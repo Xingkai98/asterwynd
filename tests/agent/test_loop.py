@@ -1,0 +1,61 @@
+# tests/agent/test_loop.py
+import pytest
+from agent.loop import AgentLoop
+from agent.message import Message
+from agent.llm import LLMResponse, ToolCallDelta
+from agent.tools.base import Tool, tool_parameters, ToolCall
+from agent.tools.registry import ToolRegistry
+from agent.hooks.manager import HookManager
+
+@tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
+class EchoTool(Tool):
+    name = "Echo"
+    description = "Echo back"
+    parameters = {}
+
+    async def execute(self, **kwargs) -> str:
+        return "echo!"
+
+class MockLLM:
+    def __init__(self, response: LLMResponse):
+        self._response = response
+
+    async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+        return self._response
+
+@pytest.mark.asyncio
+async def test_agent_loop_returns_content():
+    mock_llm = MockLLM(LLMResponse(content="Hello!"))
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    result = await loop.run([Message(role="user", content="hi")])
+    assert result.content == "Hello!"
+    assert result.stop_reason.value == "end_turn"
+
+@pytest.mark.asyncio
+async def test_agent_loop_max_iterations():
+    # LLM always returns tool calls - should stop at max_iterations
+    mock_llm = MockLLM(LLMResponse(
+        content=None,
+        tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")]
+    ))
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=2,
+    )
+
+    result = await loop.run([Message(role="user", content="test")])
+    assert result.stop_reason.value == "max_iterations"
+    assert len(result.tool_calls_made) == 2
