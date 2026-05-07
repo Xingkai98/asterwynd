@@ -77,7 +77,7 @@ def build_agent(model: str = "gpt-4o-mini", provider: str = "openai") -> AgentLo
 
 @app.command()
 def main(
-    prompt: str = typer.Argument(..., help="要发送给 agent 的提示"),
+    prompt: Optional[str] = typer.Argument(None, help="要发送给 agent 的提示（交互模式下可选）"),
     model: str = typer.Option("gpt-4o-mini", "--model", help="使用的模型"),
     provider: str = typer.Option("openai", "--provider", help="LLM 提供商: openai / anthropic"),
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
@@ -85,8 +85,11 @@ def main(
     interactive: bool = typer.Option(False, "--interactive", "-i", help="交互模式"),
 ):
     if interactive:
-        run_interactive(model, provider, max_iterations, system)
+        run_interactive(model, provider, max_iterations, system, prompt)
     else:
+        if not prompt:
+            typer.echo("Error: PROMPT is required in single-prompt mode", err=True)
+            raise SystemExit(1)
         run_single(prompt, model, provider, max_iterations, system)
 
 def run_single(prompt: str, model: str, provider: str, max_iterations: int, system: Optional[str]):
@@ -113,7 +116,7 @@ def run_single(prompt: str, model: str, provider: str, max_iterations: int, syst
 
     asyncio.run(_run())
 
-def run_interactive(model: str, provider: str, max_iterations: int, system: Optional[str]):
+def run_interactive(model: str, provider: str, max_iterations: int, system: Optional[str], initial_prompt: Optional[str] = None):
     typer.echo("MyAgent 交互模式 (输入 exit 退出)")
     typer.echo(f"模型: {model} | 提供商: {provider}\n")
 
@@ -128,6 +131,15 @@ def run_interactive(model: str, provider: str, max_iterations: int, system: Opti
     messages.append(system_message(system_prompt))
     if system:
         messages.append(system_message(system))
+
+    # 如果有初始 prompt，先跑一轮
+    if initial_prompt:
+        messages.append(Message(role="user", content=initial_prompt))
+        async def _run():
+            return await agent.run(messages)
+        result = asyncio.run(_run())
+        typer.echo(f"\n【Agent】\n{result.content}\n")
+        messages.append(Message(role="assistant", content=result.content))
 
     while True:
         try:
