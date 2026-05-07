@@ -68,7 +68,19 @@ Each plugin is a standalone subsystem with a clear interface:
 
 The `LLM` Protocol defines `chat(messages, tools, model) -> LLMResponse`. `OpenAILLM` is the default implementation via httpx + OpenAI Chat Completions API. To add Anthropic/Gemini: implement `LLM` Protocol.
 
-## File Naming Conventions
+## Regression Testing Rule
+
+**Every bug fix requires a new regression test.** When an error occurs:
+
+1. Analyze the error and identify the root cause
+2. Fix the bug
+3. **Immediately write a regression test** that reproduces the bug
+   - The test must be in `tests/agent/<subsystem>/test_<component>.py`
+   - Name it `test_<specific behavior>`, e.g. `test_anthropic_llm_sync_json_response`
+   - The test must fail before the fix and pass after — this is the proof the bug is fixed
+4. Run `uv run pytest tests/ -v` to verify all tests pass before committing
+
+This ensures every bug that was ever fixed stays fixed.
 
 - Test files: `tests/agent/<subsystem>/test_<component>.py` (e.g., `test_registry.py`)
 - Implementation: `agent/<subsystem>/<component>.py`
