@@ -1,0 +1,55 @@
+# tests/agent/skills/test_loader.py
+import pytest
+from pathlib import Path
+import tempfile
+from agent.skills.loader import Skill, SkillLoader
+
+def test_parse_skill_md():
+    content = """---
+name: test-skill
+description: A test skill
+tools: [Read, Bash]
+always: false
+---
+
+# Test Skill
+
+You are a test assistant.
+"""
+    with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
+        f.write(content)
+        path = Path(f.name)
+
+    try:
+        loader = SkillLoader()
+        skill = loader._parse_skill_md(path)
+        assert skill.name == "test-skill"
+        assert skill.always is False
+        assert "You are a test assistant" in skill.prompt
+    finally:
+        path.unlink()
+
+def test_get_system_prompt():
+    loader = SkillLoader()
+    skills = [
+        Skill(name="s1", description="d1", prompt="p1", tools=[], always=True),
+        Skill(name="s2", description="d2", prompt="p2", tools=[], always=False),
+    ]
+    prompt = loader.get_system_prompt(skills)
+    assert "s1" in prompt
+    assert "p1" in prompt
+    assert "s2" not in prompt  # always=False 不在 system prompt 中
+
+def test_load_skills_from_dir(tmp_path):
+    (tmp_path / "skill1.md").write_text("""---
+name: skill1
+description: desc1
+tools: []
+always: true
+---
+# Skill 1
+""")
+    loader = SkillLoader()
+    skills = loader.load(str(tmp_path))
+    assert len(skills) == 1
+    assert skills[0].name == "skill1"
