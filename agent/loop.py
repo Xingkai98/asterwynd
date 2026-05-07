@@ -77,6 +77,7 @@ class AgentLoop:
 
                 await self.hooks.after_tool_execute(tool_call, result)
 
+                messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls)))
                 messages.append(tool_result_message(tool_call.id, result))
                 tool_calls_made.append(ToolCallMade(
                     name=tool_call.name,

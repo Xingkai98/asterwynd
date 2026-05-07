@@ -132,34 +132,38 @@ def run_interactive(model: str, provider: str, max_iterations: int, system: Opti
     if system:
         messages.append(system_message(system))
 
-    # 如果有初始 prompt，先跑一轮
-    if initial_prompt:
-        messages.append(Message(role="user", content=initial_prompt))
-        async def _run():
-            return await agent.run(messages)
-        result = asyncio.run(_run())
-        typer.echo(f"\n【Agent】\n{result.content}\n")
-        messages.append(Message(role="assistant", content=result.content))
+    # 复用持久 event loop，避免 httpx.AsyncClient 连接池引用已关闭的 loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-    while True:
-        try:
-            user_input = input("【你】 ")
-        except (KeyboardInterrupt, EOFError):
-            typer.echo("\n再见！")
-            break
+    async def _run_async():
+        return await agent.run(messages)
 
-        if user_input.strip().lower() in ("exit", "quit", "q"):
-            typer.echo("再见！")
-            break
+    try:
+        # 如果有初始 prompt，先跑一轮
+        if initial_prompt:
+            messages.append(Message(role="user", content=initial_prompt))
+            result = loop.run_until_complete(_run_async())
+            typer.echo(f"\n【Agent】\n{result.content}\n")
+            messages.append(Message(role="assistant", content=result.content))
 
-        messages.append(Message(role="user", content=user_input))
+        while True:
+            try:
+                user_input = input("【你】 ")
+            except (KeyboardInterrupt, EOFError):
+                typer.echo("\n再见！")
+                break
 
-        async def _run():
-            return await agent.run(messages)
+            if user_input.strip().lower() in ("exit", "quit", "q"):
+                typer.echo("再见！")
+                break
 
-        result = asyncio.run(_run())
-        typer.echo(f"\n【Agent】\n{result.content}\n")
-        messages.append(Message(role="assistant", content=result.content))
+            messages.append(Message(role="user", content=user_input))
+            result = loop.run_until_complete(_run_async())
+            typer.echo(f"\n【Agent】\n{result.content}\n")
+            messages.append(Message(role="assistant", content=result.content))
+    finally:
+        loop.close()
 
 if __name__ == "__main__":
     app()

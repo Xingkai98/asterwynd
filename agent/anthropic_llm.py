@@ -1,10 +1,20 @@
 # agent/anthropic_llm.py
+import asyncio
 import json
+import re
 from typing import Optional
 import httpx
 
 from agent.llm import LLM, LLMResponse, ToolCallDelta
 from agent.message import Message
+
+# Python string 中不允许出现的 surrogate character (U+D800-U+DFFF)
+SURROGATE_PATTERN = re.compile(r"[\ud800-\udfff]")
+
+
+def _strip_surrogates(text: str) -> str:
+    """移除字符串中的 surrogate character，避免 json.dumps() UTF-8 编码时崩溃"""
+    return SURROGATE_PATTERN.sub("\ufffd", text)
 
 
 class AnthropicLLM:
@@ -45,15 +55,22 @@ class AnthropicLLM:
 
         for msg in messages:
             if msg.role == "system":
-                system_content.append({"type": "text", "text": msg.content})
+                system_content.append({"type": "text", "text": _strip_surrogates(msg.content)})
             elif msg.role == "user":
-                anthropic_messages.append({"role": "user", "content": msg.content})
+                anthropic_messages.append({"role": "user", "content": _strip_surrogates(msg.content)})
             elif msg.role == "assistant":
                 content_parts = []
-                # 如果有 tool_calls，转换为 anthropic 格式
-                # 这里简化处理，纯文本回复
+                # 如果有 tool_calls，转换为 tool_use content block
+                for tc in msg.tool_calls:
+                    input_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                    content_parts.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": input_dict,
+                    })
                 if msg.content:
-                    content_parts.append({"type": "text", "text": msg.content})
+                    content_parts.append({"type": "text", "text": _strip_surrogates(msg.content)})
                 anthropic_messages.append({"role": "assistant", "content": content_parts or [{"type": "text", "text": ""}]})
             elif msg.role == "tool":
                 anthropic_messages.append({
@@ -62,7 +79,7 @@ class AnthropicLLM:
                         {
                             "type": "tool_result",
                             "tool_use_id": msg.tool_call_id or "",
-                            "content": msg.content,
+                            "content": _strip_surrogates(msg.content),
                         }
                     ],
                 })
@@ -82,7 +99,9 @@ class AnthropicLLM:
             json=payload,
         )
         response.raise_for_status()
-        data = await response.json()
+        # response.json() 在标准 httpx 中是 async coroutine，但某些代理（如 MiniMax）返回同步 dict
+        raw = response.json()
+        data = await raw if asyncio.iscoroutine(raw) else raw
 
         # Anthropic 的 stop_reason: end_turn, max_tokens, stop_sequence
         stop_reason_map = {
@@ -104,7 +123,7 @@ class AnthropicLLM:
                         arguments=json.dumps(block["input"]) if isinstance(block["input"], dict) else str(block["input"]),
                     ))
                 elif block["type"] == "text":
-                    text_content.append(block["text"])
+                    text_content.append(_strip_surrogates(block["text"]))
 
             if tool_calls:
                 return LLMResponse(
