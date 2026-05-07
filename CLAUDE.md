@@ -9,14 +9,15 @@ MyAgent is a lightweight general-purpose AI agent framework in Python. It is des
 ## Commands
 
 ```bash
-# Install dependencies
-pip install -e ".[dev]"
+# Install dependencies (uv is fast)
+uv sync
+uv pip install pytest pytest-asyncio pytest-mock  # dev deps
 
 # Run all tests
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 
 # Run a specific test file
-python -m pytest tests/agent/tools/test_registry.py -v
+uv run pytest tests/agent/tools/test_registry.py -v
 
 # Run CLI (requires OPENAI_API_KEY env var)
 python cli.py --model gpt-4o-mini "用 Read 工具读 /tmp"

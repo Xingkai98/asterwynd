@@ -17,8 +17,9 @@
 ## 快速开始
 
 ```bash
-# 安装
-pip install -e ".[dev]"
+# 安装（使用 uv，更快）
+uv sync
+uv pip install pytest pytest-asyncio pytest-mock  # 开发依赖
 
 # 配置 API Key
 cp .env.example .env
