@@ -20,8 +20,14 @@
 # 安装
 pip install -e ".[dev]"
 
+# 配置 API Key
+cp .env.example .env
+# 编辑 .env，填入你的 OPENAI_API_KEY
+
 # 运行（单次对话）
-python cli.py --model gpt-4o-mini "用 Read 工具读取 /tmp 目录内容"
+export $(cat .env | xargs)  # Linux/macOS
+# 或直接：
+# OPENAI_API_KEY=sk-xxx python cli.py --model gpt-4o-mini "Hello"
 
 # 交互模式
 python cli.py --interactive
