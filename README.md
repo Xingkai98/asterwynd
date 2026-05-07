@@ -18,8 +18,8 @@
 
 ```bash
 # 安装（使用 uv，更快）
-uv sync
-uv pip install pytest pytest-asyncio pytest-mock  # 开发依赖
+uv sync                          # 只装运行时依赖
+uv pip install -e ".[dev]"      # 一次性装完运行时+开发依赖
 
 # 配置 API Key
 cp .env.example .env
