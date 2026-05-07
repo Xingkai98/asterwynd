@@ -22,12 +22,18 @@ pip install -e ".[dev]"
 
 # 配置 API Key
 cp .env.example .env
-# 编辑 .env，填入你的 OPENAI_API_KEY
+# 编辑 .env，填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
 
-# 运行（单次对话）
-export $(cat .env | xargs)  # Linux/macOS
-# 或直接：
-# OPENAI_API_KEY=sk-xxx python cli.py --model gpt-4o-mini "Hello"
+# 运行（OpenAI，默认）
+export $(cat .env | xargs)
+python cli.py --model gpt-4o-mini "Hello"
+
+# 运行（Anthropic）
+export $(cat .env | xargs)
+python cli.py --provider anthropic --model claude-sonnet-4-20250514 "Hello"
+
+# 交互模式
+python cli.py --interactive --provider anthropic
 
 # 交互模式
 python cli.py --interactive
@@ -54,6 +60,7 @@ agent/
 ├── loop.py              # AgentLoop 核心（~100行）
 ├── llm.py               # LLM Protocol + ToolCallDelta
 ├── openai_llm.py        # OpenAI Chat Completions 实现
+├── anthropic_llm.py     # Anthropic Messages API 实现
 ├── message.py           # Message dataclass + 快捷构造
 ├── result.py            # RunResult + StopReason + ToolCallMade
 ├── tools/

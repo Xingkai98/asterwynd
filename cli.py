@@ -3,8 +3,9 @@
 MyAgent CLI 入口
 
 用法:
-    python cli.py --model gpt-4 "你好，介绍一下自己"
-    python cli.py --model gpt-4o-mini --interactive
+    python cli.py "你好，介绍一下自己"
+    python cli.py --provider anthropic --model claude-sonnet-4-20250514 "你好"
+    python cli.py --interactive --provider anthropic
 """
 import asyncio
 import logging
@@ -17,10 +18,12 @@ import typer
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.openai_llm import OpenAILLM
+from agent.anthropic_llm import AnthropicLLM
 from agent.tools import get_default_tools, ToolRegistry
 from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
+from agent.llm import LLM
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,13 +33,25 @@ logger = logging.getLogger("myagent.cli")
 
 app = typer.Typer()
 
-def build_agent(model: str = "gpt-4o-mini") -> AgentLoop:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        typer.echo("Error: OPENAI_API_KEY not set", err=True)
-        raise SystemExit(1)
+def build_llm(provider: str, model: str) -> LLM:
+    if provider == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            typer.echo("Error: ANTHROPIC_API_KEY not set", err=True)
+            raise SystemExit(1)
+        base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+        return AnthropicLLM(api_key=api_key, base_url=base_url)
+    else:
+        # openai (default)
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            typer.echo("Error: OPENAI_API_KEY not set", err=True)
+            raise SystemExit(1)
+        base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        return OpenAILLM(api_key=api_key, base_url=base_url)
 
-    llm = OpenAILLM(api_key=api_key)
+def build_agent(model: str = "gpt-4o-mini", provider: str = "openai") -> AgentLoop:
+    llm = build_llm(provider, model)
     registry = ToolRegistry()
     for tool in get_default_tools():
         registry.register(tool)
@@ -59,17 +74,18 @@ def build_agent(model: str = "gpt-4o-mini") -> AgentLoop:
 def main(
     prompt: str = typer.Argument(..., help="要发送给 agent 的提示"),
     model: str = typer.Option("gpt-4o-mini", "--model", help="使用的模型"),
+    provider: str = typer.Option("openai", "--provider", help="LLM 提供商: openai / anthropic"),
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="交互模式"),
 ):
     if interactive:
-        run_interactive(model, max_iterations, system)
+        run_interactive(model, provider, max_iterations, system)
     else:
-        run_single(prompt, model, max_iterations, system)
+        run_single(prompt, model, provider, max_iterations, system)
 
-def run_single(prompt: str, model: str, max_iterations: int, system: Optional[str]):
-    agent = build_agent(model)
+def run_single(prompt: str, model: str, provider: str, max_iterations: int, system: Optional[str]):
+    agent = build_agent(model, provider)
     agent.max_iterations = max_iterations
 
     messages: list[Message] = []
@@ -92,11 +108,11 @@ def run_single(prompt: str, model: str, max_iterations: int, system: Optional[st
 
     asyncio.run(_run())
 
-def run_interactive(model: str, max_iterations: int, system: Optional[str]):
+def run_interactive(model: str, provider: str, max_iterations: int, system: Optional[str]):
     typer.echo("MyAgent 交互模式 (输入 exit 退出)")
-    typer.echo(f"模型: {model}\n")
+    typer.echo(f"模型: {model} | 提供商: {provider}\n")
 
-    agent = build_agent(model)
+    agent = build_agent(model, provider)
     agent.max_iterations = max_iterations
 
     messages: list[Message] = []
