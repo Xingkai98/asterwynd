@@ -25,11 +25,9 @@ cp .env.example .env
 # 编辑 .env，填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
 
 # 运行（OpenAI，默认）
-export $(cat .env | xargs)
 python cli.py --model gpt-4o-mini "Hello"
 
 # 运行（Anthropic）
-export $(cat .env | xargs)
 python cli.py --provider anthropic --model claude-sonnet-4-20250514 "Hello"
 
 # 交互模式

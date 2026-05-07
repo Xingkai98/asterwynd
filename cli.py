@@ -11,9 +11,14 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 import typer
+
+# 自动加载 .env 文件（如果存在）
+load_dotenv(Path(__file__).parent / ".env")
 
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
