@@ -26,19 +26,16 @@ cp .env.example .env
 # 编辑 .env，填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
 
 # 运行（OpenAI，默认）
-python cli.py --model gpt-4o-mini "Hello"
+uv run python cli.py --model gpt-4o-mini "Hello"
 
 # 运行（Anthropic）
-python cli.py --provider anthropic --model claude-sonnet-4-20250514 "Hello"
+uv run python cli.py --provider anthropic --model claude-sonnet-4-20250514 "Hello"
 
 # 交互模式
-python cli.py --interactive --provider anthropic
-
-# 交互模式
-python cli.py --interactive
+uv run python cli.py --interactive
 
 # 运行测试
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ## 内置工具集

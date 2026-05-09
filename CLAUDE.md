@@ -20,10 +20,10 @@ uv run pytest tests/ -v
 uv run pytest tests/agent/tools/test_registry.py -v
 
 # Run CLI (requires OPENAI_API_KEY env var)
-python cli.py --model gpt-4o-mini "用 Read 工具读 /tmp"
+uv run python cli.py --model gpt-4o-mini "用 Read 工具读 /tmp"
 
 # Interactive mode
-python cli.py --interactive
+uv run python cli.py --interactive
 ```
 
 ## Architecture
