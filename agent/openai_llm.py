@@ -1,33 +1,30 @@
 # agent/openai_llm.py
-import json
 from typing import Optional
-import httpx
 
-from agent.llm import LLM, LLMResponse, ToolCallDelta
+from agent.llm import BaseLLM, LLMResponse, ToolCallDelta
 from agent.message import Message
 
-class OpenAILLM:
+class OpenAILLM(BaseLLM):
     """OpenAI Chat Completions API 实现"""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self._client: Optional[httpx.AsyncClient] = None
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.openai.com/v1",
+        model: str = "gpt-4",
+    ):
+        super().__init__(api_key=api_key, base_url=base_url, model=model)
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                timeout=60.0,
-            )
-        return self._client
+    def _get_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     async def chat(
         self,
         messages: list[Message],
         tools: Optional[list[dict]] = None,
-        model: str = "gpt-4",
+        model: Optional[str] = None,
     ) -> LLMResponse:
+        model = model or self.model
         client = await self._get_client()
 
         payload: dict = {
@@ -56,7 +53,11 @@ class OpenAILLM:
                 )
                 for tc in message["tool_calls"]
             ]
-            return LLMResponse(content=None, tool_calls=tool_calls, stop_reason="tool_calls")
+            return LLMResponse(
+                content=message.get("content"),
+                tool_calls=tool_calls,
+                stop_reason=choice.get("finish_reason"),
+            )
 
         return LLMResponse(
             content=message.get("content"),
@@ -69,8 +70,3 @@ class OpenAILLM:
         if msg.tool_call_id:
             d["tool_call_id"] = msg.tool_call_id
         return d
-
-    async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None

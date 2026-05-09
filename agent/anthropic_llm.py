@@ -3,9 +3,8 @@ import asyncio
 import json
 import re
 from typing import Optional
-import httpx
 
-from agent.llm import LLM, LLMResponse, ToolCallDelta
+from agent.llm import BaseLLM, LLMResponse, ToolCallDelta
 from agent.message import Message
 
 # Python string 中不允许出现的 surrogate character (U+D800-U+DFFF)
@@ -17,36 +16,32 @@ def _strip_surrogates(text: str) -> str:
     return SURROGATE_PATTERN.sub("\ufffd", text)
 
 
-class AnthropicLLM:
+class AnthropicLLM(BaseLLM):
     """Anthropic Messages API 实现"""
 
     def __init__(
         self,
         api_key: str,
         base_url: str = "https://api.anthropic.com",
+        model: str = "claude-sonnet-4-20250514",
+        max_tokens: int = 16384,
     ):
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self._client: Optional[httpx.AsyncClient] = None
+        super().__init__(api_key=api_key, base_url=base_url, model=model, max_tokens=max_tokens)
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "Content-Type": "application/json",
-                },
-                timeout=60.0,
-            )
-        return self._client
+    def _get_headers(self) -> dict:
+        return {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
 
     async def chat(
         self,
         messages: list[Message],
         tools: Optional[list[dict]] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: Optional[str] = None,
     ) -> LLMResponse:
+        model = model or self.model
         client = await self._get_client()
 
         # 转换消息格式
@@ -87,7 +82,7 @@ class AnthropicLLM:
         payload: dict = {
             "model": model,
             "messages": anthropic_messages,
-            "max_tokens": 4096,
+            "max_tokens": self.max_tokens,
         }
         if system_content:
             payload["system"] = system_content
@@ -110,6 +105,8 @@ class AnthropicLLM:
             "stop_sequence": "stop",
         }
 
+        api_stop_reason = stop_reason_map.get(data.get("stop_reason", ""), "end_turn")
+
         if data.get("content"):
             # 检查是否有 tool_use 类型的 content block
             tool_calls = []
@@ -127,21 +124,21 @@ class AnthropicLLM:
 
             if tool_calls:
                 return LLMResponse(
-                    content=None,
+                    content="\n".join(text_content) if text_content else None,
                     tool_calls=tool_calls,
-                    stop_reason="tool_calls",
+                    stop_reason=api_stop_reason,
                 )
 
             return LLMResponse(
                 content="\n".join(text_content) if text_content else None,
                 tool_calls=[],
-                stop_reason=stop_reason_map.get(data.get("stop_reason", ""), "end_turn"),
+                stop_reason=api_stop_reason,
             )
 
         return LLMResponse(
             content=None,
             tool_calls=[],
-            stop_reason=stop_reason_map.get(data.get("stop_reason", ""), "end_turn"),
+            stop_reason=api_stop_reason,
         )
 
     def _convert_tool(self, tool: dict) -> dict:
@@ -152,8 +149,3 @@ class AnthropicLLM:
             "description": func.get("description", ""),
             "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
         }
-
-    async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None
