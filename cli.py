@@ -38,14 +38,17 @@ logger = logging.getLogger("myagent.cli")
 
 app = typer.Typer()
 
-def build_llm(provider: str, model: str) -> LLM:
+def build_llm(provider: str, model: Optional[str] = None) -> LLM:
+    kwargs = {}
+    if model is not None:
+        kwargs["model"] = model
     if provider == "anthropic":
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             typer.echo("Error: ANTHROPIC_API_KEY not set", err=True)
             raise SystemExit(1)
         base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-        return AnthropicLLM(api_key=api_key, base_url=base_url, model=model)
+        return AnthropicLLM(api_key=api_key, base_url=base_url, **kwargs)
     else:
         # openai (default)
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -53,9 +56,9 @@ def build_llm(provider: str, model: str) -> LLM:
             typer.echo("Error: OPENAI_API_KEY not set", err=True)
             raise SystemExit(1)
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        return OpenAILLM(api_key=api_key, base_url=base_url, model=model)
+        return OpenAILLM(api_key=api_key, base_url=base_url, **kwargs)
 
-def build_agent(model: str = "gpt-4o-mini", provider: str = "openai") -> AgentLoop:
+def build_agent(model: Optional[str] = None, provider: str = "openai") -> AgentLoop:
     llm = build_llm(provider, model)
     registry = ToolRegistry()
     for tool in get_default_tools():
@@ -78,7 +81,7 @@ def build_agent(model: str = "gpt-4o-mini", provider: str = "openai") -> AgentLo
 @app.command()
 def main(
     prompt: Optional[str] = typer.Argument(None, help="要发送给 agent 的提示（交互模式下可选）"),
-    model: str = typer.Option("gpt-4o-mini", "--model", help="使用的模型"),
+    model: Optional[str] = typer.Option(None, "--model", help="使用的模型（不指定则用 provider 默认值）"),
     provider: str = typer.Option("openai", "--provider", help="LLM 提供商: openai / anthropic"),
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
@@ -92,7 +95,7 @@ def main(
             raise SystemExit(1)
         run_single(prompt, model, provider, max_iterations, system)
 
-def run_single(prompt: str, model: str, provider: str, max_iterations: int, system: Optional[str]):
+def run_single(prompt: str, model: Optional[str], provider: str, max_iterations: int, system: Optional[str]):
     agent = build_agent(model, provider)
     agent.max_iterations = max_iterations
 
@@ -116,11 +119,12 @@ def run_single(prompt: str, model: str, provider: str, max_iterations: int, syst
 
     asyncio.run(_run())
 
-def run_interactive(model: str, provider: str, max_iterations: int, system: Optional[str], initial_prompt: Optional[str] = None):
-    typer.echo("MyAgent 交互模式 (输入 exit 退出)")
-    typer.echo(f"模型: {model} | 提供商: {provider}\n")
-
+def run_interactive(model: Optional[str], provider: str, max_iterations: int, system: Optional[str], initial_prompt: Optional[str] = None):
     agent = build_agent(model, provider)
+    resolved_model = getattr(agent.llm, "model", model or "default")
+
+    typer.echo("MyAgent 交互模式 (输入 exit 退出)")
+    typer.echo(f"模型: {resolved_model} | 提供商: {provider}\n")
     agent.max_iterations = max_iterations
 
     messages: list[Message] = []
