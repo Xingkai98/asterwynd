@@ -57,9 +57,32 @@ class BaseLLM:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 headers=self._get_headers(),
-                timeout=httpx.Timeout(60.0, read=180.0),
+                timeout=60.0,
             )
         return self._client
+
+    async def _stream_events(self, url: str, json: dict):
+        """SSE 流式请求，yield (event_type, data_dict) tuples。
+
+        共享逻辑：所有 provider 的 SSE 格式相同（event:/data: 行）。
+        子类的 chat() 调用此方法，各自解析特定 provider 的语义。
+        """
+        client = await self._get_client()
+        async with client.stream("POST", url, json=json) as response:
+            response.raise_for_status()
+            event_type = None
+            async for line in response.aiter_lines():
+                if line.startswith("event: "):
+                    event_type = line[7:]
+                elif line.startswith("data: "):
+                    data_str = line[6:]
+                    import json as _json
+                    try:
+                        data = _json.loads(data_str)
+                    except _json.JSONDecodeError:
+                        continue
+                    yield event_type, data
+                    event_type = None
 
     async def close(self):
         if self._client:
