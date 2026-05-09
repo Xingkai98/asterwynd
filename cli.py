@@ -45,7 +45,7 @@ def build_llm(provider: str, model: str) -> LLM:
             typer.echo("Error: ANTHROPIC_API_KEY not set", err=True)
             raise SystemExit(1)
         base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-        return AnthropicLLM(api_key=api_key, base_url=base_url)
+        return AnthropicLLM(api_key=api_key, base_url=base_url, model=model)
     else:
         # openai (default)
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -53,7 +53,7 @@ def build_llm(provider: str, model: str) -> LLM:
             typer.echo("Error: OPENAI_API_KEY not set", err=True)
             raise SystemExit(1)
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        return OpenAILLM(api_key=api_key, base_url=base_url)
+        return OpenAILLM(api_key=api_key, base_url=base_url, model=model)
 
 def build_agent(model: str = "gpt-4o-mini", provider: str = "openai") -> AgentLoop:
     llm = build_llm(provider, model)
