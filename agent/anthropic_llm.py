@@ -43,7 +43,7 @@ class AnthropicLLM(BaseLLM):
     ) -> LLMResponse:
         model = model or self.model
 
-        # 转换消息格式
+        # 转换消息格式（流式/非流式共用）
         anthropic_messages = []
         system_content = []
 
@@ -81,14 +81,21 @@ class AnthropicLLM(BaseLLM):
             "model": model,
             "messages": anthropic_messages,
             "max_tokens": self.max_tokens,
-            "stream": True,
         }
         if system_content:
             payload["system"] = system_content
         if tools:
             payload["tools"] = [self._convert_tool(tool) for tool in tools]
 
-        # Anthropic 的 stop_reason 映射
+        if self.stream:
+            return await self._chat_stream(payload)
+        else:
+            return await self._chat_nonstream(payload)
+
+    async def _chat_stream(self, payload: dict) -> LLMResponse:
+        """流式 SSE 解析"""
+        payload["stream"] = True
+
         stop_reason_map = {
             "end_turn": "end_turn",
             "max_tokens": "max_tokens",
@@ -96,7 +103,6 @@ class AnthropicLLM(BaseLLM):
             "tool_use": "tool_calls",
         }
 
-        # 流式 SSE 解析：按 block index 累积 text / tool_use input
         blocks: dict = {}          # index -> {type, text_parts, json_parts, id, name}
         stop_reason = None
 
@@ -133,7 +139,61 @@ class AnthropicLLM(BaseLLM):
             elif event_type == "error":
                 raise RuntimeError(f"Anthropic API error: {data}")
 
-        # 将累积的 block 转换为 LLMResponse
+        return self._build_response(blocks, stop_reason)
+
+    async def _chat_nonstream(self, payload: dict) -> LLMResponse:
+        """非流式请求"""
+        client = await self._get_client()
+        response = await client.post(
+            f"{self.base_url}/v1/messages",
+            json=payload,
+        )
+        response.raise_for_status()
+        raw = response.json()
+        data = await raw if asyncio.iscoroutine(raw) else raw
+
+        stop_reason_map = {
+            "end_turn": "end_turn",
+            "max_tokens": "max_tokens",
+            "stop_sequence": "stop",
+        }
+        api_stop_reason = stop_reason_map.get(data.get("stop_reason", ""), "end_turn")
+
+        if data.get("content"):
+            tool_calls = []
+            text_content = []
+
+            for block in data["content"]:
+                if block["type"] == "tool_use":
+                    tool_calls.append(ToolCallDelta(
+                        id=block["id"],
+                        name=block["name"],
+                        arguments=json.dumps(block["input"]) if isinstance(block["input"], dict) else str(block["input"]),
+                    ))
+                elif block["type"] == "text":
+                    text_content.append(_strip_surrogates(block["text"]))
+
+            if tool_calls:
+                return LLMResponse(
+                    content="\n".join(text_content) if text_content else None,
+                    tool_calls=tool_calls,
+                    stop_reason=api_stop_reason,
+                )
+
+            return LLMResponse(
+                content="\n".join(text_content) if text_content else None,
+                tool_calls=[],
+                stop_reason=api_stop_reason,
+            )
+
+        return LLMResponse(
+            content=None,
+            tool_calls=[],
+            stop_reason=api_stop_reason,
+        )
+
+    def _build_response(self, blocks: dict, stop_reason: str | None) -> LLMResponse:
+        """将流式累积的 block 转换为 LLMResponse"""
         tool_calls = []
         text_content = []
 

@@ -1,0 +1,2644 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "myagent",
+    "languages": [
+      "python",
+      "markdown",
+      "toml",
+      "config"
+    ],
+    "frameworks": [
+      "Aiohttp",
+      "Pytest"
+    ],
+    "description": "A lightweight general-purpose AI agent framework in Python, designed for interview preparation with a clean plugin-based architecture.",
+    "analyzedAt": "2026-05-07T15:14:00Z",
+    "gitCommitHash": "e9675334f19d741671fcfd1691ea6d44e440c2b1"
+  },
+  "nodes": [
+    {
+      "id": "file:agent/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/__init__.py",
+      "summary": "Package initialization file for the agent module, exporting public types and components.",
+      "tags": [
+        "entry-point",
+        "barrel",
+        "exports"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/llm.py",
+      "type": "file",
+      "name": "llm.py",
+      "filePath": "agent/llm.py",
+      "summary": "Defines the LLM Protocol and associated data types (ToolCallDelta, LLMResponse) for the agent framework's LLM interface.",
+      "tags": [
+        "type-definition",
+        "protocol",
+        "api-handler"
+      ],
+      "complexity": "simple",
+      "languageNotes": "Uses @runtime_checkable decorator for structural typing of the LLM Protocol."
+    },
+    {
+      "id": "file:agent/loop.py",
+      "type": "file",
+      "name": "loop.py",
+      "filePath": "agent/loop.py",
+      "summary": "Main AgentLoop orchestrator class that runs the agent cycle: messages to LLM to tool_calls to execution and back.",
+      "tags": [
+        "entry-point",
+        "orchestrator",
+        "api-handler"
+      ],
+      "complexity": "complex",
+      "languageNotes": "Delegates to plugins (ToolRegistry, HookManager, MemoryManager, SubAgentManager) rather than containing logic directly."
+    },
+    {
+      "id": "file:agent/message.py",
+      "type": "file",
+      "name": "message.py",
+      "filePath": "agent/message.py",
+      "summary": "Message data model with Role/Content/ToolCall support, plus helper constructors for tool results and system messages.",
+      "tags": [
+        "data-model",
+        "type-definition"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/result.py",
+      "type": "file",
+      "name": "result.py",
+      "filePath": "agent/result.py",
+      "summary": "Result data classes (StopReason, ToolCallMade, RunResult) capturing agent execution outcomes and tool call tracking.",
+      "tags": [
+        "data-model",
+        "type-definition"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/openai_llm.py",
+      "type": "file",
+      "name": "openai_llm.py",
+      "filePath": "agent/openai_llm.py",
+      "summary": "OpenAI Chat Completions API implementation of the LLM Protocol, using httpx AsyncClient for HTTP requests.",
+      "tags": [
+        "api-handler",
+        "service"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Implements the LLM Protocol; uses httpx for async HTTP; handles streaming tool_call deltas."
+    },
+    {
+      "id": "file:agent/anthropic_llm.py",
+      "type": "file",
+      "name": "anthropic_llm.py",
+      "filePath": "agent/anthropic_llm.py",
+      "summary": "Anthropic Messages API implementation of the LLM Protocol, converting between OpenAI-style message format and Anthropic's content blocks.",
+      "tags": [
+        "api-handler",
+        "service"
+      ],
+      "complexity": "complex",
+      "languageNotes": "Implements the LLM Protocol; converts OpenAI tool format to Anthropic tool use blocks; includes Unicode surrogate stripping."
+    },
+    {
+      "id": "file:cli.py",
+      "type": "file",
+      "name": "cli.py",
+      "filePath": "cli.py",
+      "summary": "Command-line interface entry point using Typer, providing build_llm, build_agent, and run modes (single prompt and interactive).",
+      "tags": [
+        "entry-point",
+        "cli",
+        "utility"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses Typer for CLI argument parsing; supports both OpenAI and Anthropic LLM providers."
+    },
+    {
+      "id": "class:agent/loop.py:AgentLoop",
+      "type": "class",
+      "name": "AgentLoop",
+      "filePath": "agent/loop.py",
+      "lineRange": [
+        19,
+        107
+      ],
+      "summary": "Main orchestrator class that coordinates LLM calls, tool execution, hooks, and memory management in an iterative agent cycle.",
+      "tags": [
+        "entry-point",
+        "orchestrator"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "class:agent/message.py:Message",
+      "type": "class",
+      "name": "Message",
+      "filePath": "agent/message.py",
+      "lineRange": [
+        6,
+        24
+      ],
+      "summary": "Message data class with role, content, tool_call_id, and tool_calls fields, plus serialization via to_dict and from_dict.",
+      "tags": [
+        "data-model",
+        "type-definition"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/openai_llm.py:OpenAILLM",
+      "type": "class",
+      "name": "OpenAILLM",
+      "filePath": "agent/openai_llm.py",
+      "lineRange": [
+        9,
+        76
+      ],
+      "summary": "OpenAI LLM implementation using httpx AsyncClient, implementing chat method that returns LLMResponse with tool calls.",
+      "tags": [
+        "api-handler",
+        "service"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:agent/anthropic_llm.py:AnthropicLLM",
+      "type": "class",
+      "name": "AnthropicLLM",
+      "filePath": "agent/anthropic_llm.py",
+      "lineRange": [
+        20,
+        159
+      ],
+      "summary": "Anthropic LLM implementation using httpx AsyncClient, converting between OpenAI-style API and Anthropic messages format.",
+      "tags": [
+        "api-handler",
+        "service"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:cli.py:build_llm",
+      "type": "function",
+      "name": "build_llm",
+      "filePath": "cli.py",
+      "lineRange": [
+        41,
+        56
+      ],
+      "summary": "Factory function that constructs an LLM instance based on provider (anthropic or openai) and model name, reading API keys from environment.",
+      "tags": [
+        "factory",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:cli.py:build_agent",
+      "type": "function",
+      "name": "build_agent",
+      "filePath": "cli.py",
+      "lineRange": [
+        58,
+        76
+      ],
+      "summary": "Builds a complete AgentLoop instance with ToolRegistry, HookManager (LoggingHook, TracingHook), and MemoryManager wired up.",
+      "tags": [
+        "factory",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:cli.py:main",
+      "type": "function",
+      "name": "main",
+      "filePath": "cli.py",
+      "lineRange": [
+        79,
+        93
+      ],
+      "summary": "CLI entry point using Typer decorators for arguments (prompt, model, provider, max_iterations, system, interactive), dispatching to run_interactive or run_single.",
+      "tags": [
+        "entry-point",
+        "cli"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:cli.py:run_single",
+      "type": "function",
+      "name": "run_single",
+      "filePath": "cli.py",
+      "lineRange": [
+        95,
+        117
+      ],
+      "summary": "Executes a single prompt through the agent, building messages with system_message, running agent.run, and outputting the result.",
+      "tags": [
+        "entry-point",
+        "utility"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:cli.py:run_interactive",
+      "type": "function",
+      "name": "run_interactive",
+      "filePath": "cli.py",
+      "lineRange": [
+        119,
+        166
+      ],
+      "summary": "Interactive REPL loop that repeatedly prompts user, builds messages, runs agent, and displays results until user types 'quit'.",
+      "tags": [
+        "entry-point",
+        "utility"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/tools/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/tools/__init__.py",
+      "summary": "Tool subsystem entry point providing get_default_tools() factory that assembles the default tool set (Read, Write, Bash, Grep, WebSearch, WebFetch).",
+      "tags": [
+        "entry-point",
+        "factory",
+        "tool-registry"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/base.py",
+      "type": "file",
+      "name": "base.py",
+      "filePath": "agent/tools/base.py",
+      "summary": "Defines the Tool abstract base class (ABC with name, description, parameters, read_only, dangerous properties) and ToolCall data class for representing tool call requests from the LLM.",
+      "tags": [
+        "type-definition",
+        "abstract-base-class",
+        "data-model"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses @runtime_checkable Protocol pattern; tool_parameters decorator attaches JSONSchema metadata to Tool subclasses."
+    },
+    {
+      "id": "file:agent/tools/registry.py",
+      "type": "file",
+      "name": "registry.py",
+      "filePath": "agent/tools/registry.py",
+      "summary": "ToolRegistry manages dynamic tool registration and execution, providing methods to register tools, retrieve schemas, get sandbox executor, and execute tool calls by name.",
+      "tags": [
+        "service",
+        "registry",
+        "dynamic-registration"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/sandbox.py",
+      "type": "file",
+      "name": "sandbox.py",
+      "filePath": "agent/tools/sandbox.py",
+      "summary": "SandboxExecutor provides subprocess isolation for dangerous tool execution, with async run() and sync run_sync() methods that enforce timeout and capture stdout/stderr.",
+      "tags": [
+        "sandbox",
+        "subprocess",
+        "execution-isolation"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses asyncio.create_subprocess_shell with timeout enforcement for sandboxed command execution."
+    },
+    {
+      "id": "file:agent/tools/builtin/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/tools/builtin/__init__.py",
+      "summary": "Empty init file marking the builtin tools package.",
+      "tags": [
+        "package-marker"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/builtin/bash.py",
+      "type": "file",
+      "name": "bash.py",
+      "filePath": "agent/tools/builtin/bash.py",
+      "summary": "BashTool wraps Shell commands for execution via SandboxExecutor, used for running user-provided shell scripts with timeout and output capture.",
+      "tags": [
+        "tool",
+        "shell",
+        "execution"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/builtin/grep.py",
+      "type": "file",
+      "name": "grep.py",
+      "filePath": "agent/tools/builtin/grep.py",
+      "summary": "GrepTool searches for regex patterns in files using Python pathlib and re modules, supporting recursive directory traversal and returning matched lines with context.",
+      "tags": [
+        "tool",
+        "search",
+        "regex"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/builtin/read.py",
+      "type": "file",
+      "name": "read.py",
+      "filePath": "agent/tools/builtin/read.py",
+      "summary": "ReadTool reads file contents from the filesystem using pathlib.Path, returning file contents as text with line count metadata.",
+      "tags": [
+        "tool",
+        "file-read",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/builtin/web_fetch.py",
+      "type": "file",
+      "name": "web_fetch.py",
+      "filePath": "agent/tools/builtin/web_fetch.py",
+      "summary": "WebFetchTool retrieves web page content via HTTP GET using httpx AsyncClient, returning response text with length metadata.",
+      "tags": [
+        "tool",
+        "http",
+        "web"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/builtin/web_search.py",
+      "type": "file",
+      "name": "web_search.py",
+      "filePath": "agent/tools/builtin/web_search.py",
+      "summary": "WebSearchTool performs basic web search by fetching a search endpoint and filtering results by query keywords, returning matching lines.",
+      "tags": [
+        "tool",
+        "search",
+        "web"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/tools/builtin/write.py",
+      "type": "file",
+      "name": "write.py",
+      "filePath": "agent/tools/builtin/write.py",
+      "summary": "WriteTool writes content to files using pathlib.Path, automatically creating parent directories as needed and returning bytes written.",
+      "tags": [
+        "tool",
+        "file-write",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:agent/tools/__init__.py:get_default_tools",
+      "type": "function",
+      "name": "get_default_tools",
+      "filePath": "agent/tools/__init__.py",
+      "lineRange": [
+        14,
+        22
+      ],
+      "summary": "Factory function that instantiates and returns a list of all default built-in tools: ReadTool, WriteTool, BashTool, WebSearchTool, WebFetchTool, GrepTool.",
+      "tags": [
+        "factory",
+        "tool-creation",
+        "entry-point"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:agent/tools/base.py:tool_parameters",
+      "type": "function",
+      "name": "tool_parameters",
+      "filePath": "agent/tools/base.py",
+      "lineRange": [
+        8,
+        23
+      ],
+      "summary": "Decorator that attaches name, description, and JSONSchema parameters to a Tool subclass, used to define the LLM-facing interface for each tool.",
+      "tags": [
+        "decorator",
+        "tool-definition",
+        "schema"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/tools/base.py:Tool",
+      "type": "class",
+      "name": "Tool",
+      "filePath": "agent/tools/base.py",
+      "lineRange": [
+        26,
+        47
+      ],
+      "summary": "Abstract base class for all agent tools. Subclasses must implement execute() and get_schema(). Has properties: name, description, parameters, read_only, dangerous.",
+      "tags": [
+        "abstract-base-class",
+        "tool-interface",
+        "type-definition"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:agent/tools/base.py:ToolCall",
+      "type": "class",
+      "name": "ToolCall",
+      "filePath": "agent/tools/base.py",
+      "lineRange": [
+        51,
+        59
+      ],
+      "summary": "Data class representing a tool call request from the LLM, containing id, name, and arguments. Includes classmethod from_delta for incremental parsing.",
+      "tags": [
+        "data-model",
+        "tool-call",
+        "type-definition"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/tools/registry.py:ToolRegistry",
+      "type": "class",
+      "name": "ToolRegistry",
+      "filePath": "agent/tools/registry.py",
+      "lineRange": [
+        5,
+        26
+      ],
+      "summary": "Central registry for tool management. Provides register(), get_schema(), get_all_schemas(), get_sandbox(), execute(), and get_tool() methods for dynamic tool lifecycle management.",
+      "tags": [
+        "registry",
+        "service",
+        "tool-management"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/tools/sandbox.py:SandboxExecutor",
+      "type": "class",
+      "name": "SandboxExecutor",
+      "filePath": "agent/tools/sandbox.py",
+      "lineRange": [
+        6,
+        56
+      ],
+      "summary": "Provides sandboxed subprocess execution for dangerous tools. run() is async using asyncio.create_subprocess_shell with timeout; run_sync() is a synchronous wrapper around subprocess.run.",
+      "tags": [
+        "sandbox",
+        "subprocess",
+        "execution-isolation"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:agent/tools/builtin/grep.py:GrepTool",
+      "type": "class",
+      "name": "GrepTool",
+      "filePath": "agent/tools/builtin/grep.py",
+      "lineRange": [
+        19,
+        44
+      ],
+      "summary": "File search tool using regex pattern matching via Python re module, supports recursive directory traversal and returns matched lines with filename and line number context.",
+      "tags": [
+        "tool",
+        "search",
+        "regex",
+        "filesystem"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/hooks/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/hooks/__init__.py",
+      "summary": "Barrel file re-exporting the public hooks API: Hook protocol and HookManager orchestrator.",
+      "tags": [
+        "barrel",
+        "exports",
+        "entry-point"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/hooks/manager.py",
+      "type": "file",
+      "name": "manager.py",
+      "filePath": "agent/hooks/manager.py",
+      "summary": "Core hooks plugin defining the Hook Protocol for lifecycle extension and HookManager as the orchestrator that delegates to registered hooks.",
+      "tags": [
+        "plugin",
+        "lifecycle",
+        "orchestrator"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/hooks/builtin/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/hooks/builtin/__init__.py",
+      "summary": "Barrel file re-exporting all builtin hook implementations: LoggingHook, TracingHook, RetryHook, and TokenBudgetHook.",
+      "tags": [
+        "barrel",
+        "exports"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/hooks/builtin/logging.py",
+      "type": "file",
+      "name": "logging.py",
+      "filePath": "agent/hooks/builtin/logging.py",
+      "summary": "LoggingHook implementation that logs lifecycle events (iteration start/end, LLM calls, tool execution, errors) via the standard logging module.",
+      "tags": [
+        "hook",
+        "logging",
+        "instrumentation"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/hooks/builtin/retry.py",
+      "type": "file",
+      "name": "retry.py",
+      "filePath": "agent/hooks/builtin/retry.py",
+      "summary": "RetryHook implementation providing exponential-backoff retry logic for failed tool executions, with configurable max retries and base delay.",
+      "tags": [
+        "hook",
+        "retry",
+        "error-handling"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/hooks/builtin/token_budget.py",
+      "type": "file",
+      "name": "token_budget.py",
+      "filePath": "agent/hooks/builtin/token_budget.py",
+      "summary": "TokenBudgetHook implementation that estimates token usage per tool result and emits warnings when approaching the configured budget threshold.",
+      "tags": [
+        "hook",
+        "monitoring",
+        "token-budget"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/hooks/builtin/tracing.py",
+      "type": "file",
+      "name": "tracing.py",
+      "filePath": "agent/hooks/builtin/tracing.py",
+      "summary": "TracingHook and ToolCallTrace dataclass for recording tool execution timing, success/failure status, and aggregated summary statistics.",
+      "tags": [
+        "hook",
+        "tracing",
+        "instrumentation"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:agent/hooks/manager.py:Hook",
+      "type": "class",
+      "name": "Hook",
+      "filePath": "agent/hooks/manager.py",
+      "lineRange": [
+        11,
+        17
+      ],
+      "summary": "Runtime-checkable Protocol defining six async lifecycle methods: before_iteration, after_llm_call, before_tool_execute, after_tool_execute, on_error, and on_completion.",
+      "tags": [
+        "protocol",
+        "lifecycle",
+        "interface"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/hooks/manager.py:HookManager",
+      "type": "class",
+      "name": "HookManager",
+      "filePath": "agent/hooks/manager.py",
+      "lineRange": [
+        19,
+        45
+      ],
+      "summary": "Orchestrator class holding a list of Hook implementations and delegating each lifecycle event to all registered hooks in sequence.",
+      "tags": [
+        "orchestrator",
+        "plugin",
+        "lifecycle"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/hooks/builtin/logging.py:LoggingHook",
+      "type": "class",
+      "name": "LoggingHook",
+      "filePath": "agent/hooks/builtin/logging.py",
+      "lineRange": [
+        13,
+        35
+      ],
+      "summary": "Builtin hook that logs each lifecycle event using the myagent.hooks.logging logger, with optional verbose mode for LLM response details.",
+      "tags": [
+        "hook",
+        "logging",
+        "instrumentation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/hooks/builtin/retry.py:RetryHook",
+      "type": "class",
+      "name": "RetryHook",
+      "filePath": "agent/hooks/builtin/retry.py",
+      "lineRange": [
+        14,
+        47
+      ],
+      "summary": "Builtin hook that wraps tool execution with exponential-backoff retry logic, logging warnings on each retry attempt and returning an error message after exhausting retries.",
+      "tags": [
+        "hook",
+        "retry",
+        "error-handling"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:agent/hooks/builtin/retry.py:RetryHook.execute_with_retry",
+      "type": "function",
+      "name": "execute_with_retry",
+      "filePath": "agent/hooks/builtin/retry.py",
+      "lineRange": [
+        21,
+        40
+      ],
+      "summary": "Executes a tool call function with exponential-backoff retries up to max_retries times, sleeping with doubling delay between attempts.",
+      "tags": [
+        "retry",
+        "exponential-backoff",
+        "tool-execution"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/hooks/builtin/token_budget.py:TokenBudgetHook",
+      "type": "class",
+      "name": "TokenBudgetHook",
+      "filePath": "agent/hooks/builtin/token_budget.py",
+      "lineRange": [
+        13,
+        43
+      ],
+      "summary": "Builtin hook that estimates token consumption from tool results and warns when usage exceeds the configured budget threshold.",
+      "tags": [
+        "hook",
+        "monitoring",
+        "token-budget"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/hooks/builtin/tracing.py:ToolCallTrace",
+      "type": "class",
+      "name": "ToolCallTrace",
+      "filePath": "agent/hooks/builtin/tracing.py",
+      "lineRange": [
+        16,
+        20
+      ],
+      "summary": "Dataclass recording a single tool call's name, arguments, duration in milliseconds, and success flag.",
+      "tags": [
+        "dataclass",
+        "tracing",
+        "tool-call"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/hooks/builtin/tracing.py:TracingHook",
+      "type": "class",
+      "name": "TracingHook",
+      "filePath": "agent/hooks/builtin/tracing.py",
+      "lineRange": [
+        22,
+        60
+      ],
+      "summary": "Builtin hook that instruments tool execution using time.perf_counter to record duration and success for each call, providing an aggregated summary via get_summary.",
+      "tags": [
+        "hook",
+        "tracing",
+        "instrumentation"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:agent/hooks/builtin/tracing.py:TracingHook.get_summary",
+      "type": "function",
+      "name": "get_summary",
+      "filePath": "agent/hooks/builtin/tracing.py",
+      "lineRange": [
+        44,
+        55
+      ],
+      "summary": "Computes aggregated tracing statistics: total calls, successful/failed counts, and average duration in milliseconds.",
+      "tags": [
+        "tracing",
+        "aggregation",
+        "statistics"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/memory/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/memory/__init__.py",
+      "summary": "Package init file for agent.memory module, currently empty.",
+      "tags": [
+        "barrel",
+        "package-init"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/memory/manager.py",
+      "type": "file",
+      "name": "manager.py",
+      "filePath": "agent/memory/manager.py",
+      "summary": "MemoryManager plugin handling session message history and AutoCompact token compression. Manages message addition, token counting, and LLM-based compaction when limits are exceeded.",
+      "tags": [
+        "plugin",
+        "memory",
+        "session",
+        "auto-compact"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses tiktoken encoder for token counting; AutoCompact preserves system and recent messages while compressing middle via LLM."
+    },
+    {
+      "id": "class:agent/memory/manager.py:MemoryManager",
+      "type": "class",
+      "name": "MemoryManager",
+      "filePath": "agent/memory/manager.py",
+      "lineRange": [
+        20,
+        66
+      ],
+      "summary": "Plugin managing session message history with AutoCompact token compression. Tracks messages, counts tokens using tiktoken, and compresses history when exceeding the max limit.",
+      "tags": [
+        "plugin",
+        "memory-management",
+        "session"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:agent/memory/manager.py:compact",
+      "type": "function",
+      "name": "compact",
+      "filePath": "agent/memory/manager.py",
+      "lineRange": [
+        45,
+        66
+      ],
+      "summary": "Performs LLM-based message compression when token limit is exceeded. Preserves system and recent messages, compresses middle section via LLM summarization, logs before/after counts.",
+      "tags": [
+        "memory",
+        "compression",
+        "auto-compact",
+        "llm"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/skills/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/skills/__init__.py",
+      "summary": "Package init file for agent.skills module, currently empty.",
+      "tags": [
+        "barrel",
+        "package-init"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/skills/loader.py",
+      "type": "file",
+      "name": "loader.py",
+      "filePath": "agent/skills/loader.py",
+      "summary": "SkillLoader plugin for loading markdown skill files with YAML frontmatter. Parses skill definitions (name, description, prompt, tools, always) and provides matching against user queries.",
+      "tags": [
+        "plugin",
+        "skill",
+        "loader",
+        "markdown"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses regex FRONTMATTER_RE pattern to parse YAML frontmatter from markdown files."
+    },
+    {
+      "id": "class:agent/skills/loader.py:Skill",
+      "type": "class",
+      "name": "Skill",
+      "filePath": "agent/skills/loader.py",
+      "lineRange": [
+        8,
+        13
+      ],
+      "summary": "Simple data class holding skill metadata: name, description, prompt body, tools list, and always flag.",
+      "tags": [
+        "data-model",
+        "skill",
+        "metadata"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/skills/loader.py:SkillLoader",
+      "type": "class",
+      "name": "SkillLoader",
+      "filePath": "agent/skills/loader.py",
+      "lineRange": [
+        15,
+        76
+      ],
+      "summary": "Plugin for discovering and loading markdown-based skill files from a directory. Parses YAML frontmatter, builds Skill objects, and matches skills against queries.",
+      "tags": [
+        "plugin",
+        "skill",
+        "loader",
+        "discovery"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:agent/skills/loader.py:load",
+      "type": "function",
+      "name": "load",
+      "filePath": "agent/skills/loader.py",
+      "lineRange": [
+        21,
+        30
+      ],
+      "summary": "Discovers all .md files in the skills directory using glob, parses each via _parse_skill_md, and returns a list of Skill objects.",
+      "tags": [
+        "skill",
+        "discovery",
+        "loader"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:agent/skills/loader.py:_parse_skill_md",
+      "type": "function",
+      "name": "_parse_skill_md",
+      "filePath": "agent/skills/loader.py",
+      "lineRange": [
+        32,
+        54
+      ],
+      "summary": "Parses a single markdown skill file by extracting YAML frontmatter via regex, then extracting name, description, tools, always, and prompt body fields.",
+      "tags": [
+        "skill",
+        "parsing",
+        "markdown",
+        "yaml"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/subagent/__init__.py",
+      "type": "file",
+      "name": "__init__.py",
+      "filePath": "agent/subagent/__init__.py",
+      "summary": "Package init file for agent.subagent module, currently empty.",
+      "tags": [
+        "barrel",
+        "package-init"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:agent/subagent/manager.py",
+      "type": "file",
+      "name": "manager.py",
+      "filePath": "agent/subagent/manager.py",
+      "summary": "SubAgentManager plugin for background task delegation. Creates asyncio tasks for subagents, maintains channels for parent-subagent communication, and provides cancellation support.",
+      "tags": [
+        "plugin",
+        "subagent",
+        "delegation",
+        "async"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Uses asyncio.create_task for background delegation; SubAgentResult and ParentChannel come from protocol.py."
+    },
+    {
+      "id": "class:agent/subagent/manager.py:SubAgentManager",
+      "type": "class",
+      "name": "SubAgentManager",
+      "filePath": "agent/subagent/manager.py",
+      "lineRange": [
+        11,
+        76
+      ],
+      "summary": "Plugin managing background task delegation via asyncio. Creates SubAgentManager instances with UUID, maintains channel registry, and runs the LLM chat loop for each subagent task.",
+      "tags": [
+        "plugin",
+        "subagent",
+        "delegation",
+        "async"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/subagent/parent_channel_hook.py",
+      "type": "file",
+      "name": "parent_channel_hook.py",
+      "filePath": "agent/subagent/parent_channel_hook.py",
+      "summary": "ParentChannelHook implementing all hook points (before_iteration, before_tool_execute, after_tool_execute, after_llm_call, on_error, on_completion) to inject subagent results mid-turn via ParentChannel.",
+      "tags": [
+        "hook",
+        "subagent",
+        "parent-channel",
+        "injection"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:agent/subagent/parent_channel_hook.py:ParentChannelHook",
+      "type": "class",
+      "name": "ParentChannelHook",
+      "filePath": "agent/subagent/parent_channel_hook.py",
+      "lineRange": [
+        16,
+        45
+      ],
+      "summary": "Hook implementation that bridges parent and subagent execution. Injects subagent results mid-turn through the ParentChannel and appends results to parent messages.",
+      "tags": [
+        "hook",
+        "subagent",
+        "parent-channel",
+        "mid-turn-injection"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "file:agent/subagent/protocol.py",
+      "type": "file",
+      "name": "protocol.py",
+      "filePath": "agent/subagent/protocol.py",
+      "summary": "Protocol definitions for subagent system: SubAgentResult dataclass holding subagent outputs, and ParentChannel async queue for parent-subagent communication.",
+      "tags": [
+        "protocol",
+        "subagent",
+        "data-model",
+        "async"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/subagent/protocol.py:SubAgentResult",
+      "type": "class",
+      "name": "SubAgentResult",
+      "filePath": "agent/subagent/protocol.py",
+      "lineRange": [
+        7,
+        11
+      ],
+      "summary": "Dataclass holding subagent execution results: subagent_id, task description, result value, and tool_call_id for correlation.",
+      "tags": [
+        "data-model",
+        "subagent",
+        "result"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:agent/subagent/protocol.py:ParentChannel",
+      "type": "class",
+      "name": "ParentChannel",
+      "filePath": "agent/subagent/protocol.py",
+      "lineRange": [
+        13,
+        33
+      ],
+      "summary": "Async queue-based channel for parent-subagent communication. Allows putting results and getting them with optional timeout for non-blocking retrieval.",
+      "tags": [
+        "async",
+        "channel",
+        "communication",
+        "queue"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/test_loop.py",
+      "type": "file",
+      "name": "test_loop.py",
+      "filePath": "tests/agent/test_loop.py",
+      "summary": "Tests for AgentLoop core orchestration: verifies content return, assistant message appending before tool results, and max iteration behavior.",
+      "tags": [
+        "test",
+        "agent-loop",
+        "core"
+      ],
+      "complexity": "moderate",
+      "languageNotes": "Contains EchoTool and MockLLM test helpers; MockLLM has 2 methods and qualifies as a significant class node."
+    },
+    {
+      "id": "file:tests/agent/test_openai_llm.py",
+      "type": "file",
+      "name": "test_openai_llm.py",
+      "filePath": "tests/agent/test_openai_llm.py",
+      "summary": "Tests for OpenAILLM: verifies successful chat completion and tool call handling via mocked HTTP responses.",
+      "tags": [
+        "test",
+        "openai",
+        "llm"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/test_anthropic_llm.py",
+      "type": "file",
+      "name": "test_anthropic_llm.py",
+      "filePath": "tests/agent/test_anthropic_llm.py",
+      "summary": "Tests for AnthropicLLM: covers sync/async JSON responses, surrogate character handling in user messages and response text, and tool use block conversion.",
+      "tags": [
+        "test",
+        "anthropic",
+        "llm",
+        "surrogates"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "file:tests/agent/test_message.py",
+      "type": "file",
+      "name": "test_message.py",
+      "filePath": "tests/agent/test_message.py",
+      "summary": "Tests for Message dataclass: verifies creation, tool attachment, and serialization/deserialization with and without tool calls.",
+      "tags": [
+        "test",
+        "message",
+        "serialization"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/test_result.py",
+      "type": "file",
+      "name": "test_result.py",
+      "filePath": "tests/agent/test_result.py",
+      "summary": "Tests for RunResult: verifies result creation, stop reason values, and ToolCallMade tracking.",
+      "tags": [
+        "test",
+        "result",
+        "run-result"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/test_llm.py",
+      "type": "file",
+      "name": "test_llm.py",
+      "filePath": "tests/agent/test_llm.py",
+      "summary": "Tests for LLMResponse: verifies response creation with content, tool calls, and no-content cases.",
+      "tags": [
+        "test",
+        "llm",
+        "response"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/hooks/test_logging_tracing.py",
+      "type": "file",
+      "name": "test_logging_tracing.py",
+      "filePath": "tests/agent/hooks/test_logging_tracing.py",
+      "summary": "Tests for LoggingHook and TracingHook: verifies hooks do not crash on before_iteration and that TracingHook records tool execution.",
+      "tags": [
+        "test",
+        "hooks",
+        "logging",
+        "tracing"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/hooks/test_manager.py",
+      "type": "file",
+      "name": "test_manager.py",
+      "filePath": "tests/agent/hooks/test_manager.py",
+      "summary": "Tests for HookManager: verifies all hooks are called in sequence and that empty manager handles gracefully.",
+      "tags": [
+        "test",
+        "hooks",
+        "hook-manager"
+      ],
+      "complexity": "simple",
+      "languageNotes": "Contains MockHook helper class with 6 methods implementing the Hook protocol."
+    },
+    {
+      "id": "file:tests/agent/hooks/test_retry_budget.py",
+      "type": "file",
+      "name": "test_retry_budget.py",
+      "filePath": "tests/agent/hooks/test_retry_budget.py",
+      "summary": "Tests for RetryHook and TokenBudgetHook: verifies retry behavior on tool failure and budget hook initialization.",
+      "tags": [
+        "test",
+        "hooks",
+        "retry",
+        "budget"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/memory/test_memory.py",
+      "type": "file",
+      "name": "test_memory.py",
+      "filePath": "tests/agent/memory/test_memory.py",
+      "summary": "Tests for MemoryManager: verifies message addition, token counting, and AutoCompact trigger logic.",
+      "tags": [
+        "test",
+        "memory",
+        "autocompact"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/skills/test_loader.py",
+      "type": "file",
+      "name": "test_loader.py",
+      "filePath": "tests/agent/skills/test_loader.py",
+      "summary": "Tests for SkillLoader: verifies YAML frontmatter parsing, system prompt extraction, and directory-based skill loading.",
+      "tags": [
+        "test",
+        "skills",
+        "loader"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/subagent/test_protocol.py",
+      "type": "file",
+      "name": "test_protocol.py",
+      "filePath": "tests/agent/subagent/test_protocol.py",
+      "summary": "Tests for ParentChannel: verifies put/get result semantics and timeout behavior.",
+      "tags": [
+        "test",
+        "subagent",
+        "protocol",
+        "parent-channel"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/subagent/test_subagent_manager.py",
+      "type": "file",
+      "name": "test_subagent_manager.py",
+      "filePath": "tests/agent/subagent/test_subagent_manager.py",
+      "summary": "Tests for SubAgentManager: verifies delegation returns subagent ID, listing, and cancellation.",
+      "tags": [
+        "test",
+        "subagent",
+        "manager"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/tools/test_base.py",
+      "type": "file",
+      "name": "test_base.py",
+      "filePath": "tests/agent/tools/test_base.py",
+      "summary": "Tests for tool base: verifies @tool_parameters decorator attaches metadata correctly and read_only flag is set.",
+      "tags": [
+        "test",
+        "tools",
+        "base",
+        "decorator"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/tools/test_read_write_tools.py",
+      "type": "file",
+      "name": "test_read_write_tools.py",
+      "filePath": "tests/agent/tools/test_read_write_tools.py",
+      "summary": "Tests for ReadTool and WriteTool: verifies file read, missing file error, and write operations.",
+      "tags": [
+        "test",
+        "tools",
+        "read",
+        "write"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/tools/test_registry.py",
+      "type": "file",
+      "name": "test_registry.py",
+      "filePath": "tests/agent/tools/test_registry.py",
+      "summary": "Tests for ToolRegistry: verifies tool registration, schema retrieval, sandbox flag, and execute with not-found handling.",
+      "tags": [
+        "test",
+        "tools",
+        "registry"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "file:tests/agent/tools/test_sandbox.py",
+      "type": "file",
+      "name": "test_sandbox.py",
+      "filePath": "tests/agent/tools/test_sandbox.py",
+      "summary": "Tests for SandboxExecutor: verifies simple command execution, timeout handling, and error propagation on failure.",
+      "tags": [
+        "test",
+        "tools",
+        "sandbox"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:tests/agent/test_loop.py:MockLLM",
+      "type": "class",
+      "name": "MockLLM",
+      "filePath": "tests/agent/test_loop.py",
+      "lineRange": [
+        19,
+        24
+      ],
+      "summary": "Mock LLM implementation for testing AgentLoop: returns configurable LLMResponse with optional tool call deltas.",
+      "tags": [
+        "test-helper",
+        "mock",
+        "llm"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "class:tests/agent/hooks/test_manager.py:MockHook",
+      "type": "class",
+      "name": "MockHook",
+      "filePath": "tests/agent/hooks/test_manager.py",
+      "lineRange": [
+        9,
+        30
+      ],
+      "summary": "Mock hook implementation for testing HookManager: implements all Hook protocol methods with call tracking.",
+      "tags": [
+        "test-helper",
+        "mock",
+        "hook"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:tests/agent/test_loop.py:test_agent_loop_appends_assistant_message_before_tool_result",
+      "type": "function",
+      "name": "test_agent_loop_appends_assistant_message_before_tool_result",
+      "filePath": "tests/agent/test_loop.py",
+      "lineRange": [
+        43,
+        94
+      ],
+      "summary": "Tests that AgentLoop appends assistant message with tool calls before waiting for tool execution results.",
+      "tags": [
+        "test",
+        "agent-loop",
+        "tool-calls"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "config:.env.example",
+      "type": "config",
+      "name": ".env.example",
+      "filePath": ".env.example",
+      "summary": "Environment variable template defining API keys and base URLs for OpenAI and Anthropic LLM providers.",
+      "tags": [
+        "configuration",
+        "environment",
+        "api-keys",
+        "llm"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "schema:.env.example:OPENAI_API_KEY",
+      "type": "schema",
+      "name": "OPENAI_API_KEY",
+      "filePath": ".env.example",
+      "lineRange": [
+        2,
+        2
+      ],
+      "summary": "OpenAI API key for LLM requests.",
+      "tags": [
+        "environment-variable",
+        "api-key",
+        "openai"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "schema:.env.example:ANTHROPIC_API_KEY",
+      "type": "schema",
+      "name": "ANTHROPIC_API_KEY",
+      "filePath": ".env.example",
+      "lineRange": [
+        5,
+        5
+      ],
+      "summary": "Anthropic API key for Claude LLM requests.",
+      "tags": [
+        "environment-variable",
+        "api-key",
+        "anthropic"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "schema:.env.example:OPENAI_BASE_URL",
+      "type": "schema",
+      "name": "OPENAI_BASE_URL",
+      "filePath": ".env.example",
+      "lineRange": [
+        8,
+        8
+      ],
+      "summary": "OpenAI API base URL for custom endpoint routing.",
+      "tags": [
+        "environment-variable",
+        "api-endpoint",
+        "openai"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "schema:.env.example:ANTHROPIC_BASE_URL",
+      "type": "schema",
+      "name": "ANTHROPIC_BASE_URL",
+      "filePath": ".env.example",
+      "lineRange": [
+        9,
+        9
+      ],
+      "summary": "Anthropic API base URL for custom endpoint routing.",
+      "tags": [
+        "environment-variable",
+        "api-endpoint",
+        "anthropic"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "config:pyproject.toml",
+      "type": "config",
+      "name": "pyproject.toml",
+      "filePath": "pyproject.toml",
+      "summary": "Python project configuration defining dependencies, build system, and pytest/hatch tool settings.",
+      "tags": [
+        "configuration",
+        "python",
+        "build-system",
+        "dependencies"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:README.md",
+      "type": "document",
+      "name": "README.md",
+      "filePath": "README.md",
+      "summary": "Main project documentation covering features, quick start guide, built-in tools, project structure, architecture design, extension guides, and tech stack.",
+      "tags": [
+        "documentation",
+        "entry-point",
+        "overview"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:CLAUDE.md",
+      "type": "document",
+      "name": "CLAUDE.md",
+      "filePath": "CLAUDE.md",
+      "summary": "Claude Code guidance file documenting project overview, commands, architecture with five plugin systems, and regression testing rules.",
+      "tags": [
+        "documentation",
+        "development",
+        "architecture"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:skills/code-review.md",
+      "type": "document",
+      "name": "code-review.md",
+      "filePath": "skills/code-review.md",
+      "summary": "Skill file defining the code review capability for the agent framework.",
+      "tags": [
+        "documentation",
+        "skill",
+        "code-review"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:skills/research.md",
+      "type": "document",
+      "name": "research.md",
+      "filePath": "skills/research.md",
+      "summary": "Skill file defining the research capability for the agent framework.",
+      "tags": [
+        "documentation",
+        "skill",
+        "research"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "document:docs/resume-description.md",
+      "type": "document",
+      "name": "resume-description.md",
+      "filePath": "docs/resume-description.md",
+      "summary": "Resume project description with recommended writing styles, core architecture explanation, technical highlights, and example resume entries.",
+      "tags": [
+        "documentation",
+        "resume",
+        "project-description"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "type": "document",
+      "name": "2026-05-06-general-purpose-agent-design.md",
+      "filePath": "docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "summary": "Architecture design specification covering core agent loop, tool system with registry and sandbox, hook system, memory system with AutoCompact, skill system, subagent system, and project structure.",
+      "tags": [
+        "documentation",
+        "architecture",
+        "design-spec"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "document:docs/superpowers/specs/2026-05-06-reference-projects-analysis.md",
+      "type": "document",
+      "name": "2026-05-06-reference-projects-analysis.md",
+      "filePath": "docs/superpowers/specs/2026-05-06-reference-projects-analysis.md",
+      "summary": "Analysis of reference projects (nanobot, hermes-agent, claude-code-haha, openclaw) covering core loop patterns, tool systems, memory systems, multi-agent patterns, hook/lifecycle patterns, and skill systems.",
+      "tags": [
+        "documentation",
+        "research",
+        "reference-projects",
+        "design-patterns"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-01-project-scaffolding.md",
+      "type": "document",
+      "name": "2026-05-06-01-project-scaffolding.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-01-project-scaffolding.md",
+      "summary": "Implementation plan for project scaffolding covering directory structure, pyproject.toml, .gitignore, and README.md.",
+      "tags": [
+        "documentation",
+        "plan",
+        "project-scaffolding"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-02-base-types.md",
+      "type": "document",
+      "name": "2026-05-06-02-base-types.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-02-base-types.md",
+      "summary": "Implementation plan for base type definitions covering Message, ToolCall, and LLMResponse types.",
+      "tags": [
+        "documentation",
+        "plan",
+        "type-definition"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-03-llm-abstraction.md",
+      "type": "document",
+      "name": "2026-05-06-03-llm-abstraction.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-03-llm-abstraction.md",
+      "summary": "Implementation plan for LLM interface abstraction covering LLM Protocol and OpenAI LLM implementation.",
+      "tags": [
+        "documentation",
+        "plan",
+        "llm-abstraction"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-04-tool-system.md",
+      "type": "document",
+      "name": "2026-05-06-04-tool-system.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-04-tool-system.md",
+      "summary": "Implementation plan for the tool system covering Tool ABC, ToolRegistry, SandboxExecutor, and built-in tools (Read, Write, Bash, WebSearch, WebFetch, Grep).",
+      "tags": [
+        "documentation",
+        "plan",
+        "tool-system"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-05-hook-system.md",
+      "type": "document",
+      "name": "2026-05-06-05-hook-system.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-05-hook-system.md",
+      "summary": "Implementation plan for the hook system covering HookManager, Hook Protocol, LoggingHook, TracingHook, TokenBudgetHook, and RetryHook.",
+      "tags": [
+        "documentation",
+        "plan",
+        "hook-system"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-06-memory-system.md",
+      "type": "document",
+      "name": "2026-05-06-06-memory-system.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-06-memory-system.md",
+      "summary": "Implementation plan for the memory system covering MemoryManager and AutoCompact token compression.",
+      "tags": [
+        "documentation",
+        "plan",
+        "memory-system"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-07-skill-system.md",
+      "type": "document",
+      "name": "2026-05-06-07-skill-system.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-07-skill-system.md",
+      "summary": "Implementation plan for the skill system covering SkillLoader and example skill files.",
+      "tags": [
+        "documentation",
+        "plan",
+        "skill-system"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-08-subagent-system.md",
+      "type": "document",
+      "name": "2026-05-06-08-subagent-system.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-08-subagent-system.md",
+      "summary": "Implementation plan for the subagent system covering parent-child communication via asyncio.Queue, SubAgentManager, ParentChannelHook, and mid-turn injection.",
+      "tags": [
+        "documentation",
+        "plan",
+        "subagent-system"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "document:docs/superpowers/plans/2026-05-06-09-agent-loop.md",
+      "type": "document",
+      "name": "2026-05-06-09-agent-loop.md",
+      "filePath": "docs/superpowers/plans/2026-05-06-09-agent-loop.md",
+      "summary": "Implementation plan for AgentLoop core and CLI entry point covering the main agent cycle, CLI interface, and public API exposure.",
+      "tags": [
+        "documentation",
+        "plan",
+        "agent-loop",
+        "cli"
+      ],
+      "complexity": "moderate"
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:agent/loop.py",
+      "target": "class:agent/loop.py:AgentLoop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/loop.py:AgentLoop",
+      "target": "class:agent/loop.py:AgentLoop",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/message.py",
+      "target": "class:agent/message.py:Message",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/message.py:Message",
+      "target": "class:agent/message.py:Message",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/openai_llm.py",
+      "target": "class:agent/openai_llm.py:OpenAILLM",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/openai_llm.py:OpenAILLM",
+      "target": "class:agent/openai_llm.py:OpenAILLM",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/anthropic_llm.py",
+      "target": "class:agent/anthropic_llm.py:AnthropicLLM",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/anthropic_llm.py:AnthropicLLM",
+      "target": "class:agent/anthropic_llm.py:AnthropicLLM",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:cli.py",
+      "target": "function:cli.py:build_llm",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:cli.py",
+      "target": "function:cli.py:build_agent",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:cli.py",
+      "target": "function:cli.py:main",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:cli.py",
+      "target": "function:cli.py:run_single",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:cli.py",
+      "target": "function:cli.py:run_interactive",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "function:cli.py:build_llm",
+      "target": "function:cli.py:build_llm",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:build_agent",
+      "target": "function:cli.py:build_agent",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:main",
+      "target": "function:cli.py:main",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:run_single",
+      "target": "function:cli.py:run_single",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:run_interactive",
+      "target": "function:cli.py:run_interactive",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/tools/__init__.py",
+      "target": "function:agent/tools/__init__.py:get_default_tools",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/tools/__init__.py",
+      "target": "function:agent/tools/__init__.py:get_default_tools",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/tools/base.py",
+      "target": "function:agent/tools/base.py:tool_parameters",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/tools/base.py",
+      "target": "function:agent/tools/base.py:tool_parameters",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/tools/base.py",
+      "target": "class:agent/tools/base.py:Tool",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/tools/base.py",
+      "target": "class:agent/tools/base.py:Tool",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/tools/base.py",
+      "target": "class:agent/tools/base.py:ToolCall",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/tools/base.py",
+      "target": "class:agent/tools/base.py:ToolCall",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/tools/registry.py",
+      "target": "class:agent/tools/registry.py:ToolRegistry",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/tools/registry.py",
+      "target": "class:agent/tools/registry.py:ToolRegistry",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/tools/sandbox.py",
+      "target": "class:agent/tools/sandbox.py:SandboxExecutor",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/tools/sandbox.py",
+      "target": "class:agent/tools/sandbox.py:SandboxExecutor",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/tools/builtin/grep.py",
+      "target": "class:agent/tools/builtin/grep.py:GrepTool",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/tools/builtin/grep.py",
+      "target": "class:agent/tools/builtin/grep.py:GrepTool",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/__init__.py",
+      "target": "class:agent/hooks/manager.py:Hook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/__init__.py",
+      "target": "class:agent/hooks/manager.py:HookManager",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/__init__.py",
+      "target": "class:agent/hooks/manager.py:Hook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/__init__.py",
+      "target": "class:agent/hooks/manager.py:HookManager",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/manager.py",
+      "target": "class:agent/hooks/manager.py:Hook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/manager.py",
+      "target": "class:agent/hooks/manager.py:HookManager",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/logging.py:LoggingHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/tracing.py:TracingHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/retry.py:RetryHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/token_budget.py:TokenBudgetHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/logging.py:LoggingHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/tracing.py:TracingHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/retry.py:RetryHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/__init__.py",
+      "target": "class:agent/hooks/builtin/token_budget.py:TokenBudgetHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/logging.py",
+      "target": "class:agent/hooks/builtin/logging.py:LoggingHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/logging.py",
+      "target": "class:agent/hooks/builtin/logging.py:LoggingHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/retry.py",
+      "target": "class:agent/hooks/builtin/retry.py:RetryHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/retry.py",
+      "target": "function:agent/hooks/builtin/retry.py:RetryHook.execute_with_retry",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/retry.py",
+      "target": "class:agent/hooks/builtin/retry.py:RetryHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/token_budget.py",
+      "target": "class:agent/hooks/builtin/token_budget.py:TokenBudgetHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/token_budget.py",
+      "target": "class:agent/hooks/builtin/token_budget.py:TokenBudgetHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/tracing.py",
+      "target": "class:agent/hooks/builtin/tracing.py:ToolCallTrace",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/tracing.py",
+      "target": "class:agent/hooks/builtin/tracing.py:TracingHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/tracing.py",
+      "target": "function:agent/hooks/builtin/tracing.py:TracingHook.get_summary",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/hooks/builtin/tracing.py",
+      "target": "class:agent/hooks/builtin/tracing.py:ToolCallTrace",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:agent/hooks/builtin/tracing.py",
+      "target": "class:agent/hooks/builtin/tracing.py:TracingHook",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:agent/hooks/builtin/logging.py:LoggingHook",
+      "target": "class:agent/hooks/manager.py:Hook",
+      "type": "implements",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:agent/hooks/builtin/retry.py:RetryHook",
+      "target": "class:agent/hooks/manager.py:Hook",
+      "type": "implements",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:agent/hooks/builtin/token_budget.py:TokenBudgetHook",
+      "target": "class:agent/hooks/manager.py:Hook",
+      "type": "implements",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "class:agent/hooks/builtin/tracing.py:TracingHook",
+      "target": "class:agent/hooks/manager.py:Hook",
+      "type": "implements",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "file:agent/memory/manager.py",
+      "target": "class:agent/memory/manager.py:MemoryManager",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/memory/manager.py:MemoryManager",
+      "target": "function:agent/memory/manager.py:compact",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/skills/loader.py",
+      "target": "class:agent/skills/loader.py:Skill",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/skills/loader.py",
+      "target": "class:agent/skills/loader.py:SkillLoader",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/skills/loader.py:SkillLoader",
+      "target": "function:agent/skills/loader.py:load",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/skills/loader.py:SkillLoader",
+      "target": "function:agent/skills/loader.py:_parse_skill_md",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/subagent/manager.py",
+      "target": "class:agent/subagent/manager.py:SubAgentManager",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/subagent/parent_channel_hook.py",
+      "target": "class:agent/subagent/parent_channel_hook.py:ParentChannelHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/subagent/protocol.py",
+      "target": "class:agent/subagent/protocol.py:SubAgentResult",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:agent/subagent/protocol.py",
+      "target": "class:agent/subagent/protocol.py:ParentChannel",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:agent/memory/manager.py:MemoryManager",
+      "target": "file:agent/memory/manager.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:agent/skills/loader.py:Skill",
+      "target": "file:agent/skills/loader.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:agent/skills/loader.py:SkillLoader",
+      "target": "file:agent/skills/loader.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:agent/subagent/manager.py:SubAgentManager",
+      "target": "file:agent/subagent/manager.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:agent/subagent/parent_channel_hook.py:ParentChannelHook",
+      "target": "file:agent/subagent/parent_channel_hook.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:agent/subagent/protocol.py:SubAgentResult",
+      "target": "file:agent/subagent/protocol.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "class:agent/subagent/protocol.py:ParentChannel",
+      "target": "file:agent/subagent/protocol.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:tests/agent/test_loop.py",
+      "target": "class:tests/agent/test_loop.py:MockLLM",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:tests/agent/test_loop.py",
+      "target": "function:tests/agent/test_loop.py:test_agent_loop_appends_assistant_message_before_tool_result",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:tests/agent/test_loop.py:MockLLM",
+      "target": "file:tests/agent/test_loop.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:tests/agent/hooks/test_manager.py",
+      "target": "class:tests/agent/hooks/test_manager.py:MockHook",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:tests/agent/hooks/test_manager.py:MockHook",
+      "target": "file:tests/agent/hooks/test_manager.py",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "config:.env.example",
+      "target": "schema:.env.example:OPENAI_API_KEY",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "config:.env.example",
+      "target": "schema:.env.example:ANTHROPIC_API_KEY",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "config:.env.example",
+      "target": "schema:.env.example:OPENAI_BASE_URL",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "config:.env.example",
+      "target": "schema:.env.example:ANTHROPIC_BASE_URL",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-reference-projects-analysis.md",
+      "target": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-01-project-scaffolding.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-02-base-types.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-03-llm-abstraction.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-04-tool-system.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-05-hook-system.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-06-memory-system.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-07-skill-system.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-08-subagent-system.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "target": "document:docs/superpowers/plans/2026-05-06-09-agent-loop.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/plans/2026-05-06-01-project-scaffolding.md",
+      "target": "config:pyproject.toml",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:docs/superpowers/plans/2026-05-06-01-project-scaffolding.md",
+      "target": "document:README.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:README.md",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:CLAUDE.md",
+      "target": "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+      "type": "documents",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:skills/code-review.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "document:README.md",
+      "target": "document:skills/research.md",
+      "type": "related",
+      "direction": "forward",
+      "weight": 0.5
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer:core",
+      "name": "Core Layer",
+      "description": "AgentLoop orchestration, base protocols, and shared data types.",
+      "nodeIds": [
+        "file:agent/__init__.py",
+        "file:agent/llm.py",
+        "file:agent/loop.py",
+        "file:agent/message.py",
+        "file:agent/result.py"
+      ]
+    },
+    {
+      "id": "layer:llm-providers",
+      "name": "LLM Providers",
+      "description": "Concrete LLM implementations for OpenAI and Anthropic APIs.",
+      "nodeIds": [
+        "file:agent/openai_llm.py",
+        "file:agent/anthropic_llm.py"
+      ]
+    },
+    {
+      "id": "layer:plugin-tools",
+      "name": "Tool Plugin System",
+      "description": "Dynamic tool registration, sandboxed execution, and builtin tools.",
+      "nodeIds": [
+        "file:agent/tools/__init__.py",
+        "file:agent/tools/base.py",
+        "file:agent/tools/registry.py",
+        "file:agent/tools/sandbox.py",
+        "file:agent/tools/builtin/__init__.py",
+        "file:agent/tools/builtin/read.py",
+        "file:agent/tools/builtin/write.py",
+        "file:agent/tools/builtin/bash.py",
+        "file:agent/tools/builtin/grep.py",
+        "file:agent/tools/builtin/web_search.py",
+        "file:agent/tools/builtin/web_fetch.py"
+      ]
+    },
+    {
+      "id": "layer:plugin-hooks",
+      "name": "Hook Plugin System",
+      "description": "Lifecycle extension points and builtin hooks.",
+      "nodeIds": [
+        "file:agent/hooks/__init__.py",
+        "file:agent/hooks/manager.py",
+        "file:agent/hooks/builtin/__init__.py",
+        "file:agent/hooks/builtin/logging.py",
+        "file:agent/hooks/builtin/tracing.py",
+        "file:agent/hooks/builtin/token_budget.py",
+        "file:agent/hooks/builtin/retry.py"
+      ]
+    },
+    {
+      "id": "layer:plugin-memory",
+      "name": "Memory Plugin",
+      "description": "Session message history with AutoCompact token compression.",
+      "nodeIds": [
+        "file:agent/memory/__init__.py",
+        "file:agent/memory/manager.py"
+      ]
+    },
+    {
+      "id": "layer:plugin-skills",
+      "name": "Skill Plugin System",
+      "description": "Markdown skill file loading with on-demand and always-loaded skills.",
+      "nodeIds": [
+        "file:agent/skills/__init__.py",
+        "file:agent/skills/loader.py",
+        "document:skills/code-review.md",
+        "document:skills/research.md"
+      ]
+    },
+    {
+      "id": "layer:plugin-subagent",
+      "name": "SubAgent Plugin System",
+      "description": "Background task delegation with ParentChannel for mid-turn injection.",
+      "nodeIds": [
+        "file:agent/subagent/__init__.py",
+        "file:agent/subagent/manager.py",
+        "file:agent/subagent/protocol.py",
+        "file:agent/subagent/parent_channel_hook.py"
+      ]
+    },
+    {
+      "id": "layer:cli",
+      "name": "CLI Entry Point",
+      "description": "Command-line interface built with typer.",
+      "nodeIds": [
+        "file:cli.py"
+      ]
+    },
+    {
+      "id": "layer:configuration",
+      "name": "Configuration",
+      "description": "Project configuration, dependencies, and build settings.",
+      "nodeIds": [
+        "config:pyproject.toml",
+        "config:.env.example"
+      ]
+    },
+    {
+      "id": "layer:documentation",
+      "name": "Documentation",
+      "description": "Project documentation including README, design specs, and planning documents.",
+      "nodeIds": [
+        "document:README.md",
+        "document:CLAUDE.md",
+        "document:docs/resume-description.md",
+        "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md",
+        "document:docs/superpowers/specs/2026-05-06-reference-projects-analysis.md",
+        "document:docs/superpowers/plans/2026-05-06-01-project-scaffolding.md",
+        "document:docs/superpowers/plans/2026-05-06-02-base-types.md",
+        "document:docs/superpowers/plans/2026-05-06-03-llm-abstraction.md",
+        "document:docs/superpowers/plans/2026-05-06-04-tool-system.md",
+        "document:docs/superpowers/plans/2026-05-06-05-hook-system.md",
+        "document:docs/superpowers/plans/2026-05-06-06-memory-system.md",
+        "document:docs/superpowers/plans/2026-05-06-07-skill-system.md",
+        "document:docs/superpowers/plans/2026-05-06-08-subagent-system.md",
+        "document:docs/superpowers/plans/2026-05-06-09-agent-loop.md"
+      ]
+    },
+    {
+      "id": "layer:test",
+      "name": "Tests",
+      "description": "Comprehensive test suite covering all agent subsystems.",
+      "nodeIds": [
+        "file:tests/agent/test_loop.py",
+        "file:tests/agent/test_openai_llm.py",
+        "file:tests/agent/test_anthropic_llm.py",
+        "file:tests/agent/test_message.py",
+        "file:tests/agent/test_result.py",
+        "file:tests/agent/test_llm.py",
+        "file:tests/agent/tools/test_base.py",
+        "file:tests/agent/tools/test_registry.py",
+        "file:tests/agent/tools/test_sandbox.py",
+        "file:tests/agent/tools/test_read_write_tools.py",
+        "file:tests/agent/hooks/test_manager.py",
+        "file:tests/agent/hooks/test_logging_tracing.py",
+        "file:tests/agent/hooks/test_retry_budget.py",
+        "file:tests/agent/memory/test_memory.py",
+        "file:tests/agent/skills/test_loader.py",
+        "file:tests/agent/subagent/test_protocol.py",
+        "file:tests/agent/subagent/test_subagent_manager.py"
+      ]
+    }
+  ],
+  "tour": [
+    {
+      "order": 1,
+      "title": "Project Overview",
+      "description": "Start with the README to understand the project's purpose and architecture.",
+      "nodeIds": [
+        "document:README.md"
+      ]
+    },
+    {
+      "order": 2,
+      "title": "CLI Entry Point",
+      "description": "The CLI entry point bootstraps the agent by initializing all plugin systems.",
+      "nodeIds": [
+        "file:cli.py"
+      ]
+    },
+    {
+      "order": 3,
+      "title": "AgentLoop Core",
+      "description": "The AgentLoop is the single orchestrator that holds references to all plugins.",
+      "nodeIds": [
+        "file:agent/loop.py"
+      ]
+    },
+    {
+      "order": 4,
+      "title": "Core Types",
+      "description": "The foundational types define the domain model: LLM Protocol, Message dataclass, RunResult and StopReason.",
+      "nodeIds": [
+        "file:agent/llm.py",
+        "file:agent/message.py",
+        "file:agent/result.py"
+      ]
+    },
+    {
+      "order": 5,
+      "title": "LLM Providers",
+      "description": "OpenAILLM and AnthropicLLM implement the LLM Protocol, allowing the AgentLoop to remain provider-agnostic.",
+      "nodeIds": [
+        "file:agent/openai_llm.py",
+        "file:agent/anthropic_llm.py"
+      ]
+    },
+    {
+      "order": 6,
+      "title": "Tool Registry and Base",
+      "description": "ToolRegistry manages dynamic tool registration. Tool ABC with @tool_parameters decorator declares tool metadata.",
+      "nodeIds": [
+        "file:agent/tools/base.py",
+        "file:agent/tools/registry.py"
+      ]
+    },
+    {
+      "order": 7,
+      "title": "Builtin Tools",
+      "description": "Six builtin tools: Read, Write, Bash (sandboxed), WebSearch, WebFetch, Grep.",
+      "nodeIds": [
+        "file:agent/tools/builtin/read.py",
+        "file:agent/tools/builtin/write.py",
+        "file:agent/tools/builtin/bash.py",
+        "file:agent/tools/sandbox.py"
+      ]
+    },
+    {
+      "order": 8,
+      "title": "Hook System",
+      "description": "HookManager provides six lifecycle extension points. Builtin hooks: Logging, Tracing, Retry, TokenBudget.",
+      "nodeIds": [
+        "file:agent/hooks/manager.py",
+        "file:agent/hooks/builtin/logging.py",
+        "file:agent/hooks/builtin/tracing.py",
+        "file:agent/hooks/builtin/retry.py",
+        "file:agent/hooks/builtin/token_budget.py"
+      ]
+    },
+    {
+      "order": 9,
+      "title": "Memory Manager",
+      "description": "MemoryManager handles session message history with AutoCompact token compression using LLM summarization.",
+      "nodeIds": [
+        "file:agent/memory/manager.py"
+      ]
+    },
+    {
+      "order": 10,
+      "title": "Skill Loader",
+      "description": "SkillLoader parses markdown skill files with YAML frontmatter and prompt body for on-demand capability extension.",
+      "nodeIds": [
+        "file:agent/skills/loader.py"
+      ]
+    },
+    {
+      "order": 11,
+      "title": "SubAgent System",
+      "description": "SubAgentManager handles asyncio background task delegation. ParentChannel enables mid-turn result injection.",
+      "nodeIds": [
+        "file:agent/subagent/manager.py",
+        "file:agent/subagent/protocol.py",
+        "file:agent/subagent/parent_channel_hook.py"
+      ]
+    },
+    {
+      "order": 12,
+      "title": "Architecture Spec",
+      "description": "The architecture design document traces the reasoning behind the plugin-based approach.",
+      "nodeIds": [
+        "document:docs/superpowers/specs/2026-05-06-general-purpose-agent-design.md"
+      ]
+    },
+    {
+      "order": 13,
+      "title": "Project Configuration",
+      "description": "pyproject.toml declares project dependencies, uv toolchain, and plugin module configuration.",
+      "nodeIds": [
+        "config:pyproject.toml"
+      ]
+    }
+  ]
+}

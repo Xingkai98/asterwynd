@@ -35,7 +35,14 @@ class LLMResponse:
 
 
 class BaseLLM:
-    """LLM 基类：统一构造函数、客户端管理、资源释放"""
+    """LLM 基类：统一构造函数、客户端管理、资源释放
+
+    子类可设置 stream=True 启用 SSE 流式（需 provider 支持）。
+    不支持的 provider 保持 stream=False，用非流式 + 长 read timeout。
+    """
+
+    stream: bool = False
+
     def __init__(
         self,
         api_key: str,
@@ -55,18 +62,17 @@ class BaseLLM:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
+            # 流式：chunk 间隔短，用默认 read timeout
+            # 非流式：大响应可能超 60s，read timeout 拉到 180s
+            read_timeout = 60.0 if self.stream else 180.0
             self._client = httpx.AsyncClient(
                 headers=self._get_headers(),
-                timeout=60.0,
+                timeout=httpx.Timeout(60.0, read=read_timeout),
             )
         return self._client
 
     async def _stream_events(self, url: str, json: dict):
-        """SSE 流式请求，yield (event_type, data_dict) tuples。
-
-        共享逻辑：所有 provider 的 SSE 格式相同（event:/data: 行）。
-        子类的 chat() 调用此方法，各自解析特定 provider 的语义。
-        """
+        """SSE 流式请求，yield (event_type, data_dict) tuples。"""
         client = await self._get_client()
         async with client.stream("POST", url, json=json) as response:
             response.raise_for_status()
