@@ -42,9 +42,8 @@ class AnthropicLLM(BaseLLM):
         model: Optional[str] = None,
     ) -> LLMResponse:
         model = model or self.model
-        client = await self._get_client()
 
-        # 转换消息格式
+        # 转换消息格式（流式/非流式共用）
         anthropic_messages = []
         system_content = []
 
@@ -55,7 +54,6 @@ class AnthropicLLM(BaseLLM):
                 anthropic_messages.append({"role": "user", "content": _strip_surrogates(msg.content)})
             elif msg.role == "assistant":
                 content_parts = []
-                # 如果有 tool_calls，转换为 tool_use content block
                 for tc in msg.tool_calls:
                     input_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                     content_parts.append({
@@ -89,26 +87,79 @@ class AnthropicLLM(BaseLLM):
         if tools:
             payload["tools"] = [self._convert_tool(tool) for tool in tools]
 
+        if self.stream:
+            return await self._chat_stream(payload)
+        else:
+            return await self._chat_nonstream(payload)
+
+    async def _chat_stream(self, payload: dict) -> LLMResponse:
+        """流式 SSE 解析"""
+        payload["stream"] = True
+
+        stop_reason_map = {
+            "end_turn": "end_turn",
+            "max_tokens": "max_tokens",
+            "stop_sequence": "stop",
+            "tool_use": "tool_calls",
+        }
+
+        blocks: dict = {}          # index -> {type, text_parts, json_parts, id, name}
+        stop_reason = None
+
+        async for event_type, data in self._stream_events(
+            f"{self.base_url}/v1/messages",
+            payload,
+        ):
+            if event_type == "content_block_start":
+                block = data["content_block"]
+                idx = data["index"]
+                blocks[idx] = {
+                    "type": block["type"],
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "text_parts": [],
+                    "json_parts": [],
+                }
+
+            elif event_type == "content_block_delta":
+                idx = data["index"]
+                delta = data["delta"]
+                blk = blocks.get(idx)
+                if blk is None:
+                    continue
+                if delta["type"] == "text_delta":
+                    blk["text_parts"].append(delta["text"])
+                elif delta["type"] == "input_json_delta":
+                    blk["json_parts"].append(delta["partial_json"])
+
+            elif event_type == "message_delta":
+                raw_stop = data["delta"].get("stop_reason", "")
+                stop_reason = stop_reason_map.get(raw_stop, raw_stop)
+
+            elif event_type == "error":
+                raise RuntimeError(f"Anthropic API error: {data}")
+
+        return self._build_response(blocks, stop_reason)
+
+    async def _chat_nonstream(self, payload: dict) -> LLMResponse:
+        """非流式请求"""
+        client = await self._get_client()
         response = await client.post(
             f"{self.base_url}/v1/messages",
             json=payload,
         )
         response.raise_for_status()
-        # response.json() 在标准 httpx 中是 async coroutine，但某些代理（如 MiniMax）返回同步 dict
         raw = response.json()
         data = await raw if asyncio.iscoroutine(raw) else raw
 
-        # Anthropic 的 stop_reason: end_turn, max_tokens, stop_sequence
         stop_reason_map = {
             "end_turn": "end_turn",
             "max_tokens": "max_tokens",
             "stop_sequence": "stop",
         }
-
         api_stop_reason = stop_reason_map.get(data.get("stop_reason", ""), "end_turn")
 
         if data.get("content"):
-            # 检查是否有 tool_use 类型的 content block
             tool_calls = []
             text_content = []
 
@@ -139,6 +190,38 @@ class AnthropicLLM(BaseLLM):
             content=None,
             tool_calls=[],
             stop_reason=api_stop_reason,
+        )
+
+    def _build_response(self, blocks: dict, stop_reason: str | None) -> LLMResponse:
+        """将流式累积的 block 转换为 LLMResponse"""
+        tool_calls = []
+        text_content = []
+
+        for blk in blocks.values():
+            if blk["type"] == "text":
+                text = _strip_surrogates("".join(blk["text_parts"]))
+                if text:
+                    text_content.append(text)
+            elif blk["type"] == "tool_use":
+                json_str = "".join(blk["json_parts"])
+                args = json.loads(json_str) if json_str else {}
+                tool_calls.append(ToolCallDelta(
+                    id=blk["id"],
+                    name=blk["name"],
+                    arguments=json.dumps(args),
+                ))
+
+        if tool_calls:
+            return LLMResponse(
+                content="\n".join(text_content) if text_content else None,
+                tool_calls=tool_calls,
+                stop_reason=stop_reason or "tool_calls",
+            )
+
+        return LLMResponse(
+            content="\n".join(text_content) if text_content else None,
+            tool_calls=[],
+            stop_reason=stop_reason or "end_turn",
         )
 
     def _convert_tool(self, tool: dict) -> dict:

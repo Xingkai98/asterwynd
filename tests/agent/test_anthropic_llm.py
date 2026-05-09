@@ -1,10 +1,53 @@
 # tests/agent/test_anthropic_llm.py
-"""AnthropicLLM 专项测试：MiniMax 兼容、surrogate 过滤、tool_use block"""
+"""AnthropicLLM 专项测试：非流式解析、SSE 流式、surrogate 过滤、tool_use block"""
+import json as _json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from agent.anthropic_llm import AnthropicLLM, _strip_surrogates
 from agent.message import Message
 from agent.llm import ToolCallDelta
+
+
+# ---------------------------------------------------------------------------
+# 工具函数
+# ---------------------------------------------------------------------------
+
+def _text_sse_lines(text: str, stop_reason: str = "end_turn") -> list[str]:
+    """构建简单文本响应的 SSE 行。"""
+    return [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","model":"claude","content":[]}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        "event: content_block_delta",
+        f'data: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: message_delta",
+        f'data: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}"}},"usage":{{"output_tokens":1}}}}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+
+
+def _mock_sse_stream(lines: list[str]):
+    """创建 mock httpx stream context manager，返回 SSE lines。"""
+    class _StreamResponse:
+        def __init__(self):
+            self.status_code = 200
+        def raise_for_status(self):
+            pass
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+    class _StreamCtx:
+        async def __aenter__(self):
+            return _StreamResponse()
+        async def __aexit__(self, *a):
+            pass
+
+    return _StreamCtx()
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +74,7 @@ def test_strip_surrogates_empty():
 
 
 # ---------------------------------------------------------------------------
-# AnthropicLLM.chat 集成测试（mock httpx）
+# AnthropicLLM.chat 集成测试（mock httpx stream）
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -44,7 +87,6 @@ async def test_anthropic_llm_sync_json_response():
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_response = MagicMock()
-        # MiniMax 行为：response.json() 返回同步 dict（不是 coroutine）
         mock_response.json = MagicMock(return_value={
             "id": "msg_test",
             "type": "message",
@@ -73,7 +115,6 @@ async def test_anthropic_llm_async_json_response():
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_response = MagicMock()
-        # 标准 httpx 行为：response.json() 是 async coroutine
         mock_response.json = AsyncMock(return_value={
             "id": "msg_test",
             "type": "message",
@@ -138,7 +179,6 @@ async def test_anthropic_llm_surrogate_in_response_text():
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_response = MagicMock()
-        # 模拟 MiniMax 返回含 surrogate 的 thinking 字段混入 content
         mock_response.json = MagicMock(return_value={
             "id": "msg_test",
             "type": "message",
@@ -220,3 +260,60 @@ async def test_anthropic_llm_tool_use_block_conversion():
         assert tool_result_msg["role"] == "user"
         assert tool_result_msg["content"][0]["type"] == "tool_result"
         assert tool_result_msg["content"][0]["tool_use_id"] == "call_abc"
+
+
+# ---------------------------------------------------------------------------
+# 流式 SSE 测试（stream=True）
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_anthropic_llm_stream_sse_text():
+    """stream=True 时，SSE 流式返回文本响应。"""
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(
+            _text_sse_lines("Hello via SSE!")
+        )
+
+        messages = [Message(role="user", content="hi")]
+        response = await llm.chat(messages)
+
+        assert response.content == "Hello via SSE!"
+        assert response.stop_reason == "end_turn"
+        assert response.tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_anthropic_llm_stream_sse_tool_use():
+    """stream=True 时，SSE 流式应正确解析 tool_use block。"""
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+
+    lines = [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"m1","role":"assistant","model":"claude","content":[]}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_001","name":"Bash","input":{}}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"cmd\\": \\"ls\\"}"}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: message_delta",
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(lines)
+
+        messages = [Message(role="user", content="hi")]
+        response = await llm.chat(messages)
+
+        assert response.content is None
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].name == "Bash"
+        assert response.tool_calls[0].id == "tool_001"
+        assert response.stop_reason == "tool_calls"

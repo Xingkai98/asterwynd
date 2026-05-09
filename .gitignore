@@ -7,4 +7,4 @@ dist/
 build/
 .coverage
 .env
-*.db
+*.db.understand-anything/
