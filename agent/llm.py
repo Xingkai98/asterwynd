@@ -57,7 +57,7 @@ class BaseLLM:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 headers=self._get_headers(),
-                timeout=60.0,
+                timeout=httpx.Timeout(60.0, read=180.0),
             )
         return self._client
 
