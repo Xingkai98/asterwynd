@@ -48,6 +48,13 @@ class AgentLoop:
             await self.hooks.after_llm_call(response)
 
             if not response.tool_calls:
+                # Bug 2: LLM 被 max_tokens 截断时，追加续接消息并继续迭代
+                if response.stop_reason == "max_tokens":
+                    if response.content:
+                        messages.append(Message(role="assistant", content=response.content))
+                    messages.append(Message(role="user", content="Please continue from where you left off."))
+                    continue
+
                 await self.hooks.on_completion(RunResult(
                     content=response.content or "",
                     stop_reason=StopReason.END_TURN,
@@ -58,6 +65,9 @@ class AgentLoop:
                     stop_reason=StopReason.END_TURN,
                     tool_calls_made=tool_calls_made,
                 )
+
+            # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
+            messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls)))
 
             for delta in response.tool_calls:
                 tool_call = ToolCall(
@@ -77,7 +87,6 @@ class AgentLoop:
 
                 await self.hooks.after_tool_execute(tool_call, result)
 
-                messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls)))
                 messages.append(tool_result_message(tool_call.id, result))
                 tool_calls_made.append(ToolCallMade(
                     name=tool_call.name,
