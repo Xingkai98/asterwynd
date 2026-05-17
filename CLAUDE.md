@@ -24,6 +24,15 @@ uv run python cli.py --model gpt-4o-mini "用 Read 工具读 /tmp"
 
 # Interactive mode
 uv run python cli.py --interactive
+
+# Web UI
+uv run python cli.py web                          # start web server on port 8000
+uv run python cli.py web --port 3000              # custom port
+MYAGENT_DEBUG=enabled uv run python cli.py web     # start with debug mode
+
+# Browser tests (requires playwright)
+playwright install chromium
+MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
 
 ## Architecture
@@ -49,6 +58,21 @@ Each plugin is a standalone subsystem with a clear interface:
 | MemoryManager | `agent/memory/manager.py` | Session message history + AutoCompact token compression |
 | SkillLoader | `agent/skills/loader.py` | Markdown skill file loading (YAML frontmatter + prompt body) |
 | SubAgentManager | `agent/subagent/manager.py` | Background task delegation + ParentChannel for mid-turn injection |
+
+### Web UI (`web/`)
+
+FastAPI + WebSocket server with vanilla JS frontend. Two views:
+
+- **Chat**: normal conversational interface with streaming text and tool call display
+- **Debug**: configurable via `MYAGENT_DEBUG=enabled`, shows per-iteration message assembly:
+  - Full message list sent to LLM (system prompt, user messages, tool results)
+  - LLM raw response (content, stop_reason, tool_calls)
+  - Tool execution details (name, arguments, result)
+  - Memory compaction events
+- `web/server.py` — FastAPI app, WebSocket endpoint, session management
+- `web/session.py` — SessionManager: one AgentLoop + messages per session
+- `web/debug_hook.py` — DebugHook: captures iteration state, emitted via Hook protocol
+- `web/static/` — Vanilla HTML/CSS/JS frontend
 
 ### Adding New Capabilities
 

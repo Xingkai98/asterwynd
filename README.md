@@ -183,9 +183,35 @@ always: false
 这里是指示 prompt...
 ```
 
+## Web UI
+
+启动 Web 界面：
+
+```bash
+# 默认模式（Chat 界面）
+python cli.py web --port 8000
+
+# 调试模式（Chat + Debug 双界面）
+MYAGENT_DEBUG=enabled python cli.py web --port 8000
+```
+
+- **Chat 界面**：正常对话，流式文本输出，工具调用可视化
+- **Debug 界面**：环境变量 `MYAGENT_DEBUG=enabled` 开启，逐轮展示：
+  - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
+  - LLM 原始响应（content、stop_reason、tool_calls）
+  - 工具调用详情（名称、参数、结果）
+  - Memory 压缩事件
+
+浏览器测试：
+
+```bash
+playwright install chromium
+MYAGENT_DEBUG=enabled pytest tests/web_tests/test_browser.py --run-real-api -v
+```
+
 ## 技术栈
 
-Python 3.11+ / asyncio / httpx / typer / tiktoken（可选）
+Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken（可选）
 
 ## 设计文档
 

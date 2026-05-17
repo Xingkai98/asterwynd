@@ -1,0 +1,184 @@
+// web/static/chat.js
+// Chat UI: message list, input box, WebSocket communication
+
+let ws = null;
+let sessionId = null;
+let currentAssistantMsg = null;
+let debugEvents = [];
+let activeView = 'chat';
+
+// --- DOM refs ---
+const messagesEl = document.getElementById('messages');
+const userInput = document.getElementById('user-input');
+const sendBtn = document.getElementById('send-btn');
+const statusEl = document.getElementById('status');
+const debugContent = document.getElementById('debug-content');
+const debugTabBtn = document.getElementById('debug-tab');
+
+// --- Tab switching ---
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const viewName = tab.dataset.tab;
+    activeView = viewName;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.getElementById('chat-view').classList.toggle('active', viewName === 'chat');
+    document.getElementById('debug-view').classList.toggle('active', viewName === 'debug');
+  });
+});
+
+// --- WebSocket ---
+async function connect() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${location.host}/ws/${sessionId || 'new'}`;
+
+  return new Promise((resolve, reject) => {
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      statusEl.textContent = 'connected';
+      resolve();
+    };
+    ws.onmessage = (e) => {
+      const event = JSON.parse(e.data);
+      handleEvent(event);
+    };
+    ws.onclose = () => {
+      statusEl.textContent = 'disconnected';
+      setTimeout(connect, 2000);
+    };
+    ws.onerror = () => {
+      statusEl.textContent = 'error';
+      reject(new Error('WebSocket error'));
+    };
+  });
+}
+
+function handleEvent(event) {
+  switch (event.type) {
+    case 'session_created':
+      sessionId = event.session_id;
+      break;
+
+    case 'llm_response': {
+      const data = event.data;
+      if (data.content) {
+        if (!currentAssistantMsg) {
+          currentAssistantMsg = addMessage('assistant', '');
+        }
+        currentAssistantMsg.textContent += data.content;
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+      if (data.tool_calls && data.tool_calls.length > 0) {
+        for (const tc of data.tool_calls) {
+          addToolCallBlock(tc.name, tc.arguments);
+        }
+      }
+      break;
+    }
+
+    case 'tool_call':
+      if (!currentAssistantMsg) {
+        currentAssistantMsg = addMessage('assistant', '');
+      }
+      addToolCallBlock(event.data.name, event.data.arguments);
+      break;
+
+    case 'tool_result':
+      addMessage('tool', `← ${event.data.name}\n${event.data.result}`);
+      break;
+
+    case 'done':
+      currentAssistantMsg = null;
+      break;
+
+    case 'debug':
+      debugEvents.push(event);
+      renderDebug();
+      break;
+
+    case 'session_created':
+      sessionId = event.session_id;
+      break;
+
+    case 'pong':
+      break;
+  }
+}
+
+// --- Message rendering ---
+function addMessage(role, content) {
+  const el = document.createElement('div');
+  el.className = `message ${role}`;
+  if (role === 'tool') {
+    const header = document.createElement('div');
+    header.className = 'message-header';
+    header.textContent = 'tool result';
+    el.appendChild(header);
+  }
+  const body = document.createElement('div');
+  body.textContent = content;
+  el.appendChild(body);
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return body;
+}
+
+function addToolCallBlock(name, args) {
+  const block = document.createElement('div');
+  block.className = 'tool-call-block';
+  block.innerHTML = `<span class="tool-name">🔧 ${name}</span>`;
+  if (args && Object.keys(args).length > 0) {
+    const pre = document.createElement('pre');
+    pre.textContent = JSON.stringify(args, null, 2);
+    block.appendChild(pre);
+  }
+  messagesEl.appendChild(block);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// --- Send message ---
+async function sendMessage() {
+  const text = userInput.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  addMessage('user', text);
+  userInput.value = '';
+  sendBtn.disabled = true;
+  statusEl.textContent = 'thinking...';
+
+  ws.send(JSON.stringify({ type: 'chat', content: text }));
+}
+
+sendBtn.addEventListener('click', sendMessage);
+userInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// Watch for done event to re-enable send button
+const origHandleEvent = handleEvent;
+handleEvent = function(event) {
+  origHandleEvent(event);
+  if (event.type === 'done') {
+    sendBtn.disabled = false;
+    statusEl.textContent = 'connected';
+  }
+};
+
+// --- Init ---
+async function init() {
+  try {
+    await connect();
+    // Check debug status
+    const resp = await fetch('/api/debug-status');
+    const dbg = await resp.json();
+    if (dbg.enabled) {
+      debugTabBtn.style.display = '';
+    }
+  } catch (e) {
+    statusEl.textContent = 'connection failed';
+  }
+}
+
+init();

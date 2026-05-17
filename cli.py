@@ -169,5 +169,27 @@ def run_interactive(model: Optional[str], provider: str, max_iterations: int, sy
     finally:
         loop.close()
 
+@app.command()
+def web(
+    port: int = typer.Option(8000, "--port", "-p", help="HTTP 端口"),
+    host: str = typer.Option("0.0.0.0", "--host", help="绑定地址"),
+    provider: str = typer.Option("openai", "--provider", help="LLM 提供商: openai / anthropic"),
+    model: Optional[str] = typer.Option(None, "--model", help="使用的模型"),
+):
+    """启动 Web UI 服务"""
+    import uvicorn
+    from web.server import create_app
+    from web.debug_hook import debug_enabled
+
+    debug_status = "enabled" if debug_enabled() else "disabled"
+    typer.echo(f"MyAgent Web UI starting on http://{host}:{port}")
+    typer.echo(f"Provider: {provider} | Model: {model or 'default'}")
+    typer.echo(f"Debug mode: {debug_status}")
+
+    llm = build_llm(provider, model)
+    app = create_app(llm)
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
     app()
