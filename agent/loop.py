@@ -87,7 +87,7 @@ class AgentLoop:
                 )
 
             # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
-            messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls)))
+            messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
 
             for delta in response.tool_calls:
                 tool_call = ToolCall(

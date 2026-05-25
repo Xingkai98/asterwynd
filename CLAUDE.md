@@ -113,3 +113,32 @@ This ensures every bug that was ever fixed stays fixed.
 ## Design Documents
 
 Architecture decisions are documented in `docs/superpowers/specs/`. These were created during brainstorming and should be updated if architecture changes.
+
+## 问题定位
+当需要定位问题时，首先定位清楚根因，给出解决方案，待确认后才能实际修改代码。
+
+## Lessons Learned (2026-05-26 Web UI 调试)
+
+### Pitfall 1: uv run 隔离 venv 缺少依赖
+`uv run` 创建隔离虚拟环境，只装 `pyproject.toml` 中声明的依赖。`websockets` 在系统已安装但不在依赖列表 → WebSocket 连接 404。
+**教训**: 新增 WebSocket/FastAPI 功能时，`pyproject.toml` 必须声明 `websockets`。
+
+### Pitfall 2: Mock 行为与真实 API 不一致
+`httpx.Response.json()` 是同步方法（返回 dict），测试用 `AsyncMock` 模拟 → `await response.json()` 通过了测试但运行时炸。
+**教训**: Mock 第三方库方法前，先确认它是否真的是 async。用 `MagicMock` 而非 `AsyncMock` 模拟同步方法。
+
+### Pitfall 3: LLM provider 专有字段透传
+DeepSeek 思考模式返回 `reasoning_content`，必须在后续请求的 assistant message 中原样传回。Message 序列化时丢掉了这个字段 → 400。
+**教训**: 对接新 provider 时，检查其响应是否有"需要回传"的非标准字段（如 reasoning_content）。Message 和 LLMResponse 需保守地保留未知字段。
+
+### Pitfall 4: 0.0.0.0 是监听地址不是访问地址
+服务器 bind `0.0.0.0` 表示监听所有网卡，但浏览器不能连接这个地址。
+**教训**: 启动日志应显示实际可访问的 URL（`127.0.0.1` 或 `localhost`）。
+
+### Pitfall 5: 默认模型名不匹配实际 provider
+`OpenAILLM` 默认 `model="gpt-4"`，但用户可能配了 DeepSeek 等其他 provider。
+**教训**: 无 `--model` 时应从环境变量读取默认值，或启动时警告 model 名与 base_url 不匹配。
+
+### Pitfall 6: 日志只输出 stderr 不留痕
+`logging.basicConfig()` 默认输出到 stderr，进程退出就没了。
+**教训**: 服务器模式必须加文件日志（`RotatingFileHandler`），每次启动用不同文件名（带时间戳）。

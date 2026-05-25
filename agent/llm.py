@@ -32,6 +32,7 @@ class LLMResponse:
     content: Optional[str]
     tool_calls: list[ToolCallDelta] = field(default_factory=list)
     stop_reason: Optional[str] = None
+    reasoning_content: Optional[str] = None
 
 
 class BaseLLM:

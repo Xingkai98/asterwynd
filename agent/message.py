@@ -8,6 +8,7 @@ class Message:
     role: Literal["system", "user", "assistant", "tool"]
     content: str
     tool_call_id: Optional[str] = None
+    reasoning_content: Optional[str] = None
     # tool_calls: list of ToolCallDelta, for assistant messages carrying tool_use blocks to be sent back to LLM
     tool_calls: list = field(default_factory=list)
 
@@ -15,6 +16,8 @@ class Message:
         d = asdict(self)
         if self.tool_call_id is None:
             d.pop("tool_call_id", None)
+        if self.reasoning_content is None:
+            d.pop("reasoning_content", None)
         if not self.tool_calls:
             d.pop("tool_calls", None)
         return d

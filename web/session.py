@@ -88,6 +88,8 @@ class SessionManager:
         async def run_agent():
             try:
                 await session.agent.run(session.messages, on_event=on_event)
+            except Exception:
+                logger.exception("Session run failed")
             finally:
                 await queue.put(None)  # sentinel
 

@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
@@ -30,9 +31,19 @@ from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
 from agent.llm import LLM
 
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / f"myagent-{__import__('datetime').datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+
+_LOG_LEVEL = getattr(logging, os.environ.get("MYAGENT_LOG_LEVEL", "INFO").upper(), logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=_LOG_LEVEL,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
+    ],
 )
 logger = logging.getLogger("myagent.cli")
 
@@ -182,7 +193,8 @@ def web(
     from web.debug_hook import debug_enabled
 
     debug_status = "enabled" if debug_enabled() else "disabled"
-    typer.echo(f"MyAgent Web UI starting on http://{host}:{port}")
+    display_host = "127.0.0.1" if host == "0.0.0.0" else host
+    typer.echo(f"MyAgent Web UI  →  http://{display_host}:{port}")
     typer.echo(f"Provider: {provider} | Model: {model or 'default'}")
     typer.echo(f"Debug mode: {debug_status}")
 
