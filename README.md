@@ -18,21 +18,28 @@
 
 ```bash
 # 安装（使用 uv，更快）
-uv sync                          # 只装运行时依赖
-uv pip install -e ".[dev]"      # 一次性装完运行时+开发依赖
+uv sync                          # 运行时依赖
+uv pip install pytest pytest-asyncio pytest-mock  # 开发/测试依赖
 
 # 配置 API Key
 cp .env.example .env
 # 编辑 .env，填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
+# 可选：改 OPENAI_BASE_URL 指向其他 OpenAI 兼容 API（如 DeepSeek）
 
-# 运行（OpenAI，默认）
+# 运行 CLI（OpenAI，默认）
 uv run python cli.py --model gpt-4o-mini "Hello"
 
-# 运行（Anthropic）
+# 运行 CLI（Anthropic）
 uv run python cli.py --provider anthropic --model claude-sonnet-4-20250514 "Hello"
 
 # 交互模式
 uv run python cli.py --interactive
+
+# 启动 Web UI
+uv run python cli.py web --port 8000 --model deepseek-v4-pro
+
+# Web UI + 详细日志
+MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4-pro
 
 # 运行测试
 uv run pytest tests/ -v
@@ -188,11 +195,20 @@ always: false
 启动 Web 界面：
 
 ```bash
-# 默认模式（Chat 界面）
-python cli.py web --port 8000
+# 基本启动
+uv run python cli.py web --port 8000
+
+# 指定模型（必选 — 不指定则用默认 gpt-4，可能与你的 provider 不匹配）
+uv run python cli.py web --port 8000 --model deepseek-v4-pro
+
+# 切换 provider
+uv run python cli.py web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
 
 # 调试模式（Chat + Debug 双界面）
-MYAGENT_DEBUG=enabled python cli.py web --port 8000
+MYAGENT_DEBUG=enabled uv run python cli.py web --port 8000 --model deepseek-v4-pro
+
+# 详细日志（记录 LLM 输入/输出到文件）
+MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4-pro
 ```
 
 - **Chat 界面**：正常对话，流式文本输出，工具调用可视化
@@ -202,11 +218,24 @@ MYAGENT_DEBUG=enabled python cli.py web --port 8000
   - 工具调用详情（名称、参数、结果）
   - Memory 压缩事件
 
+### 日志
+
+每次启动在 `logs/` 目录生成独立日志文件（如 `myagent-20260526-123456.log`）：
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `MYAGENT_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
+| `MYAGENT_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI 界面 |
+
+- 日志同时输出到终端和文件
+- HTTP 4xx/5xx 错误始终记录请求 payload 和响应 body
+- 单文件最大 5MB，保留最近 5 个滚动文件
+
 浏览器测试：
 
 ```bash
 playwright install chromium
-MYAGENT_DEBUG=enabled pytest tests/web_tests/test_browser.py --run-real-api -v
+MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
 
 ## 技术栈
