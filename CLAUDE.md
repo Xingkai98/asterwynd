@@ -19,13 +19,13 @@ uv run pytest tests/ -v
 # Run a specific test file
 uv run pytest tests/agent/tools/test_registry.py -v
 
-# Run CLI (requires OPENAI_API_KEY env var)
-uv run python cli.py --model gpt-4o-mini "用 Read 工具读 /tmp"
+# Run CLI (需要 .env 配置 OPENAI_API_KEY + MYAGENT_MODEL)
+uv run python cli.py "用 Read 工具读 /tmp"
 
 # Interactive mode
 uv run python cli.py --interactive
 
-# Web UI
+# Web UI (provider/model 从 .env 读取，CLI 参数可覆盖)
 uv run python cli.py web                          # start web server on port 8000
 uv run python cli.py web --port 3000              # custom port
 MYAGENT_DEBUG=enabled uv run python cli.py web     # start with debug mode
