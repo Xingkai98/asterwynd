@@ -50,6 +50,8 @@ logger = logging.getLogger("myagent.cli")
 app = typer.Typer()
 
 def build_llm(provider: str, model: Optional[str] = None) -> LLM:
+    if model is None:
+        model = os.environ.get("MYAGENT_MODEL")
     kwargs = {}
     if model is not None:
         kwargs["model"] = model
@@ -93,7 +95,9 @@ def build_agent(model: Optional[str] = None, provider: str = "openai") -> AgentL
 def main(
     prompt: Optional[str] = typer.Argument(None, help="要发送给 agent 的提示（交互模式下可选）"),
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型（不指定则用 provider 默认值）"),
-    provider: str = typer.Option("openai", "--provider", help="LLM 提供商: openai / anthropic"),
+    provider: str = typer.Option(
+        os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
+    ),
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="交互模式"),
@@ -184,7 +188,9 @@ def run_interactive(model: Optional[str], provider: str, max_iterations: int, sy
 def web(
     port: int = typer.Option(8000, "--port", "-p", help="HTTP 端口"),
     host: str = typer.Option("0.0.0.0", "--host", help="绑定地址"),
-    provider: str = typer.Option("openai", "--provider", help="LLM 提供商: openai / anthropic"),
+    provider: str = typer.Option(
+        os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
+    ),
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型"),
 ):
     """启动 Web UI 服务"""
@@ -194,11 +200,11 @@ def web(
 
     debug_status = "enabled" if debug_enabled() else "disabled"
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
-    typer.echo(f"MyAgent Web UI  →  http://{display_host}:{port}")
-    typer.echo(f"Provider: {provider} | Model: {model or 'default'}")
-    typer.echo(f"Debug mode: {debug_status}")
 
     llm = build_llm(provider, model)
+    typer.echo(f"MyAgent Web UI  →  http://{display_host}:{port}")
+    typer.echo(f"Provider: {provider} | Model: {llm.model}")
+    typer.echo(f"Debug mode: {debug_status}")
     app = create_app(llm)
     uvicorn.run(app, host=host, port=port, log_level="info")
 

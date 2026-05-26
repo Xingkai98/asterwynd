@@ -12,7 +12,6 @@ const messagesEl = document.getElementById('messages');
 const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
 const statusEl = document.getElementById('status');
-const debugContent = document.getElementById('debug-content');
 const debugTabBtn = document.getElementById('debug-tab');
 
 // --- Tab switching ---

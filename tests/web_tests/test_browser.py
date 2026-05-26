@@ -135,6 +135,9 @@ async def test_chat_tool_call_display(page, web_server):
 @pytest.mark.asyncio
 async def test_debug_tab_hidden_default(page, web_server):
     """Debug tab should not be visible when MYAGENT_DEBUG is not set."""
+    if os.environ.get("MYAGENT_DEBUG", "").lower() in ("1", "true", "enabled", "yes", "on"):
+        pytest.skip("MYAGENT_DEBUG enabled - server in debug mode, debug tab is visible")
+
     await page.goto(web_server)
     await page.wait_for_selector("#user-input")
 
