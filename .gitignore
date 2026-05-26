@@ -8,3 +8,4 @@ build/
 .coverage
 .env
 *.db.understand-anything/
+logs/

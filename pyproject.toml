@@ -5,15 +5,19 @@ description = "A lightweight general-purpose AI agent framework"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9.0",
+    "fastapi>=0.100.0",
     "psutil>=5.9.0",
     "tiktoken>=0.7.0",
     "typer>=0.12.0",
     "httpx>=0.27.0",
     "python-dotenv>=1.0.0",
+    "uvicorn>=0.30.0",
+    "websockets>=14.0",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "playwright>=1.40.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-mock>=3.12.0",
@@ -26,6 +30,9 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "real_api: tests that require a real LLM API endpoint",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent"]

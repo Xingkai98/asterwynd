@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyAgent Web UI</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>MyAgent</h1>
+    <nav id="tabs">
+      <button class="tab active" data-tab="chat">Chat</button>
+      <button class="tab" data-tab="debug" id="debug-tab" style="display:none">Debug</button>
+    </nav>
+    <span id="status"></span>
+  </header>
+
+  <main>
+    <!-- Chat View -->
+    <section id="chat-view" class="view active">
+      <div id="messages"></div>
+      <div id="input-area">
+        <textarea id="user-input" placeholder="输入消息..." rows="2"></textarea>
+        <button id="send-btn">发送</button>
+      </div>
+    </section>
+
+    <!-- Debug View -->
+    <section id="debug-view" class="view">
+      <div id="debug-content"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/chat.js"></script>
+<script src="/static/debug.js"></script>
+</body>
+</html>
