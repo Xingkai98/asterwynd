@@ -171,6 +171,57 @@ async def test_session_message_history():
 
 
 @pytest.mark.asyncio
+async def test_session_messages_include_assistant_response():
+    """run_session 后 session.messages 应包含 assistant 最终回复。
+    Regression test for: loop.py 返回前未 append 导致多轮对话失忆。
+    """
+    mock_llm = MockLLM([LLMResponse(content="Response 1")])
+    manager = SessionManager()
+    session = make_session(AgentLoop(
+        llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
+    ))
+
+    async def collect(e):
+        pass
+
+    await manager.run_session(session, "msg 1", ws_send=collect)
+
+    assistant_msgs = [m for m in session.messages if m.role == "assistant"]
+    assert len(assistant_msgs) >= 1, "assistant response should be in session.messages"
+    assert assistant_msgs[-1].content == "Response 1"
+
+
+@pytest.mark.asyncio
+async def test_session_message_history_with_tool():
+    """多轮对话含工具调用时，assistant 回复应完整记录。"""
+    mock_llm = MockLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Done after tool", stop_reason="end_turn"),
+        LLMResponse(content="Second response", stop_reason="end_turn"),
+    ])
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    manager = SessionManager()
+    session = make_session(AgentLoop(
+        llm=mock_llm, tool_registry=registry, hooks=HookManager(),
+    ))
+
+    async def collect(e):
+        pass
+
+    await manager.run_session(session, "echo test", ws_send=collect)
+    await manager.run_session(session, "second msg", ws_send=collect)
+
+    assistant_msgs = [m for m in session.messages if m.role == "assistant"]
+    assert len(assistant_msgs) >= 2, f"Expected >=2 assistant msgs, got {len(assistant_msgs)}"
+    assert assistant_msgs[-1].content == "Second response"
+
+
+@pytest.mark.asyncio
 async def test_debug_events_emitted():
     """DebugHook emits structured debug events when enabled."""
     mock_llm = MockLLM([LLMResponse(content="Hello")])

@@ -35,29 +35,31 @@ class MemoryManager:
     def count_tokens(self, messages: list["Message"]) -> int:
         return sum(_count_tokens(m.content) for m in messages)
 
-    def compact_if_needed(self) -> None:
-        total = self.count_tokens(self.messages)
+    def compact_if_needed(self, messages: Optional[list["Message"]] = None) -> None:
+        msgs = messages if messages is not None else self.messages
+        total = self.count_tokens(msgs)
         if total > self.max_tokens:
             logger.info(f"[Memory] {total} tokens > {self.max_tokens} budget, compacting")
-            self.compact()
+            self.compact(msgs)
 
-    def compact(self) -> None:
-        system = [m for m in self.messages if m.role == "system"]
-        recent = self.messages[-self.recent_window:]
-        middle = self.messages[:-self.recent_window]
+    def compact(self, messages: Optional[list["Message"]] = None) -> None:
+        msgs = messages if messages is not None else self.messages
+        system = [m for m in msgs if m.role == "system"]
+        recent = msgs[-self.recent_window:]
+        middle = msgs[:-self.recent_window]
 
         if not middle:
-            self.messages = system + recent
-            logger.info(f"[Memory] Compacted to {len(self.messages)} messages")
+            msgs[:] = system + recent
+            logger.info(f"[Memory] Compacted to {len(msgs)} messages")
             return
 
         if self.llm is None:
-            self.messages = system + recent
-            logger.info(f"[Memory] Compacted to {len(self.messages)} messages (no LLM)")
+            msgs[:] = system + recent
+            logger.info(f"[Memory] Compacted to {len(msgs)} messages (no LLM)")
             return
 
-        self.messages = system + recent
-        logger.info(f"[Memory] Compacted to {len(self.messages)} messages")
+        msgs[:] = system + recent
+        logger.info(f"[Memory] Compacted to {len(msgs)} messages")
 
     def get_messages(self) -> list["Message"]:
         return self.messages

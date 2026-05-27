@@ -80,6 +80,7 @@ class AgentLoop:
                         "content": response.content or "",
                         "stop_reason": "end_turn",
                     })
+                messages.append(Message(role="assistant", content=response.content or "", reasoning_content=response.reasoning_content))
                 return RunResult(
                     content=response.content or "",
                     stop_reason=StopReason.END_TURN,
@@ -87,7 +88,7 @@ class AgentLoop:
                 )
 
             # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
-            messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
+            messages.append(Message(role="assistant", content=response.content or "", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
 
             for delta in response.tool_calls:
                 tool_call = ToolCall(
@@ -124,7 +125,7 @@ class AgentLoop:
                     result=result,
                 ))
 
-            self.memory.compact_if_needed()
+            self.memory.compact_if_needed(messages)
             if on_event:
                 await on_event("memory_compaction", {
                     "total_messages": len(messages),
@@ -141,6 +142,9 @@ class AgentLoop:
                 "content": messages[-1].content if messages else "",
                 "stop_reason": "max_iterations",
             })
+        # max_iterations 路径：保留最后一条有内容的非 tool 消息作为 assistant 回复
+        last_content = messages[-1].content if messages else ""
+        messages.append(Message(role="assistant", content=last_content))
         return RunResult(
             content=messages[-1].content if messages else "",
             stop_reason=StopReason.MAX_ITERATIONS,

@@ -82,9 +82,8 @@ async def test_agent_loop_appends_assistant_message_before_tool_result():
     assert result.content == "done"
     assert len(result.tool_calls_made) == 1
 
-    # 验证消息链结构：user -> assistant(tool_calls) -> tool_result
-    # 注意：agent.run() 在 LLM 返回纯文本时直接 return，不会追加最后的 assistant 消息
-    assert len(messages) == 3
+    # 验证消息链结构：user -> assistant(tool_calls) -> tool_result -> assistant(final)
+    assert len(messages) == 4
     assert messages[0].role == "user"          # 原始 user
     assert messages[1].role == "assistant"     # LLM 返回的 assistant（含 tool_calls）
     assert messages[1].tool_calls is not None
@@ -92,6 +91,8 @@ async def test_agent_loop_appends_assistant_message_before_tool_result():
     assert messages[1].tool_calls[0].name == "Echo"
     assert messages[2].role == "tool"         # tool_result
     assert messages[2].tool_call_id == "c1"
+    assert messages[3].role == "assistant"    # 最终回复
+    assert messages[3].content == "done"
 
 
 @pytest.mark.asyncio
@@ -202,8 +203,77 @@ async def test_single_assistant_message_per_turn():
     assert result.content == "all done"
     assert len(result.tool_calls_made) == 2
 
-    # 消息结构：user(1) -> assistant(1) -> tool(2) -> assistant(0, loop 直接返回)
-    # 只有一条 assistant 消息（含两个 tool_calls）
+    # 消息结构：user(1) -> assistant(tool_calls) -> tool(2) -> assistant(final)
     assistant_msgs = [m for m in messages if m.role == "assistant"]
-    assert len(assistant_msgs) == 1
+    assert len(assistant_msgs) == 2
     assert len(assistant_msgs[0].tool_calls) == 2
+    assert assistant_msgs[1].content == "all done"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_appends_final_assistant_message():
+    """
+    agent.run() 应在返回前将 assistant 最终回复追加到 messages。
+    Regression test for: 多轮对话中 agent 看不到自己的回复，导致重复回答。
+    """
+    mock_llm = MockLLM(LLMResponse(content="Hello!", stop_reason="end_turn"))
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    messages = [Message(role="user", content="hi")]
+    result = await loop.run(messages)
+
+    assert result.content == "Hello!"
+    # 验证最终 assistant 消息已追加到 messages
+    assert messages[-1].role == "assistant"
+    assert messages[-1].content == "Hello!"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_preserves_text_with_tool_calls():
+    """
+    LLM 返回 tool_calls 同时附带文字时，assistant 消息应保留该文字，而非丢弃为 ""。
+    Regression test for: content="" 硬编码导致 LLM 附带的上下文文字丢失。
+    """
+    call_log = []
+
+    class TextWithToolLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            call_log.append(1)
+            if len(call_log) == 1:
+                return LLMResponse(
+                    content="Let me check that for you.",
+                    tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+                    stop_reason="tool_calls",
+                )
+            else:
+                return LLMResponse(content="Done!", stop_reason="end_turn")
+
+    mock_llm = TextWithToolLLM()
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    messages = [Message(role="user", content="test")]
+    result = await loop.run(messages)
+
+    assert result.content == "Done!"
+    # 第一轮 assistant 消息应保留附带文字
+    assistant_msgs = [m for m in messages if m.role == "assistant"]
+    assert len(assistant_msgs) == 2
+    assert assistant_msgs[0].content == "Let me check that for you."
+    assert len(assistant_msgs[0].tool_calls) == 1
+    # 最终消息是 assistant 回复
+    assert messages[-1].role == "assistant"
+    assert messages[-1].content == "Done!"

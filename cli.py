@@ -164,7 +164,6 @@ def run_interactive(model: Optional[str], provider: str, max_iterations: int, sy
             messages.append(Message(role="user", content=initial_prompt))
             result = loop.run_until_complete(_run_async())
             typer.echo(f"\n【Agent】\n{result.content}\n")
-            messages.append(Message(role="assistant", content=result.content))
 
         while True:
             try:
@@ -180,7 +179,6 @@ def run_interactive(model: Optional[str], provider: str, max_iterations: int, sy
             messages.append(Message(role="user", content=user_input))
             result = loop.run_until_complete(_run_async())
             typer.echo(f"\n【Agent】\n{result.content}\n")
-            messages.append(Message(role="assistant", content=result.content))
     finally:
         loop.close()
 

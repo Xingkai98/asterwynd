@@ -142,3 +142,11 @@ DeepSeek 思考模式返回 `reasoning_content`，必须在后续请求的 assis
 ### Pitfall 6: 日志只输出 stderr 不留痕
 `logging.basicConfig()` 默认输出到 stderr，进程退出就没了。
 **教训**: 服务器模式必须加文件日志（`RotatingFileHandler`），每次启动用不同文件名（带时间戳）。
+
+### Pitfall 7: AgentLoop 返回前未将最终回复写入 messages（2026-05-28）
+`AgentLoop.run()` 在正常返回路径直接 return，没有把 assistant 最终回复 append 到 messages。下一轮对话时 agent 看不到自己上一条回复，只能看到 tool call + tool result，于是根据同样的 tool result 重新生成相似回答，变成"复读机"。
+**教训**: AgentLoop 返回前必须将最终回复写入 messages。CLI 模式的 `messages.append()` 和 loop 内部的 append 只能有一处，否则重复。
+
+### Pitfall 8: MemoryManager.compact_if_needed 操作空列表（2026-05-28）
+MemoryManager 的 `compact_if_needed()` 统计的是自己的 `self.messages`，但 AgentLoop 用的是独立的 `messages` 列表。没有任何代码调用 `memory.add()`，导致 self.messages 永远为空，token compaction 从不触发。
+**教训**: 插件管理自己的内部状态时，确保 AgentLoop 实际使用的数据源与插件操作的数据源是同一个。

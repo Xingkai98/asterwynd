@@ -219,3 +219,42 @@ async def test_static_assets_load(page, web_server):
     assert await page.query_selector("#messages") is not None
     assert await page.query_selector("#user-input") is not None
     assert await page.query_selector("#send-btn") is not None
+
+
+@pytest.mark.real_api
+@pytest.mark.asyncio
+async def test_multi_turn_with_tool(page, web_server):
+    """多轮对话：工具调用轮次后，后续问题应获得新回复而非重复旧答案。
+    Regression test for: agent 返回前未将回复写入 messages 导致"复读机"。
+    """
+    await page.goto(web_server)
+    await page.wait_for_selector("#user-input")
+
+    # Turn 1: 触发 bash 工具调用
+    await page.fill("#user-input", "用 bash 运行 pwd")
+    await page.click("#send-btn")
+
+    # 等待工具执行和 assistant 回复
+    await page.wait_for_timeout(15000)
+
+    # 收集第一轮 assistant 消息
+    msgs_turn1 = await page.query_selector_all(".message.assistant")
+    assert len(msgs_turn1) >= 1, "Turn 1 should produce at least one assistant message"
+    text_turn1 = await msgs_turn1[-1].inner_text()
+
+    # Turn 2: 询问不同的问题
+    await page.fill("#user-input", "这个目录下有哪些文件？")
+    await page.click("#send-btn")
+    await page.wait_for_timeout(15000)
+
+    # 收集第二轮 assistant 消息
+    msgs_turn2 = await page.query_selector_all(".message.assistant")
+    assert len(msgs_turn2) > len(msgs_turn1), \
+        f"Turn 2 should add more assistant messages (had {len(msgs_turn1)}, got {len(msgs_turn2)})"
+
+    text_turn2 = await msgs_turn2[-1].inner_text()
+    assert len(text_turn2.strip()) > 0, "Turn 2 response should not be empty"
+
+    # Turn 2 的回复不应与 Turn 1 完全相同（不重复 pwd 结果）
+    assert text_turn2.strip() != text_turn1.strip(), \
+        f"Turn 2 should not repeat Turn 1 verbatim:\n  T1: {text_turn1[:100]}\n  T2: {text_turn2[:100]}"
