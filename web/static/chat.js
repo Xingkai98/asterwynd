@@ -66,18 +66,11 @@ function handleEvent(event) {
         currentAssistantMsg.textContent += data.content;
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
-      if (data.tool_calls && data.tool_calls.length > 0) {
-        for (const tc of data.tool_calls) {
-          addToolCallBlock(tc.name, tc.arguments);
-        }
-      }
       break;
     }
 
     case 'tool_call':
-      if (!currentAssistantMsg) {
-        currentAssistantMsg = addMessage('assistant', '');
-      }
+      currentAssistantMsg = null;
       addToolCallBlock(event.data.name, event.data.arguments);
       break;
 
