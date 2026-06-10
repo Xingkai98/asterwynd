@@ -1,31 +1,69 @@
-# tests/agent/tools/test_builtin.py
 import pytest
-import asyncio
-from pathlib import Path
+from agent.tools.builtin.bash import BashTool
+from agent.tools.builtin.grep import GrepTool
 from agent.tools.builtin.read import ReadTool
 from agent.tools.builtin.write import WriteTool
 
-def test_read_file(tmp_path):
+
+@pytest.mark.asyncio
+async def test_read_file(tmp_path):
     f = tmp_path / "test.txt"
     f.write_text("hello world")
 
     tool = ReadTool()
-    result = asyncio.get_event_loop().run_until_complete(
-        tool.execute(path=str(f))
-    )
+    result = await tool.execute(path=str(f))
     assert result == "hello world"
 
-def test_read_file_not_found():
+
+@pytest.mark.asyncio
+async def test_read_file_not_found():
     tool = ReadTool()
-    result = asyncio.get_event_loop().run_until_complete(
-        tool.execute(path="/nonexistent/file.txt")
-    )
+    result = await tool.execute(path="/nonexistent/file.txt")
     assert "Error" in result or "not found" in result.lower()
 
-def test_write_file(tmp_path):
+
+@pytest.mark.asyncio
+async def test_read_directory_returns_error(tmp_path):
+    tool = ReadTool()
+    result = await tool.execute(path=str(tmp_path))
+    assert "Error" in result
+
+
+@pytest.mark.asyncio
+async def test_write_file(tmp_path):
     tool = WriteTool()
     file_path = tmp_path / "output.txt"
-    result = asyncio.get_event_loop().run_until_complete(
-        tool.execute(path=str(file_path), content="hello")
-    )
+    result = await tool.execute(path=str(file_path), content="hello")
+    assert "已写入" in result
     assert file_path.read_text() == "hello"
+
+
+@pytest.mark.asyncio
+async def test_write_directory_path_returns_error(tmp_path):
+    tool = WriteTool()
+    result = await tool.execute(path=str(tmp_path), content="hello")
+    assert "Error" in result
+
+
+@pytest.mark.asyncio
+async def test_bash_timeout():
+    tool = BashTool()
+    result = await tool.execute(cmd="sleep 1", timeout=0.05)
+    assert "Timeout" in result
+
+
+@pytest.mark.asyncio
+async def test_bash_non_zero_exit():
+    tool = BashTool()
+    result = await tool.execute(cmd="sh -c 'echo failed >&2; exit 7'")
+    assert "[Exit 7]" in result
+    assert "failed" in result
+
+
+@pytest.mark.asyncio
+async def test_grep_invalid_regex_returns_error(tmp_path):
+    f = tmp_path / "test.txt"
+    f.write_text("hello")
+    tool = GrepTool()
+    result = await tool.execute(pattern="[", path=str(f))
+    assert "Error" in result

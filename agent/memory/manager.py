@@ -45,8 +45,9 @@ class MemoryManager:
     def compact(self, messages: Optional[list["Message"]] = None) -> None:
         msgs = messages if messages is not None else self.messages
         system = [m for m in msgs if m.role == "system"]
-        recent = msgs[-self.recent_window:]
-        middle = msgs[:-self.recent_window]
+        non_system = [m for m in msgs if m.role != "system"]
+        recent = self._recent_with_tool_chains(non_system)
+        middle = non_system[: max(0, len(non_system) - len(recent))]
 
         if not middle:
             msgs[:] = system + recent
@@ -60,6 +61,40 @@ class MemoryManager:
 
         msgs[:] = system + recent
         logger.info(f"[Memory] Compacted to {len(msgs)} messages")
+
+    def _recent_with_tool_chains(self, messages: list["Message"]) -> list["Message"]:
+        if self.recent_window <= 0:
+            return []
+
+        start = max(0, len(messages) - self.recent_window)
+        while start > 0:
+            expanded = False
+            for index in range(start, len(messages)):
+                message = messages[index]
+                if message.role != "tool" or not message.tool_call_id:
+                    continue
+                assistant_index = self._find_tool_call_assistant(messages, message.tool_call_id, before=index)
+                if assistant_index is not None and assistant_index < start:
+                    start = assistant_index
+                    expanded = True
+                    break
+            if not expanded:
+                break
+        return messages[start:]
+
+    def _find_tool_call_assistant(
+        self,
+        messages: list["Message"],
+        tool_call_id: str,
+        before: int,
+    ) -> Optional[int]:
+        for index in range(before - 1, -1, -1):
+            message = messages[index]
+            if message.role != "assistant":
+                continue
+            if any(getattr(tool_call, "id", None) == tool_call_id for tool_call in message.tool_calls):
+                return index
+        return None
 
     def get_messages(self) -> list["Message"]:
         return self.messages

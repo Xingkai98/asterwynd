@@ -29,6 +29,8 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "real_api: tests that require a real LLM API endpoint",

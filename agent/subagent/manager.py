@@ -52,9 +52,17 @@ class SubAgentManager:
                 response = await llm.chat(messages, model=model)
                 result = response.content or "[无内容返回]"
 
-            channel.put_result(result, tool_call_id=f"subagent_{subagent_id}", task=task)
+            channel.put_result(
+                task=task,
+                tool_call_id=f"subagent_{subagent_id}",
+                result=result,
+            )
         except Exception as e:
-            channel.put_result(f"[Error] {e}", tool_call_id=f"subagent_{subagent_id}", task=task)
+            channel.put_result(
+                task=task,
+                tool_call_id=f"subagent_{subagent_id}",
+                result=f"[Error] {e}",
+            )
         finally:
             self._subagents.pop(subagent_id, None)
 

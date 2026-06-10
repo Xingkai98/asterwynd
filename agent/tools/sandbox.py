@@ -31,7 +31,10 @@ class SandboxExecutor:
                 stdout, _ = await asyncio.wait_for(
                     proc.communicate(), timeout=timeout
                 )
-                return stdout.decode(errors="replace").strip()
+                output = stdout.decode(errors="replace").strip()
+                if proc.returncode:
+                    return f"[Exit {proc.returncode}] {output}".strip()
+                return output
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
@@ -49,7 +52,10 @@ class SandboxExecutor:
                 text=True,
                 timeout=timeout or self.timeout,
             )
-            return result.stdout.strip()
+            output = (result.stdout + result.stderr).strip()
+            if result.returncode:
+                return f"[Exit {result.returncode}] {output}".strip()
+            return output
         except subprocess.TimeoutExpired:
             return f"[Timeout after {timeout}s]"
         except Exception as e:

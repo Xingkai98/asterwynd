@@ -6,6 +6,7 @@ from agent.llm import LLMResponse, ToolCallDelta
 from agent.tools.base import Tool, tool_parameters, ToolCall
 from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
+from agent.memory.manager import MemoryManager
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -115,6 +116,85 @@ async def test_agent_loop_max_iterations():
     result = await loop.run([Message(role="user", content="test")])
     assert result.stop_reason.value == "max_iterations"
     assert len(result.tool_calls_made) == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_max_iterations_does_not_promote_tool_result_to_assistant():
+    mock_llm = MockLLM(LLMResponse(
+        content=None,
+        tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")]
+    ))
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    messages = [Message(role="user", content="test")]
+    result = await loop.run(messages)
+
+    assert result.stop_reason.value == "max_iterations"
+    assert result.content == ""
+    assert messages[-1].role == "tool"
+    assert all(not (m.role == "assistant" and m.content == "echo!") for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_invalid_tool_arguments_return_tool_error():
+    class InvalidArgsThenDoneLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{bad json")],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="recovered", stop_reason="end_turn")
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=InvalidArgsThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    messages = [Message(role="user", content="test")]
+    result = await loop.run(messages)
+
+    assert result.content == "recovered"
+    assert result.tool_calls_made[0].arguments == {}
+    assert "invalid JSON tool arguments" in (result.tool_calls_made[0].result or "")
+    tool_messages = [m for m in messages if m.role == "tool"]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].tool_call_id == "c1"
+    assert "Error" in tool_messages[0].content
+
+
+def test_memory_compaction_preserves_assistant_tool_result_chain():
+    mgr = MemoryManager(max_tokens=1, recent_window=1)
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="old"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+        ),
+        Message(role="tool", content="echo!", tool_call_id="c1"),
+    ]
+
+    mgr.compact_if_needed(messages)
+
+    assert [m.role for m in messages] == ["system", "assistant", "tool"]
+    assert messages[1].tool_calls[0].id == messages[2].tool_call_id
 
 
 @pytest.mark.asyncio

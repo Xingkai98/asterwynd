@@ -156,6 +156,7 @@ class AnthropicLLM(BaseLLM):
             "end_turn": "end_turn",
             "max_tokens": "max_tokens",
             "stop_sequence": "stop",
+            "tool_use": "tool_calls",
         }
         api_stop_reason = stop_reason_map.get(data.get("stop_reason", ""), "end_turn")
 

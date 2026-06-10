@@ -3,22 +3,18 @@ import pytest
 from agent.hooks.builtin.logging import LoggingHook
 from agent.hooks.builtin.tracing import TracingHook
 from agent.message import Message
-from agent.llm import LLMResponse
 from agent.tools.base import ToolCall
 
-def test_logging_hook_no_crash():
-    hook = LoggingHook(verbose=False)
-    # Should not raise
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(
-        hook.before_iteration(0, [Message(role="user", content="test")])
-    )
 
-def test_tracing_hook_record():
+@pytest.mark.asyncio
+async def test_logging_hook_no_crash():
+    hook = LoggingHook(verbose=False)
+    await hook.before_iteration(0, [Message(role="user", content="test")])
+
+
+@pytest.mark.asyncio
+async def test_tracing_hook_record():
     hook = TracingHook()
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(
-        hook.before_tool_execute(ToolCall(id="c1", name="Read", arguments={"path": "a.txt"}))
-    )
+    await hook.before_tool_execute(ToolCall(id="c1", name="Read", arguments={"path": "a.txt"}))
     assert len(hook.calls) == 1
     assert hook.calls[0].tool_name == "Read"
