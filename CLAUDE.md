@@ -10,20 +10,19 @@ MyAgent is a lightweight general-purpose AI agent framework in Python. It is des
 
 ```bash
 # Install dependencies (uv is fast)
-uv sync
-uv pip install pytest pytest-asyncio pytest-mock  # dev deps
+uv sync --extra dev
 
 # Run all tests
-uv run pytest tests/ -v
+uv run pytest -q
 
 # Run a specific test file
 uv run pytest tests/agent/tools/test_registry.py -v
 
 # Run CLI (需要 .env 配置 OPENAI_API_KEY + MYAGENT_MODEL)
-uv run python cli.py "用 Read 工具读 /tmp"
+uv run python cli.py main "用 Read 工具读 /tmp"
 
 # Interactive mode
-uv run python cli.py --interactive
+uv run python cli.py main --interactive
 
 # Web UI (provider/model 从 .env 读取，CLI 参数可覆盖)
 uv run python cli.py web                          # start web server on port 8000
@@ -34,6 +33,8 @@ MYAGENT_DEBUG=enabled uv run python cli.py web     # start with debug mode
 playwright install chromium
 MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
+
+`uv run` is recommended for reproducible local tooling, but it is not required if the active Python environment already has the project dependencies installed. Equivalent direct commands such as `python3 cli.py main "Hello"` and `pytest -q` are valid in that case.
 
 ## Architecture
 

@@ -18,8 +18,7 @@
 
 ```bash
 # 安装（使用 uv，更快）
-uv sync                          # 运行时依赖
-uv pip install pytest pytest-asyncio pytest-mock  # 开发/测试依赖
+uv sync --extra dev              # 运行时 + 开发/测试依赖
 
 # 配置 API Key 和模型
 cp .env.example .env
@@ -28,14 +27,14 @@ cp .env.example .env
 # 可选：设置 MYAGENT_PROVIDER（openai / anthropic）和 MYAGENT_MODEL 作为默认值
 
 # 运行 CLI（OpenAI，默认；用 .env 配置的 MYAGENT_MODEL）
-uv run python cli.py "Hello"
+uv run python cli.py main "Hello"
 
 # 或覆盖模型/提供商
-uv run python cli.py --model gpt-4o-mini "Hello"
-uv run python cli.py --provider anthropic --model claude-sonnet-4-20250514 "Hello"
+uv run python cli.py main --model gpt-4o-mini "Hello"
+uv run python cli.py main --provider anthropic --model claude-sonnet-4-20250514 "Hello"
 
 # 交互模式
-uv run python cli.py --interactive
+uv run python cli.py main --interactive
 
 # 启动 Web UI（使用 .env 配置）
 uv run python cli.py web --port 8000
@@ -44,8 +43,10 @@ uv run python cli.py web --port 8000
 MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4-pro
 
 # 运行测试
-uv run pytest tests/ -v
+uv run pytest -q
 ```
+
+`uv run` 不是业务运行的必需条件，而是推荐的环境隔离方式：它会使用 `uv` 管理的项目虚拟环境，依赖版本更可复现。如果你当前 shell 的 Python 环境已经安装好依赖，也可以直接运行等价命令，例如 `python3 cli.py main "Hello"` 或 `pytest -q`。
 
 ## 内置工具集
 
@@ -207,7 +208,7 @@ uv run python cli.py web --port 8000 --model deepseek-v4-pro
 uv run python cli.py web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
 
 # 调试模式（Chat + Debug 双界面）
-MYAGENT_DEBUG=enabled uv run python cli.py web --port 8000
+MYAGENT_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 
 # 详细日志（记录 LLM 输入/输出到文件）
 MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
