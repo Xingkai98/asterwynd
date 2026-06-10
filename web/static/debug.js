@@ -15,19 +15,21 @@ const PHASE_LABELS = {
 };
 
 function renderDebug() {
-  for (const event of debugEvents) {
+  for (const [eventIndex, event] of debugEvents.entries()) {
     if (event.type !== 'debug') continue;
     const iter = event.iteration;
+    const turn = event.turn || 1;
     const phase = event.phase;
+    const blockKey = `${turn}:${iter}`;
 
-    if (!iterBlocks[iter]) {
-      iterBlocks[iter] = createIterationBlock(iter);
-      debugContent.appendChild(iterBlocks[iter].el);
+    if (!iterBlocks[blockKey]) {
+      iterBlocks[blockKey] = createIterationBlock(turn, iter);
+      debugContent.appendChild(iterBlocks[blockKey].el);
     }
 
-    const block = iterBlocks[iter];
-    if (block.renderedPhases.has(phase)) continue;
-    block.renderedPhases.add(phase);
+    const block = iterBlocks[blockKey];
+    if (block.renderedEvents.has(eventIndex)) continue;
+    block.renderedEvents.add(eventIndex);
 
     const section = renderPhase(phase, event.data);
     block.body.appendChild(section);
@@ -35,13 +37,13 @@ function renderDebug() {
   debugContent.scrollTop = debugContent.scrollHeight;
 }
 
-function createIterationBlock(iteration) {
+function createIterationBlock(turn, iteration) {
   const el = document.createElement('div');
   el.className = 'iteration-block';
 
   const header = document.createElement('div');
   header.className = 'iteration-header';
-  header.innerHTML = `第 ${iteration + 1} 轮迭代 <span>▶</span>`;
+  header.innerHTML = `第 ${turn} 次对话 · 第 ${iteration + 1} 轮迭代 <span>▶</span>`;
   header.addEventListener('click', () => {
     body.classList.toggle('collapsed');
     header.querySelector('span').textContent = body.classList.contains('collapsed') ? '▶' : '▼';
@@ -53,7 +55,7 @@ function createIterationBlock(iteration) {
   el.appendChild(header);
   el.appendChild(body);
 
-  return { el, body, renderedPhases: new Set() };
+  return { el, body, renderedEvents: new Set() };
 }
 
 function renderPhase(phase, data) {
