@@ -2,8 +2,8 @@
 """Integration tests for FastAPI server (HTTP + WebSocket) with Mock LLM."""
 import os
 import pytest
-from unittest.mock import MagicMock
 from httpx import AsyncClient, ASGITransport
+from fastapi.testclient import TestClient
 
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.tools.base import Tool, tool_parameters
@@ -116,37 +116,81 @@ async def test_static_files_served(app):
 
 @pytest.mark.asyncio
 async def test_websocket_chat_flow():
-    """WebSocket chat: connect → send message → receive events."""
+    """WebSocket chat: connect -> send message -> receive events."""
     old_debug = os.environ.get("MYAGENT_DEBUG", "")
     try:
         if "MYAGENT_DEBUG" in os.environ:
             del os.environ["MYAGENT_DEBUG"]
         mock_llm = MockLLM([LLMResponse(content="Hello from agent!")])
         app = create_app(mock_llm)
-        transport = ASGITransport(app=app)
 
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            async with client.stream("GET", "/ws/new") as response:
-                # Send chat message
-                # Use httpx WebSocket-like approach
-                pass
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws/new") as ws:
+                created = ws.receive_json()
+                assert created["type"] == "session_created"
+
+                ws.send_json({"type": "chat", "content": "hello"})
+                events = []
+                while True:
+                    event = ws.receive_json()
+                    events.append(event)
+                    if event["type"] == "done":
+                        break
     finally:
         os.environ["MYAGENT_DEBUG"] = old_debug
-    # Skip: httpx doesn't fully support WebSocket over ASGITransport.
-    # The WebSocket flow is tested via the session tests and real browser tests.
-    pytest.skip("WebSocket over ASGITransport not fully supported; tested via browser tests")
+    assert [e["type"] for e in events] == ["llm_response", "done"]
+    assert events[-1]["data"]["content"] == "Hello from agent!"
 
 
-@pytest.mark.asyncio
-async def test_websocket_chat_via_raw(app):
-    """Test that WebSocket endpoint accepts connections."""
-    transport = ASGITransport(app=app)
-    # Just verify the endpoint exists and the app is functional
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/")
-        assert resp.status_code == 200
-        resp = await client.get("/api/debug-status")
-        assert resp.status_code == 200
+def test_websocket_ping_and_reset(app):
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+            first_session = created["session_id"]
+
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json() == {"type": "pong"}
+
+            ws.send_json({"type": "reset"})
+            reset = ws.receive_json()
+            assert reset["type"] == "session_created"
+            assert reset["session_id"] != first_session
+
+
+def test_websocket_tool_events():
+    old_debug = os.environ.get("MYAGENT_DEBUG", "")
+    try:
+        if "MYAGENT_DEBUG" in os.environ:
+            del os.environ["MYAGENT_DEBUG"]
+        mock_llm = MockLLM([
+            LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="c1", name="Bash", arguments='{"cmd": "printf websocket"}')],
+                stop_reason="tool_calls",
+            ),
+            LLMResponse(content="Done after tool", stop_reason="end_turn"),
+        ])
+        app = create_app(mock_llm)
+
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws/new") as ws:
+                ws.receive_json()
+                ws.send_json({"type": "chat", "content": "run a command"})
+                events = []
+                while True:
+                    event = ws.receive_json()
+                    events.append(event)
+                    if event["type"] == "done":
+                        break
+    finally:
+        os.environ["MYAGENT_DEBUG"] = old_debug
+
+    event_types = [e["type"] for e in events]
+    assert "tool_call" in event_types
+    assert "tool_result" in event_types
+    tool_result = next(e for e in events if e["type"] == "tool_result")
+    assert tool_result["data"]["result"] == "websocket"
 
 
 @pytest.mark.asyncio
@@ -157,9 +201,18 @@ async def test_debug_websocket_events_enabled():
         os.environ["MYAGENT_DEBUG"] = "enabled"
         mock_llm = MockLLM([LLMResponse(content="Debug test")])
         app = create_app(mock_llm)
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/debug")
-            assert resp.status_code == 200
+        with TestClient(app) as client:
+            with client.websocket_connect("/ws/new") as ws:
+                ws.receive_json()
+                ws.send_json({"type": "chat", "content": "debug"})
+                events = []
+                while True:
+                    event = ws.receive_json()
+                    events.append(event)
+                    if event["type"] == "done":
+                        break
     finally:
         os.environ["MYAGENT_DEBUG"] = old_debug
+
+    assert any(e["type"] == "debug" and e["phase"] == "before_iteration" for e in events)
+    assert any(e["type"] == "debug" and e["phase"] == "after_llm_call" for e in events)

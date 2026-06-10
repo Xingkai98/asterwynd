@@ -273,6 +273,30 @@ async def test_debug_events_contain_full_messages():
 
 
 @pytest.mark.asyncio
+async def test_debug_events_include_incrementing_turns_across_chat_runs():
+    mock_llm = MockLLM([LLMResponse(content="One"), LLMResponse(content="Two")])
+    manager = SessionManager(debug_enabled=True)
+    session = make_session(AgentLoop(
+        llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
+    ))
+
+    events = []
+
+    async def collect(e):
+        events.append(e)
+
+    await manager.run_session(session, "first", ws_send=collect)
+    await manager.run_session(session, "second", ws_send=collect)
+
+    before_iter_events = [
+        e for e in events
+        if e["type"] == "debug" and e["phase"] == "before_iteration"
+    ]
+    assert [e["turn"] for e in before_iter_events] == [1, 2]
+    assert [e["iteration"] for e in before_iter_events] == [0, 0]
+
+
+@pytest.mark.asyncio
 async def test_debug_disabled_no_events():
     """When debug is disabled, no debug events are emitted."""
     mock_llm = MockLLM([LLMResponse(content="Hello")])

@@ -21,6 +21,7 @@ class GrepTool(Tool):
 
     async def execute(self, pattern: str, path: str, recursive: bool = False, **kwargs) -> str:
         try:
+            regex = re.compile(pattern)
             p = Path(path)
             if not p.exists():
                 return f"Error: 路径不存在: {path}"
@@ -30,7 +31,7 @@ class GrepTool(Tool):
             for f in files:
                 try:
                     for i, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
-                        if re.search(pattern, line):
+                        if regex.search(line):
                             results.append(f"{f}:{i}: {line.rstrip()}")
                 except Exception:
                     pass

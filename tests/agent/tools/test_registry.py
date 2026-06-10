@@ -1,6 +1,5 @@
 # tests/agent/tools/test_registry.py
 import pytest
-import asyncio
 from agent.tools.registry import ToolRegistry
 from agent.tools.base import Tool, tool_parameters, ToolCall
 
@@ -29,15 +28,18 @@ def test_get_sandbox_flag():
     registry.register(EchoTool())
     assert registry.get_sandbox("Echo") is False
 
-def test_execute_found():
+@pytest.mark.asyncio
+async def test_execute_found():
     registry = ToolRegistry()
     registry.register(EchoTool())
     call = ToolCall(id="c1", name="Echo", arguments={})
-    result = asyncio.get_event_loop().run_until_complete(registry.execute(call))
+    result = await registry.execute(call)
     assert result == "echo!"
 
-def test_execute_not_found():
+
+@pytest.mark.asyncio
+async def test_execute_not_found():
     registry = ToolRegistry()
     call = ToolCall(id="c1", name="NonExistent", arguments={})
     with pytest.raises(KeyError):
-        asyncio.get_event_loop().run_until_complete(registry.execute(call))
+        await registry.execute(call)

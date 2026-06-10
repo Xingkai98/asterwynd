@@ -262,6 +262,36 @@ async def test_anthropic_llm_tool_use_block_conversion():
         assert tool_result_msg["content"][0]["tool_use_id"] == "call_abc"
 
 
+@pytest.mark.asyncio
+async def test_anthropic_llm_nonstream_text_and_tool_use_stop_reason():
+    """Non-stream tool_use responses should map to stop_reason=tool_calls."""
+    llm = AnthropicLLM(api_key="test-key")
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_response = MagicMock()
+        mock_response.json = MagicMock(return_value={
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "I will run a command."},
+                {"type": "tool_use", "id": "tool_1", "name": "Bash", "input": {"cmd": "pwd"}},
+            ],
+            "stop_reason": "tool_use",
+        })
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        response = await llm.chat([Message(role="user", content="where am I?")])
+
+        assert response.content == "I will run a command."
+        assert response.stop_reason == "tool_calls"
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].id == "tool_1"
+        assert response.tool_calls[0].name == "Bash"
+        assert _json.loads(response.tool_calls[0].arguments) == {"cmd": "pwd"}
+
+
 # ---------------------------------------------------------------------------
 # 流式 SSE 测试（stream=True）
 # ---------------------------------------------------------------------------

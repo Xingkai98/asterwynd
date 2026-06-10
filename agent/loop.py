@@ -91,10 +91,36 @@ class AgentLoop:
             messages.append(Message(role="assistant", content=response.content or "", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
 
             for delta in response.tool_calls:
+                try:
+                    arguments = self._parse_arguments(delta.arguments)
+                except ValueError as e:
+                    tool_call = ToolCall(id=delta.id, name=delta.name, arguments={})
+                    logger.error(f"[AgentLoop] invalid arguments for tool {delta.name}: {e}")
+                    await self.hooks.on_error(e)
+                    result = f"[Error: {e}]"
+
+                    if on_event:
+                        await on_event("tool_call", {
+                            "name": tool_call.name,
+                            "arguments": tool_call.arguments,
+                        })
+                        await on_event("tool_result", {
+                            "name": tool_call.name,
+                            "result": result,
+                        })
+
+                    messages.append(tool_result_message(tool_call.id, result))
+                    tool_calls_made.append(ToolCallMade(
+                        name=tool_call.name,
+                        arguments=tool_call.arguments,
+                        result=result,
+                    ))
+                    continue
+
                 tool_call = ToolCall(
                     id=delta.id,
                     name=delta.name,
-                    arguments=self._parse_arguments(delta.arguments),
+                    arguments=arguments,
                 )
 
                 await self.hooks.before_tool_execute(tool_call)
@@ -132,28 +158,32 @@ class AgentLoop:
                 })
 
         logger.warning(f"[AgentLoop] 达到最大迭代次数 {self.max_iterations}")
-        await self.hooks.on_completion(RunResult(
-            content=messages[-1].content if messages else "",
-            stop_reason=StopReason.MAX_ITERATIONS,
-            tool_calls_made=tool_calls_made,
-        ))
-        if on_event:
-            await on_event("done", {
-                "content": messages[-1].content if messages else "",
-                "stop_reason": "max_iterations",
-            })
-        # max_iterations 路径：保留最后一条有内容的非 tool 消息作为 assistant 回复
-        last_content = messages[-1].content if messages else ""
-        messages.append(Message(role="assistant", content=last_content))
-        return RunResult(
-            content=messages[-1].content if messages else "",
+        final_content = self._last_assistant_content(messages)
+        result = RunResult(
+            content=final_content,
             stop_reason=StopReason.MAX_ITERATIONS,
             tool_calls_made=tool_calls_made,
         )
+        await self.hooks.on_completion(result)
+        if on_event:
+            await on_event("done", {
+                "content": final_content,
+                "stop_reason": "max_iterations",
+            })
+        return result
 
     def _parse_arguments(self, arguments: str) -> dict:
         import json
         try:
-            return json.loads(arguments)
-        except json.JSONDecodeError:
-            return {}
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"invalid JSON tool arguments: {e.msg}") from e
+        if not isinstance(parsed, dict):
+            raise ValueError("tool arguments must be a JSON object")
+        return parsed
+
+    def _last_assistant_content(self, messages: list[Message]) -> str:
+        for message in reversed(messages):
+            if message.role == "assistant" and message.content:
+                return message.content
+        return ""

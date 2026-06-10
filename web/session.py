@@ -23,6 +23,7 @@ class AgentSession:
         self.session_id = session_id
         self.agent = agent
         self.messages: list[Message] = []
+        self.debug_turn = 0
 
     def init_messages(self, system_prompt: Optional[str] = None):
         default_system = (
@@ -79,7 +80,15 @@ class SessionManager:
 
         # Add debug hook if debug is enabled
         if self.debug_enabled:
-            debug_hook = DebugHook(emit=lambda e: queue.put_nowait(e), force_enabled=True)
+            session.debug_turn += 1
+            debug_turn = session.debug_turn
+
+            def emit_debug(event: dict):
+                event = dict(event)
+                event["turn"] = debug_turn
+                queue.put_nowait(event)
+
+            debug_hook = DebugHook(emit=emit_debug, force_enabled=True)
             session.agent.hooks.hooks.append(debug_hook)
 
         session.messages.append(Message(role="user", content=user_message))
