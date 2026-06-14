@@ -1,6 +1,7 @@
 # agent/tools/builtin/write.py
 from pathlib import Path
 from agent.tools.base import Tool, tool_parameters
+from agent.workspace_policy import WorkspacePolicy
 
 @tool_parameters(
     name="Write",
@@ -17,13 +18,18 @@ from agent.tools.base import Tool, tool_parameters
 class WriteTool(Tool):
     read_only = False
 
+    def __init__(self, policy: WorkspacePolicy | None = None):
+        # Keep direct WriteTool() backwards-compatible for existing tests and
+        # callers. Agent tool sets inject a workspace-rooted policy explicitly.
+        self.policy = policy or WorkspacePolicy(Path("/"))
+
     async def execute(self, path: str, content: str, **kwargs) -> str:
         try:
-            p = Path(path)
+            p = self.policy.assert_write_allowed(path)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, errors="replace")
             return f"已写入 {len(content)} 字符到 {path}"
-        except PermissionError:
-            return f"Error: 无权限写入: {path}"
+        except PermissionError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"
