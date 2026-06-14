@@ -44,6 +44,15 @@ MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4
 
 # 运行测试
 uv run pytest -q
+
+# 运行本地 coding-agent benchmark（fake runner smoke）
+uv run python cli.py benchmark benchmarks/tasks \
+  --agent fake \
+  --source-repo . \
+  --runs-dir /tmp/myagent-benchmark-smoke \
+  --fake-edit-file README.md \
+  --fake-old-string '# MyAgent' \
+  --fake-new-string '# MyAgent Coding Agent'
 ```
 
 `uv run` 不是业务运行的必需条件，而是推荐的环境隔离方式：它会使用 `uv` 管理的项目虚拟环境，依赖版本更可复现。如果你当前 shell 的 Python 环境已经安装好依赖，也可以直接运行等价命令，例如 `python3 cli.py main "Hello"` 或 `pytest -q`。
@@ -244,6 +253,41 @@ MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 playwright install chromium
 MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
+
+## Local Benchmark
+
+MyAgent includes a local coding-agent benchmark harness and task pack under
+`benchmarks/`. The harness evaluates agents in detached git worktrees, applies
+hidden evaluator tests after the agent finishes, and writes per-task artifacts.
+
+Run the deterministic fake-runner smoke test:
+
+```bash
+uv run python cli.py benchmark benchmarks/tasks \
+  --agent fake \
+  --source-repo . \
+  --runs-dir /tmp/myagent-benchmark-smoke \
+  --fake-edit-file README.md \
+  --fake-old-string '# MyAgent' \
+  --fake-new-string '# MyAgent Coding Agent'
+```
+
+Run the real MyAgent runner manually when API credentials are configured:
+
+```bash
+MYAGENT_PROVIDER=openai OPENAI_API_KEY=... \
+uv run python cli.py benchmark benchmarks/tasks \
+  --agent myagent \
+  --source-repo . \
+  --runs-dir /tmp/myagent-benchmark-myagent \
+  --max-iterations 30
+```
+
+Each run writes `run.json`, `summary.md`, and task-level `result.json`,
+`trace.json`, `final.diff`, `test_output.txt`, and `runner.log`. Task statuses
+are `passed`, `passed_with_warnings`, `failed`, or `error`; warnings mean the
+hidden tests passed but the agent run still reported an issue such as
+`max_iterations`.
 
 ## 技术栈
 

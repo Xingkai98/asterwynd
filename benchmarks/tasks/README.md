@@ -36,3 +36,16 @@ Each task contains:
 - `gold.patch`: reference implementation for analysis only.
 
 The benchmark grades by `test_command`, not by exact patch equality.
+
+Task statuses:
+
+- `passed`: hidden validation passed and the agent completed normally.
+- `passed_with_warnings`: hidden validation passed, but the agent reported a
+  non-fatal issue such as `max_iterations`.
+- `failed`: hidden validation ran and failed.
+- `error`: setup, patch application, or harness execution failed.
+
+The current P0 task pack intentionally separates harness health from model
+quality. A real MyAgent run may fail coding tasks while still proving that the
+benchmark harness created isolated worktrees, hid evaluator files, applied
+hidden tests, and wrote complete artifacts.

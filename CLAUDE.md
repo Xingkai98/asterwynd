@@ -18,6 +18,15 @@ uv run pytest -q
 # Run a specific test file
 uv run pytest tests/agent/tools/test_registry.py -v
 
+# Run local benchmark smoke
+uv run python cli.py benchmark benchmarks/tasks \
+  --agent fake \
+  --source-repo . \
+  --runs-dir /tmp/myagent-benchmark-smoke \
+  --fake-edit-file README.md \
+  --fake-old-string '# MyAgent' \
+  --fake-new-string '# MyAgent Coding Agent'
+
 # Run CLI (需要 .env 配置 OPENAI_API_KEY + MYAGENT_MODEL)
 uv run python cli.py main "用 Read 工具读 /tmp"
 
@@ -74,6 +83,28 @@ FastAPI + WebSocket server with vanilla JS frontend. Two views:
 - `web/session.py` — SessionManager: one AgentLoop + messages per session
 - `web/debug_hook.py` — DebugHook: captures iteration state, emitted via Hook protocol
 - `web/static/` — Vanilla HTML/CSS/JS frontend
+
+### Local Benchmark (`benchmarks/`)
+
+The benchmark harness runs coding-agent tasks in detached git worktrees, hides
+evaluator task files from the agent workspace, applies `test.patch` after the
+agent finishes, and writes artifacts under the configured runs directory.
+
+Relevant entry point:
+
+```bash
+uv run python cli.py benchmark benchmarks/tasks \
+  --agent fake \
+  --source-repo . \
+  --runs-dir /tmp/myagent-benchmark-smoke \
+  --fake-edit-file README.md \
+  --fake-old-string '# MyAgent' \
+  --fake-new-string '# MyAgent Coding Agent'
+```
+
+Result statuses are `passed`, `passed_with_warnings`, `failed`, and `error`.
+`passed_with_warnings` means hidden tests passed but the agent reported a
+non-clean run, commonly `max_iterations`.
 
 ### Adding New Capabilities
 
