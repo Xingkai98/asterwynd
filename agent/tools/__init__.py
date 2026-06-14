@@ -31,6 +31,7 @@ def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     return [
         ReadTool(),
+        WriteTool(policy=policy),
         EditTool(policy=policy),
         InspectGitDiffTool(policy=policy),
         GrepTool(),
