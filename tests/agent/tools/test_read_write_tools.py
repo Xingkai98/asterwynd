@@ -39,6 +39,30 @@ async def test_write_file(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_write_existing_file_is_rejected(tmp_path):
+    tool = WriteTool()
+    file_path = tmp_path / "output.txt"
+    file_path.write_text("old")
+
+    result = await tool.execute(path=str(file_path), content="new")
+
+    assert "file already exists" in result
+    assert file_path.read_text() == "old"
+
+
+@pytest.mark.asyncio
+async def test_write_existing_file_still_rejected_with_unrecognized_overwrite_kwarg(tmp_path):
+    tool = WriteTool()
+    file_path = tmp_path / "output.txt"
+    file_path.write_text("old")
+
+    result = await tool.execute(path=str(file_path), content="new", overwrite=True)
+
+    assert "file already exists" in result
+    assert file_path.read_text() == "old"
+
+
+@pytest.mark.asyncio
 async def test_write_directory_path_returns_error(tmp_path):
     tool = WriteTool()
     result = await tool.execute(path=str(tmp_path), content="hello")
