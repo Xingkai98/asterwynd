@@ -25,6 +25,7 @@ uv sync --extra dev
 uv run pytest -q
 uv run python cli.py main "Hello"
 MYAGENT_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
+uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/myagent-benchmark-smoke --fake-edit-file README.md --fake-old-string '# MyAgent' --fake-new-string '# MyAgent Coding Agent'
 ```
 
 Direct commands are also valid when the active Python environment already has dependencies installed:
@@ -59,11 +60,19 @@ playwright install chromium
 MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
 
+For benchmark changes, run the benchmark unit tests and a fake-runner smoke:
+
+```bash
+pytest -q tests/benchmark
+uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/myagent-benchmark-smoke --fake-edit-file README.md --fake-old-string '# MyAgent' --fake-new-string '# MyAgent Coding Agent'
+```
+
 ## Development Rules
 
 - Add or update regression tests for bug fixes.
 - Keep tool-call protocol chains valid: an assistant message with `tool_calls` must keep its matching `tool` result messages.
 - Do not make the `max_iterations` path fabricate a final assistant response from a tool result.
+- Treat benchmark `passed_with_warnings` as a test-passing result with agent-side issues such as `max_iterations`; do not count it as a clean pass.
 - Preserve debug UI behavior across multiple chat turns; AgentLoop iteration numbers restart per chat turn, so UI grouping must distinguish chat turns.
 - Keep `.codegraph/`, `.understand-anything/`, local `.env*`, logs, and other generated/local files out of commits unless explicitly requested.
 

@@ -357,6 +357,7 @@ benchmarks/runs/<run-id>/
   "ended_at": "2026-06-14T12:42:11Z",
   "task_count": 20,
   "passed": 13,
+  "warnings": 2,
   "failed": 7
 }
 ```
@@ -369,6 +370,7 @@ benchmarks/runs/<run-id>/
 | Task | Status | Time | Iterations | Tool Calls | Failure |
 |------|--------|------|------------|------------|---------|
 | myagent-001-edit-tool | passed | 82s | 5 | 17 | - |
+| myagent-002-benchmark-cli | passed_with_warnings | 104s | 20 | 29 | max_iterations |
 | myagent-002-policy-deny-env | failed | 120s | 8 | 22 | edit_validation |
 ```
 
@@ -378,7 +380,7 @@ First version metrics:
 
 | Metric | Meaning |
 |--------|---------|
-| `status` | `passed`, `failed`, or `error` |
+| `status` | `passed`, `passed_with_warnings`, `failed`, or `error` |
 | `duration_seconds` | Wall-clock runtime |
 | `iterations` | LLM iterations |
 | `tool_calls` | Total tool calls |
@@ -413,6 +415,11 @@ Initial categories:
 | `no_change` | Agent produced no meaningful diff |
 | `out_of_scope_change` | Agent changed denied or unrelated files |
 | `model_failure` | Agent stopped without a useful solution |
+
+`passed_with_warnings` is reserved for cases where the hidden validation command
+passed but the agent runner reported a non-clean outcome, such as
+`max_iterations`. This keeps product correctness separate from agent process
+quality.
 
 ## 13. First Task Set
 
@@ -537,11 +544,14 @@ keys, model behavior, and cost.
 
 ### P0: Self-Benchmark Skeleton
 
-- Task schema.
-- Worktree runner.
-- MyAgent runner.
-- Result files.
-- 3-5 local tasks.
+- Task schema. Implemented.
+- Worktree runner. Implemented.
+- MyAgent runner. Implemented.
+- Result files. Implemented.
+- 3-5 local tasks. Implemented with the P0 local task pack in
+  `benchmarks/tasks/`.
+- Warning status for test-passing but non-clean agent runs. Implemented as
+  `passed_with_warnings`.
 
 ### P1: Useful Evaluation
 

@@ -1,6 +1,6 @@
 # MyAgent Coding Agent Roadmap
 
-**Status**: Draft
+**Status**: Draft, with P0 benchmark harness partially implemented
 **Date**: 2026-06-14
 
 ---
@@ -33,10 +33,13 @@ The current system already has useful agent infrastructure:
 | Memory | AutoCompact-style message compaction |
 | Subagents | Background delegation and parent channel injection |
 | Web UI | Chat UI and debug timeline support |
+| Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, and CLI entry point |
+| Coding tools | `Edit`, workspace-aware `Bash`, `InspectGitDiff`, and hardened write behavior |
 
-The missing piece is a coding-agent-specific runtime. Today the project can call
-tools, but it does not yet have strong semantics for repository boundaries,
-controlled edits, test loops, trace capture, or benchmark execution.
+The remaining gap is a stronger coding-agent runtime. The project now has a P0
+self-benchmark harness and basic coding tools, but real-agent benchmark runs
+still show failures where MyAgent explores the repository without producing a
+useful diff before `max_iterations`.
 
 ## 3. Core Product Thesis
 
@@ -137,7 +140,8 @@ It should instruct the model to:
 
 ### 4.4 TraceRecorder
 
-Trace recording should become a first-class coding-agent capability.
+Trace recording is now a first-class benchmark artifact and should continue to
+become a first-class interactive coding-agent capability.
 
 Default trace should store structured summaries:
 
@@ -189,8 +193,9 @@ Initial categories:
 | `out_of_scope_change` | Agent modified denied or unrelated files |
 | `model_failure` | Agent response did not make actionable progress |
 
-The taxonomy will be used by the benchmark system, but it belongs in the coding
-agent roadmap because agent behavior should make these failures observable.
+The benchmark system uses these categories in `result.json` and `summary.md`.
+`passed_with_warnings` is used when hidden tests pass but the agent runner still
+reports a non-clean outcome such as `max_iterations`.
 
 ## 5. Implementation Phases
 
@@ -200,12 +205,13 @@ Goal: make MyAgent safely edit code in a local repository and record what it did
 
 Deliverables:
 
-- `WorkspacePolicy` minimal implementation.
-- `EditTool` with exact replacement semantics.
-- `InspectGitDiffTool`.
-- Coding-agent system prompt.
-- TraceRecorder summary trace.
-- Tests for path policy, edit semantics, and diff inspection.
+- `WorkspacePolicy` minimal implementation. Done.
+- `EditTool` with exact replacement semantics. Done.
+- `InspectGitDiffTool`. Done.
+- Coding-agent system prompt. Partially done for benchmark runs.
+- TraceRecorder summary trace. Done for benchmark artifacts.
+- Tests for path policy, edit semantics, and diff inspection. Done.
+- Local benchmark task pack and CLI runner. Done.
 
 Interview talking point:
 
