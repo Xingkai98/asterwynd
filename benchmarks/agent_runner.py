@@ -203,7 +203,7 @@ class MyAgentRunner(AgentRunner):
             problem_statement=problem_statement,
             workspace=str(workspace),
         )
-        result = await agent.run(messages)
+        result = await agent.run(messages, trace_recorder=trace)
         edit_count = sum(1 for call in result.tool_calls_made if call.name == "Edit")
         return AgentRunResult(
             status="completed" if result.stop_reason.value == "end_turn" else "error",

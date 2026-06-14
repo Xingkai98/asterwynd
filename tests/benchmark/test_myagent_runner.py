@@ -97,5 +97,10 @@ async def test_myagent_runner_uses_agent_loop_and_coding_tools(tmp_path):
     assert result.tool_calls == 2
     assert result.edit_count == 1
     assert (tmp_path / "app.py").read_text() == "# Version 2\n"
+    step_types = [step.type for step in trace.steps]
+    assert "llm_iteration" in step_types
+    assert "tool_call" in step_types
+    assert "tool_result" in step_types
+    assert "edit" in step_types
     first_prompt = "\n".join(message.content for message in llm.messages_seen[0])
     assert "Update app.py to Version 2." in first_prompt
