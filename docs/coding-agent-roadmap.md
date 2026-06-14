@@ -1,6 +1,6 @@
 # MyAgent Coding Agent Roadmap
 
-**Status**: Draft, with P0 benchmark harness partially implemented
+**Status**: Draft, P0 benchmark harness implemented
 **Date**: 2026-06-14
 
 ---
@@ -33,13 +33,23 @@ The current system already has useful agent infrastructure:
 | Memory | AutoCompact-style message compaction |
 | Subagents | Background delegation and parent channel injection |
 | Web UI | Chat UI and debug timeline support |
-| Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, and CLI entry point |
-| Coding tools | `Edit`, workspace-aware `Bash`, `InspectGitDiff`, and hardened write behavior |
+| Coding tools | Workspace policy, exact-match `Edit`, workspace-aware `Bash`, `InspectGitDiff`, and hardened `Write` behavior |
+| Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, summary reports, and CLI entry point |
 
-The remaining gap is a stronger coding-agent runtime. The project now has a P0
-self-benchmark harness and basic coding tools, but real-agent benchmark runs
-still show failures where MyAgent explores the repository without producing a
-useful diff before `max_iterations`.
+The remaining gap is coding-agent reliability. The project now has the P0
+self-benchmark harness and basic coding tools, but real MyAgent benchmark runs
+still show failures on multi-file tasks and trace propagation tasks.
+
+Recent real-agent benchmark signal:
+
+| Run | Max Iterations | Result | Notes |
+|-----|----------------|--------|-------|
+| `2026-06-14T15-12-53` | 20 | 2 passed, 2 failed | Two failed tasks produced no code changes before the iteration limit. |
+| `2026-06-14T16-57-13` | 50 | 2 passed, 2 failed | The agent began implementing the failed tasks, but one task exposed async-test environment assumptions and one missed required cross-file trace propagation. |
+
+This suggests the benchmark infrastructure is usable now, while the agent needs
+better task decomposition, test command discipline, dependency handling, and
+cross-file completion checks.
 
 ## 3. Core Product Thesis
 
@@ -193,9 +203,9 @@ Initial categories:
 | `out_of_scope_change` | Agent modified denied or unrelated files |
 | `model_failure` | Agent response did not make actionable progress |
 
-The benchmark system uses these categories in `result.json` and `summary.md`.
-`passed_with_warnings` is used when hidden tests pass but the agent runner still
-reports a non-clean outcome such as `max_iterations`.
+The benchmark system uses this taxonomy in `result.json` and `summary.md`.
+`passed_with_warnings` is used when hidden validation passes but the agent run
+still reports a non-clean outcome such as `max_iterations`.
 
 ## 5. Implementation Phases
 
@@ -208,10 +218,11 @@ Deliverables:
 - `WorkspacePolicy` minimal implementation. Done.
 - `EditTool` with exact replacement semantics. Done.
 - `InspectGitDiffTool`. Done.
-- Coding-agent system prompt. Partially done for benchmark runs.
+- Coding-agent system prompt. Done for benchmark runs.
 - TraceRecorder summary trace. Done for benchmark artifacts.
 - Tests for path policy, edit semantics, and diff inspection. Done.
 - Local benchmark task pack and CLI runner. Done.
+- `passed_with_warnings` status for test-passing but non-clean agent runs. Done.
 
 Interview talking point:
 
@@ -230,6 +241,15 @@ Deliverables:
 - Better command allowlist and timeout policy.
 - Test failure feedback loop in the prompt.
 - Trace entries for test runs.
+
+Current priority:
+
+- Standardize benchmark validation commands so async tests consistently use the
+  project environment.
+- Teach the agent to verify hidden-test-like requirements by running the exact
+  visible `test_command`, not nearby test suites only.
+- Improve completion checks so the agent stops after a clean pass and continues
+  when required files were not edited.
 
 Interview talking point:
 

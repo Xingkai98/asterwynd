@@ -400,6 +400,10 @@ Later metrics:
 - Hidden-test pass/fail.
 - Agent self-reported confidence.
 
+`passed_with_warnings` means the final validation command passed, but the agent
+runner reported a non-clean process outcome such as `max_iterations`. It should
+count separately from a clean pass when evaluating agent quality.
+
 ## 12. Failure Taxonomy
 
 Initial categories:
@@ -416,10 +420,36 @@ Initial categories:
 | `out_of_scope_change` | Agent changed denied or unrelated files |
 | `model_failure` | Agent stopped without a useful solution |
 
-`passed_with_warnings` is reserved for cases where the hidden validation command
-passed but the agent runner reported a non-clean outcome, such as
-`max_iterations`. This keeps product correctness separate from agent process
-quality.
+## 12.1 Current Implementation Snapshot
+
+Implemented:
+
+- Task schema loading from `benchmarks/tasks/<task-id>/task.json`.
+- Detached git worktree execution at each task's `base_commit`.
+- Fake, shell, and MyAgent runner adapters.
+- Coding-agent prompt builder for benchmark runs.
+- Hidden `test.patch` application after the agent finishes.
+- Per-task `result.json`, `trace.json`, `final.diff`, `test_output.txt`, and
+  `runner.log`.
+- Run-level `run.json` and `summary.md`.
+- `passed_with_warnings` for test-passing but non-clean agent runs.
+- P0 local task pack:
+  - `myagent-readme-title`
+  - `myagent-002-myagent-runner`
+  - `myagent-003-agentloop-trace`
+  - `myagent-004-benchmark-cli`
+
+Recent real MyAgent benchmark results:
+
+| Run | Max Iterations | Passed | Warnings | Failed | Main Signal |
+|-----|----------------|--------|----------|--------|-------------|
+| `2026-06-14T15-12-53` | 20 | 2 | 0 | 2 | Two medium tasks produced no useful diff before max iterations. |
+| `2026-06-14T16-57-13` | 50 | 2 | 0 | 2 | The agent edited code for the failed tasks, but 002 exposed async-test dependency assumptions and 003 missed trace propagation through `MyAgentRunner`. |
+
+Current interpretation: the benchmark harness is healthy enough to guide
+development. The remaining failures primarily reflect MyAgent coding-agent
+capability and benchmark environment sharp edges, not missing artifact capture
+or task isolation.
 
 ## 13. First Task Set
 
@@ -548,18 +578,20 @@ keys, model behavior, and cost.
 - Worktree runner. Implemented.
 - MyAgent runner. Implemented.
 - Result files. Implemented.
-- 3-5 local tasks. Implemented with the P0 local task pack in
-  `benchmarks/tasks/`.
-- Warning status for test-passing but non-clean agent runs. Implemented as
-  `passed_with_warnings`.
+- 3-5 local tasks. Implemented with the P0 local task pack.
+- Warning status for test-passing but non-clean agent runs. Implemented.
 
 ### P1: Useful Evaluation
 
-- 20 local tasks.
-- Trace JSON.
-- Failure taxonomy.
-- Summary markdown.
-- Optional gold patch storage.
+- 20 local tasks. Not started.
+- Trace JSON. Implemented for benchmark artifacts; needs richer analysis fields.
+- Failure taxonomy. Implemented as result categories; needs more automatic
+  classification.
+- Summary markdown. Implemented.
+- Optional gold patch storage. Implemented for current task pack as reference
+  `gold.patch` files.
+- Validation environment consistency. Next priority after the 50-iteration run
+  exposed async pytest plugin assumptions.
 
 ### P2: Hidden Tests
 
