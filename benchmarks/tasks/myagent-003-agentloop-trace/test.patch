@@ -1,19 +1,32 @@
-diff --git a/tests/agent/test_loop.py b/tests/agent/test_loop.py
-index d35edb1..8a69bcf 100644
---- a/tests/agent/test_loop.py
-+++ b/tests/agent/test_loop.py
-@@ -7,6 +7,7 @@ from agent.tools.base import Tool, tool_parameters, ToolCall
- from agent.tools.registry import ToolRegistry
- from agent.hooks.manager import HookManager
- from agent.memory.manager import MemoryManager
+diff --git a/tests/benchmark/test_20260614_onyx_signal_agentloop_trace.py b/tests/benchmark/test_20260614_onyx_signal_agentloop_trace.py
+new file mode 100644
+index 0000000..4f8b07d
+--- /dev/null
++++ b/tests/benchmark/test_20260614_onyx_signal_agentloop_trace.py
+@@ -0,0 +1,131 @@
++import json
++
++import pytest
++
++from agent.hooks.manager import HookManager
++from agent.llm import LLMResponse, ToolCallDelta
++from agent.loop import AgentLoop
++from agent.message import Message
++from agent.tools.base import Tool, tool_parameters
++from agent.tools.registry import ToolRegistry
 +from agent.trace_recorder import TraceRecorder
- 
- @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
- class EchoTool(Tool):
-@@ -357,3 +358,37 @@ async def test_agent_loop_preserves_text_with_tool_calls():
-     # 最终消息是 assistant 回复
-     assert messages[-1].role == "assistant"
-     assert messages[-1].content == "Done!"
++from benchmarks.agent_runner import MyAgentRunner
++from benchmarks.task_schema import TaskSpec
++
++
++@tool_parameters(
++    name="Echo",
++    description="Echo back",
++    parameters={"type": "object", "properties": {}, "required": []},
++)
++class EchoTool(Tool):
++    async def execute(self, **kwargs):
++        return "echo"
 +
 +
 +@pytest.mark.asyncio
@@ -48,18 +61,77 @@ index d35edb1..8a69bcf 100644
 +    assert step_types.count("llm_iteration") == 2
 +    assert "tool_call" in step_types
 +    assert "tool_result" in step_types
-diff --git a/tests/benchmark/test_myagent_runner.py b/tests/benchmark/test_myagent_runner.py
-index 21680e0..7793659 100644
---- a/tests/benchmark/test_myagent_runner.py
-+++ b/tests/benchmark/test_myagent_runner.py
-@@ -97,5 +97,10 @@ async def test_myagent_runner_uses_agent_loop_and_coding_tools(tmp_path):
-     assert result.tool_calls == 2
-     assert result.edit_count == 1
-     assert (tmp_path / "app.py").read_text() == "# Version 2\n"
++
++
++class ScriptedLLM:
++    def __init__(self):
++        self.calls = 0
++        self.messages_seen = []
++        self.closed = False
++
++    async def chat(self, messages, tools=None, model="gpt-4"):
++        self.calls += 1
++        self.messages_seen.append(list(messages))
++        if self.calls == 1:
++            return LLMResponse(
++                content="I will edit app.py.",
++                tool_calls=[
++                    ToolCallDelta(
++                        id="edit-1",
++                        name="Edit",
++                        arguments=json.dumps(
++                            {
++                                "path": "app.py",
++                                "old_string": "Version 1",
++                                "new_string": "Version 2",
++                            }
++                        ),
++                    )
++                ],
++                stop_reason="tool_calls",
++            )
++        if self.calls == 2:
++            return LLMResponse(
++                content="I will inspect the diff.",
++                tool_calls=[
++                    ToolCallDelta(
++                        id="diff-1",
++                        name="InspectGitDiff",
++                        arguments=json.dumps({"path": "app.py"}),
++                    )
++                ],
++                stop_reason="tool_calls",
++            )
++        return LLMResponse(content="Done. app.py updated.", stop_reason="end_turn")
++
++    async def close(self):
++        self.closed = True
++
++
++@pytest.mark.asyncio
++async def test_myagent_runner_passes_trace_recorder_to_agent_loop(tmp_path):
++    (tmp_path / "app.py").write_text("# Version 1\n")
++    task = TaskSpec(
++        id="task",
++        repo="local",
++        base_commit="abc",
++        problem_statement_file="issue.md",
++        test_command="grep -q 'Version 2' app.py",
++    )
++    trace = TraceRecorder(task_id="task")
++
++    result = await MyAgentRunner(llm=ScriptedLLM(), max_iterations=5).run(
++        task=task,
++        problem_statement="Update app.py to Version 2.",
++        workspace=tmp_path,
++        output_dir=tmp_path / "out",
++        trace=trace,
++    )
++
++    assert result.status == "completed"
++    assert (tmp_path / "app.py").read_text() == "# Version 2\n"
 +    step_types = [step.type for step in trace.steps]
 +    assert "llm_iteration" in step_types
 +    assert "tool_call" in step_types
 +    assert "tool_result" in step_types
 +    assert "edit" in step_types
-     first_prompt = "\n".join(message.content for message in llm.messages_seen[0])
-     assert "Update app.py to Version 2." in first_prompt

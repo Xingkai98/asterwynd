@@ -1,8 +1,8 @@
-diff --git a/tests/benchmark/test_cli_benchmark.py b/tests/benchmark/test_cli_benchmark.py
+diff --git a/tests/benchmark/test_20260614_cobalt_ember_cli_benchmark.py b/tests/benchmark/test_20260614_cobalt_ember_cli_benchmark.py
 new file mode 100644
 index 0000000..18af955
 --- /dev/null
-+++ b/tests/benchmark/test_cli_benchmark.py
++++ b/tests/benchmark/test_20260614_cobalt_ember_cli_benchmark.py
 @@ -0,0 +1,76 @@
 +import json
 +import subprocess

@@ -1,8 +1,8 @@
-diff --git a/tests/benchmark/test_myagent_runner.py b/tests/benchmark/test_myagent_runner.py
+diff --git a/tests/benchmark/test_20260614_quartz_lantern_myagent_runner.py b/tests/benchmark/test_20260614_quartz_lantern_myagent_runner.py
 new file mode 100644
 index 0000000..21680e0
 --- /dev/null
-+++ b/tests/benchmark/test_myagent_runner.py
++++ b/tests/benchmark/test_20260614_quartz_lantern_myagent_runner.py
 @@ -0,0 +1,101 @@
 +import json
 +
