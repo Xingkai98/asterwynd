@@ -1,0 +1,140 @@
+diff --git a/benchmarks/agent_runner.py b/benchmarks/agent_runner.py
+index 5270ca9..c7a5c3a 100644
+--- a/benchmarks/agent_runner.py
++++ b/benchmarks/agent_runner.py
+@@ -7,8 +7,13 @@ import time
+ from abc import ABC, abstractmethod
+ from pathlib import Path
+ 
++from agent.loop import AgentLoop
++from agent.memory.manager import MemoryManager
++from agent.tools import ToolRegistry, get_coding_tools
+ from agent.trace_recorder import TraceRecorder
++from agent.workspace_policy import WorkspacePolicy
+ from benchmarks.models import AgentRunResult, FailureCategory
++from benchmarks.prompt import CodingPromptBuilder
+ from benchmarks.task_schema import TaskSpec
+ 
+ 
+@@ -148,3 +153,67 @@ class ShellCommandRunner(AgentRunner):
+             failure_category=None if result.returncode == 0 else FailureCategory.TOOL_ERROR.value,
+             output=output,
+         )
++
++
++class CountingLLM:
++    def __init__(self, llm):
++        self.llm = llm
++        self.call_count = 0
++
++    async def chat(self, *args, **kwargs):
++        self.call_count += 1
++        return await self.llm.chat(*args, **kwargs)
++
++
++class MyAgentRunner(AgentRunner):
++    def __init__(
++        self,
++        llm,
++        model: str = "",
++        max_iterations: int = 20,
++        prompt_builder: CodingPromptBuilder | None = None,
++    ):
++        self.llm = llm
++        self.model = model
++        self.max_iterations = max_iterations
++        self.prompt_builder = prompt_builder or CodingPromptBuilder()
++
++    async def run(
++        self,
++        task: TaskSpec,
++        problem_statement: str,
++        workspace: Path,
++        output_dir: Path,
++        trace: TraceRecorder,
++    ) -> AgentRunResult:
++        policy = WorkspacePolicy(workspace)
++        registry = ToolRegistry()
++        for tool in get_coding_tools(policy=policy):
++            registry.register(tool)
++
++        counting_llm = CountingLLM(self.llm)
++        agent = AgentLoop(
++            llm=counting_llm,
++            tool_registry=registry,
++            memory=MemoryManager(max_tokens=80_000),
++            max_iterations=self.max_iterations,
++        )
++        messages = self.prompt_builder.build_messages(
++            task=task,
++            problem_statement=problem_statement,
++            workspace=str(workspace),
++        )
++        result = await agent.run(messages)
++        edit_count = sum(1 for call in result.tool_calls_made if call.name == "Edit")
++        return AgentRunResult(
++            status="completed" if result.stop_reason.value == "end_turn" else "error",
++            iterations=counting_llm.call_count,
++            tool_calls=len(result.tool_calls_made),
++            edit_count=edit_count,
++            failure_category=(
++                None
++                if result.stop_reason.value == "end_turn"
++                else FailureCategory.MAX_ITERATIONS.value
++            ),
++            output=result.content,
++        )
+diff --git a/benchmarks/prompt.py b/benchmarks/prompt.py
+new file mode 100644
+index 0000000..b614417
+--- /dev/null
++++ b/benchmarks/prompt.py
+@@ -0,0 +1,48 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++
++from agent.message import Message, system_message
++from benchmarks.task_schema import TaskSpec
++
++
++CODING_SYSTEM_PROMPT = """You are MyAgent running as a local coding agent.
++
++Work only inside the provided repository workspace. Inspect files before making
++changes when context is needed. Prefer the Edit tool for precise code changes.
++Use InspectGitDiff after meaningful edits. Keep changes scoped to the task.
++Do not modify .git, .env files, secrets, caches, or benchmark run artifacts.
++When finished, summarize the changed files and whether validation was run.
++"""
++
++
++@dataclass(frozen=True)
++class CodingPromptBuilder:
++    system_prompt: str = CODING_SYSTEM_PROMPT
++
++    def build_messages(
++        self,
++        task: TaskSpec,
++        problem_statement: str,
++        workspace: str,
++    ) -> list[Message]:
++        user_prompt = f"""Repository workspace:
++{workspace}
++
++Task:
++{problem_statement.strip()}
++
++Validation command used by the benchmark evaluator:
++{task.test_command}
++
++Requirements:
++- Modify only files inside the workspace.
++- Keep the change scoped to the task.
++- Use tools for repository inspection and edits.
++- Do not rely on hidden reference or evaluator-only files.
++- Before the final answer, inspect the diff if you made changes.
++"""
++        return [
++            system_message(self.system_prompt),
++            Message(role="user", content=user_prompt),
++        ]

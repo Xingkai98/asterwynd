@@ -1,0 +1,13 @@
+{
+  "id": "myagent-003-agentloop-trace",
+  "repo": "local/myagent",
+  "base_commit": "0de60d5d4aff994584044f9e3d40e1787d987558",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/agent/test_loop.py tests/benchmark/test_myagent_runner.py",
+  "timeout_seconds": 180,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "observability",
+  "difficulty": "medium"
+}
+

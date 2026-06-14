@@ -1,0 +1,13 @@
+{
+  "id": "myagent-004-benchmark-cli",
+  "repo": "local/myagent",
+  "base_commit": "f616c4265ecfa9bee875d48735f09093abccdf5e",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/benchmark/test_cli_benchmark.py",
+  "timeout_seconds": 180,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "cli",
+  "difficulty": "easy"
+}
+

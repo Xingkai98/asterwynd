@@ -1,0 +1,103 @@
+diff --git a/agent/loop.py b/agent/loop.py
+index 1003665..417d045 100644
+--- a/agent/loop.py
++++ b/agent/loop.py
+@@ -1,6 +1,7 @@
+ # agent/loop.py
+ import asyncio
+ import logging
++import time
+ from typing import Optional, Callable, Awaitable, TYPE_CHECKING
+ 
+ from agent.message import Message, tool_result_message
+@@ -14,6 +15,7 @@ from agent.subagent.manager import SubAgentManager
+ 
+ if TYPE_CHECKING:
+     from agent.llm import LLM
++    from agent.trace_recorder import TraceRecorder
+ 
+ logger = logging.getLogger("myagent.loop")
+ 
+@@ -38,6 +40,7 @@ class AgentLoop:
+         self,
+         messages: list[Message],
+         on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
++        trace_recorder: Optional["TraceRecorder"] = None,
+     ) -> RunResult:
+         tool_calls_made: list[ToolCallMade] = []
+ 
+@@ -51,6 +54,15 @@ class AgentLoop:
+                 tools=tool_schemas if tool_schemas else None,
+             )
+             await self.hooks.after_llm_call(response)
++            if trace_recorder:
++                trace_recorder.record_iteration(
++                    iteration,
++                    assistant_preview=response.content or "",
++                    tool_calls=[
++                        {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
++                        for tc in response.tool_calls
++                    ],
++                )
+ 
+             if on_event:
+                 await on_event("llm_response", {
+@@ -98,6 +110,14 @@ class AgentLoop:
+                     logger.error(f"[AgentLoop] invalid arguments for tool {delta.name}: {e}")
+                     await self.hooks.on_error(e)
+                     result = f"[Error: {e}]"
++                    if trace_recorder:
++                        trace_recorder.record_tool_call(tool_call.name, tool_call.arguments)
++                        trace_recorder.record_tool_result(
++                            tool_call.name,
++                            "error",
++                            0,
++                            result,
++                        )
+ 
+                     if on_event:
+                         await on_event("tool_call", {
+@@ -124,15 +144,30 @@ class AgentLoop:
+                 )
+ 
+                 await self.hooks.before_tool_execute(tool_call)
++                if trace_recorder:
++                    trace_recorder.record_tool_call(tool_call.name, tool_call.arguments)
+ 
++                tool_start = time.time()
+                 try:
+                     result = await self.tool_registry.execute(tool_call)
+                 except Exception as e:
+                     logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
+                     await self.hooks.on_error(e)
+                     result = f"[Error: {e}]"
++                tool_duration_ms = (time.time() - tool_start) * 1000
+ 
+                 await self.hooks.after_tool_execute(tool_call, result)
++                if trace_recorder:
++                    status = "error" if result.startswith("[Error") or result.startswith("Error") else "ok"
++                    trace_recorder.record_tool_result(
++                        tool_call.name,
++                        status,
++                        tool_duration_ms,
++                        result,
++                    )
++                    if tool_call.name == "Edit":
++                        path = str(tool_call.arguments.get("path", ""))
++                        trace_recorder.record_edit(path, status, result)
+ 
+                 if on_event:
+                     await on_event("tool_call", {
+diff --git a/benchmarks/agent_runner.py b/benchmarks/agent_runner.py
+index c7a5c3a..432c2db 100644
+--- a/benchmarks/agent_runner.py
++++ b/benchmarks/agent_runner.py
+@@ -203,7 +203,7 @@ class MyAgentRunner(AgentRunner):
+             problem_statement=problem_statement,
+             workspace=str(workspace),
+         )
+-        result = await agent.run(messages)
++        result = await agent.run(messages, trace_recorder=trace)
+         edit_count = sum(1 for call in result.tool_calls_made if call.name == "Edit")
+         return AgentRunResult(
+             status="completed" if result.stop_reason.value == "end_turn" else "error",
