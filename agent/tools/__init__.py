@@ -35,7 +35,7 @@ def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
         EditTool(policy=policy),
         InspectGitDiffTool(policy=policy),
         GrepTool(),
-        BashTool(),
+        BashTool(policy=policy),
     ]
 
 __all__ = [

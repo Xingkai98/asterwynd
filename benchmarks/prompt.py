@@ -40,6 +40,7 @@ Requirements:
 - Keep the change scoped to the task.
 - Use tools for repository inspection and edits.
 - Do not rely on hidden reference or evaluator-only files.
+- Do not create or modify tests unless the task explicitly asks for tests.
 - Before the final answer, inspect the diff if you made changes.
 """
         return [
