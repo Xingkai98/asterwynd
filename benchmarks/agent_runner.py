@@ -7,8 +7,13 @@ import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from agent.loop import AgentLoop
+from agent.memory.manager import MemoryManager
+from agent.tools import ToolRegistry, get_coding_tools
 from agent.trace_recorder import TraceRecorder
+from agent.workspace_policy import WorkspacePolicy
 from benchmarks.models import AgentRunResult, FailureCategory
+from benchmarks.prompt import CodingPromptBuilder
 from benchmarks.task_schema import TaskSpec
 
 
@@ -147,4 +152,68 @@ class ShellCommandRunner(AgentRunner):
             tool_calls=1,
             failure_category=None if result.returncode == 0 else FailureCategory.TOOL_ERROR.value,
             output=output,
+        )
+
+
+class CountingLLM:
+    def __init__(self, llm):
+        self.llm = llm
+        self.call_count = 0
+
+    async def chat(self, *args, **kwargs):
+        self.call_count += 1
+        return await self.llm.chat(*args, **kwargs)
+
+
+class MyAgentRunner(AgentRunner):
+    def __init__(
+        self,
+        llm,
+        model: str = "",
+        max_iterations: int = 20,
+        prompt_builder: CodingPromptBuilder | None = None,
+    ):
+        self.llm = llm
+        self.model = model
+        self.max_iterations = max_iterations
+        self.prompt_builder = prompt_builder or CodingPromptBuilder()
+
+    async def run(
+        self,
+        task: TaskSpec,
+        problem_statement: str,
+        workspace: Path,
+        output_dir: Path,
+        trace: TraceRecorder,
+    ) -> AgentRunResult:
+        policy = WorkspacePolicy(workspace)
+        registry = ToolRegistry()
+        for tool in get_coding_tools(policy=policy):
+            registry.register(tool)
+
+        counting_llm = CountingLLM(self.llm)
+        agent = AgentLoop(
+            llm=counting_llm,
+            tool_registry=registry,
+            memory=MemoryManager(max_tokens=80_000),
+            max_iterations=self.max_iterations,
+        )
+        messages = self.prompt_builder.build_messages(
+            task=task,
+            problem_statement=problem_statement,
+            workspace=str(workspace),
+        )
+        result = await agent.run(messages)
+        edit_count = sum(1 for call in result.tool_calls_made if call.name == "Edit")
+        return AgentRunResult(
+            status="completed" if result.stop_reason.value == "end_turn" else "error",
+            iterations=counting_llm.call_count,
+            tool_calls=len(result.tool_calls_made),
+            edit_count=edit_count,
+            failure_category=(
+                None
+                if result.stop_reason.value == "end_turn"
+                else FailureCategory.MAX_ITERATIONS.value
+            ),
+            output=result.content,
         )
