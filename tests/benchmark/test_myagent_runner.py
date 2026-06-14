@@ -13,6 +13,7 @@ class ScriptedLLM:
     def __init__(self):
         self.calls = 0
         self.messages_seen = []
+        self.closed = False
 
     async def chat(self, messages, tools=None, model="gpt-4"):
         self.calls += 1
@@ -48,6 +49,9 @@ class ScriptedLLM:
                 stop_reason="tool_calls",
             )
         return LLMResponse(content="Done. app.py updated.", stop_reason="end_turn")
+
+    async def close(self):
+        self.closed = True
 
 
 def test_coding_prompt_builder_includes_task_and_not_patch_names():
@@ -97,6 +101,7 @@ async def test_myagent_runner_uses_agent_loop_and_coding_tools(tmp_path):
     assert result.tool_calls == 2
     assert result.edit_count == 1
     assert (tmp_path / "app.py").read_text() == "# Version 2\n"
+    assert llm.closed is True
     step_types = [step.type for step in trace.steps]
     assert "llm_iteration" in step_types
     assert "tool_call" in step_types

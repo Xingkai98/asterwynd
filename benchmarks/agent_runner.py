@@ -204,20 +204,25 @@ class MyAgentRunner(AgentRunner):
             workspace=str(workspace),
         )
         try:
-            result = await asyncio.wait_for(
-                agent.run(messages, trace_recorder=trace),
-                timeout=task.timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            trace.record_completion(
-                "error",
-                f"MyAgent timed out after {task.timeout_seconds}s",
-            )
-            return AgentRunResult(
-                status="error",
-                failure_category=FailureCategory.MODEL_FAILURE.value,
-                output=f"MyAgent timed out after {task.timeout_seconds}s",
-            )
+            try:
+                result = await asyncio.wait_for(
+                    agent.run(messages, trace_recorder=trace),
+                    timeout=task.timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                trace.record_completion(
+                    "error",
+                    f"MyAgent timed out after {task.timeout_seconds}s",
+                )
+                return AgentRunResult(
+                    status="error",
+                    failure_category=FailureCategory.MODEL_FAILURE.value,
+                    output=f"MyAgent timed out after {task.timeout_seconds}s",
+                )
+        finally:
+            close = getattr(self.llm, "close", None)
+            if close:
+                await close()
         edit_count = sum(1 for call in result.tool_calls_made if call.name == "Edit")
         return AgentRunResult(
             status="completed" if result.stop_reason.value == "end_turn" else "error",
