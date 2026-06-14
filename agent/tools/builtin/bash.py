@@ -1,8 +1,7 @@
 # agent/tools/builtin/bash.py
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.sandbox import SandboxExecutor
-
-_sandbox = SandboxExecutor()
+from agent.workspace_policy import WorkspacePolicy
 
 @tool_parameters(
     name="Bash",
@@ -19,5 +18,21 @@ _sandbox = SandboxExecutor()
 class BashTool(Tool):
     dangerous = True
 
+    def __init__(
+        self,
+        policy: WorkspacePolicy | None = None,
+        sandbox: SandboxExecutor | None = None,
+    ):
+        self.policy = policy or WorkspacePolicy()
+        self.sandbox = sandbox or SandboxExecutor()
+
     async def execute(self, cmd: str, timeout: float = 30.0, **kwargs) -> str:
-        return await _sandbox.run(cmd, timeout=timeout)
+        try:
+            self.policy.assert_command_allowed(cmd)
+        except PermissionError as e:
+            return f"Error: {e}"
+        return await self.sandbox.run(
+            cmd,
+            timeout=timeout,
+            cwd=self.policy.workspace_root,
+        )

@@ -207,5 +207,65 @@ def web(
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
+@app.command()
+def benchmark(
+    tasks_dir: Path = typer.Argument(..., help="包含 benchmark task 子目录的目录"),
+    agent: str = typer.Option("fake", "--agent", help="Runner: fake / shell / myagent"),
+    source_repo: Path = typer.Option(Path("."), "--source-repo", help="被测 git repo"),
+    runs_dir: Path = typer.Option(Path("benchmarks/runs"), "--runs-dir", help="benchmark 输出目录"),
+    provider: str = typer.Option(
+        os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="MyAgent LLM provider"
+    ),
+    model: Optional[str] = typer.Option(None, "--model", help="MyAgent 模型"),
+    max_iterations: int = typer.Option(20, "--max-iterations", help="MyAgent 最大迭代次数"),
+    shell_command: Optional[str] = typer.Option(None, "--shell-command", help="shell runner 命令"),
+    fake_edit_file: Optional[str] = typer.Option(None, "--fake-edit-file", help="fake runner 修改文件"),
+    fake_old_string: Optional[str] = typer.Option(None, "--fake-old-string", help="fake runner old string"),
+    fake_new_string: Optional[str] = typer.Option(None, "--fake-new-string", help="fake runner new string"),
+    keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
+):
+    """运行本地 Coding Agent benchmark。"""
+    from benchmarks.agent_runner import FakeAgentRunner, MyAgentRunner, ShellCommandRunner
+    from benchmarks.runner import BenchmarkRunner
+
+    if agent == "fake":
+        runner_impl = FakeAgentRunner(
+            edit_file=fake_edit_file,
+            old_string=fake_old_string,
+            new_string=fake_new_string,
+        )
+    elif agent == "shell":
+        if not shell_command:
+            typer.echo("Error: --shell-command is required for --agent shell", err=True)
+            raise SystemExit(1)
+        runner_impl = ShellCommandRunner(shell_command)
+    elif agent == "myagent":
+        llm = build_llm(provider, model)
+        runner_impl = MyAgentRunner(
+            llm=llm,
+            model=getattr(llm, "model", model or ""),
+            max_iterations=max_iterations,
+        )
+    else:
+        typer.echo("Error: --agent must be fake, shell, or myagent", err=True)
+        raise SystemExit(1)
+
+    runner = BenchmarkRunner(
+        agent_runner=runner_impl,
+        source_repo=source_repo,
+        runs_dir=runs_dir,
+        agent_name=agent,
+        model=model or "",
+        keep_worktrees=keep_worktrees,
+    )
+    metadata = runner.run_all(tasks_dir)
+    run_path = runs_dir / metadata.run_id
+    typer.echo(f"Benchmark run: {run_path}")
+    typer.echo(
+        f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
+        f"warnings: {metadata.warnings} | failed: {metadata.failed}"
+    )
+
+
 if __name__ == "__main__":
     app()

@@ -1,0 +1,12 @@
+{
+  "id": "myagent-003-agentloop-trace",
+  "repo": "local/myagent",
+  "base_commit": "0de60d5d4aff994584044f9e3d40e1787d987558",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/benchmark/test_20260614_onyx_signal_agentloop_trace.py",
+  "timeout_seconds": 180,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "observability",
+  "difficulty": "medium"
+}

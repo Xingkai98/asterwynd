@@ -7,6 +7,7 @@ from agent.tools.base import Tool, tool_parameters, ToolCall
 from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
+from agent.trace_recorder import TraceRecorder
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -357,3 +358,37 @@ async def test_agent_loop_preserves_text_with_tool_calls():
     # 最终消息是 assistant 回复
     assert messages[-1].role == "assistant"
     assert messages[-1].content == "Done!"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_records_trace_events_for_tool_calls():
+    class ToolThenDoneLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    content="Using a tool.",
+                    tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=ToolThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+    trace = TraceRecorder(task_id="trace-test")
+
+    result = await loop.run([Message(role="user", content="test")], trace_recorder=trace)
+
+    assert result.content == "done"
+    step_types = [step.type for step in trace.steps]
+    assert step_types.count("llm_iteration") == 2
+    assert "tool_call" in step_types
+    assert "tool_result" in step_types

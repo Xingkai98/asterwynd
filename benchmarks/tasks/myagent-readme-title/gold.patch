@@ -1,0 +1,9 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# MyAgent
++# MyAgent Coding Agent
+ 
+ 一个用 Python 构建的轻量级通用 AI Agent 框架。
+
