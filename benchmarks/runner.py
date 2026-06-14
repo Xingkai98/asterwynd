@@ -66,7 +66,11 @@ class BenchmarkRunner:
             ended_at=ended_at,
             task_count=len(results),
             passed=sum(result.status == "passed" for result in results),
-            failed=sum(result.status != "passed" for result in results),
+            warnings=sum(result.status == "passed_with_warnings" for result in results),
+            failed=sum(
+                result.status not in {"passed", "passed_with_warnings"}
+                for result in results
+            ),
         )
         metadata.write_json(run_dir / "run.json")
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
@@ -144,9 +148,18 @@ class BenchmarkRunner:
             )
             log(f"Test command exit code: {test_exit_code}")
 
-            status = "passed" if test_exit_code == 0 else "failed"
             failure_category = None
-            if status != "passed":
+            if test_exit_code == 0:
+                if agent_result.status != "completed" or agent_result.failure_category:
+                    status = "passed_with_warnings"
+                    failure_category = (
+                        agent_result.failure_category
+                        or FailureCategory.MODEL_FAILURE.value
+                    )
+                else:
+                    status = "passed"
+            else:
+                status = "failed"
                 failure_category = (
                     FailureCategory.TEST_TIMEOUT.value
                     if test_exit_code == -1 and "Timeout" in test_output
@@ -309,4 +322,3 @@ def _now() -> str:
 
 def _new_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-

@@ -64,6 +64,7 @@ class RunMetadata:
     ended_at: str = ""
     task_count: int = 0
     passed: int = 0
+    warnings: int = 0
     failed: int = 0
 
     def write_json(self, path: str | Path) -> None:
@@ -87,4 +88,3 @@ def render_summary(results: list[TaskResult]) -> str:
             f"{result.iterations} | {result.tool_calls} | {failure} |"
         )
     return "\n".join(lines) + "\n"
-

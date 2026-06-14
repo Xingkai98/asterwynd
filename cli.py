@@ -261,7 +261,10 @@ def benchmark(
     metadata = runner.run_all(tasks_dir)
     run_path = runs_dir / metadata.run_id
     typer.echo(f"Benchmark run: {run_path}")
-    typer.echo(f"Tasks: {metadata.task_count} | passed: {metadata.passed} | failed: {metadata.failed}")
+    typer.echo(
+        f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
+        f"warnings: {metadata.warnings} | failed: {metadata.failed}"
+    )
 
 
 if __name__ == "__main__":
