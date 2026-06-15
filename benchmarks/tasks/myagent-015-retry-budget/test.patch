@@ -1,0 +1,47 @@
+diff --git a/tests/agent/hooks/test_retry_and_budget.py b/tests/agent/hooks/test_retry_and_budget.py
+new file mode 100644
+index 0000000..0a0938e
+--- /dev/null
++++ b/tests/agent/hooks/test_retry_and_budget.py
+@@ -0,0 +1,40 @@
++# tests/agent/hooks/test_retry_and_budget.py
++import pytest
++import asyncio
++from agent.hooks.builtin.retry import RetryHook
++from agent.hooks.builtin.token_budget import TokenBudgetHook
++from agent.message import Message
++from agent.llm import LLMResponse
++from agent.tools.base import ToolCall
++
++class FailingTool:
++    name = "FailingTool"
++    description = "A tool that fails"
++    parameters = {}
++    read_only = False
++    dangerous = False
++    call_count = 0
++
++    async def execute(self, **kwargs) -> str:
++        FailingTool.call_count += 1
++        if FailingTool.call_count < 3:
++            raise RuntimeError(f"Failed {FailingTool.call_count} times")
++        return "success"
++
++@pytest.mark.asyncio
++async def test_retry_hook_succeeds_after_retries():
++    hook = RetryHook(max_retries=3)
++    FailingTool.call_count = 0
++    tool_call = ToolCall(id="c1", name="FailingTool", arguments={})
++
++    async def executor(tc):
++        return await FailingTool().execute(**tc.arguments)
++
++    result = await hook.execute_with_retry(tool_call, executor)
++    assert FailingTool.call_count == 3
++    assert result == "success"
++
++def test_token_budget_hook_init():
++    hook = TokenBudgetHook(budget=100_000)
++    assert hook.budget == 100_000
++    assert hook.total_tokens == 0
+\ No newline at end of file

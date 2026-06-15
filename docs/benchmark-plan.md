@@ -487,7 +487,7 @@ Selection criteria:
 - Covers diverse categories: edit correctness, security, observability, file
   discovery, bash tooling.
 
-Candidate categories (20 tasks total):
+Candidate categories (19 tasks total from git history):
 
 | Category | Count | Example task |
 |----------|-------|-------------|
@@ -608,7 +608,7 @@ keys, model behavior, and cost.
 - Command allowlist and denylist with .env extensibility.
 - ListFilesTool and FindTool with ignore rules (separate from WorkspacePolicy).
 - Apply `test.patch` only after agent completion with hidden test status.
-- 20 local tasks total.
+- 19 new local tasks extracted from git history (plus 4 existing P0 tasks = 23 total).
 - ShellCommandRunner for baseline comparisons.
 - Package distribution via `uv tool install` / `pip install`.
 

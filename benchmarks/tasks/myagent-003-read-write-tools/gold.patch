@@ -1,0 +1,76 @@
+diff --git a/agent/tools/builtin/read.py b/agent/tools/builtin/read.py
+new file mode 100644
+index 0000000..a793d35
+--- /dev/null
++++ b/agent/tools/builtin/read.py
+@@ -0,0 +1,33 @@
++# agent/tools/builtin/read.py
++from pathlib import Path
++from agent.tools.base import Tool, tool_parameters
++
++@tool_parameters(
++    name="Read",
++    description="读取文件内容",
++    parameters={
++        "type": "object",
++        "properties": {
++            "path": {"type": "string", "description": "文件路径"},
++            "limit": {"type": "integer", "description": "最多读取行数", "default": None},
++        },
++        "required": ["path"],
++    },
++)
++class ReadTool(Tool):
++    read_only = True
++
++    async def execute(self, path: str, limit: int = None, **kwargs) -> str:
++        try:
++            p = Path(path)
++            if not p.exists():
++                return f"Error: 文件不存在: {path}"
++            content = p.read_text(errors="replace")
++            if limit:
++                lines = content.splitlines()
++                content = "\n".join(lines[:limit])
++            return content
++        except PermissionError:
++            return f"Error: 无权限读取: {path}"
++        except Exception as e:
++            return f"Error: {e}"
+\ No newline at end of file
+diff --git a/agent/tools/builtin/write.py b/agent/tools/builtin/write.py
+new file mode 100644
+index 0000000..5a55c39
+--- /dev/null
++++ b/agent/tools/builtin/write.py
+@@ -0,0 +1,29 @@
++# agent/tools/builtin/write.py
++from pathlib import Path
++from agent.tools.base import Tool, tool_parameters
++
++@tool_parameters(
++    name="Write",
++    description="写入内容到文件",
++    parameters={
++        "type": "object",
++        "properties": {
++            "path": {"type": "string", "description": "文件路径"},
++            "content": {"type": "string", "description": "写入内容"},
++        },
++        "required": ["path", "content"],
++    },
++)
++class WriteTool(Tool):
++    read_only = False
++
++    async def execute(self, path: str, content: str, **kwargs) -> str:
++        try:
++            p = Path(path)
++            p.parent.mkdir(parents=True, exist_ok=True)
++            p.write_text(content, errors="replace")
++            return f"已写入 {len(content)} 字符到 {path}"
++        except PermissionError:
++            return f"Error: 无权限写入: {path}"
++        except Exception as e:
++            return f"Error: {e}"
+\ No newline at end of file

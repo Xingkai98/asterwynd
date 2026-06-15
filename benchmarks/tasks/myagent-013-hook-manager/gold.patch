@@ -1,0 +1,61 @@
+diff --git a/agent/hooks/__init__.py b/agent/hooks/__init__.py
+index e69de29..c21441d 100644
+--- a/agent/hooks/__init__.py
++++ b/agent/hooks/__init__.py
+@@ -0,0 +1,4 @@
++# agent/hooks/__init__.py
++from agent.hooks.manager import HookManager, Hook
++
++__all__ = ["HookManager", "Hook"]
+diff --git a/agent/hooks/manager.py b/agent/hooks/manager.py
+new file mode 100644
+index 0000000..08114ce
+--- /dev/null
++++ b/agent/hooks/manager.py
+@@ -0,0 +1,45 @@
++# agent/hooks/manager.py
++from typing import Protocol, runtime_checkable, TYPE_CHECKING, Callable
++from agent.message import Message
++from agent.tools.base import ToolCall
++from agent.llm import LLMResponse
++
++if TYPE_CHECKING:
++    from agent.result import RunResult
++
++@runtime_checkable
++class Hook(Protocol):
++    async def before_iteration(self, iteration: int, messages: list[Message]) -> None: ...
++    async def after_llm_call(self, response: LLMResponse) -> None: ...
++    async def before_tool_execute(self, tool_call: ToolCall) -> None: ...
++    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None: ...
++    async def on_error(self, error: Exception) -> None: ...
++    async def on_completion(self, result: "RunResult") -> None: ...
++
++class HookManager:
++    def __init__(self, hooks: list[Hook] | None = None):
++        self.hooks: list[Hook] = hooks or []
++
++    async def before_iteration(self, iteration: int, messages: list[Message]) -> None:
++        for hook in self.hooks:
++            await hook.before_iteration(iteration, messages)
++
++    async def after_llm_call(self, response: LLMResponse) -> None:
++        for hook in self.hooks:
++            await hook.after_llm_call(response)
++
++    async def before_tool_execute(self, tool_call: ToolCall) -> None:
++        for hook in self.hooks:
++            await hook.before_tool_execute(tool_call)
++
++    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
++        for hook in self.hooks:
++            await hook.after_tool_execute(tool_call, result)
++
++    async def on_error(self, error: Exception) -> None:
++        for hook in self.hooks:
++            await hook.on_error(error)
++
++    async def on_completion(self, result: "RunResult") -> None:
++        for hook in self.hooks:
++            await hook.on_completion(result)
+\ No newline at end of file

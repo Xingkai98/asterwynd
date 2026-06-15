@@ -1,0 +1,104 @@
+diff --git a/agent/tools/__init__.py b/agent/tools/__init__.py
+index d4fb56f..bbc5e3b 100644
+--- a/agent/tools/__init__.py
++++ b/agent/tools/__init__.py
+@@ -35,7 +35,7 @@ def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
+         EditTool(policy=policy),
+         InspectGitDiffTool(policy=policy),
+         GrepTool(),
+-        BashTool(),
++        BashTool(policy=policy),
+     ]
+ 
+ __all__ = [
+diff --git a/agent/tools/builtin/bash.py b/agent/tools/builtin/bash.py
+index e89b8a6..512ce07 100644
+--- a/agent/tools/builtin/bash.py
++++ b/agent/tools/builtin/bash.py
+@@ -1,8 +1,7 @@
+ # agent/tools/builtin/bash.py
+ from agent.tools.base import Tool, tool_parameters
+ from agent.tools.sandbox import SandboxExecutor
+-
+-_sandbox = SandboxExecutor()
++from agent.workspace_policy import WorkspacePolicy
+ 
+ @tool_parameters(
+     name="Bash",
+@@ -19,5 +18,21 @@ _sandbox = SandboxExecutor()
+ class BashTool(Tool):
+     dangerous = True
+ 
++    def __init__(
++        self,
++        policy: WorkspacePolicy | None = None,
++        sandbox: SandboxExecutor | None = None,
++    ):
++        self.policy = policy or WorkspacePolicy()
++        self.sandbox = sandbox or SandboxExecutor()
++
+     async def execute(self, cmd: str, timeout: float = 30.0, **kwargs) -> str:
+-        return await _sandbox.run(cmd, timeout=timeout)
+\ No newline at end of file
++        try:
++            self.policy.assert_command_allowed(cmd)
++        except PermissionError as e:
++            return f"Error: {e}"
++        return await self.sandbox.run(
++            cmd,
++            timeout=timeout,
++            cwd=self.policy.workspace_root,
++        )
+diff --git a/agent/tools/sandbox.py b/agent/tools/sandbox.py
+index d6f6f0e..3704c97 100644
+--- a/agent/tools/sandbox.py
++++ b/agent/tools/sandbox.py
+@@ -2,6 +2,7 @@
+ import asyncio
+ import subprocess
+ from typing import Optional
++from pathlib import Path
+ 
+ class SandboxExecutor:
+     """基于 subprocess 的沙箱执行器，限制资源"""
+@@ -16,13 +17,19 @@ class SandboxExecutor:
+         self.max_memory_mb = max_memory_mb
+         self.allowed_dirs = allowed_dirs or ["/tmp", "/var/tmp"]
+ 
+-    async def run(self, command: str, timeout: Optional[float] = None) -> str:
++    async def run(
++        self,
++        command: str,
++        timeout: Optional[float] = None,
++        cwd: Optional[str | Path] = None,
++    ) -> str:
+         """在沙箱中运行命令，返回 stdout"""
+         timeout = timeout or self.timeout
+ 
+         try:
+             proc = await asyncio.create_subprocess_shell(
+                 command,
++                cwd=str(cwd) if cwd else None,
+                 stdout=asyncio.subprocess.PIPE,
+                 stderr=asyncio.subprocess.STDOUT,
+                 limit=1024 * 1024,  # 1MB stdout
+@@ -42,12 +49,18 @@ class SandboxExecutor:
+         except Exception as e:
+             return f"[Error: {e}]"
+ 
+-    def run_sync(self, command: str, timeout: Optional[float] = None) -> str:
++    def run_sync(
++        self,
++        command: str,
++        timeout: Optional[float] = None,
++        cwd: Optional[str | Path] = None,
++    ) -> str:
+         """同步版本，用于非 async 上下文"""
+         try:
+             result = subprocess.run(
+                 command,
+                 shell=True,
++                cwd=str(cwd) if cwd else None,
+                 capture_output=True,
+                 text=True,
+                 timeout=timeout or self.timeout,

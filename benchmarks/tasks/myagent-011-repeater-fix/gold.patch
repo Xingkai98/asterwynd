@@ -1,0 +1,89 @@
+diff --git a/agent/loop.py b/agent/loop.py
+index e2aadf5..d258d54 100644
+--- a/agent/loop.py
++++ b/agent/loop.py
+@@ -80,6 +80,7 @@ class AgentLoop:
+                         "content": response.content or "",
+                         "stop_reason": "end_turn",
+                     })
++                messages.append(Message(role="assistant", content=response.content or "", reasoning_content=response.reasoning_content))
+                 return RunResult(
+                     content=response.content or "",
+                     stop_reason=StopReason.END_TURN,
+@@ -87,7 +88,7 @@ class AgentLoop:
+                 )
+ 
+             # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
+-            messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
++            messages.append(Message(role="assistant", content=response.content or "", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
+ 
+             for delta in response.tool_calls:
+                 tool_call = ToolCall(
+@@ -124,7 +125,7 @@ class AgentLoop:
+                     result=result,
+                 ))
+ 
+-            self.memory.compact_if_needed()
++            self.memory.compact_if_needed(messages)
+             if on_event:
+                 await on_event("memory_compaction", {
+                     "total_messages": len(messages),
+@@ -141,6 +142,9 @@ class AgentLoop:
+                 "content": messages[-1].content if messages else "",
+                 "stop_reason": "max_iterations",
+             })
++        # max_iterations 路径：保留最后一条有内容的非 tool 消息作为 assistant 回复
++        last_content = messages[-1].content if messages else ""
++        messages.append(Message(role="assistant", content=last_content))
+         return RunResult(
+             content=messages[-1].content if messages else "",
+             stop_reason=StopReason.MAX_ITERATIONS,
+diff --git a/agent/memory/manager.py b/agent/memory/manager.py
+index 7518c40..0323478 100644
+--- a/agent/memory/manager.py
++++ b/agent/memory/manager.py
+@@ -35,29 +35,31 @@ class MemoryManager:
+     def count_tokens(self, messages: list["Message"]) -> int:
+         return sum(_count_tokens(m.content) for m in messages)
+ 
+-    def compact_if_needed(self) -> None:
+-        total = self.count_tokens(self.messages)
++    def compact_if_needed(self, messages: Optional[list["Message"]] = None) -> None:
++        msgs = messages if messages is not None else self.messages
++        total = self.count_tokens(msgs)
+         if total > self.max_tokens:
+             logger.info(f"[Memory] {total} tokens > {self.max_tokens} budget, compacting")
+-            self.compact()
++            self.compact(msgs)
+ 
+-    def compact(self) -> None:
+-        system = [m for m in self.messages if m.role == "system"]
+-        recent = self.messages[-self.recent_window:]
+-        middle = self.messages[:-self.recent_window]
++    def compact(self, messages: Optional[list["Message"]] = None) -> None:
++        msgs = messages if messages is not None else self.messages
++        system = [m for m in msgs if m.role == "system"]
++        recent = msgs[-self.recent_window:]
++        middle = msgs[:-self.recent_window]
+ 
+         if not middle:
+-            self.messages = system + recent
+-            logger.info(f"[Memory] Compacted to {len(self.messages)} messages")
++            msgs[:] = system + recent
++            logger.info(f"[Memory] Compacted to {len(msgs)} messages")
+             return
+ 
+         if self.llm is None:
+-            self.messages = system + recent
+-            logger.info(f"[Memory] Compacted to {len(self.messages)} messages (no LLM)")
++            msgs[:] = system + recent
++            logger.info(f"[Memory] Compacted to {len(msgs)} messages (no LLM)")
+             return
+ 
+-        self.messages = system + recent
+-        logger.info(f"[Memory] Compacted to {len(self.messages)} messages")
++        msgs[:] = system + recent
++        logger.info(f"[Memory] Compacted to {len(msgs)} messages")
+ 
+     def get_messages(self) -> list["Message"]:
+         return self.messages
