@@ -7,12 +7,15 @@
 | 模块 | 说明 |
 |------|------|
 | **AgentLoop** | 核心循环约 100 行，消息是唯一状态，所有能力委托给插件 |
-| **ToolRegistry** | 动态工具注册，`@tool_parameters` 装饰器声明工具，6 个内置工具 |
-| **SandboxExecutor** | subprocess 沙箱，内存/CPU/超时限制，危险命令强制走沙箱 |
+| **ToolRegistry** | 动态工具注册，`@tool_parameters` 装饰器声明工具，10 个内置工具 |
+| **WorkspacePolicy** | 工作区安全边界，拒绝路径穿越、敏感文件写入、危险命令 |
+| **SandboxExecutor** | subprocess 沙箱，结构化输出（exit_code/stdout/stderr/duration/timed_out） |
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
 | **MemoryManager** | AutoCompact token 压缩，超预算时用 LLM 生成摘要 |
 | **SkillLoader** | Markdown 技能文件（YAML frontmatter + prompt），按需/always 加载 |
 | **SubAgentManager** | asyncio 后台任务委托，ParentChannel 实现 mid-turn injection |
+| **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
+| **Local Benchmark** | 23 个 coding-agent 任务，SWE-bench 风格隔离评测，多 agent 适配器 |
 
 ## 快速开始
 
@@ -62,40 +65,56 @@ uv run python cli.py benchmark benchmarks/tasks \
 | 工具 | 权限级别 | 说明 |
 |------|---------|------|
 | `Read` | read_only | 读取文件，支持行数限制 |
-| `Write` | read_write | 写入文件，自动创建父目录 |
-| `Bash` | dangerous | 沙箱执行 shell 命令（超时/资源限制）|
+| `Write` | read_write | 创建新文件，禁止覆盖已有文件 |
+| `Edit` | read_write | 精确文本替换，要求 old_string 唯一匹配，支持 replace_all |
+| `Bash` | dangerous | 沙箱执行 shell 命令，返回结构化 JSON（exit_code/stdout/stderr/duration/timed_out） |
+| `Grep` | read_only | 正则搜索文件/目录 |
+| `InspectGitDiff` | read_only | 查看当前工作区 git diff |
+| `ListFiles` | read_only | 列出目录内容，自动忽略 .git/node_modules 等 |
+| `Find` | read_only | 按 glob 模式递归搜索文件 |
 | `WebSearch` | read_only | DuckDuckGo HTML 搜索 |
 | `WebFetch` | read_only | 获取网页内容，支持截断 |
-| `Grep` | read_only | 正则搜索文件/目录 |
+
+Bash 工具内置命令安全策略：前缀白名单（git status/pytest/uv/npm...）+ 正则黑名单（42 条，覆盖 rm -rf /、fork 炸弹、curl \| sh 等）。黑名单可通过 `MYAGENT_COMMAND_DENYLIST` 环境变量追加。
 
 ## 项目结构
 
 ```
 agent/
-├── loop.py              # AgentLoop 核心（~100行）
-├── llm.py               # LLM Protocol + ToolCallDelta
-├── openai_llm.py        # OpenAI Chat Completions 实现
-├── anthropic_llm.py     # Anthropic Messages API 实现
-├── message.py           # Message dataclass + 快捷构造
-├── result.py            # RunResult + StopReason + ToolCallMade
+├── loop.py                  # AgentLoop 核心（~100行）
+├── llm.py                   # LLM Protocol + ToolCallDelta
+├── openai_llm.py            # OpenAI Chat Completions 实现
+├── anthropic_llm.py         # Anthropic Messages API 实现
+├── workspace_policy.py      # WorkspacePolicy 工作区安全边界
+├── trace_recorder.py        # TraceRecorder 全量轨迹记录
+├── message.py               # Message dataclass + 快捷构造
+├── result.py                # RunResult + StopReason + ToolCallMade
 ├── tools/
-│   ├── base.py          # Tool ABC + @tool_parameters 装饰器
-│   ├── registry.py       # ToolRegistry
-│   ├── sandbox.py        # SandboxExecutor
-│   └── builtin/          # 6 个内置工具
+│   ├── base.py              # Tool ABC + @tool_parameters 装饰器
+│   ├── registry.py          # ToolRegistry
+│   ├── sandbox.py           # SandboxExecutor + SandboxResult
+│   └── builtin/             # 10 个内置工具
 ├── hooks/
-│   ├── manager.py        # HookManager + Hook Protocol
-│   └── builtin/          # 4 个内置 Hook
+│   ├── manager.py           # HookManager + Hook Protocol
+│   └── builtin/             # 4 个内置 Hook
 ├── memory/
-│   └── manager.py        # MemoryManager + AutoCompact
+│   └── manager.py           # MemoryManager + AutoCompact
 ├── skills/
-│   └── loader.py        # SkillLoader + Skill dataclass
+│   └── loader.py            # SkillLoader + Skill dataclass
 └── subagent/
-    ├── manager.py         # SubAgentManager
-    ├── protocol.py        # ParentChannel（asyncio.Queue）
+    ├── manager.py           # SubAgentManager
+    ├── protocol.py          # ParentChannel（asyncio.Queue）
     └── parent_channel_hook.py  # mid-turn injection 实现
 
-skills/                   # 技能文件目录
+benchmarks/                  # 本地基准测试
+├── tasks/                   # 23 个编码任务（6 类别 3 难度）
+├── runner.py                # BenchmarkRunner + SWE-bench 风格隔离
+├── agent_runner.py          # AgentRunner（fake/shell/myagent 适配器）
+├── models.py                # 失败分类 + 指标模型
+├── prompt.py                # 编码 agent 提示词构建器
+└── task_schema.py           # 任务 schema 加载
+
+skills/                      # 技能文件目录
 ├── code-review.md
 └── research.md
 ```
@@ -256,11 +275,9 @@ MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-a
 
 ## Local Benchmark
 
-MyAgent includes a local coding-agent benchmark harness and task pack under
-`benchmarks/`. The harness evaluates agents in detached git worktrees, applies
-hidden evaluator tests after the agent finishes, and writes per-task artifacts.
+MyAgent 内置本地 coding-agent 基准测试系统，位于 `benchmarks/`。评测在独立 git worktree 中运行，agent 完成后应用隐藏测试补丁，产出结构化 trace 和指标。
 
-Run the deterministic fake-runner smoke test:
+### 快速验证（fake agent，确定性地）
 
 ```bash
 uv run python cli.py benchmark benchmarks/tasks \
@@ -272,22 +289,41 @@ uv run python cli.py benchmark benchmarks/tasks \
   --fake-new-string '# MyAgent Coding Agent'
 ```
 
-Run the real MyAgent runner manually when API credentials are configured:
+### 真实 agent 评测
 
 ```bash
-MYAGENT_PROVIDER=openai OPENAI_API_KEY=... \
 uv run python cli.py benchmark benchmarks/tasks \
   --agent myagent \
   --source-repo . \
-  --runs-dir /tmp/myagent-benchmark-myagent \
-  --max-iterations 30
+  --runs-dir /tmp/myagent-benchmark \
+  --max-iterations 80
 ```
 
-Each run writes `run.json`, `summary.md`, and task-level `result.json`,
-`trace.json`, `final.diff`, `test_output.txt`, and `runner.log`. Task statuses
-are `passed`, `passed_with_warnings`, `failed`, or `error`; warnings mean the
-hidden tests passed but the agent run still reported an issue such as
-`max_iterations`.
+### 任务集
+
+23 个任务从项目 git 历史中提取，覆盖 6 个类别：
+
+| 类别 | 数量 | 示例 |
+|------|------|------|
+| 工具实现 | 5 | ToolRegistry, SandboxExecutor, Read/Write 工具, Bash workspace |
+| 安全策略 | 3 | .env 写入拒绝, 路径穿越防护, Bash 命令策略 |
+| Agent 核心 | 7 | AgentLoop, MemoryManager, SkillLoader, SubAgent 系统 |
+| 可观测性 | 3 | HookManager, 日志/追踪 Hook, 重试/预算 Hook |
+| 基准设施 | 3 | 失败分类, Runner timeout, 资源泄漏修复 |
+| 提示词 | 2 | 编码系统提示词, 验证命令注入 |
+
+### 评测流程（SWE-bench 风格）
+
+1. 在任务 base_commit 创建独立 git worktree
+2. 隐藏 `benchmarks/tasks/`（agent 看不到评测文件）
+3. Agent 在 worktree 中运行
+4. 捕获 agent 改动 diff（`:!tests/` 排除测试文件）
+5. 重置 worktree，重放源码改动
+6. 应用 `test.patch`（隐藏评测测试）
+7. 运行验证命令
+8. 写入 `result.json`、`trace.json`、`final.diff`、`test_output.txt`、`runner.log`
+
+结果状态：`passed`、`passed_with_warnings`、`failed`、`error`。
 
 ## 技术栈
 
@@ -295,7 +331,7 @@ Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken（可选）
 
 ## 设计文档
 
-详细架构设计见 `docs/superpowers/specs/`：
-
-- `2026-05-06-general-purpose-agent-design.md` — 架构设计
-- `2026-05-06-reference-projects-analysis.md` — 参考项目分析
+- `docs/coding-agent-roadmap.md` — 编码 Agent 路线图（P0 已完成 / P1 进行中）
+- `docs/benchmark-plan.md` — 基准测试设计（SWE-bench 参考、任务结构、评估指标）
+- `docs/discussions/2026-06-15-p1-p3-scope-review.md` — P1 开发方案讨论纪要
+- `docs/superpowers/specs/` — 架构设计文档和参考项目分析

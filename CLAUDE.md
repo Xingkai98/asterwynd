@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language
+
+- **README.md**: Chinese (中文) — [README_EN.md](./README_EN.md) for English
+- **docs/**: Chinese (中文)
+- **AGENTS.md, CLAUDE.md**: English
+- **Code + comments**: English
+- **Commit messages**: Chinese
+
 ## Project Overview
 
 MyAgent is a lightweight general-purpose AI agent framework in Python. It is designed for interview preparation — clean architecture with every plugin subsystem independently explainable.
@@ -57,17 +65,36 @@ messages → LLM → tool_calls → execute → append results → repeat
 
 The only state it maintains is `messages: list[Message]`. All other concerns are delegated to plugins.
 
-### Five Plugin Systems
+### Six Plugin Systems
 
 Each plugin is a standalone subsystem with a clear interface:
 
 | Plugin | File | Responsibility |
 |--------|------|----------------|
 | ToolRegistry | `agent/tools/registry.py` | Dynamic tool registration + sandbox execution |
+| WorkspacePolicy | `agent/workspace_policy.py` | Workspace safety boundary (paths, files, commands) |
 | HookManager | `agent/hooks/manager.py` | Lifecycle extension points (before_iteration, before_tool_execute, etc.) |
 | MemoryManager | `agent/memory/manager.py` | Session message history + AutoCompact token compression |
 | SkillLoader | `agent/skills/loader.py` | Markdown skill file loading (YAML frontmatter + prompt body) |
 | SubAgentManager | `agent/subagent/manager.py` | Background task delegation + ParentChannel for mid-turn injection |
+| TraceRecorder | `agent/trace_recorder.py` | Full trace: iterations, tool calls, edits, tests (no truncation) |
+
+### Coding Tools (10 built-in)
+
+| Tool | File | Permission |
+|------|------|------------|
+| Read | `agent/tools/builtin/read.py` | read_only |
+| Write | `agent/tools/builtin/write.py` | read_write |
+| Edit | `agent/tools/builtin/edit.py` | read_write |
+| Bash | `agent/tools/builtin/bash.py` | dangerous |
+| Grep | `agent/tools/builtin/grep.py` | read_only |
+| InspectGitDiff | `agent/tools/builtin/inspect_git_diff.py` | read_only |
+| ListFiles | `agent/tools/builtin/list_files.py` | read_only |
+| Find | `agent/tools/builtin/find.py` | read_only |
+| WebSearch | `agent/tools/builtin/web_search.py` | read_only |
+| WebFetch | `agent/tools/builtin/web_fetch.py` | read_only |
+
+BashTool returns structured JSON (`exit_code`, `stdout`, `stderr`, `duration_ms`, `timed_out`). WorkspacePolicy enforces a prefix allowlist and regex denylist (42 patterns) for command safety. See `agent/workspace_policy.py`.
 
 ### Web UI (`web/`)
 
@@ -86,25 +113,37 @@ FastAPI + WebSocket server with vanilla JS frontend. Two views:
 
 ### Local Benchmark (`benchmarks/`)
 
-The benchmark harness runs coding-agent tasks in detached git worktrees, hides
-evaluator task files from the agent workspace, applies `test.patch` after the
-agent finishes, and writes artifacts under the configured runs directory.
+23 coding-agent tasks extracted from git history across 6 categories. SWE-bench
+style evaluation in isolated git worktrees:
 
-Relevant entry point:
+1. Create detached worktree at task `base_commit`
+2. Hide `benchmarks/tasks/` from agent workspace
+3. Run agent with coding prompt + tools
+4. Save agent source diff (`:!tests/`), reset worktree, reapply sources
+5. Apply hidden `test.patch`, run validation command
+6. Write `result.json`, `trace.json`, `final.diff`, `test_output.txt`, `runner.log`
 
 ```bash
+# Fake agent smoke
 uv run python cli.py benchmark benchmarks/tasks \
-  --agent fake \
-  --source-repo . \
-  --runs-dir /tmp/myagent-benchmark-smoke \
-  --fake-edit-file README.md \
-  --fake-old-string '# MyAgent' \
-  --fake-new-string '# MyAgent Coding Agent'
+  --agent fake --source-repo . --runs-dir /tmp/smoke
+
+# Real agent
+uv run python cli.py benchmark benchmarks/tasks \
+  --agent myagent --source-repo . --runs-dir /tmp/bench --max-iterations 80
 ```
 
-Result statuses are `passed`, `passed_with_warnings`, `failed`, and `error`.
-`passed_with_warnings` means hidden tests passed but the agent reported a
-non-clean run, commonly `max_iterations`.
+### Anthropic / DeepSeek Compatibility
+
+When using Anthropic-compatible APIs (including DeepSeek), two requirements:
+
+1. **Tool results must be batched**: consecutive `tool` messages are merged into
+   a single `user` message with multiple `tool_result` blocks.
+2. **Text before tool_use**: assistant messages must place `text` blocks before
+   `tool_use` blocks.
+
+Both are handled in `agent/anthropic_llm.py`. These changes do not affect the
+OpenAI code path.
 
 ### Adding New Capabilities
 

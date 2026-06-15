@@ -2,6 +2,14 @@
 
 Guidance for coding agents working in this repository.
 
+## Language
+
+- **README.md**: Chinese (中文) — see [README_EN.md](./README_EN.md) for English
+- **docs/**: Chinese (中文)
+- **AGENTS.md, CLAUDE.md**: English
+- **Code + comments**: English
+- **Commit messages**: Chinese
+
 ## Project
 
 MyAgent is a lightweight Python agent framework with a Typer CLI and FastAPI/WebSocket UI.
@@ -9,12 +17,15 @@ MyAgent is a lightweight Python agent framework with a Typer CLI and FastAPI/Web
 Core areas:
 
 - `agent/loop.py`: main agent loop and tool-call orchestration.
+- `agent/workspace_policy.py`: workspace safety boundary (path/filesystem/command).
+- `agent/trace_recorder.py`: full trace recording (always complete, no truncation).
 - `agent/llm.py`, `agent/openai_llm.py`, `agent/anthropic_llm.py`: LLM protocol and adapters.
-- `agent/tools/`: tool base classes, registry, sandbox, and built-in tools.
+- `agent/tools/`: tool base classes, registry, sandbox, and 10 built-in tools (Read, Write, Edit, Bash, Grep, InspectGitDiff, ListFiles, Find, WebSearch, WebFetch).
 - `agent/memory/`: message compaction.
 - `agent/subagent/`: background subagent delegation and parent channel.
+- `benchmarks/`: local coding-agent benchmark with 23 tasks, SWE-bench style evaluation.
 - `web/`: FastAPI app, session manager, debug hook, and static UI.
-- `tests/`: pytest coverage for agent, tools, subagent, CLI, and web paths.
+- `tests/`: pytest coverage for agent, tools, subagent, CLI, benchmark, and web paths.
 
 ## Commands
 
@@ -86,3 +97,5 @@ Relevant environment variables:
 - `MYAGENT_MODEL`: default model override
 - `MYAGENT_DEBUG=enabled`: enables the Debug tab and structured debug events
 - `MYAGENT_LOG_LEVEL=DEBUG`: more verbose server/CLI logging
+- `MYAGENT_COMMAND_DENYLIST`: comma-separated extra deny patterns for BashTool
+- `MYAGENT_IGNORE_PATTERNS`: comma-separated extra ignore dirs for ListFiles/Find
