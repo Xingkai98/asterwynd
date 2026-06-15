@@ -1,7 +1,7 @@
 # MyAgent Coding Agent Roadmap
 
-**Status**: Draft, P0 benchmark harness implemented
-**Date**: 2026-06-14
+**Status**: Revised after reference-repo review
+**Date**: 2026-06-15
 
 ---
 
@@ -104,13 +104,18 @@ Required coding tools:
 | Tool | Purpose |
 |------|---------|
 | `Edit` | Exact old/new string replacement in a file |
-| `Patch` | Apply structured or unified diff changes |
 | `InspectGitDiff` | Show current repository diff |
-| `RunTests` | Run configured test commands and capture structured results |
-| `ListFiles` | Discover files with workspace-aware ignore rules |
+| `ListFiles` | List directory contents with ignore rules |
+| `Find` | Recursive file search by glob pattern |
 
-The first editing primitive should be `Edit`, modeled after mainstream coding
-agents:
+`ListFiles` and `Find` share a common set of default ignore patterns
+(`.git`, `node_modules`, `__pycache__`, `.venv`, etc.) distinct from
+`WorkspacePolicy` denied patterns. Denied patterns are hard security
+boundaries (enforced by all write tools); ignore patterns are cosmetic
+noise reduction for listing/searching. Users can append custom ignore
+patterns via `MYAGENT_IGNORE_PATTERNS` in `.env`.
+
+The first editing primitive is `Edit`, modeled after mainstream coding agents:
 
 ```json
 {
@@ -129,11 +134,55 @@ Important semantics:
 - Edits must pass `WorkspacePolicy`.
 - Each successful edit should be traceable and diffable.
 
-`Patch` should be added after `Edit` is stable. It is useful for larger
-multi-file changes, but models produce malformed patches more often than simple
-exact replacements.
+`Patch` (unified diff application) was considered and rejected after reviewing 7
+reference repos. Claude Code, nanobot, and pi-mono use only exact replacement
+(no Patch tool). Models produce malformed patches more often than simple exact
+replacements. MyAgent stays with Edit only.
 
-### 4.3 Coding System Prompt
+### 4.3 BashTool with Structured Output
+
+Rather than a dedicated `RunTestsTool`, enhance `BashTool` to return structured
+output as a JSON string. All seven reference repos (claude-code, codex,
+hermes-agent, nanobot, openclaw, opencode, pi-mono) use their shell/bash tool to
+run tests — none has a dedicated test runner tool. The Tool interface
+(`execute() -> str`) remains unchanged; BashTool returns a JSON string the LLM
+can parse.
+
+Structured output fields:
+
+```text
+exit_code: int
+stdout: str
+stderr: str
+duration_ms: float
+timed_out: bool
+```
+
+This gives benchmark reports machine-readable metrics and gives the LLM clearer
+feedback than a wall of raw text.
+
+### 4.4 Command Allowlist and Denylist
+
+`BashTool` enforces command safety through two layers:
+
+- **Allowlist**: commands matching these patterns bypass deny checks. Defaults
+  include `git`, `pytest`, `python`, `uv`, `npm`, `cargo`, `make`.
+- **Denylist**: commands matching these regex patterns are rejected. Defaults
+  cover destructive ops (`rm -rf /`, `mkfs`, `dd if=`), system control
+  (`shutdown`, `reboot`), fork bombs, pipe-to-shell (`curl | sh`), and
+  destructive git (`reset --hard`, `push --force`).
+
+Both lists are extensible via environment variables:
+
+```bash
+MYAGENT_COMMAND_ALLOWLIST="npm,yarn,cargo"
+MYAGENT_COMMAND_DENYLIST="docker rm,docker system prune"
+```
+
+User entries are appended to the hardcoded defaults, so the safety baseline
+cannot be removed by configuration.
+
+### 4.5 Coding System Prompt
 
 The default system prompt currently describes a helpful tool-using assistant.
 The coding-agent mode needs a dedicated policy.
@@ -143,30 +192,29 @@ It should instruct the model to:
 - Inspect the repository before editing.
 - Prefer `Edit` for precise modifications.
 - Use `InspectGitDiff` after meaningful edits.
-- Run relevant tests before finalizing when possible.
+- Run the provided validation command before finalizing.
 - Keep changes scoped to the task.
 - Report final diff summary and test status.
 - Avoid modifying denied or unrelated files.
 
-### 4.4 TraceRecorder
+### 4.6 TraceRecorder
 
-Trace recording is now a first-class benchmark artifact and should continue to
-become a first-class interactive coding-agent capability.
+Trace recording is a first-class artifact for both benchmark and interactive use.
 
-Default trace should store structured summaries:
+Trace stores the full record of each run:
 
 - LLM iteration number.
-- Assistant response preview.
-- Tool calls and arguments, with sensitive fields redacted if needed.
-- Tool status, duration, and observation preview.
+- Full assistant response.
+- Tool calls and arguments.
+- Tool status, duration, and full observation.
 - Edit count and diff summary.
-- Test command, exit code, and output summary.
+- Test command, exit code, and output.
 - Final diff path.
 
-A `--full-trace` mode can store full messages, raw LLM responses, and complete
-tool observations for debugging.
+No truncation — tool outputs and LLM responses are captured in full. The
+overhead is negligible compared to the debugging value.
 
-### 4.5 Test Feedback Loop
+### 4.7 Test Feedback Loop
 
 The agent should be able to move through this loop:
 
@@ -174,18 +222,17 @@ The agent should be able to move through this loop:
 edit -> inspect diff -> run tests -> read failure -> edit again
 ```
 
-`RunTests` should not just return raw stdout. It should capture:
+The enhanced `BashTool` structured output captures:
 
 - Command.
 - Exit code.
 - Duration.
 - Truncated stdout/stderr.
 - Whether the command timed out.
-- Optional parsed failure summary.
 
 This gives the model better feedback and gives benchmark reports better metrics.
 
-### 4.6 Failure Taxonomy
+### 4.8 Failure Taxonomy
 
 Failures should be classified so benchmark results can guide development.
 
@@ -195,7 +242,7 @@ Initial categories:
 |----------|---------|
 | `setup_error` | Benchmark or workspace setup failed |
 | `tool_error` | Tool execution failed unexpectedly |
-| `edit_validation` | Edit/Patch could not be applied |
+| `edit_validation` | Edit could not be applied |
 | `test_failure` | Tests ran but failed |
 | `test_timeout` | Tests timed out |
 | `max_iterations` | Agent hit iteration limit |
@@ -230,64 +277,25 @@ Interview talking point:
 > proposes exact replacements, while the runtime validates workspace boundaries,
 > applies changes, and records diffs.
 
-### P1: Test-Aware Coding Agent
+### P1: Complete Coding Agent
 
-Goal: close the edit/test/fix loop.
-
-Deliverables:
-
-- `RunTestsTool`.
-- Structured test result model.
-- Better command allowlist and timeout policy.
-- Test failure feedback loop in the prompt.
-- Trace entries for test runs.
-
-Current priority:
-
-- Standardize benchmark validation commands so async tests consistently use the
-  project environment.
-- Teach the agent to verify hidden-test-like requirements by running the exact
-  visible `test_command`, not nearby test suites only.
-- Improve completion checks so the agent stops after a clean pass and continues
-  when required files were not edited.
-
-Interview talking point:
-
-> The agent is not only generating patches; it can run the same validation loop
-> a developer would run and use failures as feedback.
-
-### P2: Patch and Multi-File Changes
-
-Goal: support larger edits and stronger workflow ergonomics.
+Goal: close the edit/test/fix loop, help the agent navigate repositories, and
+make MyAgent installable as a CLI tool.
 
 Deliverables:
 
-- `PatchTool` for unified or structured diffs.
-- `ListFilesTool` with ignore rules.
-- Better diff summaries.
-- Optional full trace mode.
-- Stronger protection for generated files and sensitive files.
+- `BashTool` structured output (exit_code, stdout, stderr, duration, timed_out).
+- `BashTool` command allowlist and denylist with .env extensibility.
+- Coding prompt update: instruct the agent to run the validation command before finishing.
+- `ListFilesTool` — list directory contents with ignore rules.
+- `FindTool` — recursive file search by glob pattern.
+- Package distribution via `uv tool install` / `pip install` (add `[project.scripts]`).
 
 Interview talking point:
 
-> I separated editing protocols by reliability: exact replacement for stable
-> local edits, patch application for larger multi-file changes.
-
-### P3: Product Polish
-
-Goal: make the coding agent usable outside benchmark runs.
-
-Deliverables:
-
-- CLI coding mode.
-- Web debug timeline improvements.
-- Human-readable final reports.
-- Optional approval mode for risky commands or writes.
-
-Interview talking point:
-
-> The same runtime supports interactive use and benchmark use because workspace
-> policy, trace recording, and tools are shared.
+> The agent can run the same validation loop a developer would — edit, test, fix
+> — navigate unfamiliar repositories with file discovery tools, and install as a
+> single command. The same runtime supports interactive use and benchmark use.
 
 ## 6. Testing Strategy
 
@@ -305,19 +313,21 @@ Recommended coverage:
 |------|---------------|
 | `WorkspacePolicy` | Allows paths inside root, rejects `..` traversal, rejects absolute paths outside root, denies `.git/`, `.env*`, secrets, caches, and benchmark run artifacts |
 | `EditTool` | Exact single replacement, missing old string, ambiguous matches, `replace_all`, empty replacement, newline preservation, permission denial through `WorkspacePolicy` |
-| `PatchTool` | Valid patch application, malformed patch rejection, patch outside workspace rejection, partial failure behavior |
 | `InspectGitDiffTool` | Clean diff, modified file diff, untracked file behavior, output truncation |
-| `RunTestsTool` | Passing command, failing command, timeout, output truncation, structured exit code and duration |
-| `TraceRecorder` | Records LLM iteration summaries, tool calls, tool results, edit summaries, test summaries, redaction and full-trace mode |
+| `BashTool` | Structured output fields, command allowlist/denylist enforcement, timeout, output truncation |
+| `ListFilesTool` | Directory listing, ignore rules, workspace boundary |
+| `FindTool` | Pattern matching, recursive search, ignore rules |
+| `TraceRecorder` | Records LLM iterations, tool calls, tool results, edit summaries, test summaries |
 | Failure taxonomy | Maps known outcomes to stable categories |
 
 These should live near the existing tool tests, for example:
 
 ```text
 tests/agent/tools/test_edit_tool.py
-tests/agent/tools/test_patch_tool.py
 tests/agent/tools/test_inspect_git_diff_tool.py
-tests/agent/tools/test_run_tests_tool.py
+tests/agent/tools/test_bash_tool_structured_output.py
+tests/agent/tools/test_list_files_tool.py
+tests/agent/tools/test_find_tool.py
 tests/agent/test_workspace_policy.py
 tests/agent/test_trace_recorder.py
 ```
@@ -330,7 +340,8 @@ to verify multiple modules together.
 Recommended coverage:
 
 - `EditTool` + `WorkspacePolicy` + `InspectGitDiffTool`.
-- `RunTestsTool` executing a small local pytest suite.
+- `BashTool` executing a small local pytest suite with structured output.
+- `BashTool` allowlist/denylist enforcement.
 - TraceRecorder receiving events from a tool execution path.
 - Coding prompt builder injecting task, workspace, and test command.
 - Denied-path behavior across all write-capable tools.
@@ -379,7 +390,7 @@ build coding capability -> run benchmark -> analyze failures -> improve agent
 
 The two plans should be developed together:
 
-- Every P0/P1 coding feature should have at least one benchmark task.
+- Every P1 coding feature should have at least one benchmark task.
 - Benchmark failures should feed back into the failure taxonomy and tool design.
 - External comparisons to Claude Code and Codex should happen after MyAgent has
   a stable self-benchmark harness.
