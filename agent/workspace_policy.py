@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import fnmatch
+import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -43,15 +45,106 @@ DEFAULT_DENIED_PATTERNS = (
     "benchmarks/runs/**",
 )
 
+def _match_allowlist(command: str) -> bool:
+    """检查命令是否匹配允许列表前缀。支持子命令匹配。"""
+    safe_prefixes = [
+        # 版本控制 — 只允许读操作
+        "git status", "git log", "git diff", "git show", "git branch",
+        "git stash list", "git stash show",
+        # 测试和构建
+        "pytest", "python", "python3", "uv", "pip",
+        "npm test", "npm run", "npx", "yarn", "cargo", "make",
+        # 文件查看
+        "cat", "head", "tail", "wc", "sort", "uniq", "ls", "tree",
+        "find", "fd", "rg", "grep",
+        # 基本工具
+        "echo", "pwd", "which", "env", "df", "du", "ps",
+        # 文件操作（只允许安全操作）
+        "mkdir", "touch", "cp", "mv",
+        # 包管理
+        "pip install", "pip list", "pip show", "pip freeze",
+    ]
+    cmd_stripped = command.strip()
+    for prefix in safe_prefixes:
+        if cmd_stripped.startswith(prefix):
+            return True
+    return False
+
+DEFAULT_DENYLIST = (
+    r"rm\s+-rf\s+/",
+    r"rm\s+-r[f]?\s+/",
+    r"rm\s+--recursive\s+/",
+    r"del\s+/[fF]\s+/",
+    r"rmdir\s+/[sS]\s+/",
+    r"format\s",
+    r"mkfs\.",
+    r"dd\s+if=",
+    r">\s*/dev/sd[a-z]",
+    r"dd\s+of=/dev/",
+    r"shutdown",
+    r"reboot",
+    r"halt",
+    r"poweroff",
+    r"init\s+[06]",
+    r"systemctl\s+(stop|restart|disable)\s",
+    r"service\s+\w+\s+(stop|restart)",
+    r"kill\s+-9\s",
+    r"killall\s",
+    r"pkill\s",
+    r":\(\)\s*\{",  # fork bomb
+    r"perl\s+-e\s",
+    r"ruby\s+-e\s",
+    r"php\s+-r\s",
+    r"curl.*\|\s*(ba)?sh",
+    r"wget.*\|\s*(ba)?sh",
+    r"curl.*\|\s*(ba)?sh",
+    r"find\s+.*-exec\s+rm\s",
+    r"find\s+.*-delete\b",
+    r"xargs\s+rm\s",
+    r"git\s+reset\s+--hard",
+    r"git\s+push\s+--force",
+    r"git\s+branch\s+-D",
+    r"chmod\s+777\s+/",
+    r"chmod\s+-R\s+777",
+    r"chown\s+-R\s+root",
+    r">\s*/etc/",
+    r">\s*/proc/",
+    r">\s*/sys/",
+    r"tee\s+/etc/",
+    r"tee\s+/proc/",
+    r"sed\s+-i.*/(etc|proc|sys)/",
+    r"sudo\s",
+    r"su\s+-",
+    r"mount\s",
+    r"umount\s",
+    r"iptables\s",
+    r"nft\s",
+    r"docker\s+rm\s",
+    r"docker\s+system\s+prune",
+    r"kubectl\s+delete\s",
+    r"DROP\s+(TABLE|DATABASE)",
+    r"DELETE\s+FROM\s+\w+\s*;",  # no WHERE
+)
+
 
 class WorkspacePolicy:
     def __init__(
         self,
         workspace_root: str | Path | None = None,
         denied_patterns: tuple[str, ...] | list[str] | None = None,
+        command_denylist: tuple[str, ...] | list[str] | None = None,
     ):
         self.workspace_root = Path(workspace_root or Path.cwd()).resolve()
         self.denied_patterns = tuple(denied_patterns or DEFAULT_DENIED_PATTERNS)
+
+        denylist = list(DEFAULT_DENYLIST)
+        extra_deny = os.environ.get("MYAGENT_COMMAND_DENYLIST", "")
+        if extra_deny:
+            denylist.extend(d.strip() for d in extra_deny.split(",") if d.strip())
+        self._denylist = tuple(denylist)
+
+        if command_denylist:
+            self._denylist = tuple(command_denylist)
 
     def resolve(self, path: str | Path) -> Path:
         raw_path = Path(path)
@@ -97,17 +190,14 @@ class WorkspacePolicy:
         return resolved
 
     def assert_command_allowed(self, command: str) -> None:
-        denied_fragments = (
-            "rm -rf /",
-            "mkfs.",
-            "dd if=",
-            ":(){ :|:& };:",
-            "chmod 777 /",
-            "> /dev/sda",
-        )
-        for fragment in denied_fragments:
-            if fragment in command:
-                raise PermissionError(f"Command denied by workspace policy: {fragment}")
+        cmd_stripped = command.strip()
+
+        if _match_allowlist(cmd_stripped):
+            return
+
+        for pattern in self._denylist:
+            if re.search(pattern, cmd_stripped):
+                raise PermissionError("Command denied by workspace policy")
 
     def snapshot_git_diff(self, stat: bool = False, timeout: float = 10.0) -> str:
         args = ["git", "diff", "--stat"] if stat else ["git", "diff"]
@@ -120,4 +210,3 @@ class WorkspacePolicy:
         )
         output = (result.stdout or result.stderr).strip()
         return output or "(no changes)"
-

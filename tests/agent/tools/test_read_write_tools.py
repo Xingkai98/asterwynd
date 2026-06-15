@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from agent.tools.builtin.bash import BashTool
 from agent.tools.builtin.grep import GrepTool
@@ -73,15 +75,17 @@ async def test_write_directory_path_returns_error(tmp_path):
 async def test_bash_timeout():
     tool = BashTool()
     result = await tool.execute(cmd="sleep 1", timeout=0.05)
-    assert "Timeout" in result
+    data = json.loads(result)
+    assert data["timed_out"]
 
 
 @pytest.mark.asyncio
 async def test_bash_non_zero_exit():
     tool = BashTool()
     result = await tool.execute(cmd="sh -c 'echo failed >&2; exit 7'")
-    assert "[Exit 7]" in result
-    assert "failed" in result
+    data = json.loads(result)
+    assert data["exit_code"] == 7
+    assert data["stderr"] == "failed"
 
 
 @pytest.mark.asyncio

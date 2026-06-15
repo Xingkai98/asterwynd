@@ -1,0 +1,124 @@
+diff --git a/agent/anthropic_llm.py b/agent/anthropic_llm.py
+index 7071f55..db328a1 100644
+--- a/agent/anthropic_llm.py
++++ b/agent/anthropic_llm.py
+@@ -1,11 +1,21 @@
+ # agent/anthropic_llm.py
++import asyncio
+ import json
++import re
+ from typing import Optional
+ import httpx
+ 
+ from agent.llm import LLM, LLMResponse, ToolCallDelta
+ from agent.message import Message
+ 
++# Python string 中不允许出现的 surrogate character (U+D800-U+DFFF)
++SURROGATE_PATTERN = re.compile(r"[\ud800-\udfff]")
++
++
++def _strip_surrogates(text: str) -> str:
++    """移除字符串中的 surrogate character，避免 json.dumps() UTF-8 编码时崩溃"""
++    return SURROGATE_PATTERN.sub("\ufffd", text)
++
+ 
+ class AnthropicLLM:
+     """Anthropic Messages API 实现"""
+@@ -45,15 +55,22 @@ class AnthropicLLM:
+ 
+         for msg in messages:
+             if msg.role == "system":
+-                system_content.append({"type": "text", "text": msg.content})
++                system_content.append({"type": "text", "text": _strip_surrogates(msg.content)})
+             elif msg.role == "user":
+-                anthropic_messages.append({"role": "user", "content": msg.content})
++                anthropic_messages.append({"role": "user", "content": _strip_surrogates(msg.content)})
+             elif msg.role == "assistant":
+                 content_parts = []
+-                # 如果有 tool_calls，转换为 anthropic 格式
+-                # 这里简化处理，纯文本回复
++                # 如果有 tool_calls，转换为 tool_use content block
++                for tc in msg.tool_calls:
++                    input_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
++                    content_parts.append({
++                        "type": "tool_use",
++                        "id": tc.id,
++                        "name": tc.name,
++                        "input": input_dict,
++                    })
+                 if msg.content:
+-                    content_parts.append({"type": "text", "text": msg.content})
++                    content_parts.append({"type": "text", "text": _strip_surrogates(msg.content)})
+                 anthropic_messages.append({"role": "assistant", "content": content_parts or [{"type": "text", "text": ""}]})
+             elif msg.role == "tool":
+                 anthropic_messages.append({
+@@ -62,7 +79,7 @@ class AnthropicLLM:
+                         {
+                             "type": "tool_result",
+                             "tool_use_id": msg.tool_call_id or "",
+-                            "content": msg.content,
++                            "content": _strip_surrogates(msg.content),
+                         }
+                     ],
+                 })
+@@ -82,7 +99,9 @@ class AnthropicLLM:
+             json=payload,
+         )
+         response.raise_for_status()
+-        data = await response.json()
++        # response.json() 在标准 httpx 中是 async coroutine，但某些代理（如 MiniMax）返回同步 dict
++        raw = response.json()
++        data = await raw if asyncio.iscoroutine(raw) else raw
+ 
+         # Anthropic 的 stop_reason: end_turn, max_tokens, stop_sequence
+         stop_reason_map = {
+@@ -104,7 +123,7 @@ class AnthropicLLM:
+                         arguments=json.dumps(block["input"]) if isinstance(block["input"], dict) else str(block["input"]),
+                     ))
+                 elif block["type"] == "text":
+-                    text_content.append(block["text"])
++                    text_content.append(_strip_surrogates(block["text"]))
+ 
+             if tool_calls:
+                 return LLMResponse(
+diff --git a/agent/loop.py b/agent/loop.py
+index 385f6d8..c3c5c01 100644
+--- a/agent/loop.py
++++ b/agent/loop.py
+@@ -77,6 +77,7 @@ class AgentLoop:
+ 
+                 await self.hooks.after_tool_execute(tool_call, result)
+ 
++                messages.append(Message(role="assistant", content="", tool_calls=list(response.tool_calls)))
+                 messages.append(tool_result_message(tool_call.id, result))
+                 tool_calls_made.append(ToolCallMade(
+                     name=tool_call.name,
+diff --git a/agent/message.py b/agent/message.py
+index 46de6e9..115e62c 100644
+--- a/agent/message.py
++++ b/agent/message.py
+@@ -1,6 +1,6 @@
+ # agent/message.py
+-from dataclasses import dataclass, asdict
+-from typing import Literal, Optional
++from dataclasses import dataclass, asdict, field
++from typing import Literal, Optional, Any
+ 
+ @dataclass
+ class Message:
+@@ -8,11 +8,15 @@ class Message:
+     role: Literal["system", "user", "assistant", "tool"]
+     content: str
+     tool_call_id: Optional[str] = None
++    # tool_calls: list of ToolCallDelta, for assistant messages carrying tool_use blocks to be sent back to LLM
++    tool_calls: list = field(default_factory=list)
+ 
+     def to_dict(self) -> dict:
+         d = asdict(self)
+         if self.tool_call_id is None:
+             d.pop("tool_call_id", None)
++        if not self.tool_calls:
++            d.pop("tool_calls", None)
+         return d
+ 
+     @classmethod

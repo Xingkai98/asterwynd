@@ -1,0 +1,12 @@
+diff --git a/agent/tools/__init__.py b/agent/tools/__init__.py
+index e715918..d4fb56f 100644
+--- a/agent/tools/__init__.py
++++ b/agent/tools/__init__.py
+@@ -31,6 +31,7 @@ def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
+     policy = policy or WorkspacePolicy()
+     return [
+         ReadTool(),
++        WriteTool(policy=policy),
+         EditTool(policy=policy),
+         InspectGitDiffTool(policy=policy),
+         GrepTool(),

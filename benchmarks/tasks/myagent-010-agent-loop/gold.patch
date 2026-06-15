@@ -1,0 +1,113 @@
+diff --git a/agent/loop.py b/agent/loop.py
+new file mode 100644
+index 0000000..385f6d8
+--- /dev/null
++++ b/agent/loop.py
+@@ -0,0 +1,106 @@
++# agent/loop.py
++import logging
++from typing import Optional, TYPE_CHECKING
++
++from agent.message import Message, tool_result_message
++from agent.result import RunResult, StopReason, ToolCallMade
++from agent.tools.base import ToolCall
++from agent.llm import LLMResponse, ToolCallDelta
++from agent.hooks.manager import HookManager
++from agent.tools.registry import ToolRegistry
++from agent.memory.manager import MemoryManager
++from agent.subagent.manager import SubAgentManager
++
++if TYPE_CHECKING:
++    from agent.llm import LLM
++
++logger = logging.getLogger("myagent.loop")
++
++class AgentLoop:
++    def __init__(
++        self,
++        llm: "LLM",
++        tool_registry: ToolRegistry,
++        hooks: Optional[HookManager] = None,
++        memory: Optional[MemoryManager] = None,
++        subagent_manager: Optional[SubAgentManager] = None,
++        max_iterations: int = 20,
++    ):
++        self.llm = llm
++        self.tool_registry = tool_registry
++        self.hooks = hooks or HookManager()
++        self.memory = memory or MemoryManager()
++        self.subagent_manager = subagent_manager or SubAgentManager()
++        self.max_iterations = max_iterations
++
++    async def run(self, messages: list[Message]) -> RunResult:
++        tool_calls_made: list[ToolCallMade] = []
++
++        for iteration in range(self.max_iterations):
++            await self.hooks.before_iteration(iteration, messages)
++
++            tool_schemas = self.tool_registry.get_all_schemas()
++
++            response = await self.llm.chat(
++                messages=messages,
++                tools=tool_schemas if tool_schemas else None,
++            )
++            await self.hooks.after_llm_call(response)
++
++            if not response.tool_calls:
++                await self.hooks.on_completion(RunResult(
++                    content=response.content or "",
++                    stop_reason=StopReason.END_TURN,
++                    tool_calls_made=tool_calls_made,
++                ))
++                return RunResult(
++                    content=response.content or "",
++                    stop_reason=StopReason.END_TURN,
++                    tool_calls_made=tool_calls_made,
++                )
++
++            for delta in response.tool_calls:
++                tool_call = ToolCall(
++                    id=delta.id,
++                    name=delta.name,
++                    arguments=self._parse_arguments(delta.arguments),
++                )
++
++                await self.hooks.before_tool_execute(tool_call)
++
++                try:
++                    result = await self.tool_registry.execute(tool_call)
++                except Exception as e:
++                    logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
++                    await self.hooks.on_error(e)
++                    result = f"[Error: {e}]"
++
++                await self.hooks.after_tool_execute(tool_call, result)
++
++                messages.append(tool_result_message(tool_call.id, result))
++                tool_calls_made.append(ToolCallMade(
++                    name=tool_call.name,
++                    arguments=tool_call.arguments,
++                    result=result,
++                ))
++
++            self.memory.compact_if_needed()
++
++        logger.warning(f"[AgentLoop] 达到最大迭代次数 {self.max_iterations}")
++        await self.hooks.on_completion(RunResult(
++            content=messages[-1].content if messages else "",
++            stop_reason=StopReason.MAX_ITERATIONS,
++            tool_calls_made=tool_calls_made,
++        ))
++        return RunResult(
++            content=messages[-1].content if messages else "",
++            stop_reason=StopReason.MAX_ITERATIONS,
++            tool_calls_made=tool_calls_made,
++        )
++
++    def _parse_arguments(self, arguments: str) -> dict:
++        import json
++        try:
++            return json.loads(arguments)
++        except json.JSONDecodeError:
++            return {}
+\ No newline at end of file

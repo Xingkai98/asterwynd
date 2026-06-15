@@ -1,0 +1,135 @@
+diff --git a/agent/subagent/manager.py b/agent/subagent/manager.py
+new file mode 100644
+index 0000000..fa0ef9b
+--- /dev/null
++++ b/agent/subagent/manager.py
+@@ -0,0 +1,76 @@
++# agent/subagent/manager.py
++import asyncio
++import uuid
++from typing import Optional, TYPE_CHECKING
++
++if TYPE_CHECKING:
++    from agent.llm import LLM
++    from agent.message import Message
++    from agent.subagent.protocol import ParentChannel
++
++class SubAgentManager:
++    def __init__(self):
++        self._subagents: dict[str, asyncio.Task] = {}
++        self._channels: dict[str, "ParentChannel"] = {}
++
++    async def delegate(
++        self,
++        task: str,
++        tools: list,
++        model: str,
++        llm: Optional["LLM"],
++    ) -> str:
++        subagent_id = uuid.uuid4().hex[:8]
++        from agent.subagent.protocol import ParentChannel
++        channel = ParentChannel(parent_id="main", subagent_id=subagent_id)
++        self._channels[subagent_id] = channel
++
++        t = asyncio.create_task(
++            self._run_subagent(subagent_id, task, tools, model, llm, channel)
++        )
++        self._subagents[subagent_id] = t
++        return subagent_id
++
++    async def _run_subagent(
++        self,
++        subagent_id: str,
++        task: str,
++        tools: list,
++        model: str,
++        llm: Optional["LLM"],
++        channel: "ParentChannel",
++    ):
++        try:
++            if llm is None:
++                result = f"[SubAgent {subagent_id}] LLM not configured"
++            else:
++                from agent.message import Message
++                messages = [
++                    Message(role="system", content=f"你是一个子 agent，任务：{task}"),
++                    Message(role="user", content=task),
++                ]
++                response = await llm.chat(messages, model=model)
++                result = response.content or "[无内容返回]"
++
++            channel.put_result(result, tool_call_id=f"subagent_{subagent_id}", task=task)
++        except Exception as e:
++            channel.put_result(f"[Error] {e}", tool_call_id=f"subagent_{subagent_id}", task=task)
++        finally:
++            self._subagents.pop(subagent_id, None)
++
++    def get_channel(self, subagent_id: str) -> Optional["ParentChannel"]:
++        return self._channels.get(subagent_id)
++
++    def list_subagents(self) -> list[str]:
++        return list(self._subagents.keys())
++
++    async def cancel(self, subagent_id: str) -> bool:
++        task = self._subagents.pop(subagent_id, None)
++        if task:
++            task.cancel()
++            try:
++                await task
++            except asyncio.CancelledError:
++                pass
++            return True
++        return False
+\ No newline at end of file
+diff --git a/agent/subagent/parent_channel_hook.py b/agent/subagent/parent_channel_hook.py
+new file mode 100644
+index 0000000..958e2d7
+--- /dev/null
++++ b/agent/subagent/parent_channel_hook.py
+@@ -0,0 +1,45 @@
++# agent/subagent/parent_channel_hook.py
++"""
++ParentChannelHook：把子 agent 结果注入父 agent 当前轮次。
++"""
++import asyncio
++from typing import TYPE_CHECKING
++from agent.hooks.manager import Hook
++
++if TYPE_CHECKING:
++    from agent.message import Message
++    from agent.result import RunResult
++    from agent.llm import LLMResponse
++    from agent.tools.base import ToolCall
++    from agent.subagent.protocol import SubAgentResult, ParentChannel
++
++class ParentChannelHook(Hook):
++    def __init__(
++        self,
++        subagent_id: str,
++        channel: "ParentChannel",
++        parent_messages: list["Message"],
++    ):
++        self.subagent_id = subagent_id
++        self.channel = channel
++        self.parent_messages = parent_messages
++
++    async def after_tool_execute(self, tool_call: "ToolCall", result: str) -> None:
++        try:
++            sub_result: "SubAgentResult" = await self.channel.get_result(timeout=0.01)
++            from agent.message import Message
++            self.parent_messages.append(
++                Message(
++                    role="tool",
++                    content=sub_result.result,
++                    tool_call_id=sub_result.tool_call_id,
++                )
++            )
++        except asyncio.TimeoutError:
++            pass
++
++    async def before_iteration(self, iteration: int, messages: list["Message"]) -> None: pass
++    async def after_llm_call(self, response: "LLMResponse") -> None: pass
++    async def before_tool_execute(self, tool_call: "ToolCall") -> None: pass
++    async def on_error(self, error: Exception) -> None: pass
++    async def on_completion(self, result: "RunResult") -> None: pass
+\ No newline at end of file

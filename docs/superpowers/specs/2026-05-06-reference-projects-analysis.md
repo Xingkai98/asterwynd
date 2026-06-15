@@ -414,6 +414,32 @@ src/skills/bundled/
 
 ---
 
+## 8.5. Updated Analysis (2026-06-15)
+
+Seven repos now available at `/home/shared/agent-study/repos/` (added codex,
+opencode, pi-mono). Key findings from the expanded review:
+
+### Tool Design
+
+| Decision | Finding |
+|----------|---------|
+| RunTestsTool | None of 7 repos has a dedicated test runner tool. All use shell/bash. |
+| PatchTool | Claude Code, nanobot, pi-mono use Edit-only. Models produce malformed patches more often than exact replacements. |
+| File listing | 4/7 repos provide dedicated ls/glob tools. MyAgent has none — ListFilesTool + FindTool needed. |
+| Shell output format | Three tiers: raw text (nanobot, openclaw, pi-mono), JSON structured (hermes-agent), fully typed internal (codex). |
+| Command filtering | Claude Code has most sophisticated (flag-level allowlist). hermes/nanobot use regex deny patterns with user overrides. |
+
+### Naming Convention
+
+MyAgent uses `FindTool` (not `GlobTool`) for recursive file search — more
+intuitive, consistent with Unix `find`. `ListFilesTool` for flat directory
+listing.
+
+These findings informed the P1 scope documented in
+`docs/coding-agent-roadmap.md` and `docs/benchmark-plan.md`.
+
+---
+
 ## 9. Common Architectural Insights
 
 ### 9.1 所有项目都遵循的核心原则

@@ -19,13 +19,14 @@ def test_trace_recorder_records_required_step_types(tmp_path):
     ]
 
 
-def test_trace_recorder_truncates_by_default():
+def test_trace_recorder_preserves_full_observation():
     recorder = TraceRecorder(task_id="task-1")
-    recorder.record_tool_result("Bash", "ok", 1, "x" * 1000)
+    long_output = "x" * 1000
+    recorder.record_tool_result("Bash", "ok", 1, long_output)
 
-    output = recorder.to_dict()["steps"][0]["data"]["observation_preview"]
-    assert len(output) < 600
-    assert "truncated" in output
+    output = recorder.to_dict()["steps"][0]["data"]["observation"]
+    assert len(output) == 1000
+    assert output == long_output
 
 
 def test_trace_recorder_writes_json(tmp_path):
@@ -36,4 +37,3 @@ def test_trace_recorder_writes_json(tmp_path):
     recorder.write_to_file(path)
 
     assert json.loads(path.read_text())["task_id"] == "task-1"
-

@@ -1,7 +1,7 @@
 # MyAgent Benchmark Plan
 
-**Status**: Draft
-**Date**: 2026-06-14
+**Status**: Revised after reference-repo review
+**Date**: 2026-06-15
 
 ---
 
@@ -209,7 +209,7 @@ Task:
 Requirements:
 - Modify only files inside the workspace.
 - Keep the change scoped to the task.
-- Run this validation command before finishing when possible:
+- Run this validation command before finishing:
   <test_command>
 - Report the final diff summary and test result.
 ```
@@ -400,6 +400,10 @@ Later metrics:
 - Hidden-test pass/fail.
 - Agent self-reported confidence.
 
+`passed_with_warnings` means the final validation command passed, but the agent
+runner reported a non-clean process outcome such as `max_iterations`. It should
+count separately from a clean pass when evaluating agent quality.
+
 ## 12. Failure Taxonomy
 
 Initial categories:
@@ -408,7 +412,7 @@ Initial categories:
 |----------|---------|
 | `setup_error` | Worktree, checkout, dependency, or environment setup failed |
 | `tool_error` | Tool failed unexpectedly |
-| `edit_validation` | Edit or patch could not be applied |
+| `edit_validation` | Edit could not be applied |
 | `test_failure` | Tests ran and failed |
 | `test_timeout` | Validation command timed out |
 | `max_iterations` | Agent hit max iteration limit |
@@ -416,39 +420,90 @@ Initial categories:
 | `out_of_scope_change` | Agent changed denied or unrelated files |
 | `model_failure` | Agent stopped without a useful solution |
 
-`passed_with_warnings` is reserved for cases where the hidden validation command
-passed but the agent runner reported a non-clean outcome, such as
-`max_iterations`. This keeps product correctness separate from agent process
-quality.
+## 12.1 Current Implementation Snapshot
+
+Implemented:
+
+- Task schema loading from `benchmarks/tasks/<task-id>/task.json`.
+- Detached git worktree execution at each task's `base_commit`.
+- Fake, shell, and MyAgent runner adapters.
+- Coding-agent prompt builder for benchmark runs.
+- Hidden `test.patch` application after the agent finishes.
+- Per-task `result.json`, `trace.json`, `final.diff`, `test_output.txt`, and
+  `runner.log`.
+- Run-level `run.json` and `summary.md`.
+- `passed_with_warnings` for test-passing but non-clean agent runs.
+- P0 local task pack:
+  - `myagent-readme-title`
+  - `myagent-002-myagent-runner`
+  - `myagent-003-agentloop-trace`
+  - `myagent-004-benchmark-cli`
+
+Recent real MyAgent benchmark results:
+
+| Run | Max Iterations | Passed | Warnings | Failed | Main Signal |
+|-----|----------------|--------|----------|--------|-------------|
+| `2026-06-14T15-12-53` | 20 | 2 | 0 | 2 | Two medium tasks produced no useful diff before max iterations. |
+| `2026-06-14T16-57-13` | 50 | 2 | 0 | 2 | The agent edited code for the failed tasks, but 002 exposed async-test dependency assumptions and 003 missed trace propagation through `MyAgentRunner`. |
+
+Current interpretation: the benchmark harness is healthy enough to guide
+development. The remaining failures primarily reflect MyAgent coding-agent
+capability and benchmark environment sharp edges, not missing artifact capture
+or task isolation.
+
+### Recent Design Decisions (2026-06-15)
+
+After reviewing 7 reference repos (claude-code, codex, hermes-agent, nanobot,
+openclaw, opencode, pi-mono):
+
+- **No RunTestsTool.** All 7 repos use their shell/bash tool to run tests.
+  MyAgent will enhance BashTool with structured JSON output instead.
+- **No PatchTool.** Claude Code, nanobot, and pi-mono use Edit-only with exact
+  replacement. Models produce malformed patches more often than exact
+  replacements.
+- **ListFilesTool + FindTool added.** 4/7 repos provide dedicated file listing
+  tools. MyAgent currently has no file discovery mechanism. Ignore patterns are
+  separate from WorkspacePolicy denied patterns — user-extensible via
+  `MYAGENT_IGNORE_PATTERNS`.
+- **BashTool gets command allowlist/denylist.** Following hermes-agent and
+  nanobot's pattern of regex-based deny patterns with user-extensible allow
+  patterns via environment variables.
+- **BashTool returns JSON string.** `execute() -> str` interface unchanged;
+  structured fields encoded as JSON for LLM and benchmark consumption.
+- **Trace always full.** No truncation, no `--full-trace` flag. Overhead is
+  negligible, debugging value is high.
+- **Test patch isolation follows SWE-bench pattern.** Before applying `test.patch`,
+  the runner saves the agent's source-only diff (`git diff -- ':!tests/'`),
+  resets the worktree to the base commit, reapplies the source diff, then applies
+  `test.patch` on a clean test directory. This prevents conflicts when the agent
+  creates or modifies test files during its run.
 
 ## 13. First Task Set
 
-Start with local MyAgent tasks, grouped around the coding-agent roadmap.
+Tasks are selected from the repository's git history. Each task corresponds to
+a real commit, giving a realistic problem statement from the commit message, an
+automatically-generated `gold.patch` from `git diff base_commit..commit`, and a
+validation command from the associated tests.
 
-Candidate tasks:
+Selection criteria:
 
-| ID | Category | Task |
-|----|----------|------|
-| `myagent-001-edit-tool` | feature | Implement exact replacement `EditTool` |
-| `myagent-002-edit-multiple-match` | bugfix | Make `EditTool` fail on ambiguous matches |
-| `myagent-003-policy-deny-env` | security | Deny writes to `.env*` |
-| `myagent-004-policy-root-escape` | security | Deny path traversal outside workspace |
-| `myagent-005-inspect-git-diff` | feature | Add diff inspection tool |
-| `myagent-006-run-tests-tool` | feature | Add structured test runner tool |
-| `myagent-007-trace-tool-calls` | observability | Record tool calls in trace |
-| `myagent-008-trace-edit-diff` | observability | Record diff summary after edits |
-| `myagent-009-task-schema` | benchmark | Parse benchmark task schema |
-| `myagent-010-single-task-runner` | benchmark | Run one benchmark task in a worktree |
-| `myagent-011-result-json` | benchmark | Write task result JSON |
-| `myagent-012-failure-taxonomy` | benchmark | Classify common failures |
-| `myagent-013-coding-prompt` | agent | Inject coding-agent system prompt |
-| `myagent-014-benchmark-cli` | benchmark | Add CLI entry for benchmark runs |
-| `myagent-015-debug-turn-id` | web | Preserve chat turn identity in debug timeline |
-| `myagent-016-output-truncation` | tools | Truncate long tool results consistently |
-| `myagent-017-bash-timeout` | tools | Improve command timeout reporting |
-| `myagent-018-dirty-worktree-guard` | benchmark | Guard against dirty benchmark sources |
-| `myagent-019-worktree-runner` | benchmark | Create and clean task worktrees |
-| `myagent-020-external-runner-skeleton` | benchmark | Add shell-based runner adapter skeleton |
+- Change size is manageable (not a full rewrite).
+- A verifiable test command exists.
+- Covers diverse categories: edit correctness, security, observability, file
+  discovery, bash tooling.
+
+Candidate categories (19 tasks total from git history):
+
+| Category | Count | Example task |
+|----------|-------|-------------|
+| Edit correctness | 4 | Exact replacement, ambiguous match, empty string, replace_all |
+| Security / policy | 3 | Deny .env writes, path traversal, bash command deny |
+| Tool capability | 4 | InspectGitDiff, ListFiles, Find, Bash structured output |
+| Observability | 3 | Trace tool calls, trace edits, trace completeness |
+| Benchmark infra | 4 | Task schema, single-task runner, result JSON, summary report |
+| Agent prompt | 2 | Coding prompt injection, test command discipline |
+
+Detailed task design and commit selection deferred to implementation phase. |
 
 ## 14. Testing Strategy
 
@@ -464,10 +519,10 @@ Recommended coverage:
 |------|---------------|
 | Task schema parser | Required fields, optional `gold_patch_file` and `test_patch_file`, relative file resolution, invalid JSON, missing issue file |
 | Task model validation | Invalid timeout, duplicate IDs, unsupported difficulty/category values if constrained |
-| Prompt builder | Converts `problem_statement` into an agent-specific prompt without exposing `gold.patch` or `test.patch` |
+| Prompt builder | Converts `problem_statement` into an agent-specific prompt, includes validation command instruction |
 | Result model | Serializes `result.json`, stable status values, token fields optional |
 | Failure taxonomy | Maps setup, timeout, test failure, no diff, and max iteration outcomes |
-| Trace writer | Writes summary trace, supports full-trace flag, truncates large outputs |
+| Trace writer | Writes full trace with all iterations, tool calls, and observations |
 | Summary renderer | Produces deterministic `summary.md` tables |
 
 Suggested files:
@@ -548,32 +603,22 @@ keys, model behavior, and cost.
 - Worktree runner. Implemented.
 - MyAgent runner. Implemented.
 - Result files. Implemented.
-- 3-5 local tasks. Implemented with the P0 local task pack in
-  `benchmarks/tasks/`.
-- Warning status for test-passing but non-clean agent runs. Implemented as
-  `passed_with_warnings`.
+- 3-5 local tasks. Implemented with the P0 local task pack.
+- Warning status for test-passing but non-clean agent runs. Implemented.
 
-### P1: Useful Evaluation
+### P1: Complete Benchmark (merged from former P1-P3)
 
-- 20 local tasks.
-- Trace JSON.
-- Failure taxonomy.
-- Summary markdown.
-- Optional gold patch storage.
+- BashTool structured output (exit_code, stdout, stderr, duration, timed_out).
+- Coding prompt updated to instruct running validation command before finishing.
+- Command allowlist and denylist with .env extensibility.
+- ListFilesTool and FindTool with ignore rules (separate from WorkspacePolicy).
+- Apply `test.patch` only after agent completion with hidden test status.
+- 19 new local tasks extracted from git history (plus 4 existing P0 tasks = 23 total).
+- ShellCommandRunner for baseline comparisons.
+- Package distribution via `uv tool install` / `pip install`.
 
-### P2: Hidden Tests
-
-- Apply `test.patch` only after agent completion.
-- Keep hidden test files outside the agent-visible workspace.
-- Add hidden-test status to metrics.
-
-### P3: Cross-Agent Comparison
-
-- `ShellCommandRunner`.
-- Claude Code adapter.
-- Codex adapter.
-- Same task set, same timeout, same output schema.
-- Comparative summary report.
+External adapters (Claude Code, Codex) and comparative reports deferred to a
+future phase.
 
 ## 16. Relationship to Coding Agent Roadmap
 

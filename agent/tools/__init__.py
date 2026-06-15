@@ -12,6 +12,8 @@ from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.grep import GrepTool
 from agent.tools.builtin.edit import EditTool
 from agent.tools.builtin.inspect_git_diff import InspectGitDiffTool
+from agent.tools.builtin.list_files import ListFilesTool
+from agent.tools.builtin.find import FindTool
 from agent.workspace_policy import WorkspacePolicy
 
 def get_default_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
@@ -34,6 +36,8 @@ def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
         WriteTool(policy=policy),
         EditTool(policy=policy),
         InspectGitDiffTool(policy=policy),
+        ListFilesTool(policy=policy),
+        FindTool(policy=policy),
         GrepTool(),
         BashTool(policy=policy),
     ]
@@ -50,6 +54,8 @@ __all__ = [
     "WriteTool",
     "EditTool",
     "InspectGitDiffTool",
+    "ListFilesTool",
+    "FindTool",
     "BashTool",
     "WebSearchTool",
     "WebFetchTool",

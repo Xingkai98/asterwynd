@@ -1,0 +1,222 @@
+diff --git a/tests/agent/test_anthropic_llm.py b/tests/agent/test_anthropic_llm.py
+index 7553365..fc2e7f4 100644
+--- a/tests/agent/test_anthropic_llm.py
++++ b/tests/agent/test_anthropic_llm.py
+@@ -1,5 +1,6 @@
+ # tests/agent/test_anthropic_llm.py
+-"""AnthropicLLM 专项测试：MiniMax 兼容、surrogate 过滤、tool_use block"""
++"""AnthropicLLM 专项测试：SSE 流式解析、surrogate 过滤、tool_use block"""
++import json as _json
+ import pytest
+ from unittest.mock import AsyncMock, MagicMock, patch
+ from agent.anthropic_llm import AnthropicLLM, _strip_surrogates
+@@ -7,6 +8,52 @@ from agent.message import Message
+ from agent.llm import ToolCallDelta
+ 
+ 
++# ---------------------------------------------------------------------------
++# 工具函数
++# ---------------------------------------------------------------------------
++
++def _text_sse_lines(text: str, stop_reason: str = "end_turn") -> list[str]:
++    """构建简单文本响应的 SSE 行。"""
++    return [
++        "event: message_start",
++        'data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","model":"claude","content":[]}}',
++        "event: content_block_start",
++        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
++        "event: content_block_delta",
++        f'data: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{text}"}}}}',
++        "event: content_block_stop",
++        'data: {"type":"content_block_stop","index":0}',
++        "event: message_delta",
++        f'data: {{"type":"message_delta","delta":{{"stop_reason":"{stop_reason}"}},"usage":{{"output_tokens":1}}}}',
++        "event: message_stop",
++        'data: {"type":"message_stop"}',
++    ]
++
++
++def _mock_sse_stream(lines: list[str]):
++    """创建 mock httpx stream context manager，返回 SSE lines。
++
++    用法: mock_stream.return_value = _mock_sse_stream(lines)
++    用法: mock_stream.side_effect = lambda url, json=None, **kw: (_capture(json), _mock_sse_stream(lines))[1]
++    """
++    class _StreamResponse:
++        def __init__(self):
++            self.status_code = 200
++        def raise_for_status(self):
++            pass
++        async def aiter_lines(self):
++            for line in lines:
++                yield line
++
++    class _StreamCtx:
++        async def __aenter__(self):
++            return _StreamResponse()
++        async def __aexit__(self, *a):
++            pass
++
++    return _StreamCtx()
++
++
+ # ---------------------------------------------------------------------------
+ # _strip_surrogates 单元测试
+ # ---------------------------------------------------------------------------
+@@ -31,29 +78,20 @@ def test_strip_surrogates_empty():
+ 
+ 
+ # ---------------------------------------------------------------------------
+-# AnthropicLLM.chat 集成测试（mock httpx）
++# AnthropicLLM.chat 集成测试（mock httpx stream）
+ # ---------------------------------------------------------------------------
+ 
+ @pytest.mark.asyncio
+ async def test_anthropic_llm_sync_json_response():
+     """
+-    MiniMax 代理返回的 response.json() 是同步 dict，不是 coroutine。
+-    AnthropicLLM 应该能正确处理（不报 'object dict can't be used in await'）。
++    流式 SSE 返回文本响应，应正确解析出 content 和 stop_reason。
+     """
+     llm = AnthropicLLM(api_key="test-key", base_url="https://api.minimaxi.com/anthropic")
+ 
+-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+-        mock_response = MagicMock()
+-        # MiniMax 行为：response.json() 返回同步 dict（不是 coroutine）
+-        mock_response.json = MagicMock(return_value={
+-            "id": "msg_test",
+-            "type": "message",
+-            "role": "assistant",
+-            "content": [{"type": "text", "text": "Hello from MiniMax!"}],
+-            "stop_reason": "end_turn",
+-        })
+-        mock_response.raise_for_status = MagicMock()
+-        mock_post.return_value = mock_response
++    with patch("httpx.AsyncClient.stream") as mock_stream:
++        mock_stream.return_value = _mock_sse_stream(
++            _text_sse_lines("Hello from MiniMax!")
++        )
+ 
+         messages = [Message(role="user", content="hi")]
+         response = await llm.chat(messages, model="MiniMax/Abab6.5s")
+@@ -66,23 +104,14 @@ async def test_anthropic_llm_sync_json_response():
+ @pytest.mark.asyncio
+ async def test_anthropic_llm_async_json_response():
+     """
+-    标准 Anthropic API 的 response.json() 是 async coroutine。
+-    验证两种模式共存都正常工作。
++    标准 Anthropic API 流式 SSE 返回文本响应。
+     """
+     llm = AnthropicLLM(api_key="test-key")
+ 
+-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+-        mock_response = MagicMock()
+-        # 标准 httpx 行为：response.json() 是 async coroutine
+-        mock_response.json = AsyncMock(return_value={
+-            "id": "msg_test",
+-            "type": "message",
+-            "role": "assistant",
+-            "content": [{"type": "text", "text": "Hello from Anthropic!"}],
+-            "stop_reason": "end_turn",
+-        })
+-        mock_response.raise_for_status = MagicMock()
+-        mock_post.return_value = mock_response
++    with patch("httpx.AsyncClient.stream") as mock_stream:
++        mock_stream.return_value = _mock_sse_stream(
++            _text_sse_lines("Hello from Anthropic!")
++        )
+ 
+         messages = [Message(role="user", content="hi")]
+         response = await llm.chat(messages, model="claude-sonnet-4-20250514")
+@@ -98,23 +127,14 @@ async def test_anthropic_llm_surrogate_in_user_message():
+     """
+     llm = AnthropicLLM(api_key="test-key")
+ 
+-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
++    with patch("httpx.AsyncClient.stream") as mock_stream:
+         captured_payload = {}
+ 
+-        async def capture_post(url, json=None, **kwargs):
+-            captured_payload["json"] = json
+-            mock_response = MagicMock()
+-            mock_response.json = AsyncMock(return_value={
+-                "id": "msg_test",
+-                "type": "message",
+-                "role": "assistant",
+-                "content": [{"type": "text", "text": "received"}],
+-                "stop_reason": "end_turn",
+-            })
+-            mock_response.raise_for_status = MagicMock()
+-            return mock_response
+-
+-        mock_post.side_effect = capture_post
++        def capture_stream(*args, **kwargs):
++            captured_payload["json"] = kwargs.get("json")
++            return _mock_sse_stream(_text_sse_lines("received"))
++
++        mock_stream.side_effect = capture_stream
+ 
+         messages = [
+             Message(role="user", content="hello\udce4world"),  # 含 surrogate
+@@ -132,24 +152,16 @@ async def test_anthropic_llm_surrogate_in_user_message():
+ @pytest.mark.asyncio
+ async def test_anthropic_llm_surrogate_in_response_text():
+     """
+-    API 返回的 text block 含 surrogate 字符时，应该被正确过滤。
++    API 返回的 text_delta 含 surrogate 字符时，应该被正确过滤。
+     """
+     llm = AnthropicLLM(api_key="test-key")
+ 
+-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+-        mock_response = MagicMock()
+-        # 模拟 MiniMax 返回含 surrogate 的 thinking 字段混入 content
+-        mock_response.json = MagicMock(return_value={
+-            "id": "msg_test",
+-            "type": "message",
+-            "role": "assistant",
+-            "content": [
+-                {"type": "text", "text": "normal text\udce4with surrogates"}
+-            ],
+-            "stop_reason": "end_turn",
+-        })
+-        mock_response.raise_for_status = MagicMock()
+-        mock_post.return_value = mock_response
++    with patch("httpx.AsyncClient.stream") as mock_stream:
++        # 直接构造含 surrogates 的 SSE delta
++        surr_text = "normal text\udce4with surrogates"
++        mock_stream.return_value = _mock_sse_stream(
++            _text_sse_lines(surr_text)
++        )
+ 
+         messages = [Message(role="user", content="hi")]
+         response = await llm.chat(messages, model="MiniMax/Abab6.5s")
+@@ -167,23 +179,14 @@ async def test_anthropic_llm_tool_use_block_conversion():
+     """
+     llm = AnthropicLLM(api_key="test-key")
+ 
+-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
++    with patch("httpx.AsyncClient.stream") as mock_stream:
+         captured_payload = {}
+ 
+-        async def capture_post(url, json=None, **kwargs):
+-            captured_payload["json"] = json
+-            mock_response = MagicMock()
+-            mock_response.json = AsyncMock(return_value={
+-                "id": "msg_test",
+-                "type": "message",
+-                "role": "assistant",
+-                "content": [{"type": "text", "text": "done"}],
+-                "stop_reason": "end_turn",
+-            })
+-            mock_response.raise_for_status = MagicMock()
+-            return mock_response
+-
+-        mock_post.side_effect = capture_post
++        def capture_stream(*args, **kwargs):
++            captured_payload["json"] = kwargs.get("json")
++            return _mock_sse_stream(_text_sse_lines("done"))
++
++        mock_stream.side_effect = capture_stream
+ 
+         # 模拟 AgentLoop 发来的消息结构：user -> assistant(tool_calls) -> tool_result
+         messages = [

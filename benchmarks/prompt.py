@@ -33,7 +33,7 @@ class CodingPromptBuilder:
 Task:
 {problem_statement.strip()}
 
-Validation command used by the benchmark evaluator:
+Validation command (run this after making changes):
 {task.test_command}
 
 Requirements:

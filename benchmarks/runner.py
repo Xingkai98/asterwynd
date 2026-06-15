@@ -258,6 +258,43 @@ class BenchmarkRunner:
         return _run_git(["diff", "--stat"], workspace) or "(no changes)"
 
     def _apply_test_patch(self, workspace: Path, patch_path: Path) -> None:
+        # SWE-bench pattern: isolate test files from agent modifications.
+        # Stage all agent changes (including untracked new files), save a
+        # source-only diff (excluding tests/), reset the worktree to the clean
+        # base commit, re-apply the source diff, then apply test.patch on the
+        # clean test directory.
+        source_patch = workspace / ".agent_source.patch"
+        subprocess.run(
+            ["git", "add", "-A", "--", ":!benchmarks/tasks/"],
+            cwd=workspace, timeout=10,
+        )
+        source_result = subprocess.run(
+            ["git", "diff", "--cached", "--", ":!tests/"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if source_result.stdout.strip():
+            source_patch.write_text(source_result.stdout)
+            subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=workspace, timeout=10)
+            subprocess.run(["git", "clean", "-fd"], cwd=workspace, timeout=10)
+            subprocess.run(
+                ["git", "apply", str(source_patch)],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        else:
+            subprocess.run(["git", "checkout", "HEAD", "--", "tests/"], cwd=workspace, timeout=10)
+            subprocess.run(["git", "clean", "-fd", "--", "tests/"], cwd=workspace, timeout=10)
+
+        try:
+            source_patch.unlink(missing_ok=True)
+        except Exception:
+            pass
+
         patch = subprocess.run(
             ["git", "apply", str(patch_path)],
             cwd=workspace,

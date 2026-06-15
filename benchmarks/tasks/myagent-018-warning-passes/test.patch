@@ -1,0 +1,64 @@
+diff --git a/tests/benchmark/test_benchmark_runner.py b/tests/benchmark/test_benchmark_runner.py
+index c684852..1ade8b6 100644
+--- a/tests/benchmark/test_benchmark_runner.py
++++ b/tests/benchmark/test_benchmark_runner.py
+@@ -25,6 +25,20 @@ class AssertHiddenAndEditRunner(AgentRunner):
+         )
+ 
+ 
++class WarningEditRunner(AgentRunner):
++    async def run(self, task, problem_statement, workspace, output_dir, trace):
++        target = workspace / "app.py"
++        target.write_text(target.read_text().replace("Version 1", "Version 2"))
++        trace.record_edit("app.py", "ok", "Version 1 -> Version 2")
++        return AgentRunResult(
++            status="error",
++            iterations=20,
++            tool_calls=3,
++            edit_count=1,
++            failure_category="max_iterations",
++        )
++
++
+ @pytest.fixture
+ def repo(tmp_path):
+     repo = tmp_path / "repo"
+@@ -83,6 +97,33 @@ def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
+     assert "benchmarks/tasks" not in final_diff
+ 
+ 
++def test_benchmark_runner_reports_passed_with_warnings(repo, tmp_path):
++    base_commit = _git_out(repo, "rev-parse", "HEAD")
++    task_dir = _task_dir(
++        tmp_path,
++        base_commit=base_commit,
++        test_command="grep -q 'Version 2' app.py",
++    )
++    runner = BenchmarkRunner(
++        agent_runner=WarningEditRunner(),
++        source_repo=repo,
++        runs_dir=tmp_path / "runs",
++    )
++
++    metadata = runner.run_all(tmp_path / "tasks", run_id="run-warning")
++
++    assert metadata.passed == 0
++    assert metadata.warnings == 1
++    assert metadata.failed == 0
++    task_output = tmp_path / "runs" / "run-warning" / "tasks" / "task-1"
++    result = json.loads((task_output / "result.json").read_text())
++    assert result["status"] == "passed_with_warnings"
++    assert result["failure_category"] == "max_iterations"
++
++    summary = (tmp_path / "runs" / "run-warning" / "summary.md").read_text()
++    assert "| task-1 | passed_with_warnings |" in summary
++
++
+ def test_benchmark_runner_writes_failure_artifacts_on_bad_test_patch(repo, tmp_path):
+     base_commit = _git_out(repo, "rev-parse", "HEAD")
+     task_dir = _task_dir(
+@@ -145,4 +186,3 @@ def _git_out(repo: Path, *args: str) -> str:
+         capture_output=True,
+         text=True,
+     ).stdout.strip()
+-

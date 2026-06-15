@@ -54,6 +54,9 @@ class AnthropicLLM(BaseLLM):
                 anthropic_messages.append({"role": "user", "content": _strip_surrogates(msg.content)})
             elif msg.role == "assistant":
                 content_parts = []
+                # text must come before tool_use blocks (required by DeepSeek Anthropic endpoint)
+                if msg.content:
+                    content_parts.append({"type": "text", "text": _strip_surrogates(msg.content)})
                 for tc in msg.tool_calls:
                     input_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                     content_parts.append({
@@ -62,19 +65,23 @@ class AnthropicLLM(BaseLLM):
                         "name": tc.name,
                         "input": input_dict,
                     })
-                if msg.content:
-                    content_parts.append({"type": "text", "text": _strip_surrogates(msg.content)})
                 anthropic_messages.append({"role": "assistant", "content": content_parts or [{"type": "text", "text": ""}]})
             elif msg.role == "tool":
+                tool_result_block = {
+                    "type": "tool_result",
+                    "tool_use_id": msg.tool_call_id or "",
+                    "content": _strip_surrogates(msg.content),
+                }
+                # Anthropic requires all tool_results for a single assistant turn
+                # to be in one user message. Merge consecutive tool messages.
+                if anthropic_messages and anthropic_messages[-1]["role"] == "user" and isinstance(anthropic_messages[-1].get("content"), list):
+                    last_content = anthropic_messages[-1]["content"]
+                    if last_content and last_content[0].get("type") == "tool_result":
+                        last_content.append(tool_result_block)
+                        continue
                 anthropic_messages.append({
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": msg.tool_call_id or "",
-                            "content": _strip_surrogates(msg.content),
-                        }
-                    ],
+                    "content": [tool_result_block],
                 })
 
         payload: dict = {
