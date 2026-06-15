@@ -17,16 +17,9 @@ class TraceStep:
 class TraceRecorder:
     def __init__(self, task_id: str = "", full_trace: bool = False):
         self.task_id = task_id
-        self.full_trace = full_trace
+        self.full_trace = full_trace  # retained for serialization compat only
         self.steps: list[TraceStep] = []
         self.started_at = time.time()
-
-    def _preview(self, value: Any, limit: int = 500) -> Any:
-        if self.full_trace or not isinstance(value, str):
-            return value
-        if len(value) <= limit:
-            return value
-        return value[:limit] + f"... (truncated, {len(value) - limit} more chars)"
 
     def record(self, step_type: str, **data: Any) -> None:
         self.steps.append(
@@ -42,7 +35,7 @@ class TraceRecorder:
         self.record(
             "llm_iteration",
             iteration=iteration,
-            assistant_preview=self._preview(assistant_preview),
+            assistant_preview=assistant_preview,
             tool_calls=tool_calls or [],
         )
 
@@ -61,14 +54,14 @@ class TraceRecorder:
             tool_name=tool_name,
             status=status,
             duration_ms=round(duration_ms, 1),
-            observation_preview=self._preview(observation),
+            observation=observation,
         )
 
     def record_edit(self, path: str, status: str, summary: str) -> None:
         self.record("edit", tool_name="Edit", path=path, status=status, summary=summary)
 
     def record_diff(self, diff_path: str, summary: str) -> None:
-        self.record("diff", diff_path=diff_path, summary=self._preview(summary))
+        self.record("diff", diff_path=diff_path, summary=summary)
 
     def record_test(
         self,
@@ -82,14 +75,14 @@ class TraceRecorder:
             command=command,
             exit_code=exit_code,
             duration_ms=round(duration_ms, 1),
-            output_preview=self._preview(output),
+            output=output,
         )
 
     def record_completion(self, status: str, content: str = "") -> None:
         self.record(
             "completion",
             status=status,
-            content_preview=self._preview(content),
+            content=content,
             duration_seconds=round(time.time() - self.started_at, 1),
         )
 
@@ -106,4 +99,3 @@ class TraceRecorder:
 
     def write_to_file(self, path: str | Path) -> None:
         Path(path).write_text(self.to_json() + "\n", errors="replace")
-

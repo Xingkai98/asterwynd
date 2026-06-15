@@ -1,8 +1,32 @@
 # agent/tools/sandbox.py
 import asyncio
+import json
 import subprocess
+import time
+from dataclasses import dataclass, asdict
 from typing import Optional
 from pathlib import Path
+
+
+@dataclass
+class SandboxResult:
+    exit_code: int
+    stdout: str
+    stderr: str
+    duration_ms: float
+    timed_out: bool
+
+    def __str__(self) -> str:
+        if self.timed_out:
+            return f"[Timeout after {self.duration_ms:.0f}ms] {self.stdout}{self.stderr}".strip()
+        if self.exit_code != 0:
+            parts = [self.stdout, self.stderr]
+            return f"[Exit {self.exit_code}] {' '.join(p for p in parts if p)}".strip()
+        return (self.stdout + self.stderr).strip()
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False)
+
 
 class SandboxExecutor:
     """基于 subprocess 的沙箱执行器，限制资源"""
@@ -22,40 +46,58 @@ class SandboxExecutor:
         command: str,
         timeout: Optional[float] = None,
         cwd: Optional[str | Path] = None,
-    ) -> str:
-        """在沙箱中运行命令，返回 stdout"""
+    ) -> SandboxResult:
         timeout = timeout or self.timeout
+        start = time.perf_counter()
 
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
                 cwd=str(cwd) if cwd else None,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                limit=1024 * 1024,  # 1MB stdout
+                stderr=asyncio.subprocess.PIPE,
+                limit=1024 * 1024,
             )
             try:
-                stdout, _ = await asyncio.wait_for(
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(), timeout=timeout
                 )
-                output = stdout.decode(errors="replace").strip()
-                if proc.returncode:
-                    return f"[Exit {proc.returncode}] {output}".strip()
-                return output
+                duration_ms = (time.perf_counter() - start) * 1000
+                return SandboxResult(
+                    exit_code=proc.returncode or 0,
+                    stdout=stdout_bytes.decode(errors="replace").strip(),
+                    stderr=stderr_bytes.decode(errors="replace").strip(),
+                    duration_ms=round(duration_ms, 1),
+                    timed_out=False,
+                )
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
-                return f"[Timeout after {timeout}s]"
+                duration_ms = (time.perf_counter() - start) * 1000
+                return SandboxResult(
+                    exit_code=-1,
+                    stdout="",
+                    stderr="",
+                    duration_ms=round(duration_ms, 1),
+                    timed_out=True,
+                )
         except Exception as e:
-            return f"[Error: {e}]"
+            duration_ms = (time.perf_counter() - start) * 1000
+            return SandboxResult(
+                exit_code=-1,
+                stdout="",
+                stderr=str(e),
+                duration_ms=round(duration_ms, 1),
+                timed_out=False,
+            )
 
     def run_sync(
         self,
         command: str,
         timeout: Optional[float] = None,
         cwd: Optional[str | Path] = None,
-    ) -> str:
-        """同步版本，用于非 async 上下文"""
+    ) -> SandboxResult:
+        start = time.perf_counter()
         try:
             result = subprocess.run(
                 command,
@@ -65,11 +107,29 @@ class SandboxExecutor:
                 text=True,
                 timeout=timeout or self.timeout,
             )
-            output = (result.stdout + result.stderr).strip()
-            if result.returncode:
-                return f"[Exit {result.returncode}] {output}".strip()
-            return output
+            duration_ms = (time.perf_counter() - start) * 1000
+            return SandboxResult(
+                exit_code=result.returncode,
+                stdout=(result.stdout or "").strip(),
+                stderr=(result.stderr or "").strip(),
+                duration_ms=round(duration_ms, 1),
+                timed_out=False,
+            )
         except subprocess.TimeoutExpired:
-            return f"[Timeout after {timeout}s]"
+            duration_ms = (time.perf_counter() - start) * 1000
+            return SandboxResult(
+                exit_code=-1,
+                stdout="",
+                stderr="",
+                duration_ms=round(duration_ms, 1),
+                timed_out=True,
+            )
         except Exception as e:
-            return f"[Error: {e}]"
+            duration_ms = (time.perf_counter() - start) * 1000
+            return SandboxResult(
+                exit_code=-1,
+                stdout="",
+                stderr=str(e),
+                duration_ms=round(duration_ms, 1),
+                timed_out=False,
+            )

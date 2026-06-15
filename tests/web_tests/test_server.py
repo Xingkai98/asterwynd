@@ -190,7 +190,7 @@ def test_websocket_tool_events():
     assert "tool_call" in event_types
     assert "tool_result" in event_types
     tool_result = next(e for e in events if e["type"] == "tool_result")
-    assert tool_result["data"]["result"] == "websocket"
+    assert "websocket" in tool_result["data"]["result"]
 
 
 @pytest.mark.asyncio

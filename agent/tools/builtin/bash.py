@@ -1,7 +1,16 @@
 # agent/tools/builtin/bash.py
+import os
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.sandbox import SandboxExecutor
 from agent.workspace_policy import WorkspacePolicy
+
+
+def _load_env_list(env_var: str) -> list[str]:
+    value = os.environ.get(env_var, "")
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
 
 @tool_parameters(
     name="Bash",
@@ -31,8 +40,9 @@ class BashTool(Tool):
             self.policy.assert_command_allowed(cmd)
         except PermissionError as e:
             return f"Error: {e}"
-        return await self.sandbox.run(
+        result = await self.sandbox.run(
             cmd,
             timeout=timeout,
             cwd=self.policy.workspace_root,
         )
+        return result.to_json()

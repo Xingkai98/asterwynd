@@ -1,4 +1,4 @@
-import subprocess
+import json
 
 import pytest
 
@@ -13,7 +13,11 @@ async def test_bash_tool_runs_in_workspace(tmp_path):
 
     result = await tool.execute("cat marker.txt")
 
-    assert result == "workspace-marker"
+    data = json.loads(result)
+    assert data["exit_code"] == 0
+    assert data["stdout"] == "workspace-marker"
+    assert not data["timed_out"]
+    assert data["duration_ms"] > 0
 
 
 @pytest.mark.asyncio
@@ -23,3 +27,24 @@ async def test_bash_tool_applies_command_policy(tmp_path):
     result = await tool.execute("rm -rf /")
 
     assert "Command denied" in result
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_reports_timeout(tmp_path):
+    tool = BashTool(policy=WorkspacePolicy(tmp_path))
+
+    result = await tool.execute("sleep 60", timeout=0.1)
+
+    data = json.loads(result)
+    assert data["timed_out"]
+    assert data["exit_code"] == -1
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_reports_exit_code(tmp_path):
+    tool = BashTool(policy=WorkspacePolicy(tmp_path))
+
+    result = await tool.execute("exit 42")
+
+    data = json.loads(result)
+    assert data["exit_code"] == 42
