@@ -203,21 +203,28 @@ class MyAgentRunner(AgentRunner):
             problem_statement=problem_statement,
             workspace=str(workspace),
         )
+        # Timeout scales with max_iterations: 10 seconds per iteration is
+        # conservative (API call ~2s + tool execution ~3s + buffer).
+        effective_timeout = max(task.timeout_seconds, self.max_iterations * 10)
         try:
             try:
                 result = await asyncio.wait_for(
                     agent.run(messages, trace_recorder=trace),
-                    timeout=task.timeout_seconds,
+                    timeout=effective_timeout,
                 )
             except asyncio.TimeoutError:
+                # Record actual progress from CountingLLM
+                tool_count = sum(1 for step in trace.steps if step.type == "tool_call")
                 trace.record_completion(
                     "error",
-                    f"MyAgent timed out after {task.timeout_seconds}s",
+                    f"MyAgent timed out after {effective_timeout}s",
                 )
                 return AgentRunResult(
                     status="error",
+                    iterations=counting_llm.call_count,
+                    tool_calls=tool_count,
                     failure_category=FailureCategory.MODEL_FAILURE.value,
-                    output=f"MyAgent timed out after {task.timeout_seconds}s",
+                    output=f"MyAgent timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
                 )
         finally:
             close = getattr(self.llm, "close", None)

@@ -472,6 +472,11 @@ openclaw, opencode, pi-mono):
   structured fields encoded as JSON for LLM and benchmark consumption.
 - **Trace always full.** No truncation, no `--full-trace` flag. Overhead is
   negligible, debugging value is high.
+- **Test patch isolation follows SWE-bench pattern.** Before applying `test.patch`,
+  the runner saves the agent's source-only diff (`git diff -- ':!tests/'`),
+  resets the worktree to the base commit, reapplies the source diff, then applies
+  `test.patch` on a clean test directory. This prevents conflicts when the agent
+  creates or modifies test files during its run.
 
 ## 13. First Task Set
 
