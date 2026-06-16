@@ -2,6 +2,9 @@
 
 Guidance for coding agents and Claude Code working in this repository.
 
+> **Maintenance**: These two files are identical copies. Edit either one, then
+> copy it to the other: `cp CLAUDE.md AGENTS.md` or vice versa.
+
 ## Language
 
 - **README.md**: Chinese (中文) — see [README_EN.md](./README_EN.md) for English
