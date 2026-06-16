@@ -286,13 +286,16 @@ Deliverables:
 
 - `ClaudeCodeRunner` — subprocess adapter that invokes `claude` CLI in the
   task worktree, passes the problem statement as a prompt, and captures the
-  final git diff and stdout log.
-- `CodexRunner` — same pattern for the `codex` CLI.
-- Unified comparison report (`summary.md` extended) — one table with
-  results from all agents on the same task set, making pass rate and
-  failure category differences visible.
+  final git diff and stdout log. Done.
+- `CodexRunner` — same pattern for the `codex` CLI. Deferred (authentication
+  complexity).
+- Unified comparison report — `benchmarks/compare.py` generates MD + HTML
+  side-by-side tables with pass rate and timing. Done.
 - Contract tests — each adapter satisfies `AgentRunner.run()`, so the
-  benchmark harness can treat Claude Code and Codex the same as MyAgent.
+  benchmark harness can treat Claude Code the same as MyAgent. Done.
+- First comparison results: MyAgent 11/23 (48%) vs Claude Code 9/23 (39%)
+  with same DeepSeek model — pass rates and failure modes overlap heavily,
+  suggesting the model is the bottleneck. Done.
 
 Design notes:
 
