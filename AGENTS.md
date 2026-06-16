@@ -2,8 +2,9 @@
 
 Guidance for coding agents and Claude Code working in this repository.
 
-> **Maintenance**: These two files are identical copies. Edit either one, then
-> copy it to the other: `cp CLAUDE.md AGENTS.md` or vice versa.
+> **Maintenance**: These two files are identical copies. When you edit
+> `CLAUDE.md`, run `cp CLAUDE.md AGENTS.md`. When you edit `AGENTS.md`,
+> run `cp AGENTS.md CLAUDE.md`. Commit both together.
 
 ## Language
 
