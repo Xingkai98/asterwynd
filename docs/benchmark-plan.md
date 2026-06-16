@@ -617,8 +617,16 @@ keys, model behavior, and cost.
 - ShellCommandRunner for baseline comparisons.
 - Package distribution via `uv tool install` / `pip install`.
 
-External adapters (Claude Code, Codex) and comparative reports deferred to a
-future phase.
+### P2: Cross-Agent Comparison
+
+- `ClaudeCodeRunner` — subprocess adapter wrapping the `claude` CLI. Runs in
+  the task worktree, passes the problem statement as a prompt. Collects final
+  git diff and stdout/stderr log. No internal tool-call trace available.
+- `CodexRunner` — same pattern for the `codex` CLI.
+- Unified comparison report: one summary table with MyAgent / Claude Code /
+  Codex results side-by-side on the same 23 tasks. Same tasks, same hidden
+  tests, same grading — only the agent runtime differs.
+- Contract tests for each adapter (satisfies `AgentRunner.run()`).
 
 ## 16. Relationship to Coding Agent Roadmap
 

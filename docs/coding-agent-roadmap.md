@@ -277,25 +277,41 @@ Interview talking point:
 > proposes exact replacements, while the runtime validates workspace boundaries,
 > applies changes, and records diffs.
 
-### P1: Complete Coding Agent
+### P2: Cross-Agent Benchmark Comparison
 
-Goal: close the edit/test/fix loop, help the agent navigate repositories, and
-make MyAgent installable as a CLI tool.
+Goal: run the same benchmark tasks with Claude Code and Codex, and compare
+results side-by-side with MyAgent.
 
 Deliverables:
 
-- `BashTool` structured output (exit_code, stdout, stderr, duration, timed_out).
-- `BashTool` command allowlist and denylist with .env extensibility.
-- Coding prompt update: instruct the agent to run the validation command before finishing.
-- `ListFilesTool` — list directory contents with ignore rules.
-- `FindTool` — recursive file search by glob pattern.
-- Package distribution via `uv tool install` / `pip install` (add `[project.scripts]`).
+- `ClaudeCodeRunner` — subprocess adapter that invokes `claude` CLI in the
+  task worktree, passes the problem statement as a prompt, and captures the
+  final git diff and stdout log.
+- `CodexRunner` — same pattern for the `codex` CLI.
+- Unified comparison report (`summary.md` extended) — one table with
+  results from all agents on the same task set, making pass rate and
+  failure category differences visible.
+- Contract tests — each adapter satisfies `AgentRunner.run()`, so the
+  benchmark harness can treat Claude Code and Codex the same as MyAgent.
+
+Design notes:
+
+- Each external agent runs as a subprocess inside the detached worktree,
+  same as `ShellCommandRunner`. No internal traces are collected — only
+  final git diff, stdout/stderr log, and test results from the harness.
+- This mirrors SWE-bench's evaluation model: the benchmark grades the
+  outcome (does the patch pass hidden tests?), not the process.
+- The comparison is fair: each agent uses its own tools, its own prompt
+  strategy, and the same task definition. The goal is to understand
+  whether MyAgent's framework or the underlying model is the performance
+  ceiling.
 
 Interview talking point:
 
-> The agent can run the same validation loop a developer would — edit, test, fix
-> — navigate unfamiliar repositories with file discovery tools, and install as a
-> single command. The same runtime supports interactive use and benchmark use.
+> I built adapters to run Claude Code and Codex in the same benchmark
+> harness as MyAgent. Same tasks, same hidden tests, same grading — only
+> the agent runtime differs. This tells us whether the gap is in our
+> framework or in the model.
 
 ## 6. Testing Strategy
 
@@ -390,7 +406,7 @@ build coding capability -> run benchmark -> analyze failures -> improve agent
 
 The two plans should be developed together:
 
-- Every P1 coding feature should have at least one benchmark task.
-- Benchmark failures should feed back into the failure taxonomy and tool design.
-- External comparisons to Claude Code and Codex should happen after MyAgent has
-  a stable self-benchmark harness.
+- Every P1 feature has at least one benchmark task.
+- P2 enables cross-agent comparison: same tasks, same hidden tests, same
+  grading — only the agent runtime differs. This reveals whether the gap is
+  in MyAgent's framework or in the underlying model.
