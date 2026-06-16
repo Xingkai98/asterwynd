@@ -87,6 +87,12 @@ uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --r
 - Preserve debug UI behavior across multiple chat turns; AgentLoop iteration numbers restart per chat turn, so UI grouping must distinguish chat turns.
 - Keep `.codegraph/`, `.understand-anything/`, local `.env*`, logs, and other generated/local files out of commits unless explicitly requested.
 
+## Design Documents
+
+- `docs/coding-agent-roadmap.md` — coding agent roadmap (live, updated as features ship)
+- `docs/benchmark-plan.md` — benchmark system design and task structure
+- `docs/discussions/` — design review meeting notes (write one per significant decision session)
+
 ## Environment
 
 Relevant environment variables:

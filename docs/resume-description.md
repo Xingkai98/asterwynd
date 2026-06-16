@@ -7,7 +7,7 @@
 > 核心循环约 100 行，采用分层插件架构：ToolRegistry（动态注册 + 三级权限 + 沙箱）、
 > HookManager（6 个生命周期扩展点）、MemoryManager（AutoCompact token 压缩）、
 > SkillLoader（Markdown 技能）、SubAgentManager（后台委托 + mid-turn injection）。
-> 44 个测试全部通过，CLI 开箱即用。
+> 176 个测试全部通过，CLI 开箱即用。
 
 ---
 
@@ -15,7 +15,7 @@
 
 ### 项目概述
 
-从零设计并实现了一个通用 AI Agent 框架（~1500 行 Python），参考了 nanobot、hermes-agent、openclaw、claude-code-haha 四种主流开源 Agent 架构。核心原则：**简洁可扩展，每个子系统职责单一，接口清晰，100% TDD 开发，44 个测试全部通过**。
+从零设计并实现了一个通用 AI Agent 框架（~1500 行 Python），参考了 nanobot、hermes-agent、openclaw、claude-code-haha 四种主流开源 Agent 架构。核心原则：**简洁可扩展，每个子系统职责单一，接口清晰，100% TDD 开发，176 个测试全部通过**。
 
 ### 核心架构
 
@@ -77,7 +77,7 @@ AgentLoop.run()  # ~100行，唯一的状态管理者
 
 ### 内置工具集
 
-`Read` / `Write` / `Bash`（沙箱） / `WebSearch` / `WebFetch` / `Grep`
+`Read` / `Write` / `Edit` / `Bash`（沙箱+结构化输出） / `InspectGitDiff` / `Grep` / `ListFiles` / `Find` / `WebSearch` / `WebFetch`
 
 ### 技术栈
 
@@ -110,7 +110,7 @@ MyAgent  |  AI Agent 系统设计  |  Python / asyncio
 • 实现 AutoCompact：token 预算超限时用 LLM 生成摘要，不依赖传统 NLP
 • 实现子 Agent 委托：asyncio.create_task 后台运行 + ParentChannel mid-turn injection
 • 实现 Markdown 技能系统：YAML frontmatter 声明元信息，支持 always/按需两种加载模式
-• 100% TDD 开发：每个模块先写失败测试，再写最小实现，44 个测试全部通过
+• 100% TDD 开发：每个模块先写失败测试，再写最小实现，176 个测试全部通过
 
 参考项目：nanobot（Hook/AutoCompact）、hermes-agent（模块化架构）、openclaw（沙箱）、claude-code-haha（并发工具执行）
 ```

@@ -334,4 +334,4 @@ Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken（可选）
 - `docs/coding-agent-roadmap.md` — 编码 Agent 路线图（P0 已完成 / P1 进行中）
 - `docs/benchmark-plan.md` — 基准测试设计（SWE-bench 参考、任务结构、评估指标）
 - `docs/discussions/2026-06-15-p1-p3-scope-review.md` — P1 开发方案讨论纪要
-- `docs/superpowers/specs/` — 架构设计文档和参考项目分析
+- `docs/discussions/2026-06-15-p1-p3-scope-review.md` — P1 设计决策记录

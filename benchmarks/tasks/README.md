@@ -1,8 +1,9 @@
 # MyAgent Local Benchmark Tasks
 
-This task set is designed to validate the P0 coding-agent benchmark loop.
+23 coding-agent tasks extracted from git history across 6 categories and 3
+difficulty levels (easy / medium / hard).
 
-Recommended fake-runner artifact smoke:
+Fake-runner artifact smoke:
 
 ```bash
 uv run python cli.py benchmark benchmarks/tasks \
@@ -14,18 +15,14 @@ uv run python cli.py benchmark benchmarks/tasks \
   --fake-new-string '# MyAgent Coding Agent'
 ```
 
-This runs the full task directory. The fake runner is only expected to solve the
-README title task; the purpose is to verify that the benchmark harness writes
-artifacts for passed and failed tasks.
-
-Recommended real MyAgent command:
+Real MyAgent run:
 
 ```bash
 uv run python cli.py benchmark benchmarks/tasks \
   --agent myagent \
   --source-repo . \
   --runs-dir /tmp/myagent-task-pack-myagent \
-  --max-iterations 30
+  --max-iterations 80
 ```
 
 Each task contains:
@@ -44,8 +41,3 @@ Task statuses:
   non-fatal issue such as `max_iterations`.
 - `failed`: hidden validation ran and failed.
 - `error`: setup, patch application, or harness execution failed.
-
-The current P0 task pack intentionally separates harness health from model
-quality. A real MyAgent run may fail coding tasks while still proving that the
-benchmark harness created isolated worktrees, hid evaluator files, applied
-hidden tests, and wrote complete artifacts.

@@ -183,7 +183,11 @@ This ensures every bug that was ever fixed stays fixed.
 
 ## Design Documents
 
-Architecture decisions are documented in `docs/superpowers/specs/`. These were created during brainstorming and should be updated if architecture changes.
+Architecture decisions and roadmap are documented in:
+
+- `docs/coding-agent-roadmap.md` — coding agent roadmap (P0 done / P1 in progress)
+- `docs/benchmark-plan.md` — benchmark system design and task structure
+- `docs/discussions/` — design review meeting notes
 
 ## 问题定位
 当需要定位问题时，首先定位清楚根因，给出解决方案，待确认后才能实际修改代码。
