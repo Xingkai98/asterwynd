@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Cross-Agent Benchmark</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+h1 { color: #333; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; }
+th { background: #f5f5f5; }
+.passed { color: #22c55e; font-weight: bold; }
+.passed_with_warnings { color: #eab308; }
+.failed { color: #ef4444; }
+.error { color: #a855f7; }
+small { color: #888; font-weight: normal; }
+.summary td { font-size: 1.1rem; }
+</style></head><body>
+<h1>Cross-Agent Benchmark Comparison</h1>
+<table>
+<thead><tr><th>Task</th><th>myagent</th><th>claude</th></tr></thead>
+<tbody><tr><td>myagent-001-tool-registry</td><td class="passed">passed<br><small>21.0s</small></td><td class="passed">passed<br><small>26.1s</small></td></tr><tr><td>myagent-002-myagent-runner</td><td class="failed">failed<br><small>119.2s</small></td><td class="failed">failed<br><small>275.3s</small></td></tr><tr><td>myagent-002-sandbox-executor</td><td class="failed">failed<br><small>301.3s</small></td><td class="passed_with_warnings">passed_with_warnings<br><small>601.2s</small></td></tr><tr><td>myagent-003-agentloop-trace</td><td class="failed">failed<br><small>66.3s</small></td><td class="failed">failed<br><small>166.5s</small></td></tr><tr><td>myagent-003-read-write-tools</td><td class="failed">failed<br><small>58.0s</small></td><td class="failed">failed<br><small>98.9s</small></td></tr><tr><td>myagent-004-benchmark-cli</td><td class="failed">failed<br><small>61.1s</small></td><td class="failed">failed<br><small>140.1s</small></td></tr><tr><td>myagent-004-harden-write</td><td class="failed">failed<br><small>39.7s</small></td><td class="failed">failed<br><small>22.4s</small></td></tr><tr><td>myagent-005-bash-workspace</td><td class="failed">failed<br><small>125.0s</small></td><td class="failed">failed<br><small>110.9s</small></td></tr><tr><td>myagent-006-memory-manager</td><td class="passed">passed<br><small>70.3s</small></td><td class="passed">passed<br><small>119.8s</small></td></tr><tr><td>myagent-007-skill-loader</td><td class="passed">passed<br><small>49.7s</small></td><td class="passed">passed<br><small>85.7s</small></td></tr><tr><td>myagent-008-parent-channel</td><td class="passed">passed<br><small>30.5s</small></td><td class="failed">failed<br><small>133.8s</small></td></tr><tr><td>myagent-009-subagent-manager</td><td class="passed">passed<br><small>172.3s</small></td><td class="failed">failed<br><small>146.1s</small></td></tr><tr><td>myagent-010-agent-loop</td><td class="passed">passed<br><small>54.4s</small></td><td class="passed">passed<br><small>100.2s</small></td></tr><tr><td>myagent-011-repeater-fix</td><td class="passed">passed<br><small>57.1s</small></td><td class="passed">passed<br><small>146.5s</small></td></tr><tr><td>myagent-012-sse-streaming</td><td class="failed">failed<br><small>198.0s</small></td><td class="failed">failed<br><small>355.3s</small></td></tr><tr><td>myagent-013-hook-manager</td><td class="passed">passed<br><small>68.6s</small></td><td class="passed">passed<br><small>51.9s</small></td></tr><tr><td>myagent-014-logging-tracing</td><td class="passed">passed<br><small>99.1s</small></td><td class="passed">passed<br><small>95.8s</small></td></tr><tr><td>myagent-015-retry-budget</td><td class="passed">passed<br><small>118.5s</small></td><td class="passed">passed<br><small>209.0s</small></td></tr><tr><td>myagent-017-interactive-fix</td><td class="failed">failed<br><small>107.8s</small></td><td class="failed">failed<br><small>223.6s</small></td></tr><tr><td>myagent-018-warning-passes</td><td class="failed">failed<br><small>51.6s</small></td><td class="failed">failed<br><small>85.0s</small></td></tr><tr><td>myagent-019-runner-timeout</td><td class="failed">failed<br><small>44.5s</small></td><td class="failed">failed<br><small>94.0s</small></td></tr><tr><td>myagent-020-close-clients</td><td class="failed">failed<br><small>125.9s</small></td><td class="failed">failed<br><small>67.4s</small></td></tr><tr><td>myagent-readme-title</td><td class="passed">passed<br><small>7.6s</small></td><td class="passed">passed<br><small>9.2s</small></td></tr></tbody>
+</table>
+<h2>Summary</h2>
+<table class="summary">
+<thead><tr><th>Agent</th><th>passed</th><th>passed_with_warnings</th><th>failed</th><th>error</th><th>Total</th></tr></thead>
+<tbody><tr><td>myagent</td><td>11</td><td>0</td><td>12</td><td>0</td><td><strong>23</strong></td></tr><tr><td>claude</td><td>9</td><td>1</td><td>13</td><td>0</td><td><strong>23</strong></td></tr></tbody>
+</table>
+</body></html>

@@ -210,7 +210,7 @@ def web(
 @app.command()
 def benchmark(
     tasks_dir: Path = typer.Argument(..., help="包含 benchmark task 子目录的目录"),
-    agent: str = typer.Option("fake", "--agent", help="Runner: fake / shell / myagent"),
+    agent: str = typer.Option("fake", "--agent", help="Runner: fake / shell / myagent / claude"),
     source_repo: Path = typer.Option(Path("."), "--source-repo", help="被测 git repo"),
     runs_dir: Path = typer.Option(Path("benchmarks/runs"), "--runs-dir", help="benchmark 输出目录"),
     provider: str = typer.Option(
@@ -225,7 +225,7 @@ def benchmark(
     keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
 ):
     """运行本地 Coding Agent benchmark。"""
-    from benchmarks.agent_runner import FakeAgentRunner, MyAgentRunner, ShellCommandRunner
+    from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, MyAgentRunner, ShellCommandRunner
     from benchmarks.runner import BenchmarkRunner
 
     if agent == "fake":
@@ -239,6 +239,9 @@ def benchmark(
             typer.echo("Error: --shell-command is required for --agent shell", err=True)
             raise SystemExit(1)
         runner_impl = ShellCommandRunner(shell_command)
+    elif agent == "claude":
+        timeout_override = int(os.environ.get("MYAGENT_BENCHMARK_TIMEOUT", "600"))
+        runner_impl = ClaudeCodeRunner(timeout_seconds=timeout_override)
     elif agent == "myagent":
         llm = build_llm(provider, model)
         runner_impl = MyAgentRunner(
@@ -247,7 +250,7 @@ def benchmark(
             max_iterations=max_iterations,
         )
     else:
-        typer.echo("Error: --agent must be fake, shell, or myagent", err=True)
+        typer.echo("Error: --agent must be fake, shell, myagent, or claude", err=True)
         raise SystemExit(1)
 
     runner = BenchmarkRunner(

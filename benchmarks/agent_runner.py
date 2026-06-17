@@ -155,6 +155,86 @@ class ShellCommandRunner(AgentRunner):
         )
 
 
+class ClaudeCodeRunner(AgentRunner):
+    """Subprocess adapter for the Claude Code CLI (`claude`).
+
+    Invokes ``claude -p`` (headless/print mode) inside the task worktree with
+    the raw issue content as the prompt.  Only the final git diff and the
+    stdout / stderr transcript are collected — no per-turn tool-call trace is
+    available from the external CLI.
+    """
+
+    def __init__(self, timeout_seconds: int = 600):
+        self.timeout_seconds = timeout_seconds
+
+    async def run(
+        self,
+        task: TaskSpec,
+        problem_statement: str,
+        workspace: Path,
+        output_dir: Path,
+        trace: TraceRecorder,
+    ) -> AgentRunResult:
+        start = time.time()
+
+        prompt = (
+            "You are working in a code repository.\n"
+            "Complete the following task:\n\n"
+            f"{problem_statement}\n\n"
+            "Verification command (run this before finishing):\n"
+            f"{task.test_command}"
+        )
+
+        env = os.environ.copy()
+        env.setdefault("ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic")
+
+        cmd = [
+            "claude", "-p",
+            "--model", "deepseek-chat",
+            "--dangerously-skip-permissions",
+            "--output-format", "text",
+            prompt,
+        ]
+        trace.record_tool_call("ClaudeCode", {"cmd": " ".join(cmd[:5])})
+
+        def _run() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                cmd,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                env=env,
+            )
+
+        try:
+            result = await asyncio.to_thread(_run)
+        except subprocess.TimeoutExpired:
+            trace.record_tool_result(
+                "ClaudeCode", "timeout",
+                (time.time() - start) * 1000,
+                f"timeout after {self.timeout_seconds}s",
+            )
+            return AgentRunResult(
+                status="error",
+                failure_category=FailureCategory.TOOL_ERROR.value,
+                output="Claude Code timed out",
+            )
+
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        trace.record_tool_result(
+            "ClaudeCode",
+            "ok" if result.returncode == 0 else "error",
+            (time.time() - start) * 1000,
+            output,
+        )
+        return AgentRunResult(
+            status="completed" if result.returncode == 0 else "error",
+            failure_category=None if result.returncode == 0 else FailureCategory.TOOL_ERROR.value,
+            output=output,
+        )
+
+
 class CountingLLM:
     def __init__(self, llm):
         self.llm = llm
