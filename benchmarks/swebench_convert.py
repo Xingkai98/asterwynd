@@ -183,6 +183,8 @@ def main():
     parser = argparse.ArgumentParser(description="Convert SWE-bench instances to MyAgent tasks")
     parser.add_argument("--all-requests", action="store_true",
                         help="Generate all 6 psf/requests <15 min fix tasks")
+    parser.add_argument("--batch", action="store_true",
+                        help="Generate curated batch: 5 requests + 3 pytest + 1 flask")
     parser.add_argument("--instances", nargs="*", default=[],
                         help="Specific SWE-bench instance IDs to convert")
     parser.add_argument("--list", action="store_true",
@@ -197,7 +199,22 @@ def main():
 
     instance_ids = list(args.instances)
 
-    if args.all_requests:
+    if args.batch:
+        instance_ids = [
+            # 5 requests (excluding 5414 which was already the smoke test)
+            "psf__requests-1142",
+            "psf__requests-1921",
+            "psf__requests-2317",
+            "psf__requests-1724",
+            "psf__requests-1766",
+            # 3 pytest
+            "pytest-dev__pytest-7521",
+            "pytest-dev__pytest-7982",
+            "pytest-dev__pytest-5262",
+            # 1 flask
+            "pallets__flask-5014",
+        ]
+    elif args.all_requests:
         instance_ids = [
             "psf__requests-5414",
             "psf__requests-1921",
