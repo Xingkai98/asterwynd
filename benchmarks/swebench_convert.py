@@ -12,8 +12,9 @@ import json
 import sys
 from pathlib import Path
 
-# Map SWE-bench repo names to GitHub URLs
-REPO_URLS = {
+# Map SWE-bench repo names to clone URLs
+# Primary: GitHub; fallback: gitee mirrors (use --mirror gitee)
+_GITHUB_URLS = {
     "psf/requests": "https://github.com/psf/requests.git",
     "pallets/flask": "https://github.com/pallets/flask.git",
     "pytest-dev/pytest": "https://github.com/pytest-dev/pytest.git",
@@ -27,6 +28,14 @@ REPO_URLS = {
     "astropy/astropy": "https://github.com/astropy/astropy.git",
     "pydata/xarray": "https://github.com/pydata/xarray.git",
 }
+
+_GITEE_URLS = {
+    "psf/requests": "https://gitee.com/mirrors/requests.git",
+    "pallets/flask": "https://gitee.com/mirrors/flask.git",
+    "pytest-dev/pytest": "https://gitee.com/mirrors/pytest.git",
+}
+
+REPO_URLS = _GITHUB_URLS  # default
 
 # Test commands per repo (runs the specific test file, not the whole suite)
 REPO_TEST_COMMAND_TEMPLATES = {
@@ -59,10 +68,17 @@ def extract_test_file(fail_to_pass: str) -> str:
 
 
 def build_test_command(repo: str, fail_to_pass: str) -> str:
-    """Build a test command for the task."""
+    """Build a test command that runs only the FAIL_TO_PASS tests directly."""
     test_file = extract_test_file(fail_to_pass)
-    template = REPO_TEST_COMMAND_TEMPLATES.get(repo, "python -m pytest {test_file} -x --tb=short -p no:warnings")
-    return template.format(test_file=test_file)
+    try:
+        tests = json.loads(fail_to_pass)
+        # Use the test node ID directly (no -k needed, avoids substring matching issues)
+        test_ids = " ".join(tests)
+        return f"python -m pytest {test_ids} --tb=short -p no:warnings"
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Fallback: run the whole file
+    return f"python -m pytest {test_file} --tb=short -p no:warnings"
 
 
 def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Path]:
@@ -191,7 +207,13 @@ def main():
                         help="List top candidates and exit")
     parser.add_argument("--output", default="benchmarks/tasks",
                         help="Output directory for generated tasks")
+    parser.add_argument("--mirror", default="github", choices=["github", "gitee"],
+                        help="Clone mirror to use (github or gitee)")
     args = parser.parse_args()
+
+    global REPO_URLS
+    if args.mirror == "gitee":
+        REPO_URLS = _GITEE_URLS
 
     if args.list:
         list_candidates()
