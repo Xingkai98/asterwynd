@@ -3,11 +3,11 @@
   "repo": "psf/requests",
   "base_commit": "39d0fdd9096f7dceccbc8f82e1eda7dd64717a8e",
   "problem_statement_file": "issue.md",
-  "test_command": "python -m pytest tests/test_requests.py -x --tb=short -p no:warnings",
+  "test_command": "python -m pytest tests/test_requests.py::TestRequests::test_invalid_url[InvalidURL-http://.example.com] --tb=short -p no:warnings",
   "timeout_seconds": 300,
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",
   "category": "bug_fix",
   "difficulty": "<15 min fix",
-  "external_repo": "https://github.com/psf/requests.git"
+  "external_repo": "https://gitee.com/mirrors/requests.git"
 }
