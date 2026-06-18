@@ -213,6 +213,18 @@ class BenchmarkRunner:
 
         return result
 
+    def _create_worktree(self, loaded: LoadedTask, task_output: Path) -> Path:
+        worktree = task_output / ".worktree"
+        subprocess.run(
+            ["git", "worktree", "add", "--detach", str(worktree), loaded.task.base_commit],
+            cwd=self.source_repo,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        return worktree
+
     def _clone_external_repo(self, loaded: LoadedTask, task_output: Path) -> Path:
         """Clone an external repo at the task's base_commit into a temp workspace."""
         repo_dir = task_output / ".external_repo"
