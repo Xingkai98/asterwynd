@@ -266,8 +266,12 @@ class BenchmarkRunner:
         )
         venv_python = str(workspace / ".venv" / "bin" / "python")
         for install_args in [
-            ["uv", "pip", "install", "--python", venv_python, "-e", ".[socks]", "pytest", "pytest-httpbin"],
-            ["uv", "pip", "install", "--python", venv_python, "-e", ".", "pytest", "pytest-httpbin"],
+            ["uv", "pip", "install", "--python", venv_python,
+             "-e", ".[socks]", "pytest", "pytest-httpbin",
+             "setuptools", "werkzeug<3.0"],
+            ["uv", "pip", "install", "--python", venv_python,
+             "-e", ".", "pytest", "pytest-httpbin",
+             "setuptools", "werkzeug<3.0"],
         ]:
             proc = subprocess.run(
                 install_args,

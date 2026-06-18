@@ -72,7 +72,12 @@ def build_test_command(repo: str, fail_to_pass: str) -> str:
     test_file = extract_test_file(fail_to_pass)
     try:
         tests = json.loads(fail_to_pass)
-        # Use the test node ID directly (no -k needed, avoids substring matching issues)
+        first_test = tests[0]
+        # Control chars (actual \r\n) or literal escape sequences (\\r\\n)
+        # can cause shell/pytest mismatch — use -k with function name instead
+        if any(ord(c) < 32 for c in first_test) or "\\r" in first_test:
+            func_name = first_test.split("[")[0].split("::")[-1]
+            return f"python -m pytest {test_file} -k '{func_name}' --tb=short -p no:warnings"
         test_ids = " ".join(tests)
         return f"python -m pytest {test_ids} --tb=short -p no:warnings"
     except (json.JSONDecodeError, TypeError):

@@ -9,7 +9,7 @@ import sys
 
 def analyze(run_dir: str | Path) -> dict:
     run_dir = Path(run_dir)
-    summary = {"passed": 0, "warnings": 0, "failed": 0, "error": 0, "tasks": []}
+    summary = {"passed": 0, "passed_with_warnings": 0, "failed": 0, "error": 0, "tasks": []}
 
     task_dirs = sorted(
         (run_dir / "tasks").iterdir()
@@ -63,11 +63,11 @@ def print_report(summary: dict) -> None:
     print("=" * 90)
     print(f"  Total: {len(summary['tasks'])} | "
           f"Passed: {summary['passed']} | "
-          f"Warnings: {summary['warnings']} | "
+          f"Warnings: {summary['passed_with_warnings']} | "
           f"Failed: {summary['failed']} | "
           f"Error: {summary['error']}")
     if summary["tasks"]:
-        passed = summary["passed"] + summary["warnings"]
+        passed = summary["passed"] + summary["passed_with_warnings"]
         total_ok = passed + summary["failed"] + summary["error"]
         if total_ok > 0:
             print(f"  Pass rate: {passed}/{total_ok} ({100*passed/total_ok:.0f}%)")
