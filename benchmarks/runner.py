@@ -218,43 +218,44 @@ class BenchmarkRunner:
         repo_dir = task_output / ".external_repo"
         repo_url = loaded.task.external_repo
         commit = loaded.task.base_commit
+        repo_key = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
 
         # Use cached bare clone if available to speed up repeated runs
         if self.clone_cache_dir:
-            cache_dir = self.clone_cache_dir / "requests_bare"
+            cache_dir = self.clone_cache_dir / f"{repo_key}_bare"
             if not cache_dir.exists():
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 subprocess.run(
                     ["git", "clone", "--bare", repo_url, str(cache_dir)],
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=300, check=True,
                 )
             subprocess.run(
                 ["git", "clone", "--shared", str(cache_dir), str(repo_dir)],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True, timeout=60, check=True,
             )
         else:
             subprocess.run(
                 ["git", "clone", repo_url, str(repo_dir)],
-                capture_output=True, text=True, timeout=300,
+                capture_output=True, text=True, timeout=300, check=True,
             )
 
         subprocess.run(
             ["git", "checkout", commit],
-            cwd=repo_dir, capture_output=True, text=True, timeout=30,
+            cwd=repo_dir, capture_output=True, text=True, timeout=30, check=True,
         )
         return repo_dir
 
-    def _install_repo_deps(self, workspace: Path, log) -> None:
-        """Install repo dependencies into a local venv for test running."""
-        log("Creating venv and installing repo dependencies...")
+    def _install_repo_deps(self, workspace: Path, log, python_version: str = "3.9") -> None:
+        """Install repo dependencies into a local venv with the correct Python version."""
+        log(f"Creating Python {python_version} venv and installing repo dependencies...")
         subprocess.run(
-            ["uv", "venv"],
-            cwd=workspace, capture_output=True, text=True, timeout=60,
+            ["uv", "venv", "--python", python_version],
+            cwd=workspace, capture_output=True, text=True, timeout=120,
         )
-        # Some older requests versions don't have [socks], try with minimal install
+        venv_python = str(workspace / ".venv" / "bin" / "python")
         for install_args in [
-            ["uv", "pip", "install", "-e", ".[socks]", "pytest", "pytest-httpbin"],
-            ["uv", "pip", "install", "-e", ".", "pytest", "pytest-httpbin"],
+            ["uv", "pip", "install", "--python", venv_python, "-e", ".[socks]", "pytest", "pytest-httpbin"],
+            ["uv", "pip", "install", "--python", venv_python, "-e", ".", "pytest", "pytest-httpbin"],
         ]:
             proc = subprocess.run(
                 install_args,
@@ -263,8 +264,8 @@ class BenchmarkRunner:
             if proc.returncode == 0:
                 log("Dependencies installed successfully")
                 return
-            log(f"Install attempt with {install_args[3]} failed, trying next...")
-        log(f"WARNING: pip install had issues: {proc.stderr[:300]}")
+            log(f"Install attempt failed: {proc.stderr[:200]}")
+        log(f"WARNING: all install attempts failed")
 
     def _cleanup_external_repo(self, workspace: Path) -> None:
         """Remove the cloned external repo."""
@@ -375,7 +376,11 @@ class BenchmarkRunner:
         is_external: bool = False,
     ) -> tuple[int, str, float]:
         if is_external:
-            command = f"uv run {command}"
+            venv_python = workspace / ".venv" / "bin" / "python"
+            if venv_python.exists():
+                command = command.replace(
+                    "python -m pytest", f"{venv_python} -m pytest"
+                )
         start = time.time()
         try:
             proc = subprocess.run(
