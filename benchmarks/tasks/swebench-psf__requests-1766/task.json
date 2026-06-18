@@ -1,0 +1,13 @@
+{
+  "id": "swebench-psf__requests-1766",
+  "repo": "psf/requests",
+  "base_commit": "847735553aeda6e6633f2b32e14ba14ba86887a4",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest test_requests.py -x --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "<15 min fix",
+  "external_repo": "https://github.com/psf/requests.git"
+}

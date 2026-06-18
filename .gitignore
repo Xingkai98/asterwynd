@@ -10,3 +10,6 @@ build/
 .env
 *.db.understand-anything/
 logs/
+benchmarks/runs/
+benchmarks/swebench_candidates.json
+*.external_repo/

@@ -223,6 +223,7 @@ def benchmark(
     fake_old_string: Optional[str] = typer.Option(None, "--fake-old-string", help="fake runner old string"),
     fake_new_string: Optional[str] = typer.Option(None, "--fake-new-string", help="fake runner new string"),
     keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
+    clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
 ):
     """运行本地 Coding Agent benchmark。"""
     from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, MyAgentRunner, ShellCommandRunner
@@ -260,6 +261,7 @@ def benchmark(
         agent_name=agent,
         model=model or "",
         keep_worktrees=keep_worktrees,
+        clone_cache_dir=clone_cache_dir,
     )
     metadata = runner.run_all(tasks_dir)
     run_path = runs_dir / metadata.run_id

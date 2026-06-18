@@ -18,6 +18,7 @@ class TaskSpec:
     hints_text: str | None = None
     category: str | None = None
     difficulty: str | None = None
+    external_repo: str | None = None  # e.g. "https://github.com/psf/requests.git"
 
     @classmethod
     def from_dict(cls, data: dict) -> "TaskSpec":
@@ -43,6 +44,7 @@ class TaskSpec:
             hints_text=data.get("hints_text"),
             category=data.get("category"),
             difficulty=data.get("difficulty"),
+            external_repo=data.get("external_repo"),
         )
         task.validate()
         return task

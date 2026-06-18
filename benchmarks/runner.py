@@ -37,6 +37,7 @@ class BenchmarkRunner:
         agent_name: str = "myagent",
         model: str = "",
         keep_worktrees: bool = False,
+        clone_cache_dir: str | Path | None = None,
     ):
         self.agent_runner = agent_runner
         self.source_repo = Path(source_repo).resolve()
@@ -44,6 +45,9 @@ class BenchmarkRunner:
         self.agent_name = agent_name
         self.model = model
         self.keep_worktrees = keep_worktrees
+        self.clone_cache_dir = (
+            Path(clone_cache_dir).resolve() if clone_cache_dir else None
+        )
 
     def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
         task_dirs = sorted(
@@ -96,7 +100,7 @@ class BenchmarkRunner:
         log_lines: list[str] = []
         trace = TraceRecorder(task_id=loaded.task.id)
         start = time.time()
-        worktree: Path | None = None
+        workspace: Path | None = None
         hidden_backup: Path | None = None
 
         def log(message: str) -> None:
@@ -110,34 +114,40 @@ class BenchmarkRunner:
 
         try:
             log(f"Starting task {loaded.task.id}")
-            worktree = self._create_worktree(loaded, task_output)
-            log(f"Created worktree: {worktree}")
-            hidden_backup = self._hide_agent_invisible_task_files(worktree, task_output)
-            if hidden_backup:
-                log("Temporarily hid benchmarks/tasks from agent workspace")
+            if loaded.task.external_repo:
+                workspace = self._clone_external_repo(loaded, task_output)
+                log(f"Cloned external repo to: {workspace}")
+                self._install_repo_deps(workspace, log)
+            else:
+                workspace = self._create_worktree(loaded, task_output)
+                log(f"Created worktree: {workspace}")
+                hidden_backup = self._hide_agent_invisible_task_files(workspace, task_output)
+                if hidden_backup:
+                    log("Temporarily hid benchmarks/tasks from agent workspace")
 
-            agent_result = self._run_agent(loaded, worktree, task_output, trace)
+            agent_result = self._run_agent(loaded, workspace, task_output, trace)
             log(f"Agent finished with status={agent_result.status}")
 
             if hidden_backup:
-                self._restore_agent_invisible_task_files(worktree, hidden_backup)
+                self._restore_agent_invisible_task_files(workspace, hidden_backup)
                 log("Restored hidden benchmark task files before diff capture")
 
-            self._write_final_diff(worktree, artifacts.final_diff)
+            self._write_final_diff(workspace, artifacts.final_diff)
             trace.record_diff(
                 str(artifacts.final_diff),
-                self._git_diff_stat(worktree),
+                self._git_diff_stat(workspace),
             )
             log(f"Captured final diff: {artifacts.final_diff}")
 
             if loaded.test_patch_path:
-                self._apply_test_patch(worktree, loaded.test_patch_path)
+                self._apply_test_patch(workspace, loaded.test_patch_path)
                 log(f"Applied test.patch: {loaded.test_patch_path}")
 
             test_exit_code, test_output, test_duration_ms = self._run_test_command(
                 loaded.task.test_command,
-                worktree,
+                workspace,
                 loaded.task.timeout_seconds,
+                is_external=bool(loaded.task.external_repo),
             )
             artifacts.test_output.write_text(test_output, errors="replace")
             trace.record_test(
@@ -188,11 +198,14 @@ class BenchmarkRunner:
             log(f"Error: {type(exc).__name__}: {exc}")
             trace.record_completion("error", f"{type(exc).__name__}: {exc}")
         finally:
-            if worktree and hidden_backup and hidden_backup.exists():
-                self._restore_agent_invisible_task_files(worktree, hidden_backup)
-            if worktree and not self.keep_worktrees:
-                self._cleanup_worktree(worktree)
-                log("Cleaned up worktree")
+            if workspace and hidden_backup and hidden_backup.exists():
+                self._restore_agent_invisible_task_files(workspace, hidden_backup)
+            if workspace and not self.keep_worktrees:
+                if loaded.task.external_repo:
+                    self._cleanup_external_repo(workspace)
+                else:
+                    self._cleanup_worktree(workspace)
+                log("Cleaned up workspace")
 
             result.write_json(artifacts.result_json)
             trace.write_to_file(artifacts.trace_json)
@@ -200,17 +213,63 @@ class BenchmarkRunner:
 
         return result
 
-    def _create_worktree(self, loaded: LoadedTask, task_output: Path) -> Path:
-        worktree = task_output / ".worktree"
+    def _clone_external_repo(self, loaded: LoadedTask, task_output: Path) -> Path:
+        """Clone an external repo at the task's base_commit into a temp workspace."""
+        repo_dir = task_output / ".external_repo"
+        repo_url = loaded.task.external_repo
+        commit = loaded.task.base_commit
+
+        # Use cached bare clone if available to speed up repeated runs
+        if self.clone_cache_dir:
+            cache_dir = self.clone_cache_dir / "requests_bare"
+            if not cache_dir.exists():
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                subprocess.run(
+                    ["git", "clone", "--bare", repo_url, str(cache_dir)],
+                    capture_output=True, text=True, timeout=300,
+                )
+            subprocess.run(
+                ["git", "clone", "--shared", str(cache_dir), str(repo_dir)],
+                capture_output=True, text=True, timeout=60,
+            )
+        else:
+            subprocess.run(
+                ["git", "clone", repo_url, str(repo_dir)],
+                capture_output=True, text=True, timeout=300,
+            )
+
         subprocess.run(
-            ["git", "worktree", "add", "--detach", str(worktree), loaded.task.base_commit],
-            cwd=self.source_repo,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=True,
+            ["git", "checkout", commit],
+            cwd=repo_dir, capture_output=True, text=True, timeout=30,
         )
-        return worktree
+        return repo_dir
+
+    def _install_repo_deps(self, workspace: Path, log) -> None:
+        """Install repo dependencies into a local venv for test running."""
+        log("Creating venv and installing repo dependencies...")
+        subprocess.run(
+            ["uv", "venv"],
+            cwd=workspace, capture_output=True, text=True, timeout=60,
+        )
+        # Some older requests versions don't have [socks], try with minimal install
+        for install_args in [
+            ["uv", "pip", "install", "-e", ".[socks]", "pytest", "pytest-httpbin"],
+            ["uv", "pip", "install", "-e", ".", "pytest", "pytest-httpbin"],
+        ]:
+            proc = subprocess.run(
+                install_args,
+                cwd=workspace, capture_output=True, text=True, timeout=300,
+            )
+            if proc.returncode == 0:
+                log("Dependencies installed successfully")
+                return
+            log(f"Install attempt with {install_args[3]} failed, trying next...")
+        log(f"WARNING: pip install had issues: {proc.stderr[:300]}")
+
+    def _cleanup_external_repo(self, workspace: Path) -> None:
+        """Remove the cloned external repo."""
+        if workspace.exists():
+            shutil.rmtree(workspace, ignore_errors=True)
 
     def _run_agent(
         self,
@@ -313,7 +372,10 @@ class BenchmarkRunner:
         command: str,
         workspace: Path,
         timeout_seconds: int,
+        is_external: bool = False,
     ) -> tuple[int, str, float]:
+        if is_external:
+            command = f"uv run {command}"
         start = time.time()
         try:
             proc = subprocess.run(
