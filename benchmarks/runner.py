@@ -140,7 +140,7 @@ class BenchmarkRunner:
             log(f"Captured final diff: {artifacts.final_diff}")
 
             if loaded.test_patch_path:
-                self._apply_test_patch(workspace, loaded.test_patch_path)
+                self._apply_test_patch(workspace, loaded.test_patch_path, task_output)
                 log(f"Applied test.patch: {loaded.test_patch_path}")
 
             test_exit_code, test_output, test_duration_ms = self._run_test_command(
@@ -317,19 +317,16 @@ class BenchmarkRunner:
     def _git_diff_stat(self, workspace: Path) -> str:
         return _run_git(["diff", "--stat"], workspace) or "(no changes)"
 
-    def _apply_test_patch(self, workspace: Path, patch_path: Path) -> None:
+    def _apply_test_patch(self, workspace: Path, patch_path: Path, task_output: Path) -> None:
         # SWE-bench pattern: isolate test files from agent modifications.
-        # Stage all agent changes (including untracked new files), save a
-        # source-only diff (excluding tests/), reset the worktree to the clean
-        # base commit, re-apply the source diff, then apply test.patch on the
-        # clean test directory.
-        source_patch = workspace / ".agent_source.patch"
+        # Write the source patch OUTSIDE the workspace so git clean doesn't remove it.
+        source_patch = task_output / ".agent_source.patch"
         subprocess.run(
-            ["git", "add", "-A", "--", ":!benchmarks/tasks/"],
+            ["git", "add", "-A"],
             cwd=workspace, timeout=10,
         )
         source_result = subprocess.run(
-            ["git", "diff", "--cached", "--", ":!tests/"],
+            ["git", "diff", "--cached", "--", ":!tests/", ":!testing/"],
             cwd=workspace,
             capture_output=True,
             text=True,
@@ -337,18 +334,35 @@ class BenchmarkRunner:
         )
         if source_result.stdout.strip():
             source_patch.write_text(source_result.stdout)
-            subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=workspace, timeout=10)
-            subprocess.run(["git", "clean", "-fd"], cwd=workspace, timeout=10)
             subprocess.run(
+                ["git", "reset", "--hard", "HEAD"],
+                cwd=workspace, timeout=10,
+            )
+            subprocess.run(
+                ["git", "clean", "-fd"],
+                cwd=workspace, timeout=10,
+            )
+            apply_result = subprocess.run(
                 ["git", "apply", str(source_patch)],
                 cwd=workspace,
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
+            if apply_result.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to re-apply agent source patch: "
+                    f"{apply_result.stderr.strip() or apply_result.stdout.strip()}"
+                )
         else:
-            subprocess.run(["git", "checkout", "HEAD", "--", "tests/"], cwd=workspace, timeout=10)
-            subprocess.run(["git", "clean", "-fd", "--", "tests/"], cwd=workspace, timeout=10)
+            subprocess.run(
+                ["git", "checkout", "HEAD", "--", "tests/", "testing/"],
+                cwd=workspace, timeout=10,
+            )
+            subprocess.run(
+                ["git", "clean", "-fd", "--", "tests/", "testing/"],
+                cwd=workspace, timeout=10,
+            )
 
         try:
             source_patch.unlink(missing_ok=True)
