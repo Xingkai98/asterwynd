@@ -1,4 +1,5 @@
 # agent/llm.py
+import asyncio
 from dataclasses import dataclass, field
 from typing import Protocol, Optional, runtime_checkable, TYPE_CHECKING
 
@@ -56,21 +57,25 @@ class BaseLLM:
         self.model = model
         self.max_tokens = max_tokens
         self._client: Optional[httpx.AsyncClient] = None
+        self._client_lock = asyncio.Lock()
 
     def _get_headers(self) -> dict:
         """子类实现：返回 HTTP headers（含认证）"""
         raise NotImplementedError
 
     async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            # 流式：chunk 间隔短，用默认 read timeout
-            # 非流式：大响应可能超 60s，read timeout 拉到 180s
-            read_timeout = 60.0 if self.stream else 180.0
-            self._client = httpx.AsyncClient(
-                headers=self._get_headers(),
-                timeout=httpx.Timeout(60.0, read=read_timeout),
-            )
-        return self._client
+        if self._client is not None:
+            return self._client
+        async with self._client_lock:
+            if self._client is None:
+                # 流式：chunk 间隔短，用默认 read timeout
+                # 非流式：大响应可能超 60s，read timeout 拉到 180s
+                read_timeout = 60.0 if self.stream else 180.0
+                self._client = httpx.AsyncClient(
+                    headers=self._get_headers(),
+                    timeout=httpx.Timeout(60.0, read=read_timeout),
+                )
+            return self._client
 
     async def _stream_events(self, url: str, json: dict):
         """SSE 流式请求，yield (event_type, data_dict) tuples。"""

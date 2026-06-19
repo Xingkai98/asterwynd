@@ -263,7 +263,7 @@ def benchmark(
         keep_worktrees=keep_worktrees,
         clone_cache_dir=clone_cache_dir,
     )
-    metadata = runner.run_all(tasks_dir)
+    metadata = asyncio.run(runner.run_all(tasks_dir))
     run_path = runs_dir / metadata.run_id
     typer.echo(f"Benchmark run: {run_path}")
     typer.echo(

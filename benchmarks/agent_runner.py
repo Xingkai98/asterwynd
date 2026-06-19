@@ -29,6 +29,10 @@ class AgentRunner(ABC):
     ) -> AgentRunResult:
         ...
 
+    async def close(self) -> None:
+        """Release resources (e.g. LLM client). Default no-op."""
+        pass
+
 
 class FakeAgentRunner(AgentRunner):
     def __init__(
@@ -252,11 +256,21 @@ class MyAgentRunner(AgentRunner):
         model: str = "",
         max_iterations: int = 20,
         prompt_builder: CodingPromptBuilder | None = None,
+        timeout_seconds: int = 1800,
     ):
         self.llm = llm
         self.model = model
         self.max_iterations = max_iterations
         self.prompt_builder = prompt_builder or CodingPromptBuilder()
+        self.timeout_seconds = timeout_seconds
+
+    async def close(self) -> None:
+        close_fn = getattr(self.llm, "close", None)
+        if close_fn:
+            try:
+                await close_fn()
+            except Exception:
+                pass
 
     async def run(
         self,
@@ -276,40 +290,33 @@ class MyAgentRunner(AgentRunner):
             llm=counting_llm,
             tool_registry=registry,
             memory=MemoryManager(max_tokens=80_000),
-            max_iterations=self.max_iterations,
+            max_iterations=999,
         )
         messages = self.prompt_builder.build_messages(
             task=task,
             problem_statement=problem_statement,
             workspace=str(workspace),
         )
-        # Timeout scales with max_iterations: 10 seconds per iteration is
-        # conservative (API call ~2s + tool execution ~3s + buffer).
-        effective_timeout = max(task.timeout_seconds, self.max_iterations * 10)
+        effective_timeout = self.timeout_seconds
         try:
-            try:
-                result = await asyncio.wait_for(
-                    agent.run(messages, trace_recorder=trace),
-                    timeout=effective_timeout,
-                )
-            except asyncio.TimeoutError:
-                # Record actual progress from CountingLLM
-                tool_count = sum(1 for step in trace.steps if step.type == "tool_call")
-                trace.record_completion(
-                    "error",
-                    f"MyAgent timed out after {effective_timeout}s",
-                )
-                return AgentRunResult(
-                    status="error",
-                    iterations=counting_llm.call_count,
-                    tool_calls=tool_count,
-                    failure_category=FailureCategory.MODEL_FAILURE.value,
-                    output=f"MyAgent timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
-                )
-        finally:
-            close = getattr(self.llm, "close", None)
-            if close:
-                await close()
+            result = await asyncio.wait_for(
+                agent.run(messages, trace_recorder=trace),
+                timeout=effective_timeout,
+            )
+        except asyncio.TimeoutError:
+            # Record actual progress from CountingLLM
+            tool_count = sum(1 for step in trace.steps if step.type == "tool_call")
+            trace.record_completion(
+                "error",
+                f"MyAgent timed out after {effective_timeout}s",
+            )
+            return AgentRunResult(
+                status="error",
+                iterations=counting_llm.call_count,
+                tool_calls=tool_count,
+                failure_category=FailureCategory.MODEL_FAILURE.value,
+                output=f"MyAgent timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
+            )
         edit_count = sum(1 for call in result.tool_calls_made if call.name == "Edit")
         return AgentRunResult(
             status="completed" if result.stop_reason.value == "end_turn" else "error",

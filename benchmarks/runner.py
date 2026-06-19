@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -49,7 +51,29 @@ class BenchmarkRunner:
             Path(clone_cache_dir).resolve() if clone_cache_dir else None
         )
 
-    def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
+    def _prefill_clone_cache(self, loaded_tasks: list) -> None:
+        """Serial pre-fill of bare clone cache for all external repos.
+
+        Called before parallel execution to eliminate TOCTOU races on the
+        shared clone cache directory.
+        """
+        if not self.clone_cache_dir:
+            return
+        seen: set[str] = set()
+        for loaded in loaded_tasks:
+            if not loaded.task.external_repo:
+                continue
+            repo_key = loaded.task.external_repo.rstrip("/").split("/")[-1].replace(".git", "")
+            if repo_key in seen:
+                continue
+            seen.add(repo_key)
+            cache_dir = self.clone_cache_dir / f"{repo_key}_bare"
+            if cache_dir.exists():
+                continue
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            self._git_clone_with_retry(loaded.task.external_repo, str(cache_dir), bare=True)
+
+    async def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
         task_dirs = sorted(
             path for path in Path(tasks_dir).iterdir()
             if path.is_dir() and (path / "task.json").exists()
@@ -58,9 +82,41 @@ class BenchmarkRunner:
         run_dir = self.runs_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
+        # Pre-fill clone cache serially before parallel execution
+        loaded_tasks = [load_task(d) for d in task_dirs]
+        self._prefill_clone_cache(loaded_tasks)
+
+        parallel = int(os.environ.get("MYAGENT_BENCHMARK_PARALLEL", "1"))
+        semaphore = asyncio.Semaphore(parallel)
+
+        async def run_one(task_dir: Path) -> TaskResult:
+            async with semaphore:
+                return await self.run_task(task_dir, run_dir=run_dir)
+
         started_at = _now()
-        results = [self.run_task(task_dir, run_dir=run_dir) for task_dir in task_dirs]
+        results_raw = await asyncio.gather(
+            *(run_one(td) for td in task_dirs),
+            return_exceptions=True,
+        )
+        results: list[TaskResult] = []
+        for i, r in enumerate(results_raw):
+            if isinstance(r, BaseException):
+                results.append(TaskResult(
+                    task_id=task_dirs[i].name,
+                    agent=self.agent_name,
+                    model=self.model,
+                    status="error",
+                    failure_category=FailureCategory.SETUP_ERROR.value,
+                ))
+            else:
+                results.append(r)
         ended_at = _now()
+
+        # Clean up shared resources after all tasks complete
+        try:
+            await self.agent_runner.close()
+        except Exception:
+            pass
 
         metadata = RunMetadata(
             run_id=run_id,
@@ -80,7 +136,7 @@ class BenchmarkRunner:
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
         return metadata
 
-    def run_task(
+    async def run_task(
         self,
         task_dir: str | Path,
         run_dir: str | Path | None = None,
@@ -115,24 +171,34 @@ class BenchmarkRunner:
         try:
             log(f"Starting task {loaded.task.id}")
             if loaded.task.external_repo:
-                workspace = self._clone_external_repo(loaded, task_output)
+                workspace = await asyncio.to_thread(
+                    self._clone_external_repo, loaded, task_output, log
+                )
                 log(f"Cloned external repo to: {workspace}")
-                self._install_repo_deps(workspace, log)
+                await asyncio.to_thread(self._install_repo_deps, workspace, log)
             else:
-                workspace = self._create_worktree(loaded, task_output)
+                workspace = await asyncio.to_thread(
+                    self._create_worktree, loaded, task_output
+                )
                 log(f"Created worktree: {workspace}")
-                hidden_backup = self._hide_agent_invisible_task_files(workspace, task_output)
+                hidden_backup = await asyncio.to_thread(
+                    self._hide_agent_invisible_task_files, workspace, task_output
+                )
                 if hidden_backup:
                     log("Temporarily hid benchmarks/tasks from agent workspace")
 
-            agent_result = self._run_agent(loaded, workspace, task_output, trace)
+            agent_result = await self._run_agent(loaded, workspace, task_output, trace)
             log(f"Agent finished with status={agent_result.status}")
 
             if hidden_backup:
-                self._restore_agent_invisible_task_files(workspace, hidden_backup)
+                await asyncio.to_thread(
+                    self._restore_agent_invisible_task_files, workspace, hidden_backup
+                )
                 log("Restored hidden benchmark task files before diff capture")
 
-            self._write_final_diff(workspace, artifacts.final_diff)
+            await asyncio.to_thread(
+                self._write_final_diff, workspace, artifacts.final_diff
+            )
             trace.record_diff(
                 str(artifacts.final_diff),
                 self._git_diff_stat(workspace),
@@ -140,14 +206,17 @@ class BenchmarkRunner:
             log(f"Captured final diff: {artifacts.final_diff}")
 
             if loaded.test_patch_path:
-                self._apply_test_patch(workspace, loaded.test_patch_path, task_output)
+                await asyncio.to_thread(
+                    self._apply_test_patch, workspace, loaded.test_patch_path, task_output
+                )
                 log(f"Applied test.patch: {loaded.test_patch_path}")
 
-            test_exit_code, test_output, test_duration_ms = self._run_test_command(
+            test_exit_code, test_output, test_duration_ms = await asyncio.to_thread(
+                self._run_test_command,
                 loaded.task.test_command,
                 workspace,
                 loaded.task.timeout_seconds,
-                is_external=bool(loaded.task.external_repo),
+                bool(loaded.task.external_repo),
             )
             artifacts.test_output.write_text(test_output, errors="replace")
             trace.record_test(
@@ -199,12 +268,14 @@ class BenchmarkRunner:
             trace.record_completion("error", f"{type(exc).__name__}: {exc}")
         finally:
             if workspace and hidden_backup and hidden_backup.exists():
-                self._restore_agent_invisible_task_files(workspace, hidden_backup)
+                await asyncio.to_thread(
+                    self._restore_agent_invisible_task_files, workspace, hidden_backup
+                )
             if workspace and not self.keep_worktrees:
                 if loaded.task.external_repo:
-                    self._cleanup_external_repo(workspace)
+                    await asyncio.to_thread(self._cleanup_external_repo, workspace)
                 else:
-                    self._cleanup_worktree(workspace)
+                    await asyncio.to_thread(self._cleanup_worktree, workspace)
                 log("Cleaned up workspace")
 
             result.write_json(artifacts.result_json)
@@ -225,30 +296,27 @@ class BenchmarkRunner:
         )
         return worktree
 
-    def _clone_external_repo(self, loaded: LoadedTask, task_output: Path) -> Path:
+    def _clone_external_repo(self, loaded: LoadedTask, task_output: Path, log=None) -> Path:
         """Clone an external repo at the task's base_commit into a temp workspace."""
         repo_dir = task_output / ".external_repo"
         repo_url = loaded.task.external_repo
         commit = loaded.task.base_commit
         repo_key = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
 
-        # Use cached bare clone if available to speed up repeated runs
         if self.clone_cache_dir:
             cache_dir = self.clone_cache_dir / f"{repo_key}_bare"
             if not cache_dir.exists():
                 cache_dir.mkdir(parents=True, exist_ok=True)
-                subprocess.run(
-                    ["git", "clone", "--bare", repo_url, str(cache_dir)],
-                    capture_output=True, text=True, timeout=300, check=True,
+                self._git_clone_with_retry(
+                    repo_url, str(cache_dir), bare=True, log=log,
                 )
             subprocess.run(
                 ["git", "clone", "--shared", str(cache_dir), str(repo_dir)],
                 capture_output=True, text=True, timeout=60, check=True,
             )
         else:
-            subprocess.run(
-                ["git", "clone", repo_url, str(repo_dir)],
-                capture_output=True, text=True, timeout=300, check=True,
+            self._git_clone_with_retry(
+                repo_url, str(repo_dir), bare=False, log=log,
             )
 
         subprocess.run(
@@ -256,6 +324,34 @@ class BenchmarkRunner:
             cwd=repo_dir, capture_output=True, text=True, timeout=30, check=True,
         )
         return repo_dir
+
+    def _git_clone_with_retry(
+        self, url: str, dest: str, *, bare: bool = False,
+        log=None,
+    ) -> None:
+        """Git clone with 3 retries and exponential backoff (1m, 2m, 4m)."""
+        delays = [60, 120, 240]  # 1 min, 2 min, 4 min
+        args = ["git", "clone"]
+        if bare:
+            args.append("--bare")
+        args.extend([url, dest])
+
+        last_exc = None
+        for attempt in range(len(delays) + 1):
+            try:
+                subprocess.run(
+                    args,
+                    capture_output=True, text=True, timeout=300, check=True,
+                )
+                return
+            except subprocess.CalledProcessError as exc:
+                last_exc = exc
+                if attempt < len(delays):
+                    delay = delays[attempt]
+                    if log:
+                        log(f"Git clone failed (attempt {attempt + 1}/4), retrying in {delay}s: {exc.stderr[:200]}")
+                    time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
 
     def _install_repo_deps(self, workspace: Path, log, python_version: str = "3.9") -> None:
         """Install repo dependencies into a local venv with the correct Python version."""
@@ -288,23 +384,19 @@ class BenchmarkRunner:
         if workspace.exists():
             shutil.rmtree(workspace, ignore_errors=True)
 
-    def _run_agent(
+    async def _run_agent(
         self,
         loaded: LoadedTask,
         workspace: Path,
         task_output: Path,
         trace: TraceRecorder,
     ):
-        import asyncio
-
-        return asyncio.run(
-            self.agent_runner.run(
-                loaded.task,
-                loaded.problem_statement,
-                workspace,
-                task_output,
-                trace,
-            )
+        return await self.agent_runner.run(
+            loaded.task,
+            loaded.problem_statement,
+            workspace,
+            task_output,
+            trace,
         )
 
     def _hide_agent_invisible_task_files(self, worktree: Path, task_output: Path) -> Path | None:
