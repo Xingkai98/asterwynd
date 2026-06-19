@@ -53,9 +53,14 @@ uv run python cli.py benchmark benchmarks/tasks \
   --fake-old-string '# MyAgent' \
   --fake-new-string '# MyAgent Coding Agent'
 
-# Real agent benchmark
+# Real agent benchmark (serial, default)
 uv run python cli.py benchmark benchmarks/tasks \
-  --agent myagent --source-repo . --runs-dir /tmp/bench --max-iterations 80
+  --agent myagent --source-repo . --runs-dir /tmp/bench
+
+# Real agent benchmark (parallel, with external repo cache)
+MYAGENT_BENCHMARK_PARALLEL=4 uv run python cli.py benchmark benchmarks/tasks \
+  --agent myagent --provider anthropic --runs-dir /tmp/bench \
+  --clone-cache-dir /tmp/swebench-cache
 
 # Browser tests (requires playwright)
 playwright install chromium
@@ -121,15 +126,22 @@ FastAPI + WebSocket server with vanilla JS frontend. Two views:
 
 ### Local Benchmark (`benchmarks/`)
 
-23 coding-agent tasks extracted from git history across 6 categories.
-SWE-bench style evaluation in isolated git worktrees:
+31 coding-agent tasks: 21 myagent internal tasks (extracted from git history) +
+10 SWE-bench Verified external tasks (flask, requests, pytest). SWE-bench style
+evaluation in isolated git worktrees or external repo clones:
 
-1. Create detached worktree at task `base_commit`
-2. Hide `benchmarks/tasks/` from agent workspace
-3. Run agent with coding prompt + tools
-4. Save agent source diff (`:!tests/`), reset worktree, reapply sources
-5. Apply hidden `test.patch`, run validation command
-6. Write `result.json`, `trace.json`, `final.diff`, `test_output.txt`, `runner.log`
+1. For internal tasks: create detached worktree at task `base_commit`
+2. For external tasks: clone repo from `external_repo` URL, install deps in venv
+3. Hide `benchmarks/tasks/` from agent workspace (internal tasks only)
+4. Run agent with coding prompt + tools (30 min timeout per task)
+5. Save agent source diff (`:!tests/`), reset worktree, reapply sources
+6. Apply hidden `test.patch`, run validation command
+7. Write `result.json`, `trace.json`, `final.diff`, `test_output.txt`, `runner.log`
+
+**Parallel execution**: Set `MYAGENT_BENCHMARK_PARALLEL=N` to run N tasks
+concurrently via `asyncio.Semaphore`. Default is 1 (serial, backward compatible).
+External repos are cloned into a shared bare cache (`--clone-cache-dir`) with
+serial pre-fill to eliminate TOCTOU races during parallel runs.
 
 ### Anthropic / DeepSeek Compatibility
 
@@ -233,6 +245,7 @@ Relevant environment variables:
 - `MYAGENT_MODEL`: default model override
 - `MYAGENT_DEBUG=enabled`: enables the Debug tab and structured debug events
 - `MYAGENT_LOG_LEVEL=DEBUG`: more verbose server/CLI logging
+- `MYAGENT_BENCHMARK_PARALLEL`: number of concurrent benchmark tasks (default 1, serial)
 - `MYAGENT_COMMAND_DENYLIST`: comma-separated extra deny patterns for BashTool
 - `MYAGENT_IGNORE_PATTERNS`: comma-separated extra ignore dirs for ListFiles/Find
 
