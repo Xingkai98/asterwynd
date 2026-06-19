@@ -371,22 +371,27 @@ class BenchmarkRunner:
         raise last_exc  # type: ignore[misc]
 
     def _install_repo_deps(self, workspace: Path, log, loaded: LoadedTask) -> None:
-        """Install repo dependencies using SWE-bench MAP_REPO_VERSION_TO_SPECS config."""
+        """Install repo deps using SWE-bench MAP_REPO_VERSION_TO_SPECS config."""
         from swebench.harness.constants import MAP_REPO_VERSION_TO_SPECS
 
         repo = loaded.task.repo
         version = loaded.task.version
 
         python_ver = "3.9"
-        install_cmd = "python -m pip install -e ."
         pip_packages: list[str] = []
 
         if version and repo in MAP_REPO_VERSION_TO_SPECS:
             specs = MAP_REPO_VERSION_TO_SPECS[repo]
             spec = specs.get(version, specs.get(list(specs.keys())[-1], {}))
             python_ver = spec.get("python", "3.9")
-            install_cmd = spec.get("install", "python -m pip install -e .")
             pip_packages = list(spec.get("pip_packages", []))
+            # SWE-bench's `packages` field: if it's a simple package name
+            # (not a file path), it's a conda package to add to pip_packages.
+            # e.g. "pytest" for requests, but "requirements.txt" for flask.
+            pkg_src = spec.get("packages", "")
+            if pkg_src and not any(pkg_src.endswith(ext) for ext in
+                                   (".txt", ".yml", ".yaml", ".in", ".cfg", ".toml")):
+                pip_packages.append(pkg_src)
             if spec.get("pre_install"):
                 for pre_cmd in spec["pre_install"]:
                     subprocess.run(
@@ -396,28 +401,26 @@ class BenchmarkRunner:
         else:
             pip_packages = ["pytest", "setuptools<70"]
 
-        # Always pin setuptools<70 for pkg_resources (required by older pytest/config.py)
+        # Always pin setuptools<70 for pkg_resources
         has_setuptools = any(p.startswith("setuptools") for p in pip_packages)
         if not has_setuptools:
             pip_packages.append("setuptools<70")
-        # pytest not in SWE-bench pip_packages (pre-installed in Docker); add explicitly.
-        # Pin to <8 to avoid bleeding-edge breaks (e.g. monkeypatch.notset removed in 9.x).
+        # Ensure pytest is present (may be conda-only in SWE-bench)
         if not any(p.startswith("pytest") for p in pip_packages):
             pip_packages.append("pytest<8")
 
-        # requests tests hit httpbin.org by default; need pytest-httpbin for local fallback
+        # requests tests need local httpbin
         if repo == "psf/requests":
             pip_packages.append("pytest-httpbin")
             pip_packages.append("werkzeug<3.0")
 
-        log(f"Creating Python {python_ver} venv and installing deps (repo={repo}, version={version})...")
+        log(f"Creating Python {python_ver} venv and installing deps (repo={repo}, version={loaded.task.version})...")
         subprocess.run(
             ["uv", "venv", "--python", python_ver],
             cwd=workspace, capture_output=True, text=True, timeout=120,
         )
         venv_python = str(workspace / ".venv" / "bin" / "python")
 
-        # Install pip_packages first (pinned versions), then the repo itself
         install_args = ["uv", "pip", "install", "--python", venv_python] + pip_packages + ["-e", "."]
         proc = subprocess.run(
             install_args,
@@ -427,7 +430,6 @@ class BenchmarkRunner:
             log(f"Dependencies installed successfully ({len(pip_packages)} packages)")
         else:
             log(f"Install failed: {proc.stderr[:300]}")
-            # Fallback without -e
             install_args2 = ["uv", "pip", "install", "--python", venv_python] + pip_packages
             subprocess.run(
                 install_args2,
