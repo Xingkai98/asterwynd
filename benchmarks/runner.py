@@ -175,7 +175,7 @@ class BenchmarkRunner:
                     self._clone_external_repo, loaded, task_output, log
                 )
                 log(f"Cloned external repo to: {workspace}")
-                await asyncio.to_thread(self._install_repo_deps, workspace, log)
+                await asyncio.to_thread(self._install_repo_deps, workspace, log, loaded)
             else:
                 workspace = await asyncio.to_thread(
                     self._create_worktree, loaded, task_output
@@ -211,13 +211,30 @@ class BenchmarkRunner:
                 )
                 log(f"Applied test.patch: {loaded.test_patch_path}")
 
+            # For requests tasks, start a local httpbin server to avoid
+            # hitting httpbin.org (which may return 503).
+            httpbin_proc = None
+            extra_env: dict[str, str] = {}
+            if loaded.task.repo == "psf/requests" and loaded.task.external_repo:
+                httpbin_proc, httpbin_url = await asyncio.to_thread(
+                    self._start_local_httpbin, workspace
+                )
+                if httpbin_url:
+                    extra_env["HTTPBIN_URL"] = httpbin_url
+                    log(f"Started local httpbin at {httpbin_url}")
+
             test_exit_code, test_output, test_duration_ms = await asyncio.to_thread(
                 self._run_test_command,
                 loaded.task.test_command,
                 workspace,
                 loaded.task.timeout_seconds,
                 bool(loaded.task.external_repo),
+                extra_env,
             )
+
+            if httpbin_proc:
+                await asyncio.to_thread(self._stop_local_httpbin, httpbin_proc)
+                log("Stopped local httpbin")
             artifacts.test_output.write_text(test_output, errors="replace")
             trace.record_test(
                 loaded.task.test_command,
@@ -353,31 +370,73 @@ class BenchmarkRunner:
                     time.sleep(delay)
         raise last_exc  # type: ignore[misc]
 
-    def _install_repo_deps(self, workspace: Path, log, python_version: str = "3.9") -> None:
-        """Install repo dependencies into a local venv with the correct Python version."""
-        log(f"Creating Python {python_version} venv and installing repo dependencies...")
+    def _install_repo_deps(self, workspace: Path, log, loaded: LoadedTask) -> None:
+        """Install repo dependencies using SWE-bench MAP_REPO_VERSION_TO_SPECS config."""
+        from swebench.harness.constants import MAP_REPO_VERSION_TO_SPECS
+
+        repo = loaded.task.repo
+        version = loaded.task.version
+
+        python_ver = "3.9"
+        install_cmd = "python -m pip install -e ."
+        pip_packages: list[str] = []
+
+        if version and repo in MAP_REPO_VERSION_TO_SPECS:
+            specs = MAP_REPO_VERSION_TO_SPECS[repo]
+            spec = specs.get(version, specs.get(list(specs.keys())[-1], {}))
+            python_ver = spec.get("python", "3.9")
+            install_cmd = spec.get("install", "python -m pip install -e .")
+            pip_packages = list(spec.get("pip_packages", []))
+            if spec.get("pre_install"):
+                for pre_cmd in spec["pre_install"]:
+                    subprocess.run(
+                        pre_cmd, shell=True, cwd=workspace,
+                        capture_output=True, text=True, timeout=60,
+                    )
+        else:
+            pip_packages = ["pytest", "setuptools<70"]
+
+        # Always pin setuptools<70 for pkg_resources (required by older pytest/config.py)
+        has_setuptools = any(p.startswith("setuptools") for p in pip_packages)
+        if not has_setuptools:
+            pip_packages.append("setuptools<70")
+        # pytest not in SWE-bench pip_packages (pre-installed in Docker); add explicitly.
+        # Pin to <8 to avoid bleeding-edge breaks (e.g. monkeypatch.notset removed in 9.x).
+        if not any(p.startswith("pytest") for p in pip_packages):
+            pip_packages.append("pytest<8")
+
+        # requests tests hit httpbin.org by default; need pytest-httpbin for local fallback
+        if repo == "psf/requests":
+            pip_packages.append("pytest-httpbin")
+            pip_packages.append("werkzeug<3.0")
+
+        log(f"Creating Python {python_ver} venv and installing deps (repo={repo}, version={version})...")
         subprocess.run(
-            ["uv", "venv", "--python", python_version],
+            ["uv", "venv", "--python", python_ver],
             cwd=workspace, capture_output=True, text=True, timeout=120,
         )
         venv_python = str(workspace / ".venv" / "bin" / "python")
-        for install_args in [
-            ["uv", "pip", "install", "--python", venv_python,
-             "-e", ".[socks]", "pytest", "pytest-httpbin",
-             "setuptools", "werkzeug<3.0"],
-            ["uv", "pip", "install", "--python", venv_python,
-             "-e", ".", "pytest", "pytest-httpbin",
-             "setuptools", "werkzeug<3.0"],
-        ]:
-            proc = subprocess.run(
-                install_args,
+
+        # Install pip_packages first (pinned versions), then the repo itself
+        install_args = ["uv", "pip", "install", "--python", venv_python] + pip_packages + ["-e", "."]
+        proc = subprocess.run(
+            install_args,
+            cwd=workspace, capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode == 0:
+            log(f"Dependencies installed successfully ({len(pip_packages)} packages)")
+        else:
+            log(f"Install failed: {proc.stderr[:300]}")
+            # Fallback without -e
+            install_args2 = ["uv", "pip", "install", "--python", venv_python] + pip_packages
+            subprocess.run(
+                install_args2,
                 cwd=workspace, capture_output=True, text=True, timeout=300,
             )
-            if proc.returncode == 0:
-                log("Dependencies installed successfully")
-                return
-            log(f"Install attempt failed: {proc.stderr[:200]}")
-        log(f"WARNING: all install attempts failed")
+            subprocess.run(
+                ["uv", "pip", "install", "--python", venv_python, "-e", "."],
+                cwd=workspace, capture_output=True, text=True, timeout=300,
+            )
 
     def _cleanup_external_repo(self, workspace: Path) -> None:
         """Remove the cloned external repo."""
@@ -490,12 +549,50 @@ class BenchmarkRunner:
                 f"{patch.stderr.strip() or patch.stdout.strip()}"
             )
 
+    def _start_local_httpbin(self, workspace: Path) -> tuple:
+        """Start a local httpbin server for requests tests. Returns (proc, url)."""
+        import socket
+        venv_python = str(workspace / ".venv" / "bin" / "python")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        server_code = f"""
+import sys
+from httpbin import app as application
+from werkzeug.serving import run_simple
+run_simple('127.0.0.1', {port}, application, use_reloader=False)
+"""
+        try:
+            proc = subprocess.Popen(
+                [venv_python, "-c", server_code],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            time.sleep(2)
+            if proc.poll() is not None:
+                return None, None
+            return proc, f"http://127.0.0.1:{port}"
+        except Exception:
+            return None, None
+
+    def _stop_local_httpbin(self, proc) -> None:
+        """Stop the local httpbin server."""
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
     def _run_test_command(
         self,
         command: str,
         workspace: Path,
         timeout_seconds: int,
         is_external: bool = False,
+        extra_env: dict[str, str] | None = None,
     ) -> tuple[int, str, float]:
         if is_external:
             venv_python = workspace / ".venv" / "bin" / "python"
@@ -503,6 +600,9 @@ class BenchmarkRunner:
                 command = command.replace(
                     "python -m pytest", f"{venv_python} -m pytest"
                 )
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
         start = time.time()
         try:
             proc = subprocess.run(
@@ -512,6 +612,7 @@ class BenchmarkRunner:
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
+                env=env,
             )
             output = f"$ {command}\n\n{proc.stdout}{proc.stderr}\n[Exit code: {proc.returncode}]"
             return proc.returncode, output, (time.time() - start) * 1000

@@ -9,5 +9,6 @@
   "test_patch_file": "test.patch",
   "category": "bug_fix",
   "difficulty": "<15 min fix",
-  "external_repo": "https://gitee.com/mirrors/requests.git"
+  "external_repo": "https://gitee.com/mirrors/requests.git",
+  "version": "2.0"
 }
