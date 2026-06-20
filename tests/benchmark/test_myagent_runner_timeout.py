@@ -9,7 +9,7 @@ from benchmarks.task_schema import TaskSpec
 
 class HangingLLM:
     async def chat(self, messages, tools=None, model="gpt-4"):
-        await asyncio.sleep(10)
+        await asyncio.sleep(60)  # sleep long enough to guarantee timeout fires first
 
 
 @pytest.mark.asyncio
@@ -23,7 +23,7 @@ async def test_myagent_runner_times_out(tmp_path):
         timeout_seconds=1,
     )
     trace = TraceRecorder(task_id=task.id)
-    runner = MyAgentRunner(llm=HangingLLM(), max_iterations=5)
+    runner = MyAgentRunner(llm=HangingLLM(), max_iterations=5, timeout_seconds=3)
 
     result = await runner.run(task, "Do something", tmp_path, tmp_path / "out", trace)
 

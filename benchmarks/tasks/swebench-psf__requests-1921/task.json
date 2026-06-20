@@ -1,0 +1,14 @@
+{
+  "id": "swebench-psf__requests-1921",
+  "repo": "psf/requests",
+  "base_commit": "3c88e520da24ae6f736929a750876e7654accc3d",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest test_requests.py::RequestsTestCase::test_DIGESTAUTH_WRONG_HTTP_401_GET test_requests.py::RequestsTestCase::test_POSTBIN_GET_POST_FILES test_requests.py::RequestsTestCase::test_basicauth_with_netrc test_requests.py::RequestsTestCase::test_cookie_persists_via_api test_requests.py::RequestsTestCase::test_headers_on_session_with_None_are_not_sent test_requests.py::RequestsTestCase::test_uppercase_scheme_redirect --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "<15 min fix",
+  "external_repo": "https://gitee.com/mirrors/requests.git",
+  "version": "2.3"
+}

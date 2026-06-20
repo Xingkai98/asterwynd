@@ -1,0 +1,14 @@
+{
+  "id": "swebench-pytest-dev__pytest-5262",
+  "repo": "pytest-dev/pytest",
+  "base_commit": "58e6a09db49f34886ff13f3b7520dd0bcd7063cd",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest testing/test_capture.py::TestFDCapture::test_capfd_sys_stdout_mode --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "<15 min fix",
+  "external_repo": "https://gitee.com/mirrors/pytest.git",
+  "version": "4.5"
+}

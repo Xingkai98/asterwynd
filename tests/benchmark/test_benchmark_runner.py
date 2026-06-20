@@ -55,7 +55,8 @@ def repo(tmp_path):
     return repo
 
 
-def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
+@pytest.mark.asyncio
+async def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
     base_commit = _git_out(repo, "rev-parse", "HEAD")
     task_dir = _task_dir(
         tmp_path,
@@ -68,7 +69,7 @@ def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
         runs_dir=tmp_path / "runs",
     )
 
-    metadata = runner.run_all(tmp_path / "tasks", run_id="run-1")
+    metadata = await runner.run_all(tmp_path / "tasks", run_id="run-1")
 
     assert metadata.passed == 1
     run_dir = tmp_path / "runs" / "run-1"
@@ -97,7 +98,8 @@ def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
     assert "benchmarks/tasks" not in final_diff
 
 
-def test_benchmark_runner_reports_passed_with_warnings(repo, tmp_path):
+@pytest.mark.asyncio
+async def test_benchmark_runner_reports_passed_with_warnings(repo, tmp_path):
     base_commit = _git_out(repo, "rev-parse", "HEAD")
     task_dir = _task_dir(
         tmp_path,
@@ -110,7 +112,7 @@ def test_benchmark_runner_reports_passed_with_warnings(repo, tmp_path):
         runs_dir=tmp_path / "runs",
     )
 
-    metadata = runner.run_all(tmp_path / "tasks", run_id="run-warning")
+    metadata = await runner.run_all(tmp_path / "tasks", run_id="run-warning")
 
     assert metadata.passed == 0
     assert metadata.warnings == 1
@@ -124,7 +126,8 @@ def test_benchmark_runner_reports_passed_with_warnings(repo, tmp_path):
     assert "| task-1 | passed_with_warnings |" in summary
 
 
-def test_benchmark_runner_writes_failure_artifacts_on_bad_test_patch(repo, tmp_path):
+@pytest.mark.asyncio
+async def test_benchmark_runner_writes_failure_artifacts_on_bad_test_patch(repo, tmp_path):
     base_commit = _git_out(repo, "rev-parse", "HEAD")
     task_dir = _task_dir(
         tmp_path,
@@ -138,7 +141,7 @@ def test_benchmark_runner_writes_failure_artifacts_on_bad_test_patch(repo, tmp_p
         runs_dir=tmp_path / "runs",
     )
 
-    result = runner.run_task(task_dir, run_dir=tmp_path / "runs" / "run-2")
+    result = await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "run-2")
 
     task_output = tmp_path / "runs" / "run-2" / "tasks" / "task-1"
     assert result.status == "error"

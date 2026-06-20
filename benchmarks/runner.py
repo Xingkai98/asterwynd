@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -37,6 +39,7 @@ class BenchmarkRunner:
         agent_name: str = "myagent",
         model: str = "",
         keep_worktrees: bool = False,
+        clone_cache_dir: str | Path | None = None,
     ):
         self.agent_runner = agent_runner
         self.source_repo = Path(source_repo).resolve()
@@ -44,8 +47,33 @@ class BenchmarkRunner:
         self.agent_name = agent_name
         self.model = model
         self.keep_worktrees = keep_worktrees
+        self.clone_cache_dir = (
+            Path(clone_cache_dir).resolve() if clone_cache_dir else None
+        )
 
-    def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
+    def _prefill_clone_cache(self, loaded_tasks: list) -> None:
+        """Serial pre-fill of bare clone cache for all external repos.
+
+        Called before parallel execution to eliminate TOCTOU races on the
+        shared clone cache directory.
+        """
+        if not self.clone_cache_dir:
+            return
+        seen: set[str] = set()
+        for loaded in loaded_tasks:
+            if not loaded.task.external_repo:
+                continue
+            repo_key = loaded.task.external_repo.rstrip("/").split("/")[-1].replace(".git", "")
+            if repo_key in seen:
+                continue
+            seen.add(repo_key)
+            cache_dir = self.clone_cache_dir / f"{repo_key}_bare"
+            if cache_dir.exists():
+                continue
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            self._git_clone_with_retry(loaded.task.external_repo, str(cache_dir), bare=True)
+
+    async def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
         task_dirs = sorted(
             path for path in Path(tasks_dir).iterdir()
             if path.is_dir() and (path / "task.json").exists()
@@ -54,9 +82,41 @@ class BenchmarkRunner:
         run_dir = self.runs_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
+        # Pre-fill clone cache serially before parallel execution
+        loaded_tasks = [load_task(d) for d in task_dirs]
+        self._prefill_clone_cache(loaded_tasks)
+
+        parallel = int(os.environ.get("MYAGENT_BENCHMARK_PARALLEL", "1"))
+        semaphore = asyncio.Semaphore(parallel)
+
+        async def run_one(task_dir: Path) -> TaskResult:
+            async with semaphore:
+                return await self.run_task(task_dir, run_dir=run_dir)
+
         started_at = _now()
-        results = [self.run_task(task_dir, run_dir=run_dir) for task_dir in task_dirs]
+        results_raw = await asyncio.gather(
+            *(run_one(td) for td in task_dirs),
+            return_exceptions=True,
+        )
+        results: list[TaskResult] = []
+        for i, r in enumerate(results_raw):
+            if isinstance(r, BaseException):
+                results.append(TaskResult(
+                    task_id=task_dirs[i].name,
+                    agent=self.agent_name,
+                    model=self.model,
+                    status="error",
+                    failure_category=FailureCategory.SETUP_ERROR.value,
+                ))
+            else:
+                results.append(r)
         ended_at = _now()
+
+        # Clean up shared resources after all tasks complete
+        try:
+            await self.agent_runner.close()
+        except Exception:
+            pass
 
         metadata = RunMetadata(
             run_id=run_id,
@@ -76,7 +136,7 @@ class BenchmarkRunner:
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
         return metadata
 
-    def run_task(
+    async def run_task(
         self,
         task_dir: str | Path,
         run_dir: str | Path | None = None,
@@ -96,7 +156,7 @@ class BenchmarkRunner:
         log_lines: list[str] = []
         trace = TraceRecorder(task_id=loaded.task.id)
         start = time.time()
-        worktree: Path | None = None
+        workspace: Path | None = None
         hidden_backup: Path | None = None
 
         def log(message: str) -> None:
@@ -110,35 +170,71 @@ class BenchmarkRunner:
 
         try:
             log(f"Starting task {loaded.task.id}")
-            worktree = self._create_worktree(loaded, task_output)
-            log(f"Created worktree: {worktree}")
-            hidden_backup = self._hide_agent_invisible_task_files(worktree, task_output)
-            if hidden_backup:
-                log("Temporarily hid benchmarks/tasks from agent workspace")
+            if loaded.task.external_repo:
+                workspace = await asyncio.to_thread(
+                    self._clone_external_repo, loaded, task_output, log
+                )
+                log(f"Cloned external repo to: {workspace}")
+                await asyncio.to_thread(self._install_repo_deps, workspace, log, loaded)
+            else:
+                workspace = await asyncio.to_thread(
+                    self._create_worktree, loaded, task_output
+                )
+                log(f"Created worktree: {workspace}")
+                hidden_backup = await asyncio.to_thread(
+                    self._hide_agent_invisible_task_files, workspace, task_output
+                )
+                if hidden_backup:
+                    log("Temporarily hid benchmarks/tasks from agent workspace")
 
-            agent_result = self._run_agent(loaded, worktree, task_output, trace)
+            agent_result = await self._run_agent(loaded, workspace, task_output, trace)
             log(f"Agent finished with status={agent_result.status}")
 
             if hidden_backup:
-                self._restore_agent_invisible_task_files(worktree, hidden_backup)
+                await asyncio.to_thread(
+                    self._restore_agent_invisible_task_files, workspace, hidden_backup
+                )
                 log("Restored hidden benchmark task files before diff capture")
 
-            self._write_final_diff(worktree, artifacts.final_diff)
+            await asyncio.to_thread(
+                self._write_final_diff, workspace, artifacts.final_diff
+            )
             trace.record_diff(
                 str(artifacts.final_diff),
-                self._git_diff_stat(worktree),
+                self._git_diff_stat(workspace),
             )
             log(f"Captured final diff: {artifacts.final_diff}")
 
             if loaded.test_patch_path:
-                self._apply_test_patch(worktree, loaded.test_patch_path)
+                await asyncio.to_thread(
+                    self._apply_test_patch, workspace, loaded.test_patch_path, task_output
+                )
                 log(f"Applied test.patch: {loaded.test_patch_path}")
 
-            test_exit_code, test_output, test_duration_ms = self._run_test_command(
+            # For requests tasks, start a local httpbin server to avoid
+            # hitting httpbin.org (which may return 503).
+            httpbin_proc = None
+            extra_env: dict[str, str] = {}
+            if loaded.task.repo == "psf/requests" and loaded.task.external_repo:
+                httpbin_proc, httpbin_url = await asyncio.to_thread(
+                    self._start_local_httpbin, workspace
+                )
+                if httpbin_url:
+                    extra_env["HTTPBIN_URL"] = httpbin_url
+                    log(f"Started local httpbin at {httpbin_url}")
+
+            test_exit_code, test_output, test_duration_ms = await asyncio.to_thread(
+                self._run_test_command,
                 loaded.task.test_command,
-                worktree,
+                workspace,
                 loaded.task.timeout_seconds,
+                bool(loaded.task.external_repo),
+                extra_env,
             )
+
+            if httpbin_proc:
+                await asyncio.to_thread(self._stop_local_httpbin, httpbin_proc)
+                log("Stopped local httpbin")
             artifacts.test_output.write_text(test_output, errors="replace")
             trace.record_test(
                 loaded.task.test_command,
@@ -188,11 +284,16 @@ class BenchmarkRunner:
             log(f"Error: {type(exc).__name__}: {exc}")
             trace.record_completion("error", f"{type(exc).__name__}: {exc}")
         finally:
-            if worktree and hidden_backup and hidden_backup.exists():
-                self._restore_agent_invisible_task_files(worktree, hidden_backup)
-            if worktree and not self.keep_worktrees:
-                self._cleanup_worktree(worktree)
-                log("Cleaned up worktree")
+            if workspace and hidden_backup and hidden_backup.exists():
+                await asyncio.to_thread(
+                    self._restore_agent_invisible_task_files, workspace, hidden_backup
+                )
+            if workspace and not self.keep_worktrees:
+                if loaded.task.external_repo:
+                    await asyncio.to_thread(self._cleanup_external_repo, workspace)
+                else:
+                    await asyncio.to_thread(self._cleanup_worktree, workspace)
+                log("Cleaned up workspace")
 
             result.write_json(artifacts.result_json)
             trace.write_to_file(artifacts.trace_json)
@@ -212,23 +313,151 @@ class BenchmarkRunner:
         )
         return worktree
 
-    def _run_agent(
+    def _clone_external_repo(self, loaded: LoadedTask, task_output: Path, log=None) -> Path:
+        """Clone an external repo at the task's base_commit into a temp workspace."""
+        repo_dir = task_output / ".external_repo"
+        repo_url = loaded.task.external_repo
+        commit = loaded.task.base_commit
+        repo_key = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
+
+        if self.clone_cache_dir:
+            cache_dir = self.clone_cache_dir / f"{repo_key}_bare"
+            if not cache_dir.exists():
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                self._git_clone_with_retry(
+                    repo_url, str(cache_dir), bare=True, log=log,
+                )
+            subprocess.run(
+                ["git", "clone", "--shared", str(cache_dir), str(repo_dir)],
+                capture_output=True, text=True, timeout=60, check=True,
+            )
+        else:
+            self._git_clone_with_retry(
+                repo_url, str(repo_dir), bare=False, log=log,
+            )
+
+        subprocess.run(
+            ["git", "checkout", commit],
+            cwd=repo_dir, capture_output=True, text=True, timeout=30, check=True,
+        )
+        return repo_dir
+
+    def _git_clone_with_retry(
+        self, url: str, dest: str, *, bare: bool = False,
+        log=None,
+    ) -> None:
+        """Git clone with 3 retries and exponential backoff (1m, 2m, 4m)."""
+        delays = [60, 120, 240]  # 1 min, 2 min, 4 min
+        args = ["git", "clone"]
+        if bare:
+            args.append("--bare")
+        args.extend([url, dest])
+
+        last_exc = None
+        for attempt in range(len(delays) + 1):
+            try:
+                subprocess.run(
+                    args,
+                    capture_output=True, text=True, timeout=300, check=True,
+                )
+                return
+            except subprocess.CalledProcessError as exc:
+                last_exc = exc
+                if attempt < len(delays):
+                    delay = delays[attempt]
+                    if log:
+                        log(f"Git clone failed (attempt {attempt + 1}/4), retrying in {delay}s: {exc.stderr[:200]}")
+                    time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
+
+    def _install_repo_deps(self, workspace: Path, log, loaded: LoadedTask) -> None:
+        """Install repo deps using SWE-bench MAP_REPO_VERSION_TO_SPECS config."""
+        from swebench.harness.constants import MAP_REPO_VERSION_TO_SPECS
+
+        repo = loaded.task.repo
+        version = loaded.task.version
+
+        python_ver = "3.9"
+        pip_packages: list[str] = []
+
+        if version and repo in MAP_REPO_VERSION_TO_SPECS:
+            specs = MAP_REPO_VERSION_TO_SPECS[repo]
+            spec = specs.get(version, specs.get(list(specs.keys())[-1], {}))
+            python_ver = spec.get("python", "3.9")
+            pip_packages = list(spec.get("pip_packages", []))
+            # SWE-bench's `packages` field: if it's a simple package name
+            # (not a file path), it's a conda package to add to pip_packages.
+            # e.g. "pytest" for requests, but "requirements.txt" for flask.
+            pkg_src = spec.get("packages", "")
+            if pkg_src and not any(pkg_src.endswith(ext) for ext in
+                                   (".txt", ".yml", ".yaml", ".in", ".cfg", ".toml")):
+                pip_packages.append(pkg_src)
+            if spec.get("pre_install"):
+                for pre_cmd in spec["pre_install"]:
+                    subprocess.run(
+                        pre_cmd, shell=True, cwd=workspace,
+                        capture_output=True, text=True, timeout=60,
+                    )
+        else:
+            pip_packages = ["pytest", "setuptools<70"]
+
+        # Always pin setuptools<70 for pkg_resources
+        has_setuptools = any(p.startswith("setuptools") for p in pip_packages)
+        if not has_setuptools:
+            pip_packages.append("setuptools<70")
+        # Ensure pytest is present (may be conda-only in SWE-bench)
+        if not any(p.startswith("pytest") for p in pip_packages):
+            pip_packages.append("pytest<8")
+
+        # requests tests need local httpbin
+        if repo == "psf/requests":
+            pip_packages.append("pytest-httpbin")
+            pip_packages.append("werkzeug<3.0")
+
+        log(f"Creating Python {python_ver} venv and installing deps (repo={repo}, version={loaded.task.version})...")
+        subprocess.run(
+            ["uv", "venv", "--python", python_ver],
+            cwd=workspace, capture_output=True, text=True, timeout=120,
+        )
+        venv_python = str(workspace / ".venv" / "bin" / "python")
+
+        install_args = ["uv", "pip", "install", "--python", venv_python] + pip_packages + ["-e", "."]
+        proc = subprocess.run(
+            install_args,
+            cwd=workspace, capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode == 0:
+            log(f"Dependencies installed successfully ({len(pip_packages)} packages)")
+        else:
+            log(f"Install failed: {proc.stderr[:300]}")
+            install_args2 = ["uv", "pip", "install", "--python", venv_python] + pip_packages
+            subprocess.run(
+                install_args2,
+                cwd=workspace, capture_output=True, text=True, timeout=300,
+            )
+            subprocess.run(
+                ["uv", "pip", "install", "--python", venv_python, "-e", "."],
+                cwd=workspace, capture_output=True, text=True, timeout=300,
+            )
+
+    def _cleanup_external_repo(self, workspace: Path) -> None:
+        """Remove the cloned external repo."""
+        if workspace.exists():
+            shutil.rmtree(workspace, ignore_errors=True)
+
+    async def _run_agent(
         self,
         loaded: LoadedTask,
         workspace: Path,
         task_output: Path,
         trace: TraceRecorder,
     ):
-        import asyncio
-
-        return asyncio.run(
-            self.agent_runner.run(
-                loaded.task,
-                loaded.problem_statement,
-                workspace,
-                task_output,
-                trace,
-            )
+        return await self.agent_runner.run(
+            loaded.task,
+            loaded.problem_statement,
+            workspace,
+            task_output,
+            trace,
         )
 
     def _hide_agent_invisible_task_files(self, worktree: Path, task_output: Path) -> Path | None:
@@ -257,19 +486,16 @@ class BenchmarkRunner:
     def _git_diff_stat(self, workspace: Path) -> str:
         return _run_git(["diff", "--stat"], workspace) or "(no changes)"
 
-    def _apply_test_patch(self, workspace: Path, patch_path: Path) -> None:
+    def _apply_test_patch(self, workspace: Path, patch_path: Path, task_output: Path) -> None:
         # SWE-bench pattern: isolate test files from agent modifications.
-        # Stage all agent changes (including untracked new files), save a
-        # source-only diff (excluding tests/), reset the worktree to the clean
-        # base commit, re-apply the source diff, then apply test.patch on the
-        # clean test directory.
-        source_patch = workspace / ".agent_source.patch"
+        # Write the source patch OUTSIDE the workspace so git clean doesn't remove it.
+        source_patch = task_output / ".agent_source.patch"
         subprocess.run(
-            ["git", "add", "-A", "--", ":!benchmarks/tasks/"],
+            ["git", "add", "-A"],
             cwd=workspace, timeout=10,
         )
         source_result = subprocess.run(
-            ["git", "diff", "--cached", "--", ":!tests/"],
+            ["git", "diff", "--cached", "--", ":!tests/", ":!testing/"],
             cwd=workspace,
             capture_output=True,
             text=True,
@@ -277,18 +503,35 @@ class BenchmarkRunner:
         )
         if source_result.stdout.strip():
             source_patch.write_text(source_result.stdout)
-            subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=workspace, timeout=10)
-            subprocess.run(["git", "clean", "-fd"], cwd=workspace, timeout=10)
             subprocess.run(
+                ["git", "reset", "--hard", "HEAD"],
+                cwd=workspace, timeout=10,
+            )
+            subprocess.run(
+                ["git", "clean", "-fd"],
+                cwd=workspace, timeout=10,
+            )
+            apply_result = subprocess.run(
                 ["git", "apply", str(source_patch)],
                 cwd=workspace,
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
+            if apply_result.returncode != 0:
+                raise RuntimeError(
+                    f"Failed to re-apply agent source patch: "
+                    f"{apply_result.stderr.strip() or apply_result.stdout.strip()}"
+                )
         else:
-            subprocess.run(["git", "checkout", "HEAD", "--", "tests/"], cwd=workspace, timeout=10)
-            subprocess.run(["git", "clean", "-fd", "--", "tests/"], cwd=workspace, timeout=10)
+            subprocess.run(
+                ["git", "checkout", "HEAD", "--", "tests/", "testing/"],
+                cwd=workspace, timeout=10,
+            )
+            subprocess.run(
+                ["git", "clean", "-fd", "--", "tests/", "testing/"],
+                cwd=workspace, timeout=10,
+            )
 
         try:
             source_patch.unlink(missing_ok=True)
@@ -308,12 +551,60 @@ class BenchmarkRunner:
                 f"{patch.stderr.strip() or patch.stdout.strip()}"
             )
 
+    def _start_local_httpbin(self, workspace: Path) -> tuple:
+        """Start a local httpbin server for requests tests. Returns (proc, url)."""
+        import socket
+        venv_python = str(workspace / ".venv" / "bin" / "python")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        server_code = f"""
+import sys
+from httpbin import app as application
+from werkzeug.serving import run_simple
+run_simple('127.0.0.1', {port}, application, use_reloader=False)
+"""
+        try:
+            proc = subprocess.Popen(
+                [venv_python, "-c", server_code],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            time.sleep(2)
+            if proc.poll() is not None:
+                return None, None
+            return proc, f"http://127.0.0.1:{port}"
+        except Exception:
+            return None, None
+
+    def _stop_local_httpbin(self, proc) -> None:
+        """Stop the local httpbin server."""
+        try:
+            proc.terminate()
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
     def _run_test_command(
         self,
         command: str,
         workspace: Path,
         timeout_seconds: int,
+        is_external: bool = False,
+        extra_env: dict[str, str] | None = None,
     ) -> tuple[int, str, float]:
+        if is_external:
+            venv_python = workspace / ".venv" / "bin" / "python"
+            if venv_python.exists():
+                command = command.replace(
+                    "python -m pytest", f"{venv_python} -m pytest"
+                )
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
         start = time.time()
         try:
             proc = subprocess.run(
@@ -323,6 +614,7 @@ class BenchmarkRunner:
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
+                env=env,
             )
             output = f"$ {command}\n\n{proc.stdout}{proc.stderr}\n[Exit code: {proc.returncode}]"
             return proc.returncode, output, (time.time() - start) * 1000

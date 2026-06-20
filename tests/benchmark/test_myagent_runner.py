@@ -101,6 +101,9 @@ async def test_myagent_runner_uses_agent_loop_and_coding_tools(tmp_path):
     assert result.tool_calls == 2
     assert result.edit_count == 1
     assert (tmp_path / "app.py").read_text() == "# Version 2\n"
+    assert llm.closed is False  # close() is no longer called inside run()
+
+    await runner.close()
     assert llm.closed is True
     step_types = [step.type for step in trace.steps]
     assert "llm_iteration" in step_types
