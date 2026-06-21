@@ -19,26 +19,26 @@ from agent.workspace_policy import WorkspacePolicy
 def get_default_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     return [
-        ReadTool(),
+        ReadTool(policy=policy),
         WriteTool(policy=policy),
         EditTool(policy=policy),
-        BashTool(),
+        BashTool(policy=policy),
         WebSearchTool(),
         WebFetchTool(),
-        GrepTool(),
+        GrepTool(policy=policy),
         InspectGitDiffTool(policy=policy),
     ]
 
 def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     return [
-        ReadTool(),
+        ReadTool(policy=policy),
         WriteTool(policy=policy),
         EditTool(policy=policy),
         InspectGitDiffTool(policy=policy),
         ListFilesTool(policy=policy),
         FindTool(policy=policy),
-        GrepTool(),
+        GrepTool(policy=policy),
         BashTool(policy=policy),
     ]
 

@@ -1,7 +1,9 @@
 # agent/tools/builtin/grep.py
+import os
 import re
 from pathlib import Path
 from agent.tools.base import Tool, tool_parameters
+from agent.workspace_policy import WorkspacePolicy
 
 @tool_parameters(
     name="Grep",
@@ -19,14 +21,34 @@ from agent.tools.base import Tool, tool_parameters
 class GrepTool(Tool):
     read_only = True
 
+    def __init__(self, policy: WorkspacePolicy | None = None):
+        self.policy = policy or WorkspacePolicy()
+
     async def execute(self, pattern: str, path: str, recursive: bool = False, **kwargs) -> str:
         try:
             regex = re.compile(pattern)
-            p = Path(path)
+            p = self.policy.assert_read_allowed(path)
             if not p.exists():
                 return f"Error: 路径不存在: {path}"
-            files = [p] if p.is_file() else (list(p.rglob("*")) if recursive else list(p.glob("*")))
-            files = [f for f in files if f.is_file()]
+            if p.is_file():
+                files = [p]
+            elif recursive:
+                files = []
+                for dirpath, dirnames, filenames in os.walk(p):
+                    current = Path(dirpath)
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if self._is_read_allowed(current / d)
+                    ]
+                    files.extend(
+                        current / f for f in filenames
+                        if self._is_read_allowed(current / f)
+                    )
+            else:
+                files = [
+                    f for f in p.glob("*")
+                    if f.is_file() and self._is_read_allowed(f)
+                ]
             results = []
             for f in files:
                 try:
@@ -43,3 +65,10 @@ class GrepTool(Tool):
             return output
         except Exception as e:
             return f"Error: {e}"
+
+    def _is_read_allowed(self, path: Path) -> bool:
+        try:
+            self.policy.assert_read_allowed(path)
+        except PermissionError:
+            return False
+        return True

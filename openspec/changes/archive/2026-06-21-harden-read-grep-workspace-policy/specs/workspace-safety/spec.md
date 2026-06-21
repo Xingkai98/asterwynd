@@ -1,10 +1,4 @@
-# workspace-safety 规格
-
-## Purpose
-
-定义 WorkspacePolicy 提供的路径、敏感文件、命令执行和 git diff 安全边界。当前实现位于 `agent/workspace_policy.py`；Read、Write、Edit、Grep、ListFiles、Find、InspectGitDiff 和 Bash 均通过工具集合注入 workspace policy。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: WorkspacePolicy 路径必须限制在 workspace 内
 
@@ -24,7 +18,7 @@ WorkspacePolicy SHALL 解析路径并阻止越过 workspace root 的读写访问
 - **THEN** 系统 SHALL 拒绝访问
 - **AND** 返回权限错误
 
-### Requirement: 敏感文件读写默认拒绝
+### Requirement: 敏感文件写入默认拒绝
 
 WorkspacePolicy SHALL 在面向 agent tool 的读写校验中拒绝匹配 denied patterns 的路径，例如本地环境变量、私密配置、版本控制内部目录、虚拟环境、依赖目录和生成目录。
 
@@ -46,24 +40,3 @@ WorkspacePolicy SHALL 在面向 agent tool 的读写校验中拒绝匹配 denied
 - **WHEN** policy 校验读取权限
 - **THEN** 系统 SHALL 拒绝该操作
 - **AND** SHALL NOT 为普通 agent tool 提供隐式绕过
-
-### Requirement: 命令执行受 denylist 和 allowlist 控制
-
-WorkspacePolicy SHALL 在 Bash 执行前检查命令；allowlist 命令可直接通过，denylist 命中的命令必须拒绝。
-
-#### Scenario: 命令命中 denylist
-
-- **GIVEN** Bash 请求执行危险命令
-- **WHEN** `assert_command_allowed` 发现命中 denylist
-- **THEN** 系统 SHALL 抛出权限错误
-
-### Requirement: git diff 快照在 workspace root 执行
-
-WorkspacePolicy SHALL 在 workspace root 下执行 git diff，并返回 diff 输出、diff stat 或无变更提示。
-
-#### Scenario: 获取 diff stat
-
-- **GIVEN** 调用方请求 stat 模式
-- **WHEN** policy 执行 diff 快照
-- **THEN** 系统 SHALL 运行 `git diff --stat`
-- **AND** 返回标准输出或错误输出

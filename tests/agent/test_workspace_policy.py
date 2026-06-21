@@ -46,6 +46,23 @@ def test_workspace_policy_allows_reads_inside_root_even_for_task_files(tmp_path)
     assert policy.assert_read_allowed(path) == path.resolve()
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env",
+        ".git/config",
+        "secret.pem",
+        ".venv/pyvenv.cfg",
+        "node_modules/pkg/index.js",
+    ],
+)
+def test_workspace_policy_rejects_denied_reads(tmp_path, path):
+    policy = WorkspacePolicy(tmp_path)
+
+    with pytest.raises(PermissionError):
+        policy.assert_read_allowed(path)
+
+
 class TestCommandPolicy:
     def test_allowlist_allows_safe_git_commands(self, tmp_path):
         policy = WorkspacePolicy(tmp_path)
