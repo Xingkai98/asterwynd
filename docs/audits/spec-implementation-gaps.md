@@ -15,9 +15,9 @@
 | `assert_read_allowed` 不拦 denied patterns | 设计缺陷 | P0 | 和 Read/Grep 一起修 |
 | Bash allowlist 先于 denylist 导致宽泛命令放行 | 设计缺陷 | P1 | 单独建 change 收紧 |
 | MemoryManager compact 不生成摘要 | 设计债务 | P1 | 建 change 明确 AutoCompact 语义 |
-| DebugHook 不捕获 memory compact 事件 | 文档/实现不一致 | P2 | 先修文档，是否扩展事件另议 |
+| DebugHook 不捕获 memory compact 事件 | 文档/实现不一致 | P2 | 已通过 `align-observability-and-benchmark-docs` 修正文档口径 |
 | InspectGitDiff 未复用 `snapshot_git_diff` | 轻微设计债务 | P3 | 后续重构时处理 |
-| Benchmark 失败路径 artifact 不完整 | 合理限制 + 旧文档债务 | P2 | 统一旧文档口径 |
+| Benchmark 失败路径 artifact 不完整 | 合理限制 + 旧文档债务 | P2 | 已通过 `align-observability-and-benchmark-docs` 统一旧文档口径 |
 
 ## 详细排查
 
@@ -153,7 +153,7 @@ mv .env backup.env
 - `AgentLoop` 通过 `on_event("memory_compaction", ...)` 向 Web session 事件队列发送压缩事件。
 - `DebugHook` 本身没有 memory compact hook 方法。
 - `web/static/debug.js` 有 `memory_compaction` 渲染分支。
-- `docs/architecture.md` 仍写“DebugHook 捕获压缩事件”，这是旧口径。
+- `docs/architecture.md` 曾把 memory compact 归到 DebugHook 来源，这是旧口径，已修正为 Web session 事件来源。
 
 **判断**
 
@@ -161,7 +161,7 @@ mv .env backup.env
 
 **建议修复**
 
-- 先修 `docs/architecture.md` 表述。
+- 已通过 `align-observability-and-benchmark-docs` 修正 `docs/architecture.md` 和 README 表述。
 - 如果需要统一 debug 事件来源，再建 change 扩展 Hook protocol。
 
 ### 7. InspectGitDiff 与 WorkspacePolicy.snapshot_git_diff 重复
@@ -188,7 +188,7 @@ mv .env backup.env
 - `final.diff` 只有 agent 运行并完成 diff capture 后才写入。
 - `test_output.txt` 只有验证命令实际运行后才写入。
 - 新 OpenSpec 已按当前实现收窄。
-- `docs/benchmark-plan.md` 等旧文档仍有“每个任务都保存 final.diff/test_output.txt”的绝对表述。
+- `docs/benchmark-plan.md` 等旧文档曾有“每个任务都保存 final.diff/test_output.txt”的绝对表述，已修正为 artifact 按阶段生成。
 
 **判断**
 
@@ -196,7 +196,7 @@ mv .env backup.env
 
 **建议修复**
 
-- 统一旧文档口径，说明 artifact 按阶段生成。
+- 已通过 `align-observability-and-benchmark-docs` 统一旧文档口径，说明 artifact 按阶段生成。
 - 是否创建空占位文件可以另议，但不是当前优先 bug。
 
 ## 建议拆分的后续 changes
@@ -245,7 +245,7 @@ mv .env backup.env
 - 无 LLM 时执行降级裁剪。
 - 包含 tool result 的 recent window 不破坏 provider 消息链。
 
-### P2: `align-observability-and-benchmark-docs`
+### P2: `align-observability-and-benchmark-docs`（已完成）
 
 范围：
 
@@ -256,4 +256,3 @@ mv .env backup.env
 
 - OpenSpec strict validate。
 - 文档链接和口径检查。
-

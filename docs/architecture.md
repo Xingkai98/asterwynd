@@ -55,7 +55,7 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 
 - `web/server.py`: FastAPI app、WebSocket endpoint、静态文件服务。
 - `web/session.py`: 会话管理，每个 session 维护一组消息和 AgentLoop。
-- `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和压缩事件。
+- `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
 Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。
@@ -68,10 +68,10 @@ Benchmark 模块位于 `benchmarks/`，目标是用可复现任务评测 coding-
 
 1. 根据 task 定义准备工作区。
 2. 运行指定 agent。
-3. 保存 trace、final diff、test output 和 result。
+3. 保存 trace、runner log 和 result；在 agent diff capture 完成后保存 final diff。
 4. 应用 hidden test patch。
 5. 运行验证命令。
-6. 汇总 run-level 报告。
+6. 在验证命令实际运行后保存 test output，并汇总 run-level 报告。
 
 内部任务和外部 SWE-bench 风格任务都通过统一 runner 执行。当前任务数量和文档口径需要后续统一校准。
 

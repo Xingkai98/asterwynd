@@ -247,7 +247,7 @@ MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 原始响应（content、stop_reason、tool_calls）
   - 工具调用详情（名称、参数、结果）
-  - Memory 压缩事件
+  - AgentLoop 通过 Web session 事件流发送的 Memory 压缩事件
 
 ### 日志
 
@@ -321,7 +321,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 5. 重置 worktree，重放源码改动
 6. 应用 `test.patch`（隐藏评测测试）
 7. 运行验证命令
-8. 写入 `result.json`、`trace.json`、`final.diff`、`test_output.txt`、`runner.log`
+8. 写入 `result.json`、`trace.json`、`runner.log`；`final.diff` 在 diff capture 完成后写入，`test_output.txt` 在验证命令实际运行后写入
 
 结果状态：`passed`、`passed_with_warnings`、`failed`、`error`。
 
