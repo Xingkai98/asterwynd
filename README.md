@@ -75,7 +75,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 | `WebSearch` | read_only | DuckDuckGo HTML 搜索 |
 | `WebFetch` | read_only | 获取网页内容，支持截断 |
 
-Bash 工具内置命令安全策略：前缀白名单（git status/pytest/uv/npm...）+ 正则黑名单（42 条，覆盖 rm -rf /、fork 炸弹、curl \| sh 等）。黑名单可通过 `MYAGENT_COMMAND_DENYLIST` 环境变量追加。
+Bash 工具内置命令安全策略：先检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。黑名单可通过 `MYAGENT_COMMAND_DENYLIST` 环境变量追加，白名单不通过环境变量扩展。
 
 ## 项目结构
 

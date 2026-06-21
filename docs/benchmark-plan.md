@@ -467,9 +467,9 @@ openclaw, opencode, pi-mono):
   tools. MyAgent currently has no file discovery mechanism. Ignore patterns are
   separate from WorkspacePolicy denied patterns — user-extensible via
   `MYAGENT_IGNORE_PATTERNS`.
-- **BashTool gets command allowlist/denylist.** Following hermes-agent and
-  nanobot's pattern of regex-based deny patterns with user-extensible allow
-  patterns via environment variables.
+- **BashTool gets command denylist/allowlist.** Commands are checked against
+  deny patterns first, then allowed only if they match safe command prefixes.
+  Extra deny patterns can be appended through environment variables.
 - **BashTool returns JSON string.** `execute() -> str` interface unchanged;
   structured fields encoded as JSON for LLM and benchmark consumption.
 - **Trace always full.** No truncation, no `--full-trace` flag. Overhead is
@@ -614,7 +614,8 @@ keys, model behavior, and cost.
 
 - BashTool structured output (exit_code, stdout, stderr, duration, timed_out).
 - Coding prompt updated to instruct running validation command before finishing.
-- Command allowlist and denylist with .env extensibility.
+- Command denylist and allowlist, with `.env` extensibility for extra deny
+  patterns.
 - ListFilesTool and FindTool with ignore rules (separate from WorkspacePolicy).
 - Apply `test.patch` only after agent completion with hidden test status.
 - 19 new local tasks extracted from git history (plus 4 existing P0 tasks = 23 total).

@@ -165,22 +165,23 @@ feedback than a wall of raw text.
 
 `BashTool` enforces command safety through two layers:
 
-- **Allowlist**: commands matching these patterns bypass deny checks. Defaults
-  include `git`, `pytest`, `python`, `uv`, `npm`, `cargo`, `make`.
 - **Denylist**: commands matching these regex patterns are rejected. Defaults
   cover destructive ops (`rm -rf /`, `mkfs`, `dd if=`), system control
   (`shutdown`, `reboot`), fork bombs, pipe-to-shell (`curl | sh`), and
   destructive git (`reset --hard`, `push --force`).
+- **Allowlist**: commands matching these safe prefixes are allowed only after
+  denylist checks pass. Defaults include read-only git commands, pytest
+  invocations, common package/test commands, and file-inspection commands.
 
-Both lists are extensible via environment variables:
+The denylist is extensible via environment variable:
 
 ```bash
-MYAGENT_COMMAND_ALLOWLIST="npm,yarn,cargo"
 MYAGENT_COMMAND_DENYLIST="docker rm,docker system prune"
 ```
 
-User entries are appended to the hardcoded defaults, so the safety baseline
-cannot be removed by configuration.
+User deny patterns are appended to the hardcoded defaults, so the safety
+baseline cannot be removed by configuration. The allowlist is intentionally
+defined in code and is not user-extensible through environment variables.
 
 ### 4.5 Coding System Prompt
 
