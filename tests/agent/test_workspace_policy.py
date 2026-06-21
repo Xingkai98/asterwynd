@@ -75,6 +75,47 @@ class TestCommandPolicy:
         with pytest.raises(PermissionError):
             policy.assert_command_allowed("git reset --hard HEAD~5")
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python -c \"import os; os.remove('x')\"",
+            "python3 -c \"print('arbitrary')\"",
+            "python - <<'PY'\nprint('arbitrary')\nPY",
+            "python3 - <<'PY'\nprint('arbitrary')\nPY",
+        ],
+    )
+    def test_denylist_rejects_arbitrary_python_execution(self, tmp_path, command):
+        policy = WorkspacePolicy(tmp_path)
+        with pytest.raises(PermissionError):
+            policy.assert_command_allowed(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "python -m pytest tests/agent -q",
+            "python3 -m pytest tests/agent -q",
+            "uv run pytest tests/agent -q",
+            "uv run python -m pytest tests/agent -q",
+        ],
+    )
+    def test_allowlist_allows_python_pytest_commands(self, tmp_path, command):
+        policy = WorkspacePolicy(tmp_path)
+        policy.assert_command_allowed(command)
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp /etc/passwd ./passwd.copy",
+            "cp .env backup.env",
+            "mv .env backup.env",
+            "mv .git/config config.backup",
+        ],
+    )
+    def test_denylist_rejects_sensitive_file_copy_or_move(self, tmp_path, command):
+        policy = WorkspacePolicy(tmp_path)
+        with pytest.raises(PermissionError):
+            policy.assert_command_allowed(command)
+
     def test_allowlist_allows_pytest(self, tmp_path):
         policy = WorkspacePolicy(tmp_path)
         policy.assert_command_allowed("pytest -q tests/ -v")

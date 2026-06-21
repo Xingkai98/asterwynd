@@ -3,9 +3,7 @@
 ## Purpose
 
 定义 WorkspacePolicy 提供的路径、敏感文件、命令执行和 git diff 安全边界。当前实现位于 `agent/workspace_policy.py`；Read、Write、Edit、Grep、ListFiles、Find、InspectGitDiff 和 Bash 均通过工具集合注入 workspace policy。
-
 ## Requirements
-
 ### Requirement: WorkspacePolicy 路径必须限制在 workspace 内
 
 WorkspacePolicy SHALL 解析路径并阻止越过 workspace root 的读写访问。读权限和写权限校验 SHALL 都执行 workspace root 边界检查。
@@ -49,13 +47,43 @@ WorkspacePolicy SHALL 在面向 agent tool 的读写校验中拒绝匹配 denied
 
 ### Requirement: 命令执行受 denylist 和 allowlist 控制
 
-WorkspacePolicy SHALL 在 Bash 执行前检查命令；allowlist 命令可直接通过，denylist 命中的命令必须拒绝。
+WorkspacePolicy SHALL 在 Bash 执行前检查命令。命令检查 SHALL 先应用 denylist，再应用 allowlist；命中 denylist 的命令 MUST 被拒绝，即使该命令同时匹配 allowlist。allowlist SHALL 只包含验证、只读查看和明确低风险的开发命令，不得用宽泛前缀放行任意脚本执行或敏感文件搬运。
 
 #### Scenario: 命令命中 denylist
 
 - **GIVEN** Bash 请求执行危险命令
 - **WHEN** `assert_command_allowed` 发现命中 denylist
 - **THEN** 系统 SHALL 抛出权限错误
+
+#### Scenario: denylist 覆盖 allowlist
+
+- **GIVEN** Bash 请求执行同时匹配 allowlist 前缀和 denylist 模式的命令
+- **WHEN** `assert_command_allowed` 检查命令
+- **THEN** 系统 SHALL 拒绝该命令
+
+#### Scenario: 拒绝任意 Python 代码执行
+
+- **GIVEN** Bash 请求执行 `python -c` 或 `python3 -c`
+- **WHEN** `assert_command_allowed` 检查命令
+- **THEN** 系统 SHALL 拒绝该命令
+
+#### Scenario: 允许 Python pytest 验证命令
+
+- **GIVEN** Bash 请求执行 `python -m pytest` 或 `python3 -m pytest`
+- **WHEN** `assert_command_allowed` 检查命令
+- **THEN** 系统 SHALL 允许该命令
+
+#### Scenario: 拒绝敏感文件搬运
+
+- **GIVEN** Bash 请求通过 `cp` 或 `mv` 读取系统敏感路径或移动 workspace denied pattern 文件
+- **WHEN** `assert_command_allowed` 检查命令
+- **THEN** 系统 SHALL 拒绝该命令
+
+#### Scenario: 允许常规验证和只读查看命令
+
+- **GIVEN** Bash 请求执行 `pytest`、`uv run pytest`、`git diff`、`rg`、`cat` 或 `ls` 等允许命令
+- **WHEN** `assert_command_allowed` 检查命令
+- **THEN** 系统 SHALL 允许该命令
 
 ### Requirement: git diff 快照在 workspace root 执行
 
@@ -67,3 +95,4 @@ WorkspacePolicy SHALL 在 workspace root 下执行 git diff，并返回 diff 输
 - **WHEN** policy 执行 diff 快照
 - **THEN** 系统 SHALL 运行 `git diff --stat`
 - **AND** 返回标准输出或错误输出
+

@@ -30,6 +30,24 @@ async def test_bash_tool_applies_command_policy(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_bash_tool_rejects_arbitrary_python_execution(tmp_path):
+    tool = BashTool(policy=WorkspacePolicy(tmp_path))
+
+    result = await tool.execute("python -c \"print('arbitrary')\"")
+
+    assert "Command denied" in result
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_rejects_sensitive_copy(tmp_path):
+    tool = BashTool(policy=WorkspacePolicy(tmp_path))
+
+    result = await tool.execute("cp /etc/passwd ./passwd.copy")
+
+    assert "Command denied" in result
+
+
+@pytest.mark.asyncio
 async def test_bash_tool_reports_timeout(tmp_path):
     tool = BashTool(policy=WorkspacePolicy(tmp_path))
 

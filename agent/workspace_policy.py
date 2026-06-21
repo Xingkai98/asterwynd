@@ -52,15 +52,17 @@ def _match_allowlist(command: str) -> bool:
         "git status", "git log", "git diff", "git show", "git branch",
         "git stash list", "git stash show",
         # 测试和构建
-        "pytest", "python", "python3", "uv", "pip",
+        "pytest", "python -m pytest", "python3 -m pytest",
+        "uv run pytest", "uv run python -m pytest", "uv run python3 -m pytest",
+        "uv", "pip",
         "npm test", "npm run", "npx", "yarn", "cargo", "make",
         # 文件查看
         "cat", "head", "tail", "wc", "sort", "uniq", "ls", "tree",
         "find", "fd", "rg", "grep",
         # 基本工具
         "echo", "pwd", "which", "env", "df", "du", "ps",
-        # 文件操作（只允许安全操作）
-        "mkdir", "touch", "cp", "mv",
+        # 文件操作（只允许低风险操作）
+        "mkdir", "touch",
         # 包管理
         "pip install", "pip list", "pip show", "pip freeze",
     ]
@@ -95,6 +97,8 @@ DEFAULT_DENYLIST = (
     r"perl\s+-e\s",
     r"ruby\s+-e\s",
     r"php\s+-r\s",
+    r"python3?\s+-c\b",
+    r"python3?\s+-\s*<<",
     r"curl.*\|\s*(ba)?sh",
     r"wget.*\|\s*(ba)?sh",
     r"curl.*\|\s*(ba)?sh",
@@ -113,6 +117,8 @@ DEFAULT_DENYLIST = (
     r"tee\s+/etc/",
     r"tee\s+/proc/",
     r"sed\s+-i.*/(etc|proc|sys)/",
+    r"\bcp\s+(/etc/|/proc/|/sys/|\.env\b|\.env\.|\S*/\.env\b|\.git/|\S*/\.git/)",
+    r"\bmv\s+(/etc/|/proc/|/sys/|\.env\b|\.env\.|\S*/\.env\b|\.git/|\S*/\.git/)",
     r"sudo\s",
     r"su\s+-",
     r"mount\s",
@@ -196,12 +202,12 @@ class WorkspacePolicy:
     def assert_command_allowed(self, command: str) -> None:
         cmd_stripped = command.strip()
 
-        if _match_allowlist(cmd_stripped):
-            return
-
         for pattern in self._denylist:
             if re.search(pattern, cmd_stripped):
                 raise PermissionError("Command denied by workspace policy")
+
+        if _match_allowlist(cmd_stripped):
+            return
 
     def snapshot_git_diff(self, stat: bool = False, timeout: float = 10.0) -> str:
         args = ["git", "diff", "--stat"] if stat else ["git", "diff"]
