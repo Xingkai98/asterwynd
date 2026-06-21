@@ -156,10 +156,11 @@ First version execution model:
 2. Check out task.base_commit.
 3. Read issue.md.
 4. Run the selected agent in the task worktree.
-5. Save the agent trace and final diff.
+5. Save the agent trace; save final.diff after diff capture succeeds.
 6. If hidden tests are enabled and test.patch exists, apply test.patch.
 7. Run test_command.
-8. Save result.json, test_output.txt, final.diff, and runner.log.
+8. Save result.json, trace.json, runner.log, and save test_output.txt only when
+   test_command actually ran.
 9. Remove or retain the worktree depending on debug mode.
 ```
 
@@ -341,8 +342,8 @@ benchmarks/runs/<run-id>/
     <task-id>/
       result.json
       trace.json
-      final.diff
-      test_output.txt
+      final.diff      # written after diff capture succeeds
+      test_output.txt # written after test_command actually runs
       runner.log
 ```
 
@@ -429,8 +430,9 @@ Implemented:
 - Fake, shell, and MyAgent runner adapters.
 - Coding-agent prompt builder for benchmark runs.
 - Hidden `test.patch` application after the agent finishes.
-- Per-task `result.json`, `trace.json`, `final.diff`, `test_output.txt`, and
-  `runner.log`.
+- Per-task core artifacts: `result.json`, `trace.json`, and `runner.log`.
+- Stage-specific artifacts: `final.diff` is written after agent diff capture;
+  `test_output.txt` is written after the validation command actually runs.
 - Run-level `run.json` and `summary.md`.
 - `passed_with_warnings` for test-passing but non-clean agent runs.
 - P0 local task pack:
@@ -545,7 +547,7 @@ Recommended coverage:
 
 - Creates a task worktree at `base_commit`.
 - Runs a fake agent that writes a known file.
-- Captures `final.diff`.
+- Captures `final.diff` after the fake agent produces a diff.
 - Runs `test_command` and records pass/fail.
 - Applies `test.patch` only after the fake agent finishes.
 - Does not expose `gold.patch` or `test.patch` to the agent workspace.
@@ -587,8 +589,10 @@ End-to-end tests should run a tiny benchmark with 1-2 tasks and a fake agent.
 Coverage:
 
 - Creates `benchmarks/runs/<run-id>/`.
-- Writes `run.json`, `summary.md`, per-task `result.json`, `trace.json`,
-  `final.diff`, `test_output.txt`, and `runner.log`.
+- Writes `run.json`, `summary.md`, and per-task core artifacts:
+  `result.json`, `trace.json`, and `runner.log`.
+- Writes `final.diff` and `test_output.txt` when the corresponding execution
+  stages are reached.
 - Correctly reports one passing and one failing task.
 - Produces deterministic output except timestamps and durations.
 
