@@ -32,7 +32,7 @@ class AgentLoop:
         self.llm = llm
         self.tool_registry = tool_registry
         self.hooks = hooks or HookManager()
-        self.memory = memory or MemoryManager()
+        self.memory = memory or MemoryManager(llm=llm)
         self.subagent_manager = subagent_manager or SubAgentManager()
         self.max_iterations = max_iterations
 
@@ -186,8 +186,8 @@ class AgentLoop:
                     result=result,
                 ))
 
-            self.memory.compact_if_needed(messages)
-            if on_event:
+            compacted = await self.memory.compact_if_needed(messages)
+            if compacted and on_event:
                 await on_event("memory_compaction", {
                     "total_messages": len(messages),
                 })

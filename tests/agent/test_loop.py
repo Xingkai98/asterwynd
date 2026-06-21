@@ -179,7 +179,8 @@ async def test_agent_loop_invalid_tool_arguments_return_tool_error():
     assert "Error" in tool_messages[0].content
 
 
-def test_memory_compaction_preserves_assistant_tool_result_chain():
+@pytest.mark.asyncio
+async def test_memory_compaction_preserves_assistant_tool_result_chain():
     mgr = MemoryManager(max_tokens=1, recent_window=1)
     messages = [
         Message(role="system", content="system"),
@@ -192,8 +193,9 @@ def test_memory_compaction_preserves_assistant_tool_result_chain():
         Message(role="tool", content="echo!", tool_call_id="c1"),
     ]
 
-    mgr.compact_if_needed(messages)
+    compacted = await mgr.compact_if_needed(messages)
 
+    assert compacted is True
     assert [m.role for m in messages] == ["system", "assistant", "tool"]
     assert messages[1].tool_calls[0].id == messages[2].tool_call_id
 
@@ -392,3 +394,40 @@ async def test_agent_loop_records_trace_events_for_tool_calls():
     assert step_types.count("llm_iteration") == 2
     assert "tool_call" in step_types
     assert "tool_result" in step_types
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_memory_compaction_only_when_compacted():
+    class ToolThenDoneLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    content="Using a tool.",
+                    tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=ToolThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        memory=MemoryManager(max_tokens=100_000_000),
+    )
+
+    await loop.run([Message(role="user", content="test")], on_event=on_event)
+
+    event_names = [name for name, _payload in events]
+    assert "tool_result" in event_names
+    assert "memory_compaction" not in event_names
