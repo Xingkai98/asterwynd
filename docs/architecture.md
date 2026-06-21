@@ -1,0 +1,93 @@
+# 架构说明
+
+本文档记录 MyAgent 的系统架构。它描述当前仓库已经具备的主要模块，后续需要随代码演进持续校准。
+
+## 核心循环
+
+`AgentLoop` 是核心调度器，位于 `agent/loop.py`。
+
+```text
+messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
+```
+
+核心原则：
+
+- `messages` 是 AgentLoop 的主要状态。
+- LLM 调用、工具执行、记忆压缩、生命周期扩展和轨迹记录通过独立模块协作。
+- tool-call 消息链必须保持合法，assistant 的 tool call 必须对应 tool result。
+
+## 插件系统
+
+当前系统包含以下关键子系统：
+
+| 模块 | 文件 | 职责 |
+| --- | --- | --- |
+| ToolRegistry | `agent/tools/registry.py` | 工具注册、schema 暴露、工具执行 |
+| WorkspacePolicy | `agent/workspace_policy.py` | 工作区路径、文件和命令安全边界 |
+| HookManager | `agent/hooks/manager.py` | 生命周期扩展点 |
+| MemoryManager | `agent/memory/manager.py` | 消息历史与 AutoCompact |
+| SkillLoader | `agent/skills/loader.py` | Markdown skill 加载 |
+| SubAgentManager | `agent/subagent/manager.py` | 后台子 agent 委托 |
+| TraceRecorder | `agent/trace_recorder.py` | 运行轨迹记录 |
+
+## 工具系统
+
+内置工具位于 `agent/tools/builtin/`。
+
+| 工具 | 权限 | 作用 |
+| --- | --- | --- |
+| Read | read_only | 读取文件 |
+| Write | read_write | 创建新文件，禁止覆盖已有文件 |
+| Edit | read_write | 精确文本替换 |
+| Bash | dangerous | 执行命令并返回结构化 JSON |
+| Grep | read_only | 正则搜索 |
+| InspectGitDiff | read_only | 查看 git diff |
+| ListFiles | read_only | 列出目录 |
+| Find | read_only | 按 glob 查找文件 |
+| WebSearch | read_only | 网络搜索 |
+| WebFetch | read_only | 抓取网页内容 |
+
+BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`duration_ms` 和 `timed_out`。WorkspacePolicy 负责命令 allowlist / denylist 和敏感路径限制。
+
+## Web UI
+
+Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
+
+- `web/server.py`: FastAPI app、WebSocket endpoint、静态文件服务。
+- `web/session.py`: 会话管理，每个 session 维护一组消息和 AgentLoop。
+- `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和压缩事件。
+- `web/static/`: Chat 与 Debug 页面前端资源。
+
+Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。
+
+## Benchmark
+
+Benchmark 模块位于 `benchmarks/`，目标是用可复现任务评测 coding-agent 能力。
+
+核心流程：
+
+1. 根据 task 定义准备工作区。
+2. 运行指定 agent。
+3. 保存 trace、final diff、test output 和 result。
+4. 应用 hidden test patch。
+5. 运行验证命令。
+6. 汇总 run-level 报告。
+
+内部任务和外部 SWE-bench 风格任务都通过统一 runner 执行。当前任务数量和文档口径需要后续统一校准。
+
+## LLM Provider
+
+LLM 抽象位于 `agent/llm.py`。当前包含 OpenAI-compatible 和 Anthropic-compatible provider。
+
+Anthropic / DeepSeek 兼容路径需要注意：
+
+- 连续 tool result 需要合并为一个 user 消息中的多个 `tool_result` block。
+- assistant 消息中 text block 必须在 tool_use block 前。
+- provider 专有字段需要保守保留，避免后续请求丢字段。
+
+## 扩展方式
+
+- 新工具：继承 Tool，使用 `@tool_parameters` 声明 schema，注册到 ToolRegistry。
+- 新 Hook：实现 Hook Protocol，加入 HookManager。
+- 新 Skill：在 `skills/` 下创建 Markdown 文件。
+- 新 LLM provider：实现 LLM Protocol。
