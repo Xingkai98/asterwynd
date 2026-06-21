@@ -87,6 +87,29 @@ uv run pytest tests/benchmark -q
 uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke
 ```
 
+涉及 AgentLoop、coding tools、workspace safety、benchmark runner 或其他 coding-agent 核心路径的变更，除了相关单元/集成测试外，至少跑通一个 benchmark smoke。优先选择能验证真实 runner 闭环的任务；如果改动影响外部 SWE-bench 风格任务，至少单独跑一个 `swebench-*` 任务。
+
+外部 SWE-bench 风格任务依赖 `swebench` 包；当前未作为默认 dev 依赖固定时，可在本地环境临时安装：
+
+```bash
+uv pip install swebench
+```
+
+单任务 SWE smoke 示例：
+
+```bash
+rm -rf /tmp/myagent-one-swe-task /tmp/myagent-swe-smoke
+mkdir -p /tmp/myagent-one-swe-task
+ln -s "$PWD/benchmarks/tasks/swebench-psf__requests-5414" \
+  /tmp/myagent-one-swe-task/swebench-psf__requests-5414
+uv run python cli.py benchmark /tmp/myagent-one-swe-task \
+  --agent shell \
+  --shell-command "git apply $PWD/benchmarks/tasks/swebench-psf__requests-5414/gold.patch" \
+  --source-repo . \
+  --runs-dir /tmp/myagent-swe-smoke \
+  --clone-cache-dir /tmp/myagent-swe-cache
+```
+
 ## 必须守住的协议
 
 - assistant message 如果包含 `tool_calls`，必须保留匹配的 tool result。

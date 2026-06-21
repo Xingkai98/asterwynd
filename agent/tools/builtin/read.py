@@ -1,6 +1,6 @@
 # agent/tools/builtin/read.py
-from pathlib import Path
 from agent.tools.base import Tool, tool_parameters
+from agent.workspace_policy import WorkspacePolicy
 
 @tool_parameters(
     name="Read",
@@ -17,9 +17,12 @@ from agent.tools.base import Tool, tool_parameters
 class ReadTool(Tool):
     read_only = True
 
+    def __init__(self, policy: WorkspacePolicy | None = None):
+        self.policy = policy or WorkspacePolicy()
+
     async def execute(self, path: str, limit: int = None, **kwargs) -> str:
         try:
-            p = Path(path)
+            p = self.policy.assert_read_allowed(path)
             if not p.exists():
                 return f"Error: 文件不存在: {path}"
             content = p.read_text(errors="replace")
@@ -27,7 +30,7 @@ class ReadTool(Tool):
                 lines = content.splitlines()
                 content = "\n".join(lines[:limit])
             return content
-        except PermissionError:
-            return f"Error: 无权限读取: {path}"
+        except PermissionError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {e}"

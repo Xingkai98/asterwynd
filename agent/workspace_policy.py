@@ -180,7 +180,11 @@ class WorkspacePolicy:
         return False
 
     def assert_read_allowed(self, path: str | Path) -> Path:
-        return self.assert_within_workspace(path)
+        resolved = self.assert_within_workspace(path)
+        if self.is_denied(resolved):
+            rel = resolved.relative_to(self.workspace_root).as_posix()
+            raise PermissionError(f"Read denied by workspace policy: {rel}")
+        return resolved
 
     def assert_write_allowed(self, path: str | Path) -> Path:
         resolved = self.assert_within_workspace(path)
