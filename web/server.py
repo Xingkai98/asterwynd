@@ -16,10 +16,10 @@ logger = logging.getLogger("myagent.web.server")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(llm) -> FastAPI:
+def create_app(llm, mode: str = "build") -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title="MyAgent Web UI", version="0.1.0")
-    session_manager = SessionManager(debug_enabled=debug_enabled())
+    session_manager = SessionManager(debug_enabled=debug_enabled(), mode=mode)
 
     # Mount static files at /static
     if STATIC_DIR.exists():
@@ -52,7 +52,11 @@ def create_app(llm) -> FastAPI:
         session = session_manager.get_session(session_id)
         if not session:
             session = session_manager.create_session(llm)
-            await ws.send_json({"type": "session_created", "session_id": session.session_id})
+            await ws.send_json({
+                "type": "session_created",
+                "session_id": session.session_id,
+                "mode": session.agent.run_config.mode.value,
+            })
 
         elif session.session_id != session_id:
             session = session_manager.get_session(session.session_id)
@@ -75,7 +79,11 @@ def create_app(llm) -> FastAPI:
                 elif msg_type == "reset":
                     session_manager.remove_session(session.session_id)
                     session = session_manager.create_session(llm)
-                    await ws.send_json({"type": "session_created", "session_id": session.session_id})
+                    await ws.send_json({
+                        "type": "session_created",
+                        "session_id": session.session_id,
+                        "mode": session.agent.run_config.mode.value,
+                    })
 
                 elif msg_type == "ping":
                     await ws.send_json({"type": "pong"})

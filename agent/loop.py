@@ -12,6 +12,7 @@ from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
 from agent.memory.manager import MemoryManager
 from agent.subagent.manager import SubAgentManager
+from agent.run_config import AgentRunConfig
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -28,6 +29,7 @@ class AgentLoop:
         memory: Optional[MemoryManager] = None,
         subagent_manager: Optional[SubAgentManager] = None,
         max_iterations: int = 20,
+        run_config: AgentRunConfig | None = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -35,6 +37,7 @@ class AgentLoop:
         self.memory = memory or MemoryManager(llm=llm)
         self.subagent_manager = subagent_manager or SubAgentManager()
         self.max_iterations = max_iterations
+        self.run_config = run_config or AgentRunConfig()
 
     async def run(
         self,
@@ -43,6 +46,13 @@ class AgentLoop:
         trace_recorder: Optional["TraceRecorder"] = None,
     ) -> RunResult:
         tool_calls_made: list[ToolCallMade] = []
+        mode = self.run_config.mode.value
+
+        await self.hooks.on_run_started(self.run_config)
+        if trace_recorder:
+            trace_recorder.record_run_started(mode)
+        if on_event:
+            await on_event("run_started", {"mode": mode})
 
         for iteration in range(self.max_iterations):
             await self.hooks.before_iteration(iteration, messages)
@@ -158,14 +168,20 @@ class AgentLoop:
 
                 await self.hooks.after_tool_execute(tool_call, result)
                 if trace_recorder:
-                    status = "error" if result.startswith("[Error") or result.startswith("Error") else "ok"
+                    status = (
+                        "error"
+                        if result.startswith("[Error")
+                        or result.startswith("Error")
+                        or result.startswith("[Permission denied")
+                        else "ok"
+                    )
                     trace_recorder.record_tool_result(
                         tool_call.name,
                         status,
                         tool_duration_ms,
                         result,
                     )
-                    if tool_call.name == "Edit":
+                    if tool_call.name == "Edit" and status == "ok":
                         path = str(tool_call.arguments.get("path", ""))
                         trace_recorder.record_edit(path, status, result)
 

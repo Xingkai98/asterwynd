@@ -128,6 +128,7 @@ async def test_websocket_chat_flow():
             with client.websocket_connect("/ws/new") as ws:
                 created = ws.receive_json()
                 assert created["type"] == "session_created"
+                assert created["mode"] == "build"
 
                 ws.send_json({"type": "chat", "content": "hello"})
                 events = []
@@ -138,8 +139,19 @@ async def test_websocket_chat_flow():
                         break
     finally:
         os.environ["MYAGENT_DEBUG"] = old_debug
-    assert [e["type"] for e in events] == ["llm_response", "done"]
+    assert [e["type"] for e in events] == ["run_started", "llm_response", "done"]
     assert events[-1]["data"]["content"] == "Hello from agent!"
+
+
+def test_websocket_session_created_includes_configured_mode():
+    app = create_app(MockLLM([LLMResponse(content="Hello")]), mode="plan")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+
+    assert created["type"] == "session_created"
+    assert created["mode"] == "plan"
 
 
 def test_websocket_ping_and_reset(app):
@@ -156,6 +168,7 @@ def test_websocket_ping_and_reset(app):
             reset = ws.receive_json()
             assert reset["type"] == "session_created"
             assert reset["session_id"] != first_session
+            assert reset["mode"] == "build"
 
 
 def test_websocket_tool_events():

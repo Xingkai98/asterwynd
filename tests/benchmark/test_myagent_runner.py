@@ -7,6 +7,7 @@ from benchmarks.agent_runner import MyAgentRunner
 from benchmarks.prompt import CodingPromptBuilder
 from benchmarks.task_schema import TaskSpec
 from agent.trace_recorder import TraceRecorder
+from agent.run_config import AgentMode
 
 
 class ScriptedLLM:
@@ -112,3 +113,29 @@ async def test_myagent_runner_uses_agent_loop_and_coding_tools(tmp_path):
     assert "edit" in step_types
     first_prompt = "\n".join(message.content for message in llm.messages_seen[0])
     assert "Update app.py to Version 2." in first_prompt
+
+
+@pytest.mark.asyncio
+async def test_myagent_runner_records_and_uses_mode(tmp_path):
+    task = TaskSpec(
+        id="task",
+        repo="local",
+        base_commit="abc",
+        problem_statement_file="issue.md",
+        test_command="true",
+    )
+    llm = ScriptedLLM()
+    runner = MyAgentRunner(llm=llm, mode="read-only", max_iterations=5)
+    trace = TraceRecorder(task_id="task")
+
+    result = await runner.run(
+        task=task,
+        problem_statement="Read only.",
+        workspace=tmp_path,
+        output_dir=tmp_path / "out",
+        trace=trace,
+    )
+
+    assert runner.run_config.mode is AgentMode.READ_ONLY
+    assert trace.to_dict()["mode"] == "read_only"
+    assert result.edit_count == 0

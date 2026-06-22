@@ -37,3 +37,14 @@ def test_trace_recorder_writes_json(tmp_path):
     recorder.write_to_file(path)
 
     assert json.loads(path.read_text())["task_id"] == "task-1"
+
+
+def test_trace_recorder_records_mode_metadata_and_run_started():
+    recorder = TraceRecorder(task_id="task-1", mode="read_only")
+    recorder.record_run_started()
+
+    data = recorder.to_dict()
+
+    assert data["mode"] == "read_only"
+    assert data["steps"][0]["type"] == "run_started"
+    assert data["steps"][0]["data"]["mode"] == "read_only"

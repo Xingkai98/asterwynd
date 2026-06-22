@@ -6,9 +6,11 @@ from agent.llm import LLMResponse
 
 if TYPE_CHECKING:
     from agent.result import RunResult
+    from agent.run_config import AgentRunConfig
 
 @runtime_checkable
 class Hook(Protocol):
+    async def on_run_started(self, run_config: "AgentRunConfig") -> None: ...
     async def before_iteration(self, iteration: int, messages: list[Message]) -> None: ...
     async def after_llm_call(self, response: LLMResponse) -> None: ...
     async def before_tool_execute(self, tool_call: ToolCall) -> None: ...
@@ -19,6 +21,12 @@ class Hook(Protocol):
 class HookManager:
     def __init__(self, hooks: list[Hook] | None = None):
         self.hooks: list[Hook] = hooks or []
+
+    async def on_run_started(self, run_config: "AgentRunConfig") -> None:
+        for hook in self.hooks:
+            handler = getattr(hook, "on_run_started", None)
+            if handler:
+                await handler(run_config)
 
     async def before_iteration(self, iteration: int, messages: list[Message]) -> None:
         for hook in self.hooks:

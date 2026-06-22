@@ -7,12 +7,16 @@ from agent.tools.base import ToolCall
 if TYPE_CHECKING:
     from agent.result import RunResult
     from agent.llm import LLMResponse
+    from agent.run_config import AgentRunConfig
 
 logger = logging.getLogger("myagent.hooks.logging")
 
 class LoggingHook:
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
+
+    async def on_run_started(self, run_config: "AgentRunConfig") -> None:
+        logger.info(f"[Run] mode={run_config.mode.value}")
 
     async def before_iteration(self, iteration: int, messages: list[Message]) -> None:
         logger.info(f"[Iteration {iteration}] messages={len(messages)}")
