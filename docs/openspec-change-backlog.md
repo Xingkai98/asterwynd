@@ -9,11 +9,34 @@
 - 调整实现顺序时，应写清楚依赖原因，而不是只移动条目。
 - 本文档只记录可提交的 change id 和稳定判断，不记录本地参考仓库路径。
 
+## 并行开发批次
+
+后续 change 不应全部串行，也不应全量并行。建议按以下批次推进；同一批次内可以并行开 PR，但如果两个 change 同时修改 AgentLoop、ToolRegistry、Web session 或 trace 语义，应在实现阶段错开合入，避免协议和事件模型互相覆盖。
+
+### 第一批：可立即并行
+
+- `add-repo-map-code-intelligence`：只读代码理解能力，影响面主要在 code intelligence、只读工具和 workspace scan。
+- `implement-structured-planning-state`：planning state 主干能力，阻塞后续 plan mode、TUI 和 subagent 协作。
+
+### 第二批：等待 planning state 合入
+
+- `add-plan-mode`：必须依赖 `implement-structured-planning-state`，否则只能做到只读权限边界，不能交付真实计划产物。
+- `add-runtime-mode-switching`：建议在 `add-plan-mode` 后做，避免 mode transition 只切工具权限而没有完整 plan 语义。
+- `upgrade-subagents-to-agentloop`：建议依赖 `implement-structured-planning-state`；如果目标优先转向并行调查能力，可以早于 TUI 推进。
+
+### 第三批：展示与外部工具
+
+- `add-minimal-tui-runtime-view`：建议在 planning state、plan mode 和 runtime mode switching 稳定后做，复用统一运行事件和 mode transition。
+- `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
+- `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
+
 ## 未实现队列
 
 ### 1. `add-repo-map-code-intelligence`
 
 状态：未实现。
+
+批次：第一批，可与 `implement-structured-planning-state` 并行。
 
 建议顺序原因：
 
@@ -30,6 +53,8 @@
 ### 2. `implement-structured-planning-state`
 
 状态：未实现。
+
+批次：第一批，可与 `add-repo-map-code-intelligence` 并行。
 
 建议顺序原因：
 
@@ -48,6 +73,8 @@
 
 状态：未实现。
 
+批次：第二批，等待 `implement-structured-planning-state` 合入后开始。
+
 建议顺序原因：
 
 - 依赖 `introduce-agent-mode-policy` 的 mode 权限边界。
@@ -64,6 +91,8 @@
 ### 4. `add-runtime-mode-switching`
 
 状态：未实现。
+
+批次：第二批，建议等待 `add-plan-mode` 合入后开始；如需提前，只能先限定为 mode transition API 设计和测试骨架。
 
 建议顺序原因：
 
@@ -82,6 +111,8 @@
 
 状态：未实现。
 
+批次：第三批，等待 planning state、plan mode 和 runtime mode switching 稳定后开始。
+
 建议顺序原因：
 
 - TUI 应复用已有 AgentLoop 事件、planning state 和 mode transition，而不是定义另一套运行协议。
@@ -97,6 +128,8 @@
 ### 6. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
+
+批次：第二批，等待 planning state 合入后开始；如果优先证明并行调查能力，可提前到 TUI 之前。
 
 建议顺序原因：
 
@@ -114,6 +147,8 @@
 
 状态：未实现。
 
+批次：第三批，可提前做设计和 fake server 测试；实现阶段建议与 browser 能力错开。
+
 建议顺序原因：
 
 - MCP 需要统一配置管理 server 列表，也需要 mode policy 和 tool permission metadata。
@@ -129,6 +164,8 @@
 ### 8. `add-browser-use-safety-foundation`
 
 状态：未实现。
+
+批次：第三批，建议在 MCP 或核心工具权限模型更稳定后开始。
 
 建议顺序原因：
 
