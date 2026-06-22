@@ -30,12 +30,13 @@
 2. 讨论目标、边界和面试价值。
 3. 写需求文档。
 4. 写详细设计文档。
-5. 人工评审并通过需求和详细设计。
-6. 实现测试。
-7. 实现功能。
-8. 运行验证。
-9. 更新文档和能力证明链。
-10. PR 合入后，执行 OpenSpec 收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。只有暂时无法归档时，才先移入“已完成待归档”。
+5. 使用 `grill-with-docs` 对 `design.md` 做开发前设计追问，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
+6. 人工评审并通过需求和详细设计。
+7. 实现测试。
+8. 实现功能。
+9. 运行验证。
+10. 更新文档和能力证明链。
+11. PR 合入后，执行 OpenSpec 收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。只有暂时无法归档时，才先移入“已完成待归档”。
 
 ## 参考实现调研
 
@@ -114,6 +115,17 @@
 
 `docs/` 只保存稳定长期文档。单个 change 的详细设计和定位过程应留在对应的 `openspec/changes/<change-id>/` 下，并随 change 一起归档。
 
+## 开发前设计追问
+
+开始实现任何非平凡 change 前，必须先用 `grill-with-docs` 审视 `design.md`：围绕现有代码、项目词汇、规格 delta、入口行为、数据结构、配置、错误处理、权限边界、测试策略和验证命令逐项追问，直到每个关键实现细节都有明确最终方案。
+
+执行规则：
+
+- 如果问题能通过阅读代码或项目文档回答，先查代码和文档，不把可验证事实留给猜测。
+- 如果发现术语、边界或设计决策不清楚，应先更新当前 change 的 `design.md`、`proposal.md`、spec delta、`tasks.md` 或稳定项目文档，再进入开发。
+- 如果当前 agent 环境没有 `grill-with-docs` skill，也必须按同等标准执行设计追问：逐个设计分支确认方案、记录取舍和未选方案，并明确测试与验收方式。
+- 设计追问完成前，不进入测试实现或功能实现。
+
 ## Change 合入后归档
 
 功能 PR 合入后，应在单独提交中完成 OpenSpec 收尾：
@@ -132,7 +144,7 @@
 
 - OpenSpec schema：`spec-driven` schema 已包含 `proposal`、`specs`、`design`、`tasks` 四类 artifact，可通过 `openspec status --change <id>` 查看缺失项。
 - 项目本地脚本：检查 active changes 是否满足项目文档规则，例如 `Change Type` 合法、各类型要求按并集满足、非平凡 change 有 `design.md`、问题定位类 change 有 `diagnosis.md`，必填章节不是空壳，核心路径 change 包含 benchmark smoke 验证项，并且 backlog 与 active/archive change 状态一致。
-- 人工评审：脚本不判断设计是否合理；开发前必须人工审核 `design.md` 并确认通过。
+- 人工评审：脚本不判断设计是否合理；开发前必须先完成 `grill-with-docs` 或等价设计追问，再人工审核 `design.md` 并确认通过。
 
 在开始实现前，应至少运行：
 
@@ -145,7 +157,7 @@ uv run python scripts/check_openspec_artifacts.py
 
 `scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、条件验证项存在、backlog 不引用已归档或不存在的 change。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
-设计评审通过前，不进入实现阶段。
+开发前设计追问和设计评审都通过前，不进入实现阶段。
 
 ## 验证任务模板
 
@@ -180,5 +192,6 @@ uv run python scripts/check_openspec_artifacts.py
 - 不允许把多个不相关功能塞进一个需求。
 - 不允许只写实现任务，不写验收标准。
 - 不允许没有测试计划就开始开发。
+- 不允许未经过 `grill-with-docs` 或等价设计追问的 `design.md` 进入开发。
 - 不允许未经过人工评审通过的 `design.md` 进入开发。
 - 不允许为了覆盖 AI 方向而偏离 Agent 开发主线。

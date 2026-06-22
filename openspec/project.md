@@ -51,9 +51,10 @@ OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
 - `proposal.md` 必须包含 `## Change Type`，声明 `primary` 和 `secondary` 类型。
 - 项目文档规则按 `primary` 与 `secondary` 的类型并集校验；每个涉及类型的要求都必须满足。
 - 新建 `tasks.md` 应参考 `openspec/templates/tasks.md`，保留通用验证项，并按影响面补充 benchmark、Web、TUI、browser 或外部集成 smoke。
+- 非平凡 change 开发前必须用 `grill-with-docs` 审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
 - change 实现 PR 合入后，应归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，并从 `docs/openspec-change-backlog.md` 移除；backlog 只记录未实现或临时已完成待归档的 active change。
 
 当前 OpenSpec CLI 可通过 `openspec status --change <id>` 检查 schema
 artifact 完成状态。`diagnosis.md` 属于项目条件规则，由项目本地文档规则脚本检查。
 
-项目本地脚本只做机械校验：`Change Type` 合法、文件存在、必填章节存在、章节非空、没有模板占位符、条件验证项存在、backlog 不引用已归档或不存在的 change。设计内容是否合理不由脚本判断；开发前必须人工审核 `design.md` 并确认通过。
+项目本地脚本只做机械校验：`Change Type` 合法、文件存在、必填章节存在、章节非空、没有模板占位符、条件验证项存在、backlog 不引用已归档或不存在的 change。设计内容是否合理不由脚本判断；开发前必须完成 `grill-with-docs` 或等价设计追问，并由人工审核 `design.md` 后确认通过。

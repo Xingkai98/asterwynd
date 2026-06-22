@@ -3,6 +3,7 @@
 - [ ] 1.1 修改 planning 规格，定义 plan item 数据模型和状态集合。
 - [ ] 1.2 修改 agent-runtime 规格，定义 planning state 事件语义。
 - [ ] 1.3 修改 web-ui 和 benchmark 规格，定义展示与 trace 记录要求。
+- [ ] 1.4 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
 
 ## 2. 测试
 

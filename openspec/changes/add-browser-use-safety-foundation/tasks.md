@@ -3,6 +3,7 @@
 - [ ] 1.1 修改 browser-computer-use 规格，定义 URL、凭据、截图、超时和审计策略。
 - [ ] 1.2 修改 tool-system 规格，定义 browser tools 权限元数据。
 - [ ] 1.3 修改 workspace-safety 规格，定义 browser artifact 存储边界。
+- [ ] 1.4 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
 
 ## 2. 测试
 
