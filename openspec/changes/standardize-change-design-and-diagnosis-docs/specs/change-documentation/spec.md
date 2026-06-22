@@ -1,0 +1,88 @@
+## ADDED Requirements
+
+### Requirement: Detailed design artifact
+Every non-trivial OpenSpec change SHALL include a `design.md` artifact that
+records the implementation approach and major technical decisions before
+development starts.
+
+#### Scenario: Feature change with implementation work
+- **WHEN** an OpenSpec change introduces or modifies runtime behavior,
+  architecture, configuration, dependencies, or tests
+- **THEN** the change includes `design.md`
+- **AND** the design documents goals, non-goals, decisions, risks, and testing
+  strategy
+
+#### Scenario: Design reviewed before implementation
+- **WHEN** implementation work is about to start for a non-trivial change
+- **THEN** the `design.md` has been reviewed and accepted by a human reviewer
+- **AND** mechanical checks are not treated as design approval
+
+#### Scenario: Trivial documentation-only change
+- **WHEN** an OpenSpec change only fixes wording, broken links, or stale
+  documentation without altering project behavior or process
+- **THEN** the proposal may state that no separate detailed design is required
+
+### Requirement: Diagnosis artifact
+Bug, regression, incident, and research-driven OpenSpec changes SHALL include a
+`diagnosis.md` artifact before implementation begins.
+
+#### Scenario: Bug-driven change
+- **WHEN** a change is created to fix a failing tool, UI defect, regression, or
+  production-like incident
+- **THEN** the change includes `diagnosis.md`
+- **AND** the diagnosis records symptom, reproduction, evidence, hypotheses,
+  root cause, fix options, and regression test expectations
+
+#### Scenario: Diagnosis leads to design
+- **WHEN** diagnosis shows that the fix requires a new architecture or
+  substantial behavior change
+- **THEN** the change also includes `design.md`
+- **AND** the design references the diagnosis as the reason for the chosen
+  approach
+
+### Requirement: Artifact responsibility boundaries
+OpenSpec change artifacts SHALL have distinct responsibilities so that
+requirements, design decisions, investigation evidence, and implementation
+tasks do not overwrite each other.
+
+#### Scenario: Change artifact separation
+- **WHEN** an agent prepares an OpenSpec change
+- **THEN** `proposal.md` explains why and what changes
+- **AND** spec delta files define normative behavior
+- **AND** `design.md` explains how the change will be implemented
+- **AND** `diagnosis.md` records root-cause evidence when applicable
+- **AND** `tasks.md` lists ordered implementation steps
+
+### Requirement: Change type metadata
+Every OpenSpec change SHALL declare a primary change type and a secondary type
+list in `proposal.md`.
+
+#### Scenario: Single-type change
+- **WHEN** a change has one clear work type
+- **THEN** `proposal.md` includes `## Change Type`
+- **AND** it declares `primary` as one allowed type
+- **AND** it declares `secondary: []`
+
+#### Scenario: Multi-type change
+- **WHEN** a change is triggered by one type of work and also includes other
+  work qualities
+- **THEN** `primary` records the trigger
+- **AND** `secondary` records additional types
+- **AND** the change satisfies the artifact requirements for every declared
+  type
+
+### Requirement: Mechanical artifact checks
+The project SHALL use a local artifact checker for mechanical document rules
+without attempting to judge technical design quality.
+
+#### Scenario: Artifact checker scope
+- **WHEN** the project artifact checker validates an active change
+- **THEN** it checks valid `Change Type` metadata, required files, required
+  section headings, non-empty section bodies, and template placeholders
+- **AND** it does not score design correctness, architecture quality, or
+  implementation trade-offs
+
+#### Scenario: Artifact checker combines type rules
+- **WHEN** a change declares both `primary` and `secondary` types
+- **THEN** the artifact checker applies the requirements for the union of all
+  declared types

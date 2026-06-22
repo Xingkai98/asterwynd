@@ -35,4 +35,22 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - `tui`: 终端 UI，当前为预留能力域。
 - `web-ui`: FastAPI、WebSocket、Chat 和 Debug 页面。
 - `benchmark`: 任务 schema、runner、artifact、hidden tests 和结果汇总。
+- `change-documentation`: OpenSpec change 的 proposal、spec、design、diagnosis 和 tasks 文档流程。
 
+## Change 文档约束
+
+OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
+`tasks` artifacts。MyAgent 在此基础上采用以下项目级规则：
+
+- 非平凡 change 必须包含 `design.md`，用于记录详细设计和关键技术取舍。
+- bug、回归、工具不可用、故障复盘和调研驱动的 change 必须包含 `diagnosis.md`。
+- `diagnosis.md` 记录症状、复现、证据、假设、根因、修复选项、推荐方案和回归测试要求。
+- `design.md` 记录目标、非目标、当前架构、方案、接口、配置、错误处理、测试策略、替代方案和风险。
+- `proposal.md` 不承载详细实现；spec delta 不承载问题定位过程；`tasks.md` 不替代设计。
+- `proposal.md` 必须包含 `## Change Type`，声明 `primary` 和 `secondary` 类型。
+- 项目文档规则按 `primary` 与 `secondary` 的类型并集校验；每个涉及类型的要求都必须满足。
+
+当前 OpenSpec CLI 可通过 `openspec status --change <id>` 检查 schema
+artifact 完成状态。`diagnosis.md` 属于项目条件规则，由项目本地文档规则脚本检查。
+
+项目本地脚本只做机械校验：`Change Type` 合法、文件存在、必填章节存在、章节非空、没有模板占位符。设计内容是否合理不由脚本判断；开发前必须人工审核 `design.md` 并确认通过。
