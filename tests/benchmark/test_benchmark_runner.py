@@ -39,6 +39,37 @@ class WarningEditRunner(AgentRunner):
         )
 
 
+class PlanningTraceRunner(AgentRunner):
+    async def run(self, task, problem_statement, workspace, output_dir, trace):
+        trace.record_planning_state({
+            "items": [
+                {
+                    "id": "item-1",
+                    "content": "Update app.py",
+                    "status": "completed",
+                    "note": None,
+                }
+            ],
+            "summary": {
+                "total": 1,
+                "pending": 0,
+                "in_progress": 0,
+                "completed": 1,
+                "failed": 0,
+                "skipped": 0,
+                "current_item": None,
+            },
+        })
+        target = workspace / "app.py"
+        target.write_text(target.read_text().replace("Version 1", "Version 2"))
+        return AgentRunResult(
+            status="completed",
+            iterations=1,
+            tool_calls=0,
+            edit_count=1,
+        )
+
+
 @pytest.fixture
 def repo(tmp_path):
     repo = tmp_path / "repo"
@@ -86,6 +117,7 @@ async def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
     assert result["status"] == "passed"
     assert result["edit_count"] == 1
     assert result["mode"] == "build"
+    assert "planning_summary" not in result
 
     trace = json.loads((task_output / "trace.json").read_text())
     assert trace["mode"] == "build"
@@ -129,6 +161,32 @@ async def test_benchmark_runner_reports_passed_with_warnings(repo, tmp_path):
 
     summary = (tmp_path / "runs" / "run-warning" / "summary.md").read_text()
     assert "| task-1 | passed_with_warnings |" in summary
+
+
+@pytest.mark.asyncio
+async def test_benchmark_runner_writes_planning_summary_when_present(repo, tmp_path):
+    base_commit = _git_out(repo, "rev-parse", "HEAD")
+    task_dir = _task_dir(
+        tmp_path,
+        base_commit=base_commit,
+        test_command="grep -q 'Version 2' app.py",
+    )
+    runner = BenchmarkRunner(
+        agent_runner=PlanningTraceRunner(),
+        source_repo=repo,
+        runs_dir=tmp_path / "runs",
+    )
+
+    await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "run-planning")
+
+    task_output = tmp_path / "runs" / "run-planning" / "tasks" / "task-1"
+    result = json.loads((task_output / "result.json").read_text())
+    trace = json.loads((task_output / "trace.json").read_text())
+
+    assert result["planning_summary"]["completed"] == 1
+    assert "planning_state_updated" in [
+        step["type"] for step in trace["steps"]
+    ]
 
 
 @pytest.mark.asyncio

@@ -48,3 +48,38 @@ def test_trace_recorder_records_mode_metadata_and_run_started():
     assert data["mode"] == "read_only"
     assert data["steps"][0]["type"] == "run_started"
     assert data["steps"][0]["data"]["mode"] == "read_only"
+
+
+def test_trace_recorder_records_planning_state():
+    recorder = TraceRecorder(task_id="task-1")
+    snapshot = {
+        "items": [
+            {
+                "id": "item-1",
+                "content": "Run tests",
+                "status": "in_progress",
+                "note": None,
+            }
+        ],
+        "summary": {
+            "total": 1,
+            "pending": 0,
+            "in_progress": 1,
+            "completed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "current_item": {
+                "id": "item-1",
+                "content": "Run tests",
+                "status": "in_progress",
+                "note": None,
+            },
+        },
+    }
+
+    recorder.record_planning_state(snapshot)
+
+    step = recorder.to_dict()["steps"][0]
+    assert step["type"] == "planning_state_updated"
+    assert step["data"] == snapshot
+    assert recorder.latest_planning_summary() == snapshot["summary"]

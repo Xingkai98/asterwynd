@@ -89,6 +89,16 @@ class TraceRecorder:
             output=output,
         )
 
+    def record_planning_state(self, snapshot: dict[str, Any]) -> None:
+        self.record("planning_state_updated", **snapshot)
+
+    def latest_planning_summary(self) -> dict[str, Any] | None:
+        for step in reversed(self.steps):
+            if step.type == "planning_state_updated":
+                summary = step.data.get("summary")
+                return summary if isinstance(summary, dict) else None
+        return None
+
     def record_completion(self, status: str, content: str = "") -> None:
         self.record(
             "completion",

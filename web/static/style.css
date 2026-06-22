@@ -139,6 +139,67 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   overflow-x: auto;
 }
 
+.planning-panel {
+  flex-shrink: 0;
+  margin: 12px 20px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.planning-panel[hidden] { display: none; }
+.planning-panel-header {
+  margin-bottom: 8px;
+  color: var(--text2);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.planning-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+.planning-item {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-height: 24px;
+  font-size: 0.86rem;
+}
+.planning-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.planning-content {
+  min-width: 0;
+  word-break: break-word;
+}
+.planning-note {
+  grid-column: 2;
+  color: var(--text2);
+  font-size: 0.78rem;
+  word-break: break-word;
+}
+.status-completed .planning-status,
+.planning-status.status-completed { color: #06240f; background: var(--success); }
+.status-in_progress .planning-status,
+.planning-status.status-in_progress { color: #061629; background: var(--info); }
+.status-failed .planning-status,
+.planning-status.status-failed { color: #300808; background: var(--error); }
+.status-skipped .planning-status,
+.planning-status.status-skipped { color: #2b2204; background: var(--warning); }
+
 /* Input Area */
 #input-area {
   display: flex;

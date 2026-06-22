@@ -13,6 +13,8 @@ const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
 const statusEl = document.getElementById('status');
 const debugTabBtn = document.getElementById('debug-tab');
+const planningPanel = document.getElementById('planning-panel');
+const planningItemsEl = document.getElementById('planning-items');
 
 // --- Tab switching ---
 document.querySelectorAll('.tab').forEach(tab => {
@@ -87,6 +89,13 @@ function handleEvent(event) {
       renderDebug();
       break;
 
+    case 'planning_state_updated':
+      renderPlanningState(event.data);
+      if (typeof renderPlanningDebug === 'function') {
+        renderPlanningDebug(event.data);
+      }
+      break;
+
     case 'session_created':
       sessionId = event.session_id;
       break;
@@ -125,6 +134,42 @@ function addToolCallBlock(name, args) {
   }
   messagesEl.appendChild(block);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function renderPlanningState(state) {
+  const items = state && Array.isArray(state.items) ? state.items : [];
+  planningItemsEl.textContent = '';
+
+  if (items.length === 0) {
+    planningPanel.hidden = true;
+    return;
+  }
+
+  planningPanel.hidden = false;
+  for (const item of items) {
+    const row = document.createElement('li');
+    row.className = `planning-item status-${item.status}`;
+
+    const status = document.createElement('span');
+    status.className = 'planning-status';
+    status.textContent = item.status;
+
+    const content = document.createElement('span');
+    content.className = 'planning-content';
+    content.textContent = item.content || '';
+
+    row.appendChild(status);
+    row.appendChild(content);
+
+    if (item.note) {
+      const note = document.createElement('span');
+      note.className = 'planning-note';
+      note.textContent = item.note;
+      row.appendChild(note);
+    }
+
+    planningItemsEl.appendChild(row);
+  }
 }
 
 // --- Send message ---

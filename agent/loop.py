@@ -4,13 +4,14 @@ import logging
 import time
 from typing import Optional, Callable, Awaitable, TYPE_CHECKING
 
-from agent.message import Message, tool_result_message
+from agent.message import Message, system_message, tool_result_message
 from agent.result import RunResult, StopReason, ToolCallMade
 from agent.tools.base import ToolCall
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
 from agent.memory.manager import MemoryManager
+from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentRunConfig
 
@@ -27,6 +28,7 @@ class AgentLoop:
         tool_registry: ToolRegistry,
         hooks: Optional[HookManager] = None,
         memory: Optional[MemoryManager] = None,
+        planning_manager: Optional[PlanningManager] = None,
         subagent_manager: Optional[SubAgentManager] = None,
         max_iterations: int = 20,
         run_config: AgentRunConfig | None = None,
@@ -35,11 +37,71 @@ class AgentLoop:
         self.tool_registry = tool_registry
         self.hooks = hooks or HookManager()
         self.memory = memory or MemoryManager(llm=llm)
+        self._planning = planning_manager or PlanningManager()
         self.subagent_manager = subagent_manager or SubAgentManager()
         self.max_iterations = max_iterations
         self.run_config = run_config or AgentRunConfig()
+        self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
+        self._active_trace_recorder: Optional["TraceRecorder"] = None
+
+    @property
+    def planning_state(self) -> dict:
+        return self._planning.snapshot()
+
+    async def set_plan(
+        self,
+        contents: list[str],
+        *,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+    ) -> dict:
+        snapshot = self._planning.set_plan(contents)
+        await self._publish_planning_state(snapshot, on_event, trace_recorder)
+        return snapshot
+
+    async def update_plan_item(
+        self,
+        item_id: str,
+        status: PlanStatus,
+        note: str | None = None,
+        *,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+    ) -> dict:
+        snapshot = self._planning.update_item(item_id, status, note=note)
+        await self._publish_planning_state(snapshot, on_event, trace_recorder)
+        return snapshot
+
+    async def _publish_planning_state(
+        self,
+        snapshot: dict,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+    ) -> None:
+        trace_sink = trace_recorder or self._active_trace_recorder
+        event_sink = on_event or self._active_on_event
+        if trace_sink:
+            trace_sink.record_planning_state(snapshot)
+        if event_sink:
+            await event_sink("planning_state_updated", snapshot)
 
     async def run(
+        self,
+        messages: list[Message],
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+    ) -> RunResult:
+        previous_on_event = self._active_on_event
+        previous_trace_recorder = self._active_trace_recorder
+        self._active_on_event = on_event
+        self._active_trace_recorder = trace_recorder
+        try:
+            return await self._run(messages, on_event, trace_recorder)
+        finally:
+            self._active_on_event = previous_on_event
+            self._active_trace_recorder = previous_trace_recorder
+
+    async def _run(
         self,
         messages: list[Message],
         on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
@@ -60,7 +122,7 @@ class AgentLoop:
             tool_schemas = self.tool_registry.get_all_schemas()
 
             response = await self.llm.chat(
-                messages=messages,
+                messages=self._messages_with_planning_context(messages),
                 tools=tool_schemas if tool_schemas else None,
             )
             await self.hooks.after_llm_call(response)
@@ -232,6 +294,21 @@ class AgentLoop:
         if not isinstance(parsed, dict):
             raise ValueError("tool arguments must be a JSON object")
         return parsed
+
+    def _messages_with_planning_context(self, messages: list[Message]) -> list[Message]:
+        planning_context = self._planning.render_context()
+        if not planning_context:
+            return messages
+
+        insert_at = 0
+        while insert_at < len(messages) and messages[insert_at].role == "system":
+            insert_at += 1
+
+        return [
+            *messages[:insert_at],
+            system_message(planning_context),
+            *messages[insert_at:],
+        ]
 
     def _last_assistant_content(self, messages: list[Message]) -> str:
         for message in reversed(messages):

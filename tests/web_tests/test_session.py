@@ -97,6 +97,43 @@ async def test_chat_simple_text_response():
 
 
 @pytest.mark.asyncio
+async def test_run_session_forwards_planning_events():
+    """Planning state updates are forwarded through the WebSocket event queue."""
+    class PlanningLLM:
+        def __init__(self):
+            self.loop = None
+
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            await self.loop.set_plan(["Read docs"])
+            await self.loop.update_plan_item("item-1", "in_progress")
+            return LLMResponse(content="planned")
+
+    mock_llm = PlanningLLM()
+    manager = SessionManager()
+    agent = AgentLoop(
+        llm=mock_llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+    )
+    mock_llm.loop = agent
+    session = make_session(agent)
+
+    events = []
+
+    async def collect(e):
+        events.append(e)
+
+    await manager.run_session(session, "hi", ws_send=collect)
+
+    planning_events = [
+        event for event in events
+        if event["type"] == "planning_state_updated"
+    ]
+    assert len(planning_events) == 2
+    assert planning_events[-1]["data"]["summary"]["current_item"]["id"] == "item-1"
+
+
+@pytest.mark.asyncio
 async def test_chat_with_tool_calls():
     """Mock LLM returns tool_calls → run_session yields tool events."""
     mock_llm = MockLLM([
