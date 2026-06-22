@@ -303,6 +303,7 @@ class BenchmarkRunner:
                     await asyncio.to_thread(self._cleanup_worktree, workspace)
                 log("Cleaned up workspace")
 
+            result.planning_summary = result.planning_summary or trace.latest_planning_summary()
             result.write_json(artifacts.result_json)
             trace.write_to_file(artifacts.trace_json)
             artifacts.runner_log.write_text("\n".join(log_lines) + "\n", errors="replace")

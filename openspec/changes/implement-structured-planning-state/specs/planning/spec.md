@@ -23,6 +23,7 @@ PlanningManager SHALL 维护有序 plan items，每个 item 至少包含 id、co
 - **WHEN** PlanningManager 接收这些步骤
 - **THEN** 系统 SHALL 保存有序 plan items
 - **AND** 每个 item SHALL 有稳定 id 和初始状态
+- **AND** item id SHALL 由 PlanningManager 在当前生命周期内单调生成且不复用
 
 #### Scenario: 更新计划状态
 
@@ -30,6 +31,21 @@ PlanningManager SHALL 维护有序 plan items，每个 item 至少包含 id、co
 - **WHEN** agent 或运行时更新该 item 状态
 - **THEN** PlanningManager SHALL 保存新状态
 - **AND** 生成可观察的 planning state 事件
+- **AND** 同一时刻 SHALL 至多存在一个 in_progress item
+
+#### Scenario: 读取计划摘要
+
+- **GIVEN** PlanningManager 已保存计划状态
+- **WHEN** 调用方读取 summary
+- **THEN** 系统 SHALL 返回总步骤数和各状态计数
+- **AND** SHALL 返回当前 in_progress 步骤信息（如果存在）
+
+#### Scenario: 替换计划
+
+- **GIVEN** PlanningManager 已存在计划
+- **WHEN** 调用方设置新的计划
+- **THEN** 系统 SHALL 用新 plan items 替换当前计划
+- **AND** SHALL 为新 plan items 分配未复用的稳定 id
 
 ### Requirement: planning state 不替代自然语言回复
 

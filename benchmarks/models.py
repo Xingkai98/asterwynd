@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class FailureCategory(str, Enum):
@@ -45,6 +46,7 @@ class TaskResult:
     input_tokens: int | None = None
     output_tokens: int | None = None
     failure_category: str | None = None
+    planning_summary: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None}

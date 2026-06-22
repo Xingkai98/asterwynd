@@ -1,7 +1,7 @@
 # tests/agent/test_loop.py
 import pytest
 from agent.loop import AgentLoop
-from agent.message import Message
+from agent.message import Message, system_message
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.tools.base import Tool, tool_parameters, ToolCall
 from agent.tools.registry import ToolRegistry
@@ -41,6 +41,110 @@ async def test_agent_loop_returns_content():
     result = await loop.run([Message(role="user", content="hi")])
     assert result.content == "Hello!"
     assert result.stop_reason.value == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_publishes_planning_state_events_and_trace():
+    events = []
+    trace = TraceRecorder(task_id="task-1")
+
+    async def on_event(event_type: str, data: dict):
+        events.append({"type": event_type, "data": data})
+
+    mock_llm = MockLLM(LLMResponse(content="Hello!"))
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+    )
+
+    snapshot = await loop.set_plan(
+        ["Read docs", "Run tests"],
+        on_event=on_event,
+        trace_recorder=trace,
+    )
+    await loop.update_plan_item(
+        "item-1",
+        "in_progress",
+        on_event=on_event,
+        trace_recorder=trace,
+    )
+
+    assert snapshot["items"][0]["id"] == "item-1"
+    assert [event["type"] for event in events] == [
+        "planning_state_updated",
+        "planning_state_updated",
+    ]
+    assert trace.to_dict()["steps"][0]["type"] == "planning_state_updated"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_uses_active_run_context_for_planning_events():
+    events = []
+    trace = TraceRecorder(task_id="task-1")
+
+    async def on_event(event_type: str, data: dict):
+        events.append({"type": event_type, "data": data})
+
+    class PlanningLLM:
+        def __init__(self):
+            self.loop = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            await self.loop.set_plan(["Read docs"])
+            return LLMResponse(content="done")
+
+    llm = PlanningLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+    )
+    llm.loop = loop
+
+    await loop.run(
+        [Message(role="user", content="hi")],
+        on_event=on_event,
+        trace_recorder=trace,
+    )
+
+    assert any(event["type"] == "planning_state_updated" for event in events)
+    assert any(
+        step["type"] == "planning_state_updated"
+        for step in trace.to_dict()["steps"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_injects_planning_context_without_mutating_messages():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+    )
+    await loop.set_plan(["Read docs"])
+    await loop.update_plan_item("item-1", "in_progress")
+
+    messages = [
+        system_message("base system"),
+        Message(role="user", content="hi"),
+    ]
+    await loop.run(messages)
+
+    assert [message.content for message in llm.messages[:2]] == [
+        "base system",
+        "Current structured planning state:\n- [in_progress] Read docs",
+    ]
+    assert [message.content for message in messages] == ["base system", "hi", "done"]
 
 @pytest.mark.asyncio
 async def test_agent_loop_appends_assistant_message_before_tool_result():

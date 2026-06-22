@@ -12,6 +12,7 @@ const PHASE_LABELS = {
   on_error:          { icon: '❌', label: '错误', cls: 'error' },
   on_completion:     { icon: '🏁', label: '完成', cls: 'done' },
   memory_compaction: { icon: '🗜️', label: 'Memory 压缩', cls: 'memory' },
+  planning_state_updated: { icon: '📋', label: 'Planning State', cls: 'planning' },
 };
 
 function renderDebug() {
@@ -96,11 +97,49 @@ function renderPhase(phase, data) {
     case 'memory_compaction':
       body.innerHTML = `<div>当前上下文消息总数: <strong>${data.total_messages}</strong></div>`;
       break;
+    case 'planning_state_updated':
+      body.appendChild(renderPlanningDebugTable(data));
+      break;
     default:
       body.textContent = JSON.stringify(data, null, 2);
   }
 
   return section;
+}
+
+function renderPlanningDebug(data) {
+  const section = renderPhase('planning_state_updated', data);
+  debugContent.appendChild(section);
+  debugContent.scrollTop = debugContent.scrollHeight;
+}
+
+function renderPlanningDebugTable(data) {
+  const items = data && Array.isArray(data.items) ? data.items : [];
+  if (items.length === 0) {
+    const el = document.createElement('div');
+    el.textContent = '(empty planning state)';
+    el.style.cssText = 'color:var(--text2);font-style:italic';
+    return el;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'msg-table planning-debug-table';
+  table.innerHTML = `<thead><tr>
+    <th style="width:84px">Status</th>
+    <th>Content</th>
+    <th>Note</th>
+  </tr></thead>`;
+  const tbody = document.createElement('tbody');
+  for (const item of items) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="planning-status status-${esc(item.status)}">${esc(item.status)}</span></td>
+      <td>${esc(item.content || '')}</td>
+      <td>${esc(item.note || '')}</td>`;
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
 }
 
 function renderMessagesTable(messages) {
