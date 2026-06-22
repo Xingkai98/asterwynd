@@ -21,6 +21,7 @@ body {
   background: var(--bg);
   color: var(--text);
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -28,6 +29,7 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   min-height: 0;
   max-width: 1200px;
   margin: 0 auto;
@@ -142,6 +144,7 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   display: flex;
   gap: 8px;
   padding: 12px 20px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
@@ -280,3 +283,76 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Mobile (portrait phones, up to 600px) */
+@media (max-width: 600px) {
+  header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  header h1 {
+    font-size: 1rem;
+  }
+  .tab {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+  }
+  #status {
+    display: none;
+  }
+
+  #messages {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .message {
+    max-width: 92%;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+  }
+
+  #input-area {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  #user-input {
+    padding: 8px 10px;
+    font-size: 0.9rem;
+    min-height: 40px;
+  }
+  #send-btn {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  #debug-content {
+    padding: 12px;
+    gap: 10px;
+  }
+}
+
+/* Extra small (<= 380px, like iPhone SE) */
+@media (max-width: 380px) {
+  header h1 {
+    font-size: 0.9rem;
+  }
+  .tab {
+    padding: 3px 8px;
+    font-size: 0.75rem;
+  }
+
+  #input-area {
+    padding: 6px 8px;
+    gap: 4px;
+  }
+  #user-input {
+    padding: 6px 8px;
+    font-size: 0.85rem;
+  }
+  #send-btn {
+    padding: 6px 10px;
+    font-size: 0.8rem;
+  }
+}
