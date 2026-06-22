@@ -20,6 +20,15 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - **工作区约束**: 不提交 `.codegraph/`、`.understand-anything/`、`.dev/`、本地 `.env*`、日志、benchmark runs 等生成或本地文件，除非用户明确要求。
 - **已有改动**: 可能存在用户未提交改动。不要回滚不是自己产生的改动；如果影响当前任务，先理解并基于它继续。
 
+## 参考实现调研
+
+当需要设计或对比某个 coding-agent 能力的实现方式时，应先查找当前工作区可用的参考仓库，并用 codegraph 加速调用链、类型关系和模块边界分析。
+
+- 当前工作区参考仓库通常放在 `/home/shared/agent-study/repos/`，例如 `codex`、`claude-code`、`opencode`、`openclaw`、`nanobot`、`hermes-agent`、`pi-mono`。
+- 这些路径只是当前工作区的参考资料位置，不是项目依赖，也不要求其他开发者拥有相同目录结构。
+- 不要把参考仓库路径、`.codegraph/` 产物或本地索引结果作为可提交项目资产；若需要沉淀结论，应写入本仓库的需求、设计、ADR 或讨论纪要。
+- 调研时优先用 codegraph 理解跨文件关系，再用 `rg`、文件阅读和测试补充验证；不要只凭关键词搜索下结论。
+
 ## 常用命令
 
 优先使用 `uv run` 保持依赖解析可复现。
