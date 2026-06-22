@@ -7,20 +7,21 @@
 ## 2. 测试
 
 - [ ] 2.1 新增配置 loader 缺省值和 YAML 读取测试。
-- [ ] 2.2 新增环境变量覆盖 YAML 的测试。
+- [ ] 2.2 新增环境变量覆盖 YAML 的测试，限定于 mode、benchmark 等仍支持环境变量的字段。
 - [ ] 2.3 新增 CLI 参数覆盖环境变量和 YAML 的测试。
 - [ ] 2.4 新增 mode `deny_tools` 过滤 schema 和执行拒绝测试。
-- [ ] 2.5 新增工具 ignore pattern / command denylist 从 YAML 生效测试。
+- [ ] 2.5 新增工具 ignore pattern / command denylist 从 YAML 生效测试，并移除旧工具策略环境变量测试。
 
 ## 3. 实现
 
 - [ ] 3.1 增加 typed config model 和 loader。
+- [ ] 3.1a 增加 `PyYAML` 运行依赖，loader 使用 `yaml.safe_load`。
 - [ ] 3.2 增加 `myagent.example.yaml`，并确保个人 `myagent.yaml` 默认不提交。
 - [ ] 3.3 将 CLI 构造路径接入统一配置对象。
 - [ ] 3.4 将 Web session 构造路径接入统一配置对象。
 - [ ] 3.5 将 benchmark runner 构造路径接入统一配置对象。
 - [ ] 3.6 将 ModePolicy deny override 接入配置对象。
-- [ ] 3.7 将 ignore patterns 和 command denylist 迁移到配置对象，保留环境变量覆盖。
+- [ ] 3.7 将 ignore patterns 和 command denylist 迁移到配置对象，不再支持旧工具策略环境变量。
 
 ## 4. 验证
 
