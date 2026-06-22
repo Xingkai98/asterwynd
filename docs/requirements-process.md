@@ -35,6 +35,7 @@
 7. 实现功能。
 8. 运行验证。
 9. 更新文档和能力证明链。
+10. PR 合入后，更新 [OpenSpec Change 实现队列](./openspec-change-backlog.md)，将已完成 change 从未实现队列移出，标记为已完成待归档或完成归档。
 
 ## 参考实现调研
 
