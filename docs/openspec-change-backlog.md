@@ -13,16 +13,17 @@
 
 后续 change 不应全部串行，也不应全量并行。建议按以下批次推进；同一批次内可以并行开 PR，但如果两个 change 同时修改 AgentLoop、ToolRegistry、Web session 或 trace 语义，应在实现阶段错开合入，避免协议和事件模型互相覆盖。
 
-### 第一批：可立即并行
+### 第一批：已完成
 
-- `implement-structured-planning-state`：planning state 主干能力，阻塞后续 plan mode、TUI 和 subagent 协作。
+- `add-repo-map-code-intelligence`：已合入并归档。
+- `implement-structured-planning-state`：已合入并归档。
 
-### 第二批：等待剩余第一批基础能力合入
+### 第二批：可开始
 
 - `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
-- `add-plan-mode`：必须依赖 `implement-structured-planning-state`，否则只能做到只读权限边界，不能交付真实计划产物。
+- `add-plan-mode`：`implement-structured-planning-state` 已合入，可基于 PlanningManager 和 planning state 事件交付真实计划产物。
 - `add-runtime-mode-switching`：建议在 `add-plan-mode` 后做，避免 mode transition 只切工具权限而没有完整 plan 语义。
-- `upgrade-subagents-to-agentloop`：建议依赖 `implement-structured-planning-state`；如果目标优先转向并行调查能力，可以早于 TUI 推进。
+- `upgrade-subagents-to-agentloop`：planning state 已合入；如果目标优先转向并行调查能力，可以早于 TUI 推进。
 
 ### 第三批：语义 code intelligence 与展示
 
@@ -36,26 +37,7 @@
 
 ## 未实现队列
 
-### 1. `implement-structured-planning-state`
-
-状态：未实现。
-
-批次：第一批剩余项。
-
-建议顺序原因：
-
-- 结构化 planning state 是真实 plan mode、TUI 展示、Web Debug、trace 分析和 subagent 协作的共同基础。
-- 不先做 planning state，`add-plan-mode` 只能停留在“只读权限边界”，无法交付真正计划能力。
-
-主要交付：
-
-- `agent/planning/` 数据模型和 PlanningManager。
-- AgentLoop planning 事件。
-- TraceRecorder planning 记录。
-- Web session / Debug 视图转发 planning 事件。
-- benchmark artifacts 记录 planning 摘要。
-
-### 2. `add-tree-sitter-symbol-extraction`
+### 1. `add-tree-sitter-symbol-extraction`
 
 状态：未实现。
 
@@ -74,16 +56,16 @@
 - 未注册语言和解析失败降级。
 - 多语言 fixture 与 benchmark smoke。
 
-### 3. `add-plan-mode`
+### 2. `add-plan-mode`
 
 状态：未实现。
 
-批次：第二批，等待 `implement-structured-planning-state` 合入后开始。
+批次：第二批，planning state 已合入，可开始。
 
 建议顺序原因：
 
 - 依赖 `introduce-agent-mode-policy` 的 mode 权限边界。
-- 依赖 `implement-structured-planning-state` 的结构化计划产物。
+- 依赖已合入的 `implement-structured-planning-state` 结构化计划产物。
 - 完成后，`plan` 才从“只读权限模式”升级为“可观察、可验证的计划模式”。
 
 主要交付：
@@ -93,7 +75,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 4. `add-runtime-mode-switching`
+### 3. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -112,7 +94,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 5. `add-minimal-tui-runtime-view`
+### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -130,11 +112,11 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 6. `upgrade-subagents-to-agentloop`
+### 5. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
-批次：第二批，等待 planning state 合入后开始；如果优先证明并行调查能力，可提前到 TUI 之前。
+批次：第二批，planning state 已合入；如果优先证明并行调查能力，可提前到 TUI 之前。
 
 建议顺序原因：
 
@@ -148,7 +130,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 7. `add-lsp-code-intelligence`
+### 6. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -167,7 +149,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 8. `add-mcp-tool-adapter`
+### 7. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -185,7 +167,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 9. `add-browser-use-safety-foundation`
+### 8. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
