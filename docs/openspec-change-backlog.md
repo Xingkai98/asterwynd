@@ -18,15 +18,20 @@
 - `add-repo-map-code-intelligence`：只读代码理解能力，影响面主要在 code intelligence、只读工具和 workspace scan。
 - `implement-structured-planning-state`：planning state 主干能力，阻塞后续 plan mode、TUI 和 subagent 协作。
 
-### 第二批：等待 planning state 合入
+### 第二批：等待第一批基础能力合入
 
+- `add-tree-sitter-symbol-extraction`：等待 `add-repo-map-code-intelligence`，复用 repo scanner、extractor 接口、repo map 输出和只读工具。
 - `add-plan-mode`：必须依赖 `implement-structured-planning-state`，否则只能做到只读权限边界，不能交付真实计划产物。
 - `add-runtime-mode-switching`：建议在 `add-plan-mode` 后做，避免 mode transition 只切工具权限而没有完整 plan 语义。
 - `upgrade-subagents-to-agentloop`：建议依赖 `implement-structured-planning-state`；如果目标优先转向并行调查能力，可以早于 TUI 推进。
 
-### 第三批：展示与外部工具
+### 第三批：语义 code intelligence 与展示
 
+- `add-lsp-code-intelligence`：等待 repo map 基础设施稳定，建议在 tree-sitter 多语言 symbol 之后推进，避免直接把 LSP 当成仓库结构层。
 - `add-minimal-tui-runtime-view`：建议在 planning state、plan mode 和 runtime mode switching 稳定后做，复用统一运行事件和 mode transition。
+
+### 第四批：外部工具与高风险能力
+
 - `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
@@ -45,7 +50,9 @@
 
 主要交付：
 
-- repo scanner 和 Python AST symbol extractor。
+- workspace-aware repo scanner 和可替换 extractor 接口。
+- 多语言文件级 repo map。
+- Python AST symbol extractor。
 - repo map 输出格式。
 - 只读 code intelligence 工具。
 - WorkspacePolicy 和 ignore patterns 约束。
@@ -69,7 +76,26 @@
 - Web session / Debug 视图转发 planning 事件。
 - benchmark artifacts 记录 planning 摘要。
 
-### 3. `add-plan-mode`
+### 3. `add-tree-sitter-symbol-extraction`
+
+状态：未实现。
+
+批次：第二批，等待 `add-repo-map-code-intelligence` 合入后开始。
+
+建议顺序原因：
+
+- tree-sitter 应复用第一阶段的 repo scanner、extractor 接口、WorkspacePolicy 约束和 repo map 输出格式。
+- 这是 LSP 之前的多语言语法级 symbol 能力，不应和第一阶段 Python AST 证明点捆绑。
+
+主要交付：
+
+- tree-sitter parser / grammar registry。
+- per-language query registry。
+- 多语言 symbol extraction。
+- 未注册语言和解析失败降级。
+- 多语言 fixture 与 benchmark smoke。
+
+### 4. `add-plan-mode`
 
 状态：未实现。
 
@@ -88,7 +114,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 4. `add-runtime-mode-switching`
+### 5. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -107,7 +133,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 5. `add-minimal-tui-runtime-view`
+### 6. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -125,7 +151,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 6. `upgrade-subagents-to-agentloop`
+### 7. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -143,11 +169,30 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 7. `add-mcp-tool-adapter`
+### 8. `add-lsp-code-intelligence`
 
 状态：未实现。
 
-批次：第三批，可提前做设计和 fake server 测试；实现阶段建议与 browser 能力错开。
+批次：第三批，等待 repo map 基础设施稳定后开始；建议在 `add-tree-sitter-symbol-extraction` 后推进。
+
+建议顺序原因：
+
+- LSP 提供 definition、references、hover、diagnostics 等语义能力，但需要 language server 配置、进程生命周期、文档同步和超时/错误处理。
+- 先完成 repo map 和 tree-sitter，可以让 LSP 作为更强 provider 接入，而不是承担仓库结构发现职责。
+
+主要交付：
+
+- LSP server 配置、发现和生命周期管理。
+- document open/sync、请求调度、超时和状态观测。
+- 只读 LSP 工具或 provider。
+- definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
+- 修改后 diagnostics 反馈。
+
+### 9. `add-mcp-tool-adapter`
+
+状态：未实现。
+
+批次：第四批，可提前做设计和 fake server 测试；实现阶段建议与 browser 能力错开。
 
 建议顺序原因：
 
@@ -161,11 +206,11 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 8. `add-browser-use-safety-foundation`
+### 10. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
-批次：第三批，建议在 MCP 或核心工具权限模型更稳定后开始。
+批次：第四批，建议在 MCP 或核心工具权限模型更稳定后开始。
 
 建议顺序原因：
 
