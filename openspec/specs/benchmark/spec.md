@@ -3,9 +3,7 @@
 ## Purpose
 
 定义本地 Coding Agent benchmark 的任务 schema、runner、artifact、hidden tests、trace 和结果汇总。当前实现位于 `benchmarks/`。
-
 ## Requirements
-
 ### Requirement: benchmark 使用任务目录运行
 
 BenchmarkRunner SHALL 从 tasks 目录读取任务定义，并逐个执行。
@@ -82,3 +80,20 @@ benchmark SHALL 区分 clean pass 和带警告通过。
 - **WHEN** 写入 result
 - **THEN** 状态 SHALL 使用 `passed_with_warnings`
 - **AND** 不得统计为 clean pass
+
+### Requirement: benchmark artifact 记录 planning state
+
+Benchmark trace SHALL 记录 planning state 事件，便于分析 agent 未完成任务时卡在哪个步骤。Benchmark result artifact SHOULD 包含最终 planning summary；如果运行中没有 planning state，artifact SHALL 保持向后兼容。
+
+#### Scenario: benchmark 任务包含 planning 事件
+
+- **GIVEN** MyAgentRunner 运行任务时产生 planning state
+- **WHEN** 写入 trace artifact
+- **THEN** trace SHALL 包含 planning state 事件序列
+
+#### Scenario: benchmark 任务完成后保存 planning 摘要
+
+- **GIVEN** MyAgentRunner 运行任务时产生 planning state
+- **WHEN** 写入 result artifact
+- **THEN** result SHALL 包含最终 planning summary
+

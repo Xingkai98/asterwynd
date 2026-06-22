@@ -3,9 +3,7 @@
 ## Purpose
 
 定义 MyAgent 的核心运行循环、消息状态、工具调用协议和停止条件。当前实现以 `agent/loop.py` 的 `AgentLoop` 为核心。
-
 ## Requirements
-
 ### Requirement: AgentLoop 执行消息循环
 
 系统 SHALL 以消息列表作为主要运行状态，在每轮中调用 LLM、解析 assistant 响应、执行工具调用并把工具结果追加回消息历史。
@@ -57,3 +55,22 @@
 - **WHEN** AgentLoop 执行任务
 - **THEN** 系统 SHALL 记录可序列化 trace
 - **AND** trace 可写入 benchmark artifact
+
+### Requirement: AgentLoop 可发出 planning state 事件
+
+AgentLoop SHALL 支持在计划创建或状态更新时发出 `planning_state_updated` 事件，并保持原有 tool-call 协议不变量。事件 payload SHALL 包含完整 planning state snapshot，至少包含 `items` 列表和可选 `summary`。
+
+#### Scenario: 计划状态更新
+
+- **GIVEN** AgentLoop 运行中产生 planning state 更新
+- **WHEN** 更新被应用
+- **THEN** 系统 SHALL 通过事件或 hook 暴露更新后的 planning state
+- **AND** SHALL NOT 插入破坏 provider tool-call 链的消息
+
+#### Scenario: LLM 调用包含只读 planning context
+
+- **GIVEN** AgentLoop 持有非空 planning state
+- **WHEN** AgentLoop 调用 LLM
+- **THEN** 系统 SHALL 将当前 planning state 作为临时只读上下文提供给 LLM
+- **AND** SHALL NOT 将该上下文持久 append 到 messages
+
