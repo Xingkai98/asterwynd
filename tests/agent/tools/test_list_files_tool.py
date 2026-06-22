@@ -62,11 +62,13 @@ async def test_rejects_non_directory(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_custom_ignore_patterns(tmp_path, monkeypatch):
-    monkeypatch.setenv("MYAGENT_IGNORE_PATTERNS", "custom_cache")
+async def test_custom_ignore_patterns(tmp_path):
     (tmp_path / "custom_cache").mkdir()
     (tmp_path / "src").mkdir()
-    tool = ListFilesTool(policy=WorkspacePolicy(tmp_path))
+    tool = ListFilesTool(
+        policy=WorkspacePolicy(tmp_path),
+        ignore_patterns=("custom_cache",),
+    )
 
     result = await tool.execute(".")
 

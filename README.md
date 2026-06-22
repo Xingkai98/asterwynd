@@ -75,7 +75,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 | `WebSearch` | read_only | DuckDuckGo HTML 搜索 |
 | `WebFetch` | read_only | 获取网页内容，支持截断 |
 
-Bash 工具内置命令安全策略：先检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。黑名单可通过 `MYAGENT_COMMAND_DENYLIST` 环境变量追加，白名单不通过环境变量扩展。
+Bash 工具内置命令安全策略：先检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则和 ListFiles / Find 忽略规则通过 `myagent.yaml` 配置扩展，见 `myagent.example.yaml`。
 
 ## 项目结构
 
@@ -260,7 +260,7 @@ MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 | `MYAGENT_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
 | `MYAGENT_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI 界面 |
 
-配置优先级：CLI 参数 `--provider` / `--model` > 环境变量 > 构造函数默认值。
+配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `myagent.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、mode deny override、工具策略和 benchmark 默认参数使用 `myagent.yaml`。
 
 - 日志同时输出到终端和文件
 - HTTP 4xx/5xx 错误始终记录请求 payload 和响应 body

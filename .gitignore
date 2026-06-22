@@ -8,6 +8,7 @@ build/
 .coverage
 .dev/
 .env
+myagent.yaml
 *.db.understand-anything/
 logs/
 benchmarks/runs/

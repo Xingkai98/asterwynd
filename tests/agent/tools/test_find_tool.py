@@ -81,9 +81,11 @@ async def test_truncates_at_max_entries(nested_repo, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_custom_ignore_patterns_env(nested_repo, monkeypatch):
-    monkeypatch.setenv("MYAGENT_IGNORE_PATTERNS", "src")
-    tool = FindTool(policy=WorkspacePolicy(nested_repo))
+async def test_custom_ignore_patterns(nested_repo):
+    tool = FindTool(
+        policy=WorkspacePolicy(nested_repo),
+        ignore_patterns=("src",),
+    )
 
     result = await tool.execute("*")
 

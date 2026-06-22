@@ -22,11 +22,13 @@ import typer
 load_dotenv(Path(__file__).parent / ".env")
 
 from agent.loop import AgentLoop
+from agent.config import ConfigError, ConfigOverrides, MyAgentConfig, load_config
 from agent.message import Message, system_message
 from agent.openai_llm import OpenAILLM
 from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.tools.factory import build_default_tool_registry
+from agent.workspace_policy import WorkspacePolicy
 from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
@@ -82,14 +84,47 @@ def _normalize_user_mode(mode: str | AgentMode) -> str:
         raise SystemExit(1) from exc
 
 
+def _load_cli_config(
+    config_path: Optional[Path],
+    *,
+    mode: str | None = None,
+    benchmark_parallel: int | None = None,
+    benchmark_timeout_seconds: int | None = None,
+) -> MyAgentConfig:
+    try:
+        return load_config(
+            config_path=config_path,
+            cli_overrides=ConfigOverrides(
+                default_mode=mode,
+                benchmark_parallel=benchmark_parallel,
+                benchmark_timeout_seconds=benchmark_timeout_seconds,
+            ),
+        )
+    except ConfigError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+
 def build_agent(
     model: Optional[str] = None,
     provider: str = "openai",
     mode: str | AgentMode = AgentMode.BUILD,
+    config: MyAgentConfig | None = None,
 ) -> AgentLoop:
+    config = config or MyAgentConfig()
     llm = build_llm(provider, model)
     run_config = AgentRunConfig(mode=parse_agent_mode(_normalize_user_mode(mode)))
-    registry = build_default_tool_registry(mode_policy=ModePolicy(run_config))
+    workspace_policy = WorkspacePolicy(
+        command_denylist=config.tools.command_denylist,
+    )
+    registry = build_default_tool_registry(
+        policy=workspace_policy,
+        mode_policy=ModePolicy(
+            run_config,
+            deny_tools_by_mode=config.deny_tools_by_mode(),
+        ),
+        ignore_patterns=config.tools.ignore_patterns,
+    )
 
     hooks = HookManager([
         LoggingHook(verbose=False),
@@ -116,16 +151,18 @@ def main(
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="交互模式"),
-    mode: str = typer.Option("build", "--mode", help="Agent mode: build / read_only / plan"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="myagent.yaml 配置文件路径"),
 ):
-    normalized_mode = _normalize_user_mode(mode)
+    config = _load_cli_config(config_path, mode=mode)
+    normalized_mode = config.agent.default_mode.value
     if interactive:
-        run_interactive(model, provider, max_iterations, system, prompt, normalized_mode)
+        run_interactive(model, provider, max_iterations, system, prompt, normalized_mode, config)
     else:
         if not prompt:
             typer.echo("Error: PROMPT is required in single-prompt mode", err=True)
             raise SystemExit(1)
-        run_single(prompt, model, provider, max_iterations, system, normalized_mode)
+        run_single(prompt, model, provider, max_iterations, system, normalized_mode, config)
 
 def run_single(
     prompt: str,
@@ -134,8 +171,9 @@ def run_single(
     max_iterations: int,
     system: Optional[str],
     mode: str = "build",
+    config: MyAgentConfig | None = None,
 ):
-    agent = build_agent(model, provider, mode)
+    agent = build_agent(model, provider, mode, config=config)
     agent.max_iterations = max_iterations
 
     messages: list[Message] = []
@@ -165,8 +203,9 @@ def run_interactive(
     system: Optional[str],
     initial_prompt: Optional[str] = None,
     mode: str = "build",
+    config: MyAgentConfig | None = None,
 ):
-    agent = build_agent(model, provider, mode)
+    agent = build_agent(model, provider, mode, config=config)
     resolved_model = getattr(agent.llm, "model", model or "default")
 
     typer.echo("MyAgent 交互模式 (输入 exit 退出)")
@@ -221,14 +260,16 @@ def web(
         os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型"),
-    mode: str = typer.Option("build", "--mode", help="Agent mode: build / read_only / plan"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="myagent.yaml 配置文件路径"),
 ):
     """启动 Web UI 服务"""
     import uvicorn
     from web.server import create_app
     from web.debug_hook import debug_enabled
 
-    normalized_mode = _normalize_user_mode(mode)
+    config = _load_cli_config(config_path, mode=mode)
+    normalized_mode = config.agent.default_mode.value
     debug_status = "enabled" if debug_enabled() else "disabled"
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
 
@@ -237,7 +278,7 @@ def web(
     typer.echo(f"Provider: {provider} | Model: {llm.model}")
     typer.echo(f"Mode: {normalized_mode}")
     typer.echo(f"Debug mode: {debug_status}")
-    app = create_app(llm, mode=normalized_mode)
+    app = create_app(llm, mode=normalized_mode, config=config)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -252,7 +293,10 @@ def benchmark(
     ),
     model: Optional[str] = typer.Option(None, "--model", help="MyAgent 模型"),
     max_iterations: int = typer.Option(20, "--max-iterations", help="MyAgent 最大迭代次数"),
-    mode: str = typer.Option("build", "--mode", help="Agent mode: build / read_only / plan"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="myagent.yaml 配置文件路径"),
+    parallel: Optional[int] = typer.Option(None, "--parallel", help="benchmark 并发任务数"),
+    timeout_seconds: Optional[int] = typer.Option(None, "--timeout-seconds", help="外部 agent 超时时间"),
     shell_command: Optional[str] = typer.Option(None, "--shell-command", help="shell runner 命令"),
     fake_edit_file: Optional[str] = typer.Option(None, "--fake-edit-file", help="fake runner 修改文件"),
     fake_old_string: Optional[str] = typer.Option(None, "--fake-old-string", help="fake runner old string"),
@@ -264,7 +308,13 @@ def benchmark(
     from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, MyAgentRunner, ShellCommandRunner
     from benchmarks.runner import BenchmarkRunner
 
-    normalized_mode = _normalize_user_mode(mode)
+    config = _load_cli_config(
+        config_path,
+        mode=mode,
+        benchmark_parallel=parallel,
+        benchmark_timeout_seconds=timeout_seconds,
+    )
+    normalized_mode = config.agent.default_mode.value
     if agent == "fake":
         runner_impl = FakeAgentRunner(
             edit_file=fake_edit_file,
@@ -277,8 +327,7 @@ def benchmark(
             raise SystemExit(1)
         runner_impl = ShellCommandRunner(shell_command)
     elif agent == "claude":
-        timeout_override = int(os.environ.get("MYAGENT_BENCHMARK_TIMEOUT", "600"))
-        runner_impl = ClaudeCodeRunner(timeout_seconds=timeout_override)
+        runner_impl = ClaudeCodeRunner(timeout_seconds=config.benchmark.timeout_seconds)
     elif agent == "myagent":
         llm = build_llm(provider, model)
         runner_impl = MyAgentRunner(
@@ -286,6 +335,8 @@ def benchmark(
             model=getattr(llm, "model", model or ""),
             max_iterations=max_iterations,
             mode=normalized_mode,
+            config=config,
+            timeout_seconds=config.benchmark.timeout_seconds,
         )
     else:
         typer.echo("Error: --agent must be fake, shell, myagent, or claude", err=True)
@@ -298,6 +349,7 @@ def benchmark(
         agent_name=agent,
         model=model or "",
         mode=normalized_mode,
+        parallel=config.benchmark.parallel,
         keep_worktrees=keep_worktrees,
         clone_cache_dir=clone_cache_dir,
     )

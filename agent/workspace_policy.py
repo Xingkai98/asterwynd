@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import fnmatch
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -144,13 +143,9 @@ class WorkspacePolicy:
         self.denied_patterns = tuple(denied_patterns or DEFAULT_DENIED_PATTERNS)
 
         denylist = list(DEFAULT_DENYLIST)
-        extra_deny = os.environ.get("MYAGENT_COMMAND_DENYLIST", "")
-        if extra_deny:
-            denylist.extend(d.strip() for d in extra_deny.split(",") if d.strip())
-        self._denylist = tuple(denylist)
-
         if command_denylist:
-            self._denylist = tuple(command_denylist)
+            denylist.extend(command_denylist)
+        self._denylist = tuple(denylist)
 
     def resolve(self, path: str | Path) -> Path:
         raw_path = Path(path)

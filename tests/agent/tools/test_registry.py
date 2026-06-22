@@ -1,6 +1,7 @@
 # tests/agent/tools/test_registry.py
 import pytest
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy
+from agent.tools.factory import build_default_tool_registry
 from agent.tools.registry import ToolRegistry
 from agent.tools.base import Tool, tool_parameters, ToolCall
 
@@ -88,3 +89,42 @@ async def test_execute_denied_by_mode_policy_returns_permission_result_without_c
     assert "WriteLike" in result
     assert "read_only" in result
     assert tool.called is False
+
+
+@pytest.mark.asyncio
+async def test_execute_denied_by_configured_deny_tool_returns_permission_result():
+    registry = ToolRegistry(
+        mode_policy=ModePolicy(
+            AgentRunConfig(mode=AgentMode.BUILD),
+            deny_tools_by_mode={AgentMode.BUILD: ("Echo",)},
+        )
+    )
+    registry.register(EchoTool())
+
+    result = await registry.execute(ToolCall(id="c1", name="Echo", arguments={}))
+
+    assert "Permission denied" in result
+    assert "Echo" in result
+    assert "build" in result
+
+
+def test_factory_allows_deny_tool_known_but_not_registered_in_entrypoint():
+    registry = build_default_tool_registry(
+        mode_policy=ModePolicy(
+            AgentRunConfig(mode=AgentMode.BUILD),
+            deny_tools_by_mode={AgentMode.BUILD: ("ListFiles",)},
+        )
+    )
+
+    names = [schema["function"]["name"] for schema in registry.get_all_schemas()]
+    assert "Read" in names
+
+
+def test_factory_rejects_unknown_deny_tool():
+    with pytest.raises(ValueError, match="Unknown deny_tools"):
+        build_default_tool_registry(
+            mode_policy=ModePolicy(
+                AgentRunConfig(mode=AgentMode.BUILD),
+                deny_tools_by_mode={AgentMode.BUILD: ("Missing",)},
+            )
+        )

@@ -18,6 +18,24 @@ CLI SHALL 通过 provider、model、ToolRegistry、HookManager 和 MemoryManager
 - **AND** 注册默认工具
 - **AND** 配置 LoggingHook、TracingHook 和 MemoryManager
 
+### Requirement: CLI 接入统一配置
+
+CLI `main`、`web` 和 `benchmark` 命令 SHALL 支持 `--config <path>`，并在入口层解析统一配置。未显式传入 `--mode` 时，CLI SHALL 使用配置中的 `agent.default_mode`。
+
+#### Scenario: main 使用配置默认 mode
+
+- **GIVEN** `myagent.yaml` 设置了 `agent.default_mode`
+- **AND** 用户未传入 `--mode`
+- **WHEN** CLI 执行 `main`
+- **THEN** CLI SHALL 使用配置默认 mode 构造 AgentLoop
+
+#### Scenario: CLI mode 覆盖配置
+
+- **GIVEN** `myagent.yaml` 设置了默认 mode
+- **AND** 用户显式传入 `--mode`
+- **WHEN** CLI 构造运行配置
+- **THEN** CLI SHALL 使用显式 mode
+
 ### Requirement: main 命令支持单轮和交互
 
 `main` 命令 SHALL 支持默认单轮模式和 `--interactive` 交互模式。
@@ -55,4 +73,3 @@ CLI SHALL 通过 provider、model、ToolRegistry、HookManager 和 MemoryManager
 - **WHEN** 未提供 `--shell-command`
 - **THEN** CLI SHALL 输出错误
 - **AND** 退出
-

@@ -29,3 +29,4 @@
 - [ ] 4.2 运行 CLI/Web 相关测试。
 - [ ] 4.3 运行全量测试。
 - [ ] 4.4 运行 OpenSpec strict validate 和项目 artifact checker。
+- [ ] 4.5 跑通至少一个 benchmark smoke。

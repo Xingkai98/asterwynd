@@ -43,6 +43,15 @@ def test_mode_policy_allows_all_registered_tools_in_build():
     assert policy.is_tool_allowed(DummyTool(read_only=False, dangerous=True)) is True
 
 
+def test_mode_policy_denies_configured_tool_name_in_build():
+    policy = ModePolicy(
+        AgentRunConfig(mode=AgentMode.BUILD),
+        deny_tools_by_mode={AgentMode.BUILD: ("Dummy",)},
+    )
+
+    assert policy.is_tool_allowed(DummyTool(read_only=True, dangerous=False)) is False
+
+
 def test_mode_policy_read_only_allows_only_read_only_non_dangerous_tools():
     policy = ModePolicy(AgentRunConfig(mode=AgentMode.READ_ONLY))
 
@@ -63,3 +72,13 @@ def test_mode_policy_bypass_fails_closed():
     policy = ModePolicy(AgentRunConfig(mode=AgentMode.BYPASS))
 
     assert policy.is_tool_allowed(DummyTool(read_only=True, dangerous=False)) is False
+
+
+def test_mode_policy_validates_unknown_deny_tools():
+    policy = ModePolicy(
+        AgentRunConfig(mode=AgentMode.BUILD),
+        deny_tools_by_mode={AgentMode.BUILD: ("Missing",)},
+    )
+
+    with pytest.raises(ValueError, match="Unknown deny_tools"):
+        policy.validate_known_tools(["Dummy"])

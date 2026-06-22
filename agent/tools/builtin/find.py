@@ -1,4 +1,3 @@
-# agent/tools/builtin/find.py
 import fnmatch
 import os
 from pathlib import Path
@@ -13,15 +12,6 @@ DEFAULT_IGNORE_DIRS = {
 }
 
 MAX_ENTRIES = 500
-
-
-def _get_ignore_dirs() -> set[str]:
-    extra = os.environ.get("MYAGENT_IGNORE_PATTERNS", "")
-    if not extra:
-        return set(DEFAULT_IGNORE_DIRS)
-    result = set(DEFAULT_IGNORE_DIRS)
-    result.update(d.strip() for d in extra.split(",") if d.strip())
-    return result
 
 
 @tool_parameters(
@@ -51,9 +41,14 @@ def _get_ignore_dirs() -> set[str]:
 class FindTool(Tool):
     read_only = True
 
-    def __init__(self, policy: WorkspacePolicy | None = None):
+    def __init__(
+        self,
+        policy: WorkspacePolicy | None = None,
+        ignore_patterns: tuple[str, ...] = (),
+    ):
         self.policy = policy or WorkspacePolicy()
-        self._ignore_dirs = _get_ignore_dirs()
+        self._ignore_dirs = set(DEFAULT_IGNORE_DIRS)
+        self._ignore_dirs.update(ignore_patterns)
 
     async def execute(
         self,

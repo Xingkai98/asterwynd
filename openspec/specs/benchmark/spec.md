@@ -17,6 +17,23 @@ BenchmarkRunner SHALL 从 tasks 目录读取任务定义，并逐个执行。
 - **THEN** BenchmarkRunner SHALL 执行所有可识别任务
 - **AND** 在 runs_dir 下创建一次 run 输出
 
+### Requirement: benchmark 复用入口层配置
+
+benchmark CLI SHALL 在入口层解析统一配置，并将最终 mode、并发度、超时和工具策略传入 runner。BenchmarkRunner 和 MyAgentRunner SHALL NOT 在任务 worktree 中重新发现 `myagent.yaml`。
+
+#### Scenario: benchmark 使用配置默认 mode
+
+- **GIVEN** `myagent.yaml` 设置了 `agent.default_mode`
+- **AND** 用户未显式传入 `--mode`
+- **WHEN** benchmark 运行任务
+- **THEN** run artifact、task result 和 trace SHALL 记录最终解析后的 mode
+
+#### Scenario: benchmark 使用配置并发度
+
+- **GIVEN** 配置设置了 `benchmark.parallel`
+- **WHEN** BenchmarkRunner 执行多个任务
+- **THEN** runner SHALL 使用该并发度限制任务执行
+
 ### Requirement: 支持多种 agent runner
 
 benchmark SHALL 支持 fake、shell、myagent 和 claude runner。

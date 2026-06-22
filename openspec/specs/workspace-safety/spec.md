@@ -79,6 +79,22 @@ WorkspacePolicy SHALL 在 Bash 执行前检查命令。命令检查 SHALL 先应
 - **WHEN** `assert_command_allowed` 检查命令
 - **THEN** 系统 SHALL 拒绝该命令
 
+### Requirement: 工作区策略支持配置扩展
+
+WorkspacePolicy SHALL 保留内置 denied patterns 和 command denylist，并允许入口层通过统一配置追加项目级 command denylist。ListFiles 和 Find SHALL 保留内置 ignore rules，并允许入口层通过统一配置追加项目级 ignore patterns。
+
+#### Scenario: YAML command denylist 扩展
+
+- **GIVEN** 统一配置包含 `tools.command_denylist`
+- **WHEN** Bash 工具校验命令
+- **THEN** 系统 SHALL 同时应用内置 denylist 和配置扩展
+
+#### Scenario: YAML ignore patterns 扩展
+
+- **GIVEN** 统一配置包含 `tools.ignore_patterns`
+- **WHEN** ListFiles 或 Find 枚举目录
+- **THEN** 系统 SHALL 同时应用内置 ignore rules 和配置扩展
+
 #### Scenario: 允许常规验证和只读查看命令
 
 - **GIVEN** Bash 请求执行 `pytest`、`uv run pytest`、`git diff`、`rg`、`cat` 或 `ls` 等允许命令
@@ -95,4 +111,3 @@ WorkspacePolicy SHALL 在 workspace root 下执行 git diff，并返回 diff 输
 - **WHEN** policy 执行 diff 快照
 - **THEN** 系统 SHALL 运行 `git diff --stat`
 - **AND** 返回标准输出或错误输出
-

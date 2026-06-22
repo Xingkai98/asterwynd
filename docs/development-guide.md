@@ -74,12 +74,15 @@ uv run python cli.py benchmark benchmarks/tasks \
 并行 benchmark：
 
 ```bash
-MYAGENT_BENCHMARK_PARALLEL=4 uv run python cli.py benchmark benchmarks/tasks \
+uv run python cli.py benchmark benchmarks/tasks \
   --agent myagent \
   --provider anthropic \
+  --parallel 4 \
   --runs-dir /tmp/bench \
   --clone-cache-dir /tmp/swebench-cache
 ```
+
+也可以在 `myagent.yaml` 中设置默认 benchmark 参数，字段示例见仓库根目录的 `myagent.example.yaml`。
 
 ## 环境变量
 
@@ -93,9 +96,20 @@ MYAGENT_BENCHMARK_PARALLEL=4 uv run python cli.py benchmark benchmarks/tasks \
 | `MYAGENT_MODEL` | 默认模型 |
 | `MYAGENT_DEBUG=enabled` | 开启 Web Debug 视图 |
 | `MYAGENT_LOG_LEVEL=DEBUG` | 开启更详细日志 |
-| `MYAGENT_BENCHMARK_PARALLEL` | benchmark 并发数 |
-| `MYAGENT_COMMAND_DENYLIST` | 追加 BashTool 命令拒绝规则 |
-| `MYAGENT_IGNORE_PATTERNS` | 追加 ListFiles / Find 忽略规则 |
+| `MYAGENT_MODE` | 覆盖 `myagent.yaml` 中的默认 agent mode |
+| `MYAGENT_BENCHMARK_PARALLEL` | 覆盖 `myagent.yaml` 中的 benchmark 并发数 |
+| `MYAGENT_BENCHMARK_TIMEOUT` | 覆盖 `myagent.yaml` 中的 benchmark 超时 |
+
+## 结构化配置
+
+非敏感、结构化配置写入 `myagent.yaml`；个人配置文件默认不提交，字段示例见 `myagent.example.yaml`。工具策略只从 YAML 读取：
+
+- `agent.default_mode`
+- `modes.<mode>.deny_tools`
+- `tools.ignore_patterns`
+- `tools.command_denylist`
+- `benchmark.parallel`
+- `benchmark.timeout_seconds`
 
 ## 开发注意事项
 

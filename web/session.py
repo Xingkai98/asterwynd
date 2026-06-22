@@ -5,10 +5,12 @@ import logging
 import uuid
 from typing import Optional, AsyncGenerator
 
+from agent.config import MyAgentConfig
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.tools.factory import build_default_tool_registry
+from agent.workspace_policy import WorkspacePolicy
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
@@ -39,15 +41,29 @@ class AgentSession:
 class SessionManager:
     """Creates and manages AgentSession instances."""
 
-    def __init__(self, debug_enabled: bool = False, mode: str = "build"):
+    def __init__(
+        self,
+        debug_enabled: bool = False,
+        mode: str | None = None,
+        config: MyAgentConfig | None = None,
+    ):
         self._sessions: dict[str, AgentSession] = {}
         self.debug_enabled = debug_enabled
-        self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
+        self.config = config or MyAgentConfig()
+        resolved_mode = mode or self.config.agent.default_mode.value
+        self.run_config = AgentRunConfig(mode=parse_agent_mode(resolved_mode))
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
         session_id = uuid.uuid4().hex[:12]
         registry = build_default_tool_registry(
-            mode_policy=ModePolicy(self.run_config),
+            policy=WorkspacePolicy(
+                command_denylist=self.config.tools.command_denylist,
+            ),
+            mode_policy=ModePolicy(
+                self.run_config,
+                deny_tools_by_mode=self.config.deny_tools_by_mode(),
+            ),
+            ignore_patterns=self.config.tools.ignore_patterns,
             tools=tools,
         )
 
