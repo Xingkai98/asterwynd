@@ -3,6 +3,7 @@ from __future__ import annotations
 from agent.run_config import ModePolicy
 from agent.tools.base import Tool
 from agent.tools.builtin.bash import BashTool
+from agent.tools.builtin.code_intelligence import RepoMapTool, SymbolSearchTool
 from agent.tools.builtin.edit import EditTool
 from agent.tools.builtin.find import FindTool
 from agent.tools.builtin.grep import GrepTool
@@ -23,7 +24,9 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "Grep",
     "InspectGitDiff",
     "ListFiles",
+    "RepoMap",
     "Read",
+    "SymbolSearch",
     "WebFetch",
     "WebSearch",
     "Write",
@@ -79,6 +82,8 @@ def get_default_tools(
         WebFetchTool(),
         GrepTool(policy=policy),
         InspectGitDiffTool(policy=policy),
+        RepoMapTool(policy=policy, ignore_patterns=ignore_patterns),
+        SymbolSearchTool(policy=policy, ignore_patterns=ignore_patterns),
     ]
 
 
@@ -95,6 +100,8 @@ def get_coding_tools(
         InspectGitDiffTool(policy=policy),
         ListFilesTool(policy=policy, ignore_patterns=ignore_patterns),
         FindTool(policy=policy, ignore_patterns=ignore_patterns),
+        RepoMapTool(policy=policy, ignore_patterns=ignore_patterns),
+        SymbolSearchTool(policy=policy, ignore_patterns=ignore_patterns),
         GrepTool(policy=policy),
         BashTool(policy=policy),
     ]
