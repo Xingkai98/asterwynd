@@ -113,13 +113,13 @@ async def test_serial_execution_default(repo, tmp_path):
 
 @pytest.mark.asyncio
 async def test_parallel_execution(repo, tmp_path, monkeypatch):
-    """With MYAGENT_BENCHMARK_PARALLEL=3, tasks run concurrently."""
-    monkeypatch.setenv("MYAGENT_BENCHMARK_PARALLEL", "3")
+    """With parsed benchmark parallel=3, tasks run concurrently."""
     recorder = TimestampRecorder()
     runner = BenchmarkRunner(
         agent_runner=DelayedRunner(delay=0.3, recorder=recorder),
         source_repo=repo,
         runs_dir=tmp_path / "runs",
+        parallel=3,
     )
     for i in range(3):
         _task_dir(tmp_path, f"task-{i}", repo)
@@ -140,12 +140,12 @@ async def test_parallel_execution(repo, tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_semaphore_gating(repo, tmp_path, monkeypatch):
     """With semaphore=1, tasks execute sequentially even in async context."""
-    monkeypatch.setenv("MYAGENT_BENCHMARK_PARALLEL", "1")
     recorder = TimestampRecorder()
     runner = BenchmarkRunner(
         agent_runner=DelayedRunner(delay=0.15, recorder=recorder),
         source_repo=repo,
         runs_dir=tmp_path / "runs",
+        parallel=1,
     )
     for i in range(3):
         _task_dir(tmp_path, f"task-{i}", repo)

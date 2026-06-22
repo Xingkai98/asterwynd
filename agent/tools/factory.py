@@ -16,15 +16,34 @@ from agent.tools.registry import ToolRegistry
 from agent.workspace_policy import WorkspacePolicy
 
 
+KNOWN_BUILTIN_TOOL_NAMES = {
+    "Bash",
+    "Edit",
+    "Find",
+    "Grep",
+    "InspectGitDiff",
+    "ListFiles",
+    "Read",
+    "WebFetch",
+    "WebSearch",
+    "Write",
+}
+
+
 def build_default_tool_registry(
     *,
     policy: WorkspacePolicy | None = None,
     mode_policy: ModePolicy | None = None,
+    ignore_patterns: tuple[str, ...] = (),
     tools: list[Tool] | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
-    for tool in tools or get_default_tools(policy=policy):
+    for tool in tools or get_default_tools(
+        policy=policy,
+        ignore_patterns=ignore_patterns,
+    ):
         registry.register(tool)
+    registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
 
 
@@ -32,14 +51,24 @@ def build_coding_tool_registry(
     *,
     policy: WorkspacePolicy | None = None,
     mode_policy: ModePolicy | None = None,
+    ignore_patterns: tuple[str, ...] = (),
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
-    for tool in get_coding_tools(policy=policy):
+    for tool in get_coding_tools(policy=policy, ignore_patterns=ignore_patterns):
         registry.register(tool)
+    registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
 
 
-def get_default_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
+def _known_tool_names(registry: ToolRegistry) -> tuple[str, ...]:
+    return tuple(sorted(KNOWN_BUILTIN_TOOL_NAMES | set(registry._tools)))
+
+
+def get_default_tools(
+    policy: WorkspacePolicy | None = None,
+    *,
+    ignore_patterns: tuple[str, ...] = (),
+) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     return [
         ReadTool(policy=policy),
@@ -53,15 +82,19 @@ def get_default_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
     ]
 
 
-def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
+def get_coding_tools(
+    policy: WorkspacePolicy | None = None,
+    *,
+    ignore_patterns: tuple[str, ...] = (),
+) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     return [
         ReadTool(policy=policy),
         WriteTool(policy=policy),
         EditTool(policy=policy),
         InspectGitDiffTool(policy=policy),
-        ListFilesTool(policy=policy),
-        FindTool(policy=policy),
+        ListFilesTool(policy=policy, ignore_patterns=ignore_patterns),
+        FindTool(policy=policy, ignore_patterns=ignore_patterns),
         GrepTool(policy=policy),
         BashTool(policy=policy),
     ]

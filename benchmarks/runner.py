@@ -40,6 +40,7 @@ class BenchmarkRunner:
         agent_name: str = "myagent",
         model: str = "",
         mode: str = "build",
+        parallel: int = 1,
         keep_worktrees: bool = False,
         clone_cache_dir: str | Path | None = None,
     ):
@@ -49,6 +50,7 @@ class BenchmarkRunner:
         self.agent_name = agent_name
         self.model = model
         self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
+        self.parallel = parallel
         self.keep_worktrees = keep_worktrees
         self.clone_cache_dir = (
             Path(clone_cache_dir).resolve() if clone_cache_dir else None
@@ -89,8 +91,7 @@ class BenchmarkRunner:
         loaded_tasks = [load_task(d) for d in task_dirs]
         self._prefill_clone_cache(loaded_tasks)
 
-        parallel = int(os.environ.get("MYAGENT_BENCHMARK_PARALLEL", "1"))
-        semaphore = asyncio.Semaphore(parallel)
+        semaphore = asyncio.Semaphore(self.parallel)
 
         async def run_one(task_dir: Path) -> TaskResult:
             async with semaphore:

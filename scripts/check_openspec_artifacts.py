@@ -24,6 +24,20 @@ ALLOWED_TYPES = {"feature", "bugfix", "research", "docs", "process", "refactor"}
 DESIGN_TYPES = {"feature", "refactor", "process"}
 DIAGNOSIS_TYPES = {"bugfix", "research"}
 
+BENCHMARK_SMOKE_CAPABILITIES = {
+    "agent-runtime",
+    "benchmark",
+    "coding-tools",
+    "tool-system",
+    "workspace-safety",
+}
+BENCHMARK_SMOKE_CODE_PATTERNS = (
+    r"`?agent/loop\.py`?",
+    r"`?agent/tools/",
+    r"`?agent/workspace_policy\.py`?",
+    r"`?benchmarks/",
+)
+
 DESIGN_SECTIONS = [
     "Context",
     "Goals / Non-Goals",
@@ -167,13 +181,41 @@ def _check_required_sections(path: Path, required_sections: list[str]) -> list[s
     return errors
 
 
+def _requires_benchmark_smoke(proposal_text: str) -> bool:
+    lowered = proposal_text.lower()
+    for capability in BENCHMARK_SMOKE_CAPABILITIES:
+        if f"- `{capability}`" in lowered or f"`{capability}`:" in lowered:
+            return True
+    return any(re.search(pattern, proposal_text) for pattern in BENCHMARK_SMOKE_CODE_PATTERNS)
+
+
+def _has_benchmark_smoke_task(tasks_text: str) -> bool:
+    lowered = tasks_text.lower()
+    return "benchmark" in lowered and "smoke" in lowered
+
+
+def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[str]:
+    if not _requires_benchmark_smoke(proposal_text):
+        return []
+
+    tasks = change_dir / "tasks.md"
+    if not tasks.exists():
+        return ["missing required file: tasks.md"]
+    if not _has_benchmark_smoke_task(tasks.read_text(encoding="utf-8")):
+        return [
+            "tasks.md missing benchmark smoke verification item for coding-agent core change"
+        ]
+    return []
+
+
 def check_change(change_dir: Path) -> list[str]:
     errors: list[str] = []
     proposal = change_dir / "proposal.md"
     if not proposal.exists():
         return [f"{change_dir.name}: missing required file: proposal.md"]
 
-    change_type, type_errors = parse_change_type(proposal.read_text(encoding="utf-8"))
+    proposal_text = proposal.read_text(encoding="utf-8")
+    change_type, type_errors = parse_change_type(proposal_text)
     errors.extend(f"{change_dir.name}: {error}" for error in type_errors)
     if change_type is None:
         return errors
@@ -198,6 +240,11 @@ def check_change(change_dir: Path) -> list[str]:
 
     if change_type.primary == "docs" and change_type.secondary:
         errors.append(f"{change_dir.name}: docs primary changes must not declare secondary types")
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_benchmark_smoke_task(change_dir, proposal_text)
+    )
 
     return errors
 

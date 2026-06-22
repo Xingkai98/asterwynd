@@ -145,11 +145,16 @@ class TestCommandPolicy:
         with pytest.raises(PermissionError):
             policy.assert_command_allowed("shutdown -h now")
 
-    def test_env_denylist_appends(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("MYAGENT_COMMAND_DENYLIST", "dangerous-cmd")
-        policy = WorkspacePolicy(tmp_path)
+    def test_custom_denylist_appends(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path, command_denylist=("dangerous-cmd",))
         with pytest.raises(PermissionError):
             policy.assert_command_allowed("dangerous-cmd something")
+
+    def test_env_denylist_is_not_used(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MYAGENT_COMMAND_DENYLIST", "dangerous-cmd")
+        policy = WorkspacePolicy(tmp_path)
+
+        policy.assert_command_allowed("dangerous-cmd something")
 
     def test_empty_command(self, tmp_path):
         policy = WorkspacePolicy(tmp_path)

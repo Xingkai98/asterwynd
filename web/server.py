@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 
+from agent.config import MyAgentConfig
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -16,10 +17,20 @@ logger = logging.getLogger("myagent.web.server")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(llm, mode: str = "build") -> FastAPI:
+def create_app(
+    llm,
+    mode: str | None = None,
+    config: MyAgentConfig | None = None,
+) -> FastAPI:
     """Create and configure the FastAPI application."""
+    config = config or MyAgentConfig()
+    resolved_mode = mode or config.agent.default_mode.value
     app = FastAPI(title="MyAgent Web UI", version="0.1.0")
-    session_manager = SessionManager(debug_enabled=debug_enabled(), mode=mode)
+    session_manager = SessionManager(
+        debug_enabled=debug_enabled(),
+        mode=resolved_mode,
+        config=config,
+    )
 
     # Mount static files at /static
     if STATIC_DIR.exists():

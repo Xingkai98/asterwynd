@@ -6,6 +6,8 @@ from httpx import AsyncClient, ASGITransport
 from fastapi.testclient import TestClient
 
 from agent.llm import LLMResponse, ToolCallDelta
+from agent.config import MyAgentConfig, AgentConfig
+from agent.run_config import AgentMode
 from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
 from web.debug_hook import debug_enabled
@@ -145,6 +147,20 @@ async def test_websocket_chat_flow():
 
 def test_websocket_session_created_includes_configured_mode():
     app = create_app(MockLLM([LLMResponse(content="Hello")]), mode="plan")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+
+    assert created["type"] == "session_created"
+    assert created["mode"] == "plan"
+
+
+def test_websocket_session_created_uses_config_default_mode():
+    app = create_app(
+        MockLLM([LLMResponse(content="Hello")]),
+        config=MyAgentConfig(agent=AgentConfig(default_mode=AgentMode.PLAN)),
+    )
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/new") as ws:

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义当前 MyAgent 已有运行入口和未来模式边界。当前实现包含 CLI 单轮、CLI 交互、Web 会话和 benchmark runner；尚未实现显式只读、plan、build、bypass 模式开关。
+定义当前 MyAgent 已有运行入口和 agent mode 边界。当前实现包含 CLI 单轮、CLI 交互、Web 会话和 benchmark runner，并支持 build、read_only、plan 和内部 bypass mode 的权限边界。
 
 ## Requirements
 
@@ -46,13 +46,44 @@
 - **THEN** 系统 SHALL 使用该 session 的 AgentLoop 运行
 - **AND** 通过 WebSocket 返回事件和结果
 
-### Requirement: 模式预留不得冒充实现
+### Requirement: Agent mode 约束工具权限
 
-系统 SHALL 将只读、plan、build、bypass 等显式 agent mode 视为未来能力，直到对应 change 被接受并实现。
+系统 SHALL 使用当前 Agent Mode 约束工具 schema 暴露和工具执行权限。`build` mode 默认允许已注册工具；`read_only` 和 `plan` mode SHALL 只允许 read-only 且 non-dangerous 的工具；`bypass` 为内部保留 mode，默认 fail closed。
 
-#### Scenario: 文档描述未来模式
+#### Scenario: read_only mode 过滤工具 schema
 
-- **GIVEN** 文档或路线图提到未来运行模式
-- **WHEN** 这些模式尚无代码入口或测试
-- **THEN** 规格 SHALL 标注为预留或未实现
+- **GIVEN** ToolRegistry 注册了读写工具
+- **WHEN** 系统以 `read_only` mode 获取工具 schema
+- **THEN** 写入或 dangerous 工具 SHALL 不出现在 schema 中
 
+#### Scenario: 被 mode 禁止的工具执行
+
+- **GIVEN** 工具调用命中当前 mode 禁止的工具
+- **WHEN** ToolRegistry 执行该调用
+- **THEN** 系统 SHALL 返回可读权限错误作为 tool result
+
+### Requirement: mode deny override 来自统一配置
+
+系统 SHALL 支持从统一配置对象读取按 mode 定义的 `deny_tools` override。`deny_tools` SHALL 使用工具公开名，大小写敏感；未知工具名 SHALL 在入口构造工具 registry 时 fail fast。
+
+#### Scenario: deny override 过滤 schema
+
+- **GIVEN** 配置为当前 mode deny 某个已注册工具
+- **WHEN** 系统获取工具 schema
+- **THEN** 被 deny 的工具 SHALL 不出现在 schema 中
+
+#### Scenario: 未知 deny tool
+
+- **GIVEN** 配置包含未知工具名
+- **WHEN** 入口构造工具 registry
+- **THEN** 系统 SHALL fail fast 并返回可读配置错误
+
+### Requirement: Plan mode 不得冒充结构化计划能力
+
+系统 SHALL 将当前 plan mode 视为只读权限边界，不得描述为已经具备结构化 planning state、todo 状态机或计划展示能力，直到对应 change 被接受并实现。
+
+#### Scenario: 文档描述 plan mode
+
+- **GIVEN** 文档或路线图提到 plan mode
+- **WHEN** 结构化 planning state 尚未实现
+- **THEN** 规格 SHALL 明确 plan mode 当前仅提供只读权限边界

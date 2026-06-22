@@ -19,6 +19,7 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 ## 能力域
 
 - `agent-runtime`: AgentLoop、消息循环、停止条件和 tool-call 协议。
+- `configuration`: 结构化配置文件、环境变量覆盖和入口层配置解析。
 - `agent-modes`: 单轮、交互、Web、benchmark 等运行入口和未来模式边界。
 - `planning`: 计划拆分和 todo 展示语义，当前为预留能力域。
 - `tool-system`: 工具协议、注册、schema、执行、错误和权限元数据。

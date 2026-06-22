@@ -48,6 +48,10 @@ def write_change(root: Path, proposal: str, design: str | None = None, diagnosis
         (root / "diagnosis.md").write_text(diagnosis, encoding="utf-8")
 
 
+def write_tasks(root: Path, text: str):
+    (root / "tasks.md").write_text(text, encoding="utf-8")
+
+
 def test_parse_change_type_primary_and_secondary():
     change_type, errors = parse_change_type(
         """## Change Type
@@ -94,6 +98,8 @@ def test_combined_type_passes_when_all_required_artifacts_exist(tmp_path):
         diagnosis=VALID_DIAGNOSIS,
     )
 
+    write_tasks(change, "## 4. Verification\n\n- [ ] Run benchmark smoke.\n")
+
     assert check_change(change) == []
 
 
@@ -136,5 +142,67 @@ def test_docs_only_change_does_not_require_design(tmp_path):
 - primary: docs
 """,
     )
+
+    assert check_change(change) == []
+
+
+def test_core_change_requires_benchmark_smoke_task(tmp_path):
+    change = tmp_path / "change-tool-system"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: feature
+
+## Capabilities
+
+### Modified Capabilities
+
+- `tool-system`: Update tool behavior.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 4. Verification\n\n- [ ] Run full tests.\n")
+
+    assert check_change(change) == [
+        "change-tool-system: tasks.md missing benchmark smoke verification item for coding-agent core change"
+    ]
+
+
+def test_core_change_passes_with_benchmark_smoke_task(tmp_path):
+    change = tmp_path / "change-tool-system"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: feature
+
+## Capabilities
+
+### Modified Capabilities
+
+- `tool-system`: Update tool behavior.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 4. Verification\n\n- [ ] 跑通至少一个 benchmark smoke。\n",
+    )
+
+    assert check_change(change) == []
+
+
+def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
+    change = tmp_path / "change-doc-process"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: process
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 4. Verification\n\n- [ ] Run OpenSpec validation.\n")
 
     assert check_change(change) == []

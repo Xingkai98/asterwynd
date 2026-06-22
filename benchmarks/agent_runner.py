@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from agent.loop import AgentLoop
+from agent.config import MyAgentConfig
 from agent.memory.manager import MemoryManager
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.tools.factory import build_coding_tool_registry
@@ -259,6 +260,7 @@ class MyAgentRunner(AgentRunner):
         max_iterations: int = 20,
         prompt_builder: CodingPromptBuilder | None = None,
         timeout_seconds: int = 1800,
+        config: MyAgentConfig | None = None,
     ):
         self.llm = llm
         self.model = model
@@ -267,6 +269,7 @@ class MyAgentRunner(AgentRunner):
         self.max_iterations = max_iterations
         self.prompt_builder = prompt_builder or CodingPromptBuilder()
         self.timeout_seconds = timeout_seconds
+        self.config = config or MyAgentConfig()
 
     async def close(self) -> None:
         close_fn = getattr(self.llm, "close", None)
@@ -284,10 +287,17 @@ class MyAgentRunner(AgentRunner):
         output_dir: Path,
         trace: TraceRecorder,
     ) -> AgentRunResult:
-        policy = WorkspacePolicy(workspace)
+        policy = WorkspacePolicy(
+            workspace,
+            command_denylist=self.config.tools.command_denylist,
+        )
         registry = build_coding_tool_registry(
             policy=policy,
-            mode_policy=ModePolicy(self.run_config),
+            mode_policy=ModePolicy(
+                self.run_config,
+                deny_tools_by_mode=self.config.deny_tools_by_mode(),
+            ),
+            ignore_patterns=self.config.tools.ignore_patterns,
         )
 
         counting_llm = CountingLLM(self.llm)

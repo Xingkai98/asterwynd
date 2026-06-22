@@ -13,7 +13,7 @@
 
 - 新增 `myagent.yaml` 作为结构化、非敏感项目配置文件。
 - `.env` 继续用于 API key、base URL 等 secrets 和环境覆盖项，不被 YAML 取代。
-- 新增配置加载顺序和优先级：CLI 参数 > 环境变量 > `myagent.yaml` > 默认值。
+- 新增配置加载顺序和优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `myagent.yaml` > 默认值。
 - 配置模型 SHALL 支持 agent 默认 mode、mode tool deny override、工具 ignore patterns、命令 denylist 等结构化字段。
 - CLI、Web、benchmark 和工具策略 SHALL 逐步从统一配置对象读取非敏感配置。
 

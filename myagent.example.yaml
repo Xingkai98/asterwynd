@@ -1,0 +1,18 @@
+agent:
+  default_mode: build
+
+modes:
+  build:
+    deny_tools: []
+  read_only:
+    deny_tools: []
+  plan:
+    deny_tools: []
+
+tools:
+  ignore_patterns: []
+  command_denylist: []
+
+benchmark:
+  parallel: 1
+  timeout_seconds: 600

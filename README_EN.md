@@ -42,7 +42,7 @@ uv run python cli.py web --port 8000
 | `WebSearch` | read_only | DuckDuckGo HTML search |
 | `WebFetch` | read_only | Fetch web page content |
 
-Bash command safety: prefix allowlist (git status, pytest, uv, npm, ...) + regex denylist (42 patterns). Extensible via `MYAGENT_COMMAND_DENYLIST` env var.
+Bash command safety: prefix allowlist (git status, pytest, uv, npm, ...) + regex denylist. Project-level command deny rules and ListFiles / Find ignore rules are configured in `myagent.yaml`; see `myagent.example.yaml`.
 
 ## Project Structure
 

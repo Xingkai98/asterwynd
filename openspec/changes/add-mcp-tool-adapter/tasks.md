@@ -23,3 +23,4 @@
 - [ ] 4.1 运行 MCP 和 tool registry 测试。
 - [ ] 4.2 运行全量测试。
 - [ ] 4.3 运行 OpenSpec strict validate。
+- [ ] 4.4 跑通至少一个 benchmark smoke。

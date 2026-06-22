@@ -24,3 +24,4 @@
 - [ ] 4.2 运行全量测试。
 - [ ] 4.3 手动运行 browser smoke。
 - [ ] 4.4 运行 OpenSpec strict validate。
+- [ ] 4.5 跑通至少一个 benchmark smoke。

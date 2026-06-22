@@ -24,7 +24,7 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build": fake,
+        lambda model=None, provider="openai", mode="build", config=None: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["main", "hello", "--max-iterations", "3"])
@@ -40,7 +40,7 @@ def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
     fake = FakeAgent()
     captured = {}
 
-    def build_agent(model=None, provider="openai", mode="build"):
+    def build_agent(model=None, provider="openai", mode="build", config=None):
         captured["mode"] = mode
         return fake
 
@@ -52,11 +52,69 @@ def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
     assert captured["mode"] == "read_only"
 
 
+def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
+    fake = FakeAgent()
+    captured = {}
+    config_path = tmp_path / "myagent.yaml"
+    config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
+
+    def build_agent(model=None, provider="openai", mode="build", config=None):
+        captured["mode"] = mode
+        captured["config"] = config
+        return fake
+
+    monkeypatch.setattr(cli, "build_agent", build_agent)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "hello", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 0
+    assert captured["mode"] == "plan"
+    assert captured["config"].path == config_path
+
+
+def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
+    fake = FakeAgent()
+    captured = {}
+    config_path = tmp_path / "myagent.yaml"
+    config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
+    monkeypatch.setenv("MYAGENT_MODE", "read_only")
+
+    def build_agent(model=None, provider="openai", mode="build", config=None):
+        captured["mode"] = mode
+        return fake
+
+    monkeypatch.setattr(cli, "build_agent", build_agent)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "hello", "--config", str(config_path), "--mode", "build"],
+    )
+
+    assert result.exit_code == 0
+    assert captured["mode"] == "build"
+
+
 def test_cli_rejects_bypass_mode():
     result = CliRunner().invoke(cli.app, ["main", "hello", "--mode", "bypass"])
 
     assert result.exit_code == 1
     assert "bypass" in result.stderr
+
+
+def test_cli_reports_invalid_config(tmp_path):
+    config_path = tmp_path / "myagent.yaml"
+    config_path.write_text("agent: [", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "hello", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid YAML" in result.stderr
 
 
 def test_cli_single_prompt_requires_prompt():
