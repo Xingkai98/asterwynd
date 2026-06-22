@@ -13,10 +13,11 @@
 
 - 新增 `AgentMode` 概念，至少覆盖 `read_only`、`build`、`plan` 和 `bypass` 的语义边界。
 - ToolRegistry 或构造工具集合时 SHALL 根据 mode 过滤或拒绝不允许的工具。
-- CLI、Web session 和 benchmark runner SHALL 能传入 mode，并记录实际使用的 mode。
+- CLI、Web session 和 benchmark runner SHALL 能传入 `build`、`read_only`、`plan`，默认 `build`，并记录实际使用的 mode。
 - `read_only` SHALL 禁止写工具和 dangerous 工具。
-- `build` SHALL 保持当前 coding-agent 能力，允许受 WorkspacePolicy 约束的编辑和验证命令。
-- `plan` 和 `bypass` 在本 change 中只定义边界；具体 plan 行为和 bypass 授权流程可由后续 change 实现。
+- `build` SHALL 保持当前 coding-agent 能力，允许受 WorkspacePolicy 约束的编辑、写入和验证命令；本 change 不重新设计 WorkspacePolicy 或 Bash allowlist。
+- `plan` 在本 change 中只交付只读权限边界，权限策略与 `read_only` 相同；不实现结构化 planning state、PlanningManager 或计划产物。
+- `bypass` 在本 change 中预留但不可运行；不提供用户入口，不绕过 ToolRegistry 或 WorkspacePolicy，具体授权流程由后续 change 实现。
 
 ## Capabilities
 
