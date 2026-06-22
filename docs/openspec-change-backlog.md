@@ -15,12 +15,11 @@
 
 ### 第一批：可立即并行
 
-- `add-repo-map-code-intelligence`：只读代码理解能力，影响面主要在 code intelligence、只读工具和 workspace scan。
 - `implement-structured-planning-state`：planning state 主干能力，阻塞后续 plan mode、TUI 和 subagent 协作。
 
-### 第二批：等待第一批基础能力合入
+### 第二批：等待剩余第一批基础能力合入
 
-- `add-tree-sitter-symbol-extraction`：等待 `add-repo-map-code-intelligence`，复用 repo scanner、extractor 接口、repo map 输出和只读工具。
+- `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
 - `add-plan-mode`：必须依赖 `implement-structured-planning-state`，否则只能做到只读权限边界，不能交付真实计划产物。
 - `add-runtime-mode-switching`：建议在 `add-plan-mode` 后做，避免 mode transition 只切工具权限而没有完整 plan 语义。
 - `upgrade-subagents-to-agentloop`：建议依赖 `implement-structured-planning-state`；如果目标优先转向并行调查能力，可以早于 TUI 推进。
@@ -37,31 +36,11 @@
 
 ## 未实现队列
 
-### 1. `add-repo-map-code-intelligence`
+### 1. `implement-structured-planning-state`
 
 状态：未实现。
 
-批次：第一批，可与 `implement-structured-planning-state` 并行。
-
-建议顺序原因：
-
-- 这是 coding-agent 主线的只读能力增强，能直接提升后续需求讨论、代码定位和 benchmark 表现。
-- 它依赖 workspace policy、ignore patterns 和 mode policy；YAML 配置已完成，可以直接接入统一 ignore 配置。
-
-主要交付：
-
-- workspace-aware repo scanner 和可替换 extractor 接口。
-- 多语言文件级 repo map。
-- Python AST symbol extractor。
-- repo map 输出格式。
-- 只读 code intelligence 工具。
-- WorkspacePolicy 和 ignore patterns 约束。
-
-### 2. `implement-structured-planning-state`
-
-状态：未实现。
-
-批次：第一批，可与 `add-repo-map-code-intelligence` 并行。
+批次：第一批剩余项。
 
 建议顺序原因：
 
@@ -76,11 +55,11 @@
 - Web session / Debug 视图转发 planning 事件。
 - benchmark artifacts 记录 planning 摘要。
 
-### 3. `add-tree-sitter-symbol-extraction`
+### 2. `add-tree-sitter-symbol-extraction`
 
 状态：未实现。
 
-批次：第二批，等待 `add-repo-map-code-intelligence` 合入后开始。
+批次：第二批，`add-repo-map-code-intelligence` 已合入，可开始。
 
 建议顺序原因：
 
@@ -95,7 +74,7 @@
 - 未注册语言和解析失败降级。
 - 多语言 fixture 与 benchmark smoke。
 
-### 4. `add-plan-mode`
+### 3. `add-plan-mode`
 
 状态：未实现。
 
@@ -114,7 +93,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 5. `add-runtime-mode-switching`
+### 4. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -133,7 +112,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 6. `add-minimal-tui-runtime-view`
+### 5. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -151,7 +130,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 7. `upgrade-subagents-to-agentloop`
+### 6. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -169,11 +148,11 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 8. `add-lsp-code-intelligence`
+### 7. `add-lsp-code-intelligence`
 
 状态：未实现。
 
-批次：第三批，等待 repo map 基础设施稳定后开始；建议在 `add-tree-sitter-symbol-extraction` 后推进。
+批次：第三批，repo map 基础设施已合入；建议在 `add-tree-sitter-symbol-extraction` 后推进。
 
 建议顺序原因：
 
@@ -188,7 +167,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 9. `add-mcp-tool-adapter`
+### 8. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -206,7 +185,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 10. `add-browser-use-safety-foundation`
+### 9. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
