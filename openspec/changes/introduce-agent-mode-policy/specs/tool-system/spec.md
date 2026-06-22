@@ -23,3 +23,4 @@ ToolRegistry 或工具集合构造层 SHALL 根据当前 agent mode 决定哪些
 - **WHEN** registry 执行该 tool call
 - **THEN** 系统 SHALL 返回可读权限错误作为 tool result
 - **AND** SHALL NOT 破坏 tool-call 消息链
+- **AND** SHALL NOT 调用真实工具 execute
