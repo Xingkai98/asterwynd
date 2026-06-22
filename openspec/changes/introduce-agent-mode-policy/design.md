@@ -138,7 +138,7 @@ bypass 在本 change 中只是未来高权限模式名称，不提供 CLI、Web 
 
 理由：bypass 属于权限放大能力，必须先设计授权范围、用户确认、审计记录和测试。没有授权流程时直接放开权限，会让 mode policy 的边界变得不可解释。
 
-## 参考实现记录
+## Reference Implementation Notes
 
 - Codex 将 `approval_policy`、`permission_profile`、network、tool mode 等运行权限上下文放在 session/turn context，ToolRegistry 主要负责工具查找、dispatch、hook 和错误返回。
 - Claude Code 的 plan mode 修改 app state 中的 `toolPermissionContext`，QueryEngine 通过 config 接收 `tools` 和 `canUseTool`，工具本身只是触发权限上下文转换。
@@ -147,7 +147,7 @@ bypass 在本 change 中只是未来高权限模式名称，不提供 CLI、Web 
 
 结论：MyAgent 应把 mode 建模为 Agent 运行上下文的一部分，而不是 ToolRegistry 私有状态。
 
-## 风险与取舍
+## Risks / Trade-offs
 
 - [风险] 过滤逻辑分散。缓解：集中在 mode policy / tool registry 边界。
 - [风险] 旧入口未传 mode。缓解：默认 build，逐步显式化。
@@ -155,7 +155,7 @@ bypass 在本 change 中只是未来高权限模式名称，不提供 CLI、Web 
 - [风险] 网络请求影响可复现性。缓解：本 change 只处理工具权限边界；网络策略留给后续独立能力处理。
 - [风险] bypass 语义过早扩大。缓解：本 change 将 bypass 定义为预留且不可运行，不实现授权或越权行为。
 
-## 测试策略
+## Testing Strategy
 
 - 实现采用 TDD：先补 mode parsing、ModePolicy、ToolRegistry、入口传参和记录相关测试，再写实现。
 - 单元测试覆盖每个 mode 可用工具集合。

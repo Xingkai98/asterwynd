@@ -76,6 +76,13 @@ benchmark:
   parallel: 1
 ```
 
+## Risks / Trade-offs
+
+- [风险] 引入 YAML 后配置来源变多。缓解：固定优先级为 CLI 参数 > 环境变量 > YAML > 默认值，并通过 typed config loader 汇总。
+- [风险] secrets 被误写入 YAML。缓解：文档明确 `.env` 负责 secrets，YAML 只保存结构化非敏感配置。
+- [风险] 一次性迁移所有环境变量导致回归。缓解：允许逐步迁移，但新增结构化配置必须通过统一 loader。
+- [风险] 个人配置污染仓库。缓解：个人 `myagent.yaml` 默认不提交，只提交示例文件或明确约定的项目级配置。
+
 ## Testing Strategy
 
 - 配置 loader 单元测试覆盖缺省值、YAML 读取、环境变量覆盖和 CLI 参数覆盖。
