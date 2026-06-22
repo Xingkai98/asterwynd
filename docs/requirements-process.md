@@ -67,6 +67,8 @@
 - `design.md`：详细设计，说明实现方案、关键决策、接口、错误处理、测试策略和风险。
 - `tasks.md`：按依赖顺序拆分可执行任务。
 
+新建 `tasks.md` 时，应先复制或参考 `openspec/templates/tasks.md`，再按当前 change 裁剪和补充。模板中的通用验证项默认保留，只有在明确不适用时才删除，并在设计或任务中说明原因。
+
 当 change 来自 bug、回归、线上式故障、工具不可用或调研驱动的问题定位时，还必须包含：
 
 - `diagnosis.md`：记录症状、影响、复现、证据、假设、根因、修复选项、推荐方向和回归测试要求。
@@ -131,6 +133,23 @@ uv run python scripts/check_openspec_artifacts.py
 `scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 设计评审通过前，不进入实现阶段。
+
+## 验证任务模板
+
+每个非平凡 change 的 `tasks.md` 都应包含通用验证任务：
+
+- 运行相关单元/集成测试。
+- 运行全量测试。
+- 运行 OpenSpec strict validate。
+- 运行项目 OpenSpec artifact checker。
+
+还应按影响面保留条件验证任务：
+
+- 涉及 AgentLoop、工具协议、coding tools、workspace safety、benchmark runner 或其他 coding-agent 核心路径时，至少跑通一个 benchmark smoke。
+- 涉及 Web 时，运行 Web session/server 测试；必要时运行浏览器 smoke。
+- 涉及 TUI、browser/computer use、外部服务或其他人工交互入口时，运行对应 smoke。
+
+这些条件验证来自项目级测试规则，不能因为当前 change 的手写任务清单未列出就省略。若某项条件验证无法运行，应在 `tasks.md` 或最终交付说明里记录原因和替代验证。
 
 ## 需求状态
 

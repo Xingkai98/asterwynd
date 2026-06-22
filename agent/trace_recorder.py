@@ -15,9 +15,15 @@ class TraceStep:
 
 
 class TraceRecorder:
-    def __init__(self, task_id: str = "", full_trace: bool = False):
+    def __init__(
+        self,
+        task_id: str = "",
+        full_trace: bool = False,
+        mode: str = "build",
+    ):
         self.task_id = task_id
         self.full_trace = full_trace  # retained for serialization compat only
+        self.mode = mode
         self.steps: list[TraceStep] = []
         self.started_at = time.time()
 
@@ -25,6 +31,11 @@ class TraceRecorder:
         self.steps.append(
             TraceStep(step=len(self.steps) + 1, type=step_type, data=data)
         )
+
+    def record_run_started(self, mode: str | None = None) -> None:
+        if mode is not None:
+            self.mode = mode
+        self.record("run_started", mode=self.mode)
 
     def record_iteration(
         self,
@@ -89,6 +100,7 @@ class TraceRecorder:
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "mode": self.mode,
             "full_trace": self.full_trace,
             "duration_seconds": round(time.time() - self.started_at, 1),
             "steps": [asdict(step) for step in self.steps],

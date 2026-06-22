@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.run_config import AgentRunConfig, parse_agent_mode
 from agent.trace_recorder import TraceRecorder
 from benchmarks.agent_runner import AgentRunner
 from benchmarks.models import (
@@ -38,6 +39,7 @@ class BenchmarkRunner:
         runs_dir: str | Path,
         agent_name: str = "myagent",
         model: str = "",
+        mode: str = "build",
         keep_worktrees: bool = False,
         clone_cache_dir: str | Path | None = None,
     ):
@@ -46,6 +48,7 @@ class BenchmarkRunner:
         self.runs_dir = Path(runs_dir).resolve()
         self.agent_name = agent_name
         self.model = model
+        self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
         self.keep_worktrees = keep_worktrees
         self.clone_cache_dir = (
             Path(clone_cache_dir).resolve() if clone_cache_dir else None
@@ -105,6 +108,7 @@ class BenchmarkRunner:
                     task_id=task_dirs[i].name,
                     agent=self.agent_name,
                     model=self.model,
+                    mode=self.run_config.mode.value,
                     status="error",
                     failure_category=FailureCategory.SETUP_ERROR.value,
                 ))
@@ -122,6 +126,7 @@ class BenchmarkRunner:
             run_id=run_id,
             agent=self.agent_name,
             model=self.model,
+            mode=self.run_config.mode.value,
             started_at=started_at,
             ended_at=ended_at,
             task_count=len(results),
@@ -154,7 +159,7 @@ class BenchmarkRunner:
         )
 
         log_lines: list[str] = []
-        trace = TraceRecorder(task_id=loaded.task.id)
+        trace = TraceRecorder(task_id=loaded.task.id, mode=self.run_config.mode.value)
         start = time.time()
         workspace: Path | None = None
         hidden_backup: Path | None = None
@@ -166,6 +171,7 @@ class BenchmarkRunner:
             task_id=loaded.task.id,
             agent=self.agent_name,
             model=self.model,
+            mode=self.run_config.mode.value,
         )
 
         try:
@@ -266,6 +272,7 @@ class BenchmarkRunner:
                 task_id=loaded.task.id,
                 agent=self.agent_name,
                 model=self.model,
+                mode=self.run_config.mode.value,
                 status=status,
                 test_exit_code=test_exit_code,
                 duration_seconds=round(time.time() - start, 1),

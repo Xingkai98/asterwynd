@@ -49,6 +49,7 @@ OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
 - `proposal.md` 不承载详细实现；spec delta 不承载问题定位过程；`tasks.md` 不替代设计。
 - `proposal.md` 必须包含 `## Change Type`，声明 `primary` 和 `secondary` 类型。
 - 项目文档规则按 `primary` 与 `secondary` 的类型并集校验；每个涉及类型的要求都必须满足。
+- 新建 `tasks.md` 应参考 `openspec/templates/tasks.md`，保留通用验证项，并按影响面补充 benchmark、Web、TUI、browser 或外部集成 smoke。
 
 当前 OpenSpec CLI 可通过 `openspec status --change <id>` 检查 schema
 artifact 完成状态。`diagnosis.md` 属于项目条件规则，由项目本地文档规则脚本检查。

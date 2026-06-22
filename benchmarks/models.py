@@ -34,6 +34,7 @@ class TaskResult:
     task_id: str
     agent: str
     model: str = ""
+    mode: str = "build"
     status: str = "error"
     test_exit_code: int | None = None
     duration_seconds: float = 0.0
@@ -60,6 +61,7 @@ class RunMetadata:
     run_id: str
     agent: str
     model: str = ""
+    mode: str = "build"
     started_at: str = ""
     ended_at: str = ""
     task_count: int = 0

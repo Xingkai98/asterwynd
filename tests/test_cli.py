@@ -21,7 +21,11 @@ class FakeAgent:
 
 def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     fake = FakeAgent()
-    monkeypatch.setattr(cli, "build_agent", lambda model=None, provider="openai": fake)
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build": fake,
+    )
 
     result = CliRunner().invoke(cli.app, ["main", "hello", "--max-iterations", "3"])
 
@@ -30,6 +34,29 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     assert fake.max_iterations == 3
     assert fake.messages[-1].role == "user"
     assert fake.messages[-1].content == "hello"
+
+
+def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
+    fake = FakeAgent()
+    captured = {}
+
+    def build_agent(model=None, provider="openai", mode="build"):
+        captured["mode"] = mode
+        return fake
+
+    monkeypatch.setattr(cli, "build_agent", build_agent)
+
+    result = CliRunner().invoke(cli.app, ["main", "hello", "--mode", "read-only"])
+
+    assert result.exit_code == 0
+    assert captured["mode"] == "read_only"
+
+
+def test_cli_rejects_bypass_mode():
+    result = CliRunner().invoke(cli.app, ["main", "hello", "--mode", "bypass"])
+
+    assert result.exit_code == 1
+    assert "bypass" in result.stderr
 
 
 def test_cli_single_prompt_requires_prompt():

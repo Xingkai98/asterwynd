@@ -10,6 +10,7 @@ from agent.llm import LLMResponse, ToolCallDelta
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
+from agent.run_config import AgentMode
 
 from web.session import SessionManager, AgentSession
 from web.debug_hook import DebugHook, debug_enabled
@@ -60,6 +61,16 @@ async def test_create_session():
 
 
 @pytest.mark.asyncio
+async def test_create_session_uses_normalized_mode():
+    """Session manager normalizes mode when constructing AgentLoop."""
+    mock_llm = MockLLM([LLMResponse(content="Hello")])
+    manager = SessionManager(mode="read-only")
+    session = manager.create_session(mock_llm, tools=[EchoTool()])
+
+    assert session.agent.run_config.mode is AgentMode.READ_ONLY
+
+
+@pytest.mark.asyncio
 async def test_chat_simple_text_response():
     """Mock LLM returns text → run_session yields llm_response and done events."""
     mock_llm = MockLLM([LLMResponse(content="Hello, user!")])
@@ -77,6 +88,7 @@ async def test_chat_simple_text_response():
     await manager.run_session(session, "hi", ws_send=collect)
 
     event_types = [e["type"] for e in events]
+    assert "run_started" in event_types
     assert "llm_response" in event_types
     assert "done" in event_types
     # Verify llm_response has content

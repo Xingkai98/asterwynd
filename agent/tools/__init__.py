@@ -14,33 +14,12 @@ from agent.tools.builtin.edit import EditTool
 from agent.tools.builtin.inspect_git_diff import InspectGitDiffTool
 from agent.tools.builtin.list_files import ListFilesTool
 from agent.tools.builtin.find import FindTool
-from agent.workspace_policy import WorkspacePolicy
-
-def get_default_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
-    policy = policy or WorkspacePolicy()
-    return [
-        ReadTool(policy=policy),
-        WriteTool(policy=policy),
-        EditTool(policy=policy),
-        BashTool(policy=policy),
-        WebSearchTool(),
-        WebFetchTool(),
-        GrepTool(policy=policy),
-        InspectGitDiffTool(policy=policy),
-    ]
-
-def get_coding_tools(policy: WorkspacePolicy | None = None) -> list[Tool]:
-    policy = policy or WorkspacePolicy()
-    return [
-        ReadTool(policy=policy),
-        WriteTool(policy=policy),
-        EditTool(policy=policy),
-        InspectGitDiffTool(policy=policy),
-        ListFilesTool(policy=policy),
-        FindTool(policy=policy),
-        GrepTool(policy=policy),
-        BashTool(policy=policy),
-    ]
+from agent.tools.factory import (
+    build_coding_tool_registry,
+    build_default_tool_registry,
+    get_coding_tools,
+    get_default_tools,
+)
 
 __all__ = [
     "Tool",
@@ -50,6 +29,8 @@ __all__ = [
     "SandboxExecutor",
     "get_default_tools",
     "get_coding_tools",
+    "build_default_tool_registry",
+    "build_coding_tool_registry",
     "ReadTool",
     "WriteTool",
     "EditTool",

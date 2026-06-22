@@ -7,7 +7,8 @@ from typing import Optional, AsyncGenerator
 
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
-from agent.tools import get_default_tools, ToolRegistry
+from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.tools.factory import build_default_tool_registry
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
@@ -38,21 +39,24 @@ class AgentSession:
 class SessionManager:
     """Creates and manages AgentSession instances."""
 
-    def __init__(self, debug_enabled: bool = False):
+    def __init__(self, debug_enabled: bool = False, mode: str = "build"):
         self._sessions: dict[str, AgentSession] = {}
         self.debug_enabled = debug_enabled
+        self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
         session_id = uuid.uuid4().hex[:12]
-        registry = ToolRegistry()
-        for tool in (tools or get_default_tools()):
-            registry.register(tool)
+        registry = build_default_tool_registry(
+            mode_policy=ModePolicy(self.run_config),
+            tools=tools,
+        )
 
         agent = AgentLoop(
             llm=llm,
             tool_registry=registry,
             hooks=HookManager([TracingHook()]),
             memory=MemoryManager(max_tokens=80_000),
+            run_config=self.run_config,
         )
         session = AgentSession(session_id, agent)
         session.init_messages()

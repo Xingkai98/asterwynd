@@ -25,7 +25,8 @@ from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.openai_llm import OpenAILLM
 from agent.anthropic_llm import AnthropicLLM
-from agent.tools import get_default_tools, ToolRegistry
+from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.tools.factory import build_default_tool_registry
 from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
@@ -71,11 +72,24 @@ def build_llm(provider: str, model: Optional[str] = None) -> LLM:
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         return OpenAILLM(api_key=api_key, base_url=base_url, **kwargs)
 
-def build_agent(model: Optional[str] = None, provider: str = "openai") -> AgentLoop:
+def _normalize_user_mode(mode: str | AgentMode) -> str:
+    if isinstance(mode, AgentMode):
+        return mode.value
+    try:
+        return parse_agent_mode(mode).value
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+
+def build_agent(
+    model: Optional[str] = None,
+    provider: str = "openai",
+    mode: str | AgentMode = AgentMode.BUILD,
+) -> AgentLoop:
     llm = build_llm(provider, model)
-    registry = ToolRegistry()
-    for tool in get_default_tools():
-        registry.register(tool)
+    run_config = AgentRunConfig(mode=parse_agent_mode(_normalize_user_mode(mode)))
+    registry = build_default_tool_registry(mode_policy=ModePolicy(run_config))
 
     hooks = HookManager([
         LoggingHook(verbose=False),
@@ -89,6 +103,7 @@ def build_agent(model: Optional[str] = None, provider: str = "openai") -> AgentL
         tool_registry=registry,
         hooks=hooks,
         memory=memory,
+        run_config=run_config,
     )
 
 @app.command()
@@ -101,17 +116,26 @@ def main(
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="交互模式"),
+    mode: str = typer.Option("build", "--mode", help="Agent mode: build / read_only / plan"),
 ):
+    normalized_mode = _normalize_user_mode(mode)
     if interactive:
-        run_interactive(model, provider, max_iterations, system, prompt)
+        run_interactive(model, provider, max_iterations, system, prompt, normalized_mode)
     else:
         if not prompt:
             typer.echo("Error: PROMPT is required in single-prompt mode", err=True)
             raise SystemExit(1)
-        run_single(prompt, model, provider, max_iterations, system)
+        run_single(prompt, model, provider, max_iterations, system, normalized_mode)
 
-def run_single(prompt: str, model: Optional[str], provider: str, max_iterations: int, system: Optional[str]):
-    agent = build_agent(model, provider)
+def run_single(
+    prompt: str,
+    model: Optional[str],
+    provider: str,
+    max_iterations: int,
+    system: Optional[str],
+    mode: str = "build",
+):
+    agent = build_agent(model, provider, mode)
     agent.max_iterations = max_iterations
 
     messages: list[Message] = []
@@ -134,12 +158,19 @@ def run_single(prompt: str, model: Optional[str], provider: str, max_iterations:
 
     asyncio.run(_run())
 
-def run_interactive(model: Optional[str], provider: str, max_iterations: int, system: Optional[str], initial_prompt: Optional[str] = None):
-    agent = build_agent(model, provider)
+def run_interactive(
+    model: Optional[str],
+    provider: str,
+    max_iterations: int,
+    system: Optional[str],
+    initial_prompt: Optional[str] = None,
+    mode: str = "build",
+):
+    agent = build_agent(model, provider, mode)
     resolved_model = getattr(agent.llm, "model", model or "default")
 
     typer.echo("MyAgent 交互模式 (输入 exit 退出)")
-    typer.echo(f"模型: {resolved_model} | 提供商: {provider}\n")
+    typer.echo(f"模型: {resolved_model} | 提供商: {provider} | Mode: {mode}\n")
     agent.max_iterations = max_iterations
 
     messages: list[Message] = []
@@ -190,20 +221,23 @@ def web(
         os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型"),
+    mode: str = typer.Option("build", "--mode", help="Agent mode: build / read_only / plan"),
 ):
     """启动 Web UI 服务"""
     import uvicorn
     from web.server import create_app
     from web.debug_hook import debug_enabled
 
+    normalized_mode = _normalize_user_mode(mode)
     debug_status = "enabled" if debug_enabled() else "disabled"
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
 
     llm = build_llm(provider, model)
     typer.echo(f"MyAgent Web UI  →  http://{display_host}:{port}")
     typer.echo(f"Provider: {provider} | Model: {llm.model}")
+    typer.echo(f"Mode: {normalized_mode}")
     typer.echo(f"Debug mode: {debug_status}")
-    app = create_app(llm)
+    app = create_app(llm, mode=normalized_mode)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -218,6 +252,7 @@ def benchmark(
     ),
     model: Optional[str] = typer.Option(None, "--model", help="MyAgent 模型"),
     max_iterations: int = typer.Option(20, "--max-iterations", help="MyAgent 最大迭代次数"),
+    mode: str = typer.Option("build", "--mode", help="Agent mode: build / read_only / plan"),
     shell_command: Optional[str] = typer.Option(None, "--shell-command", help="shell runner 命令"),
     fake_edit_file: Optional[str] = typer.Option(None, "--fake-edit-file", help="fake runner 修改文件"),
     fake_old_string: Optional[str] = typer.Option(None, "--fake-old-string", help="fake runner old string"),
@@ -229,6 +264,7 @@ def benchmark(
     from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, MyAgentRunner, ShellCommandRunner
     from benchmarks.runner import BenchmarkRunner
 
+    normalized_mode = _normalize_user_mode(mode)
     if agent == "fake":
         runner_impl = FakeAgentRunner(
             edit_file=fake_edit_file,
@@ -249,6 +285,7 @@ def benchmark(
             llm=llm,
             model=getattr(llm, "model", model or ""),
             max_iterations=max_iterations,
+            mode=normalized_mode,
         )
     else:
         typer.echo("Error: --agent must be fake, shell, myagent, or claude", err=True)
@@ -260,6 +297,7 @@ def benchmark(
         runs_dir=runs_dir,
         agent_name=agent,
         model=model or "",
+        mode=normalized_mode,
         keep_worktrees=keep_worktrees,
         clone_cache_dir=clone_cache_dir,
     )

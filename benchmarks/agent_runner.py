@@ -9,7 +9,8 @@ from pathlib import Path
 
 from agent.loop import AgentLoop
 from agent.memory.manager import MemoryManager
-from agent.tools import ToolRegistry, get_coding_tools
+from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.tools.factory import build_coding_tool_registry
 from agent.trace_recorder import TraceRecorder
 from agent.workspace_policy import WorkspacePolicy
 from benchmarks.models import AgentRunResult, FailureCategory
@@ -254,12 +255,15 @@ class MyAgentRunner(AgentRunner):
         self,
         llm,
         model: str = "",
+        mode: str | AgentMode = AgentMode.BUILD,
         max_iterations: int = 20,
         prompt_builder: CodingPromptBuilder | None = None,
         timeout_seconds: int = 1800,
     ):
         self.llm = llm
         self.model = model
+        resolved_mode = mode if isinstance(mode, AgentMode) else parse_agent_mode(mode)
+        self.run_config = AgentRunConfig(mode=resolved_mode)
         self.max_iterations = max_iterations
         self.prompt_builder = prompt_builder or CodingPromptBuilder()
         self.timeout_seconds = timeout_seconds
@@ -281,16 +285,18 @@ class MyAgentRunner(AgentRunner):
         trace: TraceRecorder,
     ) -> AgentRunResult:
         policy = WorkspacePolicy(workspace)
-        registry = ToolRegistry()
-        for tool in get_coding_tools(policy=policy):
-            registry.register(tool)
+        registry = build_coding_tool_registry(
+            policy=policy,
+            mode_policy=ModePolicy(self.run_config),
+        )
 
         counting_llm = CountingLLM(self.llm)
         agent = AgentLoop(
             llm=counting_llm,
             tool_registry=registry,
             memory=MemoryManager(max_tokens=80_000),
-            max_iterations=999,
+            max_iterations=self.max_iterations,
+            run_config=self.run_config,
         )
         messages = self.prompt_builder.build_messages(
             task=task,
@@ -317,7 +323,14 @@ class MyAgentRunner(AgentRunner):
                 failure_category=FailureCategory.MODEL_FAILURE.value,
                 output=f"MyAgent timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
             )
-        edit_count = sum(1 for call in result.tool_calls_made if call.name == "Edit")
+        edit_count = sum(
+            1
+            for call in result.tool_calls_made
+            if call.name == "Edit"
+            and call.result
+            and not call.result.startswith("[Permission denied")
+            and not call.result.startswith("[Error")
+        )
         return AgentRunResult(
             status="completed" if result.stop_reason.value == "end_turn" else "error",
             iterations=counting_llm.call_count,

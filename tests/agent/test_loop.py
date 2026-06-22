@@ -8,6 +8,7 @@ from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.trace_recorder import TraceRecorder
+from agent.run_config import AgentMode, AgentRunConfig
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -394,6 +395,29 @@ async def test_agent_loop_records_trace_events_for_tool_calls():
     assert step_types.count("llm_iteration") == 2
     assert "tool_call" in step_types
     assert "tool_result" in step_types
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_run_started_event_with_mode():
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    registry = ToolRegistry()
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=registry,
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.READ_ONLY),
+    )
+    trace = TraceRecorder(task_id="trace-test")
+
+    await loop.run([Message(role="user", content="test")], on_event=on_event, trace_recorder=trace)
+
+    assert events[0] == ("run_started", {"mode": "read_only"})
+    assert trace.to_dict()["mode"] == "read_only"
+    assert trace.steps[0].type == "run_started"
 
 
 @pytest.mark.asyncio
