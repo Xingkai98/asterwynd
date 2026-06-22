@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from scripts.check_openspec_artifacts import check_change, parse_change_type
+from scripts.check_openspec_artifacts import (
+    check_backlog_consistency,
+    check_change,
+    parse_change_type,
+)
 
 
 VALID_DESIGN = """## Context
@@ -206,3 +210,81 @@ def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
     write_tasks(change, "## 4. Verification\n\n- [ ] Run OpenSpec validation.\n")
 
     assert check_change(change) == []
+
+
+def test_backlog_rejects_archived_change_reference(tmp_path):
+    changes = tmp_path / "openspec" / "changes"
+    archive = changes / "archive" / "2026-06-22-done-change"
+    archive.mkdir(parents=True)
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.parent.mkdir()
+    backlog.write_text(
+        """# OpenSpec Change 实现队列
+
+## 未实现队列
+
+### 1. `done-change`
+
+状态：未实现。
+
+## 已完成待归档
+
+当前无。
+""",
+        encoding="utf-8",
+    )
+
+    assert check_backlog_consistency(changes, backlog) == [
+        "backlog references archived change `done-change`; remove it from backlog"
+    ]
+
+
+def test_backlog_rejects_missing_active_change_reference(tmp_path):
+    changes = tmp_path / "openspec" / "changes"
+    (changes / "archive").mkdir(parents=True)
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.parent.mkdir()
+    backlog.write_text(
+        """# OpenSpec Change 实现队列
+
+## 未实现队列
+
+### 1. `missing-change`
+
+状态：未实现。
+
+## 已完成待归档
+
+当前无。
+""",
+        encoding="utf-8",
+    )
+
+    assert check_backlog_consistency(changes, backlog) == [
+        "backlog references missing active change `missing-change`"
+    ]
+
+
+def test_backlog_accepts_active_change_reference(tmp_path):
+    changes = tmp_path / "openspec" / "changes"
+    (changes / "active-change").mkdir(parents=True)
+    (changes / "archive").mkdir()
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.parent.mkdir()
+    backlog.write_text(
+        """# OpenSpec Change 实现队列
+
+## 未实现队列
+
+### 1. `active-change`
+
+状态：未实现。
+
+## 已完成待归档
+
+当前无。
+""",
+        encoding="utf-8",
+    )
+
+    assert check_backlog_consistency(changes, backlog) == []

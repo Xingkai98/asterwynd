@@ -37,6 +37,8 @@ BENCHMARK_SMOKE_CODE_PATTERNS = (
     r"`?agent/workspace_policy\.py`?",
     r"`?benchmarks/",
 )
+BACKLOG_CHANGE_PATTERN = re.compile(r"###\s+\d+\.\s+`([^`]+)`")
+DONE_BACKLOG_PATTERN = re.compile(r"-\s+`([^`]+)`")
 
 DESIGN_SECTIONS = [
     "Context",
@@ -259,10 +261,75 @@ def iter_change_dirs(changes_root: Path, only_change: str | None) -> list[Path]:
     )
 
 
+def _archived_change_names(changes_root: Path) -> set[str]:
+    archive_root = changes_root / "archive"
+    if not archive_root.exists():
+        return set()
+
+    archived: set[str] = set()
+    for path in archive_root.iterdir():
+        if not path.is_dir():
+            continue
+        name = path.name
+        match = re.match(r"\d{4}-\d{2}-\d{2}-(.+)", name)
+        archived.add(match.group(1) if match else name)
+    return archived
+
+
+def _extract_backlog_sections(backlog_text: str) -> tuple[str, str]:
+    unfinished_match = re.search(r"^##\s+未实现队列\s*$", backlog_text, flags=re.MULTILINE)
+    done_match = re.search(r"^##\s+已完成待归档\s*$", backlog_text, flags=re.MULTILINE)
+
+    unfinished = ""
+    done = ""
+    if unfinished_match:
+        unfinished_start = unfinished_match.end()
+        unfinished_end = done_match.start() if done_match else len(backlog_text)
+        unfinished = backlog_text[unfinished_start:unfinished_end]
+    if done_match:
+        done = backlog_text[done_match.end():]
+    return unfinished, done
+
+
+def check_backlog_consistency(changes_root: Path, backlog_path: Path) -> list[str]:
+    if not backlog_path.exists():
+        return [f"backlog file does not exist: {backlog_path}"]
+
+    active = {
+        path.name
+        for path in changes_root.iterdir()
+        if path.is_dir() and path.name != "archive" and not path.name.startswith(".")
+    }
+    archived = _archived_change_names(changes_root)
+    unfinished_section, done_section = _extract_backlog_sections(
+        backlog_path.read_text(encoding="utf-8")
+    )
+    unfinished = set(BACKLOG_CHANGE_PATTERN.findall(unfinished_section))
+    done = set(DONE_BACKLOG_PATTERN.findall(done_section))
+
+    errors: list[str] = []
+    for change_id in sorted(unfinished | done):
+        if change_id in archived:
+            errors.append(
+                f"backlog references archived change `{change_id}`; remove it from backlog"
+            )
+        elif change_id not in active:
+            errors.append(
+                f"backlog references missing active change `{change_id}`"
+            )
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--changes-root", default="openspec/changes")
     parser.add_argument("--change", help="Check a single active change")
+    parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
+    parser.add_argument(
+        "--skip-backlog",
+        action="store_true",
+        help="Skip backlog/archive consistency checks",
+    )
     args = parser.parse_args(argv)
 
     changes_root = Path(args.changes_root)
@@ -276,6 +343,9 @@ def main(argv: list[str] | None = None) -> int:
             errors.append(f"{change_dir.name}: change directory does not exist")
             continue
         errors.extend(check_change(change_dir))
+
+    if not args.change and not args.skip_backlog:
+        errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
 
     if errors:
         for error in errors:

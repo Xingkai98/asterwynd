@@ -35,7 +35,7 @@
 7. 实现功能。
 8. 运行验证。
 9. 更新文档和能力证明链。
-10. PR 合入后，更新 [OpenSpec Change 实现队列](./openspec-change-backlog.md)，将已完成 change 从未实现队列移出，标记为已完成待归档或完成归档。
+10. PR 合入后，执行 OpenSpec 收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。只有暂时无法归档时，才先移入“已完成待归档”。
 
 ## 参考实现调研
 
@@ -114,12 +114,24 @@
 
 `docs/` 只保存稳定长期文档。单个 change 的详细设计和定位过程应留在对应的 `openspec/changes/<change-id>/` 下，并随 change 一起归档。
 
+## Change 合入后归档
+
+功能 PR 合入后，应在单独提交中完成 OpenSpec 收尾：
+
+1. 确认受影响的当前规格已经写入 `openspec/specs/`。
+2. 将 `openspec/changes/<change-id>/` 移动到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
+3. 从 `docs/openspec-change-backlog.md` 的“未实现队列”移除该 change，并重新编号后续条目。
+4. 如果该 change 位于“已完成待归档”，也应从该列表移除。
+5. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+
+`docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。如果 PR 合入后暂时无法归档，才把 change 放入“已完成待归档”，并在后续收尾提交中清空。
+
 ## 约束与校验
 
 当前使用三层约束：
 
 - OpenSpec schema：`spec-driven` schema 已包含 `proposal`、`specs`、`design`、`tasks` 四类 artifact，可通过 `openspec status --change <id>` 查看缺失项。
-- 项目本地脚本：检查 active changes 是否满足项目文档规则，例如 `Change Type` 合法、各类型要求按并集满足、非平凡 change 有 `design.md`、问题定位类 change 有 `diagnosis.md`，并且必填章节不是空壳。
+- 项目本地脚本：检查 active changes 是否满足项目文档规则，例如 `Change Type` 合法、各类型要求按并集满足、非平凡 change 有 `design.md`、问题定位类 change 有 `diagnosis.md`，必填章节不是空壳，核心路径 change 包含 benchmark smoke 验证项，并且 backlog 与 active/archive change 状态一致。
 - 人工评审：脚本不判断设计是否合理；开发前必须人工审核 `design.md` 并确认通过。
 
 在开始实现前，应至少运行：
@@ -131,7 +143,7 @@ openspec validate <change-id> --strict
 uv run python scripts/check_openspec_artifacts.py
 ```
 
-`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
+`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、条件验证项存在、backlog 不引用已归档或不存在的 change。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 设计评审通过前，不进入实现阶段。
 

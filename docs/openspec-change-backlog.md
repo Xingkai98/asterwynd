@@ -5,36 +5,20 @@
 维护规则：
 
 - 新增 OpenSpec change 后，如果不是纯占位，应把它加入本队列。
-- change 实现并 PR 合入后，必须更新本文档：从“未实现队列”移到“已完成待归档”，或直接归档到 `openspec/changes/archive/` 并从本文档移除。
+- change 实现并 PR 合入后，必须直接归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/` 并从本文档移除；如果暂时无法归档，才移到“已完成待归档”。
 - 调整实现顺序时，应写清楚依赖原因，而不是只移动条目。
 - 本文档只记录可提交的 change id 和稳定判断，不记录本地参考仓库路径。
 
 ## 未实现队列
 
-### 1. `add-yaml-configuration`
-
-状态：未实现。
-
-建议先做原因：
-
-- 统一配置是后续 mode deny override、MCP server、browser policy、benchmark 默认参数等能力的基础。
-- 先把 `.env`、CLI 参数和 `myagent.yaml` 的优先级固定下来，可以减少后续 change 重复改 CLI/Web/benchmark 构造路径。
-
-主要交付：
-
-- typed config model 和 loader。
-- `myagent.example.yaml`。
-- CLI/Web/benchmark 接入统一配置。
-- ModePolicy deny override、ignore patterns、command denylist 从配置读取。
-
-### 2. `add-repo-map-code-intelligence`
+### 1. `add-repo-map-code-intelligence`
 
 状态：未实现。
 
 建议顺序原因：
 
 - 这是 coding-agent 主线的只读能力增强，能直接提升后续需求讨论、代码定位和 benchmark 表现。
-- 它依赖 workspace policy、ignore patterns 和 mode policy；放在 YAML 配置之后，可以直接接入统一 ignore 配置。
+- 它依赖 workspace policy、ignore patterns 和 mode policy；YAML 配置已完成，可以直接接入统一 ignore 配置。
 
 主要交付：
 
@@ -43,7 +27,7 @@
 - 只读 code intelligence 工具。
 - WorkspacePolicy 和 ignore patterns 约束。
 
-### 3. `implement-structured-planning-state`
+### 2. `implement-structured-planning-state`
 
 状态：未实现。
 
@@ -60,7 +44,7 @@
 - Web session / Debug 视图转发 planning 事件。
 - benchmark artifacts 记录 planning 摘要。
 
-### 4. `add-plan-mode`
+### 3. `add-plan-mode`
 
 状态：未实现。
 
@@ -77,7 +61,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 5. `add-runtime-mode-switching`
+### 4. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -94,7 +78,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 6. `add-minimal-tui-runtime-view`
+### 5. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -110,7 +94,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 7. `upgrade-subagents-to-agentloop`
+### 6. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -126,7 +110,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 8. `add-mcp-tool-adapter`
+### 7. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -142,7 +126,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 9. `add-browser-use-safety-foundation`
+### 8. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
@@ -162,5 +146,4 @@
 
 这些 change 的 tasks 已完成或已经合入实现，但目录仍在 `openspec/changes/` 下。后续应按项目流程归档到 `openspec/changes/archive/`。
 
-- `introduce-agent-mode-policy`：已实现并合入，PR #10。
-- `standardize-change-design-and-diagnosis-docs`：已完成流程文档和 artifact checker 规则。
+当前无。
