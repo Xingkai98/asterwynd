@@ -52,6 +52,7 @@ uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --r
 - [开发指南](./docs/development-guide.md): 记录安装、运行、常用命令、环境变量和开发注意事项。
 - [测试指南](./docs/testing-guide.md): 记录测试分层、回归测试规则、CLI/Web/benchmark 覆盖要求。
 - [需求流程](./docs/requirements-process.md): 规定后续每个功能如何先讨论、写需求文档、评审、实现和验收。
+- [OpenSpec Change 实现队列](./docs/openspec-change-backlog.md): 记录当前未实现 OpenSpec changes，并按建议实现顺序排列。
 - [OpenSpec 项目说明](./openspec/project.md): 记录当前能力域地图；`openspec/specs/` 是已确认规格，`openspec/changes/` 承载后续需求变更。
 - [经验教训](./docs/lessons-learned.md): 记录历史问题、根因和后续开发必须吸取的教训。
 - [Coding Agent 路线图](./docs/coding-agent-roadmap.md): 当前 coding-agent 能力建设路线图，后续需要按新项目定位继续修订。
