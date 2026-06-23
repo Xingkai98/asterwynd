@@ -21,8 +21,7 @@
 ### 第二批：可立即并行的低耦合基础能力
 
 - `render-markdown-in-chat-surfaces`：展示层能力，提升 Web 对话可读性；与工具结果折叠可并行开发但不建议同时合入。
-- `harden-web-research-tools`：研究工具质量增强，主要影响 WebSearch/WebFetch 和测试替身，可与 UI 展示类 change 并行。
-- `add-search-provider-adapter-architecture`：搜索 provider 架构增强，依赖 `harden-web-research-tools` 的单 provider 边界，先调研再实现多 provider、优先级和 fallback。
+- `add-search-provider-adapter-architecture`：搜索 provider 架构增强，基于已合入的 `harden-web-research-tools` 单 provider 边界，先调研再实现多 provider、优先级和 fallback。
 - `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
 - `add-plan-mode`：planning state 已合入，可开始真实 plan mode；与 streaming / mode switching 都会碰 AgentLoop，合入阶段需要错开。
 
@@ -62,25 +61,7 @@
 - CLI / 未来 TUI Markdown 展示兼容策略。
 - XSS / raw HTML 回归测试。
 
-### 2. `harden-web-research-tools`
-
-状态：未实现。
-
-批次：第二批，可与 UI 展示类和 code intelligence 类 change 并行。
-
-建议顺序原因：
-
-- WebSearch 之前只留下流程备注，没有 active hardening change，需要补正式需求承接。
-- 搜索/抓取质量是 coding agent 调研能力基础，但主要影响 research tools 和测试替身，和 Web 展示类冲突小。
-
-主要交付：
-
-- WebSearch 失败诊断和结果结构。
-- WebFetch 错误、截断和内容边界。
-- fake provider / fixture 测试。
-- read-only 权限保持。
-
-### 3. `add-search-provider-adapter-architecture`
+### 2. `add-search-provider-adapter-architecture`
 
 状态：未实现。
 
@@ -88,7 +69,7 @@
 
 建议顺序原因：
 
-- `harden-web-research-tools` 只硬化当前 DuckDuckGo HTML 路径并拆出单 provider 边界；完整 provider registry、优先级和 fallback 应作为独立能力设计。
+- 已合入的 `harden-web-research-tools` 只硬化当前 DuckDuckGo HTML 路径并拆出单 provider 边界；完整 provider registry、优先级和 fallback 应作为独立能力设计。
 - 搜索 provider 选择会引入鉴权、成本、速率限制、fallback 和结果字段差异，不应混入 research tools hardening。
 
 主要交付：
@@ -99,7 +80,7 @@
 - 多 provider fallback diagnostics。
 - 至少两个 provider adapter 和 fixture 测试。
 
-### 4. `add-tree-sitter-symbol-extraction`
+### 3. `add-tree-sitter-symbol-extraction`
 
 状态：未实现。
 
@@ -118,7 +99,7 @@
 - 未注册语言和解析失败降级。
 - 多语言 fixture 与 benchmark smoke。
 
-### 5. `add-plan-mode`
+### 4. `add-plan-mode`
 
 状态：未实现。
 
@@ -137,7 +118,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 6. `add-streaming-agent-output`
+### 5. `add-streaming-agent-output`
 
 状态：未实现。
 
@@ -156,7 +137,7 @@
 - 非 streaming provider fallback。
 - 为未来 TUI 暴露 streaming event。
 
-### 7. `add-runtime-mode-switching`
+### 6. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -175,7 +156,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 8. `upgrade-subagents-to-agentloop`
+### 7. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -193,7 +174,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 9. `add-lsp-code-intelligence`
+### 8. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -212,7 +193,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 10. `add-minimal-tui-runtime-view`
+### 9. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -230,7 +211,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 11. `add-mcp-tool-adapter`
+### 10. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -248,7 +229,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 12. `add-browser-use-safety-foundation`
+### 11. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
