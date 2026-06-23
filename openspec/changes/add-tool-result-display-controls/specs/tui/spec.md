@@ -2,7 +2,7 @@
 
 ### Requirement: 未来 TUI 复用工具结果 display policy
 
-未来 TUI SHALL 复用 Web / CLI 的工具结果折叠策略，不得定义不兼容的长结果展示语义。
+未来 TUI SHALL 复用 Web / CLI 的工具结果折叠策略和 YAML 可配置阈值，不得定义不兼容的长结果展示语义。
 
 #### Scenario: TUI 展示长工具结果
 

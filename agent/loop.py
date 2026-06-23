@@ -15,6 +15,7 @@ from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentRunConfig
 from agent.run_identity import new_run_id
+from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -33,6 +34,7 @@ class AgentLoop:
         subagent_manager: Optional[SubAgentManager] = None,
         max_iterations: int = 20,
         run_config: AgentRunConfig | None = None,
+        tool_result_display: ToolResultDisplayConfig | None = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -42,6 +44,7 @@ class AgentLoop:
         self.subagent_manager = subagent_manager or SubAgentManager()
         self.max_iterations = max_iterations
         self.run_config = run_config or AgentRunConfig()
+        self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
 
@@ -225,6 +228,11 @@ class AgentLoop:
                         await on_event("tool_result", {
                             "name": tool_call.name,
                             "result": result,
+                            "display": summarize_tool_result(
+                                tool_call.name,
+                                result,
+                                self.tool_result_display,
+                            ).to_dict(),
                         })
 
                     messages.append(tool_result_message(tool_call.id, result))
@@ -281,6 +289,11 @@ class AgentLoop:
                     await on_event("tool_result", {
                         "name": tool_call.name,
                         "result": result,
+                        "display": summarize_tool_result(
+                            tool_call.name,
+                            result,
+                            self.tool_result_display,
+                        ).to_dict(),
                     })
 
                 messages.append(tool_result_message(tool_call.id, result))

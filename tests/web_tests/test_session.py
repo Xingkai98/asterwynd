@@ -44,6 +44,11 @@ class MockLLM:
         return resp
 
 
+class FailingLLM:
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        raise RuntimeError("provider unavailable")
+
+
 def make_session(agent):
     session = AgentSession("test-session", agent)
     session.init_messages()
@@ -94,6 +99,29 @@ async def test_chat_simple_text_response():
     # Verify llm_response has content
     llm_resp = next(e for e in events if e["type"] == "llm_response")
     assert llm_resp["data"]["content"] == "Hello, user!"
+
+
+@pytest.mark.asyncio
+async def test_run_session_emits_error_event_when_agent_run_fails():
+    manager = SessionManager()
+    session = make_session(AgentLoop(
+        llm=FailingLLM(),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+    ))
+
+    events = []
+
+    async def collect(e):
+        events.append(e)
+
+    await manager.run_session(session, "hi", ws_send=collect)
+
+    error = next(e for e in events if e["type"] == "error")
+    done = events[-1]
+    assert error["data"]["message"] == "RuntimeError: provider unavailable"
+    assert done["type"] == "done"
+    assert done["data"]["stop_reason"] == "error"
 
 
 @pytest.mark.asyncio
@@ -166,6 +194,47 @@ async def test_chat_with_tool_calls():
         for e in events
     )
     assert "done" in event_types
+
+
+@pytest.mark.asyncio
+async def test_tool_result_event_includes_display_metadata_for_long_result():
+    @tool_parameters(name="LongTool", description="Long tool", parameters={"type": "object", "properties": {}, "required": []})
+    class LongTool(Tool):
+        name = "LongTool"
+        description = "Long tool"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            return "x" * 5000
+
+    mock_llm = MockLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallDelta(id="c1", name="LongTool", arguments="{}")],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Done after tool", stop_reason="end_turn"),
+    ])
+    registry = ToolRegistry()
+    registry.register(LongTool())
+    manager = SessionManager()
+    session = make_session(AgentLoop(
+        llm=mock_llm, tool_registry=registry, hooks=HookManager(),
+    ))
+
+    events = []
+
+    async def collect(e):
+        events.append(e)
+
+    await manager.run_session(session, "long test", ws_send=collect)
+
+    tool_result = next(e for e in events if e["type"] == "tool_result")
+    display = tool_result["data"]["display"]
+    assert tool_result["data"]["result"] == "x" * 5000
+    assert display["collapsed"] is True
+    assert display["char_count"] == 5000
+    assert display["preview"] == "x" * 1200
 
 
 @pytest.mark.asyncio

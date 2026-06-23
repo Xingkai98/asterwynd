@@ -153,11 +153,23 @@ async def test_websocket_chat_flow():
 def test_web_static_assets_include_session_and_run_display():
     index = (Path(__file__).parents[2] / "web" / "static" / "index.html").read_text()
     script = (Path(__file__).parents[2] / "web" / "static" / "chat.js").read_text()
+    styles = (Path(__file__).parents[2] / "web" / "static" / "style.css").read_text()
 
     assert 'id="session-id"' in index
     assert 'id="run-id"' in index
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
+    assert "addToolResultMessage(event.data)" in script
+    assert "tool-result-toggle" in script
+    assert "aria-expanded" in script
+    assert "case 'error'" in script
+    assert "max_iterations" in script
+    assert ".tool-result-toggle" in styles
+
+    toggle_start = script.index("toggle.addEventListener")
+    toggle_end = script.index("controls.appendChild(toggle)", toggle_start)
+    toggle_handler = script[toggle_start:toggle_end]
+    assert "scrollHeight" not in toggle_handler
 
 
 def test_websocket_session_created_includes_configured_mode():
@@ -235,6 +247,8 @@ def test_websocket_tool_events():
     assert "tool_result" in event_types
     tool_result = next(e for e in events if e["type"] == "tool_result")
     assert "websocket" in tool_result["data"]["result"]
+    assert tool_result["data"]["display"]["collapsed"] is False
+    assert tool_result["data"]["display"]["preview"]
 
 
 @pytest.mark.asyncio

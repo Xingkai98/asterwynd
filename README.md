@@ -260,7 +260,7 @@ MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 | `MYAGENT_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
 | `MYAGENT_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI 界面 |
 
-配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `myagent.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、mode deny override、工具策略和 benchmark 默认参数使用 `myagent.yaml`。
+配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `myagent.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、mode deny override、工具策略、工具结果展示阈值和 benchmark 默认参数使用 `myagent.yaml`。
 
 - 日志同时输出到终端和文件
 - HTTP 4xx/5xx 错误始终记录请求 payload 和响应 body
