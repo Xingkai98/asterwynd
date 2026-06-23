@@ -17,10 +17,12 @@
 
 - `add-repo-map-code-intelligence`：已合入并归档。
 - `implement-structured-planning-state`：已合入并归档。
+- `add-tool-result-display-controls`：已合入并归档。
+- `harden-web-research-tools`：已合入并归档。
 
 ### 第二批：可立即并行的低耦合基础能力
 
-- `render-markdown-in-chat-surfaces`：展示层能力，提升 Web 对话可读性；与工具结果折叠可并行开发但不建议同时合入。
+- `render-markdown-in-chat-surfaces`：展示层能力，提升 Web 对话可读性；工具结果折叠已合入，后续实现时只需复用既有 display policy。
 - `add-search-provider-adapter-architecture`：搜索 provider 架构增强，基于已合入的 `harden-web-research-tools` 单 provider 边界，先调研再实现多 provider、优先级和 fallback。
 - `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
 - `add-plan-mode`：planning state 已合入，可开始真实 plan mode；与 streaming / mode switching 都会碰 AgentLoop，合入阶段需要错开。
