@@ -74,3 +74,14 @@ AgentLoop SHALL 支持在计划创建或状态更新时发出 `planning_state_up
 - **THEN** 系统 SHALL 将当前 planning state 作为临时只读上下文提供给 LLM
 - **AND** SHALL NOT 将该上下文持久 append 到 messages
 
+### Requirement: Agent runtime 提供 session id 和 run id
+
+Agent runtime SHALL 为一次 Agent 运行提供 run id，并在存在交互式会话时关联 session id，用于日志、事件、trace 和 UI 展示。
+
+#### Scenario: 运行事件包含 run id
+
+- **GIVEN** AgentLoop 开始一次运行
+- **WHEN** runtime 发布运行事件
+- **THEN** 事件 SHALL 包含可用于排查的 run id
+- **AND** 如果调用方提供了 session id，事件 SHALL 包含该 session id
+
