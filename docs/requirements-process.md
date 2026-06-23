@@ -128,9 +128,9 @@
 - 如果当前 agent 环境没有 `grill-with-docs` skill，也必须按同等标准执行设计追问：逐个设计分支确认方案、记录取舍和未选方案，并明确测试与验收方式。
 - 设计追问完成前，不进入测试实现或功能实现。
 
-## Change 合入后归档
+## Change 合入后固定收尾 checklist
 
-功能 PR 合入后，应在单独提交中完成 OpenSpec 收尾：
+功能 PR 合入后，必须把 Git 收尾和 OpenSpec 收尾都做完；PR merge、分支删除和 worktree 清理不等于需求流程结束。固定 checklist：
 
 1. 确认受影响的当前规格已经写入 `openspec/specs/`。
 2. 将 `openspec/changes/<change-id>/` 移动到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
@@ -139,6 +139,7 @@
 5. 如果该 change 位于“已完成待归档”，也应从该列表移除。
 6. 全量浏览 `docs/` 下的稳定文档标题和相关关键词，判断 README、架构、开发指南、测试指南、路线图、benchmark 或讨论纪要是否需要同步；只更新与本 change 直接相关的稳定口径。
 7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+8. 完成后再清理本地 worktree、删除本地分支，并确认主 worktree 位于最新 `master`。
 
 `docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。如果 PR 合入后暂时无法归档，才把 change 放入“已完成待归档”，并在后续收尾提交中清空。
 
