@@ -117,10 +117,12 @@ async def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
     assert result["status"] == "passed"
     assert result["edit_count"] == 1
     assert result["mode"] == "build"
+    assert result["agent_run_id"]
     assert "planning_summary" not in result
 
     trace = json.loads((task_output / "trace.json").read_text())
     assert trace["mode"] == "build"
+    assert trace["run_id"] == result["agent_run_id"]
     step_types = [step["type"] for step in trace["steps"]]
     assert "tool_call" in step_types
     assert "edit" in step_types
@@ -133,6 +135,7 @@ async def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
 
     run = json.loads((run_dir / "run.json").read_text())
     assert run["mode"] == "build"
+    assert run["run_id"] == "run-1"
 
 
 @pytest.mark.asyncio

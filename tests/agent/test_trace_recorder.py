@@ -40,14 +40,23 @@ def test_trace_recorder_writes_json(tmp_path):
 
 
 def test_trace_recorder_records_mode_metadata_and_run_started():
-    recorder = TraceRecorder(task_id="task-1", mode="read_only")
+    recorder = TraceRecorder(
+        task_id="task-1",
+        mode="read_only",
+        session_id="session-1",
+        run_id="run-1",
+    )
     recorder.record_run_started()
 
     data = recorder.to_dict()
 
+    assert data["session_id"] == "session-1"
+    assert data["run_id"] == "run-1"
     assert data["mode"] == "read_only"
     assert data["steps"][0]["type"] == "run_started"
     assert data["steps"][0]["data"]["mode"] == "read_only"
+    assert data["steps"][0]["data"]["session_id"] == "session-1"
+    assert data["steps"][0]["data"]["run_id"] == "run-1"
 
 
 def test_trace_recorder_records_planning_state():

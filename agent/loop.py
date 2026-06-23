@@ -14,6 +14,7 @@ from agent.memory.manager import MemoryManager
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentRunConfig
+from agent.run_identity import new_run_id
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -90,13 +91,27 @@ class AgentLoop:
         messages: list[Message],
         on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
         trace_recorder: Optional["TraceRecorder"] = None,
+        session_id: str | None = None,
+        run_id: str | None = None,
     ) -> RunResult:
+        resolved_run_id = run_id or new_run_id()
+        if trace_recorder:
+            trace_recorder.set_run_identity(
+                session_id=session_id,
+                run_id=resolved_run_id,
+            )
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
         self._active_on_event = on_event
         self._active_trace_recorder = trace_recorder
         try:
-            return await self._run(messages, on_event, trace_recorder)
+            return await self._run(
+                messages,
+                on_event,
+                trace_recorder,
+                session_id=session_id,
+                run_id=resolved_run_id,
+            )
         finally:
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
@@ -106,15 +121,26 @@ class AgentLoop:
         messages: list[Message],
         on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
         trace_recorder: Optional["TraceRecorder"] = None,
+        session_id: str | None = None,
+        run_id: str | None = None,
     ) -> RunResult:
         tool_calls_made: list[ToolCallMade] = []
         mode = self.run_config.mode.value
 
+        logger.info(
+            "Agent run started mode=%s session_id=%s run_id=%s",
+            mode,
+            session_id or "",
+            run_id or "",
+        )
         await self.hooks.on_run_started(self.run_config)
         if trace_recorder:
             trace_recorder.record_run_started(mode)
         if on_event:
-            await on_event("run_started", {"mode": mode})
+            event_data = {"mode": mode, "run_id": run_id}
+            if session_id is not None:
+                event_data["session_id"] = session_id
+            await on_event("run_started", event_data)
 
         for iteration in range(self.max_iterations):
             await self.hooks.before_iteration(iteration, messages)

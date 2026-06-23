@@ -517,9 +517,24 @@ async def test_agent_loop_emits_run_started_event_with_mode():
     )
     trace = TraceRecorder(task_id="trace-test")
 
-    await loop.run([Message(role="user", content="test")], on_event=on_event, trace_recorder=trace)
+    await loop.run(
+        [Message(role="user", content="test")],
+        on_event=on_event,
+        trace_recorder=trace,
+        session_id="session-1",
+        run_id="run-1",
+    )
 
-    assert events[0] == ("run_started", {"mode": "read_only"})
+    assert events[0] == (
+        "run_started",
+        {
+            "mode": "read_only",
+            "session_id": "session-1",
+            "run_id": "run-1",
+        },
+    )
+    assert trace.to_dict()["session_id"] == "session-1"
+    assert trace.to_dict()["run_id"] == "run-1"
     assert trace.to_dict()["mode"] == "read_only"
     assert trace.steps[0].type == "run_started"
 

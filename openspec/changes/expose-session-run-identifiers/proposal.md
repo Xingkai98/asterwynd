@@ -11,8 +11,8 @@
 
 - Web UI 显示当前 session id。
 - CLI 显示当前 run id 或 session id。
-- 未来 TUI 复用同一 correlation id。
-- 日志、trace 和 benchmark artifact 写入相同标识，便于排查。
+- 未来 TUI 复用同一 session id / run id 模型。
+- 日志、trace 和 benchmark artifact 写入 session id / run id，便于排查。
 
 ## Capabilities
 
@@ -22,7 +22,7 @@
 - `web-ui`: 展示 session id。
 - `cli`: 展示 run id。
 - `tui`: 未来 TUI 复用标识。
-- `benchmark`: artifact 记录 correlation id。
+- `benchmark`: artifact 记录 agent run id。
 
 ## Impact
 
@@ -33,4 +33,4 @@
   - `benchmarks/`
 - 影响测试：
   - CLI/Web/session/trace/benchmark 测试。
-- 后续需要统一术语：Web 长会话为 session id，单次运行为 run id，二者通过 correlation id 关联。
+- 后续需要统一术语：交互式会话为 session id，一次 Agent 运行为 run id；不引入独立 correlation id。
