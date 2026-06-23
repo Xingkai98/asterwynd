@@ -2,6 +2,7 @@
 
 - [ ] 1.1 修改 research-tools 规格，定义 WebSearch / WebFetch 的失败和结果结构语义。
 - [ ] 1.2 开发前补充具体失败案例和 provider fixture。
+- [ ] 1.3 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md` 和 `diagnosis.md`，逐项确认 provider 边界、错误语义、fixture 和测试策略。
 
 ## 2. 测试
 

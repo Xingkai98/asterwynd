@@ -196,6 +196,25 @@ def _has_benchmark_smoke_task(tasks_text: str) -> bool:
     return "benchmark" in lowered and "smoke" in lowered
 
 
+def _has_design_review_task(tasks_text: str) -> bool:
+    lowered = tasks_text.lower()
+    return "grill-with-docs" in lowered or "等价设计追问" in tasks_text
+
+
+def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list[str]:
+    if not (change_type.all_types & DESIGN_TYPES):
+        return []
+
+    tasks = change_dir / "tasks.md"
+    if not tasks.exists():
+        return ["missing required file: tasks.md"]
+    if not _has_design_review_task(tasks.read_text(encoding="utf-8")):
+        return [
+            "tasks.md missing pre-implementation grill-with-docs or equivalent design review task"
+        ]
+    return []
+
+
 def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[str]:
     if not _requires_benchmark_smoke(proposal_text):
         return []
@@ -242,6 +261,11 @@ def check_change(change_dir: Path) -> list[str]:
 
     if change_type.primary == "docs" and change_type.secondary:
         errors.append(f"{change_dir.name}: docs primary changes must not declare secondary types")
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_design_review_task(change_dir, change_type)
+    )
 
     errors.extend(
         f"{change_dir.name}: {error}"

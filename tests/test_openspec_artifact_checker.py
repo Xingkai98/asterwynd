@@ -83,6 +83,7 @@ def test_combined_bugfix_research_feature_requires_diagnosis_and_design(tmp_path
 """,
         design=VALID_DESIGN,
     )
+    write_tasks(change, "## 1. Spec\n\n- [ ] Run grill-with-docs.\n")
 
     errors = check_change(change)
 
@@ -102,7 +103,11 @@ def test_combined_type_passes_when_all_required_artifacts_exist(tmp_path):
         diagnosis=VALID_DIAGNOSIS,
     )
 
-    write_tasks(change, "## 4. Verification\n\n- [ ] Run benchmark smoke.\n")
+    write_tasks(
+        change,
+        "## 1. Spec\n\n- [ ] Run grill-with-docs.\n\n"
+        "## 4. Verification\n\n- [ ] Run benchmark smoke.\n",
+    )
 
     assert check_change(change) == []
 
@@ -131,6 +136,7 @@ Risks are documented.
 Tests are documented.
 """,
     )
+    write_tasks(change, "## 1. Spec\n\n- [ ] Run grill-with-docs.\n")
 
     assert check_change(change) == [
         "add-feature: design.md section is empty or placeholder-only: ## Context"
@@ -166,7 +172,11 @@ def test_core_change_requires_benchmark_smoke_task(tmp_path):
 """,
         design=VALID_DESIGN,
     )
-    write_tasks(change, "## 4. Verification\n\n- [ ] Run full tests.\n")
+    write_tasks(
+        change,
+        "## 1. Spec\n\n- [ ] Run grill-with-docs.\n\n"
+        "## 4. Verification\n\n- [ ] Run full tests.\n",
+    )
 
     assert check_change(change) == [
         "change-tool-system: tasks.md missing benchmark smoke verification item for coding-agent core change"
@@ -191,10 +201,28 @@ def test_core_change_passes_with_benchmark_smoke_task(tmp_path):
     )
     write_tasks(
         change,
+        "## 1. 规格\n\n- [ ] 开发前使用 `grill-with-docs`。\n\n"
         "## 4. Verification\n\n- [ ] 跑通至少一个 benchmark smoke。\n",
     )
 
     assert check_change(change) == []
+
+
+def test_design_change_requires_preimplementation_design_review_task(tmp_path):
+    change = tmp_path / "change-ui"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: feature
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 4. Verification\n\n- [ ] Run tests.\n")
+
+    assert check_change(change) == [
+        "change-ui: tasks.md missing pre-implementation grill-with-docs or equivalent design review task"
+    ]
 
 
 def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
@@ -207,7 +235,11 @@ def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
 """,
         design=VALID_DESIGN,
     )
-    write_tasks(change, "## 4. Verification\n\n- [ ] Run OpenSpec validation.\n")
+    write_tasks(
+        change,
+        "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n\n"
+        "## 4. Verification\n\n- [ ] Run OpenSpec validation.\n",
+    )
 
     assert check_change(change) == []
 

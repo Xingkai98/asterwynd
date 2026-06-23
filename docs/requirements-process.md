@@ -121,6 +121,8 @@
 
 执行规则：
 
+- 用户要求“开始开发 / 实现 / 做某个 change”时，agent 的第一阶段必须是读取 change 文档、加载并声明使用 `grill-with-docs`，然后逐项提出设计问题；在这个阶段完成前不得写实现代码或测试代码。
+- agent 可以基于代码和文档提出推荐答案，但不得把自己的推荐答案当作用户确认；只有用户明确确认，或已有代码/文档能无歧义回答，才算该问题 resolved。
 - 如果问题能通过阅读代码或项目文档回答，先查代码和文档，不把可验证事实留给猜测。
 - 如果发现术语、边界或设计决策不清楚，应先更新当前 change 的 `design.md`、`proposal.md`、spec delta、`tasks.md` 或稳定项目文档，再进入开发。
 - 如果当前 agent 环境没有 `grill-with-docs` skill，也必须按同等标准执行设计追问：逐个设计分支确认方案、记录取舍和未选方案，并明确测试与验收方式。
@@ -144,6 +146,7 @@
 
 - OpenSpec schema：`spec-driven` schema 已包含 `proposal`、`specs`、`design`、`tasks` 四类 artifact，可通过 `openspec status --change <id>` 查看缺失项。
 - 项目本地脚本：检查 active changes 是否满足项目文档规则，例如 `Change Type` 合法、各类型要求按并集满足、非平凡 change 有 `design.md`、问题定位类 change 有 `diagnosis.md`，必填章节不是空壳，核心路径 change 包含 benchmark smoke 验证项，并且 backlog 与 active/archive change 状态一致。
+- 项目本地脚本还会检查需要 `design.md` 的 active change 是否在 `tasks.md` 中包含 `grill-with-docs` 或“等价设计追问”任务，避免新 change 漏掉开发前设计门槛。
 - 人工评审：脚本不判断设计是否合理；开发前必须先完成 `grill-with-docs` 或等价设计追问，再人工审核 `design.md` 并确认通过。
 
 在开始实现前，应至少运行：

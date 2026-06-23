@@ -2,6 +2,7 @@
 
 - [ ] 1.1 修改 web-ui 规格，定义 assistant Markdown 渲染范围。
 - [ ] 1.2 修改 cli / tui 规格，记录兼容展示策略。
+- [ ] 1.3 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，逐项确认 Markdown 子集、安全策略、布局风险和测试策略。
 
 ## 2. 测试
 

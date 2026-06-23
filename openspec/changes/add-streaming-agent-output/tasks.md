@@ -3,6 +3,7 @@
 - [ ] 1.1 修改 agent-runtime 规格，定义 assistant text delta / streaming complete 事件。
 - [ ] 1.2 修改 Web / CLI / TUI 规格，定义 streaming event 消费语义。
 - [ ] 1.3 设计 tool call streaming 和最终 assistant message 的关系。
+- [ ] 1.4 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，逐项确认 provider streaming、AgentLoop 事件、消息链合法性、各端展示和测试策略。
 
 ## 2. 测试
 

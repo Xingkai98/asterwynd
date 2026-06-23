@@ -2,6 +2,7 @@
 
 - [ ] 1.1 修改 agent-runtime 规格，定义 session/run/correlation id。
 - [ ] 1.2 修改 Web / CLI / TUI / benchmark 规格，定义展示和 artifact 记录要求。
+- [ ] 1.3 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，逐项确认标识边界、日志关联、测试策略和文档影响。
 
 ## 2. 测试
 

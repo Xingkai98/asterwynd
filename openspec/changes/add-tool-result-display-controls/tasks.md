@@ -2,6 +2,7 @@
 
 - [ ] 1.1 修改 Web / CLI / TUI 规格，定义工具结果 display policy。
 - [ ] 1.2 明确 WebFetch 默认折叠和长结果阈值。
+- [ ] 1.3 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，逐项确认展示边界、trace 保真、各端行为和测试策略。
 
 ## 2. 测试
 
