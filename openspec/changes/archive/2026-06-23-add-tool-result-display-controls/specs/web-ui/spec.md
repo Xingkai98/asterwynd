@@ -2,7 +2,7 @@
 
 ### Requirement: Web UI 支持工具结果折叠与展开
 
-Web UI SHALL 对 WebFetch 等长工具结果默认折叠展示，并提供展开查看完整结果的入口。
+Web UI SHALL 对 WebFetch 等长工具结果默认折叠展示，并提供展开查看完整结果的入口。长结果阈值 SHALL 使用统一 display policy，默认从代码默认值加载，并允许通过 `myagent.yaml` 的 `tools.display` 配置覆盖。
 
 #### Scenario: WebFetch 返回长内容
 

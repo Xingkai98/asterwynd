@@ -12,6 +12,10 @@ modes:
 tools:
   ignore_patterns: []
   command_denylist: []
+  display:
+    max_result_chars: 4000
+    max_result_lines: 80
+    preview_chars: 1200
 
 benchmark:
   parallel: 1
