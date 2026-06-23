@@ -15,6 +15,9 @@ def test_load_config_uses_defaults_when_yaml_missing(tmp_path, monkeypatch):
     assert config.agent.default_mode is AgentMode.BUILD
     assert config.tools.ignore_patterns == ()
     assert config.tools.command_denylist == ()
+    assert config.tools.display.max_result_chars == 4000
+    assert config.tools.display.max_result_lines == 80
+    assert config.tools.display.preview_chars == 1200
     assert config.benchmark.parallel == 1
     assert config.benchmark.timeout_seconds == 600
 
@@ -34,6 +37,10 @@ tools:
     - .cache
   command_denylist:
     - dangerous-cmd
+  display:
+    max_result_chars: 2000
+    max_result_lines: 40
+    preview_chars: 600
 benchmark:
   parallel: 3
   timeout_seconds: 42
@@ -47,6 +54,9 @@ benchmark:
     assert config.mode_config(AgentMode.BUILD).deny_tools == ("Bash",)
     assert config.tools.ignore_patterns == (".cache",)
     assert config.tools.command_denylist == ("dangerous-cmd",)
+    assert config.tools.display.max_result_chars == 2000
+    assert config.tools.display.max_result_lines == 40
+    assert config.tools.display.preview_chars == 600
     assert config.benchmark.parallel == 3
     assert config.benchmark.timeout_seconds == 42
 
@@ -150,3 +160,18 @@ def test_tool_strategy_environment_variables_are_not_config_inputs(tmp_path, mon
 
     assert config.tools.ignore_patterns == ()
     assert config.tools.command_denylist == ()
+
+
+def test_invalid_tool_display_config_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("MYAGENT_MODE", raising=False)
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  display:
+    max_result_chars: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="tools.display.max_result_chars"):
+        load_config(start_dir=tmp_path)

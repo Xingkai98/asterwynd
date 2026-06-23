@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from agent.run_config import AgentMode, parse_agent_mode
+from agent.tool_result_display import ToolResultDisplayConfig
 
 
 CONFIG_FILENAME = "myagent.yaml"
@@ -31,6 +32,7 @@ class ModeConfig:
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
+    display: ToolResultDisplayConfig = field(default_factory=ToolResultDisplayConfig)
 
 
 @dataclass(frozen=True)
@@ -245,6 +247,29 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
             mapping.get("command_denylist", []),
             path,
             "tools.command_denylist",
+        ),
+        display=_parse_tool_display_config(mapping.get("display", {}), path),
+    )
+
+
+def _parse_tool_display_config(raw: Any, path: Path) -> ToolResultDisplayConfig:
+    mapping = _expect_mapping(raw, path, "tools.display")
+    defaults = ToolResultDisplayConfig()
+    return ToolResultDisplayConfig(
+        max_result_chars=_validate_positive_int(
+            mapping.get("max_result_chars", defaults.max_result_chars),
+            "tools.display.max_result_chars",
+            path=path,
+        ),
+        max_result_lines=_validate_positive_int(
+            mapping.get("max_result_lines", defaults.max_result_lines),
+            "tools.display.max_result_lines",
+            path=path,
+        ),
+        preview_chars=_validate_positive_int(
+            mapping.get("preview_chars", defaults.preview_chars),
+            "tools.display.preview_chars",
+            path=path,
         ),
     )
 

@@ -34,6 +34,7 @@ from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
 from agent.llm import LLM
 from agent.run_identity import new_run_id, new_session_id
+from agent.tool_result_display import summarize_tool_result
 
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -140,6 +141,7 @@ def build_agent(
         hooks=hooks,
         memory=memory,
         run_config=run_config,
+        tool_result_display=config.tools.display,
     )
 
 @app.command()
@@ -197,6 +199,7 @@ def run_single(
         typer.echo(f"\n【Agent】\n{result.content}")
         if result.tool_calls_made:
             typer.echo(f"\n【工具调用】{len(result.tool_calls_made)} 次")
+            _print_tool_call_summaries(result, config)
         return result
 
     asyncio.run(_run())
@@ -243,6 +246,7 @@ def run_interactive(
             messages.append(Message(role="user", content=initial_prompt))
             result = loop.run_until_complete(_run_async())
             typer.echo(f"\n【Agent】\n{result.content}\n")
+            _print_tool_call_summaries(result, config)
 
         while True:
             try:
@@ -258,8 +262,26 @@ def run_interactive(
             messages.append(Message(role="user", content=user_input))
             result = loop.run_until_complete(_run_async())
             typer.echo(f"\n【Agent】\n{result.content}\n")
+            _print_tool_call_summaries(result, config)
     finally:
         loop.close()
+
+
+def _print_tool_call_summaries(result, config: MyAgentConfig | None = None) -> None:
+    if not result.tool_calls_made:
+        return
+    display_config = (config or MyAgentConfig()).tools.display
+    for index, tool_call in enumerate(result.tool_calls_made, start=1):
+        tool_result = tool_call.result or ""
+        summary = summarize_tool_result(tool_call.name, tool_result, display_config)
+        header = f"{index}. {tool_call.name} ({summary.char_count} 字符, {summary.line_count} 行)"
+        if summary.collapsed:
+            typer.echo(f"\n{header} 摘要:")
+            typer.echo(summary.preview)
+            typer.echo("完整结果保留在本次运行的工具结果中；需要展开查看请使用 Web UI 或 benchmark trace。")
+        else:
+            typer.echo(f"\n{header}:")
+            typer.echo(tool_result)
 
 @app.command()
 def web(

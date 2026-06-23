@@ -73,6 +73,7 @@ class SessionManager:
             hooks=HookManager([TracingHook()]),
             memory=MemoryManager(max_tokens=80_000),
             run_config=self.run_config,
+            tool_result_display=self.config.tools.display,
         )
         session = AgentSession(session_id, agent)
         session.init_messages()
@@ -121,8 +122,19 @@ class SessionManager:
                     on_event=on_event,
                     session_id=session.session_id,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception("Session run failed")
+                await queue.put({
+                    "type": "error",
+                    "data": {"message": f"{type(exc).__name__}: {exc}"},
+                })
+                await queue.put({
+                    "type": "done",
+                    "data": {
+                        "content": "",
+                        "stop_reason": "error",
+                    },
+                })
             finally:
                 await queue.put(None)  # sentinel
 

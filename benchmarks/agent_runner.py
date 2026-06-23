@@ -307,6 +307,7 @@ class MyAgentRunner(AgentRunner):
             memory=MemoryManager(max_tokens=80_000),
             max_iterations=self.max_iterations,
             run_config=self.run_config,
+            tool_result_display=self.config.tools.display,
         )
         messages = self.prompt_builder.build_messages(
             task=task,

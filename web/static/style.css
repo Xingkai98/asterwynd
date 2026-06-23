@@ -136,6 +136,39 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   text-transform: uppercase;
   font-weight: 600;
 }
+.tool-result-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+.tool-result-meta {
+  color: var(--text2);
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: none;
+  white-space: nowrap;
+}
+.tool-result-body {
+  max-height: 260px;
+  overflow: auto;
+}
+.tool-result-controls {
+  display: flex;
+  margin-top: 8px;
+}
+.tool-result-toggle {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.tool-result-toggle:hover {
+  border-color: var(--info);
+}
 .message.error {
   border-color: var(--error);
   color: var(--error);

@@ -91,11 +91,19 @@ function handleEvent(event) {
       break;
 
     case 'tool_result':
-      addMessage('tool', `← ${event.data.name}\n${event.data.result}`);
+      addToolResultMessage(event.data);
       break;
 
     case 'done':
       currentAssistantMsg = null;
+      if (event.data && event.data.stop_reason === 'max_iterations' && !event.data.content) {
+        addMessage('error', 'Run stopped before producing a final response.');
+      }
+      break;
+
+    case 'error':
+      currentAssistantMsg = null;
+      addMessage('error', event.data && event.data.message ? event.data.message : 'Run failed.');
       break;
 
     case 'debug':
@@ -144,6 +152,64 @@ function addToolCallBlock(name, args) {
   }
   messagesEl.appendChild(block);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addToolResultMessage(data) {
+  const el = document.createElement('div');
+  el.className = 'message tool';
+
+  const display = data.display || {
+    collapsed: false,
+    preview: data.result || '',
+    char_count: (data.result || '').length,
+    line_count: (data.result || '').split('\n').length,
+  };
+  const fullResult = data.result || '';
+
+  const header = document.createElement('div');
+  header.className = 'message-header tool-result-header';
+
+  const title = document.createElement('span');
+  title.textContent = `tool result: ${data.name}`;
+  header.appendChild(title);
+
+  const meta = document.createElement('span');
+  meta.className = 'tool-result-meta';
+  meta.textContent = `${display.char_count} chars / ${display.line_count} lines`;
+  header.appendChild(meta);
+
+  el.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'tool-result-body';
+  body.textContent = display.collapsed ? display.preview : fullResult;
+  el.appendChild(body);
+
+  if (display.collapsed) {
+    const controls = document.createElement('div');
+    controls.className = 'tool-result-controls';
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'tool-result-toggle';
+    toggle.textContent = 'Expand';
+    toggle.setAttribute('aria-expanded', 'false');
+
+    let expanded = false;
+    toggle.addEventListener('click', () => {
+      expanded = !expanded;
+      body.textContent = expanded ? fullResult : display.preview;
+      toggle.textContent = expanded ? 'Collapse' : 'Expand';
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+
+    controls.appendChild(toggle);
+    el.appendChild(controls);
+  }
+
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return body;
 }
 
 function renderPlanningState(state) {
@@ -207,7 +273,7 @@ userInput.addEventListener('keydown', (e) => {
 const origHandleEvent = handleEvent;
 handleEvent = function(event) {
   origHandleEvent(event);
-  if (event.type === 'done') {
+  if (event.type === 'done' || event.type === 'error') {
     sendBtn.disabled = false;
     statusEl.textContent = 'connected';
   }

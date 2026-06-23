@@ -1,15 +1,16 @@
 from typer.testing import CliRunner
 
 import cli
-from agent.result import RunResult, StopReason
+from agent.result import RunResult, StopReason, ToolCallMade
 
 
 class FakeAgent:
-    def __init__(self, content="mock response"):
+    def __init__(self, content="mock response", tool_calls_made=None):
         self.llm = type("FakeLLM", (), {"model": "fake-model"})()
         self.max_iterations = None
         self.messages = None
         self.content = content
+        self.tool_calls_made = tool_calls_made or []
         self.session_ids = []
         self.run_ids = []
 
@@ -20,7 +21,7 @@ class FakeAgent:
         return RunResult(
             content=self.content,
             stop_reason=StopReason.END_TURN,
-            tool_calls_made=[],
+            tool_calls_made=self.tool_calls_made,
         )
 
 
@@ -58,6 +59,32 @@ def test_cli_single_prompt_prints_session_and_run_ids(monkeypatch):
     assert "Run ID: run-test" in result.stdout
     assert fake.session_ids == ["session-test"]
     assert fake.run_ids == ["run-test"]
+
+
+def test_cli_single_prompt_summarizes_long_tool_results(monkeypatch):
+    fake = FakeAgent(
+        tool_calls_made=[
+            ToolCallMade(
+                name="Bash",
+                arguments={"cmd": "generate"},
+                result="x" * 5000,
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(cli.app, ["main", "hello"])
+
+    assert result.exit_code == 0
+    assert "【工具调用】1 次" in result.stdout
+    assert "Bash" in result.stdout
+    assert "摘要" in result.stdout
+    assert "5000 字符" in result.stdout
+    assert "完整结果" in result.stdout
 
 
 def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):

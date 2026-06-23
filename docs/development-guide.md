@@ -108,6 +108,9 @@ uv run python cli.py benchmark benchmarks/tasks \
 - `modes.<mode>.deny_tools`
 - `tools.ignore_patterns`
 - `tools.command_denylist`
+- `tools.display.max_result_chars`
+- `tools.display.max_result_lines`
+- `tools.display.preview_chars`
 - `benchmark.parallel`
 - `benchmark.timeout_seconds`
 
