@@ -26,10 +26,15 @@ WebSearch / WebFetch 仍保持 read-only 工具，不引入写文件、副作用
 
 联网工具测试应通过 fake response、fixture HTML 和异常注入覆盖，不依赖真实外网请求。
 
+### Decision 3: 当前 change 只抽单 provider 内部边界
+
+WebSearchTool 只负责工具参数、结果格式和诊断文本；当前唯一 provider adapter 是 DuckDuckGo HTML。完整 provider registry、多 provider fallback、优先级和配置留给后续独立 change。
+
 ## Risks / Trade-offs
 
 - [Risk] 过早绑定某个搜索 provider 的 HTML 结构。Mitigation: 将 provider 解析封装在工具内部，并用 fixture 覆盖。
 - [Risk] 返回结构变更影响现有 prompt。Mitigation: 保留可读文本输出，同时逐步增加结构化字段。
+- [Risk] 把 hardening 扩大成完整搜索 provider 平台。Mitigation: 本 change 只拆出当前 DuckDuckGo provider adapter，不引入 registry、fallback 或配置。
 
 ## Testing Strategy
 

@@ -13,6 +13,7 @@
 
 - 明确 WebSearch 搜索失败、无结果、解析失败和 provider 异常的行为。
 - 改善 WebSearch 返回结果结构，保留标题、URL、摘要等可展示字段。
+- 将 WebSearch 工具层格式化与当前 DuckDuckGo HTML provider adapter 分离，但不引入 provider registry、多 provider fallback、优先级或配置。
 - 明确 WebFetch 内容类型、截断、错误和重定向边界。
 - 为联网研究工具建立 fake provider / fixture 测试策略，避免测试依赖真实网络。
 
@@ -25,9 +26,9 @@
 ## Impact
 
 - 影响代码：
+  - `agent/tools/builtin/search_providers.py`
   - `agent/tools/builtin/web_search.py`
   - `agent/tools/builtin/web_fetch.py`
-  - `agent/tools/factory.py`
 - 影响测试：
   - `tests/agent/tools/`
 - 后续需要补充具体失败案例和 provider 行为样本。
