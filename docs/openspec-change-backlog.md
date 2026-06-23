@@ -6,6 +6,7 @@
 
 - 新增 OpenSpec change 后，如果不是纯占位，应把它加入本队列。
 - change 实现并 PR 合入后，必须直接归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/` 并从本文档移除；如果暂时无法归档，才移到“已完成待归档”。
+- change 状态变化时，必须同步更新“并行开发批次”和“未实现队列”两个章节，避免批次章节保留过期状态。
 - 调整实现顺序时，应写清楚依赖原因，而不是只移动条目。
 - 本文档只记录可提交的 change id 和稳定判断，不记录本地参考仓库路径。
 
@@ -19,10 +20,10 @@
 - `implement-structured-planning-state`：已合入并归档。
 - `add-tool-result-display-controls`：已合入并归档。
 - `harden-web-research-tools`：已合入并归档。
+- `render-markdown-in-chat-surfaces`：已合入并归档。
 
 ### 第二批：可立即并行的低耦合基础能力
 
-- `render-markdown-in-chat-surfaces`：展示层能力，提升 Web 对话可读性；工具结果折叠已合入，后续实现时只需复用既有 display policy。
 - `add-search-provider-adapter-architecture`：搜索 provider 架构增强，基于已合入的 `harden-web-research-tools` 单 provider 边界，先调研再实现多 provider、优先级和 fallback。
 - `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
 - `add-plan-mode`：planning state 已合入，可开始真实 plan mode；与 streaming / mode switching 都会碰 AgentLoop，合入阶段需要错开。
@@ -45,25 +46,7 @@
 
 ## 未实现队列
 
-### 1. `render-markdown-in-chat-surfaces`
-
-状态：未实现。
-
-批次：第二批，可与工具结果展示并行开发，但同改 Web 静态资源时应错开合入。
-
-建议顺序原因：
-
-- assistant 回复天然包含 Markdown，Web 气泡纯文本展示影响代码块、列表和链接可读性。
-- 这是展示体验 change，不需要等待 runtime 协议重构。
-
-主要交付：
-
-- Web assistant 消息安全 Markdown 渲染。
-- 代码块、列表、链接、内联代码基础样式。
-- CLI / 未来 TUI Markdown 展示兼容策略。
-- XSS / raw HTML 回归测试。
-
-### 2. `add-search-provider-adapter-architecture`
+### 1. `add-search-provider-adapter-architecture`
 
 状态：未实现。
 
@@ -82,7 +65,7 @@
 - 多 provider fallback diagnostics。
 - 至少两个 provider adapter 和 fixture 测试。
 
-### 3. `add-tree-sitter-symbol-extraction`
+### 2. `add-tree-sitter-symbol-extraction`
 
 状态：未实现。
 
@@ -101,7 +84,7 @@
 - 未注册语言和解析失败降级。
 - 多语言 fixture 与 benchmark smoke。
 
-### 4. `add-plan-mode`
+### 3. `add-plan-mode`
 
 状态：未实现。
 
@@ -120,7 +103,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 5. `add-streaming-agent-output`
+### 4. `add-streaming-agent-output`
 
 状态：未实现。
 
@@ -139,7 +122,7 @@
 - 非 streaming provider fallback。
 - 为未来 TUI 暴露 streaming event。
 
-### 6. `add-runtime-mode-switching`
+### 5. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -158,7 +141,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 7. `upgrade-subagents-to-agentloop`
+### 6. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -176,7 +159,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 8. `add-lsp-code-intelligence`
+### 7. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -195,7 +178,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 9. `add-minimal-tui-runtime-view`
+### 8. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -213,7 +196,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 10. `add-mcp-tool-adapter`
+### 9. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -231,7 +214,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 11. `add-browser-use-safety-foundation`
+### 10. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
