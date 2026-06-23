@@ -6,12 +6,17 @@ from agent.result import RunResult, StopReason
 
 class FakeAgent:
     def __init__(self, content="mock response"):
+        self.llm = type("FakeLLM", (), {"model": "fake-model"})()
         self.max_iterations = None
         self.messages = None
         self.content = content
+        self.session_ids = []
+        self.run_ids = []
 
-    async def run(self, messages):
+    async def run(self, messages, session_id=None, run_id=None):
         self.messages = messages
+        self.session_ids.append(session_id)
+        self.run_ids.append(run_id)
         return RunResult(
             content=self.content,
             stop_reason=StopReason.END_TURN,
@@ -34,6 +39,50 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     assert fake.max_iterations == 3
     assert fake.messages[-1].role == "user"
     assert fake.messages[-1].content == "hello"
+
+
+def test_cli_single_prompt_prints_session_and_run_ids(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_session_id", lambda: "session-test")
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-test")
+
+    result = CliRunner().invoke(cli.app, ["main", "hello"])
+
+    assert result.exit_code == 0
+    assert "Session ID: session-test" in result.stdout
+    assert "Run ID: run-test" in result.stdout
+    assert fake.session_ids == ["session-test"]
+    assert fake.run_ids == ["run-test"]
+
+
+def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):
+    fake = FakeAgent()
+    run_ids = iter(["run-1", "run-2"])
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
+    monkeypatch.setattr(cli, "new_run_id", lambda: next(run_ids))
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "hello", "--interactive"],
+        input="again\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.count("Session ID: session-interactive") == 1
+    assert "Run ID: run-1" in result.stdout
+    assert "Run ID: run-2" in result.stdout
+    assert fake.session_ids == ["session-interactive", "session-interactive"]
+    assert fake.run_ids == ["run-1", "run-2"]
 
 
 def test_cli_single_prompt_passes_normalized_mode(monkeypatch):

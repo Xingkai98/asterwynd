@@ -36,6 +36,7 @@ class TaskResult:
     agent: str
     model: str = ""
     mode: str = "build"
+    agent_run_id: str | None = None
     status: str = "error"
     test_exit_code: int | None = None
     duration_seconds: float = 0.0

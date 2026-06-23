@@ -316,7 +316,12 @@ class MyAgentRunner(AgentRunner):
         effective_timeout = self.timeout_seconds
         try:
             result = await asyncio.wait_for(
-                agent.run(messages, trace_recorder=trace),
+                agent.run(
+                    messages,
+                    trace_recorder=trace,
+                    session_id=trace.session_id,
+                    run_id=trace.run_id,
+                ),
                 timeout=effective_timeout,
             )
         except asyncio.TimeoutError:

@@ -1,6 +1,8 @@
 # tests/web/test_server.py
 """Integration tests for FastAPI server (HTTP + WebSocket) with Mock LLM."""
 import os
+from pathlib import Path
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 from fastapi.testclient import TestClient
@@ -131,6 +133,7 @@ async def test_websocket_chat_flow():
                 created = ws.receive_json()
                 assert created["type"] == "session_created"
                 assert created["mode"] == "build"
+                assert created["session_id"]
 
                 ws.send_json({"type": "chat", "content": "hello"})
                 events = []
@@ -142,7 +145,19 @@ async def test_websocket_chat_flow():
     finally:
         os.environ["MYAGENT_DEBUG"] = old_debug
     assert [e["type"] for e in events] == ["run_started", "llm_response", "done"]
+    assert events[0]["data"]["session_id"] == created["session_id"]
+    assert events[0]["data"]["run_id"]
     assert events[-1]["data"]["content"] == "Hello from agent!"
+
+
+def test_web_static_assets_include_session_and_run_display():
+    index = (Path(__file__).parents[2] / "web" / "static" / "index.html").read_text()
+    script = (Path(__file__).parents[2] / "web" / "static" / "chat.js").read_text()
+
+    assert 'id="session-id"' in index
+    assert 'id="run-id"' in index
+    assert "sessionIdEl.textContent" in script
+    assert "runIdEl.textContent" in script
 
 
 def test_websocket_session_created_includes_configured_mode():

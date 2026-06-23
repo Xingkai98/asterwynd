@@ -63,6 +63,28 @@ header h1 {
 }
 .tab:hover { background: var(--surface2); color: var(--text); }
 .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+#identity-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  color: var(--text2);
+  font-size: 0.78rem;
+}
+#identity-bar span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+#identity-bar code {
+  max-width: 12ch;
+  overflow: hidden;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #status { margin-left: auto; font-size: 0.8rem; color: var(--text2); }
 
 /* Views */

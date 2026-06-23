@@ -20,12 +20,27 @@ class TraceRecorder:
         task_id: str = "",
         full_trace: bool = False,
         mode: str = "build",
+        session_id: str | None = None,
+        run_id: str | None = None,
     ):
         self.task_id = task_id
         self.full_trace = full_trace  # retained for serialization compat only
         self.mode = mode
+        self.session_id = session_id
+        self.run_id = run_id
         self.steps: list[TraceStep] = []
         self.started_at = time.time()
+
+    def set_run_identity(
+        self,
+        *,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        if session_id is not None:
+            self.session_id = session_id
+        if run_id is not None:
+            self.run_id = run_id
 
     def record(self, step_type: str, **data: Any) -> None:
         self.steps.append(
@@ -35,7 +50,12 @@ class TraceRecorder:
     def record_run_started(self, mode: str | None = None) -> None:
         if mode is not None:
             self.mode = mode
-        self.record("run_started", mode=self.mode)
+        data: dict[str, Any] = {"mode": self.mode}
+        if self.session_id is not None:
+            data["session_id"] = self.session_id
+        if self.run_id is not None:
+            data["run_id"] = self.run_id
+        self.record("run_started", **data)
 
     def record_iteration(
         self,
@@ -108,13 +128,18 @@ class TraceRecorder:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "task_id": self.task_id,
             "mode": self.mode,
             "full_trace": self.full_trace,
             "duration_seconds": round(time.time() - self.started_at, 1),
-            "steps": [asdict(step) for step in self.steps],
         }
+        if self.session_id is not None:
+            data["session_id"] = self.session_id
+        if self.run_id is not None:
+            data["run_id"] = self.run_id
+        data["steps"] = [asdict(step) for step in self.steps]
+        return data
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)

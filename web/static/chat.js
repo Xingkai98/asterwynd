@@ -12,6 +12,8 @@ const messagesEl = document.getElementById('messages');
 const userInput = document.getElementById('user-input');
 const sendBtn = document.getElementById('send-btn');
 const statusEl = document.getElementById('status');
+const sessionIdEl = document.getElementById('session-id');
+const runIdEl = document.getElementById('run-id');
 const debugTabBtn = document.getElementById('debug-tab');
 const planningPanel = document.getElementById('planning-panel');
 const planningItemsEl = document.getElementById('planning-items');
@@ -57,6 +59,18 @@ function handleEvent(event) {
   switch (event.type) {
     case 'session_created':
       sessionId = event.session_id;
+      sessionIdEl.textContent = sessionId;
+      runIdEl.textContent = 'none';
+      break;
+
+    case 'run_started':
+      if (event.data && event.data.session_id) {
+        sessionId = event.data.session_id;
+        sessionIdEl.textContent = sessionId;
+      }
+      if (event.data && event.data.run_id) {
+        runIdEl.textContent = event.data.run_id;
+      }
       break;
 
     case 'llm_response': {
@@ -94,10 +108,6 @@ function handleEvent(event) {
       if (typeof renderPlanningDebug === 'function') {
         renderPlanningDebug(event.data);
       }
-      break;
-
-    case 'session_created':
-      sessionId = event.session_id;
       break;
 
     case 'pong':

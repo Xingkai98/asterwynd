@@ -2,12 +2,12 @@
 """Session manager: one AgentLoop + message history per browser session."""
 import asyncio
 import logging
-import uuid
-from typing import Optional, AsyncGenerator
+from typing import Optional
 
 from agent.config import MyAgentConfig
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
+from agent.run_identity import new_session_id
 from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.tools.factory import build_default_tool_registry
 from agent.workspace_policy import WorkspacePolicy
@@ -54,7 +54,7 @@ class SessionManager:
         self.run_config = AgentRunConfig(mode=parse_agent_mode(resolved_mode))
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
-        session_id = uuid.uuid4().hex[:12]
+        session_id = new_session_id()
         registry = build_default_tool_registry(
             policy=WorkspacePolicy(
                 command_denylist=self.config.tools.command_denylist,
@@ -116,7 +116,11 @@ class SessionManager:
         # Run agent in background, send queued events through websocket
         async def run_agent():
             try:
-                await session.agent.run(session.messages, on_event=on_event)
+                await session.agent.run(
+                    session.messages,
+                    on_event=on_event,
+                    session_id=session.session_id,
+                )
             except Exception:
                 logger.exception("Session run failed")
             finally:

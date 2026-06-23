@@ -33,6 +33,7 @@ from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
 from agent.llm import LLM
+from agent.run_identity import new_run_id, new_session_id
 
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -175,6 +176,8 @@ def run_single(
 ):
     agent = build_agent(model, provider, mode, config=config)
     agent.max_iterations = max_iterations
+    session_id = new_session_id()
+    run_id = new_run_id()
 
     messages: list[Message] = []
     if system:
@@ -188,7 +191,9 @@ def run_single(
     messages.append(Message(role="user", content=prompt))
 
     async def _run():
-        result = await agent.run(messages)
+        typer.echo(f"Session ID: {session_id}")
+        typer.echo(f"Run ID: {run_id}")
+        result = await agent.run(messages, session_id=session_id, run_id=run_id)
         typer.echo(f"\n【Agent】\n{result.content}")
         if result.tool_calls_made:
             typer.echo(f"\n【工具调用】{len(result.tool_calls_made)} 次")
@@ -207,9 +212,11 @@ def run_interactive(
 ):
     agent = build_agent(model, provider, mode, config=config)
     resolved_model = getattr(agent.llm, "model", model or "default")
+    session_id = new_session_id()
 
     typer.echo("MyAgent 交互模式 (输入 exit 退出)")
     typer.echo(f"模型: {resolved_model} | 提供商: {provider} | Mode: {mode}\n")
+    typer.echo(f"Session ID: {session_id}\n")
     agent.max_iterations = max_iterations
 
     messages: list[Message] = []
@@ -226,7 +233,9 @@ def run_interactive(
     asyncio.set_event_loop(loop)
 
     async def _run_async():
-        return await agent.run(messages)
+        run_id = new_run_id()
+        typer.echo(f"Run ID: {run_id}")
+        return await agent.run(messages, session_id=session_id, run_id=run_id)
 
     try:
         # 如果有初始 prompt，先跑一轮

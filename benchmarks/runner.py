@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent.run_config import AgentRunConfig, parse_agent_mode
+from agent.run_identity import new_run_id as new_agent_run_id
 from agent.trace_recorder import TraceRecorder
 from benchmarks.agent_runner import AgentRunner
 from benchmarks.models import (
@@ -160,7 +161,12 @@ class BenchmarkRunner:
         )
 
         log_lines: list[str] = []
-        trace = TraceRecorder(task_id=loaded.task.id, mode=self.run_config.mode.value)
+        agent_run_id = new_agent_run_id()
+        trace = TraceRecorder(
+            task_id=loaded.task.id,
+            mode=self.run_config.mode.value,
+            run_id=agent_run_id,
+        )
         start = time.time()
         workspace: Path | None = None
         hidden_backup: Path | None = None
@@ -173,6 +179,7 @@ class BenchmarkRunner:
             agent=self.agent_name,
             model=self.model,
             mode=self.run_config.mode.value,
+            agent_run_id=agent_run_id,
         )
 
         try:
@@ -274,6 +281,7 @@ class BenchmarkRunner:
                 agent=self.agent_name,
                 model=self.model,
                 mode=self.run_config.mode.value,
+                agent_run_id=agent_run_id,
                 status=status,
                 test_exit_code=test_exit_code,
                 duration_seconds=round(time.time() - start, 1),

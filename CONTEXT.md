@@ -55,3 +55,11 @@ _避免_: 自然语言计划、任务队列、人工审批流
 **Plan Item**:
 Planning State 中的单个计划步骤，包含稳定标识、内容、状态和可选说明。
 _避免_: 整个计划、后台任务、工具调用记录
+
+**Session ID**:
+一次交互式会话的可复制标识；Web 中对应一个浏览器聊天会话，CLI 交互模式中对应一个 REPL 会话，未来 TUI 中对应一个 TUI 会话。
+_避免_: 单次 Agent 运行、benchmark 批次编号、鉴权凭证
+
+**Run ID**:
+一次 Agent 运行的可复制标识；同一个 Session ID 下可以产生多个 Run ID。
+_避免_: 交互式会话、benchmark 批次编号、分布式 tracing 标识
