@@ -7,7 +7,7 @@
 | 模块 | 说明 |
 |------|------|
 | **AgentLoop** | 核心循环约 100 行，消息是唯一状态，所有能力委托给插件 |
-| **ToolRegistry** | 动态工具注册，`@tool_parameters` 装饰器声明工具，10 个内置工具 |
+| **ToolRegistry** | 动态工具注册，`@tool_parameters` 装饰器声明工具，包含文件、命令、代码理解和联网研究工具 |
 | **WorkspacePolicy** | 工作区安全边界，拒绝路径穿越、敏感文件写入、危险命令 |
 | **SandboxExecutor** | subprocess 沙箱，结构化输出（exit_code/stdout/stderr/duration/timed_out） |
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
@@ -72,8 +72,10 @@ uv run python cli.py benchmark benchmarks/tasks \
 | `InspectGitDiff` | read_only | 查看当前工作区 git diff |
 | `ListFiles` | read_only | 列出目录内容，自动忽略 .git/node_modules 等 |
 | `Find` | read_only | 按 glob 模式递归搜索文件 |
-| `WebSearch` | read_only | DuckDuckGo HTML 搜索 |
-| `WebFetch` | read_only | 获取网页内容，支持截断 |
+| `RepoMap` | read_only | 生成仓库结构和 Python 顶层符号摘要 |
+| `SymbolSearch` | read_only | 在仓库内按名称搜索 Python 符号 |
+| `WebSearch` | read_only | DuckDuckGo HTML 搜索，返回带 provider 的稳定文本结果 |
+| `WebFetch` | read_only | 获取网页正文，返回状态/类型/截断诊断 |
 
 Bash 工具内置命令安全策略：先检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则和 ListFiles / Find 忽略规则通过 `myagent.yaml` 配置扩展，见 `myagent.example.yaml`。
 
@@ -93,7 +95,7 @@ agent/
 │   ├── base.py              # Tool ABC + @tool_parameters 装饰器
 │   ├── registry.py          # ToolRegistry
 │   ├── sandbox.py           # SandboxExecutor + SandboxResult
-│   └── builtin/             # 10 个内置工具
+│   └── builtin/             # 内置工具
 ├── hooks/
 │   ├── manager.py           # HookManager + Hook Protocol
 │   └── builtin/             # 4 个内置 Hook
@@ -242,7 +244,7 @@ MYAGENT_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 ```
 
-- **Chat 界面**：正常对话，流式文本输出，工具调用可视化
+- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id 和 planning state
 - **Debug 界面**：环境变量 `MYAGENT_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 原始响应（content、stop_reason、tool_calls）

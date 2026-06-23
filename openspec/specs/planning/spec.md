@@ -2,18 +2,19 @@
 
 ## Purpose
 
-定义计划拆分、todo list、状态推进和多端展示语义。当前仓库尚未实现独立 planning 子系统，本能力域用于约束未来需求。
+定义计划拆分、todo list、状态推进和多端展示语义。当前仓库已经具备 PlanningManager 和结构化 planning state 基础设施；真实 plan mode、持久化 todo 和跨端计划工作流仍由后续 change 定义。
 ## Requirements
-### Requirement: planning 当前为预留能力域
+### Requirement: planning state 当前提供运行期结构化状态
 
-系统 SHALL 在本 change 实现后提供结构化 planning state；在实现前不得声称已具备持久化 todo 或跨端展示能力。
+系统 SHALL 提供运行期结构化 planning state，但不得声称已经具备持久化 todo、真实 plan mode 或跨端计划工作流。
 
 #### Scenario: 当前代码运行
 
 - **GIVEN** 用户通过 CLI 或 Web 运行 AgentLoop
 - **WHEN** agent 需要拆解任务
 - **THEN** 系统 MAY 通过普通 assistant 文本表达计划
-- **AND** 只有在本 change 实现后才 SHALL 提供结构化 planning API
+- **AND** MAY 通过 PlanningManager 暴露结构化 planning state
+- **AND** SHALL NOT 声称该状态等同于真实 plan mode
 
 ### Requirement: 新增 planning 必须走变更流程
 
@@ -70,4 +71,3 @@ PlanningManager SHALL 维护有序 plan items，每个 item 至少包含 id、co
 - **WHEN** 系统返回最终 assistant 回复
 - **THEN** 最终回复 MAY 总结计划执行结果
 - **AND** planning state SHALL 仍作为独立状态可读取
-

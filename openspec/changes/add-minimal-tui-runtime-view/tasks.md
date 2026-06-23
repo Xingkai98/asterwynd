@@ -3,7 +3,8 @@
 - [ ] 1.1 修改 tui 规格，定义最小 runtime view。
 - [ ] 1.2 修改 CLI 规格，定义 TUI 命令入口。
 - [ ] 1.3 修改 planning 规格，定义 TUI 展示 planning state 的要求。
-- [ ] 1.4 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
+- [ ] 1.4 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
+- [ ] 1.5 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
 
 ## 2. 测试
 

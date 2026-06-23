@@ -71,7 +71,7 @@ Build a SWE-bench-like local benchmark for this repository.
 
 Scope:
 
-- 20 local MyAgent tasks.
+- 23 local MyAgent tasks and SWE-bench-style external task fixtures.
 - Each task starts from a `base_commit`.
 - Each task has an issue-style problem statement.
 - Each task has a validation command.
@@ -356,7 +356,7 @@ benchmarks/runs/<run-id>/
   "model": "gpt-4.1",
   "started_at": "2026-06-14T12:30:00Z",
   "ended_at": "2026-06-14T12:42:11Z",
-  "task_count": 20,
+  "task_count": 33,
   "passed": 13,
   "warnings": 2,
   "failed": 7

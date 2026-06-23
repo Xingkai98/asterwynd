@@ -10,6 +10,7 @@
 - [ ] 2.1 修改 research-tools 规格，定义搜索 provider adapter 架构。
 - [ ] 2.2 定义 provider registry、配置优先级和 fallback 语义。
 - [ ] 2.3 定义 provider diagnostics 在工具结果、trace 和测试中的可观察语义。
+- [ ] 2.4 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
 
 ## 3. 测试
 

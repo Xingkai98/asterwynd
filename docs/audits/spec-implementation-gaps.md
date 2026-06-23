@@ -6,14 +6,16 @@
 
 本文只记录排查结论和建议，不修改实现。
 
+> 更新：本排查中的前四个 P0/P1 workspace safety 问题已通过后续 OpenSpec change 修复。下方保留原始排查证据，并在对应条目标注当前状态。
+
 ## 结论摘要
 
 | 项 | 判断 | 优先级 | 建议 |
 | --- | --- | --- | --- |
-| ReadTool 不受 WorkspacePolicy 约束 | bug / 安全缺陷 | P0 | 建 change 修复 |
-| GrepTool 不受 WorkspacePolicy 约束 | bug / 安全缺陷 | P0 | 建 change 修复 |
-| `assert_read_allowed` 不拦 denied patterns | 设计缺陷 | P0 | 和 Read/Grep 一起修 |
-| Bash allowlist 先于 denylist 导致宽泛命令放行 | 设计缺陷 | P1 | 单独建 change 收紧 |
+| ReadTool 不受 WorkspacePolicy 约束 | 已修复，原为 bug / 安全缺陷 | P0 | 已通过 `harden-read-grep-workspace-policy` 修复 |
+| GrepTool 不受 WorkspacePolicy 约束 | 已修复，原为 bug / 安全缺陷 | P0 | 已通过 `harden-read-grep-workspace-policy` 修复 |
+| `assert_read_allowed` 不拦 denied patterns | 已修复，原为设计缺陷 | P0 | 已通过 `harden-read-grep-workspace-policy` 修复 |
+| Bash allowlist 先于 denylist 导致宽泛命令放行 | 已修复，原为设计缺陷 | P1 | 已通过 `tighten-bash-command-policy` 修复 |
 | MemoryManager compact 不生成摘要 | 设计债务 | P1 | 建 change 明确 AutoCompact 语义 |
 | DebugHook 不捕获 memory compact 事件 | 文档/实现不一致 | P2 | 已通过 `align-observability-and-benchmark-docs` 修正文档口径 |
 | InspectGitDiff 未复用 `snapshot_git_diff` | 轻微设计债务 | P3 | 后续重构时处理 |
@@ -23,7 +25,11 @@
 
 ### 1. ReadTool 不受 WorkspacePolicy 约束
 
-**当前实现**
+**当前状态**
+
+已修复。`ReadTool` 接收 `WorkspacePolicy` 并在读取前调用 `assert_read_allowed()`；默认工具工厂会注入共享 policy，相关回归测试位于 `tests/agent/tools/test_read_write_tools.py`。
+
+**原始排查时的实现**
 
 - `agent/tools/builtin/read.py` 直接使用 `Path(path)`。
 - `get_default_tools()` 和 `get_coding_tools()` 都以 `ReadTool()` 形式注册，没有注入 policy。
@@ -54,7 +60,11 @@ read_outside: outside-secret
 
 ### 2. GrepTool 不受 WorkspacePolicy 约束
 
-**当前实现**
+**当前状态**
+
+已修复。`GrepTool` 接收 `WorkspacePolicy`，搜索起点调用 `assert_read_allowed()`，递归搜索会跳过 read policy 拒绝的路径。
+
+**原始排查时的实现**
 
 - `agent/tools/builtin/grep.py` 直接使用 `Path(path)`。
 - `get_default_tools()` 和 `get_coding_tools()` 都以 `GrepTool()` 形式注册，没有注入 policy。
@@ -80,7 +90,11 @@ grep_env: /tmp/.../.env:1: TOKEN=secret
 
 ### 3. `assert_read_allowed` 不拦 denied patterns
 
-**当前实现**
+**当前状态**
+
+已修复。`WorkspacePolicy.assert_read_allowed()` 现在会在 workspace 边界检查后应用 denied patterns，并对 `.env` 等敏感路径返回 `Read denied by workspace policy`。
+
+**原始排查时的实现**
 
 - `WorkspacePolicy.assert_read_allowed()` 只调用 `assert_within_workspace()`。
 - `assert_write_allowed()` 才调用 `is_denied()`。
@@ -102,7 +116,11 @@ grep_env: /tmp/.../.env:1: TOKEN=secret
 
 ### 4. Bash allowlist 先于 denylist
 
-**当前实现**
+**当前状态**
+
+已修复。`WorkspacePolicy.assert_command_allowed()` 现在先检查 denylist，再检查 allowlist，避免宽泛 allowlist 前缀绕过拒绝规则。
+
+**原始排查时的实现**
 
 - `assert_command_allowed()` 先执行 `_match_allowlist()`，命中后直接 return。
 - 因为 allowlist 包含宽泛前缀，以下命令当前会放行：

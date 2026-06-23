@@ -135,8 +135,10 @@
 1. 确认受影响的当前规格已经写入 `openspec/specs/`。
 2. 将 `openspec/changes/<change-id>/` 移动到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
 3. 从 `docs/openspec-change-backlog.md` 的“未实现队列”移除该 change，并重新编号后续条目。
-4. 如果该 change 位于“已完成待归档”，也应从该列表移除。
-5. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+4. 同步更新 `docs/openspec-change-backlog.md` 的“并行开发批次”，避免批次章节保留过期状态。
+5. 如果该 change 位于“已完成待归档”，也应从该列表移除。
+6. 全量浏览 `docs/` 下的稳定文档标题和相关关键词，判断 README、架构、开发指南、测试指南、路线图、benchmark 或讨论纪要是否需要同步；只更新与本 change 直接相关的稳定口径。
+7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
 
 `docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。如果 PR 合入后暂时无法归档，才把 change 放入“已完成待归档”，并在后续收尾提交中清空。
 
@@ -158,7 +160,7 @@ openspec validate <change-id> --strict
 uv run python scripts/check_openspec_artifacts.py
 ```
 
-`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、条件验证项存在、backlog 不引用已归档或不存在的 change。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
+`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 开发前设计追问和设计评审都通过前，不进入实现阶段。
 
@@ -170,6 +172,7 @@ uv run python scripts/check_openspec_artifacts.py
 - 运行全量测试。
 - 运行 OpenSpec strict validate。
 - 运行项目 OpenSpec artifact checker。
+- 如 change 包含 spec delta，将对应 capability 的 delta 合并到 `openspec/specs/<capability>/spec.md`，并确认未实现能力没有被写成已实现。
 
 还应按影响面保留条件验证任务：
 

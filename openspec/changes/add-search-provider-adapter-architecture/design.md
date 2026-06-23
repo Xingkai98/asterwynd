@@ -32,29 +32,29 @@
 
 调研结论应写入本 change 的设计文档或 `docs/discussions/`，不得只停留在对话中。
 
-## Decisions To Confirm Before Implementation
+## Decisions
 
 ### Decision 1: Provider protocol shape
 
-待确认：`SearchProvider.search()` 返回纯 `list[SearchResult]`，还是返回包含 diagnostics 的 provider response object。
+当前待确认：`SearchProvider.search()` 返回纯 `list[SearchResult]`，还是返回包含 diagnostics 的 provider response object。
 
 推荐：返回 provider response object，包含 `provider_name`、`results`、`diagnostics`、`raw_status` 和 `fallback_reason`，避免把 fallback 信息塞进异常。
 
 ### Decision 2: Provider priority source
 
-待确认：优先级来自配置文件、环境变量还是固定默认列表。
+当前待确认：优先级来自配置文件、环境变量还是固定默认列表。
 
 推荐：配置文件声明显式优先级；未配置时使用保守默认 provider。
 
 ### Decision 3: Fallback conditions
 
-待确认：哪些错误触发 fallback。
+当前待确认：哪些错误触发 fallback。
 
 推荐：网络失败、超时、5xx、provider parse failure 可 fallback；4xx 鉴权/配额错误返回明确诊断并可 fallback 到无 key provider；无结果不自动 fallback，除非配置允许。
 
 ### Decision 4: Test strategy
 
-待确认：真实 provider smoke 是否纳入 CI。
+当前待确认：真实 provider smoke 是否纳入 CI。
 
 推荐：CI 只跑 fake provider / fixture；真实 provider smoke 使用手动命令和环境变量显式开启。
 

@@ -78,12 +78,13 @@
 - **WHEN** 入口构造工具 registry
 - **THEN** 系统 SHALL fail fast 并返回可读配置错误
 
-### Requirement: Plan mode 不得冒充结构化计划能力
+### Requirement: Plan mode 不得冒充真实计划模式
 
-系统 SHALL 将当前 plan mode 视为只读权限边界，不得描述为已经具备结构化 planning state、todo 状态机或计划展示能力，直到对应 change 被接受并实现。
+系统 SHALL 将当前 plan mode 视为只读权限边界。即使系统已经具备通用结构化 planning state，plan mode 也不得被描述为已经具备强制产出计划、禁止执行实现、或可验证计划优先工作流的真实计划模式，直到 `add-plan-mode` 或等价 change 被接受并实现。
 
 #### Scenario: 文档描述 plan mode
 
 - **GIVEN** 文档或路线图提到 plan mode
-- **WHEN** 结构化 planning state 尚未实现
+- **WHEN** 真实 plan mode 尚未实现
 - **THEN** 规格 SHALL 明确 plan mode 当前仅提供只读权限边界
+- **AND** MAY 提及通用 planning state 已存在，但不得把它等同于真实 plan mode

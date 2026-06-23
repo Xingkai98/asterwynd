@@ -44,7 +44,7 @@ Regression tests are documented.
 
 
 def write_change(root: Path, proposal: str, design: str | None = None, diagnosis: str | None = None):
-    root.mkdir()
+    root.mkdir(parents=True)
     (root / "proposal.md").write_text(proposal, encoding="utf-8")
     if design is not None:
         (root / "design.md").write_text(design, encoding="utf-8")
@@ -54,6 +54,12 @@ def write_change(root: Path, proposal: str, design: str | None = None, diagnosis
 
 def write_tasks(root: Path, text: str):
     (root / "tasks.md").write_text(text, encoding="utf-8")
+
+
+def write_spec_delta(root: Path, capability: str = "web-ui"):
+    spec = root / "specs" / capability / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("## ADDED Requirements\n\n### Requirement: Example\n\nExample.\n", encoding="utf-8")
 
 
 def test_parse_change_type_primary_and_secondary():
@@ -242,6 +248,80 @@ def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
     )
 
     assert check_change(change) == []
+
+
+def test_spec_delta_requires_matching_current_spec(tmp_path):
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: feature
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 规格\n\n"
+        "- [ ] 开发前使用等价设计追问。\n"
+        "- [ ] 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。\n",
+    )
+    write_spec_delta(change, "web-ui")
+
+    assert check_change(change, tmp_path / "openspec" / "specs") == [
+        "change-ui: spec delta capability `web-ui` has no matching current spec at "
+        f"{tmp_path / 'openspec' / 'specs' / 'web-ui' / 'spec.md'}"
+    ]
+
+
+def test_spec_delta_requires_current_spec_sync_task(tmp_path):
+    specs_root = tmp_path / "openspec" / "specs"
+    current = specs_root / "web-ui" / "spec.md"
+    current.parent.mkdir(parents=True)
+    current.write_text("# web-ui 规格\n", encoding="utf-8")
+
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: feature
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+    write_spec_delta(change, "web-ui")
+
+    assert check_change(change, specs_root) == [
+        "change-ui: tasks.md missing current spec sync task for spec delta "
+        "(`openspec/specs/<capability>/spec.md`)"
+    ]
+
+
+def test_spec_delta_passes_with_matching_current_spec_and_sync_task(tmp_path):
+    specs_root = tmp_path / "openspec" / "specs"
+    current = specs_root / "web-ui" / "spec.md"
+    current.parent.mkdir(parents=True)
+    current.write_text("# web-ui 规格\n", encoding="utf-8")
+
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: feature
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 规格\n\n"
+        "- [ ] 开发前使用等价设计追问。\n"
+        "- [ ] 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。\n",
+    )
+    write_spec_delta(change, "web-ui")
+
+    assert check_change(change, specs_root) == []
 
 
 def test_backlog_rejects_archived_change_reference(tmp_path):

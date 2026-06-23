@@ -28,11 +28,11 @@ The current system already has useful agent infrastructure:
 |------|--------------------|
 | Agent loop | LLM -> tool calls -> tool results -> repeat |
 | LLM adapters | OpenAI-compatible and Anthropic providers |
-| Tools | Read, Write, Bash, Grep, WebSearch, WebFetch |
+| Tools | Read, Write, Edit, Bash, Grep, ListFiles, Find, InspectGitDiff, RepoMap, SymbolSearch, WebSearch, WebFetch |
 | Hooks | Logging, tracing, retry, token budget hooks |
 | Memory | AutoCompact-style message compaction |
 | Subagents | Background delegation and parent channel injection |
-| Web UI | Chat UI and debug timeline support |
+| Web UI | Chat UI, debug timeline, session/run identifiers, planning state display, Markdown rendering, and tool result display controls |
 | Coding tools | Workspace policy, exact-match `Edit`, workspace-aware `Bash`, `InspectGitDiff`, and hardened `Write` behavior |
 | Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, summary reports, and CLI entry point |
 
