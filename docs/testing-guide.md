@@ -41,7 +41,8 @@ tests/agent/tools/test_edit_tool.py
 
 - WorkspacePolicy
 - ToolRegistry
-- EditTool / BashTool / ListFiles / Find
+- EditTool / BashTool / ListFiles / Find / RepoMap / SymbolSearch
+- WebSearch / WebFetch 的 fake provider、fake transport、错误诊断和截断逻辑
 - TraceRecorder
 - Message / Result
 - provider message serialization
@@ -57,11 +58,18 @@ tests/agent/tools/test_edit_tool.py
 - AgentLoop 工具调用链
 - Memory compact 后保持 tool-call 协议合法
 - Web session 消息历史
+- Web session 的 session id / run id、planning state 事件和工具结果 display metadata
 - Benchmark runner artifact 写入
 
 ### Web 测试
 
 Web 测试覆盖 server、session 和浏览器行为。
+
+重点覆盖：
+
+- Chat 页面 assistant Markdown 渲染，包括列表、代码块、链接，以及 raw HTML / unsafe link 的转义或阻断。
+- 工具结果展示策略，包括长结果折叠、preview、字符/行数元数据，以及工具结果不走 Markdown/HTML 注入。
+- session id、run id、planning state 和 Debug 开关的前端可见行为。
 
 常用命令：
 
@@ -117,6 +125,7 @@ uv run python cli.py benchmark /tmp/myagent-one-swe-task \
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。
 - Memory compact 不能破坏 tool-call / tool-result 相邻链。
 - `passed_with_warnings` 是测试通过但过程不干净，不能算 clean pass。
+- Web Chat 当前不提供 token streaming；涉及 streaming 的变更必须新增 AgentLoop event、WebSocket 和 CLI 覆盖，不能只改前端展示。
 
 ## 覆盖率目标
 

@@ -6,6 +6,8 @@ This checker intentionally performs mechanical checks only:
 - required files exist for the declared change type set
 - required sections exist and contain non-placeholder body text
 - proposal.md declares Change Type with primary/secondary fields
+- change spec delta capabilities map to current specs
+- non-docs changes with spec deltas include a current spec sync task
 
 It does not judge whether a design is technically correct. Human review owns
 that gate.
@@ -201,6 +203,63 @@ def _has_design_review_task(tasks_text: str) -> bool:
     return "grill-with-docs" in lowered or "等价设计追问" in tasks_text
 
 
+def _has_current_spec_sync_task(tasks_text: str) -> bool:
+    lowered = tasks_text.lower()
+    return (
+        ("current spec" in lowered or "当前规格" in tasks_text)
+        and "openspec/specs" in lowered
+    )
+
+
+def _changed_capabilities(change_dir: Path) -> tuple[str, ...]:
+    specs_root = change_dir / "specs"
+    if not specs_root.exists():
+        return ()
+    return tuple(
+        sorted(
+            path.parent.name
+            for path in specs_root.glob("*/spec.md")
+            if path.is_file()
+        )
+    )
+
+
+def _check_current_spec_mapping(
+    change_dir: Path, current_specs_root: Path | None
+) -> list[str]:
+    capabilities = _changed_capabilities(change_dir)
+    if not capabilities:
+        return []
+
+    root = current_specs_root or change_dir.parent.parent / "specs"
+    errors: list[str] = []
+    for capability in capabilities:
+        current_spec = root / capability / "spec.md"
+        if not current_spec.exists():
+            errors.append(
+                "spec delta capability "
+                f"`{capability}` has no matching current spec at {current_spec}"
+            )
+    return errors
+
+
+def _check_current_spec_sync_task(
+    change_dir: Path, change_type: ChangeType
+) -> list[str]:
+    if change_type.primary == "docs" or not _changed_capabilities(change_dir):
+        return []
+
+    tasks = change_dir / "tasks.md"
+    if not tasks.exists():
+        return ["missing required file: tasks.md"]
+    if not _has_current_spec_sync_task(tasks.read_text(encoding="utf-8")):
+        return [
+            "tasks.md missing current spec sync task for spec delta "
+            "(`openspec/specs/<capability>/spec.md`)"
+        ]
+    return []
+
+
 def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list[str]:
     if not (change_type.all_types & DESIGN_TYPES):
         return []
@@ -229,7 +288,7 @@ def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[st
     return []
 
 
-def check_change(change_dir: Path) -> list[str]:
+def check_change(change_dir: Path, current_specs_root: Path | None = None) -> list[str]:
     errors: list[str] = []
     proposal = change_dir / "proposal.md"
     if not proposal.exists():
@@ -270,6 +329,16 @@ def check_change(change_dir: Path) -> list[str]:
     errors.extend(
         f"{change_dir.name}: {error}"
         for error in _check_benchmark_smoke_task(change_dir, proposal_text)
+    )
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_current_spec_mapping(change_dir, current_specs_root)
+    )
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_current_spec_sync_task(change_dir, change_type)
     )
 
     return errors
@@ -347,6 +416,7 @@ def check_backlog_consistency(changes_root: Path, backlog_path: Path) -> list[st
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--changes-root", default="openspec/changes")
+    parser.add_argument("--current-specs-root", default="openspec/specs")
     parser.add_argument("--change", help="Check a single active change")
     parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
     parser.add_argument(
@@ -366,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
         if not change_dir.exists():
             errors.append(f"{change_dir.name}: change directory does not exist")
             continue
-        errors.extend(check_change(change_dir))
+        errors.extend(check_change(change_dir, Path(args.current_specs_root)))
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))

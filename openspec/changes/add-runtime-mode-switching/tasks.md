@@ -4,7 +4,8 @@
 - [ ] 1.2 修改 agent-runtime 规格，定义 session runtime state 和 mode_changed 事件。
 - [ ] 1.3 修改 tool-system 规格，定义 schema / execute 读取最新 mode。
 - [ ] 1.4 修改 CLI / Web / TUI 规格，定义用户触发 mode 切换的入口。
-- [ ] 1.5 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
+- [ ] 1.5 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
+- [ ] 1.6 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
 
 ## 2. 测试
 

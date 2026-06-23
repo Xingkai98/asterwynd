@@ -26,6 +26,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | WorkspacePolicy | `agent/workspace_policy.py` | 工作区路径、文件和命令安全边界 |
 | HookManager | `agent/hooks/manager.py` | 生命周期扩展点 |
 | MemoryManager | `agent/memory/manager.py` | 消息历史与 AutoCompact |
+| PlanningManager | `agent/planning.py` | 当前运行的结构化计划状态 |
 | SkillLoader | `agent/skills/loader.py` | Markdown skill 加载 |
 | SubAgentManager | `agent/subagent/manager.py` | 后台子 agent 委托 |
 | TraceRecorder | `agent/trace_recorder.py` | 运行轨迹记录 |
@@ -44,16 +45,20 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | InspectGitDiff | read_only | 查看 git diff |
 | ListFiles | read_only | 列出目录 |
 | Find | read_only | 按 glob 查找文件 |
-| WebSearch | read_only | 网络搜索 |
-| WebFetch | read_only | 抓取网页内容 |
+| RepoMap | read_only | 生成仓库结构和 Python 顶层符号摘要 |
+| SymbolSearch | read_only | 按名称搜索 Python 符号 |
+| WebSearch | read_only | 网络搜索，当前默认 DuckDuckGo HTML provider |
+| WebFetch | read_only | 抓取网页正文并返回状态/类型/截断诊断 |
 
 BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`duration_ms` 和 `timed_out`。WorkspacePolicy 负责命令 allowlist / denylist 和敏感路径限制。
+
+`RepoMap` 和 `SymbolSearch` 属于当前轻量 code intelligence 能力：它们复用 WorkspacePolicy、忽略规则和只读工具边界，使用文件扫描与 Python AST 提取仓库结构和符号摘要。LSP、引用分析、诊断和多语言语法级索引仍是后续能力。
 
 ### WebSearch provider adapter
 
 `WebSearch` 通过 `SearchProviderRegistry` 调用搜索 provider adapter。provider 优先级来自 `myagent.yaml` 的 `tools.web_search.providers`；未配置时使用保守默认 `duckduckgo-html`。环境变量只提供 provider 凭据和端点，例如 `MYAGENT_TAVILY_API_KEY`、`MYAGENT_BRAVE_SEARCH_API_KEY` 和 `MYAGENT_SEARXNG_BASE_URL`，不参与 provider 排序。
 
-每个 provider 返回统一的 provider response object，包含最终 provider、结果和诊断信息。网络失败、超时、5xx、429、解析失败、缺 key 或缺 base URL 可以 fallback；搜索成功但无结果默认不 fallback。CI 测试只使用 fake provider、fixture 和 `httpx.MockTransport`，真实 provider smoke 需要显式环境变量并手动执行。
+每个 provider 返回统一的 provider response object，包含最终 provider、结果和诊断信息。网络失败、超时、5xx、429、解析失败、缺 key 或缺 base URL 可以 fallback；搜索成功但无结果默认不 fallback。CI 测试只使用 fake provider、fixture 和 `httpx.MockTransport`，真实 provider smoke 需要显式环境变量并手动执行。`WebFetch` 会对非 2xx、非文本内容、请求失败和截断结果返回可读诊断。
 
 ## Web UI
 
@@ -64,7 +69,7 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
-Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。
+Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、planning state、assistant Markdown 和工具调用过程；工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。当前 Web 运行事件仍是整段 LLM response 后展示，尚未实现 assistant token streaming。
 
 ## Benchmark
 

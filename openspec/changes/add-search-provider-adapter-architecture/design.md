@@ -64,7 +64,7 @@
 - 默认 provider 列表建议只包含 `duckduckgo-html`，因为它无 key。配置提供 key 或 base URL 后再启用 `brave`、`tavily`、`serpapi`、`searxng`。
 - 本 change 首批实现 `duckduckgo-html`、`tavily`、`brave` 和 `searxng`。`serpapi` 已完成调研但暂不实现，避免在同一 change 内扩大凭据和字段兼容面。
 
-## Decisions To Confirm Before Implementation
+## Decisions
 
 ### Decision 1: Provider protocol shape
 

@@ -44,7 +44,7 @@ AgentLoop.run()  # ~100行，唯一的状态管理者
 - 面试题："如果要加监控/重试/限流，怎么做？" → 传不同 Hook
 
 **2. 工具系统：三级权限 + 沙箱隔离**
-- `read_only=True`：只读工具（Read、Grep、WebSearch、WebFetch）
+- `read_only=True`：只读工具（Read、Grep、ListFiles、Find、RepoMap、SymbolSearch、WebSearch、WebFetch）
 - `dangerous=True`：强制走 subprocess 沙箱，限制超时和资源（Bash）
 - `Tool` ABC 定义统一接口，`@tool_parameters` 装饰器声明 JSON Schema
 - `ToolRegistry.get_all_schemas()` 一次性获取所有工具定义给 LLM
@@ -77,7 +77,7 @@ AgentLoop.run()  # ~100行，唯一的状态管理者
 
 ### 内置工具集
 
-`Read` / `Write` / `Edit` / `Bash`（沙箱+结构化输出） / `InspectGitDiff` / `Grep` / `ListFiles` / `Find` / `WebSearch` / `WebFetch`
+`Read` / `Write` / `Edit` / `Bash`（沙箱+结构化输出） / `InspectGitDiff` / `Grep` / `ListFiles` / `Find` / `RepoMap` / `SymbolSearch` / `WebSearch` / `WebFetch`
 
 ### 技术栈
 

@@ -3,7 +3,8 @@
 - [ ] 1.1 修改 subagents 规格，定义受限 AgentLoop 子 agent。
 - [ ] 1.2 修改 agent-runtime 规格，定义父子 AgentLoop 事件边界。
 - [ ] 1.3 修改 tool-system 规格，定义子 agent 工具权限继承和限制。
-- [ ] 1.4 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
+- [ ] 1.4 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
+- [ ] 1.5 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案。
 
 ## 2. 测试
 

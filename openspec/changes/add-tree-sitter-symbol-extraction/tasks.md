@@ -3,7 +3,8 @@
 - [ ] 1.1 修改 code-intelligence 规格，定义 tree-sitter 多语言符号提取边界。
 - [ ] 1.2 修改 coding-tools 规格，定义 repo map / symbol 工具的多语言输出。
 - [ ] 1.3 修改 workspace-safety 规格，定义 tree-sitter 解析不得绕过 read policy。
-- [ ] 1.4 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认语言覆盖、依赖、降级策略、测试和文档影响。
+- [ ] 1.4 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
+- [ ] 1.5 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，确认语言覆盖、依赖、降级策略、测试和文档影响。
 
 ## 2. 测试
 

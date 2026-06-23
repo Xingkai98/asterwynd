@@ -21,7 +21,7 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - `agent-runtime`: AgentLoop、消息循环、停止条件和 tool-call 协议。
 - `configuration`: 结构化配置文件、环境变量覆盖和入口层配置解析。
 - `agent-modes`: 单轮、交互、Web、benchmark 等运行入口和未来模式边界。
-- `planning`: 计划拆分和 todo 展示语义，当前为预留能力域。
+- `planning`: PlanningManager、结构化 planning state、状态事件和展示语义；真实 plan mode 仍由后续 change 定义。
 - `tool-system`: 工具协议、注册、schema、执行、错误和权限元数据。
 - `coding-tools`: 文件、搜索、编辑、命令和 diff 检查工具。
 - `research-tools`: WebSearch、WebFetch 等联网研究工具。
@@ -30,7 +30,7 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - `skills`: Markdown skill 加载、匹配和注入。
 - `subagents`: 子 agent 委托、ParentChannel、结果回传和取消。
 - `mcp-integration`: MCP 集成，当前为预留能力域。
-- `code-intelligence`: LSP、符号、诊断和代码索引，当前为预留能力域。
+- `code-intelligence`: 当前包含轻量 RepoMap / SymbolSearch；LSP、诊断、引用分析、多语言索引和语义检索仍为后续能力。
 - `browser-computer-use`: 浏览器和桌面操作，当前为预留能力域。
 - `cli`: Typer 命令入口和非交互运行。
 - `tui`: 终端 UI，当前为预留能力域。
@@ -51,6 +51,7 @@ OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
 - `proposal.md` 必须包含 `## Change Type`，声明 `primary` 和 `secondary` 类型。
 - 项目文档规则按 `primary` 与 `secondary` 的类型并集校验；每个涉及类型的要求都必须满足。
 - 新建 `tasks.md` 应参考 `openspec/templates/tasks.md`，保留通用验证项，并按影响面补充 benchmark、Web、TUI、browser 或外部集成 smoke。
+- change delta spec 路径 `openspec/changes/<change-id>/specs/<capability>/spec.md` 的 `<capability>` 必须映射到 `openspec/specs/<capability>/spec.md`；非 docs change 的 `tasks.md` 必须包含 current spec 同步任务。
 - 非平凡 change 开发前必须用 `grill-with-docs` 审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
 - change 实现 PR 合入后，应归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，并从 `docs/openspec-change-backlog.md` 移除；backlog 只记录未实现或临时已完成待归档的 active change。
 
