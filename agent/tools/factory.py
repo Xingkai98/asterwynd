@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent.config import WebSearchConfig
 from agent.run_config import ModePolicy
 from agent.tools.base import Tool
 from agent.tools.builtin.bash import BashTool
@@ -38,12 +39,14 @@ def build_default_tool_registry(
     policy: WorkspacePolicy | None = None,
     mode_policy: ModePolicy | None = None,
     ignore_patterns: tuple[str, ...] = (),
+    web_search_config: WebSearchConfig | None = None,
     tools: list[Tool] | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     for tool in tools or get_default_tools(
         policy=policy,
         ignore_patterns=ignore_patterns,
+        web_search_config=web_search_config,
     ):
         registry.register(tool)
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
@@ -71,6 +74,7 @@ def get_default_tools(
     policy: WorkspacePolicy | None = None,
     *,
     ignore_patterns: tuple[str, ...] = (),
+    web_search_config: WebSearchConfig | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     return [
@@ -78,7 +82,7 @@ def get_default_tools(
         WriteTool(policy=policy),
         EditTool(policy=policy),
         BashTool(policy=policy),
-        WebSearchTool(),
+        WebSearchTool(provider_configs=(web_search_config or WebSearchConfig()).providers),
         WebFetchTool(),
         GrepTool(policy=policy),
         InspectGitDiffTool(policy=policy),

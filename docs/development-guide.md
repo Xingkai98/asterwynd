@@ -99,6 +99,9 @@ uv run python cli.py benchmark benchmarks/tasks \
 | `MYAGENT_MODE` | 覆盖 `myagent.yaml` 中的默认 agent mode |
 | `MYAGENT_BENCHMARK_PARALLEL` | 覆盖 `myagent.yaml` 中的 benchmark 并发数 |
 | `MYAGENT_BENCHMARK_TIMEOUT` | 覆盖 `myagent.yaml` 中的 benchmark 超时 |
+| `MYAGENT_TAVILY_API_KEY` | Tavily Search provider API key |
+| `MYAGENT_BRAVE_SEARCH_API_KEY` | Brave Search provider API key |
+| `MYAGENT_SEARXNG_BASE_URL` | SearXNG provider base URL |
 
 ## 结构化配置
 
@@ -108,6 +111,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 - `modes.<mode>.deny_tools`
 - `tools.ignore_patterns`
 - `tools.command_denylist`
+- `tools.web_search.providers`
 - `tools.display.max_result_chars`
 - `tools.display.max_result_lines`
 - `tools.display.preview_chars`

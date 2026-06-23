@@ -3,7 +3,12 @@ import pytest
 
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
-from agent.tools.builtin.search_providers import SearchResult
+from agent.tools.builtin.search_providers import (
+    SearchProviderRegistry,
+    SearchProviderRequestError,
+    SearchProviderResponse,
+    SearchResult,
+)
 
 
 def _transport(handler):
@@ -20,16 +25,19 @@ async def test_web_search_formats_injected_provider_results():
     class FakeSearchProvider:
         name = "fake-search"
 
-        async def search(self, query: str, limit: int) -> list[SearchResult]:
+        async def search(self, query: str, limit: int) -> SearchProviderResponse:
             assert query == "agent runtime"
             assert limit == 1
-            return [
-                SearchResult(
-                    title="Runtime",
-                    url="https://example.com/runtime",
-                    snippet="Agent runtime summary.",
-                )
-            ]
+            return SearchProviderResponse(
+                provider_name=self.name,
+                results=[
+                    SearchResult(
+                        title="Runtime",
+                        url="https://example.com/runtime",
+                        snippet="Agent runtime summary.",
+                    )
+                ],
+            )
 
     tool = WebSearchTool(provider=FakeSearchProvider())
 
@@ -43,6 +51,63 @@ async def test_web_search_formats_injected_provider_results():
         "URL: https://example.com/runtime\n"
         "Snippet: Agent runtime summary."
     )
+
+
+@pytest.mark.asyncio
+async def test_web_search_reports_fallback_diagnostics():
+    class FailingProvider:
+        name = "first"
+
+        async def search(self, query: str, limit: int) -> SearchProviderResponse:
+            raise SearchProviderRequestError("offline")
+
+    class WorkingProvider:
+        name = "second"
+
+        async def search(self, query: str, limit: int) -> SearchProviderResponse:
+            return SearchProviderResponse(
+                provider_name=self.name,
+                results=[
+                    SearchResult(
+                        title="Fallback result",
+                        url="https://example.com/fallback",
+                        snippet="Recovered.",
+                    )
+                ],
+            )
+
+    tool = WebSearchTool(
+        registry=SearchProviderRegistry([FailingProvider(), WorkingProvider()])
+    )
+
+    result = await tool.execute(query="agent runtime", limit=1)
+
+    assert "Provider: second" in result
+    assert "Provider diagnostics:" in result
+    assert "- first: network_error: offline" in result
+
+
+@pytest.mark.asyncio
+async def test_web_search_does_not_fallback_when_provider_returns_no_results():
+    class EmptyProvider:
+        name = "empty"
+
+        async def search(self, query: str, limit: int) -> SearchProviderResponse:
+            return SearchProviderResponse(provider_name=self.name, results=[])
+
+    class ShouldNotRunProvider:
+        name = "should-not-run"
+
+        async def search(self, query: str, limit: int) -> SearchProviderResponse:
+            raise AssertionError("empty results should not trigger fallback")
+
+    tool = WebSearchTool(
+        registry=SearchProviderRegistry([EmptyProvider(), ShouldNotRunProvider()])
+    )
+
+    result = await tool.execute(query="agent runtime", limit=1)
+
+    assert result == "No search results for: agent runtime\nProvider: empty"
 
 
 @pytest.mark.asyncio
@@ -128,8 +193,9 @@ async def test_web_search_reports_parse_failure():
     result = await tool.execute(query="agent")
 
     assert result == (
-        "WebSearch error: provider response could not be parsed\n"
-        "Provider: duckduckgo-html"
+        "WebSearch error: all search providers failed\n\n"
+        "Provider diagnostics:\n"
+        "- duckduckgo-html: parse_error: provider response could not be parsed"
     )
 
 
@@ -142,8 +208,8 @@ async def test_web_search_reports_request_failure():
 
     result = await tool.execute(query="agent")
 
-    assert result.startswith("WebSearch error: provider request failed: offline")
-    assert "Provider: duckduckgo-html" in result
+    assert result.startswith("WebSearch error: all search providers failed")
+    assert "- duckduckgo-html: network_error: offline" in result
 
 
 @pytest.mark.asyncio

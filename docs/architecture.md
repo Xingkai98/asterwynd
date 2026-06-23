@@ -49,6 +49,12 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`duration_ms` 和 `timed_out`。WorkspacePolicy 负责命令 allowlist / denylist 和敏感路径限制。
 
+### WebSearch provider adapter
+
+`WebSearch` 通过 `SearchProviderRegistry` 调用搜索 provider adapter。provider 优先级来自 `myagent.yaml` 的 `tools.web_search.providers`；未配置时使用保守默认 `duckduckgo-html`。环境变量只提供 provider 凭据和端点，例如 `MYAGENT_TAVILY_API_KEY`、`MYAGENT_BRAVE_SEARCH_API_KEY` 和 `MYAGENT_SEARXNG_BASE_URL`，不参与 provider 排序。
+
+每个 provider 返回统一的 provider response object，包含最终 provider、结果和诊断信息。网络失败、超时、5xx、429、解析失败、缺 key 或缺 base URL 可以 fallback；搜索成功但无结果默认不 fallback。CI 测试只使用 fake provider、fixture 和 `httpx.MockTransport`，真实 provider smoke 需要显式环境变量并手动执行。
+
 ## Web UI
 
 Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
