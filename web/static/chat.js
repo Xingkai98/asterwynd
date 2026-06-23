@@ -79,7 +79,7 @@ function handleEvent(event) {
         if (!currentAssistantMsg) {
           currentAssistantMsg = addMessage('assistant', '');
         }
-        currentAssistantMsg.textContent += data.content;
+        appendAssistantContent(currentAssistantMsg, data.content);
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
       break;
@@ -134,11 +134,28 @@ function addMessage(role, content) {
     el.appendChild(header);
   }
   const body = document.createElement('div');
-  body.textContent = content;
+  body.className = 'message-body';
+  if (role === 'assistant') {
+    body.classList.add('markdown-body');
+    body.dataset.markdownSource = '';
+    appendAssistantContent(body, content || '');
+  } else {
+    body.textContent = content;
+  }
   el.appendChild(body);
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return body;
+}
+
+function appendAssistantContent(body, content) {
+  const source = (body.dataset.markdownSource || '') + (content || '');
+  body.dataset.markdownSource = source;
+  if (window.MyAgentMarkdown && typeof window.MyAgentMarkdown.render === 'function') {
+    body.innerHTML = window.MyAgentMarkdown.render(source);
+  } else {
+    body.textContent = source;
+  }
 }
 
 function addToolCallBlock(name, args) {

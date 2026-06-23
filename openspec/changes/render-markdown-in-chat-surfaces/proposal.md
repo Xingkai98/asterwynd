@@ -11,6 +11,7 @@
 
 - Web UI 对 assistant 消息进行安全 Markdown 渲染。
 - 明确用户消息、工具结果和 assistant 消息的渲染边界。
+- 使用无构建链的轻量静态 renderer；不在本 change 引入前端框架、npm 构建链或 CDN 依赖。
 - 为 CLI 和未来 TUI 记录兼容策略：可以保留纯文本，也可以使用终端安全的 Markdown/ANSI renderer，但语义不应与 Web 冲突。
 
 ## Capabilities
@@ -25,7 +26,7 @@
 
 - 影响代码：
   - `web/static/`
-  - 可能新增前端 Markdown 渲染依赖或轻量 renderer。
+  - 新增轻量静态 Markdown renderer。
 - 影响测试：
   - Web 静态渲染测试或浏览器测试。
 - 后续需要确认允许的 Markdown 子集和链接安全策略。
