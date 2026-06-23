@@ -24,7 +24,6 @@
 
 ### 第二批：可立即并行的低耦合基础能力
 
-- `add-search-provider-adapter-architecture`：搜索 provider 架构增强，基于已合入的 `harden-web-research-tools` 单 provider 边界，先调研再实现多 provider、优先级和 fallback。
 - `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
 - `add-plan-mode`：planning state 已合入，可开始真实 plan mode；与 streaming / mode switching 都会碰 AgentLoop，合入阶段需要错开。
 
@@ -46,26 +45,7 @@
 
 ## 未实现队列
 
-### 1. `add-search-provider-adapter-architecture`
-
-状态：未实现。
-
-批次：第二批，建议在 `harden-web-research-tools` 合入后开始；必须先做 provider 调研和设计确认。
-
-建议顺序原因：
-
-- 已合入的 `harden-web-research-tools` 只硬化当前 DuckDuckGo HTML 路径并拆出单 provider 边界；完整 provider registry、优先级和 fallback 应作为独立能力设计。
-- 搜索 provider 选择会引入鉴权、成本、速率限制、fallback 和结果字段差异，不应混入 research tools hardening。
-
-主要交付：
-
-- 搜索 provider 调研结论。
-- provider protocol、capability metadata 和错误模型。
-- provider registry / factory 与配置优先级。
-- 多 provider fallback diagnostics。
-- 至少两个 provider adapter 和 fixture 测试。
-
-### 2. `add-tree-sitter-symbol-extraction`
+### 1. `add-tree-sitter-symbol-extraction`
 
 状态：未实现。
 
@@ -84,7 +64,7 @@
 - 未注册语言和解析失败降级。
 - 多语言 fixture 与 benchmark smoke。
 
-### 3. `add-plan-mode`
+### 2. `add-plan-mode`
 
 状态：未实现。
 
@@ -103,7 +83,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 4. `add-streaming-agent-output`
+### 3. `add-streaming-agent-output`
 
 状态：未实现。
 
@@ -122,7 +102,7 @@
 - 非 streaming provider fallback。
 - 为未来 TUI 暴露 streaming event。
 
-### 5. `add-runtime-mode-switching`
+### 4. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -141,7 +121,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 6. `upgrade-subagents-to-agentloop`
+### 5. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -159,7 +139,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 7. `add-lsp-code-intelligence`
+### 6. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -178,7 +158,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 8. `add-minimal-tui-runtime-view`
+### 7. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -196,7 +176,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 9. `add-mcp-tool-adapter`
+### 8. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -214,7 +194,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 10. `add-browser-use-safety-foundation`
+### 9. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
