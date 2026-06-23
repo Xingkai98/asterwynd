@@ -1,6 +1,8 @@
 # tests/web/test_server.py
 """Integration tests for FastAPI server (HTTP + WebSocket) with Mock LLM."""
 import os
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -157,19 +159,89 @@ def test_web_static_assets_include_session_and_run_display():
 
     assert 'id="session-id"' in index
     assert 'id="run-id"' in index
+    assert "/static/markdown.js?v=6" in index
+    assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
     assert "addToolResultMessage(event.data)" in script
+    assert "appendAssistantContent(currentAssistantMsg, data.content)" in script
+    assert "body.classList.add('markdown-body')" in script
     assert "tool-result-toggle" in script
     assert "aria-expanded" in script
     assert "case 'error'" in script
     assert "max_iterations" in script
     assert ".tool-result-toggle" in styles
+    assert ".markdown-body pre" in styles
 
     toggle_start = script.index("toggle.addEventListener")
     toggle_end = script.index("controls.appendChild(toggle)", toggle_start)
     toggle_handler = script[toggle_start:toggle_end]
     assert "scrollHeight" not in toggle_handler
+
+    tool_result_start = script.index("function addToolResultMessage")
+    tool_result_end = script.index("function renderPlanningState", tool_result_start)
+    tool_result_renderer = script[tool_result_start:tool_result_end]
+    assert "innerHTML" not in tool_result_renderer
+    assert "body.textContent" in tool_result_renderer
+
+
+def _render_markdown(markdown: str) -> str:
+    renderer = Path(__file__).parents[2] / "web" / "static" / "markdown.js"
+    node_script = """
+const fs = require('fs');
+const vm = require('vm');
+const renderer = fs.readFileSync(process.argv[1], 'utf8');
+const markdown = JSON.parse(process.argv[2]);
+const context = {
+  URL,
+  window: { location: { href: 'http://localhost/' } }
+};
+vm.createContext(context);
+vm.runInContext(renderer, context);
+process.stdout.write(JSON.stringify(context.window.MyAgentMarkdown.render(markdown)));
+"""
+    result = subprocess.run(
+        ["node", "-e", node_script, str(renderer), json.dumps(markdown)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(result.stdout)
+
+
+def test_markdown_renderer_supports_basic_assistant_markdown():
+    html = _render_markdown(
+        "# Plan\n\n"
+        "- read `README.md`\n"
+        "- run tests\n\n"
+        "```python\n"
+        "print('<safe>')\n"
+        "```\n\n"
+        "[docs](https://example.com/docs)"
+    )
+
+    assert "<h3>Plan</h3>" in html
+    assert "<ul><li>read <code>README.md</code></li><li>run tests</li></ul>" in html
+    assert '<code class="language-python">print(&#39;&lt;safe&gt;&#39;)</code>' in html
+    assert (
+        '<a href="https://example.com/docs" target="_blank" '
+        'rel="noopener noreferrer">docs</a>'
+    ) in html
+
+
+def test_markdown_renderer_escapes_raw_html_and_blocks_unsafe_links():
+    html = _render_markdown(
+        "<img src=x onerror=alert(1)>\n"
+        "[bad](javascript:alert(1))\n"
+        "<script>alert(1)</script>"
+    )
+
+    assert "<img" not in html
+    assert "<script" not in html
+    assert "onerror" in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    assert "href=\"javascript:" not in html
+    assert ">bad</a>" not in html
 
 
 def test_websocket_session_created_includes_configured_mode():

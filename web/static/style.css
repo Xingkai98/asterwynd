@@ -120,6 +120,7 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   align-self: flex-start;
   background: var(--surface);
   border-bottom-left-radius: 4px;
+  white-space: normal;
 }
 .message.tool {
   align-self: flex-start;
@@ -172,6 +173,67 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .message.error {
   border-color: var(--error);
   color: var(--error);
+}
+
+.markdown-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.markdown-body p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 2px 0;
+  font-size: 0.98rem;
+  line-height: 1.35;
+}
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0;
+  padding-left: 22px;
+}
+.markdown-body li + li {
+  margin-top: 3px;
+}
+.markdown-body code {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9em;
+}
+.markdown-body pre {
+  max-width: 100%;
+  margin: 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.markdown-body pre code {
+  display: block;
+  min-width: min-content;
+  border: 0;
+  padding: 10px 12px;
+  background: transparent;
+  white-space: pre;
+}
+.markdown-body a {
+  color: var(--info);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-body a:hover {
+  color: var(--accent);
 }
 
 .tool-call-block {
