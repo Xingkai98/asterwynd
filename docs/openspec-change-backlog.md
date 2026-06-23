@@ -20,7 +20,6 @@
 
 ### 第二批：可立即并行的低耦合基础能力
 
-- `add-tool-result-display-controls`：展示层能力，优先解决 WebFetch 长结果噪声；与 Markdown 同改 Web 静态资源，合入时需要协调。
 - `render-markdown-in-chat-surfaces`：展示层能力，提升 Web 对话可读性；与工具结果折叠可并行开发但不建议同时合入。
 - `harden-web-research-tools`：研究工具质量增强，主要影响 WebSearch/WebFetch 和测试替身，可与 UI 展示类 change 并行。
 - `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
@@ -44,25 +43,7 @@
 
 ## 未实现队列
 
-### 1. `add-tool-result-display-controls`
-
-状态：未实现。
-
-批次：第二批，可与 Markdown 展示并行开发，但同改 Web 静态资源时应错开合入。
-
-建议顺序原因：
-
-- WebFetch 等长工具结果会冲散对话视图，先做展示折叠能直接改善 Web/CLI 可用性。
-- 折叠属于展示策略，不改变工具返回值和 trace，风险低于 runtime 协议改造。
-
-主要交付：
-
-- WebFetch 默认折叠，可展开。
-- Web / CLI / 未来 TUI 一致的工具结果 display policy。
-- trace 保留完整 observation。
-- CLI 长结果摘要。
-
-### 2. `render-markdown-in-chat-surfaces`
+### 1. `render-markdown-in-chat-surfaces`
 
 状态：未实现。
 
@@ -80,7 +61,7 @@
 - CLI / 未来 TUI Markdown 展示兼容策略。
 - XSS / raw HTML 回归测试。
 
-### 3. `harden-web-research-tools`
+### 2. `harden-web-research-tools`
 
 状态：未实现。
 
@@ -98,7 +79,7 @@
 - fake provider / fixture 测试。
 - read-only 权限保持。
 
-### 4. `add-tree-sitter-symbol-extraction`
+### 3. `add-tree-sitter-symbol-extraction`
 
 状态：未实现。
 
@@ -117,7 +98,7 @@
 - 未注册语言和解析失败降级。
 - 多语言 fixture 与 benchmark smoke。
 
-### 5. `add-plan-mode`
+### 4. `add-plan-mode`
 
 状态：未实现。
 
@@ -136,7 +117,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 6. `add-streaming-agent-output`
+### 5. `add-streaming-agent-output`
 
 状态：未实现。
 
@@ -155,7 +136,7 @@
 - 非 streaming provider fallback。
 - 为未来 TUI 暴露 streaming event。
 
-### 7. `add-runtime-mode-switching`
+### 6. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -174,7 +155,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 8. `upgrade-subagents-to-agentloop`
+### 7. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -192,7 +173,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 9. `add-lsp-code-intelligence`
+### 8. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -211,7 +192,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 10. `add-minimal-tui-runtime-view`
+### 9. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -229,7 +210,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 11. `add-mcp-tool-adapter`
+### 10. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -247,7 +228,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 12. `add-browser-use-safety-foundation`
+### 11. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
