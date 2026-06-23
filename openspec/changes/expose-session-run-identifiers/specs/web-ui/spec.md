@@ -1,0 +1,11 @@
+## ADDED Requirements
+
+### Requirement: Web UI 展示 session id
+
+Web UI SHALL 展示当前 session id，便于用户复制并关联日志。
+
+#### Scenario: session 创建后展示 id
+
+- **GIVEN** WebSocket 创建新 session
+- **WHEN** 前端收到 session_created 事件
+- **THEN** 页面 SHALL 展示该 session id
