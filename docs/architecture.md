@@ -54,7 +54,11 @@ BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`dura
 
 `RepoMap` 和 `SymbolSearch` 属于当前轻量 code intelligence 能力：它们复用 WorkspacePolicy、忽略规则和只读工具边界，使用文件扫描与 Python AST 提取仓库结构和符号摘要。LSP、引用分析、诊断和多语言语法级索引仍是后续能力。
 
-`WebSearch` 和 `WebFetch` 属于联网研究工具。当前 `WebSearch` 已拆出轻量 provider 边界，但 master 上只内置 DuckDuckGo HTML provider；完整 provider registry、多 provider fallback 和优先级仍由后续 `add-search-provider-adapter-architecture` change 承担。`WebFetch` 会对非 2xx、非文本内容、请求失败和截断结果返回可读诊断。
+### WebSearch provider adapter
+
+`WebSearch` 通过 `SearchProviderRegistry` 调用搜索 provider adapter。provider 优先级来自 `myagent.yaml` 的 `tools.web_search.providers`；未配置时使用保守默认 `duckduckgo-html`。环境变量只提供 provider 凭据和端点，例如 `MYAGENT_TAVILY_API_KEY`、`MYAGENT_BRAVE_SEARCH_API_KEY` 和 `MYAGENT_SEARXNG_BASE_URL`，不参与 provider 排序。
+
+每个 provider 返回统一的 provider response object，包含最终 provider、结果和诊断信息。网络失败、超时、5xx、429、解析失败、缺 key 或缺 base URL 可以 fallback；搜索成功但无结果默认不 fallback。CI 测试只使用 fake provider、fixture 和 `httpx.MockTransport`，真实 provider smoke 需要显式环境变量并手动执行。`WebFetch` 会对非 2xx、非文本内容、请求失败和截断结果返回可读诊断。
 
 ## Web UI
 

@@ -12,6 +12,9 @@ from agent.tool_result_display import ToolResultDisplayConfig
 
 
 CONFIG_FILENAME = "myagent.yaml"
+SUPPORTED_SEARCH_PROVIDER_NAMES = frozenset(
+    {"duckduckgo-html", "searxng", "brave", "tavily"}
+)
 
 
 class ConfigError(ValueError):
@@ -29,9 +32,21 @@ class ModeConfig:
 
 
 @dataclass(frozen=True)
+class SearchProviderConfig:
+    name: str
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class WebSearchConfig:
+    providers: tuple[SearchProviderConfig, ...] = ()
+
+
+@dataclass(frozen=True)
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
+    web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     display: ToolResultDisplayConfig = field(default_factory=ToolResultDisplayConfig)
 
 
@@ -248,8 +263,43 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
             path,
             "tools.command_denylist",
         ),
+        web_search=_parse_web_search_config(mapping.get("web_search", {}), path),
         display=_parse_tool_display_config(mapping.get("display", {}), path),
     )
+
+
+def _parse_web_search_config(raw: Any, path: Path) -> WebSearchConfig:
+    mapping = _expect_mapping(raw, path, "tools.web_search")
+    providers_raw = mapping.get("providers", [])
+    if providers_raw is None:
+        return WebSearchConfig()
+    if not isinstance(providers_raw, list):
+        raise ConfigError(f"{path}: tools.web_search.providers must be a list")
+
+    providers = []
+    for index, raw_provider in enumerate(providers_raw):
+        field_name = f"tools.web_search.providers[{index}]"
+        if isinstance(raw_provider, str):
+            name = raw_provider.strip()
+            enabled = True
+        else:
+            provider_mapping = _expect_mapping(raw_provider, path, field_name)
+            raw_name = provider_mapping.get("name")
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                raise ConfigError(f"{path}: {field_name}.name must be a non-empty string")
+            name = raw_name.strip()
+            raw_enabled = provider_mapping.get("enabled", True)
+            if not isinstance(raw_enabled, bool):
+                raise ConfigError(f"{path}: {field_name}.enabled must be a boolean")
+            enabled = raw_enabled
+        if name not in SUPPORTED_SEARCH_PROVIDER_NAMES:
+            supported = ", ".join(sorted(SUPPORTED_SEARCH_PROVIDER_NAMES))
+            raise ConfigError(
+                f"{path}: {field_name}.name unsupported search provider "
+                f"{name!r}; expected one of: {supported}"
+            )
+        providers.append(SearchProviderConfig(name=name, enabled=enabled))
+    return WebSearchConfig(providers=tuple(providers))
 
 
 def _parse_tool_display_config(raw: Any, path: Path) -> ToolResultDisplayConfig:

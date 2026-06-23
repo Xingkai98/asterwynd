@@ -64,6 +64,7 @@ class SessionManager:
                 deny_tools_by_mode=self.config.deny_tools_by_mode(),
             ),
             ignore_patterns=self.config.tools.ignore_patterns,
+            web_search_config=self.config.tools.web_search,
             tools=tools,
         )
 

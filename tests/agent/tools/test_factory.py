@@ -1,3 +1,4 @@
+from agent.config import SearchProviderConfig, WebSearchConfig
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy
 from agent.tools.factory import build_coding_tool_registry, build_default_tool_registry
 
@@ -28,6 +29,29 @@ def test_build_default_tool_registry_filters_read_only_mode():
     assert "Bash" not in names
     assert "Write" not in names
     assert "Edit" not in names
+
+
+def test_build_default_tool_registry_passes_web_search_config(monkeypatch):
+    monkeypatch.setenv("MYAGENT_TAVILY_API_KEY", "secret")
+    monkeypatch.setenv("MYAGENT_BRAVE_SEARCH_API_KEY", "secret")
+
+    registry = build_default_tool_registry(
+        web_search_config=WebSearchConfig(
+            providers=(
+                SearchProviderConfig(name="tavily"),
+                SearchProviderConfig(name="brave"),
+                SearchProviderConfig(name="duckduckgo-html"),
+            )
+        )
+    )
+
+    web_search = registry.get_tool("WebSearch")
+
+    assert [provider.name for provider in web_search._registry.providers] == [
+        "tavily",
+        "brave",
+        "duckduckgo-html",
+    ]
 
 
 def test_build_coding_tool_registry_filters_plan_mode():

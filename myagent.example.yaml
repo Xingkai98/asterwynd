@@ -12,6 +12,19 @@ modes:
 tools:
   ignore_patterns: []
   command_denylist: []
+  web_search:
+    providers:
+      # Tavily 需要 MYAGENT_TAVILY_API_KEY。
+      # - name: tavily
+      #   enabled: true
+      - name: duckduckgo-html
+        enabled: true
+      # Brave 需要 MYAGENT_BRAVE_SEARCH_API_KEY。
+      # - name: brave
+      #   enabled: true
+      # SearXNG 需要 MYAGENT_SEARXNG_BASE_URL。
+      # - name: searxng
+      #   enabled: true
   display:
     max_result_chars: 4000
     max_result_lines: 80
