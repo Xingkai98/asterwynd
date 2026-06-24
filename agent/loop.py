@@ -16,6 +16,14 @@ from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
 from agent.run_identity import new_run_id
 from agent.tools.builtin.plan import ExitPlanModeTool, UpdatePlanTool
+from agent.tools.builtin.subagents import (
+    CancelSubagentRunTool,
+    CreateSubagentTool,
+    GetSubagentRunTool,
+    InspectSubagentTranscriptTool,
+    ListSubagentsTool,
+    RunSubagentTool,
+)
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 
 if TYPE_CHECKING:
@@ -33,6 +41,7 @@ class AgentLoop:
         memory: Optional[MemoryManager] = None,
         planning_manager: Optional[PlanningManager] = None,
         subagent_manager: Optional[SubAgentManager] = None,
+        expose_subagent_tools: bool = False,
         max_iterations: int = 20,
         run_config: AgentRunConfig | None = None,
         tool_result_display: ToolResultDisplayConfig | None = None,
@@ -43,6 +52,10 @@ class AgentLoop:
         self.memory = memory or MemoryManager(llm=llm)
         self._planning = planning_manager or PlanningManager()
         self.subagent_manager = subagent_manager or SubAgentManager()
+        self.subagent_manager.configure_runtime(
+            llm=llm,
+            parent_mode_provider=lambda: self.runtime_state.current_mode,
+        )
         self.max_iterations = max_iterations
         self.run_config = run_config or AgentRunConfig()
         policy_state = getattr(self.tool_registry.mode_policy, "runtime_state", None)
@@ -54,8 +67,11 @@ class AgentLoop:
         self._plan_document: dict | None = None
         self._plan_document_final = False
         self._plan_tools_registered = False
+        self._subagent_tools_registered = False
         if self.runtime_state.current_mode is AgentMode.PLAN:
             self._ensure_plan_tools_registered()
+        if expose_subagent_tools:
+            self._ensure_subagent_tools_registered()
 
     @property
     def planning_state(self) -> dict:
@@ -218,6 +234,17 @@ class AgentLoop:
         self.tool_registry.register(UpdatePlanTool(self.update_plan_document))
         self.tool_registry.register(ExitPlanModeTool(self.submit_plan_document))
         self._plan_tools_registered = True
+
+    def _ensure_subagent_tools_registered(self) -> None:
+        if self._subagent_tools_registered:
+            return
+        self.tool_registry.register(CreateSubagentTool(self.subagent_manager))
+        self.tool_registry.register(RunSubagentTool(self.subagent_manager))
+        self.tool_registry.register(ListSubagentsTool(self.subagent_manager))
+        self.tool_registry.register(GetSubagentRunTool(self.subagent_manager))
+        self.tool_registry.register(CancelSubagentRunTool(self.subagent_manager))
+        self.tool_registry.register(InspectSubagentTranscriptTool(self.subagent_manager))
+        self._subagent_tools_registered = True
 
     async def run(
         self,

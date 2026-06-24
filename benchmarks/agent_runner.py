@@ -11,6 +11,7 @@ from agent.loop import AgentLoop
 from agent.config import MyAgentConfig
 from agent.memory.manager import MemoryManager
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_coding_tool_registry
 from agent.trace_recorder import TraceRecorder
 from agent.workspace_policy import WorkspacePolicy
@@ -302,11 +303,19 @@ class MyAgentRunner(AgentRunner):
         )
 
         counting_llm = CountingLLM(self.llm)
+        subagent_manager = SubAgentManager(
+            llm=counting_llm,
+            config=self.config,
+            workspace_policy=policy,
+            parent_mode=self.run_config.mode,
+        )
         agent = AgentLoop(
             llm=counting_llm,
             tool_registry=registry,
             memory=MemoryManager(max_tokens=80_000),
             max_iterations=self.max_iterations,
+            subagent_manager=subagent_manager,
+            expose_subagent_tools=True,
             run_config=self.run_config,
             tool_result_display=self.config.tools.display,
         )

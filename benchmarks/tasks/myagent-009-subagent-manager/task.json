@@ -1,9 +1,9 @@
 {
   "id": "myagent-009-subagent-manager",
   "repo": "local/myagent",
-  "base_commit": "ea232b2",
+  "base_commit": "89f1c116333ed49137877c9c04a02e057482da0b",
   "problem_statement_file": "issue.md",
-  "test_command": "pytest -q tests/agent/subagent/test_manager.py",
+  "test_command": "pytest -q tests/agent/subagent/test_manager.py tests/agent/test_subagent_tools.py",
   "category": "agent",
   "difficulty": "medium",
   "timeout_seconds": 180,

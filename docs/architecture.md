@@ -29,7 +29,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | PlanningManager | `agent/planning/` | 当前运行的结构化计划状态 |
 | AgentRuntimeState | `agent/run_config.py` | 交互式 session 的当前 mode 和运行时 mode transition |
 | SkillLoader | `agent/skills/loader.py` | Markdown skill 加载 |
-| SubAgentManager | `agent/subagent/manager.py` | 后台子 agent 委托 |
+| SubAgentManager | `agent/subagent/manager.py` | 子 session runtime 管理：子 session、多次 run、状态与 transcript inspect |
 | TraceRecorder | `agent/trace_recorder.py` | 运行轨迹记录 |
 
 ## 工具系统
@@ -50,6 +50,12 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | SymbolSearch | read_only | 按名称搜索已支持语言的符号 |
 | WebSearch | read_only | 网络搜索，当前默认 DuckDuckGo HTML provider |
 | WebFetch | read_only | 抓取网页正文并返回状态/类型/截断诊断 |
+| CreateSubagent | read_only | 创建子 session |
+| RunSubagent | read_only | 在已有子 session 中启动一次 run |
+| ListSubagents | read_only | 列出可见子 session |
+| GetSubagentRun | read_only | 查询或等待某次子 run 结果 |
+| CancelSubagentRun | read_only | 取消运行中的子 run |
+| InspectSubagentTranscript | read_only | 查看子 transcript 摘要或最近消息 |
 | UpdatePlan | plan-only | 更新 Plan Document 草案，并将高层步骤同步为 planning state |
 | ExitPlanMode | plan-only | 定稿 Plan Document，并将高层步骤同步为 planning state |
 

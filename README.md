@@ -13,7 +13,7 @@
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
 | **MemoryManager** | AutoCompact token 压缩，超预算时用 LLM 生成摘要 |
 | **SkillLoader** | Markdown 技能文件（YAML frontmatter + prompt），按需/always 加载 |
-| **SubAgentManager** | asyncio 后台任务委托，ParentChannel 实现 mid-turn injection |
+| **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
 | **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
 | **Local Benchmark** | 23 个 coding-agent 任务，本地 worktree 任务 + SWE-bench Docker harness 双路径评测，多 agent 适配器 |
 
@@ -104,9 +104,7 @@ agent/
 ├── skills/
 │   └── loader.py            # SkillLoader + Skill dataclass
 └── subagent/
-    ├── manager.py           # SubAgentManager
-    ├── protocol.py          # ParentChannel（asyncio.Queue）
-    └── parent_channel_hook.py  # mid-turn injection 实现
+    └── manager.py           # SubAgentManager 子 session runtime
 
 benchmarks/                  # 本地基准测试
 ├── tasks/                   # 23 个编码任务（6 类别 3 难度）
@@ -131,7 +129,7 @@ messages → LLM → tool_calls? → [execute tools] → append results → repe
             no tools → return content
 ```
 
-`AgentLoop.run()` 是唯一的状态管理者，`messages` 是唯一的可变状态。所有子系统（工具执行、记忆管理、子 Agent 委托）均通过依赖注入持有引用。
+`AgentLoop.run()` 是唯一的状态管理者，`messages` 是唯一的可变状态。所有子系统（工具执行、记忆管理、子 session runtime）均通过依赖注入持有引用。
 
 ### 工具注册
 
@@ -181,16 +179,22 @@ agent = AgentLoop(hooks=HookManager([MyHook()]), ...)
 memory = MemoryManager(max_tokens=80_000, recent_window=10, llm=openai_llm)
 ```
 
-### 子 Agent 委托
+### 子 Session Runtime
 
 ```python
-subagent_id = await subagent_manager.delegate(
-    task="搜索相关信息",
-    tools=[WebSearchTool(), WebFetchTool()],
-    model="gpt-4o-mini",
-    llm=openai_llm,
+subagent = subagent_manager.create_subagent(
+    name="research",
+    description="只读调查代码和文档",
+    mode="read_only",
 )
-# 后台运行，结果通过 ParentChannel 注入父 agent 当前轮次
+
+run = await subagent_manager.run_subagent(
+    subagent_id=subagent["subagent_id"],
+    task="搜索相关信息",
+    wait=True,
+)
+
+print(run["status"], run["summary"])
 ```
 
 ## 扩展指南
