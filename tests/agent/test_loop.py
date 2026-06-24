@@ -1,5 +1,6 @@
 # tests/agent/test_loop.py
 import pytest
+import json
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
@@ -9,6 +10,7 @@ from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.trace_recorder import TraceRecorder
 from agent.run_config import AgentMode, AgentRunConfig
+from agent.subagent.manager import SubAgentManager
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -71,6 +73,99 @@ async def test_agent_loop_returns_content():
     result = await loop.run([Message(role="user", content="hi")])
     assert result.content == "Hello!"
     assert result.stop_reason.value == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_does_not_expose_subagent_tools_by_default():
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+    )
+    schema_names = {
+        schema["function"]["name"]
+        for schema in loop.tool_registry.get_all_schemas()
+    }
+    assert "CreateSubagent" not in schema_names
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_exposes_subagent_tools_when_enabled():
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        subagent_manager=SubAgentManager(),
+        expose_subagent_tools=True,
+    )
+    schema_names = {
+        schema["function"]["name"]
+        for schema in loop.tool_registry.get_all_schemas()
+    }
+    assert "CreateSubagent" in schema_names
+    assert "RunSubagent" in schema_names
+
+
+class SubagentWorkflowLLM:
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallDelta(
+                        id="c1",
+                        name="CreateSubagent",
+                        arguments=json.dumps({"name": "researcher"}),
+                    )
+                ],
+                stop_reason="tool_calls",
+            )
+        if self.calls == 2:
+            tool_result = messages[-1].content
+            subagent_id = json.loads(tool_result)["subagent_id"]
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallDelta(
+                        id="c2",
+                        name="RunSubagent",
+                        arguments=json.dumps(
+                            {
+                                "subagent_id": subagent_id,
+                                "task": "inspect repo",
+                                "wait": True,
+                                "timeout_s": 1,
+                            }
+                        ),
+                    )
+                ],
+                stop_reason="tool_calls",
+            )
+        return LLMResponse(content="done", stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_can_execute_subagent_runtime_tools():
+    loop = AgentLoop(
+        llm=SubagentWorkflowLLM(),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        subagent_manager=SubAgentManager(),
+        expose_subagent_tools=True,
+    )
+
+    result = await loop.run([Message(role="user", content="delegate work")])
+    assert result.content == "done"
+    assert [call.name for call in result.tool_calls_made] == [
+        "CreateSubagent",
+        "RunSubagent",
+    ]
+    run_result = json.loads(result.tool_calls_made[1].result)
+    assert run_result["status"] == "completed"
 
 
 @pytest.mark.asyncio

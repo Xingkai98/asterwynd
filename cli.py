@@ -28,6 +28,7 @@ from agent.message import Message, system_message
 from agent.openai_llm import OpenAILLM
 from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry
 from agent.workspace_policy import WorkspacePolicy
 from agent.hooks.manager import HookManager
@@ -146,12 +147,20 @@ def build_agent(
     ])
 
     memory = MemoryManager(max_tokens=80_000)
+    subagent_manager = SubAgentManager(
+        llm=llm,
+        config=config,
+        workspace_policy=workspace_policy,
+        parent_mode=run_config.mode,
+    )
 
     return AgentLoop(
         llm=llm,
         tool_registry=registry,
         hooks=hooks,
         memory=memory,
+        subagent_manager=subagent_manager,
+        expose_subagent_tools=True,
         run_config=run_config,
         tool_result_display=config.tools.display,
     )

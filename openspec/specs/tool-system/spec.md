@@ -81,3 +81,25 @@ ToolRegistry SHALL 通过 runtime state 读取当前 session mode，而不是只
 - **WHEN** 工具返回 `Error: ...`
 - **THEN** AgentLoop SHALL 将该文本作为 tool result 追加
 - **AND** 继续保持 tool-call 链合法
+
+### Requirement: 子 session runtime 工具按职责拆分
+
+子 session runtime 工具 SHALL 按窄职责拆分，而不是复用一个带 `action` 参数的大工具。当前模型至少包含创建子 session、启动子 run、列出子 session、获取子 run、取消子 run 和 inspect transcript 这些能力。
+
+#### Scenario: 暴露子 session runtime 工具
+
+- **GIVEN** 顶层 AgentLoop 显式开启子 session 工具
+- **WHEN** ToolRegistry 暴露工具 schema
+- **THEN** 系统 SHALL 暴露窄职责工具集合
+- **AND** SHALL NOT 暴露单个 `ManageSubagent(action=...)` 风格的大工具
+
+### Requirement: 子 transcript inspect 工具默认受限
+
+父 agent 查看子 session transcript 的能力 SHALL 通过单独 inspect 工具提供，并默认限制返回范围，例如摘要或最近 `N` 条消息。
+
+#### Scenario: 查看子 run 最近消息
+
+- **GIVEN** 父 agent 需要检查某个子 run 最近的执行情况
+- **WHEN** 调用 transcript inspect 工具且提供范围参数
+- **THEN** 系统 SHALL 返回受限范围内的消息
+- **AND** SHALL NOT 默认返回整份子 transcript

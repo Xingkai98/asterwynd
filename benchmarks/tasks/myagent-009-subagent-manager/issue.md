@@ -1,25 +1,39 @@
-# Implement SubAgentManager with ParentChannelHook
+# Upgrade SubAgentManager to a child-session runtime
 
-The `ParentChannel` protocol exists but there is no manager to handle sub-agent lifecycles or a hook to route messages between parent and child agents during active turns.
+The current subagent implementation is still a one-shot background helper built
+around `delegate()` and `ParentChannel`. That shape is not enough for the
+current agent runtime. A subagent should behave like a child session with its
+own transcript and multiple runs, and the parent should manage it through
+explicit runtime tools instead of mid-turn message injection.
 
 ## Task
 
-Implement two components:
+Implement a child-session runtime for `agent/subagent/manager.py` and expose it
+through narrow built-in tools.
 
 ### SubAgentManager (`agent/subagent/manager.py`)
-1. Manage child agent lifecycles: spawn, monitor, terminate
-2. Children inherit the parent's tool registry and memory manager
-3. Spawn creates a new agent loop with a subset of tools
-4. Track active child agents by ID
+1. Create named child sessions with `subagent_id`, session metadata, and mode
+2. Start tasks inside an existing child session and return structured run
+   results with `run_id`, `status`, `summary`, `reason`, and usage
+3. Allow multiple child sessions to exist concurrently, but reject a second
+   active run inside the same session
+4. Support `wait`, `get`, `cancel`, and bounded transcript inspection
 
-### ParentChannelHook (`agent/subagent/parent_channel_hook.py`)
-1. Implement the `Hook` protocol
-2. Route messages between parent and children through the hook system
-3. Inject child agent results into the parent's message stream mid-turn
+### AgentLoop / built-in tools
+1. Add built-in tools for:
+   - `CreateSubagent`
+   - `RunSubagent`
+   - `ListSubagents`
+   - `GetSubagentRun`
+   - `CancelSubagentRun`
+   - `InspectSubagentTranscript`
+2. `AgentLoop` should expose these tools only when explicitly enabled
+3. Child subagent loops must not recursively expose the same subagent tools
 
 ## Requirements
 
-- Create both files under `agent/subagent/`
-- Follow the existing `Hook` protocol in `agent/hooks/manager.py`
-- Sub-agents must run as background tasks (not block the parent)
-- Results from completed children are injected via the hook system
+- Keep child session mode at or below the parent mode
+- Use explicit runtime queries/results instead of injecting child results into
+  the parent transcript
+- `InspectSubagentTranscript` should return a summary or bounded recent
+  messages, not the full transcript by default

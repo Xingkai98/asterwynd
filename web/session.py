@@ -9,6 +9,7 @@ from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.run_identity import new_session_id
 from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry
 from agent.workspace_policy import WorkspacePolicy
 from agent.hooks.manager import HookManager
@@ -60,10 +61,11 @@ class SessionManager:
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
         session_id = new_session_id()
         run_config = AgentRunConfig(mode=self.initial_mode)
+        workspace_policy = WorkspacePolicy(
+            command_denylist=self.config.tools.command_denylist,
+        )
         registry = build_default_tool_registry(
-            policy=WorkspacePolicy(
-                command_denylist=self.config.tools.command_denylist,
-            ),
+            policy=workspace_policy,
             mode_policy=ModePolicy(
                 run_config,
                 deny_tools_by_mode=self.config.deny_tools_by_mode(),
@@ -73,12 +75,20 @@ class SessionManager:
             web_search_config=self.config.tools.web_search,
             tools=tools,
         )
+        subagent_manager = SubAgentManager(
+            llm=llm,
+            config=self.config,
+            workspace_policy=workspace_policy,
+            parent_mode=run_config.mode,
+        )
 
         agent = AgentLoop(
             llm=llm,
             tool_registry=registry,
             hooks=HookManager([TracingHook()]),
             memory=MemoryManager(max_tokens=80_000),
+            subagent_manager=subagent_manager,
+            expose_subagent_tools=True,
             run_config=run_config,
             tool_result_display=self.config.tools.display,
         )

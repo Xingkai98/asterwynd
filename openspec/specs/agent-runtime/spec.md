@@ -138,3 +138,25 @@ Agent runtime SHALL 支持在 LLM 生成过程中发布 `assistant_delta` 事件
 - **WHEN** AgentLoop 收到完整 LLM response
 - **THEN** runtime SHALL 只在 `LLMResponse.tool_calls` 完整后执行工具
 - **AND** runtime SHALL NOT 将 tool arguments 作为 assistant text delta 暴露
+
+### Requirement: 父 run 通过显式运行时接口管理子 session
+
+父 AgentLoop SHALL 通过显式运行时接口创建、启动、查询、等待、取消和检查子 session / 子 run，而不是通过自动消息注入或伪造 tool result 把子结果并入父 messages。
+
+#### Scenario: 父 run 查询子 run 结果
+
+- **GIVEN** 一个已存在的子 session 和其最近一次子 run
+- **WHEN** 父 agent 调用 `GetSubagentRun`
+- **THEN** 系统 SHALL 返回结构化结果
+- **AND** SHALL NOT 直接修改父 run 的 messages transcript
+
+### Requirement: 子 session mode 是 session 级状态
+
+子 session SHALL 拥有独立的 session 级 mode。对子 session mode 的修改 SHALL 只影响后续 run，不影响当前已在运行的子 run。
+
+#### Scenario: 运行中修改子 session mode
+
+- **GIVEN** 一个子 session 当前正在以某个 mode 运行
+- **WHEN** 父 agent 修改该子 session 的 mode
+- **THEN** 当前子 run SHALL 继续沿用原 mode
+- **AND** 后续新的子 run SHALL 使用更新后的 mode
