@@ -58,7 +58,7 @@ tests/agent/tools/test_edit_tool.py
 - AgentLoop 工具调用链
 - Memory compact 后保持 tool-call 协议合法
 - Web session 消息历史
-- Web session 的 session id / run id、Plan Document、planning state 事件和工具结果 display metadata
+- Web session 的 session id / run id / session mode、Plan Document、planning state 事件和工具结果 display metadata
 - Benchmark runner artifact 写入
 
 ### Web 测试
@@ -69,7 +69,7 @@ Web 测试覆盖 server、session 和浏览器行为。
 
 - Chat 页面 assistant Markdown 渲染，包括列表、代码块、链接，以及 raw HTML / unsafe link 的转义或阻断。
 - 工具结果展示策略，包括长结果折叠、preview、字符/行数元数据，以及工具结果不走 Markdown/HTML 注入。
-- session id、run id、Plan Document、planning state 和 Debug 开关的前端可见行为。
+- session id、run id、session mode、Plan Document、planning state 和 Debug 开关的前端可见行为。
 
 常用命令：
 
