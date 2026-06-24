@@ -46,6 +46,21 @@ class TestRunTestCommand:
 class TestApplyTestPatch:
     """Verify the apply_test_patch flow doesn't lose agent edits."""
 
+    def test_existing_test_roots_skips_missing_testing_dir(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+        (repo / "tests").mkdir()
+        (repo / "tests" / "test_x.py").write_text("def test_ok():\n    pass\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
+
+        runner = BenchmarkRunner.__new__(BenchmarkRunner)
+
+        assert runner._existing_test_roots(repo) == ["tests"]
+
     def test_source_patch_survives_git_clean(self, tmp_path):
         # Setup: create a git repo with a file
         repo = tmp_path / "repo"

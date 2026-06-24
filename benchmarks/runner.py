@@ -503,10 +503,28 @@ class BenchmarkRunner:
     def _git_diff_stat(self, workspace: Path) -> str:
         return _run_git(["diff", "--stat"], workspace) or "(no changes)"
 
+    def _existing_test_roots(self, workspace: Path) -> list[str]:
+        roots: list[str] = []
+        for candidate in ("tests", "testing"):
+            if (workspace / candidate).exists():
+                roots.append(candidate)
+                continue
+            result = subprocess.run(
+                ["git", "ls-tree", "-d", "--name-only", "HEAD", candidate],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip() == candidate:
+                roots.append(candidate)
+        return roots
+
     def _apply_test_patch(self, workspace: Path, patch_path: Path, task_output: Path) -> None:
         # SWE-bench pattern: isolate test files from agent modifications.
         # Write the source patch OUTSIDE the workspace so git clean doesn't remove it.
         source_patch = task_output / ".agent_source.patch"
+        test_roots = self._existing_test_roots(workspace)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=workspace, timeout=10,
@@ -541,14 +559,15 @@ class BenchmarkRunner:
                     f"{apply_result.stderr.strip() or apply_result.stdout.strip()}"
                 )
         else:
-            subprocess.run(
-                ["git", "checkout", "HEAD", "--", "tests/", "testing/"],
-                cwd=workspace, timeout=10,
-            )
-            subprocess.run(
-                ["git", "clean", "-fd", "--", "tests/", "testing/"],
-                cwd=workspace, timeout=10,
-            )
+            if test_roots:
+                subprocess.run(
+                    ["git", "checkout", "HEAD", "--", *test_roots],
+                    cwd=workspace, timeout=10,
+                )
+                subprocess.run(
+                    ["git", "clean", "-fd", "--", *test_roots],
+                    cwd=workspace, timeout=10,
+                )
 
         try:
             source_patch.unlink(missing_ok=True)
