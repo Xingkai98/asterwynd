@@ -26,9 +26,9 @@
 - `add-streaming-agent-output`：已合入并归档。
 - `add-runtime-mode-switching`：已合入并归档。
 
-### 第二批：benchmark 基础设施，最高优先级串行推进
+### 第二批：benchmark 基础设施，已完成关键收敛
 
-- `add-swebench-docker-harness`：当前 `swebench-*` 仍走本地 Python 环境模拟，不是 Docker harness；建议最高优先级推进，避免 benchmark 结论继续混入环境噪音。
+- `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
 ### 第三批：运行时交互协议，建议串行合入
 
@@ -46,26 +46,7 @@
 
 ## 未实现队列
 
-### 1. `add-swebench-docker-harness`
-
-状态：未实现。
-
-批次：第二批，最高优先级串行推进。
-
-建议顺序原因：
-
-- 当前 `swebench-*` 任务仍是“clone + 本地 venv 装依赖”的半兼容路径，不是 SWE-bench 官方 Docker harness。
-- benchmark 是项目主线能力证明链的一部分；如果外部任务环境语义不清，后续 pass rate 和失败归因都会失真。
-- 先把 Docker preflight 和 `unsupported` 语义立住，再继续扩展 subagent、LSP 或 TUI，更利于后续 benchmark 闭环可信度。
-
-主要交付：
-
-- `swebench-*` Docker harness 执行路径。
-- Docker preflight。
-- Docker 不可用时的显式 `unsupported` artifact。
-- 当前容器开发环境的辅助文档和备用脚本。
-
-### 2. `upgrade-subagents-to-agentloop`
+### 1. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -83,7 +64,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 3. `add-lsp-code-intelligence`
+### 2. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -102,7 +83,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 4. `add-minimal-tui-runtime-view`
+### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -120,7 +101,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 5. `add-mcp-tool-adapter`
+### 4. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -138,7 +119,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 6. `add-browser-use-safety-foundation`
+### 5. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
