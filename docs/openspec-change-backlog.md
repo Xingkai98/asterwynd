@@ -21,10 +21,10 @@
 - `add-tool-result-display-controls`：已合入并归档。
 - `harden-web-research-tools`：已合入并归档。
 - `render-markdown-in-chat-surfaces`：已合入并归档。
+- `add-tree-sitter-symbol-extraction`：已合入并归档。
 
 ### 第二批：可立即并行的低耦合基础能力
 
-- `add-tree-sitter-symbol-extraction`：`add-repo-map-code-intelligence` 已合入，可复用 repo scanner、extractor 接口、repo map 输出和只读工具。
 - `add-plan-mode`：planning state 已合入，可开始真实 plan mode；与 streaming / mode switching 都会碰 AgentLoop，合入阶段需要错开。
 
 ### 第三批：运行时交互协议，建议串行合入
@@ -35,7 +35,7 @@
 
 ### 第四批：语义 code intelligence 与 TUI
 
-- `add-lsp-code-intelligence`：等待 repo map 基础设施稳定，建议在 tree-sitter 多语言 symbol 之后推进，避免直接把 LSP 当成仓库结构层。
+- `add-lsp-code-intelligence`：repo map 和 tree-sitter 多语言 symbol 已合入，后续应把 LSP 作为更强 provider 接入，避免直接把 LSP 当成仓库结构层。
 - `add-minimal-tui-runtime-view`：建议在 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后做，复用统一运行事件和 mode transition。
 
 ### 第五批：外部工具与高风险能力
@@ -45,26 +45,7 @@
 
 ## 未实现队列
 
-### 1. `add-tree-sitter-symbol-extraction`
-
-状态：未实现。
-
-批次：第二批，`add-repo-map-code-intelligence` 已合入，可开始。
-
-建议顺序原因：
-
-- tree-sitter 应复用第一阶段的 repo scanner、extractor 接口、WorkspacePolicy 约束和 repo map 输出格式。
-- 这是 LSP 之前的多语言语法级 symbol 能力，不应和第一阶段 Python AST 证明点捆绑。
-
-主要交付：
-
-- tree-sitter parser / grammar registry。
-- per-language query registry。
-- 多语言 symbol extraction。
-- 未注册语言和解析失败降级。
-- 多语言 fixture 与 benchmark smoke。
-
-### 2. `add-plan-mode`
+### 1. `add-plan-mode`
 
 状态：未实现。
 
@@ -83,7 +64,7 @@
 - AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
 - CLI/Web 启动 plan mode。
 
-### 3. `add-streaming-agent-output`
+### 2. `add-streaming-agent-output`
 
 状态：未实现。
 
@@ -102,7 +83,7 @@
 - 非 streaming provider fallback。
 - 为未来 TUI 暴露 streaming event。
 
-### 4. `add-runtime-mode-switching`
+### 3. `add-runtime-mode-switching`
 
 状态：未实现。
 
@@ -121,7 +102,7 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 5. `upgrade-subagents-to-agentloop`
+### 4. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -139,16 +120,16 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 6. `add-lsp-code-intelligence`
+### 5. `add-lsp-code-intelligence`
 
 状态：未实现。
 
-批次：第四批，repo map 基础设施已合入；建议在 `add-tree-sitter-symbol-extraction` 后推进。
+批次：第四批，repo map 和 tree-sitter 基础设施已合入，可开始细化 LSP provider 边界。
 
 建议顺序原因：
 
 - LSP 提供 definition、references、hover、diagnostics 等语义能力，但需要 language server 配置、进程生命周期、文档同步和超时/错误处理。
-- 先完成 repo map 和 tree-sitter，可以让 LSP 作为更强 provider 接入，而不是承担仓库结构发现职责。
+- repo map 和 tree-sitter 已提供文件级扫描和语法级符号，LSP 应作为更强 provider 接入，而不是承担仓库结构发现职责。
 
 主要交付：
 
@@ -158,7 +139,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 7. `add-minimal-tui-runtime-view`
+### 6. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
