@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent.code_intelligence.config import CodeIntelligenceConfig
 from agent.code_intelligence.repo_map import build_repo_map, format_repo_map, search_symbols
 from agent.tools.base import Tool, tool_parameters
 from agent.workspace_policy import WorkspacePolicy
@@ -32,9 +33,11 @@ class RepoMapTool(Tool):
         self,
         policy: WorkspacePolicy | None = None,
         ignore_patterns: tuple[str, ...] = (),
+        code_intelligence_config: CodeIntelligenceConfig | None = None,
     ):
         self.policy = policy or WorkspacePolicy()
         self.ignore_patterns = ignore_patterns
+        self.code_intelligence_config = code_intelligence_config or CodeIntelligenceConfig()
 
     async def execute(self, path: str = ".", max_files: int = 200, **kwargs) -> str:
         try:
@@ -43,6 +46,7 @@ class RepoMapTool(Tool):
                 path=path,
                 ignore_patterns=self.ignore_patterns,
                 max_files=min(int(max_files), 500),
+                code_intelligence_config=self.code_intelligence_config,
             )
         except (FileNotFoundError, PermissionError) as exc:
             return f"Error: {exc}"
@@ -51,7 +55,7 @@ class RepoMapTool(Tool):
 
 @tool_parameters(
     name="SymbolSearch",
-    description="在工作区只读搜索可提取代码符号。首版返回 Python AST 提取的 class、function、method 和 import 相关符号。",
+    description="在工作区只读搜索可提取代码符号，返回已支持语言的 class、function、method 等结构化符号。",
     parameters={
         "type": "object",
         "properties": {
@@ -81,9 +85,11 @@ class SymbolSearchTool(Tool):
         self,
         policy: WorkspacePolicy | None = None,
         ignore_patterns: tuple[str, ...] = (),
+        code_intelligence_config: CodeIntelligenceConfig | None = None,
     ):
         self.policy = policy or WorkspacePolicy()
         self.ignore_patterns = ignore_patterns
+        self.code_intelligence_config = code_intelligence_config or CodeIntelligenceConfig()
 
     async def execute(
         self,
@@ -98,6 +104,7 @@ class SymbolSearchTool(Tool):
                 path=path,
                 ignore_patterns=self.ignore_patterns,
                 max_files=500,
+                code_intelligence_config=self.code_intelligence_config,
             )
         except (FileNotFoundError, PermissionError) as exc:
             return f"Error: {exc}"
@@ -111,5 +118,10 @@ class SymbolSearchTool(Tool):
             return f"(no symbols matching {query!r})"
         return "\n".join(
             f"{file_summary.path}:{symbol.line} {symbol.kind} {symbol.name}"
+            + (
+                ""
+                if symbol.source == "python-ast"
+                else f" [{file_summary.language}/{symbol.source}]"
+            )
             for file_summary, symbol in results
         )

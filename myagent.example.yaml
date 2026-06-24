@@ -12,6 +12,8 @@ modes:
 tools:
   ignore_patterns: []
   command_denylist: []
+  code_intelligence:
+    tree_sitter_max_file_bytes: 262144
   web_search:
     providers:
       # Tavily 需要 MYAGENT_TAVILY_API_KEY。

@@ -126,6 +126,7 @@ def build_agent(
             deny_tools_by_mode=config.deny_tools_by_mode(),
         ),
         ignore_patterns=config.tools.ignore_patterns,
+        code_intelligence_config=config.tools.code_intelligence,
         web_search_config=config.tools.web_search,
     )
 

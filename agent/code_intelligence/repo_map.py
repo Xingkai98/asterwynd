@@ -4,7 +4,8 @@ import fnmatch
 import os
 from pathlib import Path
 
-from agent.code_intelligence.extractors import DEFAULT_EXTRACTORS, SymbolExtractor
+from agent.code_intelligence.config import CodeIntelligenceConfig
+from agent.code_intelligence.extractors import build_default_extractors, SymbolExtractor
 from agent.code_intelligence.models import FileSummary, RepoMap, Symbol
 from agent.workspace_policy import WorkspacePolicy
 
@@ -72,9 +73,11 @@ def build_repo_map(
     path: str = ".",
     ignore_patterns: tuple[str, ...] = (),
     max_files: int = 200,
-    extractors: tuple[SymbolExtractor, ...] = DEFAULT_EXTRACTORS,
+    extractors: tuple[SymbolExtractor, ...] | None = None,
+    code_intelligence_config: CodeIntelligenceConfig | None = None,
 ) -> RepoMap:
     policy = policy or WorkspacePolicy()
+    extractors = extractors or build_default_extractors(code_intelligence_config)
     root = policy.assert_read_allowed(path)
     if not root.exists():
         raise FileNotFoundError(f"path not found: {path}")
@@ -138,7 +141,8 @@ def format_repo_map(repo_map: RepoMap, *, max_symbols_per_file: int = 12) -> str
             f"- {entry.path} [{entry.language} {entry.category}, {entry.lines} lines]"
         )
         for symbol in entry.symbols[:max_symbols_per_file]:
-            lines.append(f"  - {symbol.kind} {symbol.name}:{symbol.line}")
+            suffix = "" if symbol.source == "python-ast" else f" [{symbol.source}]"
+            lines.append(f"  - {symbol.kind} {symbol.name}:{symbol.line}{suffix}")
         if len(entry.symbols) > max_symbols_per_file:
             remaining = len(entry.symbols) - max_symbols_per_file
             lines.append(f"  - ... {remaining} more symbols")

@@ -43,6 +43,16 @@ async def test_symbol_search_tool_finds_matching_symbols(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_symbol_search_tool_marks_tree_sitter_symbol_source(tmp_path):
+    (tmp_path / "app.ts").write_text("export function run() {}\n", encoding="utf-8")
+
+    tool = SymbolSearchTool(policy=WorkspacePolicy(tmp_path))
+    result = await tool.execute(query="run")
+
+    assert "app.ts:1 function run [typescript/tree-sitter-typescript]" in result
+
+
+@pytest.mark.asyncio
 async def test_symbol_search_tool_skips_denied_paths(tmp_path):
     (tmp_path / ".env").write_text("def secret():\n    pass\n")
     (tmp_path / "public.py").write_text("def public():\n    pass\n")

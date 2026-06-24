@@ -298,6 +298,7 @@ class MyAgentRunner(AgentRunner):
                 deny_tools_by_mode=self.config.deny_tools_by_mode(),
             ),
             ignore_patterns=self.config.tools.ignore_patterns,
+            code_intelligence_config=self.config.tools.code_intelligence,
         )
 
         counting_llm = CountingLLM(self.llm)
