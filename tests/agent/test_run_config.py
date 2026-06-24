@@ -1,6 +1,12 @@
 import pytest
 
-from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.run_config import (
+    AgentMode,
+    AgentRunConfig,
+    AgentRuntimeState,
+    ModePolicy,
+    parse_agent_mode,
+)
 from agent.tools.base import Tool
 
 
@@ -37,6 +43,29 @@ def test_agent_run_config_defaults_to_build():
     assert AgentRunConfig().mode is AgentMode.BUILD
 
 
+def test_runtime_state_set_mode_updates_current_mode_and_returns_transition():
+    state = AgentRuntimeState(initial_mode=AgentMode.BUILD)
+
+    transition = state.set_mode("read-only", source="cli", reason="inspect only")
+
+    assert state.current_mode is AgentMode.READ_ONLY
+    assert transition == {
+        "old_mode": "build",
+        "new_mode": "read_only",
+        "source": "cli",
+        "reason": "inspect only",
+    }
+
+
+def test_runtime_state_rejects_bypass_and_keeps_current_mode():
+    state = AgentRuntimeState(initial_mode=AgentMode.BUILD)
+
+    with pytest.raises(ValueError, match="bypass"):
+        state.set_mode("bypass", source="cli")
+
+    assert state.current_mode is AgentMode.BUILD
+
+
 def test_mode_policy_allows_all_registered_tools_in_build():
     policy = ModePolicy(AgentRunConfig(mode=AgentMode.BUILD))
 
@@ -50,6 +79,20 @@ def test_mode_policy_denies_configured_tool_name_in_build():
     )
 
     assert policy.is_tool_allowed(DummyTool(read_only=True, dangerous=False)) is False
+
+
+def test_mode_policy_reads_latest_runtime_state_mode():
+    state = AgentRuntimeState(initial_mode=AgentMode.BUILD)
+    policy = ModePolicy(
+        AgentRunConfig(mode=AgentMode.BUILD),
+        runtime_state=state,
+    )
+
+    assert policy.is_tool_allowed(DummyTool(read_only=False, dangerous=False)) is True
+
+    state.set_mode("read_only", source="test")
+
+    assert policy.is_tool_allowed(DummyTool(read_only=False, dangerous=False)) is False
 
 
 def test_mode_policy_read_only_allows_only_read_only_non_dangerous_tools():

@@ -1,6 +1,6 @@
 # tests/agent/tools/test_registry.py
 import pytest
-from agent.run_config import AgentMode, AgentRunConfig, ModePolicy
+from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState, ModePolicy
 from agent.tools.factory import build_default_tool_registry
 from agent.tools.registry import ToolRegistry
 from agent.tools.base import Tool, tool_parameters, ToolCall
@@ -58,6 +58,29 @@ def test_get_all_schemas_filters_tools_by_mode_policy():
 
     assert names == ["Echo"]
 
+
+def test_get_all_schemas_uses_latest_runtime_state_mode():
+    state = AgentRuntimeState(initial_mode=AgentMode.BUILD)
+    registry = ToolRegistry(
+        mode_policy=ModePolicy(
+            AgentRunConfig(mode=AgentMode.BUILD),
+            runtime_state=state,
+        )
+    )
+    registry.register(EchoTool())
+    registry.register(WriteLikeTool())
+
+    assert [schema["function"]["name"] for schema in registry.get_all_schemas()] == [
+        "Echo",
+        "WriteLike",
+    ]
+
+    state.set_mode("read_only", source="test")
+
+    assert [schema["function"]["name"] for schema in registry.get_all_schemas()] == [
+        "Echo",
+    ]
+
 @pytest.mark.asyncio
 async def test_execute_found():
     registry = ToolRegistry()
@@ -87,6 +110,26 @@ async def test_execute_denied_by_mode_policy_returns_permission_result_without_c
 
     assert "Permission denied" in result
     assert "WriteLike" in result
+    assert "read_only" in result
+    assert tool.called is False
+
+
+@pytest.mark.asyncio
+async def test_execute_uses_latest_runtime_state_mode():
+    state = AgentRuntimeState(initial_mode=AgentMode.BUILD)
+    tool = WriteLikeTool()
+    registry = ToolRegistry(
+        mode_policy=ModePolicy(
+            AgentRunConfig(mode=AgentMode.BUILD),
+            runtime_state=state,
+        )
+    )
+    registry.register(tool)
+
+    state.set_mode("read_only", source="test")
+    result = await registry.execute(ToolCall(id="c1", name="WriteLike", arguments={}))
+
+    assert "Permission denied" in result
     assert "read_only" in result
     assert tool.called is False
 

@@ -77,6 +77,30 @@ header h1 {
   align-items: center;
   min-width: 0;
 }
+#mode-controls {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+#mode-select,
+#mode-apply {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.78rem;
+}
+#mode-select {
+  padding: 0 8px;
+}
+#mode-apply {
+  padding: 0 10px;
+  cursor: pointer;
+}
+#mode-apply:hover {
+  border-color: var(--info);
+}
 #identity-bar code {
   max-width: 12ch;
   overflow: hidden;
@@ -477,6 +501,7 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   header {
     padding: 8px 12px;
     gap: 8px;
+    flex-wrap: wrap;
   }
   header h1 {
     font-size: 1rem;
@@ -487,6 +512,16 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   }
   #status {
     display: none;
+  }
+  #identity-bar {
+    flex-wrap: wrap;
+  }
+  #mode-controls {
+    width: 100%;
+  }
+  #mode-select {
+    flex: 1;
+    min-width: 0;
   }
 
   #messages {

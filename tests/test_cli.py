@@ -15,6 +15,8 @@ class FakeAgent:
         self.session_ids = []
         self.run_ids = []
         self.plan_document = None
+        self.current_mode = "build"
+        self.mode_changes = []
 
     async def run(self, messages, session_id=None, run_id=None):
         self.messages = messages
@@ -25,6 +27,37 @@ class FakeAgent:
             stop_reason=StopReason.END_TURN,
             tool_calls_made=self.tool_calls_made,
         )
+
+    async def set_mode(
+        self,
+        mode,
+        *,
+        source,
+        reason=None,
+        on_event=None,
+        trace_recorder=None,
+        session_id=None,
+        run_id=None,
+    ):
+        if mode == "bypass":
+            raise ValueError("bypass mode is reserved for internal use")
+        old_mode = self.current_mode
+        self.current_mode = mode
+        transition = {
+            "old_mode": old_mode,
+            "new_mode": mode,
+            "source": source,
+        }
+        if reason is not None:
+            transition["reason"] = reason
+        if session_id is not None:
+            transition["session_id"] = session_id
+        if run_id is not None:
+            transition["run_id"] = run_id
+        self.mode_changes.append(transition)
+        if on_event:
+            await on_event("mode_changed", transition)
+        return transition
 
 
 class StreamingFakeAgent(FakeAgent):
@@ -184,6 +217,57 @@ def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):
     assert "Run ID: run-2" in result.stdout
     assert fake.session_ids == ["session-interactive", "session-interactive"]
     assert fake.run_ids == ["run-1", "run-2"]
+
+
+def test_cli_interactive_mode_command_changes_session_mode(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/mode read_only\nhello\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Mode changed: build -> read_only" in result.stdout
+    assert fake.mode_changes == [
+        {
+            "old_mode": "build",
+            "new_mode": "read_only",
+            "source": "cli",
+            "session_id": "session-interactive",
+        }
+    ]
+    assert [message.content for message in fake.messages if message.role == "user"] == [
+        "hello"
+    ]
+
+
+def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/mode bypass\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "bypass" in result.stdout
+    assert fake.current_mode == "build"
+    assert fake.mode_changes == []
 
 
 def test_cli_single_prompt_passes_normalized_mode(monkeypatch):

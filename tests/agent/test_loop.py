@@ -19,6 +19,21 @@ class EchoTool(Tool):
     async def execute(self, **kwargs) -> str:
         return "echo!"
 
+
+@tool_parameters(name="WriteLike", description="Write", parameters={"type": "object", "properties": {}, "required": []})
+class WriteLikeTool(Tool):
+    name = "WriteLike"
+    description = "Write"
+    parameters = {}
+    read_only = False
+
+    def __init__(self):
+        self.called = False
+
+    async def execute(self, **kwargs) -> str:
+        self.called = True
+        return "wrote!"
+
 class MockLLM:
     def __init__(self, response: LLMResponse):
         self._response = response
@@ -585,6 +600,131 @@ async def test_agent_loop_emits_run_started_event_with_mode():
     assert trace.to_dict()["run_id"] == "run-1"
     assert trace.to_dict()["mode"] == "read_only"
     assert trace.steps[0].type == "run_started"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_set_mode_emits_event_and_trace_without_messages():
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    messages = [Message(role="user", content="hi")]
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+    trace = TraceRecorder(task_id="trace-test")
+
+    transition = await loop.set_mode(
+        "read_only",
+        source="cli",
+        reason="inspect",
+        on_event=on_event,
+        trace_recorder=trace,
+        session_id="session-1",
+    )
+
+    assert transition["old_mode"] == "build"
+    assert transition["new_mode"] == "read_only"
+    assert transition["source"] == "cli"
+    assert transition["reason"] == "inspect"
+    assert transition["session_id"] == "session-1"
+    assert events == [("mode_changed", transition)]
+    assert trace.steps[-1].type == "mode_changed"
+    assert trace.steps[-1].data == transition
+    assert messages == [Message(role="user", content="hi")]
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_run_started_uses_latest_runtime_mode():
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+
+    await loop.set_mode("read_only", source="test")
+    await loop.run([Message(role="user", content="test")], on_event=on_event)
+
+    assert events[0][0] == "run_started"
+    assert events[0][1]["mode"] == "read_only"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_set_mode_to_plan_registers_plan_tools():
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+
+    build_tool_names = [
+        schema["function"]["name"]
+        for schema in loop.tool_registry.get_all_schemas()
+    ]
+    assert "UpdatePlan" not in build_tool_names
+    assert "ExitPlanMode" not in build_tool_names
+
+    await loop.set_mode("plan", source="cli")
+
+    plan_tool_names = [
+        schema["function"]["name"]
+        for schema in loop.tool_registry.get_all_schemas()
+    ]
+    assert "UpdatePlan" in plan_tool_names
+    assert "ExitPlanMode" in plan_tool_names
+
+    await loop.set_mode("build", source="cli")
+    build_tool_names = [
+        schema["function"]["name"]
+        for schema in loop.tool_registry.get_all_schemas()
+    ]
+    assert "UpdatePlan" not in build_tool_names
+    assert "ExitPlanMode" not in build_tool_names
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_tool_call_uses_mode_changed_after_schema_was_seen():
+    class SwitchBeforeToolLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            names = [tool["function"]["name"] for tool in tools or []]
+            assert "WriteLike" in names
+            await loop.set_mode("read_only", source="test")
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCallDelta(id="c1", name="WriteLike", arguments="{}")
+                ],
+                stop_reason="tool_calls",
+            )
+
+    tool = WriteLikeTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    loop = AgentLoop(
+        llm=SwitchBeforeToolLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+        max_iterations=1,
+    )
+
+    result = await loop.run([Message(role="user", content="test")])
+
+    assert tool.called is False
+    assert result.tool_calls_made[0].name == "WriteLike"
+    assert "Permission denied" in result.tool_calls_made[0].result
+    assert "read_only" in result.tool_calls_made[0].result
 
 
 @pytest.mark.asyncio

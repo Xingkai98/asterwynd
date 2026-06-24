@@ -54,6 +54,23 @@ ToolRegistry SHALL 接收包含 id、name 和 arguments 的 ToolCall，并把 ar
 - **THEN** 系统 SHALL 不暴露该工具 schema
 - **AND** 执行该工具时 SHALL 返回权限拒绝结果
 
+### Requirement: ToolRegistry 读取当前 session mode
+
+ToolRegistry SHALL 通过 runtime state 读取当前 session mode，而不是只依赖 AgentLoop 构造时的初始 mode。
+
+#### Scenario: mode 切换后 schema 立即变化
+
+- **GIVEN** ToolRegistry 当前以 `build` mode 暴露工具
+- **WHEN** session mode 切换为 `read_only`
+- **THEN** 下一次 `get_all_schemas()` SHALL 按 `read_only` mode 过滤工具
+
+#### Scenario: 已生成的 tool call 在执行前重新判权
+
+- **GIVEN** LLM 已在旧 mode 下生成 tool call
+- **WHEN** 该 tool call 真正执行前 session mode 已切换为更严格的 mode
+- **THEN** ToolRegistry SHALL 按最新 mode 判断权限
+- **AND** 被禁止的工具 SHALL 返回权限拒绝结果
+
 ### Requirement: 工具错误边界
 
 工具实现 SHALL 将可恢复错误转成可读字符串；协议层 SHALL NOT 因普通工具失败破坏消息链。

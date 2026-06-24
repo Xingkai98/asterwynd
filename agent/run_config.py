@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from threading import Lock
 
 from agent.tools.base import Tool
 
@@ -34,17 +35,52 @@ class AgentRunConfig:
     mode: AgentMode = AgentMode.BUILD
 
 
+class AgentRuntimeState:
+    def __init__(self, initial_mode: AgentMode = AgentMode.BUILD):
+        self.initial_mode = initial_mode
+        self._current_mode = initial_mode
+        self._lock = Lock()
+
+    @property
+    def current_mode(self) -> AgentMode:
+        return self._current_mode
+
+    def set_mode(
+        self,
+        value: str | AgentMode,
+        *,
+        source: str,
+        reason: str | None = None,
+    ) -> dict[str, str]:
+        new_mode = value if isinstance(value, AgentMode) else parse_agent_mode(value)
+        with self._lock:
+            old_mode = self._current_mode
+            self._current_mode = new_mode
+        transition = {
+            "old_mode": old_mode.value,
+            "new_mode": new_mode.value,
+            "source": source,
+        }
+        if reason is not None:
+            transition["reason"] = reason
+        return transition
+
+
 class ModePolicy:
     def __init__(
         self,
         run_config: AgentRunConfig | None = None,
         deny_tools_by_mode: dict[AgentMode, tuple[str, ...]] | None = None,
+        runtime_state: AgentRuntimeState | None = None,
     ):
         self.run_config = run_config or AgentRunConfig()
         self.deny_tools_by_mode = deny_tools_by_mode or {}
+        self.runtime_state = runtime_state
 
     @property
     def mode(self) -> AgentMode:
+        if self.runtime_state is not None:
+            return self.runtime_state.current_mode
         return self.run_config.mode
 
     def is_tool_allowed(self, tool: Tool) -> bool:

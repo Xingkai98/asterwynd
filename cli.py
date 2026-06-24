@@ -269,15 +269,41 @@ def run_interactive(
         )
         return result, stream_state
 
+    async def _set_mode_async(requested_mode: str):
+        return await agent.set_mode(
+            requested_mode,
+            source="cli",
+            session_id=session_id,
+        )
+
+    def _handle_interactive_command(user_input: str) -> bool:
+        stripped = user_input.strip()
+        if not stripped.startswith("/mode"):
+            return False
+        parts = stripped.split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].strip():
+            typer.echo("Error: usage /mode <build|read_only|plan>")
+            return True
+        try:
+            transition = loop.run_until_complete(_set_mode_async(parts[1].strip()))
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}")
+            return True
+        typer.echo(
+            f"Mode changed: {transition['old_mode']} -> {transition['new_mode']}"
+        )
+        return True
+
     try:
         # 如果有初始 prompt，先跑一轮
         if initial_prompt:
-            messages.append(Message(role="user", content=initial_prompt))
-            result, stream_state = loop.run_until_complete(_run_async())
-            _print_plan_document(agent)
-            if not stream_state["streamed"]:
-                typer.echo(f"\n【Agent】\n{result.content}\n")
-            _print_tool_call_summaries(result, config)
+            if not _handle_interactive_command(initial_prompt):
+                messages.append(Message(role="user", content=initial_prompt))
+                result, stream_state = loop.run_until_complete(_run_async())
+                _print_plan_document(agent)
+                if not stream_state["streamed"]:
+                    typer.echo(f"\n【Agent】\n{result.content}\n")
+                _print_tool_call_summaries(result, config)
 
         while True:
             try:
@@ -289,6 +315,9 @@ def run_interactive(
             if user_input.strip().lower() in ("exit", "quit", "q"):
                 typer.echo("再见！")
                 break
+
+            if _handle_interactive_command(user_input):
+                continue
 
             messages.append(Message(role="user", content=user_input))
             result, stream_state = loop.run_until_complete(_run_async())

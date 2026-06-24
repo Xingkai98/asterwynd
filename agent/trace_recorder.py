@@ -57,6 +57,12 @@ class TraceRecorder:
             data["run_id"] = self.run_id
         self.record("run_started", **data)
 
+    def record_mode_changed(self, transition: dict[str, Any]) -> None:
+        new_mode = transition.get("new_mode")
+        if isinstance(new_mode, str):
+            self.mode = new_mode
+        self.record("mode_changed", **transition)
+
     def record_iteration(
         self,
         iteration: int,

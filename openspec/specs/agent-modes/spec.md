@@ -62,6 +62,31 @@
 - **WHEN** ToolRegistry 执行该调用
 - **THEN** 系统 SHALL 返回可读权限错误作为 tool result
 
+### Requirement: session mode 支持运行时切换
+
+系统 SHALL 支持在同一个交互式 session 内切换当前 Agent Mode。mode transition 完成后 SHALL 更新该 session 的当前 mode，并影响同一 session 后续 run 的工具 schema 暴露和工具执行权限。
+
+#### Scenario: session 切换到 read_only
+
+- **GIVEN** CLI 交互、Web 或未来 TUI session 当前 mode 为 `build`
+- **WHEN** 用户将该 session 切换到 `read_only`
+- **THEN** 该 session 后续 run SHALL 使用 `read_only` mode
+- **AND** 工具 schema SHALL 不再暴露当前 mode 禁止的工具
+
+#### Scenario: session 切换到 plan
+
+- **GIVEN** session 当前 mode 为 `build`
+- **WHEN** 用户将该 session 切换到 `plan`
+- **THEN** 后续 run SHALL 使用 plan mode 工具策略
+- **AND** SHALL 暴露 `UpdatePlan` 和 `ExitPlanMode`
+
+#### Scenario: session 切换到 bypass 被拒绝
+
+- **GIVEN** 用户处于交互式 session
+- **WHEN** 用户请求将 mode 切换到 `bypass`
+- **THEN** 系统 SHALL 返回可读错误
+- **AND** 当前 mode SHALL 保持不变
+
 ### Requirement: mode deny override 来自统一配置
 
 系统 SHALL 支持从统一配置对象读取按 mode 定义的 `deny_tools` override。`deny_tools` SHALL 使用工具公开名，大小写敏感；未知工具名 SHALL 在入口构造工具 registry 时 fail fast。
