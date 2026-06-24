@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-class FailureCategory(str, Enum):
+class BenchmarkReason(str, Enum):
     SETUP_ERROR = "setup_error"
     TOOL_ERROR = "tool_error"
     EDIT_VALIDATION = "edit_validation"
@@ -17,6 +17,8 @@ class FailureCategory(str, Enum):
     NO_CHANGE = "no_change"
     OUT_OF_SCOPE_CHANGE = "out_of_scope_change"
     MODEL_FAILURE = "model_failure"
+    DOCKER_UNAVAILABLE = "docker_unavailable"
+    DOCKER_RUNTIME_ERROR = "docker_runtime_error"
 
 
 @dataclass
@@ -26,7 +28,7 @@ class AgentRunResult:
     tool_calls: int = 0
     edit_count: int = 0
     test_runs: int = 0
-    failure_category: str | None = None
+    reason: str | None = None
     output: str = ""
 
 
@@ -46,7 +48,7 @@ class TaskResult:
     test_runs: int = 0
     input_tokens: int | None = None
     output_tokens: int | None = None
-    failure_category: str | None = None
+    reason: str | None = None
     planning_summary: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
@@ -71,6 +73,7 @@ class RunMetadata:
     passed: int = 0
     warnings: int = 0
     failed: int = 0
+    unsupported: int = 0
 
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(
@@ -87,7 +90,7 @@ def render_summary(results: list[TaskResult]) -> str:
         "|------|--------|------|------------|------------|---------|",
     ]
     for result in results:
-        failure = result.failure_category or "-"
+        failure = result.reason or "-"
         lines.append(
             f"| {result.task_id} | {result.status} | {result.duration_seconds}s | "
             f"{result.iterations} | {result.tool_calls} | {failure} |"

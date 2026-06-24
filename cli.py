@@ -489,7 +489,7 @@ def benchmark(
     typer.echo(f"Benchmark run: {run_path}")
     typer.echo(
         f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
-        f"warnings: {metadata.warnings} | failed: {metadata.failed}"
+        f"warnings: {metadata.warnings} | unsupported: {metadata.unsupported} | failed: {metadata.failed}"
     )
 
 

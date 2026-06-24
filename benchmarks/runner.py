@@ -5,17 +5,19 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from agent.run_config import AgentRunConfig, parse_agent_mode
 from agent.run_identity import new_run_id as new_agent_run_id
 from agent.trace_recorder import TraceRecorder
 from benchmarks.agent_runner import AgentRunner
 from benchmarks.models import (
-    FailureCategory,
+    BenchmarkReason,
     RunMetadata,
     TaskResult,
     render_summary,
@@ -30,6 +32,13 @@ class TaskArtifacts:
     final_diff: Path
     test_output: Path
     runner_log: Path
+
+
+@dataclass(frozen=True)
+class DockerPreflightResult:
+    available: bool
+    reason: str
+    detail: str = ""
 
 
 class BenchmarkRunner:
@@ -56,6 +65,7 @@ class BenchmarkRunner:
         self.clone_cache_dir = (
             Path(clone_cache_dir).resolve() if clone_cache_dir else None
         )
+        self._docker_preflight_result: DockerPreflightResult | None = None
 
     def _prefill_clone_cache(self, loaded_tasks: list) -> None:
         """Serial pre-fill of bare clone cache for all external repos.
@@ -78,6 +88,38 @@ class BenchmarkRunner:
                 continue
             cache_dir.mkdir(parents=True, exist_ok=True)
             self._git_clone_with_retry(loaded.task.external_repo, str(cache_dir), bare=True)
+
+    def _get_docker_preflight_result(self) -> DockerPreflightResult:
+        if self._docker_preflight_result is None:
+            self._docker_preflight_result = self._probe_docker()
+        return self._docker_preflight_result
+
+    def _probe_docker(self) -> DockerPreflightResult:
+        try:
+            proc = subprocess.run(
+                ["docker", "info"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception as exc:
+            return DockerPreflightResult(
+                available=False,
+                reason=BenchmarkReason.DOCKER_UNAVAILABLE.value,
+                detail=str(exc),
+            )
+        if proc.returncode == 0:
+            return DockerPreflightResult(
+                available=True,
+                reason="ok",
+                detail="docker info succeeded",
+            )
+        detail = (proc.stderr or proc.stdout or "").strip()
+        return DockerPreflightResult(
+            available=False,
+            reason=BenchmarkReason.DOCKER_UNAVAILABLE.value,
+            detail=detail or "docker info failed",
+        )
 
     async def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
         task_dirs = sorted(
@@ -112,7 +154,7 @@ class BenchmarkRunner:
                     model=self.model,
                     mode=self.run_config.mode.value,
                     status="error",
-                    failure_category=FailureCategory.SETUP_ERROR.value,
+                    reason=BenchmarkReason.SETUP_ERROR.value,
                 ))
             else:
                 results.append(r)
@@ -134,8 +176,9 @@ class BenchmarkRunner:
             task_count=len(results),
             passed=sum(result.status == "passed" for result in results),
             warnings=sum(result.status == "passed_with_warnings" for result in results),
+            unsupported=sum(result.status == "unsupported" for result in results),
             failed=sum(
-                result.status not in {"passed", "passed_with_warnings"}
+                result.status in {"failed", "error"}
                 for result in results
             ),
         )
@@ -181,15 +224,32 @@ class BenchmarkRunner:
             mode=self.run_config.mode.value,
             agent_run_id=agent_run_id,
         )
+        is_docker_task = loaded.task.execution_environment == "docker"
 
         try:
             log(f"Starting task {loaded.task.id}")
+            if is_docker_task:
+                preflight = self._get_docker_preflight_result()
+                trace.record(
+                    "benchmark_preflight",
+                    environment="docker",
+                    status="ok" if preflight.available else "unsupported",
+                    reason=preflight.reason,
+                    detail=preflight.detail,
+                )
+                if not preflight.available:
+                    result.status = "unsupported"
+                    result.reason = preflight.reason
+                    trace.record_completion("unsupported", preflight.detail)
+                    log(f"Docker preflight unavailable: {preflight.detail or preflight.reason}")
+                    return result
             if loaded.task.external_repo:
                 workspace = await asyncio.to_thread(
                     self._clone_external_repo, loaded, task_output, log
                 )
                 log(f"Cloned external repo to: {workspace}")
-                await asyncio.to_thread(self._install_repo_deps, workspace, log, loaded)
+                if not is_docker_task:
+                    await asyncio.to_thread(self._install_repo_deps, workspace, log, loaded)
             else:
                 workspace = await asyncio.to_thread(
                     self._create_worktree, loaded, task_output
@@ -218,6 +278,70 @@ class BenchmarkRunner:
                 self._git_diff_stat(workspace),
             )
             log(f"Captured final diff: {artifacts.final_diff}")
+
+            if is_docker_task:
+                patch_text = self._git_patch(workspace)
+                if not patch_text.strip():
+                    result = TaskResult(
+                        task_id=loaded.task.id,
+                        agent=self.agent_name,
+                        model=self.model,
+                        mode=self.run_config.mode.value,
+                        agent_run_id=agent_run_id,
+                        status="failed",
+                        duration_seconds=round(time.time() - start, 1),
+                        iterations=agent_result.iterations,
+                        tool_calls=agent_result.tool_calls,
+                        edit_count=agent_result.edit_count,
+                        test_runs=0,
+                        reason=BenchmarkReason.NO_CHANGE.value,
+                    )
+                    trace.record_completion("failed", BenchmarkReason.NO_CHANGE.value)
+                    log("Task result: failed (no_change)")
+                    return result
+
+                verification = await asyncio.to_thread(
+                    self._run_swebench_harness,
+                    loaded,
+                    task_output,
+                    patch_text,
+                )
+                artifacts.test_output.write_text(
+                    verification.get("detail", "") or "(no SWE-bench harness output)\n",
+                    errors="replace",
+                )
+                log(f"SWE-bench verification status={verification['status']}")
+                if verification.get("detail"):
+                    log("SWE-bench verification detail saved to test_output.txt")
+
+                if verification["status"] == "passed":
+                    if agent_result.status != "completed" or agent_result.reason:
+                        status = "passed_with_warnings"
+                        reason = agent_result.reason or BenchmarkReason.MODEL_FAILURE.value
+                    else:
+                        status = "passed"
+                        reason = None
+                else:
+                    status = verification["status"]
+                    reason = verification["reason"]
+
+                result = TaskResult(
+                    task_id=loaded.task.id,
+                    agent=self.agent_name,
+                    model=self.model,
+                    mode=self.run_config.mode.value,
+                    agent_run_id=agent_run_id,
+                    status=status,
+                    duration_seconds=round(time.time() - start, 1),
+                    iterations=agent_result.iterations,
+                    tool_calls=agent_result.tool_calls,
+                    edit_count=agent_result.edit_count,
+                    test_runs=1 if verification["status"] in {"passed", "failed"} else 0,
+                    reason=reason,
+                )
+                trace.record_completion(status, reason or "")
+                log(f"Task result: {status}")
+                return result
 
             if loaded.test_patch_path:
                 await asyncio.to_thread(
@@ -258,22 +382,22 @@ class BenchmarkRunner:
             )
             log(f"Test command exit code: {test_exit_code}")
 
-            failure_category = None
+            reason = None
             if test_exit_code == 0:
-                if agent_result.status != "completed" or agent_result.failure_category:
+                if agent_result.status != "completed" or agent_result.reason:
                     status = "passed_with_warnings"
-                    failure_category = (
-                        agent_result.failure_category
-                        or FailureCategory.MODEL_FAILURE.value
+                    reason = (
+                        agent_result.reason
+                        or BenchmarkReason.MODEL_FAILURE.value
                     )
                 else:
                     status = "passed"
             else:
                 status = "failed"
-                failure_category = (
-                    FailureCategory.TEST_TIMEOUT.value
+                reason = (
+                    BenchmarkReason.TEST_TIMEOUT.value
                     if test_exit_code == -1 and "Timeout" in test_output
-                    else FailureCategory.TEST_FAILURE.value
+                    else BenchmarkReason.TEST_FAILURE.value
                 )
 
             result = TaskResult(
@@ -289,14 +413,14 @@ class BenchmarkRunner:
                 tool_calls=agent_result.tool_calls,
                 edit_count=agent_result.edit_count,
                 test_runs=1,
-                failure_category=failure_category or agent_result.failure_category,
+                reason=reason or agent_result.reason,
             )
             trace.record_completion(status)
             log(f"Task result: {status}")
         except Exception as exc:
             result.status = "error"
             result.duration_seconds = round(time.time() - start, 1)
-            result.failure_category = FailureCategory.SETUP_ERROR.value
+            result.reason = BenchmarkReason.SETUP_ERROR.value
             log(f"Error: {type(exc).__name__}: {exc}")
             trace.record_completion("error", f"{type(exc).__name__}: {exc}")
         finally:
@@ -497,11 +621,14 @@ class BenchmarkRunner:
         shutil.move(str(backup), str(target))
 
     def _write_final_diff(self, workspace: Path, output_path: Path) -> None:
-        diff = _run_git(["diff"], workspace)
+        diff = self._git_patch(workspace)
         output_path.write_text((diff or "(no changes)") + "\n", errors="replace")
 
     def _git_diff_stat(self, workspace: Path) -> str:
         return _run_git(["diff", "--stat"], workspace) or "(no changes)"
+
+    def _git_patch(self, workspace: Path) -> str:
+        return _run_git(["diff"], workspace)
 
     def _existing_test_roots(self, workspace: Path) -> list[str]:
         roots: list[str] = []
@@ -586,6 +713,94 @@ class BenchmarkRunner:
                 f"Failed to apply test patch {patch_path}: "
                 f"{patch.stderr.strip() or patch.stdout.strip()}"
             )
+
+    def _build_prediction_model_name(self) -> str:
+        if self.model:
+            return f"{self.agent_name}:{self.model}"
+        return self.agent_name
+
+    def _run_swebench_harness(
+        self,
+        loaded: LoadedTask,
+        task_output: Path,
+        patch_text: str,
+    ) -> dict[str, Any]:
+        task = loaded.task
+        if task.task_family != "swebench":
+            return {
+                "status": "unsupported",
+                "reason": "task_family_unsupported",
+                "detail": f"docker task family '{task.task_family}' is not supported yet",
+            }
+
+        predictions_path = task_output / "predictions.jsonl"
+        model_name = self._build_prediction_model_name()
+        prediction = {
+            "instance_id": task.instance_id,
+            "model_name_or_path": model_name,
+            "model_patch": patch_text,
+        }
+        predictions_path.write_text(json.dumps(prediction) + "\n", errors="replace")
+
+        run_id = f"myagent-{task.id}"
+        command = [
+            sys.executable,
+            "-m",
+            "swebench.harness.run_evaluation",
+            "--dataset_name",
+            task.dataset_name or "",
+            "--split",
+            task.dataset_split or "",
+            "--instance_ids",
+            task.instance_id or "",
+            "--predictions_path",
+            str(predictions_path),
+            "--max_workers",
+            "1",
+            "--run_id",
+            run_id,
+            "--timeout",
+            str(task.timeout_seconds),
+        ]
+        proc = subprocess.run(
+            command,
+            cwd=task_output,
+            capture_output=True,
+            text=True,
+            timeout=max(task.timeout_seconds + 300, 600),
+        )
+        detail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        if proc.returncode != 0:
+            return {
+                "status": "error",
+                "reason": BenchmarkReason.DOCKER_RUNTIME_ERROR.value,
+                "detail": detail,
+            }
+
+        report_path = (
+            task_output
+            / "logs"
+            / "run_evaluation"
+            / run_id
+            / model_name.replace("/", "__")
+            / (task.instance_id or "")
+            / "report.json"
+        )
+        if not report_path.exists():
+            return {
+                "status": "error",
+                "reason": BenchmarkReason.DOCKER_RUNTIME_ERROR.value,
+                "detail": f"Missing SWE-bench report: {report_path}",
+            }
+
+        report = json.loads(report_path.read_text())
+        instance_report = report.get(task.instance_id or "", {})
+        resolved = bool(instance_report.get("resolved"))
+        return {
+            "status": "passed" if resolved else "failed",
+            "reason": None if resolved else BenchmarkReason.TEST_FAILURE.value,
+            "detail": detail,
+        }
 
     def _start_local_httpbin(self, workspace: Path) -> tuple:
         """Start a local httpbin server for requests tests. Returns (proc, url)."""

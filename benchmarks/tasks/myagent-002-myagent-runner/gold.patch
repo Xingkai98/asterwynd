@@ -11,13 +11,13 @@ index 5270ca9..c7a5c3a 100644
 +from agent.tools import ToolRegistry, get_coding_tools
  from agent.trace_recorder import TraceRecorder
 +from agent.workspace_policy import WorkspacePolicy
- from benchmarks.models import AgentRunResult, FailureCategory
+ from benchmarks.models import AgentRunResult, BenchmarkReason
 +from benchmarks.prompt import CodingPromptBuilder
  from benchmarks.task_schema import TaskSpec
  
  
 @@ -148,3 +153,67 @@ class ShellCommandRunner(AgentRunner):
-             failure_category=None if result.returncode == 0 else FailureCategory.TOOL_ERROR.value,
+            reason=None if result.returncode == 0 else BenchmarkReason.TOOL_ERROR.value,
              output=output,
          )
 +
@@ -77,10 +77,10 @@ index 5270ca9..c7a5c3a 100644
 +            iterations=counting_llm.call_count,
 +            tool_calls=len(result.tool_calls_made),
 +            edit_count=edit_count,
-+            failure_category=(
++            reason=(
 +                None
 +                if result.stop_reason.value == "end_turn"
-+                else FailureCategory.MAX_ITERATIONS.value
++                else BenchmarkReason.MAX_ITERATIONS.value
 +            ),
 +            output=result.content,
 +        )

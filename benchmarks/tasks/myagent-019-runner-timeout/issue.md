@@ -9,7 +9,7 @@ Add a timeout safeguard to the MyAgent benchmark runner in `benchmarks/agent_run
 1. Accept a per-task `timeout_seconds` configuration
 2. Before starting the agent run, set up an `asyncio.wait_for()` or equivalent timeout wrapper
 3. If the agent exceeds the timeout, forcefully terminate the run
-4. Record the timeout as a failure with `failure_category = "test_timeout"`
+4. Record the timeout as a failure with `reason = "test_timeout"`
 
 ## Requirements
 

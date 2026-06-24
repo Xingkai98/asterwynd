@@ -9,6 +9,11 @@
   "test_patch_file": "test.patch",
   "category": "bug_fix",
   "difficulty": "<15 min fix",
+  "task_family": "swebench",
+  "execution_environment": "docker",
   "external_repo": "https://gitee.com/mirrors/requests.git",
-  "version": "2.26"
+  "version": "2.26",
+  "instance_id": "psf__requests-5414",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test"
 }

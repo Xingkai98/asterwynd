@@ -71,6 +71,8 @@ uv run python cli.py benchmark benchmarks/tasks \
   --runs-dir /tmp/bench
 ```
 
+运行单个 `swebench-*` 任务前，当前环境需要可用的 Docker daemon，且 `uv sync --extra dev` 已安装 `swebench` 依赖。Docker 不可用时，这类任务会写出 `unsupported` artifact，而不是回退到本地 venv 兼容路径。
+
 并行 benchmark：
 
 ```bash
@@ -81,6 +83,14 @@ uv run python cli.py benchmark benchmarks/tasks \
   --runs-dir /tmp/bench \
   --clone-cache-dir /tmp/swebench-cache
 ```
+
+如果你当前开发环境本身是一个没有 `systemd` 的容器，可以使用仓库内的辅助脚本手动拉起 Docker daemon：
+
+```bash
+sudo ./scripts/start-docker-daemon.sh
+```
+
+这个脚本只用于开发和验证当前环境，不属于 benchmark 运行时语义；benchmark CLI 只负责检测 Docker 是否可用。
 
 也可以在 `myagent.yaml` 中设置默认 benchmark 参数，字段示例见仓库根目录的 `myagent.example.yaml`。
 
@@ -128,5 +138,5 @@ uv run python cli.py benchmark benchmarks/tasks \
 - 修改代码前先读相关实现和测试。
 - 不要回滚用户未提交改动。
 - 不要提交本地环境文件、日志、缓存和生成产物。
-- 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke。
+- 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。

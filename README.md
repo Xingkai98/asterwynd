@@ -15,7 +15,7 @@
 | **SkillLoader** | Markdown 技能文件（YAML frontmatter + prompt），按需/always 加载 |
 | **SubAgentManager** | asyncio 后台任务委托，ParentChannel 实现 mid-turn injection |
 | **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
-| **Local Benchmark** | 23 个 coding-agent 任务，SWE-bench 风格隔离评测，多 agent 适配器 |
+| **Local Benchmark** | 23 个 coding-agent 任务，本地 worktree 任务 + SWE-bench Docker harness 双路径评测，多 agent 适配器 |
 
 ## 快速开始
 
@@ -279,7 +279,10 @@ MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-a
 
 ## Local Benchmark
 
-MyAgent 内置本地 coding-agent 基准测试系统，位于 `benchmarks/`。评测在独立 git worktree 中运行，agent 完成后应用隐藏测试补丁，产出结构化 trace 和指标。
+MyAgent 内置本地 coding-agent 基准测试系统，位于 `benchmarks/`。当前分为两类执行路径：
+
+- `myagent-*` 本地任务：在独立 git worktree 中运行，agent 完成后应用隐藏测试补丁，产出结构化 trace 和指标。
+- `swebench-*` 外部任务：agent 仍在 benchmark workspace 内产出 patch，但最终验证交给 SWE-bench Docker harness。
 
 ### 快速验证（fake agent，确定性地）
 
@@ -316,7 +319,9 @@ uv run python cli.py benchmark benchmarks/tasks \
 | 基准设施 | 3 | 失败分类, Runner timeout, 资源泄漏修复 |
 | 提示词 | 2 | 编码系统提示词, 验证命令注入 |
 
-### 评测流程（SWE-bench 风格）
+### 评测流程
+
+本地 `myagent-*` 任务：
 
 1. 在任务 base_commit 创建独立 git worktree
 2. 隐藏 `benchmarks/tasks/`（agent 看不到评测文件）
@@ -327,7 +332,15 @@ uv run python cli.py benchmark benchmarks/tasks \
 7. 运行验证命令
 8. 写入 `result.json`、`trace.json`、`runner.log`；`final.diff` 在 diff capture 完成后写入，`test_output.txt` 在验证命令实际运行后写入
 
-结果状态：`passed`、`passed_with_warnings`、`failed`、`error`。
+外部 `swebench-*` 任务：
+
+1. clone 任务指定的外部仓库并切到 `base_commit`
+2. Agent 在 benchmark workspace 中修改代码并产出最终 git patch
+3. runner 做一次 run 级 Docker preflight
+4. Docker 可用时，将 patch 交给 SWE-bench Docker harness 验证
+5. Docker 不可用时，写出 `result.json`、`trace.json`、`runner.log`，并将结果标记为 `unsupported`
+
+结果状态：`passed`、`passed_with_warnings`、`unsupported`、`failed`、`error`；细节归因统一写入 `reason` 字段。
 
 ## 技术栈
 

@@ -9,7 +9,14 @@ import sys
 
 def analyze(run_dir: str | Path) -> dict:
     run_dir = Path(run_dir)
-    summary = {"passed": 0, "passed_with_warnings": 0, "failed": 0, "error": 0, "tasks": []}
+    summary = {
+        "passed": 0,
+        "passed_with_warnings": 0,
+        "unsupported": 0,
+        "failed": 0,
+        "error": 0,
+        "tasks": [],
+    }
 
     task_dirs = sorted(
         (run_dir / "tasks").iterdir()
@@ -47,7 +54,7 @@ def analyze(run_dir: str | Path) -> dict:
             "tool_calls": result.get("tool_calls", 0),
             "edit_count": result.get("edit_count", 0),
             "duration_s": result.get("duration_seconds", 0),
-            "failure": result.get("failure_category", ""),
+            "failure": result.get("reason", ""),
             "diff_lines": diff_lines,
             "error": error_msg,
         }
@@ -64,6 +71,7 @@ def print_report(summary: dict) -> None:
     print(f"  Total: {len(summary['tasks'])} | "
           f"Passed: {summary['passed']} | "
           f"Warnings: {summary['passed_with_warnings']} | "
+          f"Unsupported: {summary['unsupported']} | "
           f"Failed: {summary['failed']} | "
           f"Error: {summary['error']}")
     if summary["tasks"]:
@@ -78,12 +86,18 @@ def print_report(summary: dict) -> None:
     for t in summary["tasks"]:
         by_status[t["status"]].append(t)
 
-    status_order = ["passed", "passed_with_warnings", "failed", "error"]
+    status_order = ["passed", "passed_with_warnings", "unsupported", "failed", "error"]
     for status in status_order:
         tasks = by_status.get(status, [])
         if not tasks:
             continue
-        emoji = {"passed": "✅", "passed_with_warnings": "⚠️", "failed": "❌", "error": "💥"}.get(status, "")
+        emoji = {
+            "passed": "✅",
+            "passed_with_warnings": "⚠️",
+            "unsupported": "⏭️",
+            "failed": "❌",
+            "error": "💥",
+        }.get(status, "")
         print(f"\n  {emoji} {status.upper()} ({len(tasks)}):")
         for t in tasks:
             extra = ""

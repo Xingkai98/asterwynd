@@ -16,7 +16,7 @@ index c684852..1ade8b6 100644
 +            iterations=20,
 +            tool_calls=3,
 +            edit_count=1,
-+            failure_category="max_iterations",
++            reason="max_iterations",
 +        )
 +
 +
@@ -48,7 +48,7 @@ index c684852..1ade8b6 100644
 +    task_output = tmp_path / "runs" / "run-warning" / "tasks" / "task-1"
 +    result = json.loads((task_output / "result.json").read_text())
 +    assert result["status"] == "passed_with_warnings"
-+    assert result["failure_category"] == "max_iterations"
++    assert result["reason"] == "max_iterations"
 +
 +    summary = (tmp_path / "runs" / "run-warning" / "summary.md").read_text()
 +    assert "| task-1 | passed_with_warnings |" in summary

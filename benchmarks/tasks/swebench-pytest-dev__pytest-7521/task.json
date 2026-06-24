@@ -9,6 +9,11 @@
   "test_patch_file": "test.patch",
   "category": "bug_fix",
   "difficulty": "<15 min fix",
+  "task_family": "swebench",
+  "execution_environment": "docker",
   "external_repo": "https://gitee.com/mirrors/pytest.git",
-  "version": "6.0"
+  "version": "6.0",
+  "instance_id": "pytest-dev__pytest-7521",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test"
 }

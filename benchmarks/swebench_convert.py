@@ -125,7 +125,12 @@ def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Pat
             "test_patch_file": "test.patch",
             "category": "bug_fix",
             "difficulty": ex.get("difficulty", ""),
+            "task_family": "swebench",
+            "execution_environment": "docker",
             "external_repo": repo_url,
+            "instance_id": iid,
+            "dataset_name": "princeton-nlp/SWE-bench_Verified",
+            "dataset_split": "test",
         }
         (task_dir / "task.json").write_text(
             json.dumps(task_json, indent=2, ensure_ascii=False) + "\n"

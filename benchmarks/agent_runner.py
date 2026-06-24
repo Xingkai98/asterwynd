@@ -14,7 +14,7 @@ from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_
 from agent.tools.factory import build_coding_tool_registry
 from agent.trace_recorder import TraceRecorder
 from agent.workspace_policy import WorkspacePolicy
-from benchmarks.models import AgentRunResult, FailureCategory
+from benchmarks.models import AgentRunResult, BenchmarkReason
 from benchmarks.prompt import CodingPromptBuilder
 from benchmarks.task_schema import TaskSpec
 
@@ -77,7 +77,7 @@ class FakeAgentRunner(AgentRunner):
                 trace.record_tool_result("FakeEdit", "error", 0, "file not found")
                 return AgentRunResult(
                     status="error",
-                    failure_category=FailureCategory.EDIT_VALIDATION.value,
+                    reason=BenchmarkReason.EDIT_VALIDATION.value,
                     output="file not found",
                 )
             content = target.read_text(errors="replace")
@@ -85,7 +85,7 @@ class FakeAgentRunner(AgentRunner):
                 trace.record_tool_result("FakeEdit", "error", 0, "old_string not found")
                 return AgentRunResult(
                     status="error",
-                    failure_category=FailureCategory.EDIT_VALIDATION.value,
+                    reason=BenchmarkReason.EDIT_VALIDATION.value,
                     output="old_string not found",
                 )
             target.write_text(content.replace(self.old_string, self.new_string, 1), errors="replace")
@@ -141,7 +141,7 @@ class ShellCommandRunner(AgentRunner):
             return AgentRunResult(
                 status="error",
                 tool_calls=1,
-                failure_category=FailureCategory.TOOL_ERROR.value,
+                reason=BenchmarkReason.TOOL_ERROR.value,
                 output="timeout",
             )
 
@@ -156,7 +156,7 @@ class ShellCommandRunner(AgentRunner):
         return AgentRunResult(
             status=status,
             tool_calls=1,
-            failure_category=None if result.returncode == 0 else FailureCategory.TOOL_ERROR.value,
+            reason=None if result.returncode == 0 else BenchmarkReason.TOOL_ERROR.value,
             output=output,
         )
 
@@ -223,7 +223,7 @@ class ClaudeCodeRunner(AgentRunner):
             )
             return AgentRunResult(
                 status="error",
-                failure_category=FailureCategory.TOOL_ERROR.value,
+                reason=BenchmarkReason.TOOL_ERROR.value,
                 output="Claude Code timed out",
             )
 
@@ -236,7 +236,7 @@ class ClaudeCodeRunner(AgentRunner):
         )
         return AgentRunResult(
             status="completed" if result.returncode == 0 else "error",
-            failure_category=None if result.returncode == 0 else FailureCategory.TOOL_ERROR.value,
+            reason=None if result.returncode == 0 else BenchmarkReason.TOOL_ERROR.value,
             output=output,
         )
 
@@ -337,7 +337,7 @@ class MyAgentRunner(AgentRunner):
                 status="error",
                 iterations=counting_llm.call_count,
                 tool_calls=tool_count,
-                failure_category=FailureCategory.MODEL_FAILURE.value,
+                reason=BenchmarkReason.MODEL_FAILURE.value,
                 output=f"MyAgent timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
             )
         edit_count = sum(
@@ -353,10 +353,10 @@ class MyAgentRunner(AgentRunner):
             iterations=counting_llm.call_count,
             tool_calls=len(result.tool_calls_made),
             edit_count=edit_count,
-            failure_category=(
+            reason=(
                 None
                 if result.stop_reason.value == "end_turn"
-                else FailureCategory.MAX_ITERATIONS.value
+                else BenchmarkReason.MAX_ITERATIONS.value
             ),
             output=result.content,
         )
