@@ -1,6 +1,7 @@
 from typer.testing import CliRunner
 
 import cli
+from agent.openai_llm import OpenAILLM
 from agent.result import RunResult, StopReason, ToolCallMade
 
 
@@ -26,6 +27,23 @@ class FakeAgent:
         )
 
 
+class StreamingFakeAgent(FakeAgent):
+    async def run(self, messages, on_event=None, session_id=None, run_id=None):
+        self.messages = messages
+        self.session_ids.append(session_id)
+        self.run_ids.append(run_id)
+        if on_event:
+            await on_event("assistant_delta", {"delta": "Hel", "content": "Hel"})
+            await on_event("assistant_delta", {"delta": "lo", "content": "Hello"})
+            await on_event("assistant_stream_complete", {"content": "Hello", "stop_reason": "end_turn"})
+            await on_event("llm_response", {"content": "Hello", "streamed": True})
+        return RunResult(
+            content="Hello",
+            stop_reason=StopReason.END_TURN,
+            tool_calls_made=[],
+        )
+
+
 def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     fake = FakeAgent()
     monkeypatch.setattr(
@@ -41,6 +59,25 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     assert fake.max_iterations == 3
     assert fake.messages[-1].role == "user"
     assert fake.messages[-1].content == "hello"
+
+
+def test_build_llm_enables_streaming_by_default(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.delenv("MYAGENT_STREAMING", raising=False)
+
+    llm = cli.build_llm("openai")
+
+    assert isinstance(llm, OpenAILLM)
+    assert llm.stream is True
+
+
+def test_build_llm_allows_disabling_streaming(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("MYAGENT_STREAMING", "disabled")
+
+    llm = cli.build_llm("openai")
+
+    assert llm.stream is False
 
 
 def test_cli_single_prompt_prints_session_and_run_ids(monkeypatch):
@@ -60,6 +97,22 @@ def test_cli_single_prompt_prints_session_and_run_ids(monkeypatch):
     assert "Run ID: run-test" in result.stdout
     assert fake.session_ids == ["session-test"]
     assert fake.run_ids == ["run-test"]
+
+
+def test_cli_single_prompt_streams_delta_without_reprinting_final_content(monkeypatch):
+    fake = StreamingFakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(cli.app, ["main", "hello"])
+
+    assert result.exit_code == 0
+    assert "Hello" in result.stdout
+    assert result.stdout.count("Hello") == 1
+    assert "【Agent】" not in result.stdout
 
 
 def test_cli_single_prompt_summarizes_long_tool_results(monkeypatch):

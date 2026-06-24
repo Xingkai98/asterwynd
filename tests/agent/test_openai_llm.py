@@ -14,6 +14,25 @@ def _mock_ok_response(json_body: dict) -> MagicMock:
     return resp
 
 
+def _mock_sse_stream(lines: list[str]):
+    class _StreamResponse:
+        def raise_for_status(self):
+            pass
+
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+    class _StreamCtx:
+        async def __aenter__(self):
+            return _StreamResponse()
+
+        async def __aexit__(self, *args):
+            pass
+
+    return _StreamCtx()
+
+
 @pytest.mark.asyncio
 async def test_openai_chat_success():
     llm = OpenAILLM(api_key="test-key", base_url="https://api.openai.com/v1")
@@ -47,6 +66,49 @@ async def test_openai_tool_call():
         response = await llm.chat(messages, model="gpt-4")
         assert len(response.tool_calls) == 1
         assert response.tool_calls[0].name == "Bash"
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_chat_yields_text_delta_and_complete_response():
+    llm = OpenAILLM(api_key="test-key")
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream([
+            'data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ])
+
+        events = [event async for event in llm.stream_chat([Message(role="user", content="Hi")])]
+
+    assert [event.type for event in events] == ["assistant_delta", "assistant_delta", "complete"]
+    assert [event.delta for event in events[:2]] == ["Hel", "lo"]
+    assert events[-1].response.content == "Hello"
+    assert events[-1].response.stop_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_chat_accumulates_tool_call_arguments():
+    llm = OpenAILLM(api_key="test-key")
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream([
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Bash","arguments":"{\\"cmd\\":"}}]},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \\"ls\\"}"}}]},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+            "data: [DONE]",
+        ])
+
+        events = [event async for event in llm.stream_chat([Message(role="user", content="Run ls")])]
+
+    response = events[-1].response
+    assert response.content is None
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].id == "call_1"
+    assert response.tool_calls[0].name == "Bash"
+    assert response.tool_calls[0].arguments == '{"cmd": "ls"}'
 
 
 @pytest.mark.asyncio

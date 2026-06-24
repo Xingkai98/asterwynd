@@ -316,6 +316,27 @@ async def test_anthropic_llm_stream_sse_text():
 
 
 @pytest.mark.asyncio
+async def test_anthropic_llm_stream_chat_yields_text_delta_and_complete_response():
+    """stream_chat 应暴露文本 delta，同时保留完整 LLMResponse。"""
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(
+            _text_sse_lines("Hello via SSE!")
+        )
+
+        messages = [Message(role="user", content="hi")]
+        events = [event async for event in llm.stream_chat(messages)]
+
+        assert [event.type for event in events] == ["assistant_delta", "complete"]
+        assert events[0].delta == "Hello via SSE!"
+        assert events[0].content == "Hello via SSE!"
+        assert events[-1].response.content == "Hello via SSE!"
+        assert events[-1].stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_llm_stream_sse_tool_use():
     """stream=True 时，SSE 流式应正确解析 tool_use block。"""
     llm = AnthropicLLM(api_key="test-key")

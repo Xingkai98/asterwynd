@@ -4,7 +4,7 @@ import json
 import re
 from typing import Optional
 
-from agent.llm import BaseLLM, LLMResponse, ToolCallDelta
+from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta
 from agent.message import Message
 
 # Python string 中不允许出现的 surrogate character (U+D800-U+DFFF)
@@ -41,6 +41,18 @@ class AnthropicLLM(BaseLLM):
         tools: Optional[list[dict]] = None,
         model: Optional[str] = None,
     ) -> LLMResponse:
+        payload = self._build_payload(messages, tools, model)
+        if self.stream:
+            return await self._chat_stream(payload)
+        else:
+            return await self._chat_nonstream(payload)
+
+    def _build_payload(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+    ) -> dict:
         model = model or self.model
 
         # 转换消息格式（流式/非流式共用）
@@ -94,10 +106,77 @@ class AnthropicLLM(BaseLLM):
         if tools:
             payload["tools"] = [self._convert_tool(tool) for tool in tools]
 
-        if self.stream:
-            return await self._chat_stream(payload)
-        else:
-            return await self._chat_nonstream(payload)
+        return payload
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+    ):
+        """流式输出 assistant text delta，并在末尾返回完整响应。"""
+        payload = self._build_payload(messages, tools, model)
+        payload["stream"] = True
+
+        stop_reason_map = {
+            "end_turn": "end_turn",
+            "max_tokens": "max_tokens",
+            "stop_sequence": "stop",
+            "tool_use": "tool_calls",
+        }
+
+        blocks: dict = {}
+        stop_reason = None
+        text_content = ""
+
+        async for event_type, data in self._stream_events(
+            f"{self.base_url}/v1/messages",
+            payload,
+        ):
+            if event_type == "content_block_start":
+                block = data["content_block"]
+                idx = data["index"]
+                blocks[idx] = {
+                    "type": block["type"],
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "text_parts": [],
+                    "json_parts": [],
+                }
+
+            elif event_type == "content_block_delta":
+                idx = data["index"]
+                delta = data["delta"]
+                blk = blocks.get(idx)
+                if blk is None:
+                    continue
+                if delta["type"] == "text_delta":
+                    text_delta = _strip_surrogates(delta["text"])
+                    blk["text_parts"].append(text_delta)
+                    text_content += text_delta
+                    if text_delta:
+                        yield LLMStreamEvent(
+                            type="assistant_delta",
+                            delta=text_delta,
+                            content=text_content,
+                        )
+                elif delta["type"] == "input_json_delta":
+                    blk["json_parts"].append(delta["partial_json"])
+
+            elif event_type == "message_delta":
+                raw_stop = data["delta"].get("stop_reason", "")
+                stop_reason = stop_reason_map.get(raw_stop, raw_stop)
+
+            elif event_type == "error":
+                raise RuntimeError(f"Anthropic API error: {data}")
+
+        response = self._build_response(blocks, stop_reason)
+        yield LLMStreamEvent(
+            type="complete",
+            response=response,
+            content=response.content or "",
+            stop_reason=response.stop_reason,
+        )
 
     async def _chat_stream(self, payload: dict) -> LLMResponse:
         """流式 SSE 解析"""

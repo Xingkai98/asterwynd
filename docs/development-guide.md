@@ -94,6 +94,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 | `ANTHROPIC_BASE_URL` | Anthropic-compatible provider base URL |
 | `MYAGENT_PROVIDER` | provider，通常是 `openai` 或 `anthropic` |
 | `MYAGENT_MODEL` | 默认模型 |
+| `MYAGENT_STREAMING` | 控制支持 streaming 的 provider 是否启用流式输出；默认开启，设为 `disabled` / `off` / `false` / `0` 可关闭 |
 | `MYAGENT_DEBUG=enabled` | 开启 Web Debug 视图 |
 | `MYAGENT_LOG_LEVEL=DEBUG` | 开启更详细日志 |
 | `MYAGENT_MODE` | 覆盖 `myagent.yaml` 中的默认 agent mode |

@@ -1,7 +1,7 @@
 # agent/llm.py
 import asyncio
 from dataclasses import dataclass, field
-from typing import Protocol, Optional, runtime_checkable, TYPE_CHECKING
+from typing import Literal, Protocol, Optional, runtime_checkable, TYPE_CHECKING
 
 import httpx
 
@@ -34,6 +34,15 @@ class LLMResponse:
     tool_calls: list[ToolCallDelta] = field(default_factory=list)
     stop_reason: Optional[str] = None
     reasoning_content: Optional[str] = None
+
+
+@dataclass
+class LLMStreamEvent:
+    type: Literal["assistant_delta", "complete"]
+    delta: str = ""
+    content: str = ""
+    stop_reason: Optional[str] = None
+    response: Optional[LLMResponse] = None
 
 
 class BaseLLM:

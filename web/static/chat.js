@@ -78,11 +78,26 @@ function handleEvent(event) {
 
     case 'llm_response': {
       const data = event.data;
+      if (data.streamed) {
+        break;
+      }
       if (data.content) {
         if (!currentAssistantMsg) {
           currentAssistantMsg = addMessage('assistant', '');
         }
         appendAssistantContent(currentAssistantMsg, data.content);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+      break;
+    }
+
+    case 'assistant_delta': {
+      const data = event.data || {};
+      if (data.delta) {
+        if (!currentAssistantMsg) {
+          currentAssistantMsg = addMessage('assistant', '');
+        }
+        appendAssistantContent(currentAssistantMsg, data.delta);
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
       break;

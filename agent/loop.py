@@ -240,9 +240,10 @@ class AgentLoop:
 
             tool_schemas = self.tool_registry.get_all_schemas()
 
-            response = await self.llm.chat(
+            response, streamed = await self._call_llm(
                 messages=self._messages_with_run_context(messages),
                 tools=tool_schemas if tool_schemas else None,
+                on_event=on_event,
             )
             await self.hooks.after_llm_call(response)
             if trace_recorder:
@@ -256,14 +257,17 @@ class AgentLoop:
                 )
 
             if on_event:
-                await on_event("llm_response", {
+                llm_event = {
                     "content": response.content,
                     "stop_reason": response.stop_reason,
                     "tool_calls": [
                         {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                         for tc in response.tool_calls
                     ],
-                })
+                }
+                if streamed:
+                    llm_event["streamed"] = True
+                await on_event("llm_response", llm_event)
 
             if not response.tool_calls:
                 # Bug 2: LLM 被 max_tokens 截断时，追加续接消息并继续迭代
@@ -413,6 +417,60 @@ class AgentLoop:
                 "stop_reason": "max_iterations",
             })
         return result
+
+    async def _call_llm(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+    ) -> tuple[LLMResponse, bool]:
+        if not self._should_stream_llm():
+            return await self.llm.chat(
+                messages=messages,
+                tools=tools,
+            ), False
+
+        response: LLMResponse | None = None
+        content = ""
+        stream_chat = getattr(self.llm, "stream_chat")
+        async for event in stream_chat(messages=messages, tools=tools):
+            if event.type == "assistant_delta":
+                content = event.content or f"{content}{event.delta}"
+                if on_event and event.delta:
+                    await on_event("assistant_delta", {
+                        "delta": event.delta,
+                        "content": content,
+                    })
+                continue
+
+            if event.type == "complete":
+                response = event.response or LLMResponse(
+                    content=event.content or content,
+                    stop_reason=event.stop_reason,
+                )
+                content = event.content or response.content or content
+                if on_event:
+                    await on_event("assistant_stream_complete", {
+                        "content": content,
+                        "stop_reason": response.stop_reason,
+                    })
+
+        if response is None:
+            response = LLMResponse(content=content, stop_reason="end_turn")
+            if on_event:
+                await on_event("assistant_stream_complete", {
+                    "content": content,
+                    "stop_reason": response.stop_reason,
+                })
+        return response, True
+
+    def _should_stream_llm(self) -> bool:
+        stream_chat = getattr(self.llm, "stream_chat", None)
+        if not callable(stream_chat):
+            return False
+        if hasattr(self.llm, "stream"):
+            return bool(getattr(self.llm, "stream"))
+        return True
 
     def _parse_arguments(self, arguments: str) -> dict:
         import json

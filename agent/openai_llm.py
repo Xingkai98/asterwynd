@@ -3,7 +3,7 @@ import json as _json
 import logging
 from typing import Optional
 
-from agent.llm import BaseLLM, LLMResponse, ToolCallDelta
+from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta
 from agent.message import Message
 
 logger = logging.getLogger("myagent.llm.openai")
@@ -103,6 +103,82 @@ class OpenAILLM(BaseLLM):
             tool_calls=[],
             stop_reason=choice.get("finish_reason"),
             reasoning_content=reasoning_content,
+        )
+
+    async def stream_chat(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+    ):
+        model = model or self.model
+        payload: dict = {
+            "model": model,
+            "messages": [self._message_to_dict(m) for m in messages],
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_buffers: dict[int, dict[str, str]] = {}
+        stop_reason = None
+
+        async for _event_type, data in self._stream_events(
+            f"{self.base_url}/chat/completions",
+            payload,
+        ):
+            choices = data.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            stop_reason = choice.get("finish_reason") or stop_reason
+            delta = choice.get("delta") or {}
+
+            if delta.get("reasoning_content"):
+                reasoning_parts.append(delta["reasoning_content"])
+
+            if delta.get("content"):
+                text_delta = delta["content"]
+                content_parts.append(text_delta)
+                yield LLMStreamEvent(
+                    type="assistant_delta",
+                    delta=text_delta,
+                    content="".join(content_parts),
+                )
+
+            for tool_delta in delta.get("tool_calls") or []:
+                index = int(tool_delta.get("index", 0))
+                current = tool_buffers.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                if tool_delta.get("id"):
+                    current["id"] = tool_delta["id"]
+                function = tool_delta.get("function") or {}
+                if function.get("name"):
+                    current["name"] = function["name"]
+                if function.get("arguments"):
+                    current["arguments"] += function["arguments"]
+
+        tool_calls = [
+            ToolCallDelta(
+                id=tool["id"],
+                name=tool["name"],
+                arguments=tool["arguments"],
+            )
+            for _, tool in sorted(tool_buffers.items())
+            if tool["id"] and tool["name"]
+        ]
+        response = LLMResponse(
+            content="".join(content_parts) or None,
+            tool_calls=tool_calls,
+            stop_reason=stop_reason,
+            reasoning_content="".join(reasoning_parts) or None,
+        )
+        yield LLMStreamEvent(
+            type="complete",
+            response=response,
+            content=response.content or "",
+            stop_reason=response.stop_reason,
         )
 
     def _message_to_dict(self, msg: Message) -> dict:
