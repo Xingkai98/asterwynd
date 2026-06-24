@@ -244,7 +244,7 @@ MYAGENT_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 ```
 
-- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id 和 planning state
+- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id、Plan Document 和 planning state
 - **Debug 界面**：环境变量 `MYAGENT_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 原始响应（content、stop_reason、tool_calls）

@@ -198,6 +198,7 @@ def run_single(
         typer.echo(f"Session ID: {session_id}")
         typer.echo(f"Run ID: {run_id}")
         result = await agent.run(messages, session_id=session_id, run_id=run_id)
+        _print_plan_document(agent)
         typer.echo(f"\n【Agent】\n{result.content}")
         if result.tool_calls_made:
             typer.echo(f"\n【工具调用】{len(result.tool_calls_made)} 次")
@@ -247,6 +248,7 @@ def run_interactive(
         if initial_prompt:
             messages.append(Message(role="user", content=initial_prompt))
             result = loop.run_until_complete(_run_async())
+            _print_plan_document(agent)
             typer.echo(f"\n【Agent】\n{result.content}\n")
             _print_tool_call_summaries(result, config)
 
@@ -263,10 +265,21 @@ def run_interactive(
 
             messages.append(Message(role="user", content=user_input))
             result = loop.run_until_complete(_run_async())
+            _print_plan_document(agent)
             typer.echo(f"\n【Agent】\n{result.content}\n")
             _print_tool_call_summaries(result, config)
     finally:
         loop.close()
+
+
+def _print_plan_document(agent: AgentLoop) -> None:
+    document = getattr(agent, "plan_document", None)
+    if not isinstance(document, dict):
+        return
+    markdown = document.get("markdown")
+    if not isinstance(markdown, str) or not markdown:
+        return
+    typer.echo(f"\n【Plan Document】\n{markdown}")
 
 
 def _print_tool_call_summaries(result, config: MyAgentConfig | None = None) -> None:

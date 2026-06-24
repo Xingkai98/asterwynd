@@ -92,3 +92,35 @@ def test_trace_recorder_records_planning_state():
     assert step["type"] == "planning_state_updated"
     assert step["data"] == snapshot
     assert recorder.latest_planning_summary() == snapshot["summary"]
+
+
+def test_trace_recorder_records_plan_document():
+    recorder = TraceRecorder(task_id="task-1")
+    document = {
+        "title": "Add plan mode",
+        "markdown": "# Add plan mode",
+        "steps": ["Read docs", "Implement"],
+        "planning_state": {"items": [], "summary": {"total": 0}},
+    }
+
+    recorder.record_plan_document("plan_document_submitted", document)
+
+    step = recorder.to_dict()["steps"][0]
+    assert step["type"] == "plan_document_submitted"
+    assert step["data"] == document
+
+
+def test_trace_recorder_records_draft_plan_document():
+    recorder = TraceRecorder(task_id="task-1")
+    document = {
+        "title": "Draft",
+        "markdown": "# Draft",
+        "steps": ["Read docs"],
+        "status": "draft",
+    }
+
+    recorder.record_plan_document("plan_document_updated", document)
+
+    step = recorder.to_dict()["steps"][0]
+    assert step["type"] == "plan_document_updated"
+    assert step["data"] == document

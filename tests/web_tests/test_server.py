@@ -159,6 +159,7 @@ def test_web_static_assets_include_session_and_run_display():
 
     assert 'id="session-id"' in index
     assert 'id="run-id"' in index
+    assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
@@ -169,7 +170,11 @@ def test_web_static_assets_include_session_and_run_display():
     assert "tool-result-toggle" in script
     assert "aria-expanded" in script
     assert "case 'error'" in script
+    assert "case 'plan_document_updated'" in script
+    assert "case 'plan_document_submitted'" in script
+    assert "function renderPlanDocument" in script
     assert "max_iterations" in script
+    assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
     assert ".markdown-body pre" in styles
 
@@ -267,6 +272,88 @@ def test_websocket_session_created_uses_config_default_mode():
 
     assert created["type"] == "session_created"
     assert created["mode"] == "plan"
+
+
+def test_websocket_plan_mode_emits_plan_document_and_planning_state():
+    mock_llm = MockLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallDelta(
+                    id="p1",
+                    name="ExitPlanMode",
+                    arguments=(
+                        '{"title":"Add plan mode",'
+                        '"plan_markdown":"# Add plan mode\\n\\n## Steps\\n- Read docs",'
+                        '"steps":["Read docs","Implement"]}'
+                    ),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="计划已生成。", stop_reason="end_turn"),
+    ])
+    app = create_app(mock_llm, mode="plan")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["mode"] == "plan"
+            ws.send_json({"type": "chat", "content": "plan add-plan-mode"})
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    event_types = [event["type"] for event in events]
+    assert "planning_state_updated" in event_types
+    assert "plan_document_submitted" in event_types
+    plan_event = next(event for event in events if event["type"] == "plan_document_submitted")
+    assert plan_event["data"]["title"] == "Add plan mode"
+    assert plan_event["data"]["status"] == "submitted"
+    assert plan_event["data"]["steps"] == ["Read docs", "Implement"]
+
+
+def test_websocket_plan_mode_emits_draft_plan_updates():
+    mock_llm = MockLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallDelta(
+                    id="p1",
+                    name="UpdatePlan",
+                    arguments=(
+                        '{"title":"Draft plan",'
+                        '"plan_markdown":"# Draft plan",'
+                        '"steps":["Read docs"]}'
+                    ),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="草案已更新。", stop_reason="end_turn"),
+    ])
+    app = create_app(mock_llm, mode="plan")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            ws.receive_json()
+            ws.send_json({"type": "chat", "content": "draft plan"})
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    event_types = [event["type"] for event in events]
+    assert "planning_state_updated" in event_types
+    assert "plan_document_updated" in event_types
+    draft_event = next(event for event in events if event["type"] == "plan_document_updated")
+    assert draft_event["data"]["title"] == "Draft plan"
+    assert draft_event["data"]["status"] == "draft"
 
 
 def test_websocket_ping_and_reset(app):

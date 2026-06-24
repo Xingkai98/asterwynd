@@ -15,6 +15,9 @@ const statusEl = document.getElementById('status');
 const sessionIdEl = document.getElementById('session-id');
 const runIdEl = document.getElementById('run-id');
 const debugTabBtn = document.getElementById('debug-tab');
+const planDocumentPanel = document.getElementById('plan-document-panel');
+const planDocumentTitleEl = document.getElementById('plan-document-title');
+const planDocumentBodyEl = document.getElementById('plan-document-body');
 const planningPanel = document.getElementById('planning-panel');
 const planningItemsEl = document.getElementById('planning-items');
 
@@ -116,6 +119,11 @@ function handleEvent(event) {
       if (typeof renderPlanningDebug === 'function') {
         renderPlanningDebug(event.data);
       }
+      break;
+
+    case 'plan_document_updated':
+    case 'plan_document_submitted':
+      renderPlanDocument(event.data);
       break;
 
     case 'pong':
@@ -262,6 +270,32 @@ function renderPlanningState(state) {
     }
 
     planningItemsEl.appendChild(row);
+  }
+}
+
+function renderPlanDocument(document) {
+  const markdown = document && typeof document.markdown === 'string'
+    ? document.markdown
+    : '';
+  const title = document && typeof document.title === 'string'
+    ? document.title
+    : '';
+
+  if (!markdown) {
+    planDocumentPanel.hidden = true;
+    planDocumentTitleEl.textContent = '';
+    planDocumentBodyEl.textContent = '';
+    return;
+  }
+
+  planDocumentPanel.hidden = false;
+  const status = document && document.status === 'submitted' ? 'Submitted' : 'Draft';
+  planDocumentTitleEl.textContent = title ? `${status}: ${title}` : status;
+  planDocumentBodyEl.dataset.markdownSource = markdown;
+  if (window.MyAgentMarkdown && typeof window.MyAgentMarkdown.render === 'function') {
+    planDocumentBodyEl.innerHTML = window.MyAgentMarkdown.render(markdown);
+  } else {
+    planDocumentBodyEl.textContent = markdown;
   }
 }
 

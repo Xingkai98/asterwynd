@@ -48,6 +48,9 @@ class ModePolicy:
         return self.run_config.mode
 
     def is_tool_allowed(self, tool: Tool) -> bool:
+        allowed_modes = getattr(tool, "allowed_modes", None)
+        if allowed_modes is not None and self.mode.value not in allowed_modes:
+            return False
         if tool.name in self.deny_tools_by_mode.get(self.mode, ()):
             return False
         if self.mode is AgentMode.BUILD:

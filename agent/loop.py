@@ -13,8 +13,9 @@ from agent.tools.registry import ToolRegistry
 from agent.memory.manager import MemoryManager
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
-from agent.run_config import AgentRunConfig
+from agent.run_config import AgentMode, AgentRunConfig
 from agent.run_identity import new_run_id
+from agent.tools.builtin.plan import ExitPlanModeTool, UpdatePlanTool
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 
 if TYPE_CHECKING:
@@ -47,10 +48,23 @@ class AgentLoop:
         self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
+        self._plan_document: dict | None = None
+        self._plan_document_final = False
+        if self.run_config.mode is AgentMode.PLAN:
+            self.tool_registry.register(UpdatePlanTool(self.update_plan_document))
+            self.tool_registry.register(ExitPlanModeTool(self.submit_plan_document))
 
     @property
     def planning_state(self) -> dict:
         return self._planning.snapshot()
+
+    @property
+    def plan_document(self) -> dict | None:
+        return self._plan_document
+
+    @property
+    def plan_document_final(self) -> bool:
+        return self._plan_document_final
 
     async def set_plan(
         self,
@@ -76,6 +90,68 @@ class AgentLoop:
         await self._publish_planning_state(snapshot, on_event, trace_recorder)
         return snapshot
 
+    async def update_plan_document(
+        self,
+        title: str,
+        plan_markdown: str,
+        steps: list[str],
+        *,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+    ) -> dict:
+        snapshot = await self.set_plan(
+            steps,
+            on_event=on_event,
+            trace_recorder=trace_recorder,
+        )
+        document = {
+            "title": title,
+            "markdown": plan_markdown,
+            "steps": [item["content"] for item in snapshot["items"]],
+            "planning_state": snapshot,
+            "status": "draft",
+        }
+        self._plan_document = document
+        self._plan_document_final = False
+        await self._publish_plan_document(
+            "plan_document_updated",
+            document,
+            on_event,
+            trace_recorder,
+        )
+        return document
+
+    async def submit_plan_document(
+        self,
+        title: str,
+        plan_markdown: str,
+        steps: list[str],
+        *,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+    ) -> dict:
+        snapshot = await self.set_plan(
+            steps,
+            on_event=on_event,
+            trace_recorder=trace_recorder,
+        )
+        document = {
+            "title": title,
+            "markdown": plan_markdown,
+            "steps": [item["content"] for item in snapshot["items"]],
+            "planning_state": snapshot,
+            "status": "submitted",
+        }
+        self._plan_document = document
+        self._plan_document_final = True
+        await self._publish_plan_document(
+            "plan_document_submitted",
+            document,
+            on_event,
+            trace_recorder,
+        )
+        return document
+
     async def _publish_planning_state(
         self,
         snapshot: dict,
@@ -88,6 +164,20 @@ class AgentLoop:
             trace_sink.record_planning_state(snapshot)
         if event_sink:
             await event_sink("planning_state_updated", snapshot)
+
+    async def _publish_plan_document(
+        self,
+        event_type: str,
+        document: dict,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+    ) -> None:
+        trace_sink = trace_recorder or self._active_trace_recorder
+        event_sink = on_event or self._active_on_event
+        if trace_sink:
+            trace_sink.record_plan_document(event_type, document)
+        if event_sink:
+            await event_sink(event_type, document)
 
     async def run(
         self,
@@ -151,7 +241,7 @@ class AgentLoop:
             tool_schemas = self.tool_registry.get_all_schemas()
 
             response = await self.llm.chat(
-                messages=self._messages_with_planning_context(messages),
+                messages=self._messages_with_run_context(messages),
                 tools=tool_schemas if tool_schemas else None,
             )
             await self.hooks.after_llm_call(response)
@@ -334,20 +424,44 @@ class AgentLoop:
             raise ValueError("tool arguments must be a JSON object")
         return parsed
 
-    def _messages_with_planning_context(self, messages: list[Message]) -> list[Message]:
+    def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
+        injected_contexts = []
+        plan_context = self._plan_mode_context()
+        if plan_context:
+            injected_contexts.append(plan_context)
         planning_context = self._planning.render_context()
-        if not planning_context:
+        if planning_context:
+            injected_contexts.append(planning_context)
+        if not injected_contexts:
             return messages
 
         insert_at = 0
         while insert_at < len(messages) and messages[insert_at].role == "system":
             insert_at += 1
 
+        context_messages = [
+            system_message(context)
+            for context in injected_contexts
+        ]
         return [
             *messages[:insert_at],
-            system_message(planning_context),
+            *context_messages,
             *messages[insert_at:],
         ]
+
+    def _plan_mode_context(self) -> str:
+        if self.run_config.mode is not AgentMode.PLAN:
+            return ""
+        return (
+            "You are running in plan mode. Inspect the repository with read-only "
+            "tools and discuss the plan with the user until it is clear. When the "
+            "draft changes materially, call UpdatePlan with the current Markdown "
+            "Plan Document and high-level steps. When the user confirms the plan "
+            "or the plan is ready to finalize, call ExitPlanMode with the final "
+            "Plan Document and steps. Steps can seed a later build-mode todo list. "
+            "Do not edit files, run shell commands, or implement changes in plan "
+            "mode."
+        )
 
     def _last_assistant_content(self, messages: list[Message]) -> str:
         for message in reversed(messages):

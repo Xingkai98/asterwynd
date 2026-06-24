@@ -26,6 +26,8 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "Grep",
     "InspectGitDiff",
     "ListFiles",
+    "ExitPlanMode",
+    "UpdatePlan",
     "RepoMap",
     "Read",
     "SymbolSearch",

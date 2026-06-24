@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义当前 MyAgent 已有运行入口和 agent mode 边界。当前实现包含 CLI 单轮、CLI 交互、Web 会话和 benchmark runner，并支持 build、read_only、plan 和内部 bypass mode 的权限边界。
+定义当前 MyAgent 已有运行入口和 agent mode 边界。当前实现包含 CLI 单轮、CLI 交互、Web 会话和 benchmark runner，并支持 build、read_only、plan 和内部 bypass mode。`plan` mode 是只读计划讨论模式，用于迭代 Plan Document 草案、定稿 Plan Document 和结构化 planning state，不执行实现。
 
 ## Requirements
 
@@ -78,13 +78,24 @@
 - **WHEN** 入口构造工具 registry
 - **THEN** 系统 SHALL fail fast 并返回可读配置错误
 
-### Requirement: Plan mode 不得冒充真实计划模式
+### Requirement: Plan mode 产出可审阅计划
 
-系统 SHALL 将当前 plan mode 视为只读权限边界。即使系统已经具备通用结构化 planning state，plan mode 也不得被描述为已经具备强制产出计划、禁止执行实现、或可验证计划优先工作流的真实计划模式，直到 `add-plan-mode` 或等价 change 被接受并实现。
+系统 SHALL 将 `plan` mode 作为只读计划讨论模式。AgentLoop 以 `plan` mode 运行时 SHALL 允许只读调研工具、`UpdatePlan` 和 `ExitPlanMode` 工具，拒绝写入、编辑和 dangerous 工具；模型 MAY 通过 `UpdatePlan` 更新 Markdown Plan Document 草案，并 SHALL 在计划定稿时通过 `ExitPlanMode` 提交最终 Markdown Plan Document，同时将高层步骤同步为结构化 planning state。
 
-#### Scenario: 文档描述 plan mode
+#### Scenario: plan mode 只读运行
 
-- **GIVEN** 文档或路线图提到 plan mode
-- **WHEN** 真实 plan mode 尚未实现
-- **THEN** 规格 SHALL 明确 plan mode 当前仅提供只读权限边界
-- **AND** MAY 提及通用 planning state 已存在，但不得把它等同于真实 plan mode
+- **GIVEN** AgentLoop 以 `plan` mode 运行
+- **WHEN** 系统暴露工具 schema
+- **THEN** schema SHALL 只包含只读 non-dangerous 工具、`UpdatePlan` 和 `ExitPlanMode`
+- **AND** 系统 SHALL 拒绝写入和 dangerous 工具调用
+
+#### Scenario: plan mode 提交计划
+
+- **GIVEN** 用户请求先规划任务
+- **WHEN** AgentLoop 以 `plan` mode 完成
+- **THEN** 系统 SHALL 允许模型通过自然语言继续讨论计划
+- **AND** MAY 记录 Markdown Plan Document 草案
+- **AND** 在计划定稿时 SHALL 记录最终 Markdown Plan Document
+- **AND** SHALL 将 Plan Document 中的高层步骤同步为结构化 planning state
+- **AND** 最终回复 SHALL 给出自然语言计划说明
+- **AND** 系统 SHALL NOT 自动切换到 `build` mode 或执行计划

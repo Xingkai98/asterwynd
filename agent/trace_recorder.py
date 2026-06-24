@@ -112,6 +112,13 @@ class TraceRecorder:
     def record_planning_state(self, snapshot: dict[str, Any]) -> None:
         self.record("planning_state_updated", **snapshot)
 
+    def record_plan_document(
+        self,
+        event_type: str,
+        document: dict[str, Any],
+    ) -> None:
+        self.record(event_type, **document)
+
     def latest_planning_summary(self) -> dict[str, Any] | None:
         for step in reversed(self.steps):
             if step.type == "planning_state_updated":
