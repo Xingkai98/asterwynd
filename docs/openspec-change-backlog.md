@@ -24,11 +24,11 @@
 - `add-tree-sitter-symbol-extraction`：已合入并归档。
 - `add-plan-mode`：已合入并归档。
 - `add-streaming-agent-output`：已合入并归档。
+- `add-runtime-mode-switching`：已合入并归档。
 
 ### 第二批：运行时交互协议，建议串行合入
 
-- `add-runtime-mode-switching`：session id 和 streaming event 语义已稳定；建议下一个串行推进。
-- `upgrade-subagents-to-agentloop`：planning state 和 streaming 已合入；建议在 mode switching 语义稳定后推进，便于 parent channel 和 trace 复用。
+- `upgrade-subagents-to-agentloop`：planning state、streaming 和 runtime mode switching 已合入；建议下一个串行推进，便于 parent channel 和 trace 复用。
 
 ### 第三批：语义 code intelligence 与 TUI
 
@@ -42,26 +42,7 @@
 
 ## 未实现队列
 
-### 1. `add-runtime-mode-switching`
-
-状态：未实现。
-
-批次：第二批，session id 和 streaming event 语义已稳定，建议下一个串行推进。
-
-建议顺序原因：
-
-- 当前 mode 在 session 内不可变；该 change 负责让 CLI/Web/未来 TUI 中的 mode 修改实时生效。
-- 会触碰 AgentLoop、WebSocket、CLI event 和 trace，应基于已稳定的 streaming event 语义推进。
-
-主要交付：
-
-- session runtime state 或等价状态对象。
-- 统一 mode transition API。
-- ToolRegistry schema / execute 读取最新 mode。
-- `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
-- 为未来 TUI 暴露复用接口。
-
-### 2. `upgrade-subagents-to-agentloop`
+### 1. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
@@ -79,7 +60,7 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 3. `add-lsp-code-intelligence`
+### 2. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -98,11 +79,11 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 4. `add-minimal-tui-runtime-view`
+### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
-批次：第三批，等待 runtime mode switching 和工具结果 display policy 稳定后开始。
+批次：第三批，runtime mode switching 已合入；等待工具结果 display policy 等其余依赖稳定后开始。
 
 建议顺序原因：
 
@@ -116,7 +97,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 5. `add-mcp-tool-adapter`
+### 4. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -134,7 +115,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 6. `add-browser-use-safety-foundation`
+### 5. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
