@@ -66,7 +66,7 @@ def create_app(
             await ws.send_json({
                 "type": "session_created",
                 "session_id": session.session_id,
-                "mode": session.agent.run_config.mode.value,
+                "mode": session.current_mode,
             })
 
         elif session.session_id != session_id:
@@ -93,8 +93,26 @@ def create_app(
                     await ws.send_json({
                         "type": "session_created",
                         "session_id": session.session_id,
-                        "mode": session.agent.run_config.mode.value,
+                        "mode": session.current_mode,
                     })
+
+                elif msg_type == "set_mode":
+                    requested_mode = str(raw.get("mode", "")).strip()
+                    if not requested_mode:
+                        await ws.send_json({
+                            "type": "error",
+                            "data": {"message": "ValueError: mode is required"},
+                        })
+                        continue
+                    try:
+                        transition = await session_manager.set_mode(session, requested_mode)
+                    except Exception as exc:
+                        await ws.send_json({
+                            "type": "error",
+                            "data": {"message": f"{type(exc).__name__}: {exc}"},
+                        })
+                        continue
+                    await ws.send_json({"type": "mode_changed", "data": transition})
 
                 elif msg_type == "ping":
                     await ws.send_json({"type": "pong"})

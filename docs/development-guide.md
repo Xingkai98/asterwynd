@@ -122,6 +122,8 @@ uv run python cli.py benchmark benchmarks/tasks \
 
 ## 开发注意事项
 
+- CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。
+- 当前 CLI/Web 的 mode 切换在用户侧表现为“影响后续 run”；runtime state 仍会在 transition 完成后立即更新，供后续 TUI 或控制面重构复用。
 - 优先使用 `rg` 和 `rg --files` 搜索。
 - 修改代码前先读相关实现和测试。
 - 不要回滚用户未提交改动。

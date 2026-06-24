@@ -45,3 +45,14 @@
 - **GIVEN** runtime 发布 `assistant_delta`
 - **WHEN** TUI 消费事件
 - **THEN** TUI SHALL 实时更新 assistant 消息区域
+
+### Requirement: 未来 TUI 复用 session mode transition API
+
+未来 TUI SHALL 复用 Agent runtime 的 session mode transition API 和 `mode_changed` 事件，不得实现一套与 CLI / Web 不兼容的 mode 切换逻辑。
+
+#### Scenario: TUI 切换 mode
+
+- **GIVEN** 未来 TUI 接入 Agent runtime
+- **WHEN** 用户在 TUI 中切换当前 session mode
+- **THEN** TUI SHALL 调用统一 runtime transition API
+- **AND** runtime SHALL 发布与 CLI / Web 一致的 `mode_changed` 事件

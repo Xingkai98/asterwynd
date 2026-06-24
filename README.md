@@ -244,12 +244,14 @@ MYAGENT_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 ```
 
-- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id、Plan Document 和 planning state
+- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan`，并展示 Plan Document 和 planning state
 - **Debug 界面**：环境变量 `MYAGENT_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 原始响应（content、stop_reason、tool_calls）
   - 工具调用详情（名称、参数、结果）
   - AgentLoop 通过 Web session 事件流发送的 Memory 压缩事件
+
+CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_only` 和 `/mode plan` 切换当前 session mode；CLI 单轮模式仍通过 `--mode` 指定初始 mode。
 
 ### 日志
 

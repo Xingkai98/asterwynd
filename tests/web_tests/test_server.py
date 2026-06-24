@@ -159,13 +159,19 @@ def test_web_static_assets_include_session_and_run_display():
 
     assert 'id="session-id"' in index
     assert 'id="run-id"' in index
+    assert 'id="mode-value"' in index
+    assert 'id="mode-select"' in index
+    assert 'id="mode-apply"' in index
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
+    assert "modeValueEl.textContent" in script
+    assert "modeApplyBtn.addEventListener('click', sendModeChange)" in script
     assert "addToolResultMessage(event.data)" in script
     assert "case 'assistant_delta'" in script
+    assert "case 'mode_changed'" in script
     assert "data.streamed" in script
     assert "appendAssistantContent(currentAssistantMsg, data.content)" in script
     assert "body.classList.add('markdown-body')" in script
@@ -178,6 +184,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert "max_iterations" in script
     assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
+    assert "#mode-controls" in styles
     assert ".markdown-body pre" in styles
 
     toggle_start = script.index("toggle.addEventListener")
@@ -274,6 +281,60 @@ def test_websocket_session_created_uses_config_default_mode():
 
     assert created["type"] == "session_created"
     assert created["mode"] == "plan"
+
+
+def test_websocket_set_mode_updates_session_mode_for_next_run():
+    app = create_app(MockLLM([LLMResponse(content="Hello")]), mode="build")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+            assert created["mode"] == "build"
+
+            ws.send_json({"type": "set_mode", "mode": "read_only"})
+            mode_changed = ws.receive_json()
+            assert mode_changed["type"] == "mode_changed"
+            assert mode_changed["data"]["old_mode"] == "build"
+            assert mode_changed["data"]["new_mode"] == "read_only"
+            assert mode_changed["data"]["source"] == "web"
+            assert mode_changed["data"]["session_id"] == created["session_id"]
+
+            ws.send_json({"type": "chat", "content": "hello"})
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    run_started = next(event for event in events if event["type"] == "run_started")
+    assert run_started["data"]["mode"] == "read_only"
+
+
+def test_websocket_set_mode_rejects_bypass():
+    app = create_app(MockLLM([LLMResponse(content="Hello")]), mode="build")
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            ws.send_json({"type": "set_mode", "mode": "bypass"})
+            error = ws.receive_json()
+
+            assert error["type"] == "error"
+            assert "bypass" in error["data"]["message"]
+
+            ws.send_json({"type": "chat", "content": "hello"})
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    run_started = next(event for event in events if event["type"] == "run_started")
+    assert created["mode"] == "build"
+    assert run_started["data"]["mode"] == "build"
 
 
 def test_websocket_plan_mode_emits_plan_document_and_planning_state():

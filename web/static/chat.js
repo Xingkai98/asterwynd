@@ -3,6 +3,7 @@
 
 let ws = null;
 let sessionId = null;
+let currentMode = 'build';
 let currentAssistantMsg = null;
 let debugEvents = [];
 let activeView = 'chat';
@@ -14,6 +15,9 @@ const sendBtn = document.getElementById('send-btn');
 const statusEl = document.getElementById('status');
 const sessionIdEl = document.getElementById('session-id');
 const runIdEl = document.getElementById('run-id');
+const modeValueEl = document.getElementById('mode-value');
+const modeSelectEl = document.getElementById('mode-select');
+const modeApplyBtn = document.getElementById('mode-apply');
 const debugTabBtn = document.getElementById('debug-tab');
 const planDocumentPanel = document.getElementById('plan-document-panel');
 const planDocumentTitleEl = document.getElementById('plan-document-title');
@@ -64,6 +68,7 @@ function handleEvent(event) {
       sessionId = event.session_id;
       sessionIdEl.textContent = sessionId;
       runIdEl.textContent = 'none';
+      syncMode(event.mode || currentMode);
       break;
 
     case 'run_started':
@@ -73,6 +78,15 @@ function handleEvent(event) {
       }
       if (event.data && event.data.run_id) {
         runIdEl.textContent = event.data.run_id;
+      }
+      if (event.data && event.data.mode) {
+        syncMode(event.data.mode);
+      }
+      break;
+
+    case 'mode_changed':
+      if (event.data && event.data.new_mode) {
+        syncMode(event.data.new_mode);
       }
       break;
 
@@ -144,6 +158,12 @@ function handleEvent(event) {
     case 'pong':
       break;
   }
+}
+
+function syncMode(mode) {
+  currentMode = mode || currentMode;
+  modeValueEl.textContent = currentMode;
+  modeSelectEl.value = currentMode;
 }
 
 // --- Message rendering ---
@@ -327,7 +347,16 @@ async function sendMessage() {
   ws.send(JSON.stringify({ type: 'chat', content: text }));
 }
 
+function sendModeChange() {
+  const nextMode = modeSelectEl.value;
+  if (!ws || ws.readyState !== WebSocket.OPEN || !nextMode || nextMode === currentMode) {
+    return;
+  }
+  ws.send(JSON.stringify({ type: 'set_mode', mode: nextMode }));
+}
+
 sendBtn.addEventListener('click', sendMessage);
+modeApplyBtn.addEventListener('click', sendModeChange);
 userInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();

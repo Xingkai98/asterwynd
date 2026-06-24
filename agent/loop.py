@@ -13,7 +13,7 @@ from agent.tools.registry import ToolRegistry
 from agent.memory.manager import MemoryManager
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
-from agent.run_config import AgentMode, AgentRunConfig
+from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
 from agent.run_identity import new_run_id
 from agent.tools.builtin.plan import ExitPlanModeTool, UpdatePlanTool
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
@@ -45,14 +45,17 @@ class AgentLoop:
         self.subagent_manager = subagent_manager or SubAgentManager()
         self.max_iterations = max_iterations
         self.run_config = run_config or AgentRunConfig()
+        policy_state = getattr(self.tool_registry.mode_policy, "runtime_state", None)
+        self.runtime_state = policy_state or AgentRuntimeState(self.run_config.mode)
+        self.tool_registry.mode_policy.runtime_state = self.runtime_state
         self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
         self._plan_document_final = False
-        if self.run_config.mode is AgentMode.PLAN:
-            self.tool_registry.register(UpdatePlanTool(self.update_plan_document))
-            self.tool_registry.register(ExitPlanModeTool(self.submit_plan_document))
+        self._plan_tools_registered = False
+        if self.runtime_state.current_mode is AgentMode.PLAN:
+            self._ensure_plan_tools_registered()
 
     @property
     def planning_state(self) -> dict:
@@ -65,6 +68,36 @@ class AgentLoop:
     @property
     def plan_document_final(self) -> bool:
         return self._plan_document_final
+
+    async def set_mode(
+        self,
+        mode: str | AgentMode,
+        *,
+        source: str,
+        reason: str | None = None,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+        session_id: str | None = None,
+        run_id: str | None = None,
+    ) -> dict:
+        transition = self.runtime_state.set_mode(mode, source=source, reason=reason)
+        if self.runtime_state.current_mode is AgentMode.PLAN:
+            self._ensure_plan_tools_registered()
+        if session_id is not None:
+            transition["session_id"] = session_id
+        trace_sink = trace_recorder or self._active_trace_recorder
+        if trace_sink and trace_sink.session_id is not None and "session_id" not in transition:
+            transition["session_id"] = trace_sink.session_id
+        if run_id is not None:
+            transition["run_id"] = run_id
+        elif trace_sink and trace_sink.run_id is not None:
+            transition["run_id"] = trace_sink.run_id
+        event_sink = on_event or self._active_on_event
+        if trace_sink:
+            trace_sink.record_mode_changed(transition)
+        if event_sink:
+            await event_sink("mode_changed", transition)
+        return transition
 
     async def set_plan(
         self,
@@ -179,6 +212,13 @@ class AgentLoop:
         if event_sink:
             await event_sink(event_type, document)
 
+    def _ensure_plan_tools_registered(self) -> None:
+        if self._plan_tools_registered:
+            return
+        self.tool_registry.register(UpdatePlanTool(self.update_plan_document))
+        self.tool_registry.register(ExitPlanModeTool(self.submit_plan_document))
+        self._plan_tools_registered = True
+
     async def run(
         self,
         messages: list[Message],
@@ -218,7 +258,7 @@ class AgentLoop:
         run_id: str | None = None,
     ) -> RunResult:
         tool_calls_made: list[ToolCallMade] = []
-        mode = self.run_config.mode.value
+        mode = self.runtime_state.current_mode.value
 
         logger.info(
             "Agent run started mode=%s session_id=%s run_id=%s",
@@ -226,7 +266,7 @@ class AgentLoop:
             session_id or "",
             run_id or "",
         )
-        await self.hooks.on_run_started(self.run_config)
+        await self.hooks.on_run_started(AgentRunConfig(mode=self.runtime_state.current_mode))
         if trace_recorder:
             trace_recorder.record_run_started(mode)
         if on_event:
@@ -508,7 +548,7 @@ class AgentLoop:
         ]
 
     def _plan_mode_context(self) -> str:
-        if self.run_config.mode is not AgentMode.PLAN:
+        if self.runtime_state.current_mode is not AgentMode.PLAN:
             return ""
         return (
             "You are running in plan mode. Inspect the repository with read-only "

@@ -61,6 +61,25 @@ CLI SHALL 支持通过 `--mode plan` 启动 plan mode，并将该 mode 传入 Ag
 - **THEN** 系统 SHALL 使用 plan mode 工具策略
 - **AND** 输出计划说明
 
+### Requirement: CLI 交互模式支持 session mode 切换
+
+CLI 交互模式 SHALL 支持通过 `/mode <build|read_only|plan>` 切换当前 session mode。CLI 单次运行 SHALL 继续只通过 `--mode` 指定初始 mode，不提供运行中的人工切换入口。
+
+#### Scenario: 交互模式切换到 read_only
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `/mode read_only`
+- **THEN** CLI SHALL 更新当前 session mode
+- **AND** 输出切换结果
+- **AND** 之后的 run SHALL 使用 `read_only`
+
+#### Scenario: 交互模式拒绝 bypass
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `/mode bypass`
+- **THEN** CLI SHALL 输出可读错误
+- **AND** 当前 session mode SHALL 保持不变
+
 ### Requirement: web 命令启动 Web UI
 
 `web` 命令 SHALL 接收 host、port、provider 和 model 参数，构造 LLM 并启动 FastAPI 应用。

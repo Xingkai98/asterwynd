@@ -28,6 +28,10 @@ class AgentSession:
         self.messages: list[Message] = []
         self.debug_turn = 0
 
+    @property
+    def current_mode(self) -> str:
+        return self.agent.runtime_state.current_mode.value
+
     def init_messages(self, system_prompt: Optional[str] = None):
         default_system = (
             "你是一个有用、诚实的人工智能助手。"
@@ -51,16 +55,17 @@ class SessionManager:
         self.debug_enabled = debug_enabled
         self.config = config or MyAgentConfig()
         resolved_mode = mode or self.config.agent.default_mode.value
-        self.run_config = AgentRunConfig(mode=parse_agent_mode(resolved_mode))
+        self.initial_mode = parse_agent_mode(resolved_mode)
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
         session_id = new_session_id()
+        run_config = AgentRunConfig(mode=self.initial_mode)
         registry = build_default_tool_registry(
             policy=WorkspacePolicy(
                 command_denylist=self.config.tools.command_denylist,
             ),
             mode_policy=ModePolicy(
-                self.run_config,
+                run_config,
                 deny_tools_by_mode=self.config.deny_tools_by_mode(),
             ),
             ignore_patterns=self.config.tools.ignore_patterns,
@@ -74,7 +79,7 @@ class SessionManager:
             tool_registry=registry,
             hooks=HookManager([TracingHook()]),
             memory=MemoryManager(max_tokens=80_000),
-            run_config=self.run_config,
+            run_config=run_config,
             tool_result_display=self.config.tools.display,
         )
         session = AgentSession(session_id, agent)
@@ -88,6 +93,13 @@ class SessionManager:
 
     def remove_session(self, session_id: str):
         self._sessions.pop(session_id, None)
+
+    async def set_mode(self, session: AgentSession, mode: str) -> dict:
+        return await session.agent.set_mode(
+            mode,
+            source="web",
+            session_id=session.session_id,
+        )
 
     async def run_session(
         self,
