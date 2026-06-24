@@ -30,41 +30,19 @@
 
 - `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
-### 第三批：运行时交互协议，建议串行合入
-
-- `upgrade-subagents-to-agentloop`：planning state、streaming 和 runtime mode switching 已合入；建议在 benchmark 基础设施收紧后推进，便于 parent channel 和 trace 复用。
-
-### 第四批：语义 code intelligence 与 TUI
+### 第三批：语义 code intelligence 与 TUI
 
 - `add-lsp-code-intelligence`：repo map 和 tree-sitter 多语言 symbol 已合入，后续应把 LSP 作为更强 provider 接入，避免直接把 LSP 当成仓库结构层。
 - `add-minimal-tui-runtime-view`：建议在 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后做，复用统一运行事件和 mode transition。
 
-### 第五批：外部工具与高风险能力
+### 第四批：外部工具与高风险能力
 
 - `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
 ## 未实现队列
 
-### 1. `upgrade-subagents-to-agentloop`
-
-状态：未实现。
-
-批次：第三批，planning state 和 streaming 已合入；建议等待 benchmark 基础设施和 mode switching 事件语义都稳定后推进。
-
-建议顺序原因：
-
-- 子 agent 升级为受限 AgentLoop 需要稳定的 mode policy、planning state、trace 和 ParentChannel 语义。
-- 放在 mode switching 后，可以复用已经稳定的运行事件和展示/调试模型；如果优先级转向并行调查能力，也可以提前到 TUI 之前。
-
-主要交付：
-
-- SubAgentManager 创建受限 AgentLoop。
-- 子 agent 独立 messages、tools、memory、mode 和 trace。
-- ParentChannel 回传完成、失败、取消和摘要。
-- 取消逻辑能停止子 AgentLoop。
-
-### 2. `add-lsp-code-intelligence`
+### 1. `add-lsp-code-intelligence`
 
 状态：未实现。
 
@@ -83,7 +61,7 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 3. `add-minimal-tui-runtime-view`
+### 2. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -101,7 +79,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 4. `add-mcp-tool-adapter`
+### 3. `add-mcp-tool-adapter`
 
 状态：未实现。
 
