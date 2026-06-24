@@ -31,7 +31,7 @@
 
 - `swebench-*` 外部任务改用 Docker-based evaluation harness。
 - runner 在执行这类任务前做 Docker preflight。
-- Docker 不可用时，以显式 `skipped` / `unsupported` artifact 结束，不回退到本地 venv 兼容路径。
+- Docker 不可用时，以显式 `unsupported` artifact 结束，不回退到本地 venv 兼容路径。
 
 当前容器内如何手工启动 Docker daemon 只作为开发辅助：
 
@@ -42,6 +42,6 @@
 ## Regression Tests
 
 - benchmark runner 测试覆盖 Docker preflight 成功 / 失败。
-- 外部 Docker-based 任务在 Docker 不可用时写出 `skipped` / `unsupported` artifact 的测试。
+- 外部 Docker-based 任务在 Docker 不可用时写出 `unsupported` artifact 的测试。
 - 本地 `myagent-*` 任务不受 Docker preflight 影响的混合任务集测试。
 - 如环境允许，补一个最小 `swebench-*` Docker smoke；如环境不允许，用 mock/fake runner 覆盖并记录限制。

@@ -18,8 +18,13 @@ class TaskSpec:
     hints_text: str | None = None
     category: str | None = None
     difficulty: str | None = None
+    task_family: str = "local"
+    execution_environment: str = "local"
     external_repo: str | None = None  # e.g. "https://github.com/psf/requests.git"
     version: str | None = None  # SWE-bench version key for MAP_REPO_VERSION_TO_SPECS lookup
+    instance_id: str | None = None
+    dataset_name: str | None = None
+    dataset_split: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "TaskSpec":
@@ -45,8 +50,13 @@ class TaskSpec:
             hints_text=data.get("hints_text"),
             category=data.get("category"),
             difficulty=data.get("difficulty"),
+            task_family=data.get("task_family", "local"),
+            execution_environment=data.get("execution_environment", "local"),
             external_repo=data.get("external_repo"),
             version=data.get("version"),
+            instance_id=data.get("instance_id"),
+            dataset_name=data.get("dataset_name"),
+            dataset_split=data.get("dataset_split"),
         )
         task.validate()
         return task
@@ -56,6 +66,19 @@ class TaskSpec:
             raise ValueError("Task id must not be empty")
         if not isinstance(self.timeout_seconds, int) or self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be a positive integer")
+        if self.execution_environment not in {"local", "docker"}:
+            raise ValueError("execution_environment must be 'local' or 'docker'")
+        if not self.task_family:
+            raise ValueError("task_family must not be empty")
+        if self.task_family == "swebench":
+            if self.execution_environment != "docker":
+                raise ValueError("swebench tasks must use execution_environment='docker'")
+            if not self.instance_id:
+                raise ValueError("swebench docker tasks require instance_id")
+            if not self.dataset_name:
+                raise ValueError("swebench docker tasks require dataset_name")
+            if not self.dataset_split:
+                raise ValueError("swebench docker tasks require dataset_split")
 
 
 @dataclass(frozen=True)
@@ -103,4 +126,3 @@ def _resolve_task_file(root: Path, filename: str) -> Path:
     except ValueError as exc:
         raise ValueError(f"Task file escapes task directory: {filename}") from exc
     return path
-

@@ -28,5 +28,5 @@ async def test_myagent_runner_times_out(tmp_path):
     result = await runner.run(task, "Do something", tmp_path, tmp_path / "out", trace)
 
     assert result.status == "error"
-    assert result.failure_category == "model_failure"
+    assert result.reason == "model_failure"
     assert "timed out" in result.output

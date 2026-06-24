@@ -12,7 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 
 
-RESULT_ORDER = ["passed", "passed_with_warnings", "failed", "error"]
+RESULT_ORDER = ["passed", "passed_with_warnings", "unsupported", "failed", "error"]
 
 
 def _sort_key(status: str) -> int:
@@ -115,6 +115,7 @@ th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #ddd; }}
 th {{ background: #f5f5f5; }}
 .passed {{ color: #22c55e; font-weight: bold; }}
 .passed_with_warnings {{ color: #eab308; }}
+.unsupported {{ color: #64748b; }}
 .failed {{ color: #ef4444; }}
 .error {{ color: #a855f7; }}
 small {{ color: #888; font-weight: normal; }}

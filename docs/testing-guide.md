@@ -97,11 +97,7 @@ uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --r
 
 涉及 AgentLoop、coding tools、workspace safety、benchmark runner 或其他 coding-agent 核心路径的变更，除了相关单元/集成测试外，至少跑通一个 benchmark smoke。优先选择能验证真实 runner 闭环的任务；如果改动影响外部 SWE-bench 风格任务，至少单独跑一个 `swebench-*` 任务。
 
-外部 SWE-bench 风格任务依赖 `swebench` 包；当前未作为默认 dev 依赖固定时，可在本地环境临时安装：
-
-```bash
-uv pip install swebench
-```
+外部 SWE-bench 风格任务依赖 Docker daemon 和 `swebench` 包；默认 `uv sync --extra dev` 会一并安装。Docker 不可用时，这类任务应返回 `unsupported`，而不是误记为 agent 失败。
 
 单任务 SWE smoke 示例：
 
@@ -118,6 +114,12 @@ uv run python cli.py benchmark /tmp/myagent-one-swe-task \
   --clone-cache-dir /tmp/myagent-swe-cache
 ```
 
+如果当前开发环境是没有 `systemd` 的容器，可先用辅助脚本启动 Docker daemon：
+
+```bash
+sudo ./scripts/start-docker-daemon.sh
+```
+
 ## 必须守住的协议
 
 - assistant message 如果包含 `tool_calls`，必须保留匹配的 tool result。
@@ -125,6 +127,7 @@ uv run python cli.py benchmark /tmp/myagent-one-swe-task \
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。
 - Memory compact 不能破坏 tool-call / tool-result 相邻链。
 - `passed_with_warnings` 是测试通过但过程不干净，不能算 clean pass。
+- benchmark 结果分类读 `status`，具体细节读 `reason`；`unsupported` 不能并入 `failed`。
 - Web Chat 的 assistant streaming 必须通过 AgentLoop `assistant_delta` / `assistant_stream_complete` 事件进入 WebSocket 和 CLI；回归测试必须覆盖流式展示不重复最终 `llm_response`，不能只改前端展示。
 
 ## 覆盖率目标

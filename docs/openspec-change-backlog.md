@@ -56,13 +56,13 @@
 
 - 当前 `swebench-*` 任务仍是“clone + 本地 venv 装依赖”的半兼容路径，不是 SWE-bench 官方 Docker harness。
 - benchmark 是项目主线能力证明链的一部分；如果外部任务环境语义不清，后续 pass rate 和失败归因都会失真。
-- 先把 Docker preflight 和 skip 语义立住，再继续扩展 subagent、LSP 或 TUI，更利于后续 benchmark 闭环可信度。
+- 先把 Docker preflight 和 `unsupported` 语义立住，再继续扩展 subagent、LSP 或 TUI，更利于后续 benchmark 闭环可信度。
 
 主要交付：
 
 - `swebench-*` Docker harness 执行路径。
 - Docker preflight。
-- Docker 不可用时的显式 `skipped` / `unsupported` artifact。
+- Docker 不可用时的显式 `unsupported` artifact。
 - 当前容器开发环境的辅助文档和备用脚本。
 
 ### 2. `upgrade-subagents-to-agentloop`

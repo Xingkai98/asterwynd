@@ -77,6 +77,7 @@ Scope:
 - Each task has a validation command.
 - Each run saves result, trace, final diff, and test output.
 - `gold.patch` and `test.patch` are supported by schema but optional.
+- Local tasks continue to use worktree validation; external SWE-bench tasks use Docker harness validation.
 
 ### Later Versions
 
@@ -120,6 +121,8 @@ Minimal schema:
   "test_command": "pytest -q tests/agent/tools/test_edit_tool.py",
   "category": "feature",
   "difficulty": "easy",
+  "task_family": "local",
+  "execution_environment": "local",
   "timeout_seconds": 300,
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",
@@ -143,6 +146,13 @@ Optional but reserved fields:
 - `hints_text`
 - `category`
 - `difficulty`
+- `task_family` (default `local`)
+- `execution_environment` (default `local`; allowed: `local`, `docker`)
+- `external_repo`
+- `version`
+- `instance_id`
+- `dataset_name`
+- `dataset_split`
 
 ## 6. Runner Design
 
@@ -164,8 +174,9 @@ First version execution model:
 9. Remove or retain the worktree depending on debug mode.
 ```
 
-Use `git worktree` first because it is fast and simple. Docker or stronger
-container isolation can be added later.
+Use `git worktree` for local tasks because it is fast and simple. Docker
+isolation is reserved for external SWE-bench tasks through the official
+evaluation harness.
 
 ## 7. Agent Runner Interface
 
@@ -326,7 +337,7 @@ Example:
   "test_runs": 1,
   "input_tokens": 18420,
   "output_tokens": 1320,
-  "failure_category": null
+  "reason": null
 }
 ```
 
@@ -359,6 +370,7 @@ benchmarks/runs/<run-id>/
   "task_count": 33,
   "passed": 13,
   "warnings": 2,
+  "unsupported": 1,
   "failed": 7
 }
 ```
@@ -381,7 +393,7 @@ First version metrics:
 
 | Metric | Meaning |
 |--------|---------|
-| `status` | `passed`, `passed_with_warnings`, `failed`, or `error` |
+| `status` | `passed`, `passed_with_warnings`, `unsupported`, `failed`, or `error` |
 | `duration_seconds` | Wall-clock runtime |
 | `iterations` | LLM iterations |
 | `tool_calls` | Total tool calls |
@@ -390,7 +402,7 @@ First version metrics:
 | `test_exit_code` | Final validation command exit code |
 | `input_tokens` | Input tokens, if available |
 | `output_tokens` | Output tokens, if available |
-| `failure_category` | Normalized failure reason |
+| `reason` | Normalized detail reason |
 
 Later metrics:
 
@@ -405,7 +417,7 @@ Later metrics:
 runner reported a non-clean process outcome such as `max_iterations`. It should
 count separately from a clean pass when evaluating agent quality.
 
-## 12. Failure Taxonomy
+## 12. Reason Taxonomy
 
 Initial categories:
 
@@ -420,6 +432,8 @@ Initial categories:
 | `no_change` | Agent produced no meaningful diff |
 | `out_of_scope_change` | Agent changed denied or unrelated files |
 | `model_failure` | Agent stopped without a useful solution |
+| `docker_unavailable` | Docker preflight failed and task is unsupported |
+| `docker_runtime_error` | Docker harness invocation failed after preflight |
 
 ## 12.1 Current Implementation Snapshot
 
@@ -520,7 +534,7 @@ Recommended coverage:
 | Area | Test Coverage |
 |------|---------------|
 | Task schema parser | Required fields, optional `gold_patch_file` and `test_patch_file`, relative file resolution, invalid JSON, missing issue file |
-| Task model validation | Invalid timeout, duplicate IDs, unsupported difficulty/category values if constrained |
+| Task model validation | Invalid timeout, unsupported execution_environment, missing SWE-bench Docker metadata |
 | Prompt builder | Converts `problem_statement` into an agent-specific prompt, includes validation command instruction |
 | Result model | Serializes `result.json`, stable status values, token fields optional |
 | Failure taxonomy | Maps setup, timeout, test failure, no diff, and max iteration outcomes |
