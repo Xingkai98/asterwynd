@@ -13,6 +13,7 @@ class FakeAgent:
         self.tool_calls_made = tool_calls_made or []
         self.session_ids = []
         self.run_ids = []
+        self.plan_document = None
 
     async def run(self, messages, session_id=None, run_id=None):
         self.messages = messages
@@ -85,6 +86,26 @@ def test_cli_single_prompt_summarizes_long_tool_results(monkeypatch):
     assert "摘要" in result.stdout
     assert "5000 字符" in result.stdout
     assert "完整结果" in result.stdout
+
+
+def test_cli_single_prompt_prints_plan_document(monkeypatch):
+    fake = FakeAgent(content="计划已生成。")
+    fake.plan_document = {
+        "title": "Add plan mode",
+        "markdown": "# Add plan mode\n\n- Read docs",
+    }
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(cli.app, ["main", "hello", "--mode", "plan"])
+
+    assert result.exit_code == 0
+    assert "【Plan Document】" in result.stdout
+    assert "# Add plan mode" in result.stdout
+    assert "计划已生成。" in result.stdout
 
 
 def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):

@@ -13,7 +13,7 @@
 
 - 新增 `plan` mode 的实际行为。
 - plan mode SHALL 只暴露只读工具，不允许 Write/Edit/Bash dangerous 操作。
-- AgentLoop 在 plan mode 中 SHALL 产出结构化 planning state 和自然语言计划说明。
+- AgentLoop 在 plan mode 中 SHALL 产出人读的 Markdown Plan Document、结构化 planning state 和自然语言计划说明。
 - CLI/Web SHALL 能启动 plan mode。
 
 ## Capabilities
@@ -21,9 +21,12 @@
 ### Modified Capabilities
 
 - `agent-modes`: `plan` 从预留边界升级为可执行 mode。
-- `planning`: plan mode 使用结构化 planning state。
+- `agent-runtime`: AgentLoop 发出 Plan Document 事件并写入 trace。
+- `planning`: plan mode 使用 Plan Document，并将高层步骤同步到结构化 planning state。
+- `tool-system`: 支持 mode-specific 工具元数据，用于只在 plan mode 暴露 `UpdatePlan` / `ExitPlanMode`。
 - `cli`: 支持启动 plan mode。
 - `web-ui`: 支持 session 使用 plan mode。
+- `benchmark`: trace artifact 记录 Plan Document 事件。
 
 ## Dependencies
 

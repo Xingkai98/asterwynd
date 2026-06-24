@@ -32,7 +32,7 @@ The current system already has useful agent infrastructure:
 | Hooks | Logging, tracing, retry, token budget hooks |
 | Memory | AutoCompact-style message compaction |
 | Subagents | Background delegation and parent channel injection |
-| Web UI | Chat UI, debug timeline, session/run identifiers, planning state display, Markdown rendering, and tool result display controls |
+| Web UI | Chat UI, debug timeline, session/run identifiers, Plan Document display, planning state display, Markdown rendering, and tool result display controls |
 | Coding tools | Workspace policy, exact-match `Edit`, workspace-aware `Bash`, `InspectGitDiff`, and hardened `Write` behavior |
 | Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, summary reports, and CLI entry point |
 

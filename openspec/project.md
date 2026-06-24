@@ -21,7 +21,7 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - `agent-runtime`: AgentLoop、消息循环、停止条件和 tool-call 协议。
 - `configuration`: 结构化配置文件、环境变量覆盖和入口层配置解析。
 - `agent-modes`: 单轮、交互、Web、benchmark 等运行入口和未来模式边界。
-- `planning`: PlanningManager、结构化 planning state、状态事件和展示语义；真实 plan mode 仍由后续 change 定义。
+- `planning`: Plan Document、PlanningManager、结构化 planning state、状态事件和展示语义；持久化 todo 和跨端计划执行工作流仍由后续 change 定义。
 - `tool-system`: 工具协议、注册、schema、执行、错误和权限元数据。
 - `coding-tools`: 文件、搜索、编辑、命令和 diff 检查工具。
 - `research-tools`: WebSearch、WebFetch 等联网研究工具。

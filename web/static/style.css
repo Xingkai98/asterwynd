@@ -256,6 +256,7 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   overflow-x: auto;
 }
 
+.plan-document-panel,
 .planning-panel {
   flex-shrink: 0;
   margin: 12px 20px 0;
@@ -264,13 +265,22 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   border-radius: 8px;
   background: var(--surface);
 }
+.plan-document-panel[hidden],
 .planning-panel[hidden] { display: none; }
+.plan-document-header,
 .planning-panel-header {
   margin-bottom: 8px;
   color: var(--text2);
   font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+.plan-document-title {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  word-break: break-word;
 }
 .planning-items {
   display: flex;

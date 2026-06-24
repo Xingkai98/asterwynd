@@ -30,6 +30,7 @@ class Tool(ABC):
     parameters: dict  # JSON Schema
     read_only: bool = False
     dangerous: bool = False
+    allowed_modes: tuple[str, ...] | None = None
 
     @abstractmethod
     async def execute(self, **kwargs) -> str:

@@ -26,7 +26,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | WorkspacePolicy | `agent/workspace_policy.py` | 工作区路径、文件和命令安全边界 |
 | HookManager | `agent/hooks/manager.py` | 生命周期扩展点 |
 | MemoryManager | `agent/memory/manager.py` | 消息历史与 AutoCompact |
-| PlanningManager | `agent/planning.py` | 当前运行的结构化计划状态 |
+| PlanningManager | `agent/planning/` | 当前运行的结构化计划状态 |
 | SkillLoader | `agent/skills/loader.py` | Markdown skill 加载 |
 | SubAgentManager | `agent/subagent/manager.py` | 后台子 agent 委托 |
 | TraceRecorder | `agent/trace_recorder.py` | 运行轨迹记录 |
@@ -49,6 +49,8 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | SymbolSearch | read_only | 按名称搜索 Python 符号 |
 | WebSearch | read_only | 网络搜索，当前默认 DuckDuckGo HTML provider |
 | WebFetch | read_only | 抓取网页正文并返回状态/类型/截断诊断 |
+| UpdatePlan | plan-only | 更新 Plan Document 草案，并将高层步骤同步为 planning state |
+| ExitPlanMode | plan-only | 定稿 Plan Document，并将高层步骤同步为 planning state |
 
 BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`duration_ms` 和 `timed_out`。WorkspacePolicy 负责命令 allowlist / denylist 和敏感路径限制。
 
@@ -69,7 +71,7 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
-Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、planning state、assistant Markdown 和工具调用过程；工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。当前 Web 运行事件仍是整段 LLM response 后展示，尚未实现 assistant token streaming。
+Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、Plan Document、planning state、assistant Markdown 和工具调用过程；工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。当前 Web 运行事件仍是整段 LLM response 后展示，尚未实现 assistant token streaming。
 
 ## Benchmark
 
