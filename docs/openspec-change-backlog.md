@@ -22,53 +22,31 @@
 - `harden-web-research-tools`：已合入并归档。
 - `render-markdown-in-chat-surfaces`：已合入并归档。
 - `add-tree-sitter-symbol-extraction`：已合入并归档。
+- `add-plan-mode`：已合入并归档。
 
-### 第二批：可立即并行的低耦合基础能力
-
-- `add-plan-mode`：planning state 已合入，可开始真实 plan mode；与 streaming / mode switching 都会碰 AgentLoop，合入阶段需要错开。
-
-### 第三批：运行时交互协议，建议串行合入
+### 第二批：运行时交互协议，建议串行合入
 
 - `add-streaming-agent-output`：先统一 AgentLoop streaming event，Web / CLI / 未来 TUI 后续都复用这条事件通道。
 - `add-runtime-mode-switching`：可在 session id 和 streaming event 语义稳定后做；如果提前推进，应限定为 mode transition API、Web/CLI 入口和当前 mode 语义。
 - `upgrade-subagents-to-agentloop`：planning state 已合入；建议在 streaming / mode switching 的事件语义稳定后推进，便于 parent channel 和 trace 复用。
 
-### 第四批：语义 code intelligence 与 TUI
+### 第三批：语义 code intelligence 与 TUI
 
 - `add-lsp-code-intelligence`：repo map 和 tree-sitter 多语言 symbol 已合入，后续应把 LSP 作为更强 provider 接入，避免直接把 LSP 当成仓库结构层。
 - `add-minimal-tui-runtime-view`：建议在 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后做，复用统一运行事件和 mode transition。
 
-### 第五批：外部工具与高风险能力
+### 第四批：外部工具与高风险能力
 
 - `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
 ## 未实现队列
 
-### 1. `add-plan-mode`
+### 1. `add-streaming-agent-output`
 
 状态：未实现。
 
-批次：第二批，planning state 已合入，可开始；与 streaming / mode switching 同改 AgentLoop，合入阶段需要错开。
-
-建议顺序原因：
-
-- 依赖 `introduce-agent-mode-policy` 的 mode 权限边界。
-- 依赖已合入的 `implement-structured-planning-state` 结构化计划产物。
-- 完成后，`plan` 才从“只读权限模式”升级为“可观察、可验证的计划模式”。
-
-主要交付：
-
-- plan mode 的真实行为。
-- plan mode 只暴露只读工具，拒绝写入和 dangerous 工具。
-- AgentLoop 在 plan mode 中产出结构化 planning state 和自然语言计划说明。
-- CLI/Web 启动 plan mode。
-
-### 2. `add-streaming-agent-output`
-
-状态：未实现。
-
-批次：第三批，建议在 session/run id 可观察性之后推进；与 runtime mode switching 串行合入。
+批次：第二批，建议在 session/run id 可观察性之后推进；与 runtime mode switching 串行合入。
 
 建议顺序原因：
 
@@ -83,11 +61,11 @@
 - 非 streaming provider fallback。
 - 为未来 TUI 暴露 streaming event。
 
-### 3. `add-runtime-mode-switching`
+### 2. `add-runtime-mode-switching`
 
 状态：未实现。
 
-批次：第三批，建议在 session id 和 streaming event 语义稳定后推进；如需提前，只先做 mode transition API 和当前 mode 语义。
+批次：第二批，建议在 session id 和 streaming event 语义稳定后推进；如需提前，只先做 mode transition API 和当前 mode 语义。
 
 建议顺序原因：
 
@@ -102,11 +80,11 @@
 - `mode_changed` 事件、trace 记录、CLI 交互命令、WebSocket 切换消息。
 - 为未来 TUI 暴露复用接口。
 
-### 4. `upgrade-subagents-to-agentloop`
+### 3. `upgrade-subagents-to-agentloop`
 
 状态：未实现。
 
-批次：第三批，planning state 已合入；建议等待 streaming / mode switching 事件语义稳定后推进。
+批次：第二批，planning state 已合入；建议等待 streaming / mode switching 事件语义稳定后推进。
 
 建议顺序原因：
 
@@ -120,11 +98,11 @@
 - ParentChannel 回传完成、失败、取消和摘要。
 - 取消逻辑能停止子 AgentLoop。
 
-### 5. `add-lsp-code-intelligence`
+### 4. `add-lsp-code-intelligence`
 
 状态：未实现。
 
-批次：第四批，repo map 和 tree-sitter 基础设施已合入，可开始细化 LSP provider 边界。
+批次：第三批，repo map 和 tree-sitter 基础设施已合入，可开始细化 LSP provider 边界。
 
 建议顺序原因：
 
@@ -139,11 +117,11 @@
 - definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
 - 修改后 diagnostics 反馈。
 
-### 6. `add-minimal-tui-runtime-view`
+### 5. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
-批次：第四批，等待 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后开始。
+批次：第三批，等待 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后开始。
 
 建议顺序原因：
 
@@ -157,11 +135,11 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 8. `add-mcp-tool-adapter`
+### 6. `add-mcp-tool-adapter`
 
 状态：未实现。
 
-批次：第五批，可提前做设计和 fake server 测试；实现阶段建议与 browser 能力错开。
+批次：第四批，可提前做设计和 fake server 测试；实现阶段建议与 browser 能力错开。
 
 建议顺序原因：
 
@@ -175,11 +153,11 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 9. `add-browser-use-safety-foundation`
+### 7. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
-批次：第五批，建议在 MCP 或核心工具权限模型更稳定后开始。
+批次：第四批，建议在 MCP 或核心工具权限模型更稳定后开始。
 
 建议顺序原因：
 
