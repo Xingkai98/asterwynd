@@ -20,7 +20,7 @@ def test_build_repo_map_scans_python_files_and_skips_denied_paths(tmp_path):
     assert ".git" not in format_repo_map(repo_map)
 
 
-def test_build_repo_map_keeps_non_python_file_entries_without_fake_symbols(tmp_path):
+def test_build_repo_map_extracts_typescript_and_keeps_docs_without_fake_symbols(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.ts").write_text("export function run() {}\n")
     (tmp_path / "README.md").write_text("# Project\n")
@@ -30,9 +30,12 @@ def test_build_repo_map_keeps_non_python_file_entries_without_fake_symbols(tmp_p
     entries = {entry.path: entry for entry in repo_map.files}
     assert entries["src/app.ts"].language == "typescript"
     assert entries["src/app.ts"].category == "source"
-    assert entries["src/app.ts"].symbols == []
+    assert [(symbol.kind, symbol.name) for symbol in entries["src/app.ts"].symbols] == [
+        ("function", "run")
+    ]
     assert entries["README.md"].language == "markdown"
     assert entries["README.md"].category == "docs"
+    assert entries["README.md"].symbols == []
 
 
 def test_build_repo_map_respects_custom_ignore_patterns(tmp_path):

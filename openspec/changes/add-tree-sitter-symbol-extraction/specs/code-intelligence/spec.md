@@ -11,6 +11,13 @@
 - **THEN** 系统 SHALL 返回该文件中的 class、function 或 export 符号摘要
 - **AND** SHALL 标识符号所属语言或 extractor 来源
 
+#### Scenario: Python 继续使用 AST extractor
+
+- **GIVEN** workspace 中包含 Python 文件
+- **WHEN** code intelligence 扫描该文件
+- **THEN** 系统 SHALL 继续返回现有 Python AST 符号摘要
+- **AND** SHALL NOT 因引入 tree-sitter 改变 Python 符号输出形状
+
 ### Requirement: 未注册语言降级为文件级条目
 
 系统 SHALL 对未注册 tree-sitter grammar 或 query 的语言保留 repo map 文件条目，但不得伪造结构化符号。
@@ -32,3 +39,15 @@
 - **WHEN** 生成 repo map
 - **THEN** 系统 SHALL 保留该文件的文件级条目
 - **AND** SHALL 在摘要中标识解析不可用
+
+### Requirement: tree-sitter 解析上限来自统一配置
+
+系统 SHALL 通过统一配置控制 tree-sitter 单文件解析大小上限。
+
+#### Scenario: 文件超过配置上限
+
+- **GIVEN** `myagent.yaml` 配置了 `tools.code_intelligence.tree_sitter_max_file_bytes`
+- **AND** workspace 中存在超过该大小的已注册语言文件
+- **WHEN** 生成 repo map
+- **THEN** 系统 SHALL 保留该文件的文件级条目
+- **AND** SHALL NOT 对该文件执行 tree-sitter 符号提取

@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from agent.code_intelligence.config import CodeIntelligenceConfig
 from agent.run_config import AgentMode, parse_agent_mode
 from agent.tool_result_display import ToolResultDisplayConfig
 
@@ -46,6 +47,7 @@ class WebSearchConfig:
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
+    code_intelligence: CodeIntelligenceConfig = field(default_factory=CodeIntelligenceConfig)
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     display: ToolResultDisplayConfig = field(default_factory=ToolResultDisplayConfig)
 
@@ -263,8 +265,27 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
             path,
             "tools.command_denylist",
         ),
+        code_intelligence=_parse_code_intelligence_config(
+            mapping.get("code_intelligence", {}),
+            path,
+        ),
         web_search=_parse_web_search_config(mapping.get("web_search", {}), path),
         display=_parse_tool_display_config(mapping.get("display", {}), path),
+    )
+
+
+def _parse_code_intelligence_config(raw: Any, path: Path) -> CodeIntelligenceConfig:
+    mapping = _expect_mapping(raw, path, "tools.code_intelligence")
+    defaults = CodeIntelligenceConfig()
+    return CodeIntelligenceConfig(
+        tree_sitter_max_file_bytes=_validate_positive_int(
+            mapping.get(
+                "tree_sitter_max_file_bytes",
+                defaults.tree_sitter_max_file_bytes,
+            ),
+            "tools.code_intelligence.tree_sitter_max_file_bytes",
+            path=path,
+        )
     )
 
 

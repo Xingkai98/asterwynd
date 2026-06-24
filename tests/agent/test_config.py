@@ -15,6 +15,7 @@ def test_load_config_uses_defaults_when_yaml_missing(tmp_path, monkeypatch):
     assert config.agent.default_mode is AgentMode.BUILD
     assert config.tools.ignore_patterns == ()
     assert config.tools.command_denylist == ()
+    assert config.tools.code_intelligence.tree_sitter_max_file_bytes == 262144
     assert config.tools.web_search.providers == ()
     assert config.tools.display.max_result_chars == 4000
     assert config.tools.display.max_result_lines == 80
@@ -38,6 +39,8 @@ tools:
     - .cache
   command_denylist:
     - dangerous-cmd
+  code_intelligence:
+    tree_sitter_max_file_bytes: 1234
   web_search:
     providers:
       - tavily
@@ -61,6 +64,7 @@ benchmark:
     assert config.mode_config(AgentMode.BUILD).deny_tools == ("Bash",)
     assert config.tools.ignore_patterns == (".cache",)
     assert config.tools.command_denylist == ("dangerous-cmd",)
+    assert config.tools.code_intelligence.tree_sitter_max_file_bytes == 1234
     assert config.tools.web_search.providers[0].name == "tavily"
     assert config.tools.web_search.providers[0].enabled is True
     assert config.tools.web_search.providers[1].name == "brave"
@@ -187,6 +191,23 @@ tools:
     )
 
     with pytest.raises(ConfigError, match="tools.display.max_result_chars"):
+        load_config(start_dir=tmp_path)
+
+
+def test_invalid_code_intelligence_config_fails_fast(tmp_path):
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  code_intelligence:
+    tree_sitter_max_file_bytes: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="tools.code_intelligence.tree_sitter_max_file_bytes",
+    ):
         load_config(start_dir=tmp_path)
 
 

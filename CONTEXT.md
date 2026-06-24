@@ -17,7 +17,7 @@ _避免_: 纯后端岗位、纯算法岗位、纯前端岗位、泛 AI 应用岗
 _避免_: 通用聊天机器人、泛化 agent 框架
 
 **Code Intelligence**:
-服务 Coding Agent 系统的只读代码理解能力；当前阶段以 workspace-aware repo map、文件级结构摘要和 Python AST 符号提取为主，后续可演进到 tree-sitter 多语言符号提取和 LSP 语义能力。
+服务 Coding Agent 系统的只读代码理解能力；当前阶段以 workspace-aware repo map、文件级结构摘要、Python AST 符号提取和 tree-sitter 多语言语法级符号提取为主，后续可演进到 LSP 语义能力。
 _避免_: 纯文本 grep、完整 LSP 承诺、通用 RAG 知识库
 
 **Repo Map**:

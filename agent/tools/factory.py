@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent.code_intelligence.config import CodeIntelligenceConfig
 from agent.config import WebSearchConfig
 from agent.run_config import ModePolicy
 from agent.tools.base import Tool
@@ -39,6 +40,7 @@ def build_default_tool_registry(
     policy: WorkspacePolicy | None = None,
     mode_policy: ModePolicy | None = None,
     ignore_patterns: tuple[str, ...] = (),
+    code_intelligence_config: CodeIntelligenceConfig | None = None,
     web_search_config: WebSearchConfig | None = None,
     tools: list[Tool] | None = None,
 ) -> ToolRegistry:
@@ -46,6 +48,7 @@ def build_default_tool_registry(
     for tool in tools or get_default_tools(
         policy=policy,
         ignore_patterns=ignore_patterns,
+        code_intelligence_config=code_intelligence_config,
         web_search_config=web_search_config,
     ):
         registry.register(tool)
@@ -58,9 +61,14 @@ def build_coding_tool_registry(
     policy: WorkspacePolicy | None = None,
     mode_policy: ModePolicy | None = None,
     ignore_patterns: tuple[str, ...] = (),
+    code_intelligence_config: CodeIntelligenceConfig | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
-    for tool in get_coding_tools(policy=policy, ignore_patterns=ignore_patterns):
+    for tool in get_coding_tools(
+        policy=policy,
+        ignore_patterns=ignore_patterns,
+        code_intelligence_config=code_intelligence_config,
+    ):
         registry.register(tool)
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
@@ -74,6 +82,7 @@ def get_default_tools(
     policy: WorkspacePolicy | None = None,
     *,
     ignore_patterns: tuple[str, ...] = (),
+    code_intelligence_config: CodeIntelligenceConfig | None = None,
     web_search_config: WebSearchConfig | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
@@ -86,8 +95,16 @@ def get_default_tools(
         WebFetchTool(),
         GrepTool(policy=policy),
         InspectGitDiffTool(policy=policy),
-        RepoMapTool(policy=policy, ignore_patterns=ignore_patterns),
-        SymbolSearchTool(policy=policy, ignore_patterns=ignore_patterns),
+        RepoMapTool(
+            policy=policy,
+            ignore_patterns=ignore_patterns,
+            code_intelligence_config=code_intelligence_config,
+        ),
+        SymbolSearchTool(
+            policy=policy,
+            ignore_patterns=ignore_patterns,
+            code_intelligence_config=code_intelligence_config,
+        ),
     ]
 
 
@@ -95,6 +112,7 @@ def get_coding_tools(
     policy: WorkspacePolicy | None = None,
     *,
     ignore_patterns: tuple[str, ...] = (),
+    code_intelligence_config: CodeIntelligenceConfig | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     return [
@@ -104,8 +122,16 @@ def get_coding_tools(
         InspectGitDiffTool(policy=policy),
         ListFilesTool(policy=policy, ignore_patterns=ignore_patterns),
         FindTool(policy=policy, ignore_patterns=ignore_patterns),
-        RepoMapTool(policy=policy, ignore_patterns=ignore_patterns),
-        SymbolSearchTool(policy=policy, ignore_patterns=ignore_patterns),
+        RepoMapTool(
+            policy=policy,
+            ignore_patterns=ignore_patterns,
+            code_intelligence_config=code_intelligence_config,
+        ),
+        SymbolSearchTool(
+            policy=policy,
+            ignore_patterns=ignore_patterns,
+            code_intelligence_config=code_intelligence_config,
+        ),
         GrepTool(policy=policy),
         BashTool(policy=policy),
     ]

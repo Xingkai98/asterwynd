@@ -1,3 +1,4 @@
+from agent.code_intelligence.config import CodeIntelligenceConfig
 from agent.code_intelligence.models import FileSummary, ImportSummary, RepoMap, Symbol
 from agent.code_intelligence.repo_map import (
     build_repo_map,
@@ -7,6 +8,7 @@ from agent.code_intelligence.repo_map import (
 
 __all__ = [
     "FileSummary",
+    "CodeIntelligenceConfig",
     "ImportSummary",
     "RepoMap",
     "Symbol",

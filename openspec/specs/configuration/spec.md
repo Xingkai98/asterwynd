@@ -75,3 +75,14 @@
 - **WHEN** runner 构造 AgentLoop 和工具策略
 - **THEN** 系统 SHALL 使用入口层已解析配置
 - **AND** SHALL NOT 在任务 worktree 中重新发现 `myagent.yaml`
+
+### Requirement: 工具策略支持 code intelligence 配置
+
+系统 SHALL 支持在 `myagent.yaml` 的 `tools.code_intelligence` 下配置 code intelligence 工具策略。非法值 SHALL fail fast。
+
+#### Scenario: 配置 tree-sitter 单文件解析上限
+
+- **GIVEN** `myagent.yaml` 设置 `tools.code_intelligence.tree_sitter_max_file_bytes`
+- **WHEN** CLI、Web 或 benchmark 入口构造工具集合
+- **THEN** 系统 SHALL 将该值传入 RepoMap 和 SymbolSearch 使用的 code intelligence 配置
+- **AND** 超过该大小的 tree-sitter 文件 SHALL 降级为文件级条目

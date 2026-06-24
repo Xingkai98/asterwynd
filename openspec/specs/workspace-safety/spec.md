@@ -95,6 +95,13 @@ WorkspacePolicy SHALL 保留内置 denied patterns 和 command denylist，并允
 - **WHEN** ListFiles 或 Find 枚举目录
 - **THEN** 系统 SHALL 同时应用内置 ignore rules 和配置扩展
 
+#### Scenario: tree-sitter 不绕过 read policy
+
+- **GIVEN** denied path 下存在已注册语言文件
+- **WHEN** RepoMap 或 SymbolSearch 扫描 workspace
+- **THEN** 系统 SHALL 跳过该文件
+- **AND** SHALL NOT 通过 tree-sitter 读取或返回该文件中的符号
+
 #### Scenario: 允许常规验证和只读查看命令
 
 - **GIVEN** Bash 请求执行 `pytest`、`uv run pytest`、`git diff`、`rg`、`cat` 或 `ls` 等允许命令

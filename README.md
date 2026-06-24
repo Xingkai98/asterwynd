@@ -72,8 +72,8 @@ uv run python cli.py benchmark benchmarks/tasks \
 | `InspectGitDiff` | read_only | 查看当前工作区 git diff |
 | `ListFiles` | read_only | 列出目录内容，自动忽略 .git/node_modules 等 |
 | `Find` | read_only | 按 glob 模式递归搜索文件 |
-| `RepoMap` | read_only | 生成仓库结构和 Python 顶层符号摘要 |
-| `SymbolSearch` | read_only | 在仓库内按名称搜索 Python 符号 |
+| `RepoMap` | read_only | 生成仓库结构和已支持语言的顶层符号摘要 |
+| `SymbolSearch` | read_only | 在仓库内按名称搜索已支持语言的符号 |
 | `WebSearch` | read_only | DuckDuckGo HTML 搜索，返回带 provider 的稳定文本结果 |
 | `WebFetch` | read_only | 获取网页正文，返回状态/类型/截断诊断 |
 
