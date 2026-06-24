@@ -165,6 +165,8 @@ def test_web_static_assets_include_session_and_run_display():
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
     assert "addToolResultMessage(event.data)" in script
+    assert "case 'assistant_delta'" in script
+    assert "data.streamed" in script
     assert "appendAssistantContent(currentAssistantMsg, data.content)" in script
     assert "body.classList.add('markdown-body')" in script
     assert "tool-result-toggle" in script

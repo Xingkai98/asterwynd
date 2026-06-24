@@ -71,7 +71,7 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
-Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、Plan Document、planning state、assistant Markdown 和工具调用过程；工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。当前 Web 运行事件仍是整段 LLM response 后展示，尚未实现 assistant token streaming。
+Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、Plan Document、planning state、assistant Markdown 和工具调用过程；工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
 
 ## Benchmark
 

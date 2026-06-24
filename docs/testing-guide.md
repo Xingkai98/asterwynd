@@ -125,7 +125,7 @@ uv run python cli.py benchmark /tmp/myagent-one-swe-task \
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。
 - Memory compact 不能破坏 tool-call / tool-result 相邻链。
 - `passed_with_warnings` 是测试通过但过程不干净，不能算 clean pass。
-- Web Chat 当前不提供 token streaming；涉及 streaming 的变更必须新增 AgentLoop event、WebSocket 和 CLI 覆盖，不能只改前端展示。
+- Web Chat 的 assistant streaming 必须通过 AgentLoop `assistant_delta` / `assistant_stream_complete` 事件进入 WebSocket 和 CLI；回归测试必须覆盖流式展示不重复最终 `llm_response`，不能只改前端展示。
 
 ## 覆盖率目标
 

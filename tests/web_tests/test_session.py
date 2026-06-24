@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 from agent.loop import AgentLoop
 from agent.message import Message
-from agent.llm import LLMResponse, ToolCallDelta
+from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
@@ -47,6 +47,21 @@ class MockLLM:
 class FailingLLM:
     async def chat(self, messages, tools=None, model="gpt-4"):
         raise RuntimeError("provider unavailable")
+
+
+class StreamingLLM:
+    async def stream_chat(self, messages, tools=None, model="gpt-4"):
+        yield LLMStreamEvent(type="assistant_delta", delta="Hel", content="Hel")
+        yield LLMStreamEvent(type="assistant_delta", delta="lo", content="Hello")
+        yield LLMStreamEvent(
+            type="complete",
+            response=LLMResponse(content="Hello", stop_reason="end_turn"),
+            content="Hello",
+            stop_reason="end_turn",
+        )
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        raise AssertionError("stream_chat should be used")
 
 
 def make_session(agent):
@@ -99,6 +114,36 @@ async def test_chat_simple_text_response():
     # Verify llm_response has content
     llm_resp = next(e for e in events if e["type"] == "llm_response")
     assert llm_resp["data"]["content"] == "Hello, user!"
+
+
+@pytest.mark.asyncio
+async def test_run_session_forwards_assistant_delta_and_streamed_response():
+    manager = SessionManager()
+    session = make_session(AgentLoop(
+        llm=StreamingLLM(),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+    ))
+
+    events = []
+
+    async def collect(e):
+        events.append(e)
+
+    await manager.run_session(session, "hi", ws_send=collect)
+
+    event_types = [event["type"] for event in events]
+    assert event_types == [
+        "run_started",
+        "assistant_delta",
+        "assistant_delta",
+        "assistant_stream_complete",
+        "llm_response",
+        "done",
+    ]
+    assert [event["data"].get("delta") for event in events if event["type"] == "assistant_delta"] == ["Hel", "lo"]
+    llm_response = next(event for event in events if event["type"] == "llm_response")
+    assert llm_response["data"]["streamed"] is True
 
 
 @pytest.mark.asyncio

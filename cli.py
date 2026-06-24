@@ -8,6 +8,7 @@ MyAgent CLI 入口
     python cli.py --interactive --provider anthropic
 """
 import asyncio
+import inspect
 import logging
 import os
 import sys
@@ -66,7 +67,9 @@ def build_llm(provider: str, model: Optional[str] = None) -> LLM:
             typer.echo("Error: ANTHROPIC_API_KEY not set", err=True)
             raise SystemExit(1)
         base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-        return AnthropicLLM(api_key=api_key, base_url=base_url, **kwargs)
+        llm = AnthropicLLM(api_key=api_key, base_url=base_url, **kwargs)
+        llm.stream = _streaming_enabled()
+        return llm
     else:
         # openai (default)
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -74,7 +77,14 @@ def build_llm(provider: str, model: Optional[str] = None) -> LLM:
             typer.echo("Error: OPENAI_API_KEY not set", err=True)
             raise SystemExit(1)
         base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        return OpenAILLM(api_key=api_key, base_url=base_url, **kwargs)
+        llm = OpenAILLM(api_key=api_key, base_url=base_url, **kwargs)
+        llm.stream = _streaming_enabled()
+        return llm
+
+
+def _streaming_enabled() -> bool:
+    value = os.environ.get("MYAGENT_STREAMING", "enabled").strip().lower()
+    return value not in {"0", "false", "off", "disabled", "no"}
 
 def _normalize_user_mode(mode: str | AgentMode) -> str:
     if isinstance(mode, AgentMode):
@@ -197,9 +207,17 @@ def run_single(
     async def _run():
         typer.echo(f"Session ID: {session_id}")
         typer.echo(f"Run ID: {run_id}")
-        result = await agent.run(messages, session_id=session_id, run_id=run_id)
+        stream_state = {"streamed": False}
+        result = await _run_agent_with_cli_streaming(
+            agent,
+            messages,
+            stream_state,
+            session_id=session_id,
+            run_id=run_id,
+        )
         _print_plan_document(agent)
-        typer.echo(f"\n【Agent】\n{result.content}")
+        if not stream_state["streamed"]:
+            typer.echo(f"\n【Agent】\n{result.content}")
         if result.tool_calls_made:
             typer.echo(f"\n【工具调用】{len(result.tool_calls_made)} 次")
             _print_tool_call_summaries(result, config)
@@ -241,15 +259,24 @@ def run_interactive(
     async def _run_async():
         run_id = new_run_id()
         typer.echo(f"Run ID: {run_id}")
-        return await agent.run(messages, session_id=session_id, run_id=run_id)
+        stream_state = {"streamed": False}
+        result = await _run_agent_with_cli_streaming(
+            agent,
+            messages,
+            stream_state,
+            session_id=session_id,
+            run_id=run_id,
+        )
+        return result, stream_state
 
     try:
         # 如果有初始 prompt，先跑一轮
         if initial_prompt:
             messages.append(Message(role="user", content=initial_prompt))
-            result = loop.run_until_complete(_run_async())
+            result, stream_state = loop.run_until_complete(_run_async())
             _print_plan_document(agent)
-            typer.echo(f"\n【Agent】\n{result.content}\n")
+            if not stream_state["streamed"]:
+                typer.echo(f"\n【Agent】\n{result.content}\n")
             _print_tool_call_summaries(result, config)
 
         while True:
@@ -264,12 +291,41 @@ def run_interactive(
                 break
 
             messages.append(Message(role="user", content=user_input))
-            result = loop.run_until_complete(_run_async())
+            result, stream_state = loop.run_until_complete(_run_async())
             _print_plan_document(agent)
-            typer.echo(f"\n【Agent】\n{result.content}\n")
+            if not stream_state["streamed"]:
+                typer.echo(f"\n【Agent】\n{result.content}\n")
             _print_tool_call_summaries(result, config)
     finally:
         loop.close()
+
+
+async def _run_agent_with_cli_streaming(
+    agent: AgentLoop,
+    messages: list[Message],
+    stream_state: dict,
+    *,
+    session_id: str,
+    run_id: str,
+):
+    async def on_event(event_type: str, data: dict):
+        if event_type == "assistant_delta":
+            delta = data.get("delta")
+            if delta:
+                stream_state["streamed"] = True
+                typer.echo(delta, nl=False)
+        elif event_type == "assistant_stream_complete" and stream_state.get("streamed"):
+            typer.echo("")
+
+    if "on_event" not in inspect.signature(agent.run).parameters:
+        return await agent.run(messages, session_id=session_id, run_id=run_id)
+
+    return await agent.run(
+        messages,
+        on_event=on_event,
+        session_id=session_id,
+        run_id=run_id,
+    )
 
 
 def _print_plan_document(agent: AgentLoop) -> None:
