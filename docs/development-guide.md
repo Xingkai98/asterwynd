@@ -123,6 +123,8 @@ sudo ./scripts/start-docker-daemon.sh
 - `tools.ignore_patterns`
 - `tools.command_denylist`
 - `tools.code_intelligence.tree_sitter_max_file_bytes`
+- `tools.code_intelligence.lsp.servers`
+- `tools.code_intelligence.lsp.default_request_timeout_ms`
 - `tools.web_search.providers`
 - `tools.display.max_result_chars`
 - `tools.display.max_result_lines`

@@ -240,3 +240,141 @@ tools:
 
     with pytest.raises(ConfigError, match="unsupported search provider"):
         load_config(start_dir=tmp_path)
+
+
+def test_lsp_config_defaults_when_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("MYAGENT_MODE", raising=False)
+    config = load_config(start_dir=tmp_path)
+
+    assert config.tools.code_intelligence.lsp.servers == ()
+    assert config.tools.code_intelligence.lsp.default_request_timeout_ms == 3000
+    assert config.tools.code_intelligence.lsp.max_diagnostics_per_file == 50
+
+
+def test_lsp_config_parses_servers(tmp_path):
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  code_intelligence:
+    lsp:
+      servers:
+        - language: python
+          command: ["pylsp"]
+          root_markers: ["pyproject.toml", "setup.py"]
+          initialize_timeout_ms: 6000
+          request_timeout_ms: 2500
+        - language: typescript
+          command: "typescript-language-server"
+          args: ["--stdio"]
+          enabled: false
+      max_diagnostics_per_file: 30
+      max_references: 80
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(start_dir=tmp_path)
+    lsp = config.tools.code_intelligence.lsp
+
+    assert len(lsp.servers) == 2
+    py = lsp.servers[0]
+    assert py.language == "python"
+    assert py.command == ("pylsp",)
+    assert py.root_markers == ("pyproject.toml", "setup.py")
+    assert py.initialize_timeout_ms == 6000
+    assert py.request_timeout_ms == 2500
+    assert py.enabled is True
+
+    ts = lsp.servers[1]
+    assert ts.language == "typescript"
+    assert ts.command == ("typescript-language-server",)
+    assert ts.args == ("--stdio",)
+    assert ts.enabled is False
+
+    assert lsp.max_diagnostics_per_file == 30
+    assert lsp.max_references == 80
+
+    assert lsp.server_for("python") is py
+    assert lsp.server_for("Python") is py
+    assert lsp.server_for("typescript") is None  # disabled
+    assert lsp.server_for("rust") is None
+
+
+def test_lsp_server_command_required(tmp_path):
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  code_intelligence:
+    lsp:
+      servers:
+        - language: python
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=r"servers\[0\]\.command"):
+        load_config(start_dir=tmp_path)
+
+
+def test_lsp_server_language_required(tmp_path):
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  code_intelligence:
+    lsp:
+      servers:
+        - command: ["pylsp"]
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match=r"servers\[0\]\.language"):
+        load_config(start_dir=tmp_path)
+
+
+def test_lsp_server_invalid_initialize_timeout(tmp_path):
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  code_intelligence:
+    lsp:
+      servers:
+        - language: python
+          command: ["pylsp"]
+          initialize_timeout_ms: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="initialize_timeout_ms"):
+        load_config(start_dir=tmp_path)
+
+
+def test_lsp_invalid_max_diagnostics(tmp_path):
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  code_intelligence:
+    lsp:
+      max_diagnostics_per_file: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="max_diagnostics_per_file"):
+        load_config(start_dir=tmp_path)
+
+
+def test_lsp_servers_must_be_list(tmp_path):
+    (tmp_path / "myagent.yaml").write_text(
+        """
+tools:
+  code_intelligence:
+    lsp:
+      servers: "not a list"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="servers must be a list"):
+        load_config(start_dir=tmp_path)

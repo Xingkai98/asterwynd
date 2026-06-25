@@ -1,0 +1,45 @@
+diff --git a/agent/example/__init__.py b/agent/example/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/agent/example/calculator.py b/agent/example/calculator.py
+new file mode 100644
+index 0000000..a4aa7f1
+--- /dev/null
++++ b/agent/example/calculator.py
+@@ -0,0 +1,7 @@
++from __future__ import annotations
++
++
++def calculate_total(items: list[int]) -> int:
++    """Return the sum of all items, treating negative values as 0."""
++    return sum(max(item, 0) for item in items)
++
++
++def format_report(total: int) -> str:
++    return f"Report total: {total}" + detail
+diff --git a/tests/agent/example/__init__.py b/tests/agent/example/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/agent/example/test_calculator.py b/tests/agent/example/test_calculator.py
+new file mode 100644
+index 0000000..1913a6f
+--- /dev/null
++++ b/tests/agent/example/test_calculator.py
+@@ -0,0 +1,17 @@
++from __future__ import annotations
++
++from agent.example.calculator import calculate_total, format_report
++
++
++def test_calculate_total_all_positive():
++    assert calculate_total([1, 2, 3]) == 6
++
++
++def test_calculate_total_with_negatives():
++    assert calculate_total([1, -2, 3]) == 4
++
++
++def test_format_report_returns_string():
++    result = format_report(42)
++    assert isinstance(result, str)
++    assert "42" in result

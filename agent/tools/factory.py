@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent.code_intelligence.config import CodeIntelligenceConfig
 from agent.config import WebSearchConfig
+from agent.lsp.client import LspClientManager
 from agent.run_config import ModePolicy
 from agent.tools.base import Tool
 from agent.tools.builtin.bash import BashTool
@@ -11,6 +12,14 @@ from agent.tools.builtin.find import FindTool
 from agent.tools.builtin.grep import GrepTool
 from agent.tools.builtin.inspect_git_diff import InspectGitDiffTool
 from agent.tools.builtin.list_files import ListFilesTool
+from agent.tools.builtin.lsp import (
+    LspDefinitionTool,
+    LspDocumentSymbolsTool,
+    LspDiagnosticsTool,
+    LspHoverTool,
+    LspReferencesTool,
+    LspWorkspaceSymbolsTool,
+)
 from agent.tools.builtin.read import ReadTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
@@ -31,6 +40,12 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "RepoMap",
     "Read",
     "SymbolSearch",
+    "LspDefinition",
+    "LspReferences",
+    "LspHover",
+    "LspDocumentSymbols",
+    "LspWorkspaceSymbols",
+    "LspDiagnostics",
     "WebFetch",
     "WebSearch",
     "Write",
@@ -80,6 +95,28 @@ def _known_tool_names(registry: ToolRegistry) -> tuple[str, ...]:
     return tuple(sorted(KNOWN_BUILTIN_TOOL_NAMES | set(registry._tools)))
 
 
+def _build_lsp_manager(
+    policy: WorkspacePolicy,
+    code_intelligence_config: CodeIntelligenceConfig | None,
+) -> LspClientManager:
+    config = (code_intelligence_config or CodeIntelligenceConfig()).lsp
+    return LspClientManager(config=config, workspace_root=policy.workspace_root)
+
+
+def _build_lsp_tools(
+    policy: WorkspacePolicy,
+    lsp_manager: LspClientManager,
+) -> list[Tool]:
+    return [
+        LspDefinitionTool(policy=policy, lsp_manager=lsp_manager),
+        LspReferencesTool(policy=policy, lsp_manager=lsp_manager),
+        LspHoverTool(policy=policy, lsp_manager=lsp_manager),
+        LspDocumentSymbolsTool(policy=policy, lsp_manager=lsp_manager),
+        LspWorkspaceSymbolsTool(policy=policy, lsp_manager=lsp_manager),
+        LspDiagnosticsTool(policy=policy, lsp_manager=lsp_manager),
+    ]
+
+
 def get_default_tools(
     policy: WorkspacePolicy | None = None,
     *,
@@ -88,10 +125,11 @@ def get_default_tools(
     web_search_config: WebSearchConfig | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
+    lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     return [
         ReadTool(policy=policy),
-        WriteTool(policy=policy),
-        EditTool(policy=policy),
+        WriteTool(policy=policy, lsp_manager=lsp_manager),
+        EditTool(policy=policy, lsp_manager=lsp_manager),
         BashTool(policy=policy),
         WebSearchTool(provider_configs=(web_search_config or WebSearchConfig()).providers),
         WebFetchTool(),
@@ -107,6 +145,7 @@ def get_default_tools(
             ignore_patterns=ignore_patterns,
             code_intelligence_config=code_intelligence_config,
         ),
+        *_build_lsp_tools(policy, lsp_manager),
     ]
 
 
@@ -117,10 +156,11 @@ def get_coding_tools(
     code_intelligence_config: CodeIntelligenceConfig | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
+    lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     return [
         ReadTool(policy=policy),
-        WriteTool(policy=policy),
-        EditTool(policy=policy),
+        WriteTool(policy=policy, lsp_manager=lsp_manager),
+        EditTool(policy=policy, lsp_manager=lsp_manager),
         InspectGitDiffTool(policy=policy),
         ListFilesTool(policy=policy, ignore_patterns=ignore_patterns),
         FindTool(policy=policy, ignore_patterns=ignore_patterns),
@@ -136,4 +176,5 @@ def get_coding_tools(
         ),
         GrepTool(policy=policy),
         BashTool(policy=policy),
+        *_build_lsp_tools(policy, lsp_manager),
     ]

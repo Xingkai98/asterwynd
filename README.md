@@ -8,6 +8,7 @@
 |------|------|
 | **AgentLoop** | 核心循环约 100 行，消息是唯一状态，所有能力委托给插件 |
 | **ToolRegistry** | 动态工具注册，`@tool_parameters` 装饰器声明工具，包含文件、命令、代码理解和联网研究工具 |
+| **Code Intelligence** | Tree-sitter 多语言符号提取、Repo Map、Python AST 符号提取、LSP 语义工具（定义跳转、引用、hover、诊断） |
 | **WorkspacePolicy** | 工作区安全边界，拒绝路径穿越、敏感文件写入、危险命令 |
 | **SandboxExecutor** | subprocess 沙箱，结构化输出（exit_code/stdout/stderr/duration/timed_out） |
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |

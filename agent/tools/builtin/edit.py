@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from agent.lsp.client import LspClientManager
 from agent.tools.base import Tool, tool_parameters
+from agent.tools.builtin._lsp_diagnostics import collect_diagnostics_feedback
 from agent.workspace_policy import WorkspacePolicy
 
 
@@ -28,8 +30,13 @@ from agent.workspace_policy import WorkspacePolicy
 class EditTool(Tool):
     read_only = False
 
-    def __init__(self, policy: WorkspacePolicy | None = None):
+    def __init__(
+        self,
+        policy: WorkspacePolicy | None = None,
+        lsp_manager: LspClientManager | None = None,
+    ):
         self.policy = policy or WorkspacePolicy()
+        self.lsp_manager = lsp_manager
 
     async def execute(
         self,
@@ -73,8 +80,12 @@ class EditTool(Tool):
             return f"Error writing file: {exc}"
 
         replaced = match_count if replace_all else 1
-        return (
+        base = (
             f"Replaced {replaced} occurrence{'s' if replaced != 1 else ''} in {path} "
             f"(size change: {len(new_content) - len(content):+d} chars)"
         )
+        diagnostics = await collect_diagnostics_feedback(self.lsp_manager, resolved)
+        if diagnostics:
+            return base + diagnostics
+        return base
 

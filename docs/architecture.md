@@ -47,6 +47,12 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | ListFiles | read_only | 列出目录 |
 | Find | read_only | 按 glob 查找文件 |
 | RepoMap | read_only | 生成仓库结构和已支持语言的顶层符号摘要 |
+| LspDefinition | read_only | LSP 定义跳转 |
+| LspReferences | read_only | LSP 引用查找 |
+| LspHover | read_only | LSP hover 信息 |
+| LspDocumentSymbols | read_only | LSP 文档符号 |
+| LspWorkspaceSymbols | read_only | LSP 工作区符号搜索 |
+| LspDiagnostics | read_only | LSP 诊断信息 |
 | SymbolSearch | read_only | 按名称搜索已支持语言的符号 |
 | WebSearch | read_only | 网络搜索，当前默认 DuckDuckGo HTML provider |
 | WebFetch | read_only | 抓取网页正文并返回状态/类型/截断诊断 |
@@ -61,7 +67,9 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`duration_ms` 和 `timed_out`。WorkspacePolicy 负责命令 allowlist / denylist 和敏感路径限制。
 
-`RepoMap` 和 `SymbolSearch` 属于当前轻量 code intelligence 能力：它们复用 WorkspacePolicy、忽略规则和只读工具边界，使用文件扫描、Python AST 和 tree-sitter 提取仓库结构和符号摘要。Tree-sitter 首批覆盖 TypeScript/JavaScript、Go 和 Rust；Python 继续使用 AST extractor。LSP、引用分析、诊断和类型推断仍是后续能力。
+`RepoMap` 和 `SymbolSearch` 属于当前轻量 code intelligence 能力：它们复用 WorkspacePolicy、忽略规则和只读工具边界，使用文件扫描、Python AST 和 tree-sitter 提取仓库结构和符号摘要。Tree-sitter 首批覆盖 TypeScript/JavaScript、Go 和 Rust；Python 继续使用 AST extractor。
+
+LSP 工具（`LspDefinition`、`LspReferences`、`LspHover`、`LspDocumentSymbols`、`LspWorkspaceSymbols`、`LspDiagnostics`）提供更丰富的语义代码理解能力，通过 `agent/lsp/` 模块管理 stdio LSP server 进程并按 (language, workspace_root) 缓存单例。Write/Edit 工具修改文件后会自动触发 LSP 诊断反馈。配置入口为 `tools.code_intelligence.lsp`。
 
 ### WebSearch provider adapter
 

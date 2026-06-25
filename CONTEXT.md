@@ -21,7 +21,7 @@ _避免_: 通用聊天机器人、泛化 agent 框架
 _避免_: 纯文本 grep、完整 LSP 承诺、通用 RAG 知识库
 
 **LSP**:
-Language Server Protocol；一种为代码编辑器和 agent 提供定义跳转、引用、hover、诊断等语义能力的标准协议。
+Language Server Protocol；一种为代码编辑器和 agent 提供定义跳转、引用、hover、诊断等语义能力的标准协议。当 LSP server 不可用时，系统可降级到 repo map 和 tree-sitter 符号提取。
 _避免_: 语法高亮器、轻量 repo map、通用知识库
 
 **Repo Map**:
