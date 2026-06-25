@@ -37,6 +37,7 @@
 
 ### 第四批：外部工具与高风险能力
 
+- `refine-tool-permission-model`：应在 MCP 和 browser 实现前完成设计并优先实现，避免外部工具继续扩大 `dangerous` 语义。
 - `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
@@ -60,11 +61,31 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 2. `add-mcp-tool-adapter`
+### 2. `refine-tool-permission-model`
 
 状态：未实现。
 
-批次：第五批，可提前做设计和 fake server 测试；实现阶段建议与 browser 能力错开。
+批次：第五批前置，建议在 MCP 和 browser 实现前完成。
+
+建议顺序原因：
+
+- 当前 Tool 权限模型把能力、风险和来源混在 `read_only` / `dangerous` 两个 boolean 中，MCP 和 browser 会继续放大这个问题。
+- 先建立 capability、risk level、origin 和 permission profile，可以让 plan mode、外部工具和未来自定义 mode 使用同一套语言。
+- 默认行为应保持保守，不在本 change 中直接开放 plan mode 写入或命令执行。
+
+主要交付：
+
+- Tool permission metadata 模型。
+- 内置工具 capability / risk / origin 标注。
+- ModePolicy profile / matrix。
+- legacy `read_only` / `dangerous` 兼容路径。
+- 配置和测试迁移策略。
+
+### 3. `add-mcp-tool-adapter`
+
+状态：未实现。
+
+批次：第五批，可提前做设计和 fake server 测试；实现阶段建议在工具权限模型稳定后推进，并与 browser 能力错开。
 
 建议顺序原因：
 
@@ -78,7 +99,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 3. `add-browser-use-safety-foundation`
+### 4. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

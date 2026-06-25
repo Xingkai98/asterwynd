@@ -52,6 +52,22 @@ _避免_: 随口想法、实现备注
 一次 Agent 运行的顶层权限意图，用于约束工具可见性、工具执行权限和运行记录；具体路径、文件和命令安全仍由工作区策略约束。
 _避免_: 仅靠 prompt 的行为建议、具体工具实现细节、工作区路径规则
 
+**Tool Capability**:
+工具能力；描述一个工具能够执行哪类操作，例如读取工作区、写入工作区、执行命令、读取网络资源、产生外部副作用、修改 agent state 或控制浏览器。它回答“工具能做什么”，不回答“工具来自哪里”或“风险多高”。
+_避免_: 工具来源、风险等级、具体工具名称
+
+**Tool Risk Level**:
+工具风险等级；描述工具默认安全风险，例如 low、medium、high。它回答“这个工具默认风险多高”，不回答“工具来自哪里”。高风险工具可能来自内置工具，也可能来自外部工具。
+_避免_: 外部来源标记、是否只读、mode 名称
+
+**Tool Origin**:
+工具来源；描述工具由哪个来源提供，例如 builtin、mcp、plugin、subagent 或 browser。它用于审计、展示、默认策略推导和排查，不应直接替代权限判定。
+_避免_: dangerous 标记、风险等级、工具能力
+
+**Permission Profile**:
+Agent Mode 绑定的工具权限配置，用 capability、risk level、origin 和 allow/deny override 决定工具可见性和执行权限。它让 `plan`、`read_only`、`build` 等 mode 不必硬编码为某个 boolean 组合。
+_避免_: 单个工具权限、WorkspacePolicy 路径规则、用户审批流程
+
 **Plan Mode**:
 一种面向分析、方案制定和人工确认的 Agent Mode；它在只读权限边界内产出可审批的 Plan Document，并可同步生成机器可读的 Planning State。
 _避免_: 执行实现、任务调度器、执行期 todo list
