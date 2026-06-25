@@ -30,46 +30,31 @@
 
 - `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
-### 第三批：语义 code intelligence 与 TUI
+### 第三批：工具权限模型前置
+
+- `refine-tool-permission-model`：优先级最高，应在 MCP、browser 和后续自定义工具能力前完成，避免外部工具继续扩大 `dangerous` 语义。
+
+### 第四批：语义 code intelligence 与 TUI
 
 - `add-lsp-code-intelligence`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后做，复用统一运行事件和 mode transition。
 
-### 第四批：外部工具与高风险能力
+### 第五批：外部工具与高风险能力
 
-- `refine-tool-permission-model`：应在 MCP 和 browser 实现前完成设计并优先实现，避免外部工具继续扩大 `dangerous` 语义。
 - `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
 ## 未实现队列
 
-### 1. `add-minimal-tui-runtime-view`
+### 1. `refine-tool-permission-model`
 
 状态：未实现。
 
-批次：第四批，runtime mode switching 已合入；等待工具结果 display policy 等其余依赖稳定后开始。
+批次：第三批前置，当前未实现队列最高优先级。
 
 建议顺序原因：
 
-- TUI 应复用已有 AgentLoop 事件、planning state、streaming、工具结果 display policy 和 mode transition，而不是定义另一套运行协议。
-- 放在这些基础能力之后，可以一次展示稳定的运行状态、工具调用、planning state、streaming 输出和 mode 状态。
-
-主要交付：
-
-- TUI 命令入口。
-- AgentLoop 事件流消费。
-- 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
-- 非交互环境 graceful failure 或降级。
-
-### 2. `refine-tool-permission-model`
-
-状态：未实现。
-
-批次：第五批前置，建议在 MCP 和 browser 实现前完成。
-
-建议顺序原因：
-
-- 当前 Tool 权限模型把能力、风险和来源混在 `read_only` / `dangerous` 两个 boolean 中，MCP 和 browser 会继续放大这个问题。
+- 当前 Tool 权限模型把能力、风险和来源混在 `read_only` / `dangerous` 两个 boolean 中，MCP、browser、自定义插件和未来实验型 plan mode 都会继续放大这个问题。
 - 先建立 capability、risk level、origin 和 permission profile，可以让 plan mode、外部工具和未来自定义 mode 使用同一套语言。
 - 默认行为应保持保守，不在本 change 中直接开放 plan mode 写入或命令执行。
 
@@ -80,6 +65,24 @@
 - ModePolicy profile / matrix。
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
+
+### 2. `add-minimal-tui-runtime-view`
+
+状态：未实现。
+
+批次：第四批，runtime mode switching 已合入；等待工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
+
+建议顺序原因：
+
+- TUI 应复用已有 AgentLoop 事件、planning state、streaming、工具结果 display policy、tool permission metadata 和 mode transition，而不是定义另一套运行协议。
+- 放在这些基础能力之后，可以一次展示稳定的运行状态、工具调用、planning state、streaming 输出、mode 状态和工具权限信息。
+
+主要交付：
+
+- TUI 命令入口。
+- AgentLoop 事件流消费。
+- 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
+- 非交互环境 graceful failure 或降级。
 
 ### 3. `add-mcp-tool-adapter`
 
