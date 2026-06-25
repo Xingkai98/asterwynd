@@ -25,3 +25,14 @@ MCP-backed tools SHALL 复用现有 Tool 权限元数据：`read_only`、`danger
 - **AND** 该 tool 被配置为 `read_only: true` 且 `dangerous: false`
 - **WHEN** 当前 mode 允许 read-only non-dangerous tools
 - **THEN** 系统 SHALL NOT 仅因为该 tool 来源于 MCP 而拒绝它
+
+### Requirement: Benchmark 默认不启用 MCP
+
+Benchmark runner SHALL 默认不启用配置的 MCP servers。只有 benchmark 配置显式启用 MCP，且 server 是 fake 或本地可控 server 时，runner 才 MAY 注册 MCP-backed tools。
+
+#### Scenario: benchmark 默认运行
+
+- **GIVEN** 用户运行 benchmark
+- **AND** benchmark 配置未显式启用 MCP
+- **WHEN** runner 构造工具 registry
+- **THEN** registry SHALL NOT 自动连接 MCP server

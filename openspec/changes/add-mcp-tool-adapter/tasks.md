@@ -14,9 +14,12 @@
 - [ ] 2.3 新增 MCP tool 执行成功、失败、超时测试。
 - [ ] 2.4 新增 mode policy 禁止 MCP dangerous tool 的测试。
 - [ ] 2.5 新增 MCP 配置解析测试，覆盖 stdio、streamable_http、非法 transport、非法 server name、缺失 command/url 和权限覆盖。
-- [ ] 2.6 新增 MCP tool name 清洗与重名短 hash 测试。
-- [ ] 2.7 新增 MCP tool result flattening 测试，覆盖 text、非 text content 和 `isError=true`。
-- [ ] 2.8 新增 MCP-backed tool 来源元数据测试，覆盖 `origin=mcp`、server name 和来源不直接替代 mode policy 判权。
+- [ ] 2.6 新增 MCP headers/env 环境变量展开测试，覆盖缺失环境变量 fail fast。
+- [ ] 2.7 新增 MCP tool name 清洗与重名短 hash 测试。
+- [ ] 2.8 新增 MCP tool result flattening 测试，覆盖 text、非 text content 和 `isError=true`。
+- [ ] 2.9 新增 MCP-backed tool 来源元数据测试，覆盖 `origin=mcp`、server name 和来源不直接替代 mode policy 判权。
+- [ ] 2.10 新增 MCP adapter close 测试，覆盖幂等关闭和 stdio 进程清理。
+- [ ] 2.11 新增 benchmark 默认不启用 MCP 的回归测试。
 
 ## 3. 实现
 
@@ -28,6 +31,10 @@
 - [ ] 3.6 实现 provider-safe tool name 映射和 original tool name 调用映射。
 - [ ] 3.7 实现 MCP content blocks 到字符串 tool result 的转换。
 - [ ] 3.8 为 MCP-backed tools 增加来源元数据，用于 trace、audit、display 和后续权限模型演进。
+- [ ] 3.9 实现 MCP headers/env 环境变量展开，仅限敏感配置字段，缺失环境变量 fail fast。
+- [ ] 3.10 实现 MCP adapter close，并在 CLI/Web/subagent/benchmark 生命周期中 best-effort 调用。
+- [ ] 3.11 benchmark 默认不启用 MCP；仅在 benchmark 配置显式启用 fake/local MCP server 时接入。
+- [ ] 3.12 权限衔接：如果 `refine-tool-permission-model` 已实现 additive metadata，则使用 capability/risk/origin 接入；否则使用 legacy `read_only` / `dangerous` 兼容路径并记录后续迁移任务。
 
 ## 4. 验证
 
