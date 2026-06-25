@@ -69,7 +69,7 @@ BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`dura
 
 `RepoMap` 和 `SymbolSearch` 属于当前轻量 code intelligence 能力：它们复用 WorkspacePolicy、忽略规则和只读工具边界，使用文件扫描、Python AST 和 tree-sitter 提取仓库结构和符号摘要。Tree-sitter 首批覆盖 TypeScript/JavaScript、Go 和 Rust；Python 继续使用 AST extractor。
 
-LSP 工具（`LspDefinition`、`LspReferences`、`LspHover`、`LspDocumentSymbols`、`LspWorkspaceSymbols`、`LspDiagnostics`）提供更丰富的语义代码理解能力，通过 `agent/lsp/` 模块管理 stdio LSP server 进程并按 (language, workspace_root) 缓存单例。Write/Edit 工具修改文件后会自动触发 LSP 诊断反馈。配置入口为 `tools.code_intelligence.lsp`。
+LSP 工具（`LspDefinition`、`LspReferences`、`LspHover`、`LspDocumentSymbols`、`LspWorkspaceSymbols`、`LspDiagnostics`）提供更丰富的语义代码理解能力，通过 `agent/lsp/` 模块管理 stdio LSP server 进程并按 (language, workspace_root) 缓存单例。Write/Edit 工具修改文件后会自动触发 LSP 诊断反馈。配置入口为 `tools.code_intelligence.lsp`。首版只支持 Python（需安装 `python-lsp-server`，可通过 `pip install myagent[lsp]` 或 `uv sync --extra lsp` 安装）；其他语言可在 `myagent.yaml` 中配置对应 server，但尚未官方验证。
 
 ### WebSearch provider adapter
 

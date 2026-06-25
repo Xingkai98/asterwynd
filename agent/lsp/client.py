@@ -261,10 +261,12 @@ class LspClient:
             self._unhealthy = True
             raise LspClientError(str(exc)) from exc
         except LspTransportError as exc:
-            # Mark unhealthy on timeout so next call retries initialize.
-            if "timed out" in str(exc).lower():
+            msg = str(exc)
+            if "timed out" in msg.lower():
                 self._unhealthy = True
-            raise LspClientError(str(exc)) from exc
+            if "method not found" in msg.lower() or "-32601" in msg or "-32602" in msg:
+                return None
+            raise LspClientError(msg) from exc
 
     async def definition(self, path: Path, line: int, character: int) -> list[LspLocation]:
         await self.ensure_initialized()

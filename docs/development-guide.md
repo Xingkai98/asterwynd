@@ -7,7 +7,13 @@
 优先使用 `uv`。
 
 ```bash
+# 基础安装
 uv sync --extra dev
+
+# LSP 支持（可选，当前只支持 Python，需 pylsp）
+uv sync --extra lsp
+# 或
+uv sync --extra dev --extra lsp
 ```
 
 如果当前 Python 环境已经安装好依赖，也可以直接运行 `python` 或 `pytest`，但默认推荐 `uv run`。

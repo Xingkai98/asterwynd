@@ -15,6 +15,8 @@ tools:
   code_intelligence:
     tree_sitter_max_file_bytes: 262144
     lsp:
+      # 当前只正式支持 Python（pylsp）。其他语言可配置对应 server，但尚未验证。
+      # 安装: uv sync --extra lsp 或 pip install myagent[lsp]
       servers:
         - language: python
           command: [pylsp]
