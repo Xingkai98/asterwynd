@@ -34,4 +34,12 @@
 - [ ] 4.1 运行 MCP 和 tool registry 测试。
 - [ ] 4.2 运行全量测试。
 - [ ] 4.3 运行 OpenSpec strict validate。
-- [ ] 4.4 跑通至少一个 benchmark smoke。
+- [ ] 4.4 运行项目 OpenSpec artifact checker。
+- [ ] 4.5 跑通至少一个 benchmark smoke。
+- [ ] 4.6 如果 Streamable HTTP transport 需要人工或外部服务 smoke，使用 fake server 或本地可控 server 验证，不依赖真实第三方服务。
+
+## 5. 合入后收尾
+
+- [ ] 5.1 PR 合入后，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-add-mcp-tool-adapter/`。
+- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
+- [ ] 5.3 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
