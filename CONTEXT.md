@@ -20,9 +20,17 @@ _避免_: 通用聊天机器人、泛化 agent 框架
 服务 Coding Agent 系统的只读代码理解能力；当前阶段以 workspace-aware repo map、文件级结构摘要、Python AST 符号提取和 tree-sitter 多语言语法级符号提取为主，后续可演进到 LSP 语义能力。
 _避免_: 纯文本 grep、完整 LSP 承诺、通用 RAG 知识库
 
+**LSP**:
+Language Server Protocol；一种为代码编辑器和 agent 提供定义跳转、引用、hover、诊断等语义能力的标准协议。
+_避免_: 语法高亮器、轻量 repo map、通用知识库
+
 **Repo Map**:
 面向 agent 上下文选择的仓库结构摘要，帮助 agent 快速识别源码、测试、配置、入口模块和可提取符号；它是运行时可再生成的只读产物，不是需要提交的长期索引文件。
 _避免_: 全量文件树转储、语义引用图、持久向量索引
+
+**Project Root Marker**:
+用于标识某个子目录属于一个独立项目边界的文件或目录名，例如 `pyproject.toml`、`package.json`、`go.mod` 和 `Cargo.toml`。
+_避免_: 语言后缀、本身就是 workspace root、任意文件路径
 
 **主线能力**:
 围绕 Agent 运行时、工具调用、上下文管理、任务执行、可观测性和评测闭环展开的核心能力。
