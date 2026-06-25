@@ -32,7 +32,7 @@
 
 ### 第三批：语义 code intelligence 与 TUI
 
-- `add-lsp-code-intelligence`：repo map 和 tree-sitter 多语言 symbol 已合入，后续应把 LSP 作为更强 provider 接入，避免直接把 LSP 当成仓库结构层。
+- `add-lsp-code-intelligence`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后做，复用统一运行事件和 mode transition。
 
 ### 第四批：外部工具与高风险能力
@@ -42,26 +42,7 @@
 
 ## 未实现队列
 
-### 1. `add-lsp-code-intelligence`
-
-状态：未实现。
-
-批次：第四批，repo map 和 tree-sitter 基础设施已合入，可开始细化 LSP provider 边界。
-
-建议顺序原因：
-
-- LSP 提供 definition、references、hover、diagnostics 等语义能力，但需要 language server 配置、进程生命周期、文档同步和超时/错误处理。
-- repo map 和 tree-sitter 已提供文件级扫描和语法级符号，LSP 应作为更强 provider 接入，而不是承担仓库结构发现职责。
-
-主要交付：
-
-- LSP server 配置、发现和生命周期管理。
-- document open/sync、请求调度、超时和状态观测。
-- 只读 LSP 工具或 provider。
-- definition、references、hover、documentSymbol、workspaceSymbol 和 diagnostics。
-- 修改后 diagnostics 反馈。
-
-### 2. `add-minimal-tui-runtime-view`
+### 1. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -79,7 +60,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 3. `add-mcp-tool-adapter`
+### 2. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -97,7 +78,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 5. `add-browser-use-safety-foundation`
+### 3. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

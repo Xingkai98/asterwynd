@@ -30,6 +30,9 @@ dev = [
     "pytest-mock>=3.12.0",
     "swebench>=4.1.0",
 ]
+lsp = [
+    "python-lsp-server>=1.12.0",
+]
 
 [project.scripts]
 myagent = "cli:app"

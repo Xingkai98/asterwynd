@@ -33,7 +33,8 @@ The current system already has useful agent infrastructure:
 | Memory | AutoCompact-style message compaction |
 | Subagents | Background delegation and parent channel injection |
 | Web UI | Chat UI, debug timeline, session/run identifiers, Plan Document display, planning state display, Markdown rendering, and tool result display controls |
-| Coding tools | Workspace policy, exact-match `Edit`, workspace-aware `Bash`, `InspectGitDiff`, and hardened `Write` behavior |
+| Coding tools | Workspace policy, exact-match `Edit`, workspace-aware `Bash`, `InspectGitDiff`, hardened `Write` behavior, and `LspDiagnostics` feedback on Write/Edit |
+| Code intelligence | Repo map, tree-sitter symbols, Python AST extraction, and LSP semantic tools (definition, references, hover, document symbols, workspace symbols, diagnostics) |
 | Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, summary reports, and CLI entry point |
 
 The remaining gap is coding-agent reliability. The project now has the P0

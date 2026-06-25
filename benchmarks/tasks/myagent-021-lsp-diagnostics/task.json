@@ -1,0 +1,13 @@
+{
+  "id": "myagent-021-lsp-diagnostics",
+  "repo": "local/myagent",
+  "base_commit": "307027c",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/agent/example/test_calculator.py",
+  "category": "lsp",
+  "difficulty": "easy",
+  "timeout_seconds": 180,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": "Use the LspDiagnostics tool to analyze the file and find the error first."
+}

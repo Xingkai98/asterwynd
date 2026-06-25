@@ -7,7 +7,13 @@ from typing import Any
 
 import yaml
 
-from agent.code_intelligence.config import CodeIntelligenceConfig
+from agent.code_intelligence.config import (
+    DEFAULT_LSP_INITIALIZE_TIMEOUT_MS,
+    DEFAULT_LSP_REQUEST_TIMEOUT_MS,
+    CodeIntelligenceConfig,
+    LspConfig,
+    LspServerConfig,
+)
 from agent.run_config import AgentMode, parse_agent_mode
 from agent.tool_result_display import ToolResultDisplayConfig
 
@@ -285,8 +291,151 @@ def _parse_code_intelligence_config(raw: Any, path: Path) -> CodeIntelligenceCon
             ),
             "tools.code_intelligence.tree_sitter_max_file_bytes",
             path=path,
-        )
+        ),
+        lsp=_parse_lsp_config(mapping.get("lsp", {}), path),
     )
+
+
+def _parse_lsp_config(raw: Any, path: Path) -> LspConfig:
+    mapping = _expect_mapping(raw, path, "tools.code_intelligence.lsp")
+    defaults = LspConfig()
+
+    servers_raw = mapping.get("servers", [])
+    if servers_raw is None:
+        servers: tuple[LspServerConfig, ...] = ()
+    else:
+        if not isinstance(servers_raw, list):
+            raise ConfigError(
+                f"{path}: tools.code_intelligence.lsp.servers must be a list"
+            )
+        parsed_servers: list[LspServerConfig] = []
+        for index, raw_server in enumerate(servers_raw):
+            field_name = f"tools.code_intelligence.lsp.servers[{index}]"
+            parsed_servers.append(
+                _parse_lsp_server_config(raw_server, path, field_name)
+            )
+        servers = tuple(parsed_servers)
+
+    return LspConfig(
+        servers=servers,
+        default_request_timeout_ms=_validate_positive_int(
+            mapping.get(
+                "default_request_timeout_ms",
+                defaults.default_request_timeout_ms,
+            ),
+            "tools.code_intelligence.lsp.default_request_timeout_ms",
+            path=path,
+        ),
+        max_diagnostics_per_file=_validate_positive_int(
+            mapping.get(
+                "max_diagnostics_per_file",
+                defaults.max_diagnostics_per_file,
+            ),
+            "tools.code_intelligence.lsp.max_diagnostics_per_file",
+            path=path,
+        ),
+        max_references=_validate_positive_int(
+            mapping.get("max_references", defaults.max_references),
+            "tools.code_intelligence.lsp.max_references",
+            path=path,
+        ),
+        max_workspace_symbols=_validate_positive_int(
+            mapping.get(
+                "max_workspace_symbols",
+                defaults.max_workspace_symbols,
+            ),
+            "tools.code_intelligence.lsp.max_workspace_symbols",
+            path=path,
+        ),
+        diagnostic_message_max_chars=_validate_positive_int(
+            mapping.get(
+                "diagnostic_message_max_chars",
+                defaults.diagnostic_message_max_chars,
+            ),
+            "tools.code_intelligence.lsp.diagnostic_message_max_chars",
+            path=path,
+        ),
+    )
+
+
+def _parse_lsp_server_config(
+    raw: Any, path: Path, field_name: str
+) -> LspServerConfig:
+    mapping = _expect_mapping(raw, path, field_name)
+
+    language = mapping.get("language")
+    if not isinstance(language, str) or not language.strip():
+        raise ConfigError(
+            f"{path}: {field_name}.language must be a non-empty string"
+        )
+
+    command_raw = mapping.get("command")
+    if isinstance(command_raw, str):
+        command = (command_raw,)
+    elif isinstance(command_raw, list):
+        command = tuple(
+            _validate_string_item(item, path, f"{field_name}.command")
+            for item in command_raw
+        )
+    else:
+        raise ConfigError(
+            f"{path}: {field_name}.command must be a string or list of strings"
+        )
+    if not command:
+        raise ConfigError(f"{path}: {field_name}.command must not be empty")
+
+    args_raw = mapping.get("args", [])
+    if isinstance(args_raw, str):
+        args = (args_raw,)
+    elif isinstance(args_raw, list):
+        args = tuple(
+            _validate_string_item(item, path, f"{field_name}.args")
+            for item in args_raw
+        )
+    else:
+        raise ConfigError(
+            f"{path}: {field_name}.args must be a string or list of strings"
+        )
+
+    root_markers_raw = mapping.get("root_markers", ["pyproject.toml"])
+    if not isinstance(root_markers_raw, list):
+        raise ConfigError(
+            f"{path}: {field_name}.root_markers must be a list of strings"
+        )
+    root_markers = tuple(
+        _validate_string_item(item, path, f"{field_name}.root_markers")
+        for item in root_markers_raw
+    )
+    if not root_markers:
+        raise ConfigError(
+            f"{path}: {field_name}.root_markers must not be empty"
+        )
+
+    return LspServerConfig(
+        language=language.strip(),
+        command=command,
+        args=args,
+        root_markers=root_markers,
+        initialize_timeout_ms=_validate_positive_int(
+            mapping.get("initialize_timeout_ms", DEFAULT_LSP_INITIALIZE_TIMEOUT_MS),
+            f"{field_name}.initialize_timeout_ms",
+            path=path,
+        ),
+        request_timeout_ms=_validate_positive_int(
+            mapping.get("request_timeout_ms", DEFAULT_LSP_REQUEST_TIMEOUT_MS),
+            f"{field_name}.request_timeout_ms",
+            path=path,
+        ),
+        enabled=bool(mapping.get("enabled", True)),
+    )
+
+
+def _validate_string_item(item: Any, path: Path, field_name: str) -> str:
+    if not isinstance(item, str) or not item:
+        raise ConfigError(
+            f"{path}: {field_name} must contain only non-empty strings"
+        )
+    return item
 
 
 def _parse_web_search_config(raw: Any, path: Path) -> WebSearchConfig:

@@ -14,6 +14,17 @@ tools:
   command_denylist: []
   code_intelligence:
     tree_sitter_max_file_bytes: 262144
+    lsp:
+      # 当前只正式支持 Python（pylsp）。其他语言可配置对应 server，但尚未验证。
+      # 安装: uv sync --extra lsp 或 pip install myagent[lsp]
+      servers:
+        - language: python
+          command: [pylsp]
+          root_markers: [pyproject.toml]
+          initialize_timeout_ms: 5000
+          request_timeout_ms: 3000
+          enabled: true
+      default_request_timeout_ms: 3000
   web_search:
     providers:
       # Tavily 需要 MYAGENT_TAVILY_API_KEY。
