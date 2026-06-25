@@ -5,7 +5,7 @@
 - [ ] 1.3 更新 workspace-safety 规格，明确 WorkspacePolicy 仍是执行前强制边界。
 - [ ] 1.4 更新 configuration 规格，定义内置 profile、deny override 和后续自定义 matrix 的 fail-fast 原则。
 - [ ] 1.5 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
-- [ ] 1.6 开发前使用 `grill-with-docs` 审视 `design.md`，逐项确认 capability 枚举、risk level、origin、profile 语义、配置范围、迁移策略和测试策略。
+- [ ] 1.6 开发前使用 `grill-with-docs` 审视 `design.md`，逐项确认 capability 枚举、risk level、origin、profile 语义、配置范围、用户可扩展 profile schema、迁移策略和测试策略；当前文档不得直接视为最终实现方案。
 
 ## 2. 测试
 

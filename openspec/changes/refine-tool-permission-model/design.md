@@ -68,6 +68,16 @@ ModePolicy 后续 SHALL 通过 permission profile 判权。profile 至少表达 
 
 审议确认：2026-06-25，grill-with-docs。
 
+### Decision 6: 本 change 仍是方向性设计，开发前必须继续确认
+
+当前文档只确认了重构方向：Tool 提供 capability、risk level、origin 等多维元数据；Agent Mode 通过 permission profile 综合这些维度和 override 判定权限；未来用户可以组合不同维度取值形成扩展 profile。
+
+具体实现细节还没有完全定稿。开发前必须再次使用 `grill-with-docs` 逐项确认 capability 枚举、risk level 取值、origin 枚举、profile 配置 schema、默认 profile 行为、兼容迁移顺序和测试矩阵，不得把本文档中的示例直接当成最终实现承诺。
+
+理由：权限模型是安全边界，过早固化配置 matrix 会放大测试面和误配风险。先沉淀共同语言，再在实现前收敛细节。
+
+审议确认：2026-06-25，grill-with-docs。
+
 ## Proposed Model
 
 ### Tool Capability
@@ -124,6 +134,22 @@ Agent Mode 不直接硬编码 `read_only and not dangerous`，而是绑定 permi
 - denied tool names
 - mode-specific allowed tool names 或 allowed origin（谨慎使用）
 
+换句话说，未来权限判定会由 Tool 的多维元数据和 Mode 的 permission profile 共同完成：
+
+```text
+Tool metadata(capability, risk level, origin)
+        +
+Mode permission profile
+        +
+显式 allow/deny override
+        +
+WorkspacePolicy 执行前强制校验
+        =
+是否暴露 schema / 是否允许执行
+```
+
+用户未来可以通过配置选择或扩展 profile，组合不同 capability、risk level 和 origin 取值来表达新的 mode。但完整自定义 matrix 是否在首版开放、开放到什么粒度、如何校验非法组合，仍是开发前必须确认的问题。
+
 建议默认 profile：
 
 | Mode | Profile | 初始语义 |
@@ -173,6 +199,7 @@ Agent Mode 不直接硬编码 `read_only and not dangerous`，而是绑定 permi
 3. plan 默认 profile 是否保持当前保守行为，只在后续 profile 中允许实验。
 4. `dangerous` 是否在迁移期保留为 derived/legacy 字段，而不是立即删除。
 5. 用户配置是否先只支持 deny_tools + 内置 profiles，还是允许完整自定义 matrix。
+6. 用户可扩展 profile 的 schema 和校验规则，包括未知 capability、risk level、origin、tool name 和互相矛盾配置的 fail-fast 行为。
 
 当前推荐：先做 additive metadata + 默认 profiles，不立即开放完整自定义 matrix。这样能把概念拆开，又不一次性放大配置和测试矩阵。
 
