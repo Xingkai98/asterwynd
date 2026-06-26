@@ -6,11 +6,13 @@ registering the class here.
 
 from claw_swebench.config import CLAW_DEFAULTS
 from claw_swebench.claws.base import BaseClawAdapter
+from claw_swebench.claws.aider import AiderAdapter
 from claw_swebench.claws.generic import GenericAgentAdapter
 from claw_swebench.claws.hermes import HermesAdapter
 from claw_swebench.claws.myagent import MyAgentAdapter
 from claw_swebench.claws.nanobot import NanoBotAdapter
 from claw_swebench.claws.openclaw import OpenClawAdapter
+from claw_swebench.claws.opencode_adapter import OpenCodeAdapter
 from claw_swebench.claws.zeroclaw import ZeroClawAdapter
 
 CLAWS: dict[str, type[BaseClawAdapter]] = {
@@ -20,6 +22,8 @@ CLAWS: dict[str, type[BaseClawAdapter]] = {
     "zeroclaw": ZeroClawAdapter,
     "generic": GenericAgentAdapter,
     "myagent": MyAgentAdapter,
+    "aider": AiderAdapter,
+    "opencode": OpenCodeAdapter,
 }
 
 

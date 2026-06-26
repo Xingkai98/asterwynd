@@ -27,7 +27,7 @@ if _VENV_SITE not in sys.path:
     sys.path.insert(0, _VENV_SITE)
 
 from agent.loop import AgentLoop
-from agent.llm import AnthropicLLM
+from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentRunConfig, AgentMode
 from agent.workspace_policy import WorkspacePolicy
 from agent.memory.manager import MemoryManager
@@ -109,6 +109,7 @@ async def main():
     messages = prompt_builder.build_messages(
         task=task,
         problem_statement=problem_statement,
+        workspace=str(workspace),
     )
 
     trace = TraceRecorder(task_id="claw-swe-task", mode="build")

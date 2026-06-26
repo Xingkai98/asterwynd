@@ -58,6 +58,8 @@ CLAW_DEFAULTS = {
     "zeroclaw": {"model": "qwen3.6-flash",  "timeout": 3600, "max_turns": 300},
     "generic":  {"model": "glm-5.1",        "timeout": 3600, "max_turns": 300, "llm_no": 0},
     "myagent":  {"model": "deepseek-v4-pro", "timeout": 1800, "max_turns": 300},
+    "aider":   {"model": "deepseek-v4-pro", "timeout": 1800, "max_turns": 300},
+    "opencode": {"model": "deepseek-v4-pro", "timeout": 1800, "max_turns": 300},
 }
 
 # API-key environment variables forwarded from the host into containers

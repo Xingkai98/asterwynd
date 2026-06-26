@@ -77,17 +77,27 @@ class SWEBenchWorkspace:
 
         logger.info("Starting container %s from image %s",
                      self.container_name, self.image_name)
-        cmd = [
-            "docker", "run", "-d",
-            "--name", self.container_name,
-            # Resource limits — protect host from agent / test framework
-            # (jest etc.) fork-bombing under parallel workers.
-            "--pids-limit", str(CONTAINER_PIDS_LIMIT),
-            "--memory", CONTAINER_MEMORY,
-            "--memory-swap", CONTAINER_MEMORY,  # no swap: cgroup-OOM stays in-container
-            # Host gateway so in-container claws can reach host-side proxies
-            "--add-host", "host.docker.internal:host-gateway",
-        ]
+        # Skip resource limits when they cause cgroup errors in nested Docker.
+        # Set CLAW_NO_RESOURCE_LIMITS=1 to disable.
+        import os as _os
+        if _os.environ.get("CLAW_NO_RESOURCE_LIMITS") == "1":
+            cmd = [
+                "docker", "run", "-d",
+                "--name", self.container_name,
+                "--add-host", "host.docker.internal:host-gateway",
+            ]
+        else:
+            cmd = [
+                "docker", "run", "-d",
+                "--name", self.container_name,
+                # Resource limits — protect host from agent / test framework
+                # (jest etc.) fork-bombing under parallel workers.
+                "--pids-limit", str(CONTAINER_PIDS_LIMIT),
+                "--memory", CONTAINER_MEMORY,
+                "--memory-swap", CONTAINER_MEMORY,  # no swap: cgroup-OOM stays in-container
+                # Host gateway so in-container claws can reach host-side proxies
+                "--add-host", "host.docker.internal:host-gateway",
+            ]
         cmd.extend(self.adapter.container_run_args(self.instance_id))
         cmd.extend([self.image_name, "tail", "-f", "/dev/null"])
 

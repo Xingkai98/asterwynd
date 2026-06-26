@@ -1,15 +1,12 @@
-"""MyAgent adapter for Claw-SWE-Bench evaluation.
+"""OpenCode adapter for Claw-SWE-Bench evaluation.
 
-Wraps MyAgent (Python AgentLoop) inside SWE-bench Docker containers via
-`docker exec`. MyAgent's source and venv are bind-mounted into the
-container, and the agent runs headless on /testbed.
-
-Isolation: MyAgent is stateless across instances — each invocation runs
-in its own container with an independent workspace. No agent
-registration or teardown needed.
+Runs OpenCode headlessly inside SWE-bench Docker containers via `docker exec`.
+OpenCode is a Go-based coding agent; we bind-mount the binary, write the
+prompt to a temp file, run `opencode run`, and collect the resulting git diff.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -22,64 +19,59 @@ from claw_swebench.types import AgentResult
 
 logger = logging.getLogger(__name__)
 
-# Sentinels printed by myagent_solve.py
 _RESULT_RE = re.compile(
-    r"MYAGENT_RESULT\s+finish_reason=(\S+)\s+exit_code=(\d+)\s+duration=([\d.]+)s"
+    r"OPECODE_RESULT\s+finish_reason=(\S+)\s+exit_code=(\d+)\s+duration=([\d.]+)s"
 )
 
-# Extra buffer beyond agent timeout for subprocess
 _SUBPROCESS_TIMEOUT_BUFFER = 60
 
-# Environment variables to forward into the container
 _FORWARDED_ENV_VARS = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
-    "MYAGENT_MODEL",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
+    "DEEPSEEK_API_KEY",
 )
 
 
-class MyAgentAdapter(BaseClawAdapter):
-    """Drives MyAgent (Python AgentLoop) inside a SWE-bench container.
+class OpenCodeAdapter(BaseClawAdapter):
+    """Drives OpenCode headlessly inside a SWE-bench container."""
 
-    Bind-mounts the MyAgent venv and source tree into the container,
-    then runs the headless solve script via docker exec.
-    """
-
-    name = "myagent"
+    name = "opencode"
 
     def __init__(self, model: str, timeout: int, max_turns: int | None = None):
         super().__init__(model, timeout, max_turns)
-        self._myagent_venv = os.environ.get(
-            "MYAGENT_VENV", "/opt/myagent-venv"
+        self._opencode_bin = os.environ.get(
+            "OPECODE_BIN", "/usr/local/bin/opencode"
         )
-        self._myagent_src = os.environ.get(
-            "MYAGENT_SRC", "/opt/myagent"
-        )
-        # Python binary inside the container (bind-mounted from host)
-        self._python_bin = os.environ.get(
-            "CLAW_PYTHON_BIN", "/opt/python3.12/bin/python3.12"
-        )
+        self._host_opencode_bin = self._find_host_binary()
+
+    @staticmethod
+    def _find_host_binary() -> str:
+        """Find the opencode binary on the host."""
+        candidates = [
+            os.environ.get("OPECODE_HOST_BIN", ""),
+            os.path.expanduser("~/.npm-global/bin/opencode"),
+            "/usr/local/bin/opencode",
+            "/usr/bin/opencode",
+        ]
+        for c in candidates:
+            if c and os.path.exists(c):
+                return c
+        return candidates[1]  # fallback
 
     # ------------------------------------------------------------------
     # Container integration
     # ------------------------------------------------------------------
 
     def container_run_args(self, instance_id: str) -> list[str]:
-        """Mount myagent venv + source + standalone Python into the container."""
-        python_home = os.environ.get(
-            "CLAW_PYTHON_HOME",
-            "/root/.local/share/uv/python/cpython-3.12.13-linux-x86_64-gnu",
-        )
+        """Mount opencode binary into the container (read-only)."""
         return [
-            "-v", f"{self._myagent_src}:/opt/myagent:ro",
-            "-v", f"{self._myagent_venv}:/opt/myagent-venv:ro",
-            "-v", f"{python_home}:/opt/python3.12:ro",
+            "-v", f"{self._host_opencode_bin}:/usr/local/bin/opencode:ro",
         ]
 
     # ------------------------------------------------------------------
-    # Agent lifecycle (stateless — no-op)
+    # Agent lifecycle (stateless)
     # ------------------------------------------------------------------
 
     def create_agent(self, agent_id: str) -> None:
@@ -88,12 +80,7 @@ class MyAgentAdapter(BaseClawAdapter):
     def delete_agent(self, agent_id: str) -> None:
         pass
 
-    # ------------------------------------------------------------------
-    # Session backup
-    # ------------------------------------------------------------------
-
     def backup_session(self, agent_id: str, dest: Path) -> None:
-        """No-op: MyAgent doesn't persist sessions across runs."""
         pass
 
     # ------------------------------------------------------------------
@@ -108,41 +95,57 @@ class MyAgentAdapter(BaseClawAdapter):
         artifact_dir: Path | None = None,
         instance_id: str | None = None,
     ) -> AgentResult:
-        """Run MyAgent headless on the given prompt inside the container."""
         if artifact_dir:
             artifact_dir.mkdir(parents=True, exist_ok=True)
 
         stdout_path = artifact_dir / "agent_stdout.log" if artifact_dir else None
         stderr_path = artifact_dir / "agent_stderr.log" if artifact_dir else None
 
-        # Build docker exec command
-        # Mount the venv's Python and site-packages via PYTHONPATH
-        # -i is required to pipe the prompt via stdin
-        cmd = [
-            "docker", "exec", "-i",
-            "-w", "/testbed",
-            "-e", f"PYTHONPATH=/opt/myagent:/opt/myagent-venv/lib/python3.12/site-packages",
-            "-e", f"MYAGENT_SRC=/opt/myagent",
-            "-e", f"MYAGENT_VENV=/opt/myagent-venv",
+        opencode_model = self._map_model(self.model)
+
+        # Write prompt to file inside container (OpenCode reads from positional arg;
+        # use shell to read file and pass as argument)
+        prompt_path = "/tmp/opencode_prompt.txt"
+        write_cmd = [
+            "docker", "exec", "-i", container_name,
+            "bash", "-c", f"cat > {prompt_path}",
         ]
+        try:
+            sp = subprocess.run(write_cmd, input=prompt, capture_output=True, text=True, timeout=30)
+            if sp.returncode != 0:
+                logger.warning("Failed to write prompt file: %s", sp.stderr)
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout writing prompt file")
+
+        # Build env vars
+        env_args = []
         for env_name in _FORWARDED_ENV_VARS:
             val = os.environ.get(env_name)
             if val:
-                cmd.extend(["-e", f"{env_name}={val}"])
+                env_args.extend(["-e", f"{env_name}={val}"])
 
-        # Also set MYAGENT_MODEL from adapter model parameter
-        if self.model:
-            cmd.extend(["-e", f"MYAGENT_MODEL={self.model}"])
+        # Run opencode with prompt from file via shell substitution
+        shell_cmd = (
+            f'cd /testbed && '
+            f'{self._opencode_bin} run '
+            f'--model {opencode_model} '
+            f'--format json '
+            f'--dangerously-skip-permissions '
+            f'"$(cat {prompt_path})" '
+            f'2>&1; '
+            f'echo "OPECODE_RESULT finish_reason=stop exit_code=$? duration=0s"'
+        )
 
-        cmd.extend([
+        cmd = [
+            "docker", "exec", "-i",
+            "-w", "/testbed",
+        ] + env_args + [
             container_name,
-            self._python_bin,
-            "/opt/myagent/agent/claw_solve.py",
-            "--timeout", str(self.timeout),
-            "--max-iterations", str(self.max_turns or 300),
-        ])
+            "bash", "-c", shell_cmd,
+        ]
 
-        logger.info("Starting MyAgent for %s (agent=%s)...", instance_id or "...", agent_id)
+        logger.info("Starting OpenCode for %s (agent=%s, model=%s)...",
+                     instance_id or "...", agent_id, opencode_model)
 
         start_time = time.time()
         timed_out = False
@@ -159,7 +162,6 @@ class MyAgentAdapter(BaseClawAdapter):
                 text=True,
             )
             stdout_text, stderr_text = proc.communicate(
-                input=prompt,
                 timeout=self.timeout + _SUBPROCESS_TIMEOUT_BUFFER,
             )
             exit_code = proc.returncode if proc.returncode is not None else -1
@@ -171,27 +173,22 @@ class MyAgentAdapter(BaseClawAdapter):
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=10)
-            logger.warning("MyAgent subprocess timed out after %ds",
+            logger.warning("OpenCode subprocess timed out after %ds",
                            self.timeout + _SUBPROCESS_TIMEOUT_BUFFER)
 
         duration = time.time() - start_time
 
-        # Save logs
         if stdout_path:
             stdout_path.write_text(stdout_text)
         if stderr_path:
             stderr_path.write_text(stderr_text)
 
-        # Parse the sentinel from stdout or stderr
         combined = (stdout_text or "") + "\n" + (stderr_text or "")
         match = _RESULT_RE.search(combined)
         if match:
             finish_reason = match.group(1)
-            parsed_exit_code = int(match.group(2))
-            parsed_duration = float(match.group(3))
-            if not timed_out:
-                exit_code = parsed_exit_code
-                duration = parsed_duration
+            exit_code = int(match.group(2))
+            duration = float(match.group(3))
         else:
             if timed_out:
                 finish_reason = "timeout"
@@ -200,7 +197,6 @@ class MyAgentAdapter(BaseClawAdapter):
             else:
                 finish_reason = "stop"
 
-        # Collect token usage from stderr (MyAgent prints token stats there)
         usage = self._parse_usage(combined)
 
         return AgentResult(
@@ -216,22 +212,34 @@ class MyAgentAdapter(BaseClawAdapter):
         )
 
     def collect_usage(self, workspace, artifact_dir: Path) -> dict:
-        """Collect token usage from agent stderr log."""
         stderr_log = artifact_dir / "agent_stderr.log"
         if not stderr_log.exists():
             return {}
-        text = stderr_log.read_text(errors="replace")
-        return self._parse_usage(text)
+        return self._parse_usage(stderr_log.read_text(errors="replace"))
 
     @staticmethod
     def _parse_usage(text: str) -> dict:
-        """Extract token usage from MyAgent output."""
-        # MyAgent uses Anthropic API — look for usage in stderr logs
-        # The AnthropicLLM doesn't print structured usage by default,
-        # but we can try to extract from common patterns.
         usage: dict[str, int] = {}
-        # Check for [myagent] tokens=N in output
-        m = re.search(r"tokens=(\d+)", text)
-        if m:
-            usage["total_tokens"] = int(m.group(1))
+        try:
+            for line in text.splitlines():
+                if '"usage"' in line or '"tokens"' in line:
+                    data = json.loads(line.strip())
+                    if "usage" in data:
+                        u = data["usage"]
+                        usage["input_tokens"] = u.get("input_tokens", 0)
+                        usage["output_tokens"] = u.get("output_tokens", 0)
+                        usage["total_tokens"] = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        except (json.JSONDecodeError, KeyError):
+            pass
         return usage
+
+    @staticmethod
+    def _map_model(model: str) -> str:
+        """Map model names to OpenCode's provider/name format."""
+        known = {
+            "deepseek-v4-pro": "anthropic/deepseek-v4-pro",
+            "deepseek-v4-flash": "anthropic/deepseek-v4-flash",
+            "claude-opus-4.6": "anthropic/claude-opus-4-20250514",
+            "claude-sonnet-4.6": "anthropic/claude-sonnet-4-20250514",
+        }
+        return known.get(model, f"anthropic/{model}")
