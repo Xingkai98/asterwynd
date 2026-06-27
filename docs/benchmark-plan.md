@@ -1,24 +1,26 @@
 # MyAgent Benchmark Plan
 
-**Status**: Revised after reference-repo review
-**Date**: 2026-06-15
+**Status**: 已按当前实现更新，保留部分历史英文设计记录
+**Date**: 2026-06-27
 
 ---
 
 ## 1. Goal
 
-Build a reproducible benchmark system for local coding agents.
+构建可复现的 Coding Agent benchmark 体系，用于验证 MyAgent 是否真的能理解仓库、修改代码、运行验证、记录轨迹，并和外部成熟 coding agent 在同类任务上对比。
 
-The benchmark should answer:
+benchmark 需要回答：
 
-- Can MyAgent solve repository-level coding tasks?
-- How often does it pass the validation tests?
-- How many iterations, tool calls, tokens, and seconds does it use?
-- What failure modes dominate?
-- How does it compare with mature coding agents such as Claude Code and Codex?
+- MyAgent 能否解决 repository-level coding tasks？
+- 验证测试通过率是多少？
+- 每次运行消耗多少 iteration、tool call、token 和时间？
+- 主要失败模式是什么？
+- 在同一批任务、同一类模型和同一验证口径下，MyAgent 与 Aider、Claude Code、OpenCode、Codex 等外部 coding agent 的差距在哪里？
 
-The first version should evaluate MyAgent only. Later versions should add
-adapters for external agents.
+当前实现已有两条互补路径：
+
+- `benchmarks/`：项目内置 runner，覆盖本仓库 23 个本地任务和 `swebench-*` 外部任务。
+- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用 SWE-bench Verified / mini 实例对比 MyAgent、Aider、OpenCode 等 agent。
 
 ## 2. Industry References
 
@@ -65,11 +67,11 @@ Useful concepts:
 
 ## 3. Benchmark Scope
 
-### First Version
+### 当前范围
 
-Build a SWE-bench-like local benchmark for this repository.
+项目当前同时维护两类 benchmark：
 
-Scope:
+**本地 runner（`benchmarks/`）**
 
 - 23 local MyAgent tasks and SWE-bench-style external task fixtures.
 - Each task starts from a `base_commit`.
@@ -79,14 +81,16 @@ Scope:
 - `gold.patch` and `test.patch` are supported by schema but optional.
 - Local tasks continue to use worktree validation; external SWE-bench tasks use Docker harness validation.
 
-### Later Versions
+**Claw-SWE-Bench runner（`claw-swe-bench/`）**
 
-Expand to:
+- 复用 Claw-SWE-Bench orchestrator / workspace / patch collection / evaluation flow。
+- 当前注册 `myagent`、`aider`、`opencode` 三个 adapter。
+- `myagent` 通过 `agent/claw_solve.py` 在 SWE-bench 容器内运行 MyAgent headless solver。
+- `aider` 通过 headless CLI 运行，可用于同模型对照。
+- `opencode` adapter 已接入，但是否能跑同模型取决于 OpenCode CLI 对自定义 API endpoint 的支持。
+- 详细运行指南见仓库根目录 [CLAW-SWE-BENCH.md](../CLAW-SWE-BENCH.md)。
 
-- 2-3 small external Python repositories.
-- Hidden tests via `test.patch`.
-- External agent adapters for Claude Code, Codex, and shell-based runners.
-- Summary reports across agents and models.
+后续扩展仍包括更多外部仓库、更多 agent adapter、统一结果报告和成本统计。
 
 ## 4. Task Directory Structure
 
@@ -189,19 +193,27 @@ Conceptual interface:
 AgentRunner.run(task, workspace, output_dir) -> AgentRunResult
 ```
 
-Initial adapters:
+当前本地 runner adapters：
 
 | Adapter | Purpose |
 |---------|---------|
 | `MyAgentRunner` | Run the local MyAgent coding mode |
 | `ShellCommandRunner` | Run an arbitrary shell command as a baseline or wrapper |
 
-Later adapters:
+Claw-SWE-Bench adapters：
 
 | Adapter | Purpose |
 |---------|---------|
-| `ClaudeCodeRunner` | Run Claude Code on the same task set |
-| `CodexRunner` | Run Codex on the same task set |
+| `MyAgentAdapter` | Run MyAgent inside the SWE-bench target container through `agent/claw_solve.py` |
+| `AiderAdapter` | Run Aider headless on the same SWE-bench instance |
+| `OpenCodeAdapter` | Run OpenCode headless when the target model endpoint is supported |
+
+Planned / historical local adapters：
+
+| Adapter | Purpose |
+|---------|---------|
+| `ClaudeCodeRunner` | Run Claude Code on the local task set |
+| `CodexRunner` | Run Codex on the local task set |
 
 This lets the benchmark compare agents without changing task definitions.
 
@@ -449,6 +461,8 @@ Implemented:
   `test_output.txt` is written after the validation command actually runs.
 - Run-level `run.json` and `summary.md`.
 - `passed_with_warnings` for test-passing but non-clean agent runs.
+- Claw-SWE-Bench integration under `claw-swe-bench/`, with MyAgent, Aider and OpenCode adapters registered.
+- MyAgent headless solver entry at `agent/claw_solve.py` for containerized SWE-bench tasks.
 - P0 local task pack:
   - `myagent-readme-title`
   - `myagent-002-myagent-runner`
@@ -638,13 +652,16 @@ keys, model behavior, and cost.
 
 ### P2: Cross-Agent Comparison
 
-- `ClaudeCodeRunner` — subprocess adapter wrapping the `claude` CLI. Runs in
-  the task worktree, passes the problem statement as a prompt. Collects final
-  git diff and stdout/stderr log. No internal tool-call trace available.
-- `CodexRunner` — same pattern for the `codex` CLI.
-- Unified comparison report: one summary table with MyAgent / Claude Code /
-  Codex results side-by-side on the same 23 tasks. Same tasks, same hidden
-  tests, same grading — only the agent runtime differs.
+- Local runner path: `ClaudeCodeRunner` wraps the `claude` CLI in the task
+  worktree, while `CodexRunner` remains deferred because of authentication
+  complexity.
+- Claw-SWE-Bench path: `MyAgentAdapter`, `AiderAdapter`, and `OpenCodeAdapter`
+  are registered under `claw-swe-bench/claw_swebench/claws/`; this path compares
+  agents on SWE-bench Verified instances through one orchestrator and evaluation
+  harness.
+- Unified comparison report: one summary table with MyAgent / external agent
+  results side-by-side on the same tasks. Same tasks, same grading — only the
+  agent runtime differs.
 - Contract tests for each adapter (satisfies `AgentRunner.run()`).
 
 ## 16. Relationship to Coding Agent Roadmap

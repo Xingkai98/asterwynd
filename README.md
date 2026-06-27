@@ -1,6 +1,6 @@
 # MyAgent
 
-一个用 Python 构建的轻量级通用 AI Agent 框架。
+一个用 Python 构建的本地 Coding Agent 系统项目，面向 Agent 运行时、工具调用、代码仓库理解、代码修改与验证、可观测性和 benchmark 闭环。
 
 ## 功能特性
 
@@ -16,7 +16,7 @@
 | **SkillLoader** | Markdown 技能文件（YAML frontmatter + prompt），按需/always 加载 |
 | **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
 | **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
-| **Local Benchmark** | 23 个 coding-agent 任务，本地 worktree 任务 + SWE-bench Docker harness 双路径评测，多 agent 适配器 |
+| **Benchmark** | 23 个本地 coding-agent 任务、SWE-bench Docker harness 任务，以及 Claw-SWE-Bench 多 agent 对比入口 |
 
 ## 快速开始
 
@@ -57,6 +57,15 @@ uv run python cli.py benchmark benchmarks/tasks \
   --fake-edit-file README.md \
   --fake-old-string '# MyAgent' \
   --fake-new-string '# MyAgent Coding Agent'
+
+# 运行 Claw-SWE-Bench 统一 harness（需先准备 Docker 镜像和环境变量）
+cd claw-swe-bench
+uv run python run_infer.py \
+  --claw myagent \
+  --dataset verified \
+  --instance_file config/verified_mini_50.txt \
+  --run_id myagent-lite \
+  --model deepseek-v4-pro
 ```
 
 `uv run` 不是业务运行的必需条件，而是推荐的环境隔离方式：它会使用 `uv` 管理的项目虚拟环境，依赖版本更可复现。如果你当前 shell 的 Python 环境已经安装好依赖，也可以直接运行等价命令，例如 `python3 cli.py main "Hello"` 或 `pytest -q`。
@@ -107,13 +116,19 @@ agent/
 └── subagent/
     └── manager.py           # SubAgentManager 子 session runtime
 
-benchmarks/                  # 本地基准测试
+benchmarks/                  # 本地 benchmark runner
 ├── tasks/                   # 23 个编码任务（6 类别 3 难度）
 ├── runner.py                # BenchmarkRunner + SWE-bench 风格隔离
 ├── agent_runner.py          # AgentRunner（fake/shell/myagent 适配器）
 ├── models.py                # 失败分类 + 指标模型
 ├── prompt.py                # 编码 agent 提示词构建器
 └── task_schema.py           # 任务 schema 加载
+
+claw-swe-bench/              # Claw-SWE-Bench 统一 harness 副本和 adapter
+└── claw_swebench/claws/
+    ├── myagent.py           # MyAgent adapter
+    ├── aider.py             # Aider adapter
+    └── opencode_adapter.py  # OpenCode adapter（受 endpoint 支持限制）
 
 skills/                      # 技能文件目录
 ├── code-review.md
@@ -282,12 +297,12 @@ playwright install chromium
 MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
 
-## Local Benchmark
+## Benchmark
 
-MyAgent 内置本地 coding-agent 基准测试系统，位于 `benchmarks/`。当前分为两类执行路径：
+MyAgent 当前有两条 benchmark 路径：
 
-- `myagent-*` 本地任务：在独立 git worktree 中运行，agent 完成后应用隐藏测试补丁，产出结构化 trace 和指标。
-- `swebench-*` 外部任务：agent 仍在 benchmark workspace 内产出 patch，但最终验证交给 SWE-bench Docker harness。
+- `benchmarks/`：项目内置 runner，用 23 个本地任务和少量 `swebench-*` 外部任务验证 MyAgent 的 coding-agent 闭环。
+- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用同一批 SWE-bench Verified 实例对比 MyAgent、Aider、OpenCode 等外部 coding agent。
 
 ### 快速验证（fake agent，确定性地）
 
@@ -309,6 +324,22 @@ uv run python cli.py benchmark benchmarks/tasks \
   --source-repo . \
   --runs-dir /tmp/myagent-benchmark \
   --max-iterations 80
+```
+
+### Claw-SWE-Bench 对比评测
+
+详细环境准备见 [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md)。最小命令形态：
+
+```bash
+cd claw-swe-bench
+uv run python run_infer.py \
+  --claw myagent \
+  --dataset verified \
+  --instance_file config/verified_mini_50.txt \
+  --run_id myagent-lite \
+  --model deepseek-v4-pro
+
+uv run python run_eval.py --run_id myagent-lite --dataset verified
 ```
 
 ### 任务集
@@ -354,6 +385,6 @@ Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken（可选）
 ## 设计文档
 
 - `docs/coding-agent-roadmap.md` — 编码 Agent 路线图（P0 已完成 / P1 进行中）
-- `docs/benchmark-plan.md` — 基准测试设计（SWE-bench 参考、任务结构、评估指标）
+- `docs/benchmark-plan.md` — benchmark 设计（本地 runner、SWE-bench Docker harness、Claw-SWE-Bench 对比入口）
+- `CLAW-SWE-BENCH.md` — Claw-SWE-Bench 集成和运行指南
 - `docs/discussions/2026-06-15-p1-p3-scope-review.md` — P1 开发方案讨论纪要
-- `docs/discussions/2026-06-15-p1-p3-scope-review.md` — P1 设计决策记录
