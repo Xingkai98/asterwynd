@@ -35,7 +35,7 @@ The current system already has useful agent infrastructure:
 | Web UI | Chat UI, debug timeline, session/run identifiers, Plan Document display, planning state display, Markdown rendering, and tool result display controls |
 | Coding tools | Workspace policy, exact-match `Edit`, workspace-aware `Bash`, `InspectGitDiff`, hardened `Write` behavior, and `LspDiagnostics` feedback on Write/Edit |
 | Code intelligence | Repo map, tree-sitter symbols, Python AST extraction, and LSP semantic tools (definition, references, hover, document symbols, workspace symbols, diagnostics) |
-| Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, summary reports, and CLI entry point |
+| Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, summary reports, CLI entry point, and Claw-SWE-Bench integration for SWE-bench Verified comparison |
 
 The remaining gap is coding-agent reliability. The project now has the P0
 self-benchmark harness and basic coding tools, but real MyAgent benchmark runs
@@ -281,7 +281,7 @@ Interview talking point:
 
 ### P2: Cross-Agent Benchmark Comparison
 
-Goal: run the same benchmark tasks with Claude Code and Codex, and compare
+Goal: run the same benchmark tasks with external coding agents, and compare
 results side-by-side with MyAgent.
 
 Deliverables:
@@ -298,12 +298,21 @@ Deliverables:
 - First comparison results: MyAgent 11/23 (48%) vs Claude Code 9/23 (39%)
   with same DeepSeek model — pass rates and failure modes overlap heavily,
   suggesting the model is the bottleneck. Done.
+- Claw-SWE-Bench path — `claw-swe-bench/` registers MyAgent, Aider, and
+  OpenCode adapters for SWE-bench Verified / mini comparison under one
+  orchestrator and evaluation harness. MyAgent runs through
+  `agent/claw_solve.py` inside the target container. Done for integration;
+  full result reporting depends on benchmark runs.
 
 Design notes:
 
-- Each external agent runs as a subprocess inside the detached worktree,
-  same as `ShellCommandRunner`. No internal traces are collected — only
-  final git diff, stdout/stderr log, and test results from the harness.
+- In the local runner path, each external agent runs as a subprocess inside the
+  detached worktree, same as `ShellCommandRunner`. No internal traces are
+  collected — only final git diff, stdout/stderr log, and test results from the
+  harness.
+- In the Claw-SWE-Bench path, each agent adapter runs inside or against the
+  SWE-bench container, and the framework collects the final patch before
+  evaluation.
 - This mirrors SWE-bench's evaluation model: the benchmark grades the
   outcome (does the patch pass hidden tests?), not the process.
 - The comparison is fair: each agent uses its own tools, its own prompt

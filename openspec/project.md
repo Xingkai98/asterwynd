@@ -30,7 +30,7 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - `skills`: Markdown skill 加载、匹配和注入。
 - `subagents`: 子 agent 委托、ParentChannel、结果回传和取消。
 - `mcp-integration`: MCP 集成，当前为预留能力域。
-- `code-intelligence`: 当前包含轻量 RepoMap / SymbolSearch；LSP、诊断、引用分析、多语言索引和语义检索仍为后续能力。
+- `code-intelligence`: RepoMap、SymbolSearch、tree-sitter 多语言符号提取、Python AST 符号提取，以及 Python LSP 语义工具；多语言 LSP 官方验证、跨仓库索引和语义检索仍为后续能力。
 - `browser-computer-use`: 浏览器和桌面操作，当前为预留能力域。
 - `cli`: Typer 命令入口和非交互运行。
 - `tui`: 终端 UI，当前为预留能力域。

@@ -100,6 +100,20 @@ sudo ./scripts/start-docker-daemon.sh
 
 也可以在 `myagent.yaml` 中设置默认 benchmark 参数，字段示例见仓库根目录的 `myagent.example.yaml`。
 
+运行 Claw-SWE-Bench 对比评测前，需要先准备 SWE-bench Docker 镜像、独立 Python、MyAgent venv 和 API key。完整环境说明见仓库根目录 `CLAW-SWE-BENCH.md`。最小命令形态：
+
+```bash
+cd claw-swe-bench
+uv run python run_infer.py \
+  --claw myagent \
+  --dataset verified \
+  --instance_file config/verified_mini_50.txt \
+  --run_id myagent-lite \
+  --model deepseek-v4-pro
+
+uv run python run_eval.py --run_id myagent-lite --dataset verified
+```
+
 ## 环境变量
 
 | 环境变量 | 作用 |
@@ -119,6 +133,10 @@ sudo ./scripts/start-docker-daemon.sh
 | `MYAGENT_TAVILY_API_KEY` | Tavily Search provider API key |
 | `MYAGENT_BRAVE_SEARCH_API_KEY` | Brave Search provider API key |
 | `MYAGENT_SEARXNG_BASE_URL` | SearXNG provider base URL |
+| `CLAW_PYTHON_HOME` / `CLAW_PYTHON_BIN` | Claw-SWE-Bench 容器内执行用的独立 Python 路径 |
+| `MYAGENT_SRC` | Claw-SWE-Bench 挂载到容器内的 MyAgent 源码路径 |
+| `MYAGENT_VENV` | Claw-SWE-Bench 挂载到容器内的 MyAgent venv 路径 |
+| `CLAW_NO_RESOURCE_LIMITS` | 在当前开发环境需要时跳过 Claw-SWE-Bench cgroup 资源限制 |
 
 ## 结构化配置
 
@@ -146,5 +164,5 @@ sudo ./scripts/start-docker-daemon.sh
 - 修改代码前先读相关实现和测试。
 - 不要回滚用户未提交改动。
 - 不要提交本地环境文件、日志、缓存和生成产物。
-- 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke。
+- 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/` 或 `agent/claw_solve.py`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。

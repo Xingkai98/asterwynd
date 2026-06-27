@@ -2,7 +2,7 @@
 
 本文件是编码 agent 和 Claude Code 进入本仓库时的入口说明。它只保留最高优先级规则和文档地图；详细背景请按链接读取对应文档。
 
-> **维护规则**: `AGENTS.md` 是唯一维护入口。`CLAUDE.md` 只保留 `@AGENTS.md`，不再重复维护完整说明。
+> **维护规则**: `AGENTS.md` 是唯一维护入口。`CLAUDE.md` 只保留 `@AGENTS.md`，不再重复维护完整说明。`README.md` 是 README 源文档；修改 `README.md` 时必须在同一变更中同步更新 `README_EN.md` 的英文翻译，保持章节、命令和事实口径一致。
 
 ## 项目定位
 
@@ -12,7 +12,7 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 
 ## 最高优先级规则
 
-- **文档语言**: 所有项目文档使用中文；代码、代码注释和公开 API 命名使用英文；提交信息使用中文。
+- **文档语言**: 除 `README_EN.md` 作为 `README.md` 的英文同步翻译外，所有项目文档使用中文；代码、代码注释和公开 API 命名使用英文；提交信息使用中文。
 - **需求先行**: 新功能必须先完成需求讨论和需求文档，再进入开发。没有把目标、边界、验收标准、测试策略聊清楚之前，不写实现代码。
 - **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `grill-with-docs` skill 审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `grill-with-docs`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。
 - **问题定位**: 定位问题时，先查清根因并给出解决方案，待确认后再实际修改代码。
@@ -64,5 +64,4 @@ uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --r
 
 ## 当前文档债务
 
-- `README.md`、`README_EN.md`、`docs/coding-agent-roadmap.md`、`docs/benchmark-plan.md`、`docs/resume-description.md` 中存在历史口径，后续需要统一到“Agent 相关开发岗位导向”的项目定位。
-- `README_EN.md` 是历史英文副本；是否保留需要后续单独决策。
+- `docs/coding-agent-roadmap.md`、`docs/benchmark-plan.md` 仍保留部分历史英文设计记录；当前事实口径已经补齐，但后续如做文档整理，应整体改为中文并清理旧阶段叙述。

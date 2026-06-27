@@ -90,7 +90,10 @@ Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DE
 
 ## Benchmark
 
-Benchmark 模块位于 `benchmarks/`，目标是用可复现任务评测 coding-agent 能力。
+Benchmark 目标是用可复现任务评测 coding-agent 能力。当前有两条路径：
+
+- `benchmarks/`：项目内置 runner，覆盖本地 worktree 任务和少量 `swebench-*` 外部任务。
+- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness 副本，用 SWE-bench Verified 实例对比 MyAgent、Aider、OpenCode 等 agent。
 
 核心流程：
 
@@ -101,7 +104,7 @@ Benchmark 模块位于 `benchmarks/`，目标是用可复现任务评测 coding-
 5. 运行验证命令。
 6. 在验证命令实际运行后保存 test output，并汇总 run-level 报告。
 
-内部任务和外部 SWE-bench 风格任务都通过统一 runner 执行。当前任务数量和文档口径需要后续统一校准。
+内置 runner 的本地任务和外部 SWE-bench 风格任务都通过统一 runner 执行。Claw-SWE-Bench 路径则复用其 orchestrator、workspace、patch collection 和 eval flow；MyAgent adapter 通过 `agent/claw_solve.py` 在目标容器内运行 headless solver。
 
 ## LLM Provider
 
