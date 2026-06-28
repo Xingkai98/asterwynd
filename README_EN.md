@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/assets/asterwynd-wordmark.svg" alt="Asterwynd" width="760" />
+  <img src="./docs/assets/asterwynd-wordmark.svg?v=20260628-centered" alt="Asterwynd" width="760" />
 </p>
 
 <p align="center">
