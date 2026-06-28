@@ -1,0 +1,48 @@
+agent:
+  default_mode: build
+
+modes:
+  build:
+    deny_tools: []
+  read_only:
+    deny_tools: []
+  plan:
+    deny_tools: []
+
+tools:
+  ignore_patterns: []
+  command_denylist: []
+  code_intelligence:
+    tree_sitter_max_file_bytes: 262144
+    lsp:
+      # 当前只正式支持 Python（pylsp）。其他语言可配置对应 server，但尚未验证。
+      # 安装: uv sync --extra lsp 或 pip install asterwynd[lsp]
+      servers:
+        - language: python
+          command: [pylsp]
+          root_markers: [pyproject.toml]
+          initialize_timeout_ms: 5000
+          request_timeout_ms: 3000
+          enabled: true
+      default_request_timeout_ms: 3000
+  web_search:
+    providers:
+      # Tavily 需要 ASTERWYND_TAVILY_API_KEY。
+      # - name: tavily
+      #   enabled: true
+      - name: duckduckgo-html
+        enabled: true
+      # Brave 需要 ASTERWYND_BRAVE_SEARCH_API_KEY。
+      # - name: brave
+      #   enabled: true
+      # SearXNG 需要 ASTERWYND_SEARXNG_BASE_URL。
+      # - name: searxng
+      #   enabled: true
+  display:
+    max_result_chars: 4000
+    max_result_lines: 80
+    preview_chars: 1200
+
+benchmark:
+  parallel: 1
+  timeout_seconds: 600

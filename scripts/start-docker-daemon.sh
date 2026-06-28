@@ -15,7 +15,7 @@ mkdir -p /run/containerd
 
 if ! pgrep -x containerd >/dev/null 2>&1; then
   echo "Starting containerd..."
-  nohup containerd >/tmp/myagent-containerd.log 2>&1 &
+  nohup containerd >/tmp/asterwynd-containerd.log 2>&1 &
 fi
 
 for _ in $(seq 1 20); do

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from agent.llm import LLM
     from agent.trace_recorder import TraceRecorder
 
-logger = logging.getLogger("myagent.loop")
+logger = logging.getLogger("asterwynd.loop")
 
 class AgentLoop:
     def __init__(

@@ -76,7 +76,7 @@ async def test_build_registry_preserves_configured_priority_and_disabled_provide
             SearchProviderConfig(name="brave", enabled=True),
             SearchProviderConfig(name="duckduckgo-html", enabled=True),
         ),
-        environ={"MYAGENT_BRAVE_SEARCH_API_KEY": "secret"},
+        environ={"ASTERWYND_BRAVE_SEARCH_API_KEY": "secret"},
         transport=_transport(handler),
     )
 
@@ -111,7 +111,7 @@ async def test_missing_api_key_falls_back_to_next_provider():
     assert response.provider_name == "duckduckgo-html"
     assert response.diagnostics[0].provider_name == "tavily"
     assert response.diagnostics[0].category == "not_configured"
-    assert "MYAGENT_TAVILY_API_KEY" in response.diagnostics[0].message
+    assert "ASTERWYND_TAVILY_API_KEY" in response.diagnostics[0].message
 
 
 @pytest.mark.asyncio
@@ -135,7 +135,7 @@ async def test_missing_searxng_base_url_falls_back_to_next_provider():
     assert response.provider_name == "duckduckgo-html"
     assert response.diagnostics[0].provider_name == "searxng"
     assert response.diagnostics[0].category == "not_configured"
-    assert "MYAGENT_SEARXNG_BASE_URL" in response.diagnostics[0].message
+    assert "ASTERWYND_SEARXNG_BASE_URL" in response.diagnostics[0].message
 
 
 @pytest.mark.asyncio

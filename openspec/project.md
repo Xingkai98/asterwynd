@@ -1,8 +1,8 @@
-# MyAgent OpenSpec 项目说明
+# Asterwynd OpenSpec 项目说明
 
 ## 项目目标
 
-MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项目。OpenSpec 是后续需求和能力规格的 source of truth，用来连接项目定位、实现行为、测试证据和面试叙事。
+Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项目。OpenSpec 是后续需求和能力规格的 source of truth，用来连接项目定位、实现行为、测试证据和面试叙事。
 
 ## 规格原则
 
@@ -41,7 +41,7 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 ## Change 文档约束
 
 OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
-`tasks` artifacts。MyAgent 在此基础上采用以下项目级规则：
+`tasks` artifacts。Asterwynd 在此基础上采用以下项目级规则：
 
 - 非平凡 change 必须包含 `design.md`，用于记录详细设计和关键技术取舍。
 - bug、回归、工具不可用、故障复盘和调研驱动的 change 必须包含 `diagnosis.md`。

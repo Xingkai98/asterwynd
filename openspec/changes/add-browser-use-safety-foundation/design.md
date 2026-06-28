@@ -1,6 +1,6 @@
 ## Context
 
-MyAgent 当前没有 browser/computer use 工具。浏览器能力会引入外部网络访问、截图 artifact、凭据暴露和页面副作用风险，因此不能直接把通用 Playwright API 暴露给 agent。
+Asterwynd 当前没有 browser/computer use 工具。浏览器能力会引入外部网络访问、截图 artifact、凭据暴露和页面副作用风险，因此不能直接把通用 Playwright API 暴露给 agent。
 
 本 change 只建立最小浏览器工具和安全基础，服务后续可控的网页观察能力。
 

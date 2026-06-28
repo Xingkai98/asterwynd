@@ -1,0 +1,73 @@
+diff --git a/agent/memory/manager.py b/agent/memory/manager.py
+new file mode 100644
+index 0000000..7518c40
+--- /dev/null
++++ b/agent/memory/manager.py
+@@ -0,0 +1,66 @@
++# agent/memory/manager.py
++import logging
++from typing import Optional, TYPE_CHECKING
++
++if TYPE_CHECKING:
++    from agent.llm import LLM
++    from agent.message import Message
++
++logger = logging.getLogger("asterwynd.memory")
++
++try:
++    import tiktoken
++    _enc = tiktoken.get_encoding("cl100k_base")
++    def _count_tokens(text: str) -> int:
++        return len(_enc.encode(text))
++except ImportError:
++    def _count_tokens(text: str) -> int:
++        return len(text) // 4
++
++class MemoryManager:
++    def __init__(
++        self,
++        max_tokens: int = 100_000,
++        recent_window: int = 10,
++        llm: Optional["LLM"] = None,
++    ):
++        self.messages: list["Message"] = []
++        self.max_tokens = max_tokens
++        self.recent_window = recent_window
++        self.llm = llm
++
++    def add(self, message: "Message") -> None:
++        self.messages.append(message)
++
++    def count_tokens(self, messages: list["Message"]) -> int:
++        return sum(_count_tokens(m.content) for m in messages)
++
++    def compact_if_needed(self) -> None:
++        total = self.count_tokens(self.messages)
++        if total > self.max_tokens:
++            logger.info(f"[Memory] {total} tokens > {self.max_tokens} budget, compacting")
++            self.compact()
++
++    def compact(self) -> None:
++        system = [m for m in self.messages if m.role == "system"]
++        recent = self.messages[-self.recent_window:]
++        middle = self.messages[:-self.recent_window]
++
++        if not middle:
++            self.messages = system + recent
++            logger.info(f"[Memory] Compacted to {len(self.messages)} messages")
++            return
++
++        if self.llm is None:
++            self.messages = system + recent
++            logger.info(f"[Memory] Compacted to {len(self.messages)} messages (no LLM)")
++            return
++
++        self.messages = system + recent
++        logger.info(f"[Memory] Compacted to {len(self.messages)} messages")
++
++    def get_messages(self) -> list["Message"]:
++        return self.messages
++
++    def clear(self) -> None:
++        self.messages = [m for m in self.messages if m.role == "system"]
+\ No newline at end of file

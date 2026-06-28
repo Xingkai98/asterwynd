@@ -601,9 +601,9 @@ def _build_provider(
             timeout=timeout,
         )
     if name == SearXNGSearchProvider.name:
-        base_url = environ.get("MYAGENT_SEARXNG_BASE_URL", "").strip()
+        base_url = environ.get("ASTERWYND_SEARXNG_BASE_URL", "").strip()
         if not base_url:
-            return UnconfiguredSearchProvider(name, "MYAGENT_SEARXNG_BASE_URL")
+            return UnconfiguredSearchProvider(name, "ASTERWYND_SEARXNG_BASE_URL")
         return SearXNGSearchProvider(
             base_url=base_url,
             transport=transport,
@@ -611,9 +611,9 @@ def _build_provider(
             timeout=timeout,
         )
     if name == BraveSearchProvider.name:
-        api_key = environ.get("MYAGENT_BRAVE_SEARCH_API_KEY", "").strip()
+        api_key = environ.get("ASTERWYND_BRAVE_SEARCH_API_KEY", "").strip()
         if not api_key:
-            return UnconfiguredSearchProvider(name, "MYAGENT_BRAVE_SEARCH_API_KEY")
+            return UnconfiguredSearchProvider(name, "ASTERWYND_BRAVE_SEARCH_API_KEY")
         return BraveSearchProvider(
             api_key=api_key,
             transport=transport,
@@ -621,9 +621,9 @@ def _build_provider(
             timeout=timeout,
         )
     if name == TavilySearchProvider.name:
-        api_key = environ.get("MYAGENT_TAVILY_API_KEY", "").strip()
+        api_key = environ.get("ASTERWYND_TAVILY_API_KEY", "").strip()
         if not api_key:
-            return UnconfiguredSearchProvider(name, "MYAGENT_TAVILY_API_KEY")
+            return UnconfiguredSearchProvider(name, "ASTERWYND_TAVILY_API_KEY")
         return TavilySearchProvider(
             api_key=api_key,
             transport=transport,

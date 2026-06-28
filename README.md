@@ -1,6 +1,20 @@
-# MyAgent
+<p align="center">
+  <img src="./docs/assets/asterwynd-wordmark.svg?v=20260628-centered" alt="Asterwynd" width="760" />
+</p>
 
-一个用 Python 构建的本地 Coding Agent 系统项目，面向 Agent 运行时、工具调用、代码仓库理解、代码修改与验证、可观测性和 benchmark 闭环。
+<p align="center">
+  <a href="./README.md">简体中文</a>
+  ·
+  <a href="./README_EN.md">English</a>
+</p>
+
+<p align="center">
+  <strong>以星为引，变更有证。</strong>
+</p>
+
+**Asterwynd** 是一个本地 Coding Agent 系统。它理解代码仓库、找到从问题到修复的路径、调用工具执行变更和验证，并留下完整的 diff、日志、工具 trace 与 benchmark 证据——让每次代码修改都是可证明的，而不只是“看起来对的”。
+
+星辰定向，风推动前行，trace 证明来过。
 
 ## 功能特性
 
@@ -28,9 +42,9 @@ uv sync --extra dev              # 运行时 + 开发/测试依赖
 cp .env.example .env
 # 编辑 .env，填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
 # 可选：改 OPENAI_BASE_URL 指向其他 OpenAI 兼容 API（如 DeepSeek）
-# 可选：设置 MYAGENT_PROVIDER（openai / anthropic）和 MYAGENT_MODEL 作为默认值
+# 可选：设置 ASTERWYND_PROVIDER（openai / anthropic）和 ASTERWYND_MODEL 作为默认值
 
-# 运行 CLI（OpenAI，默认；用 .env 配置的 MYAGENT_MODEL）
+# 运行 CLI（OpenAI，默认；用 .env 配置的 ASTERWYND_MODEL）
 uv run python cli.py main "Hello"
 
 # 或覆盖模型/提供商
@@ -44,7 +58,7 @@ uv run python cli.py main --interactive
 uv run python cli.py web --port 8000
 
 # Web UI + 详细日志
-MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4-pro
+ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4-pro
 
 # 运行测试
 uv run pytest -q
@@ -53,18 +67,18 @@ uv run pytest -q
 uv run python cli.py benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
-  --runs-dir /tmp/myagent-benchmark-smoke \
+  --runs-dir /tmp/asterwynd-benchmark-smoke \
   --fake-edit-file README.md \
-  --fake-old-string '# MyAgent' \
-  --fake-new-string '# MyAgent Coding Agent'
+  --fake-old-string '# Asterwynd' \
+  --fake-new-string '# Asterwynd Coding Agent'
 
 # 运行 Claw-SWE-Bench 统一 harness（需先准备 Docker 镜像和环境变量）
 cd claw-swe-bench
 uv run python run_infer.py \
-  --claw myagent \
+  --claw asterwynd \
   --dataset verified \
   --instance_file config/verified_mini_50.txt \
-  --run_id myagent-lite \
+  --run_id asterwynd-lite \
   --model deepseek-v4-pro
 ```
 
@@ -87,7 +101,7 @@ uv run python run_infer.py \
 | `WebSearch` | read_only | DuckDuckGo HTML 搜索，返回带 provider 的稳定文本结果 |
 | `WebFetch` | read_only | 获取网页正文，返回状态/类型/截断诊断 |
 
-Bash 工具内置命令安全策略：先检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则和 ListFiles / Find 忽略规则通过 `myagent.yaml` 配置扩展，见 `myagent.example.yaml`。
+Bash 工具内置命令安全策略：先检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则和 ListFiles / Find 忽略规则通过 `asterwynd.yaml` 配置扩展，见 `asterwynd.example.yaml`。
 
 ## 项目结构
 
@@ -119,14 +133,14 @@ agent/
 benchmarks/                  # 本地 benchmark runner
 ├── tasks/                   # 23 个编码任务（6 类别 3 难度）
 ├── runner.py                # BenchmarkRunner + SWE-bench 风格隔离
-├── agent_runner.py          # AgentRunner（fake/shell/myagent 适配器）
+├── agent_runner.py          # AgentRunner（fake/shell/asterwynd 适配器）
 ├── models.py                # 失败分类 + 指标模型
 ├── prompt.py                # 编码 agent 提示词构建器
 └── task_schema.py           # 任务 schema 加载
 
 claw-swe-bench/              # Claw-SWE-Bench 统一 harness 副本和 adapter
 └── claw_swebench/claws/
-    ├── myagent.py           # MyAgent adapter
+    ├── asterwynd.py           # Asterwynd adapter
     ├── aider.py             # Aider adapter
     └── opencode_adapter.py  # OpenCode adapter（受 endpoint 支持限制）
 
@@ -248,7 +262,7 @@ always: false
 启动 Web 界面：
 
 ```bash
-# 基本启动（使用 .env 中的 MYAGENT_PROVIDER 和 MYAGENT_MODEL）
+# 基本启动（使用 .env 中的 ASTERWYND_PROVIDER 和 ASTERWYND_MODEL）
 uv run python cli.py web --port 8000
 
 # 覆盖模型
@@ -258,14 +272,14 @@ uv run python cli.py web --port 8000 --model deepseek-v4-pro
 uv run python cli.py web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
 
 # 调试模式（Chat + Debug 双界面）
-MYAGENT_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
+ASTERWYND_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 
 # 详细日志（记录 LLM 输入/输出到文件）
-MYAGENT_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
+ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 ```
 
 - **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan`，并展示 Plan Document 和 planning state
-- **Debug 界面**：环境变量 `MYAGENT_DEBUG=enabled` 开启，逐轮展示：
+- **Debug 界面**：环境变量 `ASTERWYND_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 原始响应（content、stop_reason、tool_calls）
   - 工具调用详情（名称、参数、结果）
@@ -275,16 +289,16 @@ CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_on
 
 ### 日志
 
-每次启动在 `logs/` 目录生成独立日志文件（如 `myagent-20260526-123456.log`）：
+每次启动在 `logs/` 目录生成独立日志文件（如 `asterwynd-20260526-123456.log`）：
 
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `MYAGENT_PROVIDER` | `openai` | LLM 提供商: `openai` 或 `anthropic` |
-| `MYAGENT_MODEL` | (各 provider 默认值) | 使用的模型名称 |
-| `MYAGENT_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
-| `MYAGENT_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI 界面 |
+| `ASTERWYND_PROVIDER` | `openai` | LLM 提供商: `openai` 或 `anthropic` |
+| `ASTERWYND_MODEL` | (各 provider 默认值) | 使用的模型名称 |
+| `ASTERWYND_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
+| `ASTERWYND_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI 界面 |
 
-配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `myagent.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、mode deny override、工具策略、工具结果展示阈值和 benchmark 默认参数使用 `myagent.yaml`。
+配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `asterwynd.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、mode deny override、工具策略、工具结果展示阈值和 benchmark 默认参数使用 `asterwynd.yaml`。
 
 - 日志同时输出到终端和文件
 - HTTP 4xx/5xx 错误始终记录请求 payload 和响应 body
@@ -294,15 +308,15 @@ CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_on
 
 ```bash
 playwright install chromium
-MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
+ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
 
 ## Benchmark
 
-MyAgent 当前有两条 benchmark 路径：
+Asterwynd 当前有两条 benchmark 路径：
 
-- `benchmarks/`：项目内置 runner，用 23 个本地任务和少量 `swebench-*` 外部任务验证 MyAgent 的 coding-agent 闭环。
-- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用同一批 SWE-bench Verified 实例对比 MyAgent、Aider、OpenCode 等外部 coding agent。
+- `benchmarks/`：项目内置 runner，用 23 个本地任务和少量 `swebench-*` 外部任务验证 Asterwynd 的 coding-agent 闭环。
+- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用同一批 SWE-bench Verified 实例对比 Asterwynd、Aider、OpenCode 等外部 coding agent。
 
 ### 快速验证（fake agent，确定性地）
 
@@ -310,19 +324,19 @@ MyAgent 当前有两条 benchmark 路径：
 uv run python cli.py benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
-  --runs-dir /tmp/myagent-benchmark-smoke \
+  --runs-dir /tmp/asterwynd-benchmark-smoke \
   --fake-edit-file README.md \
-  --fake-old-string '# MyAgent' \
-  --fake-new-string '# MyAgent Coding Agent'
+  --fake-old-string '# Asterwynd' \
+  --fake-new-string '# Asterwynd Coding Agent'
 ```
 
 ### 真实 agent 评测
 
 ```bash
 uv run python cli.py benchmark benchmarks/tasks \
-  --agent myagent \
+  --agent asterwynd \
   --source-repo . \
-  --runs-dir /tmp/myagent-benchmark \
+  --runs-dir /tmp/asterwynd-benchmark \
   --max-iterations 80
 ```
 
@@ -333,13 +347,13 @@ uv run python cli.py benchmark benchmarks/tasks \
 ```bash
 cd claw-swe-bench
 uv run python run_infer.py \
-  --claw myagent \
+  --claw asterwynd \
   --dataset verified \
   --instance_file config/verified_mini_50.txt \
-  --run_id myagent-lite \
+  --run_id asterwynd-lite \
   --model deepseek-v4-pro
 
-uv run python run_eval.py --run_id myagent-lite --dataset verified
+uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 ```
 
 ### 任务集
@@ -357,7 +371,7 @@ uv run python run_eval.py --run_id myagent-lite --dataset verified
 
 ### 评测流程
 
-本地 `myagent-*` 任务：
+本地 `asterwynd-*` 任务：
 
 1. 在任务 base_commit 创建独立 git worktree
 2. 隐藏 `benchmarks/tasks/`（agent 看不到评测文件）

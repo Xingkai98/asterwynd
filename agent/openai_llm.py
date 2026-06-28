@@ -6,7 +6,7 @@ from typing import Optional
 from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta
 from agent.message import Message
 
-logger = logging.getLogger("myagent.llm.openai")
+logger = logging.getLogger("asterwynd.llm.openai")
 
 
 class OpenAILLM(BaseLLM):

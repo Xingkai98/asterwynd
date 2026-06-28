@@ -96,7 +96,7 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
 
 def test_build_llm_enables_streaming_by_default(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.delenv("MYAGENT_STREAMING", raising=False)
+    monkeypatch.delenv("ASTERWYND_STREAMING", raising=False)
 
     llm = cli.build_llm("openai")
 
@@ -106,7 +106,7 @@ def test_build_llm_enables_streaming_by_default(monkeypatch):
 
 def test_build_llm_allows_disabling_streaming(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("MYAGENT_STREAMING", "disabled")
+    monkeypatch.setenv("ASTERWYND_STREAMING", "disabled")
 
     llm = cli.build_llm("openai")
 
@@ -219,6 +219,61 @@ def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):
     assert fake.run_ids == ["run-1", "run-2"]
 
 
+def test_cli_interactive_prints_asterwynd_banner(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Navigate by stars. Prove with traces." in result.stdout
+    assert "以星为引，变更有证。" in result.stdout
+    assert "Asterwynd 交互模式" in result.stdout
+
+
+def test_cli_interactive_can_suppress_banner(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive", "--no-banner"],
+        input="exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Navigate by stars. Prove with traces." not in result.stdout
+    assert "以星为引，变更有证。" not in result.stdout
+    assert "Asterwynd 交互模式" in result.stdout
+
+
+def test_cli_single_prompt_does_not_print_asterwynd_banner(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(cli.app, ["main", "hello"])
+
+    assert result.exit_code == 0
+    assert "Navigate by stars. Prove with traces." not in result.stdout
+    assert "以星为引，变更有证。" not in result.stdout
+
+
 def test_cli_interactive_mode_command_changes_session_mode(monkeypatch):
     fake = FakeAgent()
     monkeypatch.setattr(
@@ -289,7 +344,7 @@ def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
 def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
     fake = FakeAgent()
     captured = {}
-    config_path = tmp_path / "myagent.yaml"
+    config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
 
     def build_agent(model=None, provider="openai", mode="build", config=None):
@@ -312,9 +367,9 @@ def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
 def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
     fake = FakeAgent()
     captured = {}
-    config_path = tmp_path / "myagent.yaml"
+    config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
-    monkeypatch.setenv("MYAGENT_MODE", "read_only")
+    monkeypatch.setenv("ASTERWYND_MODE", "read_only")
 
     def build_agent(model=None, provider="openai", mode="build", config=None):
         captured["mode"] = mode
@@ -339,7 +394,7 @@ def test_cli_rejects_bypass_mode():
 
 
 def test_cli_reports_invalid_config(tmp_path):
-    config_path = tmp_path / "myagent.yaml"
+    config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent: [", encoding="utf-8")
 
     result = CliRunner().invoke(
@@ -360,7 +415,7 @@ def test_cli_single_prompt_requires_prompt():
 
 def test_cli_missing_openai_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MYAGENT_MODEL", raising=False)
+    monkeypatch.delenv("ASTERWYND_MODEL", raising=False)
 
     result = CliRunner().invoke(cli.app, ["main", "hello", "--provider", "openai"])
 

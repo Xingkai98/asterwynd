@@ -1,6 +1,6 @@
 # agent/__init__.py
 """
-MyAgent — 轻量级通用 AI Agent 框架
+Asterwynd — 轻量级通用 AI Agent 框架
 """
 
 from agent.loop import AgentLoop

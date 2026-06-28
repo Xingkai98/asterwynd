@@ -1,0 +1,13 @@
+{
+  "id": "asterwynd-006-memory-manager",
+  "repo": "local/asterwynd",
+  "base_commit": "5eb53a2",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/agent/memory/test_memory.py",
+  "category": "agent",
+  "difficulty": "medium",
+  "timeout_seconds": 180,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": null
+}

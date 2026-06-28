@@ -1,6 +1,6 @@
 # 开发指南
 
-本文档记录 MyAgent 的本地开发、运行和常用命令。
+本文档记录 Asterwynd 的本地开发、运行和常用命令。
 
 ## 依赖安装
 
@@ -53,7 +53,7 @@ uv run python cli.py web --port 8000
 启动 Debug Web UI：
 
 ```bash
-MYAGENT_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
+ASTERWYND_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 ```
 
 运行 fake benchmark smoke：
@@ -64,15 +64,15 @@ uv run python cli.py benchmark benchmarks/tasks \
   --source-repo . \
   --runs-dir /tmp/smoke \
   --fake-edit-file README.md \
-  --fake-old-string '# MyAgent' \
-  --fake-new-string '# MyAgent Coding Agent'
+  --fake-old-string '# Asterwynd' \
+  --fake-new-string '# Asterwynd Coding Agent'
 ```
 
-运行 MyAgent benchmark：
+运行 Asterwynd benchmark：
 
 ```bash
 uv run python cli.py benchmark benchmarks/tasks \
-  --agent myagent \
+  --agent asterwynd \
   --source-repo . \
   --runs-dir /tmp/bench
 ```
@@ -83,7 +83,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 
 ```bash
 uv run python cli.py benchmark benchmarks/tasks \
-  --agent myagent \
+  --agent asterwynd \
   --provider anthropic \
   --parallel 4 \
   --runs-dir /tmp/bench \
@@ -98,20 +98,20 @@ sudo ./scripts/start-docker-daemon.sh
 
 这个脚本只用于开发和验证当前环境，不属于 benchmark 运行时语义；benchmark CLI 只负责检测 Docker 是否可用。
 
-也可以在 `myagent.yaml` 中设置默认 benchmark 参数，字段示例见仓库根目录的 `myagent.example.yaml`。
+也可以在 `asterwynd.yaml` 中设置默认 benchmark 参数，字段示例见仓库根目录的 `asterwynd.example.yaml`。
 
-运行 Claw-SWE-Bench 对比评测前，需要先准备 SWE-bench Docker 镜像、独立 Python、MyAgent venv 和 API key。完整环境说明见仓库根目录 `CLAW-SWE-BENCH.md`。最小命令形态：
+运行 Claw-SWE-Bench 对比评测前，需要先准备 SWE-bench Docker 镜像、独立 Python、Asterwynd venv 和 API key。完整环境说明见仓库根目录 `CLAW-SWE-BENCH.md`。最小命令形态：
 
 ```bash
 cd claw-swe-bench
 uv run python run_infer.py \
-  --claw myagent \
+  --claw asterwynd \
   --dataset verified \
   --instance_file config/verified_mini_50.txt \
-  --run_id myagent-lite \
+  --run_id asterwynd-lite \
   --model deepseek-v4-pro
 
-uv run python run_eval.py --run_id myagent-lite --dataset verified
+uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 ```
 
 ## 环境变量
@@ -122,25 +122,25 @@ uv run python run_eval.py --run_id myagent-lite --dataset verified
 | `OPENAI_BASE_URL` | OpenAI-compatible provider base URL |
 | `ANTHROPIC_API_KEY` | Anthropic-compatible provider API key |
 | `ANTHROPIC_BASE_URL` | Anthropic-compatible provider base URL |
-| `MYAGENT_PROVIDER` | provider，通常是 `openai` 或 `anthropic` |
-| `MYAGENT_MODEL` | 默认模型 |
-| `MYAGENT_STREAMING` | 控制支持 streaming 的 provider 是否启用流式输出；默认开启，设为 `disabled` / `off` / `false` / `0` 可关闭 |
-| `MYAGENT_DEBUG=enabled` | 开启 Web Debug 视图 |
-| `MYAGENT_LOG_LEVEL=DEBUG` | 开启更详细日志 |
-| `MYAGENT_MODE` | 覆盖 `myagent.yaml` 中的默认 agent mode |
-| `MYAGENT_BENCHMARK_PARALLEL` | 覆盖 `myagent.yaml` 中的 benchmark 并发数 |
-| `MYAGENT_BENCHMARK_TIMEOUT` | 覆盖 `myagent.yaml` 中的 benchmark 超时 |
-| `MYAGENT_TAVILY_API_KEY` | Tavily Search provider API key |
-| `MYAGENT_BRAVE_SEARCH_API_KEY` | Brave Search provider API key |
-| `MYAGENT_SEARXNG_BASE_URL` | SearXNG provider base URL |
+| `ASTERWYND_PROVIDER` | provider，通常是 `openai` 或 `anthropic` |
+| `ASTERWYND_MODEL` | 默认模型 |
+| `ASTERWYND_STREAMING` | 控制支持 streaming 的 provider 是否启用流式输出；默认开启，设为 `disabled` / `off` / `false` / `0` 可关闭 |
+| `ASTERWYND_DEBUG=enabled` | 开启 Web Debug 视图 |
+| `ASTERWYND_LOG_LEVEL=DEBUG` | 开启更详细日志 |
+| `ASTERWYND_MODE` | 覆盖 `asterwynd.yaml` 中的默认 agent mode |
+| `ASTERWYND_BENCHMARK_PARALLEL` | 覆盖 `asterwynd.yaml` 中的 benchmark 并发数 |
+| `ASTERWYND_BENCHMARK_TIMEOUT` | 覆盖 `asterwynd.yaml` 中的 benchmark 超时 |
+| `ASTERWYND_TAVILY_API_KEY` | Tavily Search provider API key |
+| `ASTERWYND_BRAVE_SEARCH_API_KEY` | Brave Search provider API key |
+| `ASTERWYND_SEARXNG_BASE_URL` | SearXNG provider base URL |
 | `CLAW_PYTHON_HOME` / `CLAW_PYTHON_BIN` | Claw-SWE-Bench 容器内执行用的独立 Python 路径 |
-| `MYAGENT_SRC` | Claw-SWE-Bench 挂载到容器内的 MyAgent 源码路径 |
-| `MYAGENT_VENV` | Claw-SWE-Bench 挂载到容器内的 MyAgent venv 路径 |
+| `ASTERWYND_SRC` | Claw-SWE-Bench 挂载到容器内的 Asterwynd 源码路径 |
+| `ASTERWYND_VENV` | Claw-SWE-Bench 挂载到容器内的 Asterwynd venv 路径 |
 | `CLAW_NO_RESOURCE_LIMITS` | 在当前开发环境需要时跳过 Claw-SWE-Bench cgroup 资源限制 |
 
 ## 结构化配置
 
-非敏感、结构化配置写入 `myagent.yaml`；个人配置文件默认不提交，字段示例见 `myagent.example.yaml`。工具策略只从 YAML 读取：
+非敏感、结构化配置写入 `asterwynd.yaml`；个人配置文件默认不提交，字段示例见 `asterwynd.example.yaml`。工具策略只从 YAML 读取：
 
 - `agent.default_mode`
 - `modes.<mode>.deny_tools`

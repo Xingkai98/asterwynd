@@ -293,7 +293,7 @@ async def test_benchmark_runner_mixed_local_and_docker_tasks_keep_local_results(
         tmp_path,
         base_commit=base_commit,
         test_command="grep -q 'Version 2' app.py",
-        task_id="myagent-001-local",
+        task_id="asterwynd-001-local",
     )
     _task_dir(
         tmp_path,
@@ -332,7 +332,7 @@ async def test_benchmark_runner_mixed_local_and_docker_tasks_keep_local_results(
     assert metadata.failed == 0
 
     run_dir = tmp_path / "runs" / "run-mixed" / "tasks"
-    local_result = json.loads((run_dir / "myagent-001-local" / "result.json").read_text())
+    local_result = json.loads((run_dir / "asterwynd-001-local" / "result.json").read_text())
     docker_result = json.loads(
         (run_dir / "swebench-psf__requests-1142" / "result.json").read_text()
     )
@@ -360,7 +360,7 @@ def test_run_swebench_harness_reads_report_and_maps_pass(repo, tmp_path, monkeyp
         agent_runner=FakeAgentRunner(),
         source_repo=repo,
         runs_dir=tmp_path / "runs",
-        agent_name="myagent",
+        agent_name="asterwynd",
         model="test-model",
     )
     task_output = tmp_path / "runs" / "task-output"
@@ -370,13 +370,13 @@ def test_run_swebench_harness_reads_report_and_maps_pass(repo, tmp_path, monkeyp
 
     def fake_run(command, cwd, capture_output, text, timeout):
         calls.append(command)
-        run_id = "myagent-swebench-psf__requests-1142"
+        run_id = "asterwynd-swebench-psf__requests-1142"
         report_path = (
             task_output
             / "logs"
             / "run_evaluation"
             / run_id
-            / "myagent:test-model"
+            / "asterwynd:test-model"
             / "psf__requests-1142"
             / "report.json"
         )

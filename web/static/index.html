@@ -3,13 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>MyAgent Web UI</title>
-<link rel="stylesheet" href="/static/style.css?v=7">
+<title>Asterwynd · Asterwynd Web UI</title>
+<link rel="stylesheet" href="/static/style.css?v=11">
 </head>
 <body>
 <div id="app">
   <header>
-    <h1>MyAgent</h1>
+    <div class="brand-lockup" aria-label="Asterwynd">
+      <img src="/assets/asterwynd-web-wordmark.png?v=3" alt="Asterwynd" class="brand-wordmark">
+      <span class="brand-fallback">Asterwynd</span>
+    </div>
     <nav id="tabs">
       <button class="tab active" data-tab="chat">Chat</button>
       <button class="tab" data-tab="debug" id="debug-tab" style="display:none">Debug</button>

@@ -10,7 +10,7 @@
 
 系统 SHALL NOT 声称已经支持 MCP server 连接、MCP tool discovery、MCP tool 注册或 MCP 权限隔离。
 
-#### Scenario: 当前运行 MyAgent
+#### Scenario: 当前运行 Asterwynd
 
 - **GIVEN** 用户通过 CLI、Web 或 benchmark 运行当前系统
 - **WHEN** 系统构造工具 registry

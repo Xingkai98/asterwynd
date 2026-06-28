@@ -9,7 +9,7 @@ from agent.result import RunResult
 
 
 def debug_enabled() -> bool:
-    return os.environ.get("MYAGENT_DEBUG", "").lower() in ("1", "true", "enabled", "yes", "on")
+    return os.environ.get("ASTERWYND_DEBUG", "").lower() in ("1", "true", "enabled", "yes", "on")
 
 
 class DebugHook:

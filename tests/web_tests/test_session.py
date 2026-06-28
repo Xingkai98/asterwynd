@@ -500,19 +500,19 @@ async def test_debug_hook_standalone():
 
 
 def test_debug_enabled_with_env():
-    """debug_enabled() respects MYAGENT_DEBUG env var."""
+    """debug_enabled() respects ASTERWYND_DEBUG env var."""
     # Save
-    old = os.environ.get("MYAGENT_DEBUG", "")
+    old = os.environ.get("ASTERWYND_DEBUG", "")
     try:
-        os.environ["MYAGENT_DEBUG"] = "enabled"
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
         assert debug_enabled() is True
-        os.environ["MYAGENT_DEBUG"] = "1"
+        os.environ["ASTERWYND_DEBUG"] = "1"
         assert debug_enabled() is True
-        os.environ["MYAGENT_DEBUG"] = "true"
+        os.environ["ASTERWYND_DEBUG"] = "true"
         assert debug_enabled() is True
-        os.environ["MYAGENT_DEBUG"] = "0"
+        os.environ["ASTERWYND_DEBUG"] = "0"
         assert debug_enabled() is False
-        del os.environ["MYAGENT_DEBUG"]
+        del os.environ["ASTERWYND_DEBUG"]
         assert debug_enabled() is False
     finally:
-        os.environ["MYAGENT_DEBUG"] = old
+        os.environ["ASTERWYND_DEBUG"] = old

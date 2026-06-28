@@ -1,0 +1,109 @@
+diff --git a/agent/hooks/builtin/logging.py b/agent/hooks/builtin/logging.py
+new file mode 100644
+index 0000000..db8d0f4
+--- /dev/null
++++ b/agent/hooks/builtin/logging.py
+@@ -0,0 +1,35 @@
++# agent/hooks/builtin/logging.py
++import logging
++from typing import TYPE_CHECKING
++from agent.message import Message
++from agent.tools.base import ToolCall
++
++if TYPE_CHECKING:
++    from agent.result import RunResult
++    from agent.llm import LLMResponse
++
++logger = logging.getLogger("asterwynd.hooks.logging")
++
++class LoggingHook:
++    def __init__(self, verbose: bool = False):
++        self.verbose = verbose
++
++    async def before_iteration(self, iteration: int, messages: list[Message]) -> None:
++        logger.info(f"[Iteration {iteration}] messages={len(messages)}")
++
++    async def after_llm_call(self, response: "LLMResponse") -> None:
++        if self.verbose:
++            logger.debug(f"LLM response: content={response.content!r}, tools={len(response.tool_calls)}")
++
++    async def before_tool_execute(self, tool_call: ToolCall) -> None:
++        logger.info(f"[Tool] executing {tool_call.name}({tool_call.arguments})")
++
++    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
++        preview = result[:200] + "..." if len(result) > 200 else result
++        logger.info(f"[Tool] {tool_call.name} -> {preview!r}")
++
++    async def on_error(self, error: Exception) -> None:
++        logger.error(f"Error: {error}")
++
++    async def on_completion(self, result: "RunResult") -> None:
++        logger.info(f"[Done] reason={result.stop_reason}, tools={len(result.tool_calls_made)}")
+\ No newline at end of file
+diff --git a/agent/hooks/builtin/tracing.py b/agent/hooks/builtin/tracing.py
+new file mode 100644
+index 0000000..68a6ac2
+--- /dev/null
++++ b/agent/hooks/builtin/tracing.py
+@@ -0,0 +1,60 @@
++# agent/hooks/builtin/tracing.py
++import time
++import logging
++from dataclasses import dataclass, field
++from typing import TYPE_CHECKING
++from agent.message import Message
++from agent.tools.base import ToolCall
++
++if TYPE_CHECKING:
++    from agent.result import RunResult
++    from agent.llm import LLMResponse
++
++logger = logging.getLogger("asterwynd.hooks.tracing")
++
++@dataclass
++class ToolCallTrace:
++    tool_name: str
++    arguments: dict
++    duration_ms: float = 0.0
++    success: bool = True
++
++class TracingHook:
++    def __init__(self):
++        self.calls: list[ToolCallTrace] = []
++        self._start: float = 0
++
++    async def before_tool_execute(self, tool_call: ToolCall) -> None:
++        self._start = time.perf_counter()
++        trace = ToolCallTrace(
++            tool_name=tool_call.name,
++            arguments=tool_call.arguments,
++        )
++        self.calls.append(trace)
++
++    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
++        duration_ms = (time.perf_counter() - self._start) * 1000
++        success = not result.startswith("[Error")
++        # Update the trace created in before_tool_execute
++        if self.calls:
++            self.calls[-1].duration_ms = round(duration_ms, 2)
++            self.calls[-1].success = success
++        logger.debug(f"[Trace] {tool_call.name} took {duration_ms:.2f}ms success={success}")
++
++    def get_summary(self) -> dict:
++        if not self.calls:
++            return {}
++        total = len(self.calls)
++        successful = sum(1 for c in self.calls if c.success)
++        avg_ms = sum(c.duration_ms for c in self.calls) / total
++        return {
++            "total_calls": total,
++            "successful": successful,
++            "failed": total - successful,
++            "avg_duration_ms": round(avg_ms, 2),
++        }
++
++    async def before_iteration(self, iteration: int, messages: list[Message]) -> None: pass
++    async def after_llm_call(self, response: "LLMResponse") -> None: pass
++    async def on_error(self, error: Exception) -> None: pass
++    async def on_completion(self, result: "RunResult") -> None: pass
+\ No newline at end of file
