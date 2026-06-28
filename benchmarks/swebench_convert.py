@@ -1,4 +1,4 @@
-"""Convert SWE-bench Verified instances to MyAgent benchmark task format.
+"""Convert SWE-bench Verified instances to Asterwynd benchmark task format.
 
 Usage:
     python benchmarks/swebench_convert.py              # interactive: pick from top candidates
@@ -87,7 +87,7 @@ def build_test_command(repo: str, fail_to_pass: str) -> str:
 
 
 def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Path]:
-    """Generate MyAgent task directories for the given SWE-bench instance IDs."""
+    """Generate Asterwynd task directories for the given SWE-bench instance IDs."""
     ds = load_verified()
     ds_dict = {ex["instance_id"]: ex for ex in ds}
 
@@ -206,7 +206,7 @@ def list_candidates():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert SWE-bench instances to MyAgent tasks")
+    parser = argparse.ArgumentParser(description="Convert SWE-bench instances to Asterwynd tasks")
     parser.add_argument("--all-requests", action="store_true",
                         help="Generate all 6 psf/requests <15 min fix tasks")
     parser.add_argument("--batch", action="store_true",

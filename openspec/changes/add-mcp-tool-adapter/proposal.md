@@ -1,6 +1,6 @@
 ## Why
 
-MCP 是扩展 agent 工具生态的重要协议。当前 MyAgent 只支持本地 Python Tool，不能发现或注册外部 MCP server 暴露的工具。
+MCP 是扩展 agent 工具生态的重要协议。当前 Asterwynd 只支持本地 Python Tool，不能发现或注册外部 MCP server 暴露的工具。
 
 本 change 先实现最小可测试的 MCP adapter：配置 server、发现工具、映射 schema、执行调用、应用权限边界。
 

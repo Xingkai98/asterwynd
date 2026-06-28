@@ -30,6 +30,10 @@
 
 - `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
+### 当前分支：项目重命名
+
+- `rename-project-to-asterwynd`：当前分支实现中，用于将活动代码、配置、CLI、Web、benchmark 和入口文档从旧项目名全量迁移到 Asterwynd；不纳入核心 runtime 批次，合入后应立即归档。
+
 ### 第三批：工具权限模型前置
 
 - `refine-tool-permission-model`：优先级最高，应在 MCP、browser 和后续自定义工具能力前完成，避免外部工具继续扩大 `dangerous` 语义。
@@ -119,6 +123,26 @@
 - 最小 Playwright browser session 管理。
 - 打开页面、读取页面信息和截图工具。
 - ToolRegistry、mode policy 和 trace 接入。
+
+### 5. `rename-project-to-asterwynd`
+
+状态：当前分支实现中，待测试补齐和合入后归档。
+
+批次：当前分支项目重命名，不阻塞 runtime、工具权限模型、MCP、browser 或 TUI 主线。
+
+建议顺序原因：
+
+- 旧项目名过于普通，当前分支已完成命名探索并选择 `Asterwynd` 作为正式项目名。
+- 用户已确认本 change 一次性覆盖活动代码、配置、CLI、Web、benchmark 和入口文档，不保留旧名兼容入口。
+- `agent/` Python package 目录保持不变，历史 archive、benchmark reports、discussion 原文和日志不重写。
+
+主要交付：
+
+- README / README_EN 顶部 wordmark、语言链接、slogan 和第一段介绍。
+- 共享品牌常量和 TUI 纯文本 wordmark 资产。
+- CLI 交互模式 banner 和 `--no-banner` 关闭入口。
+- Web header wordmark、静态品牌资产挂载和移动端可读降级。
+- Python project name、CLI script、`asterwynd.yaml`、`ASTERWYND_*`、`AsterwyndConfig`、`AsterwyndRunner` 和活动 `asterwynd-*` benchmark task。
 
 ## 已完成待归档
 

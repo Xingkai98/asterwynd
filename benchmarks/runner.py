@@ -47,7 +47,7 @@ class BenchmarkRunner:
         agent_runner: AgentRunner,
         source_repo: str | Path,
         runs_dir: str | Path,
-        agent_name: str = "myagent",
+        agent_name: str = "asterwynd",
         model: str = "",
         mode: str = "build",
         parallel: int = 1,
@@ -742,7 +742,7 @@ class BenchmarkRunner:
         }
         predictions_path.write_text(json.dumps(prediction) + "\n", errors="replace")
 
-        run_id = f"myagent-{task.id}"
+        run_id = f"asterwynd-{task.id}"
         command = [
             sys.executable,
             "-m",

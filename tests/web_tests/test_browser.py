@@ -4,7 +4,7 @@
 Requires: playwright browsers installed and --run-real-api flag.
 Usage:
     playwright install chromium
-    MYAGENT_DEBUG=enabled python -m pytest tests/web_tests/test_browser.py --run-real-api -v
+    ASTERWYND_DEBUG=enabled python -m pytest tests/web_tests/test_browser.py --run-real-api -v
 """
 import os
 import sys
@@ -134,9 +134,9 @@ async def test_chat_tool_call_display(page, web_server):
 @pytest.mark.real_api
 @pytest.mark.asyncio
 async def test_debug_tab_hidden_default(page, web_server):
-    """Debug tab should not be visible when MYAGENT_DEBUG is not set."""
-    if os.environ.get("MYAGENT_DEBUG", "").lower() in ("1", "true", "enabled", "yes", "on"):
-        pytest.skip("MYAGENT_DEBUG enabled - server in debug mode, debug tab is visible")
+    """Debug tab should not be visible when ASTERWYND_DEBUG is not set."""
+    if os.environ.get("ASTERWYND_DEBUG", "").lower() in ("1", "true", "enabled", "yes", "on"):
+        pytest.skip("ASTERWYND_DEBUG enabled - server in debug mode, debug tab is visible")
 
     await page.goto(web_server)
     await page.wait_for_selector("#user-input")
@@ -151,13 +151,13 @@ async def test_debug_tab_hidden_default(page, web_server):
 @pytest.mark.real_api
 @pytest.mark.asyncio
 async def test_debug_tab_visible_when_enabled(page, web_server):
-    """Debug tab should be visible when MYAGENT_DEBUG=enabled.
+    """Debug tab should be visible when ASTERWYND_DEBUG=enabled.
 
     Note: This test requires the server to have been started with debug enabled.
-    The fixture uses the current MYAGENT_DEBUG value.
+    The fixture uses the current ASTERWYND_DEBUG value.
     """
-    if os.environ.get("MYAGENT_DEBUG", "").lower() not in ("1", "true", "enabled", "yes", "on"):
-        pytest.skip("MYAGENT_DEBUG not enabled - server not in debug mode")
+    if os.environ.get("ASTERWYND_DEBUG", "").lower() not in ("1", "true", "enabled", "yes", "on"):
+        pytest.skip("ASTERWYND_DEBUG not enabled - server not in debug mode")
 
     await page.goto(web_server)
     await page.wait_for_selector("#user-input")
@@ -165,15 +165,15 @@ async def test_debug_tab_visible_when_enabled(page, web_server):
     debug_tab = await page.query_selector("#debug-tab")
     assert debug_tab is not None
     is_visible = await debug_tab.is_visible()
-    assert is_visible, "Debug tab should be visible when MYAGENT_DEBUG is enabled"
+    assert is_visible, "Debug tab should be visible when ASTERWYND_DEBUG is enabled"
 
 
 @pytest.mark.real_api
 @pytest.mark.asyncio
 async def test_debug_shows_iterations(page, web_server):
     """When debug is enabled, sending a message populates the debug view."""
-    if os.environ.get("MYAGENT_DEBUG", "").lower() not in ("1", "true", "enabled", "yes", "on"):
-        pytest.skip("MYAGENT_DEBUG not enabled")
+    if os.environ.get("ASTERWYND_DEBUG", "").lower() not in ("1", "true", "enabled", "yes", "on"):
+        pytest.skip("ASTERWYND_DEBUG not enabled")
 
     await page.goto(web_server)
     await page.wait_for_selector("#user-input")
@@ -213,7 +213,7 @@ async def test_static_assets_load(page, web_server):
 
     # Check title
     title = await page.title()
-    assert "MyAgent" in title
+    assert "Asterwynd" in title
 
     # Check essential elements
     assert await page.query_selector("#messages") is not None

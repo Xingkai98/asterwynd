@@ -32,8 +32,8 @@ def test_build_default_tool_registry_filters_read_only_mode():
 
 
 def test_build_default_tool_registry_passes_web_search_config(monkeypatch):
-    monkeypatch.setenv("MYAGENT_TAVILY_API_KEY", "secret")
-    monkeypatch.setenv("MYAGENT_BRAVE_SEARCH_API_KEY", "secret")
+    monkeypatch.setenv("ASTERWYND_TAVILY_API_KEY", "secret")
+    monkeypatch.setenv("ASTERWYND_BRAVE_SEARCH_API_KEY", "secret")
 
     registry = build_default_tool_registry(
         web_search_config=WebSearchConfig(

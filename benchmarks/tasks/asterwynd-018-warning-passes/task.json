@@ -1,0 +1,13 @@
+{
+  "id": "asterwynd-018-warning-passes",
+  "repo": "local/asterwynd",
+  "base_commit": "594fa47",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/benchmark/test_benchmark_runner.py",
+  "category": "benchmark",
+  "difficulty": "easy",
+  "timeout_seconds": 180,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": null
+}

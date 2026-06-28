@@ -45,10 +45,25 @@ header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-header h1 {
-  font-size: 1.2rem;
-  font-weight: 600;
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: clamp(118px, 13vw, 156px);
+}
+.brand-wordmark {
+  display: block;
+  width: clamp(118px, 13vw, 156px);
+  height: auto;
+  max-height: 34px;
+  object-fit: contain;
+}
+.brand-fallback {
+  display: none;
+  font-size: 1.05rem;
+  font-weight: 700;
   color: var(--accent);
+  letter-spacing: 0;
 }
 #tabs { display: flex; gap: 4px; }
 .tab {
@@ -503,8 +518,12 @@ main { flex: 1; min-height: 0; overflow: hidden; }
     gap: 8px;
     flex-wrap: wrap;
   }
-  header h1 {
-    font-size: 1rem;
+  .brand-lockup {
+    min-width: clamp(112px, 32vw, 132px);
+  }
+  .brand-wordmark {
+    width: clamp(112px, 32vw, 132px);
+    max-height: 29px;
   }
   .tab {
     padding: 4px 10px;
@@ -558,7 +577,11 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 
 /* Extra small (<= 380px, like iPhone SE) */
 @media (max-width: 380px) {
-  header h1 {
+  .brand-wordmark {
+    display: none;
+  }
+  .brand-fallback {
+    display: inline;
     font-size: 0.9rem;
   }
   .tab {

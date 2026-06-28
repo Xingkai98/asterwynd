@@ -6,7 +6,7 @@
 
 ## 项目定位
 
-MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项目。主线是 Agent 运行时、工具调用、上下文管理、代码修改、验证、可观测性和 benchmark 闭环；AI Infra、LLM、RAG、后端工程能力都作为支撑能力服务于这条主线。
+Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项目。主线是 Agent 运行时、工具调用、上下文管理、代码修改、验证、可观测性和 benchmark 闭环；AI Infra、LLM、RAG、后端工程能力都作为支撑能力服务于这条主线。
 
 项目词汇以 [CONTEXT.md](./CONTEXT.md) 为准。
 
@@ -31,6 +31,20 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - 这些路径只是当前工作区的参考资料位置，不是项目依赖，也不要求其他开发者拥有相同目录结构。
 - 不要把参考仓库路径、`.codegraph/` 产物或本地索引结果作为可提交项目资产；若需要沉淀结论，应写入本仓库的需求、设计、ADR 或讨论纪要。
 - 调研时优先用 codegraph 理解跨文件关系，再用 `rg`、文件阅读和测试补充验证；不要只凭关键词搜索下结论。
+
+## Agent skills
+
+### Issue tracker
+
+Issues 和 PRD 发布到 GitHub Issues，仓库为 `Xingkai98/asterwynd`。见 [Issue tracker](./docs/agents/issue-tracker.md)。
+
+### Triage labels
+
+使用 Matt Pocock skills 默认 triage 角色标签：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。见 [Triage labels](./docs/agents/triage-labels.md)。
+
+### Domain docs
+
+本仓库是 single-context：优先读取根目录 [CONTEXT.md](./CONTEXT.md)；只有存在且相关时才读取 `docs/adr/`。见 [Domain docs](./docs/agents/domain.md)。
 
 ## 常用命令
 

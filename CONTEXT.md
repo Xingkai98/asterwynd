@@ -1,6 +1,6 @@
-# MyAgent 上下文
+# Asterwynd 上下文
 
-MyAgent 是一个以拿到大厂 offer 为目标的 Coding Agent 项目。本词汇表定义需求、路线图、面试材料和设计文档中使用的项目语言。
+Asterwynd 是一个以拿到大厂 offer 为目标的 Coding Agent 项目。本词汇表定义需求、路线图、面试材料和设计文档中使用的项目语言。
 
 ## 语言
 

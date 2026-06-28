@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from agent.result import RunResult
     from agent.llm import LLMResponse
 
-logger = logging.getLogger("myagent.hooks.tracing")
+logger = logging.getLogger("asterwynd.hooks.tracing")
 
 @dataclass
 class ToolCallTrace:

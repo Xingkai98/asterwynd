@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义 MyAgent 的核心运行循环、消息状态、工具调用协议和停止条件。当前实现以 `agent/loop.py` 的 `AgentLoop` 为核心。
+定义 Asterwynd 的核心运行循环、消息状态、工具调用协议和停止条件。当前实现以 `agent/loop.py` 的 `AgentLoop` 为核心。
 ## Requirements
 ### Requirement: AgentLoop 执行消息循环
 

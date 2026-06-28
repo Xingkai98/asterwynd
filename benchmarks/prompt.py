@@ -6,7 +6,7 @@ from agent.message import Message, system_message
 from benchmarks.task_schema import TaskSpec
 
 
-CODING_SYSTEM_PROMPT = """You are MyAgent running as a local coding agent.
+CODING_SYSTEM_PROMPT = """You are Asterwynd running as a local coding agent.
 
 Work only inside the provided repository workspace. Inspect files before making
 changes when context is needed. Prefer the Edit tool for precise code changes.

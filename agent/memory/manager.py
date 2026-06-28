@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from agent.llm import LLM
     from agent.message import Message
 
-logger = logging.getLogger("myagent.memory")
+logger = logging.getLogger("asterwynd.memory")
 
 try:
     import tiktoken

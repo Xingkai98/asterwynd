@@ -89,7 +89,7 @@ def test_benchmark_cli_uses_yaml_default_mode(tmp_path):
             }
         )
     )
-    config_path = tmp_path / "myagent.yaml"
+    config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
     runs_dir = tmp_path / "runs"
 

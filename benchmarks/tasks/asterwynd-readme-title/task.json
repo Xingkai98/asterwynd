@@ -1,0 +1,11 @@
+{
+  "id": "asterwynd-readme-title",
+  "repo": "local/asterwynd",
+  "base_commit": "c9d5e90d6c605f298451ff841d05932f87c66575",
+  "problem_statement_file": "issue.md",
+  "test_command": "grep -q '^# Asterwynd Coding Agent$' README.md",
+  "timeout_seconds": 60,
+  "gold_patch_file": "gold.patch",
+  "category": "feature",
+  "difficulty": "easy"
+}

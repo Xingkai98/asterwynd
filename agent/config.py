@@ -18,7 +18,7 @@ from agent.run_config import AgentMode, parse_agent_mode
 from agent.tool_result_display import ToolResultDisplayConfig
 
 
-CONFIG_FILENAME = "myagent.yaml"
+CONFIG_FILENAME = "asterwynd.yaml"
 SUPPORTED_SEARCH_PROVIDER_NAMES = frozenset(
     {"duckduckgo-html", "searxng", "brave", "tavily"}
 )
@@ -65,7 +65,7 @@ class BenchmarkConfig:
 
 
 @dataclass(frozen=True)
-class MyAgentConfig:
+class AsterwyndConfig:
     path: Path | None = None
     agent: AgentConfig = field(default_factory=AgentConfig)
     modes: dict[AgentMode, ModeConfig] = field(default_factory=dict)
@@ -99,7 +99,7 @@ def load_config(
     *,
     start_dir: str | Path | None = None,
     cli_overrides: ConfigOverrides | None = None,
-) -> MyAgentConfig:
+) -> AsterwyndConfig:
     path = _resolve_config_path(config_path, start_dir)
     config = _load_yaml_config(path)
     config = _apply_environment(config)
@@ -147,9 +147,9 @@ def _find_git_root(start: Path) -> Path | None:
         current = current.parent
 
 
-def _load_yaml_config(path: Path | None) -> MyAgentConfig:
+def _load_yaml_config(path: Path | None) -> AsterwyndConfig:
     if path is None:
-        return MyAgentConfig()
+        return AsterwyndConfig()
 
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -157,11 +157,11 @@ def _load_yaml_config(path: Path | None) -> MyAgentConfig:
         raise ConfigError(f"Invalid YAML in {path}: {exc}") from exc
 
     if raw is None:
-        return MyAgentConfig(path=path)
+        return AsterwyndConfig(path=path)
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: top-level YAML value must be a mapping")
 
-    return MyAgentConfig(
+    return AsterwyndConfig(
         path=path,
         agent=_parse_agent_config(raw.get("agent", {}), path),
         modes=_parse_modes_config(raw.get("modes", {}), path),
@@ -170,30 +170,30 @@ def _load_yaml_config(path: Path | None) -> MyAgentConfig:
     )
 
 
-def _apply_environment(config: MyAgentConfig) -> MyAgentConfig:
+def _apply_environment(config: AsterwyndConfig) -> AsterwyndConfig:
     agent = config.agent
-    if mode := os.environ.get("MYAGENT_MODE"):
+    if mode := os.environ.get("ASTERWYND_MODE"):
         try:
             agent = replace(agent, default_mode=parse_agent_mode(mode))
         except ValueError as exc:
-            raise ConfigError(f"MYAGENT_MODE: {exc}") from exc
+            raise ConfigError(f"ASTERWYND_MODE: {exc}") from exc
 
     benchmark = config.benchmark
-    if parallel := os.environ.get("MYAGENT_BENCHMARK_PARALLEL"):
+    if parallel := os.environ.get("ASTERWYND_BENCHMARK_PARALLEL"):
         benchmark = replace(
             benchmark,
-            parallel=_parse_positive_int(parallel, "MYAGENT_BENCHMARK_PARALLEL"),
+            parallel=_parse_positive_int(parallel, "ASTERWYND_BENCHMARK_PARALLEL"),
         )
-    if timeout := os.environ.get("MYAGENT_BENCHMARK_TIMEOUT"):
+    if timeout := os.environ.get("ASTERWYND_BENCHMARK_TIMEOUT"):
         benchmark = replace(
             benchmark,
-            timeout_seconds=_parse_positive_int(timeout, "MYAGENT_BENCHMARK_TIMEOUT"),
+            timeout_seconds=_parse_positive_int(timeout, "ASTERWYND_BENCHMARK_TIMEOUT"),
         )
 
     return replace(config, agent=agent, benchmark=benchmark)
 
 
-def _apply_cli_overrides(config: MyAgentConfig, overrides: ConfigOverrides) -> MyAgentConfig:
+def _apply_cli_overrides(config: AsterwyndConfig, overrides: ConfigOverrides) -> AsterwyndConfig:
     agent = config.agent
     if overrides.default_mode is not None:
         mode = overrides.default_mode
