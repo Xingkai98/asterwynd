@@ -144,3 +144,4 @@ CLI SHALL 在支持 streaming 的运行路径中实时打印 `assistant_delta.de
 - **GIVEN** provider 不支持 streaming
 - **WHEN** runtime 发布普通 `llm_response`
 - **THEN** CLI SHALL 输出 `llm_response.content`
+

@@ -3,9 +3,7 @@
 ## Purpose
 
 定义 Asterwynd 的结构化配置文件、环境变量覆盖和入口层配置解析规则。当前实现位于 `agent/config.py`，入口层包括 CLI、Web 和 benchmark。
-
 ## Requirements
-
 ### Requirement: 支持结构化 YAML 配置
 
 系统 SHALL 支持从 `asterwynd.yaml` 读取结构化非敏感配置。缺失配置文件时，系统 SHALL 使用环境变量和代码默认值继续启动；发现非法配置文件时，系统 SHALL fail fast 并返回可读错误。
@@ -17,12 +15,12 @@
 - **THEN** 系统 SHALL 使用代码默认值和支持的环境变量
 - **AND** SHALL NOT 因配置文件缺失而启动失败
 
-#### Scenario: 非法 YAML 配置
+#### Scenario: 环境变量使用正式前缀
 
-- **GIVEN** 系统发现或显式指定了非法 `asterwynd.yaml`
+- **GIVEN** 用户设置 `ASTERWYND_MODE` 或 `ASTERWYND_BENCHMARK_PARALLEL`
 - **WHEN** 系统加载配置
-- **THEN** 系统 SHALL 返回可读配置错误
-- **AND** SHALL NOT 静默退回默认值
+- **THEN** 系统 SHALL 使用 `ASTERWYND_*` 环境变量覆盖对应 YAML 配置
+- **AND** 系统 SHALL NOT 接受旧 `MYAGENT_*` 前缀作为兼容入口
 
 ### Requirement: 配置优先级明确
 
@@ -45,19 +43,13 @@
 
 系统 SHALL 支持通过 `--config <path>` 显式指定配置文件；未显式指定时，系统 SHALL 从当前工作目录开始向上查找 `asterwynd.yaml`，并在 git repo 根目录停止。
 
-#### Scenario: 显式配置文件路径
-
-- **GIVEN** 用户传入 `--config <path>`
-- **WHEN** 系统加载配置
-- **THEN** 系统 SHALL 只读取该显式配置文件
-- **AND** 如果文件不存在或非法，系统 SHALL fail fast
-
 #### Scenario: 子目录启动
 
 - **GIVEN** 用户从仓库子目录启动 CLI
 - **AND** 仓库根目录存在 `asterwynd.yaml`
 - **WHEN** 系统发现配置文件
 - **THEN** 系统 SHALL 读取仓库根目录的配置文件
+- **AND** 系统 SHALL NOT 继续查找旧 `myagent.yaml`
 
 ### Requirement: 配置只在入口层解析
 
@@ -86,3 +78,4 @@
 - **WHEN** CLI、Web 或 benchmark 入口构造工具集合
 - **THEN** 系统 SHALL 将该值传入 RepoMap 和 SymbolSearch 使用的 code intelligence 配置
 - **AND** 超过该大小的 tree-sitter 文件 SHALL 降级为文件级条目
+

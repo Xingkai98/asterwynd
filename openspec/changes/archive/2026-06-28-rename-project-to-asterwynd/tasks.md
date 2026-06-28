@@ -32,6 +32,6 @@
 
 ## 5. 合入后收尾
 
-- [ ] 5.1 PR 合入后，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-rename-project-to-asterwynd/`。
-- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次。
-- [ ] 5.3 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 5.1 PR 合入后，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-rename-project-to-asterwynd/`。
+- [x] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次。
+- [x] 5.3 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
