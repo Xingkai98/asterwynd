@@ -2,7 +2,7 @@
   <title id="title">Asterwynd wordmark</title>
   <desc id="desc">A minimal Asterwynd wordmark with a star and slogan.</desc>
   <defs>
-    <linearGradient id="wordmarkGradient" x1="195" y1="116" x2="790" y2="116" gradientUnits="userSpaceOnUse">
+    <linearGradient id="wordmarkGradient" x1="321" y1="116" x2="916" y2="116" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#08213A"/>
       <stop offset="0.24" stop-color="#006EA8"/>
       <stop offset="0.46" stop-color="#058BD3"/>
@@ -13,12 +13,12 @@
     </linearGradient>
   </defs>
 
-  <g transform="translate(120 88)">
+  <g transform="translate(246 88)">
     <path d="M0 -42L11 -11L43 0L11 11L0 42L-11 11L-43 0L-11 -11L0 -42Z" fill="#FFF7D6"/>
     <path d="M0 -42L11 -11L43 0L11 11L0 42L-11 11L-43 0L-11 -11L0 -42Z" stroke="#EAB308" stroke-width="5" stroke-linejoin="round"/>
   </g>
 
-  <text x="196" y="134"
+  <text x="322" y="134"
         fill="url(#wordmarkGradient)"
         font-family="'Arial Black', 'DejaVu Sans', 'Helvetica Neue', Arial, sans-serif"
         font-size="110"
@@ -28,7 +28,7 @@
     Asterwynd
   </text>
 
-  <text x="197" y="215"
+  <text x="323" y="215"
         fill="#64748B"
         font-family="SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace"
         font-size="29"
