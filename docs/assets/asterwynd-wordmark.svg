@@ -2,39 +2,38 @@
   <title id="title">Asterwynd wordmark</title>
   <desc id="desc">A minimal Asterwynd wordmark with a star and slogan.</desc>
   <defs>
-    <linearGradient id="wordmarkGradient" x1="210" y1="110" x2="1030" y2="110" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#101827"/>
-      <stop offset="0.45" stop-color="#123B5D"/>
-      <stop offset="1" stop-color="#8A5A10"/>
-    </linearGradient>
-    <linearGradient id="starGradient" x1="115" y1="48" x2="115" y2="146" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#FFE7A3"/>
-      <stop offset="1" stop-color="#D99B1D"/>
+    <linearGradient id="wordmarkGradient" x1="195" y1="116" x2="790" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#08213A"/>
+      <stop offset="0.24" stop-color="#006EA8"/>
+      <stop offset="0.46" stop-color="#058BD3"/>
+      <stop offset="0.64" stop-color="#4D63EE"/>
+      <stop offset="0.80" stop-color="#8B3DD2"/>
+      <stop offset="0.93" stop-color="#BD5577"/>
+      <stop offset="1" stop-color="#E08312"/>
     </linearGradient>
   </defs>
 
-  <g transform="translate(124 98)">
-    <path d="M0 -48L12.8 -12.8L48 0L12.8 12.8L0 48L-12.8 12.8L-48 0L-12.8 -12.8L0 -48Z" fill="url(#starGradient)"/>
-    <path d="M0 -48L12.8 -12.8L48 0L12.8 12.8L0 48L-12.8 12.8L-48 0L-12.8 -12.8L0 -48Z" stroke="#A86B06" stroke-width="3.5" stroke-linejoin="round"/>
-    <path d="M0 -25L6.7 -6.7L25 0L6.7 6.7L0 25L-6.7 6.7L-25 0L-6.7 -6.7L0 -25Z" fill="#FFF8DB" opacity="0.84"/>
+  <g transform="translate(120 88)">
+    <path d="M0 -42L11 -11L43 0L11 11L0 42L-11 11L-43 0L-11 -11L0 -42Z" fill="#FFF7D6"/>
+    <path d="M0 -42L11 -11L43 0L11 11L0 42L-11 11L-43 0L-11 -11L0 -42Z" stroke="#EAB308" stroke-width="5" stroke-linejoin="round"/>
   </g>
 
-  <text x="210" y="135"
+  <text x="196" y="134"
         fill="url(#wordmarkGradient)"
-        font-family="Georgia, 'Times New Roman', 'DejaVu Serif', serif"
-        font-size="124"
+        font-family="'Arial Black', 'DejaVu Sans', 'Helvetica Neue', Arial, sans-serif"
+        font-size="110"
         font-style="italic"
-        font-weight="700"
-        letter-spacing="1.2">
+        font-weight="900"
+        letter-spacing="0">
     Asterwynd
   </text>
 
-  <text x="214" y="202"
-        fill="#5E6B7A"
-        font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace"
+  <text x="197" y="215"
+        fill="#64748B"
+        font-family="SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace"
         font-size="29"
         font-weight="500"
-        letter-spacing="0.4">
+        letter-spacing="0.6">
     Navigate by stars. Prove with traces.
   </text>
 </svg>
