@@ -49,8 +49,8 @@
 - [ ] 4.6 运行项目 OpenSpec artifact checker。
 - [ ] 4.7 跑通至少一个 benchmark smoke。
 
-## 5. 合入后收尾
+## 5. PR 收尾
 
-- [ ] 5.1 PR 合入后，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-refine-tool-permission-model/`。
+- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-refine-tool-permission-model/`。
 - [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
 - [ ] 5.3 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。

@@ -5,7 +5,7 @@
 维护规则：
 
 - 新增 OpenSpec change 后，如果不是纯占位，应把它加入本队列。
-- change 实现并 PR 合入后，必须直接归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/` 并从本文档移除；如果暂时无法归档，才移到“已完成待归档”。
+- change 实现 PR 必须同时包含归档收尾：归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/` 并从本文档移除；如果因冲突、校验失败或其他明确阻塞暂时无法归档，才移到“已完成待归档”。
 - change 状态变化时，必须同步更新“并行开发批次”和“未实现队列”两个章节，避免批次章节保留过期状态。
 - 调整实现顺序时，应写清楚依赖原因，而不是只移动条目。
 - 本文档只记录可提交的 change id 和稳定判断，不记录本地参考仓库路径。
@@ -122,6 +122,6 @@
 
 ## 已完成待归档
 
-这些 change 的 tasks 已完成或已经合入实现，但目录仍在 `openspec/changes/` 下。后续应按项目流程归档到 `openspec/changes/archive/`。
+这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。
 
 当前无。

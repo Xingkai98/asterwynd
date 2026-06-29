@@ -36,7 +36,7 @@
 8. 实现功能。
 9. 运行验证。
 10. 更新文档和能力证明链。
-11. PR 合入后，执行 OpenSpec 收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。只有暂时无法归档时，才先移入“已完成待归档”。
+11. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
 
 ## 参考实现调研
 
@@ -128,9 +128,24 @@
 - 如果当前 agent 环境没有 `grill-with-docs` skill，也必须按同等标准执行设计追问：逐个设计分支确认方案、记录取舍和未选方案，并明确测试与验收方式。
 - 设计追问完成前，不进入测试实现或功能实现。
 
-## Change 合入后固定收尾 checklist
+## 自然语言到 OpenSpec 流程
 
-功能 PR 合入后，必须把 Git 收尾和 OpenSpec 收尾都做完；PR merge、分支删除和 worktree 清理不等于需求流程结束。固定 checklist：
+用户可以只用自然语言描述开发动作，不需要反复提醒 agent “按 OpenSpec lifecycle 走”。agent 应根据用户意图自动选择 OpenSpec Codex 命令或等价流程：
+
+| 用户意图 | 流程 |
+| --- | --- |
+| 讨论想法、比较方案、澄清问题 | `/opsx:explore` 等价流程。只读取和讨论，不写实现代码。 |
+| 创建需求、开始一个新 change | `/opsx:propose` 等价流程。创建或补齐 proposal、design、tasks、spec delta，并更新 backlog。 |
+| 开始开发某个 change | 先执行 `grill-with-docs` 设计追问；确认后进入 `/opsx:apply` 等价流程，按 tasks 测试先行并实现。 |
+| 同步 delta spec 到正式规格 | `/opsx:sync` 等价流程。读取 delta spec 和当前 spec 后智能合并。 |
+| 提 PR、收尾、准备合入 | `/opsx:archive` 等价流程。实现 PR 内完成归档、backlog 清理、OpenSpec 校验和 artifact checker。 |
+| 合入 PR | 合入后只确认本地 `master` 同步、active change 目录不存在、backlog 不引用已归档 change。 |
+
+如果当前客户端不能直接执行 `/opsx:*` slash command，agent 也必须按表中等价步骤执行；不能因为用户没有显式写命令而跳过 OpenSpec 流程。
+
+## Change PR 固定收尾 checklist
+
+功能实现 PR 发起前，必须把 OpenSpec 收尾也纳入同一个 PR；PR merge、分支删除和 worktree 清理不等于需求流程结束。固定 checklist：
 
 1. 确认受影响的当前规格已经写入 `openspec/specs/`。
 2. 将 `openspec/changes/<change-id>/` 移动到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
@@ -139,9 +154,15 @@
 5. 如果该 change 位于“已完成待归档”，也应从该列表移除。
 6. 全量浏览 `docs/` 下的稳定文档标题和相关关键词，判断 README、架构、开发指南、测试指南、路线图、benchmark 或讨论纪要是否需要同步；只更新与本 change 直接相关的稳定口径。
 7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
-8. 完成后再清理本地 worktree、删除本地分支，并确认主 worktree 位于最新 `master`。
+8. 在 PR 说明中记录归档路径、backlog 更新和验证结果。
 
-`docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。如果 PR 合入后暂时无法归档，才把 change 放入“已完成待归档”，并在后续收尾提交中清空。
+`docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。只有遇到冲突、校验失败或其他明确阻塞，导致实现 PR 暂时不能完成归档时，才把 change 放入“已完成待归档”，并在阻塞解除后优先清空。
+
+PR 合入后固定确认：
+
+1. 快进本地 `master` 到 `origin/master`。
+2. 确认 `openspec/changes/<change-id>/` 不存在。
+3. 确认 `docs/openspec-change-backlog.md` 不再引用该已归档 change。
 
 ## 约束与校验
 
