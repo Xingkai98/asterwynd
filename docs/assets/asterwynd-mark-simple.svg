@@ -1,0 +1,45 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Asterwynd simple mark</title>
+  <desc id="desc">A minimal star and wind trail mark for Asterwynd.</desc>
+  <defs>
+    <linearGradient id="trail" x1="174" y1="655" x2="850" y2="342" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38BDF8"/>
+      <stop offset="0.52" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#F6C453"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.1 0 1 0 0 0.18 0 0 1 0 0.55 0 0 0 0.55 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <circle cx="512" cy="512" r="318" stroke="#172033" stroke-width="28" opacity="0.72"/>
+  <path d="M320 676L428 394L624 336L730 520L628 718L404 758L320 676Z" stroke="#8FA3BF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.72"/>
+
+  <g filter="url(#glow)">
+    <path d="M174 654C312 548 432 528 550 552C664 576 752 530 850 424" stroke="url(#trail)" stroke-width="46" stroke-linecap="round"/>
+    <path d="M234 726C368 668 491 661 608 688C708 711 782 682 850 612" stroke="url(#trail)" stroke-width="26" stroke-linecap="round" opacity="0.82"/>
+  </g>
+
+  <g>
+    <circle cx="428" cy="394" r="28" fill="#F6C453"/>
+    <circle cx="730" cy="520" r="30" fill="#F6C453"/>
+    <circle cx="628" cy="718" r="27" fill="#F6C453"/>
+    <circle cx="320" cy="676" r="25" fill="#F6C453"/>
+    <circle cx="428" cy="394" r="11" fill="#FFF7D6"/>
+    <circle cx="730" cy="520" r="12" fill="#FFF7D6"/>
+    <circle cx="628" cy="718" r="11" fill="#FFF7D6"/>
+    <circle cx="320" cy="676" r="10" fill="#FFF7D6"/>
+  </g>
+
+  <g transform="translate(624 336)">
+    <path d="M0 -96L22 -24L94 0L22 24L0 96L-22 24L-94 0L-22 -24L0 -96Z" fill="#FFF7D6"/>
+    <path d="M0 -96L22 -24L94 0L22 24L0 96L-22 24L-94 0L-22 -24L0 -96Z" stroke="#F6C453" stroke-width="10" stroke-linejoin="round"/>
+  </g>
+
+  <path d="M812 374L874 348L852 414" stroke="#F6C453" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

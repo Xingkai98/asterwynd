@@ -4,7 +4,7 @@
 
 系统 SHALL 在本 change 实现后支持配置 MCP server、发现 MCP tools 并通过 ToolRegistry 调用；在实现前不得声称已支持 MCP 集成。
 
-#### Scenario: 当前运行 MyAgent
+#### Scenario: 当前运行 Asterwynd
 
 - **GIVEN** 用户通过 CLI、Web 或 benchmark 运行当前系统
 - **WHEN** 系统构造工具 registry

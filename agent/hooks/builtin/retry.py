@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from agent.message import Message
     from agent.llm import LLMResponse
 
-logger = logging.getLogger("myagent.hooks.retry")
+logger = logging.getLogger("asterwynd.hooks.retry")
 
 class RetryHook:
     """工具执行失败时自动重试"""

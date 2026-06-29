@@ -1,6 +1,6 @@
 # 测试指南
 
-本文档记录 MyAgent 的测试分层和回归测试要求。
+本文档记录 Asterwynd 的测试分层和回归测试要求。
 
 ## 基本原则
 
@@ -81,7 +81,7 @@ uv run pytest tests/web_tests/test_session.py tests/web_tests/test_server.py -q
 
 ```bash
 playwright install chromium
-MYAGENT_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
+ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
 
 ### Benchmark 测试
@@ -102,22 +102,35 @@ uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --r
 单任务 SWE smoke 示例：
 
 ```bash
-rm -rf /tmp/myagent-one-swe-task /tmp/myagent-swe-smoke
-mkdir -p /tmp/myagent-one-swe-task
+rm -rf /tmp/asterwynd-one-swe-task /tmp/asterwynd-swe-smoke
+mkdir -p /tmp/asterwynd-one-swe-task
 ln -s "$PWD/benchmarks/tasks/swebench-psf__requests-5414" \
-  /tmp/myagent-one-swe-task/swebench-psf__requests-5414
-uv run python cli.py benchmark /tmp/myagent-one-swe-task \
+  /tmp/asterwynd-one-swe-task/swebench-psf__requests-5414
+uv run python cli.py benchmark /tmp/asterwynd-one-swe-task \
   --agent shell \
   --shell-command "git apply $PWD/benchmarks/tasks/swebench-psf__requests-5414/gold.patch" \
   --source-repo . \
-  --runs-dir /tmp/myagent-swe-smoke \
-  --clone-cache-dir /tmp/myagent-swe-cache
+  --runs-dir /tmp/asterwynd-swe-smoke \
+  --clone-cache-dir /tmp/asterwynd-swe-cache
 ```
 
 如果当前开发环境是没有 `systemd` 的容器，可先用辅助脚本启动 Docker daemon：
 
 ```bash
 sudo ./scripts/start-docker-daemon.sh
+```
+
+Claw-SWE-Bench 集成使用独立 harness，不通过 `cli.py benchmark`。如果改动影响 `claw-swe-bench/` 或 `agent/claw_solve.py`，在环境具备 Docker 镜像和 API key 时至少跑一个单实例 smoke：
+
+```bash
+cd claw-swe-bench
+uv run python run_infer.py \
+  --claw asterwynd \
+  --dataset verified \
+  --instance_ids psf__requests-1142 \
+  --run_id asterwynd-claw-smoke \
+  --model deepseek-v4-pro \
+  --timeout 600
 ```
 
 ## 必须守住的协议

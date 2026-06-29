@@ -27,8 +27,8 @@
 - [ ] 4.6 如果涉及 Web，运行 Web session/server 测试；必要时运行浏览器 smoke。
 - [ ] 4.7 如果涉及 TUI、browser/computer use、外部服务或其他人工交互入口，运行对应 smoke。
 
-## 5. 合入后收尾
+## 5. PR 收尾
 
-- [ ] 5.1 PR 合入后，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
+- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
 - [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
 - [ ] 5.3 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。

@@ -10,7 +10,7 @@ from httpx import AsyncClient, ASGITransport
 from fastapi.testclient import TestClient
 
 from agent.llm import LLMResponse, ToolCallDelta
-from agent.config import MyAgentConfig, AgentConfig
+from agent.config import AsterwyndConfig, AgentConfig
 from agent.run_config import AgentMode
 from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
@@ -64,42 +64,42 @@ async def test_chat_page_returns_html(app):
 @pytest.mark.asyncio
 async def test_debug_page_disabled_by_default(app):
     """GET /debug returns 404 when debug is disabled."""
-    old = os.environ.get("MYAGENT_DEBUG", "")
+    old = os.environ.get("ASTERWYND_DEBUG", "")
     try:
-        if "MYAGENT_DEBUG" in os.environ:
-            del os.environ["MYAGENT_DEBUG"]
+        if "ASTERWYND_DEBUG" in os.environ:
+            del os.environ["ASTERWYND_DEBUG"]
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/debug")
             assert resp.status_code == 404
     finally:
-        os.environ["MYAGENT_DEBUG"] = old
+        os.environ["ASTERWYND_DEBUG"] = old
 
 
 @pytest.mark.asyncio
 async def test_debug_page_enabled(app):
     """GET /debug returns 200 when debug is enabled."""
-    old = os.environ.get("MYAGENT_DEBUG", "")
+    old = os.environ.get("ASTERWYND_DEBUG", "")
     try:
         # Re-create app with debug enabled
         mock = MockLLM([LLMResponse(content="Hello")])
-        os.environ["MYAGENT_DEBUG"] = "enabled"
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
         debug_app = create_app(mock)
         transport = ASGITransport(app=debug_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/debug")
             assert resp.status_code == 200
     finally:
-        os.environ["MYAGENT_DEBUG"] = old
+        os.environ["ASTERWYND_DEBUG"] = old
 
 
 @pytest.mark.asyncio
 async def test_api_debug_status(app):
     """GET /api/debug-status returns correct status."""
-    old = os.environ.get("MYAGENT_DEBUG", "")
+    old = os.environ.get("ASTERWYND_DEBUG", "")
     try:
-        if "MYAGENT_DEBUG" in os.environ:
-            del os.environ["MYAGENT_DEBUG"]
+        if "ASTERWYND_DEBUG" in os.environ:
+            del os.environ["ASTERWYND_DEBUG"]
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/debug-status")
@@ -107,7 +107,7 @@ async def test_api_debug_status(app):
             data = resp.json()
             assert data["enabled"] == debug_enabled()
     finally:
-        os.environ["MYAGENT_DEBUG"] = old
+        os.environ["ASTERWYND_DEBUG"] = old
 
 
 @pytest.mark.asyncio
@@ -121,12 +121,23 @@ async def test_static_files_served(app):
 
 
 @pytest.mark.asyncio
+async def test_brand_assets_are_served(app):
+    """Brand wordmark assets are served for the Web UI header."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/assets/asterwynd-web-wordmark.png")
+        assert resp.status_code == 200
+        assert "image/png" in resp.headers.get("content-type", "")
+        assert resp.content.startswith(b"\x89PNG")
+
+
+@pytest.mark.asyncio
 async def test_websocket_chat_flow():
     """WebSocket chat: connect -> send message -> receive events."""
-    old_debug = os.environ.get("MYAGENT_DEBUG", "")
+    old_debug = os.environ.get("ASTERWYND_DEBUG", "")
     try:
-        if "MYAGENT_DEBUG" in os.environ:
-            del os.environ["MYAGENT_DEBUG"]
+        if "ASTERWYND_DEBUG" in os.environ:
+            del os.environ["ASTERWYND_DEBUG"]
         mock_llm = MockLLM([LLMResponse(content="Hello from agent!")])
         app = create_app(mock_llm)
 
@@ -145,7 +156,7 @@ async def test_websocket_chat_flow():
                     if event["type"] == "done":
                         break
     finally:
-        os.environ["MYAGENT_DEBUG"] = old_debug
+        os.environ["ASTERWYND_DEBUG"] = old_debug
     assert [e["type"] for e in events] == ["run_started", "llm_response", "done"]
     assert events[0]["data"]["session_id"] == created["session_id"]
     assert events[0]["data"]["run_id"]
@@ -159,11 +170,15 @@ def test_web_static_assets_include_session_and_run_display():
 
     assert 'id="session-id"' in index
     assert 'id="run-id"' in index
+    assert "Asterwynd · Asterwynd Web UI" in index
+    assert 'class="brand-wordmark"' in index
+    assert 'src="/assets/asterwynd-web-wordmark.png?v=3"' in index
     assert 'id="mode-value"' in index
     assert 'id="mode-select"' in index
     assert 'id="mode-apply"' in index
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
+    assert "/static/style.css?v=11" in index
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
@@ -185,6 +200,8 @@ def test_web_static_assets_include_session_and_run_display():
     assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
     assert "#mode-controls" in styles
+    assert ".brand-lockup" in styles
+    assert ".brand-fallback" in styles
     assert ".markdown-body pre" in styles
 
     toggle_start = script.index("toggle.addEventListener")
@@ -212,7 +229,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(renderer, context);
-process.stdout.write(JSON.stringify(context.window.MyAgentMarkdown.render(markdown)));
+process.stdout.write(JSON.stringify(context.window.AsterwyndMarkdown.render(markdown)));
 """
     result = subprocess.run(
         ["node", "-e", node_script, str(renderer), json.dumps(markdown)],
@@ -272,7 +289,7 @@ def test_websocket_session_created_includes_configured_mode():
 def test_websocket_session_created_uses_config_default_mode():
     app = create_app(
         MockLLM([LLMResponse(content="Hello")]),
-        config=MyAgentConfig(agent=AgentConfig(default_mode=AgentMode.PLAN)),
+        config=AsterwyndConfig(agent=AgentConfig(default_mode=AgentMode.PLAN)),
     )
 
     with TestClient(app) as client:
@@ -437,10 +454,10 @@ def test_websocket_ping_and_reset(app):
 
 
 def test_websocket_tool_events():
-    old_debug = os.environ.get("MYAGENT_DEBUG", "")
+    old_debug = os.environ.get("ASTERWYND_DEBUG", "")
     try:
-        if "MYAGENT_DEBUG" in os.environ:
-            del os.environ["MYAGENT_DEBUG"]
+        if "ASTERWYND_DEBUG" in os.environ:
+            del os.environ["ASTERWYND_DEBUG"]
         mock_llm = MockLLM([
             LLMResponse(
                 content=None,
@@ -462,7 +479,7 @@ def test_websocket_tool_events():
                     if event["type"] == "done":
                         break
     finally:
-        os.environ["MYAGENT_DEBUG"] = old_debug
+        os.environ["ASTERWYND_DEBUG"] = old_debug
 
     event_types = [e["type"] for e in events]
     assert "tool_call" in event_types
@@ -476,9 +493,9 @@ def test_websocket_tool_events():
 @pytest.mark.asyncio
 async def test_debug_websocket_events_enabled():
     """With debug enabled, WebSocket receives debug events."""
-    old_debug = os.environ.get("MYAGENT_DEBUG", "")
+    old_debug = os.environ.get("ASTERWYND_DEBUG", "")
     try:
-        os.environ["MYAGENT_DEBUG"] = "enabled"
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
         mock_llm = MockLLM([LLMResponse(content="Debug test")])
         app = create_app(mock_llm)
         with TestClient(app) as client:
@@ -492,7 +509,7 @@ async def test_debug_websocket_events_enabled():
                     if event["type"] == "done":
                         break
     finally:
-        os.environ["MYAGENT_DEBUG"] = old_debug
+        os.environ["ASTERWYND_DEBUG"] = old_debug
 
     assert any(e["type"] == "debug" and e["phase"] == "before_iteration" for e in events)
     assert any(e["type"] == "debug" and e["phase"] == "after_llm_call" for e in events)

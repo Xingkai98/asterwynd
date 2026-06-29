@@ -1,4 +1,4 @@
-# MyAgent Local Benchmark Tasks
+# Asterwynd Local Benchmark Tasks
 
 23 coding-agent tasks extracted from git history across 6 categories and 3
 difficulty levels (easy / medium / hard).
@@ -9,19 +9,19 @@ Fake-runner artifact smoke:
 uv run python cli.py benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
-  --runs-dir /tmp/myagent-task-pack-smoke \
+  --runs-dir /tmp/asterwynd-task-pack-smoke \
   --fake-edit-file README.md \
-  --fake-old-string '# MyAgent' \
-  --fake-new-string '# MyAgent Coding Agent'
+  --fake-old-string '# Asterwynd' \
+  --fake-new-string '# Asterwynd Coding Agent'
 ```
 
-Real MyAgent run:
+Real Asterwynd run:
 
 ```bash
 uv run python cli.py benchmark benchmarks/tasks \
-  --agent myagent \
+  --agent asterwynd \
   --source-repo . \
-  --runs-dir /tmp/myagent-task-pack-myagent \
+  --runs-dir /tmp/asterwynd-task-pack-asterwynd \
   --max-iterations 80
 ```
 

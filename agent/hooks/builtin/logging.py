@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from agent.llm import LLMResponse
     from agent.run_config import AgentRunConfig
 
-logger = logging.getLogger("myagent.hooks.logging")
+logger = logging.getLogger("asterwynd.hooks.logging")
 
 class LoggingHook:
     def __init__(self, verbose: bool = False):

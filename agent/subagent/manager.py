@@ -18,7 +18,7 @@ from agent.hooks.builtin import TracingHook
 from agent.trace_recorder import TraceRecorder
 
 if TYPE_CHECKING:
-    from agent.config import MyAgentConfig
+    from agent.config import AsterwyndConfig
     from agent.llm import LLM
 
 
@@ -94,7 +94,7 @@ class SubAgentManager:
         self,
         *,
         llm: "LLM | None" = None,
-        config: "MyAgentConfig | None" = None,
+        config: "AsterwyndConfig | None" = None,
         workspace_policy: WorkspacePolicy | None = None,
         parent_mode: AgentMode = AgentMode.BUILD,
         parent_mode_provider: Callable[[], AgentMode] | None = None,
@@ -112,7 +112,7 @@ class SubAgentManager:
         self,
         *,
         llm: "LLM | None" = None,
-        config: "MyAgentConfig | None" = None,
+        config: "AsterwyndConfig | None" = None,
         workspace_policy: WorkspacePolicy | None = None,
         parent_mode_provider: Callable[[], AgentMode] | None = None,
     ) -> None:

@@ -194,8 +194,8 @@ function addMessage(role, content) {
 function appendAssistantContent(body, content) {
   const source = (body.dataset.markdownSource || '') + (content || '');
   body.dataset.markdownSource = source;
-  if (window.MyAgentMarkdown && typeof window.MyAgentMarkdown.render === 'function') {
-    body.innerHTML = window.MyAgentMarkdown.render(source);
+  if (window.AsterwyndMarkdown && typeof window.AsterwyndMarkdown.render === 'function') {
+    body.innerHTML = window.AsterwyndMarkdown.render(source);
   } else {
     body.textContent = source;
   }
@@ -327,8 +327,8 @@ function renderPlanDocument(document) {
   const status = document && document.status === 'submitted' ? 'Submitted' : 'Draft';
   planDocumentTitleEl.textContent = title ? `${status}: ${title}` : status;
   planDocumentBodyEl.dataset.markdownSource = markdown;
-  if (window.MyAgentMarkdown && typeof window.MyAgentMarkdown.render === 'function') {
-    planDocumentBodyEl.innerHTML = window.MyAgentMarkdown.render(markdown);
+  if (window.AsterwyndMarkdown && typeof window.AsterwyndMarkdown.render === 'function') {
+    planDocumentBodyEl.innerHTML = window.AsterwyndMarkdown.render(markdown);
   } else {
     planDocumentBodyEl.textContent = markdown;
   }

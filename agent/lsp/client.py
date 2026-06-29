@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-logger = logging.getLogger("myagent.lsp")
+logger = logging.getLogger("asterwynd.lsp")
 
 from agent.code_intelligence.config import LspConfig, LspServerConfig
 from agent.lsp.transport import (

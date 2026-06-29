@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MyAgent CLI 入口
+Asterwynd CLI 入口
 
 用法:
     python cli.py "你好，介绍一下自己"
@@ -23,7 +23,7 @@ import typer
 load_dotenv(Path(__file__).parent / ".env")
 
 from agent.loop import AgentLoop
-from agent.config import ConfigError, ConfigOverrides, MyAgentConfig, load_config
+from agent.config import ConfigError, ConfigOverrides, AsterwyndConfig, load_config
 from agent.message import Message, system_message
 from agent.openai_llm import OpenAILLM
 from agent.anthropic_llm import AnthropicLLM
@@ -37,12 +37,13 @@ from agent.memory.manager import MemoryManager
 from agent.llm import LLM
 from agent.run_identity import new_run_id, new_session_id
 from agent.tool_result_display import summarize_tool_result
+from agent.branding import BRAND_NAME, render_tui_banner
 
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
-LOG_FILE = LOG_DIR / f"myagent-{__import__('datetime').datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+LOG_FILE = LOG_DIR / f"asterwynd-{__import__('datetime').datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
 
-_LOG_LEVEL = getattr(logging, os.environ.get("MYAGENT_LOG_LEVEL", "INFO").upper(), logging.INFO)
+_LOG_LEVEL = getattr(logging, os.environ.get("ASTERWYND_LOG_LEVEL", "INFO").upper(), logging.INFO)
 
 logging.basicConfig(
     level=_LOG_LEVEL,
@@ -52,13 +53,13 @@ logging.basicConfig(
         RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
     ],
 )
-logger = logging.getLogger("myagent.cli")
+logger = logging.getLogger("asterwynd.cli")
 
 app = typer.Typer()
 
 def build_llm(provider: str, model: Optional[str] = None) -> LLM:
     if model is None:
-        model = os.environ.get("MYAGENT_MODEL")
+        model = os.environ.get("ASTERWYND_MODEL")
     kwargs = {}
     if model is not None:
         kwargs["model"] = model
@@ -84,7 +85,7 @@ def build_llm(provider: str, model: Optional[str] = None) -> LLM:
 
 
 def _streaming_enabled() -> bool:
-    value = os.environ.get("MYAGENT_STREAMING", "enabled").strip().lower()
+    value = os.environ.get("ASTERWYND_STREAMING", "enabled").strip().lower()
     return value not in {"0", "false", "off", "disabled", "no"}
 
 def _normalize_user_mode(mode: str | AgentMode) -> str:
@@ -103,7 +104,7 @@ def _load_cli_config(
     mode: str | None = None,
     benchmark_parallel: int | None = None,
     benchmark_timeout_seconds: int | None = None,
-) -> MyAgentConfig:
+) -> AsterwyndConfig:
     try:
         return load_config(
             config_path=config_path,
@@ -122,9 +123,9 @@ def build_agent(
     model: Optional[str] = None,
     provider: str = "openai",
     mode: str | AgentMode = AgentMode.BUILD,
-    config: MyAgentConfig | None = None,
+    config: AsterwyndConfig | None = None,
 ) -> AgentLoop:
-    config = config or MyAgentConfig()
+    config = config or AsterwyndConfig()
     llm = build_llm(provider, model)
     run_config = AgentRunConfig(mode=parse_agent_mode(_normalize_user_mode(mode)))
     workspace_policy = WorkspacePolicy(
@@ -170,18 +171,28 @@ def main(
     prompt: Optional[str] = typer.Argument(None, help="要发送给 agent 的提示（交互模式下可选）"),
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型（不指定则用 provider 默认值）"),
     provider: str = typer.Option(
-        os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="交互模式"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="myagent.yaml 配置文件路径"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+    banner: bool = typer.Option(True, "--banner/--no-banner", help="交互模式是否显示启动 wordmark"),
 ):
     config = _load_cli_config(config_path, mode=mode)
     normalized_mode = config.agent.default_mode.value
     if interactive:
-        run_interactive(model, provider, max_iterations, system, prompt, normalized_mode, config)
+        run_interactive(
+            model,
+            provider,
+            max_iterations,
+            system,
+            prompt,
+            normalized_mode,
+            config,
+            banner=banner,
+        )
     else:
         if not prompt:
             typer.echo("Error: PROMPT is required in single-prompt mode", err=True)
@@ -195,7 +206,7 @@ def run_single(
     max_iterations: int,
     system: Optional[str],
     mode: str = "build",
-    config: MyAgentConfig | None = None,
+    config: AsterwyndConfig | None = None,
 ):
     agent = build_agent(model, provider, mode, config=config)
     agent.max_iterations = max_iterations
@@ -241,13 +252,17 @@ def run_interactive(
     system: Optional[str],
     initial_prompt: Optional[str] = None,
     mode: str = "build",
-    config: MyAgentConfig | None = None,
+    config: AsterwyndConfig | None = None,
+    banner: bool = True,
 ):
     agent = build_agent(model, provider, mode, config=config)
     resolved_model = getattr(agent.llm, "model", model or "default")
     session_id = new_session_id()
 
-    typer.echo("MyAgent 交互模式 (输入 exit 退出)")
+    if banner:
+        typer.echo(render_tui_banner())
+        typer.echo("")
+    typer.echo(f"{BRAND_NAME} 交互模式 (输入 exit 退出)")
     typer.echo(f"模型: {resolved_model} | 提供商: {provider} | Mode: {mode}\n")
     typer.echo(f"Session ID: {session_id}\n")
     agent.max_iterations = max_iterations
@@ -376,10 +391,10 @@ def _print_plan_document(agent: AgentLoop) -> None:
     typer.echo(f"\n【Plan Document】\n{markdown}")
 
 
-def _print_tool_call_summaries(result, config: MyAgentConfig | None = None) -> None:
+def _print_tool_call_summaries(result, config: AsterwyndConfig | None = None) -> None:
     if not result.tool_calls_made:
         return
-    display_config = (config or MyAgentConfig()).tools.display
+    display_config = (config or AsterwyndConfig()).tools.display
     for index, tool_call in enumerate(result.tool_calls_made, start=1):
         tool_result = tool_call.result or ""
         summary = summarize_tool_result(tool_call.name, tool_result, display_config)
@@ -397,11 +412,11 @@ def web(
     port: int = typer.Option(8000, "--port", "-p", help="HTTP 端口"),
     host: str = typer.Option("0.0.0.0", "--host", help="绑定地址"),
     provider: str = typer.Option(
-        os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="myagent.yaml 配置文件路径"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
 ):
     """启动 Web UI 服务"""
     import uvicorn
@@ -414,7 +429,7 @@ def web(
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
 
     llm = build_llm(provider, model)
-    typer.echo(f"MyAgent Web UI  →  http://{display_host}:{port}")
+    typer.echo(f"{BRAND_NAME} Web UI  →  http://{display_host}:{port}")
     typer.echo(f"Provider: {provider} | Model: {llm.model}")
     typer.echo(f"Mode: {normalized_mode}")
     typer.echo(f"Debug mode: {debug_status}")
@@ -425,16 +440,16 @@ def web(
 @app.command()
 def benchmark(
     tasks_dir: Path = typer.Argument(..., help="包含 benchmark task 子目录的目录"),
-    agent: str = typer.Option("fake", "--agent", help="Runner: fake / shell / myagent / claude"),
+    agent: str = typer.Option("fake", "--agent", help="Runner: fake / shell / asterwynd / claude"),
     source_repo: Path = typer.Option(Path("."), "--source-repo", help="被测 git repo"),
     runs_dir: Path = typer.Option(Path("benchmarks/runs"), "--runs-dir", help="benchmark 输出目录"),
     provider: str = typer.Option(
-        os.environ.get("MYAGENT_PROVIDER", "openai"), "--provider", help="MyAgent LLM provider"
+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="Asterwynd LLM provider"
     ),
-    model: Optional[str] = typer.Option(None, "--model", help="MyAgent 模型"),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="MyAgent 最大迭代次数"),
+    model: Optional[str] = typer.Option(None, "--model", help="Asterwynd 模型"),
+    max_iterations: int = typer.Option(20, "--max-iterations", help="Asterwynd 最大迭代次数"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
-    config_path: Optional[Path] = typer.Option(None, "--config", help="myagent.yaml 配置文件路径"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     parallel: Optional[int] = typer.Option(None, "--parallel", help="benchmark 并发任务数"),
     timeout_seconds: Optional[int] = typer.Option(None, "--timeout-seconds", help="外部 agent 超时时间"),
     shell_command: Optional[str] = typer.Option(None, "--shell-command", help="shell runner 命令"),
@@ -445,7 +460,7 @@ def benchmark(
     clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
 ):
     """运行本地 Coding Agent benchmark。"""
-    from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, MyAgentRunner, ShellCommandRunner
+    from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, AsterwyndRunner, ShellCommandRunner
     from benchmarks.runner import BenchmarkRunner
 
     config = _load_cli_config(
@@ -468,9 +483,9 @@ def benchmark(
         runner_impl = ShellCommandRunner(shell_command)
     elif agent == "claude":
         runner_impl = ClaudeCodeRunner(timeout_seconds=config.benchmark.timeout_seconds)
-    elif agent == "myagent":
+    elif agent == "asterwynd":
         llm = build_llm(provider, model)
-        runner_impl = MyAgentRunner(
+        runner_impl = AsterwyndRunner(
             llm=llm,
             model=getattr(llm, "model", model or ""),
             max_iterations=max_iterations,
@@ -479,7 +494,7 @@ def benchmark(
             timeout_seconds=config.benchmark.timeout_seconds,
         )
     else:
-        typer.echo("Error: --agent must be fake, shell, myagent, or claude", err=True)
+        typer.echo("Error: --agent must be fake, shell, asterwynd, or claude", err=True)
         raise SystemExit(1)
 
     runner = BenchmarkRunner(

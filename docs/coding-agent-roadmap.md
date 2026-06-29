@@ -1,4 +1,4 @@
-# MyAgent Coding Agent Roadmap
+# Asterwynd Coding Agent Roadmap
 
 **Status**: Revised after reference-repo review
 **Date**: 2026-06-15
@@ -7,7 +7,7 @@
 
 ## 1. New Positioning
 
-MyAgent should evolve from a lightweight general-purpose agent framework into a
+Asterwynd should evolve from a lightweight general-purpose agent framework into a
 local, benchmarkable coding agent framework.
 
 The target workflow is:
@@ -35,10 +35,10 @@ The current system already has useful agent infrastructure:
 | Web UI | Chat UI, debug timeline, session/run identifiers, Plan Document display, planning state display, Markdown rendering, and tool result display controls |
 | Coding tools | Workspace policy, exact-match `Edit`, workspace-aware `Bash`, `InspectGitDiff`, hardened `Write` behavior, and `LspDiagnostics` feedback on Write/Edit |
 | Code intelligence | Repo map, tree-sitter symbols, Python AST extraction, and LSP semantic tools (definition, references, hover, document symbols, workspace symbols, diagnostics) |
-| Benchmark harness | Local task schema, detached worktree runner, fake/shell/MyAgent adapters, hidden test patches, trace artifacts, summary reports, and CLI entry point |
+| Benchmark harness | Local task schema, detached worktree runner, fake/shell/Asterwynd adapters, hidden test patches, trace artifacts, summary reports, CLI entry point, and Claw-SWE-Bench integration for SWE-bench Verified comparison |
 
 The remaining gap is coding-agent reliability. The project now has the P0
-self-benchmark harness and basic coding tools, but real MyAgent benchmark runs
+self-benchmark harness and basic coding tools, but real Asterwynd benchmark runs
 still show failures on multi-file tasks and trace propagation tasks.
 
 Recent real-agent benchmark signal:
@@ -54,7 +54,7 @@ cross-file completion checks.
 
 ## 3. Core Product Thesis
 
-MyAgent's differentiator should be:
+Asterwynd's differentiator should be:
 
 > An explainable, reproducible, benchmarkable local coding agent.
 
@@ -114,7 +114,7 @@ Required coding tools:
 `WorkspacePolicy` denied patterns. Denied patterns are hard security
 boundaries (enforced by all write tools); ignore patterns are cosmetic
 noise reduction for listing/searching. Users can append custom ignore
-patterns via `MYAGENT_IGNORE_PATTERNS` in `.env`.
+patterns via `ASTERWYND_IGNORE_PATTERNS` in `.env`.
 
 The first editing primitive is `Edit`, modeled after mainstream coding agents:
 
@@ -138,7 +138,7 @@ Important semantics:
 `Patch` (unified diff application) was considered and rejected after reviewing 7
 reference repos. Claude Code, nanobot, and pi-mono use only exact replacement
 (no Patch tool). Models produce malformed patches more often than simple exact
-replacements. MyAgent stays with Edit only.
+replacements. Asterwynd stays with Edit only.
 
 ### 4.3 BashTool with Structured Output
 
@@ -177,7 +177,7 @@ feedback than a wall of raw text.
 The denylist is extensible via environment variable:
 
 ```bash
-MYAGENT_COMMAND_DENYLIST="docker rm,docker system prune"
+ASTERWYND_COMMAND_DENYLIST="docker rm,docker system prune"
 ```
 
 User deny patterns are appended to the hardcoded defaults, so the safety
@@ -260,7 +260,7 @@ still reports a non-clean outcome such as `max_iterations`.
 
 ### P0: Minimum Coding-Agent Loop
 
-Goal: make MyAgent safely edit code in a local repository and record what it did.
+Goal: make Asterwynd safely edit code in a local repository and record what it did.
 
 Deliverables:
 
@@ -281,8 +281,8 @@ Interview talking point:
 
 ### P2: Cross-Agent Benchmark Comparison
 
-Goal: run the same benchmark tasks with Claude Code and Codex, and compare
-results side-by-side with MyAgent.
+Goal: run the same benchmark tasks with external coding agents, and compare
+results side-by-side with Asterwynd.
 
 Deliverables:
 
@@ -294,27 +294,36 @@ Deliverables:
 - Unified comparison report — `benchmarks/compare.py` generates MD + HTML
   side-by-side tables with pass rate and timing. Done.
 - Contract tests — each adapter satisfies `AgentRunner.run()`, so the
-  benchmark harness can treat Claude Code the same as MyAgent. Done.
-- First comparison results: MyAgent 11/23 (48%) vs Claude Code 9/23 (39%)
+  benchmark harness can treat Claude Code the same as Asterwynd. Done.
+- First comparison results: Asterwynd 11/23 (48%) vs Claude Code 9/23 (39%)
   with same DeepSeek model — pass rates and failure modes overlap heavily,
   suggesting the model is the bottleneck. Done.
+- Claw-SWE-Bench path — `claw-swe-bench/` registers Asterwynd, Aider, and
+  OpenCode adapters for SWE-bench Verified / mini comparison under one
+  orchestrator and evaluation harness. Asterwynd runs through
+  `agent/claw_solve.py` inside the target container. Done for integration;
+  full result reporting depends on benchmark runs.
 
 Design notes:
 
-- Each external agent runs as a subprocess inside the detached worktree,
-  same as `ShellCommandRunner`. No internal traces are collected — only
-  final git diff, stdout/stderr log, and test results from the harness.
+- In the local runner path, each external agent runs as a subprocess inside the
+  detached worktree, same as `ShellCommandRunner`. No internal traces are
+  collected — only final git diff, stdout/stderr log, and test results from the
+  harness.
+- In the Claw-SWE-Bench path, each agent adapter runs inside or against the
+  SWE-bench container, and the framework collects the final patch before
+  evaluation.
 - This mirrors SWE-bench's evaluation model: the benchmark grades the
   outcome (does the patch pass hidden tests?), not the process.
 - The comparison is fair: each agent uses its own tools, its own prompt
   strategy, and the same task definition. The goal is to understand
-  whether MyAgent's framework or the underlying model is the performance
+  whether Asterwynd's framework or the underlying model is the performance
   ceiling.
 
 Interview talking point:
 
 > I built adapters to run Claude Code and Codex in the same benchmark
-> harness as MyAgent. Same tasks, same hidden tests, same grading — only
+> harness as Asterwynd. Same tasks, same hidden tests, same grading — only
 > the agent runtime differs. This tells us whether the gap is in our
 > framework or in the model.
 
@@ -391,7 +400,7 @@ Real API tests should stay optional because they are slower and non-deterministi
 Suggested command shape:
 
 ```bash
-MYAGENT_PROVIDER=openai MYAGENT_MODEL=<model> uv run pytest tests/agent/test_coding_agent_real.py --run-real-api -v
+ASTERWYND_PROVIDER=openai ASTERWYND_MODEL=<model> uv run pytest tests/agent/test_coding_agent_real.py --run-real-api -v
 ```
 
 Real-model tests should focus on smoke coverage:
@@ -414,4 +423,4 @@ The two plans should be developed together:
 - Every P1 feature has at least one benchmark task.
 - P2 enables cross-agent comparison: same tasks, same hidden tests, same
   grading — only the agent runtime differs. This reveals whether the gap is
-  in MyAgent's framework or in the underlying model.
+  in Asterwynd's framework or in the underlying model.

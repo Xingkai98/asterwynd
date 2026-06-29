@@ -18,6 +18,32 @@
 - **THEN** 系统 SHALL 按 risk/capability 处理该 tool
 - **AND** SHALL NOT 因其 origin 是 `builtin` 而自动放行
 
+### Requirement: Tool permission decision SHALL support approval
+
+工具权限判定 SHALL 返回 `allow`、`deny` 或 `require_approval`，而不是只返回 boolean。系统 SHALL 在 schema 暴露和执行前重新判权时使用同一判定语义。
+
+#### Scenario: 工具可直接执行
+
+- **GIVEN** 一个 tool 的 capability 被当前 permission profile 允许
+- **AND** 该 tool 的 risk level 不超过 profile 的 auto-approve 阈值
+- **WHEN** 系统判定该 tool 权限
+- **THEN** 判定结果 SHALL 是 `allow`
+
+#### Scenario: 工具需要用户审批
+
+- **GIVEN** 一个 tool 的 capability 被当前 permission profile 允许
+- **AND** 该 tool 的 risk level 超过 profile 的 auto-approve 阈值
+- **AND** 该 tool 的 risk level 不超过 profile 的 approval-required 阈值
+- **WHEN** 系统判定该 tool 权限
+- **THEN** 判定结果 SHALL 是 `require_approval`
+
+#### Scenario: 工具被拒绝
+
+- **GIVEN** 一个 tool 的 capability 不被当前 permission profile 允许
+- **OR** 该 tool 命中当前 permission profile 的 denied tools
+- **WHEN** 系统判定该 tool 权限
+- **THEN** 判定结果 SHALL 是 `deny`
+
 ### Requirement: Tool legacy permission metadata SHALL remain compatible during migration
 
 系统 SHALL 在迁移期保留现有 `read_only`、`dangerous` 和 `allowed_modes` 行为，并能从旧字段推导新权限元数据，直到内置工具完成显式标注。

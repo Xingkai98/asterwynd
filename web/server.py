@@ -1,10 +1,10 @@
 # web/server.py
-"""FastAPI web server for my-agent: chat UI + debug UI via WebSocket."""
+"""FastAPI web server for asterwynd: chat UI + debug UI via WebSocket."""
 import logging
 import os
 from pathlib import Path
 
-from agent.config import MyAgentConfig
+from agent.config import AsterwyndConfig
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -12,20 +12,21 @@ from fastapi.staticfiles import StaticFiles
 from web.debug_hook import debug_enabled
 from web.session import SessionManager
 
-logger = logging.getLogger("myagent.web.server")
+logger = logging.getLogger("asterwynd.web.server")
 
 STATIC_DIR = Path(__file__).parent / "static"
+BRAND_ASSETS_DIR = Path(__file__).parent.parent / "docs" / "assets"
 
 
 def create_app(
     llm,
     mode: str | None = None,
-    config: MyAgentConfig | None = None,
+    config: AsterwyndConfig | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
-    config = config or MyAgentConfig()
+    config = config or AsterwyndConfig()
     resolved_mode = mode or config.agent.default_mode.value
-    app = FastAPI(title="MyAgent Web UI", version="0.1.0")
+    app = FastAPI(title="Asterwynd · Asterwynd Web UI", version="0.1.0")
     session_manager = SessionManager(
         debug_enabled=debug_enabled(),
         mode=resolved_mode,
@@ -35,6 +36,8 @@ def create_app(
     # Mount static files at /static
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    if BRAND_ASSETS_DIR.exists():
+        app.mount("/assets", StaticFiles(directory=str(BRAND_ASSETS_DIR)), name="assets")
 
     @app.get("/", response_class=HTMLResponse)
     async def chat_page():

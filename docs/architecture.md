@@ -1,6 +1,6 @@
 # 架构说明
 
-本文档记录 MyAgent 的系统架构。它描述当前仓库已经具备的主要模块，后续需要随代码演进持续校准。
+本文档记录 Asterwynd 的系统架构。它描述当前仓库已经具备的主要模块，后续需要随代码演进持续校准。
 
 ## 核心循环
 
@@ -69,11 +69,11 @@ BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`dura
 
 `RepoMap` 和 `SymbolSearch` 属于当前轻量 code intelligence 能力：它们复用 WorkspacePolicy、忽略规则和只读工具边界，使用文件扫描、Python AST 和 tree-sitter 提取仓库结构和符号摘要。Tree-sitter 首批覆盖 TypeScript/JavaScript、Go 和 Rust；Python 继续使用 AST extractor。
 
-LSP 工具（`LspDefinition`、`LspReferences`、`LspHover`、`LspDocumentSymbols`、`LspWorkspaceSymbols`、`LspDiagnostics`）提供更丰富的语义代码理解能力，通过 `agent/lsp/` 模块管理 stdio LSP server 进程并按 (language, workspace_root) 缓存单例。Write/Edit 工具修改文件后会自动触发 LSP 诊断反馈。配置入口为 `tools.code_intelligence.lsp`。首版只支持 Python（需安装 `python-lsp-server`，可通过 `pip install myagent[lsp]` 或 `uv sync --extra lsp` 安装）；其他语言可在 `myagent.yaml` 中配置对应 server，但尚未官方验证。
+LSP 工具（`LspDefinition`、`LspReferences`、`LspHover`、`LspDocumentSymbols`、`LspWorkspaceSymbols`、`LspDiagnostics`）提供更丰富的语义代码理解能力，通过 `agent/lsp/` 模块管理 stdio LSP server 进程并按 (language, workspace_root) 缓存单例。Write/Edit 工具修改文件后会自动触发 LSP 诊断反馈。配置入口为 `tools.code_intelligence.lsp`。首版只支持 Python（需安装 `python-lsp-server`，可通过 `pip install asterwynd[lsp]` 或 `uv sync --extra lsp` 安装）；其他语言可在 `asterwynd.yaml` 中配置对应 server，但尚未官方验证。
 
 ### WebSearch provider adapter
 
-`WebSearch` 通过 `SearchProviderRegistry` 调用搜索 provider adapter。provider 优先级来自 `myagent.yaml` 的 `tools.web_search.providers`；未配置时使用保守默认 `duckduckgo-html`。环境变量只提供 provider 凭据和端点，例如 `MYAGENT_TAVILY_API_KEY`、`MYAGENT_BRAVE_SEARCH_API_KEY` 和 `MYAGENT_SEARXNG_BASE_URL`，不参与 provider 排序。
+`WebSearch` 通过 `SearchProviderRegistry` 调用搜索 provider adapter。provider 优先级来自 `asterwynd.yaml` 的 `tools.web_search.providers`；未配置时使用保守默认 `duckduckgo-html`。环境变量只提供 provider 凭据和端点，例如 `ASTERWYND_TAVILY_API_KEY`、`ASTERWYND_BRAVE_SEARCH_API_KEY` 和 `ASTERWYND_SEARXNG_BASE_URL`，不参与 provider 排序。
 
 每个 provider 返回统一的 provider response object，包含最终 provider、结果和诊断信息。网络失败、超时、5xx、429、解析失败、缺 key 或缺 base URL 可以 fallback；搜索成功但无结果默认不 fallback。CI 测试只使用 fake provider、fixture 和 `httpx.MockTransport`，真实 provider smoke 需要显式环境变量并手动执行。`WebFetch` 会对非 2xx、非文本内容、请求失败和截断结果返回可读诊断。
 
@@ -86,11 +86,14 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
-Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `MYAGENT_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan`。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
+Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan`。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
 
 ## Benchmark
 
-Benchmark 模块位于 `benchmarks/`，目标是用可复现任务评测 coding-agent 能力。
+Benchmark 目标是用可复现任务评测 coding-agent 能力。当前有两条路径：
+
+- `benchmarks/`：项目内置 runner，覆盖本地 worktree 任务和少量 `swebench-*` 外部任务。
+- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness 副本，用 SWE-bench Verified 实例对比 Asterwynd、Aider、OpenCode 等 agent。
 
 核心流程：
 
@@ -101,7 +104,7 @@ Benchmark 模块位于 `benchmarks/`，目标是用可复现任务评测 coding-
 5. 运行验证命令。
 6. 在验证命令实际运行后保存 test output，并汇总 run-level 报告。
 
-内部任务和外部 SWE-bench 风格任务都通过统一 runner 执行。当前任务数量和文档口径需要后续统一校准。
+内置 runner 的本地任务和外部 SWE-bench 风格任务都通过统一 runner 执行。Claw-SWE-Bench 路径则复用其 orchestrator、workspace、patch collection 和 eval flow；Asterwynd adapter 通过 `agent/claw_solve.py` 在目标容器内运行 headless solver。
 
 ## LLM Provider
 

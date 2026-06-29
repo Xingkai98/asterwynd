@@ -2,7 +2,7 @@
 
 ### Requirement: Agent mode 约束工具权限
 
-系统 SHALL 使用当前 Agent Mode 约束工具 schema 暴露和工具执行权限。Agent Mode SHALL 绑定 permission profile；profile SHALL 基于 tool capability、risk level、origin 和显式 allow/deny override 判定工具是否允许。`bypass` 为内部保留 mode，默认 fail closed。
+系统 SHALL 使用当前 Agent Mode 约束工具 schema 暴露和工具执行权限。Agent Mode SHALL 绑定 permission profile；profile SHALL 基于 tool capability、risk level 和显式 deny override 判定工具 `allow`、`deny` 或 `require_approval`。origin 初始 SHALL NOT 直接决定 allow/deny，只用于审计、展示、默认推导和配置定位。`bypass` 为内部保留 mode，默认 fail closed。
 
 #### Scenario: read_only mode 过滤工具 schema
 
@@ -15,6 +15,13 @@
 - **GIVEN** 工具调用命中当前 mode profile 禁止的工具
 - **WHEN** ToolRegistry 执行该调用
 - **THEN** 系统 SHALL 返回可读权限错误作为 tool result
+
+#### Scenario: mode profile 要求审批
+
+- **GIVEN** 一个工具被当前 mode profile 判定为 `require_approval`
+- **WHEN** 模型请求执行该工具
+- **THEN** AgentLoop SHALL 在实际执行前请求用户审批
+- **AND** ToolRegistry SHALL NOT 绕过该审批直接执行工具
 
 ### Requirement: Plan mode 产出可审阅计划
 

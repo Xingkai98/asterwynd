@@ -1,24 +1,26 @@
-# MyAgent Benchmark Plan
+# Asterwynd Benchmark Plan
 
-**Status**: Revised after reference-repo review
-**Date**: 2026-06-15
+**Status**: 已按当前实现更新，保留部分历史英文设计记录
+**Date**: 2026-06-27
 
 ---
 
 ## 1. Goal
 
-Build a reproducible benchmark system for local coding agents.
+构建可复现的 Coding Agent benchmark 体系，用于验证 Asterwynd 是否真的能理解仓库、修改代码、运行验证、记录轨迹，并和外部成熟 coding agent 在同类任务上对比。
 
-The benchmark should answer:
+benchmark 需要回答：
 
-- Can MyAgent solve repository-level coding tasks?
-- How often does it pass the validation tests?
-- How many iterations, tool calls, tokens, and seconds does it use?
-- What failure modes dominate?
-- How does it compare with mature coding agents such as Claude Code and Codex?
+- Asterwynd 能否解决 repository-level coding tasks？
+- 验证测试通过率是多少？
+- 每次运行消耗多少 iteration、tool call、token 和时间？
+- 主要失败模式是什么？
+- 在同一批任务、同一类模型和同一验证口径下，Asterwynd 与 Aider、Claude Code、OpenCode、Codex 等外部 coding agent 的差距在哪里？
 
-The first version should evaluate MyAgent only. Later versions should add
-adapters for external agents.
+当前实现已有两条互补路径：
+
+- `benchmarks/`：项目内置 runner，覆盖本仓库 23 个本地任务和 `swebench-*` 外部任务。
+- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用 SWE-bench Verified / mini 实例对比 Asterwynd、Aider、OpenCode 等 agent。
 
 ## 2. Industry References
 
@@ -65,13 +67,13 @@ Useful concepts:
 
 ## 3. Benchmark Scope
 
-### First Version
+### 当前范围
 
-Build a SWE-bench-like local benchmark for this repository.
+项目当前同时维护两类 benchmark：
 
-Scope:
+**本地 runner（`benchmarks/`）**
 
-- 23 local MyAgent tasks and SWE-bench-style external task fixtures.
+- 23 local Asterwynd tasks and SWE-bench-style external task fixtures.
 - Each task starts from a `base_commit`.
 - Each task has an issue-style problem statement.
 - Each task has a validation command.
@@ -79,14 +81,16 @@ Scope:
 - `gold.patch` and `test.patch` are supported by schema but optional.
 - Local tasks continue to use worktree validation; external SWE-bench tasks use Docker harness validation.
 
-### Later Versions
+**Claw-SWE-Bench runner（`claw-swe-bench/`）**
 
-Expand to:
+- 复用 Claw-SWE-Bench orchestrator / workspace / patch collection / evaluation flow。
+- 当前注册 `asterwynd`、`aider`、`opencode` 三个 adapter。
+- `asterwynd` 通过 `agent/claw_solve.py` 在 SWE-bench 容器内运行 Asterwynd headless solver。
+- `aider` 通过 headless CLI 运行，可用于同模型对照。
+- `opencode` adapter 已接入，但是否能跑同模型取决于 OpenCode CLI 对自定义 API endpoint 的支持。
+- 详细运行指南见仓库根目录 [CLAW-SWE-BENCH.md](../CLAW-SWE-BENCH.md)。
 
-- 2-3 small external Python repositories.
-- Hidden tests via `test.patch`.
-- External agent adapters for Claude Code, Codex, and shell-based runners.
-- Summary reports across agents and models.
+后续扩展仍包括更多外部仓库、更多 agent adapter、统一结果报告和成本统计。
 
 ## 4. Task Directory Structure
 
@@ -114,8 +118,8 @@ Minimal schema:
 
 ```json
 {
-  "id": "myagent-001-edit-tool",
-  "repo": "local/myagent",
+  "id": "asterwynd-001-edit-tool",
+  "repo": "local/asterwynd",
   "base_commit": "abc123",
   "problem_statement_file": "issue.md",
   "test_command": "pytest -q tests/agent/tools/test_edit_tool.py",
@@ -181,7 +185,7 @@ evaluation harness.
 ## 7. Agent Runner Interface
 
 The benchmark harness should depend on an adapter interface, not directly on
-MyAgent internals.
+Asterwynd internals.
 
 Conceptual interface:
 
@@ -189,19 +193,27 @@ Conceptual interface:
 AgentRunner.run(task, workspace, output_dir) -> AgentRunResult
 ```
 
-Initial adapters:
+当前本地 runner adapters：
 
 | Adapter | Purpose |
 |---------|---------|
-| `MyAgentRunner` | Run the local MyAgent coding mode |
+| `AsterwyndRunner` | Run the local Asterwynd coding mode |
 | `ShellCommandRunner` | Run an arbitrary shell command as a baseline or wrapper |
 
-Later adapters:
+Claw-SWE-Bench adapters：
 
 | Adapter | Purpose |
 |---------|---------|
-| `ClaudeCodeRunner` | Run Claude Code on the same task set |
-| `CodexRunner` | Run Codex on the same task set |
+| `AsterwyndAdapter` | Run Asterwynd inside the SWE-bench target container through `agent/claw_solve.py` |
+| `AiderAdapter` | Run Aider headless on the same SWE-bench instance |
+| `OpenCodeAdapter` | Run OpenCode headless when the target model endpoint is supported |
+
+Planned / historical local adapters：
+
+| Adapter | Purpose |
+|---------|---------|
+| `ClaudeCodeRunner` | Run Claude Code on the local task set |
+| `CodexRunner` | Run Codex on the local task set |
 
 This lets the benchmark compare agents without changing task definitions.
 
@@ -209,7 +221,7 @@ This lets the benchmark compare agents without changing task definitions.
 
 The dataset should store `problem_statement`, not a fixed prompt.
 
-The runner should create the agent-specific prompt. For MyAgent, a first version
+The runner should create the agent-specific prompt. For Asterwynd, a first version
 can be:
 
 ```text
@@ -258,7 +270,7 @@ Default `trace.json` should store structured summaries:
 
 ```json
 {
-  "task_id": "myagent-001-edit-tool",
+  "task_id": "asterwynd-001-edit-tool",
   "full_trace": false,
   "steps": [
     {
@@ -325,8 +337,8 @@ Example:
 
 ```json
 {
-  "task_id": "myagent-001-edit-tool",
-  "agent": "myagent",
+  "task_id": "asterwynd-001-edit-tool",
+  "agent": "asterwynd",
   "model": "gpt-4.1",
   "status": "passed",
   "test_exit_code": 0,
@@ -363,7 +375,7 @@ benchmarks/runs/<run-id>/
 ```json
 {
   "run_id": "2026-06-14T12-30-00",
-  "agent": "myagent",
+  "agent": "asterwynd",
   "model": "gpt-4.1",
   "started_at": "2026-06-14T12:30:00Z",
   "ended_at": "2026-06-14T12:42:11Z",
@@ -382,9 +394,9 @@ benchmarks/runs/<run-id>/
 
 | Task | Status | Time | Iterations | Tool Calls | Failure |
 |------|--------|------|------------|------------|---------|
-| myagent-001-edit-tool | passed | 82s | 5 | 17 | - |
-| myagent-002-benchmark-cli | passed_with_warnings | 104s | 20 | 29 | max_iterations |
-| myagent-002-policy-deny-env | failed | 120s | 8 | 22 | edit_validation |
+| asterwynd-001-edit-tool | passed | 82s | 5 | 17 | - |
+| asterwynd-002-benchmark-cli | passed_with_warnings | 104s | 20 | 29 | max_iterations |
+| asterwynd-002-policy-deny-env | failed | 120s | 8 | 22 | edit_validation |
 ```
 
 ## 11. Metrics
@@ -441,7 +453,7 @@ Implemented:
 
 - Task schema loading from `benchmarks/tasks/<task-id>/task.json`.
 - Detached git worktree execution at each task's `base_commit`.
-- Fake, shell, and MyAgent runner adapters.
+- Fake, shell, and Asterwynd runner adapters.
 - Coding-agent prompt builder for benchmark runs.
 - Hidden `test.patch` application after the agent finishes.
 - Per-task core artifacts: `result.json`, `trace.json`, and `runner.log`.
@@ -449,21 +461,23 @@ Implemented:
   `test_output.txt` is written after the validation command actually runs.
 - Run-level `run.json` and `summary.md`.
 - `passed_with_warnings` for test-passing but non-clean agent runs.
+- Claw-SWE-Bench integration under `claw-swe-bench/`, with Asterwynd, Aider and OpenCode adapters registered.
+- Asterwynd headless solver entry at `agent/claw_solve.py` for containerized SWE-bench tasks.
 - P0 local task pack:
-  - `myagent-readme-title`
-  - `myagent-002-myagent-runner`
-  - `myagent-003-agentloop-trace`
-  - `myagent-004-benchmark-cli`
+  - `asterwynd-readme-title`
+  - `asterwynd-002-asterwynd-runner`
+  - `asterwynd-003-agentloop-trace`
+  - `asterwynd-004-benchmark-cli`
 
-Recent real MyAgent benchmark results:
+Recent real Asterwynd benchmark results:
 
 | Run | Max Iterations | Passed | Warnings | Failed | Main Signal |
 |-----|----------------|--------|----------|--------|-------------|
 | `2026-06-14T15-12-53` | 20 | 2 | 0 | 2 | Two medium tasks produced no useful diff before max iterations. |
-| `2026-06-14T16-57-13` | 50 | 2 | 0 | 2 | The agent edited code for the failed tasks, but 002 exposed async-test dependency assumptions and 003 missed trace propagation through `MyAgentRunner`. |
+| `2026-06-14T16-57-13` | 50 | 2 | 0 | 2 | The agent edited code for the failed tasks, but 002 exposed async-test dependency assumptions and 003 missed trace propagation through `AsterwyndRunner`. |
 
 Current interpretation: the benchmark harness is healthy enough to guide
-development. The remaining failures primarily reflect MyAgent coding-agent
+development. The remaining failures primarily reflect Asterwynd coding-agent
 capability and benchmark environment sharp edges, not missing artifact capture
 or task isolation.
 
@@ -473,14 +487,14 @@ After reviewing 7 reference repos (claude-code, codex, hermes-agent, nanobot,
 openclaw, opencode, pi-mono):
 
 - **No RunTestsTool.** All 7 repos use their shell/bash tool to run tests.
-  MyAgent will enhance BashTool with structured JSON output instead.
+  Asterwynd will enhance BashTool with structured JSON output instead.
 - **No PatchTool.** Claude Code, nanobot, and pi-mono use Edit-only with exact
   replacement. Models produce malformed patches more often than exact
   replacements.
 - **ListFilesTool + FindTool added.** 4/7 repos provide dedicated file listing
-  tools. MyAgent currently has no file discovery mechanism. Ignore patterns are
+  tools. Asterwynd currently has no file discovery mechanism. Ignore patterns are
   separate from WorkspacePolicy denied patterns — user-extensible via
-  `MYAGENT_IGNORE_PATTERNS`.
+  `ASTERWYND_IGNORE_PATTERNS`.
 - **BashTool gets command denylist/allowlist.** Commands are checked against
   deny patterns first, then allowed only if they match safe command prefixes.
   Extra deny patterns can be appended through environment variables.
@@ -586,7 +600,7 @@ AgentRunner.run(task, workspace, output_dir) -> AgentRunResult
 
 Coverage:
 
-- `MyAgentRunner` writes trace and returns status.
+- `AsterwyndRunner` writes trace and returns status.
 - `ShellCommandRunner` captures stdout/stderr and exit code.
 - Adapter timeout is reported as `test_timeout` or `tool_error`, depending on
   phase.
@@ -619,7 +633,7 @@ keys, model behavior, and cost.
 
 - Task schema. Implemented.
 - Worktree runner. Implemented.
-- MyAgent runner. Implemented.
+- Asterwynd runner. Implemented.
 - Result files. Implemented.
 - 3-5 local tasks. Implemented with the P0 local task pack.
 - Warning status for test-passing but non-clean agent runs. Implemented.
@@ -638,13 +652,16 @@ keys, model behavior, and cost.
 
 ### P2: Cross-Agent Comparison
 
-- `ClaudeCodeRunner` — subprocess adapter wrapping the `claude` CLI. Runs in
-  the task worktree, passes the problem statement as a prompt. Collects final
-  git diff and stdout/stderr log. No internal tool-call trace available.
-- `CodexRunner` — same pattern for the `codex` CLI.
-- Unified comparison report: one summary table with MyAgent / Claude Code /
-  Codex results side-by-side on the same 23 tasks. Same tasks, same hidden
-  tests, same grading — only the agent runtime differs.
+- Local runner path: `ClaudeCodeRunner` wraps the `claude` CLI in the task
+  worktree, while `CodexRunner` remains deferred because of authentication
+  complexity.
+- Claw-SWE-Bench path: `AsterwyndAdapter`, `AiderAdapter`, and `OpenCodeAdapter`
+  are registered under `claw-swe-bench/claw_swebench/claws/`; this path compares
+  agents on SWE-bench Verified instances through one orchestrator and evaluation
+  harness.
+- Unified comparison report: one summary table with Asterwynd / external agent
+  results side-by-side on the same tasks. Same tasks, same grading — only the
+  agent runtime differs.
 - Contract tests for each adapter (satisfies `AgentRunner.run()`).
 
 ## 16. Relationship to Coding Agent Roadmap

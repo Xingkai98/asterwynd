@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from agent.config import MyAgentConfig
+from agent.config import AsterwyndConfig
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.run_identity import new_session_id
@@ -17,7 +17,7 @@ from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
 from web.debug_hook import DebugHook
 
-logger = logging.getLogger("myagent.web.session")
+logger = logging.getLogger("asterwynd.web.session")
 
 
 class AgentSession:
@@ -50,11 +50,11 @@ class SessionManager:
         self,
         debug_enabled: bool = False,
         mode: str | None = None,
-        config: MyAgentConfig | None = None,
+        config: AsterwyndConfig | None = None,
     ):
         self._sessions: dict[str, AgentSession] = {}
         self.debug_enabled = debug_enabled
-        self.config = config or MyAgentConfig()
+        self.config = config or AsterwyndConfig()
         resolved_mode = mode or self.config.agent.default_mode.value
         self.initial_mode = parse_agent_mode(resolved_mode)
 

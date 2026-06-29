@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义当前 MyAgent 已有运行入口和 agent mode 边界。当前实现包含 CLI 单轮、CLI 交互、Web 会话和 benchmark runner，并支持 build、read_only、plan 和内部 bypass mode。`plan` mode 是只读计划讨论模式，用于迭代 Plan Document 草案、定稿 Plan Document 和结构化 planning state，不执行实现。
+定义当前 Asterwynd 已有运行入口和 agent mode 边界。当前实现包含 CLI 单轮、CLI 交互、Web 会话和 benchmark runner，并支持 build、read_only、plan 和内部 bypass mode。`plan` mode 是只读计划讨论模式，用于迭代 Plan Document 草案、定稿 Plan Document 和结构化 planning state，不执行实现。
 
 ## Requirements
 

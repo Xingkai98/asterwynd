@@ -166,6 +166,68 @@ wheels = [
 ]
 
 [[package]]
+name = "asterwynd"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "datasets" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "psutil" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "tiktoken" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-go" },
+    { name = "tree-sitter-javascript" },
+    { name = "tree-sitter-rust" },
+    { name = "tree-sitter-typescript" },
+    { name = "typer" },
+    { name = "uvicorn" },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "playwright" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-mock" },
+    { name = "swebench" },
+]
+lsp = [
+    { name = "python-lsp-server" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "datasets", specifier = ">=5.0.0" },
+    { name = "fastapi", specifier = ">=0.100.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.40.0" },
+    { name = "psutil", specifier = ">=5.9.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-lsp-server", marker = "extra == 'lsp'", specifier = ">=1.12.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "swebench", marker = "extra == 'dev'", specifier = ">=4.1.0" },
+    { name = "tiktoken", specifier = ">=0.7.0" },
+    { name = "tree-sitter", specifier = ">=0.25.2" },
+    { name = "tree-sitter-go", specifier = ">=0.25.0" },
+    { name = "tree-sitter-javascript", specifier = ">=0.25.0" },
+    { name = "tree-sitter-rust", specifier = ">=0.24.2" },
+    { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
+    { name = "typer", specifier = ">=0.12.0" },
+    { name = "uvicorn", specifier = ">=0.30.0" },
+    { name = "websockets", specifier = ">=14.0" },
+]
+provides-extras = ["dev", "lsp"]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1139,68 +1201,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/61/af9115673a5870fd885247e2f1b68c4f1197737da315b520a91c757a861a/multiprocess-0.70.19-py314-none-any.whl", hash = "sha256:e8cc7fbdff15c0613f0a1f1f8744bef961b0a164c0ca29bdff53e9d2d93c5e5f", size = 160318, upload-time = "2026-01-19T06:47:37.497Z" },
     { url = "https://files.pythonhosted.org/packages/7e/82/69e539c4c2027f1e1697e09aaa2449243085a0edf81ae2c6341e84d769b6/multiprocess-0.70.19-py39-none-any.whl", hash = "sha256:0d4b4397ed669d371c81dcd1ef33fd384a44d6c3de1bd0ca7ac06d837720d3c5", size = 133477, upload-time = "2026-01-19T06:47:38.619Z" },
 ]
-
-[[package]]
-name = "myagent"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "datasets" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "psutil" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "tiktoken" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-go" },
-    { name = "tree-sitter-javascript" },
-    { name = "tree-sitter-rust" },
-    { name = "tree-sitter-typescript" },
-    { name = "typer" },
-    { name = "uvicorn" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "playwright" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-mock" },
-    { name = "swebench" },
-]
-lsp = [
-    { name = "python-lsp-server" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.9.0" },
-    { name = "datasets", specifier = ">=5.0.0" },
-    { name = "fastapi", specifier = ">=0.100.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "playwright", marker = "extra == 'dev'", specifier = ">=1.40.0" },
-    { name = "psutil", specifier = ">=5.9.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.12.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "python-lsp-server", marker = "extra == 'lsp'", specifier = ">=1.12.0" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "swebench", marker = "extra == 'dev'", specifier = ">=4.1.0" },
-    { name = "tiktoken", specifier = ">=0.7.0" },
-    { name = "tree-sitter", specifier = ">=0.25.2" },
-    { name = "tree-sitter-go", specifier = ">=0.25.0" },
-    { name = "tree-sitter-javascript", specifier = ">=0.25.0" },
-    { name = "tree-sitter-rust", specifier = ">=0.24.2" },
-    { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
-    { name = "typer", specifier = ">=0.12.0" },
-    { name = "uvicorn", specifier = ">=0.30.0" },
-    { name = "websockets", specifier = ">=14.0" },
-]
-provides-extras = ["dev", "lsp"]
 
 [[package]]
 name = "mypy-extensions"
