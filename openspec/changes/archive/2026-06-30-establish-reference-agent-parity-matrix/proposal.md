@@ -18,6 +18,7 @@ Asterwynd 当前已经具备 AgentLoop、工具系统、WorkspacePolicy、Memory
   - Claude Code 作为产品能力上限参照，不作为实现主参照。
   - Aider 作为 repo map、代码上下文和编辑工作流参照。
   - OpenCode 作为 TUI、多 provider、AGENTS.md 初始化和多入口体验参照。
+  - AtomCode 作为能力对比和 benchmark 指标呈现方式参照，不作为必须追齐的实现目标。
 - 新增长期维护的对标矩阵 artifact，记录每个能力项的参考来源、Asterwynd 状态、证据、缺口等级和后续 change。
 - 规定对标矩阵不能替代 OpenSpec change：任何运行时能力缺口都必须拆成独立 change，再进入实现。
 - 将对标矩阵接入能力证明链：重要能力必须能链接到规格、代码、测试、benchmark 或运行证据。

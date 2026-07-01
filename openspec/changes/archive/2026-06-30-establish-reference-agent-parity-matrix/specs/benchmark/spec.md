@@ -16,3 +16,10 @@
 - **WHEN** 该 change 涉及 AgentLoop、工具协议、coding tools、workspace safety、benchmark runner 或其他 coding-agent 核心路径
 - **THEN** 该 change 的任务 SHALL 包含相关测试
 - **AND** 该 change SHALL 包含 benchmark smoke 验证项或记录明确的不适用原因
+
+#### Scenario: 引用外部指标
+
+- **GIVEN** reference-agent parity artifact 引用外部 agent 的性能或能力指标
+- **WHEN** 该指标用于路线图或能力证明链判断
+- **THEN** 条目 SHALL 记录任务集、模型、样本量、度量口径、来源和最后核对日期
+- **AND** 不得只摘录排名或通过率结论

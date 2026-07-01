@@ -27,7 +27,7 @@
 
 ### Requirement: Reference Agent 分层
 
-项目 SHALL 在对标矩阵中区分主对标对象、产品能力参照和专项参照，避免把所有参考项目视为同等实现目标。
+项目 SHALL 在对标矩阵中区分主对标对象、产品能力参照、专项参照和呈现参照，避免把所有参考项目视为同等实现目标。
 
 #### Scenario: 使用 Codex CLI 作为主对标
 
@@ -37,7 +37,7 @@
 
 #### Scenario: 使用辅参照
 
-- **GIVEN** 对标能力来自 Claude Code、Aider 或 OpenCode
-- **WHEN** 该能力用于判断产品边界或专项能力
+- **GIVEN** 对标能力来自 Claude Code、Aider、OpenCode 或 AtomCode
+- **WHEN** 该能力用于判断产品边界、专项能力或指标呈现方式
 - **THEN** 条目 SHALL 标记其参考角色
 - **AND** SHALL 说明该能力是否需要 Asterwynd 等价覆盖

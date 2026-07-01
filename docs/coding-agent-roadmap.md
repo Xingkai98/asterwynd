@@ -258,6 +258,12 @@ still reports a non-clean outcome such as `max_iterations`.
 
 ## 5. Implementation Phases
 
+### Reference Agent Parity
+
+后续路线以 [Reference Agent 对标矩阵](./reference-agent-parity.md) 作为校准入口。Codex CLI 是主实现参照，Claude Code、Aider 和 OpenCode 是产品边界或专项能力参照；AtomCode 只吸收能力对比和 benchmark 指标的呈现方式，不作为当前必须追齐的实现目标。
+
+对标矩阵不直接授权 runtime 实现。矩阵中标为 `gap` 或重要 `partial` 的能力必须拆成独立 OpenSpec change，并在涉及 AgentLoop、工具协议、workspace safety、coding tools 或 benchmark runner 时包含测试和 benchmark smoke 计划。
+
 ### P0: Minimum Coding-Agent Loop
 
 Goal: make Asterwynd safely edit code in a local repository and record what it did.

@@ -30,13 +30,9 @@
 
 - `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
-### 第三批前置：对标矩阵与路线校准
-
-- `establish-reference-agent-parity-matrix`：先建立 Codex CLI 主对标、Claude Code/Aider/OpenCode 辅参照的能力矩阵，把已有能力、等价替代、缺口、证据和后续 change 串起来，避免后续功能投入发散。
-
 ### 第三批：工具权限模型前置
 
-- `refine-tool-permission-model`：优先级最高，应在 MCP、browser 和后续自定义工具能力前完成，避免外部工具继续扩大 `dangerous` 语义。
+- `refine-tool-permission-model`：当前最高优先级。对标矩阵已经确认它是 MCP、browser 和后续自定义工具能力前置，避免外部工具继续扩大 `dangerous` 语义。
 
 ### 第四批：语义 code intelligence 与 TUI
 
@@ -50,26 +46,7 @@
 
 ## 未实现队列
 
-### 1. `establish-reference-agent-parity-matrix`
-
-状态：未实现。
-
-批次：第三批前置之前的路线校准，建议优先完成。
-
-建议顺序原因：
-
-- 当前 Asterwynd 已有较多 coding-agent 基础能力，但缺少一份稳定的 reference-agent parity matrix 来说明哪些能力已支持、哪些是等价替代、哪些是缺口。
-- Codex CLI 适合作主对标对象；Claude Code、Aider、OpenCode 适合作辅参照。先建立分层和证据规则，可以避免后续按单个产品功能盲目扩张。
-- 对标矩阵应把能力项链接到规格、代码、测试、benchmark 或后续 OpenSpec change，服务能力证明链和面试叙事。
-
-主要交付：
-
-- Reference Agent 对标矩阵 artifact。
-- Codex CLI 主对标与 Claude Code/Aider/OpenCode 辅参照分层。
-- Asterwynd 能力状态、证据、缺口优先级和后续 change 映射。
-- 对 runtime 缺口的测试与 benchmark evidence 要求。
-
-### 2. `refine-tool-permission-model`
+### 1. `refine-tool-permission-model`
 
 状态：未实现。
 
@@ -89,7 +66,7 @@
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
 
-### 3. `add-minimal-tui-runtime-view`
+### 2. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -107,7 +84,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 4. `add-mcp-tool-adapter`
+### 3. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -125,7 +102,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 5. `add-browser-use-safety-foundation`
+### 4. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

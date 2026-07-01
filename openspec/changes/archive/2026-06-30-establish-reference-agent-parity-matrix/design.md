@@ -2,7 +2,7 @@
 
 本次讨论的核心问题是：Asterwynd 应该对标哪个当前 coding agent，并保证对方具备的关键能力在 Asterwynd 中有对应实现、等价替代或明确不做的理由。
 
-公开资料显示，Codex CLI 是 OpenAI 的本地运行 coding agent，代码开源，适合作为主实现参照；Claude Code 的公开文档将其描述为能读代码库、编辑文件、运行命令并集成开发工具的 agentic coding tool，适合作产品能力上限参照；Aider 强调 terminal pair programming、codebase map、git/lint/test workflow，适合作 code intelligence 和编辑闭环参照；OpenCode 强调 terminal agent、TUI、provider 配置和项目初始化生成 `AGENTS.md`，适合作终端体验和多入口参照。
+公开资料显示，Codex CLI 是 OpenAI 的本地运行 coding agent，代码开源，适合作为主实现参照；Claude Code 的公开文档将其描述为能读代码库、编辑文件、运行命令并集成开发工具的 agentic coding tool，适合作产品能力上限参照；Aider 强调 terminal pair programming、codebase map、git/lint/test workflow，适合作 code intelligence 和编辑闭环参照；OpenCode 强调 terminal agent、TUI、provider 配置和项目初始化生成 `AGENTS.md`，适合作终端体验和多入口参照；AtomCode 官网把能力分类和 benchmark 指标以产品化方式呈现，适合作展示口径参照。
 
 Asterwynd 的项目定位不是复刻某个商业产品，而是建设“可解释、可复现、可 benchmark 的本地 coding agent”。因此对标产物必须服务能力证明链，而不是变成无边界功能清单。
 
@@ -55,7 +55,13 @@ Aider 的 repo map、git workflow、lint/test feedback 与 Asterwynd 的 code in
 
 没有证据的能力项不得标为 `supported` 或 `equivalent`。
 
-### Decision 5: 矩阵只负责发现和排序，不负责实现
+### Decision 5: AtomCode 作为呈现参照，不作为实现追齐目标
+
+AtomCode 的价值主要在能力对比和指标展示方式，例如按工具、权限、会话、MCP、hook、插件和平均步骤数组织产品叙事。矩阵可以吸收这种展示口径，但不得因为 AtomCode 出现某项能力就自动提升为 Asterwynd 的 runtime 缺口。
+
+外部性能或能力指标只有在记录任务集、模型、样本量、度量口径、来源和最后核对日期后，才能用于路线图或能力证明链判断。
+
+### Decision 6: 矩阵只负责发现和排序，不负责实现
 
 矩阵发现的 `gap` 或重要 `partial` 项必须链接到已有 OpenSpec change，或新增独立 change。矩阵不得把多个 runtime 缺口塞进同一个大 change。
 
