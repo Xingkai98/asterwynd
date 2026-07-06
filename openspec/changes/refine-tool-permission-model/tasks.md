@@ -10,6 +10,7 @@
 - [ ] 1.8 新增 benchmark 规格，定义无人值守运行遇到 `require_approval` 时 fail closed。
 - [ ] 1.9 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
 - [ ] 1.10 开发前使用 `grill-with-docs` 审视 `design.md`，逐项确认 capability 枚举、risk level、origin、profile schema、approval handler 语义、subagent 审批策略、参数预览/脱敏规则、迁移策略和测试策略；当前文档不得直接视为最终实现方案。
+- [ ] 1.11 开发前补实 `## Reference Implementation Research`，基于 `.dev/reference-repos.txt` 中可用参考仓库调研工具权限、审批和外部工具接入设计，并回写 findings / design impact。
 
 ## 2. 测试
 
