@@ -12,7 +12,7 @@
 
 ## 并行开发批次
 
-后续 change 不应全部串行，也不应全量并行。建议按以下批次推进；同一批次内可以并行开 PR，但如果两个 change 同时修改 AgentLoop、ToolRegistry、Web session 或 trace 语义，应在实现阶段错开合入，避免协议和事件模型互相覆盖。
+后续 change 不应全部串行，也不应全量并行。建议按以下批次推进；同一批次内可以并行开 PR；如果两个 change 同时修改 AgentLoop、ToolRegistry、Web session 或 trace 语义，应在实现阶段错开合入，避免协议和事件模型互相覆盖。
 
 ### 第一批：已完成
 
