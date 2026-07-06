@@ -66,3 +66,18 @@
   - `openspec/specs/agent-modes/spec.md`
   - `docs/architecture.md`
   - `docs/testing-guide.md`
+
+## Reference Implementation Research
+
+- status: enabled
+- reason: 工具权限模型会影响 MCP、browser、自定义工具和 mode policy，应参考其他 coding-agent 对工具风险、权限审批和外部工具来源的建模方式。
+- research questions:
+  - Codex、Claude Code、opencode、OpenClaw 等项目如何表达工具能力、风险和来源？
+  - 需审批工具如何在 CLI/Web/TUI 或 headless 场景中 fail closed？
+  - 外部工具协议接入时，权限 metadata 应归属 registry、tool schema 还是 runtime policy？
+- findings:
+  - 本次仅为参考实现调研门禁的结构迁移，尚未完成本 change 的针对性横向调研。
+  - 当前工作区 `.dev/reference-repos.txt` 存在，可用于开发前调研；真正开始实现前必须补充具体参考仓库发现。
+- design impact:
+  - 当前 proposal 已保留 capability、risk、origin 和 approval 的设计方向；实现前需要用参考实现调研校验这些轴是否足以覆盖 MCP、browser 和自定义工具。
+  - 如果调研发现更合适的权限模型，应先回写本 change 的 design/spec/tasks，再进入实现。

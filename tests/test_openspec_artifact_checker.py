@@ -65,6 +65,18 @@ The direction is documented.
 Regression tests are documented.
 """
 
+VALID_REFERENCE_RESEARCH = """## Reference Implementation Research
+
+- status: enabled
+- reason: Reference implementations are relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
+"""
+
 
 def write_change(root: Path, proposal: str, design: str | None = None, diagnosis: str | None = None):
     root.mkdir(parents=True)
@@ -85,7 +97,13 @@ def write_spec_delta(root: Path, capability: str = "web-ui"):
     spec.write_text("## ADDED Requirements\n\n### Requirement: Example\n\nExample.\n", encoding="utf-8")
 
 
-def proposal_for(change_type: str, extra: str = "", *, impact: bool = True) -> str:
+def proposal_for(
+    change_type: str,
+    extra: str = "",
+    *,
+    impact: bool = True,
+    reference_research: bool = True,
+) -> str:
     proposal = f"""## Change Type
 
 - primary: {change_type}
@@ -98,6 +116,8 @@ def proposal_for(change_type: str, extra: str = "", *, impact: bool = True) -> s
 
 - Tests: covered.
 """
+    if reference_research and change_type != "docs":
+        proposal += f"\n{VALID_REFERENCE_RESEARCH}"
     return proposal
 
 
@@ -129,6 +149,17 @@ def test_combined_bugfix_research_feature_requires_diagnosis_and_design(tmp_path
 ## Impact Analysis
 
 - Tests: covered.
+
+## Reference Implementation Research
+
+- status: enabled
+- reason: Reference implementations are relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
 """,
         design=VALID_DESIGN,
     )
@@ -151,6 +182,17 @@ def test_combined_type_passes_when_all_required_artifacts_exist(tmp_path):
 ## Impact Analysis
 
 - Tests: covered.
+
+## Reference Implementation Research
+
+- status: enabled
+- reason: Reference implementations are relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
 """,
         design=VALID_DESIGN,
         diagnosis=VALID_DIAGNOSIS,
@@ -371,6 +413,79 @@ def test_docs_only_change_does_not_require_impact_analysis(tmp_path):
 - primary: docs
 """,
     )
+
+    assert check_change(change) == []
+
+
+def test_non_docs_change_requires_reference_implementation_research(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md or design.md missing required section: "
+        "## Reference Implementation Research"
+    ]
+
+
+def test_reference_implementation_research_enabled_requires_fields(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- status: enabled
+- reason: Relevant.
+- research questions:
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The checker should enforce records.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md section must include non-empty "
+        "`research questions` when reference implementation research is enabled: "
+        "## Reference Implementation Research"
+    ]
+
+
+def test_reference_implementation_research_disabled_requires_reason(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- status: disabled
+- reason:
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md section must include non-empty `reason`: "
+        "## Reference Implementation Research"
+    ]
+
+
+def test_reference_implementation_research_can_be_recorded_in_design(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False),
+        design=VALID_DESIGN + "\n" + VALID_REFERENCE_RESEARCH,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
 
     assert check_change(change) == []
 
