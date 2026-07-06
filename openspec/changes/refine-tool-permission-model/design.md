@@ -300,6 +300,21 @@ ApprovalResponse 至少表达：
 
 当前推荐：先做 additive metadata + 三值 profile + CLI/Web 审批，开放用户自定义 profile 但不开放自定义 mode。高风险审批的默认 profile 需要在开发前再确认一次，尤其是是否改变 build mode 下 Bash 的默认执行体验。
 
+## Pre-Implementation Review
+
+- Questions resolved:
+  - 权限模型主方向已在既有 Decisions 中记录：capability、risk level、origin、permission profile、三值判定和 ApprovalHandler。
+  - 本 change 仍未完成当前新增规则下的最终开发前设计追问，且已有 `Decisions To Confirm Before Implementation` 明确列出待确认项。
+- Options considered:
+  - 直接把既有 Decisions 视为完整开发前 review。
+  - 保留既有 Decisions，同时在真正开发前按当前规则重新确认待定项。
+- Rejected alternatives:
+  - 直接视为完整 review。原因：设计文档已明确 capability 枚举、risk 分级、profile schema、审批 UI、subagent 策略等仍需开发前再次确认。
+- Final confirmations:
+  - 开发前必须重新使用 `grill-with-docs` 或等价设计追问逐项确认 `Decisions To Confirm Before Implementation`。
+- Remaining risks:
+  - 权限模型是安全边界，未完成待确认项前不得进入测试实现或功能实现。
+
 ## Risks / Trade-offs
 
 - [Risk] 权限模型过度抽象，短期实现成本高。Mitigation: 分阶段迁移，第一阶段保持现有行为不变。

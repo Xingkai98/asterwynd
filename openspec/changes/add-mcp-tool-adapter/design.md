@@ -40,6 +40,20 @@ MCP tool 可以声明权限提示，但最终是否可执行由 Asterwynd 的 mo
 
 理由：外部 server 不应绕过本地安全模型。
 
+## Pre-Implementation Review
+
+- Questions resolved:
+  - 本 change 尚未按当前新增的 Impact Analysis / Pre-Implementation Review 规则完成开发前设计追问。
+- Options considered:
+  - 保留原设计，等待开始开发时完整追问。
+  - 在本次流程治理 change 中伪造完整追问结论。
+- Rejected alternatives:
+  - 伪造完整追问结论。原因：该 change 依赖工具权限模型等前置决策，必须在真正开发前重新结合当前代码确认。
+- Final confirmations:
+  - 开发前必须重新使用 `grill-with-docs` 或等价设计追问确认 MCP schema 映射、fake server 范围、超时错误模型、权限元数据和配置边界。
+- Remaining risks:
+  - 工具权限模型尚未实现，MCP adapter 的最终接口可能随前置 change 调整。
+
 ## Risks / Trade-offs
 
 - [Risk] MCP schema 与本地 tool schema 不完全一致。Mitigation: 先支持 JSON Schema 子集，不支持项返回清晰错误。

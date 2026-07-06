@@ -22,6 +22,7 @@
 - 设计约束：必须遵守的架构、协议和安全边界。
 - 验收标准：什么算完成？
 - 测试计划：单元测试、集成测试、CLI/Web/benchmark 覆盖。
+- 影响分析：受影响能力域、代码模块、入口、artifact、配置、测试、文档，以及明确不影响的范围。
 - 文档影响：需要更新哪些文档和面试材料？
 
 ## 开发流程
@@ -68,6 +69,26 @@
 - `specs/<capability>/spec.md`：定义系统对外可验证的行为要求。
 - `design.md`：详细设计，说明实现方案、关键决策、接口、错误处理、测试策略和风险。
 - `tasks.md`：按依赖顺序拆分可执行任务。
+
+非平凡 change 必须维护 `## Impact Analysis`。首选放在 `proposal.md`；如果影响面需要在设计阶段展开，也可以在 `design.md` 补充更细版本。影响分析至少判断以下方面是否受影响：
+
+- AgentLoop
+- Tool system
+- Workspace safety
+- Agent modes / permissions
+- CLI
+- Web UI
+- TUI
+- Benchmark
+- Trace / logs / artifacts
+- Config / env
+- Specs
+- Tests
+- Docs
+- Migration / compatibility
+- Explicitly not affected
+
+proposal 阶段可以保留 `unknown`、`TBD` 或 `待确认`，但开发前设计追问必须将待确认项清理为明确结论或阻塞项；归档前不得残留未解释的占位词。
 
 新建 `tasks.md` 时，应先复制或参考 `openspec/templates/tasks.md`，再按当前 change 裁剪和补充。模板中的通用验证项默认保留，只有在明确不适用时才删除，并在设计或任务中说明原因。
 
@@ -126,7 +147,20 @@
 - 如果问题能通过阅读代码或项目文档回答，先查代码和文档，不把可验证事实留给猜测。
 - 如果发现术语、边界或设计决策不清楚，应先更新当前 change 的 `design.md`、`proposal.md`、spec delta、`tasks.md` 或稳定项目文档，再进入开发。
 - 如果当前 agent 环境没有 `grill-with-docs` skill，也必须按同等标准执行设计追问：逐个设计分支确认方案、记录取舍和未选方案，并明确测试与验收方式。
+- 设计追问完成后，`design.md` 必须包含 `## Pre-Implementation Review`，简要记录已解决问题、备选方案、否决方案、最终确认和剩余风险；不要把完整聊天流水粘贴进设计文档。
 - 设计追问完成前，不进入测试实现或功能实现。
+
+## Impact Analysis 动态维护
+
+Impact Analysis 不是一次性段落，而是贯穿 change lifecycle 的维护对象：
+
+- proposal 阶段：记录初始影响面，允许待确认项。
+- design 阶段：结合代码和文档逐项确认影响面，将待确认项清理为明确结论或阻塞项。
+- tasks 阶段：每个受影响入口必须对应测试、文档或验证任务；如果不需要动作，应记录原因。
+- implementation 阶段：如果发现新影响面，先回写 Impact Analysis 和 `tasks.md`，再继续无关实现。
+- archive 阶段：确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`，并完成对应验证。
+
+项目 artifact checker 只机械检查 Impact Analysis 和 Pre-Implementation Review 的存在与非空，不判断分析是否充分，也不在普通模式下禁止 proposal 阶段的待确认占位词。
 
 ## 自然语言到 OpenSpec 流程
 
@@ -171,6 +205,7 @@ PR 合入后固定确认：
 - OpenSpec schema：`spec-driven` schema 已包含 `proposal`、`specs`、`design`、`tasks` 四类 artifact，可通过 `openspec status --change <id>` 查看缺失项。
 - 项目本地脚本：检查 active changes 是否满足项目文档规则，例如 `Change Type` 合法、各类型要求按并集满足、非平凡 change 有 `design.md`、问题定位类 change 有 `diagnosis.md`，必填章节不是空壳，核心路径 change 包含 benchmark smoke 验证项，并且 backlog 与 active/archive change 状态一致。
 - 项目本地脚本还会检查需要 `design.md` 的 active change 是否在 `tasks.md` 中包含 `grill-with-docs` 或“等价设计追问”任务，避免新 change 漏掉开发前设计门槛。
+- 项目本地脚本还会检查非 docs change 是否包含 `## Impact Analysis`，以及需要 `design.md` 的 change 是否包含 `## Pre-Implementation Review`。
 - 人工评审：脚本不判断设计是否合理；开发前必须先完成 `grill-with-docs` 或等价设计追问，再人工审核 `design.md` 并确认通过。
 
 在开始实现前，应至少运行：
@@ -182,7 +217,7 @@ openspec validate <change-id> --strict
 uv run python scripts/check_openspec_artifacts.py
 ```
 
-`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
+`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change。设计是否正确、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 开发前设计追问和设计评审都通过前，不进入实现阶段。
 

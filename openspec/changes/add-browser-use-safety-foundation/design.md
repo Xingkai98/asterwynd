@@ -40,6 +40,20 @@ Asterwynd 当前没有 browser/computer use 工具。浏览器能力会引入外
 
 理由：浏览器产物可能包含页面内容或凭据，必须可追踪、可清理。
 
+## Pre-Implementation Review
+
+- Questions resolved:
+  - 本 change 尚未按当前新增的 Impact Analysis / Pre-Implementation Review 规则完成开发前设计追问。
+- Options considered:
+  - 保留原设计，等待开始开发时完整追问。
+  - 在本次流程治理 change 中伪造完整追问结论。
+- Rejected alternatives:
+  - 伪造完整追问结论。原因：该 change 尚未进入实现阶段，必须在真正开发前重新结合当前代码、权限模型和测试策略确认。
+- Final confirmations:
+  - 开发前必须重新使用 `grill-with-docs` 或等价设计追问确认 URL policy、artifact 路径、权限元数据、超时、凭据边界和测试策略。
+- Remaining risks:
+  - 浏览器能力风险高，后续设计追问可能要求调整当前 scope 或依赖顺序。
+
 ## Risks / Trade-offs
 
 - [Risk] Playwright 依赖增加安装成本。Mitigation: 将浏览器集成测试标记为可选，核心单元测试使用 fake service。

@@ -1,0 +1,21 @@
+schema: spec-driven
+
+context: |
+  Asterwynd 是面向大厂 Agent 相关开发岗位的本地 Coding Agent 系统项目。
+  项目文档使用中文；代码、注释、公开 API 和命令参数使用英文；提交信息使用中文。
+  OpenSpec 是需求和能力规格的 source of truth。新功能先建 change，再设计、测试、实现、验证和归档。
+  详细项目说明和能力域地图见 openspec/project.md；核心项目词汇见 CONTEXT.md；执行入口规则见 AGENTS.md。
+
+rules:
+  proposal:
+    - 必须包含 Change Type，声明 primary 和 secondary。
+    - 非 docs change 必须包含 Impact Analysis，说明影响的能力域、代码、测试和文档。
+    - proposal 只说明为什么做、做什么和影响面，不承载详细实现方案。
+  design:
+    - 非平凡 change 必须包含 design.md。
+    - design.md 必须记录 Context、Goals / Non-Goals、Decisions、Pre-Implementation Review、Risks / Trade-offs 和 Testing Strategy。
+    - Pre-Implementation Review 只记录决策相关摘要，不粘贴完整聊天流水。
+  tasks:
+    - tasks.md 必须保留测试、实现、验证和 PR 收尾任务。
+    - 包含 spec delta 的非 docs change 必须包含同步 openspec/specs/<capability>/spec.md 的任务。
+    - 涉及核心 coding-agent 路径时必须包含 benchmark smoke 验证任务。
