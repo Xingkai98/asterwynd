@@ -32,7 +32,7 @@
 ## 5. PR 收尾
 
 - [x] 5.1 将 `change-documentation` delta 合并到 `openspec/specs/change-documentation/spec.md`，确认 current spec 只描述已经实现的流程能力。
-- [ ] 5.2 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-add-ci-impact-governance/`。
-- [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次。
-- [ ] 5.4 记录后续 branch protection 配置条件：CI workflow 名称、required check 名称和是否允许 admin bypass。
-- [ ] 5.5 运行 `npx openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 5.2 PR 发起前，将本 change 归档到 `openspec/changes/archive/2026-07-06-add-ci-impact-governance/`。
+- [x] 5.3 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次。
+- [x] 5.4 记录后续 branch protection 配置条件：CI workflow 名称为 `CI`，required check 建议使用 `validate`；是否允许 admin bypass 等 CI 在 PR 上稳定通过后再配置。
+- [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。

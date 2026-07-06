@@ -30,9 +30,7 @@
 
 - `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
-### 第三批：流程治理与工具权限模型前置
-
-- `add-ci-impact-governance`：建议优先完成，把已有测试、OpenSpec 校验、artifact checker 和 Impact Analysis 规则接入可执行流程；`master` branch protection 等 CI check 名称稳定后再单独配置。
+### 第三批：工具权限模型前置
 
 - `refine-tool-permission-model`：优先级最高，应在 MCP、browser 和后续自定义工具能力前完成，避免外部工具继续扩大 `dangerous` 语义。
 
@@ -48,28 +46,7 @@
 
 ## 未实现队列
 
-### 1. `add-ci-impact-governance`
-
-状态：未实现。
-
-批次：第三批前置，建议在继续推进核心功能 change 前完成。
-
-建议顺序原因：
-
-- 当前测试、OpenSpec validate 和 artifact checker 已存在，但主要依赖 agent 或维护者主动执行，缺少 PR 级自动门禁。
-- Impact Analysis 已在 proposal 中出现，但格式不统一，无法稳定支撑“开发中发现新影响面必须回写”的流程。
-- branch protection 需要稳定 CI check 名称，本 change 先建立 CI workflow 和文档规则，不直接配置保护规则。
-
-主要交付：
-
-- GitHub Actions CI workflow。
-- Impact Analysis 动态维护规则。
-- pre-implementation review 结论记录规则。
-- `openspec/config.yaml` 短版 OpenSpec 命令上下文和 artifact rules。
-- artifact checker 对新增结构的机械检查。
-- OpenSpec change template 和流程文档更新。
-
-### 2. `refine-tool-permission-model`
+### 1. `refine-tool-permission-model`
 
 状态：未实现。
 
@@ -89,7 +66,7 @@
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
 
-### 3. `add-minimal-tui-runtime-view`
+### 2. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -107,7 +84,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 4. `add-mcp-tool-adapter`
+### 3. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -125,7 +102,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 5. `add-browser-use-safety-foundation`
+### 4. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
