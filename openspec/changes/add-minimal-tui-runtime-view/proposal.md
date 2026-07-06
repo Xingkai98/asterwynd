@@ -29,7 +29,7 @@ CLI 单轮和 Web UI 已存在，但终端中缺少一个适合 coding-agent 长
 - 依赖 `implement-structured-planning-state`。
 - 建议依赖 `introduce-agent-mode-policy`。
 
-## Impact
+## Impact Analysis
 
 - 影响代码：
   - `cli.py`

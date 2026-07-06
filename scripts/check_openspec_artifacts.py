@@ -8,6 +8,8 @@ This checker intentionally performs mechanical checks only:
 - proposal.md declares Change Type with primary/secondary fields
 - change spec delta capabilities map to current specs
 - non-docs changes with spec deltas include a current spec sync task
+- non-docs changes include Impact Analysis
+- changes that require design include a Pre-Implementation Review record
 
 It does not judge whether a design is technically correct. Human review owns
 that gate.
@@ -46,6 +48,7 @@ DESIGN_SECTIONS = [
     "Context",
     "Goals / Non-Goals",
     "Decisions",
+    "Pre-Implementation Review",
     "Risks / Trade-offs",
     "Testing Strategy",
 ]
@@ -185,6 +188,24 @@ def _check_required_sections(path: Path, required_sections: list[str]) -> list[s
     return errors
 
 
+def _check_impact_analysis(change_dir: Path, proposal_text: str) -> list[str]:
+    proposal_sections = _extract_h2_sections(proposal_text)
+    if "Impact Analysis" in proposal_sections:
+        if _is_placeholder_body(proposal_sections["Impact Analysis"]):
+            return ["proposal.md section is empty or placeholder-only: ## Impact Analysis"]
+        return []
+
+    design = change_dir / "design.md"
+    if design.exists():
+        design_sections = _extract_h2_sections(design.read_text(encoding="utf-8"))
+        if "Impact Analysis" in design_sections:
+            if _is_placeholder_body(design_sections["Impact Analysis"]):
+                return ["design.md section is empty or placeholder-only: ## Impact Analysis"]
+            return []
+
+    return ["proposal.md or design.md missing required section: ## Impact Analysis"]
+
+
 def _requires_benchmark_smoke(proposal_text: str) -> bool:
     lowered = proposal_text.lower()
     for capability in BENCHMARK_SMOKE_CAPABILITIES:
@@ -308,6 +329,12 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
         errors.extend(
             f"{change_dir.name}: {error}"
             for error in _check_required_sections(change_dir / "design.md", DESIGN_SECTIONS)
+        )
+
+    if change_type.primary != "docs":
+        errors.extend(
+            f"{change_dir.name}: {error}"
+            for error in _check_impact_analysis(change_dir, proposal_text)
         )
 
     if all_types & DIAGNOSIS_TYPES:

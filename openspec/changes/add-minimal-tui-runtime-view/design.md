@@ -40,6 +40,20 @@ TUI renderer 只负责布局和刷新，session/agent 状态仍由现有 runtime
 
 理由：避免把终端 UI 状态混进 AgentLoop。
 
+## Pre-Implementation Review
+
+- Questions resolved:
+  - 本 change 尚未按当前新增的 Impact Analysis / Pre-Implementation Review 规则完成开发前设计追问。
+- Options considered:
+  - 保留原设计，等待开始开发时完整追问。
+  - 在本次流程治理 change 中伪造完整追问结论。
+- Rejected alternatives:
+  - 伪造完整追问结论。原因：TUI 依赖 runtime events、tool display policy、planning state 和权限展示的最新状态，必须在真正开发前重新确认。
+- Final confirmations:
+  - 开发前必须重新使用 `grill-with-docs` 或等价设计追问确认事件消费模型、终端降级策略、键盘交互、测试方式和非交互环境行为。
+- Remaining risks:
+  - TUI scope 容易扩大到交互控制面；开发前需要再次守住最小 runtime view 范围。
+
 ## Risks / Trade-offs
 
 - [Risk] TUI 与 Web 展示语义不一致。Mitigation: 复用相同事件字段和 planning state。

@@ -24,7 +24,7 @@
 - `tool-system`: 增加 browser tools 权限元数据。
 - `workspace-safety`: 截图和浏览器 artifact 存储受 workspace policy 约束。
 
-## Impact
+## Impact Analysis
 
 - 影响代码：
   - `agent/browser/`

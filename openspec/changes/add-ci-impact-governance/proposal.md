@@ -32,7 +32,7 @@
 
 - `change-documentation`: OpenSpec change 文档流程增加 Impact Analysis、pre-implementation review 和 CI 门禁要求。
 
-## Impact
+## Impact Analysis
 
 - 影响代码：
   - `.github/workflows/ci.yml`

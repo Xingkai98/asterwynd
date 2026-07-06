@@ -41,7 +41,7 @@
 - `cli`: interactive CLI 支持工具审批，single-prompt 入口对需审批工具 fail closed。
 - `web-ui`: Web session 支持审批请求、用户决定和结果回传。
 
-## Impact
+## Impact Analysis
 
 - 影响代码：
   - `agent/tools/base.py`
