@@ -22,6 +22,13 @@ MemoryManager SHALL support a manual compact operation for the current conversat
 - **THEN** the system SHALL either compact eligible older messages or return a clear no-op result
 - **AND** the result SHALL be observable by the caller
 
+#### Scenario: Manual compact has no eligible older messages
+
+- **GIVEN** conversation history contains no non-system messages beyond the retained recent window
+- **WHEN** the user manually requests compact
+- **THEN** the system SHALL leave conversation history unchanged
+- **AND** return an observable no-op result
+
 #### Scenario: Manual compact preserves tool-call chains
 
 - **GIVEN** conversation history contains assistant tool calls and tool results

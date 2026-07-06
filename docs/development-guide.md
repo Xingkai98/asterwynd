@@ -44,6 +44,17 @@ uv run python cli.py main "用 Read 工具读 /tmp"
 uv run python cli.py main --interactive
 ```
 
+交互模式内置 slash commands：
+
+```text
+/help                         # 查看可用命令
+/status                       # 查看 session、mode、provider、model 和上下文摘要
+/mode <build|read_only|plan>  # 切换后续 run 的 agent mode
+/clear                        # 清空当前交互历史，保留 system context 和 Session ID
+/compact                      # 主动压缩 eligible older history
+/exit 或 /quit                # 退出交互模式
+```
+
 启动 Web UI：
 
 ```bash
@@ -158,6 +169,8 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ## 开发注意事项
 
+- CLI 交互模式通过 slash command registry 处理 `/help`、`/status`、`/mode`、`/clear`、`/compact`、`/exit` 和 `/quit`；裸 `exit`、`quit`、`q` 仍可退出。
+- `/clear` 只清当前 CLI 交互上下文，不生成新的 Session ID；后续如果引入持久 transcript 或 cache reset，需要单独扩展语义。
 - CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。
 - 当前 CLI/Web 的 mode 切换在用户侧表现为“影响后续 run”；runtime state 仍会在 transition 完成后立即更新，供后续 TUI 或控制面重构复用。
 - 优先使用 `rg` 和 `rg --files` 搜索。

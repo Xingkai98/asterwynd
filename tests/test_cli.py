@@ -1,6 +1,7 @@
 from typer.testing import CliRunner
 
 import cli
+from agent.memory.manager import MemoryManager
 from agent.openai_llm import OpenAILLM
 from agent.result import RunResult, StopReason, ToolCallMade
 
@@ -17,6 +18,7 @@ class FakeAgent:
         self.plan_document = None
         self.current_mode = "build"
         self.mode_changes = []
+        self.memory = MemoryManager()
 
     async def run(self, messages, session_id=None, run_id=None):
         self.messages = messages
@@ -323,6 +325,140 @@ def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
     assert "bypass" in result.stdout
     assert fake.current_mode == "build"
     assert fake.mode_changes == []
+
+
+def test_cli_interactive_help_command_does_not_run_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/help\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "/help" in result.stdout
+    assert "/clear" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.run_ids == []
+
+
+def test_cli_interactive_slash_exit_exits_without_running_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "再见！" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.run_ids == []
+
+
+def test_cli_interactive_status_command_prints_local_state(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/status\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Session ID: session-interactive" in result.stdout
+    assert "Mode: build" in result.stdout
+    assert "Provider: openai" in result.stdout
+    assert "Model: fake-model" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+
+
+def test_cli_interactive_unknown_slash_command_is_not_sent_to_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/unknown\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Unknown command: /unknown" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.messages is None
+
+
+def test_cli_interactive_clear_removes_previous_user_history(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    run_ids = iter(["run-1", "run-2"])
+    monkeypatch.setattr(cli, "new_run_id", lambda: next(run_ids))
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="first\n/clear\nsecond\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Cleared conversation history." in result.stdout
+    assert "Run ID: run-1" in result.stdout
+    assert "Run ID: run-2" in result.stdout
+    assert [message.content for message in fake.messages if message.role == "user"] == [
+        "second"
+    ]
+
+
+def test_cli_interactive_compact_reports_noop_without_running_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/compact\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Nothing to compact" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.run_ids == []
 
 
 def test_cli_single_prompt_passes_normalized_mode(monkeypatch):

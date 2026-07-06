@@ -17,6 +17,7 @@ CLI interactive mode SHALL route slash commands through a central command regist
 - **WHEN** 用户输入未知 slash command
 - **THEN** CLI SHALL 输出可读错误
 - **AND** SHALL NOT 将该输入发送给 LLM
+- **AND** SHALL NOT 产生新的 Run ID
 - **AND** 会话 SHALL 继续
 
 ### Requirement: CLI interactive basic session commands
@@ -54,8 +55,10 @@ CLI interactive mode SHALL provide basic session slash commands for exit, status
 - **GIVEN** 用户处于 CLI 交互模式并已有多轮对话
 - **WHEN** 用户输入 `/clear`
 - **THEN** CLI SHALL 清空当前会话的非 system 消息
+- **AND** SHALL 保留当前 Session ID
 - **AND** 输出可读确认
 - **AND** SHALL NOT 将 `/clear` 发送给 LLM
+- **AND** SHALL NOT 产生新的 Run ID
 
 #### Scenario: Slash compact command
 
@@ -64,3 +67,4 @@ CLI interactive mode SHALL provide basic session slash commands for exit, status
 - **THEN** CLI SHALL 主动请求压缩当前会话上下文
 - **AND** 输出压缩结果或无需压缩的可读说明
 - **AND** SHALL NOT 将 `/compact` 发送给 LLM
+- **AND** SHALL NOT 产生新的 Run ID

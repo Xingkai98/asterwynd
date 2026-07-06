@@ -23,6 +23,7 @@ import typer
 load_dotenv(Path(__file__).parent / ".env")
 
 from agent.loop import AgentLoop
+from agent.commands import CommandContext, build_default_slash_command_registry
 from agent.config import ConfigError, ConfigOverrides, AsterwyndConfig, load_config
 from agent.message import Message, system_message
 from agent.openai_llm import OpenAILLM
@@ -266,6 +267,7 @@ def run_interactive(
     typer.echo(f"模型: {resolved_model} | 提供商: {provider} | Mode: {mode}\n")
     typer.echo(f"Session ID: {session_id}\n")
     agent.max_iterations = max_iterations
+    command_registry = build_default_slash_command_registry()
 
     messages: list[Message] = []
     system_prompt = (
@@ -279,6 +281,7 @@ def run_interactive(
     # 复用持久 event loop，避免 httpx.AsyncClient 连接池引用已关闭的 loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    stop_requested = False
 
     async def _run_async():
         run_id = new_run_id()
@@ -293,41 +296,39 @@ def run_interactive(
         )
         return result, stream_state
 
-    async def _set_mode_async(requested_mode: str):
-        return await agent.set_mode(
-            requested_mode,
-            source="cli",
-            session_id=session_id,
-        )
-
     def _handle_interactive_command(user_input: str) -> bool:
-        stripped = user_input.strip()
-        if not stripped.startswith("/mode"):
-            return False
-        parts = stripped.split(maxsplit=1)
-        if len(parts) != 2 or not parts[1].strip():
-            typer.echo("Error: usage /mode <build|read_only|plan>")
-            return True
-        try:
-            transition = loop.run_until_complete(_set_mode_async(parts[1].strip()))
-        except ValueError as exc:
-            typer.echo(f"Error: {exc}")
-            return True
-        typer.echo(
-            f"Mode changed: {transition['old_mode']} -> {transition['new_mode']}"
+        nonlocal stop_requested
+        command_context = CommandContext(
+            agent=agent,
+            messages=messages,
+            session_id=session_id,
+            provider=provider,
+            model=str(resolved_model),
         )
+        result = loop.run_until_complete(
+            command_registry.try_execute(user_input, command_context)
+        )
+        if result is None:
+            return False
+        if result.message:
+            typer.echo(result.message)
+        if not result.continue_session:
+            stop_requested = True
         return True
 
     try:
         # 如果有初始 prompt，先跑一轮
         if initial_prompt:
-            if not _handle_interactive_command(initial_prompt):
+            handled_initial = _handle_interactive_command(initial_prompt)
+            if not handled_initial:
                 messages.append(Message(role="user", content=initial_prompt))
                 result, stream_state = loop.run_until_complete(_run_async())
                 _print_plan_document(agent)
                 if not stream_state["streamed"]:
                     typer.echo(f"\n【Agent】\n{result.content}\n")
                 _print_tool_call_summaries(result, config)
+            if stop_requested:
+                return
 
         while True:
             try:
@@ -341,6 +342,8 @@ def run_interactive(
                 break
 
             if _handle_interactive_command(user_input):
+                if stop_requested:
+                    break
                 continue
 
             messages.append(Message(role="user", content=user_input))

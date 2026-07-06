@@ -70,15 +70,54 @@ CLI SHALL 支持通过 `--mode plan` 启动 plan mode，并将该 mode 传入 Ag
 - **THEN** 系统 SHALL 使用 plan mode 工具策略
 - **AND** 输出计划说明
 
-### Requirement: CLI 交互模式支持 session mode 切换
+### Requirement: CLI interactive slash command registry
 
-CLI 交互模式 SHALL 支持通过 `/mode <build|read_only|plan>` 切换当前 session mode。CLI 单次运行 SHALL 继续只通过 `--mode` 指定初始 mode，不提供运行中的人工切换入口。
+CLI 交互模式 SHALL 通过 central command registry 处理独立 slash command。未知 slash command SHALL 被本地拦截并提示 `/help`，不得发送给 LLM，也不得产生新的 Run ID。普通文本中的 `/` 不应触发 command registry。
+
+#### Scenario: Slash command help
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `/help`
+- **THEN** CLI SHALL 输出可用 slash command 列表
+- **AND** 每个命令 SHALL 包含简短说明或用法
+
+#### Scenario: Unknown slash command
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入未知 slash command
+- **THEN** CLI SHALL 输出可读错误
+- **AND** SHALL NOT 将该输入发送给 LLM
+- **AND** SHALL NOT 产生新的 Run ID
+- **AND** 会话 SHALL 继续
+
+### Requirement: CLI 交互模式支持基本 session slash commands
+
+CLI 交互模式 SHALL 提供 `/exit`、`/quit`、`/status`、`/mode`、`/clear` 和 `/compact`。CLI 单次运行 SHALL 继续只通过 `--mode` 指定初始 mode，不提供运行中的人工切换入口。
+
+#### Scenario: Slash exit command
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `/exit` 或 `/quit`
+- **THEN** CLI SHALL 结束交互会话
+
+#### Scenario: Bare exit remains compatible
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `exit`、`quit` 或 `q`
+- **THEN** CLI SHALL 结束交互会话
+
+#### Scenario: Slash status command
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `/status`
+- **THEN** CLI SHALL 输出当前 session id、mode、provider 和 model
+- **AND** SHOULD 输出当前消息数量或 token 估算
 
 #### Scenario: 交互模式切换到 read_only
 
 - **GIVEN** 用户处于 CLI 交互模式
 - **WHEN** 用户输入 `/mode read_only`
-- **THEN** CLI SHALL 更新当前 session mode
+- **THEN** CLI SHALL 通过 slash command registry 更新当前 session mode
 - **AND** 输出切换结果
 - **AND** 之后的 run SHALL 使用 `read_only`
 
@@ -88,6 +127,25 @@ CLI 交互模式 SHALL 支持通过 `/mode <build|read_only|plan>` 切换当前 
 - **WHEN** 用户输入 `/mode bypass`
 - **THEN** CLI SHALL 输出可读错误
 - **AND** 当前 session mode SHALL 保持不变
+
+#### Scenario: Slash clear command
+
+- **GIVEN** 用户处于 CLI 交互模式并已有多轮对话
+- **WHEN** 用户输入 `/clear`
+- **THEN** CLI SHALL 清空当前会话的非 system 消息
+- **AND** SHALL 保留当前 Session ID
+- **AND** 输出可读确认
+- **AND** SHALL NOT 将 `/clear` 发送给 LLM
+- **AND** SHALL NOT 产生新的 Run ID
+
+#### Scenario: Slash compact command
+
+- **GIVEN** 用户处于 CLI 交互模式并已有多轮对话
+- **WHEN** 用户输入 `/compact`
+- **THEN** CLI SHALL 主动请求压缩当前会话上下文
+- **AND** 输出压缩结果或无需压缩的可读说明
+- **AND** SHALL NOT 将 `/compact` 发送给 LLM
+- **AND** SHALL NOT 产生新的 Run ID
 
 ### Requirement: web 命令启动 Web UI
 
@@ -144,4 +202,3 @@ CLI SHALL 在支持 streaming 的运行路径中实时打印 `assistant_delta.de
 - **GIVEN** provider 不支持 streaming
 - **WHEN** runtime 发布普通 `llm_response`
 - **THEN** CLI SHALL 输出 `llm_response.content`
-

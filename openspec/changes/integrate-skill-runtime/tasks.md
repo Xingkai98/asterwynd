@@ -4,7 +4,7 @@
 - [ ] 1.2 更新 `configuration` spec delta，定义 skill roots 配置。
 - [ ] 1.3 更新 `cli` spec delta，定义 `/skills` 和 `/skills reload`。
 - [ ] 1.4 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。
-- [ ] 1.5 明确本 change 依赖 `add-slash-command-framework`，不包含 skill authoring、marketplace 或 semantic search。
+- [ ] 1.5 明确本 change 依赖已归档的 slash command framework，不包含 skill authoring、marketplace 或 semantic search。
 - [ ] 1.6 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，逐项确认 skill roots 默认值、注入位置、匹配算法、trace 可观测性、错误诊断和测试策略。
 - [ ] 1.7 维护 `## Impact Analysis`，列出影响、不影响和待确认影响面；开发前把待确认项清理为明确结论或阻塞项。
 - [ ] 1.8 维护 `## Reference Implementation Research`；开发前补充更具体的参考实现文件和设计影响。

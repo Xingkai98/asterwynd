@@ -1,5 +1,6 @@
 # agent/memory/manager.py
 import logging
+from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 from agent.message import Message
@@ -18,6 +19,27 @@ try:
 except ImportError:
     def _count_tokens(text: str) -> int:
         return len(text) // 4
+
+
+@dataclass(frozen=True)
+class ManualCompactResult:
+    compacted: bool
+    before_messages: int
+    after_messages: int
+    before_tokens: int
+    after_tokens: int
+    reason: str
+
+    def to_metadata(self) -> dict:
+        return {
+            "compacted": self.compacted,
+            "before_messages": self.before_messages,
+            "after_messages": self.after_messages,
+            "before_tokens": self.before_tokens,
+            "after_tokens": self.after_tokens,
+            "reason": self.reason,
+        }
+
 
 class MemoryManager:
     def __init__(
@@ -76,6 +98,37 @@ class MemoryManager:
         msgs[:] = system + [summary_message] + recent
         logger.info(f"[Memory] Compacted to {len(msgs)} messages with summary")
         return True
+
+    async def compact_manually(
+        self,
+        messages: Optional[list["Message"]] = None,
+    ) -> ManualCompactResult:
+        msgs = messages if messages is not None else self.messages
+        before_messages = len(msgs)
+        before_tokens = self.count_tokens(msgs)
+        non_system = [m for m in msgs if m.role != "system"]
+        recent = self._recent_with_tool_chains(non_system)
+        middle_count = max(0, len(non_system) - len(recent))
+
+        if middle_count == 0:
+            return ManualCompactResult(
+                compacted=False,
+                before_messages=before_messages,
+                after_messages=before_messages,
+                before_tokens=before_tokens,
+                after_tokens=before_tokens,
+                reason="no_eligible_messages",
+            )
+
+        await self.compact(msgs)
+        return ManualCompactResult(
+            compacted=True,
+            before_messages=before_messages,
+            after_messages=len(msgs),
+            before_tokens=before_tokens,
+            after_tokens=self.count_tokens(msgs),
+            reason="compacted",
+        )
 
     async def _summarize_messages(self, messages: list["Message"]) -> Optional[str]:
         if self.llm is None:

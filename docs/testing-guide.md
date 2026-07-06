@@ -57,6 +57,7 @@ tests/agent/tools/test_edit_tool.py
 - BashTool 执行本地测试并返回结构化输出
 - AgentLoop 工具调用链
 - Memory compact 后保持 tool-call 协议合法
+- CLI slash command registry 的命令解析、未知命令拦截、上下文清理和手动 compact 结果
 - Web session 消息历史
 - Web session 的 session id / run id / session mode、Plan Document、planning state 事件和工具结果 display metadata
 - Benchmark runner artifact 写入
@@ -139,6 +140,7 @@ uv run python run_infer.py \
 - `max_iterations` 不能把最后一个 tool result 包装成 assistant 最终回复。
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。
 - Memory compact 不能破坏 tool-call / tool-result 相邻链。
+- CLI 独立 slash command 属于本地控制面；未知 slash command、`/clear` 和 `/compact` 不能作为普通用户消息发送给 LLM。
 - `passed_with_warnings` 是测试通过但过程不干净，不能算 clean pass。
 - benchmark 结果分类读 `status`，具体细节读 `reason`；`unsupported` 不能并入 `failed`。
 - Web Chat 的 assistant streaming 必须通过 AgentLoop `assistant_delta` / `assistant_stream_complete` 事件进入 WebSocket 和 CLI；回归测试必须覆盖流式展示不重复最终 `llm_response`，不能只改前端展示。

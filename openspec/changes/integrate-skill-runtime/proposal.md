@@ -55,7 +55,7 @@
   - `docs/development-guide.md`
   - `docs/architecture.md`
 - 依赖：
-  - 建议在 `add-slash-command-framework` 合入后实现，以复用 command registry。
+  - 依赖已归档的 slash command framework，以复用 command registry。
 - 不影响：
   - MCP adapter。
   - browser/computer use。
