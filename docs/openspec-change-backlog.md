@@ -32,6 +32,8 @@
 
 ### 第三批：工具权限模型前置
 
+- `add-role-based-change-workflow`：流程治理增强，可先做设计讨论；如果确认要落地，应在后续复杂 change 开发前完成，降低多 agent/model 交接和审阅时的信息丢失。
+
 - `refine-tool-permission-model`：优先级最高，应在 MCP、browser 和后续自定义工具能力前完成，避免外部工具继续扩大 `dangerous` 语义。
 
 ### 第四批：语义 code intelligence 与 TUI
@@ -46,7 +48,27 @@
 
 ## 未实现队列
 
-### 1. `refine-tool-permission-model`
+### 1. `add-role-based-change-workflow`
+
+状态：未实现。
+
+批次：第三批流程治理增强，可与工具权限模型设计讨论并行，但建议在复杂多角色开发前完成。
+
+建议顺序原因：
+
+- 当前流程支持单 agent 从设计到实现再到归档，但没有明确多角色 handoff、implementation review 和 revision loop。
+- 角色化流程可以支持 A 模型设计、B 模型开发、A/C 模型审阅、B 再修改，同时仍允许同一个 agent 从头做到尾。
+- 该 change 不改变 runtime 行为，主要影响 OpenSpec change 文档和 checker 规则；适合在后续复杂功能开发前先固化。
+
+主要交付：
+
+- Designer / Implementer / Reviewer / Closer 角色边界。
+- implementation handoff artifact 要求。
+- Implementation Review 结构化 findings。
+- revision loop 和 blocking findings 关闭规则。
+- 对应流程文档、模板和 artifact checker 调整。
+
+### 2. `refine-tool-permission-model`
 
 状态：未实现。
 
@@ -66,7 +88,7 @@
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
 
-### 2. `add-minimal-tui-runtime-view`
+### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -84,7 +106,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 3. `add-mcp-tool-adapter`
+### 4. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -102,7 +124,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 4. `add-browser-use-safety-foundation`
+### 5. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
