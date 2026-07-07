@@ -1,8 +1,17 @@
 ---
 name: code-review
-description: 执行代码审查，发现潜在 bug
+description: 执行代码审查，发现潜在 bug、行为回归和缺失测试
 tools: [Read, Bash]
 always: false
+user_invocable: true
+argument_hint: <request>
+triggers:
+  - review
+  - code review
+  - 代码审查
+  - 审查
+  - PR
+  - change
 ---
 
 # Code Review Skill

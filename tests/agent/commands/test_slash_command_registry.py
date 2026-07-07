@@ -9,14 +9,16 @@ from agent.commands import (
 )
 from agent.memory.manager import MemoryManager
 from agent.message import Message
+from agent.skills import Skill, SkillRuntime
 
 
 class FakeAgent:
-    def __init__(self):
+    def __init__(self, skill_runtime=None):
         self.llm = type("FakeLLM", (), {"model": "fake-model"})()
         self.current_mode = "build"
         self.memory = MemoryManager(recent_window=2)
         self.mode_changes = []
+        self.skill_runtime = skill_runtime
 
     async def set_mode(self, mode, *, source, session_id=None, **kwargs):
         if mode == "bypass":
@@ -156,6 +158,109 @@ async def test_default_help_lists_registered_commands():
     assert "/help" in result.message
     assert "/clear" in result.message
     assert "/compact" in result.message
+
+
+@pytest.mark.asyncio
+async def test_default_registry_lists_skills_and_registers_skill_commands():
+    runtime = SkillRuntime(skills=[
+        Skill(
+            name="code-review",
+            description="审查代码变更",
+            prompt="Review instructions",
+            tools=[],
+            triggers=("review",),
+            argument_hint="<request>",
+            user_invocable=True,
+        ),
+        Skill(
+            name="internal",
+            description="Internal skill",
+            prompt="Internal instructions",
+            tools=[],
+            user_invocable=False,
+        ),
+    ])
+    registry = build_default_slash_command_registry(runtime)
+    ctx = CommandContext(
+        agent=FakeAgent(skill_runtime=runtime),
+        messages=[],
+        session_id="session-1",
+        provider="openai",
+        model="fake-model",
+    )
+
+    skills_result = await registry.try_execute("/skills", ctx)
+    skill_result = await registry.try_execute("/code-review 帮我审一下这个 change", ctx)
+
+    assert skills_result is not None
+    assert "Loaded skills: 2" in skills_result.message
+    assert "code-review" in skills_result.message
+    assert "internal" in skills_result.message
+    assert skill_result is not None
+    assert skill_result.message == "Activated skill: code-review"
+    assert skill_result.metadata["run_agent"] is True
+    assert skill_result.metadata["agent_input"] == "帮我审一下这个 change"
+    assert skill_result.metadata["skill_name"] == "code-review"
+    assert skill_result.metadata["activation_source"] == "slash_command"
+
+    catalog = registry.catalog()
+    skill_command = next(command for command in catalog if command["name"] == "code-review")
+    assert skill_command["source"] == "skill"
+    assert skill_command["kind"] == "prompt"
+    assert skill_command["argument_hint"] == "<request>"
+    assert "internal" not in {command["name"] for command in catalog}
+
+
+@pytest.mark.asyncio
+async def test_skills_reload_refreshes_dynamic_skill_commands(tmp_path):
+    skills_root = tmp_path / "skills"
+    review_dir = skills_root / "review"
+    review_dir.mkdir(parents=True)
+    (review_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: review\n"
+        "description: Review code\n"
+        "user_invocable: true\n"
+        "---\n"
+        "Review instructions\n",
+        encoding="utf-8",
+    )
+    runtime = SkillRuntime.from_roots([skills_root])
+    registry = build_default_slash_command_registry(runtime)
+    ctx = CommandContext(
+        agent=FakeAgent(skill_runtime=runtime),
+        messages=[],
+        session_id="session-1",
+        provider="openai",
+        model="fake-model",
+    )
+
+    assert await registry.try_execute("/review first", ctx) is not None
+    (review_dir / "SKILL.md").unlink()
+    docs_dir = skills_root / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: docs\n"
+        "description: Update docs\n"
+        "user_invocable: true\n"
+        "---\n"
+        "Docs instructions\n",
+        encoding="utf-8",
+    )
+
+    reload_result = await registry.try_execute("/skills reload", ctx)
+    old_result = await registry.try_execute("/review second", ctx)
+    new_result = await registry.try_execute("/docs update docs", ctx)
+
+    assert reload_result is not None
+    assert reload_result.metadata["reloaded"] is True
+    assert reload_result.metadata["skill_count"] == 1
+    assert old_result is not None
+    assert old_result.metadata["known"] is False
+    assert new_result is not None
+    assert new_result.metadata["run_agent"] is True
+    assert new_result.metadata["skill_name"] == "docs"
 
 
 @pytest.mark.asyncio

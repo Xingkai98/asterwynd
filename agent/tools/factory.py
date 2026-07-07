@@ -49,6 +49,7 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "WebFetch",
     "WebSearch",
     "Write",
+    "ActivateSkill",
 }
 
 

@@ -65,16 +65,25 @@ class BenchmarkConfig:
 
 
 @dataclass(frozen=True)
+class SkillsConfig:
+    roots: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
 class AsterwyndConfig:
     path: Path | None = None
     agent: AgentConfig = field(default_factory=AgentConfig)
     modes: dict[AgentMode, ModeConfig] = field(default_factory=dict)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
 
     def __post_init__(self) -> None:
         if not self.modes:
             object.__setattr__(self, "modes", _default_modes())
+        if not self.skills.roots:
+            base = self.path.parent if self.path else Path.cwd()
+            object.__setattr__(self, "skills", SkillsConfig(roots=(base / "skills",)))
 
     def mode_config(self, mode: AgentMode) -> ModeConfig:
         return self.modes.get(mode, ModeConfig())
@@ -101,7 +110,7 @@ def load_config(
     cli_overrides: ConfigOverrides | None = None,
 ) -> AsterwyndConfig:
     path = _resolve_config_path(config_path, start_dir)
-    config = _load_yaml_config(path)
+    config = _load_yaml_config(path, start_dir=start_dir)
     config = _apply_environment(config)
     if cli_overrides:
         config = _apply_cli_overrides(config, cli_overrides)
@@ -147,9 +156,16 @@ def _find_git_root(start: Path) -> Path | None:
         current = current.parent
 
 
-def _load_yaml_config(path: Path | None) -> AsterwyndConfig:
+def _load_yaml_config(
+    path: Path | None,
+    *,
+    start_dir: str | Path | None = None,
+) -> AsterwyndConfig:
     if path is None:
-        return AsterwyndConfig()
+        base = Path(start_dir or Path.cwd()).resolve()
+        if base.is_file():
+            base = base.parent
+        return AsterwyndConfig(skills=SkillsConfig(roots=(base / "skills",)))
 
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -166,6 +182,7 @@ def _load_yaml_config(path: Path | None) -> AsterwyndConfig:
         agent=_parse_agent_config(raw.get("agent", {}), path),
         modes=_parse_modes_config(raw.get("modes", {}), path),
         tools=_parse_tools_config(raw.get("tools", {}), path),
+        skills=_parse_skills_config(raw.get("skills", {}), path),
         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
     )
 
@@ -492,6 +509,27 @@ def _parse_tool_display_config(raw: Any, path: Path) -> ToolResultDisplayConfig:
             path=path,
         ),
     )
+
+
+def _parse_skills_config(raw: Any, path: Path) -> SkillsConfig:
+    mapping = _expect_mapping(raw, path, "skills")
+    base = path.parent
+    roots = [base / "skills"]
+    for item in _parse_string_list(mapping.get("roots", []), path, "skills.roots"):
+        expanded = os.path.expandvars(item)
+        candidate = Path(expanded).expanduser()
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        roots.append(candidate.resolve())
+    normalized = []
+    seen = set()
+    for root in roots:
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        normalized.append(resolved)
+    return SkillsConfig(roots=tuple(normalized))
 
 
 def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:

@@ -10,7 +10,7 @@ from httpx import AsyncClient, ASGITransport
 from fastapi.testclient import TestClient
 
 from agent.llm import LLMResponse, ToolCallDelta
-from agent.config import AsterwyndConfig, AgentConfig
+from agent.config import AsterwyndConfig, AgentConfig, SkillsConfig
 from agent.run_config import AgentMode
 from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
@@ -31,8 +31,10 @@ class MockLLM:
     def __init__(self, responses=None):
         self.responses = responses or [LLMResponse(content="Hello!")]
         self.call_count = 0
+        self.last_messages = None
 
     async def chat(self, messages, tools=None, model="gpt-4"):
+        self.last_messages = list(messages)
         if self.call_count < len(self.responses):
             resp = self.responses[self.call_count]
         else:
@@ -130,6 +132,41 @@ async def test_api_slash_commands_returns_catalog(app):
 
 
 @pytest.mark.asyncio
+async def test_api_slash_commands_includes_configured_skills(tmp_path):
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "code-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: code-review\n"
+        "description: 审查代码变更\n"
+        "argument_hint: <request>\n"
+        "user_invocable: true\n"
+        "---\n"
+        "Review instructions\n",
+        encoding="utf-8",
+    )
+    app = create_app(
+        MockLLM([LLMResponse(content="Hello")]),
+        config=AsterwyndConfig(skills=SkillsConfig(roots=(skills_root,))),
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/slash-commands")
+        assert resp.status_code == 200
+        data = resp.json()
+
+    skill_command = next(
+        command for command in data["commands"]
+        if command["name"] == "code-review"
+    )
+    assert skill_command["source"] == "skill"
+    assert skill_command["kind"] == "prompt"
+    assert skill_command["insert_text"] == "/code-review "
+
+
+@pytest.mark.asyncio
 async def test_static_files_served(app):
     """Static files (style.css) are served."""
     transport = ASGITransport(app=app)
@@ -199,7 +236,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
     assert "/static/style.css?v=12" in index
-    assert "/static/chat.js?v=9" in index
+    assert "/static/chat.js?v=10" in index
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
@@ -577,6 +614,57 @@ def test_websocket_mode_slash_command_updates_session_mode_without_agent_run():
     assert done["data"]["stop_reason"] == "command"
     assert "Mode: read_only" in status_result["data"]["message"]
     assert mock_llm.call_count == 0
+
+
+def test_websocket_skill_slash_command_activates_skill_and_runs_agent(tmp_path):
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "code-review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: code-review\n"
+        "description: 审查代码变更\n"
+        "argument_hint: <request>\n"
+        "user_invocable: true\n"
+        "---\n"
+        "Review instructions\n",
+        encoding="utf-8",
+    )
+    mock_llm = MockLLM([LLMResponse(content="review done")])
+    app = create_app(
+        mock_llm,
+        config=AsterwyndConfig(skills=SkillsConfig(roots=(skills_root,))),
+    )
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            ws.receive_json()
+
+            ws.send_json({"type": "chat", "content": "/code-review 帮我审一下这个 change"})
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    event_types = [event["type"] for event in events]
+    assert event_types[0] == "command_result"
+    assert "run_started" in event_types
+    assert events[-1]["data"]["content"] == "review done"
+    assert mock_llm.call_count == 1
+    assert mock_llm.last_messages is not None
+    assert [message.content for message in mock_llm.last_messages if message.role == "user"] == [
+        "帮我审一下这个 change"
+    ]
+    system_text = "\n".join(
+        message.content or ""
+        for message in mock_llm.last_messages
+        if message.role == "system"
+    )
+    assert "Available skills:" in system_text
+    assert "## Active Skill: code-review" in system_text
+    assert "Review instructions" in system_text
 
 
 def test_websocket_exit_slash_command_closes_without_agent_run():

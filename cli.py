@@ -37,6 +37,7 @@ from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
 from agent.llm import LLM
 from agent.run_identity import new_run_id, new_session_id
+from agent.skills import SkillRuntime
 from agent.tool_result_display import summarize_tool_result
 from agent.branding import BRAND_NAME, render_tui_banner
 
@@ -155,6 +156,7 @@ def build_agent(
         workspace_policy=workspace_policy,
         parent_mode=run_config.mode,
     )
+    skill_runtime = SkillRuntime.from_roots(config.skills.roots)
 
     return AgentLoop(
         llm=llm,
@@ -165,6 +167,7 @@ def build_agent(
         expose_subagent_tools=True,
         run_config=run_config,
         tool_result_display=config.tools.display,
+        skill_runtime=skill_runtime,
     )
 
 @app.command()
@@ -267,7 +270,9 @@ def run_interactive(
     typer.echo(f"模型: {resolved_model} | 提供商: {provider} | Mode: {mode}\n")
     typer.echo(f"Session ID: {session_id}\n")
     agent.max_iterations = max_iterations
-    command_registry = build_default_slash_command_registry()
+    command_registry = build_default_slash_command_registry(
+        getattr(agent, "skill_runtime", None)
+    )
 
     messages: list[Message] = []
     system_prompt = (
@@ -314,6 +319,23 @@ def run_interactive(
             typer.echo(result.message)
         if not result.continue_session:
             stop_requested = True
+        if result.metadata.get("run_agent"):
+            skill_runtime = getattr(agent, "skill_runtime", None)
+            skill_name = result.metadata.get("skill_name")
+            if skill_runtime is not None and skill_name:
+                skill_runtime.queue_activation(
+                    str(skill_name),
+                    source=str(result.metadata.get("activation_source", "slash_command")),
+                )
+            agent_input = str(result.metadata.get("agent_input") or "").strip()
+            if not agent_input:
+                agent_input = user_input
+            messages.append(Message(role="user", content=agent_input))
+            run_result, stream_state = loop.run_until_complete(_run_async())
+            _print_plan_document(agent)
+            if not stream_state["streamed"]:
+                typer.echo(f"\n【Agent】\n{run_result.content}\n")
+            _print_tool_call_summaries(run_result, config)
         return True
 
     try:

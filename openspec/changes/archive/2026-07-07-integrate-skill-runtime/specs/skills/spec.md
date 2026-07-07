@@ -18,6 +18,31 @@ The agent runtime SHALL load skills from configured skill roots before running u
 - **THEN** the runtime SHALL continue startup
 - **AND** record a diagnostic for that root
 
+#### Scenario: Skill directory format
+
+- **GIVEN** a configured root contains `skills/<name>/SKILL.md` style entries
+- **WHEN** skills are loaded
+- **THEN** the runtime SHALL parse each `SKILL.md`
+- **AND** SHALL retain each skill source path for diagnostics and slash command metadata
+
+#### Scenario: Duplicate skill name
+
+- **GIVEN** multiple configured roots contain the same skill name
+- **WHEN** skills are loaded
+- **THEN** the first loaded skill SHALL win
+- **AND** subsequent duplicates SHALL be skipped with a diagnostic
+
+### Requirement: Skill index is visible to the model
+
+The runtime SHALL include a concise skill index in model-visible context for each run. The index SHALL list loaded skill names, descriptions, and user invocation syntax without including full skill prompts.
+
+#### Scenario: Skill index rendered
+
+- **GIVEN** skills are loaded
+- **WHEN** AgentLoop calls the LLM
+- **THEN** model-visible messages SHALL include a concise skill index
+- **AND** the index SHALL NOT include full `SKILL.md` bodies
+
 ### Requirement: Always skills are injected into system context
 
 Always skills SHALL be included in the agent system context for every run.
@@ -44,6 +69,31 @@ Non-always skills SHALL be matched against the current user input and injected o
 - **GIVEN** no non-always skill matches the current user input
 - **WHEN** the agent runs that prompt
 - **THEN** no non-always skill prompt SHALL be injected
+
+#### Scenario: User input matches trigger
+
+- **GIVEN** a non-always skill declares a trigger phrase
+- **WHEN** the current user input contains that trigger
+- **THEN** the skill prompt SHALL be included in the current run context
+
+### Requirement: LLM can activate skills with a runtime tool
+
+The runtime SHALL expose a low-risk `ActivateSkill` tool that lets the LLM activate an already loaded skill for the current run.
+
+#### Scenario: LLM activates known skill
+
+- **GIVEN** the LLM calls `ActivateSkill` with a loaded skill name
+- **WHEN** the tool executes
+- **THEN** the skill SHALL become active for the current run
+- **AND** the next LLM call in that run SHALL include the full skill prompt
+- **AND** the activation SHALL be observable with source `llm_tool`
+
+#### Scenario: LLM activates unknown skill
+
+- **GIVEN** the LLM calls `ActivateSkill` with an unknown skill name
+- **WHEN** the tool executes
+- **THEN** the tool SHALL return a readable error
+- **AND** no skill prompt SHALL be injected
 
 ### Requirement: Skill reload refreshes runtime skills
 

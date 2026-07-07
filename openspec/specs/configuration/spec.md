@@ -79,3 +79,34 @@
 - **THEN** 系统 SHALL 将该值传入 RepoMap 和 SymbolSearch 使用的 code intelligence 配置
 - **AND** 超过该大小的 tree-sitter 文件 SHALL 降级为文件级条目
 
+### Requirement: 配置声明 skill roots
+
+系统 SHALL 支持在 `asterwynd.yaml` 的 `skills.roots` 下配置本地 skill roots。入口层配置解析 SHALL 总是把配置文件所在目录的 repo-local `skills/` 作为第一 root；`skills.roots` 中的路径作为追加 roots，按声明顺序加载。缺失配置文件时，默认 root SHALL 为启动目录下的 `skills/`。
+
+#### Scenario: Skill roots configured
+
+- **GIVEN** `asterwynd.yaml` 包含 `skills.roots`
+- **WHEN** 系统加载配置
+- **THEN** 每个 root SHALL 被解析为文件系统路径
+- **AND** `~` 和环境变量 SHALL 被展开
+- **AND** 相对路径 SHALL 以配置文件所在目录为基准解析
+
+#### Scenario: Skill roots omitted
+
+- **GIVEN** 配置省略 `skills.roots`
+- **WHEN** 系统加载配置
+- **THEN** 系统 SHALL 使用 repo-local `skills/` 作为 skill root
+
+#### Scenario: Skill roots order
+
+- **GIVEN** 配置声明了追加 skill roots
+- **WHEN** skill runtime 加载 skills
+- **THEN** repo-local `skills/` SHALL 先于追加 roots 加载
+- **AND** 后续 roots 中的重复 skill name SHALL NOT 覆盖先加载的 skill
+
+#### Scenario: Invalid skill roots config
+
+- **GIVEN** `skills.roots` 不是字符串列表
+- **WHEN** 系统加载配置
+- **THEN** 配置加载 SHALL fail fast
+- **AND** 返回可读错误

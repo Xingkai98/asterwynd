@@ -3,6 +3,14 @@ name: research
 description: 研究主题，搜集网络信息并总结
 tools: [WebSearch, WebFetch]
 always: false
+user_invocable: true
+argument_hint: <topic>
+triggers:
+  - research
+  - 搜索
+  - 调研
+  - 查找
+  - 网络信息
 ---
 
 # Research Skill

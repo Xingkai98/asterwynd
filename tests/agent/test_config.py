@@ -20,6 +20,7 @@ def test_load_config_uses_defaults_when_yaml_missing(tmp_path, monkeypatch):
     assert config.tools.display.max_result_chars == 4000
     assert config.tools.display.max_result_lines == 80
     assert config.tools.display.preview_chars == 1200
+    assert config.skills.roots == (tmp_path / "skills",)
     assert config.benchmark.parallel == 1
     assert config.benchmark.timeout_seconds == 600
 
@@ -51,12 +52,17 @@ tools:
     max_result_chars: 2000
     max_result_lines: 40
     preview_chars: 600
+skills:
+  roots:
+    - ./team-skills
+    - $ASTERWYND_TEST_SKILLS
 benchmark:
   parallel: 3
   timeout_seconds: 42
 """,
         encoding="utf-8",
     )
+    monkeypatch.setenv("ASTERWYND_TEST_SKILLS", str(tmp_path / "env-skills"))
 
     config = load_config(start_dir=tmp_path)
 
@@ -74,8 +80,26 @@ benchmark:
     assert config.tools.display.max_result_chars == 2000
     assert config.tools.display.max_result_lines == 40
     assert config.tools.display.preview_chars == 600
+    assert config.skills.roots == (
+        tmp_path / "skills",
+        tmp_path / "team-skills",
+        tmp_path / "env-skills",
+    )
     assert config.benchmark.parallel == 3
     assert config.benchmark.timeout_seconds == 42
+
+
+def test_invalid_skill_roots_config_fails_fast(tmp_path):
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+skills:
+  roots: ./skills
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="skills.roots"):
+        load_config(start_dir=tmp_path)
 
 
 def test_environment_overrides_yaml_for_supported_fields(tmp_path, monkeypatch):
