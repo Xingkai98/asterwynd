@@ -6,6 +6,7 @@ from pathlib import Path
 from agent.lsp.client import LspClientManager
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.builtin._lsp_diagnostics import collect_diagnostics_feedback
+from agent.tool_permissions import WORKSPACE_WRITE_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
 
 @tool_parameters(
@@ -25,6 +26,7 @@ from agent.workspace_policy import WorkspacePolicy
 )
 class WriteTool(Tool):
     read_only = False
+    permission = WORKSPACE_WRITE_PERMISSION
 
     def __init__(
         self,

@@ -139,6 +139,7 @@ def create_app(
                                 session,
                                 agent_input,
                                 ws_send=lambda e: ws.send_json(e),
+                                ws_receive=ws.receive_json,
                             )
                             continue
                         await ws.send_json({
@@ -156,9 +157,32 @@ def create_app(
                     await session_manager.run_session(
                         session, user_text,
                         ws_send=lambda e: ws.send_json(e),
+                        ws_receive=ws.receive_json,
                     )
 
+                elif msg_type == "approval_response":
+                    approval_id = str(raw.get("approval_id", "")).strip()
+                    decision = str(raw.get("decision", "")).strip()
+                    accepted = session.approval_handler.submit_response(
+                        approval_id,
+                        decision,
+                    )
+                    await ws.send_json({
+                        "type": "approval_response",
+                        "data": {
+                            "approval_id": approval_id,
+                            "status": "received" if accepted else "unavailable",
+                            "reason": (
+                                "received"
+                                if accepted
+                                else "no matching pending approval"
+                            ),
+                            "session_id": session.session_id,
+                        },
+                    })
+
                 elif msg_type == "reset":
+                    session.approval_handler.fail_pending("session reset")
                     session_manager.remove_session(session.session_id)
                     session = session_manager.create_session(llm)
                     await ws.send_json({

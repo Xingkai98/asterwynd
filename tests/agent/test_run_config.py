@@ -7,6 +7,12 @@ from agent.run_config import (
     ModePolicy,
     parse_agent_mode,
 )
+from agent.tool_permissions import (
+    PermissionDecisionType,
+    ToolCapability,
+    ToolPermission,
+    ToolRiskLevel,
+)
 from agent.tools.base import Tool
 
 
@@ -21,6 +27,18 @@ class DummyTool(Tool):
 
     async def execute(self, **kwargs) -> str:
         return "dummy"
+
+
+class PermissionedTool(Tool):
+    name = "Permissioned"
+    description = "permissioned"
+    parameters = {}
+
+    def __init__(self, permission: ToolPermission):
+        self.permission = permission
+
+    async def execute(self, **kwargs) -> str:
+        return "permissioned"
 
 
 def test_parse_agent_mode_accepts_supported_user_values():
@@ -66,10 +84,19 @@ def test_runtime_state_rejects_bypass_and_keeps_current_mode():
     assert state.current_mode is AgentMode.BUILD
 
 
-def test_mode_policy_allows_all_registered_tools_in_build():
+def test_mode_policy_keeps_high_risk_tools_visible_in_build():
     policy = ModePolicy(AgentRunConfig(mode=AgentMode.BUILD))
 
     assert policy.is_tool_allowed(DummyTool(read_only=False, dangerous=True)) is True
+
+
+def test_mode_policy_requires_approval_for_high_risk_tools_in_build():
+    policy = ModePolicy(AgentRunConfig(mode=AgentMode.BUILD))
+
+    decision = policy.decide_tool(DummyTool(read_only=False, dangerous=True))
+
+    assert decision.type is PermissionDecisionType.REQUIRE_APPROVAL
+    assert decision.permission.risk_level is ToolRiskLevel.HIGH
 
 
 def test_mode_policy_denies_configured_tool_name_in_build():
@@ -103,12 +130,28 @@ def test_mode_policy_read_only_allows_only_read_only_non_dangerous_tools():
     assert policy.is_tool_allowed(DummyTool(read_only=True, dangerous=True)) is False
 
 
-def test_mode_policy_plan_matches_read_only_policy():
+def test_mode_policy_plan_allows_agent_state_tools():
     plan = ModePolicy(AgentRunConfig(mode=AgentMode.PLAN))
-    read_only = ModePolicy(AgentRunConfig(mode=AgentMode.READ_ONLY))
-    tool = DummyTool(read_only=True, dangerous=False)
+    tool = PermissionedTool(
+        ToolPermission(
+            capabilities=frozenset({ToolCapability.AGENT_STATE}),
+            risk_level=ToolRiskLevel.MEDIUM,
+        )
+    )
 
-    assert plan.is_tool_allowed(tool) == read_only.is_tool_allowed(tool)
+    assert plan.decide_tool(tool).type is PermissionDecisionType.ALLOW
+
+
+def test_mode_policy_read_only_denies_agent_state_tools():
+    read_only = ModePolicy(AgentRunConfig(mode=AgentMode.READ_ONLY))
+    tool = PermissionedTool(
+        ToolPermission(
+            capabilities=frozenset({ToolCapability.AGENT_STATE}),
+            risk_level=ToolRiskLevel.MEDIUM,
+        )
+    )
+
+    assert read_only.decide_tool(tool).type is PermissionDecisionType.DENY
 
 
 def test_mode_policy_bypass_fails_closed():

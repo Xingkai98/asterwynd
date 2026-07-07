@@ -11,6 +11,7 @@ let slashCommands = [];
 let slashMatches = [];
 let activeSlashIndex = 0;
 let shouldReconnect = true;
+const approvalCards = new Map();
 
 // --- DOM refs ---
 const messagesEl = document.getElementById('messages');
@@ -151,6 +152,15 @@ function handleEvent(event) {
 
     case 'tool_result':
       addToolResultMessage(event.data);
+      break;
+
+    case 'approval_request':
+      currentAssistantMsg = null;
+      renderApprovalRequest(event.data || {});
+      break;
+
+    case 'approval_response':
+      renderApprovalResponse(event.data || {});
       break;
 
     case 'done':
@@ -297,6 +307,97 @@ function addToolResultMessage(data) {
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return body;
+}
+
+function renderApprovalRequest(data) {
+  const approvalId = data.approval_id;
+  if (!approvalId) return;
+
+  const el = document.createElement('div');
+  el.className = 'approval-card';
+
+  const header = document.createElement('div');
+  header.className = 'approval-card-header';
+
+  const title = document.createElement('span');
+  title.textContent = `Approval required: ${data.tool_name || 'tool'}`;
+  header.appendChild(title);
+
+  const risk = document.createElement('span');
+  risk.className = 'approval-risk';
+  risk.textContent = data.risk || '';
+  header.appendChild(risk);
+  el.appendChild(header);
+
+  const meta = document.createElement('div');
+  meta.className = 'approval-meta';
+  const capability = Array.isArray(data.capability) ? data.capability.join(', ') : '';
+  meta.textContent = `mode=${data.mode || ''} capability=${capability} origin=${data.origin || ''}`;
+  el.appendChild(meta);
+
+  if (data.reason) {
+    const reason = document.createElement('div');
+    reason.className = 'approval-reason';
+    reason.textContent = data.reason;
+    el.appendChild(reason);
+  }
+
+  const pre = document.createElement('pre');
+  pre.className = 'approval-args';
+  pre.textContent = data.args_summary || JSON.stringify(data.redacted_args || {}, null, 2);
+  el.appendChild(pre);
+
+  const controls = document.createElement('div');
+  controls.className = 'approval-controls';
+
+  const approve = document.createElement('button');
+  approve.type = 'button';
+  approve.className = 'approval-approve';
+  approve.textContent = 'Approve';
+  approve.addEventListener('click', () => sendApprovalDecision(approvalId, 'approved'));
+
+  const deny = document.createElement('button');
+  deny.type = 'button';
+  deny.className = 'approval-deny';
+  deny.textContent = 'Deny';
+  deny.addEventListener('click', () => sendApprovalDecision(approvalId, 'denied'));
+
+  const status = document.createElement('span');
+  status.className = 'approval-status';
+  status.textContent = 'pending';
+
+  controls.appendChild(approve);
+  controls.appendChild(deny);
+  controls.appendChild(status);
+  el.appendChild(controls);
+
+  messagesEl.appendChild(el);
+  approvalCards.set(approvalId, { el, approve, deny, status });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function sendApprovalDecision(approvalId, decision) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const card = approvalCards.get(approvalId);
+  if (card) {
+    card.approve.disabled = true;
+    card.deny.disabled = true;
+    card.status.textContent = 'sent';
+  }
+  ws.send(JSON.stringify({
+    type: 'approval_response',
+    approval_id: approvalId,
+    decision,
+  }));
+}
+
+function renderApprovalResponse(data) {
+  const approvalId = data.approval_id;
+  const card = approvalCards.get(approvalId);
+  if (!card) return;
+  card.approve.disabled = true;
+  card.deny.disabled = true;
+  card.status.textContent = data.status || 'completed';
 }
 
 function renderPlanningState(state) {

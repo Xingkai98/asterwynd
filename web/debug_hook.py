@@ -1,6 +1,8 @@
 # web/debug_hook.py
 """Debug hook that captures iteration state and emits events for the debug UI."""
 import os
+import json
+from agent.approval import redact_value
 from agent.hooks.manager import Hook
 from agent.message import Message
 from agent.tools.base import ToolCall
@@ -37,7 +39,11 @@ class DebugHook:
             "content": response.content,
             "stop_reason": response.stop_reason,
             "tool_calls": [
-                {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                {
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": _redact_arguments(tc.arguments),
+                }
                 for tc in response.tool_calls
             ],
         })
@@ -68,3 +74,11 @@ class DebugHook:
             "tool_calls_made": len(result.tool_calls_made),
             "total_tokens": result.total_tokens,
         })
+
+
+def _redact_arguments(arguments: str):
+    try:
+        parsed = json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+    return redact_value(parsed)

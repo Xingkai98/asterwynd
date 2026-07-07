@@ -22,6 +22,7 @@ import typer
 # 自动加载 .env 文件（如果存在）
 load_dotenv(Path(__file__).parent / ".env")
 
+from agent.approval import ApprovalHandler, CliApprovalHandler
 from agent.loop import AgentLoop
 from agent.commands import CommandContext, build_default_slash_command_registry
 from agent.config import ConfigError, ConfigOverrides, AsterwyndConfig, load_config
@@ -126,6 +127,7 @@ def build_agent(
     provider: str = "openai",
     mode: str | AgentMode = AgentMode.BUILD,
     config: AsterwyndConfig | None = None,
+    approval_handler: ApprovalHandler | None = None,
 ) -> AgentLoop:
     config = config or AsterwyndConfig()
     llm = build_llm(provider, model)
@@ -138,6 +140,7 @@ def build_agent(
         mode_policy=ModePolicy(
             run_config,
             deny_tools_by_mode=config.deny_tools_by_mode(),
+            permission_profiles_by_mode=config.permission_profiles_by_mode(),
         ),
         ignore_patterns=config.tools.ignore_patterns,
         code_intelligence_config=config.tools.code_intelligence,
@@ -168,6 +171,7 @@ def build_agent(
         run_config=run_config,
         tool_result_display=config.tools.display,
         skill_runtime=skill_runtime,
+        approval_handler=approval_handler,
     )
 
 @app.command()
@@ -260,6 +264,7 @@ def run_interactive(
     banner: bool = True,
 ):
     agent = build_agent(model, provider, mode, config=config)
+    agent.approval_handler = CliApprovalHandler(interactive=True)
     resolved_model = getattr(agent.llm, "model", model or "default")
     session_id = new_session_id()
 
@@ -394,6 +399,11 @@ async def _run_agent_with_cli_streaming(
                 typer.echo(delta, nl=False)
         elif event_type == "assistant_stream_complete" and stream_state.get("streamed"):
             typer.echo("")
+        elif event_type == "approval_request":
+            typer.echo("\n【Approval Required】", err=True)
+        elif event_type == "approval_response":
+            status = data.get("status", "")
+            typer.echo(f"【Approval】{status}", err=True)
 
     if "on_event" not in inspect.signature(agent.run).parameters:
         return await agent.run(messages, session_id=session_id, run_id=run_id)

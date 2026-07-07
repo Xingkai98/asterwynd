@@ -2,6 +2,7 @@
 import os
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.sandbox import SandboxExecutor
+from agent.tool_permissions import COMMAND_EXECUTE_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
 
 
@@ -26,6 +27,7 @@ def _load_env_list(env_var: str) -> list[str]:
 )
 class BashTool(Tool):
     dangerous = True
+    permission = COMMAND_EXECUTE_PERMISSION
 
     def __init__(
         self,

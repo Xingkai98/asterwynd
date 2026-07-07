@@ -1,5 +1,6 @@
 from agent.tools.base import Tool, ToolCall
 from agent.run_config import ModePolicy
+from agent.tool_permissions import PermissionDecisionType
 
 class ToolRegistry:
     def __init__(self, mode_policy: ModePolicy | None = None):
@@ -22,13 +23,19 @@ class ToolRegistry:
     def get_sandbox(self, name: str) -> bool:
         return self._tools[name].dangerous
 
-    async def execute(self, tool_call: ToolCall) -> str:
+    async def execute(self, tool_call: ToolCall, *, approval_granted: bool = False) -> str:
         tool = self._tools[tool_call.name]
-        if not self.mode_policy.is_tool_allowed(tool):
+        decision = self.mode_policy.decide_tool(tool)
+        if decision.type is PermissionDecisionType.DENY:
             mode = self.mode_policy.mode.value
             return (
                 f"[Permission denied: tool {tool_call.name} is not allowed "
-                f"in {mode} mode]"
+                f"in {mode} mode: {decision.reason}]"
+            )
+        if decision.type is PermissionDecisionType.REQUIRE_APPROVAL and not approval_granted:
+            return (
+                f"[Approval required: tool {tool_call.name} requires approval "
+                f"in {self.mode_policy.mode.value} mode]"
             )
         return await tool.execute(**tool_call.arguments)
 

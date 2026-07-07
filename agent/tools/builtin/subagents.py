@@ -4,6 +4,7 @@ import json
 
 from agent.subagent.manager import SubAgentManager
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import SUBAGENT_CONTROL_PERMISSION
 
 
 @tool_parameters(
@@ -21,6 +22,7 @@ from agent.tools.base import Tool, tool_parameters
 )
 class CreateSubagentTool(Tool):
     read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -50,6 +52,7 @@ class CreateSubagentTool(Tool):
 )
 class RunSubagentTool(Tool):
     read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -71,6 +74,7 @@ class RunSubagentTool(Tool):
 )
 class ListSubagentsTool(Tool):
     read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -95,6 +99,7 @@ class ListSubagentsTool(Tool):
 )
 class GetSubagentRunTool(Tool):
     read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -123,6 +128,7 @@ class GetSubagentRunTool(Tool):
 )
 class CancelSubagentRunTool(Tool):
     read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -152,6 +158,7 @@ class CancelSubagentRunTool(Tool):
 )
 class InspectSubagentTranscriptTool(Tool):
     read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager

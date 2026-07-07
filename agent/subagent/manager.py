@@ -304,6 +304,9 @@ class SubAgentManager:
             mode_policy=ModePolicy(
                 AgentRunConfig(mode=mode),
                 deny_tools_by_mode=config.deny_tools_by_mode() if config else None,
+                permission_profiles_by_mode=(
+                    config.permission_profiles_by_mode() if config else None
+                ),
             ),
             ignore_patterns=config.tools.ignore_patterns if config else (),
             code_intelligence_config=config.tools.code_intelligence if config else None,

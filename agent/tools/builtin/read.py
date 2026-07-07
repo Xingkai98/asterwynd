@@ -1,5 +1,6 @@
 # agent/tools/builtin/read.py
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import WORKSPACE_READ_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
 
 @tool_parameters(
@@ -16,6 +17,7 @@ from agent.workspace_policy import WorkspacePolicy
 )
 class ReadTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(self, policy: WorkspacePolicy | None = None):
         self.policy = policy or WorkspacePolicy()

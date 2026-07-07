@@ -4,6 +4,14 @@ import logging
 import time
 from typing import Optional, Callable, Awaitable, TYPE_CHECKING
 
+from agent.approval import (
+    ApprovalDecisionStatus,
+    ApprovalHandler,
+    ApprovalResponse,
+    FailClosedApprovalHandler,
+    build_approval_request,
+    redact_value,
+)
 from agent.message import Message, system_message, tool_result_message
 from agent.result import RunResult, StopReason, ToolCallMade
 from agent.tools.base import ToolCall
@@ -48,6 +56,7 @@ class AgentLoop:
         run_config: AgentRunConfig | None = None,
         tool_result_display: ToolResultDisplayConfig | None = None,
         skill_runtime: SkillRuntime | None = None,
+        approval_handler: ApprovalHandler | None = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -66,6 +75,7 @@ class AgentLoop:
         self.tool_registry.mode_policy.runtime_state = self.runtime_state
         self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
         self.skill_runtime = skill_runtime
+        self.approval_handler = approval_handler or FailClosedApprovalHandler()
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
@@ -326,7 +336,7 @@ class AgentLoop:
                     iteration,
                     assistant_preview=response.content or "",
                     tool_calls=[
-                        {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                        self._observed_tool_call_delta(tc)
                         for tc in response.tool_calls
                     ],
                 )
@@ -336,7 +346,7 @@ class AgentLoop:
                     "content": response.content,
                     "stop_reason": response.stop_reason,
                     "tool_calls": [
-                        {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                        self._observed_tool_call_delta(tc)
                         for tc in response.tool_calls
                     ],
                 }
@@ -418,21 +428,90 @@ class AgentLoop:
                     arguments=arguments,
                 )
 
-                await self.hooks.before_tool_execute(tool_call)
                 tool = self.tool_registry.get_tool(tool_call.name)
+                decision = self.tool_registry.mode_policy.decide_tool(tool)
+                observed_tool_call = tool_call
+                approval_granted = False
+                approval_request_data: dict | None = None
+                if decision.requires_approval:
+                    approval_request = build_approval_request(
+                        tool_call_id=tool_call.id,
+                        arguments=tool_call.arguments,
+                        decision=decision,
+                        mode=self.runtime_state.current_mode,
+                        session_id=session_id,
+                        run_id=run_id,
+                    )
+                    approval_request_data = approval_request.to_event_data()
+                    observed_tool_call = ToolCall(
+                        id=tool_call.id,
+                        name=tool_call.name,
+                        arguments=approval_request.redacted_args,
+                    )
+                    if trace_recorder:
+                        trace_recorder.record_approval_request(approval_request_data)
+                    if on_event:
+                        await on_event("approval_request", approval_request_data)
+                    try:
+                        approval_response = await self.approval_handler.request_approval(
+                            approval_request
+                        )
+                    except Exception as exc:
+                        logger.exception("Approval handler failed")
+                        approval_response = ApprovalResponse(
+                            approval_id=approval_request.approval_id,
+                            status=ApprovalDecisionStatus.UNAVAILABLE,
+                            reason=f"{type(exc).__name__}: {exc}",
+                        )
+                    approval_granted = approval_response.approved
+                    approval_response_data = {
+                        "approval_id": approval_response.approval_id,
+                        "tool_name": tool_call.name,
+                        "status": approval_response.status.value,
+                        "reason": approval_response.reason,
+                        "session_id": session_id,
+                        "run_id": run_id,
+                    }
+                    if trace_recorder:
+                        trace_recorder.record_approval_response(approval_response_data)
+                    if on_event:
+                        await on_event("approval_response", approval_response_data)
+                    if not approval_granted:
+                        if approval_response.status is ApprovalDecisionStatus.DENIED:
+                            result = (
+                                f"[Approval denied: tool {tool_call.name} was not "
+                                f"approved in {self.runtime_state.current_mode.value} "
+                                f"mode: {approval_response.reason}]"
+                            )
+                        else:
+                            result = (
+                                f"[Approval unavailable: tool {tool_call.name} requires "
+                                f"approval in {self.runtime_state.current_mode.value} "
+                                f"mode: {approval_response.reason}]"
+                            )
+                await self.hooks.before_tool_execute(observed_tool_call)
                 if trace_recorder:
-                    trace_recorder.record_tool_call(tool_call.name, tool_call.arguments)
+                    trace_recorder.record_tool_call(
+                        observed_tool_call.name,
+                        observed_tool_call.arguments,
+                    )
 
                 tool_start = time.time()
-                try:
-                    result = await self.tool_registry.execute(tool_call)
-                except Exception as e:
-                    logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
-                    await self.hooks.on_error(e)
-                    result = f"[Error: {e}]"
+                if decision.requires_approval and not approval_granted:
+                    pass
+                else:
+                    try:
+                        result = await self.tool_registry.execute(
+                            tool_call,
+                            approval_granted=approval_granted,
+                        )
+                    except Exception as e:
+                        logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
+                        await self.hooks.on_error(e)
+                        result = f"[Error: {e}]"
                 tool_duration_ms = (time.time() - tool_start) * 1000
 
-                await self.hooks.after_tool_execute(tool_call, result)
+                await self.hooks.after_tool_execute(observed_tool_call, result)
                 if trace_recorder:
                     status = (
                         "error"
@@ -453,8 +532,9 @@ class AgentLoop:
 
                 if on_event:
                     await on_event("tool_call", {
-                        "name": tool_call.name,
-                        "arguments": tool_call.arguments,
+                        "name": observed_tool_call.name,
+                        "arguments": observed_tool_call.arguments,
+                        "approval": approval_request_data,
                     })
                     await on_event("tool_result", {
                         "name": tool_call.name,
@@ -563,6 +643,16 @@ class AgentLoop:
         if not isinstance(parsed, dict):
             raise ValueError("tool arguments must be a JSON object")
         return parsed
+
+    def _observed_tool_call_delta(self, delta: ToolCallDelta) -> dict:
+        try:
+            parsed = self._parse_arguments(delta.arguments)
+        except ValueError:
+            arguments: dict | str = delta.arguments
+        else:
+            redacted = redact_value(parsed)
+            arguments = redacted if isinstance(redacted, dict) else {}
+        return {"id": delta.id, "name": delta.name, "arguments": arguments}
 
     def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
         injected_contexts = []

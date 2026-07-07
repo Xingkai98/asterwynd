@@ -552,6 +552,73 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 
 .phase-icon { font-size: 1rem; }
 
+.approval-card {
+  align-self: stretch;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 760px;
+  display: grid;
+  gap: 8px;
+}
+
+.approval-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.approval-risk {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.approval-meta,
+.approval-reason,
+.approval-status {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.approval-args {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.82rem;
+}
+
+.approval-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval-controls button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.approval-controls button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.approval-approve {
+  border-color: var(--accent);
+}
+
 /* Loading spinner */
 .spinner {
   display: inline-block;

@@ -15,6 +15,12 @@ from agent.code_intelligence.config import (
     LspServerConfig,
 )
 from agent.run_config import AgentMode, parse_agent_mode
+from agent.tool_permissions import (
+    BUILTIN_PERMISSION_PROFILES,
+    PermissionProfile,
+    ToolCapability,
+    ToolRiskLevel,
+)
 from agent.tool_result_display import ToolResultDisplayConfig
 
 
@@ -36,6 +42,12 @@ class AgentConfig:
 @dataclass(frozen=True)
 class ModeConfig:
     deny_tools: tuple[str, ...] = ()
+    permission_profile: str | None = None
+
+
+@dataclass(frozen=True)
+class PermissionsConfig:
+    profiles: dict[str, PermissionProfile] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -74,6 +86,7 @@ class AsterwyndConfig:
     path: Path | None = None
     agent: AgentConfig = field(default_factory=AgentConfig)
     modes: dict[AgentMode, ModeConfig] = field(default_factory=dict)
+    permissions: PermissionsConfig = field(default_factory=PermissionsConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
@@ -84,6 +97,7 @@ class AsterwyndConfig:
         if not self.skills.roots:
             base = self.path.parent if self.path else Path.cwd()
             object.__setattr__(self, "skills", SkillsConfig(roots=(base / "skills",)))
+        self.permission_profiles_by_mode()
 
     def mode_config(self, mode: AgentMode) -> ModeConfig:
         return self.modes.get(mode, ModeConfig())
@@ -94,6 +108,25 @@ class AsterwyndConfig:
             for mode, mode_config in self.modes.items()
             if mode_config.deny_tools
         }
+
+    def permission_profiles_by_mode(self) -> dict[AgentMode, PermissionProfile]:
+        profiles = {**BUILTIN_PERMISSION_PROFILES, **self.permissions.profiles}
+        resolved: dict[AgentMode, PermissionProfile] = {}
+        defaults = {
+            AgentMode.BUILD: "build_default",
+            AgentMode.READ_ONLY: "read_only_default",
+            AgentMode.PLAN: "plan_default",
+            AgentMode.BYPASS: "fail_closed",
+        }
+        for mode in AgentMode:
+            profile_name = self.mode_config(mode).permission_profile or defaults[mode]
+            try:
+                resolved[mode] = profiles[profile_name]
+            except KeyError as exc:
+                raise ConfigError(
+                    f"Unknown permission_profile {profile_name!r} for mode {mode.value}"
+                ) from exc
+        return resolved
 
 
 @dataclass(frozen=True)
@@ -181,6 +214,7 @@ def _load_yaml_config(
         path=path,
         agent=_parse_agent_config(raw.get("agent", {}), path),
         modes=_parse_modes_config(raw.get("modes", {}), path),
+        permissions=_parse_permissions_config(raw.get("permissions", {}), path),
         tools=_parse_tools_config(raw.get("tools", {}), path),
         skills=_parse_skills_config(raw.get("skills", {}), path),
         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
@@ -270,9 +304,68 @@ def _parse_modes_config(raw: Any, path: Path) -> dict[AgentMode, ModeConfig]:
                 mode_mapping.get("deny_tools", []),
                 path,
                 f"modes.{raw_mode}.deny_tools",
-            )
+            ),
+            permission_profile=_parse_optional_string(
+                mode_mapping.get("permission_profile"),
+                path,
+                f"modes.{raw_mode}.permission_profile",
+            ),
         )
     return modes
+
+
+def _parse_permissions_config(raw: Any, path: Path) -> PermissionsConfig:
+    mapping = _expect_mapping(raw, path, "permissions")
+    profiles_mapping = _expect_mapping(
+        mapping.get("profiles", {}),
+        path,
+        "permissions.profiles",
+    )
+    profiles: dict[str, PermissionProfile] = {}
+    for profile_name, raw_profile in profiles_mapping.items():
+        if not isinstance(profile_name, str) or not profile_name.strip():
+            raise ConfigError(f"{path}: permissions.profiles keys must be non-empty strings")
+        profile_name = profile_name.strip()
+        if profile_name in BUILTIN_PERMISSION_PROFILES:
+            raise ConfigError(
+                f"{path}: permissions.profiles.{profile_name} cannot override a built-in profile"
+            )
+        profile_mapping = _expect_mapping(
+            raw_profile,
+            path,
+            f"permissions.profiles.{profile_name}",
+        )
+        try:
+            profiles[profile_name] = PermissionProfile(
+                name=profile_name,
+                allowed_capabilities=frozenset(
+                    _parse_capabilities(
+                        profile_mapping.get("allowed_capabilities", []),
+                        path,
+                        f"permissions.profiles.{profile_name}.allowed_capabilities",
+                    )
+                ),
+                auto_approve_max_risk=_parse_risk_level(
+                    profile_mapping.get("auto_approve_max_risk"),
+                    path,
+                    f"permissions.profiles.{profile_name}.auto_approve_max_risk",
+                ),
+                approval_required_max_risk=_parse_risk_level(
+                    profile_mapping.get("approval_required_max_risk"),
+                    path,
+                    f"permissions.profiles.{profile_name}.approval_required_max_risk",
+                ),
+                denied_tools=frozenset(
+                    _parse_string_list(
+                        profile_mapping.get("denied_tools", []),
+                        path,
+                        f"permissions.profiles.{profile_name}.denied_tools",
+                    )
+                ),
+            )
+        except ValueError as exc:
+            raise ConfigError(f"{path}: permissions.profiles.{profile_name}: {exc}") from exc
+    return PermissionsConfig(profiles=profiles)
 
 
 def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
@@ -453,6 +546,44 @@ def _validate_string_item(item: Any, path: Path, field_name: str) -> str:
             f"{path}: {field_name} must contain only non-empty strings"
         )
     return item
+
+
+def _parse_optional_string(raw: Any, path: Path, field_name: str) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ConfigError(f"{path}: {field_name} must be a non-empty string")
+    return raw.strip()
+
+
+def _parse_capabilities(raw: Any, path: Path, field_name: str) -> tuple[ToolCapability, ...]:
+    values = _parse_string_list(raw, path, field_name)
+    if not values:
+        raise ConfigError(f"{path}: {field_name} must not be empty")
+    parsed = []
+    for value in values:
+        try:
+            parsed.append(ToolCapability(value))
+        except ValueError as exc:
+            supported = ", ".join(capability.value for capability in ToolCapability)
+            raise ConfigError(
+                f"{path}: {field_name} unsupported capability {value!r}; "
+                f"expected one of: {supported}"
+            ) from exc
+    return tuple(parsed)
+
+
+def _parse_risk_level(raw: Any, path: Path, field_name: str) -> ToolRiskLevel:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ConfigError(f"{path}: {field_name} must be a non-empty string")
+    try:
+        return ToolRiskLevel(raw.strip())
+    except ValueError as exc:
+        supported = ", ".join(level.value for level in ToolRiskLevel)
+        raise ConfigError(
+            f"{path}: {field_name} unsupported risk level {raw!r}; "
+            f"expected one of: {supported}"
+        ) from exc
 
 
 def _parse_web_search_config(raw: Any, path: Path) -> WebSearchConfig:

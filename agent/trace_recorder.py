@@ -94,6 +94,12 @@ class TraceRecorder:
             observation=observation,
         )
 
+    def record_approval_request(self, request: dict[str, Any]) -> None:
+        self.record("approval_request", **request)
+
+    def record_approval_response(self, response: dict[str, Any]) -> None:
+        self.record("approval_response", **response)
+
     def record_edit(self, path: str, status: str, summary: str) -> None:
         self.record("edit", tool_name="Edit", path=path, status=status, summary=summary)
 

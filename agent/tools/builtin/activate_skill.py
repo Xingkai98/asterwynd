@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agent.skills.runtime import SkillActivationResult, SkillRuntime
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import AGENT_STATE_PERMISSION
 
 
 @tool_parameters(
@@ -27,6 +28,7 @@ class ActivateSkillTool(Tool):
     description = "Activate a loaded skill for the current run."
     parameters = {}
     read_only = True
+    permission = AGENT_STATE_PERMISSION
 
     def __init__(self, runtime: SkillRuntime):
         self.runtime = runtime

@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import WORKSPACE_READ_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
 
 
@@ -26,6 +27,7 @@ from agent.workspace_policy import WorkspacePolicy
 )
 class InspectGitDiffTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(self, policy: WorkspacePolicy | None = None):
         self.policy = policy or WorkspacePolicy()
@@ -96,4 +98,3 @@ def _truncate_lines(value: str, limit: int) -> str:
     if len(lines) <= limit:
         return value
     return "\n".join(lines[:limit]) + f"\n... ({len(lines) - limit} more lines)"
-

@@ -129,3 +129,47 @@ async def test_asterwynd_runner_records_and_uses_mode(tmp_path):
     assert runner.run_config.mode is AgentMode.READ_ONLY
     assert trace.to_dict()["mode"] == "read_only"
     assert result.edit_count == 0
+
+
+@pytest.mark.asyncio
+async def test_asterwynd_runner_fails_closed_for_approval_required_tools(tmp_path):
+    task = TaskSpec(
+        id="task",
+        repo="local",
+        base_commit="abc",
+        problem_statement_file="issue.md",
+        test_command="true",
+    )
+    llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallDelta(
+                    id="bash-1",
+                    name="Bash",
+                    arguments=json.dumps({"cmd": "printf should-not-run"}),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Done.", stop_reason="end_turn"),
+    ])
+    runner = AsterwyndRunner(llm=llm, max_iterations=3)
+    trace = TraceRecorder(task_id="task")
+
+    result = await runner.run(
+        task=task,
+        problem_statement="Run a command.",
+        workspace=tmp_path,
+        output_dir=tmp_path / "out",
+        trace=trace,
+    )
+
+    assert result.status == "completed"
+    assert result.tool_calls == 1
+    assert result.edit_count == 0
+    trace_data = trace.to_dict()
+    step_types = [step["type"] for step in trace_data["steps"]]
+    assert "approval_request" in step_types
+    tool_result = next(step for step in trace_data["steps"] if step["type"] == "tool_result")
+    assert "Approval unavailable" in tool_result["data"]["observation"]
