@@ -32,7 +32,7 @@
 
 ### 第三批：Coding Agent 基本操作面和入口回归
 
-- `add-shared-test-llm-harness`：在 skills 后补齐共享 fake/real LLM 入口回归基础设施，供 CLI、Web 和未来 TUI smoke 复用。
+- 当前无未实现 change。
 
 ### 第四批：工具权限模型前置
 
@@ -50,27 +50,7 @@
 
 ## 未实现队列
 
-### 1. `add-shared-test-llm-harness`
-
-状态：未实现。
-
-批次：第三批，建议在 skill runtime 基础能力稳定后、工具权限模型和 TUI/MCP/browser 实现前推进。
-
-建议顺序原因：
-
-- 当前 CLI、Web 和浏览器测试已经有 fake/mock/real API 路径，但 fake LLM 逻辑散落，CLI 还主要通过 `FakeAgent` 覆盖 adapter 行为。
-- 共享 fake/real LLM harness 可以让 CLI、Web 和未来 TUI 用真实 AgentLoop 做稳定入口 smoke，避免后续入口能力各自维护私有 fake runtime。
-- 在 MCP、TUI 和 browser 能力前补齐这层回归，可以降低后续外部工具、运行事件和 UI 控制面变更的回归风险。
-
-主要交付：
-
-- 共享 `ScriptedLLM` 或等价测试 harness。
-- CLI 真实 `build_agent` + fake LLM runtime smoke。
-- Web server/WebSocket 复用共享 harness。
-- deterministic Playwright fake LLM browser smoke。
-- real LLM smoke opt-in 策略和测试指南。
-
-### 2. `refine-tool-permission-model`
+### 1. `refine-tool-permission-model`
 
 状态：未实现。
 
@@ -90,7 +70,7 @@
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
 
-### 3. `add-mcp-tool-adapter`
+### 2. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -108,7 +88,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 4. `add-minimal-tui-runtime-view`
+### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -126,7 +106,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 5. `add-browser-use-safety-foundation`
+### 4. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

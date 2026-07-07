@@ -8,6 +8,7 @@
 - 测试应该证明行为，而不是只覆盖实现细节。
 - 涉及共享协议的变更必须覆盖协议不变量。
 - real API 测试保持可选，不作为默认 CI 前置条件。
+- CLI、Web 和未来 TUI 的入口 smoke 优先使用共享 `ScriptedLLM` fake harness，只替换 LLM provider，不替换真实 AgentLoop。
 
 ## 回归测试规则
 
@@ -58,6 +59,7 @@ tests/agent/tools/test_edit_tool.py
 - AgentLoop 工具调用链
 - Memory compact 后保持 tool-call 协议合法
 - CLI slash command registry 的命令解析、未知命令拦截、上下文清理、手动 compact、`/skills` reload 和 skill command 触发 Agent run
+- CLI 入口 smoke 应至少覆盖真实 `build_agent` + `ScriptedLLM` 的普通回复、streaming 去重和工具调用摘要；旧 `FakeAgent` 测试只能作为 adapter 层补充。
 - Skill runtime 的多 root 加载、诊断、重复名称处理、index 注入、匹配注入和 `ActivateSkill` 工具激活
 - Web session 消息历史
 - Web session 的 session id / run id / session mode、Plan Document、planning state 事件、工具结果 display metadata 和 skill command 执行
@@ -69,6 +71,7 @@ Web 测试覆盖 server、session 和浏览器行为。
 
 重点覆盖：
 
+- server/session/browser 测试默认复用 `tests/support/llm_harness.py` 中的 `ScriptedLLM`，覆盖普通回复、streaming、tool call、错误和调用记录。
 - Chat 页面 assistant Markdown 渲染，包括列表、代码块、链接，以及 raw HTML / unsafe link 的转义或阻断。
 - 工具结果展示策略，包括长结果折叠、preview、字符/行数元数据，以及工具结果不走 Markdown/HTML 注入。
 - session id、run id、session mode、Plan Document、planning state 和 Debug 开关的前端可见行为。
@@ -83,8 +86,22 @@ uv run pytest tests/web_tests/test_session.py tests/web_tests/test_server.py -q
 
 ```bash
 playwright install chromium
+uv run pytest tests/web_tests/test_browser.py -q
 ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
 ```
+
+默认浏览器 smoke 使用 fake LLM 测试专用 Web server，不要求 API key；真实 API 浏览器 E2E 仍然必须显式传入 `--run-real-api`。
+
+### 共享 LLM 测试 Harness
+
+共享 fake LLM 位于 `tests/support/llm_harness.py`。新增 CLI、Web、未来 TUI 或 benchmark 入口回归时，优先复用 `ScriptedLLM`：
+
+- 使用顺序脚本响应表达普通文本、streaming delta、tool call 和 provider-like error。
+- 使用 `call_count`、`calls`、`last_messages` 和 `messages_seen` 断言入口层传给 LLM 的消息、工具和 model。
+- 首版 harness 不做 prompt hash 匹配、record/replay 或真实响应录制；这些能力可作为后续扩展单独设计。
+- fake 入口 smoke 不应 monkeypatch 整个 AgentLoop；只有 adapter 层测试才保留私有 fake agent。
+
+未来 TUI 实现时，至少新增一个基于 `ScriptedLLM` 的入口 smoke，证明 TUI 输入、runtime event 消费和屏幕状态展示接入真实 AgentLoop。
 
 ### Benchmark 测试
 

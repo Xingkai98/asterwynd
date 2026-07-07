@@ -1,5 +1,5 @@
 # tests/web/test_server.py
-"""Integration tests for FastAPI server (HTTP + WebSocket) with Mock LLM."""
+"""Integration tests for FastAPI server (HTTP + WebSocket) with fake LLM."""
 import os
 import json
 import subprocess
@@ -15,6 +15,7 @@ from agent.run_config import AgentMode
 from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
 from web.debug_hook import debug_enabled
+from tests.support.llm_harness import ScriptedLLM
 
 
 @tool_parameters(name="Echo", description="Echo tool", parameters={"type": "object", "properties": {}, "required": []})
@@ -27,25 +28,9 @@ class EchoTool(Tool):
         return "echo!"
 
 
-class MockLLM:
-    def __init__(self, responses=None):
-        self.responses = responses or [LLMResponse(content="Hello!")]
-        self.call_count = 0
-        self.last_messages = None
-
-    async def chat(self, messages, tools=None, model="gpt-4"):
-        self.last_messages = list(messages)
-        if self.call_count < len(self.responses):
-            resp = self.responses[self.call_count]
-        else:
-            resp = LLMResponse(content="default")
-        self.call_count += 1
-        return resp
-
-
 @pytest.fixture
 def mock_llm():
-    return MockLLM()
+    return ScriptedLLM()
 
 
 @pytest.fixture
@@ -84,7 +69,7 @@ async def test_debug_page_enabled(app):
     old = os.environ.get("ASTERWYND_DEBUG", "")
     try:
         # Re-create app with debug enabled
-        mock = MockLLM([LLMResponse(content="Hello")])
+        mock = ScriptedLLM([LLMResponse(content="Hello")])
         os.environ["ASTERWYND_DEBUG"] = "enabled"
         debug_app = create_app(mock)
         transport = ASGITransport(app=debug_app)
@@ -147,7 +132,7 @@ async def test_api_slash_commands_includes_configured_skills(tmp_path):
         encoding="utf-8",
     )
     app = create_app(
-        MockLLM([LLMResponse(content="Hello")]),
+        ScriptedLLM([LLMResponse(content="Hello")]),
         config=AsterwyndConfig(skills=SkillsConfig(roots=(skills_root,))),
     )
 
@@ -194,7 +179,7 @@ async def test_websocket_chat_flow():
     try:
         if "ASTERWYND_DEBUG" in os.environ:
             del os.environ["ASTERWYND_DEBUG"]
-        mock_llm = MockLLM([LLMResponse(content="Hello from agent!")])
+        mock_llm = ScriptedLLM([LLMResponse(content="Hello from agent!")])
         app = create_app(mock_llm)
 
         with TestClient(app) as client:
@@ -348,7 +333,7 @@ def test_markdown_renderer_escapes_raw_html_and_blocks_unsafe_links():
 
 
 def test_websocket_session_created_includes_configured_mode():
-    app = create_app(MockLLM([LLMResponse(content="Hello")]), mode="plan")
+    app = create_app(ScriptedLLM([LLMResponse(content="Hello")]), mode="plan")
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/new") as ws:
@@ -360,7 +345,7 @@ def test_websocket_session_created_includes_configured_mode():
 
 def test_websocket_session_created_uses_config_default_mode():
     app = create_app(
-        MockLLM([LLMResponse(content="Hello")]),
+        ScriptedLLM([LLMResponse(content="Hello")]),
         config=AsterwyndConfig(agent=AgentConfig(default_mode=AgentMode.PLAN)),
     )
 
@@ -373,7 +358,7 @@ def test_websocket_session_created_uses_config_default_mode():
 
 
 def test_websocket_set_mode_updates_session_mode_for_next_run():
-    app = create_app(MockLLM([LLMResponse(content="Hello")]), mode="build")
+    app = create_app(ScriptedLLM([LLMResponse(content="Hello")]), mode="build")
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/new") as ws:
@@ -402,7 +387,7 @@ def test_websocket_set_mode_updates_session_mode_for_next_run():
 
 
 def test_websocket_set_mode_rejects_bypass():
-    app = create_app(MockLLM([LLMResponse(content="Hello")]), mode="build")
+    app = create_app(ScriptedLLM([LLMResponse(content="Hello")]), mode="build")
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/new") as ws:
@@ -427,7 +412,7 @@ def test_websocket_set_mode_rejects_bypass():
 
 
 def test_websocket_plan_mode_emits_plan_document_and_planning_state():
-    mock_llm = MockLLM([
+    mock_llm = ScriptedLLM([
         LLMResponse(
             content=None,
             tool_calls=[
@@ -469,7 +454,7 @@ def test_websocket_plan_mode_emits_plan_document_and_planning_state():
 
 
 def test_websocket_plan_mode_emits_draft_plan_updates():
-    mock_llm = MockLLM([
+    mock_llm = ScriptedLLM([
         LLMResponse(
             content=None,
             tool_calls=[
@@ -526,7 +511,7 @@ def test_websocket_ping_and_reset(app):
 
 
 def test_websocket_slash_status_does_not_start_agent_run():
-    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    mock_llm = ScriptedLLM([LLMResponse(content="should not be used")])
     app = create_app(mock_llm)
 
     with TestClient(app) as client:
@@ -546,7 +531,7 @@ def test_websocket_slash_status_does_not_start_agent_run():
 
 
 def test_websocket_unknown_slash_command_does_not_start_agent_run():
-    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    mock_llm = ScriptedLLM([LLMResponse(content="should not be used")])
     app = create_app(mock_llm)
 
     with TestClient(app) as client:
@@ -564,7 +549,7 @@ def test_websocket_unknown_slash_command_does_not_start_agent_run():
 
 
 def test_websocket_clear_slash_command_clears_session_history():
-    mock_llm = MockLLM([LLMResponse(content="first response")])
+    mock_llm = ScriptedLLM([LLMResponse(content="first response")])
     app = create_app(mock_llm)
 
     with TestClient(app) as client:
@@ -592,7 +577,7 @@ def test_websocket_clear_slash_command_clears_session_history():
 
 
 def test_websocket_mode_slash_command_updates_session_mode_without_agent_run():
-    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    mock_llm = ScriptedLLM([LLMResponse(content="should not be used")])
     app = create_app(mock_llm)
 
     with TestClient(app) as client:
@@ -630,7 +615,7 @@ def test_websocket_skill_slash_command_activates_skill_and_runs_agent(tmp_path):
         "Review instructions\n",
         encoding="utf-8",
     )
-    mock_llm = MockLLM([LLMResponse(content="review done")])
+    mock_llm = ScriptedLLM([LLMResponse(content="review done")])
     app = create_app(
         mock_llm,
         config=AsterwyndConfig(skills=SkillsConfig(roots=(skills_root,))),
@@ -668,7 +653,7 @@ def test_websocket_skill_slash_command_activates_skill_and_runs_agent(tmp_path):
 
 
 def test_websocket_exit_slash_command_closes_without_agent_run():
-    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    mock_llm = ScriptedLLM([LLMResponse(content="should not be used")])
     app = create_app(mock_llm)
 
     with TestClient(app) as client:
@@ -690,7 +675,7 @@ def test_websocket_tool_events():
     try:
         if "ASTERWYND_DEBUG" in os.environ:
             del os.environ["ASTERWYND_DEBUG"]
-        mock_llm = MockLLM([
+        mock_llm = ScriptedLLM([
             LLMResponse(
                 content=None,
                 tool_calls=[ToolCallDelta(id="c1", name="Bash", arguments='{"cmd": "printf websocket"}')],
@@ -728,7 +713,7 @@ async def test_debug_websocket_events_enabled():
     old_debug = os.environ.get("ASTERWYND_DEBUG", "")
     try:
         os.environ["ASTERWYND_DEBUG"] = "enabled"
-        mock_llm = MockLLM([LLMResponse(content="Debug test")])
+        mock_llm = ScriptedLLM([LLMResponse(content="Debug test")])
         app = create_app(mock_llm)
         with TestClient(app) as client:
             with client.websocket_connect("/ws/new") as ws:

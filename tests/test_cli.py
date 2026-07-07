@@ -1,10 +1,14 @@
+import json
+
 from typer.testing import CliRunner
 
 import cli
+from agent.llm import LLMResponse, ToolCallDelta
 from agent.memory.manager import MemoryManager
 from agent.openai_llm import OpenAILLM
 from agent.result import RunResult, StopReason, ToolCallMade
 from agent.skills import Skill, SkillRuntime
+from tests.support.llm_harness import ScriptedLLM, stream_script
 
 
 class FakeAgent:
@@ -96,6 +100,70 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     assert fake.max_iterations == 3
     assert fake.messages[-1].role == "user"
     assert fake.messages[-1].content == "hello"
+
+
+def test_cli_single_prompt_runtime_smoke_uses_real_agent_loop(monkeypatch):
+    llm = ScriptedLLM([LLMResponse(content="runtime response", stop_reason="end_turn")])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(cli.app, ["main", "hello runtime"])
+
+    assert result.exit_code == 0
+    assert "runtime response" in result.stdout
+    assert llm.call_count == 1
+    user_messages = [
+        message.content
+        for message in llm.last_messages or []
+        if message.role == "user"
+    ]
+    assert user_messages == ["hello runtime"]
+
+
+def test_cli_single_prompt_runtime_smoke_streams_without_reprinting(monkeypatch):
+    llm = ScriptedLLM([stream_script("Hel", "lo")], stream=True)
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(cli.app, ["main", "hello"])
+
+    assert result.exit_code == 0
+    assert "Hello" in result.stdout
+    assert result.stdout.count("Hello") == 1
+    assert "【Agent】" not in result.stdout
+    assert llm.calls[0].method == "stream_chat"
+
+
+def test_cli_single_prompt_runtime_smoke_summarizes_tool_call(monkeypatch):
+    llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallDelta(
+                    id="bash-1",
+                    name="Bash",
+                    arguments=json.dumps(
+                        {"cmd": "printf '%5000s' '' | tr ' ' x"}
+                    ),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="tool done", stop_reason="end_turn"),
+    ])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "generate long output", "--max-iterations", "3"],
+    )
+
+    assert result.exit_code == 0
+    assert "tool done" in result.stdout
+    assert "【工具调用】1 次" in result.stdout
+    assert "Bash" in result.stdout
+    assert "摘要" in result.stdout
+    assert "字符" in result.stdout
+    assert "完整结果" in result.stdout
+    assert llm.call_count == 2
 
 
 def test_build_llm_enables_streaming_by_default(monkeypatch):
