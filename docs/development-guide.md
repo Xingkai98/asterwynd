@@ -51,7 +51,7 @@ uv run python cli.py main --interactive
 /status                       # 查看 session、mode、provider、model 和上下文摘要
 /mode <build|read_only|plan>  # 切换后续 run 的 agent mode
 /clear                        # 清空当前交互历史，保留 system context 和 Session ID
-/compact                      # 主动压缩 eligible older history
+/compact                      # 主动压缩符合条件的旧上下文
 /exit 或 /quit                # 退出交互模式
 ```
 
@@ -170,7 +170,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 ## 开发注意事项
 
 - CLI 交互模式通过 slash command registry 处理 `/help`、`/status`、`/mode`、`/clear`、`/compact`、`/exit` 和 `/quit`；裸 `exit`、`quit`、`q` 仍可退出。
-- Web Chat 输入框在输入 `/` 时会显示 slash command suggestions，并按当前前缀实时过滤；发送独立 slash command 时由 WebSocket 按控制面输入执行，不作为普通聊天消息进入 AgentLoop/LLM。后续命令如果需要摘要等能力，可以由 command handler 显式调用 LLM-backed 服务。
+- Web Chat 输入框在输入 `/` 时会显示 slash command 提示，并按当前前缀实时过滤；发送独立 slash command 时由 WebSocket 按控制面输入执行，不作为普通聊天消息进入 AgentLoop/LLM。后续命令如果需要摘要、审查或多步执行等能力，可以由命令处理器显式调用模型服务、AgentLoop 或工作流服务。
 - `/clear` 只清当前 CLI 交互上下文，不生成新的 Session ID；后续如果引入持久 transcript 或 cache reset，需要单独扩展语义。
 - CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。
 - 当前 CLI/Web 的 mode 切换在用户侧表现为“影响后续 run”；runtime state 仍会在 transition 完成后立即更新，供后续 TUI 或控制面重构复用。

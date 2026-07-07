@@ -140,7 +140,7 @@ uv run python run_infer.py \
 - `max_iterations` 不能把最后一个 tool result 包装成 assistant 最终回复。
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。
 - Memory compact 不能破坏 tool-call / tool-result 相邻链。
-- CLI/Web 独立 slash command 属于控制面输入；未知 slash command、`/clear` 和 `/compact` 不能作为普通用户消息发送给 AgentLoop/LLM。具体 command handler 未来可以在命令语义要求时显式调用 LLM-backed 服务。
+- CLI/Web 独立 slash command 属于控制面输入；未知 slash command、`/clear` 和 `/compact` 不能作为普通用户消息发送给 AgentLoop/LLM。具体命令处理器未来可以在命令语义要求时显式调用模型服务、AgentLoop 或工作流服务。
 - `passed_with_warnings` 是测试通过但过程不干净，不能算 clean pass。
 - benchmark 结果分类读 `status`，具体细节读 `reason`；`unsupported` 不能并入 `failed`。
 - Web Chat 的 assistant streaming 必须通过 AgentLoop `assistant_delta` / `assistant_stream_complete` 事件进入 WebSocket 和 CLI；回归测试必须覆盖流式展示不重复最终 `llm_response`，不能只改前端展示。

@@ -18,7 +18,7 @@ CLI 交互模式目前只有内联解析的 `/mode`，`exit/quit/q` 也只是特
 
 - 新增交互式 slash command registry，统一声明命令名、别名、帮助文本、参数解析、执行结果和是否继续会话。
 - CLI 交互模式 SHALL 通过 command registry 处理 slash commands，不再只内联识别 `/mode`。
-- Web UI SHALL 提供 slash command suggestion 面板：输入 `/` 时展示命令，继续输入时按当前前缀实时过滤。
+- Web UI SHALL 提供 slash command 提示面板：输入 `/` 时展示命令，继续输入时按当前前缀实时过滤。
 - Web 后端 SHALL 提供 command catalog，并在 WebSocket chat 路径中拦截独立 slash command，避免控制命令作为普通聊天消息进入 AgentLoop/LLM。
 - 首批内置命令：
   - `/help`：列出可用命令及简短说明。
@@ -74,7 +74,7 @@ CLI 交互模式目前只有内联解析的 `/mode`，`exit/quit/q` 也只是特
   - Codex 的 app-server 文档定义 `thread/compact/start` 作为 thread 级手动 compact 请求，请求立即返回，进度通过 `turn/*` 和 `item/*` 通知流体现；这说明 manual compact 是运行时控制动作，不应作为普通用户聊天消息。
   - Claude Code 的 `src/types/command.ts` 把命令建模为统一 `Command` 元数据和 lazy-loaded handler，并区分 `local`、`local-jsx`、`prompt` 命令；`src/commands.ts` 再把 built-in、skills、plugins、MCP 等多个来源合并、过滤和缓存。
   - Claude Code 的 `/clear` 不只是清消息，还会清 command/skill、文件建议、prompt cache、WebFetch、ToolSearch、agent definitions 等 session cache，并重新生成 session id；Asterwynd 首版没有这些缓存层，但必须明确清理当前 CLI `messages` 和 `MemoryManager` 状态。
-  - Claude Code 的 `/compact` 是本地命令，会绕过普通模型对话路径并返回专门的 compaction result；它支持自定义摘要指令、pre/post compact hooks 和 post-compact cleanup。Asterwynd 首版只需要主动调用现有 `MemoryManager.compact()`，但命令结果应说明压缩前后状态；未来如果 compact 摘要需要 LLM，应由 command handler 显式调用 LLM-backed 服务。
+  - Claude Code 的 `/compact` 是本地命令，会绕过普通模型对话路径并返回专门的 compaction result；它支持自定义摘要指令、pre/post compact hooks 和 post-compact cleanup。Asterwynd 首版只需要主动调用现有 `MemoryManager.compact()`，但命令结果应说明压缩前后状态；未来如果 compact 摘要需要模型能力，应由命令处理器显式调用模型服务、AgentLoop 或工作流服务。
   - Nanobot 的 `nanobot/command/router.py` 使用独立 `CommandRouter` 和 `CommandContext`，区分 priority、exact、prefix 三类路由；`nanobot/command/builtin.py` 用结构化 `BuiltinCommandSpec` 同时服务 `/help` 和 UI command palette。
   - Nanobot 的 `/new` 会取消当前任务、清 session、保存并失效化 session；这说明清上下文命令应属于交互/会话控制层，而不是普通 LLM tool。
   - OpenClaw 文档把 slash command、directive、inline shortcut 分为不同命令类型，并说明 `/status`、`/new`、`/reset`、`/compact` 等命令保持本地会话控制语义；它的 session 文档也强调 gateway/session store 是状态权威。

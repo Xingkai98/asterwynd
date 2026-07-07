@@ -72,7 +72,7 @@ CLI SHALL 支持通过 `--mode plan` 启动 plan mode，并将该 mode 传入 Ag
 
 ### Requirement: CLI interactive slash command registry
 
-CLI 交互模式 SHALL 通过 central command registry 处理独立 slash command。未知 slash command SHALL 被本地拦截并提示 `/help`，不得作为普通用户消息发送给 AgentLoop/LLM，也不得产生新的 Run ID。普通文本中的 `/` 不应触发 command registry。具体 command handler MAY 在命令语义需要时显式调用 LLM-backed 服务。
+CLI 交互模式 SHALL 通过 central command registry 处理独立 slash command。未知 slash command SHALL 被本地拦截并提示 `/help`，不得作为普通用户消息发送给 AgentLoop/LLM，也不得产生新的 Run ID。普通文本中的 `/` 不应触发 command registry。具体命令处理器可以在命令语义需要时显式调用模型服务、AgentLoop 或工作流服务。
 
 #### Scenario: Slash command help
 
@@ -149,28 +149,28 @@ CLI 交互模式 SHALL 提供 `/exit`、`/quit`、`/status`、`/mode`、`/clear`
 
 ### Requirement: Web slash command suggestions
 
-Web Chat SHALL expose slash command suggestions from a backend command catalog.
+Web Chat SHALL 基于后端 command catalog 提供 slash command 提示。
 
 #### Scenario: Web command catalog
 
-- **GIVEN** Web UI is running
-- **WHEN** the browser requests `/api/slash-commands`
-- **THEN** the response SHALL include command name, usage, description, aliases, and argument hint for available slash commands
+- **GIVEN** Web UI 正在运行
+- **WHEN** 浏览器请求 `/api/slash-commands`
+- **THEN** 响应 SHALL 包含可用 slash command 的命令名、用法、说明、别名和参数提示
 
-#### Scenario: Slash prefix updates suggestions
+#### Scenario: Slash 前缀实时更新提示
 
 - **GIVEN** 用户在 Web Chat 输入框中输入 `/`
 - **WHEN** 用户继续输入命令前缀
-- **THEN** Web UI SHALL update the suggestion list to commands whose name or aliases start with the current prefix
-- **AND** ordinary text containing `/` SHALL NOT show slash command suggestions
+- **THEN** Web UI SHALL 将提示列表更新为命令名或别名匹配当前前缀的命令
+- **AND** 包含 `/` 的普通文本 SHALL NOT 显示 slash command 提示
 
-#### Scenario: Web slash command is handled as control-plane input
+#### Scenario: Web slash command 作为控制面输入处理
 
 - **GIVEN** 用户处于 Web Chat
 - **WHEN** 用户发送独立 slash command
-- **THEN** WebSocket SHALL execute the command locally and emit a command result
-- **AND** SHALL NOT start an Agent run
-- **AND** SHALL NOT send that input as a normal user message to AgentLoop/LLM
+- **THEN** WebSocket SHALL 执行该命令并发送 command result
+- **AND** SHALL NOT 启动普通 Agent run
+- **AND** SHALL NOT 将该输入作为普通用户消息发送给 AgentLoop/LLM
 
 ### Requirement: web 命令启动 Web UI
 
