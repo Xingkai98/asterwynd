@@ -43,6 +43,10 @@ tools:
     max_result_lines: 80
     preview_chars: 1200
 
+skills:
+  # 仓库本地 ./skills 总是最先加载；roots 用于追加其他本地 skill 目录。
+  roots: []
+
 benchmark:
   parallel: 1
   timeout_seconds: 600

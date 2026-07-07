@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from agent.message import Message
+from agent.skills.runtime import SkillRuntime
 
 
 @dataclass
@@ -64,6 +65,13 @@ class SlashCommandRegistry:
             commands.append(command)
         return commands
 
+    def unregister_source(self, source: str) -> None:
+        self._commands = {
+            name: command
+            for name, command in self._commands.items()
+            if command.source != source
+        }
+
     def catalog(self) -> list[dict[str, Any]]:
         return [
             {
@@ -117,7 +125,9 @@ class SlashCommandRegistry:
         return command_name, args
 
 
-def build_default_slash_command_registry() -> SlashCommandRegistry:
+def build_default_slash_command_registry(
+    skill_runtime: SkillRuntime | None = None,
+) -> SlashCommandRegistry:
     registry = SlashCommandRegistry()
 
     async def help_handler(ctx: CommandContext, args: str) -> CommandResult:
@@ -213,6 +223,61 @@ def build_default_slash_command_registry() -> SlashCommandRegistry:
             metadata=result.to_metadata(),
         )
 
+    async def skills_handler(ctx: CommandContext, args: str) -> CommandResult:
+        runtime = getattr(ctx.agent, "skill_runtime", None) or skill_runtime
+        if runtime is None:
+            return CommandResult(
+                message="Skills runtime is unavailable.",
+                metadata={"skills_available": False},
+            )
+        subcommand = args.strip().lower()
+        if subcommand == "reload":
+            outcome = runtime.reload()
+            _register_skill_commands(registry, runtime)
+            return CommandResult(
+                message=(
+                    f"Reloaded {len(outcome.skills)} skills. "
+                    f"Diagnostics: {len(outcome.diagnostics)}."
+                ),
+                metadata={
+                    "skills_available": True,
+                    "reloaded": True,
+                    "skill_count": len(outcome.skills),
+                    "diagnostics": [
+                        {
+                            "level": diagnostic.level,
+                            "message": diagnostic.message,
+                            "path": str(diagnostic.path) if diagnostic.path else "",
+                        }
+                        for diagnostic in outcome.diagnostics
+                    ],
+                },
+            )
+        lines = [f"Loaded skills: {len(runtime.skills)}"]
+        for skill in runtime.skills:
+            flags = []
+            if skill.always:
+                flags.append("always")
+            if skill.user_invocable:
+                flags.append("user-invocable")
+            suffix = f" ({', '.join(flags)})" if flags else ""
+            source = f" - {skill.source_path}" if skill.source_path else ""
+            lines.append(f"- {skill.name}{suffix}: {skill.description}{source}")
+        if runtime.diagnostics:
+            lines.append("")
+            lines.append(f"Diagnostics: {len(runtime.diagnostics)}")
+            for diagnostic in runtime.diagnostics:
+                path = f" [{diagnostic.path}]" if diagnostic.path else ""
+                lines.append(f"- {diagnostic.level}: {diagnostic.message}{path}")
+        return CommandResult(
+            message="\n".join(lines),
+            metadata={
+                "skills_available": True,
+                "skill_count": len(runtime.skills),
+                "diagnostic_count": len(runtime.diagnostics),
+            },
+        )
+
     registry.register(
         SlashCommand(
             name="help",
@@ -263,6 +328,17 @@ def build_default_slash_command_registry() -> SlashCommandRegistry:
             handler=compact_handler,
         )
     )
+    registry.register(
+        SlashCommand(
+            name="skills",
+            usage="/skills [reload]",
+            description="List or reload loaded skills.",
+            argument_hint="[reload]",
+            handler=skills_handler,
+        )
+    )
+    if skill_runtime is not None:
+        _register_skill_commands(registry, skill_runtime)
     return registry
 
 
@@ -270,3 +346,38 @@ def _sync_memory_messages(ctx: CommandContext) -> None:
     memory = getattr(ctx.agent, "memory", None)
     if memory is not None and hasattr(memory, "messages"):
         memory.messages = list(ctx.messages)
+
+
+def _register_skill_commands(registry: SlashCommandRegistry, runtime: SkillRuntime) -> None:
+    registry.unregister_source("skill")
+    for skill in runtime.skills:
+        if not skill.user_invocable:
+            continue
+
+        async def skill_handler(
+            ctx: CommandContext,
+            args: str,
+            *,
+            skill_name: str = skill.name,
+        ) -> CommandResult:
+            return CommandResult(
+                message=f"Activated skill: {skill_name}",
+                metadata={
+                    "run_agent": True,
+                    "agent_input": args,
+                    "skill_name": skill_name,
+                    "activation_source": "slash_command",
+                },
+            )
+
+        registry.register(
+            SlashCommand(
+                name=skill.name,
+                usage=f"/{skill.name} {skill.argument_hint}".rstrip(),
+                description=skill.description or f"Run skill {skill.name}.",
+                argument_hint=skill.argument_hint,
+                source="skill",
+                kind="prompt",
+                handler=skill_handler,
+            )
+        )

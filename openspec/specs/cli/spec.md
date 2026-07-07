@@ -154,6 +154,33 @@ CLI 交互模式 SHALL 提供 `/exit`、`/quit`、`/status`、`/mode`、`/clear`
 - **AND** SHALL NOT 将 `/compact` 作为普通用户消息发送给 AgentLoop/LLM
 - **AND** SHALL NOT 产生新的 Run ID
 
+### Requirement: CLI exposes skill slash commands
+
+CLI 交互模式 SHALL 通过 central slash command registry 暴露 `/skills`、`/skills reload` 和用户可调用 skill commands。`/skills` 系列命令属于本地控制面命令，不启动 Agent run；`/skill-name args` 属于 prompt command，会显式激活 skill 并用 args 启动 Agent run。
+
+#### Scenario: List skills
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `/skills`
+- **THEN** CLI SHALL 输出当前已加载 skills
+- **AND** 输出 SHALL 包含每个 skill 的名称、来源和 always/user-invocable 标记
+
+#### Scenario: Reload skills
+
+- **GIVEN** 用户处于 CLI 交互模式
+- **WHEN** 用户输入 `/skills reload`
+- **THEN** CLI SHALL 重新加载 configured skill roots
+- **AND** 输出加载数量和诊断摘要
+- **AND** 后续 run SHALL 使用刷新后的 skill set
+
+#### Scenario: Skill command starts agent run with args
+
+- **GIVEN** 已加载一个名为 `code-review` 的用户可调用 skill
+- **WHEN** 用户输入 `/code-review 帮我审一下这个 change`
+- **THEN** CLI SHALL queue `code-review` activation，source 为 `slash_command`
+- **AND** SHALL 用 `帮我审一下这个 change` 作为用户消息启动 Agent run
+- **AND** SHALL NOT 将原始 `/code-review ...` 作为普通用户消息发送给 AgentLoop
+
 ### Requirement: Web slash command suggestions
 
 Web Chat SHALL 基于后端 command catalog 提供 slash command 提示。
@@ -174,10 +201,19 @@ Web Chat SHALL 基于后端 command catalog 提供 slash command 提示。
 #### Scenario: Web slash command 作为控制面输入处理
 
 - **GIVEN** 用户处于 Web Chat
-- **WHEN** 用户发送独立 slash command
+- **WHEN** 用户发送本地控制面 slash command
 - **THEN** WebSocket SHALL 执行该命令并发送 command result
-- **AND** SHALL NOT 启动普通 Agent run
+- **AND** SHALL NOT 启动 Agent run
 - **AND** SHALL NOT 将该输入作为普通用户消息发送给 AgentLoop/LLM
+
+#### Scenario: Web skill command starts agent run with args
+
+- **GIVEN** Web Chat 已加载一个名为 `code-review` 的用户可调用 skill
+- **WHEN** 用户发送 `/code-review 帮我审一下这个 change`
+- **THEN** WebSocket SHALL 先发送 command result
+- **AND** SHALL queue `code-review` activation，source 为 `slash_command`
+- **AND** SHALL 用 `帮我审一下这个 change` 作为用户消息启动 Agent run
+- **AND** SHALL NOT 将原始 `/code-review ...` 作为普通用户消息发送给 AgentLoop
 
 ### Requirement: web 命令启动 Web UI
 

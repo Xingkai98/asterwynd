@@ -27,7 +27,7 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **SandboxExecutor** | Subprocess sandbox with structured output: exit_code, stdout, stderr, duration, and timed_out. |
 | **HookManager** | 6 lifecycle extension points with built-in logging, retry, tracing, and token budget hooks. |
 | **MemoryManager** | AutoCompact token compression. When over budget, it asks the LLM to summarize older context. |
-| **SkillLoader** | Markdown skill files with YAML frontmatter and prompt body, loaded always or on demand. |
+| **SkillRuntime** | Directory-style Markdown skills with index injection, always/on-demand activation, and explicit `/skill args` invocation. |
 | **SubAgentManager** | Sub-session runtime with independent transcripts, multiple sub-sessions, repeated runs per sub-session, and explicit inspect. |
 | **TraceRecorder** | Full trace recording for iterations, tool calls, edits, and tests. |
 | **Benchmark** | 23 local coding-agent tasks, SWE-bench Docker harness tasks, and a Claw-SWE-Bench multi-agent comparison entry point. |
@@ -126,7 +126,8 @@ agent/
 ├── memory/
 │   └── manager.py           # MemoryManager + AutoCompact
 ├── skills/
-│   └── loader.py            # SkillLoader + Skill dataclass
+│   ├── loader.py            # SkillLoader + Skill dataclass
+│   └── runtime.py           # SkillRuntime + current-run skill activation
 └── subagent/
     └── manager.py           # SubAgentManager sub-session runtime
 
@@ -145,8 +146,10 @@ claw-swe-bench/              # Claw-SWE-Bench unified harness copy and adapters
     └── opencode_adapter.py  # OpenCode adapter (limited by endpoint support)
 
 skills/                      # Skill files
-├── code-review.md
-└── research.md
+├── code-review/
+│   └── SKILL.md
+└── research/
+    └── SKILL.md
 ```
 
 ## Architecture
@@ -243,7 +246,7 @@ print(run["status"], run["summary"])
 
 ### Add a New Skill
 
-Create a `.md` file under `skills/`:
+Create a directory-style skill at `skills/<name>/SKILL.md`:
 
 ```markdown
 ---
@@ -251,12 +254,18 @@ name: my-skill
 description: Skill description
 tools: [Read, Bash]
 always: false
+user_invocable: true
+argument_hint: <request>
+triggers:
+  - trigger phrase
 ---
 
 # Skill Title
 
 Prompt instructions go here...
 ```
+
+Each run injects a concise skill index into model-visible context. Full skill prompts are injected only for `always: true`, local matches, explicit `/my-skill ...` calls, or `ActivateSkill` tool activation. Interactive mode provides `/skills` to inspect loaded skills and `/skills reload` to reload configured skill roots.
 
 ## Web UI
 
@@ -365,7 +374,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 |------|------|------|
 | Tool implementation | 5 | ToolRegistry, SandboxExecutor, Read/Write tools, Bash workspace |
 | Safety policy | 3 | Reject `.env` writes, path traversal protection, Bash command policy |
-| Agent core | 7 | AgentLoop, MemoryManager, SkillLoader, SubAgent system |
+| Agent core | 7 | AgentLoop, MemoryManager, SkillRuntime, SubAgent system |
 | Observability | 3 | HookManager, logging/tracing hooks, retry/budget hooks |
 | Benchmark infrastructure | 3 | Failure classification, runner timeout, resource leak fixes |
 | Prompting | 2 | Coding system prompt, validation command injection |

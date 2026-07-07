@@ -15,7 +15,14 @@ Configuration SHALL allow users to declare local skill roots.
 
 - **GIVEN** configuration omits `skills.roots`
 - **WHEN** configuration is loaded
-- **THEN** the system SHOULD use a conservative default that includes repo-local skills when available
+- **THEN** the system SHOULD use a conservative default that includes repo-local `skills/` when available
+
+#### Scenario: Skill roots order
+
+- **GIVEN** configuration declares additional skill roots
+- **WHEN** skills are loaded
+- **THEN** repo-local `skills/` SHALL be loaded before additional roots
+- **AND** duplicate names in later roots SHALL NOT override earlier skills
 
 #### Scenario: Invalid skill roots config
 

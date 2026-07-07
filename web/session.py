@@ -9,6 +9,7 @@ from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.run_identity import new_session_id
 from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.skills import SkillRuntime
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry
 from agent.workspace_policy import WorkspacePolicy
@@ -81,6 +82,7 @@ class SessionManager:
             workspace_policy=workspace_policy,
             parent_mode=run_config.mode,
         )
+        skill_runtime = SkillRuntime.from_roots(self.config.skills.roots)
 
         agent = AgentLoop(
             llm=llm,
@@ -91,6 +93,7 @@ class SessionManager:
             expose_subagent_tools=True,
             run_config=run_config,
             tool_result_display=self.config.tools.display,
+            skill_runtime=skill_runtime,
         )
         session = AgentSession(session_id, agent)
         session.init_messages()

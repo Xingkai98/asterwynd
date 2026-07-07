@@ -28,7 +28,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | MemoryManager | `agent/memory/manager.py` | 消息历史与 AutoCompact |
 | PlanningManager | `agent/planning/` | 当前运行的结构化计划状态 |
 | AgentRuntimeState | `agent/run_config.py` | 交互式 session 的当前 mode 和运行时 mode transition |
-| SkillLoader | `agent/skills/loader.py` | Markdown skill 加载 |
+| SkillLoader / SkillRuntime | `agent/skills/` | 目录式 Markdown skill 加载、诊断、匹配、reload 和当前 run prompt 注入 |
 | SubAgentManager | `agent/subagent/manager.py` | 子 session runtime 管理：子 session、多次 run、状态与 transcript inspect |
 | TraceRecorder | `agent/trace_recorder.py` | 运行轨迹记录 |
 
@@ -56,6 +56,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | SymbolSearch | read_only | 按名称搜索已支持语言的符号 |
 | WebSearch | read_only | 网络搜索，当前默认 DuckDuckGo HTML provider |
 | WebFetch | read_only | 抓取网页正文并返回状态/类型/截断诊断 |
+| ActivateSkill | read_only | 在当前 run 内激活已加载 skill，使下一次 LLM 调用获得完整 skill prompt |
 | CreateSubagent | read_only | 创建子 session |
 | RunSubagent | read_only | 在已有子 session 中启动一次 run |
 | ListSubagents | read_only | 列出可见子 session |
@@ -87,6 +88,14 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
 Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan`。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
+
+## Skills
+
+Skill 使用目录格式：`skills/<name>/SKILL.md`。`SkillLoader` 解析 frontmatter 和正文，`SkillRuntime` 按配置的 skill roots 加载并保留诊断；配置文件所在目录的 `skills/` 总是先加载，`skills.roots` 中的路径作为追加 roots，重复名称按“先加载者生效”处理。
+
+每次 Agent run 都会向模型注入简短 skill index，包含用户可调用 skill 的名称、描述和 `/skill-name <args>` 调用方式。完整 skill prompt 只在三种情况下进入当前 run context：`always: true`、本地 name/description/triggers 匹配当前用户输入、或通过 slash command / `ActivateSkill` 显式激活。注入内容不会写回 conversation memory。
+
+CLI 和 Web 复用 central slash command registry。`/skills` 展示当前加载结果，`/skills reload` 重新加载 configured roots；`/skill-name args` 会先 queue skill activation，再以 `args` 作为用户消息启动 Agent run，原始 slash command 不进入 LLM 普通消息。
 
 ## Benchmark
 
@@ -120,5 +129,5 @@ Anthropic / DeepSeek 兼容路径需要注意：
 
 - 新工具：继承 Tool，使用 `@tool_parameters` 声明 schema，注册到 ToolRegistry。
 - 新 Hook：实现 Hook Protocol，加入 HookManager。
-- 新 Skill：在 `skills/` 下创建 Markdown 文件。
+- 新 Skill：在 `skills/<name>/SKILL.md` 中创建目录式 Markdown skill，并按需配置 `triggers`、`argument_hint` 和 `user_invocable`。
 - 新 LLM provider：实现 LLM Protocol。

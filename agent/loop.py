@@ -24,6 +24,8 @@ from agent.tools.builtin.subagents import (
     ListSubagentsTool,
     RunSubagentTool,
 )
+from agent.tools.builtin.activate_skill import ActivateSkillTool
+from agent.skills.runtime import SkillRuntime
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 
 if TYPE_CHECKING:
@@ -45,6 +47,7 @@ class AgentLoop:
         max_iterations: int = 20,
         run_config: AgentRunConfig | None = None,
         tool_result_display: ToolResultDisplayConfig | None = None,
+        skill_runtime: SkillRuntime | None = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -62,6 +65,7 @@ class AgentLoop:
         self.runtime_state = policy_state or AgentRuntimeState(self.run_config.mode)
         self.tool_registry.mode_policy.runtime_state = self.runtime_state
         self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
+        self.skill_runtime = skill_runtime
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
@@ -72,6 +76,8 @@ class AgentLoop:
             self._ensure_plan_tools_registered()
         if expose_subagent_tools:
             self._ensure_subagent_tools_registered()
+        if self.skill_runtime is not None:
+            self.tool_registry.register(ActivateSkillTool(self.skill_runtime))
 
     @property
     def planning_state(self) -> dict:
@@ -286,6 +292,8 @@ class AgentLoop:
     ) -> RunResult:
         tool_calls_made: list[ToolCallMade] = []
         mode = self.runtime_state.current_mode.value
+        if self.skill_runtime is not None:
+            self.skill_runtime.begin_run(self._last_user_content(messages))
 
         logger.info(
             "Agent run started mode=%s session_id=%s run_id=%s",
@@ -411,6 +419,7 @@ class AgentLoop:
                 )
 
                 await self.hooks.before_tool_execute(tool_call)
+                tool = self.tool_registry.get_tool(tool_call.name)
                 if trace_recorder:
                     trace_recorder.record_tool_call(tool_call.name, tool_call.arguments)
 
@@ -455,7 +464,13 @@ class AgentLoop:
                             result,
                             self.tool_result_display,
                         ).to_dict(),
-                    })
+                        })
+                    activation = getattr(tool, "last_activation", None)
+                    if activation and getattr(activation, "activated", False):
+                        await on_event("skill_activated", {
+                            "skill_name": activation.skill_name,
+                            "source": activation.source,
+                        })
 
                 messages.append(tool_result_message(tool_call.id, result))
                 tool_calls_made.append(ToolCallMade(
@@ -551,6 +566,13 @@ class AgentLoop:
 
     def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
         injected_contexts = []
+        if self.skill_runtime is not None:
+            skill_index = self.skill_runtime.render_skill_index()
+            if skill_index:
+                injected_contexts.append(skill_index)
+            active_skill_context = self.skill_runtime.render_active_skill_context()
+            if active_skill_context:
+                injected_contexts.append(active_skill_context)
         plan_context = self._plan_mode_context()
         if plan_context:
             injected_contexts.append(plan_context)
@@ -591,5 +613,11 @@ class AgentLoop:
     def _last_assistant_content(self, messages: list[Message]) -> str:
         for message in reversed(messages):
             if message.role == "assistant" and message.content:
+                return message.content
+        return ""
+
+    def _last_user_content(self, messages: list[Message]) -> str:
+        for message in reversed(messages):
+            if message.role == "user":
                 return message.content
         return ""

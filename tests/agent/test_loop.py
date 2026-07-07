@@ -11,6 +11,8 @@ from agent.memory.manager import MemoryManager
 from agent.trace_recorder import TraceRecorder
 from agent.run_config import AgentMode, AgentRunConfig
 from agent.subagent.manager import SubAgentManager
+from agent.skills.loader import Skill
+from agent.skills.runtime import SkillRuntime
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -857,3 +859,131 @@ async def test_agent_loop_emits_memory_compaction_only_when_compacted():
     event_names = [name for name, _payload in events]
     assert "tool_result" in event_names
     assert "memory_compaction" not in event_names
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_injects_skill_index_without_full_prompt():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    skill_runtime = SkillRuntime([
+        Skill(
+            name="code-review",
+            description="审查代码变更",
+            prompt="FULL REVIEW PROMPT",
+            tools=[],
+            argument_hint="<request>",
+        )
+    ])
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        skill_runtime=skill_runtime,
+    )
+
+    await loop.run([Message(role="user", content="hello")])
+
+    contents = "\n".join(message.content for message in llm.messages)
+    assert "Available skills" in contents
+    assert "/code-review <request>" in contents
+    assert "FULL REVIEW PROMPT" not in contents
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_injects_matched_skill_context_without_mutating_messages():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    skill_runtime = SkillRuntime([
+        Skill(
+            name="code-review",
+            description="审查代码变更",
+            prompt="FULL REVIEW PROMPT",
+            tools=[],
+            triggers=("review",),
+        )
+    ])
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        skill_runtime=skill_runtime,
+    )
+    messages = [Message(role="user", content="please review this change")]
+
+    await loop.run(messages)
+
+    contents = "\n".join(message.content for message in llm.messages)
+    assert "Active Skill: code-review" in contents
+    assert "FULL REVIEW PROMPT" in contents
+    assert [message.content for message in messages] == [
+        "please review this change",
+        "done",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_activate_skill_tool_adds_context_for_next_llm_call():
+    class ActivateThenDoneLLM:
+        def __init__(self):
+            self.calls = []
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.calls.append(list(messages))
+            if len(self.calls) == 1:
+                names = [tool["function"]["name"] for tool in tools or []]
+                assert "ActivateSkill" in names
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCallDelta(
+                            id="skill-1",
+                            name="ActivateSkill",
+                            arguments='{"skill_name": "research", "reason": "need research"}',
+                        )
+                    ],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="researched")
+
+    skill_runtime = SkillRuntime([
+        Skill(
+            name="research",
+            description="研究主题",
+            prompt="FULL RESEARCH PROMPT",
+            tools=[],
+        )
+    ])
+    llm = ActivateThenDoneLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        skill_runtime=skill_runtime,
+    )
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    result = await loop.run([Message(role="user", content="tell me something")], on_event=on_event)
+
+    second_call_contents = "\n".join(message.content for message in llm.calls[1])
+    assert result.content == "researched"
+    assert "Active Skill: research" in second_call_contents
+    assert "FULL RESEARCH PROMPT" in second_call_contents
+    assert ("skill_activated", {"skill_name": "research", "source": "llm_tool"}) in [
+        (name, {key: payload[key] for key in ("skill_name", "source")})
+        for name, payload in events
+        if name == "skill_activated"
+    ]

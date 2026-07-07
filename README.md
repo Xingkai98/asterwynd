@@ -27,7 +27,7 @@
 | **SandboxExecutor** | subprocess 沙箱，结构化输出（exit_code/stdout/stderr/duration/timed_out） |
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
 | **MemoryManager** | AutoCompact token 压缩，超预算时用 LLM 生成摘要 |
-| **SkillLoader** | Markdown 技能文件（YAML frontmatter + prompt），按需/always 加载 |
+| **SkillRuntime** | 目录式 Markdown skill 加载、index 注入、按需/always 激活、`/skill args` 显式调用 |
 | **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
 | **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
 | **Benchmark** | 23 个本地 coding-agent 任务、SWE-bench Docker harness 任务，以及 Claw-SWE-Bench 多 agent 对比入口 |
@@ -126,7 +126,8 @@ agent/
 ├── memory/
 │   └── manager.py           # MemoryManager + AutoCompact
 ├── skills/
-│   └── loader.py            # SkillLoader + Skill dataclass
+│   ├── loader.py            # SkillLoader + Skill dataclass
+│   └── runtime.py           # SkillRuntime + 当前 run skill 激活
 └── subagent/
     └── manager.py           # SubAgentManager 子 session runtime
 
@@ -145,8 +146,10 @@ claw-swe-bench/              # Claw-SWE-Bench 统一 harness 副本和 adapter
     └── opencode_adapter.py  # OpenCode adapter（受 endpoint 支持限制）
 
 skills/                      # 技能文件目录
-├── code-review.md
-└── research.md
+├── code-review/
+│   └── SKILL.md
+└── research/
+    └── SKILL.md
 ```
 
 ## 架构设计
@@ -242,7 +245,7 @@ print(run["status"], run["summary"])
 
 ### 添加新技能
 
-在 `skills/` 目录创建 `.md` 文件：
+在 `skills/<name>/SKILL.md` 创建目录式 skill：
 
 ```markdown
 ---
@@ -250,12 +253,18 @@ name: my-skill
 description: 技能描述
 tools: [Read, Bash]
 always: false
+user_invocable: true
+argument_hint: <request>
+triggers:
+  - 触发词
 ---
 
 # 技能标题
 
 这里是指示 prompt...
 ```
+
+每次 run 都会向模型注入简短 skill index。完整 skill prompt 只在 `always: true`、本地匹配、显式 `/my-skill ...` 或 `ActivateSkill` 工具激活时进入当前 run context。交互模式可用 `/skills` 查看加载结果、`/skills reload` 重新加载 configured skill roots。
 
 ## Web UI
 
@@ -364,7 +373,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 |------|------|------|
 | 工具实现 | 5 | ToolRegistry, SandboxExecutor, Read/Write 工具, Bash workspace |
 | 安全策略 | 3 | .env 写入拒绝, 路径穿越防护, Bash 命令策略 |
-| Agent 核心 | 7 | AgentLoop, MemoryManager, SkillLoader, SubAgent 系统 |
+| Agent 核心 | 7 | AgentLoop, MemoryManager, SkillRuntime, SubAgent 系统 |
 | 可观测性 | 3 | HookManager, 日志/追踪 Hook, 重试/预算 Hook |
 | 基准设施 | 3 | 失败分类, Runner timeout, 资源泄漏修复 |
 | 提示词 | 2 | 编码系统提示词, 验证命令注入 |

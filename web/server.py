@@ -6,6 +6,7 @@ from pathlib import Path
 
 from agent.commands import CommandContext, build_default_slash_command_registry
 from agent.config import AsterwyndConfig
+from agent.skills import SkillRuntime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,7 +34,6 @@ def create_app(
         mode=resolved_mode,
         config=config,
     )
-    command_registry = build_default_slash_command_registry()
 
     # Mount static files at /static
     if STATIC_DIR.exists():
@@ -63,6 +63,9 @@ def create_app(
 
     @app.get("/api/slash-commands")
     async def slash_commands():
+        command_registry = build_default_slash_command_registry(
+            SkillRuntime.from_roots(config.skills.roots)
+        )
         return {"commands": command_registry.catalog()}
 
     @app.websocket("/ws/{session_id}")
@@ -98,6 +101,9 @@ def create_app(
                         provider=llm.__class__.__name__,
                         model=str(getattr(llm, "model", "default")),
                     )
+                    command_registry = build_default_slash_command_registry(
+                        getattr(session.agent, "skill_runtime", None)
+                    )
                     command_result = await command_registry.try_execute(
                         user_text,
                         command_context,
@@ -111,6 +117,30 @@ def create_app(
                                 "continue_session": command_result.continue_session,
                             },
                         })
+                        if command_result.metadata.get("run_agent"):
+                            skill_runtime = getattr(session.agent, "skill_runtime", None)
+                            skill_name = command_result.metadata.get("skill_name")
+                            if skill_runtime is not None and skill_name:
+                                skill_runtime.queue_activation(
+                                    str(skill_name),
+                                    source=str(
+                                        command_result.metadata.get(
+                                            "activation_source",
+                                            "slash_command",
+                                        )
+                                    ),
+                                )
+                            agent_input = str(
+                                command_result.metadata.get("agent_input") or ""
+                            ).strip()
+                            if not agent_input:
+                                agent_input = user_text
+                            await session_manager.run_session(
+                                session,
+                                agent_input,
+                                ws_send=lambda e: ws.send_json(e),
+                            )
+                            continue
                         await ws.send_json({
                             "type": "done",
                             "data": {

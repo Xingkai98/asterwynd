@@ -2,7 +2,7 @@
 
 ### Requirement: CLI exposes skill status commands
 
-CLI interactive mode SHALL expose slash commands for observing and reloading skills after the slash command framework exists.
+CLI interactive mode SHALL expose slash commands for observing, reloading, and explicitly invoking skills after the slash command framework exists.
 
 #### Scenario: List skills
 
@@ -18,6 +18,14 @@ CLI interactive mode SHALL expose slash commands for observing and reloading ski
 - **THEN** CLI SHALL 重新加载 configured skill roots
 - **AND** 输出加载数量和诊断摘要
 - **AND** 后续 run SHALL 使用刷新后的 skill set
+
+#### Scenario: Skill command starts agent run with args
+
+- **GIVEN** 已加载一个名为 `code-review` 的用户可调用 skill
+- **WHEN** 用户输入 `/code-review 帮我审一下这个 change`
+- **THEN** CLI SHALL queue `code-review` activation，source 为 `slash_command`
+- **AND** SHALL 用 `帮我审一下这个 change` 作为用户消息启动 Agent run
+- **AND** SHALL NOT 将原始 `/code-review ...` 作为普通用户消息发送给 AgentLoop
 
 #### Scenario: Skill command requires slash command framework
 

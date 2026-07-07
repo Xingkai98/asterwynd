@@ -4,10 +4,11 @@ import cli
 from agent.memory.manager import MemoryManager
 from agent.openai_llm import OpenAILLM
 from agent.result import RunResult, StopReason, ToolCallMade
+from agent.skills import Skill, SkillRuntime
 
 
 class FakeAgent:
-    def __init__(self, content="mock response", tool_calls_made=None):
+    def __init__(self, content="mock response", tool_calls_made=None, skill_runtime=None):
         self.llm = type("FakeLLM", (), {"model": "fake-model"})()
         self.max_iterations = None
         self.messages = None
@@ -19,6 +20,7 @@ class FakeAgent:
         self.current_mode = "build"
         self.mode_changes = []
         self.memory = MemoryManager()
+        self.skill_runtime = skill_runtime
 
     async def run(self, messages, session_id=None, run_id=None):
         self.messages = messages
@@ -382,7 +384,7 @@ def test_cli_interactive_status_command_prints_local_state(monkeypatch):
 
     result = CliRunner().invoke(
         cli.app,
-        ["main", "--interactive"],
+        ["main", "--interactive", "--provider", "openai"],
         input="/status\nexit\n",
     )
 
@@ -459,6 +461,43 @@ def test_cli_interactive_compact_reports_noop_without_running_agent(monkeypatch)
     assert "Nothing to compact" in result.stdout
     assert "Run ID: run-1" not in result.stdout
     assert fake.run_ids == []
+
+
+def test_cli_interactive_skill_command_queues_activation_and_runs_agent(monkeypatch):
+    runtime = SkillRuntime(skills=[
+        Skill(
+            name="code-review",
+            description="审查代码变更",
+            prompt="Review instructions",
+            tools=[],
+            argument_hint="<request>",
+            user_invocable=True,
+        )
+    ])
+    fake = FakeAgent(skill_runtime=runtime)
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-skill")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "--interactive"],
+        input="/code-review 帮我审一下这个 change\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Activated skill: code-review" in result.stdout
+    assert "Run ID: run-skill" in result.stdout
+    runtime.begin_run("帮我审一下这个 change")
+    assert runtime.activations == [
+        {"skill_name": "code-review", "source": "slash_command"}
+    ]
+    assert fake.messages is not None
+    user_messages = [message.content for message in fake.messages if message.role == "user"]
+    assert user_messages == ["帮我审一下这个 change"]
 
 
 def test_cli_single_prompt_passes_normalized_mode(monkeypatch):

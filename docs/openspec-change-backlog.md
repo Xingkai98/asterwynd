@@ -32,7 +32,6 @@
 
 ### 第三批：Coding Agent 基本操作面和入口回归
 
-- `integrate-skill-runtime`：依赖已完成的 slash command framework，把已有 SkillLoader 接入配置、运行时上下文和 `/skills` 可观测入口。
 - `add-shared-test-llm-harness`：在 skills 后补齐共享 fake/real LLM 入口回归基础设施，供 CLI、Web 和未来 TUI smoke 复用。
 
 ### 第四批：工具权限模型前置
@@ -51,30 +50,11 @@
 
 ## 未实现队列
 
-### 1. `integrate-skill-runtime`
+### 1. `add-shared-test-llm-harness`
 
 状态：未实现。
 
-批次：第三批，建议在 slash command framework 归档后实现。
-
-建议顺序原因：
-
-- 仓库已有 SkillLoader 和 skills spec，但尚未接入真实运行时。
-- Skills 是 coding agent 复用工作流的基础能力，应先于 MCP/browser 等外部扩展稳定下来。
-- `/skills` 和 `/skills reload` 应复用已完成的 slash command framework。
-
-主要交付：
-
-- Skill roots 配置。
-- Runtime 加载 skills、always skill 注入、matched skill 当前 run 注入。
-- `/skills` 和 `/skills reload`。
-- 加载诊断和可观测记录。
-
-### 2. `add-shared-test-llm-harness`
-
-状态：未实现。
-
-批次：第三批，建议在 `integrate-skill-runtime` 之后、工具权限模型和 TUI/MCP/browser 实现前推进。
+批次：第三批，建议在 skill runtime 基础能力稳定后、工具权限模型和 TUI/MCP/browser 实现前推进。
 
 建议顺序原因：
 
@@ -90,7 +70,7 @@
 - deterministic Playwright fake LLM browser smoke。
 - real LLM smoke opt-in 策略和测试指南。
 
-### 3. `refine-tool-permission-model`
+### 2. `refine-tool-permission-model`
 
 状态：未实现。
 
@@ -110,7 +90,7 @@
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
 
-### 4. `add-mcp-tool-adapter`
+### 3. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -128,7 +108,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 5. `add-minimal-tui-runtime-view`
+### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -146,7 +126,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 6. `add-browser-use-safety-foundation`
+### 5. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
