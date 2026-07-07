@@ -170,6 +170,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 ## 开发注意事项
 
 - CLI 交互模式通过 slash command registry 处理 `/help`、`/status`、`/mode`、`/clear`、`/compact`、`/exit` 和 `/quit`；裸 `exit`、`quit`、`q` 仍可退出。
+- Web Chat 输入框在输入 `/` 时会显示 slash command suggestions，并按当前前缀实时过滤；发送独立 slash command 时由 WebSocket 按控制面输入执行，不作为普通聊天消息进入 AgentLoop/LLM。后续命令如果需要摘要等能力，可以由 command handler 显式调用 LLM-backed 服务。
 - `/clear` 只清当前 CLI 交互上下文，不生成新的 Session ID；后续如果引入持久 transcript 或 cache reset，需要单独扩展语义。
 - CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。
 - 当前 CLI/Web 的 mode 切换在用户侧表现为“影响后续 run”；runtime state 仍会在 transition 完成后立即更新，供后续 TUI 或控制面重构复用。

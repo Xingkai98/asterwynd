@@ -2,7 +2,7 @@
 
 ### Requirement: CLI interactive slash command registry
 
-CLI interactive mode SHALL route slash commands through a central command registry.
+CLI interactive mode SHALL route slash commands through a central command registry. A standalone slash command SHALL NOT be sent as a normal user message to AgentLoop/LLM; an individual command handler MAY explicitly call LLM-backed services when the command semantics require it.
 
 #### Scenario: Slash command help
 
@@ -16,7 +16,7 @@ CLI interactive mode SHALL route slash commands through a central command regist
 - **GIVEN** 用户处于 CLI 交互模式
 - **WHEN** 用户输入未知 slash command
 - **THEN** CLI SHALL 输出可读错误
-- **AND** SHALL NOT 将该输入发送给 LLM
+- **AND** SHALL NOT 将该输入作为普通用户消息发送给 AgentLoop/LLM
 - **AND** SHALL NOT 产生新的 Run ID
 - **AND** 会话 SHALL 继续
 
@@ -57,7 +57,7 @@ CLI interactive mode SHALL provide basic session slash commands for exit, status
 - **THEN** CLI SHALL 清空当前会话的非 system 消息
 - **AND** SHALL 保留当前 Session ID
 - **AND** 输出可读确认
-- **AND** SHALL NOT 将 `/clear` 发送给 LLM
+- **AND** SHALL NOT 将 `/clear` 作为普通用户消息发送给 AgentLoop/LLM
 - **AND** SHALL NOT 产生新的 Run ID
 
 #### Scenario: Slash compact command
@@ -66,5 +66,30 @@ CLI interactive mode SHALL provide basic session slash commands for exit, status
 - **WHEN** 用户输入 `/compact`
 - **THEN** CLI SHALL 主动请求压缩当前会话上下文
 - **AND** 输出压缩结果或无需压缩的可读说明
-- **AND** SHALL NOT 将 `/compact` 发送给 LLM
+- **AND** SHALL NOT 将 `/compact` 作为普通用户消息发送给 AgentLoop/LLM
 - **AND** SHALL NOT 产生新的 Run ID
+
+### Requirement: Web slash command suggestions
+
+Web Chat SHALL expose slash command suggestions from a backend command catalog.
+
+#### Scenario: Web command catalog
+
+- **GIVEN** Web UI is running
+- **WHEN** the browser requests `/api/slash-commands`
+- **THEN** the response SHALL include command name, usage, description, aliases, and argument hint for available slash commands
+
+#### Scenario: Slash prefix updates suggestions
+
+- **GIVEN** 用户在 Web Chat 输入框中输入 `/`
+- **WHEN** 用户继续输入命令前缀
+- **THEN** Web UI SHALL update the suggestion list to commands whose name or aliases start with the current prefix
+- **AND** ordinary text containing `/` SHALL NOT show slash command suggestions
+
+#### Scenario: Web slash command is handled as control-plane input
+
+- **GIVEN** 用户处于 Web Chat
+- **WHEN** 用户发送独立 slash command
+- **THEN** WebSocket SHALL execute the command locally and emit a command result
+- **AND** SHALL NOT start an Agent run
+- **AND** SHALL NOT send that input as a normal user message to AgentLoop/LLM

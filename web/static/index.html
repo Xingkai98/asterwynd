@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Asterwynd · Asterwynd Web UI</title>
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
 <div id="app">
@@ -47,7 +47,10 @@
       </div>
       <div id="messages"></div>
       <div id="input-area">
-        <textarea id="user-input" placeholder="输入消息..." rows="2"></textarea>
+        <div id="input-shell">
+          <div id="slash-suggestions" role="listbox" aria-label="Slash commands" hidden></div>
+          <textarea id="user-input" placeholder="输入消息..." rows="2" autocomplete="off"></textarea>
+        </div>
         <button id="send-btn">发送</button>
       </div>
     </section>
@@ -60,7 +63,7 @@
 </div>
 
 <script src="/static/markdown.js?v=6"></script>
-<script src="/static/chat.js?v=8"></script>
+<script src="/static/chat.js?v=9"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

@@ -62,6 +62,24 @@ class SlashCommandRegistry:
             commands.append(command)
         return commands
 
+    def catalog(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": command.canonical_name,
+                "command": f"/{command.canonical_name}",
+                "usage": command.usage,
+                "description": command.description,
+                "aliases": [alias.lstrip("/").lower() for alias in command.aliases],
+                "argument_hint": command.argument_hint,
+                "insert_text": (
+                    f"/{command.canonical_name} "
+                    if command.argument_hint
+                    else f"/{command.canonical_name}"
+                ),
+            }
+            for command in self.commands()
+        ]
+
     async def try_execute(
         self,
         user_input: str,
@@ -75,9 +93,13 @@ class SlashCommandRegistry:
         command = self._commands.get(command_name)
         if command is None:
             return CommandResult(
-                message=f"Unknown command: /{command_name}. Type /help for available commands."
+                message=f"Unknown command: /{command_name}. Type /help for available commands.",
+                metadata={"command": command_name, "known": False},
             )
-        return await command.handler(context, args)
+        result = await command.handler(context, args)
+        result.metadata.setdefault("command", command.canonical_name)
+        result.metadata.setdefault("known", True)
+        return result
 
     def _parse(self, stripped_input: str) -> tuple[str, str]:
         without_slash = stripped_input[1:]
@@ -108,6 +130,8 @@ def build_default_slash_command_registry() -> SlashCommandRegistry:
         runtime_state = getattr(ctx.agent, "runtime_state", None)
         if runtime_state is not None:
             mode = getattr(runtime_state, "current_mode", mode)
+        if hasattr(mode, "value"):
+            mode = mode.value
         mode = mode or "unavailable"
         memory = getattr(ctx.agent, "memory", None)
         token_count = None

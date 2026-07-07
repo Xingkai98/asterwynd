@@ -7,10 +7,15 @@ let currentMode = 'build';
 let currentAssistantMsg = null;
 let debugEvents = [];
 let activeView = 'chat';
+let slashCommands = [];
+let slashMatches = [];
+let activeSlashIndex = 0;
+let shouldReconnect = true;
 
 // --- DOM refs ---
 const messagesEl = document.getElementById('messages');
 const userInput = document.getElementById('user-input');
+const slashSuggestionsEl = document.getElementById('slash-suggestions');
 const sendBtn = document.getElementById('send-btn');
 const statusEl = document.getElementById('status');
 const sessionIdEl = document.getElementById('session-id');
@@ -52,8 +57,10 @@ async function connect() {
       handleEvent(event);
     };
     ws.onclose = () => {
-      statusEl.textContent = 'disconnected';
-      setTimeout(connect, 2000);
+      statusEl.textContent = shouldReconnect ? 'disconnected' : 'ended';
+      if (shouldReconnect) {
+        setTimeout(connect, 2000);
+      }
     };
     ws.onerror = () => {
       statusEl.textContent = 'error';
@@ -89,6 +96,26 @@ function handleEvent(event) {
         syncMode(event.data.new_mode);
       }
       break;
+
+    case 'command_result': {
+      const data = event.data || {};
+      const metadata = data.metadata || {};
+      if (metadata.command === 'clear') {
+        messagesEl.textContent = '';
+      }
+      if (metadata.transition && metadata.transition.new_mode) {
+        syncMode(metadata.transition.new_mode);
+      }
+      if (data.message) {
+        addMessage('system', data.message);
+      }
+      if (data.continue_session === false) {
+        shouldReconnect = false;
+        userInput.disabled = true;
+        sendBtn.disabled = true;
+      }
+      break;
+    }
 
     case 'llm_response': {
       const data = event.data;
@@ -339,10 +366,11 @@ async function sendMessage() {
   const text = userInput.value.trim();
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
 
+  hideSlashSuggestions();
   addMessage('user', text);
   userInput.value = '';
   sendBtn.disabled = true;
-  statusEl.textContent = 'thinking...';
+  statusEl.textContent = text.startsWith('/') ? 'running command...' : 'thinking...';
 
   ws.send(JSON.stringify({ type: 'chat', content: text }));
 }
@@ -357,20 +385,135 @@ function sendModeChange() {
 
 sendBtn.addEventListener('click', sendMessage);
 modeApplyBtn.addEventListener('click', sendModeChange);
+userInput.addEventListener('input', updateSlashSuggestions);
+userInput.addEventListener('blur', () => {
+  setTimeout(hideSlashSuggestions, 100);
+});
 userInput.addEventListener('keydown', (e) => {
+  if (slashSuggestionsEl && !slashSuggestionsEl.hidden) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      moveSlashSelection(1);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveSlashSelection(-1);
+      return;
+    }
+    if (e.key === 'Tab' || e.key === 'Enter') {
+      e.preventDefault();
+      applySlashSuggestion(activeSlashIndex);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hideSlashSuggestions();
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
 });
 
+// --- Slash command suggestions ---
+function slashQueryFromInput() {
+  const value = userInput.value;
+  const cursor = userInput.selectionStart ?? value.length;
+  const beforeCursor = value.slice(0, cursor);
+  if (!beforeCursor.startsWith('/')) return null;
+  if (beforeCursor.includes('\n')) return null;
+  if (/\s/.test(beforeCursor)) return null;
+  return beforeCursor.slice(1).toLowerCase();
+}
+
+function updateSlashSuggestions() {
+  if (!slashSuggestionsEl) return;
+  const query = slashQueryFromInput();
+  if (query === null) {
+    hideSlashSuggestions();
+    return;
+  }
+  slashMatches = slashCommands.filter(command => {
+    const aliases = Array.isArray(command.aliases) ? command.aliases : [];
+    return command.name.startsWith(query) || aliases.some(alias => alias.startsWith(query));
+  });
+  activeSlashIndex = 0;
+  renderSlashSuggestions();
+}
+
+function renderSlashSuggestions() {
+  slashSuggestionsEl.textContent = '';
+  if (slashMatches.length === 0) {
+    hideSlashSuggestions();
+    return;
+  }
+  slashSuggestionsEl.hidden = false;
+  slashMatches.forEach((command, index) => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = `slash-suggestion${index === activeSlashIndex ? ' active' : ''}`;
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', index === activeSlashIndex ? 'true' : 'false');
+    option.addEventListener('mousedown', event => {
+      event.preventDefault();
+      applySlashSuggestion(index);
+    });
+
+    const main = document.createElement('span');
+    main.className = 'slash-suggestion-main';
+    const name = document.createElement('code');
+    name.textContent = command.command;
+    main.appendChild(name);
+    if (command.argument_hint) {
+      const hint = document.createElement('span');
+      hint.className = 'slash-suggestion-hint';
+      hint.textContent = ` ${command.argument_hint}`;
+      main.appendChild(hint);
+    }
+
+    const desc = document.createElement('span');
+    desc.className = 'slash-suggestion-desc';
+    desc.textContent = command.description || '';
+
+    option.appendChild(main);
+    option.appendChild(desc);
+    slashSuggestionsEl.appendChild(option);
+  });
+}
+
+function hideSlashSuggestions() {
+  if (!slashSuggestionsEl) return;
+  slashSuggestionsEl.hidden = true;
+  slashSuggestionsEl.textContent = '';
+  slashMatches = [];
+  activeSlashIndex = 0;
+}
+
+function moveSlashSelection(delta) {
+  if (slashMatches.length === 0) return;
+  activeSlashIndex = (activeSlashIndex + delta + slashMatches.length) % slashMatches.length;
+  renderSlashSuggestions();
+}
+
+function applySlashSuggestion(index) {
+  const command = slashMatches[index];
+  if (!command) return;
+  userInput.value = command.insert_text || command.command;
+  userInput.focus();
+  userInput.setSelectionRange(userInput.value.length, userInput.value.length);
+  hideSlashSuggestions();
+}
+
 // Watch for done event to re-enable send button
 const origHandleEvent = handleEvent;
 handleEvent = function(event) {
   origHandleEvent(event);
   if (event.type === 'done' || event.type === 'error') {
-    sendBtn.disabled = false;
-    statusEl.textContent = 'connected';
+    sendBtn.disabled = !shouldReconnect;
+    statusEl.textContent = shouldReconnect ? 'connected' : 'ended';
   }
 };
 
@@ -378,6 +521,9 @@ handleEvent = function(event) {
 async function init() {
   try {
     await connect();
+    const commandResp = await fetch('/api/slash-commands');
+    const commandCatalog = await commandResp.json();
+    slashCommands = Array.isArray(commandCatalog.commands) ? commandCatalog.commands : [];
     // Check debug status
     const resp = await fetch('/api/debug-status');
     const dbg = await resp.json();

@@ -58,7 +58,10 @@ async def test_registry_dispatches_registered_command_and_alias():
 
     result = await registry.try_execute("/hi world", ctx)
 
-    assert result == CommandResult(message="hello world")
+    assert result == CommandResult(
+        message="hello world",
+        metadata={"command": "hello", "known": True},
+    )
 
 
 @pytest.mark.asyncio

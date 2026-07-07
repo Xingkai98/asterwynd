@@ -9,13 +9,13 @@
 开发前调研按 `.dev/reference-repos.txt` 中的本地参考仓库执行；当前环境没有可调用的 `codegraph`，因此降级为 `rg` 和定点文件阅读。调研结论只沉淀设计影响，不把本地参考仓库路径作为项目依赖。
 
 - Codex: `codex-rs/tui/src/slash_command.rs` 用 enum 集中定义命令名、展示描述、是否支持 inline args、side conversation 可用性、task-running 可用性和可见性；`codex-rs/tui/src/bottom_pane/slash_commands.rs` 集中处理 feature gating、动态 service-tier 命令插入、fuzzy lookup 和解析测试。设计影响：Asterwynd 首版 command metadata 需要覆盖 name、aliases、usage/argument hint、description、handler 和基础可用性；暂不做 fuzzy lookup、动态 service tier 和复杂状态 gating。
-- Codex: `codex-rs/app-server/README.md` 中 `thread/compact/start` 将手动 compact 建模为 thread 级运行时控制请求，立即返回，进度通过 `turn/*`、`item/*` 通知体现。设计影响：Asterwynd `/compact` 不应进入普通 LLM 消息链；CLI 首版可同步等待 MemoryManager compact，但结果类型要足够结构化，未来可演进为异步进度事件。
+- Codex: `codex-rs/app-server/README.md` 中 `thread/compact/start` 将手动 compact 建模为 thread 级运行时控制请求，立即返回，进度通过 `turn/*`、`item/*` 通知体现。设计影响：Asterwynd `/compact` 不应作为普通用户消息进入 AgentLoop/LLM；CLI 首版可同步等待 MemoryManager compact，但结果类型要足够结构化，未来可演进为异步进度事件。
 - Claude Code: `src/types/command.ts` 定义统一 command metadata、别名、可见性、参数提示、lazy handler 和不同 command 类型；`src/commands.ts` 汇总 built-in、skills、plugins、MCP 等来源并做可用性过滤。设计影响：Asterwynd 首版只做 built-in registry，但命令声明应包含 `name`、`aliases`、`usage`、`description`、handler 和结构化 result，给未来 `/skills`、TUI command palette 留接口。
 - Claude Code: `commands/clear/*` 显示 `/clear` 需要清理的不只是消息，还包括 session cache、skill/command cache、file suggestion cache、WebFetch cache、ToolSearch cache、agent definitions cache、session id 等。设计影响：Asterwynd 目前还没有这些缓存层，首版不能伪装成完整 session reset；必须把行为命名为清当前交互历史，保留 system messages，并同步 CLI `messages` 与 `MemoryManager`。
-- Claude Code: `commands/compact/*` 把 `/compact` 作为 local command，返回专门 compaction result，并触发 post-compact cleanup。设计影响：Asterwynd `/compact` 不走普通 LLM 消息路径，首版调用现有 `MemoryManager.compact()`，并返回压缩前后 message/token 变化和无可压缩内容时的原因。
+- Claude Code: `commands/compact/*` 把 `/compact` 作为 local command，返回专门 compaction result，并触发 post-compact cleanup。设计影响：Asterwynd `/compact` 不走普通聊天消息路径，首版调用现有 `MemoryManager.compact()`，并返回压缩前后 message/token 变化和无可压缩内容时的原因；后续如果压缩摘要需要 LLM，应由 command handler 显式调用 LLM-backed 服务。
 - Nanobot: `nanobot/command/router.py` 使用独立 `CommandRouter` 和 `CommandContext`，区分 priority、exact、prefix；`nanobot/command/builtin.py` 用 `BuiltinCommandSpec` 同时生成 help 和 command palette。设计影响：Asterwynd 首版可以先支持 exact command 和 alias，暂不做 priority/prefix 队列控制，但 help 文本必须从命令声明生成。
 - Nanobot: `/new` 会取消 active task、清 session、保存并 invalidate session。设计影响：清上下文命令是会话控制层能力，不应做成 LLM tool；Asterwynd 当前没有 active task/session store，本 change 不引入这些新概念。
-- OpenClaw: 文档将 command、directive、inline shortcut 分开，并把 `/new`、`/reset`、`/compact`、`/status` 归为本地会话/运行时控制。设计影响：Asterwynd 首版只实现 standalone slash command，不实现 inline directive；未知 slash command 不应被当成普通用户消息送给 LLM。
+- OpenClaw: 文档将 command、directive、inline shortcut 分开，并把 `/new`、`/reset`、`/compact`、`/status` 归为本地会话/运行时控制。设计影响：Asterwynd 首版只实现 standalone slash command，不实现 inline directive；未知 slash command 不应被当成普通用户消息送给 AgentLoop/LLM。
 - Opencode: v2 session 规格把 manual compaction 作为 automatic compaction 之上的后续能力，并强调 compaction 替换活跃 model context 表示但保留 durable history。设计影响：Asterwynd 本 change 定义手动 compact 的用户入口和当前内存行为，不提前实现 durable transcript checkpoint。
 - Pi TUI: changelog 多次记录 slash command autocomplete、`argumentHint` 和异步参数补全。设计影响：首版不做 autocomplete，但 command metadata 需要保留 usage/argument hint，避免未来 TUI 重建一套命令描述。
 
@@ -26,16 +26,18 @@ Goals:
 - 建立最小 slash command registry。
 - 将 CLI 交互模式现有 `/mode` 迁移到 registry。
 - 增加 `/help`、`/exit`、`/status`、`/clear`、`/compact`。
+- Web Chat 输入 `/` 时显示 command suggestions，并按当前前缀实时过滤。
+- Web Chat 通过后端 command catalog 复用 registry metadata，避免 CLI/Web 命令说明分裂。
 - 明确 `/clear` 和 `/compact` 对 MemoryManager 与当前 `messages` 列表的影响。
 - 保持现有 CLI 交互模式兼容，裸 `exit`、`quit`、`q` 仍可退出。
 
 Non-Goals:
 
 - 不实现 `/skills`，只为后续 change 预留注册机制。
-- 不实现 TUI 命令面板或 Web slash command。
+- 不实现 TUI 命令面板。
 - 不改变 AgentLoop 的 tool-call 协议。
 - 不允许 LLM 通过 tool 自行执行 `/clear` 或 `/compact`。
-- 不引入复杂 autocomplete；未来 TUI 可单独增强。
+- 不引入复杂 fuzzy autocomplete；首版 Web 只做前缀过滤。
 
 ## Decisions
 
@@ -69,6 +71,18 @@ Non-Goals:
 
 理由：先提供可稳定测试的信息；trace 路径、最新 run id、tool permission profile 等可在后续 change 扩展。
 
+### Decision 6: Web suggestions 由后端 command catalog 驱动
+
+Web Chat SHALL 从 `/api/slash-commands` 拉取 command metadata。当前输入为独立 slash command 前缀时，前端 SHALL 显示 suggestions，并随每个输入字符按前缀过滤。选中 suggestion 后，前端 SHALL 将命令 usage 写回输入框。
+
+理由：Web UI 不应维护一份硬编码命令列表；后端 catalog 复用 registry metadata 后，后续 `/skills` 接入时只需扩展 registry。
+
+### Decision 7: WebSocket 拦截独立 slash command
+
+Web Chat 发送独立 `/xxx` 输入时，后端 SHALL 先通过 slash command registry 执行；已知命令返回 `command_result`，未知命令返回错误提示，均不启动普通 Agent run。普通文本中的 `/` 仍按用户消息处理。
+
+理由：只做前端提示会让 `/clear`、`/compact` 仍作为普通聊天消息进入 AgentLoop/LLM，控制面语义不完整。该边界不禁止 command handler 在命令语义要求时显式调用 LLM-backed 服务，例如未来更复杂的 compact 摘要。
+
 ## Pre-Implementation Review
 
 - Questions resolved:
@@ -77,27 +91,31 @@ Non-Goals:
   - command registry 应独立于 CLI 输入循环，便于未来 TUI/Web 复用。
   - `/clear` 和 `/compact` 不暴露为 LLM tool。
   - `/clear` 首版只清当前 CLI 交互上下文，不生成新的 Session ID；保留 system messages，删除 user/assistant/tool 历史，并同步当前 `messages` 与 `MemoryManager`。
-  - `/compact` 首版沿用 `MemoryManager.recent_window` 判断是否存在可压缩 older messages；非 system 消息少于等于 recent window 时返回 no-op 成功，不发送给 LLM，不产生 Run ID。
+  - `/compact` 首版沿用 `MemoryManager.recent_window` 判断是否存在可压缩 older messages；非 system 消息少于等于 recent window 时返回 no-op 成功，不作为普通用户消息发送给 AgentLoop/LLM，不产生 Run ID。
   - 未知独立 slash command 由 registry 拦截，输出 `/help` 提示，不追加到 `messages`，不产生 Run ID，不调用 agent。
+  - Web Chat 纳入本 change：输入 `/` 时显示 suggestions，按前缀实时更新；发送独立 slash command 时后端按控制面输入执行，不作为普通聊天消息进入 AgentLoop/LLM。
 - Options considered:
   - 继续在 `run_interactive` 中用 if/else 解析每个命令。
   - 新增独立 command registry。
   - 把 `/skills` 一起实现。
   - 先只做 `/help` 和 `/mode`，把 clear/compact 后置。
   - `/clear` 生成新 Session ID，模拟完整 session reset。
-  - 未知 slash command 作为普通聊天文本发送给 LLM。
+  - 未知 slash command 作为普通聊天文本发送给 AgentLoop/LLM。
+  - Web UI 只做静态前端命令提示，不接后端 catalog 和 WebSocket command dispatch。
 - Rejected alternatives:
   - 继续 if/else。原因：后续命令会快速增长，测试和帮助文本会分裂。
   - 把 `/skills` 一起实现。原因：skills runtime 本身还需要配置、注入和匹配设计，混入会扩大首个 change。
   - 后置 clear/compact。原因：用户已明确把 compact、clear 视为常见命令，且 MemoryManager 已具备基础能力。
   - `/clear` 生成新 Session ID。原因：当前项目尚无 transcript、session store、cache reset 和 active task 管理；生成新 Session ID 会制造未实现的完整 reset 语义。
-  - 未知 slash command 发送给 LLM。原因：独立 `/xxx` 输入属于控制面，发送给 LLM 容易让用户误以为命令已执行。
+  - 未知 slash command 发送给 AgentLoop/LLM。原因：独立 `/xxx` 输入属于控制面，作为普通聊天消息发送容易让用户误以为命令已执行。
+  - Web UI 静态提示。原因：会让前端命令列表和 registry 分叉，且不能阻止 `/clear`、`/compact` 作为普通聊天消息进入 AgentLoop/LLM。
 - Final confirmations:
   - 第一批命令为 `/help`、`/exit`、`/status`、`/mode`、`/clear`、`/compact`。
   - 裸 `exit/quit/q` 保持兼容。
   - `/clear` 不新建 Session ID，只清当前上下文。
   - `/compact` 不看自动 compact token 阈值，按 `recent_window` 判断是否有 eligible older messages。
-  - 未知 slash command 本地拦截，不进 LLM。
+  - 未知 slash command 本地拦截，不作为普通聊天消息进入 AgentLoop/LLM。
+  - Web suggestions 进入本 change，使用前缀过滤，不做 fuzzy ranking 或复杂参数补全。
 - Remaining risks:
   - CLI 本地 `messages` 和 AgentLoop memory 双状态可能不一致，开发时必须用测试锁住。
   - 主动 compact 是否强制摘要取决于 LLM 可用性，用户提示文案需要准确。
@@ -122,6 +140,10 @@ Non-Goals:
   - `/status` 展示 session/mode/model。
   - `/clear` 后下一轮不携带历史 user 消息。
   - `/compact` 调用 MemoryManager compact 并输出结果。
+- Web 测试：
+  - `/api/slash-commands` 返回 command catalog。
+  - WebSocket 对 `/status`、未知 slash command 和 `/clear` 返回 command result，不启动 run。
+  - 前端脚本包含 slash suggestion 过滤、键盘选择和 clear 后清空可见消息。
 - MemoryManager 测试：
   - clear 保留 system messages。
   - forced compact 在有/无 LLM 场景行为明确。
