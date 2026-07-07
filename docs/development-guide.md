@@ -157,7 +157,12 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 非敏感、结构化配置写入 `asterwynd.yaml`；个人配置文件默认不提交，字段示例见 `asterwynd.example.yaml`。工具策略只从 YAML 读取：
 
 - `agent.default_mode`
+- `modes.<mode>.permission_profile`
 - `modes.<mode>.deny_tools`
+- `permissions.profiles.<name>.allowed_capabilities`
+- `permissions.profiles.<name>.auto_approve_max_risk`
+- `permissions.profiles.<name>.approval_required_max_risk`
+- `permissions.profiles.<name>.denied_tools`
 - `tools.ignore_patterns`
 - `tools.command_denylist`
 - `tools.code_intelligence.tree_sitter_max_file_bytes`
@@ -179,6 +184,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - `/clear` 只清当前 CLI 交互上下文，不生成新的 Session ID；后续如果引入持久 transcript 或 cache reset，需要单独扩展语义。
 - CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。
 - 当前 CLI/Web 的 mode 切换在用户侧表现为“影响后续 run”；runtime state 仍会在 transition 完成后立即更新，供后续 TUI 或控制面重构复用。
+- 默认 `build` mode 会把 high risk 工具判定为 `require_approval`。CLI 交互模式在 TTY 中提示 `Approve? [y/N]`；CLI 单轮、benchmark 和子 agent 遇到需要审批的工具调用时 fail closed。Web Chat 通过审批卡片批准或拒绝当前 pending approval。
 - 优先使用 `rg` 和 `rg --files` 搜索。
 - 修改代码前先读相关实现和测试。
 - 不要回滚用户未提交改动。

@@ -132,17 +132,18 @@ def test_cli_single_prompt_runtime_smoke_streams_without_reprinting(monkeypatch)
     assert llm.calls[0].method == "stream_chat"
 
 
-def test_cli_single_prompt_runtime_smoke_summarizes_tool_call(monkeypatch):
+def test_cli_single_prompt_runtime_smoke_summarizes_tool_call(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "long.txt"
+    target.write_text("x" * 5000, encoding="utf-8")
     llm = ScriptedLLM([
         LLMResponse(
             content=None,
             tool_calls=[
                 ToolCallDelta(
-                    id="bash-1",
-                    name="Bash",
-                    arguments=json.dumps(
-                        {"cmd": "printf '%5000s' '' | tr ' ' x"}
-                    ),
+                    id="read-1",
+                    name="Read",
+                    arguments=json.dumps({"path": str(target)}),
                 )
             ],
             stop_reason="tool_calls",
@@ -159,11 +160,38 @@ def test_cli_single_prompt_runtime_smoke_summarizes_tool_call(monkeypatch):
     assert result.exit_code == 0
     assert "tool done" in result.stdout
     assert "【工具调用】1 次" in result.stdout
-    assert "Bash" in result.stdout
+    assert "Read" in result.stdout
     assert "摘要" in result.stdout
     assert "字符" in result.stdout
     assert "完整结果" in result.stdout
     assert llm.call_count == 2
+
+
+def test_cli_single_prompt_high_risk_tool_fails_closed_without_approval(monkeypatch):
+    llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallDelta(
+                    id="bash-1",
+                    name="Bash",
+                    arguments=json.dumps({"cmd": "printf blocked"}),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="blocked", stop_reason="end_turn"),
+    ])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["main", "run command", "--max-iterations", "3"],
+    )
+
+    assert result.exit_code == 0
+    assert "Approval unavailable" in result.stdout
+    assert "blocked" in result.stdout
 
 
 def test_build_llm_enables_streaming_by_default(monkeypatch):

@@ -220,8 +220,8 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=12" in index
-    assert "/static/chat.js?v=10" in index
+    assert "/static/style.css?v=13" in index
+    assert "/static/chat.js?v=11" in index
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
@@ -249,6 +249,8 @@ def test_web_static_assets_include_session_and_run_display():
     assert "case 'error'" in script
     assert "case 'plan_document_updated'" in script
     assert "case 'plan_document_submitted'" in script
+    assert "case 'approval_request'" in script
+    assert "function sendApprovalDecision" in script
     assert "function renderPlanDocument" in script
     assert "max_iterations" in script
     assert ".plan-document-panel" in styles
@@ -693,12 +695,24 @@ def test_websocket_tool_events():
                 while True:
                     event = ws.receive_json()
                     events.append(event)
+                    if event["type"] == "approval_request":
+                        ws.send_json({
+                            "type": "approval_response",
+                            "approval_id": event["data"]["approval_id"],
+                            "decision": "approved",
+                        })
                     if event["type"] == "done":
                         break
     finally:
         os.environ["ASTERWYND_DEBUG"] = old_debug
 
     event_types = [e["type"] for e in events]
+    assert "approval_request" in event_types
+    assert any(
+        e["type"] == "approval_response"
+        and e["data"]["status"] == "approved"
+        for e in events
+    )
     assert "tool_call" in event_types
     assert "tool_result" in event_types
     tool_result = next(e for e in events if e["type"] == "tool_result")

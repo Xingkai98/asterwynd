@@ -39,13 +39,33 @@ ToolRegistry SHALL 接收包含 id、name 和 arguments 的 ToolCall，并把 ar
 
 ### Requirement: 工具权限元数据
 
-工具 SHALL 能声明 `read_only`、`dangerous` 和可选 `allowed_modes` 元数据；registry SHALL 能暴露指定工具是否 dangerous。`allowed_modes` 用于 mode-specific 工具，例如只允许在 `plan` mode 暴露和执行的 `UpdatePlan` / `ExitPlanMode`。
+工具权限模型 SHALL 区分工具能力、风险等级和来源元数据。工具能力描述 tool 能做什么，风险等级描述默认安全风险，来源元数据描述 tool 从哪里来；三者 SHALL NOT 互相替代。系统 SHALL 在迁移期保留现有 `read_only`、`dangerous` 和可选 `allowed_modes` 行为，并能从旧字段推导新权限元数据。`dangerous` 是 legacy compatibility flag，不表示工具来源。`allowed_modes` 用于 mode-specific 工具，例如只允许在 `plan` mode 暴露和执行的 `UpdatePlan` / `ExitPlanMode`。
 
 #### Scenario: 检查 Bash 权限
 
 - **GIVEN** BashTool 被注册
 - **WHEN** 调用 `get_sandbox("Bash")`
 - **THEN** 系统 SHALL 返回该工具的 dangerous 标记
+- **AND** Bash 工具 SHALL 具有 command_execute capability、high risk level 和 builtin origin
+
+#### Scenario: 外部来源不直接等同高风险
+
+- **GIVEN** 一个 tool 的 origin 是 `mcp`
+- **AND** 该 tool 被明确标注为 low risk read-only capability
+- **WHEN** ModePolicy 判定该 tool 是否允许
+- **THEN** 系统 SHALL NOT 仅因为 origin 是 `mcp` 而拒绝该 tool
+
+#### Scenario: legacy read-only tool
+
+- **GIVEN** 一个旧工具只声明 `read_only=True` 且 `dangerous=False`
+- **WHEN** 系统读取该工具权限元数据
+- **THEN** 系统 SHALL 将其视为 low risk read capability 的兼容工具
+
+#### Scenario: legacy dangerous tool
+
+- **GIVEN** 一个旧工具声明 `dangerous=True`
+- **WHEN** 系统读取该工具权限元数据
+- **THEN** 系统 SHALL 将其视为 high risk command execution 工具
 
 #### Scenario: mode-specific 工具
 
@@ -53,6 +73,32 @@ ToolRegistry SHALL 接收包含 id、name 和 arguments 的 ToolCall，并把 ar
 - **WHEN** 当前 mode 不在该列表中
 - **THEN** 系统 SHALL 不暴露该工具 schema
 - **AND** 执行该工具时 SHALL 返回权限拒绝结果
+
+### Requirement: Tool permission decision SHALL support approval
+
+工具权限判定 SHALL 返回 `allow`、`deny` 或 `require_approval`，而不是只返回 boolean。系统 SHALL 在 schema 暴露和执行前重新判权时使用同一判定语义。需要审批的工具 SHALL 对模型可见，但不得在缺少批准时执行。
+
+#### Scenario: 工具可直接执行
+
+- **GIVEN** 一个 tool 的 capability 被当前 permission profile 允许
+- **AND** 该 tool 的 risk level 不超过 profile 的 auto-approve 阈值
+- **WHEN** 系统判定该 tool 权限
+- **THEN** 判定结果 SHALL 是 `allow`
+
+#### Scenario: 工具需要用户审批
+
+- **GIVEN** 一个 tool 的 capability 被当前 permission profile 允许
+- **AND** 该 tool 的 risk level 超过 profile 的 auto-approve 阈值
+- **AND** 该 tool 的 risk level 不超过 profile 的 approval-required 阈值
+- **WHEN** 系统判定该 tool 权限
+- **THEN** 判定结果 SHALL 是 `require_approval`
+
+#### Scenario: 工具被拒绝
+
+- **GIVEN** 一个 tool 的 capability 不被当前 permission profile 允许
+- **OR** 该 tool 命中当前 permission profile 的 denied tools
+- **WHEN** 系统判定该 tool 权限
+- **THEN** 判定结果 SHALL 是 `deny`
 
 ### Requirement: ToolRegistry 读取当前 session mode
 

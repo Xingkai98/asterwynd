@@ -34,9 +34,9 @@
 
 - 当前无未实现 change。
 
-### 第四批：工具权限模型前置
+### 第四批：工具权限模型前置，已完成
 
-- `refine-tool-permission-model`：应在 MCP、browser 和后续自定义工具能力前完成，避免外部工具继续扩大 `dangerous` 语义。
+当前无未实现 change。
 
 ### 第五批：MCP 与 TUI 基本扩展
 
@@ -50,27 +50,7 @@
 
 ## 未实现队列
 
-### 1. `refine-tool-permission-model`
-
-状态：未实现。
-
-批次：第四批前置。
-
-建议顺序原因：
-
-- 当前 Tool 权限模型把能力、风险和来源混在 `read_only` / `dangerous` 两个 boolean 中，MCP、browser、自定义插件和未来实验型 plan mode 都会继续放大这个问题。
-- 先建立 capability、risk level、origin 和 permission profile，可以让 plan mode、外部工具和未来自定义 mode 使用同一套语言。
-- 默认行为应保持保守，不在本 change 中直接开放 plan mode 写入或命令执行。
-
-主要交付：
-
-- Tool permission metadata 模型。
-- 内置工具 capability / risk / origin 标注。
-- ModePolicy profile / matrix。
-- legacy `read_only` / `dangerous` 兼容路径。
-- 配置和测试迁移策略。
-
-### 2. `add-mcp-tool-adapter`
+### 1. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -88,7 +68,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 3. `add-minimal-tui-runtime-view`
+### 2. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -106,7 +86,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 4. `add-browser-use-safety-foundation`
+### 3. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

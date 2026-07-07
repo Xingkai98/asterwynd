@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import AGENT_STATE_PERMISSION
 
 
 SavePlanCallback = Callable[[str, str, list[str]], Awaitable[dict[str, Any]]]
@@ -46,6 +47,7 @@ class UpdatePlanTool(Tool):
     read_only = True
     dangerous = False
     allowed_modes = ("plan",)
+    permission = AGENT_STATE_PERMISSION
 
     def __init__(self, save_plan: SavePlanCallback):
         self._save_plan = save_plan

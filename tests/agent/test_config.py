@@ -4,6 +4,7 @@ import pytest
 
 from agent.config import ConfigError, ConfigOverrides, load_config
 from agent.run_config import AgentMode
+from agent.tool_permissions import ToolCapability, ToolRiskLevel
 
 
 def test_load_config_uses_defaults_when_yaml_missing(tmp_path, monkeypatch):
@@ -33,8 +34,19 @@ agent:
   default_mode: plan
 modes:
   build:
+    permission_profile: strict_build
     deny_tools:
       - Bash
+permissions:
+  profiles:
+    strict_build:
+      allowed_capabilities:
+        - workspace_read
+        - workspace_write
+      auto_approve_max_risk: low
+      approval_required_max_risk: medium
+      denied_tools:
+        - WebFetch
 tools:
   ignore_patterns:
     - .cache
@@ -68,6 +80,16 @@ benchmark:
 
     assert config.agent.default_mode is AgentMode.PLAN
     assert config.mode_config(AgentMode.BUILD).deny_tools == ("Bash",)
+    assert config.mode_config(AgentMode.BUILD).permission_profile == "strict_build"
+    strict_profile = config.permissions.profiles["strict_build"]
+    assert strict_profile.allowed_capabilities == frozenset({
+        ToolCapability.WORKSPACE_READ,
+        ToolCapability.WORKSPACE_WRITE,
+    })
+    assert strict_profile.auto_approve_max_risk is ToolRiskLevel.LOW
+    assert strict_profile.approval_required_max_risk is ToolRiskLevel.MEDIUM
+    assert strict_profile.denied_tools == frozenset({"WebFetch"})
+    assert config.permission_profiles_by_mode()[AgentMode.BUILD] == strict_profile
     assert config.tools.ignore_patterns == (".cache",)
     assert config.tools.command_denylist == ("dangerous-cmd",)
     assert config.tools.code_intelligence.tree_sitter_max_file_bytes == 1234
@@ -215,6 +237,74 @@ tools:
     )
 
     with pytest.raises(ConfigError, match="tools.display.max_result_chars"):
+        load_config(start_dir=tmp_path)
+
+
+def test_unknown_permission_profile_fails_fast(tmp_path):
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+modes:
+  build:
+    permission_profile: missing
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="Unknown permission_profile"):
+        load_config(start_dir=tmp_path)
+
+
+def test_unknown_permission_capability_fails_fast(tmp_path):
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+permissions:
+  profiles:
+    strict:
+      allowed_capabilities:
+        - unknown_capability
+      auto_approve_max_risk: low
+      approval_required_max_risk: medium
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="unsupported capability"):
+        load_config(start_dir=tmp_path)
+
+
+def test_unknown_permission_risk_level_fails_fast(tmp_path):
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+permissions:
+  profiles:
+    strict:
+      allowed_capabilities:
+        - workspace_read
+      auto_approve_max_risk: critical
+      approval_required_max_risk: medium
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="unsupported risk level"):
+        load_config(start_dir=tmp_path)
+
+
+def test_permission_profile_rejects_conflicting_risk_thresholds(tmp_path):
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+permissions:
+  profiles:
+    strict:
+      allowed_capabilities:
+        - workspace_read
+      auto_approve_max_risk: high
+      approval_required_max_risk: medium
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="approval_required_max_risk"):
         load_config(start_dir=tmp_path)
 
 

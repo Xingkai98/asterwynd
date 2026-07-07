@@ -91,7 +91,7 @@ uv run python run_infer.py \
 | `Read` | read_only | 读取文件，支持行数限制 |
 | `Write` | read_write | 创建新文件，禁止覆盖已有文件 |
 | `Edit` | read_write | 精确文本替换，要求 old_string 唯一匹配，支持 replace_all |
-| `Bash` | dangerous | 沙箱执行 shell 命令，返回结构化 JSON（exit_code/stdout/stderr/duration/timed_out） |
+| `Bash` | command_execute / high | 沙箱执行 shell 命令，返回结构化 JSON（exit_code/stdout/stderr/duration/timed_out） |
 | `Grep` | read_only | 正则搜索文件/目录 |
 | `InspectGitDiff` | read_only | 查看当前工作区 git diff |
 | `ListFiles` | read_only | 列出目录内容，自动忽略 .git/node_modules 等 |
@@ -101,7 +101,7 @@ uv run python run_infer.py \
 | `WebSearch` | read_only | DuckDuckGo HTML 搜索，返回带 provider 的稳定文本结果 |
 | `WebFetch` | read_only | 获取网页正文，返回状态/类型/截断诊断 |
 
-Bash 工具内置命令安全策略：先检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则和 ListFiles / Find 忽略规则通过 `asterwynd.yaml` 配置扩展，见 `asterwynd.example.yaml`。
+Bash 工具内置命令安全策略：先经过 mode permission profile 判权；默认 `build` mode 下 high risk 命令执行需要审批，CLI 单轮和 benchmark 等无人值守入口 fail closed。实际执行前仍会检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则、permission profile 和 ListFiles / Find 忽略规则通过 `asterwynd.yaml` 配置扩展，见 `asterwynd.example.yaml`。
 
 ## 项目结构
 
@@ -287,11 +287,11 @@ ASTERWYND_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 ```
 
-- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan`，并展示 Plan Document 和 planning state
+- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan`，展示 Plan Document 和 planning state，并在工具需要审批时显示审批卡片
 - **Debug 界面**：环境变量 `ASTERWYND_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
-  - LLM 原始响应（content、stop_reason、tool_calls）
-  - 工具调用详情（名称、参数、结果）
+  - LLM 响应（content、stop_reason、tool_calls；工具参数按审批脱敏规则展示）
+  - 工具调用详情（名称、脱敏参数、结果）
   - AgentLoop 通过 Web session 事件流发送的 Memory 压缩事件
 
 CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_only` 和 `/mode plan` 切换当前 session mode；CLI 单轮模式仍通过 `--mode` 指定初始 mode。
@@ -307,7 +307,7 @@ CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_on
 | `ASTERWYND_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
 | `ASTERWYND_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI 界面 |
 
-配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `asterwynd.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、mode deny override、工具策略、工具结果展示阈值和 benchmark 默认参数使用 `asterwynd.yaml`。
+配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `asterwynd.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、permission profile、mode deny override、工具策略、工具结果展示阈值和 benchmark 默认参数使用 `asterwynd.yaml`。
 
 - 日志同时输出到终端和文件
 - HTTP 4xx/5xx 错误始终记录请求 payload 和响应 body

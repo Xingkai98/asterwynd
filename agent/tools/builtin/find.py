@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import WORKSPACE_READ_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
 
 DEFAULT_IGNORE_DIRS = {
@@ -40,6 +41,7 @@ MAX_ENTRIES = 500
 )
 class FindTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,

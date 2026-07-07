@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import NETWORK_READ_PERMISSION
 from agent.tools.builtin.search_providers import (
     SearchProvider,
     SearchProviderError,
@@ -84,6 +85,7 @@ def _format_diagnostics(response: SearchProviderResponse) -> list[str]:
 )
 class WebSearchTool(Tool):
     read_only = True
+    permission = NETWORK_READ_PERMISSION
 
     def __init__(
         self,

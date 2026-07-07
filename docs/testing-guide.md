@@ -57,12 +57,13 @@ tests/agent/tools/test_edit_tool.py
 - EditTool + WorkspacePolicy + InspectGitDiff
 - BashTool 执行本地测试并返回结构化输出
 - AgentLoop 工具调用链
+- Tool permission metadata、ModePolicy 三值判定和 require_approval fail-closed 行为
 - Memory compact 后保持 tool-call 协议合法
 - CLI slash command registry 的命令解析、未知命令拦截、上下文清理、手动 compact、`/skills` reload 和 skill command 触发 Agent run
 - CLI 入口 smoke 应至少覆盖真实 `build_agent` + `ScriptedLLM` 的普通回复、streaming 去重和工具调用摘要；旧 `FakeAgent` 测试只能作为 adapter 层补充。
 - Skill runtime 的多 root 加载、诊断、重复名称处理、index 注入、匹配注入和 `ActivateSkill` 工具激活
 - Web session 消息历史
-- Web session 的 session id / run id / session mode、Plan Document、planning state 事件、工具结果 display metadata 和 skill command 执行
+- Web session 的 session id / run id / session mode、Plan Document、planning state 事件、工具结果 display metadata、approval request/response 和 skill command 执行
 - Benchmark runner artifact 写入
 
 ### Web 测试
@@ -74,7 +75,7 @@ Web 测试覆盖 server、session 和浏览器行为。
 - server/session/browser 测试默认复用 `tests/support/llm_harness.py` 中的 `ScriptedLLM`，覆盖普通回复、streaming、tool call、错误和调用记录。
 - Chat 页面 assistant Markdown 渲染，包括列表、代码块、链接，以及 raw HTML / unsafe link 的转义或阻断。
 - 工具结果展示策略，包括长结果折叠、preview、字符/行数元数据，以及工具结果不走 Markdown/HTML 注入。
-- session id、run id、session mode、Plan Document、planning state 和 Debug 开关的前端可见行为。
+- session id、run id、session mode、Plan Document、planning state、approval request/response 和 Debug 开关的前端可见行为。
 
 常用命令：
 

@@ -297,6 +297,7 @@ class AsterwyndRunner(AgentRunner):
             mode_policy=ModePolicy(
                 self.run_config,
                 deny_tools_by_mode=self.config.deny_tools_by_mode(),
+                permission_profiles_by_mode=self.config.permission_profiles_by_mode(),
             ),
             ignore_patterns=self.config.tools.ignore_patterns,
             code_intelligence_config=self.config.tools.code_intelligence,

@@ -3,6 +3,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 from agent.llm import ToolCallDelta
+from agent.tool_permissions import (
+    ToolCapability,
+    ToolOrigin,
+    ToolPermission,
+    ToolRiskLevel,
+)
 
 
 def tool_parameters(
@@ -31,6 +37,7 @@ class Tool(ABC):
     read_only: bool = False
     dangerous: bool = False
     allowed_modes: tuple[str, ...] | None = None
+    permission: ToolPermission | None = None
 
     @abstractmethod
     async def execute(self, **kwargs) -> str:
@@ -46,6 +53,27 @@ class Tool(ABC):
                 "parameters": self.parameters,
             },
         }
+
+    def get_permission(self) -> ToolPermission:
+        if self.permission is not None:
+            return self.permission
+        if self.dangerous:
+            return ToolPermission(
+                capabilities=frozenset({ToolCapability.COMMAND_EXECUTE}),
+                risk_level=ToolRiskLevel.HIGH,
+                origin=ToolOrigin.BUILTIN,
+            )
+        if self.read_only:
+            return ToolPermission(
+                capabilities=frozenset({ToolCapability.WORKSPACE_READ}),
+                risk_level=ToolRiskLevel.LOW,
+                origin=ToolOrigin.BUILTIN,
+            )
+        return ToolPermission(
+            capabilities=frozenset({ToolCapability.WORKSPACE_WRITE}),
+            risk_level=ToolRiskLevel.MEDIUM,
+            origin=ToolOrigin.BUILTIN,
+        )
 
 
 @dataclass

@@ -76,8 +76,13 @@
   - 需审批工具如何在 CLI/Web/TUI 或 headless 场景中 fail closed？
   - 外部工具协议接入时，权限 metadata 应归属 registry、tool schema 还是 runtime policy？
 - findings:
-  - 本次仅为参考实现调研门禁的结构迁移，尚未完成本 change 的针对性横向调研。
-  - 当前工作区 `.dev/reference-repos.txt` 存在，可用于开发前调研；真正开始实现前必须补充具体参考仓库发现。
+  - 当前环境没有可用 `codegraph` 命令；本轮调研按仓库规则退回到 `.dev/reference-repos.txt` 中参考仓库的 `rg` 搜索和文件阅读。
+  - Codex 将 sandbox mode、approval policy、permissions profile 分层，并支持从 legacy sandbox 配置推导 permission profile；这支持本 change 保留 legacy 字段兼容、同时引入 profile 的迁移路线。
+  - Codex permissions profile 支持命名 profile、内置 profile 引用和配置校验；Asterwynd 首版采用更小的 schema，不做 inheritance，但沿用“profile 是权限边界，mode/入口选择 profile”的方向。
+  - opencode v2 设计把工具权限表达为 ordered permissions rules，effect 包含 `allow` / `ask` / `deny`，并为 pending permission request 提供 list/reply API；这支持 Asterwynd 的 `allow` / `require_approval` / `deny` 三值判定和 Web pending approval 路由。
+  - Goose 使用 `always_allow` / `ask_before` / `never_allow` 管理工具权限，并能根据 MCP tool annotations 将 write-like tool 标为 ask-before；这支持外部工具默认保守、adapter/配置再降低风险的策略。
+  - OpenHands 使用 confirmation mode 和 security analyzer 组合选择 NeverConfirm / AlwaysConfirm / ConfirmRisky；这支持“审批策略独立于工具执行，并可由入口能力选择”的设计。
 - design impact:
   - 当前 proposal 已保留 capability、risk、origin 和 approval 的设计方向；实现前需要用参考实现调研校验这些轴是否足以覆盖 MCP、browser 和自定义工具。
-  - 如果调研发现更合适的权限模型，应先回写本 change 的 design/spec/tasks，再进入实现。
+  - 调研结果支持三值判定、profile、审批通道和 fail-closed headless 策略；首版不采用 opencode/Codex 更复杂的 ordered rules、profile inheritance 或持久 approval rules。
+  - `dangerous` 应收敛为 legacy compatibility flag；新实现优先使用 capability + risk level + permission profile。

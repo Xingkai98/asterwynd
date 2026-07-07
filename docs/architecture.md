@@ -36,37 +36,23 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 内置工具位于 `agent/tools/builtin/`。
 
-| 工具 | 权限 | 作用 |
+| 工具 | Capability / Risk | 作用 |
 | --- | --- | --- |
-| Read | read_only | 读取文件 |
-| Write | read_write | 创建新文件，禁止覆盖已有文件 |
-| Edit | read_write | 精确文本替换 |
-| Bash | dangerous | 执行命令并返回结构化 JSON |
-| Grep | read_only | 正则搜索 |
-| InspectGitDiff | read_only | 查看 git diff |
-| ListFiles | read_only | 列出目录 |
-| Find | read_only | 按 glob 查找文件 |
-| RepoMap | read_only | 生成仓库结构和已支持语言的顶层符号摘要 |
-| LspDefinition | read_only | LSP 定义跳转 |
-| LspReferences | read_only | LSP 引用查找 |
-| LspHover | read_only | LSP hover 信息 |
-| LspDocumentSymbols | read_only | LSP 文档符号 |
-| LspWorkspaceSymbols | read_only | LSP 工作区符号搜索 |
-| LspDiagnostics | read_only | LSP 诊断信息 |
-| SymbolSearch | read_only | 按名称搜索已支持语言的符号 |
-| WebSearch | read_only | 网络搜索，当前默认 DuckDuckGo HTML provider |
-| WebFetch | read_only | 抓取网页正文并返回状态/类型/截断诊断 |
-| ActivateSkill | read_only | 在当前 run 内激活已加载 skill，使下一次 LLM 调用获得完整 skill prompt |
-| CreateSubagent | read_only | 创建子 session |
-| RunSubagent | read_only | 在已有子 session 中启动一次 run |
-| ListSubagents | read_only | 列出可见子 session |
-| GetSubagentRun | read_only | 查询或等待某次子 run 结果 |
-| CancelSubagentRun | read_only | 取消运行中的子 run |
-| InspectSubagentTranscript | read_only | 查看子 transcript 摘要或最近消息 |
-| UpdatePlan | plan-only | 更新 Plan Document 草案，并将高层步骤同步为 planning state |
-| ExitPlanMode | plan-only | 定稿 Plan Document，并将高层步骤同步为 planning state |
+| Read | workspace_read / low | 读取文件 |
+| Write | workspace_write / medium | 创建新文件，禁止覆盖已有文件 |
+| Edit | workspace_write / medium | 精确文本替换 |
+| Bash | command_execute / high | 执行命令并返回结构化 JSON |
+| Grep | workspace_read / low | 正则搜索 |
+| InspectGitDiff | workspace_read / low | 查看 git diff |
+| ListFiles | workspace_read / low | 列出目录 |
+| Find | workspace_read / low | 按 glob 查找文件 |
+| RepoMap / SymbolSearch / LSP 工具 | workspace_read / low | 代码结构、符号和语义查询 |
+| WebSearch / WebFetch | network_read / low | 搜索网页或抓取网页正文 |
+| ActivateSkill | agent_state / medium | 在当前 run 内激活已加载 skill，使下一次 LLM 调用获得完整 skill prompt |
+| 子 session 工具 | subagent_control / medium | 创建、运行、查询、取消和检查子 session |
+| UpdatePlan / ExitPlanMode | agent_state / medium，plan-only | 更新或定稿 Plan Document，并将高层步骤同步为 planning state |
 
-BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`duration_ms` 和 `timed_out`。WorkspacePolicy 负责命令 allowlist / denylist 和敏感路径限制。
+`ToolPermission` 将 capability、risk level 和 origin 分开记录；`read_only`、`dangerous` 仍作为 legacy compatibility flag 保留。`ModePolicy` 通过 permission profile 产生 `allow`、`deny` 或 `require_approval` 三值判定。默认 `build_default` 会直接允许 low/medium 风险工具，高风险工具需要审批；无人值守入口使用 fail-closed approval handler。BashTool 返回结构化 JSON，包含 `exit_code`、`stdout`、`stderr`、`duration_ms` 和 `timed_out`。WorkspacePolicy 负责命令 allowlist / denylist 和敏感路径限制，不能被 capability metadata 绕过。
 
 `RepoMap` 和 `SymbolSearch` 属于当前轻量 code intelligence 能力：它们复用 WorkspacePolicy、忽略规则和只读工具边界，使用文件扫描、Python AST 和 tree-sitter 提取仓库结构和符号摘要。Tree-sitter 首批覆盖 TypeScript/JavaScript、Go 和 Rust；Python 继续使用 AST extractor。
 
@@ -87,7 +73,7 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
-Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan`。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
+Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan`。当工具调用需要审批时，服务端发送 `approval_request` 事件，前端展示脱敏参数摘要并回传批准或拒绝；每个 Web session 同一时刻只允许一个 pending approval。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
 
 ## Skills
 

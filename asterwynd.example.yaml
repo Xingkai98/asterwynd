@@ -3,11 +3,29 @@ agent:
 
 modes:
   build:
+    permission_profile: build_default
     deny_tools: []
   read_only:
+    permission_profile: read_only_default
     deny_tools: []
   plan:
+    permission_profile: plan_default
     deny_tools: []
+
+permissions:
+  profiles:
+    # 示例：自定义 profile 只能绑定到既有 mode，不会新增 Agent Mode。
+    # cautious_build:
+    #   allowed_capabilities:
+    #     - workspace_read
+    #     - workspace_write
+    #     - command_execute
+    #     - network_read
+    #     - agent_state
+    #     - subagent_control
+    #   auto_approve_max_risk: low
+    #   approval_required_max_risk: high
+    #   denied_tools: []
 
 tools:
   ignore_patterns: []

@@ -91,7 +91,7 @@ uv run python run_infer.py \
 | `Read` | read_only | Read files with line limits. |
 | `Write` | read_write | Create new files and refuse to overwrite existing files. |
 | `Edit` | read_write | Exact text replacement. Requires a unique `old_string` match and supports `replace_all`. |
-| `Bash` | dangerous | Execute shell commands in the sandbox and return structured JSON: exit_code, stdout, stderr, duration, timed_out. |
+| `Bash` | command_execute / high | Execute shell commands in the sandbox and return structured JSON: exit_code, stdout, stderr, duration, timed_out. |
 | `Grep` | read_only | Regex search over files or directories. |
 | `InspectGitDiff` | read_only | Inspect the current workspace git diff. |
 | `ListFiles` | read_only | List directory contents and automatically ignore `.git`, `node_modules`, and similar noise. |
@@ -101,7 +101,7 @@ uv run python run_infer.py \
 | `WebSearch` | read_only | DuckDuckGo HTML search with stable text results that include provider metadata. |
 | `WebFetch` | read_only | Fetch webpage text and return status, type, and truncation diagnostics. |
 
-The Bash tool has built-in command safety policy. It first checks regex deny patterns covering cases such as `rm -rf /`, fork bombs, and `curl | sh`, then matches allowed safe command prefixes such as `git status`, `pytest`, `uv`, and `npm`. Project-level command deny rules and ListFiles / Find ignore rules are extended through `asterwynd.yaml`; see `asterwynd.example.yaml`.
+The Bash tool has built-in command safety policy. It first passes mode permission profile checks; in the default `build` mode, high-risk command execution requires approval, and unattended entry points such as single-prompt CLI and benchmark fail closed. Before actual execution it still checks regex deny patterns covering cases such as `rm -rf /`, fork bombs, and `curl | sh`, then matches allowed safe command prefixes such as `git status`, `pytest`, `uv`, and `npm`. Project-level command deny rules, permission profiles, and ListFiles / Find ignore rules are extended through `asterwynd.yaml`; see `asterwynd.example.yaml`.
 
 ## Project Structure
 
@@ -288,11 +288,11 @@ ASTERWYND_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
 ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
 ```
 
-- **Chat view**: Normal conversation, assistant Markdown rendering, tool-call visualization, long tool-result folding by display policy, current session id / run id / session mode, switching between `build` / `read_only` / `plan`, and Plan Document plus planning state display.
+- **Chat view**: Normal conversation, assistant Markdown rendering, tool-call visualization, long tool-result folding by display policy, current session id / run id / session mode, switching between `build` / `read_only` / `plan`, Plan Document plus planning state display, and approval cards for tools that require approval.
 - **Debug view**: Enabled by `ASTERWYND_DEBUG=enabled`; shows each round of:
   - Full message list sent to the LLM, including system prompt, history, and tool results.
-  - Raw LLM response, including content, stop_reason, and tool_calls.
-  - Tool-call details, including name, arguments, and result.
+  - LLM response, including content, stop_reason, and tool_calls; tool arguments are displayed with approval redaction rules.
+  - Tool-call details, including name, redacted arguments, and result.
   - Memory compaction events sent by AgentLoop through the Web session event stream.
 
 CLI interactive mode supports switching the current session mode with `/mode build`, `/mode read_only`, and `/mode plan`. CLI single-run mode still uses `--mode` for the initial mode.
@@ -308,7 +308,7 @@ Each startup creates an independent log file under `logs/`, such as `asterwynd-2
 | `ASTERWYND_LOG_LEVEL` | `INFO` | At `DEBUG`, logs LLM request payloads and raw response JSON. |
 | `ASTERWYND_DEBUG` | `disabled` | When `enabled`, turns on the Debug Web UI. |
 
-Configuration precedence: explicit CLI arguments > process environment variables > `.env` loaded values > `asterwynd.yaml` > code defaults. API key, base URL, provider, model, debug, and log level continue to use `.env` or environment variables. Agent mode, mode deny overrides, tool policy, tool-result display thresholds, and benchmark defaults use `asterwynd.yaml`.
+Configuration precedence: explicit CLI arguments > process environment variables > `.env` loaded values > `asterwynd.yaml` > code defaults. API key, base URL, provider, model, debug, and log level continue to use `.env` or environment variables. Agent mode, permission profiles, mode deny overrides, tool policy, tool-result display thresholds, and benchmark defaults use `asterwynd.yaml`.
 
 - Logs are written to both terminal and file.
 - HTTP 4xx/5xx errors always log request payload and response body.

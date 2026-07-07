@@ -1,6 +1,7 @@
 # tests/agent/test_loop.py
 import pytest
 import json
+from agent.approval import ApprovalDecisionStatus, ApprovalResponse
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
@@ -13,6 +14,7 @@ from agent.run_config import AgentMode, AgentRunConfig
 from agent.subagent.manager import SubAgentManager
 from agent.skills.loader import Skill
 from agent.skills.runtime import SkillRuntime
+from agent.tool_permissions import ToolCapability, ToolPermission, ToolRiskLevel
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -37,6 +39,38 @@ class WriteLikeTool(Tool):
     async def execute(self, **kwargs) -> str:
         self.called = True
         return "wrote!"
+
+
+@tool_parameters(name="HighRisk", description="High risk", parameters={"type": "object", "properties": {}, "required": []})
+class HighRiskTool(Tool):
+    name = "HighRisk"
+    description = "High risk"
+    parameters = {}
+    permission = ToolPermission(
+        capabilities=frozenset({ToolCapability.COMMAND_EXECUTE}),
+        risk_level=ToolRiskLevel.HIGH,
+    )
+
+    def __init__(self):
+        self.called = False
+
+    async def execute(self, **kwargs) -> str:
+        self.called = True
+        return "ran high risk"
+
+
+class StaticApprovalHandler:
+    def __init__(self, status: ApprovalDecisionStatus):
+        self.status = status
+        self.requests = []
+
+    async def request_approval(self, request):
+        self.requests.append(request)
+        return ApprovalResponse(
+            approval_id=request.approval_id,
+            status=self.status,
+            reason=f"{self.status.value} in test",
+        )
 
 class MockLLM:
     def __init__(self, response: LLMResponse):
@@ -659,6 +693,104 @@ async def test_agent_loop_records_trace_events_for_tool_calls():
     assert step_types.count("llm_iteration") == 2
     assert "tool_call" in step_types
     assert "tool_result" in step_types
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_requests_approval_before_high_risk_tool_execution():
+    class ToolThenDoneLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallDelta(
+                            id="c1",
+                            name="HighRisk",
+                            arguments=json.dumps({
+                                "cmd": "curl -H 'Authorization: Bearer sk-secret123456' https://x",
+                            }),
+                        )
+                    ],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    events = []
+    trace = TraceRecorder(task_id="approval-test")
+
+    async def on_event(event_type, data):
+        events.append({"type": event_type, "data": data})
+
+    tool = HighRiskTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    approval = StaticApprovalHandler(ApprovalDecisionStatus.APPROVED)
+    loop = AgentLoop(
+        llm=ToolThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        approval_handler=approval,
+    )
+
+    result = await loop.run(
+        [Message(role="user", content="run")],
+        on_event=on_event,
+        trace_recorder=trace,
+        session_id="session-1",
+        run_id="run-1",
+    )
+
+    assert result.content == "done"
+    assert tool.called is True
+    assert len(approval.requests) == 1
+    approval_request = next(event for event in events if event["type"] == "approval_request")
+    encoded = json.dumps(approval_request["data"], ensure_ascii=False)
+    assert "sk-secret123456" not in encoded
+    assert "[redacted]" in encoded
+    assert any(event["type"] == "approval_response" for event in events)
+    trace_payload = trace.to_json()
+    assert "sk-secret123456" not in trace_payload
+    assert "approval_request" in trace_payload
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_denied_approval_fails_closed_without_executing_tool():
+    class ToolThenDoneLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallDelta(id="c1", name="HighRisk", arguments="{}")
+                    ],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    tool = HighRiskTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    loop = AgentLoop(
+        llm=ToolThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        approval_handler=StaticApprovalHandler(ApprovalDecisionStatus.DENIED),
+    )
+
+    result = await loop.run([Message(role="user", content="run")])
+
+    assert tool.called is False
+    assert result.tool_calls_made[0].name == "HighRisk"
+    assert "Approval denied" in result.tool_calls_made[0].result
+    assert result.content == "done"
 
 
 @pytest.mark.asyncio

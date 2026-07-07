@@ -1,5 +1,6 @@
 # tests/web/test_session.py
 """Unit tests for SessionManager and DebugHook with fake LLM."""
+import asyncio
 import os
 import pytest
 from unittest.mock import MagicMock
@@ -11,8 +12,9 @@ from agent.tools.base import Tool, tool_parameters
 from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
 from agent.run_config import AgentMode
+from agent.tool_permissions import ToolCapability, ToolPermission, ToolRiskLevel
 
-from web.session import SessionManager, AgentSession
+from web.session import SessionManager, AgentSession, WebApprovalHandler
 from web.debug_hook import DebugHook, debug_enabled
 from tests.support.llm_harness import ScriptedLLM, stream_script
 
@@ -25,6 +27,20 @@ class EchoTool(Tool):
 
     async def execute(self, **kwargs) -> str:
         return "echo!"
+
+
+@tool_parameters(name="HighRisk", description="High risk", parameters={"type": "object", "properties": {}, "required": []})
+class HighRiskTool(Tool):
+    name = "HighRisk"
+    description = "High risk"
+    parameters = {}
+    permission = ToolPermission(
+        capabilities=frozenset({ToolCapability.COMMAND_EXECUTE}),
+        risk_level=ToolRiskLevel.HIGH,
+    )
+
+    async def execute(self, **kwargs) -> str:
+        return "approved high risk"
 
 
 def make_session(agent):
@@ -202,6 +218,107 @@ async def test_chat_with_tool_calls():
         for e in events
     )
     assert "done" in event_types
+
+
+@pytest.mark.asyncio
+async def test_run_session_accepts_web_approval_response_for_high_risk_tool():
+    mock_llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallDelta(id="c1", name="HighRisk", arguments="{}")],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Done after tool", stop_reason="end_turn"),
+    ])
+    registry = ToolRegistry()
+    registry.register(HighRiskTool())
+    manager = SessionManager()
+    agent = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+    session = make_session(agent)
+    agent.approval_handler = session.approval_handler
+    events = []
+    incoming = asyncio.Queue()
+
+    async def collect(event):
+        events.append(event)
+        if event["type"] == "approval_request":
+            await incoming.put({
+                "type": "approval_response",
+                "approval_id": event["data"]["approval_id"],
+                "decision": "approved",
+            })
+
+    async def receive():
+        return await incoming.get()
+
+    await manager.run_session(
+        session,
+        "run high risk",
+        ws_send=collect,
+        ws_receive=receive,
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "approval_request" in event_types
+    assert any(
+        event["type"] == "approval_response"
+        and event["data"]["status"] == "approved"
+        for event in events
+    )
+    tool_result = next(event for event in events if event["type"] == "tool_result")
+    assert tool_result["data"]["result"] == "approved high risk"
+
+
+@pytest.mark.asyncio
+async def test_web_approval_handler_isolates_sessions():
+    first = WebApprovalHandler("session-1")
+    second = WebApprovalHandler("session-2")
+    request = _web_approval_request("approval-1")
+
+    pending = asyncio.create_task(first.request_approval(request))
+    await asyncio.sleep(0)
+
+    assert second.submit_response("approval-1", "approved") is False
+    assert first.submit_response("approval-1", "approved") is True
+    response = await pending
+    assert response.status.value == "approved"
+
+
+@pytest.mark.asyncio
+async def test_web_approval_handler_fail_pending_returns_unavailable():
+    handler = WebApprovalHandler("session-1")
+    pending = asyncio.create_task(handler.request_approval(_web_approval_request("approval-1")))
+    await asyncio.sleep(0)
+
+    handler.fail_pending("session reset")
+    response = await pending
+
+    assert response.status.value == "unavailable"
+    assert response.reason == "session reset"
+
+
+def _web_approval_request(approval_id: str):
+    from agent.approval import ApprovalRequest
+
+    return ApprovalRequest(
+        approval_id=approval_id,
+        tool_call_id="call-1",
+        tool_name="HighRisk",
+        mode="build",
+        capability=["command_execute"],
+        risk="high",
+        origin="builtin",
+        reason="test",
+        profile_name="build_default",
+        redacted_args={},
+        args_summary="{}",
+        session_id="session-1",
+        run_id="run-1",
+    )
 
 
 @pytest.mark.asyncio
