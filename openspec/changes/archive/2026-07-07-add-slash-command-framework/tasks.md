@@ -12,6 +12,7 @@
 ## 2. 测试
 
 - [x] 2.1 新增 command registry 单元测试，覆盖注册、别名、未知命令、帮助文本和参数错误。
+- [x] 2.1a 覆盖 skill-shaped command name 和自然语言 args 保留。
 - [x] 2.2 新增 CLI 交互测试，覆盖 `/help`、`/exit`、裸 `exit`、`/status`、`/mode`。
 - [x] 2.3 新增 CLI 交互测试，覆盖 `/clear` 清理当前会话历史。
 - [x] 2.4 新增 CLI 交互测试，覆盖 `/compact` 主动触发 MemoryManager compact。

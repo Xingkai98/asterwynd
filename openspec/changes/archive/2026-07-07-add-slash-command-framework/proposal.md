@@ -17,6 +17,7 @@ CLI 交互模式目前只有内联解析的 `/mode`，`exit/quit/q` 也只是特
 ## What Changes
 
 - 新增交互式 slash command registry，统一声明命令名、别名、帮助文本、参数解析、执行结果和是否继续会话。
+- command metadata SHALL 包含来源和执行类型，预留 builtin、skill、plugin、MCP 等命令来源。
 - CLI 交互模式 SHALL 通过 command registry 处理 slash commands，不再只内联识别 `/mode`。
 - Web UI SHALL 提供 slash command 提示面板：输入 `/` 时展示命令，继续输入时按当前前缀实时过滤。
 - Web 后端 SHALL 提供 command catalog，并在 WebSocket chat 路径中拦截独立 slash command，避免控制命令作为普通聊天消息进入 AgentLoop/LLM。
@@ -80,8 +81,10 @@ CLI 交互模式目前只有内联解析的 `/mode`，`exit/quit/q` 也只是特
   - OpenClaw 文档把 slash command、directive、inline shortcut 分为不同命令类型，并说明 `/status`、`/new`、`/reset`、`/compact` 等命令保持本地会话控制语义；它的 session 文档也强调 gateway/session store 是状态权威。
   - Opencode v2 规格把 manual compaction 作为 automatic compaction 之上的显式能力，并强调 compaction 完成后替换活跃 model context 表示、完整 transcript 仍保留；这支持把 `/compact` 定义成上下文控制命令，而不是普通用户消息。
   - Pi TUI changelog 多次记录 slash-command autocomplete、`argumentHint` 和异步 argument completion 的问题；Asterwynd 首版不做 autocomplete，但 command metadata 应保留 usage/argument hint，避免未来 TUI 命令面板重新定义命令。
+  - Claude Code 将 user-invocable skills 转换为 prompt command，`/<skill-name> args` 会把 args 传给 skill prompt 组装逻辑；Codex app-server 推荐用 `$<skill-name> 用户任务` 加结构化 `skill` input item 显式注入 skill；Goose recipes 使用参数模板组装 prompt/workflow。这说明 Asterwynd 后续应让 skill 成为动态 command source，而不是只做 `/skills run` 二级命令。
 - design impact:
   - 本 change 只做 built-in command registry 和上下文命令，不做多源动态命令加载；但 registry 类型要允许后续 skill/plugin/MCP command source 接入。
+  - registry parser 必须保留命令名后的完整 args，支持 `/xx-skill 帮我xxx` 这类自然语言参数传递。
   - command metadata 除帮助文本外，还应表达参数形态和可用性边界；首版先用简单字段承载，不引入复杂 feature gating。
   - `/clear` 和 `/compact` 作为交互命令调用 MemoryManager，不建成 LLM 可调用 tool，避免模型自行清上下文。
   - 命令处理结果应是结构化对象，方便未来 TUI/Web 复用，而 CLI 首版只做文本渲染。

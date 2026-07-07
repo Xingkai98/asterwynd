@@ -60,8 +60,50 @@ async def test_registry_dispatches_registered_command_and_alias():
 
     assert result == CommandResult(
         message="hello world",
-        metadata={"command": "hello", "known": True},
+        metadata={
+            "command": "hello",
+            "known": True,
+            "source": "builtin",
+            "kind": "local",
+        },
     )
+
+
+@pytest.mark.asyncio
+async def test_registry_preserves_args_for_skill_shaped_command_names():
+    seen_args = []
+
+    async def handler(ctx: CommandContext, args: str) -> CommandResult:
+        seen_args.append(args)
+        return CommandResult(message="skill queued")
+
+    registry = SlashCommandRegistry()
+    registry.register(
+        SlashCommand(
+            name="review-skill",
+            usage="/review-skill <request>",
+            description="Run review skill.",
+            argument_hint="<request>",
+            source="skill",
+            kind="prompt",
+            handler=handler,
+        )
+    )
+    ctx = CommandContext(
+        agent=FakeAgent(),
+        messages=[],
+        session_id="session-1",
+        provider="openai",
+        model="fake-model",
+    )
+
+    result = await registry.try_execute("/review-skill 帮我审一下这个 change", ctx)
+
+    assert result is not None
+    assert seen_args == ["帮我审一下这个 change"]
+    assert result.metadata["command"] == "review-skill"
+    assert result.metadata["source"] == "skill"
+    assert result.metadata["kind"] == "prompt"
 
 
 @pytest.mark.asyncio

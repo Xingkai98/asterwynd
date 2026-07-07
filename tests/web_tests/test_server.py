@@ -124,6 +124,8 @@ async def test_api_slash_commands_returns_catalog(app):
     mode = next(command for command in commands if command["name"] == "mode")
     assert mode["command"] == "/mode"
     assert mode["argument_hint"] == "<build|read_only|plan>"
+    assert mode["source"] == "builtin"
+    assert mode["kind"] == "local"
     assert mode["insert_text"] == "/mode "
 
 

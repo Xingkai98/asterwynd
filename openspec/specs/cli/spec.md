@@ -72,7 +72,7 @@ CLI SHALL 支持通过 `--mode plan` 启动 plan mode，并将该 mode 传入 Ag
 
 ### Requirement: CLI interactive slash command registry
 
-CLI 交互模式 SHALL 通过 central command registry 处理独立 slash command。未知 slash command SHALL 被本地拦截并提示 `/help`，不得作为普通用户消息发送给 AgentLoop/LLM，也不得产生新的 Run ID。普通文本中的 `/` 不应触发 command registry。具体命令处理器可以在命令语义需要时显式调用模型服务、AgentLoop 或工作流服务。
+CLI 交互模式 SHALL 通过 central command registry 处理独立 slash command。未知 slash command SHALL 被本地拦截并提示 `/help`，不得作为普通用户消息发送给 AgentLoop/LLM，也不得产生新的 Run ID。普通文本中的 `/` 不应触发 command registry。具体命令处理器可以在命令语义需要时显式调用模型服务、AgentLoop 或工作流服务。command registry SHALL 支持 builtin、skill、plugin 或 MCP 等动态命令来源的元数据，并保留命令名后的完整参数文本。
 
 #### Scenario: Slash command help
 
@@ -80,6 +80,13 @@ CLI 交互模式 SHALL 通过 central command registry 处理独立 slash comman
 - **WHEN** 用户输入 `/help`
 - **THEN** CLI SHALL 输出可用 slash command 列表
 - **AND** 每个命令 SHALL 包含简短说明或用法
+
+#### Scenario: Skill-shaped command preserves natural language args
+
+- **GIVEN** registry 中存在名为 `review-skill` 的 slash command
+- **WHEN** 用户输入 `/review-skill 帮我审一下这个 change`
+- **THEN** registry SHALL 将 `review-skill` 解析为命令名
+- **AND** SHALL 将 `帮我审一下这个 change` 作为完整 args 传给命令处理器
 
 #### Scenario: Unknown slash command
 
@@ -155,7 +162,7 @@ Web Chat SHALL 基于后端 command catalog 提供 slash command 提示。
 
 - **GIVEN** Web UI 正在运行
 - **WHEN** 浏览器请求 `/api/slash-commands`
-- **THEN** 响应 SHALL 包含可用 slash command 的命令名、用法、说明、别名和参数提示
+- **THEN** 响应 SHALL 包含可用 slash command 的命令名、用法、说明、别名、参数提示、来源和执行类型
 
 #### Scenario: Slash 前缀实时更新提示
 

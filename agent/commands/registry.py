@@ -33,6 +33,8 @@ class SlashCommand:
     handler: CommandHandler
     aliases: tuple[str, ...] = ()
     argument_hint: str = ""
+    source: str = "builtin"
+    kind: str = "local"
 
     @property
     def canonical_name(self) -> str:
@@ -71,6 +73,8 @@ class SlashCommandRegistry:
                 "description": command.description,
                 "aliases": [alias.lstrip("/").lower() for alias in command.aliases],
                 "argument_hint": command.argument_hint,
+                "source": command.source,
+                "kind": command.kind,
                 "insert_text": (
                     f"/{command.canonical_name} "
                     if command.argument_hint
@@ -99,6 +103,8 @@ class SlashCommandRegistry:
         result = await command.handler(context, args)
         result.metadata.setdefault("command", command.canonical_name)
         result.metadata.setdefault("known", True)
+        result.metadata.setdefault("source", command.source)
+        result.metadata.setdefault("kind", command.kind)
         return result
 
     def _parse(self, stripped_input: str) -> tuple[str, str]:
