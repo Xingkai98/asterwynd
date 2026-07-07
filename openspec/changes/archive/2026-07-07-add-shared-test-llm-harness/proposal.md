@@ -70,9 +70,13 @@
   - browser/TUI 回归如何避免模型输出不确定性导致 flaky？
 - findings:
   - 当前仓库已有足够内部证据说明需要共享 harness：CLI 使用 `FakeAgent`，Web 使用私有 `MockLLM`，浏览器测试依赖 `--run-real-api`。
-  - 本 PR 只创建 change，不进入实现；开发前必须基于 `.dev/reference-repos.txt` 中可用参考仓库补充具体参考实现发现。
-  - 如果本地参考仓库不可用，开发前需要记录不可用原因，并以当前仓库测试结构和公开文档作为替代依据。
+  - 当前环境没有可用 `codegraph` 命令；本轮调研按仓库规则退回到 `.dev/reference-repos.txt` 中参考仓库的 `rg` 搜索和文件阅读。
+  - Gemini CLI 在 integration tests 中使用 `fakeResponsesPath`、`recordResponses` 和 fixture server，把浏览器类 agent 测试固定到响应文件，说明入口/browser 回归应优先确定性 fake，而不是默认依赖真实模型。
+  - Goose 提供 `TestProvider` 的 recording/replaying 形态，用于 provider record/replay 和缺失 replay 的错误验证；这证明 record/replay 有价值，但更适合作为后续 harness 扩展。
+  - SWE-agent 提供 `ReplayModel`，从轨迹 replay agent action；这类 replay 能支持 benchmark/debug，但首版共享入口 smoke 不需要引入 prompt hash 或轨迹匹配复杂度。
+  - OpenCode 的 app e2e 使用 mock server 和固定 fixture 驱动前端 smoke，provider 层另有 recorded tests，说明 UI smoke 与真实 provider 集成验证应分层隔离。
 - design impact:
   - 初始方案坚持 fake LLM 层复用，而不是每个入口 fake 整个 AgentLoop。
+  - 首版 harness 使用顺序脚本响应和调用记录，不做 prompt hash 匹配、record/replay 或真实响应录制；record/replay 记录为未来扩展方向。
   - 真实 LLM smoke 保持 opt-in，避免默认 CI 被外部 API、网络和模型随机性污染。
-  - Playwright browser smoke 应走 fake LLM app/server，真实 API 浏览器 E2E 保留为人工或夜间验证。
+  - Playwright browser smoke 应走测试专用 fake LLM app/server，真实 API 浏览器 E2E 保留为人工或夜间验证。

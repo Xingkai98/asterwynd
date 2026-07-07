@@ -8,51 +8,41 @@ from benchmarks.prompt import CodingPromptBuilder
 from benchmarks.task_schema import TaskSpec
 from agent.trace_recorder import TraceRecorder
 from agent.run_config import AgentMode
+from tests.support.llm_harness import ScriptedLLM
 
 
-class ScriptedLLM:
-    def __init__(self):
-        self.calls = 0
-        self.messages_seen = []
-        self.closed = False
-
-    async def chat(self, messages, tools=None, model="gpt-4"):
-        self.calls += 1
-        self.messages_seen.append(list(messages))
-        if self.calls == 1:
-            return LLMResponse(
-                content="I will edit app.py.",
-                tool_calls=[
-                    ToolCallDelta(
-                        id="edit-1",
-                        name="Edit",
-                        arguments=json.dumps(
-                            {
-                                "path": "app.py",
-                                "old_string": "Version 1",
-                                "new_string": "Version 2",
-                            }
-                        ),
-                    )
-                ],
-                stop_reason="tool_calls",
-            )
-        if self.calls == 2:
-            return LLMResponse(
-                content="I will inspect the diff.",
-                tool_calls=[
-                    ToolCallDelta(
-                        id="diff-1",
-                        name="InspectGitDiff",
-                        arguments=json.dumps({"path": "app.py"}),
-                    )
-                ],
-                stop_reason="tool_calls",
-            )
-        return LLMResponse(content="Done. app.py updated.", stop_reason="end_turn")
-
-    async def close(self):
-        self.closed = True
+def benchmark_scripted_llm() -> ScriptedLLM:
+    return ScriptedLLM([
+        LLMResponse(
+            content="I will edit app.py.",
+            tool_calls=[
+                ToolCallDelta(
+                    id="edit-1",
+                    name="Edit",
+                    arguments=json.dumps(
+                        {
+                            "path": "app.py",
+                            "old_string": "Version 1",
+                            "new_string": "Version 2",
+                        }
+                    ),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(
+            content="I will inspect the diff.",
+            tool_calls=[
+                ToolCallDelta(
+                    id="diff-1",
+                    name="InspectGitDiff",
+                    arguments=json.dumps({"path": "app.py"}),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Done. app.py updated.", stop_reason="end_turn"),
+    ])
 
 
 def test_coding_prompt_builder_includes_task_and_not_patch_names():
@@ -85,7 +75,7 @@ async def test_asterwynd_runner_uses_agent_loop_and_coding_tools(tmp_path):
         problem_statement_file="issue.md",
         test_command="grep -q 'Version 2' app.py",
     )
-    llm = ScriptedLLM()
+    llm = benchmark_scripted_llm()
     runner = AsterwyndRunner(llm=llm, max_iterations=5)
     trace = TraceRecorder(task_id="task")
 
@@ -124,7 +114,7 @@ async def test_asterwynd_runner_records_and_uses_mode(tmp_path):
         problem_statement_file="issue.md",
         test_command="true",
     )
-    llm = ScriptedLLM()
+    llm = benchmark_scripted_llm()
     runner = AsterwyndRunner(llm=llm, mode="read-only", max_iterations=5)
     trace = TraceRecorder(task_id="task")
 

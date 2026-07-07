@@ -32,7 +32,7 @@ Non-Goals:
 
 ### Decision 2: 脚本化响应是默认 fake 模型
 
-`ScriptedLLM` 接收一组 response step。step 至少覆盖：
+`ScriptedLLM` 首版接收一组顺序 response step，每次 `chat` 或 `stream_chat` 消费下一个 step。step 至少覆盖：
 
 - 普通 `LLMResponse(content=...)`
 - streaming delta 和最终 `streamed` 完成态
@@ -42,15 +42,17 @@ Non-Goals:
 
 理由：入口回归需要可预测，而不是依赖模型自然语言质量。
 
+首版不实现 prompt hash 匹配、record/replay 或真实响应录制。参考 Gemini CLI、Goose、SWE-agent 和 OpenCode 后，record/replay 确认有价值，但先作为未来扩展记录，避免首版 harness 变成另一套 provider/trajectory 系统。
+
 ### Decision 3: CLI smoke 不再 fake 整个 agent
 
-新增 CLI runtime smoke 时，允许 monkeypatch `build_llm` 或注入 LLM factory，但不 monkeypatch `build_agent` 为 `FakeAgent`。已有 `FakeAgent` adapter 测试可以保留，用于快速覆盖 CLI 命令解析和输出边界。
+新增 CLI runtime smoke 时，只在测试中 monkeypatch `cli.build_llm`，不新增生产级 LLM factory seam，也不 monkeypatch `build_agent` 为 `FakeAgent`。已有 `FakeAgent` adapter 测试可以保留，用于快速覆盖 CLI 命令解析和输出边界。
 
 理由：`FakeAgent` 测不到 AgentLoop 与 CLI 之间的真实事件、工具和消息协议。
 
 ### Decision 4: Web browser smoke 使用 fake LLM app/server
 
-新增 Playwright smoke 应启动或挂载使用共享 harness 的 Web app，覆盖页面加载、slash suggestions、命令执行、mode 切换、消息展示和基本响应。不要求 API key，也不依赖真实模型输出。
+新增 Playwright smoke 应通过 `create_app(ScriptedLLM)` 启动测试专用 uvicorn server，绑定随机空闲端口，再让 Playwright 打开该地址。测试覆盖页面加载、slash suggestions、命令执行、mode 切换、消息展示和基本响应。不要求 API key，也不依赖真实模型输出。
 
 理由：浏览器回归应该默认稳定；真实 API 浏览器 E2E 继续作为可选验证。
 
@@ -73,19 +75,27 @@ harness 可以提供 real provider adapter 或 fixture profile，让同一类 sm
   - fake LLM 应作为共享驱动层，而不是每个入口 fake agent。
   - CLI、Web 和未来 TUI 都应能接入同一 harness。
   - 真实 LLM smoke 需要保留，但必须是 opt-in。
+  - `ScriptedLLM` 首版只做顺序脚本和调用记录，不做 prompt hash、record/replay 或真实响应录制；record/replay 记录为未来扩展。
+  - CLI runtime smoke 只 monkeypatch `cli.build_llm`，不先扩生产 factory seam。
+  - Playwright fake browser smoke 使用 `create_app(ScriptedLLM)` 启测试专用 uvicorn server 和随机端口；缺少 Playwright browser 时跳过并记录。
+  - 默认 CI 只跑 fake LLM harness 覆盖；real API 继续使用显式 `--run-real-api`。
+  - Web server/session 的通用私有 `MockLLM`、`StreamingLLM`、`FailingLLM` 尽量迁移到共享 harness；CLI 旧 `FakeAgent` adapter 测试保留。
 - Options considered:
   - 每个入口继续维护自己的 mock。
   - 共享 fake AgentLoop。
   - 共享 fake LLM 并保留真实 AgentLoop。
   - 将真实 API 浏览器 E2E 作为默认回归。
+  - 首版引入 record/replay。
+  - 首版新增生产级 LLM factory seam。
 - Rejected alternatives:
   - 每个入口私有 mock。原因：会继续产生测试语义漂移。
   - 共享 fake AgentLoop。原因：无法证明入口和真实 runtime 的集成。
   - 默认真实 API E2E。原因：慢、依赖外部网络/API key、模型输出不稳定。
+  - 首版 record/replay。原因：参考实现证明它适合 provider/trajectory 长期演进，但当前首要目标是稳定入口 smoke。
+  - 生产级 LLM factory seam。原因：当前测试可通过 monkeypatch `build_llm` 接入，先避免无用户可见收益的生产结构变化。
 - Final confirmations:
-  - 本 PR 只创建 change，不开始实现。
-  - 开发前必须使用 `grill-with-docs` 或等价设计追问确认 harness API、fixture 注入方式、Playwright server 生命周期、real LLM flag 和 CI 策略。
-  - 开发前必须补充 Reference Implementation Research 的具体参考仓库发现。
+  - 可以进入实现；实现范围按上面的顺序脚本 harness、CLI/Web/Browser fake smoke、real API opt-in 和 Web mock 收敛推进。
+  - `CONTEXT.md` 不新增实现细节；测试 harness 语义记录在 OpenSpec、测试指南和相关 current specs。
 - Remaining risks:
   - 如果 harness API 太宽，会变成另一套 provider 抽象。
   - 如果 Playwright 环境依赖处理不好，默认回归可能 flaky。
