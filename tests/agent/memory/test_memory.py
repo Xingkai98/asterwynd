@@ -24,6 +24,22 @@ def test_count_tokens_approx():
     tokens = mgr.count_tokens([Message(role="user", content="hello world")])
     assert tokens > 0
 
+
+def test_clear_preserves_system_messages():
+    mgr = MemoryManager(max_tokens=1000)
+    mgr.messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="user"),
+        Message(role="assistant", content="assistant"),
+        Message(role="tool", content="tool", tool_call_id="call-1"),
+    ]
+
+    mgr.clear()
+
+    assert [message.role for message in mgr.messages] == ["system"]
+    assert mgr.messages[0].content == "system"
+
+
 @pytest.mark.asyncio
 async def test_compact_if_needed_does_nothing_under_budget():
     mgr = MemoryManager(max_tokens=100_000_000)
@@ -129,3 +145,48 @@ async def test_compact_if_needed_with_llm_preserves_recent_tool_chain():
     assert compacted is True
     assert [m.role for m in messages] == ["system", "system", "assistant", "tool"]
     assert messages[2].tool_calls[0].id == messages[3].tool_call_id
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_reports_noop_without_eligible_history():
+    mgr = MemoryManager(recent_window=2)
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="recent question"),
+        Message(role="assistant", content="recent answer"),
+    ]
+
+    result = await mgr.compact_manually(messages)
+
+    assert result.compacted is False
+    assert result.reason == "no_eligible_messages"
+    assert result.before_messages == result.after_messages == 3
+    assert [message.content for message in messages] == [
+        "system",
+        "recent question",
+        "recent answer",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_forces_compaction_under_token_budget():
+    mgr = MemoryManager(max_tokens=100_000_000, recent_window=2)
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="old one"),
+        Message(role="assistant", content="old two"),
+        Message(role="user", content="recent question"),
+        Message(role="assistant", content="recent answer"),
+    ]
+
+    result = await mgr.compact_manually(messages)
+
+    assert result.compacted is True
+    assert result.reason == "compacted"
+    assert result.before_messages == 5
+    assert result.after_messages == 3
+    assert [message.content for message in messages] == [
+        "system",
+        "recent question",
+        "recent answer",
+    ]

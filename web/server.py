@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 
+from agent.commands import CommandContext, build_default_slash_command_registry
 from agent.config import AsterwyndConfig
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -32,6 +33,7 @@ def create_app(
         mode=resolved_mode,
         config=config,
     )
+    command_registry = build_default_slash_command_registry()
 
     # Mount static files at /static
     if STATIC_DIR.exists():
@@ -59,6 +61,10 @@ def create_app(
     async def debug_status():
         return {"enabled": debug_enabled()}
 
+    @app.get("/api/slash-commands")
+    async def slash_commands():
+        return {"commands": command_registry.catalog()}
+
     @app.websocket("/ws/{session_id}")
     async def websocket_endpoint(ws: WebSocket, session_id: str):
         await ws.accept()
@@ -83,6 +89,38 @@ def create_app(
                 if msg_type == "chat":
                     user_text = raw.get("content", "").strip()
                     if not user_text:
+                        continue
+
+                    command_context = CommandContext(
+                        agent=session.agent,
+                        messages=session.messages,
+                        session_id=session.session_id,
+                        provider=llm.__class__.__name__,
+                        model=str(getattr(llm, "model", "default")),
+                    )
+                    command_result = await command_registry.try_execute(
+                        user_text,
+                        command_context,
+                    )
+                    if command_result is not None:
+                        await ws.send_json({
+                            "type": "command_result",
+                            "data": {
+                                "message": command_result.message,
+                                "metadata": command_result.metadata,
+                                "continue_session": command_result.continue_session,
+                            },
+                        })
+                        await ws.send_json({
+                            "type": "done",
+                            "data": {
+                                "content": command_result.message,
+                                "stop_reason": "command",
+                            },
+                        })
+                        if not command_result.continue_session:
+                            await ws.close()
+                            break
                         continue
 
                     await session_manager.run_session(

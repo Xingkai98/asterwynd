@@ -111,6 +111,25 @@ async def test_api_debug_status(app):
 
 
 @pytest.mark.asyncio
+async def test_api_slash_commands_returns_catalog(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/slash-commands")
+        assert resp.status_code == 200
+        data = resp.json()
+
+    commands = data["commands"]
+    names = {command["name"] for command in commands}
+    assert {"help", "status", "clear", "compact", "mode"}.issubset(names)
+    mode = next(command for command in commands if command["name"] == "mode")
+    assert mode["command"] == "/mode"
+    assert mode["argument_hint"] == "<build|read_only|plan>"
+    assert mode["source"] == "builtin"
+    assert mode["kind"] == "local"
+    assert mode["insert_text"] == "/mode "
+
+
+@pytest.mark.asyncio
 async def test_static_files_served(app):
     """Static files (style.css) are served."""
     transport = ASGITransport(app=app)
@@ -176,9 +195,11 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="mode-value"' in index
     assert 'id="mode-select"' in index
     assert 'id="mode-apply"' in index
+    assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=11" in index
+    assert "/static/style.css?v=12" in index
+    assert "/static/chat.js?v=9" in index
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
@@ -187,6 +208,17 @@ def test_web_static_assets_include_session_and_run_display():
     assert "addToolResultMessage(event.data)" in script
     assert "case 'assistant_delta'" in script
     assert "case 'mode_changed'" in script
+    assert "case 'command_result'" in script
+    assert "metadata.transition" in script
+    assert "function updateSlashSuggestions" in script
+    assert "slashQueryFromInput" in script
+    assert "command.name.startsWith(query)" in script
+    assert "aliases.some(alias => alias.startsWith(query))" in script
+    assert "moveSlashSelection" in script
+    assert "applySlashSuggestion" in script
+    assert "fetch('/api/slash-commands')" in script
+    assert "shouldReconnect" in script
+    assert "data.continue_session === false" in script
     assert "data.streamed" in script
     assert "appendAssistantContent(currentAssistantMsg, data.content)" in script
     assert "body.classList.add('markdown-body')" in script
@@ -199,6 +231,9 @@ def test_web_static_assets_include_session_and_run_display():
     assert "max_iterations" in script
     assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
+    assert ".message.system" in styles
+    assert "#slash-suggestions" in styles
+    assert ".slash-suggestion.active" in styles
     assert "#mode-controls" in styles
     assert ".brand-lockup" in styles
     assert ".brand-fallback" in styles
@@ -451,6 +486,115 @@ def test_websocket_ping_and_reset(app):
             assert reset["type"] == "session_created"
             assert reset["session_id"] != first_session
             assert reset["mode"] == "build"
+
+
+def test_websocket_slash_status_does_not_start_agent_run():
+    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+
+            ws.send_json({"type": "chat", "content": "/status"})
+            command_result = ws.receive_json()
+            done = ws.receive_json()
+
+    assert command_result["type"] == "command_result"
+    assert "Session ID:" in command_result["data"]["message"]
+    assert created["session_id"] in command_result["data"]["message"]
+    assert done["type"] == "done"
+    assert done["data"]["stop_reason"] == "command"
+    assert mock_llm.call_count == 0
+
+
+def test_websocket_unknown_slash_command_does_not_start_agent_run():
+    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            ws.receive_json()
+
+            ws.send_json({"type": "chat", "content": "/unknown"})
+            command_result = ws.receive_json()
+            done = ws.receive_json()
+
+    assert command_result["type"] == "command_result"
+    assert "Unknown command: /unknown" in command_result["data"]["message"]
+    assert done["data"]["stop_reason"] == "command"
+    assert mock_llm.call_count == 0
+
+
+def test_websocket_clear_slash_command_clears_session_history():
+    mock_llm = MockLLM([LLMResponse(content="first response")])
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            ws.receive_json()
+
+            ws.send_json({"type": "chat", "content": "first"})
+            while True:
+                event = ws.receive_json()
+                if event["type"] == "done":
+                    break
+
+            ws.send_json({"type": "chat", "content": "/clear"})
+            command_result = ws.receive_json()
+            done = ws.receive_json()
+
+            ws.send_json({"type": "chat", "content": "/status"})
+            status_result = ws.receive_json()
+            ws.receive_json()
+
+    assert command_result["type"] == "command_result"
+    assert command_result["data"]["metadata"]["command"] == "clear"
+    assert done["data"]["stop_reason"] == "command"
+    assert "Messages: 1" in status_result["data"]["message"]
+
+
+def test_websocket_mode_slash_command_updates_session_mode_without_agent_run():
+    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["mode"] == "build"
+
+            ws.send_json({"type": "chat", "content": "/mode read_only"})
+            command_result = ws.receive_json()
+            done = ws.receive_json()
+
+            ws.send_json({"type": "chat", "content": "/status"})
+            status_result = ws.receive_json()
+            ws.receive_json()
+
+    assert command_result["type"] == "command_result"
+    assert command_result["data"]["metadata"]["command"] == "mode"
+    assert command_result["data"]["metadata"]["transition"]["new_mode"] == "read_only"
+    assert done["data"]["stop_reason"] == "command"
+    assert "Mode: read_only" in status_result["data"]["message"]
+    assert mock_llm.call_count == 0
+
+
+def test_websocket_exit_slash_command_closes_without_agent_run():
+    mock_llm = MockLLM([LLMResponse(content="should not be used")])
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            ws.receive_json()
+
+            ws.send_json({"type": "chat", "content": "/exit"})
+            command_result = ws.receive_json()
+            done = ws.receive_json()
+
+    assert command_result["type"] == "command_result"
+    assert command_result["data"]["continue_session"] is False
+    assert done["data"]["stop_reason"] == "command"
+    assert mock_llm.call_count == 0
 
 
 def test_websocket_tool_events():

@@ -55,3 +55,30 @@ The runtime SHALL support manual reload of configured skill roots.
 - **WHEN** the runtime reloads skills
 - **THEN** subsequent runs SHALL use the refreshed skill set
 - **AND** reload diagnostics SHALL be observable
+
+### Requirement: 用户可调用 skill 出现在 slash command 中
+
+Skill runtime SHALL 将用户可调用 skills 注册到 central slash command registry，使 CLI/Web command catalog 能提示并分发这些 skill commands。
+
+#### Scenario: Skill 出现在 slash command catalog
+
+- **GIVEN** 已加载的某个 skill 可由用户调用
+- **WHEN** 请求 slash command catalog
+- **THEN** catalog SHALL 包含该 skill 对应的 command
+- **AND** command metadata SHALL 包含 source `skill`
+- **AND** command SHALL 在可用时包含 description 和 argument hint
+
+#### Scenario: Skill slash command 保留自然语言请求
+
+- **GIVEN** 已加载一个名为 `review-skill` 的用户可调用 skill
+- **WHEN** 用户发送 `/review-skill 帮我审一下这个 change`
+- **THEN** command handler SHALL 将 `review-skill` 解析到该 skill
+- **AND** SHALL 将 `帮我审一下这个 change` 作为 skill args 传给 prompt 组装逻辑
+- **AND** SHALL NOT 将原始 slash command 作为普通用户消息发送给 AgentLoop
+
+#### Scenario: Skill command 显式组装 prompt
+
+- **GIVEN** 用户可调用 skill 包含 prompt 内容和参数占位符
+- **WHEN** skill slash command 携带 args 执行
+- **THEN** runtime SHALL 基于 skill prompt 和 args 组装 model-visible context
+- **AND** 产生的 Agent run SHALL 标记为 slash-command-triggered，并记录 skill name

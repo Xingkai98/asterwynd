@@ -169,6 +169,13 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   color: var(--text2);
   max-width: 95%;
 }
+.message.system {
+  align-self: center;
+  max-width: min(760px, 92%);
+  background: var(--surface2);
+  color: var(--text2);
+  border: 1px solid var(--border);
+}
 .message-header {
   font-size: 0.75rem;
   color: var(--accent);
@@ -375,8 +382,13 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   background: var(--surface);
   border-top: 1px solid var(--border);
 }
-#user-input {
+#input-shell {
+  position: relative;
   flex: 1;
+  min-width: 0;
+}
+#user-input {
+  width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -388,6 +400,51 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   font-family: inherit;
 }
 #user-input:focus { border-color: var(--accent); }
+#slash-suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  max-height: min(260px, 45vh);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+  padding: 4px;
+  z-index: 20;
+}
+.slash-suggestion {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(120px, 0.46fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.slash-suggestion:hover,
+.slash-suggestion.active {
+  background: var(--surface2);
+}
+.slash-suggestion code {
+  color: var(--accent);
+}
+.slash-suggestion-hint {
+  color: var(--text2);
+}
+.slash-suggestion-desc {
+  color: var(--text2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #send-btn {
   padding: 10px 24px;
   background: var(--accent);
@@ -558,6 +615,10 @@ main { flex: 1; min-height: 0; overflow: hidden; }
     padding: 8px 10px;
     gap: 6px;
   }
+  .slash-suggestion {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
   #user-input {
     padding: 8px 10px;
     font-size: 0.9rem;
@@ -592,6 +653,9 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   #input-area {
     padding: 6px 8px;
     gap: 4px;
+  }
+  #slash-suggestions {
+    max-height: 220px;
   }
   #user-input {
     padding: 6px 8px;

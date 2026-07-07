@@ -32,8 +32,7 @@
 
 ### 第三批：Coding Agent 基本操作面
 
-- `add-slash-command-framework`：最高优先级，先统一 CLI 交互命令入口，并补齐 `/help`、`/status`、`/mode`、`/clear`、`/compact` 等基本命令。
-- `integrate-skill-runtime`：依赖 slash command framework，把已有 SkillLoader 接入配置、运行时上下文和 `/skills` 可观测入口。
+- `integrate-skill-runtime`：依赖已完成的 slash command framework，把已有 SkillLoader 接入配置、运行时上下文和 `/skills` 可观测入口。
 
 ### 第四批：工具权限模型前置
 
@@ -43,7 +42,7 @@
 
 - `add-lsp-code-intelligence`：已合入并归档。
 - `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
-- `add-minimal-tui-runtime-view`：建议在 slash command、skills、工具权限模型、planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后做，复用统一运行事件和 mode transition。
+- `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
 ### 第六批：高风险 browser 能力
 
@@ -51,35 +50,17 @@
 
 ## 未实现队列
 
-### 1. `add-slash-command-framework`
+### 1. `integrate-skill-runtime`
 
 状态：未实现。
 
-批次：第三批，当前未实现队列最高优先级。
-
-建议顺序原因：
-
-- slash command 是 CLI 交互模式、未来 TUI 命令面板和 skills 可观测入口的共同操作面。
-- `/clear`、`/compact`、`/status` 是 coding agent 长会话的基本控制能力，当前 MemoryManager 已有底层能力但缺少用户入口。
-- 先统一 command registry，可以避免后续 `/skills`、权限状态、MCP 状态等命令继续散落在输入循环里。
-
-主要交付：
-
-- Slash command registry。
-- `/help`、`/exit`、`/status`、`/mode`、`/clear`、`/compact`。
-- CLI 交互测试和 MemoryManager 手动 clear/compact 行为定义。
-
-### 2. `integrate-skill-runtime`
-
-状态：未实现。
-
-批次：第三批，建议在 `add-slash-command-framework` 合入后实现。
+批次：第三批，建议在 slash command framework 归档后实现。
 
 建议顺序原因：
 
 - 仓库已有 SkillLoader 和 skills spec，但尚未接入真实运行时。
 - Skills 是 coding agent 复用工作流的基础能力，应先于 MCP/browser 等外部扩展稳定下来。
-- `/skills` 和 `/skills reload` 应复用 slash command framework，因此实现顺序排在 slash command 之后。
+- `/skills` 和 `/skills reload` 应复用已完成的 slash command framework。
 
 主要交付：
 
@@ -88,7 +69,7 @@
 - `/skills` 和 `/skills reload`。
 - 加载诊断和可观测记录。
 
-### 3. `refine-tool-permission-model`
+### 2. `refine-tool-permission-model`
 
 状态：未实现。
 
@@ -108,7 +89,7 @@
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
 
-### 4. `add-mcp-tool-adapter`
+### 3. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -126,11 +107,11 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 5. `add-minimal-tui-runtime-view`
+### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
-批次：第五批，runtime mode switching 已合入；等待 slash command、skills、工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
+批次：第五批，runtime mode switching 和 slash command framework 已合入基础能力；等待 skills、工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
 
 建议顺序原因：
 
@@ -144,7 +125,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 6. `add-browser-use-safety-foundation`
+### 5. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
