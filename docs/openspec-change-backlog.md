@@ -30,9 +30,10 @@
 
 - `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
-### 第三批：Coding Agent 基本操作面
+### 第三批：Coding Agent 基本操作面和入口回归
 
 - `integrate-skill-runtime`：依赖已完成的 slash command framework，把已有 SkillLoader 接入配置、运行时上下文和 `/skills` 可观测入口。
+- `add-shared-test-llm-harness`：在 skills 后补齐共享 fake/real LLM 入口回归基础设施，供 CLI、Web 和未来 TUI smoke 复用。
 
 ### 第四批：工具权限模型前置
 
@@ -69,7 +70,27 @@
 - `/skills` 和 `/skills reload`。
 - 加载诊断和可观测记录。
 
-### 2. `refine-tool-permission-model`
+### 2. `add-shared-test-llm-harness`
+
+状态：未实现。
+
+批次：第三批，建议在 `integrate-skill-runtime` 之后、工具权限模型和 TUI/MCP/browser 实现前推进。
+
+建议顺序原因：
+
+- 当前 CLI、Web 和浏览器测试已经有 fake/mock/real API 路径，但 fake LLM 逻辑散落，CLI 还主要通过 `FakeAgent` 覆盖 adapter 行为。
+- 共享 fake/real LLM harness 可以让 CLI、Web 和未来 TUI 用真实 AgentLoop 做稳定入口 smoke，避免后续入口能力各自维护私有 fake runtime。
+- 在 MCP、TUI 和 browser 能力前补齐这层回归，可以降低后续外部工具、运行事件和 UI 控制面变更的回归风险。
+
+主要交付：
+
+- 共享 `ScriptedLLM` 或等价测试 harness。
+- CLI 真实 `build_agent` + fake LLM runtime smoke。
+- Web server/WebSocket 复用共享 harness。
+- deterministic Playwright fake LLM browser smoke。
+- real LLM smoke opt-in 策略和测试指南。
+
+### 3. `refine-tool-permission-model`
 
 状态：未实现。
 
@@ -89,7 +110,7 @@
 - legacy `read_only` / `dangerous` 兼容路径。
 - 配置和测试迁移策略。
 
-### 3. `add-mcp-tool-adapter`
+### 4. `add-mcp-tool-adapter`
 
 状态：未实现。
 
@@ -107,7 +128,7 @@
 - MCP schema 映射为 ToolRegistry schema。
 - MCP tool 执行、错误、超时和权限元数据。
 
-### 4. `add-minimal-tui-runtime-view`
+### 5. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -125,7 +146,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 5. `add-browser-use-safety-foundation`
+### 6. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
