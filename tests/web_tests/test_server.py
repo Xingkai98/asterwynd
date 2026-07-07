@@ -236,7 +236,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
     assert "/static/style.css?v=12" in index
-    assert "/static/chat.js?v=9" in index
+    assert "/static/chat.js?v=10" in index
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
