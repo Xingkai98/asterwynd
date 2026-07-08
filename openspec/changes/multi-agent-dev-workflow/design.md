@@ -113,7 +113,8 @@ Planner / Reviewer / Builder / CodeReviewer / Closer 都作为现有 subagent ru
 | `ask` | 每次 gate 点问人 |
 
 **默认值策略:**
-- 初始默认: planning=inline/same, reviewing=codex/new, building=inline/same, code-review=codex/new, closing=inline/same
+- 初始默认: planning=inline/same, reviewing=subagent/new, building=inline/same, code-review=subagent/new, closing=inline/same
+- codex executor 保留但仅作为高级选项（当需要不同模型做独立评审时）；subagent 已能满足审查阶段的独立性需求且启动快、无外部依赖
 - 创建 change 时提示配置，人不改就用默认值
 - gate 点 `session_mode: ask` 时再问一次
 
