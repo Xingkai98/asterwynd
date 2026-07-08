@@ -608,5 +608,89 @@ def benchmark(
     )
 
 
+async def _run_tui_app(agent, session_id, initial_prompt=None, config=None):
+    """Bridge used by the CLI command and tests to run the TUI app."""
+    from agent.commands import build_default_slash_command_registry
+    from agent.tui.app import run_tui_app
+
+    command_registry = build_default_slash_command_registry(
+        getattr(agent, "skill_runtime", None)
+    )
+    return await run_tui_app(
+        agent=agent,
+        session_id=session_id,
+        command_registry=command_registry,
+        initial_prompt=initial_prompt,
+    )
+
+
+@app.command()
+def tui(
+    model: Optional[str] = typer.Option(None, "--model", help="Model to use"),
+    provider: str = typer.Option(
+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM provider: openai / anthropic"
+    ),
+    max_iterations: int = typer.Option(20, "--max-iterations", help="Maximum iterations"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="Path to asterwynd.yaml config"),
+    initial_prompt: Optional[str] = typer.Option(None, "--initial-prompt", help="Initial prompt to submit after TUI startup"),
+):
+    """Start the interactive TUI runtime view."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        typer.echo(
+            "Error: TUI requires an interactive terminal (TTY). "
+            "stdin and stdout must be connected to a terminal. "
+            "Use `cli.py main --interactive` for a non-TUI interactive mode, "
+            "or `cli.py main <prompt>` for single-prompt mode.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    config = _load_cli_config(config_path, mode=mode)
+    normalized_mode = config.agent.default_mode.value
+    resolved_model = model or os.environ.get("ASTERWYND_MODEL")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        if config.mcp.servers:
+            agent = loop.run_until_complete(
+                build_agent_async(resolved_model, provider, normalized_mode, config=config)
+            )
+        else:
+            agent = build_agent(resolved_model, provider, normalized_mode, config=config)
+    except Exception as exc:
+        typer.echo(f"Error: failed to construct agent: {exc}", err=True)
+        raise SystemExit(1) from exc
+
+    agent.max_iterations = max_iterations
+    session_id = new_session_id()
+
+    from agent.tui.approval import TUIApprovalHandler
+    agent.approval_handler = TUIApprovalHandler()
+
+    try:
+        exit_code = loop.run_until_complete(
+            _run_tui_app(
+                agent=agent,
+                session_id=session_id,
+                initial_prompt=initial_prompt,
+                config=config,
+            )
+        )
+    except Exception as exc:
+        logger.exception("TUI app crashed")
+        typer.echo(f"TUI error: {exc}", err=True)
+        exit_code = 1
+    finally:
+        mcp_manager = getattr(agent, "mcp_manager", None)
+        if mcp_manager is not None:
+            loop.run_until_complete(mcp_manager.aclose())
+        loop.close()
+
+    if exit_code:
+        raise SystemExit(exit_code)
+
+
 if __name__ == "__main__":
     app()

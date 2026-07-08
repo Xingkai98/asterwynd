@@ -54,7 +54,7 @@
 12. 更新文档和能力证明链（closing phase）。
 13. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
 
-各阶段之间通过 handoff note（存储在 `.handoff/<change-id>/`）传递上下文。同一 agent 可贯穿多个 phase，不强制切换。路由配置（executor、session_mode）支持全局默认 + per-change 覆盖。
+各阶段之间通过 handoff note（存储在 `.handoff/<change-id>/`）传递上下文。同一 agent 可贯穿多个 phase，不强制切换。`.handoff/` 是本地协作临时目录，默认不提交；它可以被同一工作区里的后续 agent 直接读取，但不能作为长期事实来源。需要长期留存和 PR 可追溯的关键结论，应写入当前 change 的 OpenSpec 文档、`handoff.json` transition、设计/代码评审报告或稳定项目文档。只有用户明确要求把交接材料纳入 PR 时，才使用 `git add -f .handoff/...` 强制提交指定文件。路由配置（executor、session_mode）支持全局默认 + per-change 覆盖。
 
 ## 参考实现调研
 

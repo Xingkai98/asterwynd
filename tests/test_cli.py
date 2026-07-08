@@ -692,3 +692,104 @@ def test_cli_missing_openai_api_key(monkeypatch):
 
     assert result.exit_code == 1
     assert "OPENAI_API_KEY not set" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# TUI CLI command tests
+# ---------------------------------------------------------------------------
+
+
+def test_cli_tui_command_non_tty_reports_error(monkeypatch):
+    """非 TTY 环境启动 TUI 应报错退出。"""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+
+    result = CliRunner().invoke(cli.app, ["tui"])
+
+    assert result.exit_code != 0
+    stderr_text = result.stderr.lower() if result.stderr else ""
+    stdout_text = result.stdout.lower()
+    combined = stderr_text + stdout_text
+    assert "tty" in combined or "terminal" in combined or "interactive" in combined
+
+
+def test_cli_tui_command_checks_stdin_tty(monkeypatch):
+    """stdin 不是 TTY 但 stdout 是 TTY 也应报错。"""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    result = CliRunner().invoke(cli.app, ["tui"])
+
+    assert result.exit_code != 0
+
+
+def test_cli_tui_command_checks_stdout_tty(monkeypatch):
+    """stdout 不是 TTY 但 stdin 是 TTY 也应报错。"""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+
+    result = CliRunner().invoke(cli.app, ["tui"])
+
+    assert result.exit_code != 0
+
+
+def test_cli_tui_command_constructs_agent_loop_when_tty(monkeypatch):
+    """TTY 环境下 TUI 应构造 AgentLoop 而不是报错。
+
+    注意: CliRunner 的 stdin/stdout 不是真实 TTY，所以本测试不通过
+    CliRunner 走完整 TUI 启动路径。改为直接测试 AgentLoop 构造和
+    _run_tui_app 桥接函数。
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    llm = ScriptedLLM([LLMResponse(content="tui response", stop_reason="end_turn")])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    # mock agent.tui.app.run_tui_app 避免启动真正的 Textual app
+    from agent.tui import app as tui_app_module
+    constructed_agents = []
+
+    async def _fake_run_tui_app(agent, session_id, command_registry, initial_prompt=None):
+        constructed_agents.append(agent)
+        return 0
+
+    monkeypatch.setattr(tui_app_module, "run_tui_app", _fake_run_tui_app)
+
+    import asyncio
+    agent = cli.build_agent(provider="openai", mode="build")
+    session_id = "test-session"
+
+    exit_code = asyncio.run(
+        cli._run_tui_app(agent=agent, session_id=session_id, initial_prompt="hello")
+    )
+
+    assert exit_code == 0
+    assert len(constructed_agents) == 1
+
+
+def test_cli_tui_command_without_initial_prompt_constructs_agent(monkeypatch):
+    """无初始 prompt 时 TUI 也应构造 AgentLoop 启动空 session。"""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    llm = ScriptedLLM([LLMResponse(content="ok", stop_reason="end_turn")])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    from agent.tui import app as tui_app_module
+    constructed_agents = []
+
+    async def _fake_run_tui_app(agent, session_id, command_registry, initial_prompt=None):
+        constructed_agents.append(agent)
+        return 0
+
+    monkeypatch.setattr(tui_app_module, "run_tui_app", _fake_run_tui_app)
+
+    import asyncio
+    agent = cli.build_agent(provider="openai", mode="build")
+    session_id = "test-session"
+
+    exit_code = asyncio.run(
+        cli._run_tui_app(agent=agent, session_id=session_id)
+    )
+
+    assert exit_code == 0
+    assert len(constructed_agents) == 1

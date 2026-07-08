@@ -1,0 +1,382 @@
+{
+  "schema_version": "1.0",
+  "change_id": "add-minimal-tui-runtime-view",
+  "state": {
+    "phase": "building",
+    "sub_state": "ready_for_review"
+  },
+  "transitions": [
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "exploring"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T10:14:57.828722+00:00",
+      "reason": "Backfill workflow state for an existing active change after PR #47 introduced handoff.json."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T10:14:57.829270+00:00",
+      "reason": "Existing proposal/design/spec/tasks documents were already present before workflow state backfill."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "grilling_design"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T10:14:57.829799+00:00",
+      "reason": "Development-prep design questioning is in progress with grill-with-docs."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "grilling_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_specs"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:10:36.352313+00:00",
+      "reason": "Spec deltas updated for multi-turn Textual TUI, slash suggestions, approval, non-TTY failure, and basic mouse behavior."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_specs"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_tasks"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:10:36.352955+00:00",
+      "reason": "Tasks updated for Textual dependency, reducer/controller, slash suggestions, approval, and Claude Code building route."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_tasks"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:10:36.353549+00:00",
+      "reason": "Planning documents are ready for human/design review before Claude Code building phase."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:11:32.864584+00:00",
+      "handoff_note": ".handoff/add-minimal-tui-runtime-view/planning-to-reviewing.md"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "trigger": "human_rollback",
+      "actor_type": "human",
+      "actor_id": "human-current",
+      "timestamp": "2026-07-08T12:37:03.827569+00:00",
+      "decision": "rollback",
+      "rollback_reason": "Clarify that .handoff notes are local by default and should not be submitted unless explicitly requested."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_specs"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:37:03.828323+00:00",
+      "reason": "Added dev-workflow-state-machine delta for local-only handoff notes."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_specs"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_tasks"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:37:03.829074+00:00",
+      "reason": "Updated tasks and docs impact for local-only .handoff behavior."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_tasks"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:37:03.829814+00:00",
+      "reason": "Planning documents are ready for review again after handoff submission policy update."
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "codex-current",
+      "timestamp": "2026-07-08T12:37:03.830670+00:00",
+      "handoff_note": ".handoff/add-minimal-tui-runtime-view/planning-to-reviewing.md"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "reviewing",
+        "sub_state": "reading_docs"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-current",
+      "timestamp": "2026-07-08T12:45:02.755854+00:00",
+      "decision": "approved",
+      "reason": "用户确认 planning gate 通过，可以进入开发前 review/building 流程。"
+    },
+    {
+      "from": {
+        "phase": "reviewing",
+        "sub_state": "reading_docs"
+      },
+      "to": {
+        "phase": "reviewing",
+        "sub_state": "reviewing_design"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-reviewer-current",
+      "timestamp": "2026-07-08T12:48:19.943670+00:00",
+      "reason": "Reviewer has read proposal, design, tasks, handoff state, and all spec deltas."
+    },
+    {
+      "from": {
+        "phase": "reviewing",
+        "sub_state": "reviewing_design"
+      },
+      "to": {
+        "phase": "reviewing",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-reviewer-current",
+      "timestamp": "2026-07-08T12:48:19.944522+00:00",
+      "reason": "Design review completed with conditional pass and no blocking issues."
+    },
+    {
+      "from": {
+        "phase": "reviewing",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "reviewing",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "codex-reviewer-current",
+      "timestamp": "2026-07-08T12:48:19.945438+00:00",
+      "handoff_note": ".handoff/add-minimal-tui-runtime-view/review-report.md"
+    },
+    {
+      "from": {
+        "phase": "reviewing",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-current",
+      "timestamp": "2026-07-08T12:57:51.574297+00:00",
+      "decision": "approved",
+      "reason": "用户确认 reviewing gate 通过，可以进入 Claude Code building phase。"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-code-builder",
+      "timestamp": "2026-07-08T13:15:00.000000+00:00",
+      "reason": "TDD tests written: reducer, controller, slash commands, approval, non-TTY, Textual smoke, shared ScriptedLLM smoke."
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-code-builder",
+      "timestamp": "2026-07-08T13:15:00.000000+00:00",
+      "reason": "agent/tui/ package implemented: reducer, controller, app, widgets, approval, commands. CLI tui command added. All 72 TUI tests pass, full suite 800 pass."
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "smoke_validating"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-code-builder",
+      "timestamp": "2026-07-08T13:15:00.000000+00:00",
+      "reason": "OpenSpec strict validation passes (22/22). All existing CLI/Web/benchmark tests pass unchanged."
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "smoke_validating"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-code-builder",
+      "timestamp": "2026-07-08T13:15:00.000000+00:00",
+      "reason": "Smoke validation completed; building phase reached ready_for_review gate."
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "claude-code-builder",
+      "timestamp": "2026-07-08T13:24:46.341998+00:00",
+      "handoff_note": ".handoff/add-minimal-tui-runtime-view/building-to-code-review.md"
+    }
+  ],
+  "current_agent": {
+    "run_id": "claude-code-builder",
+    "type": "builder"
+  },
+  "last_gate": {
+    "phase": "building",
+    "sub_state": "ready_for_review",
+    "awaiting": "human_review"
+  },
+  "blockers": [],
+  "routing": {
+    "planning": {
+      "executor": "inline",
+      "session_mode": "same"
+    },
+    "reviewing": {
+      "executor": "subagent",
+      "session_mode": "new"
+    },
+    "building": {
+      "executor": "claude-code",
+      "session_mode": "new"
+    },
+    "code-review": {
+      "executor": "subagent",
+      "session_mode": "new"
+    },
+    "closing": {
+      "executor": "inline",
+      "session_mode": "same"
+    }
+  },
+  "next_hints": {
+    "recommended_agent": "builder",
+    "entry_point": ".handoff/add-minimal-tui-runtime-view/building-to-code-review.md",
+    "priority_hints": [
+      "gate at building.ready_for_review: next phases: ['code-review.reading_diff', 'closing.syncing_specs']"
+    ]
+  }
+}
