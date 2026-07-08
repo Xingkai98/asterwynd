@@ -28,18 +28,33 @@
 
 ## 开发流程
 
+每个 change 的生命周期建模为五个阶段（phase），由 `agent/workflow/` 状态机驱动，状态文件为 `openspec/changes/<change-id>/handoff.json`：
+
+| 阶段 | 角色 Agent | 核心产出 |
+|------|-----------|---------|
+| `planning` | Planner | proposal.md, design.md, spec delta, tasks.md |
+| `reviewing` | Reviewer | 设计评审报告 |
+| `building` | Builder | 测试代码和实现代码 |
+| `code-review` | CodeReviewer | 代码审查报告 |
+| `closing` | Closer | spec 同步、归档、backlog 更新 |
+
+每个 phase 包含若干 sub_state，末端为 `ready_for_review`（human review gate）。人在 gate 点确认通过后进入下一 phase，也可以选择跳过或回退。
+
 1. 提出想法。
 2. 讨论目标、边界和面试价值。
-3. 写需求文档。
-4. 写详细设计文档。
+3. 写需求文档（planning phase）。
+4. 写详细设计文档（planning phase）。
 5. 维护 `## Reference Implementation Research`，默认启用参考实现调研；如果关闭，记录明确原因。
 6. 使用 `grill-with-docs` 对 `design.md` 做开发前设计追问，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
-7. 人工评审并通过需求和详细设计。
-8. 实现测试。
-9. 实现功能。
-10. 运行验证。
-11. 更新文档和能力证明链。
-12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
+7. 人工评审并通过需求和详细设计（planning → reviewing gate）。
+8. 实现测试（building phase）。
+9. 实现功能（building phase）。
+10. 代码审查（code-review phase）。
+11. 运行验证（closing phase）。
+12. 更新文档和能力证明链（closing phase）。
+13. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
+
+各阶段之间通过 handoff note（存储在 `.handoff/<change-id>/`）传递上下文。同一 agent 可贯穿多个 phase，不强制切换。路由配置（executor、session_mode）支持全局默认 + per-change 覆盖。
 
 ## 参考实现调研
 

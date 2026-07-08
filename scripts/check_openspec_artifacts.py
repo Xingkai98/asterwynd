@@ -11,6 +11,7 @@ This checker intentionally performs mechanical checks only:
 - non-docs changes include Impact Analysis
 - non-docs changes include Reference Implementation Research decision records
 - changes that require design include a Pre-Implementation Review record
+- handoff.json structure validation (when present)
 
 It does not judge whether a design is technically correct. Human review owns
 that gate.
@@ -19,6 +20,7 @@ that gate.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -411,6 +413,80 @@ def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[st
     return []
 
 
+HANDOFF_REQUIRED_FIELDS = ["schema_version", "change_id", "state", "transitions"]
+HANDOFF_STATE_FIELDS = ["phase", "sub_state"]
+VALID_PHASES = {"planning", "reviewing", "building", "code-review", "closing", "blocked", "done"}
+VALID_ROUTING_PHASES = {"planning", "reviewing", "building", "code-review", "closing"}
+
+
+def _check_handoff_json(change_dir: Path) -> list[str]:
+    handoff = change_dir / "handoff.json"
+    if not handoff.exists():
+        return []
+
+    errors: list[str] = []
+    change_name = change_dir.name
+
+    try:
+        data = json.loads(handoff.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{change_name}: handoff.json is not valid JSON: {exc}"]
+
+    if not isinstance(data, dict):
+        return [f"{change_name}: handoff.json must be a JSON object"]
+
+    for field in HANDOFF_REQUIRED_FIELDS:
+        if field not in data:
+            errors.append(f"{change_name}: handoff.json missing required field: {field}")
+
+    if "state" in data:
+        state = data["state"]
+        if not isinstance(state, dict):
+            errors.append(f"{change_name}: handoff.json state must be an object")
+        else:
+            for field in HANDOFF_STATE_FIELDS:
+                if field not in state:
+                    errors.append(f"{change_name}: handoff.json state missing field: {field}")
+            phase = state.get("phase")
+            if phase is not None and phase not in VALID_PHASES:
+                errors.append(
+                    f"{change_name}: handoff.json state.phase invalid: {phase!r}, "
+                    f"expected one of {sorted(VALID_PHASES)}"
+                )
+
+    if "transitions" in data and not isinstance(data["transitions"], list):
+        errors.append(f"{change_name}: handoff.json transitions must be an array")
+
+    if "routing" in data:
+        routing = data["routing"]
+        if not isinstance(routing, dict):
+            errors.append(f"{change_name}: handoff.json routing must be an object")
+        else:
+            for phase in VALID_ROUTING_PHASES:
+                if phase not in routing:
+                    errors.append(f"{change_name}: handoff.json routing missing phase: {phase}")
+                else:
+                    entry = routing[phase]
+                    if not isinstance(entry, dict):
+                        errors.append(
+                            f"{change_name}: handoff.json routing.{phase} must be an object"
+                        )
+                    else:
+                        if "executor" not in entry:
+                            errors.append(
+                                f"{change_name}: handoff.json routing.{phase} missing executor"
+                            )
+                        if "session_mode" not in entry:
+                            errors.append(
+                                f"{change_name}: handoff.json routing.{phase} missing session_mode"
+                            )
+
+    if "blockers" in data and not isinstance(data["blockers"], list):
+        errors.append(f"{change_name}: handoff.json blockers must be an array")
+
+    return errors
+
+
 def check_change(change_dir: Path, current_specs_root: Path | None = None) -> list[str]:
     errors: list[str] = []
     proposal = change_dir / "proposal.md"
@@ -455,6 +531,11 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
 
     if change_type.primary == "docs" and change_type.secondary:
         errors.append(f"{change_dir.name}: docs primary changes must not declare secondary types")
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_handoff_json(change_dir)
+    )
 
     errors.extend(
         f"{change_dir.name}: {error}"
