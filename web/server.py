@@ -74,7 +74,7 @@ def create_app(
 
         session = session_manager.get_session(session_id)
         if not session:
-            session = session_manager.create_session(llm)
+            session = await session_manager.create_session_async(llm)
             await ws.send_json({
                 "type": "session_created",
                 "session_id": session.session_id,
@@ -184,7 +184,7 @@ def create_app(
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
                     session_manager.remove_session(session.session_id)
-                    session = session_manager.create_session(llm)
+                    session = await session_manager.create_session_async(llm)
                     await ws.send_json({
                         "type": "session_created",
                         "session_id": session.session_id,

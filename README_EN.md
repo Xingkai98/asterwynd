@@ -28,6 +28,7 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **HookManager** | 6 lifecycle extension points with built-in logging, retry, tracing, and token budget hooks. |
 | **MemoryManager** | AutoCompact token compression. When over budget, it asks the LLM to summarize older context. |
 | **SkillRuntime** | Directory-style Markdown skills with index injection, always/on-demand activation, and explicit `/skill args` invocation. |
+| **MCP Adapter** | Connects stdio / Streamable HTTP MCP servers, registers MCP tools, and injects prompt/resource context through `/mcp-prompt` and `/mcp-resource`. |
 | **SubAgentManager** | Sub-session runtime with independent transcripts, multiple sub-sessions, repeated runs per sub-session, and explicit inspect. |
 | **TraceRecorder** | Full trace recording for iterations, tool calls, edits, and tests. |
 | **Benchmark** | 23 local coding-agent tasks, SWE-bench Docker harness tasks, and a Claw-SWE-Bench multi-agent comparison entry point. |
@@ -125,6 +126,9 @@ agent/
 │   └── builtin/             # 4 built-in hooks
 ├── memory/
 │   └── manager.py           # MemoryManager + AutoCompact
+├── mcp/
+│   ├── manager.py           # MCP server connection, discovery, and calls
+│   └── tools.py             # MCP-backed Tool wrapper
 ├── skills/
 │   ├── loader.py            # SkillLoader + Skill dataclass
 │   └── runtime.py           # SkillRuntime + current-run skill activation

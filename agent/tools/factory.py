@@ -4,6 +4,8 @@ from agent.code_intelligence.config import CodeIntelligenceConfig
 from agent.config import WebSearchConfig
 from agent.lsp.client import LspClientManager
 from agent.run_config import ModePolicy
+from agent.mcp.manager import McpManager
+from agent.mcp.tools import McpTool
 from agent.tools.base import Tool
 from agent.tools.builtin.bash import BashTool
 from agent.tools.builtin.code_intelligence import RepoMapTool, SymbolSearchTool
@@ -60,18 +62,26 @@ def build_default_tool_registry(
     ignore_patterns: tuple[str, ...] = (),
     code_intelligence_config: CodeIntelligenceConfig | None = None,
     web_search_config: WebSearchConfig | None = None,
+    mcp_manager: McpManager | None = None,
     tools: list[Tool] | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
-    for tool in tools or get_default_tools(
+    default_tools = tools or get_default_tools(
         policy=policy,
         ignore_patterns=ignore_patterns,
         code_intelligence_config=code_intelligence_config,
         web_search_config=web_search_config,
-    ):
+    )
+    for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
         registry.register(tool)
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
+
+
+def _build_mcp_tools(mcp_manager: McpManager | None) -> list[Tool]:
+    if mcp_manager is None:
+        return []
+    return [McpTool(metadata, mcp_manager) for metadata in mcp_manager.tools]
 
 
 def build_coding_tool_registry(
@@ -80,13 +90,17 @@ def build_coding_tool_registry(
     mode_policy: ModePolicy | None = None,
     ignore_patterns: tuple[str, ...] = (),
     code_intelligence_config: CodeIntelligenceConfig | None = None,
+    mcp_manager: McpManager | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
-    for tool in get_coding_tools(
+    for tool in [
+        *get_coding_tools(
         policy=policy,
         ignore_patterns=ignore_patterns,
         code_intelligence_config=code_intelligence_config,
-    ):
+        ),
+        *_build_mcp_tools(mcp_manager),
+    ]:
         registry.register(tool)
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry

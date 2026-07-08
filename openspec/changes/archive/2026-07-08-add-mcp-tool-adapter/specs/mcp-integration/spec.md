@@ -1,10 +1,15 @@
-# mcp-integration 规格
+## MODIFIED Requirements
 
-## Purpose
+### Requirement: MCP 当前为预留能力域
 
-定义 MCP server 配置、连接、tools/prompts/resources discovery、调用、隔离和权限边界。当前实现位于 `agent/mcp/`，入口层包括 CLI、Web 和 benchmark。
+系统 SHALL 在本 change 实现后支持配置 MCP server、发现 MCP tools/prompts/resources、通过 ToolRegistry 调用 MCP tools，并通过显式 MCP 命令读取 prompts/resources；在实现前不得声称已支持 MCP 集成。
 
-## Requirements
+#### Scenario: 当前运行 Asterwynd
+
+- **GIVEN** 用户通过 CLI、Web 或 benchmark 运行当前系统
+- **WHEN** 系统构造工具 registry
+- **THEN** registry SHALL 只包含当前代码显式注册的本地工具
+- **AND** 只有在本 change 实现后才 MAY 注册配置的 MCP tools 或读取 MCP prompts/resources
 
 ### Requirement: 配置并连接 MCP servers
 
@@ -37,6 +42,8 @@
 - **AND** 该 server 启动失败或 discovery 超时
 - **WHEN** 系统初始化 MCP adapter
 - **THEN** 系统 SHALL fail fast 并返回可读错误
+
+## ADDED Requirements
 
 ### Requirement: 发现并注册 MCP tools
 

@@ -12,6 +12,7 @@ from agent.approval import (
 from agent.config import AsterwyndConfig
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
+from agent.mcp import build_mcp_manager
 from agent.run_identity import new_session_id
 from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.skills import SkillRuntime
@@ -133,6 +134,20 @@ class SessionManager:
         self.initial_mode = parse_agent_mode(resolved_mode)
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
+        if self.config.mcp.servers:
+            raise RuntimeError("create_session with MCP config requires create_session_async")
+        return self._create_session(llm, tools=tools, mcp_manager=None)
+
+    async def create_session_async(self, llm, tools: Optional[list] = None) -> AgentSession:
+        mcp_manager = await build_mcp_manager(self.config)
+        return self._create_session(llm, tools=tools, mcp_manager=mcp_manager)
+
+    def _create_session(
+        self,
+        llm,
+        tools: Optional[list] = None,
+        mcp_manager=None,
+    ) -> AgentSession:
         session_id = new_session_id()
         approval_handler = WebApprovalHandler(session_id)
         run_config = AgentRunConfig(mode=self.initial_mode)
@@ -149,6 +164,7 @@ class SessionManager:
             ignore_patterns=self.config.tools.ignore_patterns,
             code_intelligence_config=self.config.tools.code_intelligence,
             web_search_config=self.config.tools.web_search,
+            mcp_manager=mcp_manager,
             tools=tools,
         )
         subagent_manager = SubAgentManager(
@@ -170,6 +186,7 @@ class SessionManager:
             tool_result_display=self.config.tools.display,
             skill_runtime=skill_runtime,
             approval_handler=approval_handler,
+            mcp_manager=mcp_manager,
         )
         session = AgentSession(session_id, agent, approval_handler)
         session.init_messages()

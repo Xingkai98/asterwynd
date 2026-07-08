@@ -20,6 +20,7 @@ dependencies = [
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-go>=0.25.0",
     "tree-sitter-rust>=0.24.2",
+    "mcp>=1.28.1",
 ]
 
 [project.optional-dependencies]
