@@ -16,6 +16,7 @@
 - [ ] 2.5 human review gate 流转测试：`human_review` trigger 通过、跳过、回退。
 - [ ] 2.6 阻塞状态流转测试：进入 blocked 和解除阻塞。
 - [ ] 2.7 Artifact checker 新增校验项测试：`handoff.json` 存在性、必填字段非空。
+- [ ] 2.8 路由配置单元测试：executor 枚举校验、session_mode 枚举校验、两层覆盖（全局默认 + per-change）逻辑。
 
 ## 3. 实现
 
@@ -26,8 +27,10 @@
 - [ ] 3.5 实现 `.handoff/` 目录创建和 `.gitignore` 规则。
 - [ ] 3.6 实现角色 agent 类型注册表（Planner / Reviewer / Builder / Closer），映射到 phase 和 sub_state。
 - [ ] 3.7 实现角色 agent 路由逻辑：根据 `handoff.json` state 选择 agent 类型并创建子 session。
-- [ ] 3.8 更新项目 artifact checker（`scripts/check_openspec_artifacts.py`）：新增 `handoff.json` 存在性检查、必填字段非空检查。
-- [ ] 3.9 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单。
+- [ ] 3.8 实现路由配置模块：两层覆盖（全局默认 + per-change）、executor 分发（inline / subagent / claude-code）、session_mode 控制。
+- [ ] 3.9 实现创建 change 时路由配置提示交互：展示默认配置、询问是否调整。
+- [ ] 3.10 更新项目 artifact checker（`scripts/check_openspec_artifacts.py`）：新增 `handoff.json` 存在性检查、必填字段非空检查。
+- [ ] 3.11 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单。
 
 ## 4. 验证
 

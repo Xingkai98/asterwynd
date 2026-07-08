@@ -17,6 +17,7 @@
 - 允许单 agent 完成全流程，不强制切换 agent
 - 回退路径支持从任意阶段回到之前的任何阶段
 - handoff skill 不可用时，内置等价 prompt 作为 fallback
+- 每个 phase 可独立配置 executor（inline / subagent / claude-code）和 session 模式（same / new / ask），两层覆盖（全局默认 + per-change）
 
 **Non-Goals:**
 - 不改变现有 OpenSpec change 文档结构（proposal / design / tasks / specs）
@@ -87,6 +88,33 @@ Planner / Reviewer / Builder / Closer 都作为现有 subagent runtime 的实例
 ### Decision 8: 不强制 agent 切换
 
 通过检查 `handoff.json` 中的 `current_agent.run_id`，如果同一 agent 继续下一 phase，`transitions` 仍逐条记录，但 handoff note 可简化。human gate 不因单 agent 而跳过。
+
+### Decision 9: 路由配置两层覆盖
+
+每个 phase 可配置独立的 executor 和 session 模式，存储在 `handoff.json` 的 `routing` 字段。项目全局默认值放在 `openspec/config.yaml`，per-change 可覆盖。创建 change 时先展示默认配置并询问是否需要调整，不强制人每次手动配。
+
+**Executor 类型:**
+
+| executor | 实现方式 | 适用场景 |
+|----------|---------|---------|
+| `inline` | 当前 session 直接处理 | 快速讨论、小改动、单 agent 全流程 |
+| `subagent` | 创建子 session，角色 agent 类型自动匹配 | 阶段间隔离、并行开发 |
+| `claude-code` | 调 `claude` CLI 子进程 | 用外部 Claude Code 实例执行 |
+
+**Session 模式:**
+
+| mode | 行为 |
+|------|------|
+| `same` | 尽可能复用当前 session（inline 场景） |
+| `new` | 每个 phase 创建新 session/进程 |
+| `ask` | 每次 gate 点问人 |
+
+**默认值策略:**
+- 初始默认: planning=inline/same, reviewing=subagent/new, building=subagent/new, closing=inline/same
+- 创建 change 时提示配置，人不改就用默认值
+- gate 点 `session_mode: ask` 时再问一次
+
+**替代方案**: 纯对话中每次手动指定 —— 拒绝原因：大部分场景默认值够用，少数覆盖即可，不用每次都问。
 
 ## Risks / Trade-offs
 
