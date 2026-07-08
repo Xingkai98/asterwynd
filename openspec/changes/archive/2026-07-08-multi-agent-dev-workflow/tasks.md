@@ -49,7 +49,7 @@
 
 ## 5. 文档与 spec 同步
 
-- [ ] 5.1 将 `dev-workflow-state-machine` spec delta 合并到 `openspec/specs/dev-workflow-state-machine/spec.md`。
+- [ ] 5.1 将 `dev-workflow-state-machine` spec delta 合并到 current spec `openspec/specs/dev-workflow-state-machine/spec.md`（新能力域，需创建当前规格文件）。
 - [ ] 5.2 将 `change-documentation` spec delta 合并到 `openspec/specs/change-documentation/spec.md`。
 - [ ] 5.3 将 `subagents` spec delta 合并到 `openspec/specs/subagents/spec.md`。
 - [ ] 5.4 更新 `docs/requirements-process.md` 开发流程章节，反映新的五阶段状态机模型。

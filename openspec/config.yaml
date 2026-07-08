@@ -21,3 +21,23 @@ rules:
     - tasks.md 必须包含维护 Reference Implementation Research 的任务；如调研结论变化，先回写 change 文档。
     - 包含 spec delta 的非 docs change 必须包含同步 openspec/specs/<capability>/spec.md 的任务。
     - 涉及核心 coding-agent 路径时必须包含 benchmark smoke 验证任务。
+
+# 多 agent 开发流程默认路由配置
+# 每个 phase 可独立配置 executor 和 session_mode
+# per-change 可在 handoff.json 中覆盖这些默认值
+routing:
+  planning:
+    executor: inline
+    session_mode: same
+  reviewing:
+    executor: subagent
+    session_mode: new
+  building:
+    executor: inline
+    session_mode: same
+  code-review:
+    executor: subagent
+    session_mode: new
+  closing:
+    executor: inline
+    session_mode: same

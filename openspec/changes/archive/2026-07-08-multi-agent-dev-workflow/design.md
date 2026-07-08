@@ -139,6 +139,22 @@ Planner / Reviewer / Builder / CodeReviewer / Closer 都作为现有 subagent ru
 - **CLI 测试**: 状态查询命令、手动流转命令
 - **Artifact checker 测试**: `handoff.json` 存在性检查、必填字段非空检查
 
+## Pre-Implementation Review
+
+两轮设计评审已完成，设计 APPROVED：
+
+1. **Codex 独立评审（第一轮）**: CHANGES_REQUESTED，发现 6 个问题（四阶段笔误、schema 不完整、部分 spec 缺失等），全部修正到位。
+2. **Subagent 评审（第二轮）**: APPROVED，15 项逐项确认通过，包括状态机 schema 完整性、trigger 分工、gate 路由逻辑、回退路径、风险覆盖等。
+
+设计追问（grill-with-docs 等价流程）在 planning 阶段通过 `writing_design ⇄ grilling_design` 循环完成：
+- 确认 grill-with-docs 是 planning 内部迭代，不作为独立 phase
+- 确认 handoff note 优先用 handoff skill，fallback 内置 prompt
+- 确认 dataclass 而非 Pydantic（与项目现有模式一致）
+- 确认默认路由 subagent 用于审查阶段，codex 仅作为高级选项
+- 确认 Codex 调用经验（pipe 传 prompt 不可用 heredoc）已记录
+
+实现策略：确认 dataclass 模式（保持 Pydantic-free），测试先行，按 tasks.md 五阶段顺序推进。
+
 ## Codex Executor 调用经验
 
 本 change 的 reviewing phase 使用 `codex exec` 完成了首次实际跨 agent 设计评审，记录了以下经验供实现参考：
