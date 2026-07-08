@@ -44,13 +44,127 @@
 - `add-mcp-tool-adapter`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
-### 第六批：高风险 browser 能力
+### 第六批：基础能力补全
+
+基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
+
+- `improve-agent-execution-foundation`：Agent 执行可靠性——todo 任务追踪 + 工具错误恢复重试。
+- `add-parallel-tool-execution`：AgentLoop 并行工具执行——独立只读调用并发化。
+- `add-persistent-cross-session-memory`：跨 session 持久记忆——user/feedback/project/reference 四类，与 Claude Code 格式兼容。
+- `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
+- `add-multimodal-input-support`：图片/多模态输入——Message 协议扩展 + Read 工具图片支持。
+- `add-background-task-execution-and-session-persistence`：后台任务执行 + 会话保存/恢复。
+
+### 第七批：高风险 browser 能力
 
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
 ## 未实现队列
 
-### 1. `add-minimal-tui-runtime-view`
+### 1. `improve-agent-execution-foundation`
+
+状态：未实现。
+
+批次：第六批，第一批可并行推进。
+
+建议顺序原因：
+
+- Todo 追踪和错误重试都是小改动、低风险、高回报。
+- 不依赖其他 change，可独立开发合入。
+
+主要交付：
+
+- `TodoWrite` 工具（create/update/list）。
+- AgentLoop 接入 RetryHook，基于错误类型分类的重试策略。
+- build mode 系统消息注入 todo 状态；TUI/Web 可选 todo 面板。
+
+### 2. `add-parallel-tool-execution`
+
+状态：未实现。
+
+批次：第六批第二批，建议等 `improve-agent-execution-foundation` 合入后再开始（共享 AgentLoop 改动面）。
+
+建议顺序原因：
+
+- AgentLoop 核心重构，架构风险最高。
+- 与 Change 1 共享 `loop.py` 改动面，错开合入避免冲突。
+
+主要交付：
+
+- Tool 基类 `parallelizable` 属性。
+- AgentLoop 分组并行执行（连续只读 tool calls 同组并发）。
+- 并行组审批退化策略；错误隔离。
+
+### 3. `add-persistent-cross-session-memory`
+
+状态：未实现。
+
+批次：第六批第一批，可并行推进。
+
+建议顺序原因：
+
+- 自包含的 memory 模块扩展，只新增文件和工具，不改动核心路径。
+- 与 Claude Code 格式兼容，方便后续互操作。
+
+主要交付：
+
+- `PersistentMemory` 类，管理四类记忆文件。
+- `SaveMemory` / `RecallMemory` 工具。
+- AgentLoop 系统消息注入持久记忆上下文。
+
+### 4. `add-semantic-code-search`
+
+状态：未实现。
+
+批次：第六批第一批，可并行推进。
+
+建议顺序原因：
+
+- 完全独立的 code_intelligence 模块扩展。
+- 不影响 AgentLoop 核心路径。
+
+主要交付：
+
+- `agent/code_intelligence/embeddings.py` — embedding 模型加载和编码。
+- `agent/code_intelligence/index.py` — sqlite-vec 向量索引。
+- `SearchSimilar` 语义搜索工具。
+
+### 5. `add-multimodal-input-support`
+
+状态：未实现。
+
+批次：第六批第三批，改动面最大（Message 协议 + 所有 provider adapter），建议等第一批合入后再开始。
+
+建议顺序原因：
+
+- 触及整个消息传递链（Message → LLM adapter → compact → trace → subagent）。
+- 需要等 AgentLoop 改动（Change 1/2）稳定后再叠加 Message 协议扩展。
+
+主要交付：
+
+- `Message.content` 扩展为 `str | list[ContentBlock]`。
+- `ToolResult.content_blocks` 新增字段。
+- Read 工具图片识别 + base64 编码。
+- OpenAI/Anthropic adapter 多模态格式转换。
+
+### 6. `add-background-task-execution-and-session-persistence`
+
+状态：未实现。
+
+批次：第六批第三批，可并行推进。
+
+建议顺序原因：
+
+- Bash 后台执行和 session 持久化都不改变已有核心路径语义。
+- 新增组件（BackgroundTaskManager、SessionStore）不与其他 change 冲突。
+
+主要交付：
+
+- Bash `run_in_background` 参数 + BackgroundTaskManager。
+- `TaskOutput` / `TaskStop` 工具。
+- SessionStore 序列化/恢复 + CLI `--resume`。
+
+### 7. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -68,7 +182,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 2. `add-browser-use-safety-foundation`
+### 8. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
