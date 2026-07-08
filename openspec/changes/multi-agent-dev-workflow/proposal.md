@@ -21,7 +21,7 @@
 ### Modified Capabilities
 
 - `change-documentation`: change 目录下新增 `handoff.json` 状态机文件；新增 `.handoff/` 目录存放自然语言交接笔记
-- `subagents`: 新增 Planner / Reviewer / Builder / Closer 四个角色 agent 的类型定义和路由规则
+- `subagents`: 新增 Planner / Reviewer / Builder / CodeReviewer / Closer 五个角色 agent 的类型定义和路由规则
 
 ## Change Type
 

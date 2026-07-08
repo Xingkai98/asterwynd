@@ -19,7 +19,7 @@
 - 允许单 agent 完成全流程，不强制切换 agent
 - 回退路径支持从任意阶段回到之前的任何阶段
 - handoff skill 不可用时，内置等价 prompt 作为 fallback
-- 每个 phase 可独立配置 executor（inline / subagent / claude-code）和 session 模式（same / new / ask），两层覆盖（全局默认 + per-change）
+- 每个 phase 可独立配置 executor（inline / subagent / claude-code / codex）和 session 模式（same / new / ask），两层覆盖（全局默认 + per-change）
 
 **Non-Goals:**
 - 不改变现有 OpenSpec change 文档结构（proposal / design / tasks / specs）
@@ -81,7 +81,7 @@ append to transitions, update current state, and set next hints.
 
 ### Decision 6: Gate 点统一命名为 ready_for_review
 
-四个 phase 的 gate sub_state 统一命名为 `ready_for_review`，简化路由判断和 UI 展示逻辑。
+五个 phase 的 gate sub_state 统一命名为 `ready_for_review`，简化路由判断和 UI 展示逻辑。
 
 ### Decision 7: 角色 agent 作为 subagent 运行
 
@@ -121,20 +121,48 @@ Planner / Reviewer / Builder / CodeReviewer / Closer 都作为现有 subagent ru
 
 ## Risks / Trade-offs
 
-- **[风险] handoff.json schema 在开发中发现遗漏字段** → 缓解：schema version 字段预留；state_machine_version 保证向后兼容解析
-- **[风险] 回退路径过于灵活导致无限返工** → 缓解：每次回退在 transitions 中记录 rollback_reason，形成审计轨迹；不引入"回退次数限制"但日志可见
+- **[风险] handoff.json schema 在开发中发现遗漏字段** → 缓解：`schema_version` 字段和 `state_machine_version` 保证向后兼容解析
+- **[风险] 回退路径过于灵活导致无限返工** → 缓解：回退目标限制为早于当前 phase；每次回退记录 `rollback_reason` 形成审计轨迹
 - **[风险] handoff note 质量依赖 agent 的判断力** → 缓解：fallback prompt 规定了最低内容和字数范围；后续可加 CI 检查 handoff note 文件存在性
-- **[取舍] 不实现自动调度引擎**：本次只定义状态机和路由规则，agent 启动仍由人发起或外部编排触发。自动调度（如 "change 到达 planning.ready_for_review 后自动启动 reviewer"）是后续能力
+- **[风险] handoff.json 并发写入冲突** → 缓解：同一 change 同一时刻只有一个 agent 操作（同一 session 串行约束）；文件原子写入
+- **[风险] gitignored handoff note 导致异地 agent 拿不到上下文** → 缓解：spawn 外部 agent 时将 handoff note 内容嵌入 prompt；后续可选将 note 作为提交 artifact
+- **[风险] 外部 CLI executor 的权限和环境差异** → 缓解：CLI executor 继承当前环境；worktree 隔离保证不污染原仓库
+- **[风险] human gate 被绕过或手工修改状态** → 缓解：`actor_type` / `actor_id` / `decision` 审计字段在 transition 中记录每次人决策
+- **[风险] 现有 active change 无 handoff.json 迁移** → 缓解：新 change 初始化时自动生成；已有 change 如需要可手动创建
+- **[取舍] 不实现自动调度引擎**：本次只定义状态机和路由规则，agent 启动仍由人发起或外部编排触发。自动调度是后续能力
 
 ## Testing Strategy
 
-- **单元测试**: handoff.json schema 校验（合法/非法流转）、transition 日志追加逻辑、trigger 枚举校验
-- **集成测试**: 角色 agent 路由（给定 state 创建正确类型子 session）、handoff note 生成、human review gate 流转
+- **单元测试**: handoff.json schema 校验（合法/非法流转）、transition 日志追加逻辑、trigger 枚举校验、routing 层覆盖逻辑、非法 executor/session_mode 组合降级
+- **集成测试**: 角色 agent 路由（给定 state 创建正确类型子 session）、handoff note 生成、human review gate 流转、blocked 进入/解除、外部 executor 分发
 - **CLI 测试**: 状态查询命令、手动流转命令
 - **Artifact checker 测试**: `handoff.json` 存在性检查、必填字段非空检查
 
+## Codex Executor 调用经验
+
+本 change 的 reviewing phase 使用 `codex exec` 完成了首次实际跨 agent 设计评审，记录了以下经验供实现参考：
+
+### 成功做法
+
+- `codex exec` 支持 `--cd` 指定工作目录，`--sandbox workspace-write` 允许写回评审报告
+- 用 `cat prompt-file.txt | codex exec -` 管道传 prompt 稳定可靠
+- Codex 能完整读取多个设计文档（6 个文件，~600 行），生成结构化评审报告
+- `--ephemeral` 标志避免残留 session 文件
+
+### 踩过的坑
+
+- **不要用 heredoc 传 prompt**：`codex exec "$(cat <<'EOF'...)"` 会导致 Codex 卡在 stdin 等待，进程 hang 住不动
+- **prompt 文件 + 管道是最可靠的方式**：先 `Write` prompt 到文件，再 `cat file | codex exec -`
+- **`codex review` 子命令仅适用于 git diff 代码审查**，不适合设计文档评审
+- Codex exec 输出包含完整执行过程（所有文件读取、bash 命令等），token 消耗较大（本次 ~78K tokens），适合 10 分钟 timeout
+
+### 对实现的影响
+
+- `codex` executor 的实现应使用 `subprocess` 调用 `codex exec`，与 `claude-code` executor 模式一致
+- prompt 传递方式使用 temp file + stdin pipe，避免 heredoc
+- 需要设置合理的 wall-clock timeout（Codex 设计评审约 5-8 分钟）
+
 ## Open Questions
 
-- `handoff.json` 的 `schema_version` 初始值定为 `"1.0"` 是否合适？后续如调整 schema 如何迁移？
-- 是否需要 Web UI 中显示 gate 审批等待列表？
-- 是否需要 CLI 子命令（如 `asterwynd change status <id>`）查询 change 状态机状态？
+- `schema_version` 初始值定为 `"1.0"`，后续 schema 调整时按 semver 规则递增，同时保持旧版本解析兼容
+- Web UI gate 审批列表和 CLI 状态查询命令作为后续 change，本次不实现
