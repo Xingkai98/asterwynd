@@ -1,6 +1,8 @@
 ## Context
 
-当前开发流程定义为线性步骤序列（explore → propose → grill-with-docs → apply → sync → archive），没有正式状态机模型，每次 agent 启动需要人描述上下文或让其自读文档冷启动。本次设计将该流程建模为四阶段状态机，支持不同专门化 agent 分别处理各阶段、结构化 handoff 交接、human-in-the-loop review gate 和完整回退路径。
+当前开发流程定义为线性步骤序列（explore → propose → grill-with-docs → apply → sync → archive），没有正式状态机模型，每次 agent 启动需要人描述上下文或让其自读文档冷启动。本次设计将该流程建模为五阶段状态机，支持不同专门化 agent 分别处理各阶段、结构化 handoff 交接、human-in-the-loop review gate 和完整回退路径。
+
+关键设计决策：grill-with-docs 作为设计自我追问迭代，纳入 planning 内部（`writing_design` ⇄ `grilling_design` 循环），不再作为独立阶段。reviewing 是对已完成 grill 自审的完整设计做独立评审。
 
 现有基础设施中：
 - `agent/subagent/` 已提供子 session runtime，支持子 agent 创建、并发控制和 transcript inspect

@@ -17,6 +17,7 @@
 - **WHEN** 系统初始化角色 agent 注册表
 - **THEN** `reviewer` 类型 SHALL 映射到 `reviewing` phase
 - **AND** Reviewer agent SHALL 负责从 `reading_docs` 到 `ready_for_review` 的所有 `reviewing` sub_state
+- **AND** Reviewer agent SHALL 对已完成 grill 自审的设计文档做独立评审，而非执行 grill-with-docs
 
 #### Scenario: 注册 Builder agent
 
