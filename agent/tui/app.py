@@ -265,7 +265,6 @@ class TUIApp(App):
             )
         finally:
             self._running_worker = False
-            self._transcript_line_count = 0
             input_widget.disabled = False
             input_widget.focus()
             self._refresh_display()
