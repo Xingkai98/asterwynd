@@ -9,6 +9,7 @@ from pathlib import Path
 
 from agent.loop import AgentLoop
 from agent.config import AsterwyndConfig
+from agent.mcp import build_mcp_manager
 from agent.memory.manager import MemoryManager
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.subagent.manager import SubAgentManager
@@ -292,6 +293,7 @@ class AsterwyndRunner(AgentRunner):
             workspace,
             command_denylist=self.config.tools.command_denylist,
         )
+        mcp_manager = await build_mcp_manager(self.config)
         registry = build_coding_tool_registry(
             policy=policy,
             mode_policy=ModePolicy(
@@ -301,6 +303,7 @@ class AsterwyndRunner(AgentRunner):
             ),
             ignore_patterns=self.config.tools.ignore_patterns,
             code_intelligence_config=self.config.tools.code_intelligence,
+            mcp_manager=mcp_manager,
         )
 
         counting_llm = CountingLLM(self.llm)
@@ -319,6 +322,7 @@ class AsterwyndRunner(AgentRunner):
             expose_subagent_tools=True,
             run_config=self.run_config,
             tool_result_display=self.config.tools.display,
+            mcp_manager=mcp_manager,
         )
         messages = self.prompt_builder.build_messages(
             task=task,
@@ -337,6 +341,7 @@ class AsterwyndRunner(AgentRunner):
                 timeout=effective_timeout,
             )
         except asyncio.TimeoutError:
+            await mcp_manager.aclose()
             # Record actual progress from CountingLLM
             tool_count = sum(1 for step in trace.steps if step.type == "tool_call")
             trace.record_completion(
@@ -358,6 +363,7 @@ class AsterwyndRunner(AgentRunner):
             and not call.result.startswith("[Permission denied")
             and not call.result.startswith("[Error")
         )
+        await mcp_manager.aclose()
         return AgentRunResult(
             status="completed" if result.stop_reason.value == "end_turn" else "error",
             iterations=counting_llm.call_count,

@@ -38,6 +38,7 @@ from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_re
 
 if TYPE_CHECKING:
     from agent.llm import LLM
+    from agent.mcp.manager import McpManager
     from agent.trace_recorder import TraceRecorder
 
 logger = logging.getLogger("asterwynd.loop")
@@ -57,6 +58,7 @@ class AgentLoop:
         tool_result_display: ToolResultDisplayConfig | None = None,
         skill_runtime: SkillRuntime | None = None,
         approval_handler: ApprovalHandler | None = None,
+        mcp_manager: "McpManager | None" = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -76,6 +78,7 @@ class AgentLoop:
         self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
         self.skill_runtime = skill_runtime
         self.approval_handler = approval_handler or FailClosedApprovalHandler()
+        self.mcp_manager = mcp_manager
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None

@@ -60,6 +60,7 @@ tests/agent/tools/test_edit_tool.py
 - Tool permission metadata、ModePolicy 三值判定和 require_approval fail-closed 行为
 - Memory compact 后保持 tool-call 协议合法
 - CLI slash command registry 的命令解析、未知命令拦截、上下文清理、手动 compact、`/skills` reload 和 skill command 触发 Agent run
+- MCP adapter 的 fake stdio / Streamable HTTP server discovery、tool 调用、prompt/resource 读取、mode policy 拦截和 slash command 注入
 - CLI 入口 smoke 应至少覆盖真实 `build_agent` + `ScriptedLLM` 的普通回复、streaming 去重和工具调用摘要；旧 `FakeAgent` 测试只能作为 adapter 层补充。
 - Skill runtime 的多 root 加载、诊断、重复名称处理、index 注入、匹配注入和 `ActivateSkill` 工具激活
 - Web session 消息历史
@@ -159,7 +160,7 @@ uv run python run_infer.py \
 - `max_iterations` 不能把最后一个 tool result 包装成 assistant 最终回复。
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。
 - Memory compact 不能破坏 tool-call / tool-result 相邻链。
-- CLI/Web 独立 slash command 属于命令输入；未知 slash command、`/clear`、`/compact` 和 `/skills` 不能作为普通用户消息发送给 AgentLoop/LLM。`kind=prompt` 的 skill command 必须只把命令参数作为用户消息启动 Agent run，并在 run 前激活对应 skill。
+- CLI/Web 独立 slash command 属于命令输入；未知 slash command、`/clear`、`/compact`、`/skills` 和 `/mcp` 系列命令不能作为普通用户消息发送给 AgentLoop/LLM。`kind=prompt` 的 skill command 必须只把命令参数作为用户消息启动 Agent run，并在 run 前激活对应 skill。`/mcp-prompt` 和 `/mcp-resource` 读取结果必须以带来源标记的 system context 注入，并保留 metadata。
 - `passed_with_warnings` 是测试通过但过程不干净，不能算 clean pass。
 - benchmark 结果分类读 `status`，具体细节读 `reason`；`unsupported` 不能并入 `failed`。
 - Web Chat 的 assistant streaming 必须通过 AgentLoop `assistant_delta` / `assistant_stream_complete` 事件进入 WebSocket 和 CLI；回归测试必须覆盖流式展示不重复最终 `llm_response`，不能只改前端展示。

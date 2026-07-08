@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from typing import Any, Awaitable, Callable
 
 from agent.message import Message
 from agent.skills.runtime import SkillRuntime
+from agent.tools.base import Tool
+from agent.tool_permissions import PermissionDecisionType, ToolPermission
 
 
 @dataclass
@@ -278,6 +281,99 @@ def build_default_slash_command_registry(
             },
         )
 
+    async def mcp_handler(ctx: CommandContext, args: str) -> CommandResult:
+        manager = getattr(ctx.agent, "mcp_manager", None)
+        if manager is None:
+            return CommandResult(
+                message="MCP is unavailable.",
+                metadata={"mcp_available": False},
+            )
+        lines = ["MCP servers:"]
+        statuses = manager.status()
+        if not statuses:
+            lines.append("- none configured")
+        for status in statuses:
+            if status.ready:
+                lines.append(
+                    f"- {status.name}: ready, tools={status.tools}, "
+                    f"prompts={status.prompts}, resources={status.resources}"
+                )
+            else:
+                lines.append(f"- {status.name}: failed, error={status.error or 'unknown'}")
+        return CommandResult(
+            message="\n".join(lines),
+            metadata={"mcp_available": True, "server_count": len(statuses)},
+        )
+
+    async def mcp_prompt_handler(ctx: CommandContext, args: str) -> CommandResult:
+        manager = getattr(ctx.agent, "mcp_manager", None)
+        if manager is None:
+            return CommandResult(message="MCP is unavailable.")
+        try:
+            server_name, prompt_name, raw_args = _parse_mcp_named_args(args, "prompt")
+            prompt_args = json.loads(raw_args) if raw_args else {}
+            if not isinstance(prompt_args, dict):
+                raise ValueError("json args must be an object")
+        except ValueError as exc:
+            return CommandResult(message=f"Error: {exc}")
+
+        permission = manager.get_prompt_permission(server_name, prompt_name)
+        decision = _decide_mcp_action(ctx, f"mcp__{server_name}__prompt__{prompt_name}", permission)
+        if decision.type is PermissionDecisionType.DENY:
+            return CommandResult(message=f"[Permission denied: {decision.reason}]")
+        if decision.type is PermissionDecisionType.REQUIRE_APPROVAL:
+            return CommandResult(message=f"[Approval required: MCP prompt {server_name}/{prompt_name}]")
+
+        try:
+            injected = await manager.get_prompt(server_name, prompt_name, prompt_args)
+        except Exception as exc:
+            return CommandResult(message=f"[MCP prompt error: {type(exc).__name__}: {exc}]")
+        ctx.messages.append(Message(role="system", content=injected))
+        _sync_memory_messages(ctx)
+        return CommandResult(
+            message=f"Injected MCP prompt: {server_name}/{prompt_name}",
+            metadata={
+                "mcp_server": server_name,
+                "mcp_kind": "prompt",
+                "mcp_name": prompt_name,
+                "permission_decision": decision.type.value,
+                "injected_messages": 1,
+            },
+        )
+
+    async def mcp_resource_handler(ctx: CommandContext, args: str) -> CommandResult:
+        manager = getattr(ctx.agent, "mcp_manager", None)
+        if manager is None:
+            return CommandResult(message="MCP is unavailable.")
+        try:
+            server_name, uri = _parse_mcp_resource_args(args)
+        except ValueError as exc:
+            return CommandResult(message=f"Error: {exc}")
+
+        permission = manager.get_resource_permission(server_name, uri)
+        decision = _decide_mcp_action(ctx, f"mcp__{server_name}__resource", permission)
+        if decision.type is PermissionDecisionType.DENY:
+            return CommandResult(message=f"[Permission denied: {decision.reason}]")
+        if decision.type is PermissionDecisionType.REQUIRE_APPROVAL:
+            return CommandResult(message=f"[Approval required: MCP resource {server_name} {uri}]")
+
+        try:
+            injected = await manager.read_resource(server_name, uri)
+        except Exception as exc:
+            return CommandResult(message=f"[MCP resource error: {type(exc).__name__}: {exc}]")
+        ctx.messages.append(Message(role="system", content=injected))
+        _sync_memory_messages(ctx)
+        return CommandResult(
+            message=f"Injected MCP resource: {server_name} {uri}",
+            metadata={
+                "mcp_server": server_name,
+                "mcp_kind": "resource",
+                "uri": uri,
+                "permission_decision": decision.type.value,
+                "injected_messages": 1,
+            },
+        )
+
     registry.register(
         SlashCommand(
             name="help",
@@ -337,6 +433,38 @@ def build_default_slash_command_registry(
             handler=skills_handler,
         )
     )
+    registry.register(
+        SlashCommand(
+            name="mcp",
+            usage="/mcp",
+            description="Show MCP server status.",
+            source="builtin",
+            kind="local",
+            handler=mcp_handler,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="mcp-prompt",
+            usage="/mcp-prompt <server> <prompt> [json args]",
+            description="Read an MCP prompt and inject it as session context.",
+            argument_hint="<server> <prompt> [json args]",
+            source="builtin",
+            kind="local",
+            handler=mcp_prompt_handler,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="mcp-resource",
+            usage="/mcp-resource <server> <uri>",
+            description="Read an MCP resource and inject it as session context.",
+            argument_hint="<server> <uri>",
+            source="builtin",
+            kind="local",
+            handler=mcp_resource_handler,
+        )
+    )
     if skill_runtime is not None:
         _register_skill_commands(registry, skill_runtime)
     return registry
@@ -381,3 +509,34 @@ def _register_skill_commands(registry: SlashCommandRegistry, runtime: SkillRunti
                 handler=skill_handler,
             )
         )
+
+
+class _PermissionProbeTool(Tool):
+    def __init__(self, name: str, permission: ToolPermission):
+        self.name = name
+        self.description = ""
+        self.parameters = {"type": "object", "properties": {}}
+        self.permission = permission
+
+    async def execute(self, **kwargs: Any) -> str:
+        return ""
+
+
+def _decide_mcp_action(ctx: CommandContext, name: str, permission: ToolPermission):
+    return ctx.agent.tool_registry.mode_policy.decide_tool(
+        _PermissionProbeTool(name, permission)
+    )
+
+
+def _parse_mcp_named_args(args: str, kind: str) -> tuple[str, str, str]:
+    parts = args.strip().split(maxsplit=2)
+    if len(parts) < 2:
+        raise ValueError(f"usage /mcp-{kind} <server> <{kind}> [json args]")
+    return parts[0], parts[1], parts[2] if len(parts) == 3 else ""
+
+
+def _parse_mcp_resource_args(args: str) -> tuple[str, str]:
+    parts = args.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        raise ValueError("usage /mcp-resource <server> <uri>")
+    return parts[0], parts[1]

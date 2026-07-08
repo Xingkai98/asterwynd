@@ -41,7 +41,7 @@
 ### 第五批：MCP 与 TUI 基本扩展
 
 - `add-lsp-code-intelligence`：已合入并归档。
-- `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
+- `add-mcp-tool-adapter`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
 ### 第六批：高风险 browser 能力
@@ -50,25 +50,7 @@
 
 ## 未实现队列
 
-### 1. `add-mcp-tool-adapter`
-
-状态：未实现。
-
-批次：第五批，可提前做设计和 fake server 测试；实现阶段建议在工具权限模型稳定后推进，并与 browser 能力错开。
-
-建议顺序原因：
-
-- MCP 需要统一配置管理 server 列表，也需要 mode policy 和 tool permission metadata。
-- 放在核心本地工具、planning、runtime event 和 subagent 语义稳定之后，可以降低外部工具协议引入的复杂度。
-
-主要交付：
-
-- MCP server 配置和连接管理。
-- fake MCP server discovery 测试。
-- MCP schema 映射为 ToolRegistry schema。
-- MCP tool 执行、错误、超时和权限元数据。
-
-### 2. `add-minimal-tui-runtime-view`
+### 1. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -86,7 +68,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 3. `add-browser-use-safety-foundation`
+### 2. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

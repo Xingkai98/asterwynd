@@ -55,6 +55,9 @@ uv run python cli.py main --interactive
 /skills                       # 查看当前加载的 skills 和诊断
 /skills reload                # 重新加载 configured skill roots
 /<skill-name> <request>       # 显式激活用户可调用 skill，并用 request 启动 Agent run
+/mcp                          # 查看 MCP server 状态和 tools/prompts/resources 数量
+/mcp-prompt <server> <prompt> [json args]  # 读取 MCP prompt 并注入上下文
+/mcp-resource <server> <uri>  # 读取 MCP resource 并注入上下文
 /exit 或 /quit                # 退出交互模式
 ```
 
@@ -172,6 +175,12 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - `tools.display.max_result_chars`
 - `tools.display.max_result_lines`
 - `tools.display.preview_chars`
+- `mcp.default_timeout_seconds`
+- `mcp.servers.<name>.type`
+- `mcp.servers.<name>.command` / `args` / `cwd` / `env`
+- `mcp.servers.<name>.url` / `headers`
+- `mcp.servers.<name>.default_permission`
+- `mcp.servers.<name>.tools` / `prompts` / `resources`
 - `skills.roots`
 - `benchmark.parallel`
 - `benchmark.timeout_seconds`
@@ -180,6 +189,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 - CLI 交互模式通过 slash command registry 处理 `/help`、`/status`、`/mode`、`/clear`、`/compact`、`/skills`、`/skills reload`、`/exit` 和 `/quit`；裸 `exit`、`quit`、`q` 仍可退出。
 - Web Chat 输入框在输入 `/` 时会显示 slash command 提示，并按当前前缀实时过滤；发送独立 slash command 时由 WebSocket 按命令类型执行。本地控制命令不作为普通聊天消息进入 AgentLoop/LLM；用户可调用 skill 命令会先激活 skill，再用命令参数启动 Agent run。
+- MCP server 通过顶层 `mcp.servers` 配置，支持 `stdio` 和 `streamable_http`。MCP tools 注册为 `mcp__<server>__<tool>`；`/mcp-prompt` 和 `/mcp-resource` 读取结果以 system context 注入当前会话，并按 mode policy 判权。
 - Skill 使用 `skills/<name>/SKILL.md` 目录格式。每次 run 都会向模型注入简短 skill index；完整 skill prompt 只在 `always: true`、本地匹配、显式 `/skill args` 或 `ActivateSkill` 激活时进入当前 run context。
 - `/clear` 只清当前 CLI 交互上下文，不生成新的 Session ID；后续如果引入持久 transcript 或 cache reset，需要单独扩展语义。
 - CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。

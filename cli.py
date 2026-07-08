@@ -37,6 +37,7 @@ from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
 from agent.llm import LLM
+from agent.mcp import build_mcp_manager
 from agent.run_identity import new_run_id, new_session_id
 from agent.skills import SkillRuntime
 from agent.tool_result_display import summarize_tool_result
@@ -129,6 +130,46 @@ def build_agent(
     config: AsterwyndConfig | None = None,
     approval_handler: ApprovalHandler | None = None,
 ) -> AgentLoop:
+    if config is not None and config.mcp.servers:
+        raise RuntimeError("build_agent with MCP config requires build_agent_async")
+    return _build_agent_core(
+        model=model,
+        provider=provider,
+        mode=mode,
+        config=config,
+        approval_handler=approval_handler,
+        mcp_manager=None,
+    )
+
+
+async def build_agent_async(
+    model: Optional[str] = None,
+    provider: str = "openai",
+    mode: str | AgentMode = AgentMode.BUILD,
+    config: AsterwyndConfig | None = None,
+    approval_handler: ApprovalHandler | None = None,
+) -> AgentLoop:
+    config = config or AsterwyndConfig()
+    mcp_manager = await build_mcp_manager(config)
+    return _build_agent_core(
+        model=model,
+        provider=provider,
+        mode=mode,
+        config=config,
+        approval_handler=approval_handler,
+        mcp_manager=mcp_manager,
+    )
+
+
+def _build_agent_core(
+    *,
+    model: Optional[str] = None,
+    provider: str = "openai",
+    mode: str | AgentMode = AgentMode.BUILD,
+    config: AsterwyndConfig | None = None,
+    approval_handler: ApprovalHandler | None = None,
+    mcp_manager=None,
+) -> AgentLoop:
     config = config or AsterwyndConfig()
     llm = build_llm(provider, model)
     run_config = AgentRunConfig(mode=parse_agent_mode(_normalize_user_mode(mode)))
@@ -145,6 +186,7 @@ def build_agent(
         ignore_patterns=config.tools.ignore_patterns,
         code_intelligence_config=config.tools.code_intelligence,
         web_search_config=config.tools.web_search,
+        mcp_manager=mcp_manager,
     )
 
     hooks = HookManager([
@@ -172,6 +214,7 @@ def build_agent(
         tool_result_display=config.tools.display,
         skill_runtime=skill_runtime,
         approval_handler=approval_handler,
+        mcp_manager=mcp_manager,
     )
 
 @app.command()
@@ -216,8 +259,6 @@ def run_single(
     mode: str = "build",
     config: AsterwyndConfig | None = None,
 ):
-    agent = build_agent(model, provider, mode, config=config)
-    agent.max_iterations = max_iterations
     session_id = new_session_id()
     run_id = new_run_id()
 
@@ -233,6 +274,11 @@ def run_single(
     messages.append(Message(role="user", content=prompt))
 
     async def _run():
+        if config and config.mcp.servers:
+            agent = await build_agent_async(model, provider, mode, config=config)
+        else:
+            agent = build_agent(model, provider, mode, config=config)
+        agent.max_iterations = max_iterations
         typer.echo(f"Session ID: {session_id}")
         typer.echo(f"Run ID: {run_id}")
         stream_state = {"streamed": False}
@@ -249,6 +295,9 @@ def run_single(
         if result.tool_calls_made:
             typer.echo(f"\n【工具调用】{len(result.tool_calls_made)} 次")
             _print_tool_call_summaries(result, config)
+        mcp_manager = getattr(agent, "mcp_manager", None)
+        if mcp_manager is not None:
+            await mcp_manager.aclose()
         return result
 
     asyncio.run(_run())
@@ -263,10 +312,17 @@ def run_interactive(
     config: AsterwyndConfig | None = None,
     banner: bool = True,
 ):
-    agent = build_agent(model, provider, mode, config=config)
+    session_id = new_session_id()
+
+    # 复用持久 event loop，避免 httpx/MCP async clients 引用已关闭的 loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    if config and config.mcp.servers:
+        agent = loop.run_until_complete(build_agent_async(model, provider, mode, config=config))
+    else:
+        agent = build_agent(model, provider, mode, config=config)
     agent.approval_handler = CliApprovalHandler(interactive=True)
     resolved_model = getattr(agent.llm, "model", model or "default")
-    session_id = new_session_id()
 
     if banner:
         typer.echo(render_tui_banner())
@@ -288,9 +344,6 @@ def run_interactive(
     if system:
         messages.append(system_message(system))
 
-    # 复用持久 event loop，避免 httpx.AsyncClient 连接池引用已关闭的 loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     stop_requested = False
 
     async def _run_async():
@@ -380,6 +433,9 @@ def run_interactive(
                 typer.echo(f"\n【Agent】\n{result.content}\n")
             _print_tool_call_summaries(result, config)
     finally:
+        mcp_manager = getattr(agent, "mcp_manager", None)
+        if mcp_manager is not None:
+            loop.run_until_complete(mcp_manager.aclose())
         loop.close()
 
 

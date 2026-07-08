@@ -28,6 +28,7 @@
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
 | **MemoryManager** | AutoCompact token 压缩，超预算时用 LLM 生成摘要 |
 | **SkillRuntime** | 目录式 Markdown skill 加载、index 注入、按需/always 激活、`/skill args` 显式调用 |
+| **MCP Adapter** | 连接 stdio / Streamable HTTP MCP server，注册 MCP tools，并通过 `/mcp-prompt`、`/mcp-resource` 注入上下文 |
 | **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
 | **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
 | **Benchmark** | 23 个本地 coding-agent 任务、SWE-bench Docker harness 任务，以及 Claw-SWE-Bench 多 agent 对比入口 |
@@ -125,6 +126,9 @@ agent/
 │   └── builtin/             # 4 个内置 Hook
 ├── memory/
 │   └── manager.py           # MemoryManager + AutoCompact
+├── mcp/
+│   ├── manager.py           # MCP server 连接、discovery 和调用
+│   └── tools.py             # MCP-backed Tool wrapper
 ├── skills/
 │   ├── loader.py            # SkillLoader + Skill dataclass
 │   └── runtime.py           # SkillRuntime + 当前 run skill 激活

@@ -28,6 +28,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | MemoryManager | `agent/memory/manager.py` | 消息历史与 AutoCompact |
 | PlanningManager | `agent/planning/` | 当前运行的结构化计划状态 |
 | AgentRuntimeState | `agent/run_config.py` | 交互式 session 的当前 mode 和运行时 mode transition |
+| McpManager | `agent/mcp/` | MCP server 连接、discovery、tools/prompts/resources 调用和本地权限包装 |
 | SkillLoader / SkillRuntime | `agent/skills/` | 目录式 Markdown skill 加载、诊断、匹配、reload 和当前 run prompt 注入 |
 | SubAgentManager | `agent/subagent/manager.py` | 子 session runtime 管理：子 session、多次 run、状态与 transcript inspect |
 | TraceRecorder | `agent/trace_recorder.py` | 运行轨迹记录 |
@@ -58,6 +59,14 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 LSP 工具（`LspDefinition`、`LspReferences`、`LspHover`、`LspDocumentSymbols`、`LspWorkspaceSymbols`、`LspDiagnostics`）提供更丰富的语义代码理解能力，通过 `agent/lsp/` 模块管理 stdio LSP server 进程并按 (language, workspace_root) 缓存单例。Write/Edit 工具修改文件后会自动触发 LSP 诊断反馈。配置入口为 `tools.code_intelligence.lsp`。首版只支持 Python（需安装 `python-lsp-server`，可通过 `pip install asterwynd[lsp]` 或 `uv sync --extra lsp` 安装）；其他语言可在 `asterwynd.yaml` 中配置对应 server，但尚未官方验证。
 
+### MCP integration
+
+`agent/mcp/` 使用官方 Python MCP SDK 连接 MCP server。配置入口为顶层 `mcp.servers`，首版支持 `stdio` 和 `streamable_http` transport；Streamable HTTP 支持无认证或静态 headers / env headers，不内置 OAuth 流程。
+
+MCP tools 会包装为 `McpTool` 并注册到 ToolRegistry，模型可见名为 `mcp__<server>__<tool>`，内部仍保留原始 `(server, tool)` 用于 `tools/call`。Prompts 和 resources 不自动注册为工具；CLI/Web 通过 `/mcp`、`/mcp-prompt` 和 `/mcp-resource` 显式查看或读取，并以带来源标记的 system context 注入当前会话。
+
+MCP action 默认权限为 `origin=mcp`、`external_side_effect`、`high`，因此默认 build mode 需要审批；只有本地配置可以将指定 server/tool/prompt/resource 降为 `network_read` 或其他低风险 capability。MCP server 自身 annotation 只作为外部提示，不参与最终权限判定。
+
 ### WebSearch provider adapter
 
 `WebSearch` 通过 `SearchProviderRegistry` 调用搜索 provider adapter。provider 优先级来自 `asterwynd.yaml` 的 `tools.web_search.providers`；未配置时使用保守默认 `duckduckgo-html`。环境变量只提供 provider 凭据和端点，例如 `ASTERWYND_TAVILY_API_KEY`、`ASTERWYND_BRAVE_SEARCH_API_KEY` 和 `ASTERWYND_SEARXNG_BASE_URL`，不参与 provider 排序。
@@ -81,7 +90,7 @@ Skill 使用目录格式：`skills/<name>/SKILL.md`。`SkillLoader` 解析 front
 
 每次 Agent run 都会向模型注入简短 skill index，包含用户可调用 skill 的名称、描述和 `/skill-name <args>` 调用方式。完整 skill prompt 只在三种情况下进入当前 run context：`always: true`、本地 name/description/triggers 匹配当前用户输入、或通过 slash command / `ActivateSkill` 显式激活。注入内容不会写回 conversation memory。
 
-CLI 和 Web 复用 central slash command registry。`/skills` 展示当前加载结果，`/skills reload` 重新加载 configured roots；`/skill-name args` 会先 queue skill activation，再以 `args` 作为用户消息启动 Agent run，原始 slash command 不进入 LLM 普通消息。
+CLI 和 Web 复用 central slash command registry。`/skills` 展示当前加载结果，`/skills reload` 重新加载 configured roots；`/skill-name args` 会先 queue skill activation，再以 `args` 作为用户消息启动 Agent run，原始 slash command 不进入 LLM 普通消息。MCP 控制命令 `/mcp`、`/mcp-prompt` 和 `/mcp-resource` 不直接启动 Agent run；prompt/resource 结果以带来源标记的 system context 注入当前会话。
 
 ## Benchmark
 
