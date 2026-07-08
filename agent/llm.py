@@ -88,8 +88,24 @@ class BaseLLM:
 
     async def _stream_events(self, url: str, json: dict):
         """SSE 流式请求，yield (event_type, data_dict) tuples。"""
+        import logging
+        _logger = logging.getLogger("asterwynd.llm.base")
         client = await self._get_client()
         async with client.stream("POST", url, json=json) as response:
+            if response.status_code >= 400:
+                error_body = ""
+                try:
+                    error_body = await response.aread()
+                    error_body = error_body.decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+                _logger.error(
+                    "HTTP %s from %s\nRequest payload: %s\nResponse body: %s",
+                    response.status_code,
+                    url,
+                    json,
+                    error_body,
+                )
             response.raise_for_status()
             event_type = None
             async for line in response.aiter_lines():

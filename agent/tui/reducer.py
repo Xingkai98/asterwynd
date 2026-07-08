@@ -176,14 +176,16 @@ def _on_assistant_delta(state: TUIState, data: dict[str, Any]) -> TUIState:
 
 def _on_assistant_stream_complete(state: TUIState, data: dict[str, Any]) -> TUIState:
     content = data.get("content", state.assistant_streaming) or state.assistant_streaming
-    return replace(
-        state,
-        assistant_streaming="",
-        transcript=[
-            *state.transcript,
-            TranscriptEntry.assistant(content),
-        ],
-    )
+    state = replace(state, assistant_streaming="")
+    if content:
+        state = replace(
+            state,
+            transcript=[
+                *state.transcript,
+                TranscriptEntry.assistant(content),
+            ],
+        )
+    return state
 
 
 def _on_llm_response(state: TUIState, data: dict[str, Any]) -> TUIState:

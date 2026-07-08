@@ -25,6 +25,7 @@ from textual.widgets import (
 from agent.tui.commands import filter_commands_by_prefix, strip_command_prefix
 from agent.tui.reducer import TUIState, reduce_tui_state
 from agent.tui.widgets import (
+    ApprovalBar,
     PlanningPanel,
     SlashSuggestionList,
     StatusBar,
@@ -101,8 +102,40 @@ class TUIApp(App):
 
     #tui-approval-bar {
         height: auto;
-        padding: 0 1;
+        padding: 1;
+        margin: 0 1;
+        border: solid $warning;
+        background: $surface;
+    }
+
+    #tui-approval-bar.idle {
+        border: none;
+        background: transparent;
+        padding: 0;
+        height: 0;
+        overflow: hidden;
+    }
+
+    #approval-details {
+        align: center middle;
+        width: 100%;
+    }
+
+    #approval-text {
         color: $warning;
+        text-align: center;
+        width: auto;
+    }
+
+    #approval-buttons {
+        align: center middle;
+        width: 100%;
+        padding: 1 0 0 0;
+    }
+
+    #approval-buttons Button {
+        margin: 0 2;
+        min-width: 14;
     }
 
     .hidden {
@@ -149,7 +182,7 @@ class TUIApp(App):
             yield ToolSummaryPanel(id="tui-tool-summary")
             yield SlashSuggestionList(id="tui-suggestions")
 
-        yield Static(id="tui-approval-bar")
+        yield ApprovalBar(id="tui-approval-bar")
 
         with Container(id="tui-input-container"):
             yield Input(
@@ -160,6 +193,9 @@ class TUIApp(App):
     def on_mount(self) -> None:
         """Initialize refresh timers and initial state after mount."""
         self._update_status_bar()
+
+        approval_bar = self.query_one("#tui-approval-bar", ApprovalBar)
+        approval_bar._on_decision = self._handle_approval_decision
 
         self.set_interval(0.15, self._refresh_display)
 
@@ -175,8 +211,27 @@ class TUIApp(App):
             status.run_id = state.run_id
             status.mode = state.current_mode
             status.is_running = state.is_running
+            status.activity = self._compute_activity(state)
         else:
             status.session_id = self.session_id
+
+    @staticmethod
+    def _compute_activity(state: TUIState) -> str:
+        """Derive a human-readable activity label from TUI state."""
+        if not state.is_running:
+            return ""
+        # Approval pending
+        if state.pending_approval:
+            tool = state.pending_approval.get("tool_name", "tool")
+            return f"[bold yellow]Awaiting approval: {tool}[/]"
+        # Tool currently executing
+        running_tools = [t for t in state.tool_events if t.status == "running"]
+        if running_tools:
+            return f"[bold cyan]Running: {running_tools[-1].name}[/]"
+        # LLM thinking (streaming or waiting for first response)
+        if state.assistant_streaming:
+            return "[bold cyan]Streaming...[/]"
+        return "[bold cyan]Thinking...[/]"
 
     def _refresh_display(self) -> None:
         """Refresh all widgets from controller state."""
@@ -187,6 +242,7 @@ class TUIApp(App):
 
         transcript = self.query_one("#tui-transcript", TranscriptArea)
         self._sync_transcript(transcript, state)
+        transcript.update_streaming(state.assistant_streaming)
 
         tool_panel = self.query_one("#tui-tool-summary", ToolSummaryPanel)
         tool_panel.update_tools(state.tool_events)
@@ -197,20 +253,19 @@ class TUIApp(App):
         suggestions = self.query_one("#tui-suggestions", SlashSuggestionList)
         suggestions.update_suggestions(self._slash_suggestions)
 
-        approval_bar = self.query_one("#tui-approval-bar", Static)
+        approval_bar = self.query_one("#tui-approval-bar", ApprovalBar)
         if state.pending_approval:
             req = state.pending_approval
-            tool_name = req.get("tool_name", "unknown")
-            reason = req.get("reason", "")
-            args_summary = req.get("args_summary", "")
-            approval_bar.update(
-                f"[bold yellow]! Approval Required:[/] {tool_name}\n"
-                f"  Reason: {reason}\n"
-                f"  Args: {args_summary}\n"
-                f"  Type [bold]/approve[/] or [bold]/deny[/] to respond."
+            approval_bar.show_approval(
+                pending_id=req.get("approval_id", ""),
+                tool_name=str(req.get("tool_name", "unknown")),
+                reason=str(req.get("reason", "")),
+                args_summary=str(req.get("args_summary", "")),
             )
+            if self._running_worker:
+                self.query_one("#tui-input", Input).disabled = False
         else:
-            approval_bar.update("")
+            approval_bar.hide()
 
     def _sync_transcript(self, transcript: TranscriptArea, state: TUIState) -> None:
         """Append transcript entries that are not yet rendered."""
@@ -228,10 +283,6 @@ class TUIApp(App):
                 log.write(f"[dim italic]{entry.content}[/]")
 
         self._transcript_line_count = target_lines
-
-        if state.assistant_streaming and not self._running_worker:
-            # Only show streaming during active run
-            pass
 
     def _submit_user_input(self, text: str) -> None:
         """Submit user input to the controller in a background worker."""
@@ -269,41 +320,13 @@ class TUIApp(App):
             input_widget.focus()
             self._refresh_display()
 
-    def _check_approval(self, user_input: str) -> bool:
-        """Return True when user input is consumed as an approval decision.
-
-        Returns:
-            True when input was consumed as approval.
-        """
+    def _handle_approval_decision(self, pending_id: str, decision: str) -> None:
+        """Resolve a pending approval via the ApprovalBar buttons."""
         if self._controller is None:
-            return False
-        state = self._controller.state
-        if state.pending_approval is None:
-            return False
-
+            return
         approval_handler = getattr(self._controller.agent, "approval_handler", None)
-        if approval_handler is None:
-            return False
-
-        pending_id = getattr(approval_handler, "pending_approval_id", None)
-        if pending_id is None:
-            return False
-
-        decision = user_input.strip()
-        if not decision:
-            return False
-
-        if decision.startswith("/"):
-            cmd_name, _remainder = strip_command_prefix(decision)
-            if cmd_name in ("approve", "yes", "y", "accept"):
-                approval_handler.submit_response(pending_id, "approved")
-                return True
-            if cmd_name in ("deny", "no", "n", "reject"):
-                approval_handler.submit_response(pending_id, "denied")
-                return True
-
-        approval_handler.submit_response(pending_id, decision)
-        return True
+        if approval_handler is not None:
+            approval_handler.submit_response(pending_id, decision)
 
     def action_cancel_or_clear(self) -> None:
         """Clear input or cancel the current run."""
@@ -336,9 +359,6 @@ class TUIApp(App):
         event.input.clear()
 
         if not user_input:
-            return
-
-        if self._check_approval(user_input):
             return
 
         if user_input.startswith("/"):

@@ -41,6 +41,7 @@ class TUIController:
         self.state = TUIState(session_id=session_id)
         self.messages: list[Message] = []
         self.should_exit = False
+        self._current_run_task: asyncio.Task | None = None
 
         # Initialize messages with system prompt
         self.messages.append(
@@ -85,6 +86,7 @@ class TUIController:
         async def on_event(event_type: str, data: dict) -> None:
             await self._handle_event(event_type, data)
 
+        self._current_run_task = asyncio.current_task()
         try:
             if "on_event" in inspect.signature(self.agent.run).parameters:
                 result = await self.agent.run(
@@ -99,12 +101,21 @@ class TUIController:
                     session_id=self.session_id,
                     run_id=run_id,
                 )
+        except asyncio.CancelledError:
+            logger.info("Agent run cancelled by user")
+            await self._handle_event("done", {
+                "content": "",
+                "stop_reason": "cancelled",
+            })
+            return {"session_id": self.session_id, "run_id": run_id, "cancelled": True}
         except Exception as exc:
             logger.exception("AgentLoop run failed")
             await self._handle_event("error", {
                 "message": f"{type(exc).__name__}: {exc}",
             })
             return {"session_id": self.session_id, "run_id": run_id, "error": str(exc)}
+        finally:
+            self._current_run_task = None
 
         return {"session_id": self.session_id, "run_id": run_id, "result": result}
 
@@ -197,8 +208,10 @@ class TUIController:
         )
 
     def cancel_run(self) -> None:
-        """Mark the current run as cancelled in TUI state."""
+        """Cancel the current AgentLoop run and update TUI state."""
         self.state = reduce_tui_state(self.state, "done", {
             "content": "",
             "stop_reason": "cancelled",
         })
+        if self._current_run_task is not None and not self._current_run_task.done():
+            self._current_run_task.cancel()

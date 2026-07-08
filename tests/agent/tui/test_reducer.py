@@ -314,6 +314,35 @@ def test_add_user_message_appends_to_existing():
 # error event
 # ---------------------------------------------------------------------------
 
+def test_assistant_stream_complete_empty_content_after_tool_call_does_not_add_entry():
+    """流式模式下 LLM 只返回 tool call 无文本时，不应添加空白 transcript 条目。"""
+    state = _initial_state()
+    state = reduce_tui_state(state, "run_started", {
+        "mode": "build",
+        "run_id": "run-1",
+    })
+    # Simulate: LLM streams tool call with no text
+    state = reduce_tui_state(state, "assistant_stream_complete", {
+        "content": "",
+        "stop_reason": "tool_calls",
+    })
+    assert len(state.transcript) == 0, (
+        "tool-only streaming response should not add empty assistant entry"
+    )
+
+
+def test_assistant_stream_complete_preserves_content_when_non_empty():
+    """正常文本回复的 assistant_stream_complete 不受影响。"""
+    state = _initial_state()
+    state = reduce_tui_state(state, "assistant_delta", {"delta": "Hi", "content": "Hi"})
+    state = reduce_tui_state(state, "assistant_stream_complete", {
+        "content": "Hi",
+        "stop_reason": "end_turn",
+    })
+    assert len(state.transcript) == 1
+    assert state.transcript[0].content == "Hi"
+
+
 def test_error_event_adds_transcript_and_stops():
     state = _initial_state()
     state.is_running = True
