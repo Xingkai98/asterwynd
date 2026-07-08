@@ -10,7 +10,7 @@
 - 新增 **handoff note 机制**：agent 间交接时生成自然语言上下文文档（优先使用 handoff skill，不可用时内置等价 prompt fallback），与 `handoff.json` 互补
 - 新增 **human review gate**：每个 phase 末端设置人工审批点，人在 gate 点可确认通过、跳过下一阶段或回退
 - 新增 **回退路径**：人在任意阶段可发起回退到之前的 phase + sub_state，或 agent 在实现中发现问题时可建议回退
-- 新增 **phase 级路由配置**：每个 phase 可独立配置 executor（inline / subagent / claude-code）和 session 模式（same / new / ask），项目全局默认值可被 per-change 覆盖
+- 新增 **phase 级路由配置**：每个 phase 可独立配置 executor（inline / subagent / claude-code / codex）和 session 模式（same / new / ask），项目全局默认值可被 per-change 覆盖
 
 ## Capabilities
 

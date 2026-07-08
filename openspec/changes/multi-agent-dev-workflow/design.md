@@ -100,6 +100,7 @@ Planner / Reviewer / Builder / CodeReviewer / Closer 都作为现有 subagent ru
 | `inline` | 当前 session 直接处理 | 快速讨论、小改动、单 agent 全流程 |
 | `subagent` | 创建子 session，角色 agent 类型自动匹配 | 阶段间隔离、并行开发 |
 | `claude-code` | 调 `claude` CLI 子进程 | 用外部 Claude Code 实例执行 |
+| `codex` | 调 Codex CLI 子进程 | 用外部 Codex 实例执行 |
 
 **Session 模式:**
 
@@ -110,7 +111,7 @@ Planner / Reviewer / Builder / CodeReviewer / Closer 都作为现有 subagent ru
 | `ask` | 每次 gate 点问人 |
 
 **默认值策略:**
-- 初始默认: planning=inline/same, reviewing=subagent/new, building=subagent/new, code-review=subagent/new, closing=inline/same
+- 初始默认: planning=inline/same, reviewing=codex/new, building=inline/same, code-review=codex/new, closing=inline/same
 - 创建 change 时提示配置，人不改就用默认值
 - gate 点 `session_mode: ask` 时再问一次
 
