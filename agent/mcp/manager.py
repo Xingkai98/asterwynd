@@ -74,10 +74,8 @@ class McpManager:
                 )
                 continue
             try:
-                await asyncio.wait_for(
-                    self._connect_server(server_config, used_names),
-                    timeout=server_config.startup_timeout_seconds,
-                )
+                async with asyncio.timeout(server_config.startup_timeout_seconds):
+                    await self._connect_server(server_config, used_names)
             except Exception as exc:
                 message = f"{type(exc).__name__}: {exc}"
                 self._statuses[server_name] = McpServerStatus(
