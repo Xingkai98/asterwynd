@@ -6,7 +6,7 @@
 
 - 新增 **开发流程状态机**：定义 change 全生命周期的 phase、sub_state、合法流转路径和 gate 点
 - 新增 **`handoff.json`**：change 目录下的结构化全局状态文件，作为 agent 交接和工具链校验的唯一数据源
-- 新增 **四个 agent 角色**：Planner（规划）、Reviewer（审查）、Builder（构建）、Closer（收尾），分别对应开发流程的阶段组合
+- 新增 **五个 agent 角色**：Planner（规划）、Reviewer（设计审查）、Builder（构建）、CodeReviewer（代码审查）、Closer（收尾），分别对应开发流程的五个阶段
 - 新增 **handoff note 机制**：agent 间交接时生成自然语言上下文文档（优先使用 handoff skill，不可用时内置等价 prompt fallback），与 `handoff.json` 互补
 - 新增 **human review gate**：每个 phase 末端设置人工审批点，人在 gate 点可确认通过、跳过下一阶段或回退
 - 新增 **回退路径**：人在任意阶段可发起回退到之前的 phase + sub_state，或 agent 在实现中发现问题时可建议回退

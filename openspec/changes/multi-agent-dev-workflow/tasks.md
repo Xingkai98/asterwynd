@@ -13,10 +13,11 @@
 - [ ] 2.2 状态机流转单元测试：四种 trigger 类型、所有合法 phase 流转路径、回退路径、skip 路径。
 - [ ] 2.3 handoff note 生成单元测试：handoff skill 可用路径、fallback prompt 路径、文件写入 `.handoff/` 目录。
 - [ ] 2.4 角色 agent 路由集成测试：给定 state 创建正确类型子 session；同一 agent 连续多阶段不切换。
-- [ ] 2.5 human review gate 流转测试：`human_review` trigger 通过、跳过、回退。
-- [ ] 2.6 阻塞状态流转测试：进入 blocked 和解除阻塞。
-- [ ] 2.7 Artifact checker 新增校验项测试：`handoff.json` 存在性、必填字段非空。
-- [ ] 2.8 路由配置单元测试：executor 枚举校验、session_mode 枚举校验、两层覆盖（全局默认 + per-change）逻辑。
+- [ ] 2.5 code-review phase 流转测试：`reading_diff` → `analyzing_tests` → `reviewing_code` ⇄ `requesting_changes` → `ready_for_review` → 回退到 `building`。
+- [ ] 2.6 human review gate 流转测试：`human_review` trigger 通过、跳过、回退。
+- [ ] 2.7 阻塞状态流转测试：进入 blocked 和解除阻塞。
+- [ ] 2.8 Artifact checker 新增校验项测试：`handoff.json` 存在性、必填字段非空。
+- [ ] 2.9 路由配置单元测试：executor 枚举校验、session_mode 枚举校验、两层覆盖（全局默认 + per-change）逻辑。
 
 ## 3. 实现
 
@@ -25,7 +26,7 @@
 - [ ] 3.3 实现 `handoff.json` 初始化逻辑（创建 change 时自动生成，初始状态 `planning.exploring`）。
 - [ ] 3.4 实现 handoff note 生成模块：优先调用 `handoff` skill，不可用时使用内置 fallback prompt。
 - [ ] 3.5 实现 `.handoff/` 目录创建和 `.gitignore` 规则。
-- [ ] 3.6 实现角色 agent 类型注册表（Planner / Reviewer / Builder / Closer），映射到 phase 和 sub_state。
+- [ ] 3.6 实现角色 agent 类型注册表（Planner / Reviewer / Builder / CodeReviewer / Closer），映射到 phase 和 sub_state。
 - [ ] 3.7 实现角色 agent 路由逻辑：根据 `handoff.json` state 选择 agent 类型并创建子 session。
 - [ ] 3.8 实现路由配置模块：两层覆盖（全局默认 + per-change）、executor 分发（inline / subagent / claude-code）、session_mode 控制。
 - [ ] 3.9 实现创建 change 时路由配置提示交互：展示默认配置、询问是否调整。

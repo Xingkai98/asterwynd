@@ -11,7 +11,7 @@
 
 **Goals:**
 - 将开发流程建模为可校验的状态机，每个 change 维护全局状态文件 `handoff.json`
-- 定义 Planner / Reviewer / Builder / Closer 四个角色 agent，作为 subagent 运行
+- 定义 Planner / Reviewer / Builder / CodeReviewer / Closer 五个角色 agent，作为 subagent 运行
 - 实现 agent 间结构化 handoff（`handoff.json` + 自然语言 handoff note）
 - 每个 phase 末端设 human review gate，人可确认通过、跳过或回退
 - 允许单 agent 完成全流程，不强制切换 agent
@@ -83,7 +83,7 @@ append to transitions, update current state, and set next hints.
 
 ### Decision 7: 角色 agent 作为 subagent 运行
 
-Planner / Reviewer / Builder / Closer 都作为现有 subagent runtime 的实例。路由逻辑（哪个 change 的哪个 phase 启动哪个 role）在父 session 中完成，然后创建对应类型子 session，传入 change 目录路径和 `handoff.json` 作为上下文。不引入新的 runtime 层。
+Planner / Reviewer / Builder / CodeReviewer / Closer 都作为现有 subagent runtime 的实例。路由逻辑（哪个 change 的哪个 phase 启动哪个 role）在父 session 中完成，然后创建对应类型子 session，传入 change 目录路径和 `handoff.json` 作为上下文。不引入新的 runtime 层。
 
 ### Decision 8: 不强制 agent 切换
 
@@ -110,7 +110,7 @@ Planner / Reviewer / Builder / Closer 都作为现有 subagent runtime 的实例
 | `ask` | 每次 gate 点问人 |
 
 **默认值策略:**
-- 初始默认: planning=inline/same, reviewing=subagent/new, building=subagent/new, closing=inline/same
+- 初始默认: planning=inline/same, reviewing=subagent/new, building=subagent/new, code-review=subagent/new, closing=inline/same
 - 创建 change 时提示配置，人不改就用默认值
 - gate 点 `session_mode: ask` 时再问一次
 
