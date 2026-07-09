@@ -2,7 +2,7 @@
 
 ### Requirement: TodoWrite 工具
 
-系统 SHALL 提供 `TodoWrite` 工具，用于在任意 Agent Mode 下维护结构化的执行期任务列表。TodoWrite SHALL 支持 `create`、`update` 和 `list` 操作。每个 todo item SHALL 包含 id、content、status 和可选的 notes 字段。
+系统 SHALL 提供 `TodoWrite` 工具，用于在任意 Agent Mode 下维护结构化的执行期任务列表。TodoWrite SHALL 支持 `create`、`update` 和 `list` 操作。每个 todo item SHALL 包含 id、content、status 和可选的 note 字段。
 
 #### Scenario: 创建新任务
 

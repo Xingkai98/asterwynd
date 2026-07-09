@@ -49,12 +49,12 @@
 
 ### 第七批：基础能力补全
 
-基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
+基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 5 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 4/5 可并行。
 
-- `improve-agent-execution-foundation`：Agent 执行可靠性——todo 任务追踪 + 工具错误恢复重试。
+- `improve-agent-execution-foundation`：已合入并归档。
 - `add-parallel-tool-execution`：AgentLoop 并行工具执行——独立只读调用并发化。
 - `add-persistent-cross-session-memory`：跨 session 持久记忆——user/feedback/project/reference 四类，与 Claude Code 格式兼容。
-- `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
+
 - `add-multimodal-input-support`：图片/多模态输入——Message 协议扩展 + Read 工具图片支持。
 - `add-background-task-execution-and-session-persistence`：后台任务执行 + 会话保存/恢复。
 
@@ -80,23 +80,6 @@
 - `@app.callback(invoke_without_command=True)` 默认交互；`run` 子命令单轮；删除 `--interactive` 和 `main` 子命令。
 - XDG 日志路径 + CWD `.env` 搜索。
 - `pyproject.toml` 元数据补全（MIT license、classifiers 等）。
-
-### 1. `improve-agent-execution-foundation`
-
-状态：未实现。
-
-批次：第七批，第一批可并行推进。
-
-建议顺序原因：
-
-- Todo 追踪和错误重试都是小改动、低风险、高回报。
-- 不依赖其他 change，可独立开发合入。
-
-主要交付：
-
-- `TodoWrite` 工具（create/update/list）。
-- AgentLoop 接入 RetryHook，基于错误类型分类的重试策略。
-- build mode 系统消息注入 todo 状态；TUI/Web 可选 todo 面板。
 
 ### 2. `add-parallel-tool-execution`
 
@@ -132,24 +115,7 @@
 - `SaveMemory` / `RecallMemory` 工具。
 - AgentLoop 系统消息注入持久记忆上下文。
 
-### 4. `add-semantic-code-search`
-
-状态：未实现。
-
-批次：第七批第一批，可并行推进。
-
-建议顺序原因：
-
-- 完全独立的 code_intelligence 模块扩展。
-- 不影响 AgentLoop 核心路径。
-
-主要交付：
-
-- `agent/code_intelligence/embeddings.py` — embedding 模型加载和编码。
-- `agent/code_intelligence/index.py` — sqlite-vec 向量索引。
-- `SearchSimilar` 语义搜索工具。
-
-### 5. `add-multimodal-input-support`
+### 4. `add-multimodal-input-support`
 
 状态：未实现。
 
@@ -167,7 +133,7 @@
 - Read 工具图片识别 + base64 编码。
 - OpenAI/Anthropic adapter 多模态格式转换。
 
-### 6. `add-background-task-execution-and-session-persistence`
+### 5. `add-background-task-execution-and-session-persistence`
 
 状态：未实现。
 
@@ -184,7 +150,7 @@
 - `TaskOutput` / `TaskStop` 工具。
 - SessionStore 序列化/恢复 + CLI `--resume`。
 
-### 7. `add-minimal-tui-runtime-view`
+### 6. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -202,7 +168,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 8. `add-browser-use-safety-foundation`
+### 7. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

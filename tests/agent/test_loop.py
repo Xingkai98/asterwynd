@@ -1119,3 +1119,247 @@ async def test_agent_loop_activate_skill_tool_adds_context_for_next_llm_call():
         for name, payload in events
         if name == "skill_activated"
     ]
+
+
+@pytest.mark.asyncio
+async def test_todo_write_tool_registered_in_all_modes():
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+    schemas = {s["function"]["name"]: s for s in loop.tool_registry.get_all_schemas()}
+    assert "TodoWrite" in schemas
+
+    await loop.set_mode("read_only", source="test")
+    schemas = {s["function"]["name"]: s for s in loop.tool_registry.get_all_schemas()}
+    assert "TodoWrite" in schemas
+
+    await loop.set_mode("plan", source="test")
+    schemas = {s["function"]["name"]: s for s in loop.tool_registry.get_all_schemas()}
+    assert "TodoWrite" in schemas
+
+
+@pytest.mark.asyncio
+async def test_todo_context_injected_in_build_mode():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+    loop._todo_create("Task 1")
+    loop._todo_create("Task 2")
+    loop._todo_update("todo-1", "in_progress", None)
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "## Current Progress" in contents
+    assert "Task 1" in contents
+    assert "Task 2" in contents
+
+
+@pytest.mark.asyncio
+async def test_todo_context_not_injected_when_empty():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "## Current Progress" not in contents
+
+
+@pytest.mark.asyncio
+async def test_todo_context_not_injected_in_plan_mode():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.PLAN),
+    )
+    loop._todo_create("Task 1")
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "## Current Progress" not in contents
+
+
+@pytest.mark.asyncio
+async def test_todo_updated_event_published():
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    class TodoThenDoneLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallDelta(
+                            id="t1",
+                            name="TodoWrite",
+                            arguments=json.dumps({"operation": "create", "content": "Test task"}),
+                        )
+                    ],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    loop = AgentLoop(
+        llm=TodoThenDoneLLM(),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+
+    await loop.run([Message(role="user", content="test")], on_event=on_event)
+
+    todo_events = [e for e in events if e[0] == "todo_updated"]
+    assert len(todo_events) == 1
+    assert len(todo_events[0][1]["items"]) == 1
+    assert todo_events[0][1]["items"][0]["content"] == "Test task"
+
+
+@pytest.mark.asyncio
+async def test_retry_on_timeout_error():
+    call_count = [0]
+
+    class FlakyEchoTool(Tool):
+        name = "FlakyEcho"
+        description = "Flaky"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            call_count[0] += 1
+            if call_count[0] < 3:
+                raise TimeoutError("timeout")
+            return "echo!"
+
+    class FlakyThenDoneLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="c1", name="FlakyEcho", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(FlakyEchoTool())
+    loop = AgentLoop(
+        llm=FlakyThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+    assert call_count[0] == 3
+
+
+@pytest.mark.asyncio
+async def test_no_retry_on_value_error():
+    call_count = [0]
+
+    class ValueErrorTool(Tool):
+        name = "ValueErrorTool"
+        description = "Raises ValueError"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            call_count[0] += 1
+            raise ValueError("invalid arguments")
+
+    class ValueErrorThenDoneLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="c1", name="ValueErrorTool", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(ValueErrorTool())
+    loop = AgentLoop(
+        llm=ValueErrorThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+    assert call_count[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_not_retried():
+    call_count = [0]
+
+    class TimeoutBashTool(Tool):
+        name = "Bash"
+        description = "Bash"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            call_count[0] += 1
+            raise ConnectionError("connection timed out")
+
+    class BashThenDoneLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="c1", name="Bash", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(TimeoutBashTool())
+    loop = AgentLoop(
+        llm=BashThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+    assert call_count[0] == 1
