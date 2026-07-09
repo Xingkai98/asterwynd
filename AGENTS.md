@@ -88,9 +88,9 @@ Issues 和 PRD 发布到 GitHub Issues，仓库为 `Xingkai98/asterwynd`。见 [
 uv sync --extra dev
 uv run pytest -q
 uv run pytest tests/agent/tools/test_registry.py -v
-uv run python cli.py main "用 Read 工具读 /tmp"
-uv run python cli.py web --port 8000
-uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke
+uv run asterwynd run "用 Read 工具读 /tmp"
+uv run asterwynd web --port 8000
+uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke
 ```
 
 更多命令见 [开发指南](./docs/development-guide.md)。

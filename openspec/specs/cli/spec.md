@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义 Typer CLI 的命令入口、参数、非交互运行、Web 启动和 benchmark 启动。当前入口为 `cli.py`。
+定义 Typer CLI 的命令入口、参数、非交互运行、Web 启动和 benchmark 启动。入口模块为 `agent/main.py`，entry point 为 `asterwynd`。
 ## Requirements
 ### Requirement: CLI 构造默认 AgentLoop
 
@@ -250,7 +250,7 @@ CLI 交互模式 SHALL 通过 central slash command registry 暴露 `/mcp`、`/m
 
 #### Scenario: 启动 web
 
-- **GIVEN** 用户执行 `uv run python cli.py web --port 8000`
+- **GIVEN** 用户执行 `uv run asterwynd web --port 8000`
 - **WHEN** 命令启动成功
 - **THEN** CLI SHALL 输出访问地址、provider、model 和 debug 状态
 - **AND** 使用 uvicorn 运行 app

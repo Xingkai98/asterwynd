@@ -85,7 +85,7 @@ def web_server():
     env.setdefault("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
 
     proc = subprocess.Popen(
-        [sys.executable, str(PROJECT_ROOT / "cli.py"), "web", "--port", str(WEB_PORT)],
+        [sys.executable, "-m", "agent.main", "web", "--port", str(WEB_PORT)],
         cwd=str(PROJECT_ROOT),
         env=env,
         stdout=subprocess.PIPE,

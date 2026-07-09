@@ -43,7 +43,7 @@
   - `agent/tools/builtin/tasks.py`（新增 TaskOutput / TaskStop）
   - `agent/tools/factory.py`
   - `agent/loop.py`（后台任务结果注入、session save/restore）
-  - `cli.py`（新增 --resume 参数）
+  - `agent/main.py`（新增 --resume 参数）
 - 影响测试：
   - `tests/agent/test_background.py`
   - `tests/agent/test_session.py`

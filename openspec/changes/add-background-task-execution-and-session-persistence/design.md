@@ -97,8 +97,8 @@ class SessionSnapshot:
 #### B.4 恢复入口
 
 ```bash
-uv run python cli.py main --resume <session_id>
-uv run python cli.py web --resume <session_id>
+uv run asterwynd run --resume <session_id>
+uv run asterwynd web --resume <session_id>
 ```
 
 恢复流程：
@@ -112,10 +112,10 @@ uv run python cli.py web --resume <session_id>
 #### B.5 CLI 变更
 
 ```
-cli.py main [--resume SESSION_ID]
-cli.py web [--resume SESSION_ID]
-cli.py session list     # 列出可恢复 session
-cli.py session rm ID    # 删除某个 session
+asterwynd run --resume <session_id>
+asterwynd web --resume <session_id>
+asterwynd session list     # 列出可恢复 session
+asterwynd session rm ID    # 删除某个 session
 ```
 
 ### 子能力间的交互

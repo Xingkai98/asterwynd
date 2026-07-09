@@ -113,7 +113,7 @@ Benchmark 测试要和模型质量解耦，优先使用 fake agent 和临时 git
 
 ```bash
 uv run pytest tests/benchmark -q
-uv run python cli.py benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke
+uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke
 ```
 
 涉及 AgentLoop、coding tools、workspace safety、benchmark runner 或其他 coding-agent 核心路径的变更，除了相关单元/集成测试外，至少跑通一个 benchmark smoke。优先选择能验证真实 runner 闭环的任务；如果改动影响外部 SWE-bench 风格任务，至少单独跑一个 `swebench-*` 任务。
@@ -127,7 +127,7 @@ rm -rf /tmp/asterwynd-one-swe-task /tmp/asterwynd-swe-smoke
 mkdir -p /tmp/asterwynd-one-swe-task
 ln -s "$PWD/benchmarks/tasks/swebench-psf__requests-5414" \
   /tmp/asterwynd-one-swe-task/swebench-psf__requests-5414
-uv run python cli.py benchmark /tmp/asterwynd-one-swe-task \
+uv run asterwynd benchmark /tmp/asterwynd-one-swe-task \
   --agent shell \
   --shell-command "git apply $PWD/benchmarks/tasks/swebench-psf__requests-5414/gold.patch" \
   --source-repo . \
@@ -141,7 +141,7 @@ uv run python cli.py benchmark /tmp/asterwynd-one-swe-task \
 sudo ./scripts/start-docker-daemon.sh
 ```
 
-Claw-SWE-Bench 集成使用独立 harness，不通过 `cli.py benchmark`。如果改动影响 `claw-swe-bench/` 或 `agent/claw_solve.py`，在环境具备 Docker 镜像和 API key 时至少跑一个单实例 smoke：
+Claw-SWE-Bench 集成使用独立 harness，不通过 `asterwynd benchmark`。如果改动影响 `claw-swe-bench/` 或 `agent/claw_solve.py`，在环境具备 Docker 镜像和 API key 时至少跑一个单实例 smoke：
 
 ```bash
 cd claw-swe-bench
