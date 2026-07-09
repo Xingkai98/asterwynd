@@ -141,6 +141,16 @@ SearchSimilar(query: str, top_n: int = 5) -> str
 - SearchSimilar 工具测试：自然语言查询、代码片段查询。
 - 降级测试：模型不可用、空仓库、超时。
 - 懒构建性能测试：中等仓库 < 60s。
-## Pre-Implementation Review
+## Cancellation Record
 
-待 `grill-with-docs` 执行后填写。
+**决策**: 取消此 change，归档不实现。
+
+**日期**: 2026-07-09
+
+**原因**:
+
+1. **与 CONTEXT.md 冲突**: 项目词汇表明确将 "持久向量索引" 列为 Code Intelligence 和 Repo Map 的 _避免_ 项。本 change 的核心交付物（sqlite-vec 持久向量索引）直接违反该约束。
+2. **优先级不匹配**: 当前 benchmark 瓶颈在执行可靠性（多文件任务、跨文件 trace propagation、task 拆解），而非搜索多样性。现有 Grep + SymbolSearch + RepoMap + LSP 工具已覆盖 agent 当前搜索需求。
+3. **路线图对齐**: 项目差异化定位是 "explainable, reproducible, benchmarkable local coding agent"，优先投入 benchmark 通过率比引入体验类搜索功能更有证明力。
+
+**后续**: 如未来需增强代码搜索能力，建议先探索基于 tree-sitter AST 结构相似度的轻量方案，避免引入 embedding 模型和持久向量索引的复杂度。

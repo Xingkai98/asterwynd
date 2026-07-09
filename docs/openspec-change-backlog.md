@@ -120,24 +120,7 @@
 
 批次：第七批第一批，已合入。
 
-### 4. `add-semantic-code-search`
-
-状态：未实现。
-
-批次：第七批第一批，可并行推进。
-
-建议顺序原因：
-
-- 完全独立的 code_intelligence 模块扩展。
-- 不影响 AgentLoop 核心路径。
-
-主要交付：
-
-- `agent/code_intelligence/embeddings.py` — embedding 模型加载和编码。
-- `agent/code_intelligence/index.py` — sqlite-vec 向量索引。
-- `SearchSimilar` 语义搜索工具。
-
-### 5. `add-multimodal-input-support`
+### 4. `add-multimodal-input-support`
 
 状态：未实现。
 
@@ -155,7 +138,7 @@
 - Read 工具图片识别 + base64 编码。
 - OpenAI/Anthropic adapter 多模态格式转换。
 
-### 6. `add-background-task-execution-and-session-persistence`
+### 5. `add-background-task-execution-and-session-persistence`
 
 状态：未实现。
 
@@ -172,7 +155,7 @@
 - `TaskOutput` / `TaskStop` 工具。
 - SessionStore 序列化/恢复 + CLI `--resume`。
 
-### 7. `add-minimal-tui-runtime-view`
+### 6. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -190,7 +173,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 8. `add-browser-use-safety-foundation`
+### 7. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
