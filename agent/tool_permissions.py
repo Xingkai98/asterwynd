@@ -126,6 +126,10 @@ AGENT_STATE_PERMISSION = ToolPermission(
     capabilities=frozenset({ToolCapability.AGENT_STATE}),
     risk_level=ToolRiskLevel.MEDIUM,
 )
+AGENT_STATE_LOW_PERMISSION = ToolPermission(
+    capabilities=frozenset({ToolCapability.AGENT_STATE}),
+    risk_level=ToolRiskLevel.LOW,
+)
 SUBAGENT_CONTROL_PERMISSION = ToolPermission(
     capabilities=frozenset({ToolCapability.SUBAGENT_CONTROL}),
     risk_level=ToolRiskLevel.MEDIUM,
