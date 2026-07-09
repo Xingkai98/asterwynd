@@ -13,17 +13,18 @@
 
 #### Scenario: 记忆更新
 
-- **GIVEN** 已存在一条 name 为 `user_role` 的记忆
-- **WHEN** agent 调用 SaveMemory 且 name 为 `user_role`
+- **GIVEN** 已存在一条 name 为 `user-role` 的记忆
+- **WHEN** agent 调用 SaveMemory 且 name 为 `user-role`
 - **THEN** 系统 SHALL 更新 `<name>.md` 文件内容
 - **AND** 系统 SHALL 更新 MEMORY.md 中对应的索引行
 
-#### Scenario: 记忆读取
+#### Scenario: 记忆索引注入
 
 - **GIVEN** MEMORY.md 包含 3 条索引，对应 3 个有效记忆文件
 - **WHEN** AgentLoop 启动
-- **THEN** PersistentMemory SHALL 读取全部 3 条记忆的全文
-- **AND** 内容 SHALL 注入到系统消息中
+- **THEN** PersistentMemory SHALL 读取 MEMORY.md 索引内容（不超过 200 行 / 25KB）
+- **AND** 索引内容 SHALL 注入到系统消息中
+- **AND** 各记忆文件的全文 SHALL NOT 自动注入
 
 #### Scenario: 无记忆时不注入
 
@@ -40,7 +41,14 @@
 
 ### Requirement: SaveMemory 工具
 
-系统 SHALL 提供 `SaveMemory` 工具。参数 SHALL 包含 `type`（user/feedback/project/reference）、`name`（kebab-case slug）、`description`（一行摘要）、`body`（Markdown 正文）。
+系统 SHALL 提供 `SaveMemory` 工具。参数 SHALL 包含 `type`（user/feedback/project/reference）、`name`（kebab-case slug，仅允许 `[a-z0-9-]+`）、`description`（一行摘要）、`body`（Markdown 正文）。YAML frontmatter SHALL 由工具自动生成，agent 无需手写。
+
+#### Scenario: name 格式校验
+
+- **GIVEN** agent 传入 name 包含非法字符（如空格、中文）
+- **WHEN** 调用 SaveMemory
+- **THEN** 系统 SHALL 返回格式错误信息
+- **AND** 不写入任何文件
 
 #### Scenario: 写入记忆更新 MEMORY.md 索引
 

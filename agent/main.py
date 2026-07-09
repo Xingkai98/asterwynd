@@ -37,6 +37,7 @@ from agent.workspace_policy import WorkspacePolicy
 from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
+from agent.memory.persistent import PersistentMemory
 from agent.llm import LLM
 from agent.mcp import build_mcp_manager
 from agent.run_identity import new_run_id, new_session_id
@@ -185,6 +186,8 @@ def _build_agent_core(
     workspace_policy = WorkspacePolicy(
         command_denylist=config.tools.command_denylist,
     )
+    persistent_memory = PersistentMemory(workspace_policy.workspace_root)
+
     registry = build_default_tool_registry(
         policy=workspace_policy,
         mode_policy=ModePolicy(
@@ -196,6 +199,7 @@ def _build_agent_core(
         code_intelligence_config=config.tools.code_intelligence,
         web_search_config=config.tools.web_search,
         mcp_manager=mcp_manager,
+        persistent_memory=persistent_memory,
     )
 
     hooks = HookManager([
@@ -217,6 +221,7 @@ def _build_agent_core(
         tool_registry=registry,
         hooks=hooks,
         memory=memory,
+        persistent_memory=persistent_memory,
         subagent_manager=subagent_manager,
         expose_subagent_tools=True,
         run_config=run_config,
