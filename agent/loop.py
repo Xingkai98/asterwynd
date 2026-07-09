@@ -440,6 +440,8 @@ class AgentLoop:
             # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
             messages.append(Message(role="assistant", content=response.content or "", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
 
+            # Phase 1: Pre-process tool calls (parse, validate, approve)
+            pending: list[dict] = []
             for delta in response.tool_calls:
                 try:
                     arguments = self._parse_arguments(delta.arguments)
@@ -456,7 +458,6 @@ class AgentLoop:
                             0,
                             result,
                         )
-
                     if on_event:
                         await on_event("tool_call", {
                             "name": tool_call.name,
@@ -471,7 +472,6 @@ class AgentLoop:
                                 self.tool_result_display,
                             ).to_dict(),
                         })
-
                     messages.append(tool_result_message(tool_call.id, result))
                     tool_calls_made.append(ToolCallMade(
                         name=tool_call.name,
@@ -486,11 +486,27 @@ class AgentLoop:
                     arguments=arguments,
                 )
 
-                tool = self.tool_registry.get_tool(tool_call.name)
+                try:
+                    tool = self.tool_registry.get_tool(tool_call.name)
+                except KeyError:
+                    logger.error(f"[AgentLoop] unknown tool: {tool_call.name}")
+                    # Add as pre-denied entry — post-processing handles all side effects in order
+                    pending.append({
+                        "tool_call": tool_call,
+                        "observed_tool_call": tool_call,
+                        "tool": None,
+                        "approval_granted": False,
+                        "approval_request_data": None,
+                        "pre_denied_result": f"[Error: unknown tool '{tool_call.name}']",
+                        "decision": None,
+                    })
+                    continue
+
                 decision = self.tool_registry.mode_policy.decide_tool(tool)
                 observed_tool_call = tool_call
                 approval_granted = False
                 approval_request_data: dict | None = None
+                pre_denied_result: str | None = None
                 if decision.requires_approval:
                     approval_request = build_approval_request(
                         tool_call_id=tool_call.id,
@@ -536,51 +552,45 @@ class AgentLoop:
                         await on_event("approval_response", approval_response_data)
                     if not approval_granted:
                         if approval_response.status is ApprovalDecisionStatus.DENIED:
-                            result = (
+                            pre_denied_result = (
                                 f"[Approval denied: tool {tool_call.name} was not "
                                 f"approved in {self.runtime_state.current_mode.value} "
                                 f"mode: {approval_response.reason}]"
                             )
                         else:
-                            result = (
+                            pre_denied_result = (
                                 f"[Approval unavailable: tool {tool_call.name} requires "
                                 f"approval in {self.runtime_state.current_mode.value} "
                                 f"mode: {approval_response.reason}]"
                             )
-                await self.hooks.before_tool_execute(observed_tool_call)
+
+                pending.append({
+                    "tool_call": tool_call,
+                    "observed_tool_call": observed_tool_call,
+                    "tool": tool,
+                    "approval_granted": approval_granted,
+                    "approval_request_data": approval_request_data,
+                    "pre_denied_result": pre_denied_result,
+                    "decision": decision,
+                })
+
+            # Phase 2: Execute with grouping
+            executed = await self._execute_tool_calls(pending)
+
+            # Phase 3: Post-process results in original order
+            for entry in executed:
+                tool_call = entry["tool_call"]
+                observed_tool_call = entry["observed_tool_call"]
+                result = entry["result"]
+                duration_ms = entry["duration_ms"]
+                approval_request_data = entry.get("approval_request_data")
+                tool = entry["tool"]
+
                 if trace_recorder:
                     trace_recorder.record_tool_call(
                         observed_tool_call.name,
                         observed_tool_call.arguments,
                     )
-
-                tool_start = time.time()
-                if decision.requires_approval and not approval_granted:
-                    pass
-                elif tool_call.name == "Bash":
-                    try:
-                        result = await self.tool_registry.execute(
-                            tool_call,
-                            approval_granted=approval_granted,
-                        )
-                    except Exception as e:
-                        logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
-                        await self.hooks.on_error(e)
-                        result = f"[Error: {e}]"
-                else:
-                    result = await self._retry.execute_with_retry(
-                        tool_call,
-                        execute_fn=lambda tc: self.tool_registry.execute(
-                            tc,
-                            approval_granted=approval_granted,
-                        ),
-                    )
-                    if result.startswith("[Error"):
-                        logger.error(f"[AgentLoop] tool {tool_call.name} retry exhausted: {result}")
-                tool_duration_ms = (time.time() - tool_start) * 1000
-
-                await self.hooks.after_tool_execute(observed_tool_call, result)
-                if trace_recorder:
                     status = (
                         "error"
                         if result.startswith("[Error")
@@ -591,7 +601,7 @@ class AgentLoop:
                     trace_recorder.record_tool_result(
                         tool_call.name,
                         status,
-                        tool_duration_ms,
+                        duration_ms,
                         result,
                     )
                     if tool_call.name == "Edit" and status == "ok":
@@ -713,6 +723,114 @@ class AgentLoop:
         if not isinstance(parsed, dict):
             raise ValueError("tool arguments must be a JSON object")
         return parsed
+
+    async def _execute_single_tool(
+        self, tool_call: ToolCall, observed_tool_call: ToolCall, approval_granted: bool
+    ) -> tuple[str, float]:
+        """Execute one tool call. `tool_call` has original args for execution;
+        `observed_tool_call` may have redacted args for hooks/events."""
+        await self.hooks.before_tool_execute(observed_tool_call)
+        tool_start = time.time()
+        if tool_call.name == "Bash":
+            try:
+                result = await self.tool_registry.execute(
+                    tool_call, approval_granted=approval_granted,
+                )
+            except Exception as e:
+                logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
+                await self.hooks.on_error(e)
+                result = f"[Error: {e}]"
+        else:
+            result = await self._retry.execute_with_retry(
+                tool_call,
+                execute_fn=lambda tc: self.tool_registry.execute(
+                    tc, approval_granted=approval_granted,
+                ),
+            )
+            if result.startswith("[Error"):
+                logger.error(
+                    f"[AgentLoop] tool {tool_call.name} retry exhausted: {result}"
+                )
+        duration_ms = (time.time() - tool_start) * 1000
+        await self.hooks.after_tool_execute(observed_tool_call, result)
+        return result, duration_ms
+
+    async def _execute_tool_calls(self, items: list[dict]) -> list[dict]:
+        """Execute pre-processed tool calls with parallel grouping.
+
+        Consecutive parallelizable tools are gathered concurrently.
+        Non-parallelizable tools and pre-denied calls are executed serially.
+        Results are returned in original order.
+        """
+        # Build groups: consecutive parallelizable (non-denied, non-approved) calls form one group
+        groups: list[list[dict]] = []
+        current_group: list[dict] = []
+        for item in items:
+            tool = item.get("tool")
+            decision = item.get("decision")
+            # Exclude from parallel if: pre-denied, not parallelizable, or required approval
+            pre_denied = item.get("pre_denied_result")
+            requires_approval = decision is not None and decision.requires_approval
+            is_parallel = (
+                tool is not None
+                and tool.parallelizable
+                and not pre_denied
+                and not requires_approval
+            )
+            if is_parallel:
+                current_group.append(item)
+            else:
+                if current_group:
+                    groups.append(current_group)
+                    current_group = []
+                groups.append([item])
+        if current_group:
+            groups.append(current_group)
+
+        # Execute groups
+        results: list[dict] = []
+        for group in groups:
+            if len(group) > 1:
+                # Parallel group — gather concurrently
+                group_names = [item["tool_call"].name for item in group]
+                if self._active_trace_recorder:
+                    self._active_trace_recorder.record_parallel_execution(group_names)
+
+                async def _run_one(item: dict) -> dict:
+                    pre_denied = item.get("pre_denied_result")
+                    if pre_denied is not None:
+                        return {**item, "result": pre_denied, "duration_ms": 0.0}
+                    result, duration_ms = await self._execute_single_tool(
+                        item["tool_call"], item["observed_tool_call"], item["approval_granted"],
+                    )
+                    return {**item, "result": result, "duration_ms": duration_ms}
+
+                group_results = await asyncio.gather(
+                    *[_run_one(item) for item in group],
+                    return_exceptions=True,
+                )
+                # Unwrap exceptions from gather
+                for i, r in enumerate(group_results):
+                    if isinstance(r, Exception):
+                        group_results[i] = {
+                            **group[i],
+                            "result": f"[Error: {r}]",
+                            "duration_ms": 0.0,
+                        }
+                results.extend(group_results)
+            else:
+                # Serial group (single item)
+                item = group[0]
+                pre_denied = item.get("pre_denied_result")
+                if pre_denied is not None:
+                    results.append({**item, "result": pre_denied, "duration_ms": 0.0})
+                else:
+                    result, duration_ms = await self._execute_single_tool(
+                        item["tool_call"], item["observed_tool_call"], item["approval_granted"],
+                    )
+                    results.append({**item, "result": result, "duration_ms": duration_ms})
+
+        return results
 
     def _observed_tool_call_delta(self, delta: ToolCallDelta) -> dict:
         try:

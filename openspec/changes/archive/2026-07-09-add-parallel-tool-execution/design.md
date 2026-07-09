@@ -8,12 +8,14 @@
 
 `Tool` 基类新增 `parallelizable: bool = False`。
 
-只读且无副作用的工具标记为 `True`：
+首版仅标记以下已确认并发安全的本地只读工具为 `True`：
 - `Read`, `Grep`, `Find`, `ListFiles`
-- `LspDefinition`, `LspReferences`, `LspHover`, `LspDocumentSymbols`, `LspWorkspaceSymbols`, `LspDiagnostics`
-- `WebFetch`, `WebSearch`
-- `RepoMap`, `SymbolSearch`
 - `InspectGitDiff`
+- `RepoMap`, `SymbolSearch`
+
+以下工具暂缓并行（共享客户端并发安全隐患）：
+- `LspDefinition`, `LspReferences`, `LspHover`, `LspDocumentSymbols`, `LspWorkspaceSymbols`, `LspDiagnostics` — `_ensure_document_open()` 无锁，并发可能重复 `didOpen`
+- `WebFetch`, `WebSearch` — 共享 HTTP session 并发安全待验证
 
 以下工具保持 `False`：
 - `Write`, `Edit` — 文件写操作，两个并发写可能冲突
@@ -119,4 +121,22 @@ async def _execute_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolResu
 - 与 retry 交互测试：并行组内独立重试。
 ## Pre-Implementation Review
 
-待 `grill-with-docs` 执行后填写。
+### Grill-with-docs 决策
+
+| # | 决策 | 结论 |
+|---|------|------|
+| 1 | 执行模型 | 两层分离：`_execute_single_tool` 纯执行（无副作用，可并行）+ 外层按原始顺序处理副作用（trace、hooks、events、messages） |
+| 2 | 审批退化 | 预检策略：并行组内任一需要审批 → 整组退化串行。只读工具多为 auto-approve，退化极少触发 |
+| 3 | Bash retry | 保留 `if tc.name == "Bash"` 特判在 `_execute_single_tool` 内部，不做 `retryable` 抽象 |
+| 4 | Hooks | 放外层副作用循环中串行执行。`TracingHook` 等有单例状态，并发会覆盖 |
+| 5 | 错误隔离 | `_execute_single_tool` 内部 catch 所有异常返回 `[Error: ...]` 字符串，永不抛异常 |
+| 6 | Trace | 新增 `parallel_execution_start` step 记录组成员 |
+| 7 | 容错 | 未知 tool → `parallelizable=False`；参数解析失败的分组前就地 error 处理 |
+| 8 | 结果结构 | `_execute_single_tool` 返回 `ExecutedToolCall` 结构化结果（tool_result, duration_ms, error_info），外层从结构消费 |
+
+### Codex Review 关键建议
+
+- LSP 工具首版不并行（`_ensure_document_open` 无锁）
+- Web 工具首版不并行（共享 session 并发安全待验证）
+- `return_exceptions=True` 需区分工具错误 vs 基础设施错误
+- `parallelizable` 必须显式 allow-list，不推断自 `read_only`

@@ -26,6 +26,7 @@ DEFAULT_IGNORE_DIRS = {
 )
 class ListFilesTool(Tool):
     read_only = True
+    parallelizable = True
     permission = WORKSPACE_READ_PERMISSION
 
     def __init__(

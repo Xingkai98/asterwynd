@@ -36,6 +36,7 @@ class Tool(ABC):
     parameters: dict  # JSON Schema
     read_only: bool = False
     dangerous: bool = False
+    parallelizable: bool = False
     allowed_modes: tuple[str, ...] | None = None
     permission: ToolPermission | None = None
 
