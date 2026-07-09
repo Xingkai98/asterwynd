@@ -750,3 +750,24 @@ def test_cli_log_dir_uses_platformdirs():
     assert cli.LOG_DIR == expected
     assert expected.parent.name == "asterwynd"
     assert expected.name == "log"
+
+
+def test_cli_setup_logging_graceful_when_dir_unwritable(monkeypatch):
+    """LOG_DIR 不可写时 _setup_logging 不崩溃，降级到 stderr-only"""
+    import logging
+
+    # reset logging state so basicConfig can be exercised again
+    root = logging.root
+    root.handlers.clear()
+    root.setLevel(logging.WARNING)
+
+    # /dev/null is a character device, mkdir(parents=True) will raise FileExistsError
+    # which is a subclass of OSError
+    monkeypatch.setenv("XDG_STATE_HOME", "/dev/null")
+    import platformdirs
+    monkeypatch.setattr(cli, "LOG_DIR", platformdirs.user_log_path("asterwynd"))
+
+    cli._setup_logging()
+
+    assert len(root.handlers) == 1
+    assert type(root.handlers[0]).__name__ == "StreamHandler"

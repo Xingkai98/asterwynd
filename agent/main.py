@@ -45,20 +45,26 @@ from agent.tool_result_display import summarize_tool_result
 from agent.branding import BRAND_NAME, render_tui_banner
 
 LOG_DIR = platformdirs.user_log_path("asterwynd")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / f"asterwynd-{__import__('datetime').datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
-
 _LOG_LEVEL = getattr(logging, os.environ.get("ASTERWYND_LOG_LEVEL", "INFO").upper(), logging.INFO)
-
-logging.basicConfig(
-    level=_LOG_LEVEL,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
-    ],
-)
 logger = logging.getLogger("asterwynd.cli")
+
+
+def _setup_logging() -> None:
+    """Initialize logging. File handler degrades gracefully on read-only filesystems."""
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+        )
+    except OSError:
+        pass
+    logging.basicConfig(
+        level=_LOG_LEVEL,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        handlers=handlers,
+    )
 
 app = typer.Typer()
 
@@ -235,6 +241,7 @@ def callback(
     banner: bool = typer.Option(True, "--banner/--no-banner", help="交互模式是否显示启动 wordmark"),
 ):
     """Asterwynd — 轻量级 AI Coding Agent"""
+    _setup_logging()
     if ctx.invoked_subcommand is not None:
         return
     config = _load_cli_config(config_path, mode=mode)
@@ -264,6 +271,7 @@ def run(
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
 ):
     """单轮执行 Agent"""
+    _setup_logging()
     config = _load_cli_config(config_path, mode=mode)
     normalized_mode = config.agent.default_mode.value
     run_single(prompt, model, provider, max_iterations, system, normalized_mode, config)
@@ -530,6 +538,7 @@ def web(
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
 ):
     """启动 Web UI 服务"""
+    _setup_logging()
     import uvicorn
     from web.server import create_app
     from web.debug_hook import debug_enabled
@@ -571,6 +580,7 @@ def benchmark(
     clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
 ):
     """运行本地 Coding Agent benchmark"""
+    _setup_logging()
     from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, AsterwyndRunner, ShellCommandRunner
     from benchmarks.runner import BenchmarkRunner
 
