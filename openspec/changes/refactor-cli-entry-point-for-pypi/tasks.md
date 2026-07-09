@@ -2,6 +2,7 @@
 
 ## 1. 代码重构
 
+- [ ] 0.1 grill-with-docs 设计追问（开发前确认所有 D1-D7 设计决策）
 - [ ] 1.1 创建 `agent/main.py`：将根目录 `cli.py` 完整 CLI 逻辑迁入
 - [ ] 1.2 删除根目录 `cli.py`
 - [ ] 1.3 `@app.callback(invoke_without_command=True)` 处理默认交互 REPL；新增 `run` 子命令处理单轮 prompt
@@ -48,6 +49,7 @@
 - [ ] 5.4 手动验证：`uv run asterwynd` 进交互、`uv run asterwynd run "hello"` 单轮、`uv run asterwynd web --port 8000`
 - [ ] 5.5 运行 `openspec validate --strict` 确认 change 文档合规
 - [ ] 5.6 运行项目 artifact checker
-- [ ] 5.7 同步 spec delta to `openspec/specs/cli/spec.md` 和 `openspec/specs/agent-modes/spec.md`（归档时）
+- [ ] 5.7 同步 spec delta to `openspec/specs/cli/spec.md` 和 `openspec/specs/agent-modes/spec.md`（当前规格同步）
+- [ ] 5.7b 确认 `openspec/specs/cli/spec.md` 和 `openspec/specs/agent-modes/spec.md` 已反映本次变更
 - [ ] 5.8 维护 Reference Implementation Research：实现过程中若调研结论变化，先回写 proposal/design 的 `Reference Implementation Research`
 - [ ] 5.9 归档 change 到 `openspec/changes/archive/`，更新 `docs/openspec-change-backlog.md`

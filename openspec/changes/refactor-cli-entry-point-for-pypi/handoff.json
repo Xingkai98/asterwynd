@@ -58,7 +58,13 @@
   "current_agent": null,
   "last_gate": null,
   "blockers": [],
-  "routing": {},
+  "routing": {
+    "planning": {"executor": "inline", "session_mode": "same"},
+    "reviewing": {"executor": "codex", "session_mode": "new"},
+    "building": {"executor": "inline", "session_mode": "same"},
+    "code-review": {"executor": "codex", "session_mode": "new"},
+    "closing": {"executor": "inline", "session_mode": "same"}
+  },
   "next_hints": {
     "reviewing": "由 codex executor 审查 design.md，确认 D1-D7 设计决策的合理性、风险缓解充分性、及 spec delta 覆盖完整"
   }

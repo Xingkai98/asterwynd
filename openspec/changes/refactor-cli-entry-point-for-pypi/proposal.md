@@ -2,8 +2,8 @@
 
 ## Change Type
 
-- **Primary**: feature
-- **Secondary**: refactor
+- primary: feature
+- secondary: refactor
 
 ## Summary
 
