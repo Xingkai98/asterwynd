@@ -9,14 +9,14 @@
 - [ ] 1.5 `run` / `web` / `benchmark` 子命令参数各自独立声明
 - [ ] 1.6 `@app.callback()` 仅保留 `--banner/--no-banner`（交互模式专用）
 - [ ] 1.7 `.env` 加载改为 `load_dotenv()` CWD 默认搜索（删除显式路径）
-- [ ] 1.8 `LOG_DIR` 改为 `platformdirs.user_state_path("asterwynd") / "logs"`，尊重 `$XDG_STATE_HOME`
+- [ ] 1.8 `LOG_DIR` 改为 `platformdirs.user_log_path("asterwynd")`，尊重 `$XDG_STATE_HOME`，macOS `~/Library/Logs/asterwynd/`
 - [ ] 1.9 更新 `pyproject.toml`：`[project.scripts]` → `agent.main:app`，build include 移除 `cli.py` 引用，新增 `platformdirs` 依赖
 - [ ] 1.10 补全 `pyproject.toml` 元数据：license = MIT、classifiers、repository URL、扩写 description
 - [ ] 1.11 新增 `LICENSE` 文件（MIT）
 
 ## 2. 测试更新
 
-- [ ] 2.1 `tests/test_cli.py`：`import cli` → `from agent.main import app`；`["main", ...]` → `["run", ...]`
+- [ ] 2.1 `tests/test_cli.py`：`import cli` → `import agent.main as cli`（保留 monkeypatch 面，`build_agent`/`build_llm`/`new_run_id` 等 monkeypatch 路径不变）；`["main", ...]` → `["run", ...]`
 - [ ] 2.2 `tests/benchmark/test_cli_benchmark.py`：同理更新 import 和调用方式
 - [ ] 2.3 `tests/web_tests/test_browser.py:88`：subprocess 从 `cli.py web` 改为 `asterwynd web`
 - [ ] 2.4 `tests/web_tests/conftest.py:7`：更新注释，移除 `cli.py` 引用

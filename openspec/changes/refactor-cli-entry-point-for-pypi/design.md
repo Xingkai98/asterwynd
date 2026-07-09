@@ -37,31 +37,33 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 
 ### D2: `@app.callback(invoke_without_command=True)` + `run` 子命令
 
-**决定**: 去掉 `main` 子命令和 `--interactive` 选项。采用 Typer 标准模式：`@app.callback(invoke_without_command=True)` 处理无子命令时的默认行为（进入交互 REPL），新增 `run` 子命令处理单轮 prompt。
+**决定**: 去掉 `main` 子命令和 `--interactive` 选项。采用 Typer 标准模式：`@app.callback(invoke_without_command=True)` 处理无子命令时的默认行为（进入交互 REPL），optionally 可带 prompt 参数作为交互模式的初始消息。新增 `run` 子命令处理纯单轮 prompt（不进入交互循环）。
 
 命令矩阵：
 
 | 输入 | 行为 |
 |---|---|
 | `asterwynd` | 交互 REPL |
-| `asterwynd run "hello"` | 单轮 |
+| `asterwynd "hello"` | 交互 REPL，以 "hello" 为首条用户消息 |
+| `asterwynd run "hello"` | 单轮执行（非交互） |
 | `asterwynd web --port 8000` | Web UI |
 | `asterwynd benchmark ...` | Benchmark |
 
 **理由**:
-- 避免 `@app.callback()` 带 Optional argument 与子命令的 Typer/Click 解析冲突（`web` 会被消费为 prompt 参数导致 `--port` 报错）
+- 避免 `@app.callback()` 带 Optional argument 与子命令的 Typer/Click 解析冲突。`prompt` 作为可选 argument 放在 callback，Click 会优先匹配已知子命令名（`run`/`web`/`benchmark`）再回退到 argument
 - `invoke_without_command=True` 是 Typer 标准 API，不 hack 内部解析
 - `run` 比 `main` 语义更精确，与 `web`/`benchmark` 并列自然
 - 删除 `--interactive`：交互/单轮由子命令区分而非 flag
+- `asterwynd "prompt"` 保留旧 `main --interactive "prompt"` 的语义（交互+初始消息），但去掉 flag
 
-### D3: 每个子命令独立管理参数
+### D3: 每个命令独立管理参数，callback 保留交互模式配置
 
-**决定**: `run` / `web` / `benchmark` 各子命令各自声明 `--model`、`--provider`、`--mode`、`--config` 等选项。`@app.callback()` 仅声明全局 option（`--banner/--no-banner`，只对交互模式生效）。
+**决定**: `@app.callback()` 声明交互模式选项（`--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config`、`--banner/--no-banner`）和可选 `prompt` argument。`run` / `web` / `benchmark` 子命令各自独立声明同名 `--model`、`--provider` 等选项。Click 的选项解析机制在子命令激活时以子命令选项为准，callback 选项不会与之冲突。
 
 **理由**:
-- 避免选项冲突（callback 的 `--model` 会和 web 的 `--model` 冲突）
-- 每个命令入口自包含，阅读和维护更清晰
-- 共享 helper（`build_llm`, `_load_cli_config`）仍在模块内，逻辑不重复
+- 交互模式用户仍可通过 CLI 配置 provider/model/mode 等（`asterwynd --model gpt-4o-mini`）
+- 保留旧 `main --interactive --model <x>` 的全部配置能力
+- 子命令各自独立声明避免选项冲突
 
 ### D4: `.env` 加载用 CWD 默认搜索
 
@@ -73,7 +75,7 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 
 ### D5: `logs/` 使用 `platformdirs`
 
-**决定**: 引入 `platformdirs` 库（零依赖），使用 `platformdirs.user_state_path("asterwynd") / "logs"` 作为日志目录。Linux 解析为 `~/.local/state/asterwynd/logs/`（尊重 `$XDG_STATE_HOME`），macOS 为 `~/Library/Logs/asterwynd/`，Windows 为对应 AppData 路径。
+**决定**: 引入 `platformdirs` 库（零依赖），使用 `platformdirs.user_log_path("asterwynd")` 作为日志目录。Linux 解析为 `~/.local/state/asterwynd/log/`（尊重 `$XDG_STATE_HOME`），macOS 为 `~/Library/Logs/asterwynd/`，Windows 为对应 AppData 路径。
 
 **理由**:
 - `platformdirs` 是 Python 生态标准方案（aider、pipx 等均使用），零依赖
@@ -106,7 +108,7 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 3. 路径问题通过 CWD 搜索和 `platformdirs` 解决，安装后无假设破裂
 4. 根目录 thin wrapper 不再需要
 
-### codex review (NEEDS_REVISION → 已修复)
+### codex review R1 (NEEDS_REVISION → 已修复)
 1. D2 从 callback 带参数改为 `invoke_without_command=True` + `run` 子命令，解决 Typer 解析冲突
 2. Spec delta 改为引用正式 spec 中的真实 requirement 名称，增加 REMOVED 声明
 3. 影响分析补充 test_browser.py、conftest.py、agent-modes spec、active changes
@@ -116,6 +118,16 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 7. 新增 LICENSE 文件创建任务
 8. 修正文档中 "agent/cli.py" 事实错误
 9. Spec delta 增加破坏性变更失败场景
+
+### codex review R2 (NEEDS_REVISION → 已修复)
+1. Spec delta 删除 "（替换正式 spec 中的同名词条）" 独立段，确保 SHALL/MUST 正文在 requirement 首段
+2. Callback 恢复 `--provider`/`--model`/`--max-iterations`/`--system`/`--mode`/`--config` option
+3. D2 明确 `asterwynd "prompt"` 为交互+初始 prompt（非单轮），保留旧 `main --interactive "prompt"` 语义
+4. Change Type 改为 primary: feature, secondary: refactor；backlog 描述纠正为"破坏性变更"
+5. Impact Analysis 增加 `uv.lock`；tasks 增加 `uv.lock` 更新
+6. `platformdirs` 固定为 `user_log_path`（非 `user_state_path`），路径说明与 API 匹配
+7. 测试迁移任务改为 `import agent.main as cli`（保留 monkeypatch 面）
+8. Spec 新增 benchmark `--config` scenario 和交互模式配置 option scenario
 
 ## Risks / Trade-offs
 

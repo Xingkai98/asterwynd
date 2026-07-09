@@ -2,8 +2,8 @@
 
 ## Change Type
 
-- **Primary**: refactor
-- **Secondary**: feature
+- **Primary**: feature
+- **Secondary**: refactor
 
 ## Summary
 
@@ -30,6 +30,7 @@
 - `cli.py` — 删除
 - `agent/main.py` — 新增，承载完整 CLI 逻辑，命令结构重构
 - `pyproject.toml` — 补全元数据，更新 scripts、build include，新增 `platformdirs` 依赖
+- `uv.lock` — 新增 `platformdirs` 直接依赖
 - `LICENSE` — 新增 MIT license 文件
 - `tests/test_cli.py` — import 路径从 `import cli` 改为 `from agent.main import app`；调用方式从 `["main", ...]` 改为 `["run", ...]`
 - `tests/benchmark/test_cli_benchmark.py` — import 路径更新
@@ -50,9 +51,9 @@
 - `add-minimal-tui-runtime-view` — `proposal.md:32` 引用 `cli.py`，同理处理
 
 ### 破坏性变更
-- `asterwynd main "prompt"` → `asterwynd run "prompt"`
-- `asterwynd main --interactive` → `asterwynd`
-- `asterwynd main --interactive "prompt"` → `asterwynd run "prompt"`
+- `asterwynd main "prompt"` → `asterwynd run "prompt"`（单轮）
+- `asterwynd main --interactive` → `asterwynd`（交互 REPL）
+- `asterwynd main --interactive "prompt"` → `asterwynd "prompt"`（交互 REPL，首条消息为 prompt）
 - `--interactive` 选项删除（`asterwynd --interactive` 报错）
 - `main` 子命令删除（`asterwynd main` 报错）
 - 根目录 `python cli.py` 不再可用 → 改用 `uv run asterwynd`

@@ -10,8 +10,6 @@
 
 ### Requirement: CLI 构造默认 AgentLoop
 
-（替换正式 spec 中的同名词条）
-
 系统 SHALL 从 `agent/main.py` 构造 AgentLoop。根目录 `cli.py` SHALL NOT 存在。`pyproject.toml` 的 `[project.scripts]` SHALL 指向 `agent.main:app`。`@app.callback(invoke_without_command=True)` SHALL 处理无子命令时的默认交互行为。
 
 #### Scenario: 入口模块正确加载
@@ -30,8 +28,6 @@
 
 ### Requirement: CLI 接入统一配置
 
-（替换正式 spec 中的同名词条）
-
 `run`、`web` 和 `benchmark` 子命令 SHALL 各自独立支持 `--config <path>` 和 `--mode` option。未显式传入 `--mode` 时，各命令 SHALL 使用配置中的 `agent.default_mode`。
 
 #### Scenario: run 使用配置默认 mode
@@ -49,8 +45,6 @@
 - **THEN** CLI SHALL 使用 `plan` mode
 
 ### Requirement: web 命令启动 Web UI
-
-（替换正式 spec 中的同名词条）
 
 `web` 子命令 SHALL 接收 host、port、provider、model、mode 和 config_path 参数，参数 SHALL 独立声明（不受 callback 或其他子命令影响）。
 
@@ -82,16 +76,36 @@
 - **WHEN** 用户执行 `asterwynd benchmark benchmarks/tasks --agent fake`
 - **THEN** 系统 SHALL 执行 benchmark
 
+#### Scenario: benchmark 使用独立 --config
+
+- **GIVEN** 用户执行 `asterwynd benchmark benchmarks/tasks --agent fake --config asterwynd.yaml`
+- **WHEN** 提供 `--config` option
+- **THEN** 系统 SHALL 使用指定配置文件的 benchmark 设置
+- **AND** benchmark 的 `--config` SHALL 不影响 run 或 web 的配置
+
 ### Requirement: 默认交互模式（callback）
 
-`asterwynd` 无子命令时 SHALL 进入交互 REPL。交互模式 SHALL 显示品牌 banner（可通过 `--no-banner` 关闭）和 Session ID。
+`asterwynd` 无子命令时 SHALL 进入交互 REPL。可选 `prompt` argument SHALL 作为首条用户消息执行，然后继续交互循环。交互模式 SHALL 显示品牌 banner（可通过 `--no-banner` 关闭）和 Session ID。交互模式 SHALL 支持 `--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config` option。
 
 #### Scenario: 默认交互
 
 - **GIVEN** 用户安装后执行 `asterwynd`
-- **WHEN** 无子命令
+- **WHEN** 无子命令无参数
 - **THEN** 系统 SHALL 进入交互 REPL
 - **AND** SHALL 显示品牌 banner 和 Session ID
+
+#### Scenario: 交互带初始 prompt
+
+- **GIVEN** 用户执行 `asterwynd "review this change"`
+- **WHEN** 无子命令但提供 prompt argument
+- **THEN** 系统 SHALL 以 "review this change" 为首条用户消息进入交互 REPL
+- **AND** 完成首轮后 SHALL 继续等待后续用户输入
+
+#### Scenario: 交互模式配置 provider/model
+
+- **GIVEN** 用户执行 `asterwynd --model gpt-4o-mini --mode plan`
+- **WHEN** 无子命令
+- **THEN** 系统 SHALL 使用指定 model 和 mode 进入交互 REPL
 
 #### Scenario: 关闭 banner
 
@@ -115,20 +129,20 @@
 
 ### Requirement: 日志目录使用 platformdirs
 
-系统 SHALL 使用 `platformdirs.user_state_path("asterwynd") / "logs"` 作为日志目录。Linux 下 SHALL 尊重 `$XDG_STATE_HOME`（默认 `~/.local/state/asterwynd/logs/`），macOS 为 `~/Library/Logs/asterwynd/`。目录不存在时 SHALL 自动创建。
+系统 SHALL 使用 `platformdirs.user_log_path("asterwynd")` 作为日志目录。Linux 下 SHALL 尊重 `$XDG_STATE_HOME`（默认 `~/.local/state/asterwynd/log/`），macOS 为 `~/Library/Logs/asterwynd/`，Windows 为对应 AppData 路径。目录不存在时 SHALL 自动创建。
 
 #### Scenario: 默认日志路径
 
 - **GIVEN** 用户运行 asterwynd
 - **WHEN** 系统需要写日志
-- **THEN** 日志 SHALL 写入 `platformdirs.user_state_path("asterwynd") / "logs"`
+- **THEN** 日志 SHALL 写入 `platformdirs.user_log_path("asterwynd")`
 - **AND** 目录不存在时 SHALL 自动创建
 
 #### Scenario: 尊重 XDG_STATE_HOME
 
 - **GIVEN** Linux 环境设置了 `XDG_STATE_HOME=/custom/state`
 - **WHEN** 系统需要写日志
-- **THEN** 日志 SHALL 写入 `/custom/state/asterwynd/logs/`
+- **THEN** 日志 SHALL 写入 `/custom/state/asterwynd/log/`
 
 ### Requirement: CLI 文档命令示例使用统一入口
 

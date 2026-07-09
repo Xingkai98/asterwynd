@@ -46,7 +46,7 @@
 
 ### 第六批：包结构和分发基础
 
-- `refactor-cli-entry-point-for-pypi`：CLI 入口重构为 `agent/main.py`，默认交互优先、删除 `main` 子命令，logs 走 XDG，补全 pyproject.toml 元数据，支持 PyPI 分发。
+- `refactor-cli-entry-point-for-pypi`：CLI 入口重构为 `agent/main.py`，默认交互优先、`run` 子命令单轮，删除 `main` 子命令和 `--interactive`（破坏性变更），logs 走 platformdirs，补全 pyproject.toml 元数据和 LICENSE，支持 PyPI 分发。
 
 ### 第七批：基础能力补全
 
@@ -73,7 +73,7 @@
 
 建议顺序原因：
 
-- 纯包结构重构，不改变任何运行时行为。
+- 用户可见破坏性变更：`main` 子命令删除、`--interactive` 删除、根 `cli.py` 删除。
 - 不依赖任何其他 change，可独立开发和合入。
 
 主要交付：
