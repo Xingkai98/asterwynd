@@ -46,7 +46,6 @@
 
 ### 第六批：包结构和分发基础
 
-- `refactor-cli-entry-point-for-pypi`：CLI 入口重构为 `agent/main.py`，无子命令默认交互、`run` 子命令单轮，删除 `main` 子命令和 `--interactive`（破坏性变更），logs 走 platformdirs，补全 pyproject.toml 元数据和 LICENSE，支持 PyPI 分发。
 
 ### 第七批：基础能力补全
 
@@ -65,7 +64,6 @@
 
 ## 未实现队列
 
-### 0. `refactor-cli-entry-point-for-pypi`
 
 状态：实现中（partial 已应用在 disk）。
 

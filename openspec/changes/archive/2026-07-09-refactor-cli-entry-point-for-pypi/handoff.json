@@ -2,8 +2,8 @@
   "schema_version": "1.0",
   "change_id": "refactor-cli-entry-point-for-pypi",
   "state": {
-    "phase": "code-review",
-    "sub_state": "ready_for_review"
+    "phase": "done",
+    "sub_state": null
   },
   "transitions": [
     {
@@ -262,14 +262,112 @@
       "actor_type": "agent",
       "actor_id": "system",
       "timestamp": "2026-07-09T05:07:53.024034+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "syncing_specs"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T05:18:45.067932+00:00",
+      "decision": "approved",
+      "reason": "all code review findings fixed, approved"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "syncing_specs"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "archiving"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:19:08.160108+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "archiving"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "updating_backlog"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:19:08.161553+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "updating_backlog"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "validating"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:19:08.163106+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "validating"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "pr_ready"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:19:20.234561+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "pr_ready"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:19:20.235605+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "done",
+        "sub_state": null
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T05:19:20.236703+00:00",
+      "decision": "approved",
+      "reason": "closing complete, ready to merge"
     }
   ],
   "current_agent": null,
-  "last_gate": {
-    "phase": "code-review",
-    "sub_state": "ready_for_review",
-    "awaiting": "human_review"
-  },
+  "last_gate": null,
   "blockers": [],
   "routing": {
     "planning": {
@@ -293,10 +391,5 @@
       "session_mode": "same"
     }
   },
-  "next_hints": {
-    "recommended_agent": "code-reviewer",
-    "priority_hints": [
-      "gate at code-review.ready_for_review: next phases: ['closing.syncing_specs']"
-    ]
-  }
+  "next_hints": {}
 }
