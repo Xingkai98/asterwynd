@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "change_id": "refactor-cli-entry-point-for-pypi",
+  "state": {
+    "phase": "planning",
+    "sub_state": "ready_for_review"
+  },
+  "transitions": [
+    {
+      "from": {"phase": "planning", "sub_state": "exploring"},
+      "to": {"phase": "planning", "sub_state": "writing_proposal"},
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-planner",
+      "timestamp": "2026-07-09T00:00:00.000000+00:00"
+    },
+    {
+      "from": {"phase": "planning", "sub_state": "writing_proposal"},
+      "to": {"phase": "planning", "sub_state": "writing_design"},
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-planner",
+      "timestamp": "2026-07-09T00:00:00.000000+00:00"
+    },
+    {
+      "from": {"phase": "planning", "sub_state": "writing_design"},
+      "to": {"phase": "planning", "sub_state": "grilling_design"},
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-planner",
+      "timestamp": "2026-07-09T00:00:00.000000+00:00"
+    },
+    {
+      "from": {"phase": "planning", "sub_state": "grilling_design"},
+      "to": {"phase": "planning", "sub_state": "writing_specs"},
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-planner",
+      "timestamp": "2026-07-09T00:00:00.000000+00:00"
+    },
+    {
+      "from": {"phase": "planning", "sub_state": "writing_specs"},
+      "to": {"phase": "planning", "sub_state": "writing_tasks"},
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-planner",
+      "timestamp": "2026-07-09T00:00:00.000000+00:00"
+    },
+    {
+      "from": {"phase": "planning", "sub_state": "writing_tasks"},
+      "to": {"phase": "planning", "sub_state": "ready_for_review"},
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude-planner",
+      "timestamp": "2026-07-09T00:00:00.000000+00:00"
+    }
+  ],
+  "current_agent": null,
+  "last_gate": null,
+  "blockers": [],
+  "routing": {},
+  "next_hints": {
+    "reviewing": "由 codex executor 审查 design.md，确认 D1-D7 设计决策的合理性、风险缓解充分性、及 spec delta 覆盖完整"
+  }
+}

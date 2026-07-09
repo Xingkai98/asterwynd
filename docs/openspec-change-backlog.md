@@ -44,7 +44,11 @@
 - `add-mcp-tool-adapter`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
-### 第六批：基础能力补全
+### 第六批：包结构和分发基础
+
+- `refactor-cli-entry-point-for-pypi`：CLI 入口重构为 `agent/main.py`，默认交互优先、删除 `main` 子命令，logs 走 XDG，补全 pyproject.toml 元数据，支持 PyPI 分发。
+
+### 第七批：基础能力补全
 
 基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
 
@@ -55,17 +59,35 @@
 - `add-multimodal-input-support`：图片/多模态输入——Message 协议扩展 + Read 工具图片支持。
 - `add-background-task-execution-and-session-persistence`：后台任务执行 + 会话保存/恢复。
 
-### 第七批：高风险 browser 能力
+### 第八批：高风险 browser 能力
 
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
 ## 未实现队列
 
+### 0. `refactor-cli-entry-point-for-pypi`
+
+状态：实现中（partial 已应用在 disk）。
+
+批次：第六批，独立推进。
+
+建议顺序原因：
+
+- 纯包结构重构，不改变任何运行时行为。
+- 不依赖任何其他 change，可独立开发和合入。
+
+主要交付：
+
+- `agent/main.py` 作为 CLI 主入口模块；删除根目录 `cli.py`。
+- `@app.callback()` 默认交互、带 prompt 单轮；删除 `--interactive` 和 `main` 子命令。
+- XDG 日志路径 + CWD `.env` 搜索。
+- `pyproject.toml` 元数据补全（MIT license、classifiers 等）。
+
 ### 1. `improve-agent-execution-foundation`
 
 状态：未实现。
 
-批次：第六批，第一批可并行推进。
+批次：第七批，第一批可并行推进。
 
 建议顺序原因：
 
@@ -82,7 +104,7 @@
 
 状态：未实现。
 
-批次：第六批第二批，建议等 `improve-agent-execution-foundation` 合入后再开始（共享 AgentLoop 改动面）。
+批次：第七批第二批，建议等 `improve-agent-execution-foundation` 合入后再开始（共享 AgentLoop 改动面）。
 
 建议顺序原因：
 
@@ -99,7 +121,7 @@
 
 状态：未实现。
 
-批次：第六批第一批，可并行推进。
+批次：第七批第一批，可并行推进。
 
 建议顺序原因：
 
@@ -116,7 +138,7 @@
 
 状态：未实现。
 
-批次：第六批第一批，可并行推进。
+批次：第七批第一批，可并行推进。
 
 建议顺序原因：
 
@@ -133,7 +155,7 @@
 
 状态：未实现。
 
-批次：第六批第三批，改动面最大（Message 协议 + 所有 provider adapter），建议等第一批合入后再开始。
+批次：第七批第三批，改动面最大（Message 协议 + 所有 provider adapter），建议等第一批合入后再开始。
 
 建议顺序原因：
 
@@ -151,7 +173,7 @@
 
 状态：未实现。
 
-批次：第六批第三批，可并行推进。
+批次：第七批第三批，可并行推进。
 
 建议顺序原因：
 
@@ -186,7 +208,7 @@
 
 状态：未实现。
 
-批次：第六批，建议在 MCP 或核心工具权限模型更稳定后开始。
+批次：第八批，建议在 MCP 或核心工具权限模型更稳定后开始。
 
 建议顺序原因：
 
