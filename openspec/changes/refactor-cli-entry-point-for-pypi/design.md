@@ -37,24 +37,23 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 
 ### D2: `@app.callback(invoke_without_command=True)` + `run` 子命令
 
-**决定**: 去掉 `main` 子命令和 `--interactive` 选项。采用 Typer 标准模式：`@app.callback(invoke_without_command=True)` 处理无子命令时的默认行为（进入交互 REPL），optionally 可带 prompt 参数作为交互模式的初始消息。新增 `run` 子命令处理纯单轮 prompt（不进入交互循环）。
+**决定**: 去掉 `main` 子命令和 `--interactive` 选项。采用 Typer 标准模式：`@app.callback(invoke_without_command=True)` 无 positional argument，仅带 option（`--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config`、`--banner/--no-banner`）。callback 的 `ctx.invoked_subcommand is None` 时进入交互 REPL。新增 `run` 子命令处理纯单轮 prompt（positional `prompt` argument 在 `run` 子命令上，不会与子命令路由冲突）。
 
 命令矩阵：
 
 | 输入 | 行为 |
 |---|---|
 | `asterwynd` | 交互 REPL |
-| `asterwynd "hello"` | 交互 REPL，以 "hello" 为首条用户消息 |
 | `asterwynd run "hello"` | 单轮执行（非交互） |
 | `asterwynd web --port 8000` | Web UI |
 | `asterwynd benchmark ...` | Benchmark |
 
 **理由**:
-- 避免 `@app.callback()` 带 Optional argument 与子命令的 Typer/Click 解析冲突。`prompt` 作为可选 argument 放在 callback，Click 会优先匹配已知子命令名（`run`/`web`/`benchmark`）再回退到 argument
+- `@app.callback()` 的 positional argument 会在子命令路由前消费第一个 token（实测 `asterwynd run hello` → `prompt="run"` + `No such command 'hello'`）。callback 不带 positional argument 彻底消除此冲突
 - `invoke_without_command=True` 是 Typer 标准 API，不 hack 内部解析
 - `run` 比 `main` 语义更精确，与 `web`/`benchmark` 并列自然
 - 删除 `--interactive`：交互/单轮由子命令区分而非 flag
-- `asterwynd "prompt"` 保留旧 `main --interactive "prompt"` 的语义（交互+初始消息），但去掉 flag
+- 删除 `asterwynd "prompt"` 语法：用户进交互后直接输入 prompt，一行的事
 
 ### D3: 每个命令独立管理参数，callback 保留交互模式配置
 
@@ -128,6 +127,16 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 6. `platformdirs` 固定为 `user_log_path`（非 `user_state_path`），路径说明与 API 匹配
 7. 测试迁移任务改为 `import agent.main as cli`（保留 monkeypatch 面）
 8. Spec 新增 benchmark `--config` scenario 和交互模式配置 option scenario
+
+### codex review R3 (NEEDS_REVISION → 已修复)
+1. CRITICAL: Typer callback positional `prompt` 与子命令解析冲突（实测确认）。改为 callback 不带 positional argument，仅带 option
+2. D2 删除 `asterwynd "prompt"` 语法（后续进交互直接输入）
+3. MAJOR: tasks.md:1.6 callback 选项与 design/spec 矛盾 → 修正为完整 option 列表
+4. MAJOR: wheel 打包分析不完整（缺 web/benchmarks/web/static）→ 新增 tasks 1.9 wheel 扩展、5.2 wheel smoke
+5. MAJOR: 缺 agent-modes spec delta → 新增 `specs/agent-modes/spec.md`
+6. MAJOR: MODIFIED CLI 构造 AgentLoop 丢失原有构造约束 → 保留 provider/model/tools/hooks/memory SHALL
+7. MAJOR: `asterwynd "prompt"` 测试缺口 → 已 moot（该语法已删除）
+8. MINOR: backlog 文案与 design 不一致 → 修正
 
 ## Risks / Trade-offs
 

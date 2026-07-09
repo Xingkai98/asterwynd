@@ -7,10 +7,10 @@
 - [ ] 1.3 `@app.callback(invoke_without_command=True)` 处理默认交互 REPL；新增 `run` 子命令处理单轮 prompt
 - [ ] 1.4 删除 `--interactive` 选项和 `main` 子命令
 - [ ] 1.5 `run` / `web` / `benchmark` 子命令参数各自独立声明
-- [ ] 1.6 `@app.callback()` 仅保留 `--banner/--no-banner`（交互模式专用）
+- [ ] 1.6 `@app.callback()` 声明交互模式 option（`--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config`、`--banner/--no-banner`），不带 positional argument
 - [ ] 1.7 `.env` 加载改为 `load_dotenv()` CWD 默认搜索（删除显式路径）
 - [ ] 1.8 `LOG_DIR` 改为 `platformdirs.user_log_path("asterwynd")`，尊重 `$XDG_STATE_HOME`，macOS `~/Library/Logs/asterwynd/`
-- [ ] 1.9 更新 `pyproject.toml`：`[project.scripts]` → `agent.main:app`，build include 移除 `cli.py` 引用，新增 `platformdirs` 依赖
+- [ ] 1.9 更新 `pyproject.toml`：`[project.scripts]` → `agent.main:app`；`[tool.hatch.build.targets.wheel]` 的 packages 包含 `agent`、`web`、`benchmarks`，include `web/static/**`；移除 `cli.py` 引用；新增 `platformdirs` 依赖
 - [ ] 1.10 补全 `pyproject.toml` 元数据：license = MIT、classifiers、repository URL、扩写 description
 - [ ] 1.11 新增 `LICENSE` 文件（MIT）
 
@@ -42,11 +42,12 @@
 
 ## 5. 验证和收尾
 
-- [ ] 5.1 构建 wheel：`uv build`，验证 `agent/main.py` 在 wheel 中、`cli.py` 不在、LICENSE 在 sdist 中
-- [ ] 5.2 跑通 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`
-- [ ] 5.3 手动验证：`uv run asterwynd` 进交互、`uv run asterwynd run "hello"` 单轮、`uv run asterwynd web --port 8000`
-- [ ] 5.4 运行 `openspec validate --strict` 确认 change 文档合规
-- [ ] 5.5 运行项目 artifact checker
-- [ ] 5.6 同步 spec delta to `openspec/specs/cli/spec.md`（归档时）
-- [ ] 5.7 维护 Reference Implementation Research：实现过程中若调研结论变化，先回写 proposal/design 的 `Reference Implementation Research`
-- [ ] 5.8 归档 change 到 `openspec/changes/archive/`，更新 `docs/openspec-change-backlog.md`
+- [ ] 5.1 构建 wheel：`uv build`，验证 `agent/main.py`、`web/`、`benchmarks/`、`web/static/` 在 wheel 中、`cli.py` 不在、LICENSE 在 sdist 中
+- [ ] 5.2 wheel smoke：从 wheel 安装到临时 venv，验证 `asterwynd --help`、`asterwynd web --help`、`asterwynd benchmark --help` 均可运行
+- [ ] 5.3 跑通 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`
+- [ ] 5.4 手动验证：`uv run asterwynd` 进交互、`uv run asterwynd run "hello"` 单轮、`uv run asterwynd web --port 8000`
+- [ ] 5.5 运行 `openspec validate --strict` 确认 change 文档合规
+- [ ] 5.6 运行项目 artifact checker
+- [ ] 5.7 同步 spec delta to `openspec/specs/cli/spec.md` 和 `openspec/specs/agent-modes/spec.md`（归档时）
+- [ ] 5.8 维护 Reference Implementation Research：实现过程中若调研结论变化，先回写 proposal/design 的 `Reference Implementation Research`
+- [ ] 5.9 归档 change 到 `openspec/changes/archive/`，更新 `docs/openspec-change-backlog.md`

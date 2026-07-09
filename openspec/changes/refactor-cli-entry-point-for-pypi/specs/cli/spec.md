@@ -10,7 +10,7 @@
 
 ### Requirement: CLI 构造默认 AgentLoop
 
-系统 SHALL 从 `agent/main.py` 构造 AgentLoop。根目录 `cli.py` SHALL NOT 存在。`pyproject.toml` 的 `[project.scripts]` SHALL 指向 `agent.main:app`。`@app.callback(invoke_without_command=True)` SHALL 处理无子命令时的默认交互行为。
+系统 SHALL 从 `agent/main.py` 构造 AgentLoop，通过 provider、model、ToolRegistry、HookManager 和 MemoryManager 配置。根目录 `cli.py` SHALL NOT 存在。`pyproject.toml` 的 `[project.scripts]` SHALL 指向 `agent.main:app`。`@app.callback(invoke_without_command=True)` SHALL 处理无子命令时的默认交互行为。
 
 #### Scenario: 入口模块正确加载
 
@@ -85,21 +85,14 @@
 
 ### Requirement: 默认交互模式（callback）
 
-`asterwynd` 无子命令时 SHALL 进入交互 REPL。可选 `prompt` argument SHALL 作为首条用户消息执行，然后继续交互循环。交互模式 SHALL 显示品牌 banner（可通过 `--no-banner` 关闭）和 Session ID。交互模式 SHALL 支持 `--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config` option。
+`asterwynd` 无子命令时 SHALL 进入交互 REPL。交互模式 SHALL 显示品牌 banner（可通过 `--no-banner` 关闭）和 Session ID。交互模式 SHALL 支持 `--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config` option。callback SHALL NOT 声明 positional argument。
 
 #### Scenario: 默认交互
 
 - **GIVEN** 用户安装后执行 `asterwynd`
-- **WHEN** 无子命令无参数
+- **WHEN** 无子命令
 - **THEN** 系统 SHALL 进入交互 REPL
 - **AND** SHALL 显示品牌 banner 和 Session ID
-
-#### Scenario: 交互带初始 prompt
-
-- **GIVEN** 用户执行 `asterwynd "review this change"`
-- **WHEN** 无子命令但提供 prompt argument
-- **THEN** 系统 SHALL 以 "review this change" 为首条用户消息进入交互 REPL
-- **AND** 完成首轮后 SHALL 继续等待后续用户输入
 
 #### Scenario: 交互模式配置 provider/model
 

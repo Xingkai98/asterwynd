@@ -24,7 +24,8 @@
 - **configuration**: `pyproject.toml` metadata 扩展，scripts 引用路径更新，新增 LICENSE 文件
 - **web-ui**: `web` 子命令参数独立声明（不受 callback 影响）；`tests/web_tests/test_browser.py` subprocess 调用更新
 - **benchmark**: `benchmark` 子命令参数独立声明（不受 callback 影响）
-- **agent-modes**: 正式 spec 中引用 `cli.py main` 的示例更新
+- **agent-modes**: 正式 spec 中引用 `cli.py main` 的示例更新；需新增 `specs/agent-modes/spec.md` delta
+- **wheel 打包**: 当前只打包 `agent`，需扩展打包 `web`、`benchmarks` 和 `web/static/`，确保安装后 `asterwynd web` 和 `asterwynd benchmark` 可用
 
 ### 影响的代码
 - `cli.py` — 删除
@@ -53,7 +54,7 @@
 ### 破坏性变更
 - `asterwynd main "prompt"` → `asterwynd run "prompt"`（单轮）
 - `asterwynd main --interactive` → `asterwynd`（交互 REPL）
-- `asterwynd main --interactive "prompt"` → `asterwynd "prompt"`（交互 REPL，首条消息为 prompt）
+- `asterwynd main --interactive "prompt"` → 无直接等价命令（先 `asterwynd` 进交互再输入 prompt）
 - `--interactive` 选项删除（`asterwynd --interactive` 报错）
 - `main` 子命令删除（`asterwynd main` 报错）
 - 根目录 `python cli.py` 不再可用 → 改用 `uv run asterwynd`
