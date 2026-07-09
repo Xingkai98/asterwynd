@@ -3,7 +3,7 @@ import subprocess
 
 from typer.testing import CliRunner
 
-import cli
+import agent.main as cli
 from benchmarks.runner import DockerPreflightResult
 
 

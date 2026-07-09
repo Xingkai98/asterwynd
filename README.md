@@ -46,26 +46,26 @@ cp .env.example .env
 # 可选：设置 ASTERWYND_PROVIDER（openai / anthropic）和 ASTERWYND_MODEL 作为默认值
 
 # 运行 CLI（OpenAI，默认；用 .env 配置的 ASTERWYND_MODEL）
-uv run python cli.py main "Hello"
+uv run asterwynd run "Hello"
 
 # 或覆盖模型/提供商
-uv run python cli.py main --model gpt-4o-mini "Hello"
-uv run python cli.py main --provider anthropic --model claude-sonnet-4-20250514 "Hello"
+uv run asterwynd run --model gpt-4o-mini "Hello"
+uv run asterwynd run --provider anthropic --model claude-sonnet-4-20250514 "Hello"
 
 # 交互模式
-uv run python cli.py main --interactive
+uv run asterwynd
 
 # 启动 Web UI（使用 .env 配置）
-uv run python cli.py web --port 8000
+uv run asterwynd web --port 8000
 
 # Web UI + 详细日志
-ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4-pro
+ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000 --model deepseek-v4-pro
 
 # 运行测试
 uv run pytest -q
 
 # 运行本地 coding-agent benchmark（fake runner smoke）
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
   --runs-dir /tmp/asterwynd-benchmark-smoke \
@@ -83,7 +83,7 @@ uv run python run_infer.py \
   --model deepseek-v4-pro
 ```
 
-`uv run` 不是业务运行的必需条件，而是推荐的环境隔离方式：它会使用 `uv` 管理的项目虚拟环境，依赖版本更可复现。如果你当前 shell 的 Python 环境已经安装好依赖，也可以直接运行等价命令，例如 `python3 cli.py main "Hello"` 或 `pytest -q`。
+`uv run` 不是业务运行的必需条件，而是推荐的环境隔离方式：它会使用 `uv` 管理的项目虚拟环境，依赖版本更可复现。如果你当前 shell 的 Python 环境已经安装好依赖，也可以直接运行等价命令，例如 `asterwynd run "Hello"` 或 `pytest -q`。
 
 ## 内置工具集
 
@@ -276,19 +276,19 @@ triggers:
 
 ```bash
 # 基本启动（使用 .env 中的 ASTERWYND_PROVIDER 和 ASTERWYND_MODEL）
-uv run python cli.py web --port 8000
+uv run asterwynd web --port 8000
 
 # 覆盖模型
-uv run python cli.py web --port 8000 --model deepseek-v4-pro
+uv run asterwynd web --port 8000 --model deepseek-v4-pro
 
 # 覆盖 provider
-uv run python cli.py web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
+uv run asterwynd web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
 
 # 调试模式（Chat + Debug 双界面）
-ASTERWYND_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
+ASTERWYND_DEBUG=enabled uv run asterwynd web --host 127.0.0.1 --port 8000
 
 # 详细日志（记录 LLM 输入/输出到文件）
-ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
+ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
 - **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan`，展示 Plan Document 和 planning state，并在工具需要审批时显示审批卡片
@@ -334,7 +334,7 @@ Asterwynd 当前有两条 benchmark 路径：
 ### 快速验证（fake agent，确定性地）
 
 ```bash
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
   --runs-dir /tmp/asterwynd-benchmark-smoke \
@@ -346,7 +346,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 ### 真实 agent 评测
 
 ```bash
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent asterwynd \
   --source-repo . \
   --runs-dir /tmp/asterwynd-benchmark \

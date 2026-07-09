@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Asterwynd CLI 入口
+Asterwynd CLI 入口模块
 
 用法:
-    python cli.py "你好，介绍一下自己"
-    python cli.py --provider anthropic --model claude-sonnet-4-20250514 "你好"
-    python cli.py --interactive --provider anthropic
+    asterwynd                         # 交互 REPL
+    asterwynd run "你好"              # 单轮执行
+    asterwynd web --port 8000         # Web UI
+    asterwynd benchmark benchmarks/tasks --agent fake
 """
 import asyncio
 import inspect
@@ -17,10 +18,10 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+import platformdirs
 import typer
 
-# 自动加载 .env 文件（如果存在）
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv()
 
 from agent.approval import ApprovalHandler, CliApprovalHandler
 from agent.loop import AgentLoop
@@ -43,23 +44,30 @@ from agent.skills import SkillRuntime
 from agent.tool_result_display import summarize_tool_result
 from agent.branding import BRAND_NAME, render_tui_banner
 
-LOG_DIR = Path(__file__).parent / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR = platformdirs.user_log_path("asterwynd")
 LOG_FILE = LOG_DIR / f"asterwynd-{__import__('datetime').datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
-
 _LOG_LEVEL = getattr(logging, os.environ.get("ASTERWYND_LOG_LEVEL", "INFO").upper(), logging.INFO)
-
-logging.basicConfig(
-    level=_LOG_LEVEL,
-    format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"),
-    ],
-)
 logger = logging.getLogger("asterwynd.cli")
 
+
+def _setup_logging() -> None:
+    """Initialize logging. File handler degrades gracefully on read-only filesystems."""
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        handlers.append(
+            RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8")
+        )
+    except OSError:
+        pass
+    logging.basicConfig(
+        level=_LOG_LEVEL,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        handlers=handlers,
+    )
+
 app = typer.Typer()
+
 
 def build_llm(provider: str, model: Optional[str] = None) -> LLM:
     if model is None:
@@ -91,6 +99,7 @@ def build_llm(provider: str, model: Optional[str] = None) -> LLM:
 def _streaming_enabled() -> bool:
     value = os.environ.get("ASTERWYND_STREAMING", "enabled").strip().lower()
     return value not in {"0", "false", "off", "disabled", "no"}
+
 
 def _normalize_user_mode(mode: str | AgentMode) -> str:
     if isinstance(mode, AgentMode):
@@ -217,38 +226,56 @@ def _build_agent_core(
         mcp_manager=mcp_manager,
     )
 
-@app.command()
-def main(
-    prompt: Optional[str] = typer.Argument(None, help="要发送给 agent 的提示（交互模式下可选）"),
+
+@app.callback(invoke_without_command=True)
+def callback(
+    ctx: typer.Context,
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型（不指定则用 provider 默认值）"),
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
     max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
-    interactive: bool = typer.Option(False, "--interactive", "-i", help="交互模式"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     banner: bool = typer.Option(True, "--banner/--no-banner", help="交互模式是否显示启动 wordmark"),
 ):
+    """Asterwynd — 轻量级 AI Coding Agent"""
+    _setup_logging()
+    if ctx.invoked_subcommand is not None:
+        return
     config = _load_cli_config(config_path, mode=mode)
     normalized_mode = config.agent.default_mode.value
-    if interactive:
-        run_interactive(
-            model,
-            provider,
-            max_iterations,
-            system,
-            prompt,
-            normalized_mode,
-            config,
-            banner=banner,
-        )
-    else:
-        if not prompt:
-            typer.echo("Error: PROMPT is required in single-prompt mode", err=True)
-            raise SystemExit(1)
-        run_single(prompt, model, provider, max_iterations, system, normalized_mode, config)
+    run_interactive(
+        model,
+        provider,
+        max_iterations,
+        system,
+        initial_prompt=None,
+        mode=normalized_mode,
+        config=config,
+        banner=banner,
+    )
+
+
+@app.command()
+def run(
+    prompt: str = typer.Argument(..., help="要发送给 agent 的提示"),
+    model: Optional[str] = typer.Option(None, "--model", help="使用的模型（不指定则用 provider 默认值）"),
+    provider: str = typer.Option(
+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
+    ),
+    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+):
+    """单轮执行 Agent"""
+    _setup_logging()
+    config = _load_cli_config(config_path, mode=mode)
+    normalized_mode = config.agent.default_mode.value
+    run_single(prompt, model, provider, max_iterations, system, normalized_mode, config)
+
 
 def run_single(
     prompt: str,
@@ -302,6 +329,7 @@ def run_single(
 
     asyncio.run(_run())
 
+
 def run_interactive(
     model: Optional[str],
     provider: str,
@@ -314,7 +342,6 @@ def run_interactive(
 ):
     session_id = new_session_id()
 
-    # 复用持久 event loop，避免 httpx/MCP async clients 引用已关闭的 loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     if config and config.mcp.servers:
@@ -498,6 +525,7 @@ def _print_tool_call_summaries(result, config: AsterwyndConfig | None = None) ->
             typer.echo(f"\n{header}:")
             typer.echo(tool_result)
 
+
 @app.command()
 def web(
     port: int = typer.Option(8000, "--port", "-p", help="HTTP 端口"),
@@ -510,6 +538,7 @@ def web(
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
 ):
     """启动 Web UI 服务"""
+    _setup_logging()
     import uvicorn
     from web.server import create_app
     from web.debug_hook import debug_enabled
@@ -550,7 +579,8 @@ def benchmark(
     keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
     clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
 ):
-    """运行本地 Coding Agent benchmark。"""
+    """运行本地 Coding Agent benchmark"""
+    _setup_logging()
     from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, AsterwyndRunner, ShellCommandRunner
     from benchmarks.runner import BenchmarkRunner
 

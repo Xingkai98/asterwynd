@@ -46,26 +46,26 @@ cp .env.example .env
 # Optional: set ASTERWYND_PROVIDER (openai / anthropic) and ASTERWYND_MODEL as defaults
 
 # Run CLI (OpenAI by default, using ASTERWYND_MODEL from .env)
-uv run python cli.py main "Hello"
+uv run asterwynd run "Hello"
 
 # Or override model/provider
-uv run python cli.py main --model gpt-4o-mini "Hello"
-uv run python cli.py main --provider anthropic --model claude-sonnet-4-20250514 "Hello"
+uv run asterwynd run --model gpt-4o-mini "Hello"
+uv run asterwynd run --provider anthropic --model claude-sonnet-4-20250514 "Hello"
 
 # Interactive mode
-uv run python cli.py main --interactive
+uv run asterwynd
 
 # Start Web UI (using .env config)
-uv run python cli.py web --port 8000
+uv run asterwynd web --port 8000
 
 # Web UI with verbose logging
-ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000 --model deepseek-v4-pro
+ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000 --model deepseek-v4-pro
 
 # Run tests
 uv run pytest -q
 
 # Run local coding-agent benchmark (fake runner smoke)
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
   --runs-dir /tmp/asterwynd-benchmark-smoke \
@@ -83,7 +83,7 @@ uv run python run_infer.py \
   --model deepseek-v4-pro
 ```
 
-`uv run` is not required by the application itself. It is the recommended environment isolation method because it uses the project virtual environment managed by `uv`, making dependency resolution more reproducible. If your current shell Python environment already has the dependencies installed, equivalent commands such as `python3 cli.py main "Hello"` or `pytest -q` also work.
+`uv run` is not required by the application itself. It is the recommended environment isolation method because it uses the project virtual environment managed by `uv`, making dependency resolution more reproducible. If your current shell Python environment already has the dependencies installed, equivalent commands such as `asterwynd run "Hello"` or `pytest -q` also work.
 
 ## Built-In Tools
 
@@ -277,19 +277,19 @@ Start the Web UI:
 
 ```bash
 # Basic startup (uses ASTERWYND_PROVIDER and ASTERWYND_MODEL from .env)
-uv run python cli.py web --port 8000
+uv run asterwynd web --port 8000
 
 # Override model
-uv run python cli.py web --port 8000 --model deepseek-v4-pro
+uv run asterwynd web --port 8000 --model deepseek-v4-pro
 
 # Override provider
-uv run python cli.py web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
+uv run asterwynd web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
 
 # Debug mode (Chat + Debug views)
-ASTERWYND_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
+ASTERWYND_DEBUG=enabled uv run asterwynd web --host 127.0.0.1 --port 8000
 
 # Verbose logs (record LLM input/output to files)
-ASTERWYND_LOG_LEVEL=DEBUG uv run python cli.py web --port 8000
+ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
 - **Chat view**: Normal conversation, assistant Markdown rendering, tool-call visualization, long tool-result folding by display policy, current session id / run id / session mode, switching between `build` / `read_only` / `plan`, Plan Document plus planning state display, and approval cards for tools that require approval.
@@ -335,7 +335,7 @@ Asterwynd currently has two benchmark paths:
 ### Quick Validation (Fake Agent, Deterministic)
 
 ```bash
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
   --runs-dir /tmp/asterwynd-benchmark-smoke \
@@ -347,7 +347,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 ### Real Agent Evaluation
 
 ```bash
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent asterwynd \
   --source-repo . \
   --runs-dir /tmp/asterwynd-benchmark \

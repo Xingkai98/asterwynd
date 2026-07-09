@@ -32,7 +32,7 @@ CLI 单轮和 Web UI 已存在，但终端中缺少一个适合 coding-agent 长
 ## Impact Analysis
 
 - 影响代码：
-  - `cli.py`
+  - `agent/main.py`
   - `tui/` 或 `agent/tui/`
   - 事件输出路径
 - 影响测试：
