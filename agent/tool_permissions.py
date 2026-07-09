@@ -98,6 +98,7 @@ ALL_CAPABILITIES = frozenset(ToolCapability)
 READ_ONLY_CAPABILITIES = frozenset({
     ToolCapability.WORKSPACE_READ,
     ToolCapability.NETWORK_READ,
+    ToolCapability.AGENT_STATE,
 })
 PLAN_CAPABILITIES = frozenset({
     ToolCapability.WORKSPACE_READ,
@@ -152,7 +153,7 @@ BUILTIN_PERMISSION_PROFILES: dict[str, PermissionProfile] = {
         name="read_only_default",
         allowed_capabilities=READ_ONLY_CAPABILITIES,
         auto_approve_max_risk=ToolRiskLevel.LOW,
-        approval_required_max_risk=ToolRiskLevel.LOW,
+        approval_required_max_risk=ToolRiskLevel.MEDIUM,
     ),
     "plan_default": PermissionProfile(
         name="plan_default",

@@ -142,7 +142,7 @@ def test_mode_policy_plan_allows_agent_state_tools():
     assert plan.decide_tool(tool).type is PermissionDecisionType.ALLOW
 
 
-def test_mode_policy_read_only_denies_agent_state_tools():
+def test_mode_policy_read_only_requires_approval_for_agent_state_tools():
     read_only = ModePolicy(AgentRunConfig(mode=AgentMode.READ_ONLY))
     tool = PermissionedTool(
         ToolPermission(
@@ -151,7 +151,7 @@ def test_mode_policy_read_only_denies_agent_state_tools():
         )
     )
 
-    assert read_only.decide_tool(tool).type is PermissionDecisionType.DENY
+    assert read_only.decide_tool(tool).type is PermissionDecisionType.REQUIRE_APPROVAL
 
 
 def test_mode_policy_bypass_fails_closed():

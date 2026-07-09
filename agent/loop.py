@@ -34,6 +34,9 @@ from agent.tools.builtin.subagents import (
     RunSubagentTool,
 )
 from agent.tools.builtin.activate_skill import ActivateSkillTool
+from agent.tools.builtin.todo import TodoWriteTool
+from agent.hooks.builtin.retry import RetryHook
+from agent.planning import PlanItem
 from agent.skills.runtime import SkillRuntime
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 
@@ -88,10 +91,15 @@ class AgentLoop:
         self._plan_document_final = False
         self._plan_tools_registered = False
         self._subagent_tools_registered = False
+        self._todo_tool_registered = False
+        self._execution_todos: list[PlanItem] = []
+        self._todo_next_id = 1
+        self._retry = RetryHook(max_retries=3, base_delay=1.0)
         if self.runtime_state.current_mode is AgentMode.PLAN:
             self._ensure_plan_tools_registered()
         if expose_subagent_tools:
             self._ensure_subagent_tools_registered()
+        self._ensure_todo_tool_registered()
         if self.skill_runtime is not None:
             self.tool_registry.register(ActivateSkillTool(self.skill_runtime))
 
@@ -267,6 +275,50 @@ class AgentLoop:
         self.tool_registry.register(CancelSubagentRunTool(self.subagent_manager))
         self.tool_registry.register(InspectSubagentTranscriptTool(self.subagent_manager))
         self._subagent_tools_registered = True
+
+    def _ensure_todo_tool_registered(self) -> None:
+        if self._todo_tool_registered:
+            return
+        self.tool_registry.register(TodoWriteTool(
+            create_cb=self._todo_create,
+            update_cb=self._todo_update,
+            list_cb=self._todo_list,
+        ))
+        self._todo_tool_registered = True
+
+    def _todo_create(self, content: str) -> PlanItem:
+        item = PlanItem(id=self._new_todo_id(), content=content, status="pending")
+        self._execution_todos.append(item)
+        return item
+
+    def _todo_update(self, item_id: str, status: str, note: str | None) -> PlanItem:
+        for item in self._execution_todos:
+            if item.id == item_id:
+                item.status = status  # type: ignore[assignment]
+                item.note = note
+                return item
+        raise ValueError(f"unknown todo item: {item_id}")
+
+    def _todo_list(self, status_filter: str | None) -> list[PlanItem]:
+        if status_filter is None:
+            return list(self._execution_todos)
+        return [item for item in self._execution_todos if item.status == status_filter]
+
+    def _new_todo_id(self) -> str:
+        item_id = f"todo-{self._todo_next_id}"
+        self._todo_next_id += 1
+        return item_id
+
+    @property
+    def execution_todos(self) -> list[PlanItem]:
+        return list(self._execution_todos)
+
+    def _todo_snapshot(self) -> dict:
+        items = [item.to_dict() for item in self._execution_todos]
+        return {
+            "items": items,
+            "count": len(items),
+        }
 
     async def run(
         self,
@@ -505,7 +557,7 @@ class AgentLoop:
                 tool_start = time.time()
                 if decision.requires_approval and not approval_granted:
                     pass
-                else:
+                elif tool_call.name == "Bash":
                     try:
                         result = await self.tool_registry.execute(
                             tool_call,
@@ -515,6 +567,16 @@ class AgentLoop:
                         logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
                         await self.hooks.on_error(e)
                         result = f"[Error: {e}]"
+                else:
+                    result = await self._retry.execute_with_retry(
+                        tool_call,
+                        execute_fn=lambda tc: self.tool_registry.execute(
+                            tc,
+                            approval_granted=approval_granted,
+                        ),
+                    )
+                    if result.startswith("[Error"):
+                        logger.error(f"[AgentLoop] tool {tool_call.name} retry exhausted: {result}")
                 tool_duration_ms = (time.time() - tool_start) * 1000
 
                 await self.hooks.after_tool_execute(observed_tool_call, result)
@@ -557,6 +619,8 @@ class AgentLoop:
                             "skill_name": activation.skill_name,
                             "source": activation.source,
                         })
+                    if tool_call.name == "TodoWrite" and not result.startswith("[Error"):
+                        await on_event("todo_updated", self._todo_snapshot())
 
                 messages.append(tool_result_message(tool_call.id, result))
                 tool_calls_made.append(ToolCallMade(
@@ -686,6 +750,9 @@ class AgentLoop:
         planning_context = self._planning.render_context()
         if planning_context:
             injected_contexts.append(planning_context)
+        todo_context = self._todo_context()
+        if todo_context:
+            injected_contexts.append(todo_context)
         if not injected_contexts:
             return messages
 
@@ -716,6 +783,28 @@ class AgentLoop:
             "Do not edit files, run shell commands, or implement changes in plan "
             "mode."
         )
+
+    def _todo_context(self) -> str:
+        mode = self.runtime_state.current_mode
+        if mode not in (AgentMode.BUILD, AgentMode.READ_ONLY):
+            return ""
+        if not self._execution_todos:
+            return ""
+
+        status_order = {"in_progress": 0, "pending": 1, "completed": 2}
+        sorted_items = sorted(
+            self._execution_todos[-10:],
+            key=lambda item: (status_order.get(str(item.status), 99), self._execution_todos.index(item)),
+        )
+
+        lines = ["## Current Progress"]
+        for item in sorted_items:
+            marker = {"pending": " ", "in_progress": "▶", "completed": "✓"}.get(str(item.status), " ")
+            line = f"- [{marker}] {item.content}"
+            if item.note:
+                line = f"{line} ({item.note})"
+            lines.append(line)
+        return "\n".join(lines)
 
     def _last_assistant_content(self, messages: list[Message]) -> str:
         for message in reversed(messages):

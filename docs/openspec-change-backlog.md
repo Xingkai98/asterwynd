@@ -51,7 +51,7 @@
 
 基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
 
-- `improve-agent-execution-foundation`：Agent 执行可靠性——todo 任务追踪 + 工具错误恢复重试。
+- `improve-agent-execution-foundation`：已合入并归档。
 - `add-parallel-tool-execution`：AgentLoop 并行工具执行——独立只读调用并发化。
 - `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
 - `add-multimodal-input-support`：图片/多模态输入——Message 协议扩展 + Read 工具图片支持。
@@ -80,24 +80,7 @@
 - XDG 日志路径 + CWD `.env` 搜索。
 - `pyproject.toml` 元数据补全（MIT license、classifiers 等）。
 
-### 1. `improve-agent-execution-foundation`
-
-状态：未实现。
-
-批次：第七批，第一批可并行推进。
-
-建议顺序原因：
-
-- Todo 追踪和错误重试都是小改动、低风险、高回报。
-- 不依赖其他 change，可独立开发合入。
-
-主要交付：
-
-- `TodoWrite` 工具（create/update/list）。
-- AgentLoop 接入 RetryHook，基于错误类型分类的重试策略。
-- build mode 系统消息注入 todo 状态；TUI/Web 可选 todo 面板。
-
-### 2. `add-parallel-tool-execution`
+### 1. `add-parallel-tool-execution`
 
 状态：未实现。
 
@@ -114,7 +97,7 @@
 - AgentLoop 分组并行执行（连续只读 tool calls 同组并发）。
 - 并行组审批退化策略；错误隔离。
 
-### 3. `add-multimodal-input-support`
+### 2. `add-multimodal-input-support`
 
 状态：未实现。
 
@@ -132,7 +115,7 @@
 - Read 工具图片识别 + base64 编码。
 - OpenAI/Anthropic adapter 多模态格式转换。
 
-### 4. `add-background-task-execution-and-session-persistence`
+### 3. `add-background-task-execution-and-session-persistence`
 
 状态：未实现。
 
@@ -149,7 +132,7 @@
 - `TaskOutput` / `TaskStop` 工具。
 - SessionStore 序列化/恢复 + CLI `--resume`。
 
-### 5. `add-minimal-tui-runtime-view`
+### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -167,7 +150,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 6. `add-browser-use-safety-foundation`
+### 5. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

@@ -19,7 +19,7 @@ Claude Code 的 `TodoWrite` 工具让 agent 在任意 mode 下维护 `pending/in
 
 ### 工具错误恢复
 
-- 将 `RetryHook` 接入 AgentLoop 的 HookManager。
+- 将 `RetryHook` 以工具类方式接入 AgentLoop 工具执行路径（不通过 HookManager 协议——HookManager 是 fire-and-forget 通知式协议，无法返回恢复信号）。
 - 定义重试策略：最大 3 次重试、指数退避（1s/2s/4s）、仅对瞬时错误（timeout、connection、rate limit）重试。
 - 确定性错误（参数错误、权限拒绝、文件不存在）不重试。
 - 重试过程在 trace 中记录为独立 step。

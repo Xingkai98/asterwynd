@@ -17,12 +17,17 @@
 - [ ] 2.4 AgentLoop 集成测试：build mode 下注入 todo 上下文、todo 列表空时不注入。
 - [ ] 2.5 Loop 集成测试：retry 不重复触发 approval。
 - [ ] 2.6 TUI test：todo 面板展示 pending/in_progress/completed 项。
+- [ ] 2.7 AgentLoop 集成测试：`tool_retry` trace step 记录断言（包括重试中 `final=false` 和耗尽后 `final=true` 两场景）。
+- [ ] 2.8 AgentLoop 集成测试：read_only mode 下 TodoWrite 权限/执行/注入全链路。
+- [ ] 2.9 TodoWrite 工具单元测试：排序规则（in_progress > pending > completed，同组按创建顺序）和最多 10 条截断。
+- [ ] 2.10 WebSocket/session 层测试：`todo_updated` 事件到 Web UI 面板渲染。
+- [ ] 2.11 AgentLoop 集成测试：Plan items 与 execution todos 隔离——mode 切换后展示互不污染。
 
 ## 3. 实现
 
 - [ ] 3.1 实现 `agent/tools/builtin/todo.py` —— TodoWrite 工具。
-- [ ] 3.2 在 `factory.py` 注册 TodoWrite 到所有 mode 的 tool registry。
-- [ ] 3.3 在 AgentLoop `_execute_tool_calls` 中接入重试逻辑。
+- [ ] 3.2 在 `factory.py` 将 TodoWrite 加入 `KNOWN_BUILTIN_TOOL_NAMES`；实例由 AgentLoop `_ensure_todo_tool_registered()` 注册，通过回调绑定 loop 内部 `_execution_todos`。
+- [ ] 3.3 在 AgentLoop `_execute_tool_calls` 中接入重试逻辑（含 `tool_retry` trace step 记录）。
 - [ ] 3.4 在 `_messages_with_run_context` 中注入 todo 状态。
 - [ ] 3.5 在 TUI 中新增可选 todo 面板。
 - [ ] 3.6 Web UI 展示 todo 状态（后续 PR 或本 PR 内，视复杂度）。

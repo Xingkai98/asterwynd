@@ -192,6 +192,10 @@ function handleEvent(event) {
       renderPlanDocument(event.data);
       break;
 
+    case 'todo_updated':
+      renderTodoState(event.data);
+      break;
+
     case 'pong':
       break;
   }
@@ -201,6 +205,10 @@ function syncMode(mode) {
   currentMode = mode || currentMode;
   modeValueEl.textContent = currentMode;
   modeSelectEl.value = currentMode;
+  planningItemsEl.textContent = '';
+  planningPanel.hidden = true;
+  planningPanel.querySelector('.planning-panel-header').textContent =
+    currentMode === 'plan' ? 'Plan' : 'Progress';
 }
 
 // --- Message rendering ---
@@ -409,6 +417,7 @@ function renderPlanningState(state) {
     return;
   }
 
+  planningPanel.querySelector('.planning-panel-header').textContent = 'Plan';
   planningPanel.hidden = false;
   for (const item of items) {
     const row = document.createElement('li');
@@ -417,6 +426,44 @@ function renderPlanningState(state) {
     const status = document.createElement('span');
     status.className = 'planning-status';
     status.textContent = item.status;
+
+    const content = document.createElement('span');
+    content.className = 'planning-content';
+    content.textContent = item.content || '';
+
+    row.appendChild(status);
+    row.appendChild(content);
+
+    if (item.note) {
+      const note = document.createElement('span');
+      note.className = 'planning-note';
+      note.textContent = item.note;
+      row.appendChild(note);
+    }
+
+    planningItemsEl.appendChild(row);
+  }
+}
+
+function renderTodoState(state) {
+  const items = state && Array.isArray(state.items) ? state.items : [];
+  planningItemsEl.textContent = '';
+
+  if (items.length === 0) {
+    planningPanel.hidden = true;
+    return;
+  }
+
+  planningPanel.querySelector('.planning-panel-header').textContent = 'Progress';
+  planningPanel.hidden = false;
+  const statusLabels = { pending: ' ', in_progress: '▶', completed: '✓' };
+  for (const item of items) {
+    const row = document.createElement('li');
+    row.className = `planning-item status-${item.status}`;
+
+    const status = document.createElement('span');
+    status.className = 'planning-status';
+    status.textContent = statusLabels[item.status] || item.status;
 
     const content = document.createElement('span');
     content.className = 'planning-content';
