@@ -84,8 +84,10 @@ def web_server():
     env["PYTHONPATH"] = str(PROJECT_ROOT)
     env.setdefault("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
 
+    # exercise the console_scripts entry point (asterwynd = agent.main:app)
+    asterwynd = Path(sys.executable).parent / "asterwynd"
     proc = subprocess.Popen(
-        [sys.executable, "-m", "agent.main", "web", "--port", str(WEB_PORT)],
+        [str(asterwynd), "web", "--port", str(WEB_PORT)],
         cwd=str(PROJECT_ROOT),
         env=env,
         stdout=subprocess.PIPE,

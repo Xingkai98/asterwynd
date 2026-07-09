@@ -55,13 +55,13 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 - 删除 `--interactive`：交互/单轮由子命令区分而非 flag
 - 删除 `asterwynd "prompt"` 语法：用户进交互后直接输入 prompt，一行的事
 
-### D3: 每个命令独立管理参数，callback 保留交互模式配置
+### D3: 每个命令独立管理参数，callback 声明交互模式配置
 
-**决定**: `@app.callback()` 声明交互模式选项（`--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config`、`--banner/--no-banner`）和可选 `prompt` argument。`run` / `web` / `benchmark` 子命令各自独立声明同名 `--model`、`--provider` 等选项。Click 的选项解析机制在子命令激活时以子命令选项为准，callback 选项不会与之冲突。
+**决定**: `@app.callback(invoke_without_command=True)` 声明交互模式选项（`--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config`、`--banner/--no-banner`），不带 positional argument。`run` / `web` / `benchmark` 子命令各自独立声明同名 `--model`、`--provider` 等选项。子命令激活时以子命令选项优先，callback 选项不会与之冲突。
 
 **理由**:
-- 交互模式用户仍可通过 CLI 配置 provider/model/mode 等（`asterwynd --model gpt-4o-mini`）
-- 保留旧 `main --interactive --model <x>` 的全部配置能力
+- 交互模式用户仍可通过 CLI 配置 provider/model/mode（`asterwynd --model gpt-4o-mini`）
+- 无 positional argument 避免 Typer 在子命令解析前消费首个 token（实测 `asterwynd web` 会因 callback 有 positional 而报 "No such command"）
 - 子命令各自独立声明避免选项冲突
 
 ### D4: `.env` 加载用 CWD 默认搜索

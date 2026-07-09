@@ -2,70 +2,301 @@
   "schema_version": "1.0",
   "change_id": "refactor-cli-entry-point-for-pypi",
   "state": {
-    "phase": "planning",
+    "phase": "code-review",
     "sub_state": "ready_for_review"
   },
   "transitions": [
     {
-      "from": {"phase": "planning", "sub_state": "exploring"},
-      "to": {"phase": "planning", "sub_state": "writing_proposal"},
+      "from": {
+        "phase": "planning",
+        "sub_state": "exploring"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
       "trigger": "auto",
       "actor_type": "agent",
       "actor_id": "claude-planner",
       "timestamp": "2026-07-09T00:00:00.000000+00:00"
     },
     {
-      "from": {"phase": "planning", "sub_state": "writing_proposal"},
-      "to": {"phase": "planning", "sub_state": "writing_design"},
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
       "trigger": "auto",
       "actor_type": "agent",
       "actor_id": "claude-planner",
       "timestamp": "2026-07-09T00:00:00.000000+00:00"
     },
     {
-      "from": {"phase": "planning", "sub_state": "writing_design"},
-      "to": {"phase": "planning", "sub_state": "grilling_design"},
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "grilling_design"
+      },
       "trigger": "auto",
       "actor_type": "agent",
       "actor_id": "claude-planner",
       "timestamp": "2026-07-09T00:00:00.000000+00:00"
     },
     {
-      "from": {"phase": "planning", "sub_state": "grilling_design"},
-      "to": {"phase": "planning", "sub_state": "writing_specs"},
+      "from": {
+        "phase": "planning",
+        "sub_state": "grilling_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_specs"
+      },
       "trigger": "auto",
       "actor_type": "agent",
       "actor_id": "claude-planner",
       "timestamp": "2026-07-09T00:00:00.000000+00:00"
     },
     {
-      "from": {"phase": "planning", "sub_state": "writing_specs"},
-      "to": {"phase": "planning", "sub_state": "writing_tasks"},
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_specs"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_tasks"
+      },
       "trigger": "auto",
       "actor_type": "agent",
       "actor_id": "claude-planner",
       "timestamp": "2026-07-09T00:00:00.000000+00:00"
     },
     {
-      "from": {"phase": "planning", "sub_state": "writing_tasks"},
-      "to": {"phase": "planning", "sub_state": "ready_for_review"},
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_tasks"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
       "trigger": "auto",
       "actor_type": "agent",
       "actor_id": "claude-planner",
       "timestamp": "2026-07-09T00:00:00.000000+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T04:27:06.569898+00:00",
+      "decision": "skip",
+      "skip_reason": "code already implemented, skip reviewing"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "test_failing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T04:27:06.570614+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "test_failing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T04:27:06.571291+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T04:27:06.572114+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "smoke_validating"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T04:27:06.572787+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "smoke_validating"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T04:27:06.573374+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T04:27:06.574033+00:00",
+      "decision": "approved",
+      "reason": "ready for code review"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T04:32:50.396425+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T04:44:50.690596+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "requesting_changes"
+      },
+      "trigger": "needs_revision",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T04:44:50.690596+00:00",
+      "reason": "formal cli spec still requires removed main/--interactive behavior; CLI import opens log file in unwritable platformdirs path; web subprocess test does not exercise asterwynd console script; design D3 contradicts no-positional callback decision"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "requesting_changes"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:07:53.023153+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:07:53.024034+00:00"
     }
   ],
   "current_agent": null,
-  "last_gate": null,
+  "last_gate": {
+    "phase": "code-review",
+    "sub_state": "ready_for_review",
+    "awaiting": "human_review"
+  },
   "blockers": [],
   "routing": {
-    "planning": {"executor": "inline", "session_mode": "same"},
-    "reviewing": {"executor": "codex", "session_mode": "new"},
-    "building": {"executor": "inline", "session_mode": "same"},
-    "code-review": {"executor": "codex", "session_mode": "new"},
-    "closing": {"executor": "inline", "session_mode": "same"}
+    "planning": {
+      "executor": "inline",
+      "session_mode": "same"
+    },
+    "reviewing": {
+      "executor": "codex",
+      "session_mode": "new"
+    },
+    "building": {
+      "executor": "inline",
+      "session_mode": "same"
+    },
+    "code-review": {
+      "executor": "codex",
+      "session_mode": "new"
+    },
+    "closing": {
+      "executor": "inline",
+      "session_mode": "same"
+    }
   },
   "next_hints": {
-    "reviewing": "由 codex executor 审查 design.md，确认 D1-D7 设计决策的合理性、风险缓解充分性、及 spec delta 覆盖完整"
+    "recommended_agent": "code-reviewer",
+    "priority_hints": [
+      "gate at code-review.ready_for_review: next phases: ['closing.syncing_specs']"
+    ]
   }
 }
