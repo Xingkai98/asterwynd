@@ -103,6 +103,9 @@ class TraceRecorder:
     def record_edit(self, path: str, status: str, summary: str) -> None:
         self.record("edit", tool_name="Edit", path=path, status=status, summary=summary)
 
+    def record_parallel_execution(self, group: list[str]) -> None:
+        self.record("parallel_execution_start", tools=group)
+
     def record_diff(self, diff_path: str, summary: str) -> None:
         self.record("diff", diff_path=diff_path, summary=summary)
 

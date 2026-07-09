@@ -21,6 +21,7 @@ from agent.workspace_policy import WorkspacePolicy
 )
 class GrepTool(Tool):
     read_only = True
+    parallelizable = True
     permission = WORKSPACE_READ_PERMISSION
 
     def __init__(self, policy: WorkspacePolicy | None = None):

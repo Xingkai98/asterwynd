@@ -1363,3 +1363,353 @@ async def test_bash_tool_not_retried():
 
     await loop.run([Message(role="user", content="test")])
     assert call_count[0] == 1
+
+
+# ── Parallel tool execution tests ──
+
+
+@tool_parameters(name="SlowRead", description="Slow read tool", parameters={"type": "object", "properties": {}, "required": []})
+class SlowReadTool(Tool):
+    name = "SlowRead"
+    description = "Slow read"
+    parameters = {}
+    read_only = True
+    parallelizable = True
+
+    def __init__(self, delay: float = 0.05):
+        self.delay = delay
+        self.started_at: float | None = None
+        self.ended_at: float | None = None
+
+    async def execute(self, **kwargs) -> str:
+        self.started_at = __import__("time").perf_counter()
+        await __import__("asyncio").sleep(self.delay)
+        self.ended_at = __import__("time").perf_counter()
+        return f"read after {self.delay}s"
+
+
+@tool_parameters(name="FastWrite", description="Fast write tool", parameters={"type": "object", "properties": {}, "required": []})
+class FastWriteTool(Tool):
+    name = "FastWrite"
+    description = "Fast write"
+    parameters = {}
+    read_only = False
+    parallelizable = False
+
+    def __init__(self):
+        self.called = False
+
+    async def execute(self, **kwargs) -> str:
+        self.called = True
+        return "written"
+
+
+class MultiToolLLM:
+    def __init__(self, tool_call_groups: list[list[ToolCallDelta]]):
+        self.tool_call_groups = tool_call_groups
+        self.call_count = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+        if self.call_count < len(self.tool_call_groups):
+            group = self.tool_call_groups[self.call_count]
+            self.call_count += 1
+            return LLMResponse(
+                content="calling tools",
+                tool_calls=list(group),
+                stop_reason="tool_calls",
+            )
+        return LLMResponse(content="done", stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_parallelizable_tools_execute_concurrently():
+    """All-parallelizable group: tools must overlap in time."""
+    slow_a = SlowReadTool(delay=0.05)
+    slow_a.name = "SlowReadA"
+    slow_b = SlowReadTool(delay=0.05)
+    slow_b.name = "SlowReadB"
+
+    registry = ToolRegistry()
+    registry.register(slow_a)
+    registry.register(slow_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="SlowReadA", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowReadB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    await loop.run([Message(role="user", content="test")])
+
+    # If concurrent, the second tool started before the first finished.
+    assert slow_a.started_at is not None
+    assert slow_b.started_at is not None
+    assert slow_a.ended_at is not None
+    assert slow_b.ended_at is not None
+    # The tools should overlap: B started before A finished (or vice versa)
+    parallel = slow_b.started_at < slow_a.ended_at or slow_a.started_at < slow_b.ended_at
+    assert parallel, f"Expected concurrent execution: A={slow_a.started_at:.6f}-{slow_a.ended_at:.6f}, B={slow_b.started_at:.6f}-{slow_b.ended_at:.6f}"
+
+
+@pytest.mark.asyncio
+async def test_mixed_serial_parallel_grouping():
+    """Write tool between two parallel Read tools: grouping correct, results ordered."""
+    read_a = SlowReadTool(delay=0.02)
+    read_a.name = "SlowReadA"
+    write = FastWriteTool()
+    write.name = "FastWrite"
+    read_b = SlowReadTool(delay=0.02)
+    read_b.name = "SlowReadB"
+
+    registry = ToolRegistry()
+    registry.register(read_a)
+    registry.register(write)
+    registry.register(read_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="SlowReadA", arguments="{}"),
+            ToolCallDelta(id="c2", name="FastWrite", arguments="{}"),
+            ToolCallDelta(id="c3", name="SlowReadB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    await loop.run([Message(role="user", content="test")])
+
+    # Write must have been called
+    assert write.called
+    # All Read tools executed
+    assert read_a.started_at is not None
+    assert read_b.started_at is not None
+
+
+@pytest.mark.asyncio
+async def test_parallel_group_error_isolation():
+    """One tool error in a parallel group doesn't block siblings."""
+    call_count = {"good": 0, "bad": 0}
+
+    class BadTool(Tool):
+        name = "BadTool"
+        description = "Always fails"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            call_count["bad"] += 1
+            raise RuntimeError("boom")
+
+    class GoodTool(Tool):
+        name = "GoodTool"
+        description = "Always works"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            call_count["good"] += 1
+            return "ok"
+
+    registry = ToolRegistry()
+    registry.register(BadTool())
+    registry.register(GoodTool())
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="BadTool", arguments="{}"),
+            ToolCallDelta(id="c2", name="GoodTool", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    trace = TraceRecorder(task_id="error-test")
+    result = await loop.run(
+        [Message(role="user", content="test")],
+        trace_recorder=trace,
+    )
+
+    # Both tools were attempted
+    assert call_count["bad"] == 1
+    assert call_count["good"] == 1
+    # Good tool result should appear
+    assert result.tool_calls_made[0].name == "BadTool"
+    assert result.tool_calls_made[1].name == "GoodTool"
+    assert result.tool_calls_made[1].result == "ok"
+
+
+@pytest.mark.asyncio
+async def test_result_order_preserved():
+    """Results must match original tool call order regardless of execution order."""
+    class FastReadTool(Tool):
+        name = "FastReadX"
+        description = "Fast"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            return "fast"
+
+    class SlowReadTool2(Tool):
+        name = "SlowReadX"
+        description = "Slow"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            await __import__("asyncio").sleep(0.05)
+            return "slow"
+
+    registry = ToolRegistry()
+    registry.register(FastReadTool())
+    registry.register(SlowReadTool2())
+
+    # Fast is first, Slow is second in the call list
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="FastReadX", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowReadX", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    result = await loop.run([Message(role="user", content="test")])
+
+    assert len(result.tool_calls_made) == 2
+    # Order must match original call list
+    assert result.tool_calls_made[0].name == "FastReadX"
+    assert result.tool_calls_made[0].result == "fast"
+    assert result.tool_calls_made[1].name == "SlowReadX"
+    assert result.tool_calls_made[1].result == "slow"
+
+
+@pytest.mark.asyncio
+async def test_two_write_tools_run_serially():
+    """Non-parallelizable tools should not be grouped."""
+    write_a = FastWriteTool()
+    write_a.name = "FastWriteA"
+    write_b = FastWriteTool()
+    write_b.name = "FastWriteB"
+
+    registry = ToolRegistry()
+    registry.register(write_a)
+    registry.register(write_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="FastWriteA", arguments="{}"),
+            ToolCallDelta(id="c2", name="FastWriteB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    await loop.run([Message(role="user", content="test")])
+
+    assert write_a.called
+    assert write_b.called
+
+
+@pytest.mark.asyncio
+async def test_trace_parallel_execution_start():
+    """Trace recorder captures parallel_execution_start step for grouped tools."""
+    read_a = SlowReadTool(delay=0.01)
+    read_a.name = "SlowReadA"
+    read_b = SlowReadTool(delay=0.01)
+    read_b.name = "SlowReadB"
+
+    registry = ToolRegistry()
+    registry.register(read_a)
+    registry.register(read_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="SlowReadA", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowReadB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    trace = TraceRecorder(task_id="parallel-trace")
+    await loop.run([Message(role="user", content="test")], trace_recorder=trace)
+
+    step_types = [step.type for step in trace.steps]
+    assert "parallel_execution_start" in step_types
+
+    # Verify the group membership
+    parallel_step = next(
+        step for step in trace.steps if step.type == "parallel_execution_start"
+    )
+    assert parallel_step.data["tools"] == ["SlowReadA", "SlowReadB"]
+
+
+@pytest.mark.asyncio
+async def test_parallelizable_attribute_default():
+    """Default parallelizable is False. Only explicitly marked tools are True."""
+    from agent.tools.base import Tool as BaseTool
+
+    class UnknownTool(BaseTool):
+        name = "UnknownTool"
+        description = "test"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            return "test"
+
+    tool = UnknownTool()
+    assert tool.parallelizable is False
+
+
+def test_parallelizable_tools_marked():
+    """Only the 7 safe read-only tools have parallelizable=True."""
+    from agent.tools.builtin.read import ReadTool
+    from agent.tools.builtin.grep import GrepTool
+    from agent.tools.builtin.find import FindTool
+    from agent.tools.builtin.list_files import ListFilesTool
+    from agent.tools.builtin.inspect_git_diff import InspectGitDiffTool
+    from agent.tools.builtin.code_intelligence import RepoMapTool, SymbolSearchTool
+
+    parallel_read = [ReadTool, GrepTool, FindTool, ListFilesTool, InspectGitDiffTool, RepoMapTool, SymbolSearchTool]
+    for cls in parallel_read:
+        inst = cls()
+        assert inst.parallelizable is True, f"{cls.__name__} should be parallelizable"
+
+    # Write tools must NOT be parallelizable
+    from agent.tools.builtin.write import WriteTool
+    from agent.tools.builtin.edit import EditTool
+    from agent.tools.builtin.bash import BashTool
+
+    for cls in [WriteTool, EditTool, BashTool]:
+        inst = cls()
+        assert inst.parallelizable is False, f"{cls.__name__} should not be parallelizable"
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_defaults_to_non_parallelizable():
+    """A tool not in registry is handled gracefully with an error, sibling tools continue."""
+    registry = ToolRegistry()
+    registry.register(SlowReadTool(delay=0.01))
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="NonExistentTool", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowRead", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    trace = TraceRecorder(task_id="unknown-tool")
+    result = await loop.run(
+        [Message(role="user", content="test")],
+        trace_recorder=trace,
+    )
+
+    # Non-existent tool should result in an error
+    assert result.tool_calls_made[0].name == "NonExistentTool"
+    assert "Error" in result.tool_calls_made[0].result
+    # The Read tool should still execute
+    assert result.tool_calls_made[1].name == "SlowRead"
+    assert result.tool_calls_made[1].result.startswith("read after")
