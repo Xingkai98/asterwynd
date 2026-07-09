@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger("asterwynd.memory.persistent")
 
-_MEMORY_DIR_BASE = Path.home() / ".claude" / "projects"
+_MEMORY_DIR_BASE = Path.home() / ".asterwynd" / "projects"
 MAX_INDEX_LINES = 200
 MAX_INDEX_BYTES = 25_000
 _VALID_NAME_RE = re.compile(r"^[a-z0-9-]+$")
@@ -42,7 +42,7 @@ class PersistentMemory:
     """Cross-session persistent memory, compatible with Claude Code format.
 
     Maintains four types of memory files under
-    ~/.claude/projects/<project-hash>/memory/.
+    ~/.asterwynd/projects/<project-hash>/memory/.
     MEMORY.md serves as the index; each memory is a separate .md file.
     """
 

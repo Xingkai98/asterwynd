@@ -68,7 +68,7 @@ class TestPersistentMemory:
     @pytest.fixture
     def mem(self, tmp_path, monkeypatch):
         """PersistentMemory backed by a temp memory dir."""
-        # Override the base dir so we don't write to real ~/.claude
+        # Override the base dir so we don't write to real ~/.asterwynd
         fake_base = tmp_path / "fake-claude" / "projects"
         monkeypatch.setattr(
             "agent.memory.persistent._MEMORY_DIR_BASE",
