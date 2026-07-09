@@ -121,7 +121,7 @@ Asterwynd 当前所有 CLI 逻辑放在根目录 `cli.py`（约 612 行），不
 ### codex review R2 (NEEDS_REVISION → 已修复)
 1. Spec delta 删除 "（替换正式 spec 中的同名词条）" 独立段，确保 SHALL/MUST 正文在 requirement 首段
 2. Callback 恢复 `--provider`/`--model`/`--max-iterations`/`--system`/`--mode`/`--config` option
-3. D2 明确 `asterwynd "prompt"` 为交互+初始 prompt（非单轮），保留旧 `main --interactive "prompt"` 语义
+3. D2 原决定 `asterwynd "prompt"` 为交互+初始 prompt（非单轮）。后续 R3 实测发现 callback positional argument 与子命令解析冲突，改为 callback 不带 positional argument，`asterwynd "prompt"` 语法删除（D2 和 D3 同步更新）
 4. Change Type 改为 primary: feature, secondary: refactor；backlog 描述纠正为"破坏性变更"
 5. Impact Analysis 增加 `uv.lock`；tasks 增加 `uv.lock` 更新
 6. `platformdirs` 固定为 `user_log_path`（非 `user_state_path`），路径说明与 API 匹配

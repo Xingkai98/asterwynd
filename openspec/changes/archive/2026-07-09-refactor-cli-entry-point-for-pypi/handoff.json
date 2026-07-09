@@ -364,6 +364,282 @@
       "timestamp": "2026-07-09T05:19:20.236703+00:00",
       "decision": "approved",
       "reason": "closing complete, ready to merge"
+    },
+    {
+      "from": {
+        "phase": "done",
+        "sub_state": null
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "trigger": "human_rollback",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T05:20:01.793074+00:00",
+      "reason": "re-run codex review on fixes"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:20:39.753360+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:23:13.586460+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "requesting_changes"
+      },
+      "trigger": "needs_revision",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:23:13.586460+00:00",
+      "reason": "design.md still contains stale R2 note claiming asterwynd \"prompt\" is interactive initial prompt and preserving old main --interactive \"prompt\" semantics"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "requesting_changes"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "trigger": "human_rollback",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T05:24:32.728436+00:00",
+      "reason": "fixed design.md R2 stale note, re-review"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:26:43.922285+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:26:43.922285+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "requesting_changes"
+      },
+      "trigger": "needs_revision",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:26:43.922285+00:00",
+      "reason": "design.md still retains stale R2 note text claiming asterwynd \"prompt\" is an interactive initial prompt and preserving old main --interactive \"prompt\" semantics; appending a parenthetical correction does not satisfy the D3 cleanup requirement"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "requesting_changes"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "trigger": "human_rollback",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T05:28:30.601019+00:00",
+      "reason": "rewrote design.md R2 stale line, re-review"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reading_diff"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:34:35.432210+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "analyzing_tests"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:34:35.432210+00:00"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "reviewing_code"
+      },
+      "to": {
+        "phase": "code-review",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "approved",
+      "actor_type": "agent",
+      "actor_id": "codex-code-reviewer",
+      "timestamp": "2026-07-09T05:34:35.432210+00:00",
+      "reason": "second review verified CLI spec sync, lazy logging initialization, console_scripts web subprocess coverage, and design D3 cleanup"
+    },
+    {
+      "from": {
+        "phase": "code-review",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "syncing_specs"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T05:36:07.196035+00:00",
+      "decision": "approved",
+      "reason": "codex 4th review: APPROVED, all 4 items verified"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "syncing_specs"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "archiving"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:36:17.650809+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "archiving"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "updating_backlog"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:36:17.652640+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "updating_backlog"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "validating"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:36:17.654413+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "validating"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "pr_ready"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:36:19.502691+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "pr_ready"
+      },
+      "to": {
+        "phase": "closing",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "system",
+      "timestamp": "2026-07-09T05:36:19.504546+00:00"
+    },
+    {
+      "from": {
+        "phase": "closing",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "done",
+        "sub_state": null
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human-1",
+      "timestamp": "2026-07-09T05:36:19.506820+00:00",
+      "decision": "approved",
+      "reason": "codex re-review approved, closing complete"
     }
   ],
   "current_agent": null,
