@@ -19,6 +19,7 @@ from agent.llm import LLMResponse, ToolCallDelta
 from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
 from agent.memory.manager import MemoryManager
+from agent.memory.persistent import PersistentMemory
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
@@ -50,6 +51,7 @@ class AgentLoop:
         tool_registry: ToolRegistry,
         hooks: Optional[HookManager] = None,
         memory: Optional[MemoryManager] = None,
+        persistent_memory: PersistentMemory | None = None,
         planning_manager: Optional[PlanningManager] = None,
         subagent_manager: Optional[SubAgentManager] = None,
         expose_subagent_tools: bool = False,
@@ -64,6 +66,7 @@ class AgentLoop:
         self.tool_registry = tool_registry
         self.hooks = hooks or HookManager()
         self.memory = memory or MemoryManager(llm=llm)
+        self.persistent_memory = persistent_memory
         self._planning = planning_manager or PlanningManager()
         self.subagent_manager = subagent_manager or SubAgentManager()
         self.subagent_manager.configure_runtime(
@@ -659,6 +662,17 @@ class AgentLoop:
 
     def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
         injected_contexts = []
+        if self.persistent_memory is not None:
+            memory_index = self.persistent_memory.load_index()
+            if memory_index:
+                injected_contexts.append(
+                    "## Project Memory\n"
+                    "The following persistent memories from prior sessions are available. "
+                    "Use RecallMemory to retrieve specific entries.\n"
+                    "---\n"
+                    f"{memory_index}\n"
+                    "---"
+                )
         if self.skill_runtime is not None:
             skill_index = self.skill_runtime.render_skill_index()
             if skill_index:

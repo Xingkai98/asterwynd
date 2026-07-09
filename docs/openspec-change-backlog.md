@@ -53,7 +53,6 @@
 
 - `improve-agent-execution-foundation`：Agent 执行可靠性——todo 任务追踪 + 工具错误恢复重试。
 - `add-parallel-tool-execution`：AgentLoop 并行工具执行——独立只读调用并发化。
-- `add-persistent-cross-session-memory`：跨 session 持久记忆——user/feedback/project/reference 四类，与 Claude Code 格式兼容。
 - `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
 - `add-multimodal-input-support`：图片/多模态输入——Message 协议扩展 + Read 工具图片支持。
 - `add-background-task-execution-and-session-persistence`：后台任务执行 + 会话保存/恢复。
@@ -117,20 +116,9 @@
 
 ### 3. `add-persistent-cross-session-memory`
 
-状态：未实现。
+状态：已实现，待 PR 合入后归档。
 
-批次：第七批第一批，可并行推进。
-
-建议顺序原因：
-
-- 自包含的 memory 模块扩展，只新增文件和工具，不改动核心路径。
-- 与 Claude Code 格式兼容，方便后续互操作。
-
-主要交付：
-
-- `PersistentMemory` 类，管理四类记忆文件。
-- `SaveMemory` / `RecallMemory` 工具。
-- AgentLoop 系统消息注入持久记忆上下文。
+批次：第七批第一批，已合入。
 
 ### 4. `add-semantic-code-search`
 
