@@ -114,13 +114,7 @@
 - AgentLoop 分组并行执行（连续只读 tool calls 同组并发）。
 - 并行组审批退化策略；错误隔离。
 
-### 3. `add-persistent-cross-session-memory`
-
-状态：已实现，待 PR 合入后归档。
-
-批次：第七批第一批，已合入。
-
-### 4. `add-multimodal-input-support`
+### 3. `add-multimodal-input-support`
 
 状态：未实现。
 
@@ -138,7 +132,7 @@
 - Read 工具图片识别 + base64 编码。
 - OpenAI/Anthropic adapter 多模态格式转换。
 
-### 5. `add-background-task-execution-and-session-persistence`
+### 4. `add-background-task-execution-and-session-persistence`
 
 状态：未实现。
 
@@ -155,7 +149,7 @@
 - `TaskOutput` / `TaskStop` 工具。
 - SessionStore 序列化/恢复 + CLI `--resume`。
 
-### 6. `add-minimal-tui-runtime-view`
+### 5. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -173,7 +167,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 7. `add-browser-use-safety-foundation`
+### 6. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
