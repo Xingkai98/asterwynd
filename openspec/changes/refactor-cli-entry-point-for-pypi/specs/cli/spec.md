@@ -1,70 +1,134 @@
+## REMOVED Requirements
+
+### Requirement: main 命令支持单轮和交互
+
+**Reason**: `main` 子命令被替换为 `@app.callback(invoke_without_command=True)` 默认交互 + `run` 子命令单轮。交互/单轮不再通过 `--interactive` flag 区分，而是通过是否提供子命令区分。
+
+**Migration**: `asterwynd main "prompt"` → `asterwynd run "prompt"`；`asterwynd main --interactive` → `asterwynd`；`--interactive` 选项不再支持。
+
 ## MODIFIED Requirements
 
-### Requirement: CLI 入口模块与命令结构
+### Requirement: CLI 构造默认 AgentLoop
 
-CLI 入口逻辑 SHALL 位于 `agent/main.py` 包内模块。根目录 `cli.py` SHALL NOT 存在。`pyproject.toml` 的 `[project.scripts]` SHALL 指向 `agent.main:app`。
+（替换正式 spec 中的同名词条）
 
-`@app.callback()` SHALL 作为默认入口：无参数时进入交互 REPL；提供 prompt 参数时执行单轮运行。
+系统 SHALL 从 `agent/main.py` 构造 AgentLoop。根目录 `cli.py` SHALL NOT 存在。`pyproject.toml` 的 `[project.scripts]` SHALL 指向 `agent.main:app`。`@app.callback(invoke_without_command=True)` SHALL 处理无子命令时的默认交互行为。
 
-`web` 和 `benchmark` SHALL 作为独立子命令，各自声明参数，不共享顶层选项。
+#### Scenario: 入口模块正确加载
 
-#### Scenario: 默认交互模式
+- **GIVEN** 用户通过 `pip install asterwynd` 安装
+- **WHEN** 用户执行 `asterwynd`
+- **THEN** 系统 SHALL 从 `agent.main:app` 加载 Typer 应用
+- **AND** 无子命令时 SHALL 进入交互 REPL
 
-- **GIVEN** 用户安装后执行 `asterwynd`
-- **WHEN** 无参数
-- **THEN** 系统 SHALL 进入交互 REPL
-- **AND** SHALL 显示 Session ID 和品牌 banner（可 `--no-banner` 关闭）
+#### Scenario: 根 `cli.py` 不存在
+
+- **GIVEN** 项目已安装或构建为 wheel
+- **WHEN** 检查 wheel 内容或包目录
+- **THEN** 根目录 `cli.py` SHALL NOT 存在
+- **AND** `python cli.py` SHALL NOT 可用（文件不存在）
+
+### Requirement: CLI 接入统一配置
+
+（替换正式 spec 中的同名词条）
+
+`run`、`web` 和 `benchmark` 子命令 SHALL 各自独立支持 `--config <path>` 和 `--mode` option。未显式传入 `--mode` 时，各命令 SHALL 使用配置中的 `agent.default_mode`。
+
+#### Scenario: run 使用配置默认 mode
+
+- **GIVEN** `asterwynd.yaml` 设置了 `agent.default_mode`
+- **AND** 用户未传入 `--mode`
+- **WHEN** CLI 执行 `asterwynd run "hello"`
+- **THEN** CLI SHALL 使用配置默认 mode 构造 AgentLoop
+
+#### Scenario: CLI mode 覆盖配置
+
+- **GIVEN** `asterwynd.yaml` 设置了默认 mode
+- **AND** 用户显式传入 `--mode plan`
+- **WHEN** CLI 执行 `asterwynd run "hello" --mode plan`
+- **THEN** CLI SHALL 使用 `plan` mode
+
+### Requirement: web 命令启动 Web UI
+
+（替换正式 spec 中的同名词条）
+
+`web` 子命令 SHALL 接收 host、port、provider、model、mode 和 config_path 参数，参数 SHALL 独立声明（不受 callback 或其他子命令影响）。
+
+#### Scenario: 启动 web
+
+- **GIVEN** 用户执行 `asterwynd web --port 8000`
+- **WHEN** 命令启动成功
+- **THEN** CLI SHALL 输出访问地址、provider、model 和 debug 状态
+- **AND** 使用 uvicorn 运行 app
+
+## ADDED Requirements
+
+### Requirement: run 子命令单轮执行
+
+`asterwynd run <prompt>` SHALL 执行单轮 Agent 运行。`run` 子命令 SHALL 接收 `--model`、`--provider`、`--max-iterations`、`--system`、`--mode` 和 `--config` option。
 
 #### Scenario: 单轮 prompt
 
-- **GIVEN** 用户执行 `asterwynd "hello"`
+- **GIVEN** 用户执行 `asterwynd run "hello"`
 - **WHEN** 提供 prompt 参数
 - **THEN** 系统 SHALL 执行单轮 Agent 运行
 - **AND** SHALL NOT 显示品牌 banner
 
-#### Scenario: Web 子命令
+#### Scenario: run 子命令不冲突 web/benchmark
 
-- **GIVEN** 用户执行 `asterwynd web --port 8000`
-- **WHEN** 提供 `web` 子命令
-- **THEN** 系统 SHALL 启动 Web UI 服务
-- **AND** `web` 的参数 SHALL 独立声明，不受 callback 选项影响
-
-#### Scenario: Benchmark 子命令
-
-- **GIVEN** 用户执行 `asterwynd benchmark benchmarks/tasks --agent fake`
-- **WHEN** 提供 `benchmark` 子命令
+- **GIVEN** 用户安装 asterwynd
+- **WHEN** 用户执行 `asterwynd web --port 8000`
+- **THEN** 系统 SHALL 启动 Web UI（不会将 `web` 解析为 prompt）
+- **WHEN** 用户执行 `asterwynd benchmark benchmarks/tasks --agent fake`
 - **THEN** 系统 SHALL 执行 benchmark
-- **AND** `benchmark` 的参数 SHALL 独立声明
 
-### Requirement: 运行时路径与 XDG 兼容
+### Requirement: 默认交互模式（callback）
 
-`.env` 加载 SHALL 使用 `python-dotenv` 默认 CWD 搜索。日志目录 SHALL 使用 XDG state 路径（`~/.local/state/asterwynd/logs/`）。
+`asterwynd` 无子命令时 SHALL 进入交互 REPL。交互模式 SHALL 显示品牌 banner（可通过 `--no-banner` 关闭）和 Session ID。
 
-#### Scenario: 安装后 .env 加载
+#### Scenario: 默认交互
 
-- **GIVEN** 用户通过 pip 全局安装 asterwynd
-- **AND** CWD 或其父目录存在 `.env` 文件
-- **WHEN** 用户运行 `asterwynd "hello"`
-- **THEN** 系统 SHALL 自动加载该 `.env` 文件
+- **GIVEN** 用户安装后执行 `asterwynd`
+- **WHEN** 无子命令
+- **THEN** 系统 SHALL 进入交互 REPL
+- **AND** SHALL 显示品牌 banner 和 Session ID
 
-#### Scenario: 日志写入 XDG 路径
+#### Scenario: 关闭 banner
+
+- **GIVEN** 用户执行 `asterwynd --no-banner`
+- **WHEN** 无子命令
+- **THEN** 系统 SHALL 进入交互 REPL
+- **AND** SHALL NOT 显示品牌 banner
+
+#### Scenario: main 子命令不可用
+
+- **GIVEN** 用户安装 asterwynd
+- **WHEN** 用户执行 `asterwynd main "hello"`
+- **THEN** 系统 SHALL 报错，提示子命令不存在
+- **AND** SHALL NOT 进入 Agent 运行
+
+#### Scenario: --interactive 不可用
+
+- **GIVEN** 用户安装 asterwynd
+- **WHEN** 用户执行 `asterwynd --interactive`
+- **THEN** 系统 SHALL 报错，提示未知 option
+
+### Requirement: 日志目录使用 platformdirs
+
+系统 SHALL 使用 `platformdirs.user_state_path("asterwynd") / "logs"` 作为日志目录。Linux 下 SHALL 尊重 `$XDG_STATE_HOME`（默认 `~/.local/state/asterwynd/logs/`），macOS 为 `~/Library/Logs/asterwynd/`。目录不存在时 SHALL 自动创建。
+
+#### Scenario: 默认日志路径
 
 - **GIVEN** 用户运行 asterwynd
 - **WHEN** 系统需要写日志
-- **THEN** 日志 SHALL 写入 `~/.local/state/asterwynd/logs/`
+- **THEN** 日志 SHALL 写入 `platformdirs.user_state_path("asterwynd") / "logs"`
 - **AND** 目录不存在时 SHALL 自动创建
 
-### Requirement: pyproject.toml 包含完整 PyPI 元数据
+#### Scenario: 尊重 XDG_STATE_HOME
 
-`pyproject.toml` SHALL 包含 PyPI 发布所需的最小元数据：`license = "MIT"`、`classifiers`（Python 3.11/3.12/3.13、Environment、Topic）、repository URL 和足够详细的 `description`。
-
-#### Scenario: wheel 包含完整元数据
-
-- **GIVEN** 项目执行 `uv build`
-- **WHEN** 生成 wheel 包
-- **THEN** wheel 的 METADATA SHALL 包含 Name、Version、License、Classifier、Project-URL 和 Description
-- **AND** `agent/main.py` SHALL 包含在 wheel 中
-- **AND** 根目录 `cli.py` SHALL NOT 包含在 wheel 中
+- **GIVEN** Linux 环境设置了 `XDG_STATE_HOME=/custom/state`
+- **WHEN** 系统需要写日志
+- **THEN** 日志 SHALL 写入 `/custom/state/asterwynd/logs/`
 
 ### Requirement: CLI 文档命令示例使用统一入口
 
@@ -74,5 +138,5 @@ CLI 入口逻辑 SHALL 位于 `agent/main.py` 包内模块。根目录 `cli.py` 
 
 - **GIVEN** 用户阅读 README.md 或 README_EN.md
 - **WHEN** 看到快速开始命令
-- **THEN** 命令 SHALL 为 `uv run asterwynd "Hello"` 或 `uv run asterwynd`
+- **THEN** 命令 SHALL 为 `uv run asterwynd` 或 `uv run asterwynd run "Hello"`
 - **AND** SHALL NOT 包含 `python cli.py main` 形式
