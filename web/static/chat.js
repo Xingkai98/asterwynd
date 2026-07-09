@@ -12,6 +12,7 @@ let slashMatches = [];
 let activeSlashIndex = 0;
 let shouldReconnect = true;
 const approvalCards = new Map();
+let pendingImages = [];
 
 // --- DOM refs ---
 const messagesEl = document.getElementById('messages');
@@ -30,6 +31,9 @@ const planDocumentTitleEl = document.getElementById('plan-document-title');
 const planDocumentBodyEl = document.getElementById('plan-document-body');
 const planningPanel = document.getElementById('planning-panel');
 const planningItemsEl = document.getElementById('planning-items');
+const imagePreviewsEl = document.getElementById('image-previews');
+const imageFileInput = document.getElementById('image-file-input');
+const uploadBtn = document.getElementById('upload-btn');
 
 // --- Tab switching ---
 document.querySelectorAll('.tab').forEach(tab => {
@@ -509,18 +513,168 @@ function renderPlanDocument(document) {
   }
 }
 
+// --- Image upload ---
+uploadBtn.addEventListener('click', () => imageFileInput.click());
+
+imageFileInput.addEventListener('change', () => {
+  const files = imageFileInput.files;
+  if (!files || files.length === 0) return;
+  for (const file of files) {
+    addImageFromFile(file);
+  }
+  imageFileInput.value = '';
+});
+
+document.addEventListener('paste', (e) => {
+  if (document.activeElement !== userInput) return;
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      addImageFromFile(item.getAsFile());
+    }
+  }
+});
+
+// Drag and drop
+const inputArea = document.getElementById('input-area');
+let dragCounter = 0;
+
+inputArea.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+inputArea.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter++;
+  inputArea.classList.add('drag-over');
+});
+
+inputArea.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    inputArea.classList.remove('drag-over');
+  }
+});
+
+inputArea.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter = 0;
+  inputArea.classList.remove('drag-over');
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || files.length === 0) return;
+  for (const file of files) {
+    if (file.type.startsWith('image/')) {
+      addImageFromFile(file);
+    }
+  }
+});
+
+async function addImageFromFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  if (file.size > 20 * 1024 * 1024) {
+    addMessage('error', 'Image too large (max 20MB)');
+    return;
+  }
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const resp = await fetch('/api/upload-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data_url: dataUrl }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      addMessage('error', `Upload failed: ${err.error || resp.status}`);
+      return;
+    }
+    const result = await resp.json();
+    pendingImages.push({
+      data_url: dataUrl,
+      file_path: result.file_path,
+      url: result.url,
+      name: file.name,
+    });
+    renderImagePreviews();
+  } catch (e) {
+    addMessage('error', `Upload failed: ${e.message}`);
+  }
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function removeImage(index) {
+  pendingImages.splice(index, 1);
+  renderImagePreviews();
+}
+
+function renderImagePreviews() {
+  if (!imagePreviewsEl) return;
+  imagePreviewsEl.textContent = '';
+  if (pendingImages.length === 0) {
+    imagePreviewsEl.hidden = true;
+    return;
+  }
+  imagePreviewsEl.hidden = false;
+  pendingImages.forEach((img, index) => {
+    const thumb = document.createElement('div');
+    thumb.className = 'image-preview-item';
+    const pic = document.createElement('img');
+    pic.src = img.data_url;
+    pic.alt = img.name || 'pasted image';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'image-preview-remove';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', 'Remove image');
+    remove.addEventListener('click', () => removeImage(index));
+    thumb.appendChild(pic);
+    thumb.appendChild(remove);
+    imagePreviewsEl.appendChild(thumb);
+  });
+}
+
 // --- Send message ---
 async function sendMessage() {
   const text = userInput.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const hasImages = pendingImages.length > 0;
+  if ((!text && !hasImages) || !ws || ws.readyState !== WebSocket.OPEN) return;
 
   hideSlashSuggestions();
-  addMessage('user', text);
+
+  if (hasImages) {
+    const imagePreview = pendingImages.map(img => `[image: ${img.name || 'pasted'}]`).join(' ');
+    const label = text ? `${text}\n${imagePreview}` : imagePreview;
+    addMessage('user', label);
+  } else {
+    addMessage('user', text);
+  }
+
   userInput.value = '';
   sendBtn.disabled = true;
   statusEl.textContent = text.startsWith('/') ? 'running command...' : 'thinking...';
 
-  ws.send(JSON.stringify({ type: 'chat', content: text }));
+  const payload = { type: 'chat', content: text || '' };
+  if (hasImages) {
+    payload.images = pendingImages.map(img => ({ url: img.data_url, file_path: img.file_path }));
+    pendingImages = [];
+    renderImagePreviews();
+  }
+  ws.send(JSON.stringify(payload));
 }
 
 function sendModeChange() {

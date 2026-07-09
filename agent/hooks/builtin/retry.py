@@ -1,4 +1,6 @@
 # agent/hooks/builtin/retry.py
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
@@ -7,7 +9,7 @@ from agent.tools.base import ToolCall
 
 if TYPE_CHECKING:
     from agent.result import RunResult
-    from agent.message import Message
+    from agent.message import Message, ContentBlock
     from agent.llm import LLMResponse
 
 logger = logging.getLogger("asterwynd.hooks.retry")
@@ -32,8 +34,8 @@ class RetryHook:
     async def execute_with_retry(
         self,
         tool_call: ToolCall,
-        execute_fn: Callable[[ToolCall], Awaitable[str]],
-    ) -> str:
+        execute_fn: Callable[[ToolCall], Awaitable[str | list["ContentBlock"]]],
+    ) -> str | list["ContentBlock"]:
         last_error_msg = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -53,7 +55,7 @@ class RetryHook:
         return f"[Error after {self.max_retries + 1} attempts: {last_error_msg}]"
 
     async def before_tool_execute(self, tool_call: ToolCall) -> None: pass
-    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None: pass
+    async def after_tool_execute(self, tool_call: ToolCall, result: str | list["ContentBlock"]) -> None: pass
     async def before_iteration(self, iteration: int, messages: list["Message"]) -> None: pass
     async def after_llm_call(self, response: "LLMResponse") -> None: pass
     async def on_error(self, error: Exception) -> None: pass

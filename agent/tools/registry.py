@@ -1,6 +1,12 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from agent.tools.base import Tool, ToolCall
 from agent.run_config import ModePolicy
 from agent.tool_permissions import PermissionDecisionType
+
+if TYPE_CHECKING:
+    from agent.message import ContentBlock
 
 class ToolRegistry:
     def __init__(self, mode_policy: ModePolicy | None = None):
@@ -23,7 +29,7 @@ class ToolRegistry:
     def get_sandbox(self, name: str) -> bool:
         return self._tools[name].dangerous
 
-    async def execute(self, tool_call: ToolCall, *, approval_granted: bool = False) -> str:
+    async def execute(self, tool_call: ToolCall, *, approval_granted: bool = False) -> str | list["ContentBlock"]:
         tool = self._tools[tool_call.name]
         decision = self.mode_policy.decide_tool(tool)
         if decision.type is PermissionDecisionType.DENY:

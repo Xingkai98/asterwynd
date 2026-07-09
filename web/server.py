@@ -68,6 +68,29 @@ def create_app(
         )
         return {"commands": command_registry.catalog()}
 
+    @app.post("/api/upload-image")
+    async def upload_image(request: dict):
+        """接收 base64 图片，写入 .asterwynd/uploads/，返回 file_path 和 data_url"""
+        from agent.uploads import create_image_message, MAX_UPLOAD_SIZE
+        data_url = request.get("data_url", "")
+        if not data_url:
+            return JSONResponse({"error": "missing data_url"}, status_code=400)
+        if not isinstance(data_url, str) or not data_url.startswith("data:image/"):
+            return JSONResponse({"error": "invalid data_url"}, status_code=400)
+        if len(data_url) > MAX_UPLOAD_SIZE * 2:
+            return JSONResponse({"error": "data_url too large"}, status_code=400)
+        try:
+            image_block = create_image_message(data_url)
+            return {
+                "file_path": image_block.file_path,
+                "url": image_block.image_url.url,
+            }
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except Exception as e:
+            logger.exception("Upload failed")
+            return JSONResponse({"error": "internal error"}, status_code=500)
+
     @app.websocket("/ws/{session_id}")
     async def websocket_endpoint(ws: WebSocket, session_id: str):
         await ws.accept()
@@ -154,10 +177,12 @@ def create_app(
                             break
                         continue
 
+                    images = raw.get("images") or []
                     await session_manager.run_session(
                         session, user_text,
                         ws_send=lambda e: ws.send_json(e),
                         ws_receive=ws.receive_json,
+                        images=images,
                     )
 
                 elif msg_type == "approval_response":

@@ -213,6 +213,7 @@ class SessionManager:
         user_message: str,
         ws_send,
         ws_receive=None,
+        images: list[dict] | None = None,
     ) -> None:
         """Run the agent with user message, streaming events via WebSocket."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -233,7 +234,17 @@ class SessionManager:
             debug_hook = DebugHook(emit=emit_debug, force_enabled=True)
             session.agent.hooks.hooks.append(debug_hook)
 
-        session.messages.append(Message(role="user", content=user_message))
+        if images:
+            from agent.message import TextBlock, ImageBlock, ImageUrl
+            from agent.uploads import create_image_message
+            content_blocks: list = [TextBlock(text=user_message)] if user_message else []
+            for img in images:
+                data_url = img.get("url", "")
+                if data_url:
+                    content_blocks.append(create_image_message(data_url))
+            session.messages.append(Message(role="user", content=content_blocks if content_blocks else user_message))
+        else:
+            session.messages.append(Message(role="user", content=user_message))
 
         # Run agent in background, send queued events through websocket
         async def run_agent():

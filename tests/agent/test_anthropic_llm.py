@@ -368,3 +368,148 @@ async def test_anthropic_llm_stream_sse_tool_use():
         assert response.tool_calls[0].name == "Bash"
         assert response.tool_calls[0].id == "tool_001"
         assert response.stop_reason == "tool_calls"
+
+
+# ── Multimodal content block tests ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_multimodal_content_to_anthropic_format():
+    """content list → Anthropic 多模态格式（image_url → image source）"""
+    llm = AnthropicLLM(api_key="test-key")
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    messages = [Message(role="user", content=[
+        TextBlock(text="Look at this:"),
+        ImageBlock(
+            image_url=ImageUrl(url="data:image/png;base64,iVBORw0KGgo="),
+            file_path="/tmp/img.png",
+        ),
+    ])]
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        captured = {}
+
+        async def capture(url, json=None, **kwargs):
+            captured["json"] = json
+            mock_response = MagicMock()
+            mock_response.json = AsyncMock(return_value={
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "I see it"}],
+                "stop_reason": "end_turn",
+            })
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+
+        mock_post.side_effect = capture
+        await llm.chat(messages, model="claude-sonnet-4-20250514")
+
+        anthropic_msgs = captured["json"]["messages"]
+        user_content = anthropic_msgs[0]["content"]
+        assert isinstance(user_content, list)
+        assert user_content[0]["type"] == "text"
+        assert user_content[0]["text"] == "Look at this:"
+        assert user_content[1]["type"] == "image"
+        assert user_content[1]["source"]["type"] == "base64"
+        assert user_content[1]["source"]["media_type"] == "image/png"
+        assert user_content[1]["source"]["data"] == "iVBORw0KGgo="
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_tries_vision_first():
+    """未知 Anthropic 模型先尝试发送图片，成功则不再重试"""
+    llm = AnthropicLLM(api_key="test-key")
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    messages = [Message(role="user", content=[
+        TextBlock(text="check this out"),
+        ImageBlock(
+            image_url=ImageUrl(url="data:image/png;base64,abc"),
+            file_path="/tmp/img.png",
+        ),
+    ])]
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        captured = {}
+
+        async def capture(url, json=None, **kwargs):
+            captured["json"] = json
+            mock_response = MagicMock()
+            mock_response.json = AsyncMock(return_value={
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+            })
+            mock_response.raise_for_status = MagicMock()
+            return mock_response
+
+        mock_post.side_effect = capture
+        await llm.chat(messages, model="unknown-model")
+
+        anthropic_msgs = captured["json"]["messages"]
+        user_content = anthropic_msgs[0]["content"]
+        # 未知模型首次尝试发送图片
+        assert isinstance(user_content, list)
+        assert user_content[0] == {"type": "text", "text": "check this out"}
+        assert user_content[1]["type"] == "image"
+        assert user_content[1]["source"]["data"] == "abc"
+
+
+@pytest.mark.asyncio
+async def test_unknown_model_retries_without_images_on_400():
+    """未知 Anthropic 模型首次发送图片收到 400 后，降级重试不发送图片"""
+    llm = AnthropicLLM(api_key="test-key")
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+    import httpx
+
+    messages = [Message(role="user", content=[
+        TextBlock(text="check this out"),
+        ImageBlock(
+            image_url=ImageUrl(url="data:image/png;base64,abc"),
+            file_path="/tmp/img.png",
+        ),
+    ])]
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        call_count = [0]
+        payloads = []
+
+        ok_response = MagicMock()
+        ok_response.json = AsyncMock(return_value={
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "ok"}],
+            "stop_reason": "end_turn",
+        })
+        ok_response.raise_for_status = MagicMock()
+
+        async def capture(url, json=None, **kwargs):
+            import copy
+            payloads.append(copy.deepcopy(json))
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise httpx.HTTPStatusError("400", request=MagicMock(), response=MagicMock(status_code=400))
+            return ok_response
+
+        mock_post.side_effect = capture
+
+        response = await llm.chat(messages, model="unknown-model")
+        assert response.content == "ok"
+        assert call_count[0] == 2
+
+        # 首次请求：包含 image block
+        first_msgs = payloads[0]["messages"]
+        first_blocks = first_msgs[0]["content"]
+        assert any(b["type"] == "image" for b in first_blocks)
+
+        # 重试请求：仅文本，无 image
+        second_msgs = payloads[1]["messages"]
+        second_content = second_msgs[0]["content"]
+        if isinstance(second_content, list):
+            assert all(b["type"] == "text" for b in second_content)
+        else:
+            assert isinstance(second_content, str)

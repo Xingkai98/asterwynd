@@ -220,8 +220,15 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=13" in index
-    assert "/static/chat.js?v=11" in index
+    assert "/static/style.css?v=14" in index
+    assert "/static/chat.js?v=12" in index
+    assert 'id="image-previews"' in index
+    assert 'id="image-file-input"' in index
+    assert 'id="upload-btn"' in index
+    assert "uploadBtn.addEventListener" in script
+    assert "addImageFromFile" in script
+    assert "pendingImages" in script
+    assert "renderImagePreviews" in script
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script

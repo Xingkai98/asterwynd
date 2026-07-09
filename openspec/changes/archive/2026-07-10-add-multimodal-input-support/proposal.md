@@ -28,8 +28,8 @@ Claude Code 支持通过 `Read` 工具读取图片文件并作为多模态输入
 - 影响代码：
   - `agent/message.py`
   - `agent/loop.py`（消息序列化/反序列化）
-  - `agent/llm/openai_adapter.py`
-  - `agent/llm/anthropic_adapter.py`
+  - `agent/openai_llm.py`
+  - `agent/anthropic_llm.py`
   - `agent/tools/builtin/read.py`
   - `agent/memory/manager.py`（compact 中的消息序列化）
   - `agent/trace_recorder.py`（trace 中可能包含图片引用）
