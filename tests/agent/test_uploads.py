@@ -13,7 +13,7 @@ def test_parse_data_url_png():
 
 
 def test_parse_data_url_jpeg():
-    mime, data = _parse_data_url("data:image/jpeg;base64,/9j/4AAQ=")
+    mime, data = _parse_data_url("data:image/jpeg;base64,/9j/4AAQ")
     assert mime == "image/jpeg"
 
 

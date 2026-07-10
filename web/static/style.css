@@ -183,6 +183,75 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   text-transform: uppercase;
   font-weight: 600;
 }
+.message-body {
+  min-width: 0;
+}
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.message-images:first-child {
+  margin-top: 0;
+}
+.message-image-button {
+  width: 96px;
+  height: 96px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.message-image-button:hover {
+  border-color: var(--info);
+}
+.message-image-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.78);
+}
+.image-lightbox[hidden] {
+  display: none;
+}
+.image-lightbox-img {
+  max-width: min(100%, 1100px);
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--bg);
+}
+.image-lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+}
+.image-lightbox-close:hover {
+  border-color: var(--info);
+}
 .tool-result-header {
   display: flex;
   gap: 10px;

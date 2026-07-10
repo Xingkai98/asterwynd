@@ -225,11 +225,27 @@ def create_app(
 
                     client_upload_id = str(raw.get("client_upload_id", "")).strip()
                     mime = str(raw.get("mime", "")).strip().lower()
-                    total_chars = int(raw.get("total_chars") or 0)
                     if not client_upload_id:
                         await ws.send_json({
                             "type": "image_upload_error",
                             "data": {"client_upload_id": client_upload_id, "message": "missing client_upload_id"},
+                        })
+                        continue
+                    raw_total_chars = raw.get("total_chars")
+                    try:
+                        if raw_total_chars is None or isinstance(raw_total_chars, bool):
+                            raise ValueError
+                        total_chars = int(raw_total_chars)
+                    except (TypeError, ValueError):
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "invalid image size"},
+                        })
+                        continue
+                    if total_chars < 0:
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "invalid image size"},
                         })
                         continue
                     if not mime.startswith("image/"):

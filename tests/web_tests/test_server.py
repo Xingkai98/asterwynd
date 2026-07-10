@@ -356,6 +356,54 @@ def test_websocket_chunked_image_upload_returns_upload_id(tmp_path, monkeypatch)
     assert (tmp_path / ".asterwynd" / "uploads" / data["upload_id"]).exists()
 
 
+def test_websocket_image_upload_start_rejects_invalid_total_chars(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    app = create_app(ScriptedLLM())
+    b64 = TINY_PNG_DATA_URL.split(",", 1)[1]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+
+            invalid_starts = [
+                {
+                    "type": "image_upload_start",
+                    "client_upload_id": "bad-non-int",
+                    "mime": "image/png",
+                    "total_chars": "not-an-int",
+                },
+                {
+                    "type": "image_upload_start",
+                    "client_upload_id": "bad-missing",
+                    "mime": "image/png",
+                },
+                {
+                    "type": "image_upload_start",
+                    "client_upload_id": "bad-negative",
+                    "mime": "image/png",
+                    "total_chars": -1,
+                },
+            ]
+            for start in invalid_starts:
+                ws.send_json(start)
+                assert ws.receive_json() == {
+                    "type": "image_upload_error",
+                    "data": {"client_upload_id": start["client_upload_id"], "message": "invalid image size"},
+                }
+
+            ws.send_json({
+                "type": "image_upload_start",
+                "client_upload_id": "client-after-error",
+                "mime": "image/png",
+                "total_chars": len(b64),
+            })
+            assert ws.receive_json() == {
+                "type": "image_upload_started",
+                "data": {"client_upload_id": "client-after-error"},
+            }
+
+
 def test_web_static_assets_include_session_and_run_display():
     index = (Path(__file__).parents[2] / "web" / "static" / "index.html").read_text()
     script = (Path(__file__).parents[2] / "web" / "static" / "chat.js").read_text()
@@ -373,7 +421,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
     assert "/static/style.css?v=14" in index
-    assert "/static/chat.js?v=16" in index
+    assert "/static/chat.js?v=17" in index
     assert 'id="image-previews"' in index
     assert 'id="image-file-input"' in index
     assert 'id="upload-btn"' in index
@@ -383,8 +431,13 @@ def test_web_static_assets_include_session_and_run_display():
     assert "prepareImageForSend" in script
     assert "uploadImageDataUrl" in script
     assert "uploadImageDataUrlOverWebSocket" in script
+    assert "HTTP_UPLOAD_TIMEOUT_MS" in script
+    assert "AbortController" in script
     assert "image_upload_chunk" in script
     assert "image_upload_complete" in script
+    assert "addUserMessage" in script
+    assert "appendMessageImages" in script
+    assert "openImageLightbox" in script
     assert "FormData" in script
     assert "fetch('/api/uploads'" in script
     assert "image/heic" in script
@@ -425,6 +478,8 @@ def test_web_static_assets_include_session_and_run_display():
     assert "function sendApprovalDecision" in script
     assert "function renderPlanDocument" in script
     assert "max_iterations" in script
+    assert ".message-images" in styles
+    assert ".image-lightbox" in styles
     assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
     assert ".message.system" in styles

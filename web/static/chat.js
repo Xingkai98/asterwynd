@@ -18,6 +18,7 @@ const wsUploadWaiters = new Map();
 const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_CHAT_PAYLOAD_CHARS = 12 * 1024 * 1024;
 const WS_UPLOAD_CHUNK_CHARS = 64 * 1024;
+const HTTP_UPLOAD_TIMEOUT_MS = 10000;
 const IMAGE_NORMALIZE_THRESHOLD_BYTES = 2 * 1024 * 1024;
 const MAX_NORMALIZED_IMAGE_SIDE = 1600;
 const JPEG_QUALITY = 0.82;
@@ -265,6 +266,82 @@ function addMessage(role, content) {
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return body;
+}
+
+function addUserMessage(content, images) {
+  const body = addMessage('user', content || '');
+  if (images && images.length > 0) {
+    appendMessageImages(body, images);
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function appendMessageImages(body, images) {
+  const grid = document.createElement('div');
+  grid.className = 'message-images';
+  images.forEach((image) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'message-image-button';
+    button.title = image.name || 'image';
+    button.setAttribute('aria-label', `Open ${image.name || 'image'}`);
+
+    const img = document.createElement('img');
+    img.src = image.data_url;
+    img.alt = image.name || 'uploaded image';
+    button.appendChild(img);
+    button.addEventListener('click', () => openImageLightbox(image.data_url, image.name || 'uploaded image'));
+    grid.appendChild(button);
+  });
+  body.appendChild(grid);
+}
+
+function openImageLightbox(dataUrl, name) {
+  let lightbox = document.getElementById('image-lightbox');
+  if (!lightbox) {
+    lightbox = document.createElement('div');
+    lightbox.id = 'image-lightbox';
+    lightbox.className = 'image-lightbox';
+    lightbox.hidden = true;
+    lightbox.setAttribute('role', 'dialog');
+    lightbox.setAttribute('aria-modal', 'true');
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'image-lightbox-close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Close image preview');
+
+    const img = document.createElement('img');
+    img.className = 'image-lightbox-img';
+
+    lightbox.appendChild(close);
+    lightbox.appendChild(img);
+    document.body.appendChild(lightbox);
+
+    close.addEventListener('click', closeImageLightbox);
+    lightbox.addEventListener('click', (event) => {
+      if (event.target === lightbox) {
+        closeImageLightbox();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !lightbox.hidden) {
+        closeImageLightbox();
+      }
+    });
+  }
+
+  const img = lightbox.querySelector('.image-lightbox-img');
+  img.src = dataUrl;
+  img.alt = name;
+  lightbox.hidden = false;
+}
+
+function closeImageLightbox() {
+  const lightbox = document.getElementById('image-lightbox');
+  if (!lightbox) return;
+  lightbox.hidden = true;
 }
 
 function appendAssistantContent(body, content) {
@@ -748,13 +825,23 @@ async function uploadImageDataUrl(dataUrl, name) {
   const formData = new FormData();
   formData.append('file', blob, name || `upload.${blob.type.split('/')[1] || 'jpg'}`);
   let response;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timeoutId = null;
   try {
+    if (controller) {
+      timeoutId = setTimeout(() => controller.abort(), HTTP_UPLOAD_TIMEOUT_MS);
+    }
     response = await fetch('/api/uploads', {
       method: 'POST',
       body: formData,
+      signal: controller ? controller.signal : undefined,
     });
   } catch (error) {
     return uploadImageDataUrlOverWebSocket(dataUrl, name, error);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
   }
   let result = {};
   try {
@@ -920,6 +1007,7 @@ async function sendMessage() {
   }
 
   hideSlashSuggestions();
+  let sentImages = [];
 
   if (hasImages) {
     statusEl.textContent = 'uploading image...';
@@ -932,11 +1020,16 @@ async function sendMessage() {
       statusEl.textContent = 'connected';
       return;
     }
+    sentImages = pendingImages.map(img => ({
+      data_url: img.data_url,
+      name: img.name || 'pasted',
+      upload_id: img.upload_id,
+    }));
   }
 
   const payload = { type: 'chat', content: text || '' };
   if (hasImages) {
-    payload.images = pendingImages.map(img => ({ upload_id: img.upload_id }));
+    payload.images = sentImages.map(img => ({ upload_id: img.upload_id }));
   }
   const payloadJson = JSON.stringify(payload);
   if (payloadJson.length > MAX_CHAT_PAYLOAD_CHARS) {
@@ -947,9 +1040,7 @@ async function sendMessage() {
   }
 
   if (hasImages) {
-    const imagePreview = pendingImages.map(img => `[image: ${img.name || 'pasted'}]`).join(' ');
-    const label = text ? `${text}\n${imagePreview}` : imagePreview;
-    addMessage('user', label);
+    addUserMessage(text, sentImages);
   } else {
     addMessage('user', text);
   }
