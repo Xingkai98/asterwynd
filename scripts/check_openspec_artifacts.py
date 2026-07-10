@@ -8,6 +8,10 @@ This checker intentionally performs mechanical checks only:
 - proposal.md declares Change Type with primary/secondary fields
 - change spec delta capabilities map to current specs
 - non-docs changes with spec deltas include a current spec sync task
+- non-docs changes include Impact Analysis
+- non-docs changes include Reference Implementation Research decision records
+- changes that require design include a Pre-Implementation Review record
+- handoff.json structure validation (when present)
 
 It does not judge whether a design is technically correct. Human review owns
 that gate.
@@ -16,6 +20,7 @@ that gate.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -46,6 +51,7 @@ DESIGN_SECTIONS = [
     "Context",
     "Goals / Non-Goals",
     "Decisions",
+    "Pre-Implementation Review",
     "Risks / Trade-offs",
     "Testing Strategy",
 ]
@@ -57,6 +63,14 @@ DIAGNOSIS_SECTIONS = [
     "Recommended Direction",
     "Regression Tests",
 ]
+REFERENCE_RESEARCH_SECTION = "Reference Implementation Research"
+REFERENCE_RESEARCH_FIELDS = (
+    "status",
+    "reason",
+    "research questions",
+    "findings",
+    "design impact",
+)
 
 PLACEHOLDER_ONLY = {
     "todo",
@@ -185,6 +199,117 @@ def _check_required_sections(path: Path, required_sections: list[str]) -> list[s
     return errors
 
 
+def _check_impact_analysis(change_dir: Path, proposal_text: str) -> list[str]:
+    proposal_sections = _extract_h2_sections(proposal_text)
+    if "Impact Analysis" in proposal_sections:
+        if _is_placeholder_body(proposal_sections["Impact Analysis"]):
+            return ["proposal.md section is empty or placeholder-only: ## Impact Analysis"]
+        return []
+
+    design = change_dir / "design.md"
+    if design.exists():
+        design_sections = _extract_h2_sections(design.read_text(encoding="utf-8"))
+        if "Impact Analysis" in design_sections:
+            if _is_placeholder_body(design_sections["Impact Analysis"]):
+                return ["design.md section is empty or placeholder-only: ## Impact Analysis"]
+            return []
+
+    return ["proposal.md or design.md missing required section: ## Impact Analysis"]
+
+
+def _extract_record_field(section_body: str, field: str) -> str | None:
+    lines = section_body.splitlines()
+    field_prefix = f"{field.lower()}:"
+    all_prefixes = tuple(f"{item}:" for item in REFERENCE_RESEARCH_FIELDS)
+
+    for index, line in enumerate(lines):
+        stripped = re.sub(r"^\s*[-*]\s+", "", line).strip()
+        if not stripped.lower().startswith(field_prefix):
+            continue
+
+        value = stripped.split(":", 1)[1].strip()
+        collected = [value] if value else []
+        for next_line in lines[index + 1 :]:
+            next_stripped = re.sub(r"^\s*[-*]\s+", "", next_line).strip().lower()
+            if any(next_stripped.startswith(prefix) for prefix in all_prefixes):
+                break
+            collected.append(next_line)
+        return "\n".join(collected).strip()
+
+    return None
+
+
+def _find_reference_research_section(
+    change_dir: Path, proposal_text: str
+) -> tuple[str, str] | None:
+    proposal_sections = _extract_h2_sections(proposal_text)
+    if REFERENCE_RESEARCH_SECTION in proposal_sections:
+        return "proposal.md", proposal_sections[REFERENCE_RESEARCH_SECTION]
+
+    design = change_dir / "design.md"
+    if design.exists():
+        design_sections = _extract_h2_sections(design.read_text(encoding="utf-8"))
+        if REFERENCE_RESEARCH_SECTION in design_sections:
+            return "design.md", design_sections[REFERENCE_RESEARCH_SECTION]
+
+    return None
+
+
+def _check_reference_implementation_research(
+    change_dir: Path, proposal_text: str, change_type: ChangeType
+) -> list[str]:
+    if change_type.primary == "docs":
+        return []
+
+    found = _find_reference_research_section(change_dir, proposal_text)
+    if found is None:
+        return [
+            "proposal.md or design.md missing required section: "
+            f"## {REFERENCE_RESEARCH_SECTION}"
+        ]
+
+    source, body = found
+    if _is_placeholder_body(body):
+        return [
+            f"{source} section is empty or placeholder-only: "
+            f"## {REFERENCE_RESEARCH_SECTION}"
+        ]
+
+    status = _extract_record_field(body, "status")
+    if status is None or _is_placeholder_body(status):
+        return [
+            f"{source} section must declare `status: enabled` or "
+            f"`status: disabled`: ## {REFERENCE_RESEARCH_SECTION}"
+        ]
+
+    normalized_status = status.splitlines()[0].strip().lower()
+    if normalized_status not in {"enabled", "disabled"}:
+        return [
+            f"{source} section has invalid reference implementation research "
+            f"status `{normalized_status}` (allowed: enabled, disabled)"
+        ]
+
+    errors: list[str] = []
+    reason = _extract_record_field(body, "reason")
+    if reason is None or _is_placeholder_body(reason):
+        errors.append(
+            f"{source} section must include non-empty `reason`: "
+            f"## {REFERENCE_RESEARCH_SECTION}"
+        )
+
+    if normalized_status == "enabled":
+        for field in ("research questions", "findings", "design impact"):
+            value = _extract_record_field(body, field)
+            if value is None or _is_placeholder_body(value):
+                errors.append(
+                    f"{source} section must include non-empty `{field}` when "
+                    f"reference implementation research is enabled: "
+                    f"## {REFERENCE_RESEARCH_SECTION}"
+                )
+
+    return errors
+
+
 def _requires_benchmark_smoke(proposal_text: str) -> bool:
     lowered = proposal_text.lower()
     for capability in BENCHMARK_SMOKE_CAPABILITIES:
@@ -288,6 +413,80 @@ def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[st
     return []
 
 
+HANDOFF_REQUIRED_FIELDS = ["schema_version", "change_id", "state", "transitions"]
+HANDOFF_STATE_FIELDS = ["phase", "sub_state"]
+VALID_PHASES = {"planning", "reviewing", "building", "code-review", "closing", "blocked", "done"}
+VALID_ROUTING_PHASES = {"planning", "reviewing", "building", "code-review", "closing"}
+
+
+def _check_handoff_json(change_dir: Path) -> list[str]:
+    handoff = change_dir / "handoff.json"
+    if not handoff.exists():
+        return []
+
+    errors: list[str] = []
+    change_name = change_dir.name
+
+    try:
+        data = json.loads(handoff.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{change_name}: handoff.json is not valid JSON: {exc}"]
+
+    if not isinstance(data, dict):
+        return [f"{change_name}: handoff.json must be a JSON object"]
+
+    for field in HANDOFF_REQUIRED_FIELDS:
+        if field not in data:
+            errors.append(f"{change_name}: handoff.json missing required field: {field}")
+
+    if "state" in data:
+        state = data["state"]
+        if not isinstance(state, dict):
+            errors.append(f"{change_name}: handoff.json state must be an object")
+        else:
+            for field in HANDOFF_STATE_FIELDS:
+                if field not in state:
+                    errors.append(f"{change_name}: handoff.json state missing field: {field}")
+            phase = state.get("phase")
+            if phase is not None and phase not in VALID_PHASES:
+                errors.append(
+                    f"{change_name}: handoff.json state.phase invalid: {phase!r}, "
+                    f"expected one of {sorted(VALID_PHASES)}"
+                )
+
+    if "transitions" in data and not isinstance(data["transitions"], list):
+        errors.append(f"{change_name}: handoff.json transitions must be an array")
+
+    if "routing" in data:
+        routing = data["routing"]
+        if not isinstance(routing, dict):
+            errors.append(f"{change_name}: handoff.json routing must be an object")
+        else:
+            for phase in VALID_ROUTING_PHASES:
+                if phase not in routing:
+                    errors.append(f"{change_name}: handoff.json routing missing phase: {phase}")
+                else:
+                    entry = routing[phase]
+                    if not isinstance(entry, dict):
+                        errors.append(
+                            f"{change_name}: handoff.json routing.{phase} must be an object"
+                        )
+                    else:
+                        if "executor" not in entry:
+                            errors.append(
+                                f"{change_name}: handoff.json routing.{phase} missing executor"
+                            )
+                        if "session_mode" not in entry:
+                            errors.append(
+                                f"{change_name}: handoff.json routing.{phase} missing session_mode"
+                            )
+
+    if "blockers" in data and not isinstance(data["blockers"], list):
+        errors.append(f"{change_name}: handoff.json blockers must be an array")
+
+    return errors
+
+
 def check_change(change_dir: Path, current_specs_root: Path | None = None) -> list[str]:
     errors: list[str] = []
     proposal = change_dir / "proposal.md"
@@ -310,6 +509,18 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
             for error in _check_required_sections(change_dir / "design.md", DESIGN_SECTIONS)
         )
 
+    if change_type.primary != "docs":
+        errors.extend(
+            f"{change_dir.name}: {error}"
+            for error in _check_impact_analysis(change_dir, proposal_text)
+        )
+        errors.extend(
+            f"{change_dir.name}: {error}"
+            for error in _check_reference_implementation_research(
+                change_dir, proposal_text, change_type
+            )
+        )
+
     if all_types & DIAGNOSIS_TYPES:
         errors.extend(
             f"{change_dir.name}: {error}"
@@ -320,6 +531,11 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
 
     if change_type.primary == "docs" and change_type.secondary:
         errors.append(f"{change_dir.name}: docs primary changes must not declare secondary types")
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_handoff_json(change_dir)
+    )
 
     errors.extend(
         f"{change_dir.name}: {error}"

@@ -1,15 +1,17 @@
 # web/debug_hook.py
 """Debug hook that captures iteration state and emits events for the debug UI."""
 import os
+import json
+from agent.approval import redact_value
 from agent.hooks.manager import Hook
-from agent.message import Message
+from agent.message import Message, extract_text
 from agent.tools.base import ToolCall
 from agent.llm import LLMResponse
 from agent.result import RunResult
 
 
 def debug_enabled() -> bool:
-    return os.environ.get("MYAGENT_DEBUG", "").lower() in ("1", "true", "enabled", "yes", "on")
+    return os.environ.get("ASTERWYND_DEBUG", "").lower() in ("1", "true", "enabled", "yes", "on")
 
 
 class DebugHook:
@@ -28,7 +30,7 @@ class DebugHook:
     async def before_iteration(self, iteration: int, messages: list[Message]) -> None:
         self.iteration = iteration
         self._send("before_iteration", {
-            "messages": [m.to_dict() for m in messages],
+            "messages": [_sanitize_message_dict(m.to_dict()) for m in messages],
             "message_count": len(messages),
         })
 
@@ -37,7 +39,11 @@ class DebugHook:
             "content": response.content,
             "stop_reason": response.stop_reason,
             "tool_calls": [
-                {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                {
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": _redact_arguments(tc.arguments),
+                }
                 for tc in response.tool_calls
             ],
         })
@@ -48,11 +54,12 @@ class DebugHook:
             "arguments": tool_call.arguments,
         })
 
-    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
+    async def after_tool_execute(self, tool_call: ToolCall, result: str | list) -> None:
+        safe_result = extract_text(result) if not isinstance(result, str) else result
         self._send("after_tool_execute", {
             "tool_name": tool_call.name,
             "arguments": tool_call.arguments,
-            "result": result,
+            "result": safe_result,
         })
 
     async def on_error(self, error: Exception) -> None:
@@ -68,3 +75,35 @@ class DebugHook:
             "tool_calls_made": len(result.tool_calls_made),
             "total_tokens": result.total_tokens,
         })
+
+
+def _redact_arguments(arguments: str):
+    try:
+        parsed = json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+    return redact_value(parsed)
+
+
+def _sanitize_message_dict(data: dict) -> dict:
+    """替换消息 dict 中的 data:image/ URL 为占位符，避免泄露 base64"""
+    if "content" not in data:
+        return data
+    content = data["content"]
+    if isinstance(content, list):
+        sanitized = []
+        for block in content:
+            if isinstance(block, dict):
+                block = dict(block)
+                if block.get("type") == "image_url":
+                    image_url = block.get("image_url", {})
+                    if isinstance(image_url, dict):
+                        url = image_url.get("url", "")
+                        if isinstance(url, str) and url.startswith("data:image/"):
+                            image_url["url"] = "[image data omitted]"
+                            block["image_url"] = image_url
+                sanitized.append(block)
+            else:
+                sanitized.append(block)
+        data["content"] = sanitized
+    return data

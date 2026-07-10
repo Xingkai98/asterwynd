@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -15,10 +15,18 @@ from agent.code_intelligence.config import (
     LspServerConfig,
 )
 from agent.run_config import AgentMode, parse_agent_mode
+from agent.tool_permissions import (
+    BUILTIN_PERMISSION_PROFILES,
+    PermissionProfile,
+    ToolCapability,
+    ToolPermission,
+    ToolOrigin,
+    ToolRiskLevel,
+)
 from agent.tool_result_display import ToolResultDisplayConfig
 
 
-CONFIG_FILENAME = "myagent.yaml"
+CONFIG_FILENAME = "asterwynd.yaml"
 SUPPORTED_SEARCH_PROVIDER_NAMES = frozenset(
     {"duckduckgo-html", "searxng", "brave", "tavily"}
 )
@@ -36,6 +44,12 @@ class AgentConfig:
 @dataclass(frozen=True)
 class ModeConfig:
     deny_tools: tuple[str, ...] = ()
+    permission_profile: str | None = None
+
+
+@dataclass(frozen=True)
+class PermissionsConfig:
+    profiles: dict[str, PermissionProfile] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -59,22 +73,79 @@ class ToolsConfig:
 
 
 @dataclass(frozen=True)
+class McpHeaderValueConfig:
+    value: str | None = None
+    env: str | None = None
+
+
+@dataclass(frozen=True)
+class McpActionPermissionConfig:
+    capabilities: tuple[ToolCapability, ...]
+    risk_level: ToolRiskLevel
+
+    def to_permission(self) -> ToolPermission:
+        return ToolPermission(
+            capabilities=frozenset(self.capabilities),
+            risk_level=self.risk_level,
+            origin=ToolOrigin.MCP,
+        )
+
+
+@dataclass(frozen=True)
+class McpServerConfig:
+    name: str
+    type: Literal["stdio", "streamable_http"]
+    enabled: bool = True
+    required: bool = False
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    cwd: Path | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, McpHeaderValueConfig] = field(default_factory=dict)
+    startup_timeout_seconds: int = 10
+    tool_timeout_seconds: int = 30
+    default_permission: McpActionPermissionConfig | None = None
+    tools: dict[str, McpActionPermissionConfig] = field(default_factory=dict)
+    prompts: dict[str, McpActionPermissionConfig] = field(default_factory=dict)
+    resources: dict[str, McpActionPermissionConfig] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class McpConfig:
+    default_timeout_seconds: int = 30
+    servers: dict[str, McpServerConfig] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class BenchmarkConfig:
     parallel: int = 1
     timeout_seconds: int = 600
 
 
 @dataclass(frozen=True)
-class MyAgentConfig:
+class SkillsConfig:
+    roots: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class AsterwyndConfig:
     path: Path | None = None
     agent: AgentConfig = field(default_factory=AgentConfig)
     modes: dict[AgentMode, ModeConfig] = field(default_factory=dict)
+    permissions: PermissionsConfig = field(default_factory=PermissionsConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    mcp: McpConfig = field(default_factory=McpConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
 
     def __post_init__(self) -> None:
         if not self.modes:
             object.__setattr__(self, "modes", _default_modes())
+        if not self.skills.roots:
+            base = self.path.parent if self.path else Path.cwd()
+            object.__setattr__(self, "skills", SkillsConfig(roots=(base / "skills",)))
+        self.permission_profiles_by_mode()
 
     def mode_config(self, mode: AgentMode) -> ModeConfig:
         return self.modes.get(mode, ModeConfig())
@@ -85,6 +156,25 @@ class MyAgentConfig:
             for mode, mode_config in self.modes.items()
             if mode_config.deny_tools
         }
+
+    def permission_profiles_by_mode(self) -> dict[AgentMode, PermissionProfile]:
+        profiles = {**BUILTIN_PERMISSION_PROFILES, **self.permissions.profiles}
+        resolved: dict[AgentMode, PermissionProfile] = {}
+        defaults = {
+            AgentMode.BUILD: "build_default",
+            AgentMode.READ_ONLY: "read_only_default",
+            AgentMode.PLAN: "plan_default",
+            AgentMode.BYPASS: "fail_closed",
+        }
+        for mode in AgentMode:
+            profile_name = self.mode_config(mode).permission_profile or defaults[mode]
+            try:
+                resolved[mode] = profiles[profile_name]
+            except KeyError as exc:
+                raise ConfigError(
+                    f"Unknown permission_profile {profile_name!r} for mode {mode.value}"
+                ) from exc
+        return resolved
 
 
 @dataclass(frozen=True)
@@ -99,9 +189,9 @@ def load_config(
     *,
     start_dir: str | Path | None = None,
     cli_overrides: ConfigOverrides | None = None,
-) -> MyAgentConfig:
+) -> AsterwyndConfig:
     path = _resolve_config_path(config_path, start_dir)
-    config = _load_yaml_config(path)
+    config = _load_yaml_config(path, start_dir=start_dir)
     config = _apply_environment(config)
     if cli_overrides:
         config = _apply_cli_overrides(config, cli_overrides)
@@ -147,9 +237,16 @@ def _find_git_root(start: Path) -> Path | None:
         current = current.parent
 
 
-def _load_yaml_config(path: Path | None) -> MyAgentConfig:
+def _load_yaml_config(
+    path: Path | None,
+    *,
+    start_dir: str | Path | None = None,
+) -> AsterwyndConfig:
     if path is None:
-        return MyAgentConfig()
+        base = Path(start_dir or Path.cwd()).resolve()
+        if base.is_file():
+            base = base.parent
+        return AsterwyndConfig(skills=SkillsConfig(roots=(base / "skills",)))
 
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -157,43 +254,46 @@ def _load_yaml_config(path: Path | None) -> MyAgentConfig:
         raise ConfigError(f"Invalid YAML in {path}: {exc}") from exc
 
     if raw is None:
-        return MyAgentConfig(path=path)
+        return AsterwyndConfig(path=path)
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: top-level YAML value must be a mapping")
 
-    return MyAgentConfig(
+    return AsterwyndConfig(
         path=path,
         agent=_parse_agent_config(raw.get("agent", {}), path),
         modes=_parse_modes_config(raw.get("modes", {}), path),
+        permissions=_parse_permissions_config(raw.get("permissions", {}), path),
         tools=_parse_tools_config(raw.get("tools", {}), path),
+        mcp=_parse_mcp_config(raw.get("mcp", {}), path),
+        skills=_parse_skills_config(raw.get("skills", {}), path),
         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
     )
 
 
-def _apply_environment(config: MyAgentConfig) -> MyAgentConfig:
+def _apply_environment(config: AsterwyndConfig) -> AsterwyndConfig:
     agent = config.agent
-    if mode := os.environ.get("MYAGENT_MODE"):
+    if mode := os.environ.get("ASTERWYND_MODE"):
         try:
             agent = replace(agent, default_mode=parse_agent_mode(mode))
         except ValueError as exc:
-            raise ConfigError(f"MYAGENT_MODE: {exc}") from exc
+            raise ConfigError(f"ASTERWYND_MODE: {exc}") from exc
 
     benchmark = config.benchmark
-    if parallel := os.environ.get("MYAGENT_BENCHMARK_PARALLEL"):
+    if parallel := os.environ.get("ASTERWYND_BENCHMARK_PARALLEL"):
         benchmark = replace(
             benchmark,
-            parallel=_parse_positive_int(parallel, "MYAGENT_BENCHMARK_PARALLEL"),
+            parallel=_parse_positive_int(parallel, "ASTERWYND_BENCHMARK_PARALLEL"),
         )
-    if timeout := os.environ.get("MYAGENT_BENCHMARK_TIMEOUT"):
+    if timeout := os.environ.get("ASTERWYND_BENCHMARK_TIMEOUT"):
         benchmark = replace(
             benchmark,
-            timeout_seconds=_parse_positive_int(timeout, "MYAGENT_BENCHMARK_TIMEOUT"),
+            timeout_seconds=_parse_positive_int(timeout, "ASTERWYND_BENCHMARK_TIMEOUT"),
         )
 
     return replace(config, agent=agent, benchmark=benchmark)
 
 
-def _apply_cli_overrides(config: MyAgentConfig, overrides: ConfigOverrides) -> MyAgentConfig:
+def _apply_cli_overrides(config: AsterwyndConfig, overrides: ConfigOverrides) -> AsterwyndConfig:
     agent = config.agent
     if overrides.default_mode is not None:
         mode = overrides.default_mode
@@ -253,13 +353,74 @@ def _parse_modes_config(raw: Any, path: Path) -> dict[AgentMode, ModeConfig]:
                 mode_mapping.get("deny_tools", []),
                 path,
                 f"modes.{raw_mode}.deny_tools",
-            )
+            ),
+            permission_profile=_parse_optional_string(
+                mode_mapping.get("permission_profile"),
+                path,
+                f"modes.{raw_mode}.permission_profile",
+            ),
         )
     return modes
 
 
+def _parse_permissions_config(raw: Any, path: Path) -> PermissionsConfig:
+    mapping = _expect_mapping(raw, path, "permissions")
+    profiles_mapping = _expect_mapping(
+        mapping.get("profiles", {}),
+        path,
+        "permissions.profiles",
+    )
+    profiles: dict[str, PermissionProfile] = {}
+    for profile_name, raw_profile in profiles_mapping.items():
+        if not isinstance(profile_name, str) or not profile_name.strip():
+            raise ConfigError(f"{path}: permissions.profiles keys must be non-empty strings")
+        profile_name = profile_name.strip()
+        if profile_name in BUILTIN_PERMISSION_PROFILES:
+            raise ConfigError(
+                f"{path}: permissions.profiles.{profile_name} cannot override a built-in profile"
+            )
+        profile_mapping = _expect_mapping(
+            raw_profile,
+            path,
+            f"permissions.profiles.{profile_name}",
+        )
+        try:
+            profiles[profile_name] = PermissionProfile(
+                name=profile_name,
+                allowed_capabilities=frozenset(
+                    _parse_capabilities(
+                        profile_mapping.get("allowed_capabilities", []),
+                        path,
+                        f"permissions.profiles.{profile_name}.allowed_capabilities",
+                    )
+                ),
+                auto_approve_max_risk=_parse_risk_level(
+                    profile_mapping.get("auto_approve_max_risk"),
+                    path,
+                    f"permissions.profiles.{profile_name}.auto_approve_max_risk",
+                ),
+                approval_required_max_risk=_parse_risk_level(
+                    profile_mapping.get("approval_required_max_risk"),
+                    path,
+                    f"permissions.profiles.{profile_name}.approval_required_max_risk",
+                ),
+                denied_tools=frozenset(
+                    _parse_string_list(
+                        profile_mapping.get("denied_tools", []),
+                        path,
+                        f"permissions.profiles.{profile_name}.denied_tools",
+                    )
+                ),
+            )
+        except ValueError as exc:
+            raise ConfigError(f"{path}: permissions.profiles.{profile_name}: {exc}") from exc
+    return PermissionsConfig(profiles=profiles)
+
+
 def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
     mapping = _expect_mapping(raw, path, "tools")
+    if "mcp" in mapping:
+        raise ConfigError(f"{path}: tools.mcp is unsupported; use top-level mcp.servers")
     return ToolsConfig(
         ignore_patterns=_parse_string_list(
             mapping.get("ignore_patterns", []),
@@ -277,6 +438,198 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
         ),
         web_search=_parse_web_search_config(mapping.get("web_search", {}), path),
         display=_parse_tool_display_config(mapping.get("display", {}), path),
+    )
+
+
+def _parse_mcp_config(raw: Any, path: Path) -> McpConfig:
+    mapping = _expect_mapping(raw, path, "mcp")
+    default_timeout_seconds = _validate_positive_int(
+        mapping.get("default_timeout_seconds", 30),
+        "mcp.default_timeout_seconds",
+        path=path,
+    )
+    servers_mapping = _expect_mapping(mapping.get("servers", {}), path, "mcp.servers")
+    servers: dict[str, McpServerConfig] = {}
+    base_dir = path.parent
+    for server_name, raw_server in servers_mapping.items():
+        if not isinstance(server_name, str) or not server_name.strip():
+            raise ConfigError(f"{path}: mcp.servers keys must be non-empty strings")
+        server_name = server_name.strip()
+        field_name = f"mcp.servers.{server_name}"
+        server_mapping = _expect_mapping(raw_server, path, field_name)
+        server_type = server_mapping.get("type")
+        if server_type not in {"stdio", "streamable_http"}:
+            raise ConfigError(
+                f"{path}: {field_name}.type must be 'stdio' or 'streamable_http'"
+            )
+        enabled = _parse_bool(server_mapping.get("enabled", True), path, f"{field_name}.enabled")
+        required = _parse_bool(server_mapping.get("required", False), path, f"{field_name}.required")
+        startup_timeout = _validate_positive_int(
+            server_mapping.get("startup_timeout_seconds", default_timeout_seconds),
+            f"{field_name}.startup_timeout_seconds",
+            path=path,
+        )
+        tool_timeout = _validate_positive_int(
+            server_mapping.get("tool_timeout_seconds", default_timeout_seconds),
+            f"{field_name}.tool_timeout_seconds",
+            path=path,
+        )
+        common = {
+            "name": server_name,
+            "type": server_type,
+            "enabled": enabled,
+            "required": required,
+            "startup_timeout_seconds": startup_timeout,
+            "tool_timeout_seconds": tool_timeout,
+            "default_permission": _parse_optional_mcp_permission(
+                server_mapping.get("default_permission"),
+                path,
+                f"{field_name}.default_permission",
+            ),
+            "tools": _parse_mcp_permission_map(
+                server_mapping.get("tools", {}),
+                path,
+                f"{field_name}.tools",
+            ),
+            "prompts": _parse_mcp_permission_map(
+                server_mapping.get("prompts", {}),
+                path,
+                f"{field_name}.prompts",
+            ),
+            "resources": _parse_mcp_permission_map(
+                server_mapping.get("resources", {}),
+                path,
+                f"{field_name}.resources",
+            ),
+        }
+        if server_type == "stdio":
+            command = _parse_optional_string(
+                server_mapping.get("command"),
+                path,
+                f"{field_name}.command",
+            )
+            if command is None:
+                raise ConfigError(f"{path}: {field_name}.command is required for stdio")
+            cwd = _parse_optional_path(server_mapping.get("cwd"), path, f"{field_name}.cwd")
+            if cwd is not None and not cwd.is_absolute():
+                cwd = base_dir / cwd
+            servers[server_name] = McpServerConfig(
+                **common,
+                command=command,
+                args=_parse_string_list(
+                    server_mapping.get("args", []),
+                    path,
+                    f"{field_name}.args",
+                ),
+                cwd=cwd,
+                env=_parse_string_mapping(server_mapping.get("env", {}), path, f"{field_name}.env"),
+            )
+        else:
+            url = _parse_optional_string(server_mapping.get("url"), path, f"{field_name}.url")
+            if url is None:
+                raise ConfigError(f"{path}: {field_name}.url is required for streamable_http")
+            servers[server_name] = McpServerConfig(
+                **common,
+                url=url,
+                headers=_parse_mcp_headers(
+                    server_mapping.get("headers", {}),
+                    path,
+                    f"{field_name}.headers",
+                ),
+            )
+    return McpConfig(
+        default_timeout_seconds=default_timeout_seconds,
+        servers=servers,
+    )
+
+
+def _parse_optional_path(raw: Any, path: Path, field_name: str) -> Path | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ConfigError(f"{path}: {field_name} must be a non-empty string")
+    return Path(os.path.expandvars(raw.strip())).expanduser()
+
+
+def _parse_string_mapping(raw: Any, path: Path, field_name: str) -> dict[str, str]:
+    mapping = _expect_mapping(raw, path, field_name)
+    parsed: dict[str, str] = {}
+    for key, value in mapping.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ConfigError(f"{path}: {field_name} keys must be non-empty strings")
+        if not isinstance(value, str):
+            raise ConfigError(f"{path}: {field_name}.{key} must be a string")
+        parsed[key.strip()] = os.path.expandvars(value)
+    return parsed
+
+
+def _parse_mcp_headers(raw: Any, path: Path, field_name: str) -> dict[str, McpHeaderValueConfig]:
+    mapping = _expect_mapping(raw, path, field_name)
+    parsed: dict[str, McpHeaderValueConfig] = {}
+    for key, value in mapping.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ConfigError(f"{path}: {field_name} keys must be non-empty strings")
+        header_name = key.strip()
+        if isinstance(value, str):
+            parsed[header_name] = McpHeaderValueConfig(value=os.path.expandvars(value))
+            continue
+        value_mapping = _expect_mapping(value, path, f"{field_name}.{header_name}")
+        direct_value = value_mapping.get("value")
+        env_value = value_mapping.get("env")
+        if direct_value is not None and env_value is not None:
+            raise ConfigError(
+                f"{path}: {field_name}.{header_name} must use either value or env"
+            )
+        if direct_value is None and env_value is None:
+            raise ConfigError(
+                f"{path}: {field_name}.{header_name} must define value or env"
+            )
+        parsed[header_name] = McpHeaderValueConfig(
+            value=_parse_optional_string(direct_value, path, f"{field_name}.{header_name}.value"),
+            env=_parse_optional_string(env_value, path, f"{field_name}.{header_name}.env"),
+        )
+    return parsed
+
+
+def _parse_optional_mcp_permission(
+    raw: Any, path: Path, field_name: str
+) -> McpActionPermissionConfig | None:
+    if raw is None:
+        return None
+    return _parse_mcp_permission(raw, path, field_name)
+
+
+def _parse_mcp_permission_map(
+    raw: Any, path: Path, field_name: str
+) -> dict[str, McpActionPermissionConfig]:
+    mapping = _expect_mapping(raw, path, field_name)
+    parsed: dict[str, McpActionPermissionConfig] = {}
+    for action_name, raw_permission in mapping.items():
+        if not isinstance(action_name, str) or not action_name.strip():
+            raise ConfigError(f"{path}: {field_name} keys must be non-empty strings")
+        parsed[action_name.strip()] = _parse_mcp_permission(
+            raw_permission,
+            path,
+            f"{field_name}.{action_name}",
+        )
+    return parsed
+
+
+def _parse_mcp_permission(
+    raw: Any, path: Path, field_name: str
+) -> McpActionPermissionConfig:
+    mapping = _expect_mapping(raw, path, field_name)
+    return McpActionPermissionConfig(
+        capabilities=_parse_capabilities(
+            mapping.get("capabilities", []),
+            path,
+            f"{field_name}.capabilities",
+        ),
+        risk_level=_parse_risk_level(
+            mapping.get("risk_level"),
+            path,
+            f"{field_name}.risk_level",
+        ),
     )
 
 
@@ -438,6 +791,44 @@ def _validate_string_item(item: Any, path: Path, field_name: str) -> str:
     return item
 
 
+def _parse_optional_string(raw: Any, path: Path, field_name: str) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ConfigError(f"{path}: {field_name} must be a non-empty string")
+    return raw.strip()
+
+
+def _parse_capabilities(raw: Any, path: Path, field_name: str) -> tuple[ToolCapability, ...]:
+    values = _parse_string_list(raw, path, field_name)
+    if not values:
+        raise ConfigError(f"{path}: {field_name} must not be empty")
+    parsed = []
+    for value in values:
+        try:
+            parsed.append(ToolCapability(value))
+        except ValueError as exc:
+            supported = ", ".join(capability.value for capability in ToolCapability)
+            raise ConfigError(
+                f"{path}: {field_name} unsupported capability {value!r}; "
+                f"expected one of: {supported}"
+            ) from exc
+    return tuple(parsed)
+
+
+def _parse_risk_level(raw: Any, path: Path, field_name: str) -> ToolRiskLevel:
+    if not isinstance(raw, str) or not raw.strip():
+        raise ConfigError(f"{path}: {field_name} must be a non-empty string")
+    try:
+        return ToolRiskLevel(raw.strip())
+    except ValueError as exc:
+        supported = ", ".join(level.value for level in ToolRiskLevel)
+        raise ConfigError(
+            f"{path}: {field_name} unsupported risk level {raw!r}; "
+            f"expected one of: {supported}"
+        ) from exc
+
+
 def _parse_web_search_config(raw: Any, path: Path) -> WebSearchConfig:
     mapping = _expect_mapping(raw, path, "tools.web_search")
     providers_raw = mapping.get("providers", [])
@@ -494,6 +885,27 @@ def _parse_tool_display_config(raw: Any, path: Path) -> ToolResultDisplayConfig:
     )
 
 
+def _parse_skills_config(raw: Any, path: Path) -> SkillsConfig:
+    mapping = _expect_mapping(raw, path, "skills")
+    base = path.parent
+    roots = [base / "skills"]
+    for item in _parse_string_list(mapping.get("roots", []), path, "skills.roots"):
+        expanded = os.path.expandvars(item)
+        candidate = Path(expanded).expanduser()
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        roots.append(candidate.resolve())
+    normalized = []
+    seen = set()
+    for root in roots:
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        normalized.append(resolved)
+    return SkillsConfig(roots=tuple(normalized))
+
+
 def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:
     mapping = _expect_mapping(raw, path, "benchmark")
     return BenchmarkConfig(
@@ -531,6 +943,12 @@ def _parse_string_list(raw: Any, path: Path, field_name: str) -> tuple[str, ...]
         if stripped:
             values.append(stripped)
     return tuple(values)
+
+
+def _parse_bool(raw: Any, path: Path, field_name: str) -> bool:
+    if not isinstance(raw, bool):
+        raise ConfigError(f"{path}: {field_name} must be a boolean")
+    return raw
 
 
 def _parse_positive_int(raw: str, field_name: str) -> int:

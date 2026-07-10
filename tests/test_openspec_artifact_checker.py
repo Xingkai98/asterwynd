@@ -21,6 +21,29 @@ Risks are documented.
 
 ## Testing Strategy
 Tests are documented.
+
+## Pre-Implementation Review
+Questions resolved: documented.
+Options considered: documented.
+Rejected alternatives: documented.
+Final confirmations: documented.
+Remaining risks: documented.
+"""
+
+VALID_DESIGN_WITHOUT_REVIEW = """## Context
+This change has context.
+
+## Goals / Non-Goals
+Goals and non-goals are documented.
+
+## Decisions
+Decision one is documented.
+
+## Risks / Trade-offs
+Risks are documented.
+
+## Testing Strategy
+Tests are documented.
 """
 
 VALID_DIAGNOSIS = """## Symptom
@@ -42,6 +65,18 @@ The direction is documented.
 Regression tests are documented.
 """
 
+VALID_REFERENCE_RESEARCH = """## Reference Implementation Research
+
+- status: enabled
+- reason: Reference implementations are relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
+"""
+
 
 def write_change(root: Path, proposal: str, design: str | None = None, diagnosis: str | None = None):
     root.mkdir(parents=True)
@@ -60,6 +95,30 @@ def write_spec_delta(root: Path, capability: str = "web-ui"):
     spec = root / "specs" / capability / "spec.md"
     spec.parent.mkdir(parents=True)
     spec.write_text("## ADDED Requirements\n\n### Requirement: Example\n\nExample.\n", encoding="utf-8")
+
+
+def proposal_for(
+    change_type: str,
+    extra: str = "",
+    *,
+    impact: bool = True,
+    reference_research: bool = True,
+) -> str:
+    proposal = f"""## Change Type
+
+- primary: {change_type}
+"""
+    if extra:
+        proposal += f"\n{extra.strip()}\n"
+    if impact:
+        proposal += """
+## Impact Analysis
+
+- Tests: covered.
+"""
+    if reference_research and change_type != "docs":
+        proposal += f"\n{VALID_REFERENCE_RESEARCH}"
+    return proposal
 
 
 def test_parse_change_type_primary_and_secondary():
@@ -86,6 +145,21 @@ def test_combined_bugfix_research_feature_requires_diagnosis_and_design(tmp_path
 
 - primary: bugfix
 - secondary: [research, feature]
+
+## Impact Analysis
+
+- Tests: covered.
+
+## Reference Implementation Research
+
+- status: enabled
+- reason: Reference implementations are relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
 """,
         design=VALID_DESIGN,
     )
@@ -104,6 +178,21 @@ def test_combined_type_passes_when_all_required_artifacts_exist(tmp_path):
 
 - primary: bugfix
 - secondary: [research, feature]
+
+## Impact Analysis
+
+- Tests: covered.
+
+## Reference Implementation Research
+
+- status: enabled
+- reason: Reference implementations are relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
 """,
         design=VALID_DESIGN,
         diagnosis=VALID_DIAGNOSIS,
@@ -122,10 +211,7 @@ def test_design_placeholder_section_fails(tmp_path):
     change = tmp_path / "add-feature"
     write_change(
         change,
-        """## Change Type
-
-- primary: feature
-""",
+        proposal_for("feature"),
         design="""## Context
 <!-- Background and current state -->
 
@@ -140,6 +226,9 @@ Risks are documented.
 
 ## Testing Strategy
 Tests are documented.
+
+## Pre-Implementation Review
+Questions resolved: documented.
 """,
     )
     write_tasks(change, "## 1. Spec\n\n- [ ] Run grill-with-docs.\n")
@@ -166,16 +255,12 @@ def test_core_change_requires_benchmark_smoke_task(tmp_path):
     change = tmp_path / "change-tool-system"
     write_change(
         change,
-        """## Change Type
-
-- primary: feature
-
-## Capabilities
+        proposal_for("feature", """## Capabilities
 
 ### Modified Capabilities
 
 - `tool-system`: Update tool behavior.
-""",
+"""),
         design=VALID_DESIGN,
     )
     write_tasks(
@@ -193,16 +278,12 @@ def test_core_change_passes_with_benchmark_smoke_task(tmp_path):
     change = tmp_path / "change-tool-system"
     write_change(
         change,
-        """## Change Type
-
-- primary: feature
-
-## Capabilities
+        proposal_for("feature", """## Capabilities
 
 ### Modified Capabilities
 
 - `tool-system`: Update tool behavior.
-""",
+"""),
         design=VALID_DESIGN,
     )
     write_tasks(
@@ -218,10 +299,7 @@ def test_design_change_requires_preimplementation_design_review_task(tmp_path):
     change = tmp_path / "change-ui"
     write_change(
         change,
-        """## Change Type
-
-- primary: feature
-""",
+        proposal_for("feature"),
         design=VALID_DESIGN,
     )
     write_tasks(change, "## 4. Verification\n\n- [ ] Run tests.\n")
@@ -235,10 +313,7 @@ def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
     change = tmp_path / "change-doc-process"
     write_change(
         change,
-        """## Change Type
-
-- primary: process
-""",
+        proposal_for("process"),
         design=VALID_DESIGN,
     )
     write_tasks(
@@ -254,10 +329,7 @@ def test_spec_delta_requires_matching_current_spec(tmp_path):
     change = tmp_path / "openspec" / "changes" / "change-ui"
     write_change(
         change,
-        """## Change Type
-
-- primary: feature
-""",
+        proposal_for("feature"),
         design=VALID_DESIGN,
     )
     write_tasks(
@@ -283,10 +355,7 @@ def test_spec_delta_requires_current_spec_sync_task(tmp_path):
     change = tmp_path / "openspec" / "changes" / "change-ui"
     write_change(
         change,
-        """## Change Type
-
-- primary: feature
-""",
+        proposal_for("feature"),
         design=VALID_DESIGN,
     )
     write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
@@ -307,10 +376,7 @@ def test_spec_delta_passes_with_matching_current_spec_and_sync_task(tmp_path):
     change = tmp_path / "openspec" / "changes" / "change-ui"
     write_change(
         change,
-        """## Change Type
-
-- primary: feature
-""",
+        proposal_for("feature"),
         design=VALID_DESIGN,
     )
     write_tasks(
@@ -322,6 +388,120 @@ def test_spec_delta_passes_with_matching_current_spec_and_sync_task(tmp_path):
     write_spec_delta(change, "web-ui")
 
     assert check_change(change, specs_root) == []
+
+
+def test_non_docs_change_requires_impact_analysis(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", impact=False),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md or design.md missing required section: ## Impact Analysis"
+    ]
+
+
+def test_docs_only_change_does_not_require_impact_analysis(tmp_path):
+    change = tmp_path / "fix-docs"
+    write_change(
+        change,
+        """## Change Type
+
+- primary: docs
+""",
+    )
+
+    assert check_change(change) == []
+
+
+def test_non_docs_change_requires_reference_implementation_research(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md or design.md missing required section: "
+        "## Reference Implementation Research"
+    ]
+
+
+def test_reference_implementation_research_enabled_requires_fields(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- status: enabled
+- reason: Relevant.
+- research questions:
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The checker should enforce records.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md section must include non-empty "
+        "`research questions` when reference implementation research is enabled: "
+        "## Reference Implementation Research"
+    ]
+
+
+def test_reference_implementation_research_disabled_requires_reason(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- status: disabled
+- reason:
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md section must include non-empty `reason`: "
+        "## Reference Implementation Research"
+    ]
+
+
+def test_reference_implementation_research_can_be_recorded_in_design(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False),
+        design=VALID_DESIGN + "\n" + VALID_REFERENCE_RESEARCH,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == []
+
+
+def test_design_change_requires_preimplementation_review_section(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process"),
+        design=VALID_DESIGN_WITHOUT_REVIEW,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: design.md missing required section: ## Pre-Implementation Review"
+    ]
 
 
 def test_backlog_rejects_archived_change_reference(tmp_path):

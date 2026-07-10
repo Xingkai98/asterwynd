@@ -1,19 +1,22 @@
 # tests/web/test_session.py
-"""Unit tests for SessionManager and DebugHook with Mock LLM."""
+"""Unit tests for SessionManager and DebugHook with fake LLM."""
+import asyncio
 import os
 import pytest
 from unittest.mock import MagicMock
 
 from agent.loop import AgentLoop
 from agent.message import Message
-from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
+from agent.llm import LLMResponse, ToolCallDelta
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
 from agent.run_config import AgentMode
+from agent.tool_permissions import ToolCapability, ToolPermission, ToolRiskLevel
 
-from web.session import SessionManager, AgentSession
+from web.session import SessionManager, AgentSession, WebApprovalHandler
 from web.debug_hook import DebugHook, debug_enabled
+from tests.support.llm_harness import ScriptedLLM, stream_script
 
 
 @tool_parameters(name="Echo", description="Echo tool", parameters={"type": "object", "properties": {}, "required": []})
@@ -26,42 +29,18 @@ class EchoTool(Tool):
         return "echo!"
 
 
-class MockLLM:
-    """Mock LLM that returns predefined responses."""
+@tool_parameters(name="HighRisk", description="High risk", parameters={"type": "object", "properties": {}, "required": []})
+class HighRiskTool(Tool):
+    name = "HighRisk"
+    description = "High risk"
+    parameters = {}
+    permission = ToolPermission(
+        capabilities=frozenset({ToolCapability.COMMAND_EXECUTE}),
+        risk_level=ToolRiskLevel.HIGH,
+    )
 
-    def __init__(self, responses=None):
-        self.responses = responses or []
-        self.call_count = 0
-        self.last_messages = None
-
-    async def chat(self, messages, tools=None, model="gpt-4"):
-        self.last_messages = list(messages)
-        if self.call_count < len(self.responses):
-            resp = self.responses[self.call_count]
-        else:
-            resp = LLMResponse(content="default response")
-        self.call_count += 1
-        return resp
-
-
-class FailingLLM:
-    async def chat(self, messages, tools=None, model="gpt-4"):
-        raise RuntimeError("provider unavailable")
-
-
-class StreamingLLM:
-    async def stream_chat(self, messages, tools=None, model="gpt-4"):
-        yield LLMStreamEvent(type="assistant_delta", delta="Hel", content="Hel")
-        yield LLMStreamEvent(type="assistant_delta", delta="lo", content="Hello")
-        yield LLMStreamEvent(
-            type="complete",
-            response=LLMResponse(content="Hello", stop_reason="end_turn"),
-            content="Hello",
-            stop_reason="end_turn",
-        )
-
-    async def chat(self, messages, tools=None, model="gpt-4"):
-        raise AssertionError("stream_chat should be used")
+    async def execute(self, **kwargs) -> str:
+        return "approved high risk"
 
 
 def make_session(agent):
@@ -73,7 +52,7 @@ def make_session(agent):
 @pytest.mark.asyncio
 async def test_create_session():
     """Session manager creates a session with unique ID."""
-    mock_llm = MockLLM([LLMResponse(content="Hello")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Hello")])
     manager = SessionManager()
     session = manager.create_session(mock_llm, tools=[EchoTool()])
     assert len(session.session_id) == 12
@@ -83,7 +62,7 @@ async def test_create_session():
 @pytest.mark.asyncio
 async def test_create_session_uses_normalized_mode():
     """Session manager normalizes mode when constructing AgentLoop."""
-    mock_llm = MockLLM([LLMResponse(content="Hello")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Hello")])
     manager = SessionManager(mode="read-only")
     session = manager.create_session(mock_llm, tools=[EchoTool()])
 
@@ -93,7 +72,7 @@ async def test_create_session_uses_normalized_mode():
 @pytest.mark.asyncio
 async def test_chat_simple_text_response():
     """Mock LLM returns text → run_session yields llm_response and done events."""
-    mock_llm = MockLLM([LLMResponse(content="Hello, user!")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Hello, user!")])
     manager = SessionManager()
     session = make_session(AgentLoop(
         llm=mock_llm, tool_registry=ToolRegistry(),
@@ -120,7 +99,7 @@ async def test_chat_simple_text_response():
 async def test_run_session_forwards_assistant_delta_and_streamed_response():
     manager = SessionManager()
     session = make_session(AgentLoop(
-        llm=StreamingLLM(),
+        llm=ScriptedLLM([stream_script("Hel", "lo")], stream=True),
         tool_registry=ToolRegistry(),
         hooks=HookManager(),
     ))
@@ -150,7 +129,7 @@ async def test_run_session_forwards_assistant_delta_and_streamed_response():
 async def test_run_session_emits_error_event_when_agent_run_fails():
     manager = SessionManager()
     session = make_session(AgentLoop(
-        llm=FailingLLM(),
+        llm=ScriptedLLM([RuntimeError("provider unavailable")]),
         tool_registry=ToolRegistry(),
         hooks=HookManager(),
     ))
@@ -209,7 +188,7 @@ async def test_run_session_forwards_planning_events():
 @pytest.mark.asyncio
 async def test_chat_with_tool_calls():
     """Mock LLM returns tool_calls → run_session yields tool events."""
-    mock_llm = MockLLM([
+    mock_llm = ScriptedLLM([
         LLMResponse(
             content=None,
             tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
@@ -242,6 +221,107 @@ async def test_chat_with_tool_calls():
 
 
 @pytest.mark.asyncio
+async def test_run_session_accepts_web_approval_response_for_high_risk_tool():
+    mock_llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallDelta(id="c1", name="HighRisk", arguments="{}")],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Done after tool", stop_reason="end_turn"),
+    ])
+    registry = ToolRegistry()
+    registry.register(HighRiskTool())
+    manager = SessionManager()
+    agent = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+    session = make_session(agent)
+    agent.approval_handler = session.approval_handler
+    events = []
+    incoming = asyncio.Queue()
+
+    async def collect(event):
+        events.append(event)
+        if event["type"] == "approval_request":
+            await incoming.put({
+                "type": "approval_response",
+                "approval_id": event["data"]["approval_id"],
+                "decision": "approved",
+            })
+
+    async def receive():
+        return await incoming.get()
+
+    await manager.run_session(
+        session,
+        "run high risk",
+        ws_send=collect,
+        ws_receive=receive,
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "approval_request" in event_types
+    assert any(
+        event["type"] == "approval_response"
+        and event["data"]["status"] == "approved"
+        for event in events
+    )
+    tool_result = next(event for event in events if event["type"] == "tool_result")
+    assert tool_result["data"]["result"] == "approved high risk"
+
+
+@pytest.mark.asyncio
+async def test_web_approval_handler_isolates_sessions():
+    first = WebApprovalHandler("session-1")
+    second = WebApprovalHandler("session-2")
+    request = _web_approval_request("approval-1")
+
+    pending = asyncio.create_task(first.request_approval(request))
+    await asyncio.sleep(0)
+
+    assert second.submit_response("approval-1", "approved") is False
+    assert first.submit_response("approval-1", "approved") is True
+    response = await pending
+    assert response.status.value == "approved"
+
+
+@pytest.mark.asyncio
+async def test_web_approval_handler_fail_pending_returns_unavailable():
+    handler = WebApprovalHandler("session-1")
+    pending = asyncio.create_task(handler.request_approval(_web_approval_request("approval-1")))
+    await asyncio.sleep(0)
+
+    handler.fail_pending("session reset")
+    response = await pending
+
+    assert response.status.value == "unavailable"
+    assert response.reason == "session reset"
+
+
+def _web_approval_request(approval_id: str):
+    from agent.approval import ApprovalRequest
+
+    return ApprovalRequest(
+        approval_id=approval_id,
+        tool_call_id="call-1",
+        tool_name="HighRisk",
+        mode="build",
+        capability=["command_execute"],
+        risk="high",
+        origin="builtin",
+        reason="test",
+        profile_name="build_default",
+        redacted_args={},
+        args_summary="{}",
+        session_id="session-1",
+        run_id="run-1",
+    )
+
+
+@pytest.mark.asyncio
 async def test_tool_result_event_includes_display_metadata_for_long_result():
     @tool_parameters(name="LongTool", description="Long tool", parameters={"type": "object", "properties": {}, "required": []})
     class LongTool(Tool):
@@ -252,7 +332,7 @@ async def test_tool_result_event_includes_display_metadata_for_long_result():
         async def execute(self, **kwargs) -> str:
             return "x" * 5000
 
-    mock_llm = MockLLM([
+    mock_llm = ScriptedLLM([
         LLMResponse(
             content=None,
             tool_calls=[ToolCallDelta(id="c1", name="LongTool", arguments="{}")],
@@ -285,7 +365,7 @@ async def test_tool_result_event_includes_display_metadata_for_long_result():
 @pytest.mark.asyncio
 async def test_chat_max_iterations():
     """Loop stops at max_iterations."""
-    mock_llm = MockLLM([
+    mock_llm = ScriptedLLM([
         LLMResponse(
             content=None,
             tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
@@ -316,7 +396,7 @@ async def test_chat_max_iterations():
 @pytest.mark.asyncio
 async def test_session_message_history():
     """Messages accumulate correctly across turns."""
-    mock_llm = MockLLM([LLMResponse(content="Response 1"), LLMResponse(content="Response 2")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Response 1"), LLMResponse(content="Response 2")])
     manager = SessionManager()
     session = make_session(AgentLoop(
         llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
@@ -338,7 +418,7 @@ async def test_session_messages_include_assistant_response():
     """run_session 后 session.messages 应包含 assistant 最终回复。
     Regression test for: loop.py 返回前未 append 导致多轮对话失忆。
     """
-    mock_llm = MockLLM([LLMResponse(content="Response 1")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Response 1")])
     manager = SessionManager()
     session = make_session(AgentLoop(
         llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
@@ -357,7 +437,7 @@ async def test_session_messages_include_assistant_response():
 @pytest.mark.asyncio
 async def test_session_message_history_with_tool():
     """多轮对话含工具调用时，assistant 回复应完整记录。"""
-    mock_llm = MockLLM([
+    mock_llm = ScriptedLLM([
         LLMResponse(
             content=None,
             tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
@@ -387,7 +467,7 @@ async def test_session_message_history_with_tool():
 @pytest.mark.asyncio
 async def test_debug_events_emitted():
     """DebugHook emits structured debug events when enabled."""
-    mock_llm = MockLLM([LLMResponse(content="Hello")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Hello")])
     manager = SessionManager(debug_enabled=True)
     session = make_session(AgentLoop(
         llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
@@ -410,7 +490,7 @@ async def test_debug_events_emitted():
 @pytest.mark.asyncio
 async def test_debug_events_contain_full_messages():
     """before_iteration event contains the full message snapshot."""
-    mock_llm = MockLLM([LLMResponse(content="Hello")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Hello")])
     manager = SessionManager(debug_enabled=True)
     session = make_session(AgentLoop(
         llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
@@ -437,7 +517,7 @@ async def test_debug_events_contain_full_messages():
 
 @pytest.mark.asyncio
 async def test_debug_events_include_incrementing_turns_across_chat_runs():
-    mock_llm = MockLLM([LLMResponse(content="One"), LLMResponse(content="Two")])
+    mock_llm = ScriptedLLM([LLMResponse(content="One"), LLMResponse(content="Two")])
     manager = SessionManager(debug_enabled=True)
     session = make_session(AgentLoop(
         llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
@@ -462,7 +542,7 @@ async def test_debug_events_include_incrementing_turns_across_chat_runs():
 @pytest.mark.asyncio
 async def test_debug_disabled_no_events():
     """When debug is disabled, no debug events are emitted."""
-    mock_llm = MockLLM([LLMResponse(content="Hello")])
+    mock_llm = ScriptedLLM([LLMResponse(content="Hello")])
     manager = SessionManager(debug_enabled=False)
     session = make_session(AgentLoop(
         llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager(),
@@ -500,19 +580,19 @@ async def test_debug_hook_standalone():
 
 
 def test_debug_enabled_with_env():
-    """debug_enabled() respects MYAGENT_DEBUG env var."""
+    """debug_enabled() respects ASTERWYND_DEBUG env var."""
     # Save
-    old = os.environ.get("MYAGENT_DEBUG", "")
+    old = os.environ.get("ASTERWYND_DEBUG", "")
     try:
-        os.environ["MYAGENT_DEBUG"] = "enabled"
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
         assert debug_enabled() is True
-        os.environ["MYAGENT_DEBUG"] = "1"
+        os.environ["ASTERWYND_DEBUG"] = "1"
         assert debug_enabled() is True
-        os.environ["MYAGENT_DEBUG"] = "true"
+        os.environ["ASTERWYND_DEBUG"] = "true"
         assert debug_enabled() is True
-        os.environ["MYAGENT_DEBUG"] = "0"
+        os.environ["ASTERWYND_DEBUG"] = "0"
         assert debug_enabled() is False
-        del os.environ["MYAGENT_DEBUG"]
+        del os.environ["ASTERWYND_DEBUG"]
         assert debug_enabled() is False
     finally:
-        os.environ["MYAGENT_DEBUG"] = old
+        os.environ["ASTERWYND_DEBUG"] = old

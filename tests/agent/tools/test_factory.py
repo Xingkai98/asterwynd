@@ -1,5 +1,6 @@
 from agent.config import SearchProviderConfig, WebSearchConfig
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy
+from agent.tool_permissions import ToolCapability, ToolRiskLevel
 from agent.tools.factory import build_coding_tool_registry, build_default_tool_registry
 
 
@@ -13,6 +14,27 @@ def test_build_default_tool_registry_uses_build_mode_by_default():
     assert "Bash" in names
     assert "Write" in names
     assert "Edit" in names
+
+
+def test_build_default_tool_registry_assigns_explicit_permission_metadata():
+    registry = build_default_tool_registry()
+
+    expected = {
+        "Read": (ToolCapability.WORKSPACE_READ, ToolRiskLevel.LOW),
+        "Write": (ToolCapability.WORKSPACE_WRITE, ToolRiskLevel.MEDIUM),
+        "Edit": (ToolCapability.WORKSPACE_WRITE, ToolRiskLevel.MEDIUM),
+        "Bash": (ToolCapability.COMMAND_EXECUTE, ToolRiskLevel.HIGH),
+        "WebSearch": (ToolCapability.NETWORK_READ, ToolRiskLevel.LOW),
+        "WebFetch": (ToolCapability.NETWORK_READ, ToolRiskLevel.LOW),
+        "RepoMap": (ToolCapability.WORKSPACE_READ, ToolRiskLevel.LOW),
+        "SymbolSearch": (ToolCapability.WORKSPACE_READ, ToolRiskLevel.LOW),
+    }
+
+    for tool_name, (capability, risk) in expected.items():
+        permission = registry.get_tool(tool_name).permission
+        assert permission is not None
+        assert capability in permission.capabilities
+        assert permission.risk_level is risk
 
 
 def test_build_default_tool_registry_filters_read_only_mode():
@@ -32,8 +54,8 @@ def test_build_default_tool_registry_filters_read_only_mode():
 
 
 def test_build_default_tool_registry_passes_web_search_config(monkeypatch):
-    monkeypatch.setenv("MYAGENT_TAVILY_API_KEY", "secret")
-    monkeypatch.setenv("MYAGENT_BRAVE_SEARCH_API_KEY", "secret")
+    monkeypatch.setenv("ASTERWYND_TAVILY_API_KEY", "secret")
+    monkeypatch.setenv("ASTERWYND_BRAVE_SEARCH_API_KEY", "secret")
 
     registry = build_default_tool_registry(
         web_search_config=WebSearchConfig(

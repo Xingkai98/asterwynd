@@ -19,7 +19,7 @@ async def test_logging_hook_no_crash():
 async def test_logging_hook_records_run_mode(caplog):
     hook = LoggingHook(verbose=False)
 
-    with caplog.at_level(logging.INFO, logger="myagent.hooks.logging"):
+    with caplog.at_level(logging.INFO, logger="asterwynd.hooks.logging"):
         await hook.on_run_started(AgentRunConfig(mode=AgentMode.READ_ONLY))
 
     assert "[Run] mode=read_only" in caplog.text

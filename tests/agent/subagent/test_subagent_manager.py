@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from agent.config import MyAgentConfig
+from agent.config import AsterwyndConfig
 from agent.llm import LLMResponse
 from agent.message import Message
 from agent.run_config import AgentMode
@@ -29,7 +29,7 @@ class SlowLLM:
 def manager():
     return SubAgentManager(
         llm=StaticLLM(),
-        config=MyAgentConfig(),
+        config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
     )
 
@@ -54,7 +54,7 @@ def test_list_subagents_returns_created_sessions(manager):
 def test_create_subagent_clamps_mode_to_parent():
     manager = SubAgentManager(
         llm=StaticLLM(),
-        config=MyAgentConfig(),
+        config=AsterwyndConfig(),
         parent_mode=AgentMode.READ_ONLY,
     )
     created = manager.create_subagent(name="writer", mode="build")
@@ -78,7 +78,7 @@ async def test_run_subagent_wait_false_returns_running(manager):
 async def test_run_subagent_wait_true_returns_completed_result():
     manager = SubAgentManager(
         llm=StaticLLM(),
-        config=MyAgentConfig(),
+        config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
     )
     created = manager.create_subagent(name="runner")
@@ -96,7 +96,7 @@ async def test_run_subagent_wait_true_returns_completed_result():
 async def test_get_subagent_run_waits_for_completion():
     manager = SubAgentManager(
         llm=StaticLLM(),
-        config=MyAgentConfig(),
+        config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
     )
     created = manager.create_subagent(name="runner")
@@ -119,7 +119,7 @@ async def test_get_subagent_run_waits_for_completion():
 async def test_same_subagent_rejects_concurrent_runs():
     manager = SubAgentManager(
         llm=SlowLLM(),
-        config=MyAgentConfig(),
+        config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
     )
     created = manager.create_subagent(name="runner")
@@ -140,7 +140,7 @@ async def test_same_subagent_rejects_concurrent_runs():
 async def test_multiple_subagents_can_run_concurrently():
     manager = SubAgentManager(
         llm=SlowLLM(),
-        config=MyAgentConfig(),
+        config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
     )
     first = manager.create_subagent(name="one")
@@ -163,7 +163,7 @@ async def test_multiple_subagents_can_run_concurrently():
 async def test_cancel_subagent_run_marks_cancelled():
     manager = SubAgentManager(
         llm=SlowLLM(),
-        config=MyAgentConfig(),
+        config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
     )
     created = manager.create_subagent(name="runner")
@@ -218,3 +218,35 @@ def test_inspect_transcript_recent_messages_respects_limit(manager):
     assert inspected["scope"] == "recent_messages"
     assert inspected["truncated"] is True
     assert [msg["content"] for msg in inspected["messages"]] == ["one", "two"]
+
+
+def test_inspect_transcript_uses_extract_text():
+    """inspect_transcript 中 msg.content 使用 extract_text 提取纯文本"""
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    manager = SubAgentManager(
+        llm=StaticLLM(),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BUILD,
+    )
+    created = manager.create_subagent(name="runner")
+    session = manager._sessions[created["subagent_id"]]
+    session.messages.append(
+        Message(role="assistant", content=[
+            TextBlock(text="I found an image:"),
+            ImageBlock(
+                image_url=ImageUrl(url="data:image/png;base64,abcdef"),
+                file_path="/tmp/found.png",
+            ),
+        ]),
+    )
+    inspected = manager.inspect_transcript(
+        subagent_id=created["subagent_id"],
+        scope="recent_messages",
+        limit=1,
+    )
+    content = inspected["messages"][0]["content"]
+    assert "I found an image:" in content
+    # 不应包含 base64 数据
+    assert "base64" not in content
+    assert "abcdef" not in content

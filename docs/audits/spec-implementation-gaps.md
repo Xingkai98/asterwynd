@@ -234,7 +234,7 @@ mv .env backup.env
 - Read 拒绝 `.env` 或按新策略处理敏感文件。
 - Grep 拒绝 workspace 外路径。
 - Grep 递归搜索不泄露 denied pattern 文件。
-- MyAgentRunner 使用 coding tools 时共享同一个 workspace policy。
+- AsterwyndRunner 使用 coding tools 时共享同一个 workspace policy。
 
 ### P1: `tighten-bash-command-policy`
 

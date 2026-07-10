@@ -1,0 +1,39 @@
+你是一个设计评审 agent。你的任务是独立评审 OpenSpec change "multi-agent-dev-workflow" 的完整设计方案。
+
+## 背景
+
+这个 change 将 Asterwynd 项目的现有线性开发流程（explore → propose → grill-with-docs → apply → sync → archive）重构为一个五阶段状态机，支持不同 agent 角色处理不同阶段、结构化 handoff 交接、human-in-the-loop review gate 和完整回退路径。
+
+## 需要评审的文件
+
+按顺序阅读：
+1. openspec/changes/multi-agent-dev-workflow/proposal.md
+2. openspec/changes/multi-agent-dev-workflow/design.md
+3. openspec/changes/multi-agent-dev-workflow/specs/dev-workflow-state-machine/spec.md
+4. openspec/changes/multi-agent-dev-workflow/specs/change-documentation/spec.md
+5. openspec/changes/multi-agent-dev-workflow/specs/subagents/spec.md
+6. openspec/changes/multi-agent-dev-workflow/tasks.md
+
+## 评审要求
+
+请逐项审查以下方面，并给出明确结论（通过/需要修改/阻塞）：
+
+1. **五阶段划分**: planning → reviewing → building → code-review → closing 是否合理？grill-with-docs 放在 planning 内部（而非独立阶段）是否正确？
+2. **handoff.json schema**: 字段是否完整？是否有遗漏？state/transitions/routing/blockers 的设计是否自洽？
+3. **流转规则**: 向前流转、回退流转、skip 流转、阻塞流转是否覆盖所有合理场景？是否有规则漏洞？
+4. **角色 agent**: Planner/Reviewer/Builder/CodeReviewer/Closer 的职责划分是否清晰？是否与 phase 一一对应？
+5. **路由配置**: executor 枚举（inline/subagent/claude-code/codex）、session_mode（same/new/ask）、两层覆盖是否合理？
+6. **Human review gate**: 每个 phase 的 ready_for_review gate 是否提供了足够的人工控制？
+7. **单 agent 全流程兼容**: 不强制切换 agent 的设计是否合理？
+8. **风险覆盖**: design.md 中的 Risks/Trade-offs 是否覆盖了主要风险？
+9. **任务完整性**: tasks.md 是否涵盖了所有需要实现的内容？
+
+## 输出格式
+
+请生成一份评审报告，包含：
+- **总体结论**: APPROVED（可直接进入实现）/ CHANGES_REQUESTED（需要修改后重新评审）/ REJECTED（根本性问题需要重新设计）
+- **逐项结论**: 每个评审维度给出通过/需要修改/阻塞的结论和具体理由
+- **发现的问题**: 如果有，按严重程度排序（阻塞性/重要/建议）
+- **建议**: 任何改进建议，即使不是阻塞性问题
+
+评审报告写入 .handoff/multi-agent-dev-workflow/review-report.md

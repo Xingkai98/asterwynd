@@ -1,0 +1,97 @@
+agent:
+  default_mode: build
+
+modes:
+  build:
+    permission_profile: build_default
+    deny_tools: []
+  read_only:
+    permission_profile: read_only_default
+    deny_tools: []
+  plan:
+    permission_profile: plan_default
+    deny_tools: []
+
+permissions:
+  profiles:
+    # 示例：自定义 profile 只能绑定到既有 mode，不会新增 Agent Mode。
+    # cautious_build:
+    #   allowed_capabilities:
+    #     - workspace_read
+    #     - workspace_write
+    #     - command_execute
+    #     - network_read
+    #     - agent_state
+    #     - subagent_control
+    #   auto_approve_max_risk: low
+    #   approval_required_max_risk: high
+    #   denied_tools: []
+
+tools:
+  ignore_patterns: []
+  command_denylist: []
+  code_intelligence:
+    tree_sitter_max_file_bytes: 262144
+    lsp:
+      # 当前只正式支持 Python（pylsp）。其他语言可配置对应 server，但尚未验证。
+      # 安装: uv sync --extra lsp 或 pip install asterwynd[lsp]
+      servers:
+        - language: python
+          command: [pylsp]
+          root_markers: [pyproject.toml]
+          initialize_timeout_ms: 5000
+          request_timeout_ms: 3000
+          enabled: true
+      default_request_timeout_ms: 3000
+  web_search:
+    providers:
+      # Tavily 需要 ASTERWYND_TAVILY_API_KEY。
+      # - name: tavily
+      #   enabled: true
+      - name: duckduckgo-html
+        enabled: true
+      # Brave 需要 ASTERWYND_BRAVE_SEARCH_API_KEY。
+      # - name: brave
+      #   enabled: true
+      # SearXNG 需要 ASTERWYND_SEARXNG_BASE_URL。
+      # - name: searxng
+      #   enabled: true
+  display:
+    max_result_chars: 4000
+    max_result_lines: 80
+    preview_chars: 1200
+
+mcp:
+  default_timeout_seconds: 30
+  servers:
+    # 示例：本地 stdio MCP server。未显式降权的 MCP action 默认 external_side_effect/high。
+    # local_math:
+    #   type: stdio
+    #   command: python
+    #   args: ["./scripts/mcp_math_server.py"]
+    #   cwd: "."
+    #   env: {}
+    #   default_permission:
+    #     capabilities: ["network_read"]
+    #     risk_level: low
+    #
+    # 示例：Streamable HTTP MCP server。OAuth 不在首版范围内，可用静态 header 或 env header。
+    # docs:
+    #   type: streamable_http
+    #   url: "http://127.0.0.1:8765/mcp"
+    #   headers:
+    #     Authorization:
+    #       env: DOCS_MCP_TOKEN
+    #   tool_timeout_seconds: 30
+    #   prompts:
+    #     review_pr:
+    #       capabilities: ["network_read"]
+    #       risk_level: low
+
+skills:
+  # 仓库本地 ./skills 总是最先加载；roots 用于追加其他本地 skill 目录。
+  roots: []
+
+benchmark:
+  parallel: 1
+  timeout_seconds: 600

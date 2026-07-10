@@ -1,12 +1,18 @@
+import json
+
 from typer.testing import CliRunner
 
-import cli
+import agent.main as cli
+from agent.llm import LLMResponse, ToolCallDelta
+from agent.memory.manager import MemoryManager
 from agent.openai_llm import OpenAILLM
 from agent.result import RunResult, StopReason, ToolCallMade
+from agent.skills import Skill, SkillRuntime
+from tests.support.llm_harness import ScriptedLLM, stream_script
 
 
 class FakeAgent:
-    def __init__(self, content="mock response", tool_calls_made=None):
+    def __init__(self, content="mock response", tool_calls_made=None, skill_runtime=None):
         self.llm = type("FakeLLM", (), {"model": "fake-model"})()
         self.max_iterations = None
         self.messages = None
@@ -17,6 +23,8 @@ class FakeAgent:
         self.plan_document = None
         self.current_mode = "build"
         self.mode_changes = []
+        self.memory = MemoryManager()
+        self.skill_runtime = skill_runtime
 
     async def run(self, messages, session_id=None, run_id=None):
         self.messages = messages
@@ -85,7 +93,7 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
         lambda model=None, provider="openai", mode="build", config=None: fake,
     )
 
-    result = CliRunner().invoke(cli.app, ["main", "hello", "--max-iterations", "3"])
+    result = CliRunner().invoke(cli.app, ["run", "hello", "--max-iterations", "3"])
 
     assert result.exit_code == 0
     assert "mock response" in result.stdout
@@ -94,9 +102,101 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     assert fake.messages[-1].content == "hello"
 
 
+def test_cli_single_prompt_runtime_smoke_uses_real_agent_loop(monkeypatch):
+    llm = ScriptedLLM([LLMResponse(content="runtime response", stop_reason="end_turn")])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(cli.app, ["run", "hello runtime"])
+
+    assert result.exit_code == 0
+    assert "runtime response" in result.stdout
+    assert llm.call_count == 1
+    user_messages = [
+        message.content
+        for message in llm.last_messages or []
+        if message.role == "user"
+    ]
+    assert user_messages == ["hello runtime"]
+
+
+def test_cli_single_prompt_runtime_smoke_streams_without_reprinting(monkeypatch):
+    llm = ScriptedLLM([stream_script("Hel", "lo")], stream=True)
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(cli.app, ["run", "hello"])
+
+    assert result.exit_code == 0
+    assert "Hello" in result.stdout
+    assert result.stdout.count("Hello") == 1
+    assert "【Agent】" not in result.stdout
+    assert llm.calls[0].method == "stream_chat"
+
+
+def test_cli_single_prompt_runtime_smoke_summarizes_tool_call(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "long.txt"
+    target.write_text("x" * 5000, encoding="utf-8")
+    llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallDelta(
+                    id="read-1",
+                    name="Read",
+                    arguments=json.dumps({"path": str(target)}),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="tool done", stop_reason="end_turn"),
+    ])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["run", "generate long output", "--max-iterations", "3"],
+    )
+
+    assert result.exit_code == 0
+    assert "tool done" in result.stdout
+    assert "【工具调用】1 次" in result.stdout
+    assert "Read" in result.stdout
+    assert "摘要" in result.stdout
+    assert "字符" in result.stdout
+    assert "完整结果" in result.stdout
+    assert llm.call_count == 2
+
+
+def test_cli_single_prompt_high_risk_tool_fails_closed_without_approval(monkeypatch):
+    llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                ToolCallDelta(
+                    id="bash-1",
+                    name="Bash",
+                    arguments=json.dumps({"cmd": "printf blocked"}),
+                )
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="blocked", stop_reason="end_turn"),
+    ])
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["run", "run command", "--max-iterations", "3"],
+    )
+
+    assert result.exit_code == 0
+    assert "Approval unavailable" in result.stdout
+    assert "blocked" in result.stdout
+
+
 def test_build_llm_enables_streaming_by_default(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.delenv("MYAGENT_STREAMING", raising=False)
+    monkeypatch.delenv("ASTERWYND_STREAMING", raising=False)
 
     llm = cli.build_llm("openai")
 
@@ -106,7 +206,7 @@ def test_build_llm_enables_streaming_by_default(monkeypatch):
 
 def test_build_llm_allows_disabling_streaming(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    monkeypatch.setenv("MYAGENT_STREAMING", "disabled")
+    monkeypatch.setenv("ASTERWYND_STREAMING", "disabled")
 
     llm = cli.build_llm("openai")
 
@@ -123,7 +223,7 @@ def test_cli_single_prompt_prints_session_and_run_ids(monkeypatch):
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-test")
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-test")
 
-    result = CliRunner().invoke(cli.app, ["main", "hello"])
+    result = CliRunner().invoke(cli.app, ["run", "hello"])
 
     assert result.exit_code == 0
     assert "Session ID: session-test" in result.stdout
@@ -140,7 +240,7 @@ def test_cli_single_prompt_streams_delta_without_reprinting_final_content(monkey
         lambda model=None, provider="openai", mode="build", config=None: fake,
     )
 
-    result = CliRunner().invoke(cli.app, ["main", "hello"])
+    result = CliRunner().invoke(cli.app, ["run", "hello"])
 
     assert result.exit_code == 0
     assert "Hello" in result.stdout
@@ -164,7 +264,7 @@ def test_cli_single_prompt_summarizes_long_tool_results(monkeypatch):
         lambda model=None, provider="openai", mode="build", config=None: fake,
     )
 
-    result = CliRunner().invoke(cli.app, ["main", "hello"])
+    result = CliRunner().invoke(cli.app, ["run", "hello"])
 
     assert result.exit_code == 0
     assert "【工具调用】1 次" in result.stdout
@@ -186,7 +286,7 @@ def test_cli_single_prompt_prints_plan_document(monkeypatch):
         lambda model=None, provider="openai", mode="build", config=None: fake,
     )
 
-    result = CliRunner().invoke(cli.app, ["main", "hello", "--mode", "plan"])
+    result = CliRunner().invoke(cli.app, ["run", "hello", "--mode", "plan"])
 
     assert result.exit_code == 0
     assert "【Plan Document】" in result.stdout
@@ -207,8 +307,8 @@ def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):
 
     result = CliRunner().invoke(
         cli.app,
-        ["main", "hello", "--interactive"],
-        input="again\nexit\n",
+        [],
+        input="hello\nagain\nexit\n",
     )
 
     assert result.exit_code == 0
@@ -217,6 +317,61 @@ def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):
     assert "Run ID: run-2" in result.stdout
     assert fake.session_ids == ["session-interactive", "session-interactive"]
     assert fake.run_ids == ["run-1", "run-2"]
+
+
+def test_cli_interactive_prints_asterwynd_banner(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        [],
+        input="exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Navigate by stars. Prove with traces." in result.stdout
+    assert "以星为引，变更有证。" in result.stdout
+    assert "Asterwynd 交互模式" in result.stdout
+
+
+def test_cli_interactive_can_suppress_banner(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["--no-banner"],
+        input="exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Navigate by stars. Prove with traces." not in result.stdout
+    assert "以星为引，变更有证。" not in result.stdout
+    assert "Asterwynd 交互模式" in result.stdout
+
+
+def test_cli_single_prompt_does_not_print_asterwynd_banner(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(cli.app, ["run", "hello"])
+
+    assert result.exit_code == 0
+    assert "Navigate by stars. Prove with traces." not in result.stdout
+    assert "以星为引，变更有证。" not in result.stdout
 
 
 def test_cli_interactive_mode_command_changes_session_mode(monkeypatch):
@@ -231,7 +386,7 @@ def test_cli_interactive_mode_command_changes_session_mode(monkeypatch):
 
     result = CliRunner().invoke(
         cli.app,
-        ["main", "--interactive"],
+        [],
         input="/mode read_only\nhello\nexit\n",
     )
 
@@ -260,7 +415,7 @@ def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
 
     result = CliRunner().invoke(
         cli.app,
-        ["main", "--interactive"],
+        [],
         input="/mode bypass\nexit\n",
     )
 
@@ -268,6 +423,177 @@ def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
     assert "bypass" in result.stdout
     assert fake.current_mode == "build"
     assert fake.mode_changes == []
+
+
+def test_cli_interactive_help_command_does_not_run_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        [],
+        input="/help\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "/help" in result.stdout
+    assert "/clear" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.run_ids == []
+
+
+def test_cli_interactive_slash_exit_exits_without_running_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        [],
+        input="/exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "再见！" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.run_ids == []
+
+
+def test_cli_interactive_status_command_prints_local_state(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["--provider", "openai"],
+        input="/status\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Session ID: session-interactive" in result.stdout
+    assert "Mode: build" in result.stdout
+    assert "Provider: openai" in result.stdout
+    assert "Model: fake-model" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+
+
+def test_cli_interactive_unknown_slash_command_is_not_sent_to_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        [],
+        input="/unknown\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Unknown command: /unknown" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.messages is None
+
+
+def test_cli_interactive_clear_removes_previous_user_history(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    run_ids = iter(["run-1", "run-2"])
+    monkeypatch.setattr(cli, "new_run_id", lambda: next(run_ids))
+
+    result = CliRunner().invoke(
+        cli.app,
+        [],
+        input="first\n/clear\nsecond\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Cleared conversation history." in result.stdout
+    assert "Run ID: run-1" in result.stdout
+    assert "Run ID: run-2" in result.stdout
+    assert [message.content for message in fake.messages if message.role == "user"] == [
+        "second"
+    ]
+
+
+def test_cli_interactive_compact_reports_noop_without_running_agent(monkeypatch):
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
+
+    result = CliRunner().invoke(
+        cli.app,
+        [],
+        input="/compact\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Nothing to compact" in result.stdout
+    assert "Run ID: run-1" not in result.stdout
+    assert fake.run_ids == []
+
+
+def test_cli_interactive_skill_command_queues_activation_and_runs_agent(monkeypatch):
+    runtime = SkillRuntime(skills=[
+        Skill(
+            name="code-review",
+            description="审查代码变更",
+            prompt="Review instructions",
+            tools=[],
+            argument_hint="<request>",
+            user_invocable=True,
+        )
+    ])
+    fake = FakeAgent(skill_runtime=runtime)
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+    monkeypatch.setattr(cli, "new_run_id", lambda: "run-skill")
+
+    result = CliRunner().invoke(
+        cli.app,
+        [],
+        input="/code-review 帮我审一下这个 change\nexit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Activated skill: code-review" in result.stdout
+    assert "Run ID: run-skill" in result.stdout
+    runtime.begin_run("帮我审一下这个 change")
+    assert runtime.activations == [
+        {"skill_name": "code-review", "source": "slash_command"}
+    ]
+    assert fake.messages is not None
+    user_messages = [message.content for message in fake.messages if message.role == "user"]
+    assert user_messages == ["帮我审一下这个 change"]
 
 
 def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
@@ -280,7 +606,7 @@ def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
 
     monkeypatch.setattr(cli, "build_agent", build_agent)
 
-    result = CliRunner().invoke(cli.app, ["main", "hello", "--mode", "read-only"])
+    result = CliRunner().invoke(cli.app, ["run", "hello", "--mode", "read-only"])
 
     assert result.exit_code == 0
     assert captured["mode"] == "read_only"
@@ -289,7 +615,7 @@ def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
 def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
     fake = FakeAgent()
     captured = {}
-    config_path = tmp_path / "myagent.yaml"
+    config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
 
     def build_agent(model=None, provider="openai", mode="build", config=None):
@@ -301,7 +627,7 @@ def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
 
     result = CliRunner().invoke(
         cli.app,
-        ["main", "hello", "--config", str(config_path)],
+        ["run", "hello", "--config", str(config_path)],
     )
 
     assert result.exit_code == 0
@@ -312,9 +638,9 @@ def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
 def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
     fake = FakeAgent()
     captured = {}
-    config_path = tmp_path / "myagent.yaml"
+    config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
-    monkeypatch.setenv("MYAGENT_MODE", "read_only")
+    monkeypatch.setenv("ASTERWYND_MODE", "read_only")
 
     def build_agent(model=None, provider="openai", mode="build", config=None):
         captured["mode"] = mode
@@ -324,7 +650,7 @@ def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
 
     result = CliRunner().invoke(
         cli.app,
-        ["main", "hello", "--config", str(config_path), "--mode", "build"],
+        ["run", "hello", "--config", str(config_path), "--mode", "build"],
     )
 
     assert result.exit_code == 0
@@ -332,19 +658,19 @@ def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
 
 
 def test_cli_rejects_bypass_mode():
-    result = CliRunner().invoke(cli.app, ["main", "hello", "--mode", "bypass"])
+    result = CliRunner().invoke(cli.app, ["run", "hello", "--mode", "bypass"])
 
     assert result.exit_code == 1
     assert "bypass" in result.stderr
 
 
 def test_cli_reports_invalid_config(tmp_path):
-    config_path = tmp_path / "myagent.yaml"
+    config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent: [", encoding="utf-8")
 
     result = CliRunner().invoke(
         cli.app,
-        ["main", "hello", "--config", str(config_path)],
+        ["run", "hello", "--config", str(config_path)],
     )
 
     assert result.exit_code == 1
@@ -352,17 +678,96 @@ def test_cli_reports_invalid_config(tmp_path):
 
 
 def test_cli_single_prompt_requires_prompt():
-    result = CliRunner().invoke(cli.app, ["main"])
+    result = CliRunner().invoke(cli.app, ["run"])
 
-    assert result.exit_code == 1
-    assert "PROMPT is required" in result.stderr
+    assert result.exit_code != 0
+    assert "Missing argument" in result.stderr or "Error" in result.stderr
 
 
 def test_cli_missing_openai_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MYAGENT_MODEL", raising=False)
+    monkeypatch.delenv("ASTERWYND_MODEL", raising=False)
 
-    result = CliRunner().invoke(cli.app, ["main", "hello", "--provider", "openai"])
+    result = CliRunner().invoke(cli.app, ["run", "hello", "--provider", "openai"])
 
     assert result.exit_code == 1
     assert "OPENAI_API_KEY not set" in result.stderr
+
+
+# ─── 回归测试：新命令结构 ────────────────────────────────────────────
+
+def test_cli_default_no_args_enters_interactive_repl(monkeypatch):
+    """asterwynd 无参数进入交互 REPL"""
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(cli.app, [], input="exit\n")
+
+    assert result.exit_code == 0
+    assert "Asterwynd 交互模式" in result.stdout
+
+
+def test_cli_run_subcommand_single_prompt(monkeypatch):
+    """asterwynd run 'prompt' 单轮执行"""
+    fake = FakeAgent()
+    monkeypatch.setattr(
+        cli,
+        "build_agent",
+        lambda model=None, provider="openai", mode="build", config=None: fake,
+    )
+
+    result = CliRunner().invoke(cli.app, ["run", "single shot"])
+
+    assert result.exit_code == 0
+    assert "mock response" in result.stdout
+    assert "Asterwynd 交互模式" not in result.stdout
+
+
+def test_cli_main_subcommand_not_available():
+    """asterwynd main 报错子命令不存在"""
+    result = CliRunner().invoke(cli.app, ["main", "hello"])
+
+    assert result.exit_code != 0
+    assert "main" in result.stderr
+
+
+def test_cli_interactive_option_not_available():
+    """asterwynd --interactive 报错未知 option"""
+    result = CliRunner().invoke(cli.app, ["--interactive"])
+
+    assert result.exit_code != 0
+    assert "interactive" in result.stderr
+
+
+def test_cli_log_dir_uses_platformdirs():
+    """LOG_DIR 使用 platformdirs.user_log_path"""
+    import platformdirs
+    expected = platformdirs.user_log_path("asterwynd")
+    assert cli.LOG_DIR == expected
+    assert expected.parent.name == "asterwynd"
+    assert expected.name == "log"
+
+
+def test_cli_setup_logging_graceful_when_dir_unwritable(monkeypatch):
+    """LOG_DIR 不可写时 _setup_logging 不崩溃，降级到 stderr-only"""
+    import logging
+
+    # reset logging state so basicConfig can be exercised again
+    root = logging.root
+    root.handlers.clear()
+    root.setLevel(logging.WARNING)
+
+    # /dev/null is a character device, mkdir(parents=True) will raise FileExistsError
+    # which is a subclass of OSError
+    monkeypatch.setenv("XDG_STATE_HOME", "/dev/null")
+    import platformdirs
+    monkeypatch.setattr(cli, "LOG_DIR", platformdirs.user_log_path("asterwynd"))
+
+    cli._setup_logging()
+
+    assert len(root.handlers) == 1
+    assert type(root.handlers[0]).__name__ == "StreamHandler"

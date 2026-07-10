@@ -3,13 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>MyAgent Web UI</title>
-<link rel="stylesheet" href="/static/style.css?v=7">
+<title>Asterwynd · Asterwynd Web UI</title>
+<link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
 <div id="app">
   <header>
-    <h1>MyAgent</h1>
+    <div class="brand-lockup" aria-label="Asterwynd">
+      <img src="/assets/asterwynd-web-wordmark.png?v=3" alt="Asterwynd" class="brand-wordmark">
+      <span class="brand-fallback">Asterwynd</span>
+    </div>
     <nav id="tabs">
       <button class="tab active" data-tab="chat">Chat</button>
       <button class="tab" data-tab="debug" id="debug-tab" style="display:none">Debug</button>
@@ -44,8 +47,16 @@
       </div>
       <div id="messages"></div>
       <div id="input-area">
-        <textarea id="user-input" placeholder="输入消息..." rows="2"></textarea>
-        <button id="send-btn">发送</button>
+        <div id="input-shell">
+          <div id="slash-suggestions" role="listbox" aria-label="Slash commands" hidden></div>
+          <div id="image-previews"></div>
+          <div id="input-row">
+            <textarea id="user-input" placeholder="输入消息..." rows="2" autocomplete="off"></textarea>
+            <input type="file" id="image-file-input" accept="image/*" multiple hidden>
+            <button id="upload-btn" type="button" title="上传图片">+</button>
+            <button id="send-btn">发送</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -57,7 +68,7 @@
 </div>
 
 <script src="/static/markdown.js?v=6"></script>
-<script src="/static/chat.js?v=8"></script>
+<script src="/static/chat.js?v=18"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

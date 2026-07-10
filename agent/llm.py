@@ -117,3 +117,71 @@ class BaseLLM:
         model: Optional[str] = None,
     ) -> LLMResponse:
         raise NotImplementedError
+
+
+# ── 视觉模型检测 ─────────────────────────────────────────────────────
+
+VISION_MODEL_PREFIXES = (
+    "gpt-4o",
+    "gpt-4.1",
+    "gpt-5",
+    "claude-",
+    "gemini-",
+)
+
+
+def supports_vision(model: str) -> bool:
+    """检测模型是否支持视觉输入"""
+    return model.startswith(VISION_MODEL_PREFIXES)
+
+
+def vision_mode(model: str) -> str:
+    """判断模型的视觉处理模式.
+
+    Returns:
+        "vision":     已知视觉模型，直接发送图片。
+        "try_vision": 未知模型，先尝试发送图片，400 后降级重试。
+    """
+    return "vision" if supports_vision(model) else "try_vision"
+
+
+def _messages_have_images(messages: list["Message"]) -> bool:
+    """检查消息列表中是否包含 ImageBlock"""
+    from agent.message import ImageBlock
+
+    for msg in messages:
+        if isinstance(msg.content, list):
+            if any(isinstance(b, ImageBlock) for b in msg.content):
+                return True
+    return False
+
+
+def _is_400_error(exc: Exception) -> bool:
+    """判断异常是否为 httpx 400 错误"""
+    try:
+        import httpx
+        if isinstance(exc, httpx.HTTPStatusError):
+            return exc.response.status_code == 400
+    except ImportError:
+        pass
+    return False
+
+
+def sanitize_payload_for_logging(payload: dict) -> dict:
+    """深拷贝 payload 并替换 data:image/ URL 为占位符，避免日志泄露 base64"""
+    import copy
+    sanitized = copy.deepcopy(payload)
+    _sanitize_object(sanitized)
+    return sanitized
+
+
+def _sanitize_object(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key in ("url", "data") and isinstance(value, str) and value.startswith("data:image/"):
+                obj[key] = "[image data omitted]"
+            else:
+                _sanitize_object(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            _sanitize_object(item)

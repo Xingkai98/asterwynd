@@ -24,7 +24,7 @@
 - `tool-system`: 增加 browser tools 权限元数据。
 - `workspace-safety`: 截图和浏览器 artifact 存储受 workspace policy 约束。
 
-## Impact
+## Impact Analysis
 
 - 影响代码：
   - `agent/browser/`
@@ -34,3 +34,17 @@
   - browser tool 单元测试
   - 可选 Playwright 集成测试
 - 不实现桌面截图、鼠标键盘任意输入，不处理真实登录态自动化。
+
+## Reference Implementation Research
+
+- status: enabled
+- reason: 浏览器工具风险高，必须参考其他 coding-agent 对 URL allowlist、凭据边界、截图 artifact、超时和审计的处理。
+- research questions:
+  - 其他 coding-agent 如何限制浏览器访问范围、登录态和截图保存？
+  - browser/computer use 工具如何接入 mode policy、workspace safety 和 trace？
+  - 哪些 browser smoke 可以本地稳定运行，哪些必须保持人工或可选验证？
+- findings:
+  - 本次仅为参考实现调研门禁的结构迁移，尚未完成本 change 的针对性横向调研。
+  - 当前工作区 `.dev/reference-repos.txt` 存在，可用于开发前调研；真正开始实现前必须补充具体参考仓库发现。
+- design impact:
+  - 当前方案仍以安全基础和最小 Playwright 工具为边界；实现前需要用参考实现调研校验 allowlist、artifact 存储和审计策略。

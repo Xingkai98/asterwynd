@@ -8,7 +8,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from agent.loop import AgentLoop
-from agent.config import MyAgentConfig
+from agent.config import AsterwyndConfig
+from agent.mcp import build_mcp_manager
 from agent.memory.manager import MemoryManager
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.subagent.manager import SubAgentManager
@@ -252,7 +253,7 @@ class CountingLLM:
         return await self.llm.chat(*args, **kwargs)
 
 
-class MyAgentRunner(AgentRunner):
+class AsterwyndRunner(AgentRunner):
     def __init__(
         self,
         llm,
@@ -261,7 +262,7 @@ class MyAgentRunner(AgentRunner):
         max_iterations: int = 20,
         prompt_builder: CodingPromptBuilder | None = None,
         timeout_seconds: int = 1800,
-        config: MyAgentConfig | None = None,
+        config: AsterwyndConfig | None = None,
     ):
         self.llm = llm
         self.model = model
@@ -270,7 +271,7 @@ class MyAgentRunner(AgentRunner):
         self.max_iterations = max_iterations
         self.prompt_builder = prompt_builder or CodingPromptBuilder()
         self.timeout_seconds = timeout_seconds
-        self.config = config or MyAgentConfig()
+        self.config = config or AsterwyndConfig()
 
     async def close(self) -> None:
         close_fn = getattr(self.llm, "close", None)
@@ -292,14 +293,17 @@ class MyAgentRunner(AgentRunner):
             workspace,
             command_denylist=self.config.tools.command_denylist,
         )
+        mcp_manager = await build_mcp_manager(self.config)
         registry = build_coding_tool_registry(
             policy=policy,
             mode_policy=ModePolicy(
                 self.run_config,
                 deny_tools_by_mode=self.config.deny_tools_by_mode(),
+                permission_profiles_by_mode=self.config.permission_profiles_by_mode(),
             ),
             ignore_patterns=self.config.tools.ignore_patterns,
             code_intelligence_config=self.config.tools.code_intelligence,
+            mcp_manager=mcp_manager,
         )
 
         counting_llm = CountingLLM(self.llm)
@@ -318,6 +322,7 @@ class MyAgentRunner(AgentRunner):
             expose_subagent_tools=True,
             run_config=self.run_config,
             tool_result_display=self.config.tools.display,
+            mcp_manager=mcp_manager,
         )
         messages = self.prompt_builder.build_messages(
             task=task,
@@ -336,18 +341,19 @@ class MyAgentRunner(AgentRunner):
                 timeout=effective_timeout,
             )
         except asyncio.TimeoutError:
+            await mcp_manager.aclose()
             # Record actual progress from CountingLLM
             tool_count = sum(1 for step in trace.steps if step.type == "tool_call")
             trace.record_completion(
                 "error",
-                f"MyAgent timed out after {effective_timeout}s",
+                f"Asterwynd timed out after {effective_timeout}s",
             )
             return AgentRunResult(
                 status="error",
                 iterations=counting_llm.call_count,
                 tool_calls=tool_count,
                 reason=BenchmarkReason.MODEL_FAILURE.value,
-                output=f"MyAgent timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
+                output=f"Asterwynd timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
             )
         edit_count = sum(
             1
@@ -357,6 +363,7 @@ class MyAgentRunner(AgentRunner):
             and not call.result.startswith("[Permission denied")
             and not call.result.startswith("[Error")
         )
+        await mcp_manager.aclose()
         return AgentRunResult(
             status="completed" if result.stop_reason.value == "end_turn" else "error",
             iterations=counting_llm.call_count,

@@ -1,6 +1,7 @@
 # tests/agent/tools/test_registry.py
 import pytest
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState, ModePolicy
+from agent.tool_permissions import ToolCapability, ToolPermission, ToolRiskLevel
 from agent.tools.factory import build_default_tool_registry
 from agent.tools.registry import ToolRegistry
 from agent.tools.base import Tool, tool_parameters, ToolCall
@@ -29,6 +30,24 @@ class WriteLikeTool(Tool):
     async def execute(self, **kwargs) -> str:
         self.called = True
         return "wrote!"
+
+
+@tool_parameters(name="HighRisk", description="High", parameters={"type": "object", "properties": {}})
+class HighRiskTool(Tool):
+    name = "HighRisk"
+    description = "High"
+    parameters = {}
+    permission = ToolPermission(
+        capabilities=frozenset({ToolCapability.COMMAND_EXECUTE}),
+        risk_level=ToolRiskLevel.HIGH,
+    )
+
+    def __init__(self):
+        self.called = False
+
+    async def execute(self, **kwargs) -> str:
+        self.called = True
+        return "high!"
 
 def test_register_tool():
     registry = ToolRegistry()
@@ -79,6 +98,17 @@ def test_get_all_schemas_uses_latest_runtime_state_mode():
 
     assert [schema["function"]["name"] for schema in registry.get_all_schemas()] == [
         "Echo",
+    ]
+
+
+def test_get_all_schemas_includes_approval_required_tools():
+    registry = ToolRegistry(
+        mode_policy=ModePolicy(AgentRunConfig(mode=AgentMode.BUILD))
+    )
+    registry.register(HighRiskTool())
+
+    assert [schema["function"]["name"] for schema in registry.get_all_schemas()] == [
+        "HighRisk"
     ]
 
 @pytest.mark.asyncio
@@ -149,6 +179,37 @@ async def test_execute_denied_by_configured_deny_tool_returns_permission_result(
     assert "Permission denied" in result
     assert "Echo" in result
     assert "build" in result
+
+
+@pytest.mark.asyncio
+async def test_execute_approval_required_tool_fails_closed_without_approval():
+    tool = HighRiskTool()
+    registry = ToolRegistry(
+        mode_policy=ModePolicy(AgentRunConfig(mode=AgentMode.BUILD))
+    )
+    registry.register(tool)
+
+    result = await registry.execute(ToolCall(id="c1", name="HighRisk", arguments={}))
+
+    assert "Approval required" in result
+    assert tool.called is False
+
+
+@pytest.mark.asyncio
+async def test_execute_approval_required_tool_runs_with_approval_granted():
+    tool = HighRiskTool()
+    registry = ToolRegistry(
+        mode_policy=ModePolicy(AgentRunConfig(mode=AgentMode.BUILD))
+    )
+    registry.register(tool)
+
+    result = await registry.execute(
+        ToolCall(id="c1", name="HighRisk", arguments={}),
+        approval_granted=True,
+    )
+
+    assert result == "high!"
+    assert tool.called is True
 
 
 def test_factory_allows_deny_tool_known_but_not_registered_in_entrypoint():

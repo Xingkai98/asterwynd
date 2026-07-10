@@ -1,8 +1,8 @@
-# MyAgent OpenSpec 项目说明
+# Asterwynd OpenSpec 项目说明
 
 ## 项目目标
 
-MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项目。OpenSpec 是后续需求和能力规格的 source of truth，用来连接项目定位、实现行为、测试证据和面试叙事。
+Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项目。OpenSpec 是后续需求和能力规格的 source of truth，用来连接项目定位、实现行为、测试证据和面试叙事。
 
 ## 规格原则
 
@@ -37,11 +37,12 @@ MyAgent 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统项
 - `web-ui`: FastAPI、WebSocket、Chat 和 Debug 页面。
 - `benchmark`: 任务 schema、runner、artifact、hidden tests 和结果汇总。
 - `change-documentation`: OpenSpec change 的 proposal、spec、design、diagnosis 和 tasks 文档流程。
+- `dev-workflow-state-machine`: 多阶段开发流程状态机，包含五阶段生命周期、handoff.json 状态文件、human review gate、角色 agent 路由和回退机制。
 
 ## Change 文档约束
 
 OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
-`tasks` artifacts。MyAgent 在此基础上采用以下项目级规则：
+`tasks` artifacts。Asterwynd 在此基础上采用以下项目级规则：
 
 - 非平凡 change 必须包含 `design.md`，用于记录详细设计和关键技术取舍。
 - bug、回归、工具不可用、故障复盘和调研驱动的 change 必须包含 `diagnosis.md`。
@@ -53,7 +54,7 @@ OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
 - 新建 `tasks.md` 应参考 `openspec/templates/tasks.md`，保留通用验证项，并按影响面补充 benchmark、Web、TUI、browser 或外部集成 smoke。
 - change delta spec 路径 `openspec/changes/<change-id>/specs/<capability>/spec.md` 的 `<capability>` 必须映射到 `openspec/specs/<capability>/spec.md`；非 docs change 的 `tasks.md` 必须包含 current spec 同步任务。
 - 非平凡 change 开发前必须用 `grill-with-docs` 审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
-- change 实现 PR 合入后，应归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，并从 `docs/openspec-change-backlog.md` 移除；backlog 只记录未实现或临时已完成待归档的 active change。
+- change 实现 PR 应同时包含归档收尾：归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，并从 `docs/openspec-change-backlog.md` 移除；backlog 只记录未实现或因明确阻塞临时已完成待归档的 active change。
 
 当前 OpenSpec CLI 可通过 `openspec status --change <id>` 检查 schema
 artifact 完成状态。`diagnosis.md` 属于项目条件规则，由项目本地文档规则脚本检查。

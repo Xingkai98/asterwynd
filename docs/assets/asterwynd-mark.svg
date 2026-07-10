@@ -1,0 +1,54 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Asterwynd mark</title>
+  <desc id="desc">A constellation crossed by wind lines, representing navigation, motion, and traceable software change.</desc>
+  <defs>
+    <linearGradient id="wind" x1="164" y1="683" x2="860" y2="327" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38BDF8"/>
+      <stop offset="0.55" stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#F6C453"/>
+    </linearGradient>
+    <linearGradient id="star" x1="294" y1="211" x2="737" y2="767" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF7D6"/>
+      <stop offset="0.5" stop-color="#F6C453"/>
+      <stop offset="1" stop-color="#FB923C"/>
+    </linearGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.35 0 1 0 0 0.45 0 0 1 0 0.9 0 0 0 0.55 0" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <circle cx="512" cy="512" r="342" stroke="#1E293B" stroke-width="18" opacity="0.18"/>
+  <circle cx="512" cy="512" r="286" stroke="#38BDF8" stroke-width="4" stroke-dasharray="10 28" opacity="0.24"/>
+
+  <g opacity="0.72">
+    <path d="M318 682L403 410L568 326L711 482L640 711L448 768L318 682Z" stroke="#94A3B8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M403 410L448 768M568 326L640 711M711 482L318 682" stroke="#94A3B8" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+  </g>
+
+  <g filter="url(#softGlow)">
+    <path d="M164 635C281 548 380 522 496 542C610 562 724 558 860 436" stroke="url(#wind)" stroke-width="34" stroke-linecap="round"/>
+    <path d="M218 710C347 649 458 639 573 665C679 689 765 676 861 596" stroke="url(#wind)" stroke-width="21" stroke-linecap="round" opacity="0.76"/>
+    <path d="M264 570C381 487 467 452 573 456C662 460 726 436 798 362" stroke="url(#wind)" stroke-width="15" stroke-linecap="round" opacity="0.66"/>
+  </g>
+
+  <g>
+    <circle cx="403" cy="410" r="28" fill="url(#star)"/>
+    <circle cx="568" cy="326" r="24" fill="url(#star)"/>
+    <circle cx="711" cy="482" r="30" fill="url(#star)"/>
+    <circle cx="640" cy="711" r="25" fill="url(#star)"/>
+    <circle cx="448" cy="768" r="19" fill="url(#star)"/>
+    <circle cx="318" cy="682" r="23" fill="url(#star)"/>
+  </g>
+
+  <g transform="translate(568 326)">
+    <path d="M0 -83L18 -20L82 0L18 20L0 83L-18 20L-82 0L-18 -20L0 -83Z" fill="#FFF7D6"/>
+    <path d="M0 -83L18 -20L82 0L18 20L0 83L-18 20L-82 0L-18 -20L0 -83Z" stroke="#F6C453" stroke-width="8" stroke-linejoin="round"/>
+  </g>
+
+  <path d="M809 338L868 316L847 377" stroke="#F6C453" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

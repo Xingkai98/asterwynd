@@ -1,0 +1,13 @@
+{
+  "id": "asterwynd-013-hook-manager",
+  "repo": "local/asterwynd",
+  "base_commit": "ee580b7",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/agent/hooks/test_manager.py",
+  "category": "tools",
+  "difficulty": "medium",
+  "timeout_seconds": 180,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": null
+}

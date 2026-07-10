@@ -1,14 +1,15 @@
 # agent/memory/manager.py
 import logging
+from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
-from agent.message import Message
+from agent.message import Message, TextBlock, ImageBlock, extract_text, count_tokens_for_content
 
 if TYPE_CHECKING:
     from agent.llm import LLM
     from agent.message import Message
 
-logger = logging.getLogger("myagent.memory")
+logger = logging.getLogger("asterwynd.memory")
 
 try:
     import tiktoken
@@ -18,6 +19,27 @@ try:
 except ImportError:
     def _count_tokens(text: str) -> int:
         return len(text) // 4
+
+
+@dataclass(frozen=True)
+class ManualCompactResult:
+    compacted: bool
+    before_messages: int
+    after_messages: int
+    before_tokens: int
+    after_tokens: int
+    reason: str
+
+    def to_metadata(self) -> dict:
+        return {
+            "compacted": self.compacted,
+            "before_messages": self.before_messages,
+            "after_messages": self.after_messages,
+            "before_tokens": self.before_tokens,
+            "after_tokens": self.after_tokens,
+            "reason": self.reason,
+        }
+
 
 class MemoryManager:
     def __init__(
@@ -35,7 +57,7 @@ class MemoryManager:
         self.messages.append(message)
 
     def count_tokens(self, messages: list["Message"]) -> int:
-        return sum(_count_tokens(m.content) for m in messages)
+        return sum(count_tokens_for_content(m.content, _count_tokens) for m in messages)
 
     async def compact_if_needed(self, messages: Optional[list["Message"]] = None) -> bool:
         msgs = messages if messages is not None else self.messages
@@ -77,6 +99,37 @@ class MemoryManager:
         logger.info(f"[Memory] Compacted to {len(msgs)} messages with summary")
         return True
 
+    async def compact_manually(
+        self,
+        messages: Optional[list["Message"]] = None,
+    ) -> ManualCompactResult:
+        msgs = messages if messages is not None else self.messages
+        before_messages = len(msgs)
+        before_tokens = self.count_tokens(msgs)
+        non_system = [m for m in msgs if m.role != "system"]
+        recent = self._recent_with_tool_chains(non_system)
+        middle_count = max(0, len(non_system) - len(recent))
+
+        if middle_count == 0:
+            return ManualCompactResult(
+                compacted=False,
+                before_messages=before_messages,
+                after_messages=before_messages,
+                before_tokens=before_tokens,
+                after_tokens=before_tokens,
+                reason="no_eligible_messages",
+            )
+
+        await self.compact(msgs)
+        return ManualCompactResult(
+            compacted=True,
+            before_messages=before_messages,
+            after_messages=len(msgs),
+            before_tokens=before_tokens,
+            after_tokens=self.count_tokens(msgs),
+            reason="compacted",
+        )
+
     async def _summarize_messages(self, messages: list["Message"]) -> Optional[str]:
         if self.llm is None:
             return None
@@ -111,7 +164,7 @@ class MemoryManager:
             label = message.role
             if message.role == "tool" and message.tool_call_id:
                 label = f"tool[{message.tool_call_id}]"
-            content = message.content.strip()
+            content = self._message_summary_text(message)
             if not content:
                 content = "<empty>"
             lines.append(f"{index}. {label}: {content}")
@@ -122,6 +175,21 @@ class MemoryManager:
                 )
                 lines.append(f"   tool_calls: {calls}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _message_summary_text(message: "Message") -> str:
+        """获取消息的摘要文本，图片替换为文件路径引用"""
+        content = message.content
+        if isinstance(content, str):
+            return content.strip()
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, TextBlock):
+                parts.append(block.text.strip())
+            elif isinstance(block, ImageBlock):
+                ref = block.file_path or "pasted image"
+                parts.append(f"[image: {ref}]")
+        return " ".join(parts)
 
     def _recent_with_tool_chains(self, messages: list["Message"]) -> list["Message"]:
         if self.recent_window <= 0:

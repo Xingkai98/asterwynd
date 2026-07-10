@@ -5,7 +5,7 @@
 维护规则：
 
 - 新增 OpenSpec change 后，如果不是纯占位，应把它加入本队列。
-- change 实现并 PR 合入后，必须直接归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/` 并从本文档移除；如果暂时无法归档，才移到“已完成待归档”。
+- change 实现 PR 必须同时包含归档收尾：归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/` 并从本文档移除；如果因冲突、校验失败或其他明确阻塞暂时无法归档，才移到“已完成待归档”。
 - change 状态变化时，必须同步更新“并行开发批次”和“未实现队列”两个章节，避免批次章节保留过期状态。
 - 调整实现顺序时，应写清楚依赖原因，而不是只移动条目。
 - 本文档只记录可提交的 change id 和稳定判断，不记录本地参考仓库路径。
@@ -30,51 +30,46 @@
 
 - `add-swebench-docker-harness`：已合入，后续 benchmark 相关 change 可以直接复用 Docker preflight、`status + reason` 和 SWE-bench harness 路径。
 
-### 第三批：工具权限模型前置
+### 第三批：Coding Agent 基本操作面和入口回归
 
-- `refine-tool-permission-model`：优先级最高，应在 MCP、browser 和后续自定义工具能力前完成，避免外部工具继续扩大 `dangerous` 语义。
+- 当前无未实现 change。
 
-### 第四批：语义 code intelligence 与 TUI
+### 第四批：工具权限模型前置，已完成
+
+当前无未实现 change。
+
+### 第五批：MCP 与 TUI 基本扩展
 
 - `add-lsp-code-intelligence`：已合入并归档。
-- `add-minimal-tui-runtime-view`：建议在 planning state、streaming、runtime mode switching 和工具结果 display policy 稳定后做，复用统一运行事件和 mode transition。
+- `add-mcp-tool-adapter`：已合入并归档。
+- `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
-### 第五批：外部工具与高风险能力
+### 第六批：包结构和分发基础，已完成
 
-- `add-mcp-tool-adapter`：可提前做设计和 fake server 测试，但实现会碰 ToolRegistry 权限元数据，建议与 browser 能力错开合入。
+- `improve-package-structure`：已合入（PR #49），未走完整 OpenSpec 流程，无需归档。
+
+### 第七批：基础能力补全
+
+基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
+
+- `improve-agent-execution-foundation`：已合入并归档。
+- `add-semantic-code-search`：已合入并归档。
+
+### 第八批：高风险 browser 能力
+
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
 ## 未实现队列
 
-### 1. `refine-tool-permission-model`
+### 1. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
-批次：第三批前置，当前未实现队列最高优先级。
+批次：第五批，runtime mode switching 和 slash command framework 已合入基础能力；等待 skills、工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
 
 建议顺序原因：
 
-- 当前 Tool 权限模型把能力、风险和来源混在 `read_only` / `dangerous` 两个 boolean 中，MCP、browser、自定义插件和未来实验型 plan mode 都会继续放大这个问题。
-- 先建立 capability、risk level、origin 和 permission profile，可以让 plan mode、外部工具和未来自定义 mode 使用同一套语言。
-- 默认行为应保持保守，不在本 change 中直接开放 plan mode 写入或命令执行。
-
-主要交付：
-
-- Tool permission metadata 模型。
-- 内置工具 capability / risk / origin 标注。
-- ModePolicy profile / matrix。
-- legacy `read_only` / `dangerous` 兼容路径。
-- 配置和测试迁移策略。
-
-### 2. `add-minimal-tui-runtime-view`
-
-状态：未实现。
-
-批次：第四批，runtime mode switching 已合入；等待工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
-
-建议顺序原因：
-
-- TUI 应复用已有 AgentLoop 事件、planning state、streaming、工具结果 display policy、tool permission metadata 和 mode transition，而不是定义另一套运行协议。
+- TUI 应复用已有 AgentLoop 事件、planning state、streaming、工具结果 display policy、slash command registry、skill runtime、tool permission metadata 和 mode transition，而不是定义另一套运行协议。
 - 放在这些基础能力之后，可以一次展示稳定的运行状态、工具调用、planning state、streaming 输出、mode 状态和工具权限信息。
 
 主要交付：
@@ -84,29 +79,11 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 3. `add-mcp-tool-adapter`
+### 2. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
-批次：第五批，可提前做设计和 fake server 测试；实现阶段建议在工具权限模型稳定后推进，并与 browser 能力错开。
-
-建议顺序原因：
-
-- MCP 需要统一配置管理 server 列表，也需要 mode policy 和 tool permission metadata。
-- 放在核心本地工具、planning、runtime event 和 subagent 语义稳定之后，可以降低外部工具协议引入的复杂度。
-
-主要交付：
-
-- MCP server 配置和连接管理。
-- fake MCP server discovery 测试。
-- MCP schema 映射为 ToolRegistry schema。
-- MCP tool 执行、错误、超时和权限元数据。
-
-### 4. `add-browser-use-safety-foundation`
-
-状态：未实现。
-
-批次：第五批，建议在 MCP 或核心工具权限模型更稳定后开始。
+批次：第八批，建议在 MCP 或核心工具权限模型更稳定后开始。
 
 建议顺序原因：
 
@@ -122,6 +99,6 @@
 
 ## 已完成待归档
 
-这些 change 的 tasks 已完成或已经合入实现，但目录仍在 `openspec/changes/` 下。后续应按项目流程归档到 `openspec/changes/archive/`。
+这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。
 
 当前无。

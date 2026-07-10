@@ -4,6 +4,7 @@ from pathlib import Path
 
 from agent.lsp.client import LspClientError, LspClientManager
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import WORKSPACE_READ_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
 
 
@@ -70,6 +71,7 @@ def _line_col(params: dict, line_default: int = 0, char_default: int = 0) -> tup
 )
 class LspDefinitionTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,
@@ -120,6 +122,7 @@ class LspDefinitionTool(Tool):
 )
 class LspReferencesTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,
@@ -170,6 +173,7 @@ class LspReferencesTool(Tool):
 )
 class LspHoverTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,
@@ -217,6 +221,7 @@ class LspHoverTool(Tool):
 )
 class LspDocumentSymbolsTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,
@@ -273,6 +278,7 @@ class LspDocumentSymbolsTool(Tool):
 )
 class LspWorkspaceSymbolsTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,
@@ -333,6 +339,7 @@ class LspWorkspaceSymbolsTool(Tool):
 )
 class LspDiagnosticsTool(Tool):
     read_only = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,

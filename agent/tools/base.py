@@ -1,8 +1,19 @@
 # agent/tools/base.py
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from agent.llm import ToolCallDelta
+from agent.tool_permissions import (
+    ToolCapability,
+    ToolOrigin,
+    ToolPermission,
+    ToolRiskLevel,
+)
+
+if TYPE_CHECKING:
+    from agent.message import ContentBlock
 
 
 def tool_parameters(
@@ -30,11 +41,13 @@ class Tool(ABC):
     parameters: dict  # JSON Schema
     read_only: bool = False
     dangerous: bool = False
+    parallelizable: bool = False
     allowed_modes: tuple[str, ...] | None = None
+    permission: ToolPermission | None = None
 
     @abstractmethod
-    async def execute(self, **kwargs) -> str:
-        """执行工具，返回结果字符串"""
+    async def execute(self, **kwargs) -> str | list["ContentBlock"]:
+        """执行工具，返回结果字符串或 content blocks 列表"""
         ...
 
     def get_schema(self) -> dict:
@@ -46,6 +59,27 @@ class Tool(ABC):
                 "parameters": self.parameters,
             },
         }
+
+    def get_permission(self) -> ToolPermission:
+        if self.permission is not None:
+            return self.permission
+        if self.dangerous:
+            return ToolPermission(
+                capabilities=frozenset({ToolCapability.COMMAND_EXECUTE}),
+                risk_level=ToolRiskLevel.HIGH,
+                origin=ToolOrigin.BUILTIN,
+            )
+        if self.read_only:
+            return ToolPermission(
+                capabilities=frozenset({ToolCapability.WORKSPACE_READ}),
+                risk_level=ToolRiskLevel.LOW,
+                origin=ToolOrigin.BUILTIN,
+            )
+        return ToolPermission(
+            capabilities=frozenset({ToolCapability.WORKSPACE_WRITE}),
+            risk_level=ToolRiskLevel.MEDIUM,
+            origin=ToolOrigin.BUILTIN,
+        )
 
 
 @dataclass

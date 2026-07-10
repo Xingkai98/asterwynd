@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
-from agent.message import Message, system_message
+from agent.message import Message, system_message, extract_text
 from agent.result import RunResult, StopReason
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.run_identity import new_run_id
@@ -18,7 +18,7 @@ from agent.hooks.builtin import TracingHook
 from agent.trace_recorder import TraceRecorder
 
 if TYPE_CHECKING:
-    from agent.config import MyAgentConfig
+    from agent.config import AsterwyndConfig
     from agent.llm import LLM
 
 
@@ -94,7 +94,7 @@ class SubAgentManager:
         self,
         *,
         llm: "LLM | None" = None,
-        config: "MyAgentConfig | None" = None,
+        config: "AsterwyndConfig | None" = None,
         workspace_policy: WorkspacePolicy | None = None,
         parent_mode: AgentMode = AgentMode.BUILD,
         parent_mode_provider: Callable[[], AgentMode] | None = None,
@@ -112,7 +112,7 @@ class SubAgentManager:
         self,
         *,
         llm: "LLM | None" = None,
-        config: "MyAgentConfig | None" = None,
+        config: "AsterwyndConfig | None" = None,
         workspace_policy: WorkspacePolicy | None = None,
         parent_mode_provider: Callable[[], AgentMode] | None = None,
     ) -> None:
@@ -261,7 +261,7 @@ class SubAgentManager:
             "run_id": run_id,
             "scope": "recent_messages",
             "messages": [
-                {"role": msg.role, "content": msg.content, "tool_call_id": msg.tool_call_id}
+                {"role": msg.role, "content": extract_text(msg.content), "tool_call_id": msg.tool_call_id}
                 for msg in tail
             ],
             "truncated": len(messages) > limit,
@@ -304,6 +304,9 @@ class SubAgentManager:
             mode_policy=ModePolicy(
                 AgentRunConfig(mode=mode),
                 deny_tools_by_mode=config.deny_tools_by_mode() if config else None,
+                permission_profiles_by_mode=(
+                    config.permission_profiles_by_mode() if config else None
+                ),
             ),
             ignore_patterns=config.tools.ignore_patterns if config else (),
             code_intelligence_config=config.tools.code_intelligence if config else None,

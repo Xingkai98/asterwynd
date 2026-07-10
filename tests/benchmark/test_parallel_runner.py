@@ -91,7 +91,7 @@ def repo(tmp_path):
 
 @pytest.mark.asyncio
 async def test_serial_execution_default(repo, tmp_path):
-    """With default MYAGENT_BENCHMARK_PARALLEL=1, tasks run sequentially."""
+    """With default ASTERWYND_BENCHMARK_PARALLEL=1, tasks run sequentially."""
     recorder = TimestampRecorder()
     runner = BenchmarkRunner(
         agent_runner=DelayedRunner(delay=0.2, recorder=recorder),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from agent.code_intelligence.config import CodeIntelligenceConfig
 from agent.code_intelligence.repo_map import build_repo_map, format_repo_map, search_symbols
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import WORKSPACE_READ_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
 
 
@@ -28,6 +29,8 @@ from agent.workspace_policy import WorkspacePolicy
 )
 class RepoMapTool(Tool):
     read_only = True
+    parallelizable = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,
@@ -80,6 +83,8 @@ class RepoMapTool(Tool):
 )
 class SymbolSearchTool(Tool):
     read_only = True
+    parallelizable = True
+    permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
         self,

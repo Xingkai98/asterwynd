@@ -167,7 +167,7 @@
     return blocks.join('');
   }
 
-  window.MyAgentMarkdown = {
+  window.AsterwyndMarkdown = {
     render: renderMarkdown,
     escapeHtml,
     isSafeUrl,

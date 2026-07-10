@@ -2,7 +2,7 @@
 
 ## Purpose
 
-定义 MyAgent 的核心运行循环、消息状态、工具调用协议和停止条件。当前实现以 `agent/loop.py` 的 `AgentLoop` 为核心。
+定义 Asterwynd 的核心运行循环、消息状态、工具调用协议和停止条件。当前实现以 `agent/loop.py` 的 `AgentLoop` 为核心。
 ## Requirements
 ### Requirement: AgentLoop 执行消息循环
 
@@ -160,3 +160,184 @@ Agent runtime SHALL 支持在 LLM 生成过程中发布 `assistant_delta` 事件
 - **WHEN** 父 agent 修改该子 session 的 mode
 - **THEN** 当前子 run SHALL 继续沿用原 mode
 - **AND** 后续新的子 run SHALL 使用更新后的 mode
+
+### Requirement: Agent runtime 入口回归使用共享测试 LLM harness
+
+项目 SHALL 提供共享测试 LLM harness，用于在测试中以确定性 fake LLM 或显式 opt-in real LLM 驱动真实 AgentLoop 和入口层 smoke。默认 fake LLM SHALL 兼容现有 `LLM` protocol，并支持普通文本、streaming、tool call、错误路径和调用记录。
+
+#### Scenario: Fake LLM 驱动真实 AgentLoop
+
+- **GIVEN** 测试使用共享 fake LLM harness
+- **WHEN** 入口 smoke 构造 AgentLoop
+- **THEN** 系统 SHALL 使用真实 AgentLoop、ToolRegistry、Memory 和 runtime event 路径
+- **AND** SHALL 只替换 LLM provider 行为
+
+#### Scenario: Harness 记录 LLM 调用
+
+- **GIVEN** AgentLoop 通过共享 fake LLM harness 执行一次 run
+- **WHEN** 测试检查 harness 状态
+- **THEN** harness SHALL 暴露调用次数、messages、tools 和 model 等断言信息
+
+#### Scenario: Real LLM smoke 显式开启
+
+- **GIVEN** 测试 harness 支持真实 provider profile
+- **WHEN** 未显式传入 real API flag 或对应环境变量
+- **THEN** 默认回归 SHALL 使用 fake LLM
+- **AND** SHALL NOT 要求真实 API key、外部网络或真实模型输出
+
+### Requirement: AgentLoop SHALL mediate approval-required tool calls
+
+AgentLoop SHALL 在工具执行前处理工具权限判定。对于 `allow`，AgentLoop MAY 通过 ToolRegistry 执行工具。对于 `deny`，AgentLoop SHALL NOT 执行工具，并 SHALL 追加可读的权限拒绝 tool result。对于 `require_approval`，AgentLoop SHALL 在执行前通过注入的 ApprovalHandler 请求审批。
+
+#### Scenario: 用户批准后执行工具
+
+- **GIVEN** 一个工具调用被判定为 `require_approval`
+- **AND** ApprovalHandler 返回 approved
+- **WHEN** AgentLoop 处理该工具调用
+- **THEN** AgentLoop SHALL 执行工具
+- **AND** SHALL 将实际 tool result 追加到 conversation
+
+#### Scenario: 用户拒绝后不执行工具
+
+- **GIVEN** 一个工具调用被判定为 `require_approval`
+- **AND** ApprovalHandler 返回 denied
+- **WHEN** AgentLoop 处理该工具调用
+- **THEN** AgentLoop SHALL NOT 执行工具
+- **AND** SHALL 将可读的审批拒绝 tool result 追加到 conversation
+
+#### Scenario: 审批不可用时 fail closed
+
+- **GIVEN** 一个工具调用被判定为 `require_approval`
+- **AND** 当前 runtime 没有可交互审批通道
+- **WHEN** AgentLoop 处理该工具调用
+- **THEN** AgentLoop SHALL NOT 执行工具
+- **AND** SHALL 将可读的审批不可用 tool result 追加到 conversation
+
+### Requirement: 后台任务执行
+
+系统 SHALL 支持通过 `Bash` 工具的 `run_in_background=True` 参数启动后台命令。启动后台命令后 SHALL 返回 task_id。`BackgroundTaskManager` SHALL 维护所有活跃后台任务的状态，并在任务完成时通过 AgentLoop 自动注入结果。
+
+#### Scenario: 启动后台任务
+
+- **GIVEN** agent 调用 Bash 且 run_in_background=True
+- **WHEN** 命令为 `pytest -q tests/`
+- **THEN** 系统 SHALL 返回 `"Task started: <task_id>"`
+- **AND** 命令 SHALL 在后台异步执行
+
+#### Scenario: 后台任务完成后注入结果
+
+- **GIVEN** 有一个活跃的后台任务正在执行
+- **WHEN** 任务完成（exit_code=0）
+- **THEN** AgentLoop SHALL 在下一次迭代开始时将该任务的输出作为 tool result 注入消息
+- **AND** 该 task_id SHALL 从活跃列表移至历史
+
+#### Scenario: AgentLoop 退出时清理后台任务
+
+- **GIVEN** AgentLoop 退出时仍有一个运行中的后台任务
+- **WHEN** AgentLoop.run() 返回
+- **THEN** BackgroundTaskManager SHALL 发送 SIGTERM 给所有活跃进程
+- **AND** 等待 5 秒后发送 SIGKILL
+
+### Requirement: 会话持久化
+
+系统 SHALL 支持将会话状态序列化到 `.asterwynd/sessions/<session_id>/` 目录。持久化内容 SHALL 包含消息历史、mode、todo 列表、技能激活状态。CLI SHALL 提供 `--resume` 参数恢复会话。
+
+#### Scenario: 会话自动保存
+
+- **GIVEN** AgentLoop 在一次运行结束后
+- **AND** 调用方提供了 session_id
+- **WHEN** AgentLoop.run() 返回
+- **THEN** 系统 SHALL 将会话快照写入 `.asterwynd/sessions/<session_id>/`
+
+#### Scenario: 会话恢复
+
+- **GIVEN** 存在一个有效的 session 快照
+- **WHEN** 用户通过 `--resume <session_id>` 启动
+- **THEN** 系统 SHALL 加载消息历史和 mode
+- **AND** 注入会话恢复标记消息
+- **AND** 正常进入交互循环
+
+#### Scenario: 损坏的会话文件
+
+- **GIVEN** session 文件的 JSON 格式损坏或不兼容
+- **WHEN** 用户尝试 --resume
+- **THEN** 系统 SHALL 返回明确错误而非静默失败
+
+#### Scenario: 不存在的 session
+
+- **GIVEN** session_id 对应的目录不存在
+- **WHEN** 用户尝试 --resume
+- **THEN** 系统 SHALL 返回 "Session <id> not found"
+
+### Requirement: TaskOutput 和 TaskStop 工具
+
+系统 SHALL 提供 `TaskOutput` 和 `TaskStop` 工具用于后台任务的控制。
+
+#### Scenario: 阻塞等待任务完成
+
+- **GIVEN** 后台任务 5 秒后完成
+- **WHEN** agent 调用 TaskOutput(task_id, block=True)
+- **THEN** TaskOutput SHALL 阻塞等待直到任务完成
+- **AND** 返回 exit_code、stdout、stderr
+
+#### Scenario: 非阻塞查询
+
+- **GIVEN** 后台任务仍在运行
+- **WHEN** agent 调用 TaskOutput(task_id, block=False)
+- **THEN** TaskOutput SHALL 立即返回
+- **AND** status SHALL 为 "running"
+
+#### Scenario: 终止任务
+
+- **GIVEN** 后台任务仍在运行
+- **WHEN** agent 调用 TaskStop(task_id)
+- **THEN** 进程 SHALL 被终止
+- **AND** TaskStop SHALL 返回最终输出
+
+### Requirement: Approval records SHALL be observable
+
+AgentLoop SHALL 在 trace/debug/display 路径记录审批请求和审批决定，包含 tool name、capability、risk level、origin、当前 mode、审批结果和安全的参数摘要。参数摘要 SHALL 脱敏常见 secret/key/token/password/authorization 字段和值模式，并限制长度。
+
+#### Scenario: 审批 trace 包含权限上下文
+
+- **GIVEN** 一个工具调用需要审批
+- **WHEN** AgentLoop 创建审批请求
+- **THEN** trace/debug/display 数据 SHALL 包含工具权限元数据和 profile 判定原因
+- **AND** SHALL NOT 暴露未脱敏的敏感参数
+
+### Requirement: 多模态 Message 内容
+
+Message 的 `content` 字段 SHALL 支持 `str`（纯文本）和 `list[ContentBlock]`（多模态）两种类型。`ContentBlock` SHALL 支持 `text` 和 `image_url` 两种类型。`ImageBlock` SHALL 包含 `file_path` 字段用于 compact/trace 引用。`str` 类型 SHALL 保持完全向后兼容（序列化后仍为字符串）。
+
+#### Scenario: 纯文本内容不变
+
+- **GIVEN** Message 的 content 为 `str` 类型
+- **WHEN** 任意现有代码路径处理该 Message
+- **THEN** 行为 SHALL 与改动前完全一致
+
+#### Scenario: 多模态 content 序列化
+
+- **GIVEN** Message 的 content 为 `[TextBlock("解读这张图"), ImageBlock(url="data:image/png;base64,...", file_path="/path/to/file.png")]`
+- **WHEN** 序列化为 JSON
+- **THEN** content SHALL 序列化为 content blocks 数组
+- **AND** TextBlock 序列化为 `{"type": "text", "text": "..."}`
+- **AND** ImageBlock 序列化为 `{"type": "image_url", "image_url": {"url": "data:...", "detail": "auto"}, "file_path": "/path/to/file"}`
+- **AND** deserialize 后 SHALL 还原为相同的 content blocks 数组
+
+### Requirement: 工具多模态返回值
+
+`Tool.execute()` SHALL 返回 `str | list[ContentBlock]`。当工具返回了图片内容时，返回值 SHALL 为包含 ImageBlock 的列表。AgentLoop 在构建消息时 SHALL 直接将返回值赋给 `Message.content`。
+
+#### Scenario: Read 工具读取图片
+
+- **GIVEN** Read 工具读取了一个 PNG 文件
+- **WHEN** 工具执行完成
+- **THEN** `execute()` 返回值 SHALL 为 `[TextBlock, ImageBlock]`
+- **AND** AgentLoop 在构建消息时 SHALL 将该列表赋给 `Message.content`
+
+#### Scenario: 普通文本工具结果
+
+- **GIVEN** Read 工具读取了一个 .py 文件
+- **WHEN** 工具执行完成
+- **THEN** `execute()` 返回值 SHALL 为 `str` 类型
+- **AND** AgentLoop 在构建消息时 SHALL 照常使用该字符串

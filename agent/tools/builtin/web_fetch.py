@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from agent.tools.base import Tool, tool_parameters
+from agent.tool_permissions import NETWORK_READ_PERMISSION
 
 
 TEXT_CONTENT_TYPES = {
@@ -94,6 +95,7 @@ def _format_unsupported_content_type(
 )
 class WebFetchTool(Tool):
     read_only = True
+    permission = NETWORK_READ_PERMISSION
 
     def __init__(
         self,

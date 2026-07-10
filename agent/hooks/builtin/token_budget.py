@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from agent.result import RunResult
     from agent.llm import LLMResponse
 
-logger = logging.getLogger("myagent.hooks.token_budget")
+logger = logging.getLogger("asterwynd.hooks.token_budget")
 
 class TokenBudgetHook:
     """监控 token 使用，超预算时记录警告"""

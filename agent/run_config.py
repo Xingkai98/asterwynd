@@ -5,6 +5,14 @@ from enum import Enum
 from threading import Lock
 
 from agent.tools.base import Tool
+from agent.tool_permissions import (
+    BUILTIN_PERMISSION_PROFILES,
+    PermissionDecision,
+    PermissionDecisionType,
+    PermissionProfile,
+    merge_denied_tools,
+    risk_lte,
+)
 
 
 class AgentMode(str, Enum):
@@ -72,10 +80,14 @@ class ModePolicy:
         run_config: AgentRunConfig | None = None,
         deny_tools_by_mode: dict[AgentMode, tuple[str, ...]] | None = None,
         runtime_state: AgentRuntimeState | None = None,
+        permission_profiles_by_mode: dict[AgentMode, PermissionProfile] | None = None,
     ):
         self.run_config = run_config or AgentRunConfig()
         self.deny_tools_by_mode = deny_tools_by_mode or {}
         self.runtime_state = runtime_state
+        self.permission_profiles_by_mode = (
+            permission_profiles_by_mode or _default_permission_profiles_by_mode()
+        )
 
     @property
     def mode(self) -> AgentMode:
@@ -84,16 +96,94 @@ class ModePolicy:
         return self.run_config.mode
 
     def is_tool_allowed(self, tool: Tool) -> bool:
+        return self.decide_tool(tool).is_visible
+
+    def decide_tool(self, tool: Tool) -> PermissionDecision:
+        permission = tool.get_permission()
+        profile = self.permission_profile
         allowed_modes = getattr(tool, "allowed_modes", None)
         if allowed_modes is not None and self.mode.value not in allowed_modes:
-            return False
+            return PermissionDecision(
+                type=PermissionDecisionType.DENY,
+                reason=f"tool is not allowed in {self.mode.value} mode",
+                profile_name=profile.name,
+                tool_name=tool.name,
+                permission=permission,
+            )
         if tool.name in self.deny_tools_by_mode.get(self.mode, ()):
-            return False
-        if self.mode is AgentMode.BUILD:
-            return True
-        if self.mode in {AgentMode.READ_ONLY, AgentMode.PLAN}:
-            return tool.read_only and not tool.dangerous
-        return False
+            return PermissionDecision(
+                type=PermissionDecisionType.DENY,
+                reason=f"tool is denied by {self.mode.value} mode configuration",
+                profile_name=profile.name,
+                tool_name=tool.name,
+                permission=permission,
+            )
+        if tool.name in profile.denied_tools:
+            return PermissionDecision(
+                type=PermissionDecisionType.DENY,
+                reason=f"tool is denied by permission profile {profile.name}",
+                profile_name=profile.name,
+                tool_name=tool.name,
+                permission=permission,
+            )
+        if not permission.capabilities.issubset(profile.allowed_capabilities):
+            denied = sorted(
+                capability.value
+                for capability in permission.capabilities - profile.allowed_capabilities
+            )
+            return PermissionDecision(
+                type=PermissionDecisionType.DENY,
+                reason=(
+                    f"capabilities {', '.join(denied)} are not allowed by "
+                    f"permission profile {profile.name}"
+                ),
+                profile_name=profile.name,
+                tool_name=tool.name,
+                permission=permission,
+            )
+        if risk_lte(permission.risk_level, profile.auto_approve_max_risk):
+            return PermissionDecision(
+                type=PermissionDecisionType.ALLOW,
+                reason=(
+                    f"risk {permission.risk_level.value} is within auto approval "
+                    f"threshold {profile.auto_approve_max_risk.value}"
+                ),
+                profile_name=profile.name,
+                tool_name=tool.name,
+                permission=permission,
+            )
+        if risk_lte(permission.risk_level, profile.approval_required_max_risk):
+            return PermissionDecision(
+                type=PermissionDecisionType.REQUIRE_APPROVAL,
+                reason=(
+                    f"risk {permission.risk_level.value} exceeds auto approval "
+                    f"threshold {profile.auto_approve_max_risk.value}"
+                ),
+                profile_name=profile.name,
+                tool_name=tool.name,
+                permission=permission,
+            )
+        return PermissionDecision(
+            type=PermissionDecisionType.DENY,
+            reason=(
+                f"risk {permission.risk_level.value} exceeds approval threshold "
+                f"{profile.approval_required_max_risk.value}"
+            ),
+            profile_name=profile.name,
+            tool_name=tool.name,
+            permission=permission,
+        )
+
+    @property
+    def permission_profile(self) -> PermissionProfile:
+        profile = self.permission_profiles_by_mode.get(
+            self.mode,
+            BUILTIN_PERMISSION_PROFILES["fail_closed"],
+        )
+        return merge_denied_tools(
+            profile,
+            self.deny_tools_by_mode.get(self.mode, ()),
+        )
 
     def validate_known_tools(self, tool_names: list[str] | tuple[str, ...]) -> None:
         known = set(tool_names)
@@ -106,3 +196,12 @@ class ModePolicy:
         if unknown:
             joined = ", ".join(unknown)
             raise ValueError(f"Unknown deny_tools: {joined}")
+
+
+def _default_permission_profiles_by_mode() -> dict[AgentMode, PermissionProfile]:
+    return {
+        AgentMode.BUILD: BUILTIN_PERMISSION_PROFILES["build_default"],
+        AgentMode.READ_ONLY: BUILTIN_PERMISSION_PROFILES["read_only_default"],
+        AgentMode.PLAN: BUILTIN_PERMISSION_PROFILES["plan_default"],
+        AgentMode.BYPASS: BUILTIN_PERMISSION_PROFILES["fail_closed"],
+    }

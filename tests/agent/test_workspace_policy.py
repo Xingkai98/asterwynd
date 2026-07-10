@@ -151,7 +151,7 @@ class TestCommandPolicy:
             policy.assert_command_allowed("dangerous-cmd something")
 
     def test_env_denylist_is_not_used(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("MYAGENT_COMMAND_DENYLIST", "dangerous-cmd")
+        monkeypatch.setenv("ASTERWYND_COMMAND_DENYLIST", "dangerous-cmd")
         policy = WorkspacePolicy(tmp_path)
 
         policy.assert_command_allowed("dangerous-cmd something")

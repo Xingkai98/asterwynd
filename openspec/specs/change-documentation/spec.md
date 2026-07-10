@@ -77,6 +77,7 @@ tasks do not overwrite each other.
 - **AND** `design.md` explains how the change will be implemented
 - **AND** `diagnosis.md` records root-cause evidence when applicable
 - **AND** `tasks.md` lists ordered implementation steps
+- **AND** `handoff.json` records the current state machine state of the change lifecycle
 
 ### Requirement: Change type metadata
 Every OpenSpec change SHALL declare a primary change type and a secondary type
@@ -111,3 +112,161 @@ without attempting to judge technical design quality.
 - **WHEN** a change declares both `primary` and `secondary` types
 - **THEN** the artifact checker applies the requirements for the union of all
   declared types
+
+### Requirement: CI gate for project validation
+The project SHALL provide a GitHub Actions CI workflow that runs the baseline
+validation commands for pull requests and pushes.
+
+#### Scenario: Baseline CI validation
+- **WHEN** a pull request or push triggers the baseline CI workflow
+- **THEN** the workflow runs the full pytest suite
+- **AND** runs OpenSpec strict validation for all specs and active changes
+- **AND** runs the project OpenSpec artifact checker
+
+#### Scenario: Expensive validation remains change-scoped
+- **WHEN** a change requires benchmark smoke, browser smoke, real API
+  validation, or Docker/SWE-bench validation
+- **THEN** those checks are recorded in the change tasks and final
+  verification notes
+- **AND** they are not required as part of the baseline CI workflow unless a
+  later change explicitly adds that policy
+
+### Requirement: Impact Analysis lifecycle
+Non-trivial OpenSpec changes SHALL maintain a structured Impact Analysis
+throughout the change lifecycle.
+
+#### Scenario: Proposal captures initial impact
+- **WHEN** a non-trivial change is proposed
+- **THEN** the change records an initial `## Impact Analysis` in `proposal.md`
+  or `design.md`
+- **AND** the analysis identifies affected capabilities, code modules, tests,
+  docs, and relevant user-facing or runtime entry points
+
+#### Scenario: Design review resolves uncertain impact
+- **WHEN** implementation is about to begin for a non-trivial change
+- **THEN** pre-implementation design review revisits Impact Analysis
+- **AND** unresolved impact questions are either resolved in the change
+  artifacts or recorded as explicit blockers before implementation begins
+
+#### Scenario: Implementation discovers a new impact
+- **WHEN** implementation reveals a new affected module, entry point,
+  validation path, compatibility concern, or documentation obligation
+- **THEN** the agent updates Impact Analysis and the corresponding tasks before
+  continuing with unrelated implementation work
+
+#### Scenario: Archive confirms final impact
+- **WHEN** a change is ready to archive
+- **THEN** Impact Analysis no longer contains unexplained `unknown`, `TBD`, or
+  `待确认` placeholders
+- **AND** every affected entry point has a corresponding test, validation,
+  documentation update, or recorded reason for no action
+
+### Requirement: Reference implementation research gate
+Non-docs OpenSpec changes SHALL explicitly record whether reference
+implementation research is enabled or disabled before implementation begins.
+
+#### Scenario: Non-docs change records enabled research
+- **WHEN** an OpenSpec change has `primary` other than `docs`
+- **AND** reference implementation research is enabled
+- **THEN** the change records `## Reference Implementation Research` in
+  `proposal.md` or `design.md`
+- **AND** the section records `status: enabled`
+- **AND** records the reason, research questions, findings, and design impact
+
+#### Scenario: Non-docs change disables research
+- **WHEN** an OpenSpec change has `primary` other than `docs`
+- **AND** the change owner decides reference implementation research is not
+  useful or not applicable
+- **THEN** the change records `## Reference Implementation Research` in
+  `proposal.md` or `design.md`
+- **AND** the section records `status: disabled`
+- **AND** records a non-empty reason
+
+#### Scenario: Local reference repositories are unavailable
+- **WHEN** reference implementation research is enabled
+- **AND** `.dev/reference-repos.txt` is missing, empty, or points only to
+  unavailable repositories in the current workspace
+- **THEN** the change records that local reference repositories are unavailable
+- **AND** the change records the alternative basis used for the design decision
+- **AND** CI does not require those local paths to exist
+
+#### Scenario: Docs-only change is exempt
+- **WHEN** an OpenSpec change has `primary: docs`
+- **THEN** the artifact checker does not require
+  `## Reference Implementation Research`
+
+#### Scenario: Artifact checker enforces record shape
+- **WHEN** the project artifact checker validates an active non-docs change
+- **THEN** it checks that reference implementation research status is present
+  and is either `enabled` or `disabled`
+- **AND** it checks that enabled research has non-empty reason, research
+  questions, findings, and design impact
+- **AND** it checks that disabled research has a non-empty reason
+- **AND** it does not judge research quality or verify local reference
+  repository paths
+
+### Requirement: Pre-implementation review record
+Non-trivial OpenSpec changes SHALL record a concise pre-implementation review
+summary in `design.md`.
+
+#### Scenario: Review summary records decision process
+- **WHEN** pre-implementation design review completes
+- **THEN** `design.md` records the resolved questions, options considered,
+  rejected alternatives, final confirmations, and remaining risks
+- **AND** the record summarizes decision-relevant process without requiring the
+  full chat transcript
+
+### Requirement: OpenSpec command context configuration
+The project SHALL maintain OpenSpec command context in `openspec/config.yaml`
+while preserving `openspec/project.md` as the human-readable project
+description.
+
+#### Scenario: OpenSpec config provides short machine context
+- **WHEN** OpenSpec commands generate or update change artifacts
+- **THEN** `openspec/config.yaml` provides concise project context and
+  artifact rules suitable for command injection
+- **AND** detailed project conventions, capability maps, and documentation
+  rules remain in `openspec/project.md` or linked stable docs
+
+#### Scenario: Project description remains available
+- **WHEN** an agent or maintainer needs the full OpenSpec project explanation
+- **THEN** `openspec/project.md` remains available as a human-readable source
+- **AND** it is not deleted merely because `openspec/config.yaml` exists
+
+### Requirement: Handoff state file artifact
+
+Every OpenSpec change SHALL include a `handoff.json` artifact that records the
+current state machine state and transition history of the change lifecycle.
+
+#### Scenario: handoff.json is created with the change
+
+- **WHEN** a new OpenSpec change is created
+- **THEN** `handoff.json` is initialized alongside the change
+- **AND** the initial state is `planning.exploring`
+
+#### Scenario: handoff.json is updated on state change
+
+- **WHEN** any agent completes a sub-state or phase transition
+- **THEN** `handoff.json` state and transitions are updated accordingly
+
+#### Scenario: handoff.json is submitted with the change
+
+- **WHEN** a change is ready for PR
+- **THEN** `handoff.json` reflects the final state of the change
+- **AND** it is committed as part of the change directory
+
+### Requirement: Handoff notes directory
+
+Agent-to-agent handoff notes SHALL be stored in `.handoff/<change-id>/` and
+SHALL be excluded from version control.
+
+#### Scenario: handoff notes are generated on phase transition
+
+- **WHEN** an agent completes a phase and hands off to the next agent
+- **THEN** a handoff note is written to `.handoff/<change-id>/<from_phase>-to-<to_phase>.md`
+
+#### Scenario: handoff directory is gitignored
+
+- **WHEN** `.handoff/` directory exists in the repository
+- **THEN** it is listed in `.gitignore`
+- **AND** handoff notes are not committed to version control
