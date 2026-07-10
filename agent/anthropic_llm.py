@@ -142,7 +142,46 @@ class AnthropicLLM(BaseLLM):
         model: Optional[str] = None,
     ):
         """流式输出 assistant text delta，并在末尾返回完整响应。"""
-        payload = self._build_payload(messages, tools, model)
+        resolved_model = model or self.model
+        mode = vision_mode(resolved_model)
+        has_images = _messages_have_images(messages)
+        try_vision = mode == "try_vision" and has_images
+        force_vision = try_vision or mode == "vision"
+
+        try:
+            async for event in self._stream_chat_impl(
+                messages,
+                tools,
+                resolved_model,
+                force_vision=force_vision,
+            ):
+                yield event
+        except Exception as e:
+            if not try_vision:
+                raise
+            if not _is_400_error(e):
+                raise
+            logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            logger.info(
+                "First stream attempt with images failed (400) for model=%s, retrying without images",
+                resolved_model,
+            )
+            async for event in self._stream_chat_impl(
+                messages,
+                tools,
+                resolved_model,
+                force_vision=False,
+            ):
+                yield event
+
+    async def _stream_chat_impl(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+        force_vision: bool = True,
+    ):
+        payload = self._build_payload(messages, tools, model, force_vision=force_vision)
         payload["stream"] = True
 
         stop_reason_map = {

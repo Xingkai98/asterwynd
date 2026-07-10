@@ -50,6 +50,33 @@ def _mock_sse_stream(lines: list[str]):
     return _StreamCtx()
 
 
+def _mock_sse_http_error(status_code: int = 400):
+    """创建会在 raise_for_status 抛出 HTTPStatusError 的 stream context。"""
+    import httpx
+
+    class _StreamResponse:
+        def __init__(self):
+            self.status_code = status_code
+            self.request = MagicMock()
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError(
+                str(status_code),
+                request=self.request,
+                response=MagicMock(status_code=status_code),
+            )
+        async def aiter_lines(self):
+            return
+            yield
+
+    class _StreamCtx:
+        async def __aenter__(self):
+            return _StreamResponse()
+        async def __aexit__(self, *a):
+            pass
+
+    return _StreamCtx()
+
+
 # ---------------------------------------------------------------------------
 # _strip_surrogates 单元测试
 # ---------------------------------------------------------------------------
@@ -334,6 +361,42 @@ async def test_anthropic_llm_stream_chat_yields_text_delta_and_complete_response
         assert events[0].content == "Hello via SSE!"
         assert events[-1].response.content == "Hello via SSE!"
         assert events[-1].stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_chat_unknown_model_retries_without_images_on_400():
+    """Anthropic stream_chat 未知模型带图 400 后应降级无图重试。"""
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    messages = [Message(role="user", content=[
+        TextBlock(text="check this out"),
+        ImageBlock(
+            image_url=ImageUrl(url="data:image/png;base64,abc"),
+            file_path="/tmp/img.png",
+        ),
+    ])]
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        payloads = []
+
+        def capture(method, url, json=None, **kwargs):
+            import copy
+            payloads.append(copy.deepcopy(json))
+            if len(payloads) == 1:
+                return _mock_sse_http_error(400)
+            return _mock_sse_stream(_text_sse_lines("ok"))
+
+        mock_stream.side_effect = capture
+        events = [event async for event in llm.stream_chat(messages, model="unknown-model")]
+
+        assert events[-1].response.content == "ok"
+        assert len(payloads) == 2
+        first_blocks = payloads[0]["messages"][0]["content"]
+        assert any(block["type"] == "image" for block in first_blocks)
+        second_blocks = payloads[1]["messages"][0]["content"]
+        assert all(block["type"] == "text" for block in second_blocks)
 
 
 @pytest.mark.asyncio

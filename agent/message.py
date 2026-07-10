@@ -113,15 +113,26 @@ class Message:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Message":
+        from agent.llm import ToolCallDelta
+
         content = data.get("content", "")
         if isinstance(content, list):
             content = [content_block_from_dict(b) for b in content]
+        tool_calls = [
+            call if isinstance(call, ToolCallDelta)
+            else ToolCallDelta(
+                id=call.get("id", ""),
+                name=call.get("name", ""),
+                arguments=call.get("arguments", ""),
+            )
+            for call in data.get("tool_calls", [])
+        ]
         return cls(
             role=data["role"],
             content=content,
             tool_call_id=data.get("tool_call_id"),
             reasoning_content=data.get("reasoning_content"),
-            tool_calls=data.get("tool_calls", []),
+            tool_calls=tool_calls,
         )
 
 

@@ -64,6 +64,23 @@ def test_message_serialization_with_tool_calls():
     assert data["tool_calls"][0]["id"] == "call_x"
     assert data["tool_calls"][0]["name"] == "Grep"
 
+
+def test_message_from_dict_restores_tool_calls():
+    """Message.from_dict 应将 tool_calls 还原为 ToolCallDelta 对象。"""
+    from agent.llm import ToolCallDelta
+
+    msg = Message(
+        role="assistant",
+        content="",
+        tool_calls=[ToolCallDelta(id="call_x", name="Grep", arguments='{"pattern":"TODO"}')],
+    )
+    restored = Message.from_dict(msg.to_dict())
+
+    assert isinstance(restored.tool_calls[0], ToolCallDelta)
+    assert restored.tool_calls[0].id == "call_x"
+    assert restored.to_dict() == msg.to_dict()
+
+
 def test_message_serialization_without_tool_calls():
     """tool_calls 为空时，to_dict 不应包含该字段"""
     msg = Message(role="assistant", content="hello")
