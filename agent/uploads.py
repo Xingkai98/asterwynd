@@ -6,7 +6,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -69,10 +68,34 @@ def _mime_to_ext(mime: str) -> str:
     return mapping.get(mime, ".png")
 
 
-def save_upload(data_url: str, *, workdir: str | None = None) -> str:
-    """保存上传图片到 .asterwynd/uploads/，返回绝对文件路径。已存在则跳过写入。"""
-    mime, data = _parse_data_url(data_url)
+def _uploads_dir(*, workdir: str | None = None) -> Path:
+    base = Path(workdir) if workdir else Path.cwd()
+    return base / UPLOADS_DIR
 
+
+def _upload_path(upload_id: str, *, workdir: str | None = None) -> Path:
+    filename = Path(upload_id).name
+    if filename != upload_id or not filename.startswith("sha256_"):
+        raise ValueError("invalid upload_id")
+    path = (_uploads_dir(workdir=workdir) / filename).resolve()
+    uploads_dir = _uploads_dir(workdir=workdir).resolve()
+    if uploads_dir not in path.parents:
+        raise ValueError("invalid upload_id")
+    return path
+
+
+def _data_url_from_bytes(data: bytes, mime: str) -> str:
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
+def save_upload_bytes(
+    data: bytes,
+    mime: str,
+    *,
+    workdir: str | None = None,
+) -> str:
+    """保存上传图片 bytes 到 .asterwynd/uploads/，返回绝对文件路径。"""
     if len(data) > MAX_UPLOAD_SIZE:
         size_mb = len(data) / (1024 * 1024)
         raise ValueError(f"图片过大 ({size_mb:.1f}MB)，超过 {MAX_UPLOAD_SIZE // (1024*1024)}MB 限制")
@@ -81,19 +104,21 @@ def save_upload(data_url: str, *, workdir: str | None = None) -> str:
 
     file_hash = hashlib.sha256(data).hexdigest()[:16]
     ext = _mime_to_ext(mime)
-
-    base = Path(workdir) if workdir else Path.cwd()
-    uploads_dir = base / UPLOADS_DIR
+    uploads_dir = _uploads_dir(workdir=workdir)
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = f"sha256_{file_hash}{ext}"
-    filepath = uploads_dir / filename
-
+    filepath = uploads_dir / f"sha256_{file_hash}{ext}"
     if not filepath.exists():
         filepath.write_bytes(data)
         logger.info(f"Saved upload: {filepath}")
 
     return str(filepath.resolve())
+
+
+def save_upload(data_url: str, *, workdir: str | None = None) -> str:
+    """保存上传图片到 .asterwynd/uploads/，返回绝对文件路径。已存在则跳过写入。"""
+    mime, data = _parse_data_url(data_url)
+    return save_upload_bytes(data, mime, workdir=workdir)
 
 
 def create_image_message(
@@ -108,4 +133,24 @@ def create_image_message(
     return ImageBlock(
         image_url=ImageUrl(url=data_url),
         file_path=file_path,
+    )
+
+
+def create_image_message_from_upload(
+    upload_id: str,
+    *,
+    workdir: str | None = None,
+) -> "ImageBlock":
+    """从已保存 upload_id 创建 ImageBlock。"""
+    from agent.message import ImageBlock, ImageUrl
+
+    path = _upload_path(upload_id, workdir=workdir)
+    if not path.exists():
+        raise ValueError("upload not found")
+    mime = _ext_to_mime(path.suffix)
+    data = path.read_bytes()
+    _validate_image_bytes(data, mime)
+    return ImageBlock(
+        image_url=ImageUrl(url=_data_url_from_bytes(data, mime)),
+        file_path=str(path),
     )

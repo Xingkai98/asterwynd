@@ -235,11 +235,15 @@ class SessionManager:
             session.agent.hooks.hooks.append(debug_hook)
 
         if images:
-            from agent.message import TextBlock, ImageBlock, ImageUrl
-            from agent.uploads import create_image_message
+            from agent.message import TextBlock
+            from agent.uploads import create_image_message, create_image_message_from_upload
             content_blocks: list = [TextBlock(text=user_message)] if user_message else []
             for img in images:
-                data_url = img.get("url", "")
+                upload_id = str(img.get("upload_id", "")).strip()
+                if upload_id:
+                    content_blocks.append(create_image_message_from_upload(upload_id))
+                    continue
+                data_url = str(img.get("url", ""))
                 if data_url:
                     content_blocks.append(create_image_message(data_url))
             session.messages.append(Message(role="user", content=content_blocks if content_blocks else user_message))

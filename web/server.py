@@ -1,5 +1,7 @@
 # web/server.py
 """FastAPI web server for asterwynd: chat UI + debug UI via WebSocket."""
+import base64
+import binascii
 import logging
 import os
 from pathlib import Path
@@ -7,7 +9,7 @@ from pathlib import Path
 from agent.commands import CommandContext, build_default_slash_command_registry
 from agent.config import AsterwyndConfig
 from agent.skills import SkillRuntime
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -91,9 +93,35 @@ def create_app(
             logger.exception("Upload failed")
             return JSONResponse({"error": "internal error"}, status_code=500)
 
+    @app.post("/api/uploads")
+    async def upload_file(file: UploadFile):
+        """接收 multipart 图片上传，写入 .asterwynd/uploads/，返回 upload_id。"""
+        from agent.uploads import MAX_UPLOAD_SIZE, save_upload_bytes
+
+        mime = (file.content_type or "").lower()
+        if not mime.startswith("image/"):
+            return JSONResponse({"error": "invalid image type"}, status_code=400)
+        try:
+            data = await file.read(MAX_UPLOAD_SIZE + 1)
+            if len(data) > MAX_UPLOAD_SIZE:
+                return JSONResponse({"error": "image too large"}, status_code=400)
+            file_path = save_upload_bytes(data, mime)
+            return {
+                "upload_id": Path(file_path).name,
+                "file_path": file_path,
+                "mime": mime,
+                "size": len(data),
+            }
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except Exception:
+            logger.exception("Upload failed")
+            return JSONResponse({"error": "internal error"}, status_code=500)
+
     @app.websocket("/ws/{session_id}")
     async def websocket_endpoint(ws: WebSocket, session_id: str):
         await ws.accept()
+        upload_buffers: dict[str, dict] = {}
 
         session = session_manager.get_session(session_id)
         if not session:
@@ -114,7 +142,8 @@ def create_app(
 
                 if msg_type == "chat":
                     user_text = raw.get("content", "").strip()
-                    if not user_text:
+                    images = raw.get("images") or []
+                    if not user_text and not images:
                         continue
 
                     command_context = CommandContext(
@@ -178,12 +207,112 @@ def create_app(
                         continue
 
                     images = raw.get("images") or []
-                    await session_manager.run_session(
-                        session, user_text,
-                        ws_send=lambda e: ws.send_json(e),
-                        ws_receive=ws.receive_json,
-                        images=images,
-                    )
+                    try:
+                        await session_manager.run_session(
+                            session, user_text,
+                            ws_send=lambda e: ws.send_json(e),
+                            ws_receive=ws.receive_json,
+                            images=images,
+                        )
+                    except ValueError as exc:
+                        await ws.send_json({
+                            "type": "error",
+                            "data": {"message": f"ValueError: {exc}"},
+                        })
+
+                elif msg_type == "image_upload_start":
+                    from agent.uploads import MAX_UPLOAD_SIZE
+
+                    client_upload_id = str(raw.get("client_upload_id", "")).strip()
+                    mime = str(raw.get("mime", "")).strip().lower()
+                    total_chars = int(raw.get("total_chars") or 0)
+                    if not client_upload_id:
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "missing client_upload_id"},
+                        })
+                        continue
+                    if not mime.startswith("image/"):
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "invalid image type"},
+                        })
+                        continue
+                    if total_chars > MAX_UPLOAD_SIZE * 2:
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "image too large"},
+                        })
+                        continue
+                    upload_buffers[client_upload_id] = {
+                        "mime": mime,
+                        "chunks": [],
+                        "received_chars": 0,
+                    }
+                    await ws.send_json({
+                        "type": "image_upload_started",
+                        "data": {"client_upload_id": client_upload_id},
+                    })
+
+                elif msg_type == "image_upload_chunk":
+                    from agent.uploads import MAX_UPLOAD_SIZE
+
+                    client_upload_id = str(raw.get("client_upload_id", "")).strip()
+                    chunk = str(raw.get("chunk", ""))
+                    upload = upload_buffers.get(client_upload_id)
+                    if upload is None:
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "upload not started"},
+                        })
+                        continue
+                    upload["chunks"].append(chunk)
+                    upload["received_chars"] += len(chunk)
+                    if upload["received_chars"] > MAX_UPLOAD_SIZE * 2:
+                        upload_buffers.pop(client_upload_id, None)
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "image too large"},
+                        })
+                        continue
+                    await ws.send_json({
+                        "type": "image_upload_chunk_ack",
+                        "data": {
+                            "client_upload_id": client_upload_id,
+                            "index": raw.get("index"),
+                        },
+                    })
+
+                elif msg_type == "image_upload_finish":
+                    from agent.uploads import save_upload_bytes
+
+                    client_upload_id = str(raw.get("client_upload_id", "")).strip()
+                    upload = upload_buffers.pop(client_upload_id, None)
+                    if upload is None:
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": "upload not started"},
+                        })
+                        continue
+                    try:
+                        data = base64.b64decode("".join(upload["chunks"]), validate=True)
+                        file_path = save_upload_bytes(data, upload["mime"])
+                    except (binascii.Error, ValueError) as exc:
+                        await ws.send_json({
+                            "type": "image_upload_error",
+                            "data": {"client_upload_id": client_upload_id, "message": str(exc)},
+                        })
+                        continue
+                    await ws.send_json({
+                        "type": "image_upload_complete",
+                        "data": {
+                            "client_upload_id": client_upload_id,
+                            "upload_id": Path(file_path).name,
+                            "file_path": file_path,
+                            "mime": upload["mime"],
+                            "size": len(data),
+                        },
+                    })
 
                 elif msg_type == "approval_response":
                     approval_id = str(raw.get("approval_id", "")).strip()
