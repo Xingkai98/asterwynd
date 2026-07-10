@@ -196,8 +196,8 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   margin-top: 0;
 }
 .message-image-button {
-  width: 96px;
-  height: 96px;
+  width: clamp(48px, 12vw, 64px);
+  height: clamp(48px, 12vw, 64px);
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -221,14 +221,14 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 16px;
   background: rgba(0, 0, 0, 0.78);
 }
 .image-lightbox[hidden] {
   display: none;
 }
 .image-lightbox-img {
-  max-width: min(100%, 1100px);
+  max-width: min(94vw, 1200px);
   max-height: 90vh;
   object-fit: contain;
   border-radius: 6px;

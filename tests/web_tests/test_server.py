@@ -420,7 +420,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=14" in index
+    assert "/static/style.css?v=15" in index
     assert "/static/chat.js?v=17" in index
     assert 'id="image-previews"' in index
     assert 'id="image-file-input"' in index
