@@ -16,6 +16,8 @@ def _mock_ok_response(json_body: dict) -> MagicMock:
 
 def _mock_sse_stream(lines: list[str]):
     class _StreamResponse:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
