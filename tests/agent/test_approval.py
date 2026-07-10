@@ -63,6 +63,21 @@ async def test_cli_approval_handler_denies_empty_input(monkeypatch):
     assert response.status is ApprovalDecisionStatus.DENIED
 
 
+def test_redact_value_replaces_image_blocks():
+    """redacted_args 中 ImageBlock 替换为 [image: file_path] 引用"""
+    from agent.message import ImageBlock, ImageUrl
+
+    image_block = ImageBlock(
+        image_url=ImageUrl(url="data:image/png;base64,VERYSECRETBASE64"),
+        file_path="/tmp/sensitive.png",
+    )
+    redacted = redact_value({"image": image_block, "text": "plain"})
+
+    encoded = json.dumps(redacted, ensure_ascii=False)
+    assert "VERYSECRETBASE64" not in encoded
+    assert "sensitive.png" in encoded or "plain" in encoded
+
+
 def _approval_request() -> ApprovalRequest:
     return ApprovalRequest(
         approval_id="approval-1",

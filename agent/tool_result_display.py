@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from agent.message import extract_text
+
+if TYPE_CHECKING:
+    from agent.message import ContentBlock
 
 
 DEFAULT_MAX_RESULT_CHARS = 4000
@@ -34,18 +40,19 @@ class ToolResultDisplaySummary:
 
 def summarize_tool_result(
     tool_name: str,
-    result: str,
+    result: str | list["ContentBlock"],
     config: ToolResultDisplayConfig | None = None,
 ) -> ToolResultDisplaySummary:
     config = config or ToolResultDisplayConfig()
-    char_count = len(result)
-    line_count = _line_count(result)
+    text = extract_text(result) if not isinstance(result, str) else result
+    char_count = len(text)
+    line_count = _line_count(text)
     collapsed = (
         tool_name in DEFAULT_COLLAPSED_TOOLS
         or char_count > config.max_result_chars
         or line_count > config.max_result_lines
     )
-    preview = result[:config.preview_chars] if collapsed else result
+    preview = text[:config.preview_chars] if collapsed else text
     return ToolResultDisplaySummary(
         collapsed=collapsed,
         preview=preview,

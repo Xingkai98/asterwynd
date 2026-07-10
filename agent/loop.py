@@ -14,7 +14,7 @@ from agent.approval import (
     build_approval_request,
     redact_value,
 )
-from agent.message import Message, system_message, tool_result_message
+from agent.message import Message, system_message, tool_result_message, extract_text
 from agent.result import RunResult, StopReason, ToolCallMade
 from agent.tools.base import ToolCall
 from agent.llm import LLMResponse, ToolCallDelta
@@ -607,7 +607,7 @@ class AgentLoop:
                         })
                         await on_event("tool_result", {
                             "name": tool_call.name,
-                            "result": result,
+                            "result": extract_text(result) if not isinstance(result, str) else result,
                             "display": summarize_tool_result(
                                 tool_call.name,
                                 result,
@@ -733,11 +733,12 @@ class AgentLoop:
                         observed_tool_call.name,
                         observed_tool_call.arguments,
                     )
+                    result_text = extract_text(result) if not isinstance(result, str) else result
                     status = (
                         "error"
-                        if result.startswith("[Error")
-                        or result.startswith("Error")
-                        or result.startswith("[Permission denied")
+                        if result_text.startswith("[Error")
+                        or result_text.startswith("Error")
+                        or result_text.startswith("[Permission denied")
                         else "ok"
                     )
                     trace_recorder.record_tool_result(
@@ -758,7 +759,7 @@ class AgentLoop:
                     })
                     await on_event("tool_result", {
                         "name": tool_call.name,
-                        "result": result,
+                        "result": extract_text(result) if not isinstance(result, str) else result,
                         "display": summarize_tool_result(
                             tool_call.name,
                             result,
@@ -771,7 +772,7 @@ class AgentLoop:
                             "skill_name": activation.skill_name,
                             "source": activation.source,
                         })
-                    if tool_call.name == "TodoWrite" and not result.startswith("[Error"):
+                    if tool_call.name == "TodoWrite" and not (isinstance(result, str) and result.startswith("[Error")):
                         await on_event("todo_updated", self._todo_snapshot())
 
                 messages.append(tool_result_message(tool_call.id, result))
@@ -868,7 +869,7 @@ class AgentLoop:
 
     async def _execute_single_tool(
         self, tool_call: ToolCall, observed_tool_call: ToolCall, approval_granted: bool
-    ) -> tuple[str, float]:
+    ) -> tuple[str | list, float]:
         """Execute one tool call. `tool_call` has original args for execution;
         `observed_tool_call` may have redacted args for hooks/events."""
         await self.hooks.before_tool_execute(observed_tool_call)
@@ -890,7 +891,7 @@ class AgentLoop:
                     tc, approval_granted=approval_granted,
                 ),
             )
-            if result.startswith("[Error"):
+            if isinstance(result, str) and result.startswith("[Error"):
                 logger.error(
                     f"[AgentLoop] tool {tool_call.name} retry exhausted: {result}"
                 )
@@ -1076,7 +1077,7 @@ class AgentLoop:
     def _last_user_content(self, messages: list[Message]) -> str:
         for message in reversed(messages):
             if message.role == "user":
-                return message.content
+                return extract_text(message.content)
         return ""
 
     def _save_session(

@@ -53,7 +53,6 @@
 
 - `improve-agent-execution-foundation`：已合入并归档。
 - `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
-- `add-multimodal-input-support`：图片/多模态输入——Message 协议扩展 + Read 工具图片支持。
 
 ### 第八批：高风险 browser 能力
 
@@ -78,25 +77,7 @@
 - XDG 日志路径 + CWD `.env` 搜索。
 - `pyproject.toml` 元数据补全（MIT license、classifiers 等）。
 
-### 1. `add-multimodal-input-support`
-
-状态：未实现。
-
-批次：第七批第三批，改动面最大（Message 协议 + 所有 provider adapter），建议等第一批合入后再开始。
-
-建议顺序原因：
-
-- 触及整个消息传递链（Message → LLM adapter → compact → trace → subagent）。
-- 需要等 AgentLoop 改动（Change 1/2）稳定后再叠加 Message 协议扩展。
-
-主要交付：
-
-- `Message.content` 扩展为 `str | list[ContentBlock]`。
-- `ToolResult.content_blocks` 新增字段。
-- Read 工具图片识别 + base64 编码。
-- OpenAI/Anthropic adapter 多模态格式转换。
-
-### 2. `add-minimal-tui-runtime-view`
+### 1. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -114,7 +95,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 4. `add-browser-use-safety-foundation`
+### 2. `add-browser-use-safety-foundation`
 
 状态：未实现。
 

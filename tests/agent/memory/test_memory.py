@@ -190,3 +190,54 @@ async def test_manual_compact_forces_compaction_under_token_budget():
         "recent question",
         "recent answer",
     ]
+
+
+# ── Multimodal compact tests ────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_compact_replaces_image_blocks_in_middle_messages():
+    """middle 消息中的 ImageBlock 应降级为 [image: path] 文本引用"""
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    llm = SummaryLLM(content="older context summary")
+    mgr = MemoryManager(max_tokens=1, recent_window=2, llm=llm)
+    messages = [
+        Message(role="system", content="system prompt"),
+        Message(role="user", content=[
+            TextBlock(text="old question with image " * 10),
+            ImageBlock(
+                image_url=ImageUrl(url="data:image/png;base64,abcdef"),
+                file_path="/tmp/screenshot.png",
+            ),
+        ]),
+        Message(role="assistant", content="old answer " * 10),
+        Message(role="user", content="recent query"),
+        Message(role="assistant", content="recent answer"),
+    ]
+
+    compacted = await mgr.compact_if_needed(messages)
+
+    assert compacted is True
+    assert len(llm.calls) == 1
+    # 结构: [system, summary_system, recent_user, recent_assistant]
+    assert [m.role for m in messages] == ["system", "system", "user", "assistant"]
+    # summary 包含 LLM 生成的内容
+    assert "older context summary" in messages[1].content
+    # recent window 完整保留（纯文本消息）
+    assert messages[3].content == "recent answer"
+
+
+def test_count_tokens_with_image_blocks():
+    """ImageBlock 按 1000 token/张估算"""
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    mgr = MemoryManager(max_tokens=1000)
+    messages = [
+        Message(role="user", content=[
+            TextBlock(text="hello"),
+            ImageBlock(image_url=ImageUrl(url="data:image/png;base64,abc")),
+        ]),
+    ]
+    tokens = mgr.count_tokens(messages)
+    # "hello" tokens + 1000 for image
+    assert tokens > 1000

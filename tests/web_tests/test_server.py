@@ -1,6 +1,7 @@
 # tests/web/test_server.py
 """Integration tests for FastAPI server (HTTP + WebSocket) with fake LLM."""
 import os
+import base64
 import json
 import subprocess
 from pathlib import Path
@@ -16,6 +17,13 @@ from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
 from web.debug_hook import debug_enabled
 from tests.support.llm_harness import ScriptedLLM
+
+
+TINY_PNG_DATA_URL = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+)
+TINY_PNG_BYTES = base64.b64decode(TINY_PNG_DATA_URL.split(",", 1)[1])
 
 
 @tool_parameters(name="Echo", description="Echo tool", parameters={"type": "object", "properties": {}, "required": []})
@@ -204,6 +212,198 @@ async def test_websocket_chat_flow():
     assert events[-1]["data"]["content"] == "Hello from agent!"
 
 
+def test_websocket_accepts_image_only_chat_message(tmp_path, monkeypatch):
+    """Image-only WebSocket messages should start an agent run."""
+    monkeypatch.chdir(tmp_path)
+    mock_llm = ScriptedLLM([LLMResponse(content="saw image")])
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+
+            ws.send_json({
+                "type": "chat",
+                "content": "",
+                "images": [{"url": TINY_PNG_DATA_URL}],
+            })
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    assert [e["type"] for e in events] == ["run_started", "llm_response", "done"]
+    assert events[-1]["data"]["content"] == "saw image"
+    assert mock_llm.call_count == 1
+    last_user_message = mock_llm.last_messages[-1]
+    assert last_user_message.role == "user"
+    assert [type(block).__name__ for block in last_user_message.content] == ["ImageBlock"]
+
+
+def test_uploads_api_accepts_multipart_image(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    mock_llm = ScriptedLLM()
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/uploads",
+            files={"file": ("tiny.png", TINY_PNG_BYTES, "image/png")},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["upload_id"].startswith("sha256_")
+    assert data["upload_id"].endswith(".png")
+    assert data["mime"] == "image/png"
+    assert data["size"] == len(TINY_PNG_BYTES)
+    assert (tmp_path / ".asterwynd" / "uploads" / data["upload_id"]).exists()
+
+
+def test_websocket_accepts_uploaded_image_reference(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    mock_llm = ScriptedLLM([LLMResponse(content="saw uploaded image")])
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        upload_resp = client.post(
+            "/api/uploads",
+            files={"file": ("tiny.png", TINY_PNG_BYTES, "image/png")},
+        )
+        upload_id = upload_resp.json()["upload_id"]
+
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+
+            ws.send_json({
+                "type": "chat",
+                "content": "",
+                "images": [{"upload_id": upload_id}],
+            })
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+
+    assert [e["type"] for e in events] == ["run_started", "llm_response", "done"]
+    assert events[-1]["data"]["content"] == "saw uploaded image"
+    assert mock_llm.call_count == 1
+    last_user_message = mock_llm.last_messages[-1]
+    assert [type(block).__name__ for block in last_user_message.content] == ["ImageBlock"]
+    assert last_user_message.content[0].file_path.endswith(upload_id)
+
+
+def test_websocket_chunked_image_upload_returns_upload_id(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    app = create_app(ScriptedLLM())
+    b64 = TINY_PNG_DATA_URL.split(",", 1)[1]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+
+            ws.send_json({
+                "type": "image_upload_start",
+                "client_upload_id": "client-1",
+                "mime": "image/png",
+                "total_chars": len(b64),
+            })
+            assert ws.receive_json() == {
+                "type": "image_upload_started",
+                "data": {"client_upload_id": "client-1"},
+            }
+
+            ws.send_json({
+                "type": "image_upload_chunk",
+                "client_upload_id": "client-1",
+                "index": 0,
+                "chunk": b64[:20],
+            })
+            chunk_ack = ws.receive_json()
+            assert chunk_ack["type"] == "image_upload_chunk_ack"
+            assert chunk_ack["data"]["client_upload_id"] == "client-1"
+            assert chunk_ack["data"]["index"] == 0
+
+            ws.send_json({
+                "type": "image_upload_chunk",
+                "client_upload_id": "client-1",
+                "index": 1,
+                "chunk": b64[20:],
+            })
+            chunk_ack = ws.receive_json()
+            assert chunk_ack["type"] == "image_upload_chunk_ack"
+
+            ws.send_json({
+                "type": "image_upload_finish",
+                "client_upload_id": "client-1",
+            })
+            complete = ws.receive_json()
+
+    assert complete["type"] == "image_upload_complete"
+    data = complete["data"]
+    assert data["client_upload_id"] == "client-1"
+    assert data["upload_id"].startswith("sha256_")
+    assert data["upload_id"].endswith(".png")
+    assert data["mime"] == "image/png"
+    assert data["size"] == len(TINY_PNG_BYTES)
+    assert (tmp_path / ".asterwynd" / "uploads" / data["upload_id"]).exists()
+
+
+def test_websocket_image_upload_start_rejects_invalid_total_chars(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    app = create_app(ScriptedLLM())
+    b64 = TINY_PNG_DATA_URL.split(",", 1)[1]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+
+            invalid_starts = [
+                {
+                    "type": "image_upload_start",
+                    "client_upload_id": "bad-non-int",
+                    "mime": "image/png",
+                    "total_chars": "not-an-int",
+                },
+                {
+                    "type": "image_upload_start",
+                    "client_upload_id": "bad-missing",
+                    "mime": "image/png",
+                },
+                {
+                    "type": "image_upload_start",
+                    "client_upload_id": "bad-negative",
+                    "mime": "image/png",
+                    "total_chars": -1,
+                },
+            ]
+            for start in invalid_starts:
+                ws.send_json(start)
+                assert ws.receive_json() == {
+                    "type": "image_upload_error",
+                    "data": {"client_upload_id": start["client_upload_id"], "message": "invalid image size"},
+                }
+
+            ws.send_json({
+                "type": "image_upload_start",
+                "client_upload_id": "client-after-error",
+                "mime": "image/png",
+                "total_chars": len(b64),
+            })
+            assert ws.receive_json() == {
+                "type": "image_upload_started",
+                "data": {"client_upload_id": "client-after-error"},
+            }
+
+
 def test_web_static_assets_include_session_and_run_display():
     index = (Path(__file__).parents[2] / "web" / "static" / "index.html").read_text()
     script = (Path(__file__).parents[2] / "web" / "static" / "chat.js").read_text()
@@ -220,8 +420,37 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=13" in index
-    assert "/static/chat.js?v=11" in index
+    assert "/static/style.css?v=15" in index
+    assert "/static/chat.js?v=18" in index
+    assert 'id="image-previews"' in index
+    assert 'id="image-file-input"' in index
+    assert 'id="upload-btn"' in index
+    assert "uploadBtn.addEventListener" in script
+    assert "addImageFromFile" in script
+    assert "pendingImages" in script
+    assert "prepareImageForSend" in script
+    assert "uploadImageDataUrl" in script
+    assert "uploadImageDataUrlOverWebSocket" in script
+    assert "HTTP_UPLOAD_TIMEOUT_MS" in script
+    assert "WS_UPLOAD_EVENT_TIMEOUT_MS" in script
+    assert "256 * 1024" in script
+    assert "30000" in script
+    assert "45000" in script
+    assert "AbortController" in script
+    assert "image_upload_chunk" in script
+    assert "image_upload_complete" in script
+    assert "addUserMessage" in script
+    assert "appendMessageImages" in script
+    assert "openImageLightbox" in script
+    assert "FormData" in script
+    assert "fetch('/api/uploads'" in script
+    assert "image/heic" in script
+    assert "MAX_CHAT_PAYLOAD_CHARS" in script
+    assert "sendInFlight" in script
+    assert "Connection closed before the message was sent" in script
+    assert "Connection is not ready" in script
+    assert "fetch('/api/upload-image')" not in script
+    assert "renderImagePreviews" in script
     assert index.index("/static/markdown.js") < index.index("/static/chat.js")
     assert "sessionIdEl.textContent" in script
     assert "runIdEl.textContent" in script
@@ -253,6 +482,8 @@ def test_web_static_assets_include_session_and_run_display():
     assert "function sendApprovalDecision" in script
     assert "function renderPlanDocument" in script
     assert "max_iterations" in script
+    assert ".message-images" in styles
+    assert ".image-lightbox" in styles
     assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
     assert ".message.system" in styles

@@ -1,10 +1,13 @@
 # agent/openai_llm.py
 import json as _json
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta
-from agent.message import Message
+from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
+from agent.message import Message, TextBlock, ImageBlock, ContentBlock, extract_text
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger("asterwynd.llm.openai")
 
@@ -31,10 +34,15 @@ class OpenAILLM(BaseLLM):
     ) -> LLMResponse:
         model = model or self.model
         client = await self._get_client()
+        mode = vision_mode(model)
+        has_images = _messages_have_images(messages)
+        try_vision = mode == "try_vision" and has_images
+        force_vision = try_vision or mode == "vision"
 
+        openai_messages = self._build_openai_messages(messages, model, force_vision=force_vision)
         payload: dict = {
             "model": model,
-            "messages": [self._message_to_dict(m) for m in messages],
+            "messages": openai_messages,
         }
         if tools:
             payload["tools"] = tools
@@ -43,14 +51,26 @@ class OpenAILLM(BaseLLM):
             "LLM request:\n"
             "  model=%s  messages=%d  tools=%d\n"
             "  payload=%s",
-            model, len(messages), len(tools) if tools else 0,
-            _json.dumps(payload, ensure_ascii=False),
+            model, len(openai_messages), len(tools) if tools else 0,
+            _json.dumps(sanitize_payload_for_logging(payload), ensure_ascii=False),
         )
 
         response = await client.post(
             f"{self.base_url}/chat/completions",
             json=payload,
         )
+
+        if response.status_code == 400 and try_vision:
+            logger.info(
+                "First attempt with images failed (400) for model=%s, retrying without images",
+                model,
+            )
+            openai_messages = self._build_openai_messages(messages, model, force_vision=False)
+            payload["messages"] = openai_messages
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+            )
 
         if response.status_code >= 400:
             error_body = ""
@@ -60,7 +80,7 @@ class OpenAILLM(BaseLLM):
                 pass
             logger.error(
                 f"HTTP {response.status_code} from {self.base_url}"
-                f"\nRequest payload: {_json.dumps(payload, ensure_ascii=False)}"
+                f"\nRequest payload: {_json.dumps(sanitize_payload_for_logging(payload), ensure_ascii=False)}"
                 f"\nResponse body: {error_body}"
             )
 
@@ -112,9 +132,38 @@ class OpenAILLM(BaseLLM):
         model: Optional[str] = None,
     ):
         model = model or self.model
+        mode = vision_mode(model)
+        has_images = _messages_have_images(messages)
+        try_vision = mode == "try_vision" and has_images
+        force_vision = try_vision or mode == "vision"
+
+        try:
+            async for event in self._stream_chat_impl(messages, tools, model, force_vision):
+                yield event
+        except Exception as e:
+            if not try_vision:
+                raise
+            if not _is_400_error(e):
+                raise
+            logger.info(
+                "First stream attempt with images failed (400) for model=%s, retrying without images",
+                model,
+            )
+            async for event in self._stream_chat_impl(messages, tools, model, force_vision=False):
+                yield event
+
+    async def _stream_chat_impl(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+        force_vision: bool = True,
+    ):
+        model = model or self.model
+        openai_messages = self._build_openai_messages(messages, model, force_vision=force_vision)
         payload: dict = {
             "model": model,
-            "messages": [self._message_to_dict(m) for m in messages],
+            "messages": openai_messages,
             "stream": True,
         }
         if tools:
@@ -181,8 +230,8 @@ class OpenAILLM(BaseLLM):
             stop_reason=response.stop_reason,
         )
 
-    def _message_to_dict(self, msg: Message) -> dict:
-        d: dict = {"role": msg.role, "content": msg.content}
+    def _message_to_dict(self, msg: Message, is_vision: bool = True) -> dict:
+        d: dict = {"role": msg.role, "content": self._content_to_openai(msg.content, msg.role, is_vision=is_vision)}
         if msg.tool_call_id:
             d["tool_call_id"] = msg.tool_call_id
         if msg.tool_calls:
@@ -197,3 +246,81 @@ class OpenAILLM(BaseLLM):
         if msg.reasoning_content:
             d["reasoning_content"] = msg.reasoning_content
         return d
+
+    def _build_openai_messages(
+        self, messages: list[Message], model: str | None = None, force_vision: bool = True
+    ) -> list[dict]:
+        """构建 OpenAI 消息列表，处理 tool 消息中的图片注入"""
+        resolved_model = model or self.model
+        is_vision = force_vision
+        image_buffer: list[ContentBlock] = []
+        result: list[dict] = []
+
+        for msg in messages:
+            if msg.role == "tool" and isinstance(msg.content, list):
+                text_blocks = [b for b in msg.content if isinstance(b, TextBlock)]
+                image_blocks = [b for b in msg.content if isinstance(b, ImageBlock)]
+                content = "\n".join(b.text for b in text_blocks) if text_blocks else ""
+                if image_blocks:
+                    if is_vision:
+                        image_buffer.extend(image_blocks)
+                    else:
+                        # 非视觉模型：立即将图片降级为文本引用，附加到当前 tool 消息
+                        refs = [self._degrade_image_to_text(b) for b in image_blocks if isinstance(b, ImageBlock)]
+                        content = content + "\n" + "\n".join(refs)
+                # tool 消息只保留文本
+                result.append({
+                    "role": "tool",
+                    "content": content,
+                    "tool_call_id": msg.tool_call_id,
+                })
+            else:
+                # 遇到非 tool 消息时，flush image buffer（仅视觉模式有内容）
+                if image_buffer:
+                    result.append(self._image_buffer_to_user_message(image_buffer))
+                    image_buffer = []
+                result.append(self._message_to_dict(msg, is_vision=is_vision))
+
+        # 末尾可能还有未 flush 的图片（视觉模式）
+        if image_buffer:
+            result.append(self._image_buffer_to_user_message(image_buffer))
+
+        return result
+
+    def _image_buffer_to_user_message(self, images: list[ContentBlock]) -> dict:
+        """将收集的图片转为合成 user 消息"""
+
+        content = [self._block_to_openai(b) for b in images]
+        return {"role": "user", "content": content}
+
+    def _content_to_openai(self, content: str | list[ContentBlock], role: str, is_vision: bool = True) -> str | list[dict]:
+        """将 content 转换为 OpenAI API 格式"""
+        if isinstance(content, str):
+            return content
+        # user 消息可以是 content array
+        if role == "user":
+            return [self._block_to_openai(b, is_vision=is_vision) for b in content]
+        # 其他 role 只取文本
+        return "\n".join(b.text for b in content if isinstance(b, TextBlock))
+
+    def _block_to_openai(self, block: ContentBlock, is_vision: bool = True) -> dict:
+        """单个 ContentBlock 转 OpenAI 格式。非视觉模型将 ImageBlock 降级为文本引用。"""
+        if isinstance(block, TextBlock):
+            return {"type": "text", "text": block.text}
+        if isinstance(block, ImageBlock):
+            if not is_vision:
+                ref = block.file_path or "pasted image"
+                return {"type": "text", "text": f"[image: {ref}]"}
+            return {
+                "type": "image_url",
+                "image_url": {
+                    "url": block.image_url.url,
+                    "detail": block.image_url.detail or "auto",
+                },
+            }
+        return {"type": "text", "text": ""}
+
+    def _degrade_image_to_text(self, block: ImageBlock) -> str:
+        """非视觉模型降级：ImageBlock → 文本引用"""
+        ref = block.file_path or "pasted image"
+        return f"[image: {ref}]"

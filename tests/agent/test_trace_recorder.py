@@ -124,3 +124,25 @@ def test_trace_recorder_records_draft_plan_document():
     step = recorder.to_dict()["steps"][0]
     assert step["type"] == "plan_document_updated"
     assert step["data"] == document
+
+
+def test_trace_recorder_sanitizes_image_blocks():
+    """trace 中 ImageBlock 的 base64 被替换为 [image: file_path]"""
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    recorder = TraceRecorder(task_id="task-1")
+    # record_tool_result 接收 ContentBlock list
+    result_blocks = [
+        TextBlock(text="[image: /tmp/img.png, 100x100]"),
+        ImageBlock(
+            image_url=ImageUrl(url="data:image/png;base64,VERYLONGBASE64STRING"),
+            file_path="/tmp/img.png",
+        ),
+    ]
+    recorder.record_tool_result("Read", "ok", 1, result_blocks)
+
+    step = recorder.to_dict()["steps"][0]
+    observation = step["data"]["observation"]
+    assert isinstance(observation, str)
+    assert "[image: /tmp/img.png]" in observation
+    assert "VERYLONGBASE64STRING" not in observation

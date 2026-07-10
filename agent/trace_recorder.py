@@ -4,7 +4,12 @@ import json
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+from agent.message import extract_text
+
+if TYPE_CHECKING:
+    from agent.message import ContentBlock
 
 
 @dataclass
@@ -84,8 +89,10 @@ class TraceRecorder:
         tool_name: str,
         status: str,
         duration_ms: float,
-        observation: str,
+        observation: str | list["ContentBlock"],
     ) -> None:
+        if isinstance(observation, list):
+            observation = self._sanitize_observation(observation)
         self.record(
             "tool_result",
             tool_name=tool_name,
@@ -93,6 +100,20 @@ class TraceRecorder:
             duration_ms=round(duration_ms, 1),
             observation=observation,
         )
+
+    @staticmethod
+    def _sanitize_observation(blocks: list["ContentBlock"]) -> str:
+        """将 content blocks 转为 trace-safe 文本（图片替换为路径引用）"""
+        from agent.message import ImageBlock, TextBlock
+
+        parts: list[str] = []
+        for block in blocks:
+            if isinstance(block, TextBlock):
+                parts.append(block.text)
+            elif isinstance(block, ImageBlock):
+                ref = block.file_path or "pasted image"
+                parts.append(f"[image: {ref}]")
+        return "\n".join(parts)
 
     def record_approval_request(self, request: dict[str, Any]) -> None:
         self.record("approval_request", **request)
