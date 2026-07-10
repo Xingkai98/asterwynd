@@ -44,38 +44,22 @@
 - `add-mcp-tool-adapter`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
-### 第六批：包结构和分发基础
+### 第六批：包结构和分发基础，已完成
 
+- `improve-package-structure`：已合入（PR #49），未走完整 OpenSpec 流程，无需归档。
 
 ### 第七批：基础能力补全
 
 基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
 
 - `improve-agent-execution-foundation`：已合入并归档。
-- `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
+- `add-semantic-code-search`：已合入并归档。
 
 ### 第八批：高风险 browser 能力
 
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
 ## 未实现队列
-
-
-状态：实现中（partial 已应用在 disk）。
-
-批次：第六批，独立推进。
-
-建议顺序原因：
-
-- 用户可见破坏性变更：`main` 子命令删除、`--interactive` 删除、根 `cli.py` 删除。
-- 不依赖任何其他 change，可独立开发和合入。
-
-主要交付：
-
-- `agent/main.py` 作为 CLI 主入口模块；删除根目录 `cli.py`。
-- `@app.callback(invoke_without_command=True)` 默认交互；`run` 子命令单轮；删除 `--interactive` 和 `main` 子命令。
-- XDG 日志路径 + CWD `.env` 搜索。
-- `pyproject.toml` 元数据补全（MIT license、classifiers 等）。
 
 ### 1. `add-minimal-tui-runtime-view`
 
