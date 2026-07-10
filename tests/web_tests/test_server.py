@@ -421,7 +421,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="plan-document-panel"' in index
     assert "/static/markdown.js?v=6" in index
     assert "/static/style.css?v=15" in index
-    assert "/static/chat.js?v=17" in index
+    assert "/static/chat.js?v=18" in index
     assert 'id="image-previews"' in index
     assert 'id="image-file-input"' in index
     assert 'id="upload-btn"' in index
@@ -432,6 +432,10 @@ def test_web_static_assets_include_session_and_run_display():
     assert "uploadImageDataUrl" in script
     assert "uploadImageDataUrlOverWebSocket" in script
     assert "HTTP_UPLOAD_TIMEOUT_MS" in script
+    assert "WS_UPLOAD_EVENT_TIMEOUT_MS" in script
+    assert "256 * 1024" in script
+    assert "30000" in script
+    assert "45000" in script
     assert "AbortController" in script
     assert "image_upload_chunk" in script
     assert "image_upload_complete" in script

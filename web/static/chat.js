@@ -17,8 +17,9 @@ let sendInFlight = false;
 const wsUploadWaiters = new Map();
 const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_CHAT_PAYLOAD_CHARS = 12 * 1024 * 1024;
-const WS_UPLOAD_CHUNK_CHARS = 64 * 1024;
-const HTTP_UPLOAD_TIMEOUT_MS = 10000;
+const WS_UPLOAD_CHUNK_CHARS = 256 * 1024;
+const HTTP_UPLOAD_TIMEOUT_MS = 30000;
+const WS_UPLOAD_EVENT_TIMEOUT_MS = 45000;
 const IMAGE_NORMALIZE_THRESHOLD_BYTES = 2 * 1024 * 1024;
 const MAX_NORMALIZED_IMAGE_SIDE = 1600;
 const JPEG_QUALITY = 0.82;
@@ -914,7 +915,7 @@ function parseDataUrl(dataUrl) {
   return { mime, base64: parts[1] };
 }
 
-function waitForWsUploadEvent(clientUploadId, expectedTypes, timeoutMs = 15000) {
+function waitForWsUploadEvent(clientUploadId, expectedTypes, timeoutMs = WS_UPLOAD_EVENT_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       wsUploadWaiters.delete(clientUploadId);
