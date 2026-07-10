@@ -53,7 +53,6 @@
 
 - `improve-agent-execution-foundation`：已合入并归档。
 - `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
-- `add-multimodal-input-support`：已合入并归档。
 - `add-background-task-execution-and-session-persistence`：后台任务执行 + 会话保存/恢复。
 
 ### 第八批：高风险 browser 能力
