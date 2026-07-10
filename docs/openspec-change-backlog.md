@@ -44,8 +44,9 @@
 - `add-mcp-tool-adapter`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
-### 第六批：包结构和分发基础
+### 第六批：包结构和分发基础，已完成
 
+- `improve-package-structure`：已合入（PR #49），未走完整 OpenSpec 流程，无需归档。
 
 ### 第七批：基础能力补全
 
@@ -60,24 +61,24 @@
 
 ## 未实现队列
 
+### 1. `add-semantic-code-search`
 
-状态：实现中（partial 已应用在 disk）。
+状态：未实现，无 change 目录。
 
-批次：第六批，独立推进。
+批次：第七批，建议在 `improve-agent-execution-foundation` 合入后开始。
 
 建议顺序原因：
 
-- 用户可见破坏性变更：`main` 子命令删除、`--interactive` 删除、根 `cli.py` 删除。
-- 不依赖任何其他 change，可独立开发和合入。
+- 依赖 AgentLoop 执行基础设施和 embedding 管道稳定。
+- 可与第七批其他 change 并行推进。
 
 主要交付：
 
-- `agent/main.py` 作为 CLI 主入口模块；删除根目录 `cli.py`。
-- `@app.callback(invoke_without_command=True)` 默认交互；`run` 子命令单轮；删除 `--interactive` 和 `main` 子命令。
-- XDG 日志路径 + CWD `.env` 搜索。
-- `pyproject.toml` 元数据补全（MIT license、classifiers 等）。
+- embedding 索引构建和维护。
+- `SearchSimilar` 工具，基于语义相似度检索代码片段。
+- ToolRegistry 和 trace 接入。
 
-### 1. `add-minimal-tui-runtime-view`
+### 2. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -95,7 +96,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 2. `add-browser-use-safety-foundation`
+### 3. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
