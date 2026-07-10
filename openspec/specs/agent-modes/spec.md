@@ -8,14 +8,15 @@
 
 ### Requirement: 支持单轮 CLI 模式
 
-系统 SHALL 通过 `cli.py main` 接收单个 prompt，构造 AgentLoop 并输出最终回复。
+系统 SHALL 通过 `asterwynd run <prompt>` 接收单个 prompt，构造 AgentLoop 并输出最终回复。入口模块 SHALL 为 `agent/main.py`。
 
 #### Scenario: 非交互运行
 
-- **GIVEN** 用户执行 `uv run python cli.py main "<prompt>"`
+- **GIVEN** 用户执行 `uv run asterwynd run "<prompt>"`
 - **WHEN** prompt 非空
 - **THEN** CLI SHALL 执行一次 AgentLoop
 - **AND** 输出最终 agent 内容和工具调用次数
+- **AND** SHALL NOT 进入交互循环
 
 #### Scenario: 非交互缺少 prompt
 
@@ -26,7 +27,7 @@
 
 ### Requirement: 支持 CLI 交互模式
 
-系统 SHALL 通过 `--interactive` 进入多轮输入循环，并复用同一个 event loop 和消息历史。
+系统 SHALL 通过 `asterwynd` 无子命令进入多轮输入循环，并复用同一个 event loop 和消息历史。交互模式 SHALL 支持 `--provider`、`--model`、`--max-iterations`、`--system`、`--mode`、`--config` 和 `--banner/--no-banner` option。
 
 #### Scenario: 用户连续输入
 

@@ -27,6 +27,7 @@ from agent.workspace_policy import WorkspacePolicy
 )
 class InspectGitDiffTool(Tool):
     read_only = True
+    parallelizable = True
     permission = WORKSPACE_READ_PERMISSION
 
     def __init__(self, policy: WorkspacePolicy | None = None):

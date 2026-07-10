@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
-from agent.message import Message, system_message
+from agent.message import Message, system_message, extract_text
 from agent.result import RunResult, StopReason
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.run_identity import new_run_id
@@ -261,7 +261,7 @@ class SubAgentManager:
             "run_id": run_id,
             "scope": "recent_messages",
             "messages": [
-                {"role": msg.role, "content": msg.content, "tool_call_id": msg.tool_call_id}
+                {"role": msg.role, "content": extract_text(msg.content), "tool_call_id": msg.tool_call_id}
                 for msg in tail
             ],
             "truncated": len(messages) > limit,

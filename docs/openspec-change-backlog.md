@@ -44,7 +44,18 @@
 - `add-mcp-tool-adapter`：已合入并归档。
 - `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
-### 第六批：高风险 browser 能力
+### 第六批：包结构和分发基础，已完成
+
+- `improve-package-structure`：已合入（PR #49），未走完整 OpenSpec 流程，无需归档。
+
+### 第七批：基础能力补全
+
+基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
+
+- `improve-agent-execution-foundation`：已合入并归档。
+- `add-semantic-code-search`：已合入并归档。
+
+### 第八批：高风险 browser 能力
 
 - `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
 
@@ -72,7 +83,7 @@
 
 状态：未实现。
 
-批次：第六批，建议在 MCP 或核心工具权限模型更稳定后开始。
+批次：第八批，建议在 MCP 或核心工具权限模型更稳定后开始。
 
 建议顺序原因：
 

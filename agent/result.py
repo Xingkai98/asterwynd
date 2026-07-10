@@ -1,7 +1,12 @@
 # agent/result.py
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from enum import Enum
+
+if TYPE_CHECKING:
+    from agent.message import ContentBlock
 
 class StopReason(Enum):
     END_TURN = "end_turn"
@@ -12,7 +17,7 @@ class StopReason(Enum):
 class ToolCallMade:
     name: str
     arguments: dict
-    result: Optional[str] = None
+    result: Optional[str | list["ContentBlock"]] = None
 
 @dataclass
 class RunResult:

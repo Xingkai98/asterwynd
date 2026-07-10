@@ -160,13 +160,13 @@ class TestWorkflowDispatcher:
 class TestApproveAndDispatch:
     def test_approve_at_gate_dispatches_next_phase(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mgr = WorkflowManager(tmp)
+            mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
             for sub in ["writing_proposal", "writing_design", "writing_specs",
                         "writing_tasks", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
-            dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
+            dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
             result = dispatcher.approve_and_dispatch("human-1", "approved")
 
             assert result.phase == "reviewing"
@@ -176,7 +176,7 @@ class TestApproveAndDispatch:
 
     def test_approve_to_done_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mgr = WorkflowManager(tmp)
+            mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
             for sub in ["writing_proposal", "writing_design", "writing_specs",
                         "writing_tasks", "ready_for_review"]:
@@ -194,30 +194,30 @@ class TestApproveAndDispatch:
                         "validating", "pr_ready", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
-            dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
+            dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
             with pytest.raises(ValueError, match="workflow complete"):
                 dispatcher.approve_and_dispatch("human-1", "done")
 
     def test_approve_not_at_gate_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mgr = WorkflowManager(tmp)
+            mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
             # still at exploring, not gate
 
-            dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
+            dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
             with pytest.raises(StateMachineError, match="only allowed at gate"):
                 dispatcher.approve_and_dispatch("human-1", "premature")
 
     def test_approve_dispatches_inline_when_configured(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mgr = WorkflowManager(tmp)
+            mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
             mgr.update_routing("reviewing", executor="inline", session_mode="same")
             for sub in ["writing_proposal", "writing_design", "writing_specs",
                         "writing_tasks", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
-            dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
+            dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
             result = dispatcher.approve_and_dispatch("human-1", "approved")
 
             assert result.executor == "inline"

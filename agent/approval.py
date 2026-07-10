@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
+from agent.message import ImageBlock, TextBlock
 from agent.tool_permissions import PermissionDecision
 
 
@@ -175,6 +176,10 @@ def redact_value(value: Any) -> Any:
         for pattern in SENSITIVE_STRING_PATTERNS:
             redacted = pattern.sub(_redact_string_match, redacted)
         return redacted
+    if isinstance(value, ImageBlock):
+        return f"[image: {value.file_path or 'unknown'}]"
+    if isinstance(value, TextBlock):
+        return value.text
     return value
 
 

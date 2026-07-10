@@ -1,12 +1,17 @@
 # tests/agent/test_loop.py
 import pytest
 import json
+import tempfile
+import os
 from agent.approval import ApprovalDecisionStatus, ApprovalResponse
+from agent.background import BackgroundTaskManager
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
+from agent.session import SessionStore, SessionSnapshot
 from agent.tools.base import Tool, tool_parameters, ToolCall
 from agent.tools.registry import ToolRegistry
+from agent.tools.sandbox import SandboxExecutor
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.trace_recorder import TraceRecorder
@@ -1119,3 +1124,848 @@ async def test_agent_loop_activate_skill_tool_adds_context_for_next_llm_call():
         for name, payload in events
         if name == "skill_activated"
     ]
+
+
+@pytest.mark.asyncio
+async def test_todo_write_tool_registered_in_all_modes():
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+    schemas = {s["function"]["name"]: s for s in loop.tool_registry.get_all_schemas()}
+    assert "TodoWrite" in schemas
+
+    await loop.set_mode("read_only", source="test")
+    schemas = {s["function"]["name"]: s for s in loop.tool_registry.get_all_schemas()}
+    assert "TodoWrite" in schemas
+
+    await loop.set_mode("plan", source="test")
+    schemas = {s["function"]["name"]: s for s in loop.tool_registry.get_all_schemas()}
+    assert "TodoWrite" in schemas
+
+
+@pytest.mark.asyncio
+async def test_todo_context_injected_in_build_mode():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+    loop._todo_create("Task 1")
+    loop._todo_create("Task 2")
+    loop._todo_update("todo-1", "in_progress", None)
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "## Current Progress" in contents
+    assert "Task 1" in contents
+    assert "Task 2" in contents
+
+
+@pytest.mark.asyncio
+async def test_todo_context_not_injected_when_empty():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "## Current Progress" not in contents
+
+
+@pytest.mark.asyncio
+async def test_todo_context_not_injected_in_plan_mode():
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.PLAN),
+    )
+    loop._todo_create("Task 1")
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "## Current Progress" not in contents
+
+
+@pytest.mark.asyncio
+async def test_todo_updated_event_published():
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    class TodoThenDoneLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallDelta(
+                            id="t1",
+                            name="TodoWrite",
+                            arguments=json.dumps({"operation": "create", "content": "Test task"}),
+                        )
+                    ],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    loop = AgentLoop(
+        llm=TodoThenDoneLLM(),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        run_config=AgentRunConfig(mode=AgentMode.BUILD),
+    )
+
+    await loop.run([Message(role="user", content="test")], on_event=on_event)
+
+    todo_events = [e for e in events if e[0] == "todo_updated"]
+    assert len(todo_events) == 1
+    assert len(todo_events[0][1]["items"]) == 1
+    assert todo_events[0][1]["items"][0]["content"] == "Test task"
+
+
+@pytest.mark.asyncio
+async def test_retry_on_timeout_error():
+    call_count = [0]
+
+    class FlakyEchoTool(Tool):
+        name = "FlakyEcho"
+        description = "Flaky"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            call_count[0] += 1
+            if call_count[0] < 3:
+                raise TimeoutError("timeout")
+            return "echo!"
+
+    class FlakyThenDoneLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="c1", name="FlakyEcho", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(FlakyEchoTool())
+    loop = AgentLoop(
+        llm=FlakyThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+    assert call_count[0] == 3
+
+
+@pytest.mark.asyncio
+async def test_no_retry_on_value_error():
+    call_count = [0]
+
+    class ValueErrorTool(Tool):
+        name = "ValueErrorTool"
+        description = "Raises ValueError"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            call_count[0] += 1
+            raise ValueError("invalid arguments")
+
+    class ValueErrorThenDoneLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="c1", name="ValueErrorTool", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(ValueErrorTool())
+    loop = AgentLoop(
+        llm=ValueErrorThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+    assert call_count[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_not_retried():
+    call_count = [0]
+
+    class TimeoutBashTool(Tool):
+        name = "Bash"
+        description = "Bash"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            call_count[0] += 1
+            raise ConnectionError("connection timed out")
+
+    class BashThenDoneLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="c1", name="Bash", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(TimeoutBashTool())
+    loop = AgentLoop(
+        llm=BashThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+    assert call_count[0] == 1
+
+
+# ── Parallel tool execution tests ──
+
+
+@tool_parameters(name="SlowRead", description="Slow read tool", parameters={"type": "object", "properties": {}, "required": []})
+class SlowReadTool(Tool):
+    name = "SlowRead"
+    description = "Slow read"
+    parameters = {}
+    read_only = True
+    parallelizable = True
+
+    def __init__(self, delay: float = 0.05):
+        self.delay = delay
+        self.started_at: float | None = None
+        self.ended_at: float | None = None
+
+    async def execute(self, **kwargs) -> str:
+        self.started_at = __import__("time").perf_counter()
+        await __import__("asyncio").sleep(self.delay)
+        self.ended_at = __import__("time").perf_counter()
+        return f"read after {self.delay}s"
+
+
+@tool_parameters(name="FastWrite", description="Fast write tool", parameters={"type": "object", "properties": {}, "required": []})
+class FastWriteTool(Tool):
+    name = "FastWrite"
+    description = "Fast write"
+    parameters = {}
+    read_only = False
+    parallelizable = False
+
+    def __init__(self):
+        self.called = False
+
+    async def execute(self, **kwargs) -> str:
+        self.called = True
+        return "written"
+
+
+class MultiToolLLM:
+    def __init__(self, tool_call_groups: list[list[ToolCallDelta]]):
+        self.tool_call_groups = tool_call_groups
+        self.call_count = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+        if self.call_count < len(self.tool_call_groups):
+            group = self.tool_call_groups[self.call_count]
+            self.call_count += 1
+            return LLMResponse(
+                content="calling tools",
+                tool_calls=list(group),
+                stop_reason="tool_calls",
+            )
+        return LLMResponse(content="done", stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_parallelizable_tools_execute_concurrently():
+    """All-parallelizable group: tools must overlap in time."""
+    slow_a = SlowReadTool(delay=0.05)
+    slow_a.name = "SlowReadA"
+    slow_b = SlowReadTool(delay=0.05)
+    slow_b.name = "SlowReadB"
+
+    registry = ToolRegistry()
+    registry.register(slow_a)
+    registry.register(slow_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="SlowReadA", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowReadB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    await loop.run([Message(role="user", content="test")])
+
+    # If concurrent, the second tool started before the first finished.
+    assert slow_a.started_at is not None
+    assert slow_b.started_at is not None
+    assert slow_a.ended_at is not None
+    assert slow_b.ended_at is not None
+    # The tools should overlap: B started before A finished (or vice versa)
+    parallel = slow_b.started_at < slow_a.ended_at or slow_a.started_at < slow_b.ended_at
+    assert parallel, f"Expected concurrent execution: A={slow_a.started_at:.6f}-{slow_a.ended_at:.6f}, B={slow_b.started_at:.6f}-{slow_b.ended_at:.6f}"
+
+
+@pytest.mark.asyncio
+async def test_mixed_serial_parallel_grouping():
+    """Write tool between two parallel Read tools: grouping correct, results ordered."""
+    read_a = SlowReadTool(delay=0.02)
+    read_a.name = "SlowReadA"
+    write = FastWriteTool()
+    write.name = "FastWrite"
+    read_b = SlowReadTool(delay=0.02)
+    read_b.name = "SlowReadB"
+
+    registry = ToolRegistry()
+    registry.register(read_a)
+    registry.register(write)
+    registry.register(read_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="SlowReadA", arguments="{}"),
+            ToolCallDelta(id="c2", name="FastWrite", arguments="{}"),
+            ToolCallDelta(id="c3", name="SlowReadB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    await loop.run([Message(role="user", content="test")])
+
+    # Write must have been called
+    assert write.called
+    # All Read tools executed
+    assert read_a.started_at is not None
+    assert read_b.started_at is not None
+
+
+@pytest.mark.asyncio
+async def test_parallel_group_error_isolation():
+    """One tool error in a parallel group doesn't block siblings."""
+    call_count = {"good": 0, "bad": 0}
+
+    class BadTool(Tool):
+        name = "BadTool"
+        description = "Always fails"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            call_count["bad"] += 1
+            raise RuntimeError("boom")
+
+    class GoodTool(Tool):
+        name = "GoodTool"
+        description = "Always works"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            call_count["good"] += 1
+            return "ok"
+
+    registry = ToolRegistry()
+    registry.register(BadTool())
+    registry.register(GoodTool())
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="BadTool", arguments="{}"),
+            ToolCallDelta(id="c2", name="GoodTool", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    trace = TraceRecorder(task_id="error-test")
+    result = await loop.run(
+        [Message(role="user", content="test")],
+        trace_recorder=trace,
+    )
+
+    # Both tools were attempted
+    assert call_count["bad"] == 1
+    assert call_count["good"] == 1
+    # Good tool result should appear
+    assert result.tool_calls_made[0].name == "BadTool"
+    assert result.tool_calls_made[1].name == "GoodTool"
+    assert result.tool_calls_made[1].result == "ok"
+
+
+@pytest.mark.asyncio
+async def test_result_order_preserved():
+    """Results must match original tool call order regardless of execution order."""
+    class FastReadTool(Tool):
+        name = "FastReadX"
+        description = "Fast"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            return "fast"
+
+    class SlowReadTool2(Tool):
+        name = "SlowReadX"
+        description = "Slow"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            await __import__("asyncio").sleep(0.05)
+            return "slow"
+
+    registry = ToolRegistry()
+    registry.register(FastReadTool())
+    registry.register(SlowReadTool2())
+
+    # Fast is first, Slow is second in the call list
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="FastReadX", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowReadX", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    result = await loop.run([Message(role="user", content="test")])
+
+    assert len(result.tool_calls_made) == 2
+    # Order must match original call list
+    assert result.tool_calls_made[0].name == "FastReadX"
+    assert result.tool_calls_made[0].result == "fast"
+    assert result.tool_calls_made[1].name == "SlowReadX"
+    assert result.tool_calls_made[1].result == "slow"
+
+
+@pytest.mark.asyncio
+async def test_two_write_tools_run_serially():
+    """Non-parallelizable tools should not be grouped."""
+    write_a = FastWriteTool()
+    write_a.name = "FastWriteA"
+    write_b = FastWriteTool()
+    write_b.name = "FastWriteB"
+
+    registry = ToolRegistry()
+    registry.register(write_a)
+    registry.register(write_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="FastWriteA", arguments="{}"),
+            ToolCallDelta(id="c2", name="FastWriteB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    await loop.run([Message(role="user", content="test")])
+
+    assert write_a.called
+    assert write_b.called
+
+
+@pytest.mark.asyncio
+async def test_trace_parallel_execution_start():
+    """Trace recorder captures parallel_execution_start step for grouped tools."""
+    read_a = SlowReadTool(delay=0.01)
+    read_a.name = "SlowReadA"
+    read_b = SlowReadTool(delay=0.01)
+    read_b.name = "SlowReadB"
+
+    registry = ToolRegistry()
+    registry.register(read_a)
+    registry.register(read_b)
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="SlowReadA", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowReadB", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    trace = TraceRecorder(task_id="parallel-trace")
+    await loop.run([Message(role="user", content="test")], trace_recorder=trace)
+
+    step_types = [step.type for step in trace.steps]
+    assert "parallel_execution_start" in step_types
+
+    # Verify the group membership
+    parallel_step = next(
+        step for step in trace.steps if step.type == "parallel_execution_start"
+    )
+    assert parallel_step.data["tools"] == ["SlowReadA", "SlowReadB"]
+
+
+@pytest.mark.asyncio
+async def test_parallelizable_attribute_default():
+    """Default parallelizable is False. Only explicitly marked tools are True."""
+    from agent.tools.base import Tool as BaseTool
+
+    class UnknownTool(BaseTool):
+        name = "UnknownTool"
+        description = "test"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            return "test"
+
+    tool = UnknownTool()
+    assert tool.parallelizable is False
+
+
+def test_parallelizable_tools_marked():
+    """Only the 7 safe read-only tools have parallelizable=True."""
+    from agent.tools.builtin.read import ReadTool
+    from agent.tools.builtin.grep import GrepTool
+    from agent.tools.builtin.find import FindTool
+    from agent.tools.builtin.list_files import ListFilesTool
+    from agent.tools.builtin.inspect_git_diff import InspectGitDiffTool
+    from agent.tools.builtin.code_intelligence import RepoMapTool, SymbolSearchTool
+
+    parallel_read = [ReadTool, GrepTool, FindTool, ListFilesTool, InspectGitDiffTool, RepoMapTool, SymbolSearchTool]
+    for cls in parallel_read:
+        inst = cls()
+        assert inst.parallelizable is True, f"{cls.__name__} should be parallelizable"
+
+    # Write tools must NOT be parallelizable
+    from agent.tools.builtin.write import WriteTool
+    from agent.tools.builtin.edit import EditTool
+    from agent.tools.builtin.bash import BashTool
+
+    for cls in [WriteTool, EditTool, BashTool]:
+        inst = cls()
+        assert inst.parallelizable is False, f"{cls.__name__} should not be parallelizable"
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_defaults_to_non_parallelizable():
+    """A tool not in registry is handled gracefully with an error, sibling tools continue."""
+    registry = ToolRegistry()
+    registry.register(SlowReadTool(delay=0.01))
+
+    llm = MultiToolLLM([
+        [
+            ToolCallDelta(id="c1", name="NonExistentTool", arguments="{}"),
+            ToolCallDelta(id="c2", name="SlowRead", arguments="{}"),
+        ],
+    ])
+    loop = AgentLoop(llm=llm, tool_registry=registry, hooks=HookManager(), max_iterations=3)
+
+    trace = TraceRecorder(task_id="unknown-tool")
+    result = await loop.run(
+        [Message(role="user", content="test")],
+        trace_recorder=trace,
+    )
+
+    # Non-existent tool should result in an error
+    assert result.tool_calls_made[0].name == "NonExistentTool"
+    assert "Error" in result.tool_calls_made[0].result
+    # The Read tool should still execute
+    assert result.tool_calls_made[1].name == "SlowRead"
+    assert result.tool_calls_made[1].result.startswith("read after")
+
+
+# ── Background task integration tests ──
+
+
+@pytest.mark.asyncio
+async def test_background_task_tools_registered_when_manager_provided():
+    """TaskOutput and TaskStop are registered, BashTool gets callback."""
+    sandbox = SandboxExecutor()
+    bg_manager = BackgroundTaskManager(sandbox=sandbox)
+    registry = ToolRegistry()
+
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=registry,
+        hooks=HookManager(),
+        background_manager=bg_manager,
+    )
+
+    schemas = {s["function"]["name"] for s in registry.get_all_schemas()}
+    assert "TaskOutput" in schemas
+    assert "TaskStop" in schemas
+
+
+@pytest.mark.asyncio
+async def test_background_task_tools_not_registered_without_manager():
+    """Without background_manager, TaskOutput and TaskStop are absent."""
+    registry = ToolRegistry()
+
+    AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    schemas = {s["function"]["name"] for s in registry.get_all_schemas()}
+    assert "TaskOutput" not in schemas
+    assert "TaskStop" not in schemas
+
+
+@pytest.mark.asyncio
+async def test_completed_background_task_injected_as_observation():
+    """Completed background tasks appear as role=user observation messages."""
+    sandbox = SandboxExecutor()
+    bg_manager = BackgroundTaskManager(sandbox=sandbox)
+
+    # Start a fast task that completes quickly
+    task_id = await bg_manager.start(
+        cmd="echo hello_bg",
+        tool_call_id="tc_obs",
+        cwd="/tmp",
+        timeout=None,
+    )
+    # Wait for it to complete
+    import asyncio
+    await asyncio.sleep(0.3)
+
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    registry = ToolRegistry()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+        background_manager=bg_manager,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "Background task" in contents
+    assert "completed" in contents
+    assert "hello_bg" in contents
+
+
+@pytest.mark.asyncio
+async def test_cleanup_called_on_run_exit():
+    """Background tasks are cleaned up in run() finally block."""
+    sandbox = SandboxExecutor()
+    bg_manager = BackgroundTaskManager(sandbox=sandbox)
+
+    # Start a long-running task
+    await bg_manager.start(
+        cmd="sleep 60",
+        tool_call_id="tc_cleanup",
+        cwd="/tmp",
+        timeout=None,
+    )
+    assert len(bg_manager._tasks) == 1
+
+    registry = ToolRegistry()
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=registry,
+        hooks=HookManager(),
+        background_manager=bg_manager,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    # After run exits, all tasks should be cleaned up
+    for entry in bg_manager._tasks.values():
+        assert entry.status != "running"
+
+
+@pytest.mark.asyncio
+async def test_session_saved_after_run():
+    """Session is saved to SessionStore after _run() completes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = SessionStore(sessions_root=tmpdir)
+        registry = ToolRegistry()
+
+        loop = AgentLoop(
+            llm=MockLLM(LLMResponse(content="done")),
+            tool_registry=registry,
+            hooks=HookManager(),
+            session_store=store,
+        )
+
+        await loop.run(
+            [Message(role="user", content="test")],
+            session_id="sess-test-1",
+        )
+
+        sessions = store.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["session_id"] == "sess-test-1"
+
+
+@pytest.mark.asyncio
+async def test_session_not_saved_without_session_id():
+    """No save when session_id is None."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = SessionStore(sessions_root=tmpdir)
+        registry = ToolRegistry()
+
+        loop = AgentLoop(
+            llm=MockLLM(LLMResponse(content="done")),
+            tool_registry=registry,
+            hooks=HookManager(),
+            session_store=store,
+        )
+
+        await loop.run([Message(role="user", content="test")])
+
+        sessions = store.list_sessions()
+        assert len(sessions) == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_state():
+    """Resume from snapshot restores mode, todos, skills, and injects resume marker."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = SessionStore(sessions_root=tmpdir)
+        registry = ToolRegistry()
+
+        loop = AgentLoop(
+            llm=MockLLM(LLMResponse(content="done")),
+            tool_registry=registry,
+            hooks=HookManager(),
+            session_store=store,
+            run_config=AgentRunConfig(mode=AgentMode.BUILD),
+        )
+
+        # Run once to create session
+        await loop.run(
+            [Message(role="user", content="first run")],
+            session_id="sess-resume-1",
+        )
+
+        # Load saved session
+        snapshot = store.load("sess-resume-1")
+        assert snapshot is not None
+
+        # Create a new loop and resume
+        registry2 = ToolRegistry()
+
+        class CapturingLLM:
+            def __init__(self):
+                self.messages = None
+
+            async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+                self.messages = list(messages)
+                return LLMResponse(content="resumed done")
+
+        llm2 = CapturingLLM()
+        loop2 = AgentLoop(
+            llm=llm2,
+            tool_registry=registry2,
+            hooks=HookManager(),
+            session_store=store,
+            run_config=AgentRunConfig(mode=AgentMode.BUILD),
+        )
+
+        await loop2.run(
+            [Message(role="user", content="ignored")],
+            session_id="sess-resume-1",
+            resume_snapshot=snapshot,
+        )
+
+        contents = "\n".join(m.content for m in llm2.messages)
+        assert "first run" in contents
+        assert "Session resumed" in contents
+        assert "ignored" in contents
+
+
+@pytest.mark.asyncio
+async def test_contextvar_set_in_execute_single_tool():
+    """current_tool_call_id ContextVar is set before tool execution."""
+    from agent.background import current_tool_call_id
+    import asyncio
+    import contextvars
+
+    captured_id = []
+
+    class ContextVarEchoTool(Tool):
+        name = "ContextVarEcho"
+        description = "Captures ContextVar"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            captured_id.append(current_tool_call_id.get())
+            return "captured"
+
+    class CVarLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="cv-test-id", name="ContextVarEcho", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(ContextVarEchoTool())
+    loop = AgentLoop(
+        llm=CVarLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    assert captured_id == ["cv-test-id"]

@@ -12,6 +12,19 @@ let slashMatches = [];
 let activeSlashIndex = 0;
 let shouldReconnect = true;
 const approvalCards = new Map();
+let pendingImages = [];
+let sendInFlight = false;
+const wsUploadWaiters = new Map();
+const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
+const MAX_CHAT_PAYLOAD_CHARS = 12 * 1024 * 1024;
+const WS_UPLOAD_CHUNK_CHARS = 256 * 1024;
+const HTTP_UPLOAD_TIMEOUT_MS = 30000;
+const WS_UPLOAD_EVENT_TIMEOUT_MS = 45000;
+const IMAGE_NORMALIZE_THRESHOLD_BYTES = 2 * 1024 * 1024;
+const MAX_NORMALIZED_IMAGE_SIDE = 1600;
+const JPEG_QUALITY = 0.82;
+const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const HEIC_IMAGE_TYPES = new Set(['image/heic', 'image/heif']);
 
 // --- DOM refs ---
 const messagesEl = document.getElementById('messages');
@@ -30,6 +43,9 @@ const planDocumentTitleEl = document.getElementById('plan-document-title');
 const planDocumentBodyEl = document.getElementById('plan-document-body');
 const planningPanel = document.getElementById('planning-panel');
 const planningItemsEl = document.getElementById('planning-items');
+const imagePreviewsEl = document.getElementById('image-previews');
+const imageFileInput = document.getElementById('image-file-input');
+const uploadBtn = document.getElementById('upload-btn');
 
 // --- Tab switching ---
 document.querySelectorAll('.tab').forEach(tab => {
@@ -57,7 +73,17 @@ async function connect() {
       const event = JSON.parse(e.data);
       handleEvent(event);
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      if (event.code === 1009) {
+        addMessage('error', 'Image message too large. Try a smaller image.');
+        sendBtn.disabled = false;
+        sendInFlight = false;
+      } else if (sendInFlight) {
+        addMessage('error', 'Connection closed before the message was sent. Reconnect and try again.');
+        sendBtn.disabled = false;
+        sendInFlight = false;
+      }
+      rejectWsUploadWaiters(new Error('connection closed during image upload'));
       statusEl.textContent = shouldReconnect ? 'disconnected' : 'ended';
       if (shouldReconnect) {
         setTimeout(connect, 2000);
@@ -192,7 +218,18 @@ function handleEvent(event) {
       renderPlanDocument(event.data);
       break;
 
+    case 'todo_updated':
+      renderTodoState(event.data);
+      break;
+
     case 'pong':
+      break;
+
+    case 'image_upload_started':
+    case 'image_upload_chunk_ack':
+    case 'image_upload_complete':
+    case 'image_upload_error':
+      handleWsUploadEvent(event);
       break;
   }
 }
@@ -201,6 +238,10 @@ function syncMode(mode) {
   currentMode = mode || currentMode;
   modeValueEl.textContent = currentMode;
   modeSelectEl.value = currentMode;
+  planningItemsEl.textContent = '';
+  planningPanel.hidden = true;
+  planningPanel.querySelector('.planning-panel-header').textContent =
+    currentMode === 'plan' ? 'Plan' : 'Progress';
 }
 
 // --- Message rendering ---
@@ -226,6 +267,82 @@ function addMessage(role, content) {
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return body;
+}
+
+function addUserMessage(content, images) {
+  const body = addMessage('user', content || '');
+  if (images && images.length > 0) {
+    appendMessageImages(body, images);
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function appendMessageImages(body, images) {
+  const grid = document.createElement('div');
+  grid.className = 'message-images';
+  images.forEach((image) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'message-image-button';
+    button.title = image.name || 'image';
+    button.setAttribute('aria-label', `Open ${image.name || 'image'}`);
+
+    const img = document.createElement('img');
+    img.src = image.data_url;
+    img.alt = image.name || 'uploaded image';
+    button.appendChild(img);
+    button.addEventListener('click', () => openImageLightbox(image.data_url, image.name || 'uploaded image'));
+    grid.appendChild(button);
+  });
+  body.appendChild(grid);
+}
+
+function openImageLightbox(dataUrl, name) {
+  let lightbox = document.getElementById('image-lightbox');
+  if (!lightbox) {
+    lightbox = document.createElement('div');
+    lightbox.id = 'image-lightbox';
+    lightbox.className = 'image-lightbox';
+    lightbox.hidden = true;
+    lightbox.setAttribute('role', 'dialog');
+    lightbox.setAttribute('aria-modal', 'true');
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'image-lightbox-close';
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Close image preview');
+
+    const img = document.createElement('img');
+    img.className = 'image-lightbox-img';
+
+    lightbox.appendChild(close);
+    lightbox.appendChild(img);
+    document.body.appendChild(lightbox);
+
+    close.addEventListener('click', closeImageLightbox);
+    lightbox.addEventListener('click', (event) => {
+      if (event.target === lightbox) {
+        closeImageLightbox();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !lightbox.hidden) {
+        closeImageLightbox();
+      }
+    });
+  }
+
+  const img = lightbox.querySelector('.image-lightbox-img');
+  img.src = dataUrl;
+  img.alt = name;
+  lightbox.hidden = false;
+}
+
+function closeImageLightbox() {
+  const lightbox = document.getElementById('image-lightbox');
+  if (!lightbox) return;
+  lightbox.hidden = true;
 }
 
 function appendAssistantContent(body, content) {
@@ -409,6 +526,7 @@ function renderPlanningState(state) {
     return;
   }
 
+  planningPanel.querySelector('.planning-panel-header').textContent = 'Plan';
   planningPanel.hidden = false;
   for (const item of items) {
     const row = document.createElement('li');
@@ -417,6 +535,44 @@ function renderPlanningState(state) {
     const status = document.createElement('span');
     status.className = 'planning-status';
     status.textContent = item.status;
+
+    const content = document.createElement('span');
+    content.className = 'planning-content';
+    content.textContent = item.content || '';
+
+    row.appendChild(status);
+    row.appendChild(content);
+
+    if (item.note) {
+      const note = document.createElement('span');
+      note.className = 'planning-note';
+      note.textContent = item.note;
+      row.appendChild(note);
+    }
+
+    planningItemsEl.appendChild(row);
+  }
+}
+
+function renderTodoState(state) {
+  const items = state && Array.isArray(state.items) ? state.items : [];
+  planningItemsEl.textContent = '';
+
+  if (items.length === 0) {
+    planningPanel.hidden = true;
+    return;
+  }
+
+  planningPanel.querySelector('.planning-panel-header').textContent = 'Progress';
+  planningPanel.hidden = false;
+  const statusLabels = { pending: ' ', in_progress: '▶', completed: '✓' };
+  for (const item of items) {
+    const row = document.createElement('li');
+    row.className = `planning-item status-${item.status}`;
+
+    const status = document.createElement('span');
+    status.className = 'planning-status';
+    status.textContent = statusLabels[item.status] || item.status;
 
     const content = document.createElement('span');
     content.className = 'planning-content';
@@ -462,18 +618,461 @@ function renderPlanDocument(document) {
   }
 }
 
+// --- Image upload ---
+uploadBtn.addEventListener('click', () => imageFileInput.click());
+
+imageFileInput.addEventListener('change', () => {
+  const files = imageFileInput.files;
+  if (!files || files.length === 0) return;
+  for (const file of files) {
+    addImageFromFile(file);
+  }
+  imageFileInput.value = '';
+});
+
+document.addEventListener('paste', (e) => {
+  if (document.activeElement !== userInput) return;
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      addImageFromFile(item.getAsFile());
+    }
+  }
+});
+
+// Drag and drop
+const inputArea = document.getElementById('input-area');
+let dragCounter = 0;
+
+inputArea.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+inputArea.addEventListener('dragenter', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter++;
+  inputArea.classList.add('drag-over');
+});
+
+inputArea.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    inputArea.classList.remove('drag-over');
+  }
+});
+
+inputArea.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  dragCounter = 0;
+  inputArea.classList.remove('drag-over');
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || files.length === 0) return;
+  for (const file of files) {
+    if (isImageFile(file)) {
+      addImageFromFile(file);
+    }
+  }
+});
+
+async function addImageFromFile(file) {
+  if (!isImageFile(file)) return;
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    addMessage('error', 'Image too large (max 20MB)');
+    return;
+  }
+  try {
+    const dataUrl = await prepareImageForSend(file);
+    const pendingImage = {
+      data_url: dataUrl,
+      name: file.name,
+      upload_id: null,
+      upload_error: null,
+      upload_promise: null,
+    };
+    pendingImages.push(pendingImage);
+    renderImagePreviews();
+    pendingImage.upload_promise = uploadImageDataUrl(dataUrl, file.name)
+      .then(result => {
+        pendingImage.upload_id = result.upload_id;
+        return result;
+      })
+      .catch(error => {
+        pendingImage.upload_error = error;
+        throw error;
+      })
+      .finally(renderImagePreviews);
+  } catch (e) {
+    addMessage('error', `Failed to read image: ${e.message}`);
+  }
+}
+
+async function prepareImageForSend(file) {
+  const type = normalizedImageType(file);
+  if (type === 'image/gif') {
+    return readFileAsDataUrl(file);
+  }
+  if (SUPPORTED_IMAGE_TYPES.has(type) && file.size <= IMAGE_NORMALIZE_THRESHOLD_BYTES) {
+    return readFileAsDataUrl(file);
+  }
+  return convertImageToJpegDataUrl(file);
+}
+
+function isImageFile(file) {
+  if (!file) return false;
+  if (file.type && file.type.startsWith('image/')) return true;
+  return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(file.name || '');
+}
+
+function normalizedImageType(file) {
+  const type = (file.type || '').toLowerCase();
+  if (type) return type;
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.heic')) return 'image/heic';
+  if (name.endsWith('.heif')) return 'image/heif';
+  if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+  if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.gif')) return 'image/gif';
+  if (name.endsWith('.webp')) return 'image/webp';
+  return '';
+}
+
+async function convertImageToJpegDataUrl(file) {
+  const source = await decodeImageForCanvas(file);
+  const maxSide = Math.max(source.width || 0, source.height || 0);
+  if (!maxSide) {
+    closeImageSource(source);
+    throw new Error('Unable to read image dimensions');
+  }
+  const scale = Math.min(1, MAX_NORMALIZED_IMAGE_SIDE / maxSide);
+  const width = Math.max(1, Math.round(source.width * scale));
+  const height = Math.max(1, Math.round(source.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    closeImageSource(source);
+    throw new Error('Canvas is not available');
+  }
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(source, 0, 0, width, height);
+  closeImageSource(source);
+  const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+  if (!dataUrl || dataUrl === 'data:,') {
+    throw new Error('Failed to convert image');
+  }
+  return dataUrl;
+}
+
+async function decodeImageForCanvas(file) {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(file);
+    } catch (e) {
+      // Fall back to HTMLImageElement decoding below.
+    }
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  return loadImageElement(dataUrl, file);
+}
+
+function loadImageElement(dataUrl, file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => {
+      if (HEIC_IMAGE_TYPES.has(normalizedImageType(file))) {
+        reject(new Error('HEIC image could not be decoded by this browser. Choose a JPEG/PNG image or set iPhone Camera Formats to Most Compatible.'));
+      } else {
+        reject(new Error('Failed to decode image'));
+      }
+    };
+    img.src = dataUrl;
+  });
+}
+
+function closeImageSource(source) {
+  if (source && typeof source.close === 'function') {
+    source.close();
+  }
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to read file'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadImageDataUrl(dataUrl, name) {
+  const blob = dataUrlToBlob(dataUrl);
+  const formData = new FormData();
+  formData.append('file', blob, name || `upload.${blob.type.split('/')[1] || 'jpg'}`);
+  let response;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timeoutId = null;
+  try {
+    if (controller) {
+      timeoutId = setTimeout(() => controller.abort(), HTTP_UPLOAD_TIMEOUT_MS);
+    }
+    response = await fetch('/api/uploads', {
+      method: 'POST',
+      body: formData,
+      signal: controller ? controller.signal : undefined,
+    });
+  } catch (error) {
+    return uploadImageDataUrlOverWebSocket(dataUrl, name, error);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+  let result = {};
+  try {
+    result = await response.json();
+  } catch (e) {
+    result = {};
+  }
+  if (!response.ok) {
+    throw new Error(result.error || `upload failed (${response.status})`);
+  }
+  if (!result.upload_id) {
+    throw new Error('upload response missing upload_id');
+  }
+  return result;
+}
+
+async function uploadImageDataUrlOverWebSocket(dataUrl, name, originalError) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    throw originalError || new Error('connection is not ready');
+  }
+  const parsed = parseDataUrl(dataUrl);
+  const clientUploadId = (
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  );
+
+  ws.send(JSON.stringify({
+    type: 'image_upload_start',
+    client_upload_id: clientUploadId,
+    name: name || 'upload',
+    mime: parsed.mime,
+    total_chars: parsed.base64.length,
+  }));
+  await waitForWsUploadEvent(clientUploadId, new Set(['image_upload_started']));
+
+  for (let offset = 0, index = 0; offset < parsed.base64.length; offset += WS_UPLOAD_CHUNK_CHARS, index++) {
+    ws.send(JSON.stringify({
+      type: 'image_upload_chunk',
+      client_upload_id: clientUploadId,
+      index,
+      chunk: parsed.base64.slice(offset, offset + WS_UPLOAD_CHUNK_CHARS),
+    }));
+    await waitForWsUploadEvent(clientUploadId, new Set(['image_upload_chunk_ack']));
+  }
+
+  ws.send(JSON.stringify({
+    type: 'image_upload_finish',
+    client_upload_id: clientUploadId,
+  }));
+  return waitForWsUploadEvent(clientUploadId, new Set(['image_upload_complete']));
+}
+
+function dataUrlToBlob(dataUrl) {
+  const parsed = parseDataUrl(dataUrl);
+  const binary = atob(parsed.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: parsed.mime });
+}
+
+function parseDataUrl(dataUrl) {
+  const parts = dataUrl.split(',');
+  if (parts.length !== 2 || !parts[0].startsWith('data:')) {
+    throw new Error('invalid image data');
+  }
+  const mime = parts[0].slice(5).split(';')[0] || 'image/jpeg';
+  return { mime, base64: parts[1] };
+}
+
+function waitForWsUploadEvent(clientUploadId, expectedTypes, timeoutMs = WS_UPLOAD_EVENT_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      wsUploadWaiters.delete(clientUploadId);
+      reject(new Error('image upload timed out'));
+    }, timeoutMs);
+    wsUploadWaiters.set(clientUploadId, {
+      expectedTypes,
+      resolve: (data) => {
+        clearTimeout(timer);
+        resolve(data);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+  });
+}
+
+function handleWsUploadEvent(event) {
+  const data = event.data || {};
+  const clientUploadId = data.client_upload_id || '';
+  const waiter = wsUploadWaiters.get(clientUploadId);
+  if (!waiter) return;
+  if (event.type === 'image_upload_error') {
+    wsUploadWaiters.delete(clientUploadId);
+    waiter.reject(new Error(data.message || 'image upload failed'));
+    return;
+  }
+  if (!waiter.expectedTypes.has(event.type)) return;
+  wsUploadWaiters.delete(clientUploadId);
+  waiter.resolve(data);
+}
+
+function rejectWsUploadWaiters(error) {
+  for (const [clientUploadId, waiter] of wsUploadWaiters.entries()) {
+    wsUploadWaiters.delete(clientUploadId);
+    waiter.reject(error);
+  }
+}
+
+function removeImage(index) {
+  pendingImages.splice(index, 1);
+  renderImagePreviews();
+}
+
+function renderImagePreviews() {
+  if (!imagePreviewsEl) return;
+  imagePreviewsEl.textContent = '';
+  if (pendingImages.length === 0) {
+    imagePreviewsEl.hidden = true;
+    return;
+  }
+  imagePreviewsEl.hidden = false;
+  pendingImages.forEach((img, index) => {
+    const thumb = document.createElement('div');
+    thumb.className = 'image-preview-item';
+    const pic = document.createElement('img');
+    pic.src = img.data_url;
+    pic.alt = img.name || 'pasted image';
+    if (img.upload_error) {
+      thumb.classList.add('upload-error');
+      thumb.title = img.upload_error.message || 'Upload failed';
+    } else if (!img.upload_id) {
+      thumb.classList.add('uploading');
+      thumb.title = 'Uploading image';
+    }
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'image-preview-remove';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', 'Remove image');
+    remove.addEventListener('click', () => removeImage(index));
+    thumb.appendChild(pic);
+    thumb.appendChild(remove);
+    imagePreviewsEl.appendChild(thumb);
+  });
+}
+
 // --- Send message ---
 async function sendMessage() {
   const text = userInput.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const hasImages = pendingImages.length > 0;
+  if (!text && !hasImages) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    addMessage('error', 'Connection is not ready. Reconnect and try again.');
+    sendBtn.disabled = false;
+    statusEl.textContent = 'disconnected';
+    return;
+  }
 
   hideSlashSuggestions();
-  addMessage('user', text);
+  let sentImages = [];
+
+  if (hasImages) {
+    statusEl.textContent = 'uploading image...';
+    sendBtn.disabled = true;
+    try {
+      await waitForPendingImageUploads();
+    } catch (e) {
+      addMessage('error', `Image upload failed: ${e.message}`);
+      sendBtn.disabled = false;
+      statusEl.textContent = 'connected';
+      return;
+    }
+    sentImages = pendingImages.map(img => ({
+      data_url: img.data_url,
+      name: img.name || 'pasted',
+      upload_id: img.upload_id,
+    }));
+  }
+
+  const payload = { type: 'chat', content: text || '' };
+  if (hasImages) {
+    payload.images = sentImages.map(img => ({ upload_id: img.upload_id }));
+  }
+  const payloadJson = JSON.stringify(payload);
+  if (payloadJson.length > MAX_CHAT_PAYLOAD_CHARS) {
+    addMessage('error', 'Image message too large. Try a smaller image.');
+    sendBtn.disabled = false;
+    statusEl.textContent = 'connected';
+    return;
+  }
+
+  if (hasImages) {
+    addUserMessage(text, sentImages);
+  } else {
+    addMessage('user', text);
+  }
+
   userInput.value = '';
   sendBtn.disabled = true;
+  sendInFlight = true;
   statusEl.textContent = text.startsWith('/') ? 'running command...' : 'thinking...';
 
-  ws.send(JSON.stringify({ type: 'chat', content: text }));
+  if (hasImages) {
+    pendingImages = [];
+    renderImagePreviews();
+  }
+  ws.send(payloadJson);
+}
+
+async function waitForPendingImageUploads() {
+  for (const img of pendingImages) {
+    if (img.upload_error) {
+      throw img.upload_error;
+    }
+    if (img.upload_promise) {
+      await img.upload_promise;
+    }
+    if (img.upload_error) {
+      throw img.upload_error;
+    }
+    if (!img.upload_id) {
+      throw new Error('image upload did not finish');
+    }
+  }
 }
 
 function sendModeChange() {
@@ -613,6 +1212,7 @@ const origHandleEvent = handleEvent;
 handleEvent = function(event) {
   origHandleEvent(event);
   if (event.type === 'done' || event.type === 'error') {
+    sendInFlight = false;
     sendBtn.disabled = !shouldReconnect;
     statusEl.textContent = shouldReconnect ? 'connected' : 'ended';
   }

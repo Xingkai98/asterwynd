@@ -1,13 +1,12 @@
 # tests/web_tests/conftest.py
 """Fixtures and markers for web UI browser tests."""
 import os
-from pathlib import Path
 import pytest
 
-# Load .env for API key detection (same as cli.py does)
+# Load .env for API key detection (same as agent/main.py does)
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+    load_dotenv()
 except ImportError:
     pass
 

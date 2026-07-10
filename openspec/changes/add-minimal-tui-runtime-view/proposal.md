@@ -34,7 +34,7 @@ CLI 单轮和 Web UI 已存在，但终端中缺少一个适合 coding-agent 长
 ## Impact Analysis
 
 - 影响代码：
-  - `cli.py`
+  - `agent/main.py`
   - `agent/tui/`：Textual app、事件 reducer、session/controller。
   - Agent 构造路径：复用现有 `build_agent_async` / `build_agent` 和 `on_event` 回调。
   - Slash command：复用 `agent.commands.SlashCommandRegistry` 和技能注册到命令 catalog 的机制。

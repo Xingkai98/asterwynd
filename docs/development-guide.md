@@ -35,13 +35,13 @@ uv run pytest tests/agent/tools/test_registry.py -v
 运行 CLI：
 
 ```bash
-uv run python cli.py main "用 Read 工具读 /tmp"
+uv run asterwynd run "用 Read 工具读 /tmp"
 ```
 
 交互模式：
 
 ```bash
-uv run python cli.py main --interactive
+uv run asterwynd
 ```
 
 交互模式内置 slash commands：
@@ -64,19 +64,19 @@ uv run python cli.py main --interactive
 启动 Web UI：
 
 ```bash
-uv run python cli.py web --port 8000
+uv run asterwynd web --port 8000
 ```
 
 启动 Debug Web UI：
 
 ```bash
-ASTERWYND_DEBUG=enabled uv run python cli.py web --host 127.0.0.1 --port 8000
+ASTERWYND_DEBUG=enabled uv run asterwynd web --host 127.0.0.1 --port 8000
 ```
 
 运行 fake benchmark smoke：
 
 ```bash
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent fake \
   --source-repo . \
   --runs-dir /tmp/smoke \
@@ -88,7 +88,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 运行 Asterwynd benchmark：
 
 ```bash
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent asterwynd \
   --source-repo . \
   --runs-dir /tmp/bench
@@ -99,7 +99,7 @@ uv run python cli.py benchmark benchmarks/tasks \
 并行 benchmark：
 
 ```bash
-uv run python cli.py benchmark benchmarks/tasks \
+uv run asterwynd benchmark benchmarks/tasks \
   --agent asterwynd \
   --provider anthropic \
   --parallel 4 \

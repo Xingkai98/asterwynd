@@ -25,6 +25,8 @@ from agent.tools.builtin.lsp import (
 from agent.tools.builtin.read import ReadTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
+from agent.memory.persistent import PersistentMemory
+from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool
 from agent.tools.builtin.write import WriteTool
 from agent.tools.registry import ToolRegistry
 from agent.workspace_policy import WorkspacePolicy
@@ -51,6 +53,11 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "WebFetch",
     "WebSearch",
     "Write",
+    "TaskOutput",
+    "TaskStop",
+    "TodoWrite",
+    "SaveMemory",
+    "RecallMemory",
     "ActivateSkill",
 }
 
@@ -64,6 +71,7 @@ def build_default_tool_registry(
     web_search_config: WebSearchConfig | None = None,
     mcp_manager: McpManager | None = None,
     tools: list[Tool] | None = None,
+    persistent_memory: PersistentMemory | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     default_tools = tools or get_default_tools(
@@ -71,6 +79,7 @@ def build_default_tool_registry(
         ignore_patterns=ignore_patterns,
         code_intelligence_config=code_intelligence_config,
         web_search_config=web_search_config,
+        persistent_memory=persistent_memory,
     )
     for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
         registry.register(tool)
@@ -91,6 +100,7 @@ def build_coding_tool_registry(
     ignore_patterns: tuple[str, ...] = (),
     code_intelligence_config: CodeIntelligenceConfig | None = None,
     mcp_manager: McpManager | None = None,
+    persistent_memory: PersistentMemory | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     for tool in [
@@ -98,6 +108,7 @@ def build_coding_tool_registry(
         policy=policy,
         ignore_patterns=ignore_patterns,
         code_intelligence_config=code_intelligence_config,
+        persistent_memory=persistent_memory,
         ),
         *_build_mcp_tools(mcp_manager),
     ]:
@@ -138,8 +149,10 @@ def get_default_tools(
     ignore_patterns: tuple[str, ...] = (),
     code_intelligence_config: CodeIntelligenceConfig | None = None,
     web_search_config: WebSearchConfig | None = None,
+    persistent_memory: PersistentMemory | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
+    pmem = persistent_memory or PersistentMemory(policy.workspace_root)
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     return [
         ReadTool(policy=policy),
@@ -161,6 +174,8 @@ def get_default_tools(
             code_intelligence_config=code_intelligence_config,
         ),
         *_build_lsp_tools(policy, lsp_manager),
+        SaveMemoryTool(memory=pmem),
+        RecallMemoryTool(memory=pmem),
     ]
 
 
@@ -169,8 +184,10 @@ def get_coding_tools(
     *,
     ignore_patterns: tuple[str, ...] = (),
     code_intelligence_config: CodeIntelligenceConfig | None = None,
+    persistent_memory: PersistentMemory | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
+    pmem = persistent_memory or PersistentMemory(policy.workspace_root)
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     return [
         ReadTool(policy=policy),
@@ -192,4 +209,6 @@ def get_coding_tools(
         GrepTool(policy=policy),
         BashTool(policy=policy),
         *_build_lsp_tools(policy, lsp_manager),
+        SaveMemoryTool(memory=pmem),
+        RecallMemoryTool(memory=pmem),
     ]

@@ -218,3 +218,35 @@ def test_inspect_transcript_recent_messages_respects_limit(manager):
     assert inspected["scope"] == "recent_messages"
     assert inspected["truncated"] is True
     assert [msg["content"] for msg in inspected["messages"]] == ["one", "two"]
+
+
+def test_inspect_transcript_uses_extract_text():
+    """inspect_transcript 中 msg.content 使用 extract_text 提取纯文本"""
+    from agent.message import TextBlock, ImageBlock, ImageUrl
+
+    manager = SubAgentManager(
+        llm=StaticLLM(),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BUILD,
+    )
+    created = manager.create_subagent(name="runner")
+    session = manager._sessions[created["subagent_id"]]
+    session.messages.append(
+        Message(role="assistant", content=[
+            TextBlock(text="I found an image:"),
+            ImageBlock(
+                image_url=ImageUrl(url="data:image/png;base64,abcdef"),
+                file_path="/tmp/found.png",
+            ),
+        ]),
+    )
+    inspected = manager.inspect_transcript(
+        subagent_id=created["subagent_id"],
+        scope="recent_messages",
+        limit=1,
+    )
+    content = inspected["messages"][0]["content"]
+    assert "I found an image:" in content
+    # 不应包含 base64 数据
+    assert "base64" not in content
+    assert "abcdef" not in content

@@ -22,24 +22,25 @@ class ToolCallTrace:
 class TracingHook:
     def __init__(self):
         self.calls: list[ToolCallTrace] = []
-        self._start: float = 0
+        self._pending: dict[str, tuple[ToolCallTrace, float]] = {}
 
     async def before_tool_execute(self, tool_call: ToolCall) -> None:
-        self._start = time.perf_counter()
         trace = ToolCallTrace(
             tool_name=tool_call.name,
             arguments=tool_call.arguments,
         )
         self.calls.append(trace)
+        self._pending[tool_call.id] = (trace, time.perf_counter())
 
     async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
-        duration_ms = (time.perf_counter() - self._start) * 1000
-        success = not result.startswith("[Error")
-        # Update the trace created in before_tool_execute
-        if self.calls:
-            self.calls[-1].duration_ms = round(duration_ms, 2)
-            self.calls[-1].success = success
-        logger.debug(f"[Trace] {tool_call.name} took {duration_ms:.2f}ms success={success}")
+        entry = self._pending.pop(tool_call.id, None)
+        if entry is None:
+            return
+        trace, start = entry
+        duration_ms = (time.perf_counter() - start) * 1000
+        trace.duration_ms = round(duration_ms, 2)
+        trace.success = not result.startswith("[Error")
+        logger.debug(f"[Trace] {tool_call.name} took {duration_ms:.2f}ms success={trace.success}")
 
     def get_summary(self) -> dict:
         if not self.calls:

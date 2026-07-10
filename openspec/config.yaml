@@ -30,13 +30,13 @@ routing:
     executor: inline
     session_mode: same
   reviewing:
-    executor: subagent
+    executor: codex
     session_mode: new
   building:
     executor: inline
     session_mode: same
   code-review:
-    executor: subagent
+    executor: codex
     session_mode: new
   closing:
     executor: inline

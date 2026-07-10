@@ -2,10 +2,13 @@
 import asyncio
 import json
 import re
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta
-from agent.message import Message
+from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
+from agent.message import Message, TextBlock, ImageBlock
+
+if TYPE_CHECKING:
+    from agent.message import ContentBlock
 
 # Python string 中不允许出现的 surrogate character (U+D800-U+DFFF)
 SURROGATE_PATTERN = re.compile(r"[\ud800-\udfff]")
@@ -41,34 +44,58 @@ class AnthropicLLM(BaseLLM):
         tools: Optional[list[dict]] = None,
         model: Optional[str] = None,
     ) -> LLMResponse:
-        payload = self._build_payload(messages, tools, model)
-        if self.stream:
-            return await self._chat_stream(payload)
-        else:
-            return await self._chat_nonstream(payload)
+        resolved_model = model or self.model
+        mode = vision_mode(resolved_model)
+        has_images = _messages_have_images(messages)
+        try_vision = mode == "try_vision" and has_images
+        force_vision = try_vision or mode == "vision"
+
+        payload = self._build_payload(messages, tools, model, force_vision=force_vision)
+        try:
+            if self.stream:
+                return await self._chat_stream(payload)
+            else:
+                return await self._chat_nonstream(payload)
+        except Exception as e:
+            if not try_vision:
+                raise
+            if not _is_400_error(e):
+                raise
+            logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            logger.info(
+                "First attempt with images failed (400) for model=%s, retrying without images",
+                resolved_model,
+            )
+            payload = self._build_payload(messages, tools, model, force_vision=False)
+            if self.stream:
+                return await self._chat_stream(payload)
+            else:
+                return await self._chat_nonstream(payload)
 
     def _build_payload(
         self,
         messages: list[Message],
         tools: Optional[list[dict]] = None,
         model: Optional[str] = None,
+        force_vision: bool = True,
     ) -> dict:
-        model = model or self.model
-
         # 转换消息格式（流式/非流式共用）
         anthropic_messages = []
         system_content = []
 
+        resolved_model = model or self.model
         for msg in messages:
             if msg.role == "system":
-                system_content.append({"type": "text", "text": _strip_surrogates(msg.content)})
+                system_content.extend(self._system_content_to_anthropic(msg.content))
             elif msg.role == "user":
-                anthropic_messages.append({"role": "user", "content": _strip_surrogates(msg.content)})
+                anthropic_messages.append({"role": "user", "content": self._content_to_anthropic(msg.content, resolved_model, force_vision=force_vision)})
             elif msg.role == "assistant":
                 content_parts = []
                 # text must come before tool_use blocks (required by DeepSeek Anthropic endpoint)
                 if msg.content:
-                    content_parts.append({"type": "text", "text": _strip_surrogates(msg.content)})
+                    assistant_text = _strip_surrogates(msg.content) if isinstance(msg.content, str) else ""
+                    if assistant_text:
+                        content_parts.append({"type": "text", "text": assistant_text})
                 for tc in msg.tool_calls:
                     input_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
                     content_parts.append({
@@ -82,7 +109,7 @@ class AnthropicLLM(BaseLLM):
                 tool_result_block = {
                     "type": "tool_result",
                     "tool_use_id": msg.tool_call_id or "",
-                    "content": _strip_surrogates(msg.content),
+                    "content": self._content_to_anthropic(msg.content, resolved_model, force_vision=force_vision),
                 }
                 # Anthropic requires all tool_results for a single assistant turn
                 # to be in one user message. Merge consecutive tool messages.
@@ -97,7 +124,7 @@ class AnthropicLLM(BaseLLM):
                 })
 
         payload: dict = {
-            "model": model,
+            "model": resolved_model,
             "messages": anthropic_messages,
             "max_tokens": self.max_tokens,
         }
@@ -115,7 +142,46 @@ class AnthropicLLM(BaseLLM):
         model: Optional[str] = None,
     ):
         """流式输出 assistant text delta，并在末尾返回完整响应。"""
-        payload = self._build_payload(messages, tools, model)
+        resolved_model = model or self.model
+        mode = vision_mode(resolved_model)
+        has_images = _messages_have_images(messages)
+        try_vision = mode == "try_vision" and has_images
+        force_vision = try_vision or mode == "vision"
+
+        try:
+            async for event in self._stream_chat_impl(
+                messages,
+                tools,
+                resolved_model,
+                force_vision=force_vision,
+            ):
+                yield event
+        except Exception as e:
+            if not try_vision:
+                raise
+            if not _is_400_error(e):
+                raise
+            logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            logger.info(
+                "First stream attempt with images failed (400) for model=%s, retrying without images",
+                resolved_model,
+            )
+            async for event in self._stream_chat_impl(
+                messages,
+                tools,
+                resolved_model,
+                force_vision=False,
+            ):
+                yield event
+
+    async def _stream_chat_impl(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+        model: Optional[str] = None,
+        force_vision: bool = True,
+    ):
+        payload = self._build_payload(messages, tools, model, force_vision=force_vision)
         payload["stream"] = True
 
         stop_reason_map = {
@@ -234,6 +300,22 @@ class AnthropicLLM(BaseLLM):
             f"{self.base_url}/v1/messages",
             json=payload,
         )
+        status = response.status_code
+        if isinstance(status, int) and status >= 400:
+            error_body = ""
+            try:
+                error_body = response.text
+            except Exception:
+                pass
+            import logging as _logging
+            _logger = _logging.getLogger("asterwynd.llm.anthropic")
+            _logger.error(
+                "HTTP %s from %s\nResponse body: %s\nSanitized payload: %s",
+                status,
+                f"{self.base_url}/v1/messages",
+                error_body,
+                json.dumps(sanitize_payload_for_logging(payload), ensure_ascii=False),
+            )
         response.raise_for_status()
         raw = response.json()
         data = await raw if asyncio.iscoroutine(raw) else raw
@@ -318,4 +400,50 @@ class AnthropicLLM(BaseLLM):
             "name": func["name"],
             "description": func.get("description", ""),
             "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+        }
+
+    def _content_to_anthropic(self, content: str | list["ContentBlock"], model: str = "", force_vision: bool = True):
+        """将 Message.content 转换为 Anthropic API 格式"""
+        if isinstance(content, str):
+            return _strip_surrogates(content)
+        is_vision = force_vision
+        result = []
+        for block in content:
+            if isinstance(block, TextBlock):
+                result.append({"type": "text", "text": _strip_surrogates(block.text)})
+            elif isinstance(block, ImageBlock):
+                if is_vision:
+                    result.append(self._image_to_anthropic(block))
+                else:
+                    ref = block.file_path or "pasted image"
+                    result.append({"type": "text", "text": f"[image: {ref}]"})
+        return result
+
+    def _system_content_to_anthropic(self, content: str | list["ContentBlock"]) -> list[dict]:
+        """将 system content 转换为 Anthropic 格式（始终返回列表）"""
+        if isinstance(content, str):
+            return [{"type": "text", "text": _strip_surrogates(content)}]
+        result = []
+        for block in content:
+            if isinstance(block, TextBlock):
+                result.append({"type": "text", "text": _strip_surrogates(block.text)})
+        return result or [{"type": "text", "text": ""}]
+
+    def _image_to_anthropic(self, block: ImageBlock) -> dict:
+        """将 ImageBlock 转换为 Anthropic image source 格式"""
+        data_url = block.image_url.url
+        # data:image/png;base64,ABC...
+        if data_url.startswith("data:"):
+            header, b64 = data_url.split(",", 1)
+            mime = header.split(":")[1].split(";")[0] if ":" in header else "image/png"
+        else:
+            mime = "image/png"
+            b64 = data_url
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime,
+                "data": b64,
+            },
         }

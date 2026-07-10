@@ -41,6 +41,7 @@ MAX_ENTRIES = 500
 )
 class FindTool(Tool):
     read_only = True
+    parallelizable = True
     permission = WORKSPACE_READ_PERMISSION
 
     def __init__(
