@@ -54,6 +54,17 @@ class SkillRuntime:
     def activations(self) -> list[dict[str, str]]:
         return list(self._activations)
 
+    @property
+    def active_skill_names(self) -> list[str]:
+        return sorted(self._active_skill_names)
+
+    def restore_skills(self, names: list[str]) -> None:
+        """恢复已激活 skill 列表，自动过滤当前环境中不存在的 skill。"""
+        for name in names:
+            canonical = name.strip().lstrip("/").lower()
+            if canonical in self._skills_by_name:
+                self._active_skill_names.add(canonical)
+
     def begin_run(self, user_input: str) -> None:
         self._active_skill_names = set()
         self._activations = []

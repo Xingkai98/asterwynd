@@ -29,6 +29,18 @@ class PlanItem:
             "note": self.note,
         }
 
+    @staticmethod
+    def from_dict(data: dict) -> "PlanItem":
+        status = data.get("status", "pending")
+        if status not in PLAN_STATUSES:
+            status = "pending"
+        return PlanItem(
+            id=data.get("id", ""),
+            content=data.get("content", ""),
+            status=status,
+            note=data.get("note"),
+        )
+
 
 class PlanningManager:
     def __init__(self) -> None:

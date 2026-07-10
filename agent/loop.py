@@ -1,7 +1,9 @@
 # agent/loop.py
 import asyncio
 import logging
+import os
 import time
+from datetime import datetime, timezone
 from typing import Optional, Callable, Awaitable, TYPE_CHECKING
 
 from agent.approval import (
@@ -34,11 +36,14 @@ from agent.tools.builtin.subagents import (
     RunSubagentTool,
 )
 from agent.tools.builtin.activate_skill import ActivateSkillTool
+from agent.tools.builtin.tasks import TaskOutputTool, TaskStopTool
 from agent.tools.builtin.todo import TodoWriteTool
 from agent.hooks.builtin.retry import RetryHook
 from agent.planning import PlanItem
 from agent.skills.runtime import SkillRuntime
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
+from agent.background import BackgroundTaskManager, current_tool_call_id
+from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -64,6 +69,8 @@ class AgentLoop:
         skill_runtime: SkillRuntime | None = None,
         approval_handler: ApprovalHandler | None = None,
         mcp_manager: "McpManager | None" = None,
+        background_manager: BackgroundTaskManager | None = None,
+        session_store: SessionStore | None = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -85,6 +92,8 @@ class AgentLoop:
         self.skill_runtime = skill_runtime
         self.approval_handler = approval_handler or FailClosedApprovalHandler()
         self.mcp_manager = mcp_manager
+        self.background_manager = background_manager
+        self.session_store = session_store
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
@@ -92,14 +101,17 @@ class AgentLoop:
         self._plan_tools_registered = False
         self._subagent_tools_registered = False
         self._todo_tool_registered = False
+        self._bg_tools_registered = False
         self._execution_todos: list[PlanItem] = []
         self._todo_next_id = 1
+        self._iteration = 0
         self._retry = RetryHook(max_retries=3, base_delay=1.0)
         if self.runtime_state.current_mode is AgentMode.PLAN:
             self._ensure_plan_tools_registered()
         if expose_subagent_tools:
             self._ensure_subagent_tools_registered()
         self._ensure_todo_tool_registered()
+        self._ensure_background_task_tools_registered()
         if self.skill_runtime is not None:
             self.tool_registry.register(ActivateSkillTool(self.skill_runtime))
 
@@ -309,6 +321,82 @@ class AgentLoop:
         self._todo_next_id += 1
         return item_id
 
+    def _sync_todo_next_id(self) -> None:
+        max_id = 0
+        for item in self._execution_todos:
+            if item.id.startswith("todo-"):
+                try:
+                    n = int(item.id.split("-", 1)[1])
+                    if n > max_id:
+                        max_id = n
+                except ValueError:
+                    pass
+        self._todo_next_id = max_id + 1
+
+    def _ensure_background_task_tools_registered(self) -> None:
+        if self._bg_tools_registered:
+            return
+        if self.background_manager is None:
+            return
+        self.tool_registry.register(TaskOutputTool(
+            get_task_cb=self._get_task_output,
+        ))
+        self.tool_registry.register(TaskStopTool(
+            stop_task_cb=self._stop_task,
+        ))
+        try:
+            bash_tool = self.tool_registry.get_tool("Bash")
+            bash_tool.set_run_in_background_cb(self._run_in_background)
+        except KeyError:
+            pass
+        self._bg_tools_registered = True
+
+    async def _get_task_output(self, task_id: str, block: bool, timeout: float) -> str:
+        entry = self.background_manager.get_task_output(task_id)
+        if entry is None:
+            return f"Error: Unknown task {task_id}"
+
+        if not block or entry["status"] != "running":
+            return self._format_task_output(task_id, entry)
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        while True:
+            await asyncio.sleep(0.1)
+            entry = self.background_manager.get_task_output(task_id)
+            if entry is None or entry["status"] != "running":
+                return self._format_task_output(task_id, entry)
+            if asyncio.get_event_loop().time() >= deadline:
+                return f"[Task {task_id} timeout] {self._format_task_output(task_id, entry)}"
+
+    async def _stop_task(self, task_id: str) -> str:
+        result = await self.background_manager.stop(task_id)
+        if isinstance(result, dict):
+            task_status = result.get(task_id, result)
+            if isinstance(task_status, dict):
+                return (
+                    f"[Task {task_id} stopped]\n"
+                    f"status: {task_status.get('status', 'unknown')}\n"
+                    f"stdout: {task_status.get('stdout', '')}"
+                )
+        return str(result)
+
+    async def _run_in_background(self, cmd: str, cwd: str, timeout: float | None, tool_call_id: str) -> str:
+        return await self.background_manager.start(
+            cmd=cmd,
+            tool_call_id=tool_call_id,
+            cwd=cwd,
+            timeout=timeout,
+        )
+
+    @staticmethod
+    def _format_task_output(task_id: str, entry: dict) -> str:
+        return (
+            f"[Task {task_id}]\n"
+            f"status: {entry['status']}\n"
+            f"exit_code: {entry.get('exit_code')}\n"
+            f"stdout: {entry.get('stdout', '')}"
+        )
+
     @property
     def execution_todos(self) -> list[PlanItem]:
         return list(self._execution_todos)
@@ -327,6 +415,7 @@ class AgentLoop:
         trace_recorder: Optional["TraceRecorder"] = None,
         session_id: str | None = None,
         run_id: str | None = None,
+        resume_snapshot: SessionSnapshot | None = None,
     ) -> RunResult:
         resolved_run_id = run_id or new_run_id()
         if trace_recorder:
@@ -345,8 +434,16 @@ class AgentLoop:
                 trace_recorder,
                 session_id=session_id,
                 run_id=resolved_run_id,
+                resume_snapshot=resume_snapshot,
             )
         finally:
+            if self.background_manager is not None:
+                self.background_manager.cleanup()
+            if self.session_store is not None and session_id:
+                try:
+                    self._save_session(messages, session_id, resolved_run_id, resume_snapshot)
+                except Exception:
+                    logger.warning("Failed to save session", exc_info=True)
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
 
@@ -357,29 +454,74 @@ class AgentLoop:
         trace_recorder: Optional["TraceRecorder"] = None,
         session_id: str | None = None,
         run_id: str | None = None,
+        resume_snapshot: SessionSnapshot | None = None,
     ) -> RunResult:
         tool_calls_made: list[ToolCallMade] = []
-        mode = self.runtime_state.current_mode.value
-        if self.skill_runtime is not None:
-            self.skill_runtime.begin_run(self._last_user_content(messages))
+        start_iteration = 0
 
-        logger.info(
-            "Agent run started mode=%s session_id=%s run_id=%s",
-            mode,
-            session_id or "",
-            run_id or "",
-        )
-        await self.hooks.on_run_started(AgentRunConfig(mode=self.runtime_state.current_mode))
-        if trace_recorder:
-            trace_recorder.record_run_started(mode)
-        if on_event:
-            event_data = {"mode": mode, "run_id": run_id}
-            if session_id is not None:
-                event_data["session_id"] = session_id
-            await on_event("run_started", event_data)
+        if resume_snapshot is not None:
+            current_system = [m for m in messages if m.role == "system"]
+            new_user_input = [m for m in messages if m.role != "system"]
 
-        for iteration in range(self.max_iterations):
+            if resume_snapshot.mode != self.runtime_state.current_mode:
+                await self.set_mode(resume_snapshot.mode, source="resume")
+            self._execution_todos = list(resume_snapshot.todos)
+            self._sync_todo_next_id()
+            if self.skill_runtime is not None and resume_snapshot.active_skills:
+                self.skill_runtime.restore_skills(resume_snapshot.active_skills)
+
+            conversation = [m for m in resume_snapshot.messages if m.role != "system"]
+            messages.clear()
+            messages.extend(current_system)
+            messages.extend(conversation)
+            messages.append(Message(role="user", content="[Session resumed. Continuing from where we left off.]"))
+            messages.extend(new_user_input)
+            start_iteration = 0
+
+            mode = self.runtime_state.current_mode.value
+            logger.info(
+                "Agent run resumed mode=%s session_id=%s run_id=%s",
+                mode,
+                session_id or "",
+                run_id or "",
+            )
+        else:
+            mode = self.runtime_state.current_mode.value
+            if self.skill_runtime is not None:
+                self.skill_runtime.begin_run(self._last_user_content(messages))
+
+            logger.info(
+                "Agent run started mode=%s session_id=%s run_id=%s",
+                mode,
+                session_id or "",
+                run_id or "",
+            )
+            await self.hooks.on_run_started(AgentRunConfig(mode=self.runtime_state.current_mode))
+            if trace_recorder:
+                trace_recorder.record_run_started(mode)
+            if on_event:
+                event_data = {"mode": mode, "run_id": run_id}
+                if session_id is not None:
+                    event_data["session_id"] = session_id
+                await on_event("run_started", event_data)
+
+        for iteration in range(start_iteration, self.max_iterations):
+            self._iteration = iteration
             await self.hooks.before_iteration(iteration, messages)
+
+            if self.background_manager is not None:
+                completed = self.background_manager.check_completed()
+                for task in completed:
+                    observation = (
+                        f"[Background task {task['task_id']} completed]\n"
+                        f"Command: {task['command']}\n"
+                        f"Status: {task['status']}\n"
+                        f"Exit code: {task['exit_code']}\n"
+                        f"Output:\n{task['stdout']}"
+                    )
+                    if task.get("output_truncated"):
+                        observation += "\n[output truncated]"
+                    messages.append(Message(role="user", content=observation))
 
             tool_schemas = self.tool_registry.get_all_schemas()
 
@@ -730,6 +872,7 @@ class AgentLoop:
         """Execute one tool call. `tool_call` has original args for execution;
         `observed_tool_call` may have redacted args for hooks/events."""
         await self.hooks.before_tool_execute(observed_tool_call)
+        current_tool_call_id.set(tool_call.id)
         tool_start = time.time()
         if tool_call.name == "Bash":
             try:
@@ -935,3 +1078,43 @@ class AgentLoop:
             if message.role == "user":
                 return message.content
         return ""
+
+    def _save_session(
+        self,
+        messages: list[Message],
+        session_id: str,
+        run_id: str,
+        resume_snapshot: SessionSnapshot | None,
+    ) -> None:
+        if self.session_store is None:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        created_at = resume_snapshot.created_at if resume_snapshot else now
+        snapshot = SessionSnapshot(
+            schema_version=CURRENT_SCHEMA_VERSION,
+            session_id=session_id,
+            created_at=created_at,
+            updated_at=now,
+            messages=list(messages),
+            mode=self.runtime_state.current_mode,
+            todos=list(self._execution_todos),
+            active_skills=self.skill_runtime.active_skill_names if self.skill_runtime else [],
+            run_id=run_id,
+            iteration=self._iteration,
+            runtime_fingerprint=self._build_runtime_fingerprint(),
+        )
+        self.session_store.save(snapshot)
+
+    def _build_runtime_fingerprint(self) -> dict:
+        model = getattr(self.llm, "model", "unknown")
+        provider = getattr(self.llm, "provider", "unknown")
+        try:
+            from agent import __version__ as agent_version
+        except ImportError:
+            agent_version = "unknown"
+        return {
+            "cwd": os.getcwd(),
+            "model": str(model),
+            "provider": str(provider),
+            "agent_version": agent_version,
+        }

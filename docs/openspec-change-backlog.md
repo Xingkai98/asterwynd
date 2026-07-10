@@ -54,7 +54,6 @@
 - `improve-agent-execution-foundation`：已合入并归档。
 - `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
 - `add-multimodal-input-support`：图片/多模态输入——Message 协议扩展 + Read 工具图片支持。
-- `add-background-task-execution-and-session-persistence`：后台任务执行 + 会话保存/恢复。
 
 ### 第八批：高风险 browser 能力
 
@@ -97,24 +96,7 @@
 - Read 工具图片识别 + base64 编码。
 - OpenAI/Anthropic adapter 多模态格式转换。
 
-### 2. `add-background-task-execution-and-session-persistence`
-
-状态：未实现。
-
-批次：第七批第三批，可并行推进。
-
-建议顺序原因：
-
-- Bash 后台执行和 session 持久化都不改变已有核心路径语义。
-- 新增组件（BackgroundTaskManager、SessionStore）不与其他 change 冲突。
-
-主要交付：
-
-- Bash `run_in_background` 参数 + BackgroundTaskManager。
-- `TaskOutput` / `TaskStop` 工具。
-- SessionStore 序列化/恢复 + CLI `--resume`。
-
-### 3. `add-minimal-tui-runtime-view`
+### 2. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 

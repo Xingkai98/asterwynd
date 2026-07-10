@@ -24,7 +24,17 @@ class Message:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Message":
-        return cls(**data)
+        from agent.llm import ToolCallDelta
+
+        tool_calls_raw = data.get("tool_calls", [])
+        tool_calls = []
+        for tc in tool_calls_raw:
+            if isinstance(tc, dict):
+                tool_calls.append(ToolCallDelta(**tc))
+            else:
+                tool_calls.append(tc)
+        data_copy = {**data, "tool_calls": tool_calls}
+        return cls(**data_copy)
 
 def tool_result_message(tool_call_id: str, content: str) -> "Message":
     """快捷构造工具结果消息"""

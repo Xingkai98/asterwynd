@@ -1,12 +1,17 @@
 # tests/agent/test_loop.py
 import pytest
 import json
+import tempfile
+import os
 from agent.approval import ApprovalDecisionStatus, ApprovalResponse
+from agent.background import BackgroundTaskManager
 from agent.loop import AgentLoop
 from agent.message import Message, system_message
 from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
+from agent.session import SessionStore, SessionSnapshot
 from agent.tools.base import Tool, tool_parameters, ToolCall
 from agent.tools.registry import ToolRegistry
+from agent.tools.sandbox import SandboxExecutor
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.trace_recorder import TraceRecorder
@@ -1713,3 +1718,254 @@ async def test_unknown_tool_defaults_to_non_parallelizable():
     # The Read tool should still execute
     assert result.tool_calls_made[1].name == "SlowRead"
     assert result.tool_calls_made[1].result.startswith("read after")
+
+
+# ── Background task integration tests ──
+
+
+@pytest.mark.asyncio
+async def test_background_task_tools_registered_when_manager_provided():
+    """TaskOutput and TaskStop are registered, BashTool gets callback."""
+    sandbox = SandboxExecutor()
+    bg_manager = BackgroundTaskManager(sandbox=sandbox)
+    registry = ToolRegistry()
+
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=registry,
+        hooks=HookManager(),
+        background_manager=bg_manager,
+    )
+
+    schemas = {s["function"]["name"] for s in registry.get_all_schemas()}
+    assert "TaskOutput" in schemas
+    assert "TaskStop" in schemas
+
+
+@pytest.mark.asyncio
+async def test_background_task_tools_not_registered_without_manager():
+    """Without background_manager, TaskOutput and TaskStop are absent."""
+    registry = ToolRegistry()
+
+    AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    schemas = {s["function"]["name"] for s in registry.get_all_schemas()}
+    assert "TaskOutput" not in schemas
+    assert "TaskStop" not in schemas
+
+
+@pytest.mark.asyncio
+async def test_completed_background_task_injected_as_observation():
+    """Completed background tasks appear as role=user observation messages."""
+    sandbox = SandboxExecutor()
+    bg_manager = BackgroundTaskManager(sandbox=sandbox)
+
+    # Start a fast task that completes quickly
+    task_id = await bg_manager.start(
+        cmd="echo hello_bg",
+        tool_call_id="tc_obs",
+        cwd="/tmp",
+        timeout=None,
+    )
+    # Wait for it to complete
+    import asyncio
+    await asyncio.sleep(0.3)
+
+    class CapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CapturingLLM()
+    registry = ToolRegistry()
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+        background_manager=bg_manager,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    contents = "\n".join(m.content for m in llm.messages)
+    assert "Background task" in contents
+    assert "completed" in contents
+    assert "hello_bg" in contents
+
+
+@pytest.mark.asyncio
+async def test_cleanup_called_on_run_exit():
+    """Background tasks are cleaned up in run() finally block."""
+    sandbox = SandboxExecutor()
+    bg_manager = BackgroundTaskManager(sandbox=sandbox)
+
+    # Start a long-running task
+    await bg_manager.start(
+        cmd="sleep 60",
+        tool_call_id="tc_cleanup",
+        cwd="/tmp",
+        timeout=None,
+    )
+    assert len(bg_manager._tasks) == 1
+
+    registry = ToolRegistry()
+    loop = AgentLoop(
+        llm=MockLLM(LLMResponse(content="done")),
+        tool_registry=registry,
+        hooks=HookManager(),
+        background_manager=bg_manager,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    # After run exits, all tasks should be cleaned up
+    for entry in bg_manager._tasks.values():
+        assert entry.status != "running"
+
+
+@pytest.mark.asyncio
+async def test_session_saved_after_run():
+    """Session is saved to SessionStore after _run() completes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = SessionStore(sessions_root=tmpdir)
+        registry = ToolRegistry()
+
+        loop = AgentLoop(
+            llm=MockLLM(LLMResponse(content="done")),
+            tool_registry=registry,
+            hooks=HookManager(),
+            session_store=store,
+        )
+
+        await loop.run(
+            [Message(role="user", content="test")],
+            session_id="sess-test-1",
+        )
+
+        sessions = store.list_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["session_id"] == "sess-test-1"
+
+
+@pytest.mark.asyncio
+async def test_session_not_saved_without_session_id():
+    """No save when session_id is None."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = SessionStore(sessions_root=tmpdir)
+        registry = ToolRegistry()
+
+        loop = AgentLoop(
+            llm=MockLLM(LLMResponse(content="done")),
+            tool_registry=registry,
+            hooks=HookManager(),
+            session_store=store,
+        )
+
+        await loop.run([Message(role="user", content="test")])
+
+        sessions = store.list_sessions()
+        assert len(sessions) == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_state():
+    """Resume from snapshot restores mode, todos, skills, and injects resume marker."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = SessionStore(sessions_root=tmpdir)
+        registry = ToolRegistry()
+
+        loop = AgentLoop(
+            llm=MockLLM(LLMResponse(content="done")),
+            tool_registry=registry,
+            hooks=HookManager(),
+            session_store=store,
+            run_config=AgentRunConfig(mode=AgentMode.BUILD),
+        )
+
+        # Run once to create session
+        await loop.run(
+            [Message(role="user", content="first run")],
+            session_id="sess-resume-1",
+        )
+
+        # Load saved session
+        snapshot = store.load("sess-resume-1")
+        assert snapshot is not None
+
+        # Create a new loop and resume
+        registry2 = ToolRegistry()
+
+        class CapturingLLM:
+            def __init__(self):
+                self.messages = None
+
+            async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+                self.messages = list(messages)
+                return LLMResponse(content="resumed done")
+
+        llm2 = CapturingLLM()
+        loop2 = AgentLoop(
+            llm=llm2,
+            tool_registry=registry2,
+            hooks=HookManager(),
+            session_store=store,
+            run_config=AgentRunConfig(mode=AgentMode.BUILD),
+        )
+
+        await loop2.run(
+            [Message(role="user", content="ignored")],
+            session_id="sess-resume-1",
+            resume_snapshot=snapshot,
+        )
+
+        contents = "\n".join(m.content for m in llm2.messages)
+        assert "first run" in contents
+        assert "Session resumed" in contents
+        assert "ignored" in contents
+
+
+@pytest.mark.asyncio
+async def test_contextvar_set_in_execute_single_tool():
+    """current_tool_call_id ContextVar is set before tool execution."""
+    from agent.background import current_tool_call_id
+    import asyncio
+    import contextvars
+
+    captured_id = []
+
+    class ContextVarEchoTool(Tool):
+        name = "ContextVarEcho"
+        description = "Captures ContextVar"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            captured_id.append(current_tool_call_id.get())
+            return "captured"
+
+    class CVarLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id="cv-test-id", name="ContextVarEcho", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(ContextVarEchoTool())
+    loop = AgentLoop(
+        llm=CVarLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=1,
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    assert captured_id == ["cv-test-id"]
