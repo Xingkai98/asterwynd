@@ -53,7 +53,7 @@
 基于与其他 coding agent（Claude Code、Codex、Cursor、Aider 等）的系统性对比，以下 6 个 change 覆盖了 Asterwynd 当前必备基础能力的核心缺口。第一批（1/3/4）可并行推进，第二批 2 等 1 合入后开始（共享 AgentLoop 改动面），第三批 5/6 可并行。
 
 - `improve-agent-execution-foundation`：已合入并归档。
-- `add-semantic-code-search`：语义代码搜索——embedding 索引 + SearchSimilar 工具。
+- `add-semantic-code-search`：已合入并归档。
 
 ### 第八批：高风险 browser 能力
 
@@ -61,24 +61,7 @@
 
 ## 未实现队列
 
-### 1. `add-semantic-code-search`
-
-状态：未实现，无 change 目录。
-
-批次：第七批，建议在 `improve-agent-execution-foundation` 合入后开始。
-
-建议顺序原因：
-
-- 依赖 AgentLoop 执行基础设施和 embedding 管道稳定。
-- 可与第七批其他 change 并行推进。
-
-主要交付：
-
-- embedding 索引构建和维护。
-- `SearchSimilar` 工具，基于语义相似度检索代码片段。
-- ToolRegistry 和 trace 接入。
-
-### 2. `add-minimal-tui-runtime-view`
+### 1. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -96,7 +79,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 3. `add-browser-use-safety-foundation`
+### 2. `add-browser-use-safety-foundation`
 
 状态：未实现。
 
