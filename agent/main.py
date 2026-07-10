@@ -33,7 +33,10 @@ from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry
+from agent.tools.sandbox import SandboxExecutor
 from agent.workspace_policy import WorkspacePolicy
+from agent.background import BackgroundTaskManager
+from agent.session import SessionSnapshot, SessionStore
 from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.memory.manager import MemoryManager
@@ -171,6 +174,19 @@ async def build_agent_async(
     )
 
 
+def _sessions_root(workspace_root: Path) -> str:
+    return str(workspace_root / ".asterwynd" / "sessions")
+
+
+def _load_resume_snapshot(session_id: str, config: AsterwyndConfig | None = None) -> SessionSnapshot | None:
+    store = SessionStore(sessions_root=_sessions_root(Path.cwd()))
+    snapshot = store.load(session_id)
+    if snapshot is None:
+        typer.echo(f"Error: Session {session_id} not found or cannot be restored.", err=True)
+        raise SystemExit(1)
+    return snapshot
+
+
 def _build_agent_core(
     *,
     model: Optional[str] = None,
@@ -216,6 +232,12 @@ def _build_agent_core(
     )
     skill_runtime = SkillRuntime.from_roots(config.skills.roots)
 
+    sandbox = SandboxExecutor()
+    background_manager = BackgroundTaskManager(sandbox=sandbox)
+    session_store = SessionStore(
+        sessions_root=_sessions_root(workspace_policy.workspace_root)
+    )
+
     return AgentLoop(
         llm=llm,
         tool_registry=registry,
@@ -229,6 +251,8 @@ def _build_agent_core(
         skill_runtime=skill_runtime,
         approval_handler=approval_handler,
         mcp_manager=mcp_manager,
+        background_manager=background_manager,
+        session_store=session_store,
     )
 
 
@@ -274,12 +298,14 @@ def run(
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+    resume: Optional[str] = typer.Option(None, "--resume", help="从指定 session_id 恢复会话"),
 ):
     """单轮执行 Agent"""
     _setup_logging()
     config = _load_cli_config(config_path, mode=mode)
     normalized_mode = config.agent.default_mode.value
-    run_single(prompt, model, provider, max_iterations, system, normalized_mode, config)
+    resume_snapshot = _load_resume_snapshot(resume, config) if resume else None
+    run_single(prompt, model, provider, max_iterations, system, normalized_mode, config, resume_snapshot)
 
 
 def run_single(
@@ -290,8 +316,9 @@ def run_single(
     system: Optional[str],
     mode: str = "build",
     config: AsterwyndConfig | None = None,
+    resume_snapshot: SessionSnapshot | None = None,
 ):
-    session_id = new_session_id()
+    session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
     run_id = new_run_id()
 
     messages: list[Message] = []
@@ -313,6 +340,8 @@ def run_single(
         agent.max_iterations = max_iterations
         typer.echo(f"Session ID: {session_id}")
         typer.echo(f"Run ID: {run_id}")
+        if resume_snapshot:
+            typer.echo(f"Resuming session: {session_id}")
         stream_state = {"streamed": False}
         result = await _run_agent_with_cli_streaming(
             agent,
@@ -320,6 +349,7 @@ def run_single(
             stream_state,
             session_id=session_id,
             run_id=run_id,
+            resume_snapshot=resume_snapshot,
         )
         _print_plan_document(agent)
         if not stream_state["streamed"]:
@@ -344,8 +374,9 @@ def run_interactive(
     mode: str = "build",
     config: AsterwyndConfig | None = None,
     banner: bool = True,
+    resume_snapshot: SessionSnapshot | None = None,
 ):
-    session_id = new_session_id()
+    session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -359,7 +390,10 @@ def run_interactive(
     if banner:
         typer.echo(render_tui_banner())
         typer.echo("")
-    typer.echo(f"{BRAND_NAME} 交互模式 (输入 exit 退出)")
+    if resume_snapshot:
+        typer.echo(f"{BRAND_NAME} 交互模式 - 已恢复会话 (输入 exit 退出)")
+    else:
+        typer.echo(f"{BRAND_NAME} 交互模式 (输入 exit 退出)")
     typer.echo(f"模型: {resolved_model} | 提供商: {provider} | Mode: {mode}\n")
     typer.echo(f"Session ID: {session_id}\n")
     agent.max_iterations = max_iterations
@@ -377,17 +411,22 @@ def run_interactive(
         messages.append(system_message(system))
 
     stop_requested = False
+    _resume_consumed = False
 
     async def _run_async():
+        nonlocal _resume_consumed
         run_id = new_run_id()
         typer.echo(f"Run ID: {run_id}")
         stream_state = {"streamed": False}
+        snap = None if _resume_consumed else resume_snapshot
+        _resume_consumed = True
         result = await _run_agent_with_cli_streaming(
             agent,
             messages,
             stream_state,
             session_id=session_id,
             run_id=run_id,
+            resume_snapshot=snap,
         )
         return result, stream_state
 
@@ -478,6 +517,7 @@ async def _run_agent_with_cli_streaming(
     *,
     session_id: str,
     run_id: str,
+    resume_snapshot: SessionSnapshot | None = None,
 ):
     async def on_event(event_type: str, data: dict):
         if event_type == "assistant_delta":
@@ -496,12 +536,15 @@ async def _run_agent_with_cli_streaming(
     if "on_event" not in inspect.signature(agent.run).parameters:
         return await agent.run(messages, session_id=session_id, run_id=run_id)
 
-    return await agent.run(
-        messages,
+    kwargs = dict(
+        messages=messages,
         on_event=on_event,
         session_id=session_id,
         run_id=run_id,
     )
+    if resume_snapshot is not None:
+        kwargs["resume_snapshot"] = resume_snapshot
+    return await agent.run(**kwargs)
 
 
 def _print_plan_document(agent: AgentLoop) -> None:
@@ -541,6 +584,7 @@ def web(
     model: Optional[str] = typer.Option(None, "--model", help="使用的模型"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+    resume: Optional[str] = typer.Option(None, "--resume", help="从指定 session_id 恢复会话"),
 ):
     """启动 Web UI 服务"""
     _setup_logging()
@@ -553,12 +597,18 @@ def web(
     debug_status = "enabled" if debug_enabled() else "disabled"
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
 
+    if resume:
+        resume_snapshot = _load_resume_snapshot(resume, config)
+        if resume_snapshot:
+            normalized_mode = resume_snapshot.mode.value
+            typer.echo(f"Resuming session: {resume}")
+
     llm = build_llm(provider, model)
     typer.echo(f"{BRAND_NAME} Web UI  →  http://{display_host}:{port}")
     typer.echo(f"Provider: {provider} | Model: {llm.model}")
     typer.echo(f"Mode: {normalized_mode}")
     typer.echo(f"Debug mode: {debug_status}")
-    app = create_app(llm, mode=normalized_mode, config=config)
+    app = create_app(llm, mode=normalized_mode, config=config, resume=resume)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -641,6 +691,113 @@ def benchmark(
         f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
         f"warnings: {metadata.warnings} | unsupported: {metadata.unsupported} | failed: {metadata.failed}"
     )
+
+
+session_app = typer.Typer(help="会话管理")
+app.add_typer(session_app, name="session")
+
+
+def _get_session_store(config: AsterwyndConfig | None = None) -> SessionStore:
+    return SessionStore(sessions_root=_sessions_root(Path.cwd()))
+
+
+@session_app.command("list")
+def session_list(
+    json_output: bool = typer.Option(False, "--json", help="以 JSON 格式输出"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+):
+    """列出可恢复的会话"""
+    _setup_logging()
+    _load_cli_config(config_path)  # ensure config loaded
+    store = _get_session_store()
+    sessions = store.list_sessions()
+
+    if not sessions:
+        typer.echo("(no saved sessions)")
+        return
+
+    if json_output:
+        import json
+        typer.echo(json.dumps(sessions, ensure_ascii=False, indent=2))
+        return
+
+    # Table format
+    header = f"{'SESSION_ID':<14} {'CREATED':<21} {'UPDATED':<21} {'MESSAGES':>8} {'MODE':<12}"
+    typer.echo(header)
+    typer.echo("-" * len(header))
+    for s in sessions:
+        sid = s["session_id"][:12]
+        created = s.get("created_at", "")[:19]
+        updated = s.get("updated_at", "")[:19]
+        msg_count = s.get("messages", 0)
+        mode = s.get("mode", "")
+        typer.echo(f"{sid:<14} {created:<21} {updated:<21} {msg_count:>8} {mode:<12}")
+
+
+@session_app.command("resume")
+def session_resume(
+    session_id: str = typer.Argument(..., help="要恢复的会话 ID"),
+    model: Optional[str] = typer.Option(None, "--model", help="使用的模型"),
+    provider: str = typer.Option(
+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商"
+    ),
+    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+):
+    """恢复会话并进入交互模式"""
+    _setup_logging()
+    config = _load_cli_config(config_path, mode=mode)
+    normalized_mode = config.agent.default_mode.value
+
+    snapshot = _load_resume_snapshot(session_id, config)
+    if snapshot is None:
+        return
+
+    typer.echo(f"Resuming session: {session_id}")
+    typer.echo(f"  Mode: {snapshot.mode.value}")
+    typer.echo(f"  Messages: {len(snapshot.messages)}")
+    typer.echo(f"  Created: {snapshot.created_at[:19]}")
+    typer.echo("")
+
+    run_interactive(
+        model,
+        provider,
+        max_iterations,
+        system,
+        initial_prompt=None,
+        mode=normalized_mode,
+        config=config,
+        banner=False,
+        resume_snapshot=snapshot,
+    )
+
+
+@session_app.command("rm")
+def session_rm(
+    session_id: str = typer.Argument(..., help="要删除的会话 ID"),
+    force: bool = typer.Option(False, "--force", "-f", help="跳过确认直接删除"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+):
+    """删除会话"""
+    _setup_logging()
+    _load_cli_config(config_path)
+    store = _get_session_store()
+
+    if not force:
+        typer.echo(f"Are you sure you want to delete session '{session_id}'?")
+        confirm = input("Type 'yes' to confirm: ")
+        if confirm.strip().lower() != "yes":
+            typer.echo("Cancelled.")
+            return
+
+    removed = store.remove(session_id)
+    if removed:
+        typer.echo(f"Session '{session_id}' removed.")
+    else:
+        typer.echo(f"Error: Session '{session_id}' not found.", err=True)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

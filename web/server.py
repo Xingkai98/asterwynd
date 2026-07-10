@@ -24,11 +24,13 @@ def create_app(
     llm,
     mode: str | None = None,
     config: AsterwyndConfig | None = None,
+    resume: str | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
     config = config or AsterwyndConfig()
     resolved_mode = mode or config.agent.default_mode.value
     app = FastAPI(title="Asterwynd · Asterwynd Web UI", version="0.1.0")
+    app.state.resume_session_id = resume
     session_manager = SessionManager(
         debug_enabled=debug_enabled(),
         mode=resolved_mode,

@@ -53,6 +53,8 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "WebFetch",
     "WebSearch",
     "Write",
+    "TaskOutput",
+    "TaskStop",
     "TodoWrite",
     "SaveMemory",
     "RecallMemory",
