@@ -44,7 +44,13 @@
   - browser/computer use 工具如何接入 mode policy、workspace safety 和 trace？
   - 哪些 browser smoke 可以本地稳定运行，哪些必须保持人工或可选验证？
 - findings:
-  - 本次仅为参考实现调研门禁的结构迁移，尚未完成本 change 的针对性横向调研。
-  - 当前工作区 `.dev/reference-repos.txt` 存在，可用于开发前调研；真正开始实现前必须补充具体参考仓库发现。
+  - **Claude Code**: WebFetch（只读抓取，预批准 ~80 个代码文档域名，三层权限检查）+ Claude in Chrome（Chrome 扩展 via MCP 桥接，完整交互：导航/点击/输入/截图/录 GIF/读控制台，ask/skip_all/follow_a_plan 三种权限模式）。WebBrowserTool 由内部 feature flag 控制，未开源。
+  - **Codex**: 外部 MCP browser connector（`browser_navigate`、`access_browser_origin`，Playwright 实现）+ 内置 `web.run` 工具（search/open/click/find/screenshot via Responses API）。NetworkDomainPermissions 使用 glob 模式 allow/deny（deny 优先），4 级审批（Auto/Prompt/Approve/Never）+ Guardian AI 自动审查 + 会话级记住批准。
+  - **OpenHands**: BrowserGym + Playwright（SDK 外部依赖），10 个工具：navigate、click、type、get_state、get_content、scroll、go_back、list_tabs、switch_tab、close_tab。Screenshot + URL + DOM/axtree 通过 WebSocket 实时传到前端。Docker 沙箱隔离（无 URL allowlist），安全确认模式 + 风险等级（LOW/MEDIUM/HIGH）。
+  - **Gemini CLI / Goose / Qwen Code / Aider / KiloCode**: 主要为 `web_fetch`/`web_search` 只读抓取，无完整 browser use 交互能力。
 - design impact:
-  - 当前方案仍以安全基础和最小 Playwright 工具为边界；实现前需要用参考实现调研校验 allowlist、artifact 存储和审计策略。
+  - 拆为两个 change：当前 change 收敛为"受控只读浏览器观察基础"（7 个工具：navigate、get_content、screenshot、scroll、list_tabs、switch_tab、close_tab），交互能力（click、type）放到后续 change。
+  - URL allowlist 采用精确域名 + 通配符子域名匹配，仅 https，默认空列表。
+  - BrowserService 作为独立的 `agent/browser/` 模块封装 Playwright 生命周期，工具不直接接触 Playwright API。
+  - Artifact 固定路径 `<workspace>/.asterwynd/browser-artifacts/`。
+  - Playwright 保持可选依赖，通过 lazy import 处理缺失场景。

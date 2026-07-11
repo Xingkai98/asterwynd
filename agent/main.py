@@ -214,6 +214,7 @@ def _build_agent_core(
         ignore_patterns=config.tools.ignore_patterns,
         code_intelligence_config=config.tools.code_intelligence,
         web_search_config=config.tools.web_search,
+        browser_config=config.tools.browser,
         mcp_manager=mcp_manager,
         persistent_memory=persistent_memory,
     )

@@ -64,12 +64,29 @@ class WebSearchConfig:
 
 
 @dataclass(frozen=True)
+class BrowserConfig:
+    """浏览器工具配置。
+
+    默认 enabled=False，所有浏览器工具不注册。
+    启用后可通过 url_allowlist 控制可访问的域名。
+    """
+
+    enabled: bool = False
+    url_allowlist: tuple[str, ...] = ()
+    idle_timeout: int = 300
+    navigation_timeout: int = 30
+    read_timeout: int = 15
+    screenshot_timeout: int = 10
+
+
+@dataclass(frozen=True)
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
     code_intelligence: CodeIntelligenceConfig = field(default_factory=CodeIntelligenceConfig)
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     display: ToolResultDisplayConfig = field(default_factory=ToolResultDisplayConfig)
+    browser: BrowserConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -438,6 +455,42 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
         ),
         web_search=_parse_web_search_config(mapping.get("web_search", {}), path),
         display=_parse_tool_display_config(mapping.get("display", {}), path),
+        browser=_parse_browser_config(mapping.get("browser"), path),
+    )
+
+
+def _parse_browser_config(raw: Any, path: Path) -> BrowserConfig | None:
+    """解析 tools.browser 配置节，返回 BrowserConfig 或 None（未配置时）。"""
+    if raw is None:
+        return None
+    mapping = _expect_mapping(raw, path, "tools.browser")
+    return BrowserConfig(
+        enabled=bool(mapping.get("enabled", False)),
+        url_allowlist=_parse_string_list(
+            mapping.get("url_allowlist", []),
+            path,
+            "tools.browser.url_allowlist",
+        ),
+        idle_timeout=_validate_positive_int(
+            mapping.get("idle_timeout", 300),
+            "tools.browser.idle_timeout",
+            path=path,
+        ),
+        navigation_timeout=_validate_positive_int(
+            mapping.get("navigation_timeout", 30),
+            "tools.browser.navigation_timeout",
+            path=path,
+        ),
+        read_timeout=_validate_positive_int(
+            mapping.get("read_timeout", 15),
+            "tools.browser.read_timeout",
+            path=path,
+        ),
+        screenshot_timeout=_validate_positive_int(
+            mapping.get("screenshot_timeout", 10),
+            "tools.browser.screenshot_timeout",
+            path=path,
+        ),
     )
 
 

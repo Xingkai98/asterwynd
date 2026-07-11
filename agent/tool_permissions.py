@@ -134,6 +134,11 @@ SUBAGENT_CONTROL_PERMISSION = ToolPermission(
     capabilities=frozenset({ToolCapability.SUBAGENT_CONTROL}),
     risk_level=ToolRiskLevel.MEDIUM,
 )
+BROWSER_READ_PERMISSION = ToolPermission(
+    capabilities=frozenset({ToolCapability.BROWSER_CONTROL}),
+    risk_level=ToolRiskLevel.MEDIUM,
+    origin=ToolOrigin.BROWSER,
+)
 
 
 BUILTIN_PERMISSION_PROFILES: dict[str, PermissionProfile] = {
