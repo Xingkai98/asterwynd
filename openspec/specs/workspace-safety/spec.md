@@ -160,3 +160,13 @@ MCP-backed tools、prompt 读取和 resource 读取 SHALL 声明 capability / ri
 - **GIVEN** 本地配置将某个 MCP server 的 resource 读取声明为 `network_read` + `low`
 - **WHEN** 当前 mode 允许该 capability 和 risk
 - **THEN** 系统 SHALL 允许读取该 resource
+
+### Requirement: browser artifacts 存储受 workspace policy 约束
+
+Browser screenshots、HTML snapshots 和日志 artifacts SHALL 保存到 workspace policy 允许的目录（`<workspace_root>/.asterwynd/browser-artifacts/`），写入前 SHALL 通过 `WorkspacePolicy.assert_write_allowed()` 校验。
+
+#### Scenario: browser artifact 路径被拒绝
+
+- **GIVEN** browser tool 请求保存 artifact 到 denied path
+- **WHEN** WorkspacePolicy 校验写入路径
+- **THEN** 系统 SHALL 拒绝保存

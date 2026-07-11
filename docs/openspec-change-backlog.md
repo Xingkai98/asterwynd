@@ -55,9 +55,9 @@
 - `improve-agent-execution-foundation`：已合入并归档。
 - `add-semantic-code-search`：已合入并归档。
 
-### 第八批：高风险 browser 能力
+### 第八批：高风险 browser 能力，已完成
 
-- `add-browser-use-safety-foundation`：风险高于 MCP，应在配置、mode policy、workspace safety 和工具权限模型稳定后做。
+- `add-browser-use-safety-foundation`：已合入并归档。
 
 ## 未实现队列
 
@@ -78,24 +78,6 @@
 - AgentLoop 事件流消费。
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
-
-### 2. `add-browser-use-safety-foundation`
-
-状态：未实现。
-
-批次：第八批，建议在 MCP 或核心工具权限模型更稳定后开始。
-
-建议顺序原因：
-
-- 浏览器/桌面操作风险更高，需要 URL allowlist、凭据、截图存储、超时和审计策略。
-- 应在配置系统、mode policy、workspace safety、runtime event 和工具权限模型稳定后再实现，避免把高风险外部操作接到不稳定权限边界上。
-
-主要交付：
-
-- browser policy 配置。
-- 最小 Playwright browser session 管理。
-- 打开页面、读取页面信息和截图工具。
-- ToolRegistry、mode policy 和 trace 接入。
 
 ## 已完成待归档
 

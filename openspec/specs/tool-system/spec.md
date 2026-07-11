@@ -168,3 +168,20 @@ ToolRegistry SHALL 能注册由 MCP adapter 包装的工具，并按普通 Tool 
 - **WHEN** 调用 `execute(tool_call)` 且未传入 approval
 - **THEN** registry SHALL 返回 approval required 文本
 - **AND** SHALL NOT 调用远端 MCP server
+
+### Requirement: browser tools 声明权限元数据
+
+Browser tools SHALL 声明权限元数据（capability=BROWSER_CONTROL、risk_level=MEDIUM、origin=BROWSER），并受 agent mode policy 控制。
+
+#### Scenario: build mode 下 browser tools 可见
+
+- **GIVEN** BrowserConfig.enabled 为 true 且 playwright 可用
+- **WHEN** build mode 暴露工具 schema
+- **THEN** 系统 SHALL 暴露所有 browser tools
+- **AND** 截图等 MEDIUM risk 工具 SHALL 需要审批
+
+#### Scenario: read-only mode 拒绝 browser tools
+
+- **GIVEN** browser tool 声明 BROWSER_CONTROL capability
+- **WHEN** read_only mode 暴露工具 schema
+- **THEN** 系统 SHALL NOT 暴露 browser tools

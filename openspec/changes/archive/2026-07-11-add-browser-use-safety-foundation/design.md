@@ -42,17 +42,23 @@ Asterwynd 当前没有 browser/computer use 工具。浏览器能力会引入外
 
 ## Pre-Implementation Review
 
-- Questions resolved:
-  - 本 change 尚未按当前新增的 Impact Analysis / Pre-Implementation Review 规则完成开发前设计追问。
-- Options considered:
-  - 保留原设计，等待开始开发时完整追问。
-  - 在本次流程治理 change 中伪造完整追问结论。
-- Rejected alternatives:
-  - 伪造完整追问结论。原因：该 change 尚未进入实现阶段，必须在真正开发前重新结合当前代码、权限模型和测试策略确认。
-- Final confirmations:
-  - 开发前必须重新使用 `grill-with-docs` 或等价设计追问确认 URL policy、artifact 路径、权限元数据、超时、凭据边界和测试策略。
+完成于 2026-07-11，使用 `grill-with-docs` 逐项审视。以下为确认结论：
+
+- **Scope**: 拆为两个 change。当前 change 只做受控只读浏览器观察基础（7 个工具），交互能力（click、type）放到后续 change。
+- **URL Allowlist**: 精确域名 + 通配符子域名（`*.example.com`），仅 `https://`，默认空列表，配置在 `BrowserConfig.url_allowlist`。
+- **工具集**: BrowserNavigate、BrowserGetContent、BrowserScreenshot、BrowserScroll、BrowserListTabs、BrowserSwitchTab、BrowserCloseTab。
+- **权限元数据**: 新增 `BROWSER_READ_PERMISSION`（capability=BROWSER_CONTROL, risk=MEDIUM, origin=BROWSER）。ModePolicy 控制：build mode 暴露全部 browser tools 但截图需审批；read_only mode 可暴露只读部分但禁截图。
+- **Artifact 路径**: `<workspace_root>/.asterwynd/browser-artifacts/`，写入前走 `WorkspacePolicy.assert_write_allowed()`。
+- **Browser 生命周期**: 懒启动 + AgentLoop 级生命周期，`idle_timeout` 默认 300s。
+- **超时**: navigation 30s, read 15s, screenshot 10s，超时返回 `[Browser Error: ...]` 而非异常。
+- **Playwright 依赖**: 保持可选依赖（`dev` extra），lazy import，缺失时返回 `[Browser not available: playwright not installed]`。
+- **测试**: 单元测试必跑；集成测试用 `pytest.mark.playwright` 标记，默认跳过。
+- **BrowserConfig**: `enabled: false` 默认关闭，显式开启后才暴露 browser tools。
+- **Codex 的意见**: 同意拆为两个 change，当前 change 作为受控只读基础；交互能力需动作级审批、页面状态 preflight 和凭据防护，应独立 change。
+
 - Remaining risks:
-  - 浏览器能力风险高，后续设计追问可能要求调整当前 scope 或依赖顺序。
+  - Playwright 安装成本可能影响新人上手体验（通过 lazy import + 默认 disabled 缓解）。
+  - URL allowlist 初始为空，需文档引导用户配置。
 
 ## Risks / Trade-offs
 

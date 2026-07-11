@@ -15,6 +15,15 @@ from agent.tools.builtin.inspect_git_diff import InspectGitDiffTool
 from agent.tools.builtin.list_files import ListFilesTool
 from agent.tools.builtin.find import FindTool
 from agent.tools.builtin.code_intelligence import RepoMapTool, SymbolSearchTool
+from agent.tools.builtin.browser_navigate import BrowserNavigateTool
+from agent.tools.builtin.browser_get_content import BrowserGetContentTool
+from agent.tools.builtin.browser_screenshot import BrowserScreenshotTool
+from agent.tools.builtin.browser_scroll import BrowserScrollTool
+from agent.tools.builtin.browser_tabs import (
+    BrowserListTabsTool,
+    BrowserSwitchTabTool,
+    BrowserCloseTabTool,
+)
 from agent.tools.factory import (
     build_coding_tool_registry,
     build_default_tool_registry,
@@ -44,4 +53,11 @@ __all__ = [
     "WebSearchTool",
     "WebFetchTool",
     "GrepTool",
+    "BrowserNavigateTool",
+    "BrowserGetContentTool",
+    "BrowserScreenshotTool",
+    "BrowserScrollTool",
+    "BrowserListTabsTool",
+    "BrowserSwitchTabTool",
+    "BrowserCloseTabTool",
 ]

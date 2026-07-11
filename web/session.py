@@ -164,6 +164,7 @@ class SessionManager:
             ignore_patterns=self.config.tools.ignore_patterns,
             code_intelligence_config=self.config.tools.code_intelligence,
             web_search_config=self.config.tools.web_search,
+            browser_config=self.config.tools.browser,
             mcp_manager=mcp_manager,
             tools=tools,
         )

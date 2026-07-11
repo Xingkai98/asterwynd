@@ -310,6 +310,7 @@ class SubAgentManager:
             ),
             ignore_patterns=config.tools.ignore_patterns if config else (),
             code_intelligence_config=config.tools.code_intelligence if config else None,
+            browser_config=config.tools.browser if config else None,
             web_search_config=config.tools.web_search if config else None,
         )
         return AgentLoop(
