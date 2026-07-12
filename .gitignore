@@ -8,6 +8,8 @@ build/
 .coverage
 .claude/
 .dev/
+.asterwynd/
+ASTER.local.md
 .env
 myagent.yaml
 *.db.understand-anything/

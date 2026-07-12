@@ -26,8 +26,9 @@ load_dotenv()
 from agent.approval import ApprovalHandler, CliApprovalHandler
 from agent.loop import AgentLoop
 from agent.commands import CommandContext, build_default_slash_command_registry
+from agent.commands.init import write_aster_md
 from agent.config import ConfigError, ConfigOverrides, AsterwyndConfig, load_config
-from agent.message import Message, system_message
+from agent.message import Message
 from agent.openai_llm import OpenAILLM
 from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
@@ -257,6 +258,20 @@ def _build_agent_core(
     )
 
 
+@app.command()
+def init(
+    path: Optional[str] = typer.Option(None, "--path", help="目标目录（不指定则用当前工作目录）"),
+):
+    """在当前目录生成 ASTER.md 项目指令文件"""
+    cwd = Path(path) if path else None
+    try:
+        msg = write_aster_md(cwd=cwd)
+        typer.echo(msg)
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1)
+
+
 @app.callback(invoke_without_command=True)
 def callback(
     ctx: typer.Context,
@@ -323,14 +338,6 @@ def run_single(
     run_id = new_run_id()
 
     messages: list[Message] = []
-    if system:
-        messages.append(system_message(system))
-
-    system_prompt = (
-        "你是一个有用、诚实的人工智能助手。"
-        "你可以调用工具来完成任务。"
-    )
-    messages.append(system_message(system_prompt))
     messages.append(Message(role="user", content=prompt))
 
     async def _run():
@@ -339,6 +346,8 @@ def run_single(
         else:
             agent = build_agent(model, provider, mode, config=config)
         agent.max_iterations = max_iterations
+        if system:
+            agent._user_system_prompt = system
         typer.echo(f"Session ID: {session_id}")
         typer.echo(f"Run ID: {run_id}")
         if resume_snapshot:
@@ -398,18 +407,13 @@ def run_interactive(
     typer.echo(f"模型: {resolved_model} | 提供商: {provider} | Mode: {mode}\n")
     typer.echo(f"Session ID: {session_id}\n")
     agent.max_iterations = max_iterations
+    if system:
+        agent._user_system_prompt = system
     command_registry = build_default_slash_command_registry(
         getattr(agent, "skill_runtime", None)
     )
 
     messages: list[Message] = []
-    system_prompt = (
-        "你是一个有用、诚实的人工智能助手。"
-        "你可以调用工具来完成任务。"
-    )
-    messages.append(system_message(system_prompt))
-    if system:
-        messages.append(system_message(system))
 
     stop_requested = False
     _resume_consumed = False

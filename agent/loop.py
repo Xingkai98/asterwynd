@@ -20,6 +20,17 @@ from agent.tools.base import ToolCall
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
+from agent.context import BuildContext, ContextBuilder
+from agent.context.sources import (
+    AsterMdSource,
+    MemoryIndexSource,
+    PlanModeSource,
+    PlanningStateSource,
+    SkillActiveSource,
+    SkillIndexSource,
+    SystemPromptSource,
+    TodoSource,
+)
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
 from agent.planning import PlanStatus, PlanningManager
@@ -71,6 +82,7 @@ class AgentLoop:
         mcp_manager: "McpManager | None" = None,
         background_manager: BackgroundTaskManager | None = None,
         session_store: SessionStore | None = None,
+        context_builder: ContextBuilder | None = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -90,6 +102,10 @@ class AgentLoop:
         self.tool_registry.mode_policy.runtime_state = self.runtime_state
         self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
         self.skill_runtime = skill_runtime
+        if context_builder is not None:
+            self.context_builder = context_builder
+        else:
+            self.context_builder = self._make_default_context_builder()
         self.approval_handler = approval_handler or FailClosedApprovalHandler()
         self.mcp_manager = mcp_manager
         self.background_manager = background_manager
@@ -106,6 +122,7 @@ class AgentLoop:
         self._todo_next_id = 1
         self._iteration = 0
         self._retry = RetryHook(max_retries=3, base_delay=1.0)
+        self._user_system_prompt = ""
         if self.runtime_state.current_mode is AgentMode.PLAN:
             self._ensure_plan_tools_registered()
         if expose_subagent_tools:
@@ -469,6 +486,8 @@ class AgentLoop:
             self._sync_todo_next_id()
             if self.skill_runtime is not None and resume_snapshot.active_skills:
                 self.skill_runtime.restore_skills(resume_snapshot.active_skills)
+            if resume_snapshot.user_system_prompt:
+                self._user_system_prompt = resume_snapshot.user_system_prompt
 
             conversation = [m for m in resume_snapshot.messages if m.role != "system"]
             messages.clear()
@@ -507,7 +526,6 @@ class AgentLoop:
 
         for iteration in range(start_iteration, self.max_iterations):
             self._iteration = iteration
-            await self.hooks.before_iteration(iteration, messages)
 
             if self.background_manager is not None:
                 completed = self.background_manager.check_completed()
@@ -525,8 +543,10 @@ class AgentLoop:
 
             tool_schemas = self.tool_registry.get_all_schemas()
 
+            contextualized = await self._messages_with_run_context(messages)
+            await self.hooks.before_iteration(iteration, contextualized)
             response, streamed = await self._call_llm(
-                messages=self._messages_with_run_context(messages),
+                messages=contextualized,
                 tools=tool_schemas if tool_schemas else None,
                 on_event=on_event,
             )
@@ -782,7 +802,7 @@ class AgentLoop:
                     result=result,
                 ))
 
-            compacted = await self.memory.compact_if_needed(messages)
+            compacted = await self.memory.compact_if_needed(messages, iteration=self._iteration)
             if compacted and on_event:
                 await on_event("memory_compaction", {
                     "total_messages": len(messages),
@@ -986,65 +1006,57 @@ class AgentLoop:
             arguments = redacted if isinstance(redacted, dict) else {}
         return {"id": delta.id, "name": delta.name, "arguments": arguments}
 
-    def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
-        injected_contexts = []
-        if self.persistent_memory is not None:
-            memory_index = self.persistent_memory.load_index()
-            if memory_index:
-                injected_contexts.append(
-                    "## Project Memory\n"
-                    "The following persistent memories from prior sessions are available. "
-                    "Use RecallMemory to retrieve specific entries.\n"
-                    "---\n"
-                    f"{memory_index}\n"
-                    "---"
-                )
-        if self.skill_runtime is not None:
-            skill_index = self.skill_runtime.render_skill_index()
-            if skill_index:
-                injected_contexts.append(skill_index)
-            active_skill_context = self.skill_runtime.render_active_skill_context()
-            if active_skill_context:
-                injected_contexts.append(active_skill_context)
-        plan_context = self._plan_mode_context()
-        if plan_context:
-            injected_contexts.append(plan_context)
-        planning_context = self._planning.render_context()
-        if planning_context:
-            injected_contexts.append(planning_context)
-        todo_context = self._todo_context()
-        if todo_context:
-            injected_contexts.append(todo_context)
-        if not injected_contexts:
+    async def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
+        ctx = BuildContext(
+            cwd=os.getcwd(),
+            mode=self.runtime_state.current_mode,
+            context_window=self._context_window,
+            total_budget=self._injection_budget,
+            user_system_prompt=self._user_system_prompt,
+        )
+        injected = await self.context_builder.build(ctx)
+
+        if not injected:
             return messages
 
         insert_at = 0
         while insert_at < len(messages) and messages[insert_at].role == "system":
             insert_at += 1
 
-        context_messages = [
-            system_message(context)
-            for context in injected_contexts
-        ]
+        context_message = system_message(injected)
         return [
             *messages[:insert_at],
-            *context_messages,
+            context_message,
             *messages[insert_at:],
         ]
 
-    def _plan_mode_context(self) -> str:
-        if self.runtime_state.current_mode is not AgentMode.PLAN:
-            return ""
-        return (
-            "You are running in plan mode. Inspect the repository with read-only "
-            "tools and discuss the plan with the user until it is clear. When the "
-            "draft changes materially, call UpdatePlan with the current Markdown "
-            "Plan Document and high-level steps. When the user confirms the plan "
-            "or the plan is ready to finalize, call ExitPlanMode with the final "
-            "Plan Document and steps. Steps can seed a later build-mode todo list. "
-            "Do not edit files, run shell commands, or implement changes in plan "
-            "mode."
-        )
+    @property
+    def _context_window(self) -> int:
+        """Model context window size.  Defaults to 100K when not exposed by LLM."""
+        return getattr(self.llm, "context_window", 100_000)
+
+    @property
+    def _injection_budget(self) -> int:
+        """Injection-layer budget: min(20K, 20% of context window)."""
+        return min(20_000, int(self._context_window * 0.20))
+
+    def _make_default_context_builder(self) -> ContextBuilder:
+        """Create a ContextBuilder with all currently-implemented sources."""
+        builder = ContextBuilder(total_budget=self._injection_budget)
+        # P0: System prompt (critical, never truncated)
+        builder.register(SystemPromptSource())
+        # P1: ASTER.md project instructions (critical, never truncated)
+        builder.register(AsterMdSource())
+        # P2: Memory index
+        builder.register(MemoryIndexSource(persistent_memory=self.persistent_memory))
+        # P4: Skill index + active skill
+        builder.register(SkillIndexSource(skill_runtime=self.skill_runtime))
+        builder.register(SkillActiveSource(skill_runtime=self.skill_runtime))
+        # P5: Plan mode + planning state + todo
+        builder.register(PlanModeSource())
+        builder.register(PlanningStateSource(planning_manager=self._planning))
+        builder.register(TodoSource(todo_renderer=self._todo_context))
+        return builder
 
     def _todo_context(self) -> str:
         mode = self.runtime_state.current_mode
@@ -1102,6 +1114,7 @@ class AgentLoop:
             active_skills=self.skill_runtime.active_skill_names if self.skill_runtime else [],
             run_id=run_id,
             iteration=self._iteration,
+            user_system_prompt=self._user_system_prompt,
             runtime_fingerprint=self._build_runtime_fingerprint(),
         )
         self.session_store.save(snapshot)

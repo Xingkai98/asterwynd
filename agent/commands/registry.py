@@ -8,6 +8,7 @@ from agent.message import Message
 from agent.skills.runtime import SkillRuntime
 from agent.tools.base import Tool
 from agent.tool_permissions import PermissionDecisionType, ToolPermission
+from agent.commands.init import write_aster_md
 
 
 @dataclass
@@ -281,6 +282,16 @@ def build_default_slash_command_registry(
             },
         )
 
+    async def init_handler(ctx: CommandContext, args: str) -> CommandResult:
+        try:
+            msg = write_aster_md()
+            return CommandResult(message=msg, metadata={"aster_md_created": True})
+        except Exception as exc:
+            return CommandResult(
+                message=f"创建 ASTER.md 失败: {exc}",
+                metadata={"aster_md_created": False, "error": str(exc)},
+            )
+
     async def mcp_handler(ctx: CommandContext, args: str) -> CommandResult:
         manager = getattr(ctx.agent, "mcp_manager", None)
         if manager is None:
@@ -431,6 +442,14 @@ def build_default_slash_command_registry(
             description="List or reload loaded skills.",
             argument_hint="[reload]",
             handler=skills_handler,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            name="init",
+            usage="/init",
+            description="Generate ASTER.md with project instructions for the current directory.",
+            handler=init_handler,
         )
     )
     registry.register(

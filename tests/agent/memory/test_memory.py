@@ -98,8 +98,8 @@ async def test_compact_if_needed_with_llm_inserts_summary_message():
 
     assert compacted is True
     assert len(llm.calls) == 1
-    assert [m.role for m in messages] == ["system", "system", "user", "assistant"]
-    assert messages[1].content.startswith("Previous conversation summary:\n")
+    # Summary is now injected as a user message (per design.md §5)
+    assert [m.role for m in messages] == ["system", "user", "user", "assistant"]
     assert "user chose the requests bug and pytest passed" in messages[1].content
     assert messages[2].content == "recent question"
     assert messages[3].content == "recent answer"
@@ -121,8 +121,9 @@ async def test_compact_if_needed_with_empty_llm_summary_falls_back_to_trim():
 
     assert compacted is True
     assert len(llm.calls) == 1
+    # Empty summary → middle dropped
     assert [m.role for m in messages] == ["system", "user", "assistant"]
-    assert all("Previous conversation summary:" not in m.content for m in messages)
+    assert all("Previous conversation summary:" not in str(m.content) for m in messages)
 
 
 @pytest.mark.asyncio
@@ -143,7 +144,8 @@ async def test_compact_if_needed_with_llm_preserves_recent_tool_chain():
     compacted = await mgr.compact_if_needed(messages)
 
     assert compacted is True
-    assert [m.role for m in messages] == ["system", "system", "assistant", "tool"]
+    # Summary is now a user message (design.md §5), preserving the tool chain
+    assert [m.role for m in messages] == ["system", "user", "assistant", "tool"]
     assert messages[2].tool_calls[0].id == messages[3].tool_call_id
 
 
@@ -184,12 +186,10 @@ async def test_manual_compact_forces_compaction_under_token_budget():
     assert result.compacted is True
     assert result.reason == "compacted"
     assert result.before_messages == 5
-    assert result.after_messages == 3
-    assert [message.content for message in messages] == [
-        "system",
-        "recent question",
-        "recent answer",
-    ]
+    # Old: middle dropped → 3.  New: middle summarised → system + summary + 2 recent = 4
+    assert result.after_messages == 4
+    assert messages[0].content == "system"
+    assert messages[3].content == "recent answer"
 
 
 # ── Multimodal compact tests ────────────────────────────────────────
@@ -219,8 +219,8 @@ async def test_compact_replaces_image_blocks_in_middle_messages():
 
     assert compacted is True
     assert len(llm.calls) == 1
-    # 结构: [system, summary_system, recent_user, recent_assistant]
-    assert [m.role for m in messages] == ["system", "system", "user", "assistant"]
+    # Summary is now a user message (design.md §5)
+    assert [m.role for m in messages] == ["system", "user", "user", "assistant"]
     # summary 包含 LLM 生成的内容
     assert "older context summary" in messages[1].content
     # recent window 完整保留（纯文本消息）

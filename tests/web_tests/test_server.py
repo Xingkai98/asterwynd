@@ -806,7 +806,9 @@ def test_websocket_clear_slash_command_clears_session_history():
     assert command_result["type"] == "command_result"
     assert command_result["data"]["metadata"]["command"] == "clear"
     assert done["data"]["stop_reason"] == "command"
-    assert "Messages: 1" in status_result["data"]["message"]
+    # System prompt is now injected dynamically by ContextBuilder at LLM
+    # call time, not stored as a static system message in the session list.
+    assert "Messages: 0" in status_result["data"]["message"]
 
 
 def test_websocket_mode_slash_command_updates_session_mode_without_agent_run():
