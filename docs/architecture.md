@@ -25,7 +25,8 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | ToolRegistry | `agent/tools/registry.py` | 工具注册、schema 暴露、工具执行 |
 | WorkspacePolicy | `agent/workspace_policy.py` | 工作区路径、文件和命令安全边界 |
 | HookManager | `agent/hooks/manager.py` | 生命周期扩展点 |
-| MemoryManager | `agent/memory/manager.py` | 消息历史与 AutoCompact |
+| MemoryManager | `agent/memory/manager.py` | 消息历史、90% 阈值 AutoCompact、可插拔 Summarizer |
+| ContextBuilder | `agent/context/` | 上下文注入管线：ASTER.md、记忆索引、技能、计划、待办等 ContextSource 统一编排 |
 | PlanningManager | `agent/planning/` | 当前运行的结构化计划状态 |
 | AgentRuntimeState | `agent/run_config.py` | 交互式 session 的当前 mode 和运行时 mode transition |
 | McpManager | `agent/mcp/` | MCP server 连接、discovery、tools/prompts/resources 调用和本地权限包装 |

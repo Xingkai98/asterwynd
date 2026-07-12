@@ -14,39 +14,49 @@ MemoryManager SHALL 支持添加、读取和清空消息。
 - **WHEN** 调用 `add(message)`
 - **THEN** 该消息 SHALL 被追加到内部消息列表
 
-### Requirement: 超过 token 上限时压缩
+### Requirement: 超过 90% token 阈值时触发压缩
 
-MemoryManager SHALL 在估算 token 数超过上限时执行 compact。`compact_if_needed` SHALL 返回是否实际触发了 compact；未超过上限时 SHALL 返回 false 并保持消息列表不变。
+MemoryManager SHALL 在估算 token 数达到 `max_tokens` 的 90% 时执行 compact。`compact_if_needed` SHALL 接受可选的 `iteration` 参数，在上一次压缩后的 `compaction_gap` 轮内不重复触发。`compact_if_needed` SHALL 返回是否实际触发了 compact；未达到阈值或间隔不足时 SHALL 返回 false 并保持消息列表不变。
 
-#### Scenario: 未超过上限
+#### Scenario: 未达到阈值
 
-- **GIVEN** 消息 token 估算未超过 `max_tokens`
+- **GIVEN** 消息 token 估算未达到 `max_tokens` 的 90%
 - **WHEN** 调用 `compact_if_needed`
 - **THEN** 系统 SHALL 保持消息列表不变
 - **AND** 返回 false
 
-#### Scenario: 超过上限
+#### Scenario: 达到阈值但间隔不足
 
-- **GIVEN** 消息 token 估算超过 `max_tokens`
+- **GIVEN** 消息 token 估算达到 `max_tokens` 的 90%
+- **AND** 距离上一次 compaction 不足 `compaction_gap` 轮
+- **WHEN** 调用 `compact_if_needed`
+- **THEN** 系统 SHALL 跳过 compaction
+- **AND** 返回 false
+
+#### Scenario: 达到阈值且间隔足够
+
+- **GIVEN** 消息 token 估算达到 `max_tokens` 的 90%
+- **AND** 距离上一次 compaction 已达到或超过 `compaction_gap` 轮
 - **WHEN** 调用 `compact_if_needed`
 - **THEN** 系统 SHALL 执行 compact
 - **AND** 返回 true
 
 ### Requirement: compact 必须保留系统消息和近期上下文
 
-MemoryManager SHALL 保留所有原始 system 消息和 recent window 内的近期非 system 消息。未配置 LLM 或无法生成有效摘要时，compact SHALL 降级为裁剪 recent window 之前的非 system 消息。
+MemoryManager SHALL 保留所有原始 system 消息和 recent window 内的近期非 system 消息。未配置 LLM 时，compact SHALL 使用 TruncationSummarizer 作为降级策略，产生截断摘要而非静默丢弃。当 Summarizer 返回空摘要（LLM 失败、空响应等）时，compact SHALL 降级为仅保留 system 消息和近期消息窗口。
 
-#### Scenario: 无 LLM 时执行裁剪降级
+#### Scenario: 无 LLM 时使用截断摘要
 
-- **GIVEN** 消息历史超过上限
+- **GIVEN** 消息历史达到 90% token 阈值
 - **AND** MemoryManager 未配置 LLM
 - **WHEN** compact 被触发
-- **THEN** 系统 SHALL 丢弃 recent window 之前的非 system 消息
+- **THEN** 系统 SHALL 使用 TruncationSummarizer 生成截断摘要
+- **AND** 截断摘要 SHALL 以 user 消息注入
 - **AND** 保留 system 消息和近期消息窗口
 
 #### Scenario: LLM 摘要生成失败时执行裁剪降级
 
-- **GIVEN** 消息历史超过上限
+- **GIVEN** 消息历史达到 90% token 阈值
 - **AND** MemoryManager 配置了 LLM
 - **WHEN** LLM 调用失败或返回空摘要
 - **THEN** 系统 SHALL 保留 system 消息和近期消息窗口
@@ -63,20 +73,29 @@ MemoryManager SHALL 在保留近期消息时连同相关 assistant tool call 和
 - **THEN** compact SHALL 额外保留该 assistant 消息
 - **AND** 保持 provider 可接受的消息链
 
-### Requirement: compact 配置 LLM 时生成摘要
+### Requirement: compact 通过可插拔 Summarizer 生成摘要
 
-MemoryManager SHALL 在配置 LLM 且存在待压缩中间消息时调用 LLM 生成摘要。摘要 SHALL 以 system 消息插入在原始 system 消息之后、近期上下文之前，内容 SHALL 使用 `Previous conversation summary:` 前缀。
+MemoryManager SHALL 支持通过 `summarizer` 参数注入可插拔 `Summarizer`。`Summarizer` SHALL 实现 `async summarize(messages, budget=0) -> str`。MemoryManager SHALL 在存在待压缩中间消息时调用 Summarizer 生成摘要，并将 `summary_budget`（中间消息 token 数的 30%）作为 advisory budget 传入。LLMSummarizer 生成四段式结构化摘要（已完成/关键决策/进行中/阻塞与待办）；TruncationSummarizer 在无 LLM 时作为降级策略，截断工具输出至 500 字符并记录一次性警告。
 
-#### Scenario: 有 LLM 时生成 summary message
+#### Scenario: 有 LLM 时生成 summary user 消息
 
-- **GIVEN** 消息历史超过上限
-- **AND** MemoryManager 配置了 LLM
+- **GIVEN** 消息历史达到 90% token 阈值
+- **AND** MemoryManager 配置了 LLM（或外部注入的 LLMSummarizer）
 - **AND** recent window 之前存在非 system 消息
 - **WHEN** compact 被触发且 LLM 返回非空摘要
-- **THEN** 系统 SHALL 插入一条 summary system 消息
-- **AND** summary system 消息 SHALL 位于原始 system 消息之后
-- **AND** summary system 消息 SHALL 位于近期消息窗口之前
-- **AND** summary 内容 SHALL 包含 LLM 返回的摘要文本
+- **THEN** 系统 SHALL 插入一条 summary **user** 消息（语义上为"前序会话上下文"而非 system 约束）
+- **AND** summary user 消息 SHALL 位于原始 system 消息之后
+- **AND** summary user 消息 SHALL 位于近期消息窗口之前
+- **AND** summary 内容 SHALL 为四段式结构化 Markdown 摘要
+
+#### Scenario: 无 LLM 时使用截断降级
+
+- **GIVEN** MemoryManager 未配置 LLM
+- **AND** 存在待压缩中间消息
+- **WHEN** compact 被触发
+- **THEN** 系统 SHALL 使用 TruncationSummarizer 生成截断摘要
+- **AND** 首次使用时 SHALL 记录一次性截断降级警告
+- **AND** summary 同样以 user 消息注入
 
 ### Requirement: 手动 clear 保留 system 上下文
 
