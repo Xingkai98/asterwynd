@@ -141,7 +141,7 @@ uv run asterwynd benchmark /tmp/asterwynd-one-swe-task \
 sudo ./scripts/start-docker-daemon.sh
 ```
 
-Claw-SWE-Bench 集成使用独立 harness，不通过 `asterwynd benchmark`。如果改动影响 `claw-swe-bench/` 或 `agent/claw_solve.py`，在环境具备 Docker 镜像和 API key 时至少跑一个单实例 smoke：
+Claw-SWE-Bench 集成使用独立 harness，不通过 `asterwynd benchmark`。如果改动影响 `claw-swe-bench/`，在环境具备 Docker 镜像和 API key 时至少跑一个单实例 smoke：
 
 ```bash
 cd claw-swe-bench

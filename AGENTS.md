@@ -123,7 +123,7 @@ uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-
 
 - [项目定位](./docs/project-positioning.md): 说明项目目标、目标岗位、主线能力、支撑能力和能力证明链。
 - [上下文词汇](./CONTEXT.md): 定义需求、路线图、面试材料和设计文档中使用的核心项目语言。
-- [架构说明](./docs/architecture.md): 说明 AgentLoop、插件系统、工具系统、Web UI、LLM provider、benchmark 架构。
+- [架构说明](./docs/architecture.md): 说明 AgentLoop、上下文注入管线、插件系统、工具系统、Web UI、LLM provider、benchmark 架构。
 - [开发指南](./docs/development-guide.md): 记录安装、运行、常用命令、环境变量和开发注意事项。
 - [测试指南](./docs/testing-guide.md): 记录测试分层、回归测试规则、CLI/Web/benchmark 覆盖要求。
 - [需求流程](./docs/requirements-process.md): 规定后续每个功能如何先讨论、写需求文档、评审、实现和验收。
@@ -132,8 +132,7 @@ uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-
 - [经验教训](./docs/lessons-learned.md): 记录历史问题、根因和后续开发必须吸取的教训。
 - [Coding Agent 路线图](./docs/coding-agent-roadmap.md): 当前 coding-agent 能力建设路线图，后续需要按新项目定位继续修订。
 - [Benchmark 方案](./docs/benchmark-plan.md): benchmark 任务、运行器、评测指标和结果文件设计。
-- [讨论纪要](./docs/discussions/): 保存重要设计讨论和阶段性决策记录。
 
 ## 当前文档债务
 
-- `docs/coding-agent-roadmap.md`、`docs/benchmark-plan.md` 仍保留部分历史英文设计记录；当前事实口径已经补齐，但后续如做文档整理，应整体改为中文并清理旧阶段叙述。
+- `docs/coding-agent-roadmap.md`、`docs/benchmark-plan.md` 仍保留部分历史英文设计记录和旧阶段数据；后续整体改为中文并更新 benchmark 结果数据。

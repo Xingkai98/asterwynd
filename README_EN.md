@@ -26,7 +26,9 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **WorkspacePolicy** | Workspace safety boundary that rejects path traversal, sensitive file writes, and dangerous commands. |
 | **SandboxExecutor** | Subprocess sandbox with structured output: exit_code, stdout, stderr, duration, and timed_out. |
 | **HookManager** | 6 lifecycle extension points with built-in logging, retry, tracing, and token budget hooks. |
-| **MemoryManager** | AutoCompact token compression. When over budget, it asks the LLM to summarize older context. |
+| **MemoryManager** | 90%-threshold AutoCompact with pluggable Summarizer (LLM four-section summary / truncation fallback). |
+| **ContextBuilder** | Context injection pipeline that orchestrates ASTER.md, memory index, skills, plans, todos, and other ContextSources. |
+| **Browser** | Controlled read-only browser: navigation, screenshots, content extraction, and tab management with safety policy. |
 | **SkillRuntime** | Directory-style Markdown skills with index injection, always/on-demand activation, and explicit `/skill args` invocation. |
 | **MCP Adapter** | Connects stdio / Streamable HTTP MCP servers, registers MCP tools, and injects prompt/resource context through `/mcp-prompt` and `/mcp-resource`. |
 | **SubAgentManager** | Sub-session runtime with independent transcripts, multiple sub-sessions, repeated runs per sub-session, and explicit inspect. |
@@ -101,6 +103,11 @@ uv run python run_infer.py \
 | `SymbolSearch` | read_only | Search supported symbols by name within the repository. |
 | `WebSearch` | read_only | DuckDuckGo HTML search with stable text results that include provider metadata. |
 | `WebFetch` | read_only | Fetch webpage text and return status, type, and truncation diagnostics. |
+| `BrowserNavigate` | read_only | Navigate browser to a given URL. |
+| `BrowserScreenshot` | read_only | Capture the current page viewport as a screenshot. |
+| `BrowserGetContent` | read_only | Extract interactive elements and text content from the page. |
+| `BrowserScroll` | read_only | Scroll the page by a given number of pixels. |
+| `BrowserTabs` | read_only | Manage browser tabs: new, switch, close. |
 
 The Bash tool has built-in command safety policy. It first passes mode permission profile checks; in the default `build` mode, high-risk command execution requires approval, and unattended entry points such as single-prompt CLI and benchmark fail closed. Before actual execution it still checks regex deny patterns covering cases such as `rm -rf /`, fork bombs, and `curl | sh`, then matches allowed safe command prefixes such as `git status`, `pytest`, `uv`, and `npm`. Project-level command deny rules, permission profiles, and ListFiles / Find ignore rules are extended through `asterwynd.yaml`; see `asterwynd.example.yaml`.
 
@@ -116,27 +123,59 @@ agent/
 ├── trace_recorder.py        # TraceRecorder full trace recording
 ├── message.py               # Message dataclass + constructors
 ├── result.py                # RunResult + StopReason + ToolCallMade
+├── config.py                # Config loader (asterwynd.yaml)
+├── session.py               # SessionStore session persistence
+├── approval.py              # ApprovalHandler tool approval
+├── background.py            # BackgroundTaskManager background tasks
+├── run_config.py            # AgentRuntimeState + mode transition
+├── run_identity.py          # RunId / SessionId identifiers
+├── tool_permissions.py      # ToolPermission + ModePolicy
+├── tool_result_display.py   # ToolResultDisplayConfig
+├── branding.py              # Asterwynd branding
+├── assets/                  # Branding assets
+├── commands/
+│   ├── registry.py          # SlashCommandRegistry
+│   └── init.py              # /init command (ASTER.md generation)
+├── context/
+│   ├── protocol.py          # BuildContext + ContextSource Protocol
+│   ├── builder.py           # ContextBuilder pipeline
+│   ├── sources.py           # 8 built-in ContextSources
+│   └── summarizer.py        # Summarizer Protocol + LLMSummarizer + TruncationSummarizer
 ├── tools/
 │   ├── base.py              # Tool ABC + @tool_parameters decorator
 │   ├── registry.py          # ToolRegistry
 │   ├── sandbox.py           # SandboxExecutor + SandboxResult
-│   └── builtin/             # Built-in tools
+│   └── builtin/             # Built-in tools (file, command, browser, search, etc.)
 ├── hooks/
 │   ├── manager.py           # HookManager + Hook Protocol
 │   └── builtin/             # 4 built-in hooks
 ├── memory/
 │   └── manager.py           # MemoryManager + AutoCompact
+├── planning/
+│   └── manager.py           # PlanningManager structured planning state
 ├── mcp/
 │   ├── manager.py           # MCP server connection, discovery, and calls
 │   └── tools.py             # MCP-backed Tool wrapper
 ├── skills/
 │   ├── loader.py            # SkillLoader + Skill dataclass
 │   └── runtime.py           # SkillRuntime + current-run skill activation
-└── subagent/
-    └── manager.py           # SubAgentManager sub-session runtime
+├── subagent/
+│   └── manager.py           # SubAgentManager sub-session runtime
+├── browser/
+│   ├── service.py           # BrowserService process management
+│   ├── session.py           # BrowserSession tab/navigation management
+│   └── policy.py            # BrowserPolicy safety policy
+├── code_intelligence/
+│   └── ...                  # RepoMap / SymbolSearch implementations
+├── lsp/
+│   └── ...                  # LSP server management & semantic tools
+├── workflow/
+│   └── ...                  # Handoff state machine & lifecycle tracking
+└── tui/
+    └── ...                  # Terminal UI runtime view
 
 benchmarks/                  # Local benchmark runner
-├── tasks/                   # 23 coding tasks (6 categories, 3 difficulty levels)
+├── tasks/                   # 34 coding tasks (asterwynd-* + swebench-*)
 ├── runner.py                # BenchmarkRunner + SWE-bench style isolation
 ├── agent_runner.py          # AgentRunner adapters: fake/shell/asterwynd
 ├── models.py                # Failure taxonomy + metric models
@@ -207,11 +246,12 @@ agent = AgentLoop(hooks=HookManager([MyHook()]), ...)
 
 ### AutoCompact
 
-`MemoryManager.compact_if_needed()` checks the token budget after each tool-call round. When over budget, it compacts history:
+`MemoryManager.compact_if_needed()` checks the token budget after each tool-call round. At 90% of budget, it triggers compaction:
 
 - Keep all `role=system` messages.
-- Keep the most recent N messages.
-- Ask the LLM to summarize the middle section.
+- Keep the most recent N messages (with tool-call chain integrity protection).
+- Summarize the middle section via pluggable `Summarizer` (LLM four-section summary, or truncation fallback when no LLM).
+- Summary is injected as a `role=user` message (semantically "prior conversation context").
 
 ```python
 memory = MemoryManager(max_tokens=80_000, recent_window=10, llm=openai_llm)
@@ -329,7 +369,7 @@ ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real
 
 Asterwynd currently has two benchmark paths:
 
-- `benchmarks/`: the built-in project runner, using 23 local tasks and a small number of `swebench-*` external tasks to validate the Asterwynd coding-agent loop.
+- `benchmarks/`: the built-in project runner, using 34 local tasks and a small number of `swebench-*` external tasks to validate the Asterwynd coding-agent loop.
 - `claw-swe-bench/`: the Claw-SWE-Bench unified harness, comparing Asterwynd, Aider, OpenCode, and other external coding agents on the same SWE-bench Verified instances.
 
 ### Quick Validation (Fake Agent, Deterministic)
@@ -372,16 +412,16 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ### Task Set
 
-23 tasks are extracted from the project git history and cover 6 categories:
+34 tasks are extracted from the project git history and cover several categories:
 
-| Category | Count | Example |
-|------|------|------|
-| Tool implementation | 5 | ToolRegistry, SandboxExecutor, Read/Write tools, Bash workspace |
-| Safety policy | 3 | Reject `.env` writes, path traversal protection, Bash command policy |
-| Agent core | 7 | AgentLoop, MemoryManager, SkillRuntime, SubAgent system |
-| Observability | 3 | HookManager, logging/tracing hooks, retry/budget hooks |
-| Benchmark infrastructure | 3 | Failure classification, runner timeout, resource leak fixes |
-| Prompting | 2 | Coding system prompt, validation command injection |
+| Category | Example |
+|------|------|
+| Tool implementation | ToolRegistry, SandboxExecutor, Read/Write tools, Bash workspace, Browser tools |
+| Safety policy | Reject `.env` writes, path traversal protection, Bash command policy, Browser safety |
+| Agent core | AgentLoop, MemoryManager, SkillRuntime, SubAgent system, context injection pipeline |
+| Observability | HookManager, logging/tracing hooks, retry/budget hooks |
+| Benchmark infrastructure | Failure classification, runner timeout, resource leak fixes, Docker preflight |
+| Prompting & input | Coding system prompt, validation command injection, multimodal input |
 
 ### Evaluation Flow
 
@@ -412,9 +452,8 @@ Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken (optional)
 
 ## Design Docs
 
-- `docs/coding-agent-roadmap.md`: Coding Agent roadmap (P0 completed / P1 in progress)
+- `docs/coding-agent-roadmap.md`: Coding Agent roadmap
 - `docs/benchmark-plan.md`: benchmark design for the local runner, SWE-bench Docker harness, and Claw-SWE-Bench comparison path
 - `CLAW-SWE-BENCH.md`: Claw-SWE-Bench integration and running guide
-- `docs/discussions/2026-06-15-p1-p3-scope-review.md`: P1 development discussion notes
 
 > Chinese source: [README.md](./README.md)

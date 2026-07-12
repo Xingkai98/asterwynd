@@ -301,7 +301,7 @@ Deliverables:
 - Claw-SWE-Bench path — `claw-swe-bench/` registers Asterwynd, Aider, and
   OpenCode adapters for SWE-bench Verified / mini comparison under one
   orchestrator and evaluation harness. Asterwynd runs through
-  `agent/claw_solve.py` inside the target container. Done for integration;
+  `claw-swe-bench/` adapter inside the target container. Done for integration;
   full result reporting depends on benchmark runs.
 
 Design notes:
