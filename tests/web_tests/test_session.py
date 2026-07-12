@@ -56,7 +56,9 @@ async def test_create_session():
     manager = SessionManager()
     session = manager.create_session(mock_llm, tools=[EchoTool()])
     assert len(session.session_id) == 12
-    assert session.messages[0].role == "system"
+    # System prompt is now injected dynamically by ContextBuilder at LLM call
+    # time, not stored as a static message in session.messages.
+    assert session.messages == []
 
 
 @pytest.mark.asyncio
@@ -506,7 +508,9 @@ async def test_debug_events_contain_full_messages():
     before_iter = [e for e in events if e["type"] == "debug" and e["phase"] == "before_iteration"]
     assert len(before_iter) >= 1
     msgs = before_iter[0]["data"]["messages"]
-    assert len(msgs) >= 2  # system + user
+    # before_iteration now fires with contextualized messages (including
+    # ContextBuilder output: SystemPrompt, ASTER.md, memory, skills, etc.).
+    assert len(msgs) >= 2  # system (context block) + user
     for msg in msgs:
         assert "role" in msg
         assert "content" in msg

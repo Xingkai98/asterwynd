@@ -11,7 +11,7 @@ from agent.approval import (
 )
 from agent.config import AsterwyndConfig
 from agent.loop import AgentLoop
-from agent.message import Message, system_message
+from agent.message import Message
 from agent.mcp import build_mcp_manager
 from agent.run_identity import new_session_id
 from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
@@ -109,13 +109,8 @@ class AgentSession:
         return self.agent.runtime_state.current_mode.value
 
     def init_messages(self, system_prompt: Optional[str] = None):
-        default_system = (
-            "你是一个有用、诚实的人工智能助手。"
-            "你可以调用工具来完成任务。"
-        )
-        self.messages.append(system_message(default_system))
         if system_prompt:
-            self.messages.append(system_message(system_prompt))
+            self.agent._user_system_prompt = system_prompt
 
 
 class SessionManager:

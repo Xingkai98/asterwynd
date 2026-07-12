@@ -3,11 +3,12 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
-from agent.message import Message, TextBlock, ImageBlock, extract_text, count_tokens_for_content
+from agent.message import Message, count_tokens_for_content
 
 if TYPE_CHECKING:
     from agent.llm import LLM
     from agent.message import Message
+    from agent.context.summarizer import Summarizer
 
 logger = logging.getLogger("asterwynd.memory")
 
@@ -47,11 +48,35 @@ class MemoryManager:
         max_tokens: int = 100_000,
         recent_window: int = 10,
         llm: Optional["LLM"] = None,
+        summarizer: Optional["Summarizer"] = None,
+        compaction_gap: int = 5,
     ):
         self.messages: list["Message"] = []
         self.max_tokens = max_tokens
         self.recent_window = recent_window
         self.llm = llm
+        self._summarizer = summarizer
+        self._compaction_gap = compaction_gap
+        self._last_compaction_iteration: int = -compaction_gap  # allow first
+
+    # ------------------------------------------------------------------
+    # Summarizer (lazy init for backwards compatibility)
+    # ------------------------------------------------------------------
+
+    def _get_summarizer(self) -> "Summarizer | None":
+        if self._summarizer is not None:
+            return self._summarizer
+        if self.llm is not None:
+            from agent.context.summarizer import LLMSummarizer
+            self._summarizer = LLMSummarizer(self.llm)
+        else:
+            from agent.context.summarizer import TruncationSummarizer
+            self._summarizer = TruncationSummarizer()
+        return self._summarizer
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def add(self, message: "Message") -> None:
         self.messages.append(message)
@@ -59,16 +84,45 @@ class MemoryManager:
     def count_tokens(self, messages: list["Message"]) -> int:
         return sum(count_tokens_for_content(m.content, _count_tokens) for m in messages)
 
-    async def compact_if_needed(self, messages: Optional[list["Message"]] = None) -> bool:
+    async def compact_if_needed(
+        self,
+        messages: Optional[list["Message"]] = None,
+        iteration: int = 0,
+    ) -> bool:
+        """Trigger compaction when token count reaches 90% of budget.
+
+        Minimum *compaction_gap* iterations must pass between compactions
+        to avoid thrashing.
+        """
         msgs = messages if messages is not None else self.messages
         total = self.count_tokens(msgs)
-        if total > self.max_tokens:
-            logger.info(f"[Memory] {total} tokens > {self.max_tokens} budget, compacting")
-            await self.compact(msgs)
-            return True
+        threshold = int(self.max_tokens * 0.9)
+        if total >= threshold:
+            if iteration - self._last_compaction_iteration >= self._compaction_gap:
+                logger.info(
+                    "[Memory] %d tokens >= %d (90%% of %d budget), compacting",
+                    total, threshold, self.max_tokens,
+                )
+                await self.compact(msgs)
+                self._last_compaction_iteration = iteration
+                return True
+            else:
+                logger.info(
+                    "[Memory] %d tokens >= %d but compaction skipped "
+                    "(last compaction at iteration %d, gap=%d)",
+                    total, threshold,
+                    self._last_compaction_iteration, self._compaction_gap,
+                )
         return False
 
     async def compact(self, messages: Optional[list["Message"]] = None) -> bool:
+        """Compress conversation history using the configured summarizer.
+
+        System messages and recent messages (with their tool chains) are
+        preserved.  Middle messages are summarised and the result is
+        injected as a **user** message so the agent treats it as
+        prior-conversation context rather than a constraint.
+        """
         msgs = messages if messages is not None else self.messages
         system = [m for m in msgs if m.role == "system"]
         non_system = [m for m in msgs if m.role != "system"]
@@ -77,26 +131,32 @@ class MemoryManager:
 
         if not middle:
             msgs[:] = system + recent
-            logger.info(f"[Memory] Compacted to {len(msgs)} messages")
+            logger.info("[Memory] Compacted to %d messages", len(msgs))
             return True
 
-        if self.llm is None:
+        summarizer = self._get_summarizer()
+        if summarizer is None:
             msgs[:] = system + recent
-            logger.info(f"[Memory] Compacted to {len(msgs)} messages (no LLM)")
+            logger.info("[Memory] Compacted to %d messages (no summarizer available)", len(msgs))
             return True
 
-        summary = await self._summarize_messages(middle)
+        # Compute advisory budget: 30% of the middle messages' token count
+        # (target 20-30% of P6 per design.md §5).
+        middle_tokens = self.count_tokens(middle)
+        summary_budget = int(middle_tokens * 0.30)
+
+        summary = await summarizer.summarize(middle, budget=summary_budget)
         if not summary:
             msgs[:] = system + recent
-            logger.info(f"[Memory] Compacted to {len(msgs)} messages (summary unavailable)")
+            logger.info("[Memory] Compacted to %d messages (summary unavailable)", len(msgs))
             return True
 
         summary_message = Message(
-            role="system",
-            content=f"Previous conversation summary:\n{summary}",
+            role="user",
+            content=summary,
         )
         msgs[:] = system + [summary_message] + recent
-        logger.info(f"[Memory] Compacted to {len(msgs)} messages with summary")
+        logger.info("[Memory] Compacted to %d messages with summary", len(msgs))
         return True
 
     async def compact_manually(
@@ -130,66 +190,9 @@ class MemoryManager:
             reason="compacted",
         )
 
-    async def _summarize_messages(self, messages: list["Message"]) -> Optional[str]:
-        if self.llm is None:
-            return None
-
-        prompt = (
-            "Summarize the following conversation segment for a coding agent. "
-            "Preserve the user's goal, constraints, important decisions, files or "
-            "commands mentioned, tool results, and unresolved next steps. Be concise.\n\n"
-            f"{self._format_messages_for_summary(messages)}"
-        )
-        try:
-            response = await self.llm.chat(
-                messages=[
-                    Message(
-                        role="system",
-                        content="You summarize compacted conversation history for an agent.",
-                    ),
-                    Message(role="user", content=prompt),
-                ],
-                tools=None,
-            )
-        except Exception as exc:
-            logger.warning("[Memory] Summary generation failed: %s", exc)
-            return None
-
-        summary = (response.content or "").strip()
-        return summary or None
-
-    def _format_messages_for_summary(self, messages: list["Message"]) -> str:
-        lines: list[str] = []
-        for index, message in enumerate(messages, start=1):
-            label = message.role
-            if message.role == "tool" and message.tool_call_id:
-                label = f"tool[{message.tool_call_id}]"
-            content = self._message_summary_text(message)
-            if not content:
-                content = "<empty>"
-            lines.append(f"{index}. {label}: {content}")
-            if message.tool_calls:
-                calls = ", ".join(
-                    f"{getattr(call, 'name', '<unknown>')}({getattr(call, 'id', '<no-id>')})"
-                    for call in message.tool_calls
-                )
-                lines.append(f"   tool_calls: {calls}")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _message_summary_text(message: "Message") -> str:
-        """获取消息的摘要文本，图片替换为文件路径引用"""
-        content = message.content
-        if isinstance(content, str):
-            return content.strip()
-        parts: list[str] = []
-        for block in content:
-            if isinstance(block, TextBlock):
-                parts.append(block.text.strip())
-            elif isinstance(block, ImageBlock):
-                ref = block.file_path or "pasted image"
-                parts.append(f"[image: {ref}]")
-        return " ".join(parts)
+    # ------------------------------------------------------------------
+    # Tool chain protection
+    # ------------------------------------------------------------------
 
     def _recent_with_tool_chains(self, messages: list["Message"]) -> list["Message"]:
         if self.recent_window <= 0:
@@ -224,6 +227,10 @@ class MemoryManager:
             if any(getattr(tool_call, "id", None) == tool_call_id for tool_call in message.tool_calls):
                 return index
         return None
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def get_messages(self) -> list["Message"]:
         return self.messages

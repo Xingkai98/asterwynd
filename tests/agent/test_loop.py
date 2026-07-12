@@ -339,10 +339,10 @@ async def test_agent_loop_injects_planning_context_without_mutating_messages():
     ]
     await loop.run(messages)
 
-    assert [message.content for message in llm.messages[:2]] == [
-        "base system",
-        "Current structured planning state:\n- [in_progress] Read docs",
-    ]
+    # Planning context is now part of the ContextBuilder injection block
+    # (index 1), rendered alongside SystemPrompt, MemoryIndex, Skills, etc.
+    assert "base system" in llm.messages[0].content
+    assert "Current structured planning state:\n- [in_progress] Read docs" in llm.messages[1].content
     assert [message.content for message in messages] == ["base system", "hi", "done"]
 
 @pytest.mark.asyncio
@@ -500,8 +500,9 @@ async def test_memory_compaction_preserves_assistant_tool_result_chain():
     compacted = await mgr.compact_if_needed(messages)
 
     assert compacted is True
-    assert [m.role for m in messages] == ["system", "assistant", "tool"]
-    assert messages[1].tool_calls[0].id == messages[2].tool_call_id
+    # Summary is now injected as a user message by TruncationSummarizer
+    assert [m.role for m in messages] == ["system", "user", "assistant", "tool"]
+    assert messages[2].tool_calls[0].id == messages[3].tool_call_id
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ class SessionSnapshot:
     active_skills: list[str]
     run_id: str
     iteration: int
+    user_system_prompt: str = ""
     runtime_fingerprint: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -37,6 +38,7 @@ class SessionSnapshot:
             "active_skills": self.active_skills,
             "run_id": self.run_id,
             "iteration": self.iteration,
+            "user_system_prompt": self.user_system_prompt,
             "runtime_fingerprint": self.runtime_fingerprint,
         }
 
@@ -53,6 +55,7 @@ class SessionSnapshot:
             active_skills=data.get("active_skills", []),
             run_id=data.get("run_id", ""),
             iteration=data.get("iteration", 0),
+            user_system_prompt=data.get("user_system_prompt", ""),
             runtime_fingerprint=data.get("runtime_fingerprint", {}),
         )
 
