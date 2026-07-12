@@ -84,9 +84,9 @@ AgentLoop.run()
 
 **6. Benchmark 闭环**
 
-- 内置 `benchmarks/` runner：23 个本地 coding-agent 任务，支持 worktree 隔离、hidden `test.patch`、fake/shell/Asterwynd runner、结构化 artifact。
+- 内置 `benchmarks/` runner：34 个本地 coding-agent 任务，支持 worktree 隔离、hidden `test.patch`、fake/shell/Asterwynd runner、结构化 artifact。
 - 外部 `swebench-*` 任务：通过 Docker preflight 和 SWE-bench harness 验证 patch。
-- Claw-SWE-Bench 集成：`claw-swe-bench/` 注册 Asterwynd、Aider、OpenCode adapter；Asterwynd 通过 `agent/claw_solve.py` 在目标容器内运行 headless solver。
+- Claw-SWE-Bench 集成：`claw-swe-bench/` 注册 Asterwynd、Aider、OpenCode adapter，通过独立 harness 在目标容器内运行 headless solver。
 - 结果状态区分 `passed`、`passed_with_warnings`、`unsupported`、`failed`、`error`，失败原因写入 `reason`。
 
 面试讲法：我用 benchmark 把 Agent 能力从“看起来能跑”变成可量化证据，能比较不同 agent、模型和失败模式。

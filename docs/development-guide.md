@@ -199,5 +199,5 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - 修改代码前先读相关实现和测试。
 - 不要回滚用户未提交改动。
 - 不要提交本地环境文件、日志、缓存和生成产物。
-- 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/` 或 `agent/claw_solve.py`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
+- 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。

@@ -19,7 +19,7 @@ benchmark 需要回答：
 
 当前实现已有两条互补路径：
 
-- `benchmarks/`：项目内置 runner，覆盖本仓库 23 个本地任务和 `swebench-*` 外部任务。
+- `benchmarks/`：项目内置 runner，覆盖本仓库 34 个本地任务和 `swebench-*` 外部任务。
 - `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用 SWE-bench Verified / mini 实例对比 Asterwynd、Aider、OpenCode 等 agent。
 
 ## 2. Industry References
@@ -73,7 +73,7 @@ Useful concepts:
 
 **本地 runner（`benchmarks/`）**
 
-- 23 local Asterwynd tasks and SWE-bench-style external task fixtures.
+- 34 local Asterwynd tasks and SWE-bench-style external task fixtures.
 - Each task starts from a `base_commit`.
 - Each task has an issue-style problem statement.
 - Each task has a validation command.
@@ -85,7 +85,7 @@ Useful concepts:
 
 - 复用 Claw-SWE-Bench orchestrator / workspace / patch collection / evaluation flow。
 - 当前注册 `asterwynd`、`aider`、`opencode` 三个 adapter。
-- `asterwynd` 通过 `agent/claw_solve.py` 在 SWE-bench 容器内运行 Asterwynd headless solver。
+- `asterwynd` 通过 `claw-swe-bench/` adapter 在 SWE-bench 容器内运行 Asterwynd headless solver。
 - `aider` 通过 headless CLI 运行，可用于同模型对照。
 - `opencode` adapter 已接入，但是否能跑同模型取决于 OpenCode CLI 对自定义 API endpoint 的支持。
 - 详细运行指南见仓库根目录 [CLAW-SWE-BENCH.md](../CLAW-SWE-BENCH.md)。
@@ -204,7 +204,7 @@ Claw-SWE-Bench adapters：
 
 | Adapter | Purpose |
 |---------|---------|
-| `AsterwyndAdapter` | Run Asterwynd inside the SWE-bench target container through `agent/claw_solve.py` |
+| `AsterwyndAdapter` | Run Asterwynd inside the SWE-bench target container through `claw-swe-bench/` adapter |
 | `AiderAdapter` | Run Aider headless on the same SWE-bench instance |
 | `OpenCodeAdapter` | Run OpenCode headless when the target model endpoint is supported |
 
@@ -462,7 +462,7 @@ Implemented:
 - Run-level `run.json` and `summary.md`.
 - `passed_with_warnings` for test-passing but non-clean agent runs.
 - Claw-SWE-Bench integration under `claw-swe-bench/`, with Asterwynd, Aider and OpenCode adapters registered.
-- Asterwynd headless solver entry at `agent/claw_solve.py` for containerized SWE-bench tasks.
+- Asterwynd headless solver via `claw-swe-bench/` adapter for containerized SWE-bench tasks.
 - P0 local task pack:
   - `asterwynd-readme-title`
   - `asterwynd-002-asterwynd-runner`

@@ -26,7 +26,9 @@
 | **WorkspacePolicy** | 工作区安全边界，拒绝路径穿越、敏感文件写入、危险命令 |
 | **SandboxExecutor** | subprocess 沙箱，结构化输出（exit_code/stdout/stderr/duration/timed_out） |
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
-| **MemoryManager** | AutoCompact token 压缩，超预算时用 LLM 生成摘要 |
+| **MemoryManager** | 90% 阈值 AutoCompact、可插拔 Summarizer（LLM 四段式摘要 / 截断降级） |
+| **ContextBuilder** | 上下文注入管线，统一编排 ASTER.md、记忆索引、技能、计划、待办等 ContextSource |
+| **Browser** | 受控只读浏览器：导航、截图、内容提取、标签页管理，安全策略约束 |
 | **SkillRuntime** | 目录式 Markdown skill 加载、index 注入、按需/always 激活、`/skill args` 显式调用 |
 | **MCP Adapter** | 连接 stdio / Streamable HTTP MCP server，注册 MCP tools，并通过 `/mcp-prompt`、`/mcp-resource` 注入上下文 |
 | **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
@@ -101,6 +103,11 @@ uv run python run_infer.py \
 | `SymbolSearch` | read_only | 在仓库内按名称搜索已支持语言的符号 |
 | `WebSearch` | read_only | DuckDuckGo HTML 搜索，返回带 provider 的稳定文本结果 |
 | `WebFetch` | read_only | 获取网页正文，返回状态/类型/截断诊断 |
+| `BrowserNavigate` | read_only | 浏览器导航到指定 URL |
+| `BrowserScreenshot` | read_only | 截取当前页面视口截图 |
+| `BrowserGetContent` | read_only | 提取页面可交互元素和文本内容 |
+| `BrowserScroll` | read_only | 滚动页面指定像素 |
+| `BrowserTabs` | read_only | 管理浏览器标签页（新建/切换/关闭） |
 
 Bash 工具内置命令安全策略：先经过 mode permission profile 判权；默认 `build` mode 下 high risk 命令执行需要审批，CLI 单轮和 benchmark 等无人值守入口 fail closed。实际执行前仍会检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则、permission profile 和 ListFiles / Find 忽略规则通过 `asterwynd.yaml` 配置扩展，见 `asterwynd.example.yaml`。
 
@@ -116,27 +123,59 @@ agent/
 ├── trace_recorder.py        # TraceRecorder 全量轨迹记录
 ├── message.py               # Message dataclass + 快捷构造
 ├── result.py                # RunResult + StopReason + ToolCallMade
+├── config.py                # 配置加载（asterwynd.yaml）
+├── session.py               # SessionStore 会话持久化
+├── approval.py              # ApprovalHandler 工具审批
+├── background.py            # BackgroundTaskManager 后台任务
+├── run_config.py            # AgentRuntimeState + mode transition
+├── run_identity.py          # RunId / SessionId 标识
+├── tool_permissions.py      # ToolPermission + ModePolicy
+├── tool_result_display.py   # ToolResultDisplayConfig
+├── branding.py              # Asterwynd 品牌信息
+├── assets/                  # 品牌资源
+├── commands/
+│   ├── registry.py          # SlashCommandRegistry
+│   └── init.py              # /init 命令（ASTER.md 生成）
+├── context/
+│   ├── protocol.py          # BuildContext + ContextSource Protocol
+│   ├── builder.py           # ContextBuilder 管线编排
+│   ├── sources.py           # 8 个内置 ContextSource
+│   └── summarizer.py        # Summarizer Protocol + LLMSummarizer + TruncationSummarizer
 ├── tools/
 │   ├── base.py              # Tool ABC + @tool_parameters 装饰器
 │   ├── registry.py          # ToolRegistry
 │   ├── sandbox.py           # SandboxExecutor + SandboxResult
-│   └── builtin/             # 内置工具
+│   └── builtin/             # 内置工具（文件/命令/浏览器/搜索等）
 ├── hooks/
 │   ├── manager.py           # HookManager + Hook Protocol
 │   └── builtin/             # 4 个内置 Hook
 ├── memory/
 │   └── manager.py           # MemoryManager + AutoCompact
+├── planning/
+│   └── manager.py           # PlanningManager 结构化计划状态
 ├── mcp/
 │   ├── manager.py           # MCP server 连接、discovery 和调用
 │   └── tools.py             # MCP-backed Tool wrapper
 ├── skills/
 │   ├── loader.py            # SkillLoader + Skill dataclass
 │   └── runtime.py           # SkillRuntime + 当前 run skill 激活
-└── subagent/
-    └── manager.py           # SubAgentManager 子 session runtime
+├── subagent/
+│   └── manager.py           # SubAgentManager 子 session runtime
+├── browser/
+│   ├── service.py           # BrowserService 浏览器进程管理
+│   ├── session.py           # BrowserSession 标签页/导航管理
+│   └── policy.py            # BrowserPolicy 安全策略
+├── code_intelligence/
+│   └── ...                  # RepoMap / SymbolSearch 实现
+├── lsp/
+│   └── ...                  # LSP server 管理与语义工具
+├── workflow/
+│   └── ...                  # Handoff 状态机 + 生命周期追踪
+└── tui/
+    └── ...                  # 终端 UI 运行时视图
 
 benchmarks/                  # 本地 benchmark runner
-├── tasks/                   # 23 个编码任务（6 类别 3 难度）
+├── tasks/                   # 34 个编码任务（asterwynd-* + swebench-*）
 ├── runner.py                # BenchmarkRunner + SWE-bench 风格隔离
 ├── agent_runner.py          # AgentRunner（fake/shell/asterwynd 适配器）
 ├── models.py                # 失败分类 + 指标模型
@@ -206,11 +245,12 @@ agent = AgentLoop(hooks=HookManager([MyHook()]), ...)
 
 ### AutoCompact
 
-`MemoryManager.compact_if_needed()` 在每次工具调用轮次后检查 token 预算，超限时触发压缩：
+`MemoryManager.compact_if_needed()` 在每次工具调用轮次后检查 token 预算，达到 90% 阈值时触发压缩：
 
 - 保留所有 `role=system` 消息
-- 保留最近 N 条对话
-- 中间部分调用 LLM 生成一段摘要
+- 保留最近 N 条对话（含 tool-call 链完整性保护）
+- 中间部分通过可插拔 `Summarizer` 生成摘要（LLM 四段式结构化摘要，无 LLM 时截断降级）
+- 摘要以 `role=user` 消息注入（语义上为"前序会话上下文"）
 
 ```python
 memory = MemoryManager(max_tokens=80_000, recent_window=10, llm=openai_llm)
@@ -328,7 +368,7 @@ ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real
 
 Asterwynd 当前有两条 benchmark 路径：
 
-- `benchmarks/`：项目内置 runner，用 23 个本地任务和少量 `swebench-*` 外部任务验证 Asterwynd 的 coding-agent 闭环。
+- `benchmarks/`：项目内置 runner，用 34 个本地任务和少量 `swebench-*` 外部任务验证 Asterwynd 的 coding-agent 闭环。
 - `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用同一批 SWE-bench Verified 实例对比 Asterwynd、Aider、OpenCode 等外部 coding agent。
 
 ### 快速验证（fake agent，确定性地）
@@ -371,16 +411,16 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ### 任务集
 
-23 个任务从项目 git 历史中提取，覆盖 6 个类别：
+34 个任务从项目 git 历史中提取，覆盖多个类别：
 
-| 类别 | 数量 | 示例 |
-|------|------|------|
-| 工具实现 | 5 | ToolRegistry, SandboxExecutor, Read/Write 工具, Bash workspace |
-| 安全策略 | 3 | .env 写入拒绝, 路径穿越防护, Bash 命令策略 |
-| Agent 核心 | 7 | AgentLoop, MemoryManager, SkillRuntime, SubAgent 系统 |
-| 可观测性 | 3 | HookManager, 日志/追踪 Hook, 重试/预算 Hook |
-| 基准设施 | 3 | 失败分类, Runner timeout, 资源泄漏修复 |
-| 提示词 | 2 | 编码系统提示词, 验证命令注入 |
+| 类别 | 示例 |
+|------|------|
+| 工具实现 | ToolRegistry, SandboxExecutor, Read/Write 工具, Bash workspace, Browser 工具 |
+| 安全策略 | .env 写入拒绝, 路径穿越防护, Bash 命令策略, Browser 安全策略 |
+| Agent 核心 | AgentLoop, MemoryManager, SkillRuntime, SubAgent 系统, 上下文注入管线 |
+| 可观测性 | HookManager, 日志/追踪 Hook, 重试/预算 Hook |
+| 基准设施 | 失败分类, Runner timeout, 资源泄漏修复, Docker preflight |
+| 提示词与输入 | 编码系统提示词, 验证命令注入, 多模态输入 |
 
 ### 评测流程
 
@@ -411,7 +451,6 @@ Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken（可选）
 
 ## 设计文档
 
-- `docs/coding-agent-roadmap.md` — 编码 Agent 路线图（P0 已完成 / P1 进行中）
+- `docs/coding-agent-roadmap.md` — 编码 Agent 路线图
 - `docs/benchmark-plan.md` — benchmark 设计（本地 runner、SWE-bench Docker harness、Claw-SWE-Bench 对比入口）
 - `CLAW-SWE-BENCH.md` — Claw-SWE-Bench 集成和运行指南
-- `docs/discussions/2026-06-15-p1-p3-scope-review.md` — P1 开发方案讨论纪要
