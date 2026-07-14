@@ -2,8 +2,8 @@
   "schema_version": "1.0",
   "change_id": "automate-conversation-to-delivery-workflow",
   "state": {
-    "phase": "planning",
-    "sub_state": "ready_for_review"
+    "phase": "reviewing",
+    "sub_state": "reading_docs"
   },
   "transitions": [
     {
@@ -89,6 +89,22 @@
       "actor_type": "agent",
       "actor_id": "workflow_state.py",
       "timestamp": "2026-07-14T12:22:46.205550+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "reviewing",
+        "sub_state": "reading_docs"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human",
+      "timestamp": "2026-07-14T13:08:46.452778+00:00",
+      "handoff_note": ".handoff/automate-conversation-to-delivery-workflow/planning-to-reviewing.md",
+      "decision": "approved"
     }
   ],
   "current_agent": null,
