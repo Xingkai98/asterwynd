@@ -15,6 +15,7 @@
 - [ ] 2.1 为 Workflow、Event、Snapshot、WorkItem、WorkResult、Gate、Approval、Evidence、WorkspaceBinding 和 Lease 编写失败的模型测试
 - [ ] 2.2 创建不依赖 `agent/` 的 `workflow_control` package 结构和公开类型
 - [ ] 2.3 实现版本化 phase template、executor lane、review lane、runner_profiles 与 Asterwynd `coding-agent-openspec` 默认模板
+- [ ] 2.3a 实现 phase commit_policy 配置，默认要求 human gate 前 clean worktree、HEAD commit 和 gate summary 绑定
 - [ ] 2.4 实现 event reducer 和合法 transition 判定，使模型测试通过
 - [ ] 2.5 增加依赖边界测试，阻止 `workflow_control` core 导入 AgentLoop 类型
 
@@ -62,6 +63,7 @@
 - [ ] 6.3a 验证 requirements 阶段不修改 canonical main repository，materialization 只使用 gate 绑定的 approved snapshot
 - [ ] 6.3b 验证 design.md、ADR 和 tasks.md 仅在 design phase 的绑定 worktree 中生成
 - [ ] 6.4 实现 design 到 closing 的 workspace 复用和 cwd 路由
+- [ ] 6.4a 实现 phase commit 创建/发现、dirty worktree 阻断、gate summary 绑定 branch/HEAD commit/`state_version`/evidence hash/`gate_summary_hash` 和 stale approval 检测
 - [ ] 6.5 实现 worktree 缺失、branch 漂移、重复绑定和 dirty cleanup 的 blocked 行为
 - [ ] 6.6 实现 merge/归档确认后的 worktree 清理
 
@@ -91,11 +93,11 @@
 
 ## 9. Workflow Receipt 与 CI
 
-- [ ] 9.1 为 Host 完整 history validation、Receipt 去敏、签名、artifact/evidence hash 和 archive 审计编写失败测试
+- [ ] 9.1 为 Host 完整 history validation、Receipt 去敏、签名、artifact/evidence hash、human gate binding tuple 和 archive 审计编写失败测试
 - [ ] 9.1a 为专用 Ed25519 key 初始化、文件权限、canonical JSON、多个 signer、active/retired/compromised 状态、轮换和 agent 不可见性编写测试
 - [ ] 9.2 实现最小 workflow-receipt.json 生成、event-chain root、key id 和签名
 - [ ] 9.3 扩展 artifact checker，验证 active 与 archived workflow Receipt
-- [ ] 9.4 更新 CI，验证 Receipt 签名、必需 Gate、artifact/evidence hash、base commit 和 archive 引用
+- [ ] 9.4 更新 CI，验证 Receipt 签名、必需 Gate、gate binding tuple、artifact/evidence hash、base commit 和 archive 引用
 - [ ] 9.5 增加 tampered Receipt、无效 key、绝对路径泄漏、完整事件泄漏和 secret 泄漏回归测试
 
 ## 10. Spec、文档与验证收尾

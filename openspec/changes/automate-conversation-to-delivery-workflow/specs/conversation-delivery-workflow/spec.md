@@ -377,6 +377,41 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 - **AND** SHALL NOT 进入 human `ready_for_review`
 - **AND** findings SHALL 作为 evidence 回传原 User Session
 
+#### Scenario: Human Gate 绑定 Clean Commit
+
+- **GIVEN** phase template 的 commit_policy 要求 human gate 前提交
+- **AND** phase 产物已写入最终 phase commit
+- **AND** 机械检查和 automated review 已针对该 HEAD commit 完成
+- **WHEN** workflow 准备进入 `ready_for_review`
+- **THEN** 绑定 worktree SHALL 为 clean
+- **AND** HEAD commit SHALL 位于绑定 branch
+- **AND** gate summary SHALL 包含 `state_version`、phase、branch、HEAD commit SHA、evidence hash 和 `gate_summary_hash`
+- **AND** `gate_summary_hash` SHALL 基于 canonical gate summary payload 计算，并排除 `gate_summary_hash` 字段本身
+- **AND** approval event SHALL 绑定该 `gate_summary_hash` 和对应 gate binding tuple
+
+#### Scenario: Dirty Worktree 阻止进入 Gate
+
+- **GIVEN** phase template 要求 `require_clean_worktree`
+- **AND** 绑定 worktree 存在未提交修改
+- **WHEN** workflow 准备进入 `ready_for_review`
+- **THEN** Orchestrator SHALL 拒绝进入 human gate
+- **AND** SHALL 要求 executor commit、revert 或显式进入 blocked
+
+#### Scenario: Review Fix 需要新 Commit
+
+- **GIVEN** automated reviewer 或 human reviewer 要求修改
+- **WHEN** executor 完成修复
+- **THEN** workflow SHALL 生成新的 phase commit
+- **AND** SHALL 重新运行机械检查和 configured automated review
+- **AND** 旧 approval 或 gate summary SHALL 失效
+
+#### Scenario: Gate 展示后 Commit 漂移
+
+- **GIVEN** gate summary 已绑定 HEAD commit SHA、evidence hash 和 `gate_summary_hash`
+- **WHEN** 用户批准前 HEAD commit、worktree clean 状态或 evidence hash 发生变化
+- **THEN** 系统 SHALL 拒绝该 approval 为 stale
+- **AND** SHALL 要求重新生成 gate summary、重新运行机械检查和 configured automated review
+
 ### Requirement: Agent 通过 WorkResult 报告而非指定状态
 
 Agent SHALL 通过 `report` 提交 `WorkResult`、artifact 引用、证据和 blocker。Agent SHALL NOT 直接指定任意目标 phase/sub-state；Orchestrator SHALL 根据当前状态、模板和证据决定合法结果。
@@ -422,7 +457,7 @@ Workflow event log SHALL 是实时状态的权威来源。每个事件 SHALL 具
 
 ### Requirement: 可信 Human Gate
 
-Gate approval SHALL 由可信用户客户端产生，并绑定 workflow id、gate id、phase、state version、decision 和 user identity。Agent capability SHALL NOT 包含批准 gate 的权限。
+Gate approval SHALL 由可信用户客户端产生，并绑定 workflow id、gate id、phase、`state_version`、decision 和 user identity。Agent capability SHALL NOT 包含批准 gate 的权限。
 
 #### Scenario: V1 Host Wrapper 持有 Approval Capability
 
@@ -452,6 +487,13 @@ Gate approval SHALL 由可信用户客户端产生，并绑定 workflow id、gat
 - **WHEN** 用户客户端提交绑定 version 8 的批准
 - **THEN** 系统 SHALL 拒绝 stale approval
 
+#### Scenario: 批准时重新校验 Gate Binding
+
+- **GIVEN** 用户客户端提交 approval
+- **WHEN** 当前 branch、HEAD commit SHA、worktree clean 状态、evidence hash 或 `gate_summary_hash` 与展示时不一致
+- **THEN** 系统 SHALL 拒绝 stale approval
+- **AND** SHALL NOT 推进到下一 phase
+
 #### Scenario: Session 内自然语言批准
 
 - **GIVEN** 当前 session 正在展示唯一的 pending gate
@@ -459,7 +501,7 @@ Gate approval SHALL 由可信用户客户端产生，并绑定 workflow id、gat
 - **AND** Gate Approval Token 白名单包含 `ok`
 - **WHEN** 用户发送完整消息 `ok`
 - **THEN** host adapter SHALL 在消息进入 agent 前执行精确匹配
-- **AND** SHALL 将 decision 绑定当前 gate id、state version 和原始 user message
+- **AND** SHALL 将 decision 绑定当前 gate id、`state_version` 和原始 user message
 - **AND** 控制面 SHALL 记录可信 gate_approved 事件
 - **AND** host SHALL 消费该消息而不发送给 agent
 - **AND** SHALL 在同一用户 turn 重新 enter 并自动调度下一阶段 WorkItem，默认复用当前 User Session
@@ -719,7 +761,7 @@ Workflow 在 requirements gate 批准前 SHALL 不要求专属 worktree。requir
 
 ### Requirement: 签名 Workflow Receipt CI 审计
 
-完整 workflow events SHALL 保留在项目外 event store。Closing SHALL 在 Host 完整重放验证通过后生成最小签名 `workflow-receipt.json`。CI SHALL 验证签名、Gate 摘要、artifact/evidence hash、base commit 和 change/PR 关联。
+完整 workflow events SHALL 保留在项目外 event store。Closing SHALL 在 Host 完整重放验证通过后生成最小签名 `workflow-receipt.json`。CI SHALL 验证签名、Gate 摘要、每个 human gate 的 branch/HEAD commit/`state_version`/evidence hash/`gate_summary_hash`、artifact/evidence hash、base commit 和 change/PR 关联。
 
 #### Scenario: Host History 验证失败
 
@@ -776,11 +818,18 @@ Workflow 在 requirements gate 批准前 SHALL 不要求专属 worktree。requir
 - **WHEN** CI 验证 Receipt
 - **THEN** CI SHALL 失败
 
+#### Scenario: Gate Binding Hash 不匹配
+
+- **GIVEN** Receipt 签名有效
+- **AND** archived gate summary、approval event 或 evidence hash 与 Receipt 中的 gate binding tuple 不一致
+- **WHEN** CI 或 artifact checker 验证 Receipt
+- **THEN** 验证 SHALL 失败
+
 #### Scenario: Receipt 最小化
 
 - **WHEN** Host 生成 Receipt
 - **THEN** SHALL NOT 包含聊天消息、完整 event log、用户输入原文、Session transcript、本地绝对路径或 approval secret
-- **AND** SHALL 包含 event-chain root 和必需 Gate 摘要
+- **AND** SHALL 包含 event-chain root、必需 Gate 摘要和每个 human gate 的 gate binding tuple
 
 #### Scenario: Archived Change 仍验证 Receipt
 

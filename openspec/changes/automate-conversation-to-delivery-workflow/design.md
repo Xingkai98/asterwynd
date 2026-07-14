@@ -277,13 +277,13 @@ Prompt Adapter 可以负责 automated review lane 的派发与结果上报，例
 approve(workflow_id, gate_id, state_version, decision, user_identity)
 ```
 
-Approval SHALL 绑定 workflow、gate、phase、state version、用户身份和客户端来源。Agent 执行环境只获得 `enter/report/status` capability，不获得 approval capability。
+Approval SHALL 绑定 workflow、gate、phase、`state_version`、用户身份和客户端来源。Agent 执行环境只获得 `enter/report/status` capability，不获得 approval capability。
 
 用户不需要使用专用按钮或命令。处于 gate 时，host adapter SHALL 在把用户消息发送给模型前执行确定性的 Gate Approval Token 检查。V1 配置白名单默认且仅包含完整字符串 `ok`；只有整条用户消息与白名单项精确相等时才生成 approve decision，不调用 LLM、不做关键词包含、同义词、正则或语义模糊匹配。
 
 精确匹配使用客户端提供的用户消息原文，不执行 trim、大小写转换或 Unicode normalization。V1 因此只接受两个 ASCII 字符 `ok`；`OK`、`Ok`、前后空白、换行附加内容或组合文本均不批准。
 
-匹配结果绑定原始 user message id/hash、当前 gate id 和 state version；只有 host 确认消息 actor 为用户时才能生成 approval event。未匹配消息 SHALL 保持 gate，不得静默批准；消息可以继续交给 agent 作为问题、拒绝或修改反馈，但 agent 无权将其升级为 approval。
+匹配结果绑定原始 user message id/hash、当前 gate id 和 `state_version`；只有 host 确认消息 actor 为用户时才能生成 approval event。未匹配消息 SHALL 保持 gate，不得静默批准；消息可以继续交给 agent 作为问题、拒绝或修改反馈，但 agent 无权将其升级为 approval。
 
 匹配成功的 approval token SHALL 由 host 消费，不再作为普通聊天消息发送给 agent。Host 在同一用户 turn 内完成 gate event、phase transition、必要的 worktree 操作和新一次 `enter`，然后自动调度下一阶段 WorkItem；默认复用当前 User Session 和 executor。任何 transition/preflight/worktree 失败 SHALL 进入 blocked 或返回明确错误，不得在部分完成状态下执行下一 WorkItem。
 
@@ -307,7 +307,33 @@ workspace_write: denied
 
 Gate 不只是 prompt。Workspace adapter 和 executor policy SHALL 拒绝代码/文档写操作、状态推进和新 work item claim。用户批准后创建新状态版本，旧 WorkItem 和旧 approval 自动失效。
 
-Human gate 前的 automated review lane 不等同于 gate 本身。执行顺序 SHALL 为：phase 产物完成、机械检查通过、配置的 automated reviewers 完成并满足策略、进入 `ready_for_review`、等待可信人工批准。Automated review 失败不得绕过到人工批准；人工仍可查看 reviewer findings 并要求修复或显式处理 blocker。
+Human gate 前的 automated review lane 不等同于 gate 本身。执行顺序 SHALL 为：phase 产物完成、按 commit_policy 生成最终 phase commit、确认绑定 worktree clean、对该 HEAD commit 运行机械检查、配置的 automated reviewers 针对该 HEAD commit 完成并满足策略、进入 `ready_for_review`、等待可信人工批准。Automated review 失败不得绕过到人工批准；人工仍可查看 reviewer findings 并要求修复或显式处理 blocker。任何后续文件变化都必须重新 commit、重新检查和重新 review。
+
+### D7.1: Human Gate 默认绑定 Clean Worktree Commit
+
+除非 phase template 显式声明 `commit_policy: none`，所有会修改 Git 工作区的 phase 在进入 human `ready_for_review` 前 SHALL 生成至少一个 Git commit，并要求绑定 worktree 干净。Gate summary 和 approval event SHALL 绑定 `state_version`、phase、branch、HEAD commit SHA、evidence hash 和 `gate_summary_hash`；人工批准的是该固定 gate binding tuple，而不是一个可继续漂移的 dirty worktree。`gate_summary_hash` SHALL 基于 canonical gate summary payload 计算，且该 payload SHALL 排除 `gate_summary_hash` 字段本身，避免自引用哈希。
+
+默认策略：
+
+- `exploring` 和 requirements 草稿不写入仓库，使用 `commit_policy: none`。
+- requirements gate 批准后的 promotion/materialization MAY 生成一个初始 change artifact commit，记录 approved requirements snapshot、base branch 和 base commit。
+- `design` gate 前 SHALL commit `design.md`、spec delta、`tasks.md` 和 ADR 等设计产物。
+- `building` gate 前 SHALL commit code、tests、docs 和验证证据引用。
+- `code-review` 若只产生 review result 且不修改文件 MAY 不提交；若包含 review fix，workflow SHALL 回到 building 修复并生成新 commit 后重新 review。
+- `closing` gate 前 SHALL commit archive、backlog、Receipt 和 PR/closing 文档产物。
+
+示例模板片段：
+
+```yaml
+commit_policy:
+  required_before_human_gate: true
+  require_clean_worktree: true
+  message_template: "{change_id}: complete {phase}"
+  bind_gate_to_head: true
+  include_evidence_hash: true
+```
+
+如果自动 review 后发现问题，修复必须产生新的 commit，并重新运行机械检查和 automated review lane。任何 dirty worktree、未记录 commit、HEAD 与 gate summary 不一致或 commit 不在绑定 branch 上的情况 SHALL 阻止进入 `ready_for_review` 或使 approval 变为 stale。
 
 ### D8: Worktree Coordinator 管理唯一 workspace binding
 
@@ -326,7 +352,7 @@ Human gate 前的 automated review lane 不等同于 gate 本身。执行顺序 
 
 ### D9: Claim/lease 防止多个 session 并发推进
 
-`enter` 在可执行状态下原子创建有限时长 lease，绑定 workflow、state version、session 和 actor。第二个 session 可以读取 status，但不能领取同一 WorkItem。Lease 支持续期、显式释放和超时回收；所有 report 必须携带匹配 lease。
+`enter` 在可执行状态下原子创建有限时长 lease，绑定 workflow、`state_version`、session 和 actor。第二个 session 可以读取 status，但不能领取同一 WorkItem。Lease 支持续期、显式释放和超时回收；所有 report 必须携带匹配 lease。
 
 该模型参考 Claude Code task watcher 的 claim owner 行为，避免两个 agent 同时处理相同 sub-state 并覆盖产物。
 
@@ -362,12 +388,13 @@ Workflow 到达 done 后，原 Session MAY 继续查看、总结和回答该 wor
 
 完整 workflow events、snapshot、user-message reference 和本地 workspace metadata SHALL 只保存在项目外 SQLite。进入 closing 或需要 PR 审计时，Host 先对本地完整 history 执行重放和一致性验证，验证通过后生成并签名 `workflow-receipt.json`。
 
-Receipt 至少包含：schema/key id、workflow/change/template id 与 version、base branch/commit、最终 state/version、event-chain root、必需 Gate 的 phase/version/decision、proposal/spec/design/tasks 等 artifact hash、测试与 review evidence hash、签名。Receipt SHALL NOT 包含聊天消息、完整事件、用户输入原文、Session transcript、本地绝对路径、approval capability 或工具完整输出。
+Receipt 至少包含：schema/key id、workflow/change/template id 与 version、base branch/commit、最终 state/version、event-chain root、必需 Gate 的 phase/version/decision、每个 human gate 的 branch、HEAD commit SHA、`state_version`、evidence hash 和 `gate_summary_hash`、proposal/spec/design/tasks 等 artifact hash、测试与 review evidence hash、签名。Receipt SHALL NOT 包含聊天消息、完整事件、用户输入原文、Session transcript、本地绝对路径、approval capability 或工具完整输出。
 
 Host signing private key SHALL 位于 agent 不可读取的控制面数据目录；仓库配置保存允许的 public key/key id。CI SHALL 验证：
 
 - Receipt 签名和 schema 有效。
 - 必需 Gate 摘要存在且状态顺序合法。
+- 每个 human gate 的 branch、HEAD commit SHA、`state_version`、evidence hash 和 `gate_summary_hash` 与 Receipt 记录一致。
 - Artifact 与 evidence hash 匹配 PR 内容。
 - Base commit、change、branch/PR 关联一致。
 - Active 与 archived change 均保留有效 receipt。
