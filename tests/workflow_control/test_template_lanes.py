@@ -16,6 +16,7 @@ from workflow_control import (
     ReviewContext,
     ReviewDispatchPlan,
     ReviewLane,
+    ReviewResult,
     ReviewerDefinition,
     ReviewerMode,
     RunnerProfile,
@@ -29,6 +30,8 @@ from workflow_control import (
     build_review_dispatch_plan,
     build_review_prompt,
     default_coding_agent_template,
+    dispatch_review,
+    sanitized_executor_env,
 )
 
 
@@ -45,6 +48,9 @@ def test_default_template_declares_executor_and_review_lanes() -> None:
     assert template.runner_profile("codex-reviewer").permissions == "read-only"
     assert template.runner_profile("claude-code-reviewer").permissions == "read-only"
     assert template.runner_profile("command-reviewer").permissions == "read-only"
+    assert template.runner_profile("codex-reviewer").approval_policy == "never"
+    assert template.runner_profile("claude-code-reviewer").approval_policy == "never"
+    assert template.runner_profile("command-reviewer").approval_policy == "never"
 
 
 def test_review_lane_rejects_self_reviewer() -> None:
@@ -150,6 +156,39 @@ def test_command_review_adapter_requires_read_only_profile(tmp_path) -> None:
         )
 
 
+def test_command_review_adapter_requires_never_approval_policy(tmp_path) -> None:
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(store=store, template=default_coding_agent_template()),
+    )
+
+    with pytest.raises(WorkflowValidationError, match="approval policy"):
+        CommandReviewAdapter(
+            orchestrator,
+            RunnerProfile(
+                name="command-reviewer",
+                command="python3",
+                permissions="read-only",
+                approval_policy="on-request",
+            ),
+        )
+
+
+def test_sanitized_executor_env_removes_approval_capability() -> None:
+    env = sanitized_executor_env(
+        {
+            "ASTERWYND_WORKFLOW_TRUSTED_HOST": "1",
+            "ASTERWYND_WORKFLOW_APPROVAL_SECRET": "secret",
+            "KEEP": "value",
+        },
+    )
+
+    assert env["ASTERWYND_WORKFLOW_AGENT_CONTEXT"] == "1"
+    assert env["KEEP"] == "value"
+    assert "ASTERWYND_WORKFLOW_TRUSTED_HOST" not in env
+    assert "ASTERWYND_WORKFLOW_APPROVAL_SECRET" not in env
+
+
 def test_review_prompt_contains_minimal_fresh_context() -> None:
     context = ReviewContext(
         workflow_id="workflow-1",
@@ -204,6 +243,38 @@ def test_review_dispatch_plan_supports_subagent_runner_and_command_modes() -> No
     assert command_plan.fresh_context is True
 
 
+def test_dispatch_review_records_subagent_result_with_fresh_context(tmp_path) -> None:
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
+    template = PhaseTemplate(
+        template_id="review-only",
+        phases=(
+            PhaseDefinition(
+                phase="code-review",
+                sub_states=("reviewing_code", "ready_for_review"),
+            ),
+        ),
+        initial_state=StateSnapshot(phase="code-review", sub_state="reviewing_code"),
+    )
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(store=store, template=template),
+    )
+    workflow_id = "workflow-1"
+    orchestrator.enter(workflow_id, Actor(kind=ActorKind.AGENT, actor_id="executor"))
+
+    result = dispatch_review(
+        orchestrator,
+        ReviewerDefinition(name="subagent-reviewer", mode=ReviewerMode.SUBAGENT),
+        profiles=(),
+        context=ReviewContext(
+            workflow_id=workflow_id,
+            state=StateSnapshot(phase="code-review", sub_state="reviewing_code"),
+        ),
+        result=ReviewResult.PASS,
+    )
+
+    assert result.snapshot.state == StateSnapshot(phase="code-review", sub_state="ready_for_review")
+
+
 def test_executor_prompt_contains_work_item_context(tmp_path) -> None:
     store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
     orchestrator = WorkflowOrchestrator(
@@ -241,6 +312,8 @@ def test_command_workflow_executor_runs_in_workspace_with_work_item_prompt(tmp_p
             "-c",
             "import json, os, pathlib, sys; "
             "payload=json.loads(sys.stdin.read()); "
+            "assert payload['work_item']['workspace_path'] == os.getcwd(); "
+            "assert payload['work_item']['branch'] is None; "
             "pathlib.Path('prompt-workflow.txt').write_text(payload['workflow_id']); "
             "print(os.getcwd())",
         ),

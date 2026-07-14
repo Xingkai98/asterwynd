@@ -106,7 +106,7 @@
 - [ ] 10.2 更新架构、需求流程、开发指南、测试指南和 backlog 中受影响的事实
 - [ ] 10.3 评估是否已满足精简 `AGENTS.md` 的迁移条件；未满足则保留现状并记录后续任务
 - [ ] 10.4 如 README 入口或开发流程事实变化，同步更新 `README.md` 和 `README_EN.md`
-- [ ] 10.5 运行 workflow control 单元、集成、安全和 adapter contract tests
+- [x] 10.5 运行 workflow control 单元、集成、安全和 adapter contract tests
 - [ ] 10.6 运行全量 `uv run pytest -q`
 - [ ] 10.7 运行 benchmark fake-agent smoke，验证核心 coding-agent 路径无回归
 - [ ] 10.8 运行 OpenSpec strict validate、artifact checker 和 signed workflow Receipt audit

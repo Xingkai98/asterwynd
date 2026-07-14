@@ -234,7 +234,7 @@ def test_workflow_chat_fake_executor_reaches_done_end_to_end(tmp_path, monkeypat
     assert not (worktrees_root / change_id).exists()
 
 
-def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path) -> None:
+def test_workflow_chat_command_executor_requires_existing_worktree(tmp_path) -> None:
     db_path = tmp_path / "workflow.sqlite3"
     runner = CliRunner()
 
@@ -259,9 +259,52 @@ def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path) -> 
         ],
     )
 
+    assert result.exit_code == 1
+    assert "requires an existing dedicated worktree" in result.stderr
+
+
+def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    repo = _init_repo(tmp_path / "repo")
+    worktrees_root = tmp_path / "worktrees"
+    change_id = "command-change"
+    workspace = worktrees_root / change_id
+    worktrees_root.mkdir()
+    _git(repo, "worktree", "add", "-b", f"{change_id}/2026-07-15", str(workspace))
+    runner = CliRunner()
+    monkeypatch.setenv("ASTERWYND_WORKFLOW_TRUSTED_HOST", "1")
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "chat",
+            "--workflow",
+            "command-workflow",
+            "--db",
+            str(db_path),
+            "--executor",
+            "command",
+            "--executor-command",
+            "python3",
+            "--executor-arg",
+            "-c",
+            "--executor-arg",
+            "import os; print(os.getcwd() + '|' + os.environ.get('ASTERWYND_WORKFLOW_AGENT_CONTEXT', '') + '|' + str(os.environ.get('ASTERWYND_WORKFLOW_TRUSTED_HOST')))",
+            "--repo",
+            str(repo),
+            "--worktrees-root",
+            str(worktrees_root),
+            "--change-id",
+            change_id,
+            "--json",
+        ],
+    )
+
     assert result.exit_code == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["state"] == {"phase": "requirements", "sub_state": "drafting"}
+    assert payload["summary"] == f"{workspace}|1|None"
     event = SQLiteEventStore(SQLiteEventStoreConfig(db_path=db_path)).list_events("command-workflow")[-1]
     assert event.work_result is not None
     assert event.work_result.enforcement_level == EnforcementLevel.STRICT_HOST
@@ -269,6 +312,12 @@ def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path) -> 
 
 def test_workflow_chat_command_executor_blocks_on_failure(tmp_path) -> None:
     db_path = tmp_path / "workflow.sqlite3"
+    repo = _init_repo(tmp_path / "repo")
+    worktrees_root = tmp_path / "worktrees"
+    change_id = "failing-command-change"
+    workspace = worktrees_root / change_id
+    worktrees_root.mkdir()
+    _git(repo, "worktree", "add", "-b", f"{change_id}/2026-07-15", str(workspace))
     runner = CliRunner()
 
     result = runner.invoke(
@@ -288,6 +337,12 @@ def test_workflow_chat_command_executor_blocks_on_failure(tmp_path) -> None:
             "-c",
             "--executor-arg",
             "import sys; print('boom'); sys.exit(2)",
+            "--repo",
+            str(repo),
+            "--worktrees-root",
+            str(worktrees_root),
+            "--change-id",
+            change_id,
             "--json",
         ],
     )
@@ -298,6 +353,39 @@ def test_workflow_chat_command_executor_blocks_on_failure(tmp_path) -> None:
     event = SQLiteEventStore(SQLiteEventStoreConfig(db_path=db_path)).list_events("failing-command-workflow")[-1]
     assert event.work_result is not None
     assert event.work_result.summary == "executor command failed: boom"
+
+
+def test_workflow_chat_bypasses_unmanaged_roots_without_starting_workflow(tmp_path) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    roots_file = tmp_path / "roots.json"
+    managed = tmp_path / "managed"
+    unmanaged = tmp_path / "unmanaged"
+    managed.mkdir()
+    unmanaged.mkdir()
+    runner = CliRunner()
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(managed), "--roots-file", str(roots_file)])
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "chat",
+            "--workflow",
+            "workflow-1",
+            "--db",
+            str(db_path),
+            "--cwd",
+            str(unmanaged),
+            "--roots-file",
+            str(roots_file),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["bypassed"] is True
+    assert SQLiteEventStore(SQLiteEventStoreConfig(db_path=db_path)).list_workflow_ids() == []
 
 
 def test_workflow_attach_and_prompt_adapter_show_contract(tmp_path) -> None:
@@ -329,6 +417,7 @@ def test_workflow_attach_and_prompt_adapter_show_contract(tmp_path) -> None:
     adapter_payload = json.loads(adapter.stdout)
     assert adapter_payload["enforcement_level"] == "prompt_adapter"
     assert adapter_payload["approval_capability"] is False
+    assert adapter_payload["status_command"] == "asterwynd workflow status --workflow <id>"
 
 
 def _init_repo(path: Path) -> Path:

@@ -159,6 +159,8 @@ def _workflow_enter_payload(result) -> dict:
                 "sub_state": result.work_item.state.sub_state,
             },
             "allowed_actions": list(result.work_item.allowed_actions),
+            "workspace_path": result.work_item.workspace_path,
+            "branch": result.work_item.branch,
         }
     return payload
 
@@ -520,6 +522,9 @@ def workflow_chat(
     executor_arg: list[str] = typer.Option([], "--executor-arg", help="Command executor argument"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     actor: str = typer.Option("agent", "--actor", help="Actor ID"),
+    cwd: Path = typer.Option(Path("."), "--cwd", help="Current working directory for managed-root preflight"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="User session ID"),
     change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for worktree promotion"),
     date: Optional[str] = typer.Option(None, "--date", help="Branch date for worktree promotion"),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Canonical repository for worktree promotion"),
@@ -530,11 +535,14 @@ def workflow_chat(
 ):
     """Run a workflow host-wrapper turn."""
     from workflow_control import (
+        ActivationMode,
         CommandWorkflowExecutor,
         FakeWorkflowExecutor,
         GateApprovalTokenMatcher,
         HostApprovalService,
+        ManagedWorkspaceConfig,
         RunnerProfile,
+        WorkflowActivationGate,
         WorktreeCoordinator,
         WorktreeCoordinatorConfig,
     )
@@ -542,6 +550,23 @@ def workflow_chat(
     if executor not in {"fake", "command", "codex", "claude-code"}:
         typer.echo("Error: unsupported workflow executor adapter", err=True)
         raise SystemExit(1)
+    roots = _load_workflow_roots(_workflow_roots_path(roots_file))
+    if roots:
+        activation = WorkflowActivationGate(
+            ManagedWorkspaceConfig(managed_roots=tuple(Path(root) for root in roots)),
+        ).preflight(cwd, session_id=session_id)
+        if activation.mode == ActivationMode.BYPASS:
+            payload = {
+                "mode": activation.mode.value,
+                "reason": activation.reason,
+                "workflow_prompt_enabled": activation.workflow_prompt_enabled,
+                "bypassed": True,
+            }
+            if json_output:
+                typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                typer.echo(f"Workflow bypass: {activation.reason}")
+            return
     worktree_coordinator = None
     if repo is not None and worktrees_root is not None:
         worktree_coordinator = WorktreeCoordinator(
@@ -608,6 +633,9 @@ def workflow_chat(
             workspace=workspace,
         ).run_until_blocked_or_gate(workflow)
     else:
+        if workspace is None or not workspace.exists():
+            typer.echo("Error: strict workflow executor requires an existing dedicated worktree", err=True)
+            raise SystemExit(1)
         if executor == "command":
             if executor_command is None:
                 typer.echo("Error: command executor requires --executor-command", err=True)
@@ -831,6 +859,7 @@ def workflow_prompt_adapter_show(
         "skill_path": str(skill_path),
         "agents_snippet_path": str(agents_snippet_path),
         "required_entry_command": "asterwynd workflow enter --workflow <id>",
+        "status_command": "asterwynd workflow status --workflow <id>",
         "required_exit_command": "asterwynd workflow report --workflow <id> --work-item-id <id> --expected-version <n>",
         "approval_capability": False,
     }
@@ -838,7 +867,8 @@ def workflow_prompt_adapter_show(
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         typer.echo(
-            "Prompt Adapter: call workflow enter before each run and workflow report after each run; "
+            "Prompt Adapter: call workflow enter before each run, workflow status when resuming, "
+            "and workflow report after each run; "
             "approval capability remains unavailable."
         )
 

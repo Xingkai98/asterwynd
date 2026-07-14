@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -147,6 +148,7 @@ class RunnerProfile:
     args: tuple[str, ...] = ()
     prompt_mode: str = "stdin"
     permissions: str = "read-only"
+    approval_policy: str = "never"
     timeout_seconds: int = 300
 
 
@@ -528,6 +530,8 @@ class WorkItem:
     allowed_actions: tuple[str, ...] = ()
     required_evidence: tuple[Evidence, ...] = ()
     next_action: str = ""
+    workspace_path: str | None = None
+    branch: str | None = None
 
     def allows(self, action: str) -> bool:
         return action in self.allowed_actions
@@ -1676,16 +1680,24 @@ class CommandWorkflowExecutor:
                 summary="waiting",
                 waiting_for_human=entered.waiting_for_human,
             )
+        branch = _git_optional(self.workspace, "branch", "--show-current") if self.workspace is not None else None
+        bound_work_item = replace(
+            entered.work_item,
+            workspace_path=str(self.workspace) if self.workspace is not None else entered.work_item.workspace_path,
+            branch=branch or entered.work_item.branch,
+        )
         executor_prompt = build_executor_prompt(
             workflow_id=workflow_id,
             snapshot=entered.snapshot,
-            work_item=entered.work_item,
+            work_item=bound_work_item,
             user_message=prompt,
+            workspace=self.workspace,
         )
         completed = subprocess.run(
             [self.profile.command, *self.profile.args],
             input=executor_prompt if self.profile.prompt_mode == "stdin" else None,
             cwd=self.workspace if self.workspace is not None else None,
+            env=sanitized_executor_env(os.environ),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -1729,7 +1741,9 @@ def build_executor_prompt(
     snapshot: WorkflowSnapshot,
     work_item: WorkItem,
     user_message: str,
+    workspace: Path | None = None,
 ) -> str:
+    branch = _git_optional(workspace, "branch", "--show-current") if workspace is not None and workspace.exists() else None
     return json.dumps(
         {
             "workflow_id": workflow_id,
@@ -1743,12 +1757,22 @@ def build_executor_prompt(
                 "allowed_actions": list(work_item.allowed_actions),
                 "required_evidence": [evidence.ref for evidence in work_item.required_evidence],
                 "next_action": work_item.next_action,
+                "workspace_path": str(workspace) if workspace is not None else work_item.workspace_path,
+                "branch": branch or work_item.branch,
             },
             "user_message": user_message,
         },
         ensure_ascii=False,
         indent=2,
     )
+
+
+def sanitized_executor_env(source: dict[str, str]) -> dict[str, str]:
+    env = dict(source)
+    env.pop("ASTERWYND_WORKFLOW_TRUSTED_HOST", None)
+    env.pop("ASTERWYND_WORKFLOW_APPROVAL_SECRET", None)
+    env["ASTERWYND_WORKFLOW_AGENT_CONTEXT"] = "1"
+    return env
 
 
 class CommandReviewAdapter:
@@ -1760,6 +1784,8 @@ class CommandReviewAdapter:
     ) -> None:
         if profile.permissions != "read-only":
             raise WorkflowValidationError("review command runner must be read-only")
+        if profile.approval_policy != "never":
+            raise WorkflowValidationError("review command runner approval policy must be never")
         self.orchestrator = orchestrator
         self.profile = profile
         self.actor = actor or Actor(kind=ActorKind.AGENT, actor_id=f"{profile.name}-reviewer")
@@ -1771,6 +1797,7 @@ class CommandReviewAdapter:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=sanitized_executor_env(os.environ),
             timeout=self.profile.timeout_seconds,
             check=False,
         )
@@ -1834,6 +1861,28 @@ def build_review_dispatch_plan(
         fresh_context=reviewer.fresh_context,
         prompt=build_review_prompt(context),
     )
+
+
+def dispatch_review(
+    orchestrator: WorkflowOrchestrator,
+    reviewer: ReviewerDefinition,
+    profiles: tuple[RunnerProfile, ...],
+    context: ReviewContext,
+    result: ReviewResult | None = None,
+) -> ReportResult | ReviewDispatchPlan:
+    plan = build_review_dispatch_plan(reviewer, profiles, context)
+    if plan.mode == ReviewerMode.COMMAND:
+        if plan.runner_profile is None:
+            raise WorkflowValidationError("command reviewer requires runner profile")
+        return CommandReviewAdapter(orchestrator, plan.runner_profile).run_context(context)
+    if result is not None:
+        return orchestrator.record_review_result(
+            workflow_id=context.workflow_id,
+            actor=Actor(kind=ActorKind.AGENT, actor_id=f"{reviewer.name}-reviewer"),
+            review_result=result,
+            executor_run_id=reviewer.name,
+        )
+    return plan
 
 
 @dataclass(frozen=True)
@@ -1959,6 +2008,7 @@ def default_coding_agent_template() -> PhaseTemplate:
         args=("exec", "--json"),
         prompt_mode="stdin",
         permissions="read-only",
+        approval_policy="never",
         timeout_seconds=600,
     )
     claude_reviewer = RunnerProfile(
@@ -1967,6 +2017,7 @@ def default_coding_agent_template() -> PhaseTemplate:
         args=("--print",),
         prompt_mode="stdin",
         permissions="read-only",
+        approval_policy="never",
         timeout_seconds=600,
     )
     command_reviewer = RunnerProfile(
@@ -1975,6 +2026,7 @@ def default_coding_agent_template() -> PhaseTemplate:
         args=("-c", "print('pass')"),
         prompt_mode="stdin",
         permissions="read-only",
+        approval_policy="never",
         timeout_seconds=300,
     )
     command_executor = RunnerProfile(
@@ -1983,6 +2035,7 @@ def default_coding_agent_template() -> PhaseTemplate:
         args=("-c", "print('done')"),
         prompt_mode="stdin",
         permissions="workspace-write",
+        approval_policy="never",
         timeout_seconds=300,
     )
     return PhaseTemplate(
@@ -2683,6 +2736,8 @@ __all__ = [
     "build_executor_prompt",
     "build_review_dispatch_plan",
     "build_review_prompt",
+    "dispatch_review",
+    "sanitized_executor_env",
     "WorkflowValidationError",
     "accept_outputs",
     "build_gate_binding",
