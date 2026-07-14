@@ -10,6 +10,7 @@ Asterwynd CLI 入口模块
 """
 import asyncio
 import inspect
+import json
 import logging
 import os
 import sys
@@ -72,6 +73,91 @@ def _setup_logging() -> None:
     )
 
 app = typer.Typer()
+workflow_app = typer.Typer(help="Workflow control")
+workflow_manage_app = typer.Typer(help="Managed roots")
+workflow_gate_app = typer.Typer(help="Human gate")
+workflow_app.add_typer(workflow_manage_app, name="manage")
+workflow_app.add_typer(workflow_gate_app, name="gate")
+app.add_typer(workflow_app, name="workflow")
+
+
+def _workflow_db_path(db: Path | None) -> Path:
+    if db is not None:
+        return db
+    return platformdirs.user_data_path("asterwynd") / "workflow-control.sqlite3"
+
+
+def _workflow_roots_path(roots_file: Path | None) -> Path:
+    if roots_file is not None:
+        return roots_file
+    return platformdirs.user_config_path("asterwynd") / "workflow-roots.json"
+
+
+def _workflow_orchestrator(db: Path | None):
+    from workflow_control import (
+        SQLiteEventStore,
+        SQLiteEventStoreConfig,
+        WorkflowOrchestrator,
+        WorkflowOrchestratorConfig,
+        default_coding_agent_template,
+    )
+
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=_workflow_db_path(db)))
+    template = default_coding_agent_template()
+    return WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(store=store, template=template),
+    )
+
+
+def _workflow_actor(actor_id: str, *, human: bool = False):
+    from workflow_control import Actor, ActorKind
+
+    if human:
+        return Actor(
+            kind=ActorKind.HUMAN,
+            actor_id=actor_id,
+            approval_capability=True,
+        )
+    return Actor(kind=ActorKind.AGENT, actor_id=actor_id)
+
+
+def _workflow_snapshot_payload(snapshot) -> dict:
+    return {
+        "workflow_id": snapshot.workflow_id,
+        "version": snapshot.version,
+        "state": {
+            "phase": snapshot.state.phase,
+            "sub_state": snapshot.state.sub_state,
+        },
+    }
+
+
+def _workflow_enter_payload(result) -> dict:
+    payload = _workflow_snapshot_payload(result.snapshot)
+    payload["waiting_for_human"] = result.waiting_for_human
+    if result.work_item is None:
+        payload["work_item"] = None
+    else:
+        payload["work_item"] = {
+            "work_item_id": result.work_item.work_item_id,
+            "workflow_id": result.work_item.workflow_id,
+            "state": {
+                "phase": result.work_item.state.phase,
+                "sub_state": result.work_item.state.sub_state,
+            },
+            "allowed_actions": list(result.work_item.allowed_actions),
+        }
+    return payload
+
+
+def _echo_json_or_text(payload: dict, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"{payload['workflow_id']} v{payload['version']} "
+        f"{payload['state']['phase']}.{payload['state']['sub_state']}"
+    )
 
 
 def build_llm(provider: str, model: Optional[str] = None) -> LLM:
@@ -270,6 +356,143 @@ def init(
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise SystemExit(1)
+
+
+@workflow_app.command("enter")
+def workflow_enter(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    actor: str = typer.Option("agent", "--actor", help="Actor ID"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """进入 workflow，必要时创建 exploration workflow，并返回 WorkItem。"""
+    orchestrator = _workflow_orchestrator(db)
+    result = orchestrator.enter(workflow, _workflow_actor(actor))
+    _echo_json_or_text(_workflow_enter_payload(result), json_output)
+
+
+@workflow_app.command("status")
+def workflow_status(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """查看 workflow 当前状态。"""
+    orchestrator = _workflow_orchestrator(db)
+    result = orchestrator.status(workflow)
+    _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
+
+
+@workflow_app.command("report")
+def workflow_report(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    work_item_id: str = typer.Option(..., "--work-item-id", help="WorkItem ID"),
+    expected_version: int = typer.Option(..., "--expected-version", help="Expected workflow version"),
+    summary: str = typer.Option("", "--summary", help="Work summary"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    actor: str = typer.Option("agent", "--actor", help="Actor ID"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """提交 WorkResult，由 orchestrator 决定下一状态。"""
+    from workflow_control import WorkResult
+
+    orchestrator = _workflow_orchestrator(db)
+    result = orchestrator.report(
+        workflow_id=workflow,
+        actor=_workflow_actor(actor),
+        work_item_id=work_item_id,
+        result=WorkResult(summary=summary),
+        expected_version=expected_version,
+    )
+    _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
+
+
+@workflow_gate_app.command("approve")
+def workflow_gate_approve(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    user: str = typer.Option("human", "--user", help="Human user ID"),
+    message: str = typer.Option("ok", "--message", help="Raw approval message"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """可信 CLI 人工批准当前 gate。"""
+    from workflow_control import GateApprovalTokenMatcher
+
+    orchestrator = _workflow_orchestrator(db)
+    status = orchestrator.status(workflow)
+    if not GateApprovalTokenMatcher().matches(message):
+        typer.echo("Error: approval message is not an allowed exact token", err=True)
+        raise SystemExit(1)
+    result = orchestrator.approve_gate(
+        workflow_id=workflow,
+        actor=_workflow_actor(user, human=True),
+        raw_user_message=message,
+        expected_version=status.snapshot.version,
+    )
+    _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
+
+
+def _load_workflow_roots(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return list(json.loads(path.read_text(encoding="utf-8")).get("managed_roots", []))
+
+
+def _save_workflow_roots(path: Path, roots: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"managed_roots": roots}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _emit_roots(path: Path, json_output: bool) -> None:
+    roots = _load_workflow_roots(path)
+    if json_output:
+        typer.echo(json.dumps({"managed_roots": roots}, ensure_ascii=False, indent=2))
+        return
+    for root in roots:
+        typer.echo(root)
+
+
+@workflow_manage_app.command("add")
+def workflow_manage_add(
+    root: Path = typer.Argument(..., help="Managed workspace root"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """添加受管项目根目录。"""
+    path = _workflow_roots_path(roots_file)
+    roots = _load_workflow_roots(path)
+    canonical = str(root.resolve())
+    if canonical not in roots:
+        roots.append(canonical)
+        roots.sort()
+    _save_workflow_roots(path, roots)
+    _emit_roots(path, json_output)
+
+
+@workflow_manage_app.command("list")
+def workflow_manage_list(
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """列出受管项目根目录。"""
+    _emit_roots(_workflow_roots_path(roots_file), json_output)
+
+
+@workflow_manage_app.command("remove")
+def workflow_manage_remove(
+    root: Path = typer.Argument(..., help="Managed workspace root"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """移除受管项目根目录。"""
+    path = _workflow_roots_path(roots_file)
+    canonical = str(root.resolve())
+    roots = [existing for existing in _load_workflow_roots(path) if existing != canonical]
+    _save_workflow_roots(path, roots)
+    _emit_roots(path, json_output)
 
 
 @app.callback(invoke_without_command=True)

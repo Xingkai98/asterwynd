@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import json
 from pathlib import Path
@@ -368,6 +368,30 @@ class WorkItem:
 
 
 @dataclass(frozen=True)
+class SessionBinding:
+    session_id: str
+    workflow_id: str
+
+
+class SessionBindingRegistry:
+    def __init__(self) -> None:
+        self._bindings: dict[str, SessionBinding] = {}
+
+    def bind(self, session_id: str, workflow_id: str) -> SessionBinding:
+        existing = self._bindings.get(session_id)
+        if existing is not None:
+            if existing.workflow_id != workflow_id:
+                raise WorkflowValidationError("session already bound to another workflow")
+            return existing
+        binding = SessionBinding(session_id=session_id, workflow_id=workflow_id)
+        self._bindings[session_id] = binding
+        return binding
+
+    def get(self, session_id: str) -> SessionBinding | None:
+        return self._bindings.get(session_id)
+
+
+@dataclass(frozen=True)
 class Lease:
     lease_id: str
     work_item_id: str
@@ -489,7 +513,9 @@ class WorkflowStatus:
 class EnterResult:
     snapshot: WorkflowSnapshot
     work_item: WorkItem | None = None
+    lease: Lease | None = None
     waiting_for_human: bool = False
+    blocked_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -506,11 +532,18 @@ class WorkflowOrchestratorConfig:
 class WorkflowOrchestrator:
     def __init__(self, config: WorkflowOrchestratorConfig) -> None:
         self.config = config
+        self._leases: dict[str, Lease] = {}
 
     def status(self, workflow_id: str) -> WorkflowStatus:
         return WorkflowStatus(snapshot=self._snapshot(workflow_id))
 
-    def enter(self, workflow_id: str, actor: Actor) -> EnterResult:
+    def enter(
+        self,
+        workflow_id: str,
+        actor: Actor,
+        now: datetime | None = None,
+        lease_ttl: timedelta = timedelta(minutes=15),
+    ) -> EnterResult:
         if self.config.store.current_version(workflow_id) == 0:
             self.config.store.append(
                 workflow_id,
@@ -526,14 +559,35 @@ class WorkflowOrchestrator:
                 waiting_for_human=True,
             )
 
+        work_item_id = f"{workflow_id}:{snapshot.version}"
+        now = now or datetime.now(timezone.utc)
+        existing_lease = self._leases.get(work_item_id)
+        if existing_lease is not None and existing_lease.is_active_at(now):
+            if existing_lease.owner_id != actor.actor_id:
+                return EnterResult(
+                    snapshot=snapshot,
+                    work_item=None,
+                    lease=existing_lease,
+                    waiting_for_human=False,
+                    blocked_reason="work_item_already_leased",
+                )
+
+        lease = Lease(
+            lease_id=f"lease:{work_item_id}:{actor.actor_id}",
+            work_item_id=work_item_id,
+            owner_id=actor.actor_id,
+            expires_at=now + lease_ttl,
+        )
+        self._leases[work_item_id] = lease
         return EnterResult(
             snapshot=snapshot,
             work_item=WorkItem(
-                work_item_id=f"{workflow_id}:{snapshot.version}",
+                work_item_id=work_item_id,
                 workflow_id=workflow_id,
                 state=snapshot.state,
                 allowed_actions=("report_work",),
             ),
+            lease=lease,
             waiting_for_human=False,
         )
 
@@ -551,6 +605,24 @@ class WorkflowOrchestrator:
         self.config.store.append(
             workflow_id,
             record_work_completed(workflow_id, actor, result),
+            expected_version=expected_version,
+        )
+        return ReportResult(snapshot=self._snapshot(workflow_id))
+
+    def approve_gate(
+        self,
+        workflow_id: str,
+        actor: Actor,
+        raw_user_message: str,
+        expected_version: int,
+    ) -> ReportResult:
+        if self.config.store.current_version(workflow_id) != expected_version:
+            raise WorkflowStoreConflict(
+                f"expected version {expected_version}, actual version {self.config.store.current_version(workflow_id)}"
+            )
+        self.config.store.append(
+            workflow_id,
+            record_gate_approved(workflow_id, actor, raw_user_message=raw_user_message),
             expected_version=expected_version,
         )
         return ReportResult(snapshot=self._snapshot(workflow_id))
@@ -1006,6 +1078,8 @@ __all__ = [
     "EnterResult",
     "ReportResult",
     "RunnerProfile",
+    "SessionBinding",
+    "SessionBindingRegistry",
     "SQLiteEventStore",
     "SQLiteEventStoreConfig",
     "StateSnapshot",
