@@ -8,12 +8,12 @@
 
 ## 2. 独立领域模型
 
-- [ ] 2.0 为 managed roots、Git common dir 归属、symlink、sticky Workflow Bypass 和显式 attach 编写失败测试并实现零 token 激活门禁
+- [x] 2.0 为 managed roots、Git common dir 归属、symlink、sticky Workflow Bypass 和显式 attach 编写失败测试并实现零 token 激活门禁
 - [ ] 2.0a 实现受管 session 自动 Exploration、可配置 aging TTL、Workflow Output 判定和 abandon 事件
 - [ ] 2.0c 实现 chat/status/enter/manage 前的幂等 lazy aging scan，不引入 daemon/cron
 - [ ] 2.0b 实现 draft/proposed/durable output 生命周期、retain mini-gate 和 requirements/phase gate 批量 acceptance
 - [ ] 2.1 为 Workflow、Event、Snapshot、WorkItem、WorkResult、Gate、Approval、Evidence、WorkspaceBinding 和 Lease 编写失败的模型测试
-- [ ] 2.2 创建不依赖 `agent/` 的 `workflow_control` package 结构和公开类型
+- [x] 2.2 创建不依赖 `agent/` 的 `workflow_control` package 结构和公开类型
 - [ ] 2.3 实现版本化 phase template、executor lane、review lane、runner_profiles 与 Asterwynd `coding-agent-openspec` 默认模板
 - [ ] 2.3a 实现 phase commit_policy 配置，默认要求 human gate 前 clean worktree、HEAD commit 和 gate summary 绑定
 - [ ] 2.4 实现 event reducer 和合法 transition 判定，使模型测试通过
