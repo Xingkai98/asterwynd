@@ -268,7 +268,8 @@ def test_closing_gate_approval_enters_done_phase(tmp_path: Path) -> None:
 def test_requirements_promotion_append_conflict_cleans_materialized_worktree(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo-for-conflict")
     coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=tmp_path / "conflict-worktrees"))
-    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
+    real_store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
+    store = _ConflictOnGateAppendStore(real_store)
     orchestrator = WorkflowOrchestrator(
         WorkflowOrchestratorConfig(
             store=store,
@@ -281,24 +282,41 @@ def test_requirements_promotion_append_conflict_cleans_materialized_worktree(tmp
     orchestrator.enter("workflow-1", actor)
     orchestrator.report("workflow-1", actor, "workflow-1:1", WorkResult(), 1)
     orchestrator.report("workflow-1", actor, "workflow-1:2", WorkResult(), 2)
+    requirements_snapshot = real_store.save_requirements_snapshot(
+        "workflow-1",
+        3,
+        RequirementsDraft.empty().update_goal("conflict"),
+    )
+    store.fail_next_gate_append = True
 
     with pytest.raises(WorkflowStoreConflict):
         orchestrator.approve_gate(
             "workflow-1",
-            expected_version=2,
+            expected_version=3,
             actor=human,
             raw_user_message="ok",
-            requirements_draft=orchestrator.config.store.save_requirements_snapshot(
-                "workflow-1",
-                3,
-                RequirementsDraft.empty().update_goal("conflict"),
-            ),
+            requirements_draft=requirements_snapshot,
             change_id="conflict-change",
             date="2026-07-14",
             allow_local_base=True,
         )
 
     assert not (tmp_path / "conflict-worktrees" / "conflict-change").exists()
+
+
+class _ConflictOnGateAppendStore:
+    def __init__(self, wrapped: SQLiteEventStore) -> None:
+        self.wrapped = wrapped
+        self.fail_next_gate_append = False
+
+    def append(self, workflow_id, event, expected_version):
+        if self.fail_next_gate_append and event.event_type.value == "gate_approved":
+            self.fail_next_gate_append = False
+            raise WorkflowStoreConflict("synthetic append conflict")
+        return self.wrapped.append(workflow_id, event, expected_version)
+
+    def __getattr__(self, name):
+        return getattr(self.wrapped, name)
 
 
 def test_requirements_promotion_failure_blocks_workflow(tmp_path: Path) -> None:

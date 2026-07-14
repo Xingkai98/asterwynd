@@ -1450,7 +1450,7 @@ class WorkflowOrchestrator:
             raise WorkflowValidationError("approved requirements snapshot mismatch")
         return self.config.worktree_coordinator.promote_requirements(
             change_id=change_id,
-            approved_requirements=requirements_draft,
+            approved_requirements=stored_snapshot,
             date=date,
             base_branch=base_branch,
             allow_local_base=allow_local_base,
