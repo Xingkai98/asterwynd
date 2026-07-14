@@ -418,6 +418,7 @@ class WorkItem:
     state: StateSnapshot
     allowed_actions: tuple[str, ...] = ()
     required_evidence: tuple[Evidence, ...] = ()
+    next_action: str = ""
 
     def allows(self, action: str) -> bool:
         return action in self.allowed_actions
@@ -590,9 +591,27 @@ class WorkflowOrchestrator:
     def __init__(self, config: WorkflowOrchestratorConfig) -> None:
         self.config = config
         self._leases: dict[str, Lease] = {}
+        self._active_workflows: set[str] = set()
 
     def status(self, workflow_id: str) -> WorkflowStatus:
         return WorkflowStatus(snapshot=self._snapshot(workflow_id))
+
+    def resolve_active_workflow(
+        self,
+        explicit_workflow_id: str | None = None,
+        create_if_missing: bool = False,
+    ) -> str:
+        if explicit_workflow_id is not None:
+            return explicit_workflow_id
+        if not self._active_workflows and create_if_missing:
+            workflow_id = "exploration-1"
+            self.enter(workflow_id, Actor(kind=ActorKind.SYSTEM, actor_id="workflow-control"))
+            return workflow_id
+        if len(self._active_workflows) == 1:
+            return next(iter(self._active_workflows))
+        if len(self._active_workflows) > 1:
+            raise WorkflowValidationError("multiple active workflows require explicit choice")
+        raise WorkflowValidationError("no active workflow")
 
     def enter(
         self,
@@ -607,6 +626,7 @@ class WorkflowOrchestrator:
                 start_workflow(workflow_id, self.config.template),
                 expected_version=0,
             )
+        self._active_workflows.add(workflow_id)
 
         snapshot = self._snapshot(workflow_id)
         phase = self.config.template.phase(snapshot.state.phase)
@@ -643,10 +663,86 @@ class WorkflowOrchestrator:
                 workflow_id=workflow_id,
                 state=snapshot.state,
                 allowed_actions=("report_work",),
+                required_evidence=self._required_evidence(snapshot.state),
+                next_action=self._next_action(snapshot.state),
             ),
             lease=lease,
             waiting_for_human=False,
         )
+
+    def block(
+        self,
+        workflow_id: str,
+        actor: Actor,
+        reason: str,
+    ) -> ReportResult:
+        snapshot = self._snapshot(workflow_id)
+        self.config.store.append(
+            workflow_id,
+            WorkflowEvent(
+                event_id="workflow-blocked",
+                workflow_id=workflow_id,
+                event_type=EventType.STATE_ADVANCED,
+                actor=actor,
+                from_state=snapshot.state,
+                to_state=StateSnapshot(phase="blocked", sub_state="blocked"),
+                work_result=WorkResult(summary=reason),
+            ),
+            expected_version=snapshot.version,
+        )
+        return ReportResult(snapshot=self._snapshot(workflow_id))
+
+    def rollback(
+        self,
+        workflow_id: str,
+        actor: Actor,
+        phase: str,
+        sub_state: str,
+    ) -> ReportResult:
+        snapshot = self._snapshot(workflow_id)
+        self.config.store.append(
+            workflow_id,
+            WorkflowEvent(
+                event_id="workflow-rollback",
+                workflow_id=workflow_id,
+                event_type=EventType.STATE_ADVANCED,
+                actor=actor,
+                from_state=snapshot.state,
+                to_state=StateSnapshot(phase=phase, sub_state=sub_state),
+            ),
+            expected_version=snapshot.version,
+        )
+        return ReportResult(snapshot=self._snapshot(workflow_id))
+
+    def skip(self, workflow_id: str, actor: Actor) -> ReportResult:
+        snapshot = self._snapshot(workflow_id)
+        self.config.store.append(
+            workflow_id,
+            record_work_completed(workflow_id, actor, WorkResult(summary="skip")),
+            expected_version=snapshot.version,
+        )
+        return ReportResult(snapshot=self._snapshot(workflow_id))
+
+    def release_lease(self, lease_id: str) -> None:
+        for work_item_id, lease in list(self._leases.items()):
+            if lease.lease_id == lease_id:
+                del self._leases[work_item_id]
+                return
+
+    def record_review_result(
+        self,
+        workflow_id: str,
+        actor: Actor,
+        review_result: ReviewResult,
+        executor_run_id: str,
+    ) -> ReportResult:
+        snapshot = self._snapshot(workflow_id)
+        self.config.store.append(
+            workflow_id,
+            record_review_result(workflow_id, actor, review_result, executor_run_id),
+            expected_version=snapshot.version,
+        )
+        return ReportResult(snapshot=self._snapshot(workflow_id))
 
     def report(
         self,
@@ -659,11 +755,14 @@ class WorkflowOrchestrator:
         expected_work_item_id = f"{workflow_id}:{expected_version}"
         if work_item_id != expected_work_item_id:
             raise WorkflowValidationError("stale work item")
-        self.config.store.append(
-            workflow_id,
-            record_work_completed(workflow_id, actor, result),
-            expected_version=expected_version,
-        )
+        try:
+            self.config.store.append(
+                workflow_id,
+                record_work_completed(workflow_id, actor, result),
+                expected_version=expected_version,
+            )
+        except WorkflowStoreConflict as exc:
+            raise WorkflowValidationError("stale work item") from exc
         return ReportResult(snapshot=self._snapshot(workflow_id))
 
     def approve_gate(
@@ -689,6 +788,20 @@ class WorkflowOrchestrator:
         if not events:
             raise WorkflowValidationError("workflow has no events")
         return reduce_events(events, self.config.template)
+
+    def _required_evidence(self, state: StateSnapshot) -> tuple[Evidence, ...]:
+        if state.phase == "exploring":
+            return (Evidence(ref="goal_candidate", kind="workflow_output"),)
+        if state.phase == "building":
+            return (Evidence(ref="test_result", kind="test_result"),)
+        return ()
+
+    def _next_action(self, state: StateSnapshot) -> str:
+        if state.phase == "exploring":
+            return "chat_until_goal_candidate"
+        if state.sub_state == "ready_for_review":
+            return "wait_for_human"
+        return "execute_sub_state"
 
 
 @dataclass(frozen=True)
@@ -992,6 +1105,8 @@ def _advance_from_explicit_event(
         raise WorkflowValidationError("event from_state does not match current state")
     if event.to_state is None:
         raise WorkflowValidationError("state advancement requires to_state")
+    if event.to_state.phase == "blocked" or current_state.phase == "blocked":
+        return event.to_state
     if not template.is_legal_transition(current_state, event.to_state):
         raise WorkflowValidationError("illegal transition")
     return event.to_state

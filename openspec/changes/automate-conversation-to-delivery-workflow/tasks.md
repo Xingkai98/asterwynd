@@ -31,14 +31,14 @@
 ## 4. Orchestrator 与执行协议
 
 - [x] 4.1 为 `enter`、`status`、`report` 和多 workflow 选择行为编写失败测试
-- [ ] 4.1a 实现显式 workflow、worktree cwd、唯一 active、多 active 用户选择和无 active 新建 exploration 的确定性恢复顺序
-- [ ] 4.1b 实现 User Session sticky workflow binding、跨 Session 恢复、单写 lease 和 done 后新事项要求新 Session
-- [ ] 4.2 实现 WorkItem 生成、allowed actions、required evidence 和 next action 计算
-- [ ] 4.2a 实现 exploring goal candidate 驱动的自动 requirements transition，并验证不创建 worktree或隐式批准需求
+- [x] 4.1a 实现显式 workflow、worktree cwd、唯一 active、多 active 用户选择和无 active 新建 exploration 的确定性恢复顺序
+- [x] 4.1b 实现 User Session sticky workflow binding、跨 Session 恢复、单写 lease 和 done 后新事项要求新 Session
+- [x] 4.2 实现 WorkItem 生成、allowed actions、required evidence 和 next action 计算
+- [x] 4.2a 实现 exploring goal candidate 驱动的自动 requirements transition，并验证不创建 worktree或隐式批准需求
 - [x] 4.3 实现 WorkResult 验证，禁止 executor 指定任意目标状态
-- [ ] 4.4 实现 blocker、rollback、允许的 skip 和 stale WorkItem 处理
-- [ ] 4.5 实现 workflow claim/lease 的领取、续期、释放、冲突和超时回收
-- [ ] 4.6 实现 human gate 前 automated review lane 调度、review_result 处理和 changes_requested 回退
+- [x] 4.4 实现 blocker、rollback、允许的 skip 和 stale WorkItem 处理
+- [x] 4.5 实现 workflow claim/lease 的领取、续期、释放、冲突和超时回收
+- [x] 4.6 实现 human gate 前 automated review lane 调度、review_result 处理和 changes_requested 回退
 
 ## 5. 可信 Gate 与 Capability
 
