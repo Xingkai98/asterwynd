@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -60,6 +61,11 @@ class OutputStatus(str, Enum):
 class AgingAction(str, Enum):
     KEEP = "keep"
     ABANDON = "abandon"
+
+
+class PhaseCommitPolicy(str, Enum):
+    NONE = "none"
+    REQUIRED_BEFORE_HUMAN_GATE = "required_before_human_gate"
 
 
 class ExecutorMode(str, Enum):
@@ -129,7 +135,7 @@ class RunnerProfile:
 class PhaseDefinition:
     phase: str
     sub_states: tuple[str, ...]
-    commit_policy: str = "required_before_human_gate"
+    commit_policy: PhaseCommitPolicy | str = PhaseCommitPolicy.REQUIRED_BEFORE_HUMAN_GATE
     executor_lane: ExecutorLane = field(
         default_factory=lambda: ExecutorLane(mode=ExecutorMode.SELF),
     )
@@ -140,6 +146,7 @@ class PhaseDefinition:
             raise WorkflowValidationError("phase name is required")
         if not self.sub_states:
             raise WorkflowValidationError(f"phase {self.phase!r} must define sub_states")
+        object.__setattr__(self, "commit_policy", PhaseCommitPolicy(self.commit_policy))
 
     @property
     def first_sub_state(self) -> str:
@@ -345,6 +352,16 @@ class Gate:
             gate_summary_hash=self.gate_summary_hash,
             head_sha=self.head_sha,
         )
+
+
+@dataclass(frozen=True)
+class GateBinding:
+    phase: str
+    state_version: int
+    branch: str
+    head_sha: str
+    evidence_hash: str
+    gate_summary_hash: str
 
 
 @dataclass(frozen=True)
@@ -658,6 +675,21 @@ class WorkflowOutput:
     status: OutputStatus
 
 
+def retain_output(output: WorkflowOutput) -> WorkflowOutput:
+    return replace(output, status=OutputStatus.DURABLE)
+
+
+def accept_outputs(
+    outputs: tuple[WorkflowOutput, ...],
+    refs: tuple[str, ...],
+) -> tuple[WorkflowOutput, ...]:
+    accepted_refs = set(refs)
+    return tuple(
+        retain_output(output) if output.ref in accepted_refs else output
+        for output in outputs
+    )
+
+
 @dataclass(frozen=True)
 class AgingPolicy:
     ttl: timedelta
@@ -747,14 +779,14 @@ def default_coding_agent_template() -> PhaseTemplate:
     return PhaseTemplate(
         template_id="coding-agent-conversation-delivery-v1",
         phases=(
-            ("exploring", ("chatting",), "none"),
-            ("requirements", ("drafting", "ready_for_review"), "none"),
-            ("design", ("writing_design", "ready_for_review"), "required_before_human_gate"),
-            ("building", ("writing_tests", "implementing", "ready_for_review"), "required_before_human_gate"),
+            ("exploring", ("chatting",), PhaseCommitPolicy.NONE.value),
+            ("requirements", ("drafting", "ready_for_review"), PhaseCommitPolicy.NONE.value),
+            ("design", ("writing_design", "ready_for_review"), PhaseCommitPolicy.REQUIRED_BEFORE_HUMAN_GATE.value),
+            ("building", ("writing_tests", "implementing", "ready_for_review"), PhaseCommitPolicy.REQUIRED_BEFORE_HUMAN_GATE.value),
             PhaseDefinition(
                 phase="code-review",
                 sub_states=("reviewing_code", "ready_for_review"),
-                commit_policy="required_before_human_gate",
+                commit_policy=PhaseCommitPolicy.REQUIRED_BEFORE_HUMAN_GATE,
                 executor_lane=ExecutorLane(
                     mode=ExecutorMode.RUNNER,
                     runner_profile="codex-reviewer",
@@ -770,7 +802,7 @@ def default_coding_agent_template() -> PhaseTemplate:
                     ),
                 ),
             ),
-            ("closing", ("archiving", "ready_for_review"), "required_before_human_gate"),
+            ("closing", ("archiving", "ready_for_review"), PhaseCommitPolicy.REQUIRED_BEFORE_HUMAN_GATE.value),
         ),
         initial_state=StateSnapshot(phase="exploring", sub_state="chatting"),
         runner_profiles=(codex_reviewer,),
@@ -1009,6 +1041,59 @@ def evaluate_exploration_aging(
     return AgingDecision(action=AgingAction.ABANDON, reason="empty_exploration_expired")
 
 
+def lazy_aging_scan(
+    snapshot: WorkflowSnapshot,
+    outputs: tuple[WorkflowOutput, ...],
+    last_activity_at: datetime,
+    now: datetime,
+    policy: AgingPolicy,
+    already_abandoned: bool,
+) -> AgingDecision:
+    if already_abandoned:
+        return AgingDecision(action=AgingAction.KEEP, reason="already_abandoned")
+    return evaluate_exploration_aging(
+        snapshot=snapshot,
+        outputs=outputs,
+        last_activity_at=last_activity_at,
+        now=now,
+        policy=policy,
+    )
+
+
+def build_gate_binding(
+    policy: PhaseCommitPolicy | str,
+    phase: str,
+    state_version: int,
+    branch: str,
+    head_sha: str,
+    evidence_hash: str,
+    clean_worktree: bool,
+) -> GateBinding | None:
+    resolved_policy = PhaseCommitPolicy(policy)
+    if resolved_policy == PhaseCommitPolicy.NONE:
+        return None
+    if not clean_worktree:
+        raise WorkflowValidationError("phase gate requires clean worktree")
+    payload = {
+        "branch": branch,
+        "evidence_hash": evidence_hash,
+        "head_sha": head_sha,
+        "phase": phase,
+        "state_version": state_version,
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return GateBinding(
+        phase=phase,
+        state_version=state_version,
+        branch=branch,
+        head_sha=head_sha,
+        evidence_hash=evidence_hash,
+        gate_summary_hash=f"sha256:{digest}",
+    )
+
+
 def _git_common_dir(cwd: Path) -> Path | None:
     try:
         common_dir_result = subprocess.run(
@@ -1065,10 +1150,12 @@ __all__ = [
     "ExecutorLane",
     "ExecutorMode",
     "Gate",
+    "GateBinding",
     "GateApprovalTokenMatcher",
     "Lease",
     "ManagedWorkspaceConfig",
     "OutputStatus",
+    "PhaseCommitPolicy",
     "PhaseDefinition",
     "PhaseTemplate",
     "ReviewResult",
@@ -1095,11 +1182,15 @@ __all__ = [
     "WorkspaceBinding",
     "WorkflowStoreConflict",
     "WorkflowValidationError",
+    "accept_outputs",
+    "build_gate_binding",
     "default_coding_agent_template",
     "evaluate_exploration_aging",
+    "lazy_aging_scan",
     "record_gate_approved",
     "record_review_result",
     "record_work_completed",
     "reduce_events",
+    "retain_output",
     "start_workflow",
 ]

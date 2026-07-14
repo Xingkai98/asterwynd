@@ -3,7 +3,7 @@
   "change_id": "automate-conversation-to-delivery-workflow",
   "state": {
     "phase": "building",
-    "sub_state": "smoke_validating"
+    "sub_state": "implementing"
   },
   "transitions": [
     {
@@ -289,6 +289,20 @@
       "actor_type": "agent",
       "actor_id": "workflow_state.py",
       "timestamp": "2026-07-14T14:39:19.312732+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "smoke_validating"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T14:47:34.371400+00:00"
     }
   ],
   "current_agent": null,
