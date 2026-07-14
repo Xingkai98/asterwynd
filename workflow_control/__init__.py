@@ -95,6 +95,12 @@ class ReviewerMode(str, Enum):
     COMMAND = "command"
 
 
+class EnforcementLevel(str, Enum):
+    STRICT_HOST = "strict_host"
+    PROMPT_ADAPTER = "prompt_adapter"
+    AUDIT_ONLY = "audit_only"
+
+
 @dataclass(frozen=True)
 class Actor:
     kind: ActorKind
@@ -1065,6 +1071,14 @@ class ReportResult:
 
 
 @dataclass(frozen=True)
+class AdapterRunResult:
+    snapshot: WorkflowSnapshot
+    enforcement_level: EnforcementLevel
+    summary: str
+    waiting_for_human: bool = False
+
+
+@dataclass(frozen=True)
 class WorkflowOrchestratorConfig:
     store: SQLiteEventStore
     template: PhaseTemplate
@@ -1269,6 +1283,20 @@ class WorkflowOrchestrator:
             expected_version=snapshot.version,
         )
         return ReportResult(snapshot=self._snapshot(workflow_id))
+
+    def save_approved_requirements_snapshot(
+        self,
+        workflow_id: str,
+        draft: RequirementsDraft,
+    ) -> RequirementsDraft:
+        snapshot = self._snapshot(workflow_id)
+        if snapshot.state != StateSnapshot(phase="requirements", sub_state="ready_for_review"):
+            raise WorkflowValidationError("requirements snapshot requires requirements gate")
+        return self.config.store.save_requirements_snapshot(
+            workflow_id,
+            snapshot.version,
+            draft,
+        )
 
     def report(
         self,
@@ -1475,6 +1503,141 @@ class WorkflowOrchestrator:
         if state.sub_state == "ready_for_review":
             return "wait_for_human"
         return "execute_sub_state"
+
+
+class FakeWorkflowExecutor:
+    def __init__(
+        self,
+        orchestrator: WorkflowOrchestrator,
+        actor: Actor | None = None,
+        workspace: Path | None = None,
+    ) -> None:
+        self.orchestrator = orchestrator
+        self.actor = actor or Actor(kind=ActorKind.AGENT, actor_id="fake-executor")
+        self.workspace = workspace
+
+    def run_until_blocked_or_gate(self, workflow_id: str) -> AdapterRunResult:
+        summary: list[str] = []
+        while True:
+            entered = self.orchestrator.enter(workflow_id, self.actor)
+            if entered.waiting_for_human or entered.work_item is None:
+                return AdapterRunResult(
+                    snapshot=entered.snapshot,
+                    enforcement_level=EnforcementLevel.STRICT_HOST,
+                    summary="; ".join(summary) or "waiting",
+                    waiting_for_human=entered.waiting_for_human,
+                )
+            state = entered.work_item.state
+            if state.phase == "code-review" and state.sub_state == "reviewing_code":
+                review = FakeReviewAdapter(self.orchestrator).review_pass(workflow_id)
+                summary.append("fake review pass")
+                continue
+            self._write_fake_artifact(state)
+            work_result = self._work_result_for_state(state)
+            result = self.orchestrator.report(
+                workflow_id=workflow_id,
+                actor=self.actor,
+                work_item_id=entered.work_item.work_item_id,
+                result=work_result,
+                expected_version=entered.snapshot.version,
+            )
+            summary.append(work_result.summary)
+            if result.snapshot.state == StateSnapshot(phase="requirements", sub_state="ready_for_review"):
+                self.orchestrator.save_approved_requirements_snapshot(
+                    workflow_id,
+                    RequirementsDraft(
+                        goal="Fake executor workflow",
+                        scope="End-to-end CLI tracer bullet",
+                        acceptance="The fake executor reaches each gate through the workflow host wrapper.",
+                        test_strategy="Use workflow CLI contract tests.",
+                    ),
+                )
+
+    def _work_result_for_state(self, state: StateSnapshot) -> WorkResult:
+        if state.phase == "exploring":
+            return WorkResult(output_refs=("goal_candidate",), summary="fake goal candidate")
+        if state.phase == "requirements":
+            return WorkResult(output_refs=("requirements_snapshot",), summary="fake requirements ready")
+        if state.phase == "design":
+            return WorkResult(evidence_refs=("design.md",), summary="fake design ready")
+        if state.phase == "building" and state.sub_state == "writing_tests":
+            return WorkResult(evidence_refs=("fake-tests",), summary="fake tests written")
+        if state.phase == "building":
+            return WorkResult(evidence_refs=("fake-implementation",), summary="fake implementation done")
+        if state.phase == "closing":
+            return WorkResult(evidence_refs=("fake-archive",), summary="fake archive ready")
+        return WorkResult(summary=f"fake work for {state.phase}.{state.sub_state}")
+
+    def _write_fake_artifact(self, state: StateSnapshot) -> None:
+        if self.workspace is None or not self.workspace.exists():
+            return
+        if state.phase == "design":
+            change_id = self.workspace.name
+            change_dir = self.workspace / "openspec" / "changes" / change_id
+            change_dir.mkdir(parents=True, exist_ok=True)
+            (change_dir / "design.md").write_text("# Design\n\nFake design artifact.\n", encoding="utf-8")
+            (change_dir / "tasks.md").write_text("## Tasks\n\n- [x] Fake design task\n", encoding="utf-8")
+        elif state.phase == "building":
+            (self.workspace / f"workflow-fake-{state.sub_state}.txt").write_text(
+                f"{state.phase}.{state.sub_state}\n",
+                encoding="utf-8",
+            )
+        elif state.phase == "closing":
+            (self.workspace / "workflow-fake-archive.txt").write_text("archive\n", encoding="utf-8")
+
+
+class FakeReviewAdapter:
+    def __init__(
+        self,
+        orchestrator: WorkflowOrchestrator,
+        actor: Actor | None = None,
+    ) -> None:
+        self.orchestrator = orchestrator
+        self.actor = actor or Actor(kind=ActorKind.AGENT, actor_id="fake-reviewer")
+
+    def review_pass(self, workflow_id: str) -> ReportResult:
+        return self.orchestrator.record_review_result(
+            workflow_id=workflow_id,
+            actor=self.actor,
+            review_result=ReviewResult.PASS,
+            executor_run_id="fake-executor",
+        )
+
+
+class CommandReviewAdapter:
+    def __init__(
+        self,
+        orchestrator: WorkflowOrchestrator,
+        profile: RunnerProfile,
+        actor: Actor | None = None,
+    ) -> None:
+        if profile.permissions != "read-only":
+            raise WorkflowValidationError("review command runner must be read-only")
+        self.orchestrator = orchestrator
+        self.profile = profile
+        self.actor = actor or Actor(kind=ActorKind.AGENT, actor_id=f"{profile.name}-reviewer")
+
+    def run(self, workflow_id: str, prompt: str) -> ReportResult:
+        completed = subprocess.run(
+            [self.profile.command, *self.profile.args],
+            input=prompt if self.profile.prompt_mode == "stdin" else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=self.profile.timeout_seconds,
+            check=False,
+        )
+        first_line = completed.stdout.strip().splitlines()[0] if completed.stdout.strip() else ""
+        try:
+            result = ReviewResult(first_line.strip())
+        except ValueError:
+            result = ReviewResult.INCONCLUSIVE
+        return self.orchestrator.record_review_result(
+            workflow_id=workflow_id,
+            actor=self.actor,
+            review_result=result,
+            executor_run_id=self.profile.name,
+        )
 
 
 @dataclass(frozen=True)
@@ -1754,6 +1917,8 @@ def reduce_events(
                     phase="building",
                     sub_state=template.phase("building").first_sub_state,
                 )
+            elif event.review_result == ReviewResult.PASS:
+                current_state = StateSnapshot(phase="code-review", sub_state="ready_for_review")
         elif event.event_type == EventType.WORKFLOW_ABANDONED:
             if current_state is None:
                 raise WorkflowValidationError("workflow must start before abandonment")
@@ -2238,7 +2403,10 @@ __all__ = [
     "AgingPolicy",
     "BaseBranchCheck",
     "CapabilityPolicy",
+    "AdapterRunResult",
+    "CommandReviewAdapter",
     "Evidence",
+    "EnforcementLevel",
     "EventType",
     "ExecutorLane",
     "ExecutorMode",
@@ -2246,6 +2414,8 @@ __all__ = [
     "GateBinding",
     "GateEventType",
     "GateApprovalTokenMatcher",
+    "FakeReviewAdapter",
+    "FakeWorkflowExecutor",
     "HostApprovalResult",
     "HostApprovalService",
     "Lease",

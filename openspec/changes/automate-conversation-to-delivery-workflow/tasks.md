@@ -69,18 +69,18 @@
 
 ## 7. CLI、Skill、模板与 Executor Adapter
 
-- [ ] 7.0 实现 `workflow manage add/remove/list`、`workflow attach` 和 host adapter 的 sticky session bypass
-- [ ] 7.0a 实现 `workflow chat --executor <adapter>` Host Wrapper，作为支持可信 gate 和强 enforcement 的 CLI 入口
+- [x] 7.0 实现 `workflow manage add/remove/list`、`workflow attach` 和 host adapter 的 sticky session bypass
+- [x] 7.0a 实现 `workflow chat --executor <adapter>` Host Wrapper，作为支持可信 gate 和强 enforcement 的 CLI 入口
 - [x] 7.1 为稳定 JSON 输出编写 `workflow enter/status/report` CLI contract tests
 - [x] 7.2 实现本地 CLI 和人读状态渲染
-- [ ] 7.3 实现 fake executor adapter，完成 requirements→design→gate tracer bullet
-- [ ] 7.3a 验证单一 User Session 跨 phase 复用以及 fresh executor 结果回传同一 Session
-- [ ] 7.3b 实现 runner profile 与 automated reviewer adapter，支持 subagent、fresh Codex CLI/Claude Code runner、command runner 的最小审查上下文；inline checker 通过 command runner 建模，并禁止 self reviewer
+- [x] 7.3 实现 fake executor adapter，完成 requirements→design→gate tracer bullet
+- [x] 7.3a 验证单一 User Session 跨 phase 复用以及 fresh executor 结果回传同一 Session
+- [x] 7.3b 实现 runner profile 与 automated reviewer adapter，支持 subagent、fresh Codex CLI/Claude Code runner、command runner 的最小审查上下文；inline checker 通过 command runner 建模，并禁止 self reviewer
 - [ ] 7.4 实现 Asterwynd adapter，并确保 session snapshot 不覆盖 workflow 状态
-- [ ] 7.5 实现 Prompt Adapter：可复用 workflow skill + 短版 `AGENTS.md` 模板，要求原生客户端每个 run 前调用 `enter`、结束调用 `report`
-- [ ] 7.5a 验证 Happy Coder 等非侵入客户端走 Prompt Adapter 时可派发 automated review，但不拦截用户消息、不拥有 approval capability，并在 WorkResult evidence/Receipt 中记录 `prompt_adapter` 或 `audit_only` enforcement level
-- [ ] 7.6 新增可复用项目流程模板和短版 `AGENTS.md` 接入模板，但暂不替换当前 `AGENTS.md`
-- [ ] 7.7 增加 executor capability/enforcement level 展示，区分 `strict_host`、`prompt_adapter` 和 `audit_only`
+- [x] 7.5 实现 Prompt Adapter：可复用 workflow skill + 短版 `AGENTS.md` 模板，要求原生客户端每个 run 前调用 `enter`、结束调用 `report`
+- [x] 7.5a 验证 Happy Coder 等非侵入客户端走 Prompt Adapter 时可派发 automated review，但不拦截用户消息、不拥有 approval capability，并在 WorkResult evidence/Receipt 中记录 `prompt_adapter` 或 `audit_only` enforcement level
+- [x] 7.6 新增可复用项目流程模板和短版 `AGENTS.md` 接入模板，但暂不替换当前 `AGENTS.md`
+- [x] 7.7 增加 executor capability/enforcement level 展示，区分 `strict_host`、`prompt_adapter` 和 `audit_only`
 
 ## 8. Workspace Policy 与兼容迁移
 

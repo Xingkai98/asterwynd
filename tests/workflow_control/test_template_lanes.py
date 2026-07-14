@@ -3,6 +3,9 @@ from __future__ import annotations
 import pytest
 
 from workflow_control import (
+    Actor,
+    ActorKind,
+    CommandReviewAdapter,
     ExecutorLane,
     ExecutorMode,
     PhaseDefinition,
@@ -11,7 +14,11 @@ from workflow_control import (
     ReviewerDefinition,
     ReviewerMode,
     RunnerProfile,
+    SQLiteEventStore,
+    SQLiteEventStoreConfig,
     StateSnapshot,
+    WorkflowOrchestrator,
+    WorkflowOrchestratorConfig,
     WorkflowValidationError,
     default_coding_agent_template,
 )
@@ -88,3 +95,45 @@ def test_phase_template_exposes_runner_profiles_by_name() -> None:
     )
 
     assert template.runner_profile("command-reviewer") == profile
+
+
+def test_command_review_adapter_records_fresh_review_result(tmp_path) -> None:
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(
+            store=SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3")),
+            template=default_coding_agent_template(),
+        )
+    )
+    actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
+    orchestrator.enter("workflow-1", actor)
+    orchestrator.rollback("workflow-1", actor, "code-review", "reviewing_code")
+    profile = RunnerProfile(
+        name="command-reviewer",
+        command="python3",
+        args=("-c", "print('pass')"),
+        permissions="read-only",
+    )
+
+    result = CommandReviewAdapter(orchestrator, profile).run("workflow-1", prompt="review")
+
+    assert result.snapshot.state.phase == "code-review"
+    assert result.snapshot.state.sub_state == "ready_for_review"
+
+
+def test_command_review_adapter_requires_read_only_profile(tmp_path) -> None:
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(
+            store=SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3")),
+            template=default_coding_agent_template(),
+        )
+    )
+
+    with pytest.raises(WorkflowValidationError, match="read-only"):
+        CommandReviewAdapter(
+            orchestrator,
+            RunnerProfile(
+                name="writer",
+                command="python3",
+                permissions="workspace-write",
+            ),
+        )

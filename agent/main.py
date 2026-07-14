@@ -13,6 +13,7 @@ import inspect
 import json
 import logging
 import os
+import subprocess
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -76,8 +77,10 @@ app = typer.Typer()
 workflow_app = typer.Typer(help="Workflow control")
 workflow_manage_app = typer.Typer(help="Managed roots")
 workflow_gate_app = typer.Typer(help="Human gate")
+workflow_prompt_app = typer.Typer(help="Prompt adapter")
 workflow_app.add_typer(workflow_manage_app, name="manage")
 workflow_app.add_typer(workflow_gate_app, name="gate")
+workflow_app.add_typer(workflow_prompt_app, name="prompt-adapter")
 app.add_typer(workflow_app, name="workflow")
 
 
@@ -158,6 +161,56 @@ def _workflow_enter_payload(result) -> dict:
             "allowed_actions": list(result.work_item.allowed_actions),
         }
     return payload
+
+
+def _workflow_run_payload(result) -> dict:
+    payload = _workflow_snapshot_payload(result.snapshot)
+    payload["waiting_for_human"] = result.waiting_for_human
+    payload["enforcement_level"] = result.enforcement_level.value
+    payload["summary"] = result.summary
+    return payload
+
+
+def _workflow_worktree_path(worktrees_root: Path | None, change_id: str | None) -> Path | None:
+    if worktrees_root is None or change_id is None:
+        return None
+    return (worktrees_root / change_id).resolve()
+
+
+def _workflow_gate_binding_for_current_state(
+    orchestrator,
+    workflow: str,
+    worktree_path: Path | None,
+    evidence_hash: str,
+):
+    if worktree_path is None:
+        return None
+    from workflow_control import WorktreeCoordinator, WorktreeCoordinatorConfig
+
+    repo = Path.cwd()
+    try:
+        repo_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=worktree_path,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        repo = Path(repo_result.stdout.strip())
+    except Exception:
+        pass
+    coordinator = WorktreeCoordinator(
+        WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=worktree_path.parent),
+    )
+    coordinator.commit_phase(worktree_path, message=f"complete workflow gate {workflow}")
+    snapshot = orchestrator.status(workflow).snapshot
+    return coordinator.build_phase_gate_binding(
+        worktree_path=worktree_path,
+        phase=snapshot.state.phase,
+        state_version=snapshot.version,
+        evidence_hash=evidence_hash,
+    )
 
 
 def _echo_json_or_text(payload: dict, json_output: bool) -> None:
@@ -395,6 +448,40 @@ def workflow_status(
     _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
 
 
+@workflow_app.command("attach")
+def workflow_attach(
+    root: Path = typer.Argument(..., help="Managed workspace root"),
+    cwd: Path = typer.Option(Path("."), "--cwd", help="Current working directory"),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="User session ID"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Attach the current session to workflow management."""
+    from workflow_control import ManagedWorkspaceConfig, WorkflowActivationGate
+
+    path = _workflow_roots_path(roots_file)
+    roots = _load_workflow_roots(path)
+    canonical = str(root.resolve())
+    if canonical not in roots:
+        roots.append(canonical)
+        roots.sort()
+        _save_workflow_roots(path, roots)
+    gate = WorkflowActivationGate(
+        ManagedWorkspaceConfig(managed_roots=tuple(Path(existing) for existing in roots)),
+    )
+    decision = gate.preflight(cwd, session_id=session_id, attach_root=root)
+    payload = {
+        "mode": decision.mode.value,
+        "reason": decision.reason,
+        "managed_root": str(decision.managed_root) if decision.managed_root else None,
+        "workflow_prompt_enabled": decision.workflow_prompt_enabled,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"{payload['mode']} {payload['reason']}")
+
+
 @workflow_app.command("report")
 def workflow_report(
     workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
@@ -418,6 +505,100 @@ def workflow_report(
         expected_version=expected_version,
     )
     _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
+
+
+@workflow_app.command("chat")
+def workflow_chat(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    message: str = typer.Option("", "--message", help="User message for host wrapper"),
+    executor: str = typer.Option("fake", "--executor", help="Executor adapter"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    actor: str = typer.Option("agent", "--actor", help="Actor ID"),
+    change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for worktree promotion"),
+    date: Optional[str] = typer.Option(None, "--date", help="Branch date for worktree promotion"),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Canonical repository for worktree promotion"),
+    worktrees_root: Optional[Path] = typer.Option(None, "--worktrees-root", help="Root directory for workflow worktrees"),
+    allow_local_base: bool = typer.Option(False, "--allow-local-base", help="Allow explicit local base override"),
+    evidence_hash: str = typer.Option("sha256:fake-evidence", "--evidence-hash", help="Gate evidence hash"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Run a workflow host-wrapper turn."""
+    from workflow_control import (
+        FakeWorkflowExecutor,
+        GateApprovalTokenMatcher,
+        HostApprovalService,
+        WorktreeCoordinator,
+        WorktreeCoordinatorConfig,
+    )
+
+    if executor != "fake":
+        typer.echo("Error: only fake executor is implemented for workflow chat MVP", err=True)
+        raise SystemExit(1)
+    worktree_coordinator = None
+    if repo is not None and worktrees_root is not None:
+        worktree_coordinator = WorktreeCoordinator(
+            WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=worktrees_root),
+        )
+    orchestrator = _workflow_orchestrator(db, worktree_coordinator=worktree_coordinator)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
+    status = orchestrator.status(workflow) if orchestrator.config.store.current_version(workflow) else None
+    if status is not None:
+        phase = orchestrator.config.template.phase(status.snapshot.state.phase)
+        if status.snapshot.state.sub_state == phase.gate_sub_state:
+            if os.environ.get("ASTERWYND_WORKFLOW_TRUSTED_HOST") != "1":
+                typer.echo("Error: gate approval requires trusted host context", err=True)
+                raise SystemExit(1)
+            if os.environ.get("ASTERWYND_WORKFLOW_AGENT_CONTEXT") == "1":
+                typer.echo("Error: gate approval is not available from agent context", err=True)
+                raise SystemExit(1)
+            binding = None
+            worktree_path = _workflow_worktree_path(worktrees_root, change_id)
+            if phase.commit_policy.value != "none":
+                binding = _workflow_gate_binding_for_current_state(
+                    orchestrator,
+                    workflow,
+                    worktree_path,
+                    evidence_hash,
+                )
+            approval_gate = (
+                orchestrator.current_gate_for_binding(workflow, binding)
+                if binding is not None
+                else orchestrator.current_gate(workflow)
+            )
+            host_result = HostApprovalService(GateApprovalTokenMatcher()).try_approve(
+                gate=approval_gate,
+                raw_message=message,
+                user_id="human",
+                client_id="asterwynd-cli-host",
+            )
+            if not host_result.consumed or host_result.approval is None:
+                result = orchestrator.enter(workflow, _workflow_actor(actor))
+                _echo_json_or_text(_workflow_enter_payload(result), json_output)
+                return
+            requirements_draft = None
+            if status.snapshot.state.phase == "requirements":
+                requirements_draft = orchestrator.config.store.get_requirements_snapshot(
+                    workflow,
+                    status.snapshot.version,
+                )
+            orchestrator.approve_gate(
+                workflow_id=workflow,
+                expected_version=status.snapshot.version,
+                approval=host_result.approval,
+                gate_binding=binding,
+                worktree_path=worktree_path,
+                requirements_draft=requirements_draft,
+                change_id=change_id,
+                date=date,
+                allow_local_base=allow_local_base,
+            )
+    workspace = _workflow_worktree_path(worktrees_root, change_id)
+    run_result = FakeWorkflowExecutor(
+        orchestrator,
+        actor=_workflow_actor(actor),
+        workspace=workspace,
+    ).run_until_blocked_or_gate(workflow)
+    _echo_json_or_text(_workflow_run_payload(run_result), json_output)
 
 
 @workflow_gate_app.command("approve")
@@ -512,6 +693,13 @@ def workflow_gate_approve(
             if file_draft.approved_snapshot_hash != requirements_draft.approved_snapshot_hash:
                 typer.echo("Error: requirements file does not match approved snapshot", err=True)
                 raise SystemExit(1)
+    if gate_binding is None and worktree is not None:
+        gate_binding = _workflow_gate_binding_for_current_state(
+            orchestrator,
+            workflow,
+            worktree,
+            evidence_hash or "sha256:gate-evidence",
+        )
     orchestrator.approve_gate(
         workflow_id=workflow,
         approval=host_result.approval,
@@ -594,6 +782,30 @@ def workflow_manage_remove(
     roots = [existing for existing in _load_workflow_roots(path) if existing != canonical]
     _save_workflow_roots(path, roots)
     _emit_roots(path, json_output)
+
+
+@workflow_prompt_app.command("show")
+def workflow_prompt_adapter_show(
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Show Prompt Adapter integration instructions."""
+    skill_path = Path("docs/workflow-adapter/SKILL.md")
+    agents_snippet_path = Path("docs/workflow-adapter/AGENTS_SNIPPET.md")
+    payload = {
+        "enforcement_level": "prompt_adapter",
+        "skill_path": str(skill_path),
+        "agents_snippet_path": str(agents_snippet_path),
+        "required_entry_command": "asterwynd workflow enter --workflow <id>",
+        "required_exit_command": "asterwynd workflow report --workflow <id> --work-item-id <id> --expected-version <n>",
+        "approval_capability": False,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(
+            "Prompt Adapter: call workflow enter before each run and workflow report after each run; "
+            "approval capability remains unavailable."
+        )
 
 
 @app.callback(invoke_without_command=True)

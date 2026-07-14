@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
+from pathlib import Path
+import subprocess
 
 from typer.testing import CliRunner
 
@@ -171,3 +173,109 @@ def test_workflow_cli_status_runs_lazy_aging_scan(tmp_path) -> None:
         "phase": "abandoned",
         "sub_state": "abandoned",
     }
+
+
+def test_workflow_chat_fake_executor_reaches_done_end_to_end(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    repo = _init_repo(tmp_path / "repo")
+    worktrees_root = tmp_path / "worktrees"
+    runner = CliRunner()
+    workflow_id = "workflow-e2e"
+    change_id = "change-e2e"
+    base_args = [
+        "workflow",
+        "chat",
+        "--workflow",
+        workflow_id,
+        "--db",
+        str(db_path),
+        "--executor",
+        "fake",
+        "--change-id",
+        change_id,
+        "--date",
+        "2026-07-15",
+        "--repo",
+        str(repo),
+        "--worktrees-root",
+        str(worktrees_root),
+        "--allow-local-base",
+        "--json",
+    ]
+
+    first = runner.invoke(cli.app, [*base_args, "--message", "start"])
+    assert first.exit_code == 0
+    assert json.loads(first.stdout)["state"] == {
+        "phase": "requirements",
+        "sub_state": "ready_for_review",
+    }
+
+    monkeypatch.setenv("ASTERWYND_WORKFLOW_TRUSTED_HOST", "1")
+    expected_states = [
+        {"phase": "design", "sub_state": "ready_for_review"},
+        {"phase": "building", "sub_state": "ready_for_review"},
+        {"phase": "code-review", "sub_state": "ready_for_review"},
+        {"phase": "closing", "sub_state": "ready_for_review"},
+        {"phase": "done", "sub_state": "done"},
+    ]
+    for expected_state in expected_states:
+        result = runner.invoke(cli.app, [*base_args, "--message", "ok"])
+        assert result.exit_code == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["state"] == expected_state
+        assert payload["enforcement_level"] == "strict_host"
+
+    assert not (worktrees_root / change_id).exists()
+
+
+def test_workflow_attach_and_prompt_adapter_show_contract(tmp_path) -> None:
+    runner = CliRunner()
+    root = tmp_path / "repo"
+    root.mkdir()
+    roots_file = tmp_path / "roots.json"
+
+    attached = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "attach",
+            str(root),
+            "--cwd",
+            str(root),
+            "--session-id",
+            "session-1",
+            "--roots-file",
+            str(roots_file),
+            "--json",
+        ],
+    )
+    assert attached.exit_code == 0
+    assert json.loads(attached.stdout)["workflow_prompt_enabled"] is True
+
+    adapter = runner.invoke(cli.app, ["workflow", "prompt-adapter", "show", "--json"])
+    assert adapter.exit_code == 0
+    adapter_payload = json.loads(adapter.stdout)
+    assert adapter_payload["enforcement_level"] == "prompt_adapter"
+    assert adapter_payload["approval_capability"] is False
+
+
+def _init_repo(path: Path) -> Path:
+    path.mkdir()
+    _git(path, "init")
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "Test User")
+    (path / "README.md").write_text("# repo\n", encoding="utf-8")
+    _git(path, "add", "README.md")
+    _git(path, "commit", "-m", "init")
+    return path
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
