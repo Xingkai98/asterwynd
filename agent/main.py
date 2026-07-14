@@ -179,6 +179,46 @@ def _workflow_worktree_path(worktrees_root: Path | None, change_id: str | None) 
     return (worktrees_root / change_id).resolve()
 
 
+def _require_strict_worktree(
+    workspace: Path | None,
+    repo: Path | None,
+    worktrees_root: Path | None,
+    change_id: str | None,
+    date: str | None,
+    coordinator,
+) -> None:
+    if workspace is None or repo is None or worktrees_root is None or change_id is None or date is None:
+        typer.echo("Error: strict workflow executor requires --repo --worktrees-root --change-id --date", err=True)
+        raise SystemExit(1)
+    expected_workspace = (worktrees_root / change_id).resolve()
+    if workspace.resolve() != expected_workspace or not workspace.exists():
+        typer.echo("Error: strict workflow executor requires an existing dedicated worktree", err=True)
+        raise SystemExit(1)
+    try:
+        top_level = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=workspace,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        branch = coordinator.current_branch(workspace)
+    except (OSError, subprocess.CalledProcessError):
+        typer.echo("Error: strict workflow executor workspace must be a git worktree", err=True)
+        raise SystemExit(1)
+    if Path(top_level).resolve() != workspace.resolve():
+        typer.echo("Error: strict workflow executor workspace must be a git worktree root", err=True)
+        raise SystemExit(1)
+    if workspace.resolve() == repo.resolve():
+        typer.echo("Error: strict workflow executor cannot run in canonical repository", err=True)
+        raise SystemExit(1)
+    expected_branch = f"{change_id}/{date}"
+    if branch != expected_branch:
+        typer.echo("Error: strict workflow executor worktree branch mismatch", err=True)
+        raise SystemExit(1)
+
+
 def _workflow_gate_binding_for_current_state(
     orchestrator,
     workflow: str,
@@ -551,22 +591,21 @@ def workflow_chat(
         typer.echo("Error: unsupported workflow executor adapter", err=True)
         raise SystemExit(1)
     roots = _load_workflow_roots(_workflow_roots_path(roots_file))
-    if roots:
-        activation = WorkflowActivationGate(
-            ManagedWorkspaceConfig(managed_roots=tuple(Path(root) for root in roots)),
-        ).preflight(cwd, session_id=session_id)
-        if activation.mode == ActivationMode.BYPASS:
-            payload = {
-                "mode": activation.mode.value,
-                "reason": activation.reason,
-                "workflow_prompt_enabled": activation.workflow_prompt_enabled,
-                "bypassed": True,
-            }
-            if json_output:
-                typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
-            else:
-                typer.echo(f"Workflow bypass: {activation.reason}")
-            return
+    activation = WorkflowActivationGate(
+        ManagedWorkspaceConfig(managed_roots=tuple(Path(root) for root in roots)),
+    ).preflight(cwd, session_id=session_id)
+    if activation.mode == ActivationMode.BYPASS:
+        payload = {
+            "mode": activation.mode.value,
+            "reason": activation.reason,
+            "workflow_prompt_enabled": activation.workflow_prompt_enabled,
+            "bypassed": True,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            typer.echo(f"Workflow bypass: {activation.reason}")
+        return
     worktree_coordinator = None
     if repo is not None and worktrees_root is not None:
         worktree_coordinator = WorktreeCoordinator(
@@ -633,9 +672,14 @@ def workflow_chat(
             workspace=workspace,
         ).run_until_blocked_or_gate(workflow)
     else:
-        if workspace is None or not workspace.exists():
-            typer.echo("Error: strict workflow executor requires an existing dedicated worktree", err=True)
-            raise SystemExit(1)
+        _require_strict_worktree(
+            workspace,
+            repo,
+            worktrees_root,
+            change_id,
+            date,
+            worktree_coordinator,
+        )
         if executor == "command":
             if executor_command is None:
                 typer.echo("Error: command executor requires --executor-command", err=True)

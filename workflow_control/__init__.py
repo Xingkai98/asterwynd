@@ -1216,6 +1216,15 @@ class WorkflowOrchestrator:
             owner_id=actor.actor_id,
             expires_at=now + lease_ttl,
         )
+        workspace_binding = self._current_workspace_binding(workflow_id)
+        canonical_workspace = self._canonical_workspace_binding()
+        workspace_path = None
+        branch = None
+        if workspace_binding is not None:
+            workspace_path = str(workspace_binding.worktree_path)
+            branch = workspace_binding.branch
+        elif canonical_workspace is not None:
+            workspace_path, branch = canonical_workspace
         self._leases[work_item_id] = lease
         self.config.store.save_lease(lease)
         return EnterResult(
@@ -1227,10 +1236,25 @@ class WorkflowOrchestrator:
                 allowed_actions=("report_work",),
                 required_evidence=self._required_evidence(snapshot.state),
                 next_action=self._next_action(snapshot.state),
+                workspace_path=workspace_path,
+                branch=branch,
             ),
             lease=lease,
             waiting_for_human=False,
         )
+
+    def _current_workspace_binding(self, workflow_id: str) -> WorkspaceBinding | None:
+        for event in reversed(self.config.store.list_events(workflow_id)):
+            if event.workspace_binding is not None:
+                return event.workspace_binding
+        return None
+
+    def _canonical_workspace_binding(self) -> tuple[str, str | None] | None:
+        coordinator = self.config.worktree_coordinator
+        if coordinator is None:
+            return None
+        repo = coordinator.config.canonical_repo.resolve()
+        return (str(repo), _git_optional(repo, "branch", "--show-current"))
 
     def block(
         self,

@@ -185,9 +185,11 @@ def test_workflow_chat_fake_executor_reaches_done_end_to_end(tmp_path, monkeypat
     db_path = tmp_path / "workflow.sqlite3"
     repo = _init_repo(tmp_path / "repo")
     worktrees_root = tmp_path / "worktrees"
+    roots_file = tmp_path / "roots.json"
     runner = CliRunner()
     workflow_id = "workflow-e2e"
     change_id = "change-e2e"
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(repo), "--roots-file", str(roots_file)])
     base_args = [
         "workflow",
         "chat",
@@ -195,6 +197,10 @@ def test_workflow_chat_fake_executor_reaches_done_end_to_end(tmp_path, monkeypat
         workflow_id,
         "--db",
         str(db_path),
+        "--cwd",
+        str(repo),
+        "--roots-file",
+        str(roots_file),
         "--executor",
         "fake",
         "--change-id",
@@ -236,7 +242,11 @@ def test_workflow_chat_fake_executor_reaches_done_end_to_end(tmp_path, monkeypat
 
 def test_workflow_chat_command_executor_requires_existing_worktree(tmp_path) -> None:
     db_path = tmp_path / "workflow.sqlite3"
+    repo = _init_repo(tmp_path / "repo")
+    worktrees_root = tmp_path / "worktrees"
+    roots_file = tmp_path / "roots.json"
     runner = CliRunner()
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(repo), "--roots-file", str(roots_file)])
 
     result = runner.invoke(
         cli.app,
@@ -247,6 +257,10 @@ def test_workflow_chat_command_executor_requires_existing_worktree(tmp_path) -> 
             "command-workflow",
             "--db",
             str(db_path),
+            "--cwd",
+            str(repo),
+            "--roots-file",
+            str(roots_file),
             "--executor",
             "command",
             "--executor-command",
@@ -255,6 +269,14 @@ def test_workflow_chat_command_executor_requires_existing_worktree(tmp_path) -> 
             "-c",
             "--executor-arg",
             "print('command executor done')",
+            "--repo",
+            str(repo),
+            "--worktrees-root",
+            str(worktrees_root),
+            "--change-id",
+            "missing-change",
+            "--date",
+            "2026-07-15",
             "--json",
         ],
     )
@@ -263,15 +285,109 @@ def test_workflow_chat_command_executor_requires_existing_worktree(tmp_path) -> 
     assert "requires an existing dedicated worktree" in result.stderr
 
 
+def test_workflow_chat_command_executor_rejects_plain_directory_workspace(tmp_path) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    repo = _init_repo(tmp_path / "repo")
+    worktrees_root = tmp_path / "worktrees"
+    change_id = "plain-dir-change"
+    workspace = worktrees_root / change_id
+    workspace.mkdir(parents=True)
+    roots_file = tmp_path / "roots.json"
+    runner = CliRunner()
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(repo), "--roots-file", str(roots_file)])
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "chat",
+            "--workflow",
+            "plain-dir-workflow",
+            "--db",
+            str(db_path),
+            "--cwd",
+            str(repo),
+            "--roots-file",
+            str(roots_file),
+            "--executor",
+            "command",
+            "--executor-command",
+            "python3",
+            "--executor-arg",
+            "-c",
+            "--executor-arg",
+            "print('should not run')",
+            "--repo",
+            str(repo),
+            "--worktrees-root",
+            str(worktrees_root),
+            "--change-id",
+            change_id,
+            "--date",
+            "2026-07-15",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "must be a git worktree" in result.stderr
+
+
+def test_workflow_chat_command_executor_rejects_canonical_repo_workspace(tmp_path) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    repo = _init_repo(tmp_path / "repo")
+    roots_file = tmp_path / "roots.json"
+    runner = CliRunner()
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(repo), "--roots-file", str(roots_file)])
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "chat",
+            "--workflow",
+            "canonical-workflow",
+            "--db",
+            str(db_path),
+            "--cwd",
+            str(repo),
+            "--roots-file",
+            str(roots_file),
+            "--executor",
+            "command",
+            "--executor-command",
+            "python3",
+            "--executor-arg",
+            "-c",
+            "--executor-arg",
+            "print('should not run')",
+            "--repo",
+            str(repo),
+            "--worktrees-root",
+            str(repo.parent),
+            "--change-id",
+            repo.name,
+            "--date",
+            "2026-07-15",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "cannot run in canonical repository" in result.stderr
+
+
 def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "workflow.sqlite3"
     repo = _init_repo(tmp_path / "repo")
     worktrees_root = tmp_path / "worktrees"
+    roots_file = tmp_path / "roots.json"
     change_id = "command-change"
     workspace = worktrees_root / change_id
     worktrees_root.mkdir()
     _git(repo, "worktree", "add", "-b", f"{change_id}/2026-07-15", str(workspace))
     runner = CliRunner()
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(repo), "--roots-file", str(roots_file)])
     monkeypatch.setenv("ASTERWYND_WORKFLOW_TRUSTED_HOST", "1")
 
     result = runner.invoke(
@@ -283,6 +399,10 @@ def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path, mon
             "command-workflow",
             "--db",
             str(db_path),
+            "--cwd",
+            str(workspace),
+            "--roots-file",
+            str(roots_file),
             "--executor",
             "command",
             "--executor-command",
@@ -297,6 +417,8 @@ def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path, mon
             str(worktrees_root),
             "--change-id",
             change_id,
+            "--date",
+            "2026-07-15",
             "--json",
         ],
     )
@@ -314,11 +436,13 @@ def test_workflow_chat_command_executor_blocks_on_failure(tmp_path) -> None:
     db_path = tmp_path / "workflow.sqlite3"
     repo = _init_repo(tmp_path / "repo")
     worktrees_root = tmp_path / "worktrees"
+    roots_file = tmp_path / "roots.json"
     change_id = "failing-command-change"
     workspace = worktrees_root / change_id
     worktrees_root.mkdir()
     _git(repo, "worktree", "add", "-b", f"{change_id}/2026-07-15", str(workspace))
     runner = CliRunner()
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(repo), "--roots-file", str(roots_file)])
 
     result = runner.invoke(
         cli.app,
@@ -329,6 +453,10 @@ def test_workflow_chat_command_executor_blocks_on_failure(tmp_path) -> None:
             "failing-command-workflow",
             "--db",
             str(db_path),
+            "--cwd",
+            str(workspace),
+            "--roots-file",
+            str(roots_file),
             "--executor",
             "command",
             "--executor-command",
@@ -343,6 +471,8 @@ def test_workflow_chat_command_executor_blocks_on_failure(tmp_path) -> None:
             str(worktrees_root),
             "--change-id",
             change_id,
+            "--date",
+            "2026-07-15",
             "--json",
         ],
     )
