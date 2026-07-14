@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 import subprocess
@@ -35,6 +36,17 @@ class ReviewResult(str, Enum):
 class ActivationMode(str, Enum):
     MANAGED = "managed"
     BYPASS = "bypass"
+
+
+class OutputStatus(str, Enum):
+    DRAFT = "draft"
+    PROPOSED = "proposed"
+    DURABLE = "durable"
+
+
+class AgingAction(str, Enum):
+    KEEP = "keep"
+    ABANDON = "abandon"
 
 
 @dataclass(frozen=True)
@@ -214,6 +226,23 @@ class ActivationDecision:
     git_common_dir: Path | None = None
     workflow_prompt_enabled: bool = False
     model_call_allowed: bool = True
+
+
+@dataclass(frozen=True)
+class WorkflowOutput:
+    ref: str
+    status: OutputStatus
+
+
+@dataclass(frozen=True)
+class AgingPolicy:
+    ttl: timedelta
+
+
+@dataclass(frozen=True)
+class AgingDecision:
+    action: AgingAction
+    reason: str
 
 
 class WorkflowActivationGate:
@@ -440,6 +469,22 @@ def _validate_gate_approval(event: WorkflowEvent) -> None:
         raise WorkflowValidationError("gate approval requires human approval capability")
 
 
+def evaluate_exploration_aging(
+    snapshot: WorkflowSnapshot,
+    outputs: tuple[WorkflowOutput, ...],
+    last_activity_at: datetime,
+    now: datetime,
+    policy: AgingPolicy,
+) -> AgingDecision:
+    if snapshot.state.phase != "exploring":
+        return AgingDecision(action=AgingAction.KEEP, reason="not_exploration")
+    if any(output.status == OutputStatus.DURABLE for output in outputs):
+        return AgingDecision(action=AgingAction.KEEP, reason="durable_output_present")
+    if now - last_activity_at < policy.ttl:
+        return AgingDecision(action=AgingAction.KEEP, reason="ttl_not_expired")
+    return AgingDecision(action=AgingAction.ABANDON, reason="empty_exploration_expired")
+
+
 def _git_common_dir(cwd: Path) -> Path | None:
     try:
         common_dir_result = subprocess.run(
@@ -486,8 +531,12 @@ __all__ = [
     "ActorKind",
     "ActivationDecision",
     "ActivationMode",
+    "AgingAction",
+    "AgingDecision",
+    "AgingPolicy",
     "EventType",
     "ManagedWorkspaceConfig",
+    "OutputStatus",
     "PhaseDefinition",
     "PhaseTemplate",
     "ReviewResult",
@@ -495,9 +544,11 @@ __all__ = [
     "WorkResult",
     "WorkflowEvent",
     "WorkflowActivationGate",
+    "WorkflowOutput",
     "WorkflowSnapshot",
     "WorkflowValidationError",
     "default_coding_agent_template",
+    "evaluate_exploration_aging",
     "record_gate_approved",
     "record_review_result",
     "record_work_completed",
