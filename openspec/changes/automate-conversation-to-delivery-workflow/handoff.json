@@ -3,7 +3,7 @@
   "change_id": "automate-conversation-to-delivery-workflow",
   "state": {
     "phase": "reviewing",
-    "sub_state": "reading_docs"
+    "sub_state": "ready_for_review"
   },
   "transitions": [
     {
@@ -105,11 +105,39 @@
       "timestamp": "2026-07-14T13:08:46.452778+00:00",
       "handoff_note": ".handoff/automate-conversation-to-delivery-workflow/planning-to-reviewing.md",
       "decision": "approved"
+    },
+    {
+      "from": {
+        "phase": "reviewing",
+        "sub_state": "reading_docs"
+      },
+      "to": {
+        "phase": "reviewing",
+        "sub_state": "reviewing_design"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T13:12:23.534805+00:00"
+    },
+    {
+      "from": {
+        "phase": "reviewing",
+        "sub_state": "reviewing_design"
+      },
+      "to": {
+        "phase": "reviewing",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T13:12:23.600789+00:00"
     }
   ],
   "current_agent": null,
   "last_gate": {
-    "phase": "planning",
+    "phase": "reviewing",
     "sub_state": "ready_for_review"
   },
   "blockers": [],
