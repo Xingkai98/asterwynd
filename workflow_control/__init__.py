@@ -62,6 +62,20 @@ class AgingAction(str, Enum):
     ABANDON = "abandon"
 
 
+class ExecutorMode(str, Enum):
+    SELF = "self"
+    RUNNER = "runner"
+    SUBAGENT = "subagent"
+    COMMAND = "command"
+    ASK = "ask"
+
+
+class ReviewerMode(str, Enum):
+    RUNNER = "runner"
+    SUBAGENT = "subagent"
+    COMMAND = "command"
+
+
 @dataclass(frozen=True)
 class Actor:
     kind: ActorKind
@@ -76,10 +90,50 @@ class StateSnapshot:
 
 
 @dataclass(frozen=True)
+class ExecutorLane:
+    mode: ExecutorMode
+    runner_profile: str | None = None
+
+
+@dataclass(frozen=True)
+class ReviewerDefinition:
+    name: str
+    mode: ReviewerMode | str
+    runner_profile: str | None = None
+    fresh_context: bool = True
+
+    def __post_init__(self) -> None:
+        try:
+            mode = ReviewerMode(self.mode)
+        except ValueError as exc:
+            raise WorkflowValidationError("reviewer cannot use self") from exc
+        object.__setattr__(self, "mode", mode)
+
+
+@dataclass(frozen=True)
+class ReviewLane:
+    reviewers: tuple[ReviewerDefinition, ...] = ()
+
+
+@dataclass(frozen=True)
+class RunnerProfile:
+    name: str
+    command: str
+    args: tuple[str, ...] = ()
+    prompt_mode: str = "stdin"
+    permissions: str = "read-only"
+    timeout_seconds: int = 300
+
+
+@dataclass(frozen=True)
 class PhaseDefinition:
     phase: str
     sub_states: tuple[str, ...]
     commit_policy: str = "required_before_human_gate"
+    executor_lane: ExecutorLane = field(
+        default_factory=lambda: ExecutorLane(mode=ExecutorMode.SELF),
+    )
+    review_lane: ReviewLane = field(default_factory=ReviewLane)
 
     def __post_init__(self) -> None:
         if not self.phase:
@@ -103,6 +157,7 @@ class PhaseTemplate:
     template_id: str
     phases: tuple[PhaseDefinition | tuple[str, tuple[str, ...], str], ...]
     initial_state: StateSnapshot
+    runner_profiles: tuple[RunnerProfile, ...] = ()
     _phase_definitions: tuple[PhaseDefinition, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -129,6 +184,12 @@ class PhaseTemplate:
             if definition.phase == phase:
                 return definition
         raise WorkflowValidationError(f"unknown phase: {phase}")
+
+    def runner_profile(self, name: str) -> RunnerProfile:
+        for profile in self.runner_profiles:
+            if profile.name == name:
+                return profile
+        raise WorkflowValidationError(f"unknown runner profile: {name}")
 
     def next_state_after_work(self, state: StateSnapshot) -> StateSnapshot:
         definition = self.phase(state.phase)
@@ -603,6 +664,14 @@ class WorkflowActivationGate:
 
 
 def default_coding_agent_template() -> PhaseTemplate:
+    codex_reviewer = RunnerProfile(
+        name="codex-reviewer",
+        command="codex",
+        args=("exec", "--json"),
+        prompt_mode="stdin",
+        permissions="read-only",
+        timeout_seconds=600,
+    )
     return PhaseTemplate(
         template_id="coding-agent-conversation-delivery-v1",
         phases=(
@@ -610,10 +679,29 @@ def default_coding_agent_template() -> PhaseTemplate:
             ("requirements", ("drafting", "ready_for_review"), "none"),
             ("design", ("writing_design", "ready_for_review"), "required_before_human_gate"),
             ("building", ("writing_tests", "implementing", "ready_for_review"), "required_before_human_gate"),
-            ("code-review", ("reviewing_code", "ready_for_review"), "required_before_human_gate"),
+            PhaseDefinition(
+                phase="code-review",
+                sub_states=("reviewing_code", "ready_for_review"),
+                commit_policy="required_before_human_gate",
+                executor_lane=ExecutorLane(
+                    mode=ExecutorMode.RUNNER,
+                    runner_profile="codex-reviewer",
+                ),
+                review_lane=ReviewLane(
+                    reviewers=(
+                        ReviewerDefinition(
+                            name="codex-reviewer",
+                            mode=ReviewerMode.RUNNER,
+                            runner_profile="codex-reviewer",
+                            fresh_context=True,
+                        ),
+                    ),
+                ),
+            ),
             ("closing", ("archiving", "ready_for_review"), "required_before_human_gate"),
         ),
         initial_state=StateSnapshot(phase="exploring", sub_state="chatting"),
+        runner_profiles=(codex_reviewer,),
     )
 
 
@@ -902,6 +990,8 @@ __all__ = [
     "AgingPolicy",
     "Evidence",
     "EventType",
+    "ExecutorLane",
+    "ExecutorMode",
     "Gate",
     "GateApprovalTokenMatcher",
     "Lease",
@@ -910,8 +1000,12 @@ __all__ = [
     "PhaseDefinition",
     "PhaseTemplate",
     "ReviewResult",
+    "ReviewLane",
+    "ReviewerDefinition",
+    "ReviewerMode",
     "EnterResult",
     "ReportResult",
+    "RunnerProfile",
     "SQLiteEventStore",
     "SQLiteEventStoreConfig",
     "StateSnapshot",
