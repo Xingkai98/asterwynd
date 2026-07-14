@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+import subprocess
 from typing import Any
 
 
@@ -28,6 +30,11 @@ class ReviewResult(str, Enum):
     CHANGES_REQUESTED = "changes_requested"
     BLOCKED = "blocked"
     INCONCLUSIVE = "inconclusive"
+
+
+class ActivationMode(str, Enum):
+    MANAGED = "managed"
+    BYPASS = "bypass"
 
 
 @dataclass(frozen=True)
@@ -191,6 +198,90 @@ class WorkflowSnapshot:
     events_seen: int
 
 
+@dataclass(frozen=True)
+class ManagedWorkspaceConfig:
+    managed_roots: tuple[Path, ...]
+
+    def canonical_roots(self) -> tuple[Path, ...]:
+        return tuple(root.resolve() for root in self.managed_roots)
+
+
+@dataclass(frozen=True)
+class ActivationDecision:
+    mode: ActivationMode
+    reason: str
+    managed_root: Path | None = None
+    git_common_dir: Path | None = None
+    workflow_prompt_enabled: bool = False
+    model_call_allowed: bool = True
+
+
+class WorkflowActivationGate:
+    def __init__(self, config: ManagedWorkspaceConfig) -> None:
+        self.config = config
+        self._session_bypass: set[str] = set()
+
+    def preflight(
+        self,
+        cwd: str | Path,
+        session_id: str | None = None,
+        attach_root: str | Path | None = None,
+    ) -> ActivationDecision:
+        canonical_cwd = Path(cwd).resolve()
+        roots = self.config.canonical_roots()
+
+        if attach_root is not None:
+            canonical_attach_root = Path(attach_root).resolve()
+            managed_root = self._matching_root(canonical_attach_root, roots)
+            if managed_root is None:
+                raise WorkflowValidationError("attach_root is not in managed roots")
+            if session_id is not None:
+                self._session_bypass.discard(session_id)
+            return ActivationDecision(
+                mode=ActivationMode.MANAGED,
+                reason="explicit_attach",
+                managed_root=managed_root,
+                git_common_dir=_git_common_dir(canonical_cwd),
+                workflow_prompt_enabled=True,
+            )
+
+        if session_id is not None and session_id in self._session_bypass:
+            return ActivationDecision(
+                mode=ActivationMode.BYPASS,
+                reason="sticky_bypass",
+                workflow_prompt_enabled=False,
+            )
+
+        managed_root = self._matching_root(canonical_cwd, roots)
+        git_common_dir = _git_common_dir(canonical_cwd)
+        if managed_root is None and git_common_dir is not None:
+            managed_root = self._matching_root(git_common_dir, roots)
+
+        if managed_root is None:
+            if session_id is not None:
+                self._session_bypass.add(session_id)
+            return ActivationDecision(
+                mode=ActivationMode.BYPASS,
+                reason="cwd_not_in_managed_roots",
+                workflow_prompt_enabled=False,
+            )
+
+        reason = "git_common_dir" if git_common_dir is not None and not _is_within(canonical_cwd, managed_root) else "managed_root"
+        return ActivationDecision(
+            mode=ActivationMode.MANAGED,
+            reason=reason,
+            managed_root=managed_root,
+            git_common_dir=git_common_dir,
+            workflow_prompt_enabled=True,
+        )
+
+    def _matching_root(self, path: Path, roots: tuple[Path, ...]) -> Path | None:
+        for root in roots:
+            if _is_within(path, root):
+                return root
+        return None
+
+
 def default_coding_agent_template() -> PhaseTemplate:
     return PhaseTemplate(
         template_id="coding-agent-conversation-delivery-v1",
@@ -349,16 +440,61 @@ def _validate_gate_approval(event: WorkflowEvent) -> None:
         raise WorkflowValidationError("gate approval requires human approval capability")
 
 
+def _git_common_dir(cwd: Path) -> Path | None:
+    try:
+        common_dir_result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=cwd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    raw_common_dir = common_dir_result.stdout.strip()
+    if not raw_common_dir:
+        return None
+    common_dir = Path(raw_common_dir)
+    if common_dir.is_absolute():
+        return common_dir.resolve()
+
+    try:
+        top_level_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return (cwd / common_dir).resolve()
+    top_level = Path(top_level_result.stdout.strip())
+    if not top_level.is_absolute():
+        top_level = (cwd / top_level).resolve()
+    return (top_level / common_dir).resolve()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
 __all__ = [
     "Actor",
     "ActorKind",
+    "ActivationDecision",
+    "ActivationMode",
     "EventType",
+    "ManagedWorkspaceConfig",
     "PhaseDefinition",
     "PhaseTemplate",
     "ReviewResult",
     "StateSnapshot",
     "WorkResult",
     "WorkflowEvent",
+    "WorkflowActivationGate",
     "WorkflowSnapshot",
     "WorkflowValidationError",
     "default_coding_agent_template",
