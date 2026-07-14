@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import Enum
+import json
 from pathlib import Path
+import sqlite3
 import subprocess
 from typing import Any
 
 
 class WorkflowValidationError(ValueError):
+    pass
+
+
+class WorkflowStoreConflict(WorkflowValidationError):
     pass
 
 
@@ -325,6 +331,87 @@ class WorkspaceBinding:
 
 
 @dataclass(frozen=True)
+class SQLiteEventStoreConfig:
+    db_path: Path
+
+
+class SQLiteEventStore:
+    def __init__(self, config: SQLiteEventStoreConfig) -> None:
+        self.config = config
+        self.config.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def append(
+        self,
+        workflow_id: str,
+        event: WorkflowEvent,
+        expected_version: int,
+    ) -> WorkflowEvent:
+        with sqlite3.connect(self.config.db_path) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("BEGIN IMMEDIATE")
+            current_version = self._current_version(connection, workflow_id)
+            if current_version != expected_version:
+                raise WorkflowStoreConflict(
+                    f"expected version {expected_version}, actual version {current_version}"
+                )
+            stored_event = replace(event, version=current_version + 1)
+            connection.execute(
+                """
+                INSERT INTO workflow_events (workflow_id, version, payload)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    workflow_id,
+                    stored_event.version,
+                    json.dumps(_event_to_payload(stored_event), sort_keys=True),
+                ),
+            )
+            return stored_event
+
+    def list_events(self, workflow_id: str) -> list[WorkflowEvent]:
+        with sqlite3.connect(self.config.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT payload FROM workflow_events
+                WHERE workflow_id = ?
+                ORDER BY version ASC
+                """,
+                (workflow_id,),
+            ).fetchall()
+        return [_event_from_payload(json.loads(row[0])) for row in rows]
+
+    def current_version(self, workflow_id: str) -> int:
+        with sqlite3.connect(self.config.db_path) as connection:
+            return self._current_version(connection, workflow_id)
+
+    def _initialize(self) -> None:
+        with sqlite3.connect(self.config.db_path) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_events (
+                    workflow_id TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (workflow_id, version)
+                )
+                """
+            )
+
+    def _current_version(
+        self,
+        connection: sqlite3.Connection,
+        workflow_id: str,
+    ) -> int:
+        row = connection.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM workflow_events WHERE workflow_id = ?",
+            (workflow_id,),
+        ).fetchone()
+        return int(row[0])
+
+
+@dataclass(frozen=True)
 class ManagedWorkspaceConfig:
     managed_roots: tuple[Path, ...]
 
@@ -583,6 +670,79 @@ def _validate_gate_approval(event: WorkflowEvent) -> None:
         raise WorkflowValidationError("gate approval requires human approval capability")
 
 
+def _event_to_payload(event: WorkflowEvent) -> dict[str, Any]:
+    return {
+        "event_id": event.event_id,
+        "workflow_id": event.workflow_id,
+        "event_type": event.event_type.value,
+        "actor": {
+            "kind": event.actor.kind.value,
+            "actor_id": event.actor.actor_id,
+            "approval_capability": event.actor.approval_capability,
+        },
+        "version": event.version,
+        "from_state": _state_to_payload(event.from_state),
+        "to_state": _state_to_payload(event.to_state),
+        "work_result": _work_result_to_payload(event.work_result),
+        "review_result": event.review_result.value if event.review_result is not None else None,
+        "executor_run_id": event.executor_run_id,
+        "raw_user_message": event.raw_user_message,
+    }
+
+
+def _event_from_payload(payload: dict[str, Any]) -> WorkflowEvent:
+    review_result = payload.get("review_result")
+    return WorkflowEvent(
+        event_id=payload["event_id"],
+        workflow_id=payload["workflow_id"],
+        event_type=EventType(payload["event_type"]),
+        actor=Actor(
+            kind=ActorKind(payload["actor"]["kind"]),
+            actor_id=payload["actor"]["actor_id"],
+            approval_capability=payload["actor"]["approval_capability"],
+        ),
+        version=payload["version"],
+        from_state=_state_from_payload(payload.get("from_state")),
+        to_state=_state_from_payload(payload.get("to_state")),
+        work_result=_work_result_from_payload(payload.get("work_result")),
+        review_result=ReviewResult(review_result) if review_result else None,
+        executor_run_id=payload.get("executor_run_id"),
+        raw_user_message=payload.get("raw_user_message"),
+    )
+
+
+def _state_to_payload(state: StateSnapshot | None) -> dict[str, str] | None:
+    if state is None:
+        return None
+    return {"phase": state.phase, "sub_state": state.sub_state}
+
+
+def _state_from_payload(payload: dict[str, str] | None) -> StateSnapshot | None:
+    if payload is None:
+        return None
+    return StateSnapshot(phase=payload["phase"], sub_state=payload["sub_state"])
+
+
+def _work_result_to_payload(work_result: WorkResult | None) -> dict[str, Any] | None:
+    if work_result is None:
+        return None
+    return {
+        "output_refs": list(work_result.output_refs),
+        "evidence_refs": list(work_result.evidence_refs),
+        "summary": work_result.summary,
+    }
+
+
+def _work_result_from_payload(payload: dict[str, Any] | None) -> WorkResult | None:
+    if payload is None:
+        return None
+    return WorkResult(
+        output_refs=tuple(payload["output_refs"]),
+        evidence_refs=tuple(payload["evidence_refs"]),
+        summary=payload["summary"],
+    )
+
+
 def evaluate_exploration_aging(
     snapshot: WorkflowSnapshot,
     outputs: tuple[WorkflowOutput, ...],
@@ -659,6 +819,8 @@ __all__ = [
     "PhaseDefinition",
     "PhaseTemplate",
     "ReviewResult",
+    "SQLiteEventStore",
+    "SQLiteEventStoreConfig",
     "StateSnapshot",
     "WorkResult",
     "WorkItem",
@@ -667,6 +829,7 @@ __all__ = [
     "WorkflowOutput",
     "WorkflowSnapshot",
     "WorkspaceBinding",
+    "WorkflowStoreConflict",
     "WorkflowValidationError",
     "default_coding_agent_template",
     "evaluate_exploration_aging",
