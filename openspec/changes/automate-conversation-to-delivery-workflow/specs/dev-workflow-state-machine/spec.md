@@ -52,6 +52,8 @@
 
 每个 phase SHALL 由版本化项目模板定义明确 sub-state 图，而不是由 agent 自由填写字符串。Asterwynd 默认模板 SHALL 至少包含：requirements 的目标、范围、验收和测试策略收敛；design 的参考调研、方案、设计追问和任务拆解；building 的测试先行、实现和验证；code-review 的 diff/测试/实现审查；closing 的 spec、归档、backlog、CI 和 PR 收尾。
 
+每个可审阅 phase MAY 在 human gate 前配置 automated review lane，包括 reviewer adapter、fresh context policy、输入 artifact/evidence、通过策略和失败回退 sub-state。Automated review SHALL 由 Orchestrator 派发 WorkItem，并 SHALL NOT 替代 human gate approval。
+
 #### Scenario: 非法 Sub-state
 
 - **WHEN** report 或导入历史引用模板中不存在的 sub-state
@@ -71,9 +73,18 @@
 #### Scenario: 到达 Gate 自动停止
 
 - **WHEN** Orchestrator 接受完成 phase 最后一个执行 sub-state 的 report
+- **AND** 配置的 automated review lane 已通过或未配置
 - **THEN** 状态 SHALL 进入 `ready_for_review`
 - **AND** 后续 agent `enter` SHALL 返回 waiting_for_human
 - **AND** workspace write SHALL 被拒绝
+
+#### Scenario: Automated Review 阻止进入 Gate
+
+- **GIVEN** 当前 phase 配置了 automated review lane
+- **WHEN** reviewer 返回 `changes_requested`
+- **THEN** 状态 SHALL 返回模板定义的修复 sub-state
+- **AND** SHALL NOT 进入 `ready_for_review`
+- **AND** SHALL 记录 reviewer findings 作为 evidence
 
 #### Scenario: Agent 尝试批准
 
@@ -118,4 +129,3 @@
 - **WHEN** 配置的 executor 无法启动
 - **THEN** workflow SHALL 进入 blocked 或保持当前状态
 - **AND** SHALL NOT 假定该 sub-state 已完成
-

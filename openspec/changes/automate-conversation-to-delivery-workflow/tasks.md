@@ -14,7 +14,7 @@
 - [ ] 2.0b 实现 draft/proposed/durable output 生命周期、retain mini-gate 和 requirements/phase gate 批量 acceptance
 - [ ] 2.1 为 Workflow、Event、Snapshot、WorkItem、WorkResult、Gate、Approval、Evidence、WorkspaceBinding 和 Lease 编写失败的模型测试
 - [ ] 2.2 创建不依赖 `agent/` 的 `workflow_control` package 结构和公开类型
-- [ ] 2.3 实现版本化 phase template 与 Asterwynd `coding-agent-openspec` 默认模板
+- [ ] 2.3 实现版本化 phase template、automated review lane 配置与 Asterwynd `coding-agent-openspec` 默认模板
 - [ ] 2.4 实现 event reducer 和合法 transition 判定，使模型测试通过
 - [ ] 2.5 增加依赖边界测试，阻止 `workflow_control` core 导入 AgentLoop 类型
 
@@ -37,6 +37,7 @@
 - [ ] 4.3 实现 WorkResult 验证，禁止 executor 指定任意目标状态
 - [ ] 4.4 实现 blocker、rollback、允许的 skip 和 stale WorkItem 处理
 - [ ] 4.5 实现 workflow claim/lease 的领取、续期、释放、冲突和超时回收
+- [ ] 4.6 实现 human gate 前 automated review lane 调度、review_result 处理和 changes_requested 回退
 
 ## 5. 可信 Gate 与 Capability
 
@@ -72,10 +73,10 @@
 - [ ] 7.2 实现本地 CLI 和人读状态渲染
 - [ ] 7.3 实现 fake executor adapter，完成 requirements→design→gate tracer bullet
 - [ ] 7.3a 验证单一 User Session 跨 phase 复用以及 fresh executor 结果回传同一 Session
-- [ ] 7.3b 实现 code-review fresh executor 默认策略、最小审查上下文和 changes-requested 返回原 executor
+- [ ] 7.3b 实现 automated reviewer adapter，支持 subagent/fresh Codex CLI/Claude Code/inline checker/command runner 的最小审查上下文
 - [ ] 7.4 实现 Asterwynd adapter，并确保 session snapshot 不覆盖 workflow 状态
 - [ ] 7.5 实现 Prompt Adapter：可复用 workflow skill + 短版 `AGENTS.md` 模板，要求原生客户端每个 run 前调用 `enter`、结束调用 `report`
-- [ ] 7.5a 验证 Happy Coder 等非侵入客户端走 Prompt Adapter 时不拦截用户消息、不拥有 approval capability，并明确显示降级风险
+- [ ] 7.5a 验证 Happy Coder 等非侵入客户端走 Prompt Adapter 时可派发 automated review，但不拦截用户消息、不拥有 approval capability，并明确显示降级风险
 - [ ] 7.6 新增可复用项目流程模板和短版 `AGENTS.md` 接入模板，但暂不替换当前 `AGENTS.md`
 - [ ] 7.7 增加 executor capability/enforcement level 展示，区分 `strict_host`、`prompt_adapter` 和 `audit_only`
 

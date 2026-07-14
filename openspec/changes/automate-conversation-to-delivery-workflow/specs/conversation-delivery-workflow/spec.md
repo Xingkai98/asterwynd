@@ -307,6 +307,41 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 - **AND** 修改 WorkItem SHALL 交回原 executor
 - **AND** SHALL 继续使用原绑定 worktree
 
+#### Scenario: Human Gate 前执行 Automated Review Lane
+
+- **GIVEN** phase template 为 `design` 配置了 `automated_reviewers`
+- **AND** design artifact 与机械检查已完成
+- **WHEN** workflow 准备进入 `design.ready_for_review`
+- **THEN** Orchestrator SHALL 先按配置生成 automated review WorkItem
+- **AND** reviewer MAY 是 subagent、fresh Codex CLI、Claude Code runner、Asterwynd runner、inline checker 或命令 runner
+- **AND** reviewer SHALL 只获得 artifact、diff、tests、evidence、workflow state 和必要项目约束
+- **AND** reviewer SHALL NOT 继承执行 agent 的隐藏推理上下文
+
+#### Scenario: Prompt Adapter 派发 Automated Review
+
+- **GIVEN** 当前 session 通过 Prompt Adapter 接入
+- **AND** Orchestrator 返回 automated review WorkItem
+- **WHEN** agent 按 WorkItem 启动 fresh Codex CLI reviewer 或 subagent reviewer
+- **THEN** reviewer result SHALL 通过 `workflow report` 上报
+- **AND** 该 result SHALL 只能作为自动质量门证据
+- **AND** SHALL NOT 产生 human gate approval
+
+#### Scenario: Automated Review 不等于 Human Approval
+
+- **GIVEN** automated reviewer 返回 `pass`
+- **WHEN** Orchestrator 接受 review result
+- **THEN** workflow MAY 进入 `ready_for_review`
+- **AND** SHALL 继续等待可信 human gate approval
+- **AND** reviewer SHALL NOT 产生 gate_approved 事件
+
+#### Scenario: Automated Review 要求修改
+
+- **GIVEN** automated reviewer 返回 `changes_requested`
+- **WHEN** Orchestrator 接受 review result
+- **THEN** workflow SHALL 返回模板定义的修复 sub-state
+- **AND** SHALL NOT 进入 human `ready_for_review`
+- **AND** findings SHALL 作为 evidence 回传原 User Session
+
 ### Requirement: Agent 通过 WorkResult 报告而非指定状态
 
 Agent SHALL 通过 `report` 提交 `WorkResult`、artifact 引用、证据和 blocker。Agent SHALL NOT 直接指定任意目标 phase/sub-state；Orchestrator SHALL 根据当前状态、模板和证据决定合法结果。
