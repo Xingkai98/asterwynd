@@ -74,5 +74,5 @@ markers = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["agent", "web", "benchmarks"]
+packages = ["agent", "web", "benchmarks", "workflow_control"]
 include = ["web/static/**"]

@@ -3,7 +3,7 @@
   "change_id": "automate-conversation-to-delivery-workflow",
   "state": {
     "phase": "building",
-    "sub_state": "writing_tests"
+    "sub_state": "all_tests_passing"
   },
   "transitions": [
     {
@@ -149,6 +149,48 @@
       "timestamp": "2026-07-14T13:43:50.517068+00:00",
       "handoff_note": ".handoff/automate-conversation-to-delivery-workflow/reviewing-to-building.md",
       "decision": "approved"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "test_failing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T13:58:38.452227+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "test_failing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T13:58:38.541343+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T13:58:38.606895+00:00"
     }
   ],
   "current_agent": null,
