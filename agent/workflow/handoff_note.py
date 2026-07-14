@@ -17,7 +17,13 @@ for current state, then produce a handoff note at
 5. Specific entry point and priority hints for the next agent
 
 Keep the note concise — aim for 200-400 words. Then update handoff.json:
-append to transitions, update current state, and set next hints."""
+append to transitions, update current state, and set next hints.
+
+**ADR 格式要求**: 对于有 >= 2 个备选方案的关键决策，必须使用 ADR 格式记录。
+在 handoff note 的 Key Decisions 章节中，每个符合条件的决策引用对应的 ADR 文件名
+（如 `adr/0001-xxx.md`），并包含：决策标题、备选方案表格（方案|描述|拒绝原因）、
+选择理由和重访条件。ADR 模板参考 `docs/adr/_TEMPLATE.md`。
+如果该决策尚无 ADR 文件，必须在 handoff note 中内联完整的 ADR 格式记录。"""
 
 HANDOFF_NOTE_SECTIONS = [
     "## Summary",
