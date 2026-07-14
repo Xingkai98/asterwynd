@@ -165,7 +165,7 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 
 ### Requirement: Empty Exploration Aging
 
-系统 SHALL 支持为每个 Managed Workspace Root 配置 exploration aging TTL，默认值 SHALL 为 24 小时。只有仍处于 exploring、没有 Workflow Output 且超过 TTL 的 workflow SHALL 自动 abandon。
+系统 SHALL 支持为每个 Managed Workspace Root 配置 exploration aging TTL，默认值 SHALL 为 24 小时。只有仍处于 exploring、没有 durable Workflow Output 且超过 TTL 的 workflow SHALL 自动 abandon。Draft 或 proposed output 不属于 durable output，不能阻止 empty-exploration aging。
 
 #### Scenario: Lazy Aging Scan
 
@@ -183,7 +183,7 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 
 #### Scenario: 空 Exploration 老化
 
-- **GIVEN** exploration 没有 Workflow Output
+- **GIVEN** exploration 没有 durable Workflow Output
 - **AND** phase 未进入 requirements
 - **AND** 最后活动时间超过配置 TTL
 - **WHEN** aging job 或下一次状态扫描执行
