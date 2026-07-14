@@ -287,6 +287,14 @@ class Gate:
 
 
 @dataclass(frozen=True)
+class GateApprovalTokenMatcher:
+    allowed_tokens: tuple[str, ...] = ("ok",)
+
+    def matches(self, raw_message: str) -> bool:
+        return raw_message in self.allowed_tokens
+
+
+@dataclass(frozen=True)
 class WorkItem:
     work_item_id: str
     workflow_id: str
@@ -895,6 +903,7 @@ __all__ = [
     "Evidence",
     "EventType",
     "Gate",
+    "GateApprovalTokenMatcher",
     "Lease",
     "ManagedWorkspaceConfig",
     "OutputStatus",
