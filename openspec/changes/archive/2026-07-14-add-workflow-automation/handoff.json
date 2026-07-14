@@ -1,0 +1,126 @@
+{
+  "schema_version": "1.0",
+  "change_id": "add-workflow-automation",
+  "state": {
+    "phase": "closing",
+    "sub_state": "ready_for_review"
+  },
+  "transitions": [
+    {
+      "from": { "phase": "planning", "sub_state": null },
+      "to": { "phase": "planning", "sub_state": "exploring" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:00:00Z"
+    },
+    {
+      "from": { "phase": "planning", "sub_state": "exploring" },
+      "to": { "phase": "planning", "sub_state": "writing_proposal" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:01:00Z"
+    },
+    {
+      "from": { "phase": "planning", "sub_state": "writing_proposal" },
+      "to": { "phase": "planning", "sub_state": "writing_design" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:02:00Z"
+    },
+    {
+      "from": { "phase": "planning", "sub_state": "writing_design" },
+      "to": { "phase": "planning", "sub_state": "writing_tasks" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:03:00Z"
+    },
+    {
+      "from": { "phase": "planning", "sub_state": "writing_tasks" },
+      "to": { "phase": "planning", "sub_state": "ready_for_review" },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:04:00Z"
+    },
+    {
+      "from": { "phase": "planning", "sub_state": "ready_for_review" },
+      "to": { "phase": "building", "sub_state": "implementing" },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "xingkai",
+      "timestamp": "2026-07-14T00:05:00Z"
+    },
+    {
+      "from": { "phase": "building", "sub_state": "implementing" },
+      "to": { "phase": "building", "sub_state": "all_tests_passing" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:06:00Z"
+    },
+    {
+      "from": { "phase": "building", "sub_state": "all_tests_passing" },
+      "to": { "phase": "building", "sub_state": "smoke_validating" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:07:00Z"
+    },
+    {
+      "from": { "phase": "building", "sub_state": "smoke_validating" },
+      "to": { "phase": "building", "sub_state": "ready_for_review" },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:08:00Z"
+    },
+    {
+      "from": { "phase": "building", "sub_state": "ready_for_review" },
+      "to": { "phase": "code-review", "sub_state": "reading_diff" },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "xingkai",
+      "timestamp": "2026-07-14T00:09:00Z"
+    },
+    {
+      "from": { "phase": "code-review", "sub_state": "reading_diff" },
+      "to": { "phase": "code-review", "sub_state": "ready_for_review" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex",
+      "timestamp": "2026-07-14T00:10:00Z"
+    },
+    {
+      "from": { "phase": "code-review", "sub_state": "ready_for_review" },
+      "to": { "phase": "closing", "sub_state": "archiving" },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "xingkai",
+      "timestamp": "2026-07-14T00:11:00Z"
+    },
+    {
+      "from": { "phase": "closing", "sub_state": "archiving" },
+      "to": { "phase": "closing", "sub_state": "validating" },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:12:00Z"
+    },
+    {
+      "from": { "phase": "closing", "sub_state": "validating" },
+      "to": { "phase": "closing", "sub_state": "ready_for_review" },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "claude",
+      "timestamp": "2026-07-14T00:13:00Z"
+    }
+  ],
+  "last_gate": {
+    "phase": "closing",
+    "sub_state": "ready_for_review"
+  }
+}
