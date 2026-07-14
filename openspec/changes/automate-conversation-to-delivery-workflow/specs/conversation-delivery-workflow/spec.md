@@ -307,6 +307,15 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 - **AND** WorkResult SHALL 仍通过 `workflow report` 提交
 - **AND** `self` executor SHALL NOT 获得 human approval capability
 
+#### Scenario: Ask Executor 需要用户选择
+
+- **GIVEN** phase template 的 `executor_lane.mode` 为 `ask`
+- **WHEN** Orchestrator 生成 WorkItem
+- **THEN** WorkItem SHALL 列出允许的 executor options 和推荐项
+- **AND** 系统 SHALL 等待可信用户客户端或当前 User Session 明确选择 executor
+- **AND** 选择 executor SHALL NOT 产生 human gate approval
+- **AND** 未选择前 SHALL NOT 分配可写 lease
+
 #### Scenario: Review 要求修改
 
 - **GIVEN** fresh reviewer 提交 changes requested
@@ -317,13 +326,22 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 
 #### Scenario: Human Gate 前执行 Automated Review Lane
 
-- **GIVEN** phase template 为 `design` 配置了 `automated_reviewers`
+- **GIVEN** phase template 为 `design` 配置了 `review_lane.reviewers[]`
 - **AND** design artifact 与机械检查已完成
 - **WHEN** workflow 准备进入 `design.ready_for_review`
 - **THEN** Orchestrator SHALL 先按配置生成 automated review WorkItem
-- **AND** reviewer MAY 是 subagent、fresh Codex CLI、Claude Code runner、Asterwynd runner、inline checker 或命令 runner
+- **AND** reviewer mode SHALL 为 `subagent`、`runner` 或 `command`
 - **AND** reviewer SHALL 只获得 artifact、diff、tests、evidence、workflow state 和必要项目约束
 - **AND** reviewer SHALL NOT 继承执行 agent 的隐藏推理上下文
+
+#### Scenario: Runner Profile 权限约束
+
+- **GIVEN** phase template 引用 `runner_profiles`
+- **WHEN** 系统加载或验证模板
+- **THEN** 每个 runner profile SHALL 声明 command、args、prompt_mode、permissions 和 timeout_seconds
+- **AND** review runner profile 默认 SHALL 使用 read-only filesystem 和 `approval_policy: never`
+- **AND** build runner profile 才 MAY 声明 workspace write
+- **AND** bypass permissions SHALL 显式配置并进入 WorkItem evidence 或 Receipt
 
 #### Scenario: Prompt Adapter 派发 Automated Review
 
@@ -332,6 +350,8 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 - **WHEN** agent 按 WorkItem 启动 fresh Codex CLI reviewer 或 subagent reviewer
 - **THEN** reviewer result SHALL 通过 `workflow report` 上报
 - **AND** 该 result SHALL 只能作为自动质量门证据
+- **AND** WorkResult evidence SHALL 记录 enforcement level 为 `prompt_adapter` 或 `audit_only`
+- **AND** 最终 Receipt SHALL NOT 将该 reviewer run 表示为 `strict_host`
 - **AND** SHALL NOT 产生 human gate approval
 
 #### Scenario: Review Lane 禁止 Self Reviewer

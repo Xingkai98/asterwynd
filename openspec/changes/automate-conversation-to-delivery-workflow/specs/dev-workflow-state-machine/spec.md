@@ -52,7 +52,7 @@
 
 每个 phase SHALL 由版本化项目模板定义明确 sub-state 图，而不是由 agent 自由填写字符串。Asterwynd 默认模板 SHALL 至少包含：requirements 的目标、范围、验收和测试策略收敛；design 的参考调研、方案、设计追问和任务拆解；building 的测试先行、实现和验证；code-review 的 diff/测试/实现审查；closing 的 spec、归档、backlog、CI 和 PR 收尾。
 
-每个 phase MAY 配置 executor lane，包括 `self`、runner、subagent、command 或 ask 模式。每个可审阅 phase MAY 在 human gate 前配置 automated review lane，包括 reviewer adapter、fresh context policy、输入 artifact/evidence、通过策略和失败回退 sub-state。Review lane SHALL NOT 允许 `self` reviewer；agent reviewer SHALL 使用 fresh context。Automated review SHALL 由 Orchestrator 派发 WorkItem，并 SHALL NOT 替代 human gate approval。
+每个 phase MAY 配置 executor lane，包括 `self`、runner、subagent、command 或 ask 模式。每个可审阅 phase MAY 在 human gate 前配置 canonical `review_lane.reviewers[]`，包括 reviewer adapter、fresh context policy、输入 artifact/evidence、通过策略和失败回退 sub-state。Runner 的具体 command、args、prompt_mode、permissions 和 timeout_seconds SHALL 由 `runner_profiles` 定义；review runner 默认 SHALL 为 read-only 且 `approval_policy: never`。Review lane SHALL NOT 允许 `self` reviewer；agent reviewer SHALL 使用 fresh context。Automated review SHALL 由 Orchestrator 派发 WorkItem，并 SHALL NOT 替代 human gate approval。
 
 #### Scenario: 非法 Sub-state
 
