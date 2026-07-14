@@ -412,6 +412,88 @@ class SQLiteEventStore:
 
 
 @dataclass(frozen=True)
+class WorkflowStatus:
+    snapshot: WorkflowSnapshot
+
+
+@dataclass(frozen=True)
+class EnterResult:
+    snapshot: WorkflowSnapshot
+    work_item: WorkItem | None = None
+    waiting_for_human: bool = False
+
+
+@dataclass(frozen=True)
+class ReportResult:
+    snapshot: WorkflowSnapshot
+
+
+@dataclass(frozen=True)
+class WorkflowOrchestratorConfig:
+    store: SQLiteEventStore
+    template: PhaseTemplate
+
+
+class WorkflowOrchestrator:
+    def __init__(self, config: WorkflowOrchestratorConfig) -> None:
+        self.config = config
+
+    def status(self, workflow_id: str) -> WorkflowStatus:
+        return WorkflowStatus(snapshot=self._snapshot(workflow_id))
+
+    def enter(self, workflow_id: str, actor: Actor) -> EnterResult:
+        if self.config.store.current_version(workflow_id) == 0:
+            self.config.store.append(
+                workflow_id,
+                start_workflow(workflow_id, self.config.template),
+                expected_version=0,
+            )
+
+        snapshot = self._snapshot(workflow_id)
+        phase = self.config.template.phase(snapshot.state.phase)
+        if snapshot.state.sub_state == phase.gate_sub_state:
+            return EnterResult(
+                snapshot=snapshot,
+                waiting_for_human=True,
+            )
+
+        return EnterResult(
+            snapshot=snapshot,
+            work_item=WorkItem(
+                work_item_id=f"{workflow_id}:{snapshot.version}",
+                workflow_id=workflow_id,
+                state=snapshot.state,
+                allowed_actions=("report_work",),
+            ),
+            waiting_for_human=False,
+        )
+
+    def report(
+        self,
+        workflow_id: str,
+        actor: Actor,
+        work_item_id: str,
+        result: WorkResult,
+        expected_version: int,
+    ) -> ReportResult:
+        expected_work_item_id = f"{workflow_id}:{expected_version}"
+        if work_item_id != expected_work_item_id:
+            raise WorkflowValidationError("stale work item")
+        self.config.store.append(
+            workflow_id,
+            record_work_completed(workflow_id, actor, result),
+            expected_version=expected_version,
+        )
+        return ReportResult(snapshot=self._snapshot(workflow_id))
+
+    def _snapshot(self, workflow_id: str) -> WorkflowSnapshot:
+        events = self.config.store.list_events(workflow_id)
+        if not events:
+            raise WorkflowValidationError("workflow has no events")
+        return reduce_events(events, self.config.template)
+
+
+@dataclass(frozen=True)
 class ManagedWorkspaceConfig:
     managed_roots: tuple[Path, ...]
 
@@ -819,6 +901,8 @@ __all__ = [
     "PhaseDefinition",
     "PhaseTemplate",
     "ReviewResult",
+    "EnterResult",
+    "ReportResult",
     "SQLiteEventStore",
     "SQLiteEventStoreConfig",
     "StateSnapshot",
@@ -827,7 +911,10 @@ __all__ = [
     "WorkflowEvent",
     "WorkflowActivationGate",
     "WorkflowOutput",
+    "WorkflowOrchestrator",
+    "WorkflowOrchestratorConfig",
     "WorkflowSnapshot",
+    "WorkflowStatus",
     "WorkspaceBinding",
     "WorkflowStoreConflict",
     "WorkflowValidationError",
