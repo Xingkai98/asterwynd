@@ -12,30 +12,30 @@
 - [ ] 2.0a 实现受管 session 自动 Exploration、可配置 aging TTL、Workflow Output 判定和 abandon 事件
 - [ ] 2.0c 实现 chat/status/enter/manage 前的幂等 lazy aging scan，不引入 daemon/cron
 - [ ] 2.0b 实现 draft/proposed/durable output 生命周期、retain mini-gate 和 requirements/phase gate 批量 acceptance
-- [ ] 2.1 为 Workflow、Event、Snapshot、WorkItem、WorkResult、Gate、Approval、Evidence、WorkspaceBinding 和 Lease 编写失败的模型测试
+- [x] 2.1 为 Workflow、Event、Snapshot、WorkItem、WorkResult、Gate、Approval、Evidence、WorkspaceBinding 和 Lease 编写失败的模型测试
 - [x] 2.2 创建不依赖 `agent/` 的 `workflow_control` package 结构和公开类型
 - [ ] 2.3 实现版本化 phase template、executor lane、review lane、runner_profiles 与 Asterwynd `coding-agent-openspec` 默认模板
 - [ ] 2.3a 实现 phase commit_policy 配置，默认要求 human gate 前 clean worktree、HEAD commit 和 gate summary 绑定
-- [ ] 2.4 实现 event reducer 和合法 transition 判定，使模型测试通过
+- [x] 2.4 实现 event reducer 和合法 transition 判定，使模型测试通过
 - [ ] 2.5 增加依赖边界测试，阻止 `workflow_control` core 导入 AgentLoop 类型
 
 ## 3. SQLite Event Store
 
-- [ ] 3.1 为项目 fingerprint、数据库初始化、event append、version CAS 和 snapshot rebuild 编写失败测试
+- [x] 3.1 为项目 fingerprint、数据库初始化、event append、version CAS 和 snapshot rebuild 编写失败测试
 - [ ] 3.2 实现项目外 SQLite 路径解析、schema migration、WAL 和事务边界
-- [ ] 3.3 实现 append-only event repository 与派生 snapshot repository
+- [x] 3.3 实现 append-only event repository 与派生 snapshot repository
 - [ ] 3.3a 实现结构化 requirements draft、Markdown projection、版本化更新和 approved snapshot 冻结
 - [ ] 3.4 实现 history replay、一致性检查和损坏数据库错误处理
 - [ ] 3.5 增加并发 session 的 CAS 冲突与 stale version 回归测试
 
 ## 4. Orchestrator 与执行协议
 
-- [ ] 4.1 为 `enter`、`status`、`report` 和多 workflow 选择行为编写失败测试
+- [x] 4.1 为 `enter`、`status`、`report` 和多 workflow 选择行为编写失败测试
 - [ ] 4.1a 实现显式 workflow、worktree cwd、唯一 active、多 active 用户选择和无 active 新建 exploration 的确定性恢复顺序
 - [ ] 4.1b 实现 User Session sticky workflow binding、跨 Session 恢复、单写 lease 和 done 后新事项要求新 Session
 - [ ] 4.2 实现 WorkItem 生成、allowed actions、required evidence 和 next action 计算
 - [ ] 4.2a 实现 exploring goal candidate 驱动的自动 requirements transition，并验证不创建 worktree或隐式批准需求
-- [ ] 4.3 实现 WorkResult 验证，禁止 executor 指定任意目标状态
+- [x] 4.3 实现 WorkResult 验证，禁止 executor 指定任意目标状态
 - [ ] 4.4 实现 blocker、rollback、允许的 skip 和 stale WorkItem 处理
 - [ ] 4.5 实现 workflow claim/lease 的领取、续期、释放、冲突和超时回收
 - [ ] 4.6 实现 human gate 前 automated review lane 调度、review_result 处理和 changes_requested 回退

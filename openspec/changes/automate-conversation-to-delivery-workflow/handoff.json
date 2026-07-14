@@ -247,20 +247,6 @@
       "actor_type": "agent",
       "actor_id": "workflow_state.py",
       "timestamp": "2026-07-14T14:10:26.033829+00:00"
-    },
-    {
-      "from": {
-        "phase": "building",
-        "sub_state": "all_tests_passing"
-      },
-      "to": {
-        "phase": "building",
-        "sub_state": "all_tests_passing"
-      },
-      "trigger": "auto",
-      "actor_type": "agent",
-      "actor_id": "workflow_state.py",
-      "timestamp": "2026-07-14T14:14:08.606438+00:00"
     }
   ],
   "current_agent": null,
