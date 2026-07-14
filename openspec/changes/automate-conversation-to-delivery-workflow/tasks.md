@@ -14,7 +14,7 @@
 - [ ] 2.0b 实现 draft/proposed/durable output 生命周期、retain mini-gate 和 requirements/phase gate 批量 acceptance
 - [x] 2.1 为 Workflow、Event、Snapshot、WorkItem、WorkResult、Gate、Approval、Evidence、WorkspaceBinding 和 Lease 编写失败的模型测试
 - [x] 2.2 创建不依赖 `agent/` 的 `workflow_control` package 结构和公开类型
-- [ ] 2.3 实现版本化 phase template、executor lane、review lane、runner_profiles 与 Asterwynd `coding-agent-openspec` 默认模板
+- [x] 2.3 实现版本化 phase template、executor lane、review lane、runner_profiles 与 Asterwynd `coding-agent-openspec` 默认模板
 - [ ] 2.3a 实现 phase commit_policy 配置，默认要求 human gate 前 clean worktree、HEAD commit 和 gate summary 绑定
 - [x] 2.4 实现 event reducer 和合法 transition 判定，使模型测试通过
 - [ ] 2.5 增加依赖边界测试，阻止 `workflow_control` core 导入 AgentLoop 类型
