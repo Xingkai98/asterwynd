@@ -43,8 +43,8 @@
 ## 5. 可信 Gate 与 Capability
 
 - [ ] 5.1 为 agent 伪造批准、过期批准、错误 gate 和错误用户 capability 编写失败测试
-- [ ] 5.1a 为 Gate Approval Token 精确匹配、非白名单保持 gate、原始 user message 绑定和白名单配置编写 contract tests
-- [ ] 5.1b 增加 `OK`、大小写变化、前后空白、换行和 Unicode 变体不得批准的回归测试
+- [x] 5.1a 为 Gate Approval Token 精确匹配、非白名单保持 gate、原始 user message 绑定和白名单配置编写 contract tests
+- [x] 5.1b 增加 `OK`、大小写变化、前后空白、换行和 Unicode 变体不得批准的回归测试
 - [ ] 5.2 实现并验证 V1 Host Wrapper 进程内 approval capability，确保 agent 环境不暴露 approve 命令或 secret
 - [ ] 5.3 实现 agent 与 human client 的分离 capability policy
 - [ ] 5.4 实现 gate reached、approved、rejected、revision 和 stale approval 事件
