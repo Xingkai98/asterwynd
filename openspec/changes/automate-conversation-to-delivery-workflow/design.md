@@ -205,6 +205,62 @@ Agent 不提交自由目标状态。Orchestrator 根据当前 state、phase defi
 
 用户可在同一个 User Session 中通过自然语言贯穿整个 workflow。每个用户 turn 或内部执行产生新的 Executor Run；phase 变化默认只生成新的 WorkItem 并继续复用当前 Session，不意味着创建新聊天窗口或新 agent 进程。模板 MAY 为特定 phase 配置 fresh executor，但其结果仍回传到原 User Session。
 
+### D5.1: Phase Template 配置 Executor Lane、Review Lane 和 Runner Profile
+
+版本化 phase template SHALL 使用统一 lane 配置描述“谁执行”“谁审查”“谁批准”。`executor_lane` 描述当前 phase/sub-state 的执行者，可配置 `mode: self | runner | subagent | command | ask`；其中 `self` 表示当前 User Session/当前 executor 继续执行，适合 exploring、requirements、design 讨论和 closing 等低隔离需求。`review_lane.reviewers[]` 描述 automated reviewers，只允许 `mode: runner | subagent | command`，明确禁止 `self`，且所有 agent reviewer 必须使用 `context: fresh`。
+
+Runner 的具体 CLI 命令、参数、权限和 prompt 传递方式 SHALL 放在 `runner_profiles` 中，而不是硬编码到 phase 语义里。Profile 至少描述 `command`、`args`、`prompt_mode`、`permissions`、`timeout_seconds` 和可选 environment allowlist。Review profile 默认应为 read-only、`approval_policy: never`；build profile 才可声明 workspace write。任何 bypass 权限必须显式配置、进入 WorkItem/evidence/receipt，不能作为默认。
+
+示例模板片段：
+
+```yaml
+runner_profiles:
+  codex_build:
+    type: codex_cli
+    command: ["codex"]
+    args: []
+    prompt_mode: stdin
+    permissions:
+      filesystem: workspace_write
+      network: enabled
+      approval_policy: on_failure
+    timeout_seconds: 3600
+
+  codex_review:
+    type: codex_cli
+    command: ["codex"]
+    args: []
+    prompt_mode: stdin
+    permissions:
+      filesystem: read_only
+      network: disabled
+      approval_policy: never
+    timeout_seconds: 900
+
+phases:
+  design:
+    executor_lane:
+      mode: self
+      session: current
+      allowed_actions: [edit_design, edit_tasks, edit_specs]
+    review_lane:
+      policy: all_pass
+      reviewers:
+        - id: spec_review
+          mode: subagent
+          context: fresh
+          prompt_template: spec_review.md
+        - id: standards_review
+          mode: runner
+          runner: codex_review
+          context: fresh
+          prompt_template: standards_review.md
+    approval_gate:
+      type: human
+```
+
+`approval_gate` 只能配置为 human gate 或 disabled-by-template 的显式非人工 gate；不得配置 agent、runner 或 command 自动批准 human gate。CLI Host Wrapper 可以强执行 lane 配置；Prompt Adapter 可以按配置启动 executor/reviewer，但仍不能获得 approval capability。
+
 Asterwynd 默认模板 SHALL 在 exploring、requirements、design、building 和 closing 复用当前 executor；`code-review` 默认使用 fresh executor，以减少实现者自审偏差。Fresh reviewer 只获得审查所需的 design、diff、tests、evidence 和 workflow context，不继承实现阶段的隐藏推理；审查结果回传原 User Session。若需要修改，workflow 回到 building，并由原 executor 在同一 worktree 处理。
 
 每个进入 human `ready_for_review` gate 的 phase MAY 配置 `automated_reviewers`，作为人工审阅前的自动 review lane。Reviewer 可以是 subagent、新启动的 Codex CLI/Claude Code runner、Asterwynd runner、inline checker 或普通命令 runner。Orchestrator 在进入 human gate 前按模板生成 review WorkItem；CLI Host Wrapper 或 Prompt Adapter 均可按自身 capability 派发 reviewer run，并为 agent reviewer 使用 fresh context。输入仅包含当前 phase artifact、diff、tests、evidence、workflow state 和必要项目约束，不继承执行 agent 的隐藏推理上下文。

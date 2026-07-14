@@ -299,6 +299,14 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 - **AND** SHALL NOT 依赖实现 executor 的隐藏推理上下文
 - **AND** review 结果 SHALL 回传原 User Session
 
+#### Scenario: 当前 Session 作为 Executor
+
+- **GIVEN** phase template 的 `executor_lane.mode` 为 `self`
+- **WHEN** Orchestrator 为该 phase 生成 WorkItem
+- **THEN** 当前 User Session SHALL 可以领取并执行该 WorkItem
+- **AND** WorkResult SHALL 仍通过 `workflow report` 提交
+- **AND** `self` executor SHALL NOT 获得 human approval capability
+
 #### Scenario: Review 要求修改
 
 - **GIVEN** fresh reviewer 提交 changes requested
@@ -325,6 +333,13 @@ V1 SHALL 同时提供 `workflow chat --executor <adapter>` CLI Host Wrapper 和 
 - **THEN** reviewer result SHALL 通过 `workflow report` 上报
 - **AND** 该 result SHALL 只能作为自动质量门证据
 - **AND** SHALL NOT 产生 human gate approval
+
+#### Scenario: Review Lane 禁止 Self Reviewer
+
+- **GIVEN** phase template 在 `review_lane.reviewers[]` 中配置 `mode: self`
+- **WHEN** 系统加载或验证模板
+- **THEN** 模板校验 SHALL 失败
+- **AND** 系统 SHALL 要求 reviewer 使用 `subagent`、`runner` 或 `command`
 
 #### Scenario: Automated Review 不等于 Human Approval
 
