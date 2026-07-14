@@ -50,7 +50,7 @@
 - [ ] 5.4 实现 gate reached、approved、rejected、revision 和 stale approval 事件
 - [ ] 5.4a 在 host adapter 中实现模型调用前的 Gate Approval Token 精确匹配器，V1 默认仅允许完整消息 `ok`
 - [ ] 5.4b 实现 approval token 消费、同 turn transition/re-enter/dispatch 和失败时 blocked 的原子编排测试
-- [ ] 5.4c 实现可信 CLI 批准命令 `workflow gate approve --workflow <id>`，并验证 Prompt Adapter 无法代替用户调用 approval capability
+- [x] 5.4c 实现可信 CLI 批准命令 `workflow gate approve --workflow <id>`，并验证 Prompt Adapter 无法代替用户调用 approval capability
 - [ ] 5.5 实现 gate 后 lease 释放和 workspace write fail-closed contract
 
 ## 6. Worktree Coordinator
@@ -71,8 +71,8 @@
 
 - [ ] 7.0 实现 `workflow manage add/remove/list`、`workflow attach` 和 host adapter 的 sticky session bypass
 - [ ] 7.0a 实现 `workflow chat --executor <adapter>` Host Wrapper，作为支持可信 gate 和强 enforcement 的 CLI 入口
-- [ ] 7.1 为稳定 JSON 输出编写 `workflow enter/status/report` CLI contract tests
-- [ ] 7.2 实现本地 CLI 和人读状态渲染
+- [x] 7.1 为稳定 JSON 输出编写 `workflow enter/status/report` CLI contract tests
+- [x] 7.2 实现本地 CLI 和人读状态渲染
 - [ ] 7.3 实现 fake executor adapter，完成 requirements→design→gate tracer bullet
 - [ ] 7.3a 验证单一 User Session 跨 phase 复用以及 fresh executor 结果回传同一 Session
 - [ ] 7.3b 实现 runner profile 与 automated reviewer adapter，支持 subagent、fresh Codex CLI/Claude Code runner、command runner 的最小审查上下文；inline checker 通过 command runner 建模，并禁止 self reviewer
