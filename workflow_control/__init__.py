@@ -19,6 +19,10 @@ class WorkflowStoreConflict(WorkflowValidationError):
     pass
 
 
+class WorkflowHistoryCorrupt(WorkflowValidationError):
+    pass
+
+
 class ActorKind(str, Enum):
     AGENT = "agent"
     HUMAN = "human"
@@ -292,6 +296,41 @@ class WorkflowSnapshot:
 
 
 @dataclass(frozen=True)
+class RequirementsDraft:
+    goal: str = ""
+    scope: str = ""
+    acceptance: str = ""
+    test_strategy: str = ""
+    version: int = 1
+    frozen: bool = False
+
+    @classmethod
+    def empty(cls) -> "RequirementsDraft":
+        return cls()
+
+    def update_goal(self, goal: str) -> "RequirementsDraft":
+        if self.frozen:
+            raise ValueError("requirements draft is frozen")
+        return replace(self, goal=goal, version=self.version + 1)
+
+    def freeze(self) -> "RequirementsDraft":
+        return replace(self, frozen=True, version=self.version + 1)
+
+    def to_markdown(self) -> str:
+        return "\n".join([
+            "# Requirements",
+            "",
+            f"## Goal\n{self.goal}",
+            "",
+            f"## Scope\n{self.scope}",
+            "",
+            f"## Acceptance\n{self.acceptance}",
+            "",
+            f"## Test Strategy\n{self.test_strategy}",
+        ])
+
+
+@dataclass(frozen=True)
 class Evidence:
     ref: str
     kind: str
@@ -498,6 +537,7 @@ class SQLiteEventStore:
     def _initialize(self) -> None:
         with sqlite3.connect(self.config.db_path) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA user_version = 1")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS workflow_events (
@@ -913,6 +953,16 @@ def reduce_events(
     )
 
 
+def replay_history(
+    events: list[WorkflowEvent],
+    template: PhaseTemplate,
+) -> WorkflowSnapshot:
+    for expected_version, event in enumerate(events, start=1):
+        if event.version != expected_version:
+            raise WorkflowHistoryCorrupt("event stream has non-contiguous versions")
+    return reduce_events(events, template)
+
+
 def _advance_from_work(
     current_state: StateSnapshot | None,
     template: PhaseTemplate,
@@ -1023,6 +1073,12 @@ def _work_result_from_payload(payload: dict[str, Any] | None) -> WorkResult | No
         evidence_refs=tuple(payload["evidence_refs"]),
         summary=payload["summary"],
     )
+
+
+def project_event_store_path(repo_root: Path, data_root: Path) -> Path:
+    canonical_repo = repo_root.resolve()
+    digest = hashlib.sha256(str(canonical_repo).encode("utf-8")).hexdigest()[:16]
+    return data_root.resolve() / digest / "workflow.sqlite3"
 
 
 def evaluate_exploration_aging(
@@ -1162,6 +1218,7 @@ __all__ = [
     "ReviewLane",
     "ReviewerDefinition",
     "ReviewerMode",
+    "RequirementsDraft",
     "EnterResult",
     "ReportResult",
     "RunnerProfile",
@@ -1179,6 +1236,7 @@ __all__ = [
     "WorkflowOrchestratorConfig",
     "WorkflowSnapshot",
     "WorkflowStatus",
+    "WorkflowHistoryCorrupt",
     "WorkspaceBinding",
     "WorkflowStoreConflict",
     "WorkflowValidationError",
@@ -1187,10 +1245,12 @@ __all__ = [
     "default_coding_agent_template",
     "evaluate_exploration_aging",
     "lazy_aging_scan",
+    "project_event_store_path",
     "record_gate_approved",
     "record_review_result",
     "record_work_completed",
     "reduce_events",
+    "replay_history",
     "retain_output",
     "start_workflow",
 ]

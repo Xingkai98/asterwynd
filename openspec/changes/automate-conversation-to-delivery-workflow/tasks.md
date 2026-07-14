@@ -22,11 +22,11 @@
 ## 3. SQLite Event Store
 
 - [x] 3.1 为项目 fingerprint、数据库初始化、event append、version CAS 和 snapshot rebuild 编写失败测试
-- [ ] 3.2 实现项目外 SQLite 路径解析、schema migration、WAL 和事务边界
+- [x] 3.2 实现项目外 SQLite 路径解析、schema migration、WAL 和事务边界
 - [x] 3.3 实现 append-only event repository 与派生 snapshot repository
-- [ ] 3.3a 实现结构化 requirements draft、Markdown projection、版本化更新和 approved snapshot 冻结
-- [ ] 3.4 实现 history replay、一致性检查和损坏数据库错误处理
-- [ ] 3.5 增加并发 session 的 CAS 冲突与 stale version 回归测试
+- [x] 3.3a 实现结构化 requirements draft、Markdown projection、版本化更新和 approved snapshot 冻结
+- [x] 3.4 实现 history replay、一致性检查和损坏数据库错误处理
+- [x] 3.5 增加并发 session 的 CAS 冲突与 stale version 回归测试
 
 ## 4. Orchestrator 与执行协议
 
