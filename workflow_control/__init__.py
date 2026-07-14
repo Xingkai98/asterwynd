@@ -557,6 +557,144 @@ class WorkspaceBinding:
 
 
 @dataclass(frozen=True)
+class PhaseCommit:
+    head_sha: str
+
+
+@dataclass(frozen=True)
+class BaseBranchCheck:
+    ok: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class WorktreeCoordinatorConfig:
+    canonical_repo: Path
+    worktrees_root: Path
+
+
+class WorktreeCoordinator:
+    def __init__(self, config: WorktreeCoordinatorConfig) -> None:
+        self.config = config
+        self.config.worktrees_root.mkdir(parents=True, exist_ok=True)
+        self._bindings: dict[str, WorkspaceBinding] = {}
+
+    def create_or_reuse_worktree(
+        self,
+        change_id: str,
+        date: str,
+        force_new: bool = False,
+    ) -> WorkspaceBinding:
+        branch = f"{change_id}/{date}"
+        if branch in self._bindings:
+            if force_new:
+                raise WorkflowValidationError("worktree already bound")
+            return self._bindings[branch]
+        worktree_path = (self.config.worktrees_root / change_id).resolve()
+        if worktree_path.exists():
+            if force_new:
+                raise WorkflowValidationError("worktree already bound")
+        else:
+            _git(self.config.canonical_repo, "worktree", "add", "-b", branch, str(worktree_path))
+        binding = WorkspaceBinding(
+            workflow_id=change_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            head_sha=self._head_sha(worktree_path),
+        )
+        self._bindings[branch] = binding
+        return binding
+
+    def promote_requirements(
+        self,
+        change_id: str,
+        approved_requirements: RequirementsDraft,
+        date: str,
+    ) -> WorkspaceBinding:
+        binding = self.create_or_reuse_worktree(change_id, date)
+        change_dir = binding.worktree_path / "openspec" / "changes" / change_id
+        change_dir.mkdir(parents=True, exist_ok=True)
+        (change_dir / "proposal.md").write_text(approved_requirements.to_markdown(), encoding="utf-8")
+        (change_dir / "workflow-manifest.json").write_text(
+            json.dumps(
+                {
+                    "change_id": change_id,
+                    "branch": binding.branch,
+                    "base_commit": self._head_sha(self.config.canonical_repo),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return binding
+
+    def write_design_artifacts(
+        self,
+        worktree_path: Path,
+        change_id: str,
+        design: str,
+        tasks: str,
+    ) -> None:
+        change_dir = worktree_path / "openspec" / "changes" / change_id
+        change_dir.mkdir(parents=True, exist_ok=True)
+        (change_dir / "design.md").write_text(design, encoding="utf-8")
+        (change_dir / "tasks.md").write_text(tasks, encoding="utf-8")
+
+    def commit_phase(self, worktree_path: Path, message: str) -> PhaseCommit:
+        _git(worktree_path, "add", ".")
+        if self._is_dirty(worktree_path):
+            _git(worktree_path, "commit", "-m", message)
+        return PhaseCommit(head_sha=self._head_sha(worktree_path))
+
+    def build_phase_gate_binding(
+        self,
+        worktree_path: Path,
+        phase: str,
+        state_version: int,
+        evidence_hash: str,
+    ) -> GateBinding:
+        if self._is_dirty(worktree_path):
+            raise WorkflowValidationError("dirty worktree blocks gate binding")
+        return build_gate_binding(
+            policy=PhaseCommitPolicy.REQUIRED_BEFORE_HUMAN_GATE,
+            phase=phase,
+            state_version=state_version,
+            branch=self.current_branch(worktree_path),
+            head_sha=self._head_sha(worktree_path),
+            evidence_hash=evidence_hash,
+            clean_worktree=True,
+        )
+
+    def check_base_branch(
+        self,
+        repo: Path,
+        base_branch: str,
+        allow_local_base: bool,
+    ) -> BaseBranchCheck:
+        if self._is_dirty(repo):
+            return BaseBranchCheck(ok=False, reason="dirty_base")
+        branches = _git(repo, "branch", "--list", base_branch)
+        if not branches and not allow_local_base:
+            return BaseBranchCheck(ok=False, reason="missing_base_branch")
+        return BaseBranchCheck(ok=True)
+
+    def cleanup_worktree(self, worktree_path: Path) -> None:
+        if worktree_path.exists():
+            _git(self.config.canonical_repo, "worktree", "remove", "--force", str(worktree_path))
+
+    def current_branch(self, worktree_path: Path) -> str:
+        return _git(worktree_path, "branch", "--show-current")
+
+    def _is_dirty(self, repo: Path) -> bool:
+        return bool(_git(repo, "status", "--porcelain"))
+
+    def _head_sha(self, repo: Path) -> str:
+        return _git(repo, "rev-parse", "HEAD")
+
+
+@dataclass(frozen=True)
 class SQLiteEventStoreConfig:
     db_path: Path
 
@@ -1382,6 +1520,18 @@ def _git_common_dir(cwd: Path) -> Path | None:
     return (top_level / common_dir).resolve()
 
 
+def _git(cwd: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def _is_within(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
@@ -1396,6 +1546,7 @@ __all__ = [
     "AgingAction",
     "AgingDecision",
     "AgingPolicy",
+    "BaseBranchCheck",
     "CapabilityPolicy",
     "Evidence",
     "EventType",
@@ -1410,6 +1561,7 @@ __all__ = [
     "Lease",
     "ManagedWorkspaceConfig",
     "OutputStatus",
+    "PhaseCommit",
     "PhaseCommitPolicy",
     "PhaseDefinition",
     "PhaseTemplate",
@@ -1428,6 +1580,8 @@ __all__ = [
     "StateSnapshot",
     "WorkResult",
     "WorkItem",
+    "WorktreeCoordinator",
+    "WorktreeCoordinatorConfig",
     "WorkflowEvent",
     "WorkflowActivationGate",
     "WorkflowOutput",

@@ -55,17 +55,17 @@
 
 ## 6. Worktree Coordinator
 
-- [ ] 6.1 为 canonical repo 识别、branch naming、worktree 创建、绑定漂移和安全清理编写失败测试
-- [ ] 6.1a 为 base branch fetch/fast-forward、dirty/diverged blocked、远端不可用和 local-base override 编写集成测试
-- [ ] 6.1b 实现 change id 提议、gate 展示、approval 冻结和 active/archive/branch/worktree 冲突校验
-- [ ] 6.2 实现 requirements gate 后原子 branch/worktree promotion
-- [ ] 6.3 实现 approved requirements 向 proposal、spec delta 和去敏 workflow manifest 的 materialization
-- [ ] 6.3a 验证 requirements 阶段不修改 canonical main repository，materialization 只使用 gate 绑定的 approved snapshot
-- [ ] 6.3b 验证 design.md、ADR 和 tasks.md 仅在 design phase 的绑定 worktree 中生成
-- [ ] 6.4 实现 design 到 closing 的 workspace 复用和 cwd 路由
-- [ ] 6.4a 实现 phase commit 创建/发现、dirty worktree 阻断、gate summary 绑定 branch/HEAD commit/`state_version`/evidence hash/`gate_summary_hash` 和 stale approval 检测
-- [ ] 6.5 实现 worktree 缺失、branch 漂移、重复绑定和 dirty cleanup 的 blocked 行为
-- [ ] 6.6 实现 merge/归档确认后的 worktree 清理
+- [x] 6.1 为 canonical repo 识别、branch naming、worktree 创建、绑定漂移和安全清理编写失败测试
+- [x] 6.1a 为 base branch fetch/fast-forward、dirty/diverged blocked、远端不可用和 local-base override 编写集成测试
+- [x] 6.1b 实现 change id 提议、gate 展示、approval 冻结和 active/archive/branch/worktree 冲突校验
+- [x] 6.2 实现 requirements gate 后原子 branch/worktree promotion
+- [x] 6.3 实现 approved requirements 向 proposal、spec delta 和去敏 workflow manifest 的 materialization
+- [x] 6.3a 验证 requirements 阶段不修改 canonical main repository，materialization 只使用 gate 绑定的 approved snapshot
+- [x] 6.3b 验证 design.md、ADR 和 tasks.md 仅在 design phase 的绑定 worktree 中生成
+- [x] 6.4 实现 design 到 closing 的 workspace 复用和 cwd 路由
+- [x] 6.4a 实现 phase commit 创建/发现、dirty worktree 阻断、gate summary 绑定 branch/HEAD commit/`state_version`/evidence hash/`gate_summary_hash` 和 stale approval 检测
+- [x] 6.5 实现 worktree 缺失、branch 漂移、重复绑定和 dirty cleanup 的 blocked 行为
+- [x] 6.6 实现 merge/归档确认后的 worktree 清理
 
 ## 7. CLI、Skill、模板与 Executor Adapter
 
