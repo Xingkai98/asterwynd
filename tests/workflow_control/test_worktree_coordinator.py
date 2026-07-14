@@ -22,6 +22,7 @@ def test_worktree_promotion_materialization_commit_binding_and_cleanup(tmp_path:
         change_id="change-one",
         approved_requirements=draft,
         date="2026-07-14",
+        allow_local_base=True,
     )
 
     assert binding.branch == "change-one/2026-07-14"
@@ -75,6 +76,52 @@ def test_base_branch_preflight_detects_dirty_or_diverged_base(tmp_path: Path) ->
     assert result.reason == "dirty_base"
 
 
+def test_base_branch_preflight_fetches_and_fast_forwards(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote))
+    upstream = _init_repo(tmp_path / "upstream")
+    _git(upstream, "remote", "add", "origin", str(remote))
+    _git(upstream, "push", "-u", "origin", "master")
+    local = tmp_path / "local"
+    _git(tmp_path, "clone", str(remote), str(local))
+    _configure_user(local)
+    coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=local, worktrees_root=tmp_path / "worktrees"))
+    (upstream / "next.txt").write_text("next\n", encoding="utf-8")
+    _git(upstream, "add", "next.txt")
+    _git(upstream, "commit", "-m", "next")
+    _git(upstream, "push")
+
+    result = coordinator.check_base_branch(local, base_branch="master", allow_local_base=False)
+
+    assert result.ok is True
+    assert result.reason == "fast_forwarded"
+    assert _git(local, "rev-parse", "master") == _git(local, "rev-parse", "origin/master")
+
+
+def test_base_branch_preflight_blocks_diverged_base(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote))
+    upstream = _init_repo(tmp_path / "upstream")
+    _git(upstream, "remote", "add", "origin", str(remote))
+    _git(upstream, "push", "-u", "origin", "master")
+    local = tmp_path / "local"
+    _git(tmp_path, "clone", str(remote), str(local))
+    _configure_user(local)
+    coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=local, worktrees_root=tmp_path / "worktrees"))
+    (local / "local.txt").write_text("local\n", encoding="utf-8")
+    _git(local, "add", "local.txt")
+    _git(local, "commit", "-m", "local")
+    (upstream / "remote.txt").write_text("remote\n", encoding="utf-8")
+    _git(upstream, "add", "remote.txt")
+    _git(upstream, "commit", "-m", "remote")
+    _git(upstream, "push")
+
+    result = coordinator.check_base_branch(local, base_branch="master", allow_local_base=False)
+
+    assert result.ok is False
+    assert result.reason == "diverged_base"
+
+
 def test_design_artifacts_are_written_only_in_bound_worktree(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=tmp_path / "worktrees"))
@@ -89,12 +136,16 @@ def test_design_artifacts_are_written_only_in_bound_worktree(tmp_path: Path) -> 
 def _init_repo(path: Path) -> Path:
     path.mkdir()
     _git(path, "init")
-    _git(path, "config", "user.email", "test@example.com")
-    _git(path, "config", "user.name", "Test User")
+    _configure_user(path)
     (path / "README.md").write_text("# repo\n", encoding="utf-8")
     _git(path, "add", "README.md")
     _git(path, "commit", "-m", "init")
     return path
+
+
+def _configure_user(path: Path) -> None:
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "Test User")
 
 
 def _git(cwd: Path, *args: str) -> str:

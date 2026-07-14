@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 import json
 
 from typer.testing import CliRunner
 
 import agent.main as cli
+from workflow_control import (
+    SQLiteEventStore,
+    SQLiteEventStoreConfig,
+    default_coding_agent_template,
+    start_workflow,
+)
 
 
 def test_workflow_cli_enter_status_report_and_gate_approve(tmp_path, monkeypatch) -> None:
@@ -137,3 +145,29 @@ def test_workflow_manage_roots_add_list_remove(tmp_path) -> None:
     )
     assert removed.exit_code == 0
     assert json.loads(removed.stdout)["managed_roots"] == []
+
+
+def test_workflow_cli_status_runs_lazy_aging_scan(tmp_path) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    workflow_id = "stale-exploration"
+    template = default_coding_agent_template()
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=db_path))
+    store.append(
+        workflow_id,
+        replace(
+            start_workflow(workflow_id, template),
+            occurred_at=datetime.now(timezone.utc) - timedelta(days=2),
+        ),
+        expected_version=0,
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["workflow", "status", "--workflow", workflow_id, "--db", str(db_path), "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["state"] == {
+        "phase": "abandoned",
+        "sub_state": "abandoned",
+    }

@@ -23,6 +23,7 @@ from workflow_control import (
     WorkflowValidationError,
     WorktreeCoordinator,
     WorktreeCoordinatorConfig,
+    build_gate_binding,
     default_coding_agent_template,
     record_work_completed,
     start_workflow,
@@ -73,6 +74,7 @@ def test_orchestrator_gate_approval_binds_current_gate_and_rejects_stale(tmp_pat
 
     # Drift the state version so the old approval no longer matches current gate.
     orchestrator.rollback("workflow-1", actor, "requirements", "drafting")
+    orchestrator.enter("workflow-1", actor)
     orchestrator.report("workflow-1", actor, "workflow-1:4", WorkResult(), 4)
 
     with pytest.raises(WorkflowValidationError, match="stale approval"):
@@ -83,7 +85,7 @@ def test_report_requires_matching_active_lease_owner_when_leased(tmp_path: Path)
     orchestrator = _orchestrator(tmp_path)
     owner = Actor(kind=ActorKind.AGENT, actor_id="owner")
     intruder = Actor(kind=ActorKind.AGENT, actor_id="intruder")
-    entered = orchestrator.enter("workflow-1", owner, now=NOW, lease_ttl=timedelta(minutes=5))
+    entered = orchestrator.enter("workflow-1", owner, lease_ttl=timedelta(days=1))
 
     with pytest.raises(WorkflowValidationError, match="lease owner"):
         orchestrator.report("workflow-1", intruder, entered.work_item.work_item_id, WorkResult(), entered.snapshot.version)
@@ -95,11 +97,73 @@ def test_changes_requested_review_returns_to_fix_substate(tmp_path: Path) -> Non
     orchestrator.enter("workflow-1", actor)
     orchestrator.report("workflow-1", actor, "workflow-1:1", WorkResult(), 1)
     orchestrator.report("workflow-1", actor, "workflow-1:2", WorkResult(), 2)
+    orchestrator.rollback("workflow-1", actor, "code-review", "reviewing_code")
 
     result = orchestrator.record_review_result("workflow-1", Actor(kind=ActorKind.AGENT, actor_id="reviewer"), ReviewResult.CHANGES_REQUESTED, "executor")
 
-    assert result.snapshot.state.phase == "requirements"
-    assert result.snapshot.state.sub_state == "drafting"
+    assert result.snapshot.state.phase == "building"
+    assert result.snapshot.state.sub_state == "writing_tests"
+
+
+def test_review_result_is_rejected_outside_review_state(tmp_path: Path) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
+    orchestrator.enter("workflow-1", actor)
+
+    with pytest.raises(WorkflowValidationError, match="review state"):
+        orchestrator.record_review_result(
+            "workflow-1",
+            Actor(kind=ActorKind.AGENT, actor_id="reviewer"),
+            ReviewResult.CHANGES_REQUESTED,
+            "executor",
+        )
+
+
+def test_design_gate_requires_committed_gate_binding(tmp_path: Path) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
+    human = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
+    orchestrator.enter("workflow-1", actor)
+    orchestrator.report("workflow-1", actor, "workflow-1:1", WorkResult(), 1)
+    orchestrator.report("workflow-1", actor, "workflow-1:2", WorkResult(), 2)
+    orchestrator.approve_gate("workflow-1", expected_version=3, actor=human, raw_user_message="ok")
+    design_item = orchestrator.enter("workflow-1", actor)
+    orchestrator.report(
+        "workflow-1",
+        actor,
+        design_item.work_item.work_item_id,
+        WorkResult(evidence_refs=("design.md",)),
+        design_item.snapshot.version,
+    )
+
+    with pytest.raises(WorkflowValidationError, match="committed gate binding"):
+        orchestrator.approve_gate("workflow-1", expected_version=5, actor=human, raw_user_message="ok")
+
+    binding = build_gate_binding(
+        policy="required_before_human_gate",
+        phase="design",
+        state_version=5,
+        branch="workflow-1/2026-07-14",
+        head_sha="abc123",
+        evidence_hash="sha256:evidence",
+        clean_worktree=True,
+    )
+    assert binding is not None
+    approval = orchestrator.current_gate_for_binding("workflow-1", binding).approve(
+        actor=human,
+        decision=ApprovalDecision.APPROVED,
+        client_id="trusted-host",
+        user_message_hash="sha256:ok",
+    )
+
+    result = orchestrator.approve_gate(
+        "workflow-1",
+        expected_version=5,
+        approval=approval,
+        gate_binding=binding,
+    )
+
+    assert result.snapshot.state.phase == "building"
 
 
 def test_store_rejects_event_payload_for_different_workflow(tmp_path: Path) -> None:

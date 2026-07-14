@@ -99,6 +99,7 @@ def test_lease_release_and_review_lane_changes_requested(tmp_path) -> None:
     orchestrator.release_lease(entered.lease.lease_id)
     reclaimed = orchestrator.enter("workflow-1", Actor(kind=ActorKind.AGENT, actor_id="other"), now=NOW)
     assert reclaimed.work_item is not None
+    orchestrator.rollback("workflow-1", actor, phase="code-review", sub_state="reviewing_code")
 
     review = orchestrator.record_review_result(
         workflow_id="workflow-1",
@@ -106,4 +107,5 @@ def test_lease_release_and_review_lane_changes_requested(tmp_path) -> None:
         review_result=ReviewResult.CHANGES_REQUESTED,
         executor_run_id="executor",
     )
-    assert review.snapshot.state.sub_state == "chatting"
+    assert review.snapshot.state.phase == "building"
+    assert review.snapshot.state.sub_state == "writing_tests"

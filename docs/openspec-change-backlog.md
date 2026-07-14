@@ -67,7 +67,7 @@
 
 ### 1. `automate-conversation-to-delivery-workflow`
 
-状态：规划中。
+状态：开发中（building；2-6 已实现，自动审阅修复中）。
 
 批次：第九批，独立控制平面基础设施。
 

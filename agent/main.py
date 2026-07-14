@@ -109,6 +109,12 @@ def _workflow_orchestrator(db: Path | None):
     )
 
 
+def _run_workflow_lazy_aging_scan(orchestrator, workflow: str | None = None) -> None:
+    workflow_ids = [workflow] if workflow is not None else orchestrator.config.store.list_workflow_ids()
+    for workflow_id in workflow_ids:
+        orchestrator.run_lazy_aging_scan(workflow_id)
+
+
 def _workflow_actor(actor_id: str, *, human: bool = False):
     from workflow_control import Actor, ActorKind
 
@@ -365,8 +371,9 @@ def workflow_enter(
     actor: str = typer.Option("agent", "--actor", help="Actor ID"),
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
-    """进入 workflow，必要时创建 exploration workflow，并返回 WorkItem。"""
+    """Enter a workflow and return the current work item."""
     orchestrator = _workflow_orchestrator(db)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
     result = orchestrator.enter(workflow, _workflow_actor(actor))
     _echo_json_or_text(_workflow_enter_payload(result), json_output)
 
@@ -377,8 +384,9 @@ def workflow_status(
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
-    """查看 workflow 当前状态。"""
+    """Show the current workflow state."""
     orchestrator = _workflow_orchestrator(db)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
     result = orchestrator.status(workflow)
     _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
 
@@ -393,10 +401,11 @@ def workflow_report(
     actor: str = typer.Option("agent", "--actor", help="Actor ID"),
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
-    """提交 WorkResult，由 orchestrator 决定下一状态。"""
+    """Report work completion and let the orchestrator advance state."""
     from workflow_control import WorkResult
 
     orchestrator = _workflow_orchestrator(db)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
     result = orchestrator.report(
         workflow_id=workflow,
         actor=_workflow_actor(actor),
@@ -415,8 +424,8 @@ def workflow_gate_approve(
     message: str = typer.Option("ok", "--message", help="Raw approval message"),
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
-    """可信 CLI 人工批准当前 gate。"""
-    from workflow_control import GateApprovalTokenMatcher
+    """Approve the current gate from a trusted host context."""
+    from workflow_control import GateApprovalTokenMatcher, HostApprovalService
 
     if os.environ.get("ASTERWYND_WORKFLOW_TRUSTED_HOST") != "1":
         typer.echo("Error: workflow gate approve requires trusted host context", err=True)
@@ -426,17 +435,24 @@ def workflow_gate_approve(
         raise SystemExit(1)
 
     orchestrator = _workflow_orchestrator(db)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
     status = orchestrator.status(workflow)
-    if not GateApprovalTokenMatcher().matches(message):
+    host_result = HostApprovalService(GateApprovalTokenMatcher()).try_approve(
+        gate=orchestrator.current_gate(workflow),
+        raw_message=message,
+        user_id=user,
+        client_id="asterwynd-cli-host",
+    )
+    if not host_result.consumed or host_result.approval is None:
         typer.echo("Error: approval message is not an allowed exact token", err=True)
         raise SystemExit(1)
-    result = orchestrator.approve_gate(
+    orchestrator.approve_gate(
         workflow_id=workflow,
-        actor=_workflow_actor(user, human=True),
-        raw_user_message=message,
+        approval=host_result.approval,
         expected_version=status.snapshot.version,
     )
-    _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
+    result = orchestrator.enter(workflow, _workflow_actor("agent"))
+    _echo_json_or_text(_workflow_enter_payload(result), json_output)
 
 
 def _load_workflow_roots(path: Path) -> list[str]:
@@ -466,9 +482,11 @@ def _emit_roots(path: Path, json_output: bool) -> None:
 def workflow_manage_add(
     root: Path = typer.Argument(..., help="Managed workspace root"),
     roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
-    """添加受管项目根目录。"""
+    """Add a managed workspace root."""
+    _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
     path = _workflow_roots_path(roots_file)
     roots = _load_workflow_roots(path)
     canonical = str(root.resolve())
@@ -482,9 +500,11 @@ def workflow_manage_add(
 @workflow_manage_app.command("list")
 def workflow_manage_list(
     roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
-    """列出受管项目根目录。"""
+    """List managed workspace roots."""
+    _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
     _emit_roots(_workflow_roots_path(roots_file), json_output)
 
 
@@ -492,9 +512,11 @@ def workflow_manage_list(
 def workflow_manage_remove(
     root: Path = typer.Argument(..., help="Managed workspace root"),
     roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
-    """移除受管项目根目录。"""
+    """Remove a managed workspace root."""
+    _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
     path = _workflow_roots_path(roots_file)
     canonical = str(root.resolve())
     roots = [existing for existing in _load_workflow_roots(path) if existing != canonical]

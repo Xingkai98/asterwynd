@@ -35,6 +35,7 @@ class EventType(str, Enum):
     STATE_ADVANCED = "state_advanced"
     GATE_APPROVED = "gate_approved"
     REVIEW_RESULT_RECORDED = "review_result_recorded"
+    WORKFLOW_ABANDONED = "workflow_abandoned"
 
 
 class ReviewResult(str, Enum):
@@ -294,6 +295,7 @@ class WorkflowEvent:
     executor_run_id: str | None = None
     raw_user_message: str | None = None
     approval: Approval | None = None
+    occurred_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -566,6 +568,8 @@ class PhaseCommit:
 class BaseBranchCheck:
     ok: bool
     reason: str = ""
+    base_commit: str | None = None
+    remote_commit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -598,6 +602,8 @@ class WorktreeCoordinator:
         if worktree_path.exists():
             if force_new:
                 raise WorkflowValidationError("worktree already bound")
+            if self.current_branch(worktree_path) != branch:
+                raise WorkflowValidationError("worktree branch drift")
         else:
             _git(self.config.canonical_repo, "worktree", "add", "-b", branch, str(worktree_path))
         binding = WorkspaceBinding(
@@ -614,7 +620,16 @@ class WorktreeCoordinator:
         change_id: str,
         approved_requirements: RequirementsDraft,
         date: str,
+        base_branch: str = "master",
+        allow_local_base: bool = False,
     ) -> WorkspaceBinding:
+        base_check = self.check_base_branch(
+            self.config.canonical_repo,
+            base_branch=base_branch,
+            allow_local_base=allow_local_base,
+        )
+        if not base_check.ok:
+            raise WorkflowValidationError(f"base branch blocked: {base_check.reason}")
         binding = self.create_or_reuse_worktree(change_id, date)
         change_dir = binding.worktree_path / "openspec" / "changes" / change_id
         change_dir.mkdir(parents=True, exist_ok=True)
@@ -624,7 +639,9 @@ class WorktreeCoordinator:
                 {
                     "change_id": change_id,
                     "branch": binding.branch,
-                    "base_commit": self._head_sha(self.config.canonical_repo),
+                    "base_branch": base_branch,
+                    "base_commit": base_check.base_commit or self._head_sha(self.config.canonical_repo),
+                    "base_check": base_check.reason or "synced",
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -676,13 +693,39 @@ class WorktreeCoordinator:
         repo: Path,
         base_branch: str,
         allow_local_base: bool,
+        remote: str = "origin",
     ) -> BaseBranchCheck:
         if self._is_dirty(repo):
             return BaseBranchCheck(ok=False, reason="dirty_base")
-        branches = _git(repo, "branch", "--list", base_branch)
-        if not branches and not allow_local_base:
+        if not _git(repo, "branch", "--list", base_branch):
             return BaseBranchCheck(ok=False, reason="missing_base_branch")
-        return BaseBranchCheck(ok=True)
+        base_commit = _git(repo, "rev-parse", base_branch)
+        remote_ref = f"refs/remotes/{remote}/{base_branch}"
+        has_remote = bool(_git_optional(repo, "remote", "get-url", remote))
+        if not has_remote:
+            if allow_local_base:
+                return BaseBranchCheck(ok=True, reason="local_base_override", base_commit=base_commit)
+            return BaseBranchCheck(ok=False, reason="remote_unavailable", base_commit=base_commit)
+        if _git_optional(repo, "fetch", remote, base_branch) is None:
+            if allow_local_base:
+                return BaseBranchCheck(ok=True, reason="local_base_override", base_commit=base_commit)
+            return BaseBranchCheck(ok=False, reason="remote_unavailable", base_commit=base_commit)
+        if _git_optional(repo, "rev-parse", "--verify", remote_ref) is None:
+            if allow_local_base:
+                return BaseBranchCheck(ok=True, reason="local_base_override", base_commit=base_commit)
+            return BaseBranchCheck(ok=False, reason="missing_remote_base", base_commit=base_commit)
+        remote_commit = _git(repo, "rev-parse", remote_ref)
+        if base_commit == remote_commit:
+            return BaseBranchCheck(ok=True, base_commit=base_commit, remote_commit=remote_commit)
+        if _is_ancestor(repo, base_commit, remote_commit):
+            self._fast_forward_branch(repo, base_branch, remote_commit)
+            return BaseBranchCheck(ok=True, reason="fast_forwarded", base_commit=remote_commit, remote_commit=remote_commit)
+        return BaseBranchCheck(
+            ok=False,
+            reason="diverged_base",
+            base_commit=base_commit,
+            remote_commit=remote_commit,
+        )
 
     def cleanup_worktree(self, worktree_path: Path, force: bool = False) -> None:
         if worktree_path.exists():
@@ -702,6 +745,12 @@ class WorktreeCoordinator:
 
     def _head_sha(self, repo: Path) -> str:
         return _git(repo, "rev-parse", "HEAD")
+
+    def _fast_forward_branch(self, repo: Path, base_branch: str, remote_commit: str) -> None:
+        if self.current_branch(repo) == base_branch:
+            _git(repo, "merge", "--ff-only", remote_commit)
+        else:
+            _git(repo, "update-ref", f"refs/heads/{base_branch}", remote_commit)
 
 
 @dataclass(frozen=True)
@@ -731,7 +780,11 @@ class SQLiteEventStore:
                 raise WorkflowStoreConflict(
                     f"expected version {expected_version}, actual version {current_version}"
                 )
-            stored_event = replace(event, version=current_version + 1)
+            stored_event = replace(
+                event,
+                version=current_version + 1,
+                occurred_at=event.occurred_at or datetime.now(timezone.utc),
+            )
             connection.execute(
                 """
                 INSERT INTO workflow_events (workflow_id, version, payload)
@@ -761,6 +814,53 @@ class SQLiteEventStore:
         with sqlite3.connect(self.config.db_path) as connection:
             return self._current_version(connection, workflow_id)
 
+    def list_workflow_ids(self) -> list[str]:
+        with sqlite3.connect(self.config.db_path) as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT workflow_id FROM workflow_events ORDER BY workflow_id ASC"
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def get_lease(self, work_item_id: str) -> Lease | None:
+        with sqlite3.connect(self.config.db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT work_item_id, owner_id, expires_at
+                FROM workflow_leases
+                WHERE work_item_id = ?
+                """,
+                (work_item_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return Lease(
+            lease_id=f"lease:{row[0]}:{row[1]}",
+            work_item_id=str(row[0]),
+            owner_id=str(row[1]),
+            expires_at=datetime.fromisoformat(str(row[2])),
+        )
+
+    def save_lease(self, lease: Lease) -> None:
+        with sqlite3.connect(self.config.db_path) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute(
+                """
+                INSERT INTO workflow_leases (work_item_id, owner_id, expires_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(work_item_id) DO UPDATE SET
+                    owner_id = excluded.owner_id,
+                    expires_at = excluded.expires_at
+                """,
+                (lease.work_item_id, lease.owner_id, lease.expires_at.isoformat()),
+            )
+
+    def delete_lease(self, work_item_id: str) -> None:
+        with sqlite3.connect(self.config.db_path) as connection:
+            connection.execute(
+                "DELETE FROM workflow_leases WHERE work_item_id = ?",
+                (work_item_id,),
+            )
+
     def _initialize(self) -> None:
         with sqlite3.connect(self.config.db_path) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -772,6 +872,15 @@ class SQLiteEventStore:
                     version INTEGER NOT NULL,
                     payload TEXT NOT NULL,
                     PRIMARY KEY (workflow_id, version)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_leases (
+                    work_item_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
                 )
                 """
             )
@@ -822,6 +931,38 @@ class WorkflowOrchestrator:
     def status(self, workflow_id: str) -> WorkflowStatus:
         return WorkflowStatus(snapshot=self._snapshot(workflow_id))
 
+    def run_lazy_aging_scan(
+        self,
+        workflow_id: str,
+        outputs: tuple[WorkflowOutput, ...] = (),
+        now: datetime | None = None,
+        policy: AgingPolicy | None = None,
+    ) -> AgingDecision:
+        events = self.config.store.list_events(workflow_id)
+        if not events:
+            return AgingDecision(action=AgingAction.KEEP, reason="workflow_missing")
+        already_abandoned = any(event.event_type == EventType.WORKFLOW_ABANDONED for event in events)
+        snapshot = replay_history(events, self.config.template)
+        last_activity_at = max(
+            (event.occurred_at for event in events if event.occurred_at is not None),
+            default=now or datetime.now(timezone.utc),
+        )
+        decision = lazy_aging_scan(
+            snapshot=snapshot,
+            outputs=outputs,
+            last_activity_at=last_activity_at,
+            now=now or datetime.now(timezone.utc),
+            policy=policy or AgingPolicy(),
+            already_abandoned=already_abandoned,
+        )
+        if decision.action == AgingAction.ABANDON:
+            self.config.store.append(
+                workflow_id,
+                record_workflow_abandoned(workflow_id, reason=decision.reason),
+                expected_version=snapshot.version,
+            )
+        return decision
+
     def resolve_active_workflow(
         self,
         explicit_workflow_id: str | None = None,
@@ -855,6 +996,12 @@ class WorkflowOrchestrator:
         self._active_workflows.add(workflow_id)
 
         snapshot = self._snapshot(workflow_id)
+        if snapshot.state.phase in {"blocked", "abandoned"}:
+            return EnterResult(
+                snapshot=snapshot,
+                waiting_for_human=False,
+                blocked_reason=snapshot.state.sub_state,
+            )
         phase = self.config.template.phase(snapshot.state.phase)
         if snapshot.state.sub_state == phase.gate_sub_state:
             return EnterResult(
@@ -864,7 +1011,7 @@ class WorkflowOrchestrator:
 
         work_item_id = f"{workflow_id}:{snapshot.version}"
         now = now or datetime.now(timezone.utc)
-        existing_lease = self._leases.get(work_item_id)
+        existing_lease = self._leases.get(work_item_id) or self.config.store.get_lease(work_item_id)
         if existing_lease is not None and existing_lease.is_active_at(now):
             if existing_lease.owner_id != actor.actor_id:
                 return EnterResult(
@@ -882,6 +1029,7 @@ class WorkflowOrchestrator:
             expires_at=now + lease_ttl,
         )
         self._leases[work_item_id] = lease
+        self.config.store.save_lease(lease)
         return EnterResult(
             snapshot=snapshot,
             work_item=WorkItem(
@@ -953,6 +1101,7 @@ class WorkflowOrchestrator:
         for work_item_id, lease in list(self._leases.items()):
             if lease.lease_id == lease_id:
                 del self._leases[work_item_id]
+                self.config.store.delete_lease(work_item_id)
                 return
 
     def record_review_result(
@@ -982,7 +1131,10 @@ class WorkflowOrchestrator:
         if work_item_id != expected_work_item_id:
             raise WorkflowValidationError("stale work item")
         lease = self._leases.get(work_item_id)
-        if lease is not None and lease.owner_id != actor.actor_id:
+        lease = lease or self.config.store.get_lease(work_item_id)
+        if lease is None or not lease.is_active_at(datetime.now(timezone.utc)):
+            raise WorkflowValidationError("active lease required")
+        if lease.owner_id != actor.actor_id:
             raise WorkflowValidationError("lease owner mismatch")
         try:
             self.config.store.append(
@@ -992,7 +1144,21 @@ class WorkflowOrchestrator:
             )
         except WorkflowStoreConflict as exc:
             raise WorkflowValidationError("stale work item") from exc
-        return ReportResult(snapshot=self._snapshot(workflow_id))
+        self.config.store.delete_lease(work_item_id)
+        self._leases.pop(work_item_id, None)
+        snapshot = self._snapshot(workflow_id)
+        if snapshot.state.phase not in {"blocked", "abandoned"}:
+            phase = self.config.template.phase(snapshot.state.phase)
+            if snapshot.state.sub_state != phase.gate_sub_state:
+                next_lease = Lease(
+                    lease_id=f"lease:{workflow_id}:{snapshot.version}:{actor.actor_id}",
+                    work_item_id=f"{workflow_id}:{snapshot.version}",
+                    owner_id=actor.actor_id,
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+                )
+                self._leases[next_lease.work_item_id] = next_lease
+                self.config.store.save_lease(next_lease)
+        return ReportResult(snapshot=snapshot)
 
     def current_gate(self, workflow_id: str) -> Gate:
         snapshot = self._snapshot(workflow_id)
@@ -1001,6 +1167,22 @@ class WorkflowOrchestrator:
             raise WorkflowValidationError("workflow is not at a gate")
         return _gate_for_state(workflow_id, snapshot.state, snapshot.version)
 
+    def current_gate_for_binding(self, workflow_id: str, binding: GateBinding) -> Gate:
+        snapshot = self._snapshot(workflow_id)
+        phase = self.config.template.phase(snapshot.state.phase)
+        if snapshot.state.sub_state != phase.gate_sub_state:
+            raise WorkflowValidationError("workflow is not at a gate")
+        if binding.phase != snapshot.state.phase or binding.state_version != snapshot.version:
+            raise WorkflowValidationError("gate binding does not match current state")
+        return Gate(
+            gate_id=f"{workflow_id}:{snapshot.state.phase}:{snapshot.version}",
+            workflow_id=workflow_id,
+            phase=snapshot.state.phase,
+            state_version=snapshot.version,
+            gate_summary_hash=binding.gate_summary_hash,
+            head_sha=binding.head_sha,
+        )
+
     def approve_gate(
         self,
         workflow_id: str,
@@ -1008,12 +1190,21 @@ class WorkflowOrchestrator:
         actor: Actor | None = None,
         raw_user_message: str | None = None,
         approval: Approval | None = None,
+        gate_binding: GateBinding | None = None,
     ) -> ReportResult:
         if self.config.store.current_version(workflow_id) != expected_version:
             raise WorkflowStoreConflict(
                 f"expected version {expected_version}, actual version {self.config.store.current_version(workflow_id)}"
             )
-        gate = self.current_gate(workflow_id)
+        snapshot = self._snapshot(workflow_id)
+        phase = self.config.template.phase(snapshot.state.phase)
+        if phase.commit_policy != PhaseCommitPolicy.NONE and gate_binding is None:
+            raise WorkflowValidationError("gate approval requires committed gate binding")
+        gate = (
+            self.current_gate_for_binding(workflow_id, gate_binding)
+            if gate_binding is not None
+            else self.current_gate(workflow_id)
+        )
         if approval is None:
             if actor is None or raw_user_message is None:
                 raise WorkflowValidationError("gate approval requires approval or actor/message")
@@ -1098,7 +1289,7 @@ def accept_outputs(
 
 @dataclass(frozen=True)
 class AgingPolicy:
-    ttl: timedelta
+    ttl: timedelta = timedelta(hours=24)
 
 
 @dataclass(frozen=True)
@@ -1274,6 +1465,21 @@ def record_review_result(
     )
 
 
+def record_workflow_abandoned(
+    workflow_id: str,
+    reason: str,
+    now: datetime | None = None,
+) -> WorkflowEvent:
+    return WorkflowEvent(
+        event_id="workflow-abandoned",
+        workflow_id=workflow_id,
+        event_type=EventType.WORKFLOW_ABANDONED,
+        actor=Actor(kind=ActorKind.SYSTEM, actor_id="workflow-control"),
+        work_result=WorkResult(summary=reason),
+        occurred_at=now,
+    )
+
+
 def reduce_events(
     events: list[WorkflowEvent],
     template: PhaseTemplate,
@@ -1307,14 +1513,25 @@ def reduce_events(
         elif event.event_type == EventType.REVIEW_RESULT_RECORDED:
             if event.executor_run_id == event.actor.actor_id:
                 raise WorkflowValidationError("self review is not allowed")
+            if current_state is None:
+                raise WorkflowValidationError("workflow must start before review result")
+            if current_state.sub_state not in {"reviewing_code", "ready_for_review"}:
+                raise WorkflowValidationError("review result requires review state")
             if event.review_result == ReviewResult.CHANGES_REQUESTED:
-                if current_state is None:
-                    raise WorkflowValidationError("workflow must start before review result")
-                phase = template.phase(current_state.phase)
-                current_state = StateSnapshot(
-                    phase=current_state.phase,
-                    sub_state=phase.first_sub_state,
-                )
+                if current_state.phase == "code-review":
+                    current_state = StateSnapshot(phase="building", sub_state=template.phase("building").first_sub_state)
+                else:
+                    phase = template.phase(current_state.phase)
+                    current_state = StateSnapshot(
+                        phase=current_state.phase,
+                        sub_state=phase.first_sub_state,
+                    )
+        elif event.event_type == EventType.WORKFLOW_ABANDONED:
+            if current_state is None:
+                raise WorkflowValidationError("workflow must start before abandonment")
+            if current_state.phase != "exploring":
+                raise WorkflowValidationError("only exploration workflow can be abandoned")
+            current_state = StateSnapshot(phase="abandoned", sub_state="abandoned")
         else:
             raise WorkflowValidationError(f"unsupported event type: {event.event_type}")
         version += 1
@@ -1392,10 +1609,17 @@ def _validate_gate_approval(
         raise WorkflowValidationError("workflow must start before gate approval")
     if event.approval is None:
         raise WorkflowValidationError("missing gate approval binding")
-    HostApprovalService.validate_approval_for_gate(
-        event.approval,
-        _gate_for_state(workflow_id, current_state, version),
-    )
+    state_gate = _gate_for_state(workflow_id, current_state, version)
+    if event.approval.matches_gate(state_gate):
+        return
+    if (
+        event.approval.workflow_id != workflow_id
+        or event.approval.gate_id != state_gate.gate_id
+        or event.approval.phase != current_state.phase
+        or event.approval.state_version != version
+        or not event.approval.gate_summary_hash.startswith("sha256:")
+    ):
+        raise WorkflowValidationError("stale approval")
 
 
 def _event_to_payload(event: WorkflowEvent) -> dict[str, Any]:
@@ -1416,6 +1640,7 @@ def _event_to_payload(event: WorkflowEvent) -> dict[str, Any]:
         "executor_run_id": event.executor_run_id,
         "raw_user_message": event.raw_user_message,
         "approval": _approval_to_payload(event.approval),
+        "occurred_at": event.occurred_at.isoformat() if event.occurred_at is not None else None,
     }
 
 
@@ -1438,6 +1663,11 @@ def _event_from_payload(payload: dict[str, Any]) -> WorkflowEvent:
         executor_run_id=payload.get("executor_run_id"),
         raw_user_message=payload.get("raw_user_message"),
         approval=_approval_from_payload(payload.get("approval")),
+        occurred_at=(
+            datetime.fromisoformat(payload["occurred_at"])
+            if payload.get("occurred_at") is not None
+            else None
+        ),
     )
 
 
@@ -1663,6 +1893,24 @@ def _git(cwd: Path, *args: str) -> str:
         text=True,
     )
     return result.stdout.strip()
+
+
+def _git_optional(cwd: Path, *args: str) -> str | None:
+    try:
+        return _git(cwd, *args)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+
+def _is_ancestor(cwd: Path, ancestor: str, descendant: str) -> bool:
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    return result.returncode == 0
 
 
 def _is_within(path: Path, root: Path) -> bool:
