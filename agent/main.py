@@ -369,7 +369,7 @@ def workflow_enter(
     workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     actor: str = typer.Option("agent", "--actor", help="Actor ID"),
-    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Enter a workflow and return the current work item."""
     orchestrator = _workflow_orchestrator(db)
@@ -382,7 +382,7 @@ def workflow_enter(
 def workflow_status(
     workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
-    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Show the current workflow state."""
     orchestrator = _workflow_orchestrator(db)
@@ -399,7 +399,7 @@ def workflow_report(
     summary: str = typer.Option("", "--summary", help="Work summary"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     actor: str = typer.Option("agent", "--actor", help="Actor ID"),
-    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Report work completion and let the orchestrator advance state."""
     from workflow_control import WorkResult
@@ -422,7 +422,7 @@ def workflow_gate_approve(
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     user: str = typer.Option("human", "--user", help="Human user ID"),
     message: str = typer.Option("ok", "--message", help="Raw approval message"),
-    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Approve the current gate from a trusted host context."""
     from workflow_control import GateApprovalTokenMatcher, HostApprovalService
@@ -483,7 +483,7 @@ def workflow_manage_add(
     root: Path = typer.Argument(..., help="Managed workspace root"),
     roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
-    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Add a managed workspace root."""
     _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
@@ -501,7 +501,7 @@ def workflow_manage_add(
 def workflow_manage_list(
     roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
-    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """List managed workspace roots."""
     _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
@@ -513,7 +513,7 @@ def workflow_manage_remove(
     root: Path = typer.Argument(..., help="Managed workspace root"),
     roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
-    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Remove a managed workspace root."""
     _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))

@@ -688,6 +688,9 @@ class WorktreeCoordinator:
             clean_worktree=True,
         )
 
+    def verify_gate_binding(self, worktree_path: Path, binding: GateBinding) -> None:
+        _validate_worktree_matches_gate_binding(worktree_path, binding)
+
     def check_base_branch(
         self,
         repo: Path,
@@ -1191,6 +1194,7 @@ class WorkflowOrchestrator:
         raw_user_message: str | None = None,
         approval: Approval | None = None,
         gate_binding: GateBinding | None = None,
+        worktree_path: Path | None = None,
     ) -> ReportResult:
         if self.config.store.current_version(workflow_id) != expected_version:
             raise WorkflowStoreConflict(
@@ -1198,8 +1202,10 @@ class WorkflowOrchestrator:
             )
         snapshot = self._snapshot(workflow_id)
         phase = self.config.template.phase(snapshot.state.phase)
-        if phase.commit_policy != PhaseCommitPolicy.NONE and gate_binding is None:
-            raise WorkflowValidationError("gate approval requires committed gate binding")
+        if phase.commit_policy != PhaseCommitPolicy.NONE:
+            if gate_binding is None or worktree_path is None:
+                raise WorkflowValidationError("gate approval requires committed gate binding")
+            _validate_worktree_matches_gate_binding(worktree_path, gate_binding)
         gate = (
             self.current_gate_for_binding(workflow_id, gate_binding)
             if gate_binding is not None
@@ -1818,6 +1824,17 @@ def build_gate_binding(
         evidence_hash=evidence_hash,
         gate_summary_hash=f"sha256:{digest}",
     )
+
+
+def _validate_worktree_matches_gate_binding(worktree_path: Path, binding: GateBinding) -> None:
+    if bool(_git(worktree_path, "status", "--porcelain")):
+        raise WorkflowValidationError("dirty worktree blocks gate approval")
+    current_branch = _git(worktree_path, "branch", "--show-current")
+    if current_branch != binding.branch:
+        raise WorkflowValidationError("worktree branch drift")
+    head_sha = _git(worktree_path, "rev-parse", "HEAD")
+    if head_sha != binding.head_sha:
+        raise WorkflowValidationError("worktree head drift")
 
 
 def _gate_for_state(workflow_id: str, state: StateSnapshot, state_version: int) -> Gate:

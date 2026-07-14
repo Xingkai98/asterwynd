@@ -120,6 +120,11 @@ def test_review_result_is_rejected_outside_review_state(tmp_path: Path) -> None:
 
 
 def test_design_gate_requires_committed_gate_binding(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo-for-gate")
+    coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=tmp_path / "gate-worktrees"))
+    workspace = coordinator.create_or_reuse_worktree("workflow-1", "2026-07-14")
+    (workspace.worktree_path / "design.md").write_text("design\n", encoding="utf-8")
+    phase_commit = coordinator.commit_phase(workspace.worktree_path, "design ready")
     orchestrator = _orchestrator(tmp_path)
     actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
     human = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
@@ -143,8 +148,8 @@ def test_design_gate_requires_committed_gate_binding(tmp_path: Path) -> None:
         policy="required_before_human_gate",
         phase="design",
         state_version=5,
-        branch="workflow-1/2026-07-14",
-        head_sha="abc123",
+        branch=workspace.branch,
+        head_sha=phase_commit.head_sha,
         evidence_hash="sha256:evidence",
         clean_worktree=True,
     )
@@ -161,6 +166,7 @@ def test_design_gate_requires_committed_gate_binding(tmp_path: Path) -> None:
         expected_version=5,
         approval=approval,
         gate_binding=binding,
+        worktree_path=workspace.worktree_path,
     )
 
     assert result.snapshot.state.phase == "building"
