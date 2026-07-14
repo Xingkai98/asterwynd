@@ -33,6 +33,13 @@ class ReviewResult(str, Enum):
     INCONCLUSIVE = "inconclusive"
 
 
+class ApprovalDecision(str, Enum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    ROLLBACK = "rollback"
+    SKIPPED = "skipped"
+
+
 class ActivationMode(str, Enum):
     MANAGED = "managed"
     BYPASS = "bypass"
@@ -208,6 +215,113 @@ class WorkflowSnapshot:
     state: StateSnapshot
     version: int
     events_seen: int
+
+
+@dataclass(frozen=True)
+class Evidence:
+    ref: str
+    kind: str
+    summary: str = ""
+
+
+@dataclass(frozen=True)
+class Approval:
+    workflow_id: str
+    gate_id: str
+    phase: str
+    state_version: int
+    decision: ApprovalDecision
+    actor: Actor
+    client_id: str
+    user_message_hash: str
+    gate_summary_hash: str
+    head_sha: str | None = None
+
+    def matches_gate(self, gate: "Gate") -> bool:
+        return (
+            self.workflow_id == gate.workflow_id
+            and self.gate_id == gate.gate_id
+            and self.phase == gate.phase
+            and self.state_version == gate.state_version
+            and self.gate_summary_hash == gate.gate_summary_hash
+            and self.head_sha == gate.head_sha
+        )
+
+
+@dataclass(frozen=True)
+class Gate:
+    gate_id: str
+    workflow_id: str
+    phase: str
+    state_version: int
+    gate_summary_hash: str
+    head_sha: str | None = None
+
+    def approve(
+        self,
+        actor: Actor,
+        decision: ApprovalDecision,
+        client_id: str,
+        user_message_hash: str,
+    ) -> Approval:
+        if actor.kind != ActorKind.HUMAN or not actor.approval_capability:
+            raise WorkflowValidationError("gate approval requires human approval capability")
+        return Approval(
+            workflow_id=self.workflow_id,
+            gate_id=self.gate_id,
+            phase=self.phase,
+            state_version=self.state_version,
+            decision=decision,
+            actor=actor,
+            client_id=client_id,
+            user_message_hash=user_message_hash,
+            gate_summary_hash=self.gate_summary_hash,
+            head_sha=self.head_sha,
+        )
+
+
+@dataclass(frozen=True)
+class WorkItem:
+    work_item_id: str
+    workflow_id: str
+    state: StateSnapshot
+    allowed_actions: tuple[str, ...] = ()
+    required_evidence: tuple[Evidence, ...] = ()
+
+    def allows(self, action: str) -> bool:
+        return action in self.allowed_actions
+
+
+@dataclass(frozen=True)
+class Lease:
+    lease_id: str
+    work_item_id: str
+    owner_id: str
+    expires_at: datetime
+
+    def is_active_at(self, now: datetime) -> bool:
+        return now < self.expires_at
+
+    def renew(self, expires_at: datetime) -> "Lease":
+        if expires_at <= self.expires_at:
+            raise WorkflowValidationError("renewed lease must extend expiration")
+        return Lease(
+            lease_id=self.lease_id,
+            work_item_id=self.work_item_id,
+            owner_id=self.owner_id,
+            expires_at=expires_at,
+        )
+
+
+@dataclass(frozen=True)
+class WorkspaceBinding:
+    workflow_id: str
+    branch: str
+    worktree_path: Path
+    head_sha: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "worktree_path", self.worktree_path.resolve())
 
 
 @dataclass(frozen=True)
@@ -531,10 +645,15 @@ __all__ = [
     "ActorKind",
     "ActivationDecision",
     "ActivationMode",
+    "Approval",
+    "ApprovalDecision",
     "AgingAction",
     "AgingDecision",
     "AgingPolicy",
+    "Evidence",
     "EventType",
+    "Gate",
+    "Lease",
     "ManagedWorkspaceConfig",
     "OutputStatus",
     "PhaseDefinition",
@@ -542,10 +661,12 @@ __all__ = [
     "ReviewResult",
     "StateSnapshot",
     "WorkResult",
+    "WorkItem",
     "WorkflowEvent",
     "WorkflowActivationGate",
     "WorkflowOutput",
     "WorkflowSnapshot",
+    "WorkspaceBinding",
     "WorkflowValidationError",
     "default_coding_agent_template",
     "evaluate_exploration_aging",

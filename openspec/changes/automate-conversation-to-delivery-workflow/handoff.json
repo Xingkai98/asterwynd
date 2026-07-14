@@ -191,6 +191,34 @@
       "actor_type": "agent",
       "actor_id": "workflow_state.py",
       "timestamp": "2026-07-14T13:58:38.606895+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T14:03:55.542731+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T14:05:33.827657+00:00"
     }
   ],
   "current_agent": null,
