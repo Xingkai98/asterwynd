@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "change_id": "automate-conversation-to-delivery-workflow",
+  "state": {
+    "phase": "planning",
+    "sub_state": "grilling_design"
+  },
+  "transitions": [
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "exploring"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex",
+      "timestamp": "2026-07-14T03:30:05.786763+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex",
+      "timestamp": "2026-07-14T03:30:05.787238+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "grilling_design"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "codex",
+      "timestamp": "2026-07-14T03:36:33.289499+00:00"
+    }
+  ],
+  "current_agent": null,
+  "last_gate": null,
+  "blockers": [],
+  "routing": {
+    "planning": {
+      "executor": "inline",
+      "session_mode": "same"
+    },
+    "reviewing": {
+      "executor": "codex",
+      "session_mode": "new"
+    },
+    "building": {
+      "executor": "inline",
+      "session_mode": "same"
+    },
+    "code-review": {
+      "executor": "codex",
+      "session_mode": "new"
+    },
+    "closing": {
+      "executor": "inline",
+      "session_mode": "same"
+    }
+  },
+  "next_hints": {
+    "recommended_agent": "planner"
+  }
+}

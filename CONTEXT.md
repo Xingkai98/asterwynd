@@ -85,16 +85,44 @@ Plan Mode 产出的人读 Markdown 方案，说明目标理解、实施步骤、
 _避免_: Planning State、执行期 todo list、自动审批结果
 
 **Session ID**:
-一次交互式会话的可复制标识；Web 中对应一个浏览器聊天会话，CLI 交互模式中对应一个 REPL 会话，未来 TUI 中对应一个 TUI 会话。
+一次面向用户的连续交互会话标识；Web 中对应一个浏览器聊天会话，CLI 交互模式中对应一个 REPL 会话，未来 TUI 中对应一个 TUI 会话。一个 Session 可以贯穿多个 workflow phase，并产生多个 Run ID。
 _避免_: 单次 Agent 运行、benchmark 批次编号、鉴权凭证
 
 **Run ID**:
-一次 Agent 运行的可复制标识；同一个 Session ID 下可以产生多个 Run ID。
+一次 executor 处理 WorkItem 或用户 turn 的可复制运行标识；同一个 Session ID 下可以产生多个 Run ID，后台更换 executor 也不要求用户更换 Session。
 _避免_: 交互式会话、benchmark 批次编号、分布式 tracing 标识
+
+**Managed Workspace Root**:
+显式加入 Workflow Control Plane 路径列表的项目根目录；只有位于该目录或其已识别 Git worktree 中的 agent session 才启用开发流程管理。
+_避免_: 任意当前目录、自动猜测的项目目录、普通 workspace root
+
+**Workflow Bypass**:
+当前 session 因启动路径不属于任何 Managed Workspace Root 而完全绕过 Workflow Control Plane 的固定状态；旁路判定必须在调用模型前完成，整个 session 不自动重新判定，且不得注入 workflow prompt 或消耗额外模型 token。
+_避免_: exploring phase、未创建 change、workflow blocked
+
+**Exploration Workflow**:
+受管项目中新 session 在没有恢复目标时自动创建的轻量工作流，用于承载闲聊探索、方向讨论和需求形成前的连续状态；未进入 Requirements 且未产生结构化产出时可以按老化策略自动放弃。
+_避免_: 普通未受管对话、正式 Requirements、OpenSpec change
+
+**Workflow Output**:
+Exploration Workflow 中被控制面显式记录的结构化成果，例如需求摘要、已确认决策、调研结论或 artifact 引用；draft/proposed output 不阻止老化，只有经 Human Acceptance 或正式 gate snapshot 引用的 durable output 才阻止 empty exploration aging。
+_避免_: 聊天消息、token 使用量、临时思考过程
+
+**Natural Language Gate Decision**:
+用户在当前 session 中通过受配置白名单约束的完整消息表达 gate 批准；该决定由 host 在消息进入模型前精确匹配并绑定当前 gate 和状态版本，不能由 agent 转述、模糊解释或补造。
+_避免_: 同义词猜测、Agent 总结的用户意图、自由文本 actor 字段、未绑定 gate 的普通“继续”
+
+**Gate Approval Token**:
+配置中允许批准当前唯一 pending gate 的完整用户消息；V1 默认白名单仅包含精确字符串 `ok`，不做模糊匹配或语义分类。
+_避免_: 关键词包含、正则猜测、大小写自动推断、LLM 意图识别
 
 **CLI 交互模式**:
 一个低依赖的多轮终端入口，适合 SSH、无浏览器环境和最小调试路径；它长期保留，但不承接复杂多面板终端体验。
 _避免_: TUI 替代品、完整终端工作台、废弃入口
+
+**Workflow Prompt Adapter**:
+通过 Codex/Claude/Happy Coder 等客户端已有的 skill、prompt 或 `AGENTS.md` 接入说明调用 `workflow enter/report/status` 的轻量兼容方式；它不侵入宿主客户端，但只能提供软约束、状态恢复和审计提示，不能宣称等同 Host Wrapper 的可信 gate 或写权限强制。
+_避免_: Host Wrapper、可信批准能力、进程级 sandbox、Happy Coder 原生插件
 
 **TUI**:
 未来面向复杂多轮终端体验的交互界面，承接工具结果展开、Planning State、diff/test 面板和快捷键等能力；它复用核心运行语义，不替代 CLI 单轮运行或 CLI 交互模式的低依赖入口价值。
