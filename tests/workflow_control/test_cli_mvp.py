@@ -45,6 +45,16 @@ def test_workflow_cli_enter_status_report_and_gate_approve(tmp_path) -> None:
         "sub_state": "drafting",
     }
 
+    status = runner.invoke(
+        cli.app,
+        ["workflow", "status", "--workflow", "workflow-1", "--db", str(db_path), "--json"],
+    )
+    assert status.exit_code == 0
+    assert json.loads(status.stdout)["state"] == {
+        "phase": "requirements",
+        "sub_state": "drafting",
+    }
+
     second_report = runner.invoke(
         cli.app,
         [
