@@ -428,6 +428,7 @@ def workflow_gate_approve(
     message: str = typer.Option("ok", "--message", help="Raw approval message"),
     change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for requirements promotion"),
     requirements_file: Optional[Path] = typer.Option(None, "--requirements-file", help="Approved requirements Markdown path"),
+    requirements_version: Optional[int] = typer.Option(None, "--requirements-version", help="Approved requirements snapshot version"),
     date: Optional[str] = typer.Option(None, "--date", help="Branch date for requirements promotion"),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Canonical repository for worktree promotion"),
     worktrees_root: Optional[Path] = typer.Option(None, "--worktrees-root", help="Root directory for workflow worktrees"),
@@ -493,10 +494,24 @@ def workflow_gate_approve(
         raise SystemExit(1)
     requirements_draft = None
     if change_id is not None:
-        if requirements_file is None:
-            typer.echo("Error: requirements promotion requires --requirements-file", err=True)
+        if requirements_version is None:
+            typer.echo("Error: requirements promotion requires --requirements-version", err=True)
             raise SystemExit(1)
-        requirements_draft = RequirementsDraft.from_markdown(requirements_file.read_text(encoding="utf-8"))
+        requirements_draft = orchestrator.config.store.get_requirements_snapshot(
+            workflow,
+            requirements_version,
+        )
+        if requirements_draft is None:
+            typer.echo("Error: approved requirements snapshot not found", err=True)
+            raise SystemExit(1)
+        if requirements_file is not None:
+            file_draft = RequirementsDraft.from_markdown(
+                requirements_file.read_text(encoding="utf-8"),
+                approved_snapshot_version=requirements_version,
+            )
+            if file_draft.approved_snapshot_hash != requirements_draft.approved_snapshot_hash:
+                typer.echo("Error: requirements file does not match approved snapshot", err=True)
+                raise SystemExit(1)
     orchestrator.approve_gate(
         workflow_id=workflow,
         approval=host_result.approval,

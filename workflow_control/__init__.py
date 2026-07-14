@@ -315,6 +315,8 @@ class RequirementsDraft:
     test_strategy: str = ""
     version: int = 1
     frozen: bool = False
+    approved_snapshot_version: int | None = None
+    approved_snapshot_hash: str | None = None
 
     @classmethod
     def empty(cls) -> "RequirementsDraft":
@@ -329,14 +331,23 @@ class RequirementsDraft:
         return replace(self, frozen=True, version=self.version + 1)
 
     @classmethod
-    def from_markdown(cls, markdown: str) -> "RequirementsDraft":
-        return cls(
+    def from_markdown(
+        cls,
+        markdown: str,
+        approved_snapshot_version: int | None = None,
+    ) -> "RequirementsDraft":
+        draft = cls(
             goal=_section_from_markdown(markdown, "Goal"),
             scope=_section_from_markdown(markdown, "Scope"),
             acceptance=_section_from_markdown(markdown, "Acceptance"),
             test_strategy=_section_from_markdown(markdown, "Test Strategy"),
             frozen=True,
             version=1,
+        )
+        return replace(
+            draft,
+            approved_snapshot_version=approved_snapshot_version,
+            approved_snapshot_hash=_hash_text(draft.to_markdown()),
         )
 
     def to_markdown(self) -> str:
@@ -570,6 +581,7 @@ class WorkspaceBinding:
     base_commit: str | None = None
     base_check: str | None = None
     fetch_failure: str | None = None
+    override_reason: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "worktree_path", self.worktree_path.resolve())
@@ -586,6 +598,8 @@ class BaseBranchCheck:
     reason: str = ""
     base_commit: str | None = None
     remote_commit: str | None = None
+    fetch_failure: str | None = None
+    override_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -652,41 +666,42 @@ class WorktreeCoordinator:
             base_branch=base_branch,
             base_commit=base_check.base_commit or self._head_sha(self.config.canonical_repo),
             base_check=base_check.reason or "synced",
-            fetch_failure=base_check.reason if base_check.reason == "local_base_override" else None,
+            fetch_failure=base_check.fetch_failure,
+            override_reason=base_check.override_reason,
         )
         self._bindings[binding.branch] = binding
-        change_dir = binding.worktree_path / "openspec" / "changes" / change_id
-        change_dir.mkdir(parents=True, exist_ok=True)
-        (change_dir / "proposal.md").write_text(approved_requirements.to_markdown(), encoding="utf-8")
-        spec_dir = change_dir / "specs" / "conversation-delivery-workflow"
-        spec_dir.mkdir(parents=True, exist_ok=True)
-        (spec_dir / "spec.md").write_text(
-            "\n".join([
-                "## ADDED Requirements",
-                "",
-                "### Requirement: Approved Requirements Snapshot",
-                "",
-                "The workflow SHALL materialize the approved requirements snapshot for this change.",
-                "",
-            ]),
-            encoding="utf-8",
-        )
-        (change_dir / "workflow-manifest.json").write_text(
-            json.dumps(
-                {
-                    "change_id": change_id,
-                    "branch": binding.branch,
-                    "base_branch": binding.base_branch,
-                    "base_commit": binding.base_commit,
-                    "base_check": binding.base_check,
-                    "fetch_failure": binding.fetch_failure,
-                },
-                ensure_ascii=False,
-                indent=2,
+        try:
+            change_dir = binding.worktree_path / "openspec" / "changes" / change_id
+            change_dir.mkdir(parents=True, exist_ok=True)
+            (change_dir / "proposal.md").write_text(approved_requirements.to_markdown(), encoding="utf-8")
+            spec_dir = change_dir / "specs" / "conversation-delivery-workflow"
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            (spec_dir / "spec.md").write_text(
+                _requirements_to_spec_delta(approved_requirements),
+                encoding="utf-8",
             )
-            + "\n",
-            encoding="utf-8",
-        )
+            (change_dir / "workflow-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "change_id": change_id,
+                        "branch": binding.branch,
+                        "base_branch": binding.base_branch,
+                        "base_commit": binding.base_commit,
+                        "base_check": binding.base_check,
+                        "fetch_failure": binding.fetch_failure,
+                        "override_reason": binding.override_reason,
+                        "approved_snapshot_version": approved_requirements.approved_snapshot_version,
+                        "approved_snapshot_hash": approved_requirements.approved_snapshot_hash,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            self.cleanup_worktree(binding.worktree_path, force=True)
+            raise
         return binding
 
     def write_design_artifacts(
@@ -745,16 +760,34 @@ class WorktreeCoordinator:
         has_remote = bool(_git_optional(repo, "remote", "get-url", remote))
         if not has_remote:
             if allow_local_base:
-                return BaseBranchCheck(ok=True, reason="local_base_override", base_commit=base_commit)
-            return BaseBranchCheck(ok=False, reason="remote_unavailable", base_commit=base_commit)
+                return BaseBranchCheck(
+                    ok=True,
+                    reason="local_base_override",
+                    base_commit=base_commit,
+                    fetch_failure="missing_remote",
+                    override_reason="explicit_local_base_override",
+                )
+            return BaseBranchCheck(ok=False, reason="remote_unavailable", base_commit=base_commit, fetch_failure="missing_remote")
         if _git_optional(repo, "fetch", remote, base_branch) is None:
             if allow_local_base:
-                return BaseBranchCheck(ok=True, reason="local_base_override", base_commit=base_commit)
-            return BaseBranchCheck(ok=False, reason="remote_unavailable", base_commit=base_commit)
+                return BaseBranchCheck(
+                    ok=True,
+                    reason="local_base_override",
+                    base_commit=base_commit,
+                    fetch_failure="fetch_failed",
+                    override_reason="explicit_local_base_override",
+                )
+            return BaseBranchCheck(ok=False, reason="remote_unavailable", base_commit=base_commit, fetch_failure="fetch_failed")
         if _git_optional(repo, "rev-parse", "--verify", remote_ref) is None:
             if allow_local_base:
-                return BaseBranchCheck(ok=True, reason="local_base_override", base_commit=base_commit)
-            return BaseBranchCheck(ok=False, reason="missing_remote_base", base_commit=base_commit)
+                return BaseBranchCheck(
+                    ok=True,
+                    reason="local_base_override",
+                    base_commit=base_commit,
+                    fetch_failure="missing_remote_base",
+                    override_reason="explicit_local_base_override",
+                )
+            return BaseBranchCheck(ok=False, reason="missing_remote_base", base_commit=base_commit, fetch_failure="missing_remote_base")
         remote_commit = _git(repo, "rev-parse", remote_ref)
         if base_commit == remote_commit:
             return BaseBranchCheck(ok=True, base_commit=base_commit, remote_commit=remote_commit)
@@ -909,6 +942,62 @@ class SQLiteEventStore:
                 (work_item_id,),
             )
 
+    def save_requirements_snapshot(
+        self,
+        workflow_id: str,
+        state_version: int,
+        draft: RequirementsDraft,
+    ) -> RequirementsDraft:
+        frozen = draft.freeze() if not draft.frozen else draft
+        approved = replace(
+            frozen,
+            approved_snapshot_version=state_version,
+            approved_snapshot_hash=_hash_text(frozen.to_markdown()),
+        )
+        with sqlite3.connect(self.config.db_path) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute(
+                """
+                INSERT INTO workflow_requirements_snapshots
+                    (workflow_id, state_version, snapshot_hash, markdown)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(workflow_id, state_version) DO UPDATE SET
+                    snapshot_hash = excluded.snapshot_hash,
+                    markdown = excluded.markdown
+                """,
+                (
+                    workflow_id,
+                    state_version,
+                    approved.approved_snapshot_hash,
+                    approved.to_markdown(),
+                ),
+            )
+        return approved
+
+    def get_requirements_snapshot(
+        self,
+        workflow_id: str,
+        state_version: int,
+    ) -> RequirementsDraft | None:
+        with sqlite3.connect(self.config.db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT markdown, snapshot_hash
+                FROM workflow_requirements_snapshots
+                WHERE workflow_id = ? AND state_version = ?
+                """,
+                (workflow_id, state_version),
+            ).fetchone()
+        if row is None:
+            return None
+        draft = RequirementsDraft.from_markdown(
+            str(row[0]),
+            approved_snapshot_version=state_version,
+        )
+        if draft.approved_snapshot_hash != row[1]:
+            raise WorkflowValidationError("requirements snapshot hash mismatch")
+        return draft
+
     def _initialize(self) -> None:
         with sqlite3.connect(self.config.db_path) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -929,6 +1018,17 @@ class SQLiteEventStore:
                     work_item_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
                     expires_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS workflow_requirements_snapshots (
+                    workflow_id TEXT NOT NULL,
+                    state_version INTEGER NOT NULL,
+                    snapshot_hash TEXT NOT NULL,
+                    markdown TEXT NOT NULL,
+                    PRIMARY KEY (workflow_id, state_version)
                 )
                 """
             )
@@ -1283,7 +1383,7 @@ class WorkflowOrchestrator:
                 base_branch=base_branch,
                 allow_local_base=allow_local_base,
             )
-        except WorkflowValidationError as exc:
+        except Exception as exc:
             if snapshot.state.phase != "requirements":
                 raise
             self.config.store.append(
@@ -1335,9 +1435,22 @@ class WorkflowOrchestrator:
             return None
         if requirements_draft is None or change_id is None or date is None:
             raise WorkflowValidationError("requirements gate approval requires promotion inputs")
+        if (
+            requirements_draft.approved_snapshot_version != snapshot.version
+            or requirements_draft.approved_snapshot_hash is None
+        ):
+            raise WorkflowValidationError("requirements gate approval requires approved snapshot binding")
+        stored_snapshot = self.config.store.get_requirements_snapshot(
+            snapshot.workflow_id,
+            snapshot.version,
+        )
+        if stored_snapshot is None:
+            raise WorkflowValidationError("approved requirements snapshot not found")
+        if stored_snapshot.approved_snapshot_hash != requirements_draft.approved_snapshot_hash:
+            raise WorkflowValidationError("approved requirements snapshot mismatch")
         return self.config.worktree_coordinator.promote_requirements(
             change_id=change_id,
-            approved_requirements=requirements_draft.freeze(),
+            approved_requirements=requirements_draft,
             date=date,
             base_branch=base_branch,
             allow_local_base=allow_local_base,
@@ -1874,6 +1987,7 @@ def _workspace_binding_to_payload(binding: WorkspaceBinding | None) -> dict[str,
         "base_commit": binding.base_commit,
         "base_check": binding.base_check,
         "fetch_failure": binding.fetch_failure,
+        "override_reason": binding.override_reason,
     }
 
 
@@ -1889,6 +2003,7 @@ def _workspace_binding_from_payload(payload: dict[str, Any] | None) -> Workspace
         base_commit=payload.get("base_commit"),
         base_check=payload.get("base_check"),
         fetch_failure=payload.get("fetch_failure"),
+        override_reason=payload.get("override_reason"),
     )
 
 
@@ -1905,6 +2020,27 @@ def _section_from_markdown(markdown: str, heading: str) -> str:
             collected.append(section_line)
         return "\n".join(collected).strip()
     return ""
+
+
+def _requirements_to_spec_delta(draft: RequirementsDraft) -> str:
+    title = draft.goal.strip() or "Approved Requirements Snapshot"
+    body = draft.acceptance.strip() or draft.scope.strip() or draft.test_strategy.strip()
+    if not body:
+        body = "The system SHALL implement the approved requirements snapshot for this change."
+    return "\n".join([
+        "## ADDED Requirements",
+        "",
+        f"### Requirement: {title}",
+        "",
+        body,
+        "",
+        "#### Scenario: Approved Snapshot Is Materialized",
+        "",
+        f"- **GIVEN** approved requirements snapshot `{draft.approved_snapshot_hash}`",
+        "- **WHEN** the requirements gate is approved",
+        "- **THEN** the change artifacts SHALL be materialized from that snapshot",
+        "",
+    ])
 
 
 def project_event_store_path(repo_root: Path, data_root: Path) -> Path:

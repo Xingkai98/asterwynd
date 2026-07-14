@@ -189,7 +189,11 @@ def test_requirements_gate_promotion_materializes_worktree_and_event_binding(tmp
     orchestrator.enter("workflow-1", actor)
     orchestrator.report("workflow-1", actor, "workflow-1:1", WorkResult(), 1)
     orchestrator.report("workflow-1", actor, "workflow-1:2", WorkResult(), 2)
-    draft = RequirementsDraft.empty().update_goal("workflow control").freeze()
+    draft = orchestrator.config.store.save_requirements_snapshot(
+        "workflow-1",
+        3,
+        RequirementsDraft.empty().update_goal("workflow control"),
+    )
 
     result = orchestrator.approve_gate(
         "workflow-1",
@@ -284,7 +288,11 @@ def test_requirements_promotion_append_conflict_cleans_materialized_worktree(tmp
             expected_version=2,
             actor=human,
             raw_user_message="ok",
-            requirements_draft=RequirementsDraft.empty().update_goal("conflict").freeze(),
+            requirements_draft=orchestrator.config.store.save_requirements_snapshot(
+                "workflow-1",
+                3,
+                RequirementsDraft.empty().update_goal("conflict"),
+            ),
             change_id="conflict-change",
             date="2026-07-14",
             allow_local_base=True,
@@ -314,7 +322,11 @@ def test_requirements_promotion_failure_blocks_workflow(tmp_path: Path) -> None:
         expected_version=3,
         actor=human,
         raw_user_message="ok",
-        requirements_draft=RequirementsDraft.empty().update_goal("blocked").freeze(),
+        requirements_draft=orchestrator.config.store.save_requirements_snapshot(
+            "workflow-1",
+            3,
+            RequirementsDraft.empty().update_goal("blocked"),
+        ),
         change_id="blocked-change",
         date="2026-07-14",
         allow_local_base=False,
