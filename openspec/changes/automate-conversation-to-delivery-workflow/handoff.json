@@ -2,8 +2,8 @@
   "schema_version": "1.0",
   "change_id": "automate-conversation-to-delivery-workflow",
   "state": {
-    "phase": "reviewing",
-    "sub_state": "ready_for_review"
+    "phase": "building",
+    "sub_state": "writing_tests"
   },
   "transitions": [
     {
@@ -133,6 +133,22 @@
       "actor_type": "agent",
       "actor_id": "workflow_state.py",
       "timestamp": "2026-07-14T13:12:23.600789+00:00"
+    },
+    {
+      "from": {
+        "phase": "reviewing",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "human",
+      "timestamp": "2026-07-14T13:43:50.517068+00:00",
+      "handoff_note": ".handoff/automate-conversation-to-delivery-workflow/reviewing-to-building.md",
+      "decision": "approved"
     }
   ],
   "current_agent": null,
@@ -164,6 +180,6 @@
     }
   },
   "next_hints": {
-    "recommended_agent": "planner"
+    "recommended_agent": "builder"
   }
 }
