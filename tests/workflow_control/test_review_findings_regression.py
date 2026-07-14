@@ -118,6 +118,7 @@ def test_review_result_is_rejected_outside_review_state(tmp_path: Path) -> None:
             ReviewResult.CHANGES_REQUESTED,
             "executor",
         )
+    assert len(orchestrator.config.store.list_events("workflow-1")) == 1
 
 
 def test_design_gate_requires_committed_gate_binding(tmp_path: Path) -> None:
@@ -203,9 +204,13 @@ def test_requirements_gate_promotion_materializes_worktree_and_event_binding(tmp
 
     assert result.snapshot.state.phase == "design"
     assert (tmp_path / "promotion-worktrees" / "change-one" / "openspec" / "changes" / "change-one" / "proposal.md").exists()
+    assert (tmp_path / "promotion-worktrees" / "change-one" / "openspec" / "changes" / "change-one" / "specs" / "conversation-delivery-workflow" / "spec.md").exists()
     approved_event = orchestrator.config.store.list_events("workflow-1")[-1]
     assert approved_event.workspace_binding is not None
     assert approved_event.workspace_binding.branch == "change-one/2026-07-14"
+    assert approved_event.workspace_binding.base_branch == "master"
+    assert approved_event.workspace_binding.base_commit is not None
+    assert approved_event.workspace_binding.base_check == "local_base_override"
 
 
 def test_closing_gate_approval_enters_done_phase(tmp_path: Path) -> None:
@@ -214,7 +219,13 @@ def test_closing_gate_approval_enters_done_phase(tmp_path: Path) -> None:
     workspace = coordinator.create_or_reuse_worktree("workflow-1", "2026-07-14")
     (workspace.worktree_path / "archive.txt").write_text("archive\n", encoding="utf-8")
     phase_commit = coordinator.commit_phase(workspace.worktree_path, "archive ready")
-    orchestrator = _orchestrator(tmp_path)
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(
+            store=SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3")),
+            template=default_coding_agent_template(),
+            worktree_coordinator=coordinator,
+        )
+    )
     actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
     human = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
     orchestrator.enter("workflow-1", actor)
@@ -246,6 +257,71 @@ def test_closing_gate_approval_enters_done_phase(tmp_path: Path) -> None:
 
     assert result.snapshot.state.phase == "done"
     assert result.snapshot.state.sub_state == "done"
+    assert not workspace.worktree_path.exists()
+    assert coordinator.binding_for_branch(workspace.branch) is None
+
+
+def test_requirements_promotion_append_conflict_cleans_materialized_worktree(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo-for-conflict")
+    coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=tmp_path / "conflict-worktrees"))
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(
+            store=store,
+            template=default_coding_agent_template(),
+            worktree_coordinator=coordinator,
+        )
+    )
+    actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
+    human = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
+    orchestrator.enter("workflow-1", actor)
+    orchestrator.report("workflow-1", actor, "workflow-1:1", WorkResult(), 1)
+    orchestrator.report("workflow-1", actor, "workflow-1:2", WorkResult(), 2)
+
+    with pytest.raises(WorkflowStoreConflict):
+        orchestrator.approve_gate(
+            "workflow-1",
+            expected_version=2,
+            actor=human,
+            raw_user_message="ok",
+            requirements_draft=RequirementsDraft.empty().update_goal("conflict").freeze(),
+            change_id="conflict-change",
+            date="2026-07-14",
+            allow_local_base=True,
+        )
+
+    assert not (tmp_path / "conflict-worktrees" / "conflict-change").exists()
+
+
+def test_requirements_promotion_failure_blocks_workflow(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo-for-blocked-promotion")
+    coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=tmp_path / "blocked-worktrees"))
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(
+            store=SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3")),
+            template=default_coding_agent_template(),
+            worktree_coordinator=coordinator,
+        )
+    )
+    actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
+    human = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
+    orchestrator.enter("workflow-1", actor)
+    orchestrator.report("workflow-1", actor, "workflow-1:1", WorkResult(), 1)
+    orchestrator.report("workflow-1", actor, "workflow-1:2", WorkResult(), 2)
+
+    result = orchestrator.approve_gate(
+        "workflow-1",
+        expected_version=3,
+        actor=human,
+        raw_user_message="ok",
+        requirements_draft=RequirementsDraft.empty().update_goal("blocked").freeze(),
+        change_id="blocked-change",
+        date="2026-07-14",
+        allow_local_base=False,
+    )
+
+    assert result.snapshot.state.phase == "blocked"
+    assert not (tmp_path / "blocked-worktrees" / "blocked-change").exists()
 
 
 def test_store_rejects_event_payload_for_different_workflow(tmp_path: Path) -> None:

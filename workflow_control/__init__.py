@@ -328,6 +328,17 @@ class RequirementsDraft:
     def freeze(self) -> "RequirementsDraft":
         return replace(self, frozen=True, version=self.version + 1)
 
+    @classmethod
+    def from_markdown(cls, markdown: str) -> "RequirementsDraft":
+        return cls(
+            goal=_section_from_markdown(markdown, "Goal"),
+            scope=_section_from_markdown(markdown, "Scope"),
+            acceptance=_section_from_markdown(markdown, "Acceptance"),
+            test_strategy=_section_from_markdown(markdown, "Test Strategy"),
+            frozen=True,
+            version=1,
+        )
+
     def to_markdown(self) -> str:
         return "\n".join([
             "# Requirements",
@@ -555,6 +566,10 @@ class WorkspaceBinding:
     branch: str
     worktree_path: Path
     head_sha: str
+    base_branch: str | None = None
+    base_commit: str | None = None
+    base_check: str | None = None
+    fetch_failure: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "worktree_path", self.worktree_path.resolve())
@@ -632,17 +647,39 @@ class WorktreeCoordinator:
         if not base_check.ok:
             raise WorkflowValidationError(f"base branch blocked: {base_check.reason}")
         binding = self.create_or_reuse_worktree(change_id, date)
+        binding = replace(
+            binding,
+            base_branch=base_branch,
+            base_commit=base_check.base_commit or self._head_sha(self.config.canonical_repo),
+            base_check=base_check.reason or "synced",
+            fetch_failure=base_check.reason if base_check.reason == "local_base_override" else None,
+        )
+        self._bindings[binding.branch] = binding
         change_dir = binding.worktree_path / "openspec" / "changes" / change_id
         change_dir.mkdir(parents=True, exist_ok=True)
         (change_dir / "proposal.md").write_text(approved_requirements.to_markdown(), encoding="utf-8")
+        spec_dir = change_dir / "specs" / "conversation-delivery-workflow"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        (spec_dir / "spec.md").write_text(
+            "\n".join([
+                "## ADDED Requirements",
+                "",
+                "### Requirement: Approved Requirements Snapshot",
+                "",
+                "The workflow SHALL materialize the approved requirements snapshot for this change.",
+                "",
+            ]),
+            encoding="utf-8",
+        )
         (change_dir / "workflow-manifest.json").write_text(
             json.dumps(
                 {
                     "change_id": change_id,
                     "branch": binding.branch,
-                    "base_branch": base_branch,
-                    "base_commit": base_check.base_commit or self._head_sha(self.config.canonical_repo),
-                    "base_check": base_check.reason or "synced",
+                    "base_branch": binding.base_branch,
+                    "base_commit": binding.base_commit,
+                    "base_check": binding.base_check,
+                    "fetch_failure": binding.fetch_failure,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1124,6 +1161,8 @@ class WorkflowOrchestrator:
         executor_run_id: str,
     ) -> ReportResult:
         snapshot = self._snapshot(workflow_id)
+        if snapshot.state.phase != "code-review" or snapshot.state.sub_state != "reviewing_code":
+            raise WorkflowValidationError("review result requires review state")
         self.config.store.append(
             workflow_id,
             record_review_result(workflow_id, actor, review_result, executor_run_id),
@@ -1235,25 +1274,50 @@ class WorkflowOrchestrator:
                 user_message_hash=_hash_text(raw_user_message),
             )
         HostApprovalService.validate_approval_for_gate(approval, gate)
-        workspace_binding = self._promote_requirements_gate(
-            snapshot=snapshot,
-            requirements_draft=requirements_draft,
-            change_id=change_id,
-            date=date,
-            base_branch=base_branch,
-            allow_local_base=allow_local_base,
-        )
-        self.config.store.append(
-            workflow_id,
-            record_gate_approved(
+        try:
+            workspace_binding = self._promote_requirements_gate(
+                snapshot=snapshot,
+                requirements_draft=requirements_draft,
+                change_id=change_id,
+                date=date,
+                base_branch=base_branch,
+                allow_local_base=allow_local_base,
+            )
+        except WorkflowValidationError as exc:
+            if snapshot.state.phase != "requirements":
+                raise
+            self.config.store.append(
                 workflow_id,
-                approval.actor,
-                raw_user_message=raw_user_message,
-                approval=approval,
-                workspace_binding=workspace_binding,
-            ),
-            expected_version=expected_version,
-        )
+                WorkflowEvent(
+                    event_id="workflow-blocked",
+                    workflow_id=workflow_id,
+                    event_type=EventType.STATE_ADVANCED,
+                    actor=Actor(kind=ActorKind.SYSTEM, actor_id="workflow-control"),
+                    from_state=snapshot.state,
+                    to_state=StateSnapshot(phase="blocked", sub_state="blocked"),
+                    work_result=WorkResult(summary=str(exc)),
+                ),
+                expected_version=expected_version,
+            )
+            return ReportResult(snapshot=self._snapshot(workflow_id))
+        try:
+            self.config.store.append(
+                workflow_id,
+                record_gate_approved(
+                    workflow_id,
+                    approval.actor,
+                    raw_user_message=raw_user_message,
+                    approval=approval,
+                    workspace_binding=workspace_binding,
+                ),
+                expected_version=expected_version,
+            )
+        except Exception:
+            if workspace_binding is not None and self.config.worktree_coordinator is not None:
+                self.config.worktree_coordinator.cleanup_worktree(workspace_binding.worktree_path, force=True)
+            raise
+        if snapshot.state.phase == "closing" and worktree_path is not None and self.config.worktree_coordinator is not None:
+            self.config.worktree_coordinator.cleanup_worktree(worktree_path, force=True)
         return ReportResult(snapshot=self._snapshot(workflow_id))
 
     def _promote_requirements_gate(
@@ -1806,6 +1870,10 @@ def _workspace_binding_to_payload(binding: WorkspaceBinding | None) -> dict[str,
         "branch": binding.branch,
         "worktree_path": str(binding.worktree_path),
         "head_sha": binding.head_sha,
+        "base_branch": binding.base_branch,
+        "base_commit": binding.base_commit,
+        "base_check": binding.base_check,
+        "fetch_failure": binding.fetch_failure,
     }
 
 
@@ -1817,7 +1885,26 @@ def _workspace_binding_from_payload(payload: dict[str, Any] | None) -> Workspace
         branch=payload["branch"],
         worktree_path=Path(payload["worktree_path"]),
         head_sha=payload["head_sha"],
+        base_branch=payload.get("base_branch"),
+        base_commit=payload.get("base_commit"),
+        base_check=payload.get("base_check"),
+        fetch_failure=payload.get("fetch_failure"),
     )
+
+
+def _section_from_markdown(markdown: str, heading: str) -> str:
+    marker = f"## {heading}"
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != marker:
+            continue
+        collected: list[str] = []
+        for section_line in lines[index + 1:]:
+            if section_line.startswith("## "):
+                break
+            collected.append(section_line)
+        return "\n".join(collected).strip()
+    return ""
 
 
 def project_event_store_path(repo_root: Path, data_root: Path) -> Path:

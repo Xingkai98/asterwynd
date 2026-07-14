@@ -427,6 +427,7 @@ def workflow_gate_approve(
     user: str = typer.Option("human", "--user", help="Human user ID"),
     message: str = typer.Option("ok", "--message", help="Raw approval message"),
     change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for requirements promotion"),
+    requirements_file: Optional[Path] = typer.Option(None, "--requirements-file", help="Approved requirements Markdown path"),
     date: Optional[str] = typer.Option(None, "--date", help="Branch date for requirements promotion"),
     repo: Optional[Path] = typer.Option(None, "--repo", help="Canonical repository for worktree promotion"),
     worktrees_root: Optional[Path] = typer.Option(None, "--worktrees-root", help="Root directory for workflow worktrees"),
@@ -490,13 +491,19 @@ def workflow_gate_approve(
     if not host_result.consumed or host_result.approval is None:
         typer.echo("Error: approval message is not an allowed exact token", err=True)
         raise SystemExit(1)
+    requirements_draft = None
+    if change_id is not None:
+        if requirements_file is None:
+            typer.echo("Error: requirements promotion requires --requirements-file", err=True)
+            raise SystemExit(1)
+        requirements_draft = RequirementsDraft.from_markdown(requirements_file.read_text(encoding="utf-8"))
     orchestrator.approve_gate(
         workflow_id=workflow,
         approval=host_result.approval,
         expected_version=status.snapshot.version,
         gate_binding=gate_binding,
         worktree_path=worktree,
-        requirements_draft=RequirementsDraft.empty().freeze() if change_id is not None else None,
+        requirements_draft=requirements_draft,
         change_id=change_id,
         date=date,
         allow_local_base=allow_local_base,
