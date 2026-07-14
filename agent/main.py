@@ -488,12 +488,13 @@ def workflow_report(
     work_item_id: str = typer.Option(..., "--work-item-id", help="WorkItem ID"),
     expected_version: int = typer.Option(..., "--expected-version", help="Expected workflow version"),
     summary: str = typer.Option("", "--summary", help="Work summary"),
+    enforcement_level: Optional[str] = typer.Option(None, "--enforcement-level", help="WorkResult enforcement level"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     actor: str = typer.Option("agent", "--actor", help="Actor ID"),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Report work completion and let the orchestrator advance state."""
-    from workflow_control import WorkResult
+    from workflow_control import EnforcementLevel, WorkResult
 
     orchestrator = _workflow_orchestrator(db)
     _run_workflow_lazy_aging_scan(orchestrator, workflow)
@@ -501,7 +502,10 @@ def workflow_report(
         workflow_id=workflow,
         actor=_workflow_actor(actor),
         work_item_id=work_item_id,
-        result=WorkResult(summary=summary),
+        result=WorkResult(
+            summary=summary,
+            enforcement_level=EnforcementLevel(enforcement_level) if enforcement_level else None,
+        ),
         expected_version=expected_version,
     )
     _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
@@ -512,6 +516,8 @@ def workflow_chat(
     workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
     message: str = typer.Option("", "--message", help="User message for host wrapper"),
     executor: str = typer.Option("fake", "--executor", help="Executor adapter"),
+    executor_command: Optional[str] = typer.Option(None, "--executor-command", help="Command executor binary"),
+    executor_arg: list[str] = typer.Option([], "--executor-arg", help="Command executor argument"),
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     actor: str = typer.Option("agent", "--actor", help="Actor ID"),
     change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for worktree promotion"),
@@ -524,15 +530,17 @@ def workflow_chat(
 ):
     """Run a workflow host-wrapper turn."""
     from workflow_control import (
+        CommandWorkflowExecutor,
         FakeWorkflowExecutor,
         GateApprovalTokenMatcher,
         HostApprovalService,
+        RunnerProfile,
         WorktreeCoordinator,
         WorktreeCoordinatorConfig,
     )
 
-    if executor != "fake":
-        typer.echo("Error: only fake executor is implemented for workflow chat MVP", err=True)
+    if executor not in {"fake", "command", "codex", "claude-code"}:
+        typer.echo("Error: unsupported workflow executor adapter", err=True)
         raise SystemExit(1)
     worktree_coordinator = None
     if repo is not None and worktrees_root is not None:
@@ -593,11 +601,38 @@ def workflow_chat(
                 allow_local_base=allow_local_base,
             )
     workspace = _workflow_worktree_path(worktrees_root, change_id)
-    run_result = FakeWorkflowExecutor(
-        orchestrator,
-        actor=_workflow_actor(actor),
-        workspace=workspace,
-    ).run_until_blocked_or_gate(workflow)
+    if executor == "fake":
+        run_result = FakeWorkflowExecutor(
+            orchestrator,
+            actor=_workflow_actor(actor),
+            workspace=workspace,
+        ).run_until_blocked_or_gate(workflow)
+    else:
+        if executor == "command":
+            if executor_command is None:
+                typer.echo("Error: command executor requires --executor-command", err=True)
+                raise SystemExit(1)
+            command = executor_command
+            args = tuple(executor_arg)
+        elif executor == "codex":
+            command = "codex"
+            args = ("exec", "--json", *tuple(executor_arg))
+        else:
+            command = "claude"
+            args = ("--print", *tuple(executor_arg))
+        run_result = CommandWorkflowExecutor(
+            orchestrator,
+            RunnerProfile(
+                name=f"{executor}-executor",
+                command=command,
+                args=args,
+                prompt_mode="stdin",
+                permissions="workspace-write",
+                timeout_seconds=600,
+            ),
+            actor=_workflow_actor(actor),
+            workspace=workspace,
+        ).run_once(workflow, prompt=message)
     _echo_json_or_text(_workflow_run_payload(run_result), json_output)
 
 

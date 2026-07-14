@@ -1,25 +1,25 @@
 ---
 name: asterwynd-workflow-prompt-adapter
-description: Use this in clients that cannot run the strict workflow host wrapper. It keeps workflow state visible by calling the workflow CLI before and after each agent run, but does not own human approval capability.
+description: 在无法运行严格 workflow host wrapper 的客户端中使用。该适配器要求每次 agent run 前后调用 workflow CLI，让状态可恢复；它不拥有人工审批能力。
 ---
 
 # Asterwynd Workflow Prompt Adapter
 
-This adapter is the degraded entrypoint for clients such as Happy Coder or generic coding agents that can follow prompt instructions and run shell commands, but cannot host a trusted approval boundary.
+该适配器用于 Happy Coder 或通用 coding agent 这类只能遵循 prompt 并执行 shell 命令、但不能托管可信审批边界的客户端。
 
-## Required Entry Step
+## 进入步骤
 
-Before each agent run in a managed project, call:
+每次 agent run 开始前，在受管项目中执行：
 
 ```bash
 asterwynd workflow enter --workflow <workflow-id> --json
 ```
 
-If the response has `waiting_for_human: true`, stop and ask the user to approve through a trusted host command. Do not call `workflow gate approve` from an agent context.
+如果返回 `waiting_for_human: true`，必须停止并要求用户通过可信 host 命令审批。agent session 内不得调用 `workflow gate approve`。
 
-## Required Exit Step
+## 退出步骤
 
-After completing the assigned work item, call:
+完成当前 WorkItem 后执行：
 
 ```bash
 asterwynd workflow report \
@@ -27,15 +27,16 @@ asterwynd workflow report \
   --work-item-id <work-item-id> \
   --expected-version <version> \
   --summary "<short result>" \
+  --enforcement-level prompt_adapter \
   --json
 ```
 
 ## Enforcement Level
 
-- Report `prompt_adapter` for normal operation.
-- Report `audit_only` when the client cannot reliably prevent writes outside the active work item.
-- Never report `strict_host`; only `asterwynd workflow chat` owns that level.
+- 正常 Prompt Adapter 运行记录 `prompt_adapter`。
+- 客户端无法可靠限制写入范围时记录 `audit_only`。
+- 不得记录 `strict_host`；只有 `asterwynd workflow chat` 严格 host wrapper 可以使用该级别。
 
-## Approval Rule
+## 审批规则
 
-Prompt Adapter cannot approve gates. Exact `ok` approval belongs to the trusted host wrapper or CLI command with `ASTERWYND_WORKFLOW_TRUSTED_HOST=1` and without `ASTERWYND_WORKFLOW_AGENT_CONTEXT=1`.
+Prompt Adapter 不能审批 gate。精确 `ok` 审批只属于可信 host wrapper，或满足 `ASTERWYND_WORKFLOW_TRUSTED_HOST=1` 且没有 `ASTERWYND_WORKFLOW_AGENT_CONTEXT=1` 的 CLI host 命令。

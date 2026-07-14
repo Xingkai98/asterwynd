@@ -285,6 +285,7 @@ class WorkResult:
     output_refs: tuple[str, ...] = ()
     evidence_refs: tuple[str, ...] = ()
     summary: str = ""
+    enforcement_level: EnforcementLevel | None = None
 
 
 @dataclass(frozen=True)
@@ -1079,6 +1080,26 @@ class AdapterRunResult:
 
 
 @dataclass(frozen=True)
+class ReviewContext:
+    workflow_id: str
+    state: StateSnapshot
+    design_refs: tuple[str, ...] = ()
+    diff_summary: str = ""
+    test_summary: str = ""
+    evidence_refs: tuple[str, ...] = ()
+    workflow_context: str = ""
+
+
+@dataclass(frozen=True)
+class ReviewDispatchPlan:
+    reviewer: ReviewerDefinition
+    mode: ReviewerMode
+    runner_profile: RunnerProfile | None
+    fresh_context: bool
+    prompt: str
+
+
+@dataclass(frozen=True)
 class WorkflowOrchestratorConfig:
     store: SQLiteEventStore
     template: PhaseTemplate
@@ -1555,18 +1576,45 @@ class FakeWorkflowExecutor:
 
     def _work_result_for_state(self, state: StateSnapshot) -> WorkResult:
         if state.phase == "exploring":
-            return WorkResult(output_refs=("goal_candidate",), summary="fake goal candidate")
+            return WorkResult(
+                output_refs=("goal_candidate",),
+                summary="fake goal candidate",
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+            )
         if state.phase == "requirements":
-            return WorkResult(output_refs=("requirements_snapshot",), summary="fake requirements ready")
+            return WorkResult(
+                output_refs=("requirements_snapshot",),
+                summary="fake requirements ready",
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+            )
         if state.phase == "design":
-            return WorkResult(evidence_refs=("design.md",), summary="fake design ready")
+            return WorkResult(
+                evidence_refs=("design.md",),
+                summary="fake design ready",
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+            )
         if state.phase == "building" and state.sub_state == "writing_tests":
-            return WorkResult(evidence_refs=("fake-tests",), summary="fake tests written")
+            return WorkResult(
+                evidence_refs=("fake-tests",),
+                summary="fake tests written",
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+            )
         if state.phase == "building":
-            return WorkResult(evidence_refs=("fake-implementation",), summary="fake implementation done")
+            return WorkResult(
+                evidence_refs=("fake-implementation",),
+                summary="fake implementation done",
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+            )
         if state.phase == "closing":
-            return WorkResult(evidence_refs=("fake-archive",), summary="fake archive ready")
-        return WorkResult(summary=f"fake work for {state.phase}.{state.sub_state}")
+            return WorkResult(
+                evidence_refs=("fake-archive",),
+                summary="fake archive ready",
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+            )
+        return WorkResult(
+            summary=f"fake work for {state.phase}.{state.sub_state}",
+            enforcement_level=EnforcementLevel.STRICT_HOST,
+        )
 
     def _write_fake_artifact(self, state: StateSnapshot) -> None:
         if self.workspace is None or not self.workspace.exists():
@@ -1604,6 +1652,105 @@ class FakeReviewAdapter:
         )
 
 
+class CommandWorkflowExecutor:
+    def __init__(
+        self,
+        orchestrator: WorkflowOrchestrator,
+        profile: RunnerProfile,
+        actor: Actor | None = None,
+        workspace: Path | None = None,
+    ) -> None:
+        if profile.permissions == "read-only":
+            raise WorkflowValidationError("executor command runner requires workspace write permission")
+        self.orchestrator = orchestrator
+        self.profile = profile
+        self.actor = actor or Actor(kind=ActorKind.AGENT, actor_id=f"{profile.name}-executor")
+        self.workspace = workspace
+
+    def run_once(self, workflow_id: str, prompt: str) -> AdapterRunResult:
+        entered = self.orchestrator.enter(workflow_id, self.actor)
+        if entered.waiting_for_human or entered.work_item is None:
+            return AdapterRunResult(
+                snapshot=entered.snapshot,
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+                summary="waiting",
+                waiting_for_human=entered.waiting_for_human,
+            )
+        executor_prompt = build_executor_prompt(
+            workflow_id=workflow_id,
+            snapshot=entered.snapshot,
+            work_item=entered.work_item,
+            user_message=prompt,
+        )
+        completed = subprocess.run(
+            [self.profile.command, *self.profile.args],
+            input=executor_prompt if self.profile.prompt_mode == "stdin" else None,
+            cwd=self.workspace if self.workspace is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=self.profile.timeout_seconds,
+            check=False,
+        )
+        summary = completed.stdout.strip() or completed.stderr.strip() or f"exit {completed.returncode}"
+        if completed.returncode != 0:
+            if entered.lease is not None:
+                self.orchestrator.release_lease(entered.lease.lease_id)
+            result = self.orchestrator.block(
+                workflow_id=workflow_id,
+                actor=self.actor,
+                reason=f"executor command failed: {summary}",
+            )
+            return AdapterRunResult(
+                snapshot=result.snapshot,
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+                summary=summary,
+            )
+        result = self.orchestrator.report(
+            workflow_id=workflow_id,
+            actor=self.actor,
+            work_item_id=entered.work_item.work_item_id,
+            result=WorkResult(
+                summary=summary,
+                evidence_refs=(self.profile.name,),
+                enforcement_level=EnforcementLevel.STRICT_HOST,
+            ),
+            expected_version=entered.snapshot.version,
+        )
+        return AdapterRunResult(
+            snapshot=result.snapshot,
+            enforcement_level=EnforcementLevel.STRICT_HOST,
+            summary=summary,
+        )
+
+
+def build_executor_prompt(
+    workflow_id: str,
+    snapshot: WorkflowSnapshot,
+    work_item: WorkItem,
+    user_message: str,
+) -> str:
+    return json.dumps(
+        {
+            "workflow_id": workflow_id,
+            "version": snapshot.version,
+            "state": {
+                "phase": snapshot.state.phase,
+                "sub_state": snapshot.state.sub_state,
+            },
+            "work_item": {
+                "work_item_id": work_item.work_item_id,
+                "allowed_actions": list(work_item.allowed_actions),
+                "required_evidence": [evidence.ref for evidence in work_item.required_evidence],
+                "next_action": work_item.next_action,
+            },
+            "user_message": user_message,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 class CommandReviewAdapter:
     def __init__(
         self,
@@ -1638,6 +1785,55 @@ class CommandReviewAdapter:
             review_result=result,
             executor_run_id=self.profile.name,
         )
+
+    def run_context(self, context: ReviewContext) -> ReportResult:
+        return self.run(context.workflow_id, build_review_prompt(context))
+
+
+def build_review_prompt(context: ReviewContext) -> str:
+    return "\n".join([
+        "# Workflow Review Context",
+        "",
+        f"Workflow: {context.workflow_id}",
+        f"State: {context.state.phase}.{context.state.sub_state}",
+        "",
+        "## Design",
+        "\n".join(context.design_refs) or "(none)",
+        "",
+        "## Diff",
+        context.diff_summary or "(none)",
+        "",
+        "## Tests",
+        context.test_summary or "(none)",
+        "",
+        "## Evidence",
+        "\n".join(context.evidence_refs) or "(none)",
+        "",
+        "## Workflow Context",
+        context.workflow_context or "(none)",
+    ])
+
+
+def build_review_dispatch_plan(
+    reviewer: ReviewerDefinition,
+    profiles: tuple[RunnerProfile, ...],
+    context: ReviewContext,
+) -> ReviewDispatchPlan:
+    profile = None
+    if reviewer.runner_profile is not None:
+        for candidate in profiles:
+            if candidate.name == reviewer.runner_profile:
+                profile = candidate
+                break
+        if profile is None:
+            raise WorkflowValidationError("unknown reviewer runner profile")
+    return ReviewDispatchPlan(
+        reviewer=reviewer,
+        mode=reviewer.mode,
+        runner_profile=profile,
+        fresh_context=reviewer.fresh_context,
+        prompt=build_review_prompt(context),
+    )
 
 
 @dataclass(frozen=True)
@@ -1765,6 +1961,30 @@ def default_coding_agent_template() -> PhaseTemplate:
         permissions="read-only",
         timeout_seconds=600,
     )
+    claude_reviewer = RunnerProfile(
+        name="claude-code-reviewer",
+        command="claude",
+        args=("--print",),
+        prompt_mode="stdin",
+        permissions="read-only",
+        timeout_seconds=600,
+    )
+    command_reviewer = RunnerProfile(
+        name="command-reviewer",
+        command="python3",
+        args=("-c", "print('pass')"),
+        prompt_mode="stdin",
+        permissions="read-only",
+        timeout_seconds=300,
+    )
+    command_executor = RunnerProfile(
+        name="command-executor",
+        command="python3",
+        args=("-c", "print('done')"),
+        prompt_mode="stdin",
+        permissions="workspace-write",
+        timeout_seconds=300,
+    )
     return PhaseTemplate(
         template_id="coding-agent-conversation-delivery-v1",
         phases=(
@@ -1795,7 +2015,7 @@ def default_coding_agent_template() -> PhaseTemplate:
             ("done", ("done",), PhaseCommitPolicy.NONE.value),
         ),
         initial_state=StateSnapshot(phase="exploring", sub_state="chatting"),
-        runner_profiles=(codex_reviewer,),
+        runner_profiles=(codex_reviewer, claude_reviewer, command_reviewer, command_executor),
     )
 
 
@@ -2085,6 +2305,7 @@ def _work_result_to_payload(work_result: WorkResult | None) -> dict[str, Any] | 
         "output_refs": list(work_result.output_refs),
         "evidence_refs": list(work_result.evidence_refs),
         "summary": work_result.summary,
+        "enforcement_level": work_result.enforcement_level.value if work_result.enforcement_level is not None else None,
     }
 
 
@@ -2095,6 +2316,11 @@ def _work_result_from_payload(payload: dict[str, Any] | None) -> WorkResult | No
         output_refs=tuple(payload["output_refs"]),
         evidence_refs=tuple(payload["evidence_refs"]),
         summary=payload["summary"],
+        enforcement_level=(
+            EnforcementLevel(payload["enforcement_level"])
+            if payload.get("enforcement_level") is not None
+            else None
+        ),
     )
 
 
@@ -2405,6 +2631,7 @@ __all__ = [
     "CapabilityPolicy",
     "AdapterRunResult",
     "CommandReviewAdapter",
+    "CommandWorkflowExecutor",
     "Evidence",
     "EnforcementLevel",
     "EventType",
@@ -2453,6 +2680,9 @@ __all__ = [
     "WorkspaceWritePolicy",
     "WorkspaceBinding",
     "WorkflowStoreConflict",
+    "build_executor_prompt",
+    "build_review_dispatch_plan",
+    "build_review_prompt",
     "WorkflowValidationError",
     "accept_outputs",
     "build_gate_binding",

@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 import agent.main as cli
 from workflow_control import (
+    EnforcementLevel,
     SQLiteEventStore,
     SQLiteEventStoreConfig,
     default_coding_agent_template,
@@ -46,6 +47,8 @@ def test_workflow_cli_enter_status_report_and_gate_approve(tmp_path, monkeypatch
             "1",
             "--summary",
             "drafted goal",
+            "--enforcement-level",
+            "prompt_adapter",
             "--json",
         ],
     )
@@ -54,6 +57,9 @@ def test_workflow_cli_enter_status_report_and_gate_approve(tmp_path, monkeypatch
         "phase": "requirements",
         "sub_state": "drafting",
     }
+    event = SQLiteEventStore(SQLiteEventStoreConfig(db_path=db_path)).list_events("workflow-1")[-1]
+    assert event.work_result is not None
+    assert event.work_result.enforcement_level == EnforcementLevel.PROMPT_ADAPTER
 
     status = runner.invoke(
         cli.app,
@@ -226,6 +232,72 @@ def test_workflow_chat_fake_executor_reaches_done_end_to_end(tmp_path, monkeypat
         assert payload["enforcement_level"] == "strict_host"
 
     assert not (worktrees_root / change_id).exists()
+
+
+def test_workflow_chat_command_executor_reports_strict_host_result(tmp_path) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "chat",
+            "--workflow",
+            "command-workflow",
+            "--db",
+            str(db_path),
+            "--executor",
+            "command",
+            "--executor-command",
+            "python3",
+            "--executor-arg",
+            "-c",
+            "--executor-arg",
+            "print('command executor done')",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["state"] == {"phase": "requirements", "sub_state": "drafting"}
+    event = SQLiteEventStore(SQLiteEventStoreConfig(db_path=db_path)).list_events("command-workflow")[-1]
+    assert event.work_result is not None
+    assert event.work_result.enforcement_level == EnforcementLevel.STRICT_HOST
+
+
+def test_workflow_chat_command_executor_blocks_on_failure(tmp_path) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "chat",
+            "--workflow",
+            "failing-command-workflow",
+            "--db",
+            str(db_path),
+            "--executor",
+            "command",
+            "--executor-command",
+            "python3",
+            "--executor-arg",
+            "-c",
+            "--executor-arg",
+            "import sys; print('boom'); sys.exit(2)",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["state"] == {"phase": "blocked", "sub_state": "blocked"}
+    event = SQLiteEventStore(SQLiteEventStoreConfig(db_path=db_path)).list_events("failing-command-workflow")[-1]
+    assert event.work_result is not None
+    assert event.work_result.summary == "executor command failed: boom"
 
 
 def test_workflow_attach_and_prompt_adapter_show_contract(tmp_path) -> None:

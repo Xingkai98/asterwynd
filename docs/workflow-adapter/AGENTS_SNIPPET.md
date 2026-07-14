@@ -1,9 +1,9 @@
-# Workflow Prompt Adapter Snippet
+# Workflow Prompt Adapter 片段
 
-For repositories using the degraded Workflow Prompt Adapter:
+使用降级 Workflow Prompt Adapter 的仓库可接入以下短规则：
 
-1. At the start of each run, execute `asterwynd workflow enter --workflow <workflow-id> --json`.
-2. If the workflow is at `ready_for_review`, stop. Do not approve the gate from the agent session.
-3. Do only the returned WorkItem.
-4. At the end of the run, execute `asterwynd workflow report --workflow <workflow-id> --work-item-id <id> --expected-version <version> --summary <summary> --json`.
-5. Mark evidence enforcement as `prompt_adapter` or `audit_only`; never claim `strict_host`.
+1. 每次 run 开始时执行 `asterwynd workflow enter --workflow <workflow-id> --json`。
+2. 如果 workflow 位于 `ready_for_review`，立即停止；agent session 内不得批准 gate。
+3. 只执行返回的 WorkItem。
+4. run 结束时执行 `asterwynd workflow report --workflow <workflow-id> --work-item-id <id> --expected-version <version> --summary <summary> --enforcement-level prompt_adapter --json`。
+5. evidence enforcement 只能记录 `prompt_adapter` 或 `audit_only`；不得宣称 `strict_host`。

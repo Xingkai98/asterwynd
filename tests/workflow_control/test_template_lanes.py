@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from workflow_control import (
     Actor,
     ActorKind,
     CommandReviewAdapter,
+    CommandWorkflowExecutor,
     ExecutorLane,
     ExecutorMode,
     PhaseDefinition,
     PhaseTemplate,
+    ReviewContext,
+    ReviewDispatchPlan,
     ReviewLane,
     ReviewerDefinition,
     ReviewerMode,
@@ -20,6 +25,9 @@ from workflow_control import (
     WorkflowOrchestrator,
     WorkflowOrchestratorConfig,
     WorkflowValidationError,
+    build_executor_prompt,
+    build_review_dispatch_plan,
+    build_review_prompt,
     default_coding_agent_template,
 )
 
@@ -34,6 +42,9 @@ def test_default_template_declares_executor_and_review_lanes() -> None:
     assert code_review.executor_lane.mode == ExecutorMode.RUNNER
     assert code_review.review_lane.reviewers[0].mode == ReviewerMode.RUNNER
     assert code_review.review_lane.reviewers[0].fresh_context is True
+    assert template.runner_profile("codex-reviewer").permissions == "read-only"
+    assert template.runner_profile("claude-code-reviewer").permissions == "read-only"
+    assert template.runner_profile("command-reviewer").permissions == "read-only"
 
 
 def test_review_lane_rejects_self_reviewer() -> None:
@@ -137,3 +148,112 @@ def test_command_review_adapter_requires_read_only_profile(tmp_path) -> None:
                 permissions="workspace-write",
             ),
         )
+
+
+def test_review_prompt_contains_minimal_fresh_context() -> None:
+    context = ReviewContext(
+        workflow_id="workflow-1",
+        state=StateSnapshot(phase="code-review", sub_state="reviewing_code"),
+        design_refs=("openspec/changes/x/design.md",),
+        diff_summary="diff --stat",
+        test_summary="pytest passed",
+        evidence_refs=("test_result",),
+        workflow_context="building gate passed",
+    )
+
+    prompt = build_review_prompt(context)
+
+    assert "openspec/changes/x/design.md" in prompt
+    assert "diff --stat" in prompt
+    assert "pytest passed" in prompt
+    assert "test_result" in prompt
+    assert "building gate passed" in prompt
+
+
+def test_review_dispatch_plan_supports_subagent_runner_and_command_modes() -> None:
+    context = ReviewContext(
+        workflow_id="workflow-1",
+        state=StateSnapshot(phase="code-review", sub_state="reviewing_code"),
+    )
+    profile = RunnerProfile(
+        name="command-reviewer",
+        command="python3",
+        permissions="read-only",
+    )
+
+    subagent_plan = build_review_dispatch_plan(
+        ReviewerDefinition(name="subagent", mode=ReviewerMode.SUBAGENT),
+        profiles=(profile,),
+        context=context,
+    )
+    command_plan = build_review_dispatch_plan(
+        ReviewerDefinition(
+            name="command",
+            mode=ReviewerMode.COMMAND,
+            runner_profile="command-reviewer",
+        ),
+        profiles=(profile,),
+        context=context,
+    )
+
+    assert isinstance(subagent_plan, ReviewDispatchPlan)
+    assert subagent_plan.mode == ReviewerMode.SUBAGENT
+    assert subagent_plan.runner_profile is None
+    assert command_plan.mode == ReviewerMode.COMMAND
+    assert command_plan.runner_profile == profile
+    assert command_plan.fresh_context is True
+
+
+def test_executor_prompt_contains_work_item_context(tmp_path) -> None:
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(store=store, template=default_coding_agent_template()),
+    )
+    actor = Actor(kind=ActorKind.AGENT, actor_id="executor")
+    entered = orchestrator.enter("workflow-1", actor)
+
+    prompt = build_executor_prompt(
+        workflow_id="workflow-1",
+        snapshot=entered.snapshot,
+        work_item=entered.work_item,
+        user_message="用户消息",
+    )
+
+    payload = json.loads(prompt)
+    assert payload["workflow_id"] == "workflow-1"
+    assert payload["version"] == 1
+    assert payload["work_item"]["work_item_id"] == "workflow-1:1"
+    assert payload["work_item"]["next_action"]
+    assert payload["user_message"] == "用户消息"
+
+
+def test_command_workflow_executor_runs_in_workspace_with_work_item_prompt(tmp_path) -> None:
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3"))
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(store=store, template=default_coding_agent_template()),
+    )
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    profile = RunnerProfile(
+        name="command-executor",
+        command="python3",
+        args=(
+            "-c",
+            "import json, os, pathlib, sys; "
+            "payload=json.loads(sys.stdin.read()); "
+            "pathlib.Path('prompt-workflow.txt').write_text(payload['workflow_id']); "
+            "print(os.getcwd())",
+        ),
+        permissions="workspace-write",
+    )
+
+    result = CommandWorkflowExecutor(
+        orchestrator,
+        profile,
+        actor=Actor(kind=ActorKind.AGENT, actor_id="executor"),
+        workspace=workspace,
+    ).run_once("workflow-1", prompt="hello")
+
+    assert result.summary == str(workspace)
+    assert (workspace / "prompt-workflow.txt").read_text() == "workflow-1"
+    assert result.snapshot.state == StateSnapshot(phase="requirements", sub_state="drafting")
