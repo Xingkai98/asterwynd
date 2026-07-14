@@ -51,6 +51,14 @@ class ApprovalDecision(str, Enum):
     SKIPPED = "skipped"
 
 
+class GateEventType(str, Enum):
+    REACHED = "gate_reached"
+    APPROVED = "gate_approved"
+    REJECTED = "gate_rejected"
+    REVISION_REQUESTED = "gate_revision_requested"
+    STALE = "gate_stale"
+
+
 class ActivationMode(str, Enum):
     MANAGED = "managed"
     BYPASS = "bypass"
@@ -409,6 +417,74 @@ class GateApprovalTokenMatcher:
 
     def matches(self, raw_message: str) -> bool:
         return raw_message in self.allowed_tokens
+
+
+@dataclass(frozen=True)
+class CapabilityPolicy:
+    can_approve_gate: bool
+    allowed_commands: tuple[str, ...]
+
+    @classmethod
+    def for_agent(cls) -> "CapabilityPolicy":
+        return cls(
+            can_approve_gate=False,
+            allowed_commands=("workflow enter", "workflow status", "workflow report"),
+        )
+
+    @classmethod
+    def for_host(cls) -> "CapabilityPolicy":
+        return cls(
+            can_approve_gate=True,
+            allowed_commands=(
+                "workflow enter",
+                "workflow status",
+                "workflow report",
+                "workflow gate approve",
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class HostApprovalResult:
+    consumed: bool
+    event_type: GateEventType
+    approval: Approval | None = None
+
+
+class HostApprovalService:
+    def __init__(self, matcher: GateApprovalTokenMatcher) -> None:
+        self.matcher = matcher
+
+    def try_approve(
+        self,
+        gate: Gate,
+        raw_message: str,
+        user_id: str,
+        client_id: str,
+    ) -> HostApprovalResult:
+        if not self.matcher.matches(raw_message):
+            return HostApprovalResult(consumed=False, event_type=GateEventType.REACHED)
+        approval = gate.approve(
+            actor=Actor(kind=ActorKind.HUMAN, actor_id=user_id, approval_capability=True),
+            decision=ApprovalDecision.APPROVED,
+            client_id=client_id,
+            user_message_hash=_hash_text(raw_message),
+        )
+        return HostApprovalResult(
+            consumed=True,
+            event_type=GateEventType.APPROVED,
+            approval=approval,
+        )
+
+    @staticmethod
+    def validate_approval_for_gate(approval: Approval, gate: Gate) -> None:
+        if not approval.matches_gate(gate):
+            raise WorkflowValidationError("stale approval")
+
+
+class WorkspaceWritePolicy:
+    def can_write(self, phase: str, sub_state: str, has_active_lease: bool) -> bool:
+        return has_active_lease and sub_state != "ready_for_review"
 
 
 @dataclass(frozen=True)
@@ -1265,6 +1341,10 @@ def build_gate_binding(
     )
 
 
+def _hash_text(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def _git_common_dir(cwd: Path) -> Path | None:
     try:
         common_dir_result = subprocess.run(
@@ -1316,13 +1396,17 @@ __all__ = [
     "AgingAction",
     "AgingDecision",
     "AgingPolicy",
+    "CapabilityPolicy",
     "Evidence",
     "EventType",
     "ExecutorLane",
     "ExecutorMode",
     "Gate",
     "GateBinding",
+    "GateEventType",
     "GateApprovalTokenMatcher",
+    "HostApprovalResult",
+    "HostApprovalService",
     "Lease",
     "ManagedWorkspaceConfig",
     "OutputStatus",
@@ -1352,6 +1436,7 @@ __all__ = [
     "WorkflowSnapshot",
     "WorkflowStatus",
     "WorkflowHistoryCorrupt",
+    "WorkspaceWritePolicy",
     "WorkspaceBinding",
     "WorkflowStoreConflict",
     "WorkflowValidationError",
