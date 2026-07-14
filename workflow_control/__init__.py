@@ -293,6 +293,7 @@ class WorkflowEvent:
     review_result: ReviewResult | None = None
     executor_run_id: str | None = None
     raw_user_message: str | None = None
+    approval: Approval | None = None
 
 
 @dataclass(frozen=True)
@@ -589,7 +590,10 @@ class WorktreeCoordinator:
         if branch in self._bindings:
             if force_new:
                 raise WorkflowValidationError("worktree already bound")
-            return self._bindings[branch]
+            binding = self._bindings[branch]
+            if self.current_branch(binding.worktree_path) != branch:
+                raise WorkflowValidationError("worktree branch drift")
+            return binding
         worktree_path = (self.config.worktrees_root / change_id).resolve()
         if worktree_path.exists():
             if force_new:
@@ -680,9 +684,15 @@ class WorktreeCoordinator:
             return BaseBranchCheck(ok=False, reason="missing_base_branch")
         return BaseBranchCheck(ok=True)
 
-    def cleanup_worktree(self, worktree_path: Path) -> None:
+    def cleanup_worktree(self, worktree_path: Path, force: bool = False) -> None:
         if worktree_path.exists():
-            _git(self.config.canonical_repo, "worktree", "remove", "--force", str(worktree_path))
+            if self._is_dirty(worktree_path) and not force:
+                raise WorkflowValidationError("dirty worktree cleanup blocked")
+            args = ["worktree", "remove"]
+            if force:
+                args.append("--force")
+            args.append(str(worktree_path))
+            _git(self.config.canonical_repo, *args)
 
     def current_branch(self, worktree_path: Path) -> str:
         return _git(worktree_path, "branch", "--show-current")
@@ -711,6 +721,8 @@ class SQLiteEventStore:
         event: WorkflowEvent,
         expected_version: int,
     ) -> WorkflowEvent:
+        if event.workflow_id != workflow_id:
+            raise WorkflowValidationError("workflow id mismatch")
         with sqlite3.connect(self.config.db_path) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("BEGIN IMMEDIATE")
@@ -969,6 +981,9 @@ class WorkflowOrchestrator:
         expected_work_item_id = f"{workflow_id}:{expected_version}"
         if work_item_id != expected_work_item_id:
             raise WorkflowValidationError("stale work item")
+        lease = self._leases.get(work_item_id)
+        if lease is not None and lease.owner_id != actor.actor_id:
+            raise WorkflowValidationError("lease owner mismatch")
         try:
             self.config.store.append(
                 workflow_id,
@@ -979,20 +994,44 @@ class WorkflowOrchestrator:
             raise WorkflowValidationError("stale work item") from exc
         return ReportResult(snapshot=self._snapshot(workflow_id))
 
+    def current_gate(self, workflow_id: str) -> Gate:
+        snapshot = self._snapshot(workflow_id)
+        phase = self.config.template.phase(snapshot.state.phase)
+        if snapshot.state.sub_state != phase.gate_sub_state:
+            raise WorkflowValidationError("workflow is not at a gate")
+        return _gate_for_state(workflow_id, snapshot.state, snapshot.version)
+
     def approve_gate(
         self,
         workflow_id: str,
-        actor: Actor,
-        raw_user_message: str,
         expected_version: int,
+        actor: Actor | None = None,
+        raw_user_message: str | None = None,
+        approval: Approval | None = None,
     ) -> ReportResult:
         if self.config.store.current_version(workflow_id) != expected_version:
             raise WorkflowStoreConflict(
                 f"expected version {expected_version}, actual version {self.config.store.current_version(workflow_id)}"
             )
+        gate = self.current_gate(workflow_id)
+        if approval is None:
+            if actor is None or raw_user_message is None:
+                raise WorkflowValidationError("gate approval requires approval or actor/message")
+            approval = gate.approve(
+                actor=actor,
+                decision=ApprovalDecision.APPROVED,
+                client_id="trusted-host",
+                user_message_hash=_hash_text(raw_user_message),
+            )
+        HostApprovalService.validate_approval_for_gate(approval, gate)
         self.config.store.append(
             workflow_id,
-            record_gate_approved(workflow_id, actor, raw_user_message=raw_user_message),
+            record_gate_approved(
+                workflow_id,
+                approval.actor,
+                raw_user_message=raw_user_message,
+                approval=approval,
+            ),
             expected_version=expected_version,
         )
         return ReportResult(snapshot=self._snapshot(workflow_id))
@@ -1001,7 +1040,7 @@ class WorkflowOrchestrator:
         events = self.config.store.list_events(workflow_id)
         if not events:
             raise WorkflowValidationError("workflow has no events")
-        return reduce_events(events, self.config.template)
+        return replay_history(events, self.config.template)
 
     def _required_evidence(self, state: StateSnapshot) -> tuple[Evidence, ...]:
         if state.phase == "exploring":
@@ -1205,6 +1244,7 @@ def record_gate_approved(
     workflow_id: str,
     actor: Actor,
     raw_user_message: str | None = None,
+    approval: Approval | None = None,
 ) -> WorkflowEvent:
     return WorkflowEvent(
         event_id="gate-approved",
@@ -1212,6 +1252,7 @@ def record_gate_approved(
         event_type=EventType.GATE_APPROVED,
         actor=actor,
         raw_user_message=raw_user_message,
+        approval=approval,
     )
 
 
@@ -1261,11 +1302,19 @@ def reduce_events(
         elif event.event_type == EventType.STATE_ADVANCED:
             current_state = _advance_from_explicit_event(current_state, event, template)
         elif event.event_type == EventType.GATE_APPROVED:
-            _validate_gate_approval(event)
+            _validate_gate_approval(event, current_state, workflow_id, version)
             current_state = _advance_from_gate(current_state, template)
         elif event.event_type == EventType.REVIEW_RESULT_RECORDED:
             if event.executor_run_id == event.actor.actor_id:
                 raise WorkflowValidationError("self review is not allowed")
+            if event.review_result == ReviewResult.CHANGES_REQUESTED:
+                if current_state is None:
+                    raise WorkflowValidationError("workflow must start before review result")
+                phase = template.phase(current_state.phase)
+                current_state = StateSnapshot(
+                    phase=current_state.phase,
+                    sub_state=phase.first_sub_state,
+                )
         else:
             raise WorkflowValidationError(f"unsupported event type: {event.event_type}")
         version += 1
@@ -1321,14 +1370,32 @@ def _advance_from_explicit_event(
         raise WorkflowValidationError("state advancement requires to_state")
     if event.to_state.phase == "blocked" or current_state.phase == "blocked":
         return event.to_state
+    if event.event_id == "workflow-rollback":
+        target_phase = template.phase(event.to_state.phase)
+        if event.to_state.sub_state not in target_phase.sub_states:
+            raise WorkflowValidationError("rollback target sub_state is not in phase")
+        return event.to_state
     if not template.is_legal_transition(current_state, event.to_state):
         raise WorkflowValidationError("illegal transition")
     return event.to_state
 
 
-def _validate_gate_approval(event: WorkflowEvent) -> None:
+def _validate_gate_approval(
+    event: WorkflowEvent,
+    current_state: StateSnapshot | None,
+    workflow_id: str | None,
+    version: int,
+) -> None:
     if event.actor.kind != ActorKind.HUMAN or not event.actor.approval_capability:
         raise WorkflowValidationError("gate approval requires human approval capability")
+    if current_state is None or workflow_id is None:
+        raise WorkflowValidationError("workflow must start before gate approval")
+    if event.approval is None:
+        raise WorkflowValidationError("missing gate approval binding")
+    HostApprovalService.validate_approval_for_gate(
+        event.approval,
+        _gate_for_state(workflow_id, current_state, version),
+    )
 
 
 def _event_to_payload(event: WorkflowEvent) -> dict[str, Any]:
@@ -1348,6 +1415,7 @@ def _event_to_payload(event: WorkflowEvent) -> dict[str, Any]:
         "review_result": event.review_result.value if event.review_result is not None else None,
         "executor_run_id": event.executor_run_id,
         "raw_user_message": event.raw_user_message,
+        "approval": _approval_to_payload(event.approval),
     }
 
 
@@ -1369,6 +1437,7 @@ def _event_from_payload(payload: dict[str, Any]) -> WorkflowEvent:
         review_result=ReviewResult(review_result) if review_result else None,
         executor_run_id=payload.get("executor_run_id"),
         raw_user_message=payload.get("raw_user_message"),
+        approval=_approval_from_payload(payload.get("approval")),
     )
 
 
@@ -1401,6 +1470,48 @@ def _work_result_from_payload(payload: dict[str, Any] | None) -> WorkResult | No
         output_refs=tuple(payload["output_refs"]),
         evidence_refs=tuple(payload["evidence_refs"]),
         summary=payload["summary"],
+    )
+
+
+def _approval_to_payload(approval: Approval | None) -> dict[str, Any] | None:
+    if approval is None:
+        return None
+    return {
+        "workflow_id": approval.workflow_id,
+        "gate_id": approval.gate_id,
+        "phase": approval.phase,
+        "state_version": approval.state_version,
+        "decision": approval.decision.value,
+        "actor": {
+            "kind": approval.actor.kind.value,
+            "actor_id": approval.actor.actor_id,
+            "approval_capability": approval.actor.approval_capability,
+        },
+        "client_id": approval.client_id,
+        "user_message_hash": approval.user_message_hash,
+        "gate_summary_hash": approval.gate_summary_hash,
+        "head_sha": approval.head_sha,
+    }
+
+
+def _approval_from_payload(payload: dict[str, Any] | None) -> Approval | None:
+    if payload is None:
+        return None
+    return Approval(
+        workflow_id=payload["workflow_id"],
+        gate_id=payload["gate_id"],
+        phase=payload["phase"],
+        state_version=payload["state_version"],
+        decision=ApprovalDecision(payload["decision"]),
+        actor=Actor(
+            kind=ActorKind(payload["actor"]["kind"]),
+            actor_id=payload["actor"]["actor_id"],
+            approval_capability=payload["actor"]["approval_capability"],
+        ),
+        client_id=payload["client_id"],
+        user_message_hash=payload["user_message_hash"],
+        gate_summary_hash=payload["gate_summary_hash"],
+        head_sha=payload.get("head_sha"),
     )
 
 
@@ -1476,6 +1587,28 @@ def build_gate_binding(
         head_sha=head_sha,
         evidence_hash=evidence_hash,
         gate_summary_hash=f"sha256:{digest}",
+    )
+
+
+def _gate_for_state(workflow_id: str, state: StateSnapshot, state_version: int) -> Gate:
+    gate_summary_hash = _hash_text(
+        json.dumps(
+            {
+                "workflow_id": workflow_id,
+                "phase": state.phase,
+                "sub_state": state.sub_state,
+                "state_version": state_version,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return Gate(
+        gate_id=f"{workflow_id}:{state.phase}:{state_version}",
+        workflow_id=workflow_id,
+        phase=state.phase,
+        state_version=state_version,
+        gate_summary_hash=gate_summary_hash,
     )
 
 

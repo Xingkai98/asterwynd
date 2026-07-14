@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 
 from workflow_control import (
     Actor,
     ActorKind,
+    ApprovalDecision,
     EventType,
+    Gate,
     PhaseTemplate,
     ReviewResult,
     StateSnapshot,
@@ -92,7 +97,16 @@ def test_gate_stops_until_human_approval_with_capability() -> None:
     events = [
         start_workflow("workflow-1", template),
         record_work_completed("workflow-1", agent, WorkResult()),
-        record_gate_approved("workflow-1", human),
+        record_gate_approved(
+            "workflow-1",
+            human,
+            approval=_gate_for_test("workflow-1", "design", "ready_for_review", 2).approve(
+                actor=human,
+                decision=ApprovalDecision.APPROVED,
+                client_id="test-host",
+                user_message_hash="sha256:ok",
+            ),
+        ),
     ]
 
     snapshot = reduce_events(events, template)
@@ -100,6 +114,31 @@ def test_gate_stops_until_human_approval_with_capability() -> None:
     assert snapshot.state == StateSnapshot(
         phase="building",
         sub_state="writing_tests",
+    )
+
+
+def _gate_for_test(
+    workflow_id: str,
+    phase: str,
+    sub_state: str,
+    state_version: int,
+) -> Gate:
+    summary = json.dumps(
+        {
+            "workflow_id": workflow_id,
+            "phase": phase,
+            "sub_state": sub_state,
+            "state_version": state_version,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return Gate(
+        gate_id=f"{workflow_id}:{phase}:{state_version}",
+        workflow_id=workflow_id,
+        phase=phase,
+        state_version=state_version,
+        gate_summary_hash="sha256:" + hashlib.sha256(summary.encode("utf-8")).hexdigest(),
     )
 
 

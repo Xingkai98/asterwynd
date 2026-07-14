@@ -418,6 +418,13 @@ def workflow_gate_approve(
     """可信 CLI 人工批准当前 gate。"""
     from workflow_control import GateApprovalTokenMatcher
 
+    if os.environ.get("ASTERWYND_WORKFLOW_TRUSTED_HOST") != "1":
+        typer.echo("Error: workflow gate approve requires trusted host context", err=True)
+        raise SystemExit(1)
+    if os.environ.get("ASTERWYND_WORKFLOW_AGENT_CONTEXT") == "1":
+        typer.echo("Error: workflow gate approve is not available from agent context", err=True)
+        raise SystemExit(1)
+
     orchestrator = _workflow_orchestrator(db)
     status = orchestrator.status(workflow)
     if not GateApprovalTokenMatcher().matches(message):

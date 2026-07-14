@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 import agent.main as cli
 
 
-def test_workflow_cli_enter_status_report_and_gate_approve(tmp_path) -> None:
+def test_workflow_cli_enter_status_report_and_gate_approve(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "workflow.sqlite3"
     runner = CliRunner()
 
@@ -86,6 +86,7 @@ def test_workflow_cli_enter_status_report_and_gate_approve(tmp_path) -> None:
     assert at_gate.exit_code == 0
     assert json.loads(at_gate.stdout)["waiting_for_human"] is True
 
+    monkeypatch.setenv("ASTERWYND_WORKFLOW_TRUSTED_HOST", "1")
     approval = runner.invoke(
         cli.app,
         [
