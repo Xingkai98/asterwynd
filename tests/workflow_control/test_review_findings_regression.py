@@ -15,6 +15,7 @@ from workflow_control import (
     ReviewResult,
     SQLiteEventStore,
     SQLiteEventStoreConfig,
+    RequirementsDraft,
     WorkResult,
     WorkflowEvent,
     WorkflowOrchestrator,
@@ -170,6 +171,81 @@ def test_design_gate_requires_committed_gate_binding(tmp_path: Path) -> None:
     )
 
     assert result.snapshot.state.phase == "building"
+
+
+def test_requirements_gate_promotion_materializes_worktree_and_event_binding(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo-for-promotion")
+    coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=tmp_path / "promotion-worktrees"))
+    orchestrator = WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(
+            store=SQLiteEventStore(SQLiteEventStoreConfig(db_path=tmp_path / "workflow.sqlite3")),
+            template=default_coding_agent_template(),
+            worktree_coordinator=coordinator,
+        )
+    )
+    actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
+    human = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
+    orchestrator.enter("workflow-1", actor)
+    orchestrator.report("workflow-1", actor, "workflow-1:1", WorkResult(), 1)
+    orchestrator.report("workflow-1", actor, "workflow-1:2", WorkResult(), 2)
+    draft = RequirementsDraft.empty().update_goal("workflow control").freeze()
+
+    result = orchestrator.approve_gate(
+        "workflow-1",
+        expected_version=3,
+        actor=human,
+        raw_user_message="ok",
+        requirements_draft=draft,
+        change_id="change-one",
+        date="2026-07-14",
+        allow_local_base=True,
+    )
+
+    assert result.snapshot.state.phase == "design"
+    assert (tmp_path / "promotion-worktrees" / "change-one" / "openspec" / "changes" / "change-one" / "proposal.md").exists()
+    approved_event = orchestrator.config.store.list_events("workflow-1")[-1]
+    assert approved_event.workspace_binding is not None
+    assert approved_event.workspace_binding.branch == "change-one/2026-07-14"
+
+
+def test_closing_gate_approval_enters_done_phase(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo-for-closing")
+    coordinator = WorktreeCoordinator(WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=tmp_path / "closing-worktrees"))
+    workspace = coordinator.create_or_reuse_worktree("workflow-1", "2026-07-14")
+    (workspace.worktree_path / "archive.txt").write_text("archive\n", encoding="utf-8")
+    phase_commit = coordinator.commit_phase(workspace.worktree_path, "archive ready")
+    orchestrator = _orchestrator(tmp_path)
+    actor = Actor(kind=ActorKind.AGENT, actor_id="agent")
+    human = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
+    orchestrator.enter("workflow-1", actor)
+    orchestrator.rollback("workflow-1", actor, "closing", "ready_for_review")
+    binding = build_gate_binding(
+        policy="required_before_human_gate",
+        phase="closing",
+        state_version=2,
+        branch=workspace.branch,
+        head_sha=phase_commit.head_sha,
+        evidence_hash="sha256:archive",
+        clean_worktree=True,
+    )
+    assert binding is not None
+    approval = orchestrator.current_gate_for_binding("workflow-1", binding).approve(
+        actor=human,
+        decision=ApprovalDecision.APPROVED,
+        client_id="trusted-host",
+        user_message_hash="sha256:ok",
+    )
+
+    result = orchestrator.approve_gate(
+        "workflow-1",
+        expected_version=2,
+        approval=approval,
+        gate_binding=binding,
+        worktree_path=workspace.worktree_path,
+    )
+
+    assert result.snapshot.state.phase == "done"
+    assert result.snapshot.state.sub_state == "done"
 
 
 def test_store_rejects_event_payload_for_different_workflow(tmp_path: Path) -> None:

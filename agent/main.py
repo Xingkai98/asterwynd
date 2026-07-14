@@ -93,7 +93,7 @@ def _workflow_roots_path(roots_file: Path | None) -> Path:
     return platformdirs.user_config_path("asterwynd") / "workflow-roots.json"
 
 
-def _workflow_orchestrator(db: Path | None):
+def _workflow_orchestrator(db: Path | None, worktree_coordinator=None):
     from workflow_control import (
         SQLiteEventStore,
         SQLiteEventStoreConfig,
@@ -105,7 +105,11 @@ def _workflow_orchestrator(db: Path | None):
     store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=_workflow_db_path(db)))
     template = default_coding_agent_template()
     return WorkflowOrchestrator(
-        WorkflowOrchestratorConfig(store=store, template=template),
+        WorkflowOrchestratorConfig(
+            store=store,
+            template=template,
+            worktree_coordinator=worktree_coordinator,
+        ),
     )
 
 
@@ -422,10 +426,26 @@ def workflow_gate_approve(
     db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
     user: str = typer.Option("human", "--user", help="Human user ID"),
     message: str = typer.Option("ok", "--message", help="Raw approval message"),
+    change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for requirements promotion"),
+    date: Optional[str] = typer.Option(None, "--date", help="Branch date for requirements promotion"),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Canonical repository for worktree promotion"),
+    worktrees_root: Optional[Path] = typer.Option(None, "--worktrees-root", help="Root directory for workflow worktrees"),
+    worktree: Optional[Path] = typer.Option(None, "--worktree", help="Bound worktree path for committed gates"),
+    gate_branch: Optional[str] = typer.Option(None, "--gate-branch", help="Gate binding branch"),
+    gate_head: Optional[str] = typer.Option(None, "--gate-head", help="Gate binding HEAD SHA"),
+    evidence_hash: Optional[str] = typer.Option(None, "--evidence-hash", help="Gate evidence hash"),
+    allow_local_base: bool = typer.Option(False, "--allow-local-base", help="Allow explicit local base override"),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
 ):
     """Approve the current gate from a trusted host context."""
-    from workflow_control import GateApprovalTokenMatcher, HostApprovalService
+    from workflow_control import (
+        GateApprovalTokenMatcher,
+        HostApprovalService,
+        RequirementsDraft,
+        WorktreeCoordinator,
+        WorktreeCoordinatorConfig,
+        build_gate_binding,
+    )
 
     if os.environ.get("ASTERWYND_WORKFLOW_TRUSTED_HOST") != "1":
         typer.echo("Error: workflow gate approve requires trusted host context", err=True)
@@ -434,11 +454,35 @@ def workflow_gate_approve(
         typer.echo("Error: workflow gate approve is not available from agent context", err=True)
         raise SystemExit(1)
 
-    orchestrator = _workflow_orchestrator(db)
+    worktree_coordinator = None
+    if repo is not None and worktrees_root is not None:
+        worktree_coordinator = WorktreeCoordinator(
+            WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=worktrees_root),
+        )
+    orchestrator = _workflow_orchestrator(db, worktree_coordinator=worktree_coordinator)
     _run_workflow_lazy_aging_scan(orchestrator, workflow)
     status = orchestrator.status(workflow)
+    gate_binding = None
+    if gate_branch is not None or gate_head is not None or evidence_hash is not None:
+        if gate_branch is None or gate_head is None or evidence_hash is None:
+            typer.echo("Error: gate binding requires --gate-branch, --gate-head and --evidence-hash", err=True)
+            raise SystemExit(1)
+        gate_binding = build_gate_binding(
+            policy="required_before_human_gate",
+            phase=status.snapshot.state.phase,
+            state_version=status.snapshot.version,
+            branch=gate_branch,
+            head_sha=gate_head,
+            evidence_hash=evidence_hash,
+            clean_worktree=True,
+        )
+    approval_gate = (
+        orchestrator.current_gate_for_binding(workflow, gate_binding)
+        if gate_binding is not None
+        else orchestrator.current_gate(workflow)
+    )
     host_result = HostApprovalService(GateApprovalTokenMatcher()).try_approve(
-        gate=orchestrator.current_gate(workflow),
+        gate=approval_gate,
         raw_message=message,
         user_id=user,
         client_id="asterwynd-cli-host",
@@ -450,6 +494,12 @@ def workflow_gate_approve(
         workflow_id=workflow,
         approval=host_result.approval,
         expected_version=status.snapshot.version,
+        gate_binding=gate_binding,
+        worktree_path=worktree,
+        requirements_draft=RequirementsDraft.empty().freeze() if change_id is not None else None,
+        change_id=change_id,
+        date=date,
+        allow_local_base=allow_local_base,
     )
     result = orchestrator.enter(workflow, _workflow_actor("agent"))
     _echo_json_or_text(_workflow_enter_payload(result), json_output)

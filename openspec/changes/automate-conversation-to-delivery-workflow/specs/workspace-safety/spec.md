@@ -37,4 +37,3 @@
 - **WHEN** workflow 为该 executor 分配任务
 - **THEN** 系统 SHALL 将 enforcement level 标记为 audit-only 或拒绝执行
 - **AND** SHALL NOT 宣称该环境具备强制可信 Gate
-

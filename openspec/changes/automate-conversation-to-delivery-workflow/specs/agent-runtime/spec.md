@@ -31,4 +31,3 @@
 - **WHEN** Agent runtime 完成当前 WorkItem
 - **THEN** adapter SHALL 提交 WorkResult、artifact refs 和安全的 evidence summary
 - **AND** runtime SHALL 等待控制面返回 accepted、rejected、blocked 或 gate_reached
-

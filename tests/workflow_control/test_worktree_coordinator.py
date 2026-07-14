@@ -43,6 +43,7 @@ def test_worktree_promotion_materialization_commit_binding_and_cleanup(tmp_path:
 
     coordinator.cleanup_worktree(binding.worktree_path)
     assert not binding.worktree_path.exists()
+    assert coordinator.binding_for_branch(binding.branch) is None
 
 
 def test_dirty_worktree_blocks_gate_binding(tmp_path: Path) -> None:

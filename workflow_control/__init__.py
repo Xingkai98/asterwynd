@@ -296,6 +296,7 @@ class WorkflowEvent:
     raw_user_message: str | None = None
     approval: Approval | None = None
     occurred_at: datetime | None = None
+    workspace_binding: WorkspaceBinding | None = None
 
 
 @dataclass(frozen=True)
@@ -739,6 +740,13 @@ class WorktreeCoordinator:
                 args.append("--force")
             args.append(str(worktree_path))
             _git(self.config.canonical_repo, *args)
+        resolved_path = worktree_path.resolve()
+        for branch, binding in list(self._bindings.items()):
+            if binding.worktree_path == resolved_path:
+                del self._bindings[branch]
+
+    def binding_for_branch(self, branch: str) -> WorkspaceBinding | None:
+        return self._bindings.get(branch)
 
     def current_branch(self, worktree_path: Path) -> str:
         return _git(worktree_path, "branch", "--show-current")
@@ -923,6 +931,7 @@ class ReportResult:
 class WorkflowOrchestratorConfig:
     store: SQLiteEventStore
     template: PhaseTemplate
+    worktree_coordinator: WorktreeCoordinator | None = None
 
 
 class WorkflowOrchestrator:
@@ -999,7 +1008,7 @@ class WorkflowOrchestrator:
         self._active_workflows.add(workflow_id)
 
         snapshot = self._snapshot(workflow_id)
-        if snapshot.state.phase in {"blocked", "abandoned"}:
+        if snapshot.state.phase in {"blocked", "abandoned", "done"}:
             return EnterResult(
                 snapshot=snapshot,
                 waiting_for_human=False,
@@ -1195,6 +1204,11 @@ class WorkflowOrchestrator:
         approval: Approval | None = None,
         gate_binding: GateBinding | None = None,
         worktree_path: Path | None = None,
+        requirements_draft: RequirementsDraft | None = None,
+        change_id: str | None = None,
+        date: str | None = None,
+        base_branch: str = "master",
+        allow_local_base: bool = False,
     ) -> ReportResult:
         if self.config.store.current_version(workflow_id) != expected_version:
             raise WorkflowStoreConflict(
@@ -1221,6 +1235,14 @@ class WorkflowOrchestrator:
                 user_message_hash=_hash_text(raw_user_message),
             )
         HostApprovalService.validate_approval_for_gate(approval, gate)
+        workspace_binding = self._promote_requirements_gate(
+            snapshot=snapshot,
+            requirements_draft=requirements_draft,
+            change_id=change_id,
+            date=date,
+            base_branch=base_branch,
+            allow_local_base=allow_local_base,
+        )
         self.config.store.append(
             workflow_id,
             record_gate_approved(
@@ -1228,10 +1250,34 @@ class WorkflowOrchestrator:
                 approval.actor,
                 raw_user_message=raw_user_message,
                 approval=approval,
+                workspace_binding=workspace_binding,
             ),
             expected_version=expected_version,
         )
         return ReportResult(snapshot=self._snapshot(workflow_id))
+
+    def _promote_requirements_gate(
+        self,
+        snapshot: WorkflowSnapshot,
+        requirements_draft: RequirementsDraft | None,
+        change_id: str | None,
+        date: str | None,
+        base_branch: str,
+        allow_local_base: bool,
+    ) -> WorkspaceBinding | None:
+        if snapshot.state.phase != "requirements":
+            return None
+        if self.config.worktree_coordinator is None:
+            return None
+        if requirements_draft is None or change_id is None or date is None:
+            raise WorkflowValidationError("requirements gate approval requires promotion inputs")
+        return self.config.worktree_coordinator.promote_requirements(
+            change_id=change_id,
+            approved_requirements=requirements_draft.freeze(),
+            date=date,
+            base_branch=base_branch,
+            allow_local_base=allow_local_base,
+        )
 
     def _snapshot(self, workflow_id: str) -> WorkflowSnapshot:
         events = self.config.store.list_events(workflow_id)
@@ -1406,6 +1452,7 @@ def default_coding_agent_template() -> PhaseTemplate:
                 ),
             ),
             ("closing", ("archiving", "ready_for_review"), PhaseCommitPolicy.REQUIRED_BEFORE_HUMAN_GATE.value),
+            ("done", ("done",), PhaseCommitPolicy.NONE.value),
         ),
         initial_state=StateSnapshot(phase="exploring", sub_state="chatting"),
         runner_profiles=(codex_reviewer,),
@@ -1442,6 +1489,7 @@ def record_gate_approved(
     actor: Actor,
     raw_user_message: str | None = None,
     approval: Approval | None = None,
+    workspace_binding: WorkspaceBinding | None = None,
 ) -> WorkflowEvent:
     return WorkflowEvent(
         event_id="gate-approved",
@@ -1450,6 +1498,7 @@ def record_gate_approved(
         actor=actor,
         raw_user_message=raw_user_message,
         approval=approval,
+        workspace_binding=workspace_binding,
     )
 
 
@@ -1521,17 +1570,13 @@ def reduce_events(
                 raise WorkflowValidationError("self review is not allowed")
             if current_state is None:
                 raise WorkflowValidationError("workflow must start before review result")
-            if current_state.sub_state not in {"reviewing_code", "ready_for_review"}:
+            if current_state.phase != "code-review" or current_state.sub_state != "reviewing_code":
                 raise WorkflowValidationError("review result requires review state")
             if event.review_result == ReviewResult.CHANGES_REQUESTED:
-                if current_state.phase == "code-review":
-                    current_state = StateSnapshot(phase="building", sub_state=template.phase("building").first_sub_state)
-                else:
-                    phase = template.phase(current_state.phase)
-                    current_state = StateSnapshot(
-                        phase=current_state.phase,
-                        sub_state=phase.first_sub_state,
-                    )
+                current_state = StateSnapshot(
+                    phase="building",
+                    sub_state=template.phase("building").first_sub_state,
+                )
         elif event.event_type == EventType.WORKFLOW_ABANDONED:
             if current_state is None:
                 raise WorkflowValidationError("workflow must start before abandonment")
@@ -1647,6 +1692,7 @@ def _event_to_payload(event: WorkflowEvent) -> dict[str, Any]:
         "raw_user_message": event.raw_user_message,
         "approval": _approval_to_payload(event.approval),
         "occurred_at": event.occurred_at.isoformat() if event.occurred_at is not None else None,
+        "workspace_binding": _workspace_binding_to_payload(event.workspace_binding),
     }
 
 
@@ -1674,6 +1720,7 @@ def _event_from_payload(payload: dict[str, Any]) -> WorkflowEvent:
             if payload.get("occurred_at") is not None
             else None
         ),
+        workspace_binding=_workspace_binding_from_payload(payload.get("workspace_binding")),
     )
 
 
@@ -1748,6 +1795,28 @@ def _approval_from_payload(payload: dict[str, Any] | None) -> Approval | None:
         user_message_hash=payload["user_message_hash"],
         gate_summary_hash=payload["gate_summary_hash"],
         head_sha=payload.get("head_sha"),
+    )
+
+
+def _workspace_binding_to_payload(binding: WorkspaceBinding | None) -> dict[str, Any] | None:
+    if binding is None:
+        return None
+    return {
+        "workflow_id": binding.workflow_id,
+        "branch": binding.branch,
+        "worktree_path": str(binding.worktree_path),
+        "head_sha": binding.head_sha,
+    }
+
+
+def _workspace_binding_from_payload(payload: dict[str, Any] | None) -> WorkspaceBinding | None:
+    if payload is None:
+        return None
+    return WorkspaceBinding(
+        workflow_id=payload["workflow_id"],
+        branch=payload["branch"],
+        worktree_path=Path(payload["worktree_path"]),
+        head_sha=payload["head_sha"],
     )
 
 
