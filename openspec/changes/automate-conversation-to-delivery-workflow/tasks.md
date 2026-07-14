@@ -1,10 +1,10 @@
 ## 1. 实现前设计确认
 
-- [ ] 1.1 使用 `grill-with-docs` 逐项确认事件 schema、phase template、capability transport、requirements artifact 和签名 Workflow Receipt
-- [ ] 1.2 将设计追问结论回写 `design.md`，清理或明确阻塞所有 Open Questions
-- [ ] 1.3 如最终方案偏离 ADR-0001，新增或更新 ADR 并记录重访条件
-- [ ] 1.4 复核 Reference Implementation Research；如参考实现结论变化，先更新 proposal/design
-- [ ] 1.5 创建并验证 change 专属分支与 worktree，后续设计修订和实现只在该 worktree 进行
+- [x] 1.1 使用 `grill-with-docs` 逐项确认事件 schema、phase template、capability transport、requirements artifact 和签名 Workflow Receipt
+- [x] 1.2 将设计追问结论回写 `design.md`，清理或明确阻塞所有 Open Questions
+- [x] 1.3 如最终方案偏离 ADR-0001，新增或更新 ADR 并记录重访条件
+- [x] 1.4 复核 Reference Implementation Research；如参考实现结论变化，先更新 proposal/design
+- [x] 1.5 创建并验证 change 专属分支；planning 文档在该分支完成，building 前再按 workflow worktree 规则创建或切换专属 worktree
 
 ## 2. 独立领域模型
 

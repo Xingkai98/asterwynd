@@ -3,7 +3,7 @@
   "change_id": "automate-conversation-to-delivery-workflow",
   "state": {
     "phase": "planning",
-    "sub_state": "grilling_design"
+    "sub_state": "ready_for_review"
   },
   "transitions": [
     {
@@ -47,10 +47,27 @@
       "actor_type": "agent",
       "actor_id": "codex",
       "timestamp": "2026-07-14T03:36:33.289499+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "grilling_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-14T09:29:22.586752+00:00"
     }
   ],
   "current_agent": null,
-  "last_gate": null,
+  "last_gate": {
+    "phase": "planning",
+    "sub_state": "ready_for_review"
+  },
   "blockers": [],
   "routing": {
     "planning": {
