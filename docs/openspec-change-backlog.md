@@ -67,7 +67,7 @@
 
 ### 1. `automate-conversation-to-delivery-workflow`
 
-状态：building.all_tests_passing。
+状态：building.实现收尾中，CLI/adapter/workspace/receipt 主路径已实现并进入自审。
 
 批次：第九批，独立控制平面基础设施。
 
@@ -80,6 +80,7 @@
 主要交付：
 
 - 独立 `workflow_control` bounded context 与本地 CLI。
+- CLI Host Wrapper、Prompt Adapter、Asterwynd adapter、workspace binding、旧 handoff 只读兼容入口和最小签名 workflow receipt。
 - SQLite append-only event store、snapshot、lease 和状态恢复。
 - Requirements gate 后自动创建并绑定 worktree。
 - `enter/report/approve` 分权协议与可信人工 gate。

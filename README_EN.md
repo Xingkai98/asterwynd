@@ -24,6 +24,7 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **ToolRegistry** | Dynamic tool registration with the `@tool_parameters` decorator. Includes file, command, code intelligence, and web research tools. |
 | **Code Intelligence** | Tree-sitter multi-language symbol extraction, Repo Map, Python AST symbol extraction, and LSP semantic tools such as definition, references, hover, and diagnostics. |
 | **WorkspacePolicy** | Workspace safety boundary that rejects path traversal, sensitive file writes, and dangerous commands. |
+| **Workflow Control Plane** | Independent event-driven development workflow control plane covering WorkItems, human gates, worktree binding, Prompt Adapter, and signed receipts. |
 | **SandboxExecutor** | Subprocess sandbox with structured output: exit_code, stdout, stderr, duration, and timed_out. |
 | **HookManager** | 6 lifecycle extension points with built-in logging, retry, tracing, and token budget hooks. |
 | **MemoryManager** | 90%-threshold AutoCompact with pluggable Summarizer (LLM four-section summary / truncation fallback). |
@@ -173,6 +174,8 @@ agent/
 │   └── ...                  # Handoff state machine & lifecycle tracking
 └── tui/
     └── ...                  # Terminal UI runtime view
+
+workflow_control/            # Workflow Control Plane domain model, CLI adapters, and signed receipt audit
 
 benchmarks/                  # Local benchmark runner
 ├── tasks/                   # 34 coding tasks (asterwynd-* + swebench-*)

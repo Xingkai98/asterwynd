@@ -187,6 +187,8 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ## 开发注意事项
 
+- 受 Workflow Control Plane 管理的开发流程使用 `asterwynd workflow ...` CLI。强入口为 `workflow chat --executor ...`，必须在受管路径和专属 worktree 中执行；Prompt Adapter 降级入口只调用 `workflow enter/status/report`，不能批准 gate。
+- closing/PR 前需要生成并验证 `workflow-receipt.json`：`asterwynd workflow receipt generate --workflow <id> --change-dir <path>` 和 `asterwynd workflow receipt verify --receipt <path>`。私钥位于用户数据目录或显式 `--key-dir`，只提交 `.workflow/trusted-signers/` 下的 public signer metadata。
 - CLI 交互模式通过 slash command registry 处理 `/help`、`/status`、`/mode`、`/clear`、`/compact`、`/skills`、`/skills reload`、`/exit` 和 `/quit`；裸 `exit`、`quit`、`q` 仍可退出。
 - Web Chat 输入框在输入 `/` 时会显示 slash command 提示，并按当前前缀实时过滤；发送独立 slash command 时由 WebSocket 按命令类型执行。本地控制命令不作为普通聊天消息进入 AgentLoop/LLM；用户可调用 skill 命令会先激活 skill，再用命令参数启动 Agent run。
 - MCP server 通过顶层 `mcp.servers` 配置，支持 `stdio` 和 `streamable_http`。MCP tools 注册为 `mcp__<server>__<tool>`；`/mcp-prompt` 和 `/mcp-resource` 读取结果以 system context 注入当前会话，并按 mode policy 判权。

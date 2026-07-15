@@ -156,6 +156,8 @@ uv run python run_infer.py \
 
 ## 必须守住的协议
 
+- Workflow Control Plane 相关变更至少覆盖 `tests/workflow_control`、`tests/agent/workflow` 和相关 CLI tests；涉及 workspace binding 或 executor adapter 时必须包含安全负例（错误 worktree、gate/blocked、stale version、agent context 无 approval capability）。
+- 涉及 `workflow-receipt.json` 时必须覆盖签名验证、tamper、trusted signer 状态、artifact hash mismatch、绝对路径泄漏和敏感字段泄漏；artifact checker 应同时验证 active 与 archived change 中已存在的 receipt。
 - assistant message 如果包含 `tool_calls`，必须保留匹配的 tool result。
 - `max_iterations` 不能把最后一个 tool result 包装成 assistant 最终回复。
 - 最终 assistant 回复需要进入消息历史，避免多轮对话复读。

@@ -84,12 +84,12 @@
 
 ## 8. Workspace Policy 与兼容迁移
 
-- [ ] 8.1 为 requirements 代码写入、错误 worktree、gate、blocked 和 stale version 编写安全回归测试
+- [x] 8.1 为 requirements 代码写入、错误 worktree、gate、blocked 和 stale version 编写安全回归测试
 - [x] 8.1a 验证 unmanaged main/普通 worktree 允许操作、active workflow worktree 要求 binding，以及不支持硬隔离时的 audit-only 降级
 - [x] 8.2 将 workflow workspace binding 接入 WorkspacePolicy 和命令执行入口
 - [x] 8.3 实现旧 `handoff.json` 的只读导入与兼容导出
 - [x] 8.4 将 `scripts/workflow_state.py` 降级为调用正式领域服务或只读兼容入口
-- [ ] 8.5 选择一个试点 change 进行影子记录，对比旧状态与新事件派生结果
+- [x] 8.5 选择一个试点 change 进行影子记录，对比旧状态与新事件派生结果
 
 ## 9. Workflow Receipt 与 CI
 
@@ -102,10 +102,11 @@
 
 ## 10. Spec、文档与验证收尾
 
-- [ ] 10.1 将本 change 的五个 spec delta 同步到当前规格 `openspec/specs/<capability>/spec.md`
-- [ ] 10.2 更新架构、需求流程、开发指南、测试指南和 backlog 中受影响的事实
-- [ ] 10.3 评估是否已满足精简 `AGENTS.md` 的迁移条件；未满足则保留现状并记录后续任务
-- [ ] 10.4 如 README 入口或开发流程事实变化，同步更新 `README.md` 和 `README_EN.md`
+- [x] 10.1 将本 change 的五个 spec delta 同步到当前规格 `openspec/specs/<capability>/spec.md`
+- [x] 10.2 更新架构、需求流程、开发指南、测试指南和 backlog 中受影响的事实
+- [x] 10.3 评估是否已满足精简 `AGENTS.md` 的迁移条件；未满足则保留现状并记录后续任务
+  - 结论：当前仓库 `AGENTS.md` 仍保留完整迁移期规则；精简为短接入说明需等本 change 归档合入后单独执行。
+- [x] 10.4 如 README 入口或开发流程事实变化，同步更新 `README.md` 和 `README_EN.md`
 - [x] 10.5 运行 workflow control 单元、集成、安全和 adapter contract tests
   - 验证记录（2026-07-15）：`uv run pytest tests/workflow_control tests/agent/workflow tests/test_cli.py -q`，结果 `304 passed`。
 - [ ] 10.6 运行全量 `uv run pytest -q`
