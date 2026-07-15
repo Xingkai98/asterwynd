@@ -560,6 +560,21 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
     return errors
 
 
+def check_workflow_receipt(change_dir: Path, trusted_signers_root: Path | None = None) -> list[str]:
+    receipt = change_dir / "workflow-receipt.json"
+    if not receipt.exists():
+        return []
+    signer_root = trusted_signers_root or change_dir.parents[2] / ".workflow" / "trusted-signers"
+    try:
+        from workflow_control.receipt import verify_workflow_receipt
+    except ImportError as exc:
+        return [f"{change_dir.name}: unable to import receipt verifier: {exc}"]
+    return [
+        f"{change_dir.name}: workflow-receipt.json: {error}"
+        for error in verify_workflow_receipt(receipt, signer_root)
+    ]
+
+
 def iter_change_dirs(changes_root: Path, only_change: str | None) -> list[Path]:
     if only_change:
         return [changes_root / only_change]
@@ -568,6 +583,13 @@ def iter_change_dirs(changes_root: Path, only_change: str | None) -> list[Path]:
         for path in changes_root.iterdir()
         if path.is_dir() and path.name != "archive" and not path.name.startswith(".")
     )
+
+
+def iter_archived_change_dirs(changes_root: Path) -> list[Path]:
+    archive_root = changes_root / "archive"
+    if not archive_root.exists():
+        return []
+    return sorted(path for path in archive_root.iterdir() if path.is_dir())
 
 
 def _archived_change_names(changes_root: Path) -> set[str]:
@@ -635,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--current-specs-root", default="openspec/specs")
     parser.add_argument("--change", help="Check a single active change")
     parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
+    parser.add_argument("--trusted-signers-root", default=".workflow/trusted-signers")
     parser.add_argument(
         "--skip-backlog",
         action="store_true",
@@ -653,6 +676,11 @@ def main(argv: list[str] | None = None) -> int:
             errors.append(f"{change_dir.name}: change directory does not exist")
             continue
         errors.extend(check_change(change_dir, Path(args.current_specs_root)))
+        errors.extend(check_workflow_receipt(change_dir, Path(args.trusted_signers_root)))
+
+    if not args.change:
+        for archived_change_dir in iter_archived_change_dirs(changes_root):
+            errors.extend(check_workflow_receipt(archived_change_dir, Path(args.trusted_signers_root)))
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))

@@ -3,7 +3,13 @@ from pathlib import Path
 from scripts.check_openspec_artifacts import (
     check_backlog_consistency,
     check_change,
+    check_workflow_receipt,
     parse_change_type,
+)
+from workflow_control.receipt import (
+    build_receipt_payload,
+    ensure_workflow_signer,
+    write_workflow_receipt,
 )
 
 
@@ -95,6 +101,32 @@ def write_spec_delta(root: Path, capability: str = "web-ui"):
     spec = root / "specs" / capability / "spec.md"
     spec.parent.mkdir(parents=True)
     spec.write_text("## ADDED Requirements\n\n### Requirement: Example\n\nExample.\n", encoding="utf-8")
+
+
+def write_minimal_receipt(change: Path, trusted_root: Path, key_root: Path):
+    signer = ensure_workflow_signer(key_root, trusted_root)
+    payload = build_receipt_payload(
+        change_dir=change,
+        workflow_id=change.name,
+        template_id="template-1",
+        final_state={"phase": "done", "sub_state": "done"},
+        final_version=1,
+        events=[{"event_type": "workflow_started"}],
+        gates=[
+            {
+                "phase": "building",
+                "state_version": 1,
+                "decision": "approved",
+                "branch": f"{change.name}/2026-07-15",
+                "head_sha": "abc123",
+                "evidence_hash": "sha256:evidence",
+                "gate_summary_hash": "sha256:gate",
+            },
+        ],
+        base_branch="master",
+        base_commit="base123",
+    )
+    return write_workflow_receipt(change, payload, signer)
 
 
 def proposal_for(
@@ -580,3 +612,27 @@ def test_backlog_accepts_active_change_reference(tmp_path):
     )
 
     assert check_backlog_consistency(changes, backlog) == []
+
+
+def test_checker_accepts_valid_workflow_receipt(tmp_path):
+    change = tmp_path / "change-1"
+    write_change(change, proposal_for("feature"), design=VALID_DESIGN)
+    write_tasks(change, "- [x] done\n")
+    trusted = tmp_path / ".workflow" / "trusted-signers"
+    write_minimal_receipt(change, trusted, tmp_path / "keys")
+
+    assert check_workflow_receipt(change, trusted) == []
+
+
+def test_checker_rejects_tampered_workflow_receipt(tmp_path):
+    change = tmp_path / "change-1"
+    write_change(change, proposal_for("feature"), design=VALID_DESIGN)
+    write_tasks(change, "- [x] done\n")
+    trusted = tmp_path / ".workflow" / "trusted-signers"
+    receipt = write_minimal_receipt(change, trusted, tmp_path / "keys")
+    data = receipt.read_text(encoding="utf-8").replace('"final_version": 1', '"final_version": 2')
+    receipt.write_text(data, encoding="utf-8")
+
+    errors = check_workflow_receipt(change, trusted)
+
+    assert any("signature invalid" in error for error in errors)

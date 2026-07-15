@@ -171,6 +171,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "cryptography" },
     { name = "datasets" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -206,6 +207,7 @@ lsp = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "cryptography", specifier = ">=49.0.0" },
     { name = "datasets", specifier = ">=5.0.0" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", specifier = ">=0.27.0" },

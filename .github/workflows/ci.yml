@@ -40,5 +40,5 @@ jobs:
       - name: Validate OpenSpec
         run: npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
 
-      - name: Check OpenSpec artifacts
+      - name: Check OpenSpec artifacts and workflow receipts
         run: uv run python scripts/check_openspec_artifacts.py

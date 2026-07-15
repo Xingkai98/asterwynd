@@ -550,6 +550,81 @@ def test_workflow_attach_and_prompt_adapter_show_contract(tmp_path) -> None:
     assert adapter_payload["status_command"] == "asterwynd workflow status --workflow <id>"
 
 
+def test_workflow_receipt_generate_and_verify(tmp_path) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    change_dir = tmp_path / "openspec" / "changes" / "change-1"
+    change_dir.mkdir(parents=True)
+    (change_dir / "proposal.md").write_text("# Proposal\n", encoding="utf-8")
+    (change_dir / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
+    key_dir = tmp_path / "keys"
+    trusted = tmp_path / ".workflow" / "trusted-signers"
+    runner = CliRunner()
+
+    entered = runner.invoke(
+        cli.app,
+        ["workflow", "enter", "--workflow", "change-1", "--db", str(db_path), "--json"],
+    )
+    entered_payload = json.loads(entered.stdout)
+    runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "report",
+            "--workflow",
+            "change-1",
+            "--db",
+            str(db_path),
+            "--work-item-id",
+            entered_payload["work_item"]["work_item_id"],
+            "--expected-version",
+            str(entered_payload["version"]),
+            "--summary",
+            "done",
+            "--json",
+        ],
+    )
+
+    generated = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "receipt",
+            "generate",
+            "--workflow",
+            "change-1",
+            "--db",
+            str(db_path),
+            "--change-dir",
+            str(change_dir),
+            "--key-dir",
+            str(key_dir),
+            "--trusted-signers-dir",
+            str(trusted),
+            "--base-commit",
+            "base123",
+            "--json",
+        ],
+    )
+
+    assert generated.exit_code == 0, generated.stderr
+    receipt_path = json.loads(generated.stdout)["receipt_path"]
+    verified = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "receipt",
+            "verify",
+            "--receipt",
+            receipt_path,
+            "--trusted-signers-dir",
+            str(trusted),
+            "--json",
+        ],
+    )
+    assert verified.exit_code == 0, verified.stderr
+    assert json.loads(verified.stdout)["ok"] is True
+
+
 def _init_repo(path: Path) -> Path:
     path.mkdir()
     _git(path, "init")

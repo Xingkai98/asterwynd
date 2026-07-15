@@ -93,12 +93,12 @@
 
 ## 9. Workflow Receipt 与 CI
 
-- [ ] 9.1 为 Host 完整 history validation、Receipt 去敏、签名、artifact/evidence hash、human gate binding tuple 和 archive 审计编写失败测试
-- [ ] 9.1a 为专用 Ed25519 key 初始化、文件权限、canonical JSON、多个 signer、active/retired/compromised 状态、轮换和 agent 不可见性编写测试
-- [ ] 9.2 实现最小 workflow-receipt.json 生成、event-chain root、key id 和签名
-- [ ] 9.3 扩展 artifact checker，验证 active 与 archived workflow Receipt
-- [ ] 9.4 更新 CI，验证 Receipt 签名、必需 Gate、gate binding tuple、artifact/evidence hash、base commit 和 archive 引用
-- [ ] 9.5 增加 tampered Receipt、无效 key、绝对路径泄漏、完整事件泄漏和 secret 泄漏回归测试
+- [x] 9.1 为 Host 完整 history validation、Receipt 去敏、签名、artifact/evidence hash、human gate binding tuple 和 archive 审计编写失败测试
+- [x] 9.1a 为专用 Ed25519 key 初始化、文件权限、canonical JSON、多个 signer、active/retired/compromised 状态、轮换和 agent 不可见性编写测试
+- [x] 9.2 实现最小 workflow-receipt.json 生成、event-chain root、key id 和签名
+- [x] 9.3 扩展 artifact checker，验证 active 与 archived workflow Receipt
+- [x] 9.4 更新 CI，验证 Receipt 签名、必需 Gate、gate binding tuple、artifact/evidence hash、base commit 和 archive 引用
+- [x] 9.5 增加 tampered Receipt、无效 key、绝对路径泄漏、完整事件泄漏和 secret 泄漏回归测试
 
 ## 10. Spec、文档与验证收尾
 

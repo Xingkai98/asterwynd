@@ -78,9 +78,11 @@ workflow_app = typer.Typer(help="Workflow control")
 workflow_manage_app = typer.Typer(help="Managed roots")
 workflow_gate_app = typer.Typer(help="Human gate")
 workflow_prompt_app = typer.Typer(help="Prompt adapter")
+workflow_receipt_app = typer.Typer(help="Workflow receipt")
 workflow_app.add_typer(workflow_manage_app, name="manage")
 workflow_app.add_typer(workflow_gate_app, name="gate")
 workflow_app.add_typer(workflow_prompt_app, name="prompt-adapter")
+workflow_app.add_typer(workflow_receipt_app, name="receipt")
 app.add_typer(workflow_app, name="workflow")
 
 
@@ -171,6 +173,63 @@ def _workflow_run_payload(result) -> dict:
     payload["enforcement_level"] = result.enforcement_level.value
     payload["summary"] = result.summary
     return payload
+
+
+def _workflow_receipt_event_payload(event) -> dict:
+    payload = {
+        "version": event.version,
+        "event_type": event.event_type.value,
+        "actor_kind": event.actor.kind.value,
+        "actor_id": event.actor.actor_id,
+    }
+    if event.from_state is not None:
+        payload["from_state"] = {
+            "phase": event.from_state.phase,
+            "sub_state": event.from_state.sub_state,
+        }
+    if event.to_state is not None:
+        payload["to_state"] = {
+            "phase": event.to_state.phase,
+            "sub_state": event.to_state.sub_state,
+        }
+    if event.workspace_binding is not None:
+        payload["workspace_binding"] = {
+            "branch": event.workspace_binding.branch,
+            "head_sha": event.workspace_binding.head_sha,
+            "base_branch": event.workspace_binding.base_branch,
+            "base_commit": event.workspace_binding.base_commit,
+        }
+    if event.work_result is not None:
+        payload["work_result"] = {
+            "output_refs": list(event.work_result.output_refs),
+            "evidence_refs": list(event.work_result.evidence_refs),
+            "enforcement_level": (
+                event.work_result.enforcement_level.value
+                if event.work_result.enforcement_level is not None
+                else None
+            ),
+        }
+    return payload
+
+
+def _workflow_receipt_gate_payloads(events) -> list[dict]:
+    gates = []
+    for event in events:
+        if event.approval is None:
+            continue
+        binding = event.workspace_binding
+        gates.append(
+            {
+                "phase": event.approval.phase,
+                "state_version": event.approval.state_version,
+                "decision": event.approval.decision.value,
+                "branch": binding.branch if binding is not None else "",
+                "head_sha": binding.head_sha if binding is not None else "",
+                "evidence_hash": binding.evidence_hash if binding is not None else "",
+                "gate_summary_hash": event.approval.gate_summary_hash or "",
+            },
+        )
+    return gates
 
 
 def _workflow_worktree_path(worktrees_root: Path | None, change_id: str | None) -> Path | None:
@@ -915,6 +974,77 @@ def workflow_prompt_adapter_show(
             "and workflow report after each run; "
             "approval capability remains unavailable."
         )
+
+
+@workflow_receipt_app.command("generate")
+def workflow_receipt_generate(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    change_dir: Path = typer.Option(..., "--change-dir", help="OpenSpec change directory"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    key_dir: Optional[Path] = typer.Option(None, "--key-dir", help="Private workflow signer key directory"),
+    trusted_signers_dir: Path = typer.Option(Path(".workflow/trusted-signers"), "--trusted-signers-dir", help="Trusted signer public key directory"),
+    key_id: str = typer.Option("local-workflow", "--key-id", help="Workflow signer key id"),
+    base_branch: str = typer.Option("master", "--base-branch", help="Base branch"),
+    base_commit: str = typer.Option("", "--base-commit", help="Base commit"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Generate a signed minimal workflow receipt."""
+    from workflow_control.receipt import (
+        build_receipt_payload,
+        ensure_workflow_signer,
+        write_workflow_receipt,
+    )
+
+    orchestrator = _workflow_orchestrator(db)
+    status = orchestrator.status(workflow)
+    events = orchestrator.config.store.list_events(workflow)
+    signer = ensure_workflow_signer(
+        key_dir or (platformdirs.user_data_path("asterwynd") / "workflow-keys"),
+        trusted_signers_dir,
+        key_id=key_id,
+    )
+    payload = build_receipt_payload(
+        change_dir=change_dir,
+        workflow_id=workflow,
+        template_id=orchestrator.config.template.template_id,
+        final_state={
+            "phase": status.snapshot.state.phase,
+            "sub_state": status.snapshot.state.sub_state,
+        },
+        final_version=status.snapshot.version,
+        events=[_workflow_receipt_event_payload(event) for event in events],
+        gates=_workflow_receipt_gate_payloads(events),
+        base_branch=base_branch,
+        base_commit=base_commit,
+    )
+    receipt_path = write_workflow_receipt(change_dir, payload, signer)
+    payload = {"receipt_path": str(receipt_path), "key_id": signer.key_id}
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"Generated workflow receipt: {receipt_path}")
+
+
+@workflow_receipt_app.command("verify")
+def workflow_receipt_verify(
+    receipt: Path = typer.Option(..., "--receipt", help="workflow-receipt.json path"),
+    trusted_signers_dir: Path = typer.Option(Path(".workflow/trusted-signers"), "--trusted-signers-dir", help="Trusted signer public key directory"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Verify a signed workflow receipt."""
+    from workflow_control.receipt import verify_workflow_receipt
+
+    errors = verify_workflow_receipt(receipt, trusted_signers_dir)
+    payload = {"ok": not errors, "errors": errors}
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif errors:
+        for error in errors:
+            typer.echo(f"ERROR: {error}", err=True)
+    else:
+        typer.echo("Workflow receipt verified")
+    if errors:
+        raise SystemExit(1)
 
 
 @app.callback(invoke_without_command=True)
