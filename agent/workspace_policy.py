@@ -138,14 +138,33 @@ class WorkspacePolicy:
         workspace_root: str | Path | None = None,
         denied_patterns: tuple[str, ...] | list[str] | None = None,
         command_denylist: tuple[str, ...] | list[str] | None = None,
+        workflow_binding_required: bool = False,
+        workflow_binding_active: bool = False,
+        workflow_enforcement: str = "strict_host",
     ):
         self.workspace_root = Path(workspace_root or Path.cwd()).resolve()
         self.denied_patterns = tuple(denied_patterns or DEFAULT_DENIED_PATTERNS)
+        self.workflow_binding_required = workflow_binding_required
+        self.workflow_binding_active = workflow_binding_active
+        self.workflow_enforcement = workflow_enforcement
 
         denylist = list(DEFAULT_DENYLIST)
         if command_denylist:
             denylist.extend(command_denylist)
         self._denylist = tuple(denylist)
+
+    @property
+    def workflow_audit_only(self) -> bool:
+        return self.workflow_enforcement == "audit_only"
+
+    def _assert_workflow_binding(self) -> None:
+        if not self.workflow_binding_required:
+            return
+        if self.workflow_binding_active:
+            return
+        if self.workflow_audit_only:
+            return
+        raise PermissionError("Workflow workspace requires an active binding")
 
     def resolve(self, path: str | Path) -> Path:
         raw_path = Path(path)
@@ -188,6 +207,7 @@ class WorkspacePolicy:
         return resolved
 
     def assert_write_allowed(self, path: str | Path) -> Path:
+        self._assert_workflow_binding()
         resolved = self.assert_within_workspace(path)
         if self.is_denied(resolved):
             rel = resolved.relative_to(self.workspace_root).as_posix()
@@ -195,6 +215,7 @@ class WorkspacePolicy:
         return resolved
 
     def assert_command_allowed(self, command: str) -> None:
+        self._assert_workflow_binding()
         cmd_stripped = command.strip()
 
         for pattern in self._denylist:

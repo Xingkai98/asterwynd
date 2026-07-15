@@ -1104,6 +1104,14 @@ class ReviewDispatchPlan:
 
 
 @dataclass(frozen=True)
+class HandoffCompatSnapshot:
+    change_id: str
+    phase: str
+    sub_state: str
+    source: str = "handoff.json"
+
+
+@dataclass(frozen=True)
 class WorkflowOrchestratorConfig:
     store: SQLiteEventStore
     template: PhaseTemplate
@@ -1907,6 +1915,32 @@ def dispatch_review(
             executor_run_id=reviewer.name,
         )
     return plan
+
+
+def import_handoff_read_only(path: Path) -> HandoffCompatSnapshot:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    change_id = data.get("change_id") or path.parent.name
+    state = data.get("state") or {}
+    phase = data.get("phase") or state.get("phase")
+    sub_state = data.get("sub_state") or state.get("sub_state")
+    if not change_id or not phase or not sub_state:
+        raise WorkflowValidationError("handoff.json missing change_id/phase/sub_state")
+    return HandoffCompatSnapshot(
+        change_id=str(change_id),
+        phase=str(phase),
+        sub_state=str(sub_state),
+    )
+
+
+def export_handoff_compat(snapshot: WorkflowSnapshot) -> dict[str, Any]:
+    return {
+        "change_id": snapshot.workflow_id,
+        "phase": snapshot.state.phase,
+        "sub_state": snapshot.state.sub_state,
+        "version": snapshot.version,
+        "source_of_truth": "workflow_control_event_store",
+        "compatibility": "read_only_export",
+    }
 
 
 @dataclass(frozen=True)
@@ -2722,6 +2756,7 @@ __all__ = [
     "FakeWorkflowExecutor",
     "HostApprovalResult",
     "HostApprovalService",
+    "HandoffCompatSnapshot",
     "Lease",
     "ManagedWorkspaceConfig",
     "OutputStatus",
@@ -2761,6 +2796,8 @@ __all__ = [
     "build_review_dispatch_plan",
     "build_review_prompt",
     "dispatch_review",
+    "export_handoff_compat",
+    "import_handoff_read_only",
     "sanitized_executor_env",
     "WorkflowValidationError",
     "accept_outputs",

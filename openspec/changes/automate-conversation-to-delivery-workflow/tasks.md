@@ -76,7 +76,7 @@
 - [x] 7.3 实现 fake executor adapter，完成 requirements→design→gate tracer bullet
 - [x] 7.3a 验证单一 User Session 跨 phase 复用以及 fresh executor 结果回传同一 Session
 - [x] 7.3b 实现 runner profile 与 automated reviewer adapter，支持 subagent、fresh Codex CLI/Claude Code runner、command runner 的最小审查上下文；inline checker 通过 command runner 建模，并禁止 self reviewer
-- [ ] 7.4 实现 Asterwynd adapter，并确保 session snapshot 不覆盖 workflow 状态
+- [x] 7.4 实现 Asterwynd adapter，并确保 session snapshot 不覆盖 workflow 状态
 - [x] 7.5 实现 Prompt Adapter：可复用 workflow skill + 短版 `AGENTS.md` 模板，要求原生客户端每个 run 前调用 `enter`、结束调用 `report`
 - [x] 7.5a 验证 Happy Coder 等非侵入客户端走 Prompt Adapter 时可派发 automated review，但不拦截用户消息、不拥有 approval capability，并在 WorkResult evidence/Receipt 中记录 `prompt_adapter` 或 `audit_only` enforcement level
 - [x] 7.6 新增可复用项目流程模板和短版 `AGENTS.md` 接入模板，但暂不替换当前 `AGENTS.md`
@@ -85,10 +85,10 @@
 ## 8. Workspace Policy 与兼容迁移
 
 - [ ] 8.1 为 requirements 代码写入、错误 worktree、gate、blocked 和 stale version 编写安全回归测试
-- [ ] 8.1a 验证 unmanaged main/普通 worktree 允许操作、active workflow worktree 要求 binding，以及不支持硬隔离时的 audit-only 降级
-- [ ] 8.2 将 workflow workspace binding 接入 WorkspacePolicy 和命令执行入口
-- [ ] 8.3 实现旧 `handoff.json` 的只读导入与兼容导出
-- [ ] 8.4 将 `scripts/workflow_state.py` 降级为调用正式领域服务或只读兼容入口
+- [x] 8.1a 验证 unmanaged main/普通 worktree 允许操作、active workflow worktree 要求 binding，以及不支持硬隔离时的 audit-only 降级
+- [x] 8.2 将 workflow workspace binding 接入 WorkspacePolicy 和命令执行入口
+- [x] 8.3 实现旧 `handoff.json` 的只读导入与兼容导出
+- [x] 8.4 将 `scripts/workflow_state.py` 降级为调用正式领域服务或只读兼容入口
 - [ ] 8.5 选择一个试点 change 进行影子记录，对比旧状态与新事件派生结果
 
 ## 9. Workflow Receipt 与 CI
