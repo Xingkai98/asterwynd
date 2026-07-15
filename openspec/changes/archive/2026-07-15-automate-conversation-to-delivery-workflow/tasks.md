@@ -109,7 +109,11 @@
 - [x] 10.4 如 README 入口或开发流程事实变化，同步更新 `README.md` 和 `README_EN.md`
 - [x] 10.5 运行 workflow control 单元、集成、安全和 adapter contract tests
   - 验证记录（2026-07-15）：`uv run pytest tests/workflow_control tests/agent/workflow tests/test_cli.py -q`，结果 `304 passed`。
-- [ ] 10.6 运行全量 `uv run pytest -q`
-- [ ] 10.7 运行 benchmark fake-agent smoke，验证核心 coding-agent 路径无回归
-- [ ] 10.8 运行 OpenSpec strict validate、artifact checker 和 signed workflow Receipt audit
-- [ ] 10.9 完成 code review、归档 change、清理 backlog、准备 PR 并记录验证结果
+- [x] 10.6 运行全量 `uv run pytest -q`
+  - 验证记录（2026-07-15）：`uv run python -m pytest -q`，结果 `1224 passed, 8 skipped`。
+- [x] 10.7 运行 benchmark fake-agent smoke，验证核心 coding-agent 路径无回归
+  - 验证记录（2026-07-15）：单任务 fake-agent smoke `asterwynd-001-tool-registry`，结果 `1 passed, 0 failed`。
+- [x] 10.8 运行 OpenSpec strict validate、artifact checker 和 signed workflow Receipt audit
+  - 验证记录（2026-07-15）：`npx openspec validate --all --strict`、`uv run python scripts/check_openspec_artifacts.py` 和 receipt/checker 测试通过。
+- [x] 10.9 完成 code review、归档 change、清理 backlog、准备 PR 并记录验证结果
+  - 验证记录（2026-07-15）：归档到 `openspec/changes/archive/2026-07-15-automate-conversation-to-delivery-workflow/`，已从 backlog 移除；全量测试 `1224 passed, 8 skipped`；OpenSpec strict validate、artifact checker、`git diff --check` 和单任务 benchmark smoke 均通过；code review 记录见本次 PR 审阅。

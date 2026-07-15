@@ -59,34 +59,13 @@
 
 - `add-browser-use-safety-foundation`：已合入并归档。
 
-### 第九批：开发流程控制平面
+### 第九批：开发流程控制平面，已完成
 
-- `automate-conversation-to-delivery-workflow`：建立独立于 AgentLoop 的本地 workflow control plane，统一管理探索、需求、设计、开发、审查、worktree 和人工 gate。该 change 影响 workflow、workspace safety、session/executor integration 和 CI，建议先完成 tracer bullet，再逐步接管现有脚本。
+当前无未实现 change。
 
 ## 未实现队列
 
-### 1. `automate-conversation-to-delivery-workflow`
-
-状态：building.实现收尾中，CLI/adapter/workspace/receipt 主路径已实现并进入自审。
-
-批次：第九批，独立控制平面基础设施。
-
-建议顺序原因：
-
-- 当前开发流程仍依赖 `AGENTS.md` 提示、可变 handoff JSON 和 agent 自觉停止，无法为后续多 agent、TUI 和自动化开发提供可信状态基础。
-- 应先完成 event store、可信 gate、worktree promotion 和 executor contract 的 tracer bullet，再迁移现有 workflow 脚本。
-- 与 `add-minimal-tui-runtime-view` 可并行设计，但 TUI 若展示开发生命周期状态，应最终消费本 change 的统一协议。
-
-主要交付：
-
-- 独立 `workflow_control` bounded context 与本地 CLI。
-- CLI Host Wrapper、Prompt Adapter、Asterwynd adapter、workspace binding、旧 handoff 只读兼容入口和最小签名 workflow receipt。
-- SQLite append-only event store、snapshot、lease 和状态恢复。
-- Requirements gate 后自动创建并绑定 worktree。
-- `enter/report/approve` 分权协议与可信人工 gate。
-- Workflow bundle、CI 重放审计和可复用 AGENTS 接入模板。
-
-### 2. `add-minimal-tui-runtime-view`
+### 1. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 

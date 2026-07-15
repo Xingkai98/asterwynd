@@ -4,6 +4,16 @@ import json
 import os
 import stat
 
+from agent.main import _workflow_receipt_gate_payloads
+from workflow_control import (
+    Actor,
+    ActorKind,
+    Approval,
+    ApprovalDecision,
+    EventType,
+    WorkflowEvent,
+)
+from workflow_control import _approval_from_payload
 from workflow_control.receipt import (
     build_receipt_payload,
     ensure_workflow_signer,
@@ -121,3 +131,64 @@ def test_workflow_receipt_rejects_artifact_hash_mismatch(tmp_path) -> None:
     errors = verify_workflow_receipt(receipt_path, signer.public_key_path.parent)
 
     assert "receipt artifact hashes do not match change files" in errors
+
+
+def test_receipt_gate_payload_uses_approval_evidence_hash(tmp_path) -> None:
+    actor = Actor(kind=ActorKind.HUMAN, actor_id="human", approval_capability=True)
+    event = WorkflowEvent(
+        event_id="gate-approved",
+        workflow_id="workflow-1",
+        event_type=EventType.GATE_APPROVED,
+        actor=actor,
+        approval=Approval(
+            workflow_id="workflow-1",
+            gate_id="workflow-1:building:7",
+            phase="building",
+            state_version=7,
+            decision=ApprovalDecision.APPROVED,
+            actor=actor,
+            client_id="host",
+            user_message_hash="sha256:user-message",
+            gate_summary_hash="sha256:gate",
+            head_sha="abc123",
+            evidence_hash="sha256:evidence",
+            branch="change-1/2026-07-15",
+        ),
+    )
+
+    assert _workflow_receipt_gate_payloads([event]) == [
+        {
+            "phase": "building",
+            "state_version": 7,
+            "decision": "approved",
+            "branch": "change-1/2026-07-15",
+            "head_sha": "abc123",
+            "evidence_hash": "sha256:evidence",
+            "gate_summary_hash": "sha256:gate",
+        }
+    ]
+
+
+def test_approval_from_legacy_payload_without_binding_tuple() -> None:
+    approval = _approval_from_payload(
+        {
+            "workflow_id": "workflow-1",
+            "gate_id": "workflow-1:building:7",
+            "phase": "building",
+            "state_version": 7,
+            "decision": "approved",
+            "actor": {
+                "kind": "human",
+                "actor_id": "human",
+                "approval_capability": True,
+            },
+            "client_id": "host",
+            "user_message_hash": "sha256:user-message",
+            "gate_summary_hash": "sha256:gate",
+            "head_sha": "abc123",
+        }
+    )
+
+    assert approval is not None
+    assert approval.evidence_hash is None
+    assert approval.branch is None

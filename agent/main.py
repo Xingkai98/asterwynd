@@ -223,9 +223,9 @@ def _workflow_receipt_gate_payloads(events) -> list[dict]:
                 "phase": event.approval.phase,
                 "state_version": event.approval.state_version,
                 "decision": event.approval.decision.value,
-                "branch": binding.branch if binding is not None else "",
-                "head_sha": binding.head_sha if binding is not None else "",
-                "evidence_hash": binding.evidence_hash if binding is not None else "",
+                "branch": event.approval.branch or (binding.branch if binding is not None else ""),
+                "head_sha": event.approval.head_sha or (binding.head_sha if binding is not None else ""),
+                "evidence_hash": event.approval.evidence_hash or "",
                 "gate_summary_hash": event.approval.gate_summary_hash or "",
             },
         )
@@ -812,7 +812,7 @@ def workflow_gate_approve(
     _run_workflow_lazy_aging_scan(orchestrator, workflow)
     status = orchestrator.status(workflow)
     gate_binding = None
-    if gate_branch is not None or gate_head is not None or evidence_hash is not None:
+    if gate_branch is not None or gate_head is not None:
         if gate_branch is None or gate_head is None or evidence_hash is None:
             typer.echo("Error: gate binding requires --gate-branch, --gate-head and --evidence-hash", err=True)
             raise SystemExit(1)
@@ -824,6 +824,16 @@ def workflow_gate_approve(
             head_sha=gate_head,
             evidence_hash=evidence_hash,
             clean_worktree=True,
+        )
+    elif evidence_hash is not None and worktree is None:
+        typer.echo("Error: --evidence-hash requires --worktree or explicit gate binding", err=True)
+        raise SystemExit(1)
+    if gate_binding is None and worktree is not None:
+        gate_binding = _workflow_gate_binding_for_current_state(
+            orchestrator,
+            workflow,
+            worktree,
+            evidence_hash or "sha256:gate-evidence",
         )
     approval_gate = (
         orchestrator.current_gate_for_binding(workflow, gate_binding)
@@ -859,13 +869,6 @@ def workflow_gate_approve(
             if file_draft.approved_snapshot_hash != requirements_draft.approved_snapshot_hash:
                 typer.echo("Error: requirements file does not match approved snapshot", err=True)
                 raise SystemExit(1)
-    if gate_binding is None and worktree is not None:
-        gate_binding = _workflow_gate_binding_for_current_state(
-            orchestrator,
-            workflow,
-            worktree,
-            evidence_hash or "sha256:gate-evidence",
-        )
     orchestrator.approve_gate(
         workflow_id=workflow,
         approval=host_result.approval,

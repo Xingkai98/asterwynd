@@ -625,6 +625,116 @@ def test_workflow_receipt_generate_and_verify(tmp_path) -> None:
     assert json.loads(verified.stdout)["ok"] is True
 
 
+def test_workflow_receipt_includes_committed_gate_binding_from_cli(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "workflow.sqlite3"
+    repo = _init_repo(tmp_path / "repo")
+    worktrees_root = tmp_path / "worktrees"
+    roots_file = tmp_path / "roots.json"
+    change_id = "change-committed"
+    workflow_id = "workflow-committed"
+    evidence_hash = "sha256:evidence"
+    key_dir = tmp_path / "keys"
+    trusted = tmp_path / ".workflow" / "trusted-signers"
+    receipt_change_dir = tmp_path / "openspec" / "changes" / change_id
+    receipt_change_dir.mkdir(parents=True)
+    (receipt_change_dir / "proposal.md").write_text("# Proposal\n", encoding="utf-8")
+    (receipt_change_dir / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
+    runner = CliRunner()
+    runner.invoke(cli.app, ["workflow", "manage", "add", str(repo), "--roots-file", str(roots_file)])
+    base_args = [
+        "workflow",
+        "chat",
+        "--workflow",
+        workflow_id,
+        "--db",
+        str(db_path),
+        "--cwd",
+        str(repo),
+        "--roots-file",
+        str(roots_file),
+        "--executor",
+        "fake",
+        "--change-id",
+        change_id,
+        "--date",
+        "2026-07-15",
+        "--repo",
+        str(repo),
+        "--worktrees-root",
+        str(worktrees_root),
+        "--allow-local-base",
+        "--json",
+    ]
+
+    first = runner.invoke(cli.app, [*base_args, "--message", "start"])
+    assert first.exit_code == 0, first.stderr
+    monkeypatch.setenv("ASTERWYND_WORKFLOW_TRUSTED_HOST", "1")
+    design_gate = runner.invoke(cli.app, [*base_args, "--message", "ok"])
+    assert design_gate.exit_code == 0, design_gate.stderr
+    assert json.loads(design_gate.stdout)["state"] == {
+        "phase": "design",
+        "sub_state": "ready_for_review",
+    }
+
+    worktree = worktrees_root / change_id
+    approved = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "gate",
+            "approve",
+            "--workflow",
+            workflow_id,
+            "--db",
+            str(db_path),
+            "--worktree",
+            str(worktree),
+            "--evidence-hash",
+            evidence_hash,
+            "--json",
+        ],
+    )
+    assert approved.exit_code == 0, approved.stderr
+    assert json.loads(approved.stdout)["state"] == {
+        "phase": "building",
+        "sub_state": "writing_tests",
+    }
+
+    generated = runner.invoke(
+        cli.app,
+        [
+            "workflow",
+            "receipt",
+            "generate",
+            "--workflow",
+            workflow_id,
+            "--db",
+            str(db_path),
+            "--change-dir",
+            str(receipt_change_dir),
+            "--key-dir",
+            str(key_dir),
+            "--trusted-signers-dir",
+            str(trusted),
+            "--base-commit",
+            "base123",
+            "--json",
+        ],
+    )
+    assert generated.exit_code == 0, generated.stderr
+    receipt_path = Path(json.loads(generated.stdout)["receipt_path"])
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    requirements_receipt_gate = next(gate for gate in receipt["gates"] if gate["phase"] == "requirements")
+    assert requirements_receipt_gate["branch"] == "change-committed/2026-07-15"
+    assert requirements_receipt_gate["head_sha"]
+    assert requirements_receipt_gate["evidence_hash"].startswith("sha256:")
+    design_receipt_gate = next(gate for gate in receipt["gates"] if gate["phase"] == "design")
+    assert design_receipt_gate["branch"] == "change-committed/2026-07-15"
+    assert design_receipt_gate["head_sha"] == _git(worktree, "rev-parse", "HEAD")
+    assert design_receipt_gate["evidence_hash"] == evidence_hash
+    assert design_receipt_gate["gate_summary_hash"].startswith("sha256:")
+
+
 def _init_repo(path: Path) -> Path:
     path.mkdir()
     _git(path, "init")

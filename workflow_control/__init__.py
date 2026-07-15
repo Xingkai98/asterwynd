@@ -392,6 +392,8 @@ class Approval:
     user_message_hash: str
     gate_summary_hash: str
     head_sha: str | None = None
+    evidence_hash: str | None = None
+    branch: str | None = None
 
     def matches_gate(self, gate: "Gate") -> bool:
         return (
@@ -1459,6 +1461,12 @@ class WorkflowOrchestrator:
                 user_message_hash=_hash_text(raw_user_message),
             )
         HostApprovalService.validate_approval_for_gate(approval, gate)
+        if gate_binding is not None:
+            approval = replace(
+                approval,
+                branch=gate_binding.branch,
+                evidence_hash=gate_binding.evidence_hash,
+            )
         try:
             workspace_binding = self._promote_requirements_gate(
                 snapshot=snapshot,
@@ -1468,6 +1476,18 @@ class WorkflowOrchestrator:
                 base_branch=base_branch,
                 allow_local_base=allow_local_base,
             )
+            if (
+                gate_binding is None
+                and workspace_binding is not None
+                and requirements_draft is not None
+                and requirements_draft.approved_snapshot_hash is not None
+            ):
+                approval = replace(
+                    approval,
+                    branch=workspace_binding.branch,
+                    head_sha=workspace_binding.head_sha,
+                    evidence_hash=requirements_draft.approved_snapshot_hash,
+                )
         except Exception as exc:
             if snapshot.state.phase != "requirements":
                 raise
@@ -2453,6 +2473,8 @@ def _approval_to_payload(approval: Approval | None) -> dict[str, Any] | None:
         "user_message_hash": approval.user_message_hash,
         "gate_summary_hash": approval.gate_summary_hash,
         "head_sha": approval.head_sha,
+        "evidence_hash": approval.evidence_hash,
+        "branch": approval.branch,
     }
 
 
@@ -2474,6 +2496,8 @@ def _approval_from_payload(payload: dict[str, Any] | None) -> Approval | None:
         user_message_hash=payload["user_message_hash"],
         gate_summary_hash=payload["gate_summary_hash"],
         head_sha=payload.get("head_sha"),
+        evidence_hash=payload.get("evidence_hash"),
+        branch=payload.get("branch"),
     )
 
 
