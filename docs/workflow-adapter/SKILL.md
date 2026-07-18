@@ -50,3 +50,93 @@ asterwynd workflow report \
 ## 审批规则
 
 Prompt Adapter 不能审批 gate。精确 `ok` 审批只属于可信 host wrapper，或满足 `ASTERWYND_WORKFLOW_TRUSTED_HOST=1` 且没有 `ASTERWYND_WORKFLOW_AGENT_CONTEXT=1` 的 CLI host 命令。
+
+## Happy Coder 端到端验证
+
+这条验证路径确认 `skill + AGENTS.md` 降级入口在新 session 中可恢复状态、按 WorkItem 推进，并在 gate 前停止。它不验证强 host wrapper；强入口验证见 `docs/development-guide.md` 的 Workflow Control Plane 端到端验证。
+
+### 1. 准备 workflow id
+
+在仓库根目录执行：
+
+```bash
+WF="happy-skill-e2e-$(date +%Y%m%d%H%M%S)"
+echo "$WF"
+uv run asterwynd workflow prompt-adapter show --json
+```
+
+### 2. Happy Coder Session 1：领取并完成第一个 WorkItem
+
+新开 Happy Coder session，打开当前仓库目录，然后把 `<workflow-id>` 替换为上一步输出的 `$WF`，发送：
+
+```text
+请按 docs/workflow-adapter/SKILL.md 的 Prompt Adapter 规则执行。
+workflow id 是 <workflow-id>。
+
+本轮开始前先运行：
+uv run asterwynd workflow enter --workflow <workflow-id> --json
+
+只执行返回的 WorkItem。不要调用 workflow gate approve。
+本轮只做一个轻量任务：读取 docs/workflow-adapter/AGENTS_SNIPPET.md，并总结当前 adapter 规则。
+结束前必须运行：
+uv run asterwynd workflow report --workflow <workflow-id> --work-item-id <enter返回的id> --expected-version <enter返回的version> --summary "read prompt adapter snippet" --enforcement-level prompt_adapter --json
+```
+
+外部终端检查：
+
+```bash
+uv run asterwynd workflow status --workflow "$WF" --json
+```
+
+预期状态为 `requirements.drafting`。
+
+### 3. Happy Coder Session 2：跨 session 恢复并到达 gate
+
+再新开一个 Happy Coder session，打开同一仓库目录，发送：
+
+```text
+继续按 docs/workflow-adapter/SKILL.md 的 Prompt Adapter 规则执行。
+workflow id 是 <workflow-id>。
+
+先运行 workflow enter，按返回 WorkItem 推进到 requirements ready_for_review。
+不要调用 workflow gate approve。
+结束前运行 workflow report，enforcement-level 使用 prompt_adapter。
+```
+
+外部终端检查：
+
+```bash
+uv run asterwynd workflow status --workflow "$WF" --json
+```
+
+预期状态为 `requirements.ready_for_review`，说明新 session 没依赖聊天记忆也能恢复 workflow 状态。
+
+### 4. Happy Coder Session 3：验证 gate 前停止
+
+再新开一个 Happy Coder session，发送：
+
+```text
+继续按 docs/workflow-adapter/SKILL.md 的 Prompt Adapter 规则执行。
+workflow id 是 <workflow-id>。
+
+先运行 workflow enter。如果返回 waiting_for_human 是 true，必须停止并告诉我需要人工可信审批；不要调用 approve。
+```
+
+预期 Happy Coder 停止，不继续设计或开发。
+
+### 5. 外部可信审批
+
+在普通终端中先验证非可信审批会失败：
+
+```bash
+uv run asterwynd workflow gate approve --workflow "$WF" --message ok --json
+```
+
+再用可信 host 环境审批：
+
+```bash
+ASTERWYND_WORKFLOW_TRUSTED_HOST=1 \
+uv run asterwynd workflow gate approve --workflow "$WF" --message ok --json
+```
+
+预期状态进入 `design.writing_design`。这证明 Prompt Adapter 只能提示和记录状态，不能在 Happy Coder session 内代替用户审批。

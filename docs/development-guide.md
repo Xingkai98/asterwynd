@@ -203,3 +203,64 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - 不要提交本地环境文件、日志、缓存和生成产物。
 - 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。
+
+## Workflow Control Plane 端到端验证
+
+### CLI Host Wrapper 强入口
+
+CLI Host Wrapper 是强约束入口，负责在调用 executor 前完成受管路径检查、gate token 匹配、worktree promotion 和审批能力隔离。可以用 fake executor 做确定性 smoke：
+
+```bash
+RUN_ROOT="$(mktemp -d /tmp/asterwynd-workflow-cli.XXXXXX)"
+REPO="$RUN_ROOT/repo"
+DB="$RUN_ROOT/workflow.sqlite3"
+ROOTS="$RUN_ROOT/roots.json"
+WORKTREES="$RUN_ROOT/worktrees"
+WF="cli-e2e-$(date +%Y%m%d%H%M%S)"
+CHANGE="cli-e2e-change"
+
+mkdir -p "$REPO"
+git -C "$REPO" init
+git -C "$REPO" config user.email test@example.com
+git -C "$REPO" config user.name "Test User"
+printf '# workflow smoke\n' > "$REPO/README.md"
+git -C "$REPO" add README.md
+git -C "$REPO" commit -m init
+
+uv run asterwynd workflow manage add "$REPO" --roots-file "$ROOTS"
+
+BASE_ARGS=(
+  workflow chat
+  --workflow "$WF"
+  --db "$DB"
+  --cwd "$REPO"
+  --roots-file "$ROOTS"
+  --executor fake
+  --change-id "$CHANGE"
+  --date "$(date +%F)"
+  --repo "$REPO"
+  --worktrees-root "$WORKTREES"
+  --allow-local-base
+  --json
+)
+
+uv run asterwynd "${BASE_ARGS[@]}" --message start
+ASTERWYND_WORKFLOW_TRUSTED_HOST=1 uv run asterwynd "${BASE_ARGS[@]}" --message ok
+ASTERWYND_WORKFLOW_TRUSTED_HOST=1 uv run asterwynd "${BASE_ARGS[@]}" --message ok
+ASTERWYND_WORKFLOW_TRUSTED_HOST=1 uv run asterwynd "${BASE_ARGS[@]}" --message ok
+ASTERWYND_WORKFLOW_TRUSTED_HOST=1 uv run asterwynd "${BASE_ARGS[@]}" --message ok
+ASTERWYND_WORKFLOW_TRUSTED_HOST=1 uv run asterwynd "${BASE_ARGS[@]}" --message ok
+
+uv run asterwynd workflow status --workflow "$WF" --db "$DB" --json
+```
+
+预期结果：
+
+- 第一次 `start` 到达 `requirements.ready_for_review`。
+- 每次精确输入 `ok` 推进一个 gate；其他大小写、空白或模糊表达都不应审批。
+- 最后 `status` 显示 `done.done`，且 fake workflow 创建的专属 worktree 已被清理。
+- 如果去掉 `ASTERWYND_WORKFLOW_TRUSTED_HOST=1`，gate approval 应 fail closed。
+
+### Skill / Prompt Adapter 降级入口
+
+Skill/Prompt Adapter 用于 Happy Coder、Codex 原生 session 或其他不能托管可信审批边界的客户端。它只验证状态恢复与软约束，不提供强审批能力；具体提示词和 Happy Coder 验证步骤见 `docs/workflow-adapter/SKILL.md`。
