@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Workflow state management CLI — discover, inspect, advance, and approve.
+"""Workflow state compatibility CLI — discover and inspect legacy handoff.json.
 
 Usage:
     uv run python scripts/workflow_state.py discover
     uv run python scripts/workflow_state.py current --change <id>
-    uv run python scripts/workflow_state.py advance --change <id> --to <sub_state>
-    uv run python scripts/workflow_state.py approve --change <id> --phase <phase>
     uv run python scripts/workflow_state.py validate --change <id>
+
+State transitions are owned by `asterwynd workflow ...`; this legacy script is
+kept as a read-only compatibility view during migration.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 # Guard against accidental execution as a library call
@@ -22,7 +22,6 @@ if __name__ != "__main__":
     raise ImportError("workflow_state.py is a CLI script, not a library module")
 
 CHANGES_ROOT = Path("openspec/changes")
-HANDOFF_DIR = Path(".handoff")
 
 
 def _all_change_ids(root: Path = CHANGES_ROOT) -> list[str]:
@@ -39,15 +38,14 @@ def _load_handoff(change_id: str, root: Path = CHANGES_ROOT) -> dict | None:
     path = root / change_id / "handoff.json"
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    from workflow_control import import_handoff_read_only
 
-
-def _save_handoff(change_id: str, data: dict, root: Path = CHANGES_ROOT) -> None:
-    path = root / change_id / "handoff.json"
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    Path(tmp).replace(path)
+    snapshot = import_handoff_read_only(path)
+    return {
+        "change_id": snapshot.change_id,
+        "state": {"phase": snapshot.phase, "sub_state": snapshot.sub_state},
+        "source": snapshot.source,
+    }
 
 
 def cmd_discover(args: argparse.Namespace) -> int:
@@ -80,68 +78,19 @@ def cmd_current(args: argparse.Namespace) -> int:
 
 
 def cmd_advance(args: argparse.Namespace) -> int:
-    data = _load_handoff(args.change)
-    if data is None:
-        print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
-        return 1
-
-    from_phase = data["state"]["phase"]
-    from_sub = data["state"]["sub_state"]
-    to_sub = args.to
-
-    # Determine trigger type
-    if to_sub == "ready_for_review":
-        trigger = "handoff"
-    elif from_sub == "ready_for_review" and from_phase in data.get("routing", {}):
-        trigger = "human_review"
-    else:
-        trigger = "auto"
-
-    now = datetime.now(timezone.utc).isoformat()
-    transition = {
-        "from": {"phase": from_phase, "sub_state": from_sub},
-        "to": {"phase": from_phase, "sub_state": to_sub},
-        "trigger": trigger,
-        "actor_type": "agent",
-        "actor_id": "workflow_state.py",
-        "timestamp": now,
-    }
-
-    data["state"]["sub_state"] = to_sub
-    data["transitions"].append(transition)
-
-    if to_sub == "ready_for_review":
-        data["last_gate"] = {"phase": from_phase, "sub_state": "ready_for_review"}
-
-    _save_handoff(args.change, data)
-    print(f"已推进: {from_phase}.{from_sub} → {from_phase}.{to_sub}  (trigger: {trigger})")
-    return 0
+    print(
+        "错误：workflow_state.py 已降级为只读兼容入口；请使用 `asterwynd workflow report` 或正式 gate 命令推进状态。",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
-    change_dir = HANDOFF_DIR / args.change
-    change_dir.mkdir(parents=True, exist_ok=True)
-
-    approvals_path = change_dir / "gate-approvals.json"
-    existing: list[dict] = []
-    if approvals_path.exists():
-        existing = json.loads(approvals_path.read_text(encoding="utf-8"))
-
-    now = datetime.now(timezone.utc).isoformat()
-    entry = {
-        "phase": args.phase,
-        "approved_at": now,
-        "approved_by": args.who or "human",
-        "notes": args.notes or "",
-    }
-    existing.append(entry)
-
-    with open(str(approvals_path) + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(existing, f, indent=2, ensure_ascii=False)
-    Path(str(approvals_path) + ".tmp").replace(approvals_path)
-
-    print(f"已记录批准: {args.change} / {args.phase}")
-    return 0
+    print(
+        "错误：workflow_state.py 不再记录人工批准；请使用 `asterwynd workflow gate approve`。",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -152,7 +101,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     errors: list[str] = []
 
-    required = ["schema_version", "change_id", "state", "transitions"]
+    required = ["change_id", "state"]
     for key in required:
         if key not in data:
             errors.append(f"缺少必填字段: {key}")

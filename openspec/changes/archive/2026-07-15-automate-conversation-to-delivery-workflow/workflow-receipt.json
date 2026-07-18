@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "workflow_id": "automate-conversation-to-delivery-workflow",
+  "change_id": "automate-conversation-to-delivery-workflow",
+  "template_id": "coding-agent-conversation-delivery-v1",
+  "final_state": {
+    "phase": "done",
+    "sub_state": "done"
+  },
+  "final_version": 13,
+  "event_chain_root": "sha256:34a3c06237ed1c06a279c58584a48dff724fe3b1753841d3e770fe03851454e3",
+  "base": {
+    "branch": "automate-conversation-to-delivery-workflow/2026-07-14",
+    "commit": "bc9381d12a924592a596a2b473d3941899e78d2e"
+  },
+  "gates": [
+    {
+      "phase": "requirements",
+      "state_version": 3,
+      "decision": "approved",
+      "branch": "automate-conversation-to-delivery-workflow/2026-07-15",
+      "head_sha": "6ba4e8ccacd374b0f36b7e09c5a50e0c57edf53f",
+      "evidence_hash": "sha256:ceb71465e5413f13119df4e141043b39e70299907d6129aaeb8d1c80d9d92050",
+      "gate_summary_hash": "sha256:dc3e9b7e363a009d2932f6ec9d201d24a0cba4ebfabaaa235d5a713f5b97809c"
+    },
+    {
+      "phase": "design",
+      "state_version": 5,
+      "decision": "approved",
+      "branch": "automate-conversation-to-delivery-workflow/2026-07-15",
+      "head_sha": "83735c985a08ecdf269711bf5d3f8bc85635db95",
+      "evidence_hash": "sha256:aba4232c73d326703e3fafd1cf5706f4c04381f7fda2be9594339f21e1f494c8",
+      "gate_summary_hash": "sha256:3e66b86a83846c127866f2caff2e07b064471f9392abfbdfe37ee9c86896545a"
+    },
+    {
+      "phase": "building",
+      "state_version": 8,
+      "decision": "approved",
+      "branch": "automate-conversation-to-delivery-workflow/2026-07-15",
+      "head_sha": "5e90e5c62e69aeeb9e3fbf279583461ad0d4bd24",
+      "evidence_hash": "sha256:aba4232c73d326703e3fafd1cf5706f4c04381f7fda2be9594339f21e1f494c8",
+      "gate_summary_hash": "sha256:4819f109189ff85a7cfca521e439990f661bb3d9a480b2fce869303413694505"
+    },
+    {
+      "phase": "code-review",
+      "state_version": 10,
+      "decision": "approved",
+      "branch": "automate-conversation-to-delivery-workflow/2026-07-15",
+      "head_sha": "5e90e5c62e69aeeb9e3fbf279583461ad0d4bd24",
+      "evidence_hash": "sha256:aba4232c73d326703e3fafd1cf5706f4c04381f7fda2be9594339f21e1f494c8",
+      "gate_summary_hash": "sha256:a0ca5d03aa4981016b173c958ddb385cfe58df5abd83a30a9164f8e165b8f4c6"
+    },
+    {
+      "phase": "closing",
+      "state_version": 12,
+      "decision": "approved",
+      "branch": "automate-conversation-to-delivery-workflow/2026-07-15",
+      "head_sha": "f5214c2d0f27bb9faf47d0cb69059d88780dc9d5",
+      "evidence_hash": "sha256:aba4232c73d326703e3fafd1cf5706f4c04381f7fda2be9594339f21e1f494c8",
+      "gate_summary_hash": "sha256:ddc96f245d357d93ea914de44e31bacbe1b21c87250a3ec1768a42db465c97c1"
+    }
+  ],
+  "artifact_hashes": {
+    "design.md": "sha256:d4aacb6160df2fba82eb84fb7023d856694b0e649acb82bb752d216b1881ab9b",
+    "handoff.json": "sha256:7ed66cbd31afd3d94362280ce10076be5cf61cd2d7bb9b30a950454404c8d49f",
+    "proposal.md": "sha256:4802f2aa97c83dfc8bad4cea9ca7c7ac8bdb6be81b0a7e601e8a38eeaa880b48",
+    "shadow-record.md": "sha256:b974df9de9493fb3489d6400c81c440467f7b5f3e36dd330758e09ff028f53e7",
+    "specs/agent-runtime/spec.md": "sha256:56be6d3c5e15e5e7eba170d53e7eee56c0ec92026fe1a72e15be1fcf9c34eaaf",
+    "specs/change-documentation/spec.md": "sha256:d02ad8a6816a191ced4772379f9dd99efde30d8cb4f2e1cef98c78304f4f9369",
+    "specs/conversation-delivery-workflow/spec.md": "sha256:3fff6d5b8c405052d3a077ed2725aa0e1e641c4681a27298bac0475917ee3dcc",
+    "specs/dev-workflow-state-machine/spec.md": "sha256:07417df6ef67c192473db7e3f67fc3a09ee65361ecd9f3635e23776b18ea7f48",
+    "specs/workspace-safety/spec.md": "sha256:15870087db4298c9866ec42a24bca92aaa8cccc02abfb182eb39354ccad84ee9",
+    "tasks.md": "sha256:9f321cc32b488c3ea910f217cbb14f0593383a1953af816f6d7881998f22bae8"
+  },
+  "signer": {
+    "key_id": "local-workflow",
+    "algorithm": "Ed25519"
+  },
+  "signature": {
+    "key_id": "local-workflow",
+    "algorithm": "Ed25519",
+    "value": "c2v5L0sz65EpMYPtykInptwd0T8savSOYRHbm8efmVivxh08jNxIxZI8WFFcCCZai1e0fmIjqQISEgqlBevNAw=="
+  }
+}

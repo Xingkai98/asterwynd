@@ -114,6 +114,7 @@ class AgentLoop:
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
         self._plan_document_final = False
+        self._workflow_context: dict | None = None
         self._plan_tools_registered = False
         self._subagent_tools_registered = False
         self._todo_tool_registered = False
@@ -417,6 +418,13 @@ class AgentLoop:
     @property
     def execution_todos(self) -> list[PlanItem]:
         return list(self._execution_todos)
+
+    def set_workflow_context(self, workflow_id: str, version: int, work_item_id: str | None = None) -> None:
+        self._workflow_context = {
+            "workflow_id": workflow_id,
+            "version": version,
+            "work_item_id": work_item_id,
+        }
 
     def _todo_snapshot(self) -> dict:
         items = [item.to_dict() for item in self._execution_todos]
@@ -1126,9 +1134,12 @@ class AgentLoop:
             from agent import __version__ as agent_version
         except ImportError:
             agent_version = "unknown"
-        return {
+        fingerprint = {
             "cwd": os.getcwd(),
             "model": str(model),
             "provider": str(provider),
             "agent_version": agent_version,
         }
+        if self._workflow_context is not None:
+            fingerprint["workflow"] = dict(self._workflow_context)
+        return fingerprint

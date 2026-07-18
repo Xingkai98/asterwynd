@@ -12,6 +12,40 @@ def test_workspace_policy_allows_path_inside_root(tmp_path):
     assert policy.assert_write_allowed(target) == target.resolve()
 
 
+def test_workflow_binding_required_blocks_write_without_binding(tmp_path):
+    policy = WorkspacePolicy(
+        tmp_path,
+        workflow_binding_required=True,
+        workflow_binding_active=False,
+    )
+
+    with pytest.raises(PermissionError, match="active binding"):
+        policy.assert_write_allowed("a.txt")
+
+
+def test_workflow_binding_required_blocks_command_without_binding(tmp_path):
+    policy = WorkspacePolicy(
+        tmp_path,
+        workflow_binding_required=True,
+        workflow_binding_active=False,
+    )
+
+    with pytest.raises(PermissionError, match="active binding"):
+        policy.assert_command_allowed("pwd")
+
+
+def test_workflow_binding_audit_only_allows_but_records_mode(tmp_path):
+    policy = WorkspacePolicy(
+        tmp_path,
+        workflow_binding_required=True,
+        workflow_binding_active=False,
+        workflow_enforcement="audit_only",
+    )
+
+    assert policy.workflow_audit_only is True
+    assert policy.assert_write_allowed("a.txt") == tmp_path / "a.txt"
+
+
 def test_workspace_policy_rejects_path_traversal(tmp_path):
     policy = WorkspacePolicy(tmp_path)
 

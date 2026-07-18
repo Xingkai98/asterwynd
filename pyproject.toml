@@ -40,6 +40,7 @@ dependencies = [
     "tree-sitter-go>=0.25.0",
     "tree-sitter-rust>=0.24.2",
     "mcp>=1.28.1",
+    "cryptography>=49.0.0",
 ]
 
 [project.optional-dependencies]
@@ -74,5 +75,5 @@ markers = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["agent", "web", "benchmarks"]
+packages = ["agent", "web", "benchmarks", "workflow_control"]
 include = ["web/static/**"]

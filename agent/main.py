@@ -10,8 +10,10 @@ Asterwynd CLI 入口模块
 """
 import asyncio
 import inspect
+import json
 import logging
 import os
+import subprocess
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -72,6 +74,254 @@ def _setup_logging() -> None:
     )
 
 app = typer.Typer()
+workflow_app = typer.Typer(help="Workflow control")
+workflow_manage_app = typer.Typer(help="Managed roots")
+workflow_gate_app = typer.Typer(help="Human gate")
+workflow_prompt_app = typer.Typer(help="Prompt adapter")
+workflow_receipt_app = typer.Typer(help="Workflow receipt")
+workflow_app.add_typer(workflow_manage_app, name="manage")
+workflow_app.add_typer(workflow_gate_app, name="gate")
+workflow_app.add_typer(workflow_prompt_app, name="prompt-adapter")
+workflow_app.add_typer(workflow_receipt_app, name="receipt")
+app.add_typer(workflow_app, name="workflow")
+
+
+def _workflow_db_path(db: Path | None) -> Path:
+    if db is not None:
+        return db
+    return platformdirs.user_data_path("asterwynd") / "workflow-control.sqlite3"
+
+
+def _workflow_roots_path(roots_file: Path | None) -> Path:
+    if roots_file is not None:
+        return roots_file
+    return platformdirs.user_config_path("asterwynd") / "workflow-roots.json"
+
+
+def _workflow_orchestrator(db: Path | None, worktree_coordinator=None):
+    from workflow_control import (
+        SQLiteEventStore,
+        SQLiteEventStoreConfig,
+        WorkflowOrchestrator,
+        WorkflowOrchestratorConfig,
+        default_coding_agent_template,
+    )
+
+    store = SQLiteEventStore(SQLiteEventStoreConfig(db_path=_workflow_db_path(db)))
+    template = default_coding_agent_template()
+    return WorkflowOrchestrator(
+        WorkflowOrchestratorConfig(
+            store=store,
+            template=template,
+            worktree_coordinator=worktree_coordinator,
+        ),
+    )
+
+
+def _run_workflow_lazy_aging_scan(orchestrator, workflow: str | None = None) -> None:
+    workflow_ids = [workflow] if workflow is not None else orchestrator.config.store.list_workflow_ids()
+    for workflow_id in workflow_ids:
+        orchestrator.run_lazy_aging_scan(workflow_id)
+
+
+def _workflow_actor(actor_id: str, *, human: bool = False):
+    from workflow_control import Actor, ActorKind
+
+    if human:
+        return Actor(
+            kind=ActorKind.HUMAN,
+            actor_id=actor_id,
+            approval_capability=True,
+        )
+    return Actor(kind=ActorKind.AGENT, actor_id=actor_id)
+
+
+def _workflow_snapshot_payload(snapshot) -> dict:
+    return {
+        "workflow_id": snapshot.workflow_id,
+        "version": snapshot.version,
+        "state": {
+            "phase": snapshot.state.phase,
+            "sub_state": snapshot.state.sub_state,
+        },
+    }
+
+
+def _workflow_enter_payload(result) -> dict:
+    payload = _workflow_snapshot_payload(result.snapshot)
+    payload["waiting_for_human"] = result.waiting_for_human
+    if result.work_item is None:
+        payload["work_item"] = None
+    else:
+        payload["work_item"] = {
+            "work_item_id": result.work_item.work_item_id,
+            "workflow_id": result.work_item.workflow_id,
+            "state": {
+                "phase": result.work_item.state.phase,
+                "sub_state": result.work_item.state.sub_state,
+            },
+            "allowed_actions": list(result.work_item.allowed_actions),
+            "workspace_path": result.work_item.workspace_path,
+            "branch": result.work_item.branch,
+        }
+    return payload
+
+
+def _workflow_run_payload(result) -> dict:
+    payload = _workflow_snapshot_payload(result.snapshot)
+    payload["waiting_for_human"] = result.waiting_for_human
+    payload["enforcement_level"] = result.enforcement_level.value
+    payload["summary"] = result.summary
+    return payload
+
+
+def _workflow_receipt_event_payload(event) -> dict:
+    payload = {
+        "version": event.version,
+        "event_type": event.event_type.value,
+        "actor_kind": event.actor.kind.value,
+        "actor_id": event.actor.actor_id,
+    }
+    if event.from_state is not None:
+        payload["from_state"] = {
+            "phase": event.from_state.phase,
+            "sub_state": event.from_state.sub_state,
+        }
+    if event.to_state is not None:
+        payload["to_state"] = {
+            "phase": event.to_state.phase,
+            "sub_state": event.to_state.sub_state,
+        }
+    if event.workspace_binding is not None:
+        payload["workspace_binding"] = {
+            "branch": event.workspace_binding.branch,
+            "head_sha": event.workspace_binding.head_sha,
+            "base_branch": event.workspace_binding.base_branch,
+            "base_commit": event.workspace_binding.base_commit,
+        }
+    if event.work_result is not None:
+        payload["work_result"] = {
+            "output_refs": list(event.work_result.output_refs),
+            "evidence_refs": list(event.work_result.evidence_refs),
+            "enforcement_level": (
+                event.work_result.enforcement_level.value
+                if event.work_result.enforcement_level is not None
+                else None
+            ),
+        }
+    return payload
+
+
+def _workflow_receipt_gate_payloads(events) -> list[dict]:
+    gates = []
+    for event in events:
+        if event.approval is None:
+            continue
+        binding = event.workspace_binding
+        gates.append(
+            {
+                "phase": event.approval.phase,
+                "state_version": event.approval.state_version,
+                "decision": event.approval.decision.value,
+                "branch": event.approval.branch or (binding.branch if binding is not None else ""),
+                "head_sha": event.approval.head_sha or (binding.head_sha if binding is not None else ""),
+                "evidence_hash": event.approval.evidence_hash or "",
+                "gate_summary_hash": event.approval.gate_summary_hash or "",
+            },
+        )
+    return gates
+
+
+def _workflow_worktree_path(worktrees_root: Path | None, change_id: str | None) -> Path | None:
+    if worktrees_root is None or change_id is None:
+        return None
+    return (worktrees_root / change_id).resolve()
+
+
+def _require_strict_worktree(
+    workspace: Path | None,
+    repo: Path | None,
+    worktrees_root: Path | None,
+    change_id: str | None,
+    date: str | None,
+    coordinator,
+) -> None:
+    if workspace is None or repo is None or worktrees_root is None or change_id is None or date is None:
+        typer.echo("Error: strict workflow executor requires --repo --worktrees-root --change-id --date", err=True)
+        raise SystemExit(1)
+    expected_workspace = (worktrees_root / change_id).resolve()
+    if workspace.resolve() != expected_workspace or not workspace.exists():
+        typer.echo("Error: strict workflow executor requires an existing dedicated worktree", err=True)
+        raise SystemExit(1)
+    try:
+        top_level = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=workspace,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        branch = coordinator.current_branch(workspace)
+    except (OSError, subprocess.CalledProcessError):
+        typer.echo("Error: strict workflow executor workspace must be a git worktree", err=True)
+        raise SystemExit(1)
+    if Path(top_level).resolve() != workspace.resolve():
+        typer.echo("Error: strict workflow executor workspace must be a git worktree root", err=True)
+        raise SystemExit(1)
+    if workspace.resolve() == repo.resolve():
+        typer.echo("Error: strict workflow executor cannot run in canonical repository", err=True)
+        raise SystemExit(1)
+    expected_branch = f"{change_id}/{date}"
+    if branch != expected_branch:
+        typer.echo("Error: strict workflow executor worktree branch mismatch", err=True)
+        raise SystemExit(1)
+
+
+def _workflow_gate_binding_for_current_state(
+    orchestrator,
+    workflow: str,
+    worktree_path: Path | None,
+    evidence_hash: str,
+):
+    if worktree_path is None:
+        return None
+    from workflow_control import WorktreeCoordinator, WorktreeCoordinatorConfig
+
+    repo = Path.cwd()
+    try:
+        repo_result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=worktree_path,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        repo = Path(repo_result.stdout.strip())
+    except Exception:
+        pass
+    coordinator = WorktreeCoordinator(
+        WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=worktree_path.parent),
+    )
+    coordinator.commit_phase(worktree_path, message=f"complete workflow gate {workflow}")
+    snapshot = orchestrator.status(workflow).snapshot
+    return coordinator.build_phase_gate_binding(
+        worktree_path=worktree_path,
+        phase=snapshot.state.phase,
+        state_version=snapshot.version,
+        evidence_hash=evidence_hash,
+    )
+
+
+def _echo_json_or_text(payload: dict, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    typer.echo(
+        f"{payload['workflow_id']} v{payload['version']} "
+        f"{payload['state']['phase']}.{payload['state']['sub_state']}"
+    )
 
 
 def build_llm(provider: str, model: Optional[str] = None) -> LLM:
@@ -269,6 +519,534 @@ def init(
         typer.echo(msg)
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1)
+
+
+@workflow_app.command("enter")
+def workflow_enter(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    actor: str = typer.Option("agent", "--actor", help="Actor ID"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Enter a workflow and return the current work item."""
+    orchestrator = _workflow_orchestrator(db)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
+    result = orchestrator.enter(workflow, _workflow_actor(actor))
+    _echo_json_or_text(_workflow_enter_payload(result), json_output)
+
+
+@workflow_app.command("status")
+def workflow_status(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Show the current workflow state."""
+    orchestrator = _workflow_orchestrator(db)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
+    result = orchestrator.status(workflow)
+    _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
+
+
+@workflow_app.command("attach")
+def workflow_attach(
+    root: Path = typer.Argument(..., help="Managed workspace root"),
+    cwd: Path = typer.Option(Path("."), "--cwd", help="Current working directory"),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="User session ID"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Attach the current session to workflow management."""
+    from workflow_control import ManagedWorkspaceConfig, WorkflowActivationGate
+
+    path = _workflow_roots_path(roots_file)
+    roots = _load_workflow_roots(path)
+    canonical = str(root.resolve())
+    if canonical not in roots:
+        roots.append(canonical)
+        roots.sort()
+        _save_workflow_roots(path, roots)
+    gate = WorkflowActivationGate(
+        ManagedWorkspaceConfig(managed_roots=tuple(Path(existing) for existing in roots)),
+    )
+    decision = gate.preflight(cwd, session_id=session_id, attach_root=root)
+    payload = {
+        "mode": decision.mode.value,
+        "reason": decision.reason,
+        "managed_root": str(decision.managed_root) if decision.managed_root else None,
+        "workflow_prompt_enabled": decision.workflow_prompt_enabled,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"{payload['mode']} {payload['reason']}")
+
+
+@workflow_app.command("report")
+def workflow_report(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    work_item_id: str = typer.Option(..., "--work-item-id", help="WorkItem ID"),
+    expected_version: int = typer.Option(..., "--expected-version", help="Expected workflow version"),
+    summary: str = typer.Option("", "--summary", help="Work summary"),
+    enforcement_level: Optional[str] = typer.Option(None, "--enforcement-level", help="WorkResult enforcement level"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    actor: str = typer.Option("agent", "--actor", help="Actor ID"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Report work completion and let the orchestrator advance state."""
+    from workflow_control import EnforcementLevel, WorkResult
+
+    orchestrator = _workflow_orchestrator(db)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
+    result = orchestrator.report(
+        workflow_id=workflow,
+        actor=_workflow_actor(actor),
+        work_item_id=work_item_id,
+        result=WorkResult(
+            summary=summary,
+            enforcement_level=EnforcementLevel(enforcement_level) if enforcement_level else None,
+        ),
+        expected_version=expected_version,
+    )
+    _echo_json_or_text(_workflow_snapshot_payload(result.snapshot), json_output)
+
+
+@workflow_app.command("chat")
+def workflow_chat(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    message: str = typer.Option("", "--message", help="User message for host wrapper"),
+    executor: str = typer.Option("fake", "--executor", help="Executor adapter"),
+    executor_command: Optional[str] = typer.Option(None, "--executor-command", help="Command executor binary"),
+    executor_arg: list[str] = typer.Option([], "--executor-arg", help="Command executor argument"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    actor: str = typer.Option("agent", "--actor", help="Actor ID"),
+    cwd: Path = typer.Option(Path("."), "--cwd", help="Current working directory for managed-root preflight"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    session_id: Optional[str] = typer.Option(None, "--session-id", help="User session ID"),
+    change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for worktree promotion"),
+    date: Optional[str] = typer.Option(None, "--date", help="Branch date for worktree promotion"),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Canonical repository for worktree promotion"),
+    worktrees_root: Optional[Path] = typer.Option(None, "--worktrees-root", help="Root directory for workflow worktrees"),
+    allow_local_base: bool = typer.Option(False, "--allow-local-base", help="Allow explicit local base override"),
+    evidence_hash: str = typer.Option("sha256:fake-evidence", "--evidence-hash", help="Gate evidence hash"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Run a workflow host-wrapper turn."""
+    from workflow_control import (
+        ActivationMode,
+        CommandWorkflowExecutor,
+        FakeWorkflowExecutor,
+        GateApprovalTokenMatcher,
+        HostApprovalService,
+        ManagedWorkspaceConfig,
+        RunnerProfile,
+        WorkflowActivationGate,
+        WorktreeCoordinator,
+        WorktreeCoordinatorConfig,
+    )
+
+    if executor not in {"fake", "command", "codex", "claude-code"}:
+        typer.echo("Error: unsupported workflow executor adapter", err=True)
+        raise SystemExit(1)
+    roots = _load_workflow_roots(_workflow_roots_path(roots_file))
+    activation = WorkflowActivationGate(
+        ManagedWorkspaceConfig(managed_roots=tuple(Path(root) for root in roots)),
+    ).preflight(cwd, session_id=session_id)
+    if activation.mode == ActivationMode.BYPASS:
+        payload = {
+            "mode": activation.mode.value,
+            "reason": activation.reason,
+            "workflow_prompt_enabled": activation.workflow_prompt_enabled,
+            "bypassed": True,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            typer.echo(f"Workflow bypass: {activation.reason}")
+        return
+    worktree_coordinator = None
+    if repo is not None and worktrees_root is not None:
+        worktree_coordinator = WorktreeCoordinator(
+            WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=worktrees_root),
+        )
+    orchestrator = _workflow_orchestrator(db, worktree_coordinator=worktree_coordinator)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
+    status = orchestrator.status(workflow) if orchestrator.config.store.current_version(workflow) else None
+    if status is not None:
+        phase = orchestrator.config.template.phase(status.snapshot.state.phase)
+        if status.snapshot.state.sub_state == phase.gate_sub_state:
+            if os.environ.get("ASTERWYND_WORKFLOW_TRUSTED_HOST") != "1":
+                typer.echo("Error: gate approval requires trusted host context", err=True)
+                raise SystemExit(1)
+            if os.environ.get("ASTERWYND_WORKFLOW_AGENT_CONTEXT") == "1":
+                typer.echo("Error: gate approval is not available from agent context", err=True)
+                raise SystemExit(1)
+            binding = None
+            worktree_path = _workflow_worktree_path(worktrees_root, change_id)
+            if phase.commit_policy.value != "none":
+                binding = _workflow_gate_binding_for_current_state(
+                    orchestrator,
+                    workflow,
+                    worktree_path,
+                    evidence_hash,
+                )
+            approval_gate = (
+                orchestrator.current_gate_for_binding(workflow, binding)
+                if binding is not None
+                else orchestrator.current_gate(workflow)
+            )
+            host_result = HostApprovalService(GateApprovalTokenMatcher()).try_approve(
+                gate=approval_gate,
+                raw_message=message,
+                user_id="human",
+                client_id="asterwynd-cli-host",
+            )
+            if not host_result.consumed or host_result.approval is None:
+                result = orchestrator.enter(workflow, _workflow_actor(actor))
+                _echo_json_or_text(_workflow_enter_payload(result), json_output)
+                return
+            requirements_draft = None
+            if status.snapshot.state.phase == "requirements":
+                requirements_draft = orchestrator.config.store.get_requirements_snapshot(
+                    workflow,
+                    status.snapshot.version,
+                )
+            orchestrator.approve_gate(
+                workflow_id=workflow,
+                expected_version=status.snapshot.version,
+                approval=host_result.approval,
+                gate_binding=binding,
+                worktree_path=worktree_path,
+                requirements_draft=requirements_draft,
+                change_id=change_id,
+                date=date,
+                allow_local_base=allow_local_base,
+            )
+    workspace = _workflow_worktree_path(worktrees_root, change_id)
+    if executor == "fake":
+        run_result = FakeWorkflowExecutor(
+            orchestrator,
+            actor=_workflow_actor(actor),
+            workspace=workspace,
+        ).run_until_blocked_or_gate(workflow)
+    else:
+        _require_strict_worktree(
+            workspace,
+            repo,
+            worktrees_root,
+            change_id,
+            date,
+            worktree_coordinator,
+        )
+        if executor == "command":
+            if executor_command is None:
+                typer.echo("Error: command executor requires --executor-command", err=True)
+                raise SystemExit(1)
+            command = executor_command
+            args = tuple(executor_arg)
+        elif executor == "codex":
+            command = "codex"
+            args = ("exec", "--json", *tuple(executor_arg))
+        else:
+            command = "claude"
+            args = ("--print", *tuple(executor_arg))
+        run_result = CommandWorkflowExecutor(
+            orchestrator,
+            RunnerProfile(
+                name=f"{executor}-executor",
+                command=command,
+                args=args,
+                prompt_mode="stdin",
+                permissions="workspace-write",
+                timeout_seconds=600,
+            ),
+            actor=_workflow_actor(actor),
+            workspace=workspace,
+        ).run_once(workflow, prompt=message)
+    _echo_json_or_text(_workflow_run_payload(run_result), json_output)
+
+
+@workflow_gate_app.command("approve")
+def workflow_gate_approve(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    user: str = typer.Option("human", "--user", help="Human user ID"),
+    message: str = typer.Option("ok", "--message", help="Raw approval message"),
+    change_id: Optional[str] = typer.Option(None, "--change-id", help="Change ID for requirements promotion"),
+    requirements_file: Optional[Path] = typer.Option(None, "--requirements-file", help="Approved requirements Markdown path"),
+    requirements_version: Optional[int] = typer.Option(None, "--requirements-version", help="Approved requirements snapshot version"),
+    date: Optional[str] = typer.Option(None, "--date", help="Branch date for requirements promotion"),
+    repo: Optional[Path] = typer.Option(None, "--repo", help="Canonical repository for worktree promotion"),
+    worktrees_root: Optional[Path] = typer.Option(None, "--worktrees-root", help="Root directory for workflow worktrees"),
+    worktree: Optional[Path] = typer.Option(None, "--worktree", help="Bound worktree path for committed gates"),
+    gate_branch: Optional[str] = typer.Option(None, "--gate-branch", help="Gate binding branch"),
+    gate_head: Optional[str] = typer.Option(None, "--gate-head", help="Gate binding HEAD SHA"),
+    evidence_hash: Optional[str] = typer.Option(None, "--evidence-hash", help="Gate evidence hash"),
+    allow_local_base: bool = typer.Option(False, "--allow-local-base", help="Allow explicit local base override"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Approve the current gate from a trusted host context."""
+    from workflow_control import (
+        GateApprovalTokenMatcher,
+        HostApprovalService,
+        RequirementsDraft,
+        WorktreeCoordinator,
+        WorktreeCoordinatorConfig,
+        build_gate_binding,
+    )
+
+    if os.environ.get("ASTERWYND_WORKFLOW_TRUSTED_HOST") != "1":
+        typer.echo("Error: workflow gate approve requires trusted host context", err=True)
+        raise SystemExit(1)
+    if os.environ.get("ASTERWYND_WORKFLOW_AGENT_CONTEXT") == "1":
+        typer.echo("Error: workflow gate approve is not available from agent context", err=True)
+        raise SystemExit(1)
+
+    worktree_coordinator = None
+    if repo is not None and worktrees_root is not None:
+        worktree_coordinator = WorktreeCoordinator(
+            WorktreeCoordinatorConfig(canonical_repo=repo, worktrees_root=worktrees_root),
+        )
+    orchestrator = _workflow_orchestrator(db, worktree_coordinator=worktree_coordinator)
+    _run_workflow_lazy_aging_scan(orchestrator, workflow)
+    status = orchestrator.status(workflow)
+    gate_binding = None
+    if gate_branch is not None or gate_head is not None:
+        if gate_branch is None or gate_head is None or evidence_hash is None:
+            typer.echo("Error: gate binding requires --gate-branch, --gate-head and --evidence-hash", err=True)
+            raise SystemExit(1)
+        gate_binding = build_gate_binding(
+            policy="required_before_human_gate",
+            phase=status.snapshot.state.phase,
+            state_version=status.snapshot.version,
+            branch=gate_branch,
+            head_sha=gate_head,
+            evidence_hash=evidence_hash,
+            clean_worktree=True,
+        )
+    elif evidence_hash is not None and worktree is None:
+        typer.echo("Error: --evidence-hash requires --worktree or explicit gate binding", err=True)
+        raise SystemExit(1)
+    if gate_binding is None and worktree is not None:
+        gate_binding = _workflow_gate_binding_for_current_state(
+            orchestrator,
+            workflow,
+            worktree,
+            evidence_hash or "sha256:gate-evidence",
+        )
+    approval_gate = (
+        orchestrator.current_gate_for_binding(workflow, gate_binding)
+        if gate_binding is not None
+        else orchestrator.current_gate(workflow)
+    )
+    host_result = HostApprovalService(GateApprovalTokenMatcher()).try_approve(
+        gate=approval_gate,
+        raw_message=message,
+        user_id=user,
+        client_id="asterwynd-cli-host",
+    )
+    if not host_result.consumed or host_result.approval is None:
+        typer.echo("Error: approval message is not an allowed exact token", err=True)
+        raise SystemExit(1)
+    requirements_draft = None
+    if change_id is not None:
+        if requirements_version is None:
+            typer.echo("Error: requirements promotion requires --requirements-version", err=True)
+            raise SystemExit(1)
+        requirements_draft = orchestrator.config.store.get_requirements_snapshot(
+            workflow,
+            requirements_version,
+        )
+        if requirements_draft is None:
+            typer.echo("Error: approved requirements snapshot not found", err=True)
+            raise SystemExit(1)
+        if requirements_file is not None:
+            file_draft = RequirementsDraft.from_markdown(
+                requirements_file.read_text(encoding="utf-8"),
+                approved_snapshot_version=requirements_version,
+            )
+            if file_draft.approved_snapshot_hash != requirements_draft.approved_snapshot_hash:
+                typer.echo("Error: requirements file does not match approved snapshot", err=True)
+                raise SystemExit(1)
+    orchestrator.approve_gate(
+        workflow_id=workflow,
+        approval=host_result.approval,
+        expected_version=status.snapshot.version,
+        gate_binding=gate_binding,
+        worktree_path=worktree,
+        requirements_draft=requirements_draft,
+        change_id=change_id,
+        date=date,
+        allow_local_base=allow_local_base,
+    )
+    result = orchestrator.enter(workflow, _workflow_actor("agent"))
+    _echo_json_or_text(_workflow_enter_payload(result), json_output)
+
+
+def _load_workflow_roots(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return list(json.loads(path.read_text(encoding="utf-8")).get("managed_roots", []))
+
+
+def _save_workflow_roots(path: Path, roots: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"managed_roots": roots}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _emit_roots(path: Path, json_output: bool) -> None:
+    roots = _load_workflow_roots(path)
+    if json_output:
+        typer.echo(json.dumps({"managed_roots": roots}, ensure_ascii=False, indent=2))
+        return
+    for root in roots:
+        typer.echo(root)
+
+
+@workflow_manage_app.command("add")
+def workflow_manage_add(
+    root: Path = typer.Argument(..., help="Managed workspace root"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Add a managed workspace root."""
+    _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
+    path = _workflow_roots_path(roots_file)
+    roots = _load_workflow_roots(path)
+    canonical = str(root.resolve())
+    if canonical not in roots:
+        roots.append(canonical)
+        roots.sort()
+    _save_workflow_roots(path, roots)
+    _emit_roots(path, json_output)
+
+
+@workflow_manage_app.command("list")
+def workflow_manage_list(
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """List managed workspace roots."""
+    _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
+    _emit_roots(_workflow_roots_path(roots_file), json_output)
+
+
+@workflow_manage_app.command("remove")
+def workflow_manage_remove(
+    root: Path = typer.Argument(..., help="Managed workspace root"),
+    roots_file: Optional[Path] = typer.Option(None, "--roots-file", help="Managed roots JSON path"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Remove a managed workspace root."""
+    _run_workflow_lazy_aging_scan(_workflow_orchestrator(db))
+    path = _workflow_roots_path(roots_file)
+    canonical = str(root.resolve())
+    roots = [existing for existing in _load_workflow_roots(path) if existing != canonical]
+    _save_workflow_roots(path, roots)
+    _emit_roots(path, json_output)
+
+
+@workflow_prompt_app.command("show")
+def workflow_prompt_adapter_show(
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Show Prompt Adapter integration instructions."""
+    skill_path = Path("docs/workflow-adapter/SKILL.md")
+    agents_snippet_path = Path("docs/workflow-adapter/AGENTS_SNIPPET.md")
+    payload = {
+        "enforcement_level": "prompt_adapter",
+        "skill_path": str(skill_path),
+        "agents_snippet_path": str(agents_snippet_path),
+        "required_entry_command": "asterwynd workflow enter --workflow <id>",
+        "status_command": "asterwynd workflow status --workflow <id>",
+        "required_exit_command": "asterwynd workflow report --workflow <id> --work-item-id <id> --expected-version <n>",
+        "approval_capability": False,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(
+            "Prompt Adapter: call workflow enter before each run, workflow status when resuming, "
+            "and workflow report after each run; "
+            "approval capability remains unavailable."
+        )
+
+
+@workflow_receipt_app.command("generate")
+def workflow_receipt_generate(
+    workflow: str = typer.Option(..., "--workflow", help="Workflow ID"),
+    change_dir: Path = typer.Option(..., "--change-dir", help="OpenSpec change directory"),
+    db: Optional[Path] = typer.Option(None, "--db", help="Workflow SQLite path"),
+    key_dir: Optional[Path] = typer.Option(None, "--key-dir", help="Private workflow signer key directory"),
+    trusted_signers_dir: Path = typer.Option(Path(".workflow/trusted-signers"), "--trusted-signers-dir", help="Trusted signer public key directory"),
+    key_id: str = typer.Option("local-workflow", "--key-id", help="Workflow signer key id"),
+    base_branch: str = typer.Option("master", "--base-branch", help="Base branch"),
+    base_commit: str = typer.Option("", "--base-commit", help="Base commit"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Generate a signed minimal workflow receipt."""
+    from workflow_control.receipt import (
+        build_receipt_payload,
+        ensure_workflow_signer,
+        write_workflow_receipt,
+    )
+
+    orchestrator = _workflow_orchestrator(db)
+    status = orchestrator.status(workflow)
+    events = orchestrator.config.store.list_events(workflow)
+    signer = ensure_workflow_signer(
+        key_dir or (platformdirs.user_data_path("asterwynd") / "workflow-keys"),
+        trusted_signers_dir,
+        key_id=key_id,
+    )
+    payload = build_receipt_payload(
+        change_dir=change_dir,
+        workflow_id=workflow,
+        template_id=orchestrator.config.template.template_id,
+        final_state={
+            "phase": status.snapshot.state.phase,
+            "sub_state": status.snapshot.state.sub_state,
+        },
+        final_version=status.snapshot.version,
+        events=[_workflow_receipt_event_payload(event) for event in events],
+        gates=_workflow_receipt_gate_payloads(events),
+        base_branch=base_branch,
+        base_commit=base_commit,
+    )
+    receipt_path = write_workflow_receipt(change_dir, payload, signer)
+    payload = {"receipt_path": str(receipt_path), "key_id": signer.key_id}
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        typer.echo(f"Generated workflow receipt: {receipt_path}")
+
+
+@workflow_receipt_app.command("verify")
+def workflow_receipt_verify(
+    receipt: Path = typer.Option(..., "--receipt", help="workflow-receipt.json path"),
+    trusted_signers_dir: Path = typer.Option(Path(".workflow/trusted-signers"), "--trusted-signers-dir", help="Trusted signer public key directory"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
+):
+    """Verify a signed workflow receipt."""
+    from workflow_control.receipt import verify_workflow_receipt
+
+    errors = verify_workflow_receipt(receipt, trusted_signers_dir)
+    payload = {"ok": not errors, "errors": errors}
+    if json_output:
+        typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif errors:
+        for error in errors:
+            typer.echo(f"ERROR: {error}", err=True)
+    else:
+        typer.echo("Workflow receipt verified")
+    if errors:
         raise SystemExit(1)
 
 
