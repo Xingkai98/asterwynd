@@ -587,6 +587,8 @@ class AgentLoop:
                     stop_reason=StopReason.END_TURN,
                     tool_calls_made=tool_calls_made,
                 ))
+                if trace_recorder:
+                    trace_recorder.record_completion("completed", response.content or "")
                 if on_event:
                     await on_event("done", {
                         "content": response.content or "",
@@ -816,6 +818,8 @@ class AgentLoop:
             tool_calls_made=tool_calls_made,
         )
         await self.hooks.on_completion(result)
+        if trace_recorder:
+            trace_recorder.record_completion("max_iterations", final_content)
         if on_event:
             await on_event("done", {
                 "content": final_content,

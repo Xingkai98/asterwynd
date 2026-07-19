@@ -34,6 +34,8 @@ from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry
+from agent.tool_permissions import BUILTIN_PERMISSION_PROFILES
+from agent.trace_recorder import TraceRecorder
 from agent.tools.sandbox import SandboxExecutor
 from agent.workspace_policy import WorkspacePolicy
 from agent.background import BackgroundTaskManager
@@ -143,6 +145,7 @@ def build_agent(
     mode: str | AgentMode = AgentMode.BUILD,
     config: AsterwyndConfig | None = None,
     approval_handler: ApprovalHandler | None = None,
+    auto_approve: bool = False,
 ) -> AgentLoop:
     if config is not None and config.mcp.servers:
         raise RuntimeError("build_agent with MCP config requires build_agent_async")
@@ -153,6 +156,7 @@ def build_agent(
         config=config,
         approval_handler=approval_handler,
         mcp_manager=None,
+        auto_approve=auto_approve,
     )
 
 
@@ -162,6 +166,7 @@ async def build_agent_async(
     mode: str | AgentMode = AgentMode.BUILD,
     config: AsterwyndConfig | None = None,
     approval_handler: ApprovalHandler | None = None,
+    auto_approve: bool = False,
 ) -> AgentLoop:
     config = config or AsterwyndConfig()
     mcp_manager = await build_mcp_manager(config)
@@ -172,6 +177,7 @@ async def build_agent_async(
         config=config,
         approval_handler=approval_handler,
         mcp_manager=mcp_manager,
+        auto_approve=auto_approve,
     )
 
 
@@ -196,6 +202,7 @@ def _build_agent_core(
     config: AsterwyndConfig | None = None,
     approval_handler: ApprovalHandler | None = None,
     mcp_manager=None,
+    auto_approve: bool = False,
 ) -> AgentLoop:
     config = config or AsterwyndConfig()
     llm = build_llm(provider, model)
@@ -205,12 +212,19 @@ def _build_agent_core(
     )
     persistent_memory = PersistentMemory(workspace_policy.workspace_root)
 
+    permission_profiles = config.permission_profiles_by_mode()
+    if auto_approve:
+        permission_profiles = {
+            **permission_profiles,
+            AgentMode.BUILD: BUILTIN_PERMISSION_PROFILES["build_legacy_auto_high_risk"],
+        }
+
     registry = build_default_tool_registry(
         policy=workspace_policy,
         mode_policy=ModePolicy(
             run_config,
             deny_tools_by_mode=config.deny_tools_by_mode(),
-            permission_profiles_by_mode=config.permission_profiles_by_mode(),
+            permission_profiles_by_mode=permission_profiles,
         ),
         ignore_patterns=config.tools.ignore_patterns,
         code_intelligence_config=config.tools.code_intelligence,
@@ -315,13 +329,23 @@ def run(
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     resume: Optional[str] = typer.Option(None, "--resume", help="从指定 session_id 恢复会话"),
+    auto_approve: bool = typer.Option(
+        False, "--auto-approve", help="自动批准 build 模式下所有工具调用（用于 headless/benchmark 场景）"
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None, "--output-dir", help="输出目录，运行完成后写入 trace.json"
+    ),
 ):
     """单轮执行 Agent"""
     _setup_logging()
     config = _load_cli_config(config_path, mode=mode)
     normalized_mode = config.agent.default_mode.value
     resume_snapshot = _load_resume_snapshot(resume, config) if resume else None
-    run_single(prompt, model, provider, max_iterations, system, normalized_mode, config, resume_snapshot)
+    run_single(
+        prompt, model, provider, max_iterations, system,
+        normalized_mode, config, resume_snapshot,
+        auto_approve=auto_approve, output_dir=output_dir,
+    )
 
 
 def run_single(
@@ -333,6 +357,8 @@ def run_single(
     mode: str = "build",
     config: AsterwyndConfig | None = None,
     resume_snapshot: SessionSnapshot | None = None,
+    auto_approve: bool = False,
+    output_dir: Optional[Path] = None,
 ):
     session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
     run_id = new_run_id()
@@ -340,11 +366,18 @@ def run_single(
     messages: list[Message] = []
     messages.append(Message(role="user", content=prompt))
 
+    trace = TraceRecorder(
+        task_id="cli-run",
+        mode=mode,
+        session_id=session_id,
+        run_id=run_id,
+    ) if output_dir else None
+
     async def _run():
         if config and config.mcp.servers:
-            agent = await build_agent_async(model, provider, mode, config=config)
+            agent = await build_agent_async(model, provider, mode, config=config, auto_approve=auto_approve)
         else:
-            agent = build_agent(model, provider, mode, config=config)
+            agent = build_agent(model, provider, mode, config=config, auto_approve=auto_approve)
         agent.max_iterations = max_iterations
         if system:
             agent._user_system_prompt = system
@@ -360,6 +393,7 @@ def run_single(
             session_id=session_id,
             run_id=run_id,
             resume_snapshot=resume_snapshot,
+            trace_recorder=trace,
         )
         _print_plan_document(agent)
         if not stream_state["streamed"]:
@@ -373,6 +407,14 @@ def run_single(
         return result
 
     asyncio.run(_run())
+
+    if output_dir and trace:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            trace.write_to_file(output_dir / "trace.json")
+            typer.echo(f"Trace written to: {output_dir / 'trace.json'}")
+        except OSError as exc:
+            typer.echo(f"Warning: failed to write trace: {exc}", err=True)
 
 
 def run_interactive(
@@ -523,6 +565,7 @@ async def _run_agent_with_cli_streaming(
     session_id: str,
     run_id: str,
     resume_snapshot: SessionSnapshot | None = None,
+    trace_recorder: Optional["TraceRecorder"] = None,
 ):
     async def on_event(event_type: str, data: dict):
         if event_type == "assistant_delta":
@@ -539,7 +582,16 @@ async def _run_agent_with_cli_streaming(
             typer.echo(f"【Approval】{status}", err=True)
 
     if "on_event" not in inspect.signature(agent.run).parameters:
-        return await agent.run(messages, session_id=session_id, run_id=run_id)
+        kwargs_simple: dict = dict(
+            messages=messages,
+            session_id=session_id,
+            run_id=run_id,
+        )
+        if trace_recorder is not None:
+            kwargs_simple["trace_recorder"] = trace_recorder
+        if resume_snapshot is not None:
+            kwargs_simple["resume_snapshot"] = resume_snapshot
+        return await agent.run(**kwargs_simple)
 
     kwargs = dict(
         messages=messages,
@@ -547,6 +599,8 @@ async def _run_agent_with_cli_streaming(
         session_id=session_id,
         run_id=run_id,
     )
+    if trace_recorder is not None:
+        kwargs["trace_recorder"] = trace_recorder
     if resume_snapshot is not None:
         kwargs["resume_snapshot"] = resume_snapshot
     return await agent.run(**kwargs)
