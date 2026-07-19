@@ -42,14 +42,38 @@ class AsterwyndAgent(BaseInstalledAgent):
             )
         wheel_path = Path(wheels[-1])
         container_path = f"{_CONTAINER_WHEEL_DIR}/{wheel_path.name}"
+
+        # Ensure pip is available; install python3 if the image lacks it
+        pip_cmd = "python3 -m pip"
+        check = await environment.exec(
+            command="python3 -m pip --version 2>/dev/null || python3 --version 2>/dev/null || echo MISSING",
+            user="root",
+        )
+        if "MISSING" in (check.stdout or ""):
+            await self.exec_as_root(
+                environment,
+                command=(
+                    "apt-get update -qq && "
+                    "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-pip && "
+                    "apt-get clean && rm -rf /var/lib/apt/lists/*"
+                ),
+                timeout_sec=120,
+            )
+            pip_cmd = "python3 -m pip"
+
         await self.exec_as_root(
             environment,
             command=f"mkdir -p {_CONTAINER_WHEEL_DIR}",
         )
         await environment.upload_file(str(wheel_path), container_path)
-        await self.exec_as_agent(
+        await self.exec_as_root(
             environment,
-            command=f"pip install --no-cache-dir {container_path}",
+            command=(
+                f"({pip_cmd} install --no-cache-dir --break-system-packages "
+                f"{container_path}) || "
+                f"({pip_cmd} install --no-cache-dir {container_path})"
+            ),
+            env={"PIP_REQUIRE_VIRTUALENV": "false"},
         )
 
     @with_prompt_template
