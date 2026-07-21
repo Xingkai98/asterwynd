@@ -186,7 +186,38 @@ messages
 
 ## Q1.4: 怎么确保模型在适当时候调用 SaveMemory 存全局记忆
 
-[...B 版已输出，此处省略重复内容，详见对话记录...]
+### A — 详细参考版
+
+SaveMemory 的触发时机依赖于**外部指令文件**中的行为规则，而非框架内置机制。
+
+**规则来源**：AGENTS.md 的"Agent 持久记忆"章节（`@AGENTS.md` → "保存时机"和"不保存的内容"）明确规定了四类记忆（user/feedback/project/reference）的保存场景：
+
+- **user**: 了解到用户角色/偏好/知识背景时保存
+- **feedback**: 用户纠正行为或确认非显然方案时保存
+- **project**: 了解到项目约束/截止日期/合规要求等非代码信息时保存
+- **reference**: 了解到外部资源位置时保存
+
+同时明确排除：代码模式/架构（可从代码推导）、Git 历史（git log 是权威来源）、临时任务状态、已在 AGENTS.md 中记录的内容。
+
+**注入链路**：AGENTS.md → CLAUDE.md（`@AGENTS.md`）→ `AsterMdSource`（P1）→ 上下文注入。这套规则只有在这条引用链路完整时才会被 Agent 看到。AsterMdSource 从 Git 根目录向 CWD 逐层收集 `ASTER.md` + `ASTER.local.md`（`agent/context/sources.py:252-271`），如果当前工作目录不在配置了 AGENTS.md 的仓库中，这些规则不会被注入。
+
+**工具侧**：`SaveMemoryTool` 的 description（`agent/tools/builtin/memory.py:12-17`）描述了记忆的四种类型和它们的作用，但**不包含"何时该存"的触发场景**。Agent 需要从上下文注入的指令中理解保存时机。
+
+**设计问题（BUG-001）**：P0 系统提示词（`agent/context/sources.py:67-97`）中完全没有提及记忆保存规则。在新文件夹启动 Asterwynd 且没有 ASTER.md 时，Agent 仍然拥有 SaveMemory/RecallMemory 工具，但缺乏使用判断依据——这依赖外部指令文件是否被正确加载。
+
+**RecallMemory 检索**：Agent 看到 MEMORY.md 索引后会按需调用 RecallMemory 工具查看具体记忆内容。MEMORY.md 的 truncation 保护（200 行/25KB）确保不会一次加载所有记忆。
+
+### B — 面试讲稿
+
+> "坦率说，当前机制主要靠外部指令文件中的行为规则来驱动，框架本身没有内置'什么时候该存记忆'的判断逻辑。
+>
+> 规则写在 AGENTS.md 里——比如用户纠正你的方法时写入 feedback、了解到用户偏好时写入 user、了解到外部资源位置时写入 reference、了解到项目约束时写入 project。同时明确排除了不应保存的内容——能从当前代码推导的架构信息不要存、git log 能查到的历史不要存、临时任务状态不要存。
+>
+> 注入链路是这样的：AGENTS.md 被 CLAUDE.md 的 `@AGENTS.md` 引用，然后被 AsterMdSource 作为 P1 优先级注入上下文。P1 是 critical 层，永远不会被截断。SaveMemory 工具本身的 description 描述了四种记忆类型，但没有触发场景提示——Agent 需要从注入的指令中理解'什么时候该存'。
+>
+> 这里有一个已知缺陷：P0 系统提示词里完全没有记忆保存规则。如果在没有 ASTER.md 的新文件夹启动，Agent 有 SaveMemory 工具但不知道该什么时候用。理想情况下，记忆保存时机的核心规则应该内嵌到系统提示词或工具描述中，作为框架级基础能力，不依赖外部指令文件。
+>
+> 检索侧是两级设计——Agent 首先看到 MEMORY.md 索引，一个条目一行；需要详细信息时调用 RecallMemory，系统按文件名链接去读完整内容。这样避免了一次性把全部记忆灌进上下文。"
 
 ---
 
@@ -240,7 +271,7 @@ messages
 2. **人工审批可能漏判**——长命令中藏危险操作、疲劳审批习惯性按 y
 3. **审批只管工具级别**——不知道也不应该知道哪些命令模式是危险的
 
-WorkspacePolicy 的 denylist（`rm -rf /`、`shutdown`、fork bomb、`curl | bash` 等 60+ 条正则）是正则硬匹配，不依赖人。两层之间：权限管边界，Policy 做最后安全网。
+WorkspacePolicy 的 denylist（`rm -rf /`、`shutdown`、fork bomb、`curl | bash` 等 57 条正则）是正则硬匹配，不依赖人。两层之间：权限管边界，Policy 做最后安全网。
 
 ### B — 面试讲稿
 
@@ -336,7 +367,7 @@ WorkspacePolicy 的 denylist（`rm -rf /`、`shutdown`、fork bomb、`curl | bas
 
 没有。`SandboxExecutor`（`agent/tools/sandbox.py`）基于 `asyncio.create_subprocess_shell`，不是真正的安全沙箱。
 
-三道防线：超时+输出限制（30s / 1MB）、进程组清理（`os.setsid` + `os.killpg`）、WorkspacePolicy 黑白名单。没有 Docker/容器、没有 chroot/namespace/cgroup、没有网络隔离。
+三道防线：超时+输出限制（30s / 1MB）、进程组清理（`run_background()` 中 `os.setsid` + `os.killpg`，普通 `run()` 无进程组隔离）、WorkspacePolicy 黑白名单。没有 Docker/容器、没有 chroot/namespace/cgroup、没有网络隔离。
 
 Bash 工具暴露 `timeout` 参数给 LLM 自定义超时，`run_in_background` 支持后台长时间任务——AgentLoop 每轮迭代检查完成状态并注入结果。`max_memory_mb=512` 声明但未实现。
 
@@ -2504,5 +2535,1431 @@ async def after_tool_execute(self, tool_call: "ToolCall", result: str) -> None:
 >
 > 最后是 SubAgent 场景。ParentChannelHook 是关键，它显式继承了 Hook Protocol，在父 agent 的每次 `after_tool_execute` 中非阻塞地轮询子 agent 结果。它持有一个对父 agent 消息列表的共享可变引用，子 agent 完成后直接以 tool role 的消息格式注入结果，这样父 agent 在下一轮 LLM 调用时就能看到。timeout 设成了极短的 0.01 秒，确保不阻塞父 agent 的正常执行流。
 >
+
+---
+
+## Q9: Plan-Execute 模式的设计——状态机、不变式与模式切换
+
+## Version A -- 详细参考版
+
+### 1. PlanItem 状态模型
+
+Plan-Execute 模式的核心数据类型定义在 `agent/planning/manager.py`。
+
+**PlanStatus 联合类型**（第 7 行）：
+
+```python
+PlanStatus = Literal["pending", "in_progress", "completed", "failed", "skipped"]
+```
+
+五个状态构成一个单向非循环的状态空间：
+- `pending`：初始状态，尚未开始
+- `in_progress`：正在执行（全局最多一个）
+- `completed`：正常完成
+- `failed`：执行失败
+- `skipped`：被跳过（如用户决定不实现某一步）
+
+`PLAN_STATUSES` 元组（第 8-14 行）是所有合法状态的枚举值，用于校验。
+
+**PlanItem 数据类**（第 17-42 行）：
+
+```python
+@dataclass
+class PlanItem:
+    id: str           # 自动生成，格式 "item-{n}"
+    content: str      # 步骤描述文本
+    status: PlanStatus = "pending"
+    note: str | None = None
+```
+
+它提供了 `to_dict()` / `from_dict()` 序列化方法。`from_dict()` 是防御性的——如果读到的 status 不在 `PLAN_STATUSES` 中，会默认回退为 `"pending"`（第 35-36 行），防止脏数据污染运行时。
+
+**PlanningManager 类**（第 45-130 行）维护 `self._items: list[PlanItem]` 和自增 ID 计数器 `self._next_id`，对外暴露三个核心方法：`set_plan()`、`update_item()`、`snapshot()`。
+
+### 2. "only one in_progress" 不变式
+
+**位置**：`manager.py` 第 71-77 行
+
+```python
+if status == "in_progress":
+    in_progress = [
+        existing for existing in self._items
+        if existing.status == "in_progress" and existing.id != item_id
+    ]
+    if in_progress:
+        raise ValueError("only one in_progress plan item is allowed")
+```
+
+**设计意图**：Plan-Execute 模式的本质是串行推理——模型一次只应专注于一个步骤。如果有两个步骤同时 in_progress，说明状态的确定性被破坏了。这个不变式在 `update_item()` 的写入路径上强制检查，不是在读取时做 soft check。
+
+**强制执行的点**：只有 `update_item()` 可以变更状态。`set_plan()` 重建全部 items 时不会触发此检查（因为它会先清空 `_items`，再创建全 `pending` 的新列表），所以不存在竞争条件。
+
+**错误处理**：抛出 `ValueError` 而不是静默修改，调用方（`AgentLoop.update_plan_item()` 在 `loop.py:188-199`）会将这个异常自然地传播到工具调用链中，由 `_execute_single_tool()` 的 retry 逻辑（`loop.py:908-913`）捕获，最终以 `[Error: ...]` 前缀的字符串返回给 LLM，让模型感知到约束违规。
+
+### 3. Snapshot 与恢复
+
+**Snapshot 输出**（`manager.py` 第 83-88 行）：
+
+```python
+def snapshot(self) -> dict:
+    items = [item.to_dict() for item in self._items]
+    return {
+        "items": items,
+        "summary": self.summary(items),
+    }
+```
+
+`summary()`（第 90-106 行）计算每个状态的计数、总步骤数以及当前 in_progress 的 item。这个 dict 结构是 PlanningManager 的所有可观察状态的完整投影。
+
+**跨 session 恢复**：PlanningManager 本身是内存对象，没有 `load_snapshot()` 方法。跨 session 的持久化和恢复走的是两层机制：
+
+- **Session 级持久化**：`agent/session.py` 的 `SessionSnapshot`（第 16-28 行）将 `mode: AgentMode` 和 `todos: list[PlanItem]` 写入磁盘。`SessionStore.save()`（`session.py:70-85`）在每次 AgentLoop.run() 结束时调用（`loop.py:460-461`），写入 `snapshot.json` 和 `messages.json`。
+- **Session 恢复**：`AgentLoop._run()` 的 resume 路径（`loop.py:479-506`）读取 `resume_snapshot`，将 mode 恢复（第 483-484 行）、execution todos 恢复到 `_execution_todos`（第 485 行）。PlanningManager 本身不会被直接恢复——它的生命周期在单个 AgentLoop 实例内。但 plan document 状态（`_plan_document` / `_plan_document_final`，`loop.py:115-116`）会通过 plan tools 的重新注册来重建：当 mode 被恢复为 PLAN 时，`_ensure_plan_tools_registered()`（`loop.py:290-295`）重新注入 UpdatePlanTool 和 ExitPlanModeTool，允许模型继续之前的规划流程。
+
+注意：PlanningManager 的 `_items`（计划步骤的状态机）和 AgentLoop 的 `_execution_todos`（构建模式下的 TodoWrite 列表）是**两套独立的数据结构**。前者用于 plan 模式的计划追踪，后者用于 build 模式的任务进度。但它们共享 PlanItem 类型（`loop.py:54` 的 `from agent.planning import PlanItem`），且 TodoWrite 的 create/update callbacks 直接使用 PlanItem 实例（`loop.py:318-339`）。
+
+### 4. 模式切换行为
+
+**AgentMode 枚举**（`agent/run_config.py` 第 18-22 行）：
+
+```python
+class AgentMode(str, Enum):
+    BUILD = "build"
+    READ_ONLY = "read_only"
+    PLAN = "plan"
+    BYPASS = "bypass"
+```
+
+**切换入口**：`AgentLoop.set_mode()`（`loop.py:147-175`）。
+
+核心流程：
+1. 调用 `self.runtime_state.set_mode()`（`run_config.py:56-74`），这是一个线程安全的状态转换（`self._lock` + 原子更新 `_current_mode`），返回 `{"old_mode": ..., "new_mode": ..., "source": ..., "reason": ...}`。
+2. 如果新 mode 是 PLAN，调用 `_ensure_plan_tools_registered()` 注册 UpdatePlanTool 和 ExitPlanModeTool。
+3. 通过 trace_recorder 和 on_event 发布 `mode_changed` 事件。
+
+**Plan -> Build 切换时状态保留**：
+- `PlanningManager._items` 保留在内存中（AgentLoop 实例存活），不会被清除。
+- plan document（`_plan_document`）保留，`_plan_document_final` 标志保留。
+- `PlanningStateSource` 在 build 模式下仍然会渲染（`sources.py:367-370`），因为它没有 mode gate —— `render_context()` 在 `_items` 为空时只返回空字符串。这意味着：如果从 plan 模式切到 build 模式时 PlanningManager 里还有 plan items，它们**仍然会被注入 context**，作为执行参考。
+- execution todos（`_execution_todos`）是 build 模式专属的，只有 `TodoSource._renderer` 在非 plan 模式才渲染（`loop.py:1062-1064`）。
+
+**Build -> Plan 切换时**：
+- execution todos 不再注入 context（`TodoSource` 的 renderer 在非 build/read_only 模式返回空）。
+- UpdatePlanTool 和 ExitPlanModeTool 被注册（`_ensure_plan_tools_registered` 的幂等注册）。
+- `PlanModeSource` 开始注入 plan 模式指令（`sources.py:342-354`），明确告诉模型：不可编辑文件、不可运行 shell、仅做只读调研和讨论。
+
+**模式切换的工具访问控制**：`ModePolicy.decide_tool()`（`run_config.py:101-175`）检查 `tool.allowed_modes`。
+- UpdatePlanTool 和 ExitPlanModeTool 设置 `allowed_modes = ("plan",)`（`plan.py:49` 和继承），离开 plan 模式后自动不可见。
+- Build 模式的写工具（Edit、Write、Bash）在 plan 模式不可见。
+
+### 5. Plan Document 工作流
+
+**两个工具**（`agent/tools/builtin/plan.py`）：
+
+- **UpdatePlanTool**（第 45-78 行）：更新草稿。参数为 `title`、`plan_markdown`、`steps`。调用 `_save_plan`（实际绑定到 `AgentLoop.update_plan_document`），设置 `_plan_document.status = "draft"` 且 `_plan_document_final = False`。返回值是 `[Plan draft updated: {title} ({step_count} steps)]`。
+
+- **ExitPlanModeTool**（第 90-101 行）：继承自 UpdatePlanTool，复用参数 schema 和 `_parse_args`。区别在于调用 `_save_plan`（绑定到 `AgentLoop.submit_plan_document`），设置 `_plan_document.status = "submitted"` 且 `_plan_document_final = True`。返回 `[Plan submitted: {title} ({step_count} steps)]`。
+
+**工具注册**（`loop.py:290-295`）：
+
+```python
+def _ensure_plan_tools_registered(self) -> None:
+    if self._plan_tools_registered:
+        return
+    self.tool_registry.register(UpdatePlanTool(self.update_plan_document))
+    self.tool_registry.register(ExitPlanModeTool(self.submit_plan_document))
+    self._plan_tools_registered = True
+```
+
+注意：callback 绑定有区别——UpdatePlanTool 绑定 `self.update_plan_document`，ExitPlanModeTool 绑定 `self.submit_plan_document`。两者都传递 `SavePlanCallback` 类型（`plan.py:10`）：`Callable[[str, str, list[str]], Awaitable[dict[str, Any]]]`。
+
+**两种 plan document 写入路径**（`loop.py:201-261`）：
+
+- `update_plan_document()`（第 201-230 行）：先 `set_plan(steps)` 重建 PlanItem 列表，生成 `{"title", "markdown", "steps", "planning_state", "status": "draft"}` 的 document dict，发布 `plan_document_updated` 事件。
+- `submit_plan_document()`（第 232-261 行）：结构相同但 `status` 为 `"submitted"`，`_plan_document_final = True`，发布 `plan_document_submitted` 事件。两者都返回完整的 document dict。
+
+**事件发布**（`loop.py:276-288`）：通过 `_publish_plan_document()` 同时写入 trace_recorder 和 on_event callback，实现了文档状态的可观测性。
+
+### 6. Context 注入管线
+
+**注入架构**：`ContextBuilder`（`agent/context/builder.py`）按优先级 0-5 排序所有 `ContextSource`，渲染后按 total_budget 从最低优先级尾部截断。P0 级标记 `critical=True` 永不被截断。
+
+**P5 层 Plan 相关 Source**（`agent/context/sources.py`）：
+
+- **PlanModeSource**（第 335-354 行）：priority=5, budget=2500, critical=False。仅在 `context.mode is AgentMode.PLAN` 时渲染。注入内容为 plan 模式的行为指令：只读调研、用 UpdatePlan 更新草稿、用户确认后调用 ExitPlanMode、不可编辑文件或运行命令。
+
+- **PlanningStateSource**（第 357-370 行）：priority=5, budget=1500, critical=False。始终渲染（无 mode gate）。调用 `self._planning.render_context()` 输出格式化的计划状态文本：
+  ```
+  Current structured planning state:
+  - [pending] 设计数据库 schema
+  - [in_progress] 实现 API 路由
+  - [completed] 初始化项目结构
+  ```
+
+- **TodoSource**（第 373-386 行）：priority=5, budget=1000, critical=False。通过回调函数渲染，回调是 `AgentLoop._todo_context()`（`loop.py:1061-1081`）。仅在 build 或 read_only 模式且 `_execution_todos` 非空时渲染最近 10 个按状态排序的 todo items。
+
+**P5 层预算共享**：三个 source 共享 P5 的约 5K 预算（PlanModeSource 2.5K + PlanningStateSource 1.5K + TodoSource 1K = 5K）。当总注入超过 `_injection_budget`（`loop.py:1038-1041`，min(20K, 20% 上下文窗口)）时，ContextBuilder 从最低优先级的非 critical 层尾部截断。P5 是倒数第二低的优先级（仅 P6 更低），因此在高注入压力下最容易被截断。
+
+**AgentLoop 中的注册顺序**（`loop.py:1043-1059`）：
+
+```python
+def _make_default_context_builder(self) -> ContextBuilder:
+    builder = ContextBuilder(total_budget=self._injection_budget)
+    builder.register(SystemPromptSource())        # P0
+    builder.register(AsterMdSource())              # P1
+    builder.register(MemoryIndexSource(...))       # P2
+    builder.register(SkillIndexSource(...))        # P4
+    builder.register(SkillActiveSource(...))       # P4
+    builder.register(PlanModeSource())             # P5
+    builder.register(PlanningStateSource(...))     # P5
+    builder.register(TodoSource(...))              # P5
+    return builder
+```
+
+同优先级（P5 三个 source）按注册顺序排列，ContextBuilder 不会在同优先级内重新排序。
+
+**每轮迭代触发**：`_messages_with_run_context()`（`loop.py:1009-1031`）在每次 LLM 调用前执行，生成 `BuildContext`（包含 cwd、mode、context_window、total_budget、user_system_prompt），调用 `context_builder.build(ctx)`，将渲染结果作为 system 消息插入到最后一条 system 消息之后。
+
+
+## Version B -- 面试讲稿版
+
+> Plan-Execute 模式的设计核心是一个五状态 PlanItem 模型加上一系列约束保证状态的确定性和可恢复性。
+>
+> 首先说数据结构。PlanStatus 是一个 Literal 类型的联合——pending、in_progress、completed、failed、skipped，五个状态。PlanItem 是一个 dataclass，包含 id、content、status 和一个可选的 note。PlanningManager 作为聚合根，维护了一个 PlanItem 列表和自增 ID，对外暴露 set_plan、update_item 和 snapshot 三个核心方法。
+>
+> 关键的不变式是"全局最多一个 in_progress"。这个检查写在 update_item 方法里，当有人试图把某个 item 设成 in_progress 时，先遍历所有现有 items，看是否已有其他 item 处于 in_progress 状态。如果有，直接抛 ValueError。这个设计保证了一次只有一个步骤在执行，Plan-Execute 的串行推理不被破坏。
+>
+> Snapshot 机制做的是全量序列化。PlanningManager 的 snapshot 方法把 items 列表和 summary 统计一起转成 dict——summary 里包含每种状态的数量和当前 in_progress 的 item。这个 dict 是计划状态的可观察投影。跨 session 恢复不直接通过 PlanningManager，而是走 SessionSnapshot。AgentLoop 的 run 方法在结束时调用 session store 持久化——写入 snapshot.json 和 messages.json，把 mode、todos、消息链都存下来。resume 时读取 snapshot，恢复 mode、execution todos，并且如果 mode 是 plan 就重新注册 plan tools。
+>
+> 关于模式切换。四个模式——build、read_only、plan、bypass。切换入口是 AgentLoop.set_mode，它调用 AgentRuntimeState.set_mode，这是一个带线程锁的原子状态转换。从 plan 切到 build 时，PlanningManager 的 items 不会清空，PlanningStateSource 仍然会把计划注入 context——因为没有 mode gate——所以模型在 build 模式下仍然能看到之前的计划步骤作为参考。反过来，从 build 切到 plan 时，PlanModeSource 开始注入 plan 模式的行为指令，明确告诉模型只读调研、不编辑文件。
+>
+> Plan Document 工作流由两个工具驱动。UpdatePlanTool 用于中间草稿更新，设置 status 为 draft；ExitPlanModeTool 继承同一个参数 schema，但调用 submit_plan_document 设置 status 为 submitted 并标记 finalized。两个工具都通过 _ensure_plan_tools_registered 在进入 plan 模式时幂等注册，allowed_modes 限定为 plan。工具注册时把 AgentLoop 的 update_plan_document 或 submit_plan_document 作为 callback 注入，形成闭环。
+>
+> 最后是 Context 注入管线。ContextBuilder 按 P0 到 P6 的优先级排序，渲染后按注入预算从尾部截断。Plan 相关的是 P5 层三个 source：PlanModeSource 在 plan 模式时注入行为指令，PlanningStateSource 始终渲染 PlanningManager.render_context 的格式化输出，TodoSource 仅在 build/read_only 模式有活跃 todos 时渲染。P5 三个 source 共享约 5K 的预算，在高注入压力下是非关键层中最先被截断的。每轮 LLM 调用前通过 _messages_with_run_context 执行注入，保证模型始终感知最新的 plan 状态。
+
+
+---
+## Q10: 工具系统的架构设计 -- ABC 基类、装饰器、Schema 生成与工厂组装
+
+
+## Version A -- 详细参考版
+
+### 1. Tool ABC 基类设计 (`agent/tools/base.py` L37-82)
+
+`Tool` 是一个抽象基类，继承自 `abc.ABC`，定义了所有工具的统一契约。核心接口由两部分组成：**属性声明**（元数据）和 **`execute()` 抽象方法**（行为）。
+
+**属性声明 (L39-46):**
+
+```python
+class Tool(ABC):
+    name: str
+    description: str
+    parameters: dict  # JSON Schema
+    read_only: bool = False
+    dangerous: bool = False
+    parallelizable: bool = False
+    allowed_modes: tuple[str, ...] | None = None
+    permission: ToolPermission | None = None
+```
+
+这些属性的含义：
+- `name` / `description` / `parameters`：组成 LLM function-calling schema 的三要素，通常由 `@tool_parameters` 装饰器注入。
+- `read_only`：标记工具是否只读（`base.py` L42）。用于 `get_permission()` 中的 fallback 权限推断。
+- `dangerous`：标记工具是否有危险性（L43），如 `BashTool` 设为 `True`。在 `ToolRegistry.get_sandbox()` 中被读取以判断是否需要沙箱（`registry.py` L29-30）。
+- `parallelizable`：标记工具是否可并行执行（L44），如 `ReadTool` 和 `GrepTool` 均设为 `True`。
+- `allowed_modes`：显式限制工具只能在特定模式下可见。如果为 `None`，则交由 `ModePolicy` 全局策略决定。
+- `permission`：显式指定权限对象。若为 `None`，则由 `get_permission()` 方法按 dangerous / read_only fallback 规则自动推断（L63-82）。
+
+**`execute()` 抽象方法 (L48-51):**
+
+```python
+@abstractmethod
+async def execute(self, **kwargs) -> str | list["ContentBlock"]:
+    """执行工具，返回结果字符串或 content blocks 列表"""
+    ...
+```
+
+所有子类必须实现异步 `execute()`。返回值支持两种类型：
+- `str`：纯文本结果（大多数工具），如 `ReadTool` 返回文件内容，`GrepTool` 返回匹配行。
+- `list[ContentBlock]`：富文本结果，如 `ReadTool._read_image()` 在读取图片时返回 `[TextBlock, ImageBlock]`（`read.py` L128-134），以支持多模态输出。
+
+**`get_permission()` 智能推断 (L63-82):**
+
+```python
+def get_permission(self) -> ToolPermission:
+    if self.permission is not None:
+        return self.permission
+    if self.dangerous:
+        return ToolPermission(
+            capabilities=frozenset({ToolCapability.COMMAND_EXECUTE}),
+            risk_level=ToolRiskLevel.HIGH,
+            origin=ToolOrigin.BUILTIN,
+        )
+    if self.read_only:
+        return ToolPermission(
+            capabilities=frozenset({ToolCapability.WORKSPACE_READ}),
+            risk_level=ToolRiskLevel.LOW,
+            origin=ToolOrigin.BUILTIN,
+        )
+    return ToolPermission(
+        capabilities=frozenset({ToolCapability.WORKSPACE_WRITE}),
+        risk_level=ToolRiskLevel.MEDIUM,
+        origin=ToolOrigin.BUILTIN,
+    )
+```
+
+这是 ABC 中唯一的非抽象方法，提供了三级 fallback 策略：
+1. 如果子类显式设置了 `permission`（如 `ReadTool.permission = WORKSPACE_READ_PERMISSION`），直接返回。
+2. 如果 `dangerous=True`，自动推断为 `COMMAND_EXECUTE` + `HIGH` 风险等级。
+3. 如果 `read_only=True`，推断为 `WORKSPACE_READ` + `LOW` 风险等级。
+4. 否则默认视为写入操作：`WORKSPACE_WRITE` + `MEDIUM` 风险等级。
+
+**`ToolCall` 数据类 (L85-94):**
+
+```python
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict
+
+    @classmethod
+    def from_delta(cls, delta: "ToolCallDelta", arguments: dict) -> "ToolCall":
+        return cls(id=delta.id, name=delta.name, arguments=arguments)
+```
+
+`ToolCall` 是对 LLM 返回的一次工具调用的结构化封装。`from_delta()` 类方法从流式增量 `ToolCallDelta` 和已完成的 `arguments` 构造完整调用对象，用于解耦流式解析与执行。
+
+
+### 2. `@tool_parameters` 装饰器模式 (`agent/tools/base.py` L19-34)
+
+```python
+def tool_parameters(
+    name: str,
+    description: str,
+    parameters: dict,
+):
+    """工具装饰器：附加元信息到 Tool 子类"""
+    def decorator(cls):
+        # Only set from decorator args if class doesn't already define them with truthy values
+        if not getattr(cls, 'name', None):
+            cls.name = name
+        if not getattr(cls, 'description', None):
+            cls.description = description
+        if not getattr(cls, 'parameters', None):
+            cls.parameters = parameters
+        return cls
+    return decorator
+```
+
+**设计核心：装饰器提供默认值，类属性可覆盖**
+
+装饰器通过 `getattr(cls, attr, None)` 检查类是否已定义同名属性，只在类未定义（或值为 falsy）时才注入。这意味着三层优先级：
+1. 类体中直接定义的属性（最高优先）
+2. 装饰器参数（默认值）
+3. ABC 基类的类型注解（无实际值，falsy）
+
+**实际使用中**，当前所有内置工具均使用装饰器提供全部三个元数据，类体只设置行为标记：
+
+- `ReadTool` (`read.py` L53-68)：装饰器设置 name/description/parameters；类体设置 `read_only=True, parallelizable=True, permission=WORKSPACE_READ_PERMISSION`
+- `BashTool` (`bash.py` L22-41)：装饰器设置 name/description/parameters；类体设置 `dangerous=True, permission=COMMAND_EXECUTE_PERMISSION`
+- `GrepTool` (`grep.py` L9-26)：装饰器设置 name/description/parameters；类体设置 `read_only=True, parallelizable=True, permission=WORKSPACE_READ_PERMISSION`
+- `EditTool` (`edit.py` L10-33)：装饰器设置 name/description/parameters；类体设置 `read_only=False, permission=WORKSPACE_WRITE_PERMISSION`
+
+**设计意图**：如果将来某个工具需要运行时根据构造参数动态生成 description 或 parameters，可以在 `__init__` 中设置类属性，装饰器的 `getattr` 检查会因类已定义而跳过，从而实现覆盖。当前代码中尚未使用此特性，但架构上已预留。
+
+
+### 3. `Tool.get_schema()` -- LLM Schema 生成 (`agent/tools/base.py` L53-61)
+
+```python
+def get_schema(self) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters,
+        },
+    }
+```
+
+这是将工具元数据组装为 **OpenAI function-calling 兼容格式** 的唯一入口。组装逻辑极其简洁：
+- 外层 `"type": "function"` 是 OpenAI Chat Completions API `tools` 参数要求的格式。
+- 内层 `"function"` 对象包含三个字段：`name`、`description`、`parameters`（JSON Schema）。
+- 每个工具实例自行提供这些字段，因此 `get_schema()` 对任何 `Tool` 子类都是通用的，无需重写。
+
+**在 ToolRegistry 中的调用链**：
+1. `ToolRegistry.get_all_schemas()` (`registry.py` L22-27) 对每个通过 `ModePolicy.is_tool_allowed()` 过滤的工具调用 `tool.get_schema()`。
+2. 返回的 schema 列表最终被送入 LLM 的 `tools` 参数。
+
+**McpTool 的 Schema 适配**：`McpTool` (`mcp/tools.py` L10-23) 在 `__init__` 中直接设置 `self.name`、`self.description`、`self.parameters`，因此继承的 `get_schema()` 无需任何修改即可工作：
+```python
+class McpTool(Tool):
+    def __init__(self, metadata: McpToolMetadata, manager: McpManager):
+        self.name = metadata.callable_name
+        self.description = metadata.description or (...)
+        self.parameters = metadata.input_schema
+        self.permission = metadata.permission
+        ...
+```
+
+
+### 4. 工厂组装模式 (`agent/tools/factory.py`)
+
+**`build_default_tool_registry()` (L77-101)** 是工具系统的主装配函数，接受依赖注入参数并产出配置完整的 `ToolRegistry` 实例。
+
+**函数签名 (L77-88):**
+
+```python
+def build_default_tool_registry(
+    *,
+    policy: WorkspacePolicy | None = None,
+    mode_policy: ModePolicy | None = None,
+    ignore_patterns: tuple[str, ...] = (),
+    code_intelligence_config: CodeIntelligenceConfig | None = None,
+    web_search_config: WebSearchConfig | None = None,
+    browser_config: BrowserConfig | None = None,
+    mcp_manager: McpManager | None = None,
+    tools: list[Tool] | None = None,
+    persistent_memory: PersistentMemory | None = None,
+) -> ToolRegistry:
+```
+
+所有参数使用 keyword-only 约束（`*` 之后的参数），防止误传位置参数。
+
+**装配流程 (L89-101):**
+
+```python
+registry = ToolRegistry(mode_policy=mode_policy)
+default_tools = tools or get_default_tools(
+    policy=policy,
+    ignore_patterns=ignore_patterns,
+    code_intelligence_config=code_intelligence_config,
+    web_search_config=web_search_config,
+    browser_config=browser_config,
+    persistent_memory=persistent_memory,
+)
+for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
+    registry.register(tool)
+registry.mode_policy.validate_known_tools(_known_tool_names(registry))
+return registry
+```
+
+三步装配：
+1. 创建空的 `ToolRegistry`，注入 `mode_policy`。
+2. 合并内置工具列表（来自 `get_default_tools()`）和 MCP 工具列表（来自 `_build_mcp_tools()`），逐一注册。
+3. 校验：`validate_known_tools()` 确保 `mode_policy` 中引用的 `deny_tools` 白名单与实际注册的工具名一致，不存在未知工具名。
+
+**`get_default_tools()` 功能域分组 (L162-206):**
+按功能域组织的约 20 个核心工具（另有 Todo、BackgroundTask、Subagent 等通过外部注入注册）：
+
+| 功能域 | 工具类 | 文件 |
+|--------|--------|------|
+| 文件 | `ReadTool`, `WriteTool`, `EditTool` | `builtin/read.py`, `builtin/write.py`, `builtin/edit.py` |
+| 搜索 | `GrepTool` | `builtin/grep.py` |
+| 命令/沙箱 | `BashTool` | `builtin/bash.py` |
+| Git | `InspectGitDiffTool` | `builtin/inspect_git_diff.py` |
+| 代码智能 | `RepoMapTool`, `SymbolSearchTool` | `builtin/code_intelligence.py` |
+| LSP | `LspDefinitionTool`, `LspReferencesTool`, `LspHoverTool`, `LspDocumentSymbolsTool`, `LspWorkspaceSymbolsTool`, `LspDiagnosticsTool` | `builtin/lsp.py` |
+| Web | `WebSearchTool`, `WebFetchTool` | `builtin/web_search.py`, `builtin/web_fetch.py` |
+| 浏览器 | `BrowserNavigate`, `BrowserGetContent`, `BrowserScreenshot`, `BrowserScroll`, `BrowserListTabs`, `BrowserSwitchTab`, `BrowserCloseTab` | `builtin/browser_tools.py` |
+| 记忆 | `SaveMemoryTool`, `RecallMemoryTool` | `builtin/memory.py` |
+| 子代理 | `TaskOutput`, `TaskStop`, `TodoWrite`, `ActivateSkill` (在 `KNOWN_BUILTIN_TOOL_NAMES` 中声明但通过外部注入) | 见 L39-74 |
+
+**MCP 工具适配 (`_build_mcp_tools()`, L104-107):**
+
+```python
+def _build_mcp_tools(mcp_manager: McpManager | None) -> list[Tool]:
+    if mcp_manager is None:
+        return []
+    return [McpTool(metadata, mcp_manager) for metadata in mcp_manager.tools]
+```
+
+每个 MCP 服务器提供的工具元数据被包装为 `McpTool` 实例。`McpTool` 继承 `Tool` ABC，在 `execute()` 中委托给 `McpManager.call_tool()` (`mcp/tools.py` L22-23)。
+
+**浏览器工具条件注册 (L199-204):**
+
+```python
+if browser_config is not None and browser_config.enabled:
+    try:
+        browser_tools = _build_browser_tools(browser_config, policy)
+        tools.extend(browser_tools)
+    except Exception as exc:
+        logger.warning("Failed to initialize browser tools: %s", exc)
+```
+
+浏览器工具仅在 `BrowserConfig.enabled=True` 且 `playwright` 可用时才注册，否则静默跳过。
+
+**`build_coding_tool_registry()` (L110-133)** 是一个精简变体，省略了 `WebSearchTool` 和 `WebFetchTool`，适用于不需要网络搜索能力的编码场景。
+
+
+### 5. `ToolRegistry` 数据结构 (`agent/tools/registry.py`)
+
+**核心数据结构 (L12-13):**
+
+```python
+class ToolRegistry:
+    def __init__(self, mode_policy: ModePolicy | None = None):
+        self._tools: dict[str, Tool] = {}
+        self.mode_policy = mode_policy or ModePolicy()
+```
+
+`_tools` 以工具名称为键、`Tool` 实例为值的字典，保证 O(1) 按名查找。
+
+**注册 (`register`, L16-17):**
+
+```python
+def register(self, tool: Tool) -> None:
+    self._tools[tool.name] = tool
+```
+
+以 `tool.name` 为键，覆盖式注册。后注册的同名工具会覆盖先注册的，这允许工厂中 MCP 工具按需覆盖内置工具（当前未使用此特性，但字典结构天然支持）。
+
+**Schema 获取 (`get_all_schemas`, L22-27):**
+
+```python
+def get_all_schemas(self) -> list[dict]:
+    return [
+        tool.get_schema()
+        for tool in self._tools.values()
+        if self.mode_policy.is_tool_allowed(tool)
+    ]
+```
+
+通过列表推导式实现两阶段过滤：
+1. 遍历所有注册工具。
+2. 对每个工具调用 `mode_policy.is_tool_allowed(tool)`，该方法内部调用 `decide_tool()` 检查 `is_visible` 属性（`run_config.py` L98-99）。只有 `PermissionDecisionType` 不是 `DENY` 的工具才可见。
+3. 通过过滤的工具调用 `get_schema()` 组装 LLM schema。
+
+这意味着：`build` / `read_only` / `plan` 模式下，LLM 只会看到当前模式允许的工具列表，从源头防止 LLM 生成越权调用。
+
+**执行 (`execute`, L32-46):**
+
+```python
+async def execute(self, tool_call: ToolCall, *, approval_granted: bool = False) -> str | list["ContentBlock"]:
+    tool = self._tools[tool_call.name]
+    decision = self.mode_policy.decide_tool(tool)
+    if decision.type is PermissionDecisionType.DENY:
+        mode = self.mode_policy.mode.value
+        return (
+            f"[Permission denied: tool {tool_call.name} is not allowed "
+            f"in {mode} mode: {decision.reason}]"
+        )
+    if decision.type is PermissionDecisionType.REQUIRE_APPROVAL and not approval_granted:
+        return (
+            f"[Approval required: tool {tool_call.name} requires approval "
+            f"in {self.mode_policy.mode.value} mode]"
+        )
+    return await tool.execute(**tool_call.arguments)
+```
+
+执行流程包含三层防护：
+1. 按 `tool_call.name` 查找工具实例（O(1)）。
+2. 通过 `mode_policy.decide_tool()` 获得权限决策：
+   - `DENY`：返回带原因的错误字符串，不执行。
+   - `REQUIRE_APPROVAL` 且未批准：返回要求批准的提示。
+   - `ALLOW` 或已批准：通过。
+3. 调用 `tool.execute(**tool_call.arguments)` 解包参数执行。
+
+**沙箱检查 (`get_sandbox`, L29-30):**
+
+```python
+def get_sandbox(self, name: str) -> bool:
+    return self._tools[name].dangerous
+```
+
+简化的沙箱判断：直接查询工具的 `dangerous` 属性。当前仅 `BashTool` 返回 `True`。
+
+**单工具查询 (`get_tool`, L48-49):**
+
+```python
+def get_tool(self, name: str) -> Tool:
+    return self._tools[name]
+```
+
+纯字典查找，用于需要直接访问工具实例的场景（如单元测试中获取工具引用）。
+
+
+### 架构全景图
+
+```
+                    +--------------------------+
+                    |   build_default_tool_    |
+                    |   registry()             |
+                    |   (factory.py L77)        |
+                    +-----------+--------------+
+                                |
+                +---------------+---------------+
+                |                               |
+     +----------v----------+         +----------v----------+
+     | get_default_tools() |         | _build_mcp_tools()  |
+     | (L162)              |         | (L104)              |
+     |                      |         |                      |
+     | ReadTool              |         | McpTool(metadata,    |
+     | WriteTool             |         |   mcp_manager)       |
+     | EditTool              |         +---------------------+
+     | BashTool              |
+     | GrepTool              |
+     | ... (~20 core tools)   |
+     +----------+-----------+
+                |
+     +----------v-----------+
+     | @tool_parameters(...) |  <-- class-level decorator
+     | class ReadTool(Tool): |      attaches name/desc/params
+     |   read_only = True    |      only if class not defined
+     |   execute() -> str    |
+     +----------+-----------+
+                |
+     +----------v-----------+
+     | Tool ABC              |
+     |   name/desc/params    |
+     |   read_only/dangerous |
+     |   parallelizable      |
+     |   allowed_modes       |
+     |   permission          |
+     |   execute() abstract  |
+     |   get_schema()        |
+     |   get_permission()    |
+     +----------+-----------+
+                |
+                v
+     +---------------------+
+     | ToolRegistry         |
+     | _tools: dict[str,Tool]|
+     | mode_policy           |
+     | register()            |
+     | get_all_schemas()     |  -->  filtered by ModePolicy
+     | execute()             |  -->  DENY/APPROVAL/ALLOW
+     | get_sandbox()         |
+     +---------------------+
+```
+
+
+## Version B -- 面试讲稿版
+
+> 我来介绍一下 Asterwynd 的工具系统架构，核心设计围绕四个层：Tool ABC 基类、@tool_parameters 装饰器、工厂装配和 ToolRegistry 注册中心。
+>
+> 首先看 Tool ABC，定义在 `agent/tools/base.py`。它是一个抽象类，声明了所有工具的统一契约。每个工具必须实现 `async execute()` 方法，返回字符串或 ContentBlock 列表——为什么支持列表呢？比如 ReadTool 读图片时，既要返回文本描述也要返回 base64 图片块，这是一种多模态输出需求。除了 execute，ABC 还声明了七个属性：name、description、parameters 这三个给 LLM 看；read_only、dangerous、parallelizable 三个行为标记；allowed_modes 控制工具在哪些模式下可见；permission 是显式权限对象。其中 `get_permission()` 是 ABC 中唯一的非抽象方法，它实现了一个三级 fallback：子类显式设置了 permission 就用子类的；否则如果 dangerous 是 true，自动推断为高危命令执行权限；如果 read_only 是 true，推断为低危只读权限；都不满足就给一个中危写入权限。这样大部分工具只需设置 boolean flag，不用手动构造复杂的 Permission 对象。
+>
+> 第二，`@tool_parameters` 装饰器。它的设计非常简洁：接收 name、description、parameters 三个参数，通过 `getattr` 检查类是否已经定义。如果类没定义就注入，定义了就跳过。这意味着装饰器提供默认值，类体可以覆盖——虽然当前所有内置工具都把元数据写死在装饰器参数里，但架构上预留了运行时动态覆盖的能力。
+>
+> 第三，`get_schema()` 方法。它把工具的 name、description、parameters 组装成 OpenAI function-calling 格式，最外层 type 是 function，里面包一个 function 对象。每个工具的 get_schema 返回结果完全一致，因为结构是通用的。
+>
+> 第四，工厂装配。`build_default_tool_registry()` 是主入口，所有参数都是 keyword-only 的，防止调用方传错位置。它先创建空的 ToolRegistry，然后调用 `get_default_tools()` 获取三十多个内置工具——按文件、搜索、编辑、LSP、Web、浏览器、记忆这些功能域分组——然后把 MCP 工具通过 `_build_mcp_tools()` 包装成 McpTool 实例追加到列表里，统一注册。注册完后还要跑 `validate_known_tools`，确保 ModePolicy 里配置的 deny_tools 白名单引用的都是真实存在的工具名，防止配置漂移。
+>
+> 第五，ToolRegistry 数据结构。核心就是一个 `_tools: dict[str, Tool]`，按工具名索引。它最关键的方法是 `get_all_schemas()`，遍历所有工具时先调用 `mode_policy.is_tool_allowed()` 做可见性过滤。这个方法会检查工具的 allowed_modes、deny_tools 配置、permission profile 的能力和风险阈值，只有真正允许的工具才会被组装成 schema 返回给 LLM。也就是说 LLM 在 plan 模式下压根看不到 Bash 工具，从源头杜绝越权调用。execute 方法也有三层防护：查工具实例、调用 decide_tool 做权限决策、根据 ALLOW/DENY/REQUIRE_APPROVAL 三种结果分别处理。如果 DENY 就直接返回错误信息，如果 REQUIRE_APPROVAL 且还没批准就提示需要审批，只有通过检查才真正执行。
+>
+> 总结一下，这个架构的精髓在于：ABC 定义契约、装饰器注入元数据、工厂做依赖组装、Registry 做运行时管控。整个系统用起来就是一行 `build_default_tool_registry(...)`，但内部的类型安全、权限过滤、模式感知和 schema 生成都是分层解耦的。
+
+
+*Source files referenced:*
+- `agent/tools/base.py` (L1-95) -- Tool ABC, tool_parameters decorator, get_schema(), ToolCall
+- `agent/tools/registry.py` (L1-50) -- ToolRegistry
+- `agent/tools/factory.py` (L1-284) -- build_default_tool_registry, get_default_tools, _build_mcp_tools
+- `agent/mcp/tools.py` (L1-24) -- McpTool adapter
+- `agent/tools/builtin/read.py` (L53-68) -- ReadTool example
+- `agent/tools/builtin/bash.py` (L22-41) -- BashTool example
+- `agent/tools/builtin/grep.py` (L9-26) -- GrepTool example
+- `agent/tools/builtin/edit.py` (L10-33) -- EditTool example
+- `agent/run_config.py` (L77-207) -- ModePolicy, decide_tool, is_tool_allowed
+- `agent/tool_permissions.py` (L1-78) -- ToolPermission, ToolCapability, ToolRiskLevel
+
+
+---
+## Q11: Web UI 架构——WebSocket 实时交互、SSE 流翻译与 Approval Future 桥接
+
+## Version A -- 详细参考版
+
+### 1. FastAPI + WebSocket 双接口架构
+
+入口函数 `create_app()` 位于 `web/server.py:25-390`，接收 `llm`、`mode`、`config`、`resume` 四个参数，返回一个 FastAPI 实例。架构分为两层：
+
+**REST 端点 (6 个):**
+
+| 路由 | 方法 | 位置 (行) | 功能 |
+|---|---|---|---|
+| `/` | GET | 48-53 | 返回 `static/index.html` 聊天页面 |
+| `/debug` | GET | 55-62 | 返回调试页面（需 `ASTERWYND_DEBUG=1`） |
+| `/api/debug-status` | GET | 64-66 | 返回 `{"enabled": bool}` |
+| `/api/slash-commands` | GET | 68-73 | 返回已注册的 slash command 目录 |
+| `/api/upload-image` | POST | 75-96 | 接收 base64 data URL，写入 `.asterwynd/uploads/` |
+| `/api/uploads` | POST | 98-121 | 接收 multipart 图片上传 |
+
+**WebSocket 端点 (1 个):** `/ws/{session_id}` 位于 `server.py:123-388`，是整个交互的核心。消息 dispatch 通过 `raw.get("type")` 路由到 7 种消息处理器：
+
+| msg_type | 功能 | 所在行 |
+|---|---|---|
+| `chat` | 处理用户输入，先尝试 slash command，再走 AgentLoop | 145-223 |
+| `image_upload_start/chunk/finish` | 分片接收 base64 图片 | 225-333 |
+| `approval_response` | 转发用户审批决策到 `WebApprovalHandler` | 335-354 |
+| `reset` | 销毁旧 session、创建新 session | 356-364 |
+| `set_mode` | 切换 Agent 运行模式 | 366-382 |
+| `ping` | 心跳 | 384-385 |
+
+`create_app()` 在 36-38 行创建一个 `SessionManager` 实例，它是所有 `AgentSession` 的工厂。
+
+
+### 2. WebApprovalHandler -- asyncio.Future 同步/异步桥接
+
+这是整个 Web UI 架构中最精妙的设计。核心实现位于 `web/session.py:30-89`。
+
+**问题背景:** AgentLoop 在主循环 `_run()` 中同步（async）等待审批——它调用 `await self.approval_handler.request_approval(...)` 后必须阻塞当前迭代，直到获得决策。但 Web 用户是在另一个异步上下文中、可能数秒甚至数分钟后才点击 "批准/拒绝" 按钮。
+
+**解决方案: `asyncio.Future` 作为"暂停令牌"**
+
+```python
+class WebApprovalHandler:                          # session.py:30
+    def __init__(self, session_id: str):
+        self._pending: tuple[str, asyncio.Future[ApprovalResponse]] | None = None
+
+    async def request_approval(self, request: ApprovalRequest) -> ApprovalResponse:
+        # 一次只允许一个审批请求 (行 42-47)
+        if self._pending is not None:
+            return ApprovalResponse(..., status=UNAVAILABLE)
+        future = asyncio.get_running_loop().create_future()  # 行 48
+        self._pending = (request.approval_id, future)         # 行 49
+        return await future  # ← 阻塞在这里，直到 future 被 set_result (行 51)
+
+    def submit_response(self, approval_id: str, decision: str) -> bool:
+        # 校验后 resolve future (行 62-76)
+        future.set_result(ApprovalResponse(...))
+```
+
+**时序流程:**
+1. AgentLoop 在 `agent/loop.py:692` 调用 `await self.approval_handler.request_approval(approval_request)`。
+2. `WebApprovalHandler.request_approval()` 创建 `asyncio.Future`，存入 `_pending`，然后 `await future`。AgentLoop 迭代在此暂停。
+3. AgentLoop 同时通过 `on_event("approval_request", ...)` (loop.py:690) 向前端推送审批请求——这会进入 `asyncio.Queue` 再送到 WebSocket。
+4. 用户在浏览器点击批准/拒绝，前端发送 `{"type": "approval_response", "approval_id": "...", "decision": "..."}`。
+5. WebSocket 端点在 `server.py:335-354` 接收消息，调用 `session.approval_handler.submit_response(approval_id, decision)`。
+6. `submit_response()` 对 future 调用 `future.set_result(...)` (session.py:69-76)，解冻 `request_approval()` 的 `await`。
+7. AgentLoop 继续执行，根据 `ApprovalResponse.approved` 决定是否执行工具。
+
+**关键约束:** `_pending` 是单值——同一时间只允许一个审批请求。如果在已有 pending 时再次调用 `request_approval()`，直接返回 `UNAVAILABLE` 状态（行 43-47）。
+
+**清理机制:** `fail_pending()` (session.py:78-89) 在 session reset、WebSocket disconnect、run 结束时被调用，以 `UNAVAILABLE` resolve 任何悬空的 future，防止 AgentLoop 永久挂起。
+
+
+### 3. SSE 流翻译 -> WebSocket 推送
+
+整个数据流是三层管道：
+
+```
+LLM API (SSE bytes) → stream_chat() (LLMStreamEvent) → AgentLoop._call_llm() (on_event回调) → asyncio.Queue → WebSocket
+```
+
+**第 1 层 — LLM Provider `stream_chat()`:** 以 OpenAI 为例 (`agent/openai_llm.py:128-205`)，`stream_chat()` 是 async generator，调用 `self._stream_events()`（底层 HTTP SSE 解析），将每个 delta 封装为 `LLMStreamEvent` (agent/llm.py:40-45) yield 出去：
+
+```python
+# openai_llm.py:194-198
+yield LLMStreamEvent(
+    type="assistant_delta",
+    delta=text_delta,          # 增量文本
+    content="".join(content_parts),  # 累计全文本
+)
+```
+
+最终 yield `type="complete"` 事件，包含完整 `LLMResponse`。
+
+**第 2 层 — AgentLoop `_call_llm()`:** (`agent/loop.py:826-870`)。当 `self._should_stream_llm()` 为 True，走流式分支：
+
+```python
+# loop.py:841-866
+async for event in stream_chat(messages=messages, tools=tools):
+    if event.type == "assistant_delta":
+        await on_event("assistant_delta", {
+            "delta": event.delta,
+            "content": content,     # 累计文本
+        })
+    if event.type == "complete":
+        await on_event("assistant_stream_complete", {
+            "content": content,
+            "stop_reason": ...,
+        })
+```
+
+`on_event` 回调是由 Web 层传入的闭包。
+
+**第 3 层 — SessionManager `run_session()`:** (`web/session.py:206-341`)。在 217-218 行定义了 `on_event` 回调：
+
+```python
+async def on_event(event_type: str, data: dict):
+    await queue.put({"type": event_type, "data": data})
+```
+
+每个事件被放入 `asyncio.Queue`。主循环 (316-320 行) 逐条消费队列，通过 `ws_send(event)` 发送到 WebSocket：
+
+```python
+while True:
+    event = await queue.get()
+    if event is None:       # sentinel, agent 完成
+        break
+    await ws_send(event)    # 即 ws.send_json(event)
+```
+
+**为什么不直接把 `ws.send_json` 作为 `on_event`?** 因为需要双向通信——`run_session` 还要并行跑第二个 task `receive_approval_responses()` (276-313 行)，轮询 WebSocket 接收端检查 approval 响应。Queue 解耦了发送方向和接收方向。
+
+
+### 4. AgentSession 模式 -- 每浏览器 Tab 一个 AgentLoop
+
+**AgentSession** (`web/session.py:92-113`): 轻量数据对象，持有 4 样东西：
+
+```python
+class AgentSession:
+    session_id: str                      # 12 位 hex (run_identity.py:6-7)
+    agent: AgentLoop                     # 独立的 AgentLoop 实例
+    approval_handler: WebApprovalHandler # 该 session 专属的审批处理器
+    messages: list[Message]              # 消息历史（对话上下文）
+    debug_turn: int = 0                  # 调试轮次计数器
+```
+
+**SessionManager** (`session.py:116-341`): 工厂 + 生命周期管理器。
+
+- `_sessions: dict[str, AgentSession]` — 内存字典存储所有活跃 session
+- `create_session()` (131-134): 同步版，如果 `config.mcp.servers` 非空则抛 `RuntimeError`——MCP 需要 async 初始化
+- `create_session_async()` (136-138): 异步版，先 `await build_mcp_manager(config)` 再调 `_create_session()`
+- `_create_session()` (140-191): 核心工厂方法，组装完整的 AgentLoop——创建 `WorkspacePolicy`、`ToolRegistry`、`SubAgentManager`、`SkillRuntime`、`HookManager`（含 `TracingHook`）、`MemoryManager`，然后构造 `AgentLoop` 并包装为 `AgentSession`
+- `run_session()` (206-341): 并行运行两个 asyncio task——agent 执行 task + approval 接收 task，通过 Queue 汇聚到 WebSocket
+
+**生命周期:**
+1. 用户打开网页 → WebSocket 连接 → `create_session_async(llm)` 创建 `AgentSession`
+2. 用户发消息 → `run_session()` 启动 AgentLoop，事件通过 Queue + WebSocket 推送前端
+3. 用户点 reset → `remove_session()` + `fail_pending()` → 重新 `create_session_async()`
+4. WebSocket 断开 → `WebSocketDisconnect` 异常捕获 (server.py:387)
+
+
+### 5. DebugHook -- 扩展 Hook 协议，捕获完整迭代状态
+
+**Hook 协议定义:** `agent/hooks/manager.py:14-22`，7 个 lifecycle hook：
+
+```python
+@runtime_checkable
+class Hook(Protocol):
+    async def on_run_started(self, run_config): ...
+    async def before_iteration(self, iteration, messages): ...
+    async def after_llm_call(self, response): ...
+    async def before_tool_execute(self, tool_call): ...
+    async def after_tool_execute(self, tool_call, result): ...
+    async def on_error(self, error): ...
+    async def on_completion(self, result): ...
+```
+
+**DebugHook** (`web/debug_hook.py:17-78`) 实现全部 7 个 hook，每个 hook 调用 `_send(phase, data)` 发出结构化事件：
+
+| Hook 方法 | phase | 捕获数据 |
+|---|---|---|
+| `before_iteration` | `before_iteration` | messages (脱敏后)、message_count |
+| `after_llm_call` | `after_llm_call` | content、stop_reason、tool_calls (参数经 `_redact_arguments` 脱敏) |
+| `before_tool_execute` | `before_tool_execute` | tool_name、arguments |
+| `after_tool_execute` | `after_tool_execute` | tool_name、arguments、result (extract_text 截断) |
+| `on_error` | `on_error` | error_type、error_message |
+| `on_completion` | `on_completion` | content、stop_reason、tool_calls_made、total_tokens |
+
+**事件格式:** `{"type": "debug", "phase": "<phase>", "iteration": <int>, "data": {...}}`
+
+**启用/挂载机制:**
+- 环境变量 `ASTERWYND_DEBUG=1/true/enabled/yes/on` 启用 (debug_hook.py:13-14)
+- 在 `run_session()` (session.py:221-231) 中，每次 run 动态创建新 `DebugHook` 实例并 append 到 `session.agent.hooks.hooks` 末尾
+- run 结束后移除 (338-341 行)，避免跨 run 残留
+
+**安全措施:**
+- `_redact_arguments()` (80-85): 调用 `agent/approval.py` 的 `redact_value()` 脱敏敏感参数
+- `_sanitize_message_dict()` (88-109): 将消息 dict 中的 `data:image/` URL 替换为 `[image data omitted]`
+
+
+### 6. create_session vs create_session_async -- MCP 初始化的同步/异步分叉
+
+与 CLI 的 `build_agent` / `build_agent_async` 完全对称 (agent/main.py:140-175)：
+
+```python
+# 同步版 (session.py:131-134)
+def create_session(self, llm, tools=None) -> AgentSession:
+    if self.config.mcp.servers:
+        raise RuntimeError("create_session with MCP config requires create_session_async")
+    return self._create_session(llm, tools=tools, mcp_manager=None)
+
+# 异步版 (session.py:136-138)
+async def create_session_async(self, llm, tools=None) -> AgentSession:
+    mcp_manager = await build_mcp_manager(self.config)  # MCP 连接需要 asyncio
+    return self._create_session(llm, tools=tools, mcp_manager=mcp_manager)
+```
+
+**设计动机:** MCP (Model Context Protocol) 客户端初始化是异步的——它需要建立与外部 MCP 服务器的连接。如果配置中没有 MCP server，同步版可以跳过这步直接构建。如果配置了 MCP 但错误调用了同步版，立即抛 `RuntimeError` 给出明确错误信息，而不是静默失败。
+
+两者的核心构建逻辑收敛到同一个私有方法 `_create_session()` (session.py:140-191)，唯一的差异变量是 `mcp_manager` 参数（同步版传 `None`）。
+
+
+### 架构全景总结
+
+```
+浏览器 WebSocket ──> /ws/{session_id}
+                        │
+              ┌─────────┴──────────┐
+              │  WebSocket endpoint │ (server.py:123-388)
+              │  - 消息路由         │
+              │  - chat/approval/   │
+              │    reset/set_mode   │
+              └─────────┬──────────┘
+                        │
+         ┌──────────────┼──────────────┐
+         │              │              │
+    SessionManager  WebApprovalHandler DebugHook
+    (session.py:116) (session.py:30)   (debug_hook.py:17)
+         │              │              │
+    AgentSession   asyncio.Future    Hook Protocol
+    (session.py:92)  (桥接同步/异步)  (hooks/manager.py:14)
+         │
+    AgentLoop.run()
+    (loop.py:428)
+         │
+    ┌────┴────┐
+    │ LLM     │ stream_chat() → SSE → LLMStreamEvent
+    │ Tools   │ execute()
+    │ Hooks   │ before/after 钩子
+    │ Memory  │ compact_if_needed()
+    └─────────┘
+         │
+    on_event() → asyncio.Queue → ws.send_json() → 浏览器
+```
+
+## Version B -- 面试讲稿版
+
+> Asterwynd 的 Web UI 架构核心是 **FastAPI + WebSocket 双通道**。REST 端点负责静态页面、slash command 目录和图片上传，WebSocket 则是实时交互的主干道——所有 agent 对话流、审批交互、模式切换都走 `/ws/{session_id}` 这一个 endpoint。
+>
+> 这里最值得讲的设计是 **WebApprovalHandler 的 asyncio.Future 桥接机制**。AgentLoop 在执行过程中碰到需要审批的工具调用时，会同步地 `await` 一个审批结果——它不能继续迭代，必须等用户决策。但 Web 用户是在浏览器的异步世界里，可能几秒甚至几分钟后才点"批准"。解决方案是：WebApprovalHandler 在 `request_approval` 里创建一个 `asyncio.Future`，存储为 `_pending`，然后 `await` 这个 future。AgentLoop 迭代就停在这里。同时，AgentLoop 通过 `on_event` 回调把审批请求推送到 WebSocket 前端。当用户在浏览器点批准，WebSocket 端点调用 `submit_response()`，它找到之前的 future 并 `set_result`，`request_approval` 的 `await` 立即解冻，AgentLoop 继续执行。这个设计只用一个 future 变量就解决了同步 AgentLoop 和异步 Web 之间的停顿/恢复问题。而且我们做了单审批约束——同一时间只允许一个 pending approval，避免状态混乱。
+>
+> 数据传输链路是三层管道。LLM Provider 的 `stream_chat` 方法是 async generator，把 HTTP SSE 的每个 chunk 封装成 `LLMStreamEvent` yield 出去。AgentLoop 的 `_call_llm` 消费这些事件，调用 `on_event` 回调把每个 `assistant_delta` 以及最终的 `llm_response`、`tool_call`、`tool_result` 等事件推送出去。Web 层的 `SessionManager.run_session` 把这个 `on_event` 实现为向 `asyncio.Queue` 放事件，主循环再逐条从 queue 取出发到 WebSocket。之所以不直接把 `ws.send_json` 当回调用，是因为 run_session 需要并行跑两个 asyncio task——一个跑 agent，一个轮询 WebSocket 接收端的 approval 响应。Queue 解耦了这两个方向。
+>
+> 每个浏览器标签页对应一个 AgentSession。AgentSession 是一个数据对象，持有独立的 AgentLoop 实例、专属的 WebApprovalHandler、消息历史和一个 debug 轮次计数器。SessionManager 管理内存 session 字典，提供 create_session 和 create_session_async 两个工厂方法——这个对称型和 CLI 的 build_agent / build_agent_async 一致：同步版在配置了 MCP server 时直接抛 RuntimeError，异步版先 `await build_mcp_manager` 初始化 MCP 连接。
+>
+> 调试能力通过 DebugHook 实现。它完整实现了 Hook 协议的 7 个生命周期方法：before_iteration 抓消息快照、after_llm_call 抓模型输出和工具调用（参数会做脱敏）、before/after_tool_execute 抓工具执行前后状态、on_error 抓异常、on_completion 抓最终结果。每个事件带 phase、iteration 和结构化 data，前端 Debug UI 可以回放整个迭代过程。DebugHook 在每次 run 时动态挂载、run 结束后立即移除，环境变量 `ASTERWYND_DEBUG=1` 控制开关。
+>
+> 总结一下，这个架构的核心思想是：用 asyncio.Future 做审批桥接、用 asyncio.Queue 做流翻译解耦、用 AgentSession 做会话隔离、用 Hook 协议做可插拔调试。
+
+
+## 关键文件索引
+
+| 文件 | 核心内容 |
+|---|---|
+| `web/server.py` | `create_app()` (L25-390), REST 端点 (L48-121), WebSocket `/ws/{session_id}` (L123-388) |
+| `web/session.py` | `WebApprovalHandler` (L30-89), `AgentSession` (L92-113), `SessionManager` (L116-341), `run_session()` (L206-341) |
+| `web/debug_hook.py` | `debug_enabled()` (L13-14), `DebugHook` (L17-78), `_redact_arguments()` (L80-85), `_sanitize_message_dict()` (L88-109) |
+| `agent/loop.py` | `AgentLoop.__init__()` (L67-133), `run()` (L428-465), `_run()` (L467-824), `_call_llm()` (L826-870), approval flow (L667-737) |
+| `agent/llm.py` | `LLM` Protocol (L20-28), `LLMStreamEvent` (L40-45), `BaseLLM` (L48-55) |
+| `agent/openai_llm.py` | `stream_chat()` (L128-153), `_stream_chat_impl()` (L155-205) |
+| `agent/approval.py` | `ApprovalHandler` Protocol (L82-84), `ApprovalRequest` (L35-68), `ApprovalResponse` (L71-79), `FailClosedApprovalHandler` (L87-93), `CliApprovalHandler` (L96-120), `build_approval_request()` (L123-149) |
+| `agent/hooks/manager.py` | `Hook` Protocol (L14-22), `HookManager` (L24-56) |
+| `agent/main.py` | `build_agent()` (L140-156), `build_agent_async()` (L159-175), `_build_agent_core()` (L191-258) |
+| `agent/run_identity.py` | `new_session_id()` (L6-7), `new_run_id()` (L10-11) |
+
+
+---
+## Q12: 异步执行模式 -- SubAgent 派发、Background Task 管理与并行工具执行
+
+
+## Version A -- 详细参考版
+
+### 1. SubAgent 异步派发 (`agent/subagent/manager.py`)
+
+SubAgentManager 管理子 Agent 的完整生命周期：创建 session、派发 run、等待结果、取消或查询状态。核心数据结构：
+
+- `_sessions: dict[str, SubagentSessionRecord]` -- 按 subagent_id 索引的会话记录
+- `_active_tasks: dict[str, asyncio.Task[None]]` -- 按 run_id 索引的活跃 asyncio Task 引用
+- `_run_waiters: dict[str, asyncio.Event]` -- 按 run_id 索引的完成信号事件
+
+#### 1.1 `run_subagent()` 的 wait=True/False 机制 (L162-194)
+
+```python
+async def run_subagent(self, *, subagent_id, task, wait=False, timeout_s=None):
+    session = self._require_session(subagent_id)
+    # 单 run 限制：同一 session 不允许并发 run
+    if session.active_run_id is not None:
+        raise RuntimeError(f"subagent {subagent_id} already has an active run")
+
+    run = SubagentRunRecord(run_id=run_id, task=task, status="running", started_at=time.time())
+    waiter = asyncio.Event()
+    self._run_waiters[run_id] = waiter
+
+    bg_task = asyncio.create_task(self._execute_run(session, run))  # 派发
+    self._active_tasks[run_id] = bg_task
+    bg_task.add_done_callback(lambda _: self._active_tasks.pop(run_id, None))
+
+    if wait:
+        await asyncio.wait_for(waiter.wait(), timeout=timeout_s)  # 阻塞当前协程
+    return self._format_run_envelope(session.subagent_id, run)
+```
+
+关键行为：
+- `wait=False`（默认）：立即返回 run envelope（含 run_id, status="running"），调用方可后续通过 `get_subagent_run(wait=True)` 或轮询获取结果
+- `wait=True`：在 `waiter.wait()` 上阻塞，可设超时；超时不会取消任务（任务仍然在后台运行）
+- `add_done_callback` 保证 Task 完成后自动从 `_active_tasks` 清除，防止内存泄漏
+
+#### 1.2 `_execute_run()` 内部循环 (L271-296)
+
+```python
+async def _execute_run(self, session, run):
+    trace = TraceRecorder(task_id=session.subagent_id)
+    try:
+        loop = self._build_subagent_loop(session.mode)  # 构建独立 AgentLoop
+        result = await loop.run(session.messages, trace_recorder=trace, ...)
+        self._complete_run(session, run, result, trace)
+    except asyncio.CancelledError:
+        self._mark_cancelled(session, run, trace)
+        raise
+    except Exception as exc:
+        self._mark_failed(session, run, str(exc), trace)
+    finally:
+        waiter = self._run_waiters.pop(run.run_id, None)
+        if waiter is not None:
+            waiter.set()  # 无论成功/失败/取消，都通知等待者
+```
+
+关键设计：
+- 每个 subagent run 构建**独立的 AgentLoop 实例**（`_build_subagent_loop`, L298-324），拥有自己的 ToolRegistry、HookManager、MemoryManager，模式受 `_clamp_mode()` 约束，不会超越父 Agent 权限
+- `waiter.set()` 在 `finally` 块中执行，**保证一定触发**，即使任务被取消或异常终止
+- `CancelledError` 被捕获后仍 `raise`，让 `cancel_subagent_run()` 中的 `await task` 能正常感知取消
+
+#### 1.3 结果获取方式
+
+| 方式 | 方法 | 说明 |
+|------|------|------|
+| 同步等待 | `run_subagent(wait=True)` | 在 waiter Event 上阻塞 |
+| 异步轮询 | `get_subagent_run(run_id=...)` | 返回当前 run 状态，不阻塞 |
+| 延迟等待 | `get_subagent_run(wait=True)` | 对 running 状态的 run 等待其完成 |
+| 取消 | `cancel_subagent_run()` | `task.cancel()` + await task + mark_cancelled + waiter.set() |
+| 查看消息 | `inspect_transcript(scope="summary"/"recent_messages")` | 读取 subagent 的消息历史和摘要 |
+
+#### 1.4 SubAgent 与父 Agent 的隔离
+
+`_build_subagent_loop()` (L298-324) 为每个 subagent 创建隔离的运行环境：
+- **LLM 共享**：复用父 Agent 的 LLM 实例（`llm=self.llm`）
+- **ToolRegistry 独立构建**：根据 mode 和 config 创建新的 tool set
+- **模式钳制** (`_clamp_mode`, L401-411)：subagent 的 mode 不能超越父 agent（READ_ONLY < BUILD < BYPASS），防止权限提升
+- **subagent_manager 传递**：`subagent_manager=self` -- 理论上 subagent 也能创建 sub-subagent（但受 `_clamp_mode` 限制）
+
+
+### 2. BackgroundTaskManager 轮询 (`agent/background.py`)
+
+BackgroundTaskManager 管理 OS 级别的后台进程（如长时间编译、测试套件），通过 Bash 工具的 `run_in_background=True` 参数启动。
+
+#### 2.1 启动流程 (`start()`, L43-61)
+
+```python
+async def start(self, cmd, tool_call_id, cwd, timeout=None):
+    task_id = self._new_task_id()  # "bg_0001", "bg_0002" ...
+    handle = await self._sandbox.run_background(cmd, cwd=cwd)  # 子进程
+    entry = _TaskEntry(handle=handle, tool_call_id=tool_call_id, command=cmd, ...)
+    entry._monitor_task = asyncio.create_task(self._monitor(task_id, entry))
+    self._tasks[task_id] = entry
+    return task_id
+```
+
+Sandbox 层 (`agent/tools/sandbox.py` L172-184)：
+```python
+async def run_background(self, command, cwd=None):
+    process = await asyncio.create_subprocess_shell(
+        command, cwd=str(cwd), stdout=PIPE, stderr=STDOUT,
+        preexec_fn=os.setsid,  # 创建新进程组，便于组杀
+    )
+    return _SubprocessHandle(process)
+```
+
+关键点：`preexec_fn=os.setsid` 创建新 session/进程组，后续 `terminate()` 和 `kill()` 通过 `os.killpg(pgid, signal)` 对整个进程组操作（`sandbox.py` L60-71），确保子孙进程一并被终止。
+
+#### 2.2 并发输出 drain (`_monitor()` + `_drain_output()`, L113-164)
+
+```python
+async def _monitor(self, task_id, entry):
+    drain_task = asyncio.create_task(self._drain_output(entry))  # 并发 drain
+
+    try:
+        if entry.timeout is not None:
+            await asyncio.wait_for(entry.handle.wait(), timeout=entry.timeout)
+        else:
+            await entry.handle.wait()
+    except asyncio.TimeoutError:
+        entry.status = "timeout"
+        await entry.handle.kill()
+        await entry.handle.wait()
+    ...
+
+    # 进程结束后，等待 drain 完成
+    if drain_task:
+        await drain_task
+
+    # 读取最终 exit code
+    entry.exit_code = await entry.handle.poll()
+    entry.status = "completed" if entry.exit_code == 0 else "failed"
+```
+
+`_drain_output()` (L153-164) 以 4096 字节为单位循环读取 stdout，累计最多 `MAX_OUTPUT_BYTES` (64KB)，超出部分丢弃并标记 `output_truncated=True`。
+
+这是一个 `wait` + `drain` 的并发模型：进程运行时 drain 在后台持续读取 stdout 防止管道堵塞，进程退出后 drain 读完剩余数据再读取 exit code。
+
+#### 2.3 轮询注入 (`check_completed()`) 与 AgentLoop 集成
+
+`check_completed()` (L63-69) 在**每次 AgentLoop 迭代开始时**被调用（`agent/loop.py` L530-542）：
+
+```python
+# agent/loop.py L530-542
+if self.background_manager is not None:
+    completed = self.background_manager.check_completed()
+    for task in completed:
+        observation = (
+            f"[Background task {task['task_id']} completed]\n"
+            f"Command: {task['command']}\n"
+            f"Status: {task['status']}\n"
+            f"Exit code: {task['exit_code']}\n"
+            f"Output:\n{task['stdout']}"
+        )
+        messages.append(Message(role="user", content=observation))
+```
+
+`check_completed()` 遍历所有 task，将 `status != "running"` 且 `reported == False` 的 task 标记为 `reported=True` 并返回。返回的结果作为**用户消息**注入到对话中，LLM 在下一轮推理中即能感知到后台任务完成。
+
+#### 2.4 两阶段终止 (`stop()`, L79-96)
+
+```python
+async def stop(self, task_id):
+    await entry.handle.terminate()   # Phase 1: SIGTERM (进程组)
+    try:
+        await asyncio.wait_for(entry.handle.wait(), timeout=3.0)
+    except asyncio.TimeoutError:
+        await entry.handle.kill()    # Phase 2: SIGKILL (进程组)
+        try:
+            await asyncio.wait_for(entry.handle.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            pass                      # 放弃（标记为 killed）
+    entry.status = "killed"
+```
+
+两阶段给予进程优雅退出的机会，3s+2s 的超时设计防止僵尸进程。
+
+#### 2.5 ContextVar 传播：`current_tool_call_id`
+
+```python
+# agent/background.py L10
+current_tool_call_id: ContextVar[str] = ContextVar("current_tool_call_id", default="")
+```
+
+传播链路：
+1. `AgentLoop._execute_single_tool()` (L896): `current_tool_call_id.set(tool_call.id)`
+2. `BashTool._execute_background()` (`agent/tools/builtin/bash.py` L81): `tc_id = current_tool_call_id.get()`
+3. `AgentLoop._run_in_background()` (L400-406): 将 `tool_call_id` 传给 `background_manager.start()`
+4. `BackgroundTaskManager._task_to_dict()` (L170-179): 在结果字典中携带 `tool_call_id`
+
+这使得 LLM 在后续迭代中收到 `[Background task bg_0001 completed]` 消息时，能通过 `tool_call_id` 关联到最初发起该任务的那个 Bash 工具调用。
+
+#### 2.6 cleanup 路径
+
+`AgentLoop.run()` 的 `finally` 块 (L457-458) 调用 `self.background_manager.cleanup()`，对残留 running 进程执行同步 `force_kill_sync`（SIGTERM → 0.5s → SIGKILL），属于紧急清理路径，不依赖 event loop。
+
+
+### 3. 并行工具执行 (`agent/loop.py` `_execute_tool_calls()`)
+
+#### 3.1 分组逻辑 (L922-952)
+
+```python
+async def _execute_tool_calls(self, items):
+    groups: list[list[dict]] = []
+    current_group: list[dict] = []
+    for item in items:
+        tool = item.get("tool")
+        decision = item.get("decision")
+        pre_denied = item.get("pre_denied_result")
+        requires_approval = decision is not None and decision.requires_approval
+        is_parallel = (
+            tool is not None
+            and tool.parallelizable        # Tool 类属性，默认 False
+            and not pre_denied             # 未因审批被拒绝
+            and not requires_approval      # 不需要审批
+        )
+        if is_parallel:
+            current_group.append(item)
+        else:
+            if current_group:
+                groups.append(current_group)
+                current_group = []
+            groups.append([item])
+    if current_group:
+        groups.append(current_group)
+```
+
+分组规则：
+- **连续的** `parallelizable` 工具聚合成一个并行组
+- 非并行工具、审批拒绝、需要审批的工具各占一个单独的串行组
+- 确认了并行安全性的只读/无副作用工具：Read、Grep、Glob/Find、CodeIntelligence（`codebase_search`/`grep_search`）、InspectGitDiff
+
+#### 3.2 并行执行 (L956-997)
+
+```python
+for group in groups:
+    if len(group) > 1:
+        # 并行组
+        group_results = await asyncio.gather(
+            *[_run_one(item) for item in group],
+            return_exceptions=True,
+        )
+        # Exception 解包：
+        for i, r in enumerate(group_results):
+            if isinstance(r, Exception):
+                group_results[i] = {**group[i], "result": f"[Error: {r}]", "duration_ms": 0.0}
+        results.extend(group_results)
+    else:
+        # 串行组
+        item = group[0]
+        if pre_denied := item.get("pre_denied_result"):
+            results.append({**item, "result": pre_denied, "duration_ms": 0.0})
+        else:
+            result, duration_ms = await self._execute_single_tool(...)
+            results.append({**item, "result": result, "duration_ms": duration_ms})
+```
+
+关键设计：
+- `return_exceptions=True`：组内某个工具失败不会影响同组其他工具的执行
+- 异常解包后统一转为 `"[Error: ...]"` 字符串，保持结果格式一致
+- 结果集 `results` 按**原始顺序**组装（先并行组、后串行组，同组内按出现顺序），Phase 3 后处理（L743-803）按此顺序追加 `tool_result_message`，保证 LLM 看到一致的工具结果序列
+
+
+### 4. 三维对比表
+
+| 维度 | SubAgent 派发 | BackgroundTask 管理 | 并行工具执行 |
+|------|-------------|-------------------|------------|
+| **生命周期** | `create_subagent` → `run_subagent` (spawn Task) → `_execute_run` loop → `_complete_run` → `waiter.set()` | `Bash(run_in_background=True)` → `start` (spawn 子进程 + monitor Task) → `_monitor` wait/drain → `check_completed` → `reported=True` | LLM 返回 N 个 `tool_calls` → 按 `parallelizable` 分组 → `asyncio.gather` → 结果收集 |
+| **结果投递** | 1) Event 阻塞等待 (waiter.wait) 2) 轮询 `get_subagent_run()` 3) `inspect_transcript` 查看消息历史 | `check_completed()` 在每轮迭代开始时轮询，结果以 `[Background task ... completed]` 格式注入为 user message | 同一次迭代内同步返回，`tool_result_message` 按原始顺序追加到消息列表 |
+| **错误处理** | `CancelledError` → mark_cancelled; `Exception` → mark_failed; `waiter.set()` 始终在 finally 中执行 | `TimeoutError` → status=timeout + kill; 异常 → status=orphaned; 两阶段 kill (SIGTERM 3s → SIGKILL 2s) | `return_exceptions=True` 捕获 gather 中异常 → 转为 `"[Error: ...]"` 字符串；单个串行工具的异常由 `_retry.execute_with_retry` 兜底 |
+| **LLM 可见性** | 通过工具接口间接可见：`GetSubagentRun` 返回状态/摘要，`InspectSubagentTranscript` 返回消息片段 | **自动注入**：下一轮迭代开始时，完成的后台任务作为 user role message 直接追加到对话 | **即时可见**：工具结果在当前迭代中追加为 `tool_result_message`，LLM 下一次 `_call_llm` 即看到 |
+| **取消机制** | `cancel_subagent_run()` → `task.cancel()` + await + `waiter.set()` | `stop(task_id)` → `terminate()` → wait 3s → `kill()` → wait 2s；`cleanup()` 兜底 `force_kill_sync` | 无独立取消机制；同组内某一工具异常不影响其他工具（`return_exceptions=True`） |
+| **隔离级别** | 完全隔离：独立 AgentLoop + 独立 ToolRegistry + 独立 MemoryManager | 进程级隔离：独立子进程 + 独立进程组 (setsid) | 无隔离：同一 event loop 内的并发协程 |
+| **并发模型** | `asyncio.create_task` 派发独立协程，无并发限制（但同一 session 同一时间只能有一个 run） | `asyncio.create_task` 派发 monitor 协程，并发 drain (wait + drain_output)，无显式并发限制 | `asyncio.gather` 批量并发执行同组工具，受 event loop 并发能力限制 |
+| **关键文件/行号** | `agent/subagent/manager.py` L92-417 | `agent/background.py` L1-179; `agent/tools/sandbox.py` L14-87 (BackgroundProcessHandle ABC + _SubprocessHandle) | `agent/loop.py` L890-997 (`_execute_single_tool` + `_execute_tool_calls`); `agent/tools/base.py` L44 (`parallelizable` flag) |
+
+
+## Version B -- 面试讲稿版
+
+> Asterwynd 的异步执行有三个层次，分别解决不同的并发需求。
+>
+> 第一层是 **SubAgent 异步派发**。当一个 Agent 需要把子任务委托给另一个 Agent 时，它通过 `SubAgentManager.run_subagent()` 派发一个独立的 AgentLoop。这个 API 支持 `wait=True/False` 两种模式：`wait=False` 时立即返回，后台通过 `asyncio.create_task` 启动 `_execute_run` 协程；`wait=True` 时在 `asyncio.Event` 上阻塞等待。无论哪种模式，`_execute_run` 的 finally 块一定会调用 `waiter.set()`，确保等待者不会永久挂起。SubAgent 拥有完全隔离的运行环境——独立的 ToolRegistry、MemoryManager、HookManager，但 LLM 实例是共享的，模式也受父 Agent 的 `_clamp_mode()` 钳制，无法越权。
+>
+> 第二层是 **BackgroundTaskManager**，它管理的是 OS 级别的后台进程，比如长时间的编译或测试。Agent 通过 Bash 工具的 `run_in_background=True` 参数启动，Sandbox 层用 `preexec_fn=os.setsid` 创建新进程组。启动后 `_monitor` 和 `_drain_output` 并发运行——monitor 等待进程退出，drain 持续读取 stdout 防止管道阻塞。输出限制在 64KB，超出截断。结果不立即返回，而是在**每轮迭代开始时**由 AgentLoop 调用 `check_completed()` 轮询，已完成的任务以 user message 形式注入对话，LLM 下一轮推理就能感知到。这里有个精巧的 ContextVar 设计：`current_tool_call_id` 在 `_execute_single_tool` 中被设置，Bash 工具读取它传给后台管理器，这样结果能关联到原始的工具调用。停止时采用两阶段终止：SIGTERM 等 3 秒，没死再 SIGKILL 等 2 秒。
+>
+> 第三层是**并行工具执行**。LLM 一次推理可能返回多个 tool call，AgentLoop 的 `_execute_tool_calls` 根据工具的 `parallelizable` 标志进行分组。连续的只读并行工具——比如同时读三个文件、做两次 Grep——会被聚合成一组，用 `asyncio.gather` 并发执行。任何需要审批的工具、被审批拒绝的工具、或者写操作工具，会被隔离在单独的串行组中。`return_exceptions=True` 保证组内某个工具失败不影响其他工具，异常统一转为 Error 字符串。结果按原始顺序追加为 tool_result_message，LLM 看到的工具输出序列和它发出的 tool call 顺序一致。
+>
+> 总结一下这三种模式的本质区别：SubAgent 是**协程级隔离**，BackgroundTask 是**进程级隔离**，并行工具执行是**无隔离的 intra-iteration 并发**。结果投递方式也不同：SubAgent 是主动查询或事件等待，BackgroundTask 是被动注入对话，并行工具是即时同步返回。这三种模式在 Asterwynd 中协同一工作，让 Agent 既能并行处理独立的读操作，又能异步启动长任务后继续推理，还能把复杂子问题委托给专门的 SubAgent 去解决。
+
+
+---
+## Q13: 错误处理与韧性设计 -- LLM 故障、工具异常与优雅降级
+
+## Version A -- 详细参考版
+
+### 1. 工具层重试：RetryHook 指数退避
+
+`agent/hooks/builtin/retry.py` 实现了独立的 `RetryHook`，不依赖 HookManager 回调链，而是由 AgentLoop 在 `_execute_single_tool` 中直接显式调用 `_retry.execute_with_retry()`。
+
+**可重试错误判定 (line 17-20)**
+
+```python
+RETRYABLE_PATTERN = re.compile(
+    r"timeout|timed out|connection|rate limit|429|503|temporary",
+    re.IGNORECASE,
+)
+```
+
+`_is_retryable()` 使用正则匹配异常消息字符串，覆盖超时、连接故障、限流（429）、服务不可用（503）、临时错误五类场景。匹配不区分大小写。
+
+**指数退避重试逻辑 (line 34-55)**
+
+`execute_with_retry()` 接收 `max_retries=3` 和 `base_delay=1.0`：
+
+- 最多执行 `max_retries + 1 = 4` 次尝试（含首次）。循环 `range(self.max_retries + 1)` 即 0..3。
+- 每次失败后判断是否可重试：若 `_is_retryable(error_msg)` 为 False，**立即返回** `[Error: ...]` 格式不重试。
+- 可重试且未达上限时：`delay = self.base_delay * (2 ** attempt)`，即 1s/2s/4s，第 4 次不重试直接返回。
+- 所有重试耗尽后返回：`[Error after 4 attempts: <last_error>]`
+
+**Bash 工具例外 (agent/loop.py:898-906)**
+
+在 `AgentLoop._execute_single_tool()` 中，Bash 工具**完全绕过 RetryHook**：
+
+```python
+if tool_call.name == "Bash":
+    try:
+        result = await self.tool_registry.execute(tool_call, ...)
+    except Exception as e:
+        result = f"[Error: {e}]"
+else:
+    result = await self._retry.execute_with_retry(tool_call, execute_fn=...)
+```
+
+原因：Bash 命令可能产生不可逆副作用（如 `rm -rf`、`git push`），重试会导致重复执行，造成数据损坏。Bash 失败立即返回 `[Error: ...]`。
+
+### 2. 工具执行错误约定：`[Error: ...]` 前缀
+
+整个系统使用统一的错误前缀约定，让 LLM 能识别这是错误而非工具正常输出。
+
+**错误来源汇总：**
+
+| 错误来源 | 文件位置 | 格式 |
+|---------|---------|------|
+| RetryHook 不可重试 | `retry.py:46` | `[Error: <msg>]` |
+| RetryHook 重试耗尽 | `retry.py:55` | `[Error after N attempts: <msg>]` |
+| Bash 异常 | `loop.py:906` | `[Error: <msg>]` |
+| JSON 解析失败 | `loop.py:614` | `[Error: <msg>]` |
+| 未知工具 | `loop.py:662` | `[Error: unknown tool '<name>']` |
+| 审批被拒 | `loop.py:717-727` | `[Approval denied: ...]` / `[Approval unavailable: ...]` |
+| asyncio.gather 异常 | `loop.py:981` | `[Error: <exception>]` |
+| MCP 工具异常 | `mcp/manager.py:195` | `[MCP tool error: <server>/<tool>: <exc>]` |
+| MCP isError 结果 | `mcp/manager.py:304` | `[MCP tool error: <content>]` |
+
+**追踪器错误判定 (loop.py:757-761)**：`trace_recorder.record_tool_result()` 通过检查结果是否以 `[Error` 或 `[Permission denied` 开头来决定 status 字段为 `"error"` 还是 `"ok"`。
+
+### 3. MCP 服务器故障容忍
+
+`agent/mcp/manager.py` 的 `connect_from_config()` (line 65-91) 实现分服务器错误处理：
+
+**connect_from_config 流程：**
+
+1. 遍历 `config.mcp.servers` 中的每个服务器配置
+2. 若 `server_config.enabled == False`：记录状态为 `ready=False, error="disabled"`，跳过
+3. 若启用：`asyncio.timeout(server_config.startup_timeout_seconds)` 包裹连接逻辑
+4. 单个服务器连接失败被 `except Exception` 捕获：
+   - 记录 `McpServerStatus(ready=False, error=<message>)`
+   - 检查 `server_config.required`（`agent/config.py:116`，默认 `False`）
+   - **required=True**：调用 `await self.aclose()` 清理已连接的服务器，然后 `raise RuntimeError(...)` 终止启动
+   - **required=False**：仅记录错误，继续连接后续服务器
+
+**工具列表获取容错 (line 241-252)**：`_list_or_empty()` 在 `list_tools/list_prompts/list_resources` 失败时静默返回空列表，保证服务器不会因部分能力不可用而导致注册中断。
+
+**工具调用超时 (line 181-196)**：`call_tool()` 使用 `asyncio.wait_for(timeout=server_config.tool_timeout_seconds, default=30)` 包装 MCP 调用，超时或异常返回 `[MCP tool error: ...]` 错误字符串。
+
+### 4. ContextBuilder 预算超支优雅降级
+
+`agent/context/builder.py` 的 `_apply_budget()` (line 85-119) 实现了分层优先级的截断策略：
+
+**截断算法：**
+
+1. 已按优先级排序的 layers，从尾部（最低优先级）向前扫描
+2. `_find_trimmable_index()` (line 122-128)：从末尾遍历，找到第一个 `critical=False` 的层
+3. 若无非关键层可剪裁（只剩 P0/P1），停止截断，完整保留关键层
+4. `_truncate_tail()` (line 131-142)：从文本**尾部**移除约 `excess_tokens * 4` 个字符（`_CHARS_PER_TOKEN_ESTIMATE = 4`）
+5. 若截断后内容为空，该层被完全移除
+6. 余下层之间用 `\n\n---\n\n` 连接
+
+**优先级分层** (`agent/context/sources.py`)：
+
+| 优先级 | 来源 | critical | 含义 |
+|--------|------|----------|------|
+| P0 | SystemPromptSource | True | 系统提示词，永不被截断 |
+| P1 | AsterMdSource | True | AGENTS.md 项目指令，永不被截断 |
+| P2 | MemoryIndexSource | False | 持久记忆索引，可剪裁 |
+| P4 | SkillIndexSource / SkillActiveSource | False | 技能索引/活跃技能 |
+| P5 | PlanModeSource / PlanningStateSource / TodoSource | False | 计划状态/待办 |
+
+**单源渲染失败处理 (line 62-70)**：若某个 `ContextSource.render()` 抛出异常，记录 warning 并跳过该源，不影响其他源的组装完成。
+
+### 5. SessionSnapshot 崩溃恢复
+
+`agent/session.py` 的 `SessionStore` + `AgentLoop.run()` 的 `finally` 块协同实现：
+
+**持久化触发 (loop.py:456-465)**
+
+```python
+finally:
+    if self.background_manager is not None:
+        self.background_manager.cleanup()
+    if self.session_store is not None and session_id:
+        try:
+            self._save_session(messages, session_id, resolved_run_id, resume_snapshot)
+        except Exception:
+            logger.warning("Failed to save session", exc_info=True)
+```
+
+关键设计：session 保存本身包装在 try/except 中，保存失败只记录 warning，不会掩盖原始异常或中断 finally 清理流程。
+
+**原子写入 (session.py:187-202)**：先写入 `.tmp` 临时文件，再 `os.replace()` 原子替换。崩溃不会产生损坏的半写文件。
+
+**去重保存 (session.py:70-85)**：计算 snapshot + messages 的 SHA256 去重哈希，内容无变更时跳过写入。
+
+**Schema 版本兼容 (session.py:108-116)**：加载时比较 `schema_version` 主版本号。主版本不匹配时发出 warning 并返回 None，拒绝恢复不兼容的会话。
+
+**Runtime fingerprint 对比 (session.py:225-236)**：比较 cwd、model、provider、agent_version 四个维度；不匹配时发出 RuntimeWarning 但**不阻止恢复**，仅提示"当前运行时与保存时不同，行为可能不符合预期"。
+
+**恢复行为 (loop.py:479-498)**：
+- 恢复 mode、execution_todos、active_skills、user_system_prompt
+- **iteration 重置为 0** (`start_iteration = 0`)：恢复后的计数重新开始
+- 注入 `[Session resumed. Continuing from where we left off.]` 标记消息
+- 保留 system 消息和对话历史，追加新用户输入
+
+### 6. LLM 调用失败处理
+
+**HTTP 层 (agent/llm.py:75-87)**：
+
+`BaseLLM._get_client()` 创建 `httpx.AsyncClient`，timeout 配置为 connect=60s / read=60s(流式) or 180s(非流式)。大模型推理可能耗时较长，非流式请求给予 3 分钟读取超时。
+
+**Provider 错误传播 (anthropic_llm.py + openai_llm.py)**：
+
+两个 provider 在 HTTP 层面均使用 `response.raise_for_status()`，对于 >=400 状态码会抛出 `httpx.HTTPStatusError`。错误前会记录完整的 sanitized payload（图片 base64 替换为占位符）和 error body 到日志。
+
+**视觉模型降级重试 (anthropic_llm.py:41-73, openai_llm.py:29-126)**：
+
+当 `vision_mode(model) == "try_vision"` 且消息包含图片时：
+1. 首先尝试携带图片发送请求
+2. 若收到 400 错误（`_is_400_error`），判断为模型不支持图片
+3. 自动重试，将 ImageBlock 降级为 `[image: <filename>]` 文本引用
+4. 非 400 错误直接向上传播
+
+**流式错误处理 (anthropic_llm.py:236-237)**：SSE 事件流中遇到 `event_type == "error"` 时 raise `RuntimeError`。
+
+**Loop 层无额外重试 (loop.py:548)**：`_call_llm()` 调用不做 try/except 包装。如果 LLM 抛出异常，沿 `_call_llm -> _run -> run` 传播。`run()` 的 finally 块确保 (a) background_manager.cleanup() 和 (b) session 保存无论如何都会执行。
+
+**max_tokens 截断处理 (loop.py:578-583)**：当 `stop_reason == "max_tokens"` 时，不视为错误终止，而是追加 assistant 消息 + `"Please continue from where you left off."` 提示并继续下一轮迭代。
+
+**max_iterations 上限 (loop.py:811-824)**：当 `_iteration >= self.max_iterations`（默认 20），循环退出，返回 `StopReason.MAX_ITERATIONS`，取最后一条 assistant 消息内容作为最终输出。不会无限循环耗尽资源。
+
+
+## Version B -- 面试讲稿版
+
+> 问：Asterwynd 的"错误处理与韧性设计"，你是如何系统性地应对 LLM 故障、工具异常和资源异常的？
+>
+> 答：我们从六个层面构建了完整的韧性体系。
+>
+> 第一个是工具层的指数退避重试。我们有一个独立的 RetryHook，通过正则匹配超时、限流 429、503 等可重试错误来做退避。首次间隔 1 秒，翻倍到 2 秒、4 秒，最多做 3 次重试加首次执行共 4 次尝试。不可重试的错误直接返回 `[Error: ...]` 格式。关键在于 Bash 工具完全跳过 RetryHook，因为 Bash 可能有不可逆副作用，比如文件删除或 git push，重试会导致重复操作。
+>
+> 第二个是整个系统的 `[Error: ...]` 前缀约定。无论是工具执行失败、JSON 解析错误、未知工具、审批被拒，还是 MCP 工具超时，统一用这个前缀返回给 LLM。LLM 看到这个词缀就知道这是错误而不是正常结果，可以尝试自修复，比如换个参数重试或者用别的工具替代。
+>
+> 第三个是 MCP 服务器的故障容忍。每个 MCP 服务器配置有一个 required 标记，默认是 false。非关键服务器启动失败了只记录日志和状态，整个 agent 继续启动。但如果 required 设为 true，比如一个必需的数据库查询 MCP，启动失败会直接 raise RuntimeError 终止进程。工具发现阶段也是，list_tools 调用失败就返回空列表，不会中断注册流程。
+>
+> 第四个是上下文构建器的优雅降级。我们有 0 到 5 共六个优先级的上下文层，P0 是系统提示词，P1 是 AGENTS.md 项目指令，这两层标记为 critical 永不被截断。当注入预算超支时，从最低优先级的层尾部向前裁剪，比如先从 P5 的待办列表尾部裁，不够再裁 P4 的技能索引，依此类推。单个源渲染失败也只会打 warning 并跳过，不影响其它层。
+>
+> 第五个是会话快照的崩溃恢复。AgentLoop.run 方法用 finally 块保证无论是否崩溃都会保存会话。保存采用先写临时文件再原子替换的方式，不会产生半写损坏文件。加载时会做 schema 版本兼容检查，主版本不匹配就拒绝恢复。还会对比 runtime fingerprint 发现运行时环境变化，只发警告不阻止恢复。恢复时会把 iteration 计数重置为 0，注入一条恢复提示消息，保留对话历史和系统消息。
+>
+> 第六个是 LLM 调用的容错。HTTP 层面，非流式请求读写超时拉到 180 秒防止大模型推理慢导致超时。遇到 400 且是视觉模型探测模式时，自动把图片降级为文本引用重试一次。流式 SSE 遇到 error 事件直接 RuntimeError，非 400 错误向上传播。Loop 层不做额外重试，但做了两个保护：一是响应被 max_tokens 截断时自动追加续接提示进入下一轮，二是 20 轮迭代上限防止死循环，超限返回已生成内容而不是崩溃。
+
+
+## Source File Index
+
+| 组件 | 文件 | 关键行号 |
+|------|------|---------|
+| RetryHook | `agent/hooks/builtin/retry.py` | 17-55 |
+| Bash 重试例外 | `agent/loop.py` | 898-906 |
+| Error 前缀约定 | `agent/loop.py` | 608-665, 758-762, 890-920 |
+| 并发异常处理 | `agent/loop.py` | 972-984 |
+| MCP 故障容忍 | `agent/mcp/manager.py` | 65-91, 181-196, 241-252 |
+| McpServerConfig.required | `agent/config.py` | 112-129 |
+| ContextBuilder 截断 | `agent/context/builder.py` | 85-152 |
+| ContextSource critical | `agent/context/sources.py` | 107-109, 263-265 |
+| ContextSource priorities | `agent/context/sources.py` | 107, 263, 280, 306, 322, 338, 360, 376 |
+| SessionStore save/load | `agent/session.py` | 70-123 |
+| Schema 兼容检查 | `agent/session.py` | 204-210 |
+| Fingerprint 对比 | `agent/session.py` | 225-236 |
+| finally 块崩溃保存 | `agent/loop.py` | 456-465 |
+| Session 恢复/iteration 重置 | `agent/loop.py` | 479-498 |
+| BaseLLM 超时配置 | `agent/llm.py` | 75-87 |
+| Anthropic 图片降级重试 | `agent/anthropic_llm.py` | 41-73 |
+| OpenAI 图片降级重试 | `agent/openai_llm.py` | 29-73, 88-126 |
+| SSE error 事件 | `agent/anthropic_llm.py` | 236-237 |
+| max_tokens 截断续接 | `agent/loop.py` | 578-583 |
+| max_iterations 上限 | `agent/loop.py` | 527, 811-824 |
+| _stream_events 错误 | `agent/llm.py` | 89-105 |
+
 
 ---
