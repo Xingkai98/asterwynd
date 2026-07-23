@@ -411,6 +411,9 @@ class TestMemoryManagerCompact:
             async def summarize(self, messages, budget=0):
                 return "custom summary"
 
+            async def merge(self, previous, new_events, budget=0):
+                return None
+
         fake = FakeSummarizer()
         assert isinstance(fake, Summarizer)
 

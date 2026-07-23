@@ -19,7 +19,13 @@ class TokenBudgetHook:
         self.total_tokens = 0
 
     async def after_llm_call(self, response: "LLMResponse") -> None:
-        pass
+        if response.usage:
+            self.total_tokens += response.usage.input_tokens + response.usage.output_tokens
+            ratio = self.total_tokens / self.budget if self.budget else 0
+            if ratio >= self.warn_threshold:
+                logger.warning(
+                    f"[TokenBudget] {self.total_tokens}/{self.budget} tokens ({ratio*100:.1f}%)"
+                )
 
     async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
         estimated = len(result) // 4

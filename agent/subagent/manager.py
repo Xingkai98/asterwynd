@@ -32,6 +32,8 @@ class SubagentArtifact:
 class SubagentRunUsage:
     total_tokens: int = 0
     tool_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 @dataclass
@@ -57,6 +59,8 @@ class SubagentRunRecord:
             "usage": {
                 "total_tokens": self.usage.total_tokens,
                 "tool_calls": self.usage.tool_calls,
+                "input_tokens": self.usage.input_tokens,
+                "output_tokens": self.usage.output_tokens,
             },
             "artifacts": [
                 {"path": artifact.path, "kind": artifact.kind}
@@ -336,6 +340,8 @@ class SubAgentManager:
         run.usage = SubagentRunUsage(
             total_tokens=result.total_tokens,
             tool_calls=len(result.tool_calls_made),
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
         )
         run.finished_at = time.time()
         run.trace = trace.to_dict()

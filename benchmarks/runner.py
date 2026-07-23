@@ -294,6 +294,8 @@ class BenchmarkRunner:
                         tool_calls=agent_result.tool_calls,
                         edit_count=agent_result.edit_count,
                         test_runs=0,
+                        input_tokens=agent_result.input_tokens,
+                        output_tokens=agent_result.output_tokens,
                         reason=BenchmarkReason.NO_CHANGE.value,
                     )
                     trace.record_completion("failed", BenchmarkReason.NO_CHANGE.value)
@@ -337,6 +339,8 @@ class BenchmarkRunner:
                     tool_calls=agent_result.tool_calls,
                     edit_count=agent_result.edit_count,
                     test_runs=1 if verification["status"] in {"passed", "failed"} else 0,
+                    input_tokens=agent_result.input_tokens,
+                    output_tokens=agent_result.output_tokens,
                     reason=reason,
                 )
                 trace.record_completion(status, reason or "")
@@ -413,6 +417,8 @@ class BenchmarkRunner:
                 tool_calls=agent_result.tool_calls,
                 edit_count=agent_result.edit_count,
                 test_runs=1,
+                input_tokens=agent_result.input_tokens,
+                output_tokens=agent_result.output_tokens,
                 reason=reason or agent_result.reason,
             )
             trace.record_completion(status)

@@ -11,6 +11,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from agent.cost_tracker import compute_cost, format_cost
+
 
 RESULT_ORDER = ["passed", "passed_with_warnings", "unsupported", "failed", "error"]
 
@@ -97,6 +99,31 @@ def build_summary(runs: list[tuple[str, dict[str, dict]]]) -> str:
             row = [name, "-", "-", "-", "-"]
         lines.append("| " + " | ".join(row) + " |")
 
+    # Cost Estimate
+    lines.append("")
+    lines.append("## Cost Estimate")
+    lines.append("")
+    cost_header = ["Agent", "Input Tokens", "Output Tokens", "Est. Cost"]
+    lines.append("| " + " | ".join(cost_header) + " |")
+    lines.append("|" + "|".join(["------"] * len(cost_header)) + "|")
+    for name, results in runs:
+        total_input = sum(
+            r.get("input_tokens", 0) or 0
+            for r in results.values()
+        )
+        total_output = sum(
+            r.get("output_tokens", 0) or 0
+            for r in results.values()
+        )
+        model = next(
+            (r.get("model", "") for r in results.values() if r.get("model")),
+            "",
+        )
+        cost = compute_cost(model, total_input, total_output)
+        lines.append(
+            f"| {name} | {total_input} | {total_output} | {format_cost(cost)} |"
+        )
+
     return "\n".join(lines) + "\n"
 
 
@@ -146,6 +173,24 @@ def build_html(runs: list[tuple[str, dict[str, dict]]]) -> str:
         else:
             latency_rows += f"<tr><td>{name}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"
 
+    # Cost estimate rows for HTML
+    cost_rows = ""
+    for name, results in runs:
+        total_input = sum(
+            r.get("input_tokens", 0) or 0
+            for r in results.values()
+        )
+        total_output = sum(
+            r.get("output_tokens", 0) or 0
+            for r in results.values()
+        )
+        model = next(
+            (r.get("model", "") for r in results.values() if r.get("model")),
+            "",
+        )
+        cost = compute_cost(model, total_input, total_output)
+        cost_rows += f"<tr><td>{name}</td><td>{total_input}</td><td>{total_output}</td><td>{format_cost(cost)}</td></tr>"
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Cross-Agent Benchmark</title>
 <style>
@@ -176,6 +221,11 @@ small {{ color: #888; font-weight: normal; }}
 <table>
 <thead><tr><th>Agent</th><th>p50</th><th>p95</th><th>p99</th><th>Max</th></tr></thead>
 <tbody>{latency_rows}</tbody>
+</table>
+<h2>Cost Estimate</h2>
+<table>
+<thead><tr><th>Agent</th><th>Input Tokens</th><th>Output Tokens</th><th>Est. Cost</th></tr></thead>
+<tbody>{cost_rows}</tbody>
 </table>
 </body></html>"""
 

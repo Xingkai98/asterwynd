@@ -25,4 +25,6 @@ class RunResult:
     stop_reason: StopReason
     tool_calls_made: list[ToolCallMade]
     total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     error: Optional[str] = None

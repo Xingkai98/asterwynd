@@ -66,6 +66,8 @@ class MemoryManager:
         self._compaction_gap = compaction_gap
         self.compact_trigger_tokens = compact_trigger_tokens
         self._last_compaction_iteration: int = -compaction_gap  # allow first
+        self._running_summary: str = ""
+        self._last_compaction_end_index: int = 0
 
     # ------------------------------------------------------------------
     # Summarizer (lazy init for backwards compatibility)
@@ -129,24 +131,58 @@ class MemoryManager:
     async def compact(self, messages: Optional[list["Message"]] = None) -> bool:
         """Compress conversation history using the configured summarizer.
 
+        On the first compaction, the entire middle message segment is
+        summarised and stored as a running summary.  On subsequent
+        compactions only **new** messages since the last compaction are
+        summarised, and the result is merged with the existing running
+        summary.
+
         System messages and recent messages (with their tool chains) are
-        preserved.  Middle messages are summarised and the result is
-        injected as a **user** message so the agent treats it as
-        prior-conversation context rather than a constraint.
+        preserved.  The merged summary is injected as a **user** message
+        so the agent treats it as prior-conversation context rather than
+        a constraint.
         """
         msgs = messages if messages is not None else self.messages
         system = [m for m in msgs if m.role == "system"]
         non_system = [m for m in msgs if m.role != "system"]
         recent = self._recent_with_tool_chains(non_system)
-        middle = non_system[: max(0, len(non_system) - len(recent))]
+        recent_boundary = max(0, len(non_system) - len(recent))
+
+        if self._running_summary:
+            # Subsequent compaction: only summarise new messages since
+            # the last compaction, then merge with the running summary.
+            middle = non_system[self._last_compaction_end_index : recent_boundary]
+        else:
+            # First compaction: summarise the full middle segment.
+            middle = non_system[:recent_boundary]
 
         if not middle:
+            # No new middle messages to summarise — still apply the
+            # running summary + recent window.
+            if self._running_summary:
+                summary_msg = Message(role="user", content=self._running_summary)
+                msgs[:] = system + [summary_msg] + recent
+                self._last_compaction_end_index = 1  # summary is at non_system[0]
+                logger.info(
+                    "[Memory] Compacted to %d messages (no new middle, reused running summary)",
+                    len(msgs),
+                )
+                return True
             msgs[:] = system + recent
             logger.info("[Memory] Compacted to %d messages", len(msgs))
             return True
 
         summarizer = self._get_summarizer()
         if summarizer is None:
+            if self._running_summary:
+                summary_msg = Message(role="user", content=self._running_summary)
+                msgs[:] = system + [summary_msg] + recent
+                self._last_compaction_end_index = 1  # summary is at non_system[0]
+                logger.info(
+                    "[Memory] Compacted to %d messages (no summarizer, reused running summary)",
+                    len(msgs),
+                )
+                return True
             msgs[:] = system + recent
             logger.info("[Memory] Compacted to %d messages (no summarizer available)", len(msgs))
             return True
@@ -156,15 +192,32 @@ class MemoryManager:
         middle_tokens = self.count_tokens(middle)
         summary_budget = int(middle_tokens * 0.30)
 
-        summary = await summarizer.summarize(middle, budget=summary_budget)
-        if not summary:
+        new_summary = await summarizer.summarize(middle, budget=summary_budget)
+        if not new_summary:
+            if self._running_summary:
+                summary_msg = Message(role="user", content=self._running_summary)
+                msgs[:] = system + [summary_msg] + recent
+                self._last_compaction_end_index = 1  # summary is at non_system[0]
+                logger.info(
+                    "[Memory] Compacted to %d messages (summary unavailable, reused running summary)",
+                    len(msgs),
+                )
+                return True
             msgs[:] = system + recent
             logger.info("[Memory] Compacted to %d messages (summary unavailable)", len(msgs))
             return True
 
+        if self._running_summary:
+            merged = await self._merge_summaries(self._running_summary, new_summary)
+            self._running_summary = merged
+        else:
+            self._running_summary = new_summary
+
+        self._last_compaction_end_index = 1  # summary is at non_system[0]
+
         summary_message = Message(
             role="user",
-            content=summary,
+            content=self._running_summary,
         )
         msgs[:] = system + [summary_message] + recent
         logger.info("[Memory] Compacted to %d messages with summary", len(msgs))
@@ -200,6 +253,33 @@ class MemoryManager:
             after_tokens=self.count_tokens(msgs),
             reason="compacted",
         )
+
+    async def _merge_summaries(self, previous: str, new_events: str) -> str:
+        """Merge a running summary with new events into one coherent summary.
+
+        For small outputs a simple concatenation is used to avoid an LLM
+        call.  Otherwise the summarizer's ``merge`` method is tried; if
+        it is not supported the method falls back to concatenation.
+        """
+        if len(previous) + len(new_events) < 1000:
+            return previous + "\n\n---\n\n" + new_events
+
+        summarizer = self._get_summarizer()
+        if summarizer is None:
+            return previous + "\n\n---\n\n" + new_events
+
+        if hasattr(summarizer, "merge"):
+            try:
+                result = await summarizer.merge(previous, new_events)
+                if result is not None:
+                    return result
+            except Exception:
+                logger.warning(
+                    "[Memory] merge() failed, falling back to concatenation",
+                    exc_info=True,
+                )
+
+        return previous + "\n\n---\n\n" + new_events
 
     # ------------------------------------------------------------------
     # Tool chain protection
@@ -248,3 +328,5 @@ class MemoryManager:
 
     def clear(self) -> None:
         self.messages = [m for m in self.messages if m.role == "system"]
+        self._running_summary = ""
+        self._last_compaction_end_index = 0
