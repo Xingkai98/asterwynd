@@ -17,6 +17,8 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("172.16.0.0/12"),      # private B
     ipaddress.ip_network("192.168.0.0/16"),     # private C
     ipaddress.ip_network("169.254.0.0/16"),     # link-local / cloud metadata
+    ipaddress.ip_network("100.64.0.0/10"),      # CG-NAT (RFC 6598)
+    ipaddress.ip_network("198.18.0.0/15"),      # benchmark testing (RFC 2544)
     ipaddress.ip_network("0.0.0.0/8"),          # "this" network
     ipaddress.ip_network("::1/128"),            # IPv6 loopback
     ipaddress.ip_network("fc00::/7"),           # IPv6 unique local
@@ -176,6 +178,12 @@ class WebFetchTool(Tool):
             return f"WebFetch error: request failed: {error}\nFetched: {url}"
 
         final_url = str(response.url)
+        # re-validate 重定向后的 URL host，防止 302 绕过 SSRF 校验
+        if final_url != url:
+            try:
+                _validate_url_host(final_url)
+            except ValueError as e:
+                return f"WebFetch error: {e}"
         content_type = _content_type(response)
 
         if not 200 <= response.status_code < 300:

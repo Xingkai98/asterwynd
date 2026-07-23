@@ -173,6 +173,7 @@ class OpenAILLM(BaseLLM):
             "model": model,
             "messages": openai_messages,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = tools
