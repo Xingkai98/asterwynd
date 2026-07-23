@@ -3,7 +3,7 @@ import json as _json
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
+from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
 from agent.message import Message, TextBlock, ImageBlock, ContentBlock, extract_text
 
 if TYPE_CHECKING:
@@ -87,6 +87,12 @@ class OpenAILLM(BaseLLM):
         response.raise_for_status()
         data = response.json()
 
+        usage_data = data.get("usage", {})
+        usage = Usage(
+            input_tokens=usage_data.get("prompt_tokens", 0),
+            output_tokens=usage_data.get("completion_tokens", 0),
+        ) if usage_data else None
+
         choice = data["choices"][0]
         message = choice["message"]
 
@@ -116,6 +122,7 @@ class OpenAILLM(BaseLLM):
                 tool_calls=tool_calls,
                 stop_reason=choice.get("finish_reason"),
                 reasoning_content=reasoning_content,
+                usage=usage,
             )
 
         return LLMResponse(
@@ -123,6 +130,7 @@ class OpenAILLM(BaseLLM):
             tool_calls=[],
             stop_reason=choice.get("finish_reason"),
             reasoning_content=reasoning_content,
+            usage=usage,
         )
 
     async def stream_chat(
@@ -173,6 +181,7 @@ class OpenAILLM(BaseLLM):
         reasoning_parts: list[str] = []
         tool_buffers: dict[int, dict[str, str]] = {}
         stop_reason = None
+        usage = None
 
         async for _event_type, data in self._stream_events(
             f"{self.base_url}/chat/completions",
@@ -180,6 +189,13 @@ class OpenAILLM(BaseLLM):
         ):
             choices = data.get("choices") or []
             if not choices:
+                # usage may arrive in a separate chunk without choices
+                stream_usage = data.get("usage")
+                if stream_usage:
+                    usage = Usage(
+                        input_tokens=stream_usage.get("prompt_tokens", 0),
+                        output_tokens=stream_usage.get("completion_tokens", 0),
+                    )
                 continue
             choice = choices[0]
             stop_reason = choice.get("finish_reason") or stop_reason
@@ -222,6 +238,7 @@ class OpenAILLM(BaseLLM):
             tool_calls=tool_calls,
             stop_reason=stop_reason,
             reasoning_content="".join(reasoning_parts) or None,
+            usage=usage,
         )
         yield LLMStreamEvent(
             type="complete",

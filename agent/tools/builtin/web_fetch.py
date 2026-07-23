@@ -1,9 +1,63 @@
 from __future__ import annotations
 
+import ipaddress
+import socket
+from urllib.parse import urlparse
+
 import httpx
 
 from agent.tools.base import Tool, tool_parameters
 from agent.tool_permissions import NETWORK_READ_PERMISSION
+
+
+# SSRF 防护：禁止请求的 IP 范围和 hostname
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),       # loopback
+    ipaddress.ip_network("10.0.0.0/8"),         # private A
+    ipaddress.ip_network("172.16.0.0/12"),      # private B
+    ipaddress.ip_network("192.168.0.0/16"),     # private C
+    ipaddress.ip_network("169.254.0.0/16"),     # link-local / cloud metadata
+    ipaddress.ip_network("0.0.0.0/8"),          # "this" network
+    ipaddress.ip_network("::1/128"),            # IPv6 loopback
+    ipaddress.ip_network("fc00::/7"),           # IPv6 unique local
+    ipaddress.ip_network("fe80::/10"),          # IPv6 link-local
+]
+_BLOCKED_HOSTS = {"localhost", "metadata.google.internal"}
+
+
+def _validate_url_host(url: str) -> None:
+    """校验 URL host，阻止 SSRF 攻击（私有 IP、localhost、云元数据端点）。"""
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"无法解析 URL hostname: {url}")
+    if hostname in _BLOCKED_HOSTS:
+        raise ValueError(f"禁止访问内部地址: {hostname}")
+    # 尝试解析为 IP 地址
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        # hostname 本身是 IP，直接校验
+        for net in _BLOCKED_NETWORKS:
+            if ip in net:
+                raise ValueError(f"禁止访问内部地址: {hostname} ({net})")
+        return  # 合法 IP，校验通过
+    # hostname 是域名，DNS 解析后校验
+    try:
+        resolved = socket.getaddrinfo(hostname, None)
+        for _, _, _, _, sockaddr in resolved:
+            addr = sockaddr[0]
+            try:
+                resolved_ip = ipaddress.ip_address(addr)
+                for net in _BLOCKED_NETWORKS:
+                    if resolved_ip in net:
+                        raise ValueError(f"禁止访问内部地址: {hostname} -> {addr} ({net})")
+            except ValueError:
+                pass  # 不是 IP，跳过
+    except socket.gaierror:
+        raise ValueError(f"无法解析域名: {hostname}")
 
 
 TEXT_CONTENT_TYPES = {
@@ -110,6 +164,10 @@ class WebFetchTool(Tool):
 
     async def execute(self, url: str, limit: int = 2000, **kwargs) -> str:
         normalized_limit = max(0, int(limit))
+        try:
+            _validate_url_host(url)
+        except ValueError as e:
+            return f"WebFetch error: {e}"
         try:
             response = await self._get(url)
         except httpx.RequestError as error:

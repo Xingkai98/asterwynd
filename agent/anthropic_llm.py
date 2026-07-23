@@ -4,7 +4,7 @@ import json
 import re
 from typing import Optional, TYPE_CHECKING
 
-from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
+from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
 from agent.message import Message, TextBlock, ImageBlock
 
 if TYPE_CHECKING:
@@ -21,6 +21,13 @@ def _strip_surrogates(text: str) -> str:
 
 class AnthropicLLM(BaseLLM):
     """Anthropic Messages API 实现"""
+
+    STOP_REASON_MAP: dict[str, str] = {
+        "end_turn": "end_turn",
+        "max_tokens": "max_tokens",
+        "stop_sequence": "stop",
+        "tool_use": "tool_calls",
+    }
 
     def __init__(
         self,
@@ -184,16 +191,10 @@ class AnthropicLLM(BaseLLM):
         payload = self._build_payload(messages, tools, model, force_vision=force_vision)
         payload["stream"] = True
 
-        stop_reason_map = {
-            "end_turn": "end_turn",
-            "max_tokens": "max_tokens",
-            "stop_sequence": "stop",
-            "tool_use": "tool_calls",
-        }
-
         blocks: dict = {}
         stop_reason = None
         text_content = ""
+        usage = None
 
         async for event_type, data in self._stream_events(
             f"{self.base_url}/v1/messages",
@@ -231,12 +232,15 @@ class AnthropicLLM(BaseLLM):
 
             elif event_type == "message_delta":
                 raw_stop = data["delta"].get("stop_reason", "")
-                stop_reason = stop_reason_map.get(raw_stop, raw_stop)
+                stop_reason = self.STOP_REASON_MAP.get(raw_stop, raw_stop)
+                stream_usage = data.get("usage", {})
+                if stream_usage:
+                    usage = Usage(output_tokens=stream_usage.get("output_tokens", 0))
 
             elif event_type == "error":
                 raise RuntimeError(f"Anthropic API error: {data}")
 
-        response = self._build_response(blocks, stop_reason)
+        response = self._build_response(blocks, stop_reason, usage=usage)
         yield LLMStreamEvent(
             type="complete",
             response=response,
@@ -248,15 +252,9 @@ class AnthropicLLM(BaseLLM):
         """流式 SSE 解析"""
         payload["stream"] = True
 
-        stop_reason_map = {
-            "end_turn": "end_turn",
-            "max_tokens": "max_tokens",
-            "stop_sequence": "stop",
-            "tool_use": "tool_calls",
-        }
-
         blocks: dict = {}          # index -> {type, text_parts, json_parts, id, name}
         stop_reason = None
+        usage = None
 
         async for event_type, data in self._stream_events(
             f"{self.base_url}/v1/messages",
@@ -286,12 +284,15 @@ class AnthropicLLM(BaseLLM):
 
             elif event_type == "message_delta":
                 raw_stop = data["delta"].get("stop_reason", "")
-                stop_reason = stop_reason_map.get(raw_stop, raw_stop)
+                stop_reason = self.STOP_REASON_MAP.get(raw_stop, raw_stop)
+                stream_usage = data.get("usage", {})
+                if stream_usage:
+                    usage = Usage(output_tokens=stream_usage.get("output_tokens", 0))
 
             elif event_type == "error":
                 raise RuntimeError(f"Anthropic API error: {data}")
 
-        return self._build_response(blocks, stop_reason)
+        return self._build_response(blocks, stop_reason, usage=usage)
 
     async def _chat_nonstream(self, payload: dict) -> LLMResponse:
         """非流式请求"""
@@ -320,13 +321,13 @@ class AnthropicLLM(BaseLLM):
         raw = response.json()
         data = await raw if asyncio.iscoroutine(raw) else raw
 
-        stop_reason_map = {
-            "end_turn": "end_turn",
-            "max_tokens": "max_tokens",
-            "stop_sequence": "stop",
-            "tool_use": "tool_calls",
-        }
-        api_stop_reason = stop_reason_map.get(data.get("stop_reason", ""), "end_turn")
+        usage_data = data.get("usage", {})
+        usage = Usage(
+            input_tokens=usage_data.get("input_tokens", 0),
+            output_tokens=usage_data.get("output_tokens", 0),
+        ) if usage_data else None
+
+        api_stop_reason = self.STOP_REASON_MAP.get(data.get("stop_reason", ""), "end_turn")
 
         if data.get("content"):
             tool_calls = []
@@ -347,21 +348,24 @@ class AnthropicLLM(BaseLLM):
                     content="\n".join(text_content) if text_content else None,
                     tool_calls=tool_calls,
                     stop_reason=api_stop_reason,
+                    usage=usage,
                 )
 
             return LLMResponse(
                 content="\n".join(text_content) if text_content else None,
                 tool_calls=[],
                 stop_reason=api_stop_reason,
+                usage=usage,
             )
 
         return LLMResponse(
             content=None,
             tool_calls=[],
             stop_reason=api_stop_reason,
+            usage=usage,
         )
 
-    def _build_response(self, blocks: dict, stop_reason: str | None) -> LLMResponse:
+    def _build_response(self, blocks: dict, stop_reason: str | None, usage: Usage | None = None) -> LLMResponse:
         """将流式累积的 block 转换为 LLMResponse"""
         tool_calls = []
         text_content = []
@@ -385,12 +389,14 @@ class AnthropicLLM(BaseLLM):
                 content="\n".join(text_content) if text_content else None,
                 tool_calls=tool_calls,
                 stop_reason=stop_reason or "tool_calls",
+                usage=usage,
             )
 
         return LLMResponse(
             content="\n".join(text_content) if text_content else None,
             tool_calls=[],
             stop_reason=stop_reason or "end_turn",
+            usage=usage,
         )
 
     def _convert_tool(self, tool: dict) -> dict:
