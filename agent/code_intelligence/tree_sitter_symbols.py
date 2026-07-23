@@ -43,6 +43,18 @@ def _load_rust_language() -> Language:
     return Language(tree_sitter_rust.language())
 
 
+def _load_java_language() -> Language:
+    import tree_sitter_java
+
+    return Language(tree_sitter_java.language())
+
+
+def _load_kotlin_language() -> Language:
+    import tree_sitter_kotlin
+
+    return Language(tree_sitter_kotlin.language())
+
+
 JAVASCRIPT_QUERY = """
 (function_declaration name: (identifier) @function.name)
 (class_declaration name: (identifier) @class.name)
@@ -89,6 +101,20 @@ RUST_QUERY = """
 (trait_item name: (type_identifier) @trait.name)
 """
 
+JAVA_QUERY = """
+(class_declaration name: (identifier) @class.name)
+(interface_declaration name: (identifier) @interface.name)
+(method_declaration name: (identifier) @method.name)
+(constructor_declaration name: (identifier) @constructor.name)
+(enum_declaration name: (identifier) @enum.name)
+"""
+
+KOTLIN_QUERY = """
+(class_declaration name: (identifier) @class.name)
+(object_declaration name: (identifier) @object.name)
+(function_declaration name: (identifier) @function.name)
+"""
+
 
 DEFAULT_TREE_SITTER_REGISTRY: dict[str, TreeSitterLanguage] = {
     "javascript": TreeSitterLanguage(
@@ -116,6 +142,18 @@ DEFAULT_TREE_SITTER_REGISTRY: dict[str, TreeSitterLanguage] = {
         source="tree-sitter-rust",
         load_language=_load_rust_language,
         query=RUST_QUERY,
+    ),
+    "java": TreeSitterLanguage(
+        language="java",
+        source="tree-sitter-java",
+        load_language=_load_java_language,
+        query=JAVA_QUERY,
+    ),
+    "kotlin": TreeSitterLanguage(
+        language="kotlin",
+        source="tree-sitter-kotlin",
+        load_language=_load_kotlin_language,
+        query=KOTLIN_QUERY,
     ),
 }
 
@@ -210,6 +248,17 @@ def _extract_symbols(
                     symbol_kind = "method"
                     name = f"{owner}.{name}"
                 elif kind == "method" and (owner := _rust_trait_owner(node, text)):
+                    name = f"{owner}.{name}"
+            elif registration.language == "java":
+                if kind in {"method", "constructor"} and (
+                    owner := _java_method_owner(node, text)
+                ):
+                    name = f"{owner}.{name}"
+            elif registration.language == "kotlin":
+                if kind == "function" and (
+                    owner := _kotlin_class_owner(node, text)
+                ):
+                    symbol_kind = "method"
                     name = f"{owner}.{name}"
 
             line = node.start_point[0] + 1
@@ -314,6 +363,16 @@ def _go_method_owner(node, text: str) -> str | None:
     return None
 
 
+def _java_method_owner(node, text: str) -> str | None:
+    if class_node := _ancestor(node, "class_declaration"):
+        return _child_text(class_node, "name", text)
+    if interface_node := _ancestor(node, "interface_declaration"):
+        return _child_text(interface_node, "name", text)
+    if enum_node := _ancestor(node, "enum_declaration"):
+        return _child_text(enum_node, "name", text)
+    return None
+
+
 def _rust_impl_owner(node, text: str) -> str | None:
     if impl_node := _ancestor(node, "impl_item"):
         return _child_text(impl_node, "type", text)
@@ -323,4 +382,12 @@ def _rust_impl_owner(node, text: str) -> str | None:
 def _rust_trait_owner(node, text: str) -> str | None:
     if trait_node := _ancestor(node, "trait_item"):
         return _child_text(trait_node, "name", text)
+    return None
+
+
+def _kotlin_class_owner(node, text: str) -> str | None:
+    if class_node := _ancestor(node, "class_declaration"):
+        return _child_text(class_node, "name", text)
+    if object_node := _ancestor(node, "object_declaration"):
+        return _child_text(object_node, "name", text)
     return None

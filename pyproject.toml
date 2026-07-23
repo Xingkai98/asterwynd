@@ -39,6 +39,8 @@ dependencies = [
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-go>=0.25.0",
     "tree-sitter-rust>=0.24.2",
+    "tree-sitter-java>=0.23.0",
+    "tree-sitter-kotlin>=1.0.0",
     "mcp>=1.28.1",
 ]
 

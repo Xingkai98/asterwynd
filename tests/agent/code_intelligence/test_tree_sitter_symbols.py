@@ -102,17 +102,70 @@ def test_tree_sitter_keeps_file_entry_when_file_exceeds_configured_limit(tmp_pat
 
 
 def test_unregistered_source_language_keeps_file_entry_without_fake_symbols(tmp_path):
-    source = tmp_path / "Service.java"
-    source.write_text("class Service { void run() {} }\n", encoding="utf-8")
+    source = tmp_path / "stub.c"
+    source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
 
     repo_map = build_repo_map(policy=WorkspacePolicy(tmp_path))
 
     summary = repo_map.files[0]
-    assert summary.path == "Service.java"
-    assert summary.language == "java"
+    assert summary.path == "stub.c"
+    assert summary.language == "c"
     assert summary.category == "source"
     assert summary.symbols == []
     assert summary.parse_error is None
+
+
+def test_tree_sitter_extracts_java_and_kotlin_symbols(tmp_path):
+    (tmp_path / "Service.java").write_text(
+        "class Service {\n"
+        "  void run() {}\n"
+        "  Service() {}\n"
+        "}\n"
+        "interface Port {\n"
+        "  void accept();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Main.kt").write_text(
+        "class Service {\n"
+        "  fun run() {}\n"
+        "}\n"
+        "interface Port {\n"
+        "  fun accept()\n"
+        "}\n"
+        "object Logger {\n"
+        "  fun log() {}\n"
+        "}\n"
+        "enum class State {\n"
+        "  READY\n"
+        "}\n"
+        "fun topLevel() {}\n",
+        encoding="utf-8",
+    )
+
+    repo_map = build_repo_map(policy=WorkspacePolicy(tmp_path))
+    symbols_by_path = {
+        entry.path: [(symbol.kind, symbol.name) for symbol in entry.symbols]
+        for entry in repo_map.files
+    }
+
+    assert symbols_by_path["Service.java"] == [
+        ("class", "Service"),
+        ("method", "Service.run"),
+        ("constructor", "Service.Service"),
+        ("interface", "Port"),
+        ("method", "Port.accept"),
+    ]
+    assert symbols_by_path["Main.kt"] == [
+        ("class", "Service"),
+        ("method", "Service.run"),
+        ("class", "Port"),
+        ("method", "Port.accept"),
+        ("object", "Logger"),
+        ("method", "Logger.log"),
+        ("class", "State"),
+        ("function", "topLevel"),
+    ]
 
 
 def test_tree_sitter_keeps_file_entry_when_grammar_is_unavailable(tmp_path):

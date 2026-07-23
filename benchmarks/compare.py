@@ -73,6 +73,30 @@ def build_summary(runs: list[tuple[str, dict[str, dict]]]) -> str:
         row = [name] + [str(s.get(k, 0)) for k in RESULT_ORDER] + [str(total)]
         lines.append("| " + " | ".join(row) + " |")
 
+    # Latency percentiles
+    lines.append("")
+    lines.append("## Latency Percentiles")
+    lines.append("")
+    lat_header = ["Agent", "p50", "p95", "p99", "Max"]
+    lines.append("| " + " | ".join(lat_header) + " |")
+    lines.append("|" + "|".join(["------"] * len(lat_header)) + "|")
+    for name, results in runs:
+        durations = sorted(
+            r["duration_seconds"]
+            for r in results.values()
+            if isinstance(r.get("duration_seconds"), (int, float))
+        )
+        if durations:
+            n = len(durations)
+            p50 = durations[int(n * 0.50)]
+            p95 = durations[int(n * 0.95)]
+            p99 = durations[int(n * 0.99)]
+            max_d = durations[-1]
+            row = [name, f"{p50:.1f}s", f"{p95:.1f}s", f"{p99:.1f}s", f"{max_d:.1f}s"]
+        else:
+            row = [name, "-", "-", "-", "-"]
+        lines.append("| " + " | ".join(row) + " |")
+
     return "\n".join(lines) + "\n"
 
 
@@ -105,6 +129,23 @@ def build_html(runs: list[tuple[str, dict[str, dict]]]) -> str:
         cells += f"<td><strong>{total}</strong></td>"
         summary_rows += f"<tr>{cells}</tr>"
 
+    latency_rows = ""
+    for name, results in runs:
+        durations = sorted(
+            r["duration_seconds"]
+            for r in results.values()
+            if isinstance(r.get("duration_seconds"), (int, float))
+        )
+        if durations:
+            n = len(durations)
+            p50 = durations[int(n * 0.50)]
+            p95 = durations[int(n * 0.95)]
+            p99 = durations[int(n * 0.99)]
+            max_d = durations[-1]
+            latency_rows += f"<tr><td>{name}</td><td>{p50:.1f}s</td><td>{p95:.1f}s</td><td>{p99:.1f}s</td><td>{max_d:.1f}s</td></tr>"
+        else:
+            latency_rows += f"<tr><td>{name}</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>"
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Cross-Agent Benchmark</title>
 <style>
@@ -130,6 +171,11 @@ small {{ color: #888; font-weight: normal; }}
 <table class="summary">
 <thead><tr><th>Agent</th>{"".join(f"<th>{k}</th>" for k in RESULT_ORDER)}<th>Total</th></tr></thead>
 <tbody>{summary_rows}</tbody>
+</table>
+<h2>Latency Percentiles</h2>
+<table>
+<thead><tr><th>Agent</th><th>p50</th><th>p95</th><th>p99</th><th>Max</th></tr></thead>
+<tbody>{latency_rows}</tbody>
 </table>
 </body></html>"""
 
