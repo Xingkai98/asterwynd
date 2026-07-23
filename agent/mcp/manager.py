@@ -293,14 +293,10 @@ def _format_call_tool_result(result: Any) -> str:
             parts.append(json.dumps(content.model_dump(), ensure_ascii=False))
         else:
             parts.append(str(content))
-    structured = getattr(result, "structuredContent", None) or getattr(
-        result,
-        "structured_content",
-        None,
-    )
+    structured = getattr(result, "structuredContent", None)
     if structured is not None and not parts:
         parts.append(json.dumps(structured, ensure_ascii=False))
-    if getattr(result, "isError", False) or getattr(result, "is_error", False):
+    if getattr(result, "isError", False):
         return "[MCP tool error: " + ("\n".join(parts) or "unknown error") + "]"
     return "\n".join(parts)
 

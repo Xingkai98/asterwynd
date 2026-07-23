@@ -29,11 +29,19 @@ class LLM(Protocol):
 
 
 @dataclass
+class Usage:
+    """LLM API token 用量"""
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+@dataclass
 class LLMResponse:
     content: Optional[str]
     tool_calls: list[ToolCallDelta] = field(default_factory=list)
     stop_reason: Optional[str] = None
     reasoning_content: Optional[str] = None
+    usage: Optional[Usage] = None
 
 
 @dataclass

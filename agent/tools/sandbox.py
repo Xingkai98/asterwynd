@@ -207,12 +207,12 @@ class SandboxExecutor:
                 duration_ms=round(duration_ms, 1),
                 timed_out=False,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             duration_ms = (time.perf_counter() - start) * 1000
             return SandboxResult(
                 exit_code=-1,
-                stdout="",
-                stderr="",
+                stdout=(e.stdout or b"").decode(errors="replace").strip() if e.stdout else "",
+                stderr=(e.stderr or b"").decode(errors="replace").strip() if e.stderr else "",
                 duration_ms=round(duration_ms, 1),
                 timed_out=True,
             )

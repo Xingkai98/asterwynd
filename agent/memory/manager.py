@@ -12,14 +12,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("asterwynd.memory")
 
-try:
-    import tiktoken
-    _enc = tiktoken.get_encoding("cl100k_base")
-    def _count_tokens(text: str) -> int:
-        return len(_enc.encode(text))
-except ImportError:
-    def _count_tokens(text: str) -> int:
+_enc = None
+
+
+def _count_tokens(text: str) -> int:
+    global _enc
+    if _enc is None:
+        try:
+            import tiktoken
+            _enc = tiktoken.get_encoding("cl100k_base")
+        except ImportError:
+            _enc = False  # sentinel: tiktoken not available
+    if _enc is False:
         return len(text) // 4
+    return len(_enc.encode(text))
 
 
 @dataclass(frozen=True)

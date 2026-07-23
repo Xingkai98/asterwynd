@@ -20,6 +20,16 @@ logger = logging.getLogger("asterwynd.web.server")
 
 STATIC_DIR = Path(__file__).parent / "static"
 BRAND_ASSETS_DIR = Path(__file__).parent.parent / "docs" / "assets"
+_INDEX_HTML_CACHE: str | None = None
+
+
+def _read_index_html() -> str:
+    """读取 index.html 内容，带内存缓存避免每次请求读盘。"""
+    global _INDEX_HTML_CACHE
+    if _INDEX_HTML_CACHE is None:
+        html_path = STATIC_DIR / "index.html"
+        _INDEX_HTML_CACHE = html_path.read_text(encoding="utf-8") if html_path.exists() else ""
+    return _INDEX_HTML_CACHE
 
 
 def create_app(
@@ -47,19 +57,19 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def chat_page():
-        html_path = STATIC_DIR / "index.html"
-        if not html_path.exists():
+        html = _read_index_html()
+        if not html:
             return HTMLResponse("<h1>index.html not found</h1>", status_code=404)
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(html)
 
     @app.get("/debug", response_class=HTMLResponse)
     async def debug_page():
         if not debug_enabled():
             return JSONResponse({"error": "Debug mode disabled"}, status_code=404)
-        html_path = STATIC_DIR / "index.html"
-        if not html_path.exists():
+        html = _read_index_html()
+        if not html:
             return HTMLResponse("<h1>index.html not found</h1>", status_code=404)
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+        return HTMLResponse(html)
 
     @app.get("/api/debug-status")
     async def debug_status():
