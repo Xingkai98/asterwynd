@@ -56,6 +56,7 @@ class MemoryManager:
         llm: Optional["LLM"] = None,
         summarizer: Optional["Summarizer"] = None,
         compaction_gap: int = 5,
+        compact_trigger_tokens: int | None = None,
     ):
         self.messages: list["Message"] = []
         self.max_tokens = max_tokens
@@ -63,6 +64,7 @@ class MemoryManager:
         self.llm = llm
         self._summarizer = summarizer
         self._compaction_gap = compaction_gap
+        self.compact_trigger_tokens = compact_trigger_tokens
         self._last_compaction_iteration: int = -compaction_gap  # allow first
 
     # ------------------------------------------------------------------
@@ -95,18 +97,20 @@ class MemoryManager:
         messages: Optional[list["Message"]] = None,
         iteration: int = 0,
     ) -> bool:
-        """Trigger compaction when token count reaches 90% of budget.
+        """Trigger compaction when token count reaches the threshold.
 
-        Minimum *compaction_gap* iterations must pass between compactions
-        to avoid thrashing.
+        The threshold is `compact_trigger_tokens` if configured, otherwise
+        defaults to ``max_tokens - 15_000`` (reserving 15K tokens for the LLM
+        response).  Minimum *compaction_gap* iterations must pass between
+        compactions to avoid thrashing.
         """
         msgs = messages if messages is not None else self.messages
         total = self.count_tokens(msgs)
-        threshold = int(self.max_tokens * 0.9)
+        threshold = self.compact_trigger_tokens if self.compact_trigger_tokens is not None else max(1, self.max_tokens - 15_000)
         if total >= threshold:
             if iteration - self._last_compaction_iteration >= self._compaction_gap:
                 logger.info(
-                    "[Memory] %d tokens >= %d (90%% of %d budget), compacting",
+                    "[Memory] %d tokens >= %d (threshold, %d max budget), compacting",
                     total, threshold, self.max_tokens,
                 )
                 await self.compact(msgs)
@@ -115,9 +119,10 @@ class MemoryManager:
             else:
                 logger.info(
                     "[Memory] %d tokens >= %d but compaction skipped "
-                    "(last compaction at iteration %d, gap=%d)",
+                    "(last compaction at iteration %d, gap=%d, max budget=%d)",
                     total, threshold,
                     self._last_compaction_iteration, self._compaction_gap,
+                    self.max_tokens,
                 )
         return False
 
