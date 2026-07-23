@@ -114,7 +114,12 @@ class WebQuestionHandler:
         if self._event_sender:
             self._event_sender({"type": "user_question", "data": question.to_event_data()})
         try:
-            return await future
+            return await asyncio.wait_for(future, timeout=300.0)
+        except asyncio.TimeoutError:
+            return QuestionAnswer(
+                question_id=question.question_id,
+                answer="[Error: question timed out after 5 minutes]",
+            )
         finally:
             if self._pending and self._pending[0] == question.question_id:
                 self._pending = None

@@ -377,6 +377,7 @@ def create_app(
 
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
+                    session.question_handler.fail_pending("session reset")
                     session_manager.remove_session(session.session_id)
                     session = await session_manager.create_session_async(llm)
                     await ws.send_json({

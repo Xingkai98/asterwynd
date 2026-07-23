@@ -500,7 +500,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert "scrollHeight" not in toggle_handler
 
     tool_result_start = script.index("function addToolResultMessage")
-    tool_result_end = script.index("function renderPlanningState", tool_result_start)
+    tool_result_end = script.index("function renderQuestionCard", tool_result_start)
     tool_result_renderer = script[tool_result_start:tool_result_end]
     assert "innerHTML" not in tool_result_renderer
     assert "body.textContent" in tool_result_renderer

@@ -162,7 +162,7 @@ class MemoryManager:
             if self._running_summary:
                 summary_msg = Message(role="user", content=self._running_summary)
                 msgs[:] = system + [summary_msg] + recent
-                self._last_compaction_end_index = recent_boundary
+                self._last_compaction_end_index = 1  # summary is at non_system[0]
                 logger.info(
                     "[Memory] Compacted to %d messages (no new middle, reused running summary)",
                     len(msgs),
@@ -177,7 +177,7 @@ class MemoryManager:
             if self._running_summary:
                 summary_msg = Message(role="user", content=self._running_summary)
                 msgs[:] = system + [summary_msg] + recent
-                self._last_compaction_end_index = recent_boundary
+                self._last_compaction_end_index = 1  # summary is at non_system[0]
                 logger.info(
                     "[Memory] Compacted to %d messages (no summarizer, reused running summary)",
                     len(msgs),
@@ -197,7 +197,7 @@ class MemoryManager:
             if self._running_summary:
                 summary_msg = Message(role="user", content=self._running_summary)
                 msgs[:] = system + [summary_msg] + recent
-                self._last_compaction_end_index = recent_boundary
+                self._last_compaction_end_index = 1  # summary is at non_system[0]
                 logger.info(
                     "[Memory] Compacted to %d messages (summary unavailable, reused running summary)",
                     len(msgs),
@@ -213,7 +213,7 @@ class MemoryManager:
         else:
             self._running_summary = new_summary
 
-        self._last_compaction_end_index = recent_boundary
+        self._last_compaction_end_index = 1  # summary is at non_system[0]
 
         summary_message = Message(
             role="user",
@@ -271,7 +271,7 @@ class MemoryManager:
         if hasattr(summarizer, "merge"):
             try:
                 result = await summarizer.merge(previous, new_events)
-                if result:
+                if result is not None:
                     return result
             except Exception:
                 logger.warning(

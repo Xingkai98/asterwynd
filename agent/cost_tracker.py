@@ -12,7 +12,10 @@ MODEL_PRICES: dict[str, tuple[float, float]] = {
 
 
 def compute_cost(model: str, input_tokens: int, output_tokens: int) -> float | None:
-    for prefix, (in_price, out_price) in MODEL_PRICES.items():
+    # Sort by prefix length descending to avoid short-prefix collisions
+    # (e.g. "gpt-4o" matching "gpt-4o-mini" before the longer prefix).
+    for prefix in sorted(MODEL_PRICES, key=len, reverse=True):
+        in_price, out_price = MODEL_PRICES[prefix]
         if model.startswith(prefix):
             return (input_tokens / 1_000_000) * in_price + (output_tokens / 1_000_000) * out_price
     return None
