@@ -14,6 +14,7 @@ from agent.approval import (
     build_approval_request,
     redact_value,
 )
+from agent.question import QuestionHandler
 from agent.message import Message, system_message, tool_result_message, extract_text
 from agent.result import RunResult, StopReason, ToolCallMade
 from agent.tools.base import ToolCall
@@ -79,6 +80,7 @@ class AgentLoop:
         tool_result_display: ToolResultDisplayConfig | None = None,
         skill_runtime: SkillRuntime | None = None,
         approval_handler: ApprovalHandler | None = None,
+        question_handler: "QuestionHandler | None" = None,
         mcp_manager: "McpManager | None" = None,
         background_manager: BackgroundTaskManager | None = None,
         session_store: SessionStore | None = None,
@@ -107,6 +109,7 @@ class AgentLoop:
         else:
             self.context_builder = self._make_default_context_builder()
         self.approval_handler = approval_handler or FailClosedApprovalHandler()
+        self._question_handler = question_handler
         self.mcp_manager = mcp_manager
         self.background_manager = background_manager
         self.session_store = session_store
@@ -118,6 +121,7 @@ class AgentLoop:
         self._subagent_tools_registered = False
         self._todo_tool_registered = False
         self._bg_tools_registered = False
+        self._question_tool_registered = False
         self._execution_todos: list[PlanItem] = []
         self._todo_next_id = 1
         self._iteration = 0
@@ -129,6 +133,7 @@ class AgentLoop:
             self._ensure_subagent_tools_registered()
         self._ensure_todo_tool_registered()
         self._ensure_background_task_tools_registered()
+        self._ensure_question_tool_registered()
         if self.skill_runtime is not None:
             self.tool_registry.register(ActivateSkillTool(self.skill_runtime))
 
@@ -286,6 +291,13 @@ class AgentLoop:
             trace_sink.record_plan_document(event_type, document)
         if event_sink:
             await event_sink(event_type, document)
+
+    def _ensure_question_tool_registered(self) -> None:
+        if self._question_tool_registered:
+            return
+        from agent.tools.builtin.ask_user import AskUserQuestionTool
+        self.tool_registry.register(AskUserQuestionTool(self._question_handler))
+        self._question_tool_registered = True
 
     def _ensure_plan_tools_registered(self) -> None:
         if self._plan_tools_registered:
@@ -474,6 +486,7 @@ class AgentLoop:
         resume_snapshot: SessionSnapshot | None = None,
     ) -> RunResult:
         tool_calls_made: list[ToolCallMade] = []
+        token_counters: dict[str, int] = {"input": 0, "output": 0}
         start_iteration = 0
 
         if resume_snapshot is not None:
@@ -551,6 +564,9 @@ class AgentLoop:
                 on_event=on_event,
             )
             await self.hooks.after_llm_call(response)
+            if response.usage:
+                token_counters["input"] += response.usage.input_tokens
+                token_counters["output"] += response.usage.output_tokens
             if trace_recorder:
                 trace_recorder.record_iteration(
                     iteration,
@@ -586,6 +602,9 @@ class AgentLoop:
                     content=response.content or "",
                     stop_reason=StopReason.END_TURN,
                     tool_calls_made=tool_calls_made,
+                    total_tokens=token_counters["input"] + token_counters["output"],
+                    input_tokens=token_counters["input"],
+                    output_tokens=token_counters["output"],
                 ))
                 if on_event:
                     await on_event("done", {
@@ -597,6 +616,9 @@ class AgentLoop:
                     content=response.content or "",
                     stop_reason=StopReason.END_TURN,
                     tool_calls_made=tool_calls_made,
+                    total_tokens=token_counters["input"] + token_counters["output"],
+                    input_tokens=token_counters["input"],
+                    output_tokens=token_counters["output"],
                 )
 
             # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
@@ -814,6 +836,9 @@ class AgentLoop:
             content=final_content,
             stop_reason=StopReason.MAX_ITERATIONS,
             tool_calls_made=tool_calls_made,
+            total_tokens=token_counters["input"] + token_counters["output"],
+            input_tokens=token_counters["input"],
+            output_tokens=token_counters["output"],
         )
         await self.hooks.on_completion(result)
         if on_event:

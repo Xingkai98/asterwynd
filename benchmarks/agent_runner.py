@@ -375,4 +375,6 @@ class AsterwyndRunner(AgentRunner):
                 else BenchmarkReason.MAX_ITERATIONS.value
             ),
             output=result.content,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
         )

@@ -38,6 +38,14 @@ class Summarizer(Protocol):
         """
         ...
 
+    async def merge(self, previous: str, new_events: str, budget: int = 0) -> str | None:
+        """Merge a previous running summary with a new events summary.
+
+        Return the merged summary string, or ``None`` if merging is not
+        supported (the caller should fall back to concatenation).
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # LLMSummarizer
@@ -49,6 +57,14 @@ _LLM_SUMMARY_SYSTEM_PROMPT = (
     "Preserve every file path, function name, tool name, error message, "
     "unresolved question, and key decision. "
     "Output ONLY the four-section Markdown block described in the user prompt."
+)
+
+_MERGE_SYSTEM_PROMPT = (
+    "You are merging two conversation summaries for a coding agent. "
+    "Synthesize them into ONE coherent four-section Markdown summary "
+    "while preserving all critical context: every file path, function "
+    "name, tool name, error message, unresolved question, and key "
+    "decision must survive."
 )
 
 _LLM_SUMMARY_USER_TEMPLATE = """\
@@ -148,6 +164,36 @@ class LLMSummarizer:
 
         return (response.content or "").strip()
 
+    async def merge(self, previous: str, new_events: str, budget: int = 0) -> str | None:
+        """Merge a running summary with a new events summary via LLM."""
+        if not previous and not new_events:
+            return None
+
+        user_text = (
+            f"## Previous Summary\n\n{previous}\n\n"
+            f"## New Events Summary\n\n{new_events}"
+        )
+
+        budget_hint = (
+            f"\n\nKeep the merged summary under approximately {budget} tokens."
+            if budget > 0
+            else ""
+        )
+
+        try:
+            response = await self._llm.chat(
+                messages=[
+                    Message(role="system", content=_MERGE_SYSTEM_PROMPT),
+                    Message(role="user", content=user_text + budget_hint),
+                ],
+                tools=None,
+            )
+        except Exception:
+            logger.warning("LLMSummarizer: merge LLM call failed", exc_info=True)
+            return None
+
+        return (response.content or "").strip() or None
+
 
 # ---------------------------------------------------------------------------
 # TruncationSummarizer — no-LLM fallback
@@ -205,3 +251,7 @@ class TruncationSummarizer:
             )
             TruncationSummarizer._warned = True
         return _truncate_tool_outputs(messages, self._max_chars)
+
+    async def merge(self, previous: str, new_events: str, budget: int = 0) -> str | None:
+        """Return None — merge is not supported; the caller falls back to concatenation."""
+        return None

@@ -12,6 +12,7 @@ let slashMatches = [];
 let activeSlashIndex = 0;
 let shouldReconnect = true;
 const approvalCards = new Map();
+const questionCards = new Map();
 let pendingImages = [];
 let sendInFlight = false;
 const wsUploadWaiters = new Map();
@@ -187,6 +188,15 @@ function handleEvent(event) {
 
     case 'approval_response':
       renderApprovalResponse(event.data || {});
+      break;
+
+    case 'user_question':
+      currentAssistantMsg = null;
+      renderQuestionCard(event.data || {});
+      break;
+
+    case 'user_answer':
+      renderQuestionResponse(event.data || {});
       break;
 
     case 'done':
@@ -515,6 +525,110 @@ function renderApprovalResponse(data) {
   card.approve.disabled = true;
   card.deny.disabled = true;
   card.status.textContent = data.status || 'completed';
+}
+
+function renderQuestionCard(data) {
+  const questionId = data.question_id;
+  if (!questionId) return;
+
+  const el = document.createElement('div');
+  el.className = 'question-card';
+
+  const header = document.createElement('div');
+  header.className = 'question-card-header';
+
+  const icon = document.createElement('span');
+  icon.className = 'question-icon';
+  icon.textContent = '?';
+  header.appendChild(icon);
+
+  const title = document.createElement('span');
+  title.textContent = data.title || 'Question';
+  header.appendChild(title);
+  el.appendChild(header);
+
+  if (data.body) {
+    const body = document.createElement('div');
+    body.className = 'question-card-body';
+    if (window.AsterwyndMarkdown && typeof window.AsterwyndMarkdown.render === 'function') {
+      body.innerHTML = window.AsterwyndMarkdown.render(data.body);
+    } else {
+      body.textContent = data.body;
+    }
+    el.appendChild(body);
+  }
+
+  const controls = document.createElement('div');
+  controls.className = 'question-controls';
+
+  let inputEl;
+  const options = Array.isArray(data.options) ? data.options : [];
+
+  if (options.length > 0) {
+    const optionsGroup = document.createElement('div');
+    optionsGroup.className = 'question-options-group';
+    options.forEach((opt, i) => {
+      const label = document.createElement('label');
+      label.className = 'question-option';
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `question-${questionId}`;
+      radio.value = opt;
+      if (i === 0) radio.checked = true;
+      label.appendChild(radio);
+      label.appendChild(document.createTextNode(' ' + opt));
+      optionsGroup.appendChild(label);
+    });
+    controls.appendChild(optionsGroup);
+  } else {
+    inputEl = document.createElement('input');
+    inputEl.type = 'text';
+    inputEl.className = 'question-text-input';
+    inputEl.placeholder = 'Type your answer...';
+    controls.appendChild(inputEl);
+  }
+
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'button';
+  submitBtn.className = 'question-submit';
+  submitBtn.textContent = 'Submit';
+  submitBtn.addEventListener('click', () => {
+    let answer = '';
+    if (options.length > 0) {
+      const checked = controls.querySelector(`input[name="question-${questionId}"]:checked`);
+      answer = checked ? checked.value : '';
+    } else if (inputEl) {
+      answer = inputEl.value.trim();
+    }
+    if (!answer) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Submitted';
+    sendQuestionAnswer(questionId, answer);
+  });
+
+  controls.appendChild(submitBtn);
+  el.appendChild(controls);
+
+  messagesEl.appendChild(el);
+  questionCards.set(questionId, { el, submitBtn });
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function sendQuestionAnswer(questionId, answer) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: 'user_answer',
+    question_id: questionId,
+    answer,
+  }));
+}
+
+function renderQuestionResponse(data) {
+  const questionId = data.question_id;
+  const card = questionCards.get(questionId);
+  if (!card) return;
+  card.submitBtn.disabled = true;
+  card.submitBtn.textContent = data.status === 'received' ? 'Received' : 'Unavailable';
 }
 
 function renderPlanningState(state) {

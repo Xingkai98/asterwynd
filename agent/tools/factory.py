@@ -38,6 +38,7 @@ logger = logging.getLogger("asterwynd.tools.factory")
 
 
 KNOWN_BUILTIN_TOOL_NAMES = {
+    "AskUserQuestion",
     "Bash",
     "Edit",
     "Find",

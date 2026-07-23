@@ -30,6 +30,8 @@ class AgentRunResult:
     test_runs: int = 0
     reason: str | None = None
     output: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 @dataclass

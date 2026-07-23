@@ -9,6 +9,7 @@ from agent.approval import (
     ApprovalRequest,
     ApprovalResponse,
 )
+from agent.question import Question, QuestionAnswer
 from agent.config import AsterwyndConfig
 from agent.loop import AgentLoop
 from agent.message import Message
@@ -89,6 +90,54 @@ class WebApprovalHandler:
             )
 
 
+class WebQuestionHandler:
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self._pending: tuple[str, asyncio.Future] | None = None
+        self._event_sender = None
+
+    def set_event_sender(self, sender):
+        self._event_sender = sender
+
+    @property
+    def pending_question_id(self) -> str | None:
+        return self._pending[0] if self._pending else None
+
+    async def ask_question(self, question: Question) -> QuestionAnswer:
+        if self._pending is not None:
+            return QuestionAnswer(
+                question_id=question.question_id,
+                answer="[Error: another question is already pending]",
+            )
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending = (question.question_id, future)
+        if self._event_sender:
+            self._event_sender({"type": "user_question", "data": question.to_event_data()})
+        try:
+            return await future
+        finally:
+            if self._pending and self._pending[0] == question.question_id:
+                self._pending = None
+
+    def submit_answer(self, question_id: str, answer: str) -> bool:
+        if self._pending is None or self._pending[0] != question_id:
+            return False
+        _, future = self._pending
+        if future.done():
+            return False
+        future.set_result(QuestionAnswer(question_id=question_id, answer=answer))
+        return True
+
+    def fail_pending(self, reason: str) -> None:
+        if self._pending is None:
+            return
+        qid, future = self._pending
+        if not future.done():
+            future.set_result(
+                QuestionAnswer(question_id=qid, answer=f"[Error: {reason}]")
+            )
+
+
 class AgentSession:
     """Holds one AgentLoop instance and its message history."""
 
@@ -97,10 +146,12 @@ class AgentSession:
         session_id: str,
         agent: AgentLoop,
         approval_handler: WebApprovalHandler | None = None,
+        question_handler: WebQuestionHandler | None = None,
     ):
         self.session_id = session_id
         self.agent = agent
         self.approval_handler = approval_handler or WebApprovalHandler(session_id)
+        self.question_handler = question_handler or WebQuestionHandler(session_id)
         self.messages: list[Message] = []
         self.debug_turn = 0
 
@@ -145,6 +196,7 @@ class SessionManager:
     ) -> AgentSession:
         session_id = new_session_id()
         approval_handler = WebApprovalHandler(session_id)
+        question_handler = WebQuestionHandler(session_id)
         run_config = AgentRunConfig(mode=self.initial_mode)
         workspace_policy = WorkspacePolicy(
             command_denylist=self.config.tools.command_denylist,
@@ -182,9 +234,10 @@ class SessionManager:
             tool_result_display=self.config.tools.display,
             skill_runtime=skill_runtime,
             approval_handler=approval_handler,
+            question_handler=question_handler,
             mcp_manager=mcp_manager,
         )
-        session = AgentSession(session_id, agent, approval_handler)
+        session = AgentSession(session_id, agent, approval_handler, question_handler)
         session.init_messages()
         self._sessions[session_id] = session
         logger.info(f"Created session {session_id}")
@@ -216,6 +269,11 @@ class SessionManager:
 
         async def on_event(event_type: str, data: dict):
             await queue.put({"type": event_type, "data": data})
+
+        # Wire question handler's event sender to the queue
+        session.question_handler.set_event_sender(
+            lambda event: queue.put_nowait(event)
+        )
 
         # Add debug hook if debug is enabled
         if self.debug_enabled:
@@ -296,9 +354,24 @@ class SessionManager:
                                 },
                             })
                         continue
+                    if msg_type == "user_answer":
+                        question_id = str(raw.get("question_id", "")).strip()
+                        answer = str(raw.get("answer", "")).strip()
+                        accepted = session.question_handler.submit_answer(question_id, answer)
+                        await queue.put({
+                            "type": "user_answer",
+                            "data": {
+                                "question_id": question_id,
+                                "status": "received" if accepted else "unavailable",
+                            },
+                        })
+                        continue
                     if msg_type in {"reset", "cancel"}:
                         session.approval_handler.fail_pending(
                             f"{msg_type} received while approval was pending"
+                        )
+                        session.question_handler.fail_pending(
+                            f"{msg_type} received while question was pending"
                         )
                         continue
                     if msg_type == "ping":
@@ -308,6 +381,7 @@ class SessionManager:
             except Exception as exc:
                 logger.info("Approval response receiver stopped: %s", exc)
                 session.approval_handler.fail_pending("websocket disconnected")
+                session.question_handler.fail_pending("websocket disconnected")
 
         if ws_receive is not None:
             receiver_task = asyncio.create_task(receive_approval_responses())
@@ -320,6 +394,7 @@ class SessionManager:
                 await ws_send(event)
         finally:
             session.approval_handler.fail_pending("session run ended")
+            session.question_handler.fail_pending("session run ended")
             if receiver_task is not None and not receiver_task.done():
                 receiver_task.cancel()
                 try:

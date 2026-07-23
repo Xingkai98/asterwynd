@@ -363,6 +363,18 @@ def create_app(
                         },
                     })
 
+                elif msg_type == "user_answer":
+                    question_id = str(raw.get("question_id", "")).strip()
+                    answer = str(raw.get("answer", "")).strip()
+                    accepted = session.question_handler.submit_answer(question_id, answer)
+                    await ws.send_json({
+                        "type": "user_answer",
+                        "data": {
+                            "question_id": question_id,
+                            "status": "received" if accepted else "unavailable",
+                        },
+                    })
+
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
                     session_manager.remove_session(session.session_id)

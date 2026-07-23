@@ -24,6 +24,7 @@ import typer
 load_dotenv()
 
 from agent.approval import ApprovalHandler, CliApprovalHandler
+from agent.question import FailClosedQuestionHandler as FailClosedQH, QuestionAnswer, Question
 from agent.loop import AgentLoop
 from agent.commands import CommandContext, build_default_slash_command_registry
 from agent.commands.init import write_aster_md
@@ -40,6 +41,7 @@ from agent.background import BackgroundTaskManager
 from agent.session import SessionSnapshot, SessionStore
 from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
+from agent.hooks.builtin.token_budget import TokenBudgetHook
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
 from agent.llm import LLM
@@ -70,6 +72,23 @@ def _setup_logging() -> None:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         handlers=handlers,
     )
+
+class CliQuestionHandler:
+    """CLI question handler using stdin/stdout."""
+
+    async def ask_question(self, question: Question) -> QuestionAnswer:
+        import sys
+
+        print(f"\n[Agent Question] {question.title}", file=sys.stderr)
+        print(question.body, file=sys.stderr)
+        if question.options:
+            for i, opt in enumerate(question.options, 1):
+                print(f"  {i}. {opt}", file=sys.stderr)
+            answer = input("Your answer (number or text): ").strip()
+        else:
+            answer = input("Your answer: ").strip()
+        return QuestionAnswer(question_id=question.question_id, answer=answer)
+
 
 app = typer.Typer()
 
@@ -223,6 +242,7 @@ def _build_agent_core(
     hooks = HookManager([
         LoggingHook(verbose=False),
         TracingHook(),
+        TokenBudgetHook(budget=80_000),
     ])
 
     memory = MemoryManager(max_tokens=80_000)
@@ -240,6 +260,12 @@ def _build_agent_core(
         sessions_root=_sessions_root(workspace_policy.workspace_root)
     )
 
+    # Determine question handler: use CLI handler when approval is interactive CLI
+    if isinstance(approval_handler, CliApprovalHandler) and approval_handler.interactive:
+        question_handler_instance = CliQuestionHandler()
+    else:
+        question_handler_instance = FailClosedQH()
+
     return AgentLoop(
         llm=llm,
         tool_registry=registry,
@@ -252,6 +278,7 @@ def _build_agent_core(
         tool_result_display=config.tools.display,
         skill_runtime=skill_runtime,
         approval_handler=approval_handler,
+        question_handler=question_handler_instance,
         mcp_manager=mcp_manager,
         background_manager=background_manager,
         session_store=session_store,

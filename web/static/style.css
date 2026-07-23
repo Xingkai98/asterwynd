@@ -761,6 +761,123 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   border-color: var(--accent);
 }
 
+/* Question card */
+.question-card {
+  align-self: stretch;
+  border: 1px solid var(--border);
+  background: var(--panel, var(--surface));
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 760px;
+  display: grid;
+  gap: 8px;
+}
+
+.question-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.question-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.question-card-body {
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.question-card-body p:last-child {
+  margin-bottom: 0;
+}
+
+.question-card-body code {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.question-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.question-options-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.question-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.question-option input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+.question-text-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+}
+
+.question-text-input:focus {
+  border-color: var(--accent);
+}
+
+.question-submit {
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.question-submit:hover {
+  opacity: 0.9;
+}
+
+.question-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Loading spinner */
 .spinner {
   display: inline-block;
