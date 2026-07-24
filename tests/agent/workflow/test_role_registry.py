@@ -12,9 +12,9 @@ from agent.workflow.role_registry import (
 
 
 class TestBuildRoleConfigs:
-    def test_all_five_roles_registered(self):
+    def test_all_four_roles_registered(self):
         configs = build_role_configs()
-        assert set(configs.keys()) == {"planner", "reviewer", "builder", "code-reviewer", "closer"}
+        assert set(configs.keys()) == {"wayfinder", "planner", "builder", "closer"}
 
     def test_each_config_has_system_prompt(self):
         configs = build_role_configs()
@@ -56,18 +56,19 @@ class TestSystemPrompts:
         assert "design.md" in prompt
         assert "tasks.md" in prompt
 
-    def test_reviewer_mentions_review_report(self):
-        prompt = ROLE_SYSTEM_PROMPTS["reviewer"]
-        assert "review-report" in prompt
+    def test_wayfinder_mentions_map(self):
+        prompt = ROLE_SYSTEM_PROMPTS["wayfinder"]
+        assert "charting_map" in prompt
+        assert "wayfinder:map" in prompt
 
     def test_builder_mentions_tdd(self):
         prompt = ROLE_SYSTEM_PROMPTS["builder"]
         assert "writing_tests" in prompt
         assert "test_failing" in prompt
 
-    def test_code_reviewer_mentions_diff(self):
-        prompt = ROLE_SYSTEM_PROMPTS["code-reviewer"]
-        assert "reading_diff" in prompt
+    def test_builder_mentions_reviewing_impl(self):
+        prompt = ROLE_SYSTEM_PROMPTS["builder"]
+        assert "reviewing_impl" in prompt
 
     def test_closer_mentions_archive(self):
         prompt = ROLE_SYSTEM_PROMPTS["closer"]
@@ -94,18 +95,18 @@ class TestBuildSubagentTask:
 
     def test_includes_handoff_note_when_provided(self):
         task = build_subagent_task(
-            "reviewer",
+            "planner",
             "test-change",
-            {"state": {"phase": "reviewing", "sub_state": "reading_docs"}},
-            handoff_note_path=".handoff/test/planning-to-reviewing.md",
+            {"state": {"phase": "planning", "sub_state": "writing_design"}},
+            handoff_note_path=".handoff/test/planning-handoff.md",
         )
-        assert ".handoff/test/planning-to-reviewing.md" in task
+        assert ".handoff/test/planning-handoff.md" in task
 
     def test_includes_role_system_prompt(self):
         task = build_subagent_task(
-            "code-reviewer",
+            "builder",
             "test-change",
-            {"state": {"phase": "code-review", "sub_state": "reading_diff"}},
+            {"state": {"phase": "building", "sub_state": "implementing"}},
         )
-        assert "reading_diff" in task
-        assert "analyzing_tests" in task
+        assert "TDD" in task
+        assert "implementing" in task

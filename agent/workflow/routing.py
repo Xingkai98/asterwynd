@@ -9,12 +9,15 @@ import yaml
 from agent.workflow.models import (
     DEFAULT_ROUTING,
     EXECUTORS,
+    PHASES,
     SESSION_MODES,
     Executor,
     Phase,
     PhaseRouting,
     SessionMode,
 )
+
+_ACTIVE_PHASES = tuple(p for p in PHASES if p not in ("blocked", "done"))
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +60,7 @@ def load_global_defaults(
 
 def _parse_routing_dict(raw: dict[str, Any]) -> dict[Phase, PhaseRouting]:
     result: dict[Phase, PhaseRouting] = {}
-    for phase_key in ("planning", "reviewing", "building", "code-review", "closing"):
+    for phase_key in _ACTIVE_PHASES:
         entry = raw.get(phase_key)
         if entry is None:
             result[phase_key] = DEFAULT_ROUTING[phase_key]
@@ -160,10 +163,9 @@ def build_routing_config_prompt(
         routing = load_global_defaults(repo_root)
 
     phase_descriptions = {
+        "wayfinding": "前置探路与决策",
         "planning": "方案设计与任务拆解",
-        "reviewing": "设计独立评审",
         "building": "代码实现",
-        "code-review": "代码审查",
         "closing": "收尾归档",
     }
 
@@ -181,7 +183,7 @@ def build_routing_config_prompt(
     }
 
     table_lines = []
-    for phase in ("planning", "reviewing", "building", "code-review", "closing"):
+    for phase in _ACTIVE_PHASES:
         r = routing.get(phase)
         if r is None:
             r = DEFAULT_ROUTING.get(phase, PhaseRouting(executor="inline", session_mode="same"))

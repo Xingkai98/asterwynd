@@ -39,63 +39,51 @@ class TestWorkflowManagerInit:
 
 
 class TestWorkflowManagerFullFlow:
-    def test_full_planning_through_reviewing(self):
+    def test_full_planning_through_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test-change")
 
-            # Complete planning
-            for sub in ["writing_proposal", "writing_design", "grilling_design",
-                        "writing_specs", "writing_tasks", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub, actor_id="planner-1")
 
             assert mgr.is_at_gate
             assert mgr.current_phase == "planning"
 
-            # Handoff
-            mgr.handoff("reviewing", ".handoff/test/planning-to-reviewing.md", "planner-1")
-
-            # Human approves
+            # Human approves → building
             snap = mgr.human_approve("human-1", "design approved")
-            assert snap["state"]["phase"] == "reviewing"
-            assert snap["state"]["sub_state"] == "reading_docs"
-
-    def test_skip_reviewing(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            mgr = WorkflowManager(tmp)
-            mgr.init("test")
-
-            # Go to planning gate
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
-                mgr.advance_sub_state(sub)
-
-            # Skip reviewing
-            snap = mgr.human_skip("human-1", "trivial change, no design review needed")
             assert snap["state"]["phase"] == "building"
             assert snap["state"]["sub_state"] == "writing_tests"
 
-    def test_skip_code_review(self):
+    def test_skip_not_available_single_forward_path(self):
+        """In 4-phase model, each gate has only one forward path — skip not available."""
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
 
-            # planning gate -> approve to reviewing
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
+                mgr.advance_sub_state(sub)
+            with pytest.raises(StateMachineError, match="no skip target"):
+                mgr.human_skip("human-1", "trivial change")
+
+    def test_building_to_closing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = WorkflowManager(tmp)
+            mgr.init("test")
+
+            # Complete planning
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
             mgr.human_approve("human-1")
 
-            # reviewing: already at reading_docs from approve
-            for sub in ["reviewing_design", "ready_for_review"]:
-                mgr.advance_sub_state(sub)
-            mgr.human_approve("human-1")
-
-            # building: already at writing_tests from approve
+            # Already at building.writing_tests after approve
             for sub in ["implementing", "all_tests_passing",
-                        "smoke_validating", "ready_for_review"]:
+                        "smoke_validating", "reviewing_impl", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
-            snap = mgr.human_skip("human-1", "small change, skip code review")
+            snap = mgr.human_approve("human-1")
             assert snap["state"]["phase"] == "closing"
             assert snap["state"]["sub_state"] == "syncing_specs"
 
@@ -104,16 +92,16 @@ class TestWorkflowManagerFullFlow:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
 
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
             mgr.human_approve("human-1")
 
-            # Now in reviewing.reading_docs
-            for sub in ["reviewing_design", "ready_for_review"]:
+            for sub in ["implementing", "all_tests_passing",
+                        "smoke_validating", "reviewing_impl", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
-            # Reviewer finds design issues, human rolls back to planning
+            # Review finds issues, roll back to planning
             snap = mgr.human_rollback(
                 "planning", "writing_design",
                 "human-1", "design has gaps in error handling"
@@ -122,14 +110,12 @@ class TestWorkflowManagerFullFlow:
             assert snap["state"]["sub_state"] == "writing_design"
 
     def test_rollback_from_any_sub_state_not_just_gate(self):
-        """Human can rollback from any state, not just gate."""
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
             for sub in ["writing_proposal", "writing_design"]:
                 mgr.advance_sub_state(sub)
 
-            # Rollback from writing_design (not gate) to exploring
             snap = mgr.human_rollback(
                 "planning", "exploring",
                 "human-1", "wrong direction, restarting exploration"
@@ -142,28 +128,23 @@ class TestWorkflowManagerFullFlow:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
 
-            # Get to building
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
-                mgr.advance_sub_state(sub)
-            mgr.human_approve("human-1")
-            for sub in ["reviewing_design", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
             mgr.human_approve("human-1")
 
-            # TDD: write test -> fail -> implement -> pass (already at writing_tests)
             mgr.advance_sub_state("test_failing")
             mgr.advance_sub_state("implementing")
             mgr.advance_sub_state("all_tests_passing")
             assert mgr.current_sub_state == "all_tests_passing"
 
-            # Test fix loop: back to implementing
+            # Test fix loop
             mgr.advance_sub_state("implementing")
             assert mgr.current_sub_state == "implementing"
             mgr.advance_sub_state("all_tests_passing")
             mgr.advance_sub_state("smoke_validating")
 
-            # Smoke fails -> back to implementing
+            # Smoke fails → back to implementing
             mgr.advance_sub_state("implementing")
             assert mgr.current_sub_state == "implementing"
 
@@ -198,20 +179,19 @@ class TestWorkflowManagerRouting:
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
-            mgr.update_routing("reviewing", executor="codex")
+            mgr.update_routing("planning", executor="codex")
             routing = mgr.routing()
-            assert routing["reviewing"].executor == "codex"
+            assert routing["planning"].executor == "codex"
 
     def test_routing_persists(self):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
-            mgr.update_routing("code-review", executor="codex", session_mode="new")
-
+            mgr.update_routing("building", executor="codex", session_mode="new")
             mgr2 = WorkflowManager(tmp)
             mgr2.load()
             routing = mgr2.routing()
-            assert routing["code-review"].executor == "codex"
+            assert routing["building"].executor == "codex"
 
 
 class TestWorkflowManagerProperties:
@@ -220,8 +200,8 @@ class TestWorkflowManagerProperties:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
             assert not mgr.is_at_gate
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
             assert mgr.is_at_gate
 
@@ -274,11 +254,11 @@ class TestWorkflowManagerEdgeCases:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
             with pytest.raises(StateMachineError, match="only allowed at gate"):
-                mgr.handoff("reviewing", "path.md", "agent-1")
+                mgr.handoff("planning", "path.md", "agent-1")
 
     def test_rejects_invalid_sub_state_advance(self):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test")
             with pytest.raises(StateMachineError, match="invalid within-phase transition"):
-                mgr.advance_sub_state("ready_for_review")  # too far from exploring
+                mgr.advance_sub_state("ready_for_review")

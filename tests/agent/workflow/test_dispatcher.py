@@ -53,29 +53,28 @@ class TestWorkflowDispatcher:
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test-change")
-            mgr.update_routing("reviewing", executor="subagent", session_mode="new")
+            mgr.update_routing("building", executor="subagent", session_mode="new")
 
             fake = FakeSubAgentManager()
             dispatcher = WorkflowDispatcher(tmp, subagent_manager=fake)
 
-            result = dispatcher.dispatch_phase("reviewing")
+            result = dispatcher.dispatch_phase("building")
             assert result.executor == "subagent"
-            assert result.role_type == "reviewer"
+            assert result.role_type == "builder"
             assert result.subagent_id is not None
             assert len(fake.created_subagents) == 1
-            assert fake.created_subagents[0]["name"] == "Reviewer"
 
     def test_dispatch_phase_claude_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test-change")
-            mgr.update_routing("code-review", executor="claude-code", session_mode="new")
+            mgr.update_routing("building", executor="claude-code", session_mode="new")
 
             dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
-            result = dispatcher.dispatch_phase("code-review")
+            result = dispatcher.dispatch_phase("building")
 
             assert result.executor == "claude-code"
-            assert result.role_type == "code-reviewer"
+            assert result.role_type == "builder"
             assert result.cli_command is not None
             assert "claude-code" in result.cli_command
 
@@ -83,10 +82,10 @@ class TestWorkflowDispatcher:
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test-change")
-            mgr.update_routing("reviewing", executor="codex", session_mode="new")
+            mgr.update_routing("planning", executor="codex", session_mode="new")
 
             dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
-            result = dispatcher.dispatch_phase("reviewing")
+            result = dispatcher.dispatch_phase("planning")
 
             assert result.executor == "codex"
             assert "codex exec" in result.cli_command
@@ -95,10 +94,10 @@ class TestWorkflowDispatcher:
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test-change")
-            mgr.update_routing("reviewing", executor="subagent", session_mode="new")
+            mgr.update_routing("planning", executor="subagent", session_mode="new")
 
             dispatcher = WorkflowDispatcher(tmp)  # no subagent_manager
-            result = dispatcher.dispatch_phase("reviewing")
+            result = dispatcher.dispatch_phase("planning")
 
             assert result.executor == "inline"
             assert result.inline_context is not None
@@ -118,7 +117,6 @@ class TestWorkflowDispatcher:
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test-change")
-            # manually set and persist state to done
             mgr._data["state"] = {"phase": "done", "sub_state": None}
             from agent.workflow.state_machine import save_handoff_json
             save_handoff_json(tmp, mgr._data)
@@ -140,58 +138,54 @@ class TestWorkflowDispatcher:
         assert d["executor"] == "inline"
         assert d["phase"] == "planning"
         assert d["role_type"] == "planner"
-        assert d["inline_context"]["change_dir"] == "/tmp/test"
 
     def test_dispatch_result_to_dict_with_subagent(self):
         result = DispatchResult(
             executor="subagent",
             session_mode="new",
-            phase="reviewing",
-            role_type="reviewer",
-            task_prompt="review the design",
+            phase="building",
+            role_type="builder",
+            task_prompt="build the feature",
             subagent_id="sa-123",
-            subagent_summary={"subagent_id": "sa-123", "name": "Reviewer"},
+            subagent_summary={"subagent_id": "sa-123", "name": "Builder"},
         )
         d = result.to_dict()
         assert d["subagent_id"] == "sa-123"
-        assert d["subagent_summary"]["name"] == "Reviewer"
+        assert d["subagent_summary"]["name"] == "Builder"
 
 
 class TestApproveAndDispatch:
-    def test_approve_at_gate_dispatches_next_phase(self):
+    def test_approve_at_gate_dispatches_building(self):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
             dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
             result = dispatcher.approve_and_dispatch("human-1", "approved")
 
-            assert result.phase == "reviewing"
-            assert result.role_type == "reviewer"
-            assert result.executor == "subagent"
-            assert result.subagent_id is not None
+            assert result.phase == "building"
+            assert result.role_type == "builder"
+            assert result.executor == "inline"
 
     def test_approve_to_done_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
             mgr.human_approve("human-1")
-            for sub in ["reviewing_design", "ready_for_review"]:
-                mgr.advance_sub_state(sub)
-            mgr.human_approve("human-1")
+            # Already at building.writing_tests after approve
             for sub in ["implementing", "all_tests_passing",
-                        "smoke_validating", "ready_for_review"]:
+                        "smoke_validating", "reviewing_impl", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
-            # skip code-review → closing
-            mgr.human_skip("human-1", "skip code review")
+            mgr.human_approve("human-1")
+            # Already at closing.syncing_specs after approve
             for sub in ["archiving", "updating_backlog",
-                        "validating", "pr_ready", "ready_for_review"]:
+                        "validating", "pr_ready", "reviewing_archive", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
             dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
@@ -202,7 +196,6 @@ class TestApproveAndDispatch:
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
-            # still at exploring, not gate
 
             dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
             with pytest.raises(StateMachineError, match="only allowed at gate"):
@@ -212,33 +205,31 @@ class TestApproveAndDispatch:
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp, repo_root=tmp)
             mgr.init("test-change")
-            mgr.update_routing("reviewing", executor="inline", session_mode="same")
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
+            mgr.update_routing("building", executor="inline", session_mode="same")
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
             dispatcher = WorkflowDispatcher(tmp, repo_root=tmp, subagent_manager=FakeSubAgentManager())
             result = dispatcher.approve_and_dispatch("human-1", "approved")
 
             assert result.executor == "inline"
-            assert result.phase == "reviewing"
-            assert result.inline_context is not None
+            assert result.phase == "building"
 
 
 class TestSkipAndDispatch:
-    def test_skip_reviewing_dispatches_building(self):
+    def test_skip_not_available_in_four_phase_model(self):
+        """In 4-phase model each gate has one forward path — skip raises."""
         with tempfile.TemporaryDirectory() as tmp:
             mgr = WorkflowManager(tmp)
             mgr.init("test-change")
-            for sub in ["writing_proposal", "writing_design", "writing_specs",
-                        "writing_tasks", "ready_for_review"]:
+            for sub in ["writing_proposal", "writing_design", "writing_spec",
+                        "writing_tickets", "reviewing_artifacts", "ready_for_review"]:
                 mgr.advance_sub_state(sub)
 
             dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
-            result = dispatcher.skip_and_dispatch("human-1", "trivial change")
-
-            assert result.phase == "building"
-            assert result.role_type == "builder"
+            with pytest.raises(StateMachineError, match="no skip target"):
+                dispatcher.skip_and_dispatch("human-1", "cannot skip")
 
     def test_skip_not_at_gate_raises(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -13,6 +13,7 @@ from agent.workflow.models import (
     PHASE_SUB_STATES,
     PHASE_TO_ROLE,
     PHASES,
+    REVIEW_SUB_STATES,
     Blocker,
     CurrentAgent,
     Decision,
@@ -61,18 +62,13 @@ def _phase_index(phase: Phase) -> int:
 
 # Legal cross-phase forward transitions: from_state -> to_state
 CROSS_PHASE_FORWARD: dict[tuple[Phase, SubState], list[tuple[Phase, SubState]]] = {
-    ("planning", "ready_for_review"): [
-        ("reviewing", "reading_docs"),
-        ("building", "writing_tests"),  # skip reviewing
+    ("wayfinding", "ready_for_review"): [
+        ("planning", "exploring"),
     ],
-    ("reviewing", "ready_for_review"): [
+    ("planning", "ready_for_review"): [
         ("building", "writing_tests"),
     ],
     ("building", "ready_for_review"): [
-        ("code-review", "reading_diff"),
-        ("closing", "syncing_specs"),  # skip code-review
-    ],
-    ("code-review", "ready_for_review"): [
         ("closing", "syncing_specs"),
     ],
     ("closing", "ready_for_review"): [
@@ -82,18 +78,20 @@ CROSS_PHASE_FORWARD: dict[tuple[Phase, SubState], list[tuple[Phase, SubState]]] 
 
 # Legal within-phase sub_state adjacency (sequential, with loops where noted)
 WITHIN_PHASE_ADJACENT: dict[Phase, dict[SubState, list[SubState | None]]] = {
+    "wayfinding": {
+        "charting_map": ["working_tickets"],
+        "working_tickets": ["map_cleared"],
+        "map_cleared": ["reviewing_map"],
+        "reviewing_map": ["ready_for_review"],
+        "ready_for_review": [],
+    },
     "planning": {
         "exploring": ["writing_proposal"],
         "writing_proposal": ["writing_design"],
-        "writing_design": ["grilling_design", "writing_specs"],
-        "grilling_design": ["writing_design", "writing_specs"],  # loop back or advance
-        "writing_specs": ["writing_tasks"],
-        "writing_tasks": ["ready_for_review"],
-        "ready_for_review": [],
-    },
-    "reviewing": {
-        "reading_docs": ["reviewing_design"],
-        "reviewing_design": ["ready_for_review"],
+        "writing_design": ["writing_spec"],
+        "writing_spec": ["writing_tickets"],
+        "writing_tickets": ["reviewing_artifacts"],
+        "reviewing_artifacts": ["ready_for_review"],
         "ready_for_review": [],
     },
     "building": {
@@ -101,14 +99,8 @@ WITHIN_PHASE_ADJACENT: dict[Phase, dict[SubState, list[SubState | None]]] = {
         "test_failing": ["writing_tests", "implementing"],  # TDD loop
         "implementing": ["all_tests_passing", "writing_tests"],
         "all_tests_passing": ["implementing", "smoke_validating"],  # fix loop
-        "smoke_validating": ["implementing", "ready_for_review"],  # fail -> back to implement
-        "ready_for_review": [],
-    },
-    "code-review": {
-        "reading_diff": ["analyzing_tests"],
-        "analyzing_tests": ["reviewing_code"],
-        "reviewing_code": ["requesting_changes", "ready_for_review"],
-        "requesting_changes": ["reviewing_code", "ready_for_review"],
+        "smoke_validating": ["implementing", "reviewing_impl"],  # fail -> back to implement
+        "reviewing_impl": ["ready_for_review"],
         "ready_for_review": [],
     },
     "closing": {
@@ -116,7 +108,8 @@ WITHIN_PHASE_ADJACENT: dict[Phase, dict[SubState, list[SubState | None]]] = {
         "archiving": ["updating_backlog"],
         "updating_backlog": ["validating"],
         "validating": ["pr_ready"],
-        "pr_ready": ["ready_for_review"],
+        "pr_ready": ["reviewing_archive"],
+        "reviewing_archive": ["ready_for_review"],
         "ready_for_review": [],
     },
 }
@@ -292,7 +285,8 @@ def init_handoff_json(
     """Generate the initial handoff.json content for a new change."""
     resolved_routing: dict[str, dict] = {}
     defaults = routing or DEFAULT_ROUTING
-    for phase in ("planning", "reviewing", "building", "code-review", "closing"):
+    active_phases = [p for p in PHASES if p not in ("blocked", "done")]
+    for phase in active_phases:
         r = defaults.get(phase, DEFAULT_ROUTING.get(phase))
         if r is None:
             r = PhaseRouting(executor="inline", session_mode="same")
