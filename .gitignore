@@ -18,3 +18,5 @@ benchmarks/runs/
 benchmarks/swebench_candidates.json
 *.external_repo/
 .handoff/
+.performance_findings.json
+docs/research/
