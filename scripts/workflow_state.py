@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Workflow state management CLI — discover, inspect, advance, and approve.
+"""Workflow state management CLI — discover, inspect, advance, approve, spawn.
 
 Usage:
     uv run python scripts/workflow_state.py discover
@@ -8,6 +8,7 @@ Usage:
     uv run python scripts/workflow_state.py advance --change <id> --to <sub_state>
     uv run python scripts/workflow_state.py approve --change <id> --phase <phase>
     uv run python scripts/workflow_state.py validate --change <id>
+    uv run python scripts/workflow_state.py spawn --from <wayfinding-id> --changes <id1,id2,...>
 """
 
 from __future__ import annotations
@@ -18,42 +19,42 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Guard against accidental execution as a library call
 if __name__ != "__main__":
     raise ImportError("workflow_state.py is a CLI script, not a library module")
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
 CHANGES_ROOT = Path("openspec/changes")
 HANDOFF_DIR = Path(".handoff")
+METHODS_PATH = _SCRIPT_DIR / "workflow_methods.json"
 
-PHASE_ORDER = ("planning", "reviewing", "building", "code-review", "closing")
+# ── Phase / sub-state definitions ──
+
+PHASE_ORDER = ("wayfinding", "planning", "building", "closing")
 
 PHASE_SUB_STATES: dict[str, tuple[str, ...]] = {
-    "planning": (
-        "exploring", "writing_proposal", "writing_design", "grilling_design",
-        "writing_specs", "writing_tasks", "ready_for_review",
+    "wayfinding": (
+        "charting_map", "working_tickets", "map_cleared",
+        "reviewing_map", "ready_for_review",
     ),
-    "reviewing": (
-        "reading_docs", "reviewing_design", "ready_for_review",
+    "planning": (
+        "exploring", "writing_design", "writing_spec", "writing_tickets",
+        "reviewing_artifacts", "ready_for_review",
     ),
     "building": (
         "writing_tests", "test_failing", "implementing",
-        "all_tests_passing", "smoke_validating", "ready_for_review",
-    ),
-    "code-review": (
-        "reading_diff", "analyzing_tests", "reviewing_code",
-        "requesting_changes", "ready_for_review",
+        "all_tests_passing", "smoke_validating",
+        "reviewing_impl", "ready_for_review",
     ),
     "closing": (
         "syncing_specs", "archiving", "updating_backlog", "validating",
-        "pr_ready", "ready_for_review",
+        "pr_ready", "reviewing_archive", "ready_for_review",
     ),
 }
 
 PHASE_TO_ROLE: dict[str, str] = {
+    "wayfinding": "wayfinder",
     "planning": "planner",
-    "reviewing": "reviewer",
     "building": "builder",
-    "code-review": "code-reviewer",
     "closing": "closer",
 }
 
@@ -61,33 +62,54 @@ WORKTREE_REQUIRED_PHASES = {"building"}
 
 GATE_SUB_STATE = "ready_for_review"
 
-# --- Action hints for each sub_state ---
-SUB_STATE_HINTS: dict[str, str] = {
-    "exploring": "探索代码库和现有实现，理解相关模块的当前状态",
-    "writing_proposal": "编写 proposal.md，明确需求边界和验收标准",
-    "writing_design": "编写 design.md，记录架构决策和备选方案（参考 ADR 模板）",
-    "grilling_design": "运行 /grill-with-docs 追问确认设计细节、依赖、风险和测试策略",
-    "writing_specs": "编写 spec delta，更新 openspec/specs/",
-    "writing_tasks": "编写 tasks.md，将实现拆分为独立可验证的任务",
-    "ready_for_review": "🔴 GATE — 停止执行，运行 check_phase_done.py，等待人工审批",
-    "reading_docs": "阅读相关文档、spec 和已有代码",
-    "reviewing_design": "审阅 design.md，评估方案合理性和风险",
-    "writing_tests": "按 TDD 先写测试用例，确保覆盖核心路径和边界条件",
-    "test_failing": "运行测试确认红灯（代码未实现时测试应失败）",
-    "implementing": "实现功能代码，保持小步提交",
-    "all_tests_passing": "运行全量 pytest 确认所有测试通过、无回归",
-    "smoke_validating": "运行冒烟测试（启动应用验证核心功能可用）",
-    "reading_diff": "读取 git diff，理解本次变更的完整范围",
-    "analyzing_tests": "分析测试覆盖是否充分，是否有遗漏的边界条件",
-    "reviewing_code": "多维度审阅代码（正确性/安全性/可维护性/性能）",
-    "requesting_changes": "整理审阅发现的问题，生成修复建议",
-    "syncing_specs": "将 delta spec 合并到 openspec/specs/ 主规格",
-    "archiving": "归档 change 到 openspec/changes/archive/YYYY-MM-DD-<id>/",
-    "updating_backlog": "从 docs/openspec-change-backlog.md 移除已完成 change",
-    "validating": "运行 openspec validate + artifact checker 确认归档正确",
-    "pr_ready": "创建 PR，填写描述和验证结果",
-}
+# ── Methods loading ──
 
+_methods_cache: dict | None = None
+
+
+def _load_methods() -> dict:
+    global _methods_cache
+    if _methods_cache is not None:
+        return _methods_cache
+    if METHODS_PATH.exists():
+        try:
+            _methods_cache = json.loads(METHODS_PATH.read_text(encoding="utf-8"))
+            return _methods_cache
+        except Exception:
+            pass
+    _methods_cache = {}
+    return _methods_cache
+
+
+def _method_hint(phase: str, sub_state: str) -> str:
+    """Look up hint from workflow_methods.json; fallback to built-in."""
+    methods = _load_methods()
+    try:
+        return methods[phase][sub_state]["hint"]
+    except (KeyError, TypeError):
+        pass
+    return ""
+
+
+def _method_review_dims(phase: str, sub_state: str) -> list[str]:
+    """Return review_dimensions for a reviewing_* sub-state."""
+    methods = _load_methods()
+    try:
+        return methods[phase][sub_state].get("review_dimensions", [])
+    except (KeyError, TypeError):
+        return []
+
+
+def _reviewing_sub_state(phase: str) -> str | None:
+    """Return the reviewing_* sub-state name for a phase, if it exists."""
+    seq = PHASE_SUB_STATES.get(phase, ())
+    for ss in seq:
+        if ss.startswith("reviewing_"):
+            return ss
+    return None
+
+
+# ── Helpers ──
 
 def _all_change_ids(root: Path = CHANGES_ROOT) -> list[str]:
     if not root.exists():
@@ -115,7 +137,6 @@ def _save_handoff(change_id: str, data: dict, root: Path = CHANGES_ROOT) -> None
 
 
 def _sub_state_index(phase: str, sub_state: str) -> int:
-    """Return the index of sub_state within the phase sequence."""
     seq = PHASE_SUB_STATES.get(phase, ())
     try:
         return seq.index(sub_state)
@@ -124,7 +145,7 @@ def _sub_state_index(phase: str, sub_state: str) -> int:
 
 
 def _build_path(phase: str, current_sub: str) -> list[dict]:
-    """Build the full sub_state path with status markers and hints."""
+    """Build the full sub_state path with status markers, hints, review dims."""
     seq = PHASE_SUB_STATES.get(phase, ())
     current_idx = _sub_state_index(phase, current_sub)
     path = []
@@ -137,19 +158,22 @@ def _build_path(phase: str, current_sub: str) -> list[dict]:
             status = "pending"
 
         is_gate = (ss == GATE_SUB_STATE)
+        is_reviewing = ss.startswith("reviewing_")
         step: dict = {
             "sub_state": ss,
             "status": status,
-            "hint": SUB_STATE_HINTS.get(ss, ""),
+            "hint": _method_hint(phase, ss),
             "is_gate": is_gate,
+            "is_reviewing": is_reviewing,
             "trigger": "human_review" if is_gate else "auto",
         }
+        if is_reviewing:
+            step["review_dimensions"] = _method_review_dims(phase, ss) or None
         path.append(step)
     return path
 
 
 def _next_action(phase: str, current_sub: str) -> str:
-    """Generate a human-readable next action hint."""
     seq = PHASE_SUB_STATES.get(phase, ())
     idx = _sub_state_index(phase, current_sub)
     if idx < 0:
@@ -164,20 +188,32 @@ def _next_action(phase: str, current_sub: str) -> str:
             "审批前不得推进。"
         )
 
+    cur_hint = _method_hint(phase, current_sub)
+    prefix = f"当前: {current_sub}"
+    if cur_hint:
+        prefix += f" — {cur_hint[:60]}..."
+
     next_idx = idx + 1
     if next_idx >= len(seq):
-        return "当前阶段已完成，等待跨阶段推进。"
+        return f"{prefix}\n当前阶段已完成，等待跨阶段推进。"
 
     next_ss = seq[next_idx]
-    next_hint = SUB_STATE_HINTS.get(next_ss, "")
+    next_hint = _method_hint(phase, next_ss)
     if next_ss == GATE_SUB_STATE:
         return (
-            f"当前: {current_sub}。下一步是 🔴 GATE: {GATE_SUB_STATE}。"
-            f"完成当前任务后 advance to {GATE_SUB_STATE}，"
-            f"然后停止等待人工审批。"
+            f"{prefix}\n"
+            f"下一步是 🔴 GATE: {GATE_SUB_STATE}。"
+            f"完成当前任务后 advance to {GATE_SUB_STATE}，停止等待人工审批。"
         )
-    return f"下一步: {next_ss} — {next_hint}"
+    return f"{prefix}\n下一步: {next_ss} — {next_hint}"
 
+
+def _review_report_path(change_id: str, phase: str) -> Path:
+    """Path to the review report for this phase."""
+    return HANDOFF_DIR / change_id / f"{phase}-review.md"
+
+
+# ── Commands ──
 
 def cmd_discover(args: argparse.Namespace) -> int:
     changes = _all_change_ids()
@@ -206,7 +242,6 @@ def _cmd_discover_text(changes: list[str]) -> int:
 
 
 def _cmd_discover_json(changes: list[str]) -> int:
-    """Rich JSON output for agent consumption — includes full path, gate positions, hints."""
     result: dict = {
         "active_count": len(changes),
         "active_changes": [],
@@ -214,6 +249,7 @@ def _cmd_discover_json(changes: list[str]) -> int:
             "如果有 change 处于 ready_for_review (GATE)，必须停止执行并等待人工审批。"
             "非 GATE 状态下: building phase 必须先创建 worktree。"
             "每个 sub_state 完成后自动 advance 到下一步，直到到达 GATE。"
+            "reviewing_* 子状态: spawn 独立子 Agent（零记忆）审阅本阶段产出，三轮封顶。"
         ),
     }
 
@@ -227,6 +263,7 @@ def _cmd_discover_json(changes: list[str]) -> int:
         role = PHASE_TO_ROLE.get(phase, "unknown")
         worktree = phase in WORKTREE_REQUIRED_PHASES
         is_gate = sub == GATE_SUB_STATE
+        is_reviewing = sub.startswith("reviewing_")
 
         change_info: dict = {
             "change_id": cid,
@@ -236,10 +273,20 @@ def _cmd_discover_json(changes: list[str]) -> int:
                 "role": role,
                 "worktree_required": worktree,
                 "at_gate": is_gate,
+                "is_reviewing": is_reviewing,
             },
             "path": _build_path(phase, sub),
             "next_action": _next_action(phase, sub),
         }
+
+        if is_reviewing:
+            change_info["review"] = {
+                "protocol": "spawn 独立子 Agent（零记忆），三轮封顶，产出到 .handoff/<change-id>/",
+                "dimensions": _method_review_dims(phase, sub) or [],
+                "report_path": str(_review_report_path(cid, phase)),
+                "max_rounds": 3,
+            }
+
         if is_gate:
             check_cmd = f"python3 scripts/check_phase_done.py --phase {phase} --change {cid}"
             change_info["gate_check"] = {
@@ -247,7 +294,22 @@ def _cmd_discover_json(changes: list[str]) -> int:
                 "approve_command": f"python3 scripts/workflow_state.py approve --change {cid} --phase {phase}",
             }
 
+        # wayfinding extra: hint about spawning
+        if phase == "wayfinding" and sub == "map_cleared":
+            change_info["wayfinding_next"] = {
+                "action": "path_cleared",
+                "hint": "地图已清除。审批通过后可用 spawn 命令创建子 change：",
+                "spawn_command": "python3 scripts/workflow_state.py spawn --from <wayfinding-id> --changes <id1,id2,...>",
+            }
+
         result["active_changes"].append(change_info)
+
+    # add on_ramps and cross_cutting from workflow_methods.json
+    methods = _load_methods()
+    if methods:
+        result["on_ramps"] = methods.get("on_ramps", {})
+        result["cross_cutting"] = methods.get("cross_cutting", {})
+        result["review_protocol"] = methods.get("review_protocol", {})
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
@@ -272,32 +334,37 @@ def cmd_advance(args: argparse.Namespace) -> int:
     from_sub = data["state"]["sub_state"]
     to_sub = args.to
 
-    # Determine trigger type
     if to_sub == GATE_SUB_STATE:
         trigger = "handoff"
-    elif from_sub == GATE_SUB_STATE and from_phase in data.get("routing", {}):
+    elif from_sub == GATE_SUB_STATE:
         trigger = "human_review"
     else:
         trigger = "auto"
 
+    # Phase transition: moving to a new phase
+    if args.to_phase:
+        data["state"]["phase"] = args.to_phase
+        data["state"]["sub_state"] = to_sub
+        trigger = "human_review"
+
     now = datetime.now(timezone.utc).isoformat()
     transition = {
         "from": {"phase": from_phase, "sub_state": from_sub},
-        "to": {"phase": from_phase, "sub_state": to_sub},
+        "to": {"phase": data["state"]["phase"], "sub_state": to_sub},
         "trigger": trigger,
         "actor_type": "agent",
         "actor_id": "workflow_state.py",
         "timestamp": now,
     }
-
     data["state"]["sub_state"] = to_sub
     data["transitions"].append(transition)
 
     if to_sub == GATE_SUB_STATE:
-        data["last_gate"] = {"phase": from_phase, "sub_state": GATE_SUB_STATE}
+        data["last_gate"] = {"phase": data["state"]["phase"], "sub_state": GATE_SUB_STATE}
 
     _save_handoff(args.change, data)
-    print(f"已推进: {from_phase}.{from_sub} → {from_phase}.{to_sub}  (trigger: {trigger})")
+    phase_label = data["state"]["phase"]
+    print(f"已推进: {from_phase}.{from_sub} → {phase_label}.{to_sub}  (trigger: {trigger})")
     return 0
 
 
@@ -327,6 +394,62 @@ def cmd_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spawn(args: argparse.Namespace) -> int:
+    """Spawn child changes from a wayfinding map."""
+    parent_data = _load_handoff(args.from_change)
+    if parent_data is None:
+        print(f"错误: 父 change '{args.from_change}' 没有 handoff.json", file=sys.stderr)
+        return 1
+
+    parent_phase = parent_data["state"]["phase"]
+    if parent_phase != "wayfinding":
+        print(f"错误: 父 change '{args.from_change}' 不在 wayfinding 阶段 (实际: {parent_phase})", file=sys.stderr)
+        return 1
+
+    child_ids = [c.strip() for c in args.changes.split(",") if c.strip()]
+    if not child_ids:
+        print("错误: --changes 必须提供至少一个子 change ID (逗号分隔)", file=sys.stderr)
+        return 1
+
+    now = datetime.now(timezone.utc).isoformat()
+    created = []
+    for cid in child_ids:
+        child_dir = CHANGES_ROOT / cid
+        if child_dir.exists():
+            print(f"跳过: '{cid}' 目录已存在")
+            continue
+        child_dir.mkdir(parents=True, exist_ok=True)
+        handoff = {
+            "schema_version": "1.0",
+            "change_id": cid,
+            "parent_wayfinding": args.from_change,
+            "state": {"phase": "planning", "sub_state": "exploring"},
+            "transitions": [{
+                "from": {"phase": None, "sub_state": None},
+                "to": {"phase": "planning", "sub_state": "exploring"},
+                "trigger": "auto",
+                "actor_type": "agent",
+                "actor_id": "workflow_state.py",
+                "timestamp": now,
+            }],
+        }
+        hf_path = child_dir / "handoff.json"
+        with open(str(hf_path) + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(handoff, f, indent=2, ensure_ascii=False)
+        Path(str(hf_path) + ".tmp").replace(hf_path)
+        created.append(cid)
+        print(f"已创建: {cid} ({hf_path})")
+
+    # Record relationship in parent
+    children_list = parent_data.get("wayfinding_children", [])
+    children_list.extend(created)
+    parent_data["wayfinding_children"] = children_list
+    _save_handoff(args.from_change, parent_data)
+
+    print(f"\n共创建 {len(created)} 个子 change，父 {args.from_change} 记录关联。")
+    return 0
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     data = _load_handoff(args.change)
     if data is None:
@@ -334,22 +457,20 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     errors: list[str] = []
-
     required = ["schema_version", "change_id", "state", "transitions"]
     for key in required:
         if key not in data:
             errors.append(f"缺少必填字段: {key}")
 
     state = data.get("state", {})
+    valid_phases = {"wayfinding", "planning", "building", "closing", "blocked", "done"}
     if "phase" not in state:
         errors.append("state 缺少 phase")
     else:
-        valid_phases = {"planning", "reviewing", "building", "code-review", "closing", "blocked", "done"}
         if state["phase"] not in valid_phases:
             errors.append(f"无效 phase: {state['phase']}")
     if "sub_state" not in state:
         errors.append("state 缺少 sub_state")
-
     if not isinstance(data.get("transitions", None), list):
         errors.append("transitions 必须是数组")
 
@@ -361,6 +482,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
     print(f"handoff.json 结构有效 (phase={state.get('phase')}, sub_state={state.get('sub_state')})")
     return 0
 
+
+# ── CLI ──
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -381,6 +504,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("advance", help="推进 change 的 sub_state")
     p.add_argument("--change", required=True)
     p.add_argument("--to", required=True, help="目标 sub_state")
+    p.add_argument("--to-phase", help="跨阶段推进时的目标 phase（只用于 Gate 审批后切换阶段）")
     p.set_defaults(func=cmd_advance)
 
     p = sub.add_parser("approve", help="记录人工 gate 批准")
@@ -393,6 +517,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("validate", help="校验 handoff.json 结构")
     p.add_argument("--change", required=True)
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("spawn", help="从 wayfinding change 创建子 change")
+    p.add_argument("--from", dest="from_change", required=True, help="父 wayfinding change ID")
+    p.add_argument("--changes", required=True, help="子 change ID 列表 (逗号分隔)")
+    p.set_defaults(func=cmd_spawn)
 
     return parser
 

@@ -1,0 +1,191 @@
+{
+  "_schema": "1.0",
+  "_description": "可插拔方法映射。修改此 JSON 即可替换每个 sub_state 使用的 skill/command，无需改代码。",
+
+  "wayfinding": {
+    "charting_map": {
+      "method": "/wayfinder",
+      "type": "skill",
+      "hint": "创建决策地图 (wayfinder:map issue)，定义目的地和边界"
+    },
+    "working_tickets": {
+      "method": "/wayfinder",
+      "type": "skill",
+      "hint": "逐个解决 decision ticket（research/prototype/grilling），推进地图前沿"
+    },
+    "map_cleared": {
+      "method": "wayfinder 地图所有 decision ticket 已关闭",
+      "type": "description",
+      "hint": "确认路径清晰，准备 spawn 子 change"
+    },
+    "reviewing_map": {
+      "method": "/code-review",
+      "type": "skill",
+      "hint": "Spawn 独立子 Agent（零记忆），审阅探究地图是否完整、决策是否合理。三轮封顶。产出到 .handoff/<change-id>/wayfinding-review.md",
+      "review_dimensions": [
+        "决策完整: 所有待决策项均已关闭",
+        "路径清晰: 从目的地到可构建 plan 的路径无模糊地带",
+        "边界明确: Out of scope 已清晰标记",
+        "关联正确: 如有多个子 change，依赖关系已明确"
+      ]
+    },
+    "ready_for_review": {
+      "method": "人工审批",
+      "type": "gate"
+    }
+  },
+
+  "planning": {
+    "exploring": {
+      "method": "/grill-with-docs",
+      "type": "skill",
+      "hint": "追问需求边界，理解现有代码和相关模块"
+    },
+    "writing_design": {
+      "method": "/domain-modeling",
+      "type": "skill",
+      "hint": "打磨领域术语，记录架构决策 (ADR)，产出 design.md"
+    },
+    "writing_spec": {
+      "method": "/to-spec",
+      "type": "skill",
+      "hint": "将设计合成为 spec，发布到 issue tracker"
+    },
+    "writing_tickets": {
+      "method": "/to-tickets",
+      "type": "skill",
+      "hint": "将 spec 拆分为 tracer-bullet tickets，每个声明依赖边，发布到 issue tracker"
+    },
+    "reviewing_artifacts": {
+      "method": "/code-review",
+      "type": "skill",
+      "hint": "Spawn 独立子 Agent（零记忆），审阅 proposal/design/spec/tickets 是否自洽、无遗漏。三轮封顶。产出到 .handoff/<change-id>/planning-review.md",
+      "review_dimensions": [
+        "自洽: spec 和 design 是否有矛盾",
+        "完整: 需求边界是否覆盖，验收标准是否明确",
+        "可行性: 技术方案是否合理，依赖是否就绪",
+        "术语一致: CONTEXT.md 和文档用语是否统一"
+      ]
+    },
+    "ready_for_review": {
+      "method": "人工审批",
+      "type": "gate"
+    }
+  },
+
+  "building": {
+    "writing_tests": {
+      "method": "/tdd",
+      "type": "skill",
+      "hint": "按 TDD 先写测试用例，覆盖核心路径和边界条件"
+    },
+    "test_failing": {
+      "method": "uv run pytest",
+      "type": "command",
+      "hint": "运行测试确认红灯（代码未实现时测试应失败）"
+    },
+    "implementing": {
+      "method": "/implement",
+      "type": "skill",
+      "hint": "实现功能代码（/implement 内部驱动 /tdd），保持小步提交"
+    },
+    "all_tests_passing": {
+      "method": "uv run pytest",
+      "type": "command",
+      "hint": "运行全量 pytest 确认所有测试通过、无回归"
+    },
+    "smoke_validating": {
+      "method": "uv run asterwynd run 'smoke test'",
+      "type": "command",
+      "hint": "运行冒烟测试，启动应用验证核心功能可用"
+    },
+    "reviewing_impl": {
+      "method": "/code-review",
+      "type": "skill",
+      "hint": "Spawn 独立子 Agent（零记忆），双轴审阅代码实现。三轮封顶。产出到 .handoff/<change-id>/building-review.md",
+      "review_dimensions": [
+        "正确性: 逻辑是否正确，边界条件是否处理",
+        "Spec 对齐: 实现是否完全覆盖 spec/tickets 要求",
+        "冗余度: 是否引入了与已有工具重复的代码",
+        "测试覆盖: 关键路径是否有测试，是否有回归测试",
+        "安全性: 注入、越权、信息泄露",
+        "可维护性: 代码清晰、模块合理、命名一致",
+        "CI 完整性: 是否弱化了 CI 配置"
+      ]
+    },
+    "ready_for_review": {
+      "method": "人工审批",
+      "type": "gate"
+    }
+  },
+
+  "closing": {
+    "syncing_specs": {
+      "method": "openspec sync",
+      "type": "command",
+      "hint": "将 delta spec 合并到 openspec/specs/ 主规格"
+    },
+    "archiving": {
+      "method": "openspec archive",
+      "type": "command",
+      "hint": "归档 change 到 openspec/changes/archive/YYYY-MM-DD-<id>/"
+    },
+    "updating_backlog": {
+      "method": "编辑 docs/openspec-change-backlog.md",
+      "type": "description",
+      "hint": "从 backlog 移除已完成 change"
+    },
+    "validating": {
+      "method": "openspec validate",
+      "type": "command",
+      "hint": "运行 openspec validate + artifact checker 确认归档正确"
+    },
+    "pr_ready": {
+      "method": "创建 PR",
+      "type": "description",
+      "hint": "创建 PR，填写描述和验证结果"
+    },
+    "reviewing_archive": {
+      "method": "/code-review",
+      "type": "skill",
+      "hint": "Spawn 独立子 Agent（零记忆），审阅归档完整性、PR 描述、backlog 一致性。三轮封顶。产出到 .handoff/<change-id>/closing-review.md",
+      "review_dimensions": [
+        "归档完整: 所有产出文件已归档",
+        "PR 描述准确: 变更说明与代码一致",
+        "Backlog 一致: 已完成 change 已从 backlog 移除",
+        "文档影响: 相关文档已同步更新"
+      ]
+    },
+    "ready_for_review": {
+      "method": "人工审批",
+      "type": "gate"
+    }
+  },
+
+  "on_ramps": {
+    "triage": {"method": "/triage", "trigger": "bug 或需求涌入时"},
+    "diagnose": {"method": "/diagnosing-bugs", "trigger": "出了问题要定位时"},
+    "improve": {"method": "/improve-codebase-architecture", "trigger": "代码库健康检查时"}
+  },
+
+  "cross_cutting": {
+    "handoff": {"method": "/handoff", "trigger": "跨 session 交接时"},
+    "router": {"method": "/ask-matt", "trigger": "不知道该用哪个 skill 时"},
+    "conflicts": {"method": "/resolving-merge-conflicts", "trigger": "合并冲突时"}
+  },
+
+  "review_protocol": {
+    "description": "所有 reviewing_* 子状态的统一审阅协议",
+    "reviewer": "spawn 独立子 Agent，零记忆（不继承当前 session 上下文）",
+    "max_rounds": 3,
+    "escalation": "三轮后仍有阻塞项 → 升级到人类开发者",
+    "output_dir": ".handoff/<change-id>/",
+    "output_pattern": "<phase>-review.md",
+    "report_format": {
+      "verdict": "PASS | CHANGES_REQUESTED | BLOCKED",
+      "issues": "按维度分组的问题列表",
+      "evidence": "每个 issue 引用具体文件:行号",
+      "resolved": "对 CHANGES_REQUESTED 的修复记录"
+    }
+  }
+}

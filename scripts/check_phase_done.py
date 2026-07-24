@@ -2,11 +2,11 @@
 """Read-only phase completion verification. Never modifies files.
 
 Usage:
+    uv run python scripts/check_phase_done.py --phase wayfinding --change <id>
     uv run python scripts/check_phase_done.py --phase planning --change <id>
     uv run python scripts/check_phase_done.py --phase building --change <id>
-    uv run python scripts/check_phase_done.py --phase code-review --change <id>
     uv run python scripts/check_phase_done.py --phase closing --change <id>
-    uv run python scripts/check_phase_done.py --phase planning --change <id> --json
+    uv run python scripts/check_phase_done.py --phase wayfinding --change <id> --json
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VALID_PHASES = {"planning", "building", "code-review", "closing"}
+VALID_PHASES = {"wayfinding", "planning", "building", "closing"}
 
 CHANGES_ROOT = Path("openspec/changes")
 SPECS_ROOT = Path("openspec/specs")
@@ -32,6 +32,12 @@ KNOWN_DEBT_PATH = Path("docs/known-debt.md")
 def _load_handoff(change_id: str) -> dict | None:
     path = CHANGES_ROOT / change_id / "handoff.json"
     if not path.exists():
+        # Also check archive
+        archive_matches = list((CHANGES_ROOT / "archive").glob(f"*{change_id}*"))
+        if archive_matches:
+            hf = archive_matches[0] / "handoff.json"
+            if hf.exists():
+                return json.loads(hf.read_text(encoding="utf-8"))
         return None
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -50,7 +56,6 @@ def _load_known_debt() -> set[str]:
 
 
 def _changed_python_files(repo_root: Path) -> list[Path]:
-    """Return Python files changed vs origin/master."""
     try:
         result = subprocess.run(
             ["git", "diff", "--name-only", "origin/master", "--", "*.py"],
@@ -64,11 +69,9 @@ def _changed_python_files(repo_root: Path) -> list[Path]:
 
 
 def _find_todo_residuals(repo_root: Path, change_id: str) -> list[str]:
-    """Scan changed Python files for TODO/TBD/FIXME/HACK markers not in known-debt."""
     known = _load_known_debt()
     changed = _changed_python_files(repo_root)
     residuals: list[str] = []
-
     for fpath in changed:
         if not fpath.exists():
             continue
@@ -87,7 +90,6 @@ def _find_todo_residuals(repo_root: Path, change_id: str) -> list[str]:
 
 
 def _benchmark_smoke_passes(repo_root: Path) -> tuple[bool, str]:
-    """Run benchmark smoke test. Returns (passed, reason)."""
     try:
         result = subprocess.run(
             [
@@ -104,7 +106,70 @@ def _benchmark_smoke_passes(repo_root: Path) -> tuple[bool, str]:
         return False, "Benchmark smoke 超时 (120s)"
 
 
+def _check_review_report(change_id: str, phase: str, report_name: str | None = None) -> list[str]:
+    """Check that a review report exists and has no blockers."""
+    errors: list[str] = []
+    if report_name is None:
+        report_name = f"{phase}-review.md"
+    report_path = HANDOFF_DIR / change_id / report_name
+    if not report_path.exists():
+        errors.append(f"审阅报告缺失: {report_path} — 尚未运行独立子 Agent 审阅")
+    else:
+        try:
+            text = report_path.read_text(encoding="utf-8")
+            if "BLOCKED" in text:
+                errors.append(f"审阅报告包含 BLOCKED — 存在未解决的阻塞项: {report_path}")
+            elif "CHANGES_REQUESTED" in text:
+                errors.append(f"审阅报告包含 CHANGES_REQUESTED — 请确认所有修改请求已解决: {report_path}")
+        except Exception:
+            errors.append(f"无法读取审阅报告: {report_path}")
+    return errors
+
+
+def _check_handoff_at_gate(change_id: str, phase: str) -> list[str]:
+    """Verify handoff.json is at the correct phase and gate sub-state."""
+    errors: list[str] = []
+    data = _load_handoff(change_id)
+    if data is None:
+        errors.append("handoff.json 不存在")
+    else:
+        state = data.get("state", {})
+        actual_phase = state.get("phase")
+        if actual_phase not in (phase, "done"):
+            errors.append(f"期望 phase={phase} 或 done，实际={actual_phase}")
+        if actual_phase != "done" and state.get("sub_state") != "ready_for_review":
+            errors.append(
+                f"期望 sub_state=ready_for_review，实际={state.get('sub_state')}"
+            )
+    return errors
+
+
 # ── phase checkers ─────────────────────────────────────────────────────
+
+
+def check_wayfinding(change_id: str) -> list[str]:
+    errors: list[str] = []
+    change_dir = CHANGES_ROOT / change_id
+
+    if not change_dir.exists():
+        return [f"Change 目录不存在: {change_dir}"]
+
+    # 1. wayfinder:map issue should be referenced
+    data = _load_handoff(change_id)
+    if data:
+        state = data.get("state", {})
+        if state.get("sub_state") == "map_cleared" or state.get("sub_state") == "ready_for_review":
+            # Check that map_cleared actually makes sense
+            if not data.get("transitions"):
+                errors.append("transitions 为空 — wayfinding 似乎没有推进任何步骤")
+            # Check review report
+            review_errors = _check_review_report(change_id, "wayfinding")
+            errors.extend(review_errors)
+
+    # 2. handoff.json at wayfinding.ready_for_review
+    errors.extend(_check_handoff_at_gate(change_id, "wayfinding"))
+
+    return errors
 
 
 def check_planning(change_id: str) -> list[str]:
@@ -114,25 +179,19 @@ def check_planning(change_id: str) -> list[str]:
     if not change_dir.exists():
         return [f"Change 目录不存在: {change_dir}"]
 
-    # Reuse artifact checker for structural checks
+    # 1. Artifact checker for structural checks
     try:
         from scripts.check_openspec_artifacts import check_change
         errors.extend(check_change(change_dir, SPECS_ROOT))
     except ImportError:
         errors.append("SKIP: 无法导入 check_openspec_artifacts")
 
-    # Verify handoff.json is at planning.ready_for_review
-    data = _load_handoff(change_id)
-    if data is None:
-        errors.append("handoff.json 不存在")
-    else:
-        state = data.get("state", {})
-        if state.get("phase") != "planning":
-            errors.append(f"期望 phase=planning，实际={state.get('phase')}")
-        if state.get("sub_state") != "ready_for_review":
-            errors.append(
-                f"期望 sub_state=ready_for_review，实际={state.get('sub_state')}"
-            )
+    # 2. Review report exists
+    review_errors = _check_review_report(change_id, "planning")
+    errors.extend(review_errors)
+
+    # 3. handoff.json at planning.ready_for_review
+    errors.extend(_check_handoff_at_gate(change_id, "planning"))
 
     return errors
 
@@ -161,56 +220,17 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
         errors.append(f"发现 {len(residuals)} 处 TODO/TBD/FIXME/HACK 残留:\n" +
                       "\n".join(f"  {r}" for r in residuals[:10]))
 
-    # 3. Benchmark smoke (for core changes only — try and skip if unavailable)
+    # 3. Benchmark smoke
     passed, reason = _benchmark_smoke_passes(root)
     if not passed:
         errors.append(f"Benchmark smoke 未通过: {reason}")
 
-    # 4. handoff.json at building.ready_for_review
-    data = _load_handoff(change_id)
-    if data is None:
-        errors.append("handoff.json 不存在")
-    else:
-        state = data.get("state", {})
-        if state.get("phase") != "building":
-            errors.append(f"期望 phase=building，实际={state.get('phase')}")
-        if state.get("sub_state") != "ready_for_review":
-            errors.append(
-                f"期望 sub_state=ready_for_review，实际={state.get('sub_state')}"
-            )
+    # 4. Review report exists (reviewing_impl)
+    review_errors = _check_review_report(change_id, "building")
+    errors.extend(review_errors)
 
-    return errors
-
-
-def check_code_review(change_id: str) -> list[str]:
-    errors: list[str] = []
-
-    # 1. Review report exists
-    review_dir = HANDOFF_DIR / change_id
-    review_md = review_dir / "review-report.md"
-    review_json = review_dir / "review-report.json"
-    if not review_md.exists() and not review_json.exists():
-        errors.append(f"评审报告不存在: {review_md} 或 {review_json}")
-    elif review_md.exists():
-        try:
-            text = review_md.read_text(encoding="utf-8")
-            if "CHANGES_REQUESTED" in text:
-                errors.append("评审报告包含 CHANGES_REQUESTED — 请确认所有修改请求已解决")
-        except Exception:
-            errors.append(f"无法读取 {review_md}")
-
-    # 2. handoff.json at code-review.ready_for_review
-    data = _load_handoff(change_id)
-    if data is None:
-        errors.append("handoff.json 不存在")
-    else:
-        state = data.get("state", {})
-        if state.get("phase") != "code-review":
-            errors.append(f"期望 phase=code-review，实际={state.get('phase')}")
-        if state.get("sub_state") != "ready_for_review":
-            errors.append(
-                f"期望 sub_state=ready_for_review，实际={state.get('sub_state')}"
-            )
+    # 5. handoff.json at building.ready_for_review
+    errors.extend(_check_handoff_at_gate(change_id, "building"))
 
     return errors
 
@@ -231,7 +251,7 @@ def check_closing(change_id: str) -> list[str]:
     except subprocess.TimeoutExpired:
         errors.append("openspec validate 超时 (120s)")
 
-    # 2. Change archived — find it in archive/ and use that path
+    # 2. Change archived — find it in archive/
     archive_dir = CHANGES_ROOT / "archive"
     archive_matches = list(archive_dir.glob(f"*{change_id}*"))
     if not archive_matches:
@@ -247,29 +267,21 @@ def check_closing(change_id: str) -> list[str]:
     except ImportError:
         errors.append("SKIP: 无法导入 check_backlog_consistency")
 
-    # 4. Final artifact checker — use archive path if available
+    # 4. Final artifact checker
     try:
         from scripts.check_openspec_artifacts import check_change
         check_path = archived_change_root or (CHANGES_ROOT / change_id)
-        errors.extend(check_change(check_path, SPECS_ROOT))
+        if check_path.exists():
+            errors.extend(check_change(check_path, SPECS_ROOT))
     except ImportError:
-        pass  # already reported above
+        pass
 
-    # 5. handoff.json at closing.ready_for_review or done
-    data = _load_handoff(change_id)
-    if data is None and archived_change_root is not None:
-        hf = archived_change_root / "handoff.json"
-        if hf.exists():
-            data = json.loads(hf.read_text(encoding="utf-8"))
-    if data is not None:
-        state = data.get("state", {})
-        phase = state.get("phase")
-        if phase not in ("closing", "done"):
-            errors.append(f"期望 phase=closing 或 done，实际={phase}")
-        if phase != "done" and state.get("sub_state") != "ready_for_review":
-            errors.append(
-                f"期望 sub_state=ready_for_review，实际={state.get('sub_state')}"
-            )
+    # 5. Review report exists (reviewing_archive)
+    review_errors = _check_review_report(change_id, "closing")
+    errors.extend(review_errors)
+
+    # 6. handoff.json at closing.ready_for_review or done
+    errors.extend(_check_handoff_at_gate(change_id, "closing"))
 
     return errors
 
@@ -279,7 +291,7 @@ def check_closing(change_id: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="只读相位完成验证 — 不修改任何文件",
+        description="只读 phase 完成验证 — 不修改任何文件。Gate 处运行。",
     )
     parser.add_argument("--phase", required=True, choices=sorted(VALID_PHASES))
     parser.add_argument("--change", required=True, help="Change ID")
@@ -290,9 +302,9 @@ def main() -> int:
     root = Path(args.repo_root).resolve()
 
     checkers = {
+        "wayfinding": lambda: check_wayfinding(args.change),
         "planning": lambda: check_planning(args.change),
         "building": lambda: check_building(args.change, root),
-        "code-review": lambda: check_code_review(args.change),
         "closing": lambda: check_closing(args.change),
     }
 
@@ -304,8 +316,7 @@ def main() -> int:
             "change_id": args.change,
             "passed": len(errors) == 0,
             "errors": errors,
-            "checks_run": max(len(errors), 1),
-            "checks_passed": 0 if errors else max(len(errors), 1),
+            "checks_run": len(errors) if errors else 1,
         }, indent=2, ensure_ascii=False))
     else:
         if errors:
@@ -313,7 +324,7 @@ def main() -> int:
                 print(f"FAIL: {e}")
             print(f"\n{len(errors)} 项检查失败")
         else:
-            print(f"PASS: {args.phase} 阶段所有机械检查已通过")
+            print(f"PASS: {args.phase} 阶段所有检查已通过")
 
     return 1 if errors else 0
 
