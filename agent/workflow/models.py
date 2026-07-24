@@ -54,6 +54,7 @@ WAYFINDING_SUB_STATES: tuple[SubState, ...] = (
 
 PLANNING_SUB_STATES: tuple[SubState, ...] = (
     "exploring",
+    "writing_proposal",
     "writing_design",
     "writing_spec",
     "writing_tickets",
@@ -89,6 +90,8 @@ PHASE_SUB_STATES: dict[Phase, tuple[SubState, ...]] = {
 }
 
 GATE_SUB_STATE = "ready_for_review"
+
+WORKTREE_REQUIRED_PHASES: set[Phase] = {"building"}
 
 # --- Review sub-state names per phase ---
 REVIEW_SUB_STATES: dict[Phase, SubState] = {

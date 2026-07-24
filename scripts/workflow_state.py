@@ -19,48 +19,23 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-if __name__ != "__main__":
-    raise ImportError("workflow_state.py is a CLI script, not a library module")
-
 _SCRIPT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parent
+
+# Import shared workflow constants from the canonical source
+sys.path.insert(0, str(_PROJECT_ROOT))
+from agent.workflow.models import (  # noqa: E402
+    PHASE_ORDER,
+    PHASE_SUB_STATES,
+    PHASE_TO_ROLE,
+    GATE_SUB_STATE,
+    WORKTREE_REQUIRED_PHASES,
+    REVIEW_SUB_STATES,
+)
+
 CHANGES_ROOT = Path("openspec/changes")
 HANDOFF_DIR = Path(".handoff")
 METHODS_PATH = _SCRIPT_DIR / "workflow_methods.json"
-
-# ── Phase / sub-state definitions ──
-
-PHASE_ORDER = ("wayfinding", "planning", "building", "closing")
-
-PHASE_SUB_STATES: dict[str, tuple[str, ...]] = {
-    "wayfinding": (
-        "charting_map", "working_tickets", "map_cleared",
-        "reviewing_map", "ready_for_review",
-    ),
-    "planning": (
-        "exploring", "writing_design", "writing_spec", "writing_tickets",
-        "reviewing_artifacts", "ready_for_review",
-    ),
-    "building": (
-        "writing_tests", "test_failing", "implementing",
-        "all_tests_passing", "smoke_validating",
-        "reviewing_impl", "ready_for_review",
-    ),
-    "closing": (
-        "syncing_specs", "archiving", "updating_backlog", "validating",
-        "pr_ready", "reviewing_archive", "ready_for_review",
-    ),
-}
-
-PHASE_TO_ROLE: dict[str, str] = {
-    "wayfinding": "wayfinder",
-    "planning": "planner",
-    "building": "builder",
-    "closing": "closer",
-}
-
-WORKTREE_REQUIRED_PHASES = {"building"}
-
-GATE_SUB_STATE = "ready_for_review"
 
 # ── Methods loading ──
 
@@ -82,7 +57,6 @@ def _load_methods() -> dict:
 
 
 def _method_hint(phase: str, sub_state: str) -> str:
-    """Look up hint from workflow_methods.json; fallback to built-in."""
     methods = _load_methods()
     try:
         return methods[phase][sub_state]["hint"]
@@ -92,21 +66,11 @@ def _method_hint(phase: str, sub_state: str) -> str:
 
 
 def _method_review_dims(phase: str, sub_state: str) -> list[str]:
-    """Return review_dimensions for a reviewing_* sub-state."""
     methods = _load_methods()
     try:
         return methods[phase][sub_state].get("review_dimensions", [])
     except (KeyError, TypeError):
         return []
-
-
-def _reviewing_sub_state(phase: str) -> str | None:
-    """Return the reviewing_* sub-state name for a phase, if it exists."""
-    seq = PHASE_SUB_STATES.get(phase, ())
-    for ss in seq:
-        if ss.startswith("reviewing_"):
-            return ss
-    return None
 
 
 # ── Helpers ──
@@ -145,7 +109,11 @@ def _sub_state_index(phase: str, sub_state: str) -> int:
 
 
 def _build_path(phase: str, current_sub: str) -> list[dict]:
-    """Build the full sub_state path with status markers, hints, review dims."""
+    """Build the full sub_state path with status markers, hints, review dims.
+
+    Returns list[dict] rather than a dataclass to keep this CLI script lightweight.
+    The canonical typed model lives in agent/workflow/models.py.
+    """
     seq = PHASE_SUB_STATES.get(phase, ())
     current_idx = _sub_state_index(phase, current_sub)
     path = []
@@ -182,7 +150,7 @@ def _next_action(phase: str, current_sub: str) -> str:
     if current_sub == GATE_SUB_STATE:
         check_cmd = f"python3 scripts/check_phase_done.py --phase {phase}"
         return (
-            f"🔴 当前在 GATE: {GATE_SUB_STATE}。"
+            f"[GATE] 当前在 GATE: {GATE_SUB_STATE}。"
             f"必须停止执行。运行 `{check_cmd}` 验证完成状态，"
             "然后等待人工审批（用户说 批准/通过/继续）。"
             "审批前不得推进。"
@@ -202,14 +170,13 @@ def _next_action(phase: str, current_sub: str) -> str:
     if next_ss == GATE_SUB_STATE:
         return (
             f"{prefix}\n"
-            f"下一步是 🔴 GATE: {GATE_SUB_STATE}。"
+            f"下一步是 [GATE]: {GATE_SUB_STATE}。"
             f"完成当前任务后 advance to {GATE_SUB_STATE}，停止等待人工审批。"
         )
     return f"{prefix}\n下一步: {next_ss} — {next_hint}"
 
 
 def _review_report_path(change_id: str, phase: str) -> Path:
-    """Path to the review report for this phase."""
     return HANDOFF_DIR / change_id / f"{phase}-review.md"
 
 
@@ -236,7 +203,7 @@ def _cmd_discover_text(changes: list[str]) -> int:
         state = data.get("state", {})
         phase = state.get("phase", "?")
         sub = state.get("sub_state", "?") or "-"
-        marker = " ← GATE" if sub == GATE_SUB_STATE else ""
+        marker = " [GATE]" if sub == GATE_SUB_STATE else ""
         print(f"{cid:<50} {phase:<14} {sub:<22}{marker}")
     return 0
 
@@ -294,7 +261,6 @@ def _cmd_discover_json(changes: list[str]) -> int:
                 "approve_command": f"python3 scripts/workflow_state.py approve --change {cid} --phase {phase}",
             }
 
-        # wayfinding extra: hint about spawning
         if phase == "wayfinding" and sub == "map_cleared":
             change_info["wayfinding_next"] = {
                 "action": "path_cleared",
@@ -304,7 +270,7 @@ def _cmd_discover_json(changes: list[str]) -> int:
 
         result["active_changes"].append(change_info)
 
-    # add on_ramps and cross_cutting from workflow_methods.json
+    # Include on_ramps, cross_cutting, review_protocol as reference context
     methods = _load_methods()
     if methods:
         result["on_ramps"] = methods.get("on_ramps", {})
@@ -341,7 +307,6 @@ def cmd_advance(args: argparse.Namespace) -> int:
     else:
         trigger = "auto"
 
-    # Phase transition: moving to a new phase
     if args.to_phase:
         data["state"]["phase"] = args.to_phase
         data["state"]["sub_state"] = to_sub
@@ -395,7 +360,6 @@ def cmd_approve(args: argparse.Namespace) -> int:
 
 
 def cmd_spawn(args: argparse.Namespace) -> int:
-    """Spawn child changes from a wayfinding map."""
     parent_data = _load_handoff(args.from_change)
     if parent_data is None:
         print(f"错误: 父 change '{args.from_change}' 没有 handoff.json", file=sys.stderr)
@@ -433,12 +397,9 @@ def cmd_spawn(args: argparse.Namespace) -> int:
                 "timestamp": now,
             }],
         }
-        hf_path = child_dir / "handoff.json"
-        with open(str(hf_path) + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(handoff, f, indent=2, ensure_ascii=False)
-        Path(str(hf_path) + ".tmp").replace(hf_path)
+        _save_handoff(cid, handoff)
         created.append(cid)
-        print(f"已创建: {cid} ({hf_path})")
+        print(f"已创建: {cid}")
 
     # Record relationship in parent
     children_list = parent_data.get("wayfinding_children", [])

@@ -135,8 +135,12 @@ def _check_handoff_at_gate(change_id: str, phase: str) -> list[str]:
     else:
         state = data.get("state", {})
         actual_phase = state.get("phase")
-        if actual_phase not in (phase, "done"):
-            errors.append(f"期望 phase={phase} 或 done，实际={actual_phase}")
+        # "done" is only valid for closing phase (post-PR merge)
+        valid_phases = {phase}
+        if phase == "closing":
+            valid_phases.add("done")
+        if actual_phase not in valid_phases:
+            errors.append(f"期望 phase in {valid_phases}，实际={actual_phase}")
         if actual_phase != "done" and state.get("sub_state") != "ready_for_review":
             errors.append(
                 f"期望 sub_state=ready_for_review，实际={state.get('sub_state')}"
