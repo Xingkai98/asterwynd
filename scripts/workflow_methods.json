@@ -3,6 +3,8 @@
   "_description": "可插拔方法映射。修改此 JSON 即可替换每个 sub_state 使用的 skill/command，无需改代码。",
 
   "wayfinding": {
+    "required_files_before_write": [],
+    "require_worktree": false,
     "charting_map": {
       "method": "/wayfinder",
       "type": "skill",
@@ -36,6 +38,11 @@
   },
 
   "planning": {
+    "required_files_before_write": [
+      "openspec/changes/{change_id}/proposal.md",
+      "openspec/changes/{change_id}/design.md"
+    ],
+    "require_worktree": false,
     "exploring": {
       "method": "/grill-with-docs",
       "type": "skill",
@@ -79,6 +86,10 @@
   },
 
   "building": {
+    "required_files_before_write": [
+      "openspec/changes/{change_id}/tasks.md"
+    ],
+    "require_worktree": true,
     "writing_tests": {
       "method": "/tdd",
       "type": "skill",
@@ -125,6 +136,8 @@
   },
 
   "closing": {
+    "required_files_before_write": [],
+    "require_worktree": false,
     "syncing_specs": {
       "method": "openspec sync",
       "type": "command",
