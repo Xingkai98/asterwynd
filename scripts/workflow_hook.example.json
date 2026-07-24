@@ -1,0 +1,11 @@
+{
+  "_comment": "复制此文件为 settings.json: cp .claude/settings.example.json .claude/settings.json",
+  "hooks": {
+    "onSessionStart": [
+      {
+        "command": "cd ${CLAUDE_PROJECT_DIR:-.} && python3 scripts/workflow_state.py discover --format json 2>/dev/null || echo '{\"active_count\":0,\"note\":\"workflow_state.py 不可用或不在项目根目录\"}'",
+        "description": "自动发现当前 OpenSpec change 状态：当前阶段、子状态、待推进路径、Gate 位置"
+      }
+    ]
+  }
+}
