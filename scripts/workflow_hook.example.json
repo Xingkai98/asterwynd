@@ -1,5 +1,5 @@
 {
-  "_comment": "复制此文件为 settings.json: cp .claude/settings.example.json .claude/settings.json",
+  "_comment": "复制此文件为 settings.json: cp scripts/workflow_hook.example.json .claude/settings.json",
   "hooks": {
     "onSessionStart": [
       {

@@ -41,6 +41,11 @@
       "type": "skill",
       "hint": "追问需求边界，理解现有代码和相关模块"
     },
+    "writing_proposal": {
+      "method": "编写 proposal.md",
+      "type": "description",
+      "hint": "编写 proposal.md，明确需求边界和验收标准（为 check_openspec_artifacts 检查准备）"
+    },
     "writing_design": {
       "method": "/domain-modeling",
       "type": "skill",
