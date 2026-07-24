@@ -140,13 +140,16 @@ python3 scripts/workflow_state.py discover --format json
 
 **任何涉及代码修改的操作（building phase / bug fix / 实验性改动），必须在独立 git worktree 中进行。**
 
-| 阶段 | 工作区 | 原因 |
-|------|--------|------|
-| planning | 主仓库 | 只产生文档（proposal/design/tasks），不产生代码 |
-| reviewing | 主仓库 | 只读审阅，不产生代码 |
-| building | **worktree 必须** | 代码修改在隔离环境中进行 |
-| code-review | 主仓库 | 只读审阅 diff |
-| closing | 主仓库 | 归档、PR——如需修 bug 则切到 worktree |
+| 阶段 | 工作区 | 原因 | 执行方法 |
+|------|--------|------|---------|
+| wayfinding | 主仓库 | 只探路，不产代码 | `/wayfinder` → 决策地图 + decision tickets |
+| planning | 主仓库 | 只产文档，不产代码 | `/grill-with-docs` → `/to-spec` → `/to-tickets` |
+| building | **worktree 必须** | 代码修改在隔离环境中 | `/implement`（内部驱动 `/tdd` + `/code-review`） |
+| closing | 主仓库 | 归档、PR | openspec sync/archive/validate |
+
+> 每个 phase 在进入 `ready_for_review` Gate 之前都有一个 `reviewing_*` 子状态：
+> spawn 独立子 Agent（零记忆上下文），审阅本阶段产出，三轮封顶。
+> 方法映射见 `scripts/workflow_methods.json`（可插拔，换方法只需改 JSON）。
 
 **规则**：
 - 分支命名：`<change-id>/<YYYY-MM-DD>`
@@ -158,14 +161,15 @@ python3 scripts/workflow_state.py discover --format json
 
 | 操作 | 命令 |
 |------|------|
-| 查看所有 change 状态 | `python3 scripts/workflow_state.py discover` |
+| 查看所有 change 状态 | `python3 scripts/workflow_state.py discover --format json` |
 | 查看指定 change 状态 | `python3 scripts/workflow_state.py current --change <id>` |
 | 推进 sub_state | `python3 scripts/workflow_state.py advance --change <id> --to <sub_state>` |
 | 记录人工批准 | `python3 scripts/workflow_state.py approve --change <id> --phase <phase>` |
 | 校验 handoff.json | `python3 scripts/workflow_state.py validate --change <id>` |
+| wayfinding → spawn 子 change | `python3 scripts/workflow_state.py spawn --from <id> --changes <c1,c2>` |
+| 验证 wayfinding 完成 | `python3 scripts/check_phase_done.py --phase wayfinding --change <id>` |
 | 验证 planning 完成 | `python3 scripts/check_phase_done.py --phase planning --change <id>` |
 | 验证 building 完成 | `python3 scripts/check_phase_done.py --phase building --change <id>` |
-| 验证 code-review 完成 | `python3 scripts/check_phase_done.py --phase code-review --change <id>` |
 | 验证 closing 完成 | `python3 scripts/check_phase_done.py --phase closing --change <id>` |
 
 ### ADR 创建规则
