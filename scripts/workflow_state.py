@@ -30,7 +30,6 @@ from agent.workflow.models import (  # noqa: E402
     PHASE_TO_ROLE,
     GATE_SUB_STATE,
     WORKTREE_REQUIRED_PHASES,
-    REVIEW_SUB_STATES,
 )
 
 CHANGES_ROOT = Path("openspec/changes")
