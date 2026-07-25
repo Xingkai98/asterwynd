@@ -124,6 +124,28 @@ def _check_review_report(change_id: str, phase: str, report_name: str | None = N
                 errors.append(f"审阅报告包含 BLOCKED — 存在未解决的阻塞项: {report_path}")
             elif "CHANGES_REQUESTED" in text:
                 errors.append(f"审阅报告包含 CHANGES_REQUESTED — 请确认所有修改请求已解决: {report_path}")
+            # For building phase: require tasks verification section
+            if phase == "building":
+                tasks_path = CHANGES_ROOT / change_id / "tasks.md"
+                if tasks_path.exists():
+                    task_text = tasks_path.read_text(encoding="utf-8")
+                    has_checkboxes = "- [x]" in task_text or "- [ ]" in task_text
+                    if has_checkboxes and "## Tasks Verification" not in text:
+                        errors.append(
+                            f"审阅报告缺少任务逐项验证: {report_path} 必须包含 "
+                            f"'## Tasks Verification' 章节，逐条对照 tasks.md 验证每个任务的实现状态。"
+                        )
+                    # Also count verified vs total
+                    if has_checkboxes and "## Tasks Verification" in text:
+                        total_tasks = task_text.count("- [x]") + task_text.count("- [ ]")
+                        # Rough heuristic: report should mention enough task-related content
+                        verified_count = text.count("✅") + text.count("❌")
+                        if verified_count < total_tasks and total_tasks > 0:
+                            errors.append(
+                                f"审阅报告任务验证不完整: tasks.md 有 {total_tasks} 个任务，"
+                                f"但报告似乎只涉及 {verified_count} 个 (基于 ✅/❌ 计数)。"
+                                f"请确保 '## Tasks Verification' 逐项覆盖所有任务。"
+                            )
         except Exception:
             errors.append(f"无法读取审阅报告: {report_path}")
     return errors

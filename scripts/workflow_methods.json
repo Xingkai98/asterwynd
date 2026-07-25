@@ -121,8 +121,9 @@
       "method": "/code-review",
       "type": "skill",
       "require_subagent": true,
-      "hint": "Spawn 独立子 Agent（零记忆），双轴审阅代码实现。三轮封顶。产出到 .handoff/<change-id>/building-review.md",
+      "hint": "Spawn 独立子 Agent（零记忆），对照 tasks.md 逐项验证每个 [x] 任务是否真的有对应实现文件/代码。产出必须包含 '## Tasks Verification' 章节，逐条列出每个任务及其验证结果。三轮封顶。产出到 .handoff/<change-id>/building-review.md",
       "review_dimensions": [
+        "任务逐项验证: 逐条对照 tasks.md，检查每个 [x] 任务是否有对应的文件/代码真实存在",
         "正确性: 逻辑是否正确，边界条件是否处理",
         "Spec 对齐: 实现是否完全覆盖 spec/tickets 要求",
         "冗余度: 是否引入了与已有工具重复的代码",
