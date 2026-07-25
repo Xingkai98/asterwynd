@@ -383,6 +383,7 @@ def run_single(
     mode: str = "build",
     config: AsterwyndConfig | None = None,
     resume_snapshot: SessionSnapshot | None = None,
+    workspace_root: Path | None = None,
 ):
     session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
     run_id = new_run_id()
@@ -392,9 +393,9 @@ def run_single(
 
     async def _run():
         if config and config.mcp.servers:
-            agent = await build_agent_async(model, provider, mode, config=config)
+            agent = await build_agent_async(model, provider, mode, config=config, workspace_root=workspace_root)
         else:
-            agent = build_agent(model, provider, mode, config=config)
+            agent = build_agent(model, provider, mode, config=config, workspace_root=workspace_root)
         agent.max_iterations = max_iterations
         if system:
             agent._user_system_prompt = system
@@ -435,15 +436,16 @@ def run_interactive(
     config: AsterwyndConfig | None = None,
     banner: bool = True,
     resume_snapshot: SessionSnapshot | None = None,
+    workspace_root: Path | None = None,
 ):
     session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     if config and config.mcp.servers:
-        agent = loop.run_until_complete(build_agent_async(model, provider, mode, config=config))
+        agent = loop.run_until_complete(build_agent_async(model, provider, mode, config=config, workspace_root=workspace_root))
     else:
-        agent = build_agent(model, provider, mode, config=config)
+        agent = build_agent(model, provider, mode, config=config, workspace_root=workspace_root)
     agent.approval_handler = CliApprovalHandler(interactive=True)
     resolved_model = getattr(agent.llm, "model", model or "default")
 
