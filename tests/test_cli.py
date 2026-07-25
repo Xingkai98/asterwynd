@@ -90,7 +90,7 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello", "--max-iterations", "3"])
@@ -218,7 +218,7 @@ def test_cli_single_prompt_prints_session_and_run_ids(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-test")
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-test")
@@ -237,7 +237,7 @@ def test_cli_single_prompt_streams_delta_without_reprinting_final_content(monkey
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello"])
@@ -261,7 +261,7 @@ def test_cli_single_prompt_summarizes_long_tool_results(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello"])
@@ -283,7 +283,7 @@ def test_cli_single_prompt_prints_plan_document(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello", "--mode", "plan"])
@@ -300,7 +300,7 @@ def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
     monkeypatch.setattr(cli, "new_run_id", lambda: next(run_ids))
@@ -324,7 +324,7 @@ def test_cli_interactive_prints_asterwynd_banner(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(
@@ -344,7 +344,7 @@ def test_cli_interactive_can_suppress_banner(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(
@@ -364,7 +364,7 @@ def test_cli_single_prompt_does_not_print_asterwynd_banner(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello"])
@@ -379,7 +379,7 @@ def test_cli_interactive_mode_command_changes_session_mode(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
@@ -410,7 +410,7 @@ def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(
@@ -430,7 +430,7 @@ def test_cli_interactive_help_command_does_not_run_agent(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -452,7 +452,7 @@ def test_cli_interactive_slash_exit_exits_without_running_agent(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -473,7 +473,7 @@ def test_cli_interactive_status_command_prints_local_state(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
@@ -497,7 +497,7 @@ def test_cli_interactive_unknown_slash_command_is_not_sent_to_agent(monkeypatch)
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -518,7 +518,7 @@ def test_cli_interactive_clear_removes_previous_user_history(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     run_ids = iter(["run-1", "run-2"])
     monkeypatch.setattr(cli, "new_run_id", lambda: next(run_ids))
@@ -543,7 +543,7 @@ def test_cli_interactive_compact_reports_noop_without_running_agent(monkeypatch)
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -574,7 +574,7 @@ def test_cli_interactive_skill_command_queues_activation_and_runs_agent(monkeypa
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-skill")
 
@@ -702,7 +702,7 @@ def test_cli_default_no_args_enters_interactive_repl(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, [], input="exit\n")
@@ -717,7 +717,7 @@ def test_cli_run_subcommand_single_prompt(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "single shot"])
