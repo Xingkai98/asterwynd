@@ -61,5 +61,5 @@
 ### T6.1: Benchmark smoke
 - [x] `uv run asterwynd benchmark (CI 已通过) benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`
 
-### T7: Spec sync (closing phase)
-- [x] 将 delta spec 同步到 `openspec/specs/cli/spec.md`, `openspec/specs/web-ui/spec.md`, `openspec/specs/workspace-safety/spec.md`
+### T7: 当前规格同步 (closing phase)
+- [x] 将 delta spec 同步到当前规格 `openspec/specs/cli/spec.md`, `openspec/specs/web-ui/spec.md`, `openspec/specs/workspace-safety/spec.md`
