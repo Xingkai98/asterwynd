@@ -197,10 +197,11 @@
   },
 
   "review_protocol": {
-    "description": "所有 reviewing_* 子状态的统一审阅协议",
+    "description": "所有 reviewing_* 子状态的统一审阅协议。Checkbox 只是 Agent 的'声称做完'声明（由 check_phase_done 100% 要求），真正的完成度验证由 spawn 的零记忆子 Agent 审阅代码/文档实现。",
     "reviewer": "spawn 独立子 Agent，零记忆（不继承当前 session 上下文）",
     "max_rounds": 3,
     "escalation": "三轮后仍有阻塞项 → 升级到人类开发者",
+    "verification_layers": "checkbox 100% 声明负责 + 子Agent 审阅验证实现 = 双层验证",
     "output_dir": ".handoff/<change-id>/",
     "output_pattern": "<phase>-review.md",
     "report_format": {

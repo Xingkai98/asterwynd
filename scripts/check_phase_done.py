@@ -285,19 +285,19 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
     # 6. Sub-agent call verification (reviewing_impl requires Agent tool calls)
     errors.extend(_check_subagent_calls(change_id, "building"))
 
-    # 7. Tasks completion rate
+    # 7. Tasks completion rate — checkbox 100% 是"声称做完"的最低声明门槛。
+    # 真实验证由 reviewing_impl 子 Agent 审阅 (Layer 3) 兜底。
     tasks_path = CHANGES_ROOT / change_id / "tasks.md"
     if tasks_path.exists():
         task_text = tasks_path.read_text(encoding="utf-8")
         total = task_text.count("- [ ]") + task_text.count("- [x]")
         done = task_text.count("- [x]")
-        if total > 0:
-            rate = done / total
-            if rate < 0.5:
-                errors.append(
-                    f"tasks 完成率过低: {done}/{total} ({rate:.0%})。"
-                    f"请完成至少 50% 的任务再进入 Gate。"
-                )
+        if total > 0 and done < total:
+            errors.append(
+                f"tasks 未全部勾选: {done}/{total} ({done/total:.0%})。"
+                f"请将所有已完成任务标记为 [x] 再进入 Gate。"
+                f"注意：勾选只是最低声明门槛，实际完成度由子 Agent 审阅验证。"
+            )
 
     return errors
 
