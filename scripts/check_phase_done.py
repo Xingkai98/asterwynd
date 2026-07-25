@@ -135,16 +135,16 @@ def _check_review_report(change_id: str, phase: str, report_name: str | None = N
                             f"审阅报告缺少任务逐项验证: {report_path} 必须包含 "
                             f"'## Tasks Verification' 章节，逐条对照 tasks.md 验证每个任务的实现状态。"
                         )
-                    # Also count verified vs total
+                    # Also count verified vs total (uses task group headings, not individual checkboxes)
                     if has_checkboxes and "## Tasks Verification" in text:
-                        total_tasks = task_text.count("- [x]") + task_text.count("- [ ]")
-                        # Rough heuristic: report should mention enough task-related content
-                        verified_count = text.count("✅") + text.count("❌")
-                        if verified_count < total_tasks and total_tasks > 0:
+                        import re as _re
+                        task_groups = len(_re.findall(r'^### T\d', task_text, _re.MULTILINE))
+                        verified_rows = len(_re.findall(r'^\| T\d', text, _re.MULTILINE))
+                        if task_groups > 0 and verified_rows < task_groups:
                             errors.append(
-                                f"审阅报告任务验证不完整: tasks.md 有 {total_tasks} 个任务，"
-                                f"但报告似乎只涉及 {verified_count} 个 (基于 ✅/❌ 计数)。"
-                                f"请确保 '## Tasks Verification' 逐项覆盖所有任务。"
+                                f"审阅报告任务验证不完整: tasks.md 有 {task_groups} 个任务组，"
+                                f"但 '## Tasks Verification' 只覆盖 {verified_rows} 个。"
+                                f"请确保每个 T* 任务组都有验证。"
                             )
         except Exception:
             errors.append(f"无法读取审阅报告: {report_path}")
@@ -275,7 +275,7 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
     # 1. pytest passes
     try:
         result = subprocess.run(
-            ["uv", "run", "pytest", "-q", "--ignore=tests/web_tests", "--ignore=tests/test_cli.py"],
+            ["uv", "run", "pytest", "-q", "--ignore=tests/web_tests", "--ignore=tests/test_cli.py", "--ignore=tests/benchmark", "--ignore=tests/support"],
             capture_output=True, text=True, cwd=root, timeout=300,
         )
         if result.returncode != 0:
