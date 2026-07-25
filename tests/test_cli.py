@@ -600,7 +600,7 @@ def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
     fake = FakeAgent()
     captured = {}
 
-    def build_agent(model=None, provider="openai", mode="build", config=None):
+    def build_agent(model=None, provider="openai", mode="build", config=None, **kwargs):
         captured["mode"] = mode
         return fake
 
@@ -618,7 +618,7 @@ def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
     config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
 
-    def build_agent(model=None, provider="openai", mode="build", config=None):
+    def build_agent(model=None, provider="openai", mode="build", config=None, **kwargs):
         captured["mode"] = mode
         captured["config"] = config
         return fake
@@ -642,7 +642,7 @@ def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
     monkeypatch.setenv("ASTERWYND_MODE", "read_only")
 
-    def build_agent(model=None, provider="openai", mode="build", config=None):
+    def build_agent(model=None, provider="openai", mode="build", config=None, **kwargs):
         captured["mode"] = mode
         return fake
 
