@@ -31,6 +31,7 @@ from agent.workflow.models import (  # noqa: E402
     GATE_SUB_STATE,
     WORKTREE_REQUIRED_PHASES,
 )
+from agent.workflow.state_machine import CROSS_PHASE_FORWARD  # noqa: E402
 
 CHANGES_ROOT = Path("openspec/changes")
 HANDOFF_DIR = Path(".handoff")
@@ -299,17 +300,25 @@ def cmd_advance(args: argparse.Namespace) -> int:
     from_sub = data["state"]["sub_state"]
     to_sub = args.to
 
-    if to_sub == GATE_SUB_STATE:
+    # Determine target phase: if at GATE, use CROSS_PHASE_FORWARD
+    to_phase = args.to_phase
+    if from_sub == GATE_SUB_STATE and not to_phase:
+        key = (from_phase, GATE_SUB_STATE)
+        cross = CROSS_PHASE_FORWARD.get(key, [])
+        if cross:
+            to_phase, to_sub = cross[0]  # first valid forward path
+            trigger = "human_review"
+        else:
+            trigger = "human_review"
+    elif to_sub == GATE_SUB_STATE:
         trigger = "handoff"
     elif from_sub == GATE_SUB_STATE:
         trigger = "human_review"
     else:
         trigger = "auto"
 
-    if args.to_phase:
-        data["state"]["phase"] = args.to_phase
-        data["state"]["sub_state"] = to_sub
-        trigger = "human_review"
+    if to_phase:
+        data["state"]["phase"] = to_phase
 
     now = datetime.now(timezone.utc).isoformat()
     transition = {
