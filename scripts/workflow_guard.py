@@ -37,6 +37,7 @@ else:
 METHODS_FILE = REPO_ROOT / "scripts" / "workflow_methods.json"
 
 _MANAGEMENT_FILES = {"handoff.json", "workflow_methods.json", "workflow_hook.example.json"}
+_AGENT_TRACKING = True  # 记录 Agent 工具调用用于 reviewing 验证
 
 # ── Bash write patterns ─────────────────────────────────────────────
 _BASH_WRITE_PATTERNS = [
@@ -195,6 +196,40 @@ def _check_gate(change_id, handoff, methods):
     return True
 
 
+def _track_agent_call(hook_input: dict) -> None:
+    """Record Agent tool calls if current sub_state is a reviewing_* phase."""
+    tool_name = hook_input.get("tool_name", "")
+    if tool_name != "Agent":
+        return
+
+    active = _discover_active_change()
+    if active is None:
+        return
+    change_id, handoff = active
+    sub_state = handoff.get("state", {}).get("sub_state", "")
+    if not sub_state.startswith("reviewing_"):
+        return
+
+    handoff_dir = REQUIRED_BASE / ".handoff" / change_id
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    log_path = handoff_dir / "_agent-calls.json"
+
+    entries: list = []
+    if log_path.exists():
+        try:
+            entries = json.loads(log_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            entries = []
+
+    entries.append({
+        "sub_state": sub_state,
+        "tool": "Agent",
+        "prompt_preview": str(hook_input.get("tool_input", {}).get("prompt", ""))[:120],
+        "timestamp": __import__("datetime").datetime.now().isoformat(),
+    })
+    log_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
+
+
 def main():
     try:
         raw = sys.stdin.read()
@@ -204,6 +239,10 @@ def main():
 
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})
+
+    # ── track Agent calls for reviewing_* sub-states ──
+    if _AGENT_TRACKING:
+        _track_agent_call(hook_input)
 
     # ── determine if this tool call is a "write operation" ──
     is_write = False
