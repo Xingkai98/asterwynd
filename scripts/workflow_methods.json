@@ -23,6 +23,7 @@
     "reviewing_map": {
       "method": "/code-review",
       "type": "skill",
+      "require_subagent": true,
       "hint": "Spawn 独立子 Agent（零记忆），审阅探究地图是否完整、决策是否合理。三轮封顶。产出到 .handoff/<change-id>/wayfinding-review.md",
       "review_dimensions": [
         "决策完整: 所有待决策项均已关闭",
@@ -71,6 +72,7 @@
     "reviewing_artifacts": {
       "method": "/code-review",
       "type": "skill",
+      "require_subagent": true,
       "hint": "Spawn 独立子 Agent（零记忆），审阅 proposal/design/spec/tickets 是否自洽、无遗漏。三轮封顶。产出到 .handoff/<change-id>/planning-review.md",
       "review_dimensions": [
         "自洽: spec 和 design 是否有矛盾",
@@ -118,6 +120,7 @@
     "reviewing_impl": {
       "method": "/code-review",
       "type": "skill",
+      "require_subagent": true,
       "hint": "Spawn 独立子 Agent（零记忆），双轴审阅代码实现。三轮封顶。产出到 .handoff/<change-id>/building-review.md",
       "review_dimensions": [
         "正确性: 逻辑是否正确，边界条件是否处理",
@@ -166,6 +169,7 @@
     "reviewing_archive": {
       "method": "/code-review",
       "type": "skill",
+      "require_subagent": true,
       "hint": "Spawn 独立子 Agent（零记忆），审阅归档完整性、PR 描述、backlog 一致性。三轮封顶。产出到 .handoff/<change-id>/closing-review.md",
       "review_dimensions": [
         "归档完整: 所有产出文件已归档",

@@ -126,6 +126,49 @@ def _check_review_report(change_id: str, phase: str, report_name: str | None = N
     return errors
 
 
+def _check_subagent_calls(change_id: str, phase: str) -> list[str]:
+    """Verify sub-agent calls were recorded for reviewing_* sub-states.
+
+    从 workflow_methods.json 读取 require_subagent 配置，
+    从 .handoff/<change_id>/_agent-calls.json 读取 Agent 调用记录。
+    """
+    errors: list[str] = []
+    try:
+        import json as _json
+        methods_path = _repo_root / "scripts" / "workflow_methods.json"
+        if not methods_path.exists():
+            return errors
+        methods = _json.loads(methods_path.read_text(encoding="utf-8"))
+        phase_cfg = methods.get(phase, {})
+        for sub_state, cfg in phase_cfg.items():
+            if not cfg.get("require_subagent"):
+                continue
+            # This reviewing_* sub_state requires sub-agent calls
+            log_path = HANDOFF_DIR / change_id / "_agent-calls.json"
+            if not log_path.exists():
+                errors.append(
+                    f"子Agent调用记录缺失: {sub_state} 要求 spawn 独立子Agent审阅，"
+                    f"但未检测到 Agent 工具调用。"
+                    f"请用 /{cfg.get('method','code-review')} spawn 子Agent。"
+                )
+                continue
+            try:
+                calls = _json.loads(log_path.read_text(encoding="utf-8"))
+                matching = [c for c in calls if c.get("sub_state") == sub_state]
+                if not matching:
+                    errors.append(
+                        f"子Agent调用记录缺失: {sub_state} 要求 spawn 子Agent，"
+                        f"但 _agent-calls.json 中无匹配记录。"
+                    )
+            except Exception:
+                errors.append(f"无法读取子Agent调用记录: {log_path}")
+    except ImportError:
+        errors.append("SKIP: 无法读取 workflow_methods.json")
+    except Exception:
+        pass
+    return errors
+
+
 def _check_handoff_at_gate(change_id: str, phase: str) -> list[str]:
     """Verify handoff.json is at the correct phase and gate sub-state."""
     errors: list[str] = []
