@@ -398,16 +398,17 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
             capture_output=True, text=True, cwd=root, timeout=300,
         )
         if result.returncode != 0:
-            error_lines = (result.stdout or result.stderr).strip().splitlines()
+            all_lines = (result.stdout or result.stderr).strip().splitlines()
             error_lines = [
-                l for l in error_lines
+                l for l in all_lines
                 if "ERROR" in l or "ModuleNotFound" in l or "ImportError" in l
             ]
-            if not error_lines:
-                error_lines = [
-                    l for l in (result.stdout or result.stderr).strip().splitlines()
-                    if l.strip()
-                ]
+            # Also collect FAILED summary lines (contain test name + file path)
+            failed_lines = [l for l in all_lines if "FAILED" in l]
+            if not error_lines and not failed_lines:
+                error_lines = [l for l in all_lines if l.strip()]
+            else:
+                error_lines = error_lines + failed_lines
             known_patterns = known_issues.get("pytest", set())
             unknown_lines = [
                 l for l in error_lines

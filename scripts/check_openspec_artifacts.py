@@ -415,8 +415,10 @@ def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[st
 
 HANDOFF_REQUIRED_FIELDS = ["schema_version", "change_id", "state", "transitions"]
 HANDOFF_STATE_FIELDS = ["phase", "sub_state"]
-VALID_PHASES = {"planning", "reviewing", "building", "code-review", "closing", "blocked", "done"}
-VALID_ROUTING_PHASES = {"planning", "reviewing", "building", "code-review", "closing"}
+# Four-phase workflow model: wayfinding → planning → building → closing
+# reviewing and code-review are now reviewing_* sub-states within each phase
+VALID_PHASES = {"wayfinding", "planning", "building", "closing", "blocked", "done"}
+VALID_ROUTING_PHASES = {"wayfinding", "planning", "building", "closing"}
 
 
 def _check_handoff_json(change_dir: Path) -> list[str]:
