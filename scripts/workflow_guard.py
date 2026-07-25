@@ -26,15 +26,36 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+METHODS_FILE = REPO_ROOT / "scripts" / "workflow_methods.json"
+
+
+def _resolve_changes_dir(repo_root: Path) -> Path:
+    """Resolve changes directory from workflow_methods.json doc_artifact config.
+
+    Falls back to openspec/changes if config is unavailable.
+    """
+    methods_path = repo_root / "scripts" / "workflow_methods.json"
+    try:
+        if methods_path.exists():
+            methods = json.loads(methods_path.read_text(encoding="utf-8"))
+            doc_artifact = methods.get("doc_artifact", {})
+            paths = doc_artifact.get("paths", {})
+            tmpl = paths.get("change_dir_template", "openspec/changes/{change_id}")
+            # Extract base: everything before {change_id}
+            base = tmpl.split("/{")[0] if "/{" in tmpl else tmpl.rsplit("/", 1)[0]
+            return repo_root / base
+    except (json.JSONDecodeError, OSError):
+        pass
+    return repo_root / "openspec" / "changes"
+
+
 _guard_test_dir = os.environ.get("_GUARD_TEST_CHANGES_DIR")
 if _guard_test_dir:
     CHANGES_DIR = Path(_guard_test_dir)
     REQUIRED_BASE = CHANGES_DIR.parent.parent
 else:
-    CHANGES_DIR = REPO_ROOT / "openspec" / "changes"
+    CHANGES_DIR = _resolve_changes_dir(REPO_ROOT)
     REQUIRED_BASE = REPO_ROOT
-
-METHODS_FILE = REPO_ROOT / "scripts" / "workflow_methods.json"
 
 _MANAGEMENT_FILES = {"handoff.json", "workflow_methods.json", "workflow_hook.example.json"}
 _AGENT_TRACKING = True  # 记录 Agent 工具调用用于 reviewing 验证
@@ -266,9 +287,14 @@ def main():
     methods = _load_methods()
 
     if active is None:
+        # Compute change base dir from config for the error message
+        doc_artifact = methods.get("doc_artifact", {})
+        paths = doc_artifact.get("paths", {})
+        tmpl = paths.get("change_dir_template", "openspec/changes/{change_id}")
+        base = tmpl.split("/{")[0] if "/{" in tmpl else tmpl.rsplit("/", 1)[0]
         print(
-            "⛔ 无活跃 OpenSpec change。",
-            "请先创建 change: mkdir -p openspec/changes/<change-id>",
+            f"⛔ 无活跃 OpenSpec change。",
+            f"请先创建 change: mkdir -p {base}/<change-id>",
             "然后创建 handoff.json (python3 scripts/workflow_state.py init --change <id>)",
             file=sys.stderr,
         )

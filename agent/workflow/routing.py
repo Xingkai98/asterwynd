@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,26 @@ _ACTIVE_PHASES = tuple(p for p in PHASES if p not in ("blocked", "done"))
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = "openspec/config.yaml"
+FALLBACK_CONFIG_PATH = "openspec/config.yaml"
 ROUTING_CONFIG_KEY = ("openspec", "routing")
+
+
+def _get_openspec_config_path(repo_root: str | Path = ".") -> str:
+    """Read the OpenSpec config path from workflow_methods.json doc_artifact config.
+
+    Falls back to the hardcoded FALLBACK_CONFIG_PATH if not available.
+    """
+    methods_path = Path(repo_root) / "scripts" / "workflow_methods.json"
+    try:
+        if methods_path.exists():
+            methods = json.loads(methods_path.read_text(encoding="utf-8"))
+            doc_artifact = methods.get("doc_artifact", {})
+            configured = doc_artifact.get("openspec_config_path")
+            if configured:
+                return configured
+    except (json.JSONDecodeError, OSError):
+        pass
+    return FALLBACK_CONFIG_PATH
 
 
 class RoutingConfigError(ValueError):
@@ -34,11 +53,14 @@ def load_global_defaults(
 ) -> dict[Phase, PhaseRouting]:
     """Load global routing defaults from openspec/config.yaml.
 
-    If the config file or routing section is missing, falls back to DEFAULT_ROUTING.
+    The config path is read from workflow_methods.json doc_artifact.openspec_config_path
+    (default: openspec/config.yaml). If the config file or routing section is missing,
+    falls back to DEFAULT_ROUTING.
     """
-    config_path = Path(repo_root) / DEFAULT_CONFIG_PATH
+    config_rel = _get_openspec_config_path(repo_root)
+    config_path = Path(repo_root) / config_rel
     if not config_path.exists():
-        logger.debug("no openspec/config.yaml found, using hardcoded defaults")
+        logger.debug("no %s found, using hardcoded defaults", config_rel)
         return dict(DEFAULT_ROUTING)
 
     try:

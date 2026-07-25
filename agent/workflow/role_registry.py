@@ -17,14 +17,14 @@ ROLE_SYSTEM_PROMPTS: dict[RoleAgentType, str] = {
         "并确保所有机械检查通过。"
     ),
     "planner": (
-        "你是一个 Planner agent，负责 OpenSpec change 的 planning 阶段。"
+        "你是一个 Planner agent，负责 change 的 planning 阶段。"
         "你的工作流程：exploring（探索代码库和需求）→ writing_proposal（编写 proposal.md）"
         "→ writing_design（编写 design.md）→ writing_spec（编写 spec delta）"
         "→ writing_tickets（拆分为 tracer-bullet tickets）"
         "→ reviewing_artifacts（独立子 Agent 审阅产出物）"
         "→ ready_for_review（等待 human review gate）。"
         "产出物：proposal.md、design.md、spec delta、tasks.md。"
-        "所有产出物放到 openspec/changes/<change-id>/ 目录下。"
+        "所有产出物放到 change 工作目录下（路径见 workflow_methods.json doc_artifact.paths.change_dir_template）。"
         "进入 ready_for_review 前，必须运行 "
         "`uv run python scripts/check_phase_done.py --phase planning --change <change-id>` "
         "并确保所有机械检查通过。"
@@ -38,13 +38,15 @@ ROLE_SYSTEM_PROMPTS: dict[RoleAgentType, str] = {
         "→ ready_for_review。"
         "测试先行：先写测试确保失败，再写实现让测试通过。"
         "遵循项目 AGENTS.md 中的所有编码规则和工作区约束。"
+        "重要：在 implementing 循环中，如果代码改动涉及规格变更，"
+        "必须同步维护 spec delta（openspec sync）；不要在 closing 阶段才补。"
         "进入 ready_for_review 前，必须运行 "
         "`uv run python scripts/check_phase_done.py --phase building --change <change-id>` "
-        "并确保所有机械检查通过。"
+        "并确保所有机械检查通过（包括 spec delta 同步检查）。"
     ),
     "closer": (
         "你是一个 Closer agent，负责 change 的收尾归档。"
-        "你的工作流程：syncing_specs（合并 spec delta 到 openspec/specs/）"
+        "你的工作流程：syncing_specs（合并 spec delta 到主规格）"
         "→ archiving（归档 change 到 archive/）→ updating_backlog（更新 backlog）"
         "→ validating（运行 openspec validate 和 artifact checker）"
         "→ pr_ready（准备 PR）"
@@ -128,7 +130,7 @@ def build_subagent_task(
         f"sub_state=`{state_summary['state']['sub_state']}`",
         "",
         "### 工作目录",
-        f"openspec/changes/{change_id}/",
+        f"change 工作目录路径见 scripts/workflow_methods.json doc_artifact.paths.change_dir_template",
         "",
         f"### 角色系统提示",
         config.system_prompt,
@@ -144,7 +146,7 @@ def build_subagent_task(
     lines.extend([
         "",
         "### 状态文件",
-        f"工作过程中随时读取 `openspec/changes/{change_id}/handoff.json` 了解当前状态。",
+        f"工作过程中随时读取 change 目录下的 handoff.json 了解当前状态。",
         f"完成一个 sub_state 后更新 handoff.json 的 state 字段并追加 transition 记录。",
         f"到达 ready_for_review 后停止，等待 human review。",
     ])

@@ -1,6 +1,38 @@
 {
-  "_schema": "1.0",
+  "_schema": "1.1",
   "_description": "可插拔方法映射。修改此 JSON 即可替换每个 sub_state 使用的 skill/command，无需改代码。",
+
+  "doc_artifact": {
+    "_description": "文档制品协议配置。protocol 指向 DocArtifactProtocol 实现；paths 定义目录约定；change_type_rules 定义文档类型规则。替换 protocol 即可切换文档标准（如 PRD+TDD）。",
+    "protocol": "agent.workflow.doc_artifact_protocol_openspec",
+    "protocol_version": "1.0",
+    "paths": {
+      "change_dir_template": "openspec/changes/{change_id}",
+      "specs_dir": "openspec/specs",
+      "backlog_path": "docs/openspec-change-backlog.md",
+      "known_debt_path": "docs/known-debt.md",
+      "known_issues_path": "docs/known-issues.md",
+      "handoff_dir": ".handoff"
+    },
+    "openspec_config_path": "openspec/config.yaml",
+    "change_type_rules": {
+      "allowed_types": ["feature", "bugfix", "research", "docs", "process", "refactor"],
+      "design_required_for": ["feature", "refactor", "process"],
+      "diagnosis_required_for": ["bugfix", "research"],
+      "impact_analysis_required_for_all_except": ["docs"],
+      "reference_research_required_for_all_except": ["docs"],
+      "spec_delta_sync_task_required_for_all_except": ["docs"],
+      "design_review_task_required_for": ["feature", "refactor", "process"]
+    },
+    "benchmark_smoke": {
+      "capabilities_triggering_smoke": [
+        "agent-runtime", "benchmark", "coding-tools", "tool-system", "workspace-safety"
+      ],
+      "code_patterns_triggering_smoke": [
+        "`agent/loop.py`", "`agent/tools/", "`agent/workspace_policy.py`", "`benchmarks/"
+      ]
+    }
+  },
 
   "wayfinding": {
     "required_files_before_write": [],

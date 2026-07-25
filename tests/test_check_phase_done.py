@@ -2,6 +2,9 @@
 
 Test strategy: each test creates a minimal handoff.json at the expected
 sub_state and verifies that the checker passes or fails correctly.
+
+Since paths are now config-driven via workflow_methods.json doc_artifact.paths,
+tests monkeypatch the _changes_root() and _handoff_dir() helper functions.
 """
 
 from __future__ import annotations
@@ -95,6 +98,14 @@ def _write_minimal_tasks(change_dir: Path, with_grill: bool = True) -> None:
     (change_dir / "tasks.md").write_text(content, encoding="utf-8")
 
 
+def _patch_paths(monkeypatch, changes_root: Path, handoff_dir: Path) -> None:
+    """Monkeypatch the config-driven path helpers to use temp dirs."""
+    import scripts.check_phase_done as mod
+
+    monkeypatch.setattr(mod, "_changes_root", lambda: changes_root)
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: handoff_dir)
+
+
 # ── check_wayfinding ────────────────────────────────────────────────────────
 
 
@@ -115,8 +126,9 @@ def test_wayfinding_fails_without_review_report(tmp_path, monkeypatch):
     _write_handoff(change_dir, "wayfinding", "ready_for_review")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    # Also stub the protocol to avoid import errors in test isolation
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
 
     errors = check_wayfinding("test-change")
     assert any("审阅报告缺失" in e for e in errors)
@@ -147,8 +159,8 @@ def test_planning_fails_without_review_report(tmp_path, monkeypatch):
     _write_handoff(change_dir, "planning", "ready_for_review")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
 
     errors = check_planning("test-change")
     assert any("审阅报告缺失" in e for e in errors)
@@ -191,8 +203,8 @@ def test_building_fails_without_review_report(tmp_path, monkeypatch):
     _write_handoff(change_dir, "building", "ready_for_review")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
 
     errors = check_building("test-change", repo_root=tmp_path)
     assert any("审阅报告缺失" in e for e in errors)
@@ -202,24 +214,41 @@ def test_building_fails_without_review_report(tmp_path, monkeypatch):
 
 
 def test_closing_fails_when_not_archived(tmp_path, monkeypatch):
+    """Closing gate detects missing archive — uses real OpenSpec protocol."""
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
     _write_handoff(change_dir, "closing", "ready_for_review")
     (tmp_path / "openspec" / "changes" / "archive").mkdir(parents=True, exist_ok=True)
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
+    mod._PROTOCOL_INSTANCE = None  # clear cache
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+
+    # Use real OpenSpec protocol so archive checks run
+    from agent.workflow.doc_artifact_protocol_openspec import OpenSpecDocArtifactProtocol
+    protocol = OpenSpecDocArtifactProtocol(
+        paths={"change_dir_template": str(tmp_path / "openspec" / "changes" / "{change_id}")}
+    )
+    monkeypatch.setattr(mod, "_get_protocol", lambda: protocol)
 
     errors = check_closing("test-change")
     assert any("未归档" in e for e in errors)
 
 
 def test_closing_passes_when_archived(tmp_path, monkeypatch):
+    """Closing gate accepts archived changes."""
     archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-07-14-test-change"
     archive_dir.mkdir(parents=True, exist_ok=True)
     _write_handoff(archive_dir, "closing", "ready_for_review")
+    (tmp_path / "openspec" / "changes" / "test-change").mkdir(parents=True, exist_ok=True)
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+
+    from agent.workflow.doc_artifact_protocol_openspec import OpenSpecDocArtifactProtocol
+    protocol = OpenSpecDocArtifactProtocol(
+        paths={"change_dir_template": str(tmp_path / "openspec" / "changes" / "{change_id}")}
+    )
+    monkeypatch.setattr(mod, "_get_protocol", lambda: protocol)
 
     errors = check_closing("test-change")
     assert not any("未归档" in e for e in errors)
@@ -231,8 +260,8 @@ def test_closing_fails_without_review_report(tmp_path, monkeypatch):
     _write_handoff(archive_dir, "closing", "ready_for_review")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
 
     errors = check_closing("test-change")
     assert any("审阅报告缺失" in e for e in errors)
@@ -243,7 +272,7 @@ def test_closing_fails_without_review_report(tmp_path, monkeypatch):
 
 def test_review_report_fails_when_missing(tmp_path, monkeypatch):
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
 
     errors = _check_review_report("test-change", "planning")
     assert any("审阅报告缺失" in e for e in errors)
@@ -258,7 +287,7 @@ def test_review_report_detects_changes_requested(tmp_path, monkeypatch):
     )
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
 
     errors = _check_review_report("test-change", "planning")
     assert any("CHANGES_REQUESTED" in e for e in errors)
@@ -273,7 +302,7 @@ def test_review_report_detects_blocked(tmp_path, monkeypatch):
     )
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
 
     errors = _check_review_report("test-change", "planning")
     assert any("BLOCKED" in e for e in errors)
@@ -288,7 +317,7 @@ def test_review_report_passes_on_clean(tmp_path, monkeypatch):
     )
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
 
     errors = _check_review_report("test-change", "planning")
     assert len(errors) == 0
@@ -307,7 +336,7 @@ def test_handoff_gate_accepts_done_for_closing(tmp_path, monkeypatch):
     _write_handoff(change_dir, "done", "ready_for_review")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
+    monkeypatch.setattr(mod, "_changes_root", lambda: tmp_path / "openspec" / "changes")
 
     errors = _check_handoff_at_gate("test-change", "closing")
     # "done" phase should be accepted for closing only
@@ -319,7 +348,7 @@ def test_handoff_gate_rejects_wrong_sub_state(tmp_path, monkeypatch):
     _write_handoff(change_dir, "planning", "writing_design")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
+    monkeypatch.setattr(mod, "_changes_root", lambda: tmp_path / "openspec" / "changes")
 
     errors = _check_handoff_at_gate("test-change", "planning")
     assert any("ready_for_review" in e for e in errors)
@@ -373,3 +402,27 @@ def test_json_output_mode(tmp_path, capsys):
 
     errors = check_planning("nonexistent-change")
     assert len(errors) > 0
+
+
+# ── stub protocol for tests that need path isolation ────────────────────────
+
+from agent.workflow.doc_artifact_protocol import ArtifactCheckResult
+
+
+class _StubProtocol:
+    """No-op protocol that returns an empty result for test isolation."""
+    name = "Stub"
+    version = "0"
+
+    def check_phase_artifacts(self, phase, change_id, change_dir, repo_root):
+        return ArtifactCheckResult(phase=phase, change_id=change_id)
+
+    def validate_repo_state(self, repo_root):
+        return ArtifactCheckResult(phase="repo", change_id="*")
+
+
+_stub_protocol_instance = _StubProtocol()
+
+
+def _stub_protocol():
+    return _stub_protocol_instance

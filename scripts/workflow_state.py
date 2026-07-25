@@ -33,9 +33,42 @@ from agent.workflow.models import (  # noqa: E402
 )
 from agent.workflow.state_machine import CROSS_PHASE_FORWARD  # noqa: E402
 
-CHANGES_ROOT = Path("openspec/changes")
-HANDOFF_DIR = Path(".handoff")
 METHODS_PATH = _SCRIPT_DIR / "workflow_methods.json"
+
+
+def _resolve_changes_root() -> Path:
+    """Resolve the changes directory from workflow_methods.json doc_artifact config."""
+    methods_path = _SCRIPT_DIR / "workflow_methods.json"
+    try:
+        if methods_path.exists():
+            methods = json.loads(methods_path.read_text(encoding="utf-8"))
+            doc_artifact = methods.get("doc_artifact", {})
+            paths = doc_artifact.get("paths", {})
+            tmpl = paths.get("change_dir_template", "openspec/changes/{change_id}")
+            base = tmpl.split("/{")[0] if "/{" in tmpl else tmpl.rsplit("/", 1)[0]
+            return Path(base)
+    except (json.JSONDecodeError, OSError):
+        pass
+    return Path("openspec/changes")
+
+
+def _resolve_handoff_dir() -> Path:
+    """Resolve the handoff directory from workflow_methods.json doc_artifact config."""
+    methods_path = _SCRIPT_DIR / "workflow_methods.json"
+    try:
+        if methods_path.exists():
+            methods = json.loads(methods_path.read_text(encoding="utf-8"))
+            doc_artifact = methods.get("doc_artifact", {})
+            paths = doc_artifact.get("paths", {})
+            configured = paths.get("handoff_dir", ".handoff")
+            return Path(configured)
+    except (json.JSONDecodeError, OSError):
+        pass
+    return Path(".handoff")
+
+
+CHANGES_ROOT = _resolve_changes_root()
+HANDOFF_DIR = _resolve_handoff_dir()
 
 # ── Methods loading ──
 
