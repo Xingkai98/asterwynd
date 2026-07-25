@@ -110,7 +110,8 @@
         "自洽: spec 和 design 是否有矛盾",
         "完整: 需求边界是否覆盖，验收标准是否明确",
         "可行性: 技术方案是否合理，依赖是否就绪",
-        "术语一致: CONTEXT.md 和文档用语是否统一"
+        "术语一致: CONTEXT.md 和文档用语是否统一",
+        "ADR 完整性: design.md Decisions 中有 ≥ 2 个备选方案的决策是否已创建 ADR 文件到 docs/adr/"
       ]
     },
     "ready_for_review": {
@@ -208,7 +209,8 @@
         "归档完整: 所有产出文件已归档",
         "PR 描述准确: 变更说明与代码一致",
         "Backlog 一致: 已完成 change 已从 backlog 移除",
-        "文档影响: 相关文档已同步更新"
+        "文档影响: 相关文档已同步更新",
+        "ADR 收敛: 本 change 涉及的架构决策是否已记录到 docs/adr/，关联的旧 ADR 如有状态变更（accepted→superseded）是否已更新"
       ]
     },
     "ready_for_review": {
