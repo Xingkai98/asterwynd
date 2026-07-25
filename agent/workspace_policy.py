@@ -132,6 +132,9 @@ DEFAULT_DENYLIST = (
 )
 
 
+_DENY_ROOTS = {Path(p) for p in ("/etc", "/proc", "/sys", "/dev", "/root", "/boot")}
+
+
 class WorkspacePolicy:
     def __init__(
         self,
@@ -140,12 +143,58 @@ class WorkspacePolicy:
         command_denylist: tuple[str, ...] | list[str] | None = None,
     ):
         self.workspace_root = Path(workspace_root or Path.cwd()).resolve()
+        self.additional_roots: set[Path] = set()
         self.denied_patterns = tuple(denied_patterns or DEFAULT_DENIED_PATTERNS)
 
         denylist = list(DEFAULT_DENYLIST)
         if command_denylist:
             denylist.extend(command_denylist)
         self._denylist = tuple(denylist)
+
+    @staticmethod
+    def _is_within(parent: Path, child: Path) -> bool:
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    def is_within_workspace(self, path: Path) -> bool:
+        resolved = Path(path).resolve() if not path.is_absolute() else self.resolve(path)
+        if self._is_within(self.workspace_root, resolved):
+            return True
+        return any(self._is_within(r, resolved) for r in self.additional_roots)
+
+    def add_root(self, path: str, *, create: bool = False) -> Path:
+        resolved = Path(path).expanduser().resolve()
+        if self._is_within(self.workspace_root, resolved):
+            raise ValueError(f"此路径已在主 workspace 范围内: {resolved}")
+        if self._is_within(resolved, self.workspace_root):
+            raise ValueError(f"不能添加主 workspace 的祖先目录，这会开放主 workspace 外的所有文件访问: {resolved}")
+        for deny_root in _DENY_ROOTS:
+            if resolved == deny_root or self._is_within(deny_root, resolved):
+                raise ValueError(f"禁止添加系统敏感目录: {resolved}")
+        if not resolved.exists():
+            if create:
+                try:
+                    resolved.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    raise ValueError(f"无法创建目录: {resolved} ({exc})") from exc
+            else:
+                raise ValueError(f"路径不存在: {resolved}")
+        if resolved in self.additional_roots:
+            return resolved
+        self.additional_roots.add(resolved)
+        return resolved
+
+    def remove_root(self, path: str) -> None:
+        resolved = Path(path).expanduser().resolve()
+        if resolved == self.workspace_root:
+            return
+        self.additional_roots.discard(resolved)
+
+    def list_roots(self) -> list[Path]:
+        return [self.workspace_root, *sorted(self.additional_roots)]
 
     def resolve(self, path: str | Path) -> Path:
         raw_path = Path(path)
@@ -155,20 +204,24 @@ class WorkspacePolicy:
 
     def assert_within_workspace(self, path: str | Path) -> Path:
         resolved = self.resolve(path)
-        try:
-            resolved.relative_to(self.workspace_root)
-        except ValueError as exc:
-            raise PermissionError(
-                f"Path is outside workspace: {path} -> {resolved}"
-            ) from exc
-        return resolved
+        if self.is_within_workspace(resolved):
+            return resolved
+        raise PermissionError(f"Path is outside workspace: {path} -> {resolved}")
 
     def relative_path(self, path: str | Path) -> str:
         resolved = self.assert_within_workspace(path)
-        return resolved.relative_to(self.workspace_root).as_posix()
+        if self._is_within(self.workspace_root, resolved):
+            return resolved.relative_to(self.workspace_root).as_posix()
+        return resolved.as_posix()
 
     def is_denied(self, path: str | Path) -> bool:
         resolved = self.assert_within_workspace(path)
+        if not self._is_within(self.workspace_root, resolved):
+            basename = resolved.name
+            for pattern in self.denied_patterns:
+                if fnmatch.fnmatchcase(basename, pattern.strip("/")):
+                    return True
+            return False
         rel = resolved.relative_to(self.workspace_root).as_posix()
         parts = rel.split("/")
         candidates = {rel, resolved.name, *parts}
@@ -183,24 +236,20 @@ class WorkspacePolicy:
     def assert_read_allowed(self, path: str | Path) -> Path:
         resolved = self.assert_within_workspace(path)
         if self.is_denied(resolved):
-            rel = resolved.relative_to(self.workspace_root).as_posix()
-            raise PermissionError(f"Read denied by workspace policy: {rel}")
+            raise PermissionError(f"Read denied by workspace policy: {resolved.as_posix()}")
         return resolved
 
     def assert_write_allowed(self, path: str | Path) -> Path:
         resolved = self.assert_within_workspace(path)
         if self.is_denied(resolved):
-            rel = resolved.relative_to(self.workspace_root).as_posix()
-            raise PermissionError(f"Write denied by workspace policy: {rel}")
+            raise PermissionError(f"Write denied by workspace policy: {resolved.as_posix()}")
         return resolved
 
     def assert_command_allowed(self, command: str) -> None:
         cmd_stripped = command.strip()
-
         for pattern in self._denylist:
             if re.search(pattern, cmd_stripped):
                 raise PermissionError("Command denied by workspace policy")
-
         if _match_allowlist(cmd_stripped):
             return
 

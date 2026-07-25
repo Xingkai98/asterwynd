@@ -1,0 +1,281 @@
+{
+  "schema_version": "1.0",
+  "change_id": "add-workspace-param",
+  "state": {
+    "phase": "building",
+    "sub_state": "ready_for_review"
+  },
+  "transitions": [
+    {
+      "from": {
+        "phase": "wayfinding",
+        "sub_state": "charting_map"
+      },
+      "to": {
+        "phase": "wayfinding",
+        "sub_state": "working_tickets"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-24T15:12:01.359967+00:00"
+    },
+    {
+      "from": {
+        "phase": "wayfinding",
+        "sub_state": "working_tickets"
+      },
+      "to": {
+        "phase": "wayfinding",
+        "sub_state": "map_cleared"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-24T16:06:51.880980+00:00"
+    },
+    {
+      "from": {
+        "phase": "wayfinding",
+        "sub_state": "map_cleared"
+      },
+      "to": {
+        "phase": "wayfinding",
+        "sub_state": "reviewing_map"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-24T16:06:53.066486+00:00"
+    },
+    {
+      "from": {
+        "phase": "wayfinding",
+        "sub_state": "reviewing_map"
+      },
+      "to": {
+        "phase": "wayfinding",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-24T16:07:08.585324+00:00"
+    },
+    {
+      "from": {
+        "phase": "wayfinding",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "wayfinding",
+        "sub_state": "exploring"
+      },
+      "trigger": "human_review",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-24T17:02:06.525889+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "exploring"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T00:36:22.117842+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_proposal"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T00:36:23.293370+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_design"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_spec"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T00:36:58.973365+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_spec"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "writing_tickets"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T00:37:00.070006+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "writing_tickets"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "reviewing_artifacts"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T00:37:03.820413+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "reviewing_artifacts"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T00:37:16.948879+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "reviewing_artifacts"
+      },
+      "to": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T03:04:26.609804+00:00"
+    },
+    {
+      "from": {
+        "phase": "planning",
+        "sub_state": "ready_for_review"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "trigger": "human_review",
+      "actor_type": "human",
+      "actor_id": "approval",
+      "timestamp": "2026-07-25T11:39:26.315368"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "writing_tests"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "test_failing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T03:43:40.788123+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "test_failing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T03:43:45.642274+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "implementing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T03:48:23.632679+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "all_tests_passing"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "smoke_validating"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T03:48:24.708009+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "smoke_validating"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "reviewing_impl"
+      },
+      "trigger": "auto",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T03:48:30.064881+00:00"
+    },
+    {
+      "from": {
+        "phase": "building",
+        "sub_state": "reviewing_impl"
+      },
+      "to": {
+        "phase": "building",
+        "sub_state": "ready_for_review"
+      },
+      "trigger": "handoff",
+      "actor_type": "agent",
+      "actor_id": "workflow_state.py",
+      "timestamp": "2026-07-25T03:50:48.864693+00:00"
+    }
+  ],
+  "meta": {},
+  "last_gate": {
+    "phase": "building",
+    "sub_state": "ready_for_review"
+  }
+}

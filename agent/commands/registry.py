@@ -484,6 +484,60 @@ def build_default_slash_command_registry(
             handler=mcp_resource_handler,
         )
     )
+    async def session_workspace_handler(ctx: CommandContext, args: str) -> CommandResult:
+        policy = getattr(ctx.agent.tool_registry, "workspace_policy", None)
+        if policy is None:
+            # Fallback: get policy from a registered tool
+            try:
+                read_tool = ctx.agent.tool_registry.get_tool("read")
+                policy = getattr(read_tool, "policy", None)
+            except (KeyError, AttributeError):
+                pass
+        if policy is None:
+            return CommandResult(message="Workspace policy is not available in this session.")
+
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub == "add":
+            if not arg:
+                return CommandResult(message="用法: /session-workspace add <path>")
+            try:
+                p = policy.add_root(arg, create=True)
+                return CommandResult(message=f"已添加 workspace: {p}")
+            except ValueError as e:
+                return CommandResult(message=f"无法添加: {e}")
+        elif sub == "remove":
+            if not arg:
+                return CommandResult(message="用法: /session-workspace remove <path>")
+            policy.remove_root(arg)
+            return CommandResult(message=f"已移除 workspace: {arg}")
+        elif sub == "list":
+            roots = policy.list_roots()
+            primary = roots[0]
+            extras = roots[1:]
+            lines = [f"  主 workspace: {primary}"]
+            if extras:
+                for i, r in enumerate(extras, 1):
+                    lines.append(f"  附加 workspace {i}: {r}")
+            else:
+                lines.append("  (无附加 workspace)")
+            return CommandResult(message="\n".join(lines))
+        else:
+            return CommandResult(message="用法: /session-workspace add <path> | remove <path> | list")
+
+    registry.register(
+        SlashCommand(
+            name="session-workspace",
+            usage="/session-workspace add <path> | remove <path> | list",
+            description="管理 session 中附加的 workspace 目录",
+            argument_hint="<add|remove|list> [path]",
+            source="builtin",
+            kind="local",
+            handler=session_workspace_handler,
+        )
+    )
     if skill_runtime is not None:
         _register_skill_commands(registry, skill_runtime)
     return registry
