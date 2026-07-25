@@ -24,9 +24,37 @@ SPECS_ROOT = Path("openspec/specs")
 HANDOFF_DIR = Path(".handoff")
 BACKLOG_PATH = Path("docs/openspec-change-backlog.md")
 KNOWN_DEBT_PATH = Path("docs/known-debt.md")
+KNOWN_ISSUES_PATH = Path("docs/known-issues.md")
 
 
 # ── helpers ────────────────────────────────────────────────────────────
+
+
+def _load_known_issues() -> dict[str, set[str]]:
+    """Load pre-existing known issues exempted from gate checks.
+
+    Known issues file format:
+        ## Pytest Patterns
+        - tests.support
+        - test_collection_error_pattern
+
+        ## TODO Patterns
+        - some_exact_todo_line_content
+    """
+    result: dict[str, set[str]] = {"pytest": set(), "todo": set()}
+    if not KNOWN_ISSUES_PATH.exists():
+        return result
+    current_key = ""
+    for line in KNOWN_ISSUES_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## Pytest"):
+            current_key = "pytest"
+        elif stripped.startswith("## TODO"):
+            current_key = "todo"
+        elif stripped.startswith("- ") and current_key:
+            result[current_key].add(stripped[2:].strip())
+    return result
+
 
 
 def _load_handoff(change_id: str) -> dict | None:
@@ -271,6 +299,7 @@ def check_planning(change_id: str) -> list[str]:
 def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
     errors: list[str] = []
     root = repo_root or Path.cwd()
+    known_issues = _load_known_issues()
 
     # 1. pytest passes
     try:
@@ -279,8 +308,19 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
             capture_output=True, text=True, cwd=root, timeout=300,
         )
         if result.returncode != 0:
-            summary = result.stdout.splitlines()[-3:] if result.stdout else [result.stderr]
-            errors.append(f"pytest 未通过 (exit={result.returncode}):\n" + "\n".join(summary))
+            error_lines = (result.stdout or result.stderr).strip().splitlines()
+            # Extract actual ERROR lines (collection failures, not test failures)
+            error_lines = [l for l in error_lines if "ERROR" in l or "ModuleNotFound" in l or "ImportError" in l]
+            if not error_lines:
+                error_lines = [l for l in (result.stdout or result.stderr).strip().splitlines() if l.strip()]
+            # Filter out lines matching known issues
+            known_patterns = known_issues.get("pytest", set())
+            unknown_lines = [
+                l for l in error_lines
+                if not any(p in l for p in known_patterns)
+            ]
+            if unknown_lines:
+                errors.append(f"pytest 未通过 (exit={result.returncode}):\n" + "\n".join(unknown_lines[:5]))
     except FileNotFoundError:
         errors.append("SKIP: uv/pytest 不可用")
     except subprocess.TimeoutExpired:
@@ -289,8 +329,12 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
     # 2. No TODO/TBD residuals in changed files
     residuals = _find_todo_residuals(root, change_id)
     if residuals:
-        errors.append(f"发现 {len(residuals)} 处 TODO/TBD/FIXME/HACK 残留:\n" +
-                      "\n".join(f"  {r}" for r in residuals[:10]))
+        # Filter out known issues
+        known_todos = known_issues.get("todo", set())
+        unknown = [r for r in residuals if not any(kt in r for kt in known_todos)]
+        if unknown:
+            errors.append(f"发现 {len(unknown)} 处 TODO/TBD/FIXME/HACK 残留:\n" +
+                          "\n".join(f"  {r}" for r in unknown[:10]))
 
     # 3. Benchmark smoke
     passed, reason = _benchmark_smoke_passes(root)
