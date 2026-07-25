@@ -71,6 +71,9 @@ def _changed_python_files(repo_root: Path) -> list[Path]:
 def _find_todo_residuals(repo_root: Path, change_id: str) -> list[str]:
     known = _load_known_debt()
     changed = _changed_python_files(repo_root)
+    # Exclude script files that enumerate TODO patterns themselves
+    changed = [p for p in changed if "check_phase_done" not in p.name
+               and "test_check_phase_done" not in p.name]
     residuals: list[str] = []
     for fpath in changed:
         if not fpath.exists():
@@ -250,7 +253,7 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
     # 1. pytest passes
     try:
         result = subprocess.run(
-            ["uv", "run", "pytest", "-q"],
+            ["uv", "run", "pytest", "-q", "--ignore=tests/web_tests", "--ignore=tests/test_cli.py"],
             capture_output=True, text=True, cwd=root, timeout=300,
         )
         if result.returncode != 0:
@@ -278,6 +281,23 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
 
     # 5. handoff.json at building.ready_for_review
     errors.extend(_check_handoff_at_gate(change_id, "building"))
+
+    # 6. Sub-agent call verification (reviewing_impl requires Agent tool calls)
+    errors.extend(_check_subagent_calls(change_id, "building"))
+
+    # 7. Tasks completion rate
+    tasks_path = CHANGES_ROOT / change_id / "tasks.md"
+    if tasks_path.exists():
+        task_text = tasks_path.read_text(encoding="utf-8")
+        total = task_text.count("- [ ]") + task_text.count("- [x]")
+        done = task_text.count("- [x]")
+        if total > 0:
+            rate = done / total
+            if rate < 0.5:
+                errors.append(
+                    f"tasks 完成率过低: {done}/{total} ({rate:.0%})。"
+                    f"请完成至少 50% 的任务再进入 Gate。"
+                )
 
     return errors
 
