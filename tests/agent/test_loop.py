@@ -1970,3 +1970,60 @@ async def test_contextvar_set_in_execute_single_tool():
     await loop.run([Message(role="user", content="test")])
 
     assert captured_id == ["cv-test-id"]
+
+
+@pytest.mark.asyncio
+async def test_messages_with_run_context_uses_workspace_root_from_policy(tmp_path):
+    """BuildContext.cwd 应使用 workspace_policy.workspace_root 而非 os.getcwd()"""
+    from agent.workspace_policy import WorkspacePolicy
+
+    captured_cwd = []
+
+    class CwdCapturingLLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.messages = list(messages)
+            return LLMResponse(content="done")
+
+    llm = CwdCapturingLLM()
+    registry = ToolRegistry()
+    registry.workspace_policy = WorkspacePolicy(tmp_path)
+
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    await loop.run([Message(role="user", content="test")])
+
+    # 系统 prompt 中应该包含 tmp_path 而非 os.getcwd()
+    system_text = "\n".join(
+        m.content for m in llm.messages if getattr(m, "role", None) == "system"
+    )
+    assert str(tmp_path) in system_text
+
+
+@pytest.mark.asyncio
+async def test_messages_with_run_context_falls_back_to_getcwd():
+    """当 ToolRegistry 没有 workspace_policy 时，BuildContext.cwd 应回退到 os.getcwd()"""
+    import os as _os
+
+    class CwdCapturingLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(content="done")
+
+    registry = ToolRegistry()
+    # 不设置 workspace_policy
+    assert registry.workspace_policy is None
+
+    loop = AgentLoop(
+        llm=CwdCapturingLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    # 不应抛异常
+    await loop.run([Message(role="user", content="test")])

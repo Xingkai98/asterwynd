@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from agent.tools.base import Tool, ToolCall
 from agent.run_config import ModePolicy
 from agent.tool_permissions import PermissionDecisionType
+from agent.workspace_policy import WorkspacePolicy
 
 if TYPE_CHECKING:
     from agent.message import ContentBlock
@@ -12,6 +13,7 @@ class ToolRegistry:
     def __init__(self, mode_policy: ModePolicy | None = None):
         self._tools: dict[str, Tool] = {}
         self.mode_policy = mode_policy or ModePolicy()
+        self.workspace_policy: WorkspacePolicy | None = None
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool

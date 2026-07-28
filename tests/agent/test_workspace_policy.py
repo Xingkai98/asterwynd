@@ -160,3 +160,179 @@ class TestCommandPolicy:
         policy = WorkspacePolicy(tmp_path)
         # empty command should not match allowlist or denylist
         policy.assert_command_allowed("")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo $(rm -rf /tmp/foo)",
+            "echo $(whoami)",
+            "echo `rm -rf /tmp/foo`",
+            "echo `whoami`",
+            "ls $(cat /etc/passwd)",
+            "pwd `id`",
+        ],
+    )
+    def test_denylist_rejects_shell_substitution(self, tmp_path, command):
+        policy = WorkspacePolicy(tmp_path)
+        with pytest.raises(PermissionError):
+            policy.assert_command_allowed(command)
+
+
+class TestMultiWorkspace:
+    """T1: WorkspacePolicy additional_roots 扩展测试"""
+
+    def test_additional_roots_starts_empty(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        assert policy.additional_roots == set()
+
+    def test_add_root_normal(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        assert extra.resolve() in policy.additional_roots
+
+    def test_add_root_resolves_symlink(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        real_dir = tmp_path.parent / f"real-{tmp_path.name}"
+        real_dir.mkdir()
+        link = tmp_path / "link-to-real"
+        link.symlink_to(real_dir)
+        policy.add_root(str(link))
+        assert real_dir.resolve() in policy.additional_roots
+        assert link not in policy.additional_roots
+
+    def test_add_root_auto_create(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        new_dir = tmp_path.parent / f"created-{tmp_path.name}"
+        policy.add_root(str(new_dir), create=True)
+        assert new_dir.exists()
+        assert new_dir.resolve() in policy.additional_roots
+
+    def test_add_root_rejects_workspace_subdir(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        with pytest.raises(ValueError, match="已在主 workspace 范围内"):
+            policy.add_root(str(sub))
+
+    def test_add_root_rejects_ancestor(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        with pytest.raises(ValueError, match="不能添加主 workspace 的祖先目录"):
+            policy.add_root(str(tmp_path.parent))
+
+    @pytest.mark.parametrize("denied", [
+        "/etc", "/proc", "/sys", "/dev", "/root", "/boot",
+    ])
+    def test_add_root_rejects_sensitive_dirs(self, tmp_path, denied):
+        policy = WorkspacePolicy(tmp_path)
+        with pytest.raises(ValueError, match="禁止添加系统敏感目录"):
+            policy.add_root(denied)
+
+    def test_remove_root_works(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        assert len(policy.additional_roots) == 1
+        policy.remove_root(str(extra))
+        assert len(policy.additional_roots) == 0
+
+    def test_remove_root_noop_for_unknown(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        policy.remove_root("/nonexistent")
+        assert policy.additional_roots == set()
+
+    def test_remove_root_protects_workspace_root(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        policy.remove_root(str(policy.workspace_root))
+        assert policy.workspace_root not in policy.additional_roots
+
+    def test_list_roots_includes_workspace_root(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        roots = policy.list_roots()
+        assert policy.workspace_root in roots
+        assert extra.resolve() in roots
+
+    def test_is_within_additional_root(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        assert policy.is_within_workspace(extra / "file.py")
+
+    def test_assert_within_workspace_allows_additional(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        f = extra / "code.py"
+        f.write_text("x")
+        resolved = policy.assert_within_workspace(f)
+        assert resolved == f.resolve()
+
+    def test_assert_write_allowed_in_additional_root(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        f = extra / "output.py"
+        resolved = policy.assert_write_allowed(f)
+        assert resolved == f.resolve()
+
+    def test_assert_read_allowed_in_additional_root(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        f = extra / "readme.md"
+        f.write_text("hello")
+        resolved = policy.assert_read_allowed(f)
+        assert resolved == f.resolve()
+
+    def test_still_rejects_outside_all_roots(self, tmp_path):
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        outside = tmp_path.parent.parent / "outside.txt"
+        with pytest.raises(PermissionError, match="outside workspace"):
+            policy.assert_within_workspace(outside)
+
+    def test_relative_path_for_additional_root(self, tmp_path):
+        """relative_path 对附加 root 内的文件应返回相对于该 root 的路径"""
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        f = extra / "sub" / "data.json"
+        f.parent.mkdir()
+        f.write_text("{}")
+
+        rel = policy.relative_path(f)
+        assert rel == "sub/data.json"
+
+    def test_relative_path_main_workspace_unchanged(self, tmp_path):
+        """relative_path 对主 workspace 内的文件行为不变"""
+        policy = WorkspacePolicy(tmp_path)
+        f = tmp_path / "src" / "app.py"
+        f.parent.mkdir()
+
+        rel = policy.relative_path(f)
+        assert rel == "src/app.py"
+
+    def test_relative_path_nested_in_additional_root(self, tmp_path):
+        """relative_path 对附加 root 下多层嵌套文件仍返回相对路径"""
+        policy = WorkspacePolicy(tmp_path)
+        extra = tmp_path.parent / f"extra-{tmp_path.name}"
+        extra.mkdir()
+        policy.add_root(str(extra))
+        f = extra / "deep" / "nested" / "file.py"
+        f.parent.mkdir(parents=True)
+        f.write_text("pass")
+
+        rel = policy.relative_path(f)
+        assert rel == "deep/nested/file.py"

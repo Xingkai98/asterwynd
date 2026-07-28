@@ -162,6 +162,7 @@ def build_agent(
     mode: str | AgentMode = AgentMode.BUILD,
     config: AsterwyndConfig | None = None,
     approval_handler: ApprovalHandler | None = None,
+    workspace_root: Path | None = None,
 ) -> AgentLoop:
     if config is not None and config.mcp.servers:
         raise RuntimeError("build_agent with MCP config requires build_agent_async")
@@ -172,6 +173,7 @@ def build_agent(
         config=config,
         approval_handler=approval_handler,
         mcp_manager=None,
+        workspace_root=workspace_root,
     )
 
 
@@ -181,6 +183,7 @@ async def build_agent_async(
     mode: str | AgentMode = AgentMode.BUILD,
     config: AsterwyndConfig | None = None,
     approval_handler: ApprovalHandler | None = None,
+    workspace_root: Path | None = None,
 ) -> AgentLoop:
     config = config or AsterwyndConfig()
     mcp_manager = await build_mcp_manager(config)
@@ -191,15 +194,31 @@ async def build_agent_async(
         config=config,
         approval_handler=approval_handler,
         mcp_manager=mcp_manager,
+        workspace_root=workspace_root,
     )
+
+
+def _resolve_workspace(workspace: str | None) -> Path | None:
+    if not workspace:
+        return None
+    p = Path(workspace).expanduser()
+    if not p.is_absolute():
+        typer.echo(f"Error: --workspace 必须是绝对路径: {workspace}", err=True)
+        raise SystemExit(1)
+    if not p.exists():
+        typer.echo(f"Error: --workspace 路径不存在: {p}", err=True)
+        raise SystemExit(1)
+    return p.resolve()
 
 
 def _sessions_root(workspace_root: Path) -> str:
     return str(workspace_root / ".asterwynd" / "sessions")
 
 
-def _load_resume_snapshot(session_id: str, config: AsterwyndConfig | None = None) -> SessionSnapshot | None:
-    store = SessionStore(sessions_root=_sessions_root(Path.cwd()))
+def _load_resume_snapshot(session_id: str, config: AsterwyndConfig | None = None,
+                          workspace_root: Path | None = None) -> SessionSnapshot | None:
+    root = workspace_root or Path.cwd()
+    store = SessionStore(sessions_root=_sessions_root(root))
     snapshot = store.load(session_id)
     if snapshot is None:
         typer.echo(f"Error: Session {session_id} not found or cannot be restored.", err=True)
@@ -215,11 +234,13 @@ def _build_agent_core(
     config: AsterwyndConfig | None = None,
     approval_handler: ApprovalHandler | None = None,
     mcp_manager=None,
+    workspace_root: Path | None = None,
 ) -> AgentLoop:
     config = config or AsterwyndConfig()
     llm = build_llm(provider, model)
     run_config = AgentRunConfig(mode=parse_agent_mode(_normalize_user_mode(mode)))
     workspace_policy = WorkspacePolicy(
+        workspace_root=workspace_root,
         command_denylist=config.tools.command_denylist,
     )
     persistent_memory = PersistentMemory(workspace_policy.workspace_root)
@@ -311,6 +332,7 @@ def callback(
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     banner: bool = typer.Option(True, "--banner/--no-banner", help="交互模式是否显示启动 wordmark"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", help="主工作目录（绝对路径，支持 ~）"),
 ):
     """Asterwynd — 轻量级 AI Coding Agent"""
     _setup_logging()
@@ -327,6 +349,7 @@ def callback(
         mode=normalized_mode,
         config=config,
         banner=banner,
+        workspace_root=_resolve_workspace(workspace) if workspace else None,
     )
 
 
@@ -342,13 +365,16 @@ def run(
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     resume: Optional[str] = typer.Option(None, "--resume", help="从指定 session_id 恢复会话"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", help="主工作目录（绝对路径，支持 ~）"),
 ):
     """单轮执行 Agent"""
     _setup_logging()
     config = _load_cli_config(config_path, mode=mode)
     normalized_mode = config.agent.default_mode.value
-    resume_snapshot = _load_resume_snapshot(resume, config) if resume else None
-    run_single(prompt, model, provider, max_iterations, system, normalized_mode, config, resume_snapshot)
+    workspace_root = _resolve_workspace(workspace) if workspace else None
+    resume_snapshot = _load_resume_snapshot(resume, config, workspace_root=workspace_root) if resume else None
+    run_single(prompt, model, provider, max_iterations, system, normalized_mode, config, resume_snapshot,
+               workspace_root=workspace_root)
 
 
 def run_single(
@@ -360,6 +386,7 @@ def run_single(
     mode: str = "build",
     config: AsterwyndConfig | None = None,
     resume_snapshot: SessionSnapshot | None = None,
+    workspace_root: Path | None = None,
 ):
     session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
     run_id = new_run_id()
@@ -369,9 +396,9 @@ def run_single(
 
     async def _run():
         if config and config.mcp.servers:
-            agent = await build_agent_async(model, provider, mode, config=config)
+            agent = await build_agent_async(model, provider, mode, config=config, workspace_root=workspace_root)
         else:
-            agent = build_agent(model, provider, mode, config=config)
+            agent = build_agent(model, provider, mode, config=config, workspace_root=workspace_root)
         agent.max_iterations = max_iterations
         if system:
             agent._user_system_prompt = system
@@ -412,15 +439,16 @@ def run_interactive(
     config: AsterwyndConfig | None = None,
     banner: bool = True,
     resume_snapshot: SessionSnapshot | None = None,
+    workspace_root: Path | None = None,
 ):
     session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     if config and config.mcp.servers:
-        agent = loop.run_until_complete(build_agent_async(model, provider, mode, config=config))
+        agent = loop.run_until_complete(build_agent_async(model, provider, mode, config=config, workspace_root=workspace_root))
     else:
-        agent = build_agent(model, provider, mode, config=config)
+        agent = build_agent(model, provider, mode, config=config, workspace_root=workspace_root)
     agent.approval_handler = CliApprovalHandler(interactive=True)
     resolved_model = getattr(agent.llm, "model", model or "default")
 
@@ -617,6 +645,7 @@ def web(
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     resume: Optional[str] = typer.Option(None, "--resume", help="从指定 session_id 恢复会话"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", help="主工作目录（绝对路径，支持 ~）"),
 ):
     """启动 Web UI 服务"""
     _setup_logging()
@@ -625,12 +654,13 @@ def web(
     from web.debug_hook import debug_enabled
 
     config = _load_cli_config(config_path, mode=mode)
+    workspace_root = _resolve_workspace(workspace)
     normalized_mode = config.agent.default_mode.value
     debug_status = "enabled" if debug_enabled() else "disabled"
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
 
     if resume:
-        resume_snapshot = _load_resume_snapshot(resume, config)
+        resume_snapshot = _load_resume_snapshot(resume, config, workspace_root=workspace_root)
         if resume_snapshot:
             normalized_mode = resume_snapshot.mode.value
             typer.echo(f"Resuming session: {resume}")
@@ -639,8 +669,10 @@ def web(
     typer.echo(f"{BRAND_NAME} Web UI  →  http://{display_host}:{port}")
     typer.echo(f"Provider: {provider} | Model: {llm.model}")
     typer.echo(f"Mode: {normalized_mode}")
+    if workspace_root is not None:
+        typer.echo(f"Workspace: {workspace_root}")
     typer.echo(f"Debug mode: {debug_status}")
-    app = create_app(llm, mode=normalized_mode, config=config, resume=resume)
+    app = create_app(llm, mode=normalized_mode, config=config, resume=resume, workspace_root=workspace_root)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -729,19 +761,23 @@ session_app = typer.Typer(help="会话管理")
 app.add_typer(session_app, name="session")
 
 
-def _get_session_store(config: AsterwyndConfig | None = None) -> SessionStore:
-    return SessionStore(sessions_root=_sessions_root(Path.cwd()))
+def _get_session_store(config: AsterwyndConfig | None = None,
+                      workspace_root: Path | None = None) -> SessionStore:
+    root = workspace_root or Path.cwd()
+    return SessionStore(sessions_root=_sessions_root(root))
 
 
 @session_app.command("list")
 def session_list(
     json_output: bool = typer.Option(False, "--json", help="以 JSON 格式输出"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", help="主工作目录"),
 ):
     """列出可恢复的会话"""
     _setup_logging()
-    _load_cli_config(config_path)  # ensure config loaded
-    store = _get_session_store()
+    _load_cli_config(config_path)
+    wr = _resolve_workspace(workspace) if workspace else None
+    store = _get_session_store(workspace_root=wr)
     sessions = store.list_sessions()
 
     if not sessions:
@@ -777,13 +813,15 @@ def session_resume(
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", help="主工作目录"),
 ):
     """恢复会话并进入交互模式"""
     _setup_logging()
+    wr = _resolve_workspace(workspace) if workspace else None
     config = _load_cli_config(config_path, mode=mode)
     normalized_mode = config.agent.default_mode.value
 
-    snapshot = _load_resume_snapshot(session_id, config)
+    snapshot = _load_resume_snapshot(session_id, config, workspace_root=wr)
     if snapshot is None:
         return
 
@@ -803,6 +841,7 @@ def session_resume(
         config=config,
         banner=False,
         resume_snapshot=snapshot,
+        workspace_root=wr,
     )
 
 
@@ -811,11 +850,13 @@ def session_rm(
     session_id: str = typer.Argument(..., help="要删除的会话 ID"),
     force: bool = typer.Option(False, "--force", "-f", help="跳过确认直接删除"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", help="主工作目录"),
 ):
     """删除会话"""
     _setup_logging()
     _load_cli_config(config_path)
-    store = _get_session_store()
+    wr = _resolve_workspace(workspace) if workspace else None
+    store = _get_session_store(workspace_root=wr)
 
     if not force:
         typer.echo(f"Are you sure you want to delete session '{session_id}'?")

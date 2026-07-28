@@ -98,6 +98,7 @@ def build_default_tool_registry(
     )
     for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
         registry.register(tool)
+    registry.workspace_policy = policy
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
 
@@ -130,6 +131,7 @@ def build_coding_tool_registry(
         *_build_mcp_tools(mcp_manager),
     ]:
         registry.register(tool)
+    registry.workspace_policy = policy
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
 
