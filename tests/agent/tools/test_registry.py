@@ -232,3 +232,28 @@ def test_factory_rejects_unknown_deny_tool():
                 deny_tools_by_mode={AgentMode.BUILD: ("Missing",)},
             )
         )
+
+
+def test_registry_workspace_policy_defaults_to_none():
+    """ToolRegistry.workspace_policy is None by default."""
+    registry = ToolRegistry()
+    assert registry.workspace_policy is None
+
+
+def test_factory_sets_workspace_policy_on_default_registry(tmp_path):
+    """build_default_tool_registry sets registry.workspace_policy."""
+    from agent.workspace_policy import WorkspacePolicy
+    policy = WorkspacePolicy(tmp_path)
+    registry = build_default_tool_registry(policy=policy)
+    assert registry.workspace_policy is policy
+    assert registry.workspace_policy.workspace_root == tmp_path.resolve()
+
+
+def test_factory_sets_workspace_policy_on_coding_registry(tmp_path):
+    """build_coding_tool_registry sets registry.workspace_policy."""
+    from agent.tools.factory import build_coding_tool_registry
+    from agent.workspace_policy import WorkspacePolicy
+    policy = WorkspacePolicy(tmp_path)
+    registry = build_coding_tool_registry(policy=policy)
+    assert registry.workspace_policy is policy
+    assert registry.workspace_policy.workspace_root == tmp_path.resolve()

@@ -1,5 +1,7 @@
 import json
+from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import agent.main as cli
@@ -90,7 +92,7 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello", "--max-iterations", "3"])
@@ -218,7 +220,7 @@ def test_cli_single_prompt_prints_session_and_run_ids(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-test")
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-test")
@@ -237,7 +239,7 @@ def test_cli_single_prompt_streams_delta_without_reprinting_final_content(monkey
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello"])
@@ -261,7 +263,7 @@ def test_cli_single_prompt_summarizes_long_tool_results(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello"])
@@ -283,7 +285,7 @@ def test_cli_single_prompt_prints_plan_document(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello", "--mode", "plan"])
@@ -300,7 +302,7 @@ def test_cli_interactive_reuses_session_id_and_prints_run_ids(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
     monkeypatch.setattr(cli, "new_run_id", lambda: next(run_ids))
@@ -324,7 +326,7 @@ def test_cli_interactive_prints_asterwynd_banner(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(
@@ -344,7 +346,7 @@ def test_cli_interactive_can_suppress_banner(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(
@@ -364,7 +366,7 @@ def test_cli_single_prompt_does_not_print_asterwynd_banner(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "hello"])
@@ -379,7 +381,7 @@ def test_cli_interactive_mode_command_changes_session_mode(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
@@ -410,7 +412,7 @@ def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(
@@ -430,7 +432,7 @@ def test_cli_interactive_help_command_does_not_run_agent(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -452,7 +454,7 @@ def test_cli_interactive_slash_exit_exits_without_running_agent(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -473,7 +475,7 @@ def test_cli_interactive_status_command_prints_local_state(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
@@ -497,7 +499,7 @@ def test_cli_interactive_unknown_slash_command_is_not_sent_to_agent(monkeypatch)
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -518,7 +520,7 @@ def test_cli_interactive_clear_removes_previous_user_history(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     run_ids = iter(["run-1", "run-2"])
     monkeypatch.setattr(cli, "new_run_id", lambda: next(run_ids))
@@ -543,7 +545,7 @@ def test_cli_interactive_compact_reports_noop_without_running_agent(monkeypatch)
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-1")
 
@@ -574,7 +576,7 @@ def test_cli_interactive_skill_command_queues_activation_and_runs_agent(monkeypa
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
     monkeypatch.setattr(cli, "new_run_id", lambda: "run-skill")
 
@@ -600,7 +602,7 @@ def test_cli_single_prompt_passes_normalized_mode(monkeypatch):
     fake = FakeAgent()
     captured = {}
 
-    def build_agent(model=None, provider="openai", mode="build", config=None):
+    def build_agent(model=None, provider="openai", mode="build", config=None, **kwargs):
         captured["mode"] = mode
         return fake
 
@@ -618,7 +620,7 @@ def test_cli_single_prompt_uses_yaml_default_mode(tmp_path, monkeypatch):
     config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
 
-    def build_agent(model=None, provider="openai", mode="build", config=None):
+    def build_agent(model=None, provider="openai", mode="build", config=None, **kwargs):
         captured["mode"] = mode
         captured["config"] = config
         return fake
@@ -642,7 +644,7 @@ def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
     monkeypatch.setenv("ASTERWYND_MODE", "read_only")
 
-    def build_agent(model=None, provider="openai", mode="build", config=None):
+    def build_agent(model=None, provider="openai", mode="build", config=None, **kwargs):
         captured["mode"] = mode
         return fake
 
@@ -702,7 +704,7 @@ def test_cli_default_no_args_enters_interactive_repl(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, [], input="exit\n")
@@ -717,7 +719,7 @@ def test_cli_run_subcommand_single_prompt(monkeypatch):
     monkeypatch.setattr(
         cli,
         "build_agent",
-        lambda model=None, provider="openai", mode="build", config=None: fake,
+        lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
 
     result = CliRunner().invoke(cli.app, ["run", "single shot"])
@@ -752,6 +754,58 @@ def test_cli_log_dir_uses_platformdirs():
     assert expected.name == "log"
 
 
+def test_web_resume_forwards_workspace_root(monkeypatch, tmp_path):
+    """web --resume <id> --workspace <path> 将 workspace_root 转发给 _load_resume_snapshot"""
+    from pathlib import Path
+
+    captured_kwargs = {}
+
+    def fake_load_resume_snapshot(session_id, config, workspace_root=None):
+        captured_kwargs["session_id"] = session_id
+        captured_kwargs["workspace_root"] = workspace_root
+        from agent.session import SessionSnapshot
+        from agent.run_config import AgentMode
+        return SessionSnapshot(
+            schema_version="1",
+            session_id=session_id,
+            created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00",
+            messages=[],
+            mode=AgentMode.BUILD,
+            todos=[],
+            active_skills=[],
+            run_id="run-1",
+            iteration=0,
+        )
+
+    monkeypatch.setattr(cli, "_load_resume_snapshot", fake_load_resume_snapshot)
+    monkeypatch.setattr(cli, "_setup_logging", lambda: None)
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: type("FakeLLM", (), {"model": "fake-model"})())
+
+    from web import server
+    fake_app = object()
+    monkeypatch.setattr(server, "create_app", lambda llm, mode, config, resume, workspace_root: fake_app)
+    import uvicorn
+    monkeypatch.setattr(uvicorn, "run", lambda app, host, port, log_level: None)
+
+    workspace = tmp_path / "my-workspace"
+    workspace.mkdir()
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "web",
+            "--port", "0",
+            "--resume", "test-session-id",
+            "--workspace", str(workspace),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured_kwargs["session_id"] == "test-session-id"
+    assert captured_kwargs["workspace_root"] == workspace
+
+
 def test_cli_setup_logging_graceful_when_dir_unwritable(monkeypatch):
     """LOG_DIR 不可写时 _setup_logging 不崩溃，降级到 stderr-only"""
     import logging
@@ -771,3 +825,76 @@ def test_cli_setup_logging_graceful_when_dir_unwritable(monkeypatch):
 
     assert len(root.handlers) == 1
     assert type(root.handlers[0]).__name__ == "StreamHandler"
+
+
+# ─── --workspace CLI 测试 ────────────────────────────────────────────
+
+
+def test_cli_workspace_propagated_to_run_interactive(monkeypatch, tmp_path):
+    """--workspace 在交互模式下通过 run_interactive 转发 workspace_root"""
+    captured_workspace_root = {}
+
+    def fake_run_interactive(model, provider, max_iterations, system, initial_prompt=None,
+                             mode="build", config=None, banner=True, resume_snapshot=None,
+                             workspace_root=None):
+        captured_workspace_root["value"] = workspace_root
+
+    monkeypatch.setattr(cli, "run_interactive", fake_run_interactive)
+
+    workspace = tmp_path / "my-workspace"
+    workspace.mkdir()
+
+    CliRunner().invoke(
+        cli.app,
+        ["--workspace", str(workspace)],
+    )
+
+    assert captured_workspace_root["value"] == workspace
+
+
+def test_cli_workspace_rejects_relative_path():
+    """--workspace 相对路径应抛出 SystemExit"""
+    with pytest.raises(SystemExit):
+        cli._resolve_workspace("foo")
+
+
+def test_cli_workspace_rejects_nonexistent():
+    """--workspace 指向不存在的路径应抛出 SystemExit"""
+    with pytest.raises(SystemExit):
+        cli._resolve_workspace("/nonexistent/path/that/does/not/exist")
+
+
+def test_cli_workspace_expands_tilde(monkeypatch, tmp_path):
+    """--workspace ~/something 应展开为用户家目录"""
+    import os
+    home = os.path.expanduser("~")
+    expected = Path(home) / "something"
+    expected.mkdir(parents=True, exist_ok=True)
+
+    result = cli._resolve_workspace("~/something")
+
+    assert result == expected.resolve()
+
+    expected.rmdir()  # 清理
+
+
+def test_cli_run_workspace_forwarded_to_run_single(monkeypatch, tmp_path):
+    """asterwynd run --workspace /path 'prompt' 将 workspace_root 转发给 run_single"""
+    captured = {}
+
+    def fake_run_single(prompt, model=None, provider="openai", max_iterations=20,
+                        system=None, mode="build", config=None, resume_snapshot=None,
+                        workspace_root=None):
+        captured["workspace_root"] = workspace_root
+
+    monkeypatch.setattr(cli, "run_single", fake_run_single)
+
+    workspace = tmp_path / "run-workspace"
+    workspace.mkdir()
+
+    CliRunner().invoke(
+        cli.app,
+        ["run", "--workspace", str(workspace), "hello"],
+    )
+
+    assert captured["workspace_root"] == workspace

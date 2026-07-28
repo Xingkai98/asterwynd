@@ -2,6 +2,7 @@
 """Session manager: one AgentLoop + message history per browser session."""
 import asyncio
 import logging
+from pathlib import Path
 from typing import Optional
 
 from agent.approval import (
@@ -177,10 +178,12 @@ class SessionManager:
         debug_enabled: bool = False,
         mode: str | None = None,
         config: AsterwyndConfig | None = None,
+        workspace_root: Path | None = None,
     ):
         self._sessions: dict[str, AgentSession] = {}
         self.debug_enabled = debug_enabled
         self.config = config or AsterwyndConfig()
+        self.workspace_root = workspace_root
         resolved_mode = mode or self.config.agent.default_mode.value
         self.initial_mode = parse_agent_mode(resolved_mode)
 
@@ -204,6 +207,7 @@ class SessionManager:
         question_handler = WebQuestionHandler(session_id)
         run_config = AgentRunConfig(mode=self.initial_mode)
         workspace_policy = WorkspacePolicy(
+            workspace_root=self.workspace_root,
             command_denylist=self.config.tools.command_denylist,
         )
         registry = build_default_tool_registry(

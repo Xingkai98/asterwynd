@@ -37,6 +37,7 @@ def create_app(
     mode: str | None = None,
     config: AsterwyndConfig | None = None,
     resume: str | None = None,
+    workspace_root: Path | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application."""
     config = config or AsterwyndConfig()
@@ -47,7 +48,9 @@ def create_app(
         debug_enabled=debug_enabled(),
         mode=resolved_mode,
         config=config,
+        workspace_root=workspace_root,
     )
+    app.state.session_manager = session_manager
 
     # Mount static files at /static
     if STATIC_DIR.exists():

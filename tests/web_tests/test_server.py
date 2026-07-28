@@ -977,3 +977,38 @@ async def test_debug_websocket_events_enabled():
 
     assert any(e["type"] == "debug" and e["phase"] == "before_iteration" for e in events)
     assert any(e["type"] == "debug" and e["phase"] == "after_llm_call" for e in events)
+
+
+def test_create_app_passes_workspace_root_to_session_manager(tmp_path):
+    """create_app(workspace_root=...) 应把 workspace_root 传播到 SessionManager"""
+    from pathlib import Path
+
+    app = create_app(ScriptedLLM([LLMResponse(content="ok")]), workspace_root=Path(tmp_path))
+
+    assert app.state.session_manager.workspace_root == Path(tmp_path)
+
+
+def test_create_app_workspace_root_defaults_to_none():
+    """create_app 不传 workspace_root 时 SessionManager.workspace_root 应为 None"""
+    app = create_app(ScriptedLLM([LLMResponse(content="ok")]))
+
+    assert app.state.session_manager.workspace_root is None
+
+
+def test_session_manager_creates_sessions_with_workspace_root(tmp_path):
+    """带 workspace_root 的 SessionManager 创建的 session 应使用该 workspace_root"""
+    from pathlib import Path
+
+    ws = Path(tmp_path) / "workspace"
+    ws.mkdir()
+    app = create_app(ScriptedLLM([LLMResponse(content="ok")]), workspace_root=ws)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as w:
+            created = w.receive_json()
+            session = app.state.session_manager.get_session(created["session_id"])
+            assert session is not None
+            # Agent's workspace_policy should have the correct root
+            policy = session.agent.tool_registry.workspace_policy
+            assert policy is not None
+            assert policy.workspace_root == ws.resolve()

@@ -1032,8 +1032,10 @@ class AgentLoop:
         return {"id": delta.id, "name": delta.name, "arguments": arguments}
 
     async def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
+        workspace_policy = getattr(self.tool_registry, "workspace_policy", None)
+        cwd = str(workspace_policy.workspace_root) if workspace_policy else os.getcwd()
         ctx = BuildContext(
-            cwd=os.getcwd(),
+            cwd=cwd,
             mode=self.runtime_state.current_mode,
             context_window=self._context_window,
             total_budget=self._injection_budget,
