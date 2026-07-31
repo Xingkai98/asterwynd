@@ -51,21 +51,25 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 **理由**：接口最小且稳定，契约测试锁住接口防漂移；标准化中间表示（`TaskResult`/`status`/`reason`）让下游统计与结果页只认一种形状、跨框架复用，这才构成"无缝扩展"。
 
-### Decision 1: 分层用独立标签字段，而非重载 task_family
+### Decision 1: 分层复用既有 `category` 字段，而非新增字段或重载 task_family
 
-**方案**：新增可选 task schema 字段（如 `evaluation_layer`），取值为 `execution`/`tool-usage`/`context-planning`/`multi-step-solving`，缺省归入 `execution` 默认层。
+**方案**：复用 `TaskSpec` 既有 `category` 字段作为能力分层载体，取值为 `execution`/`tool-usage`/`context-planning`/`multi-step-solving`，缺省归入 `execution` 默认层。分层是跨框架统一维度，与框架来源（`task_family`）正交解耦。
 
-**备选**：复用既有 `task_family`（local/swebench）。被拒：`task_family` 是执行环境语义（local vs docker），把能力分层塞进去会让两种维度混在同一个字段，破坏既有 `task_family` 的规格含义。
+**备选**：
+- 新增独立 `evaluation_layer` 字段。被拒：`category` 语义天然是"任务所属能力维度"，新增会造成职责重叠、多维护一个字段。
+- 复用 `task_family`（local/swebench）。被拒：`task_family` 是执行/框架语义（local vs docker vs harbor），把能力分层塞进去会让两种维度混在同一字段，破坏既有 `task_family` 规格含义。
 
-**理由**：能力分层是评测维度，与执行环境正交；独立字段保持既有规格不被污染，缺省默认层保证兼容。
+**理由**：`category` 语义匹配且已是既有字段，零 schema 改动；缺省默认层保证兼容；分层与框架来源正交，靠标准化中间表示统一承载。
 
-### Decision 2: 统计方法用 bootstrap 置信区间 + Pass@k
+### Decision 2: 统计方法用 bootstrap 置信区间 + Pass@k，纯 Python 自实现
 
 **方案**：对每层/每任务聚合：均值、标准差、95% 置信区间（bootstrap 百分位法，固定随机种子保证可复现）；通过类任务输出 `Pass@k`（k 取该任务重复次数 N，按既有通过判定统计）。无 hidden test 的开放式任务不做 Pass@k，改用 judge 判定。
 
-**备选**：解析置信区间（正态近似）。被拒：重复次数 N>=3 时样本小，正态近似在非对称分布上不可靠；bootstrap 对指标不设分布假设，且固定种子可复现。
+**备选**：
+- 解析置信区间（正态近似）。被拒：重复次数 N>=3 时样本小，正态近似在非对称分布上不可靠；bootstrap 对指标不设分布假设，且固定种子可复现。
+- 引入 numpy/scipy 求 CI 与统计。被拒：bootstrap 置信区间仅需几十行（`random.seed` + `random.sample` 重采样求百分位），Pass@k 用组合计数公式，避免给项目新增外部统计依赖。
 
-**理由**：小样本下 bootstrap 比正态近似稳健，且方法学可直接在面试引用（"我用 bootstrap 求 95% CI"）。
+**理由**：小样本下 bootstrap 比正态近似稳健，且方法学可直接在面试引用；纯 Python 自实现保持项目轻依赖风格，固定种子可复现。
 
 ### Decision 3: 开放式任务 judge 用确定判定 + 人工回流标记
 
@@ -90,6 +94,30 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 **备选**：改造既有 `compare.py` 输出。被拒：`compare.py` 是跨 run 对比工具，职责不同；新增模块聚焦单 run 的评测深度渲染，职责单一。
 
 **理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用；framework 维度与分层正交，靠标准化中间表示的 `task_family` 字段即可承载。
+
+### Decision 6: 重复运行在 CLI 层循环，不侵入 runner 单次语义
+
+**方案**：`--repeat N` 在 `agent/main.py` 的 `benchmark()` 里循环 N 次调用 `runner.run_all()`，每轮独立 `run_id`，最外层聚合。缺省 1 保持既有单次行为。
+
+**备选**：在 `BenchmarkRunner` 内部加 `repeat` 参数做多轮。被拒：`run_all()` 是单次 run 的权威入口，侵入内部会破坏单次语义、改动面大。
+
+**理由**：复用既有单次 run 全部行为；多轮天然产生独立 `run_id`，符合既有 artifact 结构，聚合在最外层隔离。
+
+### Decision 7: 开放式任务复用"无 test_patch"判定，不新增字段
+
+**方案**：以 `TaskSpec.test_patch_file` 是否存在判定开放式任务：无 test_patch 即视为开放式，跳过 Pass@k、走 judge 判定。
+
+**备选**：新增 `open_ended: bool` 字段显式标记。被拒：`test_patch_file` 已存在，"有没有 hidden test"就是有没有 test_patch 的直接反映，新增字段徒增维护。
+
+**理由**：零 schema 改动，语义正交直接。
+
+### Decision 8: 结果页为独立 `benchmarks/report.py`，不复用 compare 职责
+
+**方案**：新增 `benchmarks/report.py`，输入一次聚合 run，输出 markdown + HTML，复用 `compare.py` 的延迟/成本口径。HTML 沿用项目现有 style（参考 `reports/comparison.html`），不引第三方模板。
+
+**备选**：扩展 `compare.py` 输出。被拒：`compare.py` 是跨 run 对比工具，单 run 评测渲染与它职责不同，混在一起破坏单一职责。
+
+**理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用。
 
 ## Risks / Trade-offs
 
