@@ -20,17 +20,16 @@ from agent.workflow.models import (
     Transition,
 )
 
+_ACTIVE_PHASES = ("wayfinding", "planning", "building", "closing")
+
 
 class TestEnums:
     def test_phases_include_all_states(self):
-        assert "planning" in PHASES
-        assert "reviewing" in PHASES
-        assert "building" in PHASES
-        assert "code-review" in PHASES
-        assert "closing" in PHASES
+        for p in _ACTIVE_PHASES:
+            assert p in PHASES
         assert "blocked" in PHASES
         assert "done" in PHASES
-        assert len(PHASES) == 7
+        assert len(PHASES) == 6  # 4 active + blocked + done
 
     def test_triggers_have_four_types(self):
         assert "auto" in TRIGGERS
@@ -48,14 +47,13 @@ class TestEnums:
         assert GATE_SUB_STATE == "ready_for_review"
 
     def test_every_non_terminal_phase_has_gate(self):
-        for phase in ("planning", "reviewing", "building", "code-review", "closing"):
+        for phase in _ACTIVE_PHASES:
             assert GATE_SUB_STATE in PHASE_SUB_STATES[phase]
 
     def test_phase_maps_to_role(self):
+        assert PHASE_TO_ROLE["wayfinding"] == "wayfinder"
         assert PHASE_TO_ROLE["planning"] == "planner"
-        assert PHASE_TO_ROLE["reviewing"] == "reviewer"
         assert PHASE_TO_ROLE["building"] == "builder"
-        assert PHASE_TO_ROLE["code-review"] == "code-reviewer"
         assert PHASE_TO_ROLE["closing"] == "closer"
 
     def test_blocked_and_done_not_in_role_map(self):
@@ -93,7 +91,7 @@ class TestTransition:
     def test_full_to_dict(self):
         t = Transition(
             from_state=StateSnapshot(phase="planning", sub_state="ready_for_review"),
-            to_state=StateSnapshot(phase="reviewing", sub_state="reading_docs"),
+            to_state=StateSnapshot(phase="building", sub_state="writing_tests"),
             trigger="human_review",
             actor_type="human",
             actor_id="human-1",
@@ -188,41 +186,29 @@ class TestPhaseOrder:
             assert phase in PHASE_ORDER, f"{phase} missing from PHASE_ORDER"
 
     def test_order_values_are_correct(self):
-        assert PHASE_ORDER["planning"] == 0
-        assert PHASE_ORDER["reviewing"] == 1
+        assert PHASE_ORDER["wayfinding"] == 0
+        assert PHASE_ORDER["planning"] == 1
         assert PHASE_ORDER["building"] == 2
-        assert PHASE_ORDER["code-review"] == 3
-        assert PHASE_ORDER["closing"] == 4
+        assert PHASE_ORDER["closing"] == 3
         assert PHASE_ORDER["blocked"] == -1
-        assert PHASE_ORDER["done"] == 5
+        assert PHASE_ORDER["done"] == 4
 
     def test_active_phases_are_monotonically_increasing(self):
-        active_order = [
-            PHASE_ORDER[p]
-            for p in ("planning", "reviewing", "building", "code-review", "closing")
-        ]
+        active_order = [PHASE_ORDER[p] for p in _ACTIVE_PHASES]
         assert active_order == sorted(active_order)
 
     def test_blocked_is_less_than_all_active_phases(self):
-        for phase in ("planning", "reviewing", "building", "code-review", "closing"):
+        for phase in _ACTIVE_PHASES:
             assert PHASE_ORDER["blocked"] < PHASE_ORDER[phase]
 
     def test_done_is_greater_than_all_active_phases(self):
-        for phase in ("planning", "reviewing", "building", "code-review", "closing"):
+        for phase in _ACTIVE_PHASES:
             assert PHASE_ORDER["done"] > PHASE_ORDER[phase]
 
 
 class TestDefaultRouting:
     def test_all_phases_have_defaults(self):
-        for phase in ("planning", "reviewing", "building", "code-review", "closing"):
+        for phase in _ACTIVE_PHASES:
             assert phase in DEFAULT_ROUTING
             assert DEFAULT_ROUTING[phase].executor in ("inline", "subagent", "claude-code", "codex")
             assert DEFAULT_ROUTING[phase].session_mode in ("same", "new", "ask")
-
-    def test_reviewing_defaults_to_subagent_new(self):
-        assert DEFAULT_ROUTING["reviewing"].executor == "subagent"
-        assert DEFAULT_ROUTING["reviewing"].session_mode == "new"
-
-    def test_code_review_defaults_to_subagent_new(self):
-        assert DEFAULT_ROUTING["code-review"].executor == "subagent"
-        assert DEFAULT_ROUTING["code-review"].session_mode == "new"

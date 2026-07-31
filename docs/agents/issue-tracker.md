@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-本仓库的 issue、PRD 和可交给 agent 执行的任务都发布到 GitHub Issues。仓库从 `git remote -v` 推断，当前为 `Xingkai98/asterwynd`。
+本仓库的 issue、PRD 和可交给 agent 执行的任务默认发布到 GitHub Issues。后端配置来自 `scripts/workflow_methods.json` 的 `ticket_tracker` 段，当前仓库目标为 `Xingkai98/asterwynd`，backend 默认值为 `github`。
 
 Matt Pocock skills 需要发布或读取 issue 时，默认使用 `gh` CLI。
 
@@ -12,6 +12,8 @@ Matt Pocock skills 需要发布或读取 issue 时，默认使用 `gh` CLI。
 - 评论 issue：`gh issue comment <number> --body "..."`
 - 添加或移除标签：`gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - 关闭 issue：`gh issue close <number> --comment "..."`
+
+如果 `ticket_tracker.backend` 改成其他值，以上约定应替换为对应后端的等价命令。
 
 ## 当 skill 要求发布到 issue tracker
 

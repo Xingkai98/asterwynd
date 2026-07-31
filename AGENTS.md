@@ -20,6 +20,7 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - **测试要求**: 每个 bug fix 必须新增回归测试；涉及 CLI、Web、benchmark、工具协议或 AgentLoop 的变更必须覆盖对应层级测试。
 - **CI 与影响分析**: 非平凡 OpenSpec change 必须维护结构化 `Impact Analysis`，并在开发中发现新影响面时先回写 change 文档和任务清单；baseline CI 门禁包含全量 pytest、OpenSpec strict validate 和项目 artifact checker。`unknown` / `TBD` / `待确认` 可在 proposal 阶段短暂存在，但归档前必须清理为明确结论或阻塞项。
 - **文档影响检查**: 收尾阶段必须检查文档影响，但不要无边界全量改文档。至少检查 change 自身 OpenSpec 文档、`docs/openspec-change-backlog.md`、文档地图中的相关入口文档，并用关键词扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与本次变更相关的段落；只更新当前变更造成的事实变化，历史口径问题另记债务或单独处理。
+- **受保护 artifact 证据**: 修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须有 `workflow-events.jsonl` 中的结构化解释事件；阶段 review report 必须有对应 review manifest 绑定 reviewer run、base/head sha、tasks/spec/diff/report hash。禁止只靠手写 `PASS` 文本通过 gate。
 - **OpenSpec 收尾**: OpenSpec change 的实现 PR 必须同时包含归档收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 `docs/openspec-change-backlog.md` 移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只做确认：active change 目录不再存在、backlog 干净、本地 `master` 已快进到 `origin/master`。
 - **自然语言路由**: 用户不需要反复提醒“按 OpenSpec lifecycle 走”。当用户用自然语言表达讨论、立项、开发、同步 spec、收尾或合入意图时，agent 必须自动映射到本文件的 OpenSpec 流程和 `/opsx:*` 等价步骤；如果当前客户端不能直接调用 slash command，也要按同等步骤执行。
 - **协议约束**: 保持 tool-call 消息链合法；不要在 `max_iterations` 路径中用工具结果伪造最终 assistant 回复。
@@ -66,7 +67,7 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `grill-with-docs`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
 
-每个 change 的生命周期状态由 `agent/workflow/` 五阶段状态机追踪，状态文件为 `openspec/changes/<change-id>/handoff.json`。阶段间交接通过 `.handoff/<change-id>/` 下的 handoff note 传递上下文，human review gate 在每个 phase 的 `ready_for_review` 子状态触发。路由配置支持 executor（inline/subagent/claude-code/codex）和 session_mode（same/new/ask），全局默认值在 `openspec/config.yaml`，per-change 覆盖在 `handoff.json`。
+每个 change 的生命周期状态由 `agent/workflow/` 四阶段状态机追踪，权威事实来源为 `openspec/changes/<change-id>/workflow-events.jsonl`，`handoff.json` 是由事件 replay 生成的 projection。阶段间交接通过 `.handoff/<change-id>/` 下的 handoff note 传递上下文，human review gate 在每个 phase 的 `ready_for_review` 子状态触发。路由配置支持 executor（inline/subagent/claude-code/codex）和 session_mode（same/new/ask），全局默认值在 `openspec/config.yaml`，per-change 覆盖在 `handoff.json`。
 
 ## 工作流自动推进与 Gate 机制
 
@@ -74,10 +75,14 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 ### 会话启动协议
 
-每次新会话开始，在回复用户之前，agent 必须先运行状态检查：
-
+每次新会话开始，在回复用户之前，agent 必须先运行状态检查。
+**推荐配置 session start hook**（自动执行，无需手动）：
 ```bash
-python3 scripts/workflow_state.py discover
+cp scripts/workflow_hook.example.json .claude/settings.json
+```
+手动方式：
+```bash
+python3 scripts/workflow_state.py discover --format json
 ```
 
 根据输出决定行为：
@@ -88,6 +93,7 @@ python3 scripts/workflow_state.py discover
 | 1 个 change 处于执行中 (非 gate) | 读取该 change 的 `handoff.json` → 确认当前 sub_state → 继续执行 |
 | 多个活跃 change | 列出所有 change 状态 → 让用户选择处理哪个 |
 | 无活跃 change | 正常对话，无需追踪 phase |
+| workflow 已禁用 | 视为本仓库未启用 workflow；不要执行 gate 推进。若重新启用前存在 `.dev/workflow-resume-baseline.json`，先运行 `python3 scripts/workflow_state.py resume-audit` 并完成恢复确认 |
 
 如果用户明确指定了 change 名，直接处理该 change，跳过 discover。
 
@@ -136,13 +142,16 @@ python3 scripts/workflow_state.py discover
 
 **任何涉及代码修改的操作（building phase / bug fix / 实验性改动），必须在独立 git worktree 中进行。**
 
-| 阶段 | 工作区 | 原因 |
-|------|--------|------|
-| planning | 主仓库 | 只产生文档（proposal/design/tasks），不产生代码 |
-| reviewing | 主仓库 | 只读审阅，不产生代码 |
-| building | **worktree 必须** | 代码修改在隔离环境中进行 |
-| code-review | 主仓库 | 只读审阅 diff |
-| closing | 主仓库 | 归档、PR——如需修 bug 则切到 worktree |
+| 阶段 | 工作区 | 原因 | 执行方法 |
+|------|--------|------|---------|
+| wayfinding | 主仓库 | 只探路，不产代码 | `/wayfinder` → 决策地图 + decision tickets |
+| planning | 主仓库 | 只产文档，不产代码 | `/grill-with-docs` → `/to-spec` → `/to-tickets` |
+| building | **worktree 必须** | 代码修改在隔离环境中 | `/implement`（内部驱动 `/tdd` + `/code-review`） |
+| closing | 主仓库 | 归档、PR | openspec sync/archive/validate |
+
+> 每个 phase 在进入 `ready_for_review` Gate 之前都有一个 `reviewing_*` 子状态：
+> spawn 独立子 Agent（零记忆上下文），审阅本阶段产出，三轮封顶。
+> 方法映射见 `scripts/workflow_methods.json`（可插拔，换方法只需改 JSON）。
 
 **规则**：
 - 分支命名：`<change-id>/<YYYY-MM-DD>`
@@ -154,14 +163,15 @@ python3 scripts/workflow_state.py discover
 
 | 操作 | 命令 |
 |------|------|
-| 查看所有 change 状态 | `python3 scripts/workflow_state.py discover` |
+| 查看所有 change 状态 | `python3 scripts/workflow_state.py discover --format json` |
 | 查看指定 change 状态 | `python3 scripts/workflow_state.py current --change <id>` |
 | 推进 sub_state | `python3 scripts/workflow_state.py advance --change <id> --to <sub_state>` |
 | 记录人工批准 | `python3 scripts/workflow_state.py approve --change <id> --phase <phase>` |
 | 校验 handoff.json | `python3 scripts/workflow_state.py validate --change <id>` |
+| wayfinding → spawn 子 change | `python3 scripts/workflow_state.py spawn --from <id> --changes <c1,c2>` |
+| 验证 wayfinding 完成 | `python3 scripts/check_phase_done.py --phase wayfinding --change <id>` |
 | 验证 planning 完成 | `python3 scripts/check_phase_done.py --phase planning --change <id>` |
 | 验证 building 完成 | `python3 scripts/check_phase_done.py --phase building --change <id>` |
-| 验证 code-review 完成 | `python3 scripts/check_phase_done.py --phase code-review --change <id>` |
 | 验证 closing 完成 | `python3 scripts/check_phase_done.py --phase closing --change <id>` |
 
 ### ADR 创建规则
@@ -170,7 +180,7 @@ python3 scripts/workflow_state.py discover
 
 - planning 阶段做出了有 >= 2 个备选方案的设计决策
 - building 阶段需要偏离 design.md 中的已有决策
-- code-review 阶段评审人要求记录某个决策的上下文
+- reviewing_* 子状态或人工评审要求记录某个决策的上下文
 
 ADR 格式参考 `docs/adr/_TEMPLATE.md`。创建后在 handoff note 的 Key Decisions 章节中引用 ADR 文件名。
 

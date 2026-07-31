@@ -28,17 +28,18 @@
 
 ## 开发流程
 
-每个 change 的生命周期建模为五个阶段（phase），由 `agent/workflow/` 状态机驱动，状态文件为 `openspec/changes/<change-id>/handoff.json`：
+每个 change 的生命周期建模为四个活跃阶段（phase），由 `agent/workflow/` 状态机驱动。`openspec/changes/<change-id>/workflow-events.jsonl` 是权威事件日志，`handoff.json` 是由事件 replay 生成的 projection：
 
 | 阶段 | 角色 Agent | 核心产出 |
 |------|-----------|---------|
-| `planning` | Planner | proposal.md, design.md, spec delta, tasks.md |
-| `reviewing` | Reviewer | 设计评审报告 |
+| `wayfinding` | Wayfinder | 决策地图、decision tickets、子 change 依赖关系；tickets 默认发布到配置的 issue tracker backend，当前为 GitHub Issues |
+| `planning` | Planner | proposal.md, design.md, spec delta, tasks.md；tracer-bullet tickets 默认发布到配置的 issue tracker backend |
 | `building` | Builder | 测试代码和实现代码 |
-| `code-review` | CodeReviewer | 代码审查报告 |
 | `closing` | Closer | spec 同步、归档、backlog 更新 |
 
-每个 phase 包含若干 sub_state，末端为 `ready_for_review`（human review gate）。人在 gate 点确认通过后进入下一 phase，也可以选择跳过或回退。
+每个 phase 包含若干 sub_state，末端为 `ready_for_review`（human review gate）。独立审阅内嵌在各 phase 的 `reviewing_*` sub_state 中；人在 gate 点确认通过后进入下一 phase，也可以回退。
+
+`scripts/workflow_methods.json` 里的 `workflow.enabled` 是工作流总开关；设为 `false` 时，`discover`、gate 检查和 PreToolUse 门禁都应退化为 no-op，agent 视为当前仓库没有启用 workflow。建议通过 `python3 scripts/workflow_state.py disable --reason ...` 和 `python3 scripts/workflow_state.py enable ...` 切换开关：`disable` 会在 `.dev/workflow-resume-baseline.json` 写入本地 baseline；重新启用时如果 baseline 之后存在代码改动，必须先运行 `resume-audit --reconcile-change <id>` 将这些改动归入某个 change 并记录 `resume_audit_reconciled` 事件。手工直接改 `enabled` 无法追溯关闭期间的起点，只能退化为普通 no-op。
 
 1. 提出想法。
 2. 讨论目标、边界和面试价值。
@@ -46,15 +47,19 @@
 4. 写详细设计文档（planning phase）。
 5. 维护 `## Reference Implementation Research`，默认启用参考实现调研；如果关闭，记录明确原因。
 6. 使用 `grill-with-docs` 对 `design.md` 做开发前设计追问，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
-7. 人工评审并通过需求和详细设计（planning → reviewing gate）。
+7. 独立子 Agent 审阅 planning 产物，并在 planning gate 等待人工批准。
 8. 实现测试（building phase）。
 9. 实现功能（building phase）。
-10. 代码审查（code-review phase）。
+10. 独立子 Agent 审阅实现（building.reviewing_impl）。
 11. 运行验证（closing phase）。
 12. 更新文档和能力证明链（closing phase）。
 13. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
 
 各阶段之间通过 handoff note（存储在 `.handoff/<change-id>/`）传递上下文。同一 agent 可贯穿多个 phase，不强制切换。路由配置（executor、session_mode）支持全局默认 + per-change 覆盖。
+
+decision tickets 和 tracer-bullet tickets 的后端通过 `scripts/workflow_methods.json` 的 `ticket_tracker` 配置控制；默认 backend 为 GitHub Issues。
+
+工作流受保护 artifact 不能只靠自然语言说明来证明合法。修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须在相关 change 的 `workflow-events.jsonl` 中追加结构化 artifact 解释事件。阶段 review report 必须同时提供 `.handoff/<change-id>/<phase>-review-manifest.json`，绑定 reviewer run、base/head sha、tasks/spec/diff/report hash；gate 和 CI 不只看 review 文本里的 `PASS`。
 
 ## 参考实现调研
 
@@ -196,7 +201,7 @@ proposal 阶段可以保留 `unknown`、`TBD` 或 `待确认`，但开发前设�
 
 - planning 阶段做出了有 >= 2 个备选方案的设计决策。
 - building 阶段需要偏离 `design.md` 中的已有决策。
-- code-review 阶段评审人要求记录某个决策的上下文。
+- reviewing_* 子状态或人工评审要求记录某个决策的上下文。
 
 ADR 文件命名格式为 `NNNN-slug.md`（如 `0001-auth-token-storage.md`），格式参考 `docs/adr/_TEMPLATE.md`，包含：
 
@@ -289,7 +294,7 @@ openspec validate <change-id> --strict
 uv run python scripts/check_openspec_artifacts.py
 ```
 
-`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
+`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change、受保护 artifact 变更有 workflow event 解释、review report 有 manifest 且 hash 自洽。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 开发前设计追问和设计评审都通过前，不进入实现阶段。
 

@@ -2,20 +2,26 @@
 
 Test strategy: each test creates a minimal handoff.json at the expected
 sub_state and verifies that the checker passes or fails correctly.
+
+Since paths are now config-driven via workflow_methods.json doc_artifact.paths,
+tests monkeypatch the _changes_root() and _handoff_dir() helper functions.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from scripts.check_phase_done import (
     check_building,
     check_closing,
-    check_code_review,
     check_planning,
+    check_wayfinding,
+    _check_review_report,
+    _check_handoff_at_gate,
 )
 
 
@@ -93,6 +99,42 @@ def _write_minimal_tasks(change_dir: Path, with_grill: bool = True) -> None:
     (change_dir / "tasks.md").write_text(content, encoding="utf-8")
 
 
+def _patch_paths(monkeypatch, changes_root: Path, handoff_dir: Path) -> None:
+    """Monkeypatch the config-driven path helpers to use temp dirs."""
+    import scripts.check_phase_done as mod
+
+    monkeypatch.setattr(mod, "_changes_root", lambda: changes_root)
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: handoff_dir)
+
+
+# ── check_wayfinding ────────────────────────────────────────────────────────
+
+
+def test_wayfinding_fails_when_handoff_missing(tmp_path):
+    errors = check_wayfinding("nonexistent-change")
+    assert any("不存在" in e for e in errors)
+
+
+def test_wayfinding_fails_when_not_ready_for_review(tmp_path):
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    _write_handoff(change_dir, "wayfinding", "working_tickets")
+    # Structural — phase/sub_state mismatch detected via handoff.json path
+    pass
+
+
+def test_wayfinding_fails_without_review_report(tmp_path, monkeypatch):
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    _write_handoff(change_dir, "wayfinding", "ready_for_review")
+
+    import scripts.check_phase_done as mod
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    # Also stub the protocol to avoid import errors in test isolation
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
+
+    errors = check_wayfinding("test-change")
+    assert any("审阅报告缺失" in e for e in errors)
+
+
 # ── check_planning ────────────────────────────────────────────────────────
 
 
@@ -113,15 +155,23 @@ def test_planning_fails_when_handoff_missing(tmp_path):
     assert any("不存在" in e for e in errors)
 
 
+def test_planning_fails_without_review_report(tmp_path, monkeypatch):
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    _write_handoff(change_dir, "planning", "ready_for_review")
+
+    import scripts.check_phase_done as mod
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
+
+    errors = check_planning("test-change")
+    assert any("审阅报告缺失" in e for e in errors)
+
+
 def test_planning_fails_when_not_ready_for_review(tmp_path):
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
     _write_handoff(change_dir, "planning", "writing_proposal")
-
-    # This test uses the real filesystem layout from CWD; it will
-    # detect that handoff.json sub_state != ready_for_review.
-    # When run from repo root with real openspec/changes, the path
-    # resolution differs. Mark as integration-sensitive.
-    pass  # validated via the structural path in CI
+    # Integration-sensitive: validated via the structural path in CI
+    pass
 
 
 # ── check_building ─────────────────────────────────────────────────────────
@@ -135,7 +185,6 @@ def test_building_fails_when_handoff_missing(tmp_path):
 def test_building_fails_when_not_ready_for_review(tmp_path):
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
     _write_handoff(change_dir, "building", "implementing")
-
     # Structural — phase/sub_state mismatch detected via handoff.json path
     pass
 
@@ -145,89 +194,212 @@ def test_building_detects_wrong_phase(tmp_path):
     _write_handoff(change_dir, "planning", "ready_for_review")
 
     errors = check_building("test-change", repo_root=tmp_path)
-    # When handoff exists at wrong phase, error should mention it
     has_phase_error = any("phase" in e.lower() for e in errors)
     has_handoff_missing = any("不存在" in e for e in errors)
     assert has_phase_error or has_handoff_missing
 
 
-# ── check_code_review ──────────────────────────────────────────────────────
-
-
-def test_code_review_fails_without_review_report(tmp_path):
+def test_building_fails_without_review_report(tmp_path, monkeypatch):
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    _write_handoff(change_dir, "code-review", "ready_for_review")
-
-    errors = check_code_review("test-change")
-    assert any("评审报告不存在" in e for e in errors)
-
-
-def test_code_review_detects_changes_requested(tmp_path, monkeypatch):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    _write_handoff(change_dir, "code-review", "ready_for_review")
-
-    handoff_dir = tmp_path / ".handoff" / "test-change"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    (handoff_dir / "review-report.md").write_text(
-        "## Review Report\n\nCHANGES_REQUESTED: 需要修改测试覆盖。\n",
-        encoding="utf-8",
-    )
+    _write_handoff(change_dir, "building", "ready_for_review")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
 
-    errors = check_code_review("test-change")
-    assert any("CHANGES_REQUESTED" in e for e in errors)
-
-
-def test_code_review_passes_with_clean_report(tmp_path, monkeypatch):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    _write_handoff(change_dir, "code-review", "ready_for_review")
-
-    handoff_dir = tmp_path / ".handoff" / "test-change"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    (handoff_dir / "review-report.md").write_text(
-        "## Review Report\n\nAPPROVED: 代码质量良好，测试覆盖充分。\n",
-        encoding="utf-8",
-    )
-
-    import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
-    monkeypatch.setattr(mod, "HANDOFF_DIR", tmp_path / ".handoff")
-
-    errors = check_code_review("test-change")
-    # Should pass review content check (no CHANGES_REQUESTED)
-    assert not any("CHANGES_REQUESTED" in e for e in errors)
+    errors = check_building("test-change", repo_root=tmp_path)
+    assert any("审阅报告缺失" in e for e in errors)
 
 
 # ── check_closing ──────────────────────────────────────────────────────────
 
 
 def test_closing_fails_when_not_archived(tmp_path, monkeypatch):
+    """Closing gate detects missing archive — uses real OpenSpec protocol."""
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
     _write_handoff(change_dir, "closing", "ready_for_review")
     (tmp_path / "openspec" / "changes" / "archive").mkdir(parents=True, exist_ok=True)
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
+    mod._PROTOCOL_INSTANCE = None  # clear cache
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+
+    # Use real OpenSpec protocol so archive checks run
+    from agent.workflow.doc_artifact_protocol_openspec import OpenSpecDocArtifactProtocol
+    protocol = OpenSpecDocArtifactProtocol(
+        paths={"change_dir_template": str(tmp_path / "openspec" / "changes" / "{change_id}")}
+    )
+    monkeypatch.setattr(mod, "_get_protocol", lambda: protocol)
 
     errors = check_closing("test-change")
     assert any("未归档" in e for e in errors)
 
 
 def test_closing_passes_when_archived(tmp_path, monkeypatch):
+    """Closing gate accepts archived changes."""
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-07-14-test-change"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    _write_handoff(archive_dir, "closing", "ready_for_review")
+    (tmp_path / "openspec" / "changes" / "test-change").mkdir(parents=True, exist_ok=True)
+
+    import scripts.check_phase_done as mod
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+
+    from agent.workflow.doc_artifact_protocol_openspec import OpenSpecDocArtifactProtocol
+    protocol = OpenSpecDocArtifactProtocol(
+        paths={"change_dir_template": str(tmp_path / "openspec" / "changes" / "{change_id}")}
+    )
+    monkeypatch.setattr(mod, "_get_protocol", lambda: protocol)
+
+    errors = check_closing("test-change")
+    assert not any("未归档" in e for e in errors)
+
+
+def test_closing_fails_without_review_report(tmp_path, monkeypatch):
     archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-07-14-test-change"
     archive_dir.mkdir(parents=True, exist_ok=True)
     _write_handoff(archive_dir, "closing", "ready_for_review")
 
     import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "CHANGES_ROOT", tmp_path / "openspec" / "changes")
+    _patch_paths(monkeypatch, tmp_path / "openspec" / "changes", tmp_path / ".handoff")
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
 
     errors = check_closing("test-change")
-    # May still fail on openspec validate or other checks in real env
-    # but should NOT fail on the "未归档" check
-    assert not any("未归档" in e for e in errors)
+    assert any("审阅报告缺失" in e for e in errors)
+
+
+# ── _check_review_report helper ─────────────────────────────────────────────
+
+
+def test_review_report_fails_when_missing(tmp_path, monkeypatch):
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+
+    errors = _check_review_report("test-change", "planning")
+    assert any("审阅报告缺失" in e for e in errors)
+
+
+def test_review_report_requires_manifest(tmp_path, monkeypatch):
+    handoff_dir = tmp_path / ".handoff" / "test-change"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    (handoff_dir / "planning-review.md").write_text(
+        "## Review Report\n\nPASS\n",
+        encoding="utf-8",
+    )
+
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+
+    errors = _check_review_report("test-change", "planning")
+
+    assert any("review manifest missing" in e for e in errors)
+
+
+def test_review_report_detects_changes_requested(tmp_path, monkeypatch):
+    handoff_dir = tmp_path / ".handoff" / "test-change"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    (handoff_dir / "planning-review.md").write_text(
+        "## Review Report\n\nCHANGES_REQUESTED: 需要补充验收标准。\n",
+        encoding="utf-8",
+    )
+
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+
+    errors = _check_review_report("test-change", "planning")
+    assert any("CHANGES_REQUESTED" in e for e in errors)
+
+
+def test_review_report_detects_blocked(tmp_path, monkeypatch):
+    handoff_dir = tmp_path / ".handoff" / "test-change"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    (handoff_dir / "planning-review.md").write_text(
+        "## Review Report\n\nBLOCKED: 设计存在根本性冲突。\n",
+        encoding="utf-8",
+    )
+
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+
+    errors = _check_review_report("test-change", "planning")
+    assert any("BLOCKED" in e for e in errors)
+
+
+def test_review_report_passes_on_clean(tmp_path, monkeypatch):
+    handoff_dir = tmp_path / ".handoff" / "test-change"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    report_path = handoff_dir / "planning-review.md"
+    report_path.write_text(
+        "## Review Report\n\nPASS: 所有 artifacts 自洽。\n",
+        encoding="utf-8",
+    )
+    from agent.workflow.review_manifest import artifact_hash, file_sha256
+    (handoff_dir / "planning-review-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "review-manifest/v1",
+                "change_id": "test-change",
+                "phase": "planning",
+                "verdict": "PASS",
+                "reviewer_run_id": "reviewer-1",
+                "base_sha": "base",
+                "head_sha": "head",
+                "tasks_hash": artifact_hash(tmp_path / "openspec" / "changes" / "test-change" / "tasks.md"),
+                "spec_hash": artifact_hash(tmp_path / "openspec" / "changes" / "test-change" / "specs"),
+                "diff_hash": "sha256:diff",
+                "report_hash": file_sha256(report_path),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+
+    errors = _check_review_report("test-change", "planning")
+    assert len(errors) == 0
+
+
+# ── _check_handoff_at_gate helper ───────────────────────────────────────────
+
+
+def test_handoff_gate_rejects_done_for_wayfinding():
+    errors = _check_handoff_at_gate("nonexistent-change", "wayfinding")
+    assert any("不存在" in e for e in errors)  # file doesn't exist
+
+
+def test_handoff_gate_accepts_done_for_closing(tmp_path, monkeypatch):
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    _write_handoff(change_dir, "done", "ready_for_review")
+
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_changes_root", lambda: tmp_path / "openspec" / "changes")
+
+    errors = _check_handoff_at_gate("test-change", "closing")
+    # "done" phase should be accepted for closing only
+    assert not any("期望 phase" in e for e in errors)
+
+
+def test_handoff_gate_rejects_wrong_sub_state(tmp_path, monkeypatch):
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    _write_handoff(change_dir, "planning", "writing_design")
+
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_changes_root", lambda: tmp_path / "openspec" / "changes")
+
+    errors = _check_handoff_at_gate("test-change", "planning")
+    assert any("ready_for_review" in e for e in errors)
+
+
+# ── phase validation ────────────────────────────────────────────────────────
+
+
+def test_all_valid_phases_accepted():
+    """CLI parser accepts all valid phase names (four-phase model)."""
+    from scripts.check_phase_done import VALID_PHASES
+
+    assert VALID_PHASES == {"wayfinding", "planning", "building", "closing"}
 
 
 # ── TODO/FIXME residual scanning ───────────────────────────────────────────
@@ -237,14 +409,9 @@ def test_todo_residual_scan_detects_unlisted_markers(tmp_path):
     """_find_todo_residuals finds TODO/TBD/FIXME/HACK in changed files."""
     from scripts.check_phase_done import _find_todo_residuals
 
-    # Create a changed file simulation by writing a file under tmp_path
-    # and making it appear as a changed Python file.
-    # Since _changed_python_files uses git diff, we test _find_todo_residuals
-    # directly with a known file path that exists.
     py_file = tmp_path / "test_module.py"
     py_file.write_text("# TODO: remove this later\nprint('hello')\n", encoding="utf-8")
 
-    # The file won't appear in git diff, so residuals should be empty
     residuals = _find_todo_residuals(tmp_path, "any-change")
     assert len(residuals) == 0  # file not in git diff
 
@@ -261,7 +428,6 @@ def test_todo_scan_skips_known_debt_entries(tmp_path):
     )
 
     known = _load_known_debt()
-    # _load_known_debt reads from cwd, not tmp_path, so this tests the format
     assert isinstance(known, set)
 
 
@@ -270,19 +436,58 @@ def test_todo_scan_skips_known_debt_entries(tmp_path):
 
 def test_json_output_mode(tmp_path, capsys):
     """--json flag produces valid JSON output."""
-    import sys
-
-    # This is a smoke test that the JSON path doesn't crash
-    # We test via direct function call rather than CLI invocation
     from scripts.check_phase_done import check_planning
 
-    # nonexistent change should produce errors in JSON mode
     errors = check_planning("nonexistent-change")
     assert len(errors) > 0
 
 
-def test_all_valid_phases_accepted():
-    """CLI parser accepts all valid phase names."""
-    from scripts.check_phase_done import VALID_PHASES
+def test_disabled_workflow_skips_phase_checks(monkeypatch):
+    import scripts.check_phase_done as mod
 
-    assert VALID_PHASES == {"planning", "building", "code-review", "closing"}
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
+
+    assert check_wayfinding("any-change") == []
+    assert check_planning("any-change") == []
+    assert check_building("any-change", Path.cwd()) == []
+    assert check_closing("any-change") == []
+
+
+def test_resume_audit_failure_blocks_phase_check(monkeypatch):
+    import scripts.check_phase_done as mod
+
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: True)
+    monkeypatch.setattr(
+        mod,
+        "run_resume_audit",
+        lambda *_: SimpleNamespace(errors=("resume required",)),
+    )
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
+
+    errors = check_wayfinding("missing-change")
+
+    assert "resume required" in errors
+
+
+# ── stub protocol for tests that need path isolation ────────────────────────
+
+from agent.workflow.doc_artifact_protocol import ArtifactCheckResult
+
+
+class _StubProtocol:
+    """No-op protocol that returns an empty result for test isolation."""
+    name = "Stub"
+    version = "0"
+
+    def check_phase_artifacts(self, phase, change_id, change_dir, repo_root):
+        return ArtifactCheckResult(phase=phase, change_id=change_id)
+
+    def validate_repo_state(self, repo_root):
+        return ArtifactCheckResult(phase="repo", change_id="*")
+
+
+_stub_protocol_instance = _StubProtocol()
+
+
+def _stub_protocol():
+    return _stub_protocol_instance

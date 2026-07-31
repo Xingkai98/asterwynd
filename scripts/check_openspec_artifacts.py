@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +81,17 @@ PLACEHOLDER_ONLY = {
     "待补充",
     "无",
 }
+PROTECTED_ARTIFACT_EVENT = "protected_artifact_explained"
+CURRENT_SPEC_SYNC_EVENT = "current_spec_synced"
+BACKLOG_UPDATED_EVENT = "backlog_updated"
+CHANGE_ARCHIVED_EVENT = "change_archived"
+PROTECTED_PATH_RULES = (
+    ("exact", "docs/known-debt.md", (PROTECTED_ARTIFACT_EVENT,)),
+    ("exact", "docs/known-issues.md", (PROTECTED_ARTIFACT_EVENT,)),
+    ("exact", "docs/openspec-change-backlog.md", (BACKLOG_UPDATED_EVENT,)),
+    ("prefix", "openspec/specs/", (CURRENT_SPEC_SYNC_EVENT,)),
+    ("prefix", "openspec/changes/archive/", (CHANGE_ARCHIVED_EVENT,)),
+)
 
 
 @dataclass(frozen=True)
@@ -415,8 +427,10 @@ def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[st
 
 HANDOFF_REQUIRED_FIELDS = ["schema_version", "change_id", "state", "transitions"]
 HANDOFF_STATE_FIELDS = ["phase", "sub_state"]
-VALID_PHASES = {"planning", "reviewing", "building", "code-review", "closing", "blocked", "done"}
-VALID_ROUTING_PHASES = {"planning", "reviewing", "building", "code-review", "closing"}
+# Four-phase workflow model: wayfinding → planning → building → closing
+# reviewing and code-review are now reviewing_* sub-states within each phase
+VALID_PHASES = {"wayfinding", "planning", "building", "closing", "blocked", "done"}
+VALID_ROUTING_PHASES = {"wayfinding", "planning", "building", "closing"}
 
 
 def _check_handoff_json(change_dir: Path) -> list[str]:
@@ -484,7 +498,149 @@ def _check_handoff_json(change_dir: Path) -> list[str]:
     if "blockers" in data and not isinstance(data["blockers"], list):
         errors.append(f"{change_name}: handoff.json blockers must be an array")
 
+    if (change_dir / "workflow-events.jsonl").exists():
+        from agent.workflow.event_log import verify_handoff_projection
+
+        errors.extend(verify_handoff_projection(change_dir))
+
     return errors
+
+
+def _repo_root_for_change_dir(change_dir: Path) -> Path:
+    if (
+        change_dir.parent.name == "changes"
+        and change_dir.parent.parent.name == "openspec"
+    ):
+        return change_dir.parent.parent.parent
+    return change_dir.parent
+
+
+def _check_review_manifests(change_dir: Path) -> list[str]:
+    repo_root = _repo_root_for_change_dir(change_dir)
+    review_dir = repo_root / ".handoff" / change_dir.name
+    if not review_dir.exists():
+        return []
+
+    from agent.workflow.review_manifest import verify_review_manifest
+
+    errors: list[str] = []
+    for report_path in sorted(review_dir.glob("*-review.md")):
+        phase = report_path.name.removesuffix("-review.md")
+        errors.extend(verify_review_manifest(repo_root, change_dir.name, phase))
+    return errors
+
+
+def check_protected_path_explanations(
+    repo_root: Path,
+    *,
+    changed_paths: set[str],
+) -> list[str]:
+    errors: list[str] = []
+    for path in sorted(changed_paths):
+        allowed_event_types = _allowed_event_types_for_protected_path(path)
+        if allowed_event_types is None:
+            continue
+        explanation_errors = _protected_artifact_explanation_errors(
+            repo_root,
+            path,
+            allowed_event_types=allowed_event_types,
+        )
+        if explanation_errors is None:
+            errors.append(
+                f"protected path `{path}` changed without workflow event explanation"
+            )
+        else:
+            errors.extend(explanation_errors)
+    return errors
+
+
+def _protected_artifact_explanation_errors(
+    repo_root: Path,
+    artifact_path: str,
+    *,
+    allowed_event_types: tuple[str, ...],
+) -> list[str] | None:
+    changes_root = repo_root / "openspec" / "changes"
+    if not changes_root.exists():
+        return None
+
+    matching_errors: list[str] = []
+    for event_log in changes_root.rglob("workflow-events.jsonl"):
+        try:
+            lines = event_log.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("event_type") not in allowed_event_types:
+                continue
+            if _event_covers_artifact_path(event, artifact_path):
+                event_errors = _validate_protected_artifact_event(
+                    event,
+                    artifact_path,
+                    expected_change_id=_change_id_for_event_log(event_log),
+                    allowed_event_types=allowed_event_types,
+                )
+                if not event_errors:
+                    return []
+                matching_errors.extend(event_errors)
+    return matching_errors or None
+
+
+def _validate_protected_artifact_event(
+    event: dict,
+    artifact_path: str,
+    *,
+    expected_change_id: str,
+    allowed_event_types: tuple[str, ...],
+) -> list[str]:
+    errors: list[str] = []
+    prefix = f"protected artifact event for `{artifact_path}`"
+    required_fields = ("reason", "approved_by")
+
+    if event.get("schema") != "workflow-event/v1":
+        errors.append(f"{prefix} has invalid schema: {event.get('schema')}")
+    if event.get("event_type") not in allowed_event_types:
+        errors.append(f"{prefix} has invalid event_type: {event.get('event_type')}")
+    if event.get("change_id") != expected_change_id:
+        errors.append(f"{prefix} change_id mismatch: {event.get('change_id')}")
+    for field in required_fields:
+        value = event.get(field)
+        if not isinstance(value, str) or _is_placeholder_body(value):
+            errors.append(f"{prefix} missing required field: {field}")
+    return errors
+
+
+def _allowed_event_types_for_protected_path(path: str) -> tuple[str, ...] | None:
+    for match_type, pattern, event_types in PROTECTED_PATH_RULES:
+        if match_type == "exact" and path == pattern:
+            return event_types
+        if match_type == "prefix" and path.startswith(pattern):
+            return event_types
+    return None
+
+
+def _event_covers_artifact_path(event: dict, changed_path: str) -> bool:
+    artifact_path = event.get("artifact_path")
+    if not isinstance(artifact_path, str):
+        return False
+    return changed_path == artifact_path or changed_path.startswith(
+        artifact_path.rstrip("/") + "/"
+    )
+
+
+def _change_id_for_event_log(event_log: Path) -> str:
+    change_dir = event_log.parent
+    if change_dir.parent.name == "archive":
+        match = re.match(r"\d{4}-\d{2}-\d{2}-(.+)", change_dir.name)
+        if match:
+            return match.group(1)
+    return change_dir.name
 
 
 def check_change(change_dir: Path, current_specs_root: Path | None = None) -> list[str]:
@@ -535,6 +691,11 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
     errors.extend(
         f"{change_dir.name}: {error}"
         for error in _check_handoff_json(change_dir)
+    )
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_review_manifests(change_dir)
     )
 
     errors.extend(
@@ -629,16 +790,40 @@ def check_backlog_consistency(changes_root: Path, backlog_path: Path) -> list[st
     return errors
 
 
+def _repo_root_for_changes_root(changes_root: Path) -> Path:
+    if changes_root.name == "changes" and changes_root.parent.name == "openspec":
+        return changes_root.parent.parent
+    return Path.cwd()
+
+
+def _changed_paths_since_base(repo_root: Path, base_ref: str) -> set[str]:
+    result = subprocess.run(
+        ["git", "diff", "--name-only", base_ref, "--"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--changes-root", default="openspec/changes")
     parser.add_argument("--current-specs-root", default="openspec/specs")
     parser.add_argument("--change", help="Check a single active change")
     parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
+    parser.add_argument("--base-ref", default="master")
     parser.add_argument(
         "--skip-backlog",
         action="store_true",
         help="Skip backlog/archive consistency checks",
+    )
+    parser.add_argument(
+        "--skip-protected-paths",
+        action="store_true",
+        help="Skip git diff checks for workflow-protected project artifacts",
     )
     args = parser.parse_args(argv)
 
@@ -656,6 +841,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
+
+    if not args.skip_protected_paths:
+        repo_root = _repo_root_for_changes_root(changes_root)
+        changed_paths = _changed_paths_since_base(repo_root, args.base_ref)
+        errors.extend(
+            check_protected_path_explanations(repo_root, changed_paths=changed_paths)
+        )
 
     if errors:
         for error in errors:

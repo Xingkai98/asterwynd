@@ -5,8 +5,8 @@ from typing import Literal
 
 # --- Enums ---
 
-Phase = Literal["planning", "reviewing", "building", "code-review", "closing", "blocked", "done"]
-PHASES: tuple[Phase, ...] = ("planning", "reviewing", "building", "code-review", "closing", "blocked", "done")
+Phase = Literal["wayfinding", "planning", "building", "closing", "blocked", "done"]
+PHASES: tuple[Phase, ...] = ("wayfinding", "planning", "building", "closing", "blocked", "done")
 
 SubState = str
 
@@ -23,63 +23,83 @@ SESSION_MODES: tuple[SessionMode, ...] = ("same", "new", "ask")
 
 Decision = Literal["approved", "skip", "rollback"]
 
-RoleAgentType = Literal["planner", "reviewer", "builder", "code-reviewer", "closer"]
-ROLE_AGENT_TYPES: tuple[RoleAgentType, ...] = ("planner", "reviewer", "builder", "code-reviewer", "closer")
+RoleAgentType = Literal["wayfinder", "planner", "builder", "closer"]
+ROLE_AGENT_TYPES: tuple[RoleAgentType, ...] = ("wayfinder", "planner", "builder", "closer")
 
 PHASE_ORDER: dict[Phase, int] = {
-    "planning": 0,
-    "reviewing": 1,
+    "wayfinding": 0,
+    "planning": 1,
     "building": 2,
-    "code-review": 3,
-    "closing": 4,
+    "closing": 3,
     "blocked": -1,
-    "done": 5,
+    "done": 4,
 }
 
 PHASE_TO_ROLE: dict[Phase, RoleAgentType] = {
+    "wayfinding": "wayfinder",
     "planning": "planner",
-    "reviewing": "reviewer",
     "building": "builder",
-    "code-review": "code-reviewer",
     "closing": "closer",
 }
 
 # --- Sub-state sequences per phase ---
 
-PLANNING_SUB_STATES: tuple[SubState, ...] = (
-    "exploring", "writing_proposal", "writing_design", "grilling_design",
-    "writing_specs", "writing_tasks", "ready_for_review",
+WAYFINDING_SUB_STATES: tuple[SubState, ...] = (
+    "charting_map",
+    "working_tickets",
+    "map_cleared",
+    "reviewing_map",
+    "ready_for_review",
 )
 
-REVIEWING_SUB_STATES: tuple[SubState, ...] = (
-    "reading_docs", "reviewing_design", "ready_for_review",
+PLANNING_SUB_STATES: tuple[SubState, ...] = (
+    "exploring",
+    "writing_proposal",
+    "writing_design",
+    "writing_spec",
+    "writing_tickets",
+    "reviewing_artifacts",
+    "ready_for_review",
 )
 
 BUILDING_SUB_STATES: tuple[SubState, ...] = (
-    "writing_tests", "test_failing", "implementing",
-    "all_tests_passing", "smoke_validating", "ready_for_review",
-)
-
-CODE_REVIEW_SUB_STATES: tuple[SubState, ...] = (
-    "reading_diff", "analyzing_tests", "reviewing_code",
-    "requesting_changes", "ready_for_review",
+    "writing_tests",
+    "test_failing",
+    "implementing",
+    "all_tests_passing",
+    "smoke_validating",
+    "reviewing_impl",
+    "ready_for_review",
 )
 
 CLOSING_SUB_STATES: tuple[SubState, ...] = (
-    "syncing_specs", "archiving", "updating_backlog", "validating",
-    "pr_ready", "ready_for_review",
+    "syncing_specs",
+    "archiving",
+    "updating_backlog",
+    "validating",
+    "pr_ready",
+    "reviewing_archive",
+    "ready_for_review",
 )
 
 PHASE_SUB_STATES: dict[Phase, tuple[SubState, ...]] = {
+    "wayfinding": WAYFINDING_SUB_STATES,
     "planning": PLANNING_SUB_STATES,
-    "reviewing": REVIEWING_SUB_STATES,
     "building": BUILDING_SUB_STATES,
-    "code-review": CODE_REVIEW_SUB_STATES,
     "closing": CLOSING_SUB_STATES,
 }
 
 GATE_SUB_STATE = "ready_for_review"
 
+WORKTREE_REQUIRED_PHASES: set[Phase] = {"building"}
+
+# --- Review sub-state names per phase ---
+REVIEW_SUB_STATES: dict[Phase, SubState] = {
+    "wayfinding": "reviewing_map",
+    "planning": "reviewing_artifacts",
+    "building": "reviewing_impl",
+    "closing": "reviewing_archive",
+}
 
 # --- Dataclasses ---
 
@@ -192,9 +212,8 @@ class NextHints:
 
 
 DEFAULT_ROUTING: dict[Phase, PhaseRouting] = {
+    "wayfinding": PhaseRouting(executor="inline", session_mode="same"),
     "planning": PhaseRouting(executor="inline", session_mode="same"),
-    "reviewing": PhaseRouting(executor="subagent", session_mode="new"),
     "building": PhaseRouting(executor="inline", session_mode="same"),
-    "code-review": PhaseRouting(executor="subagent", session_mode="new"),
     "closing": PhaseRouting(executor="inline", session_mode="same"),
 }

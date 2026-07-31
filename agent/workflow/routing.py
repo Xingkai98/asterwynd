@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ import yaml
 from agent.workflow.models import (
     DEFAULT_ROUTING,
     EXECUTORS,
+    PHASES,
     SESSION_MODES,
     Executor,
     Phase,
@@ -16,10 +18,55 @@ from agent.workflow.models import (
     SessionMode,
 )
 
+_ACTIVE_PHASES = tuple(p for p in PHASES if p not in ("blocked", "done"))
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = "openspec/config.yaml"
+FALLBACK_CONFIG_PATH = "openspec/config.yaml"
 ROUTING_CONFIG_KEY = ("openspec", "routing")
+WORKFLOW_METHODS_PATH = "scripts/workflow_methods.json"
+
+
+def _get_workflow_methods_path(repo_root: str | Path = ".") -> Path:
+    return Path(repo_root) / WORKFLOW_METHODS_PATH
+
+
+def load_workflow_methods(repo_root: str | Path = ".") -> dict[str, Any]:
+    """Load workflow_methods.json from the repository root."""
+    methods_path = _get_workflow_methods_path(repo_root)
+    try:
+        if methods_path.exists():
+            loaded = json.loads(methods_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                return loaded
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def is_workflow_enabled(repo_root: str | Path = ".") -> bool:
+    """Return whether the workflow automation is enabled."""
+    methods = load_workflow_methods(repo_root)
+    workflow = methods.get("workflow", {})
+    if not isinstance(workflow, dict):
+        return True
+    return workflow.get("enabled", True) is not False
+
+
+def _get_openspec_config_path(repo_root: str | Path = ".") -> str:
+    """Read the OpenSpec config path from workflow_methods.json doc_artifact config.
+
+    Falls back to the hardcoded FALLBACK_CONFIG_PATH if not available.
+    """
+    try:
+        methods = load_workflow_methods(repo_root)
+        doc_artifact = methods.get("doc_artifact", {})
+        configured = doc_artifact.get("openspec_config_path")
+        if configured:
+            return configured
+    except (json.JSONDecodeError, OSError):
+        pass
+    return FALLBACK_CONFIG_PATH
 
 
 class RoutingConfigError(ValueError):
@@ -31,11 +78,14 @@ def load_global_defaults(
 ) -> dict[Phase, PhaseRouting]:
     """Load global routing defaults from openspec/config.yaml.
 
-    If the config file or routing section is missing, falls back to DEFAULT_ROUTING.
+    The config path is read from workflow_methods.json doc_artifact.openspec_config_path
+    (default: openspec/config.yaml). If the config file or routing section is missing,
+    falls back to DEFAULT_ROUTING.
     """
-    config_path = Path(repo_root) / DEFAULT_CONFIG_PATH
+    config_rel = _get_openspec_config_path(repo_root)
+    config_path = Path(repo_root) / config_rel
     if not config_path.exists():
-        logger.debug("no openspec/config.yaml found, using hardcoded defaults")
+        logger.debug("no %s found, using hardcoded defaults", config_rel)
         return dict(DEFAULT_ROUTING)
 
     try:
@@ -57,7 +107,7 @@ def load_global_defaults(
 
 def _parse_routing_dict(raw: dict[str, Any]) -> dict[Phase, PhaseRouting]:
     result: dict[Phase, PhaseRouting] = {}
-    for phase_key in ("planning", "reviewing", "building", "code-review", "closing"):
+    for phase_key in _ACTIVE_PHASES:
         entry = raw.get(phase_key)
         if entry is None:
             result[phase_key] = DEFAULT_ROUTING[phase_key]
@@ -160,10 +210,9 @@ def build_routing_config_prompt(
         routing = load_global_defaults(repo_root)
 
     phase_descriptions = {
+        "wayfinding": "前置探路与决策",
         "planning": "方案设计与任务拆解",
-        "reviewing": "设计独立评审",
         "building": "代码实现",
-        "code-review": "代码审查",
         "closing": "收尾归档",
     }
 
@@ -181,7 +230,7 @@ def build_routing_config_prompt(
     }
 
     table_lines = []
-    for phase in ("planning", "reviewing", "building", "code-review", "closing"):
+    for phase in _ACTIVE_PHASES:
         r = routing.get(phase)
         if r is None:
             r = DEFAULT_ROUTING.get(phase, PhaseRouting(executor="inline", session_mode="same"))
