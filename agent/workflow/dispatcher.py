@@ -15,7 +15,7 @@ from agent.workflow.models import (
     StateSnapshot,
 )
 from agent.workflow.role_registry import build_subagent_task, get_role_config
-from agent.workflow.routing import get_routing_for_phase
+from agent.workflow.routing import get_routing_for_phase, is_workflow_enabled
 
 if TYPE_CHECKING:
     from agent.subagent.manager import SubAgentManager
@@ -102,6 +102,8 @@ class WorkflowDispatcher:
 
     def dispatch_current_phase(self) -> DispatchResult:
         """Read current state and dispatch based on routing config."""
+        if not is_workflow_enabled(self._workflow._repo_root):
+            raise ValueError("workflow disabled by config")
         self._workflow.ensure_loaded()
         state = self._workflow.current_state
         phase = state.phase
@@ -129,6 +131,8 @@ class WorkflowDispatcher:
         reason: str | None = None,
     ) -> DispatchResult:
         """Human approves at gate, transitions to next phase, and dispatches it."""
+        if not is_workflow_enabled(self._workflow._repo_root):
+            raise ValueError("workflow disabled by config")
         snap = self._workflow.human_approve(actor_id, reason)
         new_phase = snap["state"]["phase"]
         if new_phase in ("blocked", "done"):
@@ -141,6 +145,8 @@ class WorkflowDispatcher:
         skip_reason: str,
     ) -> DispatchResult:
         """Human skips next phase at gate, transitions, and dispatches."""
+        if not is_workflow_enabled(self._workflow._repo_root):
+            raise ValueError("workflow disabled by config")
         snap = self._workflow.human_skip(actor_id, skip_reason)
         new_phase = snap["state"]["phase"]
         if new_phase in ("blocked", "done"):
@@ -176,6 +182,8 @@ class WorkflowDispatcher:
 
     def dispatch_phase(self, phase: Phase) -> DispatchResult:
         """Dispatch a specific phase (for future phases, e.g., at gate)."""
+        if not is_workflow_enabled(self._workflow._repo_root):
+            raise ValueError("workflow disabled by config")
         self._workflow.ensure_loaded()
         routing = self._workflow.routing_for_phase(phase)
 

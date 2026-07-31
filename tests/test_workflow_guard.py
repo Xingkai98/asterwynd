@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import io
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from agent.workflow.manager import WorkflowManager
 
@@ -66,3 +69,26 @@ def test_guard_allows_workflow_state_cli_commands(tmp_path):
     )
 
     assert result.returncode == 0
+
+
+def test_guard_noops_when_workflow_disabled(tmp_path, monkeypatch):
+    import scripts.workflow_guard as mod
+
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": str(tmp_path / "docs" / "known-debt.md")},
+                }
+            )
+        ),
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        mod.main()
+
+    assert excinfo.value.code == 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 
 from agent.workflow.manager import WorkflowManager
@@ -260,3 +261,33 @@ def test_ticket_tracker_defaults_to_github_issues():
 def test_ticket_related_hints_include_backend_label():
     assert "GitHub Issues" in _method_hint("wayfinding", "working_tickets")
     assert "GitHub Issues" in _method_hint("planning", "writing_tickets")
+
+
+def test_discover_treats_disabled_workflow_as_empty(capsys, monkeypatch):
+    import scripts.workflow_state as mod
+
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
+    monkeypatch.setattr(
+        mod,
+        "_all_change_ids",
+        lambda: (_ for _ in ()).throw(AssertionError("discover should short-circuit")),
+    )
+
+    result = mod.cmd_discover(Namespace(format="json"))
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert '"workflow_enabled": false' in output
+    assert '"active_count": 0' in output
+
+
+def test_advance_rejects_when_workflow_disabled(tmp_path, capsys, monkeypatch):
+    import scripts.workflow_state as mod
+
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
+
+    result = mod.cmd_advance(Namespace(change="test-change", to="writing_proposal", to_phase=None))
+    output = capsys.readouterr()
+
+    assert result == 1
+    assert "workflow 已在 workflow_methods.json 中禁用" in output.err

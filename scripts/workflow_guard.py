@@ -24,6 +24,8 @@ import re
 import sys
 from pathlib import Path
 
+from agent.workflow.routing import is_workflow_enabled
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 METHODS_FILE = REPO_ROOT / "scripts" / "workflow_methods.json"
@@ -277,10 +279,6 @@ def main():
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})
 
-    # ── track Agent calls for reviewing_* sub-states ──
-    if _AGENT_TRACKING:
-        _track_agent_call(hook_input)
-
     # ── determine if this tool call is a "write operation" ──
     is_write = False
     if tool_name in ("Write", "Edit"):
@@ -291,6 +289,13 @@ def main():
 
     if not is_write:
         sys.exit(0)
+
+    if not is_workflow_enabled(REPO_ROOT):
+        sys.exit(0)
+
+    # ── track Agent calls for reviewing_* sub-states ──
+    if _AGENT_TRACKING:
+        _track_agent_call(hook_input)
 
     # ── management files always bypass ──
     file_path = tool_input.get("file_path", "")

@@ -125,6 +125,19 @@ class TestWorkflowDispatcher:
             with pytest.raises(ValueError, match="cannot dispatch from terminal phase"):
                 dispatcher.dispatch_current_phase()
 
+    def test_dispatch_rejects_when_workflow_disabled(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = WorkflowManager(tmp)
+            mgr.init("test-change")
+
+            import agent.workflow.dispatcher as mod
+
+            monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
+
+            dispatcher = WorkflowDispatcher(tmp, subagent_manager=FakeSubAgentManager())
+            with pytest.raises(ValueError, match="workflow disabled by config"):
+                dispatcher.dispatch_current_phase()
+
     def test_dispatch_result_to_dict(self):
         result = DispatchResult(
             executor="inline",

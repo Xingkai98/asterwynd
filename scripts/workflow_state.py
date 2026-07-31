@@ -43,6 +43,7 @@ from agent.workflow.event_log import (  # noqa: E402
     write_init_event,
 )
 from agent.workflow.review_manifest import write_review_manifest  # noqa: E402
+from agent.workflow.routing import is_workflow_enabled  # noqa: E402
 from agent.workflow.state_machine import StateMachineError, init_handoff_json  # noqa: E402
 
 METHODS_PATH = _SCRIPT_DIR / "workflow_methods.json"
@@ -270,13 +271,21 @@ def _resolve_review_base_sha(repo_root: Path) -> str | None:
 # ── Commands ──
 
 def cmd_discover(args: argparse.Namespace) -> int:
+    if not is_workflow_enabled(_PROJECT_ROOT):
+        if args.format == "json":
+            return _cmd_discover_json([], workflow_enabled=False)
+        print("工作流已禁用。无活跃 change。")
+        return 0
     changes = _all_change_ids()
     if args.format == "json":
-        return _cmd_discover_json(changes)
-    return _cmd_discover_text(changes)
+        return _cmd_discover_json(changes, workflow_enabled=True)
+    return _cmd_discover_text(changes, workflow_enabled=True)
 
 
-def _cmd_discover_text(changes: list[str]) -> int:
+def _cmd_discover_text(changes: list[str], workflow_enabled: bool = True) -> int:
+    if not workflow_enabled:
+        print("工作流已禁用。无活跃 change。")
+        return 0
     if not changes:
         print("无活跃 change。")
         return 0
@@ -295,17 +304,26 @@ def _cmd_discover_text(changes: list[str]) -> int:
     return 0
 
 
-def _cmd_discover_json(changes: list[str]) -> int:
+def _cmd_discover_json(changes: list[str], workflow_enabled: bool = True) -> int:
     result: dict = {
+        "workflow_enabled": workflow_enabled,
         "active_count": len(changes),
         "active_changes": [],
         "instruction": (
-            "如果有 change 处于 ready_for_review (GATE)，必须停止执行并等待人工审批。"
-            "非 GATE 状态下: building phase 必须先创建 worktree。"
-            "每个 sub_state 完成后自动 advance 到下一步，直到到达 GATE。"
-            "reviewing_* 子状态: spawn 独立子 Agent（零记忆）审阅本阶段产出，三轮封顶。"
+            "工作流已禁用，忽略现有 handoff 状态。"
+            if not workflow_enabled
+            else (
+                "如果有 change 处于 ready_for_review (GATE)，必须停止执行并等待人工审批。"
+                "非 GATE 状态下: building phase 必须先创建 worktree。"
+                "每个 sub_state 完成后自动 advance 到下一步，直到到达 GATE。"
+                "reviewing_* 子状态: spawn 独立子 Agent（零记忆）审阅本阶段产出，三轮封顶。"
+            )
         ),
     }
+
+    if not workflow_enabled:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
 
     for cid in changes:
         data = _load_handoff(cid)
@@ -378,6 +396,9 @@ def cmd_current(args: argparse.Namespace) -> int:
 
 
 def cmd_advance(args: argparse.Namespace) -> int:
+    if not is_workflow_enabled(_PROJECT_ROOT):
+        print("错误：workflow 已在 workflow_methods.json 中禁用，advance 不可用", file=sys.stderr)
+        return 1
     change_dir = CHANGES_ROOT / args.change
     if not (change_dir / "handoff.json").exists():
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
@@ -412,6 +433,9 @@ def cmd_advance(args: argparse.Namespace) -> int:
 
 
 def cmd_approve(args: argparse.Namespace) -> int:
+    if not is_workflow_enabled(_PROJECT_ROOT):
+        print("错误：workflow 已在 workflow_methods.json 中禁用，approve 不可用", file=sys.stderr)
+        return 1
     change_dir = CHANGES_ROOT / args.change
     if not (change_dir / "handoff.json").exists():
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
@@ -476,6 +500,9 @@ def cmd_approve(args: argparse.Namespace) -> int:
 
 
 def cmd_spawn(args: argparse.Namespace) -> int:
+    if not is_workflow_enabled(_PROJECT_ROOT):
+        print("错误：workflow 已在 workflow_methods.json 中禁用，spawn 不可用", file=sys.stderr)
+        return 1
     parent_data = _load_handoff(args.from_change)
     if parent_data is None:
         print(f"错误: 父 change '{args.from_change}' 没有 handoff.json", file=sys.stderr)
@@ -529,6 +556,12 @@ def cmd_spawn(args: argparse.Namespace) -> int:
 
 
 def cmd_artifact_event(args: argparse.Namespace) -> int:
+    if not is_workflow_enabled(_PROJECT_ROOT):
+        print(
+            "错误：workflow 已在 workflow_methods.json 中禁用，artifact-event 不可用",
+            file=sys.stderr,
+        )
+        return 1
     change_dir = CHANGES_ROOT / args.change
     if not (change_dir / "handoff.json").exists():
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
@@ -552,6 +585,12 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
 
 
 def cmd_review_manifest(args: argparse.Namespace) -> int:
+    if not is_workflow_enabled(_PROJECT_ROOT):
+        print(
+            "错误：workflow 已在 workflow_methods.json 中禁用，review-manifest 不可用",
+            file=sys.stderr,
+        )
+        return 1
     change_dir = CHANGES_ROOT / args.change
     if not (change_dir / "handoff.json").exists():
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)

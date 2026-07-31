@@ -27,6 +27,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from agent.workflow.routing import is_workflow_enabled  # noqa: E402
+
 VALID_PHASES = {"wayfinding", "planning", "building", "closing"}
 
 
@@ -52,6 +54,10 @@ def _get_doc_artifact_config() -> dict:
 
 def _get_doc_artifact_paths() -> dict[str, str]:
     return _get_doc_artifact_config().get("paths", {})
+
+
+def _workflow_disabled() -> bool:
+    return not is_workflow_enabled(_REPO_ROOT)
 
 
 _PROTOCOL_INSTANCE = None
@@ -323,6 +329,8 @@ def _check_handoff_at_gate(change_id: str, phase: str) -> list[str]:
 
 
 def check_wayfinding(change_id: str) -> list[str]:
+    if _workflow_disabled():
+        return []
     errors: list[str] = []
     change_dir = _changes_root() / change_id
 
@@ -353,6 +361,8 @@ def check_wayfinding(change_id: str) -> list[str]:
 
 
 def check_planning(change_id: str) -> list[str]:
+    if _workflow_disabled():
+        return []
     errors: list[str] = []
     change_dir = _changes_root() / change_id
 
@@ -387,6 +397,8 @@ def check_planning(change_id: str) -> list[str]:
 
 
 def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
+    if _workflow_disabled():
+        return []
     errors: list[str] = []
     root = repo_root or Path.cwd()
     known_issues = _load_known_issues()
@@ -475,6 +487,8 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
 
 
 def check_closing(change_id: str) -> list[str]:
+    if _workflow_disabled():
+        return []
     errors: list[str] = []
 
     # ── functional check: openspec validate CLI ──

@@ -441,6 +441,17 @@ def test_json_output_mode(tmp_path, capsys):
     assert len(errors) > 0
 
 
+def test_disabled_workflow_skips_phase_checks(monkeypatch):
+    import scripts.check_phase_done as mod
+
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
+
+    assert check_wayfinding("any-change") == []
+    assert check_planning("any-change") == []
+    assert check_building("any-change", Path.cwd()) == []
+    assert check_closing("any-change") == []
+
+
 # ── stub protocol for tests that need path isolation ────────────────────────
 
 from agent.workflow.doc_artifact_protocol import ArtifactCheckResult

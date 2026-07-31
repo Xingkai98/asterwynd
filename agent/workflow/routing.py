@@ -24,6 +24,33 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_CONFIG_PATH = "openspec/config.yaml"
 ROUTING_CONFIG_KEY = ("openspec", "routing")
+WORKFLOW_METHODS_PATH = "scripts/workflow_methods.json"
+
+
+def _get_workflow_methods_path(repo_root: str | Path = ".") -> Path:
+    return Path(repo_root) / WORKFLOW_METHODS_PATH
+
+
+def load_workflow_methods(repo_root: str | Path = ".") -> dict[str, Any]:
+    """Load workflow_methods.json from the repository root."""
+    methods_path = _get_workflow_methods_path(repo_root)
+    try:
+        if methods_path.exists():
+            loaded = json.loads(methods_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                return loaded
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def is_workflow_enabled(repo_root: str | Path = ".") -> bool:
+    """Return whether the workflow automation is enabled."""
+    methods = load_workflow_methods(repo_root)
+    workflow = methods.get("workflow", {})
+    if not isinstance(workflow, dict):
+        return True
+    return workflow.get("enabled", True) is not False
 
 
 def _get_openspec_config_path(repo_root: str | Path = ".") -> str:
@@ -31,14 +58,12 @@ def _get_openspec_config_path(repo_root: str | Path = ".") -> str:
 
     Falls back to the hardcoded FALLBACK_CONFIG_PATH if not available.
     """
-    methods_path = Path(repo_root) / "scripts" / "workflow_methods.json"
     try:
-        if methods_path.exists():
-            methods = json.loads(methods_path.read_text(encoding="utf-8"))
-            doc_artifact = methods.get("doc_artifact", {})
-            configured = doc_artifact.get("openspec_config_path")
-            if configured:
-                return configured
+        methods = load_workflow_methods(repo_root)
+        doc_artifact = methods.get("doc_artifact", {})
+        configured = doc_artifact.get("openspec_config_path")
+        if configured:
+            return configured
     except (json.JSONDecodeError, OSError):
         pass
     return FALLBACK_CONFIG_PATH

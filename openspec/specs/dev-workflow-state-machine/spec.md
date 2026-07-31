@@ -97,6 +97,24 @@
 - **AND** checker SHALL 验证 `report_hash`、`tasks_hash`、`spec_hash`
 - **AND** 当 repo root 是 git repo 时，checker SHALL 验证 `head_sha` 匹配当前 `HEAD`，`base_sha` / `head_sha` 均为 commit，且 `diff_hash` 匹配 `git diff --binary <base_sha> <head_sha>` 的 sha256
 
+### Requirement: Workflow 总开关
+
+`scripts/workflow_methods.json` SHALL 提供 `workflow.enabled` 布尔开关，默认值为 `true`。当其为 `false` 时，workflow automation SHALL 视为未启用：`discover` 不 SHALL 暴露活跃 change，PreToolUse 门禁不 SHALL 阻止写操作，`check_phase_done.py` 不 SHALL 因 phase gate 阻塞，`WorkflowDispatcher` 不 SHALL 继续分发 workflow phase。
+
+#### Scenario: workflow 未启用时不暴露活跃 change
+
+- **GIVEN** `workflow.enabled = false`
+- **WHEN** agent 运行 `python3 scripts/workflow_state.py discover`
+- **THEN** 系统 SHALL 报告没有活跃 change
+- **AND** existing handoff state SHALL 不影响 discover 结果
+
+#### Scenario: workflow 未启用时 gate 和门禁退化
+
+- **GIVEN** `workflow.enabled = false`
+- **WHEN** PreToolUse 门禁或 `check_phase_done.py` 运行
+- **THEN** 系统 SHALL 不阻止写操作
+- **AND** 系统 SHALL 视 workflow gate 为 no-op
+
 ### Requirement: 四阶段生命周期
 
 开发流程 SHALL 建模为四个活跃 phase：`wayfinding`、`planning`、`building`、`closing`。独立设计审查和代码审查 SHALL 内嵌为各 phase 的 `reviewing_*` sub_state。每个活跃 phase SHALL 包含若干 sub_state，最后一个 sub_state SHALL 为 `ready_for_review`，作为 human review gate。
