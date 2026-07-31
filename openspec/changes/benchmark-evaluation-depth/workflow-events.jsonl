@@ -1,0 +1,1 @@
+{"schema":"workflow-event/v1","seq":1,"event_type":"backlog_updated","change_id":"benchmark-evaluation-depth","artifact_path":"docs/openspec-change-backlog.md","reason":"立项 benchmark-evaluation-depth，在未实现队列登记该 P0 评测体系 change，并同步建议顺序与主要交付。","approved_by":"human"}
