@@ -4,6 +4,9 @@
 Usage:
     uv run python scripts/workflow_state.py discover
     uv run python scripts/workflow_state.py discover --format json
+    uv run python scripts/workflow_state.py disable --reason <reason>
+    uv run python scripts/workflow_state.py enable --reconcile-change <id>
+    uv run python scripts/workflow_state.py resume-audit
     uv run python scripts/workflow_state.py current --change <id>
     uv run python scripts/workflow_state.py advance --change <id> --to <sub_state>
     uv run python scripts/workflow_state.py approve --change <id> --phase <phase>
@@ -44,6 +47,11 @@ from agent.workflow.event_log import (  # noqa: E402
 )
 from agent.workflow.review_manifest import write_review_manifest  # noqa: E402
 from agent.workflow.routing import is_workflow_enabled  # noqa: E402
+from agent.workflow.resume_audit import (  # noqa: E402
+    record_resume_reconciliation,
+    run_resume_audit,
+    write_resume_baseline,
+)
 from agent.workflow.state_machine import StateMachineError, init_handoff_json  # noqa: E402
 
 METHODS_PATH = _SCRIPT_DIR / "workflow_methods.json"
@@ -100,6 +108,24 @@ def _load_methods() -> dict:
             pass
     _methods_cache = {}
     return _methods_cache
+
+
+def _write_methods(methods: dict) -> None:
+    global _methods_cache
+    with METHODS_PATH.open("w", encoding="utf-8") as f:
+        json.dump(methods, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    _methods_cache = methods
+
+
+def _set_workflow_enabled(enabled: bool) -> None:
+    methods = dict(_load_methods())
+    workflow = methods.get("workflow", {})
+    if not isinstance(workflow, dict):
+        workflow = {}
+    workflow["enabled"] = enabled
+    methods["workflow"] = workflow
+    _write_methods(methods)
 
 
 def _ticket_tracker_label() -> str:
@@ -277,15 +303,29 @@ def cmd_discover(args: argparse.Namespace) -> int:
         print("工作流已禁用。无活跃 change。")
         return 0
     changes = _all_change_ids()
+    resume_audit = run_resume_audit(_PROJECT_ROOT)
     if args.format == "json":
-        return _cmd_discover_json(changes, workflow_enabled=True)
-    return _cmd_discover_text(changes, workflow_enabled=True)
+        return _cmd_discover_json(changes, workflow_enabled=True, resume_audit=resume_audit)
+    return _cmd_discover_text(changes, workflow_enabled=True, resume_audit=resume_audit)
 
 
-def _cmd_discover_text(changes: list[str], workflow_enabled: bool = True) -> int:
+def _cmd_discover_text(
+    changes: list[str],
+    workflow_enabled: bool = True,
+    resume_audit=None,
+) -> int:
     if not workflow_enabled:
         print("工作流已禁用。无活跃 change。")
         return 0
+    if resume_audit is not None and resume_audit.baseline_present:
+        if resume_audit.needs_reconciliation:
+            print("⚠️ workflow resume audit 需要人工恢复确认：")
+            for error in resume_audit.errors:
+                print(f"- {error}")
+        elif resume_audit.warnings:
+            print("workflow resume audit 有警告：")
+            for warning in resume_audit.warnings:
+                print(f"- {warning}")
     if not changes:
         print("无活跃 change。")
         return 0
@@ -304,11 +344,16 @@ def _cmd_discover_text(changes: list[str], workflow_enabled: bool = True) -> int
     return 0
 
 
-def _cmd_discover_json(changes: list[str], workflow_enabled: bool = True) -> int:
+def _cmd_discover_json(
+    changes: list[str],
+    workflow_enabled: bool = True,
+    resume_audit=None,
+) -> int:
     result: dict = {
         "workflow_enabled": workflow_enabled,
         "active_count": len(changes),
         "active_changes": [],
+        "resume_audit": resume_audit.to_dict() if resume_audit is not None else None,
         "instruction": (
             "工作流已禁用，忽略现有 handoff 状态。"
             if not workflow_enabled
@@ -384,6 +429,80 @@ def _cmd_discover_json(changes: list[str], workflow_enabled: bool = True) -> int
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
+
+
+def cmd_disable(args: argparse.Namespace) -> int:
+    baseline = write_resume_baseline(
+        _PROJECT_ROOT,
+        created_by=args.who or "human",
+        reason=args.reason or "workflow disabled",
+    )
+    _set_workflow_enabled(False)
+    print(f"workflow 已禁用，resume baseline 已写入: {baseline}")
+    return 0
+
+
+def cmd_enable(args: argparse.Namespace) -> int:
+    audit = run_resume_audit(_PROJECT_ROOT)
+    if audit.needs_reconciliation and not args.reconcile_change:
+        for error in audit.errors:
+            print(f"FAIL: {error}", file=sys.stderr)
+        print("workflow 保持禁用；请先完成 resume-audit reconciliation。", file=sys.stderr)
+        return 1
+
+    if args.reconcile_change:
+        try:
+            event_log = record_resume_reconciliation(
+                _PROJECT_ROOT,
+                args.reconcile_change,
+                approved_by=args.who or "human",
+                reason=args.reason or "workflow resume reconciled",
+                audit_result=audit,
+                clear_baseline=True,
+            )
+        except ValueError as exc:
+            print(f"错误：{exc}", file=sys.stderr)
+            return 1
+        print(f"已记录 workflow resume reconciliation: {event_log}")
+    elif audit.baseline_present and audit.baseline_path.exists():
+        audit.baseline_path.unlink()
+
+    _set_workflow_enabled(True)
+    print("workflow 已启用。")
+    return 0
+
+
+def cmd_resume_audit(args: argparse.Namespace) -> int:
+    audit = run_resume_audit(_PROJECT_ROOT)
+    if args.reconcile_change:
+        try:
+            event_log = record_resume_reconciliation(
+                _PROJECT_ROOT,
+                args.reconcile_change,
+                approved_by=args.approved_by,
+                reason=args.reason,
+                audit_result=audit,
+                clear_baseline=not args.keep_baseline,
+            )
+        except ValueError as exc:
+            print(f"错误：{exc}", file=sys.stderr)
+            return 1
+        print(f"已记录 workflow resume reconciliation: {event_log}")
+        return 0
+
+    if args.json:
+        print(json.dumps(audit.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        if not audit.baseline_present:
+            print(f"无 workflow resume baseline: {audit.baseline_path}")
+        elif audit.needs_reconciliation:
+            for error in audit.errors:
+                print(f"FAIL: {error}")
+        else:
+            print("PASS: workflow resume audit 已通过")
+        for warning in audit.warnings:
+            print(f"WARN: {warning}")
+    return 1 if audit.needs_reconciliation else 0
 
 
 def cmd_current(args: argparse.Namespace) -> int:
@@ -666,6 +785,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=["text", "json"], default="text",
                    help="输出格式: text (默认表格) 或 json (Agent 可消费的丰富上下文)")
     p.set_defaults(func=cmd_discover)
+
+    p = sub.add_parser("disable", help="禁用 workflow 并写入 resume baseline")
+    p.add_argument("--who")
+    p.add_argument("--reason")
+    p.set_defaults(func=cmd_disable)
+
+    p = sub.add_parser("enable", help="启用 workflow；如有 resume baseline，先执行恢复审计")
+    p.add_argument("--who")
+    p.add_argument("--reason")
+    p.add_argument("--reconcile-change", help="将禁用期间改动归入指定 change 并记录 reconciliation 事件")
+    p.set_defaults(func=cmd_enable)
+
+    p = sub.add_parser("resume-audit", help="检查 workflow 禁用期间产生的未恢复改动")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--reconcile-change", help="将禁用期间改动归入指定 change 并记录 reconciliation 事件")
+    p.add_argument("--approved-by", default="human")
+    p.add_argument("--reason", default="workflow resume reconciled")
+    p.add_argument("--keep-baseline", action="store_true", help="记录事件后保留 baseline")
+    p.set_defaults(func=cmd_resume_audit)
 
     p = sub.add_parser("current", help="输出指定 change 的当前状态 (JSON)")
     p.add_argument("--change", required=True)

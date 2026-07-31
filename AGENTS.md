@@ -93,6 +93,7 @@ python3 scripts/workflow_state.py discover --format json
 | 1 个 change 处于执行中 (非 gate) | 读取该 change 的 `handoff.json` → 确认当前 sub_state → 继续执行 |
 | 多个活跃 change | 列出所有 change 状态 → 让用户选择处理哪个 |
 | 无活跃 change | 正常对话，无需追踪 phase |
+| workflow 已禁用 | 视为本仓库未启用 workflow；不要执行 gate 推进。若重新启用前存在 `.dev/workflow-resume-baseline.json`，先运行 `python3 scripts/workflow_state.py resume-audit` 并完成恢复确认 |
 
 如果用户明确指定了 change 名，直接处理该 change，跳过 discover。
 

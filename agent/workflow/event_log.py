@@ -19,6 +19,7 @@ NON_STATE_EVENT_TYPES = {
     "current_spec_synced",
     "backlog_updated",
     "change_archived",
+    "resume_audit_reconciled",
 }
 BLOCKED_EVENT_TYPE = "blocked_entered"
 UNBLOCKED_EVENT_TYPE = "blocked_resolved"
@@ -30,6 +31,7 @@ ALLOWED_PROTECTED_ARTIFACT_EVENT_TYPES = {
     "change_archived",
 }
 WAYFINDING_CHILDREN_EVENT_TYPE = "wayfinding_children_spawned"
+RESUME_AUDIT_RECONCILED_EVENT_TYPE = "resume_audit_reconciled"
 
 
 def event_log_path(change_dir: str | Path) -> Path:
@@ -155,6 +157,34 @@ def append_protected_artifact_event(
             "artifact_path": artifact_path,
             "reason": reason,
             "approved_by": approved_by,
+        },
+    )
+
+
+def append_resume_audit_reconciled_event(
+    change_dir: str | Path,
+    change_id: str,
+    *,
+    artifact_path: str,
+    reason: str,
+    approved_by: str,
+    baseline_sha: str,
+    head_sha: str,
+    changed_paths_hash: str,
+    changed_paths: list[str],
+) -> None:
+    _append_event(
+        change_dir,
+        {
+            "event_type": RESUME_AUDIT_RECONCILED_EVENT_TYPE,
+            "change_id": change_id,
+            "artifact_path": artifact_path,
+            "reason": reason,
+            "approved_by": approved_by,
+            "baseline_sha": baseline_sha,
+            "head_sha": head_sha,
+            "changed_paths_hash": changed_paths_hash,
+            "changed_paths": list(changed_paths),
         },
     )
 

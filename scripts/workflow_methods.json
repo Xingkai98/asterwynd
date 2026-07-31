@@ -1,5 +1,5 @@
 {
-  "_schema": "1.1",
+  "_schema": "1.2",
   "_description": "可插拔方法映射。修改此 JSON 即可替换每个 sub_state 使用的 skill/command，无需改代码。",
 
   "doc_artifact": {
@@ -41,8 +41,11 @@
   },
 
   "workflow": {
-    "_description": "工作流总开关。enabled=false 时，discover、gate 和 dispatcher 退化为 no-op。",
-    "enabled": true
+    "_description": "工作流总开关。enabled=false 时，discover、gate 和 dispatcher 退化为 no-op。通过 workflow_state.py disable/enable 切换时会维护本地 resume audit baseline。",
+    "enabled": true,
+    "resume_audit": {
+      "baseline_path": ".dev/workflow-resume-baseline.json"
+    }
   },
 
   "wayfinding": {

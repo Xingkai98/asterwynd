@@ -99,7 +99,7 @@
 
 ### Requirement: Workflow 总开关
 
-`scripts/workflow_methods.json` SHALL 提供 `workflow.enabled` 布尔开关，默认值为 `true`。当其为 `false` 时，workflow automation SHALL 视为未启用：`discover` 不 SHALL 暴露活跃 change，PreToolUse 门禁不 SHALL 阻止写操作，`check_phase_done.py` 不 SHALL 因 phase gate 阻塞，`WorkflowDispatcher` 不 SHALL 继续分发 workflow phase。
+`scripts/workflow_methods.json` SHALL 提供 `workflow.enabled` 布尔开关，默认值为 `true`。当其为 `false` 时，workflow automation SHALL 视为未启用：`discover` 不 SHALL 暴露活跃 change，PreToolUse 门禁不 SHALL 阻止写操作，`check_phase_done.py` 不 SHALL 因 phase gate 阻塞，`WorkflowDispatcher` 不 SHALL 继续分发 workflow phase。系统 SHALL 支持本地 resume audit baseline；通过 workflow CLI 禁用 workflow 时 SHALL 记录当前 git `HEAD`，重新启用时 SHALL 对 baseline 之后的非 workflow 管理文件改动执行恢复审计。
 
 #### Scenario: workflow 未启用时不暴露活跃 change
 
@@ -114,6 +114,22 @@
 - **WHEN** PreToolUse 门禁或 `check_phase_done.py` 运行
 - **THEN** 系统 SHALL 不阻止写操作
 - **AND** 系统 SHALL 视 workflow gate 为 no-op
+
+#### Scenario: 禁用期间存在未恢复改动
+
+- **GIVEN** workflow CLI 禁用 workflow 时已写入 resume baseline
+- **AND** baseline 之后存在非 workflow 管理文件改动
+- **WHEN** workflow 被重新启用或 agent 运行 `discover`
+- **THEN** 系统 SHALL 报告需要 resume audit reconciliation
+- **AND** PreToolUse 门禁 SHALL 阻止继续写入，直到改动被归入某个 change
+
+#### Scenario: 禁用期间改动被恢复确认
+
+- **GIVEN** baseline 之后存在非 workflow 管理文件改动
+- **WHEN** 人通过 `workflow_state.py resume-audit --reconcile-change <id>` 将改动归入某个 change
+- **THEN** 系统 SHALL 向该 change 的 `workflow-events.jsonl` 追加 `resume_audit_reconciled` 事件
+- **AND** 事件 SHALL 记录 `baseline_sha`、`head_sha`、`changed_paths_hash`、`changed_paths`、`reason` 和 `approved_by`
+- **AND** replay `handoff.json` projection 时 SHALL 忽略该非状态事件
 
 ### Requirement: 四阶段生命周期
 

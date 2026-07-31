@@ -24,6 +24,7 @@ import re
 import sys
 from pathlib import Path
 
+from agent.workflow.resume_audit import run_resume_audit
 from agent.workflow.routing import is_workflow_enabled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -279,6 +280,13 @@ def main():
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})
 
+    if not is_workflow_enabled(REPO_ROOT):
+        sys.exit(0)
+
+    # ── track Agent calls for reviewing_* sub-states ──
+    if _AGENT_TRACKING:
+        _track_agent_call(hook_input)
+
     # ── determine if this tool call is a "write operation" ──
     is_write = False
     if tool_name in ("Write", "Edit"):
@@ -290,12 +298,14 @@ def main():
     if not is_write:
         sys.exit(0)
 
-    if not is_workflow_enabled(REPO_ROOT):
-        sys.exit(0)
-
-    # ── track Agent calls for reviewing_* sub-states ──
-    if _AGENT_TRACKING:
-        _track_agent_call(hook_input)
+    resume_audit = run_resume_audit(REPO_ROOT)
+    if resume_audit.needs_reconciliation:
+        print(
+            "⛔ workflow resume audit 未完成。",
+            *resume_audit.errors,
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     # ── management files always bypass ──
     file_path = tool_input.get("file_path", "")

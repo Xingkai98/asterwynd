@@ -36,6 +36,12 @@ from agent.workflow.routing import (
     load_global_defaults,
     merge_routing,
 )
+from agent.workflow.resume_audit import (
+    ResumeAuditResult,
+    record_resume_reconciliation,
+    run_resume_audit,
+    write_resume_baseline,
+)
 from agent.workflow.state_machine import (
     StateMachineError,
     get_legal_targets,
@@ -89,6 +95,11 @@ __all__ = [
     "merge_routing",
     "get_routing_for_phase",
     "build_routing_config_prompt",
+    # Resume audit
+    "ResumeAuditResult",
+    "write_resume_baseline",
+    "run_resume_audit",
+    "record_resume_reconciliation",
     # Role registry
     "build_role_configs",
     "get_role_config",

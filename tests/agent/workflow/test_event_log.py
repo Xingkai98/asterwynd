@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from agent.workflow.event_log import (
+    append_resume_audit_reconciled_event,
     append_wayfinding_children_event,
     event_log_path,
     replay_handoff_projection,
@@ -52,6 +53,25 @@ def test_projection_verification_ignores_non_state_artifact_events(tmp_path):
             )
             + "\n"
         )
+
+    assert verify_handoff_projection(change_dir) == []
+
+
+def test_projection_verification_ignores_resume_reconciliation_event(tmp_path):
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    mgr = WorkflowManager(change_dir)
+    mgr.init("test-change")
+    append_resume_audit_reconciled_event(
+        change_dir,
+        "test-change",
+        artifact_path=".dev/workflow-resume-baseline.json",
+        reason="disabled-period work reconciled",
+        approved_by="human",
+        baseline_sha="base",
+        head_sha="head",
+        changed_paths_hash="hash",
+        changed_paths=["agent/feature.py"],
+    )
 
     assert verify_handoff_projection(change_dir) == []
 

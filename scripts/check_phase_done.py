@@ -27,6 +27,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from agent.workflow.resume_audit import run_resume_audit  # noqa: E402
 from agent.workflow.routing import is_workflow_enabled  # noqa: E402
 
 VALID_PHASES = {"wayfinding", "planning", "building", "closing"}
@@ -58,6 +59,10 @@ def _get_doc_artifact_paths() -> dict[str, str]:
 
 def _workflow_disabled() -> bool:
     return not is_workflow_enabled(_REPO_ROOT)
+
+
+def _resume_audit_errors() -> list[str]:
+    return list(run_resume_audit(_REPO_ROOT).errors)
 
 
 _PROTOCOL_INSTANCE = None
@@ -331,11 +336,11 @@ def _check_handoff_at_gate(change_id: str, phase: str) -> list[str]:
 def check_wayfinding(change_id: str) -> list[str]:
     if _workflow_disabled():
         return []
-    errors: list[str] = []
+    errors: list[str] = _resume_audit_errors()
     change_dir = _changes_root() / change_id
 
     if not change_dir.exists():
-        return [f"Change 目录不存在: {change_dir}"]
+        return errors + [f"Change 目录不存在: {change_dir}"]
 
     # Delegate artifact checks to protocol
     try:
@@ -363,11 +368,11 @@ def check_wayfinding(change_id: str) -> list[str]:
 def check_planning(change_id: str) -> list[str]:
     if _workflow_disabled():
         return []
-    errors: list[str] = []
+    errors: list[str] = _resume_audit_errors()
     change_dir = _changes_root() / change_id
 
     if not change_dir.exists():
-        return [f"Change 目录不存在: {change_dir}"]
+        return errors + [f"Change 目录不存在: {change_dir}"]
 
     # Delegate ALL artifact checks to protocol (replaces direct
     # check_openspec_artifacts.check_change call)
@@ -399,7 +404,7 @@ def check_planning(change_id: str) -> list[str]:
 def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
     if _workflow_disabled():
         return []
-    errors: list[str] = []
+    errors: list[str] = _resume_audit_errors()
     root = repo_root or Path.cwd()
     known_issues = _load_known_issues()
 
@@ -489,7 +494,7 @@ def check_building(change_id: str, repo_root: Path | None = None) -> list[str]:
 def check_closing(change_id: str) -> list[str]:
     if _workflow_disabled():
         return []
-    errors: list[str] = []
+    errors: list[str] = _resume_audit_errors()
 
     # ── functional check: openspec validate CLI ──
 

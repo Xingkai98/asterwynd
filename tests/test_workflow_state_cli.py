@@ -5,6 +5,7 @@ import subprocess
 import sys
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent.workflow.manager import WorkflowManager
 from agent.workflow.event_log import event_log_path, verify_handoff_projection, write_init_event
@@ -279,6 +280,28 @@ def test_discover_treats_disabled_workflow_as_empty(capsys, monkeypatch):
     assert result == 0
     assert '"workflow_enabled": false' in output
     assert '"active_count": 0' in output
+
+
+def test_discover_includes_resume_audit_when_enabled(capsys, monkeypatch):
+    import scripts.workflow_state as mod
+
+    audit = SimpleNamespace(
+        baseline_present=True,
+        needs_reconciliation=True,
+        errors=("resume required",),
+        warnings=(),
+        to_dict=lambda: {"needs_reconciliation": True, "errors": ["resume required"]},
+    )
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: True)
+    monkeypatch.setattr(mod, "_all_change_ids", lambda: [])
+    monkeypatch.setattr(mod, "run_resume_audit", lambda *_: audit)
+
+    result = mod.cmd_discover(Namespace(format="json"))
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert '"resume_audit"' in output
+    assert "resume required" in output
 
 
 def test_advance_rejects_when_workflow_disabled(tmp_path, capsys, monkeypatch):

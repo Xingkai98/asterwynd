@@ -39,7 +39,7 @@
 
 每个 phase 包含若干 sub_state，末端为 `ready_for_review`（human review gate）。独立审阅内嵌在各 phase 的 `reviewing_*` sub_state 中；人在 gate 点确认通过后进入下一 phase，也可以回退。
 
-`scripts/workflow_methods.json` 里的 `workflow.enabled` 是工作流总开关；设为 `false` 时，`discover`、gate 检查和 PreToolUse 门禁都应退化为 no-op，agent 视为当前仓库没有启用 workflow。
+`scripts/workflow_methods.json` 里的 `workflow.enabled` 是工作流总开关；设为 `false` 时，`discover`、gate 检查和 PreToolUse 门禁都应退化为 no-op，agent 视为当前仓库没有启用 workflow。建议通过 `python3 scripts/workflow_state.py disable --reason ...` 和 `python3 scripts/workflow_state.py enable ...` 切换开关：`disable` 会在 `.dev/workflow-resume-baseline.json` 写入本地 baseline；重新启用时如果 baseline 之后存在代码改动，必须先运行 `resume-audit --reconcile-change <id>` 将这些改动归入某个 change 并记录 `resume_audit_reconciled` 事件。手工直接改 `enabled` 无法追溯关闭期间的起点，只能退化为普通 no-op。
 
 1. 提出想法。
 2. 讨论目标、边界和面试价值。

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -450,6 +451,22 @@ def test_disabled_workflow_skips_phase_checks(monkeypatch):
     assert check_planning("any-change") == []
     assert check_building("any-change", Path.cwd()) == []
     assert check_closing("any-change") == []
+
+
+def test_resume_audit_failure_blocks_phase_check(monkeypatch):
+    import scripts.check_phase_done as mod
+
+    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: True)
+    monkeypatch.setattr(
+        mod,
+        "run_resume_audit",
+        lambda *_: SimpleNamespace(errors=("resume required",)),
+    )
+    monkeypatch.setattr(mod, "_get_protocol", lambda: _stub_protocol())
+
+    errors = check_wayfinding("missing-change")
+
+    assert "resume required" in errors
 
 
 # ── stub protocol for tests that need path isolation ────────────────────────
