@@ -1,7 +1,7 @@
 ## 1. 规格与设计定稿
 
 - [ ] 1.1 确认 proposal 的 Change Type、Impact Analysis、Reference Implementation Research 完整（含本地参考仓库不可用事实与替代依据）。
-- [ ] 1.2 开发前使用 `grill-with-docs` 审视 `design.md`，逐项确认分层字段、bootstrap/Pass@k 统计、judge 判定、失败归因、结果页渲染、CLI `--repeat`、依赖策略和测试策略；不得把 agent 推荐答案当作用户确认。
+- [ ] 1.2 开发前使用 `grill-with-docs` 审视 `design.md`，逐项确认分层字段、bootstrap/Pass@k 统计、judge 判定、失败归因、结果页渲染、CLI `--repeat`、`VerifierAdapter` 接口与 registry、依赖策略和测试策略；不得把 agent 推荐答案当作用户确认。
 - [ ] 1.3 在 `design.md` 的 `## Pre-Implementation Review` 记录 grill 结论：已解决问题、备选方案、否决方案、最终确认、剩余风险。
 - [ ] 1.4 确认 spec delta（全部作为 `benchmark` 追加）与 proposal 的 Modified Capabilities 一致，且为向后兼容扩展。
 
@@ -42,7 +42,17 @@
 
 - [ ] 7.1 实现结果页渲染模块（markdown/HTML），输入一次带重复运行+统计的 run 聚合，复用 `compare.py` 的延迟/成本口径。
 - [ ] 7.2 结果页包含 Pass@k、均值/标准差、置信区间、延迟分布、token 成本，并按能力层级组织。
-- [ ] 7.3 为结果页渲染补单元测试（golden 片段）。
+- [ ] 7.3 结果页保留并展示任务所属评测框架（task_family），可按框架标注或过滤。
+- [ ] 7.4 为结果页渲染补单元测试（golden 片段）。
+
+## 7b. 评测框架 VerifierAdapter 抽象
+
+- [ ] 7b.1 定义 `VerifierAdapter` 接口：input 为任务定义 + agent 产出，output 为标准化 `Verdict { status, reason, detail, score? }`。
+- [ ] 7b.2 以 `task_family` 为 key 构建 adapter registry，调用方查 key 取 adapter、不 switch；未知 task_family 回退为 unsupported。
+- [ ] 7b.3 将 `_run_swebench_harness` 重构为 `swebench` adapter，消除 runner 中 if 分支。
+- [ ] 7b.4 新增 adapter 契约测试（fake 任务 → Verdict 映射断言），锁住接口防漂移。
+- [ ] 7b.5 迁移后跑既有 SWE-bench 兼容测试，确认 status/reason 映射与迁移前一致。
+- [ ] 7b.6 在 change 文档记录 Harbor 等框架作为后续适配项（复用本接口/统计/结果页管线），不在本 change 实现。
 
 ## 8. 同步与验证
 

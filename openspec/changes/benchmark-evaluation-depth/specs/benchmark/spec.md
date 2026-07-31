@@ -95,3 +95,35 @@ benchmark-evaluation SHALL 把上述指标汇总渲染为一个可在面试中�
 - **WHEN** 评测输出结果页
 - **THEN** 结果页 SHALL 包含 Pass@k、均值/标准差、置信区间、延迟分布与 token 成本
 - **AND** SHALL 按能力层级组织，便于按层引用
+- **AND** SHALL 保留并展示任务所属评测框架（task_family），可按框架标注或过滤
+
+### Requirement: 评测框架用 VerifierAdapter 抽象验证阶段
+
+benchmark SHALL 用 adapter 模式抽象评测框架的验证/评分阶段，支持无缝接入不同评测框架。adapter 的 input 为任务定义 + agent 产出，output 为标准化 Verdict；选择逻辑 SHALL 以 `task_family` 为 key 查 registry，不得在共享 runner 中累积 if 分支。新增框架 SHALL 通过新增 adapter + 注册实现，不修改共享 runner/统计/结果页。
+
+#### Scenario: 通过 registry 选择框架验证器
+
+- **GIVEN** 某任务声明 `task_family=swebench`
+- **WHEN** runner 对该任务做验证
+- **THEN** 系统 SHALL 按 `task_family` 从 registry 选择对应 adapter 执行验证
+- **AND** 输出标准化 Verdict（status/reason/score）
+
+#### Scenario: 未知任务族回退
+
+- **GIVEN** 某任务声明了 registry 中不存在的 `task_family`
+- **WHEN** runner 尝试验证该任务
+- **THEN** 系统 SHALL 将任务标记为 `unsupported`
+- **AND** 记录明确 reason，不得伪造验证结果
+
+#### Scenario: adapter 契约可测试
+
+- **GIVEN** 某 adapter 已注册
+- **WHEN** 运行 adapter 契约测试
+- **THEN** 每个 adapter SHALL 通过同一套契约断言（Verdict 的 status/reason/score 映射）
+- **AND** 契约测试 SHALL 锁住接口，防止 adapter 漂移破坏下游
+
+#### Scenario: 迁移既有 SWE-bench 验证
+
+- **GIVEN** 既有 `_run_swebench_harness` 逻辑迁移为 `swebench` adapter
+- **WHEN** 运行既有 SWE-bench 兼容测试
+- **THEN** 迁移前后 status/reason 映射 SHALL 一致

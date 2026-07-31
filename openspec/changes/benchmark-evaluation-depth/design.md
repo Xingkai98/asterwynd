@@ -4,6 +4,8 @@
 
 Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：从 tasks 目录读任务、支持多 agent runner、按任务写 `result.json`/`trace.json`/`runner.log`、区分 `passed/passed_with_warnings/failed/error/unsupported`、支持 Docker-based SWE-bench harness、用 `status + reason` 统一结果语义、`compare.py` 能输出 p50/p95/p99 延迟与 token 成本对比表。`benchmarks/models.py` 的 `TaskResult`/`RunMetadata` 已经携带 `status/reason/iterations/tool_calls/input_tokens/output_tokens/duration_seconds` 等字段。
 
+现有 SWE-bench 支持（`_run_swebench_harness`）已经具备 adapter 的雏形：按 `task.execution_environment == "docker"` 与 `task.task_family == "swebench"` 分流，把 agent patch 转成 SWE-bench `predictions.jsonl`，调 `swebench.harness.run_evaluation`，再把 `report.json` 标准化为 `status`/`reason`/`detail`。但它是硬编码在 `BenchmarkRunner` 里的一个 if 分支，新增评测框架（如 Harbor）就得继续叠加 if。
+
 弱项（面试复盘反复点名）：
 
 - 结果粒度是"单次通过/失败"布尔值，没有任务分层，无法回答"这个 agent 在工具调用/上下文/规划哪个层面强"。
@@ -25,6 +27,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - 开放式任务支持 judge 判定与人工回流标记。
 - 失败按 reason 分类归因，支持占比与样例回查。
 - 渲染可直接引用的量化结果页（markdown/HTML）。
+- 用 adapter 模式抽象评测框架的验证阶段，支持无缝接入不同评测框架（SWE-bench、Harbor 等），把现有硬编码的 `_run_swebench_harness` 重构为第一个 adapter。
 
 **Non-Goals:**
 
@@ -33,8 +36,20 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - 不做分布式/多机 benchmark 调度。
 - 不替代面试表达与沟通训练（那属于 wayfinder map 的 out of scope）。
 - 本 change 不做跨节点负载均衡。
+- 本 change 首批只实现 adapter 接口 + 迁移 SWE-bench；Harbor 等具体框架的适配作为后续独立 change（复用本 change 的接口/统计/结果页管线）。
+- adapter 只抽象验证/评分阶段，不包执行阶段（worktree vs sandbox 差异大，强行统一会过度设计）。
 
 ## Decisions
+
+### Decision A0: 评测框架用 VerifierAdapter 抽象，边界画在验证阶段
+
+**方案**：定义 `VerifierAdapter` 接口，只包验证/评分阶段，input 为任务定义 + agent 产出（patch / answer / transcript），output 为标准化 `Verdict { status, reason, detail, score? }`。用既有 `task_family` 作为选择 key，构建 registry（`task_family -> adapter`），调用方只查 key 拿 adapter、不 switch。新增框架 = 新增一个 adapter 文件 + 注册 + 契约测试，`BenchmarkRunner`/统计/结果页零改动。把现有硬编码的 `_run_swebench_harness` 重构为第一个 adapter（`swebench`），消除 if 分支。
+
+**备选**：
+- 继续用 if 分支累加框架。被拒：新增框架改共享 `BenchmarkRunner`，选择逻辑越来越长，碰坏其他框架风险高。
+- adapter 包整个执行+验证阶段。被拒：执行阶段差异大（SWE-bench 是 worktree 改代码，Harbor 是 sandbox 跑 agent），强行统一会过度设计；验证阶段才是"框架"核心、最该可插拔。执行阶段如需适配（如接 Harbor sandbox）走独立 `ExecutionAdapter` 边界，不扩大 `VerifierAdapter`。
+
+**理由**：接口最小且稳定，契约测试锁住接口防漂移；标准化中间表示（`TaskResult`/`status`/`reason`）让下游统计与结果页只认一种形状、跨框架复用，这才构成"无缝扩展"。
 
 ### Decision 1: 分层用独立标签字段，而非重载 task_family
 
@@ -70,11 +85,11 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 ### Decision 5: 结果页作为新增渲染模块，复用 compare 数据
 
-**方案**：新增一个评测结果页渲染模块（输入一次带重复运行+统计的 run 聚合，输出 markdown/HTML），复用 `compare.py` 已有的延迟/成本口径，新增分层与统计章节。
+**方案**：新增一个评测结果页渲染模块（输入一次带重复运行+统计的 run 聚合，输出 markdown/HTML），复用 `compare.py` 已有的延迟/成本口径，新增分层与统计章节。结果页保留并展示任务的 `task_family`（framework）维度，可标注或按框架过滤，避免多框架数据混在一起不可比。
 
 **备选**：改造既有 `compare.py` 输出。被拒：`compare.py` 是跨 run 对比工具，职责不同；新增模块聚焦单 run 的评测深度渲染，职责单一。
 
-**理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用。
+**理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用；framework 维度与分层正交，靠标准化中间表示的 `task_family` 字段即可承载。
 
 ## Risks / Trade-offs
 
@@ -83,6 +98,8 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - **[分层标签覆盖不全 → 归入默认层，结果页标注默认层占比，避免静默失真。]**
 - **[开放式 judge 误判 → 记录判定理由与人工回流标记，可审计可修正，且与既有 reason 语义兼容。]**
 - **[新增 CLI `--repeat` 与既有参数冲突 → 复用既有 benchmark CLI 参数解析，`--repeat` 缺省 1 保持既有行为。]**
+- **[adapter 抽象过早/过晚 → 以"已有两种验证形态"为抽象触发点（现有 SWE-bench + 待接 Harbor），不预为未出现的形态抽象；契约测试锁接口。]**
+- **[迁移 `_run_swebench_harness` 有回归风险 → 迁移后跑既有 SWE-bench 兼容测试确认 status/reason 映射不变。]**
 
 ## Pre-Implementation Review
 
@@ -93,6 +110,9 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - judge 判定流程的输入输出 schema，以及开放式任务如何被标记（task schema 新增字段）。
 - 结果页渲染输入的数据结构（聚合层模型），是否直接落在 `benchmarks/models.py`。
 - `--repeat` 在 CLI 与 runner 的传递路径，以及 `RunMetadata` 如何表示聚合。
+- `VerifierAdapter` 接口的 `Verdict` 字段与契约测试断言（status/reason/score 映射）是否足够锁住接口防漂移。
+- registry 的 key 选择：确认 `task_family` 作为选择 key 的边界，以及未知 task_family 的 fallback（unsupported）。
+- 迁移 `_run_swebench_harness` 后既有 SWE-bench status/reason 映射不变的回归验证方式。
 - 测试策略：`tests/benchmark/` 下单元 + benchmark smoke 的覆盖范围。
 
 （此节在 grill-with-docs 完成后补充最终结论；不粘贴聊天流水。）
@@ -100,6 +120,8 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 ## Testing Strategy
 
 - 单元测试（`tests/benchmark/`）：分层聚合、bootstrap 置信区间（固定种子可复现）、Pass@k 计算、judge 判定、失败归因占比、结果页渲染（golden 片段）。
+- adapter 契约测试：每个 adapter 跑同一套契约断言（fake 任务 → Verdict 的 status/reason/score 映射），锁住接口防漂移；未知 task_family 断言 fallback 为 unsupported。
+- 迁移回归测试：SWE-bench adapter 迁移后，既有 swebench 任务的 status/reason 映射与迁移前一致。
 - benchmark 层级测试：新增评测任务的 smoke 验证（`--repeat 3` 跑一组小任务）。
 - 兼容测试：既有单次运行 artifact 结构不变、既有 `benchmark` spec 场景不回归。
 - 每个 bug fix 需新增回归测试；涉及 benchmark 路径必须覆盖 benchmark 层级测试。

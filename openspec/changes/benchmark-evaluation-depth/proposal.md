@@ -17,6 +17,7 @@
 - 引入 judge 校准与人工回流：对部分任务（尤其是无 hidden test 的开放式任务）提供判定流程，保证判分口径一致并记录人工回流证据。
 - 引入失败归因：按失败 `reason` 分类统计，支持失败模式占比与样例回查，为后续 git bisect 定位性能退化提供入口。
 - 产出量化武器页：把上述指标汇总为一个可在面试中直接引用的结果页（markdown/HTML），覆盖 Pass@k、均值/标准差、置信区间、延迟分布和 token 成本。
+- 用 `VerifierAdapter` 抽象评测框架的验证阶段：把现有硬编码的 `_run_swebench_harness` 重构为第一个 adapter，以 `task_family` 为 key 走 registry，使新增评测框架（如 Harbor）只需新增 adapter + 契约测试即可无缝接入，不改共享 runner/统计/结果页。首批只做接口 + SWE-bench 迁移，Harbor 适配作为后续独立 change。
 
 ## Capabilities
 
@@ -26,7 +27,7 @@
 
 ### Modified Capabilities
 
-- `benchmark`: 结果汇总与 artifact 语义扩展——新增任务能力分层、重复运行聚合、统计指标（均值/标准差/置信区间/Pass@k）、judge 校准与失败归因、量化结果页渲染的 requirements；全部以 ADDED 方式追加，与既有 `RunMetadata`/`TaskResult`/result artifact 兼容扩展（新增字段而非替换），既有 status/reason 语义保持不变。
+- `benchmark`: 结果汇总与 artifact 语义扩展——新增任务能力分层、重复运行聚合、统计指标（均值/标准差/置信区间/Pass@k）、judge 校准与失败归因、量化结果页渲染、以及 `VerifierAdapter` 框架抽象（含 SWE-bench 迁移）的 requirements；全部以 ADDED 方式追加，与既有 `RunMetadata`/`TaskResult`/result artifact 兼容扩展（新增字段而非替换），既有 status/reason 语义保持不变。
 
 ## Reference Implementation Research
 
@@ -43,7 +44,7 @@
 ## Impact Analysis
 
 - **能力域**: `benchmark`（结果汇总与评测语义扩展）。
-- **代码**: `benchmarks/`（`models.py` 增加分层与统计字段、`runner.py` 支持重复运行聚合、`compare.py`/新增报告模块渲染结果页、`swebench_analyze.py` 兼容扩展）、CLI 参数（`benchmark` 命令支持 `--repeat` 等）。
-- **测试**: 新增 `tests/benchmark/` 分层、重复运行、统计聚合、judge 校准与结果页渲染的单元测试；涉及 benchmark 路径必须覆盖 benchmark 层级测试，并跑 benchmark smoke 验证。
+- **代码**: `benchmarks/`（`models.py` 增加分层与统计字段、`runner.py` 支持重复运行聚合与 adapter registry、新增 `VerifierAdapter` 接口及 `swebench` adapter 迁移、`compare.py`/新增报告模块渲染结果页、`swebench_analyze.py` 兼容扩展）、CLI 参数（`benchmark` 命令支持 `--repeat` 等）。
+- **测试**: 新增 `tests/benchmark/` 分层、重复运行、统计聚合、judge 校准、结果页渲染与 adapter 契约测试；迁移 SWE-bench 后跑既有兼容测试确认 status/reason 映射不变；涉及 benchmark 路径必须覆盖 benchmark 层级测试，并跑 benchmark smoke 验证。
 - **文档**: `openspec/specs/benchmark/spec.md` 同步扩展、新增 `openspec/specs/benchmark-evaluation/spec.md`、`docs/benchmark-plan.md` 与 `docs/openspec-change-backlog.md` 更新、README 同步。
 - **基准**: 不改变既有 benchmark 单次运行的语义与既有 `benchmark` 规格的行为；全部为向后兼容扩展。
