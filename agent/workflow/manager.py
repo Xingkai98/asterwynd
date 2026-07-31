@@ -20,6 +20,13 @@ from agent.workflow.models import (
     Transition,
     Trigger,
 )
+from agent.workflow.event_log import (
+    append_blocked_event,
+    append_routing_update_event,
+    append_transition_event,
+    append_unblocked_event,
+    write_init_event,
+)
 from agent.workflow.routing import (
     get_routing_for_phase,
     load_global_defaults,
@@ -63,6 +70,7 @@ class WorkflowManager:
         global_defaults = load_global_defaults(self._repo_root)
         self._data = init_handoff_json(change_id, routing=global_defaults)
         save_handoff_json(self._change_dir, self._data)
+        write_init_event(self._change_dir, self._data)
         return self.snapshot()
 
     def load(self) -> dict[str, Any]:
@@ -176,6 +184,12 @@ class WorkflowManager:
         self._data["next_hints"] = next_hints.to_dict()
 
         save_handoff_json(self._change_dir, self._data)
+        append_transition_event(
+            self._change_dir,
+            self._data["change_id"],
+            transition.to_dict(),
+            current_agent.to_dict() if current_agent is not None else None,
+        )
         return self.snapshot()
 
     def advance_sub_state(
@@ -299,12 +313,25 @@ class WorkflowManager:
         self.ensure_loaded()
         self._data = enter_blocked(self._data, reason, actor_id)
         save_handoff_json(self._change_dir, self._data)
+        append_blocked_event(
+            self._change_dir,
+            self._data["change_id"],
+            self._data["transitions"][-1],
+            self._data["blockers"][-1],
+        )
         return self.snapshot()
 
     def unblock(self, blocker_index: int = 0) -> dict[str, Any]:
         self.ensure_loaded()
         self._data = resolve_blocked(self._data, blocker_index)
         save_handoff_json(self._change_dir, self._data)
+        append_unblocked_event(
+            self._change_dir,
+            self._data["change_id"],
+            self._data["transitions"][-1],
+            blocker_index,
+            self._data["blockers"][blocker_index],
+        )
         return self.snapshot()
 
     def update_routing(
@@ -323,6 +350,12 @@ class WorkflowManager:
         current[phase] = entry
         self._data["routing"] = current
         save_handoff_json(self._change_dir, self._data)
+        append_routing_update_event(
+            self._change_dir,
+            self._data["change_id"],
+            phase,
+            entry,
+        )
         return self.snapshot()
 
 

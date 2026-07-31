@@ -34,6 +34,12 @@
     }
   },
 
+  "ticket_tracker": {
+    "_description": "票据后端配置。decision tickets 和 tracer-bullet tickets 默认发布到 GitHub Issues；后续可按 backend 改成其他 issue tracker。",
+    "backend": "github",
+    "repo": "Xingkai98/asterwynd"
+  },
+
   "wayfinding": {
     "required_files_before_write": [],
     "require_worktree": false,

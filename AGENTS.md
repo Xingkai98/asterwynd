@@ -20,6 +20,7 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - **测试要求**: 每个 bug fix 必须新增回归测试；涉及 CLI、Web、benchmark、工具协议或 AgentLoop 的变更必须覆盖对应层级测试。
 - **CI 与影响分析**: 非平凡 OpenSpec change 必须维护结构化 `Impact Analysis`，并在开发中发现新影响面时先回写 change 文档和任务清单；baseline CI 门禁包含全量 pytest、OpenSpec strict validate 和项目 artifact checker。`unknown` / `TBD` / `待确认` 可在 proposal 阶段短暂存在，但归档前必须清理为明确结论或阻塞项。
 - **文档影响检查**: 收尾阶段必须检查文档影响，但不要无边界全量改文档。至少检查 change 自身 OpenSpec 文档、`docs/openspec-change-backlog.md`、文档地图中的相关入口文档，并用关键词扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与本次变更相关的段落；只更新当前变更造成的事实变化，历史口径问题另记债务或单独处理。
+- **受保护 artifact 证据**: 修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须有 `workflow-events.jsonl` 中的结构化解释事件；阶段 review report 必须有对应 review manifest 绑定 reviewer run、base/head sha、tasks/spec/diff/report hash。禁止只靠手写 `PASS` 文本通过 gate。
 - **OpenSpec 收尾**: OpenSpec change 的实现 PR 必须同时包含归档收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 `docs/openspec-change-backlog.md` 移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只做确认：active change 目录不再存在、backlog 干净、本地 `master` 已快进到 `origin/master`。
 - **自然语言路由**: 用户不需要反复提醒“按 OpenSpec lifecycle 走”。当用户用自然语言表达讨论、立项、开发、同步 spec、收尾或合入意图时，agent 必须自动映射到本文件的 OpenSpec 流程和 `/opsx:*` 等价步骤；如果当前客户端不能直接调用 slash command，也要按同等步骤执行。
 - **协议约束**: 保持 tool-call 消息链合法；不要在 `max_iterations` 路径中用工具结果伪造最终 assistant 回复。
@@ -66,7 +67,7 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `grill-with-docs`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
 
-每个 change 的生命周期状态由 `agent/workflow/` 五阶段状态机追踪，状态文件为 `openspec/changes/<change-id>/handoff.json`。阶段间交接通过 `.handoff/<change-id>/` 下的 handoff note 传递上下文，human review gate 在每个 phase 的 `ready_for_review` 子状态触发。路由配置支持 executor（inline/subagent/claude-code/codex）和 session_mode（same/new/ask），全局默认值在 `openspec/config.yaml`，per-change 覆盖在 `handoff.json`。
+每个 change 的生命周期状态由 `agent/workflow/` 四阶段状态机追踪，权威事实来源为 `openspec/changes/<change-id>/workflow-events.jsonl`，`handoff.json` 是由事件 replay 生成的 projection。阶段间交接通过 `.handoff/<change-id>/` 下的 handoff note 传递上下文，human review gate 在每个 phase 的 `ready_for_review` 子状态触发。路由配置支持 executor（inline/subagent/claude-code/codex）和 session_mode（same/new/ask），全局默认值在 `openspec/config.yaml`，per-change 覆盖在 `handoff.json`。
 
 ## 工作流自动推进与 Gate 机制
 
@@ -178,7 +179,7 @@ python3 scripts/workflow_state.py discover --format json
 
 - planning 阶段做出了有 >= 2 个备选方案的设计决策
 - building 阶段需要偏离 design.md 中的已有决策
-- code-review 阶段评审人要求记录某个决策的上下文
+- reviewing_* 子状态或人工评审要求记录某个决策的上下文
 
 ADR 格式参考 `docs/adr/_TEMPLATE.md`。创建后在 handoff note 的 Key Decisions 章节中引用 ADR 文件名。
 

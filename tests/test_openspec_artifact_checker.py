@@ -1,10 +1,14 @@
 from pathlib import Path
+import json
 
 from scripts.check_openspec_artifacts import (
     check_backlog_consistency,
     check_change,
+    check_protected_path_explanations,
+    main,
     parse_change_type,
 )
+from agent.workflow.manager import WorkflowManager
 
 
 VALID_DESIGN = """## Context
@@ -95,6 +99,208 @@ def write_spec_delta(root: Path, capability: str = "web-ui"):
     spec = root / "specs" / capability / "spec.md"
     spec.parent.mkdir(parents=True)
     spec.write_text("## ADDED Requirements\n\n### Requirement: Example\n\nExample.\n", encoding="utf-8")
+
+
+def test_check_change_rejects_handoff_projection_mismatch(tmp_path):
+    change = tmp_path / "tampered-change"
+    mgr = WorkflowManager(change, repo_root=tmp_path)
+    mgr.init("tampered-change")
+    mgr.advance_sub_state("writing_proposal")
+    handoff_path = change / "handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["state"] = {"phase": "building", "sub_state": "writing_tests"}
+    handoff_path.write_text(json.dumps(handoff, indent=2), encoding="utf-8")
+    (change / "proposal.md").write_text(proposal_for("docs"), encoding="utf-8")
+
+    errors = check_change(change, tmp_path / "openspec" / "specs")
+
+    assert any("handoff.json projection does not match workflow-events.jsonl" in e for e in errors)
+
+
+def test_check_change_rejects_review_report_without_manifest(tmp_path):
+    change = tmp_path / "openspec" / "changes" / "reviewed-change"
+    write_change(change, proposal_for("docs"))
+    review_dir = tmp_path / ".handoff" / "reviewed-change"
+    review_dir.mkdir(parents=True)
+    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
+
+    errors = check_change(change, tmp_path / "openspec" / "specs")
+
+    assert any("review manifest missing" in e for e in errors)
+
+
+def test_known_debt_change_requires_workflow_event_explanation(tmp_path):
+    errors = check_protected_path_explanations(
+        tmp_path,
+        changed_paths={"docs/known-debt.md"},
+    )
+
+    assert errors == [
+        "protected path `docs/known-debt.md` changed without workflow event explanation"
+    ]
+
+
+def test_known_debt_workflow_event_requires_reason_and_approver(tmp_path):
+    event_log = tmp_path / "openspec" / "changes" / "test-change" / "workflow-events.jsonl"
+    event_log.parent.mkdir(parents=True)
+    event_log.write_text(
+        json.dumps(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 1,
+                "event_type": "protected_artifact_explained",
+                "change_id": "test-change",
+                "artifact_path": "docs/known-debt.md",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = check_protected_path_explanations(
+        tmp_path,
+        changed_paths={"docs/known-debt.md"},
+    )
+
+    assert errors == [
+        "protected artifact event for `docs/known-debt.md` missing required field: reason",
+        "protected artifact event for `docs/known-debt.md` missing required field: approved_by",
+    ]
+
+
+def test_known_debt_change_passes_with_valid_workflow_event_explanation(tmp_path):
+    event_log = tmp_path / "openspec" / "changes" / "test-change" / "workflow-events.jsonl"
+    event_log.parent.mkdir(parents=True)
+    event_log.write_text(
+        json.dumps(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 1,
+                "event_type": "protected_artifact_explained",
+                "change_id": "test-change",
+                "artifact_path": "docs/known-debt.md",
+                "reason": "closing review accepted the documented debt entry",
+                "approved_by": "human",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = check_protected_path_explanations(
+        tmp_path,
+        changed_paths={"docs/known-debt.md"},
+    )
+
+    assert errors == []
+
+
+def test_current_spec_change_requires_sync_event(tmp_path):
+    errors = check_protected_path_explanations(
+        tmp_path,
+        changed_paths={"openspec/specs/dev-workflow-state-machine/spec.md"},
+    )
+
+    assert errors == [
+        "protected path `openspec/specs/dev-workflow-state-machine/spec.md` "
+        "changed without workflow event explanation"
+    ]
+
+
+def test_backlog_change_requires_backlog_event(tmp_path):
+    errors = check_protected_path_explanations(
+        tmp_path,
+        changed_paths={"docs/openspec-change-backlog.md"},
+    )
+
+    assert errors == [
+        "protected path `docs/openspec-change-backlog.md` "
+        "changed without workflow event explanation"
+    ]
+
+
+def test_archive_change_requires_archive_event(tmp_path):
+    errors = check_protected_path_explanations(
+        tmp_path,
+        changed_paths={"openspec/changes/archive/2026-07-30-test-change/proposal.md"},
+    )
+
+    assert errors == [
+        "protected path `openspec/changes/archive/2026-07-30-test-change/proposal.md` "
+        "changed without workflow event explanation"
+    ]
+
+
+def test_archive_event_accepts_change_id_without_archive_date_prefix(tmp_path):
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-07-30-test-change"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "workflow-events.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 1,
+                "event_type": "change_archived",
+                "change_id": "test-change",
+                "artifact_path": "openspec/changes/archive/2026-07-30-test-change",
+                "reason": "closing archived accepted change artifacts",
+                "approved_by": "human",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = check_protected_path_explanations(
+        tmp_path,
+        changed_paths={"openspec/changes/archive/2026-07-30-test-change/proposal.md"},
+    )
+
+    assert errors == []
+
+
+def test_main_rejects_protected_path_diff_without_event(tmp_path, monkeypatch):
+    changes_root = tmp_path / "openspec" / "changes"
+    (changes_root / "archive").mkdir(parents=True)
+    specs_root = tmp_path / "openspec" / "specs"
+    specs_root.mkdir(parents=True)
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.parent.mkdir()
+    backlog.write_text(
+        """# OpenSpec Change 实现队列
+
+## 未实现队列
+
+当前无。
+
+## 已完成待归档
+
+当前无。
+""",
+        encoding="utf-8",
+    )
+
+    import scripts.check_openspec_artifacts as mod
+
+    monkeypatch.setattr(
+        mod,
+        "_changed_paths_since_base",
+        lambda repo_root, base_ref: {"docs/known-issues.md"},
+    )
+
+    exit_code = main(
+        [
+            "--changes-root",
+            str(changes_root),
+            "--current-specs-root",
+            str(specs_root),
+            "--backlog",
+            str(backlog),
+            "--base-ref",
+            "master",
+        ]
+    )
+
+    assert exit_code == 1
 
 
 def proposal_for(

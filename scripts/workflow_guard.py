@@ -57,7 +57,18 @@ else:
     CHANGES_DIR = _resolve_changes_dir(REPO_ROOT)
     REQUIRED_BASE = REPO_ROOT
 
-_MANAGEMENT_FILES = {"handoff.json", "workflow_methods.json", "workflow_hook.example.json"}
+_MANAGEMENT_FILES = {"workflow_methods.json", "workflow_hook.example.json"}
+_PROTECTED_PATH_FRAGMENTS = (
+    "docs/known-debt.md",
+    "docs/known-issues.md",
+    "docs/openspec-change-backlog.md",
+    "openspec/specs/",
+    "openspec/changes/archive/",
+    "workflow-events.jsonl",
+    "gate-approvals.json",
+    "-review-manifest.json",
+    "handoff.json",
+)
 _AGENT_TRACKING = True  # 记录 Agent 工具调用用于 reviewing 验证
 
 # ── Bash write patterns ─────────────────────────────────────────────
@@ -144,6 +155,11 @@ def _is_write_bash(command: str) -> bool:
 
     # unknown command → conservative: treat as safe (let it run, gate checks elsewhere)
     return False
+
+
+def _mentions_protected_path(text: str) -> bool:
+    normalized = text.replace("\\", "/")
+    return any(fragment in normalized for fragment in _PROTECTED_PATH_FRAGMENTS)
 
 
 def _discover_active_change():
@@ -281,6 +297,21 @@ def main():
     if file_path:
         if Path(file_path).name in _MANAGEMENT_FILES:
             sys.exit(0)
+        if _mentions_protected_path(file_path):
+            print(
+                f"⛔ 受保护文件不可由 Agent 直接写入: {file_path}",
+                "请通过 workflow_state.py 的结构化命令更新权威状态或 review 证据。",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    if tool_name == "Bash" and _mentions_protected_path(tool_input.get("command", "")):
+        print(
+            "⛔ 受保护路径不可通过 Bash 直接写入。",
+            "请通过 workflow_state.py 的结构化命令更新权威状态或 review 证据。",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     # ── gate check ──
     active = _discover_active_change()

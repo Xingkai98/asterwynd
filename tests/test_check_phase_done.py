@@ -278,6 +278,22 @@ def test_review_report_fails_when_missing(tmp_path, monkeypatch):
     assert any("审阅报告缺失" in e for e in errors)
 
 
+def test_review_report_requires_manifest(tmp_path, monkeypatch):
+    handoff_dir = tmp_path / ".handoff" / "test-change"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    (handoff_dir / "planning-review.md").write_text(
+        "## Review Report\n\nPASS\n",
+        encoding="utf-8",
+    )
+
+    import scripts.check_phase_done as mod
+    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+
+    errors = _check_review_report("test-change", "planning")
+
+    assert any("review manifest missing" in e for e in errors)
+
+
 def test_review_report_detects_changes_requested(tmp_path, monkeypatch):
     handoff_dir = tmp_path / ".handoff" / "test-change"
     handoff_dir.mkdir(parents=True, exist_ok=True)
@@ -311,8 +327,29 @@ def test_review_report_detects_blocked(tmp_path, monkeypatch):
 def test_review_report_passes_on_clean(tmp_path, monkeypatch):
     handoff_dir = tmp_path / ".handoff" / "test-change"
     handoff_dir.mkdir(parents=True, exist_ok=True)
-    (handoff_dir / "planning-review.md").write_text(
+    report_path = handoff_dir / "planning-review.md"
+    report_path.write_text(
         "## Review Report\n\nPASS: 所有 artifacts 自洽。\n",
+        encoding="utf-8",
+    )
+    from agent.workflow.review_manifest import artifact_hash, file_sha256
+    (handoff_dir / "planning-review-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "review-manifest/v1",
+                "change_id": "test-change",
+                "phase": "planning",
+                "verdict": "PASS",
+                "reviewer_run_id": "reviewer-1",
+                "base_sha": "base",
+                "head_sha": "head",
+                "tasks_hash": artifact_hash(tmp_path / "openspec" / "changes" / "test-change" / "tasks.md"),
+                "spec_hash": artifact_hash(tmp_path / "openspec" / "changes" / "test-change" / "specs"),
+                "diff_hash": "sha256:diff",
+                "report_hash": file_sha256(report_path),
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
 

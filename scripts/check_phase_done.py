@@ -252,6 +252,10 @@ def _check_review_report(change_id: str, phase: str, report_name: str | None = N
                 errors.append(f"审阅报告包含 BLOCKED — 存在未解决的阻塞项: {report_path}")
             elif "CHANGES_REQUESTED" in text:
                 errors.append(f"审阅报告包含 CHANGES_REQUESTED — 请确认所有修改请求已解决: {report_path}")
+            else:
+                from agent.workflow.review_manifest import verify_review_manifest
+
+                errors.extend(verify_review_manifest(hd.parent, change_id, phase))
         except Exception:
             errors.append(f"无法读取审阅报告: {report_path}")
     return errors
