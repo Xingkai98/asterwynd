@@ -112,7 +112,7 @@ benchmark SHALL 用 adapter 模式抽象评测框架的验证/评分阶段，支
 - **GIVEN** 某任务声明 `task_family=swebench`
 - **WHEN** runner 对该任务做验证
 - **THEN** 系统 SHALL 按 `task_family` 从 registry 选择对应 adapter 执行验证
-- **AND** 输出标准化 Verdict（status/reason/score）
+- **AND** 输出标准化 Verdict（status/reason/detail/score?）
 
 #### Scenario: 未知任务族回退
 
@@ -125,7 +125,7 @@ benchmark SHALL 用 adapter 模式抽象评测框架的验证/评分阶段，支
 
 - **GIVEN** 某 adapter 已注册
 - **WHEN** 运行 adapter 契约测试
-- **THEN** 每个 adapter SHALL 通过同一套契约断言（Verdict 的 status/reason/score 映射）
+- **THEN** 每个 adapter SHALL 通过同一套契约断言（Verdict 的 status/reason/detail/score? 映射）
 - **AND** 契约测试 SHALL 锁住接口，防止 adapter 漂移破坏下游
 
 #### Scenario: 迁移既有 SWE-bench 验证

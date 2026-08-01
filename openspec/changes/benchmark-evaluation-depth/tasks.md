@@ -7,8 +7,8 @@
 
 ## 2. 任务分层与 schema
 
-- [ ] 2.1 在 `benchmarks/task_schema.py` 增加可选能力分层字段（如 `evaluation_layer`，取值 `execution`/`tool-usage`/`context-planning`/`multi-step-solving`），缺省归入默认层。
-- [ ] 2.2 为分层字段补充解析与默认层 fallback 的单元测试。
+- [ ] 2.1 复用 `benchmarks/task_schema.py` 既有 `TaskSpec.category` 字段作为能力分层载体（取值 `execution`/`tool-usage`/`context-planning`/`multi-step-solving`），缺省归入默认层，不新增字段。
+- [ ] 2.2 为 `category` 分层的解析与默认层 fallback 补充单元测试。
 - [ ] 2.3 盘点 `benchmarks/tasks/` 下现有活动任务，按能力分层打标（含 swebench 任务归类），形成任务盘点清单（记录在 change 文档或结果页的按层视图）。
 
 ## 3. 重复运行聚合

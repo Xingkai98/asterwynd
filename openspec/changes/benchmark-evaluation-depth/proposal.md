@@ -11,7 +11,7 @@
 
 ## What Changes
 
-- 引入任务分层体系：对 `benchmarks/tasks/` 下现有任务与新增任务进行能力分层（如基础执行/工具调用/上下文与规划/多步问题求解），用显式字段标注层级，形成可复用的任务盘点清单。
+- 引入任务分层体系：对 `benchmarks/tasks/` 下现有任务与新增任务进行能力分层（如基础执行/工具调用/上下文与规划/多步问题求解），复用 `TaskSpec` 既有 `category` 字段标注层级（不新增字段），形成可复用的任务盘点清单。
 - 支持同一配置的 **N>=3 次重复运行**：runner 允许一次调用执行多轮重复，聚合为按任务、按层级的分布结果，而不是单次孤点。
 - 引入统计显著性与置信区间：对重复运行结果做均值/标准差计算，用 bootstrap 或解析近似给出置信区间；支持 `Pass@k` 这类稳定性指标。
 - 判分主干为确定性验证：所有任务统一走确定性 VerifierAdapter 判定（hidden test/脚本/状态比对），与业界主流一致；LLM judge 判分作为开放产出评测的可选后续项，本 change 不实现。
@@ -46,5 +46,6 @@
 - **能力域**: `benchmark`（结果汇总与评测语义扩展）。
 - **代码**: `benchmarks/`（`models.py` 增加分层与统计字段、`runner.py` 支持重复运行聚合与 adapter registry、新增 `VerifierAdapter` 接口及 `swebench` adapter 迁移、`compare.py`/新增报告模块渲染结果页、`swebench_analyze.py` 兼容扩展）、CLI 参数（`benchmark` 命令支持 `--repeat` 等）。
 - **测试**: 新增 `tests/benchmark/` 分层、重复运行、统计聚合、确定性判分、结果页渲染与 adapter 契约测试；迁移 SWE-bench 后跑既有兼容测试确认 status/reason 映射不变；涉及 benchmark 路径必须覆盖 benchmark 层级测试，并跑 benchmark smoke 验证。
-- **文档**: `openspec/specs/benchmark/spec.md` 同步扩展、新增 `openspec/specs/benchmark-evaluation/spec.md`、`docs/benchmark-plan.md` 与 `docs/openspec-change-backlog.md` 更新、README 同步。
+- **文档**: `openspec/specs/benchmark/spec.md` 同步扩展（ADDED requirements）、`docs/benchmark-plan.md` 与 `docs/openspec-change-backlog.md` 更新、README 同步。
 - **基准**: 不改变既有 benchmark 单次运行的语义与既有 `benchmark` 规格的行为；全部为向后兼容扩展。
+- **流程（process）**: 引入评测方法论约定——任务能力分层口径、重复运行与统计口径、VerifierAdapter 框架接入契约，后续所有评测任务与框架接入需遵循此约定。

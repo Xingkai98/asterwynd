@@ -89,15 +89,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 **理由**：复用既有 `reason` 语义，只加聚合视图，向后兼容且避免口径分裂。git bisect 入口通过失败样例回查 trace 定位，作为本 change 的兼容入口，不做独立 bisect 引擎。
 
-### Decision 5: 结果页作为新增渲染模块，复用 compare 数据
-
-**方案**：新增一个评测结果页渲染模块（输入一次带重复运行+统计的 run 聚合，输出 markdown/HTML），复用 `compare.py` 已有的延迟/成本口径，新增分层与统计章节。结果页保留并展示任务的 `task_family`（framework）维度，可标注或按框架过滤，避免多框架数据混在一起不可比。
-
-**备选**：改造既有 `compare.py` 输出。被拒：`compare.py` 是跨 run 对比工具，职责不同；新增模块聚焦单 run 的评测深度渲染，职责单一。
-
-**理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用；framework 维度与分层正交，靠标准化中间表示的 `task_family` 字段即可承载。
-
-### Decision 4a: 统计在 task 与 layer 两级聚合，Pass@k 只在 task 级
+### Decision 5: 统计在 task 与 layer 两级聚合，Pass@k 只在 task 级
 
 **方案**：统计在 task 和 layer 两级都聚合。task 级：对单任务 N 次重复算均值/标准差/95% CI，并输出 `Pass@k`（k=重复次数 N，通过判定 = 该轮 passed/passed_with_warnings）；layer 级：对该层所有任务的所有轮次汇总算通过率均值 + 95% CI，不输出 Pass@k。
 
@@ -121,13 +113,13 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 **理由**：与业界主流一致（确定性判分），与 Decision 3 的"judge 作可选后端、本 change 不做"呼应；未来若引入问答型任务再补 judge 层。
 
-### Decision 8: 结果页为独立 `benchmarks/report.py`，不复用 compare 职责
+### Decision 8: 结果页为独立 `benchmarks/report.py`，复用 compare 口径
 
-**方案**：新增 `benchmarks/report.py`，输入一次聚合 run，输出 markdown + HTML，复用 `compare.py` 的延迟/成本口径。HTML 沿用项目现有 style（参考 `reports/comparison.html`），不引第三方模板。
+**方案**：新增 `benchmarks/report.py`，输入一次带重复运行+统计的聚合 run，输出 markdown + HTML，复用 `compare.py` 已有的延迟/成本口径，新增分层与统计章节。结果页保留并展示任务的 `task_family`（framework）维度，可标注或按框架过滤，避免多框架数据混在一起不可比。HTML 沿用项目现有 style（参考 `reports/comparison.html`），不引第三方模板。
 
 **备选**：扩展 `compare.py` 输出。被拒：`compare.py` 是跨 run 对比工具，单 run 评测渲染与它职责不同，混在一起破坏单一职责。
 
-**理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用。
+**理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用；framework 维度与分层正交，靠标准化中间表示的 `task_family` 字段即可承载。
 
 ## Risks / Trade-offs
 
