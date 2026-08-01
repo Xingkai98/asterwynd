@@ -390,6 +390,41 @@ def test_benchmark_cli_explicit_parallel_beats_suggest_parallel(tmp_path, monkey
     assert fake_runner.kwargs["parallel"] == 3
 
 
+def test_benchmark_cli_config_parallel_explicit_wins_over_dynamic(tmp_path, monkeypatch):
+    """A configured benchmark.parallel (even 1) must beat the dynamic guardrail."""
+    repo = _minimal_repo(tmp_path)
+    _minimal_task(tmp_path, repo)
+    fake_runner = _FakeBenchmarkRunner()
+    _patch_runner(monkeypatch, fake_runner)
+    # If the guardrail ran it would produce 7; config parallel: 1 must win.
+    monkeypatch.setattr(
+        "benchmarks.resources.suggest_parallel_default",
+        lambda: 7,
+    )
+    config_path = tmp_path / "asterwynd.yaml"
+    config_path.write_text("benchmark:\n  parallel: 1\n")
+    runs_dir = tmp_path / "runs"
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "benchmark",
+            str(tmp_path / "tasks"),
+            "--agent",
+            "fake",
+            "--source-repo",
+            str(repo),
+            "--runs-dir",
+            str(runs_dir),
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runner.kwargs["parallel"] == 1
+
+
 def test_benchmark_cli_repeat_aggregates_real_results(tmp_path, monkeypatch):
     """Repeat >1 must collect per-round result.json and render them in the report.
 

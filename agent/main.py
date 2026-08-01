@@ -738,12 +738,10 @@ def benchmark(
         typer.echo("Error: --agent must be fake, shell, asterwynd, or claude", err=True)
         raise SystemExit(1)
 
-    # Dynamic resource guardrail: unless the user passed --parallel (or an
-    # explicit config/env override), derive a safe concurrency from the
-    # machine instead of hard-coding a value.
-    if parallel is not None:
-        parallel_effective = parallel
-    elif config.benchmark.parallel != 1:
+    # Dynamic resource guardrail: an explicit --parallel or a configured
+    # benchmark.parallel (yaml/env) always wins. Only when parallel is unset
+    # everywhere do we derive a safe concurrency from the machine.
+    if config.benchmark.parallel_explicit:
         parallel_effective = config.benchmark.parallel
     else:
         from benchmarks.resources import suggest_parallel_default

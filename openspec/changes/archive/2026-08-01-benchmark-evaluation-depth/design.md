@@ -143,7 +143,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - 判分主干为确定性 VerifierAdapter；LLM judge 降级为后续项（触发条件 = 引入 BrowseComp/MT-Bench 式开放产出任务）。
 - 结果页独立 `benchmarks/report.py`（markdown + HTML），复用 compare.py 延迟/成本口径，含 task_family 维度。
 - VerifierAdapter 以 `task_family` 为 key 走 registry；未知 docker family 回退 `unsupported`/`task_family_unsupported`；迁移 `_run_swebench_harness` 为第一个 adapter（SWE-bench Verified）。
-- 并发上限按当前环境动态判定（`suggest_parallel`），当前环境（7.6Gi/4 核）保守取 1。
+- 并发上限按当前环境动态判定（`suggest_parallel`），当前环境（7.6Gi/4 核）保守取 1；显式 `--parallel`、config/env 中显式配置的 `benchmark.parallel`（含显式 1）优先于动态推导，仅当完全未配置时才用动态值（`BenchmarkConfig.parallel_explicit` 哨兵区分显式与默认）。
 
 **否决方案：** 新增 `evaluation_layer` 字段（复用 category 替代）；复用 `task_family` 作分层（维度正交）；正态近似 CI / 引入 numpy（bootstrap 纯 Python 替代）；runner 内多轮循环（CLI 层循环替代）；扩展 compare.py 输出（独立 report.py 替代）；本 change 实现 LLM judge（当前无开放任务，过度设计）。
 

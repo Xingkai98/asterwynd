@@ -138,6 +138,10 @@ class McpConfig:
 class BenchmarkConfig:
     parallel: int = 1
     timeout_seconds: int = 600
+    # Whether ``parallel`` came from an explicit config/env/CLI source rather
+    # than the default. Lets the CLI distinguish "user configured 1" from
+    # "unset" so the dynamic resource guardrail only applies when unset.
+    parallel_explicit: bool = False
 
 
 @dataclass(frozen=True)
@@ -300,6 +304,7 @@ def _apply_environment(config: AsterwyndConfig) -> AsterwyndConfig:
         benchmark = replace(
             benchmark,
             parallel=_parse_positive_int(parallel, "ASTERWYND_BENCHMARK_PARALLEL"),
+            parallel_explicit=True,
         )
     if timeout := os.environ.get("ASTERWYND_BENCHMARK_TIMEOUT"):
         benchmark = replace(
@@ -329,6 +334,7 @@ def _apply_cli_overrides(config: AsterwyndConfig, overrides: ConfigOverrides) ->
                 overrides.benchmark_parallel,
                 "benchmark_parallel",
             ),
+            parallel_explicit=True,
         )
     if overrides.benchmark_timeout_seconds is not None:
         benchmark = replace(
@@ -967,6 +973,7 @@ def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:
             "benchmark.parallel",
             path=path,
         ),
+        parallel_explicit="parallel" in mapping,
         timeout_seconds=_validate_positive_int(
             mapping.get("timeout_seconds", 600),
             "benchmark.timeout_seconds",
