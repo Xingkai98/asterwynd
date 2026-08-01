@@ -62,8 +62,12 @@ def test_suggest_parallel_defaults_use_machine_values(monkeypatch):
     assert suggest_parallel() == 16
 
 
-def test_suggest_parallel_default_is_one_on_low_resource_machine():
-    # This machine has ~7.6 GiB total RAM and 4 cores; design goal is 1.
+def test_suggest_parallel_default_is_one_on_low_resource_machine(monkeypatch):
+    # Simulate a low-resource machine (e.g. ~3.7 GiB available, 4 cores);
+    # the dynamic guardrail must fall back to 1. Using monkeypatched machine
+    # values keeps the test environment-independent (CI machines differ).
+    monkeypatch.setattr(resources, "_mem_available_bytes", lambda: int(3.7 * GIB))
+    monkeypatch.setattr(resources, "_cpu_count", lambda: 4)
     assert resources.suggest_parallel_default() == 1
 
 
