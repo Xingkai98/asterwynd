@@ -97,7 +97,10 @@ class ToolSelector:
             key=lambda pair: self._embedder.cosine(q_vec, self._vectors[pair[0]]),
             reverse=True,
         )
-        tail = [name for name, _ in ranked[: max(0, self._top_k - len(stable_names))]]
+        # Variable layer: the top-K most relevant non-stable tools. Stable layer
+        # is always injected and does NOT consume the top-K budget (design Q3:
+        # stable prefix stays cacheable, variable tail is what changes).
+        tail = [name for name, _ in ranked[: self._top_k]]
         return stable_names + tail
 
     @staticmethod

@@ -87,6 +87,10 @@
 - **测试策略**：单元（NGramEmbedding 相似度/生命周期流转/dedup 标记/ToolSelector 排序与降级）+ 集成（registry 注册→去重→select_schemas Top5→loop 注入；removed 从 get_all_schemas 排除）+ 回归（get_all_schemas 契约不变）+ benchmark（选择延迟入 trace，千级工具注入 token 对比）。
 - **实现顺序（TDD）**：1) embedding 模块→单测 2) ToolMetadata 旁路表+生命周期→单测 3) 语义去重→单测 4) ToolSelector→单测 5) 接入 registry+loop 注入缝→集成测试 6) config+spec 同步+全量验证。
 
+**实现中发现并修复（端到端验证）：**
+- **稳定层不占 top_k 预算**：初版实现 `tail = max(0, top_k - len(stable))`，当稳定层数量 ≥ top_k 时可变层为 0，动态选择失效。端到端演示暴露后修复为 `tail = top_k`——稳定层始终注入（不占预算），可变层另选 top_k 个，总注入 = 稳定层 + top_k。回归测试 `test_variable_layer_selected_even_when_stable_ge_k` 锁定。
+- **端到端实测（16 真实工具）**：语义去重 0 误标（不同功能描述不触发）；Top-K 选择每个 query 精准命中相关工具（"search the web"→WebSearch/WebFetch，"symbol references"→SymbolSearch/LspHover，"save memory"→SaveMemory/RecallMemory），稳定层固定，延迟 ~3.6ms < 50ms 预算；生命周期 grace→removed 完整流转。
+
 ## Reference Implementation Research
 
 - status: enabled

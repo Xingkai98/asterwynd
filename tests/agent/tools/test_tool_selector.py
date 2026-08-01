@@ -38,6 +38,30 @@ class TestToolSelector:
         assert "Bash" in top
         assert "Read" in top
 
+    def test_variable_layer_selected_even_when_stable_ge_k(self) -> None:
+        """回归测试：稳定层数量 ≥ top_k 时，可变层仍应选 top_k 个。
+
+        修复 bug：原实现 tail = max(0, top_k - len(stable))，稳定层占满 top_k
+        后可变层为 0，动态选择失效。修复后稳定层不占 top_k 名额。
+        """
+        sel = ToolSelector(embedder=NGramEmbedding(dim=512), top_k=3)
+        # 稳定层 3 个（≥ top_k=3）
+        sel.set_stable_tools(["Bash", "Read", "Edit"])
+        sel.index_tool("Bash", "run shell commands in the workspace")
+        sel.index_tool("Read", "read file contents from disk")
+        sel.index_tool("Edit", "modify file contents in place")
+        # 可变层
+        sel.index_tool("Grep", "search files for text matching a regex pattern")
+        sel.index_tool("WebSearch", "fetch a web page over http and extract content")
+        sel.index_tool("InspectGitDiff", "show current git diff summary")
+
+        top = sel.select("search for text in files with regex")
+        # 稳定层 3 个 + 可变层 3 个 = 6 个
+        assert len(top) == 6
+        assert set(top[:3]) == {"Bash", "Read", "Edit"}  # 稳定层在前
+        # 可变层应包含最相关的 Grep
+        assert "Grep" in top[3:]
+
     def test_latency_recorded(self) -> None:
         """>选择延迟被记录（Q4：入 trace）"""
         sel = ToolSelector(embedder=NGramEmbedding(dim=512), top_k=3)
