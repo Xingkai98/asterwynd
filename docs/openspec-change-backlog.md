@@ -79,27 +79,6 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 2. `benchmark-evaluation-depth`
-
-状态：未实现（proposal/design/specs/tasks 已建，待 grill-with-docs 后进入 building）。
-
-批次：承接面试复盘最致命短板「评测体系」，P0 优先级（对应 wayfinder 地图 #73）。
-
-建议顺序原因：
-
-- 评测体系是面试被点名最多次的能力，量化杀伤力最高。
-- 复用现有 `benchmarks/` 与 `claw-swe-bench` 路径，不新建数据集，起点最干净。
-- 其他方向（记忆、安全、工具治理、可观测、多 Agent）多数依赖或受益于先有可量化的评测口径。
-
-主要交付：
-
-- 任务能力分层（execution/tool-usage/context-planning/multi-step-solving）。
-- 同一配置 N>=3 次重复运行聚合。
-- 均值/标准差/置信区间（bootstrap）/ Pass@k。
-- 开放式任务 judge 判定与人工回流标记。
-- 失败按 reason 归因与样例回查。
-- 可直接引用的量化结果页（markdown/HTML）。
-
 ## 已完成待归档
 
 这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。

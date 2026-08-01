@@ -429,6 +429,12 @@ Later metrics:
 runner reported a non-clean process outcome such as `max_iterations`. It should
 count separately from a clean pass when evaluating agent quality.
 
+评测深度扩展（benchmark-evaluation-depth，已实现）：在既有单次运行之上，
+`--repeat N` 聚合为分层量化报告，新增 Pass@k（组合计数）、均值/标准差、
+bootstrap 95% 置信区间、延迟 p50/p95/p99、token 成本与失败归因占比；
+评测框架验证经 `VerifierAdapter` 抽象（内置 SWE-bench Verified adapter）。
+权威规格见 `openspec/specs/benchmark/spec.md`。
+
 ## 12. Reason Taxonomy
 
 Initial categories:
