@@ -44,7 +44,7 @@
 ## Impact Analysis
 
 - **能力域**: `benchmark`（结果汇总与评测语义扩展）。
-- **代码**: `benchmarks/`（`models.py` 增加分层与统计字段、`runner.py` 支持重复运行聚合与 adapter registry、新增 `VerifierAdapter` 接口及 `swebench` adapter 迁移、`compare.py`/新增报告模块渲染结果页、`swebench_analyze.py` 兼容扩展）、CLI 参数（`benchmark` 命令支持 `--repeat` 等）。
+- **代码**: `benchmarks/`（`models.py` 增加分层/统计/`task_family`/`run_round` 字段与 `from_dict`、`runner.py` 迁移到 VerifierAdapter registry 并移除硬编码 `_run_swebench_harness`、新增 `adapters.py`（VerifierAdapter + SwebenchAdapter + registry）、`statistics.py`（bootstrap/Pass@k/分层统计）、`report.py`（markdown/HTML 结果页 + 失败归因）、`resources.py`（动态并发护栏 + docker 探测））、CLI 参数（`benchmark` 命令支持 `--repeat`、动态 `parallel`）。
 - **测试**: 新增 `tests/benchmark/` 分层、重复运行、统计聚合、确定性判分、结果页渲染与 adapter 契约测试；迁移 SWE-bench 后跑既有兼容测试确认 status/reason 映射不变；涉及 benchmark 路径必须覆盖 benchmark 层级测试，并跑 benchmark smoke 验证。
 - **文档**: `openspec/specs/benchmark/spec.md` 同步扩展（ADDED requirements）、`docs/benchmark-plan.md` 与 `docs/openspec-change-backlog.md` 更新、README 同步。
 - **基准**: 不改变既有 benchmark 单次运行的语义与既有 `benchmark` 规格的行为；全部为向后兼容扩展。

@@ -133,19 +133,23 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 ## Pre-Implementation Review
 
-在进入 building phase 前，用 `grill-with-docs` 对 design.md 逐项确认以下决策：
+经 batch-grill（设计树逐轮确认）与实现后独立 review subagent 复核，以下决策已定稿并回写：
 
-- 分层字段名与取值集合是否与 CONTEXT.md/architecture 词汇一致。
-- bootstrap 实现是否复用现有统计依赖，还是要新增依赖（如 numpy/scipy）；若新增，需确认依赖策略。
-- 确定性判分如何经 VerifierAdapter 统一覆盖所有任务（含无 test_patch 的 grep 类任务）；judge 作为后续项不进入本 change 范围。
-- 结果页渲染输入的数据结构（聚合层模型），是否直接落在 `benchmarks/models.py`。
-- `--repeat` 在 CLI 与 runner 的传递路径，以及 `RunMetadata` 如何表示聚合。
-- `VerifierAdapter` 接口的 `Verdict` 字段与契约测试断言（status/reason/score 映射）是否足够锁住接口防漂移。
-- registry 的 key 选择：确认 `task_family` 作为选择 key 的边界，以及未知 task_family 的 fallback（unsupported）。
-- 迁移 `_run_swebench_harness` 后既有 SWE-bench status/reason 映射不变的回归验证方式。
-- 测试策略：`tests/benchmark/` 下单元 + benchmark smoke 的覆盖范围。
+**已确认方案：**
+- 分层复用既有 `TaskSpec.category`（取值 `execution`/`tool-usage`/`context-planning`/`multi-step-solving`），缺省默认层；不新增字段。
+- 统计用 bootstrap 置信区间（固定 seed 可复现）+ Pass@k 组合计数公式（Chen et al. 2021，`pass@k = 1 - C(n-c,k)/C(n,k)`），纯 Python 自实现、不引入 numpy/scipy。
+- 统计在 task 与 layer 两级聚合；Pass@k 只在 task 级，layer 级用通过率均值+CI。
+- 重复运行在 CLI 层循环（`--repeat N`，缺省 1 保持既有行为），每轮独立 run_id，最外层聚合。
+- 判分主干为确定性 VerifierAdapter；LLM judge 降级为后续项（触发条件 = 引入 BrowseComp/MT-Bench 式开放产出任务）。
+- 结果页独立 `benchmarks/report.py`（markdown + HTML），复用 compare.py 延迟/成本口径，含 task_family 维度。
+- VerifierAdapter 以 `task_family` 为 key 走 registry；未知 docker family 回退 `unsupported`/`task_family_unsupported`；迁移 `_run_swebench_harness` 为第一个 adapter（SWE-bench Verified）。
+- 并发上限按当前环境动态判定（`suggest_parallel`），当前环境（7.6Gi/4 核）保守取 1。
 
-（此节在 grill-with-docs 完成后补充最终结论；不粘贴聊天流水。）
+**否决方案：** 新增 `evaluation_layer` 字段（复用 category 替代）；复用 `task_family` 作分层（维度正交）；正态近似 CI / 引入 numpy（bootstrap 纯 Python 替代）；runner 内多轮循环（CLI 层循环替代）；扩展 compare.py 输出（独立 report.py 替代）；本 change 实现 LLM judge（当前无开放任务，过度设计）。
+
+**实现后 review 复核修正：** Pass@k 从经验通过率改为组合计数公式并区分于通过率；结果页补 HTML；失败归因补占比列；LAYERS/resolve_layer 收敛到 models.py 单一来源；未知 task_family 回退场景在 spec 澄清仅适用于框架验证（docker）任务，本地任务不受 adapter registry 影响。
+
+**剩余风险：** `resources.is_docker_available()` 与 runner 的 `_probe_docker` 存在轻微重复，后续可收敛；CLI 默认 parallel 行为在大内存机器上会从固定 1 变为动态值（设计 7c 意图，符合预期）。
 
 ## Testing Strategy
 

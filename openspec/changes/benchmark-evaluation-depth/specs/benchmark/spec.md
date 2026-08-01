@@ -116,10 +116,11 @@ benchmark SHALL 用 adapter 模式抽象评测框架的验证/评分阶段，支
 
 #### Scenario: 未知任务族回退
 
-- **GIVEN** 某任务声明了 registry 中不存在的 `task_family`
+- **GIVEN** 某需要通过框架 adapter 验证的任务（如 docker 任务）声明了 registry 中不存在的 `task_family`
 - **WHEN** runner 尝试验证该任务
 - **THEN** 系统 SHALL 将任务标记为 `unsupported`
-- **AND** 记录明确 reason，不得伪造验证结果
+- **AND** 记录明确 reason（`task_family_unsupported`），不得伪造验证结果
+- **AND** 本地任务（`execution_environment=local`）仍走确定性 `test_command` 判定，不受 adapter registry 影响
 
 #### Scenario: adapter 契约可测试
 
