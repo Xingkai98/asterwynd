@@ -165,7 +165,7 @@
 
 - **GIVEN** change 处于 `planning` phase
 - **THEN** sub_state 序列 SHALL 为: `exploring` → `writing_proposal` → `writing_design` → `writing_spec` → `writing_tickets` → `reviewing_artifacts` → `ready_for_review`
-- **AND** grill-with-docs 或等价设计追问 SHALL 在 `exploring` 到 `writing_design` 期间完成，逐项确认实现细节、依赖、风险、测试策略和文档影响
+- **AND** batch-grill-me 或等价设计追问 SHALL 在 `exploring` 到 `writing_design` 期间完成，逐项确认实现细节、依赖、风险、测试策略和文档影响
 - **AND** 同 phase 内 sub_state 间流转 trigger SHALL 为 `auto`
 - **AND** `writing_tickets` 生成的 tracer-bullet tickets SHALL 发布到配置的 issue tracker backend，默认 backend 为 GitHub Issues
 

@@ -33,6 +33,6 @@
 
 ## 8. 收尾校验（checker 要求项）
 
-- [ ] 8.1 pre-implementation grill-with-docs 或等价设计审阅任务（进入 building 前）
+- [ ] 8.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）
 - [ ] 8.2 benchmark smoke verification（coding-agent core change 要求）
 - [ ] 8.3 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`

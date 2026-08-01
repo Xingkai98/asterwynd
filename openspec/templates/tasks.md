@@ -2,7 +2,7 @@
 
 - [ ] 1.1 更新受影响 capability 的 spec delta。
 - [ ] 1.2 明确本 change 的范围、非目标和验收标准。
-- [ ] 1.3 开发前使用 `grill-with-docs` 或等价设计追问审视 `design.md`，逐项确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案；不得把 agent 自己的推荐答案当作用户确认。
+- [ ] 1.3 开发前使用 `batch-grill-me` 或等价设计追问审视 `design.md`，逐项确认每个关键实现细节、依赖、风险、测试策略和文档影响都有最终方案；不得把 agent 自己的推荐答案当作用户确认。
 - [ ] 1.4 维护 `## Impact Analysis`，列出影响、不影响和待确认影响面；开发前把待确认项清理为明确结论或阻塞项。
 - [ ] 1.5 维护 `## Reference Implementation Research`；默认启用并记录原因、调研问题、发现和设计影响，如关闭则记录明确原因。
 - [ ] 1.6 在 `design.md` 的 `## Pre-Implementation Review` 记录已解决问题、备选方案、否决方案、最终确认和剩余风险。

@@ -55,7 +55,7 @@
 
 ## Pre-Implementation Review
 
-- 待 planning 阶段（grill-with-docs）确认本设计，并补齐 Reference Implementation Research 实质 findings 与 design impact。
+- 待 planning 阶段（batch-grill-me）确认本设计，并补齐 Reference Implementation Research 实质 findings 与 design impact。
 
 ## Reference Implementation Research
 

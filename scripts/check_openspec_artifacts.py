@@ -337,7 +337,11 @@ def _has_benchmark_smoke_task(tasks_text: str) -> bool:
 
 def _has_design_review_task(tasks_text: str) -> bool:
     lowered = tasks_text.lower()
-    return "grill-with-docs" in lowered or "等价设计追问" in tasks_text
+    return (
+        "grill-with-docs" in lowered
+        or "batch-grill" in lowered
+        or "等价设计追问" in tasks_text
+    )
 
 
 def _has_current_spec_sync_task(tasks_text: str) -> bool:
@@ -406,7 +410,7 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
         return ["missing required file: tasks.md"]
     if not _has_design_review_task(tasks.read_text(encoding="utf-8")):
         return [
-            "tasks.md missing pre-implementation grill-with-docs or equivalent design review task"
+            "tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
         ]
     return []
 
