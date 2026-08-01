@@ -258,6 +258,7 @@ def _build_agent_core(
         browser_config=config.tools.browser,
         mcp_manager=mcp_manager,
         persistent_memory=persistent_memory,
+        selection_config=config.tools.selection,
     )
 
     hooks = HookManager([

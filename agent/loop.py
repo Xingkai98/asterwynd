@@ -554,7 +554,7 @@ class AgentLoop:
                         observation += "\n[output truncated]"
                     messages.append(Message(role="user", content=observation))
 
-            tool_schemas = self.tool_registry.get_all_schemas()
+            tool_schemas = self._select_tool_schemas(messages)
 
             contextualized = await self._messages_with_run_context(messages)
             await self.hooks.before_iteration(iteration, contextualized)
@@ -847,6 +847,40 @@ class AgentLoop:
                 "stop_reason": "max_iterations",
             })
         return result
+
+    def _select_tool_schemas(self, messages: list[Message]) -> list[dict]:
+        """Select tool schemas for the LLM injection seam.
+
+        Uses Top-K selection when a selector is configured on the registry;
+        otherwise falls back to the full visible schema list (original
+        behavior, design Q4 degrade-to-full fallback). The query is built from
+        the most recent user message plus recent tool call names (design Q9).
+        """
+        selector = getattr(self.tool_registry, "_selector", None)
+        if selector is None:
+            return self.tool_registry.get_all_schemas()
+
+        query_parts: list[str] = []
+        for msg in reversed(messages):
+            if msg.role == "user" and isinstance(msg.content, str):
+                query_parts.append(msg.content)
+                break
+        # Recent tool call names (up to 3) as query hints.
+        tool_hints: list[str] = []
+        for msg in reversed(messages):
+            if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+                for tc in msg.tool_calls:
+                    name = getattr(tc, "name", None) or getattr(tc, "function", {}).get("name", "")
+                    if name:
+                        tool_hints.append(name)
+                    if len(tool_hints) >= 3:
+                        break
+            if len(tool_hints) >= 3:
+                break
+        if tool_hints:
+            query_parts.append("recently used: " + ", ".join(tool_hints))
+        query = " ".join(query_parts)
+        return self.tool_registry.select_schemas(query, k=5)
 
     async def _call_llm(
         self,

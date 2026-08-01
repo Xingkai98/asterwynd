@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from agent.code_intelligence.config import CodeIntelligenceConfig
-from agent.config import BrowserConfig, WebSearchConfig
+from agent.config import BrowserConfig, ToolSelectionConfig, WebSearchConfig
 from agent.lsp.client import LspClientManager
 from agent.run_config import ModePolicy
 from agent.mcp.manager import McpManager
@@ -75,6 +75,35 @@ KNOWN_BUILTIN_TOOL_NAMES = {
 }
 
 
+def _wire_governance(
+    registry: ToolRegistry,
+    config: ToolSelectionConfig | None,
+) -> None:
+    """Enable registry-level governance (selector/dedup/lifecycle) when configured.
+
+    Design Q2/Q4/Q5: zero-dependency NGramEmbedding default, configurable
+    latency budget and dedup threshold. Stable-layer tools are the core
+    coding tools, always injected (design Q3).
+    """
+    if config is None or not config.enabled:
+        return
+    from agent.embedding import NGramEmbedding
+    from agent.tools.governance import SemanticDeduper, ToolLifecycle, ToolSelector
+
+    embedder = NGramEmbedding(dim=2048)
+    selector = ToolSelector(
+        embedder=embedder,
+        top_k=config.top_k,
+        latency_budget_ms=config.latency_budget_ms,
+    )
+    deduper = SemanticDeduper(embedder=embedder, threshold=config.dedup_threshold)
+    lifecycle = ToolLifecycle()
+    registry.set_selector(selector)
+    registry.set_deduper(deduper)
+    registry.set_lifecycle(lifecycle)
+    registry._sync_governance_indexes()
+
+
 def build_default_tool_registry(
     *,
     policy: WorkspacePolicy | None = None,
@@ -86,6 +115,7 @@ def build_default_tool_registry(
     mcp_manager: McpManager | None = None,
     tools: list[Tool] | None = None,
     persistent_memory: PersistentMemory | None = None,
+    selection_config: ToolSelectionConfig | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     default_tools = tools or get_default_tools(
@@ -99,6 +129,7 @@ def build_default_tool_registry(
     for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
         registry.register(tool)
     registry.workspace_policy = policy
+    _wire_governance(registry, selection_config)
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
 

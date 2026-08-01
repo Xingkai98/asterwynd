@@ -80,6 +80,19 @@ class BrowserConfig:
 
 
 @dataclass(frozen=True)
+class ToolSelectionConfig:
+    """Tool governance selection knobs (design Q2/Q4/Q5).
+
+    Thresholds are calibrated to the embedding backend; n-gram defaults are
+    measured (semantic-equivalent ≈0.86, completely different ≈0.11).
+    """
+    enabled: bool = False
+    top_k: int = 5
+    latency_budget_ms: float = 50.0
+    dedup_threshold: float = 0.7
+
+
+@dataclass(frozen=True)
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
@@ -87,6 +100,7 @@ class ToolsConfig:
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     display: ToolResultDisplayConfig = field(default_factory=ToolResultDisplayConfig)
     browser: BrowserConfig | None = None
+    selection: ToolSelectionConfig = field(default_factory=ToolSelectionConfig)
 
 
 @dataclass(frozen=True)
