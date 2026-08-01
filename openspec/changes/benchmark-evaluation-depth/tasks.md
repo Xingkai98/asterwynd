@@ -1,7 +1,7 @@
 ## 1. 规格与设计定稿
 
 - [ ] 1.1 确认 proposal 的 Change Type、Impact Analysis、Reference Implementation Research 完整（含本地参考仓库不可用事实与替代依据）。
-- [ ] 1.2 开发前使用 `grill-with-docs` 审视 `design.md`，逐项确认分层字段、bootstrap/Pass@k 统计、judge 判定、失败归因、结果页渲染、CLI `--repeat`、`VerifierAdapter` 接口与 registry、依赖策略和测试策略；不得把 agent 推荐答案当作用户确认。
+- [ ] 1.2 开发前使用 `grill-with-docs` 审视 `design.md`，逐项确认分层字段、bootstrap/Pass@k 统计、确定性判分、失败归因、结果页渲染、CLI `--repeat`、`VerifierAdapter` 接口与 registry、依赖策略和测试策略；不得把 agent 推荐答案当作用户确认。
 - [ ] 1.3 在 `design.md` 的 `## Pre-Implementation Review` 记录 grill 结论：已解决问题、备选方案、否决方案、最终确认、剩余风险。
 - [ ] 1.4 确认 spec delta（全部作为 `benchmark` 追加）与 proposal 的 Modified Capabilities 一致，且为向后兼容扩展。
 
@@ -21,16 +21,15 @@
 ## 4. 统计指标
 
 - [ ] 4.1 实现均值/标准差与 95% 置信区间（bootstrap 百分位法，固定随机种子保证可复现）。
-- [ ] 4.2 实现 `Pass@k` 计算（通过类任务；开放式任务跳过改用 judge）。
+- [ ] 4.2 实现 `Pass@k` 计算（按既有 passed/passed_with_warnings 判定统计）。
 - [ ] 4.3 为统计计算补单元测试（含固定种子可复现断言）。
 - [ ] 4.4 确认统计依赖策略（是否新增 numpy/scipy；如新增需在 design 记录并在 tasks/Impact 回写）。
 
-## 5. 开放式任务 judge 与人工回流
+## 5. 确定性判分统一
 
-- [ ] 5.1 在 task schema 标记开放式任务（无 hidden test）的方式。
-- [ ] 5.2 实现 judge 判定流程（对开放式任务输出给出一致判分），判分结果写入 result。
-- [ ] 5.3 记录 `human_reviewed` 标记与判定理由，支持人工回流审计。
-- [ ] 5.4 为 judge 判定与回流标记补单元测试。
+- [ ] 5.1 确认所有任务判分统一走确定性 VerifierAdapter（hidden test/脚本/状态比对），不引入 LLM judge。
+- [ ] 5.2 覆盖无 test_patch 但可确定性验证的任务（如 `asterwynd-readme-title` 的 grep）。
+- [ ] 5.3 在 change 文档记录 judge（含 LLM judge + 人工回流校准）作为后续项及触发条件，不在本 change 实现。
 
 ## 6. 失败归因
 

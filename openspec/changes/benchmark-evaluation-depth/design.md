@@ -11,7 +11,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - 结果粒度是"单次通过/失败"布尔值，没有任务分层，无法回答"这个 agent 在工具调用/上下文/规划哪个层面强"。
 - 没有重复运行，单次结果不可当作稳定数字引用。
 - 没有均值/标准差/置信区间/Pass@k，无法讲统计显著性。
-- 开放式任务（无 hidden test）没有 judge 判定流程与人工回流。
+- 判分形态单一：全为确定性 hidden test/命令验证，尚未抽象成可插拔、可扩展到开放产出（问答/报告）评测的判分通道（judge 留作后续项）。
 - 失败只归因到 reason 字符串，没有按层、按模式的占比与回查入口。
 - 没有一个渲染好的、可直接在面试中打开引用的量化结果页。
 
@@ -24,7 +24,6 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - 建立任务能力分层体系（`execution`/`tool-usage`/`context-planning`/`multi-step-solving`），按层聚合统计。
 - 支持同一配置 N>=3 次重复运行，聚合为分布。
 - 输出均值/标准差/置信区间与 `Pass@k`，统计可复现。
-- 开放式任务支持 judge 判定与人工回流标记。
 - 失败按 reason 分类归因，支持占比与样例回查。
 - 渲染可直接引用的量化结果页（markdown/HTML）。
 - 用 adapter 模式抽象评测框架的验证阶段，支持无缝接入不同评测框架（SWE-bench、Harbor 等），把现有硬编码的 `_run_swebench_harness` 重构为第一个 adapter。
@@ -38,6 +37,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - 本 change 不做跨节点负载均衡。
 - 本 change 首批只实现 adapter 接口 + 迁移 SWE-bench；Harbor 等具体框架的适配作为后续独立 change（复用本 change 的接口/统计/结果页管线）。
 - adapter 只抽象验证/评分阶段，不包执行阶段（worktree vs sandbox 差异大，强行统一会过度设计）。
+- 本 change 不实现 LLM judge 判分（含人工回流校准链路）；judge 作为后续项，触发条件是引入 BrowseComp/MT-Bench 式开放产出任务。
 
 ## Decisions
 
@@ -63,7 +63,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 ### Decision 2: 统计方法用 bootstrap 置信区间 + Pass@k，纯 Python 自实现
 
-**方案**：对每层/每任务聚合：均值、标准差、95% 置信区间（bootstrap 百分位法，固定随机种子保证可复现）；通过类任务输出 `Pass@k`（k 取该任务重复次数 N，按既有通过判定统计）。无 hidden test 的开放式任务不做 Pass@k，改用 judge 判定。
+**方案**：对每层/每任务聚合：均值、标准差、95% 置信区间（bootstrap 百分位法，固定随机种子保证可复现）；通过类任务输出 `Pass@k`（k 取该任务重复次数 N，按既有通过判定统计）。当前全部任务为确定性验证，Pass@k 按既有 passed/passed_with_warnings 判定统计。
 
 **备选**：
 - 解析置信区间（正态近似）。被拒：重复次数 N>=3 时样本小，正态近似在非对称分布上不可靠；bootstrap 对指标不设分布假设，且固定种子可复现。
@@ -71,13 +71,15 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 **理由**：小样本下 bootstrap 比正态近似稳健，且方法学可直接在面试引用；纯 Python 自实现保持项目轻依赖风格，固定种子可复现。
 
-### Decision 3: 开放式任务 judge 用确定判定 + 人工回流标记
+### Decision 3: judge 作为可选 adapter 后端，本 change 不做 LLM judge
 
-**方案**：开放式任务提供判定流程（如对 agent 输出跑一组规则/比较式 judge），判分结果写入 result；同时记录 `human_reviewed` 标记与判定理由，供人工回流审计。
+**方案**：评测主干是确定性 VerifierAdapter（hidden test/脚本/状态比对），judge 作为 adapter 的一个可选实现形态，通过 Verdict 的 `score` 字段承载。本 change 不实现 LLM judge 的完整链路；现有任务全部为代码任务（产出 diff、确定性验证），业界主流 benchmark（SWE-bench、Terminal-Bench、τ-bench、GAIA 等）也以确定性判分为主，越权威者越刻意回避 judge（不可复现、有偏差、无法评测 SOTA）。
 
-**备选**：完全依赖人工逐条判定。被拒：benchmark 无人值守场景不现实；完全自动又缺可信度。折中为 judge 自动初判 + 人工回流标记。
+**备选**：
+- 完全依赖人工逐条判定。被拒：benchmark 无人值守场景不现实。
+- 本 change 就实现 LLM judge。被拒：当前无任何任务需要它（无开放产出任务），为一个不存在的问题写代码是过度设计；且业界只在 BrowseComp/MT-Bench 式"答案无唯一客观标准"的开放产出评测里才用 LLM judge。
 
-**理由**：兼顾无人值守可运行与可审计性，判分口径一致。
+**理由**：主干确定性判分与业界主流一致，且与 VerifierAdapter 抽象天然契合；judge 形态（含 LLM judge + 人工回流校准）作为后续项，触发条件是"引入 BrowseComp/MT-Bench 式开放产出任务"。
 
 ### Decision 4: 失败归因在既有 reason 之上增加按层占比与回查
 
@@ -111,13 +113,13 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 **理由**：复用既有单次 run 全部行为；多轮天然产生独立 `run_id`，符合既有 artifact 结构，聚合在最外层隔离。
 
-### Decision 7: 开放式任务复用"无 test_patch"判定，不新增字段
+### Decision 7: 当前无开放式任务，判分统一走确定性 VerifierAdapter
 
-**方案**：以 `TaskSpec.test_patch_file` 是否存在判定开放式任务：无 test_patch 即视为开放式，跳过 Pass@k、走 judge 判定。
+**方案**：本 change 不引入开放式任务判定机制（不新增 `open_ended` 字段、不实现 judge）。现有任务全部为代码任务、产出 diff、用确定性验证（`test_command`/`test_patch`）；唯一无 test_patch 的 `asterwynd-readme-title` 也用 `grep` 这类确定性命令验证，不需要 judge。所有任务统一走确定性 VerifierAdapter 判定。
 
-**备选**：新增 `open_ended: bool` 字段显式标记。被拒：`test_patch_file` 已存在，"有没有 hidden test"就是有没有 test_patch 的直接反映，新增字段徒增维护。
+**备选**：以"无 test_patch"判定开放式并走 judge。被拒：经盘点当前无一个任务真正需要主观评分；为一个不存在的任务形态实现 judge 是过度设计。
 
-**理由**：零 schema 改动，语义正交直接。
+**理由**：与业界主流一致（确定性判分），与 Decision 3 的"judge 作可选后端、本 change 不做"呼应；未来若引入问答型任务再补 judge 层。
 
 ### Decision 8: 结果页为独立 `benchmarks/report.py`，不复用 compare 职责
 
@@ -132,7 +134,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - **[重复运行放大成本] → 用可配置 N（验收默认 3），结果页标注重复次数与总成本，避免无界放大。**
 - **[bootstrap 在 N 小时置信区间宽] → 区间如实展示，作为"证据强度"而非失败；文档说明小样本局限。**
 - **[分层标签覆盖不全 → 归入默认层，结果页标注默认层占比，避免静默失真。]**
-- **[开放式 judge 误判 → 记录判定理由与人工回流标记，可审计可修正，且与既有 reason 语义兼容。]**
+- **[将来引入开放产出任务需要 judge → 本 change 记录为后续项与触发条件，不提前实现，避免为一个不存在的任务形态过度设计。]**
 - **[新增 CLI `--repeat` 与既有参数冲突 → 复用既有 benchmark CLI 参数解析，`--repeat` 缺省 1 保持既有行为。]**
 - **[adapter 抽象过早/过晚 → 以"已有两种验证形态"为抽象触发点（现有 SWE-bench + 待接 Harbor），不预为未出现的形态抽象；契约测试锁接口。]**
 - **[迁移 `_run_swebench_harness` 有回归风险 → 迁移后跑既有 SWE-bench 兼容测试确认 status/reason 映射不变。]**
@@ -143,7 +145,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 - 分层字段名与取值集合是否与 CONTEXT.md/architecture 词汇一致。
 - bootstrap 实现是否复用现有统计依赖，还是要新增依赖（如 numpy/scipy）；若新增，需确认依赖策略。
-- judge 判定流程的输入输出 schema，以及开放式任务如何被标记（task schema 新增字段）。
+- 确定性判分如何经 VerifierAdapter 统一覆盖所有任务（含无 test_patch 的 grep 类任务）；judge 作为后续项不进入本 change 范围。
 - 结果页渲染输入的数据结构（聚合层模型），是否直接落在 `benchmarks/models.py`。
 - `--repeat` 在 CLI 与 runner 的传递路径，以及 `RunMetadata` 如何表示聚合。
 - `VerifierAdapter` 接口的 `Verdict` 字段与契约测试断言（status/reason/score 映射）是否足够锁住接口防漂移。
@@ -155,7 +157,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 ## Testing Strategy
 
-- 单元测试（`tests/benchmark/`）：分层聚合、bootstrap 置信区间（固定种子可复现）、Pass@k 计算、judge 判定、失败归因占比、结果页渲染（golden 片段）。
+- 单元测试（`tests/benchmark/`）：分层聚合、bootstrap 置信区间（固定种子可复现）、Pass@k 计算、确定性判分统一、失败归因占比、结果页渲染（golden 片段）。
 - adapter 契约测试：每个 adapter 跑同一套契约断言（fake 任务 → Verdict 的 status/reason/score 映射），锁住接口防漂移；未知 task_family 断言 fallback 为 unsupported。
 - 迁移回归测试：SWE-bench adapter 迁移后，既有 swebench 任务的 status/reason 映射与迁移前一致。
 - benchmark 层级测试：新增评测任务的 smoke 验证（`--repeat 3` 跑一组小任务）。

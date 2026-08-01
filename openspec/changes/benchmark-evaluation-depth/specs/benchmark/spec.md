@@ -63,16 +63,22 @@ benchmark-evaluation SHALL 对重复运行结果计算均值、标准差，并�
 - **AND** SHALL 包含置信区间（如 95% CI）
 - **AND** SHALL 包含任务通过率与 `Pass@k`
 
-### Requirement: 开放式任务支持 judge 校准与人工回流
+### Requirement: 判分统一走确定性 VerifierAdapter
 
-对无 hidden test 的开放式任务，benchmark-evaluation SHALL 提供判定流程，保证判分口径一致，并记录人工回流证据。
+benchmark SHALL 以确定性验证为判分主干：任务通过确定性 hidden test/脚本/状态比对判定（产出 diff 应用 hidden test、跑 test 命令等），不使用 LLM 主观 judge 打分。judge 判分（含 LLM judge 与人工回流校准）作为开放产出评测的可选后续项，不在当前判分主干中实现。
 
-#### Scenario: 开放式任务判定
+#### Scenario: 代码任务确定性判定
 
-- **GIVEN** 某任务无 hidden test 且标记为开放式
-- **WHEN** 评测对 agent 输出做判定
-- **THEN** 系统 SHALL 使用一致的判定流程（judge）
-- **AND** 判定结果 SHALL 记录可审计的人工回流标记或判定理由
+- **GIVEN** 某任务产出 diff 且提供 test 命令/hidden test
+- **WHEN** 评测验证该任务
+- **THEN** 系统 SHALL 用确定性验证（应用 hidden test、跑 test 命令）判定通过/失败
+- **AND** 不使用 LLM 主观 judge 打分
+
+#### Scenario: 无 hidden test 任务的确定性验证
+
+- **GIVEN** 某任务无 test_patch 但仍可通过确定性命令验证（如 `grep`）
+- **WHEN** 评测验证该任务
+- **THEN** 系统 SHALL 使用该确定性命令判定，不引入 judge
 
 ### Requirement: 失败归因分类
 
