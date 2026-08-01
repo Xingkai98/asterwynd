@@ -6,6 +6,27 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+# Capability layers used for evaluation aggregation. Tasks group into these
+# layers; unknown or missing categories fall back to the default layer.
+LAYERS: tuple[str, ...] = (
+    "execution",
+    "tool-usage",
+    "context-planning",
+    "multi-step-solving",
+)
+DEFAULT_LAYER = "execution"
+
+
+def resolve_layer(category: str | None) -> str:
+    """Map a task ``category`` to a capability layer.
+
+    Unknown or missing categories fall back to the default layer so
+    aggregation never fails on a missing label.
+    """
+    if category in LAYERS:
+        return category
+    return DEFAULT_LAYER
+
 
 class BenchmarkReason(str, Enum):
     SETUP_ERROR = "setup_error"
@@ -52,9 +73,23 @@ class TaskResult:
     output_tokens: int | None = None
     reason: str | None = None
     planning_summary: dict[str, Any] | None = None
+    category: str | None = None
+    run_round: int | None = None
+    task_family: str | None = None
 
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TaskResult":
+        """Parse a ``result.json`` dict back into a TaskResult.
+
+        Unknown keys are ignored and missing fields fall back to the
+        dataclass defaults, so older or hand-crafted artifacts stay
+        compatible.
+        """
+        field_names = set(cls.__dataclass_fields__.keys())
+        return cls(**{k: v for k, v in data.items() if k in field_names})
 
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(

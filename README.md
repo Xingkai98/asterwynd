@@ -393,6 +393,18 @@ uv run asterwynd benchmark benchmarks/tasks \
   --max-iterations 80
 ```
 
+### 评测深度（重复运行与量化报告）
+
+`--repeat N` 对同一配置重复运行 N 轮（缺省 1 保持单次行为），聚合为可直接引用的量化报告（`evaluation-report.md`）：
+
+```bash
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent fake --source-repo . \
+  --runs-dir /tmp/asterwynd-eval --repeat 3 --parallel 1
+```
+
+报告按能力分层（`execution`/`tool-usage`/`context-planning`/`multi-step-solving`）组织，含 Pass@k、均值/标准差、bootstrap 95% 置信区间、延迟 p50/p95/p99、token 成本与失败归因占比，并标注任务所属评测框架（task_family）。评测框架验证经 `VerifierAdapter` 抽象（当前内置 SWE-bench Verified adapter），并发上限按当前环境动态判定（低资源环境自动取 1）。
+
 ### Claw-SWE-Bench 对比评测
 
 详细环境准备见 [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md)。最小命令形态：

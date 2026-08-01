@@ -394,6 +394,18 @@ uv run asterwynd benchmark benchmarks/tasks \
   --max-iterations 80
 ```
 
+### Evaluation Depth (Repeated Runs and Quantitative Report)
+
+`--repeat N` runs the same configuration N times (default 1 preserves single-run behavior) and aggregates into a directly citable quantitative report (`evaluation-report.md`):
+
+```bash
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent fake --source-repo . \
+  --runs-dir /tmp/asterwynd-eval --repeat 3 --parallel 1
+```
+
+The report is organized by capability layer (`execution`/`tool-usage`/`context-planning`/`multi-step-solving`) and includes Pass@k, mean/std, bootstrap 95% confidence intervals, latency p50/p95/p99, token cost, and failure attribution shares, plus each task's framework family (task_family). Framework verification is abstracted behind `VerifierAdapter` (currently a built-in SWE-bench Verified adapter); the concurrency limit is derived dynamically from the current machine (falls back to 1 on low-resource environments).
+
 ### Claw-SWE-Bench Comparison Evaluation
 
 See [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md) for full environment setup. Minimal command shape:
