@@ -53,6 +53,12 @@
 - [ ] 7b.5 迁移后跑既有 SWE-bench 兼容测试，确认 status/reason 映射与迁移前一致。
 - [ ] 7b.6 在 change 文档记录 Harbor 等框架作为后续适配项（复用本接口/统计/结果页管线），不在本 change 实现。
 
+## 7c. Docker 前置与动态资源护栏
+
+- [ ] 7c.1 验证当前环境 Docker 可用且能以 docker 组身份运行（`sg docker` 或重新登录使组生效），否则 SWE-bench 任务会走 `unsupported(docker_unavailable)`。
+- [ ] 7c.2 为 benchmark 运行实现按当前环境动态判定的并发上限（据可用内存与 CPU 核数推导安全并发并留余量），不写死固定值；低资源环境自动降低 parallel，避免打满内存/CPU。
+- [ ] 7c.3 为动态资源护栏补单元测试（mock 不同内存/CPU 配置推导出不同并发上限）。
+
 ## 8. 同步与验证
 
 - [ ] 8.1 将本 change 的 `benchmark` delta（ADDED requirements）同步到当前规格 `openspec/specs/benchmark/spec.md`。
@@ -60,7 +66,7 @@
 - [ ] 8.3 维护 Reference Implementation Research 最终结论；如调研结论变化先回写 change 文档。
 - [ ] 8.4 运行相关单元/集成测试与全量测试。
 - [ ] 8.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 8.6 跑通至少一个 benchmark smoke（`--repeat 3` 一组小任务），确认重复运行+聚合+结果页全链路。
+- [ ] 8.6 跑通至少一个 benchmark smoke（`--repeat 3` 一组小任务），确认重复运行+聚合+结果页全链路；SWE-bench smoke 需 Docker 可用且按动态并发护栏控制资源。
 
 ## 9. PR 收尾
 

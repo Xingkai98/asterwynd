@@ -155,3 +155,4 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 - benchmark 层级测试：新增评测任务的 smoke 验证（`--repeat 3` 跑一组小任务）。
 - 兼容测试：既有单次运行 artifact 结构不变、既有 `benchmark` spec 场景不回归。
 - 每个 bug fix 需新增回归测试；涉及 benchmark 路径必须覆盖 benchmark 层级测试。
+- **资源护栏（动态）**：SWE-bench 等 Docker 验证与重复运行会吃内存/CPU，并发上限按当前环境动态判定（根据可用内存与 CPU 核数推导安全并发，如 `min(cpu_count, 可用内存/单实例预估)` 并留余量），而不是写死固定值；构建验证时确认 docker 可用且以 docker 组身份运行（否则 swebench 任务走 `unsupported(docker_unavailable)`），并在低资源环境降低 parallel 避免打满内存。
