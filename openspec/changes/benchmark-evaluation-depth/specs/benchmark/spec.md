@@ -130,6 +130,6 @@ benchmark SHALL 用 adapter 模式抽象评测框架的验证/评分阶段，支
 
 #### Scenario: 迁移既有 SWE-bench 验证
 
-- **GIVEN** 既有 `_run_swebench_harness` 逻辑迁移为 `swebench` adapter
+- **GIVEN** 既有 `_run_swebench_harness` 逻辑迁移为 `swebench` adapter（SWE-bench Verified 验证协议）
 - **WHEN** 运行既有 SWE-bench 兼容测试
 - **THEN** 迁移前后 status/reason 映射 SHALL 一致

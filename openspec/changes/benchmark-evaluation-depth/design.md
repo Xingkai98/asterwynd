@@ -4,7 +4,7 @@
 
 Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：从 tasks 目录读任务、支持多 agent runner、按任务写 `result.json`/`trace.json`/`runner.log`、区分 `passed/passed_with_warnings/failed/error/unsupported`、支持 Docker-based SWE-bench harness、用 `status + reason` 统一结果语义、`compare.py` 能输出 p50/p95/p99 延迟与 token 成本对比表。`benchmarks/models.py` 的 `TaskResult`/`RunMetadata` 已经携带 `status/reason/iterations/tool_calls/input_tokens/output_tokens/duration_seconds` 等字段。
 
-现有 SWE-bench 支持（`_run_swebench_harness`）已经具备 adapter 的雏形：按 `task.execution_environment == "docker"` 与 `task.task_family == "swebench"` 分流，把 agent patch 转成 SWE-bench `predictions.jsonl`，调 `swebench.harness.run_evaluation`，再把 `report.json` 标准化为 `status`/`reason`/`detail`。但它是硬编码在 `BenchmarkRunner` 里的一个 if 分支，新增评测框架（如 Harbor）就得继续叠加 if。
+现有 SWE-bench 支持（`_run_swebench_harness`）已经具备 adapter 的雏形：按 `task.execution_environment == "docker"` 与 `task.task_family == "swebench"` 分流，把 agent patch 转成 SWE-bench `predictions.jsonl`，调 `swebench.harness.run_evaluation`，再把 `report.json` 标准化为 `status`/`reason`/`detail`。但它是硬编码在 `BenchmarkRunner` 里的一个 if 分支，新增评测框架（如 Harbor）就得继续叠加 if。具体锁定的数据源是 SWE-bench Verified（`princeton-nlp/SWE-bench_Verified`，split=test）：现有 10 个 `swebench-*` 任务全部指向该数据集，`swebench.harness` 来自官方 `swebench` PyPI 包（依赖 `swebench>=4.1.0`）；`dataset_name`/`split`/`instance_id` 由 task schema 透传，故该验证协议在数据源上可配置，当前在用为 Verified。
 
 弱项（面试复盘反复点名）：
 
@@ -43,7 +43,7 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 ### Decision A0: 评测框架用 VerifierAdapter 抽象，边界画在验证阶段
 
-**方案**：定义 `VerifierAdapter` 接口，只包验证/评分阶段，input 为任务定义 + agent 产出（patch / answer / transcript），output 为标准化 `Verdict { status, reason, detail, score? }`。用既有 `task_family` 作为选择 key，构建 registry（`task_family -> adapter`），调用方只查 key 拿 adapter、不 switch。新增框架 = 新增一个 adapter 文件 + 注册 + 契约测试，`BenchmarkRunner`/统计/结果页零改动。把现有硬编码的 `_run_swebench_harness` 重构为第一个 adapter（`swebench`），消除 if 分支。
+**方案**：定义 `VerifierAdapter` 接口，只包验证/评分阶段，input 为任务定义 + agent 产出（patch / answer / transcript），output 为标准化 `Verdict { status, reason, detail, score? }`。用既有 `task_family` 作为选择 key，构建 registry（`task_family -> adapter`），调用方只查 key 拿 adapter、不 switch。新增框架 = 新增一个 adapter 文件 + 注册 + 契约测试，`BenchmarkRunner`/统计/结果页零改动。把现有硬编码的 `_run_swebench_harness` 重构为第一个 adapter（`swebench`，即 SWE-bench Verified 验证协议：agent 产出 diff → predictions.jsonl → 官方 `swebench.harness.run_evaluation` Docker 验证 → report.json 判 resolved），消除 if 分支。
 
 **备选**：
 - 继续用 if 分支累加框架。被拒：新增框架改共享 `BenchmarkRunner`，选择逻辑越来越长，碰坏其他框架风险高。
