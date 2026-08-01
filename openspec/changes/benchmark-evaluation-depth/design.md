@@ -95,6 +95,14 @@ Asterwynd 现有 benchmark（`openspec/specs/benchmark/spec.md`）已经能：�
 
 **理由**：单一职责，不破坏既有 compare 行为，结果页独立可引用；framework 维度与分层正交，靠标准化中间表示的 `task_family` 字段即可承载。
 
+### Decision 4a: 统计在 task 与 layer 两级聚合，Pass@k 只在 task 级
+
+**方案**：统计在 task 和 layer 两级都聚合。task 级：对单任务 N 次重复算均值/标准差/95% CI，并输出 `Pass@k`（k=重复次数 N，通过判定 = 该轮 passed/passed_with_warnings）；layer 级：对该层所有任务的所有轮次汇总算通过率均值 + 95% CI，不输出 Pass@k。
+
+**备选**：只按 task 聚合、layer 只做分组展示。被拒：答不出"这个 agent 在上下文/规划这类能力上整体强不强"，而那正是面试复盘最想要的能力维度强弱证据。
+
+**理由**：task 级回答"这个任务稳不稳"，layer 级回答"这类能力整体强不强"，两级互补；layer 级跨任务 Pass@k 无统计意义，故用通过率均值+CI。区间宽度如实反映证据强度（N 小则宽），是信号而非失败。
+
 ### Decision 6: 重复运行在 CLI 层循环，不侵入 runner 单次语义
 
 **方案**：`--repeat N` 在 `agent/main.py` 的 `benchmark()` 里循环 N 次调用 `runner.run_all()`，每轮独立 `run_id`，最外层聚合。缺省 1 保持既有单次行为。
