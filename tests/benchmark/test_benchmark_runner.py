@@ -5,8 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.adapters import SwebenchAdapter, Verdict
 from benchmarks.agent_runner import AgentRunner, FakeAgentRunner
-from benchmarks.models import AgentRunResult
+from benchmarks.models import AgentRunResult, BenchmarkReason
 from benchmarks.runner import BenchmarkRunner, DockerPreflightResult
 
 
@@ -384,17 +385,18 @@ def test_run_swebench_harness_reads_report_and_maps_pass(repo, tmp_path, monkeyp
         report_path.write_text(json.dumps({"psf__requests-1142": {"resolved": True}}))
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
-    monkeypatch.setattr("benchmarks.runner.subprocess.run", fake_run)
+    monkeypatch.setattr("benchmarks.adapters.subprocess.run", fake_run)
 
-    verification = runner._run_swebench_harness(
+    adapter = SwebenchAdapter(agent_name="asterwynd", model="test-model")
+    verdict = adapter.verify(
         loaded,
         task_output,
         "diff --git a/app.py b/app.py\n",
     )
 
     assert calls, "expected harness subprocess to run"
-    assert verification["status"] == "passed"
-    assert verification["reason"] is None
+    assert verdict.status == "passed"
+    assert verdict.reason is None
     assert (task_output / "predictions.jsonl").exists()
 
 
@@ -425,14 +427,18 @@ async def test_docker_task_persists_harness_output(repo, tmp_path, monkeypatch):
         "_get_docker_preflight_result",
         lambda: DockerPreflightResult(available=True, reason="ok", detail="docker info succeeded"),
     )
+
+    class _FailingVerifier:
+        def verify(self, loaded, task_output, patch_text, log=None):
+            return Verdict(
+                status="error",
+                reason=BenchmarkReason.DOCKER_RUNTIME_ERROR.value,
+                detail="docker stderr: image pull failed",
+            )
+
     monkeypatch.setattr(
-        runner,
-        "_run_swebench_harness",
-        lambda loaded, task_output, patch_text: {
-            "status": "error",
-            "reason": "docker_runtime_error",
-            "detail": "docker stderr: image pull failed",
-        },
+        "benchmarks.runner.get_verifier",
+        lambda task_family, **kwargs: _FailingVerifier(),
     )
 
     result = await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "run-docker-error")
@@ -442,7 +448,95 @@ async def test_docker_task_persists_harness_output(repo, tmp_path, monkeypatch):
     assert result.reason == "docker_runtime_error"
     assert (task_output / "test_output.txt").read_text() == "docker stderr: image pull failed"
     runner_log = (task_output / "runner.log").read_text()
-    assert "SWE-bench verification detail saved to test_output.txt" in runner_log
+    assert "Framework verification detail saved to test_output.txt" in runner_log
+
+
+@pytest.mark.asyncio
+async def test_docker_task_unknown_family_returns_unsupported(repo, tmp_path, monkeypatch):
+    base_commit = _git_out(repo, "rev-parse", "HEAD")
+    task_dir = _task_dir(
+        tmp_path,
+        base_commit=base_commit,
+        test_command="pytest",
+        task_id="harbor-unknown-001",
+        repo_name="example/harbor",
+        task_family="harbor",
+        execution_environment="docker",
+        external_repo=str(repo),
+    )
+    runner = BenchmarkRunner(
+        agent_runner=CompleteEditRunner(),
+        source_repo=repo,
+        runs_dir=tmp_path / "runs",
+    )
+    monkeypatch.setattr(
+        runner,
+        "_get_docker_preflight_result",
+        lambda: DockerPreflightResult(available=True, reason="ok", detail="docker info succeeded"),
+    )
+
+    result = await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "run-unsupported-family")
+
+    task_output = tmp_path / "runs" / "run-unsupported-family" / "tasks" / "harbor-unknown-001"
+    assert result.status == "unsupported"
+    assert result.reason == "task_family_unsupported"
+    result_json = json.loads((task_output / "result.json").read_text())
+    assert result_json["status"] == "unsupported"
+    assert result_json["reason"] == "task_family_unsupported"
+    assert result_json["task_family"] == "harbor"
+    # category is None for tasks without an explicit layer; it stays omitted
+    # (or null) in the artifact rather than breaking old result.json readers.
+    assert result_json.get("category") is None
+    detail = (task_output / "test_output.txt").read_text()
+    assert "harbor" in detail
+
+
+@pytest.mark.asyncio
+async def test_docker_task_passed_verdict_maps_to_passed(repo, tmp_path, monkeypatch):
+    base_commit = _git_out(repo, "rev-parse", "HEAD")
+    task_dir = _task_dir(
+        tmp_path,
+        base_commit=base_commit,
+        test_command="pytest",
+        task_id="swebench-psf__requests-1142",
+        repo_name="psf/requests",
+        task_family="swebench",
+        execution_environment="docker",
+        external_repo=str(repo),
+        instance_id="psf__requests-1142",
+        dataset_name="princeton-nlp/SWE-bench_Verified",
+        dataset_split="test",
+    )
+    runner = BenchmarkRunner(
+        agent_runner=CompleteEditRunner(),
+        source_repo=repo,
+        runs_dir=tmp_path / "runs",
+    )
+    monkeypatch.setattr(
+        runner,
+        "_get_docker_preflight_result",
+        lambda: DockerPreflightResult(available=True, reason="ok", detail="docker info succeeded"),
+    )
+
+    class _PassingVerifier:
+        def verify(self, loaded, task_output, patch_text, log=None):
+            assert log is not None
+            return Verdict(status="passed", reason=None, detail="all tests passed")
+
+    monkeypatch.setattr(
+        "benchmarks.runner.get_verifier",
+        lambda task_family, **kwargs: _PassingVerifier(),
+    )
+
+    result = await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "run-docker-passed")
+
+    task_output = tmp_path / "runs" / "run-docker-passed" / "tasks" / "swebench-psf__requests-1142"
+    assert result.status == "passed"
+    assert result.reason is None
+    assert result.test_runs == 1
+    assert result.task_family == "swebench"
+    assert result.category is None
+    assert (task_output / "test_output.txt").read_text() == "all tests passed"
 
 
 def test_probe_docker_reports_available(repo, tmp_path, monkeypatch):

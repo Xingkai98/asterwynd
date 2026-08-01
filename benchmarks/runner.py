@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from agent.run_config import AgentRunConfig, parse_agent_mode
 from agent.run_identity import new_run_id as new_agent_run_id
 from agent.trace_recorder import TraceRecorder
+from benchmarks.adapters import get_verifier
 from benchmarks.agent_runner import AgentRunner
 from benchmarks.models import (
     BenchmarkReason,
@@ -223,6 +221,8 @@ class BenchmarkRunner:
             model=self.model,
             mode=self.run_config.mode.value,
             agent_run_id=agent_run_id,
+            task_family=loaded.task.task_family,
+            category=loaded.task.category,
         )
         is_docker_task = loaded.task.execution_environment == "docker"
 
@@ -297,26 +297,45 @@ class BenchmarkRunner:
                         input_tokens=agent_result.input_tokens,
                         output_tokens=agent_result.output_tokens,
                         reason=BenchmarkReason.NO_CHANGE.value,
+                        task_family=loaded.task.task_family,
+                        category=loaded.task.category,
                     )
                     trace.record_completion("failed", BenchmarkReason.NO_CHANGE.value)
                     log("Task result: failed (no_change)")
                     return result
 
-                verification = await asyncio.to_thread(
-                    self._run_swebench_harness,
-                    loaded,
-                    task_output,
-                    patch_text,
+                verifier = get_verifier(
+                    loaded.task.task_family,
+                    agent_name=self.agent_name,
+                    model=self.model,
                 )
+                if verifier is None:
+                    verifier_status = "unsupported"
+                    reason = "task_family_unsupported"
+                    detail = (
+                        f"docker task family '{loaded.task.task_family}' "
+                        "is not supported yet"
+                    )
+                else:
+                    verdict = await asyncio.to_thread(
+                        verifier.verify,
+                        loaded,
+                        task_output,
+                        patch_text,
+                        log,
+                    )
+                    verifier_status = verdict.status
+                    reason = verdict.reason
+                    detail = verdict.detail
                 artifacts.test_output.write_text(
-                    verification.get("detail", "") or "(no SWE-bench harness output)\n",
+                    detail or "(no framework harness output)\n",
                     errors="replace",
                 )
-                log(f"SWE-bench verification status={verification['status']}")
-                if verification.get("detail"):
-                    log("SWE-bench verification detail saved to test_output.txt")
+                log(f"Framework verification status={verifier_status}")
+                if detail:
+                    log("Framework verification detail saved to test_output.txt")
 
-                if verification["status"] == "passed":
+                if verifier_status == "passed":
                     if agent_result.status != "completed" or agent_result.reason:
                         status = "passed_with_warnings"
                         reason = agent_result.reason or BenchmarkReason.MODEL_FAILURE.value
@@ -324,8 +343,7 @@ class BenchmarkRunner:
                         status = "passed"
                         reason = None
                 else:
-                    status = verification["status"]
-                    reason = verification["reason"]
+                    status = verifier_status
 
                 result = TaskResult(
                     task_id=loaded.task.id,
@@ -338,10 +356,12 @@ class BenchmarkRunner:
                     iterations=agent_result.iterations,
                     tool_calls=agent_result.tool_calls,
                     edit_count=agent_result.edit_count,
-                    test_runs=1 if verification["status"] in {"passed", "failed"} else 0,
+                    test_runs=1 if verifier_status in {"passed", "failed"} else 0,
                     input_tokens=agent_result.input_tokens,
                     output_tokens=agent_result.output_tokens,
                     reason=reason,
+                    task_family=loaded.task.task_family,
+                    category=loaded.task.category,
                 )
                 trace.record_completion(status, reason or "")
                 log(f"Task result: {status}")
@@ -420,6 +440,8 @@ class BenchmarkRunner:
                 input_tokens=agent_result.input_tokens,
                 output_tokens=agent_result.output_tokens,
                 reason=reason or agent_result.reason,
+                task_family=loaded.task.task_family,
+                category=loaded.task.category,
             )
             trace.record_completion(status)
             log(f"Task result: {status}")
@@ -719,94 +741,6 @@ class BenchmarkRunner:
                 f"Failed to apply test patch {patch_path}: "
                 f"{patch.stderr.strip() or patch.stdout.strip()}"
             )
-
-    def _build_prediction_model_name(self) -> str:
-        if self.model:
-            return f"{self.agent_name}:{self.model}"
-        return self.agent_name
-
-    def _run_swebench_harness(
-        self,
-        loaded: LoadedTask,
-        task_output: Path,
-        patch_text: str,
-    ) -> dict[str, Any]:
-        task = loaded.task
-        if task.task_family != "swebench":
-            return {
-                "status": "unsupported",
-                "reason": "task_family_unsupported",
-                "detail": f"docker task family '{task.task_family}' is not supported yet",
-            }
-
-        predictions_path = task_output / "predictions.jsonl"
-        model_name = self._build_prediction_model_name()
-        prediction = {
-            "instance_id": task.instance_id,
-            "model_name_or_path": model_name,
-            "model_patch": patch_text,
-        }
-        predictions_path.write_text(json.dumps(prediction) + "\n", errors="replace")
-
-        run_id = f"asterwynd-{task.id}"
-        command = [
-            sys.executable,
-            "-m",
-            "swebench.harness.run_evaluation",
-            "--dataset_name",
-            task.dataset_name or "",
-            "--split",
-            task.dataset_split or "",
-            "--instance_ids",
-            task.instance_id or "",
-            "--predictions_path",
-            str(predictions_path),
-            "--max_workers",
-            "1",
-            "--run_id",
-            run_id,
-            "--timeout",
-            str(task.timeout_seconds),
-        ]
-        proc = subprocess.run(
-            command,
-            cwd=task_output,
-            capture_output=True,
-            text=True,
-            timeout=max(task.timeout_seconds + 300, 600),
-        )
-        detail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-        if proc.returncode != 0:
-            return {
-                "status": "error",
-                "reason": BenchmarkReason.DOCKER_RUNTIME_ERROR.value,
-                "detail": detail,
-            }
-
-        report_path = (
-            task_output
-            / "logs"
-            / "run_evaluation"
-            / run_id
-            / model_name.replace("/", "__")
-            / (task.instance_id or "")
-            / "report.json"
-        )
-        if not report_path.exists():
-            return {
-                "status": "error",
-                "reason": BenchmarkReason.DOCKER_RUNTIME_ERROR.value,
-                "detail": f"Missing SWE-bench report: {report_path}",
-            }
-
-        report = json.loads(report_path.read_text())
-        instance_report = report.get(task.instance_id or "", {})
-        resolved = bool(instance_report.get("resolved"))
-        return {
-            "status": "passed" if resolved else "failed",
-            "reason": None if resolved else BenchmarkReason.TEST_FAILURE.value,
-            "detail": detail,
-        }
 
     def _start_local_httpbin(self, workspace: Path) -> tuple:
         """Start a local httpbin server for requests tests. Returns (proc, url)."""

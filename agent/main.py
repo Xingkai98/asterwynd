@@ -697,6 +697,7 @@ def benchmark(
     fake_new_string: Optional[str] = typer.Option(None, "--fake-new-string", help="fake runner new string"),
     keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
     clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
+    repeat: int = typer.Option(1, "--repeat", min=1, help="重复运行次数，用于评测聚合；缺省 1 保持既有单次行为"),
 ):
     """运行本地 Coding Agent benchmark"""
     _setup_logging()
@@ -737,6 +738,18 @@ def benchmark(
         typer.echo("Error: --agent must be fake, shell, asterwynd, or claude", err=True)
         raise SystemExit(1)
 
+    # Dynamic resource guardrail: unless the user passed --parallel (or an
+    # explicit config/env override), derive a safe concurrency from the
+    # machine instead of hard-coding a value.
+    if parallel is not None:
+        parallel_effective = parallel
+    elif config.benchmark.parallel != 1:
+        parallel_effective = config.benchmark.parallel
+    else:
+        from benchmarks.resources import suggest_parallel_default
+
+        parallel_effective = suggest_parallel_default()
+
     runner = BenchmarkRunner(
         agent_runner=runner_impl,
         source_repo=source_repo,
@@ -744,17 +757,58 @@ def benchmark(
         agent_name=agent,
         model=model or "",
         mode=normalized_mode,
-        parallel=config.benchmark.parallel,
+        parallel=parallel_effective,
         keep_worktrees=keep_worktrees,
         clone_cache_dir=clone_cache_dir,
     )
-    metadata = asyncio.run(runner.run_all(tasks_dir))
-    run_path = runs_dir / metadata.run_id
-    typer.echo(f"Benchmark run: {run_path}")
-    typer.echo(
-        f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
-        f"warnings: {metadata.warnings} | unsupported: {metadata.unsupported} | failed: {metadata.failed}"
+
+    if repeat == 1:
+        metadata = asyncio.run(runner.run_all(tasks_dir))
+        run_path = runs_dir / metadata.run_id
+        typer.echo(f"Benchmark run: {run_path}")
+        typer.echo(
+            f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
+            f"warnings: {metadata.warnings} | unsupported: {metadata.unsupported} | failed: {metadata.failed}"
+        )
+        return
+
+    # Repeat > 1: run N rounds (each with its own run_id), then aggregate into
+    # an evaluation report. Backward compatible: single run keeps old behavior.
+    async def _run_all_rounds():
+        return [await runner.run_all(tasks_dir, run_id=rid) for rid in round_run_ids]
+
+    from datetime import datetime, timezone
+
+    from benchmarks.models import TaskResult
+    from benchmarks.report import AggregateRun, collect_run_results, render_report
+
+    base_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    round_run_ids = [f"{base_ts}-r{i + 1}" for i in range(repeat)]
+    rounds_meta = asyncio.run(_run_all_rounds())
+
+    round_results: list[list[TaskResult]] = []
+    for round_index, metadata in enumerate(rounds_meta):
+        collected = collect_run_results(runs_dir / metadata.run_id)
+        for result in collected:
+            result.run_round = round_index
+        round_results.append(collected)
+
+    aggregated = AggregateRun(
+        agent=agent,
+        model=model or "",
+        repeat=repeat,
+        results=[r for rr in round_results for r in rr],
+        run_ids=[m.run_id for m in rounds_meta],
     )
+    report_path = runs_dir / "evaluation-report.md"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(render_report(aggregated), errors="replace")
+    typer.echo(f"Repeated {repeat} runs aggregated -> {report_path}")
+    for metadata in rounds_meta:
+        typer.echo(
+            f"  run {metadata.run_id}: passed {metadata.passed} | "
+            f"warnings {metadata.warnings} | unsupported {metadata.unsupported} | failed {metadata.failed}"
+        )
 
 
 session_app = typer.Typer(help="会话管理")
