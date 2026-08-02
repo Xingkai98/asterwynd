@@ -19,6 +19,7 @@ from agent.trace_recorder import TraceRecorder
 
 if TYPE_CHECKING:
     from agent.config import AsterwyndConfig
+    from agent.cost_tracker import CostLedger
     from agent.llm import LLM
 
 
@@ -102,12 +103,14 @@ class SubAgentManager:
         workspace_policy: WorkspacePolicy | None = None,
         parent_mode: AgentMode = AgentMode.BUILD,
         parent_mode_provider: Callable[[], AgentMode] | None = None,
+        cost_ledger: "CostLedger | None" = None,
     ):
         self.llm = llm
         self.config = config
         self.workspace_policy = workspace_policy or WorkspacePolicy()
         self.parent_mode = parent_mode
         self.parent_mode_provider = parent_mode_provider
+        self.cost_ledger = cost_ledger
         self._sessions: dict[str, SubagentSessionRecord] = {}
         self._active_tasks: dict[str, asyncio.Task[None]] = {}
         self._run_waiters: dict[str, asyncio.Event] = {}
@@ -325,6 +328,8 @@ class SubAgentManager:
             run_config=AgentRunConfig(mode=mode),
             subagent_manager=self,
             tool_result_display=config.tools.display if config else None,
+            cost_ledger=self.cost_ledger,
+            ledger_tool_name="subagent",
         )
 
     def _complete_run(

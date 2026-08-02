@@ -35,7 +35,7 @@ from agent.context.sources import (
 )
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
-from agent.observability import resolve_phase
+from agent.observability import ErrorCategory, ErrorClassifier, resolve_phase
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
@@ -95,10 +95,12 @@ class AgentLoop:
         session_store: SessionStore | None = None,
         context_builder: ContextBuilder | None = None,
         cost_ledger: "CostLedger | None" = None,
+        ledger_tool_name: str | None = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
         self.cost_ledger = cost_ledger
+        self.ledger_tool_name = ledger_tool_name
         self.hooks = hooks or HookManager()
         self.memory = memory or MemoryManager(llm=llm)
         self.persistent_memory = persistent_memory
@@ -590,6 +592,7 @@ class AgentLoop:
                         output_tokens=response.usage.output_tokens,
                         session_id=session_id or "unknown",
                         phase=resolve_phase(self.runtime_state.current_mode.value),
+                        tool_name=self.ledger_tool_name,
                     )
             if trace_recorder:
                 trace_recorder.record_iteration(
@@ -669,6 +672,7 @@ class AgentLoop:
                             "error",
                             0,
                             result,
+                            error_type="parse_error",
                         )
                     if on_event:
                         await on_event("tool_call", {
@@ -811,11 +815,17 @@ class AgentLoop:
                         or result_text.startswith("[Permission denied")
                         else "ok"
                     )
+                    error_type = None
+                    if status == "error":
+                        category = ErrorClassifier().classify(text=result_text)
+                        if category is not ErrorCategory.UNKNOWN:
+                            error_type = category.value
                     trace_recorder.record_tool_result(
                         tool_call.name,
                         status,
                         duration_ms,
                         result,
+                        error_type=error_type,
                     )
                     if tool_call.name == "Edit" and status == "ok":
                         path = str(tool_call.arguments.get("path", ""))

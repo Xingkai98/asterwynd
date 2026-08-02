@@ -40,8 +40,8 @@
 
 ## 6. 收尾
 
-- [ ] 6.1 OpenSpec spec 同步
-- [ ] 6.2 全量 pytest + openspec validate + artifact checker
+- [x] 6.1 OpenSpec spec 同步
+- [x] 6.2 全量 pytest + openspec validate + artifact checker
 - [ ] 6.3 benchmark 量化（session 账单、异常分类准确率）
 
 ## 7. 收尾校验（checker 要求项）
@@ -49,3 +49,11 @@
 - [ ] 7.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）
 - [ ] 7.2 benchmark smoke verification（coding-agent core change 要求）
 - [ ] 7.3 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`
+
+## 8. 审阅修复（独立 subagent 审阅 CHANGES_REQUESTED 闭环）
+
+> 实现完成后由独立零记忆 subagent 审阅（issue #90 流程），发现 3 个中等接线问题并已修复：
+
+- [x] 8.1 CostLedger 生产接线：main.py 构造 CostLedger 传入 AgentLoop；SubAgentManager 共享同一 ledger（`_build_subagent_loop` 传 cost_ledger + ledger_tool_name="subagent"），ledger.record 带 tool_name 使 by_tool 归属有效
+- [x] 8.2 error_type 产生点打标：loop.py 两处 record_tool_result 传入 error_type（parse 失败→parse_error；工具错误→ErrorClassifier 文本兜底分类）
+- [x] 8.3 回归测试：test_loop.py 新增 cost_ledger 接线 + subagent ledger 继承 + error_type 打标 3 个测试
