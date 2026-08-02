@@ -563,6 +563,13 @@ def _repo_root_for_change_dir(change_dir: Path) -> Path:
         and change_dir.parent.parent.name == "openspec"
     ):
         return change_dir.parent.parent.parent
+    # Archived: openspec/changes/archive/<date>-<id>
+    if (
+        change_dir.parent.name == "archive"
+        and change_dir.parent.parent.name == "changes"
+        and change_dir.parent.parent.parent.name == "openspec"
+    ):
+        return change_dir.parent.parent.parent.parent
     return change_dir.parent
 
 
@@ -587,7 +594,15 @@ def _tasks_all_complete(change_dir: Path) -> bool:
     return checked > 0 and unchecked == 0
 
 
-def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[str]:
+def _change_id_from_dir_name(dir_name: str) -> str:
+    """Strip the leading ``YYYY-MM-DD-`` date prefix from an archive dir name."""
+    match = re.match(r"\d{4}-\d{2}-\d{2}-(.+)", dir_name)
+    return match.group(1) if match else dir_name
+
+
+def _check_review_manifests(
+    change_dir: Path, change_type: ChangeType, *, archived: bool = False
+) -> list[str]:
     # Review evidence lives inside the change directory (reviews/), so it is
     # committed with the change and CI can verify it mechanically. See
     # agent/workflow/review_manifest.py.
@@ -600,9 +615,12 @@ def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[s
     # skip this gate. The gate only fires once the change's tasks are ALL
     # checked — proposal-stage / partially-implemented changes (whose spec
     # delta already exists) must not be flagged, or CI would block every
-    # in-flight change.
+    # in-flight change. Archived changes predate or satisfy this gate; the
+    # --check-archived mode only verifies that EXISTING manifests still bind
+    # their artifacts (drift detection), it does not demand a historical review.
     requires_building_review = (
-        change_type.primary != "docs"
+        not archived
+        and change_type.primary != "docs"
         and _changed_capabilities(change_dir)
         and _tasks_all_complete(change_dir)
     )
@@ -619,10 +637,11 @@ def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[s
     from agent.workflow.review_manifest import verify_review_manifest
 
     repo_root = _repo_root_for_change_dir(change_dir)
+    change_id = _change_id_from_dir_name(change_dir.name)
     errors: list[str] = []
     for report_path in sorted(review_dir.glob("*-review.md")):
         phase = report_path.name.removesuffix("-review.md")
-        errors.extend(verify_review_manifest(repo_root, change_dir.name, phase))
+        errors.extend(verify_review_manifest(repo_root, change_id, phase, archived=archived))
     return errors
 
 
@@ -892,7 +911,18 @@ def _repo_root_for_changes_root(changes_root: Path) -> Path:
     return Path.cwd()
 
 
-def _changed_paths_since_base(repo_root: Path, base_ref: str) -> set[str]:
+def _changed_paths_since_base(
+    repo_root: Path, base_ref: str, *, require_base: bool = False
+) -> tuple[set[str], str | None]:
+    """Return (changed_paths, warning) where warning is set when the base ref
+    could not be resolved.
+
+    ``git diff --name-only <base_ref>`` fails on a shallow checkout where the
+    base ref is absent. With ``require_base`` the failure is reported as a
+    warning the caller must treat as an error (fails closed, so CI can't
+    silently skip protected-path checks); otherwise the check degrades to
+    best-effort with a visible warning instead of silently passing.
+    """
     result = subprocess.run(
         ["git", "diff", "--name-only", base_ref, "--"],
         cwd=repo_root,
@@ -900,8 +930,15 @@ def _changed_paths_since_base(repo_root: Path, base_ref: str) -> set[str]:
         text=True,
     )
     if result.returncode != 0:
-        return set()
-    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        warning = (
+            f"could not resolve base ref '{base_ref}' for protected-path check"
+            f" (exit {result.returncode}): {result.stderr.strip()[:200]}"
+        )
+        if require_base:
+            return set(), warning
+        return set(), warning
+    paths = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    return paths, None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -921,6 +958,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip git diff checks for workflow-protected project artifacts",
     )
+    parser.add_argument(
+        "--require-base",
+        action="store_true",
+        help="Fail when the --base-ref cannot be resolved (CI gate: prevents "
+        "protected-path checks from silently passing on a shallow checkout)",
+    )
+    parser.add_argument(
+        "--check-archived",
+        action="store_true",
+        help="Also verify review manifests of archived changes, catching drift "
+        "(e.g. post-PASS tasks edits) that active-only checks miss",
+    )
     args = parser.parse_args(argv)
 
     changes_root = Path(args.changes_root)
@@ -935,12 +984,29 @@ def main(argv: list[str] | None = None) -> int:
             continue
         errors.extend(check_change(change_dir, Path(args.current_specs_root)))
 
+    if args.check_archived and not args.change:
+        archive_root = changes_root / "archive"
+        if archive_root.exists():
+            for change_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
+                change_type = parse_change_type((change_dir / "proposal.md").read_text(encoding="utf-8"))[0] \
+                    if (change_dir / "proposal.md").exists() else None
+                if change_type is None:
+                    continue
+                errors.extend(_check_review_manifests(change_dir, change_type, archived=True))
+
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
 
     if not args.skip_protected_paths:
         repo_root = _repo_root_for_changes_root(changes_root)
-        changed_paths = _changed_paths_since_base(repo_root, args.base_ref)
+        changed_paths, base_warning = _changed_paths_since_base(
+            repo_root, args.base_ref, require_base=args.require_base
+        )
+        if base_warning is not None:
+            if args.require_base:
+                errors.append(base_warning)
+            else:
+                print(f"WARNING: {base_warning}", file=sys.stderr)
         errors.extend(
             check_protected_path_explanations(repo_root, changed_paths=changed_paths)
         )

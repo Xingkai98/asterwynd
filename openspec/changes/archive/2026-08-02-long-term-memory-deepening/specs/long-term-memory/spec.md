@@ -26,12 +26,12 @@ The long-term memory system SHALL score memories by importance × recency, SHALL
 
 ### Requirement: On-Demand Semantic Retrieval
 
-The long-term memory system SHALL inject only a ~50-token global summary into context and SHALL expose a `search_memory` tool for on-demand semantic retrieval.
+The long-term memory system SHALL inject only a ~50-token global summary into context and SHALL expose a `SearchMemory` tool for on-demand semantic retrieval.
 
 #### Scenario: semantic search on demand
 
 - Given a context with only the ~50-token global summary injected
-- When the model invokes `search_memory` with a query
+- When the model invokes `SearchMemory` with a query
 - Then top-k semantically similar memories are returned
 
 ### Requirement: Scope Isolation
@@ -44,7 +44,3 @@ The long-term memory system SHALL tag memories with project/repo scope and SHALL
 - When a query from project B tries to access it
 - Then the access is blocked
 - And no cross-project data leaks
-
-## MODIFIED Requirements
-
-- `memory-context`: the memory index source SHALL inject a ~50-token global summary instead of the full index.

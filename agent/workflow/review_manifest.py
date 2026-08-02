@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -19,26 +20,53 @@ REQUIRED_REVIEW_FIELDS = (
 )
 
 
-def review_report_path(repo_root: str | Path, change_id: str, phase: str) -> Path:
-    return (
-        Path(repo_root)
-        / "openspec"
-        / "changes"
-        / change_id
-        / "reviews"
-        / f"{phase}-review.md"
-    )
+def change_dir_for(
+    repo_root: str | Path,
+    change_id: str,
+    *,
+    archived: bool = False,
+) -> Path:
+    """Return the change directory for a change id.
+
+    Archived changes live under ``openspec/changes/archive/<date>-<id>``;
+    active ones under ``openspec/changes/<id>``. When ``archived`` is True and
+    the change_id does not already carry a date prefix, the archive directory
+    is located by scanning the archive for a ``<date>-<change_id>`` match.
+    """
+    base = Path(repo_root) / "openspec" / "changes"
+    if not archived:
+        return base / change_id
+    archive_root = base / "archive"
+    if archive_root.exists():
+        for path in archive_root.iterdir():
+            if not path.is_dir():
+                continue
+            name = path.name
+            if name == change_id:
+                return path
+            if re.match(rf"\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(change_id)}", name):
+                return path
+    return archive_root / change_id
 
 
-def review_manifest_path(repo_root: str | Path, change_id: str, phase: str) -> Path:
-    return (
-        Path(repo_root)
-        / "openspec"
-        / "changes"
-        / change_id
-        / "reviews"
-        / f"{phase}-review-manifest.json"
-    )
+def review_report_path(
+    repo_root: str | Path,
+    change_id: str,
+    phase: str,
+    *,
+    archived: bool = False,
+) -> Path:
+    return change_dir_for(repo_root, change_id, archived=archived) / "reviews" / f"{phase}-review.md"
+
+
+def review_manifest_path(
+    repo_root: str | Path,
+    change_id: str,
+    phase: str,
+    *,
+    archived: bool = False,
+) -> Path:
+    return change_dir_for(repo_root, change_id, archived=archived) / "reviews" / f"{phase}-review-manifest.json"
 
 
 def build_review_manifest(
@@ -50,16 +78,17 @@ def build_review_manifest(
     base_sha: str,
     head_sha: str | None = None,
     verdict: str = "PASS",
+    archived: bool = False,
 ) -> dict[str, Any]:
     repo_root = Path(repo_root)
     head = head_sha or _git_text(repo_root, "rev-parse", "HEAD")
     if not head:
         raise ValueError("review manifest requires head sha or a git repository")
-    report_path = review_report_path(repo_root, change_id, phase)
+    report_path = review_report_path(repo_root, change_id, phase, archived=archived)
     if not report_path.exists():
         raise FileNotFoundError(f"review report missing: {report_path}")
 
-    change_dir = repo_root / "openspec" / "changes" / change_id
+    change_dir = change_dir_for(repo_root, change_id, archived=archived)
     manifest: dict[str, Any] = {
         "schema": REVIEW_MANIFEST_SCHEMA,
         "change_id": change_id,
@@ -85,6 +114,7 @@ def write_review_manifest(
     base_sha: str,
     head_sha: str | None = None,
     verdict: str = "PASS",
+    archived: bool = False,
 ) -> Path:
     manifest = build_review_manifest(
         repo_root,
@@ -94,15 +124,22 @@ def write_review_manifest(
         base_sha=base_sha,
         head_sha=head_sha,
         verdict=verdict,
+        archived=archived,
     )
-    path = review_manifest_path(repo_root, change_id, phase)
+    path = review_manifest_path(repo_root, change_id, phase, archived=archived)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 
 
-def verify_review_manifest(repo_root: str | Path, change_id: str, phase: str) -> list[str]:
-    manifest_path = review_manifest_path(repo_root, change_id, phase)
+def verify_review_manifest(
+    repo_root: str | Path,
+    change_id: str,
+    phase: str,
+    *,
+    archived: bool = False,
+) -> list[str]:
+    manifest_path = review_manifest_path(repo_root, change_id, phase, archived=archived)
     if not manifest_path.exists():
         return [f"review manifest missing: {manifest_path}"]
 
@@ -123,12 +160,12 @@ def verify_review_manifest(repo_root: str | Path, change_id: str, phase: str) ->
     for field in REQUIRED_REVIEW_FIELDS:
         if not manifest.get(field):
             errors.append(f"review manifest missing required field: {field}")
-    report_path = review_report_path(repo_root, change_id, phase)
+    report_path = review_report_path(repo_root, change_id, phase, archived=archived)
     if not report_path.exists():
         errors.append(f"review report missing: {report_path}")
     elif manifest.get("report_hash") != file_sha256(report_path):
         errors.append("review report hash mismatch")
-    change_dir = Path(repo_root) / "openspec" / "changes" / change_id
+    change_dir = change_dir_for(repo_root, change_id, archived=archived)
     if manifest.get("tasks_hash") and manifest.get("tasks_hash") != artifact_hash(change_dir / "tasks.md"):
         errors.append("tasks hash mismatch")
     if manifest.get("spec_hash") and manifest.get("spec_hash") != artifact_hash(change_dir / "specs"):

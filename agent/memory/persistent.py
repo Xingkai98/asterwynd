@@ -3,7 +3,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
+from typing import Callable
+
+import yaml
+
+from agent.memory.model import MemoryEntry, MemoryHit
 
 logger = logging.getLogger("asterwynd.memory.persistent")
 
@@ -13,22 +19,77 @@ MAX_INDEX_BYTES = 25_000
 _VALID_NAME_RE = re.compile(r"^[a-z0-9-]+$")
 _VALID_TYPES = frozenset({"user", "feedback", "project", "reference"})
 
+# Long-term memory knobs (#75).  Overridable per-instance via MemoryConfig.
+DEFAULT_IMPORTANCE = 3
+IMPORTANCE_MIN = 1
+IMPORTANCE_MAX = 5
+ARCHIVE_AFTER_DAYS = 30
+RECENCY_HALFLIFE_DAYS = 30
+MAX_SUMMARY_TOKENS = 50
+DEDUP_RECALL_THRESHOLD = 0.5
+# Default decay score floor (Decision 3 / R1-Q6). A memory is archived only
+# when BOTH it has not been accessed for archive_after_days AND its
+# importance×recency score is below this threshold. None disables the score
+# gate (pure time-based archival).
+DECAY_THRESHOLD: float | None = 1.5
+# Throttle: run decay archival at most once per window even when every
+# read path triggers it, so a busy session does not scan the store per call.
+DECAY_INTERVAL_SECONDS = 3600
+
 
 def _compute_project_hash(project_root: Path) -> str:
     resolved = project_root.resolve()
     return hashlib.sha256(str(resolved).encode()).hexdigest()[:16]
 
 
-def _find_git_root(path: Path) -> Path | None:
+def _find_scope_root(path: Path) -> Path | None:
+    """Resolve the project scope root for a checkout.
+
+    The scope root is the canonical repository root shared across git
+    worktrees (Decision 5 / R1-Q10): walking up from ``path``, a ``.git``
+    directory identifies a normal checkout, while a ``.git`` file (the
+    worktree pointer, containing ``gitdir: <path>``) is resolved via its
+    ``commondir`` to the main worktree's common dir. Returns None when no
+    git metadata is found, so callers fall back to ``project_root.resolve()``.
+    """
     current = path.resolve()
     for _ in range(64):
-        if (current / ".git").exists():
+        git_dir = current / ".git"
+        if git_dir.is_dir():
             return current
+        if git_dir.is_file():
+            common = _git_common_dir(git_dir)
+            if common is not None:
+                return common
         parent = current.parent
         if parent == current:
             return None
         current = parent
     return None
+
+
+def _git_common_dir(git_file: Path) -> Path | None:
+    """Return the repository common dir pointed to by a worktree .git file.
+
+    The .git file in a linked worktree is ``gitdir: <path-to-gitdir>``; the
+    common dir lives in that gitdir's parent's ``commondir`` file (defaulting
+    to the gitdir's parent when absent). The scope root is the parent of the
+    common dir (the main worktree's checkout root).
+    """
+    try:
+        text = git_file.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.match(r"gitdir:\s*(.+)", text)
+    if match is None:
+        return None
+    worktree_gitdir = (git_file.parent / match.group(1).strip()).resolve()
+    commondir_file = worktree_gitdir / "commondir"
+    try:
+        common_dir = (commondir_file.parent / commondir_file.read_text(encoding="utf-8").strip()).resolve()
+    except OSError:
+        common_dir = worktree_gitdir.parent
+    return common_dir.parent
 
 
 def _validate_name(name: str) -> str | None:
@@ -38,23 +99,152 @@ def _validate_name(name: str) -> str | None:
     return None
 
 
+def _clamp_importance(value: int | None) -> int:
+    if value is None:
+        return DEFAULT_IMPORTANCE
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_IMPORTANCE
+    return max(IMPORTANCE_MIN, min(IMPORTANCE_MAX, value))
+
+
+def _parse_dt(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _split_frontmatter(content: str) -> tuple[str | None, str]:
+    """Split ``--- frontmatter ---`` from body. Returns (frontmatter, body)."""
+    if not content.startswith("---"):
+        return None, content
+    first_end = content.find("\n", 3)
+    if first_end == -1:
+        return None, content
+    second_start = content.find("\n---", first_end + 1)
+    if second_start == -1:
+        return None, content
+    fm = content[first_end + 1 : second_start].strip()
+    body = content[second_start + 4:].strip()
+    return fm, body
+
+
 class PersistentMemory:
     """Cross-session persistent memory, compatible with Claude Code format.
 
-    Maintains four types of memory files under
+    Maintains typed memory files under
     ~/.asterwynd/projects/<project-hash>/memory/.
-    MEMORY.md serves as the index; each memory is a separate .md file.
+    MEMORY.md serves as the human-readable index; each memory is a separate
+    .md file. Archived entries move to ``memory_dir/archive/``.
+
+    The store is scoped to the repository root (or resolved project root) so
+    different projects never share memory files. All worktrees of one git
+    repository share a single scope (Decision 5 / R1-Q10).
     """
 
-    def __init__(self, project_root: Path) -> None:
-        git_root = _find_git_root(project_root)
-        root = git_root or project_root.resolve()
+    def __init__(
+        self,
+        project_root: Path,
+        time_source: Callable[[], datetime] | None = None,
+        *,
+        archive_after_days: int = ARCHIVE_AFTER_DAYS,
+        recency_halflife_days: int = RECENCY_HALFLIFE_DAYS,
+        importance_default: int = DEFAULT_IMPORTANCE,
+        summary_tokens: int = MAX_SUMMARY_TOKENS,
+        decay_interval_seconds: int = DECAY_INTERVAL_SECONDS,
+        decay_threshold: float | None = DECAY_THRESHOLD,
+    ) -> None:
+        scope_root = _find_scope_root(project_root)
+        root = scope_root or project_root.resolve()
         project_hash = _compute_project_hash(root)
         self.memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"
         self._index_path = self.memory_dir / "MEMORY.md"
+        self.scope = str(root.resolve())
+        self._time_source = time_source or datetime.now
+        self._archive_after_days = archive_after_days
+        self._recency_halflife_days = recency_halflife_days
+        self._importance_default = importance_default
+        self._summary_tokens = summary_tokens
+        self._decay_interval_seconds = decay_interval_seconds
+        self._decay_threshold = decay_threshold
+        self._last_decay_run: datetime | None = None
 
     # ------------------------------------------------------------------
-    # Called by AgentLoop: load index
+    # Time and decay
+    # ------------------------------------------------------------------
+
+    def _now(self) -> datetime:
+        return self._time_source()
+
+    def _clamp_importance(self, value: int | None) -> int:
+        """Clamp importance to 1..5 using the instance default when None."""
+        if value is None:
+            return self._importance_default
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return self._importance_default
+        return max(IMPORTANCE_MIN, min(IMPORTANCE_MAX, value))
+
+    def decay_score(self, entry: MemoryEntry, now: datetime | None = None) -> float:
+        """Importance × recency joint score (Decision 3).
+
+        recency = 0.5 ^ (days_since_last_access / recency_halflife_days).
+        Days are fractional (seconds/86400) so a 30.9-day-old memory decays
+        continuously rather than snapping at the whole-day boundary.
+        """
+        now = now or self._now()
+        last = entry.last_accessed_at or entry.created_at or now
+        days = max(0.0, (now - last).total_seconds() / 86400.0)
+        recency = 0.5 ** (days / self._recency_halflife_days)
+        return entry.importance * recency
+
+    def run_decay(self, now: datetime | None = None) -> int:
+        """Archive active memories that have aged out.
+
+        A memory is archived when it has not been retrieved for more than
+        ``archive_after_days`` AND (when ``decay_threshold`` is set) its
+        importance×recency score is below the threshold. Important memories
+        therefore survive longer without access (Decision 3 / R1-Q6).
+
+        Returns the number of archived entries.
+        """
+        now = now or self._now()
+        archived = 0
+        for entry in self.load_entries():
+            last = entry.last_accessed_at or entry.created_at or now
+            days = (now - last).total_seconds() / 86400.0
+            if days <= self._archive_after_days:
+                continue
+            if self._decay_threshold is not None and self.decay_score(entry, now) >= self._decay_threshold:
+                continue
+            self.archive(entry.name, reason="decay: not retrieved within archive_after_days")
+            archived += 1
+        return archived
+
+    def _run_decay_if_due(self, now: datetime | None = None) -> int:
+        """Throttled decay trigger, called from every read entry point.
+
+        Runs archival at most once per ``decay_interval_seconds`` so cold
+        memories age out in production without scanning the store on every
+        recall/search.
+        """
+        now = now or self._now()
+        if self._last_decay_run is not None:
+            elapsed = (now - self._last_decay_run).total_seconds()
+            if elapsed < self._decay_interval_seconds:
+                return 0
+        self._last_decay_run = now
+        return self.run_decay(now)
+
+    # ------------------------------------------------------------------
+    # Called by AgentLoop: load index / summary
     # ------------------------------------------------------------------
 
     def load_index(self) -> str | None:
@@ -63,6 +253,7 @@ class PersistentMemory:
         Returns the raw index content for system message injection.
         Returns None if the index does not exist or is empty.
         """
+        self._run_decay_if_due()
         if not self._index_path.exists():
             return None
         try:
@@ -92,11 +283,149 @@ class PersistentMemory:
             )
         return content
 
+    def load_summary(self, max_tokens: int | None = None) -> str | None:
+        """Generate a ~max_tokens global summary of active memories.
+
+        Entries are ranked by importance (then recency) so the summary surfaces
+        the most relevant facts first, and truncated to the token budget.
+        Returns None when there are no active memories.
+        """
+        from agent.memory.summary import build_summary
+
+        self._run_decay_if_due()
+        if max_tokens is None:
+            max_tokens = self._summary_tokens
+        return build_summary(self.load_entries(), max_tokens=max_tokens)
+
+    # ------------------------------------------------------------------
+    # Entry loading
+    # ------------------------------------------------------------------
+
+    def _entry_path(self, name: str, archived: bool = False) -> Path:
+        if archived:
+            return self.memory_dir / "archive" / f"{name}.md"
+        return self.memory_dir / f"{name}.md"
+
+    def _load_entry_by_name(
+        self, name: str, include_archived: bool = False
+    ) -> MemoryEntry | None:
+        active = self._parse_file(self._entry_path(name))
+        if active is not None:
+            return active
+        if include_archived:
+            return self._parse_file(self._entry_path(name, archived=True))
+        return None
+
+    def load_entries(self, include_archived: bool = False) -> list[MemoryEntry]:
+        """Read all entries from the active (and optionally archive) dirs."""
+        if not self.memory_dir.exists():
+            return []
+        entries: list[MemoryEntry] = []
+        for path in sorted(self.memory_dir.glob("*.md")):
+            if path.name == "MEMORY.md":
+                continue
+            entry = self._parse_file(path)
+            if entry is not None:
+                entries.append(entry)
+        if include_archived:
+            archive_dir = self.memory_dir / "archive"
+            if archive_dir.exists():
+                for path in sorted(archive_dir.glob("*.md")):
+                    entry = self._parse_file(path)
+                    if entry is not None:
+                        entries.append(entry)
+        return entries
+
+    def _parse_file(self, filepath: Path) -> MemoryEntry | None:
+        if not filepath.exists():
+            return None
+        try:
+            raw = filepath.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning("Failed to read memory file %s", filepath, exc_info=True)
+            return None
+        fm, body = _split_frontmatter(raw)
+        if fm is None:
+            return None
+        try:
+            data = yaml.safe_load(fm) or {}
+        except yaml.YAMLError:
+            data = {}
+        if not isinstance(data, dict):
+            return None
+        metadata = data.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        name = data.get("name") or filepath.stem
+        try:
+            mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
+        except OSError:
+            mtime = datetime.min
+        created_at = _parse_dt(metadata.get("created_at")) or mtime
+        last_accessed_at = _parse_dt(metadata.get("last_accessed_at")) or created_at
+        conflict_with = metadata.get("conflict_with") or []
+        if isinstance(conflict_with, str):
+            conflict_with = [conflict_with]
+        try:
+            importance = int(metadata.get("importance") or self._importance_default)
+        except (TypeError, ValueError):
+            importance = self._importance_default
+        return MemoryEntry(
+            name=str(name),
+            description=str(data.get("description") or ""),
+            body=body,
+            type=str(metadata.get("type") or "project"),
+            importance=self._clamp_importance(importance),
+            created_at=created_at,
+            last_accessed_at=last_accessed_at,
+            scope=str(metadata.get("scope") or self.scope),
+            archived=bool(metadata.get("archived") or filepath.parent.name == "archive"),
+            conflict_with=list(conflict_with),
+        )
+
+    def _write_entry(self, entry: MemoryEntry) -> None:
+        filepath = self._entry_path(entry.name, archived=entry.archived)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        frontmatter = {
+            "name": entry.name,
+            "description": entry.description,
+            "metadata": {
+                "type": entry.type,
+                "importance": entry.importance,
+                "created_at": entry.created_at.isoformat() if entry.created_at else None,
+                "last_accessed_at": (
+                    entry.last_accessed_at.isoformat() if entry.last_accessed_at else None
+                ),
+                "scope": entry.scope,
+                "archived": entry.archived,
+                "conflict_with": list(entry.conflict_with),
+            },
+        }
+        text = (
+            "---\n"
+            + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
+            + "---\n\n"
+            + entry.body.strip()
+            + "\n"
+        )
+        try:
+            filepath.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            logger.error("Failed to write memory file %s: %s", filepath, exc)
+            raise
+
     # ------------------------------------------------------------------
     # Called by SaveMemory tool
     # ------------------------------------------------------------------
 
-    def save(self, type: str, name: str, description: str, body: str) -> str:
+    def save(
+        self,
+        type: str,
+        name: str,
+        description: str,
+        body: str,
+        importance: int | None = None,
+    ) -> str:
         """Create or update a memory entry. Returns a confirmation message."""
         if type not in _VALID_TYPES:
             return f"Error: Invalid memory type '{type}'. Must be one of: {', '.join(sorted(_VALID_TYPES))}."
@@ -105,69 +434,268 @@ class PersistentMemory:
             return f"Error: {name_error}"
 
         self.memory_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{name}.md"
-        filepath = self.memory_dir / filename
+        now = self._now()
+        existing = self._load_entry_by_name(name)
 
-        frontmatter = (
-            f"---\n"
-            f"name: {name}\n"
-            f"description: {description}\n"
-            f"metadata:\n"
-            f"  type: {type}\n"
-            f"---\n\n"
-            f"{body.strip()}\n"
-        )
+        if existing is not None:
+            existing.type = type
+            existing.description = description
+            existing.body = body.strip()
+            if importance is not None:
+                existing.importance = self._clamp_importance(importance)
+            self._write_entry(existing)
+            action = "updated"
+        else:
+            entry = MemoryEntry(
+                name=name,
+                description=description,
+                body=body.strip(),
+                type=type,
+                importance=self._clamp_importance(importance),
+                created_at=now,
+                last_accessed_at=now,
+                scope=self.scope,
+            )
+            self._write_entry(entry)
+            action = "saved"
 
-        existed = filepath.exists()
-        try:
-            filepath.write_text(frontmatter, encoding="utf-8")
-        except OSError as exc:
-            logger.error("Failed to write memory file %s: %s", filepath, exc)
-            return f"Error: Failed to write memory file '{filename}': {exc}"
-
-        self._update_index(name, description, existed)
-        action = "updated" if existed else "saved"
+        self._update_index(name, description, action == "updated")
         return f"Memory '{name}' {action}."
 
+    def apply_judgment(
+        self,
+        type: str,
+        name: str,
+        description: str,
+        body: str,
+        judgment: object,
+        importance: int | None = None,
+    ) -> str:
+        """Apply a write-time dedup judgment (supplement/update/conflict/new).
+
+        ``judgment`` exposes ``action`` and ``target_name``; see
+        ``agent.memory.dedup.Judgment``. Falls back to a direct save for
+        ``new``, unknown actions, or when the target vanished concurrently.
+        """
+        action = getattr(judgment, "action", "new")
+        target = getattr(judgment, "target_name", None)
+        reason = getattr(judgment, "reason", "") or action
+
+        # Validate the LLM-provided target before it reaches path construction.
+        if target is not None and _validate_name(str(target)) is not None:
+            return self.save(type, name, description, body, importance=importance)
+
+        if action == "supplement" and target:
+            entry = self._load_entry_by_name(target)
+            if entry is None or entry.archived:
+                return self.save(type, name, description, body, importance=importance)
+            entry.body = f"{entry.body}\n\n{body.strip()}"
+            if importance is not None:
+                entry.importance = self._clamp_importance(importance)
+            self._write_entry(entry)
+            self._update_index(target, entry.description, existed=True)
+            self._append_changelog("supplement", target, reason)
+            return f"Memory '{target}' supplemented (dedup)."
+
+        if action == "update" and target:
+            entry = self._load_entry_by_name(target)
+            if entry is None or entry.archived:
+                return self.save(type, name, description, body, importance=importance)
+            entry.description = description
+            entry.body = body.strip()
+            if importance is not None:
+                entry.importance = self._clamp_importance(importance)
+            self._write_entry(entry)
+            self._update_index(target, description, existed=True)
+            self._append_changelog("update", target, reason)
+            return f"Memory '{target}' updated (dedup)."
+
+        if action == "conflict" and target:
+            result = self.save(type, name, description, body, importance=importance)
+            other = self._load_entry_by_name(target)
+            incoming = self._load_entry_by_name(name)
+            if other is not None and incoming is not None:
+                if name not in other.conflict_with:
+                    other.conflict_with.append(name)
+                    self._write_entry(other)
+                if target not in incoming.conflict_with:
+                    incoming.conflict_with.append(target)
+                    self._write_entry(incoming)
+            self._append_changelog("conflict", f"{name}<->{target}", reason)
+            return f"Memory '{name}' saved with conflict marked vs '{target}'."
+
+        return self.save(type, name, description, body, importance=importance)
+
     # ------------------------------------------------------------------
-    # Called by RecallMemory tool
+    # Called by RecallMemory / SearchMemory tools
     # ------------------------------------------------------------------
 
-    def recall(self, type: str | None = None) -> str:
-        """Read full content of all memories matching the given type.
+    def recall(
+        self,
+        type: str | None = None,
+        scope: str | None = None,
+        include_archived: bool = False,
+    ) -> str:
+        """Read full content of active memories, optionally filtered by type/scope.
 
         Returns formatted markdown. When type is None, returns all memories.
+        Scope is validated: a non-matching scope returns an empty result.
         """
-        entries = self._parse_index()
+        if scope is not None and scope != self.scope:
+            return "No memories found."
+        self._run_decay_if_due()
+        entries = self.load_entries(include_archived=include_archived)
         if not entries:
             return "No memories found."
-
-        parts: list[str] = []
-        for entry_filename in entries:
-            filepath = self.memory_dir / entry_filename
-            if not filepath.exists():
-                logger.warning("Memory file referenced in index not found: %s", entry_filename)
-                continue
-            try:
-                content = filepath.read_text(encoding="utf-8")
-            except OSError:
-                logger.warning("Failed to read memory file: %s", entry_filename, exc_info=True)
-                continue
-
-            entry_type = self._extract_type(content)
-            entry_name = self._extract_name(content) or entry_filename.removesuffix(".md")
-
-            if type is not None and entry_type != type:
-                continue
-
-            body = self._extract_body(content)
-            parts.append(f"### {entry_name} ({entry_type})\n\n{body}")
-
-        if not parts:
+        if type is not None:
+            entries = [e for e in entries if e.type == type]
+        if not entries:
             type_hint = f" of type '{type}'" if type else ""
             return f"No memories{type_hint} found."
 
+        parts: list[str] = []
+        for entry in entries:
+            self._touch(entry.name)
+            parts.append(f"### {entry.name} ({entry.type})\n\n{entry.body}")
         return "\n\n---\n\n".join(parts)
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        type: str | None = None,
+        scope: str | None = None,
+        include_archived: bool = False,
+        embedder=None,
+    ) -> list[MemoryHit]:
+        """Semantic top-k recall over active memories (Decision 2 / 4).
+
+        Uses the pluggable ``EmbeddingProvider`` (default NGramEmbedding from
+        #77). Scope is validated; a non-matching scope returns no hits. Returned
+        entries are touched (last_accessed_at) so decay reflects retrieval.
+        """
+        if scope is not None and scope != self.scope:
+            return []
+        from agent.embedding import InMemoryVectorStore, NGramEmbedding
+        from agent.embedding.provider import DEFAULT_EMBEDDING_DIM
+
+        self._run_decay_if_due()
+        # Default embedder runs at the #77-calibrated operating point so the
+        # dedup-recall threshold has its documented meaning (R1-Q2).
+        embedder = embedder or NGramEmbedding(dim=DEFAULT_EMBEDDING_DIM)
+        entries = self.load_entries(include_archived=include_archived)
+        if type is not None:
+            entries = [e for e in entries if e.type == type]
+        if not entries:
+            return []
+
+        store = InMemoryVectorStore(embedder=embedder)
+        for entry in entries:
+            store.add(entry.name, entry.searchable_text)
+        query_vec = embedder.embed(query)
+        scored = [(name, score) for name, score in store.query(query_vec, max(0, top_k))]
+
+        hits: list[MemoryHit] = []
+        for name, score in scored:
+            entry = next((e for e in entries if e.name == name), None)
+            if entry is not None:
+                hits.append(MemoryHit(entry=entry, score=score))
+        for hit in hits:
+            self._touch(hit.entry.name)
+        return hits
+
+    def recall_similar(
+        self,
+        query: str,
+        top_k: int = 5,
+        embedder=None,
+    ) -> list[MemoryHit]:
+        """Write-dedup candidate recall: top-k similar active memories."""
+        return self.search(query, top_k=top_k, embedder=embedder)
+
+    # ------------------------------------------------------------------
+    # Archival
+    # ------------------------------------------------------------------
+
+    def archive(self, name: str, reason: str | None = None) -> str:
+        """Move an active memory into the archive directory."""
+        entry = self._load_entry_by_name(name)
+        if entry is None:
+            return f"Error: memory '{name}' not found."
+        if entry.archived:
+            return f"Memory '{name}' already archived."
+        archive_dir = self.memory_dir / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        src = self._entry_path(name)
+        dst = archive_dir / f"{name}.md"
+        entry.archived = True
+        self._write_entry_to(entry, dst)
+        try:
+            src.unlink()
+        except OSError:
+            pass
+        self._remove_from_index(name)
+        self._append_changelog("archive", name, reason or "archived")
+        return f"Memory '{name}' archived."
+
+    def restore(self, name: str) -> str:
+        """Move an archived memory back into the active store."""
+        entry = self._load_entry_by_name(name, include_archived=True)
+        if entry is None or not entry.archived:
+            return f"Error: memory '{name}' not found in archive."
+        src = self._entry_path(name, archived=True)
+        dst = self._entry_path(name)
+        entry.archived = False
+        self._write_entry_to(entry, dst)
+        try:
+            src.unlink()
+        except OSError:
+            pass
+        self._update_index(name, entry.description, existed=False)
+        self._append_changelog("restore", name, "restored from archive")
+        return f"Memory '{name}' restored."
+
+    def _write_entry_to(self, entry: MemoryEntry, filepath: Path) -> None:
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        frontmatter = {
+            "name": entry.name,
+            "description": entry.description,
+            "metadata": {
+                "type": entry.type,
+                "importance": entry.importance,
+                "created_at": entry.created_at.isoformat() if entry.created_at else None,
+                "last_accessed_at": (
+                    entry.last_accessed_at.isoformat() if entry.last_accessed_at else None
+                ),
+                "scope": entry.scope,
+                "archived": entry.archived,
+                "conflict_with": list(entry.conflict_with),
+            },
+        }
+        text = (
+            "---\n"
+            + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
+            + "---\n\n"
+            + entry.body.strip()
+            + "\n"
+        )
+        filepath.write_text(text, encoding="utf-8")
+
+    def _touch(self, name: str) -> None:
+        """Update last_accessed_at on retrieval so decay reflects real access."""
+        entry = self._load_entry_by_name(name)
+        if entry is None or entry.archived:
+            return
+        entry.last_accessed_at = self._now()
+        self._write_entry(entry)
+
+    def _append_changelog(self, action: str, name: str, reason: str) -> None:
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        changelog = self.memory_dir / "changelog.md"
+        ts = self._now().isoformat(timespec="seconds")
+        line = f"- [{ts}] {action} {name} → {reason}\n"
+        with changelog.open("a", encoding="utf-8") as fh:
+            fh.write(line)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -241,3 +769,14 @@ class PersistentMemory:
             lines.append(new_line)
 
         self._index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _remove_from_index(self, name: str) -> None:
+        """Remove an entry's line from MEMORY.md index."""
+        if not self._index_path.exists():
+            return
+        filename = f"{name}.md"
+        lines = self._index_path.read_text(encoding="utf-8").splitlines()
+        kept = [line for line in lines if f"]({filename})" not in line]
+        if len(kept) == len(lines):
+            return
+        self._index_path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")

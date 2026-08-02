@@ -243,7 +243,15 @@ def _build_agent_core(
         workspace_root=workspace_root,
         command_denylist=config.tools.command_denylist,
     )
-    persistent_memory = PersistentMemory(workspace_policy.workspace_root)
+    persistent_memory = PersistentMemory(
+        workspace_policy.workspace_root,
+        archive_after_days=config.memory.archive_after_days,
+        recency_halflife_days=config.memory.recency_halflife_days,
+        importance_default=config.memory.importance_default,
+        summary_tokens=config.memory.summary_tokens,
+        decay_interval_seconds=config.memory.decay_interval_seconds,
+        decay_threshold=config.memory.decay_threshold,
+    )
 
     try:
         sandbox = build_sandbox_from_config(config)
@@ -265,6 +273,8 @@ def _build_agent_core(
         persistent_memory=persistent_memory,
         selection_config=config.tools.selection,
         quality_config=config.tools.quality,
+        memory_config=config.memory,
+        llm=llm,
         sandbox=sandbox,
     )
 

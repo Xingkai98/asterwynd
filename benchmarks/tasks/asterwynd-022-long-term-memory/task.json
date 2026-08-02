@@ -1,0 +1,13 @@
+{
+  "id": "asterwynd-022-long-term-memory",
+  "repo": "local/asterwynd",
+  "base_commit": "dc83b4c",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/agent/memory/test_long_term.py tests/agent/memory/test_dedup.py",
+  "category": "agent",
+  "difficulty": "hard",
+  "timeout_seconds": 600,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": null
+}
