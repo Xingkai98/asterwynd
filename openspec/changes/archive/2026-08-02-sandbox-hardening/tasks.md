@@ -72,3 +72,7 @@
 - [x] 9.3 **`_setup_cgroup` 仅 catch OSError**：非 OSError（如控制器 RuntimeError）会丢 degraded 标志。修复：catch Exception。回归测试 `test_non_oserror_setup_failure_still_degrades`
 - [x] 9.4 **Docker 超时容器残留**：kill CLI 客户端后容器在 daemon 残留（--rm 只在容器退出后触发）。修复：`--cidfile` + 超时后 `docker rm -f`。Docker 契约测试验证
 - [x] 9.5 **attach 语义**：进程先于 attach 退出（快命令）不视为 degraded（`_attach` 返回 None=skip），仅 attach 失败才 degraded
+
+## 10. CI 修复（2026-08-02，PR #97 validate job）
+
+- [x] 10.1 **cgroup 测试在 CI（systemd cgroup 布局）失败**：`CgroupV2Controller.create()` 从 `/proc/self/cgroup` 解析宿主 cgroup 路径（CI runner 为 `/system.slice/hosted-compute-agent.service`，本机容器为 `0::/`），测试 fake 文件系统根未镜像该路径 → `mkdir` 父目录不存在 `FileNotFoundError`。修复：测试 fixture 镜像宿主自身 cgroup 路径（`_own_dir(fs_root)` 从 `_own_cgroup_path()` 推导并 `mkdir(parents=True)`），所有依赖子目录/control 文件的用例改从 own dir 定位。测试通过后对生产代码零改动。本地 + CI 布局模拟均验证通过

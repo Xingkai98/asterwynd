@@ -8,29 +8,45 @@ from __future__ import annotations
 
 import pytest
 
-from agent.tools.sandbox.cgroup import CgroupV2Controller
+from agent.tools.sandbox.cgroup import CgroupV2Controller, _own_cgroup_path
+
+
+def _own_dir(fs_root):
+    """The fake-fs directory mirroring this process's real cgroup path.
+
+    The controller derives its parent cgroup from ``/proc/self/cgroup`` (a
+    systemd layout like ``/system.slice/...`` on CI vs ``/`` in a container),
+    so the fake fs must mirror whatever the host reports or the mkdir under
+    the parent fails.
+    """
+    own = _own_cgroup_path().strip().lstrip("/")
+    d = fs_root / own if own else fs_root
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 @pytest.fixture
 def cg_root(tmp_path):
-    """Simulated cgroup v2 filesystem root."""
+    """Simulated cgroup v2 filesystem root, mirroring the host's own path."""
     (tmp_path / "cgroup.controllers").write_text(
         "cpuset cpu io memory hugetlb pids rdma misc\n"
     )
+    _own_dir(tmp_path)
     return tmp_path
 
 
 @pytest.fixture
 def parent(cg_root):
-    """Parent cgroup (own path is '/' in this env), with subtree_control."""
-    (cg_root / "cgroup.subtree_control").write_text("cpuset cpu pids\n")
-    (cg_root / "cpuset.cpus").write_text("0-3\n")
-    (cg_root / "cpuset.mems").write_text("0\n")
+    """Parent cgroup (the process's own cgroup dir) with subtree_control."""
+    own = _own_dir(cg_root)
+    (own / "cgroup.subtree_control").write_text("cpuset cpu pids\n")
+    (own / "cpuset.cpus").write_text("0-3\n")
+    (own / "cpuset.mems").write_text("0\n")
     return cg_root
 
 
 def _child_dirs(cg_root):
-    return [p for p in cg_root.iterdir() if p.name.startswith("asterwynd-")]
+    return [p for p in _own_dir(cg_root).iterdir() if p.name.startswith("asterwynd-")]
 
 
 class TestIsSupported:
@@ -71,7 +87,7 @@ class TestCreate:
         assert (child / "cpuset.mems").read_text() == "0"
 
     def test_no_cpuset_copy_when_controller_off(self, cg_root):
-        (cg_root / "cgroup.subtree_control").write_text("cpu pids\n")
+        (_own_dir(cg_root) / "cgroup.subtree_control").write_text("cpu pids\n")
         ctrl = CgroupV2Controller(cpus=1.0, fs_root=cg_root)
         ctrl.create()
         child = _child_dirs(cg_root)[0]
@@ -95,7 +111,7 @@ class TestCreate:
 
 class TestSweepStale:
     def _make_dir(self, cg_root, name):
-        d = cg_root / name
+        d = _own_dir(cg_root) / name
         d.mkdir()
         (d / "memory.max").write_text("0")
         return d
@@ -103,7 +119,7 @@ class TestSweepStale:
     def test_removes_dead_pid_cgroups(self, cg_root):
         # 999999 is (almost certainly) not a live pid.
         stale = self._make_dir(cg_root, "asterwynd-999999-1")
-        removed = CgroupV2Controller.sweep_stale(cg_root)
+        removed = CgroupV2Controller.sweep_stale(_own_dir(cg_root))
         assert removed == 1
         assert not stale.exists()
 
@@ -111,7 +127,7 @@ class TestSweepStale:
         import os
 
         live = self._make_dir(cg_root, f"asterwynd-{os.getpid()}-1")
-        removed = CgroupV2Controller.sweep_stale(cg_root)
+        removed = CgroupV2Controller.sweep_stale(_own_dir(cg_root))
         assert removed == 0
         assert live.exists()
 
@@ -120,7 +136,7 @@ class TestSweepStale:
         ctrl = CgroupV2Controller(memory_mb=64, fs_root=cg_root)
         ctrl.create()
         # The stale dir is gone and a fresh one exists.
-        names = [p.name for p in cg_root.iterdir()]
+        names = [p.name for p in _own_dir(cg_root).iterdir()]
         assert not any("999999" in n for n in names)
         assert any(n.startswith("asterwynd-") and "999999" not in n for n in names)
 
