@@ -32,14 +32,22 @@ class TracingHook:
         self.calls.append(trace)
         self._pending[tool_call.id] = (trace, time.perf_counter())
 
-    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
+    async def after_tool_execute(self, tool_call: ToolCall, result: str | list) -> None:
         entry = self._pending.pop(tool_call.id, None)
         if entry is None:
             return
         trace, start = entry
         duration_ms = (time.perf_counter() - start) * 1000
         trace.duration_ms = round(duration_ms, 2)
-        trace.success = not result.startswith("[Error")
+        if isinstance(result, str):
+            # Permission-denied results start with "[Permission denied" and must
+            # count as failures (consistent with ErrorClassifier batch-1).
+            trace.success = not (
+                result.startswith("[Error") or result.startswith("[Permission denied")
+            )
+        else:
+            # Content-block results (non-string) are not errors.
+            trace.success = True
         logger.debug(f"[Trace] {tool_call.name} took {duration_ms:.2f}ms success={trace.success}")
 
     def get_summary(self) -> dict:

@@ -712,61 +712,21 @@ def benchmark(
 ):
     """运行本地 Coding Agent benchmark"""
     _setup_logging()
-    from benchmarks.agent_runner import ClaudeCodeRunner, FakeAgentRunner, AsterwyndRunner, ShellCommandRunner
-    from benchmarks.runner import BenchmarkRunner
-
-    config = _load_cli_config(
-        config_path,
-        mode=mode,
-        benchmark_parallel=parallel,
-        benchmark_timeout_seconds=timeout_seconds,
-    )
-    normalized_mode = config.agent.default_mode.value
-    if agent == "fake":
-        runner_impl = FakeAgentRunner(
-            edit_file=fake_edit_file,
-            old_string=fake_old_string,
-            new_string=fake_new_string,
-        )
-    elif agent == "shell":
-        if not shell_command:
-            typer.echo("Error: --shell-command is required for --agent shell", err=True)
-            raise SystemExit(1)
-        runner_impl = ShellCommandRunner(shell_command)
-    elif agent == "claude":
-        runner_impl = ClaudeCodeRunner(timeout_seconds=config.benchmark.timeout_seconds)
-    elif agent == "asterwynd":
-        llm = build_llm(provider, model)
-        runner_impl = AsterwyndRunner(
-            llm=llm,
-            model=getattr(llm, "model", model or ""),
-            max_iterations=max_iterations,
-            mode=normalized_mode,
-            config=config,
-            timeout_seconds=config.benchmark.timeout_seconds,
-        )
-    else:
-        typer.echo("Error: --agent must be fake, shell, asterwynd, or claude", err=True)
-        raise SystemExit(1)
-
-    # Dynamic resource guardrail: an explicit --parallel or a configured
-    # benchmark.parallel (yaml/env) always wins. Only when parallel is unset
-    # everywhere do we derive a safe concurrency from the machine.
-    if config.benchmark.parallel_explicit:
-        parallel_effective = config.benchmark.parallel
-    else:
-        from benchmarks.resources import suggest_parallel_default
-
-        parallel_effective = suggest_parallel_default()
-
-    runner = BenchmarkRunner(
-        agent_runner=runner_impl,
+    runner = _build_benchmark_runner(
+        agent=agent,
         source_repo=source_repo,
         runs_dir=runs_dir,
-        agent_name=agent,
-        model=model or "",
-        mode=normalized_mode,
-        parallel=parallel_effective,
+        config_path=config_path,
+        mode=mode,
+        parallel=parallel,
+        timeout_seconds=timeout_seconds,
+        provider=provider,
+        model=model,
+        max_iterations=max_iterations,
+        shell_command=shell_command,
+        fake_edit_file=fake_edit_file,
+        fake_old_string=fake_old_string,
+        fake_new_string=fake_new_string,
         keep_worktrees=keep_worktrees,
         clone_cache_dir=clone_cache_dir,
     )
@@ -818,6 +778,254 @@ def benchmark(
             f"  run {metadata.run_id}: passed {metadata.passed} | "
             f"warnings {metadata.warnings} | unsupported {metadata.unsupported} | failed {metadata.failed}"
         )
+
+
+def _build_benchmark_runner(
+    *,
+    agent: str,
+    source_repo: Path,
+    runs_dir: Path,
+    config_path: Optional[Path],
+    mode: Optional[str],
+    parallel: Optional[int],
+    timeout_seconds: Optional[int],
+    provider: str,
+    model: Optional[str],
+    max_iterations: int,
+    shell_command: Optional[str],
+    fake_edit_file: Optional[str],
+    fake_old_string: Optional[str],
+    fake_new_string: Optional[str],
+    keep_worktrees: bool,
+    clone_cache_dir: Optional[Path],
+) -> "BenchmarkRunner":
+    """Build a configured BenchmarkRunner shared by ``benchmark`` and ``benchmark-gate``.
+
+    Loads CLI config, resolves the runner implementation for ``agent``, applies
+    the dynamic parallel guardrail, and assembles the BenchmarkRunner. Shared so
+    the two commands cannot drift on runner construction semantics.
+    """
+    from benchmarks.agent_runner import (
+        AsterwyndRunner,
+        ClaudeCodeRunner,
+        FakeAgentRunner,
+        ShellCommandRunner,
+    )
+    from benchmarks.runner import BenchmarkRunner
+
+    config = _load_cli_config(
+        config_path,
+        mode=mode,
+        benchmark_parallel=parallel,
+        benchmark_timeout_seconds=timeout_seconds,
+    )
+    normalized_mode = config.agent.default_mode.value
+    if agent == "fake":
+        runner_impl = FakeAgentRunner(
+            edit_file=fake_edit_file,
+            old_string=fake_old_string,
+            new_string=fake_new_string,
+        )
+    elif agent == "shell":
+        if not shell_command:
+            typer.echo("Error: --shell-command is required for --agent shell", err=True)
+            raise SystemExit(1)
+        runner_impl = ShellCommandRunner(shell_command)
+    elif agent == "claude":
+        runner_impl = ClaudeCodeRunner(timeout_seconds=config.benchmark.timeout_seconds)
+    elif agent == "asterwynd":
+        llm = build_llm(provider, model)
+        runner_impl = AsterwyndRunner(
+            llm=llm,
+            model=getattr(llm, "model", model or ""),
+            max_iterations=max_iterations,
+            mode=normalized_mode,
+            config=config,
+            timeout_seconds=config.benchmark.timeout_seconds,
+        )
+    else:
+        typer.echo("Error: --agent must be fake, shell, asterwynd, or claude", err=True)
+        raise SystemExit(1)
+
+    # Dynamic resource guardrail: an explicit --parallel or a configured
+    # benchmark.parallel (yaml/env) always wins. Only when parallel is unset
+    # everywhere do we derive a safe concurrency from the machine.
+    if config.benchmark.parallel_explicit:
+        parallel_effective = config.benchmark.parallel
+    else:
+        from benchmarks.resources import suggest_parallel_default
+
+        parallel_effective = suggest_parallel_default()
+
+    return BenchmarkRunner(
+        agent_runner=runner_impl,
+        source_repo=source_repo,
+        runs_dir=runs_dir,
+        agent_name=agent,
+        model=model or "",
+        mode=normalized_mode,
+        parallel=parallel_effective,
+        keep_worktrees=keep_worktrees,
+        clone_cache_dir=clone_cache_dir,
+    )
+
+
+@app.command()
+def benchmark_gate(
+    tasks_dir: Path = typer.Argument(
+        Path("benchmarks/tasks/gate-smoke"),
+        help="包含 benchmark task 子目录的目录（默认 gate-smoke）",
+    ),
+    baseline: Path = typer.Option(
+        Path("benchmarks/baseline.json"),
+        "--baseline",
+        help="基线 JSON 路径",
+    ),
+    require_baseline: bool = typer.Option(
+        False, "--require-baseline", help="缺失基线时失败退出（门禁强制模式）"
+    ),
+    update_baseline: bool = typer.Option(
+        False, "--update-baseline", help="将本次运行结果写入基线（显式确认覆盖）"
+    ),
+    success_rate_drop: float = typer.Option(
+        0.05, "--success-rate-drop", help="成功率绝对下降阈值（百分点，默认 0.05）"
+    ),
+    p95_regression_frac: float = typer.Option(
+        0.05, "--p95-regression-frac", help="P95 相对上升阈值（默认 0.05）"
+    ),
+    skip_p95: bool = typer.Option(
+        False,
+        "--skip-p95",
+        help="跳过 P95 延迟检查（近零 IO 确定性任务集墙钟受环境主导，p95 不可靠）",
+    ),
+    agent: str = typer.Option("fake", "--agent", help="Runner（门禁默认 fake，确定性基础设施回归）"),
+    source_repo: Path = typer.Option(Path("."), "--source-repo", help="被测 git repo"),
+    runs_dir: Path = typer.Option(Path("benchmarks/runs"), "--runs-dir", help="benchmark 输出目录"),
+    provider: str = typer.Option(
+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="Asterwynd LLM provider"
+    ),
+    model: Optional[str] = typer.Option(None, "--model", help="Asterwynd 模型"),
+    max_iterations: int = typer.Option(20, "--max-iterations", help="Asterwynd 最大迭代次数"),
+    mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan"),
+    config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
+    parallel: Optional[int] = typer.Option(None, "--parallel", help="benchmark 并发任务数"),
+    timeout_seconds: Optional[int] = typer.Option(None, "--timeout-seconds", help="外部 agent 超时时间"),
+    shell_command: Optional[str] = typer.Option(None, "--shell-command", help="shell runner 命令"),
+    fake_edit_file: Optional[str] = typer.Option(None, "--fake-edit-file", help="fake runner 修改文件"),
+    fake_old_string: Optional[str] = typer.Option(None, "--fake-old-string", help="fake runner old string"),
+    fake_new_string: Optional[str] = typer.Option(None, "--fake-new-string", help="fake runner new string"),
+    keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
+    clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
+):
+    """运行 benchmark 并与基线对比：成功率下降 >5pp 或 P95 相对劣化 >5% 返回非零。
+
+    ``--update-baseline`` 显式确认覆盖基线；``--require-baseline`` 使缺失基线时失败退出。
+    ``--skip-p95`` 跳过 P95 检查（用于近零 IO 确定性任务集）。门禁为确定性基础设施回归
+    守护（默认 fake agent），不引入真实 LLM 成本。
+    """
+    _setup_logging()
+    from benchmarks.gate import (
+        build_baseline,
+        compare,
+        compute_run_metrics_from_dir,
+        load_baseline,
+        write_baseline,
+    )
+    from benchmarks.report import collect_run_results
+
+    runner = _build_benchmark_runner(
+        agent=agent,
+        source_repo=source_repo,
+        runs_dir=runs_dir,
+        config_path=config_path,
+        mode=mode,
+        parallel=parallel,
+        timeout_seconds=timeout_seconds,
+        provider=provider,
+        model=model,
+        max_iterations=max_iterations,
+        shell_command=shell_command,
+        fake_edit_file=fake_edit_file,
+        fake_old_string=fake_old_string,
+        fake_new_string=fake_new_string,
+        keep_worktrees=keep_worktrees,
+        clone_cache_dir=clone_cache_dir,
+    )
+
+    metadata = asyncio.run(runner.run_all(tasks_dir))
+    run_path = runs_dir / metadata.run_id
+    metrics = compute_run_metrics_from_dir(run_path)
+
+    if metrics["total_tasks"] == 0:
+        typer.echo("Error: no benchmark tasks produced results", err=True)
+        raise SystemExit(2)
+
+    existing = load_baseline(baseline)
+
+    if update_baseline:
+        # 0-task runs must not write an empty baseline (grill Decision 20).
+        results = collect_run_results(run_path)
+        per_task = {
+            r.task_id: {"status": r.status, "duration_seconds": r.duration_seconds}
+            for r in results
+        }
+        data = build_baseline(
+            task_set=tasks_dir.name,
+            agent=agent,
+            model=model or "",
+            metrics={
+                "success_rate": metrics["success_rate"],
+                "p95_latency_s": metrics["p95_latency_s"],
+            },
+            per_task=per_task,
+        )
+        if existing is not None:
+            verdict = compare(
+                existing,
+                metrics,
+                success_rate_drop=success_rate_drop,
+                p95_regression_frac=p95_regression_frac,
+                check_p95=not skip_p95,
+            )
+            if not verdict.ok:
+                typer.echo(
+                    "Warning: current run degrades vs existing baseline; "
+                    "--update-baseline overrides it.",
+                    err=True,
+                )
+                typer.echo(verdict.report())
+        write_baseline(data, baseline)
+        typer.echo(f"Baseline updated: {baseline}")
+        typer.echo(
+            f"  success_rate={metrics['success_rate']:.4f} "
+            f"p95_latency_s={metrics['p95_latency_s']:.4f} "
+            f"tasks={metrics['total_tasks']}"
+        )
+        return
+
+    if existing is None:
+        if require_baseline:
+            typer.echo(
+                f"Error: baseline not found at {baseline} and --require-baseline set",
+                err=True,
+            )
+            raise SystemExit(2)
+        typer.echo(
+            f"GATE SKIPPED: no baseline at {baseline} "
+            "(pass --require-baseline to enforce)"
+        )
+        return
+
+    verdict = compare(
+        existing,
+        metrics,
+        success_rate_drop=success_rate_drop,
+        p95_regression_frac=p95_regression_frac,
+        check_p95=not skip_p95,
+    )
+    typer.echo(verdict.report())
+    if not verdict.ok:
+        raise SystemExit(2)
 
 
 session_app = typer.Typer(help="会话管理")

@@ -148,8 +148,8 @@
 
 #### Decision 10: CI 集成 = fake agent 确定性门禁 job
 
-- **方案**：`.github/workflows/ci.yml` 新增 `benchmark-gate` job：`git config user.name/email` 后，fake agent 跑小型确定性任务集（新增 `benchmarks/tasks/gate-smoke/`，含 2 个极快任务），对比已提交的 `benchmarks/baseline.json`（`--require-baseline`）。
-- **理由**：fake agent 确定性 → 结果稳定 → 只拦截 benchmark harness/runner/task 基础设施回归，不引入真实 LLM 成本；守护"改进不衰退"证据链的基础设施本身。
+- **方案**：`.github/workflows/ci.yml` 新增 `benchmark-gate` job：`git config user.name/email` 后，fake agent 跑小型确定性任务集（新增 `benchmarks/tasks/gate-smoke/`，含 2 个极快任务），对比已提交的 `benchmarks/baseline.json`（`--require-baseline --skip-p95`）。
+- **理由**：fake agent 确定性 → 结果稳定 → 只拦截 benchmark harness/runner/task 基础设施回归（success_rate 是主信号），不引入真实 LLM 成本；守护"改进不衰退"证据链的基础设施本身。`--skip-p95` 理由见 Decision 15 实测修正。
 - **风险**：CI 跑 git worktree 需要 git 身份配置（job 里显式设置）；若环境无法跑（如无网络克隆外部仓库），该 job 显式失败而非静默跳过——但 gate-smoke 只用本地任务，无网络依赖。
 
 ### 5. Session timeline 看板
@@ -202,11 +202,12 @@
 - **理由**：grill 实测 `report._percentile` 与 `compare.py` 的 `durations[int(n*0.95)]` 对 p<1 且 n≥1 数值一致（clamp 只在 p≥1 生效）；"同口径"可达。失败任务 0.0 时长会污染 P95。
 - **备选**：排除失败任务 vs 把 0.0 视为缺失。选前者：失败任务的时长本就不反映正常路径延迟，且 success_rate 已拦 status 回归。
 
-#### Decision 15: P95 阈值加延迟绝对值下限，边界用 `>`
+#### Decision 15: P95 阈值加延迟绝对值下限，边界用 `>`；近零 IO 任务集可 `--skip-p95`
 
-- **方案**：P95 劣化拦截条件 = `current.p95 > max(baseline.p95 * (1 + frac), baseline.p95 + ABS_FLOOR_S)`，`ABS_FLOOR_S = 1.0`（秒，常量）。即延迟绝对值下限 1s：基线 P95 <1s 时，劣化判定用绝对差而非相对百分比。成功率劣化条件 = `baseline.success_rate - current.success_rate > drop`。边界全部用严格 `>`（spec 的 "more than" 口径），测试 pin：恰好 5% / 恰好 `baseline*1.05` 不拦截，略超拦截。
+- **方案**：P95 劣化拦截条件 = `current.p95 > max(baseline.p95 * (1 + frac), baseline.p95 + ABS_FLOOR_S)`，`ABS_FLOOR_S = 1.0`（秒，常量）。即延迟绝对值下限 1s：基线 P95 <1s 时，劣化判定用绝对差而非相对百分比。成功率劣化条件 = `baseline.success_rate - current.success_rate > drop`。边界全部用严格 `>`（spec 的 "more than" 口径），测试 pin：恰好 5% / 恰好 `baseline*1.05` 不拦截，略超拦截。CLI 提供 `--skip-p95` 显式跳过 P95 检查（`compare(check_p95=False)`）。
 - **理由**：gate-smoke 仅 2 任务时 nearest-rank P95 = 两任务时长最大值，`duration_seconds` 是纯墙钟（含 worktree/git/test/清理），fake agent 只保证决策确定性不保证计时确定性；亚秒级基线下相对 5% 是 ±2.5ms 绝对抖动即拦截，必然误拦（grill 风险 1 实测）。
-- **备选**：CI 只拦 status 回归、不拦延迟。被拒：失去"P95 延迟劣化拦截"的验收；绝对值下限保留延迟维度同时避免 jitter 误拦。
+- **实测修正（2026-08-03）**：gate-smoke 墙钟实测 0.5s / 7.8s / 20.5s 三次运行，方差 40×，全部由 `git worktree add` + 清理等环境因素主导。即使基线取 10.0s 保守值，冷 CI 仍可能超过 `10.0+1.0=11.0s` 上限误拦。结论：**近零 IO 任务集的墙钟 p95 不是可靠回归信号**，gate-smoke CI job 用 `--skip-p95`，以 success_rate 为主要确定性信号；严格的 P95 语义保留在 gate 纯逻辑（单测覆盖）与真实 benchmark 工作流。
+- **备选**：CI 只拦 status 回归、不拦延迟。被拒：失去"P95 延迟劣化拦截"的验收；`--skip-p95` 显式表达"本任务集不适合 p95 门禁"，真实 benchmark 默认仍开 p95。
 
 #### Decision 16: timeline success 用双前缀判定，修复 TracingHook list 脆弱性
 

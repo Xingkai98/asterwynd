@@ -78,6 +78,16 @@ def create_app(
     async def debug_status():
         return {"enabled": debug_enabled()}
 
+    @app.get("/api/sessions/{session_id}/timeline")
+    async def session_timeline(session_id: str):
+        """Return a session's tool-call timeline (durations desc + bar widths)."""
+        from web.session import build_timeline_payload
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        return build_timeline_payload(session)
+
     @app.get("/api/slash-commands")
     async def slash_commands():
         command_registry = build_default_slash_command_registry(

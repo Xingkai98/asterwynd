@@ -1,0 +1,10 @@
+{
+  "id": "gate-smoke-001",
+  "repo": "local",
+  "base_commit": "7c6fc3e",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -c \"import sys; sys.exit(0)\"",
+  "category": "execution",
+  "difficulty": "trivial",
+  "timeout_seconds": 30
+}
