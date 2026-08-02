@@ -116,9 +116,10 @@ def _wire_governance(
     """
     if selection_config is not None and selection_config.enabled:
         from agent.embedding import NGramEmbedding
+        from agent.embedding.provider import DEFAULT_EMBEDDING_DIM
         from agent.tools.governance import SemanticDeduper, ToolLifecycle, ToolSelector
 
-        embedder = NGramEmbedding(dim=2048)
+        embedder = NGramEmbedding(dim=DEFAULT_EMBEDDING_DIM)
         selector = ToolSelector(
             embedder=embedder,
             top_k=selection_config.top_k,
@@ -297,7 +298,16 @@ def get_default_tools(
     sandbox: ExecutionBackend | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
-    pmem = persistent_memory or PersistentMemory(policy.workspace_root)
+    config = memory_config or MemoryConfig()
+    pmem = persistent_memory or PersistentMemory(
+        policy.workspace_root,
+        archive_after_days=config.archive_after_days,
+        recency_halflife_days=config.recency_halflife_days,
+        importance_default=config.importance_default,
+        summary_tokens=config.summary_tokens,
+        decay_interval_seconds=config.decay_interval_seconds,
+        decay_threshold=config.decay_threshold,
+    )
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [
@@ -384,7 +394,16 @@ def get_coding_tools(
     sandbox: ExecutionBackend | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
-    pmem = persistent_memory or PersistentMemory(policy.workspace_root)
+    config = memory_config or MemoryConfig()
+    pmem = persistent_memory or PersistentMemory(
+        policy.workspace_root,
+        archive_after_days=config.archive_after_days,
+        recency_halflife_days=config.recency_halflife_days,
+        importance_default=config.importance_default,
+        summary_tokens=config.summary_tokens,
+        decay_interval_seconds=config.decay_interval_seconds,
+        decay_threshold=config.decay_threshold,
+    )
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [

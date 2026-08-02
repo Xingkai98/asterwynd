@@ -43,14 +43,23 @@
 
 ### Requirement: importance × recency 时效性衰减
 
-长期记忆系统 SHALL 用 importance × recency 对记忆评分，SHALL 对超 30 天未检索的记忆自动归档，SHALL 提供归档/恢复 API。
+长期记忆系统 SHALL 用 importance × recency 对记忆评分，SHALL 对超 30 天未检索且衰减评分低于可配置阈值的记忆自动归档，SHALL 提供归档/恢复 API。
 
 #### Scenario: 过期记忆自动归档
 
 - **GIVEN** 一条记忆超过 30 天未被检索
+- **AND** 其衰减评分低于可配置阈值（高 importance 记忆评分较高，可豁免归档）
 - **WHEN** 衰减评分触发归档
 - **THEN** 该记忆 SHALL 被自动归档
 - **AND** 可通过恢复 API 还原
+
+#### Scenario: 高重要度记忆豁免归档
+
+- **GIVEN** 一条记忆超过 30 天未被检索
+- **AND** 其 importance × recency 评分高于可配置阈值
+- **WHEN** 衰减评分检查执行
+- **THEN** 该记忆 SHALL 不被归档
+- **AND** 仍处于 active 区可检索
 
 ### Requirement: 按需语义检索与全局摘要
 

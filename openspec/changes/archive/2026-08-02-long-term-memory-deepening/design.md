@@ -82,6 +82,17 @@
 - **R1-Q13 基准量化**：✅ 新增 `benchmarks/tasks/asterwynd-022-long-term-memory/`：量化注入 token 节省（2K→50）、三分支闭环准确率、衰减留存率。
 - **R1-Q14 迁移兼容**：✅ 旧记忆无新字段时默认 importance=3、created_at=file mtime、last_accessed_at=file mtime、scope=当前项目；写入时升级 frontmatter，既有测试不回归。
 
+### Round 2 用户确认修订（2026-08-02 补做 batch grill）
+
+> 归档后补做 batch grill（此前自主模式以推荐答案代替用户确认，违反 AGENTS.md "agent 可以给推荐答案，但不能把自己的推断当作用户确认"）。独立零记忆 subagent 挑战 5 条 Decision + R1-Q1..R1-Q14 并对照实现，产出 `reviews/grill-design.md`（Round 1 记录 + Round 2 决策树）。用户逐项拍板，下列 4 项与 Round 1 推荐答案存在偏差或落地差异，已按用户决定修订实现与文档。
+
+- **R2-1 归档判定（Decision 3 / R1-Q6）**：用户选 A 评分门。实现 `decay_threshold` 评分下限（默认 1.5，`None` 关闭评分门），`run_decay()` 改为"超 `archive_after_days` 天 **且** `decay_score < decay_threshold`"才归档——importance 4-5 的记忆自然延长存活窗口（约 43/53 天），评分公式真正进入生产路径。同时修复 `.days` 整数截断边界 bug（30.9 天不再漏归档，改用 `total_seconds()/86400` 分数天）。更新了 Round 1 中"decay_threshold 默认关闭"的过时措辞。
+- **R2-2 scope 解析（Decision 5 / R1-Q10）**：用户选 A git common-dir 派生。实现 `_find_scope_root()` 替代 `_find_git_root()`：解析 worktree `.git` 文件（`gitdir:` → `commondir`），同仓库所有 worktree 共享同一 scope/hash 键（对齐 Claude Code per-repo keying），修复 worktree 下记忆割裂。`_compute_project_hash` 仍基于路径，整仓改名孤儿化作为已知局限记录。
+- **R2-3 embedding 口径（R1-Q2）**：用户选 A dim=2048 对齐。`search()` 默认 embedder 显式 `NGramEmbedding(dim=DEFAULT_EMBEDDING_DIM=2048)`，与 #77 标定操作点一致（0.5 阈值语义成立）；`search()` 改走 `InMemoryVectorStore`（兑现"复用 #77 向量库"叙事）；`memory.embedding` 可插拔配置明确后置到三层存储 change，config seam 降级为协议层（`EmbeddingProvider`/`VectorStore` 接口），修正 Round 1 中"config 预留 seam"的不实措辞。
+- **R2-4 写时去重可逆性（Decision 2 / R1-Q4）**：用户选 A，作为 **follow-up 新 change**（issue #99 `long-term-memory-reversibility`）而非原地修订——update/supplement 补 pre-image（`memory_dir/revisions/<name>/<ts>.md` 侧车目录）+ `resolve_conflict` 解除 API，使 design Risk 表"判断结果可人工复核、change log 可回溯"的承诺从 action 级提升到内容级。本 change 保留现状（update 覆盖 + conflict_with 只增不减），偏差已登记 known-debt 并由 #99 承接。
+
+**Round 2 其余确认**（11 项 open questions 分类，见 `reviews/grill-design.md` Round 2 决策树）：Q1/Q8 confirm（SearchMemory 命名、spec 场景数差异）；Q2/Q9/Q10 needs_docs（token 口径统一 83.4%、NGram 词面近似局限、#74→#59 依赖口径回写）；Q3/Q5/Q6 needs_code（decay_interval 第 7 旋钮、CI 事件门禁 merge-base、manifest 归档前校验）；Q4/Q11 defer（embedding 配置字段、CONTEXT.md 词条）；Q7 用户决定不启用 workflow_guard，记入 known-debt。
+
 ## Reference Implementation Research
 
 - status: enabled

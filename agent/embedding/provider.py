@@ -15,6 +15,12 @@ from typing import Protocol, runtime_checkable
 # A vector is a fixed-length sequence of floats.
 Vector = Sequence[float]
 
+# The calibrated operating point for NGramEmbedding. #77's similarity
+# calibration (equivalent≈0.86, unrelated≈0.11) was measured at this dim, so
+# all consumers must use it — including long-term memory (#75) — for the
+# 0.5 dedup-recall threshold to have its documented meaning.
+DEFAULT_EMBEDDING_DIM = 2048
+
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):

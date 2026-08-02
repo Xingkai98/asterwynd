@@ -204,8 +204,10 @@ class MemoryConfig:
 
     ``archive_after_days`` triggers auto-archival of memories not retrieved
     within the window; ``recency_halflife_days`` is the half-life of the
-    importance × recency decay score; ``dedup_recall_threshold`` is the minimum
-    similarity for write-dedup candidates to reach the LLM judge.
+    importance × recency decay score; ``decay_threshold`` is the score floor
+    (None disables the gate, pure time-based archival); ``decay_interval_seconds``
+    throttles how often read paths scan for archival; ``dedup_recall_threshold``
+    is the minimum similarity for write-dedup candidates to reach the LLM judge.
     """
     archive_after_days: int = 30
     recency_halflife_days: int = 30
@@ -213,6 +215,8 @@ class MemoryConfig:
     recall_top_k: int = 5
     summary_tokens: int = 50
     dedup_recall_threshold: float = 0.5
+    decay_threshold: float | None = 1.5
+    decay_interval_seconds: int = 3600
 
 
 @dataclass(frozen=True)
@@ -1191,6 +1195,16 @@ def _parse_memory_config(raw: Any, path: Path) -> MemoryConfig:
         raise ConfigError(
             f"{path}: memory.dedup_recall_threshold must be a number"
         ) from exc
+    decay_threshold_raw = mapping.get("decay_threshold", 1.5)
+    if decay_threshold_raw is not None:
+        try:
+            decay_threshold = float(decay_threshold_raw)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                f"{path}: memory.decay_threshold must be a number or null"
+            ) from exc
+    else:
+        decay_threshold = None
     return MemoryConfig(
         archive_after_days=_validate_positive_int(
             mapping.get("archive_after_days", 30),
@@ -1218,6 +1232,12 @@ def _parse_memory_config(raw: Any, path: Path) -> MemoryConfig:
             path=path,
         ),
         dedup_recall_threshold=threshold,
+        decay_threshold=decay_threshold,
+        decay_interval_seconds=_validate_positive_int(
+            mapping.get("decay_interval_seconds", 3600),
+            "memory.decay_interval_seconds",
+            path=path,
+        ),
     )
 
 

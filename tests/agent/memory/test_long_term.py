@@ -213,6 +213,66 @@ class TestDecay:
         # the important assertion is that the throttled run did not error
         assert _reload(mem, "cold2") is not None
 
+    def test_decay_gate_keeps_high_importance_old_memory(self, make_mem):
+        """Regression (grill Decision 3 / R1-Q6): a high-importance memory
+        survives beyond archive_after_days because its score stays above the
+        decay_threshold, while a low-importance one at the same age is
+        archived."""
+        clock = Clock(datetime(2026, 8, 3, 12, 0, 0))
+        mem = make_mem(clock)
+        mem.save("project", "ddl", "deadline", "Ship Friday.", importance=5)
+        mem.save("project", "trivia", "trivia", "likes coffee", importance=1)
+        for name in ("ddl", "trivia"):
+            entry = _reload(mem, name)
+            entry.last_accessed_at = clock.now - timedelta(days=40)
+            mem._write_entry(entry)
+
+        archived = mem.run_decay()
+        # Only trivia (importance 1, score ≈0.40 < 1.5) is archived; ddl
+        # (importance 5, score ≈1.98 ≥ 1.5) stays active.
+        assert archived == 1
+        assert _reload(mem, "ddl") is not None
+        assert _reload(mem, "trivia") is None
+
+    def test_decay_gate_disabled_by_none_threshold(self, make_mem):
+        """Regression: decay_threshold=None restores pure time-based archival —
+        even a high-importance memory is archived once past archive_after_days."""
+        clock = Clock(datetime(2026, 8, 3, 12, 0, 0))
+        mem = make_mem(clock)
+        mem._decay_threshold = None
+        mem.save("project", "ddl", "deadline", "Ship Friday.", importance=5)
+        entry = _reload(mem, "ddl")
+        entry.last_accessed_at = clock.now - timedelta(days=40)
+        mem._write_entry(entry)
+
+        assert mem.run_decay() == 1
+        assert _reload(mem, "ddl") is None
+
+    def test_decay_boundary_uses_fractional_days(self, make_mem):
+        """Regression (grill): 30.9 days must count as >30 (previously
+        (now-last).days snapped to 30 and skipped archival)."""
+        clock = Clock(datetime(2026, 8, 3, 12, 0, 0))
+        mem = make_mem(clock)
+        mem.save("project", "edge", "edge", "border case")
+        entry = _reload(mem, "edge")
+        entry.last_accessed_at = clock.now - timedelta(days=30, hours=22)
+        mem._write_entry(entry)
+
+        assert mem.run_decay() == 1
+        assert _reload(mem, "edge") is None
+
+    def test_decay_score_fractional_recency(self, make_mem):
+        """Regression: decay_score uses fractional days so recency decays
+        continuously (30.9 days is more decayed than 30.0)."""
+        clock = Clock(datetime(2026, 8, 3, 12, 0, 0))
+        mem = make_mem(clock)
+        mem.save("project", "x", "x", "body", importance=4)
+        entry = _reload(mem, "x")
+        entry.last_accessed_at = clock.now - timedelta(days=30, hours=22)
+        mem._write_entry(entry)
+
+        assert mem.decay_score(entry) < 2.0  # strictly below 4 × 0.5^1
+
 
 # ---------------------------------------------------------------------------
 # Semantic search
@@ -256,6 +316,29 @@ class TestSearch:
         clock.advance(days=10)
         mem.search("data")
         assert _reload(mem, "hot").last_accessed_at == clock.now
+
+    def test_search_uses_calibrated_embedding_dim(self, make_mem, monkeypatch):
+        """Regression (grill R1-Q2): memory search must run the default embedder
+        at the #77-calibrated dim (2048) so the dedup-recall threshold has its
+        documented meaning."""
+        import agent.embedding as embedding_mod
+        from agent.embedding.provider import NGramEmbedding
+
+        mem = make_mem()
+        mem.save("project", "a", "a", "the quick brown fox jumps over the lazy dog")
+
+        seen: dict[str, object] = {}
+
+        class RecordingNGram(NGramEmbedding):
+            def __init__(self, dim: int = 256):
+                seen["dim"] = dim
+                super().__init__(dim=dim)
+
+        # search() imports NGramEmbedding from agent.embedding; patch that name
+        # so the default embedder construction records the dim it used.
+        monkeypatch.setattr(embedding_mod, "NGramEmbedding", RecordingNGram)
+        mem.search("quick brown fox", top_k=1)
+        assert seen.get("dim") == 2048
 
 
 # ---------------------------------------------------------------------------

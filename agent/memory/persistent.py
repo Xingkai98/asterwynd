@@ -27,6 +27,11 @@ ARCHIVE_AFTER_DAYS = 30
 RECENCY_HALFLIFE_DAYS = 30
 MAX_SUMMARY_TOKENS = 50
 DEDUP_RECALL_THRESHOLD = 0.5
+# Default decay score floor (Decision 3 / R1-Q6). A memory is archived only
+# when BOTH it has not been accessed for archive_after_days AND its
+# importance×recency score is below this threshold. None disables the score
+# gate (pure time-based archival).
+DECAY_THRESHOLD: float | None = 1.5
 # Throttle: run decay archival at most once per window even when every
 # read path triggers it, so a busy session does not scan the store per call.
 DECAY_INTERVAL_SECONDS = 3600
@@ -37,16 +42,54 @@ def _compute_project_hash(project_root: Path) -> str:
     return hashlib.sha256(str(resolved).encode()).hexdigest()[:16]
 
 
-def _find_git_root(path: Path) -> Path | None:
+def _find_scope_root(path: Path) -> Path | None:
+    """Resolve the project scope root for a checkout.
+
+    The scope root is the canonical repository root shared across git
+    worktrees (Decision 5 / R1-Q10): walking up from ``path``, a ``.git``
+    directory identifies a normal checkout, while a ``.git`` file (the
+    worktree pointer, containing ``gitdir: <path>``) is resolved via its
+    ``commondir`` to the main worktree's common dir. Returns None when no
+    git metadata is found, so callers fall back to ``project_root.resolve()``.
+    """
     current = path.resolve()
     for _ in range(64):
-        if (current / ".git").exists():
+        git_dir = current / ".git"
+        if git_dir.is_dir():
             return current
+        if git_dir.is_file():
+            common = _git_common_dir(git_dir)
+            if common is not None:
+                return common
         parent = current.parent
         if parent == current:
             return None
         current = parent
     return None
+
+
+def _git_common_dir(git_file: Path) -> Path | None:
+    """Return the repository common dir pointed to by a worktree .git file.
+
+    The .git file in a linked worktree is ``gitdir: <path-to-gitdir>``; the
+    common dir lives in that gitdir's parent's ``commondir`` file (defaulting
+    to the gitdir's parent when absent). The scope root is the parent of the
+    common dir (the main worktree's checkout root).
+    """
+    try:
+        text = git_file.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    match = re.match(r"gitdir:\s*(.+)", text)
+    if match is None:
+        return None
+    worktree_gitdir = (git_file.parent / match.group(1).strip()).resolve()
+    commondir_file = worktree_gitdir / "commondir"
+    try:
+        common_dir = (commondir_file.parent / commondir_file.read_text(encoding="utf-8").strip()).resolve()
+    except OSError:
+        common_dir = worktree_gitdir.parent
+    return common_dir.parent
 
 
 def _validate_name(name: str) -> str | None:
@@ -100,8 +143,9 @@ class PersistentMemory:
     MEMORY.md serves as the human-readable index; each memory is a separate
     .md file. Archived entries move to ``memory_dir/archive/``.
 
-    The store is scoped to the git root (or resolved project root) so different
-    projects never share memory files.
+    The store is scoped to the repository root (or resolved project root) so
+    different projects never share memory files. All worktrees of one git
+    repository share a single scope (Decision 5 / R1-Q10).
     """
 
     def __init__(
@@ -114,9 +158,10 @@ class PersistentMemory:
         importance_default: int = DEFAULT_IMPORTANCE,
         summary_tokens: int = MAX_SUMMARY_TOKENS,
         decay_interval_seconds: int = DECAY_INTERVAL_SECONDS,
+        decay_threshold: float | None = DECAY_THRESHOLD,
     ) -> None:
-        git_root = _find_git_root(project_root)
-        root = git_root or project_root.resolve()
+        scope_root = _find_scope_root(project_root)
+        root = scope_root or project_root.resolve()
         project_hash = _compute_project_hash(root)
         self.memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"
         self._index_path = self.memory_dir / "MEMORY.md"
@@ -127,6 +172,7 @@ class PersistentMemory:
         self._importance_default = importance_default
         self._summary_tokens = summary_tokens
         self._decay_interval_seconds = decay_interval_seconds
+        self._decay_threshold = decay_threshold
         self._last_decay_run: datetime | None = None
 
     # ------------------------------------------------------------------
@@ -150,15 +196,22 @@ class PersistentMemory:
         """Importance × recency joint score (Decision 3).
 
         recency = 0.5 ^ (days_since_last_access / recency_halflife_days).
+        Days are fractional (seconds/86400) so a 30.9-day-old memory decays
+        continuously rather than snapping at the whole-day boundary.
         """
         now = now or self._now()
         last = entry.last_accessed_at or entry.created_at or now
-        days = max(0, (now - last).days)
+        days = max(0.0, (now - last).total_seconds() / 86400.0)
         recency = 0.5 ** (days / self._recency_halflife_days)
         return entry.importance * recency
 
     def run_decay(self, now: datetime | None = None) -> int:
-        """Archive active memories not retrieved for more than archive_after_days.
+        """Archive active memories that have aged out.
+
+        A memory is archived when it has not been retrieved for more than
+        ``archive_after_days`` AND (when ``decay_threshold`` is set) its
+        importance×recency score is below the threshold. Important memories
+        therefore survive longer without access (Decision 3 / R1-Q6).
 
         Returns the number of archived entries.
         """
@@ -166,9 +219,13 @@ class PersistentMemory:
         archived = 0
         for entry in self.load_entries():
             last = entry.last_accessed_at or entry.created_at or now
-            if (now - last).days > self._archive_after_days:
-                self.archive(entry.name, reason="not retrieved within archive_after_days")
-                archived += 1
+            days = (now - last).total_seconds() / 86400.0
+            if days <= self._archive_after_days:
+                continue
+            if self._decay_threshold is not None and self.decay_score(entry, now) >= self._decay_threshold:
+                continue
+            self.archive(entry.name, reason="decay: not retrieved within archive_after_days")
+            archived += 1
         return archived
 
     def _run_decay_if_due(self, now: datetime | None = None) -> int:
@@ -310,9 +367,9 @@ class PersistentMemory:
         if isinstance(conflict_with, str):
             conflict_with = [conflict_with]
         try:
-            importance = int(metadata.get("importance") or DEFAULT_IMPORTANCE)
+            importance = int(metadata.get("importance") or self._importance_default)
         except (TypeError, ValueError):
-            importance = DEFAULT_IMPORTANCE
+            importance = self._importance_default
         return MemoryEntry(
             name=str(name),
             description=str(data.get("description") or ""),
@@ -519,24 +576,30 @@ class PersistentMemory:
         """
         if scope is not None and scope != self.scope:
             return []
-        from agent.embedding import NGramEmbedding
+        from agent.embedding import InMemoryVectorStore, NGramEmbedding
+        from agent.embedding.provider import DEFAULT_EMBEDDING_DIM
 
         self._run_decay_if_due()
-        embedder = embedder or NGramEmbedding()
+        # Default embedder runs at the #77-calibrated operating point so the
+        # dedup-recall threshold has its documented meaning (R1-Q2).
+        embedder = embedder or NGramEmbedding(dim=DEFAULT_EMBEDDING_DIM)
         entries = self.load_entries(include_archived=include_archived)
         if type is not None:
             entries = [e for e in entries if e.type == type]
         if not entries:
             return []
 
-        query_vec = embedder.embed(query)
-        scored: list[MemoryHit] = []
+        store = InMemoryVectorStore(embedder=embedder)
         for entry in entries:
-            sim = embedder.cosine(query_vec, embedder.embed(entry.searchable_text))
-            scored.append(MemoryHit(entry=entry, score=sim))
-        scored.sort(key=lambda h: h.score, reverse=True)
+            store.add(entry.name, entry.searchable_text)
+        query_vec = embedder.embed(query)
+        scored = [(name, score) for name, score in store.query(query_vec, max(0, top_k))]
 
-        hits = scored[: max(0, top_k)]
+        hits: list[MemoryHit] = []
+        for name, score in scored:
+            entry = next((e for e in entries if e.name == name), None)
+            if entry is not None:
+                hits.append(MemoryHit(entry=entry, score=score))
         for hit in hits:
             self._touch(hit.entry.name)
         return hits

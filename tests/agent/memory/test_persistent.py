@@ -5,7 +5,7 @@ from pathlib import Path
 from agent.memory.persistent import (
     PersistentMemory,
     _compute_project_hash,
-    _find_git_root,
+    _find_scope_root,
     _validate_name,
 )
 
@@ -27,7 +27,7 @@ class TestProjectHash:
         assert _compute_project_hash(a) != _compute_project_hash(b)
 
 
-class TestFindGitRoot:
+class TestFindScopeRoot:
     def test_returns_none_for_non_git_dir(self, tmp_path, monkeypatch):
         # Block all Path.exists calls for .git to simulate non-git dir
         original_exists = Path.exists
@@ -38,14 +38,75 @@ class TestFindGitRoot:
             return original_exists(self)
 
         monkeypatch.setattr(Path, "exists", fake_exists)
-        assert _find_git_root(tmp_path) is None
+        assert _find_scope_root(tmp_path) is None
 
-    def test_finds_git_root_from_subdirectory(self, tmp_path):
+    def test_finds_scope_root_from_subdirectory(self, tmp_path):
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         sub = tmp_path / "deep" / "sub"
         sub.mkdir(parents=True)
-        assert _find_git_root(sub) == tmp_path.resolve()
+        assert _find_scope_root(sub) == tmp_path.resolve()
+
+    def test_worktree_git_file_resolves_to_main_root(self, tmp_path):
+        """A linked worktree's .git file (gitdir: …) must resolve to the main
+        checkout root so all worktrees of one repo share a scope."""
+        main = tmp_path / "main"
+        worktree = tmp_path / "worktree"
+        main.mkdir()
+        worktree.mkdir()
+        # Main checkout's git dir
+        main_git = main / ".git"
+        main_git.mkdir()
+        # Worktree git dir lives under main/.git/worktrees/<name>; the
+        # commondir file there points back to ../.. (the common dir), exactly
+        # as `git worktree add` lays it out (verified empirically).
+        wt_gitdir = main_git / "worktrees" / "feature"
+        wt_gitdir.mkdir(parents=True)
+        (wt_gitdir / "commondir").write_text("../..\n", encoding="utf-8")
+        # The worktree .git file points at that git dir
+        (worktree / ".git").write_text(f"gitdir: {wt_gitdir}\n", encoding="utf-8")
+
+        assert _find_scope_root(worktree) == main.resolve()
+
+    def test_malformed_git_file_falls_back_to_scan(self, tmp_path):
+        """A malformed .git file is not treated as a scope root; walking up
+        continues (and if nothing is found, None is returned)."""
+        sub = tmp_path / "a" / "b"
+        sub.mkdir(parents=True)
+        (tmp_path / "a" / ".git").write_text("not a gitfile", encoding="utf-8")
+        assert _find_scope_root(sub) is None
+
+    def test_real_worktrees_share_scope(self, tmp_path, monkeypatch):
+        """Integration (grill Decision 5 / R1-Q10): two worktrees of one git
+        repository resolve to the same scope root and thus share memory files.
+        Requires git; skipped when unavailable."""
+        import shutil
+        import subprocess
+
+        if shutil.which("git") is None:
+            pytest.skip("git not available")
+
+        main = tmp_path / "main"
+        wt = tmp_path / "wt"
+        main.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=main, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=main, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=main, check=True)
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "init"], cwd=main, check=True)
+        subprocess.run(["git", "branch", "-q", "main"], cwd=main, check=True)
+        subprocess.run(["git", "worktree", "add", "-q", str(wt), "main"], cwd=main, check=True)
+
+        scope_main = _find_scope_root(main)
+        scope_wt = _find_scope_root(wt)
+        assert scope_main is not None
+        assert scope_wt == scope_main
+        # And the memory_dir is identical for both checkouts.
+        fake_base = tmp_path / "fake-claude" / "projects"
+        monkeypatch.setattr("agent.memory.persistent._MEMORY_DIR_BASE", fake_base)
+        mem_main = PersistentMemory(main)
+        mem_wt = PersistentMemory(wt)
+        assert mem_main.memory_dir == mem_wt.memory_dir
+        assert mem_main.scope == mem_wt.scope
 
 
 class TestValidateName:

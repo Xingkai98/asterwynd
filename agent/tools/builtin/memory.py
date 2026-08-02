@@ -139,8 +139,9 @@ class RecallMemoryTool(Tool):
 @tool_parameters(
     name="SearchMemory",
     description=(
-        "Semantically search persistent long-term memories by meaning, not just "
-        "keywords. Returns top-k matching entries with similarity scores. "
+        "Search persistent long-term memories by text similarity (char n-gram "
+        "embedding recall, not full semantic understanding). Returns top-k "
+        "matching entries with similarity scores. "
         "Use when the global memory summary does not contain the detail you need."
     ),
     parameters={

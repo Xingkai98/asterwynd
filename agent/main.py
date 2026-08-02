@@ -249,6 +249,8 @@ def _build_agent_core(
         recency_halflife_days=config.memory.recency_halflife_days,
         importance_default=config.memory.importance_default,
         summary_tokens=config.memory.summary_tokens,
+        decay_interval_seconds=config.memory.decay_interval_seconds,
+        decay_threshold=config.memory.decay_threshold,
     )
 
     try:
