@@ -128,7 +128,7 @@
 
 ### 5. `observability-deepening`
 
-状态：未实现。
+状态：第一批已合入（PR #87，2026-08-02）；第二批待实现。
 
 批次：第九批 Batch 3（与 long-term-memory-deepening 并行）。
 
@@ -137,11 +137,14 @@
 - 依赖 PR #80 statistics（已合入）做回归门禁基线；依赖 #77 质量事件 schema。
 - 交付 CI P95/成功率 >5% 拦截、成本归属账单、四类异常分类、session timeline 看板。
 
-主要交付：
+第一批（已完成）交付：
 
 - TraceRecorder 记录 token + 结构化事件 schema。
-- 按 session/phase/tool 成本归属账单。
+- 按 session/phase/tool 成本归属账单（CostLedger + JSONL 持久化）。
 - 异常自动分类（权限拒绝/网络超时/模型幻觉/参数错误）+ 差异化告警。
+
+第二批（待实现）：
+
 - CI benchmark 回归门禁（>5% 拦截）。
 - Session timeline 看板。
 
