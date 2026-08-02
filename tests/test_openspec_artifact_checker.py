@@ -614,6 +614,73 @@ def test_design_change_requires_preimplementation_design_review_task(tmp_path):
     ]
 
 
+def test_grill_evidence_passes_design_review(tmp_path):
+    """issue #95：结构化 grill 证据（reviews/grill-design.md + ≥3 决策）通过。"""
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 4. Verification\n\n- [ ] Run tests.\n")
+    reviews = change / "reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "grill-design.md").write_text(
+        "## Confirmed Decisions\n"
+        "- **决策**: 方案A；理由: 简单；来源: run-1\n"
+        "- **决策**: 方案B；理由: 可靠；来源: run-1\n"
+        "- **决策**: 方案C；理由: 已验证；来源: run-1\n"
+        "## Open Questions\n- 无\n",
+        encoding="utf-8",
+    )
+
+    errors = check_change(change)
+    assert not any("design review" in e or "grill" in e.lower() for e in errors), errors
+
+
+def test_grill_evidence_insufficient_fails(tmp_path):
+    """issue #95：grill 证据 <3 条决策 → 报错。"""
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 4. Verification\n\n- [ ] Run tests.\n")
+    reviews = change / "reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "grill-design.md").write_text(
+        "## Confirmed Decisions\n- **决策**: 只有一条\n",
+        encoding="utf-8",
+    )
+
+    errors = check_change(change)
+    assert any("Confirmed Decisions" in e for e in errors), errors
+
+
+def test_grill_evidence_without_design_marker_passes(tmp_path):
+    """issue #95：有结构化证据但 tasks 无 batch-grill 字样 → 仍通过（证据优先）。"""
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 4. Verification\n\n- [ ] Run tests.\n")
+    reviews = change / "reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "grill-design.md").write_text(
+        "## Confirmed Decisions\n"
+        "- **决策**: A；理由: a；来源: r1\n"
+        "- **决策**: B；理由: b；来源: r1\n"
+        "- **决策**: C；理由: c；来源: r1\n",
+        encoding="utf-8",
+    )
+
+    errors = check_change(change)
+    assert not any("design review" in e or "grill" in e.lower() for e in errors), errors
+
+
 def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
     change = tmp_path / "change-doc-process"
     write_change(

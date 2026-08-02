@@ -405,6 +405,22 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
     if not (change_type.all_types & DESIGN_TYPES):
         return []
 
+    # Structured grill evidence (issue #95): reviews/grill-design.md must exist
+    # with a non-empty ## Confirmed Decisions section (>= 3 decision entries).
+    # This replaces the literal "batch-grill" string check, which an agent could
+    # pass by writing one line in tasks.md.
+    grill_evidence = change_dir / "reviews" / "grill-design.md"
+    if grill_evidence.exists():
+        text = grill_evidence.read_text(encoding="utf-8")
+        decisions = _extract_grill_decisions(text)
+        if len(decisions) >= 3:
+            return []
+        return [
+            f"reviews/grill-design.md 的 ## Confirmed Decisions 不足 3 条"
+            f"（当前 {len(decisions)} 条）——独立 subagent design grilling 未完成"
+        ]
+
+    # Fallback (compat with update-design-review-method): literal task marker.
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
         return ["missing required file: tasks.md"]
@@ -413,6 +429,25 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
             "tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
         ]
     return []
+
+
+def _extract_grill_decisions(text: str) -> list[str]:
+    """Extract decision entries under ## Confirmed Decisions in grill-design.md.
+
+    Accepts both the /grill command format (``- **决策**: ...`` list items) and
+    the ``### Decision N:`` heading format (subagent-authored records).
+    """
+    section = _extract_h2_sections(text).get("Confirmed Decisions", "")
+    if not section or _is_placeholder_body(section):
+        return []
+    decisions: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- **决策**:"):
+            decisions.append(stripped)
+        elif stripped.startswith("### Decision ") or stripped.startswith("### 决策"):
+            decisions.append(stripped)
+    return decisions
 
 
 def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[str]:

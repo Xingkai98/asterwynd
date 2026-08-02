@@ -21,6 +21,7 @@
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -161,6 +162,87 @@ def _mentions_protected_path(text: str) -> bool:
     return any(fragment in normalized for fragment in _PROTECTED_PATH_FRAGMENTS)
 
 
+# ── grill gate (issue #95) ────────────────────────────────────────────
+# 写代码前门禁：非 docs + 有 spec delta 的 change，代码写操作前必须有
+# reviews/grill-design.md 证据。分支名 `<change-id>/<date>` 推导为主，
+# 单 active change 兜底；两者都不成立则门禁不触发。
+# 文档类写操作（proposal/design/tasks/specs/reviews）豁免，避免死锁。
+
+
+def _current_change_id() -> str | None:
+    """Map the current worktree/branch to a change id.
+
+    Priority: branch name `<change-id>/<date>` (or `<change-id>/<anything>`);
+    fallback: exactly one active change directory. Returns None if ambiguous.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True, text=True, timeout=5,
+        )
+        branch = result.stdout.strip()
+        if branch:
+            head = branch.split("/")[0]
+            if head and head != "master" and head != "main":
+                # sanity: an active change dir with this id should exist
+                if (CHANGES_DIR / head).is_dir():
+                    return head
+    except Exception:
+        pass
+
+    # Fallback: single active change
+    if CHANGES_DIR.exists():
+        active = [
+            d.name for d in sorted(CHANGES_DIR.iterdir())
+            if d.is_dir() and (d / "proposal.md").exists()
+        ]
+        if len(active) == 1:
+            return active[0]
+    return None
+
+
+def _grill_evidence_missing(change_id: str) -> bool:
+    """True if a change that requires grilling lacks grill evidence.
+
+    A change requires grilling when it is non-docs (has a spec delta) — i.e. it
+    will ship implementation code. docs-only changes skip the gate.
+    """
+    change_dir = CHANGES_DIR / change_id
+    evidence = change_dir / "reviews" / "grill-design.md"
+    if evidence.exists():
+        return False
+    # non-docs check: has spec delta dir with spec.md
+    specs = change_dir / "specs"
+    if not specs.exists():
+        return False
+    if not any(specs.glob("*/spec.md")):
+        return False
+    # docs-only proposal? check primary type
+    proposal = change_dir / "proposal.md"
+    if proposal.exists():
+        text = proposal.read_text(encoding="utf-8", errors="ignore")
+        if "primary: docs" in text:
+            return False
+    return True
+
+
+def _is_change_doc_write(file_path: str) -> bool:
+    """True if the write targets change doc files (exempt from grill gate)."""
+    normalized = Path(file_path).as_posix()
+    for change_dir in CHANGES_DIR.glob("*"):
+        if not change_dir.is_dir():
+            continue
+        prefix = change_dir.as_posix() + "/"
+        if not normalized.startswith(prefix):
+            continue
+        rel = normalized[len(prefix):]
+        if rel in ("proposal.md", "design.md", "tasks.md"):
+            return True
+        if rel.startswith("specs/") or rel.startswith("reviews/"):
+            return True
+    return False
+
+
 
 
 def main():
@@ -206,10 +288,26 @@ def main():
         )
         sys.exit(2)
 
+    # ── grill gate (issue #95) ──
+    # 写代码前必须完成独立 subagent design grilling。仅对非 docs + 有 spec
+    # delta 的 change 生效；文档类写操作豁免；无法映射 change 时不触发。
+    file_path = tool_input.get("file_path", "")
+    if file_path and not _is_change_doc_write(file_path):
+        change_id = _current_change_id()
+        if change_id is not None and _grill_evidence_missing(change_id):
+            print(
+                f"⛔ change '{change_id}' 尚未完成独立 subagent design grilling。",
+                f"缺少 {CHANGES_DIR / change_id / 'reviews' / 'grill-design.md'}。",
+                "请先运行 /grill 命令：独立零记忆 subagent 挑战 design.md，",
+                "产出结构化决策记录到 reviews/grill-design.md，再写代码。",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
     # ── state-machine ceremony is disabled (issue #90) ──
     # The phase gate check (active change / worktree / required files) is
     # retired: the OpenSpec + review-loop flow replaces it. Only the protected
-    # path guard above remains enforced, always.
+    # path guard and grill gate above remain enforced.
     sys.exit(0)
 
 

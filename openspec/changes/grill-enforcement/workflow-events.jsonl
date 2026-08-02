@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "current_spec_synced", "change_id": "grill-enforcement", "artifact_path": "openspec/specs/change-documentation/spec.md", "reason": "grill-enforcement 实现完成（独立 subagent grill + 写代码前门禁 + checker 结构化验证），将 Pre-implementation design grilling requirement 更新为独立执行 + 结构化证据 + 机械门禁。", "approved_by": "human"}
