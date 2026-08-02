@@ -37,6 +37,12 @@ class ContextBuilder:
     def __init__(self, total_budget: int):
         self._total_budget = total_budget
         self._sources: list[ContextSource] = []
+        # Static-source render cache.  A source marked ``static=True`` renders
+        # from immutable inputs (cwd/mode/user_system_prompt); its output is
+        # byte-identical across iterations, so we cache it keyed by
+        # (source.name, cwd, mode, user_system_prompt).  Dynamic sources
+        # (skills/plan/todo, memory index) are never cached.
+        self._static_cache: dict[tuple, str] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -53,21 +59,34 @@ class ContextBuilder:
         """Update the injection-layer budget (e.g. when the context window changes)."""
         self._total_budget = total_budget
 
+    @staticmethod
+    def _static_cache_key(source: ContextSource, context: BuildContext) -> tuple | None:
+        """Cache key for a static source, or ``None`` if the source is dynamic."""
+        if not getattr(source, "static", False):
+            return None
+        return (source.name, context.cwd, context.mode, context.user_system_prompt)
+
     async def build(self, context: BuildContext) -> str:
         """Render all registered sources, apply truncation, return joined result."""
         sorted_sources = sorted(self._sources, key=lambda s: s.priority)
 
-        # Phase 1: render each source (skip failures)
+        # Phase 1: render each source (skip failures); static sources reuse cache.
         rendered: list[tuple[ContextSource, str]] = []
         for source in sorted_sources:
-            try:
-                content = await source.render(context)
-            except Exception:
-                logger.warning(
-                    "ContextSource %r (priority=%d) failed to render — skipped",
-                    source.name, source.priority, exc_info=True,
-                )
-                continue
+            key = self._static_cache_key(source, context)
+            if key is not None and key in self._static_cache:
+                content = self._static_cache[key]
+            else:
+                try:
+                    content = await source.render(context)
+                except Exception:
+                    logger.warning(
+                        "ContextSource %r (priority=%d) failed to render — skipped",
+                        source.name, source.priority, exc_info=True,
+                    )
+                    continue
+                if key is not None:
+                    self._static_cache[key] = content
             if content:
                 rendered.append((source, content))
 

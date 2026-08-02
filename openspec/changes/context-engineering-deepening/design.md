@@ -52,15 +52,30 @@
 
 ### Decision 4: Prefix Cache 注入顺序 + 稳定层/可变层分层
 
-**方案**：注入顺序 system → MD → 工具 → 记忆索引 → 用户消息；工具 schema 确定性排序；anthropic_llm.py 加 cache_control（ephemeral）断点。与 #77 约定「稳定层=system/MD/核心工具、可变层=选中 tail」分层策略，避免动态 Top-K 破坏稳定前缀。
+**方案**（已按 grill 裁定 Q1/Q3/Q4/Q6 修正为 wire 顺序 + 按模式单断点）：
+- 注入 wire 顺序：**system（prompt → MD → memory index）→ tools（core stable → 选中 variable tail）→ user messages**。记忆索引（P2）留在缓存 system 区域；其相对 tools 的位置由 provider wire 格式决定（system 字段先于 tools 字段），不追求字面 "tools 在 memory index 之前"。
+- 稳定前缀冻结：P0/P1/P2 在 `_apply_budget` 之外以完整未截断尺寸渲染，token 预算只作用于 P4/P5；截断整块丢弃而非裁剪 P0-P2，保证稳定前缀跨迭代字节一致。
+- 按模式单断点：**selector OFF（默认）** → 只放 P2 system 断点（全量 tools 数组字节稳定，P2 同时缓存 tools+system）；**selector ON** → 只在最后一个核心工具放 cache_control（变长 tail 使 P2 断点失效）。任何情况下不宣称两个缓存同时命中。
+- 稳定标记机制：`TextBlock.cache: bool = False` 字段（`to_dict/from_dict` 序列化）；核心工具集 Read/Edit/Write/Bash/Glob/Grep/InspectGitDiff；`_select_tool_schemas` 在 selector 存在时调用 `set_stable_tools(core_names)`；`CachePlan(stable_system_block_count, stable_tool_count)` 经 `_call_llm` 只传给 `AnthropicLLM._build_payload`。
+- anthropic_llm.py 加 cache_control（ephemeral）断点；openai_llm.py 接受并忽略 CachePlan，不发送 cache_control（OpenAI 自动缓存前缀）。cache_control 加 provider 能力门控 + 400 重试降级。
 
 **备选**：全层拼一个 system 消息。被拒：无法利用 prefix cache，无法讲 cache 命中率。
 
-**理由**：稳定前缀是 cache 收益的前提，需与 #77 动态选择契约共存。
+**理由**：稳定前缀是 cache 收益的前提，需与 #77 动态选择契约共存；wire 顺序与断点策略必须按 Anthropic 渲染语义设计（tools → system → messages），否则断点失效。
 
 ## Pre-Implementation Review
 
-- 待 planning 阶段（batch-grill-me）确认本设计，并补齐 Reference Implementation Research 实质 findings 与 design impact。
+已完成 `batch-grill-me` 设计追问（2026-08-02），完整裁定见 `reviews/design-grill.md`。关键裁定：
+
+- **Q1 顺序解释**：spec 字面顺序 "system → MD → 工具 → 记忆索引 → 用户消息" 在 Anthropic wire（tools → system → messages）上不可达；保留 P2 于缓存 system 区域，spec Then 子句改为 wire 顺序（已同步 spec delta）。
+- **Q2 L2 压缩**：L1→L2 + tier 元数据补进子 change ①（原 tasks 缺失），保持压缩比量化主张。
+- **Q3 断点策略**：按模式单断点（selector OFF → P2 system 断点；ON → 末核心工具断点），不宣称双断点。
+- **Q4 稳定前缀**：P0/P1/P2 冻结于预算 pass 之外，保证跨迭代字节一致。
+- **Q5 P2 缓存**：P2 排除静态源缓存（或 content-hash 键），防 SaveMemory 中途改写陈旧。
+- **Q6 稳定标记**：`TextBlock.cache` 字段 + `CachePlan` 传 Anthropic，核心工具集 Read/Edit/Write/Bash/Glob/Grep/InspectGitDiff。
+- **Q7 token 计数**：改用 Message 非序列化 `_tokens` 字段，规避 id() 复用危险。
+- **Q8 pending 标记**：绑定 `tool_call_id`（`[call#<i>: <id> pending]`），MemoryManager 预扫标注，模板加成对保留指令。
+- **Q12 builder 返回类型**：`build()` 保持 str；新增 `build_blocks()`/`render_layers()` API 供 loop 使用。
 
 ## Reference Implementation Research
 
@@ -70,8 +85,16 @@
   - Claude Code 的四字段摘要结构与层级压缩触发条件？
   - Prefix Cache（cache_control）注入顺序与断点策略？
   - 分页读大文件进度保留实现？
-- findings: 待 planning 阶段补充（proposal 阶段已登记；实质调研在本 change planning 阶段完成）。
-- design impact: 待 planning 阶段补充；先决条件是与 #77 约定工具注入缝「稳定层/可变层」分层、与 #78 约定压缩/缓存事件 schema。
+- findings:
+  - **Anthropic prompt caching 渲染顺序是 tools → system → messages**；断点标记缓存段终点，段内任一字节变化使该段失效。因此"双断点（P2 + 末核心工具）同时命中"仅在 tools 数组字节稳定时成立 → 采用按模式单断点策略（Q3 裁定）。缓存段最小长度按模型而异（Sonnet 4 = 1024 tokens，Opus/Haiku 4.5+ = 4096），核心工具集 schema 长度需实测，不足则接受工具段 miss。
+  - **Claude Code 占位符/Dream 机制**：以占位符保留未完成调用、延迟到可完成时再解析，对应本 change 的 `[call#n pending]` 标记；实现上绑定 `tool_call_id` 可跨摘要/合并存活。
+  - **MemGPT 层级记忆**：L1 工作记忆 + L2 长期压缩，按累积量触发二次压缩；对应本 change L1→L2 压缩 + tier 元数据。
+  - **分页进度保留**：Read 工具返回 `(file, offset, total)` 进度注记，压缩时扫描 tool-result 内容提取最后一条，写入摘要"当前进行中"区。
+- design impact:
+  - 与 #77 约定工具注入缝「稳定层/可变层」分层：selector 存在时 `set_stable_tools(core_names)`（原实现从未被调用，需 wiring + 测试）。
+  - 与 #78 约定压缩/缓存事件 schema：`memory_compaction` 事件补充 before/after tokens、压缩层级；新增 cache 断点事件（延迟到 #78 事件 schema 稳定后对齐）。
+  - `build()` 公共契约保持不变，新增 `build_blocks()` API，避免破坏既有消费点。
+  - 静态源缓存键：P0/P1 用 `(name, cwd, mode, user_system_prompt)`；P2 排除或 content-hash 键。
 
 ## Risks / Trade-offs
 

@@ -93,6 +93,8 @@ class Message:
     tool_call_id: Optional[str] = None
     reasoning_content: Optional[str] = None
     tool_calls: list = field(default_factory=list)
+    # 非序列化 token 计数缓存（增量计数用；to_dict/from_dict 不包含）
+    _tokens: Optional[int] = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"role": self.role}

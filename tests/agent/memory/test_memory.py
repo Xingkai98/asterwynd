@@ -241,3 +241,255 @@ def test_count_tokens_with_image_blocks():
     tokens = mgr.count_tokens(messages)
     # "hello" tokens + 1000 for image
     assert tokens > 1000
+
+
+# ── Incremental token counting (task 1.1) ────────────────────────────
+
+def _count_calls_fixture(monkeypatch):
+    """Monkeypatch the encoder so each tokenization call is observable."""
+    import agent.memory.manager as manager_mod
+
+    real = manager_mod._count_tokens
+    calls = {"n": 0}
+
+    def counting(text: str) -> int:
+        calls["n"] += 1
+        return real(text)
+
+    monkeypatch.setattr(manager_mod, "_count_tokens", counting)
+    return calls
+
+
+def test_second_count_is_all_cache_hits(monkeypatch):
+    mgr = MemoryManager(max_tokens=1000)
+    calls = _count_calls_fixture(monkeypatch)
+    msgs = [Message(role="user", content="hello world " * 10) for _ in range(5)]
+    mgr.count_tokens(msgs)
+    first = calls["n"]
+    assert first == 5  # each message tokenized once
+    mgr.count_tokens(msgs)
+    assert calls["n"] == first  # all hits, no re-tokenization
+
+
+def test_newly_appended_message_counts_once(monkeypatch):
+    mgr = MemoryManager(max_tokens=1000)
+    calls = _count_calls_fixture(monkeypatch)
+    msgs = [Message(role="user", content="alpha " * 20) for _ in range(3)]
+    mgr.count_tokens(msgs)
+    first = calls["n"]
+    msgs.append(Message(role="user", content="beta " * 20))
+    mgr.count_tokens(msgs)
+    assert calls["n"] == first + 1  # only the new message tokenized
+
+
+@pytest.mark.asyncio
+async def test_fresh_message_recomputes_after_compaction(monkeypatch):
+    """compact() creates a fresh summary message whose tokens are recomputed."""
+    mgr = MemoryManager(max_tokens=1, recent_window=1, llm=SummaryLLM("sum"),
+                        compaction_gap=0)
+    calls = _count_calls_fixture(monkeypatch)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old " * 20),
+        Message(role="assistant", content="done"),
+    ]
+    mgr.count_tokens(messages)
+    calls_before_compact = calls["n"]
+    await mgr.compact(messages)
+    # The summary message is new -> counted once on next count.
+    mgr.count_tokens(messages)
+    assert calls["n"] >= calls_before_compact + 1
+
+
+@pytest.mark.asyncio
+async def test_message_tokens_field_not_serialized():
+    from agent.message import Message as M
+    msg = M(role="user", content="hi")
+    assert msg.to_dict()["content"] == "hi"
+    assert "_tokens" not in msg.to_dict()
+    roundtrip = M.from_dict({"role": "user", "content": "hi"})
+    assert roundtrip._tokens is None
+
+
+# ── Pending tool-call annotation (task 1.4) ───────────────────────────
+
+class RecordingSummarizer:
+    """Summarizer that records the messages passed to summarize()."""
+    name = "recording"
+
+    def __init__(self):
+        self.summarize_calls = []
+
+    async def summarize(self, messages, budget=0):
+        self.summarize_calls.append(list(messages))
+        return "summary"
+
+    async def merge(self, previous, new_events, budget=0):
+        return None
+
+    async def compress(self, tier_summaries, budget=0):
+        return "L2 conclusion"
+
+
+def _format_prompt(messages):
+    from agent.context.summarizer import _format_messages_for_summary
+    return _format_messages_for_summary(messages)
+
+
+@pytest.mark.asyncio
+async def test_pending_call_annotated_in_summarizer_input():
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder, compaction_gap=0)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old"),
+        Message(role="assistant", content="", tool_calls=[
+            ToolCallDelta(id="c1", name="Read", arguments="{}"),
+        ]),
+        Message(role="user", content="recent"),
+    ]
+    await mgr.compact(messages)
+    assert recorder.summarize_calls
+    prompt = _format_prompt(recorder.summarize_calls[0])
+    assert "[call#1: c1 pending]" in prompt
+
+
+@pytest.mark.asyncio
+async def test_completed_middle_chain_not_marked_pending():
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder, compaction_gap=0)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old"),
+        Message(role="assistant", content="", tool_calls=[
+            ToolCallDelta(id="c1", name="Read", arguments="{}"),
+        ]),
+        Message(role="tool", content="result", tool_call_id="c1"),
+        Message(role="user", content="recent"),
+    ]
+    await mgr.compact(messages)
+    prompt = _format_prompt(recorder.summarize_calls[0])
+    assert "pending" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_multiple_pending_calls_numbered_sequentially():
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder, compaction_gap=0)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old"),
+        Message(role="assistant", content="", tool_calls=[
+            ToolCallDelta(id="c1", name="Read", arguments="{}"),
+            ToolCallDelta(id="c2", name="Grep", arguments="{}"),
+        ]),
+        Message(role="tool", content="result", tool_call_id="c1"),  # only c1 complete
+        Message(role="user", content="recent"),
+    ]
+    await mgr.compact(messages)
+    prompt = _format_prompt(recorder.summarize_calls[0])
+    assert "[call#1: c1 pending]" not in prompt
+    assert "[call#2: c2 pending]" in prompt
+
+
+@pytest.mark.asyncio
+async def test_pending_annotation_visible_to_truncation_summarizer():
+    from agent.context.summarizer import TruncationSummarizer
+    recorder = TruncationSummarizer(max_tool_output_chars=500)
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder, compaction_gap=0)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old"),
+        Message(role="assistant", content="", tool_calls=[
+            ToolCallDelta(id="c1", name="Read", arguments="{}"),
+        ]),
+        Message(role="user", content="recent"),
+    ]
+    await mgr.compact(messages)
+    assert "[call#1: c1 pending]" in mgr._running_summary
+
+
+# ── L1/L2 hierarchical compaction (task 1.5) ──────────────────────────
+
+@pytest.mark.asyncio
+async def test_l2_compression_triggered_and_metadata_recorded():
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder,
+                        compaction_gap=0, l2_trigger_tokens=1)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old1"),
+        Message(role="assistant", content="a1"),
+        Message(role="user", content="recent1"),
+    ]
+    await mgr.compact(messages)
+    assert mgr._l2_summary is None  # only one L1 chunk so far
+
+    messages.append(Message(role="user", content="old2"))
+    messages.append(Message(role="user", content="recent2"))
+    await mgr.compact(messages)
+
+    assert mgr._l2_summary == "L2 conclusion"
+    assert mgr._running_summary == "L2 conclusion"
+    tiers = mgr.tier_metadata()
+    assert any(t["tier"] == "L2" for t in tiers)
+    assert any(t["tier"] == "L1" for t in tiers)
+    # L2 conclusion survives clear-independent state; chunks reset.
+    assert mgr._l1_chunks == []
+
+
+@pytest.mark.asyncio
+async def test_no_l2_below_threshold():
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder,
+                        compaction_gap=0, l2_trigger_tokens=100_000)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old1"),
+        Message(role="assistant", content="a1"),
+        Message(role="user", content="recent1"),
+    ]
+    await mgr.compact(messages)
+    messages.append(Message(role="user", content="old2"))
+    messages.append(Message(role="user", content="recent2"))
+    await mgr.compact(messages)
+    assert mgr._l2_summary is None
+    assert "L2 conclusion" not in mgr._running_summary
+
+
+@pytest.mark.asyncio
+async def test_resume_roundtrip_keeps_pending_marker():
+    """Unfinished tool_call survives message serialization + re-compaction (resume).
+
+    SessionSnapshot reload re-runs compaction on the deserialized messages;
+    the pending marker must be re-detected from the fresh Message objects
+    (tool_calls preserved by to_dict/from_dict, _tokens reset to None).
+    """
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder, compaction_gap=0)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="old"),
+        Message(role="assistant", content="", tool_calls=[
+            ToolCallDelta(id="c1", name="Read", arguments="{}"),
+        ]),
+        Message(role="user", content="recent"),
+    ]
+    # Simulate session save/load: serialize to dict and back.
+    reloaded = [Message.from_dict(m.to_dict()) for m in messages]
+    await mgr.compact(reloaded)
+    prompt = _format_prompt(recorder.summarize_calls[0])
+    assert "[call#1: c1 pending]" in prompt
+
+
+@pytest.mark.asyncio
+async def test_clear_resets_tier_state():
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder,
+                        compaction_gap=0, l2_trigger_tokens=1)
+    messages = [Message(role="user", content="old")]
+    await mgr.compact(messages)
+    mgr.clear()
+    assert mgr._l1_chunks == []
+    assert mgr._l2_summary is None
+    assert mgr._tiers == []

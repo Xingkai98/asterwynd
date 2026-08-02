@@ -14,13 +14,13 @@ The context summarizer SHALL produce summaries with four fields: completed items
 
 ### Requirement: Tool Call Pair Preservation
 
-The context summarizer SHALL preserve tool_call/tool_result pairs, SHALL mark incomplete tool calls as `[call#n pending]`, and SHALL not break the tool-call chain across compaction.
+The context summarizer SHALL preserve tool_call/tool_result pairs, SHALL mark incomplete tool calls as `[call#<i>: <tool_call_id> pending]`, and SHALL not break the tool-call chain across compaction.
 
 #### Scenario: incomplete tool call marked pending
 
 - Given a conversation with a tool_call without a matching tool_result (interrupted by max_iterations)
 - When the summarizer compacts the conversation
-- Then the incomplete call is marked `[call#n pending]`
+- Then the incomplete call is marked `[call#<i>: <tool_call_id> pending]`
 - And the tool-call chain remains valid
 
 ### Requirement: Hierarchical Compaction
@@ -47,14 +47,15 @@ The Read tool SHALL support pagination with `(file, offset, total)` progress, an
 
 ### Requirement: Prefix Cache Ordering
 
-The context system SHALL order injection as system prompt → MD → tool descriptions → memory index → user messages, with cache_control breakpoints for Anthropic providers and stable-prefix ordering.
+The context system SHALL order injection on the wire as system (prompt → MD → memory index) → tools (core stable → selected variable tail) → user messages, with cache_control breakpoints for Anthropic providers and stable-prefix ordering. The memory index is a stable, cached system block; its position relative to tool descriptions is governed by the provider wire format (the system field precedes the tools field).
 
 #### Scenario: stable prefix ordering
 
 - Given a conversation with system, MD, tools, memory index, and user messages
 - When the context is injected
-- Then the order is system prompt → MD → tool descriptions → memory index → user messages
-- And cache_control breakpoints are set for the Anthropic provider
+- Then the wire order is system (prompt → MD → memory index) → tools (core stable → selected variable tail) → user messages
+- And the stable system prefix and core tools are byte-identical across iterations
+- And cache_control breakpoints are set for the Anthropic provider on the last stable system block (selector off) or on the last core tool (selector on)
 
 ### Requirement: On-Demand Deep MD Loading
 
