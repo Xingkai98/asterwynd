@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from agent.tools.base import Tool, ToolCall
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
     from agent.message import ContentBlock
     from agent.tools.governance.dedup import SemanticDeduper
     from agent.tools.governance.lifecycle import ToolLifecycle
+    from agent.tools.governance.quality import ToolQualityStore
     from agent.tools.governance.selector import ToolSelector
 
 
@@ -23,6 +25,8 @@ class ToolRegistry:
         self._lifecycle: ToolLifecycle | None = None
         self._selector: ToolSelector | None = None
         self._deduper: SemanticDeduper | None = None
+        self._quality: ToolQualityStore | None = None
+        self._hidden_filter: Callable[[str], bool] | None = None
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
@@ -38,9 +42,34 @@ class ToolRegistry:
     def set_deduper(self, deduper: SemanticDeduper) -> None:
         self._deduper = deduper
 
+    def set_quality(self, quality: ToolQualityStore) -> None:
+        self._quality = quality
+
+    @property
+    def quality_store(self) -> ToolQualityStore | None:
+        return self._quality
+
+    def set_visibility_filter(
+        self, predicate: Callable[[str], bool] | None
+    ) -> None:
+        """Hide tools matching ``predicate`` (e.g. degraded MCP server tools)."""
+        self._hidden_filter = predicate
+
+    def quality_notice(self, tool_name: str) -> str | None:
+        if self._quality is None:
+            return None
+        return self._quality.quality_notice(tool_name)
+
+    def _is_quality_degraded(self, tool_name: str) -> bool:
+        if self._quality is None:
+            return False
+        return self._quality.is_degraded(tool_name)
+
     def _is_governance_visible(self, tool_name: str) -> bool:
-        """Lifecycle removed tools are excluded from selection/schemas."""
+        """Lifecycle-removed and hidden-filter tools are excluded from schemas."""
         if self._lifecycle is not None and not self._lifecycle.is_visible(tool_name):
+            return False
+        if self._hidden_filter is not None and self._hidden_filter(tool_name):
             return False
         return True
 
@@ -73,13 +102,20 @@ class ToolRegistry:
             return self.get_all_schemas()
         selected = self._selector.select(query)
         # Keep only selected tools that are governance-visible and mode-allowed.
-        schemas = [
-            self._tools[name].get_schema()
-            for name in selected
-            if name in self._tools
-            and self._is_governance_visible(name)
-            and self.mode_policy.is_tool_allowed(self._tools[name])
-        ]
+        # Quality-degraded tools leave the variable layer; stable-layer tools
+        # always stay injected (soft degradation, batch-2 Q4).
+        schemas: list[dict] = []
+        for name in selected:
+            tool = self._tools.get(name)
+            if tool is None:
+                continue
+            if not self._is_governance_visible(name):
+                continue
+            if self._is_quality_degraded(name) and not self._selector.is_stable(name):
+                continue
+            if not self.mode_policy.is_tool_allowed(tool):
+                continue
+            schemas.append(tool.get_schema())
         return schemas
 
     # --- Original contract ------------------------------------------------

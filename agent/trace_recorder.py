@@ -106,18 +106,27 @@ class TraceRecorder:
         status: str,
         duration_ms: float,
         observation: str | list["ContentBlock"],
+        *,
         error_type: str | None = None,
+        approval_required: bool | None = None,
+        approval_granted: bool | None = None,
     ) -> None:
         if isinstance(observation, list):
             observation = self._sanitize_observation(observation)
-        self.record(
-            "tool_result",
-            tool_name=tool_name,
-            status=status,
-            duration_ms=round(duration_ms, 1),
-            observation=observation,
-            error_type=error_type,
-        )
+        data: dict[str, Any] = {
+            "tool_name": tool_name,
+            "status": status,
+            "duration_ms": round(duration_ms, 1),
+            "observation": observation,
+            "error_type": error_type,
+        }
+        # Quality event schema (batch-2 Q10): approval context is optional and
+        # backward-compatible, consumed by tool-governance quality and #78.
+        if approval_required is not None:
+            data["approval_required"] = bool(approval_required)
+        if approval_granted is not None:
+            data["approval_granted"] = bool(approval_granted)
+        self.record("tool_result", **data)
 
     @staticmethod
     def _sanitize_observation(blocks: list["ContentBlock"]) -> str:

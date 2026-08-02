@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from agent.code_intelligence.config import CodeIntelligenceConfig
-from agent.config import BrowserConfig, ToolSelectionConfig, WebSearchConfig
+from agent.config import BrowserConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
 from agent.lsp.client import LspClientManager
 from agent.run_config import ModePolicy
 from agent.mcp.manager import McpManager
@@ -77,31 +77,48 @@ KNOWN_BUILTIN_TOOL_NAMES = {
 
 def _wire_governance(
     registry: ToolRegistry,
-    config: ToolSelectionConfig | None,
+    selection_config: ToolSelectionConfig | None,
+    quality_config: QualityConfig | None,
 ) -> None:
-    """Enable registry-level governance (selector/dedup/lifecycle) when configured.
+    """Enable registry-level governance when configured.
 
     Design Q2/Q4/Q5: zero-dependency NGramEmbedding default, configurable
     latency budget and dedup threshold. Stable-layer tools are the core
-    coding tools, always injected (design Q3).
+    coding tools, always injected (design Q3). Batch-2 quality store feeds
+    soft degradation out of the variable-layer selection candidates.
     """
-    if config is None or not config.enabled:
-        return
-    from agent.embedding import NGramEmbedding
-    from agent.tools.governance import SemanticDeduper, ToolLifecycle, ToolSelector
+    if selection_config is not None and selection_config.enabled:
+        from agent.embedding import NGramEmbedding
+        from agent.tools.governance import SemanticDeduper, ToolLifecycle, ToolSelector
 
-    embedder = NGramEmbedding(dim=2048)
-    selector = ToolSelector(
-        embedder=embedder,
-        top_k=config.top_k,
-        latency_budget_ms=config.latency_budget_ms,
-    )
-    deduper = SemanticDeduper(embedder=embedder, threshold=config.dedup_threshold)
-    lifecycle = ToolLifecycle()
-    registry.set_selector(selector)
-    registry.set_deduper(deduper)
-    registry.set_lifecycle(lifecycle)
-    registry._sync_governance_indexes()
+        embedder = NGramEmbedding(dim=2048)
+        selector = ToolSelector(
+            embedder=embedder,
+            top_k=selection_config.top_k,
+            latency_budget_ms=selection_config.latency_budget_ms,
+        )
+        deduper = SemanticDeduper(
+            embedder=embedder, threshold=selection_config.dedup_threshold
+        )
+        lifecycle = ToolLifecycle()
+        registry.set_selector(selector)
+        registry.set_deduper(deduper)
+        registry.set_lifecycle(lifecycle)
+        registry._sync_governance_indexes()
+    if quality_config is not None and quality_config.enabled:
+        from agent.tools.governance import ToolQualityStore
+
+        store = ToolQualityStore(
+            window_size=quality_config.window_size,
+            success_weight=quality_config.success_weight,
+            duration_weight=quality_config.duration_weight,
+            approval_weight=quality_config.approval_weight,
+            duration_ceiling_ms=quality_config.duration_ceiling_ms,
+            degrade_threshold=quality_config.degrade_threshold,
+            min_samples=quality_config.min_samples,
+            store_path=quality_config.store_path,
+        )
+        registry.set_quality(store)
 
 
 def build_default_tool_registry(
@@ -116,6 +133,7 @@ def build_default_tool_registry(
     tools: list[Tool] | None = None,
     persistent_memory: PersistentMemory | None = None,
     selection_config: ToolSelectionConfig | None = None,
+    quality_config: QualityConfig | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     default_tools = tools or get_default_tools(
@@ -129,7 +147,10 @@ def build_default_tool_registry(
     for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
         registry.register(tool)
     registry.workspace_policy = policy
-    _wire_governance(registry, selection_config)
+    if mcp_manager is not None:
+        # Degraded MCP servers drop their tools from both schema surfaces.
+        registry.set_visibility_filter(mcp_manager.is_tool_degraded)
+    _wire_governance(registry, selection_config, quality_config)
     registry.mode_policy.validate_known_tools(_known_tool_names(registry))
     return registry
 

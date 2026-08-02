@@ -492,3 +492,56 @@ tools:
 
     with pytest.raises(ConfigError, match="servers must be a list"):
         load_config(start_dir=tmp_path)
+
+
+def test_tools_selection_and_quality_parsed(tmp_path, monkeypatch):
+    """回归：tools.selection / tools.quality 配置段应从 YAML 解析（审阅发现未接入）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+tools:
+  selection:
+    enabled: true
+    top_k: 8
+    latency_budget_ms: 75.0
+    dedup_threshold: 0.65
+  quality:
+    enabled: true
+    window_size: 30
+    degrade_threshold: 0.5
+    min_samples: 3
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(start_dir=tmp_path)
+
+    assert config.tools.selection.enabled is True
+    assert config.tools.selection.top_k == 8
+    assert config.tools.selection.latency_budget_ms == 75.0
+    assert config.tools.selection.dedup_threshold == 0.65
+    assert config.tools.quality.enabled is True
+    assert config.tools.quality.window_size == 30
+    assert config.tools.quality.degrade_threshold == 0.5
+    assert config.tools.quality.min_samples == 3
+
+
+def test_mcp_health_parsed(tmp_path, monkeypatch):
+    """回归：mcp.health 配置段应从 YAML 解析（审阅发现未接入）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+mcp:
+  health:
+    enabled: true
+    health_check_interval_s: 15.0
+    degrade_failure_threshold: 0.6
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(start_dir=tmp_path)
+
+    assert config.mcp.health.enabled is True
+    assert config.mcp.health.health_check_interval_s == 15.0
+    assert config.mcp.health.degrade_failure_threshold == 0.6

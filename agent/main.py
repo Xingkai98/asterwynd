@@ -260,6 +260,7 @@ def _build_agent_core(
         mcp_manager=mcp_manager,
         persistent_memory=persistent_memory,
         selection_config=config.tools.selection,
+        quality_config=config.tools.quality,
     )
 
     hooks = HookManager([

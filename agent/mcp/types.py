@@ -64,3 +64,10 @@ class McpServerStatus:
     prompts: int = 0
     resources: int = 0
     error: str | None = None
+    # Runtime health (batch-2, design Decision 5): populated by McpManager.
+    health_ok: bool | None = None
+    last_health_check: float | None = None
+    calls: int = 0
+    failures: int = 0
+    failure_rate: float | None = None
+    degraded: bool = False

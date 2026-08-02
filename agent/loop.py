@@ -643,6 +643,7 @@ class AgentLoop:
                         "stop_reason": "end_turn",
                     })
                 messages.append(Message(role="assistant", content=response.content or "", reasoning_content=response.reasoning_content))
+                self._flush_tool_quality()
                 return RunResult(
                     content=response.content or "",
                     stop_reason=StopReason.END_TURN,
@@ -802,18 +803,25 @@ class AgentLoop:
                 approval_request_data = entry.get("approval_request_data")
                 tool = entry["tool"]
 
+                result_text = extract_text(result) if not isinstance(result, str) else result
+                status = (
+                    "error"
+                    if result_text.startswith("[Error")
+                    or result_text.startswith("Error")
+                    or result_text.startswith("[Permission denied")
+                    or result_text.startswith("[MCP tool error")
+                    else "ok"
+                )
+                approval_required = bool(
+                    entry.get("decision") is not None
+                    and getattr(entry["decision"], "requires_approval", False)
+                )
+                approval_granted = bool(entry.get("approval_granted"))
+
                 if trace_recorder:
                     trace_recorder.record_tool_call(
                         observed_tool_call.name,
                         observed_tool_call.arguments,
-                    )
-                    result_text = extract_text(result) if not isinstance(result, str) else result
-                    status = (
-                        "error"
-                        if result_text.startswith("[Error")
-                        or result_text.startswith("Error")
-                        or result_text.startswith("[Permission denied")
-                        else "ok"
                     )
                     error_type = None
                     if status == "error":
@@ -826,10 +834,25 @@ class AgentLoop:
                         duration_ms,
                         result,
                         error_type=error_type,
+                        approval_required=approval_required,
+                        approval_granted=approval_granted,
                     )
                     if tool_call.name == "Edit" and status == "ok":
                         path = str(tool_call.arguments.get("path", ""))
                         trace_recorder.record_edit(path, status, result)
+
+                # Feed per-tool quality store (batch-2 tasks 4.1): success /
+                # duration / approval outcome for the tool-governance scorer.
+                quality = self.tool_registry.quality_store
+                if quality is not None and tool is not None:
+                    quality.record(
+                        tool_call.name,
+                        success=status == "ok",
+                        duration_ms=duration_ms,
+                        approval_required=approval_required,
+                        approval_granted=approval_granted,
+                        executed=entry.get("pre_denied_result") is None,
+                    )
 
                 if on_event:
                     await on_event("tool_call", {
@@ -884,7 +907,14 @@ class AgentLoop:
                 "content": final_content,
                 "stop_reason": "max_iterations",
             })
+        self._flush_tool_quality()
         return result
+
+    def _flush_tool_quality(self) -> None:
+        """Persist per-tool quality windows at run end (batch-2 tasks 4.x)."""
+        quality = self.tool_registry.quality_store
+        if quality is not None:
+            quality.record_run_end()
 
     def _select_tool_schemas(self, messages: list[Message]) -> list[dict]:
         """Select tool schemas for the LLM injection seam.

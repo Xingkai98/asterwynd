@@ -59,6 +59,10 @@ class ToolSelector:
         """Stable-layer tools: always injected and sorted first (Q3)."""
         self._stable = set(tool_names)
 
+    def is_stable(self, tool_name: str) -> bool:
+        """Whether ``tool_name`` is in the stable layer (always injected)."""
+        return tool_name in self._stable
+
     def select(self, query: str) -> list[str]:
         """Return the top-K tool names for ``query``.
 
