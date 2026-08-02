@@ -1,72 +1,64 @@
-# Building Review — sandbox-hardening（第二批，Round 2）
+# Building Review — sandbox-hardening（第二批，Round 3 最终）
 
-- 审阅范围：`git diff origin/master...HEAD`（HEAD=`b8927b6`，含 3f00f94 第二批实现 + b8927b6 Round 1 修复）
-- 审阅方式：独立零记忆 subagent（不继承开发上下文），逐条验证 Round 1 的 5 项修复 + 全量跑批
+- 审阅范围：`git diff origin/master...HEAD`（HEAD=`525a307`，含 3f00f94 第二批实现 + b8927b6 Round 1 修复 + 525a307 Round 2 测试修复）
+- base sha（merge-base with origin/master）：`dc83b4c8c63395f827f59f33ae2d3b7fb724fed4`
+- 审阅方式：独立零记忆 subagent（不继承开发上下文），逐条验证 Round 2 两个测试问题修复 + 确认 Round 1 五项功能修复 + 全量跑批
 - 审阅时间：2026-08-02
-- Round 1 verdict：CHANGES_REQUESTED（1 中等 `sandbox.timeout_seconds` 不生效 + 4 minor）
+- Round 1 verdict：CHANGES_REQUESTED（1 中等 + 4 minor）
+- Round 2 verdict：CHANGES_REQUESTED（2 个测试问题：批内 flaky 测试 + 9.5 缺确定性回归）
 
-## Verdict: CHANGES_REQUESTED
+## Verdict: PASS
 
-Round 1 的 5 项修复在**代码层面全部正确**：timeout_seconds 主路径生效、cgroup sweep_stale、`_setup_cgroup` catch Exception、Docker 超时容器清理、attach 三态语义。OpenSpec strict validate 通过（32/32）、全量 pytest 通过（1516 passed, 7 skipped, 1 deselected）。
+Round 2 的两个测试问题已修复且验证充分；Round 1 的 5 项功能修复在代码与测试层面全部正确。此前 flaky 的 `test_limits_apply_cgroup_when_supported` 连续 10 次跑全绿；新增的 `test_attach_skipped_when_process_already_exited` 确定性钉住 9.5 跳过路径。OpenSpec strict validate 32/32；sandbox 相关 11 个测试文件 137 passed。无未解决的中等以上问题。
 
-但本轮**两次实际观测到**批内测试 `test_limits_apply_cgroup_when_supported` 偶发失败（`fake.attached is True` 断言失败）——这是 Round 1 fix 9.5（attach 三态）与既有快命令测试的时序竞态，属本 change 自带测试的 flaky，威胁 CI 稳定性（中等）。且 9.5 的修复缺少**确定性**回归测试（"进程先于 attach 退出 → 不 degraded"路径无测试钉住）。修复这两个测试问题后即可 PASS。
+## Round 2 两个测试问题修复确认
 
-## Round 1 五项修复逐条验证
+| # | Round 2 发现 | 修复 | 验证 | 结论 |
+|---|---|---|---|---|
+| 1 | `test_limits_apply_cgroup_when_supported` 用 `echo hi`（瞬时退出）偶发失败（`fake.attached is True` 断言时序竞态） | `tests/agent/tools/test_process_backend_cgroup.py:53` 改用 `sleep 0.2; echo hi`，命令存活期覆盖 attach 调用窗口 | `sleep 0.2` 提供 200ms 窗口，attach 在 spawn 后毫秒级调用，确定性成立；**连续 10 次单独运行全绿** | **修复正确，不再 flaky** |
+| 2 | 9.5 跳过路径无确定性回归测试 | 新增 `test_attach_skipped_when_process_already_exited`（test_process_backend_cgroup.py:62-75）：构造 `returncode=0` 的 ExitedProc，直接断言 `_attach` 返回 `None` 且 `fake.attached is False` | `_attach`（process_backend.py:148-149）`proc.returncode is not None → return None`，快命令跳过 attach 不误标 degraded；纯函数级断言，无时序依赖 | **修复正确，覆盖充分** |
 
-| # | Round 1 发现 | 修复位置 | 代码验证 | 回归测试 | 结论 |
-|---|---|---|---|---|---|
-| 9.1 | `sandbox.timeout_seconds` 主路径不生效（中等） | `agent/tools/builtin/bash.py:84-88` `timeout=timeout`（None→后端默认），删除 `timeout or 30.0` | ✅ `build_sandbox_from_config`（factory.py:41-61）把 `config.sandbox.timeout_seconds` 传入后端构造（factory.py:53）→ `ProcessBackend(timeout=...)` 默认值生效（process_backend.py:160 `timeout = timeout or self.timeout`） | ✅ `test_backend_default_timeout_used_when_none_passed`（test_bash_tool_events.py:104-118）：ProcessBackend(timeout=0.2) + 不传 timeout → sleep 60 快速 timed_out | **充分** |
-| 9.2 | cgroup 遗留目录清扫（minor） | `agent/tools/sandbox/cgroup.py:117-136` `sweep_stale`（dead pid 清理、live pid 不动），`create()` 触发（cgroup.py:141） | ✅ pid 解析 `split("-")[1]` + `_pid_alive`（os.kill(pid,0)）；live pid 跳过；普通 fs 子文件先 unlink 再 rmdir；真实 cgroup fs 上 live cgroup 的 rmdir 会 EBUSY 被吞，安全 | ✅ `TestSweepStale` 4 用例（test_cgroup.py:96-125）：removes dead / keeps live / create sweeps first / malformed 容错 | **充分** |
-| 9.3 | `_setup_cgroup` 仅 catch OSError（minor） | `process_backend.py:124` `except Exception` | ✅ 非 OSError（如控制器 RuntimeError）不再丢 degraded 标志 | ✅ `test_non_oserror_setup_failure_still_degrades`（test_process_backend_cgroup.py:153-166）：RuntimeError → degraded=True + exit_code=0 | **充分** |
-| 9.4 | Docker 超时容器残留（minor） | `docker_backend.py:132-202` `--cidfile` + 超时后 `_remove_orphaned_container`（`docker rm -f`） | ✅ mkstemp 预留唯一路径再 unlink（docker 拒绝已存在 cidfile）；超时 kill CLI → wait → 读 cidfile → `docker rm -f`；finally unlink cidfile；`_remove_orphaned_container` best-effort 吞异常 | ⚠️ 契约测试 `test_contract`（test_sandbox_backends.py:60-61）真实 Docker 跑 `sleep 5` timeout=1.0 触发该路径，但**不断言无孤儿容器残留**（仅断言 timed_out） | **充分（断言偏弱）** |
-| 9.5 | attach 语义：快命令不误标 degraded | `process_backend.py:140-153` `_attach` 三态（True/False/None=已退出跳过）+ `effective_degraded = degraded or (attached is False)` | ✅ `echo` 类快命令进程先退出 → returncode 非 None → 返回 None → 不 degraded（对照 3f00f94 旧实现返回 False → 误标 degraded） | ⚠️ **无确定性回归测试**钉住 skip 路径；且既有快命令测试 flaky（见 Issue 1） | **代码正确，测试有问题** |
+两个修复均为最小改动、针对根因，未引入新问题。
 
-## Issues
+## Round 1 五项功能修复确认（仍正确）
 
-### Issue 1（中等，需修复）— 批内测试 `test_limits_apply_cgroup_when_supported` flaky
-
-`tests/agent/tools/test_process_backend_cgroup.py:46-57` 用 `echo hi`（近瞬时退出）断言 `fake.attached is True`。9.5 修复后 `_attach` 在 `proc.returncode is not None`（进程已退出且被 asyncio reap）时返回 None 跳过 attach——`echo hi` 在慢调度/并发负载下先于 attach 退出，`fake.attached` 保持 False → 断言失败。
-
-**实际观测**：Round 2 审阅中该测试两次失败（一次在 5 文件组合跑，一次在 `test_process_backend_cgroup.py + test_sandbox.py` 组合跑），单跑均通过——典型时序竞态 flaky。CI 在任意负载下都可能红。
-
-修复方向（二选一，均一分钟内完成）：
-1. 测试改用存活足够久的命令（如 `sleep 0.2; echo hi`，与 `test_attach_failure_degrades` 一致），确定性触发 attach；
-2. 或对快命令放宽断言（`echo hi` 场景断言 `degraded is False` 即可，不要求 `attached is True`——进程已退出时跳过 attach 正是修复语义）。
-
-### Issue 2（minor）— 9.5 缺确定性回归测试
-
-tasks.md 9.5 声称修复"进程先于 attach 退出（快命令）不视为 degraded"，但无测试钉住该行为：`test_limits_apply_cgroup_when_supported` 的 skip 依赖时序（即 Issue 1），没有直接断言"returncode 非 None → `_attach` 返回 None → 不 degraded"。建议补一个确定性单测（直接构造 `proc.returncode` 场景，或对 `_attach` 做纯函数级断言）。
-
-### Issue 3（minor）— Docker cidfile 清理缺孤儿断言
-
-tasks.md 9.4 声称"Docker 契约测试验证"，但 `test_contract` 仅断言 `timed_out`，未在超时后断言 daemon 中无残留容器（如 `docker ps -a --filter ...`）。机制本身正确（`--rm` 只在容器自然退出时移除，kill CLI 后孤儿容器由 `docker rm -f <cid>` 兜底），但缺少"无残留"的强断言。可在契约测试超时分支后追加一次 `docker ps -aq | grep -c <cid>` 类校验（docker 环境跳过条件已存在）。
-
-### Issue 4（minor，观察项）— 后台路径仍不应用 config timeout
-
-`BashTool._execute_background` → `BackgroundTaskManager.start(timeout=None)` → `_monitor` 无超时（`background.py:135-138`）。Round 1 Issue 1 提及后台路径"同理"，但 9.1 只修了前台。判定为**设计合理而非缺陷**：design.md line 92 把 timeout 默认语义限定在 `ExecutionBackend.run()`（后台走 `run_background()`，无 timeout 参数），后台任务"无显式 timeout 则一直运行"是标准语义（长任务 + TaskOutput 轮询/stop），且工具 schema 的 `"default": 30` 仅作 LLM 提示、框架不注入默认值（`registry.execute` 直接 `tool.execute(**arguments)`）。无需修复，记录为设计事实。
-
-### Issue 5（minor，观察项）— attach 残留窄竞态
-
-`_attach` 的 `proc.returncode` 检查存在窄窗口：子进程已退出但 asyncio 尚未 reap（returncode 仍 None）时，attach 写死 pid 到真实 cgroup.procs 会 ESRCH → 返回 False → 快命令偶发误标 degraded。仅影响真实 cgroup 宿主（本环境走 degraded 路径不触发），且 degraded 仅标志位+单次事件，影响低。非阻塞项。
+| # | 修复 | 代码验证 | 回归测试 | 结论 |
+|---|---|---|---|---|
+| 9.1 | `sandbox.timeout_seconds` 主路径生效 | `bash.py:84-88` `timeout=timeout`（None→后端默认），`build_sandbox_from_config`（factory.py）把 `config.sandbox.timeout_seconds` 传入后端构造 → `ProcessBackend.run` `timeout = timeout or self.timeout` | `test_backend_default_timeout_used_when_none_passed`（test_bash_tool_events.py:104-118）：`ProcessBackend(timeout=0.2)` + 不传 timeout → `sleep 60` 快速 timed_out | **充分** |
+| 9.2 | cgroup 遗留目录清扫 | `cgroup.py:117-136` `sweep_stale`：解析 `asterwynd-<pid>-<seq>`、`_pid_alive`（os.kill(pid,0)）跳过 live、普通 fs 子文件先 unlink 再 rmdir；`create()` 时触发 | `TestSweepStale` 4 用例（test_cgroup.py:96-125）：removes dead / keeps live / create sweeps first / 容错 | **充分** |
+| 9.3 | `_setup_cgroup` catch Exception | `process_backend.py:126` `except Exception`——非 OSError 控制器失败也置 degraded | `test_non_oserror_setup_failure_still_degrades`（test_process_backend_cgroup.py:171-184）：RuntimeError → degraded=True + exit_code=0 | **充分** |
+| 9.4 | Docker 超时容器残留 | `docker_backend.py:132-202` `--cidfile`（mkstemp 预留唯一路径再 unlink）+ 超时后 `_remove_orphaned_container`（`docker rm -f` 读到的 cid）；finally unlink cidfile；best-effort 吞异常 | Docker 契约测试真实 `sleep 5` + timeout=1.0 触发超时路径（断言 timed_out） | **充分**（孤儿断言偏弱为已知观察项，非阻塞） |
+| 9.5 | attach 三态语义 | `process_backend.py:137-150` `_attach` 返回 True（成功）/False（失败=degrade）/None（已退出=skip）；`effective_degraded = degraded or (attached is False)` | 既有 `test_attach_failure_degrades` + 本轮新增确定性 skip 回归（Round 2 #2） | **充分** |
 
 ## 8 维度评估
 
-- **任务逐项验证**：tasks.md 第 5/6/8/9 节全部 `[x]` 均有真实代码 + 测试；第 7 节收尾（设计审阅任务/benchmark smoke/spec 同步）证据充分。9.4/9.5 测试覆盖偏弱（见 Issue 1/2/3）。
-- **正确性**：cgroup v2 工程细节（per-run 唯一目录、starttime 防 pid 复用、oom 基线、cleanup 幂等、cpuset 初始化）正确；timeout 透传正确；attach 三态语义正确（旧实现把"进程先退出"误判为 degraded 是真实 bug，已修）。
-- **Spec 对齐**：`openspec/specs/workspace-safety/spec.md` 含 cgroup v2 资源限制 + 沙箱事件入 trace 两个 ADDED requirement + ExecutionBackend 2 新 scenario，与实现一致；spec delta 同步完成（workflow-events seq 3）。
-- **冗余度**：sweep_stale/cleanup 与 `is_supported` 职责边界清晰；`run_sync` 标注为无 cgroup 的辅助方法（design 限定 async run()）。无重复实现。
-- **测试覆盖**：回归测试整体充分（timeout 透传/sweep/非 OSError degrade/attach 失败 degrade/超时杀进程树均有），但 9.5 skip 路径无确定性测试、Docker 孤儿无强断言（Issue 2/3）。
-- **安全性**：sweep_stale 不触碰 live pid（os.kill(pid,0) + rmdir EBUSY 兜底）；cleanup 只在 starttime 匹配时 `cgroup.kill`；docker `rm -f` 只针对本 run 的 cid；无越权路径。timeout 透传后默认仍受后端构造值约束，无无限运行回归。
-- **可维护性**：sandbox_events contextvar sink + loop save/restore（镜像 `_active_trace_recorder` 模式）清晰；`_attach` 三态 docstring 明确；`--cidfile` 流程注释充分。
-- **CI 完整性**：全量 pytest 绿（1516 passed, 7 skipped, 1 deselected=已知环境失败）；OpenSpec strict validate 32/32；`check_openspec_artifacts.py` 仅报 review manifest missing（预期，PASS 后生成）。**但 Issue 1 的 flaky 测试是 CI 稳定性隐患**。
+- **任务逐项验证**：tasks.md 第 5/6/8/9 节全部 `[x]`，逐项对应真实代码与测试：任务 5（cgroup.py + process_backend.py + test_cgroup/test_process_backend_cgroup）、任务 6（sandbox_events.py + trace_recorder.py + loop.py save/restore + BackgroundTaskManager kill 事件 + CommandGuard.last_reason）、任务 7（benchmark smoke 于 tasks.md 7.2 记录；spec 同步 workflow-events seq 3；设计追问 seq 2）、任务 8（factory.py / main.py / web/session.py / benchmarks/agent_runner.py / SubAgentManager._resolve_sandbox / _parse_sandbox_config + test_factory_sandbox_wiring / test_config）、任务 9（9.1-9.5 回归测试均存在且通过）。Round 2 两个测试修复未单列进 tasks.md，属轻微文档观察项（见下），不构成缺陷。
+- **正确性**：cgroup v2 工程细节正确（per-run 唯一目录、starttime 防 pid 复用、oom 基线对比、cleanup 幂等 + EBUSY 重试、cpuset 初始化）；timeout 透传正确；attach 三态语义正确（进程先退出 = skip 不 degrade）。测试修复后不再有已知竞态。
+- **Spec 对齐**：`openspec/specs/workspace-safety/spec.md` 含 cgroup v2 资源限制 + 沙箱事件入 trace 两个 ADDED requirement + ExecutionBackend 2 个新 scenario，与实现一致；change spec delta 同步完成（workflow-events seq 1/3）。OpenSpec strict validate 32/32。
+- **冗余度**：sweep_stale/cleanup 与 is_supported 职责边界清晰；sandbox_events sink 为中性 seam；run_sync 明确标注无 cgroup 的辅助方法。无重复实现。
+- **测试覆盖**：回归测试充分——timeout 透传 / sweep_stale / 非 OSError degrade / attach 失败 degrade / attach 跳过（本轮新增确定性测试）/ 超时杀进程树均有；sandbox 相关 11 文件 137 passed；此前 flaky 测试 10/10 稳定。
+- **安全性**：sweep_stale 不触碰 live pid（os.kill(pid,0) + rmdir EBUSY 兜底）；cleanup 仅在 starttime 匹配时 `cgroup.kill`；docker `rm -f` 仅针对本 run 的 cid；timeout 透传后默认仍受后端构造值约束，无无限运行回归。无注入/越权/信息泄露新路径。
+- **可维护性**：sandbox_events contextvar sink + loop save/restore（镜像 `_active_trace_recorder` 模式）清晰；`_attach` 三态 docstring 明确；`--cidfile` 流程注释充分；测试命令改为 `sleep 0.2` 带注释说明理由。
+- **CI 完整性**：全量 sandbox 相关测试绿（137 passed）；OpenSpec strict validate 32/32；`check_openspec_artifacts.py` 仅报 review manifest missing（预期，PASS 后生成）。此前威胁 CI 稳定性的 flaky 测试已消除。
 
-## Test Results（Round 2）
+## Issues
 
-- 第二批相关测试文件：`test_cgroup` / `test_process_backend_cgroup` / `test_bash_tool_events` / `test_sandbox_backends` / `test_sandbox` / `test_background` / `test_config` / `test_sandbox_events` / `test_loop_sandbox_events` / `test_factory_sandbox_wiring` / `test_command_guard`：**136 passed**（首轮组合跑 1 failed=flaky 复现，重跑绿）
-- 全量 pytest（排除已知 `test_tree_sitter_extracts_java_and_kotlin_symbols`）：**1516 passed, 7 skipped, 1 deselected**
+### Round 3 无阻塞 issue
+
+Round 2 的两个问题（Issue 1 flaky、Issue 2 缺确定性回归）均已修复并验证。Round 2 的 Issue 3（Docker 孤儿无强断言）/ Issue 4（后台不应用 config timeout，设计事实）/ Issue 5（attach 窄竞态，低影响）保持为非阻塞观察项，无需在本 change 处理。
+
+### 非阻塞观察项：Round 2 测试修复未在 tasks.md 单列
+
+Round 2 的两个测试修复直接落在 commit `525a307`，tasks.md 未新增"审阅修复（Round 2）"节。因二者是对 tasks.md 9.5 既有修复的测试补强、且本报告完整记录，不构成功能/门禁缺陷；建议归档时在 tasks.md 9.5 后附一行 Round 2 测试修复说明（可选）。
+
+## Test Results（Round 3）
+
+- 指定测试批：`test_process_backend_cgroup.py` / `test_cgroup.py` / `test_bash_tool_events.py` / `test_sandbox.py`：**37 passed**（3.34s）
+- flaky 复验：`test_limits_apply_cgroup_when_supported` 连续 **10/10 全绿**
+- sandbox 相关全量（追加 test_sandbox_backends / test_command_guard / test_factory_sandbox_wiring / test_sandbox_events / test_loop_sandbox_events / test_config / test_background）：**137 passed**（40.73s）
 - OpenSpec strict validate：**32 passed, 0 failed**
-- 受保护 artifact：b8927b6 修复提交未改动 `openspec/specs/**` / `docs/openspec-change-backlog.md` / archive / known-*，workflow-events seq 1-3 覆盖此前的 spec 同步与设计审阅事件，无缺事件
+- 受保护 artifact：本轮 diff 中 `openspec/specs/workspace-safety/spec.md` 有改动，对应 workflow-events seq 1/3（current_spec_synced）已记录；其余受保护路径（known-issues / known-debt / backlog / archive）无改动。review manifest 待生成。
 
 ## 结论
 
-Round 1 的 1 中等 + 4 minor 在代码层面全部修复到位，修复质量高且未引入新的生产代码缺陷；timeout_seconds 主路径生效、cgroup 清扫/异常兜底/Docker 容器清理/attach 三态均正确，且有对应回归测试（9.4/9.5 断言偏弱）。唯一需修复的中等问题是**批内 flaky 测试** `test_limits_apply_cgroup_when_supported`（两次实际观测失败，威胁 CI 稳定性），外加 9.5 缺确定性回归测试的 minor 覆盖缺口。修复这两个测试问题后即可 PASS。
+Round 2 的两个测试问题已按要求修复：flaky 测试确定性化（`sleep 0.2`），9.5 跳过路径补齐确定性回归测试（直接断言 `_attach` 返回 None）。Round 1 的 5 项功能修复经复验仍全部正确。批内测试稳定（10/10）、sandbox 相关 137 项全绿、OpenSpec strict validate 通过、受保护 artifact 事件齐备。无未解决的中等以上问题，判定 **PASS**。
