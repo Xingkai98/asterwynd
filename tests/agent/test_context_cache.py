@@ -237,6 +237,62 @@ class TestAnthropicCacheControl:
         assert len(calls) == 2
         assert "cache_control" not in str(calls[1])
 
+    @pytest.mark.asyncio
+    async def test_stream_cache_control_400_retry(self):
+        """Streaming path also retries once without cache_control (finding M1)."""
+        import httpx
+
+        llm = _llm()
+        llm.cache_plan = CachePlan(stable_system_block_count=1, stable_tool_count=0)
+        messages = [_system_blocks(True), Message(role="user", content="hi")]
+
+        attempts = {"n": 0}
+
+        class _StreamCtx:
+            def __init__(self, failing: bool):
+                self._failing = failing
+
+            def raise_for_status(self):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def aiter_lines(self):
+                if self._failing:
+                    import types
+                    resp = types.SimpleNamespace(status_code=400, request=MagicMock())
+                    raise httpx.HTTPStatusError(
+                        "400 cache_control unsupported", request=MagicMock(), response=resp
+                    )
+                yield "event: message_start"
+                yield 'data: {"type":"message_start","message":{"id":"m","role":"assistant","content":[]}}'
+                yield "event: content_block_start"
+                yield 'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}'
+                yield "event: content_block_delta"
+                yield 'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}'
+                yield "event: content_block_stop"
+                yield 'data: {"type":"content_block_stop","index":0}'
+                yield "event: message_delta"
+                yield 'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}'
+                yield "event: message_stop"
+                yield 'data: {"type":"message_stop"}'
+
+        def fake_stream(method, url, **kwargs):
+            attempts["n"] += 1
+            return _StreamCtx(failing=(attempts["n"] == 1))
+
+        client = MagicMock()
+        client.stream = fake_stream
+        llm._get_client = AsyncMock(return_value=client)
+
+        events = [e async for e in llm.stream_chat(messages, tools=None, model="m")]
+        assert any(e.type == "complete" for e in events)
+        assert attempts["n"] == 2  # first failed, retried without cache_control
+
 
 # ---------------------------------------------------------------------------
 # OpenAI negative path (task 2.4)
@@ -272,6 +328,21 @@ class TestLoopCacheSeam:
         plan = loop._compute_cache_plan(messages, tools=[_tool("Read")])
         assert plan.stable_system_block_count == 3
         assert plan.stable_tool_count == 0
+
+    async def test_compute_cache_plan_with_preceding_system_block(self):
+        """A non-cache system message before the injected blocks must not shift
+        the breakpoint (grill finding L5)."""
+        from agent.loop import AgentLoop
+
+        loop = AgentLoop(llm=_llm(), tool_registry=ToolRegistry())
+        messages = [
+            Message(role="system", content="pre-existing base system"),
+            _system_blocks(True, True, True),  # injected context at system index 1..3
+            Message(role="user", content="hi"),
+        ]
+        plan = loop._compute_cache_plan(messages, tools=[_tool("Read")])
+        # Last cache block is at absolute system index 3 -> breakpoint at 4.
+        assert plan.stable_system_block_count == 4
 
     async def test_compute_cache_plan_selector_on(self):
         from agent.loop import AgentLoop

@@ -30,7 +30,7 @@
 
 ## 收尾
 
-- [ ] 4.1 压缩/缓存命中事件入 trace（与 #78 对齐）：`memory_compaction` 事件补充 before/after tokens、层级；on_event 补统计
+- [x] 4.1 压缩/缓存命中事件入 trace（与 #78 对齐）：`memory_compaction` 事件补充 before/after tokens、层级；on_event 补统计（TraceRecorder.record_compaction + loop 丰富 payload）
 - [ ] 4.2 OpenSpec spec 同步
 - [ ] 4.3 全量 pytest + openspec validate + artifact checker
 - [ ] 4.4 benchmark 量化（压缩比 90%→20-30%、cache 命中率、工具链成对率）：指标契约——压缩比用 compact 前后 middle token 数；cache 命中率用代理指标（稳定前缀字节一致率 + cache_control 断点计数），真实 API cache_* 指标延迟到可用时接入；注明 tiktoken 对 Claude 低估 ~15-20%
@@ -38,5 +38,13 @@
 ## 8. 收尾校验（checker 要求项）
 
 - [x] 8.1 pre-implementation batch-grill-me 设计审阅：`reviews/design-grill.md`（2026-08-02，workflow run wf_09df918b-aec，verdict CHANGES_REQUESTED → 方案按裁定修正后进入 building）
-- [ ] 8.2 benchmark smoke verification（coding-agent core change 要求）：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`
+- [x] 8.2 benchmark smoke verification（coding-agent core change 要求）：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/benchmark-smoke-74b`，结果与 master 基线一致（6 passed / 18 failed / 10 unsupported，均为既有 harness 环境失败，无本 change 回归）
 - [ ] 8.3 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`
+
+## 审阅修复记录（Round 1）
+
+- M1（Medium）：`anthropic_llm.py` 流式 `stream_chat` 补 cache_control 400 重试降级（与非流式一致）；`_apply_cache_plan` 保存 `_last_cache_plan` 供降级判断。回归测试 `test_stream_cache_control_400_retry`。
+- M2（Medium）：`read_doc.py` 32KB 上限改按字节截断（CJK 多字节不突破上限）。回归测试 `test_size_cap_is_byte_based_for_multibyte`。
+- L3（Low）：tasks 4.1 勾选与实现同步。
+- L4（Low）：`manager.py` L2 累积 token 用增量累加器（`_l1_accumulated_tokens`），避免每轮重编码全部 L1 块。
+- L5（Low）：`loop._compute_cache_plan` 断点定位改为"最后一个 cache system 块的全局索引+1"，兼容前置非 cache system 消息。回归测试 `test_compute_cache_plan_with_preceding_system_block`。

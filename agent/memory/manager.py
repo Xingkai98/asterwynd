@@ -96,6 +96,7 @@ class MemoryManager:
         self.l2_trigger_tokens = l2_trigger_tokens
         self._l1_chunks: list[str] = []          # accumulated L1 summaries since last L2
         self._l1_chunk_ranges: list[str] = []    # source ranges for tier metadata
+        self._l1_accumulated_tokens: int = 0     # incremental L1 token accumulator
         self._l2_summary: str | None = None
         self._tiers: list[SummaryTier] = []      # full tier trail
 
@@ -275,7 +276,9 @@ class MemoryManager:
         self._tiers.append(SummaryTier(
             tier="L1", content=new_summary, source_range=middle_range, generated_at=now,
         ))
-        accumulated = sum(_count_tokens(chunk) for chunk in self._l1_chunks)
+        # Incremental L1 accumulator (avoids re-encoding all chunks each compact).
+        self._l1_accumulated_tokens += _count_tokens(new_summary)
+        accumulated = self._l1_accumulated_tokens
         if len(self._l1_chunks) >= 2 and accumulated >= self.l2_trigger_tokens:
             # Compress the accumulated L1 summaries together with any earlier
             # L2 base so top-level conclusions never lose prior context.
@@ -290,6 +293,7 @@ class MemoryManager:
                 ))
                 self._l1_chunks = []
                 self._l1_chunk_ranges = []
+                self._l1_accumulated_tokens = 0
                 logger.info("[Memory] L2 compression applied (%d tokens -> L2 conclusion)", accumulated)
 
         self._last_compaction_end_index = 1  # summary is at non_system[0]
@@ -536,5 +540,6 @@ class MemoryManager:
         self._last_compaction_end_index = 0
         self._l1_chunks = []
         self._l1_chunk_ranges = []
+        self._l1_accumulated_tokens = 0
         self._l2_summary = None
         self._tiers = []

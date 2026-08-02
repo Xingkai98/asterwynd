@@ -127,6 +127,19 @@ class TestReadDoc:
         assert len(result) <= MAX_DOC_SIZE_BYTES + 200
 
     @pytest.mark.asyncio
+    async def test_size_cap_is_byte_based_for_multibyte(self, tmp_path):
+        """CJK 多字节内容按字节截断，不突破字节上限（finding M2）。"""
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        big = docs / "cjk.md"
+        # 中文每字 3 字节：内容超过 32KB 但字符数远小于该值。
+        big.write_text("中" * (MAX_DOC_SIZE_BYTES // 3 + 500))
+        tool = ReadDocTool(policy=WorkspacePolicy(tmp_path))
+        result = await tool.execute(path="docs/cjk.md")
+        assert "已截断" in result
+        assert len(result.encode("utf-8")) <= MAX_DOC_SIZE_BYTES + 200
+
+    @pytest.mark.asyncio
     async def test_path_traversal_blocked(self, tmp_path):
         outside = tmp_path.parent / f"{tmp_path.name}-secret.md"
         outside.write_text("secret")

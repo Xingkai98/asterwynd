@@ -77,5 +77,8 @@ class ReadDocTool(Tool):
             return f"Error: 读取失败 {path}: {e}"
 
         if size > MAX_DOC_SIZE_BYTES:
-            content = content[:MAX_DOC_SIZE_BYTES] + _TRUNCATION_NOTE.format(limit_kb=limit_kb)
+            # 按字节截断（CJK 多字节字符不会突破字节上限）
+            data = content.encode("utf-8")[:MAX_DOC_SIZE_BYTES]
+            content = data.decode("utf-8", errors="replace")
+            content += _TRUNCATION_NOTE.format(limit_kb=limit_kb)
         return content

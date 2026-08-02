@@ -44,6 +44,7 @@ class AnthropicLLM(BaseLLM):
     ):
         super().__init__(api_key=api_key, base_url=base_url, model=model, max_tokens=max_tokens)
         self.cache_plan: CachePlan | None = None
+        self._last_cache_plan: CachePlan | None = None
 
     def _get_headers(self) -> dict:
         return {
@@ -175,6 +176,7 @@ class AnthropicLLM(BaseLLM):
         """
         plan = getattr(self, "cache_plan", None)
         self.cache_plan = None  # consume once
+        self._last_cache_plan = plan  # keep for 400-retry detection
         if plan is None:
             return
 
@@ -235,11 +237,30 @@ class AnthropicLLM(BaseLLM):
             ):
                 yield event
         except Exception as e:
-            if not try_vision:
-                raise
             if not _is_400_error(e):
                 raise
             logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            # Some Anthropic-compatible endpoints reject `cache_control`; retry once
+            # without it (mirrors the non-streaming path in chat()).  The plan was
+            # consumed by the first _stream_chat_impl's _build_payload, so the
+            # retry below naturally produces a payload without cache_control.
+            last_plan = getattr(self, "_last_cache_plan", None)
+            had_cache = bool(
+                last_plan
+                and (last_plan.stable_system_block_count > 0 or last_plan.stable_tool_count > 0)
+            )
+            if had_cache:
+                logger.info("Stream 400 with cache_control — retrying without it")
+                async for event in self._stream_chat_impl(
+                    messages,
+                    tools,
+                    resolved_model,
+                    force_vision=force_vision,
+                ):
+                    yield event
+                return
+            if not try_vision:
+                raise
             logger.info(
                 "First stream attempt with images failed (400) for model=%s, retrying without images",
                 resolved_model,

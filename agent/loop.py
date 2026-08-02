@@ -1060,17 +1060,26 @@ class AgentLoop:
         """
         from agent.message import TextBlock
 
-        stable_system_count = 0
+        # Compute the absolute system-block index of the LAST cacheable block.
+        # System blocks can precede the injected context (e.g. a pre-existing
+        # system message), so a cache count alone would misplace the breakpoint.
+        stable_system_breakpoint = 0
+        block_index = 0
         for m in messages:
-            if m.role == "system" and isinstance(m.content, list):
-                stable_system_count += sum(
-                    1 for b in m.content if isinstance(b, TextBlock) and b.cache
-                )
+            if m.role != "system":
+                continue
+            if isinstance(m.content, list):
+                for b in m.content:
+                    if isinstance(b, TextBlock) and b.cache:
+                        stable_system_breakpoint = block_index + 1
+                    block_index += 1
+            else:
+                block_index += 1  # a plain-string system block renders as one block
 
         selector = getattr(self.tool_registry, "_selector", None)
         if selector is None:
             return CachePlan(
-                stable_system_block_count=stable_system_count,
+                stable_system_block_count=stable_system_breakpoint,
                 stable_tool_count=0,
             )
 
