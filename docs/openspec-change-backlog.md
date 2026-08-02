@@ -64,11 +64,11 @@
 基于 wayfinder 地图 #72（面试深度路线）拆解的 6 个深化方向，已全部立项为 OpenSpec change（2026-08-01）。按批次推进；同一批次可并行开 PR，但共享 AgentLoop/ToolRegistry/trace 语义的 change 需错开合入。
 
 - **Batch 1（并行，低冲突）**：`tool-governance-deepening`（✅ 已合入并归档，2026-08-02）‖ `sandbox-hardening`。最独立、无硬依赖，各开独立 worktree。先立 `agent/embedding/` 公共模块（#77 提供，供 #75 复用）。
-- **Batch 2（高冲突，拆分）**：`context-engineering-deepening`。拆 3 子 change（增量 token 计数+四字段摘要 / Prefix Cache 注入顺序 / 分页进度+深层 MD 按需加载）；与 #77 约定「稳定层/可变层」注入契约。
+- **Batch 2（高冲突，拆分）**：`context-engineering-deepening`（✅ 已合入并归档，2026-08-02）。拆 3 子 change（增量 token 计数+四字段摘要+pending+L1/L2 / Prefix Cache 注入顺序 / 分页进度+深层 MD 按需加载）；已与 #77 约定「稳定层/可变层」注入契约并落实现。
 - **Batch 3（并行）**：`observability-deepening` ‖ `long-term-memory-deepening`。依赖 PR #80 statistics（已合入）做回归门禁；#75 先 ADR 论证三层存储，低风险切片先行。
 - **Batch 4（最后）**：`multi-agent-collaboration`。依赖最重，先 grill 设计；复用 #67 `agent/workflow/` 状态机。
 
-关键依赖：`#78 observability` 依赖 `#77 tool-governance` 质量事件 schema；`#75 long-term-memory` 依赖 `#77` embedding 模块；`#74` 子项②③ 依赖 `#77` 注入契约；`#79` 依赖 `#74/#78`。
+关键依赖：`#78 observability` 依赖 `#77 tool-governance` 质量事件 schema；`#75 long-term-memory` 依赖 `#77` embedding 模块；`#79` 依赖 `#74/#78`。
 
 ## 未实现队列
 
@@ -89,24 +89,6 @@
 - cgroup v2 资源限制 + 超限 kill 入 trace。
 - 50+ 恶意 prompt 攻击回归集。
 - 沙箱 deny/kill/oom 事件入 trace。
-
-### 3. `context-engineering-deepening`
-
-状态：未实现。
-
-批次：第九批 Batch 2（拆 3 子 change）。
-
-建议顺序原因：
-
-- 共享底座、冲突面最大，拆 3 子 change 分阶段合入（① 增量 token 计数+四字段摘要 ② Prefix Cache 注入顺序 ③ 分页进度+深层 MD 按需加载）。
-- 在 #77 注入契约之上做稳定前缀缓存（稳定层/可变层分层解决动态选择与 cache 张力）。
-
-主要交付：
-
-- 四字段结构化摘要 + tool_call pending 标记。
-- 两级层级压缩。
-- Prefix Cache 注入顺序 + cache_control 断点。
-- 分页读进度 `(file,offset,total)` + 深层 MD 按需加载。
 
 ### 4. `long-term-memory-deepening`
 
