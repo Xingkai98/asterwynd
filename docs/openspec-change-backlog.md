@@ -65,7 +65,7 @@
 
 - **Batch 1（并行，低冲突）**：`tool-governance-deepening`（✅ 已合入并归档，2026-08-02）‖ `sandbox-hardening`。最独立、无硬依赖，各开独立 worktree。先立 `agent/embedding/` 公共模块（#77 提供，供 #75 复用）。
 - **Batch 2（高冲突，拆分）**：`context-engineering-deepening`。拆 3 子 change（增量 token 计数+四字段摘要 / Prefix Cache 注入顺序 / 分页进度+深层 MD 按需加载）；与 #77 约定「稳定层/可变层」注入契约。
-- **Batch 3（并行）**：`observability-deepening` ‖ `long-term-memory-deepening`。依赖 PR #80 statistics（已合入）做回归门禁；#75 先 ADR 论证三层存储，低风险切片先行。
+- **Batch 3（并行）**：`observability-deepening`（待实现第二批）‖ `long-term-memory-deepening`（✅ 已合入并归档，2026-08-02）。依赖 PR #80 statistics（已合入）做回归门禁；#75 先 ADR 论证三层存储，低风险切片先行。
 - **Batch 4（最后）**：`multi-agent-collaboration`。依赖最重，先 grill 设计；复用 #67 `agent/workflow/` 状态机。
 
 关键依赖：`#78 observability` 依赖 `#77 tool-governance` 质量事件 schema；`#75 long-term-memory` 依赖 `#77` embedding 模块；`#74` 子项②③ 依赖 `#77` 注入契约；`#79` 依赖 `#74/#78`。
@@ -90,7 +90,7 @@
 - 50+ 恶意 prompt 攻击回归集。
 - 沙箱 deny/kill/oom 事件入 trace。
 
-### 3. `context-engineering-deepening`
+### 2. `context-engineering-deepening`
 
 状态：未实现。
 
@@ -108,25 +108,7 @@
 - Prefix Cache 注入顺序 + cache_control 断点。
 - 分页读进度 `(file,offset,total)` + 深层 MD 按需加载。
 
-### 4. `long-term-memory-deepening`
-
-状态：已实现并归档（2026-08-02）。
-
-批次：第九批 Batch 3（与 observability-deepening 并行）。
-
-建议顺序原因：
-
-- 先 ADR 论证 Postgres+向量库依赖成本（与 local/lightweight 定位冲突）。低风险切片（去重/冲突检测 + importance×recency 衰减 + 30 天归档）先行、复用 #77 embedding 模块。
-- 三层存储后置。
-
-主要交付：
-
-- 写入去重（embedding 召回 + LLM 三分支判断）+ 冲突检测 + change log。
-- importance×recency 衰减 + 30 天归档。
-- SearchMemory 语义检索 + 全局摘要 ~50 token。
-- scope 隔离（project/repo 标签）。
-
-### 5. `observability-deepening`
+### 3. `observability-deepening`
 
 状态：第一批已合入（PR #87，2026-08-02）；第二批待实现。
 
@@ -148,7 +130,7 @@
 - CI benchmark 回归门禁（>5% 拦截）。
 - Session timeline 看板。
 
-### 6. `multi-agent-collaboration`
+### 4. `multi-agent-collaboration`
 
 状态：未实现。
 
@@ -166,7 +148,7 @@
 - 轻量消息总线（严格 token 预算）。
 - 编排模式库（orchestrator-worker/peer-review/hierarchical/竞标）。
 
-### 7. `add-minimal-tui-runtime-view`
+### 5. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
