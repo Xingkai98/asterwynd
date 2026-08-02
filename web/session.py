@@ -223,6 +223,7 @@ class SessionManager:
             browser_config=self.config.tools.browser,
             mcp_manager=mcp_manager,
             tools=tools,
+            selection_config=self.config.tools.selection,
         )
         subagent_manager = SubAgentManager(
             llm=llm,
