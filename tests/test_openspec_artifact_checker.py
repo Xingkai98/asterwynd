@@ -511,7 +511,7 @@ def test_design_change_requires_preimplementation_design_review_task(tmp_path):
     write_tasks(change, "## 4. Verification\n\n- [ ] Run tests.\n")
 
     assert check_change(change) == [
-        "change-ui: tasks.md missing pre-implementation grill-with-docs or equivalent design review task"
+        "change-ui: tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
     ]
 
 

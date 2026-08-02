@@ -14,7 +14,7 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 
 - **文档语言**: 除 `README_EN.md` 作为 `README.md` 的英文同步翻译外，所有项目文档使用中文；代码、代码注释和公开 API 命名使用英文；提交信息使用中文。
 - **需求先行**: 新功能必须先完成需求讨论和需求文档，再进入开发。没有把目标、边界、验收标准、测试策略聊清楚之前，不写实现代码。
-- **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `grill-with-docs` skill 审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `grill-with-docs`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。
+- **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `batch-grill-me` skill（设计树逐轮追问，一轮问整个 frontier，效率更高）审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `batch-grill-me`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。
 - **参考实现调研门禁**: 非 docs OpenSpec change 默认必须启用参考实现调研，并在 `proposal.md` 或 `design.md` 维护 `## Reference Implementation Research`，记录 `status`、`reason`、`research questions`、`findings` 和 `design impact`。确实不适用时可写 `status: disabled`，但必须说明原因。该门禁由项目 artifact checker 和 CI 机械检查；checker 不读取本地 `.dev/reference-repos.txt`，本地参考仓库不可用时必须在 change 文档中记录不可用事实和替代依据。
 - **问题定位**: 定位问题时，先查清根因并给出解决方案，待确认后再实际修改代码。
 - **测试要求**: 每个 bug fix 必须新增回归测试；涉及 CLI、Web、benchmark、工具协议或 AgentLoop 的变更必须覆盖对应层级测试。
@@ -60,12 +60,12 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 | --- | --- |
 | “讨论一下 / 想想方案 / 看看怎么做 / 有哪些方向” | 进入 `/opsx:explore` 等价流程：读取相关代码和文档，只探索和记录，不写实现代码。 |
 | “新起一个 change / 我要做一个功能 / 改一个东西” | 进入 `/opsx:propose` 等价流程：创建或补齐 OpenSpec change、proposal、design、tasks、spec delta，并同步 backlog。 |
-| “开始开发 / 实现这个 change / 按 change 推进” | 先执行 `grill-with-docs` 开发前设计追问；确认完成后进入 `/opsx:apply` 等价流程，按 tasks 测试先行并实现。 |
+| “开始开发 / 实现这个 change / 按 change 推进” | 先执行 `batch-grill-me` 开发前设计追问；确认完成后进入 `/opsx:apply` 等价流程，按 tasks 测试先行并实现。 |
 | “同步 spec / 看正式规格有没有更新” | 进入 `/opsx:sync` 等价流程：把 change delta spec 合理合并到 `openspec/specs/`。 |
 | “收尾 / 提 PR / 准备合入” | 进入 `/opsx:archive` 等价流程：在同一个实现 PR 内归档 change、清理 backlog、跑 OpenSpec 校验和 artifact checker，并写明验证结果。 |
 | “合入 / merge” | 合入已准备好的 PR；合入后只确认本地 `master` 已同步、active change 目录不存在、backlog 不再引用已归档 change。 |
 
-这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `grill-with-docs`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
+这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `batch-grill-me`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
 
 每个 change 的生命周期状态由 `agent/workflow/` 四阶段状态机追踪，权威事实来源为 `openspec/changes/<change-id>/workflow-events.jsonl`，`handoff.json` 是由事件 replay 生成的 projection。阶段间交接通过 `.handoff/<change-id>/` 下的 handoff note 传递上下文，human review gate 在每个 phase 的 `ready_for_review` 子状态触发。路由配置支持 executor（inline/subagent/claude-code/codex）和 session_mode（same/new/ask），全局默认值在 `openspec/config.yaml`，per-change 覆盖在 `handoff.json`。
 
@@ -145,7 +145,7 @@ python3 scripts/workflow_state.py discover --format json
 | 阶段 | 工作区 | 原因 | 执行方法 |
 |------|--------|------|---------|
 | wayfinding | 主仓库 | 只探路，不产代码 | `/wayfinder` → 决策地图 + decision tickets |
-| planning | 主仓库 | 只产文档，不产代码 | `/grill-with-docs` → `/to-spec` → `/to-tickets` |
+| planning | 主仓库 | 只产文档，不产代码 | `/batch-grill-me` → `/to-spec` → `/to-tickets` |
 | building | **worktree 必须** | 代码修改在隔离环境中 | `/implement`（内部驱动 `/tdd` + `/code-review`） |
 | closing | 主仓库 | 归档、PR | openspec sync/archive/validate |
 

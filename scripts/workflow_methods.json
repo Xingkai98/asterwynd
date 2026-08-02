@@ -91,9 +91,9 @@
     ],
     "require_worktree": false,
     "exploring": {
-      "method": "/grill-with-docs",
+      "method": "/batch-grill-me",
       "type": "skill",
-      "hint": "追问需求边界，理解现有代码和相关模块"
+      "hint": "设计树逐轮追问需求边界，理解现有代码和相关模块（一轮问整个 frontier，效率更高）"
     },
     "writing_proposal": {
       "method": "编写 proposal.md",

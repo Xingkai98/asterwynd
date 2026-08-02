@@ -50,7 +50,7 @@ TUI renderer 只负责布局和刷新，session/agent 状态仍由现有 runtime
 - Rejected alternatives:
   - 伪造完整追问结论。原因：TUI 依赖 runtime events、tool display policy、planning state 和权限展示的最新状态，必须在真正开发前重新确认。
 - Final confirmations:
-  - 开发前必须重新使用 `grill-with-docs` 或等价设计追问确认事件消费模型、终端降级策略、键盘交互、测试方式和非交互环境行为。
+  - 开发前必须重新使用 `batch-grill-me` 或等价设计追问确认事件消费模型、终端降级策略、键盘交互、测试方式和非交互环境行为。
 - Remaining risks:
   - TUI scope 容易扩大到交互控制面；开发前需要再次守住最小 runtime view 范围。
 
