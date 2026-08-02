@@ -11,7 +11,7 @@ from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
 from agent.session import SessionStore, SessionSnapshot
 from agent.tools.base import Tool, tool_parameters, ToolCall
 from agent.tools.registry import ToolRegistry
-from agent.tools.sandbox import SandboxExecutor
+from agent.tools.sandbox import ProcessBackend
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.trace_recorder import TraceRecorder
@@ -1727,7 +1727,7 @@ async def test_unknown_tool_defaults_to_non_parallelizable():
 @pytest.mark.asyncio
 async def test_background_task_tools_registered_when_manager_provided():
     """TaskOutput and TaskStop are registered, BashTool gets callback."""
-    sandbox = SandboxExecutor()
+    sandbox = ProcessBackend()
     bg_manager = BackgroundTaskManager(sandbox=sandbox)
     registry = ToolRegistry()
 
@@ -1762,7 +1762,7 @@ async def test_background_task_tools_not_registered_without_manager():
 @pytest.mark.asyncio
 async def test_completed_background_task_injected_as_observation():
     """Completed background tasks appear as role=user observation messages."""
-    sandbox = SandboxExecutor()
+    sandbox = ProcessBackend()
     bg_manager = BackgroundTaskManager(sandbox=sandbox)
 
     # Start a fast task that completes quickly
@@ -1804,7 +1804,7 @@ async def test_completed_background_task_injected_as_observation():
 @pytest.mark.asyncio
 async def test_cleanup_called_on_run_exit():
     """Background tasks are cleaned up in run() finally block."""
-    sandbox = SandboxExecutor()
+    sandbox = ProcessBackend()
     bg_manager = BackgroundTaskManager(sandbox=sandbox)
 
     # Start a long-running task

@@ -35,7 +35,7 @@ from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry
-from agent.tools.sandbox import SandboxExecutor
+from agent.tools.sandbox import build_execution_backend
 from agent.workspace_policy import WorkspacePolicy
 from agent.background import BackgroundTaskManager
 from agent.session import SessionSnapshot, SessionStore
@@ -276,7 +276,13 @@ def _build_agent_core(
     )
     skill_runtime = SkillRuntime.from_roots(config.skills.roots)
 
-    sandbox = SandboxExecutor()
+    sandbox = build_execution_backend(
+        config.sandbox.backend,
+        image=config.sandbox.image,
+        memory_mb=config.sandbox.memory_mb,
+        cpus=config.sandbox.cpus,
+        timeout=config.sandbox.timeout_seconds,
+    )
     background_manager = BackgroundTaskManager(sandbox=sandbox)
     session_store = SessionStore(
         sessions_root=_sessions_root(workspace_policy.workspace_root)

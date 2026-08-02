@@ -1,11 +1,11 @@
 import pytest
 
-from agent.tools.sandbox import SandboxExecutor, SandboxResult
+from agent.tools.sandbox import ProcessBackend, SandboxResult
 
 
 @pytest.mark.asyncio
 async def test_sandbox_run_simple_command():
-    executor = SandboxExecutor()
+    executor = ProcessBackend()
     result = await executor.run("echo hello")
     assert isinstance(result, SandboxResult)
     assert result.exit_code == 0
@@ -14,7 +14,7 @@ async def test_sandbox_run_simple_command():
 
 @pytest.mark.asyncio
 async def test_sandbox_run_with_timeout():
-    executor = SandboxExecutor()
+    executor = ProcessBackend()
     result = await executor.run("sleep 0.1")
     assert isinstance(result, SandboxResult)
     assert result.exit_code == 0
@@ -22,7 +22,7 @@ async def test_sandbox_run_with_timeout():
 
 @pytest.mark.asyncio
 async def test_sandbox_run_timeout_flag():
-    executor = SandboxExecutor()
+    executor = ProcessBackend()
     result = await executor.run("sleep 10", timeout=0.05)
     assert result.timed_out
     assert result.exit_code == -1
@@ -30,7 +30,7 @@ async def test_sandbox_run_timeout_flag():
 
 @pytest.mark.asyncio
 async def test_sandbox_returns_error_on_failure():
-    executor = SandboxExecutor()
+    executor = ProcessBackend()
     result = await executor.run("exit 1")
     assert isinstance(result, SandboxResult)
     assert result.exit_code == 1

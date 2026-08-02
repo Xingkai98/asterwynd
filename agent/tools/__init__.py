@@ -1,7 +1,12 @@
 # agent/tools/__init__.py
 from agent.tools.base import Tool, ToolCall, tool_parameters
 from agent.tools.registry import ToolRegistry
-from agent.tools.sandbox import SandboxExecutor
+from agent.tools.sandbox import (
+    ExecutionBackend,
+    ProcessBackend,
+    DockerBackend,
+    build_execution_backend,
+)
 
 # 内置工具
 from agent.tools.builtin.read import ReadTool
@@ -36,7 +41,10 @@ __all__ = [
     "ToolCall",
     "tool_parameters",
     "ToolRegistry",
-    "SandboxExecutor",
+    "ExecutionBackend",
+    "ProcessBackend",
+    "DockerBackend",
+    "build_execution_backend",
     "get_default_tools",
     "get_coding_tools",
     "build_default_tool_registry",

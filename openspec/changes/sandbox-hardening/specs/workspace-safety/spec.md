@@ -2,49 +2,65 @@
 
 ## ADDED Requirements
 
-### Requirement: AST Command Validation
+### Requirement: ExecutionBackend 可插拔沙箱
 
-The workspace safety system SHALL validate shell commands by parsing them into an AST, SHALL allow only predefined command sentence patterns, and SHALL enforce parameter type and range constraints (e.g., timeout as int in [1,600], paths within the workspace, no wildcard/redirection/pipe combinations).
+The sandbox SHALL abstract command execution behind an `ExecutionBackend` interface with pluggable backends: `ProcessBackend` (subprocess, default) and `DockerBackend` (container isolation via `docker run --rm --network none`). Backends SHALL return a unified `SandboxResult` and SHALL be selectable via config.
 
-#### Scenario: blocked wildcard and pipe combination
+#### Scenario: Docker 隔离执行
 
-- Given a command using a wildcard with redirection or pipe combination
-- When the AST validator parses the command
-- Then the command is rejected
-- And a structured sandbox event with `denied` is recorded
+- **GIVEN** a command executed via the docker backend
+- **WHEN** the backend runs it in a container
+- **THEN** the command runs with network disabled (`--network none`)
+- **AND** only the workspace is mounted
+- **AND** the container is removed after run
 
-### Requirement: cgroup Resource Limits
+#### Scenario: 后端切换
 
-The sandbox SHALL enforce CPU/memory resource limits via cgroup v2, SHALL auto-kill processes exceeding limits, and SHALL record kill/oom events in the trace.
+- **GIVEN** config selects `backend: docker`
+- **WHEN** the execution backend is built
+- **THEN** a `DockerBackend` is used
+- **AND** `backend: process` selects `ProcessBackend`
 
-#### Scenario: memory limit exceeded
+### Requirement: 命令护栏（轻量分词 + argv 语义校验）
 
-- Given a sandboxed process exceeding the memory limit
-- When the cgroup v2 controller detects the overrun
-- Then the process is auto-killed
-- And a `kill`/`oom` event is recorded in the trace
+The command guard SHALL validate shell commands via lightweight tokenization and argv semantic checks, SHALL deny dangerous command patterns (rm recursive+force targeting protected/outside paths, redirects to protected paths, pipes to a shell, arbitrary code execution interpreters, exfiltration of sensitive files), SHALL extend the denylist with bypass variants, and SHALL default-allow unknown commands (guardrail, not boundary).
 
-### Requirement: Malicious Prompt Regression Suite
+#### Scenario: rm 目标越界拒绝
 
-The sandbox SHALL maintain a regression suite of 50+ malicious prompt cases (fork bomb, pipe-to-shell, rm -rf, /etc/passwd read, exfiltration, etc.) and SHALL assert all are blocked end-to-end.
+- **GIVEN** `rm -rf /` or `rm -fr /` or `rm -rf $HOME`
+- **WHEN** the command guard checks it
+- **THEN** it is denied (flag normalization catches reordering/splitting)
 
-#### Scenario: rm -rf root blocked
+#### Scenario: 重定向到受保护路径拒绝
 
-- Given a malicious prompt attempting `rm -rf /`
-- When the command is passed to the sandbox
-- Then the command is rejected
-- And the regression suite asserts the block
+- **GIVEN** `echo x > /etc/passwd`
+- **WHEN** the command guard checks it
+- **THEN** it is denied
 
-### Requirement: Sandbox Event Tracing
+#### Scenario: 默认放行未知命令
 
-The sandbox SHALL record structured events (denied/reason/kill/oom) into the trace recorder with a schema aligned with the observability event model.
+- **GIVEN** an unknown command `my-custom-tool --flag`
+- **WHEN** the command guard checks it
+- **THEN** it is allowed (default-allow; the backend isolates)
 
-#### Scenario: sandbox denial recorded
+### Requirement: 恶意命令攻击回归集
 
-- Given a command rejected by the sandbox
-- When the sandbox event is recorded
-- Then a structured event with `denied` and `reason` is written to the trace recorder
+The sandbox SHALL maintain a data-driven attack suite (`benchmarks/attacks/attacks.json`) of 50+ malicious commands across categories (file-destroy, priv-esc, code-exec, exfil, resource, bypass, sensitive-read), and SHALL assert all guard-deny cases are blocked.
+
+#### Scenario: 攻击集拦截
+
+- **GIVEN** the attack suite cases
+- **WHEN** each guard-deny case is checked by the command guard
+- **THEN** all are denied
 
 ## MODIFIED Requirements
 
-- `workspace-safety`: command validation SHALL use AST-based sentence validation instead of string-prefix matching, preserving the `assert_command_allowed` contract.
+### Requirement: 命令执行抽象
+
+`agent-runtime` 的命令执行 SHALL 使用 `ExecutionBackend`（可插拔沙箱），替代 `SandboxExecutor`；调用方（main/background/bash/__init__）SHALL 通过 `build_execution_backend(name)` 构建后端。`SandboxExecutor` SHALL 被移除（不留向后兼容别名）。
+
+#### Scenario: 迁移后无 SandboxExecutor
+
+- **GIVEN** the codebase after migration
+- **WHEN** searching for `SandboxExecutor`
+- **THEN** no references remain (callers use the factory)
