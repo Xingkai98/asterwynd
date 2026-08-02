@@ -25,8 +25,8 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | ToolRegistry | `agent/tools/registry.py` | 工具注册、schema 暴露、工具执行 |
 | WorkspacePolicy | `agent/workspace_policy.py` | 工作区路径、文件和命令安全边界 |
 | HookManager | `agent/hooks/manager.py` | 生命周期扩展点 |
-| MemoryManager | `agent/memory/manager.py` | 消息历史、90% 阈值 AutoCompact、可插拔 Summarizer |
-| ContextBuilder | `agent/context/` | 上下文注入管线：ASTER.md、记忆索引、技能、计划、待办等 ContextSource 统一编排 |
+| MemoryManager | `agent/memory/manager.py` | 消息历史、token 阈值 AutoCompact、可插拔 Summarizer；四字段摘要（已完成事项/待办事项/疑难点与决策/当前进行中）、tool_call pending 标记、L1/L2 层级压缩、增量 token 计数 |
+| ContextBuilder | `agent/context/` | 上下文注入管线：ASTER.md、记忆索引、技能、计划、待办等 ContextSource 统一编排；静态源缓存 + cache 感知分层注入（`build_blocks`，P0/P1/P2 稳定前缀） |
 | PlanningManager | `agent/planning/` | 当前运行的结构化计划状态 |
 | AgentRuntimeState | `agent/run_config.py` | 交互式 session 的当前 mode 和运行时 mode transition |
 | McpManager | `agent/mcp/` | MCP server 连接、discovery、tools/prompts/resources 调用和本地权限包装 |
@@ -42,7 +42,8 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 | 工具 | Capability / Risk | 作用 |
 | --- | --- | --- |
-| Read | workspace_read / low | 读取文件 |
+| Read | workspace_read / low | 读取文件；支持 `offset`/`limit` 分页，返回 `[ReadProgress file=...; offset=n; total=m]` 进度注记 |
+| ReadDoc | workspace_read / low | 按需读取深层 Markdown 文档（.md、32KB 上限） |
 | Write | workspace_write / medium | 创建新文件，禁止覆盖已有文件 |
 | Edit | workspace_write / medium | 精确文本替换 |
 | Bash | command_execute / high | 执行命令并返回结构化 JSON |
@@ -83,7 +84,7 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 
 - `web/server.py`: FastAPI app、WebSocket endpoint、静态文件服务。
 - `web/session.py`: 会话管理，每个 session 维护一组消息和 AgentLoop。
-- `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送。
+- `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送，payload 含 before/after messages·tokens 与压缩层级元数据。
 - `web/static/`: Chat 与 Debug 页面前端资源。
 
 Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan`。当工具调用需要审批时，服务端发送 `approval_request` 事件，前端展示脱敏参数摘要并回传批准或拒绝；每个 Web session 同一时刻只允许一个 pending approval。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。

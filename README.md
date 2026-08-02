@@ -26,8 +26,8 @@
 | **WorkspacePolicy** | 工作区安全边界，拒绝路径穿越、敏感文件写入、危险命令 |
 | **SandboxExecutor** | subprocess 沙箱，结构化输出（exit_code/stdout/stderr/duration/timed_out） |
 | **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
-| **MemoryManager** | 90% 阈值 AutoCompact、可插拔 Summarizer（LLM 四段式摘要 / 截断降级） |
-| **ContextBuilder** | 上下文注入管线，统一编排 ASTER.md、记忆索引、技能、计划、待办等 ContextSource |
+| **MemoryManager** | token 阈值 AutoCompact、可插拔 Summarizer（四字段结构化摘要 / 截断降级）；tool_call pending 标记、L1/L2 层级压缩、增量 token 计数 |
+| **ContextBuilder** | 上下文注入管线，统一编排 ASTER.md、记忆索引、技能、计划、待办等 ContextSource；静态源缓存 + 稳定前缀分层（Prefix Cache 断点） |
 | **Browser** | 受控只读浏览器：导航、截图、内容提取、标签页管理，安全策略约束 |
 | **SkillRuntime** | 目录式 Markdown skill 加载、index 注入、按需/always 激活、`/skill args` 显式调用 |
 | **MCP Adapter** | 连接 stdio / Streamable HTTP MCP server，注册 MCP tools，并通过 `/mcp-prompt`、`/mcp-resource` 注入上下文 |
@@ -245,11 +245,13 @@ agent = AgentLoop(hooks=HookManager([MyHook()]), ...)
 
 ### AutoCompact
 
-`MemoryManager.compact_if_needed()` 在每次工具调用轮次后检查 token 预算，达到 90% 阈值时触发压缩：
+`MemoryManager.compact_if_needed()` 在每次工具调用轮次后检查 token 预算，达到阈值时触发压缩：
 
 - 保留所有 `role=system` 消息
 - 保留最近 N 条对话（含 tool-call 链完整性保护）
-- 中间部分通过可插拔 `Summarizer` 生成摘要（LLM 四段式结构化摘要，无 LLM 时截断降级）
+- 中间部分通过可插拔 `Summarizer` 生成四字段结构化摘要（已完成事项/待办事项/疑难点与决策/当前进行中），无 LLM 时截断降级
+- 未完成的 tool_call 标记为 `[call#<i>: <tool_call_id> pending]`，避免压缩后工具链断裂
+- L1 摘要累积超阈值触发 L2 二次压缩（只保留最高层结论，带层级元数据）
 - 摘要以 `role=user` 消息注入（语义上为"前序会话上下文"）
 
 ```python
