@@ -59,14 +59,20 @@ The observability system SHALL classify system-level errors into four categories
 
 ### Requirement: Benchmark Regression Gate
 
-The observability system SHALL provide a benchmark regression gate that persists baseline metrics (success rate, p95 latency), compares a new run against the baseline, and returns a non-zero exit when success rate drops more than 5 percentage points or p95 latency degrades more than 5% relative.
+The observability system SHALL provide a benchmark regression gate that persists baseline metrics (success rate, p95 latency), compares a new run against the baseline, and returns a non-zero exit when success rate drops more than 5 percentage points or p95 latency exceeds `max(baseline * 1.05, baseline + 1.0s)` (relative 5% with an absolute 1-second floor so sub-second baselines are not subject to meaningless jitter).
 
 #### Scenario: gate blocks a degraded run
 
 - **GIVEN** a baseline with `success_rate=0.95` and `p95_latency_s=10.0`
-- **WHEN** a new run has `success_rate=0.85` or `p95_latency_s=11.0`
+- **WHEN** a new run has `success_rate=0.85` or `p95_latency_s=11.5`
 - **THEN** the gate returns non-zero
 - **AND** the report lists per-metric deltas
+
+#### Scenario: p95 exactly at the absolute floor ceiling passes
+
+- **GIVEN** a baseline with `p95_latency_s=10.0`
+- **WHEN** a new run has `p95_latency_s=11.0`
+- **THEN** the gate passes (ceiling is `max(10.5, 11.0)=11.0`, strict `>`)
 
 #### Scenario: update baseline from a trusted run
 

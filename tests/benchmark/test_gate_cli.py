@@ -48,10 +48,7 @@ def gate_env(tmp_path):
     base_commit = _git_out(repo, "rev-parse", "HEAD")
 
     tasks_dir = tmp_path / "tasks" / "gate-smoke"
-    for i, (cmd, expect) in enumerate(
-        [("python -c \"import sys; sys.exit(0)\"", "ok-a"),
-         ("python -c \"import sys; sys.exit(0)\"", "ok-b")]
-    ):
+    for i in range(2):
         task_dir = tasks_dir / f"gate-{i}"
         task_dir.mkdir(parents=True)
         (task_dir / "issue.md").write_text(f"Task {i}: verify exit 0.\n")
@@ -61,7 +58,7 @@ def gate_env(tmp_path):
                 "repo": "local",
                 "base_commit": base_commit,
                 "problem_statement_file": "issue.md",
-                "test_command": cmd,
+                "test_command": "python3 -c \"import sys; sys.exit(0)\"",
                 "timeout_seconds": 30,
             })
         )
@@ -116,7 +113,7 @@ def test_gate_blocks_on_success_rate_regression(gate_env, tmp_path):
     # Make the second task fail by pointing its test_command at a failing check.
     failing = tasks_dir / "gate-1" / "task.json"
     data = json.loads(failing.read_text())
-    data["test_command"] = "python -c \"import sys; sys.exit(1)\""
+    data["test_command"] = "python3 -c \"import sys; sys.exit(1)\""
     failing.write_text(json.dumps(data), encoding="utf-8")
     result = _invoke([
         "benchmark-gate",

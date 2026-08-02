@@ -77,3 +77,12 @@
 - [x] 9.1 CostLedger.flush 幂等化：`_flushed_count` 游标只写自上次 flush 以来的新增条目，主/子 loop 共享实例重复 flush 不再重复 append JSONL
 - [x] 9.2 load 后 flush 不重写历史：load 后 `_flushed_count` 前移，后续 flush 只写 load 之后的新记录
 - [x] 9.3 回归测试：test_cost_ledger.py 新增重复 flush 无重复 + load 后 flush 不重写历史 2 个测试
+
+## 10. 第二批审阅修复（独立 subagent 审阅 CHANGES_REQUESTED 闭环 Round 1）
+
+> 第二批实现完成后独立零记忆 subagent 审阅（issue #90 流程），CHANGES_REQUESTED，4 项已修复：
+
+- [x] 10.1 spec 场景与 gate 绝对下限边界对齐：spec delta + 当前规格的 p95 场景从 11.0 改为 11.5（`max(10*1.05, 10+1.0)=11.0` 严格 `>` 使恰好 11.0 通过），并补充"恰在绝对下限上限处通过"场景
+- [x] 10.2 测试/任务集 hermetic：gate-smoke task.json 与 test_gate_cli.py 的 test_command 从 `python` 改为 `python3`（仅 `python3` 的机器不再 exit 127）
+- [x] 10.3 timeline API 受 debug 门槛保护：`GET /api/sessions/{id}/timeline` 在 `ASTERWYND_DEBUG` 未启用时返回 404（与 /debug 页面一致）+ 回归测试
+- [x] 10.4 load_baseline 校验 metrics 形状：畸形基线（缺 success_rate/p95_latency_s）抛干净 ValueError 而非 KeyError + 回归测试

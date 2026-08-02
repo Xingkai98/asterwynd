@@ -248,6 +248,13 @@ def test_load_baseline_missing_returns_none(tmp_path) -> None:
     assert load_baseline(tmp_path / "nope.json") is None
 
 
+def test_load_baseline_malformed_metrics_raises_clean_error(tmp_path) -> None:
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps({"schema_version": 1, "metrics": {}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="metrics"):
+        load_baseline(path)
+
+
 def test_write_baseline_default_path() -> None:
     assert DEFAULT_BASELINE_PATH.name == "baseline.json"
 

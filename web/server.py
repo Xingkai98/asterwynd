@@ -80,9 +80,16 @@ def create_app(
 
     @app.get("/api/sessions/{session_id}/timeline")
     async def session_timeline(session_id: str):
-        """Return a session's tool-call timeline (durations desc + bar widths)."""
+        """Return a session's tool-call timeline (durations desc + bar widths).
+
+        Gated by debug mode, matching the ``/debug`` view that hosts the
+        Timeline panel: tool arguments are execution detail only shown when
+        ``ASTERWYND_DEBUG`` is enabled.
+        """
         from web.session import build_timeline_payload
 
+        if not debug_enabled():
+            return JSONResponse({"error": "Debug mode disabled"}, status_code=404)
         session = session_manager.get_session(session_id)
         if not session:
             return JSONResponse({"error": "session not found"}, status_code=404)

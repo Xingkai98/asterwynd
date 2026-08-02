@@ -522,19 +522,24 @@ async def test_timeline_api_returns_shaped_calls(app, mock_llm):
     from agent.hooks.builtin import TracingHook
     from agent.hooks.builtin.tracing import ToolCallTrace
 
-    manager = app.state.session_manager
-    session = manager.create_session(mock_llm, tools=[EchoTool()])
-    # The session already wires a TracingHook; populate it with recorded calls.
-    hook = next(h for h in session.agent.hooks.hooks if isinstance(h, TracingHook))
-    hook.calls = [
-        ToolCallTrace("Bash", {"cmd": "pwd"}, duration_ms=200.0, success=True),
-        ToolCallTrace("Read", {"path": "a.py"}, duration_ms=50.0, success=False),
-        ToolCallTrace("Edit", {"path": "a.py"}, duration_ms=0.0, success=True),  # in-flight
-    ]
+    old = os.environ.get("ASTERWYND_DEBUG", "")
+    try:
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
+        manager = app.state.session_manager
+        session = manager.create_session(mock_llm, tools=[EchoTool()])
+        # The session already wires a TracingHook; populate it with recorded calls.
+        hook = next(h for h in session.agent.hooks.hooks if isinstance(h, TracingHook))
+        hook.calls = [
+            ToolCallTrace("Bash", {"cmd": "pwd"}, duration_ms=200.0, success=True),
+            ToolCallTrace("Read", {"path": "a.py"}, duration_ms=50.0, success=False),
+            ToolCallTrace("Edit", {"path": "a.py"}, duration_ms=0.0, success=True),  # in-flight
+        ]
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get(f"/api/sessions/{session.session_id}/timeline")
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(f"/api/sessions/{session.session_id}/timeline")
+    finally:
+        os.environ["ASTERWYND_DEBUG"] = old
     assert resp.status_code == 200
     data = resp.json()
     assert data["session_id"] == session.session_id
@@ -549,9 +554,28 @@ async def test_timeline_api_returns_shaped_calls(app, mock_llm):
 
 @pytest.mark.asyncio
 async def test_timeline_api_404_unknown_session(app):
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/sessions/nonexistent/timeline")
+    old = os.environ.get("ASTERWYND_DEBUG", "")
+    try:
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sessions/nonexistent/timeline")
+    finally:
+        os.environ["ASTERWYND_DEBUG"] = old
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_timeline_api_disabled_when_debug_off(app):
+    old = os.environ.get("ASTERWYND_DEBUG", "")
+    try:
+        if "ASTERWYND_DEBUG" in os.environ:
+            del os.environ["ASTERWYND_DEBUG"]
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sessions/any/timeline")
+    finally:
+        os.environ["ASTERWYND_DEBUG"] = old
     assert resp.status_code == 404
 
 

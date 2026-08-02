@@ -166,7 +166,12 @@ def compare(
 
 
 def load_baseline(path: str | Path) -> dict | None:
-    """Load a baseline JSON; return ``None`` when the file is missing."""
+    """Load a baseline JSON; return ``None`` when the file is missing.
+
+    Validates the required shape (schema_version + ``metrics.success_rate`` /
+    ``metrics.p95_latency_s``) so a malformed baseline raises a clean
+    ``ValueError`` instead of a KeyError deep in ``compare``.
+    """
     p = Path(path)
     if not p.exists():
         return None
@@ -174,6 +179,13 @@ def load_baseline(path: str | Path) -> dict | None:
     if data.get("schema_version") != BASELINE_SCHEMA_VERSION:
         raise ValueError(
             f"unsupported baseline schema_version {data.get('schema_version')}"
+        )
+    metrics = data.get("metrics")
+    if not isinstance(metrics, dict) or not isinstance(
+        metrics.get("success_rate"), (int, float)
+    ) or not isinstance(metrics.get("p95_latency_s"), (int, float)):
+        raise ValueError(
+            f"baseline {p} missing metrics.success_rate / metrics.p95_latency_s"
         )
     return data
 
