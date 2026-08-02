@@ -56,3 +56,32 @@ The observability system SHALL classify system-level errors into four categories
 - **WHEN** 新 recorder 序列化它
 - **THEN** data 负载保持不变（timestamp 是 step 字段）
 - **AND** schema_version 附加在顶层
+
+### Requirement: Benchmark Regression Gate
+
+The observability system SHALL provide a benchmark regression gate that persists baseline metrics (success rate, p95 latency), compares a new run against the baseline, and returns a non-zero exit when success rate drops more than 5 percentage points or p95 latency degrades more than 5% relative.
+
+#### Scenario: gate blocks a degraded run
+
+- **GIVEN** a baseline with `success_rate=0.95` and `p95_latency_s=10.0`
+- **WHEN** a new run has `success_rate=0.85` or `p95_latency_s=11.0`
+- **THEN** the gate returns non-zero
+- **AND** the report lists per-metric deltas
+
+#### Scenario: update baseline from a trusted run
+
+- **GIVEN** a trusted run
+- **WHEN** the gate is run with `--update-baseline`
+- **THEN** the baseline file is rewritten with the run's metrics
+- **AND** subsequent runs compare against the new baseline
+
+### Requirement: Session Timeline
+
+The observability system SHALL expose a per-session timeline of tool calls ordered by duration (ms) with success status, shaping bar-width data for the web UI.
+
+#### Scenario: session timeline query
+
+- **GIVEN** a session with tool calls of varying durations
+- **WHEN** the timeline endpoint is queried
+- **THEN** calls are returned sorted by duration descending
+- **AND** each call carries `tool_name`, `duration_ms`, `success`, `arguments`, `index`, and `bar_pct`

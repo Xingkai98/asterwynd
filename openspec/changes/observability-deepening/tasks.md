@@ -25,24 +25,33 @@
 - [x] 3.3 每类告警策略（alert_level: immediate/warn/record）
 - [x] 3.4 单元测试：分类器、告警策略
 
-## 4. CI 回归门禁（后续批）
+## 4. CI 回归门禁（第二批）
 
-- [ ] 4.1 基线持久化（P95 延迟/成功率）
-- [ ] 4.2 CI 跑 benchmark → 对比基线 → 劣化 >5% 拦截（返回非零）
-- [ ] 4.3 复用 PR #80 statistics（bootstrap CI）
-- [ ] 4.4 集成测试：门禁命令
+> 设计见 design.md Decision 5-10。
 
-## 5. Session timeline 看板（后续批）
+- [ ] 4.1 `benchmarks/gate.py`：`load_baseline` / `compute_run_metrics` / `compare` / `GateVerdict` 纯逻辑（基线 JSON schema、success_rate 与 p95 口径对齐 report.py）
+- [ ] 4.2 `benchmark-gate` CLI 子命令：跑 benchmark → 对比基线 → 成功率绝对下降 >5pp 或 P95 相对上升 >5% 返回非零；`--require-baseline` / `--update-baseline` / `--baseline` / `--success-rate-drop` / `--p95-regression-frac`
+- [ ] 4.3 复用 report.py/statistics.py：`collect_run_results` 读结果、`bootstrap_ci` 报告当前跑与基线 CI（不进入阈值判定）
+- [ ] 4.4 单元测试：基线加载/指标计算/阈值判定（含边界：恰好 5%、无基线、无任务）
+- [ ] 4.5 集成测试：门禁命令端到端（fake agent 小任务集 + 合成基线，劣化拦截/更新基线）
+- [ ] 4.6 `benchmarks/tasks/gate-smoke/` 小型确定性任务集 + `benchmarks/baseline.json` 基线提交进仓库
+- [ ] 4.7 `.github/workflows/ci.yml` 新增 `benchmark-gate` job（fake agent + `--require-baseline`）
 
-- [ ] 5.1 单个 session timeline 可视化（tool call 耗时排序/条形）
-- [ ] 5.2 与 add-minimal-tui-runtime-view 对齐事件粒度
-- [ ] 5.3 集成测试：看板渲染
+## 5. Session timeline 看板（第二批）
+
+> 设计见 design.md Decision 11-13。
+
+- [ ] 5.1 `GET /api/sessions/{session_id}/timeline`：从 session hook 链找 TracingHook，返回按 duration_ms 降序 + `bar_pct` + 原始 `index` 的 calls
+- [ ] 5.2 与 add-minimal-tui-runtime-view 对齐事件粒度：timeline 条目 = tool_call→tool_result 对，tool_name/duration_ms 与 trace 同口径（文档记录对齐点）
+- [ ] 5.3 `/debug` 视图 Timeline 面板：拉取 API 渲染横向条形图（成功绿/失败红/hover 展开 arguments）+ 刷新按钮
+- [ ] 5.4 单元测试：timeline 数据整形（降序、bar_pct、无 calls 边界）
+- [ ] 5.5 集成测试：API 契约（字段完整/降序/bar_pct）+ `/debug` 页面含 timeline 容器
 
 ## 6. 收尾
 
-- [x] 6.1 OpenSpec spec 同步
+- [x] 6.1 OpenSpec spec 同步（第一批）
 - [x] 6.2 全量 pytest + openspec validate + artifact checker
-- [ ] 6.3 benchmark 量化（session 账单、异常分类准确率）
+- [ ] 6.3 benchmark 量化：`tests/benchmark/test_observability_quantification.py` 确定性验证 (a) CostLedger.bill() 分组/总额 (b) ErrorClassifier 标注样本分类准确率 (c) AgentLoop 工具错误路径端到端（trace token+error_type、ledger 记录）
 
 ## 7. 收尾校验（checker 要求项）
 
