@@ -420,10 +420,21 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
             f"（当前 {len(decisions)} 条）——独立 subagent design grilling 未完成"
         ]
 
-    # Fallback (compat with update-design-review-method): literal task marker.
+    # A *completed* change (non-docs, tasks all checked) must show structured
+    # grill evidence — the literal marker is no longer enough once the change
+    # is done. This is Design Decision 7: narrow the mandatory-evidence branch
+    # to implemented changes so legacy in-flight changes aren't flagged.
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
         return ["missing required file: tasks.md"]
+    if _tasks_all_complete(change_dir) and _changed_capabilities(change_dir):
+        return [
+            "reviews/grill-design.md missing — 实现已完成但独立 subagent design grilling 证据缺失。"
+            "请用 /grill 跑独立设计追问并产出结构化决策记录。"
+        ]
+
+    # Fallback (compat with update-design-review-method, in-flight changes):
+    # literal task marker.
     if not _has_design_review_task(tasks.read_text(encoding="utf-8")):
         return [
             "tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
@@ -435,7 +446,9 @@ def _extract_grill_decisions(text: str) -> list[str]:
     """Extract decision entries under ## Confirmed Decisions in grill-design.md.
 
     Accepts both the /grill command format (``- **决策**: ...`` list items) and
-    the ``### Decision N:`` heading format (subagent-authored records).
+    the ``### Decision N:`` heading format (subagent-authored records). Matches
+    half- and full-width colons, and counts each decision once (a subagent may
+    write a heading plus a list item for the same decision).
     """
     section = _extract_h2_sections(text).get("Confirmed Decisions", "")
     if not section or _is_placeholder_body(section):
@@ -443,11 +456,21 @@ def _extract_grill_decisions(text: str) -> list[str]:
     decisions: list[str] = []
     for line in section.splitlines():
         stripped = line.strip()
-        if stripped.startswith("- **决策**:"):
-            decisions.append(stripped)
+        if stripped.startswith("- **决策**：") or stripped.startswith("- **决策**:"):
+            decisions.append("list:" + stripped)
         elif stripped.startswith("### Decision ") or stripped.startswith("### 决策"):
-            decisions.append(stripped)
-    return decisions
+            decisions.append("heading:" + stripped)
+    # De-duplicate: a heading + list item describing the same decision counts once.
+    seen_titles: set[str] = set()
+    unique: list[str] = []
+    for item in decisions:
+        kind, _, content = item.partition(":")
+        title = content.strip().rstrip("。.；;")
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        unique.append(item)
+    return unique
 
 
 def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[str]:

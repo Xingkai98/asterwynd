@@ -11,7 +11,7 @@ implementing agent), SHALL produce a structured decision record at
 `openspec/changes/<id>/reviews/grill-design.md`, and SHALL be mechanically
 enforced: the PreToolUse write guard blocks code writes for a change whose
 grilling evidence is missing, and the artifact checker fails a completed change
-whose grilling evidence is absent.
+whose grilling evidence is absent or insufficient.
 
 #### Scenario: batch-grill-me is available
 
@@ -28,12 +28,21 @@ whose grilling evidence is absent.
 
 #### Scenario: grilling evidence missing blocks code writes
 
-- **GIVEN** a non-docs change with a spec delta and fully-checked tasks
+- **GIVEN** a non-docs change with a spec delta
 - **WHEN** the agent attempts a code write (agent/, tests/, scripts/) before a
   `reviews/grill-design.md` exists
 - **THEN** the PreToolUse write guard SHALL exit 2 and block the write
 - **AND** document writes (`proposal.md`, `design.md`, `tasks.md`, `specs/**`,
   `reviews/**`) are exempt
+
+#### Scenario: completed change without grilling evidence fails checker
+
+- **GIVEN** a non-docs change with a spec delta and fully-checked tasks
+- **WHEN** the artifact checker runs on a completed change that has no
+  `reviews/grill-design.md` (or fewer than 3 confirmed decisions)
+- **THEN** the checker SHALL report the missing/insufficient grilling evidence
+- **AND** a change with only a literal "batch-grill" task marker but no
+  structured evidence SHALL fail
 
 #### Scenario: batch-grill-me is unavailable
 

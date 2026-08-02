@@ -66,6 +66,14 @@ whose grilling evidence is absent or insufficient.
   documentation impact has a recorded final decision before implementation
   begins
 
+#### Scenario: completed change without grilling evidence fails checker
+- **GIVEN** a non-docs change with a spec delta and fully-checked tasks
+- **WHEN** the artifact checker runs on a completed change that has no
+  `reviews/grill-design.md` (or fewer than 3 confirmed decisions)
+- **THEN** the checker SHALL report the missing/insufficient grilling evidence
+- **AND** a change with only a literal "batch-grill" task marker but no
+  structured evidence SHALL fail
+
 ### Requirement: Diagnosis artifact
 Bug, regression, incident, and research-driven OpenSpec changes SHALL include a
 `diagnosis.md` artifact before implementation begins.

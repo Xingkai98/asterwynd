@@ -681,6 +681,37 @@ def test_grill_evidence_without_design_marker_passes(tmp_path):
     assert not any("design review" in e or "grill" in e.lower() for e in errors), errors
 
 
+def test_completed_change_literal_marker_without_evidence_fails(tmp_path):
+    """issue #95：已完成 change（tasks 全勾选 + spec delta）有字面 marker 但无
+    reviews/grill-design.md → 报错（纸糊的墙被堵住）。"""
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [x] 开发前使用 batch-grill-me。\n\n- [x] 完成项。\n")
+    write_spec_delta(change, "web-ui")
+
+    errors = check_change(change)
+    assert any("grill-design.md missing" in e for e in errors), errors
+
+
+def test_incomplete_change_literal_marker_without_evidence_passes(tmp_path):
+    """issue #95：未完成 change（tasks 未全勾选）有字面 marker → 不强制证据（存量不误伤）。"""
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [x] 开发前使用 batch-grill-me。\n\n- [ ] 待完成项。\n")
+    write_spec_delta(change, "web-ui")
+
+    errors = check_change(change)
+    assert not any("grill-design.md missing" in e for e in errors), errors
+
+
 def test_non_core_change_does_not_require_benchmark_smoke_task(tmp_path):
     change = tmp_path / "change-doc-process"
     write_change(
