@@ -48,13 +48,31 @@ async def test_limits_apply_cgroup_when_supported():
     backend = ProcessBackend(
         memory_mb=64, cgroup_supported=True, controller_factory=lambda: fake
     )
-    result = await backend.run("echo hi")
+    # The command must outlive the attach call, otherwise a fast `echo hi` can
+    # exit first and the attach is skipped (deterministic test).
+    result = await backend.run("sleep 0.2; echo hi")
     assert result.exit_code == 0
     assert fake.created is True
     assert fake.attached is True
     assert fake.cleaned is True
     assert result.degraded is False
     assert result.oom_killed is False
+
+
+def test_attach_skipped_when_process_already_exited():
+    """Regression (review fix 9.5): a process that exits before attach is
+    skipped (None), NOT a degradation."""
+    fake = FakeCgroup()
+    backend = ProcessBackend(
+        memory_mb=64, cgroup_supported=True, controller_factory=lambda: fake
+    )
+
+    class ExitedProc:
+        returncode = 0
+        pid = 12345
+
+    assert backend._attach(fake, ExitedProc()) is None
+    assert fake.attached is False
 
 
 @pytest.mark.asyncio
