@@ -142,6 +142,16 @@ class TraceRecorder:
                 parts.append(f"[image: {ref}]")
         return "\n".join(parts)
 
+    def record_sandbox_event(self, event: str, **data: Any) -> None:
+        """Record a structured sandbox event (denied/kill/oom/degraded).
+
+        Additive and backward-compatible: a new ``sandbox`` step type whose
+        data payload stays clean (timestamp is a TraceStep field). New step
+        types are open-ended and do not bump ``schema_version`` — only
+        structural changes to existing step payloads do.
+        """
+        self.record("sandbox", event=event, **data)
+
     def record_approval_request(self, request: dict[str, Any]) -> None:
         self.record("approval_request", **request)
 
@@ -150,6 +160,24 @@ class TraceRecorder:
 
     def record_edit(self, path: str, status: str, summary: str) -> None:
         self.record("edit", tool_name="Edit", path=path, status=status, summary=summary)
+
+    def record_compaction(
+        self,
+        before_messages: int,
+        after_messages: int,
+        before_tokens: int,
+        after_tokens: int,
+        tiers: list[dict] | None = None,
+    ) -> None:
+        """Record a memory compaction with before/after stats and tier trail."""
+        self.record(
+            "memory_compaction",
+            before_messages=before_messages,
+            after_messages=after_messages,
+            before_tokens=before_tokens,
+            after_tokens=after_tokens,
+            tiers=tiers or [],
+        )
 
     def record_parallel_execution(self, group: list[str]) -> None:
         self.record("parallel_execution_start", tools=group)
@@ -217,3 +245,17 @@ class TraceRecorder:
 
     def write_to_file(self, path: str | Path) -> None:
         Path(path).write_text(self.to_json() + "\n", errors="replace")
+
+
+class TraceRecorderSandboxSink:
+    """SandboxEventSink adapter that records into a TraceRecorder.
+
+    Non-blocking: appends a ``sandbox`` step, matching the rest of the
+    recorder's synchronous event API.
+    """
+
+    def __init__(self, recorder: TraceRecorder) -> None:
+        self._recorder = recorder
+
+    def emit(self, event: str, **data: Any) -> None:
+        self._recorder.record_sandbox_event(event, **data)

@@ -141,3 +141,85 @@ async def test_task_output_truncated(manager):
     await asyncio.sleep(0.5)
     completed = manager.check_completed()
     assert completed[0]["output_truncated"]
+
+
+class RecordingSink:
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+
+    def emit(self, event: str, **data):
+        self.events.append((event, data))
+
+
+@pytest.mark.asyncio
+async def test_timeout_emits_kill_event(sandbox):
+    """后台超时 kill 应发 kill 事件（design.md Decision 6：_monitor 超时分支）。"""
+    from agent.background import current_tool_call_id
+    from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
+
+    manager = BackgroundTaskManager(sandbox=sandbox)
+    sink = RecordingSink()
+    prev = current_sandbox_sink()
+    token = current_tool_call_id.set("tc_k1")
+    set_sandbox_sink(sink)
+    try:
+        await manager.start(
+            cmd="echo starting && sleep 30",
+            tool_call_id="tc_k1",
+            cwd="/tmp",
+            timeout=0.3,
+        )
+        await asyncio.sleep(1.0)
+        manager.check_completed()
+    finally:
+        current_tool_call_id.reset(token)
+        set_sandbox_sink(prev)
+
+    kills = [(e, d) for e, d in sink.events if e == "kill"]
+    assert len(kills) == 1
+    assert kills[0][1]["reason"] == "timeout"
+    assert kills[0][1]["command"] == "echo starting && sleep 30"
+    assert kills[0][1]["tool_call_id"] == "tc_k1"
+
+
+@pytest.mark.asyncio
+async def test_stop_emits_kill_event(sandbox):
+    from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
+
+    manager = BackgroundTaskManager(sandbox=sandbox)
+    sink = RecordingSink()
+    prev = current_sandbox_sink()
+    set_sandbox_sink(sink)
+    try:
+        task_id = await manager.start(
+            cmd="sleep 60", tool_call_id="tc_k2", cwd="/tmp", timeout=None
+        )
+        await manager.stop(task_id)
+    finally:
+        set_sandbox_sink(prev)
+
+    kills = [(e, d) for e, d in sink.events if e == "kill"]
+    assert len(kills) == 1
+    assert kills[0][1]["reason"] == "user_stop"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_emits_kill_event(sandbox):
+    from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
+
+    manager = BackgroundTaskManager(sandbox=sandbox)
+    sink = RecordingSink()
+    prev = current_sandbox_sink()
+    set_sandbox_sink(sink)
+    try:
+        await manager.start(
+            cmd="sleep 30", tool_call_id="tc_k3", cwd="/tmp", timeout=None
+        )
+        await asyncio.sleep(0.3)
+        manager.cleanup()
+    finally:
+        set_sandbox_sink(prev)
+
+    kills = [(e, d) for e, d in sink.events if e == "kill"]
+    assert len(kills) == 1
+    assert kills[0][1]["reason"] == "cleanup"

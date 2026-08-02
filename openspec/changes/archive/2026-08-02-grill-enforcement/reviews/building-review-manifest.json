@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "grill-enforcement",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "subagent-a3bf525268a6bbd8d-round3",
+  "base_sha": "dc83b4c8c63395f827f59f33ae2d3b7fb724fed4",
+  "head_sha": "f16f3e008dd5ab748949de5ec2f48149fdf3c88e",
+  "tasks_hash": "sha256:e802373fa5ccb27db0fe0563f48c3c208501378b570eec8666f0da927cf8c5fd",
+  "spec_hash": "sha256:c033007ccb4cada7e9f31294ecfd4cbdeba8af90796cae296a25b6f7344e590f",
+  "diff_hash": "sha256:4003520a870272a35ee5a73735d0d1068891e662a8b6623e8035f8f129b2d921",
+  "report_hash": "sha256:6390e645ed36547cc207c23d251331f96202dd0c6c447b3a41ea498be230899f"
+}

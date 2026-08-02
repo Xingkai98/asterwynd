@@ -35,8 +35,7 @@ from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.cost_tracker import CostLedger
 from agent.subagent.manager import SubAgentManager
-from agent.tools.factory import build_default_tool_registry
-from agent.tools.sandbox import build_execution_backend
+from agent.tools.factory import build_default_tool_registry, build_sandbox_from_config
 from agent.workspace_policy import WorkspacePolicy
 from agent.background import BackgroundTaskManager
 from agent.session import SessionSnapshot, SessionStore
@@ -252,6 +251,11 @@ def _build_agent_core(
         summary_tokens=config.memory.summary_tokens,
     )
 
+    try:
+        sandbox = build_sandbox_from_config(config)
+    except RuntimeError as exc:
+        raise ConfigError(str(exc)) from exc
+
     registry = build_default_tool_registry(
         policy=workspace_policy,
         mode_policy=ModePolicy(
@@ -269,6 +273,7 @@ def _build_agent_core(
         quality_config=config.tools.quality,
         memory_config=config.memory,
         llm=llm,
+        sandbox=sandbox,
     )
 
     hooks = HookManager([
@@ -285,16 +290,10 @@ def _build_agent_core(
         workspace_policy=workspace_policy,
         parent_mode=run_config.mode,
         cost_ledger=cost_ledger,
+        sandbox=sandbox,
     )
     skill_runtime = SkillRuntime.from_roots(config.skills.roots)
 
-    sandbox = build_execution_backend(
-        config.sandbox.backend,
-        image=config.sandbox.image,
-        memory_mb=config.sandbox.memory_mb,
-        cpus=config.sandbox.cpus,
-        timeout=config.sandbox.timeout_seconds,
-    )
     background_manager = BackgroundTaskManager(sandbox=sandbox)
     session_store = SessionStore(
         sessions_root=_sessions_root(workspace_policy.workspace_root)

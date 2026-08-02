@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.config import AsterwyndConfig, AgentConfig, SkillsConfig
+from agent.message import extract_text
 from agent.run_config import AgentMode
 from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
@@ -878,7 +879,7 @@ def test_websocket_skill_slash_command_activates_skill_and_runs_agent(tmp_path):
         "帮我审一下这个 change"
     ]
     system_text = "\n".join(
-        message.content or ""
+        extract_text(message.content) if not isinstance(message.content, str) else (message.content or "")
         for message in mock_llm.last_messages
         if message.role == "system"
     )

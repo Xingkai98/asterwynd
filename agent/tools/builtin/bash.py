@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from agent.background import current_tool_call_id
+from agent.sandbox_events import emit_sandbox_event
 from agent.tools.base import Tool, tool_parameters
 from agent.tools.command_guard import CommandGuard, CommandVerdict
 from agent.tools.sandbox import ExecutionBackend, build_execution_backend
@@ -66,17 +67,23 @@ class BashTool(Tool):
         try:
             self.policy.assert_command_allowed(cmd)
         except PermissionError as e:
+            emit_sandbox_event("denied", reason="workspace_policy", command=cmd, tool="Bash")
             return f"Error: {e}"
         # Command guard (guardrail, not boundary) — argv semantic checks.
         if self._guard.check(cmd) is CommandVerdict.DENY:
+            reason = f"command_guard:{self._guard.last_reason or 'denied'}"
+            emit_sandbox_event("denied", reason=reason, command=cmd, tool="Bash")
             return "Error: Command denied by sandbox command guard"
 
         if run_in_background:
             return await self._execute_background(cmd, timeout)
 
+        # Pass timeout through (None → backend's configured default). The old
+        # `timeout or 30.0` silently overrode sandbox.timeout_seconds, so the
+        # config value never took effect.
         result = await self.sandbox.run(
             cmd,
-            timeout=timeout or 30.0,
+            timeout=timeout,
             cwd=self.policy.workspace_root,
         )
         return result.to_json()

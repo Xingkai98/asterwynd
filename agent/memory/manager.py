@@ -1,9 +1,11 @@
 # agent/memory/manager.py
 import logging
-from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Literal, Optional, TYPE_CHECKING
 
-from agent.message import Message, count_tokens_for_content
+from agent.message import Message, TextBlock, count_tokens_for_content, extract_text
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -13,6 +15,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("asterwynd.memory")
 
 _enc = None
+
+# ReadTool 分页进度注记（见 agent/tools/builtin/read.py）：
+#   [ReadProgress file="<path>"; offset=<n>; total=<m>]
+_READ_PROGRESS_RE = re.compile(r'\[ReadProgress file="([^"]*)"; offset=(\d+); total=(\d+)\]')
 
 
 def _count_tokens(text: str) -> int:
@@ -26,6 +32,23 @@ def _count_tokens(text: str) -> int:
     if _enc is False:
         return len(text) // 4
     return len(_enc.encode(text))
+
+
+@dataclass
+class SummaryTier:
+    """A tier record in the hierarchical running summary (L1 / L2)."""
+
+    tier: Literal["L1", "L2"]
+    content: str
+    source_range: str = ""
+    generated_at: str = ""
+
+    def to_metadata(self) -> dict:
+        return {
+            "tier": self.tier,
+            "source_range": self.source_range,
+            "generated_at": self.generated_at,
+        }
 
 
 @dataclass(frozen=True)
@@ -57,6 +80,7 @@ class MemoryManager:
         summarizer: Optional["Summarizer"] = None,
         compaction_gap: int = 5,
         compact_trigger_tokens: int | None = None,
+        l2_trigger_tokens: int = 6_000,
     ):
         self.messages: list["Message"] = []
         self.max_tokens = max_tokens
@@ -68,6 +92,13 @@ class MemoryManager:
         self._last_compaction_iteration: int = -compaction_gap  # allow first
         self._running_summary: str = ""
         self._last_compaction_end_index: int = 0
+        # L1/L2 hierarchical state (design Decision 3)
+        self.l2_trigger_tokens = l2_trigger_tokens
+        self._l1_chunks: list[str] = []          # accumulated L1 summaries since last L2
+        self._l1_chunk_ranges: list[str] = []    # source ranges for tier metadata
+        self._l1_accumulated_tokens: int = 0     # incremental L1 token accumulator
+        self._l2_summary: str | None = None
+        self._tiers: list[SummaryTier] = []      # full tier trail
 
     # ------------------------------------------------------------------
     # Summarizer (lazy init for backwards compatibility)
@@ -92,7 +123,20 @@ class MemoryManager:
         self.messages.append(message)
 
     def count_tokens(self, messages: list["Message"]) -> int:
-        return sum(count_tokens_for_content(m.content, _count_tokens) for m in messages)
+        return sum(self._count_message_tokens(m) for m in messages)
+
+    def _count_message_tokens(self, message: "Message") -> int:
+        """Count a single message's tokens, caching the result on the message.
+
+        The cache lives in the non-serialized ``Message._tokens`` field, so
+        repeated ``count_tokens`` calls across iterations are O(1) for
+        unchanged messages.  Compaction creates a fresh summary message and
+        resume reload creates fresh messages, both with ``_tokens=None`` —
+        they are recomputed on first touch.
+        """
+        if message._tokens is None:
+            message._tokens = count_tokens_for_content(message.content, _count_tokens)
+        return message._tokens
 
     async def compact_if_needed(
         self,
@@ -192,7 +236,14 @@ class MemoryManager:
         middle_tokens = self.count_tokens(middle)
         summary_budget = int(middle_tokens * 0.30)
 
-        new_summary = await summarizer.summarize(middle, budget=summary_budget)
+        # Decorate the middle segment before summarization: annotate incomplete
+        # tool calls as `[call#<i>: <tool_call_id> pending]` and carry the last
+        # Read pagination progress (file, offset, total) so both LLM and
+        # truncation summarizers see them (design Decision: tool-call pairing +
+        # pagination progress preservation).
+        annotated_middle = self._decorate_for_summary(middle, recent)
+
+        new_summary = await summarizer.summarize(annotated_middle, budget=summary_budget)
         if not new_summary:
             if self._running_summary:
                 summary_msg = Message(role="user", content=self._running_summary)
@@ -212,6 +263,38 @@ class MemoryManager:
             self._running_summary = merged
         else:
             self._running_summary = new_summary
+
+        # L1/L2 hierarchical bookkeeping (design Decision 3).
+        now = datetime.now(timezone.utc).isoformat()
+        middle_range = (
+            f"non_system[{self._last_compaction_end_index}:{recent_boundary}]"
+            if self._running_summary and self._last_compaction_end_index
+            else f"non_system[0:{recent_boundary}]"
+        )
+        self._l1_chunks.append(new_summary)
+        self._l1_chunk_ranges.append(middle_range)
+        self._tiers.append(SummaryTier(
+            tier="L1", content=new_summary, source_range=middle_range, generated_at=now,
+        ))
+        # Incremental L1 accumulator (avoids re-encoding all chunks each compact).
+        self._l1_accumulated_tokens += _count_tokens(new_summary)
+        accumulated = self._l1_accumulated_tokens
+        if len(self._l1_chunks) >= 2 and accumulated >= self.l2_trigger_tokens:
+            # Compress the accumulated L1 summaries together with any earlier
+            # L2 base so top-level conclusions never lose prior context.
+            compress_input = ([self._l2_summary] if self._l2_summary else []) + self._l1_chunks
+            l2 = await self._compress_to_l2(compress_input, budget=int(accumulated * 0.30))
+            if l2:
+                self._running_summary = l2
+                self._l2_summary = l2
+                self._tiers.append(SummaryTier(
+                    tier="L2", content=l2,
+                    source_range="accumulated L1", generated_at=now,
+                ))
+                self._l1_chunks = []
+                self._l1_chunk_ranges = []
+                self._l1_accumulated_tokens = 0
+                logger.info("[Memory] L2 compression applied (%d tokens -> L2 conclusion)", accumulated)
 
         self._last_compaction_end_index = 1  # summary is at non_system[0]
 
@@ -320,6 +403,131 @@ class MemoryManager:
         return None
 
     # ------------------------------------------------------------------
+    # Tool-call pending annotation + L2 compression
+    # ------------------------------------------------------------------
+
+    def _annotate_pending_calls(
+        self,
+        messages: list["Message"],
+        recent: list["Message"],
+    ) -> list["Message"]:
+        """Return a copy of *messages* with incomplete tool calls annotated.
+
+        A tool call is pending when no ``tool`` result in *messages* or
+        *recent* carries its ``tool_call_id``.  Each pending call is marked
+        ``[call#<i>: <tool_call_id> pending]`` where ``<i>`` is its 1-based
+        position within the assistant message.  The annotation is appended to
+        the assistant message content so both LLMSummarizer and
+        TruncationSummarizer see it.
+        """
+        result_ids: set[str] = set()
+        for m in (*messages, *recent):
+            if m.role == "tool" and m.tool_call_id:
+                result_ids.add(m.tool_call_id)
+
+        annotated: list["Message"] = []
+        for m in messages:
+            if m.role != "assistant" or not m.tool_calls:
+                annotated.append(m)
+                continue
+            pending = [
+                (i, tc)
+                for i, tc in enumerate(m.tool_calls, 1)
+                if getattr(tc, "id", None) and tc.id not in result_ids
+            ]
+            if not pending:
+                annotated.append(m)
+                continue
+            markers = " ".join(f"[call#{i}: {tc.id} pending]" for i, tc in pending)
+            content = m.content
+            if isinstance(content, str):
+                content = f"{content}\n\n{markers}" if content else markers
+            else:
+                content = [*content, TextBlock(text=markers)]
+            annotated.append(Message(
+                role=m.role,
+                content=content,
+                tool_call_id=m.tool_call_id,
+                reasoning_content=m.reasoning_content,
+                tool_calls=m.tool_calls,
+            ))
+        return annotated
+
+    def _extract_read_progress(
+        self, messages: list["Message"]
+    ) -> list[tuple[str, int, int]]:
+        """Last ``[ReadProgress file=...; offset=...; total=...]`` per file.
+
+        Only tool results carry ``total``, so the scan reads tool-result
+        content and keeps the last match per file (last-window semantics —
+        the resume candidate for a paged large-file read).
+        """
+        per_file: dict[str, tuple[int, int]] = {}
+        for m in messages:
+            if m.role != "tool" or not m.content:
+                continue
+            text = m.content if isinstance(m.content, str) else extract_text(m.content)
+            for match in _READ_PROGRESS_RE.finditer(text):
+                per_file[match.group(1)] = (int(match.group(2)), int(match.group(3)))
+        return [(path, offset, total) for path, (offset, total) in per_file.items()]
+
+    def _decorate_for_summary(
+        self,
+        middle: list["Message"],
+        recent: list["Message"],
+    ) -> list["Message"]:
+        """Apply pending-call annotations and pagination-progress hints.
+
+        The decorated list is passed to the summarizer; the original messages
+        are untouched (pending/progress are shallow copies or appended hints).
+        """
+        annotated = self._annotate_pending_calls(middle, recent)
+        progress = self._extract_read_progress([*middle, *recent])
+        if progress:
+            lines = [
+                f"- {path}: offset={offset}, total={total}"
+                for path, offset, total in progress
+            ]
+            hint = Message(
+                role="user",
+                content=(
+                    "当前分页读取进度（大文件续读用，请在「当前进行中」中保留 (file, offset, total)）:\n"
+                    + "\n".join(lines)
+                ),
+            )
+            annotated = [*annotated, hint]
+        return annotated
+
+    async def _compress_to_l2(
+        self,
+        tier_summaries: list[str],
+        budget: int = 0,
+    ) -> str | None:
+        """Second-level compression of accumulated L1 summaries.
+
+        Uses the summarizer's ``compress`` when available; falls back to
+        concatenation when unsupported or on failure.
+        """
+        if not tier_summaries:
+            return None
+        summarizer = self._get_summarizer()
+        if summarizer is not None and hasattr(summarizer, "compress"):
+            try:
+                result = await summarizer.compress(tier_summaries, budget=budget)
+                if result:
+                    return result
+            except Exception:
+                logger.warning(
+                    "[Memory] L2 compress() failed, falling back to concatenation",
+                    exc_info=True,
+                )
+        return "\n\n---\n\n".join(tier_summaries)
+
+    def tier_metadata(self) -> list[dict]:
+        """Tier trail of the hierarchical running summary (for trace/report)."""
+        return [tier.to_metadata() for tier in self._tiers]
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -330,3 +538,8 @@ class MemoryManager:
         self.messages = [m for m in self.messages if m.role == "system"]
         self._running_summary = ""
         self._last_compaction_end_index = 0
+        self._l1_chunks = []
+        self._l1_chunk_ranges = []
+        self._l1_accumulated_tokens = 0
+        self._l2_summary = None
+        self._tiers = []

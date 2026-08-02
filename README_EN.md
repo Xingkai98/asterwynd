@@ -26,8 +26,8 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **WorkspacePolicy** | Workspace safety boundary that rejects path traversal, sensitive file writes, and dangerous commands. |
 | **SandboxExecutor** | Subprocess sandbox with structured output: exit_code, stdout, stderr, duration, and timed_out. |
 | **HookManager** | 6 lifecycle extension points with built-in logging, retry, tracing, and token budget hooks. |
-| **MemoryManager** | 90%-threshold AutoCompact with pluggable Summarizer (LLM four-section summary / truncation fallback). |
-| **ContextBuilder** | Context injection pipeline that orchestrates ASTER.md, memory index, skills, plans, todos, and other ContextSources. |
+| **MemoryManager** | Token-threshold AutoCompact with pluggable Summarizer (four-field structured summary / truncation fallback); tool_call pending markers, L1/L2 hierarchical compaction, incremental token counting. |
+| **ContextBuilder** | Context injection pipeline that orchestrates ASTER.md, memory index, skills, plans, todos, and other ContextSources; static-source caching + stable-prefix layering (prefix-cache breakpoints). |
 | **Browser** | Controlled read-only browser: navigation, screenshots, content extraction, and tab management with safety policy. |
 | **SkillRuntime** | Directory-style Markdown skills with index injection, always/on-demand activation, and explicit `/skill args` invocation. |
 | **MCP Adapter** | Connects stdio / Streamable HTTP MCP servers, registers MCP tools, and injects prompt/resource context through `/mcp-prompt` and `/mcp-resource`. |
@@ -246,11 +246,13 @@ agent = AgentLoop(hooks=HookManager([MyHook()]), ...)
 
 ### AutoCompact
 
-`MemoryManager.compact_if_needed()` checks the token budget after each tool-call round. At 90% of budget, it triggers compaction:
+`MemoryManager.compact_if_needed()` checks the token budget after each tool-call round. At the threshold, it triggers compaction:
 
 - Keep all `role=system` messages.
 - Keep the most recent N messages (with tool-call chain integrity protection).
-- Summarize the middle section via pluggable `Summarizer` (LLM four-section summary, or truncation fallback when no LLM).
+- Summarize the middle section via pluggable `Summarizer` into a four-field structured summary (completed / pending / difficulties-and-decisions / in-progress), or truncation fallback when no LLM.
+- Incomplete tool calls are marked `[call#<i>: <tool_call_id> pending]` so the tool-call chain stays valid across compaction.
+- Accumulated L1 summaries over the threshold trigger an L2 second-level compression (top-level conclusions only, with tier metadata).
 - Summary is injected as a `role=user` message (semantically "prior conversation context").
 
 ```python

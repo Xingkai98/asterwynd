@@ -204,6 +204,68 @@ class TestRenderErrorHandling:
         # Failing source is simply absent from the result
 
 
+class CountingStaticSource:
+    name = "Static"
+    priority = 0
+    budget = 1000
+    critical = True
+    static = True
+    render_calls = 0
+
+    async def render(self, context: BuildContext) -> str:
+        CountingStaticSource.render_calls += 1
+        return "STATIC_CONTENT"
+
+
+class CountingDynamicSource:
+    name = "Dynamic"
+    priority = 4
+    budget = 1000
+    critical = False
+    render_calls = 0
+
+    async def render(self, context: BuildContext) -> str:
+        CountingDynamicSource.render_calls += 1
+        return "DYNAMIC_CONTENT"
+
+
+class TestStaticSourceCache:
+    """Static sources render once across builds with the same context (task 1.2)."""
+
+    async def test_static_source_cached_across_builds(self):
+        CountingStaticSource.render_calls = 0
+        CountingDynamicSource.render_calls = 0
+        builder = ContextBuilder(total_budget=20_000)
+        builder.register(CountingStaticSource())
+        builder.register(CountingDynamicSource())
+        ctx = make_context()
+
+        r1 = await builder.build(ctx)
+        r2 = await builder.build(ctx)
+
+        assert r1 == r2
+        # Static source rendered once; dynamic source re-rendered each build.
+        assert CountingStaticSource.render_calls == 1
+        assert CountingDynamicSource.render_calls == 2
+
+    async def test_mode_change_invalidates_static_cache(self):
+        CountingStaticSource.render_calls = 0
+        builder = ContextBuilder(total_budget=20_000)
+        builder.register(CountingStaticSource())
+        await builder.build(make_context(mode=AgentMode.BUILD))
+        await builder.build(make_context(mode=AgentMode.READ_ONLY))
+        assert CountingStaticSource.render_calls == 2
+
+    async def test_non_static_source_never_cached(self):
+        CountingDynamicSource.render_calls = 0
+        builder = ContextBuilder(total_budget=20_000)
+        builder.register(CountingDynamicSource())
+        ctx = make_context()
+        await builder.build(ctx)
+        await builder.build(ctx)
+        assert CountingDynamicSource.render_calls == 2
+
+
 class TestBuildContextFields:
     """BuildContext carries environment-level info used by sources."""
 

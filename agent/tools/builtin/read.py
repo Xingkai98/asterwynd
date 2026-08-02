@@ -58,6 +58,11 @@ def _guess_mime_type(ext: str) -> str:
         "properties": {
             "path": {"type": "string", "description": "文件路径"},
             "limit": {"type": "integer", "description": "最多读取行数", "default": None},
+            "offset": {
+                "type": "integer",
+                "description": "从第几行开始读取（0 起）；配合 limit 分页续读大文件。返回末尾带 [ReadProgress] 进度注记",
+                "default": None,
+            },
         },
         "required": ["path"],
     },
@@ -70,7 +75,7 @@ class ReadTool(Tool):
     def __init__(self, policy: WorkspacePolicy | None = None):
         self.policy = policy or WorkspacePolicy()
 
-    async def execute(self, path: str, limit: int = None, **kwargs) -> str | list["ContentBlock"]:
+    async def execute(self, path: str, limit: int = None, offset: int = None, **kwargs) -> str | list["ContentBlock"]:
         try:
             p = self.policy.assert_read_allowed(path)
             if not p.exists():
@@ -81,8 +86,21 @@ class ReadTool(Tool):
                 return self._read_image(p, path)
 
             content = p.read_text(errors="replace")
+            lines = content.splitlines()
+            total = len(lines)
+
+            if offset is not None:
+                # Pagination mode: 0-based slice + machine-parseable progress note.
+                # Emitted ONLY when offset is explicitly provided so the default
+                # path+limit behavior stays byte-identical.
+                offset = max(0, offset)
+                start = offset
+                end = (start + limit) if limit else None
+                body = "\n".join(lines[start:end])
+                note = f'\n\n[ReadProgress file="{path}"; offset={offset}; total={total}]'
+                return body + note
+
             if limit:
-                lines = content.splitlines()
                 content = "\n".join(lines[:limit])
             return content
         except PermissionError as e:

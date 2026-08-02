@@ -103,6 +103,8 @@ class SandboxResult:
     stderr: str
     duration_ms: float
     timed_out: bool
+    oom_killed: bool = False
+    degraded: bool = False
 
     def __str__(self) -> str:
         if self.timed_out:

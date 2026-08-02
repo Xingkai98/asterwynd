@@ -19,7 +19,7 @@ from agent.question import QuestionHandler
 from agent.message import Message, system_message, tool_result_message, extract_text
 from agent.result import RunResult, StopReason, ToolCallMade
 from agent.tools.base import ToolCall
-from agent.llm import LLMResponse, ToolCallDelta
+from agent.llm import LLMResponse, ToolCallDelta, CachePlan
 from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
 from agent.context import BuildContext, ContextBuilder
@@ -57,6 +57,8 @@ from agent.planning import PlanItem
 from agent.skills.runtime import SkillRuntime
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 from agent.background import BackgroundTaskManager, current_tool_call_id
+from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
+from agent.trace_recorder import TraceRecorderSandboxSink
 from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 
 if TYPE_CHECKING:
@@ -72,6 +74,14 @@ def _default_ledger_path() -> str:
     """Default cost ledger path (first batch: hardcoded, configurable later)."""
     base = Path.home() / ".asterwynd"
     return str(base / "ledger.jsonl")
+
+# Core stable tool set for the prefix-cache stable layer (design Decision 4).
+# These tools are always injected (selector ON) and sort first; their schemas
+# are byte-stable so the tools segment stays cacheable.
+CORE_STABLE_TOOL_NAMES = (
+    "Read", "Edit", "Write", "Bash", "Glob", "Grep", "InspectGitDiff",
+)
+
 
 class AgentLoop:
     def __init__(
@@ -467,8 +477,14 @@ class AgentLoop:
             )
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
+        previous_sandbox_sink = current_sandbox_sink()
         self._active_on_event = on_event
         self._active_trace_recorder = trace_recorder
+        if trace_recorder:
+            # Sandbox backends/tools emit into the run's trace via the
+            # contextvar sink; save/restore mirrors _active_trace_recorder so
+            # nested subagent runs and recorder-less runs do not cross-talk.
+            set_sandbox_sink(TraceRecorderSandboxSink(trace_recorder))
         try:
             return await self._run(
                 messages,
@@ -488,6 +504,7 @@ class AgentLoop:
                     logger.warning("Failed to save session", exc_info=True)
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
+            set_sandbox_sink(previous_sandbox_sink)
             if self.cost_ledger is not None:
                 try:
                     self.cost_ledger.flush(_default_ledger_path())
@@ -885,11 +902,27 @@ class AgentLoop:
                     result=result,
                 ))
 
+            before_msgs = len(messages)
+            before_tokens = self.memory.count_tokens(messages)
             compacted = await self.memory.compact_if_needed(messages, iteration=self._iteration)
-            if compacted and on_event:
-                await on_event("memory_compaction", {
-                    "total_messages": len(messages),
-                })
+            if compacted:
+                if on_event:
+                    await on_event("memory_compaction", {
+                        "total_messages": len(messages),
+                        "before_messages": before_msgs,
+                        "after_messages": len(messages),
+                        "before_tokens": before_tokens,
+                        "after_tokens": self.memory.count_tokens(messages),
+                        "tiers": self.memory.tier_metadata(),
+                    })
+                if trace_recorder:
+                    trace_recorder.record_compaction(
+                        before_messages=before_msgs,
+                        after_messages=len(messages),
+                        before_tokens=before_tokens,
+                        after_tokens=self.memory.count_tokens(messages),
+                        tiers=self.memory.tier_metadata(),
+                    )
 
         logger.warning(f"[AgentLoop] 达到最大迭代次数 {self.max_iterations}")
         final_content = self._last_assistant_content(messages)
@@ -923,10 +956,16 @@ class AgentLoop:
         otherwise falls back to the full visible schema list (original
         behavior, design Q4 degrade-to-full fallback). The query is built from
         the most recent user message plus recent tool call names (design Q9).
+
+        When a selector exists, the core stable tool set is wired via
+        ``set_stable_tools`` so the stable prefix stays byte-identical for the
+        prefix cache (design Decision 4; the selector wiring was previously
+        inert).
         """
         selector = getattr(self.tool_registry, "_selector", None)
         if selector is None:
             return self.tool_registry.get_all_schemas()
+        selector.set_stable_tools(CORE_STABLE_TOOL_NAMES)
 
         query_parts: list[str] = []
         for msg in reversed(messages):
@@ -956,6 +995,7 @@ class AgentLoop:
         tools: Optional[list[dict]] = None,
         on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
     ) -> tuple[LLMResponse, bool]:
+        self._apply_cache_plan(messages, tools)
         if not self._should_stream_llm():
             return await self.llm.chat(
                 messages=messages,
@@ -995,6 +1035,73 @@ class AgentLoop:
                     "stop_reason": response.stop_reason,
                 })
         return response, True
+
+    def _apply_cache_plan(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+    ) -> None:
+        """Set the Anthropic cache_control breakpoint plan on the LLM.
+
+        Only providers that declare ``supports_cache_control`` receive the
+        plan (OpenAI auto-caches and must never see cache_control).  The plan
+        is consumed (read-and-cleared) by ``AnthropicLLM._build_payload``.
+        """
+        if not getattr(self.llm, "supports_cache_control", False):
+            return
+        plan = self._compute_cache_plan(messages, tools)
+        try:
+            self.llm.cache_plan = plan
+        except Exception:
+            logger.debug("cache_plan not settable on llm", exc_info=True)
+
+    def _compute_cache_plan(
+        self,
+        messages: list[Message],
+        tools: Optional[list[dict]] = None,
+    ) -> CachePlan:
+        """Per-mode breakpoint strategy (design Decision 4 / grill Q3).
+
+        Selector OFF (default): the full tools array is deterministic, so the
+        breakpoint on the last stable system block caches tools + system
+        together.  Selector ON: the varying tail invalidates the system
+        breakpoint, so only the last core tool carries the breakpoint.
+        """
+        from agent.message import TextBlock
+
+        # Compute the absolute system-block index of the LAST cacheable block.
+        # System blocks can precede the injected context (e.g. a pre-existing
+        # system message), so a cache count alone would misplace the breakpoint.
+        stable_system_breakpoint = 0
+        block_index = 0
+        for m in messages:
+            if m.role != "system":
+                continue
+            if isinstance(m.content, list):
+                for b in m.content:
+                    if isinstance(b, TextBlock) and b.cache:
+                        stable_system_breakpoint = block_index + 1
+                    block_index += 1
+            else:
+                block_index += 1  # a plain-string system block renders as one block
+
+        selector = getattr(self.tool_registry, "_selector", None)
+        if selector is None:
+            return CachePlan(
+                stable_system_block_count=stable_system_breakpoint,
+                stable_tool_count=0,
+            )
+
+        stable_names = getattr(selector, "_stable", set())
+        stable_tool_count = 0
+        for tool in tools or []:
+            func = tool.get("function") or {}
+            name = func.get("name") or tool.get("name")
+            if name in stable_names:
+                stable_tool_count += 1
+            else:
+                break  # stable tools are a contiguous prefix
+        return CachePlan(stable_system_block_count=0, stable_tool_count=stable_tool_count)
 
     def _should_stream_llm(self) -> bool:
         stream_chat = getattr(self.llm, "stream_chat", None)
@@ -1143,16 +1250,19 @@ class AgentLoop:
             total_budget=self._injection_budget,
             user_system_prompt=self._user_system_prompt,
         )
-        injected = await self.context_builder.build(ctx)
+        # Stable prefix layering (design Decision 4): system blocks are injected
+        # as a list of per-P-layer TextBlocks; cacheable layers (P0/P1/P2) carry
+        # the cache flag for the Anthropic cache_control breakpoint.
+        blocks = await self.context_builder.build_blocks(ctx)
 
-        if not injected:
+        if not blocks:
             return messages
 
         insert_at = 0
         while insert_at < len(messages) and messages[insert_at].role == "system":
             insert_at += 1
 
-        context_message = system_message(injected)
+        context_message = Message(role="system", content=blocks)
         return [
             *messages[:insert_at],
             context_message,

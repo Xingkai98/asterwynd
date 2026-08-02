@@ -19,7 +19,7 @@ _BACKENDS: dict[str, type[ExecutionBackend]] = {
 
 # Backend-specific constructor kwargs (config passes a superset; filter per backend).
 _BACKEND_KWARGS: dict[str, tuple[str, ...]] = {
-    "process": ("timeout",),
+    "process": ("timeout", "memory_mb", "cpus"),
     "docker": ("image", "memory_mb", "cpus", "timeout"),
 }
 
