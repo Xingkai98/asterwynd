@@ -58,3 +58,11 @@
 - [x] 8.2 benchmark smoke verification（coding-agent core change 要求）— fake agent 跑通，结果与 baseline 一致
 - [x] 8.3 当前规格同步：把 spec delta 合并到 `openspec/specs/tool-governance/spec.md` ✅
 - [x] 8.4 第二批 spec 同步：质量评分 + MCP 健康 requirement delta 合并当前规格 ✅
+
+## 9. 独立 subagent 审阅修复（issue #90 流程，CHANGES_REQUESTED 闭环）
+
+> 归档后由独立零记忆 subagent 审阅（issue #90），发现 2 个中等问题并修复：
+
+- [x] 9.1 MCP 工具失败被 quality store 记为成功：loop status 判定未识别 `[MCP tool error: ...]` 前缀，修复加 `startswith("[MCP tool error")`，失败调用不再污染质量分
+- [x] 9.2 配置段未接入解析器：`_parse_tools_config` 不解析 selection/quality、`_parse_mcp_config` 不解析 health；新增 `_parse_selection_config`/`_parse_quality_config`/`_parse_mcp_health_config` + `_parse_positive_float` helper，YAML 配置可真正开启功能
+- [x] 9.3 回归测试：test_config.py 新增 selection/quality/health 解析 2 个测试；test_loop.py 新增 MCP 错误状态判定 + quality 失败记录 1 个测试

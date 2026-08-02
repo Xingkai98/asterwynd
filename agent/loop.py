@@ -809,6 +809,7 @@ class AgentLoop:
                     if result_text.startswith("[Error")
                     or result_text.startswith("Error")
                     or result_text.startswith("[Permission denied")
+                    or result_text.startswith("[MCP tool error")
                     else "ok"
                 )
                 approval_required = bool(

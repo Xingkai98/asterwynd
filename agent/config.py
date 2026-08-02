@@ -534,6 +534,81 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
         web_search=_parse_web_search_config(mapping.get("web_search", {}), path),
         display=_parse_tool_display_config(mapping.get("display", {}), path),
         browser=_parse_browser_config(mapping.get("browser"), path),
+        selection=_parse_selection_config(mapping.get("selection", {}), path),
+        quality=_parse_quality_config(mapping.get("quality", {}), path),
+    )
+
+
+def _parse_selection_config(raw: Any, path: Path) -> ToolSelectionConfig:
+    """解析 tools.selection 配置段（语义去重 + Top-K 动态选择）。"""
+    mapping = _expect_mapping(raw, path, "tools.selection")
+    return ToolSelectionConfig(
+        enabled=_parse_bool(mapping.get("enabled", False), path, "tools.selection.enabled"),
+        top_k=_validate_positive_int(
+            mapping.get("top_k", 5),
+            "tools.selection.top_k",
+            path=path,
+        ),
+        latency_budget_ms=_parse_positive_float(
+            mapping.get("latency_budget_ms", 50.0),
+            "tools.selection.latency_budget_ms",
+            path=path,
+        ),
+        dedup_threshold=_parse_positive_float(
+            mapping.get("dedup_threshold", 0.7),
+            "tools.selection.dedup_threshold",
+            path=path,
+        ),
+    )
+
+
+def _parse_quality_config(raw: Any, path: Path) -> QualityConfig:
+    """解析 tools.quality 配置段（质量评分 + 软降级）。"""
+    mapping = _expect_mapping(raw, path, "tools.quality")
+    store_path_raw = mapping.get("store_path")
+    store_path: str | None = None
+    if store_path_raw is not None:
+        if not isinstance(store_path_raw, str) or not store_path_raw.strip():
+            raise ConfigError(f"{path}: tools.quality.store_path must be a non-empty string")
+        store_path = os.path.expandvars(store_path_raw.strip())
+    return QualityConfig(
+        enabled=_parse_bool(mapping.get("enabled", False), path, "tools.quality.enabled"),
+        window_size=_validate_positive_int(
+            mapping.get("window_size", 50),
+            "tools.quality.window_size",
+            path=path,
+        ),
+        success_weight=_parse_positive_float(
+            mapping.get("success_weight", 0.5),
+            "tools.quality.success_weight",
+            path=path,
+        ),
+        duration_weight=_parse_positive_float(
+            mapping.get("duration_weight", 0.3),
+            "tools.quality.duration_weight",
+            path=path,
+        ),
+        approval_weight=_parse_positive_float(
+            mapping.get("approval_weight", 0.2),
+            "tools.quality.approval_weight",
+            path=path,
+        ),
+        duration_ceiling_ms=_parse_positive_float(
+            mapping.get("duration_ceiling_ms", 30_000.0),
+            "tools.quality.duration_ceiling_ms",
+            path=path,
+        ),
+        degrade_threshold=_parse_positive_float(
+            mapping.get("degrade_threshold", 0.4),
+            "tools.quality.degrade_threshold",
+            path=path,
+        ),
+        min_samples=_validate_positive_int(
+            mapping.get("min_samples", 5),
+            "tools.quality.min_samples",
+            path=path,
+        ),
+        store_path=store_path,
     )
 
 
@@ -671,6 +746,40 @@ def _parse_mcp_config(raw: Any, path: Path) -> McpConfig:
     return McpConfig(
         default_timeout_seconds=default_timeout_seconds,
         servers=servers,
+        health=_parse_mcp_health_config(mapping.get("health", {}), path),
+    )
+
+
+def _parse_mcp_health_config(raw: Any, path: Path) -> McpHealthConfig:
+    """解析 mcp.health 配置段（运行期健康检查）。"""
+    mapping = _expect_mapping(raw, path, "mcp.health")
+    return McpHealthConfig(
+        enabled=_parse_bool(mapping.get("enabled", False), path, "mcp.health.enabled"),
+        health_check_interval_s=_parse_positive_float(
+            mapping.get("health_check_interval_s", 30.0),
+            "mcp.health.health_check_interval_s",
+            path=path,
+        ),
+        ping_timeout_s=_parse_positive_float(
+            mapping.get("ping_timeout_s", 5.0),
+            "mcp.health.ping_timeout_s",
+            path=path,
+        ),
+        failure_window_size=_validate_positive_int(
+            mapping.get("failure_window_size", 20),
+            "mcp.health.failure_window_size",
+            path=path,
+        ),
+        degrade_failure_threshold=_parse_positive_float(
+            mapping.get("degrade_failure_threshold", 0.5),
+            "mcp.health.degrade_failure_threshold",
+            path=path,
+        ),
+        degrade_min_calls=_validate_positive_int(
+            mapping.get("degrade_min_calls", 5),
+            "mcp.health.degrade_min_calls",
+            path=path,
+        ),
     )
 
 
@@ -1101,6 +1210,26 @@ def _validate_positive_int(
         prefix = f"{path}: " if path else ""
         raise ConfigError(f"{prefix}{field_name} must be a positive integer")
     return raw
+
+
+def _parse_positive_float(
+    raw: Any,
+    field_name: str,
+    *,
+    path: Path | None = None,
+) -> float:
+    """Parse a strictly-positive float (int accepted and widened)."""
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        value = float(raw)
+    elif isinstance(raw, float):
+        value = raw
+    else:
+        prefix = f"{path}: " if path else ""
+        raise ConfigError(f"{prefix}{field_name} must be a positive number")
+    if value <= 0:
+        prefix = f"{path}: " if path else ""
+        raise ConfigError(f"{prefix}{field_name} must be a positive number")
+    return value
 
 
 def _default_modes() -> dict[AgentMode, ModeConfig]:

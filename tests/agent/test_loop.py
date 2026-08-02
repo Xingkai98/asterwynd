@@ -2072,8 +2072,6 @@ async def test_subagent_loop_inherits_cost_ledger_and_tool_name():
 @pytest.mark.asyncio
 async def test_tool_result_records_error_type_on_error():
     """回归：工具返回错误文本时 record_tool_result 应带 error_type。"""
-    from agent.observability import ErrorClassifier
-
     class PermissionDeniedTool(Tool):
         name = "DeniedTool"
         description = "fails with permission denied"
@@ -2111,3 +2109,51 @@ async def test_tool_result_records_error_type_on_error():
     assert tool_result_steps, "应记录 tool_result"
     assert tool_result_steps[0].data["status"] == "error"
     assert tool_result_steps[0].data["error_type"] == "permission_denied"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_error_marks_status_error_and_quality_failure():
+    """回归：MCP 工具返回 [MCP tool error: ...] 应判为 error，不污染质量分。"""
+    from agent.tools.governance.quality import ToolQualityStore
+
+    class McpFailingTool(Tool):
+        name = "McpFail"
+        description = "fails via mcp"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            return "[MCP tool error: servers/mcp-tools: ConnectionError: boom]"
+
+    class ToolThenDoneLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    content="using tool",
+                    tool_calls=[ToolCallDelta(id="c1", name="McpFail", arguments="{}")],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    registry = ToolRegistry()
+    registry.register(McpFailingTool())
+    quality = ToolQualityStore()
+    registry.set_quality(quality)
+    trace = TraceRecorder()
+    loop = AgentLoop(
+        llm=ToolThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    await loop.run([Message(role="user", content="test")], trace_recorder=trace)
+
+    tool_result_steps = [s for s in trace.steps if s.type == "tool_result"]
+    assert tool_result_steps, "应记录 tool_result"
+    assert tool_result_steps[0].data["status"] == "error"
+    # MCP 失败调用不应被 quality store 记为成功（直接检查窗口内记录）
+    window = list(quality._windows["McpFail"])
+    assert window and window[0]["success"] is False
