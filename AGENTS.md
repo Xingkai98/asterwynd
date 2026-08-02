@@ -87,7 +87,7 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 **每次新 change 实现完成、发起 PR 前，必须运行 `/review-loop`**：spawn 独立零记忆 subagent 审阅 → 判 verdict → CHANGES_REQUESTED 则修复并加回归测试 → 再审，直到 **PASS 或 3 轮封顶**。
 
 - 审阅维度（沿用 `scripts/workflow_methods.json` `building.reviewing_impl`）：任务逐项验证、正确性、Spec 对齐、冗余度、测试覆盖、安全性、可维护性、CI 完整性
-- 报告产出到 `.handoff/<change-id>/building-review.md`，含 `PASS`/`CHANGES_REQUESTED`/`BLOCKED` verdict + 逐条任务验证 + 带 `文件:行号` 证据的 issues
+- 报告产出到 `openspec/changes/<change-id>/reviews/building-review.md`（随 change 进 PR，CI 可机械校验），含 `PASS`/`CHANGES_REQUESTED`/`BLOCKED` verdict + 逐条任务验证 + 带 `文件:行号` 证据的 issues
 - 审阅通过后生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）
 - **机械强制**：`scripts/check_openspec_artifacts.py` 对非 docs + 有 spec delta + **tasks.md 全部 `[x]` 勾选**（实现完成）的 change 强制 building-review.md + manifest 存在且 PASS——缺审阅直接报错。这是 PR 合入前必跑的门禁；提案/部分实现的 change 不受此拦截
 - 受保护 artifact（`docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`openspec/changes/archive/**`、`docs/openspec-change-backlog.md`）的修改仍需 `workflow-events.jsonl` 结构化解释事件；阶段 review report 需对应 review manifest

@@ -17,7 +17,7 @@ def _git(repo, *args):
 
 
 def test_review_report_without_manifest_is_rejected(tmp_path):
-    review_dir = tmp_path / ".handoff" / "test-change"
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
     review_dir.mkdir(parents=True)
     (review_dir / "building-review.md").write_text(
         "## Review\n\nPASS\n",
@@ -30,7 +30,7 @@ def test_review_report_without_manifest_is_rejected(tmp_path):
 
 
 def test_review_report_hash_mismatch_is_rejected(tmp_path):
-    review_dir = tmp_path / ".handoff" / "test-change"
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
     review_dir.mkdir(parents=True)
     (review_dir / "building-review.md").write_text(
         "## Review\n\nPASS after edit\n",
@@ -56,7 +56,7 @@ def test_review_report_hash_mismatch_is_rejected(tmp_path):
 
 
 def test_manifest_missing_review_evidence_fields_is_rejected(tmp_path):
-    review_dir = tmp_path / ".handoff" / "test-change"
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
     review_dir.mkdir(parents=True)
     report_path = review_dir / "building-review.md"
     report_path.write_text("## Review\n\nPASS\n", encoding="utf-8")
@@ -81,7 +81,7 @@ def test_manifest_missing_review_evidence_fields_is_rejected(tmp_path):
 
 
 def test_matching_pass_manifest_is_accepted(tmp_path):
-    review_dir = tmp_path / ".handoff" / "test-change"
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
     review_dir.mkdir(parents=True)
     report_path = review_dir / "building-review.md"
     report_path.write_text("## Review\n\nPASS\n", encoding="utf-8")
@@ -109,12 +109,12 @@ def test_matching_pass_manifest_is_accepted(tmp_path):
 
 
 def test_tasks_hash_mismatch_is_rejected(tmp_path):
-    review_dir = tmp_path / ".handoff" / "test-change"
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
     review_dir.mkdir(parents=True)
     report_path = review_dir / "building-review.md"
     report_path.write_text("## Review\n\nPASS\n", encoding="utf-8")
     tasks_path = tmp_path / "openspec" / "changes" / "test-change" / "tasks.md"
-    tasks_path.parent.mkdir(parents=True)
+    tasks_path.parent.mkdir(parents=True, exist_ok=True)
     tasks_path.write_text("- [x] changed after review\n", encoding="utf-8")
     (review_dir / "building-review-manifest.json").write_text(
         json.dumps(
@@ -158,7 +158,7 @@ def test_git_diff_hash_mismatch_is_rejected(tmp_path):
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
     change_dir.mkdir(parents=True)
     (change_dir / "tasks.md").write_text("- [x] reviewed\n", encoding="utf-8")
-    review_dir = tmp_path / ".handoff" / "test-change"
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
     review_dir.mkdir(parents=True)
     report_path = review_dir / "building-review.md"
     report_path.write_text("## Review\n\nPASS\n", encoding="utf-8")

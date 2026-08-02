@@ -248,12 +248,19 @@ def _benchmark_smoke_passes(repo_root: Path) -> tuple[bool, str]:
 
 
 def _check_review_report(change_id: str, phase: str, report_name: str | None = None) -> list[str]:
-    """Check that a review report exists and has no blockers."""
+    """Check that a review report exists and has no blockers.
+
+    Review evidence lives in the change directory's ``reviews/`` subdir (so it
+    is committed with the change and CI can verify it); see
+    agent/workflow/review_manifest.py.
+    """
     errors: list[str] = []
     if report_name is None:
         report_name = f"{phase}-review.md"
-    hd = _handoff_dir()
-    report_path = hd / change_id / report_name
+    repo_root = Path.cwd()
+    report_path = (
+        repo_root / "openspec" / "changes" / change_id / "reviews" / report_name
+    )
     if not report_path.exists():
         errors.append(f"审阅报告缺失: {report_path} — 尚未运行独立子 Agent 审阅")
     else:
@@ -266,7 +273,7 @@ def _check_review_report(change_id: str, phase: str, report_name: str | None = N
             else:
                 from agent.workflow.review_manifest import verify_review_manifest
 
-                errors.extend(verify_review_manifest(hd.parent, change_id, phase))
+                errors.extend(verify_review_manifest(repo_root, change_id, phase))
         except Exception:
             errors.append(f"无法读取审阅报告: {report_path}")
     return errors

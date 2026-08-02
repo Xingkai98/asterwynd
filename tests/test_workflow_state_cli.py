@@ -218,9 +218,9 @@ def test_review_manifest_command_writes_manifest(tmp_path):
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
     WorkflowManager(change_dir, repo_root=tmp_path).init("test-change")
 
-    handoff_dir = tmp_path / ".handoff" / "test-change"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    (handoff_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
+    review_dir = change_dir / "reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
     (change_dir / "tasks.md").write_text("- [x] cover the path\n", encoding="utf-8")
     (change_dir / "specs").mkdir(parents=True, exist_ok=True)
 
@@ -245,7 +245,7 @@ def test_review_manifest_command_writes_manifest(tmp_path):
         text=True,
     )
 
-    manifest_path = handoff_dir / "building-review-manifest.json"
+    manifest_path = review_dir / "building-review-manifest.json"
 
     assert result.returncode == 0
     assert manifest_path.exists()

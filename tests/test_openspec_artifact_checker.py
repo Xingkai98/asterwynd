@@ -104,11 +104,12 @@ def write_spec_delta(root: Path, capability: str = "web-ui"):
 def write_review_evidence(repo_root: Path, change_id: str, phase: str = "building"):
     """写一个通过 verify_review_manifest 的 review report + manifest。
 
+    审阅证据放在 change 目录的 reviews/ 子目录（随 change 进 PR，CI 可校验）。
     测试目录非 git repo，verify 跳过 sha 校验；哈希基于实际文件计算。
     """
     from agent.workflow.review_manifest import write_review_manifest
 
-    review_dir = repo_root / ".handoff" / change_id
+    review_dir = repo_root / "openspec" / "changes" / change_id / "reviews"
     review_dir.mkdir(parents=True, exist_ok=True)
     report_path = review_dir / f"{phase}-review.md"
     report_path.write_text("## Verdict\n\n**PASS**\n", encoding="utf-8")
@@ -142,7 +143,7 @@ def test_check_change_rejects_handoff_projection_mismatch(tmp_path):
 def test_check_change_rejects_review_report_without_manifest(tmp_path):
     change = tmp_path / "openspec" / "changes" / "reviewed-change"
     write_change(change, proposal_for("docs"))
-    review_dir = tmp_path / ".handoff" / "reviewed-change"
+    review_dir = change / "reviews"
     review_dir.mkdir(parents=True)
     (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
 
@@ -209,7 +210,7 @@ def test_feature_change_rejects_review_report_without_manifest(tmp_path):
         "- [x] 功能实现。\n",
     )
     write_spec_delta(change, "web-ui")
-    review_dir = tmp_path / ".handoff" / "feature-change"
+    review_dir = change / "reviews"
     review_dir.mkdir(parents=True)
     (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
 

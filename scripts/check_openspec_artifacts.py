@@ -541,8 +541,10 @@ def _tasks_all_complete(change_dir: Path) -> bool:
 
 
 def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[str]:
-    repo_root = _repo_root_for_change_dir(change_dir)
-    review_dir = repo_root / ".handoff" / change_dir.name
+    # Review evidence lives inside the change directory (reviews/), so it is
+    # committed with the change and CI can verify it mechanically. See
+    # agent/workflow/review_manifest.py.
+    review_dir = change_dir / "reviews"
     review_report = review_dir / "building-review.md"
 
     # Mandatory building review for non-docs changes that ship code: the
@@ -569,6 +571,7 @@ def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[s
 
     from agent.workflow.review_manifest import verify_review_manifest
 
+    repo_root = _repo_root_for_change_dir(change_dir)
     errors: list[str] = []
     for report_path in sorted(review_dir.glob("*-review.md")):
         phase = report_path.name.removesuffix("-review.md")

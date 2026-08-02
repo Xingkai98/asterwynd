@@ -20,11 +20,25 @@ REQUIRED_REVIEW_FIELDS = (
 
 
 def review_report_path(repo_root: str | Path, change_id: str, phase: str) -> Path:
-    return Path(repo_root) / ".handoff" / change_id / f"{phase}-review.md"
+    return (
+        Path(repo_root)
+        / "openspec"
+        / "changes"
+        / change_id
+        / "reviews"
+        / f"{phase}-review.md"
+    )
 
 
 def review_manifest_path(repo_root: str | Path, change_id: str, phase: str) -> Path:
-    return Path(repo_root) / ".handoff" / change_id / f"{phase}-review-manifest.json"
+    return (
+        Path(repo_root)
+        / "openspec"
+        / "changes"
+        / change_id
+        / "reviews"
+        / f"{phase}-review-manifest.json"
+    )
 
 
 def build_review_manifest(
