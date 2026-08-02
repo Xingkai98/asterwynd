@@ -19,6 +19,7 @@ class TextBlock:
     """文本内容块 — 构造时应显式传入 text= 关键字参数"""
     text: str = ""
     type: Literal["text"] = field(default="text", init=False)
+    cache: bool = False  # 稳定前缀标记（Anthropic cache_control 断点用）
 
 
 @dataclass
@@ -37,7 +38,10 @@ ContentBlock = TextBlock | ImageBlock
 def content_block_to_dict(block: ContentBlock) -> dict:
     """将单个 ContentBlock 序列化为 dict"""
     if isinstance(block, TextBlock):
-        return {"type": block.type, "text": block.text}
+        d = {"type": block.type, "text": block.text}
+        if block.cache:
+            d["cache"] = True
+        return d
     d: dict = {"type": block.type, "image_url": asdict(block.image_url)}
     if block.file_path:
         d["file_path"] = block.file_path
@@ -48,7 +52,7 @@ def content_block_from_dict(data: dict) -> ContentBlock:
     """从 dict 反序列化 ContentBlock"""
     block_type = data.get("type", "text")
     if block_type == "text":
-        return TextBlock(text=data.get("text", ""))
+        return TextBlock(text=data.get("text", ""), cache=bool(data.get("cache", False)))
     if block_type == "image_url":
         image_url_data = data.get("image_url", {})
         return ImageBlock(
@@ -93,6 +97,8 @@ class Message:
     tool_call_id: Optional[str] = None
     reasoning_content: Optional[str] = None
     tool_calls: list = field(default_factory=list)
+    # 非序列化 token 计数缓存（增量计数用；to_dict/from_dict 不包含）
+    _tokens: Optional[int] = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"role": self.role}

@@ -4,7 +4,11 @@ import json
 import re
 from typing import Optional, TYPE_CHECKING
 
-from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
+from agent.llm import (
+    BaseLLM, CachePlan, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage,
+    supports_vision, vision_mode, _messages_have_images, _is_400_error,
+    sanitize_payload_for_logging,
+)
 from agent.message import Message, TextBlock, ImageBlock
 
 if TYPE_CHECKING:
@@ -29,6 +33,8 @@ class AnthropicLLM(BaseLLM):
         "tool_use": "tool_calls",
     }
 
+    supports_cache_control = True  # 非 Anthropic 端点（DeepSeek-anthropic 等）可能拒绝 cache_control
+
     def __init__(
         self,
         api_key: str,
@@ -37,6 +43,8 @@ class AnthropicLLM(BaseLLM):
         max_tokens: int = 16384,
     ):
         super().__init__(api_key=api_key, base_url=base_url, model=model, max_tokens=max_tokens)
+        self.cache_plan: CachePlan | None = None
+        self._last_cache_plan: CachePlan | None = None
 
     def _get_headers(self) -> dict:
         return {
@@ -64,11 +72,20 @@ class AnthropicLLM(BaseLLM):
             else:
                 return await self._chat_nonstream(payload)
         except Exception as e:
-            if not try_vision:
-                raise
             if not _is_400_error(e):
                 raise
             logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            # Some Anthropic-compatible endpoints (e.g. DeepSeek-anthropic)
+            # reject `cache_control`; retry once without it.
+            if self._payload_has_cache_control(payload):
+                logger.info("400 with cache_control — retrying without it")
+                payload = self._strip_cache_control(payload)
+                if self.stream:
+                    return await self._chat_stream(payload)
+                else:
+                    return await self._chat_nonstream(payload)
+            if not try_vision:
+                raise
             logger.info(
                 "First attempt with images failed (400) for model=%s, retrying without images",
                 resolved_model,
@@ -140,7 +157,63 @@ class AnthropicLLM(BaseLLM):
         if tools:
             payload["tools"] = [self._convert_tool(tool) for tool in tools]
 
+        self._apply_cache_plan(payload)
         return payload
+
+    # ------------------------------------------------------------------
+    # Prompt caching (cache_control)
+    # ------------------------------------------------------------------
+
+    def _apply_cache_plan(self, payload: dict) -> None:
+        """Attach ``cache_control`` breakpoints per the CachePlan set by the loop.
+
+        The plan is consumed once per request: the loop sets ``self.cache_plan``
+        before ``chat``/``stream_chat``; this method reads-and-clears it so a
+        stale plan never leaks into summarizer or other direct chat calls.
+        Per-mode strategy (design Decision 4 / grill Q3): selector OFF places a
+        breakpoint on the last stable system block only; selector ON places one
+        on the last core tool only.
+        """
+        plan = getattr(self, "cache_plan", None)
+        self.cache_plan = None  # consume once
+        self._last_cache_plan = plan  # keep for 400-retry detection
+        if plan is None:
+            return
+
+        if plan.stable_system_block_count > 0:
+            system = payload.get("system")
+            if system:
+                idx = min(plan.stable_system_block_count, len(system)) - 1
+                if idx >= 0 and isinstance(system[idx], dict):
+                    system[idx] = {**system[idx], "cache_control": {"type": "ephemeral"}}
+        if plan.stable_tool_count > 0:
+            tools = payload.get("tools")
+            if tools:
+                idx = min(plan.stable_tool_count, len(tools)) - 1
+                if idx >= 0 and isinstance(tools[idx], dict):
+                    tools[idx] = {**tools[idx], "cache_control": {"type": "ephemeral"}}
+
+    @staticmethod
+    def _payload_has_cache_control(payload: dict) -> bool:
+        for block in payload.get("system") or []:
+            if isinstance(block, dict) and "cache_control" in block:
+                return True
+        for tool in payload.get("tools") or []:
+            if isinstance(tool, dict) and "cache_control" in tool:
+                return True
+        return False
+
+    @staticmethod
+    def _strip_cache_control(payload: dict) -> dict:
+        """Return a deep copy of the payload without any cache_control keys."""
+        stripped = json.loads(json.dumps(payload))
+        for block in stripped.get("system") or []:
+            if isinstance(block, dict):
+                block.pop("cache_control", None)
+        for tool in stripped.get("tools") or []:
+            if isinstance(tool, dict):
+                tool.pop("cache_control", None)
+        return stripped
 
     async def stream_chat(
         self,
@@ -164,11 +237,30 @@ class AnthropicLLM(BaseLLM):
             ):
                 yield event
         except Exception as e:
-            if not try_vision:
-                raise
             if not _is_400_error(e):
                 raise
             logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            # Some Anthropic-compatible endpoints reject `cache_control`; retry once
+            # without it (mirrors the non-streaming path in chat()).  The plan was
+            # consumed by the first _stream_chat_impl's _build_payload, so the
+            # retry below naturally produces a payload without cache_control.
+            last_plan = getattr(self, "_last_cache_plan", None)
+            had_cache = bool(
+                last_plan
+                and (last_plan.stable_system_block_count > 0 or last_plan.stable_tool_count > 0)
+            )
+            if had_cache:
+                logger.info("Stream 400 with cache_control — retrying without it")
+                async for event in self._stream_chat_impl(
+                    messages,
+                    tools,
+                    resolved_model,
+                    force_vision=force_vision,
+                ):
+                    yield event
+                return
+            if not try_vision:
+                raise
             logger.info(
                 "First stream attempt with images failed (400) for model=%s, retrying without images",
                 resolved_model,

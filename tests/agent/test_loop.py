@@ -6,7 +6,7 @@ import os
 from agent.approval import ApprovalDecisionStatus, ApprovalResponse
 from agent.background import BackgroundTaskManager
 from agent.loop import AgentLoop
-from agent.message import Message, system_message
+from agent.message import Message, system_message, extract_text
 from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
 from agent.session import SessionStore, SessionSnapshot
 from agent.tools.base import Tool, tool_parameters, ToolCall
@@ -20,6 +20,12 @@ from agent.subagent.manager import SubAgentManager
 from agent.skills.loader import Skill
 from agent.skills.runtime import SkillRuntime
 from agent.tool_permissions import ToolCapability, ToolPermission, ToolRiskLevel
+
+
+def _msg_text(content) -> str:
+    """Normalize Message.content (str or list of blocks) to plain text."""
+    return extract_text(content) if not isinstance(content, str) else content
+
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -341,8 +347,8 @@ async def test_agent_loop_injects_planning_context_without_mutating_messages():
 
     # Planning context is now part of the ContextBuilder injection block
     # (index 1), rendered alongside SystemPrompt, MemoryIndex, Skills, etc.
-    assert "base system" in llm.messages[0].content
-    assert "Current structured planning state:\n- [in_progress] Read docs" in llm.messages[1].content
+    assert "base system" in _msg_text(llm.messages[0].content)
+    assert "Current structured planning state:\n- [in_progress] Read docs" in _msg_text(llm.messages[1].content)
     assert [message.content for message in messages] == ["base system", "hi", "done"]
 
 @pytest.mark.asyncio
@@ -999,6 +1005,78 @@ async def test_agent_loop_emits_memory_compaction_only_when_compacted():
     assert "memory_compaction" not in event_names
 
 
+class _CompactionTriggerLLM:
+    """First response issues a tool call so compaction's loop site is reached."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+        self.call_count += 1
+        if self.call_count == 1:
+            return LLMResponse(
+                content="Using a tool.",
+                tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+        return LLMResponse(content="done", stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_memory_compaction_event_carries_token_and_tier_stats():
+    """memory_compaction 事件携带 before/after tokens + tier 元数据（task 4.1）。"""
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=_CompactionTriggerLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        memory=MemoryManager(max_tokens=1, recent_window=2, compaction_gap=0),
+    )
+
+    await loop.run([Message(role="user", content="x" * 200)], on_event=on_event)
+
+    compact_events = [p for n, p in events if n == "memory_compaction"]
+    assert compact_events, "expected a memory_compaction event"
+    payload = compact_events[0]
+    assert "before_tokens" in payload
+    assert "after_tokens" in payload
+    assert "before_messages" in payload
+    assert "after_messages" in payload
+    assert payload["after_messages"] <= payload["before_messages"]
+    assert payload["before_tokens"] > 0
+    assert isinstance(payload["tiers"], list)
+
+
+@pytest.mark.asyncio
+async def test_memory_compaction_recorded_to_trace():
+    """压缩事件写入 TraceRecorder（memory_compaction step，task 4.1）。"""
+    from agent.trace_recorder import TraceRecorder
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=_CompactionTriggerLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        memory=MemoryManager(max_tokens=1, recent_window=2, compaction_gap=0),
+    )
+    recorder = TraceRecorder()
+    await loop.run([Message(role="user", content="y" * 200)], trace_recorder=recorder)
+
+    compaction_steps = [s for s in recorder.steps if s.type == "memory_compaction"]
+    assert compaction_steps
+    data = compaction_steps[0].data
+    assert data["before_messages"] >= data["after_messages"]
+    assert data["before_tokens"] > 0
+    assert "tiers" in data
+
+
 @pytest.mark.asyncio
 async def test_agent_loop_injects_skill_index_without_full_prompt():
     class CapturingLLM:
@@ -1027,7 +1105,7 @@ async def test_agent_loop_injects_skill_index_without_full_prompt():
 
     await loop.run([Message(role="user", content="hello")])
 
-    contents = "\n".join(message.content for message in llm.messages)
+    contents = "\n".join(_msg_text(message.content) for message in llm.messages)
     assert "Available skills" in contents
     assert "/code-review <request>" in contents
     assert "FULL REVIEW PROMPT" not in contents
@@ -1062,7 +1140,7 @@ async def test_agent_loop_injects_matched_skill_context_without_mutating_message
 
     await loop.run(messages)
 
-    contents = "\n".join(message.content for message in llm.messages)
+    contents = "\n".join(_msg_text(message.content) for message in llm.messages)
     assert "Active Skill: code-review" in contents
     assert "FULL REVIEW PROMPT" in contents
     assert [message.content for message in messages] == [
@@ -1116,7 +1194,7 @@ async def test_agent_loop_activate_skill_tool_adds_context_for_next_llm_call():
 
     result = await loop.run([Message(role="user", content="tell me something")], on_event=on_event)
 
-    second_call_contents = "\n".join(message.content for message in llm.calls[1])
+    second_call_contents = "\n".join(_msg_text(message.content) for message in llm.calls[1])
     assert result.content == "researched"
     assert "Active Skill: research" in second_call_contents
     assert "FULL RESEARCH PROMPT" in second_call_contents
@@ -1170,7 +1248,7 @@ async def test_todo_context_injected_in_build_mode():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "## Current Progress" in contents
     assert "Task 1" in contents
     assert "Task 2" in contents
@@ -1196,7 +1274,7 @@ async def test_todo_context_not_injected_when_empty():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "## Current Progress" not in contents
 
 
@@ -1221,7 +1299,7 @@ async def test_todo_context_not_injected_in_plan_mode():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "## Current Progress" not in contents
 
 
@@ -1795,7 +1873,7 @@ async def test_completed_background_task_injected_as_observation():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "Background task" in contents
     assert "completed" in contents
     assert "hello_bg" in contents
@@ -1926,7 +2004,7 @@ async def test_resume_restores_state():
             resume_snapshot=snapshot,
         )
 
-        contents = "\n".join(m.content for m in llm2.messages)
+        contents = "\n".join(_msg_text(m.content) for m in llm2.messages)
         assert "first run" in contents
         assert "Session resumed" in contents
         assert "ignored" in contents
@@ -2001,7 +2079,7 @@ async def test_messages_with_run_context_uses_workspace_root_from_policy(tmp_pat
 
     # 系统 prompt 中应该包含 tmp_path 而非 os.getcwd()
     system_text = "\n".join(
-        m.content for m in llm.messages if getattr(m, "role", None) == "system"
+        _msg_text(m.content) for m in llm.messages if getattr(m, "role", None) == "system"
     )
     assert str(tmp_path) in system_text
 

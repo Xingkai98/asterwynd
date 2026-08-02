@@ -50,17 +50,17 @@ class TestLLMSummarizer:
     async def test_produces_four_section_summary(self):
         llm = MagicMock()
         llm.chat = AsyncMock(return_value=LLMResponse(
-            content="""## 已完成
+            content="""## 已完成事项
 - created file.py
 
-## 关键决策
-- used pytest
+## 待办事项
+- add CI config
 
-## 进行中
-- writing tests
+## 疑难点与决策
+- used pytest despite flaky timeout
 
-## 阻塞与待办
-- need CI config""",
+## 当前进行中
+- writing tests""",
             tool_calls=[],
             stop_reason="end_turn",
         ))
@@ -70,17 +70,51 @@ class TestLLMSummarizer:
             Message(role="assistant", content="ok, let me create the test file"),
         ]
         result = await summarizer.summarize(messages)
-        assert "已完成" in result
-        assert "关键决策" in result
-        assert "进行中" in result
-        assert "阻塞与待办" in result
+        assert "已完成事项" in result
+        assert "待办事项" in result
+        assert "疑难点与决策" in result
+        assert "当前进行中" in result
+
+    async def test_template_has_exactly_four_new_headings_in_order(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(return_value=LLMResponse(content="ok"))
+        summarizer = LLMSummarizer(llm)
+        messages = [Message(role="user", content="hi")]
+        await summarizer.summarize(messages)
+        prompt_text = llm.chat.call_args[1]["messages"][1].content
+        headings = ["## 已完成事项", "## 待办事项", "## 疑难点与决策", "## 当前进行中"]
+        positions = [prompt_text.index(h) for h in headings]
+        assert positions == sorted(positions)
+        # Old headings must be gone.
+        assert "关键决策" not in prompt_text
+        assert "阻塞与待办" not in prompt_text
+
+    async def test_merge_prompt_contains_four_new_headings(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(return_value=LLMResponse(content="## 已完成事项\n- ok"))
+        summarizer = LLMSummarizer(llm)
+        result = await summarizer.merge("## 已完成事项\n- a", "## 待办事项\n- b")
+        assert result == "## 已完成事项\n- ok"
+        user_text = llm.chat.call_args[1]["messages"][1].content
+        assert "## Previous Summary" in user_text
+        assert "## New Events Summary" in user_text
+        assert "pending" in llm.chat.call_args[1]["messages"][0].content
+
+    async def test_summarize_prompt_instructs_tool_call_pair_preservation(self):
+        llm = MagicMock()
+        llm.chat = AsyncMock(return_value=LLMResponse(content="done"))
+        summarizer = LLMSummarizer(llm)
+        await summarizer.summarize([Message(role="user", content="hi")])
+        system_prompt = llm.chat.call_args[1]["messages"][0].content
+        assert "pending" in system_prompt
+        assert "call#n" in system_prompt
 
     async def test_llm_call_receives_formatted_messages(self):
         llm = MagicMock()
         llm.chat = AsyncMock(
             return_value=LLMResponse(
-                content="## 已完成\n- ok\n\n## 关键决策\n- none\n\n"
-                        "## 进行中\n- wip\n\n## 阻塞与待办\n- none",
+                content="## 已完成事项\n- ok\n\n## 待办事项\n- none\n\n"
+                        "## 疑难点与决策\n- none\n\n## 当前进行中\n- wip",
                 tool_calls=[],
                 stop_reason="end_turn",
             )
@@ -93,8 +127,9 @@ class TestLLMSummarizer:
         user_message = call_args[1]["messages"][1]
         prompt_text = user_message.content
         assert "hello world" in prompt_text
-        assert "已完成" in prompt_text
-        assert "关键决策" in prompt_text
+        assert "已完成事项" in prompt_text
+        assert "疑难点与决策" in prompt_text
+        assert "关键决策" not in prompt_text
 
     async def test_returns_empty_on_llm_failure(self):
         llm = MagicMock()

@@ -2,7 +2,7 @@ import pytest
 
 from agent.loop import AgentLoop
 from agent.llm import LLMResponse, ToolCallDelta
-from agent.message import Message
+from agent.message import Message, extract_text
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy
 from agent.tools.base import Tool, tool_parameters, ToolCall
 from agent.tools.builtin.plan import ExitPlanModeTool, UpdatePlanTool
@@ -205,7 +205,7 @@ async def test_plan_mode_submits_plan_document_and_structured_state():
     assert "UpdatePlan" in first_tool_names
     assert "WriteLike" not in first_tool_names
     assert any(
-        "You are running in plan mode" in message.content
+        "You are running in plan mode" in extract_text(message.content)
         for message in llm.messages[0]
         if message.role == "system"
     )

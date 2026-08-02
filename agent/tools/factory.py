@@ -25,6 +25,7 @@ from agent.tools.builtin.lsp import (
     LspWorkspaceSymbolsTool,
 )
 from agent.tools.builtin.read import ReadTool
+from agent.tools.builtin.read_doc import ReadDocTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
 from agent.memory.persistent import PersistentMemory
@@ -49,6 +50,7 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "UpdatePlan",
     "RepoMap",
     "Read",
+    "ReadDoc",
     "SymbolSearch",
     "LspDefinition",
     "LspReferences",
@@ -228,6 +230,7 @@ def get_default_tools(
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     tools: list[Tool] = [
         ReadTool(policy=policy),
+        ReadDocTool(policy=policy),
         WriteTool(policy=policy, lsp_manager=lsp_manager),
         EditTool(policy=policy, lsp_manager=lsp_manager),
         BashTool(policy=policy),
@@ -305,6 +308,7 @@ def get_coding_tools(
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     tools: list[Tool] = [
         ReadTool(policy=policy),
+        ReadDocTool(policy=policy),
         WriteTool(policy=policy, lsp_manager=lsp_manager),
         EditTool(policy=policy, lsp_manager=lsp_manager),
         InspectGitDiffTool(policy=policy),

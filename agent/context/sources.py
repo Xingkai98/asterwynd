@@ -107,6 +107,8 @@ class SystemPromptSource:
     priority = 0
     budget = 1500  # ~1.5K
     critical = True
+    static = True      # 渲染输入不可变（cwd/mode/user_system_prompt），可跨迭代缓存
+    cacheable = True   # 稳定前缀层：不参与预算裁剪，cache_control 断点覆盖
 
     async def render(self, context: BuildContext) -> str:
         return _render_system_prompt(context.cwd, context.user_system_prompt)
@@ -263,6 +265,8 @@ class AsterMdSource:
     priority = 1
     budget = 3000  # ~3K
     critical = True
+    static = True      # 假设会话内 ASTER.md 不变；变化时以缓存 miss 为正确性回退
+    cacheable = True   # 稳定前缀层
 
     async def render(self, context: BuildContext) -> str:
         cwd = Path(context.cwd)
@@ -280,6 +284,9 @@ class MemoryIndexSource:
     priority = 2
     budget = 2000  # ~2K
     critical = False
+    cacheable = True  # 稳定前缀层：不参与预算裁剪；每轮重渲染（非 static）
+    # 非 static：SaveMemory/RecallMemory 会话内会改写 MEMORY.md（persistent.py save），
+    # 缓存会返回陈旧索引。builder 对无 static 属性的源每轮重渲染。
 
     def __init__(self, persistent_memory: PersistentMemory | None = None) -> None:
         self._persistent_memory = persistent_memory
