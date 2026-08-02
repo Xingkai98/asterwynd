@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Callable, Awaitable, TYPE_CHECKING
 
@@ -34,6 +35,7 @@ from agent.context.sources import (
 )
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
+from agent.observability import resolve_phase
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
@@ -58,11 +60,18 @@ from agent.background import BackgroundTaskManager, current_tool_call_id
 from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 
 if TYPE_CHECKING:
+    from agent.cost_tracker import CostLedger
     from agent.llm import LLM
     from agent.mcp.manager import McpManager
     from agent.trace_recorder import TraceRecorder
 
 logger = logging.getLogger("asterwynd.loop")
+
+
+def _default_ledger_path() -> str:
+    """Default cost ledger path (first batch: hardcoded, configurable later)."""
+    base = Path.home() / ".asterwynd"
+    return str(base / "ledger.jsonl")
 
 class AgentLoop:
     def __init__(
@@ -85,9 +94,11 @@ class AgentLoop:
         background_manager: BackgroundTaskManager | None = None,
         session_store: SessionStore | None = None,
         context_builder: ContextBuilder | None = None,
+        cost_ledger: "CostLedger | None" = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
+        self.cost_ledger = cost_ledger
         self.hooks = hooks or HookManager()
         self.memory = memory or MemoryManager(llm=llm)
         self.persistent_memory = persistent_memory
@@ -475,6 +486,11 @@ class AgentLoop:
                     logger.warning("Failed to save session", exc_info=True)
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
+            if self.cost_ledger is not None:
+                try:
+                    self.cost_ledger.flush(_default_ledger_path())
+                except Exception:
+                    logger.warning("Failed to flush cost ledger", exc_info=True)
 
     async def _run(
         self,
@@ -567,6 +583,14 @@ class AgentLoop:
             if response.usage:
                 token_counters["input"] += response.usage.input_tokens
                 token_counters["output"] += response.usage.output_tokens
+                if self.cost_ledger:
+                    self.cost_ledger.record(
+                        model=getattr(self.llm, "model", "unknown"),
+                        input_tokens=response.usage.input_tokens,
+                        output_tokens=response.usage.output_tokens,
+                        session_id=session_id or "unknown",
+                        phase=resolve_phase(self.runtime_state.current_mode.value),
+                    )
             if trace_recorder:
                 trace_recorder.record_iteration(
                     iteration,
@@ -575,6 +599,10 @@ class AgentLoop:
                         self._observed_tool_call_delta(tc)
                         for tc in response.tool_calls
                     ],
+                    input_tokens=response.usage.input_tokens if response.usage else None,
+                    output_tokens=response.usage.output_tokens if response.usage else None,
+                    model=getattr(self.llm, "model", None),
+                    finish_reason=response.stop_reason,
                 )
 
             if on_event:

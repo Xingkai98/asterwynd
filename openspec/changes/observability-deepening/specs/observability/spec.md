@@ -4,59 +4,55 @@
 
 ### Requirement: Structured Token Metrics
 
-The trace recorder SHALL record token usage for each LLM iteration and tool result, and SHALL expose structured event metrics with token/phase/tool dimensions as time series.
+The trace recorder SHALL record token usage for each LLM iteration (input/output tokens, model, finish_reason), SHALL attach a wall-clock timestamp to each trace step, and SHALL expose the event schema version.
 
-#### Scenario: tool token usage recorded
+#### Scenario: LLM iteration token recorded
 
-- Given a tool result with token usage
-- When the trace recorder records the tool result
-- Then the token usage is recorded with token/phase/tool dimensions
-- And the metrics are exposed as time series
+- **GIVEN** an LLM iteration with token usage
+- **WHEN** the trace recorder records the iteration
+- **THEN** input/output tokens, model, and finish_reason are recorded
+- **AND** each trace step carries a timestamp
+- **AND** the serialized trace includes a schema version
 
-### Requirement: Cost Attribution
+### Requirement: Cost Attribution (CostLedger)
 
-The observability system SHALL attribute token costs by session, phase, and tool, and SHALL output a billable breakdown.
+The observability system SHALL attribute token costs by session, phase, and tool via a `CostLedger`, SHALL output a billable breakdown (`by_session`/`by_phase`/`by_tool`), and SHALL persist records to JSONL for cross-session historical stats.
 
 #### Scenario: session cost breakdown
 
-- Given a session with multiple phases and tools
-- When the cost attribution runs
-- Then token costs are grouped by session, phase, and tool
-- And a billable breakdown is output
+- **GIVEN** a session with multiple phases and tools
+- **WHEN** the ledger records LLM calls
+- **THEN** token costs are grouped by session, phase, and tool
+- **AND** a billable breakdown is output
+- **AND** flushing to JSONL and reloading restores the same totals
 
 ### Requirement: Error Auto-Classification
 
-The observability system SHALL classify errors into four categories (permission denied, network timeout, model hallucination, parameter error) with distinct alerting policies.
+The observability system SHALL classify system-level errors into four categories (permission denied, network timeout, model error, parameter error) using structured attributes first (error_type/finish_reason) with text fallback, SHALL assign each category an alert policy, and SHALL NOT auto-classify semantic errors (hallucination) — that is deferred to an LLM judge.
 
-#### Scenario: permission error classified
+#### Scenario: structured error classified
 
-- Given an error message indicating a permission denial
-- When the classifier processes the error
-- Then it is classified as "permission denied"
-- And the permission-denied alerting policy is applied
+- **GIVEN** an error with `error_type=permission_denied`
+- **WHEN** the classifier processes it
+- **THEN** it is classified as permission_denied
+- **AND** its alert policy is `immediate`
 
-### Requirement: Performance Regression Gate
+#### Scenario: text fallback for unstructured error
 
-The CI pipeline SHALL run benchmarks, compare against a persisted baseline (P95 latency / success rate), and SHALL block on >5% degradation by returning non-zero.
-
-#### Scenario: >5% P95 degradation blocks CI
-
-- Given a benchmark run with P95 latency degradation >5% vs baseline
-- When the regression gate evaluates the run
-- Then the gate blocks (returns non-zero)
-- And the pipeline is stopped
-
-### Requirement: Session Timeline Dashboard
-
-The observability system SHALL provide a per-session timeline visualization showing tool call durations.
-
-#### Scenario: timeline shows slowest tool calls
-
-- Given a session with tool calls of varying durations
-- When the timeline dashboard renders
-- Then tool calls are shown with their durations
-- And the slowest calls are identifiable
+- **GIVEN** an error text containing "timed out"
+- **WHEN** the classifier processes it with no structured field
+- **THEN** it is classified as network_timeout
+- **AND** its alert policy is `warn`
 
 ## MODIFIED Requirements
 
-- `observability`: metrics SHALL be recorded in a structured event schema integrated with the trace recorder rather than a separate monitoring stack.
+### Requirement: 事件 schema 扩展
+
+`agent-runtime` 的 trace 事件 SHALL 增加 timestamp（TraceStep 字段，不污染 data 负载）、schema_version、llm_iteration 的 token/model/finish_reason 字段、tool_result 的 error_type 字段——全部向后兼容扩展（新参数带默认值，不破坏既有事件结构）。
+
+#### Scenario: 既有事件结构不破坏
+
+- **GIVEN** 一个既有 trace 事件（无 token/timestamp 字段）
+- **WHEN** 新 recorder 序列化它
+- **THEN** data 负载保持不变（timestamp 是 step 字段）
+- **AND** schema_version 附加在顶层
