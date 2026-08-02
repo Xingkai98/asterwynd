@@ -1005,6 +1005,78 @@ async def test_agent_loop_emits_memory_compaction_only_when_compacted():
     assert "memory_compaction" not in event_names
 
 
+class _CompactionTriggerLLM:
+    """First response issues a tool call so compaction's loop site is reached."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+        self.call_count += 1
+        if self.call_count == 1:
+            return LLMResponse(
+                content="Using a tool.",
+                tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+        return LLMResponse(content="done", stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_memory_compaction_event_carries_token_and_tier_stats():
+    """memory_compaction 事件携带 before/after tokens + tier 元数据（task 4.1）。"""
+    events = []
+
+    async def on_event(name, payload):
+        events.append((name, payload))
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=_CompactionTriggerLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        memory=MemoryManager(max_tokens=1, recent_window=2, compaction_gap=0),
+    )
+
+    await loop.run([Message(role="user", content="x" * 200)], on_event=on_event)
+
+    compact_events = [p for n, p in events if n == "memory_compaction"]
+    assert compact_events, "expected a memory_compaction event"
+    payload = compact_events[0]
+    assert "before_tokens" in payload
+    assert "after_tokens" in payload
+    assert "before_messages" in payload
+    assert "after_messages" in payload
+    assert payload["after_messages"] <= payload["before_messages"]
+    assert payload["before_tokens"] > 0
+    assert isinstance(payload["tiers"], list)
+
+
+@pytest.mark.asyncio
+async def test_memory_compaction_recorded_to_trace():
+    """压缩事件写入 TraceRecorder（memory_compaction step，task 4.1）。"""
+    from agent.trace_recorder import TraceRecorder
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(
+        llm=_CompactionTriggerLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        memory=MemoryManager(max_tokens=1, recent_window=2, compaction_gap=0),
+    )
+    recorder = TraceRecorder()
+    await loop.run([Message(role="user", content="y" * 200)], trace_recorder=recorder)
+
+    compaction_steps = [s for s in recorder.steps if s.type == "memory_compaction"]
+    assert compaction_steps
+    data = compaction_steps[0].data
+    assert data["before_messages"] >= data["after_messages"]
+    assert data["before_tokens"] > 0
+    assert "tiers" in data
+
+
 @pytest.mark.asyncio
 async def test_agent_loop_injects_skill_index_without_full_prompt():
     class CapturingLLM:

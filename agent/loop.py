@@ -893,11 +893,27 @@ class AgentLoop:
                     result=result,
                 ))
 
+            before_msgs = len(messages)
+            before_tokens = self.memory.count_tokens(messages)
             compacted = await self.memory.compact_if_needed(messages, iteration=self._iteration)
-            if compacted and on_event:
-                await on_event("memory_compaction", {
-                    "total_messages": len(messages),
-                })
+            if compacted:
+                if on_event:
+                    await on_event("memory_compaction", {
+                        "total_messages": len(messages),
+                        "before_messages": before_msgs,
+                        "after_messages": len(messages),
+                        "before_tokens": before_tokens,
+                        "after_tokens": self.memory.count_tokens(messages),
+                        "tiers": self.memory.tier_metadata(),
+                    })
+                if trace_recorder:
+                    trace_recorder.record_compaction(
+                        before_messages=before_msgs,
+                        after_messages=len(messages),
+                        before_tokens=before_tokens,
+                        after_tokens=self.memory.count_tokens(messages),
+                        tiers=self.memory.tier_metadata(),
+                    )
 
         logger.warning(f"[AgentLoop] 达到最大迭代次数 {self.max_iterations}")
         final_content = self._last_assistant_content(messages)

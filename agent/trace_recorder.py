@@ -151,6 +151,24 @@ class TraceRecorder:
     def record_edit(self, path: str, status: str, summary: str) -> None:
         self.record("edit", tool_name="Edit", path=path, status=status, summary=summary)
 
+    def record_compaction(
+        self,
+        before_messages: int,
+        after_messages: int,
+        before_tokens: int,
+        after_tokens: int,
+        tiers: list[dict] | None = None,
+    ) -> None:
+        """Record a memory compaction with before/after stats and tier trail."""
+        self.record(
+            "memory_compaction",
+            before_messages=before_messages,
+            after_messages=after_messages,
+            before_tokens=before_tokens,
+            after_tokens=after_tokens,
+            tiers=tiers or [],
+        )
+
     def record_parallel_execution(self, group: list[str]) -> None:
         self.record("parallel_execution_start", tools=group)
 

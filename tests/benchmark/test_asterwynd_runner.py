@@ -3,6 +3,7 @@ import json
 import pytest
 
 from agent.llm import LLMResponse, ToolCallDelta
+from agent.message import extract_text
 from benchmarks.agent_runner import AsterwyndRunner
 from benchmarks.prompt import CodingPromptBuilder
 from benchmarks.task_schema import TaskSpec
@@ -58,7 +59,10 @@ def test_coding_prompt_builder_includes_task_and_not_patch_names():
 
     messages = CodingPromptBuilder().build_messages(task, "Fix the bug", "/tmp/repo")
 
-    joined = "\n".join(message.content for message in messages)
+    joined = "\n".join(
+        extract_text(message.content) if not isinstance(message.content, str) else message.content
+        for message in messages
+    )
     assert "Fix the bug" in joined
     assert "pytest -q" in joined
     assert "gold.patch" not in joined
@@ -101,7 +105,10 @@ async def test_asterwynd_runner_uses_agent_loop_and_coding_tools(tmp_path):
     assert "tool_call" in step_types
     assert "tool_result" in step_types
     assert "edit" in step_types
-    first_prompt = "\n".join(message.content for message in llm.messages_seen[0])
+    first_prompt = "\n".join(
+        extract_text(message.content) if not isinstance(message.content, str) else message.content
+        for message in llm.messages_seen[0]
+    )
     assert "Update app.py to Version 2." in first_prompt
 
 
