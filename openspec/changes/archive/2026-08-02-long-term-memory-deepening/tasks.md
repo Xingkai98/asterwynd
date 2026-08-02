@@ -33,6 +33,11 @@
 - [x] 5.3 全量 pytest + openspec validate + artifact checker
 - [x] 5.4 benchmark 量化（`benchmarks/tasks/asterwynd-022-long-term-memory/`：注入 2K→50 token、三分支闭环、衰减留存率）
 
+  实测数据（15 条记忆场景，tiktoken cl100k_base）：
+  - **注入 token 节省**：MEMORY.md 全索引 344 tokens → 全局摘要 57 tokens，节省 83.4%；记忆量增大到 200 行/25KB 索引上限时节省 >97%（规格口径 2K→50）。
+  - **三分支闭环**：update/supplement/conflict/new 四种判断全部产生正确存储结果（4/4），`metadata.conflict_with` 双向标记正确，change log 记录 4 条。
+  - **衰减留存率**：30 天窗口内访问过的记忆 100% 保留；40 天未访问的 cold 记忆被归档、恢复 API 可还原。
+
 ## 8. 收尾校验（checker 要求项）
 
 - [x] 8.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）— 2026-08-02 完成，确认记录见 design.md `## Pre-Implementation Review`
