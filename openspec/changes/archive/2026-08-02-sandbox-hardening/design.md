@@ -91,6 +91,110 @@
 - **Docker `--memory`/`--cpus` 默认不加（cgroup 环境限制）**：实测本环境 `docker run --memory 512m` 报 `cannot enter cgroupv2 "/sys/fs/cgroup/docker" with domain controllers -- it is in threaded mode`（宿主 cgroup v2 未配置 domain controllers）。Docker 基础执行 + `--network none` 正常。故 `memory_mb`/`cpus` 默认为 None（不加 flag），作为可配置项（支持 cgroup 的环境可开启）。
 - **`ExecutionBackend.run` 的 `timeout` 可缺省**：缺省用 backend 默认（`timeout: float | None = None`），兼容旧 `SandboxExecutor.run(cmd)` 调用。
 
+## Batch 2 设计定稿（2026-08-02，batch-grill-me 等价审阅）
+
+> 进入 building 前按 AGENTS.md 执行设计追问。当前环境无 `batch-grill-me` skill，按同等标准改用 **3 个独立零记忆审阅 agent（cgroup 工程 / 可观测性 schema / 集成接线）** 对 tasks 5-7 的推荐方案做对抗式审阅，三者均返回 `changes_requested` 并给出可执行改进。以下为综合后定稿，逐项覆盖审阅发现的 blocker/major。
+
+### Decision 5: cgroup v2 资源限制（任务 5）——per-run 临时 cgroup，degrade-first
+
+**方案**：新增 `agent/tools/sandbox/cgroup.py`：
+
+- `CgroupController` Protocol（`create/attach/oom_killed/cleanup`）+ `CgroupV2Controller` 实现；所有文件操作经可注入的 `fs_root`（默认 `/sys/fs/cgroup`）便于单测 mock。
+- **每次 `run()` 调用创建独立临时 cgroup**，目录名唯一 `asterwynd-<procpid>-<seq>`，互斥于后端实例共享（后端是 main.py 构建的单例，同时被 Bash 工具/后台管理/子 agent 使用）。并发 `run()` 不共享可变状态，各自独立 controller + 基线。
+- `create()`：mkdir 子 cgroup → 写 `memory.max`（字节）、`memory.swap.max=0`（防 malloc 溢出 swap；`ENOENT` 视为 per-dimension degrade）、`cpus` 设置时写 `cpu.max = "round(cpus*100000) 100000"`；若父 `subtree_control` 含 `cpuset`，先复制父 `cpuset.cpus/cpuset.mems` 到子级再 attach（cgroup v2 已知坑）。
+- `attach(pid)`：仅当进程仍存活（`returncode is None`）时写 `cgroup.procs`；捕获 `/proc/<pid>/stat` starttime 防 pid 复用误杀。
+- `oom_killed()`：基线对比 `memory.events` 的 `oom_kill` 计数（create 时记基线，退出后最终校验）。
+- `cleanup()`：中止路径（超时）先校验 starttime 匹配再 `cgroup.kill=1`；正常退出后 `rmdir`（EBUSY 短暂重试）；`finally` 保证清理；`is_supported()`/构造时清扫遗留 `asterwynd-*` 目录。
+- `is_supported()`：仅作廉价预过滤（controllers 存在 + 可写探针），**`create()/attach()` 失败才是权威的"不支持"信号**。
+
+**ProcessBackend 接线**：新增 `memory_mb`/`cpus`/`controller_factory`/`cgroup_supported` 参数；`_BACKEND_KWARGS["process"]` 增加 `memory_mb/cpus`。`run()` 中：配置了限制且 cgroup 可用 → per-run controller + attach + 分段等待（poll `memory.events` + 退出后最终检查）→ OOM 时 kill + `result.oom_killed=True` + `oom` 事件；cgroup 不可用/设置失败 → `result.degraded=True` + `degraded` 事件（每实例限流一次）+ 退回纯超时。超时 kill 发 `kill` 事件。
+
+**`SandboxResult`** 增加 `oom_killed: bool = False`、`degraded: bool = False`（dataclass 默认值向后兼容；`to_json` 输出会多字段，无反向反序列化路径）。
+
+**degrade-first 语义**：配置了 `memory_mb/cpus` 但环境不支持 cgroup 时**必须可见地降级**（本环境即此路径：`/proc/self/cgroup=0::/`、`/sys/fs/cgroup` root-owned 755、memory 不在 subtree_control）——`degraded` 标志 + 事件 + warning，绝不允许"配置了等于没配置"的静默失效。
+
+**范围边界**：cgroup 仅作用于前台 `run()`；`run_background` 的 cgroup 限制记为 follow-up（见决策 8）。Docker 后端已用容器级 `--memory/--cpus`（可选开启）。
+
+**配置**：`SandboxConfig` 已存在但 YAML 段从未解析（batch 1 遗漏，审阅确认无 `_parse_sandbox_config`）——新增 `_parse_sandbox_config` 并接入 `_load_yaml_config`，使 `backend/image/memory_mb/cpus/timeout_seconds` 可从 `asterwynd.yaml` 生效。
+
+### Decision 6: 沙箱事件入 trace（任务 6）——contextvar sink + tool_call_id
+
+**方案**：
+
+- `TraceRecorder.record_sandbox_event(event: str, **data)` → `self.record("sandbox", event=event, **data)`。**向后兼容**：新 step type 开放扩展；`timestamp` 仍是 TraceStep 字段；data 负载干净；`schema_version` 保持 `"1.1"`（策略：仅既有 step payload 结构性变更才 bump，新 step type 不 bump——已在 spec 文档化）。
+- 新模块 `agent/sandbox_events.py`：`SandboxEventSink` Protocol（`emit` 必须非阻塞）+ `_NoopSink` 默认 + `current_sandbox_sink: ContextVar` + `emit_sandbox_event(event, **data)`。emit 自动附加 `tool_call_id`（读既有 `current_tool_call_id` contextvar，loop.py:1023 设置）并把 `command` 截断到 300 字符（折叠换行）。
+- `TraceRecorderSandboxSink` 适配器放 `agent/trace_recorder.py`（避免 sandbox 包反向依赖 trace 层）。
+- `loop.run()`：镜像现有 `_active_trace_recorder` 的 **save/restore** 模式（loop.py:468-490）——run 开始 set sink，`finally` 恢复，保证嵌套 run（子 agent）与无 recorder 的 run 不会串/漏。
+- 事件产生点：BashTool（workspace_policy 拒绝→`denied` reason=workspace_policy；guard 拒绝→`denied` reason="command_guard:"+`CommandGuard.last_reason`）；ProcessBackend（超时→`kill` reason=timeout；OOM→`oom` reason=memory_limit；降级→`degraded`）；DockerBackend（超时→`kill` reason=timeout）；`BackgroundTaskManager._monitor`（超时→`kill` reason=timeout；TaskStop→`kill` reason=user_stop；cleanup→`kill` reason=cleanup）。
+- `CommandGuard.check()` 保持返回 `CommandVerdict`，**新增 `last_reason` 属性**（denylist/pipe_to_shell/protected_redirect/rm_target_escape/mv_cp_dest/chmod_bits/timeout_range/curl_exfil），向后兼容。
+
+**范围边界**：沙箱事件在 trace_recorder 活跃时记录（子 agent run、benchmark run、web session run）；主 CLI 路径当前不创建 trace（`main.py:609` 不传 trace_recorder），该路径为 no-op——记为 follow-up（见决策 8），设计不over-claim。
+
+### Decision 7: config→BashTool 后端接线修复（batch 1 遗漏）——跨入口一致
+
+**问题**：`main.py` 按 `config.sandbox.backend` 构建后端但只传给 `BackgroundTaskManager`；`BashTool(policy=policy)` 硬编码 `backend_name="process"`。`backend: docker` 对前台 Bash 无效。
+
+**方案**：
+
+- Factory：`build_default_tool_registry`/`build_coding_tool_registry`/`get_default_tools`/`get_coding_tools` 增加 `sandbox: ExecutionBackend | None = None`，透传给 `BashTool(policy=policy, sandbox=sandbox)`；当调用方传预构建 `tools` 列表且 `sandbox` 非空时，对列表内 BashTool 实例回填 sandbox（防静默忽略）。
+- `main.py`：sandbox 构建**提前到 SubAgentManager/registry 之前**；传给 `build_default_tool_registry(sandbox=...)`、`BackgroundTaskManager(sandbox=...)`、`SubAgentManager(sandbox=...)`；**新增 `is_available()` 启动门禁**——配置后端不可用时 fail-fast 报错（不静默回退到 process，避免悄悄移除用户要求的隔离）。
+- `SubAgentManager`：新增可选 `sandbox` 参数；未显式传时自愈——`_build_subagent_loop` 按 `config.sandbox` 懒构建（缓存），保证 web/benchmark 子 agent 与 CLI 一致。
+- `web/session.py`、`benchmarks/agent_runner.py`：同样从 `config.sandbox` 构建后端并传入 registry（消除"CLI 生效、web 不生效"的同类缺口）。
+- Docker 后端后台执行：batch 2 不做 `docker run -d` 实现——`BackgroundTaskManager.start` 捕获 `NotImplementedError` 返回用户可读错误（BashTool 已有"不可用"分支），不崩溃；记 follow-up。
+
+### 审阅发现的 blocker/major 覆盖清单
+
+| 审阅发现 | 定稿处置 |
+|---|---|
+| cgroup 目录名/并发（blocker） | per-run 唯一目录 + 每 run 独立 controller（决策 5） |
+| degrade 覆盖不全（blocker） | 限制已配置但 cgroup 不可用也置 `degraded` + 事件（决策 5） |
+| `memory.swap.max` 未设 | `memory.swap.max=0`，ENOENT 容忍（决策 5） |
+| cpuset 未初始化 | 复制父 cpuset.cpus/mems（决策 5） |
+| `is_supported()` 过弱 | 仅预过滤，create/attach 失败为权威信号（决策 5） |
+| poll vs communicate | 分段等待 + 退出后最终 oom 检查（决策 5） |
+| run_background 无 cgroup | 显式 scope 出批 2，记 follow-up（决策 8） |
+| config YAML 未解析 | 新增 `_parse_sandbox_config`（决策 5） |
+| 事件发射 seam 未定义 | `agent/sandbox_events.py` sink（决策 6） |
+| pid 复用误杀 | starttime 校验 + attach 前存活检查（决策 5） |
+| 清理健壮性/遗留 cgroup | finally 清理 + EBUSY 重试 + 清扫（决策 5） |
+| 后台 kill 事件缺失 | `BackgroundTaskManager._monitor` 发 kill（决策 6） |
+| contextvar save/restore | 镜像 loop.py 既有模式（决策 6） |
+| degraded 事件时机 | 首次 run 时懒检测，构造期不发（决策 6） |
+| 事件无 tool_call_id | emit 自动附加（决策 6） |
+| schema_version 策略 | 保持 1.1 + 文档化"新 step type 不 bump"（决策 6） |
+| guard 无子原因 | `CommandGuard.last_reason`（决策 6） |
+| 命令截断策略 | 300 字符 + 折叠换行（决策 6） |
+| 主 CLI 路径无 trace | 显式 scope，记 follow-up（决策 8） |
+| 后端不可用无门禁 | `is_available()` fail-fast（决策 7） |
+| 共享后端可重入 | per-run cgroup + contextvar 归因（决策 5/6） |
+| docker 后台 NotImplementedError | 优雅报错 + follow-up（决策 7） |
+| web/benchmark 未接线 | 同模式接线（决策 7） |
+| 回归测试未测真实 bug 点 | main.py monkeypatch 测试（决策 7） |
+
+### Decision 8: 显式 follow-up（不在本批交付）
+
+- `run_background` 的 cgroup 资源限制（fork bomb 经后台逃逸的防护）。
+- `DockerBackend.run_background`（`docker run -d` + logs/kill 句柄）。
+- 主 CLI 前台 run 路径创建 trace_recorder（当前不产生 trace，沙箱事件在 main 路径为 no-op）。
+- seccomp 兜底（内核 syscall 白名单）。
+
+### 第二批实现中发现并修复（端到端验证）
+
+- **ProcessBackend 超时不杀进程树（batch 1 遗留 bug）**：`run()` 超时只 `proc.kill()`（杀 shell），`sleep 60` 等子进程残留为孤儿并握住管道 → 测试实测超时路径要等满 60s。修复：`create_subprocess_shell(start_new_session=True)` + 超时 `os.killpg(pid, SIGKILL)` 杀整个进程组（与 `run_background` 既有 `setsid` 语义一致）。回归测试 `test_sandbox_timeout_kills_process_tree`（超时 0.5s 内返回）。
+- **`CommandGuard` 的 `timeout` 是 dead code（batch 1 遗留 bug）**：`_check_argv` 把 `timeout` 当 wrapper 直接递归跳过，`_check_timeout` 不可达 → `timeout 9999 sleep 1` 被放行。修复：从 wrapper 分支移出 `timeout`，`_check_timeout` 校验数值范围后递归检查被包裹命令（`timeout 5 mv x /etc-passwd` 也会被 argv 校验拦截）。新增 `TestCommandGuardTimeoutWrapper` 回归测试。
+- **cgroup 不可写环境（本宿主）**：`/proc/self/cgroup=0::/`、`/sys/fs/cgroup` root-owned 755、memory 不在 subtree_control → 实际运行路径是 degrade-first（`degraded=True` + 事件），单元测试用注入 fake controller 覆盖 enforce 路径。
+- **`CgroupV2Controller` 的 cleanup 兼容普通文件系统**：真实 cgroup v2 fs 的 control 文件是虚拟的、不阻塞 `rmdir`；普通 fs（测试 fake）会因非空目录阻塞 `rmdir`，cleanup 增加 best-effort 清理子文件再重试。
+
+### 第二批审阅修复（Round 1）
+
+独立审阅 agent 返回 CHANGES_REQUESTED（1 中等 + 4 minor），见 tasks.md 第 9 节。要点：
+
+- **`sandbox.timeout_seconds` 主路径不生效**：`BashTool.execute` 的 `timeout or 30.0` 恒 truthy 覆盖后端配置默认。修复为直接透传 `timeout`（None → 后端默认），配置值真正生效。
+- **attach 语义修正**：进程先于 attach 退出（快命令）不是 degradation——`_attach` 返回 `None`（skip），仅 attach 失败返回 `False` 才置 `degraded`。避免"配置了限制的每条快命令都标记 degraded"的噪音。
+- **Docker 超时容器残留**：kill CLI 客户端后容器在 daemon 残留。修复为 `--cidfile`（先 `mkstemp` 预留唯一路径再 `unlink`，因 docker 拒绝已存在的 cidfile）+ 超时后 `docker rm -f` 读到的容器 id。
+- **cgroup 遗留清扫**：`sweep_stale`（dead pid 目录清理、live pid 不动），`create()` 触发。
+- **`_setup_cgroup` catch Exception**：非 OSError 控制器失败也置 degraded。
+
 ## Reference Implementation Research
 
 - status: enabled

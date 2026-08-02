@@ -36,6 +36,20 @@ async def test_sandbox_returns_error_on_failure():
     assert result.exit_code == 1
 
 
+@pytest.mark.asyncio
+async def test_sandbox_timeout_kills_process_tree():
+    """Regression: on timeout the WHOLE process group is killed.
+
+    Previously only the shell was SIGKILLed, leaving `sleep 60` as an orphan
+    holding the pipes open until its natural exit (60s). The result must come
+    back promptly, proving the process tree is gone.
+    """
+    executor = ProcessBackend()
+    result = await executor.run("sleep 60", timeout=0.5)
+    assert result.timed_out
+    assert result.duration_ms < 5000
+
+
 def test_sandbox_str_backwards_compat():
     result = SandboxResult(exit_code=0, stdout="ok", stderr="", duration_ms=1.0, timed_out=False)
     assert str(result) == "ok"

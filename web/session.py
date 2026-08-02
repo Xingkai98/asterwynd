@@ -19,7 +19,7 @@ from agent.run_identity import new_session_id
 from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.skills import SkillRuntime
 from agent.subagent.manager import SubAgentManager
-from agent.tools.factory import build_default_tool_registry
+from agent.tools.factory import build_default_tool_registry, build_sandbox_from_config
 from agent.workspace_policy import WorkspacePolicy
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
@@ -210,6 +210,7 @@ class SessionManager:
             workspace_root=self.workspace_root,
             command_denylist=self.config.tools.command_denylist,
         )
+        sandbox = build_sandbox_from_config(self.config)
         registry = build_default_tool_registry(
             policy=workspace_policy,
             mode_policy=ModePolicy(
@@ -224,12 +225,14 @@ class SessionManager:
             mcp_manager=mcp_manager,
             tools=tools,
             selection_config=self.config.tools.selection,
+            sandbox=sandbox,
         )
         subagent_manager = SubAgentManager(
             llm=llm,
             config=self.config,
             workspace_policy=workspace_policy,
             parent_mode=run_config.mode,
+            sandbox=sandbox,
         )
         skill_runtime = SkillRuntime.from_roots(self.config.skills.roots)
 

@@ -121,8 +121,12 @@ class CommandGuard:
         # Combine the project's base denylist (dd/mkfs/sudo/shutdown/python -c/
         # curl|sh/$( )/git reset 等) with the extra bypass-variant patterns.
         self._denylist = (*DEFAULT_DENYLIST, *_EXTRA_DENYLIST)
+        # Granular rejection category from the most recent check() (None when
+        # allowed). Lets sandbox trace events carry a meaningful reason.
+        self.last_reason: str | None = None
 
     def check(self, command: str) -> CommandVerdict:
+        self.last_reason = None
         cmd = command.strip()
         if not cmd:
             return CommandVerdict.ALLOW
@@ -135,12 +139,15 @@ class CommandGuard:
         if cmd_name != "rm":
             for pattern in self._denylist:
                 if re.search(pattern, cmd):
+                    self.last_reason = "denylist"
                     return CommandVerdict.DENY
 
         # 2. High-risk sentence patterns (pipe to shell, redirect to protected).
         if self._has_pipe_to_shell(cmd):
+            self.last_reason = "pipe_to_shell"
             return CommandVerdict.DENY
         if self._has_protected_redirect(cmd):
+            self.last_reason = "protected_redirect"
             return CommandVerdict.DENY
 
         # 3. argv semantic checks for dangerous commands.
@@ -185,7 +192,7 @@ class CommandGuard:
         cmd_name = tokens[0]
         if cmd_name in ("/bin/rm", "/usr/bin/rm"):
             cmd_name = "rm"
-        elif cmd_name in ("env", "command", "nohup", "timeout"):
+        elif cmd_name in ("env", "command", "nohup"):
             # Skip wrapper, check the wrapped command.
             if len(tokens) > 1:
                 return self._check_argv(tokens[1:])
@@ -216,8 +223,10 @@ class CommandGuard:
             # $IFS expands to whitespace, so "$IFS/" is effectively "/".
             normalized = target.replace("$IFS", "")
             if normalized in ("/", "$HOME", "~") or any(normalized.startswith(p) for p in _DENY_PATHS):
+                self.last_reason = "rm_target_escape"
                 return CommandVerdict.DENY
             if self._workspace and normalized.startswith("/") and not normalized.startswith(self._workspace):
+                self.last_reason = "rm_target_escape"
                 return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
@@ -228,6 +237,7 @@ class CommandGuard:
             return CommandVerdict.ALLOW
         dest = args[-1]
         if any(dest.startswith(p) for p in _DENY_PATHS):
+            self.last_reason = "mv_cp_dest"
             return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
@@ -238,9 +248,11 @@ class CommandGuard:
             return CommandVerdict.ALLOW
         mode, target = args[0], args[1]
         if any(target.startswith(p) for p in _DENY_PATHS):
+            self.last_reason = "chmod_bits"
             return CommandVerdict.DENY
         # 0777 / 777 / a+rwx on root or /tmp.
         if mode in ("0777", "777", "a+rwx", "a=rwx") and target in ("/", "/tmp"):
+            self.last_reason = "chmod_bits"
             return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
@@ -250,18 +262,26 @@ class CommandGuard:
         """
         for arg in tokens[1:]:
             if arg.startswith("@") and any(arg[1:].startswith(p) for p in _DENY_PATHS):
+                self.last_reason = "curl_exfil"
                 return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
     def _check_timeout(self, tokens: list[str]) -> CommandVerdict:
-        """timeout value must be a positive int within a sane range."""
-        args = [t for t in tokens[1:] if not t.startswith("-")]
-        if not args:
+        """timeout value must be a positive int within a sane range, then the
+        wrapped command is checked recursively (a `timeout 5 rm -rf /` must not
+        pass just because `timeout` is the first word)."""
+        rest = tokens[1:]
+        value_idx = next(
+            (i for i, t in enumerate(rest) if not t.startswith("-")), None
+        )
+        if value_idx is None:
             return CommandVerdict.ALLOW
         try:
-            val = float(args[0])
+            val = float(rest[value_idx])
         except ValueError:
-            return CommandVerdict.ALLOW  # not a numeric timeout, not our concern
+            # Not a numeric timeout — check the wrapped command directly.
+            return self._check_argv(rest)
         if val <= 0 or val > 600:
+            self.last_reason = "timeout_range"
             return CommandVerdict.DENY
-        return CommandVerdict.ALLOW
+        return self._check_argv(rest[value_idx + 1:])

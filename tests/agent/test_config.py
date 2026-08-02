@@ -545,3 +545,57 @@ mcp:
     assert config.mcp.health.enabled is True
     assert config.mcp.health.health_check_interval_s == 15.0
     assert config.mcp.health.degrade_failure_threshold == 0.6
+
+
+def test_load_config_parses_sandbox_section(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+sandbox:
+  backend: docker
+  image: python:3.10-slim
+  memory_mb: 512
+  cpus: 1.5
+  timeout_seconds: 45
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+
+    assert config.sandbox.backend == "docker"
+    assert config.sandbox.image == "python:3.10-slim"
+    assert config.sandbox.memory_mb == 512
+    assert config.sandbox.cpus == 1.5
+    assert config.sandbox.timeout_seconds == 45
+
+
+def test_sandbox_defaults_when_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "agent:\n  default_mode: build\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+
+    assert config.sandbox.backend == "process"
+    assert config.sandbox.image == "alpine:latest"
+    assert config.sandbox.memory_mb is None
+    assert config.sandbox.cpus is None
+    assert config.sandbox.timeout_seconds == 30.0
+
+
+def test_invalid_sandbox_memory_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "sandbox:\n  memory_mb: 0\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_config(start_dir=tmp_path)
+
+
+def test_invalid_sandbox_cpus_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "sandbox:\n  cpus: -2\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_config(start_dir=tmp_path)

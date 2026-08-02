@@ -360,6 +360,7 @@ def _load_yaml_config(
         mcp=_parse_mcp_config(raw.get("mcp", {}), path),
         skills=_parse_skills_config(raw.get("skills", {}), path),
         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
+        sandbox=_parse_sandbox_config(raw.get("sandbox", {}), path),
     )
 
 
@@ -1159,6 +1160,33 @@ def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:
             mapping.get("timeout_seconds", 600),
             "benchmark.timeout_seconds",
             path=path,
+        ),
+    )
+
+
+def _parse_sandbox_config(raw: Any, path: Path) -> SandboxConfig:
+    mapping = _expect_mapping(raw, path, "sandbox")
+    memory_mb = mapping.get("memory_mb")
+    cpus = mapping.get("cpus")
+    return SandboxConfig(
+        backend=_validate_string_item(
+            mapping.get("backend", "process"), path, "sandbox.backend"
+        ),
+        image=_validate_string_item(
+            mapping.get("image", "alpine:latest"), path, "sandbox.image"
+        ),
+        memory_mb=(
+            _validate_positive_int(memory_mb, "sandbox.memory_mb", path=path)
+            if memory_mb is not None
+            else None
+        ),
+        cpus=(
+            _parse_positive_float(cpus, "sandbox.cpus", path=path)
+            if cpus is not None
+            else None
+        ),
+        timeout_seconds=_parse_positive_float(
+            mapping.get("timeout_seconds", 30.0), "sandbox.timeout_seconds", path=path
         ),
     )
 

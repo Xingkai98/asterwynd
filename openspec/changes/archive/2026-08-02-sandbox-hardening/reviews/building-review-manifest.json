@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "sandbox-hardening",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a090d81afa6120900",
+  "base_sha": "dc83b4c8c63395f827f59f33ae2d3b7fb724fed4",
+  "head_sha": "525a307f01932a6613d52c580d494f9e56a8a11f",
+  "tasks_hash": "sha256:7b6bc8d94b736a7a12a8eeb65af0ff2a6d7c028764183b61a7c94549c49bc2af",
+  "spec_hash": "sha256:9b7e727f28464d0acacdcd4de0044d8d7fd96350d83a2ea574915b1feeed4391",
+  "diff_hash": "sha256:c2636af3a5170c3142b6e2c33335ca2bd84a89c61900a410f9d46c3added9c57",
+  "report_hash": "sha256:1cd60a22443e03bee17a7101d7868a1f5b41fbef9fcaf785f8c26c28b7548a17"
+}
