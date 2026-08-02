@@ -14,19 +14,19 @@
 
 ## 子 change ②：Prefix Cache 注入顺序
 
-- [ ] 2.1 注入 wire 顺序 system（prompt → MD → memory index）→ tools（core stable → 选中 variable tail）→ user messages；`ContextBuilder.build()` 保持返回 str，新增 `build_blocks()`/`render_layers()` 返回 `list[TextBlock]`（P0-P5 独立块，P0/P1/P2 标 `cache=True`）
-- [ ] 2.2 工具 schema 确定性排序：注册序稳定；selector 存在时 `set_stable_tools(core_names)`（Read/Edit/Write/Bash/Glob/Grep/InspectGitDiff），stable 前置不占 top-k 预算
-- [ ] 2.3 anthropic_llm.py 加 cache_control（ephemeral）断点：`CachePlan(stable_system_block_count, stable_tool_count)` 经 `_call_llm` 传入；按模式单断点（selector OFF → 最后稳定 system block；ON → 末核心工具）；provider 能力门控 + 400 重试降级
-- [ ] 2.4 openai_llm.py 按 provider 对齐：接受并忽略 CachePlan，不发送 cache_control
-- [ ] 2.5 稳定前缀冻结：P0/P1/P2 于预算 pass 之外完整渲染，预算只作用于 P4/P5；截断整块丢弃
-- [ ] 2.6 单元/集成测试：注入顺序、cache 分层、稳定前缀跨迭代字节一致、OpenAI payload 无 cache_control
+- [x] 2.1 注入 wire 顺序 system（prompt → MD → memory index）→ tools（core stable → 选中 variable tail）→ user messages；`ContextBuilder.build()` 保持返回 str，新增 `build_blocks()`/`render_layers()` 返回 `list[TextBlock]`（P0-P5 独立块，P0/P1/P2 标 `cache=True`）
+- [x] 2.2 工具 schema 确定性排序：注册序稳定；selector 存在时 `set_stable_tools(core_names)`（Read/Edit/Write/Bash/Glob/Grep/InspectGitDiff），stable 前置不占 top-k 预算
+- [x] 2.3 anthropic_llm.py 加 cache_control（ephemeral）断点：`CachePlan(stable_system_block_count, stable_tool_count)` 经 `_call_llm` 传入；按模式单断点（selector OFF → 最后稳定 system block；ON → 末核心工具）；provider 能力门控 + 400 重试降级
+- [x] 2.4 openai_llm.py 按 provider 对齐：接受并忽略 CachePlan，不发送 cache_control
+- [x] 2.5 稳定前缀冻结：P0/P1/P2 于预算 pass 之外完整渲染，预算只作用于 P4/P5；截断整块丢弃
+- [x] 2.6 单元/集成测试：注入顺序、cache 分层、稳定前缀跨迭代字节一致、OpenAI payload 无 cache_control
 
 ## 子 change ③：分页读进度 + 深层 MD 按需加载
 
-- [ ] 3.1 ReadTool 增加 offset/pagination/(file,offset,total) 进度：仅显式 offset 时输出 `[ReadProgress file="<rel>"; offset=<n>; total=<m>]`，默认行为字节兼容
-- [ ] 3.2 压缩前把 (file,offset,total) 写入摘要：扫 tool-result 内容取每条文件最后一条进度注记
-- [ ] 3.3 深层 MD 按需加载 tool：新增 `ReadDoc`（.md-only、docs/ 树限定、32K 上限、workspace-policy）
-- [ ] 3.4 单元测试：分页进度、深层 MD 加载、offset 边界、工厂注册/模式可见性
+- [x] 3.1 ReadTool 增加 offset/pagination/(file,offset,total) 进度：仅显式 offset 时输出 `[ReadProgress file="<rel>"; offset=<n>; total=<m>]`，默认行为字节兼容
+- [x] 3.2 压缩前把 (file,offset,total) 写入摘要：扫 tool-result 内容取每条文件最后一条进度注记
+- [x] 3.3 深层 MD 按需加载 tool：新增 `ReadDoc`（.md-only、32K 上限、workspace-policy、工厂注册）
+- [x] 3.4 单元测试：分页进度、深层 MD 加载、offset 边界、工厂注册/模式可见性
 
 ## 收尾
 

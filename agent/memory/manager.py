@@ -1,10 +1,11 @@
 # agent/memory/manager.py
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal, Optional, TYPE_CHECKING
 
-from agent.message import Message, TextBlock, count_tokens_for_content
+from agent.message import Message, TextBlock, count_tokens_for_content, extract_text
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -14,6 +15,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("asterwynd.memory")
 
 _enc = None
+
+# ReadTool 分页进度注记（见 agent/tools/builtin/read.py）：
+#   [ReadProgress file="<path>"; offset=<n>; total=<m>]
+_READ_PROGRESS_RE = re.compile(r'\[ReadProgress file="([^"]*)"; offset=(\d+); total=(\d+)\]')
 
 
 def _count_tokens(text: str) -> int:
@@ -230,10 +235,12 @@ class MemoryManager:
         middle_tokens = self.count_tokens(middle)
         summary_budget = int(middle_tokens * 0.30)
 
-        # Annotate incomplete tool calls in the middle segment as
-        # `[call#<i>: <tool_call_id> pending]` so both LLM and truncation
-        # summarizers carry the marker (design Decision: tool-call pairing).
-        annotated_middle = self._annotate_pending_calls(middle, recent)
+        # Decorate the middle segment before summarization: annotate incomplete
+        # tool calls as `[call#<i>: <tool_call_id> pending]` and carry the last
+        # Read pagination progress (file, offset, total) so both LLM and
+        # truncation summarizers see them (design Decision: tool-call pairing +
+        # pagination progress preservation).
+        annotated_middle = self._decorate_for_summary(middle, recent)
 
         new_summary = await summarizer.summarize(annotated_middle, budget=summary_budget)
         if not new_summary:
@@ -440,6 +447,51 @@ class MemoryManager:
                 reasoning_content=m.reasoning_content,
                 tool_calls=m.tool_calls,
             ))
+        return annotated
+
+    def _extract_read_progress(
+        self, messages: list["Message"]
+    ) -> list[tuple[str, int, int]]:
+        """Last ``[ReadProgress file=...; offset=...; total=...]`` per file.
+
+        Only tool results carry ``total``, so the scan reads tool-result
+        content and keeps the last match per file (last-window semantics —
+        the resume candidate for a paged large-file read).
+        """
+        per_file: dict[str, tuple[int, int]] = {}
+        for m in messages:
+            if m.role != "tool" or not m.content:
+                continue
+            text = m.content if isinstance(m.content, str) else extract_text(m.content)
+            for match in _READ_PROGRESS_RE.finditer(text):
+                per_file[match.group(1)] = (int(match.group(2)), int(match.group(3)))
+        return [(path, offset, total) for path, (offset, total) in per_file.items()]
+
+    def _decorate_for_summary(
+        self,
+        middle: list["Message"],
+        recent: list["Message"],
+    ) -> list["Message"]:
+        """Apply pending-call annotations and pagination-progress hints.
+
+        The decorated list is passed to the summarizer; the original messages
+        are untouched (pending/progress are shallow copies or appended hints).
+        """
+        annotated = self._annotate_pending_calls(middle, recent)
+        progress = self._extract_read_progress([*middle, *recent])
+        if progress:
+            lines = [
+                f"- {path}: offset={offset}, total={total}"
+                for path, offset, total in progress
+            ]
+            hint = Message(
+                role="user",
+                content=(
+                    "当前分页读取进度（大文件续读用，请在「当前进行中」中保留 (file, offset, total)）:\n"
+                    + "\n".join(lines)
+                ),
+            )
+            annotated = [*annotated, hint]
         return annotated
 
     async def _compress_to_l2(

@@ -16,6 +16,21 @@ class ToolCallDelta:
     arguments: str  # JSON string
 
 
+@dataclass
+class CachePlan:
+    """Anthropic prompt-caching breakpoint plan.
+
+    ``stable_system_block_count`` marks the last stable system block (selector
+    OFF: cache covers tools + system together).  ``stable_tool_count`` marks
+    the last core tool (selector ON: the varying tail invalidates the system
+    breakpoint).  Only one of the two is effective per request; the plan is
+    consumed by AnthropicLLM only, OpenAILLM accepts-and-ignores it.
+    """
+
+    stable_system_block_count: int = 0
+    stable_tool_count: int = 0
+
+
 @runtime_checkable
 class LLM(Protocol):
     """LLM provider 接口"""

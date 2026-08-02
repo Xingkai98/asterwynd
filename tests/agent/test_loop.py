@@ -6,7 +6,7 @@ import os
 from agent.approval import ApprovalDecisionStatus, ApprovalResponse
 from agent.background import BackgroundTaskManager
 from agent.loop import AgentLoop
-from agent.message import Message, system_message
+from agent.message import Message, system_message, extract_text
 from agent.llm import LLMResponse, LLMStreamEvent, ToolCallDelta
 from agent.session import SessionStore, SessionSnapshot
 from agent.tools.base import Tool, tool_parameters, ToolCall
@@ -20,6 +20,12 @@ from agent.subagent.manager import SubAgentManager
 from agent.skills.loader import Skill
 from agent.skills.runtime import SkillRuntime
 from agent.tool_permissions import ToolCapability, ToolPermission, ToolRiskLevel
+
+
+def _msg_text(content) -> str:
+    """Normalize Message.content (str or list of blocks) to plain text."""
+    return extract_text(content) if not isinstance(content, str) else content
+
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}, "required": []})
 class EchoTool(Tool):
@@ -341,8 +347,8 @@ async def test_agent_loop_injects_planning_context_without_mutating_messages():
 
     # Planning context is now part of the ContextBuilder injection block
     # (index 1), rendered alongside SystemPrompt, MemoryIndex, Skills, etc.
-    assert "base system" in llm.messages[0].content
-    assert "Current structured planning state:\n- [in_progress] Read docs" in llm.messages[1].content
+    assert "base system" in _msg_text(llm.messages[0].content)
+    assert "Current structured planning state:\n- [in_progress] Read docs" in _msg_text(llm.messages[1].content)
     assert [message.content for message in messages] == ["base system", "hi", "done"]
 
 @pytest.mark.asyncio
@@ -1027,7 +1033,7 @@ async def test_agent_loop_injects_skill_index_without_full_prompt():
 
     await loop.run([Message(role="user", content="hello")])
 
-    contents = "\n".join(message.content for message in llm.messages)
+    contents = "\n".join(_msg_text(message.content) for message in llm.messages)
     assert "Available skills" in contents
     assert "/code-review <request>" in contents
     assert "FULL REVIEW PROMPT" not in contents
@@ -1062,7 +1068,7 @@ async def test_agent_loop_injects_matched_skill_context_without_mutating_message
 
     await loop.run(messages)
 
-    contents = "\n".join(message.content for message in llm.messages)
+    contents = "\n".join(_msg_text(message.content) for message in llm.messages)
     assert "Active Skill: code-review" in contents
     assert "FULL REVIEW PROMPT" in contents
     assert [message.content for message in messages] == [
@@ -1116,7 +1122,7 @@ async def test_agent_loop_activate_skill_tool_adds_context_for_next_llm_call():
 
     result = await loop.run([Message(role="user", content="tell me something")], on_event=on_event)
 
-    second_call_contents = "\n".join(message.content for message in llm.calls[1])
+    second_call_contents = "\n".join(_msg_text(message.content) for message in llm.calls[1])
     assert result.content == "researched"
     assert "Active Skill: research" in second_call_contents
     assert "FULL RESEARCH PROMPT" in second_call_contents
@@ -1170,7 +1176,7 @@ async def test_todo_context_injected_in_build_mode():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "## Current Progress" in contents
     assert "Task 1" in contents
     assert "Task 2" in contents
@@ -1196,7 +1202,7 @@ async def test_todo_context_not_injected_when_empty():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "## Current Progress" not in contents
 
 
@@ -1221,7 +1227,7 @@ async def test_todo_context_not_injected_in_plan_mode():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "## Current Progress" not in contents
 
 
@@ -1795,7 +1801,7 @@ async def test_completed_background_task_injected_as_observation():
 
     await loop.run([Message(role="user", content="test")])
 
-    contents = "\n".join(m.content for m in llm.messages)
+    contents = "\n".join(_msg_text(m.content) for m in llm.messages)
     assert "Background task" in contents
     assert "completed" in contents
     assert "hello_bg" in contents
@@ -1926,7 +1932,7 @@ async def test_resume_restores_state():
             resume_snapshot=snapshot,
         )
 
-        contents = "\n".join(m.content for m in llm2.messages)
+        contents = "\n".join(_msg_text(m.content) for m in llm2.messages)
         assert "first run" in contents
         assert "Session resumed" in contents
         assert "ignored" in contents
@@ -2001,7 +2007,7 @@ async def test_messages_with_run_context_uses_workspace_root_from_policy(tmp_pat
 
     # 系统 prompt 中应该包含 tmp_path 而非 os.getcwd()
     system_text = "\n".join(
-        m.content for m in llm.messages if getattr(m, "role", None) == "system"
+        _msg_text(m.content) for m in llm.messages if getattr(m, "role", None) == "system"
     )
     assert str(tmp_path) in system_text
 

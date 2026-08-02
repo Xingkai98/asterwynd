@@ -458,6 +458,33 @@ async def test_no_l2_below_threshold():
 
 
 @pytest.mark.asyncio
+async def test_read_progress_injected_into_summary_prompt():
+    """Read(offset) 的 (file, offset, total) 进度在压缩前写入摘要提示（task 3.2）。"""
+    recorder = RecordingSummarizer()
+    mgr = MemoryManager(max_tokens=1, recent_window=1, summarizer=recorder, compaction_gap=0)
+    messages = [
+        Message(role="system", content="sys"),
+        Message(role="user", content="read the big file"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCallDelta(id="r1", name="Read", arguments='{"path":"big.txt","offset":40,"limit":20}')],
+        ),
+        Message(
+            role="tool",
+            content='content\n\n[ReadProgress file="big.txt"; offset=40; total=100]',
+            tool_call_id="r1",
+        ),
+        Message(role="user", content="recent"),
+    ]
+    await mgr.compact(messages)
+    prompt = _format_prompt(recorder.summarize_calls[0])
+    assert "big.txt" in prompt
+    assert "offset=40" in prompt
+    assert "total=100" in prompt
+
+
+@pytest.mark.asyncio
 async def test_resume_roundtrip_keeps_pending_marker():
     """Unfinished tool_call survives message serialization + re-compaction (resume).
 
