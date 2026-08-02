@@ -6,8 +6,6 @@ import io
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 
 from agent.workflow.manager import WorkflowManager
@@ -87,7 +85,12 @@ def test_guard_allows_workflow_state_cli_commands(tmp_path):
     assert result.returncode == 0
 
 
-def test_guard_tracks_agent_calls_in_reviewing_sub_state(tmp_path):
+def test_guard_agent_calls_are_not_tracked_when_workflow_disabled(tmp_path):
+    """issue #90：状态机停用后，_agent-calls.json 审阅跟踪不再产生。
+
+    独立审阅闭环由 /review-loop 命令驱动，产物是 building-review.md + manifest，
+    不再依赖 handoff.json 驱动的 _agent-calls.json 跟踪。
+    """
     _seed_reviewing_change(tmp_path)
 
     result = _run_guard(
@@ -99,16 +102,38 @@ def test_guard_tracks_agent_calls_in_reviewing_sub_state(tmp_path):
     )
 
     log_path = tmp_path / ".handoff" / "test-change" / "_agent-calls.json"
-    calls = json.loads(log_path.read_text(encoding="utf-8"))
-
     assert result.returncode == 0
-    assert calls[0]["sub_state"] == "reviewing_impl"
+    assert not log_path.exists(), "状态机停用后不应再记录 _agent-calls.json"
 
 
 def test_guard_noops_when_workflow_disabled(tmp_path, monkeypatch):
+    """issue #90：状态机停用后，普通写操作放行（exit 0）。"""
     import scripts.workflow_guard as mod
 
-    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": str(tmp_path / "agent" / "test.py")},
+                }
+            )
+        ),
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        mod.main()
+
+    assert excinfo.value.code == 0
+
+
+def test_guard_blocks_protected_files_even_when_workflow_disabled(tmp_path, monkeypatch):
+    """issue #90：受保护文件（known-issues/known-debt/specs/archive）始终拦截，
+    不随状态机停用而放行——这是安全边界，不依赖 workflow 状态。"""
+    import scripts.workflow_guard as mod
+
     monkeypatch.setattr(
         sys,
         "stdin",
@@ -125,21 +150,13 @@ def test_guard_noops_when_workflow_disabled(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         mod.main()
 
-    assert excinfo.value.code == 0
+    assert excinfo.value.code == 2
 
 
-def test_guard_blocks_writes_when_resume_audit_needs_reconciliation(tmp_path, monkeypatch):
+def test_guard_resume_audit_no_longer_blocks_writes(tmp_path, monkeypatch):
+    """issue #90：resume audit 门禁已停用（状态机仪式），普通写操作放行。"""
     import scripts.workflow_guard as mod
 
-    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: True)
-    monkeypatch.setattr(
-        mod,
-        "run_resume_audit",
-        lambda *_: SimpleNamespace(
-            needs_reconciliation=True,
-            errors=("resume required",),
-        ),
-    )
     monkeypatch.setattr(
         sys,
         "stdin",
@@ -156,4 +173,4 @@ def test_guard_blocks_writes_when_resume_audit_needs_reconciliation(tmp_path, mo
     with pytest.raises(SystemExit) as excinfo:
         mod.main()
 
-    assert excinfo.value.code == 2
+    assert excinfo.value.code == 0

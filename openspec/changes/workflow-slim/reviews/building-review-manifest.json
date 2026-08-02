@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-slim",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "subagent-a9b6482645420c6db-round3",
+  "base_sha": "9659779227eec241b93b5f0fb156626699d4e62d",
+  "head_sha": "e199160529b27f8f57aefe64dc5753c63724ca07",
+  "tasks_hash": "sha256:51df974922d5d4f35ec0fafb7f5833211dddb4ce5dd7c2b765b2e8347b46f03c",
+  "spec_hash": "sha256:2d035d56c39acb68f29fb39d6d57d07fd2ef09aecf982a3e55a3e554f080ac20",
+  "diff_hash": "sha256:bd545a58c97ec123fcf199d33f085096101cda8a050df5e09b67b531813f64cb",
+  "report_hash": "sha256:8525a57ef00eff434f727bd173344e72837bc128adbfe6981e73a2c0865d7841"
+}

@@ -101,6 +101,29 @@ def write_spec_delta(root: Path, capability: str = "web-ui"):
     spec.write_text("## ADDED Requirements\n\n### Requirement: Example\n\nExample.\n", encoding="utf-8")
 
 
+def write_review_evidence(repo_root: Path, change_id: str, phase: str = "building"):
+    """写一个通过 verify_review_manifest 的 review report + manifest。
+
+    审阅证据放在 change 目录的 reviews/ 子目录（随 change 进 PR，CI 可校验）。
+    测试目录非 git repo，verify 跳过 sha 校验；哈希基于实际文件计算。
+    """
+    from agent.workflow.review_manifest import write_review_manifest
+
+    review_dir = repo_root / "openspec" / "changes" / change_id / "reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    report_path = review_dir / f"{phase}-review.md"
+    report_path.write_text("## Verdict\n\n**PASS**\n", encoding="utf-8")
+    write_review_manifest(
+        repo_root,
+        change_id,
+        phase,
+        reviewer_run_id="test-reviewer",
+        base_sha="0" * 40,
+        head_sha="0" * 40,
+        verdict="PASS",
+    )
+
+
 def test_check_change_rejects_handoff_projection_mismatch(tmp_path):
     change = tmp_path / "tampered-change"
     mgr = WorkflowManager(change, repo_root=tmp_path)
@@ -120,13 +143,89 @@ def test_check_change_rejects_handoff_projection_mismatch(tmp_path):
 def test_check_change_rejects_review_report_without_manifest(tmp_path):
     change = tmp_path / "openspec" / "changes" / "reviewed-change"
     write_change(change, proposal_for("docs"))
-    review_dir = tmp_path / ".handoff" / "reviewed-change"
+    review_dir = change / "reviews"
     review_dir.mkdir(parents=True)
     (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
 
     errors = check_change(change, tmp_path / "openspec" / "specs")
 
     assert any("review manifest missing" in e for e in errors)
+
+
+def test_feature_change_requires_building_review_manifest(tmp_path):
+    """强制：非 docs + 有 spec delta + tasks 全勾选的 change 必须跑独立审阅。"""
+    change = tmp_path / "openspec" / "changes" / "feature-change"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 实现\n\n"
+        "- [x] 功能实现。\n",
+    )
+    write_spec_delta(change, "web-ui")
+
+    # 无 .handoff/ 目录 → 报 building-review.md missing
+    errors = check_change(change, tmp_path / "openspec" / "specs")
+    assert any("building-review.md missing" in e for e in errors), errors
+
+
+def test_partial_change_does_not_require_building_review(tmp_path):
+    """回归：部分实现（有 [ ] 未勾选）的 change 不触发强制审阅。
+
+    修复审阅发现的门禁误伤：spec delta 从 proposal 阶段就存在，未实现
+    的 active change 不应被 building 审阅门禁拦截。
+    """
+    change = tmp_path / "openspec" / "changes" / "partial-change"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 实现\n\n"
+        "- [x] 已完成项。\n"
+        "- [ ] 待实现项。\n",
+    )
+    write_spec_delta(change, "web-ui")
+
+    errors = check_change(change, tmp_path / "openspec" / "specs")
+    assert not any("building-review.md missing" in e for e in errors), errors
+
+
+def test_feature_change_rejects_review_report_without_manifest(tmp_path):
+    """强制：有 building-review.md 但缺 manifest → verify_review_manifest 报错。"""
+    change = tmp_path / "openspec" / "changes" / "feature-change"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 实现\n\n"
+        "- [x] 功能实现。\n",
+    )
+    write_spec_delta(change, "web-ui")
+    review_dir = change / "reviews"
+    review_dir.mkdir(parents=True)
+    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
+
+    errors = check_change(change, tmp_path / "openspec" / "specs")
+    assert any("review manifest missing" in e for e in errors), errors
+
+
+def test_docs_change_does_not_require_building_review(tmp_path):
+    """docs change 不强制 building review（无代码实现）。"""
+    change = tmp_path / "openspec" / "changes" / "docs-change"
+    write_change(change, proposal_for("docs"))
+    write_tasks(change, "## 1. 文档\n\n- [x] 更新文档。\n")
+
+    errors = check_change(change, tmp_path / "openspec" / "specs")
+    assert not any("building-review.md missing" in e for e in errors), errors
 
 
 def test_known_debt_change_requires_workflow_event_explanation(tmp_path):
@@ -545,6 +644,7 @@ def test_spec_delta_requires_matching_current_spec(tmp_path):
         "- [ ] 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。\n",
     )
     write_spec_delta(change, "web-ui")
+    write_review_evidence(tmp_path, "change-ui")
 
     assert check_change(change, tmp_path / "openspec" / "specs") == [
         "change-ui: spec delta capability `web-ui` has no matching current spec at "
@@ -566,6 +666,7 @@ def test_spec_delta_requires_current_spec_sync_task(tmp_path):
     )
     write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
     write_spec_delta(change, "web-ui")
+    write_review_evidence(tmp_path, "change-ui")
 
     assert check_change(change, specs_root) == [
         "change-ui: tasks.md missing current spec sync task for spec delta "
@@ -592,6 +693,7 @@ def test_spec_delta_passes_with_matching_current_spec_and_sync_task(tmp_path):
         "- [ ] 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`。\n",
     )
     write_spec_delta(change, "web-ui")
+    write_review_evidence(tmp_path, "change-ui")
 
     assert check_change(change, specs_root) == []
 

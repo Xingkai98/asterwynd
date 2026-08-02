@@ -272,23 +272,21 @@ def test_closing_fails_without_review_report(tmp_path, monkeypatch):
 
 
 def test_review_report_fails_when_missing(tmp_path, monkeypatch):
-    import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+    monkeypatch.chdir(tmp_path)
 
     errors = _check_review_report("test-change", "planning")
     assert any("审阅报告缺失" in e for e in errors)
 
 
 def test_review_report_requires_manifest(tmp_path, monkeypatch):
-    handoff_dir = tmp_path / ".handoff" / "test-change"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    (handoff_dir / "planning-review.md").write_text(
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "planning-review.md").write_text(
         "## Review Report\n\nPASS\n",
         encoding="utf-8",
     )
 
-    import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+    monkeypatch.chdir(tmp_path)
 
     errors = _check_review_report("test-change", "planning")
 
@@ -296,45 +294,43 @@ def test_review_report_requires_manifest(tmp_path, monkeypatch):
 
 
 def test_review_report_detects_changes_requested(tmp_path, monkeypatch):
-    handoff_dir = tmp_path / ".handoff" / "test-change"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    (handoff_dir / "planning-review.md").write_text(
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "planning-review.md").write_text(
         "## Review Report\n\nCHANGES_REQUESTED: 需要补充验收标准。\n",
         encoding="utf-8",
     )
 
-    import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+    monkeypatch.chdir(tmp_path)
 
     errors = _check_review_report("test-change", "planning")
     assert any("CHANGES_REQUESTED" in e for e in errors)
 
 
 def test_review_report_detects_blocked(tmp_path, monkeypatch):
-    handoff_dir = tmp_path / ".handoff" / "test-change"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    (handoff_dir / "planning-review.md").write_text(
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    (review_dir / "planning-review.md").write_text(
         "## Review Report\n\nBLOCKED: 设计存在根本性冲突。\n",
         encoding="utf-8",
     )
 
-    import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
+    monkeypatch.chdir(tmp_path)
 
     errors = _check_review_report("test-change", "planning")
     assert any("BLOCKED" in e for e in errors)
 
 
 def test_review_report_passes_on_clean(tmp_path, monkeypatch):
-    handoff_dir = tmp_path / ".handoff" / "test-change"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    report_path = handoff_dir / "planning-review.md"
+    review_dir = tmp_path / "openspec" / "changes" / "test-change" / "reviews"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    report_path = review_dir / "planning-review.md"
     report_path.write_text(
         "## Review Report\n\nPASS: 所有 artifacts 自洽。\n",
         encoding="utf-8",
     )
     from agent.workflow.review_manifest import artifact_hash, file_sha256
-    (handoff_dir / "planning-review-manifest.json").write_text(
+    (review_dir / "planning-review-manifest.json").write_text(
         json.dumps(
             {
                 "schema": "review-manifest/v1",
@@ -354,9 +350,7 @@ def test_review_report_passes_on_clean(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    import scripts.check_phase_done as mod
-    monkeypatch.setattr(mod, "_handoff_dir", lambda: tmp_path / ".handoff")
-
+    monkeypatch.chdir(tmp_path)
     errors = _check_review_report("test-change", "planning")
     assert len(errors) == 0
 

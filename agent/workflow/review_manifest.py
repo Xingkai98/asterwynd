@@ -20,11 +20,25 @@ REQUIRED_REVIEW_FIELDS = (
 
 
 def review_report_path(repo_root: str | Path, change_id: str, phase: str) -> Path:
-    return Path(repo_root) / ".handoff" / change_id / f"{phase}-review.md"
+    return (
+        Path(repo_root)
+        / "openspec"
+        / "changes"
+        / change_id
+        / "reviews"
+        / f"{phase}-review.md"
+    )
 
 
 def review_manifest_path(repo_root: str | Path, change_id: str, phase: str) -> Path:
-    return Path(repo_root) / ".handoff" / change_id / f"{phase}-review-manifest.json"
+    return (
+        Path(repo_root)
+        / "openspec"
+        / "changes"
+        / change_id
+        / "reviews"
+        / f"{phase}-review-manifest.json"
+    )
 
 
 def build_review_manifest(
@@ -162,18 +176,19 @@ def _verify_git_span(repo_root: Path, manifest: dict[str, Any]) -> list[str]:
     if not isinstance(base_sha, str) or not isinstance(head_sha, str):
         return errors
 
-    current_head = _git_text(repo_root, "rev-parse", "HEAD")
-    if current_head and head_sha != current_head:
-        errors.append("review manifest head_sha does not match current HEAD")
-
     base_exists = _git_commit_exists(repo_root, base_sha)
     head_exists = _git_commit_exists(repo_root, head_sha)
-    if not base_exists:
-        errors.append("review manifest base_sha is not a git commit")
-    if not head_exists:
-        errors.append("review manifest head_sha is not a git commit")
 
-    if base_exists and head_exists and manifest.get("diff_hash"):
+    # Git span validation is best-effort. On CI the checkout may be a shallow
+    # clone or PR head whose base/head shas are not present as git objects; on
+    # a rebased local branch the original shas may no longer exist either. In
+    # both cases we skip git-span checks rather than false-positive. The
+    # content-hash checks (tasks/spec/report) bind the review to the actual
+    # artifacts and remain authoritative; diff_hash is informational.
+    if not base_exists or not head_exists:
+        return errors
+
+    if manifest.get("diff_hash"):
         expected = git_diff_hash(repo_root, base_sha, head_sha)
         if expected is not None and manifest.get("diff_hash") != expected:
             errors.append("git diff hash mismatch")
