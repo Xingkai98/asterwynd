@@ -5,7 +5,7 @@ import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
-from agent.tools.sandbox import BackgroundProcessHandle, SandboxExecutor
+from agent.tools.sandbox import BackgroundProcessHandle, ExecutionBackend
 
 current_tool_call_id: ContextVar[str] = ContextVar("current_tool_call_id", default="")
 
@@ -30,7 +30,7 @@ class _TaskEntry:
 class BackgroundTaskManager:
     def __init__(
         self,
-        sandbox: SandboxExecutor,
+        sandbox: ExecutionBackend,
         max_output_bytes: int = MAX_OUTPUT_BYTES,
         cleanup_timeout: float = 5.0,
     ):

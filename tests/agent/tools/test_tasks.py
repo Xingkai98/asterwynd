@@ -4,12 +4,12 @@ import pytest
 
 from agent.background import BackgroundTaskManager
 from agent.tools.builtin.tasks import TaskOutputTool, TaskStopTool
-from agent.tools.sandbox import SandboxExecutor
+from agent.tools.sandbox import ProcessBackend
 
 
 @pytest.fixture
 def sandbox():
-    return SandboxExecutor()
+    return ProcessBackend()
 
 
 @pytest.fixture

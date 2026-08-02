@@ -159,6 +159,23 @@ class BenchmarkConfig:
 
 
 @dataclass(frozen=True)
+class SandboxConfig:
+    """Sandbox execution backend configuration.
+
+    ``backend`` selects the ExecutionBackend: ``process`` (subprocess, default)
+    or ``docker`` (container isolation). ``image`` is the Docker image for the
+    docker backend. ``memory_mb``/``cpus`` are optional resource limits (require
+    cgroup v2 domain controllers; omitted by default because some hosts do not
+    configure them).
+    """
+    backend: str = "process"
+    image: str = "alpine:latest"
+    memory_mb: int | None = None
+    cpus: float | None = None
+    timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
 class SkillsConfig:
     roots: tuple[Path, ...] = ()
 
@@ -173,6 +190,7 @@ class AsterwyndConfig:
     mcp: McpConfig = field(default_factory=McpConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
     def __post_init__(self) -> None:
         if not self.modes:

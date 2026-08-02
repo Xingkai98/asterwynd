@@ -170,3 +170,54 @@ Browser screenshots、HTML snapshots 和日志 artifacts SHALL 保存到 workspa
 - **GIVEN** browser tool 请求保存 artifact 到 denied path
 - **WHEN** WorkspacePolicy 校验写入路径
 - **THEN** 系统 SHALL 拒绝保存
+
+### Requirement: ExecutionBackend 可插拔沙箱
+
+沙箱 SHALL 将命令执行抽象为 `ExecutionBackend` 接口，提供可插拔后端：`ProcessBackend`（subprocess，默认）与 `DockerBackend`（`docker run --rm --network none` 容器隔离）。后端 SHALL 返回统一 `SandboxResult`，SHALL 可通过 config 选择。
+
+#### Scenario: Docker 隔离执行
+
+- **GIVEN** 通过 docker 后端执行命令
+- **WHEN** 后端在容器内运行
+- **THEN** 命令 SHALL 在 `--network none` 下运行
+- **AND** 只挂载 workspace
+- **AND** 运行后容器 SHALL 被移除
+
+#### Scenario: 后端切换
+
+- **GIVEN** config 选择 `backend: docker`
+- **WHEN** 构建执行后端
+- **THEN** 使用 `DockerBackend`
+- **AND** `backend: process` 选择 `ProcessBackend`
+
+### Requirement: 命令护栏（轻量分词 + argv 语义校验）
+
+命令护栏 SHALL 通过轻量分词与 argv 语义校验验证 shell 命令，SHALL 拒绝危险命令模式（rm 递归+强制目标越界、重定向到受保护路径、管道到 shell、任意代码执行解释器、敏感文件外传），SHALL 扩展 denylist 覆盖绕过变体，SHALL 默认放行未知命令（护栏不是边界）。
+
+#### Scenario: rm 目标越界拒绝
+
+- **GIVEN** `rm -rf /` 或 `rm -fr /` 或 `rm -rf $HOME`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝（flag 归一化捕获重排/拆分）
+
+#### Scenario: 重定向到受保护路径拒绝
+
+- **GIVEN** `echo x > /etc/passwd`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝
+
+#### Scenario: 默认放行未知命令
+
+- **GIVEN** 未知命令 `my-custom-tool --flag`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 放行（default-allow；后端负责隔离）
+
+### Requirement: 恶意命令攻击回归集
+
+沙箱 SHALL 维护数据驱动攻击集（`benchmarks/attacks/attacks.json`），包含 50+ 恶意命令（file-destroy/priv-esc/code-exec/exfil/resource/bypass/sensitive-read 分类），SHALL 断言所有 guard-deny case 被拦截。
+
+#### Scenario: 攻击集拦截
+
+- **GIVEN** 攻击集 cases
+- **WHEN** 每个 guard-deny case 被命令护栏校验
+- **THEN** 全部 SHALL 被拒绝
