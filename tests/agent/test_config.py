@@ -660,3 +660,15 @@ def test_invalid_memory_decay_threshold_fails_fast(tmp_path, monkeypatch):
     )
     with pytest.raises(ConfigError):
         load_config(start_dir=tmp_path)
+
+
+def test_memory_decay_threshold_bool_rejected(tmp_path, monkeypatch):
+    """Regression (review Round 3): `decay_threshold: false` must not silently
+    parse to 0.0 (which would effectively never archive); a bool is a config
+    mistake and should fail fast."""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "memory:\n  decay_threshold: false\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_config(start_dir=tmp_path)

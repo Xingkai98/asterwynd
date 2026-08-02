@@ -185,3 +185,102 @@ $ uv run pytest -q tests/agent/memory/test_long_term.py tests/agent/memory/test_
 Round 1 的两个 major（run_decay 未接线、judge 硬编码 gpt-4）与六个 minor 均真实修复并有回归测试；4 个 ADDED requirements 在 delta 与正式 spec 双对齐；目标测试与 OpenSpec 校验全绿；benchmark 任务在 base commit 上独立验证通过。残留问题全部为 minor，不影响规格验收路径。
 
 **Verdict: PASS**。生成 review manifest（verdict=PASS）后，CI 闸门即可通过。
+
+
+---
+
+# Round 3 Review（2026-08-02，补做 batch grill 后修订提交 2eef1fd）
+
+## 审阅范围
+
+- 对象：`2eef1fd`（`git diff b85876b...HEAD`）——用户补做 batch grill（Round 2 决策树）拍板后落地的四项实质修订 + Q3/Q5/Q6/Q9 follow-up + 文档回写。
+- 方法：独立零记忆 subagent，8 维 workflow 审阅；对照 `grill-design.md` Round 2 决策树、`design.md` Round 2 用户确认、归档 tasks.md 逐项核验实现（读代码，不只看文件名）。
+- 本报告为补做 grill 修订的独立复评，verdict 覆盖 `2eef1fd` 引入的全部变更。
+
+## Verdict
+
+**PASS**
+
+四项用户拍板（R2-1 归档评分门、R2-2 scope 解析、R2-3 embedding 口径、R2-4 可逆性→#99 follow-up）与 Q3/Q5/Q6/Q9 全部真实落地，均有回归测试覆盖且通过。正式 spec 的时效性衰减 requirement 已同步评分门语义，实现与 spec 一致。目标测试 161 passed、全量 1651 passed（6 失败全部为已知环境问题：5 个 MCP 缺 uv、1 个 tree-sitter Java/Kotlin）、openspec strict validate 29/29、artifact checker（含 `--check-archived`）通过。剩余问题均为 minor 观察，不阻塞合入。
+
+## 用户拍板项验证（逐一）
+
+| 项 | 用户决定 | 验证结果 | 代码证据 |
+|----|---------|---------|---------|
+| R2-1 归档判定评分门 | A 评分门，decay_threshold 默认 1.5（None 关闭） | 已落地 | `agent/memory/persistent.py:34` `DECAY_THRESHOLD=1.5`；`:208-229` `run_decay` 双条件 `days > archive_after_days AND (threshold is None OR decay_score < threshold)`；`:195-206` `decay_score` 分数天（`total_seconds()/86400`）修 30.9 天边界；`agent/config.py:218-219` MemoryConfig 两新字段、`:1198-1207` yaml 解析（null→None）、`:1235-1240` 接线；`agent/main.py:252-253`、`agent/tools/factory.py:308-309/404-405` 传入 PersistentMemory |
+| R2-2 scope 解析 | A git common-dir 派生，同仓 worktree 共享 | 已落地 | `agent/memory/persistent.py:45-68` `_find_scope_root`（.git 目录=checkout root；.git 文件=解析 `gitdir:`→`commondir`）；`:71-92` `_git_common_dir`；本 worktree 实测 `_find_scope_root` 解析到主仓 `/home/happy/my-agent`，验证共享生效 |
+| R2-3 embedding 口径 | A dim=2048 对齐 + InMemoryVectorStore + seam 降级协议层 | 已落地 | `agent/embedding/provider.py:22` `DEFAULT_EMBEDDING_DIM=2048` 共享常量；`agent/memory/persistent.py:579-605` `search()` 默认 embedder `NGramEmbedding(dim=DEFAULT_EMBEDDING_DIM)` 且改走 `InMemoryVectorStore`；`agent/tools/factory.py:119-121` `_wire_governance` 改用共享常量消魔数 |
+| R2-4 写时去重可逆性 | A，作为 follow-up 新 change（issue #99） | 已按决定登记 | 本 change 不原地修订；`docs/known-debt.md` 「写时去重可逆性缺口（R2-4 → issue #99）」条目；design.md Round 2 记录偏差 |
+| Q3 decay_interval_seconds 第 7 旋钮 | 补接线 | 已落地 | `agent/config.py:1236-1240` `_parse_memory_config` 解析（`_validate_positive_int`）；main.py/factory.py 传递；测试 `tests/agent/test_config.py:602-658`（yaml 解析 + 默认值 + null + 非法值） |
+| Q5 CI 事件门禁 | fetch-depth:0 + base-ref + fail-closed | 已落地 | `.github/workflows/ci.yml:17-20` fetch-depth:0；`:48-56` 传 `--base-ref`（PR base.sha / push HEAD）+ `--require-base`；`scripts/check_openspec_artifacts.py:914-941` `_changed_paths_since_base` 返回 `(paths, warning)`，base 不可解析时 warning；`:961-966` `--require-base` 参数；`:1000-1009` fail-closed 把 warning 升为 error |
+| Q6 manifest 校验 | verify 支持归档 + --check-archived + 重建漂移 manifest | 已落地 | `agent/workflow/review_manifest.py:23-49` `change_dir_for`（archived 扫描 date 前缀）；`:135-175` `verify_review_manifest(archived=)`；`scripts/check_openspec_artifacts.py:597-600` `_change_id_from_dir_name`；`:603-645` `_check_review_manifests(archived=)` 仅漂移检测不要求历史审阅；`:987-995` `--check-archived`。4 个历史漂移 manifest（context-engineering / grill-enforcement / long-term-memory / sandbox-hardening）已重建，实测 tasks_hash/spec_hash/report_hash 全部与当前 artifact 匹配（脚本复算通过） |
+| Q9 SearchMemory 描述 | 改「文本相似度召回」 | 已落地 | `agent/tools/builtin/memory.py:141-145` 「by text similarity (char n-gram embedding recall, not full semantic understanding)」 |
+
+## 八维复查
+
+**1. 任务逐项验证**：tasks.md 1.x-9.x 全部 `[x]`；本修订涉及项（2.2 衰减归档、4.1 scope、9.x 审阅修复）实现真实存在（见上表），无 checkbox 假勾选。R2-4 不落地为独立任务因属 follow-up #99，已按用户决定在 known-debt 登记。
+
+**2. 正确性**：
+- 衰减双条件：`days <= archive_after_days → continue`；`threshold is not None and decay_score >= threshold → continue`；否则归档。与 spec「超 30 天未检索且衰减评分低于阈值」字面一致。默认 importance=3 第 31 天 score≈1.465<1.5 归档；importance=4/5 延长至约 43/53 天（设计口径吻合）。
+- 30.9 天边界：`(now-last).total_seconds()/86400` 分数天，30.9 > 30 触发归档；回归测试 `test_decay_boundary_uses_fractional_days`（test_long_term.py:262-272）与 `test_decay_score_fractional_recency`（:274-289）锁定。
+- worktree .git 解析：`gitdir:` 相对路径按 `.git` 文件父目录 resolve；`commondir` 相对路径按 gitdir resolve；标准布局 `main/.git/worktrees/<name>/commondir=../..` → main 仓 checkout root。真实 git worktree 集成测试 `test_real_worktrees_share_scope`（test_persistent.py:101-133）双 checkout scope/hash 相等。
+- fail-closed CI：`--require-base` 下 base 不可解析 → error（exit 1）；默认 best-effort → stderr WARNING 不阻断。回归测试 `test_require_base_fails_closed_when_base_unresolvable` / `test_require_base_defaults_to_best_effort_warning`。
+- manifest archived 路径：`change_dir_for` 扫描 date 前缀 dir → `verify_review_manifest(archived=True)` 按归档目录校验 tasks/spec/report hash；漂移检测测试 `test_verify_review_manifest_archived_path`（改 tasks.md 后报 tasks hash mismatch）。
+
+**3. Spec 对齐**：正式 spec（`openspec/specs/long-term-memory/spec.md:45-61`）时效性衰减 requirement 已改为「超 30 天未检索且衰减评分低于可配置阈值」，并新增「高重要度记忆豁免归档」场景；与实现（run_decay 双条件）完全一致。归档 delta spec 保留旧「30 天」措辞为冻结历史，正式 spec 是活契约、已对齐（已知 minor，见下）。
+
+**4. 冗余度**：`search()` 手写线性扫描由 `InMemoryVectorStore` 复用替代（消除重复 cosine 循环）；`DEFAULT_EMBEDDING_DIM` 共享常量消除 2048 魔数两处（persistent.py / factory.py）。Round 1 遗留 `_write_entry`/`_write_entry_to` 近重复未在本修订引入，维持原状。
+
+**5. 测试覆盖**：新增回归测试全部通过：衰减门（高 importance 保留/None 关闭/分数天边界/分数 recency）、search dim 锁（monkeypatch RecordingNGram 断言 2048）、scope worktree（伪造 layout/畸形回退/真实 git 集成）、config 解析（段解析/默认/null/非法）、require-base（fail-closed/warning）、archived manifest（id 剥离/漂移检测）。已知缺口：factory/config→PersistentMemory 传播无直接测试（Round 2 minor 遗留，见下 #1）。
+
+**6. 安全性**：`_git_common_dir` 解析的路径仅用于派生 `self.scope`（字符串）与 project hash；记忆文件恒写入 `~/.asterwynd/projects/<hash>/memory`，恶意 `.git` 文件内容最多改变所用 hash 目录，无任意写面、无路径逃逸、无提权。scope 校验为字符串相等、fail-safe（不匹配返回空集），无绕过读他人 scope 的路径（memory_dir 按 hash 隔离是真正的隔离边界）。无新增注入面。
+
+**7. 可维护性**：`_find_scope_root`/`_git_common_dir` 注释清晰、分工明确；`change_dir_for` 的 archive 扫描有 docstring 说明 date 前缀约定；配置旋钮集中且命名一致；`_changed_paths_since_base` 元组返回 + warning 语义文档化。良好。
+
+**8. CI 完整性**：CI 显著增强而非弱化——fetch-depth:0 + `--require-base` fail-closed 堵住「浅克隆静默跳过受保护路径门禁」的既有漏洞；checker 新增 `--check-archived` 归档漂移检测（默认不启用，按设计 opt-in）。push 事件下 `BASE_REF=GITHUB_SHA` diff 自身恒空、门禁空转（见 minor #3），但 PR 事件是实际闸门，属既定设计。
+
+## Issues（全部 minor，不阻塞）
+
+1. **[minor] factory/config→PersistentMemory 传播无直接测试**（grill Q3 推荐项未完全兑现）：yaml→MemoryConfig 解析已测（test_config.py:602-658），但没有任何测试从 `get_default_tools(memory_config=...)` / `_build_agent_core` 断言 `decay_threshold`/`decay_interval_seconds` 真正传入 PersistentMemory 实例。若日后有人在 factory/main 调用中漏传某个旋钮（R1-Q11 死配置家族同款风险），无测试兜底。建议补一条 factory 级传播回归测试。
+2. **[minor] `decay_threshold: false` 会被解析为 0.0**（`config.py:1201` `float(False)`）：YAML `false` 是 bool，`float` 得 0.0，语义变成「几乎永不归档」而非「关闭评分门」。文档已写 null 才是关闭方式，但 bool 值应显式拒绝（`isinstance(decay_threshold_raw, bool)` 报 ConfigError）以避免误配。低风险脚枪。
+3. **[minor] CI push 事件受保护路径门禁空转**：`.github/workflows/ci.yml:51-55` push 分支时 `BASE_REF=$GITHUB_SHA`，`git diff --name-only <自身>` 恒空 → 直接 push master 可绕过事件校验。PR 事件是实际闸门，直接 push 属非主流路径，与既定设计一致（review 描述明确「or HEAD on a push」），仅记录观察。可用 `$GITHUB_SHA^` 或依赖 PR 流程收紧。
+4. **[minor] `change_dir_for` 归档扫描非确定性**（`review_manifest.py:39-49`）：若未来出现两个不同日期的归档目录共享同一 change_id，`iterdir()` 顺序任意，返回不保证；当前仓库无此冲突（实测 `--check-archived` 全绿）。可排序或精确匹配锁定。
+5. **[minor] `_git_common_dir` commondir 缺失回退**（`persistent.py:90-91`）：非标准布局下 fallback `worktree_gitdir.parent.parent` 可能得到错误 scope root（如 `main/.git`）。git 对 linked worktree 恒写 commondir，此路径仅防御性存在，无实际触发面。
+6. **[minor] 重建 manifest 绑定 post-review tasks.md**（Q6 既定妥协）：long-term-memory-deepening 的 tasks_hash 从 c0df38（审阅时）重建为 d2bfea（当前，含 closeout 补充的 9.x 节与实测数据）。manifest 现在绑定的是审阅后编辑过的 tasks.md 而非审阅当时快照——这是用户批准的漂移修复机制（known-debt Q6 已记录），`head_sha`/`diff_hash` 仍固定原范围，可接受。
+7. **[minor] 归档 delta spec 时效性衰减措辞保留旧语义**：归档 delta（`archive/.../specs/long-term-memory/spec.md`）requirement 仍写「SHALL auto-archive memories not retrieved for 30 days」，未含评分门从句；正式 spec 已同步为双条件。归档 delta 是冻结历史不回放，正式 spec 为权威，仅记录观察。
+
+## Test Results（Round 3）
+
+```
+$ python3 -m pytest tests/agent/memory/test_long_term.py tests/agent/memory/test_persistent.py \
+    tests/agent/test_config.py tests/test_openspec_artifact_checker.py \
+    tests/agent/workflow/test_review_manifest.py tests/agent/tools/test_factory_sandbox_wiring.py -q
+161 passed in 4.33s
+
+$ python3 -m pytest tests/agent/memory tests/agent/test_config.py tests/agent/tools \
+    tests/agent/workflow tests/test_openspec_artifact_checker.py tests/agent/test_memory_e2e.py -q
+729 passed in 16.03s
+
+$ python3 -m pytest -q     # 全量
+1651 passed, 7 skipped, 6 failed in 95.50s
+# 6 失败全部为已知环境问题：5 个 tests/agent/mcp/test_mcp_manager.py 缺 uv（issue #82），
+# 1 个 tests/agent/code_intelligence/test_tree_sitter_symbols.py Java/Kotlin 语法包缺失。
+# 均与本修订无关（diff 未触碰 mcp/code_intelligence）。
+
+$ npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
+Totals: 29 passed, 0 failed
+
+$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master
+OpenSpec artifact checks passed
+
+$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --check-archived
+OpenSpec artifact checks passed
+
+# 复算 4 个重建 manifest：tasks_hash/spec_hash/report_hash 全部与当前 artifact 匹配（脚本核验通过）
+```
+
+## 结论
+
+用户补做 batch grill 拍板的四项实质修订与 Q3/Q5/Q6/Q9 follow-up 全部真实落地，代码、spec、文档、事件四层一致：归档判定评分门使 decay_score 真正进入生产路径并修复 30.9 天边界；scope 解析使同仓 worktree 共享记忆（本仓库自身即受益）；embedding 对齐 dim=2048 且复用 InMemoryVectorStore，0.5 阈值语义成立；CI 门禁 fail-closed、manifest 支持归档漂移检测且历史漂移已重建绑定。回归测试完备、全量校验通过、无安全面引入。
+
+**Verdict: PASS**。残留 7 项均为 minor 观察（多为既有遗留或既定妥协），不阻塞合入。建议后续补 factory 级 config 传播测试（minor #1），可在 #99 follow-up 一并处理。

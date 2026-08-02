@@ -1196,15 +1196,19 @@ def _parse_memory_config(raw: Any, path: Path) -> MemoryConfig:
             f"{path}: memory.dedup_recall_threshold must be a number"
         ) from exc
     decay_threshold_raw = mapping.get("decay_threshold", 1.5)
-    if decay_threshold_raw is not None:
+    if decay_threshold_raw is None:
+        decay_threshold = None
+    elif isinstance(decay_threshold_raw, bool):
+        raise ConfigError(
+            f"{path}: memory.decay_threshold must be a number or null (got bool)"
+        )
+    else:
         try:
             decay_threshold = float(decay_threshold_raw)
         except (TypeError, ValueError) as exc:
             raise ConfigError(
                 f"{path}: memory.decay_threshold must be a number or null"
             ) from exc
-    else:
-        decay_threshold = None
     return MemoryConfig(
         archive_after_days=_validate_positive_int(
             mapping.get("archive_after_days", 30),
