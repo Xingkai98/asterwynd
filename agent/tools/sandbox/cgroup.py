@@ -55,6 +55,14 @@ def _own_cgroup_path() -> str:
         return "/"
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def _pid_starttime(pid: int) -> int | None:
     """Starttime (clock ticks since boot) of a pid, or None if not readable.
 
@@ -117,6 +125,34 @@ class CgroupV2Controller:
         except OSError:
             return False
 
+    @staticmethod
+    def sweep_stale(fs_root: Path | str = DEFAULT_FS_ROOT) -> int:
+        """Best-effort removal of leftover ``asterwynd-*`` child cgroups from
+        crashed runs.
+
+        A dir is stale when its ``<pid>`` component is no longer a live process
+        (or its files have been cleared). Never touches a cgroup whose pid is
+        alive. Returns the number removed.
+        """
+        root = Path(fs_root)
+        removed = 0
+        for path in root.glob("asterwynd-*"):
+            try:
+                pid_part = path.name.split("-")[1]
+                pid = int(pid_part)
+                if pid > 0 and _pid_alive(pid):
+                    continue
+                for child in path.iterdir():
+                    try:
+                        child.unlink()
+                    except OSError:
+                        pass
+                path.rmdir()
+                removed += 1
+            except (ValueError, IndexError, OSError):
+                continue
+        return removed
+
     # --- lifecycle ---------------------------------------------------------
 
     def create(self) -> None:
@@ -124,6 +160,8 @@ class CgroupV2Controller:
             return
         own = _own_cgroup_path()
         parent = self.fs_root / own.lstrip("/")
+        # Best-effort sweep of leftover cgroups from crashed runs.
+        self.sweep_stale(parent)
         name = f"asterwynd-{os.getpid()}-{next(_NAME_COUNTER)}"
         path = parent / name
         try:

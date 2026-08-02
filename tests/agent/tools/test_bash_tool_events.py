@@ -6,6 +6,8 @@ tool_call_id attached.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent.background import current_tool_call_id
@@ -96,3 +98,21 @@ async def test_timeout_emits_kill_event(tmp_path):
     assert events[0]["event"] == "kill"
     assert events[0]["reason"] == "timeout"
     assert events[0]["backend"] == "process"
+
+
+@pytest.mark.asyncio
+async def test_backend_default_timeout_used_when_none_passed(tmp_path):
+    """Regression: BashTool with no explicit timeout must use the backend's
+    configured timeout, not a hardcoded 30s (sandbox.timeout_seconds must take
+    effect)."""
+    from agent.tools.sandbox.process_backend import ProcessBackend
+
+    # A backend whose default timeout is tiny → `sleep 60` times out fast.
+    tool = BashTool(
+        policy=WorkspacePolicy(tmp_path),
+        sandbox=ProcessBackend(timeout=0.2),
+    )
+    result = await tool.execute("sleep 60")
+    data = json.loads(result)
+    assert data["timed_out"] is True
+    assert data["duration_ms"] < 5000

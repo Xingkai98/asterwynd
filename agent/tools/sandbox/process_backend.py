@@ -123,7 +123,9 @@ class ProcessBackend:
             controller = self._controller_factory()
             controller.create()
             return controller, False
-        except OSError:
+        except Exception:
+            # OSError is the primary failure (permission/cgroup setup), but any
+            # controller failure must degrade rather than lose the flag.
             self._emit_degraded_once()
             return None, True
 
@@ -134,12 +136,18 @@ class ProcessBackend:
 
     def _attach(
         self, controller: CgroupController | None, proc: asyncio.subprocess.Process
-    ) -> bool:
+    ) -> bool | None:
+        """Attach the pid to the cgroup.
+
+        Returns True on success, False on attach failure (real degradation),
+        and None when there is no controller or the process already exited
+        (nothing to constrain — not a degradation).
+        """
         if controller is None:
-            return False
+            return None
         if proc.returncode is not None:
-            return False  # process already exited — skip the attach race
-        return controller.attach(proc.pid, starttime=_pid_starttime(proc.pid))
+            return None  # process already exited — skip the attach race
+        return bool(controller.attach(proc.pid, starttime=_pid_starttime(proc.pid)))
 
     # --- ExecutionBackend ---------------------------------------------------
 
@@ -165,9 +173,10 @@ class ProcessBackend:
             )
             attached = self._attach(controller, proc)
             # Degraded means a REQUESTED limit could not be enforced (no cgroup
-            # support, setup failure, or attach failure). When no limits were
+            # support, setup failure, or attach failure). A process that exited
+            # before attach (None) is not a degradation. When no limits were
             # requested there is no controller and no degradation.
-            effective_degraded = degraded or (controller is not None and not attached)
+            effective_degraded = degraded or (attached is False)
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(), timeout=timeout

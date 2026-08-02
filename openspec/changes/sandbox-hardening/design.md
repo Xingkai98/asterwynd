@@ -185,6 +185,16 @@
 - **cgroup 不可写环境（本宿主）**：`/proc/self/cgroup=0::/`、`/sys/fs/cgroup` root-owned 755、memory 不在 subtree_control → 实际运行路径是 degrade-first（`degraded=True` + 事件），单元测试用注入 fake controller 覆盖 enforce 路径。
 - **`CgroupV2Controller` 的 cleanup 兼容普通文件系统**：真实 cgroup v2 fs 的 control 文件是虚拟的、不阻塞 `rmdir`；普通 fs（测试 fake）会因非空目录阻塞 `rmdir`，cleanup 增加 best-effort 清理子文件再重试。
 
+### 第二批审阅修复（Round 1）
+
+独立审阅 agent 返回 CHANGES_REQUESTED（1 中等 + 4 minor），见 tasks.md 第 9 节。要点：
+
+- **`sandbox.timeout_seconds` 主路径不生效**：`BashTool.execute` 的 `timeout or 30.0` 恒 truthy 覆盖后端配置默认。修复为直接透传 `timeout`（None → 后端默认），配置值真正生效。
+- **attach 语义修正**：进程先于 attach 退出（快命令）不是 degradation——`_attach` 返回 `None`（skip），仅 attach 失败返回 `False` 才置 `degraded`。避免"配置了限制的每条快命令都标记 degraded"的噪音。
+- **Docker 超时容器残留**：kill CLI 客户端后容器在 daemon 残留。修复为 `--cidfile`（先 `mkstemp` 预留唯一路径再 `unlink`，因 docker 拒绝已存在的 cidfile）+ 超时后 `docker rm -f` 读到的容器 id。
+- **cgroup 遗留清扫**：`sweep_stale`（dead pid 目录清理、live pid 不动），`create()` 触发。
+- **`_setup_cgroup` catch Exception**：非 OSError 控制器失败也置 degraded。
+
 ## Reference Implementation Research
 
 - status: enabled

@@ -93,6 +93,38 @@ class TestCreate:
             CgroupV2Controller(cpus=-1, fs_root=cg_root)
 
 
+class TestSweepStale:
+    def _make_dir(self, cg_root, name):
+        d = cg_root / name
+        d.mkdir()
+        (d / "memory.max").write_text("0")
+        return d
+
+    def test_removes_dead_pid_cgroups(self, cg_root):
+        # 999999 is (almost certainly) not a live pid.
+        stale = self._make_dir(cg_root, "asterwynd-999999-1")
+        removed = CgroupV2Controller.sweep_stale(cg_root)
+        assert removed == 1
+        assert not stale.exists()
+
+    def test_keeps_live_pid_cgroups(self, cg_root):
+        import os
+
+        live = self._make_dir(cg_root, f"asterwynd-{os.getpid()}-1")
+        removed = CgroupV2Controller.sweep_stale(cg_root)
+        assert removed == 0
+        assert live.exists()
+
+    def test_create_sweeps_stale_first(self, cg_root):
+        self._make_dir(cg_root, "asterwynd-999999-1")
+        ctrl = CgroupV2Controller(memory_mb=64, fs_root=cg_root)
+        ctrl.create()
+        # The stale dir is gone and a fresh one exists.
+        names = [p.name for p in cg_root.iterdir()]
+        assert not any("999999" in n for n in names)
+        assert any(n.startswith("asterwynd-") and "999999" not in n for n in names)
+
+
 class TestAttachAndOom:
     def test_attach_writes_pid(self, cg_root):
         ctrl = CgroupV2Controller(memory_mb=64, fs_root=cg_root)

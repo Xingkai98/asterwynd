@@ -78,9 +78,12 @@ class BashTool(Tool):
         if run_in_background:
             return await self._execute_background(cmd, timeout)
 
+        # Pass timeout through (None → backend's configured default). The old
+        # `timeout or 30.0` silently overrode sandbox.timeout_seconds, so the
+        # config value never took effect.
         result = await self.sandbox.run(
             cmd,
-            timeout=timeout or 30.0,
+            timeout=timeout,
             cwd=self.policy.workspace_root,
         )
         return result.to_json()

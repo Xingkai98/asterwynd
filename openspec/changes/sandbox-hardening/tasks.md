@@ -62,3 +62,13 @@
 - [x] 8.5 config YAML 解析：新增 `_parse_sandbox_config` 接入 `_load_yaml_config`（`backend/image/memory_mb/cpus/timeout_seconds` 可配置，含校验）
 - [x] 8.6 Docker 后端后台执行优雅报错：`BackgroundTaskManager.start` 捕获 NotImplementedError → 明确 RuntimeError（loop 转为 [Error: ...]，不崩溃）
 - [x] 8.7 回归测试：`tests/agent/tools/test_factory_sandbox_wiring.py`（registry 接线 / tools 回填 / build_sandbox_from_config fail-fast / 后台优雅报错）+ `tests/agent/test_config.py`（sandbox YAML 解析 4 个用例）
+
+## 9. 审阅修复（Round 1，issue #90 强制审阅闭环）
+
+独立零记忆审阅 agent 返回 CHANGES_REQUESTED（1 个中等 + 4 个 minor），逐条修复：
+
+- [x] 9.1 **`sandbox.timeout_seconds` 主路径不生效（中等）**：`BashTool.execute` 的 `timeout or 30.0` 恒为 30.0，覆盖后端配置默认值。修复：直接透传 `timeout`（None → 后端默认）。回归测试 `test_backend_default_timeout_used_when_none_passed`
+- [x] 9.2 **cgroup 遗留目录清扫**：`CgroupV2Controller.sweep_stale`（dead pid 的 `asterwynd-*` 目录 best-effort 清理，live pid 不动），`create()` 时触发。测试 `TestSweepStale`（4 个用例）
+- [x] 9.3 **`_setup_cgroup` 仅 catch OSError**：非 OSError（如控制器 RuntimeError）会丢 degraded 标志。修复：catch Exception。回归测试 `test_non_oserror_setup_failure_still_degrades`
+- [x] 9.4 **Docker 超时容器残留**：kill CLI 客户端后容器在 daemon 残留（--rm 只在容器退出后触发）。修复：`--cidfile` + 超时后 `docker rm -f`。Docker 契约测试验证
+- [x] 9.5 **attach 语义**：进程先于 attach 退出（快命令）不视为 degraded（`_attach` 返回 None=skip），仅 attach 失败才 degraded

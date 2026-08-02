@@ -120,7 +120,9 @@ async def test_attach_failure_degrades():
     backend = ProcessBackend(
         memory_mb=64, cgroup_supported=True, controller_factory=lambda: fake
     )
-    result = await backend.run("echo hi")
+    # The command must outlive the attach call so the fake's attach actually
+    # runs and fails (a process that exits first is skipped, not degraded).
+    result = await backend.run("sleep 0.1; echo hi")
     assert result.degraded is True
 
 
@@ -145,3 +147,20 @@ async def test_timeout_with_cgroup_still_kills():
     result = await backend.run("sleep 60", timeout=0.2)
     assert result.timed_out is True
     assert fake.cleaned is True
+
+
+@pytest.mark.asyncio
+async def test_non_oserror_setup_failure_still_degrades():
+    """Regression: a controller that raises a non-OSError must degrade (mark
+    degraded + event), not lose the flag and crash the run."""
+
+    class ExplodingCgroup(FakeCgroup):
+        def create(self) -> None:
+            raise RuntimeError("unexpected controller error")
+
+    backend = ProcessBackend(
+        memory_mb=64, cgroup_supported=True, controller_factory=ExplodingCgroup
+    )
+    result = await backend.run("echo hi")
+    assert result.degraded is True
+    assert result.exit_code == 0
