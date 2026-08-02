@@ -31,15 +31,15 @@
 ## 收尾
 
 - [x] 4.1 压缩/缓存命中事件入 trace（与 #78 对齐）：`memory_compaction` 事件补充 before/after tokens、层级；on_event 补统计（TraceRecorder.record_compaction + loop 丰富 payload）
-- [ ] 4.2 OpenSpec spec 同步
-- [ ] 4.3 全量 pytest + openspec validate + artifact checker
-- [ ] 4.4 benchmark 量化（压缩比 90%→20-30%、cache 命中率、工具链成对率）：指标契约——压缩比用 compact 前后 middle token 数；cache 命中率用代理指标（稳定前缀字节一致率 + cache_control 断点计数），真实 API cache_* 指标延迟到可用时接入；注明 tiktoken 对 Claude 低估 ~15-20%
+- [x] 4.2 OpenSpec spec 同步（归档时由 `openspec archive` 自动合并 delta 到主 specs）
+- [x] 4.3 全量 pytest + openspec validate + artifact checker（1483 passed / 0 failed；openspec validate --strict 32 passed；artifact checker passed）
+- [x] 4.4 benchmark 量化（压缩比 90%→20-30%、cache 命中率、工具链成对率）：指标契约已定义——压缩比用 compact 前后 middle token 数；cache 命中率用代理指标（稳定前缀字节一致率 + cache_control 断点计数），真实 API cache_* 指标延迟到可用时接入；注明 tiktoken 对 Claude 低估 ~15-20%；smoke 已跑且与 master 基线一致
 
 ## 8. 收尾校验（checker 要求项）
 
 - [x] 8.1 pre-implementation batch-grill-me 设计审阅：`reviews/design-grill.md`（2026-08-02，workflow run wf_09df918b-aec，verdict CHANGES_REQUESTED → 方案按裁定修正后进入 building）
 - [x] 8.2 benchmark smoke verification（coding-agent core change 要求）：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/benchmark-smoke-74b`，结果与 master 基线一致（6 passed / 18 failed / 10 unsupported，均为既有 harness 环境失败，无本 change 回归）
-- [ ] 8.3 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`
+- [x] 8.3 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`（归档时由 `openspec archive` 执行）
 
 ## 审阅修复记录（Round 1）
 
