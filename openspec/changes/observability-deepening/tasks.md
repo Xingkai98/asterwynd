@@ -57,3 +57,11 @@
 - [x] 8.1 CostLedger 生产接线：main.py 构造 CostLedger 传入 AgentLoop；SubAgentManager 共享同一 ledger（`_build_subagent_loop` 传 cost_ledger + ledger_tool_name="subagent"），ledger.record 带 tool_name 使 by_tool 归属有效
 - [x] 8.2 error_type 产生点打标：loop.py 两处 record_tool_result 传入 error_type（parse 失败→parse_error；工具错误→ErrorClassifier 文本兜底分类）
 - [x] 8.3 回归测试：test_loop.py 新增 cost_ledger 接线 + subagent ledger 继承 + error_type 打标 3 个测试
+
+## 9. 第二轮审阅修复（CHANGES_REQUESTED 闭环第二轮）
+
+> 第一轮修复提交后复审，发现接线激活的重复 flush 缺陷：
+
+- [x] 9.1 CostLedger.flush 幂等化：`_flushed_count` 游标只写自上次 flush 以来的新增条目，主/子 loop 共享实例重复 flush 不再重复 append JSONL
+- [x] 9.2 load 后 flush 不重写历史：load 后 `_flushed_count` 前移，后续 flush 只写 load 之后的新记录
+- [x] 9.3 回归测试：test_cost_ledger.py 新增重复 flush 无重复 + load 后 flush 不重写历史 2 个测试

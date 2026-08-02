@@ -75,3 +75,37 @@ class TestCostLedgerPersistence:
         loaded.load(path)
         by_session = loaded.bill()["by_session"]
         assert set(by_session.keys()) == {"s1", "s2"}  # both persisted
+
+    def test_repeated_flush_without_new_records_no_duplicates(self, tmp_path: Path) -> None:
+        """回归：同一 ledger 重复 flush（主/子 loop 共享实例场景）不得重复 append。"""
+        path = tmp_path / "ledger.jsonl"
+        ledger = CostLedger()
+        ledger.record("gpt-4o-mini", 1000, 0, session_id="s1", phase="building")
+        ledger.flush(path)
+        # 共享实例被第二个 loop 再次 flush，无新增记录时不应重复写 s1
+        ledger.flush(path)
+        ledger.flush(path)
+
+        loaded = CostLedger()
+        loaded.load(path)
+        assert loaded.bill()["by_session"]["s1"]["tokens"] == 1000
+        assert loaded.total() > 0
+
+    def test_load_then_flush_does_not_rewrite_history(self, tmp_path: Path) -> None:
+        """回归：load 恢复历史后 flush 新条目，不应重写已加载的历史。"""
+        path = tmp_path / "ledger.jsonl"
+        ledger = CostLedger()
+        ledger.record("gpt-4o-mini", 1000, 0, session_id="s1", phase="building")
+        ledger.flush(path)
+
+        loaded = CostLedger()
+        loaded.load(path)
+        loaded.record("gpt-4o-mini", 2000, 0, session_id="s2", phase="planning")
+        loaded.flush(path)
+
+        final = CostLedger()
+        final.load(path)
+        by_session = final.bill()["by_session"]
+        assert set(by_session.keys()) == {"s1", "s2"}
+        assert by_session["s1"]["tokens"] == 1000
+        assert by_session["s2"]["tokens"] == 2000
