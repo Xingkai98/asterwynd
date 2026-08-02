@@ -91,6 +91,33 @@
 - **稳定层不占 top_k 预算**：初版实现 `tail = max(0, top_k - len(stable))`，当稳定层数量 ≥ top_k 时可变层为 0，动态选择失效。端到端演示暴露后修复为 `tail = top_k`——稳定层始终注入（不占预算），可变层另选 top_k 个，总注入 = 稳定层 + top_k。回归测试 `test_variable_layer_selected_even_when_stable_ge_k` 锁定。
 - **端到端实测（16 真实工具）**：语义去重 0 误标（不同功能描述不触发）；Top-K 选择每个 query 精准命中相关工具（"search the web"→WebSearch/WebFetch，"symbol references"→SymbolSearch/LspHover，"save memory"→SaveMemory/RecallMemory），稳定层固定，延迟 ~3.6ms < 50ms 预算；生命周期 grace→removed 完整流转。
 
+### 第二批 batch-grill-me（2026-08-02，质量评分 + MCP 运行期健康）
+
+第二批范围 = tasks 第 4 节（质量评分）+ 第 6 节（MCP 运行期健康检查），一次完成。以下为逐项确认记录：
+
+**Round 1（人工确认 ✅）**
+- **批次范围**：质量评分 + MCP 健康一起做（两者独立、无共享冲突面）。
+- **质量降级语义（软降级）**：低分工具移出可变层选择候选 + 注入降级 notice，仍可显式调用；与第一批去重/生命周期"软提示不硬杀"哲学一致，不破坏权限模型。
+- **MCP 健康探针（后台定时 ping）**：后台 asyncio 定时任务周期性 `session.send_ping()`（间隔可配置默认 30s）+ 调用失败率窗口（来自真实 call_tool 结果）。已核实 mcp 库 `ClientSession.send_ping()` 可用。
+- **MCP 降级恢复（自动恢复）**：失败率窗口滑动清除或 ping 恢复后自动解除 degraded，无需人工介入。
+
+**Round 2（人工确认 ✅）**
+- **质量数据源**：loop 工具执行点直接喂入 `ToolQualityStore`（执行点同时持有 status/duration/审批上下文），实时更新，不回读 trace。
+- **评分公式**：`quality = 0.5×成功率 + 0.3×耗时因子 + 0.2×确认率`（权重可配置）；耗时因子 `clamp(1 − avg_ms/ceiling, 0..1)`；数据不足 → 中性（不参与降级）。
+- **trace/#78 契约**：扩展 `record_tool_result` 增加可选 `approval_required`/`approval_granted` 字段（向后兼容），作为 #78 observability 消费的 quality 事件 schema。
+- **聚合与权限（推荐默认确认）**：增量更新 + run 结束 flush JSON；quality 不覆盖权限判定，只影响选择排名/可变层可见性。
+- **失败率窗口（推荐默认确认）**：最近 N 次调用（默认 20）滑动窗口。
+- **可见性接线（推荐默认确认）**：factory 装配时给 registry 注入 server-degraded callable，`_is_governance_visible` 过滤，degraded server 的 tools 从 `get_all_schemas`/`select_schemas` 排除。
+
+**结论**：全部 10 项决策确认完毕，frontier 清空，可进入 building 实现。
+
+**第二批实现说明（2026-08-02）：**
+- **quality 接线**：`ToolQualityStore` 由 loop Phase 3 工具执行点喂入（`executed=False` 标记审批拒绝：只进确认率信号、不进成功率/耗时），run 结束 `record_run_end()` flush JSON；registry 暴露 `quality_store`/`quality_notice`。
+- **软降级实现**：`ToolRegistry.select_schemas` 对质量降级且非稳定层工具跳过；`ToolSelector.is_stable()` 新增判定，稳定层工具即使降级也始终注入。`get_all_schemas` 不因质量过滤（软）。
+- **MCP 可见性**：`McpManager.is_tool_degraded(callable_name)` 作 registry visibility filter（factory 注入），degraded server 的 tools 从两个 schema 面硬隐藏；与 quality 软降级语义区分。
+- **配置**：`QualityConfig`（enabled/权重/阈值/min_samples/store_path）+ `McpHealthConfig`（enabled/interval/ping_timeout/failure_window/degrade 阈值），`mcp.health.enabled` 默认 False（后台 ping 任务 opt-in，失败率窗口始终统计）。
+- **验证**：质量 12 单测+集成、MCP 健康 8 单测+集成；全量 pytest 1391 passed / 9 既有环境失败（issue #82：uv + workflow_guard PYTHONPATH + tree-sitter）；openspec validate 32/32 + artifact checker 通过；benchmark smoke 与 baseline 一致。
+
 ## Reference Implementation Research
 
 - status: enabled

@@ -1,6 +1,6 @@
 # Tasks: 工具治理做深
 
-> **批次范围**：第一批 = 第 1-3、5 节（embedding 模块 + 语义去重 + 动态选择 + 生命周期状态机）；第 4 节（quality score）与第 6 节（MCP 健康）为后续批，本 change 先占位标注。
+> **批次范围**：第一批 = 第 1-3、5 节（embedding 模块 + 语义去重 + 动态选择 + 生命周期状态机）；第二批 = 第 4 节（quality score）+ 第 6 节（MCP 运行期健康检查），2026-08-02 batch-grill-me 确认后一并完成。
 
 ## 1. `agent/embedding/` 公共模块 ✅
 
@@ -24,12 +24,13 @@
 - [x] 3.6 集成测试：Top-K 注入 registry、稳定层保持、降级路径（5 passed）
 - [x] 3.7 延迟预算实测验证（1000 工具下选择延迟 ~5-7ms < 50ms 预算，本 change 开发前已实测校准）
 
-## 4. 质量评分（后续批）
+## 4. 质量评分（第二批，✅）
 
-- [ ] 4.1 按 run 聚合 status/duration_ms/approval 计算 quality score
-- [ ] 4.2 低分自动降级（从 get_all_schemas 排除或降优先级）
-- [ ] 4.3 与 tool_permissions 权限判定组合
-- [ ] 4.4 单元测试：quality score 计算、降级
+- [x] 4.1 `quality.py`：`ToolQualityStore` 由 loop 工具执行点喂入 `(success, duration_ms, approval_required, approval_granted, executed)`，增量更新；score = 0.5×成功率 + 0.3×耗时因子 + 0.2×确认率（权重可配置），无审批信号时权重重归一化，数据不足返回中性
+- [x] 4.2 软降级：低分工具移出 `select_schemas` 可变层候选（稳定层工具始终注入），`get_all_schemas` 仍可见可调用；`quality_notice()` 提供降级说明
+- [x] 4.3 与 tool_permissions 组合：quality 不覆盖权限判定，只影响选择排名/可变层可见性（READ_ONLY 下高评分写工具仍被拒）
+- [x] 4.4 JSON 轻量持久化（`QualityConfig.store_path`，save/load 跨 run 聚合）
+- [x] 4.5 单元+集成测试（12 passed）：评分公式/中性/审批降分/权重重归一化/持久化 round-trip/软降级选择/权限不覆盖/loop 喂入
 
 ## 5. 生命周期状态机 ✅
 
@@ -38,21 +39,22 @@
 - [x] 5.3 removed 从 get_all_schemas 排除；deprecation notice 注入选择时上下文
 - [x] 5.4 单元测试：状态机流转、自动移除（13 passed）
 
-## 6. MCP 运行期健康检查（后续批）
+## 6. MCP 运行期健康检查（第二批，✅）
 
-- [ ] 6.1 McpServerStatus 增加 health ping、失败率窗口、degraded 字段
-- [ ] 6.2 失败率超阈值自动降级（隐藏 server tools）
-- [ ] 6.3 单元测试：健康检查、失败率降级
+- [x] 6.1 `McpServerStatus` 增加 `health_ok`/`last_health_check`/`calls`/`failures`/`failure_rate`/`degraded`；`McpManager` 后台 asyncio 定时 ping（`session.send_ping()`，间隔可配置默认 30s）+ 真实 call_tool 失败率滑动窗口（默认 20）
+- [x] 6.2 失败率 ≥ 阈值（默认 0.5，需 min_calls 默认 5）或 ping 失败 → `degraded`；factory 注入 `registry.set_visibility_filter(manager.is_tool_degraded)`，degraded server 的 tools 从 `get_all_schemas`/`select_schemas` 排除；窗口滑动/ping 恢复后自动恢复
+- [x] 6.3 单元+集成测试（8 passed）：失败率窗口/自动降级与恢复/ping 成功与失败/status 快照/is_tool_degraded 映射/registry 可见性
 
 ## 7. 配置与收尾 ✅
 
-- [x] 7.1 config 新增工具治理配置段（`ToolSelectionConfig`：enabled/top_k/latency_budget_ms/dedup_threshold）
+- [x] 7.1 config 新增工具治理配置段（`ToolSelectionConfig`：enabled/top_k/latency_budget_ms/dedup_threshold；第二批 `QualityConfig`：enabled/window_size/权重/degrade_threshold/min_samples/store_path + `McpHealthConfig`：enabled/interval/ping_timeout/failure_window/degrade 阈值）
 - [x] 7.2 OpenSpec spec 同步（tool-governance 主 spec + workflow-events.jsonl）
 - [x] 7.3 全量 pytest（1288 passed，9 个既有环境失败挂 issue #82）+ openspec validate（33/33）+ artifact checker
 - [x] 7.4 benchmark smoke 验证（fake agent 跑通 34 任务链路，结果与 baseline 一致：24 failed 为 fake agent 预期 + 10 unsupported 为无 Docker；无 governance 相关崩溃）
 
 ## 8. 收尾校验（checker 要求项）
 
-- [x] 8.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）✅ 已完成三轮
+- [x] 8.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）✅ 已完成三轮；第二批（2026-08-02）另完成 2 轮共 10 项决策确认（见 design.md）
 - [x] 8.2 benchmark smoke verification（coding-agent core change 要求）— fake agent 跑通，结果与 baseline 一致
 - [x] 8.3 当前规格同步：把 spec delta 合并到 `openspec/specs/tool-governance/spec.md` ✅
+- [x] 8.4 第二批 spec 同步：质量评分 + MCP 健康 requirement delta 合并当前规格 ✅

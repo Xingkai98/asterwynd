@@ -93,6 +93,26 @@ class ToolSelectionConfig:
 
 
 @dataclass(frozen=True)
+class QualityConfig:
+    """Per-tool quality scoring knobs (design Decision 3, batch 2).
+
+    Scores are a weighted blend of success rate, average duration factor and
+    user approval rate; tools below ``degrade_threshold`` soft-degrade out of
+    the variable-layer selection candidates. ``store_path`` enables lightweight
+    JSON persistence across runs; ``None`` keeps the store in-memory only.
+    """
+    enabled: bool = False
+    window_size: int = 50
+    success_weight: float = 0.5
+    duration_weight: float = 0.3
+    approval_weight: float = 0.2
+    duration_ceiling_ms: float = 30_000.0
+    degrade_threshold: float = 0.4
+    min_samples: int = 5
+    store_path: str | None = None
+
+
+@dataclass(frozen=True)
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
@@ -101,6 +121,7 @@ class ToolsConfig:
     display: ToolResultDisplayConfig = field(default_factory=ToolResultDisplayConfig)
     browser: BrowserConfig | None = None
     selection: ToolSelectionConfig = field(default_factory=ToolSelectionConfig)
+    quality: QualityConfig = field(default_factory=QualityConfig)
 
 
 @dataclass(frozen=True)
@@ -143,9 +164,28 @@ class McpServerConfig:
 
 
 @dataclass(frozen=True)
+class McpHealthConfig:
+    """MCP runtime health monitoring (design Decision 5, batch 2).
+
+    ``enabled`` turns on the background liveness-ping task started by
+    ``build_mcp_manager``; failure-rate windows are always tracked from real
+    ``call_tool`` outcomes. A server is ``degraded`` when its health ping fails
+    or its recent failure rate crosses ``degrade_failure_threshold``; it
+    auto-recovers once the window slides below the threshold.
+    """
+    enabled: bool = False
+    health_check_interval_s: float = 30.0
+    ping_timeout_s: float = 5.0
+    failure_window_size: int = 20
+    degrade_failure_threshold: float = 0.5
+    degrade_min_calls: int = 5
+
+
+@dataclass(frozen=True)
 class McpConfig:
     default_timeout_seconds: int = 30
     servers: dict[str, McpServerConfig] = field(default_factory=dict)
+    health: McpHealthConfig = field(default_factory=McpHealthConfig)
 
 
 @dataclass(frozen=True)

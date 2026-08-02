@@ -27,13 +27,15 @@ The tool governance system SHALL select a Top-K subset of tools for LLM injectio
 
 ### Requirement: Quality Score
 
-The tool governance system SHALL compute a quality score per tool from aggregated call success rate, average duration, and user confirmation rate, and SHALL auto-degrade tools below a quality threshold.
+The tool governance system SHALL compute a quality score per tool from aggregated call success rate, average duration factor, and user approval rate (configurable weights, default 0.5/0.3/0.2), and SHALL soft-degrade tools below a configurable threshold (default 0.4, requiring a min-sample count): degraded tools SHALL be excluded from the variable-layer selection candidates while staying visible in `get_all_schemas` and callable; quality SHALL NOT override the permission model; window state SHALL support JSON persistence across runs.
 
-#### Scenario: low-quality tool auto-degraded
+#### Scenario: low-quality tool soft-degraded out of selection
 
-- Given a tool with low call success rate and high average duration
-- When the quality score is computed below the threshold
-- Then the tool is auto-degraded (excluded from `get_all_schemas` or lowered priority)
+- Given a tool with quality score below the threshold
+- When `select_schemas` runs
+- Then the tool is excluded from variable-layer candidates
+- And stable-layer tools remain injected even when degraded
+- And the tool is still returned by `get_all_schemas` (soft degradation)
 
 ### Requirement: Lifecycle State Machine
 
@@ -48,14 +50,21 @@ The tool governance system SHALL manage tool lifecycle through states `low_traff
 
 ### Requirement: MCP Runtime Health
 
-The tool governance system SHALL monitor MCP server runtime health with health pings and failure-rate windows, and SHALL auto-degrade servers exceeding failure thresholds by hiding their tools.
+The tool governance system SHALL monitor MCP server runtime health with a background periodic `ping` (configurable interval, default 30s) and a real-call failure-rate sliding window (default 20); a server SHALL be marked `degraded` when its ping fails or its failure rate crosses a configurable threshold (default 0.5 over a min-call count), and SHALL auto-recover once the window slides below the threshold and pings succeed. Degraded servers' tools SHALL be hidden from `get_all_schemas`/`select_schemas`. `McpServerStatus` SHALL expose `health_ok`, `last_health_check`, `calls`, `failures`, `failure_rate`, and `degraded`.
 
 #### Scenario: failing MCP server degraded
 
 - Given an MCP server with failure rate above threshold in the window
 - When the health monitor evaluates the server
 - Then the server is marked `degraded`
-- And its tools are hidden from the registry
+- And its tools are hidden from `get_all_schemas`/`select_schemas`
+
+#### Scenario: health recovery auto-restores
+
+- Given a degraded server whose failure-rate window slides below the threshold and ping succeeds again
+- When the health monitor evaluates the server
+- Then `degraded` is cleared
+- And its tools are visible again
 
 ## MODIFIED Requirements
 

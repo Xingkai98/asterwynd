@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
+from collections import deque
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Any
@@ -32,7 +34,15 @@ from agent.tool_permissions import ToolPermission
 
 
 class McpManager:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        health_check_interval_s: float = 30.0,
+        ping_timeout_s: float = 5.0,
+        failure_window_size: int = 20,
+        degrade_failure_threshold: float = 0.5,
+        degrade_min_calls: int = 5,
+    ) -> None:
         self._exit_stack = AsyncExitStack()
         self._sessions: dict[str, ClientSession] = {}
         self._server_configs: dict[str, McpServerConfig] = {}
@@ -40,6 +50,17 @@ class McpManager:
         self._tools: dict[str, McpToolMetadata] = {}
         self._prompts: dict[tuple[str, str], McpPromptMetadata] = {}
         self._resources: dict[tuple[str, str], McpResourceMetadata] = {}
+        # Runtime health state (design Decision 5): failure-rate windows from
+        # real call outcomes plus a background liveness-ping task.
+        self._health_check_interval_s = health_check_interval_s
+        self._ping_timeout_s = ping_timeout_s
+        self._failure_window_size = failure_window_size
+        self._degrade_failure_threshold = degrade_failure_threshold
+        self._degrade_min_calls = degrade_min_calls
+        self._call_windows: dict[str, deque] = {}
+        self._health_ok: dict[str, bool | None] = {}
+        self._last_health_check: dict[str, float] = {}
+        self._health_task: asyncio.Task | None = None
 
     @property
     def tools(self) -> list[McpToolMetadata]:
@@ -54,7 +75,98 @@ class McpManager:
         return list(self._resources.values())
 
     def status(self) -> list[McpServerStatus]:
-        return [self._statuses[name] for name in sorted(self._statuses)]
+        result: list[McpServerStatus] = []
+        for name in sorted(self._statuses):
+            base = self._statuses[name]
+            window = self._call_windows.get(name, [])
+            calls = len(window)
+            failures = sum(1 for ok in window if not ok)
+            result.append(
+                McpServerStatus(
+                    name=name,
+                    ready=base.ready,
+                    tools=base.tools,
+                    prompts=base.prompts,
+                    resources=base.resources,
+                    error=base.error,
+                    health_ok=self._health_ok.get(name),
+                    last_health_check=self._last_health_check.get(name),
+                    calls=calls,
+                    failures=failures,
+                    failure_rate=self.failure_rate(name),
+                    degraded=self.is_degraded(name),
+                )
+            )
+        return result
+
+    # --- Runtime health (design Decision 5) --------------------------------
+
+    def _record_call(self, server_name: str, ok: bool) -> None:
+        window = self._call_windows.setdefault(
+            server_name, deque(maxlen=self._failure_window_size)
+        )
+        window.append(bool(ok))
+
+    def failure_rate(self, server_name: str) -> float | None:
+        """Fraction of failed calls in the recent sliding window; None when idle."""
+        window = self._call_windows.get(server_name)
+        if not window:
+            return None
+        return sum(1 for ok in window if not ok) / len(window)
+
+    def is_degraded(self, server_name: str) -> bool:
+        """Server is degraded when its health ping fails or recent failure
+        rate crosses the threshold. Auto-recovers once the window slides
+        below the threshold and pings succeed again."""
+        if self._health_ok.get(server_name) is False:
+            return True
+        window = self._call_windows.get(server_name)
+        if window is None or len(window) < self._degrade_min_calls:
+            return False
+        return self.failure_rate(server_name) >= self._degrade_failure_threshold
+
+    def degraded_servers(self) -> set[str]:
+        return {name for name in self._statuses if self.is_degraded(name)}
+
+    def is_tool_degraded(self, callable_name: str) -> bool:
+        """Registry visibility predicate: hide tools of degraded servers."""
+        metadata = self._tools.get(callable_name)
+        if metadata is None:
+            return False
+        return self.is_degraded(metadata.server_name)
+
+    def start_health_monitor(
+        self,
+        *,
+        interval_s: float | None = None,
+        timeout_s: float | None = None,
+    ) -> None:
+        """Spawn a background liveness-ping task; no-op when already running."""
+        if self._health_task is not None:
+            return
+        interval = self._health_check_interval_s if interval_s is None else interval_s
+        timeout = self._ping_timeout_s if timeout_s is None else timeout_s
+        self._health_task = asyncio.create_task(self._health_loop(interval, timeout))
+
+    async def _health_loop(self, interval_s: float, timeout_s: float) -> None:
+        while True:
+            await self._check_all_health(timeout_s)
+            await asyncio.sleep(interval_s)
+
+    async def _check_all_health(self, timeout_s: float) -> None:
+        for server_name, session in list(self._sessions.items()):
+            await self._ping_server(server_name, session, timeout_s)
+
+    async def _ping_server(
+        self, server_name: str, session: ClientSession, timeout_s: float
+    ) -> None:
+        try:
+            async with asyncio.timeout(timeout_s):
+                await session.send_ping()
+            self._health_ok[server_name] = True
+        except Exception:
+            self._health_ok[server_name] = False
+        self._last_health_check[server_name] = time.time()
 
     def get_prompt_permission(self, server_name: str, prompt_name: str) -> ToolPermission:
         return self._prompts[(server_name, prompt_name)].permission
@@ -192,7 +304,9 @@ class McpManager:
                 timeout=server_config.tool_timeout_seconds,
             )
         except Exception as exc:
+            self._record_call(server_name, False)
             return f"[MCP tool error: {server_name}/{tool_name}: {type(exc).__name__}: {exc}]"
+        self._record_call(server_name, not getattr(result, "isError", False))
         return _format_call_tool_result(result)
 
     async def get_prompt(
@@ -219,12 +333,28 @@ class McpManager:
         return _format_resource_result(server_name, uri, result)
 
     async def aclose(self) -> None:
+        if self._health_task is not None:
+            self._health_task.cancel()
+            try:
+                await self._health_task
+            except asyncio.CancelledError:
+                pass
+            self._health_task = None
         await self._exit_stack.aclose()
 
 
 async def build_mcp_manager(config: AsterwyndConfig) -> McpManager:
-    manager = McpManager()
+    health = config.mcp.health
+    manager = McpManager(
+        health_check_interval_s=health.health_check_interval_s,
+        ping_timeout_s=health.ping_timeout_s,
+        failure_window_size=health.failure_window_size,
+        degrade_failure_threshold=health.degrade_failure_threshold,
+        degrade_min_calls=health.degrade_min_calls,
+    )
     await manager.connect_from_config(config)
+    if health.enabled:
+        manager.start_health_monitor()
     return manager
 
 

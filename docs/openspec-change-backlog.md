@@ -63,7 +63,7 @@
 
 基于 wayfinder 地图 #72（面试深度路线）拆解的 6 个深化方向，已全部立项为 OpenSpec change（2026-08-01）。按批次推进；同一批次可并行开 PR，但共享 AgentLoop/ToolRegistry/trace 语义的 change 需错开合入。
 
-- **Batch 1（并行，低冲突）**：`tool-governance-deepening` ‖ `sandbox-hardening`。最独立、无硬依赖，各开独立 worktree。先立 `agent/embedding/` 公共模块（#77 提供，供 #75 复用）。
+- **Batch 1（并行，低冲突）**：`tool-governance-deepening`（✅ 已合入并归档，2026-08-02）‖ `sandbox-hardening`。最独立、无硬依赖，各开独立 worktree。先立 `agent/embedding/` 公共模块（#77 提供，供 #75 复用）。
 - **Batch 2（高冲突，拆分）**：`context-engineering-deepening`。拆 3 子 change（增量 token 计数+四字段摘要 / Prefix Cache 注入顺序 / 分页进度+深层 MD 按需加载）；与 #77 约定「稳定层/可变层」注入契约。
 - **Batch 3（并行）**：`observability-deepening` ‖ `long-term-memory-deepening`。依赖 PR #80 statistics（已合入）做回归门禁；#75 先 ADR 论证三层存储，低风险切片先行。
 - **Batch 4（最后）**：`multi-agent-collaboration`。依赖最重，先 grill 设计；复用 #67 `agent/workflow/` 状态机。
@@ -72,26 +72,7 @@
 
 ## 未实现队列
 
-### 1. `tool-governance-deepening`
-
-状态：未实现。
-
-批次：第九批 Batch 1（并行，与 sandbox-hardening 同时开）。
-
-建议顺序原因：
-
-- 最独立、无硬依赖，先立 `agent/embedding/` 公共接口，供 #74 稳定前缀与 #75 去重切片复用。
-- 语义去重 + 动态选择 + 生命周期 + MCP 健康故事完整，面试可引用"1000 工具怎么管"量化数据。
-
-主要交付：
-
-- `agent/embedding/` 公共模块。
-- 工具描述语义去重（cosine >0.9 标记）。
-- BM25+embedding+reranker Top5 动态选择。
-- quality score + 生命周期状态机。
-- MCP 运行期健康检查 + 自动降级。
-
-### 2. `sandbox-hardening`
+### 1. `sandbox-hardening`
 
 状态：未实现。
 

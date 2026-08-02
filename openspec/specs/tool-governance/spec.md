@@ -80,3 +80,38 @@
 - **GIVEN** 未配置 selector
 - **WHEN** loop 注入工具 schema
 - **THEN** 回退为全量可见工具注入（原行为）
+
+### Requirement: 质量评分（软降级）
+
+工具治理系统 SHALL 按调用结果聚合每工具 quality score（成功率/平均耗时因子/用户确认率加权，权重可配置）；低于可配置阈值（默认 0.4，需 min_samples 默认 5）的工具有资格软降级——从动态选择的可变层候选排除，但 `get_all_schemas` 仍可见可调用；quality SHALL NOT 覆盖权限判定；窗口状态 SHALL 支持 JSON 持久化跨 run 聚合。
+
+#### Scenario: 低分工具退出可变层
+
+- **GIVEN** 一个工具 quality score 低于降级阈值
+- **WHEN** `select_schemas` 运行
+- **THEN** 该工具 SHALL NOT 出现在可变层选择候选
+- **AND** 稳定层工具 SHALL 始终注入（即使被降级）
+
+#### Scenario: 软降级不改变权限
+
+- **GIVEN** 一个被权限模型拒绝的工具且 quality score 很高
+- **WHEN** `get_all_schemas` 或 `execute` 运行
+- **THEN** 权限判定结果 SHALL NOT 改变
+
+### Requirement: MCP 运行期健康检查
+
+工具治理系统 SHALL 对 MCP server 提供运行期健康检查：后台定时 `ping`（间隔可配置默认 30s）+ 真实调用失败率滑动窗口（默认 20）；失败率超阈值（默认 0.5）或 ping 失败时 server 进入 `degraded`，其 tools SHALL 从 `get_all_schemas`/`select_schemas` 排除；窗口滑动或 ping 恢复后 SHALL 自动恢复。`McpServerStatus` SHALL 暴露 `health_ok`/`last_health_check`/`calls`/`failures`/`failure_rate`/`degraded`。
+
+#### Scenario: 失败率超阈值降级
+
+- **GIVEN** 某 MCP server 最近调用失败率 ≥ 阈值
+- **WHEN** 状态查询或 schema 暴露
+- **THEN** server SHALL 标记 `degraded`
+- **AND** 该 server 的 tools SHALL 从 schema 排除
+
+#### Scenario: 健康恢复自动解除
+
+- **GIVEN** 已降级 server 的失败率窗口滑动至低于阈值且 ping 恢复
+- **WHEN** 状态查询或 schema 暴露
+- **THEN** `degraded` SHALL 自动解除
+- **AND** 该 server 的 tools SHALL 重新可见
