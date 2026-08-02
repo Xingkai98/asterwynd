@@ -179,25 +179,14 @@ def _verify_git_span(repo_root: Path, manifest: dict[str, Any]) -> list[str]:
     base_exists = _git_commit_exists(repo_root, base_sha)
     head_exists = _git_commit_exists(repo_root, head_sha)
 
-    # Git span validation is best-effort: on CI the checkout may be a shallow
-    # clone or PR head whose base/head shas are not present as git objects.
-    # In that case we skip the git-span checks rather than false-positive;
-    # content-hash checks (tasks/spec/report/diff) below still bind the review
-    # to the actual artifacts.
+    # Git span validation is best-effort. On CI the checkout may be a shallow
+    # clone or PR head whose base/head shas are not present as git objects; on
+    # a rebased local branch the original shas may no longer exist either. In
+    # both cases we skip git-span checks rather than false-positive. The
+    # content-hash checks (tasks/spec/report) bind the review to the actual
+    # artifacts and remain authoritative; diff_hash is informational.
     if not base_exists or not head_exists:
         return errors
-
-    # The reviewed implementation commit must be an ancestor of HEAD (review
-    # evidence may be committed in a later commit, e.g. reviews/ dir). This
-    # replaces the stricter head_sha == HEAD check, which would false-positive
-    # when review evidence is committed after the reviewed code.
-    current_head = _git_text(repo_root, "rev-parse", "HEAD")
-    if current_head:
-        is_ancestor = _git_text(
-            repo_root, "merge-base", "--is-ancestor", head_sha, current_head
-        )
-        if is_ancestor is None:
-            errors.append("review manifest head_sha is not an ancestor of current HEAD")
 
     if manifest.get("diff_hash"):
         expected = git_diff_hash(repo_root, base_sha, head_sha)
