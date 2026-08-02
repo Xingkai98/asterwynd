@@ -152,7 +152,7 @@ def test_check_change_rejects_review_report_without_manifest(tmp_path):
 
 
 def test_feature_change_requires_building_review_manifest(tmp_path):
-    """强制：非 docs + 有 spec delta 的 change 必须跑独立审阅（building-review.md + manifest）。"""
+    """强制：非 docs + 有 spec delta + tasks 全勾选的 change 必须跑独立审阅。"""
     change = tmp_path / "openspec" / "changes" / "feature-change"
     write_change(
         change,
@@ -169,6 +169,30 @@ def test_feature_change_requires_building_review_manifest(tmp_path):
     # 无 .handoff/ 目录 → 报 building-review.md missing
     errors = check_change(change, tmp_path / "openspec" / "specs")
     assert any("building-review.md missing" in e for e in errors), errors
+
+
+def test_partial_change_does_not_require_building_review(tmp_path):
+    """回归：部分实现（有 [ ] 未勾选）的 change 不触发强制审阅。
+
+    修复审阅发现的门禁误伤：spec delta 从 proposal 阶段就存在，未实现
+    的 active change 不应被 building 审阅门禁拦截。
+    """
+    change = tmp_path / "openspec" / "changes" / "partial-change"
+    write_change(
+        change,
+        proposal_for("feature"),
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 实现\n\n"
+        "- [x] 已完成项。\n"
+        "- [ ] 待实现项。\n",
+    )
+    write_spec_delta(change, "web-ui")
+
+    errors = check_change(change, tmp_path / "openspec" / "specs")
+    assert not any("building-review.md missing" in e for e in errors), errors
 
 
 def test_feature_change_rejects_review_report_without_manifest(tmp_path):

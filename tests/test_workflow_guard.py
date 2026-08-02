@@ -6,8 +6,6 @@ import io
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
 
 from agent.workflow.manager import WorkflowManager
@@ -112,7 +110,6 @@ def test_guard_noops_when_workflow_disabled(tmp_path, monkeypatch):
     """issue #90：状态机停用后，普通写操作放行（exit 0）。"""
     import scripts.workflow_guard as mod
 
-    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
     monkeypatch.setattr(
         sys,
         "stdin",
@@ -137,7 +134,6 @@ def test_guard_blocks_protected_files_even_when_workflow_disabled(tmp_path, monk
     不随状态机停用而放行——这是安全边界，不依赖 workflow 状态。"""
     import scripts.workflow_guard as mod
 
-    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
     monkeypatch.setattr(
         sys,
         "stdin",
@@ -161,15 +157,6 @@ def test_guard_resume_audit_no_longer_blocks_writes(tmp_path, monkeypatch):
     """issue #90：resume audit 门禁已停用（状态机仪式），普通写操作放行。"""
     import scripts.workflow_guard as mod
 
-    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: True)
-    monkeypatch.setattr(
-        mod,
-        "run_resume_audit",
-        lambda *_: SimpleNamespace(
-            needs_reconciliation=True,
-            errors=("resume required",),
-        ),
-    )
     monkeypatch.setattr(
         sys,
         "stdin",

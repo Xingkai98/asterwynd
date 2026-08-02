@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: 文件系统门禁 — 阻止 Agent 在不符合条件时修改代码。
+"""PreToolUse hook: 受保护文件门禁 — 阻止 Agent 直接写入受保护 artifact。
 
 用法 (Claude Code settings.json):
   "PreToolUse": [{"matcher": "Write|Edit|Bash", "command": "python3 scripts/workflow_guard.py"}]
 
 拦截:
-  - Write / Edit 工具
+  - Write / Edit 工具写入受保护路径
+  - Bash 命令中对受保护路径的写操作
   - Bash 命令中包含写操作模式的 (>, >>, tee, sed -i, cp, mv, mkdir,
     git commit/add/push, touch, dd of=, python -c/exec with write, etc)
 
-逻辑:
-  1. Write/Edit → 直接检查门禁
-  2. Bash → 分析命令是否含写操作 → 是则检查门禁，否则放行
-  3. 扫描活跃 change，检查 phase.required_files
-  4. 缺失 → exit 2 (阻止) + stderr
-  5. building phase 不在 worktree → exit 2
-  6. 否则 → exit 0 (放行)
+受保护路径（始终拦截，不随 workflow 状态变化）:
+  - docs/known-debt.md, docs/known-issues.md, docs/openspec-change-backlog.md
+  - openspec/specs/, openspec/changes/archive/, workflow-events.jsonl
+  - handoff.json, gate-approvals.json, -review-manifest.json
+
+状态机仪式（issue #90）已停用：不再检查 phase/required_files/worktree。
 """
 
 import json
@@ -27,11 +27,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-
-from agent.workflow.resume_audit import run_resume_audit
-from agent.workflow.routing import is_workflow_enabled
-
-METHODS_FILE = REPO_ROOT / "scripts" / "workflow_methods.json"
 
 
 def _resolve_changes_dir(repo_root: Path) -> Path:
@@ -74,7 +69,6 @@ _PROTECTED_PATH_FRAGMENTS = (
     "-review-manifest.json",
     "handoff.json",
 )
-_AGENT_TRACKING = True  # 记录 Agent 工具调用用于 reviewing 验证
 
 # ── Bash write patterns ─────────────────────────────────────────────
 _BASH_WRITE_PATTERNS = [
@@ -167,109 +161,6 @@ def _mentions_protected_path(text: str) -> bool:
     return any(fragment in normalized for fragment in _PROTECTED_PATH_FRAGMENTS)
 
 
-def _discover_active_change():
-    if not CHANGES_DIR.exists():
-        return None
-    for d in sorted(CHANGES_DIR.iterdir()):
-        if not d.is_dir():
-            continue
-        hj = d / "handoff.json"
-        if not hj.exists():
-            continue
-        try:
-            data = json.loads(hj.read_text())
-            if data.get("state", {}).get("phase") != "done":
-                return (d.name, data)
-        except (json.JSONDecodeError, KeyError):
-            continue
-    return None
-
-
-def _load_methods():
-    if METHODS_FILE.exists():
-        return json.loads(METHODS_FILE.read_text())
-    return {}
-
-
-def _in_worktree():
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["git", "worktree", "list"],
-            capture_output=True, text=True, timeout=5
-        )
-        cwd = os.getcwd()
-        for line in result.stdout.strip().split("\n"):
-            parts = line.split()
-            if parts and parts[0] == cwd:
-                return "worktree" in line.lower() or parts[0] != str(REPO_ROOT)
-        return False
-    except Exception:
-        return False
-
-
-def _check_gate(change_id, handoff, methods):
-    phase = handoff["state"]["phase"]
-    sub_state = handoff["state"]["sub_state"]
-    phase_cfg = methods.get(phase, {})
-
-    if phase_cfg.get("require_worktree") and not _in_worktree():
-        print(
-            f"⛔ Phase={phase} 要求独立 git worktree。",
-            f"Change: {change_id}",
-            f"请先创建 worktree: python3 scripts/workflow_state.py advance --change {change_id}",
-            file=sys.stderr,
-        )
-        return False
-
-    required_files = phase_cfg.get("required_files_before_write", [])
-    if isinstance(required_files, list):
-        for rf_pattern in required_files:
-            resolved = rf_pattern.replace("{change_id}", change_id)
-            p = REQUIRED_BASE / resolved
-            if not p.exists():
-                print(
-                    f"⛔ 缺少必备文件: {resolved}",
-                    f"Change: {change_id}  Phase: {phase}/{sub_state}",
-                    f"请先完成此阶段再修改代码。",
-                    file=sys.stderr,
-                )
-                return False
-    return True
-
-
-def _track_agent_call(hook_input: dict) -> None:
-    """Record Agent tool calls if current sub_state is a reviewing_* phase."""
-    tool_name = hook_input.get("tool_name", "")
-    if tool_name != "Agent":
-        return
-
-    active = _discover_active_change()
-    if active is None:
-        return
-    change_id, handoff = active
-    sub_state = handoff.get("state", {}).get("sub_state", "")
-    if not sub_state.startswith("reviewing_"):
-        return
-
-    handoff_dir = REQUIRED_BASE / ".handoff" / change_id
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    log_path = handoff_dir / "_agent-calls.json"
-
-    entries: list = []
-    if log_path.exists():
-        try:
-            entries = json.loads(log_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            entries = []
-
-    entries.append({
-        "sub_state": sub_state,
-        "tool": "Agent",
-        "prompt_preview": str(hook_input.get("tool_input", {}).get("prompt", ""))[:120],
-        "timestamp": __import__("datetime").datetime.now().isoformat(),
-    })
-    log_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False))
 
 
 def main():
@@ -302,7 +193,7 @@ def main():
     if file_path and _mentions_protected_path(file_path):
         print(
             f"⛔ 受保护文件不可由 Agent 直接写入: {file_path}",
-            "请通过 workflow_state.py 的结构化命令更新权威状态或 review 证据。",
+            "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -310,7 +201,7 @@ def main():
     if tool_name == "Bash" and _mentions_protected_path(tool_input.get("command", "")):
         print(
             "⛔ 受保护路径不可通过 Bash 直接写入。",
-            "请通过 workflow_state.py 的结构化命令更新权威状态或 review 证据。",
+            "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
             file=sys.stderr,
         )
         sys.exit(2)

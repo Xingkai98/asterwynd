@@ -519,6 +519,27 @@ def _repo_root_for_change_dir(change_dir: Path) -> Path:
     return change_dir.parent
 
 
+def _tasks_all_complete(change_dir: Path) -> bool:
+    """Return True when every checkbox line in tasks.md is ``[x]``.
+
+    A tasks.md with no checkbox lines is treated as incomplete (no evidence of
+    implementation), so the review gate does not fire prematurely.
+    """
+    tasks = change_dir / "tasks.md"
+    if not tasks.exists():
+        return False
+    text = tasks.read_text(encoding="utf-8")
+    checked = 0
+    unchecked = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- [x]") or stripped.startswith("* [x]"):
+            checked += 1
+        elif stripped.startswith("- [ ]") or stripped.startswith("* [ ]"):
+            unchecked += 1
+    return checked > 0 and unchecked == 0
+
+
 def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[str]:
     repo_root = _repo_root_for_change_dir(change_dir)
     review_dir = repo_root / ".handoff" / change_dir.name
@@ -527,8 +548,15 @@ def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[s
     # Mandatory building review for non-docs changes that ship code: the
     # independent subagent review closed loop (issue #90) must have run and
     # produced a PASS manifest before the change is merged. docs-only changes
-    # skip this gate.
-    requires_building_review = change_type.primary != "docs" and _changed_capabilities(change_dir)
+    # skip this gate. The gate only fires once the change's tasks are ALL
+    # checked — proposal-stage / partially-implemented changes (whose spec
+    # delta already exists) must not be flagged, or CI would block every
+    # in-flight change.
+    requires_building_review = (
+        change_type.primary != "docs"
+        and _changed_capabilities(change_dir)
+        and _tasks_all_complete(change_dir)
+    )
 
     if requires_building_review and not review_report.exists():
         return [
