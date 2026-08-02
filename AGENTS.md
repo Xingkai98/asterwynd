@@ -67,112 +67,48 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `batch-grill-me`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
 
-每个 change 的生命周期状态由 `agent/workflow/` 四阶段状态机追踪，权威事实来源为 `openspec/changes/<change-id>/workflow-events.jsonl`，`handoff.json` 是由事件 replay 生成的 projection。阶段间交接通过 `.handoff/<change-id>/` 下的 handoff note 传递上下文，human review gate 在每个 phase 的 `ready_for_review` 子状态触发。路由配置支持 executor（inline/subagent/claude-code/codex）和 session_mode（same/new/ask），全局默认值在 `openspec/config.yaml`，per-change 覆盖在 `handoff.json`。
+## 开发流程：OpenSpec 主干 + 强制审阅闭环
 
-## 工作流自动推进与 Gate 机制
+**这是最高优先级行为规则。** 本仓库的开发流程精简为两部分：**OpenSpec 主干**（需求→设计→实现→收尾）加 **实现完成后强制独立 subagent 审阅闭环**。旧的四阶段状态机仪式（phase/sub_state 推进、handoff.json、gate 停止）已停用，不再需要 discover/advance/approve。
 
-**这是最高优先级行为规则。每次进入仓库的会话（包括 inline 和 subagent），agent 必须遵循以下协议。**
+### 主干流程
 
-### 会话启动协议
+| 阶段 | 产出 | 工作区 |
+|------|------|--------|
+| 需求讨论 | 讨论方案、明确边界 | 主仓库 |
+| proposal / design | `openspec/changes/<id>/proposal.md` + `design.md`，非平凡 change 先 `batch-grill-me` 设计追问 | 主仓库 |
+| tasks / spec delta | `tasks.md` + `specs/` delta，同步 backlog | 主仓库 |
+| **building** | 按 tasks 测试先行实现（TDD） | **独立 worktree 必须** |
+| **审阅闭环** | 见下节，PR 前必须完成 | building worktree |
+| closing / PR | spec 同步、归档、跑 OpenSpec 校验 + artifact checker，发起 PR | 主仓库 |
 
-每次新会话开始，在回复用户之前，agent 必须先运行状态检查。
-**推荐配置 session start hook**（自动执行，无需手动）：
-```bash
-cp scripts/workflow_hook.example.json .claude/settings.json
-```
-手动方式：
-```bash
-python3 scripts/workflow_state.py discover --format json
-```
+### 强制审阅闭环（/review-loop）
 
-根据输出决定行为：
+**每次新 change 实现完成、发起 PR 前，必须运行 `/review-loop`**：spawn 独立零记忆 subagent 审阅 → 判 verdict → CHANGES_REQUESTED 则修复并加回归测试 → 再审，直到 **PASS 或 3 轮封顶**。
 
-| discover 结果 | agent 行为 |
-|-------------|----------|
-| 1 个 change 处于 ready_for_review | 运行 `check_phase_done.py` → 呈现结果 → **停止**，等人工批准 |
-| 1 个 change 处于执行中 (非 gate) | 读取该 change 的 `handoff.json` → 确认当前 sub_state → 继续执行 |
-| 多个活跃 change | 列出所有 change 状态 → 让用户选择处理哪个 |
-| 无活跃 change | 正常对话，无需追踪 phase |
-| workflow 已禁用 | 视为本仓库未启用 workflow；不要执行 gate 推进。若重新启用前存在 `.dev/workflow-resume-baseline.json`，先运行 `python3 scripts/workflow_state.py resume-audit` 并完成恢复确认 |
-
-如果用户明确指定了 change 名，直接处理该 change，跳过 discover。
-
-### Gate 停止规则（sub_state == ready_for_review）
-
-当 handoff.json 的 sub_state 为 `ready_for_review`，**这是强制停止点**：
-
-1. **停止执行**。不得修改代码、创建文件或推进状态。
-2. **运行机械验证**：
-   ```bash
-   python3 scripts/check_phase_done.py --phase <current_phase> --change <change_id>
-   ```
-3. **呈现结果**：
-   - 全部通过 → 列出通过项，说明等待人工审核
-   - 未通过 → 列出失败项，说明"需修复后再审核"
-4. **等人工指示**。用户在明确说"批准"/"通过"/"继续"之前，不得推进。
-5. 如果用户批准，记录批准后再推进：
-   ```bash
-   python3 scripts/workflow_state.py approve --change <id> --phase <phase> --who human
-   ```
-
-### 阶段内自动推进（sub_state != ready_for_review）
-
-当 sub_state 不是 gate，agent 可以自动推进：
-
-1. 确定当前 phase 的 sub_state 序列（参考 `agent/workflow/models.py` 的 `PHASE_SUB_STATES`）
-2. 执行当前 sub_state 对应的任务
-3. 完成后运行机械验证确认
-4. 验证通过 → 推进状态：
-   ```bash
-   python3 scripts/workflow_state.py advance --change <id> --to <next_sub_state>
-   ```
-5. 继续下一个 sub_state，直到到达 `ready_for_review` gate
-6. 到达 gate → 应用 Gate 停止规则
-
-### 跨阶段推进（人工批准后）
-
-当人工批准了 gate 后，agent 推进到下一 phase 的起始 sub_state，并生成 handoff note：
-
-1. 生成 handoff note 写入 `.handoff/<change_id>/<from_phase>-to-<to_phase>.md`
-2. Handoff note 关键决策部分必须包含 ADR 格式：决策标题、备选方案、拒绝原因、重访条件（格式参考 `docs/adr/_TEMPLATE.md`）
-3. 记录批准到 `.handoff/<change_id>/gate-approvals.json`
-4. 推进 handoff.json 的 state 到新 phase 的起始 sub_state
+- 审阅维度（沿用 `scripts/workflow_methods.json` `building.reviewing_impl`）：任务逐项验证、正确性、Spec 对齐、冗余度、测试覆盖、安全性、可维护性、CI 完整性
+- 报告产出到 `.handoff/<change-id>/building-review.md`，含 `PASS`/`CHANGES_REQUESTED`/`BLOCKED` verdict + 逐条任务验证 + 带 `文件:行号` 证据的 issues
+- 审阅通过后生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）
+- **机械强制**：`scripts/check_openspec_artifacts.py` 对非 docs + 有 spec delta 的 change 强制 building-review.md + manifest 存在且 PASS——缺审阅直接报错。这是 PR 合入前必跑的门禁
+- 受保护 artifact（`docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`openspec/changes/archive/**`、`docs/openspec-change-backlog.md`）的修改仍需 `workflow-events.jsonl` 结构化解释事件；阶段 review report 需对应 review manifest
 
 ### Worktree 隔离规则
 
-**任何涉及代码修改的操作（building phase / bug fix / 实验性改动），必须在独立 git worktree 中进行。**
-
-| 阶段 | 工作区 | 原因 | 执行方法 |
-|------|--------|------|---------|
-| wayfinding | 主仓库 | 只探路，不产代码 | `/wayfinder` → 决策地图 + decision tickets |
-| planning | 主仓库 | 只产文档，不产代码 | `/batch-grill-me` → `/to-spec` → `/to-tickets` |
-| building | **worktree 必须** | 代码修改在隔离环境中 | `/implement`（内部驱动 `/tdd` + `/code-review`） |
-| closing | 主仓库 | 归档、PR | openspec sync/archive/validate |
-
-> 每个 phase 在进入 `ready_for_review` Gate 之前都有一个 `reviewing_*` 子状态：
-> spawn 独立子 Agent（零记忆上下文），审阅本阶段产出，三轮封顶。
-> 方法映射见 `scripts/workflow_methods.json`（可插拔，换方法只需改 JSON）。
+**任何涉及代码修改的操作（building / bug fix / 实验性改动），必须在独立 git worktree 中进行。**
 
 **规则**：
 - 分支命名：`<change-id>/<YYYY-MM-DD>`
 - 禁止多个 change 共用同一个 worktree
-- closing 完成后清理 worktree
-- 已有 worktree 则复用，无需重建
+- PR 合入并清理后关闭 worktree；已有 worktree 则复用，无需重建
 
 ### 验证命令速查
 
 | 操作 | 命令 |
 |------|------|
-| 查看所有 change 状态 | `python3 scripts/workflow_state.py discover --format json` |
-| 查看指定 change 状态 | `python3 scripts/workflow_state.py current --change <id>` |
-| 推进 sub_state | `python3 scripts/workflow_state.py advance --change <id> --to <sub_state>` |
-| 记录人工批准 | `python3 scripts/workflow_state.py approve --change <id> --phase <phase>` |
-| 校验 handoff.json | `python3 scripts/workflow_state.py validate --change <id>` |
-| wayfinding → spawn 子 change | `python3 scripts/workflow_state.py spawn --from <id> --changes <c1,c2>` |
-| 验证 wayfinding 完成 | `python3 scripts/check_phase_done.py --phase wayfinding --change <id>` |
-| 验证 planning 完成 | `python3 scripts/check_phase_done.py --phase planning --change <id>` |
-| 验证 building 完成 | `python3 scripts/check_phase_done.py --phase building --change <id>` |
-| 验证 closing 完成 | `python3 scripts/check_phase_done.py --phase closing --change <id>` |
+| 跑独立审阅闭环 | `/review-loop <change-id>` |
+| 验证 building 审阅完成 | `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` |
+| 全量 pytest | `uv run pytest -q` |
+| OpenSpec strict validate | `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` |
 
 ### ADR 创建规则
 
@@ -180,9 +116,9 @@ python3 scripts/workflow_state.py discover --format json
 
 - planning 阶段做出了有 >= 2 个备选方案的设计决策
 - building 阶段需要偏离 design.md 中的已有决策
-- reviewing_* 子状态或人工评审要求记录某个决策的上下文
+- 审阅或人工评审要求记录某个决策的上下文
 
-ADR 格式参考 `docs/adr/_TEMPLATE.md`。创建后在 handoff note 的 Key Decisions 章节中引用 ADR 文件名。
+ADR 格式参考 `docs/adr/_TEMPLATE.md`。
 
 ### Agent 持久记忆
 

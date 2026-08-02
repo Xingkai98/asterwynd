@@ -519,9 +519,23 @@ def _repo_root_for_change_dir(change_dir: Path) -> Path:
     return change_dir.parent
 
 
-def _check_review_manifests(change_dir: Path) -> list[str]:
+def _check_review_manifests(change_dir: Path, change_type: ChangeType) -> list[str]:
     repo_root = _repo_root_for_change_dir(change_dir)
     review_dir = repo_root / ".handoff" / change_dir.name
+    review_report = review_dir / "building-review.md"
+
+    # Mandatory building review for non-docs changes that ship code: the
+    # independent subagent review closed loop (issue #90) must have run and
+    # produced a PASS manifest before the change is merged. docs-only changes
+    # skip this gate.
+    requires_building_review = change_type.primary != "docs" and _changed_capabilities(change_dir)
+
+    if requires_building_review and not review_report.exists():
+        return [
+            "building-review.md missing — 独立 subagent 审阅未运行。"
+            "请用 /review-loop 跑审阅闭环（审→改→再审直到 PASS 或 3 轮封顶）。"
+        ]
+
     if not review_dir.exists():
         return []
 
@@ -699,7 +713,7 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
 
     errors.extend(
         f"{change_dir.name}: {error}"
-        for error in _check_review_manifests(change_dir)
+        for error in _check_review_manifests(change_dir, change_type)
     )
 
     errors.extend(

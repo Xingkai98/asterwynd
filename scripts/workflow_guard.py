@@ -24,10 +24,12 @@ import re
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from agent.workflow.resume_audit import run_resume_audit
 from agent.workflow.routing import is_workflow_enabled
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
 
 METHODS_FILE = REPO_ROOT / "scripts" / "workflow_methods.json"
 
@@ -280,13 +282,6 @@ def main():
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})
 
-    if not is_workflow_enabled(REPO_ROOT):
-        sys.exit(0)
-
-    # ── track Agent calls for reviewing_* sub-states ──
-    if _AGENT_TRACKING:
-        _track_agent_call(hook_input)
-
     # ── determine if this tool call is a "write operation" ──
     is_write = False
     if tool_name in ("Write", "Edit"):
@@ -298,27 +293,19 @@ def main():
     if not is_write:
         sys.exit(0)
 
-    resume_audit = run_resume_audit(REPO_ROOT)
-    if resume_audit.needs_reconciliation:
+    # ── management files always bypass ──
+    file_path = tool_input.get("file_path", "")
+    if file_path and Path(file_path).name in _MANAGEMENT_FILES:
+        sys.exit(0)
+
+    # ── protected-path guard stays enforced regardless of workflow state ──
+    if file_path and _mentions_protected_path(file_path):
         print(
-            "⛔ workflow resume audit 未完成。",
-            *resume_audit.errors,
+            f"⛔ 受保护文件不可由 Agent 直接写入: {file_path}",
+            "请通过 workflow_state.py 的结构化命令更新权威状态或 review 证据。",
             file=sys.stderr,
         )
         sys.exit(2)
-
-    # ── management files always bypass ──
-    file_path = tool_input.get("file_path", "")
-    if file_path:
-        if Path(file_path).name in _MANAGEMENT_FILES:
-            sys.exit(0)
-        if _mentions_protected_path(file_path):
-            print(
-                f"⛔ 受保护文件不可由 Agent 直接写入: {file_path}",
-                "请通过 workflow_state.py 的结构化命令更新权威状态或 review 证据。",
-                file=sys.stderr,
-            )
-            sys.exit(2)
 
     if tool_name == "Bash" and _mentions_protected_path(tool_input.get("command", "")):
         print(
@@ -328,28 +315,10 @@ def main():
         )
         sys.exit(2)
 
-    # ── gate check ──
-    active = _discover_active_change()
-    methods = _load_methods()
-
-    if active is None:
-        # Compute change base dir from config for the error message
-        doc_artifact = methods.get("doc_artifact", {})
-        paths = doc_artifact.get("paths", {})
-        tmpl = paths.get("change_dir_template", "openspec/changes/{change_id}")
-        base = tmpl.split("/{")[0] if "/{" in tmpl else tmpl.rsplit("/", 1)[0]
-        print(
-            f"⛔ 无活跃 OpenSpec change。",
-            f"请先创建 change: mkdir -p {base}/<change-id>",
-            "然后创建 handoff.json (python3 scripts/workflow_state.py init --change <id>)",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-
-    change_id, handoff = active
-    if not _check_gate(change_id, handoff, methods):
-        sys.exit(2)
-
+    # ── state-machine ceremony is disabled (issue #90) ──
+    # The phase gate check (active change / worktree / required files) is
+    # retired: the OpenSpec + review-loop flow replaces it. Only the protected
+    # path guard above remains enforced, always.
     sys.exit(0)
 
 
