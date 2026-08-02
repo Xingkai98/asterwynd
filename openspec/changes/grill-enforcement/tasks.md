@@ -38,6 +38,6 @@
 
 ## 6. 收尾
 
-- [ ] 6.1 实现完成后走 /review-loop 审阅闭环
-- [ ] 6.2 全量 pytest + openspec validate + artifact checker
+- [x] 6.1 实现完成后走 /review-loop 审阅闭环
+- [x] 6.2 全量 pytest + openspec validate + artifact checker
 - [ ] 6.3 归档 + backlog 清理
