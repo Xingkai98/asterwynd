@@ -27,31 +27,34 @@
 
 ## 4. CI 回归门禁（第二批）
 
-> 设计见 design.md Decision 5-10。
+> 设计见 design.md Decision 5-10 + grill 确认 Decision 14-15/17-20。
 
-- [ ] 4.1 `benchmarks/gate.py`：`load_baseline` / `compute_run_metrics` / `compare` / `GateVerdict` 纯逻辑（基线 JSON schema、success_rate 与 p95 口径对齐 report.py）
-- [ ] 4.2 `benchmark-gate` CLI 子命令：跑 benchmark → 对比基线 → 成功率绝对下降 >5pp 或 P95 相对上升 >5% 返回非零；`--require-baseline` / `--update-baseline` / `--baseline` / `--success-rate-drop` / `--p95-regression-frac`
+- [ ] 4.1 `benchmarks/gate.py`：`load_baseline` / `compute_run_metrics` / `compare` / `GateVerdict` 纯逻辑（基线 JSON schema、success_rate 对齐 PASS_STATUSES、P95 复用 report._percentile、非 PASS 任务排除出 P95）
+- [ ] 4.2 `benchmark-gate` CLI 子命令：跑 benchmark → 对比基线 → 成功率绝对下降 >5pp 或 P95 超过 max(基线*1.05, 基线+1.0s) 返回非零；`--require-baseline` / `--update-baseline` / `--baseline` / `--success-rate-drop` / `--p95-regression-frac`；无任务或 0 任务时 `--update-baseline` 也报错退出
 - [ ] 4.3 复用 report.py/statistics.py：`collect_run_results` 读结果、`bootstrap_ci` 报告当前跑与基线 CI（不进入阈值判定）
-- [ ] 4.4 单元测试：基线加载/指标计算/阈值判定（含边界：恰好 5%、无基线、无任务）
+- [ ] 4.4 单元测试：基线加载/指标计算/阈值判定（含边界：恰好 5%、无基线、无任务、失败任务 0.0 时长排除）
 - [ ] 4.5 集成测试：门禁命令端到端（fake agent 小任务集 + 合成基线，劣化拦截/更新基线）
-- [ ] 4.6 `benchmarks/tasks/gate-smoke/` 小型确定性任务集 + `benchmarks/baseline.json` 基线提交进仓库
-- [ ] 4.7 `.github/workflows/ci.yml` 新增 `benchmark-gate` job（fake agent + `--require-baseline`）
+- [ ] 4.6 `benchmarks/tasks/gate-smoke/` 小型近零 IO 确定性任务集（base_commit 裸跑即绿，不依赖本 PR 新代码）+ `benchmarks/baseline.json` 基线（含 git_sha）提交进仓库，提交后本地跑一次确认裸 base_commit 即绿
+- [ ] 4.7 `.github/workflows/ci.yml` 新增 `benchmark-gate` job：`actions/checkout@v4` 显式 `fetch-depth: 0` + 配置 git 身份 + fake agent `--require-baseline`
+- [ ] 4.8 重构：`agent/main.py` 抽取 `_build_benchmark_runner()` 共享 helper（`benchmark()` 与 `benchmark-gate` 共用），纯重构不改既有行为
+- [ ] 4.9 回归测试：既有 `benchmark` 命令行为不回归（复用 test_cli_benchmark.py）
 
 ## 5. Session timeline 看板（第二批）
 
-> 设计见 design.md Decision 11-13。
+> 设计见 design.md Decision 11-13 + grill 确认 Decision 16。
 
-- [ ] 5.1 `GET /api/sessions/{session_id}/timeline`：从 session hook 链找 TracingHook，返回按 duration_ms 降序 + `bar_pct` + 原始 `index` 的 calls
-- [ ] 5.2 与 add-minimal-tui-runtime-view 对齐事件粒度：timeline 条目 = tool_call→tool_result 对，tool_name/duration_ms 与 trace 同口径（文档记录对齐点）
+- [ ] 5.1 `GET /api/sessions/{session_id}/timeline`：从 session hook 链找 TracingHook，返回按 duration_ms 降序 + `bar_pct` + 原始 `index` 的 calls；**过滤 in-flight `duration_ms==0` 条目**；无 session 返回 404
+- [ ] 5.2 与 add-minimal-tui-runtime-view 对齐事件粒度：timeline 条目 = tool_call→tool_result 对，tool_name 与 trace 同口径（文档记录对齐点；TUI 未落地，硬耦合不成立，实现时记录"待 TUI 落地后校验粒度一致性"）
 - [ ] 5.3 `/debug` 视图 Timeline 面板：拉取 API 渲染横向条形图（成功绿/失败红/hover 展开 arguments）+ 刷新按钮
-- [ ] 5.4 单元测试：timeline 数据整形（降序、bar_pct、无 calls 边界）
-- [ ] 5.5 集成测试：API 契约（字段完整/降序/bar_pct）+ `/debug` 页面含 timeline 容器
+- [ ] 5.4 单元测试：timeline 数据整形（降序、bar_pct、无 calls、in-flight 过滤）+ TracingHook success 双前缀判定（`[Error`/`[Permission denied`）+ list 结果防御
+- [ ] 5.5 集成测试：API 契约（字段完整/降序/bar_pct/404）+ `/debug` 页面含 timeline 容器
+- [ ] 5.6 TracingHook.success 判定修正回归测试：`[Permission denied:` 记 failed（get_summary failed 计数）
 
 ## 6. 收尾
 
 - [x] 6.1 OpenSpec spec 同步（第一批）
 - [x] 6.2 全量 pytest + openspec validate + artifact checker
-- [ ] 6.3 benchmark 量化：`tests/benchmark/test_observability_quantification.py` 确定性验证 (a) CostLedger.bill() 分组/总额 (b) ErrorClassifier 标注样本分类准确率 (c) AgentLoop 工具错误路径端到端（trace token+error_type、ledger 记录）
+- [ ] 6.3 benchmark 量化：`tests/benchmark/test_observability_quantification.py` 确定性验证 (a) CostLedger.bill() 分组/总额 (b) ErrorClassifier 标注样本分类准确率（样本集覆盖全部 4 类 + 文本兜底分支，每类 ≥1） (c) AgentLoop 工具错误路径端到端（trace token+error_type、ledger 记录）
 
 ## 7. 收尾校验（checker 要求项）
 

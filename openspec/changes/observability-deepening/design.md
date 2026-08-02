@@ -55,6 +55,8 @@
 
 ## Pre-Implementation Review
 
+**第二批 grill（2026-08-03）**：独立零记忆 subagent 挑战第二批设计，产出 `reviews/grill-design.md`（run `grill-obs2-2026-08-03-01`，8 条 Confirmed Decisions + 5 个 Open Questions + 8 项风险，全部带代码实测依据）。修正决策整合为 Decision 14-20（见"第二批 grill 确认"节），grill Open Questions 全部收口为具体取值（base_commit 策略 / P95 绝对值下限 1s / 失败任务排除 / in-flight 过滤 / baseline git_sha / 6.3 样本覆盖）。无阻塞性 open question，进入 building。
+
 经 batch-grill-me（设计树逐轮确认）已定稿以下决策：
 
 **第一轮已确认（根决策）：**
@@ -185,10 +187,65 @@
 
 ### 6.3/7 收尾量化与校验
 
-- **6.3 benchmark 量化**：新增 `tests/benchmark/test_observability_quantification.py`，确定性验证：(a) CostLedger 已知记录 → `bill()` 分组与总额正确（session 账单可出）；(b) ErrorClassifier 在标注样本集上分类准确率 = 100%（异常分类可量化）；(c) AgentLoop（ScriptedLLM）跑一个工具错误路径 → trace 记录 token + error_type、ledger 有记录（端到端）。真实 LLM 的 benchmark 量化受环境制约，在归档时记录。
+- **6.3 benchmark 量化**：新增 `tests/benchmark/test_observability_quantification.py`，确定性验证：(a) CostLedger 已知记录 → `bill()` 分组与总额正确（session 账单可出）；(b) ErrorClassifier 在标注样本集上分类准确率 = 100%（异常分类可量化，样本集要求覆盖全部 4 个 ErrorCategory + 文本兜底分支，每类 ≥1 样本）；(c) AgentLoop（ScriptedLLM）跑一个工具错误路径 → trace 记录 token + error_type、ledger 有记录（端到端）。真实 LLM 的 benchmark 量化受环境制约，在归档时记录。
 - **7.1 grill**：本批进入 building 前完成（本设计即 grill 对象），产出 `reviews/grill-design.md`。
 - **7.2 benchmark smoke**：`uv run asterwynd benchmark benchmarks/tasks/gate-smoke --agent fake --source-repo . --runs-dir /tmp/smoke`。
-- **7.3 spec 同步**：把本批 spec delta 合并到 `openspec/specs/observability/spec.md`。
+- **7.3 spec 同步**：把本批 spec delta 合并到 `openspec/specs/observability/spec.md`（改 `openspec/specs/**` 需 `workflow-events.jsonl` 记录 `current_spec_synced` 事件）。
+
+### 第二批 grill 确认（batch-grill-me 独立 subagent，2026-08-03）
+
+> 独立零记忆 subagent 挑战第二批设计，产出 `reviews/grill-design.md`（8 条 Confirmed Decisions + 5 个 Open Questions + 8 项风险，全部带代码实测依据）。以下为整合进设计的修正决策。
+
+#### Decision 14: gate P95 复用 report._percentile，明确 0.0 排除口径
+
+- **方案**：`benchmarks/gate.py` 直接 `from benchmarks.report import _percentile`（与 `_render` 同一 nearest-rank 实现，避免第三套统计），并在 `compute_run_metrics` 中**排除**非 PASS 任务（`status` 不在 `PASS_STATUSES`）的 `duration_seconds` 参与 P95——崩溃/失败任务时长默认 0.0（`TaskResult.from_dict` 缺省 / runner 异常分支），纳入会系统性拉低延迟、掩盖回归。P95 只统计通过任务的时长，成功率先拦 status 回归。
+- **理由**：grill 实测 `report._percentile` 与 `compare.py` 的 `durations[int(n*0.95)]` 对 p<1 且 n≥1 数值一致（clamp 只在 p≥1 生效）；"同口径"可达。失败任务 0.0 时长会污染 P95。
+- **备选**：排除失败任务 vs 把 0.0 视为缺失。选前者：失败任务的时长本就不反映正常路径延迟，且 success_rate 已拦 status 回归。
+
+#### Decision 15: P95 阈值加延迟绝对值下限，边界用 `>`
+
+- **方案**：P95 劣化拦截条件 = `current.p95 > max(baseline.p95 * (1 + frac), baseline.p95 + ABS_FLOOR_S)`，`ABS_FLOOR_S = 1.0`（秒，常量）。即延迟绝对值下限 1s：基线 P95 <1s 时，劣化判定用绝对差而非相对百分比。成功率劣化条件 = `baseline.success_rate - current.success_rate > drop`。边界全部用严格 `>`（spec 的 "more than" 口径），测试 pin：恰好 5% / 恰好 `baseline*1.05` 不拦截，略超拦截。
+- **理由**：gate-smoke 仅 2 任务时 nearest-rank P95 = 两任务时长最大值，`duration_seconds` 是纯墙钟（含 worktree/git/test/清理），fake agent 只保证决策确定性不保证计时确定性；亚秒级基线下相对 5% 是 ±2.5ms 绝对抖动即拦截，必然误拦（grill 风险 1 实测）。
+- **备选**：CI 只拦 status 回归、不拦延迟。被拒：失去"P95 延迟劣化拦截"的验收；绝对值下限保留延迟维度同时避免 jitter 误拦。
+
+#### Decision 16: timeline success 用双前缀判定，修复 TracingHook list 脆弱性
+
+- **方案**：(a) `TracingHook.after_tool_execute` 的 `success` 判定从 `not result.startswith("[Error")` 改为同时识别 `[Permission denied`（`not (isinstance(result, str) and (result.startswith("[Error") or result.startswith("[Permission denied")))`），并对非 str 结果（`list[ContentBlock]`）返回 success=True（非错误即成功）；(b) timeline API 在整形时**过滤 `duration_ms == 0` 的 in-flight 条目**（`before_tool_execute` 预置的 0ms 假条目）。
+- **理由**：grill 实测权限拒绝结果以 `[Permission denied:` 开头（`agent/tools/registry.py`、`loop.py:828`），会被旧判定记成绿色成功，与本批 batch1 的 `permission_denied` 一级错误分类矛盾；HookManager 协议 `result: str | list[ContentBlock]`，list 结果会让 `.startswith` AttributeError 打断 hook 链。
+- **边界**：TracingHook 是共享 hook（web 主循环也用它做摘要），改 success 判定会同时影响 `get_summary` 的 failed 计数——这是修正而非回归（权限拒绝本就该算 failed）。
+
+#### Decision 17: gate-smoke 任务集近零 IO + 裸 base_commit 即绿
+
+- **方案**：`benchmarks/tasks/gate-smoke/` 含 2 个任务，`test_command` 为近零 IO 的确定性命令（如 `python -c "import sys; sys.exit(0)"`），且**在 base_commit 上无改动即通过**（fake agent 默认不配 edit_file 不改任何文件；任务不依赖本 PR 新代码）。任务 `base_commit` 用当前 HEAD 可达的祖先（用仓库内已存在的历史 SHA，如 `benchmarks/` 目录最近一次真实改动对应的 commit）。
+- **理由**：grill 风险 7 实测：fake agent 不配置 edit_file 时不做任何改动，worktree 停在 base_commit；若 test_command 依赖新代码 gate 永远红。近零 IO 同时缓解 P95 计时抖动（Decision 15 的绝对值下限已兜底）。
+- **验证**：任务集随本 change 提交后立即本地跑一次 `benchmark --agent fake` 确认裸 base_commit 即绿。
+
+#### Decision 18: CI benchmark-gate job 用 fetch-depth: 0
+
+- **方案**：`.github/workflows/ci.yml` 新增 `benchmark-gate` job，`actions/checkout@v4` 显式 `with: { fetch-depth: 0 }`（全量克隆），之后配置 git 身份（`git config user.name/user.email`），fake agent 跑 `benchmarks/tasks/gate-smoke` 对比 `benchmarks/baseline.json`（`--require-baseline`）。
+- **理由**：grill 实测 `actions/checkout@v4` 默认 shallow（fetch-depth=1），`benchmarks/runner.py:_create_worktree` 执行 `git worktree add --detach <path> <base_commit>`，base_commit 在浅克隆中不存在 → worktree 失败 → 任务 error → gate 必红且非被测代码回归。这是部署级阻塞，必须显式处理。
+- **风险**：全量克隆仓库体积增大；git worktree 需要 git 身份（job 内显式配置）；若 runner 仍无法跑（如环境问题），该 job 显式失败而非静默跳过——但 gate-smoke 只用本地任务，无网络依赖。
+
+#### Decision 19: 抽取 `_build_benchmark_runner()` 共享 helper
+
+- **方案**：把 `agent/main.py` 现有 `benchmark()` 中的 runner 构造（`FakeAgentRunner`/`ShellCommandRunner`/`ClaudeCodeRunner`/`AsterwyndRunner` 分支 + `_load_cli_config` + `suggest_parallel_default` 资源护栏）抽取为 `_build_benchmark_runner(...)` 共享函数，`benchmark()` 与新的 `benchmark-gate` 共用。
+- **理由**：grill 实测两命令若不抽取会复制 ~130 行参数与分支逻辑，参数语义后续必然漂移。
+- **边界**：抽取是纯重构，不改既有 benchmark 行为；`benchmark-gate` 只支持 `--agent fake`（门禁用于确定性基础设施回归），runner 分支仍共用。
+
+#### Decision 20: baseline 记录 git sha（审计）+ 0 任务不写基线
+
+- **方案**：(a) `benchmarks/baseline.json` 增加 `"git_sha": "<run 时 HEAD 短 sha>"`（不可用时 `null`）；(b) `--update-baseline` 在 0 任务（metrics 无法计算）时同样报错退出、不写空基线。
+- **理由**：grill Open Question 5/3：基线需可审计对应代码版本；0 任务写空基线会让后续对比静默无意义。
+- **边界**：git_sha 仅审计信息，不作为对比条件（task_set 才是）。
+
+#### 未决项收口（grill Open Questions 的解答）
+
+- **base_commit 策略** → Decision 17/18 定案（仓库内既有祖先 SHA + fetch-depth:0）。
+- **P95 绝对值下限** → Decision 15 定案（1s）。
+- **失败任务 duration=0.0** → Decision 14 定案（非 PASS 任务排除出 P95）。
+- **timeline in-flight 过滤 + success 语义** → Decision 16 定案。
+- **baseline git sha** → Decision 20 定案。
+- **6.3(b) 样本集覆盖** → 每类 ≥1 + 文本兜底 ≥1（写入 tasks 6.3）。
 
 ## Reference Implementation Research
 
