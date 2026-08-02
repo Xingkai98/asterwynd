@@ -110,7 +110,7 @@
 
 ### 4. `long-term-memory-deepening`
 
-状态：未实现。
+状态：已实现并归档（2026-08-02）。
 
 批次：第九批 Batch 3（与 observability-deepening 并行）。
 
@@ -123,7 +123,7 @@
 
 - 写入去重（embedding 召回 + LLM 三分支判断）+ 冲突检测 + change log。
 - importance×recency 衰减 + 30 天归档。
-- search_memory 语义检索 + 全局摘要 ~50 token。
+- SearchMemory 语义检索 + 全局摘要 ~50 token。
 - scope 隔离（project/repo 标签）。
 
 ### 5. `observability-deepening`

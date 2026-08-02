@@ -13,7 +13,7 @@ from agent.loop import AgentLoop
 from agent.memory.persistent import PersistentMemory
 from agent.message import Message
 from agent.llm import LLMResponse, ToolCallDelta
-from agent.tools.builtin.memory import SaveMemoryTool, RecallMemoryTool
+from agent.tools.builtin.memory import SaveMemoryTool, RecallMemoryTool, SearchMemoryTool
 from agent.tools.registry import ToolRegistry
 from agent.hooks.manager import HookManager
 
@@ -161,7 +161,7 @@ async def test_save_memory_persists_across_agent_runs(
 async def test_memory_index_injected_in_system_messages(
     persistent_memory, registry_with_memory_tools
 ):
-    """After saving a memory, the MEMORY.md index should appear in context."""
+    """After saving a memory, the ~50-token global summary appears in context."""
     # Pre-populate a memory
     persistent_memory.save("user", "my-role", "role desc", "I write Go and Python.")
 
@@ -178,7 +178,7 @@ async def test_memory_index_injected_in_system_messages(
 
     await loop.run([Message(role="user", content="What do you know?")])
 
-    # The LLM should have received messages containing the memory index
+    # The LLM should have received messages containing the global memory summary
     all_text = ""
     for batch in capture_llm.all_messages:
         for msg in batch:
@@ -186,8 +186,8 @@ async def test_memory_index_injected_in_system_messages(
                 all_text += str(msg.content) + "\n"
 
     assert "## Project Memory" in all_text
-    assert "my-role.md" in all_text
-    # Full body text must NOT be injected — only the index is
+    assert "my-role: role desc" in all_text
+    # Full body text must NOT be injected — only the summary is
     assert "I write Go and Python." not in all_text
 
 
@@ -364,3 +364,104 @@ async def test_save_memory_update_persists_across_runs(
     recall_result = result3.tool_calls_made[0].result or ""
     assert "Likes light mode." in recall_result
     assert "Likes dark mode." not in recall_result
+
+
+# ---------------------------------------------------------------------------
+# SearchMemory tool end-to-end (#75)
+# ---------------------------------------------------------------------------
+
+
+def _search_tool_call(query: str, call_id: str = "search-1") -> ToolCallDelta:
+    return ToolCallDelta(
+        id=call_id,
+        name="SearchMemory",
+        arguments=json.dumps({"query": query}),
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_memory_semantic_retrieval(
+    persistent_memory, registry_with_memory_tools
+):
+    """Agent searches memories semantically via the SearchMemory tool."""
+    persistent_memory.save(
+        "feedback", "go-pref", "likes Go", "User prefers Go for backend services."
+    )
+    registry = ToolRegistry()
+    registry.register(RecallMemoryTool(memory=persistent_memory))
+    registry.register(SearchMemoryTool(memory=persistent_memory))
+
+    llm = MultiStepLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[_search_tool_call("what language does the user prefer?")],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Go.", stop_reason="end_turn"),
+    ])
+
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+        persistent_memory=persistent_memory,
+    )
+    result = await loop.run([Message(role="user", content="Check my preferences.")])
+
+    assert result.stop_reason.value == "end_turn"
+    assert result.tool_calls_made[0].name == "SearchMemory"
+    search_result = result.tool_calls_made[0].result or ""
+    assert "go-pref" in search_result
+    assert "User prefers Go" in search_result
+
+
+@pytest.mark.asyncio
+async def test_save_memory_with_dedup_update_judgment(
+    persistent_memory, tmp_path, monkeypatch
+):
+    """SaveMemory with a dedup judge classifies the write as update."""
+    from agent.memory.dedup import MemoryDedupJudge
+    from agent.tools.builtin.memory import SearchMemoryTool
+
+    persistent_memory.save("user", "role", "v1", "Old role description.")
+
+    class _DedupLLM(MultiStepLLM):
+        pass
+
+    judge = MemoryDedupJudge(
+        llm=MultiStepLLM([
+            LLMResponse(
+                content='{"action":"update","target_name":"role","reason":"supersedes"}',
+                stop_reason="end_turn",
+            ),
+        ])
+    )
+
+    registry = ToolRegistry()
+    registry.register(SaveMemoryTool(memory=persistent_memory, judge=judge))
+    registry.register(RecallMemoryTool(memory=persistent_memory))
+    registry.register(SearchMemoryTool(memory=persistent_memory))
+
+    llm = MultiStepLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[
+                _save_tool_call("incoming", "user", "v2", "New role description."),
+            ],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="Done.", stop_reason="end_turn"),
+    ])
+
+    loop = AgentLoop(
+        llm=llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+        persistent_memory=persistent_memory,
+    )
+    result = await loop.run([Message(role="user", content="Update my role.")])
+
+    assert result.tool_calls_made[0].name == "SaveMemory"
+    assert "updated (dedup)" in (result.tool_calls_made[0].result or "")
+    entry = persistent_memory._load_entry_by_name("role")
+    assert entry.body == "New role description."

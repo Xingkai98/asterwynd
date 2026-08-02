@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from agent.code_intelligence.config import CodeIntelligenceConfig
-from agent.config import BrowserConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
+from agent.config import BrowserConfig, MemoryConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
 from agent.lsp.client import LspClientManager
 from agent.run_config import ModePolicy
 from agent.mcp.manager import McpManager
@@ -28,7 +28,7 @@ from agent.tools.builtin.read import ReadTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
 from agent.memory.persistent import PersistentMemory
-from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool
+from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool, SearchMemoryTool
 from agent.tools.builtin.write import WriteTool
 from agent.tools.builtin.browser_tools import BROWSER_TOOL_CLASSES
 from agent.tools.registry import ToolRegistry
@@ -64,6 +64,7 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "TodoWrite",
     "SaveMemory",
     "RecallMemory",
+    "SearchMemory",
     "ActivateSkill",
     "BrowserNavigate",
     "BrowserGetContent",
@@ -121,6 +122,19 @@ def _wire_governance(
         registry.set_quality(store)
 
 
+def _build_memory_dedup_judge(llm, memory_config=None):
+    """Build the write-time memory dedup judge, or None when no LLM is wired."""
+    if llm is None:
+        return None
+    from agent.memory.dedup import MemoryDedupJudge
+
+    config = memory_config or MemoryConfig()
+    return MemoryDedupJudge(
+        llm=llm,
+        recall_threshold=config.dedup_recall_threshold,
+    )
+
+
 def build_default_tool_registry(
     *,
     policy: WorkspacePolicy | None = None,
@@ -134,6 +148,8 @@ def build_default_tool_registry(
     persistent_memory: PersistentMemory | None = None,
     selection_config: ToolSelectionConfig | None = None,
     quality_config: QualityConfig | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     default_tools = tools or get_default_tools(
@@ -143,6 +159,8 @@ def build_default_tool_registry(
         web_search_config=web_search_config,
         browser_config=browser_config,
         persistent_memory=persistent_memory,
+        memory_config=memory_config,
+        llm=llm,
     )
     for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
         registry.register(tool)
@@ -170,6 +188,8 @@ def build_coding_tool_registry(
     browser_config: BrowserConfig | None = None,
     mcp_manager: McpManager | None = None,
     persistent_memory: PersistentMemory | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     for tool in [
@@ -179,6 +199,8 @@ def build_coding_tool_registry(
         code_intelligence_config=code_intelligence_config,
         browser_config=browser_config,
         persistent_memory=persistent_memory,
+        memory_config=memory_config,
+        llm=llm,
         ),
         *_build_mcp_tools(mcp_manager),
     ]:
@@ -222,10 +244,13 @@ def get_default_tools(
     web_search_config: WebSearchConfig | None = None,
     browser_config: BrowserConfig | None = None,
     persistent_memory: PersistentMemory | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     pmem = persistent_memory or PersistentMemory(policy.workspace_root)
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
+    judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [
         ReadTool(policy=policy),
         WriteTool(policy=policy, lsp_manager=lsp_manager),
@@ -246,8 +271,13 @@ def get_default_tools(
             code_intelligence_config=code_intelligence_config,
         ),
         *_build_lsp_tools(policy, lsp_manager),
-        SaveMemoryTool(memory=pmem),
+        SaveMemoryTool(
+            memory=pmem,
+            judge=judge,
+            recall_top_k=(memory_config or MemoryConfig()).recall_top_k,
+        ),
         RecallMemoryTool(memory=pmem),
+        SearchMemoryTool(memory=pmem),
     ]
 
     # 浏览器工具：仅在 BrowserConfig 启用时注册
@@ -299,10 +329,13 @@ def get_coding_tools(
     code_intelligence_config: CodeIntelligenceConfig | None = None,
     browser_config: BrowserConfig | None = None,
     persistent_memory: PersistentMemory | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     pmem = persistent_memory or PersistentMemory(policy.workspace_root)
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
+    judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [
         ReadTool(policy=policy),
         WriteTool(policy=policy, lsp_manager=lsp_manager),
@@ -323,8 +356,13 @@ def get_coding_tools(
         GrepTool(policy=policy),
         BashTool(policy=policy),
         *_build_lsp_tools(policy, lsp_manager),
-        SaveMemoryTool(memory=pmem),
+        SaveMemoryTool(
+            memory=pmem,
+            judge=judge,
+            recall_top_k=(memory_config or MemoryConfig()).recall_top_k,
+        ),
         RecallMemoryTool(memory=pmem),
+        SearchMemoryTool(memory=pmem),
     ]
 
     # 浏览器工具：仅在 BrowserConfig 启用时注册

@@ -272,13 +272,14 @@ class AsterMdSource:
 
 
 class MemoryIndexSource:
-    """P2: memory index from PersistentMemory (MEMORY.md summary).
+    """P2: ~50-token global memory summary from PersistentMemory.
 
-    Always loaded; content is static per session.
+    Always loaded; content is static per session. Full entries are retrieved
+    on demand via the SearchMemory tool (Decision 4).
     """
     name = "MemoryIndex"
     priority = 2
-    budget = 2000  # ~2K
+    budget = 2000  # ~2K (summary itself is ~50 tokens)
     critical = False
 
     def __init__(self, persistent_memory: PersistentMemory | None = None) -> None:
@@ -287,15 +288,15 @@ class MemoryIndexSource:
     async def render(self, context: BuildContext) -> str:
         if self._persistent_memory is None:
             return ""
-        memory_index = self._persistent_memory.load_index()
-        if not memory_index:
+        summary = self._persistent_memory.load_summary()
+        if not summary:
             return ""
         return (
             "## Project Memory\n"
-            "The following persistent memories from prior sessions are available. "
-            "Use RecallMemory to retrieve specific entries.\n"
+            "Summary of persistent memories from prior sessions. "
+            "Use SearchMemory to semantically retrieve specific entries.\n"
             "---\n"
-            f"{memory_index}\n"
+            f"{summary}\n"
             "---"
         )
 

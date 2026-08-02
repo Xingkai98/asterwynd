@@ -244,7 +244,13 @@ def _build_agent_core(
         workspace_root=workspace_root,
         command_denylist=config.tools.command_denylist,
     )
-    persistent_memory = PersistentMemory(workspace_policy.workspace_root)
+    persistent_memory = PersistentMemory(
+        workspace_policy.workspace_root,
+        archive_after_days=config.memory.archive_after_days,
+        recency_halflife_days=config.memory.recency_halflife_days,
+        importance_default=config.memory.importance_default,
+        summary_tokens=config.memory.summary_tokens,
+    )
 
     registry = build_default_tool_registry(
         policy=workspace_policy,
@@ -261,6 +267,8 @@ def _build_agent_core(
         persistent_memory=persistent_memory,
         selection_config=config.tools.selection,
         quality_config=config.tools.quality,
+        memory_config=config.memory,
+        llm=llm,
     )
 
     hooks = HookManager([
