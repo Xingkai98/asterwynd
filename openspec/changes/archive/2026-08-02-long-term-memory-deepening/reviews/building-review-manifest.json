@@ -3,11 +3,11 @@
   "change_id": "long-term-memory-deepening",
   "phase": "building",
   "verdict": "PASS",
-  "reviewer_run_id": "a57796cd3b994b3ef",
-  "base_sha": "dc83b4c8c63395f827f59f33ae2d3b7fb724fed4",
-  "head_sha": "5d507acf2479a8554ef8a2146aedd0be09741c77",
+  "reviewer_run_id": "aa959f4f483a95d36",
+  "base_sha": "7c6fc3e472956cc53f0a71a091aa4cb3536c2bcd",
+  "head_sha": "e39e4bdb6cd4c1aaafcfa772454e68a8e27078ab",
   "tasks_hash": "sha256:d2bfea36753aa8f37e1a4f2d8f89a7614d1e767c9a5798ff32fea029a171cafe",
   "spec_hash": "sha256:7a4a2a092f4c13c68861547ae96d83797944f40d3ef03156d6a2228c5f495ecc",
-  "diff_hash": "sha256:981a413ec418521531a543432c5f2549c30bb72ac859fba018d0680c9c83828c",
-  "report_hash": "sha256:c77c3975d5a512b5a9c02752b6f7ded0a3f455430c470f4ab7a7540cb267286e"
+  "diff_hash": "sha256:43defb29d56e305502222b5ea290c81d41bccc33c415a4f3141688ef3d96bfc8",
+  "report_hash": "sha256:c968be303d4b3d1c1b221bbe32c7b68ea597accb4330533b33f2af5963913404"
 }
