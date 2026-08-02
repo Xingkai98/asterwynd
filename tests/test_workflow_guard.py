@@ -174,3 +174,88 @@ def test_guard_resume_audit_no_longer_blocks_writes(tmp_path, monkeypatch):
         mod.main()
 
     assert excinfo.value.code == 0
+
+
+# ── grill 门禁（issue #95）────────────────────────────────────────────
+
+
+def _seed_grill_change(tmp_path: Path, change_id: str = "grill-change") -> None:
+    """Seed a change dir with a spec delta (triggers grill gate)."""
+    change_dir = tmp_path / "openspec" / "changes" / change_id
+    change_dir.mkdir(parents=True, exist_ok=True)
+    (change_dir / "proposal.md").write_text("## Change Type\n\nprimary: feature\n", encoding="utf-8")
+    (change_dir / "design.md").write_text("## Context\n\nctx\n", encoding="utf-8")
+    (change_dir / "tasks.md").write_text("## 1. 实现\n\n- [x] 完成项\n", encoding="utf-8")
+    spec = change_dir / "specs" / "web-ui" / "spec.md"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("## ADDED Requirements\n\n### Requirement: X\n\nX.\n", encoding="utf-8")
+
+
+def test_guard_blocks_code_write_without_grill_evidence(tmp_path):
+    """issue #95：有 spec delta 的 change，写代码前无 grill 证据 → exit 2。"""
+    _seed_grill_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")},
+        },
+    )
+
+    assert result.returncode == 2
+    assert "grill" in result.stderr.lower()
+
+
+def test_guard_allows_code_write_with_grill_evidence(tmp_path):
+    """issue #95：有 grill 证据（reviews/grill-design.md）→ 放行。"""
+    _seed_grill_change(tmp_path)
+    reviews = tmp_path / "openspec" / "changes" / "grill-change" / "reviews"
+    reviews.mkdir(parents=True, exist_ok=True)
+    (reviews / "grill-design.md").write_text(
+        "## Confirmed Decisions\n- **决策**: x；理由: y；来源: run-1\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(
+        tmp_path,
+        {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")},
+        },
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_exempts_change_doc_writes(tmp_path):
+    """issue #95：change 文档类写操作（design.md/specs/reviews）豁免，不触发 grill 门禁。"""
+    _seed_grill_change(tmp_path)
+
+    cases = [
+        str(tmp_path / "openspec" / "changes" / "grill-change" / "design.md"),
+        str(tmp_path / "openspec" / "changes" / "grill-change" / "specs" / "web-ui" / "spec.md"),
+        str(tmp_path / "openspec" / "changes" / "grill-change" / "reviews" / "grill-design.md"),
+    ]
+    for path in cases:
+        result = _run_guard(
+            tmp_path,
+            {"tool_name": "Write", "tool_input": {"file_path": path}},
+        )
+        assert result.returncode == 0, f"文档写操作不应被拦: {path}"
+
+
+def test_guard_no_change_mapping_does_not_trigger(tmp_path):
+    """issue #95：无法映射 change（无分支名、多 active）→ 门禁不触发。"""
+    _seed_grill_change(tmp_path)
+    _seed_grill_change(tmp_path, "other-change")
+
+    # 分支名不是 <change-id>/<date>，多 active change → 门禁不触发（放行）
+    result = _run_guard(
+        tmp_path,
+        {
+            "tool_name": "Write",
+            "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")},
+        },
+    )
+    assert result.returncode == 0

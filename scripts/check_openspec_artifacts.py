@@ -405,14 +405,61 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
     if not (change_type.all_types & DESIGN_TYPES):
         return []
 
+    # Structured grill evidence (issue #95): reviews/grill-design.md must exist
+    # with a non-empty ## Confirmed Decisions section (>= 3 decision entries).
+    # This replaces the literal "batch-grill" string check, which an agent could
+    # pass by writing one line in tasks.md.
+    grill_evidence = change_dir / "reviews" / "grill-design.md"
+    if grill_evidence.exists():
+        text = grill_evidence.read_text(encoding="utf-8")
+        decisions = _extract_grill_decisions(text)
+        if len(decisions) >= 3:
+            return []
+        return [
+            f"reviews/grill-design.md 的 ## Confirmed Decisions 不足 3 条"
+            f"（当前 {len(decisions)} 条）——独立 subagent design grilling 未完成"
+        ]
+
+    # A *completed* change (non-docs, tasks all checked) must show structured
+    # grill evidence — the literal marker is no longer enough once the change
+    # is done. This is Design Decision 7: narrow the mandatory-evidence branch
+    # to implemented changes so legacy in-flight changes aren't flagged.
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
         return ["missing required file: tasks.md"]
+    if _tasks_all_complete(change_dir) and _changed_capabilities(change_dir):
+        return [
+            "reviews/grill-design.md missing — 实现已完成但独立 subagent design grilling 证据缺失。"
+            "请用 /grill 跑独立设计追问并产出结构化决策记录。"
+        ]
+
+    # Fallback (compat with update-design-review-method, in-flight changes):
+    # literal task marker.
     if not _has_design_review_task(tasks.read_text(encoding="utf-8")):
         return [
             "tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
         ]
     return []
+
+
+def _extract_grill_decisions(text: str) -> list[str]:
+    """Extract decision entries under ## Confirmed Decisions in grill-design.md.
+
+    Only the canonical list-item format counts (``- **决策**: ...``, half- or
+    full-width colon). The ``### Decision N:`` heading form is tolerated for
+    display but does not satisfy the evidence threshold on its own — headings
+    lack the required 理由/来源 fields, so counting them would let an agent pad
+    the decision count without real content.
+    """
+    section = _extract_h2_sections(text).get("Confirmed Decisions", "")
+    if not section or _is_placeholder_body(section):
+        return []
+    decisions: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- **决策**：") or stripped.startswith("- **决策**:"):
+            decisions.append(stripped)
+    return decisions
 
 
 def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[str]:
