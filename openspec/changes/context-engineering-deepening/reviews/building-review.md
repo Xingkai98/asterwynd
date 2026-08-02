@@ -1,137 +1,103 @@
 # Building Review: context-engineering-deepening（issue #74）
 
-> 独立零记忆 subagent 审阅（不继承开发上下文）。审阅范围：`git diff origin/master...HEAD`（3 个提交 760d57c / b1515bf / 1ae4023）。
+> 独立零记忆 subagent 审阅（不继承开发上下文）。审阅范围：`git diff origin/master...HEAD`（4 个提交 760d57c / b1515bf / 1ae4023 / baa510d）。
+> Round 1（CHANGES_REQUESTED）后主 agent 已修复全部 5 个 finding（fix commit `baa510d`）。本报告为 Round 2 复审，逐一验证修复是否到位。
 
 ## Verdict
 
-**CHANGES_REQUESTED** — 所有 `[x]` 任务均有真实实现且测试通过，但存在 2 个需修复的中等问题：
+**PASS** — Round 1 的 5 个 finding（M1 / M2 / L3 / L4 / L5）全部修复到位，均有真实代码实现与回归测试支撑；Round 2 指定测试全部通过。修复未引入新的阻塞性问题。
 
-- **[M1]** Anthropic `stream_chat` 流式路径缺少 cache_control 400 重试降级（task 2.3 只实现了一半）。
-- **[M2]** ReadDoc 32KB 上限按字符截断而非按字节，多字节（CJK）文档会突破字节上限。
+Round 1 verdict：**CHANGES_REQUESTED**（2 个 Medium + 3 个 Low），详见下方「Round 1 修复验证」逐条记录。
 
-其余为 Low 级观察项。无阻塞性缺陷。
+---
+
+## Round 1 修复验证（逐条）
+
+### M1 (Medium) — `stream_chat` 流式路径补 cache_control 400 重试降级 → 已修复
+
+- **验证结论**: PASS
+- **代码**: `agent/anthropic_llm.py:239-261`。`stream_chat` 异常处理器：`_is_400_error` 过滤后，读取 `_last_cache_plan`（`anthropic_llm.py:247`），`had_cache` 判定为 plan 任一 count > 0（`:248-251`）；命中则重试一次 `_stream_chat_impl`（`:254-260`）。`_apply_cache_plan` 在 `_build_payload` 中 read-and-clear `cache_plan` 并保存 `_last_cache_plan`（`:177-179`），因此重试时 `cache_plan is None` → `_apply_cache_plan` 直接 return，重试 payload **不重建 plan、不误消费、天然无 cache_control**。降级判断基于已保存的 plan，不重建 payload。
+- **回归测试**: `tests/agent/test_context_cache.py:241-294` `test_stream_cache_control_400_retry`。fake `client.stream` 首次抛 HTTP 400，二次成功返回 SSE；断言 `attempts["n"] == 2` 且产出 `complete` 事件。真实驱动流式降级路径（非 `chat()` 非流式）。
+
+### M2 (Medium) — ReadDoc 32KB 上限按字节截断 → 已修复
+
+- **验证结论**: PASS
+- **代码**: `agent/tools/builtin/read_doc.py:79-84`。`content.encode("utf-8")[:MAX_DOC_SIZE_BYTES].decode("utf-8", errors="replace")`，CJK 多字节不会突破 32KB 字节上限；截断后追加截断注记。
+- **回归测试**: `tests/agent/tools/test_read_doc_and_pagination.py:130-140` `test_size_cap_is_byte_based_for_multibyte`。写入 `"中"*(32KB/3+500)`（约 34KB 字节、1.1 万字符），断言 `len(result.encode("utf-8")) <= MAX_DOC_SIZE_BYTES + 200`。
+
+### L3 (Low) — tasks.md 4.1 勾选与实现同步 → 已修复
+
+- **验证结论**: PASS
+- **代码**: `openspec/changes/context-engineering-deepening/tasks.md:33` 已为 `[x] 4.1`；实现真实存在：`agent/loop.py:896-916`（compaction 后 `on_event("memory_compaction", {...})` 携带 before/after tokens + `tier_metadata()`，并调 `trace_recorder.record_compaction`）、`agent/trace_recorder.py:154-170`（`record_compaction`）。
+- **测试**: `tests/agent/test_loop.py:1026` `test_memory_compaction_event_carries_token_and_tier_stats`、`:1057` `test_memory_compaction_recorded_to_trace`，均通过（`-k compaction` 4 passed）。
+
+### L4 (Low) — L2 累积 token 每次 compact 重算 → 已修复
+
+- **验证结论**: PASS
+- **代码**: `agent/memory/manager.py`。新增 `_l1_accumulated_tokens` 增量累加器（`:99` 初始化），`compact()` 每次追加新 L1 summary 时 `+= _count_tokens(new_summary)`（`:280`），触发判断与 L2 budget 改用累加值（`:281,:286`），L2 压缩后清零（`:296`）；`clear()` 同步重置（`:543`）。与旧 `sum(_count_tokens(chunk) for chunk in self._l1_chunks)` 数学等价（chunk 即各次 `new_summary`），无累积漂移。
+
+### L5 (Low) — 断点定位假设系统块数组以稳定块开头 → 已修复
+
+- **验证结论**: PASS
+- **代码**: `agent/loop.py:1063-1077`。`_compute_cache_plan` 不再按 cache 块计数，改为遍历所有 system 消息、以**全局 block index** 记录最后一个 `TextBlock.cache` 块的 `block_index + 1`；前置非 cache system 消息（plain-string 也计 1 块，`:1077`）不再导致错位。selector OFF 返回 `stable_system_block_count=stable_system_breakpoint`（`:1079-1084`）。
+- **回归测试**: `tests/agent/test_context_cache.py:332-345` `test_compute_cache_plan_with_preceding_system_block`。消息链为「plain-string system 块 + 3 个 cache TextBlock」，断言 `stable_system_block_count == 4`（最后 cache 块全局 index 3 + 1）。该断言对旧实现（计数 3）会失败，真实覆盖修复。
 
 ---
 
 ## Tasks Verification
 
-### 子 change ①：增量 token 计数 + 静态源缓存 + 四字段摘要 + pending 标记 + L1/L2 层级压缩
+Round 1 已验证的 tasks 结论全部保留有效（见 git 历史 Round 1 报告版本）；Round 2 复审确认无回退：
 
-| Task | 实现位置 | 验证结论 |
-|------|----------|----------|
-| 1.1 增量 token 计数 `Message._tokens` | `agent/message.py:100`（非序列化字段）、`agent/memory/manager.py:124-138`（惰性缓存） | PASS。`to_dict` 不含 `_tokens`；测试 `test_second_count_is_all_cache_hits`/`test_newly_appended_message_counts_once`/`test_message_tokens_field_not_serialized` 覆盖 |
-| 1.2 ContextBuilder 静态源缓存 | `agent/context/builder.py:41-45,66-70,75-89`、`agent/context/sources.py:110-112,268-270` | PASS。P0/P1 `static=True` 以 `(name,cwd,mode,user_system_prompt)` 键缓存；P2 `MemoryIndexSource` 无 `static` 属性 → 每轮重渲染，防 SaveMemory 陈旧。测试 `test_static_source_cached_across_builds`/`test_mode_change_invalidates_static_cache`/`test_non_static_source_never_cached` |
-| 1.3 四字段摘要模板替换 | `agent/context/summarizer.py:74-107` | PASS。`_LLM_SUMMARY_USER_TEMPLATE` 四标题为 已完成事项/待办事项/疑难点与决策/当前进行中，旧标题已移除；`_LLM_SUMMARY_SYSTEM_PROMPT`/`_MERGE_SYSTEM_PROMPT` 同步加入成对保留指令。测试 `test_template_has_exactly_four_new_headings_in_order`/`test_merge_prompt_contains_four_new_headings` |
-| 1.4 pending 标记绑定 tool_call_id | `agent/memory/manager.py:402-452`（`_annotate_pending_calls`） | PASS。格式 `[call#<i>: <tool_call_id> pending]`；预扫 middle+recent 的 tool 结果集合，无匹配则标注；LLM 与 Truncation 路径均可见（标注进 content）。测试 `test_pending_call_annotated_in_summarizer_input`/`test_completed_middle_chain_not_marked_pending`/`test_multiple_pending_calls_numbered_sequentially`/`test_pending_annotation_visible_to_truncation_summarizer` |
-| 1.5 L1/L2 层级压缩 + tier 元数据 | `agent/memory/manager.py:34-47,96-102,266-294,398-430,455-470`（`SummaryTier`/`_l1_chunks`/`_compress_to_l2`）、`agent/context/summarizer.py:215-244`（`compress`） | PASS。L1 摘要累积，`len>=2 且 tokens>=l2_trigger` 触发 L2（复用 `_compress_to_l2`，LLM `compress()` 失败降级拼接）；tier/source_range/generated_at 元数据入 `_tiers`。测试 `test_l2_compression_triggered_and_metadata_recorded`/`test_no_l2_below_threshold` |
-| 1.6 单元测试 | `tests/agent/context/test_summarizer.py`、`tests/agent/memory/test_memory.py`、`tests/agent/context/test_builder.py` | PASS。四字段模板、pending、增量计数、L1/L2、静态源缓存均有断言 |
-| 1.7 resume pending 链 | `tests/agent/memory/test_memory.py::test_resume_roundtrip_keeps_pending_marker` | PASS（单元级 resume 往返：`to_dict/from_dict` 保留 tool_calls、`_tokens` 重置后重算、再压缩仍含 pending）。非完整 AgentLoop snapshot/resume e2e，但核心机制已覆盖 |
-
-### 子 change ②：Prefix Cache 注入顺序
-
-| Task | 实现位置 | 验证结论 |
-|------|----------|----------|
-| 2.1 build_blocks()/render_layers() 返回 list[TextBlock] | `agent/context/builder.py:77-126`、`agent/loop.py:1238-1252` | PASS。`build()` 保持 str；`build_blocks` 每层独立 TextBlock，`cacheable` 层标 `cache=True`；loop 注入为 system 消息块列表。测试 `test_build_blocks_returns_textblocks_with_cache_flags`/`test_build_still_returns_str` |
-| 2.2 工具 schema 确定性排序 + set_stable_tools | `agent/loop.py:956-959`（`CORE_STABLE_TOOL_NAMES`）、`agent/tools/governance/selector.py:58-60,86-108`、`agent/tools/registry.py:95-119` | PASS。注册序稳定（dict 插入序）；selector 存在时 loop 以核心 7 工具集调用 `set_stable_tools`，stable 前置不占 top-k。测试 `test_set_stable_tools_wired_when_selector_present` |
-| 2.3 cache_control 断点 + 400 重试降级 | `agent/llm.py:20-31`（CachePlan）、`agent/loop.py:1030-1086`（按模式单断点）、`agent/anthropic_llm.py:166-214`（断点放置+400降级） | **部分 PASS（含 M1）**。非流式 `chat` 路径断点与 400 降级正确；`stream_chat` 路径缺 400 降级（见 M1）。测试 `test_breakpoint_on_last_stable_system_block`/`test_breakpoint_on_last_core_tool`/`test_cache_control_400_retry` |
-| 2.4 openai_llm.py 按 provider 对齐 | `agent/openai_llm.py`（无 `supports_cache_control`）、`agent/loop.py:1041`（能力门控） | PASS。loop 门控 `supports_cache_control`，OpenAILLM 无此属性 → 永不被设置 plan，payload 无 cache_control。测试 `test_openai_payload_never_has_cache_control` |
-| 2.5 稳定前缀冻结 | `agent/context/builder.py:145-179`（`_find_trimmable_index` 跳过 cacheable） | PASS。cacheable（P0/P1/P2）不参与预算裁剪，整块保留；预算只作用于 P4/P5。测试 `test_cacheable_source_survives_budget_pressure` |
-| 2.6 单元/集成测试 | `tests/agent/test_context_cache.py`（303 行） | PASS。注入顺序、cache 分层、稳定前缀冻结、Anthropic/OpenAI payload、CachePlan 消费、400 重试均覆盖 |
-
-### 子 change ③：分页读进度 + 深层 MD 按需加载
-
-| Task | 实现位置 | 验证结论 |
-|------|----------|----------|
-| 3.1 ReadTool offset/pagination 进度 | `agent/tools/builtin/read.py:58-105` | PASS。仅显式 offset 时输出 `\n\n[ReadProgress file="<path>"; offset=<n>; total=<m>]`；默认 path+limit 字节兼容（`test_limit_only_unchanged_no_note`）。offset 0-based、>total 空内容+注记、负 offset 归 0。测试 `test_offset_slices_and_notes_progress`/`test_offset_beyond_total_returns_empty_plus_note` 等 |
-| 3.2 压缩前写入 (file,offset,total) | `agent/memory/manager.py:454-465`（`_extract_read_progress`）、`agent/memory/manager.py:468-489`（`_decorate_for_summary`） | PASS。`_READ_PROGRESS_RE` 扫 tool-result 取每文件最后一条进度，注入 summary prompt「当前进行中」区。测试 `test_read_progress_injected_into_summary_prompt` + `test_progress_note_format_matches_regex` |
-| 3.3 深层 MD 按需加载 tool | `agent/tools/builtin/read_doc.py`（新增 81 行）、`agent/tools/factory.py:50-53,230-232,311-313` | PASS（含 M2）。`.md` only、workspace-policy 走 `assert_read_allowed`、`KNOWN_BUILTIN_TOOL_NAMES` 与两个工具工厂列表均注册 ReadDoc。测试 `test_reads_deep_md`/`test_rejects_non_md`/`test_path_traversal_blocked`/`test_registered_in_default_factory` 等 |
-| 3.4 单元测试 | `tests/agent/tools/test_read_doc_and_pagination.py`（173 行） | PASS。分页进度、深层 MD、offset 边界、工厂注册/权限均覆盖 |
-
-### 8. 收尾校验
-
-| Task | 实现位置 | 验证结论 |
-|------|----------|----------|
-| 8.1 batch-grill-me 设计审阅 | `openspec/changes/context-engineering-deepening/reviews/design-grill.md` | PASS。2026-08-02，workflow run `wf_09df918b-aec`，verdict CHANGES_REQUESTED → 裁定已落入 design.md Decision 4 与 tasks |
+| Task | 结论 | 备注 |
+|------|------|------|
+| 子 change ①（1.1-1.7）增量计数/静态缓存/四字段摘要/pending/L1/L2/resume | PASS | 原结论保持 |
+| 子 change ②（2.1-2.6）注入顺序/稳定工具/cache_control 断点/OpenAI 对齐/稳定前缀冻结 | PASS | M1 修复后 2.3 全量成立；新增流式 400 降级测试 |
+| 子 change ③（3.1-3.4）分页进度/深层 MD | PASS | M2 修复后 3.3 全量成立；新增 CJK 字节上限测试 |
+| 4.1 压缩/缓存事件入 trace | PASS | L3 勾选同步；loop + trace_recorder 实现及测试均存在 |
+| 4.2/4.3/4.4、8.2/8.3 | — | closing 阶段工作，未勾选属预期 |
 
 ---
 
-## Issues
+## New Issues
 
-### M1 (Medium) — `stream_chat` 流式路径缺少 cache_control 400 重试降级
+Round 2 复审未发现修复引入的新缺陷。以下为观察项（非阻塞）：
 
-- **证据**: `agent/anthropic_llm.py:237-241`（`stream_chat` 异常处理器只做 vision 降级，`if not try_vision: raise`）；对比 `agent/anthropic_llm.py:73-96`（`chat` 非流式路径已实现 cache_control 400 降级）。
-- **说明**: task 2.3 / design Decision 4 承诺「400 重试降级」，但只在非流式 `chat()` 实现。若 AnthropicLLM 启用流式（`BaseLLM.stream=True`，`agent/llm.py:78`），DeepSeek-anthropic 等拒绝 cache_control 的兼容端点会直接 400 失败。当前 loop 默认走非流式（`_should_stream_llm` 因 `stream=False` 返回 False，`agent/loop.py:1088-1094`），故为潜在缺陷而非当前主路径故障。
-- **建议**: 在 `stream_chat` 的异常处理器中复用 `_payload_has_cache_control`/`_strip_cache_control`，400 且含 cache_control 时去掉断点重试一次。
-
-### M2 (Medium) — ReadDoc 32KB 上限按字符截断，多字节文档突破字节上限
-
-- **证据**: `agent/tools/builtin/read_doc.py:80` `content = content[:MAX_DOC_SIZE_BYTES]`（`MAX_DOC_SIZE_BYTES = 32*1024`，`read_doc.py:22`）。
-- **说明**: 字节检查 `if size > MAX_DOC_SIZE_BYTES` 正确（`read_doc.py:68`），但截断按 Python 字符切片。对 CJK 等多字节 UTF-8 文档，返回内容字节数可达 32KB 的 2-3 倍（40KB 中文文件 → 返回约 98KB），与设计「32K 字节上限」契约（design-grill Q10、`MAX_ASTER_SIZE_BYTES` 字节模式，`sources.py:121`）不符。本项目文档为中文，命中概率高。
-- **建议**: 按字节截断（如 `content.encode("utf-8")[:MAX_DOC_SIZE_BYTES].decode("utf-8", errors="ignore")`），或复用 `MAX_ASTER_SIZE_BYTES` 的字节累计模式。
-
-### L3 (Low) — tasks.md 4.1 已实现但未勾选
-
-- **证据**: `openspec/changes/context-engineering-deepening/tasks.md:33` 仍为 `[ ] 4.1`；但实现已合入 `agent/loop.py:896-916`（memory_compaction 事件带 before/after tokens+tiers）与 `agent/trace_recorder.py:154-168`（`record_compaction`），且有测试 `tests/agent/test_loop.py::test_memory_compaction_event_carries_token_and_tier_stats`/`test_memory_compaction_recorded_to_trace`。
-- **说明**: 收尾阶段勾选与代码不同步。4.2/4.3/4.4、8.2/8.3 未勾选属预期（closing 阶段工作），但 4.1 的实现已完成应勾选。
-
-### L4 (Low) — L2 累积 token 每次 compact 重算
-
-- **证据**: `agent/memory/manager.py:278` `accumulated = sum(_count_tokens(chunk) for chunk in self._l1_chunks)`。
-- **说明**: 每次 compact 对全部累积 L1 块重新 tiktoken 编码，超长会话下为 O(累积 L1 内容) 开销，未复用增量计数。非正确性问题，纯性能观察项。
-
-### L5 (Low) — 断点定位假设系统块数组以稳定块开头
-
-- **证据**: `agent/loop.py:1063-1068` 按 cache 块计数，`agent/anthropic_llm.py:184` 按位置索引 `min(stable_system_block_count, len(system))-1`。
-- **说明**: 若消息链中存在非 cache 的 system 消息先于注入上下文块，断点会落在 P1 而非 P2（缓存覆盖少一块）。当前 loop 流程唯一 system 消息即注入块（`agent/loop.py:1247`），resume 恢复时过滤掉 system（`agent/loop.py:531`），实际不可达。防御性说明。
+- **O1（观察）**: M2 修复后返回串字节数为「32KB 内容 + 截断注记（约 60 字节）」，严格上略超 32KB；这是设计注记的刻意附加，测试容差 `+200` 覆盖，符合「文档内容 32KB 上限」契约，无需改动。
+- **O2（过程）**: `scripts/check_openspec_artifacts.py` 当前报 `building-review-manifest.json` 缺失——因为 Round 1 为 CHANGES_REQUESTED 从未生成 manifest。本报告 PASS 后，review-loop 收尾需生成 manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）方可过门禁。属流程项，非代码缺陷。
 
 ---
 
 ## Test Results
 
-指定 4 个文件（本地 `/home/happy/.local/bin` PATH）：
+Round 2 指定测试（本仓库 `/home/happy/.local/bin` PATH）：
 
 ```
-$ uv run pytest tests/agent/test_context_cache.py tests/agent/tools/test_read_doc_and_pagination.py tests/agent/memory/test_memory.py tests/agent/context/test_summarizer.py -q
-93 passed in 3.44s
+$ uv run pytest tests/agent/test_context_cache.py tests/agent/tools/test_read_doc_and_pagination.py tests/agent/memory/test_memory.py -q
+61 passed in 6.71s
 ```
 
-补充回归（touch 到的测试）：
+补充回归（修复触及文件对应的测试面）：
 
 ```
-$ uv run pytest tests/agent/test_loop.py tests/agent/context/test_builder.py tests/agent/tools/test_plan_mode_tools.py tests/agent/context/test_sources.py -q
-101 passed in 10.54s
+$ uv run pytest tests/agent/test_loop.py tests/agent/context/test_builder.py tests/agent/context/test_summarizer.py -q
+113 passed in 10.22s
 
-$ uv run pytest tests/benchmark/test_asterwynd_runner.py tests/web_tests/test_server.py -q
-39 passed in 6.57s
+$ uv run pytest tests/agent/test_llm.py tests/agent/tools/test_plan_mode_tools.py tests/agent/context/test_sources.py -q
+26 passed in 2.04s
+
+$ uv run pytest tests/agent/test_anthropic_llm.py tests/agent/test_openai_llm.py tests/support/test_llm_harness.py -q
+31 passed in 1.76s
+
+$ uv run pytest tests/agent/test_loop.py -q
+62 passed in 10.36s
 ```
 
-全量 agent 测试（排除已知环境性 docker 失败）：
+定向验证：`test_loop.py -k compaction` 4 passed（L3 两个事件测试在内）。
 
-```
-$ uv run pytest tests/agent -q --ignore=tests/agent/code_intelligence --ignore=tests/agent/tools/test_sandbox_backends.py
-1121 passed in 170.18s
-```
-
-门禁：
-
-```
-$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py
-OpenSpec artifact checks passed
-
-$ npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
-Totals: 32 passed, 0 failed
-```
-
-CI 配置无改动（`.github/workflows/ci.yml` 未出现在 diff 中），未弱化。
+门禁：OpenSpec validate 与全量 agent 测试已在 Round 1 跑通（1121 passed）；Round 2 修复只改 4 个源文件 + 3 个测试文件，未触碰 CI 配置。artifact checker 仅剩 manifest（见 New Issues O2），PASS 后由 review-loop 收尾补齐。
 
 ---
 
 ## 结论
 
-实现质量高：所有 `[x]` 任务均有真实代码与测试支撑，核心承诺（四字段摘要、pending 标记、L1/L2 压缩、增量 token 计数、Prefix Cache 注入顺序+断点、ReadDoc 按需加载、压缩事件入 trace）全部落地，93+101+39 及全量 agent 测试（1121）通过，artifact checker 与 OpenSpec validate 通过。
-
-需在合入前修复 2 个中等问题：
-1. **M1** `stream_chat` 补 cache_control 400 降级（~5 行）。
-2. **M2** ReadDoc 截断改按字节（~3 行）。
-
-修复后建议重跑 `tests/agent/test_context_cache.py tests/agent/tools/test_read_doc_and_pagination.py` 及对应新增回归测试。
+Round 1 的 5 个 finding 全部修复并验证通过：M1 流式 400 降级（`_last_cache_plan` 检测 + 重试不误消费 plan）、M2 字节截断、L3 勾选同步、L4 增量累加器、L5 全局 index 断点，均有实现 + 回归测试支撑。无新增缺陷。**Verdict: PASS。**
