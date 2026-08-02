@@ -445,10 +445,11 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
 def _extract_grill_decisions(text: str) -> list[str]:
     """Extract decision entries under ## Confirmed Decisions in grill-design.md.
 
-    Accepts both the /grill command format (``- **决策**: ...`` list items) and
-    the ``### Decision N:`` heading format (subagent-authored records). Matches
-    half- and full-width colons, and counts each decision once (a subagent may
-    write a heading plus a list item for the same decision).
+    Only the canonical list-item format counts (``- **决策**: ...``, half- or
+    full-width colon). The ``### Decision N:`` heading form is tolerated for
+    display but does not satisfy the evidence threshold on its own — headings
+    lack the required 理由/来源 fields, so counting them would let an agent pad
+    the decision count without real content.
     """
     section = _extract_h2_sections(text).get("Confirmed Decisions", "")
     if not section or _is_placeholder_body(section):
@@ -457,20 +458,8 @@ def _extract_grill_decisions(text: str) -> list[str]:
     for line in section.splitlines():
         stripped = line.strip()
         if stripped.startswith("- **决策**：") or stripped.startswith("- **决策**:"):
-            decisions.append("list:" + stripped)
-        elif stripped.startswith("### Decision ") or stripped.startswith("### 决策"):
-            decisions.append("heading:" + stripped)
-    # De-duplicate: a heading + list item describing the same decision counts once.
-    seen_titles: set[str] = set()
-    unique: list[str] = []
-    for item in decisions:
-        kind, _, content = item.partition(":")
-        title = content.strip().rstrip("。.；;")
-        if title in seen_titles:
-            continue
-        seen_titles.add(title)
-        unique.append(item)
-    return unique
+            decisions.append(stripped)
+    return decisions
 
 
 def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[str]:
