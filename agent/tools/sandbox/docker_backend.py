@@ -19,6 +19,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from agent.sandbox_events import emit_sandbox_event
 from agent.tools.sandbox.base import (
     BackgroundProcessHandle,
     ExecutionBackend,
@@ -136,6 +137,9 @@ class DockerBackend:
                     timed_out=False,
                 )
             except asyncio.TimeoutError:
+                emit_sandbox_event(
+                    "kill", reason="timeout", command=command, backend="docker"
+                )
                 proc.kill()
                 await proc.wait()
                 duration_ms = (time.perf_counter() - start) * 1000

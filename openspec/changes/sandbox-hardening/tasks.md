@@ -1,6 +1,7 @@
 # Tasks: 安全沙箱做深
 
 > **批次范围**：第一批 = 第 1-4 节（ExecutionBackend 抽象 + ProcessBackend/DockerBackend + 命令护栏 + 攻击回归集 + 彻底迁移）；cgroup v2 为后续批（Docker 自带 --memory 资源限制）。
+> **第二批（2026-08-02）**：第 5-6 节 + 第 7 节收尾 + 第 8 节接线修复（batch 1 遗漏）。设计经 batch-grill-me 等价审阅（3 个独立审阅 agent）定稿，见 design.md「Batch 2 设计定稿」。
 
 ## 1. 命令护栏（command_guard.py）
 
@@ -32,20 +33,32 @@
 - [x] 4.3 全量 pytest + openspec validate + artifact checker
 - [x] 4.4 benchmark 量化（阻断率、Docker 隔离验证）
 
-## 5. cgroup v2 资源限制（后续批）
+## 5. cgroup v2 资源限制（第二批）
 
-- [ ] 5.1 `max_memory_mb` 生效：cgroup v2 限制 CPU/内存（本地 ProcessBackend）
-- [ ] 5.2 超限自动 kill + 记录
-- [ ] 5.3 低资源环境降级（无 cgroup 时退化为超时/警告）
-- [ ] 5.4 单元测试：cgroup 限制逻辑（mock）
+- [x] 5.1 `max_memory_mb` 生效：cgroup v2 限制 CPU/内存（本地 ProcessBackend）。新增 `agent/tools/sandbox/cgroup.py`（CgroupController Protocol + CgroupV2Controller：per-run 临时 cgroup、memory.max/memory.swap.max=0、cpu.max、cpuset 复制、starttime pid 复用防护、oom 基线对比、cleanup 幂等）；ProcessBackend 增加 memory_mb/cpus/controller_factory/cgroup_supported 参数
+- [x] 5.2 超限自动 kill + 记录：OOM kill 检测 → `SandboxResult.oom_killed=True` + `oom` 事件（reason=memory_limit）
+- [x] 5.3 低资源环境降级：cgroup 不可用/设置失败 → `SandboxResult.degraded=True` + `degraded` 事件（每实例限流一次）+ 退回纯超时
+- [x] 5.4 单元测试：cgroup 限制逻辑（mock）。新增 `tests/agent/tools/test_cgroup.py`（fake fs）+ `tests/agent/tools/test_process_backend_cgroup.py`（注入 fake controller + 降级路径）
+- [x] 5.5 顺带修复：ProcessBackend 超时只 kill shell 不 kill 进程组 → `start_new_session=True` + `killpg`，`sleep 60` 超时不再残留孤儿进程（回归测试 `test_sandbox_timeout_kills_process_tree`）
 
-## 6. 沙箱事件入 trace（后续批，与 #78 协调）
+## 6. 沙箱事件入 trace（第二批，与 #78 协调）
 
-- [ ] 6.1 结构化 sandbox 事件（denied/reason/kill/oom）入 trace_recorder
-- [ ] 6.2 与 #78 事件 schema 对齐
+- [x] 6.1 结构化 sandbox 事件（denied/reason/kill/oom/degraded）入 trace_recorder。新增 `agent/sandbox_events.py`（contextvar sink + emit_sandbox_event + tool_call_id 自动附加 + command 截断 300 字符）；`TraceRecorder.record_sandbox_event` + `TraceRecorderSandboxSink`；`CommandGuard.last_reason`（denylist/pipe_to_shell/protected_redirect/rm_target_escape/mv_cp_dest/chmod_bits/timeout_range/curl_exfil）
+- [x] 6.2 与 #78 事件 schema 对齐：新增 `sandbox` step type 向后兼容（timestamp 是 TraceStep 字段、data 负载干净、schema_version 保持 1.1——策略：新 step type 不 bump，仅既有 step payload 结构性变更才 bump）
+- [x] 6.3 事件产生点接线：BashTool（workspace_policy/command_guard 拒绝）、ProcessBackend/DockerBackend（超时 kill）、`BackgroundTaskManager._monitor`（超时/stop/cleanup kill）；`loop.run` save/restore sink（镜像 `_active_trace_recorder` 模式，嵌套 run 不串）
 
 ## 7. 收尾校验（checker 要求项）
 
-- [ ] 7.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）
-- [ ] 7.2 benchmark smoke verification（coding-agent core change 要求）
-- [ ] 7.3 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`
+- [x] 7.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）。2026-08-02 用 3 个独立审阅 agent 完成等价追问并定稿，见 design.md「Batch 2 设计定稿」+ workflow-events.jsonl seq 2
+- [x] 7.2 benchmark smoke verification（coding-agent core change 要求）。`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke` 跑通 34 tasks，无基础设施级错误（fake agent 任务失败为预期），产出 run.json/summary.md
+- [x] 7.3 当前规格同步：把 spec delta 合并到 `openspec/specs/workspace-safety/spec.md`（第二批 ADDED requirement：cgroup 资源限制 / 沙箱事件入 trace + ExecutionBackend 2 个新 scenario），workflow-events.jsonl seq 3 记录
+
+## 8. config→BashTool 后端接线修复（第二批，batch 1 遗漏）
+
+- [x] 8.1 `build_default_tool_registry`/`build_coding_tool_registry`/`get_default_tools`/`get_coding_tools` 增加 `sandbox: ExecutionBackend | None` 参数并透传给 `BashTool`；预构建 `tools` 列表 + sandbox 同时传入时对列表内 BashTool 回填（`_apply_sandbox_to_tools`）
+- [x] 8.2 `main.py`：sandbox 构建提前到 SubAgentManager/registry 之前；传给 registry/BackgroundTaskManager/SubAgentManager；新增 `build_sandbox_from_config()`（is_available 启动门禁，fail-fast 不静默回退）
+- [x] 8.3 `SubAgentManager`：可选 `sandbox` 参数 + `_resolve_sandbox()` 自愈默认（未传时按 `config.sandbox` 懒构建并缓存）
+- [x] 8.4 `web/session.py`、`benchmarks/agent_runner.py`：`build_sandbox_from_config` 构建后端并传入 registry + SubAgentManager
+- [x] 8.5 config YAML 解析：新增 `_parse_sandbox_config` 接入 `_load_yaml_config`（`backend/image/memory_mb/cpus/timeout_seconds` 可配置，含校验）
+- [x] 8.6 Docker 后端后台执行优雅报错：`BackgroundTaskManager.start` 捕获 NotImplementedError → 明确 RuntimeError（loop 转为 [Error: ...]，不崩溃）
+- [x] 8.7 回归测试：`tests/agent/tools/test_factory_sandbox_wiring.py`（registry 接线 / tools 回填 / build_sandbox_from_config fail-fast / 后台优雅报错）+ `tests/agent/test_config.py`（sandbox YAML 解析 4 个用例）

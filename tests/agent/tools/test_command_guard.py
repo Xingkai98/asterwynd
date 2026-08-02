@@ -101,6 +101,33 @@ class TestCommandGuardArgv:
         assert g.check("cat /etc/passwd") is CommandVerdict.ALLOW
 
 
+class TestCommandGuardTimeoutWrapper:
+    """Regression: `timeout` was treated as a passthrough wrapper so its argv
+    check was dead code (`timeout 9999 sleep 1` was allowed) and a wrapped
+    dangerous command (`timeout 5 rm -rf /`) escaped the guard."""
+
+    def test_oversized_timeout_denied(self) -> None:
+        g = CommandGuard()
+        assert g.check("timeout 9999 sleep 1") is CommandVerdict.DENY
+        assert g.last_reason == "timeout_range"
+
+    def test_valid_timeout_allowed(self) -> None:
+        g = CommandGuard()
+        assert g.check("timeout 30 pytest tests/") is CommandVerdict.ALLOW
+
+    def test_wrapped_destructive_command_denied(self) -> None:
+        # A wrapped mv into a protected path must not pass just because
+        # `timeout` is the first word (argv recursion into the wrapped command).
+        g = CommandGuard()
+        assert g.check("timeout 5 mv /tmp/x /etc-passwd/foo") is CommandVerdict.DENY
+        assert g.last_reason == "mv_cp_dest"
+
+    def test_wrapped_rm_rf_still_denied(self) -> None:
+        # `timeout 5 rm -rf /` is caught by the denylist before argv recursion.
+        g = CommandGuard()
+        assert g.check("timeout 5 rm -rf /") is CommandVerdict.DENY
+
+
 class TestCommandGuardDefaultAllow:
     def test_safe_git_allowed(self) -> None:
         g = CommandGuard()
@@ -114,3 +141,61 @@ class TestCommandGuardDefaultAllow:
         """default-allow：未知命令不拦（不 deny-by-default）"""
         g = CommandGuard()
         assert g.check("my-custom-tool --flag") is CommandVerdict.ALLOW
+
+
+class TestCommandGuardLastReason:
+    """CommandGuard.last_reason exposes the granular rejection category so
+    sandbox trace events can carry a meaningful reason (design.md Decision 6)."""
+
+    def test_reason_denylist(self) -> None:
+        g = CommandGuard()
+        g.check("shutdown now")
+        assert g.last_reason == "denylist"
+
+    def test_reason_pipe_to_shell(self) -> None:
+        g = CommandGuard()
+        g.check("cat file | sh")
+        assert g.last_reason == "pipe_to_shell"
+
+    def test_reason_protected_redirect(self) -> None:
+        # Target starts with a protected prefix but is not matched by the
+        # denylist regex (which requires literal /etc/), so the argv check fires.
+        g = CommandGuard()
+        g.check("echo x > /etc-passwd/foo")
+        assert g.last_reason == "protected_redirect"
+
+    def test_reason_rm_target_escape(self) -> None:
+        g = CommandGuard()
+        g.check("rm -rf /")
+        assert g.last_reason == "rm_target_escape"
+
+    def test_reason_mv_cp_dest(self) -> None:
+        # Target starts with a protected prefix but is not matched by the
+        # denylist regex (which requires literal /etc/), so the argv check fires.
+        g = CommandGuard()
+        g.check("mv /tmp/x /etc-passwd/foo")
+        assert g.last_reason == "mv_cp_dest"
+
+    def test_reason_chmod_bits(self) -> None:
+        # The broad chmod denylist catches `chmod 0777 /` before the argv check;
+        # unit-test the fallback branch directly (defense in depth).
+        g = CommandGuard()
+        g._check_chmod(tokenize_command("chmod 0777 /"))
+        assert g.last_reason == "chmod_bits"
+
+    def test_reason_timeout_range(self) -> None:
+        g = CommandGuard()
+        g.check("timeout 9999 sleep 1")
+        assert g.last_reason == "timeout_range"
+
+    def test_reason_none_on_allow(self) -> None:
+        g = CommandGuard()
+        assert g.check("git status") is CommandVerdict.ALLOW
+        assert g.last_reason is None
+
+    def test_reason_reset_on_subsequent_check(self) -> None:
+        g = CommandGuard()
+        g.check("shutdown now")
+        assert g.last_reason == "denylist"
+        g.check("git status")
+        assert g.last_reason is None

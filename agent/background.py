@@ -5,6 +5,7 @@ import time
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
+from agent.sandbox_events import emit_sandbox_event
 from agent.tools.sandbox import BackgroundProcessHandle, ExecutionBackend
 
 current_tool_call_id: ContextVar[str] = ContextVar("current_tool_call_id", default="")
@@ -48,7 +49,15 @@ class BackgroundTaskManager:
         timeout: float | None = None,
     ) -> str:
         task_id = self._new_task_id()
-        handle = await self._sandbox.run_background(cmd, cwd=cwd)
+        try:
+            handle = await self._sandbox.run_background(cmd, cwd=cwd)
+        except NotImplementedError as exc:
+            # DockerBackend has no background execution yet; surface a clear
+            # user-facing error instead of crashing the tool call.
+            raise RuntimeError(
+                f"background task execution is not supported by the configured"
+                f" sandbox backend ({type(self._sandbox).__name__})"
+            ) from exc
         entry = _TaskEntry(
             handle=handle,
             tool_call_id=tool_call_id,
@@ -92,6 +101,9 @@ class BackgroundTaskManager:
                 pass
 
         entry.status = "killed"
+        emit_sandbox_event(
+            "kill", reason="user_stop", command=entry.command, backend="background"
+        )
         entry.reported = True
         return {task_id: self._task_to_dict(task_id, entry)}
 
@@ -103,6 +115,9 @@ class BackgroundTaskManager:
             self._force_kill_sync(entry)
             if entry.status == "running":
                 entry.status = "killed"
+                emit_sandbox_event(
+                    "kill", reason="cleanup", command=entry.command, backend="background"
+                )
             remaining[task_id] = self._task_to_dict(task_id, entry)
         return remaining
 
@@ -123,6 +138,9 @@ class BackgroundTaskManager:
                 await entry.handle.wait()
         except asyncio.TimeoutError:
             entry.status = "timeout"
+            emit_sandbox_event(
+                "kill", reason="timeout", command=entry.command, backend="background"
+            )
             try:
                 await entry.handle.kill()
                 await entry.handle.wait()
