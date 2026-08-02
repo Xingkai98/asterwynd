@@ -2027,3 +2027,87 @@ async def test_messages_with_run_context_falls_back_to_getcwd():
 
     # 不应抛异常
     await loop.run([Message(role="user", content="test")])
+
+
+@pytest.mark.asyncio
+async def test_cost_ledger_records_when_passed_in():
+    """回归：CostLedger 传入 AgentLoop 后，run 应记录 LLM token 成本。"""
+    from agent.cost_tracker import CostLedger
+    from agent.llm import Usage
+
+    ledger = CostLedger()
+    mock_llm = MockLLM(LLMResponse(
+        content="Hello!",
+        usage=Usage(input_tokens=100, output_tokens=50),
+    ))
+    mock_llm.model = "gpt-4o-mini"
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        cost_ledger=ledger,
+    )
+
+    await loop.run([Message(role="user", content="hi")])
+
+    assert ledger.total() > 0
+    assert ledger.bill()["by_session"]
+
+
+@pytest.mark.asyncio
+async def test_subagent_loop_inherits_cost_ledger_and_tool_name():
+    """回归：SubAgentManager 构造的子 loop 应共享 cost_ledger 并标记 tool_name。"""
+    from agent.cost_tracker import CostLedger
+
+    ledger = CostLedger()
+    subagent_manager = SubAgentManager(
+        llm=MockLLM(LLMResponse(content="subagent done")),
+        cost_ledger=ledger,
+    )
+    sub_loop = subagent_manager._build_subagent_loop(AgentMode.BUILD)
+    assert sub_loop.cost_ledger is ledger
+    assert sub_loop.ledger_tool_name == "subagent"
+
+
+@pytest.mark.asyncio
+async def test_tool_result_records_error_type_on_error():
+    """回归：工具返回错误文本时 record_tool_result 应带 error_type。"""
+    from agent.observability import ErrorClassifier
+
+    class PermissionDeniedTool(Tool):
+        name = "DeniedTool"
+        description = "fails with permission denied"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> str:
+            return "[Permission denied: can't write there]"
+
+    class ToolThenDoneLLM:
+        def __init__(self):
+            self.call_count = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            self.call_count += 1
+            if self.call_count == 1:
+                return LLMResponse(
+                    content="using tool",
+                    tool_calls=[ToolCallDelta(id="c1", name="DeniedTool", arguments="{}")],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    registry = ToolRegistry()
+    registry.register(PermissionDeniedTool())
+    trace = TraceRecorder()
+    loop = AgentLoop(
+        llm=ToolThenDoneLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    await loop.run([Message(role="user", content="test")], trace_recorder=trace)
+
+    tool_result_steps = [s for s in trace.steps if s.type == "tool_result"]
+    assert tool_result_steps, "应记录 tool_result"
+    assert tool_result_steps[0].data["status"] == "error"
+    assert tool_result_steps[0].data["error_type"] == "permission_denied"

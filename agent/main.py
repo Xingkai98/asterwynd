@@ -33,6 +33,7 @@ from agent.message import Message
 from agent.openai_llm import OpenAILLM
 from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.cost_tracker import CostLedger
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry
 from agent.tools.sandbox import build_execution_backend
@@ -268,11 +269,13 @@ def _build_agent_core(
     ])
 
     memory = MemoryManager(max_tokens=80_000)
+    cost_ledger = CostLedger()
     subagent_manager = SubAgentManager(
         llm=llm,
         config=config,
         workspace_policy=workspace_policy,
         parent_mode=run_config.mode,
+        cost_ledger=cost_ledger,
     )
     skill_runtime = SkillRuntime.from_roots(config.skills.roots)
 
@@ -310,6 +313,7 @@ def _build_agent_core(
         mcp_manager=mcp_manager,
         background_manager=background_manager,
         session_store=session_store,
+        cost_ledger=cost_ledger,
     )
 
 

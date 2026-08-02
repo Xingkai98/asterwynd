@@ -17,6 +17,7 @@ class TraceStep:
     step: int
     type: str
     data: dict[str, Any] = field(default_factory=dict)
+    timestamp: float = 0.0
 
 
 class TraceRecorder:
@@ -48,8 +49,15 @@ class TraceRecorder:
             self.run_id = run_id
 
     def record(self, step_type: str, **data: Any) -> None:
+        # Attach a wall-clock timestamp to the step (not the data payload) so
+        # event data stays clean and backward compatible.
         self.steps.append(
-            TraceStep(step=len(self.steps) + 1, type=step_type, data=data)
+            TraceStep(
+                step=len(self.steps) + 1,
+                type=step_type,
+                data=data,
+                timestamp=time.time(),
+            )
         )
 
     def record_run_started(self, mode: str | None = None) -> None:
@@ -73,12 +81,20 @@ class TraceRecorder:
         iteration: int,
         assistant_preview: str = "",
         tool_calls: list[dict[str, Any]] | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        model: str | None = None,
+        finish_reason: str | None = None,
     ) -> None:
         self.record(
             "llm_iteration",
             iteration=iteration,
             assistant_preview=assistant_preview,
             tool_calls=tool_calls or [],
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            model=model,
+            finish_reason=finish_reason,
         )
 
     def record_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> None:
@@ -90,6 +106,7 @@ class TraceRecorder:
         status: str,
         duration_ms: float,
         observation: str | list["ContentBlock"],
+        error_type: str | None = None,
     ) -> None:
         if isinstance(observation, list):
             observation = self._sanitize_observation(observation)
@@ -99,6 +116,7 @@ class TraceRecorder:
             status=status,
             duration_ms=round(duration_ms, 1),
             observation=observation,
+            error_type=error_type,
         )
 
     @staticmethod
@@ -176,6 +194,7 @@ class TraceRecorder:
             "mode": self.mode,
             "full_trace": self.full_trace,
             "duration_seconds": round(time.time() - self.started_at, 1),
+            "schema_version": "1.1",
         }
         if self.session_id is not None:
             data["session_id"] = self.session_id
