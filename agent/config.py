@@ -242,6 +242,22 @@ class SkillsConfig:
 
 
 @dataclass(frozen=True)
+class SubagentsConfig:
+    """Subagent collaboration guardrails and budget defaults (issue 79).
+
+    ``max_concurrent_runs`` / ``max_depth`` bound runaway spawning (reference:
+    Codex max_threads/max_depth, Claude Code #68110 unbounded burn).
+    ``default_max_tokens`` / ``default_max_time_s`` are per-run budget defaults
+    applied when a run does not override them; the manager hard-kills a run that
+    exceeds either limit.
+    """
+    max_concurrent_runs: int = 4
+    max_depth: int = 3
+    default_max_tokens: int | None = None
+    default_max_time_s: float | None = None
+
+
+@dataclass(frozen=True)
 class AsterwyndConfig:
     path: Path | None = None
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -253,6 +269,7 @@ class AsterwyndConfig:
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    subagents: SubagentsConfig = field(default_factory=SubagentsConfig)
 
     def __post_init__(self) -> None:
         if not self.modes:
@@ -384,6 +401,7 @@ def _load_yaml_config(
         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
         memory=_parse_memory_config(raw.get("memory", {}), path),
         sandbox=_parse_sandbox_config(raw.get("sandbox", {}), path),
+        subagents=_parse_subagents_config(raw.get("subagents", {}), path),
     )
 
 
@@ -1268,6 +1286,31 @@ def _parse_sandbox_config(raw: Any, path: Path) -> SandboxConfig:
         ),
         timeout_seconds=_parse_positive_float(
             mapping.get("timeout_seconds", 30.0), "sandbox.timeout_seconds", path=path
+        ),
+    )
+
+
+def _parse_subagents_config(raw: Any, path: Path) -> SubagentsConfig:
+    mapping = _expect_mapping(raw, path, "subagents")
+    budget = _expect_mapping(mapping.get("budget", {}), path, "subagents.budget")
+    max_tokens = budget.get("max_tokens")
+    max_time_s = budget.get("max_time_s")
+    max_concurrent = mapping.get("max_concurrent_runs", 4)
+    max_depth = mapping.get("max_depth", 3)
+    return SubagentsConfig(
+        max_concurrent_runs=_validate_positive_int(
+            max_concurrent, "subagents.max_concurrent_runs", path=path
+        ),
+        max_depth=_validate_positive_int(max_depth, "subagents.max_depth", path=path),
+        default_max_tokens=(
+            _validate_positive_int(max_tokens, "subagents.budget.max_tokens", path=path)
+            if max_tokens is not None
+            else None
+        ),
+        default_max_time_s=(
+            _parse_positive_float(max_time_s, "subagents.budget.max_time_s", path=path)
+            if max_time_s is not None
+            else None
         ),
     )
 

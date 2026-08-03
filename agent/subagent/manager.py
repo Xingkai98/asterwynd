@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -16,12 +17,23 @@ from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
 from agent.trace_recorder import TraceRecorder
+from agent.subagent.budget import BudgetExceededError, BudgetHook, BudgetTracker
+from agent.subagent.context import (
+    current_bus,
+    current_spawn_depth,
+    reset_spawn_depth,
+    set_spawn_depth,
+)
+from agent.subagent.snapshot import SubagentSnapshotStore
 
 if TYPE_CHECKING:
     from agent.config import AsterwyndConfig
     from agent.cost_tracker import CostLedger
     from agent.llm import LLM
+    from agent.session import SessionSnapshot
     from agent.tools.sandbox import ExecutionBackend
+
+logger = logging.getLogger("asterwynd.subagent")
 
 
 @dataclass
@@ -51,6 +63,13 @@ class SubagentRunRecord:
     started_at: float | None = None
     finished_at: float | None = None
     trace: dict | None = None
+    # Per-run budget limits (issue 79, decision D3). Defaulted from config in
+    # ``run_subagent`` unless overridden per run.
+    max_tokens: int | None = None
+    max_time_s: float | None = None
+    # Internal: set by the time-budget monitor *before* it cancels so the
+    # cancelled-task handler records ``budget_exceeded`` instead of ``cancelled``.
+    _budget_kill_reason: str | None = field(default=None, repr=False)
 
     def to_result_dict(self) -> dict:
         return {
@@ -58,6 +77,8 @@ class SubagentRunRecord:
             "status": self.status,
             "summary": self.summary,
             "reason": self.reason,
+            "max_tokens": self.max_tokens,
+            "max_time_s": self.max_time_s,
             "usage": {
                 "total_tokens": self.usage.total_tokens,
                 "tool_calls": self.usage.tool_calls,
@@ -106,6 +127,8 @@ class SubAgentManager:
         parent_mode_provider: Callable[[], AgentMode] | None = None,
         cost_ledger: "CostLedger | None" = None,
         sandbox: "ExecutionBackend | None" = None,
+        max_concurrent_runs: int | None = None,
+        max_depth: int | None = None,
     ):
         self.llm = llm
         self.config = config
@@ -117,6 +140,20 @@ class SubAgentManager:
         self._sessions: dict[str, SubagentSessionRecord] = {}
         self._active_tasks: dict[str, asyncio.Task[None]] = {}
         self._run_waiters: dict[str, asyncio.Event] = {}
+        # Concurrency / nesting-depth guardrails (decision D4; reference:
+        # Codex max_threads/max_depth, Claude Code #68110 unbounded burn).
+        guardrails = getattr(config, "subagents", None) if config is not None else None
+        self.max_concurrent_runs = (
+            max_concurrent_runs
+            if max_concurrent_runs is not None
+            else getattr(guardrails, "max_concurrent_runs", 4)
+        )
+        self.max_depth = (
+            max_depth
+            if max_depth is not None
+            else getattr(guardrails, "max_depth", 3)
+        )
+        self._snapshot_store_impl: SubagentSnapshotStore | None = None
 
     def configure_runtime(
         self,
@@ -176,32 +213,147 @@ class SubAgentManager:
         task: str,
         wait: bool = False,
         timeout_s: float | None = None,
+        max_tokens: int | None = None,
+        max_time_s: float | None = None,
     ) -> dict:
         session = self._require_session(subagent_id)
         if session.active_run_id is not None:
             raise RuntimeError(f"subagent {subagent_id} already has an active run")
+        self._check_guardrails()
 
+        budget_defaults = getattr(self.config, "subagents", None) if self.config else None
+        run = self._new_run(
+            session,
+            task,
+            max_tokens=(
+                max_tokens
+                if max_tokens is not None
+                else getattr(budget_defaults, "default_max_tokens", None)
+            ),
+            max_time_s=(
+                max_time_s
+                if max_time_s is not None
+                else getattr(budget_defaults, "default_max_time_s", None)
+            ),
+        )
+        await self._launch_run(session, run, wait=wait, timeout_s=timeout_s)
+        return self._format_run_envelope(session.subagent_id, run)
+
+    async def resume_subagent(
+        self,
+        *,
+        subagent_id: str,
+        task: str,
+        run_id: str,
+        wait: bool = False,
+        timeout_s: float | None = None,
+        max_tokens: int | None = None,
+        max_time_s: float | None = None,
+    ) -> dict:
+        """Resume a previously interrupted run from its checkpoint.
+
+        The snapshot is loaded and passed to ``AgentLoop.run(resume_snapshot=...)``
+        which rebuilds the transcript and appends a continue marker. The in-flight
+        tool call (if any) is retried by the model — resume is transcript-level,
+        not stack-level (issue 79, decision D2).
+        """
+        session = self._require_session(subagent_id)
+        if session.active_run_id is not None:
+            raise RuntimeError(f"subagent {subagent_id} already has an active run")
+        snapshot = self._snapshot_store().load(run_id)
+        if snapshot is None:
+            raise KeyError(f"no checkpoint found for run {run_id}")
+        self._check_guardrails()
+
+        budget_defaults = getattr(self.config, "subagents", None) if self.config else None
+        run = self._new_run(
+            session,
+            task,
+            max_tokens=(
+                max_tokens
+                if max_tokens is not None
+                else getattr(budget_defaults, "default_max_tokens", None)
+            ),
+            max_time_s=(
+                max_time_s
+                if max_time_s is not None
+                else getattr(budget_defaults, "default_max_time_s", None)
+            ),
+        )
+        # Reset the session transcript to system + the continue prompt; the
+        # loop's resume path folds the snapshot history back in from the
+        # checkpoint and ``_launch_run`` appends the continue task.
+        session.messages = [
+            system_message("你是一个受限的子 agent。按任务目标完成工作并汇报结果。")
+        ]
+        await self._launch_run(
+            session,
+            run,
+            wait=wait,
+            timeout_s=timeout_s,
+            resume_snapshot=snapshot,
+        )
+        return self._format_run_envelope(session.subagent_id, run)
+
+    def _new_run(
+        self,
+        session: SubagentSessionRecord,
+        task: str,
+        *,
+        max_tokens: int | None,
+        max_time_s: float | None,
+    ) -> SubagentRunRecord:
+        """Create and register a new run record for a session."""
         run_id = new_run_id()
         run = SubagentRunRecord(
             run_id=run_id,
             task=task,
             status="running",
             started_at=time.time(),
+            max_tokens=max_tokens,
+            max_time_s=max_time_s,
         )
         session.runs.append(run)
-        session.active_run_id = run_id
-        session.status = "running"
-        session.messages.append(Message(role="user", content=task))
-        waiter = asyncio.Event()
-        self._run_waiters[run_id] = waiter
+        return run
 
-        bg_task = asyncio.create_task(self._execute_run(session, run))
-        self._active_tasks[run_id] = bg_task
-        bg_task.add_done_callback(lambda _: self._active_tasks.pop(run_id, None))
+    async def _launch_run(
+        self,
+        session: SubagentSessionRecord,
+        run: SubagentRunRecord,
+        *,
+        wait: bool = False,
+        timeout_s: float | None = None,
+        resume_snapshot: "SessionSnapshot | None" = None,
+    ) -> None:
+        """Start the background run task (optionally from a checkpoint).
+
+        ``resume_snapshot`` is only passed through when resuming; a fresh run
+        leaves it ``None`` and the loop starts from the session transcript.
+        The time-budget monitor is only started when the run has a limit.
+        """
+        session.active_run_id = run.run_id
+        session.status = "running"
+        session.messages.append(Message(role="user", content=run.task))
+        waiter = asyncio.Event()
+        self._run_waiters[run.run_id] = waiter
+
+        depth_token = set_spawn_depth(current_spawn_depth() + 1)
+        try:
+            bg_task = asyncio.create_task(
+                self._execute_run(session, run, resume_snapshot)
+            )
+        finally:
+            reset_spawn_depth(depth_token)
+        self._active_tasks[run.run_id] = bg_task
+        bg_task.add_done_callback(
+            lambda _: self._active_tasks.pop(run.run_id, None)
+        )
+
+        if run.max_time_s is not None:
+            asyncio.create_task(self._monitor_run_timeout(session, run))
 
         if wait:
             await asyncio.wait_for(waiter.wait(), timeout=timeout_s)
-        return self._format_run_envelope(session.subagent_id, run)
 
     async def get_subagent_run(
         self,
@@ -282,23 +434,43 @@ class SubAgentManager:
         self,
         session: SubagentSessionRecord,
         run: SubagentRunRecord,
+        resume_snapshot: "SessionSnapshot | None" = None,
     ) -> None:
         if self.llm is None:
             raise RuntimeError("subagent manager LLM is not configured")
         trace = TraceRecorder(task_id=session.subagent_id)
+        tracker = BudgetTracker(
+            max_tokens=run.max_tokens,
+            max_time_s=run.max_time_s,
+            started_at=run.started_at,
+        )
         try:
-            loop = self._build_subagent_loop(session.mode)
+            loop = self._build_subagent_loop(session.mode, budget=tracker)
             result = await loop.run(
                 session.messages,
                 trace_recorder=trace,
                 session_id=session.subagent_id,
                 run_id=run.run_id,
+                resume_snapshot=resume_snapshot,
             )
             self._complete_run(session, run, result, trace)
+        except BudgetExceededError as exc:
+            self._write_checkpoint(session, run)
+            self._mark_budget_exceeded(
+                session, run, exc.dimension, trace, tokens=tracker.tokens
+            )
         except asyncio.CancelledError:
-            self._mark_cancelled(session, run, trace)
+            self._write_checkpoint(session, run)
+            if run._budget_kill_reason is not None:
+                self._mark_budget_exceeded(
+                    session, run, run._budget_kill_reason, trace,
+                    tokens=tracker.tokens,
+                )
+            else:
+                self._mark_cancelled(session, run, trace)
             raise
         except Exception as exc:
+            self._write_checkpoint(session, run)
             self._mark_failed(session, run, str(exc), trace)
         finally:
             waiter = self._run_waiters.pop(run.run_id, None)
@@ -328,7 +500,11 @@ class SubAgentManager:
         )
         return self.sandbox
 
-    def _build_subagent_loop(self, mode: AgentMode) -> AgentLoop:
+    def _build_subagent_loop(
+        self,
+        mode: AgentMode,
+        budget: BudgetTracker | None = None,
+    ) -> AgentLoop:
         from agent.loop import AgentLoop
 
         config = self.config
@@ -347,13 +523,17 @@ class SubAgentManager:
             web_search_config=config.tools.web_search if config else None,
             sandbox=self._resolve_sandbox(),
         )
+        hooks = HookManager([TracingHook()])
+        if budget is not None:
+            hooks.hooks.append(BudgetHook(budget))
         return AgentLoop(
             llm=self.llm,
             tool_registry=registry,
-            hooks=HookManager([TracingHook()]),
+            hooks=hooks,
             memory=MemoryManager(max_tokens=80_000),
             run_config=AgentRunConfig(mode=mode),
             subagent_manager=self,
+            expose_subagent_tools=True,
             tool_result_display=config.tools.display if config else None,
             cost_ledger=self.cost_ledger,
             ledger_tool_name="subagent",
@@ -400,12 +580,90 @@ class SubAgentManager:
         run: SubagentRunRecord,
         trace: TraceRecorder,
     ) -> None:
+        if run.status != "running":
+            return  # budget_exceeded / failed / completed already terminal
         run.status = "cancelled"
         run.reason = "cancelled"
         run.finished_at = time.time()
         run.trace = trace.to_dict()
         session.active_run_id = None
         session.status = "idle"
+
+    def _mark_budget_exceeded(
+        self,
+        session: SubagentSessionRecord,
+        run: SubagentRunRecord,
+        dimension: str,
+        trace: TraceRecorder | None,
+        tokens: int | None = None,
+    ) -> None:
+        if run.status != "running":
+            return  # already terminal
+        run.status = "budget_exceeded"
+        run.reason = f"budget exceeded ({dimension})"
+        run.finished_at = time.time()
+        run.trace = trace.to_dict() if trace is not None else None
+        # Backfill cost summary (review M1): the run consumed real tokens even
+        # though it never reached a normal completion, so the failure/cost
+        # summary must reflect them for benchmark cost attribution.
+        if tokens:
+            run.usage = SubagentRunUsage(total_tokens=tokens, input_tokens=0, output_tokens=0)
+        session.active_run_id = None
+        session.status = "idle"
+
+    def _snapshot_store(self) -> SubagentSnapshotStore:
+        if self._snapshot_store_impl is None:
+            self._snapshot_store_impl = SubagentSnapshotStore.for_workspace(
+                self.workspace_policy.workspace_root
+            )
+        return self._snapshot_store_impl
+
+    def _write_checkpoint(
+        self,
+        session: SubagentSessionRecord,
+        run: SubagentRunRecord,
+    ) -> None:
+        """Snapshot the run before an interrupt/kill so it can be resumed.
+
+        A compact view of the active orchestration bus (if any) is folded into
+        the snapshot so a resumed run can still see what was exchanged even
+        though the in-memory bus does not survive the run (design D5).
+        """
+        try:
+            store = self._snapshot_store()
+            bus_summary = ""
+            bus = current_bus()
+            if bus is not None:
+                bus_summary = bus.compact_summary()
+            store.save(store.snapshot_for_run(session, run, bus_summary))
+        except Exception:
+            logger.warning(
+                "Failed to write subagent checkpoint run_id=%s", run.run_id,
+                exc_info=True,
+            )
+
+    async def _monitor_run_timeout(
+        self,
+        session: SubagentSessionRecord,
+        run: SubagentRunRecord,
+    ) -> None:
+        """Time-budget kill path: cancel a run stuck past ``max_time_s``.
+
+        The monitor marks ``_budget_kill_reason`` and snapshots *before*
+        cancelling so the cancelled-task handler records ``budget_exceeded``
+        (and the checkpoint is resumable) rather than a plain ``cancelled``.
+        """
+        await asyncio.sleep(run.max_time_s)
+        task = self._active_tasks.get(run.run_id)
+        if task is None or task.done():
+            return
+        run._budget_kill_reason = "time"
+        self._write_checkpoint(session, run)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     def _format_run_envelope(
         self,
@@ -452,3 +710,23 @@ class SubAgentManager:
         if self.parent_mode_provider is not None:
             return self.parent_mode_provider()
         return self.parent_mode
+
+    def _check_guardrails(self) -> None:
+        """Reject a spawn that would exceed concurrency or nesting-depth limits.
+
+        Pure pre-spawn guard: called before any run record is created, so a
+        rejected spawn leaves no trace in the session (``run_subagent`` raises
+        before appending to ``session.runs``).
+        """
+        depth = current_spawn_depth() + 1
+        if depth > self.max_depth:
+            raise RuntimeError(
+                f"subagent nesting depth limit exceeded: depth {depth} > "
+                f"max_depth {self.max_depth}"
+            )
+        active = len(self._active_tasks)
+        if active >= self.max_concurrent_runs:
+            raise RuntimeError(
+                f"subagent concurrency limit exceeded: {active} active runs >= "
+                f"max_concurrent_runs {self.max_concurrent_runs}"
+            )

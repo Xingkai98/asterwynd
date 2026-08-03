@@ -26,6 +26,16 @@ class SessionSnapshot:
     iteration: int
     user_system_prompt: str = ""
     runtime_fingerprint: dict = field(default_factory=dict)
+    # Subagent checkpoint extras (issue 79, decision D2): the objective and a
+    # minimal "what next" summary aligned with the community minimal-snapshot
+    # proposal (Claude Code #16375). Optional so main-session snapshots are
+    # unaffected.
+    objective: str = ""
+    blockers: list[str] = field(default_factory=list)
+    next_steps: list[str] = field(default_factory=list)
+    # Compact orchestration-bus summary (issue 79 D5): a resume that lost the
+    # in-memory bus still has a readable view of what was exchanged.
+    bus_summary: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -40,6 +50,10 @@ class SessionSnapshot:
             "iteration": self.iteration,
             "user_system_prompt": self.user_system_prompt,
             "runtime_fingerprint": self.runtime_fingerprint,
+            "objective": self.objective,
+            "blockers": list(self.blockers),
+            "next_steps": list(self.next_steps),
+            "bus_summary": self.bus_summary,
         }
 
     @classmethod
@@ -57,6 +71,10 @@ class SessionSnapshot:
             iteration=data.get("iteration", 0),
             user_system_prompt=data.get("user_system_prompt", ""),
             runtime_fingerprint=data.get("runtime_fingerprint", {}),
+            objective=data.get("objective", ""),
+            blockers=list(data.get("blockers", [])),
+            next_steps=list(data.get("next_steps", [])),
+            bus_summary=data.get("bus_summary", ""),
         )
 
 
