@@ -111,6 +111,46 @@ benchmark:
     assert config.benchmark.timeout_seconds == 42
 
 
+def test_load_config_parses_subagents_section(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+subagents:
+  max_concurrent_runs: 6
+  max_depth: 2
+  budget:
+    max_tokens: 12000
+    max_time_s: 45.5
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.subagents.max_concurrent_runs == 6
+    assert config.subagents.max_depth == 2
+    assert config.subagents.default_max_tokens == 12000
+    assert config.subagents.default_max_time_s == 45.5
+
+
+def test_load_config_subagents_defaults_when_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "agent:\n  default_mode: plan\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.subagents.max_concurrent_runs == 4
+    assert config.subagents.max_depth == 3
+    assert config.subagents.default_max_tokens is None
+
+
+def test_invalid_subagents_config_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "subagents:\n  max_depth: 0\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="max_depth"):
+        load_config(start_dir=tmp_path)
+
+
 def test_invalid_skill_roots_config_fails_fast(tmp_path):
     (tmp_path / "asterwynd.yaml").write_text(
         """

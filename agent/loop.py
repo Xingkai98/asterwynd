@@ -47,6 +47,10 @@ from agent.tools.builtin.subagents import (
     GetSubagentRunTool,
     InspectSubagentTranscriptTool,
     ListSubagentsTool,
+    PublishBusMessageTool,
+    ReadBusTool,
+    ResumeSubagentTool,
+    RunPatternTool,
     RunSubagentTool,
 )
 from agent.tools.builtin.activate_skill import ActivateSkillTool
@@ -338,6 +342,10 @@ class AgentLoop:
         self.tool_registry.register(GetSubagentRunTool(self.subagent_manager))
         self.tool_registry.register(CancelSubagentRunTool(self.subagent_manager))
         self.tool_registry.register(InspectSubagentTranscriptTool(self.subagent_manager))
+        self.tool_registry.register(PublishBusMessageTool(self.subagent_manager))
+        self.tool_registry.register(ReadBusTool(self.subagent_manager))
+        self.tool_registry.register(ResumeSubagentTool(self.subagent_manager))
+        self.tool_registry.register(RunPatternTool(self.subagent_manager))
         self._subagent_tools_registered = True
 
     def _ensure_todo_tool_registered(self) -> None:
