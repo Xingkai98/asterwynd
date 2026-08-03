@@ -74,6 +74,12 @@
 
 ## 未实现队列
 
+### 1. `long-term-memory-reversibility`
+
+状态：未实现。
+
+批次：第九批 follow-up（#99）。#75 长期记忆可逆性 follow-up，issue #99 已确认方案 A（git 管理可逆写入，ADR-0002）。依赖 #75（已合入）的 `apply_judgment()` 与 conflict_with 标记；复用 git 原生能力做 commit-before-write + resolve_conflict。已立项（2026-08-03），tasks 待开发。
+
 ### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。
