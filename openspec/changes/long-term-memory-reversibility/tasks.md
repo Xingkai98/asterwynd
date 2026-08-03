@@ -41,3 +41,13 @@
 - [ ] 6.2 文档影响：AGENTS.md / 文档地图关键词扫描；ADR-0002 已同步
 - [ ] 6.3 known-debt 登记并发丢更新债务（受保护，需 workflow-events）
 - [ ] 6.4 归档 + 更新 backlog + artifact checker + openspec validate（archive/backlog 受保护，需 workflow-events）
+
+## 审阅修复记录
+
+### Round 1（CHANGES_REQUESTED，2026-08-03）
+
+- [x] 1. [中] resolve_conflict 实现"默认 loser=name_b"（`archive=True` 未传 loser 时归档 name_b）
+- [x] 2. [低] MemoryGitBackend history/diff/revert 入口加 `_validate_name` 校验
+- [x] 3. [低] 补 `git_backend_enabled=False` 的 factory 开关回归测试
+- [x] 4. [低] resolve_conflict 校验 `name_a != name_b`（同名自解防护）
+- [x] 5. [低] 统一 resolve commit message 与 changelog 分隔符（均带空格）

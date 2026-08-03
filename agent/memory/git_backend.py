@@ -35,8 +35,17 @@ class MemoryGitBackend:
 
         return _run_git(self._memory.memory_dir, *args)
 
+    @staticmethod
+    def _check_name(name: str) -> str | None:
+        from agent.memory.persistent import _validate_name
+
+        return _validate_name(name)
+
     def history(self, name: str) -> str:
         """Return the commit log for one memory file."""
+        name_error = self._check_name(name)
+        if name_error is not None:
+            return f"Error: {name_error}"
         proc = self._git("log", "--format=%h %s", "--", f"{name}.md")
         if proc.returncode != 0:
             return f"Error: git log failed: {proc.stderr}"
@@ -47,6 +56,9 @@ class MemoryGitBackend:
 
     def diff(self, name: str, commit_a: str, commit_b: str) -> str:
         """Return the diff of one memory file between two commits."""
+        name_error = self._check_name(name)
+        if name_error is not None:
+            return f"Error: {name_error}"
         proc = self._git("diff", commit_a, commit_b, "--", f"{name}.md")
         if proc.returncode != 0:
             return f"Error: git diff failed: {proc.stderr}"
@@ -62,6 +74,9 @@ class MemoryGitBackend:
           2. checkout old body + rebuild index line + append change log,
              then commit the revert result so history is immediately visible.
         """
+        name_error = self._check_name(name)
+        if name_error is not None:
+            return f"Error: {name_error}"
         if self._memory._load_entry_by_name(name) is None:
             return f"Error: memory '{name}' not found."
 

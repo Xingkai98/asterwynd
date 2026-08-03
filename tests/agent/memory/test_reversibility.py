@@ -225,6 +225,30 @@ class TestResolveConflict:
         assert not (mem.memory_dir / "b.md").exists()
         assert (mem.memory_dir / "archive" / "b.md").exists()
 
+    @pytest.mark.skipif(not _git_ok(), reason="git not available")
+    def test_4_3_resolve_default_loser_archives_name_b(self, mem):
+        """审阅 Round 1 Issue 1: archive=True 未传 loser 时默认归档 name_b。"""
+        from agent.memory.dedup import Judgment
+
+        mem.save("user", "a", "a", "A body.")
+        mem.save("user", "b", "b", "B body.")
+        mem.apply_judgment(
+            type="user", name="a", description="a", body="A body.",
+            judgment=Judgment(action="conflict", target_name="b", reason="conflicts"),
+        )
+        result = mem.resolve_conflict("a", "b", archive=True, reason="b loses")
+        assert "archived" in result
+        assert not (mem.memory_dir / "b.md").exists()
+        assert (mem.memory_dir / "archive" / "b.md").exists()
+        assert (mem.memory_dir / "a.md").exists()
+
+    @pytest.mark.skipif(not _git_ok(), reason="git not available")
+    def test_4_3_resolve_same_name_rejected(self, mem):
+        """审阅 Round 1 Issue 4: name_a == name_b 自解防护。"""
+        mem.save("user", "a", "a", "A body.")
+        result = mem.resolve_conflict("a", "a")
+        assert "itself" in result
+
 
 class TestTools:
     @pytest.mark.skipif(not _git_ok(), reason="git not available")
@@ -274,3 +298,37 @@ class TestTools:
         assert "reverted" in result
         content = (mem.memory_dir / "role.md").read_text()
         assert "Old body." in content
+
+    @pytest.mark.skipif(not _git_ok(), reason="git not available")
+    def test_4_9_git_backend_rejects_invalid_name(self, mem):
+        """审阅 Round 1 Issue 2: MemoryGitBackend history/diff/revert 校验 name。"""
+        from agent.memory.git_backend import MemoryGitBackend
+
+        backend = MemoryGitBackend(mem)
+        assert "Error" in backend.history("../escape")
+        assert "Error" in backend.diff("../escape", "a", "b")
+        assert "Error" in backend.revert("../escape", "abc1234")
+
+
+class TestGitBackendConfig:
+    @pytest.mark.skipif(not _git_ok(), reason="git not available")
+    def test_3_2_git_backend_disabled_skips_tool(self, mem, tmp_path):
+        """审阅 Round 1 Issue 3: git_backend_enabled=False 时 MemoryGitBackend 不注册，
+        ResolveMemoryConflict 仍注册。"""
+        from agent.config import MemoryConfig
+        from agent.tools.factory import get_default_tools
+
+        mem.memory_dir.mkdir(parents=True, exist_ok=True)
+
+        # enabled=False → 无 MemoryGitBackend，有 ResolveMemoryConflict
+        disabled_config = MemoryConfig(git_backend_enabled=False)
+        tools_off = get_default_tools(persistent_memory=mem, memory_config=disabled_config)
+        names_off = {t.name for t in tools_off}
+        assert "MemoryGitBackend" not in names_off
+        assert "ResolveMemoryConflict" in names_off
+
+        # 默认 → 两者都有
+        tools_on = get_default_tools(persistent_memory=mem, memory_config=MemoryConfig())
+        names_on = {t.name for t in tools_on}
+        assert "MemoryGitBackend" in names_on
+        assert "ResolveMemoryConflict" in names_on

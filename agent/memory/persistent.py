@@ -635,6 +635,8 @@ class PersistentMemory:
         for name in (name_a, name_b):
             if _validate_name(name) is not None:
                 return f"Error: invalid memory name '{name}'"
+        if name_a == name_b:
+            return f"Error: cannot resolve a memory against itself ('{name_a}')."
         a = self._load_entry_by_name(name_a)
         b = self._load_entry_by_name(name_b)
         if a is None or b is None:
@@ -644,12 +646,14 @@ class PersistentMemory:
 
         # commit-before-write (#99): snapshot the marked state so the cleared
         # markers are recoverable from git history.
-        self._git_commit("resolve", f"{name_a}<->{name_b}", reason or "resolve-conflict")
+        self._git_commit("resolve", f"{name_a} <-> {name_b}", reason or "resolve-conflict")
 
         a.conflict_with = [n for n in a.conflict_with if n != name_b]
         b.conflict_with = [n for n in b.conflict_with if n != name_a]
 
-        if archive and loser:
+        if archive:
+            # Default loser is name_b (task 2.1 / design Decision 2 contract).
+            loser = loser or name_b
             loser_entry = a if loser == name_a else b
             winner_entry = b if loser == name_a else a
             archive_dir = self.memory_dir / "archive"
