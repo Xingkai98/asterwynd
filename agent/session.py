@@ -33,6 +33,9 @@ class SessionSnapshot:
     objective: str = ""
     blockers: list[str] = field(default_factory=list)
     next_steps: list[str] = field(default_factory=list)
+    # Compact orchestration-bus summary (issue 79 D5): a resume that lost the
+    # in-memory bus still has a readable view of what was exchanged.
+    bus_summary: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -50,6 +53,7 @@ class SessionSnapshot:
             "objective": self.objective,
             "blockers": list(self.blockers),
             "next_steps": list(self.next_steps),
+            "bus_summary": self.bus_summary,
         }
 
     @classmethod
@@ -70,6 +74,7 @@ class SessionSnapshot:
             objective=data.get("objective", ""),
             blockers=list(data.get("blockers", [])),
             next_steps=list(data.get("next_steps", [])),
+            bus_summary=data.get("bus_summary", ""),
         )
 
 

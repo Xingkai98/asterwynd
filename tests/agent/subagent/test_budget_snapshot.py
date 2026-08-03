@@ -4,6 +4,7 @@ Covers tasks 1.x (checkpoint + resume) and 2.1/2.2 (per-run token/time budget,
 ``budget_exceeded`` terminal state, kill-before-snapshot).
 """
 import asyncio
+import time
 
 import pytest
 
@@ -13,7 +14,7 @@ from agent.message import Message
 from agent.run_config import AgentMode
 from agent.session import SessionSnapshot
 from agent.subagent.budget import BudgetExceededError, BudgetTracker
-from agent.subagent.manager import SubAgentManager
+from agent.subagent.manager import SubAgentManager, SubagentRunRecord
 from agent.subagent.snapshot import SubagentSnapshotStore
 from agent.workspace_policy import WorkspacePolicy
 
@@ -107,6 +108,66 @@ async def test_token_budget_kill_writes_checkpoint(manager, tmp_path):
     assert snapshot.objective == "burn tokens"
 
 
+@pytest.mark.asyncio
+async def test_budget_kill_backfills_usage_in_envelope(manager):
+    """Review M1: a budget-exceeded run's envelope reflects real tokens consumed."""
+    manager.llm = TokenBurningLLM()
+    created = manager.create_subagent(name="burner")
+    result = await manager.run_subagent(
+        subagent_id=created["subagent_id"],
+        task="burn tokens",
+        wait=True,
+        max_tokens=100,
+    )
+    assert result["status"] == "budget_exceeded"
+    # two LLM calls at 60 tokens each before overrun
+    assert result["usage"]["total_tokens"] >= 100
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_includes_bus_summary(manager, tmp_path):
+    """Review M2: a checkpoint written under an active bus carries its summary."""
+    from agent.subagent.bus import MessageBus
+    from agent.subagent.context import reset_bus, set_bus
+
+    manager.llm = TokenBurningLLM()
+    bus = MessageBus()
+    token = set_bus(bus)
+    try:
+        created = manager.create_subagent(name="burner")
+        launched = await manager.run_subagent(
+            subagent_id=created["subagent_id"],
+            task="burn tokens",
+            wait=False,
+            max_tokens=100,
+        )
+        run_id = launched["run_id"]
+        await asyncio.sleep(0.2)
+    finally:
+        reset_bus(token)
+    snapshot = manager._snapshot_store().load(run_id)
+    assert snapshot is not None
+    assert snapshot.bus_summary == ""  # nothing published on the bus
+    # publish before the kill so the checkpoint carries it
+    bus.publish(sender="w1", topic="finding", summary="found it")
+    token = set_bus(bus)
+    try:
+        created2 = manager.create_subagent(name="burner2")
+        launched2 = await manager.run_subagent(
+            subagent_id=created2["subagent_id"],
+            task="burn tokens",
+            wait=False,
+            max_tokens=100,
+        )
+        run_id2 = launched2["run_id"]
+        await asyncio.sleep(0.2)
+    finally:
+        reset_bus(token)
+    snapshot2 = manager._snapshot_store().load(run_id2)
+    assert snapshot2 is not None
+    assert "[w1/finding]" in snapshot2.bus_summary
+
+
 # --- Time budget hard-kill ---
 
 
@@ -169,6 +230,7 @@ def test_snapshot_store_roundtrip(tmp_path):
         objective="inspect repo",
         blockers=["blocked on sandbox"],
         next_steps=["retry sandbox"],
+        bus_summary="[w1/finding] found it",
     )
     assert store.save(snapshot) is True
     loaded = store.load("run-abc")
@@ -176,6 +238,7 @@ def test_snapshot_store_roundtrip(tmp_path):
     assert loaded.objective == "inspect repo"
     assert loaded.blockers == ["blocked on sandbox"]
     assert loaded.next_steps == ["retry sandbox"]
+    assert loaded.bus_summary == "[w1/finding] found it"
     assert loaded.iteration == 3
     assert [m.content for m in loaded.messages] == ["inspect repo", "working"]
 
@@ -183,6 +246,17 @@ def test_snapshot_store_roundtrip(tmp_path):
 def test_snapshot_store_missing_returns_none(tmp_path):
     store = SubagentSnapshotStore.for_workspace(tmp_path)
     assert store.load("run-missing") is None
+
+
+def test_snapshot_created_at_not_empty(manager, tmp_path):
+    """Review M3: snapshot created_at reflects the run start (not an empty string)."""
+    created = manager.create_subagent(name="runner")
+    session = manager._sessions[created["subagent_id"]]
+    run = SubagentRunRecord(run_id="run-t", task="task", status="running", started_at=time.time())
+    session.runs.append(run)
+    snapshot = manager._snapshot_store().snapshot_for_run(session, run)
+    assert snapshot.created_at != ""
+    assert "T" in snapshot.created_at  # ISO-8601 timestamp, not an empty string
 
 
 # --- Cancel writes checkpoint, then resume ---

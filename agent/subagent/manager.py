@@ -18,7 +18,12 @@ from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
 from agent.trace_recorder import TraceRecorder
 from agent.subagent.budget import BudgetExceededError, BudgetHook, BudgetTracker
-from agent.subagent.context import current_spawn_depth, set_spawn_depth, reset_spawn_depth
+from agent.subagent.context import (
+    current_bus,
+    current_spawn_depth,
+    reset_spawn_depth,
+    set_spawn_depth,
+)
 from agent.subagent.snapshot import SubagentSnapshotStore
 
 if TYPE_CHECKING:
@@ -451,12 +456,15 @@ class SubAgentManager:
             self._complete_run(session, run, result, trace)
         except BudgetExceededError as exc:
             self._write_checkpoint(session, run)
-            self._mark_budget_exceeded(session, run, exc.dimension, trace)
+            self._mark_budget_exceeded(
+                session, run, exc.dimension, trace, tokens=tracker.tokens
+            )
         except asyncio.CancelledError:
             self._write_checkpoint(session, run)
             if run._budget_kill_reason is not None:
                 self._mark_budget_exceeded(
-                    session, run, run._budget_kill_reason, trace
+                    session, run, run._budget_kill_reason, trace,
+                    tokens=tracker.tokens,
                 )
             else:
                 self._mark_cancelled(session, run, trace)
@@ -587,6 +595,7 @@ class SubAgentManager:
         run: SubagentRunRecord,
         dimension: str,
         trace: TraceRecorder | None,
+        tokens: int | None = None,
     ) -> None:
         if run.status != "running":
             return  # already terminal
@@ -594,6 +603,11 @@ class SubAgentManager:
         run.reason = f"budget exceeded ({dimension})"
         run.finished_at = time.time()
         run.trace = trace.to_dict() if trace is not None else None
+        # Backfill cost summary (review M1): the run consumed real tokens even
+        # though it never reached a normal completion, so the failure/cost
+        # summary must reflect them for benchmark cost attribution.
+        if tokens:
+            run.usage = SubagentRunUsage(total_tokens=tokens, input_tokens=0, output_tokens=0)
         session.active_run_id = None
         session.status = "idle"
 
@@ -609,10 +623,19 @@ class SubAgentManager:
         session: SubagentSessionRecord,
         run: SubagentRunRecord,
     ) -> None:
-        """Snapshot the run before an interrupt/kill so it can be resumed."""
+        """Snapshot the run before an interrupt/kill so it can be resumed.
+
+        A compact view of the active orchestration bus (if any) is folded into
+        the snapshot so a resumed run can still see what was exchanged even
+        though the in-memory bus does not survive the run (design D5).
+        """
         try:
             store = self._snapshot_store()
-            store.save(store.snapshot_for_run(session, run))
+            bus_summary = ""
+            bus = current_bus()
+            if bus is not None:
+                bus_summary = bus.compact_summary()
+            store.save(store.snapshot_for_run(session, run, bus_summary))
         except Exception:
             logger.warning(
                 "Failed to write subagent checkpoint run_id=%s", run.run_id,

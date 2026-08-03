@@ -41,6 +41,10 @@
 - [x] 5.2 全量 pytest + openspec validate + artifact checker（全量 1617 passed；validate 30/30；checker 通过）
 - [x] 5.3 benchmark 量化（新增协作任务 `asterwynd-022-collaborative-context-audit` + fake smoke 验证 harness；真实多模式对比数据需真实 LLM 多轮采集，作为后续）
 
+## 6. 审阅闭环修复
+
+- [x] 6.1 Round 1 building review（CHANGES_REQUESTED，run id: building-review-subagent-2026-08-03）：M1 预算超限 usage 回填 / M2 快照 bus 摘要 / M3 created_at 非空 / M4 peer-review 合成条目移除 + 死代码清理 / M5 bus.read 最新单条超窗口不返空 / M6 新工具注册断言补齐
+
 ## 8. 收尾校验（checker 要求项）
 
 - [x] 8.1 pre-implementation batch-grill-me 或等价设计审阅任务（独立 subagent 已产出 `reviews/grill-design.md`）

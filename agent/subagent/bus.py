@@ -112,6 +112,10 @@ class MessageBus:
             if self.ttl_s is not None and now - msg.timestamp > self.ttl_s:
                 continue
             if used + msg.token_count > budget:
+                # A single message larger than the window still surfaces (the
+                # newest) so the consumer is never blind to the latest state.
+                if not collected:
+                    collected.append(msg)
                 break
             collected.append(msg)
             used += msg.token_count

@@ -40,6 +40,16 @@ def test_read_token_window_keeps_most_recent():
     assert sum(m.token_count for m in messages) <= 5
 
 
+def test_read_returns_newest_when_single_message_exceeds_window():
+    """Review M5: a message larger than the window still surfaces (not empty)."""
+    bus = MessageBus(max_read_tokens=10)
+    bus.publish(sender="w", topic="t", summary="tiny")
+    bus.publish(sender="w", topic="t", summary="x" * 400)  # ~100 tokens >> 10
+    messages = bus.read(max_tokens=10)
+    assert len(messages) == 1
+    assert messages[0].summary == "x" * 400  # newest, even though over budget
+
+
 def test_topic_filter():
     bus = MessageBus()
     bus.publish(sender="a", topic="finding", summary="f1")

@@ -119,13 +119,11 @@ class PeerReviewPattern(OrcPattern):
         producer = self._spawn("producer", "produces the proposal")
         reviewer = self._spawn("reviewer", "critiques the proposal")
 
-        history: list[dict] = []
+        last_produced: dict | None = None
+        last_review: dict | None = None
         for _ in range(max_rounds):
             produced = await self._run_worker(producer, self.task)
-            produced_summary = produced.get("summary", "") or ""
-            history.append(
-                {"round": len(history) + 1, "producer_status": produced["status"]}
-            )
+            last_produced = produced
             if produced["status"] != "completed":
                 return self._aggregate([produced])
 
@@ -134,31 +132,21 @@ class PeerReviewPattern(OrcPattern):
                 "Review the following proposal. Reply with exactly one line "
                 "starting with APPROVED if it is acceptable, or CRITIQUE followed "
                 "by the specific issues if it needs revision.\n\n"
-                f"PROPOSAL:\n{produced_summary}",
+                f"PROPOSAL:\n{produced.get('summary', '')}",
             )
+            last_review = review
             review_text = (review.get("summary", "") or "").upper()
-            history[-1]["review_status"] = review["status"]
-            history[-1]["approved"] = review_text.startswith("APPROVED")
             if review_text.startswith("APPROVED"):
-                return self._aggregate(
-                    [
-                        {
-                            **produced,
-                            "status": "completed",
-                        },
-                        review,
-                    ]
-                )
+                return self._aggregate([produced, review])
             # feed critique back to producer for the next round
             self.task = (
                 f"{self.task}\n\nAddress the reviewer's critique:\n"
                 f"{review.get('summary', '')}"
             )
 
-        results = [
-            {"subagent_id": producer, "status": "completed", "summary": "reached max review rounds"}
-        ]
-        return self._aggregate(results + [review])
+        # max_rounds reached without approval — report the real final runs
+        real_runs = [r for r in (last_produced, last_review) if r is not None]
+        return self._aggregate(real_runs)
 
 
 class HierarchicalPattern(OrcPattern):

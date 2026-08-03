@@ -14,6 +14,7 @@ silently overwrite another run's checkpoint.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,13 +47,19 @@ class SubagentSnapshotStore:
         self,
         session: "SubagentSessionRecord",
         run: "SubagentRunRecord",
+        bus_summary: str = "",
     ) -> SessionSnapshot:
         """Build the checkpoint for a session at the given run."""
+        created = (
+            datetime.fromtimestamp(run.created_at, tz=timezone.utc).isoformat()
+            if run.created_at
+            else ""
+        )
         return SessionSnapshot(
             schema_version="1.0",
             session_id=run.run_id,
-            created_at=run.created_at.isoformat() if hasattr(run.created_at, "isoformat") else "",
-            updated_at=run.created_at.isoformat() if hasattr(run.created_at, "isoformat") else "",
+            created_at=created,
+            updated_at=created,
             messages=list(session.messages),
             mode=session.mode,
             todos=[],
@@ -62,6 +69,7 @@ class SubagentSnapshotStore:
             objective=run.task,
             blockers=[],
             next_steps=[],
+            bus_summary=bus_summary,
         )
 
 

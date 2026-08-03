@@ -48,9 +48,20 @@ def manager():
 def test_build_subagent_loop_exposes_subagent_tools(manager):
     """Sub-agent loops expose the subagent tools so a child can spawn grandkids."""
     loop = manager._build_subagent_loop(AgentMode.BUILD)
-    assert loop.tool_registry.get_tool("CreateSubagent") is not None
-    assert loop.tool_registry.get_tool("RunSubagent") is not None
-    assert loop.tool_registry.get_tool("ListSubagents") is not None
+    for name in (
+        "CreateSubagent",
+        "RunSubagent",
+        "ListSubagents",
+        "GetSubagentRun",
+        "CancelSubagentRun",
+        "InspectSubagentTranscript",
+        # issue 79 additions: bus + resume + patterns are available to children
+        "PublishBusMessage",
+        "ReadBus",
+        "ResumeSubagent",
+        "RunPattern",
+    ):
+        assert loop.tool_registry.get_tool(name) is not None, name
 
 
 @pytest.mark.asyncio
