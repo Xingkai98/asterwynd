@@ -37,10 +37,10 @@
 
 ## 6. 收尾
 
-- [ ] 6.1 当前规格同步：specs delta 合入 `openspec/specs/long-term-memory/spec.md`（受保护，需 workflow-events）
-- [ ] 6.2 文档影响：AGENTS.md / 文档地图关键词扫描；ADR-0002 已同步
-- [ ] 6.3 known-debt 登记并发丢更新债务（受保护，需 workflow-events）
-- [ ] 6.4 归档 + 更新 backlog + artifact checker + openspec validate（archive/backlog 受保护，需 workflow-events）
+- [x] 6.1 当前规格同步：specs delta 合入 `openspec/specs/long-term-memory/spec.md`（受保护，需 workflow-events）
+- [x] 6.2 文档影响：AGENTS.md / 文档地图关键词扫描；ADR-0002 已同步
+- [x] 6.3 known-debt 登记并发丢更新债务（受保护，需 workflow-events）
+- [x] 6.4 归档 + 更新 backlog + artifact checker + openspec validate（archive/backlog 受保护，需 workflow-events）
 
 ## 审阅修复记录
 

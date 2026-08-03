@@ -71,14 +71,9 @@
 关键依赖：`#78 observability` 依赖 `#77 tool-governance` 质量事件 schema；`#75 long-term-memory` 依赖 `#77` embedding 模块；`#79` 依赖 `#74/#78`。
 
 **#89 follow-up**：`structured-error-type-wiring`（✅ 已合入并归档，2026-08-03）。#78 的数据源接入下一步：工具错误在产生点打结构化 `error_type` 而非文本猜测（`ToolResult` 通道 + Bash/MCP/approval/LLM 打标）。
+- **#99 follow-up**：`long-term-memory-reversibility`（✅ 已合入并归档，2026-08-03）。#75 长期记忆可逆性 follow-up：git commit-before-write + resolve_conflict + MemoryGitBackend（ADR-0002）。
 
 ## 未实现队列
-
-### 1. `long-term-memory-reversibility`
-
-状态：未实现。
-
-批次：第九批 follow-up（#99）。#75 长期记忆可逆性 follow-up，issue #99 已确认方案 A（git 管理可逆写入，ADR-0002）。依赖 #75（已合入）的 `apply_judgment()` 与 conflict_with 标记；复用 git 原生能力做 commit-before-write + resolve_conflict。已立项（2026-08-03），tasks 待开发。
 
 ### 4. `add-minimal-tui-runtime-view`
 
