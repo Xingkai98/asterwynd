@@ -811,6 +811,28 @@ def test_grill_empty_open_questions_skips_confirmation(tmp_path):
     assert not any("未确认" in e for e in errors), errors
 
 
+def test_grill_punctuation_variant_confirmation_not_counted(tmp_path):
+    """grill-confirmation-gate M1：标点/空白变体（待确认。/待主agent提交）不得计入确认。"""
+    _grill_evidence(
+        tmp_path,
+        "## Open Questions\n1. 问题一\n"
+        "## User Confirmation\n- **Q1**: 用户答复：待确认。；确认时间: 2026-08-02\n",
+    )
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert any("未确认" in e and "Q1" in e for e in errors), errors
+
+
+def test_grill_no_space_variant_confirmation_not_counted(tmp_path):
+    """grill-confirmation-gate M1：无空格变体（待主agent提交）不得计入确认。"""
+    _grill_evidence(
+        tmp_path,
+        "## Open Questions\n1. 问题一\n"
+        "## User Confirmation\n- **Q1**: 用户答复：待主agent提交；确认时间: 2026-08-02\n",
+    )
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert any("未确认" in e and "Q1" in e for e in errors), errors
+
+
 def test_grill_evidence_fullwidth_colon_passes(tmp_path):
     """issue #95：全角冒号列表项格式（- **决策**：）3 条 → 通过（实际证据格式）。"""
     change = tmp_path / "openspec" / "changes" / "change-ui"

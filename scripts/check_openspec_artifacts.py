@@ -93,14 +93,17 @@ UNCONFIRMED_EXACT = {
     "待确认", "未确认", "待定", "pending", "待补充", "占位", "未决",
 }
 UNCONFIRMED_STRONG = {
-    "待主 agent", "待用户", "placeholder", "tobeconfirmed", "待拍板", "未拍板",
+    "待主 agent", "待主agent", "待用户", "placeholder", "tobeconfirmed",
+    "待拍板", "未拍板",
 }
 _UNCONFIRMED_MAX_ANSWER_LEN = 20
+# 标点/空白变体剥离：`待确认。` → `待确认`，`待主agent提交` → `待主agent提交`
+_UNCONFIRMED_STRIP = str.maketrans("", "", "。．.；;，,、 \t")
 
 
 def _is_unconfirmed_answer(answer: str) -> bool:
     """True when an answer value is an unconfirmed marker, not a real decision."""
-    a = answer.lower().strip()
+    a = answer.lower().strip().translate(_UNCONFIRMED_STRIP)
     if not a:
         return True
     if a in UNCONFIRMED_EXACT:
@@ -489,10 +492,14 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
 def _normalize_question_index(raw: str) -> str | None:
     """Normalize an Open Questions / User Confirmation index to ``Q<n>``.
 
-    Accepts ``1``, ``1.``, ``Q1``, ``q1`` (half/full-width colon stripped by
-    callers). Returns None when no numeric index is present.
+    Accepts ``1``, ``1.``, ``Q1``, ``q1``, and list/bold-wrapped forms like
+    ``- **Q1**:`` (list marker and asterisks stripped). Returns None when no
+    numeric index is present.
     """
     cleaned = raw.strip().strip(".")
+    # Strip a leading list marker and any bold asterisks so the Q/number is
+    # directly matchable.
+    cleaned = re.sub(r"^[-*]\s*\**\s*", "", cleaned)
     m = re.match(r"(?:[Qq])?(\d+)", cleaned)
     if not m:
         return None
@@ -511,12 +518,16 @@ def _extract_open_question_indexes(text: str) -> list[str]:
     indexes: list[str] = []
     for line in section.splitlines():
         stripped = line.strip()
-        if not stripped or stripped in {"- 无", "- 无。", "- none", "- none。"}:
+        if not stripped:
             continue
-        # Strip markdown list marker and bold, then read the leading index.
-        candidate = re.sub(r"^[-*]\s*", "", stripped)
-        candidate = re.sub(r"^\*\*", "", candidate)
-        m = re.match(r"(?:(?:Q|q)\d+|\d+)\s*[:：.]?\s*", candidate)
+        # Skip "no open questions" markers in any form (bare, numbered, "- 无").
+        no_q = re.sub(r"^[-*]\s*", "", stripped)
+        no_q = re.sub(r"^\d+[.、]\s*", "", no_q)
+        no_q = re.sub(r"^\*\*", "", no_q)
+        if no_q.strip() in {"无", "无。", "none", "none。", "没有", "无问题"}:
+            continue
+        # Read the leading index of a real entry (from the original line).
+        m = re.match(r"^[-*]?\s*\**\s*(?:(?:Q|q)\d+|\d+)\s*[:：.]?\s*", stripped)
         if m:
             idx = _normalize_question_index(m.group(0))
             if idx:

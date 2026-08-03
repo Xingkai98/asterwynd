@@ -22,8 +22,9 @@ guard and SHALL fail the artifact checker once its tasks are fully checked.
 #### Scenario: grill evidence passes design review
 
 - **GIVEN** a non-trivial change with a `reviews/grill-design.md`
-- **WHEN** the record has at least 3 confirmed decisions, an empty Open
-  Questions section, and a `## User Confirmation` section
+- **WHEN** the record has at least 3 confirmed decisions
+- **AND** either the Open Questions section is empty, or every listed Open
+  Question has a matching `## User Confirmation` entry
 - **THEN** the design review is satisfied and code writes are allowed
 
 #### Scenario: open question not confirmed blocks code writes
