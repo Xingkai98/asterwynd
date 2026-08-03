@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "multi-agent-collaboration",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a9cd3857fdff96a00",
+  "base_sha": "21547dd3ee01251c76851699a8573b29e1aedd2e",
+  "head_sha": "c8c6727e8460571e5094ab36d278dd22de4e9576",
+  "tasks_hash": "sha256:595c0313e19db67670c9d7f8c2593e9e1775a23a8453c44ee8778482e335bdd7",
+  "spec_hash": "sha256:b207618df6c5c2616e8e41f3d8f150df6268e00d3bb5714a467d55703d1b22cf",
+  "diff_hash": "sha256:93d4b6de22b45079c9c6f56ac40da982d9b0b91e660b5174afb1d0309aa46c40",
+  "report_hash": "sha256:b96ab1833fa17fd3566db5a5b53dfc251450b985b0d1ad3fc304f8266c6c85f4"
+}
