@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "observability-deepening",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "ae45515db1f4ead43",
+  "base_sha": "7c6fc3e472956cc53f0a71a091aa4cb3536c2bcd",
+  "head_sha": "0985ca4725e36a857aad96702c03894d5919bfba",
+  "tasks_hash": "sha256:f0fb7f51e921800f79a7216f1c5583a90b60f8a92edad6116746ed6a0a3e485c",
+  "spec_hash": "sha256:03a3464e5ec801bb9417b2cb101f4b5ad067ff14a248c28ca3471bc323078d44",
+  "diff_hash": "sha256:0754f839e43a888e42f01e2b33dd632c5d735e2085812b142d584fc08ac32097",
+  "report_hash": "sha256:3ab200e33dfb4d4918b4b920e87bd2ea4490da13ba935ee1901be5c0eba7c88a"
+}

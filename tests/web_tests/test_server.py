@@ -506,6 +506,78 @@ def test_web_static_assets_include_session_and_run_display():
     assert "innerHTML" not in tool_result_renderer
     assert "body.textContent" in tool_result_renderer
 
+    # Timeline panel assets (observability batch-2).
+    assert 'id="timeline-panel"' in index
+    assert 'id="timeline-content"' in index
+    assert 'id="timeline-refresh"' in index
+    debug_script = (Path(__file__).parents[2] / "web" / "static" / "debug.js").read_text()
+    assert "renderTimeline" in debug_script
+    assert ".timeline-bar" in styles
+    assert ".timeline-bar.fail" in styles
+
+
+@pytest.mark.asyncio
+async def test_timeline_api_returns_shaped_calls(app, mock_llm):
+    """GET /api/sessions/{id}/timeline returns duration-desc calls with bar_pct."""
+    from agent.hooks.builtin import TracingHook
+    from agent.hooks.builtin.tracing import ToolCallTrace
+
+    old = os.environ.get("ASTERWYND_DEBUG", "")
+    try:
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
+        manager = app.state.session_manager
+        session = manager.create_session(mock_llm, tools=[EchoTool()])
+        # The session already wires a TracingHook; populate it with recorded calls.
+        hook = next(h for h in session.agent.hooks.hooks if isinstance(h, TracingHook))
+        hook.calls = [
+            ToolCallTrace("Bash", {"cmd": "pwd"}, duration_ms=200.0, success=True),
+            ToolCallTrace("Read", {"path": "a.py"}, duration_ms=50.0, success=False),
+            ToolCallTrace("Edit", {"path": "a.py"}, duration_ms=0.0, success=True),  # in-flight
+        ]
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get(f"/api/sessions/{session.session_id}/timeline")
+    finally:
+        os.environ["ASTERWYND_DEBUG"] = old
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == session.session_id
+    assert data["total_calls"] == 2  # in-flight filtered
+    assert [c["tool_name"] for c in data["calls"]] == ["Bash", "Read"]
+    assert [c["index"] for c in data["calls"]] == [0, 1]
+    assert data["calls"][0]["bar_pct"] == 100.0
+    assert data["calls"][0]["duration_ms"] == 200.0
+    assert data["calls"][1]["success"] is False
+    assert data["calls"][1]["arguments"] == {"path": "a.py"}
+
+
+@pytest.mark.asyncio
+async def test_timeline_api_404_unknown_session(app):
+    old = os.environ.get("ASTERWYND_DEBUG", "")
+    try:
+        os.environ["ASTERWYND_DEBUG"] = "enabled"
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sessions/nonexistent/timeline")
+    finally:
+        os.environ["ASTERWYND_DEBUG"] = old
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_timeline_api_disabled_when_debug_off(app):
+    old = os.environ.get("ASTERWYND_DEBUG", "")
+    try:
+        if "ASTERWYND_DEBUG" in os.environ:
+            del os.environ["ASTERWYND_DEBUG"]
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/sessions/any/timeline")
+    finally:
+        os.environ["ASTERWYND_DEBUG"] = old
+    assert resp.status_code == 404
+
 
 def _render_markdown(markdown: str) -> str:
     renderer = Path(__file__).parents[2] / "web" / "static" / "markdown.js"

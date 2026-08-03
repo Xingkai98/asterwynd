@@ -65,7 +65,7 @@
 
 - **Batch 1（并行，低冲突）**：`tool-governance-deepening`（✅ 已合入并归档，2026-08-02）‖ `sandbox-hardening`（✅ 已合入并归档，2026-08-02）。最独立、无硬依赖，各开独立 worktree。先立 `agent/embedding/` 公共模块（#77 提供，供 #75 复用）。
 - **Batch 2（高冲突，拆分）**：`context-engineering-deepening`（✅ 已合入并归档，2026-08-02）。拆 3 子 change（增量 token 计数+四字段摘要+pending+L1/L2 / Prefix Cache 注入顺序 / 分页进度+深层 MD 按需加载）；已与 #77 约定「稳定层/可变层」注入契约并落实现。
-- **Batch 3（并行）**：`observability-deepening`（✅ 已合入并归档，2026-08-02）‖ `long-term-memory-deepening`（✅ 已合入并归档，2026-08-02）。依赖 PR #80 statistics（已合入）做回归门禁；#75 先 ADR 论证三层存储，低风险切片先行。
+- **Batch 3（并行）**：`observability-deepening`（✅ 已合入并归档，2026-08-03）‖ `long-term-memory-deepening`（✅ 已合入并归档，2026-08-02）。observability 依赖 PR #80 statistics（已合入）做回归门禁；#75 先 ADR 论证三层存储，低风险切片先行。
 - **Batch 4（最后）**：`multi-agent-collaboration`。依赖最重，先 grill 设计；复用 #67 `agent/workflow/` 状态机。
 
 关键依赖：`#78 observability` 依赖 `#77 tool-governance` 质量事件 schema；`#75 long-term-memory` 依赖 `#77` embedding 模块；`#79` 依赖 `#74/#78`。
@@ -73,29 +73,7 @@
 ## 未实现队列
 
 
-### 4. `observability-deepening`
-
-状态：第一批已合入（PR #87，2026-08-02）；第二批待实现。
-
-批次：第九批 Batch 3（与 long-term-memory-deepening 并行）。
-
-建议顺序原因：
-
-- 依赖 PR #80 statistics（已合入）做回归门禁基线；依赖 #77 质量事件 schema。
-- 交付 CI P95/成功率 >5% 拦截、成本归属账单、四类异常分类、session timeline 看板。
-
-第一批（已完成）交付：
-
-- TraceRecorder 记录 token + 结构化事件 schema。
-- 按 session/phase/tool 成本归属账单（CostLedger + JSONL 持久化）。
-- 异常自动分类（权限拒绝/网络超时/模型幻觉/参数错误）+ 差异化告警。
-
-第二批（待实现）：
-
-- CI benchmark 回归门禁（>5% 拦截）。
-- Session timeline 看板。
-
-### 6. `multi-agent-collaboration`
+### 4. `multi-agent-collaboration`
 
 状态：未实现。
 
@@ -113,7 +91,7 @@
 - 轻量消息总线（严格 token 预算）。
 - 编排模式库（orchestrator-worker/peer-review/hierarchical/竞标）。
 
-### 7. `add-minimal-tui-runtime-view`
+### 5. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 

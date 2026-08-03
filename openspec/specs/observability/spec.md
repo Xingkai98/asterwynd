@@ -68,3 +68,38 @@ trace recorder SHALL 记录每次 LLM 迭代的 token（input/output tokens、mo
 - **WHEN** 新 recorder 序列化它
 - **THEN** data 负载保持不变（timestamp 是 step 字段）
 - **AND** schema_version 附加在顶层
+
+### Requirement: Benchmark Regression Gate
+
+可观测性系统 SHALL 提供 benchmark 回归门禁：持久化基线指标（success_rate、p95 latency），将新 run 与基线对比，当成功率下降超过 5 个百分点或 p95 延迟超过 `max(基线*1.05, 基线+1.0s)`（相对 5% + 1 秒绝对值下限，避免亚秒级基线受无意义相对抖动影响）时返回非零退出码。
+
+#### Scenario: 门禁拦截劣化 run
+
+- **GIVEN** 基线 `success_rate=0.95`、`p95_latency_s=10.0`
+- **WHEN** 新 run 的 `success_rate=0.85` 或 `p95_latency_s=11.5`
+- **THEN** 门禁返回非零
+- **AND** 报告列出每个指标的 delta
+
+#### Scenario: p95 恰在绝对下限上限处通过
+
+- **GIVEN** 基线 `p95_latency_s=10.0`
+- **WHEN** 新 run 的 `p95_latency_s=11.0`
+- **THEN** 门禁通过（上限为 `max(10.5, 11.0)=11.0`，严格 `>`）
+
+#### Scenario: 从信任的 run 更新基线
+
+- **GIVEN** 一个信任的 run
+- **WHEN** 门禁以 `--update-baseline` 运行
+- **THEN** 基线文件被重写为该 run 的指标
+- **AND** 后续 run 与新的基线对比
+
+### Requirement: Session Timeline
+
+可观测性系统 SHALL 暴露每个 session 的工具调用 timeline，按耗时（ms）降序排列，带成功状态，为 Web UI 整形条宽数据。
+
+#### Scenario: session timeline 查询
+
+- **GIVEN** 一个含不同耗时工具调用的 session
+- **WHEN** 查询 timeline 端点
+- **THEN** calls 按耗时降序返回
+- **AND** 每条 call 携带 `tool_name`、`duration_ms`、`success`、`arguments`、`index`、`bar_pct`
