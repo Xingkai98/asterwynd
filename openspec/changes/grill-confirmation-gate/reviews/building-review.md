@@ -2,86 +2,79 @@
 
 ## Verdict
 
-**CHANGES_REQUESTED**
+**PASS**
 
-审阅对象：`git diff origin/master...HEAD`（7dbe9ad 立项 → 21dc43a grill 确认 → 1a59099 实现）。
+审阅对象：`git diff origin/master...HEAD`（7dbe9ad 立项 → 21dc43a grill 确认 → 1a59099 实现 → f60c0ad Round 1 修复）。本报告为 Round 2 复审，验证 Round 1（CHANGES_REQUESTED）的 M1/L1/L2 修复是否到位，并对实现做独立复核。
 
-核心承诺（Must-fix A 早返回重构、Must-fix B 判定顺序重构、`_UNCONFIRMED_TOKENS` 占位排除、序号集匹配、checker/workflow_guard 双门禁 + parity 测试、停轮契约）全部真实落地且测试通过。发现 1 个中等问题（未确认 token 判定对标点/空格变体不鲁棒，设计 Decision 4「致命缺口」的覆盖有洞），2 个低等观察。修复后重审即可 PASS。
+Round 1 的三项 findings 全部修复到位：M1（未确认 token 标点/空格变体绕过）已用 `_UNCONFIRMED_STRIP` 归一化 + STRONG 集补 `待主agent` 修复，两条回归测试真实覆盖且通过；L1 的 concrete 漂移点（`1. 无` 判空不一致）已统一，parity 测试通过；L2 spec 措辞已与实现对齐。实现核心承诺（Must-fix A/B 重构、序号集匹配、双门禁 + parity、停轮契约）复核通过，测试全绿（65 passed），checker 门禁通过（仅缺 review manifest，本审阅即产出该产物）。
 
-## Tasks Verification
+## Round 1 修复验证
 
-| task | 实现位置 | 结论 |
-|------|---------|------|
-| 0.1 独立 subagent grill，产出 `reviews/grill-design.md` | `openspec/changes/grill-confirmation-gate/reviews/grill-design.md`（含 Confirmed Decisions 4 条 + Open Questions Q1-Q7 + User Confirmation Q1-Q7） | ✅ 真实存在 |
-| 0.2 Reference Implementation Research 实质调研 | `proposal.md` L42-53、`design.md` L95-107（status: enabled + findings + design impact） | ✅ 实质调研 |
-| 1.1 `_extract_open_questions` | `scripts/check_openspec_artifacts.py:502` `_extract_open_question_indexes`（解析 `1.`/`- **Q1**:`/`- Q1`，`- 无` 与占位跳过） | ✅ 真实实现 |
-| 1.2 `_extract_user_confirmations` | `scripts/check_openspec_artifacts.py:527` `_extract_user_confirmation_indexes`（`**Q<n>**:` 前缀 + `用户答复：` 字段 + 未确认 token 排除） | ✅ 真实实现 |
-| 1.3 `_check_design_review_task` 增强 | `scripts/check_openspec_artifacts.py:435-465`（无早返回，decisions<3 与 User Confirmation 校验合并进 error list；仅在 `_tasks_all_complete` 时强制） | ✅ 真实实现（Must-fix A 已重构，实测 decisions≥3 + 未确认仍报错） |
-| 2.1 `_grill_evidence_missing` 增强 | `scripts/workflow_guard.py:204-242`（docs-only/spec-delta 判定前置，证据存在但 Open Questions 未确认 → True） | ✅ 真实实现（Must-fix B 已重构，实测 docs-only 不误拦） |
-| 2.2 提取规则与 checker 一致 | `scripts/workflow_guard.py:272-329`（独立复刻，含 `_UNCONFIRMED_*` 与 helper） | ✅ 复刻 + parity 测试兜底 |
-| 3.1 checker 回归测试 | `tests/test_openspec_artifact_checker.py` 新增 7 个（为空通过/确认覆盖通过/未确认全勾选报错/无 User Confirmation 节报错/占位不计/重复序号不覆盖/开发中不强制） | ✅ 覆盖要求场景 |
-| 3.2 workflow_guard 回归测试 | `tests/test_workflow_guard.py` 新增 3 个（未确认拦截/已确认放行/parity） | ✅ 覆盖要求场景 |
-| 4.1 AGENTS.md 最高优先级规则 | `AGENTS.md` 设计追问条追加「停轮确认（grill-confirmation-gate）」段落（停轮、User Confirmation 节、双门禁、占位不计、分支纪律保留） | ✅ 真实更新 |
-| 4.2 batch-grill-me / grilling skill | `~/.claude/skills/batch-grill-me/SKILL.md`（## Open Questions must be confirmed…停轮+记录）、`~/.claude/skills/grilling/SKILL.md`（stop and wait + User Confirmation 记录） | ✅ 本地安装件已更新（不进 PR，符合预期） |
-| 5.1-5.3、6.1-6.2 收尾 | 均 `[ ]` 未勾选 | ⏸ 收尾阶段任务，属预期（本审阅即闭环之一环）；归档前需补 |
+### M1 [Medium] → 已修复
 
-## Issues
+**验证结论**：`_is_unconfirmed_answer` 在精确匹配前用 `_UNCONFIRMED_STRIP` 剥离标点/空白（`。．.；;，,、 \t`），STRONG 集含 `待主agent` 无空格变体；两文件行为一致。
 
-### M1 [Medium] `_is_unconfirmed_answer` 对未确认 token 的标点/空格变体不鲁棒
+**证据**：
+- `scripts/check_openspec_artifacts.py:100-101`（`_UNCONFIRMED_STRIP = str.maketrans("", "", "。．.；;，,、 \t")`）、`:95-98`（STRONG 含 `待主 agent` 与 `待主agent`）、`:104-117`（`_is_unconfirmed_answer` 先 `.translate(_UNCONFIRMED_STRIP)` 再精确/子串匹配）
+- `scripts/workflow_guard.py:258`（同 `_UNCONFIRMED_STRIP`）、`:253-256`（同 STRONG 集）、`:261-271`（同判定逻辑）
+- 回归测试：`tests/test_openspec_artifact_checker.py:814-823`（`test_grill_punctuation_variant_confirmation_not_counted`，fixture `用户答复：待确认。；确认时间: ...`，断言错误含 `未确认` + `Q1`）、`:825-833`（`test_grill_no_space_variant_confirmation_not_counted`，fixture `用户答复：待主agent提交；...`）。两测试均走 `_grill_evidence` 默认 `tasks_all_checked=True`，真实覆盖归档 checker 的拦截路径。
 
-**证据**：`scripts/check_openspec_artifacts.py:101-114`、`scripts/workflow_guard.py:259-269`（两处同缺陷）。
+**实测**：`待确认。`/`未确认。`/`待定。`/`待主agent提交`/`待确认`/`pending`/`TODO` 两文件均判 `True`（未确认）；`做 A` 与 27 字符实质长答复判 `False`（不误伤）。端到端 guard：`待确认。` 变体 rc=2（拦截），真实确认 rc=0（放行）。
 
-实测（两文件行为一致）：
+### L1 [Low] → 已修复（concrete 漂移点），留 1 个极端残余
 
-```text
-'待确认。'  → 计入已确认（不应计入）
-'未确认。'  → 计入已确认
-'待定。'    → 计入已确认
-'待主agent提交'（无空格） → 计入已确认
-```
+**验证结论**：Round 1 实测的具体漂移点（单行节 `## Open Questions\n1. 无` → checker 判空、guard 计 `['Q1']`）已消除；两文件 `_extract_open_question_indexes` 现为逐行逻辑逐字节一致，`1. 无` / `- 无` / `- **Q1**:` 三种形式均一致。
 
-`_extract_user_confirmation_indexes` 对 `- **Q1**: 用户答复：待确认。；确认时间: ...` 返回 `['Q1']`（判为已确认），而 `待确认`（无标点）正确返回 `[]`。
+**证据**：
+- `scripts/check_openspec_artifacts.py:509-535` 与 `scripts/workflow_guard.py:274-296`：逐行逻辑一致——no_q 归一化跳过 `{"无","无。","none","none。","没有","无问题"}`，索引正则 `^[-*]?\s*\**\s*(?:(?:Q|q)\d+|\d+)\s*[:：.]?\s*` 从原始行读取
+- `_normalize_question_index` 支持 `- **Q1**:`（`check_openspec_artifacts.py:502`、`workflow_guard.py:322`：`re.sub(r"^[-*]\s*\**\s*", "", cleaned)` 剥离列表/加粗包裹）
+- parity 测试：`tests/test_workflow_guard.py:308-340`，3 个 fixture 覆盖 `1. a\n2. b` / `- 无` / `- **Q1**: a\n- **Q3**: c`，对 checker 与 guard 双实现断言一致
+- `tests/test_workflow_guard.py:324-327` fixture `- 无` → 两实现均 `[]`
 
-**影响**：design.md Decision 4 把「未确认 token 集」定义为 grill Q1「致命缺口」，明确列出 `待确认` / `待主 agent 提交` 等不得计入确认。实现只做整串精确匹配（EXACT）+ 少数强 token 子串（STRONG）。中文句末标点（。，！）与无空格写法是常见变体，恰好绕过该门禁——本 change 的核心承诺（机械拦下「写了占位但没真拍板」）在此变体上失效。`待主agent提交`（issue #74 原文去掉空格）同样漏掉。
+**实测**：`1. 无`/`- 无`/`- 无。`/`**无**`/`<!-- 无问题占位 -->` 两实现均 `[]`；`1. 无\n2. 问题二` 均 `['Q2']`；`- **Q1**: 问题一\n- **Q3**: 问题三` 均 `['Q1','Q3']`；`_normalize_question_index` 对 `- **Q1**:`/`**Q2**:`/`1.`/`1. 问题一` 分别返回 `Q1`/`Q2`/`Q1`/`Q1`，不误伤数字序号。
 
-**修复建议**（约 3 行）：`_is_unconfirmed_answer` 在精确匹配前先 `answer.strip("。，！!.,;； ")` 归一化；并把 `待确认`/`未确认`/`待定` 这类短 token 加入 STRONG（子串匹配），同时保留 ≤20 字符长度门（长答复仍不误伤）。
+**残余（新观察，非阻塞）**：重复 `## Open Questions` 节（同一文件两个同标题 H2）仍分歧——checker 用 dict 取**最后一个**，workflow_guard `_h2_section` 线性扫描取**第一个**。实测 `## Open Questions\n1. 无\n## Open Questions\n- **Q1**: 真实问题\n` → checker `['Q1']`、guard `[]`。这是极端 markdown 结构（grill skill 产出的证据单节），且归档门禁侧（checker，CI 强制）是更严方向，不会被此漂移放行未确认项。见 New Issue N1。
 
-### L1 [Low] 两处提取逻辑存在未覆盖的 parity 漂移点
+### L2 [Low] → 已修复
 
-**证据**：checker `scripts/check_openspec_artifacts.py:502-524` 对整节有 `_is_placeholder_body(section)` 守卫，workflow_guard `scripts/workflow_guard.py:272-289` 无该守卫；checker 用 dict（重复 `## Open Questions` 节取**最后一个**），workflow_guard `_h2_section` 线性扫描取**第一个**。parity 测试（`tests/test_workflow_guard.py:311-340`）3 个 fixture 未覆盖这些差异。
+**验证结论**：spec 场景措辞已对齐实现「Open Questions 空则无需 User Confirmation 节」。
 
-**实测差异**：单行节 `## Open Questions\n1. 无` → checker 判空（`_is_placeholder_body` 命中）而 workflow_guard 计为 `['Q1']`。极端场景，但设计 Decision 4 的「两处复刻有漂移风险，用 parity 测试兜底」承诺的是强一致。建议补一条 fixture（含 `1. 无` 与重复节）或在 workflow_guard 补齐 `_is_placeholder_body` 守卫。
+**证据**：`openspec/changes/grill-confirmation-gate/specs/change-documentation/spec.md:25-28`——`**WHEN** the record has at least 3 confirmed decisions` + `**AND** either the Open Questions section is empty, or every listed Open Question has a matching ## User Confirmation entry`。与 `_unconfirmed_open_questions`（`check_openspec_artifacts.py:565-571`：`if not open_indexes: return []`）一致。
 
-### L2 [Low] spec delta 场景措辞严于实现
+## 重点复核
 
-**证据**：`openspec/changes/grill-confirmation-gate/specs/change-documentation/spec.md`「grill evidence passes design review」把 `## User Confirmation` 节列为通过前置条件；但实现（`_unconfirmed_open_questions`，checker:554-560）在 Open Questions 为空时无需 User Confirmation 节即放行。design.md Decision 2 明确「若 N>0 且 tasks 全勾选才要求确认」，实现与 design 一致，是 spec 场景措辞偏严。归档前建议把场景改写为「…and a `## User Confirmation` section (when Open Questions is non-empty)」或保持现状（非阻塞，记录即可）。
+- **`_normalize_question_index` 支持 `- **Q1**:` 不误伤 `1. 问题一`**：实测 `- **Q1**:`→`Q1`、`**Q2**:`→`Q2`、`1.`→`Q1`、`1. 问题一`→`Q1`。剥离正则 `^[-*]\s*\**\s*` 只匹配列表/加粗前缀，数字序号不受影响。
+- **真实 change 的 grill-design.md 正确解析、无未确认**：checker open=[Q1..Q7]、confirm=[Q1..Q7]、unconfirmed=[]；guard 完全一致（PARITY）。7 个 Open Questions 与 7 条 User Confirmation 序号一一对应。
+- **`_check_design_review_task` 不早返回**：`scripts/check_openspec_artifacts.py:438-468`——`grill_evidence.exists()` 分支内先收集 `decisions < 3` 错误进 error list，随后 `if _tasks_all_complete(change_dir)` 独立执行 `_unconfirmed_open_questions` 校验，无 `return []` 早返回路径。Must-fix A 修复保持有效。
+- **`_grill_evidence_missing` 判定顺序（docs-only 不误拦）**：`scripts/workflow_guard.py:204-242`——步骤 1 docs-only（`primary: docs`）return False；步骤 2 无 spec delta return False；步骤 3 才评估证据完整性（缺失或 Open Questions 未确认 → True）。Must-fix B 修复保持有效。实测 docs-only 无证据 → False，feature + spec delta + 未确认 → True。
+- **checker 门禁**：`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --change grill-confirmation-gate` 仅报 review manifest 缺失（本审阅闭环产物），无 grill/未确认/占位错误——change 自身证据通过。
 
-### L3 [Low] checker 读 grill-design.md 无异常兜底
+## New Issues
 
-**证据**：`scripts/check_openspec_artifacts.py:446` `text = grill_evidence.read_text(encoding="utf-8")` 无 try/except；workflow_guard 侧有 OSError 兜底（`workflow_guard.py:234-237`）。文件刚 exists() 判定过，实际风险极低，但两侧不对称。建议与 workflow_guard 对齐。
+### N1 [Low] 重复 `## Open Questions` 节的 parity 残余漂移
 
-### L4 [Low] 确认记录不强制 `确认时间` 字段
+**证据**：实测 `## Open Questions\n1. 无\n## Open Questions\n- **Q1**: 真实问题\n` → checker `['Q1']`（dict 取末节）、workflow_guard `[]`（线性取首节）。Round 1 L1 已点名该漂移点；修复统一了逐行逻辑，但两文件节提取 helper 差异（`_extract_h2_sections` vs `_h2_section`）未消除。
 
-**证据**：`_extract_user_confirmation_indexes` 的正则 `(?:[；;]\s*确认时间|\s*$)`（checker:544）允许无 `确认时间` 的 `- **Q1**: 用户答复：做 A` 行计入。design 规定格式含 `；确认时间: <date>`。属「宽松接受」，在「不防恶意伪造」边界内无害；记录即可，不必改。
+**影响**：极端 markdown 结构（同文件重复 H2 标题），grill skill 产出的证据恒为单节，实际不会触发；且更严方向在 checker（归档/CI 强制侧），不会放行未确认项。建议后续在 workflow_guard 的 `_h2_section` 或 parity fixture 中补一条重复节用例对齐，非本轮阻塞项。
+
+### N2 [Info] guard 侧无 M1 标点变体的独立单元测试
+
+**证据**：M1 两条回归测试只落在 `tests/test_openspec_artifact_checker.py`；`tests/test_workflow_guard.py` 的 guard 级 M1 覆盖仅 fixture 3 用无标点 `待确认`（`:330`）。guard 的标点变体行为由两文件 `_is_unconfirmed_answer` 逐字节一致 + parity 测试 + 本次端到端实测（`待确认。`→rc=2）兜底。属测试分布不均，非缺陷。
 
 ## Test Results
 
 ```bash
 cd /home/happy/my-agent/.claude/worktrees/grill-confirmation-gate
 uv run pytest tests/test_openspec_artifact_checker.py tests/test_workflow_guard.py -q
-# 63 passed in 1.88s
-
-PYTHONPATH=. python3 scripts/check_openspec_artifacts.py
-# OpenSpec artifact checks passed (EXIT=0)
+# 65 passed in 2.62s
 ```
 
-- 新增：checker 7 个 + workflow_guard 3 个（含 parity），全部通过。
+- 新增（Round 1 修复）：checker 2 个 M1 回归测试（标点变体 + 无空格变体），全通过。
 - 实测本 change 自身 `reviews/grill-design.md`：Open Questions Q1-Q7 与 User Confirmation Q1-Q7 全部匹配，`_unconfirmed_open_questions` 返回 `[]`；checker 与 workflow_guard 提取完全一致。
-- 实测 `_is_unconfirmed_answer` 边界：`待主 agent 提交用户确认`/`待确认`/`pending`/`TODO` 正确判为未确认；长答复（>20 字符，含 `待确认` 字样）正确判为实质确认，不误伤。
-- 已排除已知环境性失败（`tests/agent/mcp/`、`tests/agent/code_intelligence/`、docker 相关）。
+- 实测 `_is_unconfirmed_answer` 边界：`待确认。`/`未确认。`/`待定。`/`待主agent提交`/`pending`/`TODO` 正确判为未确认；`做 A` 与 27 字符实质答复正确判为确认，不误伤。
+- 端到端 guard：`待确认。` 变体写操作 rc=2（拦截）；真实确认 rc=0（放行）。
+- 全量 checker：`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --change grill-confirmation-gate` 仅缺 review manifest（本审阅产出）。
 
 ## 结论
 
-实现真实覆盖了 tasks 1.x-4.x 全部 `[x]` 项：Must-fix A（`_check_design_review_task` 不早返回，decisions≥3 时 User Confirmation 校验仍执行）与 Must-fix B（`_grill_evidence_missing` 先判需否 grill 再判证据完整性，docs-only 不误拦）均已落地；序号集匹配防 Q1,Q2,Q3,Q3,Q3 假通过；checker 仅在 tasks 全勾选时强制；AGENTS.md 与两个 grill skill 的停轮契约齐备。测试全绿，checker 门禁通过。
-
-唯一中等问题是 M1：未确认 token 判定对标点/空格变体不鲁棒，使 design.md 明确列出的「致命缺口」token 集（`待确认` 等）在 `待确认。`/`待主agent提交` 等常见变体下失效。该缺陷位于本 change 的核心机械强制路径上，按审阅标准应修复后合入；修复量约 3 行，重审成本低。
+Round 1 全部 findings 修复到位：M1（核心机械强制路径上的标点/空格变体绕过）已真实修复并有回归测试兜底；L1 concrete 漂移点已统一并有 parity 测试；L2 spec 措辞已对齐。实现核心承诺（Must-fix A 不早返回、Must-fix B docs-only 不误拦、序号集匹配防 Q1,Q2,Q3,Q3,Q3 假通过、checker 仅 tasks 全勾选时强制、AGENTS.md 停轮契约）复核通过。测试全绿，checker 门禁通过（仅缺本审阅将产出的 review manifest）。残留 N1（重复节 parity 漂移）为极端输入下的 Low 级观察，归档门禁侧更严，不构成合入阻塞。**PASS**。
