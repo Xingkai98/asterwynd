@@ -36,6 +36,19 @@
 - **R6 文本兜底 vs 结构化双路径漂移**: 打标工具用结构化 error_type，未打标工具用 category.value，边界 case 可能不一致（如某工具返回 `[Error: timeout]` 文本未打标 → network_timeout，另一工具打标 timeout）。design 已承认此差异，但 spec delta 场景措辞与实现不符（见 Q8），归档前必须统一口径。
 - **R7 既有 spec 张力**: tool-system spec「工具执行使用 ToolCall」场景当前断言「返回工具输出字符串」，与新增「结构化结果」需求并存；7.1 同步时需显式更新或标注，避免 spec 自相矛盾。
 
+## User Confirmation
+
+> 主 agent 停轮逐项确认（grill-confirmation-gate）。用户对 Q1-Q8 的答复如下，全部实质确认。
+
+- **Q1**: 用户答复：ErrorCategory 保持四类不扩（permission_denied/network_timeout/model_error/parameter_error），error_type 细粒度值通过映射表归入粗粒度类别；确认时间: 2026-08-03
+- **Q2**: 用户答复：接受 ToolResult 显式 dataclass（非 str 子类）作为破坏性协议变更，~11 处测试 + RetryHook + loop 解包 .text，test_mcp_health.py/test_retry_budget.py 破坏面纳入任务；确认时间: 2026-08-03
+- **Q3**: 用户答复：MCP isError 结果纳入本次打标范围，call_tool 对 isError=true 返回 ToolResult(error_type="mcp_error")；确认时间: 2026-08-03
+- **Q4**: 用户答复：LLM 错误用 re-raise 最小范围（捕获 → record_llm_error → 同一异常继续上抛），不加重试增强，run 失败语义不变；确认时间: 2026-08-03
+- **Q5**: 用户答复：接受改 Hook Protocol——after_tool_execute 签名加 error_type 可选参数，TracingHook 用 error_type is not None 判失败、无 signal 回退文本前缀；确认时间: 2026-08-03
+- **Q6**: 用户答复：approval denied/unavailable 的 trace status 定为 "error"，executed=False 承担「工具没跑」区分，不引入新 status 值；确认时间: 2026-08-03
+- **Q7**: 用户答复：采纳立即解包方案——_execute_single_tool 在 execute/retry 返回后立即解包为 (text, error_type, duration_ms)，hook 收到解包 text，error_type 随 entry 字段到 Phase 3，补「ToolResult 不得泄漏」协议测试；确认时间: 2026-08-03
+- **Q8**: 用户答复：接受 error_type 词汇混用（结构化细粒度值 vs 文本兜底粗粒度 category.value），spec delta 措辞已对齐为 network_timeout；确认时间: 2026-08-03
+
 ## 与门禁机制的兼容性确认
 
 - 本 change 非 docs + 有 spec delta，触发 `scripts/workflow_guard.py` grill gate（`_grill_evidence_missing`，workflow_guard.py:204-242）与 `scripts/check_openspec_artifacts.py` `_check_design_review_task`（check_openspec_artifacts.py:438-489）。
