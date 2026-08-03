@@ -97,7 +97,7 @@ class BashTool(Tool):
             return ToolResult(text=result.to_json(), error_type="resource_exhausted")
         return result.to_json()
 
-    async def _execute_background(self, cmd: str, timeout: float | None) -> str:
+    async def _execute_background(self, cmd: str, timeout: float | None) -> str | ToolResult:
         if self._run_in_background_cb is None:
             return ToolResult(
                 text="Error: Background task execution is not available (no manager configured).",

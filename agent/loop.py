@@ -35,7 +35,7 @@ from agent.context.sources import (
 )
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
-from agent.observability import ErrorCategory, ErrorClassifier, resolve_phase
+from agent.observability import ErrorCategory, ErrorClassifier, exception_error_type, resolve_phase
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
@@ -96,19 +96,6 @@ def _text_prefix_guess(result_text: str) -> bool:
         or result_text.startswith("[Permission denied")
         or result_text.startswith("[MCP tool error")
     )
-
-
-def _exception_error_type(exc: Exception) -> str | None:
-    """Map an unexpected execution exception to a structured error_type.
-
-    Only semantically clear mappings are tagged; everything else returns None
-    so the text-fallback path classifies it (design Decision 3 principle).
-    """
-    if isinstance(exc, asyncio.TimeoutError):
-        return "timeout"
-    if isinstance(exc, (ConnectionError, TimeoutError)):
-        return "network_error"
-    return None
 
 
 def _llm_exception_error_type(exc: Exception) -> str:
@@ -1282,7 +1269,7 @@ class AgentLoop:
                         group_results[i] = {
                             **group[i],
                             "result": f"[Error: {r}]",
-                            "error_type": _exception_error_type(r),
+                            "error_type": exception_error_type(r),
                             "duration_ms": 0.0,
                         }
                 results.extend(group_results)

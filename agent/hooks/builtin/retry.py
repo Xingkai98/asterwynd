@@ -5,6 +5,7 @@ import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING, Callable, Awaitable
+from agent.observability import exception_error_type
 from agent.tools.base import ToolCall, ToolResult
 
 if TYPE_CHECKING:
@@ -22,19 +23,6 @@ RETRYABLE_PATTERN = re.compile(
 
 def _is_retryable(error_message: str) -> bool:
     return bool(RETRYABLE_PATTERN.search(error_message))
-
-
-def _exception_error_type(exc: Exception) -> str | None:
-    """Map a raised exception to a structured error_type.
-
-    Retryable transport failures get explicit tags (timeout/network_error);
-    everything else returns None so the loop's text-fallback classifies it.
-    """
-    if isinstance(exc, asyncio.TimeoutError):
-        return "timeout"
-    if isinstance(exc, (ConnectionError, TimeoutError)):
-        return "network_error"
-    return None
 
 
 class RetryHook:
@@ -56,7 +44,7 @@ class RetryHook:
                 return await execute_fn(tool_call)
             except Exception as e:
                 last_error_msg = str(e)
-                last_error_type = _exception_error_type(e)
+                last_error_type = exception_error_type(e)
                 if not _is_retryable(last_error_msg):
                     return ToolResult(text=f"[Error: {last_error_msg}]", error_type=last_error_type)
                 if attempt < self.max_retries:

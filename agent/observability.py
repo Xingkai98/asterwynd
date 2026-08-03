@@ -13,6 +13,7 @@ a different layer.
 """
 from __future__ import annotations
 
+import asyncio
 from enum import Enum
 
 
@@ -55,6 +56,7 @@ _ERROR_TYPE_TO_CATEGORY: dict[str, ErrorCategory] = {
     "parameter_error": ErrorCategory.PARAMETER_ERROR,
     "invalid_argument": ErrorCategory.PARAMETER_ERROR,
     "unknown_tool": ErrorCategory.PARAMETER_ERROR,
+    "model_error": ErrorCategory.MODEL_ERROR,
     "mcp_error": ErrorCategory.UNKNOWN,
     "resource_exhausted": ErrorCategory.UNKNOWN,
     "unavailable": ErrorCategory.UNKNOWN,
@@ -79,6 +81,20 @@ _ALERT_LEVEL: dict[ErrorCategory, str] = {
 def resolve_phase(mode: str) -> str:
     """Map an AgentMode value to a runtime phase label."""
     return PHASE_BY_MODE.get(mode, _DEFAULT_PHASE)
+
+
+def exception_error_type(exc: Exception) -> str | None:
+    """Map a raised exception to a fine-grained structured error_type.
+
+    Only semantically clear mappings are tagged; everything else returns None
+    so the text-fallback path classifies it (design Decision 3 principle).
+    Shared by the AgentLoop and RetryHook error paths (issue #89).
+    """
+    if isinstance(exc, asyncio.TimeoutError):
+        return "timeout"
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return "network_error"
+    return None
 
 
 class ErrorClassifier:

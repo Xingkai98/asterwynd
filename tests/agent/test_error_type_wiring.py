@@ -4,6 +4,7 @@
 覆盖：ToolResult 协议泄漏防护、Bash 超时误判回归、approval 预拒绝打标、
 MCP 错误打标、LLM 错误可观测化、词汇映射、TracingHook success 判定。
 """
+import asyncio
 import json
 
 import pytest
@@ -343,6 +344,45 @@ async def test_llm_error_model_error_classification():
 
 # ── 5.3 词汇映射与 TracingHook success ──
 
+@pytest.mark.asyncio
+async def test_parallel_gather_timeout_tags_error_type():
+    """并行 gather 中工具抛 asyncio.TimeoutError → error_type=timeout（N6）。"""
+    class TimeoutTool(Tool):
+        name = "TimeoutTool"
+        description = "always raises timeout"
+        parameters = {}
+        read_only = True
+        parallelizable = True
+
+        async def execute(self, **kwargs) -> str:
+            raise asyncio.TimeoutError("slow tool")
+
+    class SingleToolLLM:
+        async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+            return LLMResponse(
+                content="using tool",
+                tool_calls=[ToolCallDelta(id="c1", name="TimeoutTool", arguments="{}")],
+                stop_reason="tool_calls",
+            )
+
+    registry = ToolRegistry()
+    registry.register(TimeoutTool())
+    trace = TraceRecorder()
+    loop = AgentLoop(
+        llm=SingleToolLLM(),
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=2,
+    )
+
+    await loop.run([Message(role="user", content="test")], trace_recorder=trace)
+
+    steps = _tool_result_steps(trace)
+    assert steps, "应记录 tool_result"
+    assert steps[0]["status"] == "error"
+    assert steps[0]["error_type"] == "timeout"
+
+
 def test_error_type_to_category_mapping():
     """新增 error_type 值映射到粗粒度四类类别（Q1/Q8）。"""
     classifier = ErrorClassifier()
@@ -354,6 +394,7 @@ def test_error_type_to_category_mapping():
     assert classifier.classify(error_type="resource_exhausted") is ErrorCategory.UNKNOWN
     assert classifier.classify(error_type="mcp_error") is ErrorCategory.UNKNOWN
     assert classifier.classify(error_type="unavailable") is ErrorCategory.UNKNOWN
+    assert classifier.classify(error_type="model_error") is ErrorCategory.MODEL_ERROR
 
 
 @pytest.mark.asyncio

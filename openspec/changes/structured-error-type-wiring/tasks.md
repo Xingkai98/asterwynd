@@ -50,6 +50,17 @@
 - [x] 6.1 `specs/tool-system/spec.md`：ADDED「工具执行结果携带结构化错误码」（`ToolResult` + registry 包装/透传 + deny/approval 打标）
 - [x] 6.2 `specs/observability/spec.md`：ADDED「error_type 在产生点打标」（关键打标点 + 结构化优先/文本兜底；文本兜底词汇对齐 network_timeout）
 
+## 8. 审阅修复（独立 subagent 审阅 CHANGES_REQUESTED 闭环 Round 1）
+
+> 独立零记忆审阅（run review-run-structured-error-type-wiring-2026-08-03-001）发现 1 中 + 1 中低 + 4 低，已全部修复：
+
+- [x] 8.1 **N1（中）** Bash OOM / 后台不可用分支补测试：`test_bash_tool_events.py` 新增 `test_oom_killed_marks_resource_exhausted` + `test_background_unavailable_marks_unavailable`
+- [x] 8.2 **N2（中低）** `_ERROR_TYPE_TO_CATEGORY` 补 `model_error → MODEL_ERROR`（design 声称已存在，实际缺失）+ `test_error_type_wiring.py` 断言
+- [x] 8.3 **N3（低）** `tests/agent/hooks/test_manager.py` MockHook 签名同步 error_type 参数
+- [x] 8.4 **N4（低）** `_exception_error_type` 去重：抽公共 `agent/observability.py:exception_error_type`，loop.py/retry.py 共用（防两处漂移）
+- [x] 8.5 **N5（低）** `BashTool._execute_background` 返回注解 `-> str` 改为 `str | ToolResult`
+- [x] 8.6 **N6（低）** 并行 gather TimeoutError→timeout 直接测试：`test_error_type_wiring.py::test_parallel_gather_timeout_tags_error_type`
+
 ## 7. 收尾
 
 - [ ] 7.1 当前规格同步：把 spec delta 合并到 `openspec/specs/tool-system/spec.md` + `openspec/specs/observability/spec.md`（受保护路径，配 workflow-events.jsonl 解释事件）
