@@ -203,3 +203,139 @@ class SearchMemoryTool(Tool):
                 f"{entry.body}"
             )
         return "\n\n---\n\n".join(parts)
+
+
+@tool_parameters(
+    name="ResolveMemoryConflict",
+    description=(
+        "Resolve a mutual conflict marker between two memories. Clears both "
+        "conflict_with entries, records a resolve event in the change log, and "
+        "optionally archives the losing memory. Use after a dedup 'conflict' "
+        "judgment marked two memories as contradictory but the agent/user has "
+        "determined which one is current."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "name_a": {
+                "type": "string",
+                "description": "First conflicting memory name (kebab-case)",
+            },
+            "name_b": {
+                "type": "string",
+                "description": "Second conflicting memory name (kebab-case)",
+            },
+            "loser": {
+                "type": "string",
+                "description": "Which memory to archive when archive=True (default name_b)",
+            },
+            "archive": {
+                "type": "boolean",
+                "description": "Archive the loser (default false — both kept, markers cleared)",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Optional reason recorded in the change log",
+            },
+        },
+        "required": ["name_a", "name_b"],
+    },
+)
+class ResolveMemoryConflictTool(Tool):
+    read_only = False
+    permission = AGENT_STATE_PERMISSION
+
+    def __init__(self, memory: PersistentMemory | None = None) -> None:
+        self._memory = memory
+
+    def _get_memory(self) -> PersistentMemory:
+        if self._memory is None:
+            return PersistentMemory(Path.cwd())
+        return self._memory
+
+    async def execute(
+        self,
+        name_a: str,
+        name_b: str,
+        loser: str | None = None,
+        archive: bool = False,
+        reason: str = "",
+        **kwargs,
+    ) -> str:
+        return self._get_memory().resolve_conflict(
+            name_a=name_a,
+            name_b=name_b,
+            loser=loser,
+            archive=archive,
+            reason=reason,
+        )
+
+
+@tool_parameters(
+    name="MemoryGitBackend",
+    description=(
+        "Inspect or restore memory revisions via the git-backed reversibility "
+        "layer. Actions: 'history' (commit log for a memory), 'diff' (diff "
+        "between two commits for a memory), 'revert' (restore a memory to a "
+        "prior commit, keeping the MEMORY.md index consistent and the change "
+        "log updated). Revert is a destructive write and is recorded in the "
+        "change log."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["history", "diff", "revert"],
+                "description": "Operation to perform",
+            },
+            "name": {
+                "type": "string",
+                "description": "Memory name (kebab-case)",
+            },
+            "commit_a": {
+                "type": "string",
+                "description": "First commit (required for diff; target for revert)",
+            },
+            "commit_b": {
+                "type": "string",
+                "description": "Second commit for diff",
+            },
+        },
+        "required": ["action", "name"],
+    },
+)
+class MemoryGitBackendTool(Tool):
+    read_only = False
+    permission = AGENT_STATE_PERMISSION
+
+    def __init__(self, memory: PersistentMemory | None = None) -> None:
+        self._memory = memory
+
+    def _get_memory(self) -> PersistentMemory:
+        if self._memory is None:
+            return PersistentMemory(Path.cwd())
+        return self._memory
+
+    async def execute(
+        self,
+        action: str,
+        name: str,
+        commit_a: str | None = None,
+        commit_b: str | None = None,
+        **kwargs,
+    ) -> str:
+        from agent.memory.git_backend import MemoryGitBackend
+
+        backend = MemoryGitBackend(self._get_memory())
+        if action == "history":
+            return backend.history(name)
+        if action == "diff":
+            if not commit_a or not commit_b:
+                return "Error: diff requires both commit_a and commit_b."
+            return backend.diff(name, commit_a, commit_b)
+        if action == "revert":
+            if not commit_a:
+                return "Error: revert requires commit_a (target commit)."
+            return backend.revert(name, commit_a)
+        return f"Error: unknown action '{action}'."

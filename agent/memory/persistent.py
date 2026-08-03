@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -14,6 +16,21 @@ from agent.memory.model import MemoryEntry, MemoryHit
 logger = logging.getLogger("asterwynd.memory.persistent")
 
 _MEMORY_DIR_BASE = Path.home() / ".asterwynd" / "projects"
+
+# Reversibility git identity (#99). Commits use inline -c identity so they
+# never depend on global/repo git config (CI validate jobs have none).
+_GIT_USER_NAME = "Asterwynd Memory"
+_GIT_USER_EMAIL = "memory@asterwynd.local"
+
+
+def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run git in ``cwd`` with inline identity. Returns the completed process."""
+    return subprocess.run(
+        ["git", "-c", f"user.name={_GIT_USER_NAME}", "-c", f"user.email={_GIT_USER_EMAIL}", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
 MAX_INDEX_LINES = 200
 MAX_INDEX_BYTES = 25_000
 _VALID_NAME_RE = re.compile(r"^[a-z0-9-]+$")
@@ -383,6 +400,70 @@ class PersistentMemory:
             conflict_with=list(conflict_with),
         )
 
+    # ------------------------------------------------------------------
+    # Reversibility: git-backed pre-image snapshots (#99)
+    # ------------------------------------------------------------------
+
+    def _ensure_git(self) -> bool:
+        """Lazily initialize the memory git repo. Returns True when git is usable.
+
+        No side effect in ``__init__``: the repo is created only on the first
+        destructive write, so invalid-name paths never create a memory dir
+        (grill Q3 / test_persistent.py:209-212).
+        """
+        if shutil.which("git") is None:
+            return False
+        if not self.memory_dir.exists():
+            return False
+        try:
+            proc = subprocess.run(
+                ["git", "init", "-q"],
+                cwd=self.memory_dir,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                logger.warning("Failed to git init memory dir: %s", proc.stderr)
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("Failed to git init memory dir: %s", exc)
+            return False
+
+    def _git_commit(self, action: str, name: str, reason: str) -> None:
+        """commit-before-write: snapshot current memory dir before a destructive write.
+
+        - Inline identity so CI (no global git config) can still commit.
+        - nothing-to-commit (fresh repo / no staged change) is safe and returns.
+        - A real git failure raises ``RuntimeError`` so the caller aborts the
+          write (write protection — never overwrite without a snapshot).
+        """
+        if shutil.which("git") is None:
+            raise RuntimeError(
+                "Memory reversibility: git is not available; aborting write to "
+                "protect existing content (no pre-image snapshot possible)."
+            )
+        if not self.memory_dir.exists():
+            return
+        if not self._ensure_git():
+            raise RuntimeError(
+                "Memory reversibility: failed to initialize git repo; aborting write."
+            )
+        add = _run_git(self.memory_dir, "add", "-A")
+        if add.returncode != 0:
+            raise RuntimeError(f"Memory reversibility: git add failed: {add.stderr}")
+        # No staged changes → nothing to commit (fresh repo / no prior state).
+        quiet = _run_git(self.memory_dir, "diff", "--cached", "--quiet")
+        if quiet.returncode == 0:
+            return
+        msg = f"{action} {name} → {reason}"
+        commit = _run_git(self.memory_dir, "commit", "-q", "-m", msg)
+        if commit.returncode != 0:
+            raise RuntimeError(
+                f"Memory reversibility: git commit failed, aborting write to "
+                f"protect old content: {commit.stderr}"
+            )
+
     def _write_entry(self, entry: MemoryEntry) -> None:
         filepath = self._entry_path(entry.name, archived=entry.archived)
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -438,6 +519,8 @@ class PersistentMemory:
         existing = self._load_entry_by_name(name)
 
         if existing is not None:
+            # commit-before-write (#99): snapshot old body before overwrite.
+            self._git_commit("update", name, "save-overwrite")
             existing.type = type
             existing.description = description
             existing.body = body.strip()
@@ -489,6 +572,8 @@ class PersistentMemory:
             entry = self._load_entry_by_name(target)
             if entry is None or entry.archived:
                 return self.save(type, name, description, body, importance=importance)
+            # commit-before-write (#99): snapshot target old state before merge.
+            self._git_commit("supplement", target, reason)
             entry.body = f"{entry.body}\n\n{body.strip()}"
             if importance is not None:
                 entry.importance = self._clamp_importance(importance)
@@ -501,6 +586,8 @@ class PersistentMemory:
             entry = self._load_entry_by_name(target)
             if entry is None or entry.archived:
                 return self.save(type, name, description, body, importance=importance)
+            # commit-before-write (#99): snapshot target old state before replace.
+            self._git_commit("update", target, reason)
             entry.description = description
             entry.body = body.strip()
             if importance is not None:
@@ -511,6 +598,10 @@ class PersistentMemory:
             return f"Memory '{target}' updated (dedup)."
 
         if action == "conflict" and target:
+            # commit-before-write (#99): snapshot target old state + incoming
+            # absent before the conflict writes; markers land without a
+            # follow-up commit (next destructive write snapshots them).
+            self._git_commit("conflict", name, reason)
             result = self.save(type, name, description, body, importance=importance)
             other = self._load_entry_by_name(target)
             incoming = self._load_entry_by_name(name)
@@ -525,6 +616,60 @@ class PersistentMemory:
             return f"Memory '{name}' saved with conflict marked vs '{target}'."
 
         return self.save(type, name, description, body, importance=importance)
+
+    def resolve_conflict(
+        self,
+        name_a: str,
+        name_b: str,
+        loser: str | None = None,
+        archive: bool = False,
+        reason: str = "",
+    ) -> str:
+        """Resolve a mutual conflict marker between two memories (#99).
+
+        Clears the mutual ``conflict_with`` entries, records a resolve event
+        in the change log, and optionally archives the loser. The cleared
+        marker state is committed-before-write; the resolution itself is left
+        uncommitted until the next destructive write snapshots it (grill Q4).
+        """
+        for name in (name_a, name_b):
+            if _validate_name(name) is not None:
+                return f"Error: invalid memory name '{name}'"
+        a = self._load_entry_by_name(name_a)
+        b = self._load_entry_by_name(name_b)
+        if a is None or b is None:
+            return f"Error: memory '{name_a}' or '{name_b}' not found."
+        if a.archived or b.archived:
+            return f"Error: memory '{name_a}' or '{name_b}' is archived."
+
+        # commit-before-write (#99): snapshot the marked state so the cleared
+        # markers are recoverable from git history.
+        self._git_commit("resolve", f"{name_a}<->{name_b}", reason or "resolve-conflict")
+
+        a.conflict_with = [n for n in a.conflict_with if n != name_b]
+        b.conflict_with = [n for n in b.conflict_with if n != name_a]
+
+        if archive and loser:
+            loser_entry = a if loser == name_a else b
+            winner_entry = b if loser == name_a else a
+            archive_dir = self.memory_dir / "archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            self._write_entry_to(loser_entry, self._entry_path(loser, archived=True))
+            loser_path = self._entry_path(loser)
+            try:
+                loser_path.unlink()
+            except OSError:
+                pass
+            self._remove_from_index(loser)
+            self._write_entry(winner_entry)
+            action_note = f", '{loser}' archived"
+        else:
+            self._write_entry(a)
+            self._write_entry(b)
+            action_note = ""
+
+        self._append_changelog("resolve", f"{name_a} <-> {name_b}", reason or "resolved")
+        return f"Memory '{name_a}' and '{name_b}' conflict resolved{action_note}."
 
     # ------------------------------------------------------------------
     # Called by RecallMemory / SearchMemory tools
