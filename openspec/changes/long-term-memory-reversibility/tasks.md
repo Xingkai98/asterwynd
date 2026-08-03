@@ -51,3 +51,7 @@
 - [x] 3. [低] 补 `git_backend_enabled=False` 的 factory 开关回归测试
 - [x] 4. [低] resolve_conflict 校验 `name_a != name_b`（同名自解防护）
 - [x] 5. [低] 统一 resolve commit message 与 changelog 分隔符（均带空格）
+
+### Round 2（CHANGES_REQUESTED，2026-08-03）
+
+- [x] 6. [中/安全] resolve_conflict 校验 `loser`：`_validate_name` + 必须为 None/name_a/name_b（防路径穿越任意写/删 `.md`）；工具 schema 同步；补路径穿越回归测试

@@ -227,7 +227,8 @@ class SearchMemoryTool(Tool):
             },
             "loser": {
                 "type": "string",
-                "description": "Which memory to archive when archive=True (default name_b)",
+                "description": "Which memory to archive when archive=True (default name_b). "
+                "Must be one of name_a or name_b.",
             },
             "archive": {
                 "type": "boolean",

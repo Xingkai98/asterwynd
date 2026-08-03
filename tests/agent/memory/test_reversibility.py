@@ -249,6 +249,42 @@ class TestResolveConflict:
         result = mem.resolve_conflict("a", "a")
         assert "itself" in result
 
+    @pytest.mark.skipif(not _git_ok(), reason="git not available")
+    def test_4_3_resolve_rejects_path_traversal_loser(self, mem):
+        """审阅 Round 2 Issue 6: loser 路径穿越被拒，不写不删文件。"""
+        from agent.memory.dedup import Judgment
+
+        mem.save("user", "a", "a", "A body.")
+        mem.save("user", "b", "b", "B body.")
+        mem.apply_judgment(
+            type="user", name="a", description="a", body="A body.",
+            judgment=Judgment(action="conflict", target_name="b", reason="conflicts"),
+        )
+        result = mem.resolve_conflict("a", "b", loser="../../../victim", archive=True)
+        assert "Error" in result
+        # 未写入 memory_dir 外、未删除任何文件
+        assert not (mem.memory_dir.parent / "victim.md").exists()
+        assert (mem.memory_dir / "a.md").exists()
+        assert (mem.memory_dir / "b.md").exists()
+        assert not (mem.memory_dir / "archive" / "victim.md").exists()
+
+    @pytest.mark.skipif(not _git_ok(), reason="git not available")
+    def test_4_3_resolve_rejects_third_party_loser(self, mem):
+        """审阅 Round 2 Issue 6: loser 非 a/b 之一被拒，不误删无关记忆。"""
+        from agent.memory.dedup import Judgment
+
+        mem.save("user", "a", "a", "A body.")
+        mem.save("user", "b", "b", "B body.")
+        mem.save("user", "c", "c", "C body.")
+        mem.apply_judgment(
+            type="user", name="a", description="a", body="A body.",
+            judgment=Judgment(action="conflict", target_name="b", reason="conflicts"),
+        )
+        result = mem.resolve_conflict("a", "b", loser="c", archive=True)
+        assert "Error" in result
+        # c 未被删除
+        assert (mem.memory_dir / "c.md").exists()
+
 
 class TestTools:
     @pytest.mark.skipif(not _git_ok(), reason="git not available")

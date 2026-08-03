@@ -654,6 +654,13 @@ class PersistentMemory:
         if archive:
             # Default loser is name_b (task 2.1 / design Decision 2 contract).
             loser = loser or name_b
+            # Security (review Round 2 Issue 6): loser must be one of the two
+            # resolved names — never a path traversal into another memory.
+            if _validate_name(loser) is not None or loser not in (name_a, name_b):
+                return (
+                    f"Error: loser '{loser}' must be one of '{name_a}' or "
+                    f"'{name_b}' (archive target)."
+                )
             loser_entry = a if loser == name_a else b
             winner_entry = b if loser == name_a else a
             archive_dir = self.memory_dir / "archive"
