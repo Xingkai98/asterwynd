@@ -11,7 +11,7 @@ The subagent system SHALL serialize subagent execution state to a JSON snapshot 
 - Given a subagent execution interrupted mid-run
 - When a JSON snapshot is serialized
 - Then the subagent resumes from the checkpoint
-- And execution continues from the interruption point
+- And execution continues toward the objective, retrying any in-flight tool call
 
 ### Requirement: Per-Subagent Budget Enforcement
 
@@ -46,6 +46,17 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 - Then the best proposal is selected
 - And the pattern is driven by the common OrcPattern interface
 
+### Requirement: Concurrency and Depth Guardrails
+
+The subagent system SHALL enforce concurrency and nesting-depth limits (max_concurrent_runs / max_depth) and SHALL reject spawns exceeding the limits.
+
+#### Scenario: spawn rejected beyond depth limit
+
+- Given a subagent spawn beyond the configured nesting depth
+- When the guardrail detects the overrun
+- Then the spawn is rejected with an error
+- And no background task is started
+
 ## MODIFIED Requirements
 
-- `agent-runtime`: subagent orchestration SHALL reuse the `agent/workflow/` state machine (agent-runtime scope), not a separate control plane.
+- `agent-runtime`: subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline (JSON serialization + schema_version + transition log style), not a separate control plane, and SHALL NOT couple to the dev-workflow phase vocabulary.

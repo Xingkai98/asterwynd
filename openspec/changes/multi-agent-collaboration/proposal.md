@@ -24,8 +24,10 @@ secondary:
 ## 非目标
 
 - 不引入 gRPC 跨节点调度（单机协作、快照和预算护栏跑通后再决策，第一版不交付）。
-- 不重做 dev-workflow 编排（复用 #67 合入的 `agent/workflow/` 四阶段状态机，本 change 只做 agent-runtime 子 agent 编排）。
+- 不重做 dev-workflow 编排（复用 #67 合入的 `agent/workflow/` 持久化纪律——JSON 序列化 + schema_version + transition 日志风格，不耦合其阶段常量；本 change 只做 agent-runtime 子 agent 编排）。
 - 不重做 `SubAgentManager` 既有接口（在其上扩展）。
+- 不做整树共享 token 预算（per-run 预算 + session 累计展示；树级共享是跨节点调度的前置）。
+- 不做 web 端模式编排可视化（第一版只交付 API/测试/benchmark 数据）。
 
 ## Impact Analysis
 
@@ -33,11 +35,11 @@ secondary:
 |---------|------|
 | `agent/subagent/manager.py` | 状态快照/恢复、预算硬 kill、失败摘要 |
 | `agent/subagent/protocol.py` | 消息总线（多子 agent 间交换摘要，token 预算） |
-| `agent/tools/builtin/subagents.py` | 新工具（resume/budget-query/pattern-spawn） |
-| `agent/loop.py` | 子 agent 事件流（依赖 #78 稳定） |
+| `agent/tools/builtin/subagents.py` | 新工具（ResumeSubagent/RunPattern/PublishBusMessage/ReadBus） |
+| `agent/loop.py` | 预算计数（复用 hook + TraceRecorder token 字段） |
 | `agent/memory/` | 消息摘要生成（依赖 #74 压缩能力） |
-| `agent/config.py` | 预算配置段 |
-| `web/` | 子 agent 状态/预算展示 |
+| `agent/config.py` | 预算配置段 + 并发/深度护栏 |
+| `web/` | 子 agent 状态/预算展示（第一版不做，列为后续） |
 
 ## Reference Implementation Research
 
@@ -48,9 +50,9 @@ secondary:
   - LangGraph/crewAI/OpenAI Swarm 的编排模式与 token 预算控制？
   - 消息总线的 token 预算语义（bounded/可丢弃/摘要化）？
 - findings:
-  - 待 planning 阶段补充（本 proposal 阶段完成 status/reason/questions 登记；实质调研在本 change planning 阶段完成）。
+  - 已完成实质调研（planning 阶段，2026-08-03），完整 findings 与 design impact 见 `design.md` 的 `## Reference Implementation Research`。核心结论：仅 OpenAI Codex 有真正子代理 checkpoint/resume；行业普遍协作式中断而非硬杀；Claude Code 无 per-subagent token 预算且有无递归上限烧钱事故（#68110）；竞标模式在主流框架均无原生原语。
 - design impact:
-  - 待 planning 阶段补充；先决条件：明确复用 `agent/workflow/`（#67）而非重建控制面；区分 dev-workflow 编排与 agent-runtime 子 agent 编排两个 scope。
+  - 已落进 design.md Decisions（见其 Reference Implementation Research 节）：快照对齐社区最小快照提案、硬 kill 对齐 Codex close_agent、新增并发/深度护栏、消息总线三层预算、竞标定位为差异化实现。
 
 ## Dependencies
 
