@@ -75,12 +75,6 @@
 
 ## 未实现队列
 
-### 1. `interview-script`
-
-状态：未实现。
-
-批次：面试材料（docs）。为面试准备的分层讲稿文档：由浅入深 15 个顶层问题（模块全景 / AgentLoop / 上下文 / 工具 / 记忆 / LLM / 多agent / 可观测 / 沙箱 / 错误 / CI / benchmark / 流程 / 记忆可逆性坑），每问一个文件（讲稿 300-500 字 + 代码走读），AGENTS.md 记录建议性维护约束。已立项（2026-08-03），tasks 待实现。
-
 ### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。

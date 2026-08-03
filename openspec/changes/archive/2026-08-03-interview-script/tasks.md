@@ -38,5 +38,5 @@
 ## 7. 维护约束与收尾
 
 - [x] 7.1 AGENTS.md：文档地图加 `interview-script` + 建议性维护约束
-- [ ] 7.2 spec delta 合入 `openspec/specs/interview-script/spec.md`（受保护，需 workflow-events）
-- [ ] 7.3 归档 + 更新 backlog + artifact checker + openspec validate
+- [x] 7.2 spec delta 合入 `openspec/specs/interview-script/spec.md`（受保护，需 workflow-events）
+- [x] 7.3 归档 + 更新 backlog + artifact checker + openspec validate
