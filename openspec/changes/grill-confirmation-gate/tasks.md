@@ -28,11 +28,11 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 OpenSpec spec 同步（change-documentation MODIFIED requirement 加 user-confirmation 场景）
-- [ ] 5.2 全量 pytest + openspec validate + artifact checker
-- [ ] 5.3 benchmark smoke（process change 不强制，标注跳过）
+- [x] 5.1 OpenSpec spec 同步（change-documentation MODIFIED requirement 加 user-confirmation 场景）
+- [x] 5.2 全量 pytest + openspec validate + artifact checker
+- [x] 5.3 benchmark smoke（process change 不强制，标注跳过）
 
 ## 6. 收尾校验（checker 要求项）
 
-- [ ] 6.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）
-- [ ] 6.2 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`
+- [x] 6.1 pre-implementation batch-grill-me 或等价设计审阅任务（进入 building 前）
+- [x] 6.2 当前规格同步：把 spec delta 合并到 `openspec/specs/<capability>/spec.md`
