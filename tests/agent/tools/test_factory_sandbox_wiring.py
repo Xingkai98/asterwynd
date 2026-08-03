@@ -62,6 +62,48 @@ class TestRegistrySandboxWiring:
         assert isinstance(_bash_tool_from(registry).sandbox, ProcessBackend)
 
 
+class TestMemoryConfigPropagation:
+    """Regression (review Round 3): memory_config knobs must reach the
+    PersistentMemory instance that tools are built with, not just parse."""
+
+    def test_default_tools_propagate_memory_knobs(self, monkeypatch):
+        from agent.config import MemoryConfig
+        from agent.tools.factory import get_default_tools
+
+        monkeypatch.setenv("ASTERWYND_PROJECT_ROOT", "/tmp")
+        config = MemoryConfig(
+            archive_after_days=45,
+            recency_halflife_days=20,
+            importance_default=4,
+            summary_tokens=60,
+            decay_interval_seconds=7200,
+            decay_threshold=2.0,
+            recall_top_k=3,
+            dedup_recall_threshold=0.6,
+        )
+        tools = get_default_tools(memory_config=config)
+        save_mem = [t for t in tools if t.name == "SaveMemory"][0]
+        mem = save_mem._memory
+        assert mem._archive_after_days == 45
+        assert mem._recency_halflife_days == 20
+        assert mem._importance_default == 4
+        assert mem._summary_tokens == 60
+        assert mem._decay_interval_seconds == 7200
+        assert mem._decay_threshold == 2.0
+
+    def test_coding_tools_propagate_memory_knobs(self, monkeypatch):
+        from agent.config import MemoryConfig
+        from agent.tools.factory import get_coding_tools
+
+        monkeypatch.setenv("ASTERWYND_PROJECT_ROOT", "/tmp")
+        config = MemoryConfig(decay_threshold=None, decay_interval_seconds=1800)
+        tools = get_coding_tools(memory_config=config)
+        save_mem = [t for t in tools if t.name == "SaveMemory"][0]
+        mem = save_mem._memory
+        assert mem._decay_threshold is None
+        assert mem._decay_interval_seconds == 1800
+
+
 class TestBuildSandboxFromConfig:
     def test_process_backend(self):
         config = AsterwyndConfig(sandbox=SandboxConfig(backend="process"))

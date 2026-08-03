@@ -1,0 +1,1408 @@
+diff --git a/agent/config.py b/agent/config.py
+index bd98502..9ad0cc9 100644
+--- a/agent/config.py
++++ b/agent/config.py
+@@ -198,6 +198,23 @@ class BenchmarkConfig:
+     parallel_explicit: bool = False
+ 
+ 
++@dataclass(frozen=True)
++class MemoryConfig:
++    """Long-term memory knobs (#75).
++
++    ``archive_after_days`` triggers auto-archival of memories not retrieved
++    within the window; ``recency_halflife_days`` is the half-life of the
++    importance × recency decay score; ``dedup_recall_threshold`` is the minimum
++    similarity for write-dedup candidates to reach the LLM judge.
++    """
++    archive_after_days: int = 30
++    recency_halflife_days: int = 30
++    importance_default: int = 3
++    recall_top_k: int = 5
++    summary_tokens: int = 50
++    dedup_recall_threshold: float = 0.5
++
++
+ @dataclass(frozen=True)
+ class SandboxConfig:
+     """Sandbox execution backend configuration.
+@@ -231,6 +248,7 @@ class AsterwyndConfig:
+     skills: SkillsConfig = field(default_factory=SkillsConfig)
+     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
+     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
++    memory: MemoryConfig = field(default_factory=MemoryConfig)
+ 
+     def __post_init__(self) -> None:
+         if not self.modes:
+@@ -360,6 +378,7 @@ def _load_yaml_config(
+         mcp=_parse_mcp_config(raw.get("mcp", {}), path),
+         skills=_parse_skills_config(raw.get("skills", {}), path),
+         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
++        memory=_parse_memory_config(raw.get("memory", {}), path),
+     )
+ 
+ 
+@@ -1163,6 +1182,44 @@ def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:
+     )
+ 
+ 
++def _parse_memory_config(raw: Any, path: Path) -> MemoryConfig:
++    mapping = _expect_mapping(raw, path, "memory")
++    try:
++        threshold = float(mapping.get("dedup_recall_threshold", 0.5))
++    except (TypeError, ValueError) as exc:
++        raise ConfigError(
++            f"{path}: memory.dedup_recall_threshold must be a number"
++        ) from exc
++    return MemoryConfig(
++        archive_after_days=_validate_positive_int(
++            mapping.get("archive_after_days", 30),
++            "memory.archive_after_days",
++            path=path,
++        ),
++        recency_halflife_days=_validate_positive_int(
++            mapping.get("recency_halflife_days", 30),
++            "memory.recency_halflife_days",
++            path=path,
++        ),
++        importance_default=_validate_positive_int(
++            mapping.get("importance_default", 3),
++            "memory.importance_default",
++            path=path,
++        ),
++        recall_top_k=_validate_positive_int(
++            mapping.get("recall_top_k", 5),
++            "memory.recall_top_k",
++            path=path,
++        ),
++        summary_tokens=_validate_positive_int(
++            mapping.get("summary_tokens", 50),
++            "memory.summary_tokens",
++            path=path,
++        ),
++        dedup_recall_threshold=threshold,
++    )
++
++
+ def _expect_mapping(raw: Any, path: Path, field_name: str) -> dict[str, Any]:
+     if raw is None:
+         return {}
+diff --git a/agent/context/sources.py b/agent/context/sources.py
+index 3a858ce..b8c91d7 100644
+--- a/agent/context/sources.py
++++ b/agent/context/sources.py
+@@ -272,13 +272,14 @@ class AsterMdSource:
+ 
+ 
+ class MemoryIndexSource:
+-    """P2: memory index from PersistentMemory (MEMORY.md summary).
++    """P2: ~50-token global memory summary from PersistentMemory.
+ 
+-    Always loaded; content is static per session.
++    Always loaded; content is static per session. Full entries are retrieved
++    on demand via the SearchMemory tool (Decision 4).
+     """
+     name = "MemoryIndex"
+     priority = 2
+-    budget = 2000  # ~2K
++    budget = 2000  # ~2K (summary itself is ~50 tokens)
+     critical = False
+ 
+     def __init__(self, persistent_memory: PersistentMemory | None = None) -> None:
+@@ -287,15 +288,15 @@ class MemoryIndexSource:
+     async def render(self, context: BuildContext) -> str:
+         if self._persistent_memory is None:
+             return ""
+-        memory_index = self._persistent_memory.load_index()
+-        if not memory_index:
++        summary = self._persistent_memory.load_summary()
++        if not summary:
+             return ""
+         return (
+             "## Project Memory\n"
+-            "The following persistent memories from prior sessions are available. "
+-            "Use RecallMemory to retrieve specific entries.\n"
++            "Summary of persistent memories from prior sessions. "
++            "Use SearchMemory to semantically retrieve specific entries.\n"
+             "---\n"
+-            f"{memory_index}\n"
++            f"{summary}\n"
+             "---"
+         )
+ 
+diff --git a/agent/main.py b/agent/main.py
+index 135a5ad..206f949 100644
+--- a/agent/main.py
++++ b/agent/main.py
+@@ -244,7 +244,13 @@ def _build_agent_core(
+         workspace_root=workspace_root,
+         command_denylist=config.tools.command_denylist,
+     )
+-    persistent_memory = PersistentMemory(workspace_policy.workspace_root)
++    persistent_memory = PersistentMemory(
++        workspace_policy.workspace_root,
++        archive_after_days=config.memory.archive_after_days,
++        recency_halflife_days=config.memory.recency_halflife_days,
++        importance_default=config.memory.importance_default,
++        summary_tokens=config.memory.summary_tokens,
++    )
+ 
+     registry = build_default_tool_registry(
+         policy=workspace_policy,
+@@ -261,6 +267,8 @@ def _build_agent_core(
+         persistent_memory=persistent_memory,
+         selection_config=config.tools.selection,
+         quality_config=config.tools.quality,
++        memory_config=config.memory,
++        llm=llm,
+     )
+ 
+     hooks = HookManager([
+diff --git a/agent/memory/dedup.py b/agent/memory/dedup.py
+new file mode 100644
+index 0000000..3c3d9ae
+--- /dev/null
++++ b/agent/memory/dedup.py
+@@ -0,0 +1,155 @@
++"""Write-time dedup and conflict detection for long-term memory (#75).
++
++``MemoryDedupJudge`` classifies an incoming memory against top-k similar
++existing memories into one of: ``new`` / ``supplement`` / ``update`` /
++``conflict``. The three-branch judgment is the interview-carrying feature of
++this change (Decision 2); a None LLM degrades to ``new`` so a missing model
++never blocks writes.
++"""
++from __future__ import annotations
++
++import json
++import logging
++import re
++from dataclasses import dataclass
++from typing import TYPE_CHECKING
++
++from agent.memory.model import MemoryHit
++
++if TYPE_CHECKING:
++    from agent.llm import LLM
++
++logger = logging.getLogger("asterwynd.memory.dedup")
++
++_ACTIONS = frozenset({"new", "supplement", "update", "conflict"})
++
++
++@dataclass
++class Judgment:
++    """Result of the LLM dedup pass.
++
++    ``action``: new / supplement / update / conflict.
++    ``target_name``: existing entry the action applies to (None for new).
++    ``reason``: human-readable explanation recorded in the change log.
++    """
++
++    action: str = "new"
++    target_name: str | None = None
++    reason: str = ""
++
++
++_SYSTEM_PROMPT = (
++    "You are the write-time dedup judge for a coding agent's long-term memory store. "
++    "An incoming memory is being saved. You are given up to 5 semantically similar "
++    "existing memories. Decide the relationship and return ONLY a JSON object with "
++    "keys: action (one of \"new\", \"supplement\", \"update\", \"conflict\"), "
++    "target_name (the name of the existing memory the action applies to, or null), "
++    "reason (one short sentence explaining the decision). "
++    "Rules: \"supplement\" = the incoming adds detail to an existing memory without "
++    "contradicting it; \"update\" = the incoming supersedes/replaces an existing "
++    "memory's content; \"conflict\" = the incoming contradicts an existing memory "
++    "and both should be kept, marked against each other; \"new\" = the incoming is "
++    "not covered by any existing memory. Do not invent a target_name that is not in "
++    "the candidates."
++)
++
++_USER_TEMPLATE = """\
++Incoming memory:
++{incoming}
++
++Similar existing memories:
++{candidates}
++"""
++
++
++class MemoryDedupJudge:
++    """Classify an incoming memory against similar existing memories via LLM.
++
++    ``recall_threshold`` is the minimum similarity for a candidate to reach the
++    LLM; below it the write short-circuits to ``new`` (zero LLM cost). Passing
++    ``model=None`` makes the LLM use its own configured model, so the judge
++    never overrides the provider's model (e.g. Anthropic).
++    """
++
++    def __init__(
++        self,
++        llm: "LLM | None" = None,
++        model: str | None = None,
++        recall_threshold: float = 0.5,
++    ) -> None:
++        self._llm = llm
++        self._model = model
++        self._recall_threshold = recall_threshold
++
++    async def judge(
++        self,
++        incoming_text: str,
++        candidates: list[MemoryHit],
++    ) -> Judgment:
++        """Return a Judgment for the incoming text given candidate memories."""
++        if self._llm is None or not candidates:
++            return Judgment("new", None, "no_llm_or_no_candidates")
++
++        strong = [c for c in candidates if c.score >= self._recall_threshold]
++        if not strong:
++            return Judgment("new", None, "below_recall_threshold")
++
++        candidates_text = _format_candidates(strong)
++        from agent.message import Message
++
++        try:
++            response = await self._llm.chat(
++                messages=[
++                    Message(role="system", content=_SYSTEM_PROMPT),
++                    Message(
++                        role="user",
++                        content=_USER_TEMPLATE.format(
++                            incoming=incoming_text,
++                            candidates=candidates_text,
++                        ),
++                    ),
++                ],
++                tools=None,
++                model=self._model,
++            )
++        except Exception:
++            logger.warning("MemoryDedupJudge: LLM call failed, falling back to new", exc_info=True)
++            return Judgment("new", None, "llm_call_failed")
++
++        return _parse_judgment(response.content or "")
++
++
++def _format_candidates(candidates: list[MemoryHit]) -> str:
++    lines: list[str] = []
++    for index, hit in enumerate(candidates, start=1):
++        entry = hit.entry
++        body_preview = entry.body.replace("\n", " ").strip()[:200]
++        lines.append(
++            f"{index}. name={entry.name} type={entry.type} "
++            f"similarity={hit.score:.2f}\n"
++            f"   description: {entry.description}\n"
++            f"   body: {body_preview}"
++        )
++    return "\n".join(lines)
++
++
++def _parse_judgment(text: str) -> Judgment:
++    """Parse the LLM's JSON answer, tolerating markdown fences and trailing text."""
++    cleaned = text.strip()
++    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
++    if match is None:
++        return Judgment("new", None, "parse_failed")
++    try:
++        data = json.loads(match.group(0))
++    except json.JSONDecodeError:
++        return Judgment("new", None, "parse_failed")
++    if not isinstance(data, dict):
++        return Judgment("new", None, "parse_failed")
++    action = str(data.get("action") or "new").strip().lower()
++    if action not in _ACTIONS:
++        return Judgment("new", None, "invalid_action")
++    target = data.get("target_name")
++    if target is not None:
++        target = str(target)
++    reason = str(data.get("reason") or action)
++    return Judgment(action=action, target_name=target, reason=reason)
+diff --git a/agent/memory/model.py b/agent/memory/model.py
+new file mode 100644
+index 0000000..83633b0
+--- /dev/null
++++ b/agent/memory/model.py
+@@ -0,0 +1,44 @@
++"""Long-term memory data model shared by persistent storage, dedup, and summary.
++
++The entry is backed by one Markdown file with YAML frontmatter; the dataclass
++is the in-memory representation that keeps storage parsing, write dedup, decay
++scoring and summary generation decoupled.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from datetime import datetime
++
++
++@dataclass
++class MemoryEntry:
++    """A single long-term memory entry.
++
++    ``importance`` is a 1..5 score (higher = more important); ``scope`` is the
++    project root path that owns this entry. ``conflict_with`` lists the names of
++    entries that were judged to contradict this one by the write-time dedup pass.
++    """
++
++    name: str
++    description: str
++    body: str
++    type: str = "project"
++    importance: int = 3
++    created_at: datetime | None = None
++    last_accessed_at: datetime | None = None
++    scope: str = ""
++    archived: bool = False
++    conflict_with: list[str] = field(default_factory=list)
++
++    @property
++    def searchable_text(self) -> str:
++        """Text embedded for semantic recall and write dedup."""
++        return f"{self.name}: {self.description}\n{self.body}"
++
++
++@dataclass
++class MemoryHit:
++    """A search result: an entry plus its similarity score."""
++
++    entry: MemoryEntry
++    score: float
+diff --git a/agent/memory/persistent.py b/agent/memory/persistent.py
+index dba375c..7856acc 100644
+--- a/agent/memory/persistent.py
++++ b/agent/memory/persistent.py
+@@ -3,7 +3,13 @@ from __future__ import annotations
+ import hashlib
+ import logging
+ import re
++from datetime import datetime
+ from pathlib import Path
++from typing import Callable
++
++import yaml
++
++from agent.memory.model import MemoryEntry, MemoryHit
+ 
+ logger = logging.getLogger("asterwynd.memory.persistent")
+ 
+@@ -13,6 +19,18 @@ MAX_INDEX_BYTES = 25_000
+ _VALID_NAME_RE = re.compile(r"^[a-z0-9-]+$")
+ _VALID_TYPES = frozenset({"user", "feedback", "project", "reference"})
+ 
++# Long-term memory knobs (#75).  Overridable per-instance via MemoryConfig.
++DEFAULT_IMPORTANCE = 3
++IMPORTANCE_MIN = 1
++IMPORTANCE_MAX = 5
++ARCHIVE_AFTER_DAYS = 30
++RECENCY_HALFLIFE_DAYS = 30
++MAX_SUMMARY_TOKENS = 50
++DEDUP_RECALL_THRESHOLD = 0.5
++# Throttle: run decay archival at most once per window even when every
++# read path triggers it, so a busy session does not scan the store per call.
++DECAY_INTERVAL_SECONDS = 3600
++
+ 
+ def _compute_project_hash(project_root: Path) -> str:
+     resolved = project_root.resolve()
+@@ -38,23 +56,138 @@ def _validate_name(name: str) -> str | None:
+     return None
+ 
+ 
++def _clamp_importance(value: int | None) -> int:
++    if value is None:
++        return DEFAULT_IMPORTANCE
++    try:
++        value = int(value)
++    except (TypeError, ValueError):
++        return DEFAULT_IMPORTANCE
++    return max(IMPORTANCE_MIN, min(IMPORTANCE_MAX, value))
++
++
++def _parse_dt(value) -> datetime | None:
++    if isinstance(value, datetime):
++        return value
++    if isinstance(value, str):
++        try:
++            return datetime.fromisoformat(value)
++        except ValueError:
++            return None
++    return None
++
++
++def _split_frontmatter(content: str) -> tuple[str | None, str]:
++    """Split ``--- frontmatter ---`` from body. Returns (frontmatter, body)."""
++    if not content.startswith("---"):
++        return None, content
++    first_end = content.find("\n", 3)
++    if first_end == -1:
++        return None, content
++    second_start = content.find("\n---", first_end + 1)
++    if second_start == -1:
++        return None, content
++    fm = content[first_end + 1 : second_start].strip()
++    body = content[second_start + 4:].strip()
++    return fm, body
++
++
+ class PersistentMemory:
+     """Cross-session persistent memory, compatible with Claude Code format.
+ 
+-    Maintains four types of memory files under
++    Maintains typed memory files under
+     ~/.asterwynd/projects/<project-hash>/memory/.
+-    MEMORY.md serves as the index; each memory is a separate .md file.
++    MEMORY.md serves as the human-readable index; each memory is a separate
++    .md file. Archived entries move to ``memory_dir/archive/``.
++
++    The store is scoped to the git root (or resolved project root) so different
++    projects never share memory files.
+     """
+ 
+-    def __init__(self, project_root: Path) -> None:
++    def __init__(
++        self,
++        project_root: Path,
++        time_source: Callable[[], datetime] | None = None,
++        *,
++        archive_after_days: int = ARCHIVE_AFTER_DAYS,
++        recency_halflife_days: int = RECENCY_HALFLIFE_DAYS,
++        importance_default: int = DEFAULT_IMPORTANCE,
++        summary_tokens: int = MAX_SUMMARY_TOKENS,
++        decay_interval_seconds: int = DECAY_INTERVAL_SECONDS,
++    ) -> None:
+         git_root = _find_git_root(project_root)
+         root = git_root or project_root.resolve()
+         project_hash = _compute_project_hash(root)
+         self.memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"
+         self._index_path = self.memory_dir / "MEMORY.md"
++        self.scope = str(root.resolve())
++        self._time_source = time_source or datetime.now
++        self._archive_after_days = archive_after_days
++        self._recency_halflife_days = recency_halflife_days
++        self._importance_default = importance_default
++        self._summary_tokens = summary_tokens
++        self._decay_interval_seconds = decay_interval_seconds
++        self._last_decay_run: datetime | None = None
+ 
+     # ------------------------------------------------------------------
+-    # Called by AgentLoop: load index
++    # Time and decay
++    # ------------------------------------------------------------------
++
++    def _now(self) -> datetime:
++        return self._time_source()
++
++    def _clamp_importance(self, value: int | None) -> int:
++        """Clamp importance to 1..5 using the instance default when None."""
++        if value is None:
++            return self._importance_default
++        try:
++            value = int(value)
++        except (TypeError, ValueError):
++            return self._importance_default
++        return max(IMPORTANCE_MIN, min(IMPORTANCE_MAX, value))
++
++    def decay_score(self, entry: MemoryEntry, now: datetime | None = None) -> float:
++        """Importance × recency joint score (Decision 3).
++
++        recency = 0.5 ^ (days_since_last_access / recency_halflife_days).
++        """
++        now = now or self._now()
++        last = entry.last_accessed_at or entry.created_at or now
++        days = max(0, (now - last).days)
++        recency = 0.5 ** (days / self._recency_halflife_days)
++        return entry.importance * recency
++
++    def run_decay(self, now: datetime | None = None) -> int:
++        """Archive active memories not retrieved for more than archive_after_days.
++
++        Returns the number of archived entries.
++        """
++        now = now or self._now()
++        archived = 0
++        for entry in self.load_entries():
++            last = entry.last_accessed_at or entry.created_at or now
++            if (now - last).days > self._archive_after_days:
++                self.archive(entry.name, reason="not retrieved within archive_after_days")
++                archived += 1
++        return archived
++
++    def _run_decay_if_due(self, now: datetime | None = None) -> int:
++        """Throttled decay trigger, called from every read entry point.
++
++        Runs archival at most once per ``decay_interval_seconds`` so cold
++        memories age out in production without scanning the store on every
++        recall/search.
++        """
++        now = now or self._now()
++        if self._last_decay_run is not None:
++            elapsed = (now - self._last_decay_run).total_seconds()
++            if elapsed < self._decay_interval_seconds:
++                return 0
++        self._last_decay_run = now
++        return self.run_decay(now)
++
++    # ------------------------------------------------------------------
++    # Called by AgentLoop: load index / summary
+     # ------------------------------------------------------------------
+ 
+     def load_index(self) -> str | None:
+@@ -63,6 +196,7 @@ class PersistentMemory:
+         Returns the raw index content for system message injection.
+         Returns None if the index does not exist or is empty.
+         """
++        self._run_decay_if_due()
+         if not self._index_path.exists():
+             return None
+         try:
+@@ -92,11 +226,149 @@ class PersistentMemory:
+             )
+         return content
+ 
++    def load_summary(self, max_tokens: int | None = None) -> str | None:
++        """Generate a ~max_tokens global summary of active memories.
++
++        Entries are ranked by importance (then recency) so the summary surfaces
++        the most relevant facts first, and truncated to the token budget.
++        Returns None when there are no active memories.
++        """
++        from agent.memory.summary import build_summary
++
++        self._run_decay_if_due()
++        if max_tokens is None:
++            max_tokens = self._summary_tokens
++        return build_summary(self.load_entries(), max_tokens=max_tokens)
++
++    # ------------------------------------------------------------------
++    # Entry loading
++    # ------------------------------------------------------------------
++
++    def _entry_path(self, name: str, archived: bool = False) -> Path:
++        if archived:
++            return self.memory_dir / "archive" / f"{name}.md"
++        return self.memory_dir / f"{name}.md"
++
++    def _load_entry_by_name(
++        self, name: str, include_archived: bool = False
++    ) -> MemoryEntry | None:
++        active = self._parse_file(self._entry_path(name))
++        if active is not None:
++            return active
++        if include_archived:
++            return self._parse_file(self._entry_path(name, archived=True))
++        return None
++
++    def load_entries(self, include_archived: bool = False) -> list[MemoryEntry]:
++        """Read all entries from the active (and optionally archive) dirs."""
++        if not self.memory_dir.exists():
++            return []
++        entries: list[MemoryEntry] = []
++        for path in sorted(self.memory_dir.glob("*.md")):
++            if path.name == "MEMORY.md":
++                continue
++            entry = self._parse_file(path)
++            if entry is not None:
++                entries.append(entry)
++        if include_archived:
++            archive_dir = self.memory_dir / "archive"
++            if archive_dir.exists():
++                for path in sorted(archive_dir.glob("*.md")):
++                    entry = self._parse_file(path)
++                    if entry is not None:
++                        entries.append(entry)
++        return entries
++
++    def _parse_file(self, filepath: Path) -> MemoryEntry | None:
++        if not filepath.exists():
++            return None
++        try:
++            raw = filepath.read_text(encoding="utf-8")
++        except OSError:
++            logger.warning("Failed to read memory file %s", filepath, exc_info=True)
++            return None
++        fm, body = _split_frontmatter(raw)
++        if fm is None:
++            return None
++        try:
++            data = yaml.safe_load(fm) or {}
++        except yaml.YAMLError:
++            data = {}
++        if not isinstance(data, dict):
++            return None
++        metadata = data.get("metadata") or {}
++        if not isinstance(metadata, dict):
++            metadata = {}
++        name = data.get("name") or filepath.stem
++        try:
++            mtime = datetime.fromtimestamp(filepath.stat().st_mtime)
++        except OSError:
++            mtime = datetime.min
++        created_at = _parse_dt(metadata.get("created_at")) or mtime
++        last_accessed_at = _parse_dt(metadata.get("last_accessed_at")) or created_at
++        conflict_with = metadata.get("conflict_with") or []
++        if isinstance(conflict_with, str):
++            conflict_with = [conflict_with]
++        try:
++            importance = int(metadata.get("importance") or DEFAULT_IMPORTANCE)
++        except (TypeError, ValueError):
++            importance = DEFAULT_IMPORTANCE
++        return MemoryEntry(
++            name=str(name),
++            description=str(data.get("description") or ""),
++            body=body,
++            type=str(metadata.get("type") or "project"),
++            importance=self._clamp_importance(importance),
++            created_at=created_at,
++            last_accessed_at=last_accessed_at,
++            scope=str(metadata.get("scope") or self.scope),
++            archived=bool(metadata.get("archived") or filepath.parent.name == "archive"),
++            conflict_with=list(conflict_with),
++        )
++
++    def _write_entry(self, entry: MemoryEntry) -> None:
++        filepath = self._entry_path(entry.name, archived=entry.archived)
++        filepath.parent.mkdir(parents=True, exist_ok=True)
++        frontmatter = {
++            "name": entry.name,
++            "description": entry.description,
++            "metadata": {
++                "type": entry.type,
++                "importance": entry.importance,
++                "created_at": entry.created_at.isoformat() if entry.created_at else None,
++                "last_accessed_at": (
++                    entry.last_accessed_at.isoformat() if entry.last_accessed_at else None
++                ),
++                "scope": entry.scope,
++                "archived": entry.archived,
++                "conflict_with": list(entry.conflict_with),
++            },
++        }
++        text = (
++            "---\n"
++            + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
++            + "---\n\n"
++            + entry.body.strip()
++            + "\n"
++        )
++        try:
++            filepath.write_text(text, encoding="utf-8")
++        except OSError as exc:
++            logger.error("Failed to write memory file %s: %s", filepath, exc)
++            raise
++
+     # ------------------------------------------------------------------
+     # Called by SaveMemory tool
+     # ------------------------------------------------------------------
+ 
+-    def save(self, type: str, name: str, description: str, body: str) -> str:
++    def save(
++        self,
++        type: str,
++        name: str,
++        description: str,
++        body: str,
++        importance: int | None = None,
++    ) -> str:
+         """Create or update a memory entry. Returns a confirmation message."""
+         if type not in _VALID_TYPES:
+             return f"Error: Invalid memory type '{type}'. Must be one of: {', '.join(sorted(_VALID_TYPES))}."
+@@ -105,69 +377,262 @@ class PersistentMemory:
+             return f"Error: {name_error}"
+ 
+         self.memory_dir.mkdir(parents=True, exist_ok=True)
+-        filename = f"{name}.md"
+-        filepath = self.memory_dir / filename
+-
+-        frontmatter = (
+-            f"---\n"
+-            f"name: {name}\n"
+-            f"description: {description}\n"
+-            f"metadata:\n"
+-            f"  type: {type}\n"
+-            f"---\n\n"
+-            f"{body.strip()}\n"
+-        )
+-
+-        existed = filepath.exists()
+-        try:
+-            filepath.write_text(frontmatter, encoding="utf-8")
+-        except OSError as exc:
+-            logger.error("Failed to write memory file %s: %s", filepath, exc)
+-            return f"Error: Failed to write memory file '{filename}': {exc}"
++        now = self._now()
++        existing = self._load_entry_by_name(name)
++
++        if existing is not None:
++            existing.type = type
++            existing.description = description
++            existing.body = body.strip()
++            if importance is not None:
++                existing.importance = self._clamp_importance(importance)
++            self._write_entry(existing)
++            action = "updated"
++        else:
++            entry = MemoryEntry(
++                name=name,
++                description=description,
++                body=body.strip(),
++                type=type,
++                importance=self._clamp_importance(importance),
++                created_at=now,
++                last_accessed_at=now,
++                scope=self.scope,
++            )
++            self._write_entry(entry)
++            action = "saved"
+ 
+-        self._update_index(name, description, existed)
+-        action = "updated" if existed else "saved"
++        self._update_index(name, description, action == "updated")
+         return f"Memory '{name}' {action}."
+ 
++    def apply_judgment(
++        self,
++        type: str,
++        name: str,
++        description: str,
++        body: str,
++        judgment: object,
++        importance: int | None = None,
++    ) -> str:
++        """Apply a write-time dedup judgment (supplement/update/conflict/new).
++
++        ``judgment`` exposes ``action`` and ``target_name``; see
++        ``agent.memory.dedup.Judgment``. Falls back to a direct save for
++        ``new``, unknown actions, or when the target vanished concurrently.
++        """
++        action = getattr(judgment, "action", "new")
++        target = getattr(judgment, "target_name", None)
++        reason = getattr(judgment, "reason", "") or action
++
++        # Validate the LLM-provided target before it reaches path construction.
++        if target is not None and _validate_name(str(target)) is not None:
++            return self.save(type, name, description, body, importance=importance)
++
++        if action == "supplement" and target:
++            entry = self._load_entry_by_name(target)
++            if entry is None or entry.archived:
++                return self.save(type, name, description, body, importance=importance)
++            entry.body = f"{entry.body}\n\n{body.strip()}"
++            if importance is not None:
++                entry.importance = self._clamp_importance(importance)
++            self._write_entry(entry)
++            self._update_index(target, entry.description, existed=True)
++            self._append_changelog("supplement", target, reason)
++            return f"Memory '{target}' supplemented (dedup)."
++
++        if action == "update" and target:
++            entry = self._load_entry_by_name(target)
++            if entry is None or entry.archived:
++                return self.save(type, name, description, body, importance=importance)
++            entry.description = description
++            entry.body = body.strip()
++            if importance is not None:
++                entry.importance = self._clamp_importance(importance)
++            self._write_entry(entry)
++            self._update_index(target, description, existed=True)
++            self._append_changelog("update", target, reason)
++            return f"Memory '{target}' updated (dedup)."
++
++        if action == "conflict" and target:
++            result = self.save(type, name, description, body, importance=importance)
++            other = self._load_entry_by_name(target)
++            incoming = self._load_entry_by_name(name)
++            if other is not None and incoming is not None:
++                if name not in other.conflict_with:
++                    other.conflict_with.append(name)
++                    self._write_entry(other)
++                if target not in incoming.conflict_with:
++                    incoming.conflict_with.append(target)
++                    self._write_entry(incoming)
++            self._append_changelog("conflict", f"{name}<->{target}", reason)
++            return f"Memory '{name}' saved with conflict marked vs '{target}'."
++
++        return self.save(type, name, description, body, importance=importance)
++
+     # ------------------------------------------------------------------
+-    # Called by RecallMemory tool
++    # Called by RecallMemory / SearchMemory tools
+     # ------------------------------------------------------------------
+ 
+-    def recall(self, type: str | None = None) -> str:
+-        """Read full content of all memories matching the given type.
++    def recall(
++        self,
++        type: str | None = None,
++        scope: str | None = None,
++        include_archived: bool = False,
++    ) -> str:
++        """Read full content of active memories, optionally filtered by type/scope.
+ 
+         Returns formatted markdown. When type is None, returns all memories.
++        Scope is validated: a non-matching scope returns an empty result.
+         """
+-        entries = self._parse_index()
++        if scope is not None and scope != self.scope:
++            return "No memories found."
++        self._run_decay_if_due()
++        entries = self.load_entries(include_archived=include_archived)
+         if not entries:
+             return "No memories found."
++        if type is not None:
++            entries = [e for e in entries if e.type == type]
++        if not entries:
++            type_hint = f" of type '{type}'" if type else ""
++            return f"No memories{type_hint} found."
+ 
+         parts: list[str] = []
+-        for entry_filename in entries:
+-            filepath = self.memory_dir / entry_filename
+-            if not filepath.exists():
+-                logger.warning("Memory file referenced in index not found: %s", entry_filename)
+-                continue
+-            try:
+-                content = filepath.read_text(encoding="utf-8")
+-            except OSError:
+-                logger.warning("Failed to read memory file: %s", entry_filename, exc_info=True)
+-                continue
++        for entry in entries:
++            self._touch(entry.name)
++            parts.append(f"### {entry.name} ({entry.type})\n\n{entry.body}")
++        return "\n\n---\n\n".join(parts)
+ 
+-            entry_type = self._extract_type(content)
+-            entry_name = self._extract_name(content) or entry_filename.removesuffix(".md")
++    def search(
++        self,
++        query: str,
++        top_k: int = 5,
++        type: str | None = None,
++        scope: str | None = None,
++        include_archived: bool = False,
++        embedder=None,
++    ) -> list[MemoryHit]:
++        """Semantic top-k recall over active memories (Decision 2 / 4).
++
++        Uses the pluggable ``EmbeddingProvider`` (default NGramEmbedding from
++        #77). Scope is validated; a non-matching scope returns no hits. Returned
++        entries are touched (last_accessed_at) so decay reflects retrieval.
++        """
++        if scope is not None and scope != self.scope:
++            return []
++        from agent.embedding import NGramEmbedding
+ 
+-            if type is not None and entry_type != type:
+-                continue
++        self._run_decay_if_due()
++        embedder = embedder or NGramEmbedding()
++        entries = self.load_entries(include_archived=include_archived)
++        if type is not None:
++            entries = [e for e in entries if e.type == type]
++        if not entries:
++            return []
+ 
+-            body = self._extract_body(content)
+-            parts.append(f"### {entry_name} ({entry_type})\n\n{body}")
++        query_vec = embedder.embed(query)
++        scored: list[MemoryHit] = []
++        for entry in entries:
++            sim = embedder.cosine(query_vec, embedder.embed(entry.searchable_text))
++            scored.append(MemoryHit(entry=entry, score=sim))
++        scored.sort(key=lambda h: h.score, reverse=True)
++
++        hits = scored[: max(0, top_k)]
++        for hit in hits:
++            self._touch(hit.entry.name)
++        return hits
++
++    def recall_similar(
++        self,
++        query: str,
++        top_k: int = 5,
++        embedder=None,
++    ) -> list[MemoryHit]:
++        """Write-dedup candidate recall: top-k similar active memories."""
++        return self.search(query, top_k=top_k, embedder=embedder)
+ 
+-        if not parts:
+-            type_hint = f" of type '{type}'" if type else ""
+-            return f"No memories{type_hint} found."
++    # ------------------------------------------------------------------
++    # Archival
++    # ------------------------------------------------------------------
+ 
+-        return "\n\n---\n\n".join(parts)
++    def archive(self, name: str, reason: str | None = None) -> str:
++        """Move an active memory into the archive directory."""
++        entry = self._load_entry_by_name(name)
++        if entry is None:
++            return f"Error: memory '{name}' not found."
++        if entry.archived:
++            return f"Memory '{name}' already archived."
++        archive_dir = self.memory_dir / "archive"
++        archive_dir.mkdir(parents=True, exist_ok=True)
++        src = self._entry_path(name)
++        dst = archive_dir / f"{name}.md"
++        entry.archived = True
++        self._write_entry_to(entry, dst)
++        try:
++            src.unlink()
++        except OSError:
++            pass
++        self._remove_from_index(name)
++        self._append_changelog("archive", name, reason or "archived")
++        return f"Memory '{name}' archived."
++
++    def restore(self, name: str) -> str:
++        """Move an archived memory back into the active store."""
++        entry = self._load_entry_by_name(name, include_archived=True)
++        if entry is None or not entry.archived:
++            return f"Error: memory '{name}' not found in archive."
++        src = self._entry_path(name, archived=True)
++        dst = self._entry_path(name)
++        entry.archived = False
++        self._write_entry_to(entry, dst)
++        try:
++            src.unlink()
++        except OSError:
++            pass
++        self._update_index(name, entry.description, existed=False)
++        self._append_changelog("restore", name, "restored from archive")
++        return f"Memory '{name}' restored."
++
++    def _write_entry_to(self, entry: MemoryEntry, filepath: Path) -> None:
++        filepath.parent.mkdir(parents=True, exist_ok=True)
++        frontmatter = {
++            "name": entry.name,
++            "description": entry.description,
++            "metadata": {
++                "type": entry.type,
++                "importance": entry.importance,
++                "created_at": entry.created_at.isoformat() if entry.created_at else None,
++                "last_accessed_at": (
++                    entry.last_accessed_at.isoformat() if entry.last_accessed_at else None
++                ),
++                "scope": entry.scope,
++                "archived": entry.archived,
++                "conflict_with": list(entry.conflict_with),
++            },
++        }
++        text = (
++            "---\n"
++            + yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True)
++            + "---\n\n"
++            + entry.body.strip()
++            + "\n"
++        )
++        filepath.write_text(text, encoding="utf-8")
++
++    def _touch(self, name: str) -> None:
++        """Update last_accessed_at on retrieval so decay reflects real access."""
++        entry = self._load_entry_by_name(name)
++        if entry is None or entry.archived:
++            return
++        entry.last_accessed_at = self._now()
++        self._write_entry(entry)
++
++    def _append_changelog(self, action: str, name: str, reason: str) -> None:
++        self.memory_dir.mkdir(parents=True, exist_ok=True)
++        changelog = self.memory_dir / "changelog.md"
++        ts = self._now().isoformat(timespec="seconds")
++        line = f"- [{ts}] {action} {name} → {reason}\n"
++        with changelog.open("a", encoding="utf-8") as fh:
++            fh.write(line)
+ 
+     # ------------------------------------------------------------------
+     # Internal helpers
+@@ -241,3 +706,14 @@ class PersistentMemory:
+             lines.append(new_line)
+ 
+         self._index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
++
++    def _remove_from_index(self, name: str) -> None:
++        """Remove an entry's line from MEMORY.md index."""
++        if not self._index_path.exists():
++            return
++        filename = f"{name}.md"
++        lines = self._index_path.read_text(encoding="utf-8").splitlines()
++        kept = [line for line in lines if f"]({filename})" not in line]
++        if len(kept) == len(lines):
++            return
++        self._index_path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+diff --git a/agent/memory/summary.py b/agent/memory/summary.py
+new file mode 100644
+index 0000000..ddf273b
+--- /dev/null
++++ b/agent/memory/summary.py
+@@ -0,0 +1,55 @@
++"""Global memory summary generation (#75, Decision 4).
++
++The summary is the ~50-token always-injected context for long-term memory; full
++entries are retrieved on demand via the SearchMemory tool. Generation is
++deterministic (importance-ranked name: description lines) so tests are stable
++and no extra LLM call is spent per save.
++"""
++from __future__ import annotations
++
++from datetime import datetime
++
++from agent.memory.model import MemoryEntry
++
++
++def build_summary(entries: list[MemoryEntry], max_tokens: int = 50) -> str | None:
++    """Build a deterministic ~max_tokens global summary of *entries*.
++
++    Returns None when there are no entries. The summary is importance-ranked
++    (tie-broken by last access, most recent first) and truncated to the token
++    budget with an ellipsis hint to use SearchMemory.
++    """
++    if not entries:
++        return None
++    ranked = sorted(
++        entries,
++        key=lambda e: (-e.importance, e.last_accessed_at or e.created_at or datetime.min),
++    )
++    lines = [f"- {e.name}: {e.description}" for e in ranked]
++    summary = "\n".join(lines)
++    if _estimate_tokens(summary) <= max_tokens:
++        return summary
++
++    kept: list[str] = []
++    total = 0
++    for line in lines:
++        line_tokens = _estimate_tokens(line)
++        if total + line_tokens > max_tokens:
++            break
++        kept.append(line)
++        total += line_tokens
++    if kept:
++        return "\n".join(kept) + "\n- ... (use SearchMemory for details)"
++    # Even the first line exceeds the budget — hard-truncate it.
++    first = lines[0]
++    return first[: max_tokens * 4]
++
++
++def _estimate_tokens(text: str) -> int:
++    try:
++        import tiktoken
++
++        enc = tiktoken.get_encoding("cl100k_base")
++        return len(enc.encode(text))
++    except Exception:
++        return max(1, len(text) // 4)
+diff --git a/agent/tools/builtin/memory.py b/agent/tools/builtin/memory.py
+index 0c5b5f9..9a7f0bd 100644
+--- a/agent/tools/builtin/memory.py
++++ b/agent/tools/builtin/memory.py
+@@ -1,11 +1,15 @@
+ from __future__ import annotations
+ 
+ from pathlib import Path
++from typing import TYPE_CHECKING
+ 
+ from agent.memory.persistent import PersistentMemory
+ from agent.tool_permissions import AGENT_STATE_LOW_PERMISSION, AGENT_STATE_PERMISSION
+ from agent.tools.base import Tool, tool_parameters
+ 
++if TYPE_CHECKING:
++    from agent.memory.dedup import MemoryDedupJudge
++
+ 
+ @tool_parameters(
+     name="SaveMemory",
+@@ -14,7 +18,9 @@ from agent.tools.base import Tool, tool_parameters
+         "Four types: user (user role/preferences/knowledge), "
+         "feedback (user corrections and confirmed approaches), "
+         "project (non-code project information like deadlines, constraints), "
+-        "reference (pointers to external resources like bug trackers, dashboards)."
++        "reference (pointers to external resources like bug trackers, dashboards). "
++        "When a dedup judge is available, semantically similar existing memories "
++        "are recalled and the write is classified as supplement/update/conflict/new."
+     ),
+     parameters={
+         "type": "object",
+@@ -36,6 +42,12 @@ from agent.tools.base import Tool, tool_parameters
+                 "type": "string",
+                 "description": "Memory body in Markdown (frontmatter is auto-generated)",
+             },
++            "importance": {
++                "type": "integer",
++                "minimum": 1,
++                "maximum": 5,
++                "description": "Optional importance score 1-5 (default 3); drives decay",
++            },
+         },
+         "required": ["type", "name", "description", "body"],
+     },
+@@ -44,16 +56,50 @@ class SaveMemoryTool(Tool):
+     read_only = False
+     permission = AGENT_STATE_PERMISSION
+ 
+-    def __init__(self, memory: PersistentMemory | None = None) -> None:
++    def __init__(
++        self,
++        memory: PersistentMemory | None = None,
++        judge: "MemoryDedupJudge | None" = None,
++        recall_top_k: int = 5,
++    ) -> None:
+         self._memory = memory
++        self._judge = judge
++        self._recall_top_k = recall_top_k
+ 
+     def _get_memory(self) -> PersistentMemory:
+         if self._memory is None:
+             return PersistentMemory(Path.cwd())
+         return self._memory
+ 
+-    async def execute(self, type: str, name: str, description: str, body: str, **kwargs) -> str:
+-        return self._get_memory().save(type=type, name=name, description=description, body=body)
++    async def execute(
++        self,
++        type: str,
++        name: str,
++        description: str,
++        body: str,
++        importance: int | None = None,
++        **kwargs,
++    ) -> str:
++        memory = self._get_memory()
++        if self._judge is not None:
++            incoming = f"{name}: {description}\n{body}"
++            candidates = memory.recall_similar(incoming, top_k=self._recall_top_k)
++            judgment = await self._judge.judge(incoming, candidates)
++            return memory.apply_judgment(
++                type=type,
++                name=name,
++                description=description,
++                body=body,
++                importance=importance,
++                judgment=judgment,
++            )
++        return memory.save(
++            type=type,
++            name=name,
++            description=description,
++            body=body,
++            importance=importance,
++        )
+ 
+ 
+ @tool_parameters(
+@@ -88,3 +134,71 @@ class RecallMemoryTool(Tool):
+ 
+     async def execute(self, type: str | None = None, **kwargs) -> str:
+         return self._get_memory().recall(type=type if type else None)
++
++
++@tool_parameters(
++    name="SearchMemory",
++    description=(
++        "Semantically search persistent long-term memories by meaning, not just "
++        "keywords. Returns top-k matching entries with similarity scores. "
++        "Use when the global memory summary does not contain the detail you need."
++    ),
++    parameters={
++        "type": "object",
++        "properties": {
++            "query": {
++                "type": "string",
++                "description": "Free-text semantic query describing the memory you need",
++            },
++            "top_k": {
++                "type": "integer",
++                "minimum": 1,
++                "maximum": 20,
++                "description": "Number of results to return (default 5)",
++            },
++            "type": {
++                "type": "string",
++                "enum": ["user", "feedback", "project", "reference"],
++                "description": "Optional filter by memory type",
++            },
++            "scope": {
++                "type": "string",
++                "description": "Optional project scope (git root path). A non-matching "
++                "scope is rejected so cross-project memories never leak.",
++            },
++        },
++        "required": ["query"],
++    },
++)
++class SearchMemoryTool(Tool):
++    read_only = True
++    permission = AGENT_STATE_LOW_PERMISSION
++
++    def __init__(self, memory: PersistentMemory | None = None) -> None:
++        self._memory = memory
++
++    def _get_memory(self) -> PersistentMemory:
++        if self._memory is None:
++            return PersistentMemory(Path.cwd())
++        return self._memory
++
++    async def execute(
++        self,
++        query: str,
++        top_k: int = 5,
++        type: str | None = None,
++        scope: str | None = None,
++        **kwargs,
++    ) -> str:
++        memory = self._get_memory()
++        hits = memory.search(query=query, top_k=top_k, type=type, scope=scope)
++        if not hits:
++            return "No memories found."
++        parts: list[str] = []
++        for hit in hits:
++            entry = hit.entry
++            parts.append(
++                f"### {entry.name} ({entry.type}) [similarity={hit.score:.2f}]\n"
++                f"{entry.body}"
++            )
++        return "\n\n---\n\n".join(parts)
+diff --git a/agent/tools/factory.py b/agent/tools/factory.py
+index 262e7c1..40b1812 100644
+--- a/agent/tools/factory.py
++++ b/agent/tools/factory.py
+@@ -3,7 +3,7 @@ from __future__ import annotations
+ import logging
+ 
+ from agent.code_intelligence.config import CodeIntelligenceConfig
+-from agent.config import BrowserConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
++from agent.config import BrowserConfig, MemoryConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
+ from agent.lsp.client import LspClientManager
+ from agent.run_config import ModePolicy
+ from agent.mcp.manager import McpManager
+@@ -28,7 +28,7 @@ from agent.tools.builtin.read import ReadTool
+ from agent.tools.builtin.web_fetch import WebFetchTool
+ from agent.tools.builtin.web_search import WebSearchTool
+ from agent.memory.persistent import PersistentMemory
+-from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool
++from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool, SearchMemoryTool
+ from agent.tools.builtin.write import WriteTool
+ from agent.tools.builtin.browser_tools import BROWSER_TOOL_CLASSES
+ from agent.tools.registry import ToolRegistry
+@@ -64,6 +64,7 @@ KNOWN_BUILTIN_TOOL_NAMES = {
+     "TodoWrite",
+     "SaveMemory",
+     "RecallMemory",
++    "SearchMemory",
+     "ActivateSkill",
+     "BrowserNavigate",
+     "BrowserGetContent",
+@@ -121,6 +122,19 @@ def _wire_governance(
+         registry.set_quality(store)
+ 
+ 
++def _build_memory_dedup_judge(llm, memory_config=None):
++    """Build the write-time memory dedup judge, or None when no LLM is wired."""
++    if llm is None:
++        return None
++    from agent.memory.dedup import MemoryDedupJudge
++
++    config = memory_config or MemoryConfig()
++    return MemoryDedupJudge(
++        llm=llm,
++        recall_threshold=config.dedup_recall_threshold,
++    )
++
++
+ def build_default_tool_registry(
+     *,
+     policy: WorkspacePolicy | None = None,
+@@ -134,6 +148,8 @@ def build_default_tool_registry(
+     persistent_memory: PersistentMemory | None = None,
+     selection_config: ToolSelectionConfig | None = None,
+     quality_config: QualityConfig | None = None,
++    memory_config: MemoryConfig | None = None,
++    llm=None,
+ ) -> ToolRegistry:
+     registry = ToolRegistry(mode_policy=mode_policy)
+     default_tools = tools or get_default_tools(
+@@ -143,6 +159,8 @@ def build_default_tool_registry(
+         web_search_config=web_search_config,
+         browser_config=browser_config,
+         persistent_memory=persistent_memory,
++        memory_config=memory_config,
++        llm=llm,
+     )
+     for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
+         registry.register(tool)
+@@ -170,6 +188,8 @@ def build_coding_tool_registry(
+     browser_config: BrowserConfig | None = None,
+     mcp_manager: McpManager | None = None,
+     persistent_memory: PersistentMemory | None = None,
++    memory_config: MemoryConfig | None = None,
++    llm=None,
+ ) -> ToolRegistry:
+     registry = ToolRegistry(mode_policy=mode_policy)
+     for tool in [
+@@ -179,6 +199,8 @@ def build_coding_tool_registry(
+         code_intelligence_config=code_intelligence_config,
+         browser_config=browser_config,
+         persistent_memory=persistent_memory,
++        memory_config=memory_config,
++        llm=llm,
+         ),
+         *_build_mcp_tools(mcp_manager),
+     ]:
+@@ -222,10 +244,13 @@ def get_default_tools(
+     web_search_config: WebSearchConfig | None = None,
+     browser_config: BrowserConfig | None = None,
+     persistent_memory: PersistentMemory | None = None,
++    memory_config: MemoryConfig | None = None,
++    llm=None,
+ ) -> list[Tool]:
+     policy = policy or WorkspacePolicy()
+     pmem = persistent_memory or PersistentMemory(policy.workspace_root)
+     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
++    judge = _build_memory_dedup_judge(llm, memory_config)
+     tools: list[Tool] = [
+         ReadTool(policy=policy),
+         WriteTool(policy=policy, lsp_manager=lsp_manager),
+@@ -246,8 +271,13 @@ def get_default_tools(
+             code_intelligence_config=code_intelligence_config,
+         ),
+         *_build_lsp_tools(policy, lsp_manager),
+-        SaveMemoryTool(memory=pmem),
++        SaveMemoryTool(
++            memory=pmem,
++            judge=judge,
++            recall_top_k=(memory_config or MemoryConfig()).recall_top_k,
++        ),
+         RecallMemoryTool(memory=pmem),
++        SearchMemoryTool(memory=pmem),
+     ]
+ 
+     # 浏览器工具：仅在 BrowserConfig 启用时注册
+@@ -299,10 +329,13 @@ def get_coding_tools(
+     code_intelligence_config: CodeIntelligenceConfig | None = None,
+     browser_config: BrowserConfig | None = None,
+     persistent_memory: PersistentMemory | None = None,
++    memory_config: MemoryConfig | None = None,
++    llm=None,
+ ) -> list[Tool]:
+     policy = policy or WorkspacePolicy()
+     pmem = persistent_memory or PersistentMemory(policy.workspace_root)
+     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
++    judge = _build_memory_dedup_judge(llm, memory_config)
+     tools: list[Tool] = [
+         ReadTool(policy=policy),
+         WriteTool(policy=policy, lsp_manager=lsp_manager),
+@@ -323,8 +356,13 @@ def get_coding_tools(
+         GrepTool(policy=policy),
+         BashTool(policy=policy),
+         *_build_lsp_tools(policy, lsp_manager),
+-        SaveMemoryTool(memory=pmem),
++        SaveMemoryTool(
++            memory=pmem,
++            judge=judge,
++            recall_top_k=(memory_config or MemoryConfig()).recall_top_k,
++        ),
+         RecallMemoryTool(memory=pmem),
++        SearchMemoryTool(memory=pmem),
+     ]
+ 
+     # 浏览器工具：仅在 BrowserConfig 启用时注册
