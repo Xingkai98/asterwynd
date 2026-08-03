@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from agent.mcp.manager import McpManager
-from agent.mcp.types import McpToolMetadata
-from agent.tools.base import Tool
+from agent.mcp.types import McpCallError, McpToolMetadata
+from agent.tools.base import Tool, ToolResult
 
 
 class McpTool(Tool):
@@ -19,5 +19,8 @@ class McpTool(Tool):
         self.tool_name = metadata.tool_name
         self._manager = manager
 
-    async def execute(self, **kwargs: Any) -> str:
-        return await self._manager.call_tool(self.server_name, self.tool_name, kwargs)
+    async def execute(self, **kwargs: Any) -> str | ToolResult:
+        try:
+            return await self._manager.call_tool(self.server_name, self.tool_name, kwargs)
+        except McpCallError as exc:
+            return ToolResult(text=exc.text, error_type=exc.error_type)

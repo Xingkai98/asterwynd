@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from agent.tools.base import Tool, ToolCall
+from agent.tools.base import Tool, ToolCall, ToolResult
 from agent.run_config import ModePolicy
 from agent.tool_permissions import PermissionDecisionType
 from agent.workspace_policy import WorkspacePolicy
@@ -134,21 +134,30 @@ class ToolRegistry:
     def get_sandbox(self, name: str) -> bool:
         return self._tools[name].dangerous
 
-    async def execute(self, tool_call: ToolCall, *, approval_granted: bool = False) -> str | list["ContentBlock"]:
+    async def execute(self, tool_call: ToolCall, *, approval_granted: bool = False) -> "ToolResult":
         tool = self._tools[tool_call.name]
         decision = self.mode_policy.decide_tool(tool)
         if decision.type is PermissionDecisionType.DENY:
             mode = self.mode_policy.mode.value
-            return (
-                f"[Permission denied: tool {tool_call.name} is not allowed "
-                f"in {mode} mode: {decision.reason}]"
+            return ToolResult(
+                text=(
+                    f"[Permission denied: tool {tool_call.name} is not allowed "
+                    f"in {mode} mode: {decision.reason}]"
+                ),
+                error_type="permission_denied",
             )
         if decision.type is PermissionDecisionType.REQUIRE_APPROVAL and not approval_granted:
-            return (
-                f"[Approval required: tool {tool_call.name} requires approval "
-                f"in {self.mode_policy.mode.value} mode]"
+            return ToolResult(
+                text=(
+                    f"[Approval required: tool {tool_call.name} requires approval "
+                    f"in {self.mode_policy.mode.value} mode]"
+                ),
+                error_type="approval_required",
             )
-        return await tool.execute(**tool_call.arguments)
+        result = await tool.execute(**tool_call.arguments)
+        if isinstance(result, ToolResult):
+            return result
+        return ToolResult(text=result)
 
     def get_tool(self, name: str) -> Tool:
         return self._tools[name]

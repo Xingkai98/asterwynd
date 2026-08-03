@@ -85,4 +85,4 @@ async def test_registry_executes_code_intelligence_tool_call(tmp_path):
         ToolCall(id="call-1", name="SymbolSearch", arguments={"query": "main"})
     )
 
-    assert "app.py:1 function main" in result
+    assert "app.py:1 function main" in result.text

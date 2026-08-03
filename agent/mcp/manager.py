@@ -25,11 +25,13 @@ from agent.mcp.naming import (
 from agent.mcp.types import (
     DEFAULT_MCP_PERMISSION,
     McpActionKind,
+    McpCallError,
     McpPromptMetadata,
     McpResourceMetadata,
     McpServerStatus,
     McpToolMetadata,
 )
+from agent.tools.base import ToolResult
 from agent.tool_permissions import ToolPermission
 
 
@@ -295,7 +297,7 @@ class McpManager:
         server_name: str,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> str | "ToolResult":
         session = self._sessions[server_name]
         server_config = self._server_configs[server_name]
         try:
@@ -303,11 +305,27 @@ class McpManager:
                 session.call_tool(tool_name, arguments or {}),
                 timeout=server_config.tool_timeout_seconds,
             )
+        except asyncio.TimeoutError as exc:
+            self._record_call(server_name, False)
+            raise McpCallError(
+                f"[MCP tool error: {server_name}/{tool_name}: {type(exc).__name__}: {exc}]",
+                error_type="timeout",
+            ) from exc
         except Exception as exc:
             self._record_call(server_name, False)
-            return f"[MCP tool error: {server_name}/{tool_name}: {type(exc).__name__}: {exc}]"
+            if isinstance(exc, (ConnectionError, TimeoutError)):
+                error_type = "network_error"
+            else:
+                error_type = "mcp_error"
+            raise McpCallError(
+                f"[MCP tool error: {server_name}/{tool_name}: {type(exc).__name__}: {exc}]",
+                error_type=error_type,
+            ) from exc
         self._record_call(server_name, not getattr(result, "isError", False))
-        return _format_call_tool_result(result)
+        formatted = _format_call_tool_result(result)
+        if getattr(result, "isError", False):
+            return ToolResult(text=formatted, error_type="mcp_error")
+        return formatted
 
     async def get_prompt(
         self,

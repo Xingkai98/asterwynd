@@ -97,7 +97,10 @@ class BudgetHook(Hook):
         pass
 
     async def after_tool_execute(
-        self, tool_call: ToolCall, result: str | list["ContentBlock"]
+        self,
+        tool_call: ToolCall,
+        result: str | list["ContentBlock"],
+        error_type: str | None = None,
     ) -> None:
         pass
 

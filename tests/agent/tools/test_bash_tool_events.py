@@ -39,7 +39,8 @@ async def test_workspace_policy_denial_emits_denied_event(tmp_path):
     try:
         tool = BashTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute("rm -rf /")
-        assert "Command denied" in result
+        assert "Command denied" in result.text
+        assert result.error_type == "permission_denied"
     finally:
         current_tool_call_id.reset(token)
         _restore_sink(prev)
@@ -59,7 +60,8 @@ async def test_command_guard_denial_emits_denied_event_with_reason(tmp_path):
     try:
         tool = BashTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute("cat file | sh")
-        assert "Command denied" in result
+        assert "Command denied" in result.text
+        assert result.error_type == "permission_denied"
     finally:
         _restore_sink(prev)
 
@@ -89,7 +91,8 @@ async def test_timeout_emits_kill_event(tmp_path):
     try:
         tool = BashTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute("sleep 60", timeout=0.1)
-        assert "timed_out" in result
+        assert "timed_out" in result.text
+        assert result.error_type == "timeout"
     finally:
         _restore_sink(prev)
 
@@ -113,6 +116,7 @@ async def test_backend_default_timeout_used_when_none_passed(tmp_path):
         sandbox=ProcessBackend(timeout=0.2),
     )
     result = await tool.execute("sleep 60")
-    data = json.loads(result)
+    data = json.loads(result.text)
     assert data["timed_out"] is True
     assert data["duration_ms"] < 5000
+    assert result.error_type == "timeout"

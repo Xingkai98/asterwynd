@@ -25,6 +25,25 @@ class McpActionKind(str, Enum):
     RESOURCE = "resource"
 
 
+class McpCallError(Exception):
+    """Typed MCP tool-call error carrying a structured ``error_type``.
+
+    Raised by ``McpManager.call_tool`` on the exception path so the caller
+    (``McpTool.execute``) can produce a ``ToolResult(text, error_type)`` at the
+    error source instead of guessing from a formatted string. ``__str__``
+    returns the user-facing text (keeps RetryHook's retryable-token matching
+    and logging readable).
+    """
+
+    def __init__(self, text: str, error_type: str = "mcp_error"):
+        super().__init__(text)
+        self.text = text
+        self.error_type = error_type
+
+    def __str__(self) -> str:
+        return self.text
+
+
 @dataclass(frozen=True)
 class McpToolMetadata:
     server_name: str

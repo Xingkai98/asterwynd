@@ -46,8 +46,8 @@ class Tool(ABC):
     permission: ToolPermission | None = None
 
     @abstractmethod
-    async def execute(self, **kwargs) -> str | list["ContentBlock"]:
-        """执行工具，返回结果字符串或 content blocks 列表"""
+    async def execute(self, **kwargs) -> str | list["ContentBlock"] | "ToolResult":
+        """执行工具，返回结果字符串、content blocks 列表或 ToolResult"""
         ...
 
     def get_schema(self) -> dict:
@@ -92,3 +92,16 @@ class ToolCall:
     @classmethod
     def from_delta(cls, delta: "ToolCallDelta", arguments: dict) -> "ToolCall":
         return cls(id=delta.id, name=delta.name, arguments=arguments)
+
+
+@dataclass
+class ToolResult:
+    """工具执行结果：文本 + 可选结构化错误码。
+
+    ``error_type`` 在错误产生点打标（Bash 超时→``timeout``、registry deny→
+    ``permission_denied`` 等），随结果传递到 loop 的 record_tool_result，
+    替代文本前缀猜测 status。未打标的工具由 registry 自动包装（error_type=None）。
+    """
+
+    text: str | list["ContentBlock"]
+    error_type: str | None = None

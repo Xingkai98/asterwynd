@@ -32,16 +32,27 @@ class TracingHook:
         self.calls.append(trace)
         self._pending[tool_call.id] = (trace, time.perf_counter())
 
-    async def after_tool_execute(self, tool_call: ToolCall, result: str | list) -> None:
+    async def after_tool_execute(
+        self,
+        tool_call: ToolCall,
+        result: str | list,
+        error_type: str | None = None,
+    ) -> None:
         entry = self._pending.pop(tool_call.id, None)
         if entry is None:
             return
         trace, start = entry
         duration_ms = (time.perf_counter() - start) * 1000
         trace.duration_ms = round(duration_ms, 2)
-        if isinstance(result, str):
-            # Permission-denied results start with "[Permission denied" and must
-            # count as failures (consistent with ErrorClassifier batch-1).
+        if error_type is not None:
+            # Structured signal from the tool source wins (design Decision 6):
+            # Bash timeout (JSON timed_out) is indistinguishable from a normal
+            # JSON result by text alone, so only error_type can tell.
+            trace.success = False
+        elif isinstance(result, str):
+            # Fallback for untagged tools: text-prefix guess. Permission-denied
+            # results start with "[Permission denied" and must count as failures
+            # (consistent with ErrorClassifier batch-1).
             trace.success = not (
                 result.startswith("[Error") or result.startswith("[Permission denied")
             )

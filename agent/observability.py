@@ -37,15 +37,27 @@ PHASE_BY_MODE: dict[str, str] = {
 _DEFAULT_PHASE = "building"
 
 # Structured error_type -> category (primary signal).
+# error_type carries the fine-grained value from the error source (issue #89);
+# categories stay coarse (four-class, spec-pinned) so the alert policy is
+# stable. Approval-denied variants map to PERMISSION_DENIED (a denied tool did
+# not run due to permission semantics).
 _ERROR_TYPE_TO_CATEGORY: dict[str, ErrorCategory] = {
     "permission_denied": ErrorCategory.PERMISSION_DENIED,
     "permission": ErrorCategory.PERMISSION_DENIED,
+    "approval_required": ErrorCategory.PERMISSION_DENIED,
+    "approval_denied": ErrorCategory.PERMISSION_DENIED,
+    "approval_unavailable": ErrorCategory.PERMISSION_DENIED,
     "timeout": ErrorCategory.NETWORK_TIMEOUT,
     "network_timeout": ErrorCategory.NETWORK_TIMEOUT,
+    "network_error": ErrorCategory.NETWORK_TIMEOUT,
     "rate_limit": ErrorCategory.NETWORK_TIMEOUT,
     "parse_error": ErrorCategory.PARAMETER_ERROR,
     "parameter_error": ErrorCategory.PARAMETER_ERROR,
     "invalid_argument": ErrorCategory.PARAMETER_ERROR,
+    "unknown_tool": ErrorCategory.PARAMETER_ERROR,
+    "mcp_error": ErrorCategory.UNKNOWN,
+    "resource_exhausted": ErrorCategory.UNKNOWN,
+    "unavailable": ErrorCategory.UNKNOWN,
 }
 
 # Text fallback patterns -> category (used only when no structured field).

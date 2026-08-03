@@ -28,7 +28,12 @@ class LoggingHook:
     async def before_tool_execute(self, tool_call: ToolCall) -> None:
         logger.info(f"[Tool] executing {tool_call.name}({tool_call.arguments})")
 
-    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
+    async def after_tool_execute(
+        self,
+        tool_call: ToolCall,
+        result: str,
+        error_type: str | None = None,
+    ) -> None:
         preview = result[:200] + "..." if len(result) > 200 else result
         logger.info(f"[Tool] {tool_call.name} -> {preview!r}")
 

@@ -5,7 +5,7 @@ from typing import Any
 
 from agent.background import current_tool_call_id
 from agent.sandbox_events import emit_sandbox_event
-from agent.tools.base import Tool, tool_parameters
+from agent.tools.base import Tool, tool_parameters, ToolResult
 from agent.tools.command_guard import CommandGuard, CommandVerdict
 from agent.tools.sandbox import ExecutionBackend, build_execution_backend
 from agent.tool_permissions import COMMAND_EXECUTE_PERMISSION
@@ -63,17 +63,20 @@ class BashTool(Tool):
         timeout: float | None = None,
         run_in_background: bool = False,
         **kwargs,
-    ) -> str:
+    ) -> str | ToolResult:
         try:
             self.policy.assert_command_allowed(cmd)
         except PermissionError as e:
             emit_sandbox_event("denied", reason="workspace_policy", command=cmd, tool="Bash")
-            return f"Error: {e}"
+            return ToolResult(text=f"Error: {e}", error_type="permission_denied")
         # Command guard (guardrail, not boundary) — argv semantic checks.
         if self._guard.check(cmd) is CommandVerdict.DENY:
             reason = f"command_guard:{self._guard.last_reason or 'denied'}"
             emit_sandbox_event("denied", reason=reason, command=cmd, tool="Bash")
-            return "Error: Command denied by sandbox command guard"
+            return ToolResult(
+                text="Error: Command denied by sandbox command guard",
+                error_type="permission_denied",
+            )
 
         if run_in_background:
             return await self._execute_background(cmd, timeout)
@@ -86,11 +89,20 @@ class BashTool(Tool):
             timeout=timeout,
             cwd=self.policy.workspace_root,
         )
+        if result.timed_out:
+            # Structured signal at the source: the JSON text is indistinguishable
+            # from a normal result, so only error_type can tell the loop apart.
+            return ToolResult(text=result.to_json(), error_type="timeout")
+        if result.oom_killed:
+            return ToolResult(text=result.to_json(), error_type="resource_exhausted")
         return result.to_json()
 
     async def _execute_background(self, cmd: str, timeout: float | None) -> str:
         if self._run_in_background_cb is None:
-            return "Error: Background task execution is not available (no manager configured)."
+            return ToolResult(
+                text="Error: Background task execution is not available (no manager configured).",
+                error_type="unavailable",
+            )
         tc_id = current_tool_call_id.get()
         task_id = await self._run_in_background_cb(cmd, str(self.policy.workspace_root), timeout, tc_id)
         return f"Task started: {task_id}. Use TaskOutput to check status."
