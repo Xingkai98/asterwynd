@@ -103,6 +103,35 @@ async def test_peer_review_critique_loop_until_approved(manager):
 
 
 @pytest.mark.asyncio
+async def test_peer_review_max_rounds_falls_back_to_real_runs(manager):
+    """Review M4/N1: when max_rounds is reached without approval, the aggregate
+    reports the real producer/reviewer runs — not a synthetic entry."""
+    manager.llm = ScriptedLLM(
+        [
+            "draft v1",
+            "CRITIQUE needs work",
+            "draft v2",
+            "CRITIQUE still needs work",
+            "draft v3",
+        ]
+    )
+    result = await run_pattern(
+        manager,
+        pattern="peer-review",
+        task="write proposal",
+        params={"max_rounds": 2},
+    )
+    # max_rounds=2 => producer ran 2x + reviewer ran 2x (both real runs)
+    assert result["completed"] == 2
+    # every worker entry is a real session run, not a synthetic summary
+    for worker in result["workers"]:
+        assert worker["status"] == "completed"
+        assert "reached max review rounds" not in worker.get("summary", "")
+        # the subagent_id exists in the manager's sessions
+        assert worker["subagent_id"] in manager._sessions
+
+
+@pytest.mark.asyncio
 async def test_bidding_selects_best(manager):
     manager.llm = ScriptedLLM(
         [

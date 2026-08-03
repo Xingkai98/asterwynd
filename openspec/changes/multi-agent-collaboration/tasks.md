@@ -44,6 +44,7 @@
 ## 6. 审阅闭环修复
 
 - [x] 6.1 Round 1 building review（CHANGES_REQUESTED，run id: building-review-subagent-2026-08-03）：M1 预算超限 usage 回填 / M2 快照 bus 摘要 / M3 created_at 非空 / M4 peer-review 合成条目移除 + 死代码清理 / M5 bus.read 最新单条超窗口不返空 / M6 新工具注册断言补齐
+- [x] 6.2 Round 2 building review（CHANGES_REQUESTED，run id: building-review-subagent-round2-2026-08-03）：N1 peer-review max_rounds 回退路径补回归测试（test_peer_review_max_rounds_falls_back_to_real_runs）
 
 ## 8. 收尾校验（checker 要求项）
 
