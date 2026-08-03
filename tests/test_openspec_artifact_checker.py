@@ -712,6 +712,105 @@ def test_incomplete_change_literal_marker_without_evidence_passes(tmp_path):
     assert not any("grill-design.md missing" in e for e in errors), errors
 
 
+# ── grill 用户确认门禁（grill-confirmation-gate）────────────────────────
+
+_UC_DECISIONS = (
+    "## Confirmed Decisions\n"
+    "- **决策**：A；理由: a；来源: r1\n"
+    "- **决策**：B；理由: b；来源: r1\n"
+    "- **决策**：C；理由: c；来源: r1\n"
+)
+
+
+def _grill_evidence(tmp_path, body: str, tasks_all_checked: bool = True) -> Path:
+    """Create a feature change with grill-design.md and (optionally) checked tasks."""
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(change, proposal_for("feature"), design=VALID_DESIGN)
+    tasks = "## 1. 规格\n\n- [x] 完成项。\n" if tasks_all_checked else "## 1. 规格\n\n- [ ] 待完成项。\n"
+    write_tasks(change, tasks)
+    write_spec_delta(change, "web-ui")
+    reviews = change / "reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "grill-design.md").write_text(_UC_DECISIONS + body, encoding="utf-8")
+    return change
+
+
+def test_grill_completed_change_unconfirmed_open_question_fails(tmp_path):
+    """grill-confirmation-gate：tasks 全勾选 + Open Question 无确认记录 → 报错。"""
+    _grill_evidence(
+        tmp_path,
+        "## Open Questions\n1. 问题一\n2. 问题二\n"
+        "## User Confirmation\n- **Q1**: 用户答复：已确认做 A；确认时间: 2026-08-02\n",
+    )
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert any("未确认" in e and "Q2" in e for e in errors), errors
+
+
+def test_grill_completed_change_all_open_questions_confirmed_passes(tmp_path):
+    """grill-confirmation-gate：tasks 全勾选 + Open Questions 全部有确认记录 → 通过。"""
+    _grill_evidence(
+        tmp_path,
+        "## Open Questions\n1. 问题一\n2. 问题二\n"
+        "## User Confirmation\n"
+        "- **Q1**: 用户答复：做 A；确认时间: 2026-08-02\n"
+        "- **Q2**: 用户答复：做 B；确认时间: 2026-08-02\n",
+    )
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert not any("未确认" in e for e in errors), errors
+
+
+def test_grill_placeholder_confirmation_does_not_count(tmp_path):
+    """grill-confirmation-gate Q1：占位确认（待主 agent 提交）不得计入已确认 → 报错。"""
+    _grill_evidence(
+        tmp_path,
+        "## Open Questions\n1. 问题一\n"
+        "## User Confirmation\n- **Q1**: 用户答复：待主 agent 提交用户确认；确认时间: 2026-08-02\n",
+    )
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert any("未确认" in e and "Q1" in e for e in errors), errors
+
+
+def test_grill_duplicate_confirmation_indexes_do_not_cover_missing(tmp_path):
+    """grill-confirmation-gate Q5：Q1,Q2,Q3,Q3,Q3 条数够但 Q4 缺失 → 报错。"""
+    _grill_evidence(
+        tmp_path,
+        "## Open Questions\n1. 问题一\n2. 问题二\n3. 问题三\n4. 问题四\n"
+        "## User Confirmation\n"
+        "- **Q1**: 用户答复：a；确认时间: 2026-08-02\n"
+        "- **Q2**: 用户答复：b；确认时间: 2026-08-02\n"
+        "- **Q3**: 用户答复：c；确认时间: 2026-08-02\n"
+        "- **Q3**: 用户答复：c；确认时间: 2026-08-02\n"
+        "- **Q3**: 用户答复：c；确认时间: 2026-08-02\n",
+    )
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert any("未确认" in e and "Q4" in e for e in errors), errors
+
+
+def test_grill_incomplete_change_unconfirmed_open_question_passes(tmp_path):
+    """grill-confirmation-gate：tasks 未全勾选 + 未确认 Open Question → 不报错（开发中可澄清）。"""
+    _grill_evidence(
+        tmp_path,
+        "## Open Questions\n1. 问题一\n",
+        tasks_all_checked=False,
+    )
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert not any("未确认" in e for e in errors), errors
+
+
+def test_grill_completed_change_missing_confirmation_section_fails(tmp_path):
+    """grill-confirmation-gate：tasks 全勾选 + 有 Open Questions 但无 User Confirmation 节 → 报错。"""
+    _grill_evidence(tmp_path, "## Open Questions\n1. 问题一\n")
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert any("未确认" in e and "Q1" in e for e in errors), errors
+
+
+def test_grill_empty_open_questions_skips_confirmation(tmp_path):
+    """grill-confirmation-gate：Open Questions 为空（- 无）→ 无需确认记录，通过。"""
+    _grill_evidence(tmp_path, "## Open Questions\n- 无\n")
+    errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
+    assert not any("未确认" in e for e in errors), errors
+
+
 def test_grill_evidence_fullwidth_colon_passes(tmp_path):
     """issue #95：全角冒号列表项格式（- **决策**：）3 条 → 通过（实际证据格式）。"""
     change = tmp_path / "openspec" / "changes" / "change-ui"

@@ -202,28 +202,131 @@ def _current_change_id() -> str | None:
 
 
 def _grill_evidence_missing(change_id: str) -> bool:
-    """True if a change that requires grilling lacks grill evidence.
+    """True if a change that requires grilling lacks complete grill evidence.
 
     A change requires grilling when it is non-docs (has a spec delta) — i.e. it
     will ship implementation code. docs-only changes skip the gate.
+
+    Reordered (grill-confirmation-gate Must-fix B): the "requires grilling"
+    check now runs BEFORE the evidence check, so a docs-only or proposal-stage
+    change is never blocked by a partial grill-design.md. Completeness: when the
+    evidence exists but Open Questions are not all confirmed in
+    ``## User Confirmation``, the evidence is treated as missing so code writes
+    are blocked until the user confirms (grill-confirmation-gate Decision 3).
     """
     change_dir = CHANGES_DIR / change_id
-    evidence = change_dir / "reviews" / "grill-design.md"
-    if evidence.exists():
-        return False
-    # non-docs check: has spec delta dir with spec.md
-    specs = change_dir / "specs"
-    if not specs.exists():
-        return False
-    if not any(specs.glob("*/spec.md")):
-        return False
-    # docs-only proposal? check primary type
+    # 1. docs-only proposal? skip the gate.
     proposal = change_dir / "proposal.md"
     if proposal.exists():
         text = proposal.read_text(encoding="utf-8", errors="ignore")
         if "primary: docs" in text:
             return False
-    return True
+    # 2. non-docs check: must have a spec delta to require grilling.
+    specs = change_dir / "specs"
+    if not specs.exists():
+        return False
+    if not any(specs.glob("*/spec.md")):
+        return False
+    # 3. evidence completeness.
+    evidence = change_dir / "reviews" / "grill-design.md"
+    if not evidence.exists():
+        return True
+    try:
+        text = evidence.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return True
+    open_indexes = _extract_open_question_indexes(text)
+    if not open_indexes:
+        return False
+    confirmed = set(_extract_user_confirmation_indexes(text))
+    return any(q not in confirmed for q in open_indexes)
+
+
+# ── grill evidence extraction (mirrors scripts/check_openspec_artifacts.py) ──
+# Replicated here (hook is self-contained per issue #95). A parity test in
+# tests/test_workflow_guard.py pins the two implementations to the same output.
+
+_UNCONFIRMED_EXACT = {
+    "todo", "tbd", "n/a", "na", "无", "none",
+    "待确认", "未确认", "待定", "pending", "待补充", "占位", "未决",
+}
+_UNCONFIRMED_STRONG = {
+    "待主 agent", "待用户", "placeholder", "tobeconfirmed", "待拍板", "未拍板",
+}
+_UNCONFIRMED_MAX_ANSWER_LEN = 20
+
+
+def _is_unconfirmed_answer(answer: str) -> bool:
+    a = answer.lower().strip()
+    if not a:
+        return True
+    if a in _UNCONFIRMED_EXACT:
+        return True
+    if len(a) <= _UNCONFIRMED_MAX_ANSWER_LEN:
+        for tok in _UNCONFIRMED_STRONG:
+            if tok in a:
+                return True
+    return False
+
+
+def _extract_open_question_indexes(text: str) -> list[str]:
+    """Open Questions entry indexes (``1.`` / ``- **Q1**:`` / ``- Q1 ...``)."""
+    section = _h2_section(text, "Open Questions")
+    if not section:
+        return []
+    indexes: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped in {"- 无", "- 无。", "- none", "- none。"}:
+            continue
+        candidate = re.sub(r"^[-*]\s*", "", stripped)
+        candidate = re.sub(r"^\*\*", "", candidate)
+        m = re.match(r"(?:(?:Q|q)\d+|\d+)\s*[:：.]?\s*", candidate)
+        if m:
+            idx = _normalize_question_index(m.group(0))
+            if idx:
+                indexes.append(idx)
+    return indexes
+
+
+def _extract_user_confirmation_indexes(text: str) -> list[str]:
+    """Confirmed Open Questions indexes from ``## User Confirmation``."""
+    section = _h2_section(text, "User Confirmation")
+    if not section:
+        return []
+    indexes: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        m = re.match(r"^-\s+\*\*Q(\d+)\*\*\s*[:：]", stripped)
+        if not m:
+            continue
+        answer_match = re.search(r"用户答复\s*[:：]\s*(.*?)(?:[；;]\s*确认时间|\s*$)", stripped)
+        if not answer_match:
+            continue
+        answer = answer_match.group(1).strip().strip("`")
+        if not answer or _is_unconfirmed_answer(answer):
+            continue
+        indexes.append(f"Q{m.group(1)}")
+    return indexes
+
+
+def _normalize_question_index(raw: str) -> str | None:
+    cleaned = raw.strip().strip(".")
+    m = re.match(r"(?:[Qq])?(\d+)", cleaned)
+    if not m:
+        return None
+    return f"Q{m.group(1)}"
+
+
+def _h2_section(text: str, title: str) -> str:
+    """Return the body of the ``## <title>`` section, or empty string."""
+    matches = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
+    for index, match in enumerate(matches):
+        if match.group(1).strip() == title:
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            return text[start:end].strip()
+    return ""
 
 
 def _is_change_doc_write(file_path: str) -> bool:
