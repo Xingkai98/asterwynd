@@ -81,6 +81,40 @@ PLACEHOLDER_ONLY = {
     "待补充",
     "无",
 }
+# grill-design.md ## User Confirmation 节的"未确认"标记：`用户答复：` 后跟这些
+# 值（小写归一后）的确认记录不得计入已确认。与 PLACEHOLDER_ONLY 区分——占位
+# 判定是给整节正文用的，这些 token 用于识别"写了占位但没真拍板"的确认行
+# （grill-confirmation-gate Q1：占位文本会假通过朴素判定）。
+# 占位判定的关键：占位文本短且无实质决策内容；真实答复即使是"排除未确认 token"
+# 这类长句也不得误伤。因此短答复（≤20 字符）才做子串匹配，长答复一律视为实质
+# 内容。EXACT 精确匹配兜底短占位。
+UNCONFIRMED_EXACT = {
+    "todo", "tbd", "n/a", "na", "无", "none",
+    "待确认", "未确认", "待定", "pending", "待补充", "占位", "未决",
+}
+UNCONFIRMED_STRONG = {
+    "待主 agent", "待主agent", "待用户", "placeholder", "tobeconfirmed",
+    "待拍板", "未拍板",
+}
+_UNCONFIRMED_MAX_ANSWER_LEN = 20
+# 标点/空白变体剥离：`待确认。` → `待确认`，`待主agent提交` → `待主agent提交`
+_UNCONFIRMED_STRIP = str.maketrans("", "", "。．.；;，,、 \t")
+
+
+def _is_unconfirmed_answer(answer: str) -> bool:
+    """True when an answer value is an unconfirmed marker, not a real decision."""
+    a = answer.lower().strip().translate(_UNCONFIRMED_STRIP)
+    if not a:
+        return True
+    if a in UNCONFIRMED_EXACT:
+        return True
+    # Short answers that merely gesture at "pending" are placeholders; long
+    # answers are substantive even if they mention a token like 未确认.
+    if len(a) <= _UNCONFIRMED_MAX_ANSWER_LEN:
+        for tok in UNCONFIRMED_STRONG:
+            if tok in a:
+                return True
+    return False
 PROTECTED_ARTIFACT_EVENT = "protected_artifact_explained"
 CURRENT_SPEC_SYNC_EVENT = "current_spec_synced"
 BACKLOG_UPDATED_EVENT = "backlog_updated"
@@ -405,20 +439,33 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
     if not (change_type.all_types & DESIGN_TYPES):
         return []
 
-    # Structured grill evidence (issue #95): reviews/grill-design.md must exist
-    # with a non-empty ## Confirmed Decisions section (>= 3 decision entries).
-    # This replaces the literal "batch-grill" string check, which an agent could
-    # pass by writing one line in tasks.md.
+    # Structured grill evidence (issue #95 + grill-confirmation-gate):
+    # reviews/grill-design.md must exist with a non-empty ## Confirmed Decisions
+    # section (>= 3 decision entries), and every ## Open Questions entry must
+    # have a matching ## User Confirmation record once the change is complete
+    # (tasks all checked). This replaces the literal "batch-grill" string check.
     grill_evidence = change_dir / "reviews" / "grill-design.md"
     if grill_evidence.exists():
         text = grill_evidence.read_text(encoding="utf-8")
+        errors: list[str] = []
         decisions = _extract_grill_decisions(text)
-        if len(decisions) >= 3:
-            return []
-        return [
-            f"reviews/grill-design.md 的 ## Confirmed Decisions 不足 3 条"
-            f"（当前 {len(decisions)} 条）——独立 subagent design grilling 未完成"
-        ]
+        if len(decisions) < 3:
+            errors.append(
+                f"reviews/grill-design.md 的 ## Confirmed Decisions 不足 3 条"
+                f"（当前 {len(decisions)} 条）——独立 subagent design grilling 未完成"
+            )
+        # User Confirmation coverage (grill-confirmation-gate): only enforced
+        # on a completed change (tasks all checked). In-flight changes may keep
+        # open questions while the user clarifies mid-development.
+        if _tasks_all_complete(change_dir):
+            missing = _unconfirmed_open_questions(text)
+            if missing:
+                errors.append(
+                    "reviews/grill-design.md 存在未确认的 Open Question: "
+                    + ", ".join(missing)
+                    + " ——每个 Open Question 必须有 ## User Confirmation 记录，未确认不允许归档"
+                )
+        return errors
 
     # A *completed* change (non-docs, tasks all checked) must show structured
     # grill evidence — the literal marker is no longer enough once the change
@@ -440,6 +487,88 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
             "tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
         ]
     return []
+
+
+def _normalize_question_index(raw: str) -> str | None:
+    """Normalize an Open Questions / User Confirmation index to ``Q<n>``.
+
+    Accepts ``1``, ``1.``, ``Q1``, ``q1``, and list/bold-wrapped forms like
+    ``- **Q1**:`` (list marker and asterisks stripped). Returns None when no
+    numeric index is present.
+    """
+    cleaned = raw.strip().strip(".")
+    # Strip a leading list marker and any bold asterisks so the Q/number is
+    # directly matchable.
+    cleaned = re.sub(r"^[-*]\s*\**\s*", "", cleaned)
+    m = re.match(r"(?:[Qq])?(\d+)", cleaned)
+    if not m:
+        return None
+    return f"Q{m.group(1)}"
+
+
+def _extract_open_question_indexes(text: str) -> list[str]:
+    """Extract Open Questions entry indexes from ``## Open Questions``.
+
+    Only entries with an explicit numeric/``Q<n>`` index count (``1.``, ``- **Q1**:``,
+    ``- Q1 ...``). Placeholder entries (``- 无``, empty) are skipped.
+    """
+    section = _extract_h2_sections(text).get("Open Questions", "")
+    if not section or _is_placeholder_body(section):
+        return []
+    indexes: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Skip "no open questions" markers in any form (bare, numbered, "- 无").
+        no_q = re.sub(r"^[-*]\s*", "", stripped)
+        no_q = re.sub(r"^\d+[.、]\s*", "", no_q)
+        no_q = re.sub(r"^\*\*", "", no_q)
+        if no_q.strip() in {"无", "无。", "none", "none。", "没有", "无问题"}:
+            continue
+        # Read the leading index of a real entry (from the original line).
+        m = re.match(r"^[-*]?\s*\**\s*(?:(?:Q|q)\d+|\d+)\s*[:：.]?\s*", stripped)
+        if m:
+            idx = _normalize_question_index(m.group(0))
+            if idx:
+                indexes.append(idx)
+    return indexes
+
+
+def _extract_user_confirmation_indexes(text: str) -> list[str]:
+    """Extract confirmed Open Questions indexes from ``## User Confirmation``.
+
+    A record counts only when the line is ``- **Q<n>**: 用户答复：<value>`` and
+    the answer value is not an unconfirmed marker (``待确认``, ``pending``, etc.
+    per UNCONFIRMED_TOKENS). This blocks the placeholder false-pass discovered
+    in grill-confirmation-gate Q1.
+    """
+    section = _extract_h2_sections(text).get("User Confirmation", "")
+    if not section:
+        return []
+    indexes: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        m = re.match(r"^-\s+\*\*Q(\d+)\*\*\s*[:：]", stripped)
+        if not m:
+            continue
+        answer_match = re.search(r"用户答复\s*[:：]\s*(.*?)(?:[；;]\s*确认时间|\s*$)", stripped)
+        if not answer_match:
+            continue
+        answer = answer_match.group(1).strip().strip("`")
+        if not answer or _is_unconfirmed_answer(answer):
+            continue
+        indexes.append(f"Q{m.group(1)}")
+    return indexes
+
+
+def _unconfirmed_open_questions(text: str) -> list[str]:
+    """Open Questions without a matching confirmed User Confirmation record."""
+    open_indexes = _extract_open_question_indexes(text)
+    if not open_indexes:
+        return []
+    confirmed = set(_extract_user_confirmation_indexes(text))
+    return [q for q in open_indexes if q not in confirmed]
 
 
 def _extract_grill_decisions(text: str) -> list[str]:

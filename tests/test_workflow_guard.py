@@ -259,3 +259,81 @@ def test_guard_no_change_mapping_does_not_trigger(tmp_path):
         },
     )
     assert result.returncode == 0
+
+
+# ── grill 用户确认门禁（grill-confirmation-gate）────────────────────────
+
+
+def test_guard_blocks_code_write_with_unconfirmed_open_questions(tmp_path):
+    """grill-confirmation-gate：grill-design.md 存在但 Open Question 未确认 → 拦代码写。"""
+    _seed_grill_change(tmp_path)
+    reviews = tmp_path / "openspec" / "changes" / "grill-change" / "reviews"
+    reviews.mkdir(parents=True, exist_ok=True)
+    (reviews / "grill-design.md").write_text(
+        "## Confirmed Decisions\n- **决策**: x；理由: y；来源: run-1\n"
+        "## Open Questions\n1. 问题一\n"
+        "## User Confirmation\n- **Q1**: 用户答复：待确认；确认时间: 2026-08-02\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "grill" in result.stderr.lower()
+
+
+def test_guard_allows_code_write_when_open_questions_confirmed(tmp_path):
+    """grill-confirmation-gate：grill-design.md 存在且 Open Question 已确认 → 放行。"""
+    _seed_grill_change(tmp_path)
+    reviews = tmp_path / "openspec" / "changes" / "grill-change" / "reviews"
+    reviews.mkdir(parents=True, exist_ok=True)
+    (reviews / "grill-design.md").write_text(
+        "## Confirmed Decisions\n- **决策**: x；理由: y；来源: run-1\n"
+        "## Open Questions\n1. 问题一\n"
+        "## User Confirmation\n- **Q1**: 用户答复：做 A；确认时间: 2026-08-02\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_grill_evidence_extraction_parity_with_checker(tmp_path):
+    """grill-confirmation-gate Decision 4：workflow_guard 与 checker 提取规则一致。"""
+    import scripts.workflow_guard as wg
+    from scripts.check_openspec_artifacts import (
+        _extract_open_question_indexes as ck_open,
+        _extract_user_confirmation_indexes as ck_confirm,
+    )
+
+    fixtures = [
+        (
+            "## Open Questions\n1. a\n2. b\n"
+            "## User Confirmation\n- **Q1**: 用户答复：x；确认时间: t\n- **Q2**: 用户答复：y；确认时间: t\n",
+            ["Q1", "Q2"],
+            ["Q1", "Q2"],
+        ),
+        (
+            "## Open Questions\n- 无\n",
+            [],
+            [],
+        ),
+        (
+            "## Open Questions\n- **Q1**: a\n- **Q3**: c\n"
+            "## User Confirmation\n- **Q1**: 用户答复：待确认；确认时间: t\n- **Q3**: 用户答复：ok；确认时间: t\n",
+            ["Q1", "Q3"],
+            ["Q3"],  # Q1 是未确认占位，不计入
+        ),
+    ]
+    for text, exp_open, exp_confirm in fixtures:
+        assert ck_open(text) == exp_open, text
+        assert ck_confirm(text) == exp_confirm, text
+        assert wg._extract_open_question_indexes(text) == exp_open, text
+        assert wg._extract_user_confirmation_indexes(text) == exp_confirm, text

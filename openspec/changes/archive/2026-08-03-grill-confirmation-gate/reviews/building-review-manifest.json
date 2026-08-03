@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "grill-confirmation-gate",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a4ee01517d2c8c7a3",
+  "base_sha": "183a9bdfb6a5d1abab04d4a4a58c3faa4823fd01",
+  "head_sha": "785b924b3634a899a7f8b637850bb873fb76b8fb",
+  "tasks_hash": "sha256:17ff5777cd12452ee5bc5b4bfebc6580d2c8024acef91fc16aad92f0f1aa7f40",
+  "spec_hash": "sha256:49a2484592985531551b9fad2c21fb5d6482aa2a414c854831ba9f327154a6d4",
+  "diff_hash": "sha256:96e0f7a34e863cef70cd6b8112a18ef9c5d5c717696a4dda1ed9a2cdd7fa65a2",
+  "report_hash": "sha256:9adca3ccbf00065baf7a0e1f36a2ae43f7511015225a55d479534c418b77392d"
+}
