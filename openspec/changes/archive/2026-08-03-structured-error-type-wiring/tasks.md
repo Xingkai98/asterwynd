@@ -63,9 +63,9 @@
 
 ## 7. 收尾
 
-- [ ] 7.1 当前规格同步：把 spec delta 合并到 `openspec/specs/tool-system/spec.md` + `openspec/specs/observability/spec.md`（受保护路径，配 workflow-events.jsonl 解释事件）
-- [ ] 7.2 文档影响检查：`docs/openspec-change-backlog.md` 移除本 change（配 workflow 事件）；文档地图相关入口关键词扫描
+- [x] 7.1 当前规格同步：把 spec delta 合并到 `openspec/specs/tool-system/spec.md`（ADDED「工具执行结果携带结构化错误码」+ 更新「执行已注册工具」场景）+ `openspec/specs/observability/spec.md`（ADDED「error_type 在产生点打标」+「LLM 错误可观测化」），配 workflow-events.jsonl 解释事件
+- [x] 7.2 文档影响检查：`docs/openspec-change-backlog.md` 移除本 change（配 workflow 事件）并加 #89 follow-up 归档说明；README/docs 关键词扫描无事实变化
 - [x] 7.3 benchmark smoke verification：coding-agent core change（改 `agent/tools/` + `agent/loop.py`）要求——`asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-89` 跑通（0 passed/10 unsupported/26 failed，与基线一致，无新回归）
-- [ ] 7.4 全量 pytest + `openspec validate --all --strict` + artifact checker
-- [ ] 7.5 `/review-loop` 独立审阅闭环至 PASS（含 building-review.md + manifest）
-- [ ] 7.6 归档 `openspec/changes/archive/2026-08-03-structured-error-type-wiring/` + backlog 清理 + 提 PR
+- [x] 7.4 全量 pytest（1742 passed）+ `openspec validate --all --strict`（27 passed）+ artifact checker（passed）
+- [x] 7.5 `/review-loop` 独立审阅闭环至 PASS（Round 2，含 building-review.md + manifest）
+- [x] 7.6 归档 `openspec/changes/archive/2026-08-03-structured-error-type-wiring/` + backlog 清理 + 提 PR
