@@ -66,32 +66,14 @@
 - **Batch 1（并行，低冲突）**：`tool-governance-deepening`（✅ 已合入并归档，2026-08-02）‖ `sandbox-hardening`（✅ 已合入并归档，2026-08-02）。最独立、无硬依赖，各开独立 worktree。先立 `agent/embedding/` 公共模块（#77 提供，供 #75 复用）。
 - **Batch 2（高冲突，拆分）**：`context-engineering-deepening`（✅ 已合入并归档，2026-08-02）。拆 3 子 change（增量 token 计数+四字段摘要+pending+L1/L2 / Prefix Cache 注入顺序 / 分页进度+深层 MD 按需加载）；已与 #77 约定「稳定层/可变层」注入契约并落实现。
 - **Batch 3（并行）**：`observability-deepening`（✅ 已合入并归档，2026-08-03）‖ `long-term-memory-deepening`（✅ 已合入并归档，2026-08-02）。observability 依赖 PR #80 statistics（已合入）做回归门禁；#75 先 ADR 论证三层存储，低风险切片先行。
-- **Batch 4（最后）**：`multi-agent-collaboration`。依赖最重，先 grill 设计；复用 #67 `agent/workflow/` 状态机。
+- **Batch 4（最后）**：`multi-agent-collaboration`（✅ 已合入并归档，2026-08-03）。依赖最重，先 grill 设计；复用 #67 `agent/workflow/` 持久化纪律而非阶段机器。
 
 关键依赖：`#78 observability` 依赖 `#77 tool-governance` 质量事件 schema；`#75 long-term-memory` 依赖 `#77` embedding 模块；`#79` 依赖 `#74/#78`。
 
 ## 未实现队列
 
 
-### 4. `multi-agent-collaboration`
-
-状态：未实现。
-
-批次：第九批 Batch 4（最后）。
-
-建议顺序原因：
-
-- 依赖最重且需先决策复用 PR #63 控制平面（已关闭，改用 #67 `agent/workflow/` 状态机）。
-- 做 token/time 预算硬 kill、JSON 快照恢复、消息总线、编排模式库，均建立在 #74/#75 压缩与 #78 事件流稳定之后。
-
-主要交付：
-
-- 状态快照与恢复（JSON + 断点续跑）。
-- 每子 agent token/时间预算硬 kill + 失败摘要。
-- 轻量消息总线（严格 token 预算）。
-- 编排模式库（orchestrator-worker/peer-review/hierarchical/竞标）。
-
-### 5. `add-minimal-tui-runtime-view`
+### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
