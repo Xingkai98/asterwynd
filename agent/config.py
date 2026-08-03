@@ -217,6 +217,7 @@ class MemoryConfig:
     dedup_recall_threshold: float = 0.5
     decay_threshold: float | None = 1.5
     decay_interval_seconds: int = 3600
+    git_backend_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -1259,6 +1260,11 @@ def _parse_memory_config(raw: Any, path: Path) -> MemoryConfig:
             mapping.get("decay_interval_seconds", 3600),
             "memory.decay_interval_seconds",
             path=path,
+        ),
+        git_backend_enabled=_parse_bool(
+            mapping.get("git_backend_enabled", True),
+            path,
+            "memory.git_backend_enabled",
         ),
     )
 

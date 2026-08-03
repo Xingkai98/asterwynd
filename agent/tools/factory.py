@@ -29,7 +29,13 @@ from agent.tools.builtin.read_doc import ReadDocTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
 from agent.memory.persistent import PersistentMemory
-from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool, SearchMemoryTool
+from agent.tools.builtin.memory import (
+    MemoryGitBackendTool,
+    RecallMemoryTool,
+    ResolveMemoryConflictTool,
+    SaveMemoryTool,
+    SearchMemoryTool,
+)
 from agent.tools.builtin.write import WriteTool
 from agent.tools.builtin.browser_tools import BROWSER_TOOL_CLASSES
 from agent.tools.registry import ToolRegistry
@@ -91,6 +97,8 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "SaveMemory",
     "RecallMemory",
     "SearchMemory",
+    "ResolveMemoryConflict",
+    "MemoryGitBackend",
     "ActivateSkill",
     "BrowserNavigate",
     "BrowserGetContent",
@@ -338,6 +346,12 @@ def get_default_tools(
         ),
         RecallMemoryTool(memory=pmem),
         SearchMemoryTool(memory=pmem),
+        ResolveMemoryConflictTool(memory=pmem),
+        *(
+            [MemoryGitBackendTool(memory=pmem)]
+            if (memory_config or MemoryConfig()).git_backend_enabled
+            else []
+        ),
     ]
 
     # 浏览器工具：仅在 BrowserConfig 启用时注册
@@ -434,6 +448,12 @@ def get_coding_tools(
         ),
         RecallMemoryTool(memory=pmem),
         SearchMemoryTool(memory=pmem),
+        ResolveMemoryConflictTool(memory=pmem),
+        *(
+            [MemoryGitBackendTool(memory=pmem)]
+            if (memory_config or MemoryConfig()).git_backend_enabled
+            else []
+        ),
     ]
 
     # 浏览器工具：仅在 BrowserConfig 启用时注册

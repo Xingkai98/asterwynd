@@ -81,3 +81,78 @@
 - **WHEN** 项目 B 的查询尝试访问它
 - **THEN** 访问 SHALL 被阻止
 - **AND** 不发生跨项目数据泄露
+
+### Requirement: 可逆写入
+
+长期记忆系统 SHALL 在任何破坏性写（save 覆盖 / supplement / update）前用 git commit-before-write 快照旧状态，使误判的去重判断能回退到旧 body，且每次写记录一条 change log 条目。
+
+#### Scenario: 更新前快照旧状态
+
+- **GIVEN** 一条既有内容的记忆
+- **WHEN** 写时去重判断把 incoming 归类为"更新"
+- **THEN** 旧 body 在覆盖前 SHALL 被提交到 git 历史
+- **AND** change log 记录一条更新条目
+
+#### Scenario: 补充前快照旧状态
+
+- **GIVEN** 一条既有内容的记忆
+- **WHEN** 写时去重判断把 incoming 归类为"补充"
+- **THEN** 旧 body 在合并前 SHALL 被提交到 git 历史
+- **AND** change log 记录一条补充条目
+
+#### Scenario: 误判可回退到旧 body
+
+- **GIVEN** 一条被破坏性写覆盖的记忆
+- **WHEN** 用户判定该写是误判
+- **THEN** 旧 body SHALL 可从 git 历史恢复
+- **AND** 回退记录进 change log
+
+#### Scenario: 回退保持索引一致
+
+- **GIVEN** 一条记忆的 body 与 description 被回退到旧版本
+- **WHEN** 回退完成
+- **THEN** `MEMORY.md` 中该条索引行 SHALL 重建以匹配回退后的 description
+- **AND** 回退的 change log 条目保留（审计历史不回退）
+
+#### Scenario: 回退以两步提交落盘
+
+- **GIVEN** 一条有 git 历史版本的记忆
+- **WHEN** 回退工具把记忆恢复到某个旧 commit
+- **THEN** 当前状态 SHALL 先被提交（作为撤销凭据）
+- **AND** 回退后的 body、重建的索引行、change log 条目 SHALL 再次提交，
+  使回退历史在 `git log -- <name>.md` 中立即可见
+
+### Requirement: 冲突解除
+
+长期记忆系统 SHALL 提供冲突解除 API，清除两条矛盾记忆互标的 `conflict_with` 标记，在 change log 记录 resolve 事件，并可选归档败者。败者 SHALL 由显式 `loser` 参数标识。
+
+#### Scenario: 解除冲突清除互标
+
+- **GIVEN** 两条经互标 `conflict_with` 标记为矛盾的记忆
+- **WHEN** 用双方 name 调用冲突解除 API
+- **THEN** 双方 `conflict_with` 标记 SHALL 被清除
+- **AND** change log 记录一条 resolve 事件
+
+#### Scenario: 解除冲突可归档败者
+
+- **GIVEN** 两条矛盾记忆
+- **WHEN** 以 archive 启用且 `loser` 参数指向败者调用冲突解除 API
+- **THEN** 败者 SHALL 被移动到 archive 目录
+- **AND** 胜者保留内容且标记被清除
+
+### Requirement: Git 后端访问
+
+长期记忆系统 SHALL 暴露 git 支持的 history / diff / revert 操作作为可选工具，供 agent 检查与恢复记忆版本。
+
+#### Scenario: agent 检查记忆历史
+
+- **GIVEN** 一条有 git 历史版本的记忆
+- **WHEN** agent 对这条记忆调用 git 后端 history 工具
+- **THEN** 返回该条的 commit log
+
+#### Scenario: agent 回退到旧版本
+
+- **GIVEN** 一条有 git 历史版本的记忆
+- **WHEN** agent 用目标 commit 调用 git 后端 revert 工具
+- **THEN** 该条 body SHALL 恢复到目标 commit 版本
+- **AND** change log 记录一条 revert 条目

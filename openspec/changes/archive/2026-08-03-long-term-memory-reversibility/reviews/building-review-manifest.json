@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "long-term-memory-reversibility",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "subagent-review-ltm-reversibility-20260803",
+  "base_sha": "3d87bfcd4d5381778032806b7cd82ad6ecb5dee5",
+  "head_sha": "1f49cc03686584bce3c75be64a7b9080b7e68ff6",
+  "tasks_hash": "sha256:378b41be9f2a5808e4b7215397213330695df786ee8fb1e78819c18993e7ddc0",
+  "spec_hash": "sha256:afd259cb339f245e3d07088ef119388616b209e6b72b319de277728a7df1f581",
+  "diff_hash": "sha256:b3c2eaf0420748bf69d974c3a0d2f67676cc50646f9beb728639bfb4ff57319b",
+  "report_hash": "sha256:e891f2bbbeb2f2abd0174e8ed1ce01365b3280b30d8524da7c76b8c1aa9cc47c"
+}
