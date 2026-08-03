@@ -29,7 +29,7 @@
 
 - **GIVEN** 一个未打标工具返回 `"[Error: timed out]"` 文本
 - **WHEN** loop 判定该工具结果状态
-- **THEN** 系统 SHALL 通过文本兜底分类为 `"timeout"`
+- **THEN** 系统 SHALL 通过文本兜底分类为 `"network_timeout"`（文本兜底返回粗粒度 category.value）
 - **AND** status SHALL 为 `"error"`
 
 ### Requirement: LLM 错误可观测化

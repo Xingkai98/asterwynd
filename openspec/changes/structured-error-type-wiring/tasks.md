@@ -3,7 +3,7 @@
 ## 0. 开发前设计追问（进入 building 前）
 
 - [ ] 0.1 运行 `/grill` 独立 subagent 设计追问（batch-grill-me 等价流程）：挑战 design.md，产出 `reviews/grill-design.md`（≥3 条 `## Confirmed Decisions`）
-- [ ] 0.2 停轮确认：把 `## Open Questions` 逐项抛给用户，答复记录进 `reviews/grill-design.md` 的 `## User Confirmation`（全部确认前不写实现代码）
+- [ ] 0.2 停轮确认：把 `## Open Questions`（Q1-Q8）逐项抛给用户，答复记录进 `reviews/grill-design.md` 的 `## User Confirmation`（全部确认前不写实现代码）
 
 ## 1. ToolResult 协议层
 
@@ -11,22 +11,25 @@
 - [ ] 1.2 `Tool.execute` 返回类型注解拓宽为 `str | list[ContentBlock] | ToolResult`
 - [ ] 1.3 `ToolRegistry.execute` 返回 `ToolResult`：普通 `str | list` 自动包装，`ToolResult` 原样透传
 - [ ] 1.4 `ToolRegistry.execute` deny 分支打标 `permission_denied`；REQUIRE_APPROVAL 兜底打标 `approval_required`
-- [ ] 1.5 协议层测试：包装/透传/deny/approval 打标 + 既有 `registry.execute` 调用方解包 `.text`
+- [ ] 1.5 协议层测试：包装/透传/deny/approval 打标 + 既有 `registry.execute` 调用方解包 `.text`（~11 处）
+- [ ] 1.6 协议级泄漏测试：**「ToolResult 不得泄漏到 hook/record_tool_result」**——hook 收到 str/list；record_tool_result 收到 error_type 独立参数（grill R1）
 
 ## 2. 工具层打标
 
 - [ ] 2.1 `BashTool.execute`：workspace policy deny → `permission_denied`；command guard deny → `permission_denied`
 - [ ] 2.2 `BashTool.execute`：`sandbox_result.timed_out` → `timeout`；`oom_killed` → `resource_exhausted`；后台不可用 → `unavailable`
-- [ ] 2.3 MCP：新增 `McpCallError`（`error_type` + `text`）；`call_tool` 异常分支抛出（timeout/network_error/mcp_error）；`McpTool.execute` 捕获转 `ToolResult`
-- [ ] 2.4 `RetryHook.execute_with_retry` 错误路径返回 `ToolResult`（超时/网络异常带 error_type，其他留 None）
-- [ ] 2.5 工具层测试：Bash（mock sandbox 的 timeout/policy/guard/oom 分支）、MCP（call_tool 抛错 + McpTool 转换）、RetryHook（重试耗尽/非可重试异常）
+- [ ] 2.3 MCP：新增 `McpCallError`（`error_type` + `text` + `__str__` 返回 text）；`call_tool` 异常分支抛出（timeout/network_error/mcp_error），**`_record_call(False)` 在 raise 前执行**；`McpTool.execute` 捕获转 `ToolResult`
+- [ ] 2.4 MCP isError：`call_tool` 对 `isError=true` 结果返回 `ToolResult(text=格式化文本, error_type="mcp_error")`；`McpTool.execute` 原样透传（grill Q3）
+- [ ] 2.5 `RetryHook.execute_with_retry` 错误路径返回 `ToolResult`（超时/网络异常带 error_type，其他留 None）
+- [ ] 2.6 工具层测试：Bash（mock sandbox 的 timeout/policy/guard/oom 分支）、MCP（call_tool 抛错 + McpCallError.__str__ + isError 分支 + McpTool 转换）、RetryHook（重试耗尽/非可重试异常）
+- [ ] 2.7 破坏面回归：`test_mcp_health.py` 两处循环调用改接 McpCallError（:60-69/:72-87）；`test_retry_budget.py` 两处断言改接 ToolResult（:56/:77）（grill R2/R3）
 
 ## 3. AgentLoop 接线
 
-- [ ] 3.1 `_execute_single_tool` 返回 `ToolResult`：Bash 异常兜底 `asyncio.TimeoutError` → `timeout`；其他异常留 None（文本兜底）
-- [ ] 3.2 `_execute_tool_calls` gather 异常解包：异常 → `ToolResult(f"[Error: {r}]", error_type=按异常类型)`
-- [ ] 3.3 Phase 3 判定：`result.error_type` 存在 → status="error" 直接用；否则保留文本前缀 + ErrorClassifier 兜底
-- [ ] 3.4 预拒绝分支打标：unknown tool → `unknown_tool`；approval denied → `approval_denied`；approval unavailable → `approval_unavailable`
+- [ ] 3.1 `_execute_single_tool` 在 execute/retry 返回后**立即解包**为 `(text, error_type, duration_ms)`；`hooks.after_tool_execute` 收到解包 text；Bash 异常兜底 `asyncio.TimeoutError` → `timeout`，其他留 None（grill Q7）
+- [ ] 3.2 `_execute_tool_calls` gather 异常解包：异常 → `(text=f"[Error: {r}]", error_type=按异常类型)`；预拒绝条目带 error_type 字段（approval_denied/unavailable/unknown_tool）
+- [ ] 3.3 `loop.py:1156` retry-exhausted 日志判定改解包后 text（`isinstance(result, str)` 改判）
+- [ ] 3.4 Phase 3 判定：`entry["error_type"]` 存在 → status="error" 直接用；否则保留文本前缀 + ErrorClassifier 兜底
 - [ ] 3.5 `record_tool_result` 传结构化 error_type（替代文本猜测）
 - [ ] 3.6 AgentLoop 集成测试：Bash 超时（mock sandbox `timed_out=True`）→ status="error" + error_type="timeout"（回归修 JSON 误判 ok）；registry deny → `permission_denied`；approval 预拒绝 → `approval_denied`；MCP → `mcp_error`；未打标工具 → 文本兜底不回归
 
@@ -39,8 +42,8 @@
 ## 5. 观测词汇与 TracingHook
 
 - [ ] 5.1 `agent/observability.py` `_ERROR_TYPE_TO_CATEGORY` 扩展（approval_* / network_error / resource_exhausted / unavailable / unknown_tool → 对应类别）
-- [ ] 5.2 `TracingHook.after_tool_execute` success 判定消除文本前缀猜测（接入结构化 error_type 或补全 `[Approval` 前缀，按 grill Q5 结论）
-- [ ] 5.3 测试：新 error_type → 类别映射；TracingHook 对 approval/timeout 结果的 success 判定
+- [ ] 5.2 `HookManager.after_tool_execute` 签名增加 `error_type: str | None = None`（manager.py:20,46-48 同步）；`TracingHook` success 判定用 `error_type is not None` 判失败、无 signal 回退文本前缀（grill Q5）
+- [ ] 5.3 测试：新 error_type → 类别映射；TracingHook 对 approval/timeout 结果的 success 判定（Bash 正常 JSON vs timed_out JSON 区分）
 
 ## 6. spec delta
 
