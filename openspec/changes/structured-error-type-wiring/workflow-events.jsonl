@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "structured-error-type-wiring", "artifact_path": "docs/openspec-change-backlog.md", "reason": "issue 89（结构化 error_type 全链路接入：工具错误在产生点打标而非文本猜测）立项，新增 OpenSpec change structured-error-type-wiring，加入未实现队列。", "approved_by": "human"}

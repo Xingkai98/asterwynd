@@ -72,6 +72,23 @@
 
 ## 未实现队列
 
+### 5. `structured-error-type-wiring`
+
+状态：未实现（2026-08-03 立项，issue 89）。
+
+批次：第九批 wayfinder 的 follow-up（#78 可观测性做深的数据源接入下一步）。
+
+建议顺序原因：
+
+- 依赖 #78 第一批的 `record_tool_result(error_type=...)` 字段能力 + ErrorClassifier（已合入）。
+- 与 #78 共享 trace/tool 语义，应在 #78 归档后推进（#78 已归档 2026-08-03）。
+
+主要交付：
+
+- Tool 执行结果携带结构化错误码（`ToolResult`：text + 可选 error_type），向后兼容。
+- 关键错误产生点打标：Bash 超时（`timeout`）、registry deny（`permission_denied`）、approval 预拒绝、MCP 错误、LLM 错误。
+- loop 的 `record_tool_result` 用结构化 error_type（替代文本猜测 status）；文本兜底降级为未打标工具路径。
+- 覆盖工具协议层 + AgentLoop 集成 + 回归测试（修 Bash 超时 JSON 误判 ok 缺陷）。
 
 ### 4. `add-minimal-tui-runtime-view`
 
