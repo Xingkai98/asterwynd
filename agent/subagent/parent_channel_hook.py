@@ -24,7 +24,12 @@ class ParentChannelHook(Hook):
         self.channel = channel
         self.parent_messages = parent_messages
 
-    async def after_tool_execute(self, tool_call: "ToolCall", result: str) -> None:
+    async def after_tool_execute(
+        self,
+        tool_call: "ToolCall",
+        result: str,
+        error_type: str | None = None,
+    ) -> None:
         try:
             sub_result: "SubAgentResult" = await self.channel.get_result(timeout=0.01)
             from agent.message import Message

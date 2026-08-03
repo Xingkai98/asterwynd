@@ -217,6 +217,14 @@ class TraceRecorder:
                 return summary if isinstance(summary, dict) else None
         return None
 
+    def record_llm_error(self, error_type: str, message: str = "") -> None:
+        """Record a structured LLM call failure (additive step type ``llm_error``).
+
+        Called at the failure source before re-raising, so the exception path
+        keeps its control flow while the trace gains a structured signal.
+        """
+        self.record("llm_error", error_type=error_type, message=message)
+
     def record_completion(self, status: str, content: str = "") -> None:
         self.record(
             "completion",

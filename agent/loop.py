@@ -18,7 +18,7 @@ from agent.approval import (
 from agent.question import QuestionHandler
 from agent.message import Message, system_message, tool_result_message, extract_text
 from agent.result import RunResult, StopReason, ToolCallMade
-from agent.tools.base import ToolCall
+from agent.tools.base import ToolCall, ToolResult
 from agent.llm import LLMResponse, ToolCallDelta, CachePlan
 from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
@@ -35,7 +35,7 @@ from agent.context.sources import (
 )
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
-from agent.observability import ErrorCategory, ErrorClassifier, resolve_phase
+from agent.observability import ErrorCategory, ErrorClassifier, exception_error_type, resolve_phase
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
@@ -85,6 +85,28 @@ def _default_ledger_path() -> str:
 CORE_STABLE_TOOL_NAMES = (
     "Read", "Edit", "Write", "Bash", "Glob", "Grep", "InspectGitDiff",
 )
+
+
+def _text_prefix_guess(result_text: str) -> bool:
+    """Legacy text-prefix status guess — only used when no structured
+    error_type signal exists (untagged tools, design Decision 6 fallback)."""
+    return (
+        result_text.startswith("[Error")
+        or result_text.startswith("Error")
+        or result_text.startswith("[Permission denied")
+        or result_text.startswith("[MCP tool error")
+    )
+
+
+def _llm_exception_error_type(exc: Exception) -> str:
+    """Classify an LLM call failure for the ``llm_error`` trace event.
+
+    Connection/timeout failures are network_timeout (aligns with
+    ErrorClassifier); everything else (API/auth/unknown) is model_error.
+    """
+    if isinstance(exc, (asyncio.TimeoutError, ConnectionError, TimeoutError)):
+        return "network_timeout"
+    return "model_error"
 
 
 class AgentLoop:
@@ -740,6 +762,7 @@ class AgentLoop:
                         "approval_granted": False,
                         "approval_request_data": None,
                         "pre_denied_result": f"[Error: unknown tool '{tool_call.name}']",
+                        "error_type": "unknown_tool",
                         "decision": None,
                     })
                     continue
@@ -749,6 +772,7 @@ class AgentLoop:
                 approval_granted = False
                 approval_request_data: dict | None = None
                 pre_denied_result: str | None = None
+                pre_denied_error_type: str | None = None
                 if decision.requires_approval:
                     approval_request = build_approval_request(
                         tool_call_id=tool_call.id,
@@ -799,12 +823,14 @@ class AgentLoop:
                                 f"approved in {self.runtime_state.current_mode.value} "
                                 f"mode: {approval_response.reason}]"
                             )
+                            pre_denied_error_type = "approval_denied"
                         else:
                             pre_denied_result = (
                                 f"[Approval unavailable: tool {tool_call.name} requires "
                                 f"approval in {self.runtime_state.current_mode.value} "
                                 f"mode: {approval_response.reason}]"
                             )
+                            pre_denied_error_type = "approval_unavailable"
 
                 pending.append({
                     "tool_call": tool_call,
@@ -813,6 +839,7 @@ class AgentLoop:
                     "approval_granted": approval_granted,
                     "approval_request_data": approval_request_data,
                     "pre_denied_result": pre_denied_result,
+                    "error_type": pre_denied_error_type,
                     "decision": decision,
                 })
 
@@ -829,14 +856,18 @@ class AgentLoop:
                 tool = entry["tool"]
 
                 result_text = extract_text(result) if not isinstance(result, str) else result
-                status = (
-                    "error"
-                    if result_text.startswith("[Error")
-                    or result_text.startswith("Error")
-                    or result_text.startswith("[Permission denied")
-                    or result_text.startswith("[MCP tool error")
-                    else "ok"
-                )
+                # Structured error_type from the source (produced-at tagging);
+                # when absent, fall back to text-prefix guess + ErrorClassifier
+                # for untagged tools (design Decision 6).
+                error_type = entry.get("error_type")
+                if error_type is not None:
+                    status = "error"
+                else:
+                    status = "error" if _text_prefix_guess(result_text) else "ok"
+                    if status == "error":
+                        category = ErrorClassifier().classify(text=result_text)
+                        if category is not ErrorCategory.UNKNOWN:
+                            error_type = category.value
                 approval_required = bool(
                     entry.get("decision") is not None
                     and getattr(entry["decision"], "requires_approval", False)
@@ -848,11 +879,6 @@ class AgentLoop:
                         observed_tool_call.name,
                         observed_tool_call.arguments,
                     )
-                    error_type = None
-                    if status == "error":
-                        category = ErrorClassifier().classify(text=result_text)
-                        if category is not ErrorCategory.UNKNOWN:
-                            error_type = category.value
                     trace_recorder.record_tool_result(
                         tool_call.name,
                         status,
@@ -1004,45 +1030,56 @@ class AgentLoop:
         on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
     ) -> tuple[LLMResponse, bool]:
         self._apply_cache_plan(messages, tools)
-        if not self._should_stream_llm():
-            return await self.llm.chat(
-                messages=messages,
-                tools=tools,
-            ), False
+        try:
+            if not self._should_stream_llm():
+                return await self.llm.chat(
+                    messages=messages,
+                    tools=tools,
+                ), False
 
-        response: LLMResponse | None = None
-        content = ""
-        stream_chat = getattr(self.llm, "stream_chat")
-        async for event in stream_chat(messages=messages, tools=tools):
-            if event.type == "assistant_delta":
-                content = event.content or f"{content}{event.delta}"
-                if on_event and event.delta:
-                    await on_event("assistant_delta", {
-                        "delta": event.delta,
-                        "content": content,
-                    })
-                continue
+            response: LLMResponse | None = None
+            content = ""
+            stream_chat = getattr(self.llm, "stream_chat")
+            async for event in stream_chat(messages=messages, tools=tools):
+                if event.type == "assistant_delta":
+                    content = event.content or f"{content}{event.delta}"
+                    if on_event and event.delta:
+                        await on_event("assistant_delta", {
+                            "delta": event.delta,
+                            "content": content,
+                        })
+                    continue
 
-            if event.type == "complete":
-                response = event.response or LLMResponse(
-                    content=event.content or content,
-                    stop_reason=event.stop_reason,
-                )
-                content = event.content or response.content or content
+                if event.type == "complete":
+                    response = event.response or LLMResponse(
+                        content=event.content or content,
+                        stop_reason=event.stop_reason,
+                    )
+                    content = event.content or response.content or content
+                    if on_event:
+                        await on_event("assistant_stream_complete", {
+                            "content": content,
+                            "stop_reason": response.stop_reason,
+                        })
+
+            if response is None:
+                response = LLMResponse(content=content, stop_reason="end_turn")
                 if on_event:
                     await on_event("assistant_stream_complete", {
                         "content": content,
                         "stop_reason": response.stop_reason,
                     })
-
-        if response is None:
-            response = LLMResponse(content=content, stop_reason="end_turn")
-            if on_event:
-                await on_event("assistant_stream_complete", {
-                    "content": content,
-                    "stop_reason": response.stop_reason,
-                })
-        return response, True
+            return response, True
+        except Exception as exc:
+            # Tag the LLM failure at the source, then re-raise to keep the
+            # existing run-failure semantics (design Decision 5 / grill Q4).
+            recorder = self._active_trace_recorder
+            if recorder is not None:
+                recorder.record_llm_error(
+                    _llm_exception_error_type(exc),
+                    str(exc),
+                )
+            raise
 
     def _apply_cache_plan(
         self,
@@ -1131,9 +1168,14 @@ class AgentLoop:
 
     async def _execute_single_tool(
         self, tool_call: ToolCall, observed_tool_call: ToolCall, approval_granted: bool
-    ) -> tuple[str | list, float]:
-        """Execute one tool call. `tool_call` has original args for execution;
-        `observed_tool_call` may have redacted args for hooks/events."""
+    ) -> tuple[str | list, str | None, float]:
+        """Execute one tool call and return ``(text, error_type, duration_ms)``.
+
+        ``tool_call`` has original args for execution; ``observed_tool_call``
+        may have redacted args for hooks/events. ``ToolResult`` is unpacked
+        here so hooks and Phase 3 consumers only see plain text; ``error_type``
+        rides alongside for ``record_tool_result`` (design Decision 2 / grill Q7).
+        """
         await self.hooks.before_tool_execute(observed_tool_call)
         current_tool_call_id.set(tool_call.id)
         tool_start = time.time()
@@ -1142,10 +1184,14 @@ class AgentLoop:
                 result = await self.tool_registry.execute(
                     tool_call, approval_granted=approval_granted,
                 )
+            except asyncio.TimeoutError as e:
+                logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
+                await self.hooks.on_error(e)
+                result = ToolResult(text=f"[Error: {e}]", error_type="timeout")
             except Exception as e:
                 logger.error(f"[AgentLoop] tool {tool_call.name} raised: {e}")
                 await self.hooks.on_error(e)
-                result = f"[Error: {e}]"
+                result = ToolResult(text=f"[Error: {e}]")
         else:
             result = await self._retry.execute_with_retry(
                 tool_call,
@@ -1153,13 +1199,15 @@ class AgentLoop:
                     tc, approval_granted=approval_granted,
                 ),
             )
-            if isinstance(result, str) and result.startswith("[Error"):
-                logger.error(
-                    f"[AgentLoop] tool {tool_call.name} retry exhausted: {result}"
-                )
+        text = result.text if isinstance(result, ToolResult) else result
+        error_type = result.error_type if isinstance(result, ToolResult) else None
+        if tool_call.name != "Bash" and isinstance(text, str) and text.startswith("[Error"):
+            logger.error(
+                f"[AgentLoop] tool {tool_call.name} retry exhausted: {text}"
+            )
         duration_ms = (time.time() - tool_start) * 1000
-        await self.hooks.after_tool_execute(observed_tool_call, result)
-        return result, duration_ms
+        await self.hooks.after_tool_execute(observed_tool_call, text, error_type=error_type)
+        return text, error_type, duration_ms
 
     async def _execute_tool_calls(self, items: list[dict]) -> list[dict]:
         """Execute pre-processed tool calls with parallel grouping.
@@ -1206,10 +1254,10 @@ class AgentLoop:
                     pre_denied = item.get("pre_denied_result")
                     if pre_denied is not None:
                         return {**item, "result": pre_denied, "duration_ms": 0.0}
-                    result, duration_ms = await self._execute_single_tool(
+                    text, error_type, duration_ms = await self._execute_single_tool(
                         item["tool_call"], item["observed_tool_call"], item["approval_granted"],
                     )
-                    return {**item, "result": result, "duration_ms": duration_ms}
+                    return {**item, "result": text, "error_type": error_type, "duration_ms": duration_ms}
 
                 group_results = await asyncio.gather(
                     *[_run_one(item) for item in group],
@@ -1221,6 +1269,7 @@ class AgentLoop:
                         group_results[i] = {
                             **group[i],
                             "result": f"[Error: {r}]",
+                            "error_type": exception_error_type(r),
                             "duration_ms": 0.0,
                         }
                 results.extend(group_results)
@@ -1231,10 +1280,10 @@ class AgentLoop:
                 if pre_denied is not None:
                     results.append({**item, "result": pre_denied, "duration_ms": 0.0})
                 else:
-                    result, duration_ms = await self._execute_single_tool(
+                    text, error_type, duration_ms = await self._execute_single_tool(
                         item["tool_call"], item["observed_tool_call"], item["approval_granted"],
                     )
-                    results.append({**item, "result": result, "duration_ms": duration_ms})
+                    results.append({**item, "result": text, "error_type": error_type, "duration_ms": duration_ms})
 
         return results
 

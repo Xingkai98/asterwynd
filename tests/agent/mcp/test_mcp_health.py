@@ -13,6 +13,7 @@ import pytest
 from agent.mcp.manager import McpManager
 from agent.mcp.types import (
     DEFAULT_MCP_PERMISSION,
+    McpCallError,
     McpServerStatus,
     McpToolMetadata,
 )
@@ -64,7 +65,8 @@ class TestFailureWindow:
             degrade_min_calls=3,
         )
         for _ in range(4):
-            await m.call_tool("alpha", "add", {})
+            with pytest.raises(McpCallError):
+                await m.call_tool("alpha", "add", {})
         assert m.failure_rate("alpha") == 1.0
         assert m.is_degraded("alpha") is True
 
@@ -76,7 +78,8 @@ class TestFailureWindow:
             degrade_min_calls=3,
         )
         for _ in range(4):
-            await m.call_tool("alpha", "add", {})
+            with pytest.raises(McpCallError):
+                await m.call_tool("alpha", "add", {})
         assert m.is_degraded("alpha") is True
 
         m._sessions["alpha"] = _FakeSession(call_fails=False)

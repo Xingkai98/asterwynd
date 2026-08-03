@@ -144,7 +144,7 @@ async def test_exit_plan_mode_tool_is_denied_outside_plan_mode():
         )
     )
 
-    assert "Permission denied" in result
+    assert "Permission denied" in result.text
     assert called is False
 
 
@@ -174,7 +174,7 @@ async def test_update_plan_tool_is_denied_outside_plan_mode():
         )
     )
 
-    assert "Permission denied" in result
+    assert "Permission denied" in result.text
     assert called is False
 
 

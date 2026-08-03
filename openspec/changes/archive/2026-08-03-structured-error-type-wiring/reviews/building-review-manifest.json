@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "structured-error-type-wiring",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "ac1b8f7f560ec1ce5",
+  "base_sha": "02e54052b256d30670bb52cccdf64ea1740dc80d",
+  "head_sha": "202f11c98fa6bd212da0a12d3ed4cb1dbec9bfed",
+  "tasks_hash": "sha256:1b80e974bbfca23c2978439f3e006dac0786bfa0edd088e37cd61f5244183a47",
+  "spec_hash": "sha256:8c221a7e0279b2d432d71ee998ad1d77efa1f79c03c732bdf71ad8498728f6b8",
+  "diff_hash": "sha256:f582a28244cadb9ba4dc029c325db3535222f97e01cc8a817df8089efd3c9a05",
+  "report_hash": "sha256:395a9a6a9d9c721c16252ec9a393d2c05a54db0807a5daa47792ddb9049fdeae"
+}

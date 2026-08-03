@@ -7,6 +7,7 @@ import pytest
 from agent.config import load_config
 from agent.config import McpServerConfig
 from agent.mcp import McpManager, build_mcp_manager
+from agent.mcp.types import McpCallError
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy
 from agent.tool_permissions import ToolCapability, ToolRiskLevel
 from agent.tools.base import ToolCall
@@ -81,7 +82,7 @@ mcp:
             ToolCall(id="call-1", name="mcp__fixture__add", arguments={"a": 2, "b": 3})
         )
 
-        assert result == "5"
+        assert result.text == "5"
     finally:
         await manager.aclose()
 
@@ -148,7 +149,8 @@ mcp:
             ToolCall(id="call-1", name="mcp__fixture__add", arguments={"a": 2, "b": 3})
         )
 
-        assert result == "[Approval required: tool mcp__fixture__add requires approval in build mode]"
+        assert result.text == "[Approval required: tool mcp__fixture__add requires approval in build mode]"
+        assert result.error_type == "approval_required"
     finally:
         await manager.aclose()
 
@@ -203,10 +205,76 @@ async def test_mcp_tool_timeout_returns_readable_error():
         tool_timeout_seconds=1,
     )
 
-    result = await manager.call_tool("slow", "wait", {})
+    with pytest.raises(McpCallError) as exc_info:
+        await manager.call_tool("slow", "wait", {})
 
-    assert result.startswith("[MCP tool error: slow/wait: TimeoutError:")
+    assert exc_info.value.text.startswith("[MCP tool error: slow/wait: TimeoutError:")
+    assert exc_info.value.error_type == "timeout"
 
+
+@pytest.mark.asyncio
+async def test_mcp_call_error_raises_typed_error_on_generic_exception():
+    """异常路径：非超时/非连接异常抛 McpCallError(error_type='mcp_error')，
+    __str__ 返回 user-facing text（grill R4）。"""
+    class FailingSession:
+        async def call_tool(self, name, arguments):
+            raise RuntimeError("boom")
+
+    manager = McpManager()
+    manager._sessions["srv"] = FailingSession()
+    manager._server_configs["srv"] = McpServerConfig(
+        name="srv", type="stdio", command="unused", tool_timeout_seconds=5,
+    )
+
+    with pytest.raises(McpCallError) as exc_info:
+        await manager.call_tool("srv", "t", {})
+    assert exc_info.value.error_type == "mcp_error"
+    assert "boom" in str(exc_info.value)
+    assert str(exc_info.value) == exc_info.value.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_call_error_connection_error_maps_to_network_error():
+    """连接类异常映射 network_error（可被 RetryHook 识别）。"""
+    class ConnFailingSession:
+        async def call_tool(self, name, arguments):
+            raise ConnectionError("connection refused")
+
+    manager = McpManager()
+    manager._sessions["srv"] = ConnFailingSession()
+    manager._server_configs["srv"] = McpServerConfig(
+        name="srv", type="stdio", command="unused", tool_timeout_seconds=5,
+    )
+
+    with pytest.raises(McpCallError) as exc_info:
+        await manager.call_tool("srv", "t", {})
+    assert exc_info.value.error_type == "network_error"
+
+
+@pytest.mark.asyncio
+async def test_mcp_iserror_result_maps_to_mcp_error_tool_result():
+    """isError 结果：协议层返回 success 但 isError=true → ToolResult(mcp_error)。"""
+    class ErrorResult:
+        isError = True
+        content = [type("C", (), {"text": "server error"})()]
+        structuredContent = None
+
+    class ErrSession:
+        async def call_tool(self, name, arguments):
+            return ErrorResult()
+
+    from agent.tools.base import ToolResult
+
+    manager = McpManager()
+    manager._sessions["srv"] = ErrSession()
+    manager._server_configs["srv"] = McpServerConfig(
+        name="srv", type="stdio", command="unused", tool_timeout_seconds=5,
+    )
+
+    result = await manager.call_tool("srv", "t", {})
+    assert isinstance(result, ToolResult)
+    assert result.error_type == "mcp_error"
+    assert "server error" in result.text
 
 @pytest.mark.asyncio
 async def test_streamable_http_mcp_discovers_and_calls_tool(tmp_path):

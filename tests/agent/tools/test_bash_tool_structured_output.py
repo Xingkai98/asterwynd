@@ -61,11 +61,12 @@ async def test_structured_output_on_timeout(tmp_path):
     tool = BashTool(policy=WorkspacePolicy(tmp_path))
 
     result = await tool.execute("sleep 60", timeout=0.1)
-    data = json.loads(result)
+    data = json.loads(result.text)
 
     assert data["timed_out"] is True
     assert data["exit_code"] == -1
     assert data["duration_ms"] > 0
+    assert result.error_type == "timeout"
 
 
 @pytest.mark.asyncio
@@ -74,4 +75,5 @@ async def test_structured_output_valid_json_always(tmp_path):
 
     result = await tool.execute("rm -rf /")
 
-    assert "Command denied" in result
+    assert "Command denied" in result.text
+    assert result.error_type == "permission_denied"

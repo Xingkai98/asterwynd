@@ -26,7 +26,8 @@ async def test_bash_tool_applies_command_policy(tmp_path):
 
     result = await tool.execute("rm -rf /")
 
-    assert "Command denied" in result
+    assert "Command denied" in result.text
+    assert result.error_type == "permission_denied"
 
 
 @pytest.mark.asyncio
@@ -35,7 +36,8 @@ async def test_bash_tool_rejects_arbitrary_python_execution(tmp_path):
 
     result = await tool.execute("python -c \"print('arbitrary')\"")
 
-    assert "Command denied" in result
+    assert "Command denied" in result.text
+    assert result.error_type == "permission_denied"
 
 
 @pytest.mark.asyncio
@@ -44,7 +46,8 @@ async def test_bash_tool_rejects_sensitive_copy(tmp_path):
 
     result = await tool.execute("cp /etc/passwd ./passwd.copy")
 
-    assert "Command denied" in result
+    assert "Command denied" in result.text
+    assert result.error_type == "permission_denied"
 
 
 @pytest.mark.asyncio
@@ -53,9 +56,10 @@ async def test_bash_tool_reports_timeout(tmp_path):
 
     result = await tool.execute("sleep 60", timeout=0.1)
 
-    data = json.loads(result)
+    data = json.loads(result.text)
     assert data["timed_out"]
     assert data["exit_code"] == -1
+    assert result.error_type == "timeout"
 
 
 @pytest.mark.asyncio

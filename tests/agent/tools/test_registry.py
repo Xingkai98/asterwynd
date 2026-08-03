@@ -4,7 +4,7 @@ from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState, ModeP
 from agent.tool_permissions import ToolCapability, ToolPermission, ToolRiskLevel
 from agent.tools.factory import build_default_tool_registry
 from agent.tools.registry import ToolRegistry
-from agent.tools.base import Tool, tool_parameters, ToolCall
+from agent.tools.base import Tool, tool_parameters, ToolCall, ToolResult
 
 @tool_parameters(name="Echo", description="Echo back", parameters={"type": "object", "properties": {}})
 class EchoTool(Tool):
@@ -117,7 +117,39 @@ async def test_execute_found():
     registry.register(EchoTool())
     call = ToolCall(id="c1", name="Echo", arguments={})
     result = await registry.execute(call)
-    assert result == "echo!"
+    assert isinstance(result, ToolResult)
+    assert result.text == "echo!"
+    assert result.error_type is None
+
+
+@pytest.mark.asyncio
+async def test_execute_wraps_str_result_into_tool_result():
+    """回归：普通工具返回 str 被自动包装为 ToolResult（error_type=None）。"""
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    result = await registry.execute(ToolCall(id="c1", name="Echo", arguments={}))
+    assert isinstance(result, ToolResult)
+    assert result.text == "echo!"
+    assert result.error_type is None
+
+
+@pytest.mark.asyncio
+async def test_execute_passthrough_tagged_tool_result():
+    """回归：已打标工具返回 ToolResult 原样透传（error_type 保持）。"""
+    class TaggedTool(Tool):
+        name = "Tagged"
+        description = "returns tagged result"
+        parameters = {}
+
+        async def execute(self, **kwargs) -> "ToolResult":
+            return ToolResult(text="boom", error_type="timeout")
+
+    registry = ToolRegistry()
+    registry.register(TaggedTool())
+    result = await registry.execute(ToolCall(id="c1", name="Tagged", arguments={}))
+    assert isinstance(result, ToolResult)
+    assert result.text == "boom"
+    assert result.error_type == "timeout"
 
 
 @pytest.mark.asyncio
@@ -138,9 +170,10 @@ async def test_execute_denied_by_mode_policy_returns_permission_result_without_c
 
     result = await registry.execute(ToolCall(id="c1", name="WriteLike", arguments={}))
 
-    assert "Permission denied" in result
-    assert "WriteLike" in result
-    assert "read_only" in result
+    assert "Permission denied" in result.text
+    assert "WriteLike" in result.text
+    assert "read_only" in result.text
+    assert result.error_type == "permission_denied"
     assert tool.called is False
 
 
@@ -159,8 +192,9 @@ async def test_execute_uses_latest_runtime_state_mode():
     state.set_mode("read_only", source="test")
     result = await registry.execute(ToolCall(id="c1", name="WriteLike", arguments={}))
 
-    assert "Permission denied" in result
-    assert "read_only" in result
+    assert "Permission denied" in result.text
+    assert "read_only" in result.text
+    assert result.error_type == "permission_denied"
     assert tool.called is False
 
 
@@ -176,9 +210,10 @@ async def test_execute_denied_by_configured_deny_tool_returns_permission_result(
 
     result = await registry.execute(ToolCall(id="c1", name="Echo", arguments={}))
 
-    assert "Permission denied" in result
-    assert "Echo" in result
-    assert "build" in result
+    assert "Permission denied" in result.text
+    assert "Echo" in result.text
+    assert "build" in result.text
+    assert result.error_type == "permission_denied"
 
 
 @pytest.mark.asyncio
@@ -191,7 +226,8 @@ async def test_execute_approval_required_tool_fails_closed_without_approval():
 
     result = await registry.execute(ToolCall(id="c1", name="HighRisk", arguments={}))
 
-    assert "Approval required" in result
+    assert "Approval required" in result.text
+    assert result.error_type == "approval_required"
     assert tool.called is False
 
 
@@ -208,7 +244,8 @@ async def test_execute_approval_required_tool_runs_with_approval_granted():
         approval_granted=True,
     )
 
-    assert result == "high!"
+    assert result.text == "high!"
+    assert result.error_type is None
     assert tool.called is True
 
 

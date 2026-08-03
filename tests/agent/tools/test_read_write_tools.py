@@ -121,8 +121,9 @@ async def test_write_directory_path_returns_error(tmp_path):
 async def test_bash_timeout():
     tool = BashTool()
     result = await tool.execute(cmd="sleep 1", timeout=0.05)
-    data = json.loads(result)
+    data = json.loads(result.text)
     assert data["timed_out"]
+    assert result.error_type == "timeout"
 
 
 @pytest.mark.asyncio

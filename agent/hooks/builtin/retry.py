@@ -5,7 +5,8 @@ import asyncio
 import logging
 import re
 from typing import TYPE_CHECKING, Callable, Awaitable
-from agent.tools.base import ToolCall
+from agent.observability import exception_error_type
+from agent.tools.base import ToolCall, ToolResult
 
 if TYPE_CHECKING:
     from agent.result import RunResult
@@ -34,16 +35,18 @@ class RetryHook:
     async def execute_with_retry(
         self,
         tool_call: ToolCall,
-        execute_fn: Callable[[ToolCall], Awaitable[str | list["ContentBlock"]]],
-    ) -> str | list["ContentBlock"]:
+        execute_fn: Callable[[ToolCall], Awaitable[str | list["ContentBlock"] | "ToolResult"]],
+    ) -> str | list["ContentBlock"] | "ToolResult":
         last_error_msg = None
+        last_error_type: str | None = None
         for attempt in range(self.max_retries + 1):
             try:
                 return await execute_fn(tool_call)
             except Exception as e:
                 last_error_msg = str(e)
+                last_error_type = exception_error_type(e)
                 if not _is_retryable(last_error_msg):
-                    return f"[Error: {last_error_msg}]"
+                    return ToolResult(text=f"[Error: {last_error_msg}]", error_type=last_error_type)
                 if attempt < self.max_retries:
                     delay = self.base_delay * (2 ** attempt)
                     logger.warning(
@@ -52,10 +55,18 @@ class RetryHook:
                     )
                     await asyncio.sleep(delay)
 
-        return f"[Error after {self.max_retries + 1} attempts: {last_error_msg}]"
+        return ToolResult(
+            text=f"[Error after {self.max_retries + 1} attempts: {last_error_msg}]",
+            error_type=last_error_type,
+        )
 
     async def before_tool_execute(self, tool_call: ToolCall) -> None: pass
-    async def after_tool_execute(self, tool_call: ToolCall, result: str | list["ContentBlock"]) -> None: pass
+    async def after_tool_execute(
+        self,
+        tool_call: ToolCall,
+        result: str | list["ContentBlock"],
+        error_type: str | None = None,
+    ) -> None: pass
     async def before_iteration(self, iteration: int, messages: list["Message"]) -> None: pass
     async def after_llm_call(self, response: "LLMResponse") -> None: pass
     async def on_error(self, error: Exception) -> None: pass

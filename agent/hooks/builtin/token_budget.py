@@ -27,7 +27,12 @@ class TokenBudgetHook:
                     f"[TokenBudget] {self.total_tokens}/{self.budget} tokens ({ratio*100:.1f}%)"
                 )
 
-    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
+    async def after_tool_execute(
+        self,
+        tool_call: ToolCall,
+        result: str,
+        error_type: str | None = None,
+    ) -> None:
         estimated = len(result) // 4
         self.total_tokens += estimated
         if self.total_tokens > self.budget * self.warn_threshold:

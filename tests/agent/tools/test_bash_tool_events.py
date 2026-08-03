@@ -13,6 +13,7 @@ import pytest
 from agent.background import current_tool_call_id
 from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
 from agent.tools.builtin.bash import BashTool
+from agent.tools.sandbox.base import SandboxResult
 from agent.trace_recorder import TraceRecorder, TraceRecorderSandboxSink
 from agent.workspace_policy import WorkspacePolicy
 
@@ -39,7 +40,8 @@ async def test_workspace_policy_denial_emits_denied_event(tmp_path):
     try:
         tool = BashTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute("rm -rf /")
-        assert "Command denied" in result
+        assert "Command denied" in result.text
+        assert result.error_type == "permission_denied"
     finally:
         current_tool_call_id.reset(token)
         _restore_sink(prev)
@@ -59,7 +61,8 @@ async def test_command_guard_denial_emits_denied_event_with_reason(tmp_path):
     try:
         tool = BashTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute("cat file | sh")
-        assert "Command denied" in result
+        assert "Command denied" in result.text
+        assert result.error_type == "permission_denied"
     finally:
         _restore_sink(prev)
 
@@ -89,7 +92,8 @@ async def test_timeout_emits_kill_event(tmp_path):
     try:
         tool = BashTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute("sleep 60", timeout=0.1)
-        assert "timed_out" in result
+        assert "timed_out" in result.text
+        assert result.error_type == "timeout"
     finally:
         _restore_sink(prev)
 
@@ -113,6 +117,46 @@ async def test_backend_default_timeout_used_when_none_passed(tmp_path):
         sandbox=ProcessBackend(timeout=0.2),
     )
     result = await tool.execute("sleep 60")
-    data = json.loads(result)
+    data = json.loads(result.text)
     assert data["timed_out"] is True
     assert data["duration_ms"] < 5000
+    assert result.error_type == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_oom_killed_marks_resource_exhausted(tmp_path):
+    """回归：Bash OOM（SandboxResult.oom_killed=True）打标 resource_exhausted。"""
+    class OomSandbox:
+        def is_available(self) -> bool:
+            return True
+
+        async def run(self, command, *, timeout=None, cwd=None) -> "SandboxResult":
+            return SandboxResult(
+                exit_code=-1,
+                stdout="",
+                stderr="memory limit exceeded",
+                duration_ms=50.0,
+                timed_out=False,
+                oom_killed=True,
+            )
+
+        async def run_background(self, command, *, cwd=None):
+            raise NotImplementedError
+
+    tool = BashTool(
+        policy=WorkspacePolicy(tmp_path),
+        sandbox=OomSandbox(),  # type: ignore[arg-type]
+    )
+    result = await tool.execute("stress --vm 1")
+    data = json.loads(result.text)
+    assert data["oom_killed"] is True
+    assert result.error_type == "resource_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_background_unavailable_marks_unavailable(tmp_path):
+    """回归：后台执行不可用（无 run_in_background_cb）打标 unavailable。"""
+    tool = BashTool(policy=WorkspacePolicy(tmp_path))
+    result = await tool.execute("sleep 60", run_in_background=True)
+    assert "Background task execution is not available" in result.text
+    assert result.error_type == "unavailable"

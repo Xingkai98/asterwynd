@@ -20,7 +20,12 @@ class MockHook(Hook):
     async def before_tool_execute(self, tool_call: ToolCall) -> None:
         pass
 
-    async def after_tool_execute(self, tool_call: ToolCall, result: str) -> None:
+    async def after_tool_execute(
+        self,
+        tool_call: ToolCall,
+        result: str,
+        error_type: str | None = None,
+    ) -> None:
         self.after_tool_execute_called = True
 
     async def on_error(self, error: Exception) -> None:

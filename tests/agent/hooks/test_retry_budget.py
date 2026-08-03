@@ -53,7 +53,8 @@ async def test_non_retryable_error_not_retried():
 
     result = await hook.execute_with_retry(tool_call, executor)
     assert NonRetryableTool.call_count == 1
-    assert result.startswith("[Error")
+    assert result.text.startswith("[Error")
+    assert result.error_type is None
 
 
 @pytest.mark.asyncio
@@ -74,7 +75,8 @@ async def test_retry_exhausted_returns_error():
 
     result = await hook.execute_with_retry(tool_call, executor)
     assert call_count[0] == 3  # 1 initial + 2 retries
-    assert "Error after" in result
+    assert "Error after" in result.text
+    assert result.error_type == "timeout"
 
 
 def test_is_retryable_patterns():

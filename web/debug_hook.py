@@ -54,12 +54,18 @@ class DebugHook:
             "arguments": tool_call.arguments,
         })
 
-    async def after_tool_execute(self, tool_call: ToolCall, result: str | list) -> None:
+    async def after_tool_execute(
+        self,
+        tool_call: ToolCall,
+        result: str | list,
+        error_type: str | None = None,
+    ) -> None:
         safe_result = extract_text(result) if not isinstance(result, str) else result
         self._send("after_tool_execute", {
             "tool_name": tool_call.name,
             "arguments": tool_call.arguments,
             "result": safe_result,
+            "error_type": error_type,
         })
 
     async def on_error(self, error: Exception) -> None:
