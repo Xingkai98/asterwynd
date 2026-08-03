@@ -2,7 +2,73 @@
 // Debug UI: renders iteration-by-iteration message assembly view
 
 const debugContent = document.getElementById('debug-content');
+const timelineContent = document.getElementById('timeline-content');
 let iterBlocks = {};
+
+// --- Tool Call Timeline panel ---
+// Fetches the session timeline API and renders horizontal bars (backend shapes
+// the data: duration desc + bar_pct + success). The panel is deliberately
+// thin — sort/width logic lives in web/session.build_timeline_payload.
+
+async function renderTimeline() {
+  if (!timelineContent) return;
+  if (!sessionId) {
+    timelineContent.innerHTML = '<div class="timeline-empty">等待 session…</div>';
+    return;
+  }
+  let data;
+  try {
+    const resp = await fetch(`/api/sessions/${sessionId}/timeline`);
+    if (!resp.ok) {
+      timelineContent.innerHTML = '<div class="timeline-empty">session 不可用</div>';
+      return;
+    }
+    data = await resp.json();
+  } catch (e) {
+    timelineContent.innerHTML = '<div class="timeline-empty">加载失败</div>';
+    return;
+  }
+  if (!data.calls || data.calls.length === 0) {
+    timelineContent.innerHTML = '<div class="timeline-empty">暂无工具调用</div>';
+    return;
+  }
+  timelineContent.innerHTML = '';
+  for (const call of data.calls) {
+    const row = document.createElement('div');
+    row.className = 'timeline-row';
+
+    const label = document.createElement('div');
+    label.className = 'timeline-label';
+    label.textContent = `#${call.index} ${call.tool_name} · ${Number(call.duration_ms).toFixed(1)}ms`;
+
+    const bar = document.createElement('div');
+    bar.className = `timeline-bar ${call.success ? 'ok' : 'fail'}`;
+    bar.style.width = `${call.bar_pct}%`;
+
+    const args = document.createElement('div');
+    args.className = 'timeline-args';
+    args.textContent = JSON.stringify(call.arguments || {});
+    args.style.display = 'none';
+    row.addEventListener('mouseenter', () => { args.style.display = 'block'; });
+    row.addEventListener('mouseleave', () => { args.style.display = 'none'; });
+
+    row.appendChild(label);
+    row.appendChild(bar);
+    row.appendChild(args);
+    timelineContent.appendChild(row);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const refreshBtn = document.getElementById('timeline-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', renderTimeline);
+  }
+  const debugTab = document.getElementById('debug-tab');
+  if (debugTab) {
+    debugTab.addEventListener('click', renderTimeline);
+  }
+});
 
 const PHASE_LABELS = {
   before_iteration: { icon: '📤', label: '发送给 LLM 的消息', cls: 'send' },

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from agent.code_intelligence.config import CodeIntelligenceConfig
-from agent.config import BrowserConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
+from agent.config import BrowserConfig, MemoryConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
 from agent.lsp.client import LspClientManager
 from agent.run_config import ModePolicy
 from agent.mcp.manager import McpManager
@@ -29,13 +29,37 @@ from agent.tools.builtin.read_doc import ReadDocTool
 from agent.tools.builtin.web_fetch import WebFetchTool
 from agent.tools.builtin.web_search import WebSearchTool
 from agent.memory.persistent import PersistentMemory
-from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool
+from agent.tools.builtin.memory import RecallMemoryTool, SaveMemoryTool, SearchMemoryTool
 from agent.tools.builtin.write import WriteTool
 from agent.tools.builtin.browser_tools import BROWSER_TOOL_CLASSES
 from agent.tools.registry import ToolRegistry
+from agent.tools.sandbox import ExecutionBackend, build_execution_backend
 from agent.workspace_policy import WorkspacePolicy
 
 logger = logging.getLogger("asterwynd.tools.factory")
+
+
+def build_sandbox_from_config(config) -> "ExecutionBackend":
+    """Build the backend selected by ``config.sandbox``, failing fast.
+
+    Raises RuntimeError when the configured backend is unavailable. A silent
+    fallback to ProcessBackend would quietly drop the isolation the user asked
+    for, so every entrypoint (CLI, web, benchmark) gates on this.
+    """
+    sandbox = build_execution_backend(
+        config.sandbox.backend,
+        image=config.sandbox.image,
+        memory_mb=config.sandbox.memory_mb,
+        cpus=config.sandbox.cpus,
+        timeout=config.sandbox.timeout_seconds,
+    )
+    if not sandbox.is_available():
+        raise RuntimeError(
+            f"sandbox backend {config.sandbox.backend!r} is unavailable"
+            f" (for 'docker': is the Docker daemon running and the user in the"
+            f" docker group?)"
+        )
+    return sandbox
 
 
 KNOWN_BUILTIN_TOOL_NAMES = {
@@ -66,6 +90,7 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "TodoWrite",
     "SaveMemory",
     "RecallMemory",
+    "SearchMemory",
     "ActivateSkill",
     "BrowserNavigate",
     "BrowserGetContent",
@@ -91,9 +116,10 @@ def _wire_governance(
     """
     if selection_config is not None and selection_config.enabled:
         from agent.embedding import NGramEmbedding
+        from agent.embedding.provider import DEFAULT_EMBEDDING_DIM
         from agent.tools.governance import SemanticDeduper, ToolLifecycle, ToolSelector
 
-        embedder = NGramEmbedding(dim=2048)
+        embedder = NGramEmbedding(dim=DEFAULT_EMBEDDING_DIM)
         selector = ToolSelector(
             embedder=embedder,
             top_k=selection_config.top_k,
@@ -123,6 +149,35 @@ def _wire_governance(
         registry.set_quality(store)
 
 
+def _build_memory_dedup_judge(llm, memory_config=None):
+    """Build the write-time memory dedup judge, or None when no LLM is wired."""
+    if llm is None:
+        return None
+    from agent.memory.dedup import MemoryDedupJudge
+
+    config = memory_config or MemoryConfig()
+    return MemoryDedupJudge(
+        llm=llm,
+        recall_threshold=config.dedup_recall_threshold,
+    )
+
+
+def _apply_sandbox_to_tools(
+    tools: list[Tool], sandbox: "ExecutionBackend | None"
+) -> None:
+    """Backfill a sandbox into pre-built BashTool instances.
+
+    When a caller passes a pre-built ``tools`` list, ``get_default_tools`` is
+    bypassed and its ``sandbox`` param would otherwise be silently ignored; the
+    config knob must still reach the Bash tool.
+    """
+    if sandbox is None:
+        return
+    for tool in tools:
+        if isinstance(tool, BashTool):
+            tool.sandbox = sandbox
+
+
 def build_default_tool_registry(
     *,
     policy: WorkspacePolicy | None = None,
@@ -136,6 +191,9 @@ def build_default_tool_registry(
     persistent_memory: PersistentMemory | None = None,
     selection_config: ToolSelectionConfig | None = None,
     quality_config: QualityConfig | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
+    sandbox: "ExecutionBackend | None" = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     default_tools = tools or get_default_tools(
@@ -145,7 +203,12 @@ def build_default_tool_registry(
         web_search_config=web_search_config,
         browser_config=browser_config,
         persistent_memory=persistent_memory,
+        memory_config=memory_config,
+        llm=llm,
+        sandbox=sandbox,
     )
+    if tools is not None:
+        _apply_sandbox_to_tools(tools, sandbox)
     for tool in [*default_tools, *_build_mcp_tools(mcp_manager)]:
         registry.register(tool)
     registry.workspace_policy = policy
@@ -172,6 +235,9 @@ def build_coding_tool_registry(
     browser_config: BrowserConfig | None = None,
     mcp_manager: McpManager | None = None,
     persistent_memory: PersistentMemory | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
+    sandbox: "ExecutionBackend | None" = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(mode_policy=mode_policy)
     for tool in [
@@ -181,6 +247,9 @@ def build_coding_tool_registry(
         code_intelligence_config=code_intelligence_config,
         browser_config=browser_config,
         persistent_memory=persistent_memory,
+        memory_config=memory_config,
+        llm=llm,
+        sandbox=sandbox,
         ),
         *_build_mcp_tools(mcp_manager),
     ]:
@@ -224,16 +293,29 @@ def get_default_tools(
     web_search_config: WebSearchConfig | None = None,
     browser_config: BrowserConfig | None = None,
     persistent_memory: PersistentMemory | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
+    sandbox: ExecutionBackend | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
-    pmem = persistent_memory or PersistentMemory(policy.workspace_root)
+    config = memory_config or MemoryConfig()
+    pmem = persistent_memory or PersistentMemory(
+        policy.workspace_root,
+        archive_after_days=config.archive_after_days,
+        recency_halflife_days=config.recency_halflife_days,
+        importance_default=config.importance_default,
+        summary_tokens=config.summary_tokens,
+        decay_interval_seconds=config.decay_interval_seconds,
+        decay_threshold=config.decay_threshold,
+    )
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
+    judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [
         ReadTool(policy=policy),
         ReadDocTool(policy=policy),
         WriteTool(policy=policy, lsp_manager=lsp_manager),
         EditTool(policy=policy, lsp_manager=lsp_manager),
-        BashTool(policy=policy),
+        BashTool(policy=policy, sandbox=sandbox),
         WebSearchTool(provider_configs=(web_search_config or WebSearchConfig()).providers),
         WebFetchTool(),
         GrepTool(policy=policy),
@@ -249,8 +331,13 @@ def get_default_tools(
             code_intelligence_config=code_intelligence_config,
         ),
         *_build_lsp_tools(policy, lsp_manager),
-        SaveMemoryTool(memory=pmem),
+        SaveMemoryTool(
+            memory=pmem,
+            judge=judge,
+            recall_top_k=(memory_config or MemoryConfig()).recall_top_k,
+        ),
         RecallMemoryTool(memory=pmem),
+        SearchMemoryTool(memory=pmem),
     ]
 
     # 浏览器工具：仅在 BrowserConfig 启用时注册
@@ -302,10 +389,23 @@ def get_coding_tools(
     code_intelligence_config: CodeIntelligenceConfig | None = None,
     browser_config: BrowserConfig | None = None,
     persistent_memory: PersistentMemory | None = None,
+    memory_config: MemoryConfig | None = None,
+    llm=None,
+    sandbox: ExecutionBackend | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
-    pmem = persistent_memory or PersistentMemory(policy.workspace_root)
+    config = memory_config or MemoryConfig()
+    pmem = persistent_memory or PersistentMemory(
+        policy.workspace_root,
+        archive_after_days=config.archive_after_days,
+        recency_halflife_days=config.recency_halflife_days,
+        importance_default=config.importance_default,
+        summary_tokens=config.summary_tokens,
+        decay_interval_seconds=config.decay_interval_seconds,
+        decay_threshold=config.decay_threshold,
+    )
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
+    judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [
         ReadTool(policy=policy),
         ReadDocTool(policy=policy),
@@ -325,10 +425,15 @@ def get_coding_tools(
             code_intelligence_config=code_intelligence_config,
         ),
         GrepTool(policy=policy),
-        BashTool(policy=policy),
+        BashTool(policy=policy, sandbox=sandbox),
         *_build_lsp_tools(policy, lsp_manager),
-        SaveMemoryTool(memory=pmem),
+        SaveMemoryTool(
+            memory=pmem,
+            judge=judge,
+            recall_top_k=(memory_config or MemoryConfig()).recall_top_k,
+        ),
         RecallMemoryTool(memory=pmem),
+        SearchMemoryTool(memory=pmem),
     ]
 
     # 浏览器工具：仅在 BrowserConfig 启用时注册

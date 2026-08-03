@@ -142,6 +142,16 @@ class TraceRecorder:
                 parts.append(f"[image: {ref}]")
         return "\n".join(parts)
 
+    def record_sandbox_event(self, event: str, **data: Any) -> None:
+        """Record a structured sandbox event (denied/kill/oom/degraded).
+
+        Additive and backward-compatible: a new ``sandbox`` step type whose
+        data payload stays clean (timestamp is a TraceStep field). New step
+        types are open-ended and do not bump ``schema_version`` — only
+        structural changes to existing step payloads do.
+        """
+        self.record("sandbox", event=event, **data)
+
     def record_approval_request(self, request: dict[str, Any]) -> None:
         self.record("approval_request", **request)
 
@@ -235,3 +245,17 @@ class TraceRecorder:
 
     def write_to_file(self, path: str | Path) -> None:
         Path(path).write_text(self.to_json() + "\n", errors="replace")
+
+
+class TraceRecorderSandboxSink:
+    """SandboxEventSink adapter that records into a TraceRecorder.
+
+    Non-blocking: appends a ``sandbox`` step, matching the rest of the
+    recorder's synchronous event API.
+    """
+
+    def __init__(self, recorder: TraceRecorder) -> None:
+        self._recorder = recorder
+
+    def emit(self, event: str, **data: Any) -> None:
+        self._recorder.record_sandbox_event(event, **data)

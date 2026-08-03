@@ -15,10 +15,13 @@ Docker daemon access: the current user must be in the ``docker`` group (or use
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
+from agent.sandbox_events import emit_sandbox_event
 from agent.tools.sandbox.base import (
     BackgroundProcessHandle,
     ExecutionBackend,
@@ -91,12 +94,19 @@ class DockerBackend:
         except Exception:
             return False
 
-    def _run_cmd(self, command: str, cwd: Path | None) -> list[str]:
+    def _run_cmd(
+        self, command: str, cwd: Path | None, cidfile: str | None = None
+    ) -> list[str]:
         # docker run <opts> <image> sh -c "<command>"
         run_args = [
             "run", "--rm",
             "--network", "none",
         ]
+        if cidfile is not None:
+            # Let the timeout path remove the container the killed CLI leaves
+            # orphaned in the daemon (SIGKILL to the docker client does not stop
+            # the container; --rm only fires once it exits).
+            run_args += ["--cidfile", cidfile]
         if self.memory_mb is not None:
             run_args += ["--memory", f"{self.memory_mb}m"]
         if self.cpus is not None:
@@ -115,7 +125,14 @@ class DockerBackend:
     ) -> SandboxResult:
         timeout = timeout or self.timeout
         start = time.perf_counter()
-        cmd = self._run_cmd(command, cwd)
+        # cidfile lets us rm the orphaned container when the CLI is killed on
+        # timeout; docker removes the cidfile itself when --rm cleans up.
+        # mkstemp reserves a unique path then we unlink it because docker's
+        # --cidfile refuses an existing file.
+        fd, cidfile = tempfile.mkstemp(prefix="asterwynd-cid-")
+        os.close(fd)
+        os.unlink(cidfile)
+        cmd = self._run_cmd(command, cwd, cidfile=cidfile)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -136,8 +153,12 @@ class DockerBackend:
                     timed_out=False,
                 )
             except asyncio.TimeoutError:
+                emit_sandbox_event(
+                    "kill", reason="timeout", command=command, backend="docker"
+                )
                 proc.kill()
                 await proc.wait()
+                self._remove_orphaned_container(cidfile)
                 duration_ms = (time.perf_counter() - start) * 1000
                 return SandboxResult(
                     exit_code=-1,
@@ -155,6 +176,30 @@ class DockerBackend:
                 duration_ms=round(duration_ms, 1),
                 timed_out=False,
             )
+        finally:
+            try:
+                os.unlink(cidfile)
+            except OSError:
+                pass
+
+    def _remove_orphaned_container(self, cidfile: str) -> None:
+        """Best-effort ``docker rm -f`` of a container left behind after the
+        CLI client was killed on timeout."""
+        try:
+            cid = Path(cidfile).read_text(encoding="utf-8").strip()
+        except OSError:
+            return
+        if not cid:
+            return
+        try:
+            subprocess.run(
+                _docker_argv(["rm", "-f", cid]),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception:
+            pass
 
     async def run_background(
         self,

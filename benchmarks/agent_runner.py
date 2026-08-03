@@ -13,7 +13,7 @@ from agent.mcp import build_mcp_manager
 from agent.memory.manager import MemoryManager
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.subagent.manager import SubAgentManager
-from agent.tools.factory import build_coding_tool_registry
+from agent.tools.factory import build_coding_tool_registry, build_sandbox_from_config
 from agent.trace_recorder import TraceRecorder
 from agent.workspace_policy import WorkspacePolicy
 from benchmarks.models import AgentRunResult, BenchmarkReason
@@ -294,6 +294,7 @@ class AsterwyndRunner(AgentRunner):
             command_denylist=self.config.tools.command_denylist,
         )
         mcp_manager = await build_mcp_manager(self.config)
+        sandbox = build_sandbox_from_config(self.config)
         registry = build_coding_tool_registry(
             policy=policy,
             mode_policy=ModePolicy(
@@ -304,6 +305,7 @@ class AsterwyndRunner(AgentRunner):
             ignore_patterns=self.config.tools.ignore_patterns,
             code_intelligence_config=self.config.tools.code_intelligence,
             mcp_manager=mcp_manager,
+            sandbox=sandbox,
         )
 
         counting_llm = CountingLLM(self.llm)
@@ -312,6 +314,7 @@ class AsterwyndRunner(AgentRunner):
             config=self.config,
             workspace_policy=policy,
             parent_mode=self.run_config.mode,
+            sandbox=sandbox,
         )
         agent = AgentLoop(
             llm=counting_llm,

@@ -14,6 +14,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # Full history so protected-path checks can diff against the PR base
+          # (shallow checkouts silently skip the gate).
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -41,4 +45,52 @@ jobs:
         run: npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
 
       - name: Check OpenSpec artifacts
-        run: uv run python scripts/check_openspec_artifacts.py
+        run: |
+          # Diff the PR branch against its base (or HEAD on a push) so
+          # protected-path changes cannot silently pass the event gate.
+          if [ -n "$GITHUB_BASE_REF" ]; then
+            BASE_REF="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_REF="$GITHUB_SHA"
+          fi
+          uv run python scripts/check_openspec_artifacts.py --base-ref "$BASE_REF" --require-base
+
+  benchmark-gate:
+    name: benchmark-gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository (full history)
+        uses: actions/checkout@v4
+        with:
+          # gate-smoke tasks use `git worktree add <base_commit>`; the base
+          # commit must exist locally, so a shallow (fetch-depth:1) checkout
+          # would make every task fail. Full history is required.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync --extra dev --locked
+
+      - name: Configure git identity
+        run: |
+          git config user.name "CI"
+          git config user.email "ci@example.com"
+
+      - name: Run benchmark regression gate
+        run: uv run asterwynd benchmark-gate benchmarks/tasks/gate-smoke --source-repo . --runs-dir /tmp/benchmark-gate-runs --baseline benchmarks/baseline.json --require-baseline --skip-p95

@@ -57,6 +57,8 @@ from agent.planning import PlanItem
 from agent.skills.runtime import SkillRuntime
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 from agent.background import BackgroundTaskManager, current_tool_call_id
+from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
+from agent.trace_recorder import TraceRecorderSandboxSink
 from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 
 if TYPE_CHECKING:
@@ -475,8 +477,14 @@ class AgentLoop:
             )
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
+        previous_sandbox_sink = current_sandbox_sink()
         self._active_on_event = on_event
         self._active_trace_recorder = trace_recorder
+        if trace_recorder:
+            # Sandbox backends/tools emit into the run's trace via the
+            # contextvar sink; save/restore mirrors _active_trace_recorder so
+            # nested subagent runs and recorder-less runs do not cross-talk.
+            set_sandbox_sink(TraceRecorderSandboxSink(trace_recorder))
         try:
             return await self._run(
                 messages,
@@ -496,6 +504,7 @@ class AgentLoop:
                     logger.warning("Failed to save session", exc_info=True)
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
+            set_sandbox_sink(previous_sandbox_sink)
             if self.cost_ledger is not None:
                 try:
                     self.cost_ledger.flush(_default_ledger_path())

@@ -992,3 +992,62 @@ main { flex: 1; min-height: 0; overflow: hidden; }
     font-size: 0.8rem;
   }
 }
+
+/* --- Debug view: Tool Call Timeline panel --- */
+.timeline-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+.timeline-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.timeline-panel-header button {
+  font-size: 0.8rem;
+  padding: 2px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+.timeline-row {
+  position: relative;
+  padding: 4px 0;
+  cursor: default;
+}
+.timeline-label {
+  font-size: 0.78rem;
+  margin-bottom: 2px;
+  color: #334155;
+}
+.timeline-bar {
+  height: 14px;
+  min-width: 2px;
+  border-radius: 3px;
+}
+.timeline-bar.ok { background: #22c55e; }
+.timeline-bar.fail { background: #ef4444; }
+.timeline-args {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.timeline-empty {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  padding: 6px 0;
+}

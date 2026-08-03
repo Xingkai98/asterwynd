@@ -545,3 +545,130 @@ mcp:
     assert config.mcp.health.enabled is True
     assert config.mcp.health.health_check_interval_s == 15.0
     assert config.mcp.health.degrade_failure_threshold == 0.6
+
+
+def test_load_config_parses_sandbox_section(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+sandbox:
+  backend: docker
+  image: python:3.10-slim
+  memory_mb: 512
+  cpus: 1.5
+  timeout_seconds: 45
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+
+    assert config.sandbox.backend == "docker"
+    assert config.sandbox.image == "python:3.10-slim"
+    assert config.sandbox.memory_mb == 512
+    assert config.sandbox.cpus == 1.5
+    assert config.sandbox.timeout_seconds == 45
+
+
+def test_sandbox_defaults_when_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "agent:\n  default_mode: build\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+
+    assert config.sandbox.backend == "process"
+    assert config.sandbox.image == "alpine:latest"
+    assert config.sandbox.memory_mb is None
+    assert config.sandbox.cpus is None
+    assert config.sandbox.timeout_seconds == 30.0
+
+
+def test_invalid_sandbox_memory_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "sandbox:\n  memory_mb: 0\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_config(start_dir=tmp_path)
+
+
+def test_invalid_sandbox_cpus_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "sandbox:\n  cpus: -2\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_config(start_dir=tmp_path)
+
+
+def test_load_config_parses_memory_section(tmp_path, monkeypatch):
+    """Regression (grill): memory config exposes the decay-threshold and
+    decay-interval knobs, not just the original six."""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+memory:
+  archive_after_days: 45
+  recency_halflife_days: 20
+  importance_default: 4
+  recall_top_k: 3
+  summary_tokens: 60
+  dedup_recall_threshold: 0.6
+  decay_threshold: 2.0
+  decay_interval_seconds: 7200
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+
+    assert config.memory.archive_after_days == 45
+    assert config.memory.recency_halflife_days == 20
+    assert config.memory.importance_default == 4
+    assert config.memory.recall_top_k == 3
+    assert config.memory.summary_tokens == 60
+    assert config.memory.dedup_recall_threshold == 0.6
+    assert config.memory.decay_threshold == 2.0
+    assert config.memory.decay_interval_seconds == 7200
+
+
+def test_memory_defaults_when_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "agent:\n  default_mode: build\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+
+    assert config.memory.decay_threshold == 1.5
+    assert config.memory.decay_interval_seconds == 3600
+    assert config.memory.archive_after_days == 30
+
+
+def test_memory_decay_threshold_null_disables_gate(tmp_path, monkeypatch):
+    """decay_threshold: null must parse to None (pure time-based archival)."""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "memory:\n  decay_threshold: null\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.memory.decay_threshold is None
+
+
+def test_invalid_memory_decay_threshold_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "memory:\n  decay_threshold: not-a-number\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_config(start_dir=tmp_path)
+
+
+def test_memory_decay_threshold_bool_rejected(tmp_path, monkeypatch):
+    """Regression (review Round 3): `decay_threshold: false` must not silently
+    parse to 0.0 (which would effectively never archive); a bool is a config
+    mistake and should fail fast."""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "memory:\n  decay_threshold: false\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_config(start_dir=tmp_path)

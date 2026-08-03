@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from agent.config import AsterwyndConfig
     from agent.cost_tracker import CostLedger
     from agent.llm import LLM
+    from agent.tools.sandbox import ExecutionBackend
 
 
 @dataclass
@@ -104,6 +105,7 @@ class SubAgentManager:
         parent_mode: AgentMode = AgentMode.BUILD,
         parent_mode_provider: Callable[[], AgentMode] | None = None,
         cost_ledger: "CostLedger | None" = None,
+        sandbox: "ExecutionBackend | None" = None,
     ):
         self.llm = llm
         self.config = config
@@ -111,6 +113,7 @@ class SubAgentManager:
         self.parent_mode = parent_mode
         self.parent_mode_provider = parent_mode_provider
         self.cost_ledger = cost_ledger
+        self.sandbox = sandbox
         self._sessions: dict[str, SubagentSessionRecord] = {}
         self._active_tasks: dict[str, asyncio.Task[None]] = {}
         self._run_waiters: dict[str, asyncio.Event] = {}
@@ -302,6 +305,29 @@ class SubAgentManager:
             if waiter is not None:
                 waiter.set()
 
+    def _resolve_sandbox(self) -> "ExecutionBackend | None":
+        """Return the sandbox for sub-agent registries.
+
+        Prefers an explicitly-provided sandbox; otherwise self-heals from
+        ``config.sandbox`` (cached) so every construction site — CLI, web, or
+        benchmark — runs sub-agents in the same sandbox as the parent.
+        """
+        if self.sandbox is not None:
+            return self.sandbox
+        config = self.config
+        if config is None:
+            return None
+        from agent.tools.sandbox import build_execution_backend
+
+        self.sandbox = build_execution_backend(
+            config.sandbox.backend,
+            image=config.sandbox.image,
+            memory_mb=config.sandbox.memory_mb,
+            cpus=config.sandbox.cpus,
+            timeout=config.sandbox.timeout_seconds,
+        )
+        return self.sandbox
+
     def _build_subagent_loop(self, mode: AgentMode) -> AgentLoop:
         from agent.loop import AgentLoop
 
@@ -319,6 +345,7 @@ class SubAgentManager:
             code_intelligence_config=config.tools.code_intelligence if config else None,
             browser_config=config.tools.browser if config else None,
             web_search_config=config.tools.web_search if config else None,
+            sandbox=self._resolve_sandbox(),
         )
         return AgentLoop(
             llm=self.llm,

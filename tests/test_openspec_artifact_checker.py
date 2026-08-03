@@ -383,7 +383,7 @@ def test_main_rejects_protected_path_diff_without_event(tmp_path, monkeypatch):
     monkeypatch.setattr(
         mod,
         "_changed_paths_since_base",
-        lambda repo_root, base_ref: {"docs/known-issues.md"},
+        lambda repo_root, base_ref, require_base=False: ({"docs/known-issues.md"}, None),
     )
 
     exit_code = main(
@@ -400,6 +400,111 @@ def test_main_rejects_protected_path_diff_without_event(tmp_path, monkeypatch):
     )
 
     assert exit_code == 1
+
+
+def test_require_base_fails_closed_when_base_unresolvable(tmp_path, monkeypatch):
+    """Regression (grill Q5): with --require-base, a failed git diff (e.g. on a
+    shallow checkout missing the base ref) must fail the gate instead of
+    silently passing."""
+    changes_root = tmp_path / "openspec" / "changes"
+    (changes_root / "archive").mkdir(parents=True)
+    specs_root = tmp_path / "openspec" / "specs"
+    specs_root.mkdir(parents=True)
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.parent.mkdir()
+    backlog.write_text(
+        """# OpenSpec Change 实现队列
+
+## 未实现队列
+
+当前无。
+
+## 已完成待归档
+
+当前无。
+""",
+        encoding="utf-8",
+    )
+
+    import scripts.check_openspec_artifacts as mod
+
+    # Simulate a shallow checkout where the base ref cannot be resolved.
+    monkeypatch.setattr(
+        mod,
+        "_changed_paths_since_base",
+        lambda repo_root, base_ref, require_base=False: (
+            set(),
+            f"could not resolve base ref '{base_ref}'",
+        ),
+    )
+
+    exit_code = main(
+        [
+            "--changes-root",
+            str(changes_root),
+            "--current-specs-root",
+            str(specs_root),
+            "--backlog",
+            str(backlog),
+            "--base-ref",
+            "origin/main",
+            "--require-base",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_require_base_defaults_to_best_effort_warning(tmp_path, monkeypatch, capsys):
+    """Without --require-base, an unresolvable base ref is a warning, not an
+    error (local best-effort mode)."""
+    changes_root = tmp_path / "openspec" / "changes"
+    (changes_root / "archive").mkdir(parents=True)
+    specs_root = tmp_path / "openspec" / "specs"
+    specs_root.mkdir(parents=True)
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.parent.mkdir()
+    backlog.write_text(
+        """# OpenSpec Change 实现队列
+
+## 未实现队列
+
+当前无。
+
+## 已完成待归档
+
+当前无。
+""",
+        encoding="utf-8",
+    )
+
+    import scripts.check_openspec_artifacts as mod
+
+    monkeypatch.setattr(
+        mod,
+        "_changed_paths_since_base",
+        lambda repo_root, base_ref, require_base=False: (
+            set(),
+            "could not resolve base ref 'origin/main'",
+        ),
+    )
+
+    exit_code = main(
+        [
+            "--changes-root",
+            str(changes_root),
+            "--current-specs-root",
+            str(specs_root),
+            "--backlog",
+            str(backlog),
+            "--base-ref",
+            "origin/main",
+        ]
+    )
+
+    assert exit_code == 0
+    assert "WARNING: could not resolve base ref" in capsys.readouterr().err
+
 
 
 def proposal_for(
@@ -1153,3 +1258,58 @@ def test_backlog_accepts_active_change_reference(tmp_path):
     )
 
     assert check_backlog_consistency(changes, backlog) == []
+
+
+def test_change_id_from_dir_name_strips_date_prefix():
+    """Regression (grill Q6): archived dirs are date-prefixed; the bare change
+    id must be derived for manifest verification."""
+    import scripts.check_openspec_artifacts as mod
+
+    assert mod._change_id_from_dir_name("2026-08-02-long-term-memory-deepening") == "long-term-memory-deepening"
+    assert mod._change_id_from_dir_name("long-term-memory-deepening") == "long-term-memory-deepening"
+
+
+def test_verify_review_manifest_archived_path(tmp_path):
+    """Regression (grill Q6): verify_review_manifest must resolve archived
+    change paths (openspec/changes/archive/<date>-<id>) for drift detection."""
+    import json
+
+    from agent.workflow.review_manifest import (
+        REVIEW_MANIFEST_SCHEMA,
+        artifact_hash,
+        file_sha256,
+        verify_review_manifest,
+    )
+
+    archive = tmp_path / "openspec" / "changes" / "archive" / "2026-08-02-sample-change"
+    (archive / "reviews").mkdir(parents=True)
+    (archive / "specs").mkdir()
+    (archive / "tasks.md").write_text("- [x] task\n", encoding="utf-8")
+    report = archive / "reviews" / "building-review.md"
+    report.write_text("# Review\n\nPASS\n", encoding="utf-8")
+
+    manifest = {
+        "schema": REVIEW_MANIFEST_SCHEMA,
+        "change_id": "sample-change",
+        "phase": "building",
+        "verdict": "PASS",
+        "reviewer_run_id": "r1",
+        "base_sha": "abc123",
+        "head_sha": "def456",
+        "tasks_hash": artifact_hash(archive / "tasks.md"),
+        "spec_hash": artifact_hash(archive / "specs"),
+        "diff_hash": "sha256:unavailable",
+        "report_hash": file_sha256(report),
+    }
+    (archive / "reviews" / "building-review-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+    # No git repo here → git-span checks are skipped; content hashes must pass.
+    errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
+    assert errors == []
+
+    # Now mutate tasks.md → drift must be detected.
+    (archive / "tasks.md").write_text("- [x] task\n- [x] another\n", encoding="utf-8")
+    errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
+    assert any("tasks hash mismatch" in e for e in errors)

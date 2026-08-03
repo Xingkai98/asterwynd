@@ -190,6 +190,18 @@ Browser screenshots、HTML snapshots 和日志 artifacts SHALL 保存到 workspa
 - **THEN** 使用 `DockerBackend`
 - **AND** `backend: process` 选择 `ProcessBackend`
 
+#### Scenario: config 后端对前台 Bash 生效
+
+- **GIVEN** `sandbox.backend: docker` 配置
+- **WHEN** 构建 agent 工具注册表
+- **THEN** Bash 工具的执行后端 SHALL 是配置的 `DockerBackend`（main/web/benchmark 入口一致，不仅限后台任务）
+
+#### Scenario: 后端不可用 fail-fast
+
+- **GIVEN** `sandbox.backend: docker` 配置但 Docker daemon 不可达
+- **WHEN** 构建 agent core
+- **THEN** 启动 SHALL 以明确错误失败（不静默回退到 process）
+
 ### Requirement: 命令护栏（轻量分词 + argv 语义校验）
 
 命令护栏 SHALL 通过轻量分词与 argv 语义校验验证 shell 命令，SHALL 拒绝危险命令模式（rm 递归+强制目标越界、重定向到受保护路径、管道到 shell、任意代码执行解释器、敏感文件外传），SHALL 扩展 denylist 覆盖绕过变体，SHALL 默认放行未知命令（护栏不是边界）。
@@ -221,3 +233,37 @@ Browser screenshots、HTML snapshots 和日志 artifacts SHALL 保存到 workspa
 - **GIVEN** 攻击集 cases
 - **WHEN** 每个 guard-deny case 被命令护栏校验
 - **THEN** 全部 SHALL 被拒绝
+
+### Requirement: cgroup v2 资源限制
+
+沙箱 SHALL 在配置 `sandbox.memory_mb`/`sandbox.cpus` 时通过 cgroup v2 对本地 `ProcessBackend` 实施 CPU/内存限制，SHALL 为每次 `run` 创建唯一命名的临时子 cgroup，SHALL 检测 OOM kill 并在结果上标记 `oom_killed`，且 SHALL 在宿主无法创建 cgroup 时可观测地降级（结果 `degraded` 标志 + `degraded` 沙箱事件）——绝不静默忽略已请求的限制。
+
+#### Scenario: 内存限制生效
+
+- **GIVEN** 配置 `sandbox.memory_mb` 且 cgroup v2 可用
+- **WHEN** 命令通过 ProcessBackend 运行
+- **THEN** 命令 SHALL 在独立临时 cgroup 中运行并写入 `memory.max`
+- **AND** OOM kill SHALL 标记结果并发出 `oom` 沙箱事件
+
+#### Scenario: 无 cgroup 环境降级
+
+- **GIVEN** 配置 `sandbox.memory_mb` 但宿主无法创建 cgroup
+- **WHEN** 命令通过 ProcessBackend 运行
+- **THEN** 结果 SHALL 标记 `degraded`
+- **AND** 发出 `degraded` 沙箱事件（每后端实例至多一次）
+
+### Requirement: 沙箱事件入 trace
+
+沙箱 SHALL 通过 contextvar sink 向活跃的 `TraceRecorder` 发出结构化事件（`denied`/`kill`/`oom`/`degraded`），SHALL 附带调用方 `tool_call_id` 与截断的命令，且 SHALL 与 trace 事件 schema 向后兼容（新增 `sandbox` step type；`schema_version` 不变）。
+
+#### Scenario: 命令拒绝事件
+
+- **GIVEN** 命令被 workspace policy 或命令护栏拒绝
+- **WHEN** Bash 工具拒绝该命令
+- **THEN** trace 中 SHALL 记录带拒绝原因的 `sandbox` `denied` 事件
+
+#### Scenario: 超时 kill 事件
+
+- **GIVEN** 命令超过超时（前台或后台）
+- **WHEN** 后端或后台管理器杀死进程树
+- **THEN** trace 中 SHALL 记录 `sandbox` `kill` 事件

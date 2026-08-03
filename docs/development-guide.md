@@ -115,6 +115,30 @@ sudo ./scripts/start-docker-daemon.sh
 
 这个脚本只用于开发和验证当前环境，不属于 benchmark 运行时语义；benchmark CLI 只负责检测 Docker 是否可用。
 
+运行 benchmark 回归门禁（对比已提交基线，劣化 >5% 返回非零）：
+
+```bash
+# 用仓库内 gate-smoke 任务集 + 已提交基线（CI 同款）
+uv run asterwynd benchmark-gate benchmarks/tasks/gate-smoke \
+  --source-repo . \
+  --baseline benchmarks/baseline.json \
+  --require-baseline
+
+# 跑完把当前结果固化为新基线（显式确认覆盖）
+uv run asterwynd benchmark-gate benchmarks/tasks \
+  --source-repo . \
+  --baseline benchmarks/baseline.json \
+  --update-baseline
+
+# 近零 IO 确定性任务集可跳过 P95 延迟检查（墙钟受环境主导不可靠）
+uv run asterwynd benchmark-gate benchmarks/tasks/gate-smoke \
+  --source-repo . \
+  --baseline benchmarks/baseline.json \
+  --require-baseline --skip-p95
+```
+
+门禁判定规则：成功率相对基线绝对下降 >5 个百分点，或 P95 延迟超过 `max(基线*1.05, 基线+1.0s)`（相对 5% + 1 秒绝对值下限）即返回非零。`--update-baseline` 为显式确认覆盖；0 任务时不会写空基线。
+
 也可以在 `asterwynd.yaml` 中设置默认 benchmark 参数，字段示例见仓库根目录的 `asterwynd.example.yaml`。
 
 运行 Claw-SWE-Bench 对比评测前，需要先准备 SWE-bench Docker 镜像、独立 Python、Asterwynd venv 和 API key。完整环境说明见仓库根目录 `CLAW-SWE-BENCH.md`。最小命令形态：
