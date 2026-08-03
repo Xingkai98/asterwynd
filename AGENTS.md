@@ -184,6 +184,9 @@ uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-
 - [经验教训](./docs/lessons-learned.md): 记录历史问题、根因和后续开发必须吸取的教训。
 - [Coding Agent 路线图](./docs/coding-agent-roadmap.md): 当前 coding-agent 能力建设路线图，后续需要按新项目定位继续修订。
 - [Benchmark 方案](./docs/benchmark-plan.md): benchmark 任务、运行器、评测指标和结果文件设计。
+- [面试讲稿](./docs/interview-script/README.md): 面向面试的分层讲稿，由浅入深 15 个顶层问题（讲稿 300-500 字 + 代码走读）。
+
+**建议性维护约束**：每次有新的设计或架构变更后，应检查 `docs/interview-script/` 中对应问题是否需更新讲稿与代码走读；若变更引入新能力线，可新增问题文件。该约束为建议，不设机械门禁。
 
 ## 当前文档债务
 
