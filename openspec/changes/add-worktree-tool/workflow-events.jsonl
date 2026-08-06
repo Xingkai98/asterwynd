@@ -1,0 +1,1 @@
+{"schema":"workflow-event/v1","seq":1,"event_type":"backlog_updated","change_id":"add-worktree-tool","artifact_path":"docs/openspec-change-backlog.md","reason":"add-worktree-tool（issue #111）立项：并行开发批次新增第十批（Agent 侧 worktree 隔离工具），未实现队列新增 5 号条目，记录批次、issue 关联、建议顺序原因与主要交付。","approved_by":"human"}
