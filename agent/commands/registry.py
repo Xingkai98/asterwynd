@@ -170,7 +170,7 @@ def build_default_slash_command_registry(
 
     async def mode_handler(ctx: CommandContext, args: str) -> CommandResult:
         if not args:
-            return CommandResult(message="Error: usage /mode <build|read_only|plan>")
+            return CommandResult(message="Error: usage /mode <build|read_only|plan|bypass>")
         try:
             transition = await ctx.agent.set_mode(
                 args,
@@ -413,9 +413,9 @@ def build_default_slash_command_registry(
     registry.register(
         SlashCommand(
             name="mode",
-            usage="/mode <build|read_only|plan>",
+            usage="/mode <build|read_only|plan|bypass>",
             description="Switch the current agent mode.",
-            argument_hint="<build|read_only|plan>",
+            argument_hint="<build|read_only|plan|bypass>",
             handler=mode_handler,
         )
     )

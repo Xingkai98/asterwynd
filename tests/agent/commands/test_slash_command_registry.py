@@ -21,8 +21,6 @@ class FakeAgent:
         self.skill_runtime = skill_runtime
 
     async def set_mode(self, mode, *, source, session_id=None, **kwargs):
-        if mode == "bypass":
-            raise ValueError("bypass mode is reserved for internal use")
         old_mode = self.current_mode
         self.current_mode = mode
         transition = {
@@ -315,4 +313,32 @@ async def test_default_compact_reports_noop_without_eligible_history():
         "system",
         "recent user",
         "recent answer",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mode_command_switches_to_bypass():
+    registry = build_default_slash_command_registry()
+    agent = FakeAgent()
+    messages = [Message(role="system", content="system")]
+    ctx = CommandContext(
+        agent=agent,
+        messages=messages,
+        session_id="session-1",
+        provider="openai",
+        model="fake-model",
+    )
+
+    result = await registry.try_execute("/mode bypass", ctx)
+
+    assert result is not None
+    assert "Mode changed: build -> bypass" in result.message
+    assert agent.current_mode == "bypass"
+    assert agent.mode_changes == [
+        {
+            "old_mode": "build",
+            "new_mode": "bypass",
+            "source": "cli",
+            "session_id": "session-1",
+        }
     ]

@@ -109,7 +109,7 @@ uv run python run_infer.py \
 | `BrowserScroll` | read_only | 滚动页面指定像素 |
 | `BrowserTabs` | read_only | 管理浏览器标签页（新建/切换/关闭） |
 
-Bash 工具内置命令安全策略：先经过 mode permission profile 判权；默认 `build` mode 下 high risk 命令执行需要审批，CLI 单轮和 benchmark 等无人值守入口 fail closed。实际执行前仍会检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则、permission profile 和 ListFiles / Find 忽略规则通过 `asterwynd.yaml` 配置扩展，见 `asterwynd.example.yaml`。
+Bash 工具内置命令安全策略：先经过 mode permission profile 判权；默认 `build` mode 下 high risk 命令执行需要审批，CLI 单轮和 benchmark 等无人值守入口 fail closed（显式指定 `bypass` mode 时自动放行）。实际执行前仍会检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则、permission profile 和 ListFiles / Find 忽略规则通过 `asterwynd.yaml` 配置扩展，见 `asterwynd.example.yaml`。
 
 ## 项目结构
 
@@ -333,14 +333,14 @@ ASTERWYND_DEBUG=enabled uv run asterwynd web --host 127.0.0.1 --port 8000
 ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
-- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan`，展示 Plan Document 和 planning state，并在工具需要审批时显示审批卡片
+- **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan` / `bypass`，展示 Plan Document 和 planning state，并在工具需要审批时显示审批卡片
 - **Debug 界面**：环境变量 `ASTERWYND_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 响应（content、stop_reason、tool_calls；工具参数按审批脱敏规则展示）
   - 工具调用详情（名称、脱敏参数、结果）
   - AgentLoop 通过 Web session 事件流发送的 Memory 压缩事件
 
-CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_only` 和 `/mode plan` 切换当前 session mode；CLI 单轮模式仍通过 `--mode` 指定初始 mode。
+CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_only`、`/mode plan` 和 `/mode bypass` 切换当前 session mode；CLI 单轮模式仍通过 `--mode` 指定初始 mode。
 
 ### 日志
 
