@@ -22,17 +22,13 @@ class AgentMode(str, Enum):
     BYPASS = "bypass"
 
 
-def parse_agent_mode(value: str, *, allow_bypass: bool = False) -> AgentMode:
+def parse_agent_mode(value: str) -> AgentMode:
     normalized = value.strip().lower().replace("-", "_")
-    if normalized == AgentMode.BYPASS.value and not allow_bypass:
-        raise ValueError("bypass mode is reserved for internal use")
 
     try:
         return AgentMode(normalized)
     except ValueError as exc:
-        supported = ["build", "read_only", "read-only", "plan"]
-        if allow_bypass:
-            supported.append("bypass")
+        supported = ["build", "read_only", "read-only", "plan", "bypass"]
         raise ValueError(
             f"unsupported agent mode {value!r}; expected one of {supported}"
         ) from exc
@@ -203,5 +199,5 @@ def _default_permission_profiles_by_mode() -> dict[AgentMode, PermissionProfile]
         AgentMode.BUILD: BUILTIN_PERMISSION_PROFILES["build_default"],
         AgentMode.READ_ONLY: BUILTIN_PERMISSION_PROFILES["read_only_default"],
         AgentMode.PLAN: BUILTIN_PERMISSION_PROFILES["plan_default"],
-        AgentMode.BYPASS: BUILTIN_PERMISSION_PROFILES["fail_closed"],
+        AgentMode.BYPASS: BUILTIN_PERMISSION_PROFILES["bypass_default"],
     }

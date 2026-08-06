@@ -11,6 +11,9 @@ modes:
   plan:
     permission_profile: plan_default
     deny_tools: []
+  bypass:
+    permission_profile: bypass_default
+    deny_tools: []
 
 permissions:
   profiles:

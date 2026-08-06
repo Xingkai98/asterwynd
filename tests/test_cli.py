@@ -49,8 +49,6 @@ class FakeAgent:
         session_id=None,
         run_id=None,
     ):
-        if mode == "bypass":
-            raise ValueError("bypass mode is reserved for internal use")
         old_mode = self.current_mode
         self.current_mode = mode
         transition = {
@@ -407,13 +405,14 @@ def test_cli_interactive_mode_command_changes_session_mode(monkeypatch):
     ]
 
 
-def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
+def test_cli_interactive_mode_command_switches_to_bypass(monkeypatch):
     fake = FakeAgent()
     monkeypatch.setattr(
         cli,
         "build_agent",
         lambda model=None, provider="openai", mode="build", config=None, **kwargs: fake,
     )
+    monkeypatch.setattr(cli, "new_session_id", lambda: "session-interactive")
 
     result = CliRunner().invoke(
         cli.app,
@@ -422,9 +421,16 @@ def test_cli_interactive_mode_command_rejects_bypass(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert "bypass" in result.stdout
-    assert fake.current_mode == "build"
-    assert fake.mode_changes == []
+    assert "Mode changed: build -> bypass" in result.stdout
+    assert fake.current_mode == "bypass"
+    assert fake.mode_changes == [
+        {
+            "old_mode": "build",
+            "new_mode": "bypass",
+            "source": "cli",
+            "session_id": "session-interactive",
+        }
+    ]
 
 
 def test_cli_interactive_help_command_does_not_run_agent(monkeypatch):
@@ -659,11 +665,23 @@ def test_cli_mode_overrides_env_and_yaml(tmp_path, monkeypatch):
     assert captured["mode"] == "build"
 
 
-def test_cli_rejects_bypass_mode():
-    result = CliRunner().invoke(cli.app, ["run", "hello", "--mode", "bypass"])
+def test_cli_accepts_bypass_mode(monkeypatch):
+    fake = FakeAgent()
+    captured = {}
 
-    assert result.exit_code == 1
-    assert "bypass" in result.stderr
+    def build_agent(model=None, provider="openai", mode="build", config=None, **kwargs):
+        captured["mode"] = mode
+        return fake
+
+    monkeypatch.setattr(cli, "build_agent", build_agent)
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["run", "hello", "--mode", "bypass"],
+    )
+
+    assert result.exit_code == 0
+    assert captured["mode"] == "bypass"
 
 
 def test_cli_reports_invalid_config(tmp_path):

@@ -297,7 +297,7 @@ class AsterwyndConfig:
             AgentMode.BUILD: "build_default",
             AgentMode.READ_ONLY: "read_only_default",
             AgentMode.PLAN: "plan_default",
-            AgentMode.BYPASS: "fail_closed",
+            AgentMode.BYPASS: "bypass_default",
         }
         for mode in AgentMode:
             profile_name = self.mode_config(mode).permission_profile or defaults[mode]

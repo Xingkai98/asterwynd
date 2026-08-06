@@ -49,7 +49,7 @@ uv run asterwynd
 ```text
 /help                         # 查看可用命令
 /status                       # 查看 session、mode、provider、model 和上下文摘要
-/mode <build|read_only|plan>  # 切换后续 run 的 agent mode
+/mode <build|read_only|plan|bypass>  # 切换后续 run 的 agent mode
 /clear                        # 清空当前交互历史，保留 system context 和 Session ID
 /compact                      # 主动压缩符合条件的旧上下文
 /skills                       # 查看当前加载的 skills 和诊断
@@ -216,7 +216,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - MCP server 通过顶层 `mcp.servers` 配置，支持 `stdio` 和 `streamable_http`。MCP tools 注册为 `mcp__<server>__<tool>`；`/mcp-prompt` 和 `/mcp-resource` 读取结果以 system context 注入当前会话，并按 mode policy 判权。
 - Skill 使用 `skills/<name>/SKILL.md` 目录格式。每次 run 都会向模型注入简短 skill index；完整 skill prompt 只在 `always: true`、本地匹配、显式 `/skill args` 或 `ActivateSkill` 激活时进入当前 run context。
 - `/clear` 只清当前 CLI 交互上下文，不生成新的 Session ID；后续如果引入持久 transcript 或 cache reset，需要单独扩展语义。
-- CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。
+- CLI 交互模式可用 `/mode build`、`/mode read_only`、`/mode plan`、`/mode bypass` 切换当前 session mode；Web Chat 也支持在当前 session 内切换 mode。
 - 当前 CLI/Web 的 mode 切换在用户侧表现为“影响后续 run”；runtime state 仍会在 transition 完成后立即更新，供后续 TUI 或控制面重构复用。
 - 默认 `build` mode 会把 high risk 工具判定为 `require_approval`。CLI 交互模式在 TTY 中提示 `Approve? [y/N]`；CLI 单轮、benchmark 和子 agent 遇到需要审批的工具调用时 fail closed。Web Chat 通过审批卡片批准或拒绝当前 pending approval。
 - 优先使用 `rg` 和 `rg --files` 搜索。

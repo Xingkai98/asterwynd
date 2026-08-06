@@ -119,7 +119,7 @@ async def test_api_slash_commands_returns_catalog(app):
     assert {"help", "status", "clear", "compact", "mode"}.issubset(names)
     mode = next(command for command in commands if command["name"] == "mode")
     assert mode["command"] == "/mode"
-    assert mode["argument_hint"] == "<build|read_only|plan>"
+    assert mode["argument_hint"] == "<build|read_only|plan|bypass>"
     assert mode["source"] == "builtin"
     assert mode["kind"] == "local"
     assert mode["insert_text"] == "/mode "
@@ -692,17 +692,17 @@ def test_websocket_set_mode_updates_session_mode_for_next_run():
     assert run_started["data"]["mode"] == "read_only"
 
 
-def test_websocket_set_mode_rejects_bypass():
+def test_websocket_set_mode_switches_to_bypass():
     app = create_app(ScriptedLLM([LLMResponse(content="Hello")]), mode="build")
 
     with TestClient(app) as client:
         with client.websocket_connect("/ws/new") as ws:
             created = ws.receive_json()
             ws.send_json({"type": "set_mode", "mode": "bypass"})
-            error = ws.receive_json()
+            mode_changed = ws.receive_json()
 
-            assert error["type"] == "error"
-            assert "bypass" in error["data"]["message"]
+            assert mode_changed["type"] == "mode_changed"
+            assert mode_changed["data"]["new_mode"] == "bypass"
 
             ws.send_json({"type": "chat", "content": "hello"})
             events = []
@@ -714,7 +714,7 @@ def test_websocket_set_mode_rejects_bypass():
 
     run_started = next(event for event in events if event["type"] == "run_started")
     assert created["mode"] == "build"
-    assert run_started["data"]["mode"] == "build"
+    assert run_started["data"]["mode"] == "bypass"
 
 
 def test_websocket_plan_mode_emits_plan_document_and_planning_state():

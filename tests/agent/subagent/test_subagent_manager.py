@@ -61,6 +61,26 @@ def test_create_subagent_clamps_mode_to_parent():
     assert created["mode"] == "read_only"
 
 
+def test_create_subagent_cannot_escalate_to_bypass_from_build_parent():
+    manager = SubAgentManager(
+        llm=StaticLLM(),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BUILD,
+    )
+    created = manager.create_subagent(name="writer", mode="bypass")
+    assert created["mode"] == "build"
+
+
+def test_create_subagent_inherits_bypass_from_bypass_parent():
+    manager = SubAgentManager(
+        llm=StaticLLM(),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BYPASS,
+    )
+    created = manager.create_subagent(name="writer")
+    assert created["mode"] == "bypass"
+
+
 @pytest.mark.asyncio
 async def test_run_subagent_wait_false_returns_running(manager):
     created = manager.create_subagent(name="runner")

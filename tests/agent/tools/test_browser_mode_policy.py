@@ -25,7 +25,7 @@ def _make_policy(mode: AgentMode) -> ModePolicy:
             AgentMode.BUILD: BUILTIN_PERMISSION_PROFILES["build_default"],
             AgentMode.READ_ONLY: BUILTIN_PERMISSION_PROFILES["read_only_default"],
             AgentMode.PLAN: BUILTIN_PERMISSION_PROFILES["plan_default"],
-            AgentMode.BYPASS: BUILTIN_PERMISSION_PROFILES["fail_closed"],
+            AgentMode.BYPASS: BUILTIN_PERMISSION_PROFILES["bypass_default"],
         },
     )
 
@@ -95,15 +95,16 @@ class TestBrowserToolsInPlanMode:
 
 
 class TestBrowserToolsInBypassMode:
-    """BYPASS 模式下浏览器工具不可见。"""
+    """BYPASS 模式下浏览器工具自动放行。"""
 
-    def test_bypass_mode_denies_browser_tools(self):
-        """BYPASS 模式的 fail_closed profile 不包含任何能力。"""
+    def test_bypass_mode_allows_browser_tools(self):
+        """BYPASS 模式的 bypass_default profile 允许全部能力，包括 BROWSER_CONTROL。"""
         policy = _make_policy(AgentMode.BYPASS)
         tool = BrowserNavigateTool()
 
         decision = policy.decide_tool(tool)
-        assert decision.is_visible is False
+        assert decision.is_visible is True
+        assert decision.type is PermissionDecisionType.ALLOW
 
 
 class TestBrowserPermissionMetadata:

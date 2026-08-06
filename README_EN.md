@@ -109,7 +109,7 @@ uv run python run_infer.py \
 | `BrowserScroll` | read_only | Scroll the page by a given number of pixels. |
 | `BrowserTabs` | read_only | Manage browser tabs: new, switch, close. |
 
-The Bash tool has built-in command safety policy. It first passes mode permission profile checks; in the default `build` mode, high-risk command execution requires approval, and unattended entry points such as single-prompt CLI and benchmark fail closed. Before actual execution it still checks regex deny patterns covering cases such as `rm -rf /`, fork bombs, and `curl | sh`, then matches allowed safe command prefixes such as `git status`, `pytest`, `uv`, and `npm`. Project-level command deny rules, permission profiles, and ListFiles / Find ignore rules are extended through `asterwynd.yaml`; see `asterwynd.example.yaml`.
+The Bash tool has built-in command safety policy. It first passes mode permission profile checks; in the default `build` mode, high-risk command execution requires approval, and unattended entry points such as single-prompt CLI and benchmark fail closed (they auto-allow only when `bypass` mode is explicitly selected). Before actual execution it still checks regex deny patterns covering cases such as `rm -rf /`, fork bombs, and `curl | sh`, then matches allowed safe command prefixes such as `git status`, `pytest`, `uv`, and `npm`. Project-level command deny rules, permission profiles, and ListFiles / Find ignore rules are extended through `asterwynd.yaml`; see `asterwynd.example.yaml`.
 
 ## Project Structure
 
@@ -334,14 +334,14 @@ ASTERWYND_DEBUG=enabled uv run asterwynd web --host 127.0.0.1 --port 8000
 ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
-- **Chat view**: Normal conversation, assistant Markdown rendering, tool-call visualization, long tool-result folding by display policy, current session id / run id / session mode, switching between `build` / `read_only` / `plan`, Plan Document plus planning state display, and approval cards for tools that require approval.
+- **Chat view**: Normal conversation, assistant Markdown rendering, tool-call visualization, long tool-result folding by display policy, current session id / run id / session mode, switching between `build` / `read_only` / `plan` / `bypass`, Plan Document plus planning state display, and approval cards for tools that require approval.
 - **Debug view**: Enabled by `ASTERWYND_DEBUG=enabled`; shows each round of:
   - Full message list sent to the LLM, including system prompt, history, and tool results.
   - LLM response, including content, stop_reason, and tool_calls; tool arguments are displayed with approval redaction rules.
   - Tool-call details, including name, redacted arguments, and result.
   - Memory compaction events sent by AgentLoop through the Web session event stream.
 
-CLI interactive mode supports switching the current session mode with `/mode build`, `/mode read_only`, and `/mode plan`. CLI single-run mode still uses `--mode` for the initial mode.
+CLI interactive mode supports switching the current session mode with `/mode build`, `/mode read_only`, `/mode plan`, and `/mode bypass`. CLI single-run mode still uses `--mode` for the initial mode.
 
 ### Logs
 

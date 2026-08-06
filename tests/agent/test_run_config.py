@@ -46,15 +46,12 @@ def test_parse_agent_mode_accepts_supported_user_values():
     assert parse_agent_mode("read_only") is AgentMode.READ_ONLY
     assert parse_agent_mode("read-only") is AgentMode.READ_ONLY
     assert parse_agent_mode("plan") is AgentMode.PLAN
+    assert parse_agent_mode("bypass") is AgentMode.BYPASS
 
 
-def test_parse_agent_mode_rejects_bypass_for_user_input():
+def test_parse_agent_mode_error_message_lists_bypass():
     with pytest.raises(ValueError, match="bypass"):
-        parse_agent_mode("bypass")
-
-
-def test_parse_agent_mode_can_allow_internal_bypass():
-    assert parse_agent_mode("bypass", allow_bypass=True) is AgentMode.BYPASS
+        parse_agent_mode("unknown-mode")
 
 
 def test_agent_run_config_defaults_to_build():
@@ -75,13 +72,17 @@ def test_runtime_state_set_mode_updates_current_mode_and_returns_transition():
     }
 
 
-def test_runtime_state_rejects_bypass_and_keeps_current_mode():
+def test_runtime_state_set_mode_accepts_bypass():
     state = AgentRuntimeState(initial_mode=AgentMode.BUILD)
 
-    with pytest.raises(ValueError, match="bypass"):
-        state.set_mode("bypass", source="cli")
+    transition = state.set_mode("bypass", source="cli")
 
-    assert state.current_mode is AgentMode.BUILD
+    assert state.current_mode is AgentMode.BYPASS
+    assert transition == {
+        "old_mode": "build",
+        "new_mode": "bypass",
+        "source": "cli",
+    }
 
 
 def test_mode_policy_keeps_high_risk_tools_visible_in_build():
@@ -154,8 +155,29 @@ def test_mode_policy_read_only_requires_approval_for_agent_state_tools():
     assert read_only.decide_tool(tool).type is PermissionDecisionType.REQUIRE_APPROVAL
 
 
-def test_mode_policy_bypass_fails_closed():
+def test_mode_policy_bypass_auto_allows_all_risk_levels():
     policy = ModePolicy(AgentRunConfig(mode=AgentMode.BYPASS))
+
+    assert policy.is_tool_allowed(DummyTool(read_only=True, dangerous=False)) is True
+    assert policy.is_tool_allowed(DummyTool(read_only=False, dangerous=False)) is True
+    assert policy.is_tool_allowed(DummyTool(read_only=True, dangerous=True)) is True
+
+
+def test_mode_policy_bypass_auto_allows_high_risk_without_approval():
+    policy = ModePolicy(AgentRunConfig(mode=AgentMode.BYPASS))
+
+    decision = policy.decide_tool(DummyTool(read_only=False, dangerous=True))
+
+    assert decision.type is PermissionDecisionType.ALLOW
+    assert decision.can_execute_without_approval is True
+    assert decision.requires_approval is False
+
+
+def test_mode_policy_bypass_still_denies_configured_tool():
+    policy = ModePolicy(
+        AgentRunConfig(mode=AgentMode.BYPASS),
+        deny_tools_by_mode={AgentMode.BYPASS: ("Dummy",)},
+    )
 
     assert policy.is_tool_allowed(DummyTool(read_only=True, dangerous=False)) is False
 

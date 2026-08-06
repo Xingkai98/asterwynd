@@ -154,6 +154,16 @@ BUILTIN_PERMISSION_PROFILES: dict[str, PermissionProfile] = {
         auto_approve_max_risk=ToolRiskLevel.HIGH,
         approval_required_max_risk=ToolRiskLevel.HIGH,
     ),
+    # bypass_default: 自动放行全部风险档（LOW/MEDIUM/HIGH），不产生审批请求。
+    # approval_required_max_risk=HIGH 与 auto_approve_max_risk=HIGH 相等，
+    # 是 PermissionProfile.__post_init__ 强制 approval >= auto 下的合法取值；
+    # 若未来新增高于 HIGH 的风险档，该 profile 会退化为 REQUIRE_APPROVAL 而非 DENY。
+    "bypass_default": PermissionProfile(
+        name="bypass_default",
+        allowed_capabilities=ALL_CAPABILITIES,
+        auto_approve_max_risk=ToolRiskLevel.HIGH,
+        approval_required_max_risk=ToolRiskLevel.HIGH,
+    ),
     "read_only_default": PermissionProfile(
         name="read_only_default",
         allowed_capabilities=READ_ONLY_CAPABILITIES,
