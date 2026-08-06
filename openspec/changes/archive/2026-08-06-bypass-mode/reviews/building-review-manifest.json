@@ -5,9 +5,9 @@
   "verdict": "PASS",
   "reviewer_run_id": "review-subagent-bypass-mode-building-review",
   "base_sha": "cb5a5dfd234c30e24961dab400801ca9dd8e3c38",
-  "head_sha": "cb5a5dfd234c30e24961dab400801ca9dd8e3c38",
+  "head_sha": "102cba8c2edca6c25056ef63b2c340eef8aedddc",
   "tasks_hash": "sha256:31b2bef818d8a89ddc5b90cf2b56e0b921129d0d16883b53788dafb44c0de445",
   "spec_hash": "sha256:f59c0ff2ca28dbc168d049fccf0b2523ebce95fb04adaedd14a9463d7df5e9f6",
-  "diff_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "diff_hash": "sha256:ea9bd4dc08ef9df4058709ed25b21b4a2becf062de65d66667415cae2e4b676e",
   "report_hash": "sha256:2e8df206347cb32e7da4ec82ebd02291fdb3e9533ce05e4941984618b6d93656"
 }
