@@ -44,16 +44,17 @@
 1. 提出想法。
 2. 讨论目标、边界和面试价值。
 3. 写需求文档（planning phase）。
-4. 写详细设计文档（planning phase）。
-5. 维护 `## Reference Implementation Research`，默认启用参考实现调研；如果关闭，记录明确原因。
-6. 使用 `batch-grill-me` 对 `design.md` 做开发前设计追问，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
-7. 独立子 Agent 审阅 planning 产物，并在 planning gate 等待人工批准。
-8. 实现测试（building phase）。
-9. 实现功能（building phase）。
-10. 独立子 Agent 审阅实现（building.reviewing_impl）。
-11. 运行验证（closing phase）。
-12. 更新文档和能力证明链（closing phase）。
-13. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
+4. 创建关联 GitHub issue：issue 标题以【feature】开头标明类型（例如【feature】xxxx），正文写明背景、需求、OpenSpec change 路径和跟踪约定；change 文档与 backlog 记录 issue 号。
+5. 写详细设计文档（planning phase）。
+6. 维护 `## Reference Implementation Research`，默认启用参考实现调研；如果关闭，记录明确原因。
+7. 使用 `batch-grill-me` 对 `design.md` 做开发前设计追问，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
+8. 独立子 Agent 审阅 planning 产物，并在 planning gate 等待人工批准。
+9. 实现测试（building phase）。
+10. 实现功能（building phase）。
+11. 独立子 Agent 审阅实现（building.reviewing_impl）。
+12. 运行验证（closing phase）。
+13. 更新文档和能力证明链（closing phase）。
+14. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
 
 各阶段之间通过 handoff note（存储在 `.handoff/<change-id>/`）传递上下文。同一 agent 可贯穿多个 phase，不强制切换。路由配置（executor、session_mode）支持全局默认 + per-change 覆盖。
 
@@ -103,6 +104,7 @@ decision tickets 和 tracer-bullet tickets 的后端通过 `scripts/workflow_met
 - `openspec/specs/` 记录当前已确认的能力规格。
 - `openspec/changes/<change-id>/` 记录单个需求对一个或多个能力域的 delta spec。
 - `openspec/project.md` 记录项目级约定和能力域地图。
+- 每个 OpenSpec change 立项时必须关联一个 GitHub issue 作为跟踪入口，issue 标题以【feature】开头标明类型；change 实现 PR 合入时给对应 issue 添加完成说明 comment 并关闭。
 
 不要把需求散落在 README、roadmap 或聊天记录里。README 和 roadmap 可以引用 OpenSpec 结论，但不能替代需求规格。
 
@@ -273,6 +275,7 @@ PR 合入后固定确认：
 1. 快进本地 `master` 到 `origin/master`。
 2. 确认 `openspec/changes/<change-id>/` 不存在。
 3. 确认 `docs/openspec-change-backlog.md` 不再引用该已归档 change。
+4. 给关联 GitHub issue（标题【feature】）添加完成说明 comment 并关闭。
 
 ## 约束与校验
 
