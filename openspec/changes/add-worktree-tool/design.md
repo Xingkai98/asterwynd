@@ -54,7 +54,7 @@
 ### D3: ExitWorktree 语义
 
 - 参数：`keep`（布尔，缺省 true）。
-- 前置校验：当前位于某个 worktree 中（与 D2 相同判定：toplevel ≠ 主工作区）。
+- 前置校验：当前位于某个 worktree 中（与 D2 相同判定：toplevel ≠ 主工作区）；**且该 worktree 必须是 EnterWorktree 工具自建的**（路径位于 `.asterwynd/worktrees/` 下，`_is_tool_created_worktree` 判定）。编排层/benchmark 任务 worktree 不在该约定下，工具拒绝退出/删除（否则 agent 可删掉任务 worktree 破坏 benchmark）——review-loop R1 用户确认新增边界。
 - 执行顺序（写死，grill 实测约束）：预检未提交改动 → 会话 cwd 与 policy root 切回主工作区 → 重新验证已不在 worktree → 需要删除时 `git worktree remove`。必须先切出再删除（删掉 cwd 所在目录后 `os.getcwd()` 崩溃）。
 - `keep=false`：预检 worktree 内无未提交改动（tracked 修改与 untracked 文件均判定）才删除；含未提交改动时**拒绝并保持原状态**（仍在 worktree 内，无部分成功状态），不使用 `--force` 静默丢弃。**不删除分支**（分支保留在主仓库，与 proposal 行为定义同步）。
 - 输出：`{"workspace": "<主工作区路径>", "removed": bool}`。
@@ -78,7 +78,7 @@
 ### D7: 与现有机制的关系
 
 - workflow 状态机 building 阶段的强制 worktree 是编排层纪律；工具化后 agent 自主创建的 worktree 与其并行共存（worktree 列表以 git 为准），互不干扰。
-- **工具仅对主 checkout 会话有效**（用户确认）：在编排层 worktree 内（building 强制、benchmark runner）EnterWorktree 前置条件不满足，恒被拒——显式声明此边界；benchmark smoke 只验证注册 + `get_all_schemas()` 暴露 + 被拒错误路径，不改 runner。
+- **工具仅对主 checkout 会话有效**（用户确认）：在编排层 worktree 内（building 强制、benchmark runner）EnterWorktree 前置条件不满足，恒被拒；ExitWorktree 同样仅对工具自建 worktree 生效（D3 边界）——显式声明此边界；benchmark smoke 只验证注册 + `get_all_schemas()` 暴露 + 被拒错误路径，不改 runner。
 - benchmark runner 保持现状，不改为调用工具。
 - 目录约定 `.asterwynd/worktrees/` 与编排层 worktree 命名前缀隔离。
 

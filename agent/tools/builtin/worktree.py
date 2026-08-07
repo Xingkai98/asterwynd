@@ -99,8 +99,9 @@ def _current_branch(repo: Path) -> str:
 def _is_valid_worktree_name(repo: Path, name: str) -> bool:
     """worktree 名同时是分支名与目录成分，前置校验（review-loop R1-4）。
 
-    ``git check-ref-format`` 校验分支名合法性（禁止 ``..``/空格/特殊字符/
-    以 ``-`` 开头等），同时防路径穿越；用 ``--allow-onelevel`` 允许单成分名。
+    ``git check-ref-format`` 校验分支名合法性（禁止 ``..``/空格/特殊字符等，
+    允许 ``-`` 开头但分支创建会拒绝），同时防路径穿越；用 ``--allow-onelevel``
+    允许单成分名。name 不得含 ``/``（目录成分必须单层）。
     """
     if not name or "/" in name or name in (".", ".."):
         return False
