@@ -75,47 +75,11 @@
 
 ### 第十批：Agent 侧 worktree 隔离工具
 
-- `add-worktree-tool`（issue #111）：对标 Claude Code EnterWorktree/ExitWorktree，把 worktree 隔离做成 agent 工具面能力（agent 运行时自主创建/进入/退出）。与外部编排层现有 worktree 机制（workflow 状态机 building 强制、benchmark runner、`--keep-worktrees`）并行共存，不改动编排层。主要影响 tool-system 与 workspace-safety。
+- `add-worktree-tool`（issue #111）：✅ 已合入并归档（2026-08-08）。对标 Claude Code EnterWorktree/ExitWorktree，把 worktree 隔离做成 agent 工具面能力（agent 运行时自主创建/进入/退出）。与外部编排层现有 worktree 机制（workflow 状态机 building 强制、benchmark runner、`--keep-worktrees`）并行共存，不改动编排层。主要影响 tool-system 与 workspace-safety。
 
 ## 未实现队列
 
 ### 4. `add-minimal-tui-runtime-view`
-
-状态：未实现。
-
-批次：第五批，runtime mode switching 和 slash command framework 已合入基础能力；等待 skills、工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
-
-建议顺序原因：
-
-- TUI 应复用已有 AgentLoop 事件、planning state、streaming、工具结果 display policy、slash command registry、skill runtime、tool permission metadata 和 mode transition，而不是定义另一套运行协议。
-- 放在这些基础能力之后，可以一次展示稳定的运行状态、工具调用、planning state、streaming 输出、mode 状态和工具权限信息。
-
-主要交付：
-
-- TUI 命令入口。
-- AgentLoop 事件流消费。
-- 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
-- 非交互环境 graceful failure 或降级。
-
-### 5. `add-worktree-tool`
-
-状态：未实现。
-
-关联 issue：[#111](https://github.com/Xingkai98/asterwynd/issues/111)（【feature】Agent 侧 worktree 隔离工具，对标 Claude Code EnterWorktree/ExitWorktree）。
-
-批次：第十批，与队列中其他 change（TUI 等）无依赖。
-
-建议顺序原因：
-
-- 新工具面能力，主要影响 tool-system 与 workspace-safety。
-- 涉及会话工作目录切换与 WorkspacePolicy root 重绑定，开发前需 `batch-grill-me` 收敛 design.md 中的开放问题（切换承载点、重绑定 API、目录约定、权限元数据、失败回滚、错误码枚举）。
-
-主要交付：
-
-- `EnterWorktree` / `ExitWorktree` 两个 builtin 工具注册进 ToolRegistry。
-- 会话工作目录切换 + WorkspacePolicy root 重绑定，worktree 内文件工具路径边界生效。
-- 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
-- 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
 状态：未实现。
 
