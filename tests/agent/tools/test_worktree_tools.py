@@ -193,6 +193,48 @@ async def test_enter_worktree_branch_conflict(git_repo, policy):
 
 
 @pytest.mark.asyncio
+async def test_enter_worktree_invalid_name_rejected(git_repo, policy):
+    tool = EnterWorktreeTool(policy=policy)
+
+    for bad in ("", "..", "a/b", "a b", "-leading"):
+        result = await tool.execute(name=bad)
+
+        assert isinstance(result, ToolResult)
+        assert result.error_type == "worktree_create_failed"
+        assert _linked_worktrees(git_repo) == []
+    assert policy.workspace_root == git_repo.resolve()
+
+
+@pytest.mark.asyncio
+async def test_exit_worktree_rejects_non_tool_created(git_repo, policy):
+    """编排层/benchmark 任务 worktree（非 .asterwynd/worktrees/ 下）拒绝退出。"""
+    linked = _create_linked_worktree(git_repo)
+    policy.workspace_root = linked.resolve()
+    exit_tool = ExitWorktreeTool(policy=policy)
+
+    result = await exit_tool.execute(keep=False)
+
+    assert isinstance(result, ToolResult)
+    assert result.error_type == "not_in_worktree"
+    # 状态不变：policy root 未切回主工作区、任务 worktree 未被删除
+    assert policy.workspace_root == linked.resolve()
+    assert _linked_worktrees(git_repo) == [str(linked.resolve())]
+
+
+@pytest.mark.asyncio
+async def test_enter_worktree_detached_head(git_repo, policy):
+    _run_git(git_repo, "checkout", "--detach")
+    tool = EnterWorktreeTool(policy=policy)
+
+    result = await tool.execute(name="test-wt")
+
+    assert isinstance(result, ToolResult)
+    assert result.error_type is None
+    wt_path = git_repo / WT_DIR / "test-wt"
+    assert policy.workspace_root == wt_path.resolve()
+
+
+@pytest.mark.asyncio
 async def test_enter_worktree_rollback_on_post_add_failure(git_repo, policy, monkeypatch):
     tool = EnterWorktreeTool(policy=policy)
 
