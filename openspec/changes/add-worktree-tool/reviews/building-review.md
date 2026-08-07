@@ -1,51 +1,47 @@
-# Building Review: add-worktree-tool (Round 2)
+# Building Review: add-worktree-tool (Round 3)
 
 ## Reviewer
 
-- run id: ba39bffa-27bb-4aa9-b159-15f82003c53b（独立零记忆 subagent）
+- run id: fc8263e9-38ca-4ba0-bd51-e895d7694f39（独立零记忆 subagent，PASEO_AGENT_ID）
 - 时间: 2026-08-08
-- 审阅范围: `git diff origin/master...HEAD`（三个提交：7e661e4 grill/文档整合 + 454bebe 实现 + 922bc45 R1 修复）
+- 审阅范围: `git diff origin/master...HEAD`（四个提交：7e661e4 grill/文档 + 454bebe 实现 + 922bc45 R1 修复 + 9bc3573 R2 修复）
 - 测试环境: 本 worktree 内 `source ~/my-agent/.venv/bin/activate` + `python3 -m pytest`
 
-## Round 1 修复验证
+## Round 2 修复验证
 
-- **R1-1 [中] ExitWorktree 越权边界：已修复**。
-  `_is_tool_created_worktree`（`agent/tools/builtin/worktree.py:24-33`）实现正确：`path.resolve().relative_to((repo / WORKTREE_SUBDIR).resolve())`，两侧均 resolve 归一化，`..`/符号链接场景一致；ExitWorktree 内检查位置在"是否在 worktree"判定之后、任何状态变更之前（worktree.py:237-241），编排层/benchmark worktree 返回 `not_in_worktree` 且 policy root 与 worktree 均不变。验证：单测 `test_exit_worktree_rejects_non_tool_created`（test_worktree_tools.py:209-221，断言 policy root 未切回、worktree 未被删）+ registry 层 smoke `test_rejected_in_orchestration_worktree`（test_worktree_benchmark_smoke.py:60-81）。工具描述（worktree.py:200-204）已声明"仅对 EnterWorktree 工具自建的 worktree 生效"。
-- **R1-2 [中] 任务 2.5 证据：已修复（主套件证据充分），但沉淀的 benchmark task 存在可运行性缺陷（见 New Issue 1）**。`benchmarks/tasks/asterwynd-008-worktree-tools/` 四文件齐全；task.json 经 `benchmarks/task_schema.load_task` 加载通过（字段与 001/005 等既有任务一致）；test.patch 与主套件 `tests/agent/tools/test_worktree_benchmark_smoke.py` **逐字节一致**（diff 无差异），主套件实际运行 3 个 smoke 测试全绿（断言强度足够：注册/schema/权限元数据/编排层双工具拒绝 + 状态不变）。
-- **R1-3 [低-中] D2 兜底：已修复**。add 失败后显式执行 `_run_git(repo, "worktree", "remove", str(wt_path))` 兜底再返回 `worktree_create_failed`（worktree.py:165-172）；rebind 失败且 remove 回滚失败时返回部分成功 text（明确"worktree 保留"+ 回滚 stderr，worktree.py:176-189）。残留：add 失败路径的 remove 返回值未检查（见 New Issue 4）。
-- **R1-4 [低] name 前置校验：已修复（`-` 开头子项声明不实，见 New Issue 3）**。`_is_valid_worktree_name`（worktree.py:99-110）在 mkdir 副作用（worktree.py:161-162）之前执行（worktree.py:155），cwd 参数正确传入 `_run_git(repo, ...)`；空名/`.`/`..`/含 `/`/空格/`.lock`/`..` 全部前置拒绝（实测 `git check-ref-format --allow-onelevel refs/heads/<name>`：`a b`/`..`/`.`/`a.lock`/`a..b` rc=1）。路径穿越（`..`/`/`）已无目录副作用窗口。
-- **R1-5 [低] git 超时：已修复**。`_run_git` 捕获 `subprocess.TimeoutExpired` 映射 returncode=124 + stderr 超时说明（worktree.py:43-58），超时值 10s→30s；124 为非零，落入 add 失败路径 → `worktree_create_failed`。MCP 相关测试因缺 uv 失败为既有 baseline。
-- **R1-6 [低] 测试缺口：已修复（清单三项齐备）**。`test_enter_worktree_invalid_name_rejected`（test_worktree_tools.py:196-205，5 种非法名逐一断言无残留 worktree）、`test_enter_worktree_detached_head`（test_worktree_tools.py:225-234，detached 时以 HEAD 为 base 成功创建）、`test_exit_worktree_rejects_non_tool_created`（test_worktree_tools.py:209-221）。R1 报告 Issue 6 的其余两项（ExitWorktree 切回后 remove 失败部分成功、read_only/plan 模式 DENY）仍无测试，属低危残留。
+- **R2-1 test.patch 格式：已修复**。`benchmarks/tasks/asterwynd-008-worktree-tools/test.patch` 首行为标准 diff 头 `diff --git a/tests/agent/tools/test_worktree_benchmark_smoke.py b/tests/agent/tools/test_worktree_benchmark_smoke.py` + `new file mode 100644`（87 行）。模拟 runner 流程：`rm` 目标文件 → `git apply --check` rc=0 → `git apply` rc=0 → `git checkout --` 恢复，工作树干净；应用结果与主套件 `tests/agent/tools/test_worktree_benchmark_smoke.py` 逐字节一致（diff 无差异）。`git ls-tree 454bebe tests/agent/tools/` 确认该文件不在 base 树中（该文件由 922bc45 引入），runner 的 reset→apply 注入路径可行。
+- **R2-2 文档回写：已修复**。D3（design.md:55-58）前置校验新增"且该 worktree 必须是 EnterWorktree 工具自建的（路径位于 `.asterwynd/worktrees/` 下，`_is_tool_created_worktree` 判定）。编排层/benchmark 任务 worktree 不在该约定下，工具拒绝退出/删除（否则 agent 可删掉任务 worktree 破坏 benchmark）——review-loop R1 用户确认新增边界"；D7（design.md:81）显式声明"ExitWorktree 同样仅对工具自建 worktree 生效（D3 边界）——显式声明此边界"；`_is_tool_created_worktree` 函数 docstring（worktree.py:28-31）与 ExitWorktree 工具描述亦覆盖该边界。模块 docstring（worktree.py:8-9）仍只展开 EnterWorktree 拒绝面，属微瑕疵，非阻断。
+- **R2-3 `-` 前缀声明：已修复**。`_is_valid_worktree_name` docstring（worktree.py:101-105）改为"允许 `-` 开头但分支创建会拒绝"，与实测一致（`git check-ref-format --allow-onelevel refs/heads/-leading` rc=0 通过前置校验、分支创建处下游拒绝）。
+- **R2-4 add 失败路径 remove 返回值：未修复（R2 自评 [低] 非阻断，维持）**。add 失败分支（worktree.py:169-172）的 `_run_git(repo, "worktree", "remove", str(wt_path))` 返回值仍被丢弃，与 rebind 回滚路径（worktree.py:176-189，text 合并 remove stderr 并明示 worktree 保留）写法不一致。双失败（add 失败且 remove 也失败）概率极低，维持 R2 的 [低] 分级，不阻断本轮。
 
 ## Verdict
 
-**CHANGES_REQUESTED** —— R1 的 6 项问题均已实质修复且核心语义验证充分（23 个测试全绿），但任务 2.5 沉淀的 benchmark task 交付物有缺陷：`test.patch` 是纯文件内容而非 unified diff，benchmark harness（`benchmarks/runner.py:733` 的 `git apply`）在 base commit 454bebe 上应用失败（实测 exit 128 "No valid patches in input"），该 task 无法经 benchmark 运行器执行。修复范围单一（重新生成 patch 格式并验证 `git apply --check`），其余为低危建议项。
+**CHANGES_REQUESTED** —— R2 的三项修复（test.patch 格式、design.md D3/D7 回写、`-` 声明修正）全部到位且经实测验证；主套件 23 测试全绿；实现代码未发现新问题。但 Round 3 实测发现 benchmark task `asterwynd-008-worktree-tools` 存在新的自洽性缺陷（New Issue 1）：task.json 的 base_commit=454bebe 与其 issue.md/test.patch 三方矛盾，任务在其声明 base 上必然失败，且失败过程实测复现了测试所防的越权删除行为。修复为 issue.md 措辞/组合微调（见 New Issue 1），机械、不影响产品代码。
 
 ## New Issues
 
-- [中] **benchmark task 的 test.patch 非 patch 格式，harness 无法应用**：`benchmarks/tasks/asterwynd-008-worktree-tools/test.patch` 是待测文件的纯内容（首行 `# tests/agent/tools/test_worktree_benchmark_smoke.py`），而既有任务（001/005 等）的 test.patch 均为 `diff --git` 格式。实测：在 base commit 454bebe 检出上 `git apply --check test.patch` → `error: No valid patches in input (allow with "--allow-empty")`，exit 128；runner 的 `_apply_test_patch`（benchmarks/runner.py:733-741）对非零返回值直接 raise RuntimeError，未来任何 `run_all` 批量 benchmark 运行都会在该任务上失败。修复：用 `git diff`（新文件相对空索引）重新生成 test.patch 并在 454bebe 上 `git apply --check` 验证；或如认定该任务仅供主套件运行，需修改 tasks 2.5/4.6 描述避免"沉淀 benchmark task"的误导。gold.patch 为 0 字节（runner 不参与打分，swebench_convert.py:152 注释"reference only"），可接受。
-- [低] **design.md 未回写 ExitWorktree 新边界**：R1-1 修复（仅工具自建 worktree 可退出/删除，用户确认）只记录在 tasks.md 审阅修复记录（tasks.md:33）和代码注释/工具描述，design.md D7（design.md:78-81）与 Risks 节（design.md:109）仍只写"编排层 worktree 内 EnterWorktree 恒被拒"，未提 ExitWorktree 的 `not_in_worktree` 边界；模块 docstring（worktree.py:8-9）同样只述 EnterWorktree。spec delta（specs/tool-system/spec.md）7 个场景与新行为不冲突（新行为映射既有 `not_in_worktree` 错误），无需改 spec。收尾前应把边界写回 design.md 与 docstring。
-- [低] **`_is_valid_worktree_name` 对 `-` 开头名的"前置校验"声明不实**：tasks.md:36 称 check-ref-format 禁止"`-` 开头"，但实测 `git check-ref-format --allow-onelevel refs/heads/-leading` 返回 rc=0（`-` 规则只作用于 refname 整体而非成分），`_is_valid_worktree_name` 对 `-leading` 返回 True。实际由 `git worktree add -b -leading` 在分支创建处拒绝（`name[0]=='-'`），端到端行为仍正确（测试通过、无 worktree 残留），但前置校验被绕过，留下空目录 `.asterwynd/worktrees/-leading/` 副作用（在 `.asterwynd/` 内且被 gitignore，无害）。可在 check-ref-format 之外显式加 `name.startswith("-")` 拒绝，或修正 tasks.md 描述。
-- [低] **add 失败路径的 remove 兜底返回值未检查**（worktree.py:168）：设计 D2 字面要求"显式 verify `git worktree list` 中无该 worktree"，实现改为无条件 remove 且不检查结果；若 remove 也失败（超时/被杀），残留注册与 text 中仅有原始 add 错误。双失败概率极低，建议后续在 text 中合并 remove 失败信息（与 rebind 回滚路径 worktree.py:176-189 的写法一致）。
-- [流程] **artifact checker 当前报错**：`scripts/check_openspec_artifacts.py` 报 `review manifest missing: openspec/changes/add-worktree-tool/reviews/building-review-manifest.json`。这是本轮 verdict 之前的预期状态；R2 修复后若审阅 PASS，必须由 /review-loop 生成绑定 R2 报告的 manifest，CI 门禁才可通过。
+- [中] **benchmark task base_commit 与 issue.md 自相矛盾，任务在其声明 base 上必失败**：`benchmarks/tasks/asterwynd-008-worktree-tools/task.json` base_commit=454bebe，而 test.patch 断言的"编排层 worktree 内 ExitWorktree 返回 `not_in_worktree`"边界是 922bc45（R1 修复）才落地的行为，454bebe 的 ExitWorktree 仅检查 `_toplevel != main`。实测（临时 worktree 检出 454bebe + `git apply` test.patch + pytest）：`test_rejected_in_orchestration_worktree` 失败（1 failed, 2 passed），ExitWorktree(keep=false) 实际切回 policy root 并删除编排层 worktree（ToolResult `{"workspace": ..., "removed": true}`、error_type=None）——正是该测试要防的行为。issue.md 明示 "no code changes required / The implementation already exists; confirm the tests pass against the current checkout"，与 base 实际状态冲突：忠实执行指示的 agent 零改动必然失败（对比 001：base cc06ee8 无 test_registry.py 与实现，issue.md 为实现型框架，测试后注入属标准 SWE-bench 模式）。修复选项：a) 保留 base 454bebe + test.patch，把 issue.md 措辞改为"实现缺失的边界行为使提供测试通过"（item 3 已给出完整边界规格，与 001 模式对齐）；b) 不可简单把 base_commit 改为 922bc45——该提交树上 smoke 文件已存在，new-file patch `git apply` 报 `error: tests/agent/tools/test_worktree_benchmark_smoke.py: already exists in working directory`（实测 rc=1）；c) 弱化 test.patch 至 454bebe 行为（丢失边界断言，不推荐）。修复后须在所选 base 上重跑 smoke 验证。
+- [低] **add 失败路径 remove 返回值未检查（R2-4 残留）**：worktree.py:169-172，R2 自评 [低] 非阻断，本轮维持；建议后续与 rebind 回滚路径对齐（text 合并 remove stderr）。
+- [流程] **review manifest 仍未生成**：`reviews/building-review-manifest.json` 缺失为 verdict 前预期状态；本轮修复后再审通过后，须由 /review-loop 生成绑定本报告的 manifest 才能过 CI 门禁。
 
 ## Test Results
 
 ```
 $ python3 -m pytest tests/agent/tools/test_worktree_tools.py tests/agent/tools/test_worktree_benchmark_smoke.py -q
-23 passed in 1.80s
+23 passed in 1.62s
 ```
 
 （test_worktree_tools.py 20 个 + test_worktree_benchmark_smoke.py 3 个；MCP 相关测试因环境缺 uv 未跑，已知 baseline。）
 
-专项实测：
-- `git apply --check`（454bebe 检出上应用新 test.patch）→ `error: No valid patches in input`，exit 128（确认 New Issue 1）。
-- `git check-ref-format --allow-onelevel refs/heads/<name>` 探测：`-leading` rc=0（绕过前置校验），`a b`/`..`/`.`/`a.lock`/`a..b` rc=1（正常拒绝），`HEAD`/`@` rc=0（由 git 下游拒绝，无害）。
-- `load_task('benchmarks/tasks/asterwynd-008-worktree-tools')` 加载通过。
-- 全量 pytest 未重跑（4.2 勾选声称 1823 通过，本次按指示只跑相关套件）。
+专项实测（临时 worktree 检出，用后已删除）：
+- **454bebe 检出 + test.patch**：`git apply` rc=0；`pytest tests/agent/tools/test_worktree_benchmark_smoke.py` → `1 failed, 2 passed`，失败断言 `exit_res.error_type == "not_in_worktree"` 实际为 None（ToolResult `{"workspace": "...", "removed": true}`）——越权删除行为被复现（New Issue 1 证据）。
+- **922bc45 检出**：同一 smoke 测试 `3 passed`（边界行为在该提交起成立）。
+- **922bc45 上 `git apply` test.patch** → rc=1 `already exists in working directory`（排除"仅改 base_commit"的修复路径）。
+- **模拟 runner 流程（HEAD 上 rm + apply --check + apply + restore）**：全过，应用结果与主套件逐字节一致。
+- 001 task 对照：base cc06ee8 树中无 test_registry.py（new-file patch 适用），issue.md 为实现型任务框架——008 的偏离点仅在 base_commit 选择与 issue.md"无需改动"声称。
 
 ## 结论
 
-R1 全部 6 项问题均得到实质修复，核心实现质量保持良好：ExitWorktree 越权边界修复正确且被单测+registry 层 smoke 双层验证（状态不变断言到位）；name 前置校验消除了路径穿越与目录副作用窗口；add 失败 remove 兜底与回滚部分成功 text 落位；超时映射 124 落入结构化错误码；R1-6 清单三项测试齐备。`_is_tool_created_worktree` 的路径约定边界（手动建在 `.asterwynd/worktrees/` 下的 worktree 会被视为工具自建）是用户确认过的设计取舍，非新缺陷。
+R2 三项修复全部到位且验证充分：test.patch 已是标准 a/b 相对路径 diff，模拟 runner 的 reset→apply 流程通过，应用结果与主套件一致；design.md D3/D7 已回写 ExitWorktree 仅限工具自建边界；`-` 前缀声明与实测行为一致。主套件 23 测试全绿，实现代码无新问题。主套件保留 smoke 测试与 test.patch 重复沿用 001 同模式（SWE-bench 式测试注入，runner reset 后应用），可接受。
 
-阻止合入的一项：benchmark task `asterwynd-008-worktree-tools` 的 test.patch 非 unified diff，harness `git apply` 失败，2.5 的"沉淀 benchmark task"交付物不可运行。修复方式机械（重新生成 patch 并在 base commit 验证 `git apply --check`），另建议同提交回写 design.md D7/模块 docstring 的 ExitWorktree 边界。修复后应进入 Round 3 审阅；PASS 后须生成 review manifest 才能过 CI 门禁（1.7/5.x 收尾任务仍待完成）。
+但 benchmark 交付物仍有实质缺陷：base_commit=454bebe 与 test.patch/issue.md 三方不一致，任务在其声明 base 上必失败，且实测复现测试所防的越权删除——任务 2.5 的"沉淀 benchmark task"仍未达到可运行标准（R1/R2 同为该交付物阻断，本轮为其第三种形态）。修复为 issue.md 措辞或 base/patch 组合微调（见 New Issue 1），机械且不影响产品代码；修复后应做最终确认，PASS 后由 /review-loop 生成 review manifest。

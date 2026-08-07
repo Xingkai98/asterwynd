@@ -1,0 +1,140 @@
+diff --git a/agent/tools/builtin/worktree.py b/agent/tools/builtin/worktree.py
+index de3e406..d0e3ca8 100644
+--- a/agent/tools/builtin/worktree.py
++++ b/agent/tools/builtin/worktree.py
+@@ -20,6 +20,18 @@ from agent.workspace_policy import WorkspacePolicy
+ # 目录约定（用户确认，design.md D2）：主工作区仓库内 .asterwynd/worktrees/<name>
+ WORKTREE_SUBDIR = ".asterwynd/worktrees"
+ 
++
++def _is_tool_created_worktree(path: Path, repo: Path) -> bool:
++    """路径是否位于工具自建 worktree 目录约定（.asterwynd/worktrees/）内。
++
++    编排层/benchmark 任务 worktree 不在该约定下，工具不得退出/删除它们。
++    """
++    try:
++        path.resolve().relative_to((repo / WORKTREE_SUBDIR).resolve())
++        return True
++    except ValueError:
++        return False
++
+ # 错误码（用户确认，design.md D6）
+ ERROR_NOT_A_GIT_REPO = "not_a_git_repo"
+ ERROR_ALREADY_IN_WORKTREE = "already_in_worktree"
+@@ -28,14 +40,22 @@ ERROR_NOT_IN_WORKTREE = "not_in_worktree"
+ ERROR_WORKTREE_REMOVE_FAILED = "worktree_remove_failed"
+ 
+ 
+-def _run_git(cwd: Path, *args: str, timeout: float = 10.0) -> subprocess.CompletedProcess:
+-    return subprocess.run(
+-        ["git", *args],
+-        cwd=cwd,
+-        capture_output=True,
+-        text=True,
+-        timeout=timeout,
+-    )
++def _run_git(cwd: Path, *args: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
++    try:
++        return subprocess.run(
++            ["git", *args],
++            cwd=cwd,
++            capture_output=True,
++            text=True,
++            timeout=timeout,
++        )
++    except subprocess.TimeoutExpired as exc:
++        return subprocess.CompletedProcess(
++            args=["git", *args],
++            returncode=124,  # 与 timeout(1) 惯例一致
++            stdout="",
++            stderr=f"git command timed out after {timeout}s",
++        )
+ 
+ 
+ def _is_git_repo(repo: Path) -> bool:
+@@ -76,6 +96,20 @@ def _current_branch(repo: Path) -> str:
+     return branch or "HEAD"  # detached HEAD 时以 HEAD 为基准
+ 
+ 
++def _is_valid_worktree_name(repo: Path, name: str) -> bool:
++    """worktree 名同时是分支名与目录成分，前置校验（review-loop R1-4）。
++
++    ``git check-ref-format`` 校验分支名合法性（禁止 ``..``/空格/特殊字符/
++    以 ``-`` 开头等），同时防路径穿越；用 ``--allow-onelevel`` 允许单成分名。
++    """
++    if not name or "/" in name or name in (".", ".."):
++        return False
++    result = _run_git(
++        repo, "check-ref-format", "--allow-onelevel", f"refs/heads/{name}"
++    )
++    return result.returncode == 0
++
++
+ @tool_parameters(
+     name="EnterWorktree",
+     description=(
+@@ -118,14 +152,20 @@ class EnterWorktreeTool(Tool):
+                 text="Error: 当前已在 worktree 中，禁止嵌套 worktree",
+                 error_type=ERROR_ALREADY_IN_WORKTREE,
+             )
++        if not _is_valid_worktree_name(repo, name):
++            return ToolResult(
++                text="Error: worktree 名不合法（须为合法 git 分支名，单层成分）",
++                error_type=ERROR_WORKTREE_CREATE_FAILED,
++            )
+ 
+         wt_path = (repo / WORKTREE_SUBDIR / name).resolve()
+         wt_path.parent.mkdir(parents=True, exist_ok=True)
+         base = base_branch or _current_branch(repo)
+         result = _run_git(repo, "worktree", "add", "-b", name, str(wt_path), base)
+         if result.returncode != 0:
+-            # git 自清理（branch 冲突 exit 255 无残留注册）；目录残留由
+-            # .asterwynd/ 约定忽略，text 区分 branch/path 冲突两类原因
++            # D2 显式 verify：git 自清理（branch 冲突 exit 255 无残留注册），
++            # 但非 branch 冲突失败可能残留注册，remove 兜底；text 区分原因
++            _run_git(repo, "worktree", "remove", str(wt_path))
+             return ToolResult(
+                 text=f"Error: worktree 创建失败: {result.stderr.strip()}",
+                 error_type=ERROR_WORKTREE_CREATE_FAILED,
+@@ -134,7 +174,15 @@ class EnterWorktreeTool(Tool):
+         try:
+             self._rebind_workspace(wt_path)
+         except Exception as exc:
+-            _run_git(repo, "worktree", "remove", str(wt_path))
++            rollback = _run_git(repo, "worktree", "remove", str(wt_path))
++            if rollback.returncode != 0:
++                return ToolResult(
++                    text=(
++                        f"Error: worktree 创建失败（切换失败且回滚未完成，worktree "
++                        f"保留）: {exc}; 回滚: {rollback.stderr.strip()}"
++                    ),
++                    error_type=ERROR_WORKTREE_CREATE_FAILED,
++                )
+             return ToolResult(
+                 text=f"Error: worktree 创建失败（切换失败，已回滚）: {exc}",
+                 error_type=ERROR_WORKTREE_CREATE_FAILED,
+@@ -151,7 +199,8 @@ class EnterWorktreeTool(Tool):
+     name="ExitWorktree",
+     description=(
+         "离开当前 worktree 回到主工作区；keep=false 时删除该 worktree"
+-        "（含未提交改动时拒绝删除，不使用 --force，分支保留）"
++        "（含未提交改动时拒绝删除，不使用 --force，分支保留）。"
++        "仅对 EnterWorktree 工具自建的 worktree 生效"
+     ),
+     parameters={
+         "type": "object",
+@@ -182,6 +231,14 @@ class ExitWorktreeTool(Tool):
+                 text="Error: 当前不在任何 worktree 中",
+                 error_type=ERROR_NOT_IN_WORKTREE,
+             )
++        # 用户确认（review-loop R1，Q1）：ExitWorktree 仅对工具自建 worktree
++        # 生效；编排层/benchmark 任务 worktree 不在 .asterwynd/worktrees/ 下，
++        # 不得退出/删除（否则 agent 可删掉 benchmark 任务 worktree）。
++        if not _is_tool_created_worktree(current, main):
++            return ToolResult(
++                text="Error: 当前 worktree 不是本工具创建，拒绝退出",
++                error_type=ERROR_NOT_IN_WORKTREE,
++            )
+ 
+         # 执行顺序（design.md D3）：预检 → 切出 → 删除。必须先切出再删除
+         # （删掉 cwd 所在目录后 os.getcwd() 崩溃）。

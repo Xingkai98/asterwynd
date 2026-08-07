@@ -193,6 +193,38 @@ async def test_enter_worktree_branch_conflict(git_repo, policy):
 
 
 @pytest.mark.asyncio
+async def test_enter_worktree_add_failure_cleanup_checked(git_repo, policy, monkeypatch):
+    """add 失败后 remove 兜底失败时返回部分成功 text（R2-4）。"""
+    import agent.tools.builtin.worktree as wt_mod
+
+    tool = EnterWorktreeTool(policy=policy)
+    real_run_git = wt_mod._run_git
+    # 前置 git 检查（is_git_repo / in_worktree / name 校验 / mkdir）走真实 git，
+    # 只在 add 与 remove 调用时注入失败：按 args 里的 "add"/"remove" 区分
+    def _inject(*args, **kwargs):
+        # _run_git(cwd, *git_args)；git_args 含 ("worktree", "add"/"remove", ...)
+        git_args = args[1:] if len(args) > 1 else ()
+        if "add" in git_args:
+            return subprocess.CompletedProcess(
+                args, returncode=255, stdout="", stderr="boom"
+            )
+        if "remove" in git_args:
+            return subprocess.CompletedProcess(
+                args, returncode=1, stdout="", stderr="rm-fail"
+            )
+        return real_run_git(*args, **kwargs)
+
+    monkeypatch.setattr(wt_mod, "_run_git", _inject)
+
+    result = await tool.execute(name="test-wt")
+
+    assert isinstance(result, ToolResult)
+    assert result.error_type == "worktree_create_failed"
+    assert "清理未完成" in result.text
+    assert policy.workspace_root == git_repo.resolve()
+
+
+@pytest.mark.asyncio
 async def test_enter_worktree_invalid_name_rejected(git_repo, policy):
     tool = EnterWorktreeTool(policy=policy)
 

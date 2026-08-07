@@ -166,7 +166,15 @@ class EnterWorktreeTool(Tool):
         if result.returncode != 0:
             # D2 显式 verify：git 自清理（branch 冲突 exit 255 无残留注册），
             # 但非 branch 冲突失败可能残留注册，remove 兜底；text 区分原因
-            _run_git(repo, "worktree", "remove", str(wt_path))
+            cleanup = _run_git(repo, "worktree", "remove", str(wt_path))
+            if cleanup.returncode != 0:
+                return ToolResult(
+                    text=(
+                        f"Error: worktree 创建失败且清理未完成，worktree 可能残留: "
+                        f"{result.stderr.strip()}; 清理: {cleanup.stderr.strip()}"
+                    ),
+                    error_type=ERROR_WORKTREE_CREATE_FAILED,
+                )
             return ToolResult(
                 text=f"Error: worktree 创建失败: {result.stderr.strip()}",
                 error_type=ERROR_WORKTREE_CREATE_FAILED,
