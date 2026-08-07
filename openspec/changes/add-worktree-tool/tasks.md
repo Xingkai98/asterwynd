@@ -12,20 +12,20 @@
 
 ## 2. 测试
 
-- [ ] 2.1 按 TDD 先新增 `EnterWorktree` / `ExitWorktree` 单元测试（参数校验、错误路径、keep 语义、分支名派生）。
-- [ ] 2.2 集成测试：`tmp_path` 真实 git 仓库全流程（创建→进入→文件工具路径边界重绑定→退出→删除）。
-- [ ] 2.3 负向路径：非 git 仓库、嵌套 worktree、删除含未提交改动的 worktree 被拒、失败回滚（cwd 与 policy root 不变）。
-- [ ] 2.4 AgentLoop 层测试：工具调用后会话 cwd 与 policy root 状态正确。
-- [ ] 2.5 涉及工具协议与 workspace safety 核心路径，跑通至少一个 benchmark smoke。
+- [x] 2.1 按 TDD 先新增 `EnterWorktree` / `ExitWorktree` 单元测试（参数校验、错误路径、keep 语义、分支名派生）。
+- [x] 2.2 集成测试：`tmp_path` 真实 git 仓库全流程（创建→进入→文件工具路径边界重绑定→退出→删除）。
+- [x] 2.3 负向路径：非 git 仓库、嵌套 worktree、删除含未提交改动的 worktree 被拒、失败回滚（cwd 与 policy root 不变）。
+- [x] 2.4 AgentLoop 层测试：工具调用后会话 cwd 与 policy root 状态正确。
+- [x] 2.5 涉及工具协议与 workspace safety 核心路径，跑通至少一个 benchmark smoke（与 master baseline 一致无回归；Q7 形态注册+schema+被拒路径由专用验证脚本覆盖）。
 
 ## 3. 实现
 
-- [ ] 3.1 实现最小可验证路径：EnterWorktree 创建 + 切换。
-- [ ] 3.2 实现 ExitWorktree（keep / remove）。
-- [ ] 3.3 接入 WorkspacePolicy root 重绑定与权限元数据。
-- [ ] 3.4 注册进 ToolRegistry，schema 可从 `get_all_schemas()` 获取。
-- [ ] 3.5 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单，再继续无关实现。
-- [ ] 3.6 如果实现中发现参考实现调研结论需要修正，先回写 Reference Implementation Research 和本任务清单。
+- [x] 3.1 实现最小可验证路径：EnterWorktree 创建 + 切换。
+- [x] 3.2 实现 ExitWorktree（keep / remove）。
+- [x] 3.3 接入 WorkspacePolicy root 重绑定与权限元数据（dangerous=False + MEDIUM；DEFAULT_DENIED_PATTERNS 增加 `.asterwynd/worktrees/**`）。
+- [x] 3.4 注册进 ToolRegistry，schema 可从 `get_all_schemas()` 获取。
+- [x] 3.5 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单，再继续无关实现。
+- [x] 3.6 如果实现中发现参考实现调研结论需要修正，先回写 Reference Implementation Research 和本任务清单。
 - [ ] 3.7 更新必要文档（架构说明、工具文档、面试讲稿如有新能力线）。
 
 ## 4. 验证
