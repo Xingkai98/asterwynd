@@ -308,9 +308,10 @@ async def test_multi_tab_exit_does_not_affect_other_tab_reconnect(page, seeded_w
     await page.wait_for_function(
         "document.querySelector('.tab-pane.active .message.system') !== null"
     )
-    # tab2 WS 关闭（server 端 continue_session=false 会 close）
+    # tab2 WS 关闭（server 端 continue_session=false 会 close）——tab2 是 active，
+    # 其 shouldReconnect=false，状态灯应显示 ended 而非 connected。
     await page.wait_for_function(
-        "document.querySelector('#status').textContent !== 'connected' || true"
+        "['ended', 'disconnected'].includes(document.querySelector('#status').textContent)"
     )
 
     # 切到 tab1：仍可正常发送并收到回复（reconnect 未被全局禁用）

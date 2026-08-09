@@ -404,6 +404,8 @@ function handleTabEvent(tab, event) {
     tabs.set(sid, tab);
     // 新建会话 rekey（'new' → 真实 sid）后同步 activeTabId，避免指向已删除键
     if (activeTabId === oldId) activeTabId = sid;
+    // 同步 pane 的 data-tab-id，paste/drag-drop 事件委托按它反查 tab（design review I7）
+    if (tab.pane) tab.pane.dataset.tabId = sid;
     renderSessionTabs();
   }
   if (prevTab && prevTab !== tab && tabs.has(prevTab.id)) bindActiveTab(prevTab);
