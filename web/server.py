@@ -166,7 +166,8 @@ def create_app(
         """删除会话（issue #117 D1）：内存 + 指定 workspace store 的磁盘快照。
 
         workspace 必须显式传入（冷会话无内存 workspace_root 可查）；缺省 →
-        400；未授权 → 403。
+        400；未授权 → 403。畸形 session_id 由 SessionStore._validate_session_id
+        拒绝 → 400（design review I4）。
         """
         if not workspace:
             return JSONResponse({"error": "missing_workspace"}, status_code=400)
@@ -174,7 +175,10 @@ def create_app(
             ws = session_manager.resolve_workspace(workspace)
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
-        session_manager.remove_session(session_id, workspace=ws)
+        try:
+            session_manager.remove_session(session_id, workspace=ws)
+        except ValueError:
+            return JSONResponse({"error": "invalid_session_id"}, status_code=400)
         return {"deleted": True, "session_id": session_id, "workspace": str(ws)}
 
     @app.post("/api/upload-image")

@@ -130,6 +130,58 @@ def test_api_sessions_rejects_path_traversal(tmp_path):
         assert resp.status_code == 403
 
 
+def test_api_sessions_rejects_symlink_escape(tmp_path):
+    """符号链接解析到 allowlist 外路径 → 拒绝（resolve 后不在有效集合）。"""
+    ws_a = tmp_path / "ws-a"
+    ws_a.mkdir()
+    config = AsterwyndConfig(web=WebConfig(workspaces=(ws_a,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path, config=config)
+    link = tmp_path / "ws-link"
+    link.symlink_to("/etc", target_is_directory=True)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": str(link)})
+        assert resp.status_code == 403
+
+
+def test_api_sessions_accepts_trailing_slash(tmp_path):
+    """尾部斜杠归一化后匹配 allowlist（不被误拒）。"""
+    ws_a = tmp_path / "ws-a"
+    ws_a.mkdir()
+    config = AsterwyndConfig(web=WebConfig(workspaces=(ws_a,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path, config=config)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": str(ws_a) + "/"})
+        assert resp.status_code == 200
+        assert resp.json()["workspace"] == str(ws_a.resolve())
+
+
+def test_api_sessions_rejects_case_variant(tmp_path):
+    """大小写变体（Linux 敏感）resolve 后不匹配 allowlist → 拒绝。"""
+    ws_a = tmp_path / "ws-a"
+    ws_a.mkdir()
+    config = AsterwyndConfig(web=WebConfig(workspaces=(ws_a,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path, config=config)
+    upper = str(ws_a).replace(str(ws_a.name), str(ws_a.name).upper())
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": upper})
+        assert resp.status_code == 403
+
+
+def test_api_sessions_rejects_nonexistent_path(tmp_path):
+    """不存在路径（即使拼写近似 allowlist）→ 拒绝。"""
+    ws_a = tmp_path / "ws-a"
+    ws_a.mkdir()
+    config = AsterwyndConfig(web=WebConfig(workspaces=(ws_a,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path, config=config)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": str(tmp_path / "ws-a-but-not-exist")})
+        assert resp.status_code == 403
+
+
 def test_api_sessions_per_workspace(tmp_path):
     ws_a = tmp_path / "ws-a"
     ws_a.mkdir()
@@ -184,6 +236,17 @@ def test_api_delete_requires_workspace(tmp_path):
         resp = client.delete("/api/sessions/aaaa11111111")
         assert resp.status_code == 400
         assert resp.json()["error"] == "missing_workspace"
+
+
+def test_api_delete_rejects_invalid_session_id(tmp_path):
+    """畸形 session_id（含 / 的路径穿越）不被处理：路由层 404 或 handler 400，
+    绝不返回 500（design review I4）。"""
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.delete("/api/sessions/..%2F..%2Fetc", params={"workspace": str(tmp_path)})
+        assert resp.status_code in (400, 404)
+        assert resp.status_code != 500
 
 
 def test_api_delete_rejects_unauthorized_workspace(tmp_path):

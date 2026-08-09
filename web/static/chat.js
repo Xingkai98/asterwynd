@@ -4,6 +4,7 @@
 // --- Multi-session tab state (issue #117) ---
 let tabs = new Map();          // tabId -> tab
 let activeTabId = null;
+let newTabSeq = 0;             // 新建会话临时 tabId 递增，避免固定 'new' 覆盖键
 
 // 每个会话一个 Tab，独立持有 WebSocket、消息容器与运行状态。
 function createTab(tabId, sessionId, workspace, mode) {
@@ -396,10 +397,14 @@ function handleTabEvent(tab, event) {
   syncActiveTab();
   const sid = event && (event.session_id || (event.data && event.data.session_id));
   if (sid && tab.id !== sid) {
-    tabs.delete(tab.id);
+    const oldId = tab.id;
+    tabs.delete(oldId);
     tab.id = sid;
     tab.sessionId = sid;
     tabs.set(sid, tab);
+    // 新建会话 rekey（'new' → 真实 sid）后同步 activeTabId，避免指向已删除键
+    if (activeTabId === oldId) activeTabId = sid;
+    renderSessionTabs();
   }
   if (prevTab && prevTab !== tab && tabs.has(prevTab.id)) bindActiveTab(prevTab);
 }
@@ -1771,9 +1776,12 @@ function setupHub() {
   hubNewBtn.addEventListener('click', () => {
     const mode = hubNewMode.value;
     const workspace = hubNewWorkspace.value;
-    const tab = createTab('new', null, workspace, mode);
+    // 每次新建用递增临时 id，避免固定 'new' 覆盖 Map 键（design review I5）
+    newTabSeq += 1;
+    const tempId = `new-${newTabSeq}`;
+    const tab = createTab(tempId, null, workspace, mode);
     buildTabPane(tab);
-    switchTab(tab.id);
+    switchTab(tempId);
     connectTab(tab, 'new', workspace).catch(() => {
       statusEl.textContent = 'connection failed';
     });

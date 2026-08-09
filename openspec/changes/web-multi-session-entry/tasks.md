@@ -56,6 +56,25 @@
 - [ ] 3.8 如果实现中发现参考实现调研结论需要修正，先回写 Reference Implementation Research 和本任务清单。
 - [ ] 3.9 更新必要文档（架构说明、README 若涉及 Web 使用方式；`README_EN.md` 同步）。
 
+
+## 审阅修复记录（building Round 1，2026-08-09）
+
+Round 1 building 审阅（reviews/building-review.md）判 CHANGES_REQUESTED，已修复：
+
+- **I1（中高，测试覆盖过度声明）**: tasks 2.2/2.3 声称的 per-tab 隔离 Playwright 用例与负向边界矩阵缺失。
+  修复: test_multi_session_browser.py 补 slash 匹配隔离 / 图片预览隔离 / approval 卡片隔离 /
+  /exit reconnect 隔离 4 个 Playwright 用例；test_multi_session.py 补 symlink 穿越 /
+  尾部斜杠归一化 / 大小写变体 / 不存在路径 / 畸形 session_id 5 个负向用例。
+- **I2（中，前端 bug）**: handleTabEvent 新建会话 rekey（'new'→真实 sid）后 activeTabId 未同步，
+  导致 getActiveTab() 返回 null、tab 栏滞留 "new"。修复: rekey 后同步 activeTabId 并重渲染 tab 栏。
+- **I3（中，机械门禁）**: design-review-manifest.json 的 tasks_hash 绑定设计阶段 tasks.md，
+  building 勾选后 mismatch。修复: building 审阅 PASS 后重新生成 building-review-manifest，
+  并同步重算 design manifest（见收尾节）。
+- **I4（低）**: DELETE 畸形 session_id 可能 500。修复: 捕获 ValueError 返回 400（路由层 404 也安全）。
+- **I5（低）**: hub 新建固定临时 id 'new' 会覆盖 Map 键。修复: 递增 newTabSeq 生成唯一临时 id。
+- **I6（低，文档口径）**: spec delta "路径存在"措辞与 resolve_workspace 只做集合成员判断的决策
+  （design I14）有轻微差异，可接受。
+
 ## 4. 验证
 
 - [ ] 4.1 运行相关单元/集成测试（`uv run pytest tests/web_tests/ -q`）。

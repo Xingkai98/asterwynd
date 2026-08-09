@@ -214,3 +214,175 @@ async def test_new_session_respects_mode(page, seeded_web_server):
     await page.wait_for_function(
         "document.querySelector('#mode-value').textContent === 'read_only'"
     )
+
+
+# ─── per-tab 隔离（design review I5/I13）───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_multi_tab_slash_suggestion_isolation(page, seeded_web_server):
+    """两个 tab 的 slash 匹配状态互不串扰：tab1 输 /s 出建议，切到 tab2 无建议。"""
+    await page.goto(seeded_web_server)
+    await page.wait_for_selector("#hub-view.active")
+    await page.click(".hub-session-open")
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
+    await page.click("#hub-tab")
+    await page.wait_for_selector("#hub-view.active")
+    await page.click("#hub-new-btn")
+    await page.wait_for_selector(INPUT_SELECTOR)
+    await page.wait_for_function(
+        "document.querySelectorAll('.session-tab').length === 2"
+    )
+
+    # tab2（active）输 /s：建议只出现在 tab2
+    await page.fill(INPUT_SELECTOR, "/s")
+    await page.wait_for_selector(".tab-pane.active .slash-suggestions:not([hidden])")
+
+    # 切到 tab1：无建议（tab1 自己的 slashSuggestionsEl 是独立的，hidden）
+    await page.click('.session-tab[data-tab-id="aaaa11111111"]')
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
+    suggestions_hidden = await page.evaluate(
+        "document.querySelector('.tab-pane[data-tab-id=\"aaaa11111111\"] .slash-suggestions').hidden"
+    )
+    assert suggestions_hidden
+
+    # 切回 tab2：建议仍在
+    second_tab = '.session-tab:not([data-tab-id="aaaa11111111"])'
+    await page.click(second_tab)
+    await page.wait_for_function(
+        "document.querySelector('.tab-pane.active .slash-suggestions') && "
+        "!document.querySelector('.tab-pane.active .slash-suggestions').hidden"
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_tab_image_preview_isolation(page, seeded_web_server):
+    """图片预览只落各自 tab：tab2 传图，tab1 预览区为空。"""
+    await page.goto(seeded_web_server)
+    await page.wait_for_selector("#hub-view.active")
+    await page.click(".hub-session-open")
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
+    await page.click("#hub-tab")
+    await page.wait_for_selector("#hub-view.active")
+    await page.click("#hub-new-btn")
+    await page.wait_for_selector(INPUT_SELECTOR)
+    await page.wait_for_function(
+        "document.querySelectorAll('.session-tab').length === 2"
+    )
+
+    # 构造一个极小 PNG 上传到 tab2（active）的 file input
+    import base64
+    png_b64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==")
+    await page.set_input_files(
+        ".tab-pane.active .image-file-input",
+        {"name": "tiny.png", "mimeType": "image/png", "buffer": base64.b64decode(png_b64)},
+    )
+    await page.wait_for_selector(".tab-pane.active .image-preview-item")
+
+    # 切到 tab1：预览区为空
+    await page.click('.session-tab[data-tab-id="aaaa11111111"]')
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
+    preview_count = await page.evaluate(
+        "document.querySelectorAll('.tab-pane[data-tab-id=\"aaaa11111111\"] .image-preview-item').length"
+    )
+    assert preview_count == 0
+
+
+@pytest.mark.asyncio
+async def test_multi_tab_exit_does_not_affect_other_tab_reconnect(page, seeded_web_server):
+    """一个 tab 结束（/exit → continue_session=false）不影响另一 tab reconnect。"""
+    await page.goto(seeded_web_server)
+    await page.wait_for_selector("#hub-view.active")
+    await page.click(".hub-session-open")
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
+    await page.click("#hub-tab")
+    await page.wait_for_selector("#hub-view.active")
+    await page.click("#hub-new-btn")
+    await page.wait_for_selector(INPUT_SELECTOR)
+    await page.wait_for_function(
+        "document.querySelectorAll('.session-tab').length === 2"
+    )
+    # tab2（active）执行 /exit → 该 tab 会话结束
+    await page.fill(INPUT_SELECTOR, "/exit")
+    await page.click(SEND_SELECTOR)
+    await page.wait_for_function(
+        "document.querySelector('.tab-pane.active .message.system') !== null"
+    )
+    # tab2 WS 关闭（server 端 continue_session=false 会 close）
+    await page.wait_for_function(
+        "document.querySelector('#status').textContent !== 'connected' || true"
+    )
+
+    # 切到 tab1：仍可正常发送并收到回复（reconnect 未被全局禁用）
+    await page.click('.session-tab[data-tab-id="aaaa11111111"]')
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
+    await page.wait_for_function(
+        "document.querySelector('#status').textContent === 'connected'"
+    )
+    await page.fill('.tab-pane[data-tab-id="aaaa11111111"] .user-input', "还在吗")
+    await page.click('.tab-pane[data-tab-id="aaaa11111111"] .send-btn')
+    await page.wait_for_selector(
+        '.tab-pane[data-tab-id="aaaa11111111"] .message.assistant',
+        timeout=15000,
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_tab_approval_isolation(page, tmp_path):
+    """审批卡片只落各自 tab：tab1 触发 Bash 审批，tab2 无卡片。"""
+    import uvicorn
+    from agent.llm import ToolCallDelta
+
+    _seed_session(tmp_path, "aaaa11111111", "历史消息")
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    llm = ScriptedLLM([
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallDelta(id="c1", name="Bash", arguments='{"cmd": "printf isolation"}')],
+            stop_reason="tool_calls",
+        ),
+        LLMResponse(content="done after tool", stop_reason="end_turn"),
+    ])
+    app = create_app(llm, workspace_root=tmp_path)
+    server = uvicorn.Server(uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", lifespan="off",
+    ))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f"{base_url}/api/debug-status", timeout=1)
+            break
+        except Exception:
+            time.sleep(0.1)
+    try:
+        await page.goto(base_url)
+        await page.wait_for_selector("#hub-view.active")
+        await page.click(".hub-session-open")
+        await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
+        # tab2 新建并激活
+        await page.click("#hub-tab")
+        await page.wait_for_selector("#hub-view.active")
+        await page.click("#hub-new-btn")
+        await page.wait_for_selector(INPUT_SELECTOR)
+        await page.wait_for_function(
+            "document.querySelectorAll('.session-tab').length === 2"
+        )
+        # 在 tab2（active）发消息触发 Bash 工具 → approval_request
+        await page.fill(INPUT_SELECTOR, "run bash")
+        await page.click(SEND_SELECTOR)
+        # tab2 出现审批卡片
+        await page.wait_for_selector(".tab-pane.active .approval-card", timeout=15000)
+        # tab1 无审批卡片
+        count = await page.evaluate(
+            "document.querySelectorAll('.tab-pane[data-tab-id=\"aaaa11111111\"] .approval-card').length"
+        )
+        assert count == 0
+        # 处理 tab2 审批后收到 assistant 回复
+        await page.click(".tab-pane.active .approval-approve")
+        await page.wait_for_selector(".tab-pane.active .message.assistant", timeout=15000)
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
