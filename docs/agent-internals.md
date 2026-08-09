@@ -508,11 +508,11 @@ builder = ContextBuilder(total_budget=injection_budget)
 builder.register(SystemPromptSource())       # P0 — 系统提示词
 builder.register(AsterMdSource())            # P1 — ASTER.md
 builder.register(MemoryIndexSource(...))     # P2 — 持久记忆索引
+builder.register(TodoSource(...))            # P2 — 执行进度 Todo
 builder.register(SkillIndexSource(...))      # P4 — 可用技能列表
 builder.register(SkillActiveSource(...))     # P4 — 已激活技能内容
 builder.register(PlanModeSource())           # P5 — Plan 模式提示
 builder.register(PlanningStateSource(...))   # P5 — 计划状态
-builder.register(TodoSource(...))            # P5 — 执行进度 Todo
 ```
 
 注入预算计算：`injection_budget = min(20_000, context_window × 20%)`。例如 context_window=200K → 注入预算 = 20,000 tokens。
@@ -525,11 +525,11 @@ builder.register(TodoSource(...))            # P5 — 执行进度 Todo
 P0  SystemPrompt  : 1,500 tokens  [critical]
 P1  AsterMd       : 3,000 tokens  [critical]
 P2  MemoryIndex   : 2,000 tokens
+P2  Todo          : 1,000 tokens
 P4  SkillIndex    : 2,500 tokens
 P4  SkillActive   : 2,500 tokens
 P5  PlanMode      : 2,500 tokens
 P5  PlanningState : 1,500 tokens
-P5  Todo          : 1,000 tokens
 ─────────────────────────────────
 Total:             16,500 tokens  → 在 20,000 预算内，全部保留
 ```
@@ -540,16 +540,16 @@ Total:             16,500 tokens  → 在 20,000 预算内，全部保留
 # builder.py:132 — _apply_budget()
 while total_tokens > self._total_budget and layers:
     trim_idx = self._find_trimmable_index(layers)  # 从后往前找第一个非 critical 且非 cacheable
-    # → 找到 P5 Todo (最末尾的普通层)
+    # → 找到 P5 PlanningState (最末尾的普通层)
     trimmed = self._truncate_tail(content, excess)
-    # → 从 Todo 的尾部裁掉 2,000 tokens 等价字符
+    # → 从 PlanningState 的尾部裁掉 2,000 tokens 等价字符
     if trimmed:
-        layers[trim_idx] = trimmed   # Todo 被裁短了
+        layers[trim_idx] = trimmed   # PlanningState 被裁短了
     else:
-        layers.pop(trim_idx)          # Todo 整层被移除
+        layers.pop(trim_idx)          # PlanningState 整层被移除
 ```
 
-裁切顺序：**从低优先级的尾部开始**。先裁 Todo（P5），不够再裁 PlanningState（P5），再裁 SkillActive（P4）……`critical` 层（P0 系统提示词、P1 ASTER.md）和 `cacheable` 层（P2 MemoryIndex）都**永远不会被裁**——它们构成稳定的前缀供缓存命中。
+裁切顺序：**从低优先级的尾部开始**。先裁 PlanningState（P5），不够再裁 PlanMode（P5），再裁 SkillActive（P4）、SkillIndex（P4），最后才轮到 Todo（P2）——Todo 虽非 critical/cacheable，但排在 P4/P5 之后才被裁（issue #107 修复后）。`critical` 层（P0 系统提示词、P1 ASTER.md）和 `cacheable` 层（P2 MemoryIndex）都**永远不会被裁**——它们构成稳定的前缀供缓存命中。
 
 #### 注入到消息列表
 
@@ -1595,9 +1595,9 @@ AgentLoop (agent/loop.py)  ←── 核心调度器
     ├── ContextBuilder (agent/context/builder.py)
     │     ├── P0: SystemPromptSource — 身份 + 红线约束
     │     ├── P1: AsterMdSource — 多层 ASTER.md 发现与拼接
-    │     ├── P2: MemoryIndexSource — 持久记忆摘要（cacheable）
+    │     ├── P2: MemoryIndexSource — 持久记忆摘要（cacheable）/ TodoSource — 执行进度
     │     ├── P4: SkillIndexSource / SkillActiveSource — 技能上下文
-    │     └── P5: PlanModeSource / PlanningStateSource / TodoSource — 规划状态
+    │     └── P5: PlanModeSource / PlanningStateSource — 规划状态
     │
     ├── MemoryManager (agent/memory/manager.py)
     │     ├── compact_if_needed() — 默认 max_tokens − 15_000 阈值自动触发

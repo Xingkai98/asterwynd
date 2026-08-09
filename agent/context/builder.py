@@ -73,9 +73,10 @@ class ContextBuilder:
 
         Returns the surviving layers as ``(source, content)`` pairs in
         priority order.  ``cacheable`` sources (P0/P1/P2, the stable prefix)
-        are frozen outside the budget pass — the token budget only trims the
-        variable P4/P5 layers, so the stable prefix stays byte-identical
-        across iterations.
+        are frozen outside the budget pass — the token budget trims the
+        variable P4/P5 layers first and may continue into non-cacheable
+        lower-priority layers (e.g. Todo at P2) only after P4/P5 are fully
+        removed, so the stable prefix stays byte-identical across iterations.
         """
         sorted_sources = sorted(self._sources, key=lambda s: s.priority)
 
