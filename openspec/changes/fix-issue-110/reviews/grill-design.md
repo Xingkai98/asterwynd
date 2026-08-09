@@ -22,12 +22,12 @@
   来源: `web/session.py:346, 355`；`agent/loop.py:1402-1415`；`proposal.md:48`。
 
 - **决策**: 恢复路径事件序列（`session_resumed` + `session_history`，失败回退 `session_created`）正确，且同进程二次重连（内存命中）与跨进程恢复（快照重建）行为一致。
-  理由: WS 端点 `get_session` 未命中 → `resume_session_async`（内存命中复用，否则 `SessionStore.load` 重建并持 `resume_snapshot`）→ 仍无则 `create_session_async` 新建（`web/server.py:169-194`）；`session_history` 由 `build_history_payload` 从 `session.messages` 序列化（`web/session.py:33-48`），恢复重建时 `session.messages` 来自 `snapshot.messages`（`web/session.py:358-359`），历史正确。unknown id 回退新建后回发新 id，前端据此更新 localStorage，自愈成立（`chat.js:140-144`）。
-  来源: `web/server.py:169-194`；`web/session.py:268-295, 358-359`；`chat.js:140-144`。
+  理由: WS 端点 `get_session` 未命中 → `resume_session_async`（内存命中复用，否则 `SessionStore.load` 重建并持 `resume_snapshot`）→ 仍无则 `create_session_async` 新建（`web/server.py:169-194`）；`session_history` 由 `build_history_payload` 序列化（`web/session.py:33-53`），快照恢复的会话在首次 run 前 `session.messages` 为空时回退用 `resume_snapshot.messages` 渲染历史。unknown id 回退新建后回发新 id，前端据此更新 localStorage，自愈成立（`chat.js:140-144`）。
+  来源: `web/server.py:169-194`；`web/session.py:268-295, 33-53`；`chat.js:140-144`。
 
 - **决策**: 历史水合用 `extract_text` 丢图片 block 对 agent 上下文无损，仅前端展示丢图，可接受为本 fix 的已知边界。
-  理由: `extract_text` 只取 `TextBlock.text`（`agent/message.py:68-74`），`session_history` 丢图；但恢复后的 `session.messages` 保留完整 block（`web/session.py:358-359` 用 `snapshot.messages`，非 extract 后文本），下一次 run 时 LLM 仍拿到图片。rich 历史序列化可归 #117。
-  来源: `agent/message.py:68-74`；`web/session.py:33-48, 43-45, 358-359`。
+  理由: `extract_text` 只取 `TextBlock.text`（`agent/message.py:68-74`），`session_history` 丢图；恢复后的 `session.messages` 在首次 run 后由 `_run` 从 `resume_snapshot` 重建为完整 block 列表（`web/session.py:435-446, 461-464` 传 `resume_snapshot` 并消费后清空；`agent/loop.py:570-575` 重建），下一次 run 时 LLM 仍拿到图片。rich 历史序列化可归 #117。
+  来源: `agent/message.py:68-74`；`web/session.py:33-53, 435-446`；`agent/loop.py:570-575`。
 
 - **决策**: store 根路径 `(workspace_root or cwd)/.asterwynd/sessions` 与 CLI 一致，未显式指定 workspace 时以 cwd 为根符合预期。
   理由: 与 CLI `_sessions_root`（`agent/main.py:214-215`）完全同语义；CLI `session resume`/交互也按 `workspace_root or cwd` 解析（`agent/main.py:219-220, 395`）。跨目录启动找不到旧 session 属既有 workspace 作用域语义，非本 fix 引入。

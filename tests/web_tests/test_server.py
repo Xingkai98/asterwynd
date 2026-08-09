@@ -961,6 +961,32 @@ def test_web_run_persists_session_to_store(tmp_path):
     assert match["messages"] == 2  # user + assistant
 
 
+def test_reset_removes_session_from_store(tmp_path):
+    """reset 后 session 从内存与磁盘快照中一并移除，旧 id 无法被复活。"""
+    from agent.session import SessionStore
+
+    mock_llm = ScriptedLLM([LLMResponse(content="hi")])
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            sid = created["session_id"]
+            ws.send_json({"type": "chat", "content": "hi"})
+            while True:
+                event = ws.receive_json()
+                if event["type"] == "done":
+                    break
+
+            ws.send_json({"type": "reset"})
+            reset = ws.receive_json()
+            assert reset["type"] == "session_created"
+            assert reset["session_id"] != sid
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    assert store.load(sid) is None, "reset 后磁盘快照应被删除，旧 id 不应被复活"
+
+
 def test_websocket_resume_cli_param_preloads_session(tmp_path):
     """asterwynd web --resume <id>：首次连 /ws/new 时恢复指定 session。"""
     from agent.session import SessionStore
