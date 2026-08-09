@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-107",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a1de07c21f9267b6e",
+  "base_sha": "3662f38c65a415e89309bcea455b8a7da172056f",
+  "head_sha": "a2eb0a6b5fd950f6543934818f69f661c5950589",
+  "tasks_hash": "sha256:0eaec13dc20bf46fddd21a38d1bc88dfe00599c667c52fe016501743ab9134e6",
+  "spec_hash": "sha256:missing",
+  "diff_hash": "sha256:b344a22a59a3d2f677bea37daefce79a9a3f1f4598529f6d66d1259bfec3dffc",
+  "report_hash": "sha256:1cce9e37a986f831a8aa96f8745a5694a6d2fceb5d6d91ecd984406a7af15389"
+}
