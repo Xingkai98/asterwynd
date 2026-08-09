@@ -34,8 +34,8 @@
 
 ## 审阅闭环
 
-- [ ] Round 1 独立 subagent 审阅
-- [ ] 按 CHANGES_REQUESTED 修复并加回归测试
+- [x] Round 1 独立 subagent 审阅（CHANGES_REQUESTED）：resume 恢复后首次 run 快照历史重复送入 LLM（web/session.py 预填 session.messages + run_session 传 resume_snapshot 与 loop.py resume 分支叠加）
+- [x] Round 1 修复：resume 不预填 session.messages（由 _run 从 resume_snapshot 重建）；build_history_payload 回退用快照历史；remove_session 同步删磁盘快照；回归测试增强断言 LLM 消息无重复
 - [ ] Round 2 独立 subagent 审阅（PASS）
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
 
