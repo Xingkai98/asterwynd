@@ -420,9 +420,14 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="mode-apply"' in index
     assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
+    assert 'id="planning-toggle"' in index
+    assert 'id="planning-title"' in index
+    assert 'id="planning-count"' in index
+    assert 'aria-expanded="true"' in index
+    assert 'aria-controls="planning-items"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=15" in index
-    assert "/static/chat.js?v=18" in index
+    assert "/static/style.css?v=16" in index
+    assert "/static/chat.js?v=19" in index
     assert 'id="image-previews"' in index
     assert 'id="image-file-input"' in index
     assert 'id="upload-btn"' in index
@@ -435,6 +440,20 @@ def test_web_static_assets_include_session_and_run_display():
     assert "HTTP_UPLOAD_TIMEOUT_MS" in script
     assert "WS_UPLOAD_EVENT_TIMEOUT_MS" in script
     assert "256 * 1024" in script
+    assert "planningToggle.addEventListener" in script
+    assert "setPlanningPanelCollapsed" in script
+    assert "planningTitle.textContent" in script
+    assert "planningCount.hidden" in script
+    assert "wasCollapsed" in script
+    assert "closest('.planning-content')" in script
+    assert "aria-expanded" in script
+    # CSS: new planning panel features
+    assert ".planning-toggle" in styles
+    assert ".planning-title" in styles
+    assert ".planning-count" in styles
+    assert ".planning-panel.collapsed" in styles
+    assert ".planning-content.expanded" in styles
+    assert ".planning-content:hover" in styles
     assert "30000" in script
     assert "45000" in script
     assert "AbortController" in script

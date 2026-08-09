@@ -44,9 +44,32 @@ const planDocumentTitleEl = document.getElementById('plan-document-title');
 const planDocumentBodyEl = document.getElementById('plan-document-body');
 const planningPanel = document.getElementById('planning-panel');
 const planningItemsEl = document.getElementById('planning-items');
+const planningToggle = document.getElementById('planning-toggle');
+const planningTitle = document.getElementById('planning-title');
+const planningCount = document.getElementById('planning-count');
 const imagePreviewsEl = document.getElementById('image-previews');
 const imageFileInput = document.getElementById('image-file-input');
 const uploadBtn = document.getElementById('upload-btn');
+
+// --- Planning panel toggle ---
+function setPlanningPanelCollapsed(collapsed) {
+  planningPanel.classList.toggle('collapsed', collapsed);
+  planningToggle.classList.toggle('collapsed', collapsed);
+  planningToggle.setAttribute('aria-expanded', String(!collapsed));
+  planningToggle.setAttribute('aria-label', collapsed ? 'Expand panel' : 'Collapse panel');
+  planningToggle.title = collapsed ? 'Expand' : 'Collapse';
+}
+
+planningToggle.addEventListener('click', () => {
+  setPlanningPanelCollapsed(planningPanel.classList.toggle('collapsed'));
+});
+
+// Tap/click a truncated progress item to expand it (touch devices have no hover tooltip).
+planningItemsEl.addEventListener('click', (e) => {
+  const content = e.target.closest('.planning-content');
+  if (!content) return;
+  content.classList.toggle('expanded');
+});
 
 // --- Tab switching ---
 document.querySelectorAll('.tab').forEach(tab => {
@@ -250,8 +273,8 @@ function syncMode(mode) {
   modeSelectEl.value = currentMode;
   planningItemsEl.textContent = '';
   planningPanel.hidden = true;
-  planningPanel.querySelector('.planning-panel-header').textContent =
-    currentMode === 'plan' ? 'Plan' : 'Progress';
+  planningCount.hidden = true;
+  planningTitle.textContent = currentMode === 'plan' ? 'Plan' : 'Progress';
 }
 
 // --- Message rendering ---
@@ -640,19 +663,25 @@ function renderPlanningState(state) {
     return;
   }
 
-  planningPanel.querySelector('.planning-panel-header').textContent = 'Plan';
+  planningTitle.textContent = 'Plan';
+  planningCount.textContent = items.length;
   planningPanel.hidden = false;
+
+  const wasCollapsed = planningPanel.classList.contains('collapsed');
+  const statusLabels = { pending: '○', in_progress: '▶', completed: '✓', failed: '✗', skipped: '⏭' };
+
   for (const item of items) {
     const row = document.createElement('li');
     row.className = `planning-item status-${item.status}`;
 
     const status = document.createElement('span');
     status.className = 'planning-status';
-    status.textContent = item.status;
+    status.textContent = statusLabels[item.status] || item.status;
 
     const content = document.createElement('span');
     content.className = 'planning-content';
     content.textContent = item.content || '';
+    content.title = item.content || '';
 
     row.appendChild(status);
     row.appendChild(content);
@@ -665,6 +694,11 @@ function renderPlanningState(state) {
     }
 
     planningItemsEl.appendChild(row);
+  }
+
+  // Restore collapsed state
+  if (wasCollapsed) {
+    setPlanningPanelCollapsed(true);
   }
 }
 
@@ -677,9 +711,12 @@ function renderTodoState(state) {
     return;
   }
 
-  planningPanel.querySelector('.planning-panel-header').textContent = 'Progress';
+  planningTitle.textContent = 'Progress';
+  planningCount.textContent = items.length;
   planningPanel.hidden = false;
-  const statusLabels = { pending: ' ', in_progress: '▶', completed: '✓' };
+
+  const wasCollapsed = planningPanel.classList.contains('collapsed');
+  const statusLabels = { pending: '○', in_progress: '▶', completed: '✓' };
   for (const item of items) {
     const row = document.createElement('li');
     row.className = `planning-item status-${item.status}`;
@@ -691,6 +728,7 @@ function renderTodoState(state) {
     const content = document.createElement('span');
     content.className = 'planning-content';
     content.textContent = item.content || '';
+    content.title = item.content || '';
 
     row.appendChild(status);
     row.appendChild(content);
@@ -703,6 +741,11 @@ function renderTodoState(state) {
     }
 
     planningItemsEl.appendChild(row);
+  }
+
+  // Restore collapsed state
+  if (wasCollapsed) {
+    setPlanningPanelCollapsed(true);
   }
 }
 

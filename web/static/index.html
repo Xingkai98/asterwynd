@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Asterwynd · Asterwynd Web UI</title>
-<link rel="stylesheet" href="/static/style.css?v=15">
+<link rel="stylesheet" href="/static/style.css?v=16">
 </head>
 <body>
 <div id="app">
@@ -43,7 +43,11 @@
         <div id="plan-document-body" class="markdown-body"></div>
       </div>
       <div id="planning-panel" class="planning-panel" hidden>
-        <div class="planning-panel-header">Plan</div>
+        <div class="planning-panel-header">
+          <button id="planning-toggle" class="planning-toggle" type="button" aria-expanded="true" aria-controls="planning-items" aria-label="Collapse panel" title="Collapse">&#x25BC;</button>
+          <span id="planning-title" class="planning-title">Plan</span>
+          <span id="planning-count" class="planning-count" hidden></span>
+        </div>
         <ol id="planning-items" class="planning-items"></ol>
       </div>
       <div id="messages"></div>
@@ -76,7 +80,7 @@
 </div>
 
 <script src="/static/markdown.js?v=6"></script>
-<script src="/static/chat.js?v=18"></script>
+<script src="/static/chat.js?v=19"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>
