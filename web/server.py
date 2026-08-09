@@ -65,6 +65,17 @@ def create_app(
             return HTMLResponse("<h1>index.html not found</h1>", status_code=404)
         return HTMLResponse(html)
 
+    @app.get("/resume", response_class=HTMLResponse)
+    async def resume_page():
+        """显式恢复入口：返回 Chat 页面 HTML，前端配合 ``?session=<id>`` 恢复。
+
+        桌面端与移动端共用同一页面（无额外依赖）。
+        """
+        html = _read_index_html()
+        if not html:
+            return HTMLResponse("<h1>index.html not found</h1>", status_code=404)
+        return HTMLResponse(html)
+
     @app.get("/debug", response_class=HTMLResponse)
     async def debug_page():
         if not debug_enabled():
@@ -156,16 +167,31 @@ def create_app(
         upload_buffers: dict[str, dict] = {}
 
         session = session_manager.get_session(session_id)
-        if not session:
+        if session is None:
+            # /ws/new 是默认入口：若 CLI 传了 --resume，则用它作为恢复目标；
+            # 其他 session id 直接用该 id 尝试恢复（内存或持久化快照）。
+            resume_target = (
+                session_id if session_id != "new" else app.state.resume_session_id
+            )
+            if resume_target:
+                session = await session_manager.resume_session_async(resume_target, llm)
+
+        if session is None:
             session = await session_manager.create_session_async(llm)
             await ws.send_json({
                 "type": "session_created",
                 "session_id": session.session_id,
                 "mode": session.current_mode,
             })
+        else:
+            from web.session import build_history_payload
 
-        elif session.session_id != session_id:
-            session = session_manager.get_session(session.session_id)
+            await ws.send_json({
+                "type": "session_resumed",
+                "session_id": session.session_id,
+                "mode": session.current_mode,
+            })
+            await ws.send_json(build_history_payload(session))
 
         try:
             while True:

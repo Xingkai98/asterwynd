@@ -31,3 +31,16 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "real_api" in item.keywords:
                 item.add_marker(skip_real)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_workspace(tmp_path, monkeypatch):
+    """隔离 web 测试的工作目录。
+
+    SessionManager 的持久化目录默认为 workspace_root 或 cwd（`<root>/.asterwynd/sessions`），
+    uploads 也写入 cwd 下的 `.asterwynd`。autouse 切到 pytest 临时目录，避免测试
+    在仓库根累积 `.asterwynd/sessions` 和上传文件。
+    """
+    monkeypatch.chdir(tmp_path)
+    yield tmp_path
+
