@@ -658,7 +658,7 @@ def _print_tool_call_summaries(result, config: AsterwyndConfig | None = None) ->
 @app.command()
 def web(
     port: int = typer.Option(8000, "--port", "-p", help="HTTP 端口"),
-    host: str = typer.Option("0.0.0.0", "--host", help="绑定地址"),
+    host: str = typer.Option("127.0.0.1", "--host", help="绑定地址"),
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),

@@ -233,6 +233,12 @@ class AgentSession:
         # 从持久化快照恢复的会话持有快照，仅在第一次 run 时传给 AgentLoop
         # 作为 resume_snapshot（AgentLoop 会把历史上下文灌回 messages）。
         self.resume_snapshot: SessionSnapshot | None = None
+        # 会话归属的 workspace（issue #117）：决定 WorkspacePolicy 根与
+        # SessionStore 归属；创建/恢复时设置，reset 沿用。
+        self.workspace_root: Path | None = None
+        # per-session run 互斥（issue #117 D8）：同一 session 并发 run 被拒，
+        # 避免两个 WebSocket 并发驱动同一 AgentLoop 污染共享可变状态。
+        self.run_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def current_mode(self) -> str:
@@ -252,44 +258,119 @@ class SessionManager:
         mode: str | None = None,
         config: AsterwyndConfig | None = None,
         workspace_root: Path | None = None,
+        allowed_workspaces: list[Path] | None = None,
     ):
         self._sessions: dict[str, AgentSession] = {}
         self.debug_enabled = debug_enabled
         self.config = config or AsterwyndConfig()
         self.workspace_root = workspace_root
+        # 主 workspace：CLI --workspace 或启动目录（CLI 同语义）。
+        self.primary_workspace = (workspace_root or Path.cwd()).resolve()
+        # allowlist 中 resolve 后存在的路径（已排除不存在项，create_app 打 warning）。
+        self._allowlist = [w.resolve() for w in (allowed_workspaces or [])]
+        # 有效 workspace 集合 = {主 workspace} ∪ allowlist，启动时一次性解析。
+        self._workspace_set = {self.primary_workspace, *self._allowlist}
         resolved_mode = mode or self.config.agent.default_mode.value
         self.initial_mode = parse_agent_mode(resolved_mode)
-        # Web session 持久化目录与 CLI 一致：<workspace_root 或 cwd>/.asterwynd/sessions。
-        # 未显式指定 workspace 时以启动目录为 workspace（CLI 同语义）。
-        store_root = (workspace_root or Path.cwd()) / ".asterwynd" / "sessions"
-        self.session_store = SessionStore(str(store_root))
+        # per-workspace SessionStore：key 为 resolve 后的绝对路径（issue #117 D3）。
+        self._stores: dict[str, SessionStore] = {}
+
+    def _store_for(self, workspace_root: Path | None) -> SessionStore:
+        """按 workspace 解析 SessionStore，惰性创建。
+
+        key 用 resolve() 规范化后的绝对路径（None → cwd.resolve()），避免同一
+        目录因写法不同产生多个 store。
+        """
+        key = str((workspace_root or Path.cwd()).resolve())
+        store = self._stores.get(key)
+        if store is None:
+            store = SessionStore(str(Path(key) / ".asterwynd" / "sessions"))
+            self._stores[key] = store
+        return store
+
+    def resolve_workspace(self, workspace: str | Path | None) -> Path:
+        """统一校验用户可控 workspace 输入（issue #117 D4）。
+
+        None/空 → 主 workspace；否则 expanduser().resolve() 后校验落入有效
+        集合，否则抛 ValueError（结构化拒绝）。覆盖 /api/sessions、/ws/new、
+        /ws/{id}?workspace= 全部入口，防 .. 穿越 / 符号链接 / 尾部斜杠。
+        """
+        if workspace is None or workspace == "":
+            return self.primary_workspace
+        resolved = Path(str(workspace)).expanduser().resolve()
+        if resolved not in self._workspace_set:
+            raise ValueError("workspace_not_allowed")
+        return resolved
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
         if self.config.mcp.servers:
             raise RuntimeError("create_session with MCP config requires create_session_async")
         return self._create_session(llm, tools=tools, mcp_manager=None)
 
-    async def create_session_async(self, llm, tools: Optional[list] = None) -> AgentSession:
+    async def create_session_async(
+        self,
+        llm,
+        tools: Optional[list] = None,
+        *,
+        mode: str | None = None,
+        workspace_root: Path | None = None,
+    ) -> AgentSession:
+        """创建新 session，可指定 mode 与 workspace（issue #117 D2/D3）。
+
+        mode/workspace 缺省回落 manager 初始 mode / 主 workspace。
+        """
         mcp_manager = await build_mcp_manager(self.config)
-        return self._create_session(llm, tools=tools, mcp_manager=mcp_manager)
+        initial_mode = parse_agent_mode(mode) if mode else None
+        return self._create_session(
+            llm,
+            tools=tools,
+            mcp_manager=mcp_manager,
+            initial_mode=initial_mode,
+            workspace_root=workspace_root,
+        )
 
     async def resume_session_async(
         self,
         session_id: str,
         llm,
         tools: Optional[list] = None,
+        *,
+        workspace: str | Path | None = None,
     ) -> Optional[AgentSession]:
         """按 id 恢复 session：内存命中直接复用，否则从持久化快照重建。
 
-        快照也不存在时返回 None，由调用方回退新建。返回的 session 持有
-        ``resume_snapshot``，首次 run 时传给 AgentLoop 恢复上下文。
+        workspace 显式传入（hub 列表 / URL ?workspace=）→ 用该 workspace 的
+        store 恢复；未传 → 按确定顺序（主 → allowlist 配置序）搜索，首个命中
+        即恢复。快照也不存在时返回 None，由调用方回退新建。返回的 session
+        持有 ``resume_snapshot``，首次 run 时传给 AgentLoop 恢复上下文。
+
+        归属闭环（issue #117 D3）：命中哪个 store，就用该 workspace 创建
+        session（workspace_root / WorkspacePolicy / _store_for 均用命中值），
+        保证恢复后的会话下次 run 仍落盘回原 workspace。
         """
         existing = self._sessions.get(session_id)
         if existing is not None:
             return existing
-        snapshot = self.session_store.load(session_id)
-        if snapshot is None:
-            return None
+        if workspace is not None:
+            ws = self.resolve_workspace(workspace)
+            snapshot = self._store_for(ws).load(session_id)
+            if snapshot is None:
+                return None
+            return await self._restore_snapshot(snapshot, ws, llm, tools)
+        for ws in self._search_order():
+            snapshot = self._store_for(ws).load(session_id)
+            if snapshot is not None:
+                logger.info("Resumed session %s from store %s", session_id, ws)
+                return await self._restore_snapshot(snapshot, ws, llm, tools)
+        return None
+
+    async def _restore_snapshot(
+        self,
+        snapshot: SessionSnapshot,
+        workspace_root: Path,
+        llm,
+        tools: Optional[list],
+    ) -> AgentSession:
         mcp_manager = await build_mcp_manager(self.config)
         # 不预填 session.messages：恢复的历史由 AgentLoop 首次 run 时从
         # resume_snapshot 重建（_run 的 resume 分支），避免快照历史重复入参。
@@ -300,9 +381,29 @@ class SessionManager:
             mcp_manager=mcp_manager,
             initial_mode=snapshot.mode,
             resume_snapshot=snapshot,
+            workspace_root=workspace_root,
         )
-        logger.info("Resumed session %s from store", session_id)
+        logger.info("Resumed session %s from store", snapshot.session_id)
         return session
+
+    def _search_order(self) -> list[Path]:
+        """确定性搜索顺序：主 workspace → allowlist 配置序（去重）。"""
+        order = [self.primary_workspace]
+        for ws in self._allowlist:
+            if ws not in order:
+                order.append(ws)
+        return order
+
+    def list_workspaces(self) -> list[tuple[Path, bool]]:
+        """有序 workspace 列表：(path, is_primary)，主 workspace 置顶 + allowlist。
+
+        供 hub ``GET /api/workspaces`` 使用。
+        """
+        items = [(self.primary_workspace, True)]
+        for ws in self._allowlist:
+            if ws != self.primary_workspace:
+                items.append((ws, False))
+        return items
 
     def _create_session(
         self,
@@ -312,14 +413,18 @@ class SessionManager:
         *,
         initial_mode: Optional[AgentMode] = None,
         resume_snapshot: Optional[SessionSnapshot] = None,
+        workspace_root: Path | None = None,
     ) -> AgentSession:
         session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
         approval_handler = WebApprovalHandler(session_id)
         question_handler = WebQuestionHandler(session_id)
         resolved_mode = initial_mode or self.initial_mode
         run_config = AgentRunConfig(mode=resolved_mode)
+        session_workspace = (
+            (workspace_root or self.primary_workspace).resolve()
+        )
         workspace_policy = WorkspacePolicy(
-            workspace_root=self.workspace_root,
+            workspace_root=session_workspace,
             command_denylist=self.config.tools.command_denylist,
         )
         sandbox = build_sandbox_from_config(self.config)
@@ -361,25 +466,33 @@ class SessionManager:
             approval_handler=approval_handler,
             question_handler=question_handler,
             mcp_manager=mcp_manager,
-            session_store=self.session_store,
+            session_store=self._store_for(session_workspace),
         )
         session = AgentSession(session_id, agent, approval_handler, question_handler)
+        session.workspace_root = session_workspace
         if resume_snapshot is not None:
             session.resume_snapshot = resume_snapshot
             session.init_messages(resume_snapshot.user_system_prompt)
         else:
             session.init_messages()
         self._sessions[session_id] = session
-        logger.info(f"Created session {session_id}")
+        logger.info(f"Created session {session_id} workspace={session_workspace}")
         return session
 
     def get_session(self, session_id: str) -> Optional[AgentSession]:
         return self._sessions.get(session_id)
 
-    def remove_session(self, session_id: str):
-        self._sessions.pop(session_id, None)
-        # reset 语义是废弃当前会话：同步删除磁盘快照，避免孤儿快照被旧 id 复活。
-        self.session_store.remove(session_id)
+    def remove_session(self, session_id: str, workspace: str | Path | None = None):
+        session = self._sessions.pop(session_id, None)
+        # workspace 显式传入（hub DELETE 端点，冷会话常态）→ 用该 workspace 的
+        # store 删快照；缺省（reset 路径）→ 回退内存 session 的 workspace_root。
+        if workspace is not None:
+            ws = self.resolve_workspace(workspace)
+            self._store_for(ws).remove(session_id)
+        elif session is not None and session.workspace_root is not None:
+            self._store_for(session.workspace_root).remove(session_id)
+        else:
+            self._store_for(self.primary_workspace).remove(session_id)
 
     async def set_mode(self, session: AgentSession, mode: str) -> dict:
         return await session.agent.set_mode(
@@ -396,7 +509,41 @@ class SessionManager:
         ws_receive=None,
         images: list[dict] | None = None,
     ) -> None:
-        """Run the agent with user message, streaming events via WebSocket."""
+        """Run the agent with user message, streaming events via WebSocket.
+
+        同一 session 并发 run 互斥（issue #117 D8）：锁被占用时回发 error
+        事件并返回，不阻塞 WS 连接；成功则整个 run 流程（含 queue drain）都
+        在锁内，避免两个 WebSocket 并发驱动同一 AgentLoop。
+        """
+        # Python 3.12 的 asyncio.Lock 无 acquire_nowait；wait_for(timeout=0)
+        # 会因 acquire 的调度延迟误判（锁可用也超时）。改用 locked() 检查 +
+        # acquire()：asyncio 单线程事件循环下，locked() 检查与 acquire() 的
+        # 锁设置之间无 await 点（acquire 对可用锁是同步路径），故无
+        # check-then-act 竞态；锁被占用时在 if 直接拒绝，不会走到 acquire
+        # 阻塞（区别于 async with 写法）。
+        if session.run_lock.locked():
+            await ws_send({
+                "type": "error",
+                "data": {"message": "another run is already in progress"},
+            })
+            return
+        await session.run_lock.acquire()
+        try:
+            await self._run_session_locked(
+                session, user_message, ws_send, ws_receive, images
+            )
+        finally:
+            session.run_lock.release()
+
+    async def _run_session_locked(
+        self,
+        session: AgentSession,
+        user_message: str,
+        ws_send,
+        ws_receive=None,
+        images: list[dict] | None = None,
+    ) -> None:
+        """``run_session`` 的锁内实现：实际驱动 AgentLoop 与 queue drain。"""
         queue: asyncio.Queue = asyncio.Queue()
 
         async def on_event(event_type: str, data: dict):

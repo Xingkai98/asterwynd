@@ -143,21 +143,33 @@ async def page():
         await browser.close()
 
 
-@pytest.mark.asyncio
-async def test_fake_llm_browser_smoke(page, fake_web_server):
-    await page.goto(fake_web_server)
-    await page.wait_for_selector("#user-input")
+# 从 hub 新建一个会话，进入 chat 视图并等输入框可见（issue #117 默认入口是 hub）。
+INPUT_SELECTOR = ".tab-pane.active .user-input"
+SEND_SELECTOR = ".tab-pane.active .send-btn"
+SUGGEST_SELECTOR = ".tab-pane.active .slash-suggestions"
+
+
+async def _open_chat(page):
+    await page.click("#hub-new-btn")
+    await page.wait_for_selector(INPUT_SELECTOR)
     await page.wait_for_function(
         "document.querySelector('#status').textContent === 'connected'"
     )
 
-    await page.fill("#user-input", "/s")
-    await page.wait_for_selector("#slash-suggestions:not([hidden])")
-    suggestions = await page.inner_text("#slash-suggestions")
+
+@pytest.mark.asyncio
+async def test_fake_llm_browser_smoke(page, fake_web_server):
+    await page.goto(fake_web_server)
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
+
+    await page.fill(INPUT_SELECTOR, "/s")
+    await page.wait_for_selector(f"{SUGGEST_SELECTOR}:not([hidden])")
+    suggestions = await page.inner_text(SUGGEST_SELECTOR)
     assert "/status" in suggestions
 
-    await page.fill("#user-input", "/status")
-    await page.click("#send-btn")
+    await page.fill(INPUT_SELECTOR, "/status")
+    await page.click(SEND_SELECTOR)
     await page.wait_for_selector(".message.system")
     status_text = await page.locator(".message.system").last.inner_text()
     assert "Session ID:" in status_text
@@ -168,14 +180,14 @@ async def test_fake_llm_browser_smoke(page, fake_web_server):
         "document.querySelector('#mode-value').textContent === 'read_only'"
     )
 
-    await page.fill("#user-input", "hello from browser")
-    await page.click("#send-btn")
+    await page.fill(INPUT_SELECTOR, "hello from browser")
+    await page.click(SEND_SELECTOR)
     await page.wait_for_selector(".message.assistant")
     assistant_text = await page.locator(".message.assistant").last.inner_text()
     assert "Fake browser response" in assistant_text
 
-    await page.fill("#user-input", "/clear")
-    await page.click("#send-btn")
+    await page.fill(INPUT_SELECTOR, "/clear")
+    await page.click(SEND_SELECTOR)
     await page.wait_for_function(
         "Array.from(document.querySelectorAll('.message.system'))"
         ".some(el => el.textContent.includes('Cleared conversation history.'))"
@@ -190,11 +202,12 @@ async def test_fake_llm_browser_smoke(page, fake_web_server):
 async def test_chat_send_message(page, web_server):
     """Send a message and verify a response appears."""
     await page.goto(web_server)
-    await page.wait_for_selector("#user-input")
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
 
     # Type and send
-    await page.fill("#user-input", "用一句话介绍你自己")
-    await page.click("#send-btn")
+    await page.fill(".tab-pane.active .user-input", "用一句话介绍你自己")
+    await page.click(".tab-pane.active .send-btn")
 
     # Wait for response (up to 30s for real API)
     await page.wait_for_selector(".message.assistant", timeout=30000)
@@ -212,10 +225,11 @@ async def test_chat_send_message(page, web_server):
 async def test_chat_tool_call_display(page, web_server):
     """Send a message requiring a tool call and verify tool info displayed."""
     await page.goto(web_server)
-    await page.wait_for_selector("#user-input")
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
 
-    await page.fill("#user-input", "读一下 README.md 文件")
-    await page.click("#send-btn")
+    await page.fill(".tab-pane.active .user-input", "读一下 README.md 文件")
+    await page.click(".tab-pane.active .send-btn")
 
     # Wait for response
     await page.wait_for_selector(".message.assistant", timeout=30000)
@@ -237,7 +251,8 @@ async def test_debug_tab_hidden_default(page, web_server):
         pytest.skip("ASTERWYND_DEBUG enabled - server in debug mode, debug tab is visible")
 
     await page.goto(web_server)
-    await page.wait_for_selector("#user-input")
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
 
     debug_tab = await page.query_selector("#debug-tab")
     # Debug tab element exists but is hidden by default
@@ -258,7 +273,8 @@ async def test_debug_tab_visible_when_enabled(page, web_server):
         pytest.skip("ASTERWYND_DEBUG not enabled - server not in debug mode")
 
     await page.goto(web_server)
-    await page.wait_for_selector("#user-input")
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
 
     debug_tab = await page.query_selector("#debug-tab")
     assert debug_tab is not None
@@ -274,7 +290,8 @@ async def test_debug_shows_iterations(page, web_server):
         pytest.skip("ASTERWYND_DEBUG not enabled")
 
     await page.goto(web_server)
-    await page.wait_for_selector("#user-input")
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
 
     # Switch to Debug tab
     debug_tab = await page.query_selector("#debug-tab")
@@ -284,8 +301,8 @@ async def test_debug_shows_iterations(page, web_server):
     # Switch back to Chat, send message
     chat_tab = await page.query_selector('.tab[data-tab="chat"]')
     await chat_tab.click()
-    await page.fill("#user-input", "说一句话介绍自己")
-    await page.click("#send-btn")
+    await page.fill(".tab-pane.active .user-input", "说一句话介绍自己")
+    await page.click(".tab-pane.active .send-btn")
 
     # Wait for response
     await page.wait_for_selector(".message.assistant", timeout=30000)
@@ -313,10 +330,11 @@ async def test_static_assets_load(page, web_server):
     title = await page.title()
     assert "Asterwynd" in title
 
-    # Check essential elements
-    assert await page.query_selector("#messages") is not None
-    assert await page.query_selector("#user-input") is not None
-    assert await page.query_selector("#send-btn") is not None
+    # Check essential elements (hub is the default entry, issue #117)
+    assert await page.query_selector("#hub-view") is not None
+    assert await page.query_selector("#hub-new-btn") is not None
+    assert await page.query_selector("#session-tabs") is not None
+    assert await page.query_selector("#chat-view") is not None
 
 
 @pytest.mark.real_api
@@ -326,11 +344,12 @@ async def test_multi_turn_with_tool(page, web_server):
     Regression test for: agent 返回前未将回复写入 messages 导致"复读机"。
     """
     await page.goto(web_server)
-    await page.wait_for_selector("#user-input")
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
 
     # Turn 1: 触发 bash 工具调用
-    await page.fill("#user-input", "用 bash 运行 pwd")
-    await page.click("#send-btn")
+    await page.fill(".tab-pane.active .user-input", "用 bash 运行 pwd")
+    await page.click(".tab-pane.active .send-btn")
 
     # 等待工具执行和 assistant 回复
     await page.wait_for_timeout(15000)
@@ -341,8 +360,8 @@ async def test_multi_turn_with_tool(page, web_server):
     text_turn1 = await msgs_turn1[-1].inner_text()
 
     # Turn 2: 询问不同的问题
-    await page.fill("#user-input", "这个目录下有哪些文件？")
-    await page.click("#send-btn")
+    await page.fill(".tab-pane.active .user-input", "这个目录下有哪些文件？")
+    await page.click(".tab-pane.active .send-btn")
     await page.wait_for_timeout(15000)
 
     # 收集第二轮 assistant 消息

@@ -259,6 +259,17 @@ class SubagentsConfig:
 
 
 @dataclass(frozen=True)
+class WebConfig:
+    """Web 多 session 入口的 workspace allowlist（issue #117）。
+
+    ``workspaces`` 是允许 Web 会话操作的工作区路径（绝对路径，``~`` 可展开）。
+    allowlist 为空时有效集合退化为 {主 workspace}（CLI ``--workspace`` 或 cwd），
+    不改变现有默认行为。有效集合在 ``create_app`` 启动时解析一次。
+    """
+    workspaces: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
 class AsterwyndConfig:
     path: Path | None = None
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -271,6 +282,7 @@ class AsterwyndConfig:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     subagents: SubagentsConfig = field(default_factory=SubagentsConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     def __post_init__(self) -> None:
         if not self.modes:
@@ -403,6 +415,7 @@ def _load_yaml_config(
         memory=_parse_memory_config(raw.get("memory", {}), path),
         sandbox=_parse_sandbox_config(raw.get("sandbox", {}), path),
         subagents=_parse_subagents_config(raw.get("subagents", {}), path),
+        web=_parse_web_config(raw.get("web", {}), path),
     )
 
 
@@ -1187,6 +1200,28 @@ def _parse_skills_config(raw: Any, path: Path) -> SkillsConfig:
         seen.add(resolved)
         normalized.append(resolved)
     return SkillsConfig(roots=tuple(normalized))
+
+
+def _parse_web_config(raw: Any, path: Path) -> WebConfig:
+    mapping = _expect_mapping(raw, path, "web")
+    base = path.parent
+    workspaces: list[Path] = []
+    for item in _parse_string_list(mapping.get("workspaces", []), path, "web.workspaces"):
+        expanded = os.path.expandvars(item)
+        candidate = Path(expanded).expanduser()
+        if not candidate.is_absolute():
+            raise ConfigError(
+                f"{path}: web.workspaces 必须是绝对路径: {item}"
+            )
+        workspaces.append(candidate.resolve())
+    normalized = []
+    seen = set()
+    for ws in workspaces:
+        if ws in seen:
+            continue
+        seen.add(ws)
+        normalized.append(ws)
+    return WebConfig(workspaces=tuple(normalized))
 
 
 def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:
