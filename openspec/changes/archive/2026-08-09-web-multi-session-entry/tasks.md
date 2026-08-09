@@ -10,7 +10,7 @@
 - [x] 1.4 维护 `## Impact Analysis`，列出影响、不影响和待确认影响面；开发前把待确认项清理为明确结论或阻塞项。
 - [x] 1.5 维护 `## Reference Implementation Research`；记录最终调研状态、发现和设计影响。
 - [x] 1.6 在 `design.md` 的 `## Pre-Implementation Review` 记录已解决问题、备选方案、否决方案、最终确认和剩余风险。
-- [ ] 1.7 当前规格同步：把 web-ui spec delta 合并到 `openspec/specs/web-ui/spec.md`，确认未实现能力没有被写成已实现，并配 workflow-events.jsonl 解释事件。
+- [x] 1.7 当前规格同步：把 web-ui spec delta 合并到 `openspec/specs/web-ui/spec.md`，确认未实现能力没有被写成已实现，并配 workflow-events.jsonl 解释事件。
 
 ## 2. 测试
 
@@ -77,17 +77,17 @@ Round 1 building 审阅（reviews/building-review.md）判 CHANGES_REQUESTED，�
 
 ## 4. 验证
 
-- [ ] 4.1 运行相关单元/集成测试（`uv run pytest tests/web_tests/ -q`）。
-- [ ] 4.2 运行全量测试（`uv run pytest -q`）。
-- [ ] 4.3 运行 OpenSpec strict validate（`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`）。
-- [ ] 4.4 运行项目 OpenSpec artifact checker（`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`）。
-- [ ] 4.5 独立审阅闭环 `/review-loop web-multi-session-entry`：逐任务验证、正确性、Spec 对齐、测试覆盖、安全性、可维护性、CI 完整性；PASS 或 3 轮封顶，产出 `reviews/building-review.md` + review manifest。
-- [ ] 4.6 确认 baseline CI 命令可本地通过。
+- [x] 4.1 运行相关单元/集成测试（`uv run pytest tests/web_tests/ -q`）。
+- [x] 4.2 运行全量测试（`uv run pytest -q`）。
+- [x] 4.3 运行 OpenSpec strict validate（`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`）。
+- [x] 4.4 运行项目 OpenSpec artifact checker（`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`）。
+- [x] 4.5 独立审阅闭环 `/review-loop web-multi-session-entry`：逐任务验证、正确性、Spec 对齐、测试覆盖、安全性、可维护性、CI 完整性；PASS 或 3 轮封顶，产出 `reviews/building-review.md` + review manifest。
+- [x] 4.6 确认 baseline CI 命令可本地通过。
 
 ## 5. PR 收尾
 
-- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
-- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
-- [ ] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
-- [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
-- [ ] 5.5 给 issue #117 添加完成说明 comment 并关闭。
+- [x] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
+- [x] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
+- [x] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
+- [x] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
+- [x] 5.5 给 issue #117 添加完成说明 comment 并关闭。
