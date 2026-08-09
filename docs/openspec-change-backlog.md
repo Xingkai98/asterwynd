@@ -79,6 +79,27 @@
 
 ## 未实现队列
 
+### 6. `web-multi-session-entry`
+
+状态：已立项（proposal/design/tasks/spec delta 齐备，grill 已确认），未实现。
+
+关联 issue：[#117](https://github.com/Xingkai98/asterwynd/issues/117)（【feature】Web 多 session 入口页）。
+
+批次：Web 会话能力批次，依赖 issue #110（PR #118，已合入）的 Web session 本地持久化与按 id 恢复基础。
+
+建议顺序原因：
+
+- 复用 #110 已合入的 `SessionStore` 持久化 / `resume_session_async` 恢复 / 前端 localStorage 记忆，在其上补 hub 列表、多标签、按 workspace 组织与新建指定 mode/workspace。
+- 涉及 `web/session.py`、`web/server.py`、`chat.js` 大面改动，与 Web session 语义相关，宜在 #110 稳定后独立进行。
+
+主要交付：
+
+- `GET /api/workspaces`、`GET /api/sessions` 会话列表 API（复用 `SessionStore.list_sessions()`）。
+- 前端 hub 入口页 + 多标签 per-tab 状态模型（独立 WebSocket/历史/运行状态）。
+- `/ws/new?mode=&workspace=` 新建会话 + workspace allowlist 安全边界（`resolve_workspace()` 全覆盖）+ 默认 host 改 `127.0.0.1`。
+- per-session run 互斥；会话删除；恢复优先级扩展 workspace 记忆。
+- 实现 PR 合入时给 issue #117 添加完成 comment 并关闭。
+
 ### 4. `add-minimal-tui-runtime-view`
 
 状态：未实现。
