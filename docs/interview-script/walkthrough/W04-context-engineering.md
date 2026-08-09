@@ -25,11 +25,11 @@ agent/context/
 | P0 | SystemPromptSource | 0 | ✅ | ✅ | ✅ |
 | P1 | AsterMdSource（ASTER.md 项目指令） | 1 | ✅ | ✅ | ✅ |
 | P2 | MemoryIndexSource（持久记忆摘要） | 2 | ❌ | ✅ | ❌（每轮重渲染） |
+| P2 | TodoSource（执行进度） | 2 | ❌ | ❌ | — |
 | P4 | SkillIndexSource | 4 | ❌ | ❌ | — |
 | P4 | SkillActiveSource | 4 | ❌ | ❌ | — |
 | P5 | PlanModeSource | 5 | ❌ | ❌ | — |
 | P5 | PlanningStateSource | 5 | ❌ | ❌ | — |
-| P5 | TodoSource | 5 | ❌ | ❌ | — |
 
 **三个关键区分**：
 - **critical** = 永不裁剪（P0/P1）
