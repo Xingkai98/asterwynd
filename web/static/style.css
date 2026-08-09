@@ -443,12 +443,26 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .planning-panel.collapsed .planning-panel-header {
   margin-bottom: 0;
 }
+/* Collapsed plan document: only header visible, no longer covering chat */
+.plan-document-panel.collapsed .plan-document-title,
+.plan-document-panel.collapsed #plan-document-body {
+  display: none;
+}
+.plan-document-panel.collapsed .plan-document-header {
+  margin-bottom: 0;
+}
 .plan-document-title {
   margin-bottom: 8px;
   color: var(--text);
   font-size: 0.95rem;
   font-weight: 700;
   word-break: break-word;
+}
+#plan-document-body {
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
 }
 .planning-items {
   display: flex;

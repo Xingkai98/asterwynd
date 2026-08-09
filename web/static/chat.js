@@ -42,6 +42,7 @@ const debugTabBtn = document.getElementById('debug-tab');
 const planDocumentPanel = document.getElementById('plan-document-panel');
 const planDocumentTitleEl = document.getElementById('plan-document-title');
 const planDocumentBodyEl = document.getElementById('plan-document-body');
+const planDocumentToggle = document.getElementById('plan-document-toggle');
 const planningPanel = document.getElementById('planning-panel');
 const planningItemsEl = document.getElementById('planning-items');
 const planningToggle = document.getElementById('planning-toggle');
@@ -69,6 +70,19 @@ planningItemsEl.addEventListener('click', (e) => {
   const content = e.target.closest('.planning-content');
   if (!content) return;
   content.classList.toggle('expanded');
+});
+
+// --- Plan document panel toggle ---
+function setPlanDocumentCollapsed(collapsed) {
+  planDocumentPanel.classList.toggle('collapsed', collapsed);
+  planDocumentToggle.classList.toggle('collapsed', collapsed);
+  planDocumentToggle.setAttribute('aria-expanded', String(!collapsed));
+  planDocumentToggle.setAttribute('aria-label', collapsed ? 'Expand panel' : 'Collapse panel');
+  planDocumentToggle.title = collapsed ? 'Expand' : 'Collapse';
+}
+
+planDocumentToggle.addEventListener('click', () => {
+  setPlanDocumentCollapsed(planDocumentPanel.classList.toggle('collapsed'));
 });
 
 // --- Tab switching ---
@@ -764,6 +778,7 @@ function renderPlanDocument(document) {
     return;
   }
 
+  const wasCollapsed = planDocumentPanel.classList.contains('collapsed');
   planDocumentPanel.hidden = false;
   const status = document && document.status === 'submitted' ? 'Submitted' : 'Draft';
   planDocumentTitleEl.textContent = title ? `${status}: ${title}` : status;
@@ -772,6 +787,10 @@ function renderPlanDocument(document) {
     planDocumentBodyEl.innerHTML = window.AsterwyndMarkdown.render(markdown);
   } else {
     planDocumentBodyEl.textContent = markdown;
+  }
+  // Restore collapsed state
+  if (wasCollapsed) {
+    setPlanDocumentCollapsed(true);
   }
 }
 

@@ -420,14 +420,16 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="mode-apply"' in index
     assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
+    assert 'id="plan-document-toggle"' in index
+    assert 'aria-controls="plan-document-body"' in index
     assert 'id="planning-toggle"' in index
     assert 'id="planning-title"' in index
     assert 'id="planning-count"' in index
     assert 'aria-expanded="true"' in index
     assert 'aria-controls="planning-items"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=16" in index
-    assert "/static/chat.js?v=19" in index
+    assert "/static/style.css?v=18" in index
+    assert "/static/chat.js?v=20" in index
     assert 'id="image-previews"' in index
     assert 'id="image-file-input"' in index
     assert 'id="upload-btn"' in index
@@ -447,6 +449,10 @@ def test_web_static_assets_include_session_and_run_display():
     assert "wasCollapsed" in script
     assert "closest('.planning-content')" in script
     assert "aria-expanded" in script
+    # JS: plan document panel collapse/expand
+    assert "setPlanDocumentCollapsed" in script
+    assert "planDocumentToggle.addEventListener" in script
+    assert "planDocumentPanel.classList.toggle('collapsed')" in script
     # CSS: new planning panel features
     assert ".planning-toggle" in styles
     assert ".planning-title" in styles
@@ -454,6 +460,10 @@ def test_web_static_assets_include_session_and_run_display():
     assert ".planning-panel.collapsed" in styles
     assert ".planning-content.expanded" in styles
     assert ".planning-content:hover" in styles
+    # CSS: plan document panel collapse/expand — must hide title AND body,
+    # not just the one-line title (body element is id plan-document-body)
+    assert ".plan-document-panel.collapsed .plan-document-title" in styles
+    assert ".plan-document-panel.collapsed #plan-document-body" in styles
     assert "30000" in script
     assert "45000" in script
     assert "AbortController" in script
