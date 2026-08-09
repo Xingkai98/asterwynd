@@ -117,21 +117,25 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-状态：未实现。
+### 6. `fix-issue-110`
 
-批次：第五批，runtime mode switching 和 slash command framework 已合入基础能力；等待 skills、工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
+状态：实现中。
+
+关联 issue：[#110](https://github.com/Xingkai98/asterwynd/issues/110)（bug：刷新后 session 丢失，需支持恢复并补继续会话入口）。
+
+批次：Web 会话连续性，独立于其他未实现 change，优先于 #117（Web 多 session 入口页）合入。
 
 建议顺序原因：
 
-- TUI 应复用已有 AgentLoop 事件、planning state、streaming、工具结果 display policy、slash command registry、skill runtime、tool permission metadata 和 mode transition，而不是定义另一套运行协议。
-- 放在这些基础能力之后，可以一次展示稳定的运行状态、工具调用、planning state、streaming 输出、mode 状态和工具权限信息。
+- 修复 Web session 刷新丢失根因（不落盘 / 不记忆 / 不恢复），是 #117 多 session 入口页的前置依赖。
+- 复用 CLI 既有 `SessionStore` / `resume_snapshot` 基础设施，改动面集中在 `web/`。
 
 主要交付：
 
-- TUI 命令入口。
-- AgentLoop 事件流消费。
-- 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
-- 非交互环境 graceful failure 或降级。
+- Web session run 后自动持久化到 `.asterwynd/sessions/`。
+- 刷新 / 进程重启后按 id 恢复 + 历史水合。
+- 前端 localStorage 记忆 + `GET /resume` 显式恢复入口。
+- `asterwynd web --resume <id>` 生效。
 
 ## 已完成待归档
 
