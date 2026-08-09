@@ -18,7 +18,7 @@
 
 ### Modified Capabilities
 
-- 无 spec 变更。`openspec/specs/context-engineering/spec.md` 描述 L1/L2 压缩等行为，未描述 P0-P5 注入优先级模型；本修复是内部层级归属调整，不改变 capability 对外规格。
+- `context-engineering`: 新增"执行进度保留（Todo 层级保护）"Requirement——注入层预算超限时 Todo 层（P2）在 P4/P5 可变层之后才被裁剪，将本次修复确立的行为不变量写入规格。
 
 ## Dependencies
 

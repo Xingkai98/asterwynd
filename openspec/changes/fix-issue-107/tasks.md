@@ -3,6 +3,8 @@
 ## 实现
 
 - [x] 将 `agent/context/sources.py` 中 `TodoSource.priority` 从 5 提升到 2，docstring 说明 issue #107 动机
+- [x] spec delta：新增 `context-engineering` 能力域"执行进度保留（Todo 层级保护）"Requirement
+- [x] 当前规格同步：将 ADDED Requirement 合入 `openspec/specs/context-engineering/spec.md` 并记录 workflow-events 事件
 - [x] 同步 `PlanModeSource` 预算注释（P5 5K → 4K，算术 2500+1500=4000）
 - [x] `agent/loop.py` `_make_default_context_builder` 将 `TodoSource` 注册移入 P2 区块（MemoryIndex 之后）
 - [x] `agent/context/builder.py` `render_layers` docstring 更正：预算先裁 P4/P5，P4/P5 裁完后可能继续裁非 cacheable 的 P2

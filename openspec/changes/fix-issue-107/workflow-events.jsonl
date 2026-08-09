@@ -1,0 +1,1 @@
+{"schema":"workflow-event/v1","seq":1,"event_type":"current_spec_synced","change_id":"fix-issue-107","artifact_path":"openspec/specs/context-engineering/spec.md","reason":"同步 fix-issue-107 规格：新增 '执行进度保留（Todo 层级保护）' Requirement——注入层预算超限时 Todo 层（P2）在 P4/P5 可变层之后才被裁剪，记录 issue #107 修复确立的行为不变量。","approved_by":"human"}
