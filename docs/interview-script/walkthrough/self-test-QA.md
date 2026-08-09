@@ -60,7 +60,7 @@
 ## W04 · ContextBuilder
 
 **Q1. 8 个上下文源分哪几层？**
-- P0 SystemPrompt / P1 AsterMd / P2 MemoryIndex / P4 SkillIndex+SkillActive / P5 PlanMode+PlanningState+Todo。
+- P0 SystemPrompt / P1 AsterMd / P2 MemoryIndex+Todo / P4 SkillIndex+SkillActive / P5 PlanMode+PlanningState。
 
 **Q2. critical / cacheable / static 三个属性各管什么？**
 - critical=永不裁剪（P0/P1）；cacheable=稳定前缀层，参与 cache_control 断点 + 不裁剪（P0/P1/P2）；static=渲染可缓存（P0/P1）。MemoryIndex 故意非 static（SaveMemory 会改写索引）。

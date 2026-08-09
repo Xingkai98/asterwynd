@@ -1343,15 +1343,15 @@ class AgentLoop:
         builder.register(SystemPromptSource())
         # P1: ASTER.md project instructions (critical, never truncated)
         builder.register(AsterMdSource())
-        # P2: Memory index
+        # P2: Memory index + Todo (execution progress, Todo raised from P5 per issue #107)
         builder.register(MemoryIndexSource(persistent_memory=self.persistent_memory))
+        builder.register(TodoSource(todo_renderer=self._todo_context))
         # P4: Skill index + active skill
         builder.register(SkillIndexSource(skill_runtime=self.skill_runtime))
         builder.register(SkillActiveSource(skill_runtime=self.skill_runtime))
-        # P5: Plan mode + planning state + todo
+        # P5: Plan mode + planning state
         builder.register(PlanModeSource())
         builder.register(PlanningStateSource(planning_manager=self._planning))
-        builder.register(TodoSource(todo_renderer=self._todo_context))
         return builder
 
     def _todo_context(self) -> str:
