@@ -37,12 +37,13 @@ issue #110（PR #118）已为 Web 补齐"本地持久化 + 按 id 恢复"：`Ses
 
 ### D1: Hub 数据 API
 
-新增两个只读 HTTP 端点：
+新增两个只读 HTTP 端点 + 一个删除端点：
 
-- `GET /api/workspaces` → `{"workspaces": [{"path": "<abs>", "is_primary": bool, "exists": bool, "session_count": int}]}`。有效 workspace 集合 = 主 workspace ∪ allowlist（见 D4），按 allowlist 顺序排列，主 workspace 置顶。
+- `GET /api/workspaces` → `{"workspaces": [{"path": "<abs>", "is_primary": bool, "exists": bool, "session_count": int}]}`。有效 workspace 集合 = 主 workspace ∪ allowlist（见 D4），按 allowlist 顺序排列，主 workspace 置顶。`exists` 在响应时对每个条目实时 `Path.exists()` 判断（集合启动时一次性解析，`exists` 反映运行期目录状态），避免恒真字段（design review I7）。
 - `GET /api/sessions?workspace=<path>` → `{"workspace": "<resolved>", "sessions": SessionStore.list_sessions()}`。缺省 `workspace` 用主 workspace。workspace 不在有效集合或路径不存在 → HTTP 403 + `{"error": "workspace_not_allowed"}`。
+- `DELETE /api/sessions/{session_id}?workspace=<path>` → `{"deleted": true, "session_id": <id>, "workspace": "<resolved>"}`。workspace 必须显式传入并经 `resolve_workspace()` 校验（hub 删除一个未打开过的冷会话是常态，冷会话没有内存 `session.workspace_root` 可查，必须由请求携带）；缺 `workspace` 参数 → HTTP 400 + `{"error": "missing_workspace"}`；未授权 → HTTP 403 + `{"error": "workspace_not_allowed"}`（design review I15）。删除内存中的 session（若在）与该 workspace store 下的磁盘快照。删除后若存在打开的同 id tab，前端关闭该 tab（对齐 D5）。
 
-理由：直接复用 `SessionStore.list_sessions()`（`agent/session.py:143-182`，已返回 session_id/created_at/updated_at/mode/messages 并按 updated_at 倒序），无需新序列化层。对齐 Open WebUI 侧边栏"fetch chat list"模式。
+理由：直接复用 `SessionStore.list_sessions()`（`agent/session.py:143-182`，已返回 session_id/created_at/updated_at/mode/messages 并按 updated_at 倒序），无需新序列化层；删除沿用 `remove_session` 的"内存 pop + 快照删除"语义，但把 workspace 解析从"依赖内存 session 的 workspace_root"改为"请求显式携带 + store 定位"，使冷会话删除可落地（design review I1）。对齐 Open WebUI 侧边栏"fetch chat list"模式。
 
 ### D2: 新建会话走 WebSocket 查询参数
 
@@ -59,10 +60,11 @@ issue #110（PR #118）已为 Web 补齐"本地持久化 + 按 id 恢复"：`Ses
 
 - `AgentSession` 增加 `workspace_root: Path | None` 字段（`web/session.py:217-244`）。
 - `SessionManager._create_session` 增加 `workspace_root` kwarg（缺省 `self.workspace_root`）；构造 `WorkspacePolicy(workspace_root=session_workspace, ...)` 时使用 session 的 workspace。
-- `SessionManager` 的 store 从单例 `self.session_store` 改为 `self._stores: dict[str, SessionStore]`，key 为 `str(Path(workspace).resolve())` 规范化后的值（避免同一目录因写法不同产生多个 store）；`_store_for(workspace_root)` 惰性创建（`SessionStore(str((workspace_root or cwd) / ".asterwynd" / "sessions"))`，与 `web/session.py:264-265` 同语义）。
+- `SessionManager` 的 store 从单例 `self.session_store` 改为 `self._stores: dict[str, SessionStore]`，key 为 `str(Path(workspace).resolve())` 规范化后的值（避免同一目录因写法不同产生多个 store）；`_store_for(workspace_root)` 惰性创建（`SessionStore(str((workspace_root or cwd) / ".asterwynd" / "sessions"))`，与 `web/session.py:264-265` 同语义）。**`_store_for(None)` 的 key 为 `str(Path.cwd().resolve())`**，与显式传主 workspace 时一致，避免主 workspace 出现两个 store（design review I10）。
 - `_create_session` 把 `_store_for(session_workspace)` 传给 `AgentLoop.session_store`（`web/session.py:364`），保证 run 落盘到 session 所属 workspace。
-- `resume_session_async(session_id, workspace=None)`：workspace 显式传入（hub 列表 / URL `?workspace=` 已知）→ 用该 workspace 的 store 恢复；未传 → 依次搜主 workspace store 与 allowlist stores（**确定性顺序：主 → allowlist 配置序**，grill R10/Q12），首个命中即恢复，全部未命中返回 None。
-- `remove_session(session_id)`：内存 pop 后，用 session 的 `workspace_root` 解析 store 并 `store.remove(session_id)`（对齐 `web/session.py:379-382`）。
+- `resume_session_async(session_id, workspace=None)`：workspace 显式传入（hub 列表 / URL `?workspace=` 已知）→ 用该 workspace 的 store 恢复；未传 → 依次搜主 workspace store 与 allowlist stores（**确定性顺序：主 → allowlist 配置序**，grill R10/Q12），首个命中即恢复，全部未命中返回 None。**归属闭环（design review I2）**：命中哪个 store，就用该 workspace 创建 session——`workspace_root`、`WorkspacePolicy`、`_store_for(命中 workspace)` 全部用命中值，保证恢复后的会话下次 run 仍落盘回原 workspace，不会"漂移"到主 store；测试须断言无 workspace 恢复 allowlist 会话后 re-run 仍写原 store（tasks 2.1）。
+- `remove_session(session_id, workspace=None)`：内存 pop 后删除快照。workspace 显式传入（hub `DELETE` 端点，冷会话常态）→ 用该 workspace 的 store `store.remove(session_id)`；workspace 缺省（reset 路径）→ 回退用内存 session 的 `workspace_root` 解析 store（对齐 `web/session.py:379-382`）。**错配边界（design review I16）**：请求 workspace 与内存 session 实际 workspace 不一致时（前端 bug/竞态场景），按请求 workspace 删除磁盘快照、按内存 session 的 workspace_root 移除内存——两者都可能落空，但幂等且可由前端重试自愈，不做额外错误分支。
+- **恢复回退新建（design review I11）**：`/ws/{id}?workspace=X` 快照未命中时回退新建，若 URL 携带了合法 workspace，则以该 workspace 新建（而不是忽略参数建到主 workspace），与 URL 意图一致。
 - **统一 workspace 解析（grill R1/Q7）**：新增 `SessionManager.resolve_workspace(input) -> Path`，对输入做 `expanduser().resolve()` 后校验落入有效集合，否则抛结构化拒绝；`/api/sessions`、`/ws/new`、`/ws/{id}?workspace=` 全部入口统一走它，杜绝 resume/open-tab 路径绕过 allowlist。
 - **reset 保留 workspace/mode（grill R7/Q9）**：`reset` 前记录 `session.workspace_root` 与 `current_mode`，替换会话用同 workspace + 同 mode 创建（`web/server.py:424-433` 现状会丢非主 workspace）。
 
@@ -73,8 +75,9 @@ issue #110（PR #118）已为 Web 补齐"本地持久化 + 按 id 恢复"：`Ses
 - `AsterwyndConfig` 新增 `web: WebConfig` 节，`WebConfig.workspaces: tuple[Path, ...] = ()`（`agent/config.py:262-275` 增加字段 + 解析 + 校验，见 Impact）。
 - 有效 workspace 集合 = `{主 workspace}` ∪ `{allowlist 中 resolve 后存在的路径}`。主 workspace = CLI `--workspace` 解析路径或 `Path.cwd()`。
 - 所有用户可控 workspace 输入（`/api/sessions` query、`/ws/new` query、`/ws/{id}?workspace=`，grill R1/Q7）都必须经 `SessionManager.resolve_workspace(input)`（`expanduser().resolve()` + 集合成员判断）落入有效集合，否则结构化拒绝；防 `..` 穿越、符号链接、尾部斜杠、大小写变体。
-- 集合在 `create_app` 启动时解析一次，存入 `app.state.workspaces`；`SessionManager` 持有该集合用于校验。allowlist 中不存在或不可解析的路径在启动时打 warning 日志（grill R12），避免用户拼错路径后一律 403 无从排查。
-- host 绑定策略与是否加 token 属于 Open Questions（Q1）——本决策不改变 `0.0.0.0` 默认，但文档必须写明：`0.0.0.0` 绑定下 allowlist 只限制"可操作的 workspace 集合"，不限制"谁能访问端口"。
+- 集合在 `create_app` 启动时解析一次，存入 `app.state.workspaces`；`SessionManager` 持有该集合用于校验。`resolve_workspace` 只做集合成员判断，**不做运行期 `Path.exists()` 复检**（design review I14）——集合是启动时一次性解析的"操作边界"，目录被删等运行期变化在 store 操作时以 IO 错误暴露；`/api/workspaces` 的 `exists` 字段是唯一运行期存在性反映。allowlist 中不存在或不可解析的路径在启动时打 warning 日志（grill R12），避免用户拼错路径后一律 403 无从排查。
+- host 绑定策略（Q1 已确认，design review I3）：默认 host 改 `127.0.0.1`（`agent/main.py:661`），显式 `--host 0.0.0.0` 才开放局域网访问。`0.0.0.0` 绑定下 allowlist 只限制"可操作的 workspace 集合"，不限制"谁能访问端口"，文档必须明示此边界。
+- `/ws/{id}?workspace=` 的拒绝路径（design review I6）：workspace 不在有效集合或路径不存在 → 回发 `{"error": "workspace_not_allowed"}` 事件后关闭连接，不创建/不恢复会话（与 `/ws/new` 拒绝语义一致）；不允许静默回退主 workspace 新建——否则该入口的校验形同虚设。
 
 理由：issue #117 明确列出"allowlist / 路径校验 / 鉴权，或默认绑定 localhost"为选项；allowlist + 严格路径校验是最小可用方案（与 `_resolve_workspace` 的绝对路径 + 存在性校验语义一致，`agent/main.py:201-210`），不引入认证复杂度。host 默认策略单独让用户拍板。
 
@@ -129,6 +132,20 @@ issue #110（PR #118）已为 Web 补齐"本地持久化 + 按 id 恢复"：`Ses
 
 剩余 13 个 Open Questions（含 grill 补充的 Q7-Q13）已停轮抛给用户确认，答复记录在 `reviews/grill-design.md` 的 `## User Confirmation` 节。全部确认前不写实现代码。
 
+### 设计审阅闭环（/review-loop 设计阶段）
+
+grill 之后又跑了独立零记忆设计审阅（`reviews/design-review.md`，Round 1 run `b5515634-0bdd-4c80-b10f-15c9a4d52a76`），首轮 **CHANGES_REQUESTED**，已修复：
+
+- **I1（高）删除 API 缺失** → D1 新增 `DELETE /api/sessions/{session_id}?workspace=`，D3 的 `remove_session` 支持显式 workspace（冷会话可删）。
+- **I2（高）resume 归属未闭环** → D3 明确命中哪个 store 就用该 workspace 建 session，tasks 补落盘断言。
+- **I3（中）D4 host 残留矛盾** → 改为 Q1 已确认的 `127.0.0.1` 默认。
+- **I4（中）spec delta 丢 scenario** → MODIFIED 补回"未知 id 回退新建""进程重启按 id 恢复"。
+- **I5（中）前端回归测试盲区** → tasks 补 per-tab 隔离 Playwright + 裸 `/ws/new` resume 回归。
+- **I6（中）resume 拒绝路径未定义** → D4 明确 error 事件 + 关闭，tasks/spec 补负向。
+- **I7-I11（低）** → `exists` 实时判断、chat.js 行数 1451、uploads 措辞、`_store_for(None)` key、恢复回退新建用 URL workspace。
+
+修复后进入 Round 2 再审，直到 PASS 或 3 轮封顶。
+
 ## Open Questions
 
 全部已确认（2026-08-09，见 `reviews/grill-design.md` `## User Confirmation`）。停轮确认结果：
@@ -163,11 +180,11 @@ issue #110（PR #118）已为 Web 补齐"本地持久化 + 按 id 恢复"：`Ses
 
 ## Risks / Trade-offs
 
-- **网络暴露（严重）**：`0.0.0.0` 绑定下端口访问者可浏览/操作 allowlist 内 workspace 的会话。缓解：allowlist 限制 workspace 集合；Q1 决定 host/token 策略；文档明示安全边界。
-- **前端重构回归（高）**：`chat.js`（1353 行）从全局单例重构为 per-tab，事件分发/上传/审批路径都改，回归面大。缓解：Playwright smoke 覆盖 hub/多标签/新建/刷新恢复；后端不变量由集成测试保护；尽量增量（提取函数改签名，不重写渲染逻辑）。
-- **恢复路径歧义（中）**：`/ws/<id>` 未带 workspace 时需在多个 store 中搜索。缓解：hub/URL 显式带 workspace；未带时按主 → allowlist 顺序搜索，命中即返回；仍不命中回退新建（与 #110 一致）。
+- **网络暴露（严重）**：`0.0.0.0` 显式绑定下端口访问者可浏览/操作 allowlist 内 workspace 的会话。缓解：默认 host 已改 `127.0.0.1`（Q1 确认）；allowlist 限制 workspace 集合；`0.0.0.0` 下文档明示安全边界。
+- **前端重构回归（高）**：`chat.js`（1451 行）从全局单例重构为 per-tab，事件分发/上传/审批路径都改，回归面大。缓解：Playwright smoke 覆盖 hub/多标签/新建/刷新恢复，并补 per-tab 隔离用例（审批卡片、图片预览、reconnect、slash 匹配各落各 tab，design review I5）；后端不变量由集成测试保护；尽量增量（提取函数改签名，不重写渲染逻辑）。
+- **恢复路径歧义（中）**：`/ws/<id>` 未带 workspace 时需在多个 store 中搜索。缓解：hub/URL 显式带 workspace；未带时按主 → allowlist 顺序搜索，命中即返回且会话归属命中 workspace；仍不命中回退新建（与 #110 一致，若 URL 带合法 workspace 则用该 workspace 新建）。
 - **session_history 全量重发（低，承接 #110）**：恢复连接全量重发文本历史，超长会话 payload 大。缓解：沿用现状，超长会话的增量/分页归后续。
-- **uploads 全局 vs workspace（中，Q2 未决时）**：若保持全局，图片归属与会话 workspace 不一致但功能可用（绝对路径引用）；若隔离，需要改 uploads 调用链并补回归。
+- **uploads 全局 vs workspace（低，Q2 已确认保持全局）**：图片归属全局而会话归属 workspace，但绝对路径引用跨 workspace 有效，无功能问题；若后续隔离，需补 HTTP 上传 workspace 线程与回归。
 - **run 生命周期绑定发起 tab（低）**：tab 关闭取消 run（沿用现状）。多 tab 下"换 tab 后 run 被关"是已知边界，非目标。
 - **替代方案权衡**：
   - `POST /api/sessions` 先建后连：两次往返 + 孤儿 session 竞态，拒绝。
@@ -178,15 +195,18 @@ issue #110（PR #118）已为 Web 补齐"本地持久化 + 按 id 恢复"：`Ses
 ## Testing Strategy
 
 - 后端集成测试（`tests/web_tests/test_server.py`，fake LLM `ScriptedLLM`）：
-  - `GET /api/workspaces` / `GET /api/sessions` 结构与 allowlist 拒绝。
+  - `GET /api/workspaces` / `GET /api/sessions` 结构与 allowlist 拒绝；`DELETE /api/sessions/{id}?workspace=` 删除内存 + 磁盘快照（含未打开过的冷会话）。
   - `/ws/new?mode=&workspace=` 创建指定 mode/workspace；非法 mode / 未授权 workspace 拒绝。
   - 多 session 并行（各自 run 互不串扰）；per-session run 互斥（并发 chat 第二个被拒）。
   - 进程重启恢复（`SessionStore` 落盘 → 新 app `/ws/<id>` 恢复 → `session_resumed` + `session_history`）。
-  - 删除会话（内存 + 磁盘快照移除）。
-  - 跨 workspace：两个 workspace 各自创建/列出/恢复会话，互不串扰。
+  - 恢复归属闭环（design review I2）：无 workspace 恢复 allowlist 会话后再次 run，快照仍写入该 allowlist store、主 store 不新增。
+  - 裸 `/ws/new` 保留 `--resume` 语义回归（`create_app(resume=...)` 下裸 `/ws/new` 返回 resume 会话，design review I5）。
+  - `/ws/{id}?workspace=` 未授权 workspace 拒绝路径（error 事件 + 关闭，design review I6）。
+  - 删除会话（内存 + 磁盘快照移除）；跨 workspace：两个 workspace 各自创建/列出/恢复会话，互不串扰。
 - 前端 Playwright smoke（`tests/web_tests/test_browser.py`，fake LLM）：
   - hub 渲染会话列表；点开进入 tab 展示历史。
   - 多标签切换与消息隔离。
+  - per-tab 隔离（design review I5）：两个 tab 各自触发审批/图片上传，卡片与预览只落各自 tab；一个 tab 结束（continue_session=false）不影响另一 tab 的 reconnect。
   - 新建会话（mode/workspace）打开对应会话。
-  - 刷新回到上次会话。
+  - 刷新回到上次会话；删除会话后对应 tab 被关闭。
 - 回归：全量 pytest + OpenSpec strict validate + artifact checker（`scripts/check_openspec_artifacts.py`）。

@@ -86,7 +86,7 @@
 
 - `agent/config.py`：新增 `WebConfig`（`workspaces: tuple[Path, ...]` allowlist）+ 解析校验。
 - `web/session.py`：`SessionManager` 支持 per-session workspace；SessionStore 改为按 workspace 的 store map；`_create_session`/`resume_session_async`/`remove_session` 适配；新增 per-session run 互斥。
-- `web/server.py`：新增 `/api/workspaces`、`/api/sessions`；`/ws/new` 支持 mode/workspace 查询参数；hub 页面路由。
+- `web/server.py`：新增 `/api/workspaces`、`/api/sessions`、`DELETE /api/sessions/{session_id}`；`/ws/new` 支持 mode/workspace 查询参数；`/ws/{id}?workspace=` 校验与拒绝路径；hub 页面路由。
 - `web/static/chat.js`：单例状态重构为 per-tab 模型；hub 视图渲染；会话恢复优先级逻辑。
 - `web/static/index.html`：新增 hub 视图 DOM、标签栏容器。
 - `web/static/style.css`：hub、标签栏样式。

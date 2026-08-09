@@ -10,6 +10,7 @@ Web UI SHALL 提供 session 入口页（hub），列出已保存会话并允许�
 - **WHEN** 前端请求 `GET /api/workspaces`
 - **THEN** 响应 SHALL 包含主 workspace 与 allowlist 内存在的路径
 - **AND** 每个 workspace SHALL 标注是否为主 workspace
+- **AND** 每个 workspace SHALL 标注运行期是否存在
 
 #### Scenario: 获取会话列表
 
@@ -68,6 +69,20 @@ Web UI SHALL 允许通过 WebSocket 连接参数新建指定 mode 与 workspace 
 - **THEN** 服务端 SHALL 从 A 的 store 恢复该 session
 - **AND** 前端 SHALL 收到 `session_resumed` 与 `session_history`
 
+#### Scenario: 未带 workspace 恢复时会话归属命中 workspace
+
+- **GIVEN** workspace A 下存在会话快照且未带 workspace 参数
+- **WHEN** 浏览器连接 `/ws/<session_id>` 且搜索命中 A 的 store
+- **THEN** 恢复的 session SHALL 以 A 为 workspace_root
+- **AND** 该 session 后续 run SHALL 仍写入 A 的 store
+
+#### Scenario: 恢复时指定未授权 workspace 被拒
+
+- **GIVEN** 请求 `/ws/<session_id>?workspace=<不在 allowlist 的路径>`
+- **WHEN** WebSocket 连接建立
+- **THEN** 服务端 SHALL 返回 `{"error": "workspace_not_allowed"}` 事件并关闭连接
+- **AND** SHALL NOT 创建或恢复 session
+
 ### Requirement: 同一 session 并发发送被拒绝
 
 Web UI SHALL 对同一 session 的并发 Agent run 提供互斥：同一 session 已有 run 进行中时，新发送 SHALL 被拒绝并返回 error 事件，不得并发执行同一 AgentLoop。
@@ -99,21 +114,55 @@ Web UI SHALL 允许同时打开多个会话标签页，每个标签页独立维�
 
 ### Requirement: Web UI 提供会话删除
 
-Web UI hub SHALL 提供会话删除，删除 SHALL 移除内存中的会话与持久化目录下的快照。删除已打开会话时 SHALL 关闭对应标签页。
+Web UI hub SHALL 通过 `DELETE /api/sessions/{session_id}?workspace=<path>` 提供会话删除。删除 SHALL 移除内存中的会话（若在）与指定 workspace store 下的持久化快照；workspace 参数 SHALL 经 allowlist 校验。删除已打开会话时 SHALL 关闭对应标签页。
 
 #### Scenario: 删除会话
 
 - **GIVEN** hub 列表中某会话已被删除请求
-- **WHEN** 用户确认删除
+- **WHEN** 前端调用 `DELETE /api/sessions/<session_id>?workspace=<path>`
 - **THEN** 该会话从内存与磁盘快照移除
 - **AND** 列表 SHALL 不再展示该会话
 - **AND** 若存在打开的同 id 标签页，该标签页 SHALL 被关闭
+
+#### Scenario: 删除冷会话
+
+- **GIVEN** 某会话未在内存中打开（仅存在磁盘快照）
+- **WHEN** 前端调用 `DELETE /api/sessions/<session_id>?workspace=<path>`
+- **THEN** 服务端 SHALL 按请求 workspace 定位 store 并删除磁盘快照
+- **AND** 返回 `{"deleted": true, "session_id": <id>, "workspace": "<resolved>"}`
+
+#### Scenario: 删除时缺 workspace 参数
+
+- **GIVEN** 前端调用 `DELETE /api/sessions/<session_id>`（无 `?workspace=`）
+- **WHEN** 发起删除
+- **THEN** 响应 SHALL 返回 HTTP 400 与结构化错误
+- **AND** SHALL NOT 删除任何快照
+
+#### Scenario: 删除时未授权 workspace 被拒
+
+- **GIVEN** 请求 `DELETE /api/sessions/<session_id>?workspace=<不在 allowlist 的路径>`
+- **WHEN** 前端发起删除
+- **THEN** 响应 SHALL 返回 HTTP 403 与结构化错误
+- **AND** SHALL NOT 删除任何快照
 
 ## MODIFIED Requirements
 
 ### Requirement: Web session 本地持久化与恢复
 
-更新恢复优先级：刷新/重开页面 SHALL 优先回到原 session，支持显式恢复入口（URL `?session=<id>`，可带 `?workspace=`）。恢复会话时若带 `?workspace=` 则用该 workspace 的 store 恢复；未带则按确定顺序（主 workspace → allowlist）搜索。Web 默认 host 绑定策略为 `127.0.0.1`，显式 `--host 0.0.0.0` 才开放局域网访问。
+Web session SHALL 在每次 Agent run 结束后持久化到 `<workspace>/.asterwynd/sessions/<session_id>/`（复用 `SessionStore`，与 CLI 同一存储位置），保存消息、mode、todos、skills 和 system prompt。WebSocket 连接 `GET /ws/<session_id>` SHALL 按 session id 恢复：内存命中则复用；未命中则从持久化快照恢复并推送 `session_resumed` 与 `session_history` 事件；快照不可用才新建 session。刷新/重开页面 SHALL 优先回到原 session，不自动新建。Web UI SHALL 提供显式恢复入口（URL `?session=<id>` 与 `GET /resume`）。恢复会话时若带 `?workspace=` 则用该 workspace 的 store 恢复；未带则按确定顺序（主 workspace → allowlist）搜索。Web 默认 host 绑定策略为 `127.0.0.1`，显式 `--host 0.0.0.0` 才开放局域网访问。
+
+#### Scenario: run 结束后自动落盘
+
+- **GIVEN** Web session 完成一次 Agent run
+- **WHEN** AgentLoop 结束 run
+- **THEN** session 的消息、mode、todos、skills、system prompt SHALL 写入持久化目录
+
+#### Scenario: 进程重启后按 id 恢复
+
+- **GIVEN** 服务端进程重启，本地存在该 session 快照
+- **WHEN** 浏览器连接 `/ws/<session_id>`
+- **THEN** 服务端 SHALL 从快照恢复 session
+- **AND** 前端 SHALL 收到 `session_resumed` 事件与 `session_history` 历史消息
 
 #### Scenario: 刷新页面回到原 session
 
@@ -128,3 +177,11 @@ Web UI hub SHALL 提供会话删除，删除 SHALL 移除内存中的会话与�
 - **WHEN** 访问 `/resume?session=<session_id>` 或 `/resume?session=<session_id>&workspace=<path>`
 - **THEN** Web UI SHALL 进入指定 session 并展示其历史
 - **AND** 指定了 workspace 时 SHALL 使用该 workspace 的 store 恢复
+
+#### Scenario: 未知 session id 回退新建
+
+- **GIVEN** 浏览器连接不存在的 session id 且无快照
+- **WHEN** WebSocket 连接建立
+- **THEN** 服务端 SHALL 新建 session
+- **AND** 前端 SHALL 收到 `session_created` 事件
+- **AND** 若连接 URL 携带合法 `?workspace=`，新建的 session SHALL 使用该 workspace

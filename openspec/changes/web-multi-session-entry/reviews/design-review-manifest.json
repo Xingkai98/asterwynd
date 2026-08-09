@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "web-multi-session-entry",
+  "phase": "design",
+  "verdict": "PASS",
+  "reviewer_run_id": "b1a2f3c4-5d6e-4f80-9a1b-2c3d4e5f6a7b",
+  "base_sha": "d88ef885f928afd48bb568da5d4bfe9bd6a97418",
+  "head_sha": "164b13f41ec207e89daffbf7411b6d29423497a9",
+  "tasks_hash": "sha256:8f6d7132fb95754739d072583cc0903aeea25f73a1945f3be647b2598cbef502",
+  "spec_hash": "sha256:d095271aa0f4a30ae08d22d59707fe6a8f834e991ba8cc2e84bd999da3167588",
+  "diff_hash": "sha256:d0bfc3439299f78845540f7db5721f326e540589796e962d5efa2c9e87ee828c",
+  "report_hash": "sha256:2be83456a32300060f6155dc43d564719133cdd998464d6b354c14b7ab53ee8e"
+}
