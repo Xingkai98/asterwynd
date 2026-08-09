@@ -28,10 +28,13 @@
 - [x] Round 1 独立 subagent 审阅（CHANGES_REQUESTED）：文档 7 处陈旧引用 + 回归测试未绑定真实 TodoSource
 - [x] Round 1 修复：同步文档、强化测试绑定、更正 render_layers docstring
 - [x] Round 2 独立 subagent 审阅（PASS，零记忆重新审阅）
-- [x] 生成 review manifest 绑定 reviewer run / base·head sha / diff·report hash
+- [x] Round 3 独立 subagent 审阅（最终状态全量复核，CHANGES_REQUESTED：manifest 未绑定最终 head/spec_hash 为 missing）
+- [x] Round 4 独立 subagent 审阅（最终确认 PASS，manifest 重新绑定最终 head 与 tasks/spec/diff/report hash，报告与 manifest 一致）
+- [x] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
 
 ## 验证
 
 - [x] 全量相关测试通过（109 passed，含 `tests/agent/test_loop.py` todo 注入集成测试）
 - [x] benchmark smoke：fake agent 跑通 36 个任务，CLI/AgentLoop 端到端无崩溃（fake agent 为回显 stub，0 通过是预期，非回归信号）
 - [x] OpenSpec artifact checker 通过
+- [x] OpenSpec strict validate 通过（30/30）
