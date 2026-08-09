@@ -12,8 +12,9 @@ from fastapi.testclient import TestClient
 
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.config import AsterwyndConfig, AgentConfig, SkillsConfig
-from agent.message import extract_text
+from agent.message import Message, extract_text
 from agent.run_config import AgentMode
+from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
 from web.debug_hook import debug_enabled
@@ -43,8 +44,8 @@ def mock_llm():
 
 
 @pytest.fixture
-def app(mock_llm):
-    return create_app(mock_llm)
+def app(mock_llm, tmp_path):
+    return create_app(mock_llm, workspace_root=tmp_path)
 
 
 @pytest.mark.asyncio
@@ -843,6 +844,139 @@ def test_websocket_ping_and_reset(app):
             assert reset["type"] == "session_created"
             assert reset["session_id"] != first_session
             assert reset["mode"] == "build"
+
+
+def _make_snapshot(session_id: str = "deadbeef0000", content: str = "hello"):
+    return SessionSnapshot(
+        schema_version=CURRENT_SCHEMA_VERSION,
+        session_id=session_id,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        messages=[Message(role="user", content=content)],
+        mode=AgentMode.BUILD,
+        todos=[],
+        active_skills=[],
+        run_id="run-1",
+        iteration=0,
+        user_system_prompt="",
+        runtime_fingerprint={},
+    )
+
+
+def test_websocket_reuses_inmemory_session_with_same_id():
+    """同一 session id 二次连接复用内存 session，不新建（刷新不丢会话的入口）。"""
+    mock_llm = ScriptedLLM()
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+            sid = created["session_id"]
+
+        with client.websocket_connect(f"/ws/{sid}") as ws:
+            resumed = ws.receive_json()
+            assert resumed["type"] == "session_resumed"
+            assert resumed["session_id"] == sid
+            assert resumed["mode"] == "build"
+
+    assert sid in app.state.session_manager._sessions
+
+
+def test_websocket_unknown_session_creates_new():
+    """未知 session id 且无持久化快照 → 新建 session 并发送 session_created。"""
+    mock_llm = ScriptedLLM()
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/doesnotexist12") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+            assert created["session_id"] != "doesnotexist12"
+
+
+def test_websocket_resumes_from_store_after_process_restart(tmp_path):
+    """进程重启后按 id 从持久化快照恢复，且原 session 可继续接着用。"""
+    from agent.session import SessionStore
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    store.save(_make_snapshot(content="恢复我"))
+
+    mock_llm = ScriptedLLM([LLMResponse(content="好的，继续")])
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/deadbeef0000") as ws:
+            resumed = ws.receive_json()
+            assert resumed["type"] == "session_resumed"
+            assert resumed["session_id"] == "deadbeef0000"
+            assert resumed["mode"] == "build"
+
+            history = ws.receive_json()
+            assert history["type"] == "session_history"
+            texts = [m["content"] for m in history["data"]["messages"]]
+            assert "恢复我" in texts
+
+            # 原 session 可继续接着用：同一 session id 发起新 run
+            # （resume run 按 AgentLoop 既有语义不重复发 run_started）
+            ws.send_json({"type": "chat", "content": "继续"})
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+            assert events[-1]["data"]["content"] == "好的，继续"
+            assert app.state.session_manager.get_session("deadbeef0000") is not None
+
+
+def test_web_run_persists_session_to_store(tmp_path):
+    """Web run 结束后 session 自动落盘到 SessionStore。"""
+    from agent.session import SessionStore
+
+    mock_llm = ScriptedLLM([LLMResponse(content="hi")])
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            sid = created["session_id"]
+            ws.send_json({"type": "chat", "content": "hi"})
+            while True:
+                event = ws.receive_json()
+                if event["type"] == "done":
+                    break
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    sessions = store.list_sessions()
+    match = next((s for s in sessions if s["session_id"] == sid), None)
+    assert match is not None
+    assert match["messages"] == 2  # user + assistant
+
+
+def test_websocket_resume_cli_param_preloads_session(tmp_path):
+    """asterwynd web --resume <id>：首次连 /ws/new 时恢复指定 session。"""
+    from agent.session import SessionStore
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    store.save(_make_snapshot())
+
+    mock_llm = ScriptedLLM()
+    app = create_app(mock_llm, resume="deadbeef0000", workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            resumed = ws.receive_json()
+            assert resumed["type"] == "session_resumed"
+            assert resumed["session_id"] == "deadbeef0000"
+
+
+def test_resume_route_returns_html(app):
+    """GET /resume 是显式恢复入口，返回 Chat 页面 HTML（桌面端与移动端通用）。"""
+    with TestClient(app) as client:
+        resp = client.get("/resume")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
 
 
 def test_websocket_slash_status_does_not_start_agent_run():

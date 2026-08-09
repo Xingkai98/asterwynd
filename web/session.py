@@ -13,10 +13,11 @@ from agent.approval import (
 from agent.question import Question, QuestionAnswer
 from agent.config import AsterwyndConfig
 from agent.loop import AgentLoop
-from agent.message import Message
+from agent.message import Message, extract_text
 from agent.mcp import build_mcp_manager
 from agent.run_identity import new_session_id
-from agent.run_config import AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
+from agent.session import SessionSnapshot, SessionStore
 from agent.skills import SkillRuntime
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry, build_sandbox_from_config
@@ -27,6 +28,24 @@ from agent.hooks.builtin import TracingHook
 from web.debug_hook import DebugHook
 
 logger = logging.getLogger("asterwynd.web.session")
+
+
+def build_history_payload(session: "AgentSession") -> dict:
+    """把 session 的消息历史序列化为前端可渲染的文本事件。
+
+    历史消息的 content 用 ``extract_text`` 提取纯文本（图片 block 无文本则
+    略过），供恢复连接后前端渲染，避免前端拿到内部 block 结构。
+    """
+    return {
+        "type": "session_history",
+        "data": {
+            "session_id": session.session_id,
+            "messages": [
+                {"role": message.role, "content": extract_text(message.content)}
+                for message in session.messages
+            ],
+        },
+    }
 
 
 def build_timeline_payload(session: "AgentSession") -> dict:
@@ -203,6 +222,9 @@ class AgentSession:
         self.question_handler = question_handler or WebQuestionHandler(session_id)
         self.messages: list[Message] = []
         self.debug_turn = 0
+        # 从持久化快照恢复的会话持有快照，仅在第一次 run 时传给 AgentLoop
+        # 作为 resume_snapshot（AgentLoop 会把历史上下文灌回 messages）。
+        self.resume_snapshot: SessionSnapshot | None = None
 
     @property
     def current_mode(self) -> str:
@@ -229,6 +251,10 @@ class SessionManager:
         self.workspace_root = workspace_root
         resolved_mode = mode or self.config.agent.default_mode.value
         self.initial_mode = parse_agent_mode(resolved_mode)
+        # Web session 持久化目录与 CLI 一致：<workspace_root 或 cwd>/.asterwynd/sessions。
+        # 未显式指定 workspace 时以启动目录为 workspace（CLI 同语义）。
+        store_root = (workspace_root or Path.cwd()) / ".asterwynd" / "sessions"
+        self.session_store = SessionStore(str(store_root))
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
         if self.config.mcp.servers:
@@ -239,16 +265,50 @@ class SessionManager:
         mcp_manager = await build_mcp_manager(self.config)
         return self._create_session(llm, tools=tools, mcp_manager=mcp_manager)
 
+    async def resume_session_async(
+        self,
+        session_id: str,
+        llm,
+        tools: Optional[list] = None,
+    ) -> Optional[AgentSession]:
+        """按 id 恢复 session：内存命中直接复用，否则从持久化快照重建。
+
+        快照也不存在时返回 None，由调用方回退新建。返回的 session 持有
+        ``resume_snapshot``，首次 run 时传给 AgentLoop 恢复上下文。
+        """
+        existing = self._sessions.get(session_id)
+        if existing is not None:
+            return existing
+        snapshot = self.session_store.load(session_id)
+        if snapshot is None:
+            return None
+        mcp_manager = await build_mcp_manager(self.config)
+        session = self._create_session(
+            llm,
+            tools=tools,
+            mcp_manager=mcp_manager,
+            initial_mode=snapshot.mode,
+            initial_messages=snapshot.messages,
+            resume_snapshot=snapshot,
+        )
+        logger.info("Resumed session %s from store", session_id)
+        return session
+
     def _create_session(
         self,
         llm,
         tools: Optional[list] = None,
         mcp_manager=None,
+        *,
+        initial_mode: Optional[AgentMode] = None,
+        initial_messages: Optional[list[Message]] = None,
+        resume_snapshot: Optional[SessionSnapshot] = None,
     ) -> AgentSession:
-        session_id = new_session_id()
+        session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
         approval_handler = WebApprovalHandler(session_id)
         question_handler = WebQuestionHandler(session_id)
-        run_config = AgentRunConfig(mode=self.initial_mode)
+        resolved_mode = initial_mode or self.initial_mode
+        run_config = AgentRunConfig(mode=resolved_mode)
         workspace_policy = WorkspacePolicy(
             workspace_root=self.workspace_root,
             command_denylist=self.config.tools.command_denylist,
@@ -292,9 +352,16 @@ class SessionManager:
             approval_handler=approval_handler,
             question_handler=question_handler,
             mcp_manager=mcp_manager,
+            session_store=self.session_store,
         )
         session = AgentSession(session_id, agent, approval_handler, question_handler)
-        session.init_messages()
+        if initial_messages:
+            session.messages = list(initial_messages)
+        if resume_snapshot is not None:
+            session.resume_snapshot = resume_snapshot
+            session.init_messages(resume_snapshot.user_system_prompt)
+        else:
+            session.init_messages()
         self._sessions[session_id] = session
         logger.info(f"Created session {session_id}")
         return session
@@ -367,6 +434,7 @@ class SessionManager:
                     session.messages,
                     on_event=on_event,
                     session_id=session.session_id,
+                    resume_snapshot=session.resume_snapshot,
                 )
             except Exception as exc:
                 logger.exception("Session run failed")
@@ -382,6 +450,9 @@ class SessionManager:
                     },
                 })
             finally:
+                # resume_snapshot 只消费一次：run 完成后恢复上下文已并入
+                # session.messages，后续 run 不再重复恢复。
+                session.resume_snapshot = None
                 await queue.put(None)  # sentinel
 
         agent_task = asyncio.create_task(run_agent())

@@ -141,6 +141,21 @@ function handleEvent(event) {
       sessionIdEl.textContent = sessionId;
       runIdEl.textContent = 'none';
       syncMode(event.mode || currentMode);
+      rememberSessionId(sessionId);
+      break;
+
+    case 'session_resumed':
+      sessionId = event.session_id;
+      sessionIdEl.textContent = sessionId;
+      runIdEl.textContent = 'none';
+      syncMode(event.mode || currentMode);
+      rememberSessionId(sessionId);
+      break;
+
+    case 'session_history':
+      if (event.data && Array.isArray(event.data.messages)) {
+        renderHistory(event.data.messages);
+      }
       break;
 
     case 'run_started':
@@ -289,6 +304,22 @@ function syncMode(mode) {
   planningPanel.hidden = true;
   planningCount.hidden = true;
   planningTitle.textContent = currentMode === 'plan' ? 'Plan' : 'Progress';
+}
+
+// 记忆最近使用的 session id，刷新/重开页面后优先回到原 session。
+function rememberSessionId(sessionId) {
+  if (!sessionId) return;
+  localStorage.setItem('asterwynd.session_id', sessionId);
+}
+
+function renderHistory(messages) {
+  messagesEl.textContent = '';
+  for (const message of messages) {
+    if (!message || !message.content) continue;
+    const role = message.role === 'assistant' ? 'assistant' : 'user';
+    addMessage(role, message.content);
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 // --- Message rendering ---
@@ -1396,6 +1427,11 @@ handleEvent = function(event) {
 
 // --- Init ---
 async function init() {
+  // 初始 session id 优先级：URL ?session=<id>（显式恢复）→ localStorage
+  // 记忆的最近 session（刷新恢复）→ null（新建）。URL 参数提供显式 /resume 入口。
+  const urlParams = new URLSearchParams(location.search);
+  const urlSession = urlParams.get('session');
+  sessionId = urlSession || localStorage.getItem('asterwynd.session_id') || null;
   try {
     await connect();
     const commandResp = await fetch('/api/slash-commands');
