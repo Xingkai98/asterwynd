@@ -117,26 +117,6 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-### 6. `fix-issue-110`
-
-状态：实现中。
-
-关联 issue：[#110](https://github.com/Xingkai98/asterwynd/issues/110)（bug：刷新后 session 丢失，需支持恢复并补继续会话入口）。
-
-批次：Web 会话连续性，独立于其他未实现 change，优先于 #117（Web 多 session 入口页）合入。
-
-建议顺序原因：
-
-- 修复 Web session 刷新丢失根因（不落盘 / 不记忆 / 不恢复），是 #117 多 session 入口页的前置依赖。
-- 复用 CLI 既有 `SessionStore` / `resume_snapshot` 基础设施，改动面集中在 `web/`。
-
-主要交付：
-
-- Web session run 后自动持久化到 `.asterwynd/sessions/`。
-- 刷新 / 进程重启后按 id 恢复 + 历史水合。
-- 前端 localStorage 记忆 + `GET /resume` 显式恢复入口。
-- `asterwynd web --resume <id>` 生效。
-
 ## 已完成待归档
 
 这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。
