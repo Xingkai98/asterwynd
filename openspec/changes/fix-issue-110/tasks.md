@@ -36,16 +36,17 @@
 
 - [x] Round 1 独立 subagent 审阅（CHANGES_REQUESTED）：resume 恢复后首次 run 快照历史重复送入 LLM（web/session.py 预填 session.messages + run_session 传 resume_snapshot 与 loop.py resume 分支叠加）
 - [x] Round 1 修复：resume 不预填 session.messages（由 _run 从 resume_snapshot 重建）；build_history_payload 回退用快照历史；remove_session 同步删磁盘快照；回归测试增强断言 LLM 消息无重复
-- [ ] Round 2 独立 subagent 审阅（PASS）
-- [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
+- [x] Round 2 独立 subagent 审阅（PASS，零记忆重新审阅，端到端验证 Issue 1/2 已修复）
+- [x] 审阅收尾：新增 test_reset_removes_session_from_store（reset 后磁盘快照删除，验证禁用删磁盘后测试失败）；grill-design 决策措辞同步
+- [x] 生成 review manifest 绑定 reviewer run a855b0469fb515136 / base 12f6cdf / head 8e732b4 / tasks·spec·diff·report hash
 
 ## 验证
 
-- [x] `uv run pytest tests/web_tests/ -q` 通过（76 passed，7 skipped）
-- [x] `uv run pytest -q` 全量通过（1813 passed，7 skipped）——注意：需 `uv sync --extra dev` 后用 venv pytest，否则用户级 pytest 缺 tree_sitter_java/kotlin 导致 code_intelligence 测试误报失败
+- [x] `uv run pytest tests/web_tests/ -q` 通过（77 passed，7 skipped）
+- [x] `uv run pytest -q` 全量通过（1814 passed，7 skipped）——注意：需 `uv sync --extra dev` 后用 venv pytest，否则用户级 pytest 缺 tree_sitter_java/kotlin 导致 code_intelligence 测试误报失败
 - [x] `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 通过（30/30）
-- [ ] `uv run python scripts/check_openspec_artifacts.py` 通过
-- [x] Web smoke 由回归测试覆盖：刷新恢复（reuses_inmemory）、`/resume?session=`（resume_route + URL 参数）、进程重启恢复（resumes_from_store）、`--resume`（resume_cli）
+- [x] `uv run python scripts/check_openspec_artifacts.py` 通过（含 review manifest + report hash）
+- [x] Web smoke 由回归测试覆盖：刷新恢复（reuses_inmemory）、`/resume?session=`（resume_route + URL 参数）、进程重启恢复（resumes_from_store）、`--resume`（resume_cli）、reset 删磁盘（reset_removes）
 
 ## PR 收尾
 
