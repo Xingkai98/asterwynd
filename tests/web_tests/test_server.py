@@ -929,6 +929,13 @@ def test_websocket_resumes_from_store_after_process_restart(tmp_path):
             assert events[-1]["data"]["content"] == "好的，继续"
             assert app.state.session_manager.get_session("deadbeef0000") is not None
 
+    # 恢复后首次 run 的 LLM 上下文不得把快照历史重复送入（issue #110 回归：
+    # 快照历史由 AgentLoop 从 resume_snapshot 重建，session.messages 不含预填副本）。
+    llm_messages = mock_llm.last_messages
+    assert llm_messages is not None
+    texts = [extract_text(m.content) for m in llm_messages if m.role == "user"]
+    assert texts.count("恢复我") == 1, f"快照历史重复送入 LLM: {texts}"
+
 
 def test_web_run_persists_session_to_store(tmp_path):
     """Web run 结束后 session 自动落盘到 SessionStore。"""

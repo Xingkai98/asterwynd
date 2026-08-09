@@ -35,14 +35,22 @@ def build_history_payload(session: "AgentSession") -> dict:
 
     历史消息的 content 用 ``extract_text`` 提取纯文本（图片 block 无文本则
     略过），供恢复连接后前端渲染，避免前端拿到内部 block 结构。
+
+    从快照恢复的会话在首次 run 前 ``session.messages`` 为空，历史还在
+    ``resume_snapshot.messages``（恢复上下文由 AgentLoop 首次 run 时重建），
+    因此这里回退用快照历史渲染。
     """
+    if not session.messages and session.resume_snapshot is not None:
+        messages = session.resume_snapshot.messages
+    else:
+        messages = session.messages
     return {
         "type": "session_history",
         "data": {
             "session_id": session.session_id,
             "messages": [
                 {"role": message.role, "content": extract_text(message.content)}
-                for message in session.messages
+                for message in messages
             ],
         },
     }
@@ -283,12 +291,14 @@ class SessionManager:
         if snapshot is None:
             return None
         mcp_manager = await build_mcp_manager(self.config)
+        # 不预填 session.messages：恢复的历史由 AgentLoop 首次 run 时从
+        # resume_snapshot 重建（_run 的 resume 分支），避免快照历史重复入参。
+        # session_history 渲染由 build_history_payload 回退到 resume_snapshot。
         session = self._create_session(
             llm,
             tools=tools,
             mcp_manager=mcp_manager,
             initial_mode=snapshot.mode,
-            initial_messages=snapshot.messages,
             resume_snapshot=snapshot,
         )
         logger.info("Resumed session %s from store", session_id)
@@ -301,7 +311,6 @@ class SessionManager:
         mcp_manager=None,
         *,
         initial_mode: Optional[AgentMode] = None,
-        initial_messages: Optional[list[Message]] = None,
         resume_snapshot: Optional[SessionSnapshot] = None,
     ) -> AgentSession:
         session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
@@ -355,8 +364,6 @@ class SessionManager:
             session_store=self.session_store,
         )
         session = AgentSession(session_id, agent, approval_handler, question_handler)
-        if initial_messages:
-            session.messages = list(initial_messages)
         if resume_snapshot is not None:
             session.resume_snapshot = resume_snapshot
             session.init_messages(resume_snapshot.user_system_prompt)
@@ -371,6 +378,8 @@ class SessionManager:
 
     def remove_session(self, session_id: str):
         self._sessions.pop(session_id, None)
+        # reset 语义是废弃当前会话：同步删除磁盘快照，避免孤儿快照被旧 id 复活。
+        self.session_store.remove(session_id)
 
     async def set_mode(self, session: AgentSession, mode: str) -> dict:
         return await session.agent.set_mode(
