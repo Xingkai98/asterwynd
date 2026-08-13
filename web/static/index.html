@@ -14,9 +14,11 @@
       <span class="brand-fallback">Asterwynd</span>
     </div>
     <nav id="tabs">
-      <button class="tab active" data-tab="chat">Chat</button>
+      <button class="tab active" data-tab="hub" id="hub-tab">Sessions</button>
+      <button class="tab" data-tab="chat" id="chat-tab">Chat</button>
       <button class="tab" data-tab="debug" id="debug-tab" style="display:none">Debug</button>
     </nav>
+    <div id="session-tabs" class="session-tabs" hidden></div>
     <div id="identity-bar" aria-label="runtime identifiers">
       <span>Session <code id="session-id">pending</code></span>
       <span>Run <code id="run-id">none</code></span>
@@ -35,8 +37,42 @@
   </header>
 
   <main>
+    <!-- Hub View -->
+    <section id="hub-view" class="view active">
+      <div class="hub-layout">
+        <div class="hub-sidebar">
+          <div class="hub-section">
+            <div class="hub-section-header"><span>Workspace</span></div>
+            <select id="hub-workspace-select" aria-label="Workspace"></select>
+          </div>
+          <div class="hub-section">
+            <div class="hub-section-header"><span>新建会话</span></div>
+            <div class="hub-new-form">
+              <select id="hub-new-mode" aria-label="Mode">
+                <option value="build">build</option>
+                <option value="read_only">read_only</option>
+                <option value="plan">plan</option>
+                <option value="bypass">bypass</option>
+              </select>
+              <select id="hub-new-workspace" aria-label="Workspace"></select>
+              <button id="hub-new-btn" type="button">新建</button>
+            </div>
+          </div>
+        </div>
+        <div class="hub-list">
+          <div class="hub-section-header">
+            <span>已保存会话</span>
+            <span id="hub-list-count" class="hub-list-count"></span>
+          </div>
+          <div id="hub-session-list" class="hub-session-list">
+            <div class="hub-empty">加载中…</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Chat View -->
-    <section id="chat-view" class="view active">
+    <section id="chat-view" class="view">
       <div id="plan-document-panel" class="plan-document-panel" hidden>
         <div class="plan-document-header">
           <button id="plan-document-toggle" class="planning-toggle" type="button" aria-expanded="true" aria-controls="plan-document-body" aria-label="Collapse panel" title="Collapse">&#x25BC;</button>
@@ -53,19 +89,7 @@
         </div>
         <ol id="planning-items" class="planning-items"></ol>
       </div>
-      <div id="messages"></div>
-      <div id="input-area">
-        <div id="input-shell">
-          <div id="slash-suggestions" role="listbox" aria-label="Slash commands" hidden></div>
-          <div id="image-previews"></div>
-          <div id="input-row">
-            <textarea id="user-input" placeholder="输入消息..." rows="2" autocomplete="off"></textarea>
-            <input type="file" id="image-file-input" accept="image/*" multiple hidden>
-            <button id="upload-btn" type="button" title="上传图片">+</button>
-            <button id="send-btn">发送</button>
-          </div>
-        </div>
-      </div>
+      <div id="chat-panes"></div>
     </section>
 
     <!-- Debug View -->

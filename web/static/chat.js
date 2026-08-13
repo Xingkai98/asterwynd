@@ -1,21 +1,103 @@
 // web/static/chat.js
-// Chat UI: message list, input box, WebSocket communication
+// Chat UI: message list, input box, WebSocket communication, multi-session tabs.
 
+// --- Multi-session tab state (issue #117) ---
+let tabs = new Map();          // tabId -> tab
+let activeTabId = null;
+let newTabSeq = 0;             // 新建会话临时 tabId 递增，避免固定 'new' 覆盖键
+
+// 每个会话一个 Tab，独立持有 WebSocket、消息容器与运行状态。
+function createTab(tabId, sessionId, workspace, mode) {
+  const tab = {
+    id: tabId,
+    sessionId: sessionId || null,
+    workspace: workspace || null,
+    mode: mode || 'build',
+    ws: null,
+    currentAssistantMsg: null,
+    debugEvents: [],
+    debugIterBlocks: {},
+    approvalCards: new Map(),
+    questionCards: new Map(),
+    pendingImages: [],
+    shouldReconnect: true,
+    slashMatches: [],
+    activeSlashIndex: 0,
+    inFlight: false,
+    uploadWaiters: new Map(),
+    pane: null,
+    messagesEl: null,
+    inputEl: null,
+    previewsEl: null,
+    slashSuggestionsEl: null,
+    sendBtn: null,
+    uploadBtn: null,
+    imageFileInput: null,
+  };
+  tabs.set(tabId, tab);
+  return tab;
+}
+
+function getActiveTab() {
+  return activeTabId ? tabs.get(activeTabId) : null;
+}
+
+// 全局状态变量作为「当前 active tab 上下文」的代理：渲染/事件函数读写的就是
+// 当前 tab 的状态，切换 tab 时 bindActiveTab 重新指向。
 let ws = null;
 let sessionId = null;
 let currentMode = 'build';
 let currentAssistantMsg = null;
 let debugEvents = [];
-let activeView = 'chat';
+let activeView = 'hub';
 let slashCommands = [];
 let slashMatches = [];
 let activeSlashIndex = 0;
 let shouldReconnect = true;
-const approvalCards = new Map();
-const questionCards = new Map();
+let approvalCards = new Map();
+let questionCards = new Map();
 let pendingImages = [];
 let sendInFlight = false;
-const wsUploadWaiters = new Map();
+let wsUploadWaiters = new Map();
+let iterBlocks = {};  // debug 迭代块索引（per-tab，见 debug.js）
+// per-tab DOM（在 tab pane 内动态创建；bindActiveTab 时指向 active tab）
+let messagesEl = null;
+let userInput = null;
+let slashSuggestionsEl = null;
+let sendBtn = null;
+let imagePreviewsEl = null;
+let imageFileInput = null;
+let uploadBtn = null;
+// 全局 chrome（header/面板，保持单例）
+const statusEl = document.getElementById('status');
+const sessionIdEl = document.getElementById('session-id');
+const runIdEl = document.getElementById('run-id');
+const modeValueEl = document.getElementById('mode-value');
+const modeSelectEl = document.getElementById('mode-select');
+const modeApplyBtn = document.getElementById('mode-apply');
+const debugTabBtn = document.getElementById('debug-tab');
+const chatTabBtn = document.getElementById('chat-tab');
+const hubTabBtn = document.getElementById('hub-tab');
+const planDocumentPanel = document.getElementById('plan-document-panel');
+const planDocumentTitleEl = document.getElementById('plan-document-title');
+const planDocumentBodyEl = document.getElementById('plan-document-body');
+const planDocumentToggle = document.getElementById('plan-document-toggle');
+const planningPanel = document.getElementById('planning-panel');
+const planningItemsEl = document.getElementById('planning-items');
+const planningToggle = document.getElementById('planning-toggle');
+const planningTitle = document.getElementById('planning-title');
+const planningCount = document.getElementById('planning-count');
+const chatPanesEl = document.getElementById('chat-panes');
+const sessionTabsEl = document.getElementById('session-tabs');
+const hubViewEl = document.getElementById('hub-view');
+const chatViewEl = document.getElementById('chat-view');
+const hubWorkspaceSelect = document.getElementById('hub-workspace-select');
+const hubNewMode = document.getElementById('hub-new-mode');
+const hubNewWorkspace = document.getElementById('hub-new-workspace');
+const hubNewBtn = document.getElementById('hub-new-btn');
+const hubSessionList = document.getElementById('hub-session-list');
+const hubListCount = document.getElementById('hub-list-count');
+
 const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_CHAT_PAYLOAD_CHARS = 12 * 1024 * 1024;
 const WS_UPLOAD_CHUNK_CHARS = 256 * 1024;
@@ -27,30 +109,194 @@ const JPEG_QUALITY = 0.82;
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const HEIC_IMAGE_TYPES = new Set(['image/heic', 'image/heif']);
 
-// --- DOM refs ---
-const messagesEl = document.getElementById('messages');
-const userInput = document.getElementById('user-input');
-const slashSuggestionsEl = document.getElementById('slash-suggestions');
-const sendBtn = document.getElementById('send-btn');
-const statusEl = document.getElementById('status');
-const sessionIdEl = document.getElementById('session-id');
-const runIdEl = document.getElementById('run-id');
-const modeValueEl = document.getElementById('mode-value');
-const modeSelectEl = document.getElementById('mode-select');
-const modeApplyBtn = document.getElementById('mode-apply');
-const debugTabBtn = document.getElementById('debug-tab');
-const planDocumentPanel = document.getElementById('plan-document-panel');
-const planDocumentTitleEl = document.getElementById('plan-document-title');
-const planDocumentBodyEl = document.getElementById('plan-document-body');
-const planDocumentToggle = document.getElementById('plan-document-toggle');
-const planningPanel = document.getElementById('planning-panel');
-const planningItemsEl = document.getElementById('planning-items');
-const planningToggle = document.getElementById('planning-toggle');
-const planningTitle = document.getElementById('planning-title');
-const planningCount = document.getElementById('planning-count');
-const imagePreviewsEl = document.getElementById('image-previews');
-const imageFileInput = document.getElementById('image-file-input');
-const uploadBtn = document.getElementById('upload-btn');
+// --- Tab lifecycle ---
+function buildTabPane(tab) {
+  const pane = document.createElement('div');
+  pane.className = 'tab-pane';
+  pane.dataset.tabId = tab.id;
+  pane.innerHTML = `
+    <div class="tab-messages"></div>
+    <div class="input-area">
+      <div class="input-shell">
+        <div class="slash-suggestions" role="listbox" aria-label="Slash commands" hidden></div>
+        <div class="image-previews" hidden></div>
+        <div class="input-row">
+          <textarea class="user-input" placeholder="输入消息..." rows="2" autocomplete="off"></textarea>
+          <input type="file" class="image-file-input" accept="image/*" multiple hidden>
+          <button type="button" class="upload-btn" title="上传图片">+</button>
+          <button type="button" class="send-btn">发送</button>
+        </div>
+      </div>
+    </div>`;
+  tab.pane = pane;
+  tab.messagesEl = pane.querySelector('.tab-messages');
+  tab.inputEl = pane.querySelector('.user-input');
+  tab.slashSuggestionsEl = pane.querySelector('.slash-suggestions');
+  tab.previewsEl = pane.querySelector('.image-previews');
+  tab.imageFileInput = pane.querySelector('.image-file-input');
+  tab.uploadBtn = pane.querySelector('.upload-btn');
+  tab.sendBtn = pane.querySelector('.send-btn');
+
+  // 输入区事件绑定（闭包捕获 tab）：先切到该 tab 再执行，保证全局代理指向它。
+  tab.sendBtn.addEventListener('click', () => { switchTab(tab.id); sendMessage(); });
+  tab.uploadBtn.addEventListener('click', () => { switchTab(tab.id); tab.imageFileInput.click(); });
+  tab.imageFileInput.addEventListener('change', () => {
+    switchTab(tab.id);
+    const files = tab.imageFileInput.files;
+    if (!files || files.length === 0) return;
+    for (const file of files) addImageFromFile(file);
+    tab.imageFileInput.value = '';
+  });
+  tab.inputEl.addEventListener('input', () => { switchTab(tab.id); updateSlashSuggestions(); });
+  tab.inputEl.addEventListener('blur', () => { setTimeout(hideSlashSuggestions, 100); });
+  tab.inputEl.addEventListener('keydown', (e) => {
+    switchTab(tab.id);
+    const suggestions = tab.slashSuggestionsEl;
+    if (suggestions && !suggestions.hidden) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashSelection(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); moveSlashSelection(-1); return; }
+      if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); applySlashSuggestion(activeSlashIndex); return; }
+      if (e.key === 'Escape') { e.preventDefault(); hideSlashSuggestions(); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  chatPanesEl.appendChild(pane);
+  return tab;
+}
+
+function bindActiveTab(tab) {
+  if (!tab) return;
+  activeTabId = tab.id;
+  ws = tab.ws;
+  sessionId = tab.sessionId;
+  currentMode = tab.mode;
+  currentAssistantMsg = tab.currentAssistantMsg;
+  debugEvents = tab.debugEvents;
+  approvalCards = tab.approvalCards;
+  questionCards = tab.questionCards;
+  pendingImages = tab.pendingImages;
+  shouldReconnect = tab.shouldReconnect;
+  slashMatches = tab.slashMatches;
+  activeSlashIndex = tab.activeSlashIndex;
+  sendInFlight = tab.inFlight;
+  wsUploadWaiters = tab.uploadWaiters;
+  iterBlocks = tab.debugIterBlocks;
+  messagesEl = tab.messagesEl;
+  userInput = tab.inputEl;
+  slashSuggestionsEl = tab.slashSuggestionsEl;
+  sendBtn = tab.sendBtn;
+  imagePreviewsEl = tab.previewsEl;
+  imageFileInput = tab.imageFileInput;
+  uploadBtn = tab.uploadBtn;
+  // header chrome
+  sessionIdEl.textContent = tab.sessionId || 'pending';
+  modeValueEl.textContent = tab.mode;
+  modeSelectEl.value = tab.mode;
+  runIdEl.textContent = 'none';
+  statusEl.textContent = tab.ws && tab.ws.readyState === WebSocket.OPEN ? 'connected' : (tab.shouldReconnect ? 'disconnected' : 'ended');
+  syncMode(tab.mode);
+  renderSessionTabs();
+}
+
+function syncActiveTab() {
+  const tab = getActiveTab();
+  if (!tab) return;
+  tab.ws = ws;
+  tab.sessionId = sessionId;
+  tab.mode = currentMode;
+  tab.currentAssistantMsg = currentAssistantMsg;
+  tab.debugEvents = debugEvents;
+  tab.approvalCards = approvalCards;
+  tab.questionCards = questionCards;
+  tab.pendingImages = pendingImages;
+  tab.shouldReconnect = shouldReconnect;
+  tab.slashMatches = slashMatches;
+  tab.activeSlashIndex = activeSlashIndex;
+  tab.inFlight = sendInFlight;
+  tab.uploadWaiters = wsUploadWaiters;
+  tab.debugIterBlocks = iterBlocks;
+}
+
+function renderSessionTabs() {
+  if (!sessionTabsEl) return;
+  sessionTabsEl.textContent = '';
+  for (const tab of tabs.values()) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'session-tab' + (tab.id === activeTabId ? ' active' : '');
+    btn.dataset.tabId = tab.id;
+    btn.textContent = tab.sessionId ? tab.sessionId.slice(0, 8) : 'new';
+    btn.title = tab.sessionId || 'new session';
+    btn.addEventListener('click', () => switchTab(tab.id));
+    const close = document.createElement('span');
+    close.className = 'session-tab-close';
+    close.textContent = '×';
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTab(tab.id);
+    });
+    btn.appendChild(close);
+    sessionTabsEl.appendChild(btn);
+  }
+  sessionTabsEl.hidden = tabs.size === 0;
+}
+
+function switchTab(tabId) {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  syncActiveTab();
+  for (const t of tabs.values()) {
+    if (t.pane) t.pane.classList.toggle('active', t.id === tabId);
+  }
+  bindActiveTab(tab);
+  activeView = 'chat';
+  document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab === 'chat'));
+  chatViewEl.classList.add('active');
+  hubViewEl.classList.remove('active');
+  document.getElementById('debug-view').classList.remove('active');
+}
+
+function closeTab(tabId) {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  if (tab.ws) {
+    tab.shouldReconnect = false;
+    try { tab.ws.close(); } catch (e) { /* ignore */ }
+  }
+  if (tab.pane) tab.pane.remove();
+  tabs.delete(tabId);
+  if (activeTabId === tabId) {
+    const next = Array.from(tabs.keys())[0];
+    if (next) switchTab(next);
+    else {
+      activeTabId = null;
+      showHub();
+    }
+  } else {
+    renderSessionTabs();
+  }
+}
+
+function showHub() {
+  activeView = 'hub';
+  document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab === 'hub'));
+  hubViewEl.classList.add('active');
+  chatViewEl.classList.remove('active');
+  document.getElementById('debug-view').classList.remove('active');
+  loadHub();
+}
+
+function openSessionTab(sessionId, workspace) {
+  // 已打开的 tab 直接激活
+  if (tabs.has(sessionId)) {
+    switchTab(sessionId);
+    return;
+  }
+  const tab = createTab(sessionId, sessionId, workspace, 'build');
+  buildTabPane(tab);
+  switchTab(sessionId);
+  connectTab(tab, sessionId, workspace);
+}
 
 // --- Planning panel toggle ---
 function setPlanningPanelCollapsed(collapsed) {
@@ -97,41 +343,72 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 // --- WebSocket ---
-async function connect() {
+async function connectTab(tab, targetSessionId, workspace) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${location.host}/ws/${sessionId || 'new'}`;
+  const params = new URLSearchParams();
+  if (workspace) params.set('workspace', workspace);
+  // 新建会话时把用户选择的 mode 传给服务端；恢复已有会话不传（用快照 mode）。
+  if (targetSessionId === 'new' && tab.mode) params.set('mode', tab.mode);
+  const qs = params.toString();
+  const wsUrl = `${protocol}//${location.host}/ws/${targetSessionId || 'new'}${qs ? '?' + qs : ''}`;
 
   return new Promise((resolve, reject) => {
-    ws = new WebSocket(wsUrl);
-    ws.onopen = () => {
+    const socket = new WebSocket(wsUrl);
+    tab.ws = socket;
+    socket.onopen = () => {
+      bindActiveTab(tab);
       statusEl.textContent = 'connected';
       resolve();
     };
-    ws.onmessage = (e) => {
+    socket.onmessage = (e) => {
       const event = JSON.parse(e.data);
-      handleEvent(event);
+      handleTabEvent(tab, event);
     };
-    ws.onclose = (event) => {
+    socket.onclose = (event) => {
+      bindActiveTab(tab);
       if (event.code === 1009) {
         addMessage('error', 'Image message too large. Try a smaller image.');
-        sendBtn.disabled = false;
-        sendInFlight = false;
-      } else if (sendInFlight) {
+        tab.sendBtn.disabled = false;
+        tab.inFlight = false;
+      } else if (tab.inFlight) {
         addMessage('error', 'Connection closed before the message was sent. Reconnect and try again.');
-        sendBtn.disabled = false;
-        sendInFlight = false;
+        tab.sendBtn.disabled = false;
+        tab.inFlight = false;
       }
       rejectWsUploadWaiters(new Error('connection closed during image upload'));
-      statusEl.textContent = shouldReconnect ? 'disconnected' : 'ended';
-      if (shouldReconnect) {
-        setTimeout(connect, 2000);
+      statusEl.textContent = tab.shouldReconnect ? 'disconnected' : 'ended';
+      if (tab.shouldReconnect) {
+        setTimeout(() => connectTab(tab, tab.sessionId, tab.workspace), 2000);
       }
     };
-    ws.onerror = () => {
+    socket.onerror = () => {
+      bindActiveTab(tab);
       statusEl.textContent = 'error';
       reject(new Error('WebSocket error'));
     };
   });
+}
+
+// 事件路由到指定 tab：bind 该 tab 后执行原 handleEvent，再写回并恢复原 active。
+function handleTabEvent(tab, event) {
+  const prevTab = getActiveTab();
+  bindActiveTab(tab);
+  handleEvent(event);
+  syncActiveTab();
+  const sid = event && (event.session_id || (event.data && event.data.session_id));
+  if (sid && tab.id !== sid) {
+    const oldId = tab.id;
+    tabs.delete(oldId);
+    tab.id = sid;
+    tab.sessionId = sid;
+    tabs.set(sid, tab);
+    // 新建会话 rekey（'new' → 真实 sid）后同步 activeTabId，避免指向已删除键
+    if (activeTabId === oldId) activeTabId = sid;
+    // 同步 pane 的 data-tab-id，paste/drag-drop 事件委托按它反查 tab（design review I7）
+    if (tab.pane) tab.pane.dataset.tabId = sid;
+    renderSessionTabs();
+  }
+  if (prevTab && prevTab !== tab && tabs.has(prevTab.id)) bindActiveTab(prevTab);
 }
 
 function handleEvent(event) {
@@ -306,10 +583,14 @@ function syncMode(mode) {
   planningTitle.textContent = currentMode === 'plan' ? 'Plan' : 'Progress';
 }
 
-// 记忆最近使用的 session id，刷新/重开页面后优先回到原 session。
+// 记忆最近使用的 session id 与 workspace，刷新/重开页面后优先回到原 session。
 function rememberSessionId(sessionId) {
   if (!sessionId) return;
   localStorage.setItem('asterwynd.session_id', sessionId);
+  const tab = getActiveTab();
+  if (tab && tab.workspace) {
+    localStorage.setItem('asterwynd.session_workspace', tab.workspace);
+  }
 }
 
 function renderHistory(messages) {
@@ -826,19 +1107,15 @@ function renderPlanDocument(document) {
 }
 
 // --- Image upload ---
-uploadBtn.addEventListener('click', () => imageFileInput.click());
-
-imageFileInput.addEventListener('change', () => {
-  const files = imageFileInput.files;
-  if (!files || files.length === 0) return;
-  for (const file of files) {
-    addImageFromFile(file);
-  }
-  imageFileInput.value = '';
-});
-
+// 上传按钮 / file input 的绑定在 buildTabPane 内（per-tab）；这里用委托处理
+// 全局的 paste 与拖拽，路由到焦点所在的 tab pane。
 document.addEventListener('paste', (e) => {
-  if (document.activeElement !== userInput) return;
+  const active = document.activeElement;
+  const pane = active && active.closest ? active.closest('.tab-pane') : null;
+  if (!pane) return;
+  const tab = tabs.get(pane.dataset.tabId);
+  if (!tab) return;
+  switchTab(tab.id);
   const items = e.clipboardData && e.clipboardData.items;
   if (!items) return;
   for (const item of items) {
@@ -849,42 +1126,60 @@ document.addEventListener('paste', (e) => {
   }
 });
 
-// Drag and drop
-const inputArea = document.getElementById('input-area');
-let dragCounter = 0;
+// Drag and drop：委托到 chat-panes（tab pane 的 input-area 都在里面）
+const dragPaneState = { pane: null, counter: 0 };
 
-inputArea.addEventListener('dragover', (e) => {
+chatPanesEl.addEventListener('dragover', (e) => {
   e.preventDefault();
   e.stopPropagation();
 });
 
-inputArea.addEventListener('dragenter', (e) => {
+chatPanesEl.addEventListener('dragenter', (e) => {
   e.preventDefault();
   e.stopPropagation();
-  dragCounter++;
-  inputArea.classList.add('drag-over');
-});
-
-inputArea.addEventListener('dragleave', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  dragCounter--;
-  if (dragCounter <= 0) {
-    dragCounter = 0;
-    inputArea.classList.remove('drag-over');
+  const pane = e.target.closest ? e.target.closest('.tab-pane') : null;
+  if (pane) {
+    if (dragPaneState.pane !== pane) {
+      dragPaneState.pane = pane;
+      dragPaneState.counter = 0;
+    }
+    dragPaneState.counter++;
+    pane.classList.add('drag-over');
   }
 });
 
-inputArea.addEventListener('drop', (e) => {
+chatPanesEl.addEventListener('dragleave', (e) => {
   e.preventDefault();
   e.stopPropagation();
-  dragCounter = 0;
-  inputArea.classList.remove('drag-over');
-  const files = e.dataTransfer && e.dataTransfer.files;
-  if (!files || files.length === 0) return;
-  for (const file of files) {
-    if (isImageFile(file)) {
-      addImageFromFile(file);
+  const pane = e.target.closest ? e.target.closest('.tab-pane') : null;
+  if (pane && dragPaneState.pane === pane) {
+    dragPaneState.counter--;
+    if (dragPaneState.counter <= 0) {
+      dragPaneState.counter = 0;
+      dragPaneState.pane = null;
+      pane.classList.remove('drag-over');
+    }
+  }
+});
+
+chatPanesEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const pane = e.target.closest ? e.target.closest('.tab-pane') : null;
+  if (pane) {
+    dragPaneState.pane = null;
+    dragPaneState.counter = 0;
+    pane.classList.remove('drag-over');
+    const tab = tabs.get(pane.dataset.tabId);
+    if (tab) {
+      switchTab(tab.id);
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      for (const file of files) {
+        if (isImageFile(file)) {
+          addImageFromFile(file);
+        }
+      }
     }
   }
 });
@@ -1290,40 +1585,7 @@ function sendModeChange() {
   ws.send(JSON.stringify({ type: 'set_mode', mode: nextMode }));
 }
 
-sendBtn.addEventListener('click', sendMessage);
 modeApplyBtn.addEventListener('click', sendModeChange);
-userInput.addEventListener('input', updateSlashSuggestions);
-userInput.addEventListener('blur', () => {
-  setTimeout(hideSlashSuggestions, 100);
-});
-userInput.addEventListener('keydown', (e) => {
-  if (slashSuggestionsEl && !slashSuggestionsEl.hidden) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      moveSlashSelection(1);
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      moveSlashSelection(-1);
-      return;
-    }
-    if (e.key === 'Tab' || e.key === 'Enter') {
-      e.preventDefault();
-      applySlashSuggestion(activeSlashIndex);
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      hideSlashSuggestions();
-      return;
-    }
-  }
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
 
 // --- Slash command suggestions ---
 function slashQueryFromInput() {
@@ -1425,26 +1687,160 @@ handleEvent = function(event) {
   }
 };
 
+// --- Hub view (issue #117) ---
+async function loadHub() {
+  try {
+    const wsResp = await fetch('/api/workspaces');
+    const wsData = await wsResp.json();
+    const workspaces = Array.isArray(wsData.workspaces) ? wsData.workspaces : [];
+    const options = workspaces.map(w => {
+      const opt = document.createElement('option');
+      opt.value = w.path;
+      opt.textContent = w.is_primary ? `${w.path} (primary)` : w.path;
+      return opt;
+    });
+    hubWorkspaceSelect.textContent = '';
+    hubNewWorkspace.textContent = '';
+    for (const opt of options) {
+      hubWorkspaceSelect.appendChild(opt.cloneNode(true));
+      hubNewWorkspace.appendChild(opt.cloneNode(true));
+    }
+    renderSessionList();
+  } catch (e) {
+    hubSessionList.innerHTML = '<div class="hub-empty">加载失败</div>';
+  }
+}
+
+async function renderSessionList() {
+  const workspace = hubWorkspaceSelect.value;
+  try {
+    const resp = await fetch(`/api/sessions?workspace=${encodeURIComponent(workspace)}`);
+    if (!resp.ok) {
+      hubSessionList.innerHTML = '<div class="hub-empty">workspace 不可用</div>';
+      return;
+    }
+    const data = await resp.json();
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    hubListCount.textContent = `${sessions.length} 个`;
+    hubSessionList.textContent = '';
+    if (sessions.length === 0) {
+      hubSessionList.innerHTML = '<div class="hub-empty">暂无会话，新建一个开始</div>';
+      return;
+    }
+    for (const s of sessions) {
+      const row = document.createElement('div');
+      row.className = 'hub-session-row';
+      row.title = `session ${s.session_id}`;
+      const info = document.createElement('div');
+      info.className = 'hub-session-info';
+      const idLine = document.createElement('div');
+      idLine.className = 'hub-session-id';
+      idLine.textContent = s.session_id;
+      const meta = document.createElement('div');
+      meta.className = 'hub-session-meta';
+      meta.textContent = `mode=${s.mode} · ${s.messages} msgs · ${new Date(s.updated_at).toLocaleString()}`;
+      info.appendChild(idLine);
+      info.appendChild(meta);
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'hub-session-open';
+      openBtn.textContent = '打开';
+      openBtn.addEventListener('click', () => openSessionTab(s.session_id, workspace));
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'hub-session-delete';
+      delBtn.textContent = '删除';
+      delBtn.addEventListener('click', async () => {
+        if (!confirm(`删除会话 ${s.session_id}？`)) return;
+        try {
+          await fetch(`/api/sessions/${encodeURIComponent(s.session_id)}?workspace=${encodeURIComponent(workspace)}`, { method: 'DELETE' });
+          closeTab(s.session_id);
+          renderSessionList();
+        } catch (e) {
+          alert('删除失败');
+        }
+      });
+      const actions = document.createElement('div');
+      actions.className = 'hub-session-actions';
+      actions.appendChild(openBtn);
+      actions.appendChild(delBtn);
+      row.appendChild(info);
+      row.appendChild(actions);
+      hubSessionList.appendChild(row);
+    }
+  } catch (e) {
+    hubSessionList.innerHTML = '<div class="hub-empty">加载失败</div>';
+  }
+}
+
+function setupHub() {
+  hubWorkspaceSelect.addEventListener('change', renderSessionList);
+  hubNewBtn.addEventListener('click', () => {
+    const mode = hubNewMode.value;
+    const workspace = hubNewWorkspace.value;
+    // 每次新建用递增临时 id，避免固定 'new' 覆盖 Map 键（design review I5）
+    newTabSeq += 1;
+    const tempId = `new-${newTabSeq}`;
+    const tab = createTab(tempId, null, workspace, mode);
+    buildTabPane(tab);
+    switchTab(tempId);
+    connectTab(tab, 'new', workspace).catch(() => {
+      statusEl.textContent = 'connection failed';
+    });
+  });
+}
+
 // --- Init ---
 async function init() {
-  // 初始 session id 优先级：URL ?session=<id>（显式恢复）→ localStorage
-  // 记忆的最近 session（刷新恢复）→ null（新建）。URL 参数提供显式 /resume 入口。
+  // 初始 session 优先级：URL ?session=<id>（显式恢复，可带 ?workspace=）→
+  // localStorage 记忆的最近会话（刷新恢复）→ hub（无默认会话则展示列表）。
   const urlParams = new URLSearchParams(location.search);
   const urlSession = urlParams.get('session');
-  sessionId = urlSession || localStorage.getItem('asterwynd.session_id') || null;
+  const urlWorkspace = urlParams.get('workspace') || null;
+  const rememberedSession = localStorage.getItem('asterwynd.session_id');
+  const rememberedWorkspace = localStorage.getItem('asterwynd.session_workspace') || null;
+
   try {
-    await connect();
     const commandResp = await fetch('/api/slash-commands');
     const commandCatalog = await commandResp.json();
     slashCommands = Array.isArray(commandCatalog.commands) ? commandCatalog.commands : [];
-    // Check debug status
     const resp = await fetch('/api/debug-status');
     const dbg = await resp.json();
     if (dbg.enabled) {
       debugTabBtn.style.display = '';
     }
   } catch (e) {
-    statusEl.textContent = 'connection failed';
+    // 忽略：hub 仍可渲染
+  }
+
+  // 视图 tab 切换（Sessions / Chat / Debug）
+  document.querySelectorAll('.tab[data-tab]').forEach(tabBtn => {
+    tabBtn.addEventListener('click', () => {
+      const target = tabBtn.dataset.tab;
+      document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t === tabBtn));
+      hubViewEl.classList.toggle('active', target === 'hub');
+      chatViewEl.classList.toggle('active', target === 'chat');
+      document.getElementById('debug-view').classList.toggle('active', target === 'debug');
+      activeView = target;
+      if (target === 'hub') loadHub();
+      if (target === 'debug' && typeof renderTimeline === 'function') renderTimeline();
+    });
+  });
+  setupHub();
+
+  const targetSession = urlSession || rememberedSession;
+  if (targetSession) {
+    const workspace = urlWorkspace || rememberedWorkspace;
+    const tab = createTab(targetSession, targetSession, workspace, 'build');
+    buildTabPane(tab);
+    switchTab(targetSession);
+    try {
+      await connectTab(tab, targetSession, workspace);
+    } catch (e) {
+      statusEl.textContent = 'connection failed';
+    }
+  } else {
+    showHub();
   }
 }
 

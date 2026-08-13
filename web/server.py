@@ -44,11 +44,24 @@ def create_app(
     resolved_mode = mode or config.agent.default_mode.value
     app = FastAPI(title="Asterwynd · Asterwynd Web UI", version="0.1.0")
     app.state.resume_session_id = resume
+    # 有效 workspace 集合（issue #117 D4）：主 workspace + allowlist 中存在路径。
+    # allowlist 中不存在或不可解析的路径打 warning 并从有效集合排除。
+    primary_workspace = (workspace_root or Path.cwd()).resolve()
+    allowed_workspaces: list[Path] = []
+    for ws in config.web.workspaces:
+        resolved = ws.resolve() if isinstance(ws, Path) else Path(str(ws)).resolve()
+        if resolved == primary_workspace:
+            continue
+        if resolved.exists():
+            allowed_workspaces.append(resolved)
+        else:
+            logger.warning("web.workspaces 路径不存在，已排除: %s", resolved)
     session_manager = SessionManager(
         debug_enabled=debug_enabled(),
         mode=resolved_mode,
         config=config,
         workspace_root=workspace_root,
+        allowed_workspaces=allowed_workspaces,
     )
     app.state.session_manager = session_manager
 
@@ -113,6 +126,61 @@ def create_app(
         )
         return {"commands": command_registry.catalog()}
 
+    @app.get("/api/workspaces")
+    async def api_workspaces():
+        """Hub workspace 列表（issue #117 D1）：主 workspace 置顶 + allowlist。
+
+        ``exists`` 反映运行期目录状态（集合启动时一次性解析）；``session_count``
+        为该 workspace store 下的已保存会话数。
+        """
+        workspaces = []
+        for ws, is_primary in session_manager.list_workspaces():
+            try:
+                session_count = len(session_manager._store_for(ws).list_sessions())
+            except Exception:
+                session_count = 0
+            workspaces.append({
+                "path": str(ws),
+                "is_primary": is_primary,
+                "exists": ws.exists(),
+                "session_count": session_count,
+            })
+        return {"workspaces": workspaces}
+
+    @app.get("/api/sessions")
+    async def api_sessions(workspace: str | None = None):
+        """Hub 会话列表：复用 ``SessionStore.list_sessions()`` 元数据。
+
+        缺省 workspace 用主 workspace；workspace 不在有效集合或路径不存在 →
+        HTTP 403 + 结构化错误。
+        """
+        try:
+            ws = session_manager.resolve_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        sessions = session_manager._store_for(ws).list_sessions()
+        return {"workspace": str(ws), "sessions": sessions}
+
+    @app.delete("/api/sessions/{session_id}")
+    async def api_delete_session(session_id: str, workspace: str | None = None):
+        """删除会话（issue #117 D1）：内存 + 指定 workspace store 的磁盘快照。
+
+        workspace 必须显式传入（冷会话无内存 workspace_root 可查）；缺省 →
+        400；未授权 → 403。畸形 session_id 由 SessionStore._validate_session_id
+        拒绝 → 400（design review I4）。
+        """
+        if not workspace:
+            return JSONResponse({"error": "missing_workspace"}, status_code=400)
+        try:
+            ws = session_manager.resolve_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        try:
+            session_manager.remove_session(session_id, workspace=ws)
+        except ValueError:
+            return JSONResponse({"error": "invalid_session_id"}, status_code=400)
+        return {"deleted": True, "session_id": session_id, "workspace": str(ws)}
+
     @app.post("/api/upload-image")
     async def upload_image(request: dict):
         """接收 base64 图片，写入 .asterwynd/uploads/，返回 file_path 和 data_url"""
@@ -165,23 +233,61 @@ def create_app(
     async def websocket_endpoint(ws: WebSocket, session_id: str):
         await ws.accept()
         upload_buffers: dict[str, dict] = {}
+        query = ws.query_params
+        requested_mode = str(query.get("mode", "")).strip()
+        requested_workspace = str(query.get("workspace", "")).strip()
+        # /ws/new 带显式参数（mode 或 workspace）→ 跳过 --resume 拦截直接新建
+        # （issue #117 grill R2/Q8）；仅裸 /ws/new 保留 --resume 语义。
+        has_explicit_new_params = session_id == "new" and bool(requested_mode or requested_workspace)
+        # 恢复路径的 workspace 参数先校验（issue #117 R1/Q7）：非法 → error 后关闭。
+        resume_workspace: Path | None = None
+        if requested_workspace:
+            try:
+                resume_workspace = session_manager.resolve_workspace(requested_workspace)
+            except ValueError:
+                await ws.send_json({"error": "workspace_not_allowed"})
+                await ws.close()
+                return
 
         session = session_manager.get_session(session_id)
         if session is None:
-            # /ws/new 是默认入口：若 CLI 传了 --resume，则用它作为恢复目标；
-            # 其他 session id 直接用该 id 尝试恢复（内存或持久化快照）。
+            # /ws/new 是默认入口：若 CLI 传了 --resume 且无显式新建参数，则用
+            # resume 目标；其他 session id 直接用该 id 尝试恢复。
             resume_target = (
                 session_id if session_id != "new" else app.state.resume_session_id
             )
+            if has_explicit_new_params:
+                resume_target = None
             if resume_target:
-                session = await session_manager.resume_session_async(resume_target, llm)
+                session = await session_manager.resume_session_async(
+                    resume_target, llm, workspace=resume_workspace,
+                )
 
         if session is None:
-            session = await session_manager.create_session_async(llm)
+            # 新建：校验 mode / workspace（issue #117 D2）。
+            create_mode: str | None = None
+            create_workspace: Path | None = None
+            if requested_mode:
+                try:
+                    from agent.run_config import parse_agent_mode
+                    parse_agent_mode(requested_mode)
+                    create_mode = requested_mode
+                except ValueError:
+                    await ws.send_json({"error": "invalid_mode"})
+                    await ws.close()
+                    return
+            if requested_workspace:
+                create_workspace = resume_workspace
+            session = await session_manager.create_session_async(
+                llm,
+                mode=create_mode,
+                workspace_root=create_workspace,
+            )
             await ws.send_json({
                 "type": "session_created",
                 "session_id": session.session_id,
                 "mode": session.current_mode,
+                "workspace": str(session.workspace_root) if session.workspace_root else None,
             })
         else:
             from web.session import build_history_payload
@@ -190,6 +296,7 @@ def create_app(
                 "type": "session_resumed",
                 "session_id": session.session_id,
                 "mode": session.current_mode,
+                "workspace": str(session.workspace_root) if session.workspace_root else None,
             })
             await ws.send_json(build_history_payload(session))
 
@@ -424,12 +531,21 @@ def create_app(
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
                     session.question_handler.fail_pending("session reset")
+                    # reset 保留原 workspace/mode（issue #117 grill R7/Q9），
+                    # 替换会话用同 workspace + 同 mode 创建。
+                    old_workspace = session.workspace_root
+                    old_mode = session.current_mode
                     session_manager.remove_session(session.session_id)
-                    session = await session_manager.create_session_async(llm)
+                    session = await session_manager.create_session_async(
+                        llm,
+                        mode=old_mode,
+                        workspace_root=old_workspace,
+                    )
                     await ws.send_json({
                         "type": "session_created",
                         "session_id": session.session_id,
                         "mode": session.current_mode,
+                        "workspace": str(session.workspace_root) if session.workspace_root else None,
                     })
 
                 elif msg_type == "set_mode":
