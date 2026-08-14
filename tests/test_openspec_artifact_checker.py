@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
 
+import pytest
+
 from scripts.check_openspec_artifacts import (
     check_backlog_consistency,
     check_change,
@@ -9,6 +11,20 @@ from scripts.check_openspec_artifacts import (
     parse_change_type,
 )
 from agent.workflow.manager import WorkflowManager
+
+
+@pytest.fixture(autouse=True)
+def _seed_policy_file(tmp_path):
+    """Seed scripts/flow-policy.json so protected-path checks load real rules.
+
+    flow-policy-source P0: the checker loads PROTECTED_PATH_RULES from
+    scripts/flow-policy.json (single policy source), so tmp_path-based repo
+    fixtures must provide it.
+    """
+    src = Path(__file__).resolve().parents[1] / "scripts" / "flow-policy.json"
+    target = tmp_path / "scripts" / "flow-policy.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 VALID_DESIGN = """## Context
