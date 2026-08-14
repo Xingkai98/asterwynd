@@ -117,6 +117,27 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
+### 6. `flow-policy-source`
+
+状态：未实现。
+
+关联 issue：[#131](https://github.com/Xingkai98/asterwynd/issues/131)（【feature】flow-policy-source：开发流程策略单一源（P0））；父 map：[#121](https://github.com/Xingkai98/asterwynd/issues/121)。
+
+批次：开发流程可安装化 P0 批次（#121 P0-P4 第一步），先于 P1 事件投影 / P2 平台闸门；与队列中其他 change（TUI、worktree 工具等）无代码面重叠。
+
+建议顺序原因：
+
+- P0 把受保护路径规则从 guard/checker 双份硬编码收敛为单一 `scripts/flow-policy.json`，是 P1（事件投影 workflow-state.json 入受保护清单）、P2（CI guard-parity job）的地基；#121 已确认 P0 先立。
+- 范围三合一：#122（策略源落点 A）+ #123（内容门槛阶段感知）+ #127（agent schema P0 定义 + JSON Schema 校验，spawn 留 P4）。
+
+主要交付：
+
+- `scripts/flow-policy.json` 单一策略源（受保护路径规则表 match_type+governance+event_types + phases/review agent schema）。
+- guard/checker 同源加载 + guard 内嵌默认表 fail-closed（缺失/损坏 exit 2）+ parity 测试锁一致。
+- 修 guard 4 个实测绕过（`echo > file`、`cat <<EOF`、`pathlib.write_text`、`docs/./` 变体）与 User Confirmation 正则死锁。
+- `workflow_state.py` 新增 `policy-*` 子命令；checker 内容门槛；agent schema JSON Schema 校验。
+- 实现 PR 合入时给 issue #131 添加完成 comment 并关闭。
+
 ## 已完成待归档
 
 这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。
