@@ -49,3 +49,4 @@
 ## 审阅修复（review-loop，issue #90）
 
 - Round 1（2026-08-14，run aba4d44717337df70）：**[中] light 档「research questions 可省略」与 checker 结构门槛矛盾**——checker 在 status=enabled 结构门槛按 tier 分流，light 跳过 `research questions` 必填（`scripts/check_openspec_artifacts.py` enabled_fields 分支），新增回归测试 `test_light_tier_research_questions_optional`（proposal 阶段 + tasks 全勾完成时均通过）。观察项（full/light+disabled 完成时只报 status 根因错误、不聚合 findings 占位）确认为有意行为：status 错误是根因，修正为 enabled 后 #123 检查即捕获 findings 占位，净效果仍 exit 2，不修复。
+- Round 2（2026-08-14，run a8615a71314c8044a）：**[中] spec 侧残留 rq 必填口径**——spec delta/synced 的「Non-docs change records enabled research」与「Artifact checker enforces record shape」两处场景仍无条件要求 enabled 调研含 `research questions`，与「Routine enhancement requires light research」（light 可省略）及已修复的 checker 自相矛盾；改为 `research_tier: full` 才要求 research questions 非空（delta 与 synced spec 同步修）。[低] `tests/test_flow_policy.py` 的 #123 内容门槛 fixture 补 `research_tier: full`（消除多余结构错误）。

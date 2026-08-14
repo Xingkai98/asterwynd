@@ -200,7 +200,9 @@ and SHALL declare the expected research tier as
   `proposal.md` or `design.md`
 - **AND** the section records `research_tier: full` or `research_tier: light`
 - **AND** the section records `status: enabled`
-- **AND** records the reason, research questions, findings, and design impact
+- **AND** records the reason, findings, and design impact
+- **AND** records research questions when `research_tier: full` (omittable
+  for `research_tier: light`)
 
 #### Scenario: Non-docs change disables research
 - **WHEN** an OpenSpec change has `primary` other than `docs`
@@ -257,8 +259,10 @@ and SHALL declare the expected research tier as
 - **WHEN** the project artifact checker validates an active non-docs change
 - **THEN** it checks that reference implementation research status is present
   and is either `enabled` or `disabled`
-- **AND** it checks that enabled research has non-empty reason, research
-  questions, findings, and design impact
+- **AND** it checks that enabled research has non-empty reason, findings, and
+  design impact
+- **AND** it checks that research questions are non-empty when
+  `research_tier: full`
 - **AND** it checks that disabled research has a non-empty reason
 - **AND** it does not judge research quality or verify local reference
   repository paths

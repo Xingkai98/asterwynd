@@ -251,6 +251,7 @@ def _seed_content_gate_change(tmp_path, *, tasks_all_done: bool, phrase: str):
     (change_dir / "proposal.md").write_text(
         "## Change Type\n\n- primary: feature\n\n"
         "## Reference Implementation Research\n\n"
+        "- research_tier: full\n"
         "- status: enabled\n"
         "- reason: 需要参考实现\n"
         f"- research questions: {phrase}\n"
