@@ -117,27 +117,6 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-### 6. `industry-research-gate`
-
-状态：未实现。
-
-关联 issue：[#133](https://github.com/Xingkai98/asterwynd/issues/133)（【feature】industry-research-gate：方案设计前业界调研门禁（分流判据））。父 map：[#121](https://github.com/Xingkai98/asterwynd/issues/121)（cross-cutting 规则：方案设计前业界调研门禁）。
-
-批次：开发流程可安装化 cross-cutting 规则落点，与队列中其他 change（TUI、worktree 工具）无依赖。
-
-建议顺序原因：
-
-- #121 cross-cutting 规则（用户 2026-08-14 提出）：方案设计前充分调研业界最新实践或框架，按改动性质分流；本 change 将其落地为 AGENTS.md 规则 + checker 机械校验。
-- 先于 P1-P4 立项落地：P1-P4 立项时可直接引用其「上游决策锁定」豁免口径（与 flow-policy-source 归档口径一致）。
-
-主要交付：
-
-- AGENTS.md「参考实现调研」节升级为「业界调研门禁」（三档分流判据表 + 豁免质量门槛）。
-- RIR 节新增 `research_tier: full|light|exempt` 必填字段；checker 阶段感知校验（proposal 查结构，tasks 全勾时 full/light 查占位词与 status、exempt 查结构性豁免关键词或引用证据）。
-- `docs/development-guide.md` 新增「业界调研门禁」小节（判据举例、豁免写法示范）。
-- spec delta：change-documentation 的 Reference implementation research gate 扩展 + 新增 Research tier triage。
-- 实现 PR 合入时给 issue #133 添加完成 comment 并关闭。
-
 ## 已完成待归档
 
 这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。

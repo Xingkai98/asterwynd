@@ -39,11 +39,11 @@
 
 ## 5. PR 收尾
 
-- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-industry-research-gate/`。
-- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次章节。
-- [ ] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
-- [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
-- [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/2026-08-14-industry-research-gate/`。
+- [x] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次章节。
+- [x] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
+- [x] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
+- [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
 - [ ] 5.6 PR 合入时，给关联 GitHub issue #133 添加完成说明 comment 并关闭。
 
 ## 审阅修复（review-loop，issue #90）
