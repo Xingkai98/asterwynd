@@ -147,9 +147,11 @@ P0 目标是把开发流程规则从「guard/checker 双份硬编码」收敛为
 - **缺陷 5（低，已修正 D3）**：内嵌默认表定位矛盾，明确 parity-only 不参与 enforcement。
 
 - 已确定（决策票 + grill 确认，本 change 沿用）：独立 `flow-policy.json`（JSON）、match_type+governance+event_types 规则表、guard 内嵌默认表 parity-only + 缺失/损坏 fail-closed、checker 同源加载（链式 parity）、workflow_methods.json 保留 management bypass、内容门槛阶段感知（短语集去 `暂无`/`未完成`）、agent schema P0 只定义不消费。
-- 待确认（Open Questions Q1-Q10，停轮等待用户逐项确认，记录于 grill-design.md `## User Confirmation`）：完整 A vs P0 变体；三合一范围；governance 分配表；`policy-*` 写通道形态；agent schema 与 config.yaml routing 关系；内容门槛短语集；Bash 写意图感知语义；自举写通道；checker 正则同步修复；内嵌默认表 parity-only。
+- **全部 Open Questions（Q1-Q10）已由用户确认**（2026-08-14，记录于 grill-design.md `## User Confirmation`）：Q1 完整 A；Q2 合并三合一；Q3 governance 分配表按推荐；Q4 含 policy-set 写通道；Q5 agent schema 只定义不接线；Q6 短语集删 `暂无`/`未完成`；Q7 写意图感知 Bash 扫描；Q8 policy-set 为唯一 agent 写通道；Q9 checker 正则同步修复；Q10 内嵌默认表 parity-only。grill-confirmation-gate 已满足，进入 building 写代码门禁放行。
 
 ## Open Questions
+
+全部已确认（2026-08-14，详见 `reviews/grill-design.md` `## User Confirmation`）。
 
 - **Q1**（#122 遗留 Q4）：P0 范围选**完整 A**（checker 也从 `flow-policy.json` 加载，推荐）还是 **P0 变体**（checker 暂硬编码 + parity 锁子集）？完整 A 才是真单一源，checker 无 stdlib-only 约束读 JSON 成本低；变体改动小但 checker 侧双份源仍在。
 - **Q2**：范围三合一确认——本 change 合并 #122（策略单一源）+ #123（内容门槛）+ #127（agent schema P0 边界）为一个 P0 change，接受吗？（#121 frontier 指示如此；如需拆开请说明优先级）

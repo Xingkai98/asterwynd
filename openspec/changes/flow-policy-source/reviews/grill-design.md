@@ -24,6 +24,19 @@
 - **Q9**（新）: D7 只修 guard 的 `_h2_section`/User Confirmation 正则，但 checker 的 `_extract_h2_sections`（check_openspec_artifacts.py:165-173）与 `_extract_user_confirmation_indexes`（:552）有完全相同的两个 bug（fenced code block 内 `##` 误判为 section；`- **Q8**（分支命名）:` 后缀无法提取）。我已实测两者当前行为一致（都错），若只修 guard 则 parity 测试（tests/test_workflow_guard.py:308）在 fenced-block / Q8 后缀 fixture 上失配。推荐答案: guard 与 checker 的提取正则同步修复（两个文件同 PR 改），并在 parity 测试新增这两类 fixture 锁死。
 - **Q10**（新）: guard 内嵌默认表的定位——D3 说「guard 先于策略文件部署窗口期的兜底」但又「加载失败 fail-closed exit 2 不使用内嵌默认表继续放行」，两者矛盾；内嵌表到底参不参与 enforcement？推荐答案: 明确内嵌默认表为 parity-only（只作「磁盘表 == 内嵌表」对比锚点，从不参与运行时 enforcement），删除「兜底/fail-safe」表述，与 fail-closed-on-missing 语义一致；否则「guard 生效但磁盘表旧版」的漂移窗口理解混乱。
 
+## User Confirmation
+
+- **Q1**: 用户答复：完整 A（checker 也从 flow-policy.json 加载，真单一源）；确认时间: 2026-08-14
+- **Q2**: 用户答复：合并（#122+#123+#127 一个 P0 change）；确认时间: 2026-08-14
+- **Q3**: 用户答复：按推荐（D4 governance 分配表确认：workflow-events.jsonl=cli_written、gate-approvals.json/handoff.json=guard_only、-review-manifest.json=manifest_verified、workflow-state.json 预留=cli_written）；确认时间: 2026-08-14
+- **Q4**: 用户答复：含 policy-set 写通道（policy-show + policy-validate + policy-set 原子写）；确认时间: 2026-08-14
+- **Q5**: 用户答复：按推荐（P0 只定义 agent schema 不接线 config.yaml routing，迁移留 P1/P4）；确认时间: 2026-08-14
+- **Q6**: 用户答复：按推荐（内容门槛短语集删 暂无/未完成，保留 尚未完成/待补充/待调研/TBD/todo/待确认，匹配前 lower 归一）；确认时间: 2026-08-14
+- **Q7**: 用户答复：写意图感知（路径提取 token → normpath → match_type，只在有写意图且非豁免 CLI 写通道时拦）；确认时间: 2026-08-14
+- **Q8**: 用户答复：policy-set 作为唯一 agent 可调用写通道（guard 显式豁免）；确认时间: 2026-08-14
+- **Q9**: 用户答复：按推荐（checker 提取正则与 guard 同 PR 修复 + parity 新增 fenced-block/Q8 后缀 fixture）；确认时间: 2026-08-14
+- **Q10**: 用户答复：按推荐（内嵌默认表 parity-only，不参与运行时 enforcement）；确认时间: 2026-08-14
+
 ## 风险
 - **D7 blanket contains 误拦合法只读与 CLI 写通道（高）**: 若按「策略表 path 值集 contains 命中即 exit 2」实现，`git diff openspec/specs/...`、`cat docs/known-debt.md`、`grep` 等只读命令会被拦截（现 rc=0，我已实测）；且会破坏 `test_guard_allows_workflow_state_cli_commands`（tests/test_workflow_guard.py:65-85 期望 rc=0）。D7 两个 bullet 自相矛盾（design.md D7「对每条 Bash 命令先做 _mentions_protected_path 命中即 exit 2」vs「Bash 命令中提取的路径先 normpath 再匹配」）。
 - **flow-policy.json 自举/迭代死锁（高）**: guard fail-closed on missing + flow-policy.json governance=cli_written 拦截 agent Write/Edit，导致本 change 自己无法创建/修正策略文件（tasks.md:26 任务 3.1 由 agent 执行；D6 P0 仅 policy-show/policy-validate 只读通道）。design.md 未提供 bootstrap 豁免或写通道。
