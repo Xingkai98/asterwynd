@@ -401,6 +401,7 @@ def test_guard_rejects_chained_privileged_cli_hijack(tmp_path):
     for cmd in (
         "python3 scripts/workflow_state.py policy-show && echo >docs/known-debt.md",
         "python3 scripts/workflow_state.py artifact-event --change x --event-type protected_artifact_explained --artifact-path docs/known-debt.md --reason r --approved-by h; echo x > docs/known-debt.md",
+        "python3 scripts/workflow_state.py policy-show\npython3 -c \"Path('docs/known-debt.md').write_text('x')\"",
     ):
         result = _run_guard(
             tmp_path,

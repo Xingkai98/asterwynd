@@ -888,8 +888,12 @@ def cmd_policy_set(args: argparse.Namespace) -> int:
             rules.append(entry)
         verb = "写入"
 
-    if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
-        print("错误：写入后策略规则表校验失败（请检查 match-type/governance/event-types）", file=sys.stderr)
+    try:
+        if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
+            print("错误：写入后策略规则表校验失败（请检查 match-type/governance/event-types）", file=sys.stderr)
+            return 1
+    except RuntimeError as exc:
+        print(f"错误：写入后策略规则表 schema 非法: {exc}", file=sys.stderr)
         return 1
 
     _atomic_write_json(_POLICY_PATH, data)

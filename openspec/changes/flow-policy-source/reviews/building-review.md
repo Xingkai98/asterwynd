@@ -6,9 +6,9 @@
 
 ## Verdict
 
-**CHANGES_REQUESTED**
+**CHANGES_REQUESTED**（Round 2 复核后维持）
 
-实现主体完整且正确（单一策略源、同源加载、fail-closed、4 绕过纯形态拦截、内容门槛、schema 校验、policy-* CLI 均有真实实现与测试，95 个定向测试全绿，artifact checker 通过）。但存在 **1 个高严重度新绕过**（特权 CLI 豁免可被 `&&`/`;` 链式劫持，使 P0 的「4 绕过修复」可被一行前缀重新绕过）+ 若干中低问题（Q10 违反、checker schema 非法裸崩、tasks 2.5 parity 缺测试锁）。需修复后复审。
+实现主体完整且正确（单一策略源、同源加载、fail-closed、4 绕过纯形态拦截、内容门槛、schema 校验、policy-* CLI 均有真实实现与测试，99 个定向测试全绿）。Round 1 的 7 个 issue 大部分已修复（见 `## Round 2 复核`），但 R1-1 只修了 `&&`/`;`/`|`/`>` 链式，**换行符（`\n`）链式仍可劫持特权 CLI 豁免**，属与 R1 同一安全类的残留绕过；另 R1-3 的 `cmd_policy_set` 调用点未捕获 RuntimeError、R1-5 的「记 known-debt」实际未写文件。需第 3 轮修复后复审。
 
 ## Tasks Verification
 
@@ -104,6 +104,52 @@
 ## 结论
 
 - **优势**: 架构主线完整——单一策略源（flow-policy.json）真实落地，guard/checker 同源加载，缺失/损坏 fail-closed exit 2，4 个文档化绕过纯形态全部拦截（带回归测试），内容门槛阶段感知与 agent schema JSON Schema 校验均有真实实现和测试，policy-* CLI 原子写可用。parity 链式断言（guard 内嵌子集 == 磁盘子集 == checker 加载集）设计正确。
-- **必须修复**: Issue #1（特权 CLI 豁免链式绕过）——它使 P0 的核心交付「4 绕过修复」可被一行前缀重新绕过，属安全边界缺陷，修复（锚定豁免）+ 补链式回归测试后再复审。
-- **建议修复**: Issue #2（Q10 违反 + Write/Bash 不一致）、Issue #3（checker 裸崩）、Issue #4（2.5 parity 缺测试锁）。
-- **可接受残余**: Issue #5/#6/#7（低严重度，可记 known-debt 或文档化）。
+- **必须修复（Round 2）**: 换行符链式绕过（R1-1 残留）——`_is_privileged_cli` 的拒绝集未含 `\n`/`\r` 且 `re.match` 仅前缀锚定，`workflow_state.py policy-show\n python3 -c "Path(...).write_text(...)"` 仍 rc=0 放行。修复（拒绝集加 `\n\r` 或行尾锚定）+ 补换行链式回归测试后复审。
+- **建议修复（Round 2 残留）**: `cmd_policy_set`（workflow_state.py:891）对 schema 非法既有策略仍裸 RuntimeError；R1-5「记 known-debt」实际未写 docs/known-debt.md。
+- **已修复确认**: R1-1 的 `&&`/`;`/`||`/`|`/`>`/`$(`/反引号链式、R1-2（内嵌表 fallback 移除 + Write/Bash 空规则一致）、R1-3（checker + policy-validate 可读错误）、R1-4（词表 parity 测试 + tasks 2.5 措辞）、R1-6（design D2 对齐）、R1-7（guard 恢复文案）。
+
+## Round 2 复核（2026-08-14，对 commit 9f01b2f）
+
+Round 1 的 7 个 issue 修复逐项复核：
+
+| Issue | 修复验证 |
+|---|---|
+| R1-1 链式劫持 | ⚠️ **部分修复**。`&&`/`;`/`\|\|`/`\|`/`>`/`$(`/反引号 链式实测全部 rc=2（含新增测试 test_guard_rejects_chained_privileged_cli_hijack）。但**换行符链式仍绕过**（见下方 Round 2 Issue 1）。 |
+| R1-2 内嵌表 fallback | ✅ 已修复。`_bash_targets_protected_path`（workflow_guard.py:296-306）改用 `_CURRENT_RULES` 且 None 时返回 False；空规则时 Write 与 Bash 实测一致 rc=0（test_guard_empty_rules_consistent_fail_open）。 |
+| R1-3 checker 裸崩 | ⚠️ **部分修复**。`check_protected_path_explanations`（check_openspec_artifacts.py:973-978）与 `cmd_policy_validate`（workflow_state.py:823-827）已捕获 RuntimeError 返回可读错误（test_checker_schema_error_is_readable）；但 `cmd_policy_set`（workflow_state.py:891）仍未捕获（见 Round 2 Issue 2）。 |
+| R1-4 词表 parity | ✅ 已修复。test_unconfirmed_vocab_parity 机械断言 guard↔checker 词表一致；tasks 2.5 措辞修正（bash 写正则仅 guard 侧无 parity 对象）。 |
+| R1-5 shell 变量绕过 | ⚠️ 未完全执行。tasks.md R1-5 声称「记 known-debt」，但 docs/known-debt.md 无 diff（见 Round 2 Issue 3）。 |
+| R1-6 design D2 对齐 | ✅ 已修复。design.md:76 明确 guard Write/Edit 用 normpath+contains 保守超集。 |
+| R1-7 guard 恢复文案 | ✅ 已修复。workflow_guard.py:246-248 改为「请先修复该文件再重试（JSON 可读时可运行 policy-validate 校验结构）」。 |
+
+### Round 2 Issue 1 [MEDIUM-HIGH] 换行符链式仍可劫持特权 CLI 豁免（R1-1 残留）
+
+- 位置: `scripts/workflow_guard.py:263`（拒绝正则 `re.search(r"&&|\|\||[;|`]|\$\(|>\s*[^=]", stripped)` 未含 `\n`/`\r`）、`:266`（`re.match` 仅前缀锚定，非整行）
+- 失败场景: `python3 scripts/workflow_state.py policy-show\n python3 -c "Path('docs/known-debt.md').write_text('x')"` → 拒绝集无 `\n`，`re.match` 前缀命中 `policy-show` → 整条豁免 → **rc=0**。
+- 同类变体: 换行后接 `cp x docs/known-debt.md`、`python3 -c "...write_text..."`（凡不含 `>`/`;`/`|`/反引号/`$(` 的 `>`-free 写形态）。
+- 与 R1 同一安全类（多行 Bash 是 agent 常见写法），且修复意图「整条命令是独立调用」未完全落实。
+- 修复建议: 拒绝集加 `\n`/`\r`（`r"...|[\r\n]"`）或将 `re.match` 改为整行校验；补换行链式回归测试。
+
+### Round 2 Issue 2 [LOW] cmd_policy_set 对 schema 非法既有策略仍裸 RuntimeError（R1-3 残留）
+
+- 位置: `scripts/workflow_state.py:891`（`if checker._load_protected_path_rules(_PROJECT_ROOT) is None:` 无 try/except）
+- 失败场景: 既有 flow-policy.json 含 event_explained 规则缺 event_types（parseable JSON）→ policy-set 读取成功、内存修改后，:891 重读磁盘抛 RuntimeError → 裸 traceback（exit 1）。policy-set 无法用于修复 schema 非法策略。
+- 修复建议: 与 cmd_policy_validate 一样 try/except RuntimeError 转干净 FAIL。
+
+### Round 2 Issue 3 [LOW] R1-5「记 known-debt」实际未写 docs/known-debt.md
+
+- 位置: tasks.md 第 6 节 R1-5（声称「记 known-debt」）；`git diff 774e30a...HEAD -- docs/known-debt.md` 为空
+- 现状: shell 变量拼接绕过（`echo > doc$V/known-debt.md`）记录在 tasks.md 与 building-review.md，但未落到规范 known-debt.md（受保护文件，需 workflow-events.jsonl 事件）。已知限制信息随 change 携带，可接受，但 R1-5 勾选与实际不符。
+- 建议: 归档前把该已知限制与事件补入 docs/known-debt.md，或修正 tasks R1-5 措辞。
+
+### Round 2 Test Results
+
+| 命令 | 结果 |
+|---|---|
+| `python3 -m pytest tests/test_flow_policy.py tests/test_workflow_guard.py tests/test_openspec_artifact_checker.py -q` | **99 passed**（Round 1 后新增 4 个修复测试） |
+| `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` | 除本 change 因 building-review.md 无 manifest 报 review manifest missing（审阅闭环产物未完成，属预期）外无其他错误 |
+| `python3 scripts/workflow_state.py policy-validate` / `policy-show` | 校验通过 / 正常展示 |
+
+### Round 2 复核结论
+
+修复整体有效（R1-2/R1-4/R1-6/R1-7 彻底；R1-1/R1-3 部分），但 R1-1 的换行符链式绕过使「特权 CLI 豁免」安全类问题未完全闭合，属中等偏高残留，须第 3 轮修复（加 `\n\r` 拒绝或整行锚定 + 回归测试）后复审。当前 verdict 维持 **CHANGES_REQUESTED**。

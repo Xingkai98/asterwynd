@@ -260,7 +260,8 @@ def _is_privileged_cli(command: str) -> bool:
     would hijack the exemption (building-review Issue 1).
     """
     stripped = command.strip()
-    if re.search(r"&&|\|\||[;|`]|\$\(|>\s*[^=]", stripped):
+    # 复合/重定向/命令替换/换行（多行 Bash 可换行接写命令）→ 非独立调用
+    if re.search(r"&&|\|\||[;|`]|\$\(|[\r\n]|>\s*[^=]", stripped):
         return False
     return bool(
         re.match(
