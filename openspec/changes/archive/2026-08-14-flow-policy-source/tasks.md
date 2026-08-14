@@ -8,7 +8,7 @@
 - [x] 1.4 维护 `## Reference Implementation Research`（status: disabled + 理由 + findings + design impact）。
 - [x] 1.5 开发前使用独立 subagent 等价设计追问（grill）审视 `design.md`，产出 `reviews/grill-design.md`（6 条 Confirmed Decisions + Q1-Q10 + 风险），逐项确认实现细节；停轮获得用户对 `## Open Questions`（Q1-Q10）的确认并记录到 `## User Confirmation`。
 - [x] 1.6 更新 `docs/openspec-change-backlog.md`，把 flow-policy-source 加入未实现队列（配 workflow-events.jsonl 解释事件）。
-- [ ] 1.7 当前规格同步：把 dev-workflow-state-machine spec delta 合并到 `openspec/specs/dev-workflow-state-machine/spec.md`，确认未实现能力没有被写成已实现，并配 workflow-events.jsonl 解释事件。
+- [x] 1.7 当前规格同步：把 dev-workflow-state-machine spec delta 合并到 `openspec/specs/dev-workflow-state-machine/spec.md`，确认未实现能力没有被写成已实现，并配 workflow-events.jsonl 解释事件。
 
 ## 2. 测试
 
@@ -42,11 +42,11 @@
 
 ## 5. PR 收尾
 
-- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-flow-policy-source/`。
-- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
-- [ ] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
-- [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
-- [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-flow-policy-source/`。
+- [x] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
+- [x] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
+- [x] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
+- [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
 - [ ] 5.6 PR 合入时，给关联 GitHub issue #131 添加完成说明 comment 并关闭。
 
 ## 6. 审阅修复记录（building-review Round 1，verdict CHANGES_REQUESTED）
