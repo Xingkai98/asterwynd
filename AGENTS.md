@@ -68,6 +68,14 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `batch-grill-me`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
 
+### paseo 会话长任务提示
+
+用户主要从手机经 paseo 操作本仓库时，当前会话是一个 paseo 托管进程：paseo 会在 agent **空闲约 2 分钟后回收其运行时**（`IDLE_AGENT_RUNTIME_TTL_MS`，daemon 日志见「Collected idle agent runtime」）。因此：
+
+- **长任务 / 并行子任务一律用 paseo 托管 agent（`mcp__paseo__create_agent`）**，不要用 Claude Code 内置的 Workflow / 后台 Agent 工具——后者是会话内子进程，随本会话进程被回收而中断（实测：workflow 在回合结束后被回收杀掉）。
+- create_agent 用法：provider 形如 `claude/claude-fable-5[1m]`；只读审阅/调研任务设 `modeId: "plan"` 防写和防权限卡住；配 `notifyOnFinish` 等完成通知。
+- paseo 托管 agent 运行期间是 `running` 态、不在 idle 回收范围，且独立于本会话进程；任务完成后再被回收属正常，产出在其 transcript/落盘文件中可恢复。
+
 ## 开发流程：OpenSpec 主干 + 强制审阅闭环
 
 **这是最高优先级行为规则。** 本仓库的开发流程精简为两部分：**OpenSpec 主干**（需求→设计→实现→收尾）加 **实现完成后强制独立 subagent 审阅闭环**。旧的四阶段状态机仪式（phase/sub_state 推进、handoff.json、gate 停止）已停用，不再需要 discover/advance/approve。
