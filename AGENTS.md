@@ -16,7 +16,7 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - **需求先行**: 新功能必须先完成需求讨论和需求文档，再进入开发。没有把目标、边界、验收标准、测试策略聊清楚之前，不写实现代码。
 - **Issue 关联**: 每个 OpenSpec 立项必须关联一个 GitHub issue 作为跟踪入口，issue 标题以【feature】开头标明类型（例如【feature】xxxx）；issue 正文写明背景、需求、OpenSpec change 路径和跟踪约定，change 文档与 backlog 记录 issue 号。change 实现 PR 合入时，必须给对应 issue 添加完成说明 comment 并关闭。
 - **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `batch-grill-me` skill（设计树逐轮追问，一轮问整个 frontier，效率更高）审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `batch-grill-me`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。**机械强制（issue #95）**：grill 由独立零记忆 subagent 执行（`/grill` 命令），产出结构化决策记录到 `openspec/changes/<id>/reviews/grill-design.md`；workflow_guard 在写代码前检查该证据，缺失则阻止写操作；artifact checker 对完成 change 验证证据存在且 ≥3 条决策。**停轮确认（grill-confirmation-gate）**：grill 产出后，agent 必须**停轮**把 `## Open Questions` 逐项抛给用户并等待明确答复；收到答复前不得写实现代码。用户答复记录进 `grill-design.md` 的 `## User Confirmation` 节（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。workflow_guard 在 Open Questions 未全部确认时仍拦截代码写；artifact checker 对 tasks 全勾选的完成 change 校验每个 Open Question 都有确认记录。占位文本（`待确认`/`待主 agent 提交` 等）不计入确认。**分支纪律**：每次开发必须切 `<change-id>/<YYYY-MM-DD>` 分支（门禁依赖分支名推导 change-id）。
-- **参考实现调研门禁**: 非 docs OpenSpec change 默认必须启用参考实现调研，并在 `proposal.md` 或 `design.md` 维护 `## Reference Implementation Research`，记录 `status`、`reason`、`research questions`、`findings` 和 `design impact`。确实不适用时可写 `status: disabled`，但必须说明原因。该门禁由项目 artifact checker 和 CI 机械检查；checker 不读取本地 `.dev/reference-repos.txt`，本地参考仓库不可用时必须在 change 文档中记录不可用事实和替代依据。
+- **业界调研门禁**: 方案设计（proposal/design）前必须按改动性质分流调研业界最新实践或框架，并在 `proposal.md` 或 `design.md` 维护 `## Reference Implementation Research`（必填 `research_tier: full|light|exempt`）。三档判据与豁免质量门槛见下节「业界调研门禁」：`full` 必调研、`light` 浅调研、`exempt` 须 reason 引用客观依据（结构关键词或已关闭决策 issue/评审路径），占位文本不计入。该门禁由 artifact checker 与 CI 机械校验（proposal 阶段查结构，tasks 全勾时按 tier 查完成闭环）；checker 不读取本地 `.dev/reference-repos.txt`，「本地参考仓库不可用」不构成豁免理由，但须在 findings 记录不可用事实和替代依据。
 - **问题定位**: 定位问题时，先查清根因并给出解决方案，待确认后再实际修改代码。
 - **测试要求**: 每个 bug fix 必须新增回归测试；涉及 CLI、Web、benchmark、工具协议或 AgentLoop 的变更必须覆盖对应层级测试。
 - **CI 与影响分析**: 非平凡 OpenSpec change 必须维护结构化 `Impact Analysis`，并在开发中发现新影响面时先回写 change 文档和任务清单；baseline CI 门禁包含全量 pytest、OpenSpec strict validate 和项目 artifact checker。`unknown` / `TBD` / `待确认` 可在 proposal 阶段短暂存在，但归档前必须清理为明确结论或阻塞项。
@@ -28,15 +28,23 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - **工作区约束**: 不提交 `.codegraph/`、`.understand-anything/`、`.dev/`、本地 `.env*`、日志、benchmark runs 等生成或本地文件，除非用户明确要求。
 - **已有改动**: 可能存在用户未提交改动。不要回滚不是自己产生的改动；如果影响当前任务，先理解并基于它继续。
 
-## 参考实现调研
+## 业界调研门禁
 
-当需要设计或对比某个 coding-agent 能力的实现方式时，应先查找当前工作区可用的参考仓库，并用 codegraph 加速调用链、类型关系和模块边界分析。非 docs OpenSpec change 默认启用该调研；若关闭，必须在 change 文档中显式写明原因。
+方案设计（proposal/design）前必须充分调研业界最新实践或框架，按改动性质分流，不允许一句「方案明确」豁免。分流判据表：
+
+| 档位 | 判据（命中任一） | 调研深度要求 |
+|------|------|---------|
+| `full` 必调研 | 架构级改造；引入新框架/新依赖/新协议；对标业界产品；走 grill 的非平凡 change | 完整 RIR（status/reason/research questions/findings/design impact 全字段） |
+| `light` 浅调研 | 常规功能增强；成熟模式的局部应用 | findings 一段 + 结论；research questions 可省略 |
+| `exempt` 可豁免（须 reason） | docs-only；bugfix（无新增能力面 + 回归测试）；上游决策锁定（引用已关闭决策 issue/架构评审结论，无待定设计项） | reason 须命中结构关键词或引用证据（`#<数字>`、评审文档路径），占位不计入 |
+
+豁免 reason 写法示范与常见误用（占位文本、无证据空话、判断性豁免须带引用）见 [docs/development-guide.md](./docs/development-guide.md) 的「业界调研门禁」小节。业界调研渠道为「业界实践/框架调研 + 本地参考仓库对比」两层，`## Reference Implementation Research` 的 findings 可同时含业界调研与参考仓库对比结果。
 
 - 当前工作区参考仓库路径应写在本地配置 `.dev/reference-repos.txt` 中，每行一个目录路径；该文件不提交。
 - 这些路径只是当前工作区的参考资料位置，不是项目依赖，也不要求其他开发者拥有相同目录结构。
 - 不要把参考仓库路径、`.codegraph/` 产物或本地索引结果作为可提交项目资产；若需要沉淀结论，应写入本仓库的需求、设计、ADR 或讨论纪要。
 - 调研时优先用 codegraph 理解跨文件关系，再用 `rg`、文件阅读和测试补充验证；不要只凭关键词搜索下结论。
-- 如果 codegraph 或本地参考仓库不可用，应在 `## Reference Implementation Research` 的 findings 中记录不可用事实，并说明改用的依据。
+- 如果 codegraph 或本地参考仓库不可用，应在 `## Reference Implementation Research` 的 findings 中记录不可用事实，并说明改用的依据；「本地参考仓库不可用」不构成 exempt 豁免理由。
 
 ## Agent skills
 
