@@ -6,9 +6,11 @@
 
 ## Verdict
 
-**CHANGES_REQUESTED**（Round 2 复核后维持）
+**PASS**（Round 3 最终判定）
 
-实现主体完整且正确（单一策略源、同源加载、fail-closed、4 绕过纯形态拦截、内容门槛、schema 校验、policy-* CLI 均有真实实现与测试，99 个定向测试全绿）。Round 1 的 7 个 issue 大部分已修复（见 `## Round 2 复核`），但 R1-1 只修了 `&&`/`;`/`|`/`>` 链式，**换行符（`\n`）链式仍可劫持特权 CLI 豁免**，属与 R1 同一安全类的残留绕过；另 R1-3 的 `cmd_policy_set` 调用点未捕获 RuntimeError、R1-5 的「记 known-debt」实际未写文件。需第 3 轮修复后复审。
+实现主体完整且正确（单一策略源、同源加载、fail-closed、4 绕过纯形态拦截、内容门槛、schema 校验、policy-* CLI 均有真实实现与测试，99 个定向测试全绿）。Round 1 的 7 个 issue 与 Round 2 的 3 个剩余 issue 已全部修复并经复核确认（见 `## Round 2 复核` / `## Round 3 复核`）。无未解决的中等以上问题。**可生成 review manifest。**
+
+注：`check_openspec_artifacts.py` 当前对 flow-policy-source 报 `review manifest missing`，是审阅闭环进行中的预期状态（本 building-review.md 已存在但 PASS manifest 尚未生成）；生成 manifest 后该错误消除。
 
 ## Tasks Verification
 
@@ -153,3 +155,29 @@ Round 1 的 7 个 issue 修复逐项复核：
 ### Round 2 复核结论
 
 修复整体有效（R1-2/R1-4/R1-6/R1-7 彻底；R1-1/R1-3 部分），但 R1-1 的换行符链式绕过使「特权 CLI 豁免」安全类问题未完全闭合，属中等偏高残留，须第 3 轮修复（加 `\n\r` 拒绝或整行锚定 + 回归测试）后复审。当前 verdict 维持 **CHANGES_REQUESTED**。
+
+## Round 3 复核（2026-08-14，对 commit 2efa601，封顶轮）
+
+Round 2 的 3 个剩余 issue 逐项复核：
+
+| Issue | 修复验证 |
+|---|---|
+| R2-1 换行符链式劫持 | ✅ 已修复。`_is_privileged_cli` 拒绝正则（workflow_guard.py:263）已加 `[\r\n]`；实测 `policy-show\npython3 -c "...write_text..."`、`\ncp x docs/known-debt.md`、`\r\ncat <<EOF > ...`、`\necho > ...` 全部 rc=2；合法独立 CLI（policy-show / policy-set）仍 rc=0。测试已并入 test_guard_rejects_chained_privileged_cli_hijack（3 用例）。 |
+| R2-2 cmd_policy_set RuntimeError | ✅ 已修复。`cmd_policy_set`（workflow_state.py:891-896）try/except RuntimeError 返回可读错误；实测 schema 非法既有策略下 policy-set → exit 1 + 干净文案「写入后策略规则表 schema 非法: ...」，且不覆盖原文件。 |
+| R2-3 known-debt 落实 | ✅ 已修复。docs/known-debt.md 新增「guard Bash 静态分析无法解析 shell 变量拼接（flow-policy-source P0）」条目，配 workflow-events.jsonl seq 3（protected_artifact_explained, artifact_path=docs/known-debt.md）；checker 对 docs/known-debt.md 变更不再报受保护路径未解释。 |
+
+### Round 3 复核结论
+
+3 个剩余 issue 全部真实修复并经独立复测确认；99 个定向测试全绿；checker 唯一剩余报错为「review manifest missing」（审阅闭环进行中、PASS manifest 尚未生成的预期状态，非代码缺陷）。审阅闭环三轮封顶，无未解决的中等以上问题。
+
+**最终 Verdict: PASS。可生成 review manifest 收尾。**
+
+### Round 3 Test Results
+
+| 命令 | 结果 |
+|---|---|
+| `python3 -m pytest tests/test_flow_policy.py tests/test_workflow_guard.py tests/test_openspec_artifact_checker.py -q` | **99 passed** |
+| 手工 Bash payload（4 个换行链式变体） | 全部 rc=2（被拦） |
+| 手工 Bash payload（合法独立 CLI） | rc=0（豁免正常） |
+| 手工 policy-set（schema 非法既有策略） | exit 1 + 可读错误，文件未被覆盖 |
+| `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` | 仅「review manifest missing」（预期，PASS 后生成 manifest 消除） |
