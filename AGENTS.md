@@ -36,7 +36,7 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 |------|------|---------|
 | `full` 必调研 | 架构级改造；引入新框架/新依赖/新协议；对标业界产品；走 grill 的非平凡 change | 完整 RIR（status/reason/research questions/findings/design impact 全字段） |
 | `light` 浅调研 | 常规功能增强；成熟模式的局部应用 | findings 一段 + 结论；research questions 可省略 |
-| `exempt` 可豁免（须 reason） | docs-only；bugfix（无新增能力面 + 回归测试）；上游决策锁定（引用已关闭决策 issue/架构评审结论，无待定设计项） | reason 须命中结构关键词或引用证据（`#<数字>`、评审文档路径），占位不计入 |
+| `exempt` 可豁免（须 reason） | docs-only；bugfix（无新增能力面 + 回归测试）；上游决策锁定（引用已关闭决策 issue/架构评审结论，无待定设计项） | reason 须命中结构关键词或引用证据（`#<数字>` 或 `docs/`、`openspec/changes/archive/`、`reviews/` 路径），占位不计入 |
 
 豁免 reason 写法示范与常见误用（占位文本、无证据空话、判断性豁免须带引用）见 [docs/development-guide.md](./docs/development-guide.md) 的「业界调研门禁」小节。业界调研渠道为「业界实践/框架调研 + 本地参考仓库对比」两层，`## Reference Implementation Research` 的 findings 可同时含业界调研与参考仓库对比结果。
 

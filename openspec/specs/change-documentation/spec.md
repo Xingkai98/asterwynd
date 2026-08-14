@@ -212,8 +212,8 @@ and SHALL declare the expected research tier as
 - **AND** the section records `status: disabled`
 - **AND** records a non-empty reason that hits a structural exemption keyword
   (for example `docs-only`, `bugfix`, `上游决策锁定`, `无设计决策`) or cites
-  evidence such as a closed decision issue (`#<number>`) or a review document
-  path
+  evidence such as a closed decision issue (`#<number>`) or a review/decision
+  document path (`docs/`, `openspec/changes/archive/`, `reviews/`)
 
 #### Scenario: Research tier is validated in proposal phase
 - **WHEN** the project artifact checker validates a non-docs change whose tasks

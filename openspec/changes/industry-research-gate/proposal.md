@@ -71,7 +71,7 @@
 | 影响面 | 说明 |
 |---------|------|
 | 开发流程治理（checker） | `check_openspec_artifacts.py`：RIR 结构门槛扩展 `research_tier` 字段校验；tasks 全勾时 exempt reason 证据校验 + full/light status 约束；现有 #123 内容门槛保留复用 |
-| Docs | `AGENTS.md`（参考实现调研节升级为业界调研门禁）、`docs/development-guide.md`（新增小节）、change 自身 OpenSpec 文档 |
+| Docs | `AGENTS.md`（参考实现调研节升级为业界调研门禁）、`docs/development-guide.md`（新增小节）、change 自身 OpenSpec 文档、存量 active change 的 proposal RIR 节补齐 `research_tier`（add-minimal-tui-runtime-view / add-worktree-tool / update-design-review-method，后者 reason 强化命中「无设计决策」） |
 | Specs | `openspec/specs/change-documentation/spec.md`（RIR gate requirement 扩展 + 新增分流 requirement） |
 | Tests | checker 单元测试新增：tier 解析/豁免证据/阶段感知/回归 |
 | CI | checker 行为变严（合规 change 不受影响），无新 check 条目 |

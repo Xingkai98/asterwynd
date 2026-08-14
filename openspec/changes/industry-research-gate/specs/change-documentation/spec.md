@@ -22,7 +22,7 @@ Non-docs OpenSpec changes SHALL explicitly record whether reference implementati
 - **THEN** the change records `## Reference Implementation Research` in `proposal.md` or `design.md`
 - **AND** the section records `research_tier: exempt`
 - **AND** the section records `status: disabled`
-- **AND** records a non-empty reason that hits a structural exemption keyword (for example `docs-only`, `bugfix`, `上游决策锁定`, `无设计决策`) or cites evidence such as a closed decision issue (`#<number>`) or a review document path
+- **AND** records a non-empty reason that hits a structural exemption keyword (for example `docs-only`, `bugfix`, `上游决策锁定`, `无设计决策`) or cites evidence such as a closed decision issue (`#<number>`) or a review/decision document path (`docs/`, `openspec/changes/archive/`, `reviews/`)
 
 #### Scenario: Research tier is validated in proposal phase
 

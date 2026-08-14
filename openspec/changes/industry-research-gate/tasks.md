@@ -27,15 +27,15 @@
 - [x] 3.4 `docs/development-guide.md` 新增「业界调研门禁」小节：三档判据举例、豁免 reason 写法示范（好/坏例子）、常见误用。
 - [x] 3.5 spec delta 合入：change-documentation 的 RIR gate requirement 扩展 + 新增 Research tier triage requirement。
 - [x] 3.6 存量 active change（add-minimal-tui-runtime-view / add-worktree-tool / update-design-review-method）的 RIR 节补齐 `research_tier` 字段（如合规，配 workflow-events 解释事件）。
-- [ ] 3.7 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单，再继续无关实现。
+- [x] 3.7 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单，再继续无关实现。
 
 ## 4. 验证
 
-- [ ] 4.1 运行相关单元测试（checker tier 校验矩阵）。
-- [ ] 4.2 运行全量测试 `uv run pytest -q`。
-- [ ] 4.3 运行 OpenSpec strict validate `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`。
-- [ ] 4.4 运行项目 artifact checker `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 4.5 人工核对 AGENTS.md 判据表与 development-guide 示例、spec Requirement 口径一致。
+- [x] 4.1 运行相关单元测试（checker tier 校验矩阵）。
+- [x] 4.2 运行全量测试 `uv run pytest -q`。
+- [x] 4.3 运行 OpenSpec strict validate `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`。
+- [x] 4.4 运行项目 artifact checker `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 4.5 人工核对 AGENTS.md 判据表与 development-guide 示例、spec Requirement 口径一致。
 
 ## 5. PR 收尾
 
