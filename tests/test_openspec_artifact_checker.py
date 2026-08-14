@@ -1276,6 +1276,40 @@ def test_research_tier_valid_values_pass_structure_gate(tmp_path, tier, status):
     assert check_change(change) == []
 
 
+def test_light_tier_research_questions_optional(tmp_path):
+    """light 档可省略 research questions（D2 + spec 口径），proposal 阶段与
+    tasks 全勾完成时均通过（review-loop Round 1 issue 回归）。"""
+    rir = """## Reference Implementation Research
+
+- research_tier: light
+- status: enabled
+- reason: 常规功能增强，成熟模式局部应用。
+- findings:
+  - Comparable repositories use documented gates; local application is routine.
+- design impact:
+  - The change records a mechanical gate.
+"""
+    change = tmp_path / "change-light-proposal"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False) + rir,
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == []
+
+    completed = tmp_path / "change-light-completed"
+    write_change(
+        completed,
+        proposal_for("process", reference_research=False) + rir,
+        design=VALID_DESIGN,
+    )
+    write_tasks(completed, ALL_TASKS_CHECKED)
+
+    assert check_change(completed) == []
+
+
 def test_exempt_reason_structural_keyword_passes_when_tasks_complete(tmp_path):
     change = tmp_path / "change-exempt-keyword"
     write_change(

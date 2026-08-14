@@ -565,7 +565,12 @@ def _check_reference_implementation_research(
         )
 
     if normalized_status == "enabled":
-        for field in ("research questions", "findings", "design impact"):
+        # light 档可省略 research questions（D2 + spec「Routine enhancement
+        # requires light research」），findings 与 design impact 仍必填。
+        enabled_fields = ("research questions", "findings", "design impact")
+        if normalized_tier == "light":
+            enabled_fields = ("findings", "design impact")
+        for field in enabled_fields:
             value = _extract_record_field(body, field)
             if value is None or _is_placeholder_body(value):
                 errors.append(

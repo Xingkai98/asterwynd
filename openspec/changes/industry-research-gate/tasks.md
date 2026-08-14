@@ -45,3 +45,7 @@
 - [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
 - [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
 - [ ] 5.6 PR 合入时，给关联 GitHub issue #133 添加完成说明 comment 并关闭。
+
+## 审阅修复（review-loop，issue #90）
+
+- Round 1（2026-08-14，run aba4d44717337df70）：**[中] light 档「research questions 可省略」与 checker 结构门槛矛盾**——checker 在 status=enabled 结构门槛按 tier 分流，light 跳过 `research questions` 必填（`scripts/check_openspec_artifacts.py` enabled_fields 分支），新增回归测试 `test_light_tier_research_questions_optional`（proposal 阶段 + tasks 全勾完成时均通过）。观察项（full/light+disabled 完成时只报 status 根因错误、不聚合 findings 占位）确认为有意行为：status 错误是根因，修正为 enabled 后 #123 检查即捕获 findings 占位，净效果仍 exit 2，不修复。
