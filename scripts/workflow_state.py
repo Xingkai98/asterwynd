@@ -772,6 +772,128 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── policy-*（flow-policy-source P0 单一策略源合法更新通道）────────────
+
+_POLICY_PATH = _SCRIPT_DIR / "flow-policy.json"
+
+
+def _read_policy() -> dict | None:
+    try:
+        data = json.loads(_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def cmd_policy_show(args: argparse.Namespace) -> int:
+    data = _read_policy()
+    if data is None:
+        print(f"错误：{_POLICY_PATH} 缺失或不是合法 JSON", file=sys.stderr)
+        return 1
+    rules = data.get("protected_paths", [])
+    print(f"{'path':<45} {'match_type':<10} {'governance':<18} event_types")
+    print("-" * 100)
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        et = ",".join(r.get("event_types", []) or []) or "-"
+        print(
+            f"{r.get('path',''):<45} {r.get('match_type',''):<10} "
+            f"{r.get('governance',''):<18} {et}"
+        )
+    print(f"\n共 {len(rules)} 条受保护路径规则（phases/review agent schema 见 flow-policy.json）")
+    return 0
+
+
+def cmd_policy_validate(args: argparse.Namespace) -> int:
+    import scripts.check_openspec_artifacts as checker
+    import scripts.workflow_guard as guard
+
+    errors: list[str] = []
+
+    data = _read_policy()
+    if data is None:
+        errors.append(f"{_POLICY_PATH} 缺失或不是合法 JSON")
+    if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
+        errors.append("受保护路径规则表加载失败（event_explained 规则缺失 event_types 或结构非法）")
+    schema_errs = checker._validate_policy_agent_schema(_PROJECT_ROOT)
+    errors.extend(schema_errs)
+
+    # parity：磁盘表 event_explained 子集 == guard 内嵌默认表 event_explained 子集
+    if data is not None:
+        disk = {
+            (r.get("path"), r.get("match_type"), tuple(r.get("event_types", [])))
+            for r in data.get("protected_paths", [])
+            if isinstance(r, dict) and r.get("governance") == "event_explained"
+        }
+        default = {
+            (r.get("path"), r.get("match_type"), tuple(r.get("event_types", [])))
+            for r in guard._DEFAULT_PROTECTED_PATHS
+            if r.get("governance") == "event_explained"
+        }
+        if disk != default:
+            errors.append(
+                "磁盘策略表 event_explained 子集与 guard 内嵌默认表不一致（parity 漂移）——"
+                "请同步 scripts/workflow_guard.py 的 _DEFAULT_PROTECTED_PATHS"
+            )
+
+    if errors:
+        for e in errors:
+            print(f"FAIL: {e}", file=sys.stderr)
+        return 1
+    print("flow-policy.json 校验通过（schema 合法 + 与 guard 内嵌默认表 parity 一致）")
+    return 0
+
+
+def cmd_policy_set(args: argparse.Namespace) -> int:
+    import scripts.check_openspec_artifacts as checker
+
+    data = _read_policy()
+    if data is None:
+        print(f"错误：{_POLICY_PATH} 缺失或不是合法 JSON", file=sys.stderr)
+        return 1
+    rules = data.setdefault("protected_paths", [])
+    if not isinstance(rules, list):
+        print("错误：flow-policy.json 的 protected_paths 不是数组", file=sys.stderr)
+        return 1
+
+    if args.delete:
+        before = len(rules)
+        rules[:] = [r for r in rules if not (isinstance(r, dict) and r.get("path") == args.path)]
+        if len(rules) == before:
+            print(f"未找到要删除的规则: {args.path}", file=sys.stderr)
+            return 1
+        verb = "删除"
+    else:
+        if not args.match_type or not args.governance:
+            print("错误：--match-type 与 --governance 必填（--delete 时除外）", file=sys.stderr)
+            return 1
+        entry: dict = {"path": args.path, "match_type": args.match_type, "governance": args.governance}
+        if args.event_types:
+            entry["event_types"] = [t.strip() for t in args.event_types.split(",") if t.strip()]
+        for i, r in enumerate(rules):
+            if isinstance(r, dict) and r.get("path") == args.path:
+                rules[i] = entry
+                break
+        else:
+            rules.append(entry)
+        verb = "写入"
+
+    if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
+        print("错误：写入后策略规则表校验失败（请检查 match-type/governance/event-types）", file=sys.stderr)
+        return 1
+
+    _atomic_write_json(_POLICY_PATH, data)
+    print(f"已{verb}策略规则: {args.path}（{_POLICY_PATH}）")
+    return 0
+
+
 # ── CLI ──
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -851,6 +973,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--head-sha")
     p.add_argument("--verdict", default="PASS", choices=["PASS"])
     p.set_defaults(func=cmd_review_manifest)
+
+    p = sub.add_parser("policy-show", help="展示 flow-policy.json 当前受保护路径规则")
+    p.set_defaults(func=cmd_policy_show)
+
+    p = sub.add_parser("policy-validate", help="校验 flow-policy.json（schema + 与 guard 内嵌默认表 parity）")
+    p.set_defaults(func=cmd_policy_validate)
+
+    p = sub.add_parser("policy-set", help="写入/删除 flow-policy.json 的单条受保护路径规则（原子写）")
+    p.add_argument("--path", required=True, help="受保护路径模式")
+    p.add_argument("--match-type", choices=["exact", "prefix", "contains"])
+    p.add_argument("--governance", choices=["guard_only", "event_explained", "manifest_verified", "cli_written"])
+    p.add_argument("--event-types", help="逗号分隔的事件类型列表（governance=event_explained 时必填）")
+    p.add_argument("--delete", action="store_true", help="删除该 path 的规则")
+    p.set_defaults(func=cmd_policy_set)
 
     return parser
 

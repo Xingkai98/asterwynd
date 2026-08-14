@@ -59,24 +59,99 @@ else:
     REQUIRED_BASE = REPO_ROOT
 
 _MANAGEMENT_FILES = {"workflow_methods.json", "workflow_hook.example.json"}
-_PROTECTED_PATH_FRAGMENTS = (
-    "docs/known-debt.md",
-    "docs/known-issues.md",
-    "docs/openspec-change-backlog.md",
-    "openspec/specs/",
-    "openspec/changes/archive/",
-    "workflow-events.jsonl",
-    "gate-approvals.json",
-    "-review-manifest.json",
-    "handoff.json",
+
+# ── 单一策略源（flow-policy.json）───────────────────────────────────
+# 受保护路径规则表唯一来源。guard 启动时读磁盘策略文件；缺失/损坏/非法 →
+# fail-closed exit 2（不得静默放行）。内嵌默认表仅作 parity 对比锚点，从不参与
+# 运行时 enforcement（flow-policy-source P0，grill Q10 确认）。
+_POLICY_PATH_ENV = "_GUARD_TEST_POLICY_PATH"
+_DEFAULT_POLICY_PATH = REPO_ROOT / "scripts" / "flow-policy.json"
+_ALLOWED_GOVERNANCE = ("guard_only", "event_explained", "manifest_verified", "cli_written")
+_ALLOWED_MATCH_TYPES = ("exact", "prefix", "contains")
+
+# 内嵌默认规则表（parity-only：tests/test_workflow_guard.py 锁「磁盘表 == 默认表」）
+_DEFAULT_PROTECTED_PATHS = (
+    {"path": "docs/known-debt.md", "match_type": "exact", "governance": "event_explained", "event_types": ("protected_artifact_explained",)},
+    {"path": "docs/known-issues.md", "match_type": "exact", "governance": "event_explained", "event_types": ("protected_artifact_explained",)},
+    {"path": "docs/openspec-change-backlog.md", "match_type": "exact", "governance": "event_explained", "event_types": ("backlog_updated",)},
+    {"path": "openspec/specs/", "match_type": "prefix", "governance": "event_explained", "event_types": ("current_spec_synced",)},
+    {"path": "openspec/changes/archive/", "match_type": "prefix", "governance": "event_explained", "event_types": ("change_archived",)},
+    {"path": "workflow-events.jsonl", "match_type": "contains", "governance": "cli_written"},
+    {"path": "gate-approvals.json", "match_type": "contains", "governance": "guard_only"},
+    {"path": "-review-manifest.json", "match_type": "contains", "governance": "manifest_verified"},
+    {"path": "handoff.json", "match_type": "contains", "governance": "guard_only"},
+    {"path": "scripts/flow-policy.json", "match_type": "exact", "governance": "cli_written"},
+    {"path": "workflow-state.json", "match_type": "contains", "governance": "cli_written"},
 )
+
+
+def _resolve_policy_path() -> Path:
+    env = os.environ.get(_POLICY_PATH_ENV)
+    return Path(env) if env else _DEFAULT_POLICY_PATH
+
+
+def _load_protected_paths(policy_path: Path) -> list[dict] | None:
+    """Load protected_paths rules from flow-policy.json. None on missing/corrupt."""
+    try:
+        data = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    rules = data.get("protected_paths")
+    if not isinstance(rules, list):
+        return None
+    valid: list[dict] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        path = rule.get("path")
+        mt = rule.get("match_type")
+        gov = rule.get("governance")
+        if not isinstance(path, str) or not path:
+            continue
+        if mt not in _ALLOWED_MATCH_TYPES or gov not in _ALLOWED_GOVERNANCE:
+            continue
+        # event_explained 规则必须带非空 event_types（缺失 → 策略非法，fail-closed）
+        if gov == "event_explained":
+            et = rule.get("event_types")
+            if not isinstance(et, (list, tuple)) or not et:
+                return None
+        valid.append(rule)
+    return valid
+
+
+def _norm_path(p: str) -> str:
+    """Normalize a path: unify separators, strip './' prefix, resolve '..'."""
+    norm = os.path.normpath(p.replace("\\", "/"))
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return norm
+
+
+def _matches_protected_path(normalized: str, rules: list[dict]) -> bool:
+    """True when a normalized path contains any protected path fragment.
+
+    Guard scans arbitrary path strings (absolute/relative/./ variants from
+    Write/Edit file_path or Bash command tokens), so it uses contains semantics
+    after normalization. The checker uses exact/prefix match_type on canonical
+    CI diff paths; parity tests lock both to the same rule table source.
+    """
+    for rule in rules:
+        pattern = rule.get("path", "")
+        if pattern and pattern in normalized:
+            return True
+    return False
 
 # ── Bash write patterns ─────────────────────────────────────────────
 _BASH_WRITE_PATTERNS = [
     # output redirection: > file, >> file, 2> file, &> file, |& file
     r'\s[0-9]?>>?\s+\S',            # >file, >>file, 2>file
     r'\s[>&][>&]?\s+\S',             # &> file, &>> file
+    # no-space redirection (flow-policy-source P0 绕过修复): echo >file
+    r'\s[0-9]?>>?[^\s=]',            # >file (no space after >), excludes a>b
     r'<<<\s',                        # here-string
+    r'<<\s*[A-Za-z_][A-Za-z0-9_]*',  # here-doc <<EOF (flow-policy-source P0 绕过修复)
     # tee (written to file)
     r'\|\s*tee\s',                   # | tee file
     r'\btee\s+\S',                   # tee file (start of command)
@@ -95,8 +170,8 @@ _BASH_WRITE_PATTERNS = [
     r'\bgit\s+checkout\s+-[bB]',     # git checkout -b (create branch)
     r'\bgit\s+rm\s+',                # git rm
     # python -c with file writes (not print/arithmetic)
-    r'\bpython3?\s+-c\s+.*\b(open|write|dump|save|remove|unlink|'
-    r'chmod|mkdir|rmdir|shutil|os\.system|subprocess)\s*\(',
+    r'\bpython3?\s+-c\s+.*\b(open|write|write_text|write_bytes|dump|save|'
+    r'remove|unlink|chmod|mkdir|rmdir|shutil|os\.system|subprocess)\s*\(',
     # perl/ruby in-place edit
     r'\bperl\s+-[pie]',              # perl -pi -e
     r'\bruby\s+-[pie]',              # ruby -pi -e
@@ -157,9 +232,76 @@ def _is_write_bash(command: str) -> bool:
     return False
 
 
-def _mentions_protected_path(text: str) -> bool:
-    normalized = text.replace("\\", "/")
-    return any(fragment in normalized for fragment in _PROTECTED_PATH_FRAGMENTS)
+# ── 策略加载与 Bash 写意图感知（flow-policy-source P0）───────────────
+_CURRENT_RULES: list[dict] | None = None
+
+
+def _load_policy_or_fail() -> int | None:
+    """Load policy rules into _CURRENT_RULES. Returns a fail-closed exit code."""
+    global _CURRENT_RULES
+    rules = _load_protected_paths(_resolve_policy_path())
+    if rules is None:
+        print(
+            "⛔ 策略文件 scripts/flow-policy.json 缺失、损坏或 schema 非法（fail-closed）。",
+            "请检查/修复该文件（可用 workflow_state.py policy-validate 校验）后重试。",
+            file=sys.stderr,
+        )
+        return 2
+    _CURRENT_RULES = rules
+    return None
+
+
+def _is_privileged_cli(command: str) -> bool:
+    """True when a Bash command is an exempted privileged CLI write channel."""
+    return bool(
+        re.search(
+            r'workflow_state\.py\s+(artifact-event|review-manifest|policy-[a-z-]+)',
+            command,
+        )
+    )
+
+
+_BASH_TARGET_RE = re.compile(
+    r'(?:^|[\s;|&<>])(?:[0-9]*>>?|>>?)\s*([^\s;&|<>`]+)'
+)
+
+
+def _extract_bash_targets(command: str) -> list[str]:
+    """Extract write-target path tokens from a Bash command."""
+    targets: list[str] = []
+    for m in _BASH_TARGET_RE.finditer(command):
+        tok = m.group(1).strip().strip('"\'')
+        if tok:
+            targets.append(tok)
+    for m in re.finditer(
+        r'\b(?:tee|cp|mv|touch|mkdir|install|git\s+add|git\s+rm)\s+([^\s;&|<>`]+)',
+        command,
+    ):
+        tok = m.group(1).strip().strip('"\'')
+        if tok:
+            targets.append(tok)
+    return targets
+
+
+def _bash_targets_protected_path(command: str) -> bool:
+    """True when a write-intent Bash command targets a protected path.
+
+    Checks (1) command text contains a protected path fragment (covers quoted
+    paths like ``python -c "...docs/known-debt.md..."``), then (2) extracted
+    write-target tokens normalized (covers ``./`` variants like
+    ``docs/./known-debt.md``).
+    """
+    rules = _CURRENT_RULES or _DEFAULT_PROTECTED_PATHS
+    text = command.replace("\\", "/")
+    for rule in rules:
+        pattern = rule.get("path", "")
+        if pattern and pattern in text:
+            return True
+    for target in _extract_bash_targets(command):
+        nt = _norm_path(target)
+        if _matches_protected_path(nt, rules):
+            return True
+    return False
 
 
 # ── grill gate (issue #95) ────────────────────────────────────────────
@@ -304,7 +446,8 @@ def _extract_user_confirmation_indexes(text: str) -> list[str]:
     indexes: list[str] = []
     for line in section.splitlines():
         stripped = line.strip()
-        m = re.match(r"^-\s+\*\*Q(\d+)\*\*\s*[:：]", stripped)
+        # 容忍 `**Q8**（分支命名）:` 后缀（flow-policy-source P0 正则死锁修复）
+        m = re.match(r"^-\s+\*\*Q(\d+)\*\*(?:[^：:]*)\s*[:：]", stripped)
         if not m:
             continue
         answer_match = re.search(r"用户答复\s*[:：]\s*(.*?)(?:[；;]\s*确认时间|\s*$)", stripped)
@@ -327,14 +470,30 @@ def _normalize_question_index(raw: str) -> str | None:
 
 
 def _h2_section(text: str, title: str) -> str:
-    """Return the body of the ``## <title>`` section, or empty string."""
+    """Return the body of the ``## <title>`` section, or empty string.
+
+    Skips ``##`` lines inside fenced code blocks (``` ... ```) so code samples
+    are not mistaken for section headers (flow-policy-source P0 正则死锁修复).
+    """
     matches = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
     for index, match in enumerate(matches):
-        if match.group(1).strip() == title:
-            start = match.end()
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            return text[start:end].strip()
+        if _inside_fence(text, match.start()) or match.group(1).strip() != title:
+            continue
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        return text[start:end].strip()
     return ""
+
+
+def _inside_fence(text: str, pos: int) -> bool:
+    """True when ``pos`` falls inside a fenced code block (``` ... ```)."""
+    fences = [m.start() for m in re.finditer(r"^```", text, flags=re.MULTILINE)]
+    open_fence = None
+    for f in fences:
+        if f >= pos:
+            break
+        open_fence = None if open_fence is not None else f
+    return open_fence is not None
 
 
 def _is_change_doc_write(file_path: str) -> bool:
@@ -366,38 +525,42 @@ def main():
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {})
 
-    # ── determine if this tool call is a "write operation" ──
-    is_write = False
-    if tool_name in ("Write", "Edit"):
-        is_write = True
-    elif tool_name == "Bash":
-        command = tool_input.get("command", "")
-        is_write = _is_write_bash(command)
+    # ── 策略加载（fail-closed）──
+    # 策略文件缺失/损坏/非法 → exit 2，不依赖内嵌默认表放行（flow-policy-source P0）。
+    fail_code = _load_policy_or_fail()
+    if fail_code is not None:
+        sys.exit(fail_code)
 
-    if not is_write:
-        sys.exit(0)
+    file_path = tool_input.get("file_path", "")
 
     # ── management files always bypass ──
-    file_path = tool_input.get("file_path", "")
-    if file_path and Path(file_path).name in _MANAGEMENT_FILES:
-        sys.exit(0)
+    if tool_name in ("Write", "Edit"):
+        if file_path and Path(file_path).name in _MANAGEMENT_FILES:
+            sys.exit(0)
 
     # ── protected-path guard stays enforced regardless of workflow state ──
-    if file_path and _mentions_protected_path(file_path):
-        print(
-            f"⛔ 受保护文件不可由 Agent 直接写入: {file_path}",
-            "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+    # Write/Edit: normalize then contains-match against policy rules.
+    if tool_name in ("Write", "Edit") and file_path:
+        if _matches_protected_path(_norm_path(file_path), _CURRENT_RULES):
+            print(
+                f"⛔ 受保护文件不可由 Agent 直接写入: {file_path}",
+                "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
-    if tool_name == "Bash" and _mentions_protected_path(tool_input.get("command", "")):
-        print(
-            "⛔ 受保护路径不可通过 Bash 直接写入。",
-            "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+    # Bash: privileged CLI channels are exempt; otherwise protected-path check
+    # runs for write-intent commands only (write-intent aware, 4-绕过修复).
+    if tool_name == "Bash":
+        command = tool_input.get("command", "")
+        if not _is_privileged_cli(command) and _is_write_bash(command):
+            if _bash_targets_protected_path(command):
+                print(
+                    "⛔ 受保护路径不可通过 Bash 直接写入。",
+                    "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
 
     # ── grill gate (issue #95) ──
     # 写代码前必须完成独立 subagent design grilling。仅对非 docs + 有 spec

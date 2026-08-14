@@ -105,7 +105,7 @@ P0 是 #121「开发流程可安装化」的第一阶段，目标是把开发流
 ## Reference Implementation Research
 
 - status: disabled
-- reason: 纯内部开发流程改造，无外部同类「开发流程策略单一源」实现可比；规则收敛自本仓库既有实现（guard `_PROTECTED_PATH_FRAGMENTS` + checker `PROTECTED_PATH_RULES` + 事件类型映射），决策依据来自 #121 架构评审（2026-08-14 交接文档 `/tmp/handoff-asterwynd-flow-2026-08-14.md` + 架构评审输出，未重复运行评审工作流）。本地参考仓库不可用（`.dev/reference-repos.txt` 不存在，已确认）。
+- reason: 纯内部开发流程改造，无外部同类「开发流程策略单一源」实现可比；规则收敛自本仓库既有实现（guard `_PROTECTED_PATH_FRAGMENTS` + checker `PROTECTED_PATH_RULES` + 事件类型映射），决策依据来自 #121 架构评审（2026-08-14 交接文档 `/tmp/handoff-asterwynd-flow-2026-08-14.md` + 架构评审输出，未重复运行评审工作流）。业界调研已在 #121 架构评审完成，本 change 归「上游决策锁定」豁免，与 #121 新增 cross-cutting 规则「方案设计前业界调研门禁」口径一致：重型 workflow 引擎（Temporal/Argo）评审已否决（过重）、编排工具等待/blocked 建模调研见 #126、Herdr/Orca 桌面端增量有限。本地参考仓库不可用（`.dev/reference-repos.txt` 不存在，已确认）。
 - research questions:
   - 受保护路径规则如何建模为「match_type + governance + event_types」的机器可解析表？（#122 已决策，见 issue 决策记录）
   - 同源加载形态：各自读 JSON + parity vs 生成器展开 guard 内嵌快照？（#122 Q4 P0 范围，本 change 立项时定）
