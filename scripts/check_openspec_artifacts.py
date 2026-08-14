@@ -970,7 +970,12 @@ def check_protected_path_explanations(
     changed_paths: set[str],
 ) -> list[str]:
     errors: list[str] = []
-    rules = _load_protected_path_rules(repo_root)
+    try:
+        rules = _load_protected_path_rules(repo_root)
+    except RuntimeError as exc:
+        # schema 非法（event_explained 缺 event_types 等）：不抛裸 traceback，
+        # 以可读错误 fail-closed（building-review Issue 3）。
+        return [f"scripts/flow-policy.json schema 非法: {exc}"]
     if rules is None:
         return [
             "scripts/flow-policy.json 缺失或损坏：受保护路径检查无法执行（fail-closed）。"

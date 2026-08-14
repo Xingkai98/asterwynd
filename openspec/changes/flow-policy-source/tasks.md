@@ -16,7 +16,7 @@
 - [x] 2.2 guard 4 个绕过回归测试：`echo > file`、`cat <<EOF`、`pathlib.write_text`、`docs/./` 变体 → 全部 exit 2 拦截。
 - [x] 2.3 guard User Confirmation 正则死锁修复测试：`- **Q8**（分支命名）:` 后缀可提取；`_h2_section` 跳过 fenced code block 内的 `##`。
 - [x] 2.4 checker 单元测试：`PROTECTED_PATH_RULES` 从策略文件加载；checker 规则集 == 策略表 `event_explained` 子集。
-- [x] 2.5 同源 parity 测试：磁盘表 == guard 内嵌默认表；guard Bash fragment 集 == 策略表 path 值集；bash 写正则 / unconfirmed 词表 guard↔checker 一致（扩展现有 `tests/test_workflow_guard.py` parity 测试）。
+- [x] 2.5 同源 parity 测试：磁盘表 == guard 内嵌默认表；guard Bash fragment 集 == 策略表 path 值集；unconfirmed 词表 guard↔checker 一致（bash 写正则仅 guard 侧有实现，checker 无对应，无 parity 对象）。
 - [x] 2.6 内容门槛测试（#123）：tasks 全勾 + 命中「自认未完成」短语 → checker exit 2；tasks 未全勾 → 不触发内容门槛。
 - [x] 2.7 agent schema JSON Schema 校验测试（#127）：非法 provider/model 类型、未知 phase 键 → checker 报错。
 - [x] 2.8 集成测试：策略文件变更后 guard 与 checker 同时生效；`policy-show`/`policy-validate` 子命令行为。
@@ -48,3 +48,13 @@
 - [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
 - [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
 - [ ] 5.6 PR 合入时，给关联 GitHub issue #131 添加完成说明 comment 并关闭。
+
+## 6. 审阅修复记录（building-review Round 1，verdict CHANGES_REQUESTED）
+
+- [x] R1-1（HIGH）特权 CLI 豁免可被 `&&`/`;` 链式劫持 → `_is_privileged_cli` 严格化为独立调用（无复合/重定向/命令替换）+ 链式劫持回归测试。
+- [x] R1-2（MEDIUM）内嵌默认表运行时 fallback 违反 parity-only → 移除 `_CURRENT_RULES or _DEFAULT_PROTECTED_PATHS`，Write/Bash 一致用磁盘规则集 + 空规则一致性测试。
+- [x] R1-3（MEDIUM）checker/policy-validate 对 schema 非法策略裸 RuntimeError → 捕获返回可读错误 + 测试。
+- [x] R1-4（MEDIUM）unconfirmed 词表 parity 无测试锁 → 新增 guard↔checker 词表机械断言；tasks 2.5 措辞修正（bash 写正则仅 guard 侧无 parity 对象）。
+- [x] R1-5（LOW）shell 变量拼接路径绕过 → 记录为已知限制（静态 shell 分析无法解析变量，属工具面纪律），记 known-debt，不引入过度误拦。
+- [x] R1-6（LOW）Write/Edit blanket contains vs match_type → design D2 文档对齐（guard 面对任意路径字符串用 contains 保守超集，deny-by-default）。
+- [x] R1-7（LOW）guard 恢复文案误导 + policy-set 无法修复损坏 JSON → 文案微调（明确「先修复 JSON，可读时可 policy-validate」）。

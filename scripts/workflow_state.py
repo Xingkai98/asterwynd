@@ -820,8 +820,11 @@ def cmd_policy_validate(args: argparse.Namespace) -> int:
     data = _read_policy()
     if data is None:
         errors.append(f"{_POLICY_PATH} 缺失或不是合法 JSON")
-    if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
-        errors.append("受保护路径规则表加载失败（event_explained 规则缺失 event_types 或结构非法）")
+    try:
+        if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
+            errors.append("受保护路径规则表加载失败（event_explained 规则缺失 event_types 或结构非法）")
+    except RuntimeError as exc:
+        errors.append(f"受保护路径规则表 schema 非法: {exc}")
     schema_errs = checker._validate_policy_agent_schema(_PROJECT_ROOT)
     errors.extend(schema_errs)
 

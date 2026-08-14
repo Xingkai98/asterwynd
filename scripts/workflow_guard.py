@@ -243,7 +243,7 @@ def _load_policy_or_fail() -> int | None:
     if rules is None:
         print(
             "⛔ 策略文件 scripts/flow-policy.json 缺失、损坏或 schema 非法（fail-closed）。",
-            "请检查/修复该文件（可用 workflow_state.py policy-validate 校验）后重试。",
+            "请先修复该文件再重试（JSON 可读时可运行 workflow_state.py policy-validate 校验结构）。",
             file=sys.stderr,
         )
         return 2
@@ -252,11 +252,21 @@ def _load_policy_or_fail() -> int | None:
 
 
 def _is_privileged_cli(command: str) -> bool:
-    """True when a Bash command is an exempted privileged CLI write channel."""
+    """True when a Bash command is an exempted privileged CLI write channel.
+
+    The command must be a standalone ``workflow_state.py <subcommand>`` call
+    (no ``&&``/``;``/``|`` chaining, no redirection, no command substitution) —
+    otherwise a chain like ``workflow_state.py policy-show && echo >docs/known-debt.md``
+    would hijack the exemption (building-review Issue 1).
+    """
+    stripped = command.strip()
+    if re.search(r"&&|\|\||[;|`]|\$\(|>\s*[^=]", stripped):
+        return False
     return bool(
-        re.search(
-            r'workflow_state\.py\s+(artifact-event|review-manifest|policy-[a-z-]+)',
-            command,
+        re.match(
+            r"^(?:python3?|uv\s+run\s+python3?)\s+scripts/workflow_state\.py\s+"
+            r"(artifact-event|review-manifest|policy-[a-z-]+)\b",
+            stripped,
         )
     )
 
@@ -289,9 +299,13 @@ def _bash_targets_protected_path(command: str) -> bool:
     Checks (1) command text contains a protected path fragment (covers quoted
     paths like ``python -c "...docs/known-debt.md..."``), then (2) extracted
     write-target tokens normalized (covers ``./`` variants like
-    ``docs/./known-debt.md``).
+    ``docs/./known-debt.md``). Uses ``_CURRENT_RULES`` only — the embedded
+    default table is parity-only and never participates in runtime enforcement
+    (grill Q10 / building-review Issue 2).
     """
-    rules = _CURRENT_RULES or _DEFAULT_PROTECTED_PATHS
+    rules = _CURRENT_RULES
+    if rules is None:
+        return False  # main() fail-closes first; defensive for direct calls
     text = command.replace("\\", "/")
     for rule in rules:
         pattern = rule.get("path", "")

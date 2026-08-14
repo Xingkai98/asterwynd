@@ -390,3 +390,67 @@ def test_policy_set_rejects_invalid_args():
     result = _run_policy_cli("policy-set", "--path", "docs/x.md")
     assert result.returncode == 1
     assert "--match-type" in result.stderr or "必填" in result.stderr
+
+
+# ── 审阅修复回归（building-review Round 1） ─────────────────────────
+
+
+def test_guard_rejects_chained_privileged_cli_hijack(tmp_path):
+    """Issue 1：特权 CLI 豁免不可被 &&/; 链式劫持。"""
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    for cmd in (
+        "python3 scripts/workflow_state.py policy-show && echo >docs/known-debt.md",
+        "python3 scripts/workflow_state.py artifact-event --change x --event-type protected_artifact_explained --artifact-path docs/known-debt.md --reason r --approved-by h; echo x > docs/known-debt.md",
+    ):
+        result = _run_guard(
+            tmp_path,
+            {"tool_name": "Bash", "tool_input": {"command": cmd}},
+        )
+        assert result.returncode == 2, f"链式命令应被拦: {cmd}\n{result.stderr}"
+
+
+def test_guard_empty_rules_consistent_fail_open(tmp_path):
+    """Issue 2：空规则集时 Write 与 Bash 一致 fail-open（内嵌默认表不参与运行时）。"""
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"protected_paths": []}), encoding="utf-8")
+    w = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": "docs/known-debt.md"}},
+        policy_path=policy,
+    )
+    b = _run_guard(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "echo >docs/known-debt.md"}},
+        policy_path=policy,
+    )
+    assert w.returncode == 0, f"Write 空规则集应放行: {w.stderr}"
+    assert b.returncode == 0, f"Bash 空规则集应放行: {b.stderr}"
+
+
+def test_unconfirmed_vocab_parity():
+    """Issue 4：unconfirmed 词表 guard↔checker 一致（机械断言）。"""
+    import scripts.workflow_guard as wg
+    from scripts.check_openspec_artifacts import (
+        UNCONFIRMED_EXACT,
+        UNCONFIRMED_STRONG,
+    )
+
+    assert wg._UNCONFIRMED_EXACT == UNCONFIRMED_EXACT
+    assert wg._UNCONFIRMED_STRONG == UNCONFIRMED_STRONG
+
+
+def test_checker_schema_error_is_readable(tmp_path):
+    """Issue 3：checker 对 schema 非法策略返回可读错误而非裸 traceback。"""
+    from scripts.check_openspec_artifacts import check_protected_path_explanations
+
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / "scripts" / "flow-policy.json").write_text(
+        json.dumps({"protected_paths": [
+            {"path": "docs/known-debt.md", "match_type": "exact", "governance": "event_explained"},
+        ]}),
+        encoding="utf-8",
+    )
+    errors = check_protected_path_explanations(tmp_path, changed_paths={"docs/known-debt.md"})
+    assert errors, "应返回可读错误"
+    assert any("schema 非法" in e or "event_types" in e for e in errors)

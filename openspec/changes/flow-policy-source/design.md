@@ -73,10 +73,10 @@ P0 目标是把开发流程规则从「guard/checker 双份硬编码」收敛为
   - `cli_written`：只允许人类直改或 `policy-*`/`artifact-event` 等 CLI 通道写，guard 拦截 agent 直写，checker 不要求事件（CLI 自身即合法通道）。
   - `manifest_verified`：变更由 review manifest 内容寻址校验绑定（`-review-manifest.json`），guard 拦截 agent 直写。
   - `guard_only`：本地 backstop，仅 guard 拦截 agent 直写，checker 无 diff 规则（历史遗留/状态机仪式停用后不活跃）。
-- **Bash 扫描与 match_type 的关系**（关键设计，grill 修正 + Q3/Q7 待确认）：guard 对 Write/Edit 的 `file_path` 与 checker 对 git diff 的 `changed_paths` 都按归一化路径 + match_type 精确解释。guard 对 **Bash 命令文本**的受保护路径扫描**不是 blanket contains**（会误拦 `git diff openspec/specs/...` 等只读命令、破坏 `test_guard_allows_workflow_state_cli_commands`，grill 已实测），而是：
-  1. 从命令文本中提取路径 token（含重定向目标 `>`/`>>`/`tee` 后、here-doc `<<` 前、`cp/mv/touch` 等目标位置），normpath 归一化后按 match_type 匹配；
+- **Bash 扫描与 match_type 的关系**（关键设计，grill 修正 + Q3/Q7 确认 + building-review Issue 6 对齐）：guard 对 Write/Edit 的 `file_path` 做「normpath 归一化 + contains 匹配」——guard 面对的是任意路径字符串（绝对/相对/`./` 变体），contains 是保守超集（deny-by-default，宁可误拦）；checker 对 git diff 的 `changed_paths` 按 match_type 精确解释（CI 路径是规范仓库相对路径）。guard 对 **Bash 命令文本**的受保护路径扫描**不是 blanket contains**（会误拦 `git diff openspec/specs/...` 等只读命令、破坏 `test_guard_allows_workflow_state_cli_commands`，grill 已实测），而是：
+  1. 从命令文本中提取路径 token（含重定向目标 `>`/`>>`/`tee` 后、here-doc `<<` 前、`cp/mv/touch` 等目标位置），normpath 归一化后 contains 匹配；
   2. 受保护路径检查**前移到 is_write 判定之前**（修 4 个绕过根因），但**只在命令具有写意图且非 read-only allow 且非豁免 CLI 写通道时 exit 2**；
-  3. 显式豁免 `workflow_state.py (artifact-event|review-manifest|policy-*)` 合法写通道（现状 `test_guard_allows_workflow_state_cli_commands` 期望 rc=0）。
+  3. 显式豁免 `workflow_state.py (artifact-event|review-manifest|policy-*)` 合法写通道——豁免**仅限独立调用**（无 `&&`/`;`/`|` 链式、无重定向、无命令替换），防链式劫持（building-review Issue 1）。
   该语义写入 parity 测试与回归测试固定预期。
 
 ### D3: 同源加载形态（#122 Q4 P0 范围，推荐完整 A）
