@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "industry-research-gate",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a674f38147841788d",
+  "base_sha": "367e910c8f4f6c985adf0d7adf58a72acebefb1f",
+  "head_sha": "4d3d800e4f46ff756b21c24ad64f60db03537be3",
+  "tasks_hash": "sha256:64ebdbc574ce0fb6ba987e55dc89156980b9ee7c430d3c7dc9dc4fac55a287cc",
+  "spec_hash": "sha256:c7d6f7d81d3c2f3a34f026302e73db48e9a43d640c9bace36b55f028af17d988",
+  "diff_hash": "sha256:15ded9d28411cce75a3d77b0e129a6194118908867e18cc90cb26d9da5156418",
+  "report_hash": "sha256:f5f660dba391134f28778162173b30db748dd180f54e7eb1fad9f47badbde834"
+}

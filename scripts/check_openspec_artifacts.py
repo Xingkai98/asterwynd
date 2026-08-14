@@ -66,12 +66,26 @@ DIAGNOSIS_SECTIONS = [
 ]
 REFERENCE_RESEARCH_SECTION = "Reference Implementation Research"
 REFERENCE_RESEARCH_FIELDS = (
+    "research_tier",
     "status",
     "reason",
     "research questions",
     "findings",
     "design impact",
 )
+RESEARCH_TIER_VALUES = ("full", "light", "exempt")
+# exempt 结构性豁免关键词（D3 + Q3 确认：不扩展证据路径清单，判断性豁免示例
+# 「与已有模块 X 等价改造」类必须带引用才通过）。「方案已由.*决策」用正则，
+# 其余子串匹配；证据 = issue 引用 #<数字> 或评审文档路径
+# （docs/、openspec/changes/archive/、reviews/）。
+STRUCTURAL_EXEMPTION_KEYWORDS = (
+    "docs-only",
+    "bugfix",
+    "上游决策锁定",
+    "无设计决策",
+)
+STRUCTURAL_EXEMPTION_RE_PATTERNS = (re.compile(r"方案已由.*决策"),)
+EXEMPT_EVIDENCE_PATH_PATTERNS = ("docs/", "openspec/changes/archive/", "reviews/")
 # 内容门槛（#123 阶段感知）：tasks 全勾（实现完成）时命中即红的「自认未完成」
 # 短语级模式（grill Q6 确认，删 暂无/未完成 避免误伤「暂无参考仓库可用」类
 # 合法 finding）；语义化占位漏检记 docs/known-debt.md，不无限扩表。
@@ -471,6 +485,23 @@ def _find_reference_research_section(
     return None
 
 
+def _exempt_reason_satisfies(reason: str) -> bool:
+    """True when an exempt reason hits a structural keyword or cites evidence.
+
+    判断性豁免必须带客观依据（Q3 口径）：结构性豁免关键词、`#<数字>` issue 引用、
+    或评审文档路径（docs/、openspec/changes/archive/、reviews/）。「与已有模块 X
+    等价改造」类无引用表述不通过。
+    """
+    lowered = reason.lower()
+    if any(keyword.lower() in lowered for keyword in STRUCTURAL_EXEMPTION_KEYWORDS):
+        return True
+    if any(pattern.search(reason) for pattern in STRUCTURAL_EXEMPTION_RE_PATTERNS):
+        return True
+    if re.search(r"#\d+", reason):
+        return True
+    return any(path in lowered for path in EXEMPT_EVIDENCE_PATH_PATTERNS)
+
+
 def _check_reference_implementation_research(
     change_dir: Path, proposal_text: str, change_type: ChangeType
 ) -> list[str]:
@@ -491,21 +522,41 @@ def _check_reference_implementation_research(
             f"## {REFERENCE_RESEARCH_SECTION}"
         ]
 
+    errors: list[str] = []
+
+    # research_tier（结构门槛，proposal 阶段即生效）：必填枚举 full|light|exempt。
+    normalized_tier: str | None = None
+    tier = _extract_record_field(body, "research_tier")
+    if tier is None or _is_placeholder_body(tier):
+        errors.append(
+            f"{source} section must declare `research_tier: full|light|exempt`: "
+            f"## {REFERENCE_RESEARCH_SECTION}"
+        )
+    else:
+        normalized_tier = tier.splitlines()[0].strip().lower()
+        if normalized_tier not in RESEARCH_TIER_VALUES:
+            errors.append(
+                f"{source} section has invalid research_tier `{normalized_tier}` "
+                f"(allowed: full, light, exempt)"
+            )
+            normalized_tier = None
+
     status = _extract_record_field(body, "status")
     if status is None or _is_placeholder_body(status):
-        return [
+        errors.append(
             f"{source} section must declare `status: enabled` or "
             f"`status: disabled`: ## {REFERENCE_RESEARCH_SECTION}"
-        ]
+        )
+        return errors
 
     normalized_status = status.splitlines()[0].strip().lower()
     if normalized_status not in {"enabled", "disabled"}:
-        return [
+        errors.append(
             f"{source} section has invalid reference implementation research "
             f"status `{normalized_status}` (allowed: enabled, disabled)"
-        ]
+        )
+        return errors
 
-    errors: list[str] = []
     reason = _extract_record_field(body, "reason")
     if reason is None or _is_placeholder_body(reason):
         errors.append(
@@ -514,7 +565,12 @@ def _check_reference_implementation_research(
         )
 
     if normalized_status == "enabled":
-        for field in ("research questions", "findings", "design impact"):
+        # light 档可省略 research questions（D2 + spec「Routine enhancement
+        # requires light research」），findings 与 design impact 仍必填。
+        enabled_fields = ("research questions", "findings", "design impact")
+        if normalized_tier == "light":
+            enabled_fields = ("findings", "design impact")
+        for field in enabled_fields:
             value = _extract_record_field(body, field)
             if value is None or _is_placeholder_body(value):
                 errors.append(
@@ -540,6 +596,35 @@ def _check_reference_implementation_research(
                     f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 `{field}` 命中"
                     f"「自认未完成」短语「{hit}」——tasks 已全勾，内容门槛拒绝占位"
                 )
+
+        # tier 内容门槛（D4 + Q4 确认）：tasks 全勾时 tier 与 status/证据组合闭环。
+        if normalized_tier in ("full", "light"):
+            if normalized_status == "disabled":
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 "
+                    f"`research_tier: {normalized_tier}` 在 tasks 已全勾时 "
+                    f"`status` 不得为 `disabled`——必调研档必须已完成调研（完成时闭环）"
+                )
+        elif normalized_tier == "exempt":
+            if normalized_status != "disabled":
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 "
+                    f"`research_tier: exempt` 在 tasks 已全勾时 `status` 必须为 "
+                    f"`disabled`——做了调研就如实改 full/light + enabled（Q4 口径）"
+                )
+            if reason and not _is_placeholder_body(reason):
+                hit = _self_admitted_incomplete(reason)
+                if hit:
+                    # #123 内容门槛已报占位短语，这里不重复报
+                    pass
+                elif not _exempt_reason_satisfies(reason):
+                    errors.append(
+                        f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 `reason` "
+                        f"未命中结构性豁免关键词（docs-only/bugfix/上游决策锁定/"
+                        f"无设计决策/方案已由.*决策）也未引用证据（#<数字> 或 "
+                        f"docs/、openspec/changes/archive/、reviews/ 路径），"
+                        f"exempt 证据校验不通过——请引用已关闭决策 issue 或评审文档路径"
+                    )
 
     return errors
 

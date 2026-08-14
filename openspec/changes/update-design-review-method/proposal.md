@@ -47,5 +47,6 @@ secondary:
 
 ## Reference Implementation Research
 
+- research_tier: exempt
 - status: disabled
-- reason: 纯工具替换（流程方法名变更），不涉及实现方案选择，无需参考实现调研。
+- reason: 无设计决策——纯工具替换（流程方法名变更），不涉及实现方案选择，无需参考实现调研。
