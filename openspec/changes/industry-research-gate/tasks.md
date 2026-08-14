@@ -6,8 +6,8 @@
 - [x] 1.2 创建 design.md，记录 Context、Goals/Non-Goals、Decisions（D1-D8）、Risks、Testing Strategy。
 - [x] 1.3 维护 `## Impact Analysis`（proposal.md），列出影响/不影响面。
 - [x] 1.4 维护 `## Reference Implementation Research`（status: disabled + 上游决策锁定理由 + research_tier: exempt）。
-- [ ] 1.5 开发前使用独立 subagent 等价设计追问（grill）审视 `design.md`，产出 `reviews/grill-design.md`（≥3 条 Confirmed Decisions），逐项确认实现细节；停轮获得用户对 `## Open Questions` 的确认并记录到 `## User Confirmation`。
-- [ ] 1.6 更新 `docs/openspec-change-backlog.md`，把 industry-research-gate 加入未实现队列（配 workflow-events.jsonl 解释事件）。
+- [x] 1.5 开发前使用独立 subagent 等价设计追问（grill）审视 `design.md`，产出 `reviews/grill-design.md`（≥3 条 Confirmed Decisions），逐项确认实现细节；停轮获得用户对 `## Open Questions` 的确认并记录到 `## User Confirmation`。
+- [x] 1.6 更新 `docs/openspec-change-backlog.md`，把 industry-research-gate 加入未实现队列（配 workflow-events.jsonl 解释事件）。
 - [ ] 1.7 当前规格同步：把 change-documentation spec delta 合并到 `openspec/specs/change-documentation/spec.md`，确认未实现能力没有被写成已实现，并配 workflow-events.jsonl 解释事件。
 
 ## 2. 测试

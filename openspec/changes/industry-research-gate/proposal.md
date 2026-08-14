@@ -79,6 +79,7 @@
 
 ## Reference Implementation Research
 
+- research_tier: exempt
 - status: disabled
 - reason: 本 change 归「上游决策锁定」豁免——决策集来自 #121 cross-cutting 规则（2026-08-14 用户提出并确认分流模型）与本仓库既有实现（change-documentation spec 的 RIR gate + #123 内容门槛 + flow-policy-source 归档版豁免口径），无外部同类「coding-agent 仓库的调研门禁分流规则」可比；业界调研实践已在 #121 架构评审完成（重型 workflow 引擎评审否决、编排工具调研 #126、Herdr/Orca 桌面端调研），本 change 不引入新能力面。本地参考仓库不可用（`.dev/reference-repos.txt` 不存在，已确认）。
 - research questions: 无（决策已由 #121 锁定）

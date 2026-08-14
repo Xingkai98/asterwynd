@@ -34,7 +34,7 @@ Non-docs OpenSpec changes SHALL explicitly record whether reference implementati
 
 - **WHEN** the project artifact checker validates a non-docs change whose tasks are all complete
 - **AND** the section records `research_tier: full` or `research_tier: light`
-- **THEN** the checker SHALL fail (exit 2) when findings or design impact contain self-admitted incomplete phrases (the `#123` word list: `尚未完成`, `待补充`, `待调研`, `TBD`, `todo`, `待确认`)
+- **THEN** the checker SHALL fail (exit 2) when findings or design impact contain self-admitted incomplete phrases from the `#123` word list (defined in `dev-workflow-state-machine/spec.md`; not restated here to avoid drift)
 - **AND** the checker SHALL fail (exit 2) when `status` is `disabled`
 
 #### Scenario: Completed exempt research change must justify exemption
