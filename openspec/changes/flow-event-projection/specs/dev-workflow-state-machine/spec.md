@@ -34,27 +34,31 @@
 
 ### Modified: 阻塞状态
 
-系统 SHALL 支持任意 phase 进入 awaiting 态，用于等待外部依赖或决策。等待合法化不弱化执法：awaiting 期间写操作 SHALL 仍被 guard 拦截（exit 2），用户确认后才放行。awaiting 态集合 SHALL 包含 `awaiting_human_review` 与 `awaiting_user_confirmation`；`awaiting_proposal_confirmation` 保留槽位但暂不派生；`review_blocked` 不 SHALL 计入 awaiting 集。
+系统 SHALL 支持任意 phase 进入 awaiting 态，用于等待外部依赖或决策。等待合法化不弱化执法：awaiting 期间写操作 SHALL 仍被 guard 拦截（exit 2），用户确认后才放行。awaiting 态 SHALL 建模为 `blocked` phase 的 sub_state（如 `blocked.awaiting_proposal_confirmation`），普通 `blocked`（非 awaiting）sub_state 为 null。awaiting 态集合 SHALL 包含 `awaiting_proposal_confirmation`（激活，proposal 完成后进入）、`awaiting_human_review` 与 `awaiting_user_confirmation`；`review_blocked` 不 SHALL 计入 awaiting 集。
 
 #### Scenario: 进入等待态
 
-- **WHEN** agent 完成某阶段并进入需要外部输入的状态
-- **THEN** 完成命令 SHALL 追加 `blocked_entered` 事件（复用 v1 blocked 事件类型，不新增类型）
-- **AND** 投影状态 SHALL 变为对应的 awaiting 态
-- **AND** `blocked_entered` SHALL 只由进入 awaiting 的完成命令写入（写路径唯一化）
+- **WHEN** agent 完成 proposal 阶段（含调研结论）或用户主动 block，进入需要外部确认的状态
+- **THEN** 完成命令或 `flow block` SHALL 追加 `blocked_entered` 事件（复用 v1 blocked 事件类型，不新增类型）
+- **AND** 投影状态 SHALL 变为对应的 `blocked.awaiting_*` 态
+- **AND** `blocked_entered` SHALL 只由进入 awaiting 的完成命令或 `flow block` 写入（写路径唯一化）
+- **AND** proposal 完成后写 `blocked_entered` 进入 `awaiting_proposal_confirmation`，用户 `flow confirm` 写 `blocked_resolved` 后才允许进入开发
 
 #### Scenario: 解除等待态
 
 - **WHEN** 用户确认或批准解除等待
 - **THEN** `flow confirm` / `flow approve` SHALL 追加 `blocked_resolved` 事件（复用 v1 blocked 事件类型）
 - **AND** `blocked_resolved` SHALL 只由 `flow confirm` / `flow approve` 写入（写路径唯一化）
+- **AND** `blocked_resolved` 的 payload SHALL 从当前投影 awaiting 态推导（from=当前 `blocked.awaiting_*`，to=恢复目标），兼容无 `blocked_entered` 前置记录的 change
 - **AND** 状态 SHALL 恢复到进入 awaiting 之前的阶段
 
 #### Scenario: guard 读投影执法
 
 - **WHEN** guard 判断某 change 处于 awaiting 态且未确认
 - **THEN** 写操作 SHALL exit 2（awaiting 执法不弱化）
-- **AND** 投影缺失、损坏或 `source_event_seq` 与事件文件不一致（stale）时，guard SHALL 回退现有正则兜底（fail-closed，不因投影问题放行）
+- **AND** 投影缺失、损坏或 `source_event_seq` 与事件文件不一致（stale）时，guard SHALL fail-closed（exit 2，提示先运行 `flow status` 重建），不因投影问题放行
+- **AND** guard SHALL 只读投影，不写盘（hook 无副作用）
+- **AND** 事件损坏（缺 seq / JSON 语法坏 / 末尾截断）时，`flow status` SHALL 报「事件不完整，检查 seq N」，不猜测不跳过
 
 #### Scenario: checker 派生物一致性
 
@@ -66,13 +70,21 @@
 
 ### Requirement: flow 命令与受保护路径
 
-系统 SHALL 提供 `flow status` / `flow confirm` / `flow approve` 命令，作为投影查询与等待态确认的 CLI 通道；`workflow-state.json` 与 `workflow-events.jsonl` SHALL 纳入受保护路径（governance=cli_written），只允许 CLI 写入。
+系统 SHALL 提供 `flow status` / `flow confirm` / `flow approve` / `flow block` / `flow advance` 命令，作为投影查询、等待态确认与阶段推进的 CLI 通道；`workflow-state.json` 与 `workflow-events.jsonl` SHALL 纳入受保护路径（governance=cli_written），只允许 CLI 写入。
 
 #### Scenario: flow status 展示投影
 
 - **WHEN** 运行 `flow status [--change <id>|--all]`
-- **THEN** 系统 SHALL 输出各 change 的投影状态（state / milestones / source_event_seq）
+- **THEN** 系统 SHALL 输出各 change 的投影状态（state / milestones / source_event_seq），唯一/默认格式为 JSON
 - **AND** 事件文件不一致时 SHALL 提示 stale
+- **AND** 投影缺失/损坏/stale 时 SHALL 先用事件 replay 自动重建，重建成功即输出；仅事件不完整导致重建失败时 SHALL 报「事件不完整，检查 seq N」
+
+#### Scenario: flow block / flow advance
+
+- **WHEN** 运行 `flow block --change <id> --awaiting <type>`
+- **THEN** 系统 SHALL 追加 `blocked_entered` 事件并进入对应 `blocked.awaiting_*` 态
+- **WHEN** 运行 `flow advance --change <id> --to <sub_state>`
+- **THEN** 系统 SHALL 追加 `transition_applied` 事件推进 sub_state
 
 #### Scenario: 受保护路径只准 CLI 写
 

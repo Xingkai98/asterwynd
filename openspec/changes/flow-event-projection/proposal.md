@@ -74,14 +74,20 @@
 
 | 影响面 | 说明 |
 |---------|------|
-| 开发流程治理 | `scripts/workflow_state.py`（flow status/confirm/approve + 投影生成）、`scripts/workflow_guard.py`（读投影 + stale 兜底）、`scripts/check_openspec_artifacts.py`（派生物一致性 + verify 扩展） |
-| 事件溯源 | `agent/workflow/event_log.py`：replay_handoff_projection 兼容当代事件（两代分裂修复）；复用 v1 blocked 事件，不新增类型 |
-| 受保护 artifact | `workflow-state.json` 入 flow-policy.json 受保护清单（P0 已预留条目） |
-| CLI | `flow` 命令组（status/confirm/approve），废旧 advance/approve |
-| Specs | `openspec/specs/dev-workflow-state-machine/spec.md`（投影 + 等待态执法 + flow 命令 requirement） |
-| Tests | 投影派生测试、stale 兜底测试、派生物一致性测试、两代兼容测试、flow 命令集成测试 |
-| Docs | AGENTS.md（flow 命令说明）、docs/known-debt.md（如有）、change 自身文档 |
-| 明确不受影响 | AgentLoop、工具系统、Web/TUI、benchmark、`flow-policy.json` 既有规则表、hook 部署机制 |
+| 开发流程治理 | `scripts/workflow_state.py`（flow status/confirm/approve/block/advance + 投影生成 + 自愈重建）、`scripts/workflow_guard.py`（读投影判断 awaiting + stale/corrupt fail-closed + `_is_privileged_cli` 豁免正则扩展 flow）、`scripts/check_openspec_artifacts.py`（投影==replay 一致性 + verify_projection 扩展 + 归档可投影检查） |
+| 事件溯源 | `agent/workflow/event_log.py`：`project_workflow_state` 统一投影入口（两代兼容，change_created seed + milestones 推进器 + 容忍无 seed）；`verify_handoff_projection` 扩为 `verify_projection`；复用 v1 blocked 事件，不新增类型 |
+| 受保护 artifact | `workflow-state.json` + `workflow-events.jsonl` 已在 flow-policy.json 受保护清单（governance=cli_written，P0 已预留条目）；**任务 3.5 无需改策略表**（改动会破坏 parity 测试）；`workflow-state.json` 入库 git 跟踪 |
+| CLI | `flow` 命令组（status/confirm/approve/block/advance）；废旧 `advance`/`approve` 子命令删除，discover 的 `approve_command` 改指 `flow approve`；gen-2 change 的 `flow status` 同步映射写 handoff.json（老枚举/工具兼容） |
+| Specs | `openspec/specs/dev-workflow-state-machine/spec.md`（两代投影 + awaiting 态建模为 blocked.awaiting_* + flow 命令 + guard 读投影执法 + verify_projection） |
+| Tests | 投影派生测试、两代 parity 测试、stale 兜底测试、派生物一致性测试、归档可投影测试、flow 命令集成测试、废旧命令迁移 |
+| Docs | AGENTS.md（flow 命令说明）、change 自身文档（design/grill） |
+| 明确不受影响 | AgentLoop、工具系统、Web/TUI、benchmark、`flow-policy.json` 既有规则表（不改）、hook 部署机制、归档事件文件内容（不重写 v1 证据） |
+
+### 实现期发现并回写的新影响面
+
+- **gen-2 change 同步写 handoff.json**（代码层修正 6）：`flow` 命令写 `workflow-state.json` 时同步映射写最小 handoff.json，避免 `_load_handoff`/discover 等老枚举工具漏掉当代 change。checker 的 `_check_handoff_json` 已改用 `verify_projection`（gen-2 校验 workflow-state.json，不校验 synced handoff 与 replay 的 handoff 形状）。
+- **guard bootstrap 语义**：当代 change 有 events 但无 workflow-state.json 时，guard fail-closed 拦写并提示先跑 `flow status`（投影是 awaiting 判定的前提）。
+- **`--check-archived` 既有 drift**：归档 change 的 review manifest tasks hash 与当前 tasks.md 存在 pre-existing drift（7 处），非本 change 引入，另作债务处理。
 
 ## Reference Implementation Research
 

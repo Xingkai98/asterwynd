@@ -1,0 +1,10 @@
+{
+  "schema": "workflow-state/v1",
+  "change_id": "flow-event-projection",
+  "state": {
+    "phase": "planning",
+    "sub_state": "exploring"
+  },
+  "milestones": [],
+  "source_event_seq": 3
+}
