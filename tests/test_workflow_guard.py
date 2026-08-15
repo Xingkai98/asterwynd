@@ -405,7 +405,8 @@ def test_guard_blocks_write_when_awaiting(tmp_path):
     assert "awaiting" in result.stderr
 
 
-def test_guard_blocks_write_when_projection_missing(tmp_path):
+def test_guard_blocks_write_when_awaiting_despite_missing_projection(tmp_path):
+    """事件已 awaiting、磁盘无投影 → 仍拦截（不因投影缺失放行）。"""
     _seed_awaiting_change(tmp_path, with_state=False)
 
     result = _run_guard(
@@ -414,10 +415,11 @@ def test_guard_blocks_write_when_projection_missing(tmp_path):
     )
 
     assert result.returncode == 2
-    assert "重建" in result.stderr
+    assert "awaiting" in result.stderr
 
 
-def test_guard_blocks_write_when_projection_stale(tmp_path):
+def test_guard_blocks_write_when_awaiting_despite_stale_projection(tmp_path):
+    """building-review Issue 2：事件已 awaiting、磁盘 stale → 仍拦截（fail-closed）。"""
     _seed_awaiting_change(tmp_path)
     ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
     ws = json.loads(ws_path.read_text(encoding="utf-8"))
@@ -430,10 +432,29 @@ def test_guard_blocks_write_when_projection_stale(tmp_path):
     )
 
     assert result.returncode == 2
-    assert "重建" in result.stderr
+    assert "awaiting" in result.stderr
 
 
-def test_guard_blocks_write_when_projection_corrupt(tmp_path):
+def test_guard_blocks_write_when_events_awaiting_but_disk_stale_non_awaiting(tmp_path):
+    """building-review Issue 2 具体场景：磁盘 stale 且显示非 awaiting，但事件已 blocked_entered。"""
+    _seed_awaiting_change(tmp_path)
+    ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
+    ws = json.loads(ws_path.read_text(encoding="utf-8"))
+    ws["state"] = {"phase": "planning", "sub_state": "exploring"}  # 磁盘显示非 awaiting
+    ws["source_event_seq"] = 1  # stale
+    ws_path.write_text(json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_blocks_write_when_awaiting_despite_corrupt_projection(tmp_path):
+    """事件已 awaiting、磁盘投影损坏 → 仍拦截（不因投影损坏放行）。"""
     _seed_awaiting_change(tmp_path)
     ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
     ws_path.write_text("{not valid json", encoding="utf-8")
@@ -444,7 +465,62 @@ def test_guard_blocks_write_when_projection_corrupt(tmp_path):
     )
 
     assert result.returncode == 2
-    assert "重建" in result.stderr
+    assert "awaiting" in result.stderr
+
+
+def test_guard_allows_write_for_non_awaiting_change_without_projection(tmp_path):
+    """building-review Issue 3：无投影的非 awaiting gen-0 change 不被误拦（不额外误拦）。"""
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    change_dir.mkdir(parents=True)
+    (change_dir / "proposal.md").write_text(
+        "## Change Type\n\nprimary: feature\n", encoding="utf-8"
+    )
+    with (change_dir / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "schema": "workflow-event/v1",
+                    "seq": 1,
+                    "event_type": "backlog_updated",
+                    "change_id": "test-change",
+                    "artifact_path": "docs/x.md",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_blocks_bash_write_when_awaiting(tmp_path):
+    """building-review Issue 1：awaiting 期间 Bash 写代码文件被拦（红线 1 不可经 Bash 绕过）。"""
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "echo code > agent/foo.py"}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_allows_bash_read_when_awaiting(tmp_path):
+    """awaiting 期间只读 Bash 放行。"""
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "git status"}},
+    )
+
+    assert result.returncode == 0
 
 
 def test_guard_allows_write_when_not_awaiting(tmp_path):

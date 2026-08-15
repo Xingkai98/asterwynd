@@ -55,10 +55,10 @@
 #### Scenario: guard 读投影执法
 
 - **WHEN** guard 判断某 change 处于 awaiting 态且未确认
-- **THEN** 写操作 SHALL exit 2（awaiting 执法不弱化）
-- **AND** 投影缺失、损坏或 `source_event_seq` 与事件文件不一致（stale）时，guard SHALL fail-closed（exit 2，提示先运行 `flow status` 重建），不因投影问题放行
-- **AND** guard SHALL 只读投影，不写盘（hook 无副作用）
-- **AND** 事件损坏（缺 seq / JSON 语法坏 / 末尾截断）时，`flow status` SHALL 报「事件不完整，检查 seq N」，不猜测不跳过
+- **THEN** 写操作（Write/Edit 与 write-intent Bash）SHALL exit 2（awaiting 执法不弱化，不可经 Bash 绕过）
+- **AND** guard SHALL 以事件日志 replay 结果判定 awaiting（事件是唯一真相）：投影缺失/损坏/stale 不影响判定——awaiting 仍 exit 2（不因投影问题放行）、非 awaiting 放行（不额外误拦）
+- **AND** guard SHALL 只读，不写盘（hook 无副作用）
+- **AND** 仅事件不完整（缺 seq / JSON 语法坏 / 末尾截断）导致无法 replay 时，guard SHALL fail-closed（exit 2，报「事件不完整，检查 seq N」）；`flow status` 同口径报错，不猜测不跳过
 
 #### Scenario: checker 派生物一致性
 

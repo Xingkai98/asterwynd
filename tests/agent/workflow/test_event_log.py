@@ -254,6 +254,24 @@ def test_project_unknown_event_type_raises(tmp_path):
         project_workflow_state(change_dir)
 
 
+def test_project_rejects_blocked_non_awaiting_sub_state(tmp_path):
+    """building-review Issue 5：blocked.<任意非 awaiting> 事件在投影层被拒，防绕过 awaiting 集。"""
+    change_dir = _seed_new_gen_change(tmp_path)
+    _append_raw_event(
+        change_dir,
+        "blocked_entered",
+        2,
+        transition=_transition(
+            {"phase": "planning", "sub_state": "writing_design"},
+            {"phase": "blocked", "sub_state": "weird_blocked"},
+        ),
+        blocker={"blocked_from": {"phase": "planning", "sub_state": "writing_design"}, "reason": "x"},
+    )
+
+    with pytest.raises(StateMachineError, match="awaiting type or null"):
+        project_workflow_state(change_dir)
+
+
 def test_project_empty_log_raises(tmp_path):
     change_dir = tmp_path / "openspec" / "changes" / "empty-change"
     change_dir.mkdir(parents=True)

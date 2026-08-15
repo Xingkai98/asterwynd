@@ -457,6 +457,13 @@ def _apply_blocked_to_state(state: dict[str, Any], event: dict[str, Any]) -> Non
     _validate_transition_dict(transition)
     if transition["to"]["phase"] != "blocked":
         raise StateMachineError("blocked event must transition to blocked")
+    # building-review Issue 5：blocked 的 sub_state 必须是合法 awaiting 类型（或 None），
+    # 拒绝 blocked.<任意> 绕过 awaiting 集（普通 blocked 无 sub_state）。
+    to_sub_state = transition["to"].get("sub_state")
+    if to_sub_state is not None and to_sub_state not in AWAITING_SUB_STATES:
+        raise StateMachineError(
+            f"blocked sub_state must be an awaiting type or null: {to_sub_state!r}"
+        )
     state.clear()
     state.update(deepcopy(transition["to"]))
 

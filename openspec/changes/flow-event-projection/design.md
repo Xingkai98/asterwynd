@@ -66,11 +66,13 @@
 - `blocked_resolved` 只由 `flow confirm/approve` 写。
 - 不新增事件类型（v1 blocked 类型复用，`append_blocked_event`/`append_unblocked_event` 沿用）。
 
-### D5: guard 读投影 + stale 自愈重建（#129 + Q3 确认）
+### D5: guard 读投影 + stale 自愈重建（#129 + Q3 确认 + building-review 修复）
 
-- guard 读 `workflow-state.json` 判断 awaiting 态；`source_event_seq != len(events)`（stale）或投影缺失/损坏 → **guard 只读不写盘**（hook 无副作用，代码层修正 4），exit 2 提示「先运行 flow status 重建」。
-- **自愈重建**（Q3）：`flow` 命令在投影缺失/损坏/stale 时先用事件 replay 自动重建，重建成功即用重建结果正常执法；只有事件本身不完整导致重建失败才回退现有 gate（fail-closed，不因投影问题放行也不额外误拦）。
-- **事件损坏**（缺 seq / JSON 语法坏 / 末尾截断）→ fail-closed：投影标 incomplete，guard 回退，`flow status` 报「事件不完整，检查 seq N」，不猜测不跳过（事件是唯一真相）。
+- guard 判断 awaiting **以事件日志 replay 结果为准**（事件是唯一真相，building-review Issue 2/3 修复）：`_awaiting_block_reason` 调 `project_workflow_state` 得到权威状态；投影缺失/损坏/stale 不影响判定——awaiting 仍 exit 2（不因投影问题放行）、非 awaiting 放行（不额外误拦 gen-0 在途 change）。
+- **写操作全覆盖**（building-review Issue 1 修复）：awaiting 期间 Write/Edit 与 write-intent Bash（重定向/heredoc 等）均 exit 2，红线 1 不可经 Bash 绕过；`flow`/`policy-*` 特权 CLI 豁免（确认/解除通道）。
+- guard **只读不写盘**（hook 无副作用，代码层修正 4）。
+- **自愈重建**（Q3）：`flow` 命令在投影缺失/损坏/stale 时先用事件 replay 自动重建，重建成功即写新鲜投影；仅事件不完整导致重建失败才报错。
+- **事件损坏**（缺 seq / JSON 语法坏 / 末尾截断）→ guard fail-closed exit 2 报「事件不完整，检查 seq N」；`flow status` 同口径报错，不猜测不跳过。
 - guard 内嵌默认行为保持：awaiting 且未确认 → exit 2（执法不弱化，红线 1）。
 
 ### D6: checker 派生物一致性（#129 + Q5/Q11 确认）
