@@ -57,6 +57,7 @@
 - **WHEN** change 处于某 phase 的 `ready_for_review`（gate）且运行 `flow approve --phase <phase>`
 - **THEN** 系统 SHALL 追加 `transition_applied` 事件（trigger: `human_review`）完成跨阶段推进到下一 phase 首 sub_state
 - **AND** 不写 `blocked_resolved`（awaiting 解除只由 `flow confirm` 承担）
+- **AND** phase 机械检查未通过时 SHALL 拒绝批准
 
 #### Scenario: guard 读投影执法
 
