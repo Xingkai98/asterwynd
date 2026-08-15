@@ -186,6 +186,21 @@ uv run asterwynd web --port 8000
 uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke
 ```
 
+### flow 命令组（开发流程事件投影）
+
+每个 change 的 `workflow-events.jsonl` 是权威事件日志，`flow` 命令组负责投影查询与等待态执法（`workflow-state.json` 每当代 change 落盘一份，guard/checker 读它判断 awaiting 与一致性）：
+
+```bash
+uv run python scripts/workflow_state.py flow status --change <id>    # 投影 JSON（缺失/stale 自动重建）
+uv run python scripts/workflow_state.py flow status --all
+uv run python scripts/workflow_state.py flow block --change <id> --awaiting awaiting_proposal_confirmation
+uv run python scripts/workflow_state.py flow confirm --change <id>   # 解除 awaiting（写 blocked_resolved）
+uv run python scripts/workflow_state.py flow approve --change <id> --phase <phase>  # gate 通过跨阶段
+uv run python scripts/workflow_state.py flow advance --change <id> --to <sub_state> # 推进 sub_state
+```
+
+废旧 `advance`/`approve` 子命令已删除；`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow`/`policy-*` CLI 写。
+
 更多命令见 [开发指南](./docs/development-guide.md)。
 
 ## 文档地图

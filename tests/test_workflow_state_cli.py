@@ -17,98 +17,210 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_STATE = REPO_ROOT / "scripts" / "workflow_state.py"
 
 
-def test_advance_rejects_invalid_sub_state_jump(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    WorkflowManager(change_dir, repo_root=REPO_ROOT).init("test-change")
+def _append_ev(change_dir, event_type, seq, change_id="test-change", **extra):
+    event = {
+        "schema": "workflow-event/v1",
+        "seq": seq,
+        "event_type": event_type,
+        "change_id": change_id,
+        **extra,
+    }
+    with (change_dir / "workflow-events.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(WORKFLOW_STATE),
-            "advance",
-            "--change",
-            "test-change",
-            "--to",
-            "ready_for_review",
-        ],
+
+def _tr(from_state, to_state, trigger="auto"):
+    return {"from": from_state, "to": to_state, "trigger": trigger}
+
+
+def _seed_gen2_change(tmp_path, change_id="test-change"):
+    change_dir = tmp_path / "openspec" / "changes" / change_id
+    change_dir.mkdir(parents=True)
+    _append_ev(change_dir, "change_created", 1, change_id)
+    return change_dir
+
+
+def _run_cli(tmp_path, *args):
+    return subprocess.run(
+        [sys.executable, str(WORKFLOW_STATE), *args],
         cwd=tmp_path,
         capture_output=True,
         text=True,
     )
 
-    handoff = json.loads((change_dir / "handoff.json").read_text(encoding="utf-8"))
+
+def test_flow_advance_rejects_invalid_sub_state_jump(tmp_path):
+    change_dir = _seed_gen2_change(tmp_path)
+
+    result = _run_cli(tmp_path, "flow", "advance", "--change", "test-change", "--to", "ready_for_review")
 
     assert result.returncode != 0
     assert "invalid within-phase transition" in (result.stderr + result.stdout)
-    assert handoff["state"] == {"phase": "planning", "sub_state": "exploring"}
+    # 失败操作不写事件：从事件重新投影，状态不变
+    assert not (change_dir / "workflow-state.json").exists()
+    from agent.workflow.event_log import project_workflow_state
+
+    assert project_workflow_state(change_dir)["state"] == {"phase": "planning", "sub_state": "exploring"}
 
 
-def test_approve_rejects_non_gate_state_without_writing_approval(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    WorkflowManager(change_dir, repo_root=REPO_ROOT).init("test-change")
+def test_flow_approve_rejects_non_gate_state(tmp_path):
+    change_dir = _seed_gen2_change(tmp_path)
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(WORKFLOW_STATE),
-            "approve",
-            "--change",
-            "test-change",
-            "--phase",
-            "planning",
-            "--who",
-            "human-1",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-
-    handoff = json.loads((change_dir / "handoff.json").read_text(encoding="utf-8"))
+    result = _run_cli(tmp_path, "flow", "approve", "--change", "test-change", "--phase", "planning")
 
     assert result.returncode != 0
-    assert "approval only allowed at gate" in (result.stderr + result.stdout)
-    assert handoff["state"] == {"phase": "planning", "sub_state": "exploring"}
-    assert not (tmp_path / ".handoff" / "test-change" / "gate-approvals.json").exists()
+    assert "期望 gate planning.ready_for_review" in (result.stderr + result.stdout)
+    assert not (change_dir / "workflow-state.json").exists()
+    from agent.workflow.event_log import project_workflow_state
+
+    assert project_workflow_state(change_dir)["state"] == {"phase": "planning", "sub_state": "exploring"}
 
 
-def test_approve_rejects_gate_when_phase_check_fails(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir, repo_root=REPO_ROOT)
-    mgr.init("test-change")
-    for sub_state in [
+def test_flow_approve_rejects_gate_when_phase_check_fails(tmp_path):
+    change_dir = _seed_gen2_change(tmp_path)
+    subs = [
         "writing_proposal",
         "writing_design",
         "writing_spec",
         "writing_tickets",
         "reviewing_artifacts",
         "ready_for_review",
-    ]:
-        mgr.advance_sub_state(sub_state, actor_id="planner-1")
+    ]
+    current = {"phase": "planning", "sub_state": "exploring"}
+    for seq, sub in enumerate(subs, start=2):
+        _append_ev(
+            change_dir,
+            "transition_applied",
+            seq,
+            transition=_tr(current, {"phase": "planning", "sub_state": sub}),
+        )
+        current = {"phase": "planning", "sub_state": sub}
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(WORKFLOW_STATE),
-            "approve",
-            "--change",
-            "test-change",
-            "--phase",
-            "planning",
-            "--who",
-            "human-1",
-        ],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
-
-    handoff = json.loads((change_dir / "handoff.json").read_text(encoding="utf-8"))
+    result = _run_cli(tmp_path, "flow", "approve", "--change", "test-change", "--phase", "planning")
 
     assert result.returncode != 0
     assert "phase 机械检查未通过" in (result.stderr + result.stdout)
-    assert handoff["state"] == {"phase": "planning", "sub_state": "ready_for_review"}
-    assert not (tmp_path / ".handoff" / "test-change" / "gate-approvals.json").exists()
+    assert not (change_dir / "workflow-state.json").exists()
+    from agent.workflow.event_log import project_workflow_state
+
+    assert project_workflow_state(change_dir)["state"] == {"phase": "planning", "sub_state": "ready_for_review"}
+
+
+def test_flow_advance_ignores_workflow_disabled_flag(tmp_path):
+    """flow 命令是新执法核心，不再受 workflow_methods.json enabled 旧旗标门控。"""
+    change_dir = _seed_gen2_change(tmp_path)
+    methods = tmp_path / "scripts" / "workflow_methods.json"
+    methods.parent.mkdir(parents=True, exist_ok=True)
+    methods.write_text('{"workflow": {"enabled": false}}', encoding="utf-8")
+
+    result = _run_cli(tmp_path, "flow", "advance", "--change", "test-change", "--to", "writing_proposal")
+
+    assert result.returncode == 0
+    projection = json.loads((change_dir / "workflow-state.json").read_text(encoding="utf-8"))
+    assert projection["state"] == {"phase": "planning", "sub_state": "writing_proposal"}
+
+
+def test_flow_status_outputs_json_and_self_heals_stale(tmp_path):
+    change_dir = _seed_gen2_change(tmp_path)
+    _append_ev(change_dir, "backlog_updated", 2, artifact_path="docs/x.md")
+    # 先写一个 stale 投影
+    (change_dir / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "schema": "workflow-state/v1",
+                "change_id": "test-change",
+                "state": {"phase": "building", "sub_state": "writing_tests"},
+                "milestones": [],
+                "source_event_seq": 99,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_cli(tmp_path, "flow", "status", "--change", "test-change")
+
+    assert result.returncode == 0
+    output = json.loads(result.stdout)
+    assert output["state"] == {"phase": "planning", "sub_state": "exploring"}
+    assert output["source_event_seq"] == 2
+    assert output["stale"] is True
+    # 自愈重建：磁盘投影已刷新
+    disk = json.loads((change_dir / "workflow-state.json").read_text(encoding="utf-8"))
+    assert disk["source_event_seq"] == 2
+
+
+def test_flow_status_all_lists_contemporary_changes(tmp_path):
+    _seed_gen2_change(tmp_path, "modern-change")
+    # 老世代 change（handoff.json 驱动）
+    old_dir = tmp_path / "openspec" / "changes" / "legacy-change"
+    WorkflowManager(old_dir, repo_root=tmp_path).init("legacy-change")
+
+    result = _run_cli(tmp_path, "flow", "status", "--all")
+
+    assert result.returncode == 0
+    output = json.loads(result.stdout)
+    assert "modern-change" in output
+    assert "legacy-change" in output
+
+
+def test_flow_status_archived_change_readonly(tmp_path):
+    """归档 change 可查询（用户故事：老 change 也能 flow status），只读不落盘。"""
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-08-09-old-change"
+    archive_dir.mkdir(parents=True)
+    _append_ev(archive_dir, "change_created", 1, "old-change")
+    _append_ev(archive_dir, "grill_completed", 2, "old-change")
+
+    result = _run_cli(tmp_path, "flow", "status", "--change", "2026-08-09-old-change")
+
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output["change_id"] == "old-change"
+    assert output["milestones"] == ["grill_completed"]
+    assert not (archive_dir / "workflow-state.json").exists()
+
+
+def test_flow_block_and_confirm_roundtrip(tmp_path):
+    change_dir = _seed_gen2_change(tmp_path)
+    _append_ev(
+        change_dir,
+        "transition_applied",
+        2,
+        transition=_tr(
+            {"phase": "planning", "sub_state": "exploring"},
+            {"phase": "planning", "sub_state": "writing_proposal"},
+        ),
+    )
+
+    block_result = _run_cli(
+        tmp_path,
+        "flow",
+        "block",
+        "--change",
+        "test-change",
+        "--awaiting",
+        "awaiting_proposal_confirmation",
+    )
+    assert block_result.returncode == 0, block_result.stderr
+
+    block_projection = json.loads((change_dir / "workflow-state.json").read_text(encoding="utf-8"))
+    assert block_projection["state"] == {"phase": "blocked", "sub_state": "awaiting_proposal_confirmation"}
+
+    confirm_result = _run_cli(tmp_path, "flow", "confirm", "--change", "test-change")
+    assert confirm_result.returncode == 0, confirm_result.stderr
+
+    confirm_projection = json.loads((change_dir / "workflow-state.json").read_text(encoding="utf-8"))
+    assert confirm_projection["state"] == {"phase": "planning", "sub_state": "writing_proposal"}
+
+
+def test_flow_confirm_rejects_when_not_awaiting(tmp_path):
+    _seed_gen2_change(tmp_path)
+
+    result = _run_cli(tmp_path, "flow", "confirm", "--change", "test-change")
+
+    assert result.returncode != 0
+    assert "不在 awaiting 态" in (result.stderr + result.stdout)
 
 
 def test_spawn_rejects_wayfinding_before_ready_for_review(tmp_path):
@@ -304,13 +416,11 @@ def test_discover_includes_resume_audit_when_enabled(capsys, monkeypatch):
     assert "resume required" in output
 
 
-def test_advance_rejects_when_workflow_disabled(tmp_path, capsys, monkeypatch):
+def test_flow_status_requires_change_or_all(capsys):
     import scripts.workflow_state as mod
 
-    monkeypatch.setattr(mod, "is_workflow_enabled", lambda *_: False)
-
-    result = mod.cmd_advance(Namespace(change="test-change", to="writing_proposal", to_phase=None))
+    result = mod.cmd_flow_status(Namespace(change=None, all=False))
     output = capsys.readouterr()
 
     assert result == 1
-    assert "workflow 已在 workflow_methods.json 中禁用" in output.err
+    assert "需要 --change" in output.err

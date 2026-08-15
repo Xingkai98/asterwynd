@@ -954,9 +954,11 @@ def _check_handoff_json(change_dir: Path) -> list[str]:
         errors.append(f"{change_name}: handoff.json blockers must be an array")
 
     if (change_dir / "workflow-events.jsonl").exists():
-        from agent.workflow.event_log import verify_handoff_projection
+        # Q11/代码层修正 11：verify_handoff_projection 扩为 verify_projection——
+        # gen-1 校验 handoff.json == replay；gen-2 校验磁盘 workflow-state.json == replay。
+        from agent.workflow.event_log import verify_projection
 
-        errors.extend(verify_handoff_projection(change_dir))
+        errors.extend(verify_projection(change_dir))
 
     return errors
 
@@ -1047,6 +1049,23 @@ def _check_review_manifests(
         phase = report_path.name.removesuffix("-review.md")
         errors.extend(verify_review_manifest(repo_root, change_id, phase, archived=archived))
     return errors
+
+
+def _check_archived_projectable(change_dir: Path) -> list[str]:
+    """归档 change 可投影校验（Q5/代码层修正 2）。
+
+    只验证结构合法 + 所有 event_type 可识别（_apply / NON_STATE / milestones 集），
+    不要求 seed 事件、不要求磁盘 workflow-state.json（老世代不落盘，Q13）。
+    """
+    if not (change_dir / "workflow-events.jsonl").exists():
+        return []
+    try:
+        from agent.workflow.event_log import project_workflow_state
+
+        project_workflow_state(change_dir)
+    except Exception as exc:
+        return [f"{change_dir.name}: archived change 事件日志不可投影: {exc}"]
+    return []
 
 
 def check_protected_path_explanations(
@@ -1412,6 +1431,8 @@ def main(argv: list[str] | None = None) -> int:
                 if change_type is None:
                     continue
                 errors.extend(_check_review_manifests(change_dir, change_type, archived=True))
+                # Q5/代码层修正 2：归档 change 只验可投影（结构合法 + 类型可识别）
+                errors.extend(_check_archived_projectable(change_dir))
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))

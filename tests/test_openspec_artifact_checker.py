@@ -1704,3 +1704,141 @@ def test_verify_review_manifest_archived_path(tmp_path):
     (archive / "tasks.md").write_text("- [x] task\n- [x] another\n", encoding="utf-8")
     errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
     assert any("tasks hash mismatch" in e for e in errors)
+
+
+# ── workflow-state.json 投影一致性 + 归档可投影（flow-event-projection P1）──
+
+
+def _seed_gen2_projection(change: Path, *, tamper: bool = False) -> None:
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {
+            "schema": "workflow-event/v1",
+            "seq": 1,
+            "event_type": "change_created",
+            "change_id": change.name,
+        },
+        {
+            "schema": "workflow-event/v1",
+            "seq": 2,
+            "event_type": "backlog_updated",
+            "change_id": change.name,
+            "artifact_path": "docs/x.md",
+        },
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    ws = {
+        "schema": "workflow-state/v1",
+        "change_id": change.name,
+        "state": {"phase": "planning", "sub_state": "exploring"},
+        "milestones": [],
+        "source_event_seq": 2,
+    }
+    if tamper:
+        ws["state"] = {"phase": "building", "sub_state": "writing_tests"}
+    (change / "workflow-state.json").write_text(
+        json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    # flow status 会同步映射写 handoff.json
+    handoff = {
+        "schema_version": "1.0",
+        "change_id": change.name,
+        "state": ws["state"],
+        "transitions": [],
+    }
+    (change / "handoff.json").write_text(
+        json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_check_handoff_json_rejects_gen2_projection_mismatch(tmp_path):
+    from scripts.check_openspec_artifacts import _check_handoff_json
+
+    change = tmp_path / "openspec" / "changes" / "projected-change"
+    _seed_gen2_projection(change, tamper=True)
+
+    errors = _check_handoff_json(change)
+
+    assert any("workflow-state.json projection does not match workflow-events.jsonl" in e for e in errors)
+
+
+def test_check_handoff_json_passes_gen2_projection(tmp_path):
+    from scripts.check_openspec_artifacts import _check_handoff_json
+
+    change = tmp_path / "openspec" / "changes" / "projected-change"
+    _seed_gen2_projection(change)
+
+    assert _check_handoff_json(change) == []
+
+
+def test_check_handoff_json_gen2_without_disk_projection_passes(tmp_path):
+    """gen-2 change 未跑过 flow status（无 workflow-state.json）→ 不报错（可投影即通过）。"""
+    from scripts.check_openspec_artifacts import _check_handoff_json
+
+    change = tmp_path / "openspec" / "changes" / "no-projection"
+    change.mkdir(parents=True, exist_ok=True)
+    (change / "workflow-events.jsonl").write_text(
+        json.dumps(
+            {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "no-projection"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert _check_handoff_json(change) == []
+
+
+def test_check_archived_projectable_passes_with_recognized_types(tmp_path):
+    from scripts.check_openspec_artifacts import _check_archived_projectable
+
+    change = tmp_path / "openspec" / "changes" / "archive" / "2026-08-09-web-multi-session-entry"
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "web-multi-session-entry"},
+        {"schema": "workflow-event/v1", "seq": 2, "event_type": "backlog_updated", "change_id": "web-multi-session-entry", "artifact_path": "docs/x.md"},
+        {"schema": "workflow-event/v1", "seq": 3, "event_type": "grill_completed", "change_id": "web-multi-session-entry"},
+        {"schema": "workflow-event/v1", "seq": 4, "event_type": "change_archived", "change_id": "web-multi-session-entry", "artifact_path": "openspec/changes/archive/x"},
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+    assert _check_archived_projectable(change) == []
+
+
+def test_check_archived_projectable_rejects_unknown_event(tmp_path):
+    from scripts.check_openspec_artifacts import _check_archived_projectable
+
+    change = tmp_path / "openspec" / "changes" / "archive" / "2026-08-09-broken"
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "broken"},
+        {"schema": "workflow-event/v1", "seq": 2, "event_type": "mystery_event", "change_id": "broken"},
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+    errors = _check_archived_projectable(change)
+
+    assert any("不可投影" in e for e in errors)
+
+
+def test_check_archived_no_seed_projectable(tmp_path):
+    """gen-0 归档（backlog_updated 开头，无 seed）→ 结构合法即可投影，不抛错。"""
+    from scripts.check_openspec_artifacts import _check_archived_projectable
+
+    change = tmp_path / "openspec" / "changes" / "archive" / "2026-08-01-gen0"
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "gen0", "artifact_path": "docs/x.md"},
+        {"schema": "workflow-event/v1", "seq": 2, "event_type": "current_spec_synced", "change_id": "gen0", "artifact_path": "openspec/specs/x.md"},
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+    assert _check_archived_projectable(change) == []

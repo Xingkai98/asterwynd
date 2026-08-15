@@ -33,9 +33,37 @@ ALLOWED_PROTECTED_ARTIFACT_EVENT_TYPES = {
 WAYFINDING_CHILDREN_EVENT_TYPE = "wayfinding_children_spawned"
 RESUME_AUDIT_RECONCILED_EVENT_TYPE = "resume_audit_reconciled"
 
+# ── workflow-state.json projection（flow-event-projection P1）────────────
+WORKFLOW_STATE_FILENAME = "workflow-state.json"
+WORKFLOW_STATE_SCHEMA = "workflow-state/v1"
+CHANGE_CREATED_EVENT_TYPE = "change_created"
+
+# milestones 推进器：只追加 milestones 数组、不改 projection state（Q8 确认）。
+MILESTONE_EVENT_TYPES = {
+    "grill_completed",
+    "design_reviewed",
+    "design_review_completed",
+    "building_review_completed",
+    "known_debt_updated",
+}
+
+# awaiting 态集合（建模为 blocked phase 的 sub_state，代码层修正 1）。
+AWAITING_SUB_STATES = (
+    "awaiting_proposal_confirmation",
+    "awaiting_human_review",
+    "awaiting_user_confirmation",
+)
+
+# 默认 seed：首事件 change_created 或缺失 seed 时的初始投影（等价 init_handoff_json 的 planning.exploring）。
+DEFAULT_SEED_STATE = {"phase": "planning", "sub_state": "exploring"}
+
 
 def event_log_path(change_dir: str | Path) -> Path:
     return Path(change_dir) / EVENT_LOG_FILENAME
+
+
+def workflow_state_path(change_dir: str | Path) -> Path:
+    return Path(change_dir) / WORKFLOW_STATE_FILENAME
 
 
 def write_init_event(change_dir: str | Path, handoff: dict[str, Any]) -> None:
@@ -328,6 +356,148 @@ def verify_handoff_projection(change_dir: str | Path) -> list[str]:
 
     if actual != expected:
         return ["handoff.json projection does not match workflow-events.jsonl"]
+    return []
+
+
+# ── workflow-state.json 统一投影（flow-event-projection P1）──────────────
+
+
+def is_awaiting_state(state: dict[str, Any]) -> bool:
+    """True when the projection state is an awaiting state (blocked.awaiting_*)."""
+    return state.get("phase") == "blocked" and state.get("sub_state") in AWAITING_SUB_STATES
+
+
+def project_workflow_state(change_dir: str | Path) -> dict[str, Any]:
+    """Unified projection entry: derive workflow-state.json shape for any change.
+
+    两代兼容（Q7/Q8 确认）：
+    - gen-1：首事件 `initialized` + handoff.json → 走既有 handoff replay，再映射为
+      `state + milestones + source_event_seq` 形状（handoff.json 不落盘为 workflow-state.json）。
+    - gen-2：首事件 `change_created`（或无 seed）→ change_created 作 seed（默认
+      planning.exploring），`_apply_*` 事件链驱动 state，milestones 推进器收集里程碑事件。
+    - 容忍异构：无 seed 事件（如 backlog_updated 开头的老归档）同样按默认 seed 投影，不抛错。
+    """
+    events = _read_events(event_log_path(change_dir))
+    if not events:
+        raise StateMachineError("workflow-events.jsonl is empty")
+    first = events[0]
+    if first.get("event_type") == "initialized":
+        handoff_projection = replay_handoff_projection(change_dir)
+        return _map_handoff_to_workflow_state(change_dir, handoff_projection, len(events))
+    return _project_new_gen(change_dir, events)
+
+
+def _project_new_gen(change_dir: str | Path, events: list[dict[str, Any]]) -> dict[str, Any]:
+    change_id = events[0].get("change_id") or Path(change_dir).name
+    state = dict(DEFAULT_SEED_STATE)
+    milestones: list[str] = []
+    for index, event in enumerate(events):
+        event_type = event.get("event_type")
+        if event_type == CHANGE_CREATED_EVENT_TYPE and index == 0:
+            continue  # seed 已应用（默认 planning.exploring）
+        if event_type in NON_STATE_EVENT_TYPES:
+            continue
+        if event_type in MILESTONE_EVENT_TYPES:
+            if event_type not in milestones:
+                milestones.append(event_type)
+            continue
+        if event_type == "transition_applied":
+            _apply_transition_to_state(state, event)
+        elif event_type == BLOCKED_EVENT_TYPE:
+            _apply_blocked_to_state(state, event)
+        elif event_type == UNBLOCKED_EVENT_TYPE:
+            _apply_unblocked_to_state(state, event)
+        elif event_type in (ROUTING_UPDATED_EVENT_TYPE, WAYFINDING_CHILDREN_EVENT_TYPE):
+            continue  # 不属于 workflow-state 形状（state/milestones）
+        else:
+            raise StateMachineError(f"unknown workflow event type: {event_type}")
+    return {
+        "schema": WORKFLOW_STATE_SCHEMA,
+        "change_id": change_id,
+        "state": state,
+        "milestones": milestones,
+        "source_event_seq": len(events),
+    }
+
+
+def _map_handoff_to_workflow_state(
+    change_dir: str | Path,
+    handoff_projection: dict[str, Any],
+    seq: int,
+) -> dict[str, Any]:
+    change_id = handoff_projection.get("change_id") or Path(change_dir).name
+    return {
+        "schema": WORKFLOW_STATE_SCHEMA,
+        "change_id": change_id,
+        "state": deepcopy(handoff_projection.get("state", {})),
+        "milestones": _milestones_from_transitions(handoff_projection.get("transitions", [])),
+        "source_event_seq": seq,
+    }
+
+
+def _milestones_from_transitions(transitions: list[dict[str, Any]]) -> list[str]:
+    """gen-1 milestones：transitions 中按序到达的不同 phase（跳过 blocked）。"""
+    seen: list[str] = []
+    for transition in transitions:
+        to_phase = transition.get("to", {}).get("phase")
+        if to_phase and to_phase != "blocked" and to_phase not in seen:
+            seen.append(to_phase)
+    return seen
+
+
+def _apply_transition_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
+    transition = deepcopy(event["transition"])
+    _validate_transition_dict(transition)
+    state.clear()
+    state.update(deepcopy(transition["to"]))
+
+
+def _apply_blocked_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
+    transition = deepcopy(event["transition"])
+    _validate_transition_dict(transition)
+    if transition["to"]["phase"] != "blocked":
+        raise StateMachineError("blocked event must transition to blocked")
+    state.clear()
+    state.update(deepcopy(transition["to"]))
+
+
+def _apply_unblocked_to_state(state: dict[str, Any], event: dict[str, Any]) -> None:
+    transition = deepcopy(event["transition"])
+    _validate_transition_dict(transition)
+    if transition["from"]["phase"] != "blocked":
+        raise StateMachineError("unblocked event must transition from blocked")
+    # 不依赖 blockers 数组（Q9/代码层修正 7：无 blocked_entered 前置记录的 change 不抛错）
+    state.clear()
+    state.update(deepcopy(transition["to"]))
+
+
+def verify_projection(change_dir: str | Path) -> list[str]:
+    """两代通用校验（Q11）：可投影 + 一致性。
+
+    - gen-1（initialized 开头）：沿用 handoff.json == replay 校验。
+    - gen-2（change_created / 无 seed）：事件可投影；若磁盘有 workflow-state.json，
+      校验磁盘投影 == 从事件 replay 重建的投影（D6 防自锁）。
+    """
+    events_path = event_log_path(change_dir)
+    if not events_path.exists():
+        return []
+    try:
+        projection = project_workflow_state(change_dir)
+    except Exception as exc:
+        return [f"workflow event log projection failed: {exc}"]
+
+    first = _read_events(events_path)[0]
+    if first.get("event_type") == "initialized":
+        return verify_handoff_projection(change_dir)
+
+    ws_path = Path(change_dir) / WORKFLOW_STATE_FILENAME
+    if ws_path.exists():
+        try:
+            disk = json.loads(ws_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return [f"workflow-state.json invalid JSON: {exc}"]
+        if disk != projection:
+            return ["workflow-state.json projection does not match workflow-events.jsonl"]
     return []
 
 

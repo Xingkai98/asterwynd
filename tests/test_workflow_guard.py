@@ -337,3 +337,169 @@ def test_guard_grill_evidence_extraction_parity_with_checker(tmp_path):
         assert ck_confirm(text) == exp_confirm, text
         assert wg._extract_open_question_indexes(text) == exp_open, text
         assert wg._extract_user_confirmation_indexes(text) == exp_confirm, text
+
+
+# ── awaiting gate（flow-event-projection P1）────────────────────────────
+
+
+def _seed_awaiting_change(tmp_path: Path, *, awaiting=True, with_state=True, with_proposal=True) -> Path:
+    """Seed a gen-2 change whose projection is (or is not) in awaiting state."""
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    change_dir.mkdir(parents=True)
+    if with_proposal:
+        (change_dir / "proposal.md").write_text(
+            "## Change Type\n\nprimary: feature\n", encoding="utf-8"
+        )
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "test-change"},
+    ]
+    if awaiting:
+        events.append(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 2,
+                "event_type": "blocked_entered",
+                "change_id": "test-change",
+                "transition": {
+                    "from": {"phase": "planning", "sub_state": "writing_design"},
+                    "to": {"phase": "blocked", "sub_state": "awaiting_proposal_confirmation"},
+                    "trigger": "auto",
+                },
+                "blocker": {
+                    "blocked_from": {"phase": "planning", "sub_state": "writing_design"},
+                    "reason": "proposal done",
+                },
+            }
+        )
+    with (change_dir / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    if with_state:
+        state = (
+            {"phase": "blocked", "sub_state": "awaiting_proposal_confirmation"}
+            if awaiting
+            else {"phase": "planning", "sub_state": "exploring"}
+        )
+        ws = {
+            "schema": "workflow-state/v1",
+            "change_id": "test-change",
+            "state": state,
+            "milestones": [],
+            "source_event_seq": len(events),
+        }
+        (change_dir / "workflow-state.json").write_text(
+            json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    return change_dir
+
+
+def test_guard_blocks_write_when_awaiting(tmp_path):
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_blocks_write_when_projection_missing(tmp_path):
+    _seed_awaiting_change(tmp_path, with_state=False)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "重建" in result.stderr
+
+
+def test_guard_blocks_write_when_projection_stale(tmp_path):
+    _seed_awaiting_change(tmp_path)
+    ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
+    ws = json.loads(ws_path.read_text(encoding="utf-8"))
+    ws["source_event_seq"] = 99  # 人为过期
+    ws_path.write_text(json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "重建" in result.stderr
+
+
+def test_guard_blocks_write_when_projection_corrupt(tmp_path):
+    _seed_awaiting_change(tmp_path)
+    ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
+    ws_path.write_text("{not valid json", encoding="utf-8")
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "重建" in result.stderr
+
+
+def test_guard_allows_write_when_not_awaiting(tmp_path):
+    _seed_awaiting_change(tmp_path, awaiting=False)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_allows_change_doc_writes_during_awaiting(tmp_path):
+    _seed_awaiting_change(tmp_path)
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(change_dir / "design.md")}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_allows_flow_cli_commands(tmp_path):
+    _seed_awaiting_change(tmp_path)
+
+    for command in [
+        "python3 scripts/workflow_state.py flow status --change test-change",
+        "uv run python scripts/workflow_state.py flow block --change test-change --awaiting awaiting_human_review",
+        "python3 scripts/workflow_state.py flow confirm --change test-change",
+        "python3 scripts/workflow_state.py flow advance --change test-change --to writing_proposal",
+    ]:
+        result = _run_guard(
+            tmp_path,
+            {"tool_name": "Bash", "tool_input": {"command": command}},
+        )
+        assert result.returncode == 0, f"flow 命令应豁免: {command}"
+
+
+def test_guard_blocks_flow_chain_hijack(tmp_path):
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    "python3 scripts/workflow_state.py flow status --change test-change "
+                    "&& echo x > docs/known-debt.md"
+                )
+            },
+        },
+    )
+
+    assert result.returncode == 2

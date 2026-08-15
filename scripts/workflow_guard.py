@@ -263,10 +263,12 @@ def _is_privileged_cli(command: str) -> bool:
     # 复合/重定向/命令替换/换行（多行 Bash 可换行接写命令）→ 非独立调用
     if re.search(r"&&|\|\||[;|`]|\$\(|[\r\n]|>\s*[^=]", stripped):
         return False
+    # flow 子命令白名单（Q10/代码层修正 8）：status|confirm|approve|block|advance
     return bool(
         re.match(
             r"^(?:python3?|uv\s+run\s+python3?)\s+scripts/workflow_state\.py\s+"
-            r"(artifact-event|review-manifest|policy-[a-z-]+)\b",
+            r"(?:artifact-event|review-manifest|policy-[a-z-]+"
+            r"|flow\s+(?:status|confirm|approve|block|advance))\b",
             stripped,
         )
     )
@@ -528,6 +530,52 @@ def _is_change_doc_write(file_path: str) -> bool:
     return False
 
 
+# ── awaiting gate（flow-event-projection P1）────────────────────────────
+# guard 只读投影、绝不写盘（hook 无副作用，代码层修正 4）。投影缺失/stale/corrupt
+# → fail-closed exit 2（提示先运行 flow status 重建）；awaiting 且未确认 → exit 2
+# （执法不弱化，红线 1）。事件损坏（_read_events 报错带行号≈seq）→ 报「事件不完整」。
+
+_AWAITING_SUB_STATES = ("awaiting_proposal_confirmation", "awaiting_human_review", "awaiting_user_confirmation")
+
+
+def _awaiting_block_reason(change_id: str) -> str | None:
+    """返回拦截原因；None 表示放行。"""
+    change_dir = CHANGES_DIR / change_id
+    ws_path = change_dir / "workflow-state.json"
+    if not ws_path.exists():
+        if (change_dir / "workflow-events.jsonl").exists():
+            return "projection_missing"
+        return None  # 无事件日志的 legacy change：不适用 awaiting 执法
+    try:
+        disk = json.loads(ws_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "projection_corrupt"
+    state = disk.get("state", {})
+    if not (state.get("phase") == "blocked" and state.get("sub_state") in _AWAITING_SUB_STATES):
+        return None
+    events_path = change_dir / "workflow-events.jsonl"
+    if not events_path.exists():
+        return "projection_corrupt"
+    try:
+        from agent.workflow.event_log import _read_events
+
+        events = _read_events(events_path)
+    except Exception:
+        return "事件不完整，检查 seq"
+    if disk.get("source_event_seq") != len(events):
+        return "projection_stale"
+    return f"blocked.{state.get('sub_state')}"
+
+
+def _awaiting_gate_message(change_id: str, reason: str) -> str:
+    if reason in ("projection_missing", "projection_corrupt", "projection_stale"):
+        return (
+            f"⛔ change '{change_id}' 投影不可用/过期（{reason}），无法判断 awaiting 态（fail-closed）。"
+            f"请先运行 `flow status --change {change_id}` 重建投影。"
+        )
+    return f"⛔ change '{change_id}' 处于 awaiting 态（{reason}），用户确认后才能继续写代码。"
+
+
 
 
 def main():
@@ -592,6 +640,18 @@ def main():
                 file=sys.stderr,
             )
             sys.exit(2)
+
+    # ── awaiting gate（flow-event-projection P1）──
+    # 写代码前判断 change 是否处于 awaiting 态（blocked.awaiting_*）。投影缺失/
+    # stale/corrupt → fail-closed exit 2（提示先跑 flow status 重建）；guard 只读
+    # 不写盘。与 grill gate 一样：文档类写操作豁免；无法映射 change 时不触发。
+    if file_path and not _is_change_doc_write(file_path):
+        change_id = _current_change_id()
+        if change_id is not None:
+            reason = _awaiting_block_reason(change_id)
+            if reason is not None:
+                print(_awaiting_gate_message(change_id, reason), file=sys.stderr)
+                sys.exit(2)
 
     # ── state-machine ceremony is disabled (issue #90) ──
     # The phase gate check (active change / worktree / required files) is
