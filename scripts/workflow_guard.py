@@ -263,10 +263,12 @@ def _is_privileged_cli(command: str) -> bool:
     # 复合/重定向/命令替换/换行（多行 Bash 可换行接写命令）→ 非独立调用
     if re.search(r"&&|\|\||[;|`]|\$\(|[\r\n]|>\s*[^=]", stripped):
         return False
+    # flow 子命令白名单（Q10/代码层修正 8）：status|confirm|approve|block|advance
     return bool(
         re.match(
             r"^(?:python3?|uv\s+run\s+python3?)\s+scripts/workflow_state\.py\s+"
-            r"(artifact-event|review-manifest|policy-[a-z-]+)\b",
+            r"(?:artifact-event|review-manifest|policy-[a-z-]+"
+            r"|flow\s+(?:status|confirm|approve|block|advance))\b",
             stripped,
         )
     )
@@ -528,6 +530,53 @@ def _is_change_doc_write(file_path: str) -> bool:
     return False
 
 
+# ── awaiting gate（flow-event-projection P1）────────────────────────────
+# guard 只读投影、绝不写盘（hook 无副作用，代码层修正 4）。投影缺失/stale/corrupt
+# → fail-closed exit 2（提示先运行 flow status 重建）；awaiting 且未确认 → exit 2
+# （执法不弱化，红线 1）。事件损坏（_read_events 报错带行号≈seq）→ 报「事件不完整」。
+
+
+def _awaiting_block_reason(change_id: str) -> str | None:
+    """返回拦截原因；None 表示放行。
+
+    事件日志是唯一真相（Q3/building-review Issue 2/3）：guard 不依赖磁盘
+    workflow-state.json 判定 awaiting——投影只是缓存，缺失/stale/损坏不代表状态
+    真实。用事件 replay 得到权威 awaiting 判定：非 awaiting 放行（不额外误拦
+    gen-0 在途 change），awaiting 拦截（不因投影问题放行）；仅事件不完整
+    （无法 replay）时 fail-closed。guard 只读不写盘。
+    """
+    change_dir = CHANGES_DIR / change_id
+    if not (change_dir / "workflow-events.jsonl").exists():
+        return None  # 无事件日志的 legacy change：不适用 awaiting 执法
+    try:
+        from agent.workflow.event_log import is_awaiting_state, project_workflow_state
+
+        projection = project_workflow_state(change_dir)
+    except Exception as exc:
+        return _event_damaged_reason(str(exc))
+    state = projection.get("state", {})
+    if not is_awaiting_state(state):
+        return None
+    return f"blocked.{state.get('sub_state')}"
+
+
+def _event_damaged_reason(message: str) -> str:
+    """从 replay 异常提取行号≈seq（_read_events 报错带 'at line N'）。"""
+    match = re.search(r"at line (\d+)", message)
+    if match:
+        return f"事件不完整，检查 seq {match.group(1)}"
+    return f"事件不完整，检查 seq（{message}）"
+
+
+def _awaiting_gate_message(change_id: str, reason: str) -> str:
+    if reason.startswith("事件不完整"):
+        return (
+            f"⛔ change '{change_id}' 事件日志不完整，无法判定 awaiting 态（fail-closed）。"
+            f"{reason}。事件是唯一真相，请检查并修复 workflow-events.jsonl。"
+        )
+    return f"⛔ change '{change_id}' 处于 awaiting 态（{reason}），用户确认后才能继续写代码。"
+
+
 
 
 def main():
@@ -576,6 +625,16 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(2)
+            # awaiting gate 对 write-intent Bash 同样生效（building-review Issue 1）：
+            # 写操作（含 Bash 重定向/heredoc）在 awaiting 期间 exit 2，防红线 1 经 Bash 绕过。
+            change_id = _current_change_id()
+            if change_id is not None:
+                targets = _extract_bash_targets(command)
+                if not targets or not all(_is_change_doc_write(t) for t in targets):
+                    reason = _awaiting_block_reason(change_id)
+                    if reason is not None:
+                        print(_awaiting_gate_message(change_id, reason), file=sys.stderr)
+                        sys.exit(2)
 
     # ── grill gate (issue #95) ──
     # 写代码前必须完成独立 subagent design grilling。仅对非 docs + 有 spec
@@ -592,6 +651,19 @@ def main():
                 file=sys.stderr,
             )
             sys.exit(2)
+
+    # ── awaiting gate（flow-event-projection P1）──
+    # 写代码前判断 change 是否处于 awaiting 态（blocked.awaiting_*）。事件日志是
+    # 唯一真相（Q3）：用事件 replay 判定，非 awaiting 放行、awaiting 拦截、事件
+    # 损坏 fail-closed。guard 只读不写盘。与 grill gate 一样：文档类写操作豁免；
+    # 无法映射 change 时不触发。
+    if file_path and not _is_change_doc_write(file_path):
+        change_id = _current_change_id()
+        if change_id is not None:
+            reason = _awaiting_block_reason(change_id)
+            if reason is not None:
+                print(_awaiting_gate_message(change_id, reason), file=sys.stderr)
+                sys.exit(2)
 
     # ── state-machine ceremony is disabled (issue #90) ──
     # The phase gate check (active change / worktree / required files) is
