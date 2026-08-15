@@ -117,28 +117,6 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-### 6. `flow-event-projection`
-
-状态：未实现。
-
-关联 issue：[#136](https://github.com/Xingkai98/asterwynd/issues/136)（【feature】flow-event-projection：开发流程事件投影（workflow-state.json，P1））。父 map：[#121](https://github.com/Xingkai98/asterwynd/issues/121)（开发流程可安装化 P1 事件投影）。
-
-批次：开发流程可安装化 P1，P0（flow-policy-source）与 cross-cutting（industry-research-gate）已合入；与队列中其他 change（TUI、worktree 工具）影响面不同，可并行立项但合入需错开（共享 openspec/specs/** 与 backlog 归档阶段）。
-
-建议顺序原因：
-
-- #121 P1 是 P2 平台闸门 / P3 编排通知 / P4 声明化引擎的前置（guard 读投影、checker 派生物一致性是后续依赖）。
-- 决策已锁定：#125（事件溯源两代分裂盘点）+ #128（投影 schema）+ #129（等待态执法），无待定架构项。
-
-主要交付：
-
-- per-change `workflow-state.json` 投影（state + milestones + source_event_seq；awaiting 态建模为 blocked.awaiting_*；容忍异构派生）。
-- `flow status` / `flow confirm` / `flow approve` / `flow block` / `flow advance` 命令（废旧 advance/approve 删除；写路径唯一化复用 v1 blocked 事件）。
-- guard 读投影判断 awaiting + last_seq 新鲜度；投影缺失/损坏/stale → fail-closed（提示先跑 `flow status` 重建，只读不写盘）；checker 投影==replay 一致性防自锁 + 归档可投影校验。
-- `workflow-state.json` + `workflow-events.jsonl` 入受保护路径（cli_written）。
-- 事件基建两代分裂修复（统一投影入口 `project_workflow_state` 兼容当代事件）。
-- 实现 PR 合入时给 issue #136 添加完成 comment 并关闭。
-
 ## 已完成待归档
 
 这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。
