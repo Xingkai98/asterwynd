@@ -132,11 +132,11 @@
 
 主要交付：
 
-- per-change `workflow-state.json` 投影（state + milestones + source_event_seq；awaiting 集；容忍异构派生）。
-- `flow status` / `flow confirm` / `flow approve` 命令（废旧 advance/approve；写路径唯一化复用 v1 blocked 事件）。
-- guard 读投影 + last_seq 新鲜度 + stale 回退正则兜底（fail-closed）；checker 投影==replay 一致性防自锁。
+- per-change `workflow-state.json` 投影（state + milestones + source_event_seq；awaiting 态建模为 blocked.awaiting_*；容忍异构派生）。
+- `flow status` / `flow confirm` / `flow approve` / `flow block` / `flow advance` 命令（废旧 advance/approve 删除；写路径唯一化复用 v1 blocked 事件）。
+- guard 读投影判断 awaiting + last_seq 新鲜度；投影缺失/损坏/stale → fail-closed（提示先跑 `flow status` 重建，只读不写盘）；checker 投影==replay 一致性防自锁 + 归档可投影校验。
 - `workflow-state.json` + `workflow-events.jsonl` 入受保护路径（cli_written）。
-- 事件基建两代分裂修复（replay 兼容当代事件）。
+- 事件基建两代分裂修复（统一投影入口 `project_workflow_state` 兼容当代事件）。
 - 实现 PR 合入时给 issue #136 添加完成 comment 并关闭。
 
 ## 已完成待归档
