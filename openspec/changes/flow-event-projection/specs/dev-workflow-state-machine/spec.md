@@ -46,11 +46,17 @@
 
 #### Scenario: 解除等待态
 
-- **WHEN** 用户确认或批准解除等待
-- **THEN** `flow confirm` / `flow approve` SHALL 追加 `blocked_resolved` 事件（复用 v1 blocked 事件类型）
-- **AND** `blocked_resolved` SHALL 只由 `flow confirm` / `flow approve` 写入（写路径唯一化）
+- **WHEN** 用户确认解除等待
+- **THEN** `flow confirm` SHALL 追加 `blocked_resolved` 事件（复用 v1 blocked 事件类型）
+- **AND** `blocked_resolved` SHALL 只由 `flow confirm` 写入（写路径唯一化）
 - **AND** `blocked_resolved` 的 payload SHALL 从当前投影 awaiting 态推导（from=当前 `blocked.awaiting_*`，to=恢复目标），兼容无 `blocked_entered` 前置记录的 change
 - **AND** 状态 SHALL 恢复到进入 awaiting 之前的阶段
+
+#### Scenario: flow approve 阶段 gate 通过
+
+- **WHEN** change 处于某 phase 的 `ready_for_review`（gate）且运行 `flow approve --phase <phase>`
+- **THEN** 系统 SHALL 追加 `transition_applied` 事件（trigger: `human_review`）完成跨阶段推进到下一 phase 首 sub_state
+- **AND** 不写 `blocked_resolved`（awaiting 解除只由 `flow confirm` 承担）
 
 #### Scenario: guard 读投影执法
 

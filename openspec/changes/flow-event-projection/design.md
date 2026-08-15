@@ -63,7 +63,7 @@
 ### D4: 写路径唯一化（#129 红线 2 + Q4/Q12 确认）
 
 - `blocked_entered` 只由进入 awaiting 的完成命令与 `flow block` 写：**P1 至少 proposal 完成命令写 `awaiting_proposal_confirmation` 的 blocked_entered**（Q4/Q12 激活）；进入其他 awaiting 态的完成命令写路径可留 P2。
-- `blocked_resolved` 只由 `flow confirm/approve` 写。
+- `blocked_resolved` 只由 `flow confirm` 写（building-review S2：`flow approve` 是阶段 gate 通过，写 `transition_applied`，不写 blocked_resolved）。
 - 不新增事件类型（v1 blocked 类型复用，`append_blocked_event`/`append_unblocked_event` 沿用）。
 
 ### D5: guard 读投影 + stale 自愈重建（#129 + Q3 确认 + building-review 修复）

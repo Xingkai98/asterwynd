@@ -86,7 +86,7 @@
 ### 实现期发现并回写的新影响面
 
 - **gen-2 change 同步写 handoff.json**（代码层修正 6）：`flow` 命令写 `workflow-state.json` 时同步映射写最小 handoff.json，避免 `_load_handoff`/discover 等老枚举工具漏掉当代 change。checker 的 `_check_handoff_json` 已改用 `verify_projection`（gen-2 校验 workflow-state.json，不校验 synced handoff 与 replay 的 handoff 形状）。
-- **guard bootstrap 语义**：当代 change 有 events 但无 workflow-state.json 时，guard fail-closed 拦写并提示先跑 `flow status`（投影是 awaiting 判定的前提）。
+- **guard awaiting 判定以事件 replay 为准**（building-review Round 2 S3 更新）：guard 不依赖磁盘投影判定 awaiting——投影缺失/损坏/stale 不额外误拦非 awaiting change、awaiting 仍拦截（不因投影问题放行）；仅事件不完整（无法 replay）时 fail-closed 报「事件不完整，检查 seq N」。write-intent Bash 与 Write/Edit 同样受 awaiting 执法约束（红线 1 不可经 Bash 绕过）。
 - **`--check-archived` 既有 drift**：归档 change 的 review manifest tasks hash 与当前 tasks.md 存在 pre-existing drift（7 处），非本 change 引入，另作债务处理。
 
 ## Reference Implementation Research

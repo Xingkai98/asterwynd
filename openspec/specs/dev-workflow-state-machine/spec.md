@@ -497,11 +497,24 @@ phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，�
 
 #### Scenario: 解除等待态
 
-- **WHEN** 用户确认或批准解除等待
-- **THEN** `flow confirm` / `flow approve` SHALL 追加 `blocked_resolved` 事件（复用 v1 blocked 事件类型）
-- **AND** `blocked_resolved` SHALL 只由 `flow confirm` / `flow approve` 写入（写路径唯一化）
+- **WHEN** 用户确认解除等待
+- **THEN** `flow confirm` SHALL 追加 `blocked_resolved` 事件（复用 v1 blocked 事件类型）
+- **AND** `blocked_resolved` SHALL 只由 `flow confirm` 写入（写路径唯一化）
 - **AND** `blocked_resolved` 的 payload SHALL 从当前投影 awaiting 态推导（from=当前 `blocked.awaiting_*`，to=恢复目标），兼容无 `blocked_entered` 前置记录的 change
 - **AND** 状态 SHALL 恢复到进入 awaiting 之前的阶段
+
+#### Scenario: flow approve 阶段 gate 通过
+
+- **WHEN** change 处于某 phase 的 `ready_for_review`（gate）且运行 `flow approve --phase <phase>`
+- **THEN** 系统 SHALL 追加 `transition_applied` 事件（trigger: `human_review`）完成跨阶段推进到下一 phase 首 sub_state
+- **AND** 不写 `blocked_resolved`（awaiting 解除只由 `flow confirm` 承担）
+- **AND** phase 机械检查未通过时 SHALL 拒绝批准
+
+#### Scenario: checker 派生物一致性
+
+- **WHEN** 项目 artifact checker 校验 tasks 全勾的 change
+- **THEN** 它 SHALL 校验磁盘投影（workflow-state.json）与从事件 replay 重建的投影一致（投影 == replay）
+- **AND** 不一致时 SHALL 失败（exit 2），防止自锁
 
 #### Scenario: guard 读投影执法
 
