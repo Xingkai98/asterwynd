@@ -46,5 +46,5 @@
 - [x] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
 - [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`——归档后复跑通过（见下）。
 - [x] 5.6 PR 合入时给关联 GitHub issue #141 添加完成说明 comment 并关闭——合入后由主 session 执行（本实现 agent 不 merge）。
-- [ ] 5.7 合入前用 `gh pr checks <PR>` 核对本 PR 的 `validate` 与 `benchmark-gate` check 均 SUCCESS——PR 创建后核对。
+- [x] 5.7 合入前用 `gh pr checks <PR>` 核对本 PR 的 `validate` 与 `benchmark-gate` check 均 SUCCESS——PR #142 双 check 均 SUCCESS（validate 1m51s / benchmark-gate 15s）。
 - [x] 5.8 运行 `/review-loop` 直至 PASS（或 3 轮封顶），产出 `reviews/building-review.md` + review manifest（checker 对 tasks 全勾的 change 强制）——Round 1 PASS（review-declarative-flow-engine-20260816-1），finding 2 修复后 6138 组合 0 mismatch。
