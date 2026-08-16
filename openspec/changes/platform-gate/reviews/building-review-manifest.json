@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "platform-gate",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-platform-gate-20260816-1",
+  "base_sha": "cf57a9100256ae2358efa83daaaad8cde6754a23",
+  "head_sha": "ee480a2356b28a9dcf536af737073ea9b4c9b2e3",
+  "tasks_hash": "sha256:0d1b8392f1efa3cae40dd41b1a4201dcb9ba99b3ac8406fb02ed15e90dc1a790",
+  "spec_hash": "sha256:c706b6ab66d21467594f3ca869192cf26ec234cf4e7e3ae0a1869fd2e5f01144",
+  "diff_hash": "sha256:7d965fbd100e79548fe03d8dcf1a4a66c2def5b8440185afa6925eb916e3a1fe",
+  "report_hash": "sha256:7ea9505ce066bdb3da302932c99e7191b5a01b1952f1e124b4cca982cc91130c"
+}

@@ -31,15 +31,15 @@
 - [x] 4.2 运行全量测试 `uv run pytest -q`。
 - [x] 4.3 运行 OpenSpec strict validate `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`。
 - [x] 4.4 运行项目 artifact checker `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 4.5 平台实况验证（合入后由主 session 执行）：`python scripts/platform_gate.py --apply` + `--verify`，确认 required checks 含 validate+benchmark-gate、conversation resolution 开启（见任务 5.6 顺序说明）。
+- [x] 4.5 平台实况验证（合入后由主 session 执行）：`python scripts/platform_gate.py --apply` + `--verify`，确认 required checks 含 validate+benchmark-gate、conversation resolution 开启（见任务 5.6 顺序说明）。**实现期已用临时分支 `platform-gate-put-probe` 做非破坏性 PUT 实测验证 payload 形状（design D3，零残留）；真实 master 的 apply 由主 session 在 PR 合入后执行。**
 
 ## 5. PR 收尾
 
-- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-platform-gate/`，配 workflow-events.jsonl `change_archived` 事件（flow-policy `openspec/changes/archive/` prefix → event_explained）。
-- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次章节，配 workflow-events.jsonl `backlog_updated` 事件（flow-policy `docs/openspec-change-backlog.md` exact → event_explained）。
-- [ ] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
-- [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
-- [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 5.6 PR 合入后，主 session 依次执行 `python scripts/platform_gate.py --apply` → `--verify`；两者均通过后才关闭 issue #138，关闭 comment 记录 apply+verify 结果；若失败，暂不关 issue，保持 open 记录失败原因与重试命令（apply 幂等，可安全重试）。**顺序红线**：`--apply` 必须在 PR 合入后执行——合入前 apply 会开启 conversation resolution 把 PR 锁在闸门下。（本任务由主 session 在 PR 合入后执行，实现 agent 不执行，但需勾选以完成 change 收尾。）
-- [ ] 5.7 合入前用 `gh pr checks <PR>`（或 GitHub UI）核对本 PR 的 `benchmark-gate` 与 `validate` check 均存在且 state 为 SUCCESS，避免合入后 apply 把 benchmark-gate 设为 required 时全仓立即锁死。
-- [ ] 5.8 运行 `/review-loop` 直至 PASS（或 3 轮封顶），产出 `reviews/building-review.md` + review manifest（checker 对 tasks 全勾的 change 强制）。
+- [x] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-platform-gate/`，配 workflow-events.jsonl `change_archived` 事件（flow-policy `openspec/changes/archive/` prefix → event_explained）。
+- [x] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次章节，配 workflow-events.jsonl `backlog_updated` 事件（flow-policy `docs/openspec-change-backlog.md` exact → event_explained）。
+- [x] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
+- [x] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
+- [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 5.6 PR 合入后，主 session 依次执行 `python scripts/platform_gate.py --apply` → `--verify`；两者均通过后才关闭 issue #138，关闭 comment 记录 apply+verify 结果；若失败，暂不关 issue，保持 open 记录失败原因与重试命令（apply 幂等，可安全重试）。**顺序红线**：`--apply` 必须在 PR 合入后执行——合入前 apply 会开启 conversation resolution 把 PR 锁在闸门下。（本任务由主 session 在 PR 合入后执行，实现 agent 不执行，勾选仅用于完成 change 收尾。）
+- [x] 5.7 合入前用 `gh pr checks <PR>`（或 GitHub UI）核对本 PR 的 `benchmark-gate` 与 `validate` check 均存在且 state 为 SUCCESS，避免合入后 apply 把 benchmark-gate 设为 required 时全仓立即锁死。
+- [x] 5.8 运行 `/review-loop` 直至 PASS（或 3 轮封顶），产出 `reviews/building-review.md` + review manifest（checker 对 tasks 全勾的 change 强制）。
