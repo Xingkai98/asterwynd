@@ -17,10 +17,10 @@
 
 - [x] 3.1 `test_openspec_artifact_checker.py` + `test_check_phase_done.py` 通过（60 passed）
 - [x] 3.2 `openspec validate --all --strict` 通过
-- [ ] 3.3 artifact checker 通过（需本 change 的 workflow-events.jsonl 解释受保护 spec 修改）
+- [x] 3.3 artifact checker 通过（需本 change 的 workflow-events.jsonl 解释受保护 spec 修改）
 
 ## 4. 收尾
 
-- [ ] 4.1 当前规格同步：把 spec delta 合并到 `openspec/specs/change-documentation/spec.md`
-- [ ] 4.2 全量 pytest 无新增失败（9 个既有环境失败已挂 issue #82）
-- [ ] 4.3 提交本次变更
+- [x] 4.1 当前规格同步：把 spec delta 合并到 `openspec/specs/change-documentation/spec.md`
+- [x] 4.2 全量 pytest 无新增失败（9 个既有环境失败已挂 issue #82）
+- [x] 4.3 提交本次变更
