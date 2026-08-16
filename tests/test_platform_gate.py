@@ -406,6 +406,34 @@ def test_description_fields_do_not_affect_schema(tmp_path):
     assert target["required_status_checks"]["contexts"] == ["validate", "benchmark-gate"]
 
 
+def test_schema_rejects_empty_contexts(tmp_path):
+    """contexts 空列表 → schema 非法（不能 PUT 空 required checks）。"""
+    config = tmp_path / "empty-ctx.json"
+    config.write_text(
+        json.dumps(
+            {
+                "required_status_checks": {"strict": True, "contexts": []},
+                "required_conversation_resolution": {"enabled": True},
+                "required_pull_request_reviews": {"required_approving_review_count": 0},
+                "enforce_admins": {"enabled": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(pg.PlatformGateError) as exc:
+        pg.load_target(str(config))
+    assert "非空" in str(exc.value)
+
+
+def test_error_repo_flag_invalid_format_exit_2(capsys):
+    """--repo 多段路径（owner/repo/extra）→ exit 2 格式校验，不调用 gh。"""
+    fake = _fake_run(_old_get())
+    code = _run_cli(["--verify", "--repo", "Xingkai98/asterwynd/extra"], fake, capsys)
+    assert code == 2
+    assert "--repo" in capsys.readouterr().err
+    fake.assert_not_called()
+
+
 def test_schema_rejects_unknown_top_level_key(tmp_path):
     """未知顶层字段 → schema 非法。"""
     config = tmp_path / "bad-key.json"

@@ -147,7 +147,7 @@ def _validate_target(target: dict[str, Any]) -> list[str]:
         if not isinstance(rsc.get("strict"), bool):
             errors.append("`required_status_checks.strict` 必须是布尔")
         contexts = rsc.get("contexts")
-        if not isinstance(contexts, list) or not all(
+        if not isinstance(contexts, list) or not contexts or not all(
             isinstance(item, str) and item for item in contexts
         ):
             errors.append("`required_status_checks.contexts` 必须是非空字符串列表")
@@ -240,7 +240,7 @@ def parse_repo_from_url(url: str) -> str | None:
 def resolve_repo(repo_flag: str | None) -> str:
     """解析目标仓库。提供 ``--repo`` 时完全短路 git remote 解析。"""
     if repo_flag:
-        if "/" not in repo_flag or repo_flag.startswith("/") or repo_flag.endswith("/"):
+        if not re.match(r"^[^/]+/[^/]+$", repo_flag):
             raise PlatformGateError(f"--repo 必须是 owner/repo 格式: {repo_flag!r}")
         return repo_flag
 
