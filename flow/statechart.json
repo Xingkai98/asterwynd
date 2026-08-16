@@ -1,0 +1,195 @@
+{
+  "_schema": "statechart/v1",
+  "_description": "流程状态机声明（P4，declarative-flow-engine，issue #141）。状态 = <phase>.<sub_state>；sub_state 为 None 时状态名 = <phase>（如 blocked / done）。on 表声明静态转移（phase 内邻接 + gate 跨 phase 前进），每条转移带 trigger（auto / handoff / human_review / human_rollback）。动态语义对齐现有 Python 常量：任意非 blocked/done 态可进 blocked（flow block）、blocked 恢复目标数据依赖（last blocked_entered 的 transition.from，兜底 recovery_default）。演示态 awaiting_design_confirmation 是 test-only fixture，不进本文件。",
+  "id": "dev-flow",
+  "initial": "planning.exploring",
+  "states": {
+    "wayfinding.charting_map": {
+      "_description": "绘制能力地图",
+      "on": [
+        {"trigger": "auto", "to": "wayfinding.working_tickets", "_description": "地图草稿 → 拆 decision tickets"}
+      ]
+    },
+    "wayfinding.working_tickets": {
+      "_description": "整理 decision tickets",
+      "on": [
+        {"trigger": "auto", "to": "wayfinding.map_cleared", "_description": "tickets 整理完 → 地图清除"}
+      ]
+    },
+    "wayfinding.map_cleared": {
+      "_description": "地图清除，等待审批 spawn 子 change",
+      "on": [
+        {"trigger": "auto", "to": "wayfinding.reviewing_map", "_description": "地图清除 → 审阅地图"}
+      ]
+    },
+    "wayfinding.reviewing_map": {
+      "_description": "审阅地图产出",
+      "on": [
+        {"trigger": "auto", "to": "wayfinding.ready_for_review", "_description": "审阅完成 → gate"}
+      ]
+    },
+    "wayfinding.ready_for_review": {
+      "_description": "GATE：等待人工审批跨 phase 到 planning",
+      "on": [
+        {"trigger": "human_review", "to": "planning.exploring", "_description": "人工批准 → planning.exploring"}
+      ]
+    },
+    "planning.exploring": {
+      "_description": "需求探索（initial）",
+      "on": [
+        {"trigger": "auto", "to": "planning.writing_proposal", "_description": "探索完成 → 写 proposal"}
+      ]
+    },
+    "planning.writing_proposal": {
+      "_description": "写 proposal.md",
+      "on": [
+        {"trigger": "auto", "to": "planning.writing_design", "_description": "proposal 完成 → 写 design"}
+      ]
+    },
+    "planning.writing_design": {
+      "_description": "写 design.md",
+      "on": [
+        {"trigger": "auto", "to": "planning.writing_spec", "_description": "design 完成 → 写 spec delta"}
+      ]
+    },
+    "planning.writing_spec": {
+      "_description": "写 spec delta",
+      "on": [
+        {"trigger": "auto", "to": "planning.writing_tickets", "_description": "spec 完成 → 拆 tasks"}
+      ]
+    },
+    "planning.writing_tickets": {
+      "_description": "拆 tasks.md",
+      "on": [
+        {"trigger": "auto", "to": "planning.reviewing_artifacts", "_description": "tickets 完成 → 审阅产物"}
+      ]
+    },
+    "planning.reviewing_artifacts": {
+      "_description": "审阅 proposal/design/spec/tasks",
+      "on": [
+        {"trigger": "auto", "to": "planning.ready_for_review", "_description": "审阅完成 → gate"}
+      ]
+    },
+    "planning.ready_for_review": {
+      "_description": "GATE：等待人工审批跨 phase 到 building",
+      "on": [
+        {"trigger": "human_review", "to": "building.writing_tests", "_description": "人工批准 → building.writing_tests"}
+      ]
+    },
+    "building.writing_tests": {
+      "_description": "测试先行写测试",
+      "on": [
+        {"trigger": "auto", "to": "building.test_failing", "_description": "写测试 → 红"},
+        {"trigger": "auto", "to": "building.implementing", "_description": "写测试 → 实现"}
+      ]
+    },
+    "building.test_failing": {
+      "_description": "测试红（TDD 循环）",
+      "on": [
+        {"trigger": "auto", "to": "building.writing_tests", "_description": "回写测试"},
+        {"trigger": "auto", "to": "building.implementing", "_description": "红 → 实现"}
+      ]
+    },
+    "building.implementing": {
+      "_description": "实现代码",
+      "on": [
+        {"trigger": "auto", "to": "building.all_tests_passing", "_description": "实现完成 → 全绿"},
+        {"trigger": "auto", "to": "building.writing_tests", "_description": "补测试"}
+      ]
+    },
+    "building.all_tests_passing": {
+      "_description": "测试全绿",
+      "on": [
+        {"trigger": "auto", "to": "building.implementing", "_description": "修复循环"},
+        {"trigger": "auto", "to": "building.smoke_validating", "_description": "全绿 → 冒烟"}
+      ]
+    },
+    "building.smoke_validating": {
+      "_description": "冒烟验证",
+      "on": [
+        {"trigger": "auto", "to": "building.implementing", "_description": "冒烟失败回实现"},
+        {"trigger": "auto", "to": "building.reviewing_impl", "_description": "冒烟通过 → 审阅实现"}
+      ]
+    },
+    "building.reviewing_impl": {
+      "_description": "独立 subagent 审阅实现",
+      "on": [
+        {"trigger": "auto", "to": "building.ready_for_review", "_description": "审阅通过 → gate"}
+      ]
+    },
+    "building.ready_for_review": {
+      "_description": "GATE：等待人工审批跨 phase 到 closing",
+      "on": [
+        {"trigger": "human_review", "to": "closing.syncing_specs", "_description": "人工批准 → closing.syncing_specs"}
+      ]
+    },
+    "closing.syncing_specs": {
+      "_description": "同步 spec delta 到当前规格",
+      "on": [
+        {"trigger": "auto", "to": "closing.archiving", "_description": "spec 同步完成 → 归档"}
+      ]
+    },
+    "closing.archiving": {
+      "_description": "归档 change 到 archive/",
+      "on": [
+        {"trigger": "auto", "to": "closing.updating_backlog", "_description": "归档完成 → 更新 backlog"}
+      ]
+    },
+    "closing.updating_backlog": {
+      "_description": "从 backlog 移除 change",
+      "on": [
+        {"trigger": "auto", "to": "closing.validating", "_description": "backlog 更新完成 → 校验"}
+      ]
+    },
+    "closing.validating": {
+      "_description": "跑 OpenSpec validate + artifact checker",
+      "on": [
+        {"trigger": "auto", "to": "closing.pr_ready", "_description": "校验通过 → PR 就绪"}
+      ]
+    },
+    "closing.pr_ready": {
+      "_description": "发起 PR",
+      "on": [
+        {"trigger": "auto", "to": "closing.reviewing_archive", "_description": "PR 发起 → 审阅归档收尾"}
+      ]
+    },
+    "closing.reviewing_archive": {
+      "_description": "审阅归档收尾",
+      "on": [
+        {"trigger": "auto", "to": "closing.ready_for_review", "_description": "审阅完成 → gate"}
+      ]
+    },
+    "closing.ready_for_review": {
+      "_description": "GATE：等待人工审批进入 done",
+      "on": [
+        {"trigger": "human_review", "to": "done", "_description": "人工批准 → done"}
+      ]
+    },
+    "blocked": {
+      "_description": "generic blocked（sub_state None）；blocked.awaiting_* 见下。进入路径动态（flow block --awaiting），非 on 表声明。",
+      "on": []
+    },
+    "blocked.awaiting_proposal_confirmation": {
+      "_description": "等待 proposal 确认（flow block --awaiting awaiting_proposal_confirmation）",
+      "recovery": "from_blocked_from",
+      "recovery_default": {"phase": "planning", "sub_state": "writing_design"},
+      "on": []
+    },
+    "blocked.awaiting_human_review": {
+      "_description": "等待人工审阅（flow block --awaiting awaiting_human_review）",
+      "recovery": "from_blocked_from",
+      "recovery_default": {"phase": "planning", "sub_state": "reviewing_artifacts"},
+      "on": []
+    },
+    "blocked.awaiting_user_confirmation": {
+      "_description": "等待用户确认（flow block --awaiting awaiting_user_confirmation）",
+      "recovery": "from_blocked_from",
+      "recovery_default": {"phase": "planning", "sub_state": "writing_design"},
+      "on": []
+    },
+    "done": {
+      "_description": "终态（sub_state None）；由 closing.ready_for_review 人工批准进入。",
+      "on": []
+    }
+  }
+}

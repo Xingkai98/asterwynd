@@ -201,6 +201,19 @@ uv run python scripts/workflow_state.py flow advance --change <id> --to <sub_sta
 
 废旧 `advance`/`approve` 子命令已删除；`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow`/`policy-*` CLI 写。
 
+### 配置架构（四类配置文件，P4 declarative-flow-engine）
+
+开发流程的规则按职责拆在四个配置文件中，改规则时按维度选文件改、不互相污染：
+
+| 配置文件 | 负责维度 | 说明 |
+| --- | --- | --- |
+| `scripts/flow-policy.json` | 执法 | 受保护路径规则表（governance=event_explained 等），guard 与 checker 同源加载，单一策略源 |
+| `flow/statechart.json` | 流转 | 流程状态机声明（P4 新增）：`id`/`initial`/`states`/`on` 转移表（每转移带 trigger）+ awaiting 态 `recovery` 语义；状态集权威声明 |
+| `scripts/workflow_methods.json` | 执行 | 每状态执行方法映射（skill/command/agent），`_method_hint`/`_build_path` 直接索引，**不删 phase/sub_state 段** |
+| `scripts/platform-gate.json` | 平台 | GitHub branch protection 目标状态声明（platform-gate 平台闸门） |
+
+`flow/statechart.json` 由 `flow/engine.py`（stdlib-only 薄引擎）消费，与现有 Python 状态机（`agent/workflow/event_log.py` + `state_machine.py`）parity 并存：parity 测试锁定完整投影与合法目标等价；`validate()` 对提交的 statechart 做结构校验 + 对 `validate_transition` 的 parity 交叉校验（漂移在 CI 拦截）。statechart 不在受保护路径，保持 agent 可编辑（「改规则不改 Python」的编辑通道）。流转结构与执行方法分工：改转移只改 statechart、改执行 skill 只改 workflow_methods（共享状态名，职责不重叠）。
+
 ### platform-gate 平台闸门（合入门禁）
 
 `master` 合入门禁由 GitHub branch protection 强制（`scripts/platform-gate.json` 目标状态声明 + `scripts/platform_gate.py` 幂等脚本，配置即代码，走 git PR 流程 review）：
