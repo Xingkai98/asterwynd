@@ -78,12 +78,15 @@
 
 | 影响面 | 说明 |
 |---------|------|
-| 引擎边界 | 新增 `flow/` 目录（statechart.yaml + 薄引擎 + schema 校验），#124 可拆缝契约落点 |
-| 配置架构 | 新增 `statechart.yaml`（流程状态机）；`workflow_methods.json` 流程部分抽到 statechart（方案 A），保留执行方法部分 |
-| workflow 命令 | `scripts/workflow_state.py` 的 flow 命令可**改用引擎**（parity 对照，不替换旧逻辑）或保持（grill 定）；现有 Python 状态机不改 |
-| Specs | `openspec/specs/dev-workflow-state-machine/spec.md` delta（statechart 声明化 requirement） |
-| Tests | parity 测试（引擎==Python golden）、statechart 合法性测试、演示规则测试 |
-| Docs | AGENTS.md（配置架构说明：4 个配置文件各管什么）、change 自身文档 |
+| 引擎边界 | 新增 `flow/` 目录（statechart.json + engine.py + CLI），#124 可拆缝契约落点；文件名落地为 `.json`（grill confirmed 1，D2），非 proposal 初稿的 `.yaml` |
+| 配置架构 | 新增 `flow/statechart.json`（流转权威声明，状态集 + on 转移表 + awaiting recovery）；`workflow_methods.json` **不删** phase/sub_state 段（Q3，`_method_hint`/`_build_path` 直接索引），保留执行方法映射 |
+| workflow 命令 | `scripts/workflow_state.py` 的 flow 命令**不替换**（D8），引擎独立交付 + parity 对照；现有 Python 状态机不改 |
+| Specs | `openspec/specs/dev-workflow-state-machine/spec.md` delta 已合并（状态机声明化 requirement，SHALL 目标语言，未实现能力不写成已实现） |
+| Tests | parity 测试（完整投影 dict golden）、statechart 合法性测试（结构 + parity 交叉校验）、演示 fixture 测试、workflow_methods 兼容测试、e2e 三层（CLI 冒烟 / 真实生命周期 / 演示集成，用户 Q9） |
+| Docs | AGENTS.md 已补配置架构说明（4 个配置文件各管什么）；change 自身文档 |
+| 新影响面 1（实现期） | wayfinding phase 由 handoff 直接建态外部进入（非 transition 可达），statechart 孤儿状态检查豁免 wayfinding/blocked/done |
+| 新影响面 2（实现期） | statechart `states` 键声明顺序定义 phase 内 sub_state 序列（rollback 先后语义依赖），需保持与 `PHASE_SUB_STATES` 一致 |
+| 新影响面 3（实现期） | `validate(parity=True)` 懒加载 `agent.workflow.state_machine` 做交叉校验；核心引擎 API（derive/legal/can/apply）保持 stdlib-only，可拆缝平移 |
 | 明确不受影响 | guard 执法（flow-policy.json 驱动）、platform-gate 配置、AgentLoop、benchmark、paseo |
 
 ## Reference Implementation Research

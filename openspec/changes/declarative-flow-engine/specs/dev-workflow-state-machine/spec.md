@@ -16,8 +16,9 @@
 #### Scenario: 引擎与现有 Python parity 等价
 
 - **WHEN** 对同一事件序列运行薄引擎与现有 Python 派生
-- **THEN** 结果 SHALL 一致（parity golden 断言）
-- **AND** 引擎对未声明状态/事件的容忍 SHALL 对齐现有容忍异构（不抛错）
+- **THEN** 结果 SHALL 一致（parity golden 断言，完整投影 dict）
+- **AND** 引擎对未知事件类型的处理 SHALL 与现有 Python 一致（raise）
+- **AND** 「容忍异构」SHALL 仅指无 seed 事件（首事件非 `change_created`）仍可投影，不抛错
 
 #### Scenario: 改规则不改 Python
 
