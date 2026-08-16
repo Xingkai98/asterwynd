@@ -117,6 +117,27 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
+### 6. `platform-gate`
+
+状态：未实现。
+
+关联 issue：[#138](https://github.com/Xingkai98/asterwynd/issues/138)（【feature】platform-gate：P2 平台闸门（benchmark-gate 进 required + conversation resolution + 配置脚本固化））。
+
+批次：开发流程可安装化（#121）P2，与队列中其他 change（TUI / worktree-tool）无代码依赖。
+
+建议顺序原因：
+
+- P2 在 P1（flow-event-projection，事件投影）合入后开启——P2 是平台层合入门禁，不依赖 P1 代码但需治理基线稳定。
+- 用户决策（2026-08-15）：approve=1 暂缓（GitHub 硬限制 PR 作者不能 approve 自己的 PR，单人仓直接开启会锁死合入，触发条件=出现第二个有权限 reviewer）；平台配置用幂等脚本 + 文档固化。
+
+主要交付：
+
+- `scripts/platform-gate.json`：master 分支保护目标状态声明（required checks validate+benchmark-gate strict、conversation resolution、approve=1 暂缓 + 触发条件）。
+- `scripts/platform_gate.py`：幂等脚本 `--apply` / `--verify`（配置即代码，可复现、可 review、防漂移）。
+- AGENTS.md 合入门禁描述。
+- `openspec/specs/platform-gate/spec.md`（合入平台闸门 + 配置即代码 requirement）。
+- 实现 PR 合入时给 issue #138 添加完成 comment 并关闭；配置落地（`--apply`）在 PR 合入后由主 session 执行。
+
 ## 已完成待归档
 
 这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。
