@@ -117,28 +117,6 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-### 7. `declarative-flow-engine`
-
-状态：未实现。
-
-关联 issue：[#141](https://github.com/Xingkai98/asterwynd/issues/141)（【feature】declarative-flow-engine：P4 声明化引擎（statechart.yaml + 薄引擎 + parity 等价 pin））。
-
-批次：开发流程可安装化（#121）P4——路线终点。P0（flow-policy-source）→ P1（flow-event-projection）→ P2（platform-gate）已合入，P3（orchestration-notification）砍掉（飞书通知对单人仓 + 手机 paseo 鸡肋，issue #140 记录）。
-
-建议顺序原因：
-
-- #124 验收线：statechart 声明 + 薄引擎与现有 Python 常量 parity 等价 pin 住 + 演示一次真实规则变更不改 Python。
-- 用户范围决策（2026-08-16）：只声明流程状态机（guard/checker 规则已由 flow-policy.json 驱动）；parity 并存（不替换旧逻辑，验证价值后再替换）；方案 A 分工（statechart 管流转，workflow_methods.json 管执行方法）；引擎收进 `flow/` 目录（可拆缝契约）。
-
-主要交付：
-
-- `flow/statechart.json`（或 .yaml）：流程状态机声明（id/initial/states/on 转移表，对齐 XState `states/on/transition` 模型 + dev-workflow-state-machine 语义）。
-- `flow/engine.py`：薄引擎（`apply_transition` / `derive_state` / `validate`，stdlib-only）。
-- parity 测试：引擎输出 == 现有 Python 常量（golden 断言），验证价值后再替换。
-- 演示：新增 `awaiting_design_confirmation` 态，只改声明文件不改 Python。
-- `workflow_methods.json` 流程结构抽取到 statechart（方案 A），执行方法部分保留。
-- 实现 PR 合入时给 issue #141 添加完成 comment 并关闭。
-
 ## 已完成待归档
 
 这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。

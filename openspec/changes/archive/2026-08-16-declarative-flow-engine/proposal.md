@@ -65,7 +65,7 @@
 
 ### 演示（改规则不改 Python）
 
-- 新增 `awaiting_design_confirmation` 态（演示规则）：statechart.yaml 加一个 state + transition；Python 不改；parity 测试证明引擎正确派生新态，旧 Python 逻辑不变（新态对旧逻辑透明——旧逻辑不认识该态时按 NON_STATE/容忍处理，grill 定）。
+- 新增 `awaiting_design_confirmation` 态（演示规则）：statechart.json 加一个 state + transition；Python 不改；parity 测试证明引擎正确派生新态。（归档修正：grill Q1 确认旧 Python 对该新态一律 raise、无透明路径，本 change 不要求旧 Python 处理该态——演示态为 test-only fixture，不进提交的 statechart，见 grill-design.md Q1/Q6。）
 
 ### 方案 A 分工
 

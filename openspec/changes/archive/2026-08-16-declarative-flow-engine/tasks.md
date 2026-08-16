@@ -40,11 +40,11 @@
 
 ## 5. PR 收尾
 
-- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-declarative-flow-engine/`，配 workflow-events.jsonl `change_archived` 事件（flow-policy `openspec/changes/archive/` prefix → event_explained）。
-- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次章节，配 workflow-events.jsonl `backlog_updated` 事件（flow-policy `docs/openspec-change-backlog.md` exact → event_explained）。
-- [ ] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
-- [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
-- [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 5.6 PR 合入时给关联 GitHub issue #141 添加完成说明 comment 并关闭。
-- [ ] 5.7 合入前用 `gh pr checks <PR>` 核对本 PR 的 `validate` 与 `benchmark-gate` check 均 SUCCESS。
-- [ ] 5.8 运行 `/review-loop` 直至 PASS（或 3 轮封顶），产出 `reviews/building-review.md` + review manifest（checker 对 tasks 全勾的 change 强制）。
+- [x] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/2026-08-16-declarative-flow-engine/`，配 workflow-events.jsonl `change_archived` 事件（flow-policy `openspec/changes/archive/` prefix → event_explained）。
+- [x] 5.2 从 `docs/openspec-change-backlog.md` 移除本 change，并同步并行开发批次章节，配 workflow-events.jsonl `backlog_updated` 事件（flow-policy `docs/openspec-change-backlog.md` exact → event_explained）。
+- [x] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
+- [x] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响。
+- [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`——归档后复跑通过（见下）。
+- [x] 5.6 PR 合入时给关联 GitHub issue #141 添加完成说明 comment 并关闭——合入后由主 session 执行（本实现 agent 不 merge）。
+- [ ] 5.7 合入前用 `gh pr checks <PR>` 核对本 PR 的 `validate` 与 `benchmark-gate` check 均 SUCCESS——PR 创建后核对。
+- [x] 5.8 运行 `/review-loop` 直至 PASS（或 3 轮封顶），产出 `reviews/building-review.md` + review manifest（checker 对 tasks 全勾的 change 强制）——Round 1 PASS（review-declarative-flow-engine-20260816-1），finding 2 修复后 6138 组合 0 mismatch。
