@@ -1,0 +1,24 @@
+{
+  "schema": "1.0",
+  "_description": "master 分支保护目标状态声明（platform-gate，issue #138）。本文件只声明要强制的字段；未声明的保护字段（required_signatures / required_linear_history / allow_force_pushes / allow_deletions / lock_branch 等）保持当前实况，由 platform_gate.py --apply 的 GET-modify-PUT 保留自 GitHub。config 变更走 git PR 流程 review，不直接手工在 GitHub UI 修改。",
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "validate",
+      "benchmark-gate"
+    ],
+    "_description": "合入门禁：CI required status checks 必须全绿（strict 模式，分支合入前与上游同步）才能合入。validate = pytest + openspec validate + artifact checker；benchmark-gate = gate-smoke 基准回归。两个 check 由 .github/workflows/ci.yml 在每个 PR 上运行。"
+  },
+  "required_conversation_resolution": {
+    "enabled": true,
+    "_description": "PR 存在未 resolve 的 conversation 时 GitHub 阻止合入，全部 resolve 后才允许合入。"
+  },
+  "required_pull_request_reviews": {
+    "required_approving_review_count": 0,
+    "_description": "approve=1 暂缓：GitHub 硬限制 PR 作者不能 approve 自己的 PR，单人仓无第二 reviewer，直接开启会锁死合入。触发条件：出现第二个有权限 reviewer（能 approve 且非 PR 作者的身份，read 以上权限即可 approve）时开启——改本文件 count=1 + python scripts/platform_gate.py --apply；开启前必须用测试 PR 让第二 reviewer 实际 approve 一次验证有效性；锁死应急回滚路径 = 改回 count=0 + --apply（幂等，随时可回）。"
+  },
+  "enforce_admins": {
+    "enabled": true,
+    "_description": "admin 也不绕过 branch protection（保持现状）。"
+  }
+}

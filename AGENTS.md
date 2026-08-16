@@ -201,6 +201,15 @@ uv run python scripts/workflow_state.py flow advance --change <id> --to <sub_sta
 
 废旧 `advance`/`approve` 子命令已删除；`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow`/`policy-*` CLI 写。
 
+### platform-gate 平台闸门（合入门禁）
+
+`master` 合入门禁由 GitHub branch protection 强制（`scripts/platform-gate.json` 目标状态声明 + `scripts/platform_gate.py` 幂等脚本，配置即代码，走 git PR 流程 review）：
+
+- **合入硬性要求**：PR 合入 `master` 必须 required status checks 全绿（`validate` + `benchmark-gate`，strict 模式）且 PR conversations 全部 resolve（`required_conversation_resolution` 开启）；`enforce_admins` 开启（admin 也不 bypass）。
+- **approve=1 暂缓**：`required_approving_review_count` 保持 0。触发条件 = 仓库出现第二个有权限 reviewer（能 approve 且非 PR 作者的身份，read 以上权限即可 approve）时开启：改 `scripts/platform-gate.json` 的 `required_approving_review_count` 为 1 + `python scripts/platform_gate.py --apply`；开启前必须用测试 PR 让第二 reviewer 实际 approve 一次验证有效性；锁死应急回滚 = 改回 0 + `--apply`（幂等，随时可回）。
+- **配置漂移检查**：怀疑平台配置被手动改漂移时运行 `python scripts/platform_gate.py --verify`（只读，漂移 exit 1 并输出逐字段 diff）。
+- **配置落地**：`python scripts/platform_gate.py --apply`（GET-modify-PUT 幂等，apply 前打印目标 vs 实况 diff 供确认，需 admin PAT，由主 session 在 PR 合入后执行——合入前 apply 会把对话 resolution 闸门锁住 PR 自身）。
+
 更多命令见 [开发指南](./docs/development-guide.md)。
 
 ## 文档地图

@@ -60,7 +60,7 @@
 - 幂等：GET 结果 merge 声明字段后 PUT，重复 apply 结果一致、无副作用（目标状态已是当前状态时无实际变更）。
 - apply 前预检（Q7）：目标 JSON schema 合法性 + gh 可用 + **打印「目标 vs 当前实况」逐字段 diff** 供执行者确认后再 PUT（GET-modify-PUT 下 diff 即「将把什么改成什么」）；**预检复用 `--verify` 的归一化/diff 实现**（代码层审查 P11，避免两套逻辑漂移）；预检失败 exit 2 不写。
 - **输出通道与交互性**（代码层审查 P3）：diff 与任何提示输出**一律走 stderr**；stdout 只输出最终 JSON（apply 输出结果对象、verify 输出 `{"ok": bool, "diff": {...}}` 结构）；**脚本不交互**（无 y/n 提示）——执行者看完 stderr diff 后决定是否重跑 `--apply`，保证非交互/自动化可复跑。
-- **实现前临时分支实验**（Q1）：在真实仓用临时分支做一次非破坏性 PUT 实验（建临时分支 → PUT → GET 验证 → DELETE 该分支保护 → 删分支），确认个人仓 PUT 的必需字段集与省略布尔行为，再定稿 payload 变换。
+- **实现前临时分支实验**（Q1）：在真实仓用临时分支做一次非破坏性 PUT 实验（建临时分支 → PUT → GET 验证 → DELETE 该分支保护 → 删分支），确认个人仓 PUT 的必需字段集与省略布尔行为，再定稿 payload 变换。**已执行（2026-08-16，平台实况验证）**：对 `platform-gate-put-probe` 临时分支（off origin/master）PUT 脚本构造的 payload（`enforce_admins: true` + `required_pull_request_reviews`（GET 可写子字段 + count=0）+ `required_status_checks: {strict, contexts:[validate,benchmark-gate]}` + `required_conversation_resolution: true` + `restrictions: null`）→ **exit 0 成功**；GET 验证 strict=true、contexts=[validate, benchmark-gate]、conversation enabled=true、reviews count=0、enforce_admins=true；GET 响应不含 `restrictions` 键（个人仓语义：PUT 显式传 null 后响应省略该字段）。随后 DELETE 该分支保护（404 确认已删）+ 删除临时分支。结论：个人仓接受完整四必需字段 + `restrictions: null` + `enabled`→布尔变换，payload 形状定稿正确。
 
 ### D4: verify 语义（漂移检测）
 
@@ -108,7 +108,7 @@
 
 ## Pre-Implementation Review
 
-独立 subagent design grilling 已完成第一轮（`reviews/grill-design.md`，2026-08-15，run `reviewer-platform-gate-20260815-1`）：6 条 Confirmed Decisions + 10 条 Open Questions（Q1/Q2 BLOCKING 已吸收进 D1/D3）+ 9 条风险。Open Questions Q1-Q10 停轮等用户逐项确认，用户答复记录于 `reviews/grill-design.md` 的 `## User Confirmation`；确认后本 section 回填最终口径（对齐 P1 归档）。
+独立 subagent design grilling 已完成第一轮（`reviews/grill-design.md`，2026-08-15，run `reviewer-platform-gate-20260815-1`）：6 条 Confirmed Decisions + 10 条 Open Questions（Q1/Q2 BLOCKING 已吸收进 D1/D3）+ 9 条风险。Open Questions Q1-Q10 已全部停轮获得用户确认（2026-08-16，答复记录于 `reviews/grill-design.md` 的 `## User Confirmation`，全部有实质答复）：Q1/Q2 BLOCKING 按推荐（GET-modify-PUT + 显式双向变换 + 递归剥离 `_description` + 临时分支实测）、Q3 `--config` 输入路径、Q4 verify 白名单 null/缺失=漂移、Q5 合入后 apply 顺序红线、Q6 approve=1 暂缓 + 测试 PR 验证 + 应急回滚、Q7 apply 前 diff 预检、Q8 单测强制 `--repo` + mock、Q9 benchmark-gate 核对、Q10 拒绝 `--check-json`（pytest 已直接校验 checked-in JSON，记 backlog）。所有决策已吸收进 D1-D11 并据此定稿。
 
 ## Risks / Trade-offs
 

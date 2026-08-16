@@ -75,12 +75,12 @@
 
 | 影响面 | 说明 |
 |---------|------|
-| GitHub 平台配置 | `master` branch protection：required checks 增加 benchmark-gate、conversation resolution 开启（合入后由 `--apply` 落地） |
+| GitHub 平台配置 | `master` branch protection：required checks 增加 benchmark-gate、conversation resolution 开启（合入后由 `--apply` 落地）。**实现期已用临时分支做非破坏性 PUT 实验验证**（`platform-gate-put-probe` off origin/master：PUT 脚本构造的完整 payload 成功，GET 确认四必需字段 + `restrictions: null` + enabled→布尔均正确，随后 DELETE 保护 + 删分支，零残留） |
 | scripts/ | 新增 `platform_gate.py`（stdlib-only）+ `platform-gate.json`（目标状态声明） |
-| Docs | AGENTS.md（合入门禁描述 + verify 命令）、change 自身文档（design/grill） |
+| Docs | AGENTS.md（合入门禁描述 + verify/apply 命令 + approve 触发条件）、change 自身文档（design/grill） |
 | Specs | 新增 `openspec/specs/platform-gate/spec.md`（合入平台闸门 + 配置即代码 requirement） |
-| 测试 | `platform_gate.py` 单测（payload 构造、verify 比对、幂等、错误处理）+ 全量 pytest 回归 |
-| 明确不受影响 | AgentLoop、工具系统、Web/TUI、benchmark 运行代码、workflow 治理脚本（guard/checker/workflow_state/event_log）、`flow-policy.json` 受保护策略表 |
+| 测试 | `tests/test_platform_gate.py` 单测（payload 构造、verify 比对、幂等、错误处理、schema、--repo 短路）+ 全量 pytest 回归 |
+| 明确不受影响 | AgentLoop、工具系统、Web/TUI、benchmark 运行代码、workflow 治理脚本（guard/checker/workflow_state/event_log）、`flow-policy.json` 受保护策略表。实现期未发现新的额外影响面（脚本自包含，仅 scripts/ + tests/ + 文档/spec） |
 
 ## Reference Implementation Research
 
