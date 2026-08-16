@@ -258,10 +258,14 @@ class TestParity:
             assert engine_targets == python_targets, f"legal_targets mismatch for {state}"
 
     def test_can_transition_parity_all_combos(self):
-        """逐态 can_transition == validate_transition（全部状态 × 全部 trigger）。"""
+        """逐态 can_transition == validate_transition（全部状态 × 全部 trigger）。
+
+        含未识别 trigger（"bogus"/None）：Python validate_transition 不做 trigger 成员校验，
+        引擎须严格镜像（review-loop Round 1 finding 2 回归 pin）。
+        """
         engine = _load_engine()
         states = _all_declared_states()
-        triggers = ("auto", "handoff", "human_review", "human_rollback")
+        triggers = ("auto", "handoff", "human_review", "human_rollback", "bogus", None)
         for from_state in states:
             from_phase, from_sub = parse_state(from_state)
             for to_state in states + ["blocked", "done"]:

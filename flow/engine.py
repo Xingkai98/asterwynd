@@ -277,12 +277,17 @@ class FlowEngine:
         state.update(dict(transition["to"]))
 
     def _validate_transition(self, transition: dict) -> None:
-        """校验单条 transition dict，非法 raise（镜像 _validate_transition_dict）。"""
+        """校验单条 transition dict，非法 raise（镜像 _validate_transition_dict）。
+
+        trigger 键必须存在（Python 的 ``transition["trigger"]`` 缺失即 KeyError）；
+        但不对 trigger 值做成员校验——镜像 validate_transition 对未识别 trigger 的容忍
+        （review-loop Round 1 finding 2）。
+        """
+        if "trigger" not in transition:
+            raise StatechartError("transition missing trigger")
         from_state = parse_state(transition.get("from"))
         to_state = parse_state(transition.get("to"))
-        trigger = transition.get("trigger")
-        if trigger not in TRIGGERS:
-            raise StatechartError(f"invalid trigger: {trigger!r}")
+        trigger = transition["trigger"]
         if not self.can_transition(from_state, to_state, trigger):
             raise StatechartError(
                 f"invalid transition: {state_name(*from_state)} -> {state_name(*to_state)} "
@@ -304,8 +309,10 @@ class FlowEngine:
         """
         from_phase, from_sub = parse_state(from_state)
         to_phase, to_sub = parse_state(to_state)
-        if trigger not in TRIGGERS:
-            return False
+
+        # 不校验 trigger 成员性：Python validate_transition 对未识别的 trigger 不做成员
+        # 校验（within-phase 邻接不看 trigger、self-loop 只认 handoff、rollback 只认
+        # human_rollback），引擎需严格镜像（review-loop Round 1 finding 2）。
 
         # sub_state 成员校验（镜像 _validate_sub_state，blocked/done 无 sub_state）
         if from_phase not in ("blocked", "done"):
