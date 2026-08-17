@@ -1,0 +1,84 @@
+commit 3ffa0cb024b120e306e8e84f311b0a5bfad81b4e
+Author: Xingkai98 <xingkai98@126.com>
+Date:   Sun Jun 14 23:44:31 2026 +0800
+
+    Distinguish benchmark warning passes
+    
+    Co-authored-by: Claude <noreply@anthropic.com>
+
+diff --git a/benchmarks/models.py b/benchmarks/models.py
+index ae06bfe..17fe98e 100644
+--- a/benchmarks/models.py
++++ b/benchmarks/models.py
+@@ -64,6 +64,7 @@ class RunMetadata:
+     ended_at: str = ""
+     task_count: int = 0
+     passed: int = 0
++    warnings: int = 0
+     failed: int = 0
+ 
+     def write_json(self, path: str | Path) -> None:
+@@ -87,4 +88,3 @@ def render_summary(results: list[TaskResult]) -> str:
+             f"{result.iterations} | {result.tool_calls} | {failure} |"
+         )
+     return "\n".join(lines) + "\n"
+-
+diff --git a/benchmarks/runner.py b/benchmarks/runner.py
+index b2063cf..1789ce7 100644
+--- a/benchmarks/runner.py
++++ b/benchmarks/runner.py
+@@ -66,7 +66,11 @@ class BenchmarkRunner:
+             ended_at=ended_at,
+             task_count=len(results),
+             passed=sum(result.status == "passed" for result in results),
+-            failed=sum(result.status != "passed" for result in results),
++            warnings=sum(result.status == "passed_with_warnings" for result in results),
++            failed=sum(
++                result.status not in {"passed", "passed_with_warnings"}
++                for result in results
++            ),
+         )
+         metadata.write_json(run_dir / "run.json")
+         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
+@@ -144,9 +148,18 @@ class BenchmarkRunner:
+             )
+             log(f"Test command exit code: {test_exit_code}")
+ 
+-            status = "passed" if test_exit_code == 0 else "failed"
+             failure_category = None
+-            if status != "passed":
++            if test_exit_code == 0:
++                if agent_result.status != "completed" or agent_result.failure_category:
++                    status = "passed_with_warnings"
++                    failure_category = (
++                        agent_result.failure_category
++                        or FailureCategory.MODEL_FAILURE.value
++                    )
++                else:
++                    status = "passed"
++            else:
++                status = "failed"
+                 failure_category = (
+                     FailureCategory.TEST_TIMEOUT.value
+                     if test_exit_code == -1 and "Timeout" in test_output
+@@ -309,4 +322,3 @@ def _now() -> str:
+ 
+ def _new_run_id() -> str:
+     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+-
+diff --git a/cli.py b/cli.py
+index 36cd031..9e77d97 100644
+--- a/cli.py
++++ b/cli.py
+@@ -261,7 +261,10 @@ def benchmark(
+     metadata = runner.run_all(tasks_dir)
+     run_path = runs_dir / metadata.run_id
+     typer.echo(f"Benchmark run: {run_path}")
+-    typer.echo(f"Tasks: {metadata.task_count} | passed: {metadata.passed} | failed: {metadata.failed}")
++    typer.echo(
++        f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
++        f"warnings: {metadata.warnings} | failed: {metadata.failed}"
++    )
+ 
+ 
+ if __name__ == "__main__":

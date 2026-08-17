@@ -3,11 +3,13 @@
   "repo": "local/asterwynd",
   "base_commit": "7c6fc3e",
   "problem_statement_file": "issue.md",
-  "test_command": "test -f docs/collab-context-audit.md && grep -q 'summarizer' docs/collab-context-audit.md && grep -q 'compact' docs/collab-context-audit.md",
+  "test_command": "pytest -q tests/benchmark/test_collab_audit_structure.py",
   "category": "agent",
   "difficulty": "medium",
   "timeout_seconds": 300,
   "gold_patch_file": null,
-  "test_patch_file": null,
-  "hints_text": "This multi-part audit is a good fit for delegating parallel exploration to subagents and aggregating the results."
+  "test_patch_file": "test.patch",
+  "hints_text": "This multi-part audit is a good fit for delegating parallel exploration to subagents and aggregating the results.",
+  "track": "A",
+  "scenario": "debug"
 }

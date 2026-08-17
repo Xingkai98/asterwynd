@@ -1,15 +1,15 @@
-# Fix the Calculator Module Using LSP Diagnostics
+# LspDiagnostics 支持显式 language 覆盖
 
-A new module `agent/example/calculator.py` was recently added but contains a bug. The function `calculate_total` produces incorrect results when given a list with negative numbers. There is also a type-related defect that the LSP server should flag.
+`agent/tools/builtin/lsp.py` 的 `LspDiagnosticsTool` 通过文件后缀推断语言（`_language_for`，映射 `.py`→python、`.ts`→typescript 等）。对无后缀或未知后缀文件（如 `README`、`Makefile`、扩展名缺失的文件），推断为 `None`，工具返回「no LSP server configured for this file type」——即使调用方明确知道该文件的真实语言，也没有办法强制指定。
 
 ## Task
 
-1. First, use the `LspDiagnostics` tool on `agent/example/calculator.py` to discover what the LSP server reports
-2. Review the diagnostics and understand the error
-3. Fix the error so that all tests pass
+给 `LspDiagnosticsTool` 增加可选 `language` 参数：当后缀推断为 `None` 时，用显式 `language` 覆盖；后缀能推断时显式值不生效（后缀优先）。这样对扩展名缺失但语言明确的文件（如无后缀的 Python 脚本），调用方可以显式指定语言拿到真实诊断。
 
 ## Requirements
 
-- Use the LSP diagnostics tool to find the issue before making changes
-- Fix the code in `agent/example/calculator.py`
-- Run the failing test to confirm your fix works
+- 工具参数新增可选 `language`（缺省不传）
+- 无后缀文件（如 `README`）默认执行 → 「no LSP server」（后缀无法推断，保持现状）
+- 无后缀文件 + `language="python"` → 走 python server 拿诊断（覆盖生效）
+- `.py` 文件传 `language="python"` 行为不变（后缀优先）
+- 既有 LSP 工具测试不得回归

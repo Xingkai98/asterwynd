@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "task_set": "A 轨历史重建 + B 轨当前演进 + Verified 精选子集（三来源组成，D3）",
+  "anti_cheat_disclosure": {
+    "track_a_note": "A 轨任务为历史重建回归基线，非公平评测：在完整 git 历史中运行，agent 可见 base_commit 之后的本仓库提交，存在答案泄漏面（D7）。",
+    "source": "本仓库 git 历史生成",
+    "time_range": "2026-06 前合入特性",
+    "training_cutoff": "未知（未对模型训练数据做污染排查）",
+    "positioning": "回归基线、非公平评测"
+  },
+  "capabilities": [
+    "tool-usage",
+    "context-planning",
+    "multi-step-solving",
+    "error-recovery",
+    "safety-boundary",
+    "long-term-memory",
+    "long-context"
+  ],
+  "coverage": {
+    "asterwynd-001-tool-registry": ["tool-usage"],
+    "asterwynd-002-asterwynd-runner": ["multi-step-solving"],
+    "asterwynd-002-sandbox-executor": ["safety-boundary", "tool-usage"],
+    "asterwynd-003-agentloop-trace": ["multi-step-solving", "tool-usage"],
+    "asterwynd-003-read-write-tools": ["tool-usage"],
+    "asterwynd-004-benchmark-cli": ["tool-usage", "multi-step-solving"],
+    "asterwynd-004-harden-write": ["safety-boundary"],
+    "asterwynd-005-bash-workspace": ["safety-boundary", "tool-usage"],
+    "asterwynd-006-memory-manager": ["long-term-memory"],
+    "asterwynd-007-skill-loader": ["tool-usage"],
+    "asterwynd-008-parent-channel": ["error-recovery", "multi-step-solving"],
+    "asterwynd-009-subagent-manager": ["multi-step-solving"],
+    "asterwynd-010-agent-loop": ["multi-step-solving", "context-planning"],
+    "asterwynd-011-repeater-fix": ["error-recovery"],
+    "asterwynd-012-sse-streaming": ["error-recovery", "multi-step-solving"],
+    "asterwynd-013-hook-manager": ["tool-usage"],
+    "asterwynd-014-logging-tracing": ["multi-step-solving"],
+    "asterwynd-015-retry-budget": ["error-recovery"],
+    "asterwynd-017-interactive-fix": ["error-recovery"],
+    "asterwynd-018-warning-passes": ["multi-step-solving"],
+    "asterwynd-019-runner-timeout": ["error-recovery"],
+    "asterwynd-020-close-clients": ["error-recovery"],
+    "asterwynd-021-lsp-diagnostics": ["tool-usage", "error-recovery"],
+    "asterwynd-022-collaborative-context-audit": ["context-planning"],
+    "asterwynd-022-long-term-memory": ["long-term-memory"],
+    "asterwynd-b01-report-family-summary": ["long-context", "multi-step-solving"],
+    "asterwynd-readme-title": ["tool-usage"]
+  }
+}
