@@ -1,0 +1,1 @@
+{"schema":"workflow-event/v1","seq":1,"event_type":"backlog_updated","change_id":"evaluation-narrative","artifact_path":"docs/openspec-change-backlog.md","reason":"evaluation-narrative（issue #160）立项：第十一批评测升级系列 C4 从「未立项」更新为「已立项」，未实现队列新增条目，记录依赖 C3（并行）、docs-only 交付范围。","approved_by":"human"}

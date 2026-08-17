@@ -1,0 +1,94 @@
+# Design: evaluation-narrative（C4）
+
+## Context
+
+T2 叙事改动清单（`docs/research/narrative-changes-2026-08-17.md`，map #144 已确认，2026-08-17）是精确编辑清单：总原则 + 每文件编辑表 + 关键段落草案。本 change 按它落进 4 份面试文档。实测现状（2026-08-17 主仓库 master `88ed98a`，C2 合入后）：
+
+- `docs/resume-description.md`：L9/L104「23 个」、L87「34 个」、L23/L116「450+」、L9/L89/L105/L125-126/L132 多处 `claw-swe-bench/` 目录表述。
+- `Q13-benchmark.md`：L7 任务两类、L11 指标层（无 pass^k/cost@pass/fault_owner）、L13 对比层（无配对比较）、L15 面试重点（无污染披露）、L64 Claw 表述。
+- `W07-observability-benchmark.md`：L3/L98 36+ 保留、L104-109 加分点 4 条。
+- `FINAL-master-script.md`：L111 130/~1691、L112 38 工具、L117 36 任务、bullet 7 L96、速查表 L106-127。
+
+**数字口径基线**（已核实）：本地任务 26（C1 新增 b01 后 27，A 轨 26 + B 轨 1）；测试 135 文件/1700+ 函数；内置工具 38；36 = 26 本地 + 10 swebench。
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- 4 份文档按 T2 编辑清单修正现状口径（resume 任务数/测试数/Claw 重锚、FINAL 速查表 135/1700+）。
+- 升级叙事段写入 Q13/W07/FINAL（场景化 ~90/pass^k/cost@pass/fault_owner/配对比较/污染披露/预算），全部标「设计已定、C1–C3 实现中」。
+- 简历 bullet 7 改后草案落地。
+
+**Non-Goals:**
+
+- **不把未实现写成已实现**（升级数字不伪装成当前能力）。
+- **不改 benchmark 代码/spec**（归 C1/C2/C3）。
+- **不改 T1 协议文档**（归 C3，本 change 只引用）。
+- **不重跑 comparison.md**（C3 按协议产出后替换；本 change 不引用其数字）。
+- **不改 README/README_EN 中与任务数无关的内容**（如涉及任务数才同步）。
+
+## Decisions
+
+### Decision D1: 现状口径修正（resume + FINAL 速查表）
+
+**方案**：按 T2 编辑表逐行修正：
+- resume L9/L104 23→26、L87 34→26、L23/L116 450+→1700+；L9/L89/L105/L125-126/L132 Claw-SWE-Bench 目录表述 → 统一 harness 口径（SwebenchAdapter + 多 runner）。
+- FINAL L111 130/~1691→135/1700+；L112 38 保留 + 口径注明「38 内置（KNOWN_BUILTIN_TOOL_NAMES 已知名数，含默认关闭的浏览器工具）」；L117 36 保留 + 追加升级行。
+
+**理由**：T2 总原则 1「现状口径与升级方向分层」；resume 内部 23 与 34 自相矛盾必须统一（R3 发现）。
+
+### Decision D2: 升级叙事段（Q13/W07/FINAL）
+
+**方案**：
+- Q13 L7 加场景×难度分层 + 三来源（带过渡句区分「两类=执行类型轴」）；L11 指标层加 pass^k/cost@pass/fault_owner；L13 对比层加配对比较；L15 面试重点加污染披露 + pass@1/pass^k 口径 + 内联 Claw 重锚。
+- W07 L104-109 追加 4 条升级加分点（场景化 ~90/pass^k、污染披露、反作弊诚实边界、预算可配置可取消——标 C2/C3 交付）。
+- FINAL bullet 7 L96 追加升级句 + 速查表新增升级数字行（~90/pass^k/cost@pass/fault_owner/预算，标「设计已定/实现中」）。
+
+**理由**：T2 各文件编辑表 + 段落草案直接落地；升级全部标实现中，不穿帮。
+
+### Decision D3: 简历 bullet 7 改后草案
+
+**方案**：T2 给的改后草案落地：
+> "内置 26 个本地 coding-agent 任务 + SWE-bench Verified 子集，git worktree 隔离 + hidden test patch 确定性验证，bootstrap 95% CI（固定 seed）统计，pass@1/pass@k 指标，支持跨 agent 统一 harness 对比和 CI 回归门禁。"
+
+升级方向（~90/pass^k/cost@pass）**不上简历**（未实现），面试讲稿讲路线。
+
+**理由**：T2 §1 bullet 7 草案；升级不上简历原则。
+
+### Decision D4: C3 并行边界与校准
+
+**方案**：本 change 与 C3 并行。升级叙事段标「C1–C3 实现中」不依赖 C3 合入即可落；C3 合入后如有数字变化（如任务数、协议细节），本 change 收尾时校准。不碰 `docs/benchmark-run-protocol.md`（C3 专属）。
+
+**理由**：G4 C3/C4 并行决策；现状口径修正零依赖，升级叙事段措辞稳定（标实现中）。
+
+### Decision D5: 不引用 comparison.md
+
+**方案**：面试材料不引用 `benchmarks/reports/comparison.md` 的 myagent 旧数字（R3 确认其为 2026-06 一次性产物、与当前任务集/agent 名不符）；C3 重跑后替换。
+
+**理由**：T2 总原则 4；避免面试引用过时能力证据。
+
+## Reference Implementation Research
+
+- status: enabled
+- research_tier: exempt
+- reason: docs-only + 数字均已核实 + 编辑清单来自已确认 T2 交付物（#153 已关闭）；引用已关闭决策路径，无待定设计项。
+- findings: 本地 `.dev/reference-repos.txt` 不存在（已记录）。数字口径来源：R3（#147）实测 + C1 合入后任务数 27；编辑位置与草案来自 T2（#153）。
+- design impact: D1–D5 直接承接 T2 编辑清单；无新增调研依赖。
+
+## Risks / Trade-offs
+
+- **[升级叙事误写成已实现] → 全部升级段标「设计已定、C1–C3 实现中」；简历不上升级数字（D3）。**
+- **[数字口径漂移（C1 后 27 vs 26）] → 以 C1 合入后实测为准（A 轨 26 + B 轨 1 = 27）；T2 原文 26 为 C1 前口径，落稿时用当前 master 核实。**
+- **[C3 合入后数字变化] → 本 change 收尾时校准升级段；C3 协议文档是契约点（D4）。**
+- **[Claw 重锚误伤历史] → 只改失效目录表述，不动历史口径说明。**
+- **[README 同步遗漏] → tasks 明确「如涉及任务数同步 README/README_EN」。**
+
+## Pre-Implementation Review
+
+（占位：由独立零记忆 grill subagent 对 design.md 逐项追问后填写结论；grill 产出 `reviews/grill-design.md`，Open Questions 停轮等用户确认。）
+
+## Testing Strategy
+
+- docs-only change：无新增功能测试。
+- 一致性校验：落稿后 grep 确认无残留「23 个/34 个/450+/claw-swe-bench/」错误口径（README 同步）；数字与 C1 合入后 master 一致。
+- 若存在文档检查脚本则跑过；跑 `npx openspec validate` + artifact checker。
