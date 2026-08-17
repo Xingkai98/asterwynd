@@ -144,8 +144,9 @@ def failure_attribution(
     """Classify failures by ``reason`` into look-back samples.
 
     Returns ``{reason: [(task_id, round_index), ...]}`` counting only
-    ``failed`` / ``error`` / ``unsupported`` results that carry a non-None
-    reason. ``passed`` and ``passed_with_warnings`` results are never counted.
+    ``failed`` / ``error`` results that carry a non-None reason. ``unsupported``
+    rounds carry no failure signal and are excluded, matching the
+    ``fault_owner_cross`` failure set. Passed results are never counted.
     """
     buckets: dict[str, list[tuple[str, int | None]]] = defaultdict(list)
     for aggregate in aggregates:
