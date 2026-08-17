@@ -10,5 +10,33 @@
     "long-term-memory",
     "long-context"
   ],
-  "coverage": {}
+  "coverage": {
+    "asterwynd-001-tool-registry": ["tool-usage"],
+    "asterwynd-002-asterwynd-runner": ["multi-step-solving"],
+    "asterwynd-002-sandbox-executor": ["safety-boundary", "tool-usage"],
+    "asterwynd-003-agentloop-trace": ["multi-step-solving", "tool-usage"],
+    "asterwynd-003-read-write-tools": ["tool-usage"],
+    "asterwynd-004-benchmark-cli": ["tool-usage", "multi-step-solving"],
+    "asterwynd-004-harden-write": ["safety-boundary"],
+    "asterwynd-005-bash-workspace": ["safety-boundary", "tool-usage"],
+    "asterwynd-006-memory-manager": ["long-term-memory"],
+    "asterwynd-007-skill-loader": ["tool-usage"],
+    "asterwynd-008-parent-channel": ["error-recovery", "multi-step-solving"],
+    "asterwynd-009-subagent-manager": ["multi-step-solving"],
+    "asterwynd-010-agent-loop": ["multi-step-solving", "context-planning"],
+    "asterwynd-011-repeater-fix": ["error-recovery"],
+    "asterwynd-012-sse-streaming": ["error-recovery", "multi-step-solving"],
+    "asterwynd-013-hook-manager": ["tool-usage"],
+    "asterwynd-014-logging-tracing": ["multi-step-solving"],
+    "asterwynd-015-retry-budget": ["error-recovery"],
+    "asterwynd-017-interactive-fix": ["error-recovery"],
+    "asterwynd-018-warning-passes": ["multi-step-solving"],
+    "asterwynd-019-runner-timeout": ["error-recovery"],
+    "asterwynd-020-close-clients": ["error-recovery"],
+    "asterwynd-021-lsp-diagnostics": ["tool-usage", "error-recovery"],
+    "asterwynd-022-collaborative-context-audit": ["context-planning"],
+    "asterwynd-022-long-term-memory": ["long-term-memory"],
+    "asterwynd-b01-report-family-summary": ["long-context", "multi-step-solving"],
+    "asterwynd-readme-title": ["tool-usage"]
+  }
 }

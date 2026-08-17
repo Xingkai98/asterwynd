@@ -1,0 +1,23 @@
+diff --git a/tests/benchmark/test_report.py b/tests/benchmark/test_report.py
+index 879b898..48daa1a 100644
+--- a/tests/benchmark/test_report.py
++++ b/tests/benchmark/test_report.py
+@@ -319,3 +319,18 @@ def test_render_report_empty_aggregates() -> None:
+     md = render_report([])
+     assert md.startswith("# Benchmark Evaluation Report")
+     assert "(no failures)" in md
++
++
++def test_render_report_contains_task_family_section() -> None:
++    aggregates = aggregate_results(
++        [
++            [
++                _result("swebench-abc", "passed", task_family="swebench"),
++                _result("local-001", "failed", reason="test_failure", task_family="local"),
++            ]
++        ]
++    )
++    md = render_report(aggregates)
++    assert "## By Task Family" in md
++    assert "| swebench | 1 | 1.00 |" in md
++    assert "| local | 1 | 0.00 |" in md
