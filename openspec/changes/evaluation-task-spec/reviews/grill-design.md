@@ -18,7 +18,7 @@
 - `SwebenchAdapter` 目前只从 `report.json` 提取 `resolved` 布尔，`f2p_rate`/`p2p_rate`/`reward` 被丢弃（spec delta 的「SWE-bench 部分成功保留」为 C2 文本，未实现）。
 - `external_repo` 指向 `https://gitee.com/mirrors/requests.git`——L1 本地验证依赖外部镜像可达性，存在风险。
 
-## Confirmed Decisions（已确认，至少 3 条）
+## Confirmed Decisions
 
 - **决策**: D1 任务 schema 双标签（`scenario` 5 枚举 + `difficulty` 3 档归一化、缺省 `scenario=None` 向后兼容）方向确认；理由: Terminal-Bench 式显式双标签最干净、缺省兼容保证既有 26 本地 + 10 fixture 不破，`validate()` 对已填值做枚举校验合理；来源: grill-evaluation-task-spec-2026-08-17
 - **决策**: D2 能力层从任务级移到套件级覆盖矩阵方向确认；理由: 业界主流（OpenHands Index / VersaBench 聚合映射式）无任务级「场景×能力」二维先例，manifest 一层声明可机械校验，比任务级标注便宜可维护；`category` 保留为信息性主题标签正确（实测 26 本地 `category` 确为主题标签 tools/security/agent 等，从未真正打能力枚举）。覆盖矩阵的文件落点与 `track` 归属属未定细节，见 OQ-1；来源: grill-evaluation-task-spec-2026-08-17
