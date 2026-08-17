@@ -2,8 +2,8 @@
 
 ## 1. 规格与设计定稿
 
-- [ ] 1.1 确认 proposal 的 Change Type、Impact Analysis、Reference Implementation Research（research_tier=full，含本地参考仓库不可用事实与替代依据）完整。
-- [ ] 1.2 开发前使用 `batch-grill-me`（独立零记忆 grill subagent）审视 `design.md`，逐项确认 D1–D8 与开放问题（披露渲染 10 项清单、预算超限语义、self_check 门禁粒度、C4 并行边界）；不得把 agent 推荐答案当作用户确认。
+- [x] 1.1 确认 proposal 的 Change Type、Impact Analysis、Reference Implementation Research（research_tier=full，含本地参考仓库不可用事实与替代依据）完整。
+- [x] 1.2 开发前使用 `batch-grill-me`（独立零记忆 grill subagent）审视 `design.md`，逐项确认 D1–D8 与开放问题（披露渲染 10 项清单、预算超限语义、self_check 门禁粒度、C4 并行边界）；不得把 agent 推荐答案当作用户确认。
 - [ ] 1.3 grill 产出 `reviews/grill-design.md` 后**停轮**把 `## Open Questions` 逐项抛给用户并等待明确答复（每条配具体例子/场景），用户答复记录进 `## User Confirmation`；收到答复前不写实现代码。
 - [ ] 1.4 确认 spec delta（MODIFIED 渲染边界注记→已实现）与 proposal Modified Capabilities 一致，且为向后兼容扩展。
 

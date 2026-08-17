@@ -53,21 +53,24 @@ C2 已实现指标层数据/统计/CLI（`benchmarks/statistics.py` pass^k/cost/
 9. 过程效率（time-to-first-successful-edit / exploration fraction）
 10. 能力覆盖矩阵（C1 manifest，套件级展示）
 
-**备选**：只加元组 + 污染注记。被拒：spec 边界注记明确 10 项渲染义务，缺项会留下"实现了但结果页不可引用"。
+**数据管线注意（grill 实证）**：报告元组字段（task_set_hash/adapter_version/prompt_version/pricing_table_version/network 等）在 `models.py::RunMetadata` 已声明但 runner 未写入 run.json；`render_report` 只接收 `AggregateRun`（不含 RunMetadata）——item1 的数据源与接口形态待确认（Q2/Q3）。item9 过程效率需读 trace.json（当前 `collect_run_results` 只读 result.json），trace 读取管线待确认（Q12）。item2/3 的污染注记数字与 manifest 路径来源待确认（Q13/Q14）。item10 能力覆盖矩阵在 spec 边界注记之外（独立 Requirement），「10 项」口径与注记「9 项」不一致待统一（Q17）。
+
+**备选**：只加元组 + 污染注记。被拒：spec 边界注记明确渲染义务，缺项会留下"实现了但结果页不可引用"。
 
 **理由**：C2 已备好全部数据/统计字段，渲染是纯消费层；golden 测试锁片段。
 
 ### Decision D3: compare 配对渲染 + 元数据补齐
 
-**方案**：`compare.py` 接入 `statistics.paired_comparison`（C2 已实现），`build_summary`/`build_html` 对成对 run 输出 per-task delta 表 + 差异 CI + win-rate + McNemar p 值；run 元数据补齐（model version/date/cost 口径读 run.json 新字段）。
+**方案**：markdown 路径已由 C2 接入 `paired_comparison`（`compare.py::build_paired_report` 渲染 per-task delta 表 + 差异 CI + win-rate + McNemar p 值，`main()` 写 `build_summary + build_paired_report`）。本 change 补两处缺口：(a) `build_html`（HTML 路径）补配对段，复用 `build_paired_report` 避免 md/html 双份逻辑漂移；(b) run 元数据补齐（model version/date/cost 口径读 run.json 新字段）。
 
-**理由**：G3 M8 面试卖点"同任务同 harness 换 agent 对比不能只给两个点估计"；C2 已实现统计函数，本 change 只接线渲染。
+**理由**：G3 M8 面试卖点"同任务同 harness 换 agent 对比不能只给两个点估计"；配对统计与 markdown 渲染已在 C2 完成，本 change 只补 HTML 配对段与元数据。（tasks 4.1 措辞据此修正，待 Q1 用户确认。）
 
 ### Decision D4: CLI `--budget-cap`/`--no-cap` + `--preflight`
 
 **方案**：
-- `--budget-cap <USD>`：成本上限（建议默认 $50），运行中累计成本超限停止该 run 并标 `incomplete`（新增状态，C2 数据模型可承载）；`--budget-cap 0`（或 `--no-cap`）取消上限。
-- `--preflight`：Docker daemon 探测 + 内存检查（可用内存 <8GiB 提示走 L1 本地路径，不强制失败）；退出码 0=可跑全量、1=需 L1 降级。
+- `--budget-cap <USD>`：成本上限，运行中累计成本超限停止该 run 并标 `incomplete`。**grill 实证：C2 数据模型无 `incomplete`/status 字段**（`RunMetadata` 无 status、`TaskResult.status` 无生产者写 `"incomplete"`），C3 需扩展字段（候选：`RunMetadata.truncated: bool` 或 status 字段），落点与 compare/结果页对 incomplete 轮的处理待用户确认（Q4/Q5）。缺省语义三处文档冲突（Q6）：以 spec delta「缺省不设上限保持既有行为」为基线，`$50` 作为协议文档建议值，待用户确认。
+- `--budget-cap 0`（或 `--no-cap`）取消上限；`0.0`/`None`/`--no-cap` 等价语义与负数拒绝待用户确认（Q7）。
+- `--preflight`：Docker daemon 探测 + 内存检查（可用内存 <8GiB 提示走 L1 本地路径，不强制失败）；退出码 0=可跑全量、1=需 L1 降级；Docker 不可用时的退出码语义待确认（Q8）。
 - 两者均与 C2 的 `--seeds/--temperature/--model-version` 组合使用。
 
 **理由**：用户 2026-08-17 已定「预算可配置、可取消」；T1 协议命令面直接落地；`--preflight` 处置内存墙（R2 实测 2.5GiB < 8GiB）。
@@ -120,7 +123,11 @@ C2 已实现指标层数据/统计/CLI（`benchmarks/statistics.py` pass^k/cost/
 
 ## Pre-Implementation Review
 
-（占位：由独立零记忆 grill subagent 对 design.md 逐项追问后填写结论；grill 产出 `reviews/grill-design.md`，Open Questions 停轮等用户确认。）
+由独立零记忆 grill subagent 对 D1–D8 逐项追问并对照实际代码验证，2026-08-17 完成（run id 见 `reviews/grill-design.md`）。结论：
+
+- **已确认**：D1（T1 文档存在、协议文档缺失）、D2（10 项披露段现状全缺）、D4 CLI 现状（无 --budget-cap/--no-cap/--preflight）、D5 前置现状（self_check.py 与协议文档均不存在）、C2 数据模型与统计函数齐备（partial/fault_owner/cache tokens/seed/temperature、paired_comparison/cost_per_resolved/fault_owner_cross/process_efficiency/swebench_versions）、D6 spec 边界注记存在。
+- **必须修改（已整合进本 design）**：D3 前提修正（markdown 配对段 C2 已完成，C3 只补 HTML 配对段 + 元数据）；D4 `incomplete` 状态 C2 模型不存在、C3 需扩展字段；D2 报告元组字段 runner 未写入、渲染入口未携带 RunMetadata、过程效率缺 trace 数据管线。
+- **Open Questions**：共 18 条（Q1–Q18），详见 `reviews/grill-design.md` `## Open Questions`。**停轮等用户确认**，用户答复记录进该文件 `## User Confirmation` 节后，方可进入 building 写代码。
 
 ## Testing Strategy
 
