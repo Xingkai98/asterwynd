@@ -5,19 +5,26 @@ random seed so results are reproducible.
 """
 from __future__ import annotations
 
+import logging
 import random
 import statistics as _stats
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from benchmarks.models import DEFAULT_LAYER, LAYERS, resolve_layer
+from agent.cost_tracker import compute_cost_cached
+from benchmarks.models import DEFAULT_LAYER, LAYERS, TaskResult, resolve_layer
 
 __all__ = [
     "DEFAULT_LAYER",
+    "FAULT_OWNERS",
     "LAYERS",
     "PassKSummary",
     "bootstrap_ci",
+    "cohen_kappa",
+    "cost_per_resolved",
     "effective_pass_rate",
+    "fault_owner_cross",
     "is_valid_round",
     "layer_pass_rate",
     "mean_std",
@@ -25,6 +32,11 @@ __all__ = [
     "pass_k_success_rate",
     "resolve_layer",
 ]
+
+_logger = logging.getLogger("asterwynd.benchmark.statistics")
+
+# Orthogonal failure attribution dimension (C1 spec: agent/task/environment/unknown).
+FAULT_OWNERS: tuple[str, ...] = ("agent", "task", "environment", "unknown")
 
 # Reasons whose rounds carry no signal about the agent's ability: the task
 # never ran, so the round is neither a pass nor a failure. These rounds are
@@ -185,3 +197,88 @@ def pass_k_success_rate(
         excluded_tasks=excluded_tasks,
         min_valid_rounds=min_valid_rounds,
     )
+
+
+# ---------------------------------------------------------------------------
+# Cost and failure attribution
+# ---------------------------------------------------------------------------
+
+_RESOLVED_STATUSES = frozenset({"passed", "passed_with_warnings"})
+_FAILURE_STATUSES = frozenset({"failed", "error"})
+
+
+def cost_per_resolved(
+    results: Sequence[TaskResult],
+) -> tuple[float | None, float, int]:
+    """$/resolved-task over a layer's runs.
+
+    Numerator: total LLM token cost across *all* runs, including failed ones
+    (cache-aware, via ``compute_cost_cached``). Denominator: resolved count
+    (``passed`` + ``passed_with_warnings``). Returns ``(per_resolved, total_cost,
+    resolved_count)``; ``per_resolved`` is None when no task resolved. Only LLM
+    token billing is included — no sandbox / CI / compute cost.
+    """
+    total_cost = 0.0
+    resolved = 0
+    for result in results:
+        estimate = compute_cost_cached(
+            result.model,
+            input_tokens=result.input_tokens or 0,
+            cache_read_tokens=result.cache_read_tokens or 0,
+            cache_write_tokens=result.cache_write_tokens or 0,
+            output_tokens=result.output_tokens or 0,
+        )
+        total_cost += estimate.cost
+        if result.status in _RESOLVED_STATUSES:
+            resolved += 1
+    per_resolved = total_cost / resolved if resolved else None
+    return (per_resolved, total_cost, resolved)
+
+
+def fault_owner_cross(
+    results: Sequence[TaskResult],
+) -> dict[str, dict[str, int]]:
+    """reason x fault_owner cross-tab over failure samples.
+
+    Only ``failed`` / ``error`` results contribute (unsupported rounds are not
+    failures, and passed results are not attribution samples). Unlabelled or
+    invalid ``fault_owner`` strings fall back to ``unknown``.
+    """
+    cross: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for result in results:
+        if result.status not in _FAILURE_STATUSES:
+            continue
+        owner = result.fault_owner
+        if owner not in FAULT_OWNERS:
+            if owner is not None:
+                _logger.warning(
+                    "Invalid fault_owner %r on task %s; falling back to unknown",
+                    owner,
+                    result.task_id,
+                )
+            owner = "unknown"
+        cross[result.reason or "unknown_reason"][owner] += 1
+    return {reason: dict(counts) for reason, counts in cross.items()}
+
+
+def cohen_kappa(annotator_a: Sequence[str], annotator_b: Sequence[str]) -> float:
+    """Cohen's kappa for two annotators' categorical labels.
+
+    ``kappa = (Po - Pe) / (1 - Pe)`` where Po is the observed agreement and Pe
+    the expected agreement under independence. Returns 0.0 for empty input.
+    """
+    if len(annotator_a) != len(annotator_b):
+        raise ValueError("annotator label sequences must have equal length")
+    n = len(annotator_a)
+    if n == 0:
+        return 0.0
+    agreed = sum(1 for a, b in zip(annotator_a, annotator_b) if a == b)
+    po = agreed / n
+    counts_a = Counter(annotator_a)
+    counts_b = Counter(annotator_b)
+    pe = sum(
+        (counts_a[label] / n) * (counts_b[label] / n) for label in set(counts_a) | set(counts_b)
+    )
+    if pe >= 1.0:
+        return 1.0 if po == 1.0 else 0.0
+    return (po - pe) / (1.0 - pe)

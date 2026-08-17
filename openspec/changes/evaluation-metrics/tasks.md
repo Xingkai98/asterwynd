@@ -32,10 +32,10 @@
 
 ## 5. $/resolved-task 与 fault_owner（D4/D5 + Q6/Q7）
 
-- [ ] 5.1 `cost_per_resolved` 聚合（层内全部 run 总成本含失败 / resolved 数；passed_with_warnings 计入分母；Verdict 加 resolved 字段透传 SWE-bench 严格 resolved；resolved=0 返回 None；self-hosted 分子 0 输出 $0.00+注记；口径声明「仅 LLM token 计费」）+ 单元测试。
-- [ ] 5.2 `fault_owner` 数据模型（D5）+ `fault_owner_cross` 交叉表聚合（reason × fault_owner，默认 unknown 归并、非法字符串归 unknown 并警告）+ 单元测试。
-- [ ] 5.3 最小标注工具 `benchmark annotate <run-dir> (task,round) --owner agent|task|environment|unknown`（更新 result.json）+ CLI 测试。
-- [ ] 5.4 κ helper（双人标注一致性 Cohen's kappa）归 C2 统计层 + 单元测试。
+- [x] 5.1 `cost_per_resolved` 聚合（层内全部 run 总成本含失败 / resolved 数；passed_with_warnings 计入分母；Verdict 加 resolved 字段透传 SWE-bench 严格 resolved；resolved=0 返回 None；self-hosted 分子 0 输出 $0.00+注记；口径声明「仅 LLM token 计费」）+ 单元测试。
+- [x] 5.2 `fault_owner` 数据模型（D5）+ `fault_owner_cross` 交叉表聚合（reason × fault_owner，默认 unknown 归并、非法字符串归 unknown 并警告）+ 单元测试。
+- [x] 5.3 最小标注工具 `benchmark annotate <run-dir> (task,round) --owner agent|task|environment|unknown`（更新 result.json）+ CLI 测试。
+- [x] 5.4 κ helper（双人标注一致性 Cohen's kappa）归 C2 统计层 + 单元测试。
 
 ## 6. 配对比较统计（D6 + Q8）
 

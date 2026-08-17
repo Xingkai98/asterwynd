@@ -26,6 +26,12 @@ class Verdict:
     reason: str | None = None
     detail: str = ""
     score: float | None = None
+    # SWE-bench strict resolved boolean (None when the framework does not
+    # provide one). C2: passed-with-warnings handling and strict-resolved
+    # pass-through for $/resolved-task denominators.
+    resolved: bool | None = None
+    # Partial-success fields (e.g. SWE-bench f2p_rate/p2p_rate/reward).
+    partial: dict | None = None
 
 
 class VerifierAdapter(Protocol):
@@ -130,10 +136,17 @@ class SwebenchAdapter:
         report = json.loads(report_path.read_text())
         instance_report = report.get(task.instance_id or "", {})
         resolved = bool(instance_report.get("resolved"))
+        partial = {
+            key: instance_report[key]
+            for key in ("f2p_rate", "p2p_rate", "reward")
+            if key in instance_report
+        }
         return Verdict(
             status="passed" if resolved else "failed",
             reason=None if resolved else BenchmarkReason.TEST_FAILURE.value,
             detail=detail,
+            resolved=resolved,
+            partial=partial or None,
         )
 
 

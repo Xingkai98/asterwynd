@@ -790,6 +790,32 @@ def benchmark(
         )
 
 
+@app.command("benchmark-annotate")
+def benchmark_annotate(
+    run_dir: Path = typer.Argument(..., help="run 目录（含 tasks/<task-id>/result.json）"),
+    task_id: str = typer.Argument(..., help="要标注的任务 id"),
+    owner: str = typer.Option(
+        ..., "--owner", help="fault_owner 标注：agent / task / environment / unknown"
+    ),
+):
+    """标注失败归因 fault_owner 到指定任务的 result.json（C2 evaluation-metrics）"""
+    import json
+
+    from benchmarks.statistics import FAULT_OWNERS
+
+    if owner not in FAULT_OWNERS:
+        raise typer.BadParameter(f"--owner 必须是 {'/'.join(FAULT_OWNERS)} 之一")
+    result_path = run_dir / "tasks" / task_id / "result.json"
+    if not result_path.exists():
+        raise typer.BadParameter(f"未找到 result.json: {result_path}")
+    data = json.loads(result_path.read_text())
+    data["fault_owner"] = owner
+    result_path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n", errors="replace"
+    )
+    typer.echo(f"annotated {task_id}: fault_owner={owner}")
+
+
 def _build_benchmark_runner(
     *,
     agent: str,
