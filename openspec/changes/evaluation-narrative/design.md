@@ -85,7 +85,23 @@ T2 叙事改动清单（`docs/research/narrative-changes-2026-08-17.md`，map #1
 
 ## Pre-Implementation Review
 
-（占位：由独立零记忆 grill subagent 对 design.md 逐项追问后填写结论；grill 产出 `reviews/grill-design.md`，Open Questions 停轮等用户确认。）
+（2026-08-17 由独立零记忆 grill subagent 完成，产出 `reviews/grill-design.md`，run id `f1c9210c-1fd3-47f2-9358-09b84b483d5a`。）
+
+**已确认（6 条，详见 grill-design.md）**：D3 升级不上简历；D4 C3 并行边界不碰 `docs/benchmark-run-protocol.md`；D5 不引用 `comparison.md`；38 内置工具口径（含默认关闭浏览器工具）；污染披露数字 138/59.4% 有 spec 依据；Change Type 保持 `process`（docs 主类型会放宽门禁，保持 process 门禁更严）。
+
+**grill 发现的核心矛盾（须用户确认后修正 D1/D3 目标数字）**：design 落稿目标（resume 26、FINAL 36、测试 135/1700+）与当前 master 实测（本地任务 27 = 26 A 轨 + b01、总任务 37 = 27 + 10 swebench、测试 148 文件/1997 函数）不一致；直接按 D1/D3 落稿会把旧口径换成另一版旧口径。
+
+**Open Questions（8 条，待用户确认后记录进 grill-design.md `## User Confirmation`）**：
+- Q1: FINAL 速查表「评测任务 36（26+10）」写 36 还是 37（含 L11/L27/L96 三处 36+ 联动）？
+- Q2: resume 本地任务数用 27（含 b01）还是 26（仅 A 轨）？连带 L9/L104/L87 目标数与 D3 草案逐字。
+- Q3: FINAL「自动化测试」写 148/~1997 还是 135/1700+？连带 resume 450+→1700+ 或 ~1997。
+- Q4: `docs/interview-script/walkthrough/README.md` L27-L28（26+10=36 / 130/~1691）是否纳入本 change（第 5 份文档）+ 6.1 grep 词表扩展？
+- Q5: D3「简历 bullet 7 草案」落点：推荐写法 L9 / 选项 A / 展开版 §6？
+- Q6: W07 L98 核实表「26+10=36 ✅」与 L3 顶部引用句是否同步（与 Q1 联动）？
+- Q7: 升级叙事「~90」是否统一「目标 ~90 + 当前已落 37」双要素标注？
+- Q8: 缺失的逐字段落草案来源：design 内补齐（停轮覆盖）还是用户提供外部 T2 路径（`docs/research/narrative-changes-2026-08-17.md` 在所有 git 分支不存在）？
+
+**停轮状态**：Open Questions 未确认前不落稿 4 份目标文档（grill-confirmation-gate，issue #95）。
 
 ## Testing Strategy
 
