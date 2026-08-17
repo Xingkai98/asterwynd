@@ -89,6 +89,7 @@ Wayfinder map #144 的决策（G1/G2/G3/G4/T1/T2，9/9 票关闭）为本次变�
 **方案**（G2 Q3 + R2 组合 A）：
 - **构成**：保留现有 10 fixture（requests/flask/pytest 轻量实例）→ 从 Verified 轻量+中等 repo（requests/flask/pytest/sympy/seaborn/pylint 共 115 条）逐条过滤 KNOWN_BAD 补齐至 50；**不含 django/sphinx** 重实例（测试慢、权重失真）。
 - **验证路径分级**（R2 组合 A）：L1 本地轻量（能在 Py3.12 现代 pytest 跑的实例用本地 test_command 验证，免 Docker）；L2 Docker harness（`SwebenchAdapter`，需 ≥8 GiB 内存 + `uv sync --extra dev`）；L3 金补丁自检（所选子集先跑 gold.patch 确认可复现，剔除 flaky/坏实例，对齐 SWE-rebench）。
+- **L1/L3 顺序耦合（grill 追问）**：L1「能在 Py3.12 现代 pytest 跑」的资格判定本身需要一次试跑（即 L3 自检），流程顺序为「候选实例 → L3 金补丁试跑 → 顺带探明 L1 资格 → 按资格分配 L1/L2 验证路径」，tasks 5.3/5.4 按此顺序执行。
 - **污染披露**：结果页/报告带注记「OpenAI 2026-02 弃用 Verified：审计 138 实例 59.4% 有实质缺陷」，不当金标准；子集风险注记（KNOWN_BAD 过滤、现有 10 fixture 偏置、数据集版本 + swebench 包版本钉住 4.1.x）。
 - 子集 50 的具体实例选择（从 115 过滤后的清单）为**开放问题 OQ-V1**。
 
@@ -123,13 +124,29 @@ Wayfinder map #144 的决策（G1/G2/G3/G4/T1/T2，9/9 票关闭）为本次变�
 - **[Verified 50 具体实例选择未定] → 开放问题 OQ-V1；实现阶段 L3 金补丁自检剔除 flaky/坏实例，宁可子集略小于 50 也不混入坏实例。**
 - **[4 陈旧任务重写成本高] → 2 gold.patch 空若逆向推导成本高，降级并入评测基建任务（D4 已给降级路径），不硬凑。**
 - **[能力层覆盖矩阵维护漂移] → manifest 机械校验每能力列至少 1 任务，C1 tasks 加该校验测试。**
-- **[difficulty 归一化口径主观] → 3 档锚定预期解决投入（R3 现有 easy/medium/hard 分布 9/12/5 保留），swebench `<15 min fix`→easy 映射在 manifest 记录。**
+- **[difficulty 归一化口径主观] → 3 档锚定预期解决投入（R3 现有 easy/medium/hard 分布 9/13/4 保留，grill 实测校正 9/12/5），swebench `<15 min fix`→easy 映射在 manifest 记录。**
 - **[spec delta 大（含 M1–M11 文本）] → tasks 明确区分"规格落定"（本 change 完成）与"指标实现"（归 C2），避免审阅误判未实现即已验收。**
 - **[A 轨反作弊开放被面试追问] → 披露文案（结果页 + 面试叙事）明确"回归基线定位"，诚实边界是加分项非减分项（G3 M7）。**
 
 ## Pre-Implementation Review
 
-（占位：由独立零记忆 grill subagent 对 design.md 逐项追问后填写结论；grill 产出 `reviews/grill-design.md`，Open Questions 停轮等用户确认。）
+独立零记忆 grill 已完成（run id `a98e752e1a6c61309`，2026-08-17，产出 `reviews/grill-design.md`）。
+
+**已确认决策**（≥3 条）：D1 双标签方向、D2 能力层移到套件级覆盖矩阵、D3 三来源配比、D7 反作弊本期披露、D8 spec 先行编排，全部确认；D4 附 005/021 track 归属问题（OQ-2）、D5 附 B 轨清单边界（OQ-B1）、D6 附实例选择与 L1/L3 顺序（OQ-V1）。
+
+**必须修改（已整合进本设计）**：
+- 难度分布引用 9/12/5 实测为 **9/13/4**（grill 核验 + 本机复核），已在 Risks 节修正；`benchmarks/tasks/README.md`「23 任务」陈旧口径在 tasks 8.3 一并修正（含 README_EN）。
+- D6 补 **L1/L3 顺序耦合**：L3 金补丁试跑先于 L1 资格判定，tasks 5.3/5.4 按序执行。
+- `validate()` 收紧对既有 10 fixture（`<15 min fix`）与 gate-smoke（`trivial`）的连锁破坏 → 归 **OQ-3**（迁移策略待用户拍板，tasks 2.2/5.2 需同变更原子落地）。
+- spec 落定与实现之间空窗期风险 → 归 **OQ-4**（C2 承接待用户确认）。
+
+**Open Questions**（停轮等用户确认，逐条带例子见 `reviews/grill-design.md` `## Open Questions`）：
+- **OQ-B1** B 轨具体任务清单（含「合成任务 vs 真实缺陷」边界）
+- **OQ-V1** Verified 50 实例选择（KNOWN_BAD 过滤口径 / difficulty 映射 / L1 判据）
+- **OQ-1** `track` 字段落点（task.json vs manifest）
+- **OQ-2** 覆盖矩阵统计口径 + 005/021 重写后 track 归属 + 数据对账
+- **OQ-3** difficulty 归一化迁移兼容（原子迁移 / 弱校验 / 双字段）
+- **OQ-4** spec-实现空窗与 C2 承接
 
 ## Testing Strategy
 
