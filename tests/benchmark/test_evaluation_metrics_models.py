@@ -189,3 +189,35 @@ def test_run_metadata_to_dict_old_shape_unchanged() -> None:
         "failed": 1,
         "unsupported": 0,
     }
+
+
+def test_run_metadata_from_dict_round_trip_and_old_artifact() -> None:
+    meta = RunMetadata(
+        run_id="r1",
+        agent="fake",
+        model="claude-sonnet-5",
+        task_count=2,
+        temperature=0.2,
+        seed=1,
+        model_version="v1",
+        swebench_dataset_version="SWE-bench_Verified@test",
+    )
+    data = json.loads(json.dumps(meta.to_dict()))
+    assert RunMetadata.from_dict(data) == meta
+
+    # old run.json without new fields parses without error
+    old = {
+        "run_id": "old",
+        "agent": "fake",
+        "model": "fake",
+        "mode": "build",
+        "task_count": 1,
+        "passed": 1,
+        "failed": 0,
+        "some_future_key": "ignored",
+    }
+    parsed = RunMetadata.from_dict(old)
+    assert parsed.run_id == "old"
+    assert parsed.temperature is None
+    assert parsed.seed is None
+    assert not hasattr(parsed, "some_future_key")

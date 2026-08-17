@@ -95,16 +95,20 @@ def test_compute_cost_cached_four_tier_pricing() -> None:
     assert estimate.cost == pytest.approx(3.0 + 0.30 + 3.75 + 15.0)
 
 
-def test_compute_cost_cached_unknown_model_estimates_and_warns() -> None:
-    estimate = compute_cost_cached(
-        "brand-new-model-xyz",
-        input_tokens=1_000_000,
-        cache_read_tokens=0,
-        cache_write_tokens=0,
-        output_tokens=1_000_000,
-    )
+def test_compute_cost_cached_unknown_model_estimates_and_warns(caplog) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="asterwynd.cost_tracker"):
+        estimate = compute_cost_cached(
+            "brand-new-model-xyz",
+            input_tokens=1_000_000,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            output_tokens=1_000_000,
+        )
     assert not estimate.known
     assert estimate.cost > 0  # must not silently return zero
+    assert any("brand-new-model-xyz" in record.getMessage() for record in caplog.records)
 
 
 def test_compute_cost_cached_self_hosted_zero_cost() -> None:

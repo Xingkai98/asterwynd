@@ -89,14 +89,15 @@ def test_process_efficiency_empty_trace() -> None:
 
 def test_swebench_versions_from_task_and_package(monkeypatch) -> None:
     loaded = [
-        _loaded_swebench_task(version="v1.0"),
+        _loaded_swebench_task(version="requests__2.28.1"),
         _loaded_swebench_task(version="ignored"),
     ]
     monkeypatch.setattr(
         "importlib.metadata.version", lambda name: "1.0.10" if name == "swebench" else "?"
     )
     dataset_version, package_version = swebench_versions(loaded)
-    assert dataset_version == "v1.0"
+    # dataset version is the dataset identifier, not the repo version
+    assert dataset_version == "princeton-nlp/SWE-bench_Verified@test"
     assert package_version == "1.0.10"
 
 
@@ -120,11 +121,11 @@ def test_swebench_versions_no_swebench_tasks() -> None:
 
 
 def test_swebench_versions_package_missing(monkeypatch) -> None:
-    loaded = [_loaded_swebench_task(version="v2")]
+    loaded = [_loaded_swebench_task(version="requests__2.28.1")]
     def _raise(name):
         raise ModuleNotFoundError(name)
 
     monkeypatch.setattr("importlib.metadata.version", _raise)
     dataset_version, package_version = swebench_versions(loaded)
-    assert dataset_version == "v2"
+    assert dataset_version == "princeton-nlp/SWE-bench_Verified@test"
     assert package_version is None

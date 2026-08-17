@@ -138,6 +138,16 @@ class RunMetadata:
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "RunMetadata":
+        """Parse a ``run.json`` dict back into a RunMetadata.
+
+        Unknown keys are ignored and missing fields fall back to defaults, so
+        older or hand-crafted run artifacts stay compatible.
+        """
+        field_names = set(cls.__dataclass_fields__.keys())
+        return cls(**{k: v for k, v in data.items() if k in field_names})
+
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(
             json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",

@@ -832,7 +832,10 @@ def benchmark_annotate(
 
     if owner not in FAULT_OWNERS:
         raise typer.BadParameter(f"--owner 必须是 {'/'.join(FAULT_OWNERS)} 之一")
-    result_path = run_dir / "tasks" / task_id / "result.json"
+    result_path = (run_dir / "tasks" / task_id / "result.json").resolve()
+    tasks_root = (run_dir / "tasks").resolve()
+    if not result_path.is_relative_to(tasks_root):
+        raise typer.BadParameter(f"task_id 越出 tasks 目录: {task_id}")
     if not result_path.exists():
         raise typer.BadParameter(f"未找到 result.json: {result_path}")
     data = json.loads(result_path.read_text())

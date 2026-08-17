@@ -29,7 +29,9 @@ from benchmarks.statistics import (
 )
 
 PASS_STATUSES = {"passed", "passed_with_warnings"}
-FAILURE_STATUSES = {"failed", "error", "unsupported"}
+# unsupported rounds carry no failure signal (invalid rounds are excluded from
+# failure attribution and from the fault_owner cross-tab alike).
+FAILURE_STATUSES = {"failed", "error"}
 
 
 @dataclass
@@ -239,7 +241,12 @@ def _render(
         valid = _valid_results(aggregate.results)
         passes = sum(1 for r in valid if _is_pass(r))
         pk = pass_at_k(passes, len(valid))
-        pk_success = all(_is_pass(r) for r in valid) if valid else False
+        # pass^k at task level needs >= 3 valid rounds to be meaningful;
+        # below that the cell shows an em-dash ("sample too small").
+        if len(valid) >= 3:
+            pk_success = "yes" if all(_is_pass(r) for r in valid) else "no"
+        else:
+            pk_success = "—"
         mean_v, std_v = mean_std(
             [r.duration_seconds for r in aggregate.results]
         )
@@ -249,7 +256,7 @@ def _render(
         lines.append(
             f"| {aggregate.task_id} | {aggregate.task_family} | {aggregate.category} | "
             f"{pk:.2f} | {passes}/{len(valid)} | "
-            f"{'yes' if pk_success else 'no'} | "
+            f"{pk_success} | "
             f"{mean_v:.1f} | {std_v:.1f} | [{lo:.1f}, {hi:.1f}] | "
             f"{_percentile(durations, 0.50):.1f} | {_percentile(durations, 0.95):.1f} | "
             f"{_percentile(durations, 0.99):.1f} | "
@@ -342,7 +349,10 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         valid = _valid_results(aggregate.results)
         passes = sum(1 for r in valid if _is_pass(r))
         pk = pass_at_k(passes, len(valid))
-        pk_success = all(_is_pass(r) for r in valid) if valid else False
+        if len(valid) >= 3:
+            pk_success = "yes" if all(_is_pass(r) for r in valid) else "no"
+        else:
+            pk_success = "—"
         mean_v, std_v = mean_std([r.duration_seconds for r in aggregate.results])
         lo, hi = bootstrap_ci([r.duration_seconds for r in aggregate.results])
         total_input = sum(r.input_tokens or 0 for r in aggregate.results)
@@ -352,7 +362,7 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
             f'<tr><td>{aggregate.task_id}</td><td>{aggregate.task_family}</td>'
             f'<td>{aggregate.category}</td><td class="{cls}">{pk:.2f}</td>'
             f"<td>{passes}/{len(valid)}</td>"
-            f"<td>{'yes' if pk_success else 'no'}</td>"
+            f"<td>{pk_success}</td>"
             f"<td>{mean_v:.1f}</td><td>{std_v:.1f}</td>"
             f"<td>[{lo:.1f}, {hi:.1f}]</td>"
             f"<td>{_percentile(durations, 0.50):.1f}</td>"

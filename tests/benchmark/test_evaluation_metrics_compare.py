@@ -217,3 +217,21 @@ def test_build_paired_report_requires_two_runs() -> None:
 
     assert build_paired_report([("a", {})]) == ""
     assert build_paired_report([("a", {}), ("b", {}), ("c", {})]) == ""
+
+
+def test_paired_comparison_ci_is_zero_when_runs_identical() -> None:
+    """Paired bootstrap must preserve pairing: identical per-task pass rates
+    yield a delta CI of exactly [0.0, 0.0] (regression for H1)."""
+    results_a = []
+    results_b = []
+    for i in range(20):
+        # both runs pass exactly the same tasks
+        status = "passed" if i % 2 == 0 else "failed"
+        reason = None if status == "passed" else "test_failure"
+        results_a.append(_r(f"t{i}", status, reason=reason, run_round=0))
+        results_b.append(_r(f"t{i}", status, reason=reason, run_round=0))
+    comp = paired_comparison(results_a, results_b, seed=7)
+    lo, hi = comp.delta_ci
+    assert lo == pytest.approx(0.0)
+    assert hi == pytest.approx(0.0)
+    assert all(abs(d) == pytest.approx(0.0) for d in comp.per_task_deltas.values())

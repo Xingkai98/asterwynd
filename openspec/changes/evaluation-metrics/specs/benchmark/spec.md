@@ -1,6 +1,6 @@
 # benchmark 规格（delta）
 
-本文件是 `evaluation-metrics`（C2）change 对既有 `benchmark` capability 的修订。C1 `evaluation-task-spec` 已把 G3 M1–M11 指标/方法 Requirement 落进正式规格（带「实现归 C2 evaluation-metrics」注记）；本 change 已实现这些 Requirement 的指标层，以 REVISED 方式去掉注记并补充实现细节，正式规格 `openspec/specs/benchmark/spec.md` 已同步。既有 requirements 语义保持兼容，全部为向后兼容扩展。
+本文件是 `evaluation-metrics`（C2）change 对既有 `benchmark` capability 的修订。C1 `evaluation-task-spec` 已把 G3 M1–M11 指标/方法 Requirement 落进正式规格（带「实现归 C2 evaluation-metrics」注记）；本 change 已实现这些 Requirement 的指标层，以 REVISED 方式去掉注记并补充实现细节，正式规格 `openspec/specs/benchmark/spec.md` 已同步。既有 requirements 语义保持兼容，全部为向后兼容扩展。 结果页渲染义务（`$/resolved-task`/cache hit rate/定价表版本展示、reason × fault_owner 交叉表、报告元组、SWE-bench 污染注记、部分成功档、采样参数、小样本声明、过程效率展示）归 C3 `evaluation-protocol-reporting`，本 change 仅实现数据/统计/CLI 层。
 
 ## MODIFIED Requirements
 

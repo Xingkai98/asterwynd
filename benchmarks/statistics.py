@@ -49,6 +49,9 @@ FAULT_OWNERS: tuple[str, ...] = ("agent", "task", "environment", "unknown")
 # never ran, so the round is neither a pass nor a failure. These rounds are
 # excluded before any pass-rate denominator is computed (C1 spec: invalid
 # rounds SHALL NOT count into pass@1 / pass^k denominators).
+# Note: approval_unavailable currently has no producer in the benchmark
+# path (agent-loop reports it as a tool error_type); the predicate keeps it
+# defensive so a future fail-closed producer slots in without spec change.
 INVALID_ROUND_REASONS = frozenset(
     {"docker_unavailable", "task_family_unsupported", "approval_unavailable"}
 )
@@ -357,12 +360,15 @@ def _paired_delta_ci(
     n = len(common_tasks)
     sample_means = []
     for _ in range(n_resamples):
-        mean = sum(
-            a_pass1[common_tasks[rng.randrange(n)]][0]
-            - b_pass1[common_tasks[rng.randrange(n)]][0]
-            for _ in range(n)
-        ) / n
-        sample_means.append(mean)
+        # Paired bootstrap: draw a task index once and read BOTH runs' pass@1
+        # for that same task, so the resampled delta preserves the pairing.
+        # Drawing A and B independently would inflate the variance (unpaired
+        # variance Var(A)+Var(B) vs paired Var(A-B)) and understate significance.
+        mean = 0.0
+        for _ in range(n):
+            task = common_tasks[rng.randrange(n)]
+            mean += a_pass1[task][0] - b_pass1[task][0]
+        sample_means.append(mean / n)
     sample_means.sort()
     alpha = (1.0 - ci) / 2.0
     lo = sample_means[max(0, int(alpha * n_resamples))]
@@ -492,19 +498,23 @@ def swebench_versions(
 ) -> tuple[str | None, str | None]:
     """(dataset_version, swebench_package_version) for run metadata (D11).
 
-    Dataset version comes from the first SWE-bench task's ``version`` field;
-    the package version from ``importlib.metadata`` (None when swebench is not
-    installed). Rendering of pollution disclosures belongs to C3.
+    Dataset version is the SWE-bench dataset identifier, built from the first
+    SWE-bench task's ``dataset_name``/``dataset_split`` (e.g.
+    ``princeton-nlp/SWE-bench_Verified@test``); the package version comes from
+    ``importlib.metadata`` (None when swebench is not installed). Rendering of
+    pollution disclosures belongs to C3.
     """
     import importlib.metadata as _metadata
 
     dataset_version: str | None = None
     for loaded in loaded_tasks:
-        if getattr(loaded.task, "task_family", None) == "swebench":
-            candidate = getattr(loaded.task, "version", None)
-            if candidate:
-                dataset_version = candidate
-                break
+        if getattr(loaded.task, "task_family", None) != "swebench":
+            continue
+        name = getattr(loaded.task, "dataset_name", None)
+        split = getattr(loaded.task, "dataset_split", None)
+        if name:
+            dataset_version = f"{name}@{split}" if split else name
+            break
     package_version: str | None = None
     try:
         package_version = _metadata.version("swebench")

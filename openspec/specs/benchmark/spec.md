@@ -3,6 +3,8 @@
 ## Purpose
 
 定义本地 Coding Agent benchmark 的任务 schema、runner、artifact、hidden tests、trace 和结果汇总。当前实现位于 `benchmarks/`。
+
+> 渲染边界：结果页渲染义务（`$/resolved-task`/cache hit rate/定价表版本展示、reason × fault_owner 交叉表、报告元组、SWE-bench 污染注记、部分成功档、采样参数、小样本声明、过程效率展示）归 C3 `evaluation-protocol-reporting`，本规格的 benchmark-evaluation 指标 Requirement 在 C2 仅实现数据/统计/CLI 层。
 ## Requirements
 ### Requirement: benchmark 使用任务目录运行
 

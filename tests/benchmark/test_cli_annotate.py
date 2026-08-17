@@ -63,3 +63,23 @@ def test_annotate_missing_result_errors(tmp_path) -> None:
     )
     assert result.exit_code != 0
     assert "result.json" in result.output
+
+
+def test_annotate_rejects_path_traversal(tmp_path) -> None:
+    run_dir = tmp_path / "run-1"
+    # create a result.json outside the tasks dir that must NOT be touched
+    outside = tmp_path / "victim.json"
+    outside.write_text(json.dumps({"status": "passed"}))
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "benchmark-annotate",
+            str(run_dir),
+            "../victim.json",
+            "--owner",
+            "agent",
+        ],
+    )
+    assert result.exit_code != 0
+    assert json.loads(outside.read_text()) == {"status": "passed"}

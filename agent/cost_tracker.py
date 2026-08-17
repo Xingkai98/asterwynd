@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+_logger = logging.getLogger("asterwynd.cost_tracker")
 
 # USD per 1M tokens as (fresh input, cache read, cache write, output).
 # Cache read = 0.1x fresh input, cache write = 1.25x fresh input (5-minute TTL),
@@ -76,6 +79,10 @@ def compute_cost_cached(
     """
     prices = _lookup_prices(model)
     if prices is None:
+        _logger.warning(
+            "Unknown model %r not in pricing table — estimating cost from table average",
+            model,
+        )
         cost = (
             (input_tokens / 1_000_000) * _AVG_INPUT_PRICE
             + (cache_read_tokens / 1_000_000) * _AVG_INPUT_PRICE * 0.1

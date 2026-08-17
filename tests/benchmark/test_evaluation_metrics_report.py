@@ -87,8 +87,9 @@ def test_task_row_pass_at_k_counts_only_valid_rounds() -> None:
         ]
     )
     md = render_report(aggregates)
-    # 2 valid rounds, both passed -> Pass@k 1.00, Passes 2/2, Pass^k yes
-    assert "| t1 | local | execution | 1.00 | 2/2 | yes |" in md
+    # 2 valid rounds, both passed -> Pass@k 1.00, Passes 2/2,
+    # Pass^k shows em-dash (below the 3-valid-round threshold)
+    assert "| t1 | local | execution | 1.00 | 2/2 | — |" in md
 
 
 def test_task_row_pass_k_marked_no_when_any_valid_round_fails() -> None:
@@ -100,8 +101,8 @@ def test_task_row_pass_k_marked_no_when_any_valid_round_fails() -> None:
     )
     md = render_report(aggregates)
     # pass@2 = "at least one success in 2 rounds" -> 1.00; pass^k (all rounds)
-    # is no because one valid round failed.
-    assert "| t1 | local | execution | 1.00 | 1/2 | no |" in md
+    # shows em-dash because only 2 valid rounds (below threshold).
+    assert "| t1 | local | execution | 1.00 | 1/2 | — |" in md
 
 
 def test_render_html_includes_pass_k_columns() -> None:
@@ -110,7 +111,7 @@ def test_render_html_includes_pass_k_columns() -> None:
     )
     html = render_html(aggregates)
     assert "Pass^k" in html
-    assert ">yes<" in html
+    assert ">—<" in html
 
 
 def test_layer_pass_k_n_a_when_no_task_has_enough_rounds() -> None:
@@ -120,3 +121,15 @@ def test_layer_pass_k_n_a_when_no_task_has_enough_rounds() -> None:
     md = render_report(aggregates)
     # single round: no task has >=3 valid rounds -> Pass^k n/a
     assert "| execution | 1 | 1 | 1.00 | [1.00, 1.00] | n/a |" in md
+
+
+def test_task_row_pass_k_yes_when_three_valid_rounds_pass() -> None:
+    aggregates = aggregate_results(
+        [
+            [_result("t1", "passed", run_round=0)],
+            [_result("t1", "passed", run_round=1)],
+            [_result("t1", "passed", run_round=2)],
+        ]
+    )
+    md = render_report(aggregates)
+    assert "| t1 | local | execution | 1.00 | 3/3 | yes |" in md
