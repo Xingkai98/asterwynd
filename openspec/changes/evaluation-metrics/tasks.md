@@ -18,10 +18,10 @@
 
 ## 3. pass^k 聚合（D2 + Q1/Q2/Q3）
 
-- [ ] 3.1 `statistics.py` 新增 `pass_k_success_rate`（任务级「全部有效轮通过」布尔 → 跨任务均值），区分 pass@1/pass@k/pass^k 语义。
-- [ ] 3.2 无效轮次排除谓词显式化（`status=='unsupported'` 或 `reason ∈ {docker_unavailable, task_family_unsupported, approval_unavailable}`）+ 单元测试（不进分母、不当失败、全无效任务剔除、有效轮<3 标「样本不足」）。
-- [ ] 3.3 pass@1 定义为排除无效轮的新聚合，结果页 `layer_pass_rate` 按规格口径替换（golden 测试同步更新）。
-- [ ] 3.4 结果页/统计层三指标并列标注语义（pass@1 用户实际获得 / pass@k 能力上限 / pass^k 可靠性）+ n/k 有效性声明。
+- [x] 3.1 `statistics.py` 新增 `pass_k_success_rate`（任务级「全部有效轮通过」布尔 → 跨任务均值），区分 pass@1/pass@k/pass^k 语义。
+- [x] 3.2 无效轮次排除谓词显式化（`status=='unsupported'` 或 `reason ∈ {docker_unavailable, task_family_unsupported, approval_unavailable}`）+ 单元测试（不进分母、不当失败、全无效任务剔除、有效轮<3 标「样本不足」）。
+- [x] 3.3 pass@1 定义为排除无效轮的新聚合，结果页 `layer_pass_rate` 按规格口径替换（golden 测试同步更新）。
+- [x] 3.4 结果页/统计层三指标并列标注语义（pass@1 用户实际获得 / pass@k 能力上限 / pass^k 可靠性）+ n/k 有效性声明。
 
 ## 4. cache-aware 成本（D3/D4 + Q4/Q5/Q6）
 
