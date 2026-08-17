@@ -9,5 +9,7 @@
   "timeout_seconds": 300,
   "gold_patch_file": null,
   "test_patch_file": null,
-  "hints_text": "This multi-part audit is a good fit for delegating parallel exploration to subagents and aggregating the results."
+  "hints_text": "This multi-part audit is a good fit for delegating parallel exploration to subagents and aggregating the results.",
+  "track": "A",
+  "scenario": "debug"
 }
