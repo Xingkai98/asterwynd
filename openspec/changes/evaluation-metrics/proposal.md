@@ -58,8 +58,8 @@ C1 `evaluation-task-spec`（#154，PR #155）已把 G3 M1–M11 的指标/方法
 ## Impact Analysis
 
 - **能力域**: `benchmark`（指标层实现）。
-- **代码**: `benchmarks/models.py`（数据模型字段）、`benchmarks/statistics.py`（pass^k/成本/归因/配对统计）、`agent/cost_tracker.py`（cache-aware 四档 + 5 系定价）、`benchmarks/adapters.py`（f2p/p2p 保留）、`benchmarks/compare.py`（配对比较）、`agent/main.py`（benchmark CLI `--seeds`/`--temperature`/`--model-version`）、结果页/统计渲染层（小 N 声明、fault_owner 交叉表）。
-- **测试**: 新增 `tests/benchmark/` 指标层测试（pass^k 聚合、cache-aware 成本、$/resolved-task、fault_owner 归因、配对比较、f2p/p2p 透传、数据模型向后兼容、CLI 采样参数）；涉及 benchmark 路径必须覆盖 benchmark 层级测试。
-- **文档**: `openspec/specs/benchmark/spec.md` 同步（REVISED 去掉「实现归 C2」注记）、`docs/openspec-change-backlog.md` 更新。
-- **基准**: 不改变既有单次运行语义与既有 artifact 结构；新增字段全部可选，旧 result/run.json 读取兼容。
-- **流程（process）**: 指标口径约定落地——pass^1/pass^k 语义、成本口径（仅 LLM token、cache-aware）、fault_owner 标注来源、配对比较统计方法，供后续评测引用。
+- **代码**: `benchmarks/models.py`（TaskResult/RunMetadata 可选字段：cache tokens/temperature/seed/fault_owner/partial + report tuple 12 字段，向后兼容）、`benchmarks/statistics.py`（pass^k 聚合、无效轮排除、$/resolved-task、fault_owner 交叉表、κ、配对比较 + McNemar、小 N 样本量、过程效率、swebench 版本）、`agent/cost_tracker.py`（cache-aware 四档 + 5 系定价 + self-hosted 零成本档）、`benchmarks/adapters.py`（Verdict resolved/partial 透传）、`benchmarks/compare.py`（配对比较渲染）、`agent/main.py`（benchmark CLI `--seeds`/`--temperature`/`--model-version` + `benchmark-annotate`）、cache token 采集链（`agent/llm.py` Usage → anthropic_llm → loop → RunResult → AgentRunResult → TaskResult）、`benchmarks/runner.py`（partial/采样参数/swebench 版本透传）。
+- **测试**: 新增 `tests/benchmark/` 指标层测试（pass^k 聚合、cache-aware 成本、$/resolved-task、fault_owner 归因 + 交叉表、κ、配对比较、f2p/p2p 透传、数据模型向后兼容、CLI 采样参数、annotate、过程效率、swebench 版本、runner 集成）；涉及 benchmark 路径已覆盖 benchmark 层级测试；全部基准测试通过。
+- **文档**: `openspec/specs/benchmark/spec.md` 已同步（9 条 REVISED 去掉「实现归 C2」注记）、`docs/openspec-change-backlog.md` 更新（收尾阶段）。
+- **基准**: 不改变既有单次运行语义与既有 artifact 结构；新增字段全部可选，旧 result/run.json 读取兼容（向后兼容测试锁定）。
+- **流程（process）**: 指标口径约定落地——pass@1/pass@k/pass^k 语义、无效轮次排除谓词、成本口径（仅 LLM token、cache-aware 四档、self-hosted 不计费）、fault_owner 标注来源（annotate 工具 + κ）、配对比较统计方法（paired bootstrap + 精确二项 McNemar）、采样参数记录（temperature/seed/model-version，只记录不接线），供后续评测与 C3 结果页引用。

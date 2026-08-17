@@ -64,12 +64,12 @@
 
 ## 11. 同步与验证
 
-- [ ] 11.1 维护 Impact Analysis，清理开发中发现的 `unknown`/`TBD`/`待确认`。
-- [ ] 11.2 维护 Reference Implementation Research 最终结论；调研结论变化先回写 change 文档。
+- [x] 11.1 维护 Impact Analysis，清理开发中发现的 `unknown`/`TBD`/`待确认`。
+- [x] 11.2 维护 Reference Implementation Research 最终结论；调研结论变化先回写 change 文档。
 - [ ] 11.3 更新 `docs/openspec-change-backlog.md`（C2 状态从「已立项」→ 已合入归档）。
-- [ ] 11.4 运行相关单元/集成测试与全量测试。
-- [ ] 11.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 11.6 跑通至少一个 benchmark smoke（`--repeat 3 --seeds 0 1 2` fake runner），确认采样参数 + 指标层全链路。
+- [x] 11.4 运行相关单元/集成测试与全量测试。
+- [x] 11.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 11.6 跑通至少一个 benchmark smoke（`--repeat 3 --seeds 0 1 2` fake runner），确认采样参数 + 指标层全链路。
 
 ## 12. 审阅与 PR 收尾
 

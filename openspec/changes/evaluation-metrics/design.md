@@ -131,6 +131,7 @@ C1 `evaluation-task-spec` 已合入并归档（PR #155）：`openspec/specs/benc
 - reason: 指标口径需对照业界主流（同 proposal 4 项）。
 - findings: 本地 `.dev/reference-repos.txt` 不存在（已记录不可用）。替代依据为 G3 决议（#150，4 独立审阅 agent 对照 2025-2026 业界验证定稿）与 R1（#145）：pass^k 为 τ-bench 事实标准（M1）、cost@pass 为 Claw-SWE-Bench 等统一 harness 披露口径（M3）、fault_owner 对齐 TRAIL/AutoTriage（M4）、配对比较为标准统计方法（M8）。口径细节已固化为 C1 spec delta 的 Requirement 文本，本 design 按其实现。
 - design impact: M1–M11 Requirement 文本为 D1–D9 输入；无新增调研依赖。
+- **最终结论（2026-08-17）**: 指标口径按 C1 spec delta 的 Requirement 文本落地为 D1–D11 并实现完毕：pass^k 独立聚合（不坍缩为 ≥1 成功）、cache-aware 四档定价（0.1×/1.25× 倍率按 Anthropic prompt-caching 经济学，5 系定价补全）、$/resolved-task 分子含失败 run 分母为 resolved 数、fault_owner 正交不查表、配对比较用 pass@1 delta + paired bootstrap + 精确二项 McNemar、f2p/p2p partial 透传、小 N 只输出样本量声明文案归 C3、采样参数显式化 CLI（只记录不接线）。调研结论无需修订；无遗留未知项。
 
 ## Risks / Trade-offs
 
