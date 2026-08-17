@@ -91,7 +91,14 @@ C1 归档 + sync 后，`openspec/specs/benchmark/spec.md` 将含 `采样显式�
 
 ## User Confirmation
 
-（占位：grill-confirmation-gate 停轮后，主 session 转达的用户实质答复逐条记录于此；每条格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`。占位文本不计入确认。）
+主 session 转达用户答复（2026-08-17，「ok 按推荐」；long-context 形态经用户追问后细化为「大读取+小改动」，验证走确定性测试）。
+
+- **OQ-B1**: 用户答复：B 轨任务允许「基于当前仓库代码构造的合成任务」（gold patch=参考实现，不要求必须真实历史缺陷）；context-planning 按 grill 候选 CP-1/CP-2/CP-3/CP-4 形态落 3–5 条；hard 档映射 = CP-2（跨 4 处修改）+ 结果页 track 分组 + 002/004 重写；long-context 采用「强制大读取 + 小改动」形态（题面不给文件路径、只给行为症状，agent 需通读相关管线定位；验证 = 确定性 test_command + test.patch 新增回归断言，不依赖 diff 与 gold patch 比对），long-context 1–2 条按此构造；确认时间: 2026-08-17
+- **OQ-V1**: 用户答复：补齐 40 条配比 = requests+4/flask+6/pytest+8/sympy+8/seaborn+6/pylint+8（平衡现有 requests 6/10 偏置），从轻量+中等池过滤 KNOWN_BAD 后选择；difficulty 按 `<15min`→easy、`15min-2h`→medium、`≥2h`→hard 逐实例映射，池中无 hard 则由 B 轨保证 hard 档并在结果页披露「Verified 子集难度集中在 easy/medium」；L1 判据 = Py3.12 venv 中依赖安装成功 + FAIL_TO_PASS 红绿转换 + 单实例 <300s + 不依赖 Docker-only 环境，L1/L3 顺序为「候选→L3 金补丁试跑→探明 L1 资格→分配 L1/L2」；确认时间: 2026-08-17
+- **OQ-1**: 用户答复：`track`（A|B|verified）写进每个任务的 `task.json`（单一事实源，新增任务只改一处），manifest 只声明套件级能力覆盖矩阵；确认时间: 2026-08-17
+- **OQ-2**: 用户答复：能力覆盖矩阵只统计本地 A+B 任务，Verified 50 条单独披露（避免 bug-fix 列被撑满、校验失去意义）；005-bash-workspace/021-lsp-diagnostics 按新架构改写后归 B 轨（base_commit 换当前 HEAD，与 002/004 一致），对账 A≈22、B≈14–18；数据口径按实测难度分布 9/13/4 修正，`benchmarks/tasks/README.md`「23 任务」陈旧口径与 README/README_EN 任务数在收尾阶段（tasks 8.3）一并修正；确认时间: 2026-08-17
+- **OQ-3**: 用户答复：方案 A——同 PR 原子迁移，10 个 swebench fixture 的 `difficulty` `<15 min fix` 改为 `easy`、gate-smoke-001 的 `trivial` 改为 `easy`，与 `validate()` 枚举校验同一变更落地，保证存量测试不红；缺省 `scenario=None` 归「未标注」桶（spec「归入默认值」即该桶）；确认时间: 2026-08-17
+- **OQ-4**: 用户答复：方案 A——spec Requirement 文本加「实现归 C2 evaluation-metrics」状态注记（防误导）；C2 `evaluation-metrics` 已在 backlog 第十一批排期（依赖 C1，未立项），C1 收尾时提醒主 session 跟进立项推进；确认时间: 2026-08-17
 
 ## 风险（design 自身 Risks 之外新发现）
 

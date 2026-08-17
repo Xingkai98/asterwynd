@@ -140,13 +140,13 @@ Wayfinder map #144 的决策（G1/G2/G3/G4/T1/T2，9/9 票关闭）为本次变�
 - `validate()` 收紧对既有 10 fixture（`<15 min fix`）与 gate-smoke（`trivial`）的连锁破坏 → 归 **OQ-3**（迁移策略待用户拍板，tasks 2.2/5.2 需同变更原子落地）。
 - spec 落定与实现之间空窗期风险 → 归 **OQ-4**（C2 承接待用户确认）。
 
-**Open Questions**（停轮等用户确认，逐条带例子见 `reviews/grill-design.md` `## Open Questions`）：
-- **OQ-B1** B 轨具体任务清单（含「合成任务 vs 真实缺陷」边界）
-- **OQ-V1** Verified 50 实例选择（KNOWN_BAD 过滤口径 / difficulty 映射 / L1 判据）
-- **OQ-1** `track` 字段落点（task.json vs manifest）
-- **OQ-2** 覆盖矩阵统计口径 + 005/021 重写后 track 归属 + 数据对账
-- **OQ-3** difficulty 归一化迁移兼容（原子迁移 / 弱校验 / 双字段）
-- **OQ-4** spec-实现空窗与 C2 承接
+**Open Questions**（**已全部确认**，用户 2026-08-17「按推荐」答复，逐条记录见 `reviews/grill-design.md` `## User Confirmation`）：
+- **OQ-B1** 已确认：B 轨允许基于当前仓库构造的合成任务；context-planning 按 CP-1~CP-4 形态落 3–5 条；long-context 采用「强制大读取 + 小改动」形态（验证走确定性测试）；hard 档 = CP-2 + track 分组 + 002/004 重写。
+- **OQ-V1** 已确认：40 条配比 requests+4/flask+6/pytest+8/sympy+8/seaborn+6/pylint+8；difficulty 逐实例映射 `<15min`→easy/`15min-2h`→medium/`≥2h`→hard；L1 判据 = Py3.12 依赖安装 + FAIL_TO_PASS 红绿 + <300s + 不依赖 Docker。
+- **OQ-1** 已确认：`track` 写进 `task.json`（单一事实源），manifest 只声明能力覆盖矩阵。
+- **OQ-2** 已确认：覆盖矩阵只统计本地 A+B；005/021 改写后归 B 轨（A≈22、B≈14–18）；口径按实测 9/13/4 修正。
+- **OQ-3** 已确认：方案 A 同 PR 原子迁移 fixture→easy + gate-smoke→easy；缺省 scenario 归「未标注」桶。
+- **OQ-4** 已确认：spec Requirement 加「实现归 C2」注记；C2 已在 backlog 第十一批排期，收尾提醒主 session 跟进。
 
 ## Testing Strategy
 
