@@ -1,6 +1,6 @@
 # Asterwynd Local Benchmark Tasks
 
-26 local coding-agent tasks in a three-track task set (D3):
+27 local coding-agent tasks in a three-track task set (D3):
 
 - **A 轨（22）**: 历史重建回归基线，base_commit 为特性引入前提交，在完整 git 历史中运行（反作弊泄漏已披露，见 `manifest.json` `anti_cheat_disclosure`）。
 - **B 轨（5）**: 当前 HEAD 真实缺陷/增强（面试核心），含 `asterwynd-002-sandbox-executor`、`asterwynd-004-benchmark-cli`、`asterwynd-005-bash-workspace`、`asterwynd-021-lsp-diagnostics` 重写与 `asterwynd-b01-report-family-summary` 新增。

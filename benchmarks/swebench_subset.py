@@ -47,6 +47,7 @@ class SubsetPlan:
     skipped_known_bad: int = 0
     skipped_heavy: int = 0
     skipped_no_test_patch: int = 0
+    skipped_missing_instance_id: int = 0
     pool_remaining: int = 0
 
     def summary(self) -> str:
@@ -55,7 +56,9 @@ class SubsetPlan:
         return (
             f"selected={len(self.selected)} ({parts}) | "
             f"skipped: known_bad={self.skipped_known_bad}, heavy={self.skipped_heavy}, "
-            f"no_test_patch={self.skipped_no_test_patch}, pool_remaining={self.pool_remaining}"
+            f"no_test_patch={self.skipped_no_test_patch}, "
+            f"missing_instance_id={self.skipped_missing_instance_id}, "
+            f"pool_remaining={self.pool_remaining}"
         )
 
 
@@ -82,7 +85,10 @@ def build_subset(
     by_repo: dict[str, list[dict]] = {}
     for ex in instances:
         repo = ex.get("repo", "")
-        if ex.get("instance_id") in known_bad:
+        if not ex.get("instance_id"):
+            plan.skipped_missing_instance_id += 1
+            continue
+        if ex["instance_id"] in known_bad:
             plan.skipped_known_bad += 1
             continue
         if repo in heavy_repos:
@@ -145,13 +151,12 @@ def validate_fixtures_dir(tasks_dir: str | Path) -> list[tuple[str, list[str]]]:
 def gold_check(
     task_dir: str | Path,
     *,
-    python: str | None = None,
     timeout: int = 600,
 ) -> int:
     """L3 金补丁自检：检出 base_commit → 应用 gold.patch → 跑 test_command。
 
     返回 0 表示 gold.patch 应用 + 验证命令通过（实例可复现）；非 0 表示
-    不可复现（flaky/坏实例，应剔除）。python 参数用于覆盖解释器。
+    不可复现（flaky/坏实例，应剔除）。
     """
     from benchmarks.task_schema import load_task
 

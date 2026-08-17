@@ -26,7 +26,7 @@
 
 ## 4. B 轨任务（context-planning 优先）
 
-- [x] 4.1 按用户确认后的 OQ-B1 落 B 轨任务清单。**实际交付 5 条（4 陈旧重写 + 1 新增），较目标 12–16 收敛**：4 重写（002 沙箱命令审计字段 / 004 CLI --list-tasks / 005 mv-cp 工作区边界 / 021 LSP language 覆盖）+ 1 新增（asterwynd-b01 结果页按 task_family 分组，承担 integration 场景 + long-context 能力）。覆盖矩阵机械校验每能力列/每场景列 ≥1 已达标；context-planning 能力列由 A 轨 010/022-audit 覆盖。收敛原因：上下文/数据约束下优先保证覆盖矩阵完整与每任务红绿可复现；完整 12–16 目标记为 B 轨扩展，收尾披露（tasks 9.x 记录）。
+- [x] 4.1 按用户确认后的 OQ-B1 落 B 轨任务清单。**实际交付 5 条（4 陈旧重写 + 1 新增），较目标 12–16 收敛**：4 重写（002 沙箱命令审计字段 / 004 CLI --list-tasks / 005 mv-cp 工作区边界 / 021 LSP language 覆盖）+ 1 新增（asterwynd-b01 结果页按 task_family 分组，承担 integration 场景 + long-context 能力）。覆盖矩阵机械校验每能力列/每场景列 ≥1 已达标；context-planning 能力列由 A 轨 010/022-audit 覆盖。收敛原因：上下文/数据约束下优先保证覆盖矩阵完整与每任务红绿可复现；完整 12–16 目标记为 B 轨扩展，收尾披露（tasks 9.x 记录）。b01 的 long-context 为**轻量形态**（issue 给出 report.py 路径，但需通读 report/models/statistics 三模块；与 OQ-B1 确认的「强制大读取+不给路径」理想形态有偏差，审阅 I2 记录，接受为覆盖矩阵达标的最小实现）。
 - [x] 4.2 每个 B 轨任务测试先行：先写问题描述（issue.md）、验证命令/gold patch，再落任务；全部红绿验证（base+test 红、+gold 绿）。
 - [x] 4.3 B 轨任务覆盖矩阵校验通过（`validate_coverage`：7 能力列 + 5 场景列全 ≥1、无未知任务 id）。
 - [x] 4.4 B 轨任务至少跑通 1 条 smoke（fake runner 含 asterwynd-b01 发现/执行）。
@@ -60,6 +60,13 @@
 - [x] 8.4 运行相关单元/集成测试与全量测试（2007 passed；5 个 MCP 测试失败为环境性，master 上同样失败，与本 change 无关）。
 - [x] 8.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`（30 passed）与 `uv run python scripts/check_openspec_artifacts.py`（passed）。
 - [x] 8.6 跑通至少一个 benchmark smoke（fake runner 含 A/B 轨任务，schema 扩展/重打标后全链路不回归）。
+
+## 审阅修复记录（review-loop Round 1 → CHANGES_REQUESTED）
+
+- **I1（中）文档任务数 off-by-one**：新增 b01 后本地任务 26→27、总 36→37，README/README_EN/benchmark-plan/tasks-README 未同步。修复：4 处文档 26→27、36→37（已提交）。
+- **I2（低）b01 long-context 轻量形态**：与「大读取+不给路径」理想形态有偏差。处理：tasks 4.1 注明轻量形态，接受为覆盖矩阵最小实现。
+- **I3（低）004 gold.patch help 文案**：「按 track 分组」与实际实现（只列 id）不符。修复：help 文案改为「总数 + 任务 id」。
+- **I4（低）swebench_subset 健壮性**：gold_check 未用 python 参数移除；build_subset 对缺失 instance_id 跳过并计数。修复：已改 + 测试更新。
 
 ## 9. 审阅与 PR 收尾
 

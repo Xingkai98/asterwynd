@@ -31,7 +31,7 @@ index a57c8d2..25a0740 100644
      keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
      clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
      repeat: int = typer.Option(1, "--repeat", min=1, help="重复运行次数，用于评测聚合；缺省 1 保持既有单次行为"),
-+    list_tasks: bool = typer.Option(False, "--list-tasks", help="只列出任务集组成（总数 + 按 track 分组），不运行 benchmark"),
++    list_tasks: bool = typer.Option(False, "--list-tasks", help="只列出任务集组成（总数 + 任务 id），不运行 benchmark"),
  ):
      """运行本地 Coding Agent benchmark"""
      _setup_logging()

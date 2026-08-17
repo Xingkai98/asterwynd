@@ -53,6 +53,16 @@ def test_build_subset_pool_remaining_counts_extras():
     assert plan.pool_remaining == 3
 
 
+def test_build_subset_skips_missing_instance_id():
+    instances = [
+        _inst("psf__requests-1", "psf/requests"),
+        {"repo": "psf/requests", "test_patch": "--- a/x\n+++ b/x\n"},  # no instance_id
+    ]
+    plan = build_subset(instances, targets={"psf/requests": 2})
+    assert [e["instance_id"] for e in plan.selected] == ["psf__requests-1"]
+    assert plan.skipped_missing_instance_id == 1
+
+
 def test_validate_fixture_accepts_valid_verified_task():
     task = {
         "id": "swebench-psf__requests-1142",
