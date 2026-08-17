@@ -12,9 +12,9 @@
 
 ## 2. 数据模型扩展（D1 + Q5/Q9/Q11/Q13）
 
-- [ ] 2.1 `TaskResult` 新增 `cache_read_tokens`/`cache_write_tokens`/`temperature`/`seed`/`fault_owner`/`partial`（可选字段）。
-- [ ] 2.2 `RunMetadata` 新增 `task_set_hash`/`max_iterations`/`timeout_seconds`/`network`/`adapter_version`/`prompt_version`/`pricing_table_version`/`temperature`/`seed`/`model_version`/`swebench_dataset_version`/`swebench_package_version`（可选字段）。
-- [ ] 2.3 `from_dict`/`to_dict` 向后兼容测试（旧 artifact 读取不报错、未知 key 忽略、None 省略）。
+- [x] 2.1 `TaskResult` 新增 `cache_read_tokens`/`cache_write_tokens`/`temperature`/`seed`/`fault_owner`/`partial`（可选字段）。
+- [x] 2.2 `RunMetadata` 新增 `task_set_hash`/`max_iterations`/`timeout_seconds`/`network`/`adapter_version`/`prompt_version`/`pricing_table_version`/`temperature`/`seed`/`model_version`/`swebench_dataset_version`/`swebench_package_version`（可选字段）。
+- [x] 2.3 `from_dict`/`to_dict` 向后兼容测试（旧 artifact 读取不报错、未知 key 忽略、None 省略）。
 
 ## 3. pass^k 聚合（D2 + Q1/Q2/Q3）
 
