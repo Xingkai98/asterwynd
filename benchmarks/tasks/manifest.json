@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "task_set": "A 轨历史重建 + B 轨当前演进 + Verified 精选子集（三来源组成，D3）",
+  "capabilities": [
+    "tool-usage",
+    "context-planning",
+    "multi-step-solving",
+    "error-recovery",
+    "safety-boundary",
+    "long-term-memory",
+    "long-context"
+  ],
+  "coverage": {}
+}
