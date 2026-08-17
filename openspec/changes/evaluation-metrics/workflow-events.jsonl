@@ -1,1 +1,0 @@
-{"schema":"workflow-event/v1","seq":1,"event_type":"backlog_updated","change_id":"evaluation-metrics","artifact_path":"docs/openspec-change-backlog.md","reason":"evaluation-metrics（issue #157）立项：第十一批评测升级系列 C2 从「未立项」更新为「已立项」，未实现队列新增条目，记录依赖 C1、关联 follow-up #156、主要交付。","approved_by":"human"}

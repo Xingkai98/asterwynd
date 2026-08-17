@@ -66,15 +66,15 @@
 
 - [x] 11.1 维护 Impact Analysis，清理开发中发现的 `unknown`/`TBD`/`待确认`。
 - [x] 11.2 维护 Reference Implementation Research 最终结论；调研结论变化先回写 change 文档。
-- [ ] 11.3 更新 `docs/openspec-change-backlog.md`（C2 状态从「已立项」→ 已合入归档）。
+- [x] 11.3 更新 `docs/openspec-change-backlog.md`（C2 状态从「已立项」→ 已合入归档）。
 - [x] 11.4 运行相关单元/集成测试与全量测试。
 - [x] 11.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
 - [x] 11.6 跑通至少一个 benchmark smoke（`--repeat 3 --seeds 0 1 2` fake runner），确认采样参数 + 指标层全链路。
 
 ## 12. 审阅与 PR 收尾
 
-- [ ] 12.1 运行 `/review-loop`（独立零记忆 subagent 审阅 → verdict → CHANGES_REQUESTED 则修复 + 回归测试 → 再审至 PASS/3 轮封顶），产出 `reviews/building-review.md` + review manifest。
-- [ ] 12.2 将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
-- [ ] 12.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change 并同步批次。
-- [ ] 12.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker。
+- [x] 12.1 运行 `/review-loop`（独立零记忆 subagent 审阅 → verdict → CHANGES_REQUESTED 则修复 + 回归测试 → 再审至 PASS/3 轮封顶），产出 `reviews/building-review.md` + review manifest。
+- [x] 12.2 将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
+- [x] 12.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change 并同步批次。
+- [x] 12.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker。
 - [ ] 12.5 发起实现 PR；合入后给跟踪 issue #157 添加完成说明 comment 并关闭，并在 follow-up #156 上确认 C3 前置跟踪项状态。
