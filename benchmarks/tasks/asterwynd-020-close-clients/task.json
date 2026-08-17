@@ -3,7 +3,7 @@
   "repo": "local/asterwynd",
   "base_commit": "dfbd831",
   "problem_statement_file": "issue.md",
-  "test_command": "pytest -q tests/benchmark/test_asterwynd_runner.py",
+  "test_command": "pytest -q tests/benchmark/test_myagent_runner.py",
   "category": "benchmark",
   "difficulty": "easy",
   "timeout_seconds": 180,
