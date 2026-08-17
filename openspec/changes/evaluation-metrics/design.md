@@ -102,9 +102,27 @@ C1 `evaluation-task-spec` 已合入并归档（PR #155）：`openspec/specs/benc
 
 **方案**：`agent/main.py` benchmark CLI 新增 `--seeds`（`list[int]`，默认 `0..N-1` 由 `--repeat` 推导）、`--temperature`（float，默认 0.2）、`--model-version`（str，报告元组字段）；每轮 run 记录 (temperature, seed, model version) 进 run artifact/result。
 
+**grill 补充（Q11/Q12）**：`RunMetadata` 新增 `temperature`/`seed`/`model_version`（轮级共享，run.json 可读），`TaskResult` 保留 `temperature`/`seed` 便于 (task, round) 回查。`--seeds` 与 `--repeat` 长度不一致时**报错**（防静默丢弃）；`--repeat` 上限 5、N<3 时警告；C2 只记录不接线，结果页声明「temperature/seed 为记录值，部分 provider 不承诺 seed 语义」。
+
 **备选**：仅 `--repeat`。被拒：G3 M2 要求显式采样参数 + 每轮记录，可复现声明限定在 (model, provider, harness) 内。
 
 **理由**：T1 协议命令面直接落地；C3 的 `--budget-cap`/`--preflight` 不在本 change。
+
+### Decision D10: 过程效率指标（trace 采集，渲染归 C3）
+
+**方案**：从 trace 采集 `time-to-first-successful-edit`（首次 status 成功的 Edit 事件时间戳 − run 开始时间）与 `exploration fraction`（探索占比）。exploration fraction 口径定义为：非 Edit 工具调用耗时占比 =（全部工具调用总耗时 − Edit 工具总耗时）/ 全部工具调用总耗时（无工具调用时为 0）。统计层提供 `process_efficiency(trace_events) -> dict`，输出两项 + 可空标记；结果页可选展示归 C3。
+
+**备选**：只落字段不采集。被拒：spec delta「过程效率指标」带「实现归 C2」注记，只落字段无法诚实 REVISED 去注记。
+
+**理由**：grill Q13；trace 已有事件序列（`agent/trace_recorder.py`），纯 Python 采集成本低。
+
+### Decision D11: SWE-bench 污染披露数据层
+
+**方案**：`RunMetadata` 新增 `swebench_dataset_version`/`swebench_package_version`（可选字段）；SwebenchAdapter 运行时用 `importlib.metadata.version("swebench")` 采集包版本、从 task/dataset 元数据采集数据集版本，写入 run metadata。披露渲染（污染注记/子集过滤信息）归 C3。
+
+**备选**：不记录。被拒：spec「run metadata SHALL 记录 swebench 数据集版本与 swebench 包版本，供披露引用」是数据层工作，不记录则 C3 无数据可渲染。
+
+**理由**：grill Q13；C3 渲染「数据集版本与 swebench 包版本钉住」注记时 run.json 有数据可引用。
 
 ## Reference Implementation Research
 
@@ -126,7 +144,12 @@ C1 `evaluation-task-spec` 已合入并归档（PR #155）：`openspec/specs/benc
 
 ## Pre-Implementation Review
 
-（占位：由独立零记忆 grill subagent 对 design.md 逐项追问后填写结论；grill 产出 `reviews/grill-design.md`，Open Questions 停轮等用户确认。）
+独立零记忆 grill subagent（run id `grill-evaluation-metrics-20260817`）已于 2026-08-17 完成对 design.md D1–D9 的逐项追问，完整记录见 `reviews/grill-design.md`。结论摘要：
+
+- **Confirmed Decisions**（6 条方向成立）：D2 独立 pass^k 聚合（不复用 pass_at_k(k=n)）、D5 fault_owner 不做 reason→owner 查表、D1 字段可选 + from_dict/to_dict 向后兼容机制、纯 Python 统计扩展、D7 保留 f2p/p2p/reward 方向、D3/D4 cache-aware 定价方向。
+- **Open Questions**（13 条待用户确认，每条带具体例子）：Q1 pass^k 排除谓词未定义且 approval-unavailable 无生产者；Q2 pass@1「= 现有 layer_pass_rate」事实错误（现有实现把 unsupported 计入分母）；Q3 部分有效/全无效边界与 n/k 有效性声明；Q4 MODEL_PRICES 四档改造破坏 5 个消费点；Q5 cache token 采集链路全缺（D3/D4 在真实 run 退化为两档）；Q6 $/resolved-task 分子分母边界（passed_with_warnings 计入、resolved=0 除零、self-hosted 口径）；Q7 fault_owner 写入路径与非法值校验；Q8 配对比较二元定义三选一/缺对处理；Q9 f2p/p2p 承载位置（Verdict detail 是 str，「在 detail 透传」不成立）；Q10 小 N 声明挂渲染层与 Non-Goal 冲突；Q11 采样参数记录粒度 + model_version 字段遗漏；Q12 --seeds/--repeat 长度不匹配与 temperature 只记录不生效；Q13 spec delta 9 条中「过程效率指标」「SWE-bench 污染披露」两条无对应决策。
+
+**状态：已确认**。用户 2026-08-17 答复全部 13 条 Open Questions 按 grill 推荐执行（原始答复「看晕了，代码层面且逻辑 ok 的过滤掉，按推荐就行」，主 session 审核后判定全部按推荐）。13 条确认记录见 `reviews/grill-design.md` 的 `## User Confirmation` 节。grill 补充决策 D10（过程效率指标）/D11（SWE-bench 污染披露数据层）已并入本设计；开始按 tasks 测试先行实现。
 
 ## Testing Strategy
 
