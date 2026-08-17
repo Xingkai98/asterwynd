@@ -71,7 +71,7 @@
 ## 9. 审阅与 PR 收尾
 
 - [x] 9.1 运行 `/review-loop`（独立零记忆 subagent 审阅 → verdict → CHANGES_REQUESTED 则修复 + 回归测试 → 再审至 PASS/3 轮封顶），产出 `reviews/building-review.md` + review manifest（Round 2 PASS）。
-- [ ] 9.2 将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
-- [ ] 9.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change 并同步批次。
-- [ ] 9.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker。
-- [ ] 9.5 发起实现 PR；合入后给跟踪 issue #154 添加完成说明 comment 并关闭。
+- [x] 9.2 将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
+- [x] 9.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change 并同步批次。
+- [x] 9.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker。
+- [ ] 9.5 发起实现 PR（本 worktree 已完成 push + PR 创建）；合入后给跟踪 issue #154 添加完成说明 comment 并关闭（由主 session 监督执行）。
