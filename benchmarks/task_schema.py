@@ -89,14 +89,19 @@ class TaskSpec:
         if self.track is not None and self.track not in TRACKS:
             raise ValueError("track must be one of A/B/verified")
         if self.task_family == "swebench":
-            if self.execution_environment != "docker":
-                raise ValueError("swebench tasks must use execution_environment='docker'")
-            if not self.instance_id:
-                raise ValueError("swebench docker tasks require instance_id")
-            if not self.dataset_name:
-                raise ValueError("swebench docker tasks require dataset_name")
-            if not self.dataset_split:
-                raise ValueError("swebench docker tasks require dataset_split")
+            # L1/L2 分级（D6）：docker 走 SwebenchAdapter + instance 元数据；
+            # local 走本地 test_command 验证（免 Docker），不需要 instance 元数据。
+            if self.execution_environment == "docker":
+                if not self.instance_id:
+                    raise ValueError("swebench docker tasks require instance_id")
+                if not self.dataset_name:
+                    raise ValueError("swebench docker tasks require dataset_name")
+                if not self.dataset_split:
+                    raise ValueError("swebench docker tasks require dataset_split")
+            elif self.execution_environment != "local":
+                raise ValueError(
+                    "swebench execution_environment must be 'local' or 'docker'"
+                )
 
 
 @dataclass(frozen=True)

@@ -207,3 +207,32 @@ def test_legacy_task_json_without_new_fields_loads():
     assert task.scenario is None
     assert task.difficulty is None
     assert task.track is None
+
+
+def test_swebench_task_allows_local_verification_without_instance_metadata():
+    """D6 L1 分级：swebench 任务可走本地 test_command 验证（免 Docker），
+    不需要 instance_id/dataset 元数据。"""
+    task = TaskSpec.from_dict(
+        _base_task_dict(
+            id="swebench-psf__requests-1142",
+            task_family="swebench",
+            execution_environment="local",
+            external_repo="https://github.com/psf/requests.git",
+            track="verified",
+            scenario="bug-fix",
+            difficulty="easy",
+        )
+    )
+    assert task.execution_environment == "local"
+    assert task.instance_id is None
+
+
+def test_swebench_task_rejects_invalid_execution_environment():
+    with pytest.raises(ValueError, match="execution_environment"):
+        TaskSpec.from_dict(
+            _base_task_dict(
+                id="swebench-x",
+                task_family="swebench",
+                execution_environment="vm",
+            )
+        )
