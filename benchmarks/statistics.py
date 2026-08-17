@@ -33,8 +33,10 @@ __all__ = [
     "mcnemar_exact",
     "paired_comparison",
     "pass_at_k",
+    "process_efficiency",
     "pass_k_success_rate",
     "resolve_layer",
+    "swebench_versions",
     "valid_round_count",
 ]
 
@@ -429,3 +431,83 @@ def paired_comparison(
         win_rate={"a_wins": a_wins, "b_wins": b_wins, "ties": ties},
         mcnemar=mcnemar,
     )
+
+
+# ---------------------------------------------------------------------------
+# Process efficiency (D10) + SWE-bench pollution disclosure (D11)
+# ---------------------------------------------------------------------------
+
+def process_efficiency(trace_events: Sequence[dict]) -> dict:
+    """Process-efficiency metrics from a trace's event list.
+
+    ``time_to_first_successful_edit``: seconds from the run start to the first
+    edit event whose status is success (``ok``/``success``); None when no
+    successful edit exists. ``exploration_fraction``: share of tool-call wall
+    time spent on non-Edit tools (0.0 when there are no tool calls). Rendering
+    of both as result-page options belongs to C3.
+    """
+    if not trace_events:
+        return {"time_to_first_successful_edit": None, "exploration_fraction": 0.0}
+    run_start = min(ev.get("timestamp", 0.0) for ev in trace_events)
+
+    first_edit_ts: float | None = None
+    for ev in trace_events:
+        if ev.get("type") == "edit":
+            status = (ev.get("data") or {}).get("status")
+            if status in ("ok", "success"):
+                first_edit_ts = ev.get("timestamp")
+                break
+    time_to_first = (
+        (first_edit_ts - run_start) if first_edit_ts is not None else None
+    )
+
+    open_calls: list[tuple[str | None, float]] = []
+    total_duration = 0.0
+    edit_duration = 0.0
+    for ev in trace_events:
+        etype = ev.get("type")
+        data = ev.get("data") or {}
+        if etype == "tool_call":
+            open_calls.append((data.get("tool_name"), ev.get("timestamp", 0.0)))
+        elif etype == "tool_result" and open_calls:
+            name, start_ts = open_calls.pop(0)
+            duration = ev.get("timestamp", 0.0) - start_ts
+            if duration > 0:
+                total_duration += duration
+                if name == "Edit":
+                    edit_duration += duration
+    exploration = (
+        (total_duration - edit_duration) / total_duration
+        if total_duration > 0
+        else 0.0
+    )
+    return {
+        "time_to_first_successful_edit": time_to_first,
+        "exploration_fraction": exploration,
+    }
+
+
+def swebench_versions(
+    loaded_tasks: Sequence["LoadedTask"],
+) -> tuple[str | None, str | None]:
+    """(dataset_version, swebench_package_version) for run metadata (D11).
+
+    Dataset version comes from the first SWE-bench task's ``version`` field;
+    the package version from ``importlib.metadata`` (None when swebench is not
+    installed). Rendering of pollution disclosures belongs to C3.
+    """
+    import importlib.metadata as _metadata
+
+    dataset_version: str | None = None
+    for loaded in loaded_tasks:
+        if getattr(loaded.task, "task_family", None) == "swebench":
+            candidate = getattr(loaded.task, "version", None)
+            if candidate:
+                dataset_version = candidate
+                break
+    package_version: str | None = None
+    try:
+        package_version = _metadata.version("swebench")
+    except Exception:
+        package_version = None
+    return dataset_version, package_version

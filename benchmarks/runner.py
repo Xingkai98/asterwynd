@@ -20,6 +20,7 @@ from benchmarks.models import (
     TaskResult,
     render_summary,
 )
+from benchmarks.statistics import swebench_versions
 from benchmarks.task_schema import LoadedTask, load_task
 
 
@@ -169,6 +170,8 @@ class BenchmarkRunner:
                 results.append(r)
         ended_at = _now()
 
+        _dataset_version, _package_version = swebench_versions(loaded_tasks)
+
         # Clean up shared resources after all tasks complete
         try:
             await self.agent_runner.close()
@@ -193,6 +196,8 @@ class BenchmarkRunner:
             temperature=self.temperature,
             seed=seed,
             model_version=self.model_version,
+            swebench_dataset_version=_dataset_version,
+            swebench_package_version=_package_version,
         )
         metadata.write_json(run_dir / "run.json")
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")

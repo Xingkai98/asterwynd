@@ -54,8 +54,8 @@
 
 ## 9. 过程效率指标 + SWE-bench 污染披露数据层（D10/D11 + Q13）
 
-- [ ] 9.1 `process_efficiency` 统计函数（time-to-first-successful-edit + exploration fraction，从 trace 事件采集；exploration fraction 口径=非 Edit 工具调用耗时占比；渲染归 C3）+ 单元测试。
-- [ ] 9.2 SwebenchAdapter 采集 `swebench_dataset_version`/`swebench_package_version` 写进 run metadata + 契约测试。
+- [x] 9.1 `process_efficiency` 统计函数（time-to-first-successful-edit + exploration fraction，从 trace 事件采集；exploration fraction 口径=非 Edit 工具调用耗时占比；渲染归 C3）+ 单元测试。
+- [x] 9.2 SwebenchAdapter 采集 `swebench_dataset_version`/`swebench_package_version` 写进 run metadata + 契约测试。
 
 ## 10. spec 注记清理与同步
 
