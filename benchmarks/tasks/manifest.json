@@ -1,6 +1,13 @@
 {
   "version": 1,
   "task_set": "A 轨历史重建 + B 轨当前演进 + Verified 精选子集（三来源组成，D3）",
+  "anti_cheat_disclosure": {
+    "track_a_note": "A 轨任务为历史重建回归基线，非公平评测：在完整 git 历史中运行，agent 可见 base_commit 之后的本仓库提交，存在答案泄漏面（D7）。",
+    "source": "本仓库 git 历史生成",
+    "time_range": "2026-06 前合入特性",
+    "training_cutoff": "未知（未对模型训练数据做污染排查）",
+    "positioning": "回归基线、非公平评测"
+  },
   "capabilities": [
     "tool-usage",
     "context-planning",

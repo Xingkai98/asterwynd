@@ -103,6 +103,8 @@ Wayfinder map #144 的决策（G1/G2/G3/G4/T1/T2，9/9 票关闭）为本次变�
 
 **理由**：诚实边界 > 假装公平（G3 M7 + T2 叙事第 7 加分点"反作弊诚实边界"）；披露成本近零，加固成本高。
 
+**后续加固触发条件（tasks 6.2）**：当出现任一以下情形时启用 shallow/mirror 克隆截断历史——① 结果页数字被外部引用为「公平评测」并被质疑；② 面试/评审把 A 轨作为能力上限而非回归基线解读；③ 需要与外部基准（如 Verified 数字）直接比较时。触发后改造 runner 克隆语义（`--depth 1` + base_commit 深取），改动面限于 `runner.py` 的 `_create_worktree`/`_clone_external_repo` 与 fixture 元数据，需配套回归测试。
+
 ### Decision D8: spec delta 承载完整评估规格，实现分 C2–C4
 
 **方案**：C1 的 spec delta 落定评估升级**完整 Requirement 文本**：修订 `任务支持显式能力分层`（D2）、`Pass@k 稳定性指标` 改名 `pass^k` 并补 pass@1/pass@k/pass^k 三分定义（G3 M1）、新增任务 schema/任务集组成/Verified 子集/反作弊披露 Requirement（本 change 实现），以及 G3 M1–M11 的指标/方法 Requirement（**本 change 只落文本不实现，实现归 C2**）。C2 `evaluation-metrics` 为纯实现 change（statistics/models/adapters），其 proposal 引用本 change 落定的 Requirement。
