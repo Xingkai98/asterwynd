@@ -129,3 +129,30 @@ def test_swebench_versions_package_missing(monkeypatch) -> None:
     dataset_version, package_version = swebench_versions(loaded)
     assert dataset_version == "princeton-nlp/SWE-bench_Verified@test"
     assert package_version is None
+
+
+def test_swebench_versions_no_swebench_tasks_ignores_installed_package(monkeypatch) -> None:
+    """CI regression: even when swebench is installed (e.g. 4.1.0 via
+    `uv sync --extra dev`), a task set without SWE-bench tasks must report
+    package_version None — the package must not be probed at all."""
+    local_task = TaskSpec(
+        id="local-1",
+        repo="local",
+        base_commit="abc",
+        problem_statement_file="issue.md",
+        test_command="grep x",
+        timeout_seconds=30,
+        task_family="local",
+        execution_environment="local",
+    )
+    loaded = [
+        LoadedTask(task=local_task, task_dir=Path("/nonexistent"), problem_statement="fix")
+    ]
+
+    def _installed(name):
+        assert False, "importlib.metadata.version must not be called for a local-only task set"
+
+    monkeypatch.setattr("importlib.metadata.version", _installed)
+    dataset_version, package_version = swebench_versions(loaded)
+    assert dataset_version is None
+    assert package_version is None

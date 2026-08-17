@@ -500,24 +500,30 @@ def swebench_versions(
 
     Dataset version is the SWE-bench dataset identifier, built from the first
     SWE-bench task's ``dataset_name``/``dataset_split`` (e.g.
-    ``princeton-nlp/SWE-bench_Verified@test``); the package version comes from
-    ``importlib.metadata`` (None when swebench is not installed). Rendering of
-    pollution disclosures belongs to C3.
+    ``princeton-nlp/SWE-bench_Verified@test``). The package version comes from
+    ``importlib.metadata`` (None when swebench is not installed) and is only
+    read when the task set actually contains SWE-bench tasks — a local-only
+    run must not report a package version just because swebench happens to be
+    installed in the environment. Rendering of pollution disclosures belongs
+    to C3.
     """
-    import importlib.metadata as _metadata
-
     dataset_version: str | None = None
+    has_swebench = False
     for loaded in loaded_tasks:
         if getattr(loaded.task, "task_family", None) != "swebench":
             continue
+        has_swebench = True
         name = getattr(loaded.task, "dataset_name", None)
         split = getattr(loaded.task, "dataset_split", None)
         if name:
             dataset_version = f"{name}@{split}" if split else name
             break
     package_version: str | None = None
-    try:
-        package_version = _metadata.version("swebench")
-    except Exception:
-        package_version = None
+    if has_swebench:
+        import importlib.metadata as _metadata
+
+        try:
+            package_version = _metadata.version("swebench")
+        except Exception:
+            package_version = None
     return dataset_version, package_version
