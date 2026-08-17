@@ -51,12 +51,16 @@ class BenchmarkRunner:
         parallel: int = 1,
         keep_worktrees: bool = False,
         clone_cache_dir: str | Path | None = None,
+        temperature: float | None = None,
+        model_version: str | None = None,
     ):
         self.agent_runner = agent_runner
         self.source_repo = Path(source_repo).resolve()
         self.runs_dir = Path(runs_dir).resolve()
         self.agent_name = agent_name
         self.model = model
+        self.temperature = temperature
+        self.model_version = model_version
         self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
         self.parallel = parallel
         self.keep_worktrees = keep_worktrees
@@ -119,7 +123,12 @@ class BenchmarkRunner:
             detail=detail or "docker info failed",
         )
 
-    async def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
+    async def run_all(
+        self,
+        tasks_dir: str | Path,
+        run_id: str | None = None,
+        seed: int | None = None,
+    ) -> RunMetadata:
         task_dirs = sorted(
             path for path in Path(tasks_dir).iterdir()
             if path.is_dir() and (path / "task.json").exists()
@@ -136,7 +145,7 @@ class BenchmarkRunner:
 
         async def run_one(task_dir: Path) -> TaskResult:
             async with semaphore:
-                return await self.run_task(task_dir, run_dir=run_dir)
+                return await self.run_task(task_dir, run_dir=run_dir, seed=seed)
 
         started_at = _now()
         results_raw = await asyncio.gather(
@@ -153,6 +162,8 @@ class BenchmarkRunner:
                     mode=self.run_config.mode.value,
                     status="error",
                     reason=BenchmarkReason.SETUP_ERROR.value,
+                    temperature=self.temperature,
+                    seed=seed,
                 ))
             else:
                 results.append(r)
@@ -179,6 +190,9 @@ class BenchmarkRunner:
                 result.status in {"failed", "error"}
                 for result in results
             ),
+            temperature=self.temperature,
+            seed=seed,
+            model_version=self.model_version,
         )
         metadata.write_json(run_dir / "run.json")
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
@@ -188,6 +202,7 @@ class BenchmarkRunner:
         self,
         task_dir: str | Path,
         run_dir: str | Path | None = None,
+        seed: int | None = None,
     ) -> TaskResult:
         loaded = load_task(task_dir)
         run_dir = Path(run_dir).resolve() if run_dir else self.runs_dir / _new_run_id()
@@ -223,6 +238,8 @@ class BenchmarkRunner:
             agent_run_id=agent_run_id,
             task_family=loaded.task.task_family,
             category=loaded.task.category,
+        temperature=self.temperature,
+        seed=seed,
         )
         is_docker_task = loaded.task.execution_environment == "docker"
 
@@ -301,6 +318,8 @@ class BenchmarkRunner:
                         reason=BenchmarkReason.NO_CHANGE.value,
                         task_family=loaded.task.task_family,
                         category=loaded.task.category,
+                        temperature=self.temperature,
+                        seed=seed,
                     )
                     trace.record_completion("failed", BenchmarkReason.NO_CHANGE.value)
                     log("Task result: failed (no_change)")
@@ -368,6 +387,8 @@ class BenchmarkRunner:
                     reason=reason,
                     task_family=loaded.task.task_family,
                     category=loaded.task.category,
+                    temperature=self.temperature,
+                    seed=seed,
                     partial=partial,
                 )
                 trace.record_completion(status, reason or "")
@@ -451,6 +472,8 @@ class BenchmarkRunner:
                 reason=reason or agent_result.reason,
                 task_family=loaded.task.task_family,
                 category=loaded.task.category,
+                temperature=self.temperature,
+                seed=seed,
             )
             trace.record_completion(status)
             log(f"Task result: {status}")

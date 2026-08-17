@@ -49,8 +49,8 @@
 
 ## 8. 采样显式化 CLI（D9 + Q11/Q12）
 
-- [ ] 8.1 `agent/main.py` benchmark CLI 新增 `--seeds`（默认 seed 0..N-1）、`--temperature`（默认 0.2）、`--model-version`；`--seeds` 与 `--repeat` 长度不一致报错；`--repeat` 上限 5、N<3 警告。
-- [ ] 8.2 每轮 run 记录 (temperature, seed, model version) 进 run.json（RunMetadata）与 result.json（TaskResult）+ 单元/CLI 测试。
+- [x] 8.1 `agent/main.py` benchmark CLI 新增 `--seeds`（默认 seed 0..N-1）、`--temperature`（默认 0.2）、`--model-version`；`--seeds` 与 `--repeat` 长度不一致报错；`--repeat` 上限 5、N<3 警告。
+- [x] 8.2 每轮 run 记录 (temperature, seed, model version) 进 run.json（RunMetadata）与 result.json（TaskResult）+ 单元/CLI 测试。
 
 ## 9. 过程效率指标 + SWE-bench 污染披露数据层（D10/D11 + Q13）
 
