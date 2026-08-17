@@ -77,6 +77,15 @@
 
 - `add-worktree-tool`（issue #111）：对标 Claude Code EnterWorktree/ExitWorktree，把 worktree 隔离做成 agent 工具面能力（agent 运行时自主创建/进入/退出）。与外部编排层现有 worktree 机制（workflow 状态机 building 强制、benchmark runner、`--keep-worktrees`）并行共存，不改动编排层。主要影响 tool-system 与 workspace-safety。
 
+### 第十一批：评测升级系列（wayfinder map #144 决策落地）
+
+基于 wayfinder 地图 #144（Agent 评测升级）已完成的全部决策（G1 分层/G2 任务集/G3 指标/G4 落地形态/T1 协议/T2 叙事）拆解的系列 change。**串行主链 C1→C2→C3→C4**：C1/C2 共享 `adapters.py`（子集接入 vs f2p/p2p 保留）、C2/C3 共享 `statistics/compare` 需顺序；**C3/C4 在 C2 合入后并行**（C4 叙事引用 C3 协议与数字）。每 change 独立 worktree、`<change-id>/<YYYY-MM-DD>` 分支、各自 grill/review/archive。
+
+- `evaluation-task-spec`（issue #154）：**C1** 评测任务集组成与任务 schema 扩展。任务 schema 加 `scenario`×`difficulty` 双标签、能力层改套件级覆盖矩阵；任务集三来源（A 轨 20–24 存量重打标 + B 轨 12–16 新增 + Verified 50 子集）≈ 82–90；spec delta 落定评估升级完整规格（能力分层修订 + pass^k 改名 + M1–M11 Requirement，指标实现归 C2）。先行解锁 C2–C4。
+- `evaluation-metrics`（**C2**，未立项）：pass^k 聚合、cost@pass cache-aware、fault_owner、配对比较、f2p/p2p 保留、小 N 声明。依赖 C1。
+- `evaluation-protocol-reporting`（**C3**，未立项）：T1 运行协议文档 + 结果页披露（报告元组/污染注记/反作弊）+ compare 增强。依赖 C2。
+- `evaluation-narrative`（**C4**，未立项）：T2 面试叙事（Q13/W07/FINAL/resume 改动清单）。依赖 C3，与 C3 并行。
+
 ## 未实现队列
 
 ### 4. `add-minimal-tui-runtime-view`
@@ -116,6 +125,28 @@
 - 会话工作目录切换 + WorkspacePolicy root 重绑定，worktree 内文件工具路径边界生效。
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
+
+### 6. `evaluation-task-spec`
+
+状态：已立项，未实现。
+
+关联 issue：[#154](https://github.com/Xingkai98/asterwynd/issues/154)（【feature】evaluation-task-spec：评测任务集组成与任务 schema 扩展）。
+
+批次：第十一批（评测升级系列）C1，先行；C2 `evaluation-metrics` 依赖其 spec delta 落定。
+
+建议顺序原因：
+
+- 任务 schema（scenario/difficulty）与任务集组成（三来源 ~90）是评测升级的地基，C2 指标实现依赖 C1 落定的 spec Requirement。
+- C1 承载 G1 的 spec 张力修订（任务级能力层 → 套件级覆盖矩阵）与 G2/G3 的任务集与指标 Requirement 文本。
+
+主要交付：
+
+- `TaskSpec` 扩展 `scenario` 字段 + `difficulty` 3 档归一化，向后兼容。
+- 存量 26 去留重打标（4 陈旧重写/改写、2 gold.patch 空补、1 弱评估补结构校验）。
+- B 轨新增 12–16 条（context-planning 0→3–5 优先）。
+- SWE-bench Verified 50 子集接入（L1/L2/L3 验证路径 + 污染披露）。
+- spec delta 落定评估升级完整规格（含 M1–M11 Requirement，实现归 C2）。
+- 实现 PR 合入时给 issue #154 添加完成 comment 并关闭。
 
 ## 已完成待归档
 

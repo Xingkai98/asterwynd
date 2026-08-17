@@ -1,0 +1,1 @@
+{"schema":"workflow-event/v1","seq":1,"event_type":"backlog_updated","change_id":"evaluation-task-spec","artifact_path":"docs/openspec-change-backlog.md","reason":"evaluation-task-spec（issue #154）立项：并行开发批次新增第十一批（评测升级系列，wayfinder map #144 决策落地，C1→C2→C3→C4 串行主链、C3/C4 在 C2 后并行），未实现队列新增 6 号条目，记录批次、issue 关联、建议顺序原因与主要交付。","approved_by":"human"}
