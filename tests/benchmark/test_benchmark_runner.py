@@ -643,3 +643,53 @@ def _git_out(repo: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+@pytest.mark.asyncio
+async def test_docker_task_passes_partial_to_task_result(repo, tmp_path, monkeypatch):
+    """SWE-bench partial-success fields survive from Verdict into TaskResult."""
+    base_commit = _git_out(repo, "rev-parse", "HEAD")
+    task_dir = _task_dir(
+        tmp_path,
+        base_commit=base_commit,
+        test_command="pytest",
+        task_id="swebench-psf__requests-1142",
+        repo_name="psf/requests",
+        task_family="swebench",
+        execution_environment="docker",
+        external_repo=str(repo),
+        instance_id="psf__requests-1142",
+        dataset_name="princeton-nlp/SWE-bench_Verified",
+        dataset_split="test",
+    )
+    runner = BenchmarkRunner(
+        agent_runner=CompleteEditRunner(),
+        source_repo=repo,
+        runs_dir=tmp_path / "runs",
+    )
+    monkeypatch.setattr(
+        runner,
+        "_get_docker_preflight_result",
+        lambda: DockerPreflightResult(available=True, reason="ok", detail="docker info succeeded"),
+    )
+
+    class _PartialVerifier:
+        def verify(self, loaded, task_output, patch_text, log=None):
+            return Verdict(
+                status="passed",
+                reason=None,
+                detail="ok",
+                resolved=True,
+                partial={"f2p_rate": 0.8, "p2p_rate": 0.5, "reward": 0.3},
+            )
+
+    monkeypatch.setattr(
+        "benchmarks.runner.get_verifier",
+        lambda task_family, **kwargs: _PartialVerifier(),
+    )
+
+    result = await runner.run_task(
+        task_dir, run_dir=tmp_path / "runs" / "run-partial"
+    )
+    assert result.status == "passed"
+    assert result.partial == {"f2p_rate": 0.8, "p2p_rate": 0.5, "reward": 0.3}

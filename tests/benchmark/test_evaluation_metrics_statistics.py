@@ -12,6 +12,7 @@ from benchmarks.statistics import (
     effective_pass_rate,
     is_valid_round,
     pass_k_success_rate,
+    valid_round_count,
 )
 
 
@@ -139,3 +140,33 @@ def test_pass_k_summary_dataclass_shape() -> None:
     assert summary.valid_tasks == 2
     assert summary.excluded_tasks == 1
     assert summary.min_valid_rounds == 3
+
+
+# ---------------------------------------------------------------------------
+# valid_round_count (small-N declaration support, Q10)
+# ---------------------------------------------------------------------------
+
+def test_valid_round_count_excludes_invalid_rounds() -> None:
+    from benchmarks.models import TaskResult
+
+    results = [
+        TaskResult(task_id="t1", agent="a", status="passed"),
+        TaskResult(task_id="t1", agent="a", status="failed", reason="test_failure"),
+        TaskResult(
+            task_id="t1",
+            agent="a",
+            status="unsupported",
+            reason="docker_unavailable",
+        ),
+        TaskResult(
+            task_id="t1",
+            agent="a",
+            status="failed",
+            reason="approval_unavailable",
+        ),
+    ]
+    assert valid_round_count(results) == 2
+
+
+def test_valid_round_count_empty() -> None:
+    assert valid_round_count([]) == 0

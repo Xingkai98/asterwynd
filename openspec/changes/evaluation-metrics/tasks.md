@@ -44,8 +44,8 @@
 
 ## 7. f2p/p2p 保留 + 小 N 声明（D7/D8 + Q9/Q10）
 
-- [ ] 7.1 `adapters.py` SwebenchAdapter 透传 `f2p_rate`/`p2p_rate`/`reward` 到 Verdict `partial` 字段 + runner 透传到 `TaskResult.partial` + 契约测试更新。
-- [ ] 7.2 统计层输出样本量 N 供渲染层判断（小样本声明文案渲染归 C3，本 change 不渲染声明文案）+ 单元测试。
+- [x] 7.1 `adapters.py` SwebenchAdapter 透传 `f2p_rate`/`p2p_rate`/`reward` 到 Verdict `partial` 字段 + runner 透传到 `TaskResult.partial` + 契约测试更新。
+- [x] 7.2 统计层输出样本量 N 供渲染层判断（小样本声明文案渲染归 C3，本 change 不渲染声明文案）+ 单元测试。
 
 ## 8. 采样显式化 CLI（D9 + Q11/Q12）
 

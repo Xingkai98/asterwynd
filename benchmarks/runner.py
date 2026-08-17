@@ -318,6 +318,7 @@ class BenchmarkRunner:
                         f"docker task family '{loaded.task.task_family}' "
                         "is not supported yet"
                     )
+                    partial = None
                 else:
                     verdict = await asyncio.to_thread(
                         verifier.verify,
@@ -329,6 +330,7 @@ class BenchmarkRunner:
                     verifier_status = verdict.status
                     reason = verdict.reason
                     detail = verdict.detail
+                    partial = verdict.partial
                 artifacts.test_output.write_text(
                     detail or "(no framework harness output)\n",
                     errors="replace",
@@ -366,6 +368,7 @@ class BenchmarkRunner:
                     reason=reason,
                     task_family=loaded.task.task_family,
                     category=loaded.task.category,
+                    partial=partial,
                 )
                 trace.record_completion(status, reason or "")
                 log(f"Task result: {status}")

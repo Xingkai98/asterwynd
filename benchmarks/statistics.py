@@ -35,6 +35,7 @@ __all__ = [
     "pass_at_k",
     "pass_k_success_rate",
     "resolve_layer",
+    "valid_round_count",
 ]
 
 _logger = logging.getLogger("asterwynd.benchmark.statistics")
@@ -74,6 +75,15 @@ def effective_pass_rate(valid_pass_flags: Sequence[bool]) -> float:
     if not valid_pass_flags:
         return 0.0
     return sum(1 for ok in valid_pass_flags if ok) / len(valid_pass_flags)
+
+
+def valid_round_count(results: Sequence[TaskResult]) -> int:
+    """Number of valid rounds in a result set.
+
+    Exposes the sample size N for per-task CI small-N declarations; the
+    rendering layer (C3) decides how to phrase the disclaimer.
+    """
+    return sum(1 for r in results if is_valid_round(r.status, r.reason))
 
 
 def mean_std(values: Sequence[float]) -> tuple[float, float]:
