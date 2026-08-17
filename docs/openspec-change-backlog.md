@@ -82,7 +82,7 @@
 基于 wayfinder 地图 #144（Agent 评测升级）已完成的全部决策（G1 分层/G2 任务集/G3 指标/G4 落地形态/T1 协议/T2 叙事）拆解的系列 change。**串行主链 C1→C2→C3→C4**：C1/C2 共享 `adapters.py`（子集接入 vs f2p/p2p 保留）、C2/C3 共享 `statistics/compare` 需顺序；**C3/C4 在 C2 合入后并行**（C4 叙事引用 C3 协议与数字）。每 change 独立 worktree、`<change-id>/<YYYY-MM-DD>` 分支、各自 grill/review/archive。
 
 - `evaluation-task-spec`（issue #154）：**C1** 评测任务集组成与任务 schema 扩展（**已归档 2026-08-17**）。任务 schema 加 `scenario`×`difficulty` 双标签、能力层改套件级覆盖矩阵；任务集三来源（A 轨 20–24 存量重打标 + B 轨 12–16 新增 + Verified 50 子集）≈ 82–90；spec delta 落定评估升级完整规格（能力分层修订 + pass^k 改名 + M1–M11 Requirement，指标实现归 C2）。先行解锁 C2–C4。
-- `evaluation-metrics`（**C2**，未立项）：pass^k 聚合、cost@pass cache-aware、fault_owner、配对比较、f2p/p2p 保留、小 N 声明。依赖 C1。
+- `evaluation-metrics`（issue #157）：**C2** 评测指标层实现（**已合入归档 2026-08-17**）。实现 C1 已落 spec 的 M1–M11 Requirement 指标层：pass^k 聚合、cost@pass cache-aware（四档定价 + cache tokens 数据模型）、fault_owner 正交 + 交叉表、配对比较统计（per-task delta/差异 CI/win-rate）、f2p/p2p 保留、小 N 声明、采样显式化 CLI（--seeds/--temperature/--model-version）；清理 spec「实现归 C2」注记。依赖 C1；关联 follow-up #156（C3 前置 Verified 40 fixture）。
 - `evaluation-protocol-reporting`（**C3**，未立项）：T1 运行协议文档 + 结果页披露（报告元组/污染注记/反作弊）+ compare 增强。依赖 C2。
 - `evaluation-narrative`（**C4**，未立项）：T2 面试叙事（Q13/W07/FINAL/resume 改动清单）。依赖 C3，与 C3 并行。
 
@@ -125,4 +125,3 @@
 - 会话工作目录切换 + WorkspacePolicy root 重绑定，worktree 内文件工具路径边界生效。
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
-

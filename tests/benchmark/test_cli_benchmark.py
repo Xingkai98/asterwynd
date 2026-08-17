@@ -212,7 +212,7 @@ class _FakeBenchmarkRunner:
         self.kwargs = kwargs
         self.run_all_calls: list[tuple[str, str | None]] = []
 
-    async def run_all(self, tasks_dir, run_id=None):
+    async def run_all(self, tasks_dir, run_id=None, seed=None):
         self.run_all_calls.append((str(tasks_dir), run_id))
         return _FakeRunMetadata(run_id=run_id or "auto-run")
 
@@ -437,7 +437,7 @@ def test_benchmark_cli_repeat_aggregates_real_results(tmp_path, monkeypatch):
     runs_dir = tmp_path / "runs"
 
     class _WritingRunner(_FakeBenchmarkRunner):
-        async def run_all(self, tasks_dir, run_id=None):
+        async def run_all(self, tasks_dir, run_id=None, seed=None):
             self.run_all_calls.append((str(tasks_dir), run_id))
             rid = run_id or "auto-run"
             task_out = runs_dir / rid / "tasks" / "task-1"

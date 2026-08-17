@@ -15,7 +15,7 @@ import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from dotenv import load_dotenv
 import platformdirs
@@ -719,9 +719,31 @@ def benchmark(
     keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
     clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
     repeat: int = typer.Option(1, "--repeat", min=1, help="重复运行次数，用于评测聚合；缺省 1 保持既有单次行为"),
+    seeds: Optional[List[int]] = typer.Option(
+        None,
+        "--seeds",
+        help="显式 seed 集合（可重复：--seeds 0 --seeds 1）；缺省推导为 0..N-1",
+    ),
+    temperature: float = typer.Option(
+        0.2,
+        "--temperature",
+        help="采样温度（记录值；部分 provider 不承诺 seed 语义）",
+    ),
+    model_version: Optional[str] = typer.Option(
+        None, "--model-version", help="模型版本（报告元组字段）"
+    ),
 ):
     """运行本地 Coding Agent benchmark"""
     _setup_logging()
+    if repeat > 5:
+        raise typer.BadParameter("--repeat 最大 5（N>=3 才有 pass^k 意义）")
+    if 1 < repeat < 3:
+        typer.echo("Warning: --repeat < 3 时 pass^k 无统计意义", err=True)
+    effective_seeds = seeds if seeds is not None else list(range(repeat))
+    if len(effective_seeds) != repeat:
+        raise typer.BadParameter(
+            f"--seeds 数量（{len(effective_seeds)}）必须等于 --repeat（{repeat}）"
+        )
     runner = _build_benchmark_runner(
         agent=agent,
         source_repo=source_repo,
@@ -739,10 +761,12 @@ def benchmark(
         fake_new_string=fake_new_string,
         keep_worktrees=keep_worktrees,
         clone_cache_dir=clone_cache_dir,
+        temperature=temperature,
+        model_version=model_version,
     )
 
     if repeat == 1:
-        metadata = asyncio.run(runner.run_all(tasks_dir))
+        metadata = asyncio.run(runner.run_all(tasks_dir, seed=effective_seeds[0]))
         run_path = runs_dir / metadata.run_id
         typer.echo(f"Benchmark run: {run_path}")
         typer.echo(
@@ -754,7 +778,10 @@ def benchmark(
     # Repeat > 1: run N rounds (each with its own run_id), then aggregate into
     # an evaluation report. Backward compatible: single run keeps old behavior.
     async def _run_all_rounds():
-        return [await runner.run_all(tasks_dir, run_id=rid) for rid in round_run_ids]
+        return [
+            await runner.run_all(tasks_dir, run_id=rid, seed=s)
+            for rid, s in zip(round_run_ids, effective_seeds)
+        ]
 
     from datetime import datetime, timezone
 
@@ -790,6 +817,35 @@ def benchmark(
         )
 
 
+@app.command("benchmark-annotate")
+def benchmark_annotate(
+    run_dir: Path = typer.Argument(..., help="run 目录（含 tasks/<task-id>/result.json）"),
+    task_id: str = typer.Argument(..., help="要标注的任务 id"),
+    owner: str = typer.Option(
+        ..., "--owner", help="fault_owner 标注：agent / task / environment / unknown"
+    ),
+):
+    """标注失败归因 fault_owner 到指定任务的 result.json（C2 evaluation-metrics）"""
+    import json
+
+    from benchmarks.statistics import FAULT_OWNERS
+
+    if owner not in FAULT_OWNERS:
+        raise typer.BadParameter(f"--owner 必须是 {'/'.join(FAULT_OWNERS)} 之一")
+    result_path = (run_dir / "tasks" / task_id / "result.json").resolve()
+    tasks_root = (run_dir / "tasks").resolve()
+    if not result_path.is_relative_to(tasks_root):
+        raise typer.BadParameter(f"task_id 越出 tasks 目录: {task_id}")
+    if not result_path.exists():
+        raise typer.BadParameter(f"未找到 result.json: {result_path}")
+    data = json.loads(result_path.read_text())
+    data["fault_owner"] = owner
+    result_path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n", errors="replace"
+    )
+    typer.echo(f"annotated {task_id}: fault_owner={owner}")
+
+
 def _build_benchmark_runner(
     *,
     agent: str,
@@ -808,6 +864,8 @@ def _build_benchmark_runner(
     fake_new_string: Optional[str],
     keep_worktrees: bool,
     clone_cache_dir: Optional[Path],
+    temperature: Optional[float] = None,
+    model_version: Optional[str] = None,
 ) -> "BenchmarkRunner":
     """Build a configured BenchmarkRunner shared by ``benchmark`` and ``benchmark-gate``.
 
@@ -877,6 +935,8 @@ def _build_benchmark_runner(
         parallel=parallel_effective,
         keep_worktrees=keep_worktrees,
         clone_cache_dir=clone_cache_dir,
+        temperature=temperature,
+        model_version=model_version,
     )
 
 
