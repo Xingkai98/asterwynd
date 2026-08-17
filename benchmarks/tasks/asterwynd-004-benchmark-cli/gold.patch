@@ -1,111 +1,43 @@
-diff --git a/benchmarks/tasks/asterwynd-readme-title/gold.patch b/benchmarks/tasks/asterwynd-readme-title/gold.patch
-new file mode 100644
-index 0000000..e02737d
---- /dev/null
-+++ b/benchmarks/tasks/asterwynd-readme-title/gold.patch
-@@ -0,0 +1,9 @@
-+diff --git a/README.md b/README.md
-+--- a/README.md
-++++ b/README.md
-+@@ -1,4 +1,4 @@
-+-# Asterwynd
-++# Asterwynd Coding Agent
-+ 
-+ 一个用 Python 构建的轻量级通用 AI Agent 框架。
-+
-diff --git a/benchmarks/tasks/asterwynd-readme-title/issue.md b/benchmarks/tasks/asterwynd-readme-title/issue.md
-new file mode 100644
-index 0000000..ac92eaa
---- /dev/null
-+++ b/benchmarks/tasks/asterwynd-readme-title/issue.md
-@@ -0,0 +1,4 @@
-+Update the README title from `# Asterwynd` to `# Asterwynd Coding Agent`.
-+
-+Keep the change scoped to the README title.
-+
-diff --git a/benchmarks/tasks/asterwynd-readme-title/task.json b/benchmarks/tasks/asterwynd-readme-title/task.json
-new file mode 100644
-index 0000000..b15dd73
---- /dev/null
-+++ b/benchmarks/tasks/asterwynd-readme-title/task.json
-@@ -0,0 +1,11 @@
-+{
-+  "id": "asterwynd-readme-title",
-+  "repo": "local/asterwynd",
-+  "base_commit": "c9d5e90d6c605f298451ff841d05932f87c66575",
-+  "problem_statement_file": "issue.md",
-+  "test_command": "grep -q '^# Asterwynd Coding Agent$' README.md",
-+  "timeout_seconds": 60,
-+  "gold_patch_file": "gold.patch",
-+  "category": "feature",
-+  "difficulty": "easy"
-+}
-diff --git a/cli.py b/cli.py
-index 2c4455a..36cd031 100644
---- a/cli.py
-+++ b/cli.py
-@@ -207,5 +207,62 @@ def web(
+diff --git a/agent/main.py b/agent/main.py
+index a57c8d2..25a0740 100644
+--- a/agent/main.py
++++ b/agent/main.py
+@@ -697,6 +697,24 @@ def web(
      uvicorn.run(app, host=host, port=port, log_level="info")
  
  
-+@app.command()
-+def benchmark(
-+    tasks_dir: Path = typer.Argument(..., help="包含 benchmark task 子目录的目录"),
-+    agent: str = typer.Option("fake", "--agent", help="Runner: fake / shell / asterwynd"),
-+    source_repo: Path = typer.Option(Path("."), "--source-repo", help="被测 git repo"),
-+    runs_dir: Path = typer.Option(Path("benchmarks/runs"), "--runs-dir", help="benchmark 输出目录"),
-+    provider: str = typer.Option(
-+        os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="Asterwynd LLM provider"
-+    ),
-+    model: Optional[str] = typer.Option(None, "--model", help="Asterwynd 模型"),
-+    max_iterations: int = typer.Option(20, "--max-iterations", help="Asterwynd 最大迭代次数"),
-+    shell_command: Optional[str] = typer.Option(None, "--shell-command", help="shell runner 命令"),
-+    fake_edit_file: Optional[str] = typer.Option(None, "--fake-edit-file", help="fake runner 修改文件"),
-+    fake_old_string: Optional[str] = typer.Option(None, "--fake-old-string", help="fake runner old string"),
-+    fake_new_string: Optional[str] = typer.Option(None, "--fake-new-string", help="fake runner new string"),
-+    keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
-+):
-+    """运行本地 Coding Agent benchmark。"""
-+    from benchmarks.agent_runner import FakeAgentRunner, AsterwyndRunner, ShellCommandRunner
-+    from benchmarks.runner import BenchmarkRunner
++def _echo_task_set(tasks_dir: Path) -> None:
++    # List the task set (ids + total) without running the benchmark.
++    from benchmarks.task_schema import load_task
 +
-+    if agent == "fake":
-+        runner_impl = FakeAgentRunner(
-+            edit_file=fake_edit_file,
-+            old_string=fake_old_string,
-+            new_string=fake_new_string,
-+        )
-+    elif agent == "shell":
-+        if not shell_command:
-+            typer.echo("Error: --shell-command is required for --agent shell", err=True)
-+            raise SystemExit(1)
-+        runner_impl = ShellCommandRunner(shell_command)
-+    elif agent == "asterwynd":
-+        llm = build_llm(provider, model)
-+        runner_impl = AsterwyndRunner(
-+            llm=llm,
-+            model=getattr(llm, "model", model or ""),
-+            max_iterations=max_iterations,
-+        )
-+    else:
-+        typer.echo("Error: --agent must be fake, shell, or asterwynd", err=True)
-+        raise SystemExit(1)
-+
-+    runner = BenchmarkRunner(
-+        agent_runner=runner_impl,
-+        source_repo=source_repo,
-+        runs_dir=runs_dir,
-+        agent_name=agent,
-+        model=model or "",
-+        keep_worktrees=keep_worktrees,
++    task_dirs = sorted(
++        p for p in tasks_dir.iterdir() if p.is_dir() and (p / "task.json").exists()
 +    )
-+    metadata = runner.run_all(tasks_dir)
-+    run_path = runs_dir / metadata.run_id
-+    typer.echo(f"Benchmark run: {run_path}")
-+    typer.echo(f"Tasks: {metadata.task_count} | passed: {metadata.passed} | failed: {metadata.failed}")
++    typer.echo(f"Tasks: {len(task_dirs)}")
++    for d in task_dirs:
++        try:
++            task = load_task(d).task
++        except (ValueError, FileNotFoundError) as exc:
++            typer.echo(f"Error: failed to load {d.name}: {exc}", err=True)
++            continue
++        typer.echo(f"  {task.id}")
 +
 +
- if __name__ == "__main__":
--    app()
-\ No newline at end of file
-+    app()
++
+ @app.command()
+ def benchmark(
+     tasks_dir: Path = typer.Argument(..., help="包含 benchmark task 子目录的目录"),
+@@ -719,9 +737,13 @@ def benchmark(
+     keep_worktrees: bool = typer.Option(False, "--keep-worktrees", help="保留任务 worktree 便于调试"),
+     clone_cache_dir: Optional[Path] = typer.Option(None, "--clone-cache-dir", help="外部仓库裸克隆缓存目录"),
+     repeat: int = typer.Option(1, "--repeat", min=1, help="重复运行次数，用于评测聚合；缺省 1 保持既有单次行为"),
++    list_tasks: bool = typer.Option(False, "--list-tasks", help="只列出任务集组成（总数 + 按 track 分组），不运行 benchmark"),
+ ):
+     """运行本地 Coding Agent benchmark"""
+     _setup_logging()
++    if list_tasks:
++        _echo_task_set(tasks_dir)
++        return
+     runner = _build_benchmark_runner(
+         agent=agent,
+         source_repo=source_repo,
