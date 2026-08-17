@@ -59,8 +59,8 @@
 
 ## 10. spec 注记清理与同步
 
-- [ ] 10.1 将 `openspec/specs/benchmark/spec.md` 中带「实现归 C2 evaluation-metrics」注记的 Requirement 在本 change 的 spec delta 以 REVISED 列出（去掉注记、补充具体化细节）。
-- [ ] 10.2 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
+- [x] 10.1 将 `openspec/specs/benchmark/spec.md` 中带「实现归 C2 evaluation-metrics」注记的 Requirement 在本 change 的 spec delta 以 REVISED 列出（去掉注记、补充具体化细节）。
+- [x] 10.2 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
 
 ## 11. 同步与验证
 
