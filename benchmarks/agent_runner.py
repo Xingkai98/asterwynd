@@ -380,4 +380,6 @@ class AsterwyndRunner(AgentRunner):
             output=result.content,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            cache_read_tokens=result.cache_read_input_tokens,
+            cache_write_tokens=result.cache_creation_input_tokens,
         )

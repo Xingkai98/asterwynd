@@ -25,10 +25,10 @@
 
 ## 4. cache-aware 成本（D3/D4 + Q4/Q5/Q6）
 
-- [ ] 4.1 `agent/cost_tracker.py` 定价表扩展为四档（fresh input / cache read / cache write / output）+ 5 系模型（claude-sonnet-5/opus-5/haiku-4.5）+ deepseek-v4-flash（self-hosted 口径）；`MODEL_PRICES` 统一改四元组 + `compute_cost` 同步解包，消费点行为不变。
-- [ ] 4.2 `compute_cost_cached` + `cache_hit_rate` 实现 + 单元测试（含未知模型回退估算/警告、self-hosted 不计费、cache_hit_rate 分母定义）。
-- [ ] 4.3 `PRICING_TABLE_VERSION` + 日期落进定价表。
-- [ ] 4.4 cache token 采集链：`Usage` 加 cache_read/cache_creation 字段 → anthropic_llm 解析 → loop 累加 → AgentRunResult → TaskResult（真实 run 可采集）。
+- [x] 4.1 `agent/cost_tracker.py` 定价表扩展为四档（fresh input / cache read / cache write / output）+ 5 系模型（claude-sonnet-5/opus-5/haiku-4.5）+ deepseek-v4-flash（self-hosted 口径）；`MODEL_PRICES` 统一改四元组 + `compute_cost` 同步解包，消费点行为不变。
+- [x] 4.2 `compute_cost_cached` + `cache_hit_rate` 实现 + 单元测试（含未知模型回退估算/警告、self-hosted 不计费、cache_hit_rate 分母定义）。
+- [x] 4.3 `PRICING_TABLE_VERSION` + 日期落进定价表。
+- [x] 4.4 cache token 采集链：`Usage` 加 cache_read/cache_creation 字段 → anthropic_llm 解析 → loop 累加 → AgentRunResult → TaskResult（真实 run 可采集）。
 
 ## 5. $/resolved-task 与 fault_owner（D4/D5 + Q6/Q7）
 
