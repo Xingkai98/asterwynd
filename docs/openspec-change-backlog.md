@@ -83,8 +83,8 @@
 
 - `evaluation-task-spec`（issue #154）：**C1** 评测任务集组成与任务 schema 扩展（**已归档 2026-08-17**）。任务 schema 加 `scenario`×`difficulty` 双标签、能力层改套件级覆盖矩阵；任务集三来源（A 轨 20–24 存量重打标 + B 轨 12–16 新增 + Verified 50 子集）≈ 82–90；spec delta 落定评估升级完整规格（能力分层修订 + pass^k 改名 + M1–M11 Requirement，指标实现归 C2）。先行解锁 C2–C4。
 - `evaluation-metrics`（issue #157）：**C2** 评测指标层实现（**已合入归档 2026-08-17**）。实现 C1 已落 spec 的 M1–M11 Requirement 指标层：pass^k 聚合、cost@pass cache-aware（四档定价 + cache tokens 数据模型）、fault_owner 正交 + 交叉表、配对比较统计（per-task delta/差异 CI/win-rate）、f2p/p2p 保留、小 N 声明、采样显式化 CLI（--seeds/--temperature/--model-version）；清理 spec「实现归 C2」注记。依赖 C1；关联 follow-up #156（C3 前置 Verified 40 fixture）。
-- `evaluation-protocol-reporting`（**C3**，未立项）：T1 运行协议文档 + 结果页披露（报告元组/污染注记/反作弊）+ compare 增强。依赖 C2。
-- `evaluation-narrative`（**C4**，未立项）：T2 面试叙事（Q13/W07/FINAL/resume 改动清单）。依赖 C3，与 C3 并行。
+- `evaluation-protocol-reporting`（issue #159）：**C3** 运行协议文档 + 结果页披露 + compare 增强（**已立项 2026-08-17**）。T1 协议转正 `docs/benchmark-run-protocol.md`；结果页渲染披露 10 项（报告元组/污染注记/反作弊/fault_owner 交叉表/$/resolved-task/部分成功档/采样参数/小N/过程效率/覆盖矩阵）；compare 配对渲染；CLI `--budget-cap`/`--no-cap`/`--preflight`；self_check 五门禁；spec 渲染边界注记→已实现。依赖 C2；关联 follow-up #156（C3 前置 Verified 40 fixture）。
+- `evaluation-narrative`（issue #160）：**C4** 面试叙事（**已立项 2026-08-17**）。T2 改动清单落 Q13/W07/FINAL/resume：现状口径修正（23→26、450+→1700+、Claw 重锚）+ 升级叙事段（场景化 ~90/pass^k/cost@pass/fault_owner/预算，标 C1–C3 实现中）。依赖 C3，与 C3 并行。
 
 ## 未实现队列
 
@@ -125,3 +125,42 @@
 - 会话工作目录切换 + WorkspacePolicy root 重绑定，worktree 内文件工具路径边界生效。
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
+
+### 6. `evaluation-protocol-reporting`
+
+状态：已立项，未实现。
+
+关联 issue：[#159](https://github.com/Xingkai98/asterwynd/issues/159)（【feature】evaluation-protocol-reporting：运行协议文档 + 结果页披露 + compare 增强）。
+
+批次：第十一批（评测升级系列）C3，与 C4 并行（C2 后）。
+
+建议顺序原因：
+
+- 承接 C2 的渲染边界义务（spec 顶部「归 C3」注记 10 项），结果页披露/协议是面试可引用数字的前提。
+- C4 升级叙事段引用 C3 协议与数字，但 C3/C4 并行（C4 现状口径修正不依赖 C3）。
+
+主要交付：
+
+- `docs/benchmark-run-protocol.md` 运行协议（T1 转正）。
+- 结果页披露渲染 10 项 + compare 配对渲染。
+- CLI `--budget-cap`/`--no-cap`/`--preflight` + `scripts/self_check.py` 五门禁。
+- spec 渲染边界注记→已实现。
+- 实现 PR 合入时给 issue #159 添加完成 comment 并关闭，在 follow-up #156 确认 Verified 40 fixture 前置状态。
+
+### 7. `evaluation-narrative`
+
+状态：已立项，未实现。
+
+关联 issue：[#160](https://github.com/Xingkai98/asterwynd/issues/160)（【feature】evaluation-narrative：面试叙事改动）。
+
+批次：第十一批（评测升级系列）C4，与 C3 并行。
+
+建议顺序原因：
+
+- T2 叙事改动清单已定稿（2026-08-17），现状口径修正（resume 23→26/450+→1700+/Claw 重锚、FINAL 速查表）不依赖任何实现可立即落；升级叙事段标「C1–C3 实现中」随 C3 状态校准。
+
+主要交付：
+
+- `docs/resume-description.md`：任务数/测试数口径 + Claw 重锚 + bullet 7 草案。
+- `docs/interview-script/`：Q13 指标层升级段、W07 加分点 5–8、FINAL 速查表修正 + 升级行。
+- 实现 PR 合入时给 issue #160 添加完成 comment 并关闭。
