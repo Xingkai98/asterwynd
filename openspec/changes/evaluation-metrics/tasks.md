@@ -39,8 +39,8 @@
 
 ## 6. 配对比较统计（D6 + Q8）
 
-- [ ] 6.1 `compare.py` 新增 `paired_comparison`（per-task delta 用 pass@1 有效轮通过率 + 差异 CI（paired bootstrap，seed 固定）+ win-rate）。
-- [ ] 6.2 McNemar 显著性检验（精确二项，用 pass^k 布尔做 2×2）+ 单元测试（含小样本路径、任务集不完全重合剔除并注记）。
+- [x] 6.1 `compare.py` 新增 `paired_comparison`（per-task delta 用 pass@1 有效轮通过率 + 差异 CI（paired bootstrap，seed 固定）+ win-rate）。
+- [x] 6.2 McNemar 显著性检验（精确二项，用 pass^k 布尔做 2×2）+ 单元测试（含小样本路径、任务集不完全重合剔除并注记）。
 
 ## 7. f2p/p2p 保留 + 小 N 声明（D7/D8 + Q9/Q10）
 

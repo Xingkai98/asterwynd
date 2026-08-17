@@ -12,6 +12,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from agent.cost_tracker import compute_cost, format_cost
+from benchmarks.models import TaskResult
+from benchmarks.statistics import paired_comparison
 
 
 RESULT_ORDER = ["passed", "passed_with_warnings", "unsupported", "failed", "error"]
@@ -124,6 +126,57 @@ def build_summary(runs: list[tuple[str, dict[str, dict]]]) -> str:
             f"| {name} | {total_input} | {total_output} | {format_cost(cost)} |"
         )
 
+    return "\n".join(lines) + "\n"
+
+
+def build_paired_report(runs: list[tuple[str, dict[str, dict]]]) -> str:
+    """Build a markdown paired-comparison section for exactly two runs.
+
+    Returns an empty string when ``runs`` does not have exactly two entries.
+    Uses the shared paired-comparison statistics (per-task pass@1 delta,
+    paired-bootstrap difference CI, win-rate, exact-binomial McNemar on pass^k).
+    """
+    if len(runs) != 2:
+        return ""
+    (name_a, results_a), (name_b, results_b) = runs
+    comp = paired_comparison(
+        [TaskResult.from_dict(d) for d in results_a.values()],
+        [TaskResult.from_dict(d) for d in results_b.values()],
+    )
+    lines = ["## Paired Comparison", ""]
+    n_shared = len(comp.per_task_deltas)
+    lines.append(
+        f"Comparing **{name_a}** vs **{name_b}** over {n_shared} shared tasks."
+    )
+    lines.append("")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
+    mean_delta = (
+        sum(comp.per_task_deltas.values()) / n_shared if n_shared else 0.0
+    )
+    ci = comp.delta_ci
+    ci_str = f"[{ci[0]:.3f}, {ci[1]:.3f}]" if ci else "n/a"
+    lines.append(f"| Mean per-task delta (pass@1) | {mean_delta:.3f} |")
+    lines.append(f"| Difference 95% CI (paired bootstrap) | {ci_str} |")
+    wr = comp.win_rate
+    lines.append(
+        f"| Win-rate | {name_a}: {wr['a_wins']} / {name_b}: {wr['b_wins']} "
+        f"/ ties: {wr['ties']} |"
+    )
+    if comp.mcnemar:
+        m = comp.mcnemar
+        sig = "significant" if m["significant"] else "not significant"
+        lines.append(
+            f"| McNemar (pass^k) | b={m['b']}, c={m['c']}, "
+            f"p={m['p_value']:.4f} ({sig}) |"
+        )
+    lines.append("")
+    lines.append("### Per-task deltas")
+    lines.append("")
+    lines.append("| Task | delta |")
+    lines.append("|------|-------|")
+    for task_id, delta in sorted(comp.per_task_deltas.items()):
+        lines.append(f"| {task_id} | {delta:.3f} |")
     return "\n".join(lines) + "\n"
 
 
@@ -260,7 +313,7 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     md_path = out_dir / "comparison.md"
-    md_path.write_text(build_summary(runs))
+    md_path.write_text(build_summary(runs) + build_paired_report(runs))
     print(f"Markdown: {md_path}")
 
     html_path = out_dir / "comparison.html"

@@ -11,6 +11,7 @@ import statistics as _stats
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
+from math import comb
 
 from agent.cost_tracker import compute_cost_cached
 from benchmarks.models import DEFAULT_LAYER, LAYERS, TaskResult, resolve_layer
@@ -20,6 +21,7 @@ __all__ = [
     "FAULT_OWNERS",
     "LAYERS",
     "PassKSummary",
+    "PairedComparison",
     "bootstrap_ci",
     "cohen_kappa",
     "cost_per_resolved",
@@ -28,6 +30,8 @@ __all__ = [
     "is_valid_round",
     "layer_pass_rate",
     "mean_std",
+    "mcnemar_exact",
+    "paired_comparison",
     "pass_at_k",
     "pass_k_success_rate",
     "resolve_layer",
@@ -282,3 +286,136 @@ def cohen_kappa(annotator_a: Sequence[str], annotator_b: Sequence[str]) -> float
     if pe >= 1.0:
         return 1.0 if po == 1.0 else 0.0
     return (po - pe) / (1.0 - pe)
+
+
+# ---------------------------------------------------------------------------
+# Paired comparison
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PairedComparison:
+    """Per-task delta + paired-bootstrap CI + win-rate + McNemar summary."""
+
+    per_task_deltas: dict[str, float]
+    delta_ci: tuple[float, float] | None
+    win_rate: dict[str, int]
+    mcnemar: dict | None
+
+
+def _pass1_by_task(results: Sequence[TaskResult]) -> dict[str, tuple[float, int]]:
+    """task_id -> (pass@1 over valid rounds, valid round count)."""
+    buckets: dict[str, list[int]] = defaultdict(list)
+    for result in results:
+        if not is_valid_round(result.status, result.reason):
+            continue
+        buckets[result.task_id].append(
+            1 if result.status in _RESOLVED_STATUSES else 0
+        )
+    return {
+        task_id: (sum(flags) / len(flags), len(flags))
+        for task_id, flags in buckets.items()
+        if flags
+    }
+
+
+def _passk_bool_by_task(results: Sequence[TaskResult]) -> dict[str, bool]:
+    """task_id -> all-valid-rounds-passed boolean, only for tasks with >= 3 valid rounds."""
+    buckets: dict[str, list[bool]] = defaultdict(list)
+    for result in results:
+        if is_valid_round(result.status, result.reason):
+            buckets[result.task_id].append(
+                result.status in _RESOLVED_STATUSES
+            )
+    return {
+        task_id: all(flags)
+        for task_id, flags in buckets.items()
+        if len(flags) >= 3
+    }
+
+
+def _paired_delta_ci(
+    common_tasks: Sequence[str],
+    a_pass1: dict[str, tuple[float, int]],
+    b_pass1: dict[str, tuple[float, int]],
+    seed: int,
+    n_resamples: int = 2000,
+    ci: float = 0.95,
+) -> tuple[float, float]:
+    rng = random.Random(seed)
+    n = len(common_tasks)
+    sample_means = []
+    for _ in range(n_resamples):
+        mean = sum(
+            a_pass1[common_tasks[rng.randrange(n)]][0]
+            - b_pass1[common_tasks[rng.randrange(n)]][0]
+            for _ in range(n)
+        ) / n
+        sample_means.append(mean)
+    sample_means.sort()
+    alpha = (1.0 - ci) / 2.0
+    lo = sample_means[max(0, int(alpha * n_resamples))]
+    hi = sample_means[max(lo, int((1.0 - alpha) * n_resamples) - 1)]
+    return (lo, hi)
+
+
+def mcnemar_exact(b: int, c: int) -> dict:
+    """Exact-binomial McNemar test on discordant pairs.
+
+    ``b`` = pairs where A passed pass^k and B did not; ``c`` = the reverse.
+    H0: b and c are equally likely. Two-sided p-value from the exact binomial
+    distribution. No discordant pairs -> p=1.0, not significant.
+    """
+    n = b + c
+    if n == 0:
+        return {"p_value": 1.0, "b": b, "c": c, "significant": False, "n_discordant": 0}
+    m = max(b, c)
+    tail = sum(comb(n, i) for i in range(m, n + 1)) / (2**n)
+    p = min(1.0, 2.0 * tail)
+    return {
+        "p_value": p,
+        "b": b,
+        "c": c,
+        "significant": p < 0.05,
+        "n_discordant": n,
+    }
+
+
+def paired_comparison(
+    run_a: Sequence[TaskResult],
+    run_b: Sequence[TaskResult],
+    seed: int = 0,
+) -> PairedComparison:
+    """Paired comparison of two runs over a shared task set.
+
+    Per-task delta uses pass@1 (effective pass rate over valid rounds). The
+    difference CI is a paired bootstrap over tasks (fixed seed, reproducible).
+    Win-rate counts tasks by whether A's pass@1 exceeds B's. McNemar uses the
+    task-level pass^k booleans (all valid rounds passed, >= 3 valid rounds).
+    """
+    a_pass1 = _pass1_by_task(run_a)
+    b_pass1 = _pass1_by_task(run_b)
+    common = sorted(set(a_pass1) & set(b_pass1))
+    deltas = {
+        task_id: a_pass1[task_id][0] - b_pass1[task_id][0] for task_id in common
+    }
+    a_wins = sum(1 for d in deltas.values() if d > 0)
+    b_wins = sum(1 for d in deltas.values() if d < 0)
+    ties = len(deltas) - a_wins - b_wins
+
+    delta_ci = (
+        _paired_delta_ci(common, a_pass1, b_pass1, seed=seed) if common else None
+    )
+
+    a_pk = _passk_bool_by_task(run_a)
+    b_pk = _passk_bool_by_task(run_b)
+    common_pk = sorted(set(a_pk) & set(b_pk))
+    b_cnt = sum(1 for t in common_pk if a_pk[t] and not b_pk[t])
+    c_cnt = sum(1 for t in common_pk if b_pk[t] and not a_pk[t])
+    mcnemar = mcnemar_exact(b_cnt, c_cnt) if common_pk else None
+
+    return PairedComparison(
+        per_task_deltas=deltas,
+        delta_ci=delta_ci,
+        win_rate={"a_wins": a_wins, "b_wins": b_wins, "ties": ties},
+        mcnemar=mcnemar,
+    )
