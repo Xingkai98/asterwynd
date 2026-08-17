@@ -425,7 +425,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ### 任务集
 
-34 个任务从项目 git 历史中提取，覆盖多个类别：
+27 个任务从项目 git 历史中提取，覆盖多个类别：
 
 | 类别 | 示例 |
 |------|------|
