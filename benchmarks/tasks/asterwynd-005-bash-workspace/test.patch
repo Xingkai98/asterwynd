@@ -1,31 +1,29 @@
-diff --git a/tests/agent/tools/test_bash_tool_workspace.py b/tests/agent/tools/test_bash_tool_workspace.py
-new file mode 100644
-index 0000000..8d9f884
---- /dev/null
-+++ b/tests/agent/tools/test_bash_tool_workspace.py
-@@ -0,0 +1,25 @@
-+import subprocess
-+
-+import pytest
-+
-+from agent.tools.builtin.bash import BashTool
-+from agent.workspace_policy import WorkspacePolicy
+diff --git a/tests/agent/tools/test_command_guard.py b/tests/agent/tools/test_command_guard.py
+index b11cdf7..c4ad5f0 100644
+--- a/tests/agent/tools/test_command_guard.py
++++ b/tests/agent/tools/test_command_guard.py
+@@ -199,3 +199,24 @@ class TestCommandGuardLastReason:
+         assert g.last_reason == "denylist"
+         g.check("git status")
+         assert g.last_reason is None
 +
 +
-+@pytest.mark.asyncio
-+async def test_bash_tool_runs_in_workspace(tmp_path):
-+    (tmp_path / "marker.txt").write_text("workspace-marker\n")
-+    tool = BashTool(policy=WorkspacePolicy(tmp_path))
++class TestMvCpWorkspaceBoundary:
++    def test_mv_to_outside_workspace_denied(self) -> None:
++        g = CommandGuard(workspace="/repo/ws")
++        assert g.check("mv app.py /tmp/leak.py") is CommandVerdict.DENY
++        assert g.last_reason == "mv_cp_dest"
 +
-+    result = await tool.execute("cat marker.txt")
++    def test_cp_to_outside_workspace_denied(self) -> None:
++        g = CommandGuard(workspace="/repo/ws")
++        assert g.check("cp app.py /home/user/out.py") is CommandVerdict.DENY
++        assert g.last_reason == "mv_cp_dest"
 +
-+    assert result == "workspace-marker"
++    def test_mv_within_workspace_allowed(self) -> None:
++        g = CommandGuard(workspace="/repo/ws")
++        assert g.check("mv app.py backup.py") is CommandVerdict.ALLOW
++        assert g.check("mv app.py /repo/ws/backup.py") is CommandVerdict.ALLOW
 +
-+
-+@pytest.mark.asyncio
-+async def test_bash_tool_applies_command_policy(tmp_path):
-+    tool = BashTool(policy=WorkspacePolicy(tmp_path))
-+
-+    result = await tool.execute("rm -rf /")
-+
-+    assert "Command denied" in result
++    def test_mv_without_workspace_keeps_default_allow(self) -> None:
++        g = CommandGuard()
++        assert g.check("mv app.py /tmp/leak.py") is CommandVerdict.ALLOW

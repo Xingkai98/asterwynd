@@ -576,3 +576,78 @@ async def test_unknown_model_retries_without_images_on_400():
             assert all(b["type"] == "text" for b in second_content)
         else:
             assert isinstance(second_content, str)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_llm_stream_preserves_input_and_cache_usage():
+    """Streaming must carry input/cache usage from message_start and only
+    merge output_tokens from message_delta (M3 regression)."""
+    from unittest.mock import patch
+
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+    lines = [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","model":"claude","content":[],'
+        '"usage":{"input_tokens":100,"cache_creation_input_tokens":10,"cache_read_input_tokens":80}}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: message_delta",
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":50}}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(lines)
+        messages = [Message(role="user", content="hi")]
+        response = await llm.chat(messages)
+
+    assert response.content == "hi"
+    assert response.stop_reason == "end_turn"
+    assert response.usage is not None
+    assert response.usage.input_tokens == 100
+    assert response.usage.cache_read_input_tokens == 80
+    assert response.usage.cache_creation_input_tokens == 10
+    assert response.usage.output_tokens == 50
+
+
+@pytest.mark.asyncio
+async def test_anthropic_llm_stream_chat_carries_cache_usage_in_complete_event():
+    """stream_chat (generator path) must also preserve input/cache usage."""
+    from unittest.mock import patch
+
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+    lines = [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"msg_1","role":"assistant","model":"claude","content":[],'
+        '"usage":{"input_tokens":50,"cache_creation_input_tokens":5,"cache_read_input_tokens":40}}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: message_delta",
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":25}}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(lines)
+        messages = [Message(role="user", content="hi")]
+        events = [event async for event in llm.stream_chat(messages)]
+
+    response = events[-1].response
+    assert response.content == "ok"
+    assert response.usage is not None
+    assert response.usage.input_tokens == 50
+    assert response.usage.cache_read_input_tokens == 40
+    assert response.usage.cache_creation_input_tokens == 5
+    assert response.usage.output_tokens == 25

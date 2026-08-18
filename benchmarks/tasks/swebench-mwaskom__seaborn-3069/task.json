@@ -1,0 +1,21 @@
+{
+  "id": "swebench-mwaskom__seaborn-3069",
+  "repo": "mwaskom/seaborn",
+  "base_commit": "54cab15bdacfaa05a88fbc5502a5b322d99f148e",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest tests/_core/test_plot.py::TestScaling::test_nominal_x_axis_tweaks tests/_core/test_plot.py::TestScaling::test_nominal_y_axis_tweaks --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "medium",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://github.com/mwaskom/seaborn.git",
+  "version": "0.12",
+  "instance_id": "mwaskom__seaborn-3069",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

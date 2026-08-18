@@ -179,10 +179,10 @@ def test_failure_attribution_counts_reasons_and_rounds() -> None:
         ),
     ]
     attribution = failure_attribution(aggregates)
-    assert set(attribution) == {"test_failure", "tool_error", "docker_unavailable"}
+    # unsupported (docker_unavailable) is an invalid round, not a failure
+    assert set(attribution) == {"test_failure", "tool_error"}
     assert attribution["test_failure"] == [("t1", 0), ("t1", 1)]
     assert attribution["tool_error"] == [("t2", 0)]
-    assert attribution["docker_unavailable"] == [("t2", 1)]
 
 
 def test_failure_attribution_excludes_passed_and_none_reason() -> None:

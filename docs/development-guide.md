@@ -225,3 +225,38 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - 不要提交本地环境文件、日志、缓存和生成产物。
 - 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。
+
+## 业界调研门禁
+
+方案设计（proposal/design）前须按改动性质分流调研业界最新实践或框架（核心规则见 AGENTS.md「业界调研门禁」节；机械校验由 artifact checker 执行）。本小节给判据举例、豁免 reason 写法示范与常见误用。
+
+### 三档判据举例
+
+| 档位 | 适用示例 | 反例（不属于该档） |
+|------|---------|------------------|
+| `full` 必调研 | 引入新框架/新依赖/新协议；架构级改造；对标业界产品（如"参考 Herdr/Orca 的桌面端编排"）；走 grill 的非平凡 change | 给已有工具加一个可选参数（→ light） |
+| `light` 浅调研 | 常规功能增强；成熟模式的局部应用；给已有工具扩展参数 | 引入全新消息协议（→ full） |
+| `exempt` 可豁免（须 reason） | docs-only；纯 bugfix（无新增能力面 + 回归测试）；上游决策锁定（方案已由已关闭决策 issue/架构评审锁定，无待定设计项） | 有设计空间的新功能标 exempt（→ 至少 light） |
+
+### 豁免 reason 写法示范
+
+**好例子**（checker 可机械通过）：
+
+- `- reason: 纯 bugfix（修复 X 越界），无新增能力面，带回归测试。` —— 命中关键词 `bugfix`
+- `- reason: 方案已由 #128 决策 issue 完整讨论并记录，无待定设计项。` —— 命中 `方案已由.*决策` + 引用 `#<数字>`
+- `- reason: 决策已记录于 docs/adr/0007-gate.md 与 openspec/changes/archive/2026-08-14-flow-policy-source/。` —— 引用 `docs/`、`openspec/changes/archive/` 路径
+- `- reason: 上游决策锁定——依赖 #121 cross-cutting 规则与既有 checker 实现，无外部同类可比。` —— 命中关键词 `上游决策锁定` + issue 引用
+
+**坏例子**（checker 拒绝）：
+
+- `- reason: 方案明确。` —— 无关键词、无引用、非实质依据（占位）
+- `- reason: 待确认。` / `- reason: 待补充。` —— 命中 #123 占位词表
+- `- reason: 与已有模块 X 等价改造。` —— 判断性豁免但**无引用**；判断性豁免必须带引用（`#<数字>` issue 或 `docs/`、`openspec/changes/archive/`、`reviews/` 下的文档路径，代码路径如 `agent/`、`scripts/` 不在证据路径清单内）
+- `- reason: 本地参考仓库不可用。` —— 不构成豁免理由；业界调研不依赖本地参考仓库，应在 full/light 的 findings 中记录不可用事实与替代依据
+
+### 常见误用
+
+- **占位文本**：`待确认`/`待补充`/`待调研`/`TBD`/`todo` 等（#123 词表）出现在 full/light 的 findings/design impact 或 exempt 的 reason 里，tasks 全勾时 exit 2。
+- **无证据空话**：一句「方案明确」「无需调研」不命中关键词也无引用 → exempt 证据校验失败。
+- **tier 与 status 不一致**：`exempt` + `status: enabled`（声言豁免却完成了调研）→ 完成时被「exempt 必须 disabled」拦下；正确做法是**如实改 tier 为 light/full + status: enabled**。
+- **full/light 完成时仍 disabled**：proposal 阶段允许 full/light + disabled 在途（只查结构），但 tasks 全勾时必调研档必须已完成调研 → 完成时改 `status: enabled`。

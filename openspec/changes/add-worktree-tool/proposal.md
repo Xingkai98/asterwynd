@@ -50,29 +50,29 @@
 
 ### ExitWorktree
 
-- 输入：`keep: boolean`（缺省 true，保留 worktree；false 时删除 worktree 及对应分支）。
+- 输入：`keep: boolean`（缺省 true，保留 worktree；false 时删除 worktree，分支保留）。
 - 前置条件：当前处于某个 worktree 中。
-- 行为：将会话工作目录切回主工作区；WorkspacePolicy root 重绑定回主工作区；`keep=false` 时执行 worktree 删除清理。
+- 行为：将会话工作目录切回主工作区；WorkspacePolicy root 重绑定回主工作区；`keep=false` 时执行 worktree 删除清理（含未提交改动时拒绝删除，保持原状态，不使用 `--force`）。
 - 输出：主工作区路径、清理结果。
-- 错误：不在 worktree 中、删除失败（存在未提交改动且 keep=false 时需提示），返回结构化错误。
+- 错误：不在 worktree 中、删除失败（存在未提交改动且 keep=false），返回结构化错误，状态不变。
 
 ## 验收
 
 - `EnterWorktree` / `ExitWorktree` 已注册进 ToolRegistry，schema 可从 `get_all_schemas()` 获取。
 - 单测 + 集成测试（真实临时 git 仓库）覆盖：创建进入、退出保留、退出删除、非 git 仓库拒绝、嵌套拒绝、失败回滚（工作目录不变）。
 - worktree 内文件工具路径边界正确重绑定（越界读写被拒）。
-- 工具调用遵循权限元数据（危险等级、mode 可见性）与结构化错误码约定。
-- 至少一个 benchmark smoke 通过。
+- 工具调用遵循权限元数据（dangerous=False + MEDIUM）与结构化错误码约定（5 个新码）。
+- 至少一个 benchmark smoke 通过（注册 + schema 暴露 + 编排层 worktree 内被拒错误路径）。
 
 ## Impact Analysis
 
 | 影响面 | 说明 |
 |---------|------|
-| Tool system | 新增 2 个 builtin 工具注册进 ToolRegistry；权限元数据（dangerous 等级、allowed_modes）待设计确认 |
-| Workspace safety | WorkspacePolicy root 在工具执行前后重绑定；worktree 路径边界规则待设计确认 |
-| AgentLoop | 会话工作目录状态切换的承载点；影响面待设计确认 |
+| Tool system | 新增 2 个 builtin 工具注册进 ToolRegistry；权限元数据已定：dangerous=False + WORKSPACE_WRITE（MEDIUM），不限制 allowed_modes |
+| Workspace safety | WorkspacePolicy root 原地重绑定（可变属性更新，不做 os.chdir）；主模式 DEFAULT_DENIED_PATTERNS 增加 `.asterwynd/worktrees/**` |
+| AgentLoop | 会话"当前目录"由 policy root 驱动；工具仅对主 checkout 会话有效（编排层 worktree 内被拒） |
 | CLI | 不改动现有 `--keep-worktrees` 行为 |
-| Benchmark | 运行器现有 worktree 管理保持现状；新增 smoke 验证项 |
+| Benchmark | 运行器现有 worktree 管理保持现状；smoke 验证注册 + schema 暴露 + 被拒错误路径 |
 | Specs | `openspec/specs/tool-system/spec.md` 合入 worktree 工具要求 |
 | Tests | 工具单测、集成测试、AgentLoop 层测试、benchmark smoke |
 | Docs | 架构说明、开发指南、工具文档、面试讲稿（如涉及新能力线） |
@@ -81,6 +81,7 @@
 
 ## Reference Implementation Research
 
+- research_tier: full
 - status: enabled
 - reason: Claude Code 内置 `EnterWorktree` / `ExitWorktree` 工具是直接参考实现；本地参考仓库不可用（`.dev/reference-repos.txt` 不存在，已确认工作区无可用参考仓库），改为以 Claude Code 工具公开行为（本会话环境中可直接观察）和公开文档作为依据。
 - research questions:
@@ -91,9 +92,10 @@
   - Claude Code 将 worktree 创建在 `.claude/worktrees/<name>`，分支按 worktree 名派生；`EnterWorktree` 创建并切换，`ExitWorktree` 支持 keep / remove；禁止嵌套。
   - worktree 内所有工具（Read/Write/Bash 等）的 cwd 随会话切换，隔离是工作区级的。
 - design impact:
-  - Asterwynd 采用类似目录约定（`.claude/worktrees/<name>` 或等价项目内约定，待设计确认）与 keep/remove 退出语义。
-  - 隔离通过"会话工作目录切换 + WorkspacePolicy root 重绑定"实现，不修改单个文件工具。
+  - Asterwynd 采用 `.asterwynd/worktrees/<name>` 目录约定（分支名 = name，2026-08-07 用户确认，见 design.md D2）与 keep/remove 退出语义（keep=false 不删分支）。
+  - 隔离通过"WorkspacePolicy root 原地重绑定"实现（不做进程级 os.chdir），不修改单个文件工具。
   - 嵌套限制、非 git 仓库拒绝作为显式错误路径写入 spec。
+  - 工具仅对主 checkout 会话有效：编排层 worktree 内（building 强制、benchmark runner）EnterWorktree 前置条件不满足被拒。
 
 ## 测试计划
 

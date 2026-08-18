@@ -1,0 +1,15 @@
+{
+  "id": "asterwynd-b07-memory-context-source-split",
+  "repo": "local/asterwynd",
+  "base_commit": "597d12172f541bf2f588fb4e96b9c512d97e2498",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/agent/context/test_memory_index_source.py",
+  "category": "context",
+  "difficulty": "hard",
+  "scenario": "refactor",
+  "track": "B",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": "记忆摘要注入源在 context 层 sources.py（MemoryIndexSource.render），memory 层目录已含 persistent.py 等实现。下沉目标 = 记忆层新增 context_source.py 导出 render_memory_index(memory)；注入源 render 懒加载委托。输出文本逐字保持。"
+}

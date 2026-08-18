@@ -1,0 +1,1 @@
+It seems to me that there is no good explanation for the chosen implementation. `_af_new` should probably be a `classmethod` with creating command `Basic.__new__(cls, perm)`. Please test that and send a PR.

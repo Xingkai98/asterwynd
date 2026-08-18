@@ -110,7 +110,7 @@ class OpenSpecDocArtifactProtocol(DocArtifactProtocol):
                 ContentRequirement(
                     f"{resolved}/tasks.md",
                     "design_review_task_present",
-                    description="Must include grill-with-docs design review task",
+                    description="Must include batch-grill-me (or grill-with-docs) design review task",
                 ),
                 ContentRequirement(
                     f"{resolved}/tasks.md",

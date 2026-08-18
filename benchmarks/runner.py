@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.cost_tracker import PRICING_TABLE_VERSION
 from agent.run_config import AgentRunConfig, parse_agent_mode
 from agent.run_identity import new_run_id as new_agent_run_id
 from agent.trace_recorder import TraceRecorder
@@ -20,6 +22,7 @@ from benchmarks.models import (
     TaskResult,
     render_summary,
 )
+from benchmarks.statistics import swebench_versions
 from benchmarks.task_schema import LoadedTask, load_task
 
 
@@ -39,6 +42,37 @@ class DockerPreflightResult:
     detail: str = ""
 
 
+# Harness report-tuple facts (C3): recorded into run.json so the result page
+# can render a complete, referenceable report tuple.
+HARNESS_ADAPTER_VERSION = "1"
+HARNESS_PROMPT_VERSION = "default"
+HARNESS_NETWORK = "on"
+
+
+def _available_memory_gib() -> float | None:
+    """Available memory in GiB from /proc/meminfo, or None when unreadable."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    kb = int(line.split()[1])
+                    return kb / (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _task_set_hash(loaded_tasks: list) -> str:
+    """Deterministic hash over the task set (id + version) for version pinning."""
+    digest = hashlib.sha256()
+    for loaded in sorted(loaded_tasks, key=lambda lt: lt.task.id):
+        digest.update(loaded.task.id.encode())
+        digest.update(b"\x00")
+        digest.update(str(getattr(loaded.task, "version", "") or "").encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()[:12]
+
+
 class BenchmarkRunner:
     def __init__(
         self,
@@ -51,12 +85,22 @@ class BenchmarkRunner:
         parallel: int = 1,
         keep_worktrees: bool = False,
         clone_cache_dir: str | Path | None = None,
+        temperature: float | None = None,
+        model_version: str | None = None,
+        provider: str | None = None,
+        max_iterations: int | None = None,
+        timeout_seconds: int | None = None,
     ):
         self.agent_runner = agent_runner
         self.source_repo = Path(source_repo).resolve()
         self.runs_dir = Path(runs_dir).resolve()
         self.agent_name = agent_name
         self.model = model
+        self.temperature = temperature
+        self.model_version = model_version
+        self.provider = provider
+        self.max_iterations = max_iterations
+        self.timeout_seconds = timeout_seconds
         self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
         self.parallel = parallel
         self.keep_worktrees = keep_worktrees
@@ -92,6 +136,26 @@ class BenchmarkRunner:
             self._docker_preflight_result = self._probe_docker()
         return self._docker_preflight_result
 
+    def preflight(self) -> tuple[int, str]:
+        """Environment preflight check.
+
+        Returns ``(exit_code, message)``: 0 = full run OK, 1 = available memory
+        below 8 GiB (prefer L1 local path), 2 = Docker daemon unavailable.
+        """
+        mem_gib = _available_memory_gib()
+        if mem_gib is not None and mem_gib < 8.0:
+            return (
+                1,
+                f"可用内存 {mem_gib:.1f} GiB < 8 GiB：建议走 L1 本地轻量路径",
+            )
+        docker = self._get_docker_preflight_result()
+        if not docker.available:
+            return (
+                2,
+                f"Docker daemon 不可用：{docker.detail or docker.reason}",
+            )
+        return (0, "环境可跑全量：Docker 可用，内存充足")
+
     def _probe_docker(self) -> DockerPreflightResult:
         try:
             proc = subprocess.run(
@@ -119,7 +183,12 @@ class BenchmarkRunner:
             detail=detail or "docker info failed",
         )
 
-    async def run_all(self, tasks_dir: str | Path, run_id: str | None = None) -> RunMetadata:
+    async def run_all(
+        self,
+        tasks_dir: str | Path,
+        run_id: str | None = None,
+        seed: int | None = None,
+    ) -> RunMetadata:
         task_dirs = sorted(
             path for path in Path(tasks_dir).iterdir()
             if path.is_dir() and (path / "task.json").exists()
@@ -136,7 +205,7 @@ class BenchmarkRunner:
 
         async def run_one(task_dir: Path) -> TaskResult:
             async with semaphore:
-                return await self.run_task(task_dir, run_dir=run_dir)
+                return await self.run_task(task_dir, run_dir=run_dir, seed=seed)
 
         started_at = _now()
         results_raw = await asyncio.gather(
@@ -153,10 +222,14 @@ class BenchmarkRunner:
                     mode=self.run_config.mode.value,
                     status="error",
                     reason=BenchmarkReason.SETUP_ERROR.value,
+                    temperature=self.temperature,
+                    seed=seed,
                 ))
             else:
                 results.append(r)
         ended_at = _now()
+
+        _dataset_version, _package_version = swebench_versions(loaded_tasks)
 
         # Clean up shared resources after all tasks complete
         try:
@@ -179,6 +252,22 @@ class BenchmarkRunner:
                 result.status in {"failed", "error"}
                 for result in results
             ),
+            temperature=self.temperature,
+            seed=seed,
+            model_version=self.model_version,
+            swebench_dataset_version=_dataset_version,
+            swebench_package_version=_package_version,
+            # C3 report tuple: runner now fills the fields it knows so the
+            # result page renders a referenceable tuple instead of nulls.
+            task_set_hash=_task_set_hash(loaded_tasks),
+            max_iterations=self.max_iterations,
+            timeout_seconds=self.timeout_seconds,
+            network=HARNESS_NETWORK,
+            adapter_version=HARNESS_ADAPTER_VERSION,
+            prompt_version=HARNESS_PROMPT_VERSION,
+            pricing_table_version=PRICING_TABLE_VERSION,
+            provider=self.provider,
+            truncated=False,
         )
         metadata.write_json(run_dir / "run.json")
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
@@ -188,6 +277,7 @@ class BenchmarkRunner:
         self,
         task_dir: str | Path,
         run_dir: str | Path | None = None,
+        seed: int | None = None,
     ) -> TaskResult:
         loaded = load_task(task_dir)
         run_dir = Path(run_dir).resolve() if run_dir else self.runs_dir / _new_run_id()
@@ -223,6 +313,8 @@ class BenchmarkRunner:
             agent_run_id=agent_run_id,
             task_family=loaded.task.task_family,
             category=loaded.task.category,
+        temperature=self.temperature,
+        seed=seed,
         )
         is_docker_task = loaded.task.execution_environment == "docker"
 
@@ -296,9 +388,13 @@ class BenchmarkRunner:
                         test_runs=0,
                         input_tokens=agent_result.input_tokens,
                         output_tokens=agent_result.output_tokens,
+                        cache_read_tokens=agent_result.cache_read_tokens,
+                        cache_write_tokens=agent_result.cache_write_tokens,
                         reason=BenchmarkReason.NO_CHANGE.value,
                         task_family=loaded.task.task_family,
                         category=loaded.task.category,
+                        temperature=self.temperature,
+                        seed=seed,
                     )
                     trace.record_completion("failed", BenchmarkReason.NO_CHANGE.value)
                     log("Task result: failed (no_change)")
@@ -316,6 +412,7 @@ class BenchmarkRunner:
                         f"docker task family '{loaded.task.task_family}' "
                         "is not supported yet"
                     )
+                    partial = None
                 else:
                     verdict = await asyncio.to_thread(
                         verifier.verify,
@@ -327,6 +424,7 @@ class BenchmarkRunner:
                     verifier_status = verdict.status
                     reason = verdict.reason
                     detail = verdict.detail
+                    partial = verdict.partial
                 artifacts.test_output.write_text(
                     detail or "(no framework harness output)\n",
                     errors="replace",
@@ -359,9 +457,14 @@ class BenchmarkRunner:
                     test_runs=1 if verifier_status in {"passed", "failed"} else 0,
                     input_tokens=agent_result.input_tokens,
                     output_tokens=agent_result.output_tokens,
+                    cache_read_tokens=agent_result.cache_read_tokens,
+                    cache_write_tokens=agent_result.cache_write_tokens,
                     reason=reason,
                     task_family=loaded.task.task_family,
                     category=loaded.task.category,
+                    temperature=self.temperature,
+                    seed=seed,
+                    partial=partial,
                 )
                 trace.record_completion(status, reason or "")
                 log(f"Task result: {status}")
@@ -439,9 +542,13 @@ class BenchmarkRunner:
                 test_runs=1,
                 input_tokens=agent_result.input_tokens,
                 output_tokens=agent_result.output_tokens,
+                cache_read_tokens=agent_result.cache_read_tokens,
+                cache_write_tokens=agent_result.cache_write_tokens,
                 reason=reason or agent_result.reason,
                 task_family=loaded.task.task_family,
                 category=loaded.task.category,
+                temperature=self.temperature,
+                seed=seed,
             )
             trace.record_completion(status)
             log(f"Task result: {status}")

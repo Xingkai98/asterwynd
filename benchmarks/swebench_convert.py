@@ -37,6 +37,9 @@ _GITEE_URLS = {
 
 REPO_URLS = _GITHUB_URLS  # default
 
+# build-subset 用：gitee 镜像优先（requests/flask/pytest 有镜像），其余走 github。
+GITEE_PREFERRED_URLS = {**_GITHUB_URLS, **_GITEE_URLS}
+
 # Test commands per repo (runs the specific test file, not the whole suite)
 REPO_TEST_COMMAND_TEMPLATES = {
     "psf/requests": "python -m pytest {test_file} -x --tb=short -p no:warnings",
@@ -45,6 +48,45 @@ REPO_TEST_COMMAND_TEMPLATES = {
     "sympy/sympy": "python -m pytest {test_file} -x --tb=short -p no:warnings",
     "pylint-dev/pylint": "python -m pytest {test_file} -x --tb=short -p no:warnings",
 }
+
+# C1 OQ-V1 确认的 difficulty 归一化口径：<15min→easy、15min-2h→medium、≥2h→hard。
+# 本机 hf-mirror 首拉实测 Verified difficulty 列真实值（2026-08-18）：
+#   <15 min fix (194) / 15 min - 1 hour (261) / 1-4 hours (42) / >4 hours (3)
+# 映射按口径收录真实值与 SWE-bench 官方措辞两种变体。
+DIFFICULTY_MAP = {
+    "<15 min fix": "easy",
+    "<15min": "easy",
+    "15 min - 1 hour": "medium",
+    "15-30 min fix": "medium",
+    "15min-2h": "medium",
+    "1-4 hours": "hard",
+    ">30 min fix": "hard",
+    ">=2h": "hard",
+    ">4 hours": "hard",
+}
+
+
+def normalize_difficulty(ex: dict) -> str:
+    """把 SWE-bench 实例难度归一化到 easy/medium/hard。
+
+    优先用数据集 per-instance ``difficulty`` 列（C1 OQ-V1 映射口径）；缺列或值
+    未命中时按 FAIL_TO_PASS 测试数启发式兜底（<=2 easy、<=5 medium、>5 hard）。
+    """
+    raw = (ex.get("difficulty") or "").strip()
+    if raw in DIFFICULTY_MAP:
+        return DIFFICULTY_MAP[raw]
+    if raw in {"easy", "medium", "hard"}:
+        return raw
+    try:
+        f2p = json.loads(ex.get("FAIL_TO_PASS") or "[]")
+        n = len(f2p) if isinstance(f2p, list) else 0
+    except (json.JSONDecodeError, TypeError):
+        n = 0
+    if n <= 2:
+        return "easy"
+    if n <= 5:
+        return "medium"
+    return "hard"
 
 
 def load_verified():
@@ -67,29 +109,79 @@ def extract_test_file(fail_to_pass: str) -> str:
     return ""
 
 
-def build_test_command(repo: str, fail_to_pass: str) -> str:
-    """Build a test command that runs only the FAIL_TO_PASS tests directly."""
-    test_file = extract_test_file(fail_to_pass)
+def _test_file_from_patch(test_patch: str) -> str:
+    """从 test.patch 的 diff 头提取测试文件路径（偏好含 'test' 的路径）。
+
+    数据集 FAIL_TO_PASS 可能存裸函数名（无 ``.py::`` 前缀，如 sympy 系），
+    需按 test.patch 修改的文件重建定位（Round 1 Issue 1）。
+    """
+    candidates: list[str] = []
+    for line in (test_patch or "").splitlines():
+        if line.startswith("diff --git a/"):
+            path = line.split(" b/", 1)[-1].strip()
+            if path and path not in candidates:
+                candidates.append(path)
+    if not candidates:
+        return ""
+    test_candidates = [p for p in candidates if "test" in p.lower()]
+    return test_candidates[0] if test_candidates else candidates[0]
+
+
+def build_test_command(repo: str, fail_to_pass: str, test_patch: str | None = None) -> str:
+    """Build a test command that runs only the FAIL_TO_PASS tests directly.
+
+    全 node id（含 ``.py::``）直接拼接；含裸函数名（无路径前缀）时按 test.patch
+    文件路径重建 ``-k`` 命令——否则 pytest 收集 0 项、评测假 PASS（Round 1 Issue 1）。
+    """
     try:
         tests = json.loads(fail_to_pass)
+        if not tests:
+            return "python -m pytest --tb=short -p no:warnings"
+        bare = [t for t in tests if "::" not in t and ".py" not in t]
+        if bare:
+            test_file = _test_file_from_patch(test_patch or "")
+            names: list[str] = []
+            for t in bare:
+                name = t.split("[")[0].split("::")[-1]
+                if name not in names:
+                    names.append(name)
+            # 函数名均为合法标识符，-k 表达式内无需引号，外层单引号包裹整体。
+            expr = " or ".join(names)
+            if test_file:
+                return f"python -m pytest {test_file} -k '{expr}' --tb=short -p no:warnings"
+            return f"python -m pytest -k '{expr}' --tb=short -p no:warnings"
         first_test = tests[0]
         # Control chars (actual \r\n) or literal escape sequences (\\r\\n)
         # can cause shell/pytest mismatch — use -k with function name instead
         if any(ord(c) < 32 for c in first_test) or "\\r" in first_test:
             func_name = first_test.split("[")[0].split("::")[-1]
+            test_file = extract_test_file(fail_to_pass)
             return f"python -m pytest {test_file} -k '{func_name}' --tb=short -p no:warnings"
         test_ids = " ".join(tests)
         return f"python -m pytest {test_ids} --tb=short -p no:warnings"
     except (json.JSONDecodeError, TypeError):
         pass
     # Fallback: run the whole file
-    return f"python -m pytest {test_file} --tb=short -p no:warnings"
+    return "python -m pytest --tb=short -p no:warnings"
 
 
-def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Path]:
-    """Generate Asterwynd task directories for the given SWE-bench instance IDs."""
-    ds = load_verified()
-    ds_dict = {ex["instance_id"]: ex for ex in ds}
+def generate_tasks(
+    instance_ids: list[str],
+    output_base: str | Path,
+    *,
+    dataset=None,
+    repo_urls: dict[str, str] | None = None,
+) -> list[Path]:
+    """Generate Asterwynd task directories for the given SWE-bench instance IDs.
+
+    ``dataset`` 复用调用方已加载的 Verified 数据集（避免 build-subset 双次加载，
+    grill R3）；``repo_urls`` 覆盖默认 clone 表（build-subset 传 gitee 优先表）。
+    落盘字段固定写 track=verified/scenario=bug-fix + difficulty 归一化（OQ-V1）。
+    """
+    if dataset is None:
+        dataset = load_verified()
+    ds_dict = {ex["instance_id"]: ex for ex in dataset}
+    url_table = repo_urls if repo_urls is not None else REPO_URLS
 
     output_base = Path(output_base)
     output_base.mkdir(parents=True, exist_ok=True)
@@ -102,13 +194,13 @@ def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Pat
             continue
 
         repo = ex["repo"]
-        repo_url = REPO_URLS.get(repo)
+        repo_url = url_table.get(repo)
         short_id = iid.replace("__", "/")
         if not repo_url:
             print(f"WARNING: no URL mapping for {repo}, skipping {iid}")
             continue
 
-        test_command = build_test_command(repo, ex["FAIL_TO_PASS"])
+        test_command = build_test_command(repo, ex["FAIL_TO_PASS"], ex.get("test_patch", ""))
 
         task_dir = output_base / f"swebench-{iid}"
         task_dir.mkdir(parents=True, exist_ok=True)
@@ -124,13 +216,16 @@ def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Pat
             "gold_patch_file": "gold.patch",
             "test_patch_file": "test.patch",
             "category": "bug_fix",
-            "difficulty": ex.get("difficulty", ""),
+            "difficulty": normalize_difficulty(ex),
             "task_family": "swebench",
             "execution_environment": "docker",
             "external_repo": repo_url,
+            "version": ex.get("version", ""),
             "instance_id": iid,
             "dataset_name": "princeton-nlp/SWE-bench_Verified",
             "dataset_split": "test",
+            "track": "verified",
+            "scenario": "bug-fix",
         }
         (task_dir / "task.json").write_text(
             json.dumps(task_json, indent=2, ensure_ascii=False) + "\n"

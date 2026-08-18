@@ -322,12 +322,23 @@ class AnthropicLLM(BaseLLM):
                 elif delta["type"] == "input_json_delta":
                     blk["json_parts"].append(delta["partial_json"])
 
+            elif event_type == "message_start":
+                msg_usage = data.get("message", {}).get("usage", {})
+                if msg_usage:
+                    usage = Usage(
+                        input_tokens=msg_usage.get("input_tokens", 0),
+                        cache_read_input_tokens=msg_usage.get("cache_read_input_tokens", 0),
+                        cache_creation_input_tokens=msg_usage.get("cache_creation_input_tokens", 0),
+                    )
+
             elif event_type == "message_delta":
                 raw_stop = data["delta"].get("stop_reason", "")
                 stop_reason = self.STOP_REASON_MAP.get(raw_stop, raw_stop)
                 stream_usage = data.get("usage", {})
                 if stream_usage:
-                    usage = Usage(output_tokens=stream_usage.get("output_tokens", 0))
+                    if usage is None:
+                        usage = Usage()
+                    usage.output_tokens = stream_usage.get("output_tokens", 0)
 
             elif event_type == "error":
                 raise RuntimeError(f"Anthropic API error: {data}")
@@ -374,12 +385,23 @@ class AnthropicLLM(BaseLLM):
                 elif delta["type"] == "input_json_delta":
                     blk["json_parts"].append(delta["partial_json"])
 
+            elif event_type == "message_start":
+                msg_usage = data.get("message", {}).get("usage", {})
+                if msg_usage:
+                    usage = Usage(
+                        input_tokens=msg_usage.get("input_tokens", 0),
+                        cache_read_input_tokens=msg_usage.get("cache_read_input_tokens", 0),
+                        cache_creation_input_tokens=msg_usage.get("cache_creation_input_tokens", 0),
+                    )
+
             elif event_type == "message_delta":
                 raw_stop = data["delta"].get("stop_reason", "")
                 stop_reason = self.STOP_REASON_MAP.get(raw_stop, raw_stop)
                 stream_usage = data.get("usage", {})
                 if stream_usage:
-                    usage = Usage(output_tokens=stream_usage.get("output_tokens", 0))
+                    if usage is None:
+                        usage = Usage()
+                    usage.output_tokens = stream_usage.get("output_tokens", 0)
 
             elif event_type == "error":
                 raise RuntimeError(f"Anthropic API error: {data}")
@@ -417,6 +439,8 @@ class AnthropicLLM(BaseLLM):
         usage = Usage(
             input_tokens=usage_data.get("input_tokens", 0),
             output_tokens=usage_data.get("output_tokens", 0),
+            cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
+            cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens", 0),
         ) if usage_data else None
 
         api_stop_reason = self.STOP_REASON_MAP.get(data.get("stop_reason", ""), "end_turn")

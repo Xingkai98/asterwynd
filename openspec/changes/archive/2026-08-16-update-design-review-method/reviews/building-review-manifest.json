@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "update-design-review-method",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-update-design-review-method-20260816-1",
+  "base_sha": "4f9988256ea0da451e52b51bacd1dce9e6ba7724",
+  "head_sha": "d7f59b1911acf10a250a33938f081129ea88902c",
+  "tasks_hash": "sha256:92aca8f2c91ec0af9068aee1a1b6d3fcb9249647af84d2ba59707fb38ad02f53",
+  "spec_hash": "sha256:f95f7fa07ed2ea7d6a60e6d2cfa9309dd747914cbbc74449daa209ca1bde27de",
+  "diff_hash": "sha256:cb29161f8897356a8df8838c0f8e3829fa637cf0b23d8ee357a9ed99be18f9ca",
+  "report_hash": "sha256:18b8487eaae1fe887f391be72f651fd18a5393e550fefa3c224ce22f0908881a"
+}

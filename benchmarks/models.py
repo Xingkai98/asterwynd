@@ -53,6 +53,8 @@ class AgentRunResult:
     output: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 @dataclass
@@ -76,6 +78,14 @@ class TaskResult:
     category: str | None = None
     run_round: int | None = None
     task_family: str | None = None
+    # C2 evaluation-metrics: cache-aware cost, sampling, fault attribution.
+    # All optional so old artifacts keep parsing and None values stay omitted.
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    temperature: float | None = None
+    seed: int | None = None
+    fault_owner: str | None = None
+    partial: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None}
@@ -111,10 +121,39 @@ class RunMetadata:
     warnings: int = 0
     failed: int = 0
     unsupported: int = 0
+    # C2 evaluation-metrics: report tuple fields (all optional, None omitted).
+    task_set_hash: str | None = None
+    max_iterations: int | None = None
+    timeout_seconds: int | None = None
+    network: str | None = None
+    adapter_version: str | None = None
+    prompt_version: str | None = None
+    pricing_table_version: str | None = None
+    temperature: float | None = None
+    seed: int | None = None
+    model_version: str | None = None
+    swebench_dataset_version: str | None = None
+    swebench_package_version: str | None = None
+    # C3 protocol-reporting: model provider + budget-truncation flag.
+    provider: str | None = None
+    truncated: bool | None = None
+
+    def to_dict(self) -> dict:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RunMetadata":
+        """Parse a ``run.json`` dict back into a RunMetadata.
+
+        Unknown keys are ignored and missing fields fall back to defaults, so
+        older or hand-crafted run artifacts stay compatible.
+        """
+        field_names = set(cls.__dataclass_fields__.keys())
+        return cls(**{k: v for k, v in data.items() if k in field_names})
 
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(
-            json.dumps(asdict(self), indent=2, ensure_ascii=False) + "\n",
+            json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",
             errors="replace",
         )
 

@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "declarative-flow-engine",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-declarative-flow-engine-20260816-1",
+  "base_sha": "69715c03e68fe5cad1295bf646b381fc707272ab",
+  "head_sha": "fd9504b5205645cef3cefcd89d2669a17c64a484",
+  "tasks_hash": "sha256:3d0f9d2459391046c1606a5d0a0c28d8304294dcb84043d0352c2ac81f4b5b84",
+  "spec_hash": "sha256:0acf0a5e31de86f1f65a077f7d11bf1798dfb7a81f75ec52a266b9531d2be2a5",
+  "diff_hash": "sha256:0b25310de3c2b721720bd7781a8702b4e50433fc9ca7ec12372a5a76487e873f",
+  "report_hash": "sha256:f872d4cb37ba749e1b29a60b7e1016b325282cf4f664b434b68ac332da8db84a"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "swebench-pylint-dev__pylint-4970",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "40cc2ffd7887959157aaf469e09585ec2be7f528",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest tests/checkers/unittest_similar.py::test_set_duplicate_lines_to_zero --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "easy",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://github.com/pylint-dev/pylint.git",
+  "version": "2.10",
+  "instance_id": "pylint-dev__pylint-4970",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

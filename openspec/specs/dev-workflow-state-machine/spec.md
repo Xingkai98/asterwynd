@@ -8,7 +8,26 @@
 
 ### Requirement: 工作流事件日志与 handoff.json projection
 
-每个 change 目录下 SHALL 存在一个 `workflow-events.jsonl` 文件，作为该 change 开发流程的权威事实来源。`handoff.json` SHALL 作为由事件日志 replay 生成的 projection，供 agent 快速读取当前状态。Agent 不 SHALL 直接编辑 `handoff.json` 来声明状态变化；所有状态变化 SHALL 通过 WorkflowEngine/CLI 追加事件并重新生成 projection。
+每个 change 目录下 SHALL 存在一个 `workflow-events.jsonl` 文件，作为该 change 开发流程的权威事实来源。投影分为两代：老世代（归档 change）SHALL 由事件日志 replay 生成 `handoff.json` projection；当代（新 change）SHALL 由事件日志 replay 生成 `workflow-state.json` projection。Agent 不 SHALL 直接编辑投影文件来声明状态变化；所有状态变化 SHALL 通过 CLI 追加事件并重新生成投影。
+
+#### Scenario: 当代 change 投影为 workflow-state.json
+
+- **WHEN** change 的事件日志以 `change_created` 开头（当代事件，无 handoff.json）
+- **THEN** 系统 SHALL 由其事件 replay 生成 `workflow-state.json`
+- **AND** 投影 SHALL 包含 `state`、`milestones` 与 `source_event_seq`（投影来源的最大事件 seq）
+- **AND** 投影 SHALL 不包含 `updated_at` 字段
+
+#### Scenario: 老世代 change 仍可投影
+
+- **WHEN** change 的事件日志以 `initialized` 开头且存在 `handoff.json`（老世代，归档 change）
+- **THEN** replay SHALL 沿用既有 handoff.json projection 路径，不抛错
+- **AND** 与修复前行为保持一致
+
+#### Scenario: 任意 change 可查询状态
+
+- **WHEN** 对任一 change（老或新世代）运行 `flow status`
+- **THEN** 系统 SHALL 输出该 change 的投影状态（state / milestones / source_event_seq）
+- **AND** SHALL 不要求首事件为 `change_created`（容忍异构派生）
 
 #### Scenario: 新建 change 时初始化 workflow event log 和 handoff.json
 
@@ -47,7 +66,7 @@
 
 ### Requirement: Protected artifact 变更解释
 
-工作流保护的项目级 artifact 被修改时，CI/gate SHALL 要求对应 `workflow-events.jsonl` 中存在结构化解释事件。解释事件 SHALL 包含 `artifact_path`、`reason`、`approved_by` 和匹配的 `change_id`，不得只依赖自然语言对话或手写无证据 review 文本。
+工作流保护的项目级 artifact 被修改时，CI/gate SHALL 要求对应 `workflow-events.jsonl` 中存在结构化解释事件。解释事件 SHALL 包含 `artifact_path`、`reason`、`approved_by` 和匹配的 `change_id`，不得只依赖自然语言对话或手写无证据 review 文本。受保护路径清单 SHALL 从 `scripts/flow-policy.json` 中 `governance == event_explained` 的规则子集加载（flow-policy-source P0 单一策略源），checker 不保留独立硬编码清单；策略文件缺失/损坏时 checker SHALL fail-closed。
 
 #### Scenario: known issues/debt 文档变更
 
@@ -267,6 +286,7 @@ phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，�
 - **WHEN** 读取 `handoff.json`
 - **THEN** `state` SHALL 包含 `phase`（枚举值: `wayfinding` / `planning` / `building` / `closing` / `blocked` / `done`）
 - **AND** `state` SHALL 包含 `sub_state`（string），当 phase 为 `blocked` 或 `done` 时可为 `null`
+- **AND** awaiting 态（`blocked.awaiting_*`）SHALL 承载 sub_state，普通 `blocked`（非 awaiting）sub_state 仍为 `null`
 
 #### Scenario: transitions 字段
 
@@ -331,6 +351,47 @@ phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，�
 - **WHEN** 尝试执行不在合法流转表中的流转
 - **THEN** 系统 SHALL 拒绝
 - **AND** SHALL 提示最近的合法目标
+
+### Requirement: 流程状态机声明化
+
+流程状态机 SHALL 可声明化：`flow/statechart.json`（或等价声明文件）SHALL 声明状态（`<phase>.<sub_state>`）、初始状态与转移表（每条转移带 `trigger`），语义对齐现有 Python 常量（awaiting 三态建模为 `blocked.awaiting_*`）。薄引擎 SHALL 消费声明文件提供等价派生与转移，并与现有 Python 行为 parity 等价 pin 住（golden 断言）。
+
+#### Scenario: 声明文件定义状态机
+
+- **WHEN** 查看 `flow/statechart.json`
+- **THEN** 它 SHALL 声明 `initial`、`states`（每个含 `on` 转移表）
+- **AND** 状态名 SHALL 为 `<phase>.<sub_state>` 形式
+- **AND** awaiting 态 SHALL 建模为 `blocked.awaiting_*`
+
+#### Scenario: 引擎与现有 Python parity 等价
+
+- **WHEN** 对同一事件序列运行薄引擎与现有 Python 派生
+- **THEN** 结果 SHALL 一致（parity golden 断言，完整投影 dict）
+- **AND** 引擎对未知事件类型的处理 SHALL 与现有 Python 一致（raise）
+- **AND** 「容忍异构」SHALL 仅指无 seed 事件（首事件非 `change_created`）仍可投影，不抛错
+
+#### Scenario: 改规则不改 Python
+
+- **WHEN** 在声明文件中新增状态或转移（如 test fixture 注入 `awaiting_design_confirmation`）
+- **THEN** 引擎 SHALL 正确派生新态与转移
+- **AND** 现有 Python 逻辑 SHALL 不需要修改
+- **AND** 本 change SHALL 不要求现有 Python 处理该新态（未知 sub_state 由既有校验拒绝，属已知边界）
+
+### Requirement: 状态机声明与执行方法分工
+
+流程状态机声明（`statechart`）与每个状态使用的执行方法（`workflow_methods.json`）SHALL 分工不重叠：statechart 描述状态流转，workflow_methods 描述每个状态用哪个 skill/command/agent 执行。
+
+#### Scenario: 状态流转变更只改 statechart
+
+- **WHEN** 调整状态转移（如新增 transition）
+- **THEN** 只需修改 `statechart` 声明文件
+- **AND** `workflow_methods.json` 的执行方法映射 SHALL 不变
+
+#### Scenario: 执行方法变更只改 workflow_methods
+
+- **WHEN** 更换某状态使用的 skill/command
+- **THEN** 只需修改 `workflow_methods.json`
+- **AND** `statechart` 声明文件 SHALL 不变
 
 ### Requirement: 角色 Agent 类型
 
@@ -465,20 +526,68 @@ phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，�
 
 ### Requirement: 阻塞状态
 
-系统 SHALL 支持任意 phase 进入 `blocked` 状态，用于等待外部依赖或决策。
+系统 SHALL 支持任意 phase 进入 awaiting 态，用于等待外部依赖或决策。等待合法化不弱化执法：awaiting 期间写操作 SHALL 仍被 guard 拦截（exit 2），用户确认后才放行。awaiting 态 SHALL 建模为 `blocked` phase 的 sub_state（如 `blocked.awaiting_proposal_confirmation`），普通 `blocked`（非 awaiting）sub_state 为 null。awaiting 态集合 SHALL 包含 `awaiting_proposal_confirmation`（激活，proposal 完成后进入）、`awaiting_human_review` 与 `awaiting_user_confirmation`；`review_blocked` 不 SHALL 计入 awaiting 集。
 
-#### Scenario: 进入阻塞
+#### Scenario: 进入等待态
 
-- **WHEN** agent 或人判断 change 需要等待外部输入
-- **THEN** 状态 SHALL 变为 `blocked`（无 sub_state）
-- **AND** `blockers` 数组 SHALL 追加新的阻塞项
-- **AND** transition trigger SHALL 为 `auto` 或 `human_rollback`
+- **WHEN** agent 完成 proposal 阶段（含调研结论）或用户主动 block，进入需要外部确认的状态
+- **THEN** 完成命令或 `flow block` SHALL 追加 `blocked_entered` 事件（复用 v1 blocked 事件类型，不新增类型）
+- **AND** 投影状态 SHALL 变为对应的 `blocked.awaiting_*` 态
+- **AND** `blocked_entered` SHALL 只由进入 awaiting 的完成命令或 `flow block` 写入（写路径唯一化）
+- **AND** proposal 完成后写 `blocked_entered` 进入 `awaiting_proposal_confirmation`，用户 `flow confirm` 写 `blocked_resolved` 后才允许进入开发
 
-#### Scenario: 解除阻塞
+#### Scenario: 解除等待态
 
-- **WHEN** 阻塞条件解除
-- **THEN** 状态 SHALL 恢复到进入 `blocked` 之前的 phase + sub_state
-- **AND** `blockers[i].resolved_at` SHALL 填写解除时间
+- **WHEN** 用户确认解除等待
+- **THEN** `flow confirm` SHALL 追加 `blocked_resolved` 事件（复用 v1 blocked 事件类型）
+- **AND** `blocked_resolved` SHALL 只由 `flow confirm` 写入（写路径唯一化）
+- **AND** `blocked_resolved` 的 payload SHALL 从当前投影 awaiting 态推导（from=当前 `blocked.awaiting_*`，to=恢复目标），兼容无 `blocked_entered` 前置记录的 change
+- **AND** 状态 SHALL 恢复到进入 awaiting 之前的阶段
+
+#### Scenario: flow approve 阶段 gate 通过
+
+- **WHEN** change 处于某 phase 的 `ready_for_review`（gate）且运行 `flow approve --phase <phase>`
+- **THEN** 系统 SHALL 追加 `transition_applied` 事件（trigger: `human_review`）完成跨阶段推进到下一 phase 首 sub_state
+- **AND** 不写 `blocked_resolved`（awaiting 解除只由 `flow confirm` 承担）
+- **AND** phase 机械检查未通过时 SHALL 拒绝批准
+
+#### Scenario: checker 派生物一致性
+
+- **WHEN** 项目 artifact checker 校验 tasks 全勾的 change
+- **THEN** 它 SHALL 校验磁盘投影（workflow-state.json）与从事件 replay 重建的投影一致（投影 == replay）
+- **AND** 不一致时 SHALL 失败（exit 2），防止自锁
+
+#### Scenario: guard 读投影执法
+
+- **WHEN** guard 判断某 change 处于 awaiting 态且未确认
+- **THEN** 写操作（Write/Edit 与 write-intent Bash）SHALL exit 2（awaiting 执法不弱化，不可经 Bash 绕过）
+- **AND** guard SHALL 以事件日志 replay 结果判定 awaiting（事件是唯一真相）：投影缺失/损坏/stale 不影响判定——awaiting 仍 exit 2（不因投影问题放行）、非 awaiting 放行（不额外误拦）
+- **AND** guard SHALL 只读，不写盘（hook 无副作用）
+- **AND** 仅事件不完整（缺 seq / JSON 语法坏 / 末尾截断）导致无法 replay 时，guard SHALL fail-closed（exit 2，报「事件不完整，检查 seq N」）；`flow status` 同口径报错，不猜测不跳过
+
+### Requirement: flow 命令与受保护路径
+
+系统 SHALL 提供 `flow status` / `flow confirm` / `flow approve` / `flow block` / `flow advance` 命令，作为投影查询、等待态确认与阶段推进的 CLI 通道；`workflow-state.json` 与 `workflow-events.jsonl` SHALL 纳入受保护路径（governance=cli_written），只允许 CLI 写入。
+
+#### Scenario: flow status 展示投影
+
+- **WHEN** 运行 `flow status [--change <id>|--all]`
+- **THEN** 系统 SHALL 输出各 change 的投影状态（state / milestones / source_event_seq），唯一/默认格式为 JSON
+- **AND** 事件文件不一致时 SHALL 提示 stale
+- **AND** 投影缺失/损坏/stale 时 SHALL 先用事件 replay 自动重建，重建成功即输出；仅事件不完整导致重建失败时 SHALL 报「事件不完整，检查 seq N」
+
+#### Scenario: flow block / flow advance
+
+- **WHEN** 运行 `flow block --change <id> --awaiting <type>`
+- **THEN** 系统 SHALL 追加 `blocked_entered` 事件并进入对应 `blocked.awaiting_*` 态
+- **WHEN** 运行 `flow advance --change <id> --to <sub_state>`
+- **THEN** 系统 SHALL 追加 `transition_applied` 事件推进 sub_state
+
+#### Scenario: 受保护路径只准 CLI 写
+
+- **WHEN** agent 直接 Write/Edit `workflow-state.json` 或 `workflow-events.jsonl`
+- **THEN** guard SHALL 拦截（exit 2）
+- **AND** `flow` / `policy-*` CLI 作为合法写通道 SHALL 被 guard 豁免
 
 ### Requirement: 开发流程精简为 OpenSpec 主干 + 强制审阅闭环
 
@@ -504,3 +613,81 @@ phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，�
 - **WHEN** agent 开始新 change 开发
 - **THEN** 无需 phase/sub_state 推进、handoff.json 或 gate 停止
 - **AND** 开发流程遵循 OpenSpec 主干 + 实现完成后 `/review-loop` 审阅闭环
+
+### Requirement: 开发流程策略单一源
+
+受保护路径治理规则 SHALL 收敛到单一策略文件 `scripts/flow-policy.json`，作为 guard（PreToolUse hook）与 CI artifact checker 的共同规则来源。该文件 SHALL 以 JSON 承载受保护路径规则表，每条规则 SHALL 声明 `match_type(exact|prefix|contains)`、`governance(guard_only|event_explained|manifest_verified|cli_written)` 与可空 `event_types`。系统 SHALL 禁止 agent 直接改写该策略文件（governance=cli_written），仅允许人类直改或 `policy-*` CLI 子命令更新。
+
+#### Scenario: guard 与 checker 同源加载受保护路径规则
+
+- **WHEN** guard 或 checker 需要判断某路径是否受保护
+- **THEN** 系统 SHALL 从 `scripts/flow-policy.json` 读取规则表，而不再使用各自硬编码的独立清单
+- **AND** guard 与 checker 对同一路径 SHALL 得出一致的受保护判定
+
+#### Scenario: 策略文件缺失或损坏时 guard fail-closed
+
+- **GIVEN** `scripts/flow-policy.json` 缺失、损坏或非法
+- **WHEN** guard 拦截代码写操作
+- **THEN** guard SHALL fail-closed（exit 2），不得静默放行
+- **AND** guard SHALL 在错误信息中指明策略文件问题与恢复方向
+
+#### Scenario: 策略文件规则与 guard 内嵌默认表保持一致
+
+- **WHEN** 运行 parity 测试
+- **THEN** 磁盘上的 `flow-policy.json` 规则表 SHALL 与 guard 源码内嵌的默认规则表一致
+- **AND** checker 的受保护路径规则集 SHALL 是策略表 `event_explained` 子集
+
+### Requirement: guard 写操作门禁顺序与路径归一化
+
+guard 对 Bash 命令 SHALL 在 is_write 判定之前先扫描受保护路径；对 Write/Edit 的 `file_path` SHALL 先做路径归一化（normpath / 剥离 `./`、解析 `..`）再匹配。已知绕过形态（`echo > file`、`cat <<EOF`、`pathlib.write_text`、`docs/./` 变体）SHALL 被拦截。`workflow_state.py (artifact-event|review-manifest|policy-*|flow (status|confirm|approve|block|advance))` 作为合法写通道 SHALL 被豁免，但豁免 SHALL 仅限独立调用（无 `&&`/`;`/`|` 链式、无重定向、无命令替换、无换行）。
+
+#### Scenario: Bash 命令绕过受保护路径被拦截
+
+- **GIVEN** Bash 命令尝试改写受保护 artifact 但未命中既有写模式（如 `cat <<EOF`、`python3 -c "Path(...).write_text(...)"`）
+- **WHEN** 命令具有写意图且包含受保护路径
+- **THEN** guard SHALL 拦截（exit 2），不受 is_write 判定前置影响
+
+#### Scenario: 归一化变体写入受保护路径被拦截
+
+- **GIVEN** Write/Edit 或 Bash 使用 `docs/./known-debt.md` 等归一化变体路径
+- **WHEN** 目标指向受保护 artifact
+- **THEN** guard SHALL 在路径归一化后拦截（exit 2）
+
+#### Scenario: 特权 CLI 链式调用不被豁免
+
+- **GIVEN** Bash 命令以 `workflow_state.py` 合法子命令开头但通过 `&&`、`;`、`|` 或换行链式拼接写命令
+- **WHEN** 该命令尝试改写受保护 artifact
+- **THEN** guard SHALL 拒绝豁免并拦截（exit 2）
+
+### Requirement: 内容门槛阶段感知
+
+CI artifact checker 对 `Reference Implementation Research` 字段的检查 SHALL 区分结构门槛与内容门槛：change 处于 proposal 阶段时 SHALL 只要求 section 存在且非空；tasks 全部勾选（实现完成）时 SHALL 额外检查「自认未完成」短语级模式，命中 SHALL 报错（exit 2）并指明命中短语与字段。
+
+#### Scenario: 实现完成的 change 含自认未完成占位
+
+- **GIVEN** 一个 change 的 tasks 全部勾选
+- **WHEN** 其 Reference Implementation Research 字段包含「尚未完成」「待补充」等自认未完成短语
+- **THEN** checker SHALL exit 2
+- **AND** 错误信息 SHALL 指明命中短语与所在字段
+
+#### Scenario: proposal 阶段含占位不触发内容门槛
+
+- **GIVEN** 一个 change 处于 proposal 阶段（tasks 未全勾）
+- **WHEN** 其 Reference Implementation Research 字段含占位文本
+- **THEN** checker SHALL 只按结构门槛检查（section 存在 + 非空），不触发内容门槛报错
+
+### Requirement: 阶段执行者 agent schema 定义
+
+`scripts/flow-policy.json` SHALL 支持可选的 `phases.<phase>.agent = {provider, model}` 与顶层 `review.agent` 声明，用于表达每阶段与审阅节点的执行者选择。本 requirement 只定义 schema 并做结构校验，不实现按阶段 spawn 执行者（后续阶段实现）。
+
+#### Scenario: 合法 agent schema 通过校验
+
+- **GIVEN** `flow-policy.json` 声明 `phases.building.agent` 或 `review.agent`，字段为合法 provider/model 字符串
+- **WHEN** 运行 artifact checker
+- **THEN** checker SHALL 通过 schema 校验
+
+#### Scenario: 非法 agent schema 被拒绝
+
+- **GIVEN** `flow-policy.json` 声明未知 phase 键、非字符串 provider/model 或额外未知字段
+- **WHEN** 运行 artifact checker
+- **THEN** checker SHALL 报错并指明非法字段

@@ -1,0 +1,148 @@
+diff --git a/benchmarks/models.py b/benchmarks/models.py
+index 4942673..07a5dda 100644
+--- a/benchmarks/models.py
++++ b/benchmarks/models.py
+@@ -78,6 +78,8 @@ class TaskResult:
+     category: str | None = None
+     run_round: int | None = None
+     task_family: str | None = None
++    # D1/OQ-1: track（A|B|verified）单一事实源在 task.json，结果页按 track 分组。
++    track: str | None = None
+     # C2 evaluation-metrics: cache-aware cost, sampling, fault attribution.
+     # All optional so old artifacts keep parsing and None values stay omitted.
+     cache_read_tokens: int | None = None
+diff --git a/benchmarks/report.py b/benchmarks/report.py
+index 5d42396..d1d11af 100644
+--- a/benchmarks/report.py
++++ b/benchmarks/report.py
+@@ -46,6 +46,7 @@ class TaskAggregate:
+     task_id: str
+     category: str
+     task_family: str
++    track: str = "A"
+     results: list[TaskResult] = field(default_factory=list)
+ 
+ 
+@@ -100,6 +101,23 @@ def _infer_task_family(result: TaskResult) -> str:
+     return "local"
+ 
+ 
++def _infer_track(result: TaskResult) -> str:
++    """Infer track (A|B|verified) from the result when the field is missing.
++
++    Tracks mirror the task.json ``track`` single source of truth; older run
++    artifacts without the field fall back to the task-id convention
++    (``swebench-`` -> verified, ``asterwynd-b`` -> B, otherwise A).
++    """
++    track = (result.track or "").strip()
++    if track:
++        return track
++    if result.task_id.startswith("swebench-"):
++        return "verified"
++    if result.task_id.startswith("asterwynd-b"):
++        return "B"
++    return "A"
++
++
+ def collect_run_results(run_dir: Path) -> list[TaskResult]:
+     """Read every ``run_dir/tasks/*/result.json`` back into TaskResult objects.
+ 
+@@ -142,6 +160,7 @@ def aggregate_results(round_results: list[list[TaskResult]]) -> list[TaskAggrega
+                 task_id=task_id,
+                 category=resolve_layer(first.category),
+                 task_family=_infer_task_family(first),
++                track=_infer_track(first),
+                 results=results,
+             )
+         )
+@@ -254,6 +273,21 @@ def _render(
+         )
+     lines.append("")
+ 
++    # ---- Track-level aggregation ---------------------------------------------
++    present_tracks = {aggregate.track for aggregate in aggregates}
++    if present_tracks:
++        lines.append("## By Track")
++        lines.append("")
++        lines.append("| Track | Tasks | Pass@k |")
++        lines.append("|-------|-------|--------|")
++        for track in sorted(present_tracks):
++            track_aggregates = [a for a in aggregates if a.track == track]
++            track_valid = [r for a in track_aggregates for r in _valid_results(a.results)]
++            rounds = [_is_pass(r) for r in track_valid]
++            rate = pass_at_k(sum(rounds), len(rounds))
++            lines.append(f"| {track} | {len(track_aggregates)} | {rate:.2f} |")
++        lines.append("")
++
+     # ---- Task-level table ---------------------------------------------------
+     lines.append("## By Task")
+     lines.append("")
+@@ -407,6 +441,20 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
+             f"<td>[{lo:.2f}, {hi:.2f}]</td><td>{pk_str}</td></tr>"
+         )
+ 
++    # ---- Track-level rows -------------------------------------------------
++    track_rows = ""
++    present_tracks = {a.track for a in task_aggregates}
++    for track in sorted(present_tracks):
++        track_aggregates = [a for a in task_aggregates if a.track == track]
++        track_valid = [r for a in track_aggregates for r in _valid_results(a.results)]
++        rounds = [_is_pass(r) for r in track_valid]
++        rate = pass_at_k(sum(rounds), len(rounds))
++        cls = "passed" if rate >= 1.0 else "failed"
++        track_rows += (
++            f"<tr><td>{track}</td><td>{len(track_aggregates)}</td>"
++            f'<td class="{cls}">{rate:.2f}</td></tr>'
++        )
++
+     # ---- Task-level rows -------------------------------------------------
+     task_rows = ""
+     for aggregate in task_aggregates:
+@@ -499,6 +547,11 @@ small {{ color: #888; font-weight: normal; }}
+ <thead><tr><th>Layer</th><th>Tasks</th><th>Rounds</th><th>Pass Rate</th><th>95% CI</th><th>Pass^k</th></tr></thead>
+ <tbody>{layer_rows}</tbody>
+ </table>
++<h2>By Track</h2>
++<table>
++<thead><tr><th>Track</th><th>Tasks</th><th>Pass@k</th></tr></thead>
++<tbody>{track_rows}</tbody>
++</table>
+ <h2>By Task</h2>
+ <table>
+ <thead><tr><th>Task</th><th>task_family</th><th>category</th><th>Pass@k</th><th>Passes</th><th>Pass^k</th><th>Mean(s)</th><th>Std(s)</th><th>95% CI</th><th>p50</th><th>p95</th><th>p99</th><th>Input Tokens</th><th>Output Tokens</th></tr></thead>
+diff --git a/benchmarks/runner.py b/benchmarks/runner.py
+index 3f63530..2791ddf 100644
+--- a/benchmarks/runner.py
++++ b/benchmarks/runner.py
+@@ -313,6 +313,7 @@ class BenchmarkRunner:
+             agent_run_id=agent_run_id,
+             task_family=loaded.task.task_family,
+             category=loaded.task.category,
++            track=loaded.task.track,
+         temperature=self.temperature,
+         seed=seed,
+         )
+@@ -393,6 +394,7 @@ class BenchmarkRunner:
+                         reason=BenchmarkReason.NO_CHANGE.value,
+                         task_family=loaded.task.task_family,
+                         category=loaded.task.category,
++                        track=loaded.task.track,
+                         temperature=self.temperature,
+                         seed=seed,
+                     )
+@@ -462,6 +464,7 @@ class BenchmarkRunner:
+                     reason=reason,
+                     task_family=loaded.task.task_family,
+                     category=loaded.task.category,
++                    track=loaded.task.track,
+                     temperature=self.temperature,
+                     seed=seed,
+                     partial=partial,
+@@ -547,6 +550,7 @@ class BenchmarkRunner:
+                 reason=reason or agent_result.reason,
+                 task_family=loaded.task.task_family,
+                 category=loaded.task.category,
++                track=loaded.task.track,
+                 temperature=self.temperature,
+                 seed=seed,
+             )

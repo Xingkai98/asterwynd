@@ -66,12 +66,45 @@ DIAGNOSIS_SECTIONS = [
 ]
 REFERENCE_RESEARCH_SECTION = "Reference Implementation Research"
 REFERENCE_RESEARCH_FIELDS = (
+    "research_tier",
     "status",
     "reason",
     "research questions",
     "findings",
     "design impact",
 )
+RESEARCH_TIER_VALUES = ("full", "light", "exempt")
+# exempt 结构性豁免关键词（D3 + Q3 确认：不扩展证据路径清单，判断性豁免示例
+# 「与已有模块 X 等价改造」类必须带引用才通过）。「方案已由.*决策」用正则，
+# 其余子串匹配；证据 = issue 引用 #<数字> 或评审文档路径
+# （docs/、openspec/changes/archive/、reviews/）。
+STRUCTURAL_EXEMPTION_KEYWORDS = (
+    "docs-only",
+    "bugfix",
+    "上游决策锁定",
+    "无设计决策",
+)
+STRUCTURAL_EXEMPTION_RE_PATTERNS = (re.compile(r"方案已由.*决策"),)
+EXEMPT_EVIDENCE_PATH_PATTERNS = ("docs/", "openspec/changes/archive/", "reviews/")
+# 内容门槛（#123 阶段感知）：tasks 全勾（实现完成）时命中即红的「自认未完成」
+# 短语级模式（grill Q6 确认，删 暂无/未完成 避免误伤「暂无参考仓库可用」类
+# 合法 finding）；语义化占位漏检记 docs/known-debt.md，不无限扩表。
+SELF_ADMITTED_INCOMPLETE_PHRASES = (
+    "尚未完成",
+    "待补充",
+    "待调研",
+    "tbd",
+    "todo",
+    "待确认",
+)
+
+
+def _self_admitted_incomplete(text: str) -> str | None:
+    lowered = text.lower()
+    for phrase in SELF_ADMITTED_INCOMPLETE_PHRASES:
+        if phrase.lower() in lowered:
+            return phrase
+    return None
 
 PLACEHOLDER_ONLY = {
     "todo",
@@ -119,13 +152,149 @@ PROTECTED_ARTIFACT_EVENT = "protected_artifact_explained"
 CURRENT_SPEC_SYNC_EVENT = "current_spec_synced"
 BACKLOG_UPDATED_EVENT = "backlog_updated"
 CHANGE_ARCHIVED_EVENT = "change_archived"
-PROTECTED_PATH_RULES = (
-    ("exact", "docs/known-debt.md", (PROTECTED_ARTIFACT_EVENT,)),
-    ("exact", "docs/known-issues.md", (PROTECTED_ARTIFACT_EVENT,)),
-    ("exact", "docs/openspec-change-backlog.md", (BACKLOG_UPDATED_EVENT,)),
-    ("prefix", "openspec/specs/", (CURRENT_SPEC_SYNC_EVENT,)),
-    ("prefix", "openspec/changes/archive/", (CHANGE_ARCHIVED_EVENT,)),
-)
+
+# 受保护路径规则从 scripts/flow-policy.json 加载（flow-policy-source P0 单一策略源），
+# 替换原硬编码 PROTECTED_PATH_RULES。取 governance == event_explained 的条目。
+_POLICY_REL_PATH = Path("scripts") / "flow-policy.json"
+
+
+def _load_protected_path_rules(repo_root: Path) -> tuple[tuple[str, str, tuple[str, ...]], ...] | None:
+    """Load event_explained rules from scripts/flow-policy.json.
+
+    Returns None when the policy file is missing/corrupt (fail-closed: the CI
+    gate must not silently skip protected-path checks). Raises RuntimeError on
+    an event_explained rule without event_types (invalid policy schema).
+    """
+    policy = repo_root / _POLICY_REL_PATH
+    try:
+        data = json.loads(policy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    rules = data.get("protected_paths")
+    if not isinstance(rules, list):
+        return None
+    out: list[tuple[str, str, tuple[str, ...]]] = []
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("governance") != "event_explained":
+            continue
+        path = rule.get("path")
+        mt = rule.get("match_type")
+        et = rule.get("event_types")
+        if not isinstance(path, str) or not path:
+            continue
+        if mt not in ("exact", "prefix", "contains"):
+            continue
+        if not isinstance(et, (list, tuple)) or not et:
+            raise RuntimeError(
+                f"scripts/flow-policy.json: event_explained rule for '{path}' "
+                "missing event_types (invalid policy schema)"
+            )
+        out.append((mt, path, tuple(et)))
+    return tuple(out)
+
+
+ALLOWED_POLICY_PHASES = {"wayfinding", "planning", "building", "closing"}
+_POLICY_META_KEYS = {"_description"}
+
+
+def _validate_agent_content(prefix: str, agent: object) -> list[str]:
+    """Validate a direct ``{provider, model}`` agent content (#127 P0 schema)."""
+    errors: list[str] = []
+    if agent is None:
+        return errors
+    if not isinstance(agent, dict):
+        return [f"flow-policy.json `{prefix}` must be an object"]
+    if not agent:
+        return errors
+    for k in ("provider", "model"):
+        if k not in agent:
+            errors.append(f"flow-policy.json `{prefix}` missing `{k}`")
+        elif not isinstance(agent[k], str) or not agent[k]:
+            errors.append(f"flow-policy.json `{prefix}.{k}` must be a non-empty string")
+    extra = set(agent.keys()) - {"provider", "model"}
+    if extra:
+        errors.append(
+            f"flow-policy.json `{prefix}` has unknown keys: " + ", ".join(sorted(extra))
+        )
+    return errors
+
+
+def _validate_agent_decl(prefix: str, val: object) -> list[str]:
+    """Validate a ``{agent: {provider, model}}`` phase declaration (#127 P0 schema).
+
+    Accepts an empty dict (schema placeholder) or a ``{agent: {...}}`` wrapper;
+    a bare ``{provider, model}`` (direct agent content) is also accepted for
+    symmetry with ``review.agent``.
+    """
+    errors: list[str] = []
+    if val is None:
+        return errors
+    if not isinstance(val, dict):
+        return [f"flow-policy.json `{prefix}` must be an object"]
+    if not val:
+        return errors
+    non_meta = set(val.keys()) - _POLICY_META_KEYS
+    if "agent" not in val:
+        # bare {provider, model} direct content form (review.agent style)
+        if non_meta <= {"provider", "model"}:
+            return _validate_agent_content(prefix, val)
+        errors.append(
+            f"flow-policy.json `{prefix}` has unknown keys (expected `agent`): "
+            + ", ".join(sorted(non_meta))
+        )
+        return errors
+    if len(non_meta) > 1:
+        errors.append(
+            f"flow-policy.json `{prefix}` has unknown extra keys: "
+            + ", ".join(sorted(non_meta - {"agent"}))
+        )
+    return _validate_agent_content(f"{prefix}.agent", val.get("agent"))
+
+
+def _validate_policy_agent_schema(repo_root: Path) -> list[str]:
+    """Validate the phases/review agent schema of flow-policy.json (#127 P0).
+
+    Missing/corrupt policy is left to ``_load_protected_path_rules`` fail-closed;
+    here we only structurally validate the optional phases/review sections.
+    """
+    errors: list[str] = []
+    policy = repo_root / _POLICY_REL_PATH
+    try:
+        data = json.loads(policy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return errors
+    if not isinstance(data, dict):
+        return errors
+
+    phases = data.get("phases")
+    if phases is not None and not isinstance(phases, dict):
+        errors.append("flow-policy.json `phases` must be an object")
+    elif isinstance(phases, dict):
+        for key, val in phases.items():
+            if key in _POLICY_META_KEYS:
+                continue
+            if key not in ALLOWED_POLICY_PHASES:
+                errors.append(
+                    f"flow-policy.json unknown phase `{key}` "
+                    f"(allowed: {', '.join(sorted(ALLOWED_POLICY_PHASES))})"
+                )
+                continue
+            errors.extend(_validate_agent_decl(f"phases.{key}", val))
+
+    review = data.get("review")
+    if review is not None and not isinstance(review, dict):
+        errors.append("flow-policy.json `review` must be an object")
+    elif isinstance(review, dict):
+        for key, val in review.items():
+            if key in _POLICY_META_KEYS:
+                continue
+            if key != "agent":
+                errors.append(f"flow-policy.json unknown review key `{key}` (allowed: agent)")
+                continue
+            errors.extend(_validate_agent_decl("review.agent", val))
+    return errors
 
 
 @dataclass(frozen=True)
@@ -162,10 +331,25 @@ def _is_placeholder_body(text: str) -> bool:
     return cleaned in PLACEHOLDER_ONLY
 
 
+def _inside_fence(text: str, pos: int) -> bool:
+    """True when ``pos`` falls inside a fenced code block (``` ... ```)."""
+    fences = [m.start() for m in re.finditer(r"^```", text, flags=re.MULTILINE)]
+    open_fence = None
+    for f in fences:
+        if f >= pos:
+            break
+        open_fence = None if open_fence is not None else f
+    return open_fence is not None
+
+
 def _extract_h2_sections(text: str) -> dict[str, str]:
     matches = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
     sections: dict[str, str] = {}
     for index, match in enumerate(matches):
+        # Skip ## inside fenced code blocks (flow-policy-source P0 正则修复，
+        # 与 workflow_guard._h2_section 同步).
+        if _inside_fence(text, match.start()):
+            continue
         title = match.group(1).strip()
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
@@ -301,6 +485,23 @@ def _find_reference_research_section(
     return None
 
 
+def _exempt_reason_satisfies(reason: str) -> bool:
+    """True when an exempt reason hits a structural keyword or cites evidence.
+
+    判断性豁免必须带客观依据（Q3 口径）：结构性豁免关键词、`#<数字>` issue 引用、
+    或评审文档路径（docs/、openspec/changes/archive/、reviews/）。「与已有模块 X
+    等价改造」类无引用表述不通过。
+    """
+    lowered = reason.lower()
+    if any(keyword.lower() in lowered for keyword in STRUCTURAL_EXEMPTION_KEYWORDS):
+        return True
+    if any(pattern.search(reason) for pattern in STRUCTURAL_EXEMPTION_RE_PATTERNS):
+        return True
+    if re.search(r"#\d+", reason):
+        return True
+    return any(path in lowered for path in EXEMPT_EVIDENCE_PATH_PATTERNS)
+
+
 def _check_reference_implementation_research(
     change_dir: Path, proposal_text: str, change_type: ChangeType
 ) -> list[str]:
@@ -321,21 +522,41 @@ def _check_reference_implementation_research(
             f"## {REFERENCE_RESEARCH_SECTION}"
         ]
 
+    errors: list[str] = []
+
+    # research_tier（结构门槛，proposal 阶段即生效）：必填枚举 full|light|exempt。
+    normalized_tier: str | None = None
+    tier = _extract_record_field(body, "research_tier")
+    if tier is None or _is_placeholder_body(tier):
+        errors.append(
+            f"{source} section must declare `research_tier: full|light|exempt`: "
+            f"## {REFERENCE_RESEARCH_SECTION}"
+        )
+    else:
+        normalized_tier = tier.splitlines()[0].strip().lower()
+        if normalized_tier not in RESEARCH_TIER_VALUES:
+            errors.append(
+                f"{source} section has invalid research_tier `{normalized_tier}` "
+                f"(allowed: full, light, exempt)"
+            )
+            normalized_tier = None
+
     status = _extract_record_field(body, "status")
     if status is None or _is_placeholder_body(status):
-        return [
+        errors.append(
             f"{source} section must declare `status: enabled` or "
             f"`status: disabled`: ## {REFERENCE_RESEARCH_SECTION}"
-        ]
+        )
+        return errors
 
     normalized_status = status.splitlines()[0].strip().lower()
     if normalized_status not in {"enabled", "disabled"}:
-        return [
+        errors.append(
             f"{source} section has invalid reference implementation research "
             f"status `{normalized_status}` (allowed: enabled, disabled)"
-        ]
+        )
+        return errors
 
-    errors: list[str] = []
     reason = _extract_record_field(body, "reason")
     if reason is None or _is_placeholder_body(reason):
         errors.append(
@@ -344,7 +565,12 @@ def _check_reference_implementation_research(
         )
 
     if normalized_status == "enabled":
-        for field in ("research questions", "findings", "design impact"):
+        # light 档可省略 research questions（D2 + spec「Routine enhancement
+        # requires light research」），findings 与 design impact 仍必填。
+        enabled_fields = ("research questions", "findings", "design impact")
+        if normalized_tier == "light":
+            enabled_fields = ("findings", "design impact")
+        for field in enabled_fields:
             value = _extract_record_field(body, field)
             if value is None or _is_placeholder_body(value):
                 errors.append(
@@ -352,6 +578,53 @@ def _check_reference_implementation_research(
                     f"reference implementation research is enabled: "
                     f"## {REFERENCE_RESEARCH_SECTION}"
                 )
+
+    # 内容门槛（#123 阶段感知）：仅当 tasks 全勾（实现完成）时生效。proposal
+    # 阶段只查结构门槛（上述 section 存在 + 非空），不触发内容门槛，避免在途
+    # change 被误伤。命中「自认未完成」短语 → exit 2，错误指明短语 + 字段。
+    if _tasks_all_complete(change_dir):
+        content_fields = ("reason",)
+        if normalized_status == "enabled":
+            content_fields += ("research questions", "findings", "design impact")
+        for field in content_fields:
+            value = _extract_record_field(body, field)
+            if not value:
+                continue
+            hit = _self_admitted_incomplete(value)
+            if hit:
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 `{field}` 命中"
+                    f"「自认未完成」短语「{hit}」——tasks 已全勾，内容门槛拒绝占位"
+                )
+
+        # tier 内容门槛（D4 + Q4 确认）：tasks 全勾时 tier 与 status/证据组合闭环。
+        if normalized_tier in ("full", "light"):
+            if normalized_status == "disabled":
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 "
+                    f"`research_tier: {normalized_tier}` 在 tasks 已全勾时 "
+                    f"`status` 不得为 `disabled`——必调研档必须已完成调研（完成时闭环）"
+                )
+        elif normalized_tier == "exempt":
+            if normalized_status != "disabled":
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 "
+                    f"`research_tier: exempt` 在 tasks 已全勾时 `status` 必须为 "
+                    f"`disabled`——做了调研就如实改 full/light + enabled（Q4 口径）"
+                )
+            if reason and not _is_placeholder_body(reason):
+                hit = _self_admitted_incomplete(reason)
+                if hit:
+                    # #123 内容门槛已报占位短语，这里不重复报
+                    pass
+                elif not _exempt_reason_satisfies(reason):
+                    errors.append(
+                        f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 `reason` "
+                        f"未命中结构性豁免关键词（docs-only/bugfix/上游决策锁定/"
+                        f"无设计决策/方案已由.*决策）也未引用证据（#<数字> 或 "
+                        f"docs/、openspec/changes/archive/、reviews/ 路径），"
+                        f"exempt 证据校验不通过——请引用已关闭决策 issue 或评审文档路径"
+                    )
 
     return errors
 
@@ -549,7 +822,9 @@ def _extract_user_confirmation_indexes(text: str) -> list[str]:
     indexes: list[str] = []
     for line in section.splitlines():
         stripped = line.strip()
-        m = re.match(r"^-\s+\*\*Q(\d+)\*\*\s*[:：]", stripped)
+        # 容忍 `**Q8**（分支命名）:` 后缀（flow-policy-source P0 正则修复，
+        # 与 workflow_guard._extract_user_confirmation_indexes 同步).
+        m = re.match(r"^-\s+\*\*Q(\d+)\*\*(?:[^：:]*)\s*[:：]", stripped)
         if not m:
             continue
         answer_match = re.search(r"用户答复\s*[:：]\s*(.*?)(?:[；;]\s*确认时间|\s*$)", stripped)
@@ -679,9 +954,11 @@ def _check_handoff_json(change_dir: Path) -> list[str]:
         errors.append(f"{change_name}: handoff.json blockers must be an array")
 
     if (change_dir / "workflow-events.jsonl").exists():
-        from agent.workflow.event_log import verify_handoff_projection
+        # Q11/代码层修正 11：verify_handoff_projection 扩为 verify_projection——
+        # gen-1 校验 handoff.json == replay；gen-2 校验磁盘 workflow-state.json == replay。
+        from agent.workflow.event_log import verify_projection
 
-        errors.extend(verify_handoff_projection(change_dir))
+        errors.extend(verify_projection(change_dir))
 
     return errors
 
@@ -774,14 +1051,42 @@ def _check_review_manifests(
     return errors
 
 
+def _check_archived_projectable(change_dir: Path) -> list[str]:
+    """归档 change 可投影校验（Q5/代码层修正 2）。
+
+    只验证结构合法 + 所有 event_type 可识别（_apply / NON_STATE / milestones 集），
+    不要求 seed 事件、不要求磁盘 workflow-state.json（老世代不落盘，Q13）。
+    """
+    if not (change_dir / "workflow-events.jsonl").exists():
+        return []
+    try:
+        from agent.workflow.event_log import project_workflow_state
+
+        project_workflow_state(change_dir)
+    except Exception as exc:
+        return [f"{change_dir.name}: archived change 事件日志不可投影: {exc}"]
+    return []
+
+
 def check_protected_path_explanations(
     repo_root: Path,
     *,
     changed_paths: set[str],
 ) -> list[str]:
     errors: list[str] = []
+    try:
+        rules = _load_protected_path_rules(repo_root)
+    except RuntimeError as exc:
+        # schema 非法（event_explained 缺 event_types 等）：不抛裸 traceback，
+        # 以可读错误 fail-closed（building-review Issue 3）。
+        return [f"scripts/flow-policy.json schema 非法: {exc}"]
+    if rules is None:
+        return [
+            "scripts/flow-policy.json 缺失或损坏：受保护路径检查无法执行（fail-closed）。"
+            "请修复策略文件后重跑。"
+        ]
     for path in sorted(changed_paths):
-        allowed_event_types = _allowed_event_types_for_protected_path(path)
+        allowed_event_types = _allowed_event_types_for_protected_path(path, rules)
         if allowed_event_types is None:
             continue
         explanation_errors = _protected_artifact_explanation_errors(
@@ -860,11 +1165,15 @@ def _validate_protected_artifact_event(
     return errors
 
 
-def _allowed_event_types_for_protected_path(path: str) -> tuple[str, ...] | None:
-    for match_type, pattern, event_types in PROTECTED_PATH_RULES:
+def _allowed_event_types_for_protected_path(
+    path: str, rules: tuple[tuple[str, str, tuple[str, ...]], ...]
+) -> tuple[str, ...] | None:
+    for match_type, pattern, event_types in rules:
         if match_type == "exact" and path == pattern:
             return event_types
         if match_type == "prefix" and path.startswith(pattern):
+            return event_types
+        if match_type == "contains" and pattern in path:
             return event_types
     return None
 
@@ -1122,6 +1431,8 @@ def main(argv: list[str] | None = None) -> int:
                 if change_type is None:
                     continue
                 errors.extend(_check_review_manifests(change_dir, change_type, archived=True))
+                # Q5/代码层修正 2：归档 change 只验可投影（结构合法 + 类型可识别）
+                errors.extend(_check_archived_projectable(change_dir))
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
@@ -1139,6 +1450,8 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(
             check_protected_path_explanations(repo_root, changed_paths=changed_paths)
         )
+        # #127 P0：flow-policy.json 的 phases/review agent schema 结构校验
+        errors.extend(_validate_policy_agent_schema(repo_root))
 
     if errors:
         for error in errors:

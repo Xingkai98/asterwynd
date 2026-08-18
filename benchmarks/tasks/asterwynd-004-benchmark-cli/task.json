@@ -1,12 +1,15 @@
 {
   "id": "asterwynd-004-benchmark-cli",
   "repo": "local/asterwynd",
-  "base_commit": "f616c4265ecfa9bee875d48735f09093abccdf5e",
+  "base_commit": "4dc6289b86ad2317814729b8f63a0df00cdd1d7c",
   "problem_statement_file": "issue.md",
-  "test_command": "pytest -q tests/benchmark/test_20260614_cobalt_ember_cli_benchmark.py",
-  "timeout_seconds": 180,
+  "test_command": "pytest -q tests/benchmark/test_cli_benchmark.py",
+  "category": "cli",
+  "difficulty": "easy",
+  "scenario": "feature-dev",
+  "track": "B",
+  "timeout_seconds": 300,
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",
-  "category": "cli",
-  "difficulty": "easy"
+  "hints_text": null
 }

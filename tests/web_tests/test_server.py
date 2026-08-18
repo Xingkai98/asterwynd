@@ -419,7 +419,6 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="mode-value"' in index
     assert 'id="mode-select"' in index
     assert 'id="mode-apply"' in index
-    assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
     assert 'id="plan-document-toggle"' in index
     assert 'aria-controls="plan-document-body"' in index
@@ -428,13 +427,16 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="planning-count"' in index
     assert 'aria-expanded="true"' in index
     assert 'aria-controls="planning-items"' in index
+    # Multi-session hub (issue #117): hub view + dynamic per-tab panes
+    assert 'id="hub-view"' in index
+    assert 'id="session-tabs"' in index
+    assert 'id="hub-new-btn"' in index
+    assert 'id="chat-panes"' in index
+    assert 'id="hub-session-list"' in index
     assert "/static/markdown.js?v=6" in index
     assert "/static/style.css?v=18" in index
     assert "/static/chat.js?v=20" in index
-    assert 'id="image-previews"' in index
-    assert 'id="image-file-input"' in index
-    assert 'id="upload-btn"' in index
-    assert "uploadBtn.addEventListener" in script
+    assert "buildTabPane" in script
     assert "addImageFromFile" in script
     assert "pendingImages" in script
     assert "prepareImageForSend" in script
@@ -518,7 +520,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
     assert ".message.system" in styles
-    assert "#slash-suggestions" in styles
+    assert ".slash-suggestions" in styles
     assert ".slash-suggestion.active" in styles
     assert "#mode-controls" in styles
     assert ".brand-lockup" in styles

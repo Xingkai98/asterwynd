@@ -1,0 +1,82 @@
+{
+  "schema": "1.0",
+  "_description": "开发流程策略单一源。受保护路径规则表是 guard（PreToolUse hook）与 CI artifact checker 的共同规则来源；phases/review 定义每阶段执行者 schema（P0 只定义 + JSON Schema 校验，spawn 消费留 P4）。governance 语义：event_explained=变更需 workflow-events.jsonl 结构化解释事件（event_types 必填）；cli_written=只允许人类直改或 policy-*/artifact-event 等 CLI 通道写；manifest_verified=变更由 review manifest 校验绑定；guard_only=仅 guard 本地 backstop。match_type：exact=归一化后路径精确相等；prefix=归一化后路径以该前缀开头；contains=归一化路径或命令文本中包含该片段。",
+  "protected_paths": [
+    {
+      "path": "docs/known-debt.md",
+      "match_type": "exact",
+      "governance": "event_explained",
+      "event_types": [
+        "protected_artifact_explained"
+      ]
+    },
+    {
+      "path": "docs/known-issues.md",
+      "match_type": "exact",
+      "governance": "event_explained",
+      "event_types": [
+        "protected_artifact_explained"
+      ]
+    },
+    {
+      "path": "docs/openspec-change-backlog.md",
+      "match_type": "exact",
+      "governance": "event_explained",
+      "event_types": [
+        "backlog_updated"
+      ]
+    },
+    {
+      "path": "openspec/specs/",
+      "match_type": "prefix",
+      "governance": "event_explained",
+      "event_types": [
+        "current_spec_synced"
+      ]
+    },
+    {
+      "path": "openspec/changes/archive/",
+      "match_type": "prefix",
+      "governance": "event_explained",
+      "event_types": [
+        "change_archived"
+      ]
+    },
+    {
+      "path": "workflow-events.jsonl",
+      "match_type": "contains",
+      "governance": "cli_written"
+    },
+    {
+      "path": "gate-approvals.json",
+      "match_type": "contains",
+      "governance": "guard_only"
+    },
+    {
+      "path": "-review-manifest.json",
+      "match_type": "contains",
+      "governance": "manifest_verified"
+    },
+    {
+      "path": "handoff.json",
+      "match_type": "contains",
+      "governance": "guard_only"
+    },
+    {
+      "path": "scripts/flow-policy.json",
+      "match_type": "exact",
+      "governance": "cli_written"
+    },
+    {
+      "path": "workflow-state.json",
+      "match_type": "contains",
+      "governance": "cli_written"
+    }
+  ],
+  "phases": {
+    "_description": "P0 只定义 schema 占位：phases.<phase>.agent = {provider, model}（可选，缺省=当前会话 inline）；provider/model 命名空间钉 paseo 侧（claude/...、codex/... 形式）。spawn 消费留 P4。"
+  },
+  "review": {
+    "_description": "顶层 review.agent 覆盖节：review 是 sub_state 非 phase，用顶层覆盖节表达「review 用不同执行者」。独立+零记忆红线不可配置。"
+  }
+}

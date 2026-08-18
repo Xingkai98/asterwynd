@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "flow-policy-source",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "aa00fc1d82fc47b71",
+  "base_sha": "774e30a21e79c31d084b54fddbecaf6ca6d4bb55",
+  "head_sha": "1f32f0531a4ffdd1bbb19d8323e0636350a2c57b",
+  "tasks_hash": "sha256:d258be9d5fee61827f2f884412692bf371ccd101c07b2febe873f5271e37a53b",
+  "spec_hash": "sha256:853bcf66176d82be0118ce20715049189cf2b2da2f0e9c1de719ea8defb200a0",
+  "diff_hash": "sha256:03884f3de137a73eb49fba6cebe59c34e185201e3745d71072fe0e33877bcd40",
+  "report_hash": "sha256:a3aeb425398fc97ebc200fd43d47fb555aa242c36b03b8cdc4980df88d99fefd"
+}

@@ -1,45 +1,27 @@
-diff --git a/agent/example/__init__.py b/agent/example/__init__.py
-new file mode 100644
-index 0000000..e69de29
-diff --git a/agent/example/calculator.py b/agent/example/calculator.py
-new file mode 100644
-index 0000000..a4aa7f1
---- /dev/null
-+++ b/agent/example/calculator.py
-@@ -0,0 +1,7 @@
-+from __future__ import annotations
+diff --git a/tests/agent/tools/test_lsp_tools.py b/tests/agent/tools/test_lsp_tools.py
+index 8645e38..c3317a3 100644
+--- a/tests/agent/tools/test_lsp_tools.py
++++ b/tests/agent/tools/test_lsp_tools.py
+@@ -274,3 +274,22 @@ async def test_tools_registered_in_factory(
+         "LspDiagnostics",
+     ):
+         assert name in KNOWN_BUILTIN_TOOL_NAMES
 +
 +
-+def calculate_total(items: list[int]) -> int:
-+    """Return the sum of all items, treating negative values as 0."""
-+    return sum(max(item, 0) for item in items)
++@pytest.mark.asyncio
++async def test_diagnostics_tool_language_override_for_extensionless_file(
++    lsp_manager: LspClientManager,
++    policy: WorkspacePolicy,
++    workspace: Path,
++    transport: FakeLspTransport,
++):
++    extless = workspace / "README"
++    extless.write_text("import missing\n", encoding="utf-8")
++    transport.on("textDocument/diagnostic", result={"items": []})
 +
++    tool = LspDiagnosticsTool(policy=policy, lsp_manager=lsp_manager)
++    default_result = await tool.execute(path="README")
++    assert "no LSP server" in default_result
 +
-+def format_report(total: int) -> str:
-+    return f"Report total: {total}" + detail
-diff --git a/tests/agent/example/__init__.py b/tests/agent/example/__init__.py
-new file mode 100644
-index 0000000..e69de29
-diff --git a/tests/agent/example/test_calculator.py b/tests/agent/example/test_calculator.py
-new file mode 100644
-index 0000000..1913a6f
---- /dev/null
-+++ b/tests/agent/example/test_calculator.py
-@@ -0,0 +1,17 @@
-+from __future__ import annotations
-+
-+from agent.example.calculator import calculate_total, format_report
-+
-+
-+def test_calculate_total_all_positive():
-+    assert calculate_total([1, 2, 3]) == 6
-+
-+
-+def test_calculate_total_with_negatives():
-+    assert calculate_total([1, -2, 3]) == 4
-+
-+
-+def test_format_report_returns_string():
-+    result = format_report(42)
-+    assert isinstance(result, str)
-+    assert "42" in result
++    override_result = await tool.execute(path="README", language="python")
++    assert "no diagnostics" in override_result

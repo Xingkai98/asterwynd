@@ -1,6 +1,8 @@
 from pathlib import Path
 import json
 
+import pytest
+
 from scripts.check_openspec_artifacts import (
     check_backlog_consistency,
     check_change,
@@ -9,6 +11,20 @@ from scripts.check_openspec_artifacts import (
     parse_change_type,
 )
 from agent.workflow.manager import WorkflowManager
+
+
+@pytest.fixture(autouse=True)
+def _seed_policy_file(tmp_path):
+    """Seed scripts/flow-policy.json so protected-path checks load real rules.
+
+    flow-policy-source P0: the checker loads PROTECTED_PATH_RULES from
+    scripts/flow-policy.json (single policy source), so tmp_path-based repo
+    fixtures must provide it.
+    """
+    src = Path(__file__).resolve().parents[1] / "scripts" / "flow-policy.json"
+    target = tmp_path / "scripts" / "flow-policy.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 VALID_DESIGN = """## Context
@@ -71,6 +87,7 @@ Regression tests are documented.
 
 VALID_REFERENCE_RESEARCH = """## Reference Implementation Research
 
+- research_tier: full
 - status: enabled
 - reason: Reference implementations are relevant.
 - research questions:
@@ -80,6 +97,10 @@ VALID_REFERENCE_RESEARCH = """## Reference Implementation Research
 - design impact:
   - The change records a mechanical gate.
 """
+
+ALL_TASKS_CHECKED = (
+    "## 1. 规格\n\n- [x] 1.1 完成。\n- [x] 开发前使用等价设计追问。\n"
+)
 
 
 def write_change(root: Path, proposal: str, design: str | None = None, diagnosis: str | None = None):
@@ -562,6 +583,7 @@ def test_combined_bugfix_research_feature_requires_diagnosis_and_design(tmp_path
 
 ## Reference Implementation Research
 
+- research_tier: full
 - status: enabled
 - reason: Reference implementations are relevant.
 - research questions:
@@ -595,6 +617,7 @@ def test_combined_type_passes_when_all_required_artifacts_exist(tmp_path):
 
 ## Reference Implementation Research
 
+- research_tier: full
 - status: enabled
 - reason: Reference implementations are relevant.
 - research questions:
@@ -1117,6 +1140,7 @@ def test_reference_implementation_research_enabled_requires_fields(tmp_path):
         proposal_for("process", reference_research=False)
         + """## Reference Implementation Research
 
+- research_tier: full
 - status: enabled
 - reason: Relevant.
 - research questions:
@@ -1143,6 +1167,7 @@ def test_reference_implementation_research_disabled_requires_reason(tmp_path):
         proposal_for("process", reference_research=False)
         + """## Reference Implementation Research
 
+- research_tier: exempt
 - status: disabled
 - reason:
 """,
@@ -1166,6 +1191,372 @@ def test_reference_implementation_research_can_be_recorded_in_design(tmp_path):
     write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
 
     assert check_change(change) == []
+
+
+# --- research_tier 结构门槛（2.1）与 exempt 证据校验（2.2）---
+
+
+def test_research_tier_missing_rejected_in_proposal_phase(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- status: enabled
+- reason: Relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md section must declare "
+        "`research_tier: full|light|exempt`: ## Reference Implementation Research"
+    ]
+
+
+def test_research_tier_invalid_value_rejected_in_proposal_phase(tmp_path):
+    change = tmp_path / "change-process"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: deep
+- status: enabled
+- reason: Relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == [
+        "change-process: proposal.md section has invalid research_tier `deep` "
+        "(allowed: full, light, exempt)"
+    ]
+
+
+@pytest.mark.parametrize("tier,status", [("full", "enabled"), ("light", "enabled"), ("exempt", "disabled")])
+def test_research_tier_valid_values_pass_structure_gate(tmp_path, tier, status):
+    change = tmp_path / f"change-{tier}"
+    rir = f"""## Reference Implementation Research
+
+- research_tier: {tier}
+- status: {status}
+- reason: {"上游决策锁定" if tier == "exempt" else "Relevant."}
+"""
+    if tier != "exempt":
+        rir += """- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
+"""
+    write_change(
+        change,
+        proposal_for("process", reference_research=False) + rir,
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == []
+
+
+def test_light_tier_research_questions_optional(tmp_path):
+    """light 档可省略 research questions（D2 + spec 口径），proposal 阶段与
+    tasks 全勾完成时均通过（review-loop Round 1 issue 回归）。"""
+    rir = """## Reference Implementation Research
+
+- research_tier: light
+- status: enabled
+- reason: 常规功能增强，成熟模式局部应用。
+- findings:
+  - Comparable repositories use documented gates; local application is routine.
+- design impact:
+  - The change records a mechanical gate.
+"""
+    change = tmp_path / "change-light-proposal"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False) + rir,
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用等价设计追问。\n")
+
+    assert check_change(change) == []
+
+    completed = tmp_path / "change-light-completed"
+    write_change(
+        completed,
+        proposal_for("process", reference_research=False) + rir,
+        design=VALID_DESIGN,
+    )
+    write_tasks(completed, ALL_TASKS_CHECKED)
+
+    assert check_change(completed) == []
+
+
+def test_exempt_reason_structural_keyword_passes_when_tasks_complete(tmp_path):
+    change = tmp_path / "change-exempt-keyword"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: exempt
+- status: disabled
+- reason: 纯 bugfix，无新增能力面，带回归测试。
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    assert check_change(change) == []
+
+
+def test_exempt_reason_issue_reference_passes_when_tasks_complete(tmp_path):
+    change = tmp_path / "change-exempt-issue"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: exempt
+- status: disabled
+- reason: 方案已在 #128 决策 issue 完整讨论并记录，无待定设计项。
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    assert check_change(change) == []
+
+
+def test_exempt_reason_review_path_reference_passes_when_tasks_complete(tmp_path):
+    change = tmp_path / "change-exempt-path"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: exempt
+- status: disabled
+- reason: 决策已记录于 docs/adr/0007-gate.md，无待定设计项。
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    assert check_change(change) == []
+
+
+def test_exempt_reason_placeholder_rejected_when_tasks_complete(tmp_path):
+    change = tmp_path / "change-exempt-placeholder"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: exempt
+- status: disabled
+- reason: 待确认。
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    errors = check_change(change)
+    assert len(errors) == 1
+    assert "命中「自认未完成」短语「待确认」" in errors[0]
+
+
+def test_exempt_reason_empty_rejected_when_tasks_complete(tmp_path):
+    change = tmp_path / "change-exempt-empty"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: exempt
+- status: disabled
+- reason:
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    errors = check_change(change)
+    assert any("must include non-empty `reason`" in e for e in errors)
+
+
+def test_exempt_reason_without_evidence_rejected_when_tasks_complete(tmp_path):
+    """判断性豁免示例「与已有模块 X 等价改造」无引用 → 证据校验拒绝（Q3 口径）。"""
+    change = tmp_path / "change-exempt-noevidence"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: exempt
+- status: disabled
+- reason: 与已有模块 X 等价改造。
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    errors = check_change(change)
+    assert len(errors) == 1
+    assert "exempt 证据校验不通过" in errors[0]
+
+
+# --- full/light 内容门槛（2.3）与阶段感知（2.4）---
+
+
+def test_full_tier_incomplete_findings_rejected_when_tasks_complete(tmp_path):
+    change = tmp_path / "change-full-incomplete"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: full
+- status: enabled
+- reason: 引入新协议。
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - 业界调研尚未完成。
+- design impact:
+  - The change records a mechanical gate.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    errors = check_change(change)
+    assert any("findings" in e and "尚未完成" in e for e in errors)
+
+
+def test_full_tier_status_disabled_rejected_when_tasks_complete(tmp_path):
+    change = tmp_path / "change-full-disabled"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: full
+- status: disabled
+- reason: 调研在途。
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, ALL_TASKS_CHECKED)
+
+    errors = check_change(change)
+    assert any("status" in e and "disabled" in e for e in errors)
+
+
+def test_full_tier_status_disabled_allowed_in_proposal_phase(tmp_path):
+    change = tmp_path / "change-full-disabled-proposal"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: full
+- status: disabled
+- reason: 调研在途。
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - 业界调研尚未完成。
+- design impact:
+  - The change records a mechanical gate.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 规格\n\n- [x] 1.1 完成。\n- [ ] 1.2 未完成。\n"
+        "- [x] 开发前使用等价设计追问。\n",
+    )
+
+    assert check_change(change) == []
+
+
+def test_structure_gate_only_when_tasks_not_complete(tmp_path):
+    """阶段感知：tasks 未全勾时不触发 full/light 内容门槛。"""
+    change = tmp_path / "change-stage-aware"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- research_tier: full
+- status: disabled
+- reason: 调研在途。
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - 业界调研尚未完成。
+- design impact:
+  - The change records a mechanical gate.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(
+        change,
+        "## 1. 规格\n\n- [x] 1.1 完成。\n- [ ] 1.2 未完成。\n"
+        "- [x] 开发前使用等价设计追问。\n",
+    )
+
+    assert check_change(change) == []
+
+
+def test_active_change_without_tier_reports_clear_error(tmp_path):
+    """2.6 存量非 docs change 缺 research_tier → 结构门槛报错信息清晰可修。"""
+    change = tmp_path / "legacy-change"
+    write_change(
+        change,
+        proposal_for("process", reference_research=False)
+        + """## Reference Implementation Research
+
+- status: enabled
+- reason: Reference implementations are relevant.
+- research questions:
+  - Which patterns are reusable?
+- findings:
+  - Comparable repositories use documented gates.
+- design impact:
+  - The change records a mechanical gate.
+""",
+        design=VALID_DESIGN,
+    )
+    write_tasks(change, "## 1. 规格\n\n- [ ] 1.1 完成。\n")
+
+    errors = check_change(change)
+    assert any("must declare `research_tier: full|light|exempt`" in e for e in errors)
 
 
 def test_design_change_requires_preimplementation_review_section(tmp_path):
@@ -1313,3 +1704,141 @@ def test_verify_review_manifest_archived_path(tmp_path):
     (archive / "tasks.md").write_text("- [x] task\n- [x] another\n", encoding="utf-8")
     errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
     assert any("tasks hash mismatch" in e for e in errors)
+
+
+# ── workflow-state.json 投影一致性 + 归档可投影（flow-event-projection P1）──
+
+
+def _seed_gen2_projection(change: Path, *, tamper: bool = False) -> None:
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {
+            "schema": "workflow-event/v1",
+            "seq": 1,
+            "event_type": "change_created",
+            "change_id": change.name,
+        },
+        {
+            "schema": "workflow-event/v1",
+            "seq": 2,
+            "event_type": "backlog_updated",
+            "change_id": change.name,
+            "artifact_path": "docs/x.md",
+        },
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    ws = {
+        "schema": "workflow-state/v1",
+        "change_id": change.name,
+        "state": {"phase": "planning", "sub_state": "exploring"},
+        "milestones": [],
+        "source_event_seq": 2,
+    }
+    if tamper:
+        ws["state"] = {"phase": "building", "sub_state": "writing_tests"}
+    (change / "workflow-state.json").write_text(
+        json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    # flow status 会同步映射写 handoff.json
+    handoff = {
+        "schema_version": "1.0",
+        "change_id": change.name,
+        "state": ws["state"],
+        "transitions": [],
+    }
+    (change / "handoff.json").write_text(
+        json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_check_handoff_json_rejects_gen2_projection_mismatch(tmp_path):
+    from scripts.check_openspec_artifacts import _check_handoff_json
+
+    change = tmp_path / "openspec" / "changes" / "projected-change"
+    _seed_gen2_projection(change, tamper=True)
+
+    errors = _check_handoff_json(change)
+
+    assert any("workflow-state.json projection does not match workflow-events.jsonl" in e for e in errors)
+
+
+def test_check_handoff_json_passes_gen2_projection(tmp_path):
+    from scripts.check_openspec_artifacts import _check_handoff_json
+
+    change = tmp_path / "openspec" / "changes" / "projected-change"
+    _seed_gen2_projection(change)
+
+    assert _check_handoff_json(change) == []
+
+
+def test_check_handoff_json_gen2_without_disk_projection_passes(tmp_path):
+    """gen-2 change 未跑过 flow status（无 workflow-state.json）→ 不报错（可投影即通过）。"""
+    from scripts.check_openspec_artifacts import _check_handoff_json
+
+    change = tmp_path / "openspec" / "changes" / "no-projection"
+    change.mkdir(parents=True, exist_ok=True)
+    (change / "workflow-events.jsonl").write_text(
+        json.dumps(
+            {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "no-projection"},
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert _check_handoff_json(change) == []
+
+
+def test_check_archived_projectable_passes_with_recognized_types(tmp_path):
+    from scripts.check_openspec_artifacts import _check_archived_projectable
+
+    change = tmp_path / "openspec" / "changes" / "archive" / "2026-08-09-web-multi-session-entry"
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "web-multi-session-entry"},
+        {"schema": "workflow-event/v1", "seq": 2, "event_type": "backlog_updated", "change_id": "web-multi-session-entry", "artifact_path": "docs/x.md"},
+        {"schema": "workflow-event/v1", "seq": 3, "event_type": "grill_completed", "change_id": "web-multi-session-entry"},
+        {"schema": "workflow-event/v1", "seq": 4, "event_type": "change_archived", "change_id": "web-multi-session-entry", "artifact_path": "openspec/changes/archive/x"},
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+    assert _check_archived_projectable(change) == []
+
+
+def test_check_archived_projectable_rejects_unknown_event(tmp_path):
+    from scripts.check_openspec_artifacts import _check_archived_projectable
+
+    change = tmp_path / "openspec" / "changes" / "archive" / "2026-08-09-broken"
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "broken"},
+        {"schema": "workflow-event/v1", "seq": 2, "event_type": "mystery_event", "change_id": "broken"},
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+    errors = _check_archived_projectable(change)
+
+    assert any("不可投影" in e for e in errors)
+
+
+def test_check_archived_no_seed_projectable(tmp_path):
+    """gen-0 归档（backlog_updated 开头，无 seed）→ 结构合法即可投影，不抛错。"""
+    from scripts.check_openspec_artifacts import _check_archived_projectable
+
+    change = tmp_path / "openspec" / "changes" / "archive" / "2026-08-01-gen0"
+    change.mkdir(parents=True, exist_ok=True)
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "gen0", "artifact_path": "docs/x.md"},
+        {"schema": "workflow-event/v1", "seq": 2, "event_type": "current_spec_synced", "change_id": "gen0", "artifact_path": "openspec/specs/x.md"},
+    ]
+    with (change / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+    assert _check_archived_projectable(change) == []

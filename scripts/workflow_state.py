@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Workflow state management CLI — discover, inspect, advance, approve, spawn.
+"""Workflow state management CLI — discover, inspect, flow, spawn.
 
 Usage:
     uv run python scripts/workflow_state.py discover
@@ -8,8 +8,11 @@ Usage:
     uv run python scripts/workflow_state.py enable --reconcile-change <id>
     uv run python scripts/workflow_state.py resume-audit
     uv run python scripts/workflow_state.py current --change <id>
-    uv run python scripts/workflow_state.py advance --change <id> --to <sub_state>
-    uv run python scripts/workflow_state.py approve --change <id> --phase <phase>
+    uv run python scripts/workflow_state.py flow status [--change <id>|--all]
+    uv run python scripts/workflow_state.py flow block --change <id> --awaiting <type>
+    uv run python scripts/workflow_state.py flow confirm --change <id>
+    uv run python scripts/workflow_state.py flow approve --change <id> --phase <phase>
+    uv run python scripts/workflow_state.py flow advance --change <id> --to <sub_state>
     uv run python scripts/workflow_state.py artifact-event --change <id> --event-type <type> ...
     uv run python scripts/workflow_state.py review-manifest --change <id> --phase <phase> ...
     uv run python scripts/workflow_state.py validate --change <id>
@@ -36,13 +39,25 @@ from agent.workflow.models import (  # noqa: E402
     PHASE_TO_ROLE,
     GATE_SUB_STATE,
     WORKTREE_REQUIRED_PHASES,
+    StateSnapshot,
 )
 from agent.workflow.manager import WorkflowManager  # noqa: E402
 from agent.workflow.event_log import (  # noqa: E402
+    AWAITING_SUB_STATES,
     ALLOWED_PROTECTED_ARTIFACT_EVENT_TYPES,
+    DEFAULT_SEED_STATE,
+    _read_events,
+    append_blocked_event,
     append_protected_artifact_event,
+    append_transition_event,
+    append_unblocked_event,
     append_wayfinding_children_event,
+    event_log_path,
+    is_awaiting_state,
+    project_workflow_state,
     replay_handoff_projection,
+    verify_projection,
+    workflow_state_path,
     write_init_event,
 )
 from agent.workflow.review_manifest import write_review_manifest  # noqa: E402
@@ -52,7 +67,12 @@ from agent.workflow.resume_audit import (  # noqa: E402
     run_resume_audit,
     write_resume_baseline,
 )
-from agent.workflow.state_machine import StateMachineError, init_handoff_json  # noqa: E402
+from agent.workflow.state_machine import (  # noqa: E402
+    CROSS_PHASE_FORWARD,
+    StateMachineError,
+    init_handoff_json,
+    validate_transition,
+)
 
 METHODS_PATH = _SCRIPT_DIR / "workflow_methods.json"
 
@@ -171,12 +191,23 @@ def _method_review_dims(phase: str, sub_state: str) -> list[str]:
 # ── Helpers ──
 
 def _all_change_ids(root: Path = CHANGES_ROOT) -> list[str]:
+    """List active change ids: handoff.json 或 workflow-state.json 或 workflow-events.jsonl。
+
+    代码层修正 6：原实现只列「有 handoff.json」的目录，当代 change（change_created 开头、
+    无 handoff.json）会被 flow status --all / discover 漏掉。
+    """
     if not root.exists():
         return []
     return sorted(
         d.name
         for d in root.iterdir()
-        if d.is_dir() and d.name != "archive" and (d / "handoff.json").exists()
+        if d.is_dir()
+        and d.name != "archive"
+        and (
+            (d / "handoff.json").exists()
+            or (d / "workflow-state.json").exists()
+            or (d / "workflow-events.jsonl").exists()
+        )
     )
 
 
@@ -408,7 +439,7 @@ def _cmd_discover_json(
             check_cmd = f"python3 scripts/check_phase_done.py --phase {phase} --change {cid}"
             change_info["gate_check"] = {
                 "command": check_cmd,
-                "approve_command": f"python3 scripts/workflow_state.py approve --change {cid} --phase {phase}",
+                "approve_command": f"python3 scripts/workflow_state.py flow approve --change {cid} --phase {phase}",
             }
 
         if phase == "wayfinding" and sub == "map_cleared":
@@ -514,67 +545,132 @@ def cmd_current(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_advance(args: argparse.Namespace) -> int:
-    if not is_workflow_enabled(_PROJECT_ROOT):
-        print("错误：workflow 已在 workflow_methods.json 中禁用，advance 不可用", file=sys.stderr)
+def cmd_flow_status(args: argparse.Namespace) -> int:
+    if args.all:
+        result: dict = {}
+        had_error = 0
+        for cid in _all_change_ids():
+            projection, error = _flow_status_projection(cid)
+            if error:
+                result[cid] = {"error": error}
+                had_error = 1
+            else:
+                result[cid] = projection
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return had_error
+    if not args.change:
+        print("错误：flow status 需要 --change <id> 或 --all", file=sys.stderr)
         return 1
-    change_dir = CHANGES_ROOT / args.change
-    if not (change_dir / "handoff.json").exists():
-        print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
+    projection, error = _flow_status_projection(args.change)
+    if error:
+        print(error, file=sys.stderr)
         return 1
-
-    mgr = WorkflowManager(change_dir, repo_root=Path.cwd())
-    mgr.load()
-    from_phase = mgr.current_phase
-    from_sub = mgr.current_sub_state
-
-    try:
-        if mgr.is_at_gate:
-            print(
-                "错误：当前位于 ready_for_review gate；请使用 approve 命令记录人工批准并跨阶段推进",
-                file=sys.stderr,
-            )
-            return 1
-        if args.to_phase:
-            print("错误：advance 不再支持跨阶段推进；请使用 approve", file=sys.stderr)
-            return 1
-        snap = mgr.advance_sub_state(args.to, actor_id="workflow_state.py")
-    except StateMachineError as exc:
-        print(f"错误：{exc}", file=sys.stderr)
-        return 1
-
-    to_state = snap["state"]
-    print(
-        f"已推进: {from_phase}.{from_sub} → "
-        f"{to_state['phase']}.{to_state.get('sub_state')}  (trigger: auto)"
-    )
+    print(json.dumps(projection, indent=2, ensure_ascii=False))
     return 0
 
 
-def cmd_approve(args: argparse.Namespace) -> int:
-    if not is_workflow_enabled(_PROJECT_ROOT):
-        print("错误：workflow 已在 workflow_methods.json 中禁用，approve 不可用", file=sys.stderr)
+def cmd_flow_block(args: argparse.Namespace) -> int:
+    change_dir = _flow_require_change(args.change)
+    if change_dir is None:
         return 1
-    change_dir = CHANGES_ROOT / args.change
-    if not (change_dir / "handoff.json").exists():
-        print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
+    if args.awaiting not in AWAITING_SUB_STATES:
+        print(f"错误：--awaiting 必须是 {', '.join(AWAITING_SUB_STATES)}", file=sys.stderr)
         return 1
+    try:
+        projection = project_workflow_state(change_dir)
+    except StateMachineError as exc:
+        print(f"错误：事件不完整，检查 seq（{exc}）", file=sys.stderr)
+        return 1
+    current = projection["state"]
+    if current.get("phase") == "blocked":
+        print(f"错误：change 已处于 blocked/awaiting 态（{current['phase']}.{current.get('sub_state')}）", file=sys.stderr)
+        return 1
+    now = datetime.now(timezone.utc).isoformat()
+    transition = {
+        "from": current,
+        "to": {"phase": "blocked", "sub_state": args.awaiting},
+        "trigger": "auto",
+        "actor_type": "human",
+        "actor_id": "flow",
+        "timestamp": now,
+    }
+    blocker = {"blocked_from": current, "reason": args.awaiting, "blocked_at": now}
+    try:
+        validate_transition(
+            StateSnapshot(phase=current["phase"], sub_state=current.get("sub_state")),
+            StateSnapshot(phase="blocked", sub_state=args.awaiting),
+            "auto",
+        )
+        append_blocked_event(change_dir, args.change, transition, blocker)
+    except StateMachineError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 1
+    _flow_refresh_after_event(change_dir)
+    print(f"已进入 awaiting: {args.change} → blocked.{args.awaiting}")
+    return 0
 
-    mgr = WorkflowManager(change_dir, repo_root=Path.cwd())
-    mgr.load()
-    if mgr.current_phase != args.phase:
-        print(f"错误：期望 phase={args.phase}，实际={mgr.current_phase}", file=sys.stderr)
-        return 1
-    if not mgr.is_at_gate:
-        print("错误：approval only allowed at gate (ready_for_review)", file=sys.stderr)
-        return 1
 
+def cmd_flow_confirm(args: argparse.Namespace) -> int:
+    change_dir = _flow_require_change(args.change)
+    if change_dir is None:
+        return 1
+    try:
+        projection = project_workflow_state(change_dir)
+    except StateMachineError as exc:
+        print(f"错误：事件不完整，检查 seq（{exc}）", file=sys.stderr)
+        return 1
+    current = projection["state"]
+    if not is_awaiting_state(current):
+        print(
+            f"错误：change '{args.change}' 不在 awaiting 态（当前 {current['phase']}.{current.get('sub_state')}）",
+            file=sys.stderr,
+        )
+        return 1
+    awaiting = current["sub_state"]
+    recovery = _awaiting_recovery_target(change_dir, awaiting, current)
+    now = datetime.now(timezone.utc).isoformat()
+    transition = {
+        "from": current,
+        "to": recovery,
+        "trigger": "auto",
+        "actor_type": "human",
+        "actor_id": "flow",
+        "timestamp": now,
+    }
+    blocker = {"blocked_from": recovery, "reason": awaiting, "blocked_at": now}
+    try:
+        append_unblocked_event(change_dir, args.change, transition, 0, blocker)
+    except StateMachineError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 1
+    _flow_refresh_after_event(change_dir)
+    print(f"已确认解除 awaiting: {args.change} → {recovery['phase']}.{recovery.get('sub_state')}")
+    return 0
+
+
+def cmd_flow_approve(args: argparse.Namespace) -> int:
+    change_dir = _flow_require_change(args.change)
+    if change_dir is None:
+        return 1
+    try:
+        projection = project_workflow_state(change_dir)
+    except StateMachineError as exc:
+        print(f"错误：事件不完整，检查 seq（{exc}）", file=sys.stderr)
+        return 1
+    current = projection["state"]
+    phase = args.phase
+    if current.get("phase") != phase or current.get("sub_state") != GATE_SUB_STATE:
+        print(
+            f"错误：期望 gate {phase}.{GATE_SUB_STATE}，实际 {current.get('phase')}.{current.get('sub_state')}",
+            file=sys.stderr,
+        )
+        return 1
     check = subprocess.run(
         [
             sys.executable,
             str(_SCRIPT_DIR / "check_phase_done.py"),
             "--phase",
-            args.phase,
+            phase,
             "--change",
             args.change,
         ],
@@ -587,35 +683,193 @@ def cmd_approve(args: argparse.Namespace) -> int:
         print(f"错误：phase 机械检查未通过，拒绝批准\n{output}", file=sys.stderr)
         return 1
 
+    targets = CROSS_PHASE_FORWARD.get((phase, GATE_SUB_STATE), [])
+    if not targets:
+        print(f"错误：phase '{phase}' 无跨阶段推进目标", file=sys.stderr)
+        return 1
+    target_phase, target_sub = targets[0]
+    now = datetime.now(timezone.utc).isoformat()
+    transition = {
+        "from": current,
+        "to": {"phase": target_phase, "sub_state": target_sub},
+        "trigger": "human_review",
+        "actor_type": "human",
+        "actor_id": args.who or "human",
+        "timestamp": now,
+    }
     try:
-        snap = mgr.human_approve(args.who or "human", args.notes)
+        validate_transition(
+            StateSnapshot(phase=phase, sub_state=GATE_SUB_STATE),
+            StateSnapshot(phase=target_phase, sub_state=target_sub),
+            "human_review",
+        )
+        append_transition_event(change_dir, args.change, transition)
     except StateMachineError as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
-
-    approval_dir = HANDOFF_DIR / args.change
-    approval_dir.mkdir(parents=True, exist_ok=True)
-    approvals_path = approval_dir / "gate-approvals.json"
-    existing: list[dict] = []
-    if approvals_path.exists():
-        existing = json.loads(approvals_path.read_text(encoding="utf-8"))
-
-    now = datetime.now(timezone.utc).isoformat()
-    entry = {
-        "phase": args.phase,
-        "approved_at": now,
-        "approved_by": args.who or "human",
-        "notes": args.notes or "",
-    }
-    existing.append(entry)
-
-    with open(str(approvals_path) + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(existing, f, indent=2, ensure_ascii=False)
-    Path(str(approvals_path) + ".tmp").replace(approvals_path)
-
-    state = snap["state"]
-    print(f"已批准并推进: {args.change} / {args.phase} → {state['phase']}.{state.get('sub_state')}")
+    _flow_refresh_after_event(change_dir)
+    print(f"已批准并推进: {args.change} / {phase} → {target_phase}.{target_sub}")
     return 0
+
+
+def cmd_flow_advance(args: argparse.Namespace) -> int:
+    change_dir = _flow_require_change(args.change)
+    if change_dir is None:
+        return 1
+    try:
+        projection = project_workflow_state(change_dir)
+    except StateMachineError as exc:
+        print(f"错误：事件不完整，检查 seq（{exc}）", file=sys.stderr)
+        return 1
+    current = projection["state"]
+    if current.get("phase") == "blocked":
+        print("错误：blocked/awaiting 态不能 advance", file=sys.stderr)
+        return 1
+    phase = current["phase"]
+    now = datetime.now(timezone.utc).isoformat()
+    transition = {
+        "from": current,
+        "to": {"phase": phase, "sub_state": args.to},
+        "trigger": "auto",
+        "actor_type": "agent",
+        "actor_id": "flow",
+        "timestamp": now,
+    }
+    try:
+        validate_transition(
+            StateSnapshot(phase=phase, sub_state=current.get("sub_state")),
+            StateSnapshot(phase=phase, sub_state=args.to),
+            "auto",
+        )
+        append_transition_event(change_dir, args.change, transition)
+    except StateMachineError as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 1
+    _flow_refresh_after_event(change_dir)
+    print(f"已推进: {args.change} → {phase}.{args.to}")
+    return 0
+
+
+# ── flow 命令组 helpers ───────────────────────────────────────────────
+
+_AWAITING_RECOVERY_DEFAULTS: dict[str, dict] = {
+    "awaiting_proposal_confirmation": {"phase": "planning", "sub_state": "writing_design"},
+    "awaiting_human_review": {"phase": "planning", "sub_state": "reviewing_artifacts"},
+    "awaiting_user_confirmation": {"phase": "planning", "sub_state": "writing_design"},
+}
+
+
+def _flow_require_change(change_id: str) -> Path | None:
+    change_dir = CHANGES_ROOT / change_id
+    if not change_dir.exists():
+        print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
+        return None
+    if not (change_dir / "workflow-events.jsonl").exists():
+        print(f"错误：change '{change_id}' 没有 workflow-events.jsonl", file=sys.stderr)
+        return None
+    return change_dir
+
+
+def _flow_is_gen1(change_dir: Path) -> bool:
+    """True 当事件日志首事件为 initialized（老世代，handoff.json 驱动）。"""
+    events_path = event_log_path(change_dir)
+    if not events_path.exists():
+        return False
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            return json.loads(stripped).get("event_type") == "initialized"
+        except json.JSONDecodeError:
+            return False
+    return False
+
+
+def _flow_resolve_change_dir(change_id: str) -> Path | None:
+    """解析 change 目录：active 目录优先；归档目录（openspec/changes/archive/<date>-<id>）只读可查。"""
+    change_dir = CHANGES_ROOT / change_id
+    if change_dir.exists():
+        return change_dir
+    archive_dir = CHANGES_ROOT / "archive" / change_id
+    if archive_dir.exists():
+        return archive_dir
+    return None
+
+
+def _flow_status_projection(change_id: str) -> tuple[dict | None, str | None]:
+    """投影 + 自愈重建（Q3/Q6）：投影缺失/损坏/stale 时用事件 replay 重建并落盘。"""
+    change_dir = _flow_resolve_change_dir(change_id)
+    if change_dir is None:
+        return None, f"错误：change '{change_id}' 不存在"
+    events_path = event_log_path(change_dir)
+    if not events_path.exists():
+        return None, f"错误：change '{change_id}' 没有 workflow-events.jsonl"
+    try:
+        projection = project_workflow_state(change_dir)
+    except StateMachineError as exc:
+        return None, f"错误：事件不完整，检查 seq（{exc}）"
+    is_archived = "archive" in change_dir.parts
+    if _flow_is_gen1(change_dir) or is_archived:
+        # 老世代/归档：handoff.json 即投影，只读不落盘 workflow-state.json（Q13）
+        return {**projection, "stale": False}, None
+    stale = False
+    ws_path = workflow_state_path(change_dir)
+    if ws_path.exists():
+        try:
+            disk = json.loads(ws_path.read_text(encoding="utf-8"))
+        except Exception:
+            disk = None
+        if disk != projection:
+            stale = True
+    else:
+        stale = True
+    if stale:
+        # 自愈重建：写新鲜投影 + 同步映射 handoff.json
+        _refresh_workflow_state(change_dir, projection)
+    return {**projection, "stale": stale}, None
+
+
+def _awaiting_recovery_target(change_dir: Path, awaiting: str, current_state: dict) -> dict:
+    """confirm 恢复目标：优先最后 blocked_entered 的 transition.from，否则按 awaiting 类型默认。"""
+    try:
+        events = _read_events(event_log_path(change_dir))
+    except StateMachineError:
+        events = []
+    for event in reversed(events):
+        if event.get("event_type") == "blocked_entered":
+            trans = event.get("transition", {})
+            if trans.get("from"):
+                return trans["from"]
+    return _AWAITING_RECOVERY_DEFAULTS.get(awaiting, DEFAULT_SEED_STATE)
+
+
+def _flow_refresh_after_event(change_dir: Path) -> None:
+    """写事件后刷新投影：gen-1 同步 handoff.json，gen-2 写 workflow-state.json + 映射 handoff。"""
+    if _flow_is_gen1(change_dir):
+        try:
+            _save_handoff(change_dir.name, replay_handoff_projection(change_dir))
+        except StateMachineError as exc:
+            print(f"错误：handoff.json 同步失败：{exc}", file=sys.stderr)
+    else:
+        _refresh_workflow_state(change_dir)
+
+
+def _refresh_workflow_state(change_dir: Path, projection: dict | None = None) -> None:
+    """写 workflow-state.json + 同步映射 handoff.json（代码层修正 5/6）。"""
+    if projection is None:
+        try:
+            projection = project_workflow_state(change_dir)
+        except StateMachineError:
+            return
+    _atomic_write_json(workflow_state_path(change_dir), projection)
+    handoff = {
+        "schema_version": "1.0",
+        "change_id": projection["change_id"],
+        "state": projection["state"],
+        "transitions": [],
+    }
+    _atomic_write_json(change_dir / "handoff.json", handoff)
 
 
 def cmd_spawn(args: argparse.Namespace) -> int:
@@ -772,6 +1026,135 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+# ── policy-*（flow-policy-source P0 单一策略源合法更新通道）────────────
+
+_POLICY_PATH = _SCRIPT_DIR / "flow-policy.json"
+
+
+def _read_policy() -> dict | None:
+    try:
+        data = json.loads(_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def cmd_policy_show(args: argparse.Namespace) -> int:
+    data = _read_policy()
+    if data is None:
+        print(f"错误：{_POLICY_PATH} 缺失或不是合法 JSON", file=sys.stderr)
+        return 1
+    rules = data.get("protected_paths", [])
+    print(f"{'path':<45} {'match_type':<10} {'governance':<18} event_types")
+    print("-" * 100)
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        et = ",".join(r.get("event_types", []) or []) or "-"
+        print(
+            f"{r.get('path',''):<45} {r.get('match_type',''):<10} "
+            f"{r.get('governance',''):<18} {et}"
+        )
+    print(f"\n共 {len(rules)} 条受保护路径规则（phases/review agent schema 见 flow-policy.json）")
+    return 0
+
+
+def cmd_policy_validate(args: argparse.Namespace) -> int:
+    import scripts.check_openspec_artifacts as checker
+    import scripts.workflow_guard as guard
+
+    errors: list[str] = []
+
+    data = _read_policy()
+    if data is None:
+        errors.append(f"{_POLICY_PATH} 缺失或不是合法 JSON")
+    try:
+        if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
+            errors.append("受保护路径规则表加载失败（event_explained 规则缺失 event_types 或结构非法）")
+    except RuntimeError as exc:
+        errors.append(f"受保护路径规则表 schema 非法: {exc}")
+    schema_errs = checker._validate_policy_agent_schema(_PROJECT_ROOT)
+    errors.extend(schema_errs)
+
+    # parity：磁盘表 event_explained 子集 == guard 内嵌默认表 event_explained 子集
+    if data is not None:
+        disk = {
+            (r.get("path"), r.get("match_type"), tuple(r.get("event_types", [])))
+            for r in data.get("protected_paths", [])
+            if isinstance(r, dict) and r.get("governance") == "event_explained"
+        }
+        default = {
+            (r.get("path"), r.get("match_type"), tuple(r.get("event_types", [])))
+            for r in guard._DEFAULT_PROTECTED_PATHS
+            if r.get("governance") == "event_explained"
+        }
+        if disk != default:
+            errors.append(
+                "磁盘策略表 event_explained 子集与 guard 内嵌默认表不一致（parity 漂移）——"
+                "请同步 scripts/workflow_guard.py 的 _DEFAULT_PROTECTED_PATHS"
+            )
+
+    if errors:
+        for e in errors:
+            print(f"FAIL: {e}", file=sys.stderr)
+        return 1
+    print("flow-policy.json 校验通过（schema 合法 + 与 guard 内嵌默认表 parity 一致）")
+    return 0
+
+
+def cmd_policy_set(args: argparse.Namespace) -> int:
+    import scripts.check_openspec_artifacts as checker
+
+    data = _read_policy()
+    if data is None:
+        print(f"错误：{_POLICY_PATH} 缺失或不是合法 JSON", file=sys.stderr)
+        return 1
+    rules = data.setdefault("protected_paths", [])
+    if not isinstance(rules, list):
+        print("错误：flow-policy.json 的 protected_paths 不是数组", file=sys.stderr)
+        return 1
+
+    if args.delete:
+        before = len(rules)
+        rules[:] = [r for r in rules if not (isinstance(r, dict) and r.get("path") == args.path)]
+        if len(rules) == before:
+            print(f"未找到要删除的规则: {args.path}", file=sys.stderr)
+            return 1
+        verb = "删除"
+    else:
+        if not args.match_type or not args.governance:
+            print("错误：--match-type 与 --governance 必填（--delete 时除外）", file=sys.stderr)
+            return 1
+        entry: dict = {"path": args.path, "match_type": args.match_type, "governance": args.governance}
+        if args.event_types:
+            entry["event_types"] = [t.strip() for t in args.event_types.split(",") if t.strip()]
+        for i, r in enumerate(rules):
+            if isinstance(r, dict) and r.get("path") == args.path:
+                rules[i] = entry
+                break
+        else:
+            rules.append(entry)
+        verb = "写入"
+
+    try:
+        if checker._load_protected_path_rules(_PROJECT_ROOT) is None:
+            print("错误：写入后策略规则表校验失败（请检查 match-type/governance/event-types）", file=sys.stderr)
+            return 1
+    except RuntimeError as exc:
+        print(f"错误：写入后策略规则表 schema 非法: {exc}", file=sys.stderr)
+        return 1
+
+    _atomic_write_json(_POLICY_PATH, data)
+    print(f"已{verb}策略规则: {args.path}（{_POLICY_PATH}）")
+    return 0
+
+
 # ── CLI ──
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -809,18 +1192,33 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--change", required=True)
     p.set_defaults(func=cmd_current)
 
-    p = sub.add_parser("advance", help="推进 change 的 sub_state")
-    p.add_argument("--change", required=True)
-    p.add_argument("--to", required=True, help="目标 sub_state")
-    p.add_argument("--to-phase", help="跨阶段推进时的目标 phase（只用于 Gate 审批后切换阶段）")
-    p.set_defaults(func=cmd_advance)
+    p = sub.add_parser("flow", help="flow 命令组：投影查询、等待态确认与阶段推进")
+    flow_sub = p.add_subparsers(dest="flow_command", required=True)
 
-    p = sub.add_parser("approve", help="记录人工 gate 批准")
-    p.add_argument("--change", required=True)
-    p.add_argument("--phase", required=True)
-    p.add_argument("--who")
-    p.add_argument("--notes")
-    p.set_defaults(func=cmd_approve)
+    p_status = flow_sub.add_parser("status", help="输出投影状态（唯一/默认 JSON）")
+    p_status.add_argument("--change", help="指定 change id")
+    p_status.add_argument("--all", action="store_true", help="所有 change")
+    p_status.set_defaults(func=cmd_flow_status)
+
+    p_block = flow_sub.add_parser("block", help="进入 awaiting 态（写 blocked_entered）")
+    p_block.add_argument("--change", required=True)
+    p_block.add_argument("--awaiting", required=True, choices=list(AWAITING_SUB_STATES))
+    p_block.set_defaults(func=cmd_flow_block)
+
+    p_confirm = flow_sub.add_parser("confirm", help="确认解除 awaiting（写 blocked_resolved）")
+    p_confirm.add_argument("--change", required=True)
+    p_confirm.set_defaults(func=cmd_flow_confirm)
+
+    p_approve = flow_sub.add_parser("approve", help="阶段通过（跨阶段推进，写 transition_applied）")
+    p_approve.add_argument("--change", required=True)
+    p_approve.add_argument("--phase", required=True)
+    p_approve.add_argument("--who")
+    p_approve.set_defaults(func=cmd_flow_approve)
+
+    p_advance = flow_sub.add_parser("advance", help="sub_state 推进（写 transition_applied）")
+    p_advance.add_argument("--change", required=True)
+    p_advance.add_argument("--to", required=True, help="目标 sub_state")
+    p_advance.set_defaults(func=cmd_flow_advance)
 
     p = sub.add_parser("validate", help="校验 handoff.json 结构")
     p.add_argument("--change", required=True)
@@ -851,6 +1249,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--head-sha")
     p.add_argument("--verdict", default="PASS", choices=["PASS"])
     p.set_defaults(func=cmd_review_manifest)
+
+    p = sub.add_parser("policy-show", help="展示 flow-policy.json 当前受保护路径规则")
+    p.set_defaults(func=cmd_policy_show)
+
+    p = sub.add_parser("policy-validate", help="校验 flow-policy.json（schema + 与 guard 内嵌默认表 parity）")
+    p.set_defaults(func=cmd_policy_validate)
+
+    p = sub.add_parser("policy-set", help="写入/删除 flow-policy.json 的单条受保护路径规则（原子写）")
+    p.add_argument("--path", required=True, help="受保护路径模式")
+    p.add_argument("--match-type", choices=["exact", "prefix", "contains"])
+    p.add_argument("--governance", choices=["guard_only", "event_explained", "manifest_verified", "cli_written"])
+    p.add_argument("--event-types", help="逗号分隔的事件类型列表（governance=event_explained 时必填）")
+    p.add_argument("--delete", action="store_true", help="删除该 path 的规则")
+    p.set_defaults(func=cmd_policy_set)
 
     return parser
 

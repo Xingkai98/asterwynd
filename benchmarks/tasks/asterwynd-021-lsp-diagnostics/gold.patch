@@ -1,45 +1,49 @@
-diff --git a/agent/example/__init__.py b/agent/example/__init__.py
-new file mode 100644
-index 0000000..e69de29
-diff --git a/agent/example/calculator.py b/agent/example/calculator.py
-new file mode 100644
-index 0000000..5305351
---- /dev/null
-+++ b/agent/example/calculator.py
-@@ -0,0 +1,7 @@
-+from __future__ import annotations
-+
-+
-+def calculate_total(items: list[int]) -> int:
-+    """Return the sum of all items, treating negative values as 0."""
-+    return sum(max(item, 0) for item in items)
-+
-+
-+def format_report(total: int) -> str:
-+    return f"Report total: {total}"
-diff --git a/tests/agent/example/__init__.py b/tests/agent/example/__init__.py
-new file mode 100644
-index 0000000..e69de29
-diff --git a/tests/agent/example/test_calculator.py b/tests/agent/example/test_calculator.py
-new file mode 100644
-index 0000000..1913a6f
---- /dev/null
-+++ b/tests/agent/example/test_calculator.py
-@@ -0,0 +1,17 @@
-+from __future__ import annotations
-+
-+from agent.example.calculator import calculate_total, format_report
-+
-+
-+def test_calculate_total_all_positive():
-+    assert calculate_total([1, 2, 3]) == 6
-+
-+
-+def test_calculate_total_with_negatives():
-+    assert calculate_total([1, -2, 3]) == 4
-+
-+
-+def test_format_report_returns_string():
-+    result = format_report(42)
-+    assert isinstance(result, str)
-+    assert "42" in result
+diff --git a/agent/tools/builtin/lsp.py b/agent/tools/builtin/lsp.py
+index 35320bc..34b08f7 100644
+--- a/agent/tools/builtin/lsp.py
++++ b/agent/tools/builtin/lsp.py
+@@ -327,12 +327,18 @@ class LspWorkspaceSymbolsTool(Tool):
+     name="LspDiagnostics",
+     description=(
+         "Get LSP diagnostics (errors, warnings) for a file. Returns one "
+-        "diagnostic per line: file:line:col [severity] message."
++        "diagnostic per line: file:line:col [severity] message. Pass "
++        "language to override suffix-based detection (e.g. for extensionless "
++        "files)."
+     ),
+     parameters={
+         "type": "object",
+         "properties": {
+             "path": {"type": "string", "description": "File path in the workspace"},
++            "language": {
++                "type": "string",
++                "description": "Optional language override (e.g. 'python')",
++            },
+         },
+         "required": ["path"],
+     },
+@@ -349,18 +355,18 @@ class LspDiagnosticsTool(Tool):
+         self.policy = policy or WorkspacePolicy()
+         self.lsp_manager = lsp_manager
+ 
+-    async def execute(self, path: str, **kwargs) -> str:
++    async def execute(self, path: str, language: str | None = None, **kwargs) -> str:
+         resolved, err = _resolve_and_check(path, self.policy)
+         if err is not None:
+             return err
+         assert resolved is not None
+ 
+-        language = _language_for(resolved)
+-        if self.lsp_manager is None or not self.lsp_manager.has_server_for(language or ""):
+-            return _format_no_server(language)
+-        client = self.lsp_manager.get_client_for_file(resolved, language or "")
++        resolved_language = _language_for(resolved) or language
++        if self.lsp_manager is None or not self.lsp_manager.has_server_for(resolved_language or ""):
++            return _format_no_server(resolved_language)
++        client = self.lsp_manager.get_client_for_file(resolved, resolved_language or "")
+         if client is None:
+-            return _format_no_server(language)
++            return _format_no_server(resolved_language)
+         try:
+             diagnostics = await client.diagnostics(resolved)
+         except LspClientError as exc:

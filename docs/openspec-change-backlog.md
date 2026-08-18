@@ -77,6 +77,18 @@
 
 - `add-worktree-tool`（issue #111）：对标 Claude Code EnterWorktree/ExitWorktree，把 worktree 隔离做成 agent 工具面能力（agent 运行时自主创建/进入/退出）。与外部编排层现有 worktree 机制（workflow 状态机 building 强制、benchmark runner、`--keep-worktrees`）并行共存，不改动编排层。主要影响 tool-system 与 workspace-safety。
 
+### 第十一批：评测升级系列（wayfinder map #144 决策落地）
+
+基于 wayfinder 地图 #144（Agent 评测升级）已完成的全部决策（G1 分层/G2 任务集/G3 指标/G4 落地形态/T1 协议/T2 叙事）拆解的系列 change。**串行主链 C1→C2→C3→C4**：C1/C2 共享 `adapters.py`（子集接入 vs f2p/p2p 保留）、C2/C3 共享 `statistics/compare` 需顺序；**C3/C4 在 C2 合入后并行**（C4 叙事引用 C3 协议与数字）。每 change 独立 worktree、`<change-id>/<YYYY-MM-DD>` 分支、各自 grill/review/archive。
+
+- `evaluation-task-spec`（issue #154）：**C1** 评测任务集组成与任务 schema 扩展（**已归档 2026-08-17**）。任务 schema 加 `scenario`×`difficulty` 双标签、能力层改套件级覆盖矩阵；任务集三来源（A 轨 20–24 存量重打标 + B 轨 12–16 新增 + Verified 50 子集）≈ 82–90；spec delta 落定评估升级完整规格（能力分层修订 + pass^k 改名 + M1–M11 Requirement，指标实现归 C2）。先行解锁 C2–C4。
+- `evaluation-metrics`（issue #157）：**C2** 评测指标层实现（**已合入归档 2026-08-17**）。实现 C1 已落 spec 的 M1–M11 Requirement 指标层：pass^k 聚合、cost@pass cache-aware（四档定价 + cache tokens 数据模型）、fault_owner 正交 + 交叉表、配对比较统计（per-task delta/差异 CI/win-rate）、f2p/p2p 保留、小 N 声明、采样显式化 CLI（--seeds/--temperature/--model-version）；清理 spec「实现归 C2」注记。依赖 C1；关联 follow-up #156（C3 前置 Verified 40 fixture）。
+- `evaluation-protocol-reporting`（issue #159）：**C3** 运行协议文档 + 结果页披露 + compare 增强（**已归档 2026-08-18**）。T1 协议转正 `docs/benchmark-run-protocol.md`；结果页渲染披露 9 项 + 能力覆盖矩阵（报告元组/污染注记/反作弊/fault_owner 交叉表/$/resolved-task/部分成功档/采样参数/小N/过程效率）；compare HTML 配对段 + 元数据；CLI `--budget-cap`/`--no-cap`/`--preflight`（per-round cap、truncated）；self_check 五门禁；spec 渲染边界注记→已实现。依赖 C2；关联 follow-up #156（C3 前置 Verified 40 fixture）。
+- `evaluation-narrative`（issue #160）：**C4** 面试叙事（**已归档 2026-08-17**）。T2 改动清单 + grill 实测落 Q13/W07/FINAL/resume/walkthrough-README 五份面试文档：现状口径修正（23→27、450+→~1997、Claw 重锚为统一 harness 口径）+ 升级叙事段（升级目标 ~90/pass^k/cost@pass/fault_owner/预算，双要素标注「当前已落 37」，标 C1–C3 实现中）。依赖 C3，与 C3 并行。
+- `evaluation-btrack-expansion`（issue #164）：**B 轨扩展（follow-up #156 后续项 2，已归档 2026-08-18）**。B 轨 5→12（新增 7 条：CP-1 工具装配链 / CP-2 statechart 新态 / CP-3 结果页 track 分组 / CP-4 SwebenchAdapter 合成回归 / LT-MEM-1 project scope 隔离 / LC-1 memory 注入归属拆分 / BF-1 绝对路径 shell 拦截修复），每任务 issue.md 不给路径 + 确定性 test_command + base 红/gold 绿红绿可复现；manifest coverage 登记 + `validate_coverage` per-track B 扩展；面试叙事数字校准 37→44（34 本地 = 22 A + 12 B）。任务集 37→44。依赖 C1（候选 OQ-B1）；与 `evaluation-verified-subset` 并行（manifest 只改 coverage 段）。
+
+- `evaluation-verified-subset`（issue #163）：**follow-up #156 后续项 1** Verified fixture 生成管线（**已归档 2026-08-18**）。接通 `swebench_subset build-subset` 管线：hf-mirror 实测生成 28 条新 Verified fixture，总计 38 条（10 既有 + 28 新）——flask 池 1 条/seaborn 池 2 条全被既有占用，轻量池上限即 28；difficulty 归一化（真实列值映射，17 easy/16 medium/5 hard）、validate 全过、L3 抽样自检 3 PASS（gitee 系）/github 系未自检（github 本机不可达）、manifest verified 摘要登记 + disclosure 披露段；review-loop Round 2 PASS。依赖 C1；与 `evaluation-btrack-expansion` 并行（manifest 只改 verified 段，错开合入）。
+
 ## 未实现队列
 
 ### 4. `add-minimal-tui-runtime-view`
@@ -117,8 +129,3 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-## 已完成待归档
-
-这些 change 的 tasks 已完成或实现已准备合入，但因明确阻塞暂时无法在同一个实现 PR 中归档，目录仍在 `openspec/changes/` 下。阻塞解除后应优先按项目流程归档到 `openspec/changes/archive/`。
-
-当前无。

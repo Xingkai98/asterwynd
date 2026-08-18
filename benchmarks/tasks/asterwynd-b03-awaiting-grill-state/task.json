@@ -1,0 +1,15 @@
+{
+  "id": "asterwynd-b03-awaiting-grill-state",
+  "repo": "local/asterwynd",
+  "base_commit": "597d12172f541bf2f588fb4e96b9c512d97e2498",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/test_declarative_flow_engine.py::TestE2eDemoIntegration::test_awaiting_grill_confirmation_wired_end_to_end",
+  "category": "flow",
+  "difficulty": "hard",
+  "scenario": "refactor",
+  "track": "B",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": "等待态在四层有镜像定义：状态机声明（statechart）+ event_log 的等待态镜像常量（flow block 校验来源）+ flow 命令的恢复默认值表（flow confirm 目标）+ parity 测试的精确集合断言。参照既有 awaiting_proposal_confirmation 的三层定义逐处复制。"
+}

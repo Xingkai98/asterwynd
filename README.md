@@ -33,7 +33,7 @@
 | **MCP Adapter** | 连接 stdio / Streamable HTTP MCP server，注册 MCP tools，并通过 `/mcp-prompt`、`/mcp-resource` 注入上下文 |
 | **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
 | **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
-| **Benchmark** | 34 个本地 coding-agent 任务、SWE-bench Docker harness 任务，以及 Claw-SWE-Bench 多 agent 对比入口 |
+| **Benchmark** | 34 个本地 coding-agent 任务（22 A 轨回归基线 + 12 B 轨当前演进）、SWE-bench Verified 精选子集（10 fixture，目标 50），以及 Claw-SWE-Bench 多 agent 对比入口 |
 
 ## 快速开始
 
@@ -175,7 +175,7 @@ agent/
     └── ...                  # 终端 UI 运行时视图
 
 benchmarks/                  # 本地 benchmark runner
-├── tasks/                   # 34 个编码任务（asterwynd-* + swebench-*）
+├── tasks/                   # 44 个编码任务（asterwynd-* 本地 + swebench-* Verified 子集）
 ├── runner.py                # BenchmarkRunner + SWE-bench 风格隔离
 ├── agent_runner.py          # AgentRunner（fake/shell/asterwynd 适配器）
 ├── models.py                # 失败分类 + 指标模型
@@ -370,7 +370,7 @@ ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real
 
 Asterwynd 当前有两条 benchmark 路径：
 
-- `benchmarks/`：项目内置 runner，用 34 个本地任务和少量 `swebench-*` 外部任务验证 Asterwynd 的 coding-agent 闭环。
+- `benchmarks/`：项目内置 runner，用 34 个本地任务（22 A 轨 + 12 B 轨）和 `swebench-*` Verified 子集（目标 50）验证 Asterwynd 的 coding-agent 闭环。
 - `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用同一批 SWE-bench Verified 实例对比 Asterwynd、Aider、OpenCode 等外部 coding agent。
 
 ### 快速验证（fake agent，确定性地）
@@ -425,7 +425,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ### 任务集
 
-34 个任务从项目 git 历史中提取，覆盖多个类别：
+27 个任务从项目 git 历史中提取，覆盖多个类别：
 
 | 类别 | 示例 |
 |------|------|

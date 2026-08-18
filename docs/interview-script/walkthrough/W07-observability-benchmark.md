@@ -1,6 +1,6 @@
 # W07 · 可观测体系 + Benchmark 评测闭环
 
-**对应简历 bullet 7**：*"建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；36+ 个 coding 任务（26 本地 + 10 SWE-bench 外部）在 git worktree 隔离执行，bootstrap 95% CI 统计，支持 SWE-bench 跨 Agent 对比和 CI 回归门禁"*
+**对应简历 bullet 7**：*"建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；44 个 coding 任务（34 本地 + 10 SWE-bench 外部）在 git worktree 隔离执行，bootstrap 95% CI 统计，支持 SWE-bench 跨 Agent 对比和 CI 回归门禁"*
 
 ## 代码入口
 
@@ -95,7 +95,7 @@ run_all(tasks) → asyncio.Semaphore(parallel) 限流
 | "TraceRecorder 全链轨迹记录" | trace_recorder.py 吻合 | ✅ |
 | "CostLedger 三层成本归因" | by_session/by_phase/by_tool | ✅ |
 | "ErrorClassifier 错误类型自动打标" | 4 类 + unknown，无数字 | ✅ |
-| "36+ 任务（26 本地 + 10 SWE-bench）" | 26 + 10 = 36 | ✅ |
+| "44 任务（34 本地 + 10 SWE-bench）" | 34 + 10 = 44 | ✅ |
 | "git worktree 隔离执行" | _create_worktree | ✅ |
 | "bootstrap 95% CI 统计" | bootstrap_ci | ✅ |
 | "SWE-bench 跨 Agent 对比" | compare.py + 多 runner | ✅ |
@@ -107,3 +107,7 @@ run_all(tasks) → asyncio.Semaphore(parallel) 限流
 2. **gate 的 epsilon + p95 绝对下限**——真实工程坑。
 3. **bootstrap 固定 seed 可复现**——统计严谨性。
 4. **ErrorClassifier 诚实边界**——"幻觉不自动分类，需 LLM judge"。
+5. **评测升级路线**（设计已定、C1–C3 实现中）：任务集从 44 扩到升级目标 ~90（A 轨 20–24 + B 轨 12–16 + Verified 50），按场景×难度分层（5 场景 × 3 档），补 context-planning 空白；指标加 pass^k（可靠性）与 cost@pass（$/resolved-task）。
+6. **SWE-bench 污染披露**：2026-02 OpenAI 弃用 Verified（138 题 59.4% 缺陷），我们引用时带披露，不当金标准——"知道 benchmark 的失效边界"本身是加分项。
+7. **反作弊诚实边界**：A 轨历史重建任务在完整 git 历史中跑，agent 理论上能看到后续提交——我们披露这一自评局限（回归基线定位），B 轨与 Verified 子集不受影响。
+8. **预算可配置可取消**（设计已定，C2/C3 交付）：`--budget-cap` 设上限、`--budget-cap 0` 取消（flag 当前代码库未实现），成本口径 cache-aware 四档——"跑评测不是无脑烧钱"。

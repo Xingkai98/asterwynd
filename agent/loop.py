@@ -551,7 +551,12 @@ class AgentLoop:
         resume_snapshot: SessionSnapshot | None = None,
     ) -> RunResult:
         tool_calls_made: list[ToolCallMade] = []
-        token_counters: dict[str, int] = {"input": 0, "output": 0}
+        token_counters: dict[str, int] = {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_creation": 0,
+        }
         start_iteration = 0
 
         if resume_snapshot is not None:
@@ -632,6 +637,8 @@ class AgentLoop:
             if response.usage:
                 token_counters["input"] += response.usage.input_tokens
                 token_counters["output"] += response.usage.output_tokens
+                token_counters["cache_read"] += response.usage.cache_read_input_tokens
+                token_counters["cache_creation"] += response.usage.cache_creation_input_tokens
                 if self.cost_ledger:
                     self.cost_ledger.record(
                         model=getattr(self.llm, "model", "unknown"),
@@ -683,6 +690,8 @@ class AgentLoop:
                     total_tokens=token_counters["input"] + token_counters["output"],
                     input_tokens=token_counters["input"],
                     output_tokens=token_counters["output"],
+                    cache_read_input_tokens=token_counters["cache_read"],
+                    cache_creation_input_tokens=token_counters["cache_creation"],
                 ))
                 if on_event:
                     await on_event("done", {
@@ -698,6 +707,8 @@ class AgentLoop:
                     total_tokens=token_counters["input"] + token_counters["output"],
                     input_tokens=token_counters["input"],
                     output_tokens=token_counters["output"],
+                    cache_read_input_tokens=token_counters["cache_read"],
+                    cache_creation_input_tokens=token_counters["cache_creation"],
                 )
 
             # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
@@ -967,6 +978,8 @@ class AgentLoop:
             total_tokens=token_counters["input"] + token_counters["output"],
             input_tokens=token_counters["input"],
             output_tokens=token_counters["output"],
+            cache_read_input_tokens=token_counters["cache_read"],
+            cache_creation_input_tokens=token_counters["cache_creation"],
         )
         await self.hooks.on_completion(result)
         if on_event:
