@@ -3,7 +3,7 @@
   "repo": "sympy/sympy",
   "base_commit": "d1320814eda6549996190618a21eaf212cfd4d1e",
   "problem_statement_file": "issue.md",
-  "test_command": "python -m pytest test_equality test_comparisons_with_unknown_type --tb=short -p no:warnings",
+  "test_command": "python -m pytest sympy/core/tests/test_basic.py -k 'test_equality or test_comparisons_with_unknown_type' --tb=short -p no:warnings",
   "timeout_seconds": 300,
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",

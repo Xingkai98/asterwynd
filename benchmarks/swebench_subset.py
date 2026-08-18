@@ -435,11 +435,19 @@ def cmd_build_subset(args) -> int:
         print("[known_bad] 未指定 --known-bad-file，接受空集（OQ-V4；坏实例靠 L2 兜底）")
 
     existing_ids = collect_existing_instance_ids(args.output)
-    if existing_ids:
-        print(f"[exclude] 选择池排除既有 {len(existing_ids)} 条 instance_id（OQ-V3）")
+
+    if args.resume:
+        # OQ-V3② 续跑语义：选择池含既有实例（确定性排序保证每次选中同一目标集），
+        # 落盘时跳过已存在目录 → 重复执行收敛到目标配比，不漂移、不覆盖既有。
+        exclude_ids: set[str] = set()
+        print(f"[resume] 选择池含既有 {len(existing_ids)} 条 instance_id（续跑收敛），落盘时跳过已存在目录")
+    else:
+        exclude_ids = existing_ids
+        if existing_ids:
+            print(f"[exclude] 选择池排除既有 {len(existing_ids)} 条 instance_id（OQ-V3）")
 
     plan = build_subset(
-        instances, targets=targets, known_bad=known_bad, exclude_ids=existing_ids
+        instances, targets=targets, known_bad=known_bad, exclude_ids=exclude_ids
     )
     print(f"[select] {plan.summary()}")
     if not plan.selected:
@@ -449,13 +457,13 @@ def cmd_build_subset(args) -> int:
     iids = [ex["instance_id"] for ex in plan.selected]
 
     if args.resume:
-        existing_dirs = {
-            p.parent.name[len("swebench-"):]
-            for p in Path(args.output).glob("swebench-*/task.json")
-        }
-        skip = [iid for iid in iids if iid in existing_dirs]
-        iids = [iid for iid in iids if iid not in existing_dirs]
-        print(f"[resume] 跳过已存在 {len(skip)} 条（续跑）：{sorted(skip)}")
+        skip = [
+            iid
+            for iid in iids
+            if (Path(args.output) / f"swebench-{iid}" / "task.json").exists()
+        ]
+        iids = [iid for iid in iids if iid not in skip]
+        print(f"[resume] 跳过已存在 {len(skip)} 条（续跑收敛）：{sorted(skip)}")
 
     print(f"[generate] 落盘 {len(iids)} 条 fixture 到 {args.output}")
     created = generate_tasks(iids, args.output, dataset=ds, repo_urls=GITEE_PREFERRED_URLS)

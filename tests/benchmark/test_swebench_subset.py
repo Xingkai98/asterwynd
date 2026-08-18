@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
@@ -279,7 +280,10 @@ def test_build_subset_cli_resume_skips_existing(tmp_path, monkeypatch):
         ]
     )
     assert rc == 0
-    # requests-0 已存在被跳过（未覆盖），其余 3 条生成
+    # 选择池含既有（续跑收敛）→ requests-0 被选中但落盘跳过（未被覆盖），其余 3 条生成
+    assert "test_command" not in json.loads(
+        (tmp_path / "swebench-psf__requests-0" / "task.json").read_text()
+    ), "requests-0 被 resume 覆盖写"
     assert (tmp_path / "swebench-psf__requests-1" / "task.json").exists()
     assert (tmp_path / "swebench-psf__requests-3" / "task.json").exists()
     assert validate_fixtures_dir(tmp_path) == []
@@ -322,6 +326,43 @@ def test_gold_check_external_repo_clones_applies_runs(monkeypatch, tmp_path):
     assert [c for c in git_cmds if "apply" in c]  # gold/test apply
     shell_runs = [(cmd, shell) for cmd, shell in calls if shell]
     assert shell_runs and "test_a" in shell_runs[0][0]
+
+
+def _pytest_node_args(cmd: str) -> list[str]:
+    """用 shlex 解析命令，返回 ``python -m pytest`` 之后的 node id 参数。
+
+    跳过 -k 表达式、-p 插件名与 flags（shlex 已合并引号内空格）。
+    """
+    import shlex
+
+    tokens = shlex.split(cmd)
+    try:
+        i = tokens.index("pytest") + 1
+    except ValueError:
+        return []
+    out: list[str] = []
+    while i < len(tokens):
+        t = tokens[i]
+        if t in {"-k", "-p"}:
+            i += 2
+            continue
+        if t.startswith("-"):
+            i += 1
+            continue
+        out.append(t)
+        i += 1
+    return out
+
+
+def test_generated_fixture_test_commands_have_no_bare_identifiers():
+    """Round 1 Issue 1 回归守卫：全部 38 条 fixture 的 test_command 不得含裸函数名。"""
+    bad = []
+    for task_json in sorted(Path("benchmarks/tasks").glob("swebench-*/task.json")):
+        task = json.loads(task_json.read_text())
+        for arg in _pytest_node_args(task["test_command"]):
+            if "." not in arg and "::" not in arg and "/" not in arg:
+                bad.append((task["instance_id"], arg))
+    assert bad == [], f"test_command 含裸函数名（评测假 PASS 风险）: {bad}"
 
 
 @pytest.mark.integration

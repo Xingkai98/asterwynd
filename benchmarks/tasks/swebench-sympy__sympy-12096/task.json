@@ -3,7 +3,7 @@
   "repo": "sympy/sympy",
   "base_commit": "d7c3045115693e887bcd03599b7ca4650ac5f2cb",
   "problem_statement_file": "issue.md",
-  "test_command": "python -m pytest test_issue_12092 --tb=short -p no:warnings",
+  "test_command": "python -m pytest sympy/utilities/tests/test_lambdify.py -k 'test_issue_12092' --tb=short -p no:warnings",
   "timeout_seconds": 300,
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",

@@ -3,7 +3,7 @@
   "repo": "sympy/sympy",
   "base_commit": "2dfa7457f20ee187fbb09b5b6a1631da4458388c",
   "problem_statement_file": "issue.md",
-  "test_command": "python -m pytest test_sparse_matrix --tb=short -p no:warnings",
+  "test_command": "python -m pytest sympy/matrices/tests/test_sparse.py -k 'test_sparse_matrix' --tb=short -p no:warnings",
   "timeout_seconds": 300,
   "gold_patch_file": "gold.patch",
   "test_patch_file": "test.patch",

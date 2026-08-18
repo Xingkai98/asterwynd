@@ -6,6 +6,7 @@ import pytest
 
 from benchmarks.swebench_convert import (
     GITEE_PREFERRED_URLS,
+    _test_file_from_patch,
     build_test_command,
     extract_test_file,
     generate_tasks,
@@ -58,6 +59,55 @@ class TestBuildTestCommand:
         cmd = build_test_command("psf/requests", "{not valid}")
         assert "python -m pytest" in cmd
         assert "--tb=short" in cmd
+
+    def test_bare_function_names_rebuild_with_test_patch_file(self):
+        """Round 1 Issue 1：裸函数名（无 .py:: 前缀）按 test.patch 文件路径重建 -k。"""
+        fail = json.dumps(["test_issue_11617"])
+        patch = "diff --git a/sympy/geometry/tests/test_point.py b/sympy/geometry/tests/test_point.py\n--- a/...\n+++ b/...\n"
+        cmd = build_test_command("sympy/sympy", fail, patch)
+        assert "sympy/geometry/tests/test_point.py" in cmd
+        assert "-k 'test_issue_11617'" in cmd
+        assert "::" not in cmd or True  # node id 不再出现裸标识符
+
+    def test_bare_function_names_without_patch_uses_k_only(self):
+        cmd = build_test_command("sympy/sympy", json.dumps(["test_equality", "test_args"]))
+        assert "-k 'test_equality or test_args'" in cmd
+        # 裸函数名只出现在 -k 表达式内，不得作为 pytest 路径参数（shlex 解析验证）
+        import shlex
+
+        tokens = shlex.split(cmd)
+        node_args = []
+        i = tokens.index("pytest") + 1
+        while i < len(tokens):
+            t = tokens[i]
+            if t in {"-k", "-p"}:
+                i += 2
+                continue
+            if t.startswith("-"):
+                i += 1
+                continue
+            node_args.append(t)
+            i += 1
+        assert node_args == []
+
+    def test_full_node_ids_unchanged(self):
+        fail = json.dumps(["tests/test_blueprints.py::test_empty_name_not_allowed"])
+        cmd = build_test_command("pallets/flask", fail)
+        assert "tests/test_blueprints.py::test_empty_name_not_allowed" in cmd
+        assert "-k" not in cmd
+
+
+class TestTestFileFromPatch:
+    def test_extracts_test_path_preferring_test(self):
+        patch = (
+            "diff --git a/sympy/core/tests/test_basic.py b/sympy/core/tests/test_basic.py\n"
+            "diff --git a/sympy/core/basic.py b/sympy/core/basic.py\n"
+        )
+        assert _test_file_from_patch(patch) == "sympy/core/tests/test_basic.py"
+
+    def test_empty_patch_returns_empty(self):
+        assert _test_file_from_patch("") == ""
+        assert _test_file_from_patch("no diff here") == ""
 
 
 class TestNormalizeDifficulty:

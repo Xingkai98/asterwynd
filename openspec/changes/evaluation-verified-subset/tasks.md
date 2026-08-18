@@ -26,13 +26,22 @@
 
 ## 5. 同步与验证
 
-- [ ] 5.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`。
-- [ ] 5.2 维护 Reference Implementation Research 最终结论。
-- [ ] 5.3 更新 `docs/openspec-change-backlog.md`（#156 后续项 1 状态）。
-- [ ] 5.3b 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
-- [ ] 5.4 运行相关单元/集成测试与全量测试。
-- [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 5.6 跑通 benchmark smoke（fake runner 含新 swebench fixture 发现/加载）。
+- [x] 5.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`。
+- [x] 5.2 维护 Reference Implementation Research 最终结论。
+- [x] 5.3 更新 `docs/openspec-change-backlog.md`（#156 后续项 1 状态）。
+- [x] 5.3b 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
+- [x] 5.4 运行相关单元/集成测试与全量测试。
+- [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 5.6 跑通 benchmark smoke（fake runner 含新 swebench fixture 发现/加载）。
+
+## 审阅修复记录
+
+### Round 1（2026-08-18，verdict CHANGES_REQUESTED）
+
+- **Issue 1（major）裸函数名 test_command**：`build_test_command` 对 FAIL_TO_PASS 裸函数名（无 `.py::`，sympy 全 8 条）直接拼 shell，pytest 收集 0 项假 PASS。修复：`build_test_command(repo, fail_to_pass, test_patch)` 按 test.patch `diff --git a/<path>` 提取文件重建 `-k '<func> or ...'`；8 条 sympy fixture 用缓存数据集定向重生成；新增回归测试（裸函数名重建 + 全 fixture 无裸标识符守卫 `test_generated_fixture_test_commands_have_no_bare_identifiers`）。
+- **Issue 2（minor）`--resume` 死代码**：改为「续跑收敛」语义——`--resume` 时选择池含既有（确定性排序每次选中同一目标集）、落盘跳过已存在目录；测试强化为真正覆盖 resume 分支（断言 requests-0 不被覆盖）。
+- **Issue 3（minor）.gitignore**：新增 `.gold-check*` 忽略规则。
+- **Issue 4（minor）tasks 勾选口径**：5.3/5.3b 实际已执行，本节勾选。
 
 ## 6. 审阅与 PR 收尾
 

@@ -109,23 +109,60 @@ def extract_test_file(fail_to_pass: str) -> str:
     return ""
 
 
-def build_test_command(repo: str, fail_to_pass: str) -> str:
-    """Build a test command that runs only the FAIL_TO_PASS tests directly."""
-    test_file = extract_test_file(fail_to_pass)
+def _test_file_from_patch(test_patch: str) -> str:
+    """从 test.patch 的 diff 头提取测试文件路径（偏好含 'test' 的路径）。
+
+    数据集 FAIL_TO_PASS 可能存裸函数名（无 ``.py::`` 前缀，如 sympy 系），
+    需按 test.patch 修改的文件重建定位（Round 1 Issue 1）。
+    """
+    candidates: list[str] = []
+    for line in (test_patch or "").splitlines():
+        if line.startswith("diff --git a/"):
+            path = line.split(" b/", 1)[-1].strip()
+            if path and path not in candidates:
+                candidates.append(path)
+    if not candidates:
+        return ""
+    test_candidates = [p for p in candidates if "test" in p.lower()]
+    return test_candidates[0] if test_candidates else candidates[0]
+
+
+def build_test_command(repo: str, fail_to_pass: str, test_patch: str | None = None) -> str:
+    """Build a test command that runs only the FAIL_TO_PASS tests directly.
+
+    全 node id（含 ``.py::``）直接拼接；含裸函数名（无路径前缀）时按 test.patch
+    文件路径重建 ``-k`` 命令——否则 pytest 收集 0 项、评测假 PASS（Round 1 Issue 1）。
+    """
     try:
         tests = json.loads(fail_to_pass)
+        if not tests:
+            return "python -m pytest --tb=short -p no:warnings"
+        bare = [t for t in tests if "::" not in t and ".py" not in t]
+        if bare:
+            test_file = _test_file_from_patch(test_patch or "")
+            names: list[str] = []
+            for t in bare:
+                name = t.split("[")[0].split("::")[-1]
+                if name not in names:
+                    names.append(name)
+            # 函数名均为合法标识符，-k 表达式内无需引号，外层单引号包裹整体。
+            expr = " or ".join(names)
+            if test_file:
+                return f"python -m pytest {test_file} -k '{expr}' --tb=short -p no:warnings"
+            return f"python -m pytest -k '{expr}' --tb=short -p no:warnings"
         first_test = tests[0]
         # Control chars (actual \r\n) or literal escape sequences (\\r\\n)
         # can cause shell/pytest mismatch — use -k with function name instead
         if any(ord(c) < 32 for c in first_test) or "\\r" in first_test:
             func_name = first_test.split("[")[0].split("::")[-1]
+            test_file = extract_test_file(fail_to_pass)
             return f"python -m pytest {test_file} -k '{func_name}' --tb=short -p no:warnings"
         test_ids = " ".join(tests)
         return f"python -m pytest {test_ids} --tb=short -p no:warnings"
     except (json.JSONDecodeError, TypeError):
         pass
     # Fallback: run the whole file
-    return f"python -m pytest {test_file} --tb=short -p no:warnings"
+    return "python -m pytest --tb=short -p no:warnings"
 
 
 def generate_tasks(
@@ -163,7 +200,7 @@ def generate_tasks(
             print(f"WARNING: no URL mapping for {repo}, skipping {iid}")
             continue
 
-        test_command = build_test_command(repo, ex["FAIL_TO_PASS"])
+        test_command = build_test_command(repo, ex["FAIL_TO_PASS"], ex.get("test_patch", ""))
 
         task_dir = output_base / f"swebench-{iid}"
         task_dir.mkdir(parents=True, exist_ok=True)
