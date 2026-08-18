@@ -122,7 +122,7 @@ class SwebenchAdapter:
             / "logs"
             / "run_evaluation"
             / run_id
-            / model_name.replace("/", "__")
+            / model_name
             / (task.instance_id or "")
             / "report.json"
         )
