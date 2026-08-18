@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.cost_tracker import PRICING_TABLE_VERSION
 from agent.run_config import AgentRunConfig, parse_agent_mode
 from agent.run_identity import new_run_id as new_agent_run_id
 from agent.trace_recorder import TraceRecorder
@@ -40,6 +42,24 @@ class DockerPreflightResult:
     detail: str = ""
 
 
+# Harness report-tuple facts (C3): recorded into run.json so the result page
+# can render a complete, referenceable report tuple.
+HARNESS_ADAPTER_VERSION = "1"
+HARNESS_PROMPT_VERSION = "default"
+HARNESS_NETWORK = "on"
+
+
+def _task_set_hash(loaded_tasks: list) -> str:
+    """Deterministic hash over the task set (id + version) for version pinning."""
+    digest = hashlib.sha256()
+    for loaded in sorted(loaded_tasks, key=lambda lt: lt.task.id):
+        digest.update(loaded.task.id.encode())
+        digest.update(b"\x00")
+        digest.update(str(getattr(loaded.task, "version", "") or "").encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()[:12]
+
+
 class BenchmarkRunner:
     def __init__(
         self,
@@ -54,6 +74,9 @@ class BenchmarkRunner:
         clone_cache_dir: str | Path | None = None,
         temperature: float | None = None,
         model_version: str | None = None,
+        provider: str | None = None,
+        max_iterations: int | None = None,
+        timeout_seconds: int | None = None,
     ):
         self.agent_runner = agent_runner
         self.source_repo = Path(source_repo).resolve()
@@ -62,6 +85,9 @@ class BenchmarkRunner:
         self.model = model
         self.temperature = temperature
         self.model_version = model_version
+        self.provider = provider
+        self.max_iterations = max_iterations
+        self.timeout_seconds = timeout_seconds
         self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
         self.parallel = parallel
         self.keep_worktrees = keep_worktrees
@@ -198,6 +224,17 @@ class BenchmarkRunner:
             model_version=self.model_version,
             swebench_dataset_version=_dataset_version,
             swebench_package_version=_package_version,
+            # C3 report tuple: runner now fills the fields it knows so the
+            # result page renders a referenceable tuple instead of nulls.
+            task_set_hash=_task_set_hash(loaded_tasks),
+            max_iterations=self.max_iterations,
+            timeout_seconds=self.timeout_seconds,
+            network=HARNESS_NETWORK,
+            adapter_version=HARNESS_ADAPTER_VERSION,
+            prompt_version=HARNESS_PROMPT_VERSION,
+            pricing_table_version=PRICING_TABLE_VERSION,
+            provider=self.provider,
+            truncated=False,
         )
         metadata.write_json(run_dir / "run.json")
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")

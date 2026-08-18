@@ -14,12 +14,12 @@
 
 ## 3. 结果页披露渲染
 
-- [ ] 3.1 `report.py` 渲染报告元组（model/harness/task_set_hash/grader/成本口径，读 RunMetadata 新字段）。
-- [ ] 3.2 渲染 SWE-bench 污染注记（保留条件域）+ 反作弊泄漏披露（A 轨回归基线）。
-- [ ] 3.3 渲染 reason × fault_owner 交叉表 + $/resolved-task + cache hit rate + 定价表版本。
-- [ ] 3.4 渲染 f2p/p2p 部分成功档 + 采样参数 + 小样本声明 + 过程效率（10 项清单完整）。
-- [ ] 3.5 能力覆盖矩阵（C1 manifest）套件级展示。
-- [ ] 3.6 披露渲染 golden 片段测试（不含时间戳/路径）。
+- [x] 3.1 `report.py` 渲染报告元组（model/harness/task_set_hash/grader/成本口径，读 RunMetadata 新字段）。
+- [x] 3.2 渲染 SWE-bench 污染注记（保留条件域）+ 反作弊泄漏披露（A 轨回归基线）。
+- [x] 3.3 渲染 reason × fault_owner 交叉表 + $/resolved-task + cache hit rate + 定价表版本。
+- [x] 3.4 渲染 f2p/p2p 部分成功档 + 采样参数 + 小样本声明 + 过程效率（10 项清单完整）。
+- [x] 3.5 能力覆盖矩阵（C1 manifest）套件级展示。
+- [x] 3.6 披露渲染 golden 片段测试（不含时间戳/路径）。
 
 ## 4. compare 配对渲染
 

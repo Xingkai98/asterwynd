@@ -805,6 +805,9 @@ def benchmark(
         repeat=repeat,
         results=[r for rr in round_results for r in rr],
         run_ids=[m.run_id for m in rounds_meta],
+        metadata=rounds_meta,
+        run_dirs=[runs_dir / m.run_id for m in rounds_meta],
+        manifest=_load_manifest(tasks_dir),
     )
     report_path = runs_dir / "evaluation-report.md"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -844,6 +847,19 @@ def benchmark_annotate(
         json.dumps(data, indent=2, ensure_ascii=False) + "\n", errors="replace"
     )
     typer.echo(f"annotated {task_id}: fault_owner={owner}")
+
+
+def _load_manifest(tasks_dir: Path) -> dict | None:
+    """Load ``tasks_dir/manifest.json`` for disclosure rendering, if present."""
+    import json as _json
+
+    manifest_path = Path(tasks_dir) / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        return _json.loads(manifest_path.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def _build_benchmark_runner(
@@ -937,6 +953,9 @@ def _build_benchmark_runner(
         clone_cache_dir=clone_cache_dir,
         temperature=temperature,
         model_version=model_version,
+        provider=provider,
+        max_iterations=max_iterations,
+        timeout_seconds=config.benchmark.timeout_seconds,
     )
 
 

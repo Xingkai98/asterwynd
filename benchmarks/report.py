@@ -18,7 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.cost_tracker import compute_cost, format_cost
-from benchmarks.models import LAYERS, TaskResult, resolve_layer
+from benchmarks.disclosure import (
+    DisclosureContext,
+    html_disclosure_sections,
+    markdown_disclosure_sections,
+)
+from benchmarks.models import LAYERS, RunMetadata, TaskResult, resolve_layer
 from benchmarks.statistics import (
     bootstrap_ci,
     is_valid_round,
@@ -53,6 +58,11 @@ class AggregateRun:
     repeat: int
     results: list[TaskResult] = field(default_factory=list)
     run_ids: list[str] = field(default_factory=list)
+    # C3 protocol-reporting: report-tuple metadata + per-round run dirs +
+    # task-set manifest, all optional so older callers keep working.
+    metadata: list[RunMetadata] | None = None
+    run_dirs: list[Path] | None = None
+    manifest: dict | None = None
 
     def layers(self) -> list[str]:
         present = {resolve_layer(r.category) for r in self.results}
@@ -173,6 +183,9 @@ def render_report(aggregates: AggregateRun | list[TaskAggregate]) -> str:
             agent=aggregates.agent,
             model=aggregates.model,
             repeat=aggregates.repeat,
+            metadata=aggregates.metadata[0] if aggregates.metadata else None,
+            run_dirs=aggregates.run_dirs or [],
+            manifest=aggregates.manifest,
         )
     return _render(list(aggregates))
 
@@ -183,6 +196,9 @@ def _render(
     agent: str = "",
     model: str = "",
     repeat: int = 0,
+    metadata: RunMetadata | None = None,
+    run_dirs: list[Path] | None = None,
+    manifest: dict | None = None,
 ) -> str:
     lines: list[str] = ["# Benchmark Evaluation Report", ""]
     if agent:
@@ -298,6 +314,20 @@ def _render(
                 f"| {reason} | {len(samples)} | {share:.1%} | {lookbacks} |"
             )
 
+    # ---- C3 disclosure sections ---------------------------------------------
+    for heading, body in markdown_disclosure_sections(
+        DisclosureContext(
+            metadata=metadata,
+            results=[r for a in aggregates for r in a.results],
+            manifest=manifest,
+            run_dirs=run_dirs or [],
+        )
+    ):
+        lines.append("")
+        lines.append(heading)
+        lines.append("")
+        lines.append(body.rstrip())
+
     return "\n".join(lines) + "\n"
 
 
@@ -313,11 +343,17 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         agent = aggregates.agent
         model = aggregates.model
         repeat = aggregates.repeat
+        metadata = aggregates.metadata[0] if aggregates.metadata else None
+        run_dirs = aggregates.run_dirs or []
+        manifest = aggregates.manifest
     else:
         task_aggregates = list(aggregates)
         agent = ""
         model = ""
         repeat = 0
+        metadata = None
+        run_dirs = []
+        manifest = None
 
     # ---- Layer-level rows ------------------------------------------------
     layer_rows = ""
@@ -399,6 +435,19 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         else ""
     )
 
+    # ---- C3 disclosure sections ---------------------------------------------
+    disclosure_html = "".join(
+        f"{heading}{body}"
+        for heading, body in html_disclosure_sections(
+            DisclosureContext(
+                metadata=metadata,
+                results=[r for a in task_aggregates for r in a.results],
+                manifest=manifest,
+                run_dirs=run_dirs,
+            )
+        )
+    )
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Benchmark Evaluation Report</title>
 <style>
@@ -433,4 +482,5 @@ small {{ color: #888; font-weight: normal; }}
 <thead><tr><th>Reason</th><th>Count</th><th>Share</th><th>Look-back (task, round)</th></tr></thead>
 <tbody>{attr_rows}</tbody>
 </table>
+{disclosure_html}
 </body></html>"""
