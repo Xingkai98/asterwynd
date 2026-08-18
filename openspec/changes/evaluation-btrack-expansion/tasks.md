@@ -31,7 +31,7 @@
 ## 5. 红绿可复现 + smoke
 
 - [x] 5.1 每个新增任务「base 红 + gold 绿」验证（不加 gold.patch → test_command 红；加 → 绿）。
-- [ ] 5.2 `--tasks <glob>` 单任务 smoke（fake runner 发现/执行新 B 轨任务）。
+- [x] 5.2 `--tasks <glob>` 单任务 smoke（fake runner 发现/执行新 B 轨任务）。
 
 ## 6. 面试叙事数字校准（grill OQ-3 全套清单）
 
@@ -40,13 +40,13 @@
 
 ## 7. 同步与验证
 
-- [ ] 7.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`。
-- [ ] 7.2 维护 Reference Implementation Research 最终结论。
-- [ ] 7.3 更新 `docs/openspec-change-backlog.md`（#156 后续项 2 状态）。
-- [ ] 7.3b 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
-- [ ] 7.4 运行相关单元/集成测试与全量测试。
-- [ ] 7.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 7.6 跑通 benchmark smoke。
+- [x] 7.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`。
+- [x] 7.2 维护 Reference Implementation Research 最终结论。
+- [x] 7.3 更新 `docs/openspec-change-backlog.md`（#156 后续项 2 状态）。
+- [x] 7.3b 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
+- [x] 7.4 运行相关单元/集成测试与全量测试。
+- [x] 7.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
+- [x] 7.6 跑通 benchmark smoke。
 
 ## 8. 审阅与 PR 收尾
 
