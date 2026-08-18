@@ -37,6 +37,9 @@ _GITEE_URLS = {
 
 REPO_URLS = _GITHUB_URLS  # default
 
+# build-subset 用：gitee 镜像优先（requests/flask/pytest 有镜像），其余走 github。
+GITEE_PREFERRED_URLS = {**_GITHUB_URLS, **_GITEE_URLS}
+
 # Test commands per repo (runs the specific test file, not the whole suite)
 REPO_TEST_COMMAND_TEMPLATES = {
     "psf/requests": "python -m pytest {test_file} -x --tb=short -p no:warnings",
@@ -45,6 +48,40 @@ REPO_TEST_COMMAND_TEMPLATES = {
     "sympy/sympy": "python -m pytest {test_file} -x --tb=short -p no:warnings",
     "pylint-dev/pylint": "python -m pytest {test_file} -x --tb=short -p no:warnings",
 }
+
+# C1 OQ-V1 确认的 difficulty 归一化口径：<15min→easy、15min-2h→medium、≥2h→hard。
+# 数据集列值同时收录两种措辞（SWE-bench 官方 "<15 min fix"/"15-30 min fix"/">30 min fix"）。
+DIFFICULTY_MAP = {
+    "<15 min fix": "easy",
+    "<15min": "easy",
+    "15-30 min fix": "medium",
+    "15min-2h": "medium",
+    ">30 min fix": "hard",
+    ">=2h": "hard",
+}
+
+
+def normalize_difficulty(ex: dict) -> str:
+    """把 SWE-bench 实例难度归一化到 easy/medium/hard。
+
+    优先用数据集 per-instance ``difficulty`` 列（C1 OQ-V1 映射口径）；缺列或值
+    未命中时按 FAIL_TO_PASS 测试数启发式兜底（<=2 easy、<=5 medium、>5 hard）。
+    """
+    raw = (ex.get("difficulty") or "").strip()
+    if raw in DIFFICULTY_MAP:
+        return DIFFICULTY_MAP[raw]
+    if raw in {"easy", "medium", "hard"}:
+        return raw
+    try:
+        f2p = json.loads(ex.get("FAIL_TO_PASS") or "[]")
+        n = len(f2p) if isinstance(f2p, list) else 0
+    except (json.JSONDecodeError, TypeError):
+        n = 0
+    if n <= 2:
+        return "easy"
+    if n <= 5:
+        return "medium"
+    return "hard"
 
 
 def load_verified():
@@ -86,10 +123,23 @@ def build_test_command(repo: str, fail_to_pass: str) -> str:
     return f"python -m pytest {test_file} --tb=short -p no:warnings"
 
 
-def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Path]:
-    """Generate Asterwynd task directories for the given SWE-bench instance IDs."""
-    ds = load_verified()
-    ds_dict = {ex["instance_id"]: ex for ex in ds}
+def generate_tasks(
+    instance_ids: list[str],
+    output_base: str | Path,
+    *,
+    dataset=None,
+    repo_urls: dict[str, str] | None = None,
+) -> list[Path]:
+    """Generate Asterwynd task directories for the given SWE-bench instance IDs.
+
+    ``dataset`` 复用调用方已加载的 Verified 数据集（避免 build-subset 双次加载，
+    grill R3）；``repo_urls`` 覆盖默认 clone 表（build-subset 传 gitee 优先表）。
+    落盘字段固定写 track=verified/scenario=bug-fix + difficulty 归一化（OQ-V1）。
+    """
+    if dataset is None:
+        dataset = load_verified()
+    ds_dict = {ex["instance_id"]: ex for ex in dataset}
+    url_table = repo_urls if repo_urls is not None else REPO_URLS
 
     output_base = Path(output_base)
     output_base.mkdir(parents=True, exist_ok=True)
@@ -102,7 +152,7 @@ def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Pat
             continue
 
         repo = ex["repo"]
-        repo_url = REPO_URLS.get(repo)
+        repo_url = url_table.get(repo)
         short_id = iid.replace("__", "/")
         if not repo_url:
             print(f"WARNING: no URL mapping for {repo}, skipping {iid}")
@@ -124,13 +174,16 @@ def generate_tasks(instance_ids: list[str], output_base: str | Path) -> list[Pat
             "gold_patch_file": "gold.patch",
             "test_patch_file": "test.patch",
             "category": "bug_fix",
-            "difficulty": ex.get("difficulty", ""),
+            "difficulty": normalize_difficulty(ex),
             "task_family": "swebench",
             "execution_environment": "docker",
             "external_repo": repo_url,
+            "version": ex.get("version", ""),
             "instance_id": iid,
             "dataset_name": "princeton-nlp/SWE-bench_Verified",
             "dataset_split": "test",
+            "track": "verified",
+            "scenario": "bug-fix",
         }
         (task_dir / "task.json").write_text(
             json.dumps(task_json, indent=2, ensure_ascii=False) + "\n"

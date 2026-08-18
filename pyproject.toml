@@ -73,6 +73,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "real_api: tests that require a real LLM API endpoint",
+    "integration: tests that require real network access (e.g. hf-mirror dataset pull)",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -257,6 +257,26 @@ def coverage_rows(manifest: dict | None) -> list[tuple[str, str]]:
     return rows
 
 
+def verified_rows(manifest: dict | None) -> list[tuple[str, str]]:
+    """Verified 子集披露 rows from the manifest ``verified`` 摘要段（OQ-V6②）。
+
+    摘要口径：count/by_repo/by_difficulty，不占能力覆盖矩阵（G2/Q2：verified
+    单独披露，避免 bug-fix 列被撑满）。
+    """
+    v = (manifest or {}).get("verified") or {}
+    if not v:
+        return []
+    rows: list[tuple[str, str]] = [("任务数", _fmt(v.get("count")))]
+    for repo, n in sorted((v.get("by_repo") or {}).items()):
+        rows.append((f"  {repo}", str(n)))
+    for difficulty, n in sorted((v.get("by_difficulty") or {}).items()):
+        rows.append((f"  difficulty={difficulty}", str(n)))
+    note = v.get("note")
+    if note:
+        rows.append(("note", str(note)))
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Markdown sections
 # ---------------------------------------------------------------------------
@@ -369,6 +389,17 @@ def markdown_disclosure_sections(ctx: DisclosureContext) -> list[tuple[str, str]
     else:
         sections.append(("## 能力覆盖矩阵", "无 manifest（未提供或旧格式）。\n"))
 
+    v_rows = verified_rows(ctx.manifest)
+    if v_rows:
+        sections.append(
+            (
+                "## Verified 子集披露",
+                _md_table(["项", "值"], [tuple(r) for r in v_rows]),
+            )
+        )
+    else:
+        sections.append(("## Verified 子集披露", "无 verified 登记（本任务集未含 Verified 子集）。\n"))
+
     return sections
 
 
@@ -438,5 +469,11 @@ def html_disclosure_sections(ctx: DisclosureContext) -> list[tuple[str, str]]:
         sections.append(("<h2>能力覆盖矩阵</h2>", _html_table(["能力", "覆盖任务"], [tuple(r) for r in cov_rows])))
     else:
         sections.append(("<h2>能力覆盖矩阵</h2>", "<p>无 manifest（未提供或旧格式）。</p>"))
+
+    v_rows = verified_rows(ctx.manifest)
+    if v_rows:
+        sections.append(("<h2>Verified 子集披露</h2>", _html_table(["项", "值"], [tuple(r) for r in v_rows])))
+    else:
+        sections.append(("<h2>Verified 子集披露</h2>", "<p>无 verified 登记（本任务集未含 Verified 子集）。</p>"))
 
     return sections
