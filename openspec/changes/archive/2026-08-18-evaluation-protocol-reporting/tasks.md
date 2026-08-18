@@ -56,7 +56,7 @@
 ## 9. 审阅与 PR 收尾
 
 - [x] 9.1 运行 `/review-loop`（独立零记忆 subagent 审阅 → Round 1 CHANGES_REQUESTED 修复 5 项 + 回归测试 → Round 2 PASS），产出 `reviews/building-review.md` + review manifest。
-- [ ] 9.2 将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
-- [ ] 9.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change 并同步批次。
-- [ ] 9.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker。
+- [x] 9.2 将本 change 归档到 `openspec/changes/archive/2026-08-18-evaluation-protocol-reporting/`。
+- [x] 9.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change（未实现队列移除 + 批次 bullet 标已归档）。
+- [x] 9.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker（validate 30 passed、checker passed）。
 - [ ] 9.5 发起实现 PR；合入后给跟踪 issue #159 添加完成说明 comment 并关闭，在 follow-up #156 确认 Verified 40 fixture 前置项状态。
