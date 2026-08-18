@@ -134,6 +134,9 @@ class RunMetadata:
     model_version: str | None = None
     swebench_dataset_version: str | None = None
     swebench_package_version: str | None = None
+    # C3 protocol-reporting: model provider + budget-truncation flag.
+    provider: str | None = None
+    truncated: bool | None = None
 
     def to_dict(self) -> dict:
         return {k: v for k, v in asdict(self).items() if v is not None}

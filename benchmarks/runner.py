@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.cost_tracker import PRICING_TABLE_VERSION
 from agent.run_config import AgentRunConfig, parse_agent_mode
 from agent.run_identity import new_run_id as new_agent_run_id
 from agent.trace_recorder import TraceRecorder
@@ -40,6 +42,37 @@ class DockerPreflightResult:
     detail: str = ""
 
 
+# Harness report-tuple facts (C3): recorded into run.json so the result page
+# can render a complete, referenceable report tuple.
+HARNESS_ADAPTER_VERSION = "1"
+HARNESS_PROMPT_VERSION = "default"
+HARNESS_NETWORK = "on"
+
+
+def _available_memory_gib() -> float | None:
+    """Available memory in GiB from /proc/meminfo, or None when unreadable."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    kb = int(line.split()[1])
+                    return kb / (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _task_set_hash(loaded_tasks: list) -> str:
+    """Deterministic hash over the task set (id + version) for version pinning."""
+    digest = hashlib.sha256()
+    for loaded in sorted(loaded_tasks, key=lambda lt: lt.task.id):
+        digest.update(loaded.task.id.encode())
+        digest.update(b"\x00")
+        digest.update(str(getattr(loaded.task, "version", "") or "").encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()[:12]
+
+
 class BenchmarkRunner:
     def __init__(
         self,
@@ -54,6 +87,9 @@ class BenchmarkRunner:
         clone_cache_dir: str | Path | None = None,
         temperature: float | None = None,
         model_version: str | None = None,
+        provider: str | None = None,
+        max_iterations: int | None = None,
+        timeout_seconds: int | None = None,
     ):
         self.agent_runner = agent_runner
         self.source_repo = Path(source_repo).resolve()
@@ -62,6 +98,9 @@ class BenchmarkRunner:
         self.model = model
         self.temperature = temperature
         self.model_version = model_version
+        self.provider = provider
+        self.max_iterations = max_iterations
+        self.timeout_seconds = timeout_seconds
         self.run_config = AgentRunConfig(mode=parse_agent_mode(mode))
         self.parallel = parallel
         self.keep_worktrees = keep_worktrees
@@ -96,6 +135,26 @@ class BenchmarkRunner:
         if self._docker_preflight_result is None:
             self._docker_preflight_result = self._probe_docker()
         return self._docker_preflight_result
+
+    def preflight(self) -> tuple[int, str]:
+        """Environment preflight check.
+
+        Returns ``(exit_code, message)``: 0 = full run OK, 1 = available memory
+        below 8 GiB (prefer L1 local path), 2 = Docker daemon unavailable.
+        """
+        mem_gib = _available_memory_gib()
+        if mem_gib is not None and mem_gib < 8.0:
+            return (
+                1,
+                f"可用内存 {mem_gib:.1f} GiB < 8 GiB：建议走 L1 本地轻量路径",
+            )
+        docker = self._get_docker_preflight_result()
+        if not docker.available:
+            return (
+                2,
+                f"Docker daemon 不可用：{docker.detail or docker.reason}",
+            )
+        return (0, "环境可跑全量：Docker 可用，内存充足")
 
     def _probe_docker(self) -> DockerPreflightResult:
         try:
@@ -198,6 +257,17 @@ class BenchmarkRunner:
             model_version=self.model_version,
             swebench_dataset_version=_dataset_version,
             swebench_package_version=_package_version,
+            # C3 report tuple: runner now fills the fields it knows so the
+            # result page renders a referenceable tuple instead of nulls.
+            task_set_hash=_task_set_hash(loaded_tasks),
+            max_iterations=self.max_iterations,
+            timeout_seconds=self.timeout_seconds,
+            network=HARNESS_NETWORK,
+            adapter_version=HARNESS_ADAPTER_VERSION,
+            prompt_version=HARNESS_PROMPT_VERSION,
+            pricing_table_version=PRICING_TABLE_VERSION,
+            provider=self.provider,
+            truncated=False,
         )
         metadata.write_json(run_dir / "run.json")
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")

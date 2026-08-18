@@ -732,6 +732,13 @@ def benchmark(
     model_version: Optional[str] = typer.Option(
         None, "--model-version", help="模型版本（报告元组字段）"
     ),
+    budget_cap: Optional[float] = typer.Option(
+        None, "--budget-cap", help="单轮成本上限（USD）；缺省不设上限；0 或 --no-cap 取消；负数拒绝"
+    ),
+    no_cap: bool = typer.Option(False, "--no-cap", help="取消预算上限"),
+    preflight_flag: bool = typer.Option(
+        False, "--preflight", help="检查环境后退出（0=可跑、1=需 L1 降级、2=Docker 不可用）"
+    ),
 ):
     """运行本地 Coding Agent benchmark"""
     _setup_logging()
@@ -739,6 +746,16 @@ def benchmark(
         raise typer.BadParameter("--repeat 最大 5（N>=3 才有 pass^k 意义）")
     if 1 < repeat < 3:
         typer.echo("Warning: --repeat < 3 时 pass^k 无统计意义", err=True)
+    if no_cap and budget_cap is not None:
+        raise typer.BadParameter("--no-cap 与 --budget-cap 不能同时指定")
+    if budget_cap is not None and budget_cap < 0:
+        raise typer.BadParameter("--budget-cap 不能为负数")
+    # Effective cap: None = no cap (default / --budget-cap 0 / --no-cap).
+    effective_cap = (
+        None
+        if no_cap or budget_cap is None or budget_cap == 0
+        else budget_cap
+    )
     effective_seeds = seeds if seeds is not None else list(range(repeat))
     if len(effective_seeds) != repeat:
         raise typer.BadParameter(
@@ -765,9 +782,23 @@ def benchmark(
         model_version=model_version,
     )
 
+    if preflight_flag:
+        code, message = runner.preflight()
+        typer.echo(message)
+        raise typer.Exit(code)
+
     if repeat == 1:
         metadata = asyncio.run(runner.run_all(tasks_dir, seed=effective_seeds[0]))
         run_path = runs_dir / metadata.run_id
+        if effective_cap is not None:
+            cost = _round_cost(run_path, model or "")
+            if cost > effective_cap:
+                metadata.truncated = True
+                metadata.write_json(run_path / "run.json")
+                typer.echo(
+                    f"  预算超限：round {metadata.run_id} 成本 ${cost:.4f} > cap "
+                    f"${effective_cap:.4f}，该轮标 truncated"
+                )
         typer.echo(f"Benchmark run: {run_path}")
         typer.echo(
             f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "
@@ -777,12 +808,8 @@ def benchmark(
 
     # Repeat > 1: run N rounds (each with its own run_id), then aggregate into
     # an evaluation report. Backward compatible: single run keeps old behavior.
-    async def _run_all_rounds():
-        return [
-            await runner.run_all(tasks_dir, run_id=rid, seed=s)
-            for rid, s in zip(round_run_ids, effective_seeds)
-        ]
-
+    # Budget cap (C3): per-round check — when a round's cost exceeds the cap,
+    # that round is marked ``truncated`` and the remaining rounds are skipped.
     from datetime import datetime, timezone
 
     from benchmarks.models import TaskResult
@@ -790,7 +817,26 @@ def benchmark(
 
     base_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
     round_run_ids = [f"{base_ts}-r{i + 1}" for i in range(repeat)]
-    rounds_meta = asyncio.run(_run_all_rounds())
+
+    async def _run_rounds_with_budget() -> list:
+        meta_list = []
+        for rid, s in zip(round_run_ids, effective_seeds):
+            meta = await runner.run_all(tasks_dir, run_id=rid, seed=s)
+            if effective_cap is not None:
+                cost = _round_cost(runs_dir / rid, model or "")
+                if cost > effective_cap:
+                    meta.truncated = True
+                    meta.write_json(runs_dir / rid / "run.json")
+                    meta_list.append(meta)
+                    typer.echo(
+                        f"  预算超限：round {rid} 成本 ${cost:.4f} > cap "
+                        f"${effective_cap:.4f}，该轮标 truncated，停止剩余轮次"
+                    )
+                    break
+            meta_list.append(meta)
+        return meta_list
+
+    rounds_meta = asyncio.run(_run_rounds_with_budget())
 
     round_results: list[list[TaskResult]] = []
     for round_index, metadata in enumerate(rounds_meta):
@@ -805,6 +851,9 @@ def benchmark(
         repeat=repeat,
         results=[r for rr in round_results for r in rr],
         run_ids=[m.run_id for m in rounds_meta],
+        metadata=rounds_meta,
+        run_dirs=[runs_dir / m.run_id for m in rounds_meta],
+        manifest=_load_manifest(tasks_dir),
     )
     report_path = runs_dir / "evaluation-report.md"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -844,6 +893,37 @@ def benchmark_annotate(
         json.dumps(data, indent=2, ensure_ascii=False) + "\n", errors="replace"
     )
     typer.echo(f"annotated {task_id}: fault_owner={owner}")
+
+
+def _load_manifest(tasks_dir: Path) -> dict | None:
+    """Load ``tasks_dir/manifest.json`` for disclosure rendering, if present."""
+    import json as _json
+
+    manifest_path = Path(tasks_dir) / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        return _json.loads(manifest_path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _round_cost(run_dir: Path, model: str) -> float:
+    """Total LLM token cost of one round (cache-aware), for budget caps."""
+    from agent.cost_tracker import compute_cost_cached
+    from benchmarks.report import collect_run_results
+
+    total = 0.0
+    for result in collect_run_results(run_dir):
+        estimate = compute_cost_cached(
+            result.model or model,
+            input_tokens=result.input_tokens or 0,
+            cache_read_tokens=result.cache_read_tokens or 0,
+            cache_write_tokens=result.cache_write_tokens or 0,
+            output_tokens=result.output_tokens or 0,
+        )
+        total += estimate.cost
+    return total
 
 
 def _build_benchmark_runner(
@@ -937,6 +1017,9 @@ def _build_benchmark_runner(
         clone_cache_dir=clone_cache_dir,
         temperature=temperature,
         model_version=model_version,
+        provider=provider,
+        max_iterations=max_iterations,
+        timeout_seconds=config.benchmark.timeout_seconds,
     )
 
 

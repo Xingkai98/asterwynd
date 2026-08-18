@@ -18,7 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent.cost_tracker import compute_cost, format_cost
-from benchmarks.models import LAYERS, TaskResult, resolve_layer
+from benchmarks.disclosure import (
+    DisclosureContext,
+    html_disclosure_sections,
+    markdown_disclosure_sections,
+)
+from benchmarks.models import LAYERS, RunMetadata, TaskResult, resolve_layer
 from benchmarks.statistics import (
     bootstrap_ci,
     is_valid_round,
@@ -53,6 +58,11 @@ class AggregateRun:
     repeat: int
     results: list[TaskResult] = field(default_factory=list)
     run_ids: list[str] = field(default_factory=list)
+    # C3 protocol-reporting: report-tuple metadata + per-round run dirs +
+    # task-set manifest, all optional so older callers keep working.
+    metadata: list[RunMetadata] | None = None
+    run_dirs: list[Path] | None = None
+    manifest: dict | None = None
 
     def layers(self) -> list[str]:
         present = {resolve_layer(r.category) for r in self.results}
@@ -173,6 +183,9 @@ def render_report(aggregates: AggregateRun | list[TaskAggregate]) -> str:
             agent=aggregates.agent,
             model=aggregates.model,
             repeat=aggregates.repeat,
+            metadata_list=aggregates.metadata,
+            run_dirs=aggregates.run_dirs or [],
+            manifest=aggregates.manifest,
         )
     return _render(list(aggregates))
 
@@ -183,7 +196,18 @@ def _render(
     agent: str = "",
     model: str = "",
     repeat: int = 0,
+    metadata_list: list[RunMetadata] | None = None,
+    run_dirs: list[Path] | None = None,
+    manifest: dict | None = None,
 ) -> str:
+    metadata = metadata_list[0] if metadata_list else None
+    # Budget-truncated rounds keep their (real, completed) task results for
+    # pass@1 but are excluded from pass^k denominators (Q4 confirmation).
+    truncated_rounds = {
+        i
+        for i, meta in enumerate(metadata_list or [])
+        if meta is not None and getattr(meta, "truncated", None)
+    }
     lines: list[str] = ["# Benchmark Evaluation Report", ""]
     if agent:
         lines.append(
@@ -215,7 +239,11 @@ def _render(
         lo, hi = bootstrap_ci([1.0 if ok else 0.0 for ok in rounds])
         pk_summary = pass_k_success_rate(
             [
-                [_is_pass(r) for r in _valid_results(a.results)]
+                [
+                    _is_pass(r)
+                    for r in _valid_results(a.results)
+                    if r.run_round not in truncated_rounds
+                ]
                 for a in layer_aggregates
             ]
         )
@@ -244,8 +272,13 @@ def _render(
         pk = pass_at_k(passes, len(valid))
         # pass^k at task level needs >= 3 valid rounds to be meaningful;
         # below that the cell shows an em-dash ("sample too small").
-        if len(valid) >= 3:
-            pk_success = "yes" if all(_is_pass(r) for r in valid) else "no"
+        # Truncated rounds are excluded from the pass^k sample (Q4).
+        pk_valid = [
+            r for r in _valid_results(aggregate.results)
+            if r.run_round not in truncated_rounds
+        ]
+        if len(pk_valid) >= 3:
+            pk_success = "yes" if all(_is_pass(r) for r in pk_valid) else "no"
         else:
             pk_success = "—"
         mean_v, std_v = mean_std(
@@ -298,6 +331,20 @@ def _render(
                 f"| {reason} | {len(samples)} | {share:.1%} | {lookbacks} |"
             )
 
+    # ---- C3 disclosure sections ---------------------------------------------
+    for heading, body in markdown_disclosure_sections(
+        DisclosureContext(
+            metadata=metadata,
+            results=[r for a in aggregates for r in a.results],
+            manifest=manifest,
+            run_dirs=run_dirs or [],
+        )
+    ):
+        lines.append("")
+        lines.append(heading)
+        lines.append("")
+        lines.append(body.rstrip())
+
     return "\n".join(lines) + "\n"
 
 
@@ -313,11 +360,24 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         agent = aggregates.agent
         model = aggregates.model
         repeat = aggregates.repeat
+        metadata = aggregates.metadata[0] if aggregates.metadata else None
+        metadata_list = aggregates.metadata
+        run_dirs = aggregates.run_dirs or []
+        manifest = aggregates.manifest
     else:
         task_aggregates = list(aggregates)
         agent = ""
         model = ""
         repeat = 0
+        metadata = None
+        metadata_list = None
+        run_dirs = []
+        manifest = None
+    truncated_rounds = {
+        i
+        for i, meta in enumerate(metadata_list or [])
+        if meta is not None and getattr(meta, "truncated", None)
+    }
 
     # ---- Layer-level rows ------------------------------------------------
     layer_rows = ""
@@ -332,7 +392,11 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         lo, hi = bootstrap_ci([1.0 if ok else 0.0 for ok in rounds])
         pk_summary = pass_k_success_rate(
             [
-                [_is_pass(r) for r in _valid_results(a.results)]
+                [
+                    _is_pass(r)
+                    for r in _valid_results(a.results)
+                    if r.run_round not in truncated_rounds
+                ]
                 for a in layer_aggregates
             ]
         )
@@ -350,8 +414,12 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         valid = _valid_results(aggregate.results)
         passes = sum(1 for r in valid if _is_pass(r))
         pk = pass_at_k(passes, len(valid))
-        if len(valid) >= 3:
-            pk_success = "yes" if all(_is_pass(r) for r in valid) else "no"
+        pk_valid = [
+            r for r in _valid_results(aggregate.results)
+            if r.run_round not in truncated_rounds
+        ]
+        if len(pk_valid) >= 3:
+            pk_success = "yes" if all(_is_pass(r) for r in pk_valid) else "no"
         else:
             pk_success = "—"
         mean_v, std_v = mean_std([r.duration_seconds for r in aggregate.results])
@@ -399,6 +467,19 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         else ""
     )
 
+    # ---- C3 disclosure sections ---------------------------------------------
+    disclosure_html = "".join(
+        f"{heading}{body}"
+        for heading, body in html_disclosure_sections(
+            DisclosureContext(
+                metadata=metadata,
+                results=[r for a in task_aggregates for r in a.results],
+                manifest=manifest,
+                run_dirs=run_dirs,
+            )
+        )
+    )
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Benchmark Evaluation Report</title>
 <style>
@@ -433,4 +514,5 @@ small {{ color: #888; font-weight: normal; }}
 <thead><tr><th>Reason</th><th>Count</th><th>Share</th><th>Look-back (task, round)</th></tr></thead>
 <tbody>{attr_rows}</tbody>
 </table>
+{disclosure_html}
 </body></html>"""
