@@ -35,9 +35,9 @@
 
 ## 6. self_check 五门禁
 
-- [ ] 6.1 `scripts/self_check.py <run_dir>`：同模型同 harness 复现、seed 复现、失败归因闭环、披露段齐全、报告元组完整五门禁。
-- [ ] 6.2 每门禁缺失项报告 + exit 码；全部通过 exit 0。
-- [ ] 6.3 门禁测试（各门禁缺失场景 + 全通过场景）。
+- [x] 6.1 `scripts/self_check.py <run_dir>`：同模型同 harness 复现、seed 复现、失败归因闭环（无 κ artifact 降级为 fault_owner 覆盖率）、披露段齐全、报告元组完整五门禁。
+- [x] 6.2 每门禁缺失项报告 + 非零 exit 1；`--skip <n>` 可重复；全部通过 exit 0。
+- [x] 6.3 门禁测试（各门禁缺失场景 + 全通过场景 + skip + 集成）。
 
 ## 7. spec 同步
 
