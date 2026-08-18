@@ -95,7 +95,7 @@ def report_tuple_rows(meta: RunMetadata | None) -> list[tuple[str, str]]:
         f"network={network}" if network else None,
     )
     cost_cell = f"pricing_table={getattr(meta, 'pricing_table_version', None) or '-'}"
-    return [
+    rows = [
         ("model", model_cell),
         ("harness", harness_cell),
         ("task_set_hash", _fmt(getattr(meta, "task_set_hash", None))),
@@ -103,6 +103,9 @@ def report_tuple_rows(meta: RunMetadata | None) -> list[tuple[str, str]]:
         ("成本口径", cost_cell),
         ("date", _fmt(getattr(meta, "started_at", None))),
     ]
+    if getattr(meta, "truncated", None):
+        rows.append(("truncated", "true（预算超限，剩余轮次未运行）"))
+    return rows
 
 
 def anti_cheat_rows(manifest: dict | None) -> list[tuple[str, str]]:

@@ -183,7 +183,7 @@ def render_report(aggregates: AggregateRun | list[TaskAggregate]) -> str:
             agent=aggregates.agent,
             model=aggregates.model,
             repeat=aggregates.repeat,
-            metadata=aggregates.metadata[0] if aggregates.metadata else None,
+            metadata_list=aggregates.metadata,
             run_dirs=aggregates.run_dirs or [],
             manifest=aggregates.manifest,
         )
@@ -196,10 +196,18 @@ def _render(
     agent: str = "",
     model: str = "",
     repeat: int = 0,
-    metadata: RunMetadata | None = None,
+    metadata_list: list[RunMetadata] | None = None,
     run_dirs: list[Path] | None = None,
     manifest: dict | None = None,
 ) -> str:
+    metadata = metadata_list[0] if metadata_list else None
+    # Budget-truncated rounds keep their (real, completed) task results for
+    # pass@1 but are excluded from pass^k denominators (Q4 confirmation).
+    truncated_rounds = {
+        i
+        for i, meta in enumerate(metadata_list or [])
+        if meta is not None and getattr(meta, "truncated", None)
+    }
     lines: list[str] = ["# Benchmark Evaluation Report", ""]
     if agent:
         lines.append(
@@ -231,7 +239,11 @@ def _render(
         lo, hi = bootstrap_ci([1.0 if ok else 0.0 for ok in rounds])
         pk_summary = pass_k_success_rate(
             [
-                [_is_pass(r) for r in _valid_results(a.results)]
+                [
+                    _is_pass(r)
+                    for r in _valid_results(a.results)
+                    if r.run_round not in truncated_rounds
+                ]
                 for a in layer_aggregates
             ]
         )
@@ -260,8 +272,13 @@ def _render(
         pk = pass_at_k(passes, len(valid))
         # pass^k at task level needs >= 3 valid rounds to be meaningful;
         # below that the cell shows an em-dash ("sample too small").
-        if len(valid) >= 3:
-            pk_success = "yes" if all(_is_pass(r) for r in valid) else "no"
+        # Truncated rounds are excluded from the pass^k sample (Q4).
+        pk_valid = [
+            r for r in _valid_results(aggregate.results)
+            if r.run_round not in truncated_rounds
+        ]
+        if len(pk_valid) >= 3:
+            pk_success = "yes" if all(_is_pass(r) for r in pk_valid) else "no"
         else:
             pk_success = "—"
         mean_v, std_v = mean_std(
@@ -344,6 +361,7 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         model = aggregates.model
         repeat = aggregates.repeat
         metadata = aggregates.metadata[0] if aggregates.metadata else None
+        metadata_list = aggregates.metadata
         run_dirs = aggregates.run_dirs or []
         manifest = aggregates.manifest
     else:
@@ -352,8 +370,14 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         model = ""
         repeat = 0
         metadata = None
+        metadata_list = None
         run_dirs = []
         manifest = None
+    truncated_rounds = {
+        i
+        for i, meta in enumerate(metadata_list or [])
+        if meta is not None and getattr(meta, "truncated", None)
+    }
 
     # ---- Layer-level rows ------------------------------------------------
     layer_rows = ""
@@ -368,7 +392,11 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         lo, hi = bootstrap_ci([1.0 if ok else 0.0 for ok in rounds])
         pk_summary = pass_k_success_rate(
             [
-                [_is_pass(r) for r in _valid_results(a.results)]
+                [
+                    _is_pass(r)
+                    for r in _valid_results(a.results)
+                    if r.run_round not in truncated_rounds
+                ]
                 for a in layer_aggregates
             ]
         )
@@ -386,8 +414,12 @@ def render_html(aggregates: AggregateRun | list[TaskAggregate]) -> str:
         valid = _valid_results(aggregate.results)
         passes = sum(1 for r in valid if _is_pass(r))
         pk = pass_at_k(passes, len(valid))
-        if len(valid) >= 3:
-            pk_success = "yes" if all(_is_pass(r) for r in valid) else "no"
+        pk_valid = [
+            r for r in _valid_results(aggregate.results)
+            if r.run_round not in truncated_rounds
+        ]
+        if len(pk_valid) >= 3:
+            pk_success = "yes" if all(_is_pass(r) for r in pk_valid) else "no"
         else:
             pk_success = "—"
         mean_v, std_v = mean_std([r.duration_seconds for r in aggregate.results])

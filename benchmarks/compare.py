@@ -424,6 +424,13 @@ def main():
         run_json = run_dir / "run.json"
         if run_json.exists():
             meta = json.loads(run_json.read_text())
+            if meta.get("truncated"):
+                # Budget-truncated rounds are excluded from pairing (Q4).
+                print(
+                    f"Warning: skipping truncated run {run_dir}",
+                    file=sys.stderr,
+                )
+                continue
             name = f"{meta.get('agent', '?')}" + (f" ({meta.get('model', '')})" if meta.get('model') else "")
         else:
             meta = {}

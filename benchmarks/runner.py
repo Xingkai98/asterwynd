@@ -49,6 +49,19 @@ HARNESS_PROMPT_VERSION = "default"
 HARNESS_NETWORK = "on"
 
 
+def _available_memory_gib() -> float | None:
+    """Available memory in GiB from /proc/meminfo, or None when unreadable."""
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    kb = int(line.split()[1])
+                    return kb / (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def _task_set_hash(loaded_tasks: list) -> str:
     """Deterministic hash over the task set (id + version) for version pinning."""
     digest = hashlib.sha256()
@@ -122,6 +135,26 @@ class BenchmarkRunner:
         if self._docker_preflight_result is None:
             self._docker_preflight_result = self._probe_docker()
         return self._docker_preflight_result
+
+    def preflight(self) -> tuple[int, str]:
+        """Environment preflight check.
+
+        Returns ``(exit_code, message)``: 0 = full run OK, 1 = available memory
+        below 8 GiB (prefer L1 local path), 2 = Docker daemon unavailable.
+        """
+        mem_gib = _available_memory_gib()
+        if mem_gib is not None and mem_gib < 8.0:
+            return (
+                1,
+                f"可用内存 {mem_gib:.1f} GiB < 8 GiB：建议走 L1 本地轻量路径",
+            )
+        docker = self._get_docker_preflight_result()
+        if not docker.available:
+            return (
+                2,
+                f"Docker daemon 不可用：{docker.detail or docker.reason}",
+            )
+        return (0, "环境可跑全量：Docker 可用，内存充足")
 
     def _probe_docker(self) -> DockerPreflightResult:
         try:

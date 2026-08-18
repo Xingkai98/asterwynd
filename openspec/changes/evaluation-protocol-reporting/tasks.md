@@ -29,9 +29,9 @@
 
 ## 5. CLI 预算/预检
 
-- [ ] 5.1 `--budget-cap <USD>`（默认建议 $50，超限标 `incomplete`）+ `--no-cap`/`--budget-cap 0` 取消。
-- [ ] 5.2 `--preflight`（Docker daemon + 内存 <8GiB 提示 L1 路径，退出码 0/1）。
-- [ ] 5.3 CLI 测试（超限 incomplete、取消上限、preflight 内存分支）。
+- [x] 5.1 `--budget-cap <USD>`（per-round 超限停止剩余轮次、该轮标 `truncated`；缺省无 cap、$50 为协议建议值）+ `--no-cap`/`--budget-cap 0` 取消、负数拒绝。
+- [x] 5.2 `--preflight`（Docker daemon + 内存 <8GiB 提示 L1 路径，退出码 0/1/2）。
+- [x] 5.3 CLI 测试（超限 truncated、取消上限、preflight 内存/Docker 分支）+ pass^k 剔除 truncated 轮。
 
 ## 6. self_check 五门禁
 
