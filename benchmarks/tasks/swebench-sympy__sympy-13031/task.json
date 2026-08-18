@@ -1,0 +1,21 @@
+{
+  "id": "swebench-sympy__sympy-13031",
+  "repo": "sympy/sympy",
+  "base_commit": "2dfa7457f20ee187fbb09b5b6a1631da4458388c",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest test_sparse_matrix --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "medium",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://github.com/sympy/sympy.git",
+  "version": "1.1",
+  "instance_id": "sympy__sympy-13031",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

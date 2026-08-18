@@ -50,14 +50,19 @@ REPO_TEST_COMMAND_TEMPLATES = {
 }
 
 # C1 OQ-V1 确认的 difficulty 归一化口径：<15min→easy、15min-2h→medium、≥2h→hard。
-# 数据集列值同时收录两种措辞（SWE-bench 官方 "<15 min fix"/"15-30 min fix"/">30 min fix"）。
+# 本机 hf-mirror 首拉实测 Verified difficulty 列真实值（2026-08-18）：
+#   <15 min fix (194) / 15 min - 1 hour (261) / 1-4 hours (42) / >4 hours (3)
+# 映射按口径收录真实值与 SWE-bench 官方措辞两种变体。
 DIFFICULTY_MAP = {
     "<15 min fix": "easy",
     "<15min": "easy",
+    "15 min - 1 hour": "medium",
     "15-30 min fix": "medium",
     "15min-2h": "medium",
+    "1-4 hours": "hard",
     ">30 min fix": "hard",
     ">=2h": "hard",
+    ">4 hours": "hard",
 }
 
 

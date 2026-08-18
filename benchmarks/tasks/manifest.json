@@ -133,5 +133,23 @@
     "asterwynd-readme-title": [
       "tool-usage"
     ]
+  },
+  "verified": {
+    "count": 38,
+    "by_repo": {
+      "mwaskom/seaborn": 2,
+      "pallets/flask": 1,
+      "psf/requests": 8,
+      "pylint-dev/pylint": 8,
+      "pytest-dev/pytest": 11,
+      "sympy/sympy": 8
+    },
+    "by_difficulty": {
+      "medium": 16,
+      "easy": 17,
+      "hard": 5
+    },
+    "updated_at": "2026-08-18",
+    "note": "Verified 精选子集摘要（track=verified 计数，不占能力覆盖矩阵）"
   }
 }

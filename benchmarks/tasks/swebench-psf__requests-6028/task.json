@@ -1,0 +1,21 @@
+{
+  "id": "swebench-psf__requests-6028",
+  "repo": "psf/requests",
+  "base_commit": "0192aac24123735b3eaf9b08df46429bb770c283",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest tests/test_utils.py::test_prepend_scheme_if_needed[http://user:pass@example.com/path?query-http://user:pass@example.com/path?query] tests/test_utils.py::test_prepend_scheme_if_needed[http://user@example.com/path?query-http://user@example.com/path?query] --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "medium",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://gitee.com/mirrors/requests.git",
+  "version": "2.27",
+  "instance_id": "psf__requests-6028",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

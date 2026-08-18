@@ -70,6 +70,10 @@ class TestNormalizeDifficulty:
         assert normalize_difficulty({"difficulty": "<15min"}) == "easy"
         assert normalize_difficulty({"difficulty": "15min-2h"}) == "medium"
         assert normalize_difficulty({"difficulty": ">=2h"}) == "hard"
+        # 本机 hf-mirror 首拉实测的真实列值（2026-08-18）
+        assert normalize_difficulty({"difficulty": "15 min - 1 hour"}) == "medium"
+        assert normalize_difficulty({"difficulty": "1-4 hours"}) == "hard"
+        assert normalize_difficulty({"difficulty": ">4 hours"}) == "hard"
 
     def test_passthrough_already_normalized(self):
         assert normalize_difficulty({"difficulty": "easy"}) == "easy"

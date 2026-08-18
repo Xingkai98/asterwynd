@@ -216,6 +216,7 @@ def _gold_check_external(
         subprocess.run(
             ["git", "clone", "-q", task.external_repo, str(worktree)],
             check=True,
+            timeout=timeout,
         )
     subprocess.run(
         ["git", "-C", str(worktree), "checkout", "-q", task.base_commit],
@@ -259,6 +260,13 @@ def _install_repo_deps(root: Path, worktree: Path, timeout: int) -> dict | None:
     if not (venv_dir / "bin" / "python").exists():
         subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
     python = venv_dir / "bin" / "python"
+    # py3.12 venv 默认无 setuptools，老 setup.py 的 repo 需先装 setuptools/wheel。
+    subprocess.run(
+        [str(python), "-m", "pip", "install", "-q", "setuptools", "wheel"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
     for spec in (".", ".[test]"):
         proc = subprocess.run(
             [str(python), "-m", "pip", "install", "-q", "-e", spec],

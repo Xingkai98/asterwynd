@@ -1,0 +1,21 @@
+{
+  "id": "swebench-pylint-dev__pylint-6386",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "754b487f4d892e3d4872b6fc7468a71db4e31c13",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest tests/config/test_config.py::test_short_verbose --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "medium",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://github.com/pylint-dev/pylint.git",
+  "version": "2.14",
+  "instance_id": "pylint-dev__pylint-6386",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}
