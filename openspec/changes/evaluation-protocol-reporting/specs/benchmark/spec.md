@@ -1,6 +1,6 @@
 # benchmark 规格（delta）
 
-本文件是 `evaluation-protocol-reporting`（C3）change 对既有 `benchmark` capability 的修订。C2 已在数据/统计/CLI 层实现指标（pass^k/cache-aware 成本/fault_owner/配对比较），本 change 承接**结果页渲染义务**（C2 spec 边界注记的 10 项）并新增运行协议文档、预算/预检 CLI 与 self_check 自洽门禁。既有 requirements 语义保持兼容。
+本文件是 `evaluation-protocol-reporting`（C3）change 对既有 `benchmark` capability 的修订。C2 已在数据/统计/CLI 层实现指标（pass^k/cache-aware 成本/fault_owner/配对比较）；本 change **已实现结果页渲染义务**（C2 spec 边界注记的 9 项披露段 + 能力覆盖矩阵独立 Requirement）、运行协议文档、预算/预检 CLI 与 self_check 自洽门禁。既有 requirements 语义保持兼容。
 
 ## MODIFIED Requirements
 
