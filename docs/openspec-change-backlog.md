@@ -84,7 +84,7 @@
 - `evaluation-task-spec`（issue #154）：**C1** 评测任务集组成与任务 schema 扩展（**已归档 2026-08-17**）。任务 schema 加 `scenario`×`difficulty` 双标签、能力层改套件级覆盖矩阵；任务集三来源（A 轨 20–24 存量重打标 + B 轨 12–16 新增 + Verified 50 子集）≈ 82–90；spec delta 落定评估升级完整规格（能力分层修订 + pass^k 改名 + M1–M11 Requirement，指标实现归 C2）。先行解锁 C2–C4。
 - `evaluation-metrics`（issue #157）：**C2** 评测指标层实现（**已合入归档 2026-08-17**）。实现 C1 已落 spec 的 M1–M11 Requirement 指标层：pass^k 聚合、cost@pass cache-aware（四档定价 + cache tokens 数据模型）、fault_owner 正交 + 交叉表、配对比较统计（per-task delta/差异 CI/win-rate）、f2p/p2p 保留、小 N 声明、采样显式化 CLI（--seeds/--temperature/--model-version）；清理 spec「实现归 C2」注记。依赖 C1；关联 follow-up #156（C3 前置 Verified 40 fixture）。
 - `evaluation-protocol-reporting`（issue #159）：**C3** 运行协议文档 + 结果页披露 + compare 增强（**实现完成 2026-08-18**）。T1 协议转正 `docs/benchmark-run-protocol.md`；结果页渲染披露 9 项 + 能力覆盖矩阵（报告元组/污染注记/反作弊/fault_owner 交叉表/$/resolved-task/部分成功档/采样参数/小N/过程效率）；compare HTML 配对段 + 元数据；CLI `--budget-cap`/`--no-cap`/`--preflight`（per-round cap、truncated）；self_check 五门禁；spec 渲染边界注记→已实现。依赖 C2；关联 follow-up #156（C3 前置 Verified 40 fixture）。
-- `evaluation-narrative`（**C4**，未立项）：T2 面试叙事（Q13/W07/FINAL/resume 改动清单）。依赖 C3，与 C3 并行（立项与归档在 `evaluation-narrative/2026-08-17` 分支自理）。
+- `evaluation-narrative`（issue #160）：**C4** 面试叙事（**已归档 2026-08-17**）。T2 改动清单 + grill 实测落 Q13/W07/FINAL/resume/walkthrough-README 五份面试文档：现状口径修正（23→27、450+→~1997、Claw 重锚为统一 harness 口径）+ 升级叙事段（升级目标 ~90/pass^k/cost@pass/fault_owner/预算，双要素标注「当前已落 37」，标 C1–C3 实现中）。依赖 C3，与 C3 并行。
 
 ## 未实现队列
 
