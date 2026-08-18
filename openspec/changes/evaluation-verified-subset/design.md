@@ -85,7 +85,21 @@ uv run python benchmarks/swebench_subset.py build-subset \
 
 ## Pre-Implementation Review
 
-（占位：由独立零记忆 grill subagent 对 design.md 逐项追问后填写结论；grill 产出 `reviews/grill-design.md`，Open Questions 停轮等用户确认。）
+独立零记忆 grill（run `grill-evaluation-verified-subset-2026-08-18`，2026-08-18，详见 `reviews/grill-design.md`）已对 D1–D5 逐项追问，结论如下：
+
+**已确认**：
+- D2 镜像加载方向确认——`load_verified()` 即 `datasets.load_dataset`，天然读 `HF_ENDPOINT` 环境变量，无代码污染。
+- D1 职责边界（选择在 subset、落盘在 convert）方向确认——接口天然匹配；CLI 细节缺口见 Open Questions。
+- D4/D5 manifest 只改 verified 段 + 与 B 轨错开合入方向确认——manifest 既有消费方（`task_set.py`/`disclosure.py`）只读固定键，新增顶层键安全。
+- 落盘后自动 `validate_fixtures_dir`、invalid exit 1 内建方向确认。
+
+**必须修改（阻塞项，Open Questions 定稿后落实）**：
+- `generate_tasks` 落盘缺 `track`/`scenario` 且 `difficulty` 未归一化 → 直接跑管线必 fail `validate_fixture` 3 类错误（D1–D5 未含 convert 侧改动）。
+- `gold_check` 对 `external_repo` 直接 SystemExit，D3「默认跑 L3 自检」在当前实现下不可行，需定自检机制。
+- 选择池若不排除既有 10 条 instance_id，覆盖写会把既有 fixture 改回非法字段且新生成 <40、总数 46。
+
+**Open Questions（停轮等用户确认，逐条配例子见 `reviews/grill-design.md`）**：
+OQ-V1 落盘字段修复位置；OQ-V2 L3 自检机制/默认行为/坏实例剔除；OQ-V3 既有 10 条重叠与 `--resume` 语义；OQ-V4 KNOWN_BAD 来源；OQ-V5 CLI 结构与 `--targets` 解析；OQ-V6 manifest verified 段 schema 与消费方。
 
 ## Testing Strategy
 
