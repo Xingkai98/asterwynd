@@ -23,9 +23,9 @@
 
 ## 4. compare 配对渲染
 
-- [ ] 4.1 `compare.py` 接入 `statistics.paired_comparison`：per-task delta 表 + 差异 CI + win-rate + McNemar p 值。
-- [ ] 4.2 run 元数据补齐（model version/date/cost 口径读 run.json 新字段）。
-- [ ] 4.3 配对渲染测试 + 既有 compare 回归。
+- [x] 4.1 `build_html` 补配对段（复用 C2 的 `paired_comparison`/`build_paired_report` 共享数据函数）：per-task delta 表 + 差异 CI + win-rate + McNemar p 值。
+- [x] 4.2 run 元数据补齐（model version/date/cost 口径读 run.json 新字段），md/html 双格式。
+- [x] 4.3 配对渲染测试 + 既有 compare 回归。
 
 ## 5. CLI 预算/预检
 
