@@ -82,7 +82,26 @@
 
 ## User Confirmation
 
-（停轮待确认。收到主 session 转达的用户实质答复后，逐条记录：`- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`。占位文本不计入确认。）
+全部 18 条 Open Questions 由用户审阅后按推荐确认，主 session 于 2026-08-17 转达实质答复。
+
+- **Q1**: 用户答复：tasks 4.1 改措辞「build_html 补配对段 + run 元数据补齐」，HTML 复用 C2 已实现的 build_paired_report，不重复实现 markdown 配对；确认时间: 2026-08-17
+- **Q2**: 用户答复：C3 扩展 runner 填充 RunMetadata 报告元组字段（task_set_hash/adapter_version/prompt_version/pricing_table_version/network），否则 spec「报告元组完整」违约；确认时间: 2026-08-17
+- **Q3**: 用户答复：AggregateRun 加 metadata 字段，main.py 聚合时透传 rounds_meta，render_report 可读 RunMetadata；确认时间: 2026-08-17
+- **Q4**: 用户答复：RunMetadata 加 truncated: bool；compare 剔除 incomplete 轮、pass^k 分母不含 truncated 轮；确认时间: 2026-08-17
+- **Q5**: 用户答复：按轮检查预算，超限停止后续轮次；轮内已启动的自然完成不 cancel，该轮标 truncated；确认时间: 2026-08-17
+- **Q6**: 用户答复：以 spec delta 为准——缺省不设上限，$50 只作协议建议值，修 proposal/design 措辞；确认时间: 2026-08-17
+- **Q7**: 用户答复：--budget-cap 0/None/--no-cap 等价取消，负数报错，CLI 测试覆盖 4 分支；确认时间: 2026-08-17
+- **Q8**: 用户答复：preflight 退出码 0=可跑、1=内存<8GiB 需 L1、2=Docker 不可用；spec delta 补 Scenario；确认时间: 2026-08-17
+- **Q9**: 用户答复：self_check 逐门禁定输入 + 判定谓词；门禁 3（失败归因闭环）因无 κ artifact 降级为查 fault_owner 覆盖率并在协议注明；确认时间: 2026-08-17
+- **Q10**: 用户答复：--skip <n> 可重复；非零统一 exit 1；确认时间: 2026-08-17
+- **Q11**: 用户答复：以 spec delta「披露段齐全」清单为唯一事实源；能力覆盖矩阵独立另查（注记 9 项披露段 + 覆盖矩阵独立 Requirement）；确认时间: 2026-08-17
+- **Q12**: 用户答复：聚合时读 run_dir/tasks/<id>/trace.json 喂 process_efficiency，缺 trace 跳过该段；确认时间: 2026-08-17
+- **Q13**: 用户答复：污染披露数字集中常量表注来源日期；版本钉住用 RunMetadata.swebench 版本字段；确认时间: 2026-08-17
+- **Q14**: 用户答复：manifest.json 路径由 CLI 从已知 tasks 路径传入，report.py 加可选参数，缺失时跳过矩阵/反作弊段；确认时间: 2026-08-17
+- **Q15**: 用户答复：补端到端 trace_recorder→process_efficiency 单元测试锁 trace 事件契约；确认时间: 2026-08-17
+- **Q16**: 用户答复：披露段 md 全量 + HTML 复用同一段渲染函数，golden 双覆盖；确认时间: 2026-08-17
+- **Q17**: 用户答复：口径统一「注记 9 项披露段 + 能力覆盖矩阵独立 Requirement」；确认时间: 2026-08-17
+- **Q18**: 用户答复：预算 cap 按 T1 per-round，spec delta 措辞「任一轮超限停止剩余轮次」；确认时间: 2026-08-17
 
 ## 风险
 

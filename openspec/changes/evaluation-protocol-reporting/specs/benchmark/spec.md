@@ -60,14 +60,14 @@ benchmark SHALL 提供运行协议文档（`docs/benchmark-run-protocol.md`）�
 
 ### Requirement: 预算上限可配置可取消
 
-benchmark CLI SHALL 支持 `--budget-cap <USD>` 设置成本上限（建议默认 $50），超限停止该 run 并标记 `incomplete`；`--budget-cap 0`（或 `--no-cap`）取消上限。缺省 SHALL 不设上限保持既有行为。
+benchmark CLI SHALL 支持 `--budget-cap <USD>` 设置成本上限（建议值 $50，写于运行协议文档），任一轮累计成本超限时停止剩余轮次，并将该轮标记为 `truncated`（新增运行字段）；`--budget-cap 0`（或 `--no-cap`）取消上限。缺省 SHALL 不设上限保持既有行为。
 
 #### Scenario: 预算超限
 
-- **GIVEN** 某 run 累计成本超过 `--budget-cap`
+- **GIVEN** 某轮累计成本超过 `--budget-cap`
 - **WHEN** runner 继续执行
-- **THEN** 系统 SHALL 停止该 run
-- **AND** 结果 SHALL 标记为 `incomplete`（不伪造通过/失败）
+- **THEN** 系统 SHALL 停止剩余轮次（已启动的并发任务自然完成，不 cancel）
+- **AND** 该轮结果 SHALL 标记为 `truncated`（不伪造通过/失败）
 
 #### Scenario: 取消预算上限
 
@@ -77,7 +77,7 @@ benchmark CLI SHALL 支持 `--budget-cap <USD>` 设置成本上限（建议默�
 
 ### Requirement: 预检命令
 
-benchmark CLI SHALL 支持 `--preflight` 检查环境：Docker daemon 可用性 + 可用内存检测；内存 <8GiB 时提示走 L1 本地轻量路径。预检结果 SHALL 以退出码表达（0=可跑全量、1=需 L1 降级）。
+benchmark CLI SHALL 支持 `--preflight` 检查环境：Docker daemon 可用性 + 可用内存检测；内存 <8GiB 时提示走 L1 本地轻量路径。预检结果 SHALL 以退出码表达（0=可跑全量、1=内存不足需 L1 降级、2=Docker 不可用）。
 
 #### Scenario: 内存不足提示 L1
 

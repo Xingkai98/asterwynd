@@ -53,7 +53,7 @@ C2 已实现指标层数据/统计/CLI（`benchmarks/statistics.py` pass^k/cost/
 9. 过程效率（time-to-first-successful-edit / exploration fraction）
 10. 能力覆盖矩阵（C1 manifest，套件级展示）
 
-**数据管线注意（grill 实证）**：报告元组字段（task_set_hash/adapter_version/prompt_version/pricing_table_version/network 等）在 `models.py::RunMetadata` 已声明但 runner 未写入 run.json；`render_report` 只接收 `AggregateRun`（不含 RunMetadata）——item1 的数据源与接口形态待确认（Q2/Q3）。item9 过程效率需读 trace.json（当前 `collect_run_results` 只读 result.json），trace 读取管线待确认（Q12）。item2/3 的污染注记数字与 manifest 路径来源待确认（Q13/Q14）。item10 能力覆盖矩阵在 spec 边界注记之外（独立 Requirement），「10 项」口径与注记「9 项」不一致待统一（Q17）。
+**数据管线（grill Q2/Q3/Q12–Q14/Q17 已确认）**：runner 扩展填充报告元组字段（task_set_hash/adapter_version/prompt_version/pricing_table_version/network）；`AggregateRun` 加 `metadata` 字段、main.py 聚合时透传 rounds_meta，render_report 可读 RunMetadata；item9 聚合时读 `run_dir/tasks/<id>/trace.json` 喂 `process_efficiency`（缺 trace 跳过该段）；污染注记数字集中常量表（注来源日期），版本钉住用 RunMetadata.swebench 版本字段；manifest 路径由 CLI 传入（report.py 可选参数，缺失跳过矩阵/反作弊段）；披露口径统一为「注记 9 项披露段 + 能力覆盖矩阵独立 Requirement」。
 
 **备选**：只加元组 + 污染注记。被拒：spec 边界注记明确渲染义务，缺项会留下"实现了但结果页不可引用"。
 
@@ -68,12 +68,12 @@ C2 已实现指标层数据/统计/CLI（`benchmarks/statistics.py` pass^k/cost/
 ### Decision D4: CLI `--budget-cap`/`--no-cap` + `--preflight`
 
 **方案**：
-- `--budget-cap <USD>`：成本上限，运行中累计成本超限停止该 run 并标 `incomplete`。**grill 实证：C2 数据模型无 `incomplete`/status 字段**（`RunMetadata` 无 status、`TaskResult.status` 无生产者写 `"incomplete"`），C3 需扩展字段（候选：`RunMetadata.truncated: bool` 或 status 字段），落点与 compare/结果页对 incomplete 轮的处理待用户确认（Q4/Q5）。缺省语义三处文档冲突（Q6）：以 spec delta「缺省不设上限保持既有行为」为基线，`$50` 作为协议文档建议值，待用户确认。
-- `--budget-cap 0`（或 `--no-cap`）取消上限；`0.0`/`None`/`--no-cap` 等价语义与负数拒绝待用户确认（Q7）。
-- `--preflight`：Docker daemon 探测 + 内存检查（可用内存 <8GiB 提示走 L1 本地路径，不强制失败）；退出码 0=可跑全量、1=需 L1 降级；Docker 不可用时的退出码语义待确认（Q8）。
+- `--budget-cap <USD>`：成本上限，**按轮检查**——任一轮累计成本超限则停止剩余轮次，该轮标 `truncated`；轮内已启动的并发任务自然完成不 cancel（避免半截 trace）。`truncated` 为 C3 新增字段（`RunMetadata.truncated: bool`；grill Q4 实证 C2 模型无此状态）；compare 配对剔除 truncated 轮、pass^k 分母不含 truncated 轮。**缺省不设上限保持既有行为**；`$50` 为协议文档建议值（Q6 确认）。
+- `--budget-cap 0`（或 `--no-cap`）取消上限；`0.0`/`None`/`--no-cap` 三者等价取消，负数显式报错（Q7 确认）。
+- `--preflight`：Docker daemon 探测 + 内存检查（可用内存 <8GiB 提示走 L1 本地路径，不强制失败）；退出码 0=可跑全量、1=需 L1 降级、2=Docker 不可用（Q8 确认）。
 - 两者均与 C2 的 `--seeds/--temperature/--model-version` 组合使用。
 
-**理由**：用户 2026-08-17 已定「预算可配置、可取消」；T1 协议命令面直接落地；`--preflight` 处置内存墙（R2 实测 2.5GiB < 8GiB）。
+**理由**：用户 2026-08-17 已定「预算可配置、可取消」并确认 per-round 口径（Q18）；T1 协议命令面直接落地；`--preflight` 处置内存墙（R2 实测 2.5GiB < 8GiB）。
 
 ### Decision D5: `scripts/self_check.py` 五门禁
 

@@ -23,7 +23,7 @@ C1（#154）与 C2（#157）已合入：任务 schema（scenario/difficulty/trac
 - **运行协议文档**：T1 转正为 `docs/benchmark-run-protocol.md`（中文），含任务集 82–90 口径、模型/采样（repeat 5 + seed 0..4 + temp 0.2）、预算 `--budget-cap`（可配置可取消 `--budget-cap 0`）、对照口径（换 agent / 换 model 分开）、artifact 布局（run.json 元组 + trace.json + summary + protocol.json）、自洽五门禁、reproduction 步骤。
 - **结果页披露渲染**（`benchmarks/report.py` + 结果页模板）：报告元组（model/harness/task_set_hash/grader/成本口径）、SWE-bench 污染注记（保留条件域，OpenAI 2026-02 弃用 + 138 实例 59.4% 缺陷）、反作弊泄漏披露（A 轨回归基线定位）、reason × fault_owner 交叉表、$/resolved-task + cache hit rate + 定价表版本、f2p/p2p 部分成功档、采样参数、小样本声明、过程效率展示。
 - **compare 报告增强**（`benchmarks/compare.py`）：接入 C2 的 `paired_comparison` 渲染 per-task delta/差异 CI/win-rate；run 元数据补齐（模型/日期/成本口径）。
-- **CLI**（`agent/main.py` benchmark）：`--budget-cap <USD>`/`--no-cap`（默认建议 $50，超限标 `incomplete`）；`--preflight`（Docker daemon + 内存检查，<8GiB 走 L1 本地路径）。
+- **CLI**（`agent/main.py` benchmark）：`--budget-cap <USD>`/`--no-cap`（缺省不设上限保持既有行为；`$50` 为协议文档建议值；超限按轮停止剩余轮次并标 `truncated`）；`--preflight`（Docker daemon + 内存检查，<8GiB 走 L1 本地路径，退出码 0/1/2）。
 - **`scripts/self_check.py` 五门禁**：同模型同 harness 复现、seed 复现、失败归因闭环（fault_owner + 校准证据 + reason×owner 交叉表）、披露段齐全（污染注记 + 严格 resolved + f2p/p2p 保留 + A 轨泄漏 + 小 N 声明）、报告元组完整。
 - **C3 前置**：Verified 40 fixture 生成（#156）在数据可达环境执行 `build_subset`；本环境不可达记录为范围外阻塞项，不阻塞本 change 其余交付。
 
