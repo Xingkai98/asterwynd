@@ -40,16 +40,18 @@ T2 叙事改动清单（2026-08-17，map #144 已确认）是精确编辑清单�
 
 - status: enabled
 - research_tier: exempt
-- reason: docs-only 变更（无新增能力面），数字口径均已核实（R3 资产盘点 #147 + C1 实测），编辑清单来自已确认的 T2 交付物；无待定设计项，引用已关闭决策路径（#153 已关闭、`docs/research/narrative-changes-2026-08-17.md` 已定稿）。
+- reason: docs-only 变更（无新增能力面），数字口径均已核实（R3 资产盘点 #147 + grill 2026-08-17 实测 master），编辑清单来自已确认的 T2 交付物（#153 已关闭；T2 文件实体在 `wayfinder-research` worktree `docs/research/narrative-changes-2026-08-17.md` 可读，2026-08-17 用户确认草案来源）。无待定设计项。
 - research questions: 无（exempt）。
-- findings: 本地 `.dev/reference-repos.txt` 不存在（已记录）。数字口径来源：R3（#147）实测 26 本地 + 10 swebench、135 测试文件/1700+ 测试函数、38 内置工具（KNOWN_BUILTIN_TOOL_NAMES）；C1 合入后本地任务 27（26 + b01）。编辑清单为 T2（#153）交付物。
-- design impact: 4 份文档的编辑位置与段落草案由 T2 交付物给出，design.md 承接。
+- findings: 本地 `.dev/reference-repos.txt` 不存在（已记录）。数字口径：grill 2026-08-17 实测 master 为本地任务 27（26 A 轨 + 1 B 轨 b01）+ 10 swebench = 37、测试 148 文件/~1997 函数、38 内置工具（KNOWN_BUILTIN_TOOL_NAMES）；用户确认以该实测为准（T2 原文 26/36/135/1700+ 为 C1/C2 合入前口径，不采用）。编辑清单为 T2（#153）交付物。
+- design impact: 5 份文档的编辑位置与段落草案由 T2 交付物 + grill 实测给出，design.md 承接并已补齐逐字 before/after。
 
 ## Impact Analysis
 
 - **能力域**: `interview-script`（docs）——面试材料口径修正与升级叙事。
 - **代码**: 无。
-- **测试**: 无新增测试（docs-only）；若存在文档校验脚本则跑过。
-- **文档**: `docs/resume-description.md`、`docs/interview-script/questions/Q13-benchmark.md`、`docs/interview-script/walkthrough/W07-observability-benchmark.md`、`docs/interview-script/FINAL-master-script.md` 四份修改；`docs/openspec-change-backlog.md` 更新；README 如涉及任务数同步（含 README_EN）。
+- **测试**: 无新增测试（docs-only）；一致性校验用扩展词表 grep（`23 个`/`34 个`/`450+`/`claw-swe-bench`/`26 + 10`/`130 文件`/`~1691`/`36（26`）确认 5 份目标文档清零。
+- **文档**: `docs/resume-description.md`、`docs/interview-script/questions/Q13-benchmark.md`、`docs/interview-script/walkthrough/W07-observability-benchmark.md`、`docs/interview-script/FINAL-master-script.md`、`docs/interview-script/walkthrough/README.md`（用户 Q4 确认纳入第 5 份）五份修改；`docs/openspec-change-backlog.md` 更新；README/README_EN 实测已为 27/37（C1 同步），无待改。
 - **基准**: 无行为影响（纯文档）。
-- **流程（process）**: 面试叙事与评测现状对齐——升级方向标「设计已定、C1–C3 实现中」，不把未实现写成已实现。
+- **流程（process）**: 面试叙事与评测现状对齐——升级方向标「设计已定、C1–C3 实现中」+ 双要素标注（升级目标 ~90 + 当前已落 37），不把未实现写成已实现。
+- **已知债务（2026-08-17 用户确认，不扩 scope）**: `docs/architecture.md`/`docs/development-guide.md`/`docs/testing-guide.md`/`docs/benchmark-plan.md`/`docs/coding-agent-roadmap.md` 的 `claw-swe-bench/` 失效目录引用记录于 design.md `## Known Debt`，后续专项清理。
+- **状态**: 实现完成（tasks 2.x–6.x 已勾选），进入同步与审阅收尾。
