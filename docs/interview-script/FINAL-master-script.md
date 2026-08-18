@@ -8,7 +8,7 @@
 
 ## 0. 30 秒电梯 pitch（开场必须背熟）
 
-> "我独立实现了一个 coding agent 系统 **Asterwynd**，约 2.7 万行生产代码、1700+ 自动化测试、37 任务评测闭环。它的核心是一个消息驱动的 AgentLoop，围绕它做了完整的能力纵深：上下文工程（8 源分层注入 + 稳定前缀命中 Prefix Cache + L1/L2 分层压缩）、工具系统（38 内置工具 + 动态 Top-K 选择 + 质量软降级）、长期记忆（LLM 写时三路去重 + importance×recency 衰减 + git 可逆写入）、多 Agent 编排（4 种模式 + 消息总线 + 预算硬 kill + 快照恢复）、3 层纵深防御安全体系，以及全链路可观测 + Benchmark 回归门禁。每条能力线都能讲清设计取舍和踩过的坑，有 ADR 记录决策。"
+> "我独立实现了一个 coding agent 系统 **Asterwynd**，约 2.7 万行生产代码、1700+ 自动化测试、44 任务评测闭环。它的核心是一个消息驱动的 AgentLoop，围绕它做了完整的能力纵深：上下文工程（8 源分层注入 + 稳定前缀命中 Prefix Cache + L1/L2 分层压缩）、工具系统（38 内置工具 + 动态 Top-K 选择 + 质量软降级）、长期记忆（LLM 写时三路去重 + importance×recency 衰减 + git 可逆写入）、多 Agent 编排（4 种模式 + 消息总线 + 预算硬 kill + 快照恢复）、3 层纵深防御安全体系，以及全链路可观测 + Benchmark 回归门禁。每条能力线都能讲清设计取舍和踩过的坑，有 ADR 记录决策。"
 
 **关键叙事要点**：
 1. 不是堆功能，是每条线做深到"能讲出取舍"。
@@ -24,7 +24,7 @@
 | **定位** | local、benchmarkable 的 coding agent，面向大厂 Agent 开发岗位的能力证明项目 |
 | **主线** | Agent 运行时 → 工具调用 → 上下文 → 记忆 → 多 Agent → 可观测 → 评测闭环 |
 | **不是** | 不是通用 agent 框架、不是复刻 Claude Code 功能清单（Q03 展开） |
-| **验证** | 37 任务（27 本地 + 10 SWE-bench）+ bootstrap CI + CI 回归门禁 |
+| **验证** | 44 任务（34 本地 + 10 SWE-bench）+ bootstrap CI + CI 回归门禁 |
 
 ---
 
@@ -93,7 +93,7 @@
 
 ### Bullet 7 · 可观测 + Benchmark
 
-- **讲法**："TraceRecorder 全链 step 流（run_started→llm_iteration→tool_call→approval→sandbox→compaction→completion）；CostLedger 按 session/phase/tool 三维成本归因；ErrorClassifier 结构化错误分类（4 类 + unknown 兜底，审批拒绝系归到 permission_denied）。评测 37 任务在 git worktree 隔离执行，bootstrap 95% CI（固定 seed 可复现），CI 回归门禁对比 baseline。评测在升级：任务集从 37 扩到升级目标 ~90（场景×难度分层，A 轨 20–24 + B 轨 12–16 + Verified 50）、指标加 pass^k 与 cost@pass、SWE-bench 引用带污染披露——设计已定，实现中。"
+- **讲法**："TraceRecorder 全链 step 流（run_started→llm_iteration→tool_call→approval→sandbox→compaction→completion）；CostLedger 按 session/phase/tool 三维成本归因；ErrorClassifier 结构化错误分类（4 类 + unknown 兜底，审批拒绝系归到 permission_denied）。评测 44 任务在 git worktree 隔离执行，bootstrap 95% CI（固定 seed 可复现），CI 回归门禁对比 baseline。评测在升级：任务集从 44 扩到升级目标 ~90（场景×难度分层，A 轨 20–24 + B 轨 12–16 + Verified 50）、指标加 pass^k 与 cost@pass、SWE-bench 引用带污染披露——设计已定，实现中。"
 - **入口**：`agent/trace_recorder.py`；`agent/cost_tracker.py`；`agent/observability.py`；`benchmarks/{runner,statistics,gate,compare}.py`。
 - **拷打点**：
   - "评测怎么防止 agent 作弊？" → `_hide_agent_invisible_task_files` 评测前藏掉 task.json（`runner.py:632`）。
@@ -114,8 +114,8 @@
 | 上下文源 | 8 个 | `loop.py:1339` |
 | Hook 切面 | 7 个 | `hooks/manager.py:15` |
 | 编排模式 | 4 种 | `subagent/patterns.py:203` |
-| 评测任务 | 37（27 本地 + 10 SWE-bench） | `benchmarks/tasks/` |
-| 评测任务（升级目标） | ~90（设计已定：A 轨 20–24 + B 轨 12–16 + Verified 50；当前已落 37） | C1 `evaluation-task-spec` |
+| 评测任务 | 44（34 本地 + 10 SWE-bench） | `benchmarks/tasks/` |
+| 评测任务（升级目标） | ~90（设计已定：A 轨 20–24 + B 轨 12–16 + Verified 50；当前已落 44） | C1 `evaluation-task-spec` |
 | pass^k | 全部 k 次成功（可靠性指标） | statistics.py 新增聚合（C2） |
 | cost@pass | $/resolved-task，cache-aware 四档定价 | cost_tracker 扩展（C2/C3） |
 | fault_owner | {agent, task, environment, unknown} | C2 |

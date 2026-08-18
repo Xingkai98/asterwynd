@@ -1,0 +1,20 @@
+diff --git a/tests/test_declarative_flow_engine.py b/tests/test_declarative_flow_engine.py
+index 8dd066a..ea030d6 100644
+--- a/tests/test_declarative_flow_engine.py
++++ b/tests/test_declarative_flow_engine.py
+@@ -563,3 +563,15 @@ class TestE2eDemoIntegration:
+             "phase": "planning",
+             "sub_state": "exploring",
+         }
++
++    def test_awaiting_grill_confirmation_wired_end_to_end(self):
++        """awaiting_grill_confirmation 三处一致：statechart 派生 + event_log 镜像 + recovery 目标。"""
++        from agent.workflow.event_log import AWAITING_SUB_STATES
++
++        engine = _load_engine()
++        assert "awaiting_grill_confirmation" in engine.chart.awaiting_sub_states()
++        assert "awaiting_grill_confirmation" in AWAITING_SUB_STATES
++        assert engine.chart.recovery_default("blocked.awaiting_grill_confirmation") == {
++            "phase": "planning",
++            "sub_state": "writing_design",
++        }

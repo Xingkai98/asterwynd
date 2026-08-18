@@ -4,7 +4,7 @@
 
 Benchmark 解决"agent 到底行不行，用什么数字说话"。Asterwynd 的评测体系分四层（`docs/benchmark-plan.md`）。
 
-**任务层**。任务有统一 schema（`task_schema.py`）：任务描述、工作区准备、验证命令、hidden test patch、评测指标。任务分两类：本地 worktree 任务（内置）+ 外部 SWE-bench 风格任务（两类=执行类型轴）。在此基础上，评测任务按 **场景×难度** 分层组织（5 场景枚举 × easy/medium/hard），能力层用套件级覆盖矩阵表达（OpenHands 式）；任务集三来源：历史重建回归基线 + 当前 HEAD 真实缺陷/增强 + 开源测试集精选子集（升级目标 ~90 = A 轨 20–24 + B 轨 12–16 + Verified 50，设计已定、C1 实现中；当前已落 37 = 27 本地 + 10 Verified 子集）。
+**任务层**。任务有统一 schema（`task_schema.py`）：任务描述、工作区准备、验证命令、hidden test patch、评测指标。任务分两类：本地 worktree 任务（内置）+ 外部 SWE-bench 风格任务（两类=执行类型轴）。在此基础上，评测任务按 **场景×难度** 分层组织（5 场景枚举 × easy/medium/hard），能力层用套件级覆盖矩阵表达（OpenHands 式）；任务集三来源：历史重建回归基线 + 当前 HEAD 真实缺陷/增强 + 开源测试集精选子集（升级目标 ~90 = A 轨 20–24 + B 轨 12–16 + Verified 50，设计已定、实现中；当前已落 44 = 34 本地 + 10 Verified 子集）。
 
 **执行层**。`BenchmarkRunner` 跑完整流程：准备 worktree（`git worktree add`）→ 跑 agent → 保存 trace/runner log/result → 应用 hidden test patch → 跑验证命令 → 保存 test output → 汇总报告。支持 fake agent（无 LLM 冒烟）、真实 agent 对比。
 

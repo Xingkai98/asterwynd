@@ -1,0 +1,53 @@
+diff --git a/agent/workflow/event_log.py b/agent/workflow/event_log.py
+index 5834ee8..bed8664 100644
+--- a/agent/workflow/event_log.py
++++ b/agent/workflow/event_log.py
+@@ -52,6 +52,7 @@ AWAITING_SUB_STATES = (
+     "awaiting_proposal_confirmation",
+     "awaiting_human_review",
+     "awaiting_user_confirmation",
++    "awaiting_grill_confirmation",
+ )
+ 
+ # 默认 seed：首事件 change_created 或缺失 seed 时的初始投影（等价 init_handoff_json 的 planning.exploring）。
+diff --git a/flow/statechart.json b/flow/statechart.json
+index b928e9b..6d7bffc 100644
+--- a/flow/statechart.json
++++ b/flow/statechart.json
+@@ -187,6 +187,12 @@
+       "recovery_default": {"phase": "planning", "sub_state": "writing_design"},
+       "on": []
+     },
++    "blocked.awaiting_grill_confirmation": {
++      "_description": "等待 grill 设计追问确认（flow block --awaiting awaiting_grill_confirmation）",
++      "recovery": "from_blocked_from",
++      "recovery_default": {"phase": "planning", "sub_state": "writing_design"},
++      "on": []
++    },
+     "done": {
+       "_description": "终态（sub_state None）；由 closing.ready_for_review 人工批准进入。",
+       "on": []
+diff --git a/scripts/workflow_state.py b/scripts/workflow_state.py
+index 41ad00e..a6d10c2 100644
+--- a/scripts/workflow_state.py
++++ b/scripts/workflow_state.py
+@@ -756,6 +756,7 @@ _AWAITING_RECOVERY_DEFAULTS: dict[str, dict] = {
+     "awaiting_proposal_confirmation": {"phase": "planning", "sub_state": "writing_design"},
+     "awaiting_human_review": {"phase": "planning", "sub_state": "reviewing_artifacts"},
+     "awaiting_user_confirmation": {"phase": "planning", "sub_state": "writing_design"},
++    "awaiting_grill_confirmation": {"phase": "planning", "sub_state": "writing_design"},
+ }
+ 
+ 
+diff --git a/tests/test_declarative_flow_engine.py b/tests/test_declarative_flow_engine.py
+index 8dd066a..0998771 100644
+--- a/tests/test_declarative_flow_engine.py
++++ b/tests/test_declarative_flow_engine.py
+@@ -143,6 +143,7 @@ class TestStatechartValidity:
+             "awaiting_proposal_confirmation",
+             "awaiting_human_review",
+             "awaiting_user_confirmation",
++            "awaiting_grill_confirmation",
+         ]
+ 
+     def test_validate_rejects_done_sub_state(self):

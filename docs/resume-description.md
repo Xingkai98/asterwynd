@@ -6,7 +6,7 @@
 
 > **Asterwynd** — 本地 Coding Agent 系统 | Python / asyncio / FastAPI
 > 从零设计并实现面向代码仓库任务的 Agent 运行时，覆盖 LLM tool-call 循环、WorkspacePolicy 安全边界、代码理解工具、精确编辑、命令验证、轨迹记录、Web/CLI 入口和 benchmark 闭环。
-> 内置 27 个本地 coding-agent 任务（26 A 轨回归基线 + 1 B 轨当前演进）、SWE-bench Docker harness 路径，并以统一 harness（SwebenchAdapter + 多 runner）对比 Aider、OpenCode 等外部 coding agent 在同类任务上的表现。
+> 内置 34 个本地 coding-agent 任务（22 A 轨回归基线 + 12 B 轨当前演进）、SWE-bench Docker harness 路径，并以统一 harness（SwebenchAdapter + 多 runner）对比 Aider、OpenCode 等外部 coding agent 在同类任务上的表现。
 
 ---
 
@@ -84,7 +84,7 @@ AgentLoop.run()
 
 **6. Benchmark 闭环**
 
-- 内置 27 个本地 coding-agent 任务（26 A 轨回归基线 + 1 B 轨当前演进）+ SWE-bench Verified 子集，git worktree 隔离 + hidden test patch 确定性验证，bootstrap 95% CI（固定 seed）统计，pass@1/pass@k 指标，支持跨 agent 统一 harness 对比和 CI 回归门禁。
+- 内置 34 个本地 coding-agent 任务（22 A 轨回归基线 + 12 B 轨当前演进）+ SWE-bench Verified 子集，git worktree 隔离 + hidden test patch 确定性验证，bootstrap 95% CI（固定 seed）统计，pass@1/pass@k 指标，支持跨 agent 统一 harness 对比和 CI 回归门禁。
 - 外部 `swebench-*` 任务：通过 Docker preflight 和 SWE-bench harness 验证 patch。
 - 统一 harness 对比：SwebenchAdapter + 多 runner（Asterwynd/ClaudeCode/Shell）在同一批任务上对比。
 - 结果状态区分 `passed`、`passed_with_warnings`、`unsupported`、`failed`、`error`，失败原因写入 `reason`。
@@ -101,7 +101,7 @@ AgentLoop.run()
 Asterwynd | 本地 Coding Agent 系统 | Python / asyncio / FastAPI
 从零设计实现面向代码仓库任务的 Agent 运行时，覆盖 LLM tool-call 循环、
 WorkspacePolicy 安全边界、代码理解工具、精确编辑、命令验证、轨迹记录和 CLI/Web 入口。
-内置 27 个本地 coding-agent benchmark 任务（26 A 轨回归基线 + 1 B 轨当前演进）、SWE-bench Docker harness 路径，
+内置 34 个本地 coding-agent benchmark 任务（22 A 轨回归基线 + 12 B 轨当前演进）、SWE-bench Docker harness 路径，
 并以统一 harness（SwebenchAdapter + 多 runner）对比 Asterwynd / Aider / OpenCode 等 agent 的解题表现。
 ```
 

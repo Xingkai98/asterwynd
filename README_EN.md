@@ -33,7 +33,7 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **MCP Adapter** | Connects stdio / Streamable HTTP MCP servers, registers MCP tools, and injects prompt/resource context through `/mcp-prompt` and `/mcp-resource`. |
 | **SubAgentManager** | Sub-session runtime with independent transcripts, multiple sub-sessions, repeated runs per sub-session, and explicit inspect. |
 | **TraceRecorder** | Full trace recording for iterations, tool calls, edits, and tests. |
-| **Benchmark** | 27 local coding-agent tasks (track A regression baseline + track B current-evolution), a curated SWE-bench Verified subset (10 fixtures, target 50), and a Claw-SWE-Bench multi-agent comparison entry point. |
+| **Benchmark** | 34 local coding-agent tasks (22 track-A regression baseline + 12 track-B current-evolution), a curated SWE-bench Verified subset (10 fixtures, target 50), and a Claw-SWE-Bench multi-agent comparison entry point. |
 
 ## Quick Start
 
@@ -175,7 +175,7 @@ agent/
     └── ...                  # Terminal UI runtime view
 
 benchmarks/                  # Local benchmark runner
-├── tasks/                   # 37 coding tasks (asterwynd-* local + swebench-* Verified subset)
+├── tasks/                   # 44 coding tasks (asterwynd-* local + swebench-* Verified subset)
 ├── runner.py                # BenchmarkRunner + SWE-bench style isolation
 ├── agent_runner.py          # AgentRunner adapters: fake/shell/asterwynd
 ├── models.py                # Failure taxonomy + metric models

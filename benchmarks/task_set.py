@@ -11,7 +11,7 @@ so their bug-fix bias cannot saturate the scenario columns).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from benchmarks.task_schema import LoadedTask
@@ -33,6 +33,15 @@ SCENARIO_ORDER = ("bug-fix", "feature-dev", "refactor", "debug", "integration")
 # OQ-2: 覆盖矩阵只统计本地 A+B 任务；verified 子集单独披露。
 _LOCAL_TRACKS = {None, "A", "B"}
 
+# Q6: spec delta「context-planning 列 SHALL 有 B 轨任务登记」的机械强制。
+# 只对声明的缺口能力列生效：该能力列必须至少有一个指定 track 的任务登记，
+# 其余能力列维持 A+B 聚合校验（evaluation-btrack-expansion OQ-6）。
+REQUIRED_TRACK_COVERAGE: dict[str, set[str]] = {
+    "context-planning": {"B"},
+    "long-term-memory": {"B"},
+    "long-context": {"B"},
+}
+
 
 @dataclass(frozen=True)
 class CoverageReport:
@@ -41,9 +50,15 @@ class CoverageReport:
     missing_capabilities: list[str]
     missing_scenarios: list[str]
     unknown_task_ids: list[str]
+    # Q6: e.g. "context-planning@B" —— 能力列缺指定 track 的任务登记。
+    missing_track_coverage: list[str] = field(default_factory=list)
 
     def is_complete(self) -> bool:
-        return not (self.missing_capabilities or self.missing_scenarios)
+        return not (
+            self.missing_capabilities
+            or self.missing_scenarios
+            or self.missing_track_coverage
+        )
 
 
 @dataclass
@@ -97,8 +112,24 @@ class Manifest:
         }
         missing_scenarios = [s for s in SCENARIO_ORDER if s not in covered_scenarios]
 
+        # Q6: per-track 能力列缺口——能力列必须有指定 track 的任务登记。
+        loaded_by_id = {t.task.id: t.task for t in loaded}
+        covered_capability_tracks = {
+            (cap, loaded_by_id[task_id].track)
+            for task_id, caps in self.coverage.items()
+            if task_id in known_ids
+            for cap in caps
+        }
+        missing_track_coverage = sorted(
+            f"{cap}@{track}"
+            for cap, required_tracks in REQUIRED_TRACK_COVERAGE.items()
+            for track in sorted(required_tracks)
+            if (cap, track) not in covered_capability_tracks
+        )
+
         return CoverageReport(
             missing_capabilities=missing_capabilities,
             missing_scenarios=missing_scenarios,
             unknown_task_ids=unknown_task_ids,
+            missing_track_coverage=missing_track_coverage,
         )
