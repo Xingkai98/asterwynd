@@ -4,7 +4,7 @@
 
 - **A 轨（22）**: 历史重建回归基线，base_commit 为特性引入前提交，在完整 git 历史中运行（反作弊泄漏已披露，见 `manifest.json` `anti_cheat_disclosure`）。
 - **B 轨（5）**: 当前 HEAD 真实缺陷/增强（面试核心），含 `asterwynd-002-sandbox-executor`、`asterwynd-004-benchmark-cli`、`asterwynd-005-bash-workspace`、`asterwynd-021-lsp-diagnostics` 重写与 `asterwynd-b01-report-family-summary` 新增。
-- **Verified（10，目标 50）**: `swebench-*` 外部精选子集，配比与 KNOWN_BAD 过滤见 `benchmarks/swebench_subset.py`。
+- **Verified（38）**: `swebench-*` 外部精选子集（requests 8/flask 1/pytest 11/sympy 8/seaborn 2/pylint 8），配比与 KNOWN_BAD 过滤见 `benchmarks/swebench_subset.py`，difficulty 分布 17 easy/16 medium/5 hard；flask/seaborn 池已达 Verified 数据集上限。
 
 任务按 5 场景（bug-fix/feature-dev/refactor/debug/integration）与 3 难度（easy/medium/hard）双标签组织；套件级能力覆盖矩阵见 `manifest.json` `coverage`。
 

@@ -12,11 +12,13 @@ C1 已交付：`benchmarks/swebench_subset.py::build_subset(instances, targets, 
 
 **Goals:**
 
-- `build-subset` CLI 接通：加载 → 选 40 → 落 fixture。
-- 本机 hf-mirror 实际生成 40 条，`validate_fixtures_dir` 全过。
-- L3 `gold_check` 对生成 fixture 自检。
-- manifest 登记 verified 条目。
+- `build-subset` CLI 接通：加载 → 按配比选实例 → 落 fixture。
+- 本机 hf-mirror 实际生成 Verified fixture，`validate_fixtures_dir` 全过。
+- L3 `gold_check` 对生成 fixture 抽样自检（每 repo ≥1 跑通，其余记录未自检）。
+- manifest 登记 verified 摘要条目 + disclosure 披露。
 - #156 后续项 1 闭环。
+
+**实测结果（2026-08-18，hf-mirror）**：Verified 轻量池有上限——flask 全数据集仅 1 条、seaborn 仅 2 条（均被既有 fixture 占用），requests 8 条中 6 条既有。故按 OQ-V1 配比实际补 28 条新（requests+2/flask+0/pytest+8/sympy+8/seaborn+2/pylint+8），总计 **38** 条（10 既有 + 28 新），而非目标 40/50。difficulty 列真实值为 `<15 min fix`/`15 min - 1 hour`/`1-4 hours`/`>4 hours`，映射后分布 17 easy/16 medium/5 hard。L3 抽样自检：requests/flask/pytest 3 条 PASS（gitee 可达 + PyPI 装依赖），sympy/seaborn/pylint 未自检（github 不可达，clone 超时记录）。
 
 **Non-Goals:**
 
@@ -72,12 +74,13 @@ uv run python benchmarks/swebench_subset.py build-subset \
 - status: enabled
 - research_tier: light
 - reason: 常规补全（C1 已调研 R2 #146 与 G2 #149）；本机网络实测补充 hf-mirror 可达事实。
-- findings: 本地 `.dev/reference-repos.txt` 不存在（已记录）。hf-mirror 实测 200 且数据集完整（2026-08-18）；`build_subset`/`load_verified`/`generate_tasks` 接口匹配，接线即可。
+- findings: 本地 `.dev/reference-repos.txt` 不存在（已记录）。hf-mirror 实测 200 且数据集完整（2026-08-18）；`build_subset`/`load_verified`/`generate_tasks` 接口匹配，接线即可。实现期补充：difficulty 列真实 4 值、flask/seaborn 池上限、github 不可达（L3 抽样受限）——见「实测结果」。
 - design impact: D1–D5 全部来自 C1 交付物 + 本机实测；无新增调研依赖。
 
 ## Risks / Trade-offs
 
 - **[hf-mirror 数据集字段与直连不一致] → `load_verified` 加载后先打印字段名/dataset_size 再 build，字段缺失早暴露；gold_check 兜底。**
+- **[轻量池上限不足 40] → 实测 flask 1 条/seaborn 2 条/requests 8 条（6 既有），按配比实际补 28 新、总 38；接受略少于 40（OQ-V6 数字按实际，manifest/disclosure 如实登记）。**
 - **[40 条中含 KNOWN_BAD/坏实例] → build_subset 已过滤 KNOWN_BAD；gold_check 自检剔除 flaky；宁可略少于 40 也不混入坏实例（G2 口径）。**
 - **[gold_check 耗时长（clone+装依赖×40）] → 默认跑但允许 `--skip-gold-check`；结果页标注自检覆盖。**
 - **[manifest 与 B 轨并行冲突] → 只改 verified 段 + 错开合入（D5）。**
