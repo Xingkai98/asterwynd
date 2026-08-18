@@ -41,17 +41,17 @@
 
 ## 7. spec 同步
 
-- [ ] 7.1 本 change 的 spec delta 以 MODIFIED 更新渲染边界注记（C2 留下的「归 C3」注记 → 已实现）。
-- [ ] 7.2 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
+- [x] 7.1 本 change 的 spec delta 以 MODIFIED 更新渲染边界注记（C2 留下的「归 C3」注记 → 已实现）。
+- [x] 7.2 将本 change 的 `benchmark` delta 同步到当前规格 `openspec/specs/benchmark/spec.md`。
 
 ## 8. 同步与验证
 
-- [ ] 8.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`。
-- [ ] 8.2 维护 Reference Implementation Research 最终结论。
-- [ ] 8.3 更新 `docs/openspec-change-backlog.md`（C3 状态）。
-- [ ] 8.4 运行相关单元/集成测试与全量测试。
-- [ ] 8.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 8.6 跑通 benchmark smoke（`--repeat 3 --seeds 0 1 2` fake runner），确认结果页含披露段。
+- [x] 8.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`（proposal Impact Analysis 无残留）。
+- [x] 8.2 维护 Reference Implementation Research 最终结论（本地参考仓库不可用事实 + map 决策替代依据已记录）。
+- [x] 8.3 更新 `docs/openspec-change-backlog.md`（C3 状态→实现完成；C4 由 master merge 带来已归档）。
+- [x] 8.4 运行相关单元/集成测试与全量测试（benchmark 374 全过；全量 2172 passed，2 个环境相关失败：tree-sitter Java 语法、flow/engine 系统 python 缺 agent 模块，与本次变更无关）。
+- [x] 8.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`（30 passed）与 `uv run python scripts/check_openspec_artifacts.py`（passed）。
+- [x] 8.6 跑通 benchmark smoke（`--repeat 3 --seeds 0 1 2` fake runner），确认结果页含披露段 + self_check 五门禁 PASS。
 
 ## 9. 审阅与 PR 收尾
 
