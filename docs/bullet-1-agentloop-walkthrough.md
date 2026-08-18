@@ -11,30 +11,30 @@
 主类 `AgentLoop`（line 112），入口 `run()` → `_run()`（line 544）。核心是一个 for 循环：
 
 ```python
-for iteration in range(start_iteration, self.max_iterations):  # loop.py:605
+for iteration in range(start_iteration, self.max_iterations):  # loop.py:610
 ```
 
 单次迭代的完整流程：
 
 ```
-① _select_tool_schemas()  — 从 38 工具中 Top-K 选 schema 注入 LLM    (:622)
-② _messages_with_run_context() — 拼接 context block (ContextBuilder)   (:624)
-③ hooks.before_iteration()     — Hook 切面                            (:625)
-④ _call_llm()                  — 调 LLM，返回 LLMResponse              (:626)
-⑤ hooks.after_llm_call()      — Hook 切面                             (:631)
-⑥ 无 tool_call → 判断是否 max_tokens 截断                               (:671)
+① _select_tool_schemas()  — 从 38 工具中 Top-K 选 schema 注入 LLM    (:627)
+② _messages_with_run_context() — 拼接 context block (ContextBuilder)   (:629)
+③ hooks.before_iteration()     — Hook 切面                            (:630)
+④ _call_llm()                  — 调 LLM，返回 LLMResponse              (:631)
+⑤ hooks.after_llm_call()      — Hook 切面                             (:636)
+⑥ 无 tool_call → 判断是否 max_tokens 截断                               (:678-683)
    - 截断 → 续接消息 "Please continue..."，下一轮继续
    - 非截断 → end_turn，结束
-⑦ 有 tool_call → 追加 assistant 消息到 messages                        (:704)
-⑧ Phase 1：解析 arguments + 权限审批 + 模式策略判定                     (:706-844)
-⑨ Phase 2: _execute_tool_calls() 并行/串行执行                          (:846)
-⑩ Phase 3: 结果回填 messages + hook after_tool_execute                  (:849-937)
-⑪ memory.compact_if_needed() 上下文压缩                                (:941)
+⑦ 有 tool_call → 追加 assistant 消息到 messages                        (:715)
+⑧ Phase 1：解析 arguments + 权限审批 + 模式策略判定                     (:719-855)
+⑨ Phase 2: _execute_tool_calls() 并行/串行执行                          (:858)
+⑩ Phase 3: 结果回填 messages + hook after_tool_execute                  (:861-951)
+⑪ memory.compact_if_needed() 上下文压缩                                (:952)
 ```
 
 "message-driven" 的含义：所有状态在 `messages: list[Message]` 中流转，没有外部状态机。messages 数组就是 Agent 的"记忆"。
 
-### Phase 1: JSON 解析 + 权限审批（:706-844）
+### Phase 1: JSON 解析 + 权限审批（:719-855）
 
 ```python
 for delta in response.tool_calls:
@@ -81,7 +81,7 @@ class RetryHook:
 
 **注意**：RetryHook 只在非 Bash 工具上生效（Bash 可能有副作用，异常直接转 error，不重试）。
 
-### Phase 2: 并行/串行分组逻辑（:1212-1279）
+### Phase 2: 并行/串行分组逻辑（:1225-1295）
 
 ```python
 # 贪心分组：连续的可并行工具 → 同一组，不可并行的 → 单独一组
@@ -145,7 +145,7 @@ class SessionStore:
 
 **保存触发**：`run()` 的 `finally` 块（`:530-534`）→ 无论成功/异常/中断，保底落盘。
 
-### 恢复路径（`loop.py:557-584`）
+### 恢复路径（`loop.py:561-588`）
 
 ```python
 if resume_snapshot is not None:
@@ -185,13 +185,13 @@ class Hook(Protocol):
 
 | Hook | 接线点 | 说明 |
 |------|--------|------|
-| `on_run_started` | `:596` | 仅在非 resume 路径触发 |
-| `before_iteration` | `:625` | 每轮迭代前，传入 contextualized messages |
-| `after_llm_call` | `:631` | LLM 返回后，可读 response.usage |
-| `before_tool_execute` | `:1179` | 工具执行前 |
-| `after_tool_execute` | `:1209` | 工具执行后，带 error_type |
-| `on_error` | `:714, :1189, :1193` | JSON 解析失败 / Bash 超时 / 其他异常 |
-| `on_completion` | `:679, :971` | end_turn 和 max_iterations 两个出口 |
+| `on_run_started` | `:601` | 仅在非 resume 路径触发 |
+| `before_iteration` | `:630` | 每轮迭代前，传入 contextualized messages |
+| `after_llm_call` | `:636` | LLM 返回后，可读 response.usage |
+| `before_tool_execute` | `:1192` | 工具执行前 |
+| `after_tool_execute` | `:1222` | 工具执行后，带 error_type |
+| `on_error` | `:725, :1202, :1206` | JSON 解析失败 / Bash 超时 / 其他异常 |
+| `on_completion` | `:686, :984` | end_turn 和 max_iterations 两个出口 |
 
 **内置 Hook**（`agent/hooks/builtin/`）：
 
@@ -225,7 +225,7 @@ class LLM(Protocol):
 ### 关键差异：Cache Plan
 
 - `AnthropicLLM.supports_cache_control = True` — 只有 Anthropic 路径打 `cache_control: {"type": "ephemeral"}` 断点
-- `_apply_cache_plan()`（`loop.py:1084`）在每次 LLM 调用前检查 `supports_cache_control`，决定是否打断点
+- `_apply_cache_plan()`（`loop.py:1097`）在每次 LLM 调用前检查 `supports_cache_control`，决定是否打断点
 - OpenAI 走服务端 auto-caching，不需要手动放断点
 
 ### AnthropicLLM 三层降级（`:56-97`）

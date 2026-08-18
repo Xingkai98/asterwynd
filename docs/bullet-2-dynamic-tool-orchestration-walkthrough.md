@@ -6,7 +6,7 @@
 
 ## 整体架构
 
-4 个机制都在 `agent/tools/governance/` 目录，由 `ToolRegistry`（`registry.py`）统一编排。调用入口在 `agent/loop.py:986` `_select_tool_schemas()`，每次迭代前触发。
+4 个机制都在 `agent/tools/governance/` 目录，由 `ToolRegistry`（`registry.py`）统一编排。调用入口在 `agent/loop.py:999` `_select_tool_schemas()`，每次迭代前触发。
 
 ```
 每次迭代前 (_select_tool_schemas):
@@ -55,7 +55,7 @@ class ToolSelector:
 
 ### 调用触发
 
-`agent/loop.py:1004-1024`，每次迭代构造 query：
+`agent/loop.py:1008-1029`，每次迭代构造 query：
 
 ```python
 # query = 最新一条 user 消息 + 最多 3 个最近的工具调用名
@@ -125,7 +125,7 @@ return stable_names + tail
 
 ### cache_control 断点
 
-**文件**：`agent/loop.py:1103-1148` + `agent/anthropic_llm.py:167-194`
+**文件**：`agent/loop.py:1116-1163` + `agent/anthropic_llm.py:167-194`
 
 | Selector 状态 | 断点策略 | 缓存范围 |
 |:---|:---|:---|
@@ -133,7 +133,7 @@ return stable_names + tail
 | **ON** | **最后一个核心稳定工具** | system + 稳定工具前缀缓存，变层不缓存 |
 
 ```python
-# loop.py:1133-1148
+# loop.py:1146-1163
 selector = getattr(self.tool_registry, "_selector", None)
 if selector is None:
     return CachePlan(stable_system_block_count=N, stable_tool_count=0)
@@ -148,7 +148,7 @@ else:
     return CachePlan(stable_system_block_count=0, stable_tool_count=stable_tool_count)
 ```
 
-**重要**：`cache_control` 断点**仅 Anthropic 路径生效**（`loop.py:1095`）：
+**重要**：`cache_control` 断点**仅 Anthropic 路径生效**（`loop.py:1108`）：
 
 ```python
 if not getattr(self.llm, "supports_cache_control", False):
@@ -240,6 +240,6 @@ if self._is_quality_degraded(name) and not self._selector.is_stable(name):
 | `agent/embedding/provider.py` | EmbeddingProvider Protocol + NGramEmbedding 默认实现 |
 | `agent/config.py` | ToolSelectionConfig / QualityConfig（默认关闭） |
 | `agent/loop.py:85-87` | CORE_STABLE_TOOL_NAMES |
-| `agent/loop.py:986-1024` | _select_tool_schemas() 注入点 |
-| `agent/loop.py:1084-1148` | _apply_cache_plan / _compute_cache_plan |
+| `agent/loop.py:999-1029` | _select_tool_schemas() 注入点 |
+| `agent/loop.py:1097-1163` | _apply_cache_plan / _compute_cache_plan |
 | `agent/anthropic_llm.py:167-194` | AnthropicLLM._apply_cache_plan 实际打断点 |

@@ -33,7 +33,7 @@
 
 ### 注册点
 
-**文件**：`agent/loop.py:1339-1355`
+**文件**：`agent/loop.py:1352-1367`
 
 `AgentLoop._make_default_context_builder()` 是唯一的注册入口，创建 `ContextBuilder` 并逐个注册 8 个 `ContextSource`：
 
@@ -51,7 +51,7 @@ def _make_default_context_builder(self) -> ContextBuilder:
     return builder
 ```
 
-**代码级计数**：恰好 8 次 `builder.register()` 调用（line 1343-1354），无其他注册路径。
+**代码级计数**：恰好 8 次 `builder.register()` 调用（line 1356-1367），无其他注册路径。
 
 ### 8 个源的完整属性对照表
 
@@ -95,10 +95,10 @@ P6           (未使用)
 
 核心类 `ContextBuilder`，维护 `_sources: list[ContextSource]` 和 `_static_cache: dict[tuple, str]`。
 
-**注入入口**（`loop.py:1300-1327` `_messages_with_run_context`）：
+**注入入口**（`loop.py:1313-1340` `_messages_with_run_context`）：
 
 ```python
-# loop.py:1303-1313
+# loop.py:1316-1326
 ctx = BuildContext(
     cwd=cwd,
     mode=self.runtime_state.current_mode,
@@ -109,7 +109,7 @@ ctx = BuildContext(
 blocks = await self.context_builder.build_blocks(ctx)
 ```
 
-注入预算公式（`loop.py:1335-1337`）：
+注入预算公式（`loop.py:1348-1350`）：
 
 ```python
 @property
@@ -118,7 +118,7 @@ def _injection_budget(self) -> int:
     return min(20_000, int(self._context_window * 0.20))
 ```
 
-默认 context_window 为 100K（`loop.py:1330-1332`），所以默认注入预算为 `min(20000, 20000) = 20000` tokens。
+默认 context_window 为 100K（`loop.py:1343-1345`，`_context_window` property fallback 到 100000），所以默认注入预算为 `min(20000, 20000) = 20000` tokens。
 
 ---
 
@@ -238,7 +238,7 @@ ContextBuilder.build_blocks()
 
 ### _compute_cache_plan — 断点计算
 
-**文件**：`agent/loop.py:1103-1148`
+**文件**：`agent/loop.py:1116-1163`
 
 ```python
 def _compute_cache_plan(self, messages, tools=None) -> CachePlan:
@@ -250,7 +250,7 @@ def _compute_cache_plan(self, messages, tools=None) -> CachePlan:
             continue
         if isinstance(m.content, list):
             for b in m.content:
-                if isinstance(b, TextBlock) and b.cache:   # :1127
+                if isinstance(b, TextBlock) and b.cache:   # :1140
                     stable_system_breakpoint = block_index + 1  # 1-based
                 block_index += 1
         else:
@@ -260,7 +260,7 @@ def _compute_cache_plan(self, messages, tools=None) -> CachePlan:
     selector = getattr(self.tool_registry, "_selector", None)
     if selector is None:
         return CachePlan(stable_system_block_count=stable_system_breakpoint,
-                         stable_tool_count=0)                # :1135-1138
+                         stable_tool_count=0)                # :1148-1151
 
     # Selector ON：断点打在最后一个核心稳定工具上
     ...
@@ -301,12 +301,12 @@ def _apply_cache_plan(self, payload: dict) -> None:
 |------|------|------|
 | P0/P1 源：同 cwd/mode/user_system_prompt 下输出不变 | `static=True` + 缓存 key 排除变化因素 | `builder.py:63-67` |
 | cacheable 层不参与预算截断 | `cacheable=True` → `_find_trimmable_index` 跳过 | `builder.py:178` |
-| budget 不变 | 截断位置稳定，不会锯齿状变化 | `loop.py:1337` |
-| 工具 schema 不变（Selector OFF） | 全量 tool schema 无变化 | `loop.py:1001` |
+| budget 不变 | 截断位置稳定，不会锯齿状变化 | `loop.py:1350` |
+| 工具 schema 不变（Selector OFF） | 全量 tool schema 无变化 | `loop.py:1013` |
 
 ### 仅 Anthropic 路径生效
 
-**文件**：`loop.py:1084-1101`
+**文件**：`loop.py:1097-1115`
 
 ```python
 def _apply_cache_plan(self, messages, tools=None) -> None:
@@ -320,7 +320,7 @@ def _apply_cache_plan(self, messages, tools=None) -> None:
 
 ### 400 降级保护
 
-**文件**：`anthropic_llm.py:74-86`
+**文件**：`anthropic_llm.py:75-86`
 
 某些 Anthropic 兼容端点（如 DeepSeek-anthropic）会拒收 `cache_control` 字段并返回 400。AnthropicLLM 在非流式路径中自动检测并重试：
 
@@ -331,7 +331,7 @@ if self._payload_has_cache_control(payload):
     return await self._chat_nonstream(payload)      # 重试
 ```
 
-流式路径同样有对应的 400 降级逻辑（`anthropic_llm.py:239-261`）。
+400 降级逻辑统一在 `chat()`（`anthropic_llm.py:56-97`）中处理，同时覆盖流式与非流式两条路径（try/except 同时包住 `_chat_stream` 与 `_chat_nonstream`）。
 
 ---
 
@@ -339,12 +339,12 @@ if self._payload_has_cache_control(payload):
 
 ### 触发时机
 
-**文件**：`agent/loop.py:939-959`
+**文件**：`agent/loop.py:952-972`
 
 每次迭代的 Phase 3 末尾，工具执行结果回填后触发：
 
 ```python
-# loop.py:941
+# loop.py:952
 compacted = await self.memory.compact_if_needed(messages, iteration=self._iteration)
 ```
 
@@ -627,8 +627,8 @@ keep `[call#<i>: <tool_call_id> pending]` markers verbatim.
 
 | 参数 | 默认值 | 位置 |
 |------|--------|------|
-| ContextBuilder 注入预算 | `min(20000, context_window * 0.2)` | `loop.py:1337` |
-| context_window 默认 | 100000 (100K) | `loop.py:1330-1332` |
+| ContextBuilder 注入预算 | `min(20000, context_window * 0.2)` | `loop.py:1350` |
+| context_window 默认 | 100000 (100K) | `loop.py:1343-1345` |
 | MemoryManager.max_tokens | 100000 | `manager.py:77` |
 | recent_window | 10 条消息 | `manager.py:78` |
 | compaction_gap | 5 轮迭代 | `manager.py:81` |
@@ -642,7 +642,7 @@ keep `[call#<i>: <tool_call_id> pending]` markers verbatim.
 | 层间分隔符 | `"\n\n---\n\n"` | `builder.py:204` |
 | cache_control 类型 | `"ephemeral"` | `anthropic_llm.py:188` |
 
-**无"默认关闭"的功能**：ContextBuilder 在 `AgentLoop.__init__` 中始终创建（`loop.py:156-159`），AutoCompact 始终由 `compact_if_needed` 调用（`loop.py:941`），cache_control 断点对所有 `supports_cache_control=True` 的 LLM 生效。整个上下文系统没有通过配置开关控制的功能。
+**无"默认关闭"的功能**：ContextBuilder 在 `AgentLoop.__init__` 中始终创建（`loop.py:157-159`），AutoCompact 始终由 `compact_if_needed` 调用（`loop.py:952`），cache_control 断点对所有 `supports_cache_control=True` 的 LLM 生效。整个上下文系统没有通过配置开关控制的功能。
 
 ---
 
@@ -655,9 +655,9 @@ keep `[call#<i>: <tool_call_id> pending]` markers verbatim.
 | `agent/context/protocol.py` | ContextSource Protocol + BuildContext 数据类 |
 | `agent/context/summarizer.py` | Summarizer Protocol + LLMSummarizer（四段式 + L2）+ TruncationSummarizer |
 | `agent/memory/manager.py` | MemoryManager：AutoCompact + L1/L2 层级记账 + tool-call pending + ReadProgress 保护 |
-| `agent/loop.py:1339-1355` | `_make_default_context_builder()` — 8 源注册点 |
-| `agent/loop.py:1300-1327` | `_messages_with_run_context()` — context 注入到 messages |
-| `agent/loop.py:1084-1148` | `_apply_cache_plan()` + `_compute_cache_plan()` — cache_control 断点计算 |
+| `agent/loop.py:1352-1367` | `_make_default_context_builder()` — 8 源注册点 |
+| `agent/loop.py:1313-1340` | `_messages_with_run_context()` — context 注入到 messages |
+| `agent/loop.py:1097-1163` | `_apply_cache_plan()` + `_compute_cache_plan()` — cache_control 断点计算 |
 | `agent/anthropic_llm.py:167-194` | `AnthropicLLM._apply_cache_plan()` — cache_control 断点实际注入 |
 | `agent/anthropic_llm.py:36` | `supports_cache_control = True` |
 | `agent/message.py:18-22` | `TextBlock` — `cache: bool` 字段定义 |

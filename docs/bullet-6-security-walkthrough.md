@@ -39,7 +39,7 @@
 |------|------|------|
 | 细粒度工具权限 | `tool_permissions.py` + `run_config.py` | 8 种 Capability + 3 级 Risk + 4 种 Mode |
 | 受控只读浏览器 | `browser/policy.py` + `browser/service.py` | URL 白名单 + 默认关闭 + 7 个浏览器工具 |
-| 人工审批链路 | `approval.py` + `loop.py:776-833` | 审批请求/响应 + 敏感数据脱敏 |
+| 人工审批链路 | `approval.py` + `loop.py:780-853` | 审批请求/响应 + 敏感数据脱敏 |
 
 ---
 
@@ -595,7 +595,7 @@ class FailClosedApprovalHandler:
         )
 ```
 
-`UNAVAILABLE` 在 AgentLoop 的处理中（`loop.py:827-833`）等价于**拒绝**：`pre_denied_error_type = "approval_unavailable"`，工具不执行。这是在非交互式环境（如 benchmark / CI / 无 TTY）下的 fail-closed 行为。
+`UNAVAILABLE` 在 AgentLoop 的处理中（`loop.py:831-853`）等价于**拒绝**：`pre_denied_error_type = "approval_unavailable"`，工具不执行。这是在非交互式环境（如 benchmark / CI / 无 TTY）下的 fail-closed 行为。
 
 ### C.3 CLI 交互式审批
 
@@ -633,9 +633,9 @@ class CliApprovalHandler:
 
 ### C.5 审批在 AgentLoop 中的接线
 
-**文件**：`agent/loop.py:776-833`
+**文件**：`agent/loop.py:780-853`
 
-审批决策仅在 `PermissionDecision.type == REQUIRE_APPROVAL` 时触发（`:776`）。审批被拒/不可用时工具不执行，`pre_denied_result` 注入 messages 供模型观察（`:835-844`）。审批成功（`approval_granted=True`）则工具正常进入 Phase 2 执行（`:846`）。
+审批决策仅在 `PermissionDecision.type == REQUIRE_APPROVAL` 时触发（`:788`）。审批被拒/不可用时工具不执行，`pre_denied_result` 注入 messages 供模型观察（`:833-853`）。审批成功（`approval_granted=True`）则工具正常进入 Phase 2 执行（`:858`）。
 
 ---
 
@@ -660,4 +660,4 @@ class CliApprovalHandler:
 | `agent/browser/session.py` | BrowserSession: 策略约束的页面操作 + 超时容错 | 防线 B |
 | `agent/tools/builtin/browser_tools.py` | BROWSER_TOOL_CLASSES: 7 个只读浏览器工具 | 防线 B |
 | `agent/approval.py` | ApprovalRequest/Response + FailClosedApprovalHandler + CliApprovalHandler + 脱敏 | 防线 C |
-| `agent/loop.py:776-833` | Phase 1 审批接线：审批请求 → 响应 → 预拒绝结果回填 | 防线 C |
+| `agent/loop.py:780-853` | Phase 1 审批接线：审批请求 → 响应 → 预拒绝结果回填 | 防线 C |
