@@ -9,8 +9,8 @@
 
 ## 2. 运行协议文档
 
-- [ ] 2.1 T1 `eval-run-protocol-2026-08-17.md` 转正为 `docs/benchmark-run-protocol.md`（中文，清理 wayfinder-research 引用，落真实命令）。
-- [ ] 2.2 协议含：任务集 82–90 口径、模型/采样（repeat 5 + seed 0..4 + temp 0.2）、预算 `--budget-cap`/`--budget-cap 0`、对照口径（换 agent/换 model 分开）、artifact 布局、自洽五门禁、reproduction 步骤、Verified 40 fixture 前置说明（#156）。
+- [x] 2.1 T1 `eval-run-protocol-2026-08-17.md` 转正为 `docs/benchmark-run-protocol.md`（中文，清理 wayfinder-research 引用，落真实命令）。
+- [x] 2.2 协议含：任务集 82–90 口径、模型/采样（repeat 5 + seed 0..4 + temp 0.2）、预算 `--budget-cap`/`--budget-cap 0`、对照口径（换 agent/换 model 分开）、artifact 布局、自洽五门禁、reproduction 步骤、Verified 40 fixture 前置说明（#156）。
 
 ## 3. 结果页披露渲染
 
