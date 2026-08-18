@@ -1,0 +1,1 @@
+{"schema":"workflow-event/v1","seq":1,"event_type":"backlog_updated","change_id":"evaluation-verified-subset","artifact_path":"docs/openspec-change-backlog.md","reason":"evaluation-verified-subset（issue #163）立项：follow-up #156 后续项 1（Verified 40 fixture 生成）承接——补 build_subset 生成管线 + hf-mirror 本机生成，C1 未完交付补全。backlog 登记。","approved_by":"human"}
