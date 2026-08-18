@@ -116,4 +116,11 @@ disclosure.py 无 verified 渲染（B8），`report.py` 只透传 manifest。**�
 
 ## User Confirmation
 
-（本轮为空，等用户答复后填写。）
+主 session 转达用户答复（2026-08-18，OQ-V1~V6 全部按推荐执行）。
+
+- **OQ-V1 落盘字段修复**: 用户答复：按推荐——修复放 convert 侧（`generate_tasks` 写死 track=verified/scenario=bug-fix/difficulty 归一化），未来转 SWE-bench Full 再改可接受；本机 hf-mirror 首拉后先打印数据集字段名，无 per-instance difficulty 列时按 FAIL_TO_PASS 测试数启发式兜底（`<15min`→easy/`15min-2h`→medium/`≥2h`→hard）；写 version 字段；external_repo 沿用 gitee 镜像（与既有 10 条一致）；确认时间: 2026-08-18
+- **OQ-V2 L3 自检**: 用户答复：按推荐——抽样 1-2 条跑通 gold_check（每 repo ≥1），其余记录「未自检」；默认抽样跑、`--skip-gold-check` 跳过、`--full-gold-check` 全量可选（统一 design/tasks/proposal 三处口径）；坏实例只记录不删除（文档标注，40 可略少）；确认时间: 2026-08-18
+- **OQ-V3 既有重叠与 resume**: 用户答复：按推荐——选择池排除既有 instance_id（40 新 + 10 既有 = 50）；`--resume` 只用于续跑已存在 instance_id，既有 10 条永不被选中/覆盖；确认时间: 2026-08-18
+- **OQ-V4 KNOWN_BAD 来源**: 用户答复：按推荐——接受空集并记录事实（Verified 500 人工验证过，坏实例靠 L2 兜底），CLI 保留 `--known-bad-file` 接口；确认时间: 2026-08-18
+- **OQ-V5 CLI 结构**: 用户答复：按推荐——`build-subset`/`validate-dir`/`gold-check` 全部迁入子命令；`--targets` 逗号分隔短名（`requests+4,flask+6`，短名映射 `psf/requests`）；确认时间: 2026-08-18
+- **OQ-V6 manifest verified 段**: 用户答复：按推荐——摘要计数（count/by_repo/by_difficulty），不登记明细数组；本 change 顺带在 disclosure.py 加最小 verified 披露段（D4 承诺落地）；数字按实际（40 或略少）；确认时间: 2026-08-18
