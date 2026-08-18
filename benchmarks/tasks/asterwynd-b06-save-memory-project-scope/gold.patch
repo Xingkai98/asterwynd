@@ -1,0 +1,117 @@
+diff --git a/agent/context/sources.py b/agent/context/sources.py
+index bd3dac6..ca90a26 100644
+--- a/agent/context/sources.py
++++ b/agent/context/sources.py
+@@ -289,13 +289,21 @@ class MemoryIndexSource:
+     # 非 static：SaveMemory/RecallMemory 会话内会改写 MEMORY.md（persistent.py save），
+     # 缓存会返回陈旧索引。builder 对无 static 属性的源每轮重渲染。
+ 
+-    def __init__(self, persistent_memory: PersistentMemory | None = None) -> None:
++    def __init__(
++        self,
++        persistent_memory: PersistentMemory | None = None,
++        project: str | None = None,
++    ) -> None:
+         self._persistent_memory = persistent_memory
++        self._project = project
+ 
+     async def render(self, context: BuildContext) -> str:
+         if self._persistent_memory is None:
+             return ""
+-        summary = self._persistent_memory.load_summary()
++        memory = self._persistent_memory
++        if self._project:
++            memory = memory.with_project(self._project)
++        summary = memory.load_summary()
+         if not summary:
+             return ""
+         return (
+diff --git a/agent/memory/persistent.py b/agent/memory/persistent.py
+index 4779b96..f09591f 100644
+--- a/agent/memory/persistent.py
++++ b/agent/memory/persistent.py
+@@ -176,11 +176,14 @@ class PersistentMemory:
+         summary_tokens: int = MAX_SUMMARY_TOKENS,
+         decay_interval_seconds: int = DECAY_INTERVAL_SECONDS,
+         decay_threshold: float | None = DECAY_THRESHOLD,
++        project_hash: str | None = None,
+     ) -> None:
+         scope_root = _find_scope_root(project_root)
+         root = scope_root or project_root.resolve()
+-        project_hash = _compute_project_hash(root)
+-        self.memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"
++        # LT-MEM-1: 显式 project hash 覆盖（跨项目写/读复用同一构造路径）。
++        resolved_hash = project_hash or _compute_project_hash(root)
++        self.project_hash = resolved_hash
++        self.memory_dir = _MEMORY_DIR_BASE / resolved_hash / "memory"
+         self._index_path = self.memory_dir / "MEMORY.md"
+         self.scope = str(root.resolve())
+         self._time_source = time_source or datetime.now
+@@ -192,6 +195,23 @@ class PersistentMemory:
+         self._decay_threshold = decay_threshold
+         self._last_decay_run: datetime | None = None
+ 
++    def with_project(self, project_hash: str) -> "PersistentMemory":
++        """返回绑定到另一 project hash 的存储（继承本实例全部配置）。
++
++        用于 SaveMemory 跨项目写入与上下文注入源按会话 project 过滤。
++        """
++        return PersistentMemory(
++            Path(self.scope),
++            time_source=self._time_source,
++            archive_after_days=self._archive_after_days,
++            recency_halflife_days=self._recency_halflife_days,
++            importance_default=self._importance_default,
++            summary_tokens=self._summary_tokens,
++            decay_interval_seconds=self._decay_interval_seconds,
++            decay_threshold=self._decay_threshold,
++            project_hash=project_hash,
++        )
++
+     # ------------------------------------------------------------------
+     # Time and decay
+     # ------------------------------------------------------------------
+diff --git a/agent/tools/builtin/memory.py b/agent/tools/builtin/memory.py
+index 7ed09ad..00d4c03 100644
+--- a/agent/tools/builtin/memory.py
++++ b/agent/tools/builtin/memory.py
+@@ -48,6 +48,11 @@ if TYPE_CHECKING:
+                 "maximum": 5,
+                 "description": "Optional importance score 1-5 (default 3); drives decay",
+             },
++            "project": {
++                "type": "string",
++                "description": "Optional project hash scope. When set, the memory is "
++                "saved under that project's store instead of the current workspace.",
++            },
+         },
+         "required": ["type", "name", "description", "body"],
+     },
+@@ -66,10 +71,11 @@ class SaveMemoryTool(Tool):
+         self._judge = judge
+         self._recall_top_k = recall_top_k
+ 
+-    def _get_memory(self) -> PersistentMemory:
+-        if self._memory is None:
+-            return PersistentMemory(Path.cwd())
+-        return self._memory
++    def _get_memory(self, project: str | None = None) -> PersistentMemory:
++        base = self._memory or PersistentMemory(Path.cwd())
++        if project:
++            return base.with_project(project)
++        return base
+ 
+     async def execute(
+         self,
+@@ -78,9 +84,10 @@ class SaveMemoryTool(Tool):
+         description: str,
+         body: str,
+         importance: int | None = None,
++        project: str | None = None,
+         **kwargs,
+     ) -> str:
+-        memory = self._get_memory()
++        memory = self._get_memory(project=project)
+         if self._judge is not None:
+             incoming = f"{name}: {description}\n{body}"
+             candidates = memory.recall_similar(incoming, top_k=self._recall_top_k)

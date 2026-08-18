@@ -1,0 +1,15 @@
+{
+  "id": "asterwynd-b06-save-memory-project-scope",
+  "repo": "local/asterwynd",
+  "base_commit": "597d12172f541bf2f588fb4e96b9c512d97e2498",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/agent/tools/test_memory_tools.py",
+  "category": "memory",
+  "difficulty": "medium",
+  "scenario": "feature-dev",
+  "track": "B",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": "三处改动：持久记忆存储（PersistentMemory）加 project_hash 构造覆盖 + with_project 同配置派生；保存记忆工具（SaveMemory）execute 加 project 参数并按 project 取存储；记忆摘要注入源（MemoryIndexSource）构造加 project 并在 render 时按 project 取摘要。测试构造两个不同项目根的记忆实例断言隔离。"
+}
