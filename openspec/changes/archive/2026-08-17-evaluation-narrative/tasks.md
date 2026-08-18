@@ -50,8 +50,8 @@
 
 ## 8. 审阅与 PR 收尾
 
-- [ ] 8.1 运行 `/review-loop`（独立零记忆 subagent 审阅 → verdict → CHANGES_REQUESTED 则修复 → 再审至 PASS/3 轮封顶），产出 `reviews/building-review.md` + review manifest（docs-only change 的审阅聚焦文档口径一致性）。
-- [ ] 8.2 将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
-- [ ] 8.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change 并同步批次。
-- [ ] 8.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker。
-- [ ] 8.5 发起实现 PR；合入后给跟踪 issue #160 添加完成说明 comment 并关闭。
+- [x] 8.1 运行 `/review-loop`（独立零记忆 subagent 审阅 → verdict → CHANGES_REQUESTED 则修复 → 再审至 PASS/3 轮封顶），产出 `reviews/building-review.md` + review manifest（docs-only change 的审阅聚焦文档口径一致性）。**Round 1 PASS（run a62dd79041b1fbdbc），manifest 绑定 base 88ed98a / head 4145f7b。**
+- [x] 8.2 将本 change 归档到 `openspec/changes/archive/2026-08-17-evaluation-narrative/`。
+- [x] 8.3 从 `docs/openspec-change-backlog.md` 移除/更新本 change 并同步批次（批次条目标已归档 + 校正口径；未实现队列详细条目 7 移除；workflow-events seq 3/4）。
+- [x] 8.4 确认 Impact Analysis 与 Reference Implementation Research 无残留未解释项，跑最终 validate + artifact checker（31 passed + passed）。
+- [ ] 8.5 发起实现 PR；合入后给跟踪 issue #160 添加完成说明 comment 并关闭——**由主 session 监督执行**（本 change 开发 agent 已 notify，等合入指令）。
