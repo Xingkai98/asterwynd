@@ -89,3 +89,17 @@
 - **checker 门禁误判风险已排除但需执行**: Change Type=process（非 docs）→ tasks 全勾选时 `_check_review_manifests` 强制 building-review.md + manifest（tasks 8.1 `/review-loop` 已含，OK）；`_check_design_review_task` 要求 grill-design.md ≥3 Confirmed Decisions 且**全 Open Questions 有 User Confirmation 记录**（占位不计入）。本文件满足结构，但停轮确认必须逐条真实记录用户答复。
 - **spec delta 场景可验证性弱**: delta 的 Scenario「现状数字 SHALL 与当前实现一致」未钉死「当前实现」的数字来源（27/37？148/1997？），机械校验时无对照锚点，容易随 Q1–Q3 漂移。建议落稿时在 Scenario 里钉死权威来源（如 `benchmarks/tasks/` 目录计数 + `rg "^\s*(async def|def) test_"` 求和），或引用本 change 归档后的实测数字。
 - **C3 合入后升级段数字需校准**: C3 并行中（`docs/benchmark-run-protocol.md` 当前不存在），C4 收尾时若 C3 已合入，任务数/协议细节变化需按 tasks 7.6 校准；C4 不得提前引用 C3 协议文档。
+
+## User Confirmation
+
+> 2026-08-17 用户经主 session 审阅本文件 8 条 Open Questions + 补充发现后**全部按推荐执行**。逐条实质答复如下；草案来源：grill 核验 master 实测数字 + T2 内容（`wayfinder-research` worktree 可读，`docs/research/narrative-changes-2026-08-17.md`）。
+
+- **Q1**: 用户答复：FINAL L117 写 37（27 本地 + 10 SWE-bench）；L11/L27/L96 的「36+」同步改「37」。确认时间: 2026-08-17
+- **Q2**: 用户答复：resume 本地任务写 27（26 A 轨 + 1 B 轨），L9/L104「23→27」、L87「34→27」；简历草案「内置 27 个本地 coding-agent 任务（26 A 轨回归基线 + 1 B 轨当前演进）+ SWE-bench Verified 子集」。确认时间: 2026-08-17
+- **Q3**: 用户答复：FINAL L111 写「148 测试文件 / ~1997 测试函数」（实测）；resume L23/L116「450+→~1997」；FINAL L11「1700+ 自动化测试」保留（仍真）。确认时间: 2026-08-17
+- **Q4**: 用户答复：walkthrough/README.md 纳入本 change（第 5 份目标文档），L27「37 任务（27 本地 + 10 SWE-bench）」、L28「148 文件 / ~1997 函数」；tasks 6.1 grep 词表扩展加 `26 + 10`、`130 文件`、`~1691`。确认时间: 2026-08-17
+- **Q5**: 用户答复：简历 bullet 7 草案落展开版 §6 Benchmark 闭环（替换 L87「34 个本地」行）；简洁版 L9 只改数字不塞长子弹。确认时间: 2026-08-17
+- **Q6**: 用户答复：W07 L3/L98 同步改「37（27 本地 + 10 SWE-bench）」（与 Q1 联动）。确认时间: 2026-08-17
+- **Q7**: 用户答复：「~90」三处（FINAL 速查表升级行 / W07 加分点 / Q13 升级段）统一双要素标注「升级目标 ~90（设计已定：A 轨 20–24 + B 轨 12–16 + Verified 50；当前已落 37）」，标「C1–C3 实现中」。确认时间: 2026-08-17
+- **Q8**: 用户答复：本 change 自足——design.md 补齐全部逐字 before/after 草案，确认后落稿，不依赖外部 T2 文件；草案来源记录为「grill 核验 master 实测数字 + T2 内容（wayfinder-research worktree 可读）」。确认时间: 2026-08-17
+- **补充（claw-swe-bench 基建债务）**: 用户答复：`docs/architecture.md`/`development-guide.md`/`testing-guide.md`/`benchmark-plan.md`/`coding-agent-roadmap.md` 的 claw-swe-bench 引用记为已知债务、不扩 scope（记入 change 文档债务节）；面试材料 6 处 Claw 表述照改。确认时间: 2026-08-17
