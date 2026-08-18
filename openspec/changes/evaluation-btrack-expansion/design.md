@@ -95,7 +95,17 @@ C1 已交付：B 轨 5 条（4 陈旧重写 002-sandbox-executor/004-benchmark-c
 
 ## Pre-Implementation Review
 
-（占位：由独立零记忆 grill subagent 对 design.md 逐项追问后填写结论；grill 产出 `reviews/grill-design.md`，Open Questions 停轮等用户确认。）
+独立零记忆 grill（`reviews/grill-design.md`，2026-08-18）已完成，结论如下：
+
+**已确认（5）**：D2 不给路径、D6 红绿硬性、D1 能力补缺方向（CP-1/CP-2/CP-3/LT-MEM-1 候选实测可构造）、D5 只改 coverage 段（前提 verified-subset 用独立顶层段）、D3 校验方向（需扩展 per-track B）。grill 门禁自检无死锁；`reviews/**` 写豁免成立；tasks 1.3 停轮确认有机械强制。
+
+**需修改（待用户确认后整合进 D1/D3/D4 与 tasks）**：
+- D1：任务数口径——实测 A=22（非 26）、B=5、verified=10、总 37；6 条候选落地后 B=11，低于 proposal/C1「B 轨 12–16」下限 12，需补第 7 条 bug-fix 或明确收敛（OQ-1）。
+- CP-4：前提与 HEAD 不符——`benchmarks/adapters.py:125` 已做 `model_name.replace("/","__")`，「未转义 bug」不存在，按现描述不可构造（OQ-2）。
+- D4：校准范围与数字——`walkthrough/README.md` 实际在 `docs/interview-script/walkthrough/`；resume 在 `docs/resume-description.md`（L9/L87/L104 写「26 A + 1 B」与实测 22 A + 5 B 不符）；校准范围漏 FINAL L27/L96/L118、README L36/L178/L373、README_EN L36/L178（OQ-3）。
+- CP-2 触面：真实为 6 处（补 `agent/workflow/event_log.py` AWAITING_SUB_STATES + `scripts/workflow_state.py` _AWAITING_RECOVERY_DEFAULTS），非「跨 4 处」（OQ-5）。
+
+**Open Questions（Q1–Q7，停轮等用户确认后写入 `## User Confirmation`）**：Q1 B 轨下限 12 vs 11；Q2 CP-4 前提与红绿构造；Q3 D4 校准范围与 22/26；Q4 LC-1 拆分方向与 base 红判别力；Q5 CP-2 六处触面；Q6 validate_coverage per-track B 机械校验；Q7 LT-MEM-1 project 身份来源。详见 `reviews/grill-design.md`。
 
 ## Testing Strategy
 
