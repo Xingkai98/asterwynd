@@ -17,6 +17,8 @@ logs/
 benchmarks/runs/
 benchmarks/swebench_candidates.json
 *.external_repo/
+.gold-check*
+
 .handoff/
 .performance_findings.json
 docs/research/

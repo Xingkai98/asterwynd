@@ -366,6 +366,31 @@ benchmark SHALL 支持接入外部开源测试集精选子集（如 SWE-bench Ve
 - **THEN** 系统 SHALL 优先走本地 test_command 验证
 - **AND** Docker 不可用或内存不足时 L2 路径 SHALL 标记为 `unsupported` 而非伪造结果
 - **AND** 子集接入时 SHALL 提供 L3 金补丁自检能力以剔除 flaky/坏实例
+
+### Requirement: 外部测试集子集生成管线
+
+benchmark SHALL 提供外部测试集（如 SWE-bench Verified）精选子集的生成管线：从数据集加载实例 → 按配比过滤（KNOWN_BAD/重 repo/空 test_patch）选择 → 落盘为任务 fixture（task.json/test.patch/gold.patch）→ 元数据校验。生成管线 SHALL 支持通过镜像端点（如 `HF_ENDPOINT`）访问数据集，并支持 L3 金补丁自检剔除 flaky/坏实例。
+
+#### Scenario: 生成子集 fixture
+
+- **GIVEN** 数据集可访问（含镜像端点）
+- **WHEN** 运行生成管线
+- **THEN** 系统 SHALL 按配比选择实例并落盘 fixture
+- **AND** fixture 元数据 SHALL 通过校验（instance_id/dataset_name/dataset_split/track/scenario/difficulty/task_family/execution_environment）
+
+#### Scenario: 镜像端点访问数据集
+
+- **GIVEN** 直连数据集不可达但镜像端点可达
+- **WHEN** 运行生成管线（设置 `HF_ENDPOINT`）
+- **THEN** 系统 SHALL 经镜像端点加载数据集
+- **AND** 生成的 fixture 字段与直连一致
+
+#### Scenario: 金补丁自检剔除坏实例
+
+- **GIVEN** 生成的 fixture 中某实例金补丁无法复现
+- **WHEN** 运行 L3 自检
+- **THEN** 系统 SHALL 标记/剔除该实例
+- **AND** 结果页/文档 SHALL 记录自检覆盖与剔除情况
 ### Requirement: 反作弊泄漏披露
 
 benchmark SHALL 对存在反作弊泄漏面的任务集（如 A 轨历史重建任务在完整 git 历史中运行、agent 可见后续提交）在结果页/任务集 manifest 披露泄漏事实，并声明任务集定位（如"回归基线、非公平评测"），不得冒充公平评测。

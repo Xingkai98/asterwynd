@@ -318,6 +318,47 @@ def test_coverage_matrix_section() -> None:
     assert "context-planning" in body
 
 
+def test_verified_disclosure_section() -> None:
+    manifest = {
+        "verified": {
+            "count": 50,
+            "by_repo": {"psf/requests": 10, "sympy/sympy": 8},
+            "by_difficulty": {"easy": 40, "medium": 10},
+            "note": "Verified 精选子集摘要",
+        },
+    }
+    sections = dict(markdown_disclosure_sections(DisclosureContext(manifest=manifest)))
+    body = sections["## Verified 子集披露"]
+    assert "50" in body
+    assert "psf/requests" in body
+    assert "difficulty=easy" in body
+
+
+def test_verified_disclosure_placeholder_without_manifest() -> None:
+    sections = dict(markdown_disclosure_sections(DisclosureContext(manifest=None)))
+    assert "无 verified 登记" in sections["## Verified 子集披露"]
+
+
+def test_verified_disclosure_in_html() -> None:
+    manifest = {
+        "verified": {
+            "count": 50,
+            "by_repo": {"psf/requests": 10},
+            "by_difficulty": {"easy": 40},
+        }
+    }
+    agg = AggregateRun(
+        agent="fake",
+        model="deepseek-v4-flash",
+        repeat=1,
+        results=[_result("swebench-1", "passed", task_family="swebench")],
+        manifest=manifest,
+    )
+    html = render_html(agg)
+    assert "Verified 子集披露" in html
+    assert "psf/requests" in html
+
+
 def test_render_report_aggregate_includes_disclosures() -> None:
     results = [
         _result("swebench-1", "passed", task_family="swebench", run_round=0),
