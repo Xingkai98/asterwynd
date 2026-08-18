@@ -1,93 +1,85 @@
-# Building Review: evaluation-verified-subset
+# Building Review: evaluation-verified-subset（Round 2）
 
 ## Reviewer
 
-- run id: review-evaluation-verified-subset-2026-08-18
+- run id: review-evaluation-verified-subset-round2-2026-08-18
 - 时间: 2026-08-18
-- 独立零记忆声明：本 reviewer 未继承任何开发上下文；全部结论基于对 change 文档、代码与生成 fixture 的逐一实际核验（`benchmarks/swebench_subset.py`、`benchmarks/swebench_convert.py`、`benchmarks/disclosure.py`、三个新增/修改测试文件、38 条 swebench-* fixture 的 task.json/test.patch、manifest.json、workflow-events.jsonl、proposal/design/tasks/grill-design.md）。
-- 网络受限说明：本机无法访问 huggingface/github，无法复跑 hf-mirror 真实生成与 L3 网络自检；相关结论以代码事实 + 落盘产物交叉核对为准。
+- 独立零记忆声明：本 reviewer 未继承开发上下文；全部结论基于对 Round 1 审阅报告、change 文档与代码的独立复核。Round 1 结论（5 项 CHANGES_REQUESTED）仅作核验清单，逐项以代码事实与实测重新验证。
+- 验证方式：读 `benchmarks/swebench_convert.py`（`_test_file_from_patch`/`build_test_command`/`generate_tasks`）、`benchmarks/swebench_subset.py`（`cmd_build_subset` resume 分支）、`.gitignore` diff、tasks.md；shlex 扫描全部 38 条 fixture 的 test_command；运行回归测试。
 
 ## Verdict
 
-**CHANGES_REQUESTED**
+**PASS**
 
-核心管线（build-subset 接线、convert 字段修复、validate 内建、manifest 摘要、disclosure 披露段）实现真实且测试全绿；但 **8/38（sympy 全系）fixture 的 test_command 由裸函数名（无 `.py::` 路径前缀）拼接，无法运行目标测试**——现代 pytest 对裸标识符收集 0 项（已实测），评测时要么静默假 PASS（跑 0 个测试）、要么恒失败，Verify 子集评估有效性受影响，须修复 + 加回归守卫后再合入。
+Round 1 的 5 项 CHANGES_REQUESTED 全部落地或按既定口径处理：sympy 8 条裸函数名 test_command 已按 test.patch 文件路径重建为 `-k` 形式且无裸标识符；`--resume` 已从死代码改为续跑收敛语义；`.gitignore` 已补 `.gold-check*`；tasks.md 5.3/5.3b 已勾选；Issue 5（REPO_TEST_COMMAND_TEMPLATES 死代码）为非本 change 引入的既有债务，未修且已记录，不阻塞。回归测试全绿。
 
 ## Tasks Verification
 
-逐条核对 tasks.md 的 `[x]` 任务（5.x/6.x 为 `[ ]`，属 PR 前正常待办；其中 5.3/5.3b 已实际执行但未勾选，见 Issue 4）。
+逐条核对 tasks.md 的 `[x]` 任务（6.x 为 `[ ]`，属 PR 前正常待办）：
 
 | Task | 状态 | 证据 |
 |---|---|---|
-| 1.1 proposal 三件套完整 | ✅ | proposal.md:5-48（Change Type/Impact Analysis/RIR research_tier=light + reason + `.dev/reference-repos.txt` 不存在记录） |
-| 1.2 batch-grill-me 审视 D1–D5 | ✅ | reviews/grill-design.md 全文；D1–D5 逐项判断表（:37-43）+ 9 项核查（:46-57） |
-| 1.3 停轮 + User Confirmation | ✅ | grill-design.md:117-126，OQ-V1~V6 逐条含用户答复与确认时间 2026-08-18 |
-| 2.1 build-subset 子命令 | ✅ | swebench_subset.py:521-528（--output/--targets/--skip-gold-check/--resume/--known-bad-file） |
-| 2.2 管线接线 | ✅ | swebench_subset.py:424-461（load_verified→_probe_dataset→build_subset(exclude_ids)→generate_tasks(dataset 复用, gitee 优先)） |
-| 2.3 落盘后自动 validate，invalid exit 1 | ✅ | swebench_subset.py:463-467（`if problems: ... return 1`） |
-| 3.1 hf-mirror 实际生成 28 新/38 总 | ✅（产物可证） | benchmarks/tasks/ 下 38 条 swebench-* fixture 实盘；design.md:21 与 proposal.md:24 回写实测结果；网络无法复跑 |
-| 3.2 validate_fixtures_dir 全过 | ✅（复验） | 本人扫描 38 条 task.json：track/scenario/difficulty 归一化全部合法；manifest 与实盘一致（见 Test Results） |
-| 3.3 L3 抽样自检 3 PASS/3 未自检 | ⚠️ 机制在、覆盖有缺口 | gold_check external 路径已实现（swebench_subset.py:205-238）；build-subset 默认抽样每 repo 1 条 + 记录（:470-495）。但 sympy/seaborn/pylint 3 repo 未自检（github 不可达，已记录），且 sympy 系 test_command 裸函数名问题使自检即使跑也不可靠（见 Issue 1） |
-| 3.4 结果回写 change 文档 | ✅ | design.md:21、proposal.md:24、backlog 条目（docs/openspec-change-backlog.md） |
-| 4.1 manifest verified 摘要登记 | ✅（复验） | benchmarks/tasks/manifest.json `verified` 段（count=38/by_repo/by_difficulty），与 38 条实盘逐项核对一致 |
-| 4.2 临时文件清理 | ✅ | 扫描 benchmarks/tasks 无 `.gold-check*` 残留；git status clean；无未跟踪文件泄漏 |
+| 1.1 proposal 三件套完整 | ✅ | proposal.md:5-48（Change Type/Impact Analysis/RIR research_tier=light） |
+| 1.2 batch-grill-me 审视 D1–D5 | ✅ | reviews/grill-design.md 全文 |
+| 1.3 停轮 + User Confirmation | ✅ | grill-design.md:117-126，OQ-V1~V6 逐条含用户答复与确认时间 |
+| 2.1 build-subset 子命令 | ✅ | swebench_subset.py:529-536（--output/--targets/--skip-gold-check/--full-gold-check/--resume/--known-bad-file） |
+| 2.2 流程接线 | ✅ | swebench_subset.py:424-469（load_verified→_probe_dataset→build_subset→generate_tasks） |
+| 2.3 落盘后自动 validate，invalid exit 1 | ✅ | swebench_subset.py:471-476 |
+| 3.1 hf-mirror 实际生成 28 新/38 总 | ✅（产物可证） | benchmarks/tasks/ 38 条 swebench-* fixture 实盘；网络无法复跑 |
+| 3.2 validate_fixtures_dir 全过 | ✅（复验） | 38 条 task.json track/scenario/difficulty 归一化合法；manifest verified 段 count=38 与实盘一致 |
+| 3.3 L3 抽样自检 | ✅（机制+记录） | gold_check external 路径（swebench_subset.py:205-238）；sympy/seaborn/pylint 未自检为 github 不可达的已确认设计，非缺陷 |
+| 3.4 结果回写 change 文档 | ✅ | design.md/proposal.md/backlog 回写 |
+| 4.1 manifest verified 摘要登记 | ✅（复验） | manifest.json `verified` 段 count=38、by_repo/by_difficulty 与 38 条实盘一致（medium=16/easy=17/hard=5） |
+| 4.2 临时文件清理 | ✅ | `.gold-check*` 无残留（.gitignore 已加忽略规则）；git status clean |
+| 5.1/5.2 Impact Analysis + RIR | ✅ | 已维护，无 `unknown`/`TBD`/`待确认` 残留 |
+| 5.3/5.3b backlog + spec sync | ✅（Round 1 Issue 4 已修复） | tasks.md:31-32 现为 `[x]`；workflow-events.jsonl 记录 spec/backlog 结构化解释事件 |
+| 5.4/5.5/5.6 测试/validate/checker/smoke | ✅ | 见 Test Results；checker 当前仅报 review manifest 缺失（review-loop 中途预期状态，非缺陷） |
 
 ## Issues
 
-### Issue 1（major）：sympy 8/38 fixture 的 test_command 为裸函数名，无法运行目标测试
+### Round 1 Issue 1（major）：sympy 8/38 fixture 裸函数名 test_command → **已修复**
 
-- **证据**：`benchmarks/swebench_convert.py:123-124`——`build_test_command` 把 FAIL_TO_PASS 原值 `" ".join(tests)` 直接拼进 shell 命令，无路径剥离/校验。受影响 fixture 的 task.json `test_command` 全部形如：
-  - `benchmarks/tasks/swebench-sympy__sympy-11618/task.json:6` → `python -m pytest test_issue_11617 --tb=short -p no:warnings`
-  - `benchmarks/tasks/swebench-sympy__sympy-12096/task.json:6` → `python -m pytest test_issue_12092 ...`
-  - `benchmarks/tasks/swebench-sympy__sympy-12419/task.json:6` → `python -m pytest test_Identity ...`
-  - `benchmarks/tasks/swebench-sympy__sympy-12481/task.json:6` → `python -m pytest test_args ...`
-  - `benchmarks/tasks/swebench-sympy__sympy-12489/task.json:6` → `python -m pytest test_Permutation_subclassing ...`
-  - `benchmarks/tasks/swebench-sympy__sympy-13031/task.json:6` → `python -m pytest test_sparse_matrix ...`
-  - `benchmarks/tasks/swebench-sympy__sympy-13091/task.json:6` → `python -m pytest test_equality test_comparisons_with_unknown_type ...`
-  - `benchmarks/tasks/swebench-sympy__sympy-13372/task.json:6` → `python -m pytest test_evalf_bugs ...`
-- **扫描方法**：对全部 38 条 test_command 逐条解析 pytest 参数，凡无 `.`/`::`/`/` 路径特征的裸标识符即命中；命中恰为 sympy 全 8 条，其余 30 条（requests/flask/pytest/seaborn/pylint）均为完整 node id 或 `-k` 形式，未命中。
-- **实证**：本机（现代 pytest 8.x，uv 环境）`python -m pytest test_issue_11617` 对含该测试函数的仓库输出 `collected 0 items`——目标测试根本不被收集。裸标识符不指向任何文件/目录，pytest 不会从仓库中按函数名反查文件。
-- **后果**：评测时该 test_command 要么 rc=0 但跑了 0 个测试（**静默假 PASS**，把未验证的 agent 补丁判为 resolved），要么收集错误 rc≠0（fixture 恒失败）——两种情况下 8 条 sympy fixture 都无法有效评定 agent 对 bug 的修复。L3 gold_check 对这些 fixture 同样不可靠。
-- **根因链**：数据集 FAIL_TO_PASS 存的是裸函数名（build_test_command 无剥离逻辑，故命令直接反映原值）→ 生成时未拦截 → sympy 未自检（github 不可达，已确认设计）→ 缺陷未被捕获。同时 spec「金补丁自检剔除坏实例」Scenario 3 的覆盖在此 repo 缺口被放大。
-- **修复建议**（供 Round 2）：a) `build_test_command`/`generate_tasks` 增加校验——test_command 参数必须含文件路径（`.py` 或 `::`），裸函数名直接报错或按 test.patch 的文件头解析出路径后重建 node id；b) 对受影响 sympy fixture 重生成或剔除；c) 新增回归测试锁定「test_command 不含裸函数名」（用 test.patch 的 `diff --git a/<path>` 交叉校验）。
-- **待 Round 2 实测确认**：pytest 精确退出码（0=假 PASS 场景 / 5=无测试收集 / 2=collect 错误）在隔离环境确认；sympy 8 条 FAIL_TO_PASS 数据集原值在可联网环境确认。受影响 fixture 精确清单 = sympy-11618/12096/12419/12481/12489/13031/13091/13372（8 条），以本次扫描为准，如 Round 2 复扫有出入以实测为准。
+- **修复证据（代码）**：`swebench_convert.py:112-127` `_test_file_from_patch(test_patch)` 从 test.patch `diff --git a/<path>` 头提取测试文件路径（偏好含 `test` 的路径）；`:130-165` `build_test_command` 以 `bare = [t for t in tests if "::" not in t and ".py" not in t]` 识别裸函数名，重建 `python -m pytest {test_file} -k '{expr}' --tb=short -p no:warnings`（`-k` 表达式外层单引号、内部为合法 Python 标识符 `or` 连接，无嵌套引号）；`:203` `generate_tasks` 调用处传入 `ex.get("test_patch", "")`。
+- **修复证据（产物）**：shlex 扫描全部 38 条 fixture 的 test_command，无任何裸标识符路径参数。sympy 8 条实盘命令均为：
+  - `sympy/geometry/tests/test_point.py -k 'test_issue_11617'`
+  - `sympy/utilities/tests/test_lambdify.py -k 'test_issue_12092'`
+  - `sympy/matrices/expressions/tests/test_matexpr.py -k 'test_Identity'`
+  - `sympy/combinatorics/tests/test_permutations.py -k 'test_args'`
+  - `sympy/combinatorics/tests/test_permutations.py -k 'test_Permutation_subclassing'`
+  - `sympy/matrices/tests/test_sparse.py -k 'test_sparse_matrix'`
+  - `sympy/core/tests/test_basic.py -k 'test_equality or test_comparisons_with_unknown_type'`
+  - `sympy/core/tests/test_evalf.py -k 'test_evalf_bugs'`
+  其余 30 条（requests/flask/pytest/seaborn/pylint）均为完整 node id 或 `-k` 形式。
+- **回归守卫（新增）**：`tests/benchmark/test_swebench_subset.py:357-365` `test_generated_fixture_test_commands_have_no_bare_identifiers`（shlex 解析、跳过 `-k`/`-p`、断言无裸参数）；`tests/benchmark/test_swebench_convert.py:63-70` `test_bare_function_names_rebuild_with_test_patch_file`、`:72-91` `test_bare_function_names_without_patch_uses_k_only`（含 shlex 校验裸函数名只出现在 `-k` 内）。
+- **残留（info，不阻塞）**：`build_test_command` 的 `repo` 形参未被函数体使用（既有签名，非本次回归）；`-k` 为子串匹配，理论上可能多收集同名前缀用例，属可接受精度范围。
 
-### Issue 2（minor）：`--resume` 为死代码，实际行为由无条件 exclude 替代
+### Round 1 Issue 2（minor）：`--resume` 死代码 → **已修复**
 
-- **证据**：`benchmarks/swebench_subset.py:437-443`——`cmd_build_subset` 无条件 `collect_existing_instance_ids(args.output)` 并作为 `exclude_ids` 传入 `build_subset`；随后 `:451-458` 的 `--resume` 分支再次按输出目录存在的 instance_id 过滤 `iids`，此时 `skip` 恒空（build_subset 已排除所有既有 ID）。
-- **后果**：`--resume` 无任何实际效果；OQ-V3② 的「续跑跳过已存在」语义实际由排除逻辑承担。测试 `test_build_subset_cli_resume_skips_existing`（tests/benchmark/test_swebench_subset.py:233-285）实际通过的是排除路径而非 resume 分支（assert 结果成立但覆盖的是同一机制）。重跑时会换选其它候选实例（可能超目标数），非「续跑补齐到原计划集合」。不破坏主功能，但语义误导，建议 Round 2 明确 `--resume` 语义或删除该分支并修测试注释。
+- 修复证据：`swebench_subset.py:437-466`。`--resume` 时 `exclude_ids = set()`（选择池含既有实例，`build_subset` 确定性排序保证每次选中同一目标集），落盘前按输出目录已存在的 `swebench-<iid>/task.json` 过滤跳过——续跑收敛、不覆盖既有、不漂移。非 resume 路径仍走 `exclude_ids = existing_ids`。
+- 测试强化：`tests/benchmark/test_swebench_subset.py:234-289` `test_build_subset_cli_resume_skips_existing` 断言既有 requests-0 未被覆盖写（无 `test_command` 键），其余 3 条生成。真实覆盖 resume 分支（此前测试实际走的是排除路径）。
 
-### Issue 3（minor）：.gitignore 缺 `.gold-check*` 规则
+### Round 1 Issue 3（minor）：.gitignore 缺 `.gold-check*` → **已修复**
 
-- **证据**：`.gitignore:4` 仅 `.venv/`；`swebench_subset.py:214,259` gold_check 会在 fixture 目录内创建 `.gold-check`/`.gold-check-venv`。
-- **现状**：当前已清理（任务 4.2 ✅，git status clean），但未来 build-subset 或 gold-check 运行后残留有被误提交风险。建议补忽略规则。
+- 证据：`.gitignore` 新增 `.gold-check*` 规则。
 
-### Issue 4（minor，流程口径）：tasks.md 5.3/5.3b 已实际执行但未勾选
+### Round 1 Issue 4（minor）：tasks.md 5.3/5.3b 未勾选 → **已修复**
 
-- **证据**：收尾 commit 5d00ebf 已做 backlog 登记与 spec sync（workflow-events.jsonl seq 2/3 记录了 `docs/openspec-change-backlog.md` 与 `openspec/specs/benchmark/spec.md` 的结构化解释事件）；但 tasks.md:31-32 仍为 `[ ]`。
-- **后果**：`[ ]` 状态使 artifact checker 不进入 building-review 强制门禁——当前属合理（PR 前），但「已做未勾」在收尾时会造成口径混乱，建议 Round 2 同步勾选。5.x/6.x 其余未勾属 PR 前正常待办（测试全量、archive、PR）。
+- 证据：tasks.md:31-32 现为 `[x]`（backlog 登记 + spec sync 均已实际执行并有 workflow-events.jsonl 解释事件）。
 
-### Issue 5（minor，既有债务，非本 change 引入）：REPO_TEST_COMMAND_TEMPLATES 死代码未被触碰
+### Round 1 Issue 5（minor）：REPO_TEST_COMMAND_TEMPLATES 死代码 → **按既定口径处理（既有债务）**
 
-- **证据**：`benchmarks/swebench_convert.py:44-50` 定义，全仓无消费方（grep 确认仅声明处）；本次 diff 未改动。冗余度维度：本 change 未与既有工具重复实现、未触碰死代码，符合「不扩大债务」；可后续单独清理。
+- 非本 change 引入（全仓无消费方，本次 diff 未触碰），Round 1 已接受为既有债务；未修不阻塞。建议后续单独清理。
 
-### Issue 6（info，安全维度结论）
+### Round 1 Issue 6（info，安全维度）→ **维持结论**
 
-- shell 注入面：`swebench_subset.py:194-202,229-237` 用 `shell=True` 执行 `task.test_command`，其参数来自数据集 FAIL_TO_PASS——SWE-bench 为可信研究数据集（非对抗输入），且该拼接逻辑为既有 `build_test_command`（本次未改），风险低；无凭证/敏感信息；git clone/apply/checkout 均为 list 形式无 shell；`task_dir = output_base / f"swebench-{iid}"`（swebench_convert.py:168）instance_id 为 `repo__name-NNN` 格式、无路径穿越面。结论：无新增可利用漏洞。
+- shell 注入面 `shell=True` 执行 `task.test_command`（swebench_subset.py:194-202,229-237）参数来自可信研究数据集；git clone/apply/checkout 均为 list 形式无 shell；`task_dir = output_base / f"swebench-{iid}"` 无路径穿越面。Round 2 修复新增的 `-k` 表达式为 `or` 连接的纯标识符（`name.split("[")[0].split("::")[-1]` 已剥离参数化与路径分隔），外层单引号包裹、内部无引号字符，无新增注入面。结论：无新增可利用漏洞。
 
 ## Test Results
 
-实际跑出（uv run，uv 位于 `~/.local/bin/uv`）：
-
-- `uv run pytest tests/benchmark/test_swebench_subset.py tests/benchmark/test_swebench_convert.py tests/benchmark/test_c3_disclosures.py -q` → **49 passed, 1 skipped**（skip 为 @integration hf-mirror 网络测试，RUN_INTEGRATION 未设置）in 2.50s。
-- `uv run pytest tests/benchmark/ -q` → **412 passed, 1 skipped** in 14.81s。
-- 未跑全仓 pytest（已知环境性失败 tree-sitter / declarative-flow-engine 与本次无关，见任务说明）。
-- 额外复验：
-  - 38 条 fixture 逐条 validate 字段全过；difficulty 分布 17 easy/16 medium/5 hard 与 manifest `verified` 段逐项一致（count=38/by_repo 全对）。
-  - 既有 10 条 fixture（requests×6/flask×1/pytest×3）`git diff origin/master...HEAD` 无任何改动。
-  - CI 未弱化：无 `.github/`/workflow 变更；`pyproject.toml` 仅新增 `integration` marker。
-  - `.gold-check*` 无残留；git status clean。
+- `uv run pytest tests/benchmark/test_swebench_subset.py tests/benchmark/test_swebench_convert.py -q` → **33 passed, 1 skipped**（skip 为 @integration hf-mirror 网络测试，RUN_INTEGRATION 未设置）。
+- 复验：38 条 fixture 逐条 shlex 扫描 test_command，无裸标识符；manifest verified 段与实盘一致；`git status` clean，无 `.gold-check*` 残留。
+- 未跑全仓 pytest（已知环境性失败 tree-sitter / declarative-flow-engine 与本次无关）；artifact checker 报 review manifest 缺失为 review-loop 中途预期状态，非缺陷。
 
 ## 结论
 
-build-subset 管线、convert 字段修复（track/scenario/difficulty/version/gitee 优先）、validate 内建、manifest verified 摘要与 disclosure 披露段均实现真实，测试 49+412 全绿，文档/backlog/spec sync/受保护路径事件齐备——管线本体质量良好。**唯一 major 问题**：sympy 全 8 条 fixture 的 test_command 为裸函数名（`pytest test_issue_11617` 等），现代 pytest 收集 0 项测试，评测时无法有效验证 agent 修复（假 PASS 或恒失败）；该问题因 sympy 未自检（github 不可达，已确认设计）而未被捕获。判定 **CHANGES_REQUESTED**：修复方式为在生成/校验侧拦截裸函数名 test_command（按 test.patch 文件路径重建 node id 或剔除）+ 新增回归测试，随后重扫受影响 fixture 并补记自检覆盖，再进入再审。其余 minor 项（--resume 死代码、.gitignore、tasks 勾选口径）可随修复一并处理。
+Round 1 的 5 项 CHANGES_REQUESTED 全部按声明落地，且经独立复核确认：sympy 8 条 fixture 的 test_command 已由裸函数名重建为 `python -m pytest <test.patch文件> -k 'func'` 形式（无裸标识符，`-k` 引号正确），生成/校验侧已具备裸名拦截，回归测试（全 fixture 守卫 + 裸函数名重建单测）存在且全绿；`--resume` 语义修复、`.gitignore`、tasks 勾选均已处理；Issue 5 为既有债务已记录不阻塞。判定 **PASS**，无未解决的中等以上问题。
