@@ -6,7 +6,7 @@
 
 > **Asterwynd** — 本地 Coding Agent 系统 | Python / asyncio / FastAPI
 > 从零设计并实现面向代码仓库任务的 Agent 运行时，覆盖 LLM tool-call 循环、WorkspacePolicy 安全边界、代码理解工具、精确编辑、命令验证、轨迹记录、Web/CLI 入口和 benchmark 闭环。
-> 内置 23 个 coding-agent 本地任务、SWE-bench Docker harness 路径，并接入 Claw-SWE-Bench 统一对比框架，用于评估 Asterwynd 与 Aider、OpenCode 等外部 coding agent 在同类任务上的表现。
+> 内置 27 个本地 coding-agent 任务（26 A 轨回归基线 + 1 B 轨当前演进）、SWE-bench Docker harness 路径，并以统一 harness（SwebenchAdapter + 多 runner）对比 Aider、OpenCode 等外部 coding agent 在同类任务上的表现。
 
 ---
 
@@ -20,7 +20,7 @@ Asterwynd 是一个可运行、可观测、可评测的本地 Coding Agent 系�
 理解仓库 -> 调用工具 -> 修改代码 -> 运行验证 -> 记录轨迹 -> benchmark 评估
 ```
 
-系统核心用 Python / asyncio 实现，包含 AgentLoop、工具协议、权限与工作区安全、上下文压缩、子 session runtime、CLI/Web 入口、代码理解能力和 benchmark 基础设施。当前测试集中约 450+ 个测试函数，覆盖工具、AgentLoop、Web session、benchmark runner、workspace safety 等关键路径。
+系统核心用 Python / asyncio 实现，包含 AgentLoop、工具协议、权限与工作区安全、上下文压缩、子 session runtime、CLI/Web 入口、代码理解能力和 benchmark 基础设施。当前测试集约 ~1997 个测试函数，覆盖工具、AgentLoop、Web session、benchmark runner、workspace safety 等关键路径。
 
 ### 核心架构
 
@@ -84,9 +84,9 @@ AgentLoop.run()
 
 **6. Benchmark 闭环**
 
-- 内置 `benchmarks/` runner：34 个本地 coding-agent 任务，支持 worktree 隔离、hidden `test.patch`、fake/shell/Asterwynd runner、结构化 artifact。
+- 内置 27 个本地 coding-agent 任务（26 A 轨回归基线 + 1 B 轨当前演进）+ SWE-bench Verified 子集，git worktree 隔离 + hidden test patch 确定性验证，bootstrap 95% CI（固定 seed）统计，pass@1/pass@k 指标，支持跨 agent 统一 harness 对比和 CI 回归门禁。
 - 外部 `swebench-*` 任务：通过 Docker preflight 和 SWE-bench harness 验证 patch。
-- Claw-SWE-Bench 集成：`claw-swe-bench/` 注册 Asterwynd、Aider、OpenCode adapter，通过独立 harness 在目标容器内运行 headless solver。
+- 统一 harness 对比：SwebenchAdapter + 多 runner（Asterwynd/ClaudeCode/Shell）在同一批任务上对比。
 - 结果状态区分 `passed`、`passed_with_warnings`、`unsupported`、`failed`、`error`，失败原因写入 `reason`。
 
 面试讲法：我用 benchmark 把 Agent 能力从“看起来能跑”变成可量化证据，能比较不同 agent、模型和失败模式。
@@ -101,8 +101,8 @@ AgentLoop.run()
 Asterwynd | 本地 Coding Agent 系统 | Python / asyncio / FastAPI
 从零设计实现面向代码仓库任务的 Agent 运行时，覆盖 LLM tool-call 循环、
 WorkspacePolicy 安全边界、代码理解工具、精确编辑、命令验证、轨迹记录和 CLI/Web 入口。
-内置 23 个本地 coding-agent benchmark 任务、SWE-bench Docker harness 路径，
-并接入 Claw-SWE-Bench 对比 Asterwynd / Aider / OpenCode 等 agent 的解题表现。
+内置 27 个本地 coding-agent benchmark 任务（26 A 轨回归基线 + 1 B 轨当前演进）、SWE-bench Docker harness 路径，
+并以统一 harness（SwebenchAdapter + 多 runner）对比 Asterwynd / Aider / OpenCode 等 agent 的解题表现。
 ```
 
 ### 选项 B — 偏 AI Infra / Runtime 方向
@@ -113,7 +113,7 @@ Asterwynd | Agent Runtime / AI Infra 项目 | Python / asyncio
 ToolRegistry 暴露 JSON Schema 并执行 Read/Edit/Bash/RepoMap/LSP/Web 工具，
 WorkspacePolicy 统一约束路径、敏感文件和命令风险。
 实现 TraceRecorder、AutoCompact、SubAgent session runtime、WebSocket Debug UI 和 benchmark artifact，
-用约 450+ 回归测试覆盖核心协议、工具安全、Web session 和 benchmark runner。
+用约 ~1997 个回归测试覆盖核心协议、工具安全、Web session 和 benchmark runner。
 ```
 
 ### 选项 C — 偏 Benchmark / 评测方向
@@ -122,12 +122,12 @@ WorkspacePolicy 统一约束路径、敏感文件和命令风险。
 Asterwynd | Coding Agent Benchmark 闭环 | Python / Docker / SWE-bench
 设计实现可复现 benchmark runner：本地任务使用 git worktree 隔离和 hidden test patch，
 外部任务接 SWE-bench Docker harness，输出 result.json / trace.json / final.diff / runner.log。
-集成 Claw-SWE-Bench，新增 Asterwynd headless solver 与 Asterwynd/Aider/OpenCode adapter，
+统一 harness 对比：SwebenchAdapter + 多 runner（Asterwynd/ClaudeCode/Shell）在同一批任务上对比，
 用于在同一批 SWE-bench Verified 实例上比较不同 coding agent 的 pass rate 和失败原因。
 ```
 
 ### 选项 D — 一行版
 
 ```text
-Asterwynd：本地 Coding Agent 系统，覆盖 AgentLoop、工具协议、WorkspacePolicy、Code Intelligence、AutoCompact、SubAgent runtime、Web Debug 和 benchmark 闭环，并接入 SWE-bench / Claw-SWE-Bench 做可复现评测。
+Asterwynd：本地 Coding Agent 系统，覆盖 AgentLoop、工具协议、WorkspacePolicy、Code Intelligence、AutoCompact、SubAgent runtime、Web Debug 和 benchmark 闭环，并以 SWE-bench / 统一 harness 做可复现评测。
 ```
