@@ -41,12 +41,12 @@
 
 ## 7. 同步与验证
 
-- [ ] 7.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`。
-- [ ] 7.2 维护 Reference Implementation Research 最终结论。
-- [ ] 7.3 更新 `docs/openspec-change-backlog.md`（C4 状态）。
-- [ ] 7.4 将本 change 的 `interview-script` delta 同步到当前规格 `openspec/specs/interview-script/spec.md`。
-- [ ] 7.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 7.6 若 C3 已合入，校准升级叙事段数字（任务数/协议细节）。
+- [x] 7.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`。
+- [x] 7.2 维护 Reference Implementation Research 最终结论。
+- [ ] 7.3 更新 `docs/openspec-change-backlog.md`（C4 状态）——与 8.3 归档清理合并执行。
+- [x] 7.4 将本 change 的 `interview-script` delta 同步到当前规格 `openspec/specs/interview-script/spec.md`（workflow-events seq 2 `current_spec_synced`）。
+- [x] 7.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`（31 passed）与 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`（passed）。
+- [x] 7.6 校准检查：C3（`evaluation-protocol-reporting`）**未合入 master**（master 停在 C2 后 88ed98a），升级叙事段数字无需校准，维持「设计已定、C1–C3 实现中」标注。
 
 ## 8. 审阅与 PR 收尾
 

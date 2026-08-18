@@ -131,6 +131,7 @@ after（D3 草案整行替换，含 27 本地任务口径）：
 - `docs/testing-guide.md` L144/L147（同上）
 - `docs/benchmark-plan.md` L23/L84/L88/L207/L470/L471/L665
 - `docs/coding-agent-roadmap.md` L301/L304
+- `README.md` / `README_EN.md` L36/L78-79/L81/L185-186/L374/L410-417/L469-470（含 `cd claw-swe-bench` 可运行指令与「详见 CLAW-SWE-BENCH.md」引用，目录与文件均已不在 tree；2026-08-17 building-review 低级别项补充）
 
 后续由专项基建债务清理或涉及这些文档的 change 一并修正。
 
