@@ -94,7 +94,15 @@
 
 ## User Confirmation
 
-（占位：主 session 在停轮把 Q1–Q7 逐项抛给用户并收到明确答复后，逐条在此记录 `- **Qn**: 用户答复：<实质内容>；确认时间: <date>`。占位不计入确认。）
+主 session 转达用户答复（2026-08-18，Q1–Q7 全部按推荐执行）：
+
+- **Q1**: 用户答复：按推荐 A——补第 7 条 B 轨 bug-fix 任务（B=12）；若实现时红绿做不出判别力，按 D6 收敛并在 #156 标注。确认时间: 2026-08-18
+- **Q2**: 用户答复：按推荐 A——CP-4 改成合成回归：base 人为去掉转义 + gold 加回 + 单测断言「路径转义后与 harness 目录命名一致」；若判别力弱则换本地可确定性验证的其它 debug 任务。确认时间: 2026-08-18
+- **Q3**: 用户答复：按推荐——全套清单校准（FINAL L11/L27/L96/L117/L118 + walkthrough/README L27 + resume L9/L87/L104 + README L36/L178/L373 + README_EN L36/L178），A 轨以实测 22 为准。确认时间: 2026-08-18
+- **Q4**: 用户答复：按推荐——LC-1 拆分目标钉具体（sources.py 的 memory 注入逻辑下沉到 agent/memory/ 明确归属），base 红用「行为保持断言 + 新模块路径可用」双断言。确认时间: 2026-08-18
+- **Q5**: 用户答复：按推荐——CP-2 触面 = statechart.json + event_log.py + workflow_state.py（校验+recovery）+ workflow_methods.json + parity 测试共 6 处，写进 issue.md。确认时间: 2026-08-18
+- **Q6**: 用户答复：按推荐 A——扩展 validate_coverage 加 per-track B 能力列校验（`{"context-planning": {"B"}, "long-term-memory": {"B"}, "long-context": {"B"}}`，只对声明的缺口列生效）。确认时间: 2026-08-18
+- **Q7**: 用户答复：按推荐——project 身份 = SaveMemoryTool 新增 `--project <hash>` 参数 + MemoryIndexSource 按当前 session project 过滤注入（双端闭合），测试构造两个 project 实例断言隔离。确认时间: 2026-08-18
 
 ## 风险
 

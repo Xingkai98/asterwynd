@@ -19,29 +19,30 @@ C1 已交付：B 轨 5 条（4 陈旧重写 002-sandbox-executor/004-benchmark-c
 
 **Non-Goals:**
 
-- **不改 A 轨**（26 条保持）。
+- **不改 A 轨**（22 条保持，grill 实测口径；C1 重打标后 A=22/B=5/verified=10/总 37）。
 - **不改既有 B 轨 5 条**（002/004/005/021/b01 保持）。
 - **不做 Verified 40**（归并行的 evaluation-verified-subset）。
 - **不引入外部任务集**（B 轨全为本地真实模块构造）。
-- **不改 benchmark 代码逻辑**（只加任务 + manifest；若新增能力列需小改校验器）。
+- **不改 benchmark 运行逻辑**（只加任务 + manifest + 校验器小改：Q6 确认扩展 `validate_coverage` per-track B 能力列校验）。
 
 ## Decisions
 
-### Decision D1: 任务清单（CP-1~CP-4 + long-term-memory + long-context）
+### Decision D1: 任务清单（CP-1~CP-4 + LT-MEM-1 + LC-1 + BF-1）
 
-**方案**（来自 C1 grill OQ-B1 用户确认的候选）：
-- **CP-1**（feature-dev / multi-step-solving / tool-usage / context-planning）：新增工具 `ListRunningBenchmarks`，注册进 `agent/tools/registry.py` 并经 `agent/tools/factory.py` 装配、在 `agent/loop.py` AgentLoop 主循环可调用，补 contract 测试。验证：`pytest tests/...` 断言工具已注册且经 `run()` 可调用。难度：hard。
-- **CP-2**（refactor / context-planning）：`flow/statechart.json` 新增 awaiting 态 `awaiting_grill_confirmation`，同步 `flow/engine.py` 转移表、`scripts/workflow_methods.json` 方法映射与 parity 测试。难点：先理解 statechart↔engine↔parity 四者关系。难度：hard。
-- **CP-3**（integration / context-planning / multi-step-solving）：`benchmarks/report.py` 结果页新增按 `track`（A/B/verified）分组数量与占比（spec「任务集由三来源组成」Scenario）。需读 report.py + run.json schema + statistics.py。难度：medium。
-- **CP-4**（debug / context-planning / error-recovery）：构造 `SwebenchAdapter` 在 model name 含 `/` 时 `predictions.jsonl` 的 `model_name_or_path` 未转义导致 report 路径找不到的 debug 任务，agent 需先读 harness 输出定位根因。难度：medium。
-- **LT-MEM-1**（feature-dev / long-term-memory）：SaveMemory 支持 `--project <hash>`，`agent/context/sources.py` 的 `MemoryIndexSource` 按当前 project 过滤注入。验证：先写 A 项目记忆、切 B 项目确认不可见、切回 A 复用。难度：medium。
-- **LC-1**（refactor / long-context）：审计拆分 `agent/context/` 与 `agent/memory/` 职责，把混在 `sources.py` 的 memory 注入逻辑拆到 `agent/memory/`，保持现有测试全绿。需通读注入管线 + memory 层。难度：hard。
+**方案**（来自 C1 grill OQ-B1 候选 + 本 change grill OQ-1~7 用户确认，2026-08-18）：
+- **CP-1**（feature-dev / multi-step-solving / tool-usage / context-planning）：新增工具 `ListRunningBenchmarks`（类名按惯例 `ListRunningBenchmarksTool`），注册进 `agent/tools/registry.py` 并经 `agent/tools/factory.py` 装配、在 `agent/loop.py` AgentLoop 主循环可调用，补 contract 测试。验证：`pytest tests/...` 断言工具已注册且经 `run()` 可调用。难度：hard。
+- **CP-2**（refactor / context-planning）：`flow/statechart.json` 新增 awaiting 态 `awaiting_grill_confirmation`，**触面 6 处**（grill OQ-5 确认）：①`flow/statechart.json` 新增态；②`agent/workflow/event_log.py` 的 `AWAITING_SUB_STATES` 镜像常量；③`scripts/workflow_state.py` 的 `args.awaiting` 校验（~L576）；④`scripts/workflow_state.py` 的 `_AWAITING_RECOVERY_DEFAULTS`（`flow confirm` recovery 目标）；⑤`scripts/workflow_methods.json` 方法映射；⑥parity 测试 `tests/test_declarative_flow_engine.py`。难点：先理解 statechart↔engine↔event_log↔workflow_state↔parity 五者关系。难度：hard。
+- **CP-3**（integration / context-planning / multi-step-solving）：`benchmarks/report.py` 结果页新增按 `track`（A/B/verified）分组数量与占比（spec「任务集由三来源组成」Scenario）。grill 核验：`benchmarks/models.py` 的 `TaskResult` 现只有 `task_family`/`category` 无 `track`，需 models+runner+statistics+report 管道改造（5 处 `TaskResult(...)` 构造点），触面写进 issue.md。需读 report.py + run.json schema + statistics.py。难度：medium。
+- **CP-4**（debug / context-planning / error-recovery）：**合成回归**（grill OQ-2 确认，原「未转义 bug」前提与 HEAD 不符）：base 人为去掉 `benchmarks/adapters.py` 的 `model_name.replace("/","__")` 转义（合成回归制造缺陷），gold 加回 + 单测断言「路径转义后与 harness 目录命名一致」。若判别力弱则换本地可确定性验证的其它 debug 任务。难度：medium。
+- **LT-MEM-1**（feature-dev / long-term-memory）：project 身份双端闭合（grill OQ-7 确认）：`SaveMemoryTool` 新增 `--project <hash>` 参数（`agent/tools/builtin/memory.py`）+ `agent/context/sources.py` 的 `MemoryIndexSource` 按当前 session project 过滤注入。验证：先写 A 项目记忆、切 B 项目确认不可见、切回 A 复用（测试构造两个 project 实例断言隔离）。难度：medium。
+- **LC-1**（refactor / long-context）：拆分目标钉具体（grill OQ-4 确认）：把 `agent/context/sources.py` 里 memory 注入逻辑下沉到 `agent/memory/` 的明确归属（如 `agent/memory/context_source.py` 或同类），`MemoryIndexSource` 保留在 context 层但渲染逻辑调 memory 层 API；base 红用「行为保持断言 + 新模块路径可用」双断言，避免纯符号搬家。保持现有测试全绿。难度：hard。
+- **BF-1**（bug-fix / error-recovery，第 7 条，grill OQ-1 确认 B=12）：从 command_guard/sandbox 等真实模块挑一个本地可确定性验证的缺陷形态（红绿可复现）。
 
-**覆盖矩阵目标**：context-planning 由 CP-1/2/3/4 覆盖、long-term-memory 由 LT-MEM-1、long-context 由 LC-1 + b01；每场景 ≥1–2（bug-fix 用既有 + 1 条新、feature-dev CP-1/LT-MEM-1、refactor CP-2/LC-1、debug CP-4、integration CP-3/b01）。
+**覆盖矩阵目标**：context-planning 由 CP-1/2/3/4 覆盖、long-term-memory 由 LT-MEM-1、long-context 由 LC-1 + b01；每场景 ≥1–2（bug-fix 由既有 005/004-harden/011/017/020 + 新 BF-1、feature-dev CP-1/LT-MEM-1、refactor CP-2/LC-1、debug CP-4、integration CP-3/b01）。B 轨总数 = 5 + 7 = 12，达 proposal/C1「B 轨 12–16」下限。
 
-**备选**：只补 3 条 context-planning。被拒：C1 grill 用户确认的形态（CP-1~4 + LT-MEM + LC）覆盖 6 能力列目标，只补 3 条达不到 12–16。
+**备选**：只补 3 条 context-planning / 接受 B=11 收敛。被拒：C1 grill 用户确认的形态（CP-1~4 + LT-MEM + LC + BF-1）覆盖全部能力列目标且 B=12 达下限。
 
-**理由**：全部来自已确认候选；每任务测试先行 + 覆盖矩阵登记；难度梯度 hard×3（CP-1/CP-2/LC-1）。
+**理由**：全部来自已确认候选 + grill OQ-1~7 用户确认；每任务测试先行 + 覆盖矩阵登记；难度梯度 hard×3（CP-1/CP-2/LC-1）。任务数口径实测 A=22/B=5/verified=10/总 37（grill 事实基线）。
 
 ### Decision D2: 任务设计规范（issue.md 不给路径）
 
@@ -49,21 +50,22 @@ C1 已交付：B 轨 5 条（4 陈旧重写 002-sandbox-executor/004-benchmark-c
 
 **理由**：B 轨定位"面试核心"（G2），不给路径才能测 context-planning 能力；与 C1 B 轨既有任务（b01 同规范）一致。
 
-### Decision D3: 覆盖矩阵校验
+### Decision D3: 覆盖矩阵校验（含 per-track B 扩展）
 
-**方案**：manifest coverage 登记新任务后，跑 `validate_coverage`（C1 交付）确认 7 能力列 × 5 场景列 ≥1；新增任务若引入新能力列需小改校验器（本 change 预期不需要，6 列已有覆盖）。
+**方案**：manifest coverage 登记新任务后，跑 `validate_coverage`（C1 交付）确认 7 能力列 × 5 场景列 ≥1。grill OQ-6 确认扩展：`benchmarks/task_set.py` 的 `validate_coverage` 增加 per-track B 能力列要求——`required_track_coverage = {"context-planning": {"B"}, "long-term-memory": {"B"}, "long-context": {"B"}}`，只对声明的缺口列生效（A+B 聚合校验保留；新任务若引入新能力列需小改校验器）。
 
-**理由**：覆盖矩阵是"场景×能力"的可引用证据（G1），机械校验防漂移。
+**理由**：覆盖矩阵是"场景×能力"的可引用证据（G1），机械校验防漂移；per-track B 校验让 spec delta「context-planning 列 SHALL 有 B 轨任务登记」有机械强制（否则交付 0 条新任务门禁也绿，grill R3）。
 
-### Decision D4: 面试叙事数字校准
+### Decision D4: 面试叙事数字校准（grill OQ-3 全套清单）
 
-**方案**：B 轨合入后任务数 37+N（27 本地 → 27+N 本地，总 → 37+N）。change 内更新 C4 引用的数字：
-- `docs/interview-script/FINAL-master-script.md`：L117「37（27 本地 + 10 SWE-bench）」→ 新数字；升级行「当前已落 37」→ 新数字。
-- `walkthrough/README.md` L27：同步。
-- 简历/resume：写「27 本地任务（26 A 轨 + 1 B 轨）」→ 若 B 轨变多，改为「26 A 轨 + N B 轨」。
+**方案**：B 轨合入后任务数 37+7=44（27 本地 → 34 本地，总 → 44；A=22/B=12/verified=10）。A 轨以实测 22 为准（不延续「26 A 轨」错误口径）。change 内更新 C4 引用的数字，**全套清单**（grill OQ-3 确认）：
+- `docs/interview-script/FINAL-master-script.md`：L11「37 任务评测闭环」、L27「37 任务（27 本地 + 10 SWE-bench）」、L96「评测 37 任务…从 37 扩到 ~90」、L117「评测任务 37（27 本地 + 10 SWE-bench）」、L118「~90（…当前已落 37）」→ 按实测新数字；升级行「当前已落 37」→ 新数字。
+- `docs/interview-script/walkthrough/README.md` L27：同步。
+- `docs/resume-description.md` L9/L87/L104：写「27 本地（26 A + 1 B）」→「34 本地（22 A + 12 B）」。
+- `README.md` L36/L178/L373、`README_EN.md` L36/L178：同步（README 修改须同变更同步 README_EN，AGENTS.md 维护规则）。
 数字口径以 change 实现时实测为准（C4 教训：按 master 实测而非预定数字）。
 
-**理由**：C4 合入后 B 轨扩展改变任务数，面试材料必须同步避免穿帮（C4 review-loop 对数字一致性是 PASS 项）。
+**理由**：C4 合入后 B 轨扩展改变任务数，面试材料必须同步避免穿帮（C4 review-loop 对数字一致性是 PASS 项）；D4 原「26 A 轨 + N B 轨」会延续错误口径（grill R4）。
 
 ### Decision D5: 与 Verified-subset 并行——manifest 错开合入
 
@@ -89,9 +91,13 @@ C1 已交付：B 轨 5 条（4 陈旧重写 002-sandbox-executor/004-benchmark-c
 
 - **[任务设计超出手工可验证范围] → D6 红绿可复现硬性；任一任务红绿不成立则不提交（宁可收敛条数）。**
 - **[context-planning 任务设计难（不给路径 vs 模型能力）] → issue.md 症状描述 + hints_text 给线索但给不给路径由实现 agent 定（C1 b01 先例）。**
-- **[C4 数字校准滞后] → D4 实现时实测 + 同步 4 处文档（FINAL/walkthrough/resume/README）。**
-- **[manifest 与 verified-subset 冲突] → 只改 coverage 段 + 错开合入（D5）。**
-- **[任务数目标 12–16 可能达不到] → 红绿可复现优先；若某候选做不出判别力，如实记录收敛 + 在 #156 标注（C1 先例：5 条收敛）。**
+- **[C4 数字校准滞后/口径错] → D4 实现时实测 + 全套清单（FINAL 5 行/walkthrough/resume/README/README_EN）+ A 轨以实测 22 为准（grill OQ-3）。**
+- **[manifest 与 verified-subset 冲突] → 只改 coverage 段 + 错开合入（D5）；前提 verified-subset 用独立顶层段（grill R6）。**
+- **[任务数目标 12–16 可能达不到] → 7 条候选 B=12 达下限；若某候选做不出判别力，如实记录收敛 + 在 #156 标注（C1 先例：5 条收敛）。**
+- **[CP-4 合成回归判别力弱] → base 人为去掉转义 + gold 加回 + 单测断言路径转义一致性；判别力不足则换本地确定性 debug 任务（grill OQ-2）。**
+- **[LC-1 弱判别力（重构不改行为）] → base 红用「行为保持断言 + 新模块路径可用」双断言，避免纯符号搬家重演 C1 022 教训（grill OQ-4）。**
+- **[CP-2 触面低估] → 6 处清单写进 issue.md（statechart/event_log/workflow_state×2/methods/parity），避免 agent 只改 statechart 卡死（grill OQ-5）。**
+- **[per-track B 机械校验缺口] → validate_coverage 扩展 required_track_coverage，防「0 新任务也过门禁」（grill OQ-6）。**
 
 ## Pre-Implementation Review
 
