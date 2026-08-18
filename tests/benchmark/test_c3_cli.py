@@ -147,6 +147,19 @@ def test_budget_cap_overrun_stops_and_marks_truncated(tmp_path, monkeypatch):
     assert "truncated" in report
 
 
+def test_budget_cap_overrun_single_run_marks_truncated(tmp_path, monkeypatch):
+    """repeat=1 (default) also honors --budget-cap (regression for review r1)."""
+    tasks, repo, runs = _setup_repo_and_task(tmp_path)
+    monkeypatch.setattr("agent.main._round_cost", lambda run_dir, model: 999.0)
+    result = _invoke(tasks, repo, runs, ["--budget-cap", "1"])
+    assert result.exit_code == 0, result.output
+    assert "预算超限" in result.output
+    round_dirs = [p for p in runs.iterdir() if p.is_dir()]
+    assert len(round_dirs) == 1
+    meta = json.loads((round_dirs[0] / "run.json").read_text())
+    assert meta["truncated"] is True
+
+
 def test_report_excludes_truncated_round_from_pass_k():
     """Truncated rounds keep their pass@1 data but drop out of pass^k (Q4)."""
     results = [

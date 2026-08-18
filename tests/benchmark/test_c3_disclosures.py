@@ -201,6 +201,42 @@ def test_small_n_section() -> None:
     assert "N=1" in sections["## 小样本声明"]
 
 
+def test_small_n_note_counts_valid_rounds_per_task() -> None:
+    """Repeat=3 must report N=3, not N=1 (regression for review round 1)."""
+    from benchmarks.disclosure import small_n_note
+
+    results = [
+        _result("t1", "passed", run_round=0),
+        _result("t1", "passed", run_round=1),
+        _result("t1", "passed", run_round=2),
+        _result("t1", "unsupported", reason="docker_unavailable", run_round=3),
+    ]
+    assert "N=3–3" in small_n_note(results)
+
+
+def test_process_efficiency_rows_deduplicated_per_task(tmp_path: Path) -> None:
+    """repeat=3 must render each task once, not one identical row per round."""
+    run_dir = tmp_path / "run-1"
+    _write_trace(
+        run_dir,
+        "t1",
+        [
+            {"step": 1, "type": "tool_call", "data": {"tool_name": "Edit"}, "timestamp": 1.0},
+            {"step": 2, "type": "tool_result", "data": {"status": "ok"}, "timestamp": 2.0},
+        ],
+    )
+    results = [
+        _result("t1", "passed", run_round=0),
+        _result("t1", "passed", run_round=1),
+        _result("t1", "passed", run_round=2),
+    ]
+    sections = dict(
+        markdown_disclosure_sections(DisclosureContext(results=results, run_dirs=[run_dir]))
+    )
+    body = sections["## 过程效率"]
+    assert body.count("| t1 |") == 1
+
+
 # ---------------------------------------------------------------------------
 # Process efficiency + trace contract (Q15)
 # ---------------------------------------------------------------------------

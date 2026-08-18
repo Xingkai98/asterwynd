@@ -6,6 +6,7 @@ Usage:
 """
 from __future__ import annotations
 
+import html
 import json
 import sys
 from collections import defaultdict
@@ -66,7 +67,7 @@ def _build_paired_html(runs: list[tuple[str, dict[str, dict]]]) -> str:
             f"p={m['p_value']:.4f} ({sig})</p>"
         )
     delta_rows = "".join(
-        f"<tr><td>{task_id}</td><td>{delta:.3f}</td></tr>"
+        f"<tr><td>{html.escape(task_id)}</td><td>{delta:.3f}</td></tr>"
         for task_id, delta in sorted(comp.per_task_deltas.items())
     )
     return f"""<h2>Paired Comparison</h2>

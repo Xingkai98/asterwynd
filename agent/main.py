@@ -790,6 +790,15 @@ def benchmark(
     if repeat == 1:
         metadata = asyncio.run(runner.run_all(tasks_dir, seed=effective_seeds[0]))
         run_path = runs_dir / metadata.run_id
+        if effective_cap is not None:
+            cost = _round_cost(run_path, model or "")
+            if cost > effective_cap:
+                metadata.truncated = True
+                metadata.write_json(run_path / "run.json")
+                typer.echo(
+                    f"  预算超限：round {metadata.run_id} 成本 ${cost:.4f} > cap "
+                    f"${effective_cap:.4f}，该轮标 truncated"
+                )
         typer.echo(f"Benchmark run: {run_path}")
         typer.echo(
             f"Tasks: {metadata.task_count} | passed: {metadata.passed} | "

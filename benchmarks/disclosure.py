@@ -20,8 +20,8 @@ from benchmarks.models import RunMetadata, TaskResult
 from benchmarks.statistics import (
     cost_per_resolved,
     fault_owner_cross,
+    is_valid_round,
     process_efficiency,
-    valid_round_count,
 )
 
 # SWE-bench pollution facts (R1 research, 2026-08-17). Kept in one constants
@@ -177,10 +177,22 @@ def sampling_rows(meta: RunMetadata | None, results: list[TaskResult]) -> list[t
     ]
 
 
+def _unique_task_ids(results: list[TaskResult]) -> list[str]:
+    """Task ids in first-seen order, deduplicated across rounds."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for r in results:
+        if r.task_id not in seen:
+            seen.add(r.task_id)
+            ordered.append(r.task_id)
+    return ordered
+
+
 def small_n_note(results: list[TaskResult]) -> str:
     by_task: dict[str, int] = {}
     for r in results:
-        by_task[r.task_id] = max(by_task.get(r.task_id, 0), valid_round_count([r]))
+        if is_valid_round(r.status, r.reason):
+            by_task[r.task_id] = by_task.get(r.task_id, 0) + 1
     if not by_task:
         return "无任务样本。"
     counts = sorted(by_task.values())
@@ -335,7 +347,7 @@ def markdown_disclosure_sections(ctx: DisclosureContext) -> list[tuple[str, str]
 
     sections.append(("## 小样本声明", small_n_note(ctx.results)))
 
-    eff_rows = process_efficiency_rows(ctx.run_dirs, [r.task_id for r in ctx.results])
+    eff_rows = process_efficiency_rows(ctx.run_dirs, _unique_task_ids(ctx.results))
     if eff_rows:
         sections.append(
             (
@@ -415,7 +427,7 @@ def html_disclosure_sections(ctx: DisclosureContext) -> list[tuple[str, str]]:
     )
     sections.append(("<h2>小样本声明</h2>", f"<p>{small_n_note(ctx.results)}</p>"))
 
-    eff_rows = process_efficiency_rows(ctx.run_dirs, [r.task_id for r in ctx.results])
+    eff_rows = process_efficiency_rows(ctx.run_dirs, _unique_task_ids(ctx.results))
     if eff_rows:
         sections.append(("<h2>过程效率</h2>", _html_table(["Task", "指标"], [tuple(r) for r in eff_rows])))
     else:

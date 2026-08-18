@@ -49,9 +49,9 @@
 - [x] 8.1 维护 Impact Analysis，清理 `unknown`/`TBD`/`待确认`（proposal Impact Analysis 无残留）。
 - [x] 8.2 维护 Reference Implementation Research 最终结论（本地参考仓库不可用事实 + map 决策替代依据已记录）。
 - [x] 8.3 更新 `docs/openspec-change-backlog.md`（C3 状态→实现完成；C4 由 master merge 带来已归档）。
-- [x] 8.4 运行相关单元/集成测试与全量测试（benchmark 374 全过；全量 2172 passed，2 个环境相关失败：tree-sitter Java 语法、flow/engine 系统 python 缺 agent 模块，与本次变更无关）。
+- [x] 8.4 运行相关单元/集成测试与全量测试（benchmark 套件全过，含 C3 新增测试共 392 passed；全量 2172 passed，2 个环境相关失败：tree-sitter Java 语法、flow/engine 系统 python 缺 agent 模块，与本次变更无关）。
 - [x] 8.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`（30 passed）与 `uv run python scripts/check_openspec_artifacts.py`（passed）。
-- [x] 8.6 跑通 benchmark smoke（`--repeat 3 --seeds 0 1 2` fake runner），确认结果页含披露段 + self_check 五门禁 PASS。
+- [x] 8.6 跑通 benchmark smoke（`--repeat 3 --seeds 0 1 2` fake runner），确认结果页含披露段；`--model deepseek-v4-flash --model-version` 的 smoke 上 self_check 五门禁 PASS（裸 fake 不带 model/annotate 时 GATE 1/2/5 失败属预期严格行为）。
 
 ## 9. 审阅与 PR 收尾
 
