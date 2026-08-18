@@ -87,7 +87,7 @@
 - `evaluation-narrative`（issue #160）：**C4** 面试叙事（**已归档 2026-08-17**）。T2 改动清单 + grill 实测落 Q13/W07/FINAL/resume/walkthrough-README 五份面试文档：现状口径修正（23→27、450+→~1997、Claw 重锚为统一 harness 口径）+ 升级叙事段（升级目标 ~90/pass^k/cost@pass/fault_owner/预算，双要素标注「当前已落 37」，标 C1–C3 实现中）。依赖 C3，与 C3 并行。
 - `evaluation-btrack-expansion`（issue #164）：**B 轨扩展（follow-up #156 后续项 2，已归档 2026-08-18）**。B 轨 5→12（新增 7 条：CP-1 工具装配链 / CP-2 statechart 新态 / CP-3 结果页 track 分组 / CP-4 SwebenchAdapter 合成回归 / LT-MEM-1 project scope 隔离 / LC-1 memory 注入归属拆分 / BF-1 绝对路径 shell 拦截修复），每任务 issue.md 不给路径 + 确定性 test_command + base 红/gold 绿红绿可复现；manifest coverage 登记 + `validate_coverage` per-track B 扩展；面试叙事数字校准 37→44（34 本地 = 22 A + 12 B）。任务集 37→44。依赖 C1（候选 OQ-B1）；与 `evaluation-verified-subset` 并行（manifest 只改 coverage 段）。
 
-- `evaluation-verified-subset`（issue #163）：**follow-up #156 后续项 1** Verified fixture 生成管线（**实现中，2026-08-18**）。接通 `swebench_subset build-subset` 管线：hf-mirror 实测生成 28 条新 Verified fixture，总计 38 条（10 既有 + 28 新）——flask 池 1 条/seaborn 池 2 条全被既有占用，轻量池上限即 28；difficulty 归一化（真实列值映射，17 easy/16 medium/5 hard）、validate 全过、L3 抽样自检 3 PASS（gitee 系）/github 系未自检（github 本机不可达）、manifest verified 摘要登记 + disclosure 披露段。依赖 C1；与 `evaluation-btrack-expansion` 并行（manifest 只改 verified 段，错开合入）。
+- `evaluation-verified-subset`（issue #163）：**follow-up #156 后续项 1** Verified fixture 生成管线（**已归档 2026-08-18**）。接通 `swebench_subset build-subset` 管线：hf-mirror 实测生成 28 条新 Verified fixture，总计 38 条（10 既有 + 28 新）——flask 池 1 条/seaborn 池 2 条全被既有占用，轻量池上限即 28；difficulty 归一化（真实列值映射，17 easy/16 medium/5 hard）、validate 全过、L3 抽样自检 3 PASS（gitee 系）/github 系未自检（github 本机不可达）、manifest verified 摘要登记 + disclosure 披露段；review-loop Round 2 PASS。依赖 C1；与 `evaluation-btrack-expansion` 并行（manifest 只改 verified 段，错开合入）。
 
 ## 未实现队列
 
