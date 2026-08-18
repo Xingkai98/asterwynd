@@ -1,0 +1,60 @@
+diff --git a/agent/context/sources.py b/agent/context/sources.py
+index bd3dac6..cc68321 100644
+--- a/agent/context/sources.py
++++ b/agent/context/sources.py
+@@ -295,17 +295,10 @@ class MemoryIndexSource:
+     async def render(self, context: BuildContext) -> str:
+         if self._persistent_memory is None:
+             return ""
+-        summary = self._persistent_memory.load_summary()
+-        if not summary:
+-            return ""
+-        return (
+-            "## Project Memory\n"
+-            "Summary of persistent memories from prior sessions. "
+-            "Use SearchMemory to semantically retrieve specific entries.\n"
+-            "---\n"
+-            f"{summary}\n"
+-            "---"
+-        )
++        # LC-1: 注入逻辑下沉到 memory 层，context 源只做委托（行为不变）。
++        from agent.memory.context_source import render_memory_index
++
++        return render_memory_index(self._persistent_memory)
+ 
+ 
+ class SkillIndexSource:
+diff --git a/agent/memory/context_source.py b/agent/memory/context_source.py
+new file mode 100644
+index 0000000..e136336
+--- /dev/null
++++ b/agent/memory/context_source.py
+@@ -0,0 +1,28 @@
++"""Context-source rendering helpers owned by the memory layer.
++
++LC-1: the memory-summary injection logic used to live inline in
++``agent/context/sources.py`` (MemoryIndexSource.render). The memory layer now
++owns how its summaries are surfaced to context; the context source delegates
++here. Behavior is unchanged: an empty summary yields an empty string.
++"""
++from __future__ import annotations
++
++from agent.memory.persistent import PersistentMemory
++
++
++def render_memory_index(memory: PersistentMemory) -> str:
++    """Build the '## Project Memory' context block from a persistent memory store.
++
++    Returns an empty string when the store has no summary to inject.
++    """
++    summary = memory.load_summary()
++    if not summary:
++        return ""
++    return (
++        "## Project Memory\n"
++        "Summary of persistent memories from prior sessions. "
++        "Use SearchMemory to semantically retrieve specific entries.\n"
++        "---\n"
++        f"{summary}\n"
++        "---"
++    )

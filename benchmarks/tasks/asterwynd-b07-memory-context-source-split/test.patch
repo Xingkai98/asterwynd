@@ -1,0 +1,37 @@
+diff --git a/tests/agent/context/test_memory_index_source.py b/tests/agent/context/test_memory_index_source.py
+new file mode 100644
+index 0000000..1a00bbb
+--- /dev/null
++++ b/tests/agent/context/test_memory_index_source.py
+@@ -0,0 +1,31 @@
++# tests/agent/context/test_memory_index_source.py
++"""LC-1: memory 注入逻辑下沉到 agent/memory/，行为保持 + 新模块路径可用。"""
++from types import SimpleNamespace
++
++import pytest
++
++from agent.context.sources import MemoryIndexSource
++from agent.memory.persistent import PersistentMemory
++
++
++@pytest.fixture
++def mem(tmp_path, monkeypatch):
++    fake_base = tmp_path / "fake-claude" / "projects"
++    monkeypatch.setattr("agent.memory.persistent._MEMORY_DIR_BASE", fake_base)
++    return PersistentMemory(tmp_path)
++
++
++async def test_render_memory_index_module_available_and_preserves_behavior(mem):
++    from agent.memory.context_source import render_memory_index
++
++    mem.save(type="project", name="ctx-fact", description="d", body="Context fact for split")
++
++    # 新模块路径可用：render_memory_index 直接产出摘要块
++    index_text = render_memory_index(mem)
++    assert "## Project Memory" in index_text
++    assert "ctx-fact" in index_text
++
++    # 行为保持：注入源 render 输出与新模块一致
++    source = MemoryIndexSource(persistent_memory=mem)
++    source_text = await source.render(SimpleNamespace())
++    assert source_text == index_text
