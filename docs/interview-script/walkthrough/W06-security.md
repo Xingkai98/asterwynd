@@ -29,8 +29,8 @@
 
 **核心心智：路径是边界，命令是最后防线。**
 
-- **路径边界**（is_within_workspace，workspace_policy.py:164）：resolve 后 relative_to 校验，所有文件工具过 assert_within_workspace。
-- **add_root 祖先守卫**（workspace_policy.py:170-190）：禁止添加 workspace 祖先目录（"会开放主 workspace 外的所有文件访问"），禁止添加 /etc、/proc、/sys 等系统敏感目录。
+- **路径边界**（is_within_workspace，workspace_policy.py:166）：resolve 后 relative_to 校验，所有文件工具过 assert_within_workspace。
+- **add_root 祖先守卫**（workspace_policy.py:172-192）：禁止添加 workspace 祖先目录（"会开放主 workspace 外的所有文件访问"），禁止添加 /etc、/proc、/sys 等系统敏感目录；敏感目录判定抽成 `is_sensitive_root()`（workspace_policy.py:275），Web hub 新增 workspace 路径复用同一函数，`_DENY_ROOTS` 按 `.resolve()` 后的真实路径比较（防 macOS 符号链接绕过）。
 - **敏感文件 deny**（DEFAULT_DENIED_PATTERNS）：.git/**、.env*、*.pem、id_rsa、__pycache__ 等，读写都拒。
 - **命令拒绝列表**（DEFAULT_DENYLIST）：rm -rf /、chmod 777 /、curl|sh、$(cmd)、sudo、git reset --hard、git push --force 等 58 个模式。
 

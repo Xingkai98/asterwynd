@@ -2,6 +2,7 @@
 """Session manager: one AgentLoop + message history per browser session."""
 import asyncio
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -11,7 +12,7 @@ from agent.approval import (
     ApprovalResponse,
 )
 from agent.question import Question, QuestionAnswer
-from agent.config import AsterwyndConfig
+from agent.config import AsterwyndConfig, append_sidecar_workspace
 from agent.loop import AgentLoop
 from agent.message import Message, extract_text
 from agent.mcp import build_mcp_manager
@@ -21,7 +22,7 @@ from agent.session import SessionSnapshot, SessionStore
 from agent.skills import SkillRuntime
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry, build_sandbox_from_config
-from agent.workspace_policy import WorkspacePolicy
+from agent.workspace_policy import WorkspacePolicy, is_sensitive_root
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
@@ -249,6 +250,15 @@ class AgentSession:
             self.agent._user_system_prompt = system_prompt
 
 
+@dataclass(frozen=True)
+class WorkspaceRegistration:
+    """``SessionManager.register_workspace`` 的结果（供 HTTP 响应投影）。"""
+
+    path: Path
+    created: bool  # 目录由本次调用 mkdir 创建
+    persisted: bool  # 侧车文件新增了一条记录
+
+
 class SessionManager:
     """Creates and manages AgentSession instances."""
 
@@ -259,6 +269,7 @@ class SessionManager:
         config: AsterwyndConfig | None = None,
         workspace_root: Path | None = None,
         allowed_workspaces: list[Path] | None = None,
+        sidecar_path: Path | None = None,
     ):
         self._sessions: dict[str, AgentSession] = {}
         self.debug_enabled = debug_enabled
@@ -268,8 +279,11 @@ class SessionManager:
         self.primary_workspace = (workspace_root or Path.cwd()).resolve()
         # allowlist 中 resolve 后存在的路径（已排除不存在项，create_app 打 warning）。
         self._allowlist = [w.resolve() for w in (allowed_workspaces or [])]
-        # 有效 workspace 集合 = {主 workspace} ∪ allowlist，启动时一次性解析。
+        # 有效 workspace 集合 = {主 workspace} ∪ allowlist，启动时一次性解析；
+        # 之后可由 register_workspace 追加（hub「+ 添加」，同进程内立即生效）。
         self._workspace_set = {self.primary_workspace, *self._allowlist}
+        # 新增 workspace 的落盘位置（None → 只注册不落盘，仅测试直连时出现）。
+        self.sidecar_path = Path(sidecar_path) if sidecar_path is not None else None
         resolved_mode = mode or self.config.agent.default_mode.value
         self.initial_mode = parse_agent_mode(resolved_mode)
         # per-workspace SessionStore：key 为 resolve 后的绝对路径（issue #117 D3）。
@@ -301,6 +315,71 @@ class SessionManager:
         if resolved not in self._workspace_set:
             raise ValueError("workspace_not_allowed")
         return resolved
+
+    def register_workspace(self, workspace: str | Path) -> WorkspaceRegistration:
+        """注册一个新的 workspace（hub「+ 添加」），同进程内立即生效并落盘侧车。
+
+        顺序：校验 → 需要时 mkdir -p → 写侧车 → 计入有效集合。任一步失败即抛
+        ``ValueError(<结构化错误码>)``，且**不**注册到运行期集合——落盘失败时
+        只注册不持久会让用户重启后困惑，宁可整体失败（此时可能已建出目录）。
+
+        拒绝：文件系统根 ``/`` 与系统敏感目录（``agent.workspace_policy`` 的
+        ``is_sensitive_root``，与 CLI ``/workspace add`` 同判定）——以它们为根等于
+        把整个文件系统交给该 workspace 的工具。
+
+        错误码：``missing_path`` / ``workspace_path_invalid`` /
+        ``workspace_must_be_absolute`` / ``workspace_sensitive_path`` /
+        ``workspace_not_a_directory`` / ``workspace_create_failed`` /
+        ``workspace_persist_failed``。已注册路径（主 workspace 或既有 allowlist）
+        → 幂等返回 ``created=False, persisted=False``。
+        """
+        raw = str(workspace).strip()
+        if not raw:
+            raise ValueError("missing_path")
+        try:
+            candidate = Path(raw).expanduser()
+        except (ValueError, OSError):
+            raise ValueError("workspace_path_invalid") from None
+        if not candidate.is_absolute():
+            # 必须在 resolve() 前判断：resolve() 会把相对路径静默拼到 cwd 上。
+            raise ValueError("workspace_must_be_absolute")
+        try:
+            resolved = candidate.resolve()
+        except (ValueError, OSError):
+            # 归一成结构化错误码，不透传 OS 文案（如 "embedded null character"）。
+            raise ValueError("workspace_path_invalid") from None
+        if resolved in self._workspace_set:
+            return WorkspaceRegistration(resolved, created=False, persisted=False)
+        # 与 CLI /workspace add 共用敏感根判定：/ 或 /etc 这类根等于全盘开放。
+        if is_sensitive_root(resolved):
+            raise ValueError("workspace_sensitive_path")
+        if resolved.exists() and not resolved.is_dir():
+            raise ValueError("workspace_not_a_directory")
+
+        created = False
+        if not resolved.exists():
+            try:
+                resolved.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                logger.exception("创建 workspace 目录失败: %s", resolved)
+                raise ValueError("workspace_create_failed") from None
+            created = True
+            # 目录创建后再规范化一次：父级可能是符号链接。
+            resolved = resolved.resolve()
+
+        persisted = False
+        if self.sidecar_path is not None:
+            try:
+                persisted = append_sidecar_workspace(self.sidecar_path, resolved)
+            except OSError:
+                logger.exception("写入 workspace 侧车失败: %s", self.sidecar_path)
+                raise ValueError("workspace_persist_failed") from None
+
+        if resolved != self.primary_workspace:
+            self._allowlist.append(resolved)
+        self._workspace_set.add(resolved)
+        logger.info("已注册 workspace: %s (created=%s, persisted=%s)", resolved, created, persisted)
+        return WorkspaceRegistration(resolved, created=created, persisted=persisted)
 
     def create_session(self, llm, tools: Optional[list] = None) -> AgentSession:
         if self.config.mcp.servers:

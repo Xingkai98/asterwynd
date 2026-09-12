@@ -433,9 +433,22 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="hub-new-btn"' in index
     assert 'id="chat-panes"' in index
     assert 'id="hub-session-list"' in index
+    # Workspace 新增路径入口（hub「+ 添加」）
+    assert 'id="hub-workspace-add"' in index
+    assert 'id="hub-workspace-form"' in index
+    assert 'id="hub-workspace-input"' in index
+    assert 'id="hub-workspace-error"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=18" in index
-    assert "/static/chat.js?v=20" in index
+    assert "/static/style.css?v=19" in index
+    assert "/static/chat.js?v=22" in index
+    assert "hubWorkspaceAdd.addEventListener" in script
+    assert "hubWorkspaceForm.addEventListener('submit'" in script
+    assert "fetch('/api/workspaces', {" in script
+    assert "method: 'POST'" in script
+    assert "workspaceErrorMessage" in script
+    # 新增成功后直接用 POST 响应重建选项（避免并发 renderSessionList 抢写）
+    assert "applyWorkspaceOptions" in script
+    assert ".hub-workspace-form" in styles
     assert "buildTabPane" in script
     assert "addImageFromFile" in script
     assert "pendingImages" in script

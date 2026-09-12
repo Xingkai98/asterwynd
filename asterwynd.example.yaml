@@ -98,3 +98,11 @@ skills:
 benchmark:
   parallel: 1
   timeout_seconds: 600
+
+web:
+  # Web UI（asterwynd web）允许操作的额外工作区路径（必须是绝对路径，~ 可展开）。
+  # 主 workspace（启动目录或 --workspace）始终有效，不在这里重复列；列出的路径
+  # 会出现在 hub 的 workspace 选择器里。路径不存在时启动阶段排除并打 warning。
+  workspaces: []
+  # 说明：hub 的「Workspace → + 添加」写入 <本配置文件目录>/.asterwynd/workspaces.yaml，
+  # 启动时与上面的 workspaces 合并生效；该文件由程序独占写入，不会改写本文件。

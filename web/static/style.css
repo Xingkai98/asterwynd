@@ -1287,6 +1287,73 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   color: var(--text);
   font-size: 0.85rem;
 }
+.hub-workspace-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.hub-workspace-row select { flex: 1; min-width: 0; }
+#hub-workspace-add {
+  flex-shrink: 0;
+  width: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+#hub-workspace-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.hub-workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.hub-workspace-form[hidden],
+.hub-workspace-error[hidden] { display: none; }
+.hub-workspace-form input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.hub-workspace-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.hub-workspace-form-actions {
+  display: flex;
+  gap: 8px;
+}
+.hub-workspace-form-actions button {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+#hub-workspace-submit {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.hub-workspace-error {
+  color: var(--error);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
 .hub-new-form {
   display: flex;
   flex-direction: column;
