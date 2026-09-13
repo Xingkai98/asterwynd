@@ -42,13 +42,27 @@ class CreateSubagentTool(Tool):
 
 @tool_parameters(
     name="RunSubagent",
-    description="Start a new run in an existing child subagent session.",
+    description=(
+        "Start a new run in an existing child subagent session. Returns "
+        "status 'running' when an execution slot was free, or 'queued' with a "
+        "run_id when the concurrency limit is saturated — a queued run has not "
+        "started yet, so collect its result later with "
+        "GetSubagentRun(wait=true). Returns status 'queue_full' when the "
+        "pending queue is full: wait for running/queued runs to finish "
+        "(GetSubagentRun(wait=true)) before spawning more."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "subagent_id": {"type": "string"},
             "task": {"type": "string"},
-            "wait": {"type": "boolean"},
+            "wait": {
+                "type": "boolean",
+                "description": (
+                    "Block until the run reaches a terminal state, across both "
+                    "queueing and execution. Defaults to false."
+                ),
+            },
             "timeout_s": {"type": "number"},
         },
         "required": ["subagent_id", "task"],
@@ -56,6 +70,7 @@ class CreateSubagentTool(Tool):
 )
 class RunSubagentTool(Tool):
     read_only = True
+    parallelizable = True  # fan-out: several calls in one turn run concurrently
     permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
@@ -89,13 +104,25 @@ class ListSubagentsTool(Tool):
 
 @tool_parameters(
     name="GetSubagentRun",
-    description="Get the result or current status of a child subagent run.",
+    description=(
+        "Get the result or current status of a child subagent run. Statuses "
+        "include 'queued' (waiting for an execution slot; not started yet), "
+        "'running', and the terminal states completed/failed/cancelled/"
+        "budget_exceeded. Pass wait=true to block until the run reaches a "
+        "terminal state — this is how queued results are collected."
+    ),
     parameters={
         "type": "object",
         "properties": {
             "subagent_id": {"type": "string"},
             "run_id": {"type": "string"},
-            "wait": {"type": "boolean"},
+            "wait": {
+                "type": "boolean",
+                "description": (
+                    "Block until the run reaches a terminal state, across both "
+                    "queueing and execution. Defaults to false."
+                ),
+            },
             "timeout_s": {"type": "number"},
         },
         "required": ["subagent_id"],
@@ -103,6 +130,7 @@ class ListSubagentsTool(Tool):
 )
 class GetSubagentRunTool(Tool):
     read_only = True
+    parallelizable = True  # collecting several queued results in one turn
     permission = SUBAGENT_CONTROL_PERMISSION
 
     def __init__(self, manager: SubAgentManager):
