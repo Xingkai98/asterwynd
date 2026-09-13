@@ -125,10 +125,38 @@ subagents:
         encoding="utf-8",
     )
     config = load_config(start_dir=tmp_path)
+    # 旧键 max_concurrent_runs 迁到 max_active（兼容别名仍可读）
+    assert config.subagents.max_active == 6
     assert config.subagents.max_concurrent_runs == 6
     assert config.subagents.max_depth == 2
     assert config.subagents.default_max_tokens == 12000
     assert config.subagents.default_max_time_s == 45.5
+
+
+def test_load_config_parses_subagents_queue_section(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+subagents:
+  max_active: 7
+  max_queued_runs: 3
+  max_spawns: 42
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.subagents.max_active == 7
+    assert config.subagents.max_queued_runs == 3
+    assert config.subagents.max_spawns == 42
+
+
+def test_load_config_max_active_wins_over_legacy_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "subagents:\n  max_active: 7\n  max_concurrent_runs: 2\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.subagents.max_active == 7
 
 
 def test_load_config_subagents_defaults_when_absent(tmp_path, monkeypatch):
@@ -137,7 +165,10 @@ def test_load_config_subagents_defaults_when_absent(tmp_path, monkeypatch):
         "agent:\n  default_mode: plan\n", encoding="utf-8"
     )
     config = load_config(start_dir=tmp_path)
-    assert config.subagents.max_concurrent_runs == 4
+    assert config.subagents.max_active == 5
+    assert config.subagents.max_concurrent_runs == 5
+    assert config.subagents.max_queued_runs == 20
+    assert config.subagents.max_spawns == 200
     assert config.subagents.max_depth == 3
     assert config.subagents.default_max_tokens is None
 

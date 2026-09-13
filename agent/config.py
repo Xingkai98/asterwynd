@@ -246,16 +246,33 @@ class SkillsConfig:
 class SubagentsConfig:
     """Subagent collaboration guardrails and budget defaults (issue 79).
 
-    ``max_concurrent_runs`` / ``max_depth`` bound runaway spawning (reference:
-    Codex max_threads/max_depth, Claude Code #68110 unbounded burn).
+    Concurrency is decoupled from declaration (change
+    ``subagent-concurrency-queue``, decision D2): ``max_active`` bounds the
+    instantaneous number of *executing* runs, ``max_queued_runs`` bounds the
+    pending queue (overflow returns a ``queue_full`` signal) and ``max_spawns``
+    is the cumulative per-orchestration spawn budget — ``create_subagent`` and
+    every run launch each count once, so empty session creation cannot bypass
+    counting (reference: Codex max_threads queueing; Claude Code #68110 /
+    #69206 unbounded burn). ``max_depth`` bounds nesting depth.
+
+    ``max_concurrent_runs`` is a legacy alias kept readable for older config
+    files; it reports the effective ``max_active``.
+
     ``default_max_tokens`` / ``default_max_time_s`` are per-run budget defaults
     applied when a run does not override them; the manager hard-kills a run that
     exceeds either limit.
     """
-    max_concurrent_runs: int = 4
+    max_active: int = 5
+    max_queued_runs: int = 20
+    max_spawns: int = 200
     max_depth: int = 3
     default_max_tokens: int | None = None
     default_max_time_s: float | None = None
+
+    @property
+    def max_concurrent_runs(self) -> int:
+        """Legacy alias for ``max_active`` (pre-queue config key)."""
+        return self.max_active
 
 
 @dataclass(frozen=True)
@@ -1336,11 +1353,22 @@ def _parse_subagents_config(raw: Any, path: Path) -> SubagentsConfig:
     budget = _expect_mapping(mapping.get("budget", {}), path, "subagents.budget")
     max_tokens = budget.get("max_tokens")
     max_time_s = budget.get("max_time_s")
-    max_concurrent = mapping.get("max_concurrent_runs", 4)
+    # ``max_active`` supersedes the legacy ``max_concurrent_runs`` key; when
+    # both are present the new key wins.
+    if "max_active" in mapping:
+        max_active = mapping["max_active"]
+    else:
+        max_active = mapping.get("max_concurrent_runs", 5)
     max_depth = mapping.get("max_depth", 3)
     return SubagentsConfig(
-        max_concurrent_runs=_validate_positive_int(
-            max_concurrent, "subagents.max_concurrent_runs", path=path
+        max_active=_validate_positive_int(
+            max_active, "subagents.max_active", path=path
+        ),
+        max_queued_runs=_validate_positive_int(
+            mapping.get("max_queued_runs", 20), "subagents.max_queued_runs", path=path
+        ),
+        max_spawns=_validate_positive_int(
+            mapping.get("max_spawns", 200), "subagents.max_spawns", path=path
         ),
         max_depth=_validate_positive_int(max_depth, "subagents.max_depth", path=path),
         default_max_tokens=(

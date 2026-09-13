@@ -120,6 +120,7 @@ class AgentLoop:
         planning_manager: Optional[PlanningManager] = None,
         subagent_manager: Optional[SubAgentManager] = None,
         expose_subagent_tools: bool = False,
+        unregistered_subagent_tools: tuple[str, ...] = (),
         max_iterations: int = 20,
         run_config: AgentRunConfig | None = None,
         tool_result_display: ToolResultDisplayConfig | None = None,
@@ -179,7 +180,7 @@ class AgentLoop:
         if self.runtime_state.current_mode is AgentMode.PLAN:
             self._ensure_plan_tools_registered()
         if expose_subagent_tools:
-            self._ensure_subagent_tools_registered()
+            self._ensure_subagent_tools_registered(unregistered=unregistered_subagent_tools)
         self._ensure_todo_tool_registered()
         self._ensure_background_task_tools_registered()
         self._ensure_question_tool_registered()
@@ -355,19 +356,38 @@ class AgentLoop:
         self.tool_registry.register(ExitPlanModeTool(self.submit_plan_document))
         self._plan_tools_registered = True
 
-    def _ensure_subagent_tools_registered(self) -> None:
+    def _ensure_subagent_tools_registered(
+        self,
+        *,
+        unregistered: tuple[str, ...] = (),
+    ) -> None:
+        """Register the subagent tool set, minus an explicit deny list.
+
+        ``unregistered`` withdraws individual tools (change
+        ``subagent-concurrency-queue``, decision D4: a child at ``max_depth``
+        loses the spawn-class tools but keeps the read/cancel/bus tools), as
+        opposed to ``expose_subagent_tools=False``, which withdraws the whole
+        set.
+        """
         if self._subagent_tools_registered:
             return
-        self.tool_registry.register(CreateSubagentTool(self.subagent_manager))
-        self.tool_registry.register(RunSubagentTool(self.subagent_manager))
-        self.tool_registry.register(ListSubagentsTool(self.subagent_manager))
-        self.tool_registry.register(GetSubagentRunTool(self.subagent_manager))
-        self.tool_registry.register(CancelSubagentRunTool(self.subagent_manager))
-        self.tool_registry.register(InspectSubagentTranscriptTool(self.subagent_manager))
-        self.tool_registry.register(PublishBusMessageTool(self.subagent_manager))
-        self.tool_registry.register(ReadBusTool(self.subagent_manager))
-        self.tool_registry.register(ResumeSubagentTool(self.subagent_manager))
-        self.tool_registry.register(RunPatternTool(self.subagent_manager))
+        tools = [
+            CreateSubagentTool(self.subagent_manager),
+            RunSubagentTool(self.subagent_manager),
+            ListSubagentsTool(self.subagent_manager),
+            GetSubagentRunTool(self.subagent_manager),
+            CancelSubagentRunTool(self.subagent_manager),
+            InspectSubagentTranscriptTool(self.subagent_manager),
+            PublishBusMessageTool(self.subagent_manager),
+            ReadBusTool(self.subagent_manager),
+            ResumeSubagentTool(self.subagent_manager),
+            RunPatternTool(self.subagent_manager),
+        ]
+        withdrawn = set(unregistered)
+        for tool in tools:
+            if tool.name in withdrawn:
+                continue
+            self.tool_registry.register(tool)
         self._subagent_tools_registered = True
 
     def _ensure_todo_tool_registered(self) -> None:
