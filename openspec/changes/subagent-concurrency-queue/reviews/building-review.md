@@ -1,16 +1,18 @@
 # Building Review: subagent-concurrency-queue
 
-- Reviewer: 独立零记忆 building 审阅员（/review-loop）
+- Reviewer（Round 1）: 独立零记忆 building 审阅员（/review-loop）
 - 审阅时间: 2026-09-13
 - base sha: `bdd0eda`（本分支真实 fork 点）
-- head sha: `5342382`
+- head sha（Round 1）: `5342382`；Round 2 复审 head: `ea22b65`（修复 commit `d868184`）
 - 审阅范围: `git diff bdd0eda` — 15 files, +1784/-92（agent/config.py、agent/loop.py、agent/subagent/context.py、agent/subagent/manager.py、agent/tools/builtin/subagents.py、4 个测试文件、6 个 OpenSpec 文档）
 
 ## Verdict
 
-**CHANGES_REQUESTED**
+**PASS**（Round 2 复审，2026-09-14）
 
-三个门禁全绿（2225 passed / artifact checker passed / openspec validate 30 passed），D1–D7 与 8 条 grill 决议大体正确落地。但发现 **1 个新增的、可经真实 AgentLoop 工具路径触发的严重正确性缺陷**：并发许可在「任务已创建但尚未进入首步就被取消」的路径上永久泄漏，导致整个并发池永久停滞。原始变更（master）无此缺陷，是本 change 新引入的回归。另有 2 个中等问题。
+Round 1 的三个 issue 已由修复 commit `d868184` 全部修复，Round 2 独立核验通过。Round 1 的详细判定与证据保留在下方，Round 2 的核验过程、falsifiability 结果与门禁复跑见文末「Round 2 复审」节。
+
+Round 1 verdict（历史）: **CHANGES_REQUESTED** — 并发许可在「任务已创建但尚未进入首步就被取消」的路径上永久泄漏，导致整个并发池永久停滞；另有 2 个中等问题。
 
 ---
 
@@ -145,3 +147,63 @@ Tasks: 72 | passed: 5 | warnings: 0 | unsupported: 38 | failed: 29   (exit 0)
 ## 结论
 
 实现质量总体高、门禁全绿、D1–D7 与 grill 决议落地准确，但 **Issue 1 是一个可经真实工具路径触发、导致并发池永久停滞的严重回归**，且现有测试恰好绕过了它。按 verdict 规则（存在 correctness 问题）→ **CHANGES_REQUESTED**。修 Issue 1（含回归测试）后可复审；Issue 2、3 建议同轮一并修（都是低改动量、有明确期望行为）。
+
+---
+
+# Round 2 复审（2026-09-14）
+
+- Reviewer（Round 2）: 独立零记忆 building 复审员，**不继承** Round 1 上下文
+- Verdict: **PASS**
+- base sha: `bdd0eda`（fork 点）；head sha: `ea22b65`；修复 commit: `d868184`
+- reviewer run id: `review-subagent-concurrency-queue-20260914-r2`
+- 核验方式: 自己读代码 + 自己构造复现（含 AgentLoop 真实工具路径）+ falsifiability（把 `manager.py` 回退到 `5342382` 重跑，确认新测试确会红）+ 门禁复跑
+
+## Issue 逐项核验结论
+
+### Issue 1（严重 · 许可泄漏）— **已修复 ✅**
+
+- **修复实现**：`_start_task` 把 done-callback 由 `lambda _: self._active_tasks.pop(...)` 换为 `lambda _: self._on_run_task_done(run.run_id)`（`manager.py:653`）；`_on_run_task_done`（`manager.py:663-676`）对 task 的**每种终态**都执行 `_active_tasks.pop` + `_permits.release(run_id)` + waiter 唤醒 + `_pump_queue()`，而非只依赖协程体的 finally。`_execute_run` 的 finally（`:850-856`）保留 `release`，两条路径靠 `_ExecutionPermits.release` 的幂等性（`:251-256`，仅当 run_id 命中 `_holders` 才递减）互不冲突。
+- **不双释放 / 不负计数**：正常完成路径下 finally 与 done-callback 都跑，第二次 `release` 因 run_id 已不在 `_holders` 而 no-op。我构造 `test_r2_double_release_and_negative_count`（单跑 + 4 并发 wait=true）与 `test_r2_many_iterations_no_drift`（30 轮 run+cancel 混合），post-让出 `in_use == 0`、`holders == frozenset()`，无负计数、无漂移。release 唯一递减点且被 `_holders` 命中守卫；`try_acquire`/`resume` 是唯一递增点，run_id 唯一且不会重复入 `_holders`，故 `_in_use` 不可能为负。
+- **不泄漏（核心）**：我构造了与 Round 1 同款的**真实工具路径**复现 `test_r2_same_turn_run_then_cancel_through_agentloop`——`AgentLoop` + 脚本化 LLM 在同一轮发 `RunSubagent(wait=false)` → `CancelSubagentRun`（无让出点）。post-fix `in_use == 0`，后续 run 立即 running 并 completed。
+- **falsifiability**：把 `manager.py` 回退到 `5342382` 重跑同一测试 → `AssertionError: LEAKED in_use=1 holders=frozenset({'98649fb31e2a'})`（并带 `Task was destroyed but it is pending!` 于 `:672`）。修复后同一测试转绿。新增的 `test_cancel_before_first_step_releases_permit`（仓库内）在 pre-fix 同样红、post-fix 绿。**机制与修复均确认有效**。
+- **排空确认**：`max_active=1` 下 first 占槽 + second 排队 → never-started cancel first → second 被泵起并 completed、`in_use == 0`（`test_r2_pool_recovers...`）。saturate 探测（50 轮 ×2 run 全 never-started cancel）后 `in_use` 恒为 0。
+- **补充（无新竞态）**：`_on_run_task_done` 无条件 `_pump_queue()` 是同步调用，done-callback 在 loop 上经 call_soon 执行，无重入风险；waiter pop 幂等。父 run waiting 时 suspend 语义与 done-callback 释放互不干扰（父 task 未终结，其 done-callback 尚未触发），既有 `test_parent_run_releases_permit_while_waiting_on_child` 仍绿。
+
+### Issue 2（中 · queue_full 耗预算）— **已修复 ✅**
+
+- **修复实现**：`_count_spawn()` 从 `_enqueue_run` 的 `:565`（pump 前）挪到 `_pump_queue()` + `_take_back_if_queue_full()` **之后**（`manager.py:575-579`），注释与实现一致（`manager.py:578`）。被 `queue_full` 拒绝的 spawn 在 `_take_back_if_queue_full` 内 `return True`，`_count_spawn` 被跳过。
+- **核验**：`test_queue_full_rejection_does_not_consume_spawn_budget`（仓库内）通过；我另写 `test_r2_queue_full_does_not_consume_budget` 断言 `_spawn_count` 前后不变，通过；pre-fix 该断言红。接受路径仍计数（既有 D5 spawn-budget 测试全绿，`_check_spawn_budget` 由 `create_subagent` 与每次 run 接入生效）。
+
+### Issue 3（中 · inspect summary 无 status）— **已修复 ✅**
+
+- **修复实现**：`inspect_transcript` 的 summary scope 返回体新增 `status` 字段（`manager.py:809-817`）。三种情况覆盖：`status="queued"`（仅校验过 queued 分支）、`status="completed"` + 非空 summary、`session.runs` 为空时 `status=None` + `summary=""`（`manager.py:804/813-814`）。`recent_messages` scope 不变。
+- **核验**：`test_inspect_transcript_summary_reports_run_status`（仓库内）断言 queued→`status=="queued"/summary==""`、completed→`status=="completed"/summary=="done"`，通过；我另测无 run 时 `status is None`，通过；pre-fix 该测试 `KeyError: 'status'` 红。既有 `test_inspect_transcript_summary_returns_latest_run_summary` 只需 `summary` 键，加字段不破坏。
+
+## 回归检查（D1–D7 未被破坏）
+
+`uv run pytest tests/agent/subagent/ tests/agent/test_config.py -q` → **130 passed**。三个修复未触及队列准入/泵/深度工具撤除/累计计数/并行组语义，仅改动终态清理与观测字段。无测试删改。
+
+## 门禁复跑结果（Round 2，自己跑）
+
+```
+$ uv run pytest tests/agent/subagent/test_concurrency_queue.py \
+    tests/agent/subagent/test_guardrails.py tests/agent/subagent/test_patterns.py \
+    tests/agent/test_config.py -q
+83 passed in 1.99s
+
+$ uv run pytest -q
+2228 passed, 8 skipped, 19 warnings in 129.28s (0:02:09)
+
+$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py
+ERROR: subagent-concurrency-queue: review manifest missing: .../building-review-manifest.json
+（Round 1 report 落盘后、PASS manifest 落盘前的**预期**状态；本 PASS manifest 落盘后转绿。）
+
+$ npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
+Totals: 30 passed, 0 failed (30 items)
+```
+
+> Round 1 提到的 `Task was destroyed but it is pending!`（`manager.py:672`）在 Round 2 单独复跑 `test_concurrency_queue.py + test_guardrails.py` 时未复现，与 Round 1 判定的「GC 时机依赖、非真实泄漏」一致。
+
+## Round 2 结论
+
+三个 issue 全部修复且经独立复现与 falsifiability 确认有效，无新引入的双释放/负计数/竞态，D1–D7 回归全绿，门禁全绿（artifact checker 仅剩预期中的 PASS manifest 缺失）。**PASS**。本报告落盘后由复审写入 `building-review-manifest.json`（base `bdd0eda`，head 为报告落盘 commit），artifact checker 随之恢复绿。
