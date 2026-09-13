@@ -564,8 +564,6 @@ class SubAgentManager:
         waiter = asyncio.Event()
         self._run_waiters[run.run_id] = waiter
 
-        # 计数在真正接单之后（被 queue_full 拒绝的 spawn 不消耗预算）。
-        self._count_spawn()
         self._pending.append(
             _QueueItem(
                 session=session,
@@ -577,6 +575,8 @@ class SubAgentManager:
         self._pump_queue()
         if self._take_back_if_queue_full(session, run):
             return
+        # 计数在真正接单之后：被 queue_full 拒绝的 spawn 不消耗预算。
+        self._count_spawn()
         if wait:
             await self._wait_for_run(waiter, timeout_s)
 
@@ -636,6 +636,12 @@ class SubAgentManager:
         always sees a consistent state. ``run.status`` flips to ``running``
         here (not inside the task) so ``run_subagent(wait=false)`` returns
         ``running`` whenever a slot was free at spawn time (decision Q8).
+
+        Permit release (plus waiter wake-up and the queue pump) is bound to the
+        *task* via this done-callback, not only to the coroutine body: a task
+        cancelled before its first step never enters ``_execute_run``, so its
+        ``finally`` never runs. ``release`` is idempotent, so the normal path —
+        where ``_execute_run``'s ``finally`` already released — stays a no-op.
         """
         run = item.run
         run.status = "running"
@@ -644,7 +650,7 @@ class SubAgentManager:
             self._execute_run_in_context(item), context=item.context
         )
         self._active_tasks[run.run_id] = bg_task
-        bg_task.add_done_callback(lambda _: self._active_tasks.pop(run.run_id, None))
+        bg_task.add_done_callback(lambda _: self._on_run_task_done(run.run_id))
         if run.max_time_s is not None:
             # The time budget starts counting at execution, not at enqueue
             # (decision Q3): while queued the run burns no budget. The monitor
@@ -653,6 +659,21 @@ class SubAgentManager:
             asyncio.create_task(
                 self._monitor_run_timeout(item.session, run), context=item.context
             )
+
+    def _on_run_task_done(self, run_id: str) -> None:
+        """Task-lifetime teardown for a run (idempotent with ``_execute_run``).
+
+        Runs for every terminal state of the task — including tasks cancelled
+        before their first step, where the coroutine body (and its ``finally``)
+        never executed. Releasing a permit already released by ``_execute_run``
+        is a no-op, so both paths are safe.
+        """
+        self._active_tasks.pop(run_id, None)
+        self._permits.release(run_id)
+        waiter = self._run_waiters.pop(run_id, None)
+        if waiter is not None:
+            waiter.set()
+        self._pump_queue()
 
     async def _execute_run_in_context(self, item: _QueueItem) -> None:
         """Execute a run inside the context captured when it was enqueued.
@@ -780,12 +801,17 @@ class SubAgentManager:
     ) -> dict:
         session = self._require_session(subagent_id)
         if scope == "summary":
-            latest = session.runs[-1].summary if session.runs else ""
+            latest_run = session.runs[-1] if session.runs else None
+            # ``summary`` is empty for a run that has not produced output yet;
+            # the run status tells the caller whether that means "still queued"
+            # or "already terminal without output" (queueing makes the queued
+            # window a common state, so the two must be distinguishable).
             return {
                 "subagent_id": subagent_id,
                 "run_id": run_id,
                 "scope": "summary",
-                "summary": latest,
+                "status": latest_run.status if latest_run is not None else None,
+                "summary": latest_run.summary if latest_run is not None else "",
                 "truncated": False,
                 "included_tool_results": include_tool_results,
             }

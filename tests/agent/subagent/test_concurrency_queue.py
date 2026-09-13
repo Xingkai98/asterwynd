@@ -240,6 +240,94 @@ async def test_cancelled_queued_run_is_skipped_and_slot_reused():
 
 
 @pytest.mark.asyncio
+async def test_cancel_before_first_step_releases_permit():
+    """Issue 1 回归：run 在进入首步前被取消（同轮 Run→Cancel，无让出点）不泄漏许可。
+
+    ``run_subagent(wait=false)`` 到 ``cancel_subagent_run`` 之间不让出事件循环，
+    因此 task 尚未跑到首步，协程体（含 ``_execute_run`` 的 finally）不会执行——
+    许可释放必须绑 task 生命周期（done-callback），不能只依赖协程体的 finally。
+    """
+    manager = _manager(llm=StaticLLM(), max_active=1)
+    first = manager.create_subagent(name="first")
+    second = manager.create_subagent(name="second")
+
+    launched = await manager.run_subagent(
+        subagent_id=first["subagent_id"], task="t1", wait=False
+    )
+    assert launched["status"] == "running"
+    # 关键：不 await 任何让出点，直接取消——task 从未 step 过
+    cancelled = await manager.cancel_subagent_run(
+        subagent_id=first["subagent_id"], run_id=launched["run_id"]
+    )
+    assert cancelled["status"] == "cancelled"
+    # 许可已随 task 终结归还，池子不漂移
+    assert manager._permits.in_use == 0
+
+    # 后续 run 能立刻拿到槽位执行（泄漏时它会永久 queued）
+    again = await manager.run_subagent(
+        subagent_id=second["subagent_id"], task="t2", wait=False
+    )
+    assert again["status"] == "running"
+    done = await manager.get_subagent_run(
+        subagent_id=second["subagent_id"], run_id=again["run_id"], wait=True, timeout_s=3
+    )
+    assert done["status"] == "completed"
+    assert manager._permits.in_use == 0
+
+
+@pytest.mark.asyncio
+async def test_queue_full_rejection_does_not_consume_spawn_budget():
+    """Issue 2 回归：被 queue_full 拒绝的 spawn 不递增累计预算（与注释语义一致）。"""
+    llm = PausableLLM()
+    llm.pause()
+    manager = _manager(llm=llm, max_active=1, max_queued_runs=1)
+    one = manager.create_subagent(name="one")
+    two = manager.create_subagent(name="two")
+    three = manager.create_subagent(name="three")
+
+    await manager.run_subagent(subagent_id=one["subagent_id"], task="t1", wait=False)
+    await manager.run_subagent(subagent_id=two["subagent_id"], task="t2", wait=False)
+    budget_before = manager._spawn_count
+    rejected = await manager.run_subagent(
+        subagent_id=three["subagent_id"], task="t3", wait=False
+    )
+    assert rejected["status"] == "queue_full"
+    assert manager._spawn_count == budget_before
+    llm.resume()
+
+
+@pytest.mark.asyncio
+async def test_inspect_transcript_summary_reports_run_status():
+    """Issue 3 回归：summary scope 带 run status，区分「排队中」与「跑完无输出」。"""
+    llm = PausableLLM()
+    llm.pause()
+    manager = _manager(llm=llm, max_active=1)
+    running = manager.create_subagent(name="running")
+    queued = manager.create_subagent(name="queued")
+
+    await manager.run_subagent(subagent_id=running["subagent_id"], task="t1", wait=False)
+    launched = await manager.run_subagent(
+        subagent_id=queued["subagent_id"], task="t2", wait=False
+    )
+    assert launched["status"] == "queued"
+
+    inspected = manager.inspect_transcript(subagent_id=queued["subagent_id"], scope="summary")
+    assert inspected["status"] == "queued"
+    assert inspected["summary"] == ""
+
+    llm.resume()
+    done = await manager.get_subagent_run(
+        subagent_id=queued["subagent_id"], run_id=launched["run_id"], wait=True, timeout_s=3
+    )
+    assert done["status"] == "completed"
+    inspected_done = manager.inspect_transcript(
+        subagent_id=queued["subagent_id"], scope="summary"
+    )
+    assert inspected_done["status"] == "completed"
+    assert inspected_done["summary"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_wait_true_blocks_through_queue_until_terminal():
     llm = PausableLLM()
     llm.pause()
