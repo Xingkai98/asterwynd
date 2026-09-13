@@ -27,8 +27,6 @@ from agent.subagent.context import (
     current_run_id,
     current_spawn_depth,
     current_workflow_id,
-    reset_current_run_id,
-    reset_spawn_depth,
     set_current_run_id,
     set_spawn_depth,
 )
@@ -182,8 +180,9 @@ class _ExecutionPermits:
         self._in_use = 0
         self._holders: set[str] = set()
         self._suspended: set[str] = set()
-        self._resuming: set[str] = set()
-        self._notice: asyncio.Future[None] | None = None
+        # Insertion-ordered: a resumer's position is its place in line.
+        self._resuming: list[str] = []
+        self._notices: deque[asyncio.Future[None]] = deque()
 
     @property
     def limit(self) -> int:
@@ -229,16 +228,23 @@ class _ExecutionPermits:
         return True
 
     async def resume(self, run_id: str) -> None:
-        """Take a permit back after a wait, waiting for a slot if needed."""
+        """Take a permit back after a wait, waiting for a slot if needed.
+
+        Resumers queue in arrival order: a run waits while the slots taken by
+        executing runs plus the runs *ahead of it* in line fill the pool.
+        """
         if run_id not in self._suspended:
             return
         self._suspended.discard(run_id)
-        self._resuming.add(run_id)
+        self._resuming.append(run_id)
         try:
-            while self._in_use >= self._limit:
+            while self._in_use + self._resuming.index(run_id) >= self._limit:
                 await self._wait_notice()
         finally:
-            self._resuming.discard(run_id)
+            with suppress(ValueError):
+                self._resuming.remove(run_id)
+            # Later resumers' positions in line just improved.
+            self._wake()
         self._in_use += 1
         self._holders.add(run_id)
 
@@ -250,18 +256,24 @@ class _ExecutionPermits:
         self._wake()
 
     def _wake(self) -> None:
-        notice = self._notice
-        self._notice = None
-        if notice is not None and not notice.done():
-            notice.set_result(None)
+        """Wake every waiting resumer; each rechecks the slot count itself.
+
+        Waking all (rather than one) keeps the pool free of per-waiter
+        bookkeeping races: the herd is at most the number of active runs.
+        """
+        while self._notices:
+            notice = self._notices.popleft()
+            if not notice.done():
+                notice.set_result(None)
 
     async def _wait_notice(self) -> None:
-        notice = self._notice
-        if notice is None:
-            notice = asyncio.get_running_loop().create_future()
-            self._notice = notice
-        if self._in_use >= self._limit:
+        notice: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._notices.append(notice)
+        try:
             await notice
+        finally:
+            with suppress(ValueError):
+                self._notices.remove(notice)
 
 
 # Spawn-class tools withdrawn from a child agent once its depth reaches
@@ -552,10 +564,6 @@ class SubAgentManager:
         waiter = asyncio.Event()
         self._run_waiters[run.run_id] = waiter
 
-        if len(self._pending) >= self.max_queued_runs:
-            self._reject_queued(session, run)
-            return
-
         # 计数在真正接单之后（被 queue_full 拒绝的 spawn 不消耗预算）。
         self._count_spawn()
         self._pending.append(
@@ -567,6 +575,8 @@ class SubAgentManager:
             )
         )
         self._pump_queue()
+        if self._take_back_if_queue_full(session, run):
+            return
         if wait:
             await self._wait_for_run(waiter, timeout_s)
 
@@ -592,6 +602,11 @@ class SubAgentManager:
         finally:
             if suspended:
                 await self._permits.resume(waiting_run_id)
+        if waiter.is_set():
+            # 被等的 run 可能刚被惰性跳过（取消/预算），或从未真正入队：
+            # 只泵一次，把该 run 从队列中清掉并让出槽位（wait=false 路径的泵
+            # 覆盖不到 queue_full 未触发的情形）。
+            self._pump_queue()
 
     def _pump_queue(self) -> None:
         """Start queued runs while execution permits are available.
@@ -632,8 +647,12 @@ class SubAgentManager:
         bg_task.add_done_callback(lambda _: self._active_tasks.pop(run.run_id, None))
         if run.max_time_s is not None:
             # The time budget starts counting at execution, not at enqueue
-            # (decision Q3): while queued the run burns no budget.
-            asyncio.create_task(self._monitor_run_timeout(item.session, run))
+            # (decision Q3): while queued the run burns no budget. The monitor
+            # runs in the run's captured context so its checkpoint can still
+            # see the orchestration bus.
+            asyncio.create_task(
+                self._monitor_run_timeout(item.session, run), context=item.context
+            )
 
     async def _execute_run_in_context(self, item: _QueueItem) -> None:
         """Execute a run inside the context captured when it was enqueued.
@@ -652,16 +671,26 @@ class SubAgentManager:
         set_current_run_id(item.run.run_id)
         await self._execute_run(item.session, item.run, item.resume_snapshot)
 
-    def _reject_queued(
+    def _take_back_if_queue_full(
         self,
         session: SubagentSessionRecord,
         run: SubagentRunRecord,
-    ) -> None:
+    ) -> bool:
         """Queue overflow (Q1): drop the pending run and report ``queue_full``.
 
-        No run record survives — the spawn leaves no trace, matching the old
-        fail-fast guard — so the session is immediately re-runnable.
+        Checked *after* the pump, so a spawn that started executing (or was
+        skipped as cancelled) is never turned into ``queue_full``. A dropped
+        run leaves no record — matching the old fail-fast guard — so the
+        session is immediately re-runnable.
         """
+        if run.status in TERMINAL_RUN_STATUSES:
+            return True
+        if len(self._pending) <= self.max_queued_runs:
+            return False
+        for item in list(self._pending):
+            if item.run is run:
+                self._pending.remove(item)
+                break
         run.status = "queue_full"
         run.reason = (
             f"subagent queue is full ({self.max_queued_runs}/{self.max_queued_runs}); "
@@ -672,11 +701,16 @@ class SubAgentManager:
             session.runs.pop()
         session.active_run_id = None
         session.status = "idle"
-        if session.messages and session.messages[-1].role == "user" and session.messages[-1].content == run.task:
+        if (
+            session.messages
+            and session.messages[-1].role == "user"
+            and session.messages[-1].content == run.task
+        ):
             session.messages.pop()
         waiter = self._run_waiters.pop(run.run_id, None)
         if waiter is not None:
             waiter.set()
+        return True
 
     def _cleanup_queued_item(self, item: _QueueItem) -> None:
         """Release a skipped queue item's bookkeeping (waiter already set)."""
@@ -778,8 +812,6 @@ class SubAgentManager:
         run: SubagentRunRecord,
         resume_snapshot: "SessionSnapshot | None" = None,
     ) -> None:
-        if self.llm is None:
-            raise RuntimeError("subagent manager LLM is not configured")
         trace = TraceRecorder(task_id=session.subagent_id)
         try:
             # The execution permit covers exactly this loop run (decision D1).
@@ -810,6 +842,8 @@ class SubAgentManager:
             started_at=run.started_at,
         )
         try:
+            if self.llm is None:
+                raise RuntimeError("subagent manager LLM is not configured")
             loop = self._build_subagent_loop(session.mode, budget=tracker, depth=run.depth)
             result = await loop.run(
                 session.messages,

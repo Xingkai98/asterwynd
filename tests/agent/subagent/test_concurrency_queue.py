@@ -182,6 +182,64 @@ async def test_queue_full_returns_signal_without_creating_run_record():
 
 
 @pytest.mark.asyncio
+async def test_queue_full_never_rejects_a_run_that_can_start():
+    """队列满判定发生在泵之后：有空槽的 spawn 永远先启动，不会误报 queue_full。"""
+    llm = PausableLLM()
+    llm.pause()
+    manager = _manager(llm=llm, max_active=2, max_queued_runs=1)
+    ids = [manager.create_subagent(name=f"s{i}")["subagent_id"] for i in range(3)]
+
+    first = await manager.run_subagent(subagent_id=ids[0], task="t0", wait=False)
+    second = await manager.run_subagent(subagent_id=ids[1], task="t1", wait=False)
+    # 两个槽都占满，第三个进队列（队列上限 1，恰好不溢出）
+    third = await manager.run_subagent(subagent_id=ids[2], task="t2", wait=False)
+    assert (first["status"], second["status"], third["status"]) == ("running", "running", "queued")
+
+    # 第一个跑完，槽位释放 → 队列里的 run 应当被泵起来，而不是被拒
+    llm.resume()
+    done_first = await manager.get_subagent_run(
+        subagent_id=ids[0], run_id=first["run_id"], wait=True, timeout_s=3
+    )
+    assert done_first["status"] == "completed"
+    await _wait_until(lambda: _run_status(manager, {"subagent_id": ids[2]}) in {"running", "completed"})
+    final = await manager.get_subagent_run(
+        subagent_id=ids[2], run_id=third["run_id"], wait=True, timeout_s=3
+    )
+    assert final["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_queued_run_is_skipped_and_slot_reused():
+    """Q7 惰性跳过：取消的排队 run 不执行，但队列名额的释放不阻塞后续 run。"""
+    llm = PausableLLM()
+    llm.pause()
+    manager = _manager(llm=llm, max_active=1, max_queued_runs=5)
+    holder = manager.create_subagent(name="holder")
+    cancelled_session = manager.create_subagent(name="cancelled")
+    later = manager.create_subagent(name="later")
+
+    await manager.run_subagent(subagent_id=holder["subagent_id"], task="hold", wait=False)
+    queued = await manager.run_subagent(
+        subagent_id=cancelled_session["subagent_id"], task="drop me", wait=False
+    )
+    later_run = await manager.run_subagent(subagent_id=later["subagent_id"], task="later", wait=False)
+    assert queued["status"] == "queued" and later_run["status"] == "queued"
+
+    await manager.cancel_subagent_run(
+        subagent_id=cancelled_session["subagent_id"], run_id=queued["run_id"]
+    )
+    llm.resume()
+    done = await manager.get_subagent_run(
+        subagent_id=later["subagent_id"], run_id=later_run["run_id"], wait=True, timeout_s=3
+    )
+    assert done["status"] == "completed"
+    # 被取消的 run 从未真正执行：状态保持 cancelled，摘要为空
+    assert _run_status(manager, cancelled_session) == "cancelled"
+    assert manager._sessions[cancelled_session["subagent_id"]].runs[-1].summary == ""
+    assert manager._permits.in_use == 0
+
+
+@pytest.mark.asyncio
 async def test_wait_true_blocks_through_queue_until_terminal():
     llm = PausableLLM()
     llm.pause()
@@ -355,6 +413,29 @@ def test_build_subagent_loop_depth_defaults_to_exposing_everything():
         assert name in names, name
 
 
+@pytest.mark.asyncio
+async def test_deep_child_agent_runs_without_spawn_tools():
+    """D4 端到端：depth 到限的子 run 实际执行时工具集不含 spawn 工具。"""
+    seen: list[set[str]] = []
+
+    class ToolProbeLLM:
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            seen.append({tool["function"]["name"] for tool in (tools or [])})
+            return LLMResponse(content="done", stop_reason="end_turn", usage=Usage(5, 5))
+
+    manager = _manager(llm=ToolProbeLLM(), max_depth=1, max_active=2)
+    first = manager.create_subagent(name="first")
+    await manager.run_subagent(subagent_id=first["subagent_id"], task="t", wait=True)
+    # 该子 run depth=1 == max_depth → 无 spawn 工具
+    assert seen, "child run must have executed"
+    for schema_names in seen:
+        assert "CreateSubagent" not in schema_names
+        assert "RunSubagent" not in schema_names
+        assert "RunPattern" not in schema_names
+        assert "ResumeSubagent" not in schema_names
+        assert "GetSubagentRun" in schema_names
+
+
 # --- D5/Q5: cumulative spawn counting ---
 
 
@@ -488,6 +569,84 @@ def test_tool_descriptions_explain_queue_semantics():
     run_desc = RunSubagentTool.description.lower()
     assert "queued" in run_desc
     assert "getsubagentrun" in run_desc
+    assert "queue_full" in run_desc
     get_desc = GetSubagentRunTool.description.lower()
     assert "wait" in get_desc
     assert "queued" in get_desc
+
+
+@pytest.mark.asyncio
+async def test_run_subagent_calls_in_one_turn_execute_as_one_parallel_group():
+    """D7 端到端：一轮多个 RunSubagent 被 loop 归入同一并行组并真并发。"""
+    import json as _json
+
+    from agent.loop import AgentLoop
+    from agent.hooks.manager import HookManager
+    from agent.message import Message
+    from agent.tools.registry import ToolRegistry
+    from agent.llm import ToolCallDelta
+
+    class TwoCallsLLM:
+        def __init__(self, manager, first_id, second_id):
+            self.manager = manager
+            self.first_id = first_id
+            self.second_id = second_id
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCallDelta(
+                            id="c1",
+                            name="RunSubagent",
+                            arguments=_json.dumps({"subagent_id": self.first_id, "task": "a"}),
+                        ),
+                        ToolCallDelta(
+                            id="c2",
+                            name="RunSubagent",
+                            arguments=_json.dumps({"subagent_id": self.second_id, "task": "b"}),
+                        ),
+                    ],
+                    stop_reason="tool_calls",
+                )
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    manager = _manager(llm=StaticLLM(), max_active=2)
+    one = manager.create_subagent(name="one")
+    two = manager.create_subagent(name="two")
+    loop = AgentLoop(
+        llm=TwoCallsLLM(manager, one["subagent_id"], two["subagent_id"]),
+        tool_registry=ToolRegistry(),
+        hooks=HookManager(),
+        subagent_manager=manager,
+        expose_subagent_tools=True,
+    )
+    from agent.trace_recorder import TraceRecorder
+
+    trace = TraceRecorder(task_id="parallel-subagents")
+    result = await loop.run([Message(role="user", content="fan out")], trace_recorder=trace)
+
+    assert result.content == "done"
+    parallel_steps = [s for s in trace.steps if s.type == "parallel_execution_start"]
+    assert parallel_steps, "RunSubagent calls must be grouped as one parallel group"
+    assert parallel_steps[0].data["tools"] == ["RunSubagent", "RunSubagent"]
+    payloads = [_json.loads(call.result) for call in result.tool_calls_made]
+    # 两个槽位空闲：均同步返回 running（Q8），随后各自跑到终态
+    assert [p["status"] for p in payloads] == ["running", "running"]
+    collected = await asyncio.gather(
+        *[
+            manager.get_subagent_run(
+                subagent_id=call_subagent_id,
+                run_id=payload["run_id"],
+                wait=True,
+                timeout_s=3,
+            )
+            for call_subagent_id, payload in zip(
+                (one["subagent_id"], two["subagent_id"]), payloads
+            )
+        ]
+    )
+    assert [c["status"] for c in collected] == ["completed", "completed"]

@@ -65,6 +65,7 @@ spawn 深度到 `max_depth` 时，从子 agent 工具注册移除 spawn 类工�
 新增 per-orchestration 累计 spawn 上限（`max_spawns=200`）。用 contextvar 或显式计数器挂在 orchestration 根上下文，每次 `create_subagent`/`run_subagent` 递增，超限拒绝。区别于瞬时并发 `max_active`。
 
 - **依据**：Claude Code 只限瞬时并发、无累计计数 → #69206 翻车（218 spawned）。
+- **实现注记（scope 载体）**：grill Q5 只拍板了计数语义（create + run/resume 各计 1），作用域载体未定。实现取 **manager 生命周期为 orchestration 边界**（manager 内单一 `_spawn_count`，无复位通道）：CLI 一次 `asterwynd run`、benchmark 单 task、web 单 session 各自正好构造一个 manager（`agent/main.py:289`、`benchmarks/agent_runner.py:308`、`web/session.py:447`），因此前两者与「per-orchestration 根 run 起算」等价；web 长会话是最严格读法（跨 turn 累计、不复位），偏保守且不会中途弱化上限——取「永不静默复位」而非「根 run 终结即复位」，因为排队子 run 可以活过父 run 终结，复位会让迟到 spawn 拿到全新预算。该分歧记录在此，若需要「每 turn 复位」语义由后续 change 明确。
 
 ### D6 — 父子身份显式字段
 
