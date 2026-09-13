@@ -36,5 +36,5 @@
 - [x] 6.1 新增回归测试（G2 决议 7 条）：队列化、wait 语义、父等子、深度撤工具、累计计数、queue_full、depth fail-fast。
 - [x] 6.2 适配既有测试（grill 已定位 4 处破坏 + 1 处签名兼容）：`test_guardrails.py:133-153`/`:156-171`（超限抛错 → 队列化 envelope）、`test_subagent_manager.py:85-96`（条件性，max_active 默认值决定）、`test_config.py:119/128/140`（max_concurrent_runs → max_active 迁移）；`_build_subagent_loop` 签名兼容（`test_guardrails.py:50`、`test_loop.py:2144` 给 depth 默认值）。
 - [x] 6.3 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke` 冒烟通过（coding-agent core 变更）。
-- [ ] 6.4 同步 current spec：把 spec delta 合入 `openspec/specs/subagents/spec.md`，并同步修订 `openspec/specs/multi-agent-collaboration/spec.md:43` 的「SHALL reject spawns exceeding the limits」——该旧口径与本 change「排队而非失败」矛盾（grill 已定位，sync 时必须处理）。**归 closing 阶段（/opsx:archive）执行。**
+- [x] 6.4 同步 current spec：把 spec delta 合入 `openspec/specs/subagents/spec.md`（ADDED 5 + MODIFIED 1），并同步修订 `openspec/specs/multi-agent-collaboration/spec.md:43` 的「SHALL reject spawns exceeding the limits」——该旧口径与本 change「排队而非失败」矛盾（grill 已定位，sync 时必须处理）。**由 closing 阶段（/opsx:archive）执行**：两条 `current_spec_synced` 事件随归档落 workflow-events.jsonl；`validate --all --strict` 30/30 通过。
 - [x] 6.5 `uv run pytest -q` 全绿；OpenSpec validate + artifact checker 通过。
