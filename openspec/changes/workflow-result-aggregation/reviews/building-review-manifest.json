@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-result-aggregation",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-result-aggregation-20260914-r2",
+  "base_sha": "0dcbefb",
+  "head_sha": "1550e03",
+  "tasks_hash": "sha256:4960e510f5cbb9855c5a46b6b4540741f8883e348318eb48b754d618d7acc7a4",
+  "spec_hash": "sha256:f3092e181a89cff3d0e9601f386c57302cc2bc15cf475bb93b5fdf8cce8237d8",
+  "diff_hash": "sha256:56fc8e1f7dc04aff3d8ee558fd71ef9389ebf7836e0c5d920d95bd1f8b5b1afa",
+  "report_hash": "sha256:8fd0cbd7f58618fbc6bc12b0dd719752b509eea81280126c87ea913cb792f2a8"
+}
