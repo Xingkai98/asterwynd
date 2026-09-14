@@ -32,7 +32,14 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping
 
 from agent.subagent.bus import MessageBus
-from agent.subagent.context import reset_bus, reset_node_id, reset_workflow_id, set_bus, set_node_id, set_workflow_id
+from agent.subagent.context import (
+    reset_bus,
+    reset_node_id,
+    reset_workflow_id,
+    set_bus,
+    set_node_id,
+    set_workflow_id,
+)
 from agent.subagent.workflow import (
     REDUCERS,
     WorkflowNode,
@@ -855,14 +862,10 @@ class WorkflowScheduler:
 
     async def _cancel_node(self, state: NodeState) -> None:
         """取消该节点所有仍在跑的 run（含 foreach 展开项）。"""
-        live = list(self._live_runs.get(state.node.id, []))
+        live = set(self._live_runs.get(state.node.id, []))
         if state.subagent_id is not None and state.run_id is not None:
-            live.append((state.subagent_id, state.run_id))
-        seen: set[tuple[str, str]] = set()
+            live.add((state.subagent_id, state.run_id))
         for subagent_id, run_id in live:
-            if (subagent_id, run_id) in seen:
-                continue
-            seen.add((subagent_id, run_id))
             try:
                 await self.manager.cancel_subagent_run(
                     subagent_id=subagent_id, run_id=run_id
@@ -947,7 +950,7 @@ class WorkflowScheduler:
             upstream = self._states.get(edge.source)
             if upstream is None:
                 continue
-            text = self._node_output(upstream, edge_slots(edge)[0])
+            text = self._node_output(upstream, "result")
             if text:
                 parts.append(f"Input from {edge.source}:\n{text}")
         return "\n\n".join(parts)
@@ -969,7 +972,7 @@ class WorkflowScheduler:
             upstream = self._states.get(edge.source)
             if upstream is None:
                 continue
-            text = self._node_output(upstream, edge_slots(edge)[0])
+            text = self._node_output(upstream, "result")
             if text:
                 parts.append(text)
         return "\n".join(parts)
@@ -1038,6 +1041,3 @@ class WorkflowScheduler:
         return payload
 
 
-def edge_slots(edge: Any) -> tuple[str, ...]:
-    """边所承载的槽名（由源节点声明；默认单槽 ``result``）。"""
-    return ("result",)

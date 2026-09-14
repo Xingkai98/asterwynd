@@ -1,10 +1,10 @@
 """Orchestration pattern library for subagents (issue 79, decision D6).
 
-``OrcPattern`` subclasses provide the deterministic skeleton — spawn N → wait →
-collect — while the "split / select / review" intelligence inside a pattern is
-carried by LLM subagents. Patterns run on top of ``SubAgentManager`` (no
-separate control plane) and receive a per-run ``MessageBus`` via the contextvar,
-so workers can exchange summaries under the bus's token budget.
+The "split / select / review" intelligence inside a pattern is carried by LLM
+subagents; the deterministic skeleton — spawn N → wait → collect — is now the
+unified scheduler. Patterns run on top of ``SubAgentManager`` (no separate
+control plane) and receive a per-run ``MessageBus`` via the contextvar, so
+workers can exchange summaries under the bus's token budget.
 
 Change ``workflow-dsl-scheduler`` (D7) demotes the four patterns to **DSL
 templates**: :func:`compile_pattern` turns a pattern name + task + params into a
@@ -212,14 +212,6 @@ def _template_peer_review(task: str, params: dict[str, Any]) -> dict:
     }
 
 
-_TEMPLATES = {
-    "orchestrator-worker": _template_orchestrator_worker,
-    "peer-review": _template_peer_review,
-    "hierarchical": _template_hierarchical,
-    "bidding": _template_bidding,
-}
-
-
 def compile_pattern(
     pattern: str,
     *,
@@ -227,9 +219,9 @@ def compile_pattern(
     params: dict[str, Any] | None = None,
 ) -> WorkflowSpec:
     """把一个内置 pattern 编译成 WorkflowSpec 模板（D7）。"""
-    if pattern not in _TEMPLATES:
-        raise KeyError(f"unknown pattern {pattern!r}; available: {sorted(_TEMPLATES)}")
-    return parse_workflow_spec(_TEMPLATES[pattern](task, params or {}))
+    if pattern not in PATTERNS:
+        raise KeyError(f"unknown pattern {pattern!r}; available: {sorted(PATTERNS)}")
+    return PATTERNS[pattern](task=task, params=params).compile()
 
 
 #: 模板里「进 workers[] 的节点」白名单（其余节点只出现在新增字段里）。
@@ -242,15 +234,20 @@ _AGGREGATE_NODE_IDS = {
 
 
 class OrcPattern:
-    """历史 pattern 接口（issue 79）。C2 起由 DSL 模板驱动，保留为兼容外观。"""
+    """Common pattern interface: a pattern knows how to compile itself to a spec.
+
+    Before this change a pattern was a spawn/wait/collect routine; now the routine
+    *is* the scheduler, and what remains pattern-specific is the topology. Each
+    subclass therefore only declares ``name`` and ``build``.
+    """
 
     name = "base"
 
     def __init__(
         self,
-        manager: "SubAgentManager",
+        manager: "SubAgentManager" = None,  # type: ignore[assignment]
         *,
-        task: str,
+        task: str = "",
         params: dict[str, Any] | None = None,
         bus: MessageBus | None = None,
     ) -> None:
@@ -259,69 +256,33 @@ class OrcPattern:
         self.params = params or {}
         self.bus = bus
 
-    def compile(self) -> WorkflowSpec:
-        return compile_pattern(self.name, task=self.task, params=self.params)
-
-    async def run(self) -> dict:
+    @classmethod
+    def build(cls, task: str, params: dict[str, Any]) -> dict:
+        """Return the raw WorkflowSpec mapping for this pattern."""
         raise NotImplementedError
 
-    # -- helpers ------------------------------------------------------------
-
-    def _spawn(self, name: str, description: str = "") -> str:
-        return self.manager.create_subagent(name=name, description=description)[
-            "subagent_id"
-        ]
-
-    async def _run_worker(self, subagent_id: str, task: str) -> dict:
-        return await self.manager.run_subagent(
-            subagent_id=subagent_id,
-            task=task,
-            wait=True,
-            max_tokens=self.params.get("worker_max_tokens"),
-            max_time_s=self.params.get("worker_max_time_s"),
-        )
-
-    def _aggregate(self, results: list[dict]) -> dict:
-        completed = sum(1 for r in results if r["status"] == "completed")
-        failed = sum(1 for r in results if r["status"] != "completed")
-        workers = [
-            {
-                "subagent_id": r["subagent_id"],
-                "status": r["status"],
-                "summary": r.get("summary", ""),
-                "reason": r.get("reason"),
-                "usage": r.get("usage", {}),
-            }
-            for r in results
-        ]
-        parts = [
-            f"[{r['subagent_id']}] {r.get('summary', r.get('reason', 'no output'))}"
-            for r in results
-        ]
-        return {
-            "pattern": self.name,
-            "task": self.task,
-            "completed": completed,
-            "failed": failed,
-            "workers": workers,
-            "summary": "\n".join(parts),
-        }
+    def compile(self) -> WorkflowSpec:
+        return parse_workflow_spec(self.build(self.task, self.params))
 
 
 class OrchestratorWorkerPattern(OrcPattern):
     name = "orchestrator-worker"
+    build = staticmethod(_template_orchestrator_worker)
 
 
 class PeerReviewPattern(OrcPattern):
     name = "peer-review"
+    build = staticmethod(_template_peer_review)
 
 
 class HierarchicalPattern(OrcPattern):
     name = "hierarchical"
+    build = staticmethod(_template_hierarchical)
 
 
 class BiddingPattern(OrcPattern):
     name = "bidding"
+    build = staticmethod(_template_bidding)
 
 
 PATTERNS: dict[str, type[OrcPattern]] = {
@@ -333,16 +294,6 @@ PATTERNS: dict[str, type[OrcPattern]] = {
 
 
 # --- adapter ---------------------------------------------------------------
-
-
-def _select_aggregate_node(result: dict, pattern: str) -> dict:
-    """取模板聚合口径内的节点状态（grill 决策 4/5）。"""
-    wanted = result.get("_aggregate_node_ids") or _AGGREGATE_NODE_IDS.get(pattern, ())
-    by_id = {node["id"]: node for node in result["nodes"]}
-    selected = [by_id[node_id] for node_id in wanted if node_id in by_id]
-    for node in selected:
-        node.setdefault("subagent_ids", [])
-    return {"nodes": selected}
 
 
 def _workers_from_node(node: dict, manager: "SubAgentManager") -> list[dict]:
@@ -456,8 +407,8 @@ async def run_pattern(
     envelope is folded into it (``workflow_id``, ``workflow_spec_hash``,
     ``critical_path_s``, ``peak_active``, ``total_cost``).
     """
-    if pattern not in _TEMPLATES:
-        raise KeyError(f"unknown pattern {pattern!r}; available: {sorted(_TEMPLATES)}")
+    if pattern not in PATTERNS:
+        raise KeyError(f"unknown pattern {pattern!r}; available: {sorted(PATTERNS)}")
     spec = compile_pattern(pattern, task=task, params=params)
     bus = MessageBus()
     token = set_bus(bus)
