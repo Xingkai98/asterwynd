@@ -15,6 +15,7 @@ from agent.subagent.workflow import (
     WorkflowValidationError,
     parse_workflow_spec,
 )
+from agent.subagent.workflow_store import DEFAULT_READ_LIMIT, WorkflowStore
 from agent.tools.base import Tool, tool_parameters
 from agent.tool_permissions import SUBAGENT_CONTROL_PERMISSION
 
@@ -554,22 +555,87 @@ async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
 
 
 @tool_parameters(
+    name="ReadWorkflowResult",
+    description=(
+        "Read a workflow result artifact by its result_ref (page through the "
+        "full text). Refs come from a workflow envelope's root_result_ref, from "
+        "GetWorkflow(detail='nodes') node refs, or from a run envelope's "
+        "result_ref. Pass offset/limit to page; the response reports total_chars "
+        "and truncated so you can decide whether to keep reading."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "ref": {
+                "type": "string",
+                "description": "Artifact ref, e.g. artifact://workflow/wf_123/root.",
+            },
+            "offset": {"type": "integer", "minimum": 0, "description": "Char offset."},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Max characters to return (default 4000, cap 20000).",
+            },
+        },
+        "required": ["ref"],
+    },
+)
+class ReadWorkflowResultTool(Tool):
+    """Q1：把 ``result_ref`` 换成内容的唯一通道（只读、分页）。
+
+    不是 spawn 类工具（不拉起新工作），因此**不进** ``SPAWN_TOOL_NAMES``：深度到限
+    的子 agent 仍能读回自己的结果。
+    """
+    read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
+
+    def __init__(self, manager: SubAgentManager):
+        self.manager = manager
+
+    async def execute(self, **kwargs) -> str:
+        ref = kwargs["ref"]
+        try:
+            workflow_id, _key = WorkflowStore.parse_ref(ref)
+        except ValueError as exc:
+            return json.dumps(
+                {"ref": ref, "missing": True, "content": "", "reason": str(exc)},
+                ensure_ascii=False,
+            )
+        store = self.manager.workflow_store(workflow_id)
+        page = store.read(ref, offset=kwargs.get("offset", 0), limit=kwargs.get("limit", DEFAULT_READ_LIMIT))
+        return json.dumps(page, ensure_ascii=False)
+
+
+@tool_parameters(
     name="GetWorkflow",
     description=(
         "Get the bounded status of a declared workflow: per-node "
         "{id, kind, status, runs, summary, reason}, run totals, steps, "
         "peak_active, critical_path_s, total_cost and diagnostics. Summaries are "
-        "truncated so a large graph cannot blow up the caller's context."
+        "truncated so a large graph cannot blow up the caller's context. Use "
+        "detail to pick what the response focuses on: 'summary' (default, node "
+        "summaries only), 'nodes' (node summaries plus each node's result_ref — "
+        "read the body with ReadWorkflowResult), or 'events' (the latest terminal "
+        "transitions)."
     ),
     parameters={
         "type": "object",
-        "properties": {"workflow_id": {"type": "string"}},
+        "properties": {
+            "workflow_id": {"type": "string"},
+            "detail": {
+                "type": "string",
+                "enum": ["summary", "nodes", "events"],
+                "description": "Response focus. Defaults to 'summary'.",
+            },
+        },
         "required": ["workflow_id"],
     },
 )
 class GetWorkflowTool(Tool):
     read_only = True
     permission = SUBAGENT_CONTROL_PERMISSION
+
+    _DETAILS = ("summary", "nodes", "events")
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -579,7 +645,42 @@ class GetWorkflowTool(Tool):
         scheduler = self.manager.get_workflow(workflow_id)
         if scheduler is None:
             return _unknown_workflow(workflow_id, self.manager)
-        return json.dumps(scheduler.status(), ensure_ascii=False)
+        detail = kwargs.get("detail", "summary")
+        if detail not in self._DETAILS:
+            return json.dumps(
+                {
+                    "status": "invalid_detail",
+                    "workflow_id": workflow_id,
+                    "reason": f"unknown detail {detail!r}; expected one of {list(self._DETAILS)}",
+                },
+                ensure_ascii=False,
+            )
+        payload = scheduler.status()
+        payload["detail"] = detail
+        if detail == "nodes":
+            # 节点级摘要 + 各自的 result_ref（**不**展开正文，Q1）。
+            refs = _node_refs(scheduler)
+            for node in payload["nodes"]:
+                ref = refs.get(node["id"])
+                if ref:
+                    node["result_ref"] = ref
+        elif detail == "events":
+            payload["nodes"] = []
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def _node_refs(scheduler: WorkflowScheduler) -> dict[str, str]:
+    """node_id -> result_ref（只读投影；没有落盘件的节点不出现）。"""
+    refs: dict[str, str] = {}
+    manager = scheduler.manager
+    for node_id, state in scheduler._states.items():
+        if not state.subagent_id or not state.run_id:
+            continue
+        run = manager.find_run(state.subagent_id, state.run_id)
+        ref = getattr(run, "result_ref", None) if run is not None else None
+        if ref:
+            refs[node_id] = ref
+    return refs
 
 
 @tool_parameters(

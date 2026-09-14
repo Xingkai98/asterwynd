@@ -151,7 +151,11 @@ class NodeState:
         if self.items is not None:
             payload["items"] = self.items
         if self.slots:
-            payload["slots"] = dict(self.slots)
+            # bounded envelope（D3）：collect aggregate 的槽是 N 份上游 concat 后的
+            # 巨型字符串，整段进 envelope 就等于把父上下文打爆——槽值同样要裁剪。
+            payload["slots"] = {
+                slot: value[:_SUMMARY_LIMIT] for slot, value in self.slots.items()
+            }
         if self.node.kind == "route":
             payload["verdict"] = self.verdict
             payload["raw"] = self.raw
@@ -388,18 +392,24 @@ class WorkflowScheduler:
         node_id: str | None = None,
         status: str = "",
         summary: str = "",
+        terminal: bool = False,
     ) -> None:
-        """写一条权威事件：ring buffer（喂 envelope）+ 落盘事件日志（D4）。
+        """写一条权威事件：落盘事件日志（D4）+ 终态迁移进 ring buffer（Q5）。
 
         事件日志是**权威源**（结果完整性、重试、重放的依据）；MessageBus 丢消息
         不影响这里的记录，因此 bus 降级后 workflow 完成与结果正确性不受影响。
+
+        ``latest_events`` 只收**终态迁移**（Q5：节点/工作流进入终态），非终态的
+        生命周期事件（``workflow_started``）只进日志——否则小图里 5 格 ring buffer
+        会被非终态事件挤满，父 agent 反而看不到「谁跑完了」。
         """
         event: dict[str, Any] = {"type": event_type, "status": status}
         if node_id is not None:
             event["node_id"] = node_id
             preview = _first_non_empty_line(summary)
             event["summary_preview"] = preview[:_EVENT_PREVIEW_LIMIT]
-        self._latest_events.append(event)
+        if terminal:
+            self._latest_events.append(event)
         try:
             self._workflow_store().append_event({**event, "workflow_id": self.workflow_id})
         except Exception:  # noqa: BLE001 - 事件日志是尽力而为的可观测性
@@ -464,7 +474,7 @@ class WorkflowScheduler:
             self.manager.release_workflow_bucket(self.workflow_id)
             self._finished_at = time.time()
             self._write_root_result()
-            self._record_event("workflow_terminal", status=self._status)
+            self._record_event("workflow_terminal", status=self._status, terminal=True)
         return self.status()
 
     def _check_declared_limits(self, spec: WorkflowSpec) -> None:
@@ -733,6 +743,7 @@ class WorkflowScheduler:
                     node_id=state.node.id,
                     status=state.status,
                     summary=state.summary or state.reason or "",
+                    terminal=True,
                 )
             self._on_node_finished(state)
             self._progress.set()

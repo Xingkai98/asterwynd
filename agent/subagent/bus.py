@@ -6,6 +6,14 @@ context.py``), and lives only for the duration of that run. It exchanges
 *semantic summaries*, never raw transcripts, under a strict token budget to
 prevent context explosion.
 
+**The bus is a non-authoritative channel** (change ``workflow-result-aggregation``,
+decision D4): it carries low-latency broadcasts and non-critical hints only.
+Authoritative state — node/workflow terminal status, dependency completion,
+result completeness, retries, replay — lives in the workflow store and its
+event log (``agent/subagent/workflow_store.py``). Dropping a bus message
+therefore cannot affect whether a workflow completes or whether its results are
+correct: a full queue drops the oldest message and the graph never observes it.
+
 The three budget layers from the design:
 1. bounded queue — ``max_messages`` with drop-oldest when full (NATS DiscardOld
    semantics; ``ttl_s`` optionally drops stale entries);

@@ -52,6 +52,7 @@ from agent.tools.builtin.subagents import (
     ListSubagentsTool,
     PublishBusMessageTool,
     ReadBusTool,
+    ReadWorkflowResultTool,
     ResumeSubagentTool,
     RunPatternTool,
     RunSubagentTool,
@@ -395,6 +396,9 @@ class AgentLoop:
             GetWorkflowTool(self.subagent_manager),
             CancelWorkflowTool(self.subagent_manager),
             RunWorkflowTool(self.subagent_manager),
+            # Q1: the read channel for result_ref artifacts. Read-only and not a
+            # spawn entry point, so it stays available at max depth.
+            ReadWorkflowResultTool(self.subagent_manager),
         ]
         withdrawn = set(unregistered)
         for tool in tools:
