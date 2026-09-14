@@ -31,6 +31,7 @@ from agent.subagent.context import (
     set_spawn_depth,
 )
 from agent.subagent.snapshot import SubagentSnapshotStore
+from agent.subagent.workflow_store import WorkflowStore
 
 if TYPE_CHECKING:
     from agent.config import AsterwyndConfig
@@ -40,6 +41,21 @@ if TYPE_CHECKING:
     from agent.tools.sandbox import ExecutionBackend
 
 logger = logging.getLogger("asterwynd.subagent")
+
+#: 落盘 bounded summary 的字符预算。token 预算（四档）是**调度器**给节点 task 输入
+#: 的口径；这里是 artifact 侧的摘要件，只保证「比全文短、够定位」。Q6：``run.summary``
+#: 本身保留全文，裁剪只发生在落盘件与出口 projection。
+BOUNDED_SUMMARY_CHARS = 2000
+
+
+def _bounded_summary(text: str, max_tokens: int | None) -> str:
+    """把全文裁成 bounded summary 落盘件（短文本 no-op，见 grill 风险「中」）。"""
+    budget_chars = BOUNDED_SUMMARY_CHARS
+    if max_tokens:
+        budget_chars = max(budget_chars, max_tokens * 4)
+    if len(text) <= budget_chars:
+        return text
+    return text[:budget_chars] + "\n…[truncated; full result in result_ref]"
 
 # Run statuses that no longer change: a queued run cancelled before it ever
 # executed must be skipped by the worker instead of being launched.
@@ -86,6 +102,13 @@ class SubagentRunRecord:
     workflow_id: str | None = None
     node_id: str | None = None
     depth: int = 0
+    # Workflow result artifacts (change ``workflow-result-aggregation``, D1).
+    # ``summary`` above stays the FULL text (Q6); these refs point at the
+    # on-disk artifacts written when the run reaches a terminal state.
+    result_ref: str | None = None
+    summary_ref: str | None = None
+    transcript_ref: str | None = None
+    artifact_refs: list[str] = field(default_factory=list)
     # Internal: set by the time-budget monitor *before* it cancels so the
     # cancelled-task handler records ``budget_exceeded`` instead of ``cancelled``.
     _budget_kill_reason: str | None = field(default=None, repr=False)
@@ -108,6 +131,10 @@ class SubagentRunRecord:
                 {"path": artifact.path, "kind": artifact.kind}
                 for artifact in self.artifacts
             ],
+            "result_ref": self.result_ref,
+            "summary_ref": self.summary_ref,
+            "transcript_ref": self.transcript_ref,
+            "artifact_refs": list(self.artifact_refs),
         }
 
 
@@ -357,6 +384,10 @@ class SubAgentManager:
         # benchmark replay belongs to C5).
         self._workflows: dict[str, object] = {}
         self._snapshot_store_impl: SubagentSnapshotStore | None = None
+        # Workflow result stores, keyed by workflow_id (change
+        # ``workflow-result-aggregation``): results live in their own subtree,
+        # never in the checkpoint namespace (grill decision 1).
+        self._workflow_stores: dict[str, WorkflowStore] = {}
 
     @property
     def max_concurrent_runs(self) -> int:
@@ -1048,6 +1079,64 @@ class SubAgentManager:
         run.trace = trace.to_dict()
         session.active_run_id = None
         session.status = "idle"
+        self._write_result_artifacts(session, run)
+
+    def _write_result_artifacts(
+        self,
+        session: SubagentSessionRecord,
+        run: SubagentRunRecord,
+    ) -> None:
+        """落盘一个成功 workflow run 的完整结果（D1，grill 决策 2/3）。
+
+        这是**新增写点**：``_write_checkpoint`` 只在异常/取消分支调用，正常收尾
+        走 ``_complete_run``，它今天只把 ``result.content`` 写进 ``run.summary``。
+        没有这一步，spec delta 的「完整结果落盘、内存只持摘要」在成功路径下不成立。
+
+        内存里仍只持 bounded summary + ref：``run.summary`` 保留全文（Q6），
+        落盘的 ``summary_ref`` 是裁剪件，下游消费它而不是全文。
+
+        workflow store 不可用（无 workflow 身份 / 落盘失败）时保持 refs 为空——
+        落盘是**尽力而为的可观测性**，不能让它把一次成功的 run 变成失败。
+        """
+        workflow_id = run.workflow_id
+        if not workflow_id:
+            return
+        try:
+            store = self._workflow_store(workflow_id)
+            refs: list[str] = []
+            result_ref = store.save_result(run.run_id, run.summary)
+            refs.append(result_ref)
+            transcript_ref = store.save_transcript(
+                run.run_id, [message.to_dict() for message in session.messages]
+            )
+            refs.append(transcript_ref)
+            summary_ref = store.save_summary(
+                run.run_id, _bounded_summary(run.summary, run.max_tokens)
+            )
+            refs.append(summary_ref)
+            run.result_ref = result_ref
+            run.transcript_ref = transcript_ref
+            run.summary_ref = summary_ref
+            run.artifact_refs = refs
+        except Exception:
+            logger.warning(
+                "Failed to persist workflow result artifacts run_id=%s", run.run_id,
+                exc_info=True,
+            )
+
+    def _workflow_store(self, workflow_id: str) -> WorkflowStore:
+        """本 workflow run 的结果 store（独立 subtree，grill 决策 1）。"""
+        store = self._workflow_stores.get(workflow_id)
+        if store is None:
+            store = WorkflowStore.for_workspace(
+                self.workspace_policy.workspace_root, workflow_id
+            )
+            self._workflow_stores[workflow_id] = store
+        return store
+
+    def workflow_store(self, workflow_id: str) -> WorkflowStore:
+        """公开只读入口：``ReadWorkflowResult`` 工具与 scheduler 事件日志共用。"""
+        return self._workflow_store(workflow_id)
 
     def _mark_failed(
         self,
