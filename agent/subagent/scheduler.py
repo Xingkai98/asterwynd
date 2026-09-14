@@ -48,7 +48,7 @@ from agent.subagent.workflow import (
 )
 
 if TYPE_CHECKING:
-    from agent.subagent.manager import SubAgentManager, SubagentRunRecord
+    from agent.subagent.manager import SubAgentManager
 
 # 节点状态机（D3）。``queued``/``started`` 是「已派发、未终态」的两个子态。
 NODE_STATUSES = ("pending", "queued", "started", "completed", "failed", "cancelled", "blocked")
