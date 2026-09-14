@@ -39,5 +39,5 @@
 - [x] 6.1 新增 DSL 校验测试 + 调度器测试（fan-out/join/route/foreach/递归上限）+ pattern 模板映射测试。
 - [x] 6.2 适配既有 `test_patterns.py`（返回字段兼容）。
 - [x] 6.3 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke` 冒烟通过。
-- [ ] 6.4 同步 current spec：把 spec delta 合入 `openspec/specs/multi-agent-collaboration/spec.md`（当前规格 sync 任务）。
+- [x] 6.4 同步 current spec：把 spec delta 合入 `openspec/specs/multi-agent-collaboration/spec.md` 与 `openspec/specs/subagents/spec.md`（closing 阶段执行；`openspec archive` CLI 合并 +5 ~3，两条 `current_spec_synced` 事件随归档落 workflow-events.jsonl）。
 - [x] 6.5 `uv run pytest -q` 全绿；OpenSpec validate + artifact checker 通过。
