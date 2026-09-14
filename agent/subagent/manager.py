@@ -279,11 +279,16 @@ class _ExecutionPermits:
 # Spawn-class tools withdrawn from a child agent once its depth reaches
 # ``max_depth`` (decision D4): the child does the work itself instead of
 # hitting a RuntimeError that invites retrying under a different name.
+# ``StartWorkflow``/``RunWorkflow`` joined the list in ``workflow-dsl-scheduler``
+# (grill decision 6): they are spawn entry points that would otherwise let a
+# depth-capped child raise a whole graph past the depth gate.
 SPAWN_TOOL_NAMES = (
     "CreateSubagent",
     "RunSubagent",
     "RunPattern",
     "ResumeSubagent",
+    "StartWorkflow",
+    "RunWorkflow",
 )
 
 
@@ -342,6 +347,15 @@ class SubAgentManager:
         )
         self._permits = _ExecutionPermits(self.max_active)
         self._spawn_count = 0
+        # Workflow identity (change ``workflow-dsl-scheduler``, D8/Q6): a workflow
+        # run owns its own cumulative-spawn bucket, so a long-lived manager no
+        # longer accumulates every spawn into one lifetime counter. Runs with no
+        # workflow in context keep the C1 manager-lifetime semantics.
+        self._workflow_spawn_counts: dict[str, int] = {}
+        self._workflow_spawn_limits: dict[str, int] = {}
+        # Workflow registry (grill Q1: manager-scoped, in-memory; persistence for
+        # benchmark replay belongs to C5).
+        self._workflows: dict[str, object] = {}
         self._snapshot_store_impl: SubagentSnapshotStore | None = None
 
     @property
@@ -414,6 +428,49 @@ class SubAgentManager:
         data = session.to_summary_dict()
         data["description"] = session.description
         return data
+
+    def find_run(self, subagent_id: str, run_id: str) -> SubagentRunRecord | None:
+        """Look up a run record without raising (used for live status polling)."""
+        session = self._sessions.get(subagent_id)
+        if session is None:
+            return None
+        for run in session.runs:
+            if run.run_id == run_id:
+                return run
+        return None
+
+    # -- workflow registry / spawn buckets (change workflow-dsl-scheduler) ---
+
+    def register_workflow(self, scheduler: object) -> None:
+        self._workflows[getattr(scheduler, "workflow_id")] = scheduler
+
+    def get_workflow(self, workflow_id: str) -> object | None:
+        return self._workflows.get(workflow_id)
+
+    def list_workflows(self) -> list[str]:
+        return list(self._workflows)
+
+    def register_workflow_bucket(self, workflow_id: str, limit: int) -> None:
+        """Open the cumulative-spawn bucket owned by one workflow run (Q6).
+
+        ``limit`` is calibrated by the scheduler to ``max_runs * 2`` so the
+        spawn bucket (1 create + 1 run per subagent run) can never fire before
+        the workflow's own run gate — otherwise a graph could die of
+        "spawn budget exceeded" while still inside its declared run budget.
+        """
+        self._workflow_spawn_counts[workflow_id] = 0
+        self._workflow_spawn_limits[workflow_id] = limit
+
+    def release_workflow_bucket(self, workflow_id: str) -> None:
+        self._workflow_spawn_counts.pop(workflow_id, None)
+        self._workflow_spawn_limits.pop(workflow_id, None)
+
+    def spawn_count(self) -> int:
+        """Spawns charged in the current context's bucket (introspection/tests)."""
+        workflow_id = current_workflow_id()
+        if workflow_id is None:
+            return self._spawn_count
+        return self._workflow_spawn_counts.get(workflow_id, 0)
 
     async def run_subagent(
         self,
@@ -1182,19 +1239,37 @@ class SubAgentManager:
         self._check_spawn_budget()
 
     def _check_spawn_budget(self) -> None:
-        if self._spawn_count >= self.max_spawns:
+        workflow_id = current_workflow_id()
+        if workflow_id is None:
+            # 无 workflow 的主 loop：沿用 C1 的 manager 生命周期保守语义
+            # （Q6 已确认「每 turn 复位」归后续 change）。
+            if self._spawn_count >= self.max_spawns:
+                raise RuntimeError(
+                    f"subagent spawn budget exceeded: {self._spawn_count} spawns >= "
+                    f"max_spawns {self.max_spawns} (per orchestration)"
+                )
+            return
+        used = self._workflow_spawn_counts.get(workflow_id, 0)
+        limit = self._workflow_spawn_limits.get(workflow_id, self.max_spawns)
+        if used >= limit:
             raise RuntimeError(
-                f"subagent spawn budget exceeded: {self._spawn_count} spawns >= "
-                f"max_spawns {self.max_spawns} (per orchestration)"
+                f"subagent spawn budget exceeded: {used} spawns >= "
+                f"max_spawns {limit} (workflow {workflow_id})"
             )
 
     def _count_spawn(self) -> None:
-        """Cumulative per-orchestration spawn accounting (decision D5).
+        """Cumulative spawn accounting (decision D5; D8 workflow bucket).
 
-        The orchestration boundary is the manager instance: every construction
-        site (one ``asterwynd run``, one web session, one benchmark run) owns
-        exactly one manager, so its lifetime is the orchestration lifetime and
-        the counter needs no reset channel. Both ``create_subagent`` and every
-        run launch count once, so empty session creation cannot bypass the cap.
+        Both ``create_subagent`` and every run launch count once, so empty
+        session creation cannot bypass the cap. With a workflow in context the
+        count lands in that workflow run's bucket (two ``foreach`` nodes share
+        one bucket; a nested workflow gets its own); without one it falls back
+        to the manager-lifetime counter.
         """
-        self._spawn_count += 1
+        workflow_id = current_workflow_id()
+        if workflow_id is None:
+            self._spawn_count += 1
+            return
+        self._workflow_spawn_counts[workflow_id] = (
+            self._workflow_spawn_counts.get(workflow_id, 0) + 1
+        )

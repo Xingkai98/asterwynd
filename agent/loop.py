@@ -43,8 +43,11 @@ from agent.run_identity import new_run_id
 from agent.tools.builtin.plan import ExitPlanModeTool, UpdatePlanTool
 from agent.tools.builtin.subagents import (
     CancelSubagentRunTool,
+    CancelWorkflowTool,
     CreateSubagentTool,
+    DeclareWorkflowTool,
     GetSubagentRunTool,
+    GetWorkflowTool,
     InspectSubagentTranscriptTool,
     ListSubagentsTool,
     PublishBusMessageTool,
@@ -52,6 +55,8 @@ from agent.tools.builtin.subagents import (
     ResumeSubagentTool,
     RunPatternTool,
     RunSubagentTool,
+    RunWorkflowTool,
+    StartWorkflowTool,
 )
 from agent.tools.builtin.activate_skill import ActivateSkillTool
 from agent.tools.builtin.tasks import TaskOutputTool, TaskStopTool
@@ -382,6 +387,14 @@ class AgentLoop:
             ReadBusTool(self.subagent_manager),
             ResumeSubagentTool(self.subagent_manager),
             RunPatternTool(self.subagent_manager),
+            # Workflow DSL entry points (change ``workflow-dsl-scheduler``).
+            # ``StartWorkflow``/``RunWorkflow`` are also in ``SPAWN_TOOL_NAMES``
+            # so a depth-capped child cannot raise a whole graph past the gate.
+            DeclareWorkflowTool(self.subagent_manager),
+            StartWorkflowTool(self.subagent_manager),
+            GetWorkflowTool(self.subagent_manager),
+            CancelWorkflowTool(self.subagent_manager),
+            RunWorkflowTool(self.subagent_manager),
         ]
         withdrawn = set(unregistered)
         for tool in tools:

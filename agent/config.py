@@ -243,6 +243,19 @@ class SkillsConfig:
 
 
 @dataclass(frozen=True)
+class WorkflowLimitsConfig:
+    """Workflow DSL 的三闸默认值（change ``workflow-dsl-scheduler``，D6/Q5）。
+
+    三者量纲不同、必须一起校准：``recursion_limit`` 数**图级 superstep**，
+    ``max_nodes`` 数节点（含 foreach 展开），``max_runs`` 数实际 run 总数。
+    spec 可以逐项覆盖，缺省时用这里的值（``parse_workflow_spec`` 的默认参数）。
+    """
+    recursion_limit: int = 25
+    max_nodes: int = 200
+    max_runs: int = 300
+
+
+@dataclass(frozen=True)
 class SubagentsConfig:
     """Subagent collaboration guardrails and budget defaults (issue 79).
 
@@ -268,6 +281,7 @@ class SubagentsConfig:
     max_depth: int = 3
     default_max_tokens: int | None = None
     default_max_time_s: float | None = None
+    workflow: WorkflowLimitsConfig = field(default_factory=WorkflowLimitsConfig)
 
     @property
     def max_concurrent_runs(self) -> int:
@@ -1380,6 +1394,26 @@ def _parse_subagents_config(raw: Any, path: Path) -> SubagentsConfig:
             _parse_positive_float(max_time_s, "subagents.budget.max_time_s", path=path)
             if max_time_s is not None
             else None
+        ),
+        workflow=_parse_workflow_limits(mapping.get("workflow", {}), path),
+    )
+
+
+def _parse_workflow_limits(raw: Any, path: Path) -> WorkflowLimitsConfig:
+    """``_parse_subagents_config`` 是唯一的解析入口且逐字段显式取值——
+    只给 dataclass 默认值不会让 yaml 生效（C1 grill 的教训）。"""
+    mapping = _expect_mapping(raw, path, "subagents.workflow")
+    return WorkflowLimitsConfig(
+        recursion_limit=_validate_positive_int(
+            mapping.get("recursion_limit", 25),
+            "subagents.workflow.recursion_limit",
+            path=path,
+        ),
+        max_nodes=_validate_positive_int(
+            mapping.get("max_nodes", 200), "subagents.workflow.max_nodes", path=path
+        ),
+        max_runs=_validate_positive_int(
+            mapping.get("max_runs", 300), "subagents.workflow.max_runs", path=path
         ),
     )
 

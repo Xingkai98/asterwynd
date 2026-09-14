@@ -3,9 +3,7 @@
 ## Purpose
 
 定义子 agent 的子 session runtime 语义、子 run 生命周期、并发边界和 transcript inspect 能力。当前实现位于 `agent/subagent/`。
-
 ## Requirements
-
 ### Requirement: 子 agent 是完整子 session runtime
 
 系统 SHALL 将子 agent 建模为不直接与用户交互的受限子 session。每个子 session SHALL 拥有独立 transcript、当前 mode、run 历史和可关联的 trace / usage / artifact 信息。
@@ -69,25 +67,25 @@
 
 ### Requirement: 深度到限撤 spawn 工具
 
-当子 session 的 spawn 深度达到 `max_depth` 时，系统 SHALL 从该子 agent 的工具注册中移除 spawn 类工具（`CreateSubagent`/`RunSubagent`/`RunPattern`/`ResumeSubagent`），让子 agent 自行完成任务，而非返回错误。
+当子 session 的 spawn 深度达到 `max_depth` 时，系统 SHALL 从该子 agent 的工具注册中移除 spawn 类工具（`CreateSubagent`/`RunSubagent`/`RunPattern`/`ResumeSubagent` **以及 `StartWorkflow`/`RunWorkflow`**，后两者语义上等价于一次性拉起整张图），让子 agent 自行完成任务，而非返回错误。
 
 #### Scenario: 深度到限子 agent 无 spawn 工具
 
 - **GIVEN** 一个子 session 的 spawn 深度已达到 `max_depth`
 - **WHEN** 构建该子 agent 的工具注册
-- **THEN** 其工具集 SHALL NOT 包含 spawn 类工具
-- **AND** SHALL 保留其余工具完成自身任务
+- **THEN** 其工具集 SHALL NOT 包含 spawn 类工具（含 `StartWorkflow`/`RunWorkflow`）
+- **AND** SHALL 保留其余工具（含只读的 `GetWorkflow`/`DeclareWorkflow`/`CancelWorkflow`）完成自身任务
 
 ### Requirement: 累计 spawn 计数上限
 
-系统 SHALL 对每次 orchestration（根 run 起算）维护累计 spawn 计数，并 SHALL 在该计数超过 `max_spawns`（默认 200）时拒绝新的 spawn。
+系统 SHALL 对累计 spawn 计数（create 与每次 run 各计一次）执行 `max_spawns`（默认 200）上限，超限时拒绝新的 spawn。计数的 orchestration 边界 SHALL 是 workflow run（桶键 = `workflow_id`）：一个 workflow run 的展开项共享一个桶，嵌套 workflow 各自独立成桶；无 workflow 的主 loop SHALL 沿用按 manager 生命周期的累计语义（每 turn 复位归后续 change）。
 
-#### Scenario: 累计 spawn 超限拒绝
+#### Scenario: 嵌套 workflow 各自独立成桶
 
-- **GIVEN** 某 orchestration 的累计 spawn 计数已达 `max_spawns`
-- **WHEN** 再次创建或运行子 agent
-- **THEN** 系统 SHALL 拒绝该请求
-- **AND** 不影响既有运行中的子 run
+- **GIVEN** workflow A 的某个节点内又声明并启动了 workflow B
+- **WHEN** B 在其节点里 spawn 子 agent
+- **THEN** 这些 spawn SHALL 计入 B 自己的桶
+- **AND** SHALL NOT 因 A 的累计消耗而失败
 
 ### Requirement: 子 session 显式父子身份
 
@@ -180,3 +178,4 @@
 - **WHEN** 人确认通过且选择不切换 agent
 - **THEN** 系统 SHALL 允许同一 agent 进入 `reviewing` phase
 - **AND** `handoff.json` 中 `current_agent.type` SHALL 更新为 `reviewer`
+

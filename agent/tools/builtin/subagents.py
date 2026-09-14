@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from typing import Any
 
 from agent.message import Message
-from agent.subagent.bus import estimate_tokens
+from agent.subagent.bus import MessageBus, estimate_tokens
 from agent.subagent.context import current_bus
 from agent.subagent.manager import SubAgentManager
 from agent.subagent.patterns import run_pattern
+from agent.subagent.scheduler import WorkflowScheduler
+from agent.subagent.workflow import (
+    WorkflowSpec,
+    WorkflowValidationError,
+    parse_workflow_spec,
+)
 from agent.tools.base import Tool, tool_parameters
 from agent.tool_permissions import SUBAGENT_CONTROL_PERMISSION
 
@@ -380,3 +388,272 @@ class RunPatternTool(Tool):
             params=kwargs.get("params"),
         )
         return json.dumps(result, ensure_ascii=False)
+
+
+# --- Workflow DSL 入口（change ``workflow-dsl-scheduler``，D1） --------------
+#
+# 分离式入口：Declare → Start → Get / Cancel；RunWorkflow 是 Declare+Start 的
+# 便捷语法（spec 可保存、可哈希、可重放）。五个工具**全部不标 parallelizable**
+# （Q7）：一轮里多个 RunWorkflow(wait=true) 若被 asyncio.gather 并发拉起，多张图会
+# 同时抢 max_active，可能导致某张图永远等不到槽位。
+#
+# 深度闸（grill 决策 6）：StartWorkflow/RunWorkflow 已进 ``SPAWN_TOOL_NAMES``，
+# 深度到限的子 agent 拿不到它们，无法绕开 max_depth 拉起整张图。
+
+
+def _spec_bounds(manager: SubAgentManager) -> dict[str, int]:
+    """三闸默认值来自配置（Q5/Q9）：spec 未声明时用 ``subagents.workflow.*``。"""
+    limits = getattr(getattr(manager.config, "subagents", None), "workflow", None)
+    return {
+        "default_recursion_limit": getattr(limits, "recursion_limit", 25),
+        "default_max_nodes": getattr(limits, "max_nodes", 200),
+        "default_max_runs": getattr(limits, "max_runs", 300),
+    }
+
+
+def parse_spec_for_manager(manager: SubAgentManager, raw: Any) -> WorkflowSpec:
+    """把模型给的 spec 解析成 WorkflowSpec，带上当前配置的三闸默认值。"""
+    return parse_workflow_spec(raw, **_spec_bounds(manager))
+
+
+def _invalid_spec(exc: Exception) -> str:
+    return json.dumps(
+        {
+            "status": "invalid_spec",
+            "reason": str(exc),
+            "hint": "fix the workflow spec (see DeclareWorkflow description) and retry",
+        },
+        ensure_ascii=False,
+    )
+
+
+def _unknown_workflow(workflow_id: str, manager: SubAgentManager) -> str:
+    return json.dumps(
+        {
+            "status": "unknown",
+            "workflow_id": workflow_id,
+            "reason": (
+                f"unknown workflow_id {workflow_id!r}; the registry is per-manager and "
+                f"in-memory (known: {sorted(manager.list_workflows())})"
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+@tool_parameters(
+    name="DeclareWorkflow",
+    description=(
+        "Declare a workflow topology (a DAG of subagent/aggregate/route/foreach "
+        "nodes) and get back a workflow_id. Does not start anything — call "
+        "StartWorkflow to run it. Spec shape: {goal, nodes:[{id, kind, task, "
+        "outputs, ...}], edges:[{from, to, channel, required, reducer}], entry, "
+        "terminal, recursion_limit, max_nodes, max_runs}. Parallel branches "
+        "writing the same output slot must declare a reducer "
+        "(concat/merge_dict/first_non_empty/last). Cycles are only allowed "
+        "through a route node."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "spec": {
+                "type": "object",
+                "description": "The workflow spec (see the tool description).",
+            }
+        },
+        "required": ["spec"],
+    },
+)
+class DeclareWorkflowTool(Tool):
+    read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
+
+    def __init__(self, manager: SubAgentManager):
+        self.manager = manager
+
+    async def execute(self, **kwargs) -> str:
+        try:
+            spec = parse_spec_for_manager(self.manager, kwargs["spec"])
+        except WorkflowValidationError as exc:
+            return _invalid_spec(exc)
+        scheduler = WorkflowScheduler(self.manager, bus=MessageBus())
+        # Attach the parsed spec up front: StartWorkflow executes what was declared
+        # here, so the declaration step must carry it (D1).
+        scheduler.spec = spec
+        self.manager.register_workflow(scheduler)
+        return json.dumps(
+            {
+                "status": "declared",
+                "workflow_id": scheduler.workflow_id,
+                "spec_hash": spec.spec_hash,
+                "goal": spec.goal,
+                "nodes": [node.id for node in spec.nodes],
+                "entry": list(spec.entry),
+                "terminal": list(spec.terminal),
+                "recursion_limit": spec.recursion_limit,
+                "max_nodes": spec.max_nodes,
+                "max_runs": spec.max_runs,
+            },
+            ensure_ascii=False,
+        )
+
+
+@tool_parameters(
+    name="StartWorkflow",
+    description=(
+        "Start a workflow declared with DeclareWorkflow. With wait=true (default) "
+        "blocks until the workflow reaches a terminal state and returns the "
+        "bounded run envelope; with wait=false returns immediately with a "
+        "'running' envelope that GetWorkflow can poll. A run that exceeds the "
+        "graph recursion limit returns status 'graph_recursion_exceeded' with "
+        "diagnostics (steps / current nodes / reason), not an exception."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "workflow_id": {"type": "string"},
+            "wait": {
+                "type": "boolean",
+                "description": "Block until the workflow terminates. Defaults to true.",
+            },
+        },
+        "required": ["workflow_id"],
+    },
+)
+class StartWorkflowTool(Tool):
+    permission = SUBAGENT_CONTROL_PERMISSION
+
+    def __init__(self, manager: SubAgentManager):
+        self.manager = manager
+
+    async def execute(self, **kwargs) -> str:
+        workflow_id = kwargs["workflow_id"]
+        scheduler = self.manager.get_workflow(workflow_id)
+        if scheduler is None:
+            return _unknown_workflow(workflow_id, self.manager)
+        wait = kwargs.get("wait", True)
+        if not wait:
+            asyncio.ensure_future(_drive_scheduler(scheduler))
+            return json.dumps(
+                {"status": "running", "workflow_id": workflow_id, "nodes": []},
+                ensure_ascii=False,
+            )
+        return json.dumps(await _drive_scheduler(scheduler), ensure_ascii=False)
+
+
+async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
+    """跑一张已声明的图；已有 spec 则直接执行，否则视为未声明。"""
+    spec = scheduler.spec
+    if spec is None:
+        return {
+            "status": "unknown",
+            "workflow_id": scheduler.workflow_id,
+            "reason": "workflow has no spec attached (declare it with DeclareWorkflow)",
+        }
+    return await scheduler.run(spec)
+
+
+@tool_parameters(
+    name="GetWorkflow",
+    description=(
+        "Get the bounded status of a declared workflow: per-node "
+        "{id, kind, status, runs, summary, reason}, run totals, steps, "
+        "peak_active, critical_path_s, total_cost and diagnostics. Summaries are "
+        "truncated so a large graph cannot blow up the caller's context."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"workflow_id": {"type": "string"}},
+        "required": ["workflow_id"],
+    },
+)
+class GetWorkflowTool(Tool):
+    read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
+
+    def __init__(self, manager: SubAgentManager):
+        self.manager = manager
+
+    async def execute(self, **kwargs) -> str:
+        workflow_id = kwargs["workflow_id"]
+        scheduler = self.manager.get_workflow(workflow_id)
+        if scheduler is None:
+            return _unknown_workflow(workflow_id, self.manager)
+        return json.dumps(scheduler.status(), ensure_ascii=False)
+
+
+@tool_parameters(
+    name="CancelWorkflow",
+    description=(
+        "Cancel a workflow. Returns immediately with status 'cancelling' — "
+        "in-flight runs are cancelled (writing checkpoints for later resume) "
+        "without waiting for them to stop. Poll GetWorkflow for the final state."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"workflow_id": {"type": "string"}},
+        "required": ["workflow_id"],
+    },
+)
+class CancelWorkflowTool(Tool):
+    read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
+
+    def __init__(self, manager: SubAgentManager):
+        self.manager = manager
+
+    async def execute(self, **kwargs) -> str:
+        workflow_id = kwargs["workflow_id"]
+        scheduler = self.manager.get_workflow(workflow_id)
+        if scheduler is None:
+            return _unknown_workflow(workflow_id, self.manager)
+        return json.dumps(scheduler.cancel(), ensure_ascii=False)
+
+
+@tool_parameters(
+    name="RunWorkflow",
+    description=(
+        "Convenience: declare a workflow spec and start it in one call "
+        "(Declare+Start). Use DeclareWorkflow/StartWorkflow when you want to "
+        "inspect or cancel the graph between the two steps."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "spec": {
+                "type": "object",
+                "description": "The workflow spec (see DeclareWorkflow).",
+            },
+            "wait": {
+                "type": "boolean",
+                "description": "Block until the workflow terminates. Defaults to true.",
+            },
+        },
+        "required": ["spec"],
+    },
+)
+class RunWorkflowTool(Tool):
+    permission = SUBAGENT_CONTROL_PERMISSION
+
+    def __init__(self, manager: SubAgentManager):
+        self.manager = manager
+
+    async def execute(self, **kwargs) -> str:
+        try:
+            spec = parse_spec_for_manager(self.manager, kwargs["spec"])
+        except WorkflowValidationError as exc:
+            return _invalid_spec(exc)
+        scheduler = WorkflowScheduler(self.manager, bus=MessageBus())
+        self.manager.register_workflow(scheduler)
+        if not kwargs.get("wait", True):
+            asyncio.ensure_future(scheduler.run(spec))
+            return json.dumps(
+                {
+                    "status": "running",
+                    "workflow_id": scheduler.workflow_id,
+                    "spec_hash": spec.spec_hash,
+                    "nodes": [],
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(await scheduler.run(spec), ensure_ascii=False)
