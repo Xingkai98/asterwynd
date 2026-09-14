@@ -58,17 +58,6 @@
 
 ## MODIFIED Requirements
 
-### Requirement: 深度到限撤 spawn 工具（跨能力域修订）
-
-系统 SHALL 在 spawn 深度达到 `max_depth` 时，从子 agent 工具注册中移除 spawn 类工具。spawn 类工具 SHALL 包含 `CreateSubagent`/`RunSubagent`/`RunPattern`/`ResumeSubagent` **以及本 change 新增的 `StartWorkflow`/`RunWorkflow`**（它们语义上等价于一次性拉起整张图，属于 spawn 入口）。
-
-#### Scenario: 深度到限子 agent 无 workflow spawn 工具
-
-- **GIVEN** 一个子 session 的 spawn 深度已达到 `max_depth`
-- **WHEN** 构建该子 agent 的工具注册
-- **THEN** 其工具集 SHALL NOT 包含 `StartWorkflow`/`RunWorkflow`
-- **AND** SHALL NOT 包含其余 spawn 类工具
-
 ### Requirement: Orchestration Pattern Library
 
 The subagent system SHALL provide an orchestration pattern library: orchestrator-worker, peer-review, hierarchical, and bidding patterns, via a common OrcPattern interface. The four patterns SHALL be compiled to Workflow DSL templates and executed through the unified scheduler, while `run_pattern()` SHALL remain a compatible adapter.

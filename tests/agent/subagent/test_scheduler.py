@@ -606,6 +606,17 @@ def test_matches_route_is_case_insensitive_structured_labels():
     assert not matches_route("", "APPROVED")
 
 
+def test_matches_route_requires_a_label_at_the_start_of_the_line():
+    """building-review Issue 7：子串包含会让 `NOT APPROVED` 命中 APPROVED 分支。"""
+    assert not matches_route("NOT APPROVED at all", "APPROVED")
+    assert not matches_route("DISAPPROVED", "APPROVED")
+    assert not matches_route("This is not APPROVED yet", "APPROVED")
+    # 结构化标签（行首）仍然命中，含后随标点/空白
+    assert matches_route("APPROVED.", "APPROVED")
+    assert matches_route("APPROVED\nlooks good", "APPROVED")
+    assert matches_route("  APPROVED looks good", "APPROVED")
+
+
 @pytest.mark.asyncio
 async def test_route_takes_matching_case(manager_for_scheduler):
     manager_for_scheduler.llm = ScriptedLLM(["draft", "APPROVED looks good", "final"])
@@ -783,6 +794,139 @@ async def test_foreach_consumes_upstream_collection(manager_for_scheduler):
     result = await _run(WorkflowScheduler(manager_for_scheduler), spec)
     fan = next(node for node in result["nodes"] if node["id"] == "fan")
     assert fan["items"] == 2
+
+
+# --- foreach 并发（building-review Issue 1） --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_foreach_expands_items_concurrently(manager_for_scheduler):
+    """foreack 是「并行展开」原语：展开项必须真并发，而不是逐项串行等待。"""
+    probe = ConcurrencyProbeLLM(hold=0.05)
+    manager_for_scheduler.llm = probe
+    spec = {
+        "goal": "fan out concurrently",
+        "nodes": [
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "review {item}",
+                "items": [f"item-{i}" for i in range(4)],
+                "outputs": ["items"],
+            }
+        ],
+        "edges": [],
+    }
+    result = await _run(WorkflowScheduler(manager_for_scheduler), spec)
+    assert result["status"] == "completed"
+    assert probe.peak > 1, f"foreach 展开项应并发执行，实测 LLM 并发峰值 {probe.peak}"
+    assert result["peak_active"] > 1
+
+
+@pytest.mark.asyncio
+async def test_foreach_concurrency_is_bounded_by_max_active(tmp_path):
+    """并发展开仍受 max_active 背压约束：峰值不越过物理并发上限。"""
+    probe = ConcurrencyProbeLLM(hold=0.05)
+    manager = _manager(tmp_path, probe, max_active=2)
+    manager._permits._limit = 2  # type: ignore[attr-defined]
+    spec = {
+        "goal": "bounded fan out",
+        "nodes": [
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "work {item}",
+                "items": [f"item-{i}" for i in range(6)],
+                "outputs": ["items"],
+            }
+        ],
+        "edges": [],
+    }
+    result = await _run(WorkflowScheduler(manager), spec)
+    assert result["status"] == "completed"
+    assert probe.peak > 1, "展开项应当并发"
+    assert probe.peak <= 2, f"并发峰值 {probe.peak} 越过了 max_active=2"
+
+
+# --- foreach 三闸（building-review Issue 2 / Issue 4） ---------------------
+
+
+@pytest.mark.asyncio
+async def test_foreach_run_budget_reports_graph_recursion_exceeded(manager_for_scheduler):
+    """foreach 展开项也受 max_runs 约束，超限走 envelope 而非 spawn 桶文案。"""
+    manager_for_scheduler.llm = StaticLLM("ok")
+    spec = {
+        "goal": "budgeted fan out",
+        "nodes": [
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "work {item}",
+                "items": [f"item-{i}" for i in range(8)],
+                "outputs": ["items"],
+            }
+        ],
+        "edges": [],
+        "max_runs": 3,
+    }
+    result = await _run(WorkflowScheduler(manager_for_scheduler), spec)
+    assert result["status"] == "graph_recursion_exceeded"
+    assert result["diagnostics"]["reason"] == "max_runs"
+    # 不是「图报 completed 但节点死在 spawn budget」
+    fan = next(node for node in result["nodes"] if node["id"] == "fan")
+    assert "spawn budget" not in (fan.get("error") or "")
+
+
+@pytest.mark.asyncio
+async def test_foreach_expansion_counts_toward_max_nodes(manager_for_scheduler):
+    """Q5：max_nodes 是「节点数（含 foreach 展开）」，展开后必须复检。"""
+    manager_for_scheduler.llm = StaticLLM("ok")
+    spec = {
+        "goal": "too wide",
+        "nodes": [
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "work {item}",
+                "items": [f"item-{i}" for i in range(20)],
+                "outputs": ["items"],
+            }
+        ],
+        "edges": [],
+        "max_nodes": 5,
+    }
+    result = await _run(WorkflowScheduler(manager_for_scheduler), spec)
+    assert result["status"] == "graph_recursion_exceeded"
+    assert result["diagnostics"]["reason"] == "max_nodes"
+    # 拒绝在展开建 session 之前发生
+    created = [
+        session
+        for session in manager_for_scheduler._sessions.values()
+        if session.name.startswith("fan-")
+    ]
+    assert created == []
+
+
+# --- queue_full 可观测性（building-review Issue 3） ------------------------
+
+
+@pytest.mark.asyncio
+async def test_queue_full_is_diagnosable_and_does_not_raise_index_error(tmp_path):
+    """Q2 兜底分支：queue_full 时 run record 已被 manager 弹掉，不能索引 runs[-1]。"""
+    gated = GatedLLM()
+    manager = _manager(tmp_path, gated, max_active=1, max_queued_runs=0)
+    manager._permits._limit = 1  # type: ignore[attr-defined]
+    # 一个非 workflow 的 run 占住唯一许可，使调度器的派发必然撞 queue_full
+    foreign = manager.create_subagent(name="foreign")
+    await manager.run_subagent(subagent_id=foreign["subagent_id"], task="hold", wait=False)
+
+    spec = {"goal": "blocked", "nodes": [{"id": "a", "kind": "subagent", "task": "t"}], "edges": []}
+    result = await _run(WorkflowScheduler(manager), spec)
+    node = result["nodes"][0]
+    assert node["status"] == "failed"
+    assert "IndexError" not in (node.get("error") or "")
+    assert "queue" in (node.get("reason") or "").lower()
+    gated.release()
 
 
 # --- 生命周期 / 取消 --------------------------------------------------------

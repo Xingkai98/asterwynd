@@ -62,6 +62,21 @@ def _items(n: int, label: str) -> list[dict]:
     return [{"name": f"{label}-{i}"} for i in range(n)]
 
 
+def _worker_budget(params: dict[str, Any]) -> dict[str, Any]:
+    """``worker_max_tokens`` / ``worker_max_time_s`` → 节点的 run 预算字段。
+
+    Issue 6（building-review）：这两个参数过去传给每个 worker run，模板化后不能
+    静默丢弃——落到 ``WorkflowNode.max_tokens`` / ``max_time_s``，由调度器在
+    ``_launch_run`` 里透传给 ``run_subagent``。
+    """
+    budget: dict[str, Any] = {}
+    if params.get("worker_max_tokens") is not None:
+        budget["max_tokens"] = int(params["worker_max_tokens"])
+    if params.get("worker_max_time_s") is not None:
+        budget["max_time_s"] = float(params["worker_max_time_s"])
+    return budget
+
+
 def _template_orchestrator_worker(task: str, params: dict[str, Any]) -> dict:
     workers = max(1, int(params.get("workers", 3)))
     return {
@@ -74,6 +89,7 @@ def _template_orchestrator_worker(task: str, params: dict[str, Any]) -> dict:
                 "task": task,
                 "items": _items(workers, "worker"),
                 "outputs": ["result"],
+                **_worker_budget(params),
             },
             {
                 "id": "aggregate",
@@ -101,6 +117,7 @@ def _template_hierarchical(task: str, params: dict[str, Any]) -> dict:
                 "task": task,
                 "items": _items(teams, "manager"),
                 "outputs": ["result"],
+                **_worker_budget(params),
             },
             {
                 "id": "aggregate",
@@ -128,6 +145,7 @@ def _template_bidding(task: str, params: dict[str, Any]) -> dict:
                 "task": task,
                 "items": _items(proposers, "proposer"),
                 "outputs": ["proposal"],
+                **_worker_budget(params),
             },
             {
                 "id": "selector",
@@ -169,6 +187,7 @@ def _template_peer_review(task: str, params: dict[str, Any]) -> dict:
                 "description": "produces the proposal",
                 "task": task,
                 "outputs": ["proposal"],
+                **_worker_budget(params),
             },
             {
                 "id": "reviewer",
@@ -181,6 +200,7 @@ def _template_peer_review(task: str, params: dict[str, Any]) -> dict:
                     "specific issues if it needs revision."
                 ),
                 "outputs": ["review"],
+                **_worker_budget(params),
             },
             {
                 "id": "gate",
@@ -244,16 +264,12 @@ class OrcPattern:
 
     def __init__(
         self,
-        manager: "SubAgentManager" = None,  # type: ignore[assignment]
         *,
         task: str = "",
         params: dict[str, Any] | None = None,
-        bus: MessageBus | None = None,
     ) -> None:
-        self.manager = manager
         self.task = task
         self.params = params or {}
-        self.bus = bus
 
     @classmethod
     def build(cls, task: str, params: dict[str, Any]) -> dict:

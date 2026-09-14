@@ -68,6 +68,9 @@ _NODE_FIELDS = frozenset(
         "source",
         "source_field",
         "max_items",
+        # 每个 subagent/foreach 节点的 run 预算（pattern 模板把 worker_max_* 落在这里）
+        "max_tokens",
+        "max_time_s",
     }
 )
 _EDGE_FIELDS = frozenset({"from", "to", "channel", "required", "reducer"})
@@ -111,6 +114,10 @@ class WorkflowNode:
     source: str | None = None
     source_field: str | None = None
     max_items: int = 20
+    # 节点级 run 预算：透传给 ``SubAgentManager.run_subagent``（pattern 模板的
+    # ``worker_max_tokens`` / ``worker_max_time_s`` 落到这里）。
+    max_tokens: int | None = None
+    max_time_s: float | None = None
 
     def to_dict(self) -> dict:
         data: dict[str, Any] = {"id": self.id, "kind": self.kind}
@@ -122,6 +129,10 @@ class WorkflowNode:
             data["description"] = self.description
         if self.mode is not None:
             data["mode"] = self.mode
+        if self.max_tokens is not None:
+            data["max_tokens"] = self.max_tokens
+        if self.max_time_s is not None:
+            data["max_time_s"] = self.max_time_s
         data["outputs"] = list(self.outputs)
         if self.kind == "aggregate":
             data["join"] = self.join
@@ -456,6 +467,8 @@ def _parse_node(raw: Any) -> WorkflowNode:
             data.get("source_field"), f"node {node_id!r} source_field"
         ),
         max_items=_parse_max_items(data.get("max_items", 20), node_id),
+        max_tokens=_parse_node_max_tokens(data.get("max_tokens"), node_id),
+        max_time_s=_parse_node_max_time_s(data.get("max_time_s"), node_id),
     )
     if node.kind == "subagent" and not node.task:
         raise WorkflowValidationError(f"subagent node {node_id!r} needs a task")
@@ -521,6 +534,22 @@ def _parse_max_routes(value: Any, node_id: str) -> int:
 
 def _parse_max_items(value: Any, node_id: str) -> int:
     return _positive_int(value, f"foreach node {node_id!r} max_items")
+
+
+def _parse_node_max_tokens(value: Any, node_id: str) -> int | None:
+    if value is None:
+        return None
+    return _positive_int(value, f"node {node_id!r} max_tokens")
+
+
+def _parse_node_max_time_s(value: Any, node_id: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise WorkflowValidationError(
+            f"node {node_id!r} max_time_s must be a positive number"
+        )
+    return float(value)
 
 
 def _parse_items(value: Any, node_id: str) -> tuple[Any, ...] | None:

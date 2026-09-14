@@ -161,6 +161,41 @@ async def test_two_foreach_in_one_workflow_share_one_bucket(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_foreach_using_the_whole_run_budget_never_misfires_the_spawn_bucket(tmp_path):
+    """building-review Issue 2 的校准倒置：foreach 用满 max_runs 时桶不得先炸。
+
+    N 项展开 = N 次 create + N 次 run = 2N 次 spawn，桶上限恰好是 ``max_runs * 2``。
+    边界必须落在「允许最后一次 spawn」而不是「拒绝它」。
+    """
+    from agent.subagent.scheduler import WorkflowScheduler
+    from agent.subagent.workflow import parse_workflow_spec
+
+    for n in (3, 5, 8):
+        manager = _manager(tmp_path, max_active=10, max_spawns=1000)
+        spec = parse_workflow_spec(
+            {
+                "goal": "use the whole budget",
+                "nodes": [
+                    {
+                        "id": "fan",
+                        "kind": "foreach",
+                        "task": "work {item}",
+                        "items": [f"item-{i}" for i in range(n)],
+                        "outputs": ["items"],
+                    }
+                ],
+                "edges": [],
+                "max_runs": n,
+            }
+        )
+        result = await WorkflowScheduler(manager).run(spec)
+        assert result["status"] == "completed", n
+        assert result["completed"] == n
+        fan = result["nodes"][0]
+        assert "spawn budget" not in (fan.get("error") or ""), n
+
+
+@pytest.mark.asyncio
 async def test_workflow_bucket_limit_is_calibrated_above_max_runs(tmp_path):
     """桶上限 = max_runs * 2，避免「图还没跑完 spawn 预算先耗尽」。"""
     from agent.subagent.scheduler import WorkflowScheduler

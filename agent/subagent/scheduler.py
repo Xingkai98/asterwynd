@@ -50,9 +50,6 @@ from agent.subagent.workflow import (
 if TYPE_CHECKING:
     from agent.subagent.manager import SubAgentManager
 
-# 节点状态机（D3）。``queued``/``started`` 是「已派发、未终态」的两个子态。
-NODE_STATUSES = ("pending", "queued", "started", "completed", "failed", "cancelled", "blocked")
-
 # 终态节点状态：汇合门控只看这些。
 TERMINAL_NODE_STATUSES = frozenset({"completed", "failed", "cancelled", "blocked"})
 
@@ -120,8 +117,6 @@ class NodeState:
     #: best_effort 的等待时钟起点（第一条上游臂派发时刻）
     deadline_ref: float | None = None
     deadline_fired: bool = False
-    #: 该节点的数据上游重跑后置位；在途节点跑完再被复位成 pending
-    stale: bool = False
     verdict: str | None = None
     raw: str | None = None
     targets: list[str] = field(default_factory=list)
@@ -185,10 +180,21 @@ def aggregate_slots(values: list[str], reducer: str) -> str:
 
 
 def matches_route(verdict: str, label: str) -> bool:
-    """结构化标签匹配：大小写无关的整体词匹配，不做表达式求值。"""
+    """结构化标签匹配：标签必须出现在**某一行行首**（大小写无关），不做表达式求值。
+
+    用行首匹配而非子串包含：reviewer 写「NOT APPROVED」时，子串判定会命中
+    `APPROVED` 分支并让 review 循环提前终止（building-review Issue 7）。
+    """
     if not verdict or not label:
         return False
-    return label.strip().upper() in verdict.upper()
+    expected = label.strip().upper()
+    if not expected:
+        return False
+    for line in verdict.upper().splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(expected):
+            return True
+    return False
 
 
 def extract_collection(value: Any, field_name: str | None) -> list[Any]:
@@ -274,14 +280,14 @@ class WorkflowScheduler:
         self._run_refs: list[Any] = []
         #: node_id -> 仍在跑的 (subagent_id, run_id)，取消路径据此找到 in-flight run
         self._live_runs: dict[str, list[tuple[str, str]]] = {}
-        #: foreach 节点 id -> NodeState，供展开项派发时登记 run id
-        self._foreach_state: dict[str, NodeState] = {}
         self._peak_active = 0
         self._started_at = 0.0
         self._finished_at: float | None = None
         self._status = "declared"
         #: False 之后调度器不再接受新的派发/复位（取消或图级超限后）
         self._accepting = True
+        #: 节点任务里抛出的图级闸门异常，由主循环冒泡成 envelope 诊断
+        self._fatal_error: GraphRecursionError | None = None
         self._diagnostics: dict[str, Any] = {}
         self._cost_before = 0.0
 
@@ -395,6 +401,9 @@ class WorkflowScheduler:
                             dispatched += 1
                     if dispatched:
                         self._steps += 1
+                if self._fatal_error is not None:
+                    # 节点任务里触发的图级闸门（典型：foreach 展开预检）
+                    raise self._fatal_error
                 if dispatched == 0 and self._in_flight_nodes == 0:
                     # 没有可派发的节点、也没有在途节点：图已收敛（或存在不可达节点）。
                     self._status = "completed"
@@ -565,6 +574,14 @@ class WorkflowScheduler:
         except asyncio.CancelledError:
             state.status = "cancelled"
             raise
+        except GraphRecursionError as exc:
+            # 图级闸门（含 foreach 展开预检）：不能折叠成「节点失败」——它是整张图
+            # 的终止条件，必须冒泡成 envelope 的 graph_recursion_exceeded。
+            state.status = "failed"
+            state.error = f"{type(exc).__name__}: {exc}"
+            state.reason = state.reason or state.error
+            self._fatal_error = self._fatal_error or exc
+            self._accepting = False
         except Exception as exc:  # noqa: BLE001 - 节点失败不 fail-fast（D4）
             state.status = "failed"
             state.error = f"{type(exc).__name__}: {exc}"
@@ -597,15 +614,12 @@ class WorkflowScheduler:
                 continue
             if successor.status in TERMINAL_NODE_STATUSES:
                 self._reset_subtree(successor)
-            elif successor.status in ("queued", "started"):
-                successor.stale = True
 
     def _reset_subtree(self, state: NodeState) -> None:
         """数据上游重跑 → 下游必须用新输入重跑（同一 session 复用）。"""
         if state.status == "pending":
             return
         state.status = "pending"
-        state.stale = False
         state.activations = 0
         state.deadline_fired = False
         state.verdict = None
@@ -695,40 +709,42 @@ class WorkflowScheduler:
                 self._reset_subtree(successor)
 
     async def _execute_foreach(self, state: NodeState) -> None:
+        """展开项**并发**派发（D2「对有限集合展开并行」），受三重闸门控。
+
+        并发不是无界的：先按 max_runs / max_nodes 预检（超限直接报
+        GraphRecursionError，而不是让 spawn 桶先炸），再由 ``_acquire_slot``
+        统一受准入背压约束——所以峰值并发仍是 ``max_active``，只是不再串行。
+        """
         node = state.node
-        self._foreach_state[node.id] = state
         items = self._resolve_items(state)
         state.items = len(items)
         state.subagent_id = None
         state.run_ids = []
         state.subagent_ids = []
+        self._check_foreach_budget(node, state)
+        tasks = [
+            asyncio.create_task(self._run_foreach_item(node, index, item))
+            for index, item in enumerate(items)
+        ]
+        for task in tasks:
+            self._tasks.add(task)
+        envelopes = await asyncio.gather(*tasks, return_exceptions=True)
         summaries: list[str] = []
         failures = 0
-        for index, item in enumerate(items):
-            if self._cancelled:
-                state.status = "cancelled"
-                return
-            task_text = render_item_task(node.task, item, index=index)
-            await self._acquire_slot()
-            if self._cancelled:
-                self._release(1)
-                state.status = "cancelled"
-                return
-            state.run_ids.append(None)  # type: ignore[arg-type]
-            envelope = await self._launch_run(
-                node=node,
-                task=task_text,
-                mode=node.mode,
-                reuse_state=None,
-                session_name=f"{node.id}-{index}",
-            )
+        for index, envelope in enumerate(envelopes):
+            if isinstance(envelope, BaseException):
+                if isinstance(envelope, asyncio.CancelledError):
+                    state.status = "cancelled"
+                    return
+                summaries.append("")
+                failures += 1
+                continue
             state.subagent_ids.append(envelope["subagent_id"])
-            state.run_ids[-1] = envelope["run_id"]
-            state.runs += 1
+            state.run_ids.append(envelope["run_id"])
             summaries.append(envelope.get("summary", "") or "")
             if envelope["status"] != "completed":
                 failures += 1
-            self._release(1)
+        state.runs = len(items)
         state.summary = "\n".join(summaries)
         if items and failures == len(items):
             state.status = "failed"
@@ -738,6 +754,60 @@ class WorkflowScheduler:
             state.reason = f"{failures}/{len(items)} foreach items did not complete"
         else:
             state.status = "completed"
+
+    async def _run_foreach_item(
+        self, node: WorkflowNode, index: int, item: Any
+    ) -> dict:
+        """一个展开项的完整生命周期；并发实例由 ``_acquire_slot`` 统一背压。"""
+        acquired = await self._acquire_slot()
+        if not acquired:
+            raise asyncio.CancelledError
+        try:
+            return await self._launch_run(
+                node=node,
+                task=render_item_task(node.task, item, index=index),
+                mode=node.mode,
+                reuse_state=None,
+                session_name=f"{node.id}-{index}",
+            )
+        finally:
+            self._release(1)
+
+    def _check_foreach_budget(self, node: WorkflowNode, state: NodeState) -> None:
+        """展开前预检（Q5/D6）：max_runs 与 max_nodes 都要把展开项算进去。
+
+        预检先于任何 session 创建，所以超限时不会留下半张已展开的图；报错走
+        ``GraphRecursionError`` envelope（Q8），而不是让 spawn 桶抛底层 RuntimeError。
+        """
+        spec = self._spec
+        assert spec is not None
+        count = state.items or 0
+        if self._runs + count > spec.max_runs:
+            raise GraphRecursionError(
+                steps=self._steps,
+                limit=spec.max_runs,
+                current_nodes=[node.id],
+                reason="max_runs",
+                message=(
+                    f"GraphRecursionError: foreach node {node.id!r} would expand "
+                    f"{count} runs, exceeding max_runs {spec.max_runs} "
+                    f"({self._runs} already used)"
+                ),
+            )
+        if self._expanded_nodes + count > spec.max_nodes:
+            raise GraphRecursionError(
+                steps=self._steps,
+                limit=spec.max_nodes,
+                current_nodes=[node.id],
+                reason="max_nodes",
+                message=(
+                    f"GraphRecursionError: foreach node {node.id!r} would expand "
+                    f"{count} nodes, exceeding max_nodes {spec.max_nodes} "
+                    f"({self._expanded_nodes} already declared)"
+                ),
+            )
+        self._expanded_nodes += count
+        self._runs += count
 
     # -- run 派发（身份 contextvar 的唯一 set 点） ---------------------------
 
@@ -783,12 +853,25 @@ class WorkflowScheduler:
                 subagent_id=subagent_id,
                 task=task,
                 wait=False,
+                max_tokens=node.max_tokens,
+                max_time_s=node.max_time_s,
             )
         finally:
             reset_bus(token_bus)
             reset_node_id(token_node)
             reset_workflow_id(token_workflow)
         run_id = launched["run_id"]
+        if launched["status"] == "queue_full":
+            # Q2：准入背压让 workflow 永不撞 queue_full；真撞上时 manager 已经把
+            # run record 弹掉了（`_take_back_if_queue_full`），所以这里**不能**索引
+            # ``session.runs[-1]``——按可诊断的失败记账，绝不静默丢。
+            return {
+                "subagent_id": subagent_id,
+                "run_id": run_id,
+                "status": "queue_full",
+                "summary": "",
+                "reason": launched.get("reason") or "subagent queue is full",
+            }
         self._run_refs.append(manager._sessions[subagent_id].runs[-1])
         # 派发即登记：取消路径要能在 run 终态之前找到它。foreach 节点没有单一
         # session，所以只登记 live 列表，不写回 state.subagent_id（它是 None）。
@@ -797,9 +880,6 @@ class WorkflowScheduler:
             reuse_state.run_id = run_id
         self._live_runs.setdefault(node.id, []).append((subagent_id, run_id))
         self._refresh_peak()
-        if launched["status"] == "queue_full":
-            # Q2：准入背压保证不出现；真出现时按失败记录，绝不静默丢。
-            return {"subagent_id": subagent_id, "run_id": run_id, **launched}
         terminal = await self._await_run(subagent_id, run_id)
         self._live_runs.get(node.id, []).remove((subagent_id, run_id))
         return terminal
@@ -873,17 +953,22 @@ class WorkflowScheduler:
             except Exception:  # noqa: BLE001 - 取消是尽力而为
                 continue
 
-    async def _acquire_slot(self) -> None:
-        """背压门：在途 run 数达到 max_active + max_queued_runs 时让出调度。"""
+    async def _acquire_slot(self) -> bool:
+        """背压门：在途 run 数达到 max_active + max_queued_runs 时让出调度。
+
+        run 预算（``max_runs``）已由调用方在派发前预扣，这里只管理物理在途槽位。
+        返回 False 表示 workflow 在等待期间被取消（调用方自行收尾，别派发）。
+        """
         capacity = self._dispatch_capacity()
-        cost = 1
-        while self._in_flight_runs + cost > capacity:
+        while self._in_flight_runs + 1 > capacity:
             if self._cancelled:
-                return
+                return False
             self._progress.clear()
             await self._progress.wait()
-        self._in_flight_runs += cost
-        self._runs += cost
+        if self._cancelled:
+            return False
+        self._in_flight_runs += 1
+        return True
 
     # -- 槽 / 任务文本 -------------------------------------------------------
 

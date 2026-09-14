@@ -123,6 +123,51 @@ def test_compile_pattern_rejects_unknown_name():
         compile_pattern("nope", task="t")
 
 
+def test_compile_pattern_threads_worker_budget_params_into_nodes():
+    """building-review Issue 6：文档化的 worker 预算参数不能被静默丢弃。"""
+    for pattern, params in (
+        ("orchestrator-worker", {"workers": 2}),
+        ("hierarchical", {"teams": 2}),
+        ("bidding", {"proposers": 2}),
+        ("peer-review", {"max_rounds": 2}),
+    ):
+        spec = compile_pattern(
+            pattern,
+            task="t",
+            params={**params, "worker_max_tokens": 123, "worker_max_time_s": 7.5},
+        )
+        budgeted = [
+            node
+            for node in spec.nodes
+            if node.kind in ("subagent", "foreach")
+            and node.kind != "route"
+            and node.id != "selector"
+        ]
+        assert budgeted, pattern
+        for node in budgeted:
+            assert node.max_tokens == 123, (pattern, node.id)
+            assert node.max_time_s == 7.5, (pattern, node.id)
+
+
+@pytest.mark.asyncio
+async def test_run_pattern_worker_budget_params_reach_the_runs(manager):
+    result = await run_pattern(
+        manager,
+        pattern="orchestrator-worker",
+        task="research",
+        params={"workers": 2, "worker_max_tokens": 321, "worker_max_time_s": 9.0},
+    )
+    runs = [
+        session.runs[-1]
+        for session in manager._sessions.values()
+        if session.runs
+    ]
+    assert runs, "workers must have produced runs"
+    for run in runs:
+        assert run.max_tokens == 321
+        assert run.max_time_s == 9.0
+
+
 # --- 5.2 run_pattern 兼容 adapter ------------------------------------------
 
 
