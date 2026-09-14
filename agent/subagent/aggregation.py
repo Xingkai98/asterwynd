@@ -40,7 +40,20 @@ MAX_FAN_IN = 10
 AUTO_NODE_PREFIX = "__auto_agg__"
 
 #: 四档分层 token 预算默认值（D2/G4 决议，Q4 确认层级判据）。
-#: 语义（Q7 明确）：这是「每 run / 每层」的 **token 总量**口径，不是字符数。
+#:
+#: **语义（Q7 要求明确）**：这是「每层 / 每节点」的 token 总量口径，度量的是**一个
+#: 节点向它的消费者贡献多少文本**——不是字符数，也**不是** ``run_subagent`` 的
+#: ``max_tokens``。两者不能混：
+#:
+#: - 作为 ``max_tokens`` 用时，``leaf=300`` 会让一个真实干活的 leaf run 立刻被预算
+#:   杀掉（300 token 连一轮思考都不够）；
+#: - 作为「向上贡献量」用时，``leaf 300`` 的含义是「一个 leaf 的产出进入下游 prompt
+#:   时最多占 300 token」——这正是防 prompt 膨胀要限的量。
+#:
+#: 消费点：``WorkflowAggregator.bounded``（裁剪单份贡献）、
+#: ``ExecutionPlan.budget_for``（按距 leaf 层数定档）、collect 聚合的
+#: ``WorkflowAggregator.merge``（压缩多份贡献）。节点显式声明的 ``max_tokens``
+#: 优先于档位（``WorkflowNode.max_tokens`` 仍然是 run 级预算，语义不同但显式优先）。
 DEFAULT_TOKEN_BUDGETS: dict[str, int] = {
     "leaf": 300,
     "shard": 800,

@@ -151,6 +151,30 @@ def test_inserted_shards_get_shard_budget_and_root_gets_root_budget():
     assert plan.budget_for("l0") == DEFAULT_BUDGETS["leaf"]
 
 
+def test_tier_budget_is_a_contribution_budget_not_a_run_max_tokens():
+    """Q7 语义：四档预算是「节点向上贡献多少文本」，**不是** run 的 max_tokens。
+
+    这条锁定实现的语义边界：若本 change 把 leaf 档当成 ``run_subagent`` 的
+    ``max_tokens``，leaf=300 会让每个真实干活的 leaf run 立刻被预算杀掉。
+    计划**不得**把档位写进节点的 ``max_tokens`` 字段。
+    """
+    raw = _fanout(3)
+    plan = ExecutionPlan.build(
+        parse_workflow_spec(raw), max_fan_in=10, budgets=DEFAULT_BUDGETS
+    )
+    # 档位可查（供 bounded formatter 用），但节点自身声明的 max_tokens 保持原样
+    assert plan.budget_for("l0") == DEFAULT_BUDGETS["leaf"]
+    assert plan.node("l0").max_tokens is None
+    # 显式声明的 run 预算是另一回事，且优先
+    raw2 = _fanout(3)
+    raw2["nodes"][0]["max_tokens"] = 50000
+    plan2 = ExecutionPlan.build(
+        parse_workflow_spec(raw2), max_fan_in=10, budgets=DEFAULT_BUDGETS
+    )
+    assert plan2.node("l0").max_tokens == 50000
+    assert plan2.budget_for("l0") == 50000
+
+
 def test_explicit_node_max_tokens_wins_over_tier_budget():
     raw = _fanout(3)
     raw["nodes"][0]["max_tokens"] = 77

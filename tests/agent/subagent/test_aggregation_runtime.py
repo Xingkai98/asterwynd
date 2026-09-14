@@ -11,6 +11,7 @@
   bounded summary/ref 而不是 concat 全文；
 - envelope 保留 ``nodes``（C2 的 24 处断言依赖它）+ 新增逻辑执行单元计数。
 """
+import asyncio
 import json
 
 import pytest
@@ -38,6 +39,20 @@ class RecordingLLM:
                 self.tasks.append(content)
                 break
         return LLMResponse(content=self.content, stop_reason="end_turn", usage=Usage(5, 5))
+
+
+class GatedLLM:
+    """卡住所有 run 直到 ``release()``，用于构造取消场景。"""
+
+    def __init__(self):
+        self.gate = asyncio.Event()
+
+    def release(self) -> None:
+        self.gate.set()
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        await self.gate.wait()
+        return LLMResponse(content="ok", stop_reason="end_turn", usage=Usage(5, 5))
 
 
 @pytest.fixture
@@ -303,6 +318,40 @@ async def test_envelope_reports_logical_execution_units(manager):
     assert len(result["nodes"]) == 11
     assert result["current_nodes"] == []
     assert result["declared_spec_hash"] == result["spec_hash"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_workflow_buckets_are_consistent(manager):
+    """Q2：``total`` 是逻辑执行单元分母；各桶互不混算。
+
+    旧 run 口径字段（``completed``/``failed``）语义不动（C2 的 24 处断言依赖它），
+    新增的单元桶各归各：``blocked`` 是终态单独计数、``cancelled`` 不混进 ``failed``。
+    """
+    manager.llm = GatedLLM()
+    scheduler = WorkflowScheduler(manager)
+    task = asyncio.create_task(scheduler.run(parse_workflow_spec(_spec_with_leaves(3))))
+    await asyncio.sleep(0.05)
+    scheduler.cancel()
+    manager.llm.release()
+    result = await task
+
+    assert result["status"] == "cancelled"
+    # 分母是逻辑执行单元（4 个节点，无 foreach 展开）
+    assert result["total"] == 4
+    # 四个单元各有归属，互不重叠：completed/failed/cancelled/blocked/pending
+    units = {
+        state.node.id: state.status for state in scheduler._states.values()
+    }
+    assert sum(1 for _ in units) == result["total"]
+    for node_id, status in units.items():
+        if status == "cancelled":
+            assert result["cancelled"] >= 1
+        elif status == "blocked":
+            assert result["blocked"] >= 1
+        elif status == "pending":
+            assert result["pending"] >= 1
+    # 旧 run 口径字段仍在（C2 兼容），且不参与上面的单元分桶
+    assert "completed" in result and "failed" in result
 
 
 @pytest.mark.asyncio
