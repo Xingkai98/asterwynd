@@ -76,6 +76,15 @@ async def test_three_representations_are_distinct(manager):
     assert len(node_a["summary"]) <= 400
     assert LONG not in json.dumps(result)
 
+    # ③' run 级 parent envelope（to_result_dict）同样提供独立的 bounded 字段，
+    # 而 summary 保留全文（Q6：改 summary 语义会一路传导到下游）
+    run_envelope = manager._format_run_envelope(
+        scheduler._states["a"].subagent_id, run_a
+    )
+    assert run_envelope["summary"] == LONG
+    assert len(run_envelope["bounded_summary"]) < len(LONG)
+    assert run_envelope["result_ref"] == run_a.result_ref
+
 
 @pytest.mark.asyncio
 async def test_run_summary_keeps_full_text(manager):

@@ -54,6 +54,8 @@ def test_to_result_dict_exposes_refs_without_breaking_existing_keys():
     for key in ("run_id", "status", "summary", "reason", "max_tokens", "max_time_s", "usage", "artifacts"):
         assert key in payload
     assert payload["summary"] == "s"
+    # D7/Q6 的 parent bounded 表示是独立字段：短文本与全文一致（no-op）
+    assert payload["bounded_summary"] == "s"
     # 新增 refs：非 workflow run 无落盘件，保持 None/[]
     assert payload["result_ref"] is None
     assert payload["summary_ref"] is None

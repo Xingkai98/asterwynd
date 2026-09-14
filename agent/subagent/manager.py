@@ -114,10 +114,17 @@ class SubagentRunRecord:
     _budget_kill_reason: str | None = field(default=None, repr=False)
 
     def to_result_dict(self) -> dict:
+        """Parent/public run envelope（D7 的第三种表示，Q6）。
+
+        ``summary`` 保留**全文**（Q6：改成裁剪版会经 ``state.summary`` 一路传导到
+        下游）；父 agent / 普通工具消费的 bounded 版是独立的 ``bounded_summary``，
+        与 ``summary_ref`` 落盘件同源。
+        """
         return {
             "run_id": self.run_id,
             "status": self.status,
             "summary": self.summary,
+            "bounded_summary": _bounded_summary(self.summary, self.max_tokens),
             "reason": self.reason,
             "max_tokens": self.max_tokens,
             "max_time_s": self.max_time_s,
