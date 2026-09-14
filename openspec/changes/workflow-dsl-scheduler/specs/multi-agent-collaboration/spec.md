@@ -47,14 +47,14 @@
 
 ### Requirement: 内置编排模式降级为 DSL 模板
 
-系统 SHALL 将 4 个内置编排模式（orchestrator-worker / peer-review / hierarchical / bidding）编译为 DSL 模板，`run_pattern()` 保留兼容 adapter，返回字段兼容并新增 workflow_id / spec_hash / critical_path_s / peak_active / total_cost。
+系统 SHALL 将 4 个内置编排模式（orchestrator-worker / peer-review / hierarchical / bidding）编译为 DSL 模板，`run_pattern()` 保留兼容 adapter，返回字段兼容并新增 workflow_id / workflow_spec_hash / critical_path_s / peak_active / total_cost（哈希字段命名为 `workflow_spec_hash`，避免与 OpenSpec artifact 的 `spec_hash` 同名不同义）。
 
 #### Scenario: run_pattern 编译为 DSL 模板
 
 - **GIVEN** 调用 `run_pattern(pattern="orchestrator-worker", ...)`
 - **WHEN** 执行
 - **THEN** 系统 SHALL 内部编译为 WorkflowSpec 并走统一调度器
-- **AND** 返回字段 SHALL 保留既有 pattern 聚合字段并新增 workflow_id / spec_hash
+- **AND** 返回字段 SHALL 保留既有 pattern 聚合字段并新增 workflow_id / workflow_spec_hash
 
 ## MODIFIED Requirements
 
