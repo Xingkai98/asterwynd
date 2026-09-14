@@ -243,16 +243,54 @@ class SkillsConfig:
 
 
 @dataclass(frozen=True)
+class AggregationThresholdsConfig:
+    """自动兜底阈值（change ``workflow-result-aggregation``，D6/Q4）。
+
+    ``max_fan_in`` 是单个 aggregate 能直接消费的上游上限；超过（``>``，恰好等于
+    不触发）时调度器自动插入分层 aggregate。
+    """
+    max_fan_in: int = 10
+
+
+@dataclass(frozen=True)
+class AggregationTokenBudgetsConfig:
+    """四档分层 token 预算（D2/G4 决议，Q4/Q7）。
+
+    语义（Q7 明确）：这是「每 run / 每层」的 **token 总量**口径（不是输出预算、也
+    不是字符数）。档位按「距 leaf 层数」判：leaf 300 / 第 1 层 shard 800 / 再上
+    domain 1500 / 根 root 3000。校验**非递减（允许相等）**，拒绝严格递减（Q8）。
+    """
+    leaf: int = 300
+    shard: int = 800
+    domain: int = 1500
+    root: int = 3000
+
+
+@dataclass(frozen=True)
+class AggregationConfig:
+    """分层汇聚配置（D6/Q8）：阈值 + 四档 token 预算，嵌套挂在 ``workflow`` 下。"""
+    thresholds: AggregationThresholdsConfig = field(
+        default_factory=AggregationThresholdsConfig
+    )
+    token_budgets: AggregationTokenBudgetsConfig = field(
+        default_factory=AggregationTokenBudgetsConfig
+    )
+
+
+@dataclass(frozen=True)
 class WorkflowLimitsConfig:
     """Workflow DSL 的三闸默认值（change ``workflow-dsl-scheduler``，D6/Q5）。
 
     三者量纲不同、必须一起校准：``recursion_limit`` 数**图级 superstep**，
     ``max_nodes`` 数节点（含 foreach 展开），``max_runs`` 数实际 run 总数。
     spec 可以逐项覆盖，缺省时用这里的值（``parse_workflow_spec`` 的默认参数）。
+
+    ``aggregation`` 是分层汇聚配置（change ``workflow-result-aggregation``，D6/Q8）。
     """
     recursion_limit: int = 25
     max_nodes: int = 200
     max_runs: int = 300
+    aggregation: AggregationConfig = field(default_factory=AggregationConfig)
 
 
 @dataclass(frozen=True)
@@ -1414,6 +1452,66 @@ def _parse_workflow_limits(raw: Any, path: Path) -> WorkflowLimitsConfig:
         ),
         max_runs=_validate_positive_int(
             mapping.get("max_runs", 300), "subagents.workflow.max_runs", path=path
+        ),
+        aggregation=_parse_aggregation(mapping.get("aggregation", {}), path),
+    )
+
+
+def _parse_aggregation(raw: Any, path: Path) -> AggregationConfig:
+    """逐字段显式解析 ``subagents.workflow.aggregation``（grill 决策 7）。
+
+    只给 dataclass 默认值不会让 yaml 生效——每个新字段都必须在这里 ``mapping.get``
+    一次，否则模型/用户改了配置也读不到。
+    """
+    mapping = _expect_mapping(raw, path, "subagents.workflow.aggregation")
+
+    thresholds = _expect_mapping(
+        mapping.get("thresholds", {}), path, "subagents.workflow.aggregation.thresholds"
+    )
+    budgets = _expect_mapping(
+        mapping.get("token_budgets", {}), path, "subagents.workflow.aggregation.token_budgets"
+    )
+
+    leaf = _validate_positive_int(
+        budgets.get("leaf", 300),
+        "subagents.workflow.aggregation.token_budgets.leaf",
+        path=path,
+    )
+    shard = _validate_positive_int(
+        budgets.get("shard", 800),
+        "subagents.workflow.aggregation.token_budgets.shard",
+        path=path,
+    )
+    domain = _validate_positive_int(
+        budgets.get("domain", 1500),
+        "subagents.workflow.aggregation.token_budgets.domain",
+        path=path,
+    )
+    root = _validate_positive_int(
+        budgets.get("root", 3000),
+        "subagents.workflow.aggregation.token_budgets.root",
+        path=path,
+    )
+    # Q8：四档预算非递减（允许相等）；严格递减是配置错误。
+    tiers = (("leaf", leaf), ("shard", shard), ("domain", domain), ("root", root))
+    for (lower_name, lower), (upper_name, upper) in zip(tiers, tiers[1:]):
+        if lower > upper:
+            raise ConfigError(
+                f"{path}: subagents.workflow.aggregation.token_budgets must be "
+                f"non-decreasing (leaf <= shard <= domain <= root), got "
+                f"{lower_name}={lower} > {upper_name}={upper}"
+            )
+
+    return AggregationConfig(
+        thresholds=AggregationThresholdsConfig(
+            max_fan_in=_validate_positive_int(
+                thresholds.get("max_fan_in", 10),
+                "subagents.workflow.aggregation.thresholds.max_fan_in",
+                path=path,
+            )
+        ),
+        token_budgets=AggregationTokenBudgetsConfig(
+            leaf=leaf, shard=shard, domain=domain, root=root
         ),
     )
 

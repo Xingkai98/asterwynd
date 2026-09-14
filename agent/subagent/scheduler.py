@@ -28,9 +28,18 @@ import asyncio
 import json
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping
 
+from agent.subagent.aggregation import (
+    CHARS_PER_TOKEN,
+    DEFAULT_TOKEN_BUDGETS,
+    ExecutionPlan,
+    MAX_FAN_IN,
+    WorkflowAggregator,
+)
+from agent.context.summarizer import LLMSummarizer, Summarizer
 from agent.subagent.bus import MessageBus
 from agent.subagent.context import (
     reset_bus,
@@ -46,6 +55,7 @@ from agent.subagent.workflow import (
     WorkflowSpec,
     WorkflowValidationError,
 )
+from agent.subagent.workflow_store import WorkflowStore
 
 if TYPE_CHECKING:
     from agent.subagent.manager import SubAgentManager
@@ -62,6 +72,18 @@ TERMINAL_RUN_STATUSES = frozenset(
 _POLL_INTERVAL_S = 0.01
 
 _SUMMARY_LIMIT = 400
+
+#: bounded envelope 里 ``latest_events`` 的条目数上限（Q5：5 条终态迁移事件）。
+_LATEST_EVENTS_LIMIT = 5
+#: 单条 ``latest_events`` 的 ``summary_preview`` 字符上限（Q5：每条分配字符上限，
+#: 5 × 80 = 400 字符，bounded envelope 的「bounded」由这个上界保证）。
+_EVENT_PREVIEW_LIMIT = 80
+
+#: 父 agent 面向投影的节点条数硬上限（D3「永远 bounded」；Issue 4）。
+#: 与 ``max_nodes`` 默认值同量级：超过就按上限截断并用 ``nodes_omitted`` 显式报告。
+_PARENT_NODES_LIMIT = 200
+#: 父投影里单节点文本字段（summary/reason/error）的字符上限。
+_PARENT_FIELD_LIMIT = 200
 
 
 class GraphRecursionError(RuntimeError):
@@ -138,7 +160,11 @@ class NodeState:
         if self.items is not None:
             payload["items"] = self.items
         if self.slots:
-            payload["slots"] = dict(self.slots)
+            # bounded envelope（D3）：collect aggregate 的槽是 N 份上游 concat 后的
+            # 巨型字符串，整段进 envelope 就等于把父上下文打爆——槽值同样要裁剪。
+            payload["slots"] = {
+                slot: value[:_SUMMARY_LIMIT] for slot, value in self.slots.items()
+            }
         if self.node.kind == "route":
             payload["verdict"] = self.verdict
             payload["raw"] = self.raw
@@ -237,6 +263,40 @@ def render_item_task(template: str, item: Any, *, index: int | None = None) -> s
     return rendered
 
 
+#: 父投影里保留的节点字段：都是 O(1) 的标量/短列表。
+_PARENT_NODE_FIELDS = ("id", "kind", "status", "runs", "subagent_id", "items")
+#: 父投影里保留但必须裁剪的文本字段。
+_PARENT_NODE_TEXT_FIELDS = ("summary", "reason", "error")
+
+
+def _bounded_node(node: dict) -> dict:
+    """把一个节点摘要投影成父 agent 面向的有界版本（Issue 4）。
+
+    丢弃随图规模线性增长的数组（``subagent_ids``/``run_ids``/``slots``/``targets``/
+    ``raw``）；文本字段裁到 ``_PARENT_FIELD_LIMIT``。
+    """
+    projected: dict[str, Any] = {
+        key: node[key] for key in _PARENT_NODE_FIELDS if key in node
+    }
+    for key in _PARENT_NODE_TEXT_FIELDS:
+        value = node.get(key)
+        if not value:
+            continue
+        projected[key] = value[:_PARENT_FIELD_LIMIT]
+    if node.get("reason") is None and "reason" in node:
+        projected["reason"] = None
+    return projected
+
+
+def _first_non_empty_line(text: str) -> str:
+    """事件预览取**首个非空行**（Q5：不承诺「一句话」，只保证确定性的短预览）。"""
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
 def _maybe_json(value: Any) -> Any:
     if not isinstance(value, str):
         return value
@@ -266,13 +326,25 @@ class WorkflowScheduler:
         self.workflow_id = workflow_id or f"wf_{uuid.uuid4().hex[:8]}"
         self.bus = bus
         self._spec: WorkflowSpec | None = None
+        self._plan: ExecutionPlan | None = None
         self._states: dict[str, NodeState] = {}
+        #: 最近 5 次**终态迁移事件**（Q5）：ring buffer，同节点重跑可再次出现。
+        self._latest_events: deque[dict] = deque(maxlen=_LATEST_EVENTS_LIMIT)
+        self._store: WorkflowStore | None = None
+        self._root_result_ref: str | None = None
+        #: workflow 级汇聚器（D5）：复用 summarizer 抽象做 bounded formatter。
+        #: LLM 可用时用它做语义压缩，否则退回 TruncationSummarizer（仍有界）。
+        self._aggregator = WorkflowAggregator(
+            summarizer=self._build_summarizer()
+        )
         self._cancelled = False
         self._cancel_event = asyncio.Event()
         self._progress = asyncio.Event()
         self._steps = 0
         self._runs = 0
         self._expanded_nodes = 0
+        #: foreach node_id -> 已计费的展开项数（review Issue 3：再展开只扣增量）。
+        self._charged_expansions: dict[str, int] = {}
         self._in_flight_runs = 0
         self._in_flight_nodes = 0
         self._tasks: set[asyncio.Task[None]] = set()
@@ -297,12 +369,103 @@ class WorkflowScheduler:
     def spec(self) -> WorkflowSpec | None:
         return self._spec
 
+    @property
+    def plan(self) -> ExecutionPlan | None:
+        """当前执行计划（含自动插入层 + 预算档），未 attach 时为 ``None``。"""
+        return self._plan
+
     @spec.setter
     def spec(self, value: WorkflowSpec) -> None:
         """Attach the parsed spec before ``StartWorkflow`` drives the graph (D1)."""
         self._spec = value
-        self._states = {node.id: NodeState(node=node) for node in value.nodes}
-        self._expanded_nodes = len(value.nodes)
+        self._plan = self._build_plan(value)
+        self._states = {node.id: NodeState(node=node) for node in self._plan.nodes}
+        self._expanded_nodes = len(self._plan.nodes)
+        self._charged_expansions = {}
+
+    def _build_plan(self, spec: WorkflowSpec) -> ExecutionPlan:
+        """按 ``subagents.workflow.aggregation`` 配置构建执行计划（D2/D6/Q4）。"""
+        return ExecutionPlan.build(
+            spec,
+            max_fan_in=self._aggregation_max_fan_in(),
+            budgets=self._token_budgets(),
+        )
+
+    def _aggregation_config(self) -> Any:
+        limits = getattr(getattr(self.manager.config, "subagents", None), "workflow", None)
+        return getattr(limits, "aggregation", None)
+
+    def _aggregation_max_fan_in(self) -> int:
+        aggregation = self._aggregation_config()
+        thresholds = getattr(aggregation, "thresholds", None)
+        if thresholds is None:
+            return MAX_FAN_IN
+        return getattr(thresholds, "max_fan_in", MAX_FAN_IN)
+
+    def _token_budgets(self) -> dict[str, int]:
+        """四档 token 预算（leaf/shard/domain/root），配置缺失时用默认值。"""
+        aggregation = self._aggregation_config()
+        tiers = getattr(aggregation, "token_budgets", None)
+        if tiers is None:
+            return dict(DEFAULT_TOKEN_BUDGETS)
+        return {
+            "leaf": getattr(tiers, "leaf", DEFAULT_TOKEN_BUDGETS["leaf"]),
+            "shard": getattr(tiers, "shard", DEFAULT_TOKEN_BUDGETS["shard"]),
+            "domain": getattr(tiers, "domain", DEFAULT_TOKEN_BUDGETS["domain"]),
+            "root": getattr(tiers, "root", DEFAULT_TOKEN_BUDGETS["root"]),
+        }
+
+    def _build_summarizer(self) -> Summarizer | None:
+        """有 LLM 时用 ``LLMSummarizer``，否则 ``None`` 让 aggregator 用截断兜底。"""
+        llm = getattr(self.manager, "llm", None)
+        if llm is None:
+            return None
+        try:
+            return LLMSummarizer(llm)
+        except Exception:  # noqa: BLE001 - 汇聚器构造失败不该拖垮调度
+            return None
+
+    def _graph(self) -> ExecutionPlan:
+        """运行期图结构（含自动插入层）——所有边/节点查询的唯一入口。"""
+        assert self._plan is not None
+        return self._plan
+
+    def _workflow_store(self) -> WorkflowStore:
+        if self._store is None:
+            self._store = self.manager.workflow_store(self.workflow_id)
+        return self._store
+
+    # -- 事件（D4：权威状态进事件日志，bus 只做低延迟广播） -----------------
+
+    def _record_event(
+        self,
+        event_type: str,
+        *,
+        node_id: str | None = None,
+        status: str = "",
+        summary: str = "",
+        terminal: bool = False,
+    ) -> None:
+        """写一条权威事件：落盘事件日志（D4）+ 终态迁移进 ring buffer（Q5）。
+
+        事件日志是**权威源**（结果完整性、重试、重放的依据）；MessageBus 丢消息
+        不影响这里的记录，因此 bus 降级后 workflow 完成与结果正确性不受影响。
+
+        ``latest_events`` 只收**终态迁移**（Q5：节点/工作流进入终态），非终态的
+        生命周期事件（``workflow_started``）只进日志——否则小图里 5 格 ring buffer
+        会被非终态事件挤满，父 agent 反而看不到「谁跑完了」。
+        """
+        event: dict[str, Any] = {"type": event_type, "status": status}
+        if node_id is not None:
+            event["node_id"] = node_id
+            preview = _first_non_empty_line(summary)
+            event["summary_preview"] = preview[:_EVENT_PREVIEW_LIMIT]
+        if terminal:
+            self._latest_events.append(event)
+        try:
+            self._workflow_store().append_event({**event, "workflow_id": self.workflow_id})
+        except Exception:  # noqa: BLE001 - 事件日志是尽力而为的可观测性
+            pass
 
     def cancel(self) -> dict:
         """Q8：立即返回「取消已提交」envelope（不 gather 等 in-flight 停下）。"""
@@ -334,21 +497,59 @@ class WorkflowScheduler:
         raise_on_recursion: bool = False,
     ) -> dict:
         self._spec = spec
-        self._states = {node.id: NodeState(node=node) for node in spec.nodes}
-        self._expanded_nodes = len(spec.nodes)
+        # 自动兜底在 parse 之后插入节点，所以执行计划（而非原 spec）是运行期权威
+        # （grill 决策 6）；原始 spec 保持不变，其 spec_hash 仍是 replay 锚点。
+        self._plan = self._build_plan(spec)
+        self._states = {node.id: NodeState(node=node) for node in self._plan.nodes}
+        self._expanded_nodes = len(self._plan.nodes)
+        self._charged_expansions = {}
         self._status = "running"
         self._started_at = time.time()
         self._cost_before = self._ledger_total()
         bus = self.bus or MessageBus()
         self.bus = bus
+        self._record_event("workflow_started", status="running")
         self.manager.register_workflow_bucket(self.workflow_id, spec.max_runs * 2)
         try:
+            self._check_declared_limits(spec)
             await self._drive(raise_on_recursion=raise_on_recursion)
+        except GraphRecursionError as exc:
+            # 运行期复检（自动插入节点吃 max_nodes）：与主循环内触发的图级闸门
+            # 走同一个 envelope 诊断出口（Q8：模型看到 envelope，不是异常文本）。
+            self._accepting = False
+            await self._cancel_all_in_flight()
+            self._diagnostics = exc.to_dict()
+            self._status = "graph_recursion_exceeded"
+            if raise_on_recursion:
+                raise
         finally:
             await self._teardown()
             self.manager.release_workflow_bucket(self.workflow_id)
             self._finished_at = time.time()
+            self._write_root_result()
+            self._record_event("workflow_terminal", status=self._status, terminal=True)
         return self.status()
+
+    def _check_declared_limits(self, spec: WorkflowSpec) -> None:
+        """运行期记账复检（grill 决策 6）：自动插入的节点也要吃 ``max_nodes``。
+
+        ``parse_workflow_spec`` 的 ``max_nodes`` 检查是**声明期**的（一次算完），
+        自动兜底发生在 parse 之后。没有这道复检，用户配置的节点上限对自动插入的
+        shard/domain 层完全失效——与 C2 grill Q5 的「max_nodes = 节点数（含 foreach
+        展开）」口径直接矛盾。
+        """
+        if len(self._plan.nodes) > spec.max_nodes:
+            raise GraphRecursionError(
+                steps=0,
+                limit=spec.max_nodes,
+                current_nodes=[node.id for node in self._plan.nodes],
+                reason="max_nodes",
+                message=(
+                    f"GraphRecursionError: workflow expands to {len(self._plan.nodes)} "
+                    f"nodes (including {len(self._plan.inserted_nodes)} auto-inserted "
+                    f"aggregate nodes), exceeding max_nodes {spec.max_nodes}"
+                ),
+            )
 
     async def _teardown(self) -> None:
         """取消/收尾所有仍在途的节点任务，并标记未派发节点为 blocked。"""
@@ -458,9 +659,7 @@ class WorkflowScheduler:
     # -- 就绪与派发 ---------------------------------------------------------
 
     def _data_deps_satisfied(self, state: NodeState) -> bool:
-        spec = self._spec
-        assert spec is not None
-        for edge in spec.data_incoming(state.node.id):
+        for edge in self._graph().data_incoming(state.node.id):
             if not edge.required:
                 continue
             upstream = self._states.get(edge.source)
@@ -469,9 +668,8 @@ class WorkflowScheduler:
         return True
 
     def _has_control_incoming(self, node_id: str) -> bool:
-        spec = self._spec
-        assert spec is not None
-        return any(spec.is_control_edge(edge) for edge in spec.incoming(node_id))
+        plan = self._graph()
+        return any(plan.is_control_edge(edge) for edge in plan.incoming(node_id))
 
     def _ready_nodes(self) -> list[NodeState]:
         ready: list[NodeState] = []
@@ -495,7 +693,8 @@ class WorkflowScheduler:
         return ready
 
     def _is_entry(self, node_id: str) -> bool:
-        return bool(self._spec and node_id in self._spec.entry)
+        plan = self._plan
+        return bool(plan is not None and node_id in plan.entry)
 
     def _dispatch_capacity(self) -> int:
         return self.manager.max_active + self.manager.max_queued_runs
@@ -548,7 +747,7 @@ class WorkflowScheduler:
         self._in_flight_runs += cost
         self._in_flight_nodes += 1
         # aggregate 的 best_effort 等待时钟从「第一条上游臂开始跑」起算（Q3）。
-        for edge in spec.data_outgoing(state.node.id):
+        for edge in self._graph().data_outgoing(state.node.id):
             successor = self._states.get(edge.target)
             if (
                 successor is not None
@@ -590,6 +789,15 @@ class WorkflowScheduler:
             if state.finished_at is None:
                 state.finished_at = time.time()
             self._in_flight_nodes -= 1
+            # 终态迁移事件（Q5）：同节点重跑会再次出现，因为它是一次新的迁移。
+            if state.status in TERMINAL_NODE_STATUSES:
+                self._record_event(
+                    "node_terminal",
+                    node_id=state.node.id,
+                    status=state.status,
+                    summary=state.summary or state.reason or "",
+                    terminal=True,
+                )
             self._on_node_finished(state)
             self._progress.set()
 
@@ -606,9 +814,7 @@ class WorkflowScheduler:
             # workflow 已取消/已超限：节点收尾不得把下游从终态复活（否则 blocked
             # 会被重新改回 pending，取消后的状态快照就自相矛盾）。
             return
-        spec = self._spec
-        assert spec is not None
-        for edge in spec.data_outgoing(state.node.id):
+        for edge in self._graph().data_outgoing(state.node.id):
             successor = self._states.get(edge.target)
             if successor is None:
                 continue
@@ -624,9 +830,7 @@ class WorkflowScheduler:
         state.deadline_fired = False
         state.verdict = None
         state.targets = []
-        spec = self._spec
-        assert spec is not None
-        for edge in spec.data_outgoing(state.node.id):
+        for edge in self._graph().data_outgoing(state.node.id):
             successor = self._states.get(edge.target)
             if successor is not None:
                 self._reset_subtree(successor)
@@ -673,7 +877,12 @@ class WorkflowScheduler:
             self._release(1)
             self._apply_run_status(state, envelope["status"])
             return
-        # collect：纯逻辑聚合，不产生 run（completed 只数真实 run）
+        # collect：纯逻辑聚合，不产生 run（completed 只数真实 run）。没有下游 LLM run
+        # 来消化拼接结果，所以 D5 的 workflow 级汇聚器正是这里的压缩点：把多份贡献交给
+        # summarizer 语义压缩，无 LLM 时退回有界拼接（不把巨型字符串原样传下去）。
+        merged = await self._merge_contributions_bounded(state, contributions, merged)
+        for slot in node.outputs:
+            state.slots[slot] = merged
         state.summary = merged or "\n".join(str(value) for value in state.slots.values())
         state.subagent_id = None
         state.run_id = None
@@ -721,6 +930,8 @@ class WorkflowScheduler:
         state.subagent_id = None
         state.run_ids = []
         state.subagent_ids = []
+        # 展开期复检（Q3）：声明期不可知的展开项数在这里进入执行计划，重新插层。
+        self._expand_plan(node.id, len(items))
         self._check_foreach_budget(node, state)
         tasks = [
             asyncio.create_task(self._run_foreach_item(node, index, item))
@@ -773,16 +984,94 @@ class WorkflowScheduler:
         finally:
             self._release(1)
 
+    def _expand_plan(self, node_id: str, count: int) -> None:
+        """展开期复检（Q3）：把 foreach 展开项数记进执行计划并按需插入新层。
+
+        声明期只知道 1 个 foreach 节点；运行时才知道它展开出多少项。不在这里重算，
+        「2 个声明节点 + 展开 100 项汇入同一 aggregate」的图仍会把 100 份结果 concat
+        后喂给单个 aggregate——正是 spec delta 要防的场景。
+
+        新插入的节点必须进 ``_expanded_nodes`` 记账并复检（grill 决策 6）：它们绕过
+        parse 期的 ``max_nodes`` 检查。
+        """
+        plan = self._plan
+        if plan is None:
+            return
+        expanded = plan.with_expansion(node_id, count)
+        new_ids = [
+            node_id for node_id in expanded.inserted_nodes if node_id not in plan.inserted_nodes
+        ]
+        # 收缩时（展开项数变少）旧 auto 节点的 NodeState 会失效：它们已不在新 plan 的
+        # 图里，却仍被 `_unit_counts()` 统计进 envelope 的 total/pending（Issue 5）。
+        # 先算 stale 集合，两条返回路径都要 prune。
+        stale_ids = [
+            node_id
+            for node_id in plan.inserted_nodes
+            if node_id not in expanded.inserted_nodes
+        ]
+        if not new_ids:
+            self._plan = expanded
+            self._prune_states(stale_ids)
+            return
+        spec = self._spec
+        assert spec is not None
+        added_nodes = len(new_ids)
+        # foreach 展开项本身也要吃 max_nodes：展开前预检保留给 `_check_foreach_budget`，
+        # 这里只把**新增的 auto aggregate 节点**记进已声明节点数并复检。
+        if self._expanded_nodes + added_nodes > spec.max_nodes:
+            raise GraphRecursionError(
+                steps=self._steps,
+                limit=spec.max_nodes,
+                current_nodes=new_ids,
+                reason="max_nodes",
+                message=(
+                    f"GraphRecursionError: node {node_id!r} expansion requires "
+                    f"{added_nodes} auto-inserted aggregate nodes, exceeding max_nodes "
+                    f"{spec.max_nodes} ({self._expanded_nodes} already declared)"
+                ),
+            )
+        self._expanded_nodes += added_nodes
+        self._plan = expanded
+        for new_id in new_ids:
+            self._states[new_id] = NodeState(node=expanded.node(new_id))
+        self._prune_states(stale_ids)
+
+    def _prune_states(self, stale_ids: list[str]) -> None:
+        """丢弃已不在执行图里的节点状态（Issue 5：收缩后不留幽灵计数）。
+
+        只删真正失效的 id；仍在图里的节点状态（可能已带运行期 summary/槽）保持不动。
+        已计费的 ``_expanded_nodes`` 不退还——预算是保守的**高水位**口径，与
+        ``_check_foreach_budget`` 只收增量的语义一致。
+        """
+        for stale_id in stale_ids:
+            state = self._states.pop(stale_id, None)
+            if state is None:
+                continue
+            # 在途节点不该出现在 stale 集合里（foreach 必须等所有展开项收尾才结束，
+            # 其下游 aggregate 才可能就绪）。真出现时按取消处理，避免留下孤儿任务。
+            if state.status in ("queued", "started"):
+                self._schedule_cancel(state)
+            self._live_runs.pop(stale_id, None)
+
     def _check_foreach_budget(self, node: WorkflowNode, state: NodeState) -> None:
         """展开前预检（Q5/D6）：max_runs 与 max_nodes 都要把展开项算进去。
 
         预检先于任何 session 创建，所以超限时不会留下半张已展开的图；报错走
         ``GraphRecursionError`` envelope（Q8），而不是让 spawn 桶抛底层 RuntimeError。
+
+        计费按**增量**：route 回边会把同一个 foreach 重新激活，重复按满额计费会让
+        用户配置的 max_nodes/max_runs 被无声缩水（review Issue 3）。``_charged_
+        expansions`` 记「该节点已计费到多少项」，只收差额；项数变小时保守保持已扣
+        额度（不退还），与 ``_expand_plan`` 的幂等语义对齐。
         """
         spec = self._spec
         assert spec is not None
         count = state.items or 0
-        if self._runs + count > spec.max_runs:
+        charged = self._charged_expansions.get(node.id, 0)
+        delta = count - charged
+        if delta <= 0:
+            return  # 已计费过这份（或更大量）展开，不重复扣
+        if self._runs + delta > spec.max_runs:
             raise GraphRecursionError(
                 steps=self._steps,
                 limit=spec.max_runs,
@@ -790,11 +1079,11 @@ class WorkflowScheduler:
                 reason="max_runs",
                 message=(
                     f"GraphRecursionError: foreach node {node.id!r} would expand "
-                    f"{count} runs, exceeding max_runs {spec.max_runs} "
+                    f"{count} runs ({delta} new), exceeding max_runs {spec.max_runs} "
                     f"({self._runs} already used)"
                 ),
             )
-        if self._expanded_nodes + count > spec.max_nodes:
+        if self._expanded_nodes + delta > spec.max_nodes:
             raise GraphRecursionError(
                 steps=self._steps,
                 limit=spec.max_nodes,
@@ -802,12 +1091,13 @@ class WorkflowScheduler:
                 reason="max_nodes",
                 message=(
                     f"GraphRecursionError: foreach node {node.id!r} would expand "
-                    f"{count} nodes, exceeding max_nodes {spec.max_nodes} "
+                    f"{count} nodes ({delta} new), exceeding max_nodes {spec.max_nodes} "
                     f"({self._expanded_nodes} already declared)"
                 ),
             )
-        self._expanded_nodes += count
-        self._runs += count
+        self._charged_expansions[node.id] = count
+        self._expanded_nodes += delta
+        self._runs += delta
 
     # -- run 派发（身份 contextvar 的唯一 set 点） ---------------------------
 
@@ -929,7 +1219,7 @@ class WorkflowScheduler:
             if now - state.deadline_ref < node.deadline_s:
                 continue
             state.deadline_fired = True
-            for edge in spec.data_incoming(node.id):
+            for edge in self._graph().data_incoming(node.id):
                 upstream = self._states.get(edge.source)
                 if upstream is not None and upstream.status in ("queued", "started"):
                     self._schedule_cancel(upstream)
@@ -972,6 +1262,44 @@ class WorkflowScheduler:
 
     # -- 槽 / 任务文本 -------------------------------------------------------
 
+    async def _merge_contributions_bounded(
+        self,
+        state: NodeState,
+        contributions: dict[str, str],
+        merged: str,
+    ) -> str:
+        """collect 聚合的压缩点（D5/Q7）。
+
+        只有**多份贡献**且拼接结果超出该节点预算时才走 summarizer：单份贡献或本来就
+        在预算内的结果保持原样（既省一次无谓调用，也保住既有精确断言）。
+        """
+        plan = self._plan
+        if plan is None:
+            return merged
+        budget = plan.budget_for(state.node.id)
+        if len(merged) <= budget * CHARS_PER_TOKEN:
+            return merged
+        # 传给 summarizer 的是**每个上游一份**的 bounded 产出（而不是已经 concat 好的
+        # 巨型字符串）：compress 的语义是「多份文本 → 一份摘要」。
+        #
+        # 不按上游数提前返回：单个 foreach 容器展开 100 项时上游只有 1 个，但它的
+        # summary 已经是 100 份结果的拼接——正是 Q3 要防的场景，必须压缩。
+        upstreams = [
+            edge
+            for edge in plan.data_incoming(state.node.id)
+            if self._states.get(edge.source) is not None
+            and self._states[edge.source].status in TERMINAL_NODE_STATUSES
+        ]
+        texts = [
+            text
+            for edge in upstreams
+            for text in (self._bounded_output(self._states[edge.source], "result"),)
+            if text
+        ]
+        if not texts:
+            return self._aggregator.bounded(merged, budget=budget)
+        return await self._aggregator.merge(texts, budget=budget)
+
     def _merge_contributions(self, state: NodeState, contributions: dict[str, str]) -> str:
         """把所有上游贡献合并成一个字符串（``outputs`` 单槽时的取值语义）。
 
@@ -983,10 +1311,8 @@ class WorkflowScheduler:
             return ""
         if len(contributions) == 1:
             return next(iter(contributions.values()))
-        spec = self._spec
-        assert spec is not None
         reducer = "concat"
-        for edge in spec.data_incoming(state.node.id):
+        for edge in self._graph().data_incoming(state.node.id):
             if edge.reducer:
                 reducer = edge.reducer
                 break
@@ -994,11 +1320,9 @@ class WorkflowScheduler:
 
     def _collect_slots(self, state: NodeState) -> dict[str, str]:
         """按槽聚合每个数据上游的产出（每节点取最新一次 run，Q9/D7）。"""
-        spec = self._spec
-        assert spec is not None
         groups: dict[str, list[str]] = {}
         reducers: dict[str, str] = {}
-        for edge in spec.data_incoming(state.node.id):
+        for edge in self._graph().data_incoming(state.node.id):
             upstream = self._states.get(edge.source)
             if upstream is None or upstream.status not in TERMINAL_NODE_STATUSES:
                 continue
@@ -1017,43 +1341,86 @@ class WorkflowScheduler:
     def _node_output(self, state: NodeState, slot: str) -> str | None:
         if slot in state.slots and state.node.kind != "subagent":
             return state.slots[slot]
-        for edge in (self._spec.data_incoming(state.node.id) if self._spec else ()):
+        plan = self._plan
+        for edge in (plan.data_incoming(state.node.id) if plan else ()):
             upstream = self._states.get(edge.source)
             if upstream is not None and slot in upstream.slots:
                 return upstream.slots[slot]
         return state.summary or None
 
     def _node_task_text(self, node: WorkflowNode) -> str:
-        """subagent 节点的任务文本 = 节点 task + 上游产出（如果有）。"""
+        """subagent 节点的任务文本 = 节点 task + 上游**bounded**产出（D7/Q7）。
+
+        真正的爆点在这里（grill 决策 5）：把所有数据上游的 ``_node_output`` 原文拼进
+        下游 task，100 个 leaf 就会把 100 份完整结果灌进一个 prompt。所以下游消费的是
+        bounded 投影（按上游节点的预算档裁剪 + 带 ``result_ref``），不是全文。
+        """
         spec = self._spec
         assert spec is not None
         parts = [node.task]
         goal = spec.goal
         if goal and goal not in node.task:
             parts.append(f"Overall goal: {goal}")
-        for edge in spec.data_incoming(node.id):
+        for edge in self._plan.data_incoming(node.id):
             upstream = self._states.get(edge.source)
             if upstream is None:
                 continue
-            text = self._node_output(upstream, "result")
-            if text:
-                parts.append(f"Input from {edge.source}:\n{text}")
+            text = self._bounded_output(upstream, "result")
+            if not text:
+                continue
+            ref = self._result_ref_for(upstream)
+            suffix = f" (full result: {ref})" if ref else ""
+            parts.append(f"Input from {edge.source}{suffix}:\n{text}")
         return "\n\n".join(parts)
 
     def _aggregate_task_text(self, state: NodeState) -> str:
+        """aggregate 的任务文本 = 节点 task + 各上游的 **bounded** 贡献（Q7）。
+
+        不能读 ``state.slots`` 的拼接结果：那已经是 N 份全文 concat 后的巨型字符串
+        （``reducer=concat``），把它整段喂给 aggregate 正是要防的 prompt 膨胀。这里
+        改为按上游逐个取 bounded 投影。
+        """
         spec = self._spec
         assert spec is not None
         parts = [state.node.task or f"Aggregate the results of {spec.goal or 'the workflow'}."]
-        for slot, value in state.slots.items():
-            parts.append(f"Slot {slot}:\n{value}")
+        for edge in self._plan.data_incoming(state.node.id):
+            upstream = self._states.get(edge.source)
+            if upstream is None:
+                continue
+            for slot in upstream.node.outputs:
+                text = self._bounded_output(upstream, slot)
+                if not text:
+                    continue
+                ref = self._result_ref_for(upstream)
+                suffix = f" (result_ref: {ref})" if ref else ""
+                parts.append(f"Input from {edge.source} slot {slot}{suffix}:\n{text}")
         return "\n\n".join(parts)
+
+    def _result_ref_for(self, state: NodeState) -> str | None:
+        """上游节点的最新一次 run 的 ``result_ref``（没落盘/token 上限到达时为空）。"""
+        if not state.subagent_id or not state.run_id:
+            return None
+        run = self.manager.find_run(state.subagent_id, state.run_id)
+        return getattr(run, "result_ref", None) if run is not None else None
+
+    def _bounded_output(self, state: NodeState, slot: str) -> str:
+        """一个上游节点在**下游视角**下的 bounded 产出（按距 leaf 层数定档裁剪）。
+
+        裁剪经 :class:`WorkflowAggregator` 完成（D5：复用 summarizer 抽象），短文本
+        no-op——grill 风险「中」的既有精确相等断言因此不受影响。
+        """
+        value = self._node_output(state, slot)
+        if not value:
+            return ""
+        plan = self._plan
+        assert plan is not None
+        tier_tokens = plan.budget_for(state.node.id)
+        return self._aggregator.bounded(value, budget=tier_tokens)
 
     def _route_verdict(self, state: NodeState) -> str:
         """route 的判定文本 = 所有数据上游产出的拼接（只做标签匹配）。"""
-        spec = self._spec
-        assert spec is not None
         parts: list[str] = []
-        for edge in spec.data_incoming(state.node.id):
+        for edge in self._graph().data_incoming(state.node.id):
             upstream = self._states.get(edge.source)
             if upstream is None:
                 continue
@@ -1089,8 +1456,55 @@ class WorkflowScheduler:
         running = sum(1 for run in self._run_refs if run.status == "running")
         self._peak_active = max(self._peak_active, running)
 
+    def _logical_units(self, state: NodeState) -> int:
+        """一个节点的**逻辑执行单元**数（Q2 的分母口径）。
+
+        普通节点 = 1；``foreach`` = 展开项数 + 1（展开项各自是一个执行单元，容器节点
+        自身也是一个）。未展开时按 1 算。
+        """
+        if state.node.kind == "foreach":
+            return (state.items or 0) + 1
+        return 1
+
+    def _unit_counts(self) -> dict[str, int]:
+        """按逻辑执行单元统计各桶（Q2）。
+
+        ``blocked`` 是终态、单独计数；``cancelled``/``budget_exceeded`` 单列不混
+        ``failed``；剩下的（pending/queued/started）都是 ``pending``。
+        """
+        counts = {
+            "total": 0,
+            "completed_units": 0,
+            "failed_units": 0,
+            "cancelled_units": 0,
+            "budget_exceeded_units": 0,
+            "blocked_units": 0,
+            "pending_units": 0,
+        }
+        for state in self._states.values():
+            units = self._logical_units(state)
+            counts["total"] += units
+            status = state.status
+            if status == "completed":
+                counts["completed_units"] += units
+            elif status == "failed":
+                counts["failed_units"] += units
+            elif status == "cancelled":
+                counts["cancelled_units"] += units
+            elif status == "budget_exceeded":
+                counts["budget_exceeded_units"] += units
+            elif status == "blocked":
+                counts["blocked_units"] += units
+            else:
+                counts["pending_units"] += units
+        return counts
+
     def _envelope(self, *, status: str) -> dict:
-        nodes = [self._states[node.id].to_dict() for node in (self._spec.nodes if self._spec else ())]
+        plan = self._plan
+        nodes = [
+            self._states[node.id].to_dict() for node in (plan.nodes if plan else ())
+        ]
+        # 旧 run 计数字段：语义不动（C2 的 24 处断言依赖 completed/failed 的 run 口径）。
         completed = sum(
             1
             for ref in self._run_refs
@@ -1101,6 +1515,7 @@ class WorkflowScheduler:
             for ref in self._run_refs
             if getattr(ref, "status", None) in ("failed", "cancelled", "budget_exceeded")
         )
+        units = self._unit_counts()
         finished_at = self._finished_at or time.time()
         payload: dict[str, Any] = {
             "workflow_id": self.workflow_id,
@@ -1110,6 +1525,15 @@ class WorkflowScheduler:
             "nodes": nodes,
             "completed": completed,
             "failed": failed,
+            # 逻辑执行单元计数（Q2）：``total`` 是分母，其余是各终态桶 + pending。
+            "total": units["total"],
+            "cancelled": units["cancelled_units"],
+            "budget_exceeded": units["budget_exceeded_units"],
+            "blocked": units["blocked_units"],
+            "pending": units["pending_units"],
+            # 事件 ring buffer（Q5）：最近 5 次终态迁移，不用 bus 填。
+            "latest_events": list(self._latest_events),
+            "root_result_ref": self._root_result_ref,
             "steps": self._steps,
             "peak_active": self._peak_active,
             "critical_path_s": round(finished_at - self._started_at, 6) if self._started_at else 0.0,
@@ -1121,8 +1545,66 @@ class WorkflowScheduler:
             ],
             "diagnostics": dict(self._diagnostics),
         }
+        if plan is not None:
+            # 三 hash 分离（Q3）：声明哈希是 replay 锚点，运行期哈希随自动插层变化。
+            payload["declared_spec_hash"] = plan.declared_spec_hash
+            payload["expansion_plan_hash"] = plan.expansion_plan_hash
+            payload["runtime_graph_hash"] = plan.runtime_graph_hash
+            payload["inserted_nodes"] = list(plan.inserted_nodes)
         if self.bus is not None:
             payload["bus"] = self.bus.snapshot_payload()
         return payload
+
+    def parent_envelope(self) -> dict:
+        """父 agent 面向的 **bounded** 投影（D3；review Issue 4）。
+
+        与 ``status()``/``_envelope()`` 的关系：
+
+        - ``_envelope()`` 是**权威** envelope，供 ``run()`` 返回值与 C2 断言使用
+          （保留全量 ``nodes`` 与 per-node ``subagent_ids``，grill 决策 4 明确不能替换）。
+        - 本方法是**父 agent 实际看到的东西**（工具返回），必须真的 bounded：bus 是
+          非权威通道、不进这里（D4 自洽）；节点只保留 bounded 摘要（不展开
+          ``slots``/全量 ``summary``/``subagent_ids``/``run_ids`` 这些随图规模线性增长的
+          字段）；节点条数设硬上限，超出部分用 ``nodes_omitted`` 显式报告——不静默截断。
+        """
+        payload = self._envelope(status=self._status)
+        # bus 是非权威广播通道（D4）：它不属于权威 envelope，也不该出现在父上下文里。
+        payload.pop("bus", None)
+
+        nodes = payload.get("nodes", [])
+        total = len(nodes)
+        visible = nodes[:_PARENT_NODES_LIMIT]
+        payload["nodes"] = [_bounded_node(node) for node in visible]
+        payload["nodes_total"] = total
+        payload["nodes_omitted"] = max(total - _PARENT_NODES_LIMIT, 0)
+        return payload
+
+    def _write_root_result(self) -> None:
+        """把根结果落盘并记录 ``root_result_ref``（D3：父 agent 只看 ref）。
+
+        ``collect`` 聚合不产生 run（没有 per-run artifact），所以根结果是**工作流级
+        落盘件**：取终态节点里最后一条有内容的 summary。落盘失败不影响 workflow 完成。
+        """
+        plan = self._plan
+        if plan is None:
+            return
+        candidates = list(plan.terminal) or [node.id for node in plan.nodes]
+        text = ""
+        for node_id in candidates:
+            state = self._states.get(node_id)
+            if state is not None and (state.summary or "").strip():
+                text = state.summary
+        if not text:
+            text = "\n\n".join(
+                state.summary
+                for state in self._states.values()
+                if (state.summary or "").strip()
+            )
+        if not text:
+            return
+        try:
+            self._root_result_ref = self._workflow_store().save_result("root", text)
+        except Exception:  # noqa: BLE001 - 落盘是尽力而为的可观测性
+            logger.warning("Failed to persist workflow root result", exc_info=True)
 
 
