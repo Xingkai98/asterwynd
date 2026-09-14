@@ -284,6 +284,13 @@ class WorkflowScheduler:
     def spec(self) -> WorkflowSpec | None:
         return self._spec
 
+    @spec.setter
+    def spec(self, value: WorkflowSpec) -> None:
+        """Attach the parsed spec before ``StartWorkflow`` drives the graph (D1)."""
+        self._spec = value
+        self._states = {node.id: NodeState(node=node) for node in value.nodes}
+        self._expanded_nodes = len(value.nodes)
+
     def cancel(self) -> dict:
         """Q8：立即返回「取消已提交」envelope（不 gather 等 in-flight 停下）。"""
         self._cancelled = True
