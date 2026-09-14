@@ -26,6 +26,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from agent.context.summarizer import Summarizer, TruncationSummarizer
 from agent.subagent.workflow import (
     WorkflowEdge,
     WorkflowNode,
@@ -49,6 +50,56 @@ DEFAULT_TOKEN_BUDGETS: dict[str, int] = {
 
 #: 每 token 折算的字符数（bounded formatter 按字符裁剪，与 bus 的估算同口径）。
 CHARS_PER_TOKEN = 4
+
+_BOUNDED_MARKER = "\n…[bounded; read the full result via result_ref]"
+
+
+class WorkflowAggregator:
+    """workflow 级汇聚器（D5）：把**多节点结果文本**压成 bounded 贡献。
+
+    复用点是 :mod:`agent.context.summarizer` 的 :class:`Summarizer` Protocol，尤其
+    ``compress(tier_summaries: list[str], budget)``——签名正是「多份文本 + 预算」，
+    与 workflow 级汇聚的输入同型。``MemoryManager`` 的 L1/L2 是实例私有、绑定单
+    AgentLoop 的 ``messages`` 流，无直接复用入口（grill 决策 8）。
+
+    两档能力，职责分明：
+
+    - :meth:`bounded`（同步）：按层预算裁剪单份贡献。调度器构造下游 task 文本时走
+      这条——它必须在**同步**的 formatter 路径上完成，不能 await。
+    - :meth:`merge`（异步）：把一份 shard 的多条贡献交给 summarizer 语义压缩。
+      无 LLM 时退回 ``TruncationSummarizer`` 的拼接，且**仍然有界**（否则「没有 LLM」
+      会变成绕过预算的旁路）。
+    """
+
+    def __init__(self, summarizer: Summarizer | None = None) -> None:
+        self._summarizer: Summarizer = summarizer or TruncationSummarizer()
+
+    @property
+    def summarizer(self) -> Summarizer:
+        return self._summarizer
+
+    def bounded(self, text: str, *, budget: int) -> str:
+        """把一份贡献裁到 ``budget`` token（短文本 no-op）。"""
+        if not text:
+            return ""
+        limit = max(int(budget), 1) * CHARS_PER_TOKEN
+        if len(text) <= limit:
+            return text
+        return text[:limit] + _BOUNDED_MARKER
+
+    async def merge(self, contributions: list[str], *, budget: int) -> str:
+        """把多份贡献汇聚成一份 bounded 文本（先走 summarizer，再兜底裁剪）。"""
+        texts = [text for text in contributions if text]
+        if not texts:
+            return ""
+        compressed: str | None = None
+        try:
+            compressed = await self._summarizer.compress(texts, budget)
+        except Exception:  # noqa: BLE001 - 汇聚失败退回拼接，不丢结果
+            compressed = None
+        if compressed:
+            return self.bounded(compressed, budget=budget)
+        return self.bounded("\n\n---\n\n".join(texts), budget=budget)
 
 
 @dataclass(frozen=True)

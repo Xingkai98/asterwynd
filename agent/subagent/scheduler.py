@@ -33,10 +33,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping
 
 from agent.subagent.aggregation import (
+    CHARS_PER_TOKEN,
     DEFAULT_TOKEN_BUDGETS,
     ExecutionPlan,
     MAX_FAN_IN,
+    WorkflowAggregator,
 )
+from agent.context.summarizer import LLMSummarizer, Summarizer
 from agent.subagent.bus import MessageBus
 from agent.subagent.context import (
     reset_bus,
@@ -298,6 +301,11 @@ class WorkflowScheduler:
         self._latest_events: deque[dict] = deque(maxlen=_LATEST_EVENTS_LIMIT)
         self._store: WorkflowStore | None = None
         self._root_result_ref: str | None = None
+        #: workflow 级汇聚器（D5）：复用 summarizer 抽象做 bounded formatter。
+        #: LLM 可用时用它做语义压缩，否则退回 TruncationSummarizer（仍有界）。
+        self._aggregator = WorkflowAggregator(
+            summarizer=self._build_summarizer()
+        )
         self._cancelled = False
         self._cancel_event = asyncio.Event()
         self._progress = asyncio.Event()
@@ -372,6 +380,16 @@ class WorkflowScheduler:
             "domain": getattr(tiers, "domain", DEFAULT_TOKEN_BUDGETS["domain"]),
             "root": getattr(tiers, "root", DEFAULT_TOKEN_BUDGETS["root"]),
         }
+
+    def _build_summarizer(self) -> Summarizer | None:
+        """有 LLM 时用 ``LLMSummarizer``，否则 ``None`` 让 aggregator 用截断兜底。"""
+        llm = getattr(self.manager, "llm", None)
+        if llm is None:
+            return None
+        try:
+            return LLMSummarizer(llm)
+        except Exception:  # noqa: BLE001 - 汇聚器构造失败不该拖垮调度
+            return None
 
     def _graph(self) -> ExecutionPlan:
         """运行期图结构（含自动插入层）——所有边/节点查询的唯一入口。"""
@@ -824,7 +842,12 @@ class WorkflowScheduler:
             self._release(1)
             self._apply_run_status(state, envelope["status"])
             return
-        # collect：纯逻辑聚合，不产生 run（completed 只数真实 run）
+        # collect：纯逻辑聚合，不产生 run（completed 只数真实 run）。没有下游 LLM run
+        # 来消化拼接结果，所以 D5 的 workflow 级汇聚器正是这里的压缩点：把多份贡献交给
+        # summarizer 语义压缩，无 LLM 时退回有界拼接（不把巨型字符串原样传下去）。
+        merged = await self._merge_contributions_bounded(state, contributions, merged)
+        for slot in node.outputs:
+            state.slots[slot] = merged
         state.summary = merged or "\n".join(str(value) for value in state.slots.values())
         state.subagent_id = None
         state.run_id = None
@@ -1167,6 +1190,45 @@ class WorkflowScheduler:
 
     # -- 槽 / 任务文本 -------------------------------------------------------
 
+    async def _merge_contributions_bounded(
+        self,
+        state: NodeState,
+        contributions: dict[str, str],
+        merged: str,
+    ) -> str:
+        """collect 聚合的压缩点（D5/Q7）。
+
+        只有**多份贡献**且拼接结果超出该节点预算时才走 summarizer：单份贡献或本来就
+        在预算内的结果保持原样（既省一次无谓调用，也保住既有精确断言）。
+        """
+        plan = self._plan
+        if plan is None:
+            return merged
+        # ``contributions`` 是按**槽**聚合的，所以它的条目数不等于上游数：单槽多上游
+        # 时只有 1 条。判据取「有几个上游节点贡献了内容」。
+        upstreams = [
+            edge
+            for edge in plan.data_incoming(state.node.id)
+            if self._states.get(edge.source) is not None
+            and self._states[edge.source].status in TERMINAL_NODE_STATUSES
+        ]
+        if len(upstreams) < 2:
+            return merged
+        budget = plan.budget_for(state.node.id)
+        if len(merged) <= budget * CHARS_PER_TOKEN:
+            return merged
+        # 传给 summarizer 的是**每个上游一份**的 bounded 产出（而不是已经 concat 好的
+        # 巨型字符串）：compress 的语义是「多份文本 → 一份摘要」。
+        texts = [
+            text
+            for edge in upstreams
+            for text in (self._bounded_output(self._states[edge.source], "result"),)
+            if text
+        ]
+        if len(texts) < 2:
+            return merged
+        return await self._aggregator.merge(texts, budget=budget)
+
     def _merge_contributions(self, state: NodeState, contributions: dict[str, str]) -> str:
         """把所有上游贡献合并成一个字符串（``outputs`` 单槽时的取值语义）。
 
@@ -1233,8 +1295,11 @@ class WorkflowScheduler:
             if upstream is None:
                 continue
             text = self._bounded_output(upstream, "result")
-            if text:
-                parts.append(f"Input from {edge.source}:\n{text}")
+            if not text:
+                continue
+            ref = self._result_ref_for(upstream)
+            suffix = f" (full result: {ref})" if ref else ""
+            parts.append(f"Input from {edge.source}{suffix}:\n{text}")
         return "\n\n".join(parts)
 
     def _aggregate_task_text(self, state: NodeState) -> str:
@@ -1270,16 +1335,16 @@ class WorkflowScheduler:
     def _bounded_output(self, state: NodeState, slot: str) -> str:
         """一个上游节点在**下游视角**下的 bounded 产出（按距 leaf 层数定档裁剪）。
 
-        短文本 no-op（grill 风险「中」：``summary`` 的精确相等断言不受影响）。
+        裁剪经 :class:`WorkflowAggregator` 完成（D5：复用 summarizer 抽象），短文本
+        no-op——grill 风险「中」的既有精确相等断言因此不受影响。
         """
         value = self._node_output(state, slot)
         if not value:
             return ""
-        assert self._plan is not None
-        budget = self._plan.char_budget_for(state.node.id)
-        if len(value) <= budget:
-            return value
-        return value[:budget] + "\n…[bounded; read the full result via result_ref]"
+        plan = self._plan
+        assert plan is not None
+        tier_tokens = plan.budget_for(state.node.id)
+        return self._aggregator.bounded(value, budget=tier_tokens)
 
     def _route_verdict(self, state: NodeState) -> str:
         """route 的判定文本 = 所有数据上游产出的拼接（只做标签匹配）。"""
