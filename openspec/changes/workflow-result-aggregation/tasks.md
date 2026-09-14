@@ -28,7 +28,7 @@
 ## 5. 测试与收尾
 
 - [ ] 5.1 新增 result_ref 落盘/读取、分层汇聚自动兜底、bounded envelope、四档预算、bus 降级测试。
-- [ ] 5.2 100 leaf 不撑爆父上下文 + bus 丢消息不影响完成 + checkpoint/resume 恢复结果 ref。
+- [ ] 5.2 100 leaf 不撑爆父上下文 + bus 丢消息不影响完成 + **跨进程 result artifact 读取**（新 store 实例/subprocess 验证 result_ref 跨进程可解析 + 非 dedup 假象；不要求恢复 workflow 状态——调度器无 resume 入口，归 C5）。
 - [ ] 5.3 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke` 冒烟通过。
 - [ ] 5.4 同步 current spec：把 spec delta 合入 `openspec/specs/multi-agent-collaboration/spec.md`（当前规格 sync 任务）。
 - [ ] 5.5 `uv run pytest -q` 全绿；OpenSpec validate + artifact checker 通过。

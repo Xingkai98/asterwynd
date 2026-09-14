@@ -23,17 +23,20 @@ C2 交付了 Workflow DSL + 统一调度器，但结果传递是「完整 summar
 
 ## Decisions
 
-### D1 — result_ref 落盘 artifact
+### D1 — result_ref 落盘 artifact（独立 subtree，不复用 checkpoint 命名空间）
 
-完整结果/transcript 落盘到 workflow store（`agent/subagent/workflow_store.py`），`result_ref` 指向文件路径；内存只持 bounded summary。复用 C1/C2 的 checkpoint 机制（`SubagentSnapshotStore.for_workspace` 已落 `<workspace_root>/.asterwynd/subagents/`）。
+完整结果/transcript 落盘到 workflow store（`agent/subagent/workflow_store.py`），`result_ref` 指向文件路径。**独立 subtree** `<workspace_root>/.asterwynd/workflows/<workflow_id>/`，不复用 `SubagentSnapshotStore` 的目录命名空间（`SessionStore.remove()` 是 `shutil.rmtree` 整个 run 目录，复用会让 checkpoint 清理连结果一起删；且 `SessionStore.save()` 有 dedup skip，「写完再读」测试会看到不存在文件）。
 
-`SubagentRunRecord.to_result_dict` 增 `summary_ref` / `transcript_ref` / `artifact_refs`，默认返回 bounded summary + refs，完整 transcript 显式 inspect。
+`SubagentRunRecord.to_result_dict` 增 `summary_ref` / `transcript_ref` / `artifact_refs`。**正常完成的 run 不写 checkpoint**（`_write_checkpoint` 只在异常/取消分支），所以「完整结果落盘」是**新增写点**，在成功路径显式触发。`artifact_refs` 当前零生产者，本 change 明确定义其填充时机（否则恒为 `[]`）。
 
 ### D2 — 树状汇聚 = 显式 + 自动兜底
 
 - 模型在 DSL 里**显式声明 aggregate 节点**组成树（leaf→shard→domain→root）。
-- 调度器**自动兜底**：检测到「单 aggregate 直接上游 >10」或「总叶子数 >10」时自动插入分层 aggregate。
-- 分层 token 预算（G4 决议）：leaf 300 / shard 800 / domain 1500 / root 3000，可配置。
+- 调度器**自动兜底**：检测到「单 aggregate 直接上游 >10」（max fan-in=10）或「总叶子数 >10」时自动插入分层 aggregate。**声明期 + 展开期都算**（foreach 展开项数声明期不可知）。
+- 分层 token 预算（G4 决议）：leaf 300 / shard 800 / domain 1500 / root 3000，可配置。**预算档按「距 leaf 层数」判**（第 1 层 shard 800，再上 domain 1500，根 root 3000）。
+- **自动插层按 fan-in 分组**（`shard_count=ceil(leaf/10)`，逐层向上直到 root 输入 ≤10），不按 `ceil(log10(n))` 层数公式（会过度分层）。
+- **auto aggregate 默认 `strategy="llm"`**（collect 只是文本拼接、不解决 prompt 膨胀）；auto 节点预算计入 `max_nodes` + `max_runs`。
+- **部分显式树也触发兜底**（只补缺失层，已声明层保留）。
 
 ### D3 — 父 agent 永远 bounded envelope
 
@@ -43,27 +46,42 @@ C2 交付了 Workflow DSL + 统一调度器，但结果传递是「完整 summar
 {
   "workflow_id": "wf-123",
   "status": "running",
+  "total": 100,
   "completed": 73,
   "failed": 4,
+  "cancelled": 0,
+  "budget_exceeded": 0,
+  "blocked": 0,
   "pending": 23,
-  "latest_events": 5,
+  "latest_events": [...],
   "root_result_ref": "artifact://workflow/wf-123/root"
 }
 ```
 
-不看子级详细结果；要看再显式 inspect（GetWorkflow 带 detail 参数 / InspectSubagentTranscript）。语义统一、防炸。
+- **分母 = 逻辑执行单元**（普通节点=1、foreach=展开项数含容器）；`blocked` 是终态、单独计数；`cancelled`/`budget_exceeded` 单列不混 `failed`。保留旧 `completed`/`failed` run 计数字段兼容（`WorkflowScheduler.run()` 返回值语义不动）。
+- 不看子级详细结果；要看再显式 inspect（新增只读工具 `ReadWorkflowResult(ref, offset, limit)` 分页读 artifact 正文；GetWorkflow detail 返回节点级摘要列表）。
 
 ### D4 — bus 降级为非权威
 
 MessageBus 只做低延迟广播/非关键提示；权威状态、依赖完成、结果完整性、重试、重放全部进 workflow store/事件日志。bus 丢消息不影响 workflow 完成与结果正确性。
 
-### D5 — 复用 MemoryManager 的 L1/L2 分层摘要能力
+### D5 — 复用 summarizer 抽象（非 MemoryManager 私有字段）
 
-复用 `agent/memory/manager.py` 的 L1/L2 分层摘要能力（`_l1_chunks`/`_l2_summary`/`_tiers`）的 summarizer；但新增 workflow 级汇聚器，因为 MemoryManager 压缩的是单个 AgentLoop 的 messages，不能替代 workflow 级分层汇聚。
+复用 `agent/context/summarizer.py` 的 `Summarizer` Protocol / `compress(tier_summaries, budget)`（`MemoryManager` 的 L1/L2 是实例私有、绑定单 AgentLoop messages，无直接复用入口）；新增 workflow 级汇聚器，输入是「多节点 result_ref / summary 字符串」。
 
-### D6 — 分层汇聚阈值可配置
+### D6 — 分层汇聚阈值可配置（嵌套 AggregationConfig）
 
-「单 aggregate 直接上游 >10」「总叶子数 >10」的自动兜底阈值、四档 token 预算，均作为 `SubagentsConfig` 的可配置项（`subagents.workflow.*`），`_parse_subagents_config` 逐字段解析。
+自动兜底阈值 + 四档 token 预算作为**嵌套 `AggregationConfig`**（`thresholds` + `token_budgets` 两个子 dataclass，均 frozen + `field(default_factory)`）挂成 `WorkflowLimitsConfig.aggregation`；`_parse_workflow_limits` 多调 `_parse_aggregation` 显式逐字段解析。四档预算校验**非递减（允许相等）**，拒绝严格递减。
+
+### D7 — 三种结果表示（codex 修正）
+
+拆三种表示，`to_result_dict` 不承担双接口：
+
+1. **artifact**：完整结果，落盘；
+2. **scheduler internal**：供下游调度使用的 full formatter（`_node_task_text`/`_aggregate_task_text` 消费 bounded summary/ref，不是 concat 后的全文）；
+3. **parent/public envelope**：bounded summary + refs。
+
+层级中间节点必须消费 bounded summaries/ref，否则 100-leaf 的 prompt 膨胀依然发生（`_aggregate_task_text` 拼全文是真正的爆点）。
 
 ## Pre-Implementation Review
 
