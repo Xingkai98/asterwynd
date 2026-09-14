@@ -1,13 +1,30 @@
 # Building Review: workflow-dsl-scheduler
 
 - Reviewer: 独立零记忆 building 审阅员（/review-loop），不继承实现上下文
-- 审阅时间: 2026-09-14
+- 审阅时间: 2026-09-14（Round 1）/ 2026-09-14（Round 2）
 - base sha: `c662165`（C1 `subagent-concurrency-queue` merge，本分支真实 fork 点）
-- head sha: `5ec9ade`（分支 `workflow-dsl-scheduler/2026-09-14`）
+- head sha: `213e668`（Round 2；分支 `workflow-dsl-scheduler/2026-09-14`）
 - 审阅范围: `git diff c662165...HEAD` — 36 files, +7008/-248（新增 `agent/subagent/workflow.py`、`agent/subagent/scheduler.py`；改 `manager.py` / `patterns.py` / `tools/builtin/subagents.py` / `loop.py` / `config.py`；5 个新测试文件 ~91 条）
 - 验证方式: 全部结论均由本地实跑复现（三门禁 + 全量 pytest + 6 组独立探针脚本），未采信上一轮报告
 
 ## Verdict
+
+**PASS**（Round 2，2026-09-14）
+
+Round 1 的 4 个阻塞 issue（全在 `foreach`）已由 commit `213e668` 修复，本轮的每一条结论都由**独立探针**重新复现（不采信实现 agent 的修复报告，也不复用 Round 1 的上下文）：
+
+1. **`foreach` 串行 → 并发**：已修复。4 项 `foreach`（每次 LLM hold 0.08s）实测 LLM 并发峰值 **4**、墙钟 **0.093s**，与「4 个独立 subagent 节点」对照组的 0.094s 一致（串行下界 0.320s）。修复前峰值恒为 1。
+2. **`foreach` 绕过 `max_runs`**：已修复。`max_runs=3` + 8 项展开 → envelope `status="graph_recursion_exceeded"` + `diagnostics.reason="max_runs"`，且**在建任何 session 之前拒绝**（实测 0 个 session）。桶校准 `max_runs*2` 在 n=3/5/8 边界均不倒置。
+3. **`queue_full` 必崩**：已修复。两张并发图共用 manager 的原始可达路径实测 **0 个 IndexError**；单节点路径失败原因为可读的 `"subagent queue is full (0/0); ..."`。20/20 次重复稳定。
+4. **`max_nodes` 不数展开**：已修复。`max_nodes=5` + 20 项 → 拒绝且创建 session 数 **0**；边界含端点（`1 声明 + 4 展开 == 5` 放行，`5 展开` 拒绝）。
+
+Round 1 列出的 5 个次要项亦逐条核验通过（见「Round 2 独立核验」）。回归面（D1–D8：fan-out/join、取消传播、部分失败、superstep 计数、spawn 桶复位、身份隔离、worker 预算透传）在并发化后**无一破坏**，48 组 `n × max_active` 压力矩阵下并发峰值恒 ≤ `max_active`、无槽位泄漏、无挂起。
+
+Round 2 新增 2 条**非阻塞**观察（见「非阻塞观察」），均不影响合入：一处是 `max_nodes` 在 `foreach` 重入时按累计语义计（保守、默认值下几乎不可达，4 个内置模板无一路径命中）；一处是 `foreach` 项的 `queue_full` 原因未在节点级透出（窄路径）。
+
+---
+
+## Round 1 Verdict（历史记录，已被 Round 2 取代）
 
 **CHANGES_REQUESTED**
 
@@ -240,3 +257,123 @@ peer-review 模板的 reviewer 指令是「Reply with exactly one line starting 
 - Issue 6/7：分别为参数透传与 `NOT APPROVED` 不命中 `APPROVED` 各加一条断言。
 
 修完后重新跑 round 2 复审；本轮 verdict 为 CHANGES_REQUESTED，未生成 review manifest（manifest 只在 PASS 时产出）。
+
+---
+
+# Round 2 复审（2026-09-14）
+
+- Reviewer: 独立零记忆 building 复审员（/review-loop），**不继承** Round 1 上下文
+- head sha: `213e668`（修复 commit：`building review Round 1 修复：foreach 并发/三闸 + queue_full 可观测性 + spec 对齐`）
+- 验证方式: 全部结论由**独立探针**（`/tmp/round2_probe/`，约 40 条，自建 LLM/manager 桩，不复用仓库内新增测试的断言口径）实跑复现 + 三门禁复跑
+
+## 4 个阻塞 issue 的独立复现
+
+### Issue 1 — `foreach` 真并行 ✅ 已修复
+
+修复点：`agent/subagent/scheduler.py:711-731`（`asyncio.create_task` × N + `asyncio.gather`）与 `:758-774`（`_run_foreach_item`，逐项 `_acquire_slot` 背压）。
+
+独立探针（4 项 `foreach`，每项 `asyncio.sleep(0.08)`，`max_active=5`，热身 3 轮后测 5 次取中位）：
+
+| 场景 | 墙钟中位 | LLM 并发峰值 |
+|------|---------|-------------|
+| 4 项 `foreach` | **0.093s** | **4** |
+| 对照组：4 个独立 `subagent` 节点 | 0.094s | 4 |
+| 串行下界（4 × 0.08） | 0.320s | 1 |
+
+`foreach` 与独立节点的墙钟/峰值**完全一致**，确认并发化真实生效、且与 `c662165:agent/subagent/patterns.py` 旧 `asyncio.gather` 基线同级。逐次 chat 时间线（`test_timeline.py`）显示 4 次调用在 0.000–0.089s 内**重叠**，非串行排队。
+
+> 过程说明：首轮探针曾测得 0.299s 疑似「假并发」。定位为**冷启动**（同进程首次跑 scheduler 的一次性开销 ~0.22s），非实现缺陷——同进程第 2 次起稳定 0.093s（`test_warmup.py`：walls=[0.325, 0.094, 0.093, 0.093, 0.094]）。对照组同样受冷启动影响，故公平对照以热身后的数据为准。
+
+### Issue 2 — `foreach` 受 `max_runs` 闸 + 桶校准不倒置 ✅ 已修复
+
+修复点：`agent/subagent/scheduler.py:776-810`（`_check_foreach_budget`，展开**前**预检 `max_runs`/`max_nodes`，抛 `GraphRecursionError`）+ `:404-405`（主循环冒泡 `_fatal_error`）+ `:577-583`（节点任务捕获 `GraphRecursionError` 不当普通失败）+ `:945-952`（桶上限 `max_runs*2` 不变）。
+
+| 探针 | 结果 |
+|------|------|
+| `max_runs=3` + 8 项展开 | `status=graph_recursion_exceeded`，`reason=max_runs`，节点 `error` 不含 `"spawn budget"`，**创建 session 数 0** |
+| 桶校准 n=3/5/8（`max_runs=n`） | 均 `completed`、`completed==n`、无 `"spawn budget"`——桶恰好容纳 N create + N run = 2N |
+| 跨节点预算：`pre`(1 run) + `foreach`(5 项) + `max_runs=4` | `graph_recursion_exceeded`——图级预算正确按已耗额度判 |
+| 20 次重复 | 20/20 稳定，无 flake |
+
+原 Round 1 观测的「envelope 报 `completed` + 节点死在 `RuntimeError(spawn budget ...)`」不再出现。
+
+### Issue 3 — `queue_full` 不崩、可诊断 ✅ 已修复
+
+修复点：`agent/subagent/scheduler.py:862-872`（**先**判 `queue_full` 再取值；该状态下 `_take_back_if_queue_full` 已弹掉 run record，故按可诊断失败记账，不再索引 `session.runs[-1]`）。
+
+- 单图（`max_active=1`/`max_queued_runs=0`，外部 run 占池）：节点 `status=failed`，`error=None`（非 `IndexError`），`reason="subagent queue is full (0/0); wait for queued runs to finish ..."`。
+- **Round 1 的原始可达路径**（两张并发图共用 manager）：A/B 均 `completed`，节点 `error` 全为空——**0 个 IndexError**。
+- 20 次重复：20/20 无 `IndexError`。
+
+### Issue 4 — `max_nodes` 计入 `foreach` 展开 ✅ 已修复
+
+修复点：`agent/subagent/scheduler.py:795-809`（`_expanded_nodes` 由预检读写，不再是死字段）。
+
+| 探针 | 结果 |
+|------|------|
+| `max_nodes=5` + 20 项 | `graph_recursion_exceeded`，`reason=max_nodes`，**创建 `fan-*` session 数 0** |
+| 边界：`1 声明 + 4 展开 == max_nodes=5` | `completed`（端点放行，不倒置） |
+| 边界：`1 声明 + 5 展开 > max_nodes=5` | `graph_recursion_exceeded` |
+| `max_nodes=2` + 2 声明节点（无展开） | `completed` |
+| 20 次重复 | 20/20 稳定 |
+
+## 5 个次要项的独立核验
+
+| Issue | 状态 | 独立证据 |
+|-------|------|---------|
+| 5 `peak_active` 失真 | ✅ | `foreach` 路径 `peak_active` 实测 4（旧为恒 1）；与 LLM 观测峰值一致 |
+| 6 `worker_max_tokens`/`worker_max_time_s` 丢失 | ✅ | `patterns.py:65-78` `_worker_budget` → `WorkflowNode.max_tokens`/`max_time_s`（`workflow.py:119-120`）→ `_launch_run` 透传（`scheduler.py:856-857`）。4 个 pattern 模板均落到节点；实测 `run.max_tokens==321`、`run.max_time_s==9.0`。非法值（0/负数/非数）报 schema 错，不再静默丢弃 |
+| 7 `NOT APPROVED` 误命中 `APPROVED` | ✅ | `scheduler.py:182-197` 改行首匹配：`matches_route("NOT APPROVED at all","APPROVED")==False`、`"DISAPPROVED"`/`"This is not APPROVED yet"` 均 False；`"APPROVED."`/`"  APPROVED looks good"`/`"APPROVED\nlooks good"` 仍 True。残留（保留行首即命中，如 `"Issues found:\nAPPROVED is premature"`）已记录，属行首语义本身，非回归 |
+| 8 死字段/死代码 | ✅ | `NODE_STATUSES`、`_foreach_state`、`NodeState.stale`、`OrcPattern.manager`/`bus` 均已从 `scheduler.py`/`patterns.py` 删除（`grep` 全仓无引用点） |
+| 9 深度闸 spec delta 落错域 | ✅ | MODIFIED「深度到限撤 spawn 工具」+「累计 spawn 计数上限」已迁至 `specs/subagents/spec.md`（本体域）；`specs/multi-agent-collaboration/spec.md` 不再含这两条 → sync 后不会产生两条矛盾 requirement |
+
+## 回归检查（D1–D8 既有行为，并发化后）
+
+| 维度 | 结果 |
+|------|------|
+| fan-out + join（all_required，3 臂 → collect） | 全 `completed`、`completed==3`、`steps==2`、`peak_active==3` |
+| 取消传播（`foreach` 在飞时 `CancelWorkflow`） | `status=cancelled`，展开项全部停；6 项 × 多 `max_active` 组合下 `live_sessions==0`、`_in_flight_runs==0` |
+| 部分失败 | `foreach` 报 `completed` + `reason="k/n foreach items did not complete"`；envelope `completed`/`failed` 与 manager 真实 run 数一致（3+3==6） |
+| 全部失败 | 节点 `failed` + `reason="all foreach items failed"` |
+| 图级 recursion_limit（route 自环） | `graph_recursion_exceeded` + `reason=recursion_limit`，10/10 稳定 |
+| spawn 桶复位 | workflow 结束后 `spawn_count()==0`、`_workflow_spawn_counts=={}` |
+| 身份 contextvar 隔离（并发展开项） | 4 项并发下 `workflow_id` 全为同一值、`node_id` 全为 `"fan"`，退出后无残留（`current_workflow_id() is None`） |
+| superstep 计数 | 6 项 `foreach` == 1 步（一次派发批次） |
+| 背压不变量 | `n∈{2,5,12,30} × max_active∈{1,2,3,8}`（16 组合 × 3 次 = 48 次运行）：峰值恒 ≤ `max_active`、`_in_flight_runs==0`、无挂起 |
+| 三闸无重复计数 | `_run_cost(foreach)==0`（`:546`），预算只在 `_check_foreach_budget` 计一次，无双重扣减 |
+
+## 非阻塞观察
+
+### O1 — `_expanded_nodes` 在 `foreach` 重入时按累计语义计（保守，非缺陷）
+
+`scheduler.py:809` 的 `self._expanded_nodes += count` 无重入复位，`_reset_subtree`（`scheduler.py:617-634`）也不回退。因此「`foreach` + route 回边的有限循环」每轮重展开**重复计入** `max_nodes`，`max_nodes` 实际语义是「累计展开节点预算」而非「瞬时图规模」。
+
+实测（2 节点图 `fan`/`gate` + 2 项 `foreach` + 回边）：`max_nodes=5` 在第 2 轮被拒（`"would expand 2 nodes, exceeding max_nodes 5 (4 already declared)"`），而图规模始终只有 4 个节点。
+
+判定为**非阻塞**：① 方向保守（只多算、不少算，不会放过爆炸）；② 诊断诚实可读；③ 默认 `max_nodes=200` 下，`recursion_limit=25`（≈12 轮）先于 `max_nodes` 生效，正常图不可达；④ **4 个内置模板无一路径命中**（`peer-review` 有回边但无 `foreach`；含 `foreach` 的 3 个模板无回边）；⑤ 与 `max_runs`（`:810`，累计计 run，语义本就该累计）在同一预检里成对，读起来是一套一致口径。
+
+建议（不阻塞合入）：在 design.md D6 或 `WorkflowSpec.max_nodes` 的 docstring 里显式写明是「累计展开预算」；若期望「瞬时图规模」语义，则在 `_reset_subtree`/重展开前把该节点的既有展开数回退。
+
+### O2 — `foreach` 项的 `queue_full` 原因未在节点级透出（窄路径）
+
+`scheduler.py:776-810` 的预检与 `:731-753` 的聚合只产出 `"all foreach items failed"`，不聚合逐项的 `queue_full` 原因；对照单 `subagent` 节点路径（`:864-872` 把 envelope 的 `reason` 写回 `state.reason`），`foreach` 节点/`GetWorkflow` 看不到 `"subagent queue is full ..."`。同时 envelope 的 `completed`/`failed` 是 **run record 计数**（`queue_full` 不留记录），故该场景下 `completed=0`/`failed=0` 与节点 `failed` 并存——内部自洽，但父 agent 无法区分「queue 满」与「LLM 报错」两种 `foreach` 全失败。
+
+判定为**非阻塞**：① 需外部 run 占满全 manager 池才能触达（Q2 准入背压使 workflow 自身不产生 `queue_full`）；② 节点状态 `failed` + `runs=n` 已如实反映「尝试了 n 项、全失败」，未静默丢；③ Round 1 Issue 3 的硬要求（不崩、单节点可诊断）已达成。
+
+建议（不阻塞合入）：`_execute_foreach` 在全失败时把首条非空 `envelope.reason` 并入 `state.reason`（如 `"all foreach items failed: subagent queue is full ..."`）。
+
+## 门禁复跑结果（Round 2，独立执行）
+
+| 门禁 | 命令 | 结果 |
+|------|------|------|
+| 目标测试集 | `uv run pytest tests/agent/subagent/ -q` | ✅ **179 passed** in 5.38s（含 Round 1 后新增的 6 条 `foreach` 回归测试） |
+| 全量 pytest | `uv run pytest -q` | ✅ **2325 passed, 8 skipped** in 135.27s（exit 0） |
+| 浏览器 flake 复跑 | `uv run pytest tests/web_tests/test_browser.py tests/web_tests/test_multi_session_browser.py -q` ×3 | ✅ 3 次均 `10 passed, 7 skipped`，**未复现** flake |
+| OpenSpec strict validate | `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` | ✅ **30 passed, 0 failed** |
+| 项目 artifact checker | `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` | ✅ `OpenSpec artifact checks passed`（本轮写入 PASS manifest 后 exit 0；此前仅 `review manifest missing` 一条，符合 Round 1 CHANGES_REQUESTED 的预期） |
+| benchmark smoke | `uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-c2-r2` | ✅ `Tasks: 72 | passed: 5 | warnings: 0 | unsupported: 38 | failed: 29`，exit 0（与基线一致） |
+| 独立探针 | `/tmp/round2_probe/`（约 40 条） | ✅ 全部通过（初版 4 条因**探针自身**缺陷失败——2 条冷启动未热身、2 条 spec 缺 `entry`——修正探针后全通过；非实现缺陷） |
+
+## 复审结论
+
+Round 1 的 4 个阻塞 issue 全部**独立复现为已修复**，5 个次要项全部核验通过，D1–D8 回归面无一破坏，6 项门禁全绿。Round 2 新增 2 条非阻塞观察（O1/O2），已给出建议但不阻塞合入。**verdict = PASS**，随本报告生成 `reviews/building-review-manifest.json`。

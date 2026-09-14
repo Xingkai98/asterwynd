@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-dsl-scheduler",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-dsl-scheduler-20260914-r2",
+  "base_sha": "c6621652e3cd5744a4227172bdaa3da79486bbe6",
+  "head_sha": "213e6687bc177a4c11fd0f8a96a8426912f80396",
+  "tasks_hash": "sha256:109f58066731a594e8cd59f4c6ff68d7d053bd2d443ac5f429cf4a8adf4bc0e9",
+  "spec_hash": "sha256:fb64eb5f739070400398eea6816da88f94c538570777479c67e379adee71bae8",
+  "diff_hash": "sha256:22362869933e7e5b6cd5a01bcbde498156fa487545289b21829424879bdc8fd8",
+  "report_hash": "sha256:2b1f35b0254b35113fac004caa64c0d644aa7e586710d329b6b0563dbc158f4d"
+}
