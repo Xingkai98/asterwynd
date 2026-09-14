@@ -123,6 +123,19 @@ class WorkflowStore:
         )
         return ref
 
+    def save_attribution(self, key: str, payload: dict) -> str:
+        """落盘四维成本归因快照（change ``workflow-budget-attribution``，D7/Q15）。
+
+        ``key`` 约定传 ``workflow_id``（与 ``save_result`` 的 key 命名空间同层，但
+        文件名带 ``.attribution`` 后缀避免撞 ``attribution`` 槽名）。父 agent 通过
+        ``GetWorkflow(detail="attribution")`` 拿 ref、再用 ``ReadWorkflowResult`` 读回。
+        """
+        ref = self.ref(f"{key}.attribution")
+        self._atomic_write(
+            self.path_for(ref), json.dumps(payload, ensure_ascii=False, indent=2)
+        )
+        return ref
+
     def append_event(self, event: dict) -> None:
         """追加一条权威事件（``events.jsonl``，每行一个 JSON 对象）。"""
         path = self._root / "events.jsonl"

@@ -32,6 +32,10 @@ _bus: ContextVar["MessageBus | None"] = ContextVar("subagent_bus", default=None)
 _current_run_id: ContextVar[str | None] = ContextVar("subagent_current_run_id", default=None)
 _workflow_id: ContextVar[str | None] = ContextVar("subagent_workflow_id", default=None)
 _node_id: ContextVar[str | None] = ContextVar("subagent_node_id", default=None)
+#: workflow 图距（0=leaf / 1=shard / 2=domain / 3+=root）。**独立于** ``spawn_depth``
+#: ——调度器按执行计划给每个节点 set，绝不用它驱动 ``max_depth`` 深度闸（change
+#: ``workflow-budget-attribution``，Q7/Q13：by_depth 的图距口径）。
+_graph_distance: ContextVar[int | None] = ContextVar("subagent_graph_distance", default=None)
 
 
 def current_spawn_depth() -> int:
@@ -92,3 +96,15 @@ def set_node_id(node_id: str | None) -> Any:
 
 def reset_node_id(token: Any) -> None:
     _node_id.reset(token)
+
+
+def current_graph_distance() -> int | None:
+    return _graph_distance.get()
+
+
+def set_graph_distance(distance: int | None) -> Any:
+    return _graph_distance.set(distance)
+
+
+def reset_graph_distance(token: Any) -> None:
+    _graph_distance.reset(token)

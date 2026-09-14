@@ -92,6 +92,29 @@ async def test_token_budget_exceeded_marks_budget_exceeded(manager):
 
 
 @pytest.mark.asyncio
+async def test_token_budget_exceeded_backfills_input_output_usage(manager):
+    """C4 task 2.4 回归：被预算杀的 run 的 usage 不得把 input/output 写成 0。
+
+    C3 遗留把 ``SubagentRunUsage(total_tokens=tokens, input_tokens=0,
+    output_tokens=0)``——CostLedger 按 run.usage 报的 cost 会因此偏低甚至为 0，
+    与 workflow 账本口径打架（Q12）。这里补填 tracker 实际累计的 input/output。
+    """
+    manager.llm = TokenBurningLLM()
+    created = manager.create_subagent(name="burner")
+    result = await manager.run_subagent(
+        subagent_id=created["subagent_id"],
+        task="burn tokens",
+        wait=True,
+        max_tokens=100,
+    )
+    assert result["status"] == "budget_exceeded"
+    usage = result["usage"]
+    assert usage["input_tokens"] > 0
+    assert usage["output_tokens"] > 0
+    assert usage["input_tokens"] + usage["output_tokens"] == usage["total_tokens"]
+
+
+@pytest.mark.asyncio
 async def test_token_budget_kill_writes_checkpoint(manager, tmp_path):
     manager.llm = TokenBurningLLM()
     created = manager.create_subagent(name="burner")

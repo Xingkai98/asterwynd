@@ -621,8 +621,10 @@ class ReadWorkflowResultTool(Tool):
         "truncated so a large graph cannot blow up the caller's context. Use "
         "detail to pick what the response focuses on: 'summary' (default, node "
         "summaries only), 'nodes' (node summaries plus each node's result_ref — "
-        "read the body with ReadWorkflowResult), or 'events' (the latest terminal "
-        "transitions)."
+        "read the body with ReadWorkflowResult), 'events' (the latest terminal "
+        "transitions), or 'attribution' (the four-dimension cost attribution "
+        "summary — by_workflow/by_node/by_depth/by_edge top-k — plus an "
+        "attribution_ref for the full bill)."
     ),
     parameters={
         "type": "object",
@@ -630,7 +632,7 @@ class ReadWorkflowResultTool(Tool):
             "workflow_id": {"type": "string"},
             "detail": {
                 "type": "string",
-                "enum": ["summary", "nodes", "events"],
+                "enum": ["summary", "nodes", "events", "attribution"],
                 "description": "Response focus. Defaults to 'summary'.",
             },
         },
@@ -641,7 +643,7 @@ class GetWorkflowTool(Tool):
     read_only = True
     permission = SUBAGENT_CONTROL_PERMISSION
 
-    _DETAILS = ("summary", "nodes", "events")
+    _DETAILS = ("summary", "nodes", "events", "attribution")
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -672,6 +674,11 @@ class GetWorkflowTool(Tool):
                     node["result_ref"] = ref
         elif detail == "events":
             payload["nodes"] = []
+        elif detail == "attribution":
+            # 节点列表与 attribution 无关，去掉以免撑大返回（attribution 摘要已在
+            # 顶层 payload 里；这里只补一个显式的 ref 键，Q15）。
+            payload["nodes"] = []
+            payload["attribution_ref"] = payload.get("attribution_ref")
         return json.dumps(payload, ensure_ascii=False)
 
 
