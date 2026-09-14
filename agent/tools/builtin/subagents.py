@@ -543,7 +543,12 @@ class StartWorkflowTool(Tool):
 
 
 async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
-    """跑一张已声明的图；已有 spec 则直接执行，否则视为未声明。"""
+    """跑一张已声明的图；已有 spec 则直接执行，否则视为未声明。
+
+    返回**父 agent 面向的 bounded 投影**（D3/Issue 4）：``run()`` 的权威 envelope
+    仍保留全量 ``nodes``（C2 断言依赖），但那是调度器内部/回放口径；父 agent 拿到的
+    是 ``parent_envelope()``。
+    """
     spec = scheduler.spec
     if spec is None:
         return {
@@ -551,7 +556,8 @@ async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
             "workflow_id": scheduler.workflow_id,
             "reason": "workflow has no spec attached (declare it with DeclareWorkflow)",
         }
-    return await scheduler.run(spec)
+    await scheduler.run(spec)
+    return scheduler.parent_envelope()
 
 
 @tool_parameters(
@@ -655,7 +661,7 @@ class GetWorkflowTool(Tool):
                 },
                 ensure_ascii=False,
             )
-        payload = scheduler.status()
+        payload = scheduler.parent_envelope()
         payload["detail"] = detail
         if detail == "nodes":
             # 节点级摘要 + 各自的 result_ref（**不**展开正文，Q1）。
@@ -757,4 +763,6 @@ class RunWorkflowTool(Tool):
                 },
                 ensure_ascii=False,
             )
-        return json.dumps(await scheduler.run(spec), ensure_ascii=False)
+        # 父 agent 拿到的是 bounded 投影（D3/Issue 4），与 StartWorkflow 同口径。
+        await scheduler.run(spec)
+        return json.dumps(scheduler.parent_envelope(), ensure_ascii=False)

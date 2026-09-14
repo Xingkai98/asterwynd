@@ -32,6 +32,18 @@ _ALLOWED_REF_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
 )
 
+#: 被禁止的路径段：``.`` / ``..`` 会让 ``<ws>/.asterwynd/workflows/<id>`` 跳出 subtree。
+#: 必须在**段级**拒绝——字符白名单允许 ``.``（``run_a.summary`` 这类键依赖它），
+#: 只靠「两段」校验会漏掉 ``artifact://workflow/../leak``（恰好两段）。
+_FORBIDDEN_SEGMENTS = frozenset({".", ".."})
+
+
+def _validate_segment(value: str, label: str) -> str:
+    """校验一个 ref 路径段：非空、字符集受限、且不是 ``.`` / ``..``。"""
+    if not value or set(value) - _ALLOWED_REF_CHARS or value in _FORBIDDEN_SEGMENTS:
+        raise ValueError(f"invalid {label}: {value!r}")
+    return value
+
 
 class WorkflowStore:
     """一个 workflow run 的结果 artifact + 事件日志（独立于 checkpoint 命名空间）。"""
@@ -42,6 +54,9 @@ class WorkflowStore:
 
     @classmethod
     def for_workspace(cls, workspace_root: str | Path, workflow_id: str) -> "WorkflowStore":
+        # workflow_id 直接拼进路径，所以它必须自己就是合法段（否则 ``..`` 会让 root
+        # 跳到 ``<ws>/.asterwynd``）。
+        _validate_segment(workflow_id, "workflow_id")
         return cls(Path(workspace_root) / ".asterwynd" / "workflows" / workflow_id)
 
     # -- ref 编解码 ----------------------------------------------------------
@@ -50,8 +65,9 @@ class WorkflowStore:
     def parse_ref(ref: str) -> tuple[str, str]:
         """把 ``artifact://workflow/<workflow_id>/<key>`` 拆成两段，非法即拒绝。
 
-        严格白名单：只接受单段 ``workflow_id`` + 单段 ``key``，字符集受限，
-        因此 ``..``、绝对路径、多余层级在解析层就被拒绝（不会拼出逃逸路径）。
+        严格白名单 + **段级**校验：只接受单段 ``workflow_id`` + 单段 ``key``，字符集
+        受限，且 ``.`` / ``..`` 这类路径段被显式拒绝。绝对路径、多余层级同样在解析层
+        被拒（不会拼出逃逸路径）。
         """
         if not isinstance(ref, str) or not ref.startswith(RESULT_REF_PREFIX):
             raise ValueError(f"not a workflow result ref: {ref!r}")
@@ -60,14 +76,12 @@ class WorkflowStore:
         if len(parts) != 2:
             raise ValueError(f"malformed workflow result ref: {ref!r}")
         workflow_id, key = parts
-        for part, label in ((workflow_id, "workflow_id"), (key, "key")):
-            if not part or set(part) - _ALLOWED_REF_CHARS:
-                raise ValueError(f"invalid {label} in workflow result ref: {ref!r}")
+        _validate_segment(workflow_id, "workflow_id")
+        _validate_segment(key, "key")
         return workflow_id, key
 
     def ref(self, key: str) -> str:
-        if not key or set(key) - _ALLOWED_REF_CHARS:
-            raise ValueError(f"invalid result key: {key!r}")
+        _validate_segment(key, "result key")
         return f"{RESULT_REF_PREFIX}{self.workflow_id}/{key}"
 
     @property

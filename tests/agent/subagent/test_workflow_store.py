@@ -100,18 +100,72 @@ def test_result_ref_prefix_round_trips(store):
     assert (workflow_id, key) == ("wf_test1", "run_a")
 
 
-def test_parse_ref_rejects_foreign_and_traversing_refs(store):
+def test_parse_ref_rejects_foreign_and_malformed_refs(store):
     for bad in (
-        "artifact://workflow/../etc/passwd",
-        "artifact://workflow/wf_test1/../../escape",
         "artifact://subagent/wf_test1/run_a",
         "/etc/passwd",
         "artifact://workflow/wf_test1",
+        "artifact://workflow/wf_test1/run_a/extra",
         "artifact://workflow//run_a",
         "",
     ):
         with pytest.raises(ValueError):
             WorkflowStore.parse_ref(bad)
+
+
+def test_parse_ref_rejects_dot_segments(store):
+    """安全边界（review Issue 2）：``..`` 必须是**段级**拒绝，不能靠段数侥幸拦截。
+
+    之前那条 ``artifact://workflow/../etc/passwd`` 是因为「三段」被
+    ``len(parts) != 2`` 拒掉，``..`` 本身从未被识别——给出虚假信心。
+    """
+    for bad in (
+        "artifact://workflow/../leak",       # 两段，workflow_id == ".."
+        "artifact://workflow/wf_test1/..",   # 两段，key == ".."
+        "artifact://workflow/./leak",        # 单点段
+        "artifact://workflow/wf_test1/.",    # 单点段（key）
+        "artifact://workflow/../x",
+        "artifact://workflow/sub/../../leak",
+    ):
+        with pytest.raises(ValueError):
+            WorkflowStore.parse_ref(bad)
+
+
+def test_dot_segment_ref_cannot_read_outside_the_subtree(tmp_path):
+    """端到端复现 review Issue 2：``..`` 曾能读到 ``<ws>/.asterwynd/results/*.txt``。
+
+    安全属性 = **读不到**：严格原语 ``path_for`` 抛 ValueError；容忍型 IO 包装
+    （``load``/``read``）把坏 ref 当「无此件」处理，同样不泄漏正文。
+    """
+    leak_dir = tmp_path / ".asterwynd" / "results"
+    leak_dir.mkdir(parents=True)
+    (leak_dir / "leak.txt").write_text("LEAKED", encoding="utf-8")
+
+    # ``for_workspace`` 的 workflow_id 也必须拒绝 ``..``（否则 root 直接跳出去）
+    with pytest.raises(ValueError):
+        WorkflowStore.for_workspace(tmp_path, "..")
+
+    store = WorkflowStore.for_workspace(tmp_path, "wf_test1")
+    bad_ref = "artifact://workflow/../leak"
+    with pytest.raises(ValueError):
+        store.path_for(bad_ref)
+    assert store.load(bad_ref) is None
+    page = store.read(bad_ref)
+    assert page["missing"] is True and page["content"] == ""
+    assert "LEAKED" not in json.dumps(page)
+
+
+def test_ref_rejects_dot_segments_on_the_write_path(store):
+    """写路径同样不能产出逃逸 ref（``save_summary`` 会拼 ``{key}.summary``）。"""
+    for bad in ("..", ".", "../x", "a/.."):
+        with pytest.raises(ValueError):
+            store.ref(bad)
+
+
+def test_ref_still_allows_dots_inside_key_names(store):
+    """段级校验不能误伤合法键：``save_summary``/``save_transcript`` 依赖点号。"""
+    assert store.ref("run_a.summary") == "artifact://workflow/wf_test1/run_a.summary"
+    assert store.ref("run_a.transcript") == "artifact://workflow/wf_test1/run_a.transcript"
 
 
 # --- 1.1 分页读取 -----------------------------------------------------------

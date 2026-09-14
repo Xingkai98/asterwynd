@@ -120,6 +120,21 @@ async def test_read_workflow_result_rejects_malformed_ref(manager):
     assert "reason" in out
 
 
+@pytest.mark.asyncio
+async def test_read_workflow_result_rejects_dot_segment_escape(manager, tmp_path):
+    """安全边界（review Issue 2）：模型可控的 ref 不能靠 ``..`` 跳到 subtree 之外。"""
+    leak_dir = tmp_path / ".asterwynd" / "results"
+    leak_dir.mkdir(parents=True)
+    (leak_dir / "leak.txt").write_text("LEAKED-OTHER-CONTENT", encoding="utf-8")
+
+    for bad_ref in ("artifact://workflow/../leak", "artifact://workflow/sub/../../leak"):
+        out = json.loads(
+            await ReadWorkflowResultTool(manager).execute(ref=bad_ref)
+        )
+        assert out["missing"] is True, bad_ref
+        assert "LEAKED-OTHER-CONTENT" not in out["content"], bad_ref
+
+
 # --- GetWorkflow(detail) -----------------------------------------------------
 
 

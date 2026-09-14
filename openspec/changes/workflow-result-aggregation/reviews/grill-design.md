@@ -102,14 +102,14 @@
 ## User Confirmation
 
 - **Q1**: 用户答复：新增只读工具 `ReadWorkflowResult(ref, offset, limit)` 分页读回 artifact 正文；`GetWorkflow(detail)` 只返回节点级摘要列表（不展开正文）；确认时间: 2026-09-14
-- **Q2**: 用户答复（codex 独立确认修正）：分母改「逻辑执行单元」——普通节点=1、foreach=展开项数（含容器节点计入）；`blocked` 是终态、单独计数不计入 pending；`cancelled`/`budget_exceeded` 单独计数不混入 `failed`；保留旧 run 计数字段兼容（`completed`/`failed` 既有语义不动，新增 `total`/`cancelled`/`budget_exceeded`/`blocked`/`pending` 字段）；确认时间: 2026-09-14
-- **Q3**: 用户答复（codex 独立确认修正）：声明期 + 展开期都算；**三 hash**——`declared_spec_hash`（原始 spec 不可变）/ `expansion_plan_hash`（foreach 展开计划）/ `runtime_graph_hash`（含自动插节点的执行图）；**不原地改 `WorkflowSpec`**，用独立 execution plan（否则状态表/入边/reducer 全乱）；确认时间: 2026-09-14
-- **Q4**: 用户答复（codex 独立确认修正）：阈值 `>10`（max fan-in=10，n=10 不触发拆分）；层数按 fan-in 分组（`shard_count=ceil(leaf/10)`，逐层向上直到 root 输入 ≤10）；预算按「距 leaf 层数」（第 1 层 shard 800，再上 domain 1500，根 root 3000）；**auto aggregate 默认 `strategy="llm"`**（collect 只是拼接不解决 prompt 膨胀），auto 节点预算计入 `max_nodes` + `max_runs`；部分显式树补缺（只补缺失层，已声明层保留）；确认时间: 2026-09-14
-- **Q5**: 用户答复（codex 独立确认修正）：ring buffer 放 **scheduler 内部**（非 manager），记「最近 5 次**终态迁移事件**」（同节点重跑可再次出现）；事件字段 = `node_id + status + summary_preview(首个非空行)`，不承诺「一句话」；每条事件分配字符上限（5×80 或整体裁剪）；不用 bus 填；确认时间: 2026-09-14
-- **Q6**: 用户答复（codex 独立确认修正）：**拆三种表示**——①artifact 完整落盘 ②scheduler 内部 full formatter（下游用）③父 agent/普通工具 bounded formatter。**不能只做 `to_result_dict` 出口裁剪**（否则裁剪经 `_format_run_envelope`→`_execute_subagent`→`state.summary`→`_node_task_text` 一路传导，下游也拿到裁剪版）；`run.summary` 保留全文；确认时间: 2026-09-14
-- **Q7**: 用户答复（codex 独立确认修正）：aggregate 保持**真实 run** 对，但 `max_tokens` 透传**不够**——它只限 token 消耗、不限 task 输入文本长度。必须**同时改 `_aggregate_task_text` 输入构造**（层级中间节点消费 bounded summary/ref，不是 concat 后的全文）；auto aggregate 默认 `strategy="llm"`；四档预算当前是「per-run total token budget」而非「输出预算」，需明确语义；确认时间: 2026-09-14
-- **Q8**: 用户答复（codex 独立确认修正）：嵌套 `AggregationConfig`（`thresholds` + `token_budgets` 两个子 dataclass，均 frozen + `field(default_factory)`）挂 `WorkflowLimitsConfig.aggregation`；四档预算校验**非递减（允许相等）**，拒绝严格递减；`_parse_aggregation` 显式逐字段解析；确认时间: 2026-09-14
-- **Q9**: 用户答复（codex 独立确认修正）：tasks 5.2 删「恢复 workflow 状态」；验收不能只做同进程读回——补**最小跨进程 result artifact 读取测试**（新 store 实例/subprocess，验证跨进程可解析 + 非 dedup 假象）；确认时间: 2026-09-14
+- **Q2**（codex 独立确认修正）: 用户答复：分母改「逻辑执行单元」——普通节点=1、foreach=展开项数（含容器节点计入）；`blocked` 是终态、单独计数不计入 pending；`cancelled`/`budget_exceeded` 单独计数不混入 `failed`；保留旧 run 计数字段兼容（`completed`/`failed` 既有语义不动，新增 `total`/`cancelled`/`budget_exceeded`/`blocked`/`pending` 字段）；确认时间: 2026-09-14
+- **Q3**（codex 独立确认修正）: 用户答复：声明期 + 展开期都算；**三 hash**——`declared_spec_hash`（原始 spec 不可变）/ `expansion_plan_hash`（foreach 展开计划）/ `runtime_graph_hash`（含自动插节点的执行图）；**不原地改 `WorkflowSpec`**，用独立 execution plan（否则状态表/入边/reducer 全乱）；确认时间: 2026-09-14
+- **Q4**（codex 独立确认修正）: 用户答复：阈值 `>10`（max fan-in=10，n=10 不触发拆分）；层数按 fan-in 分组（`shard_count=ceil(leaf/10)`，逐层向上直到 root 输入 ≤10）；预算按「距 leaf 层数」（第 1 层 shard 800，再上 domain 1500，根 root 3000）；**auto aggregate 默认 `strategy="llm"`**（collect 只是拼接不解决 prompt 膨胀），auto 节点预算计入 `max_nodes` + `max_runs`；部分显式树补缺（只补缺失层，已声明层保留）；确认时间: 2026-09-14
+- **Q5**（codex 独立确认修正）: 用户答复：ring buffer 放 **scheduler 内部**（非 manager），记「最近 5 次**终态迁移事件**」（同节点重跑可再次出现）；事件字段 = `node_id + status + summary_preview(首个非空行)`，不承诺「一句话」；每条事件分配字符上限（5×80 或整体裁剪）；不用 bus 填；确认时间: 2026-09-14
+- **Q6**（codex 独立确认修正）: 用户答复：**拆三种表示**——①artifact 完整落盘 ②scheduler 内部 full formatter（下游用）③父 agent/普通工具 bounded formatter。**不能只做 `to_result_dict` 出口裁剪**（否则裁剪经 `_format_run_envelope`→`_execute_subagent`→`state.summary`→`_node_task_text` 一路传导，下游也拿到裁剪版）；`run.summary` 保留全文；确认时间: 2026-09-14
+- **Q7**（codex 独立确认修正）: 用户答复：aggregate 保持**真实 run** 对，但 `max_tokens` 透传**不够**——它只限 token 消耗、不限 task 输入文本长度。必须**同时改 `_aggregate_task_text` 输入构造**（层级中间节点消费 bounded summary/ref，不是 concat 后的全文）；auto aggregate 默认 `strategy="llm"`；四档预算当前是「per-run total token budget」而非「输出预算」，需明确语义；确认时间: 2026-09-14
+- **Q8**（codex 独立确认修正）: 用户答复：嵌套 `AggregationConfig`（`thresholds` + `token_budgets` 两个子 dataclass，均 frozen + `field(default_factory)`）挂 `WorkflowLimitsConfig.aggregation`；四档预算校验**非递减（允许相等）**，拒绝严格递减；`_parse_aggregation` 显式逐字段解析；确认时间: 2026-09-14
+- **Q9**（codex 独立确认修正）: 用户答复：tasks 5.2 删「恢复 workflow 状态」；验收不能只做同进程读回——补**最小跨进程 result artifact 读取测试**（新 store 实例/subprocess，验证跨进程可解析 + 非 dedup 假象）；确认时间: 2026-09-14
 
 ## 风险
 

@@ -79,6 +79,12 @@ _LATEST_EVENTS_LIMIT = 5
 #: 5 × 80 = 400 字符，bounded envelope 的「bounded」由这个上界保证）。
 _EVENT_PREVIEW_LIMIT = 80
 
+#: 父 agent 面向投影的节点条数硬上限（D3「永远 bounded」；Issue 4）。
+#: 与 ``max_nodes`` 默认值同量级：超过就按上限截断并用 ``nodes_omitted`` 显式报告。
+_PARENT_NODES_LIMIT = 200
+#: 父投影里单节点文本字段（summary/reason/error）的字符上限。
+_PARENT_FIELD_LIMIT = 200
+
 
 class GraphRecursionError(RuntimeError):
     """图级步数/节点数/run 数超限（D6 Q5）。模型看到的是 envelope，不是异常文本。"""
@@ -257,6 +263,31 @@ def render_item_task(template: str, item: Any, *, index: int | None = None) -> s
     return rendered
 
 
+#: 父投影里保留的节点字段：都是 O(1) 的标量/短列表。
+_PARENT_NODE_FIELDS = ("id", "kind", "status", "runs", "subagent_id", "items")
+#: 父投影里保留但必须裁剪的文本字段。
+_PARENT_NODE_TEXT_FIELDS = ("summary", "reason", "error")
+
+
+def _bounded_node(node: dict) -> dict:
+    """把一个节点摘要投影成父 agent 面向的有界版本（Issue 4）。
+
+    丢弃随图规模线性增长的数组（``subagent_ids``/``run_ids``/``slots``/``targets``/
+    ``raw``）；文本字段裁到 ``_PARENT_FIELD_LIMIT``。
+    """
+    projected: dict[str, Any] = {
+        key: node[key] for key in _PARENT_NODE_FIELDS if key in node
+    }
+    for key in _PARENT_NODE_TEXT_FIELDS:
+        value = node.get(key)
+        if not value:
+            continue
+        projected[key] = value[:_PARENT_FIELD_LIMIT]
+    if node.get("reason") is None and "reason" in node:
+        projected["reason"] = None
+    return projected
+
+
 def _first_non_empty_line(text: str) -> str:
     """事件预览取**首个非空行**（Q5：不承诺「一句话」，只保证确定性的短预览）。"""
     for line in (text or "").splitlines():
@@ -312,6 +343,8 @@ class WorkflowScheduler:
         self._steps = 0
         self._runs = 0
         self._expanded_nodes = 0
+        #: foreach node_id -> 已计费的展开项数（review Issue 3：再展开只扣增量）。
+        self._charged_expansions: dict[str, int] = {}
         self._in_flight_runs = 0
         self._in_flight_nodes = 0
         self._tasks: set[asyncio.Task[None]] = set()
@@ -348,6 +381,7 @@ class WorkflowScheduler:
         self._plan = self._build_plan(value)
         self._states = {node.id: NodeState(node=node) for node in self._plan.nodes}
         self._expanded_nodes = len(self._plan.nodes)
+        self._charged_expansions = {}
 
     def _build_plan(self, spec: WorkflowSpec) -> ExecutionPlan:
         """按 ``subagents.workflow.aggregation`` 配置构建执行计划（D2/D6/Q4）。"""
@@ -468,6 +502,7 @@ class WorkflowScheduler:
         self._plan = self._build_plan(spec)
         self._states = {node.id: NodeState(node=node) for node in self._plan.nodes}
         self._expanded_nodes = len(self._plan.nodes)
+        self._charged_expansions = {}
         self._status = "running"
         self._started_at = time.time()
         self._cost_before = self._ledger_total()
@@ -966,8 +1001,17 @@ class WorkflowScheduler:
         new_ids = [
             node_id for node_id in expanded.inserted_nodes if node_id not in plan.inserted_nodes
         ]
+        # 收缩时（展开项数变少）旧 auto 节点的 NodeState 会失效：它们已不在新 plan 的
+        # 图里，却仍被 `_unit_counts()` 统计进 envelope 的 total/pending（Issue 5）。
+        # 先算 stale 集合，两条返回路径都要 prune。
+        stale_ids = [
+            node_id
+            for node_id in plan.inserted_nodes
+            if node_id not in expanded.inserted_nodes
+        ]
         if not new_ids:
             self._plan = expanded
+            self._prune_states(stale_ids)
             return
         spec = self._spec
         assert spec is not None
@@ -990,17 +1034,44 @@ class WorkflowScheduler:
         self._plan = expanded
         for new_id in new_ids:
             self._states[new_id] = NodeState(node=expanded.node(new_id))
+        self._prune_states(stale_ids)
+
+    def _prune_states(self, stale_ids: list[str]) -> None:
+        """丢弃已不在执行图里的节点状态（Issue 5：收缩后不留幽灵计数）。
+
+        只删真正失效的 id；仍在图里的节点状态（可能已带运行期 summary/槽）保持不动。
+        已计费的 ``_expanded_nodes`` 不退还——预算是保守的**高水位**口径，与
+        ``_check_foreach_budget`` 只收增量的语义一致。
+        """
+        for stale_id in stale_ids:
+            state = self._states.pop(stale_id, None)
+            if state is None:
+                continue
+            # 在途节点不该出现在 stale 集合里（foreach 必须等所有展开项收尾才结束，
+            # 其下游 aggregate 才可能就绪）。真出现时按取消处理，避免留下孤儿任务。
+            if state.status in ("queued", "started"):
+                self._schedule_cancel(state)
+            self._live_runs.pop(stale_id, None)
 
     def _check_foreach_budget(self, node: WorkflowNode, state: NodeState) -> None:
         """展开前预检（Q5/D6）：max_runs 与 max_nodes 都要把展开项算进去。
 
         预检先于任何 session 创建，所以超限时不会留下半张已展开的图；报错走
         ``GraphRecursionError`` envelope（Q8），而不是让 spawn 桶抛底层 RuntimeError。
+
+        计费按**增量**：route 回边会把同一个 foreach 重新激活，重复按满额计费会让
+        用户配置的 max_nodes/max_runs 被无声缩水（review Issue 3）。``_charged_
+        expansions`` 记「该节点已计费到多少项」，只收差额；项数变小时保守保持已扣
+        额度（不退还），与 ``_expand_plan`` 的幂等语义对齐。
         """
         spec = self._spec
         assert spec is not None
         count = state.items or 0
-        if self._runs + count > spec.max_runs:
+        charged = self._charged_expansions.get(node.id, 0)
+        delta = count - charged
+        if delta <= 0:
+            return  # 已计费过这份（或更大量）展开，不重复扣
+        if self._runs + delta > spec.max_runs:
             raise GraphRecursionError(
                 steps=self._steps,
                 limit=spec.max_runs,
@@ -1008,11 +1079,11 @@ class WorkflowScheduler:
                 reason="max_runs",
                 message=(
                     f"GraphRecursionError: foreach node {node.id!r} would expand "
-                    f"{count} runs, exceeding max_runs {spec.max_runs} "
+                    f"{count} runs ({delta} new), exceeding max_runs {spec.max_runs} "
                     f"({self._runs} already used)"
                 ),
             )
-        if self._expanded_nodes + count > spec.max_nodes:
+        if self._expanded_nodes + delta > spec.max_nodes:
             raise GraphRecursionError(
                 steps=self._steps,
                 limit=spec.max_nodes,
@@ -1020,12 +1091,13 @@ class WorkflowScheduler:
                 reason="max_nodes",
                 message=(
                     f"GraphRecursionError: foreach node {node.id!r} would expand "
-                    f"{count} nodes, exceeding max_nodes {spec.max_nodes} "
+                    f"{count} nodes ({delta} new), exceeding max_nodes {spec.max_nodes} "
                     f"({self._expanded_nodes} already declared)"
                 ),
             )
-        self._expanded_nodes += count
-        self._runs += count
+        self._charged_expansions[node.id] = count
+        self._expanded_nodes += delta
+        self._runs += delta
 
     # -- run 派发（身份 contextvar 的唯一 set 点） ---------------------------
 
@@ -1481,6 +1553,30 @@ class WorkflowScheduler:
             payload["inserted_nodes"] = list(plan.inserted_nodes)
         if self.bus is not None:
             payload["bus"] = self.bus.snapshot_payload()
+        return payload
+
+    def parent_envelope(self) -> dict:
+        """父 agent 面向的 **bounded** 投影（D3；review Issue 4）。
+
+        与 ``status()``/``_envelope()`` 的关系：
+
+        - ``_envelope()`` 是**权威** envelope，供 ``run()`` 返回值与 C2 断言使用
+          （保留全量 ``nodes`` 与 per-node ``subagent_ids``，grill 决策 4 明确不能替换）。
+        - 本方法是**父 agent 实际看到的东西**（工具返回），必须真的 bounded：bus 是
+          非权威通道、不进这里（D4 自洽）；节点只保留 bounded 摘要（不展开
+          ``slots``/全量 ``summary``/``subagent_ids``/``run_ids`` 这些随图规模线性增长的
+          字段）；节点条数设硬上限，超出部分用 ``nodes_omitted`` 显式报告——不静默截断。
+        """
+        payload = self._envelope(status=self._status)
+        # bus 是非权威广播通道（D4）：它不属于权威 envelope，也不该出现在父上下文里。
+        payload.pop("bus", None)
+
+        nodes = payload.get("nodes", [])
+        total = len(nodes)
+        visible = nodes[:_PARENT_NODES_LIMIT]
+        payload["nodes"] = [_bounded_node(node) for node in visible]
+        payload["nodes_total"] = total
+        payload["nodes_omitted"] = max(total - _PARENT_NODES_LIMIT, 0)
         return payload
 
     def _write_root_result(self) -> None:

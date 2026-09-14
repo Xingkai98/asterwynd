@@ -245,6 +245,153 @@ async def test_reexpanding_same_foreach_does_not_double_charge_max_nodes(manager
     assert len(scheduler._plan.nodes) == len(before_plan.nodes)
 
 
+@pytest.mark.asyncio
+async def test_reexpanding_same_foreach_does_not_double_charge_budgets(manager):
+    """回归（review Issue 3）：``_check_foreach_budget`` 再展开时不得重复计费。
+
+    ``_expand_plan`` 已修成幂等（不重复扣 auto 节点），但 ``_check_foreach_budget``
+    仍无条件 ``_expanded_nodes += count`` / ``_runs += count``——一次 route 回边重激活
+    foreach，就把用户配置的 max_nodes/max_runs 预算无声缩水一份展开量。
+    """
+    raw = {
+        "goal": "g",
+        "nodes": [
+            {"id": "seed", "kind": "subagent", "task": "seed"},
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "source": "seed",
+                "source_field": "items",
+                "max_items": 50,
+            },
+            {"id": "root", "kind": "aggregate", "strategy": "collect"},
+        ],
+        "edges": [
+            {"from": "seed", "to": "fan"},
+            {"from": "fan", "to": "root", "reducer": "concat"},
+        ],
+        "terminal": ["root"],
+    }
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(raw)
+    state = scheduler._states["fan"]
+    state.items = 12
+
+    scheduler._expand_plan("fan", 12)
+    scheduler._check_foreach_budget(state.node, state)
+    nodes_after_first = scheduler._expanded_nodes
+    runs_after_first = scheduler._runs
+
+    # 同一个 foreach 再次展开（同项数）：预算不得再扣一遍
+    scheduler._expand_plan("fan", 12)
+    scheduler._check_foreach_budget(state.node, state)
+    assert scheduler._expanded_nodes == nodes_after_first
+    assert scheduler._runs == runs_after_first
+
+    # 展开项数变大：只扣增量
+    state.items = 20
+    scheduler._expand_plan("fan", 20)
+    scheduler._check_foreach_budget(state.node, state)
+    assert scheduler._expanded_nodes == nodes_after_first + 8
+    assert scheduler._runs == runs_after_first + 8
+
+    # 展开项数变小：不退还已扣额度，也不重复扣（保守语义，与幂等复检一致）
+    state.items = 5
+    scheduler._expand_plan("fan", 5)
+    scheduler._check_foreach_budget(state.node, state)
+    assert scheduler._expanded_nodes == nodes_after_first + 8
+    assert scheduler._runs == runs_after_first + 8
+
+
+@pytest.mark.asyncio
+async def test_shrinking_expansion_prunes_stale_auto_node_states(manager):
+    """回归（review Issue 5）：plan 收缩时，失效的 auto-aggregate NodeState 必须清掉。
+
+    同一 foreach 以更小项数再展开（``inserted_nodes`` 变少）时，旧 auto 节点的
+    ``NodeState`` 若残留，会继续污染 envelope 的 ``total``/``pending`` 计数——图里
+    已经没有那些节点了。
+    """
+    raw = {
+        "goal": "g",
+        "nodes": [
+            {"id": "seed", "kind": "subagent", "task": "seed"},
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "source": "seed",
+                "source_field": "items",
+                "max_items": 50,
+            },
+            {"id": "root", "kind": "aggregate", "strategy": "collect"},
+        ],
+        "edges": [
+            {"from": "seed", "to": "fan"},
+            {"from": "fan", "to": "root", "reducer": "concat"},
+        ],
+        "terminal": ["root"],
+    }
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(raw)
+
+    scheduler._expand_plan("fan", 25)
+    assert len(scheduler._plan.inserted_nodes) == 3
+    stale_ids = set(scheduler._plan.inserted_nodes)
+    assert stale_ids <= set(scheduler._states)
+
+    # 收缩到 5 项：不需要任何中间层，旧的 3 个 auto 节点必须从 states 里消失
+    scheduler._expand_plan("fan", 5)
+    assert scheduler._plan.inserted_nodes == ()
+    assert set(scheduler._states) == {"seed", "fan", "root"}
+    # envelope 的分母不再统计已不存在的节点
+    counts = scheduler._unit_counts()
+    assert counts["total"] == len(scheduler._states)
+
+
+@pytest.mark.asyncio
+async def test_shrinking_expansion_keeps_surviving_auto_states(manager):
+    """收缩只 prune 失效节点：仍在新 plan 里的 auto 节点状态必须保留。"""
+    raw = {
+        "goal": "g",
+        "nodes": [
+            {"id": "seed", "kind": "subagent", "task": "seed"},
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "source": "seed",
+                "source_field": "items",
+                "max_items": 100,
+            },
+            {"id": "root", "kind": "aggregate", "strategy": "collect"},
+        ],
+        "edges": [
+            {"from": "seed", "to": "fan"},
+            {"from": "fan", "to": "root", "reducer": "concat"},
+        ],
+        "terminal": ["root"],
+    }
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(raw)
+
+    scheduler._expand_plan("fan", 100)
+    first = list(scheduler._plan.inserted_nodes)
+    assert len(first) == 10
+
+    scheduler._expand_plan("fan", 50)
+    second = set(scheduler._plan.inserted_nodes)
+    assert len(second) == 5  # ceil(50/10)
+    # 存活节点（两次都需要的）状态对象被**原样保留**，不是被删掉重建
+    survivors = second & set(first)
+    assert survivors == second  # 50 项的 5 个组正是 100 项的前 5 个组
+    for node_id in survivors:
+        assert node_id in scheduler._states
+        assert scheduler._states[node_id].status == "pending"
+    # 失效节点确已清除
+    assert set(scheduler._states) == {"seed", "fan", "root"} | second
+
+
 # --- 三 hash 分离 -----------------------------------------------------------
 
 
