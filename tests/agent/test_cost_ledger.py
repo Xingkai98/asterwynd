@@ -224,6 +224,32 @@ class TestCostLedgerAttributionDimensions:
         )
         assert ledger.bill()["by_workflow"]["wf1"]["estimated"] is False
 
+    def test_bill_scoped_to_workflow_does_not_cross_workflows(self) -> None:
+        """Q15：``bill(workflow_id=...)`` 把四维归因限定到该 workflow。
+
+        ``CostLedger`` 是被同一个 manager 跨 workflow 共享的实例（子 loop 都用它），
+        by_node/by_depth/by_edge 的桶键（node id / edge 串）在不同 workflow 间会重名。
+        不按 workflow 过滤，本 workflow 的 attribution 快照就会串进别的 workflow 的成本
+        （D7/Q15 要求落盘的正是「本 workflow 的 attribution」）。
+        """
+        ledger = CostLedger()
+        ledger.record(
+            "gpt-4o", 1000, 0, session_id="s1", phase="building",
+            workflow_id="wf1", node_id="n", depth=0, edge="<root>->n",
+        )
+        ledger.record(
+            "gpt-4o", 5000, 0, session_id="s2", phase="building",
+            workflow_id="wf2", node_id="n", depth=0, edge="<root>->n",
+        )
+        scoped = ledger.bill(workflow_id="wf1")
+        assert scoped["by_node"]["n"]["tokens"] == 1000
+        assert scoped["by_edge"]["<root>->n"]["tokens"] == 1000
+        assert set(scoped["by_workflow"].keys()) == {"wf1"}
+        # legacy 三维仍是跨 workflow 的全局财务记录（Q12），不受过滤影响
+        assert scoped["by_session"]["s2"]["tokens"] == 5000
+        # 不带过滤参数时行为与改造前一致
+        assert ledger.bill()["by_node"]["n"]["tokens"] == 6000
+
     def test_bucket_values_round_to_nine_places(self) -> None:
         """Q16：分桶 cost 与 envelope ``total_cost`` 对齐为 9 位。"""
         ledger = CostLedger()

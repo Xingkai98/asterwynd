@@ -269,6 +269,65 @@ async def test_edge_route_control_prefers_route_source(manager):
     assert "gate->done" in by_edge
 
 
+# --- 归因摘要按 workflow 作用域（回归，Round 2） ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_attribution_summary_scoped_to_own_workflow(manager):
+    """回归（Round 2）：envelope 的 attribution 摘要只含**本 workflow** 成本。
+
+    ``CostLedger`` 是跨 workflow 共享的（子 loop 都用同一个实例），而 by_node /
+    by_edge 的桶键（node id / edge 串）在不同 workflow 间会重名。不按 workflow
+    过滤，本 workflow 的归因快照就串进别人的成本——D7/Q15 要求落盘的正是「本
+    workflow 的 attribution」。
+    """
+    spec = {
+        "goal": "g",
+        "nodes": [{"id": "n0", "kind": "subagent", "task": "t"}],
+        "edges": [],
+        "terminal": ["n0"],
+    }
+    first = await WorkflowScheduler(manager).run(parse_workflow_spec(spec))
+    second = await WorkflowScheduler(manager).run(parse_workflow_spec(spec))
+    first_cost = first["attribution"]["by_node"]["n0"]["cost"]
+    second_cost = second["attribution"]["by_node"]["n0"]["cost"]
+    assert first_cost > 0
+    # 两次独立 workflow 的单节点成本必须相等，而不是第二次翻倍
+    assert second_cost == pytest.approx(first_cost)
+    # by_workflow 只含本 workflow
+    assert set(second["attribution"]["by_workflow"].keys()) == {second["workflow_id"]}
+
+
+@pytest.mark.asyncio
+async def test_attribution_ref_persists_full_bill_not_bounded_summary(manager):
+    """回归（Round 2）：``attribution_ref`` 落盘件必须是**完整**账单，不是 top-k 摘要。
+
+    D7/Q15：envelope 只回 bounded 摘要（top-5），**完整**归因走 ``attribution_ref``
+    让父按需 inspect。若落盘的也是截断摘要，超过 k 个节点/边就永久取不回来。
+    """
+    import json
+
+    spec = {
+        "goal": "g",
+        "nodes": [
+            {"id": f"n{i}", "kind": "subagent", "task": f"t{i}"} for i in range(8)
+        ],
+        "edges": [],
+    }
+    result = await WorkflowScheduler(manager).run(parse_workflow_spec(spec))
+    # 8 个节点 > top_k=5：envelope 摘要是 bounded 的
+    assert len(result["attribution"]["by_node"]) == 5
+    assert result["attribution"]["counts"]["by_node_omitted"] == 3
+    ref = result["attribution_ref"]
+    assert ref
+    store = manager.workflow_store(result["workflow_id"])
+    payload = json.loads(store.path_for(ref).read_text(encoding="utf-8"))
+    # 落盘件是完整账单：8 个节点一个不少
+    assert len(payload["by_node"]) == 8
+    assert set(payload["by_node"].keys()) == {f"n{i}" for i in range(8)}
+    assert len(payload["by_edge"]) == 8
+
+
 # --- 兼容：根 loop 不记 workflow 预算 --------------------------------------
 
 

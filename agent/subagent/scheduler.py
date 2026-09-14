@@ -396,6 +396,8 @@ class WorkflowScheduler:
         self._budget: WorkflowBudget | None = None
         self._budget_stop = False
         self._budget_dimension: str | None = None
+        #: runs 预扣被拒时触发拒绝的累计值（实际未扣款，仅用于 envelope 口径自洽）。
+        self._budget_projected_runs: int | None = None
         #: 四维归因摘要的落盘件 ref（D7/Q15：结算时一次性写，父按需 Read）。
         self._attribution_ref: str | None = None
 
@@ -546,6 +548,7 @@ class WorkflowScheduler:
         self._budget = WorkflowBudget(_budget_config(self.manager.config))
         self._budget_stop = False
         self._budget_dimension = None
+        self._budget_projected_runs = None
         bus = self.bus or MessageBus()
         self.bus = bus
         self._record_event("workflow_started", status="running")
@@ -608,18 +611,16 @@ class WorkflowScheduler:
         ``budget_exceeded``，其余未派发节点仍是 ``blocked``；已完成的根节点不覆盖。
         """
         self._accepting = False
-        expired_roots = self._expired_root_ids() if self._budget_stop else set()
         for state in self._states.values():
             if state.status in ("queued", "started"):
                 await self._cancel_node(state)
                 if state.status in ("queued", "started"):
                     state.status = "cancelled"
             elif state.status == "pending":
-                if state.node.id in expired_roots:
-                    state.status = "budget_exceeded"
-                    state.reason = (
-                        f"budget exceeded ({self._budget_dimension or 'unknown'})"
-                    )
+                # Q5：预算超限时根节点改 ``budget_exceeded``、其余仍 ``blocked``；
+                # 非预算路径保持原 ``blocked`` 语义（含既有 reason）。
+                if self._budget_stop:
+                    self._apply_budget_exhausted_status(state)
                 else:
                     state.status = "blocked"
                     state.reason = (
@@ -742,13 +743,40 @@ class WorkflowScheduler:
         # token/cost/wall_time 三维是「已完成调用的累计值」判定（Q6 方案 B）。
         self._raise_if_budget_exceeded(now=time.time())
         # runs 维度是**预扣**：用预扣后的累计值判定（复用 ``self._runs``，Q4）。
-        projected = self._runs + cost
-        if budget.max_runs and projected > budget.max_runs:
+        self._enforce_c4_runs(self._runs + cost)
+
+    def _enforce_c4_runs(self, projected: int) -> None:
+        """C4 ``max_total_runs`` 的**唯一**预扣落点（Q4）。
+
+        派发点（``_dispatch``）与 foreach 展开点（``_execute_foreach``）都必须走这里
+        ——foreach 展开项经 ``_run_foreach_item`` 直接派发、**不经 ``_dispatch``**，
+        只在 ``_dispatch`` 里查 C4 会让 foreach 完全绕过 runs 预算（building-review
+        Round 2 回归：``max_total_runs=2`` 的图仍跑满 10 项且报 ``exceeded=False``）。
+
+        ``projected`` 是**预扣后**的累计 run 数。超限判定委托给账本的
+        :meth:`WorkflowBudget.reserve_runs`（上限语义与「0 = 不限」只在该处定义一次），
+        调度器只负责把拒绝映射成 stop_new。C4 检查刻意先于 C2 结构闸——同值时由 C4
+        触发 drain 语义，只有 C2 显式更小时才走 ``graph_recursion_exceeded``。
+        """
+        budget = self._budget
+        if budget is None:
+            return
+        try:
+            budget.reserve_runs(projected)
+        except WorkflowBudgetExceeded:
+            # 记下触发值：预扣被拒时实际未扣款，envelope 的 runs.used 要能自洽地
+            # 展现「是哪个数触发的」（见 _budget_summary）。
+            self._budget_projected_runs = projected
             self._mark_budget_stop("runs")
-            raise WorkflowBudgetExceeded("runs", projected, budget.max_runs)
+            raise
 
     def _raise_if_budget_exceeded(self, *, now: float | None = None) -> None:
-        """token/cost/wall_time 三维超限判定 → 置 stop_new + 抛异常。"""
+        """四维预算超限判定 → 置 stop_new + 抛 ``WorkflowBudgetExceeded``。
+
+        维度覆盖 ``exceeded_dimension`` 的全部返回集（含 ``"runs"``）——漏掉任一维
+        都会在这里抛 ``KeyError`` 而不是预算异常，异常穿透 ``run()``，违反 spec
+        Scenario「超限出口不逃出 run」（building-review Round 2 回归）。
+        """
         budget = self._budget
         if budget is None:
             return
@@ -756,21 +784,13 @@ class WorkflowScheduler:
         if dimension is None:
             return
         self._mark_budget_stop(dimension)
-        raise WorkflowBudgetExceeded(
-            dimension,
-            budget.tokens
-            if dimension == "tokens"
-            else (
-                budget.cost_usd
-                if dimension == "cost_usd"
-                else budget.wall_time_s(now=now)
-            ),
-            getattr(budget, {
-                "tokens": "max_tokens",
-                "cost_usd": "max_cost_usd",
-                "wall_time_s": "max_wall_time_s",
-            }[dimension]),
-        )
+        used, limit = {
+            "tokens": (budget.tokens, budget.max_tokens),
+            "cost_usd": (budget.cost_usd, budget.max_cost_usd),
+            "runs": (self._runs, budget.max_runs),
+            "wall_time_s": (budget.wall_time_s(now=now), budget.max_wall_time_s),
+        }[dimension]
+        raise WorkflowBudgetExceeded(dimension, used, limit)
 
     def _mark_budget_stop(self, dimension: str) -> None:
         """置粘性 stop_new 状态：不取消在跑 run、退掉 queued、让主循环 drain。
@@ -795,6 +815,31 @@ class WorkflowScheduler:
         if plan is None:
             return set()
         return set(plan.terminal)
+
+    def _apply_budget_exhausted_status(
+        self, state: NodeState, *, reason: str | None = None
+    ) -> None:
+        """预算停下时节点级状态的**唯一**落点（Q5）。
+
+        - 根节点（``plan.terminal``）未完成 → ``budget_exceeded``；
+        - 非根节点 → ``blocked``（仍由上游/收敛语义解释）。
+
+        被预算抓到的节点有两类：仍在 ``pending``（``_teardown`` 路径）与已 ``started``
+        但中途撞上预算（``_run_node`` 路径）。两条路径必须用**同一规则**，否则根节点
+        在 ``_run_node`` 路径会被写成 ``blocked``、绕过 Q5 的 ``budget_exceeded``。
+
+        ``reason`` 是非根 ``blocked`` 的备选说明（如 ``_run_node`` 传入异常文本）。
+        """
+        if state.node.id in self._expired_root_ids():
+            state.status = "budget_exceeded"
+            state.reason = f"budget exceeded ({self._budget_dimension or 'unknown'})"
+        else:
+            state.status = "blocked"
+            state.reason = (
+                state.reason
+                or reason
+                or "workflow ended before the node became ready"
+            )
 
     def record_llm_usage(
         self,
@@ -861,19 +906,40 @@ class WorkflowScheduler:
         )
         return int(distance.get(node_id, 0))
 
-    def _attribution_summary(self) -> dict:
-        """四维账单的 **bounded** 摘要（D7/Q15/Q16）。
+    def _attribution_bill(self) -> dict | None:
+        """本 workflow 的四维账单（未截断）；无 ledger 或读取失败时 ``None``。
 
-        每维只回 top-``_ATTRIBUTION_TOP_K``（按 cost 降序）——整表返回（100 节点的
-        ``by_node``）会撑爆父上下文，与 C3 的 bounded envelope 同口径。完整账单走
-        ``attribution_ref`` 落盘件。
+        按 ``workflow_id`` 过滤（D7/Q15）：ledger 是跨 workflow 共享的，by_node/by_edge
+        的键会跨图重名——不限定就把别的 workflow 的成本写进本图的 attribution。
         """
         ledger = getattr(self.manager, "cost_ledger", None)
         if ledger is None:
-            return {dim: {} for dim in _ATTRIBUTION_DIMS}
+            return None
         try:
-            bill = ledger.bill()
+            return ledger.bill(workflow_id=self.workflow_id)
+        except TypeError:
+            # 兼容不支持作用域参数的 ledger 替身（测试注入的 stub）。
+            return ledger.bill()
         except Exception:  # noqa: BLE001 - 归因是尽力而为的可观测性
+            return None
+
+    @staticmethod
+    def _bucket_projection(bucket: dict) -> dict:
+        return {
+            "tokens": int(bucket.get("tokens", 0)),
+            "cost": round(float(bucket.get("cost", 0.0)), 9),
+            "estimated": bool(bucket.get("estimated", False)),
+        }
+
+    def _attribution_summary(self) -> dict:
+        """四维账单的 **bounded** 摘要（D7/Q15/Q16）——回给父 agent 的那一份。
+
+        每维只回 top-``_ATTRIBUTION_TOP_K``（按 cost 降序）——整表返回（100 节点的
+        ``by_node``）会撑爆父上下文，与 C3 的 bounded envelope 同口径。**完整账单**
+        走 ``attribution_ref`` 落盘件（见 :meth:`_attribution_full`）。
+        """
+        bill = self._attribution_bill()
+        if bill is None:
             return {dim: {} for dim in _ATTRIBUTION_DIMS}
         summary: dict[str, Any] = {}
         counts: dict[str, int] = {}
@@ -883,12 +949,7 @@ class WorkflowScheduler:
                 buckets.items(), key=lambda item: item[1].get("cost", 0.0), reverse=True
             )[:_ATTRIBUTION_TOP_K]
             summary[dim] = {
-                key: {
-                    "tokens": int(bucket.get("tokens", 0)),
-                    "cost": round(float(bucket.get("cost", 0.0)), 9),
-                    "estimated": bool(bucket.get("estimated", False)),
-                }
-                for key, bucket in top
+                key: self._bucket_projection(bucket) for key, bucket in top
             }
             # 桶总数与被截断的条数显式报告（不静默截断，与 C3 的 nodes_omitted 同口径）。
             counts[f"{dim}_total"] = len(buckets)
@@ -896,14 +957,34 @@ class WorkflowScheduler:
         summary["counts"] = counts
         return summary
 
-    def _write_attribution(self) -> None:
-        """结算时一次性落盘完整账单，并记录 ``_attribution_ref``（D7/Q15）。
+    def _attribution_full(self) -> dict:
+        """四维账单的**完整**快照（不截断）——落盘给 ``attribution_ref`` 的那一份。
 
-        落盘失败不影响 workflow 完成（与 ``_write_root_result`` 同口径：尽力而为的
-        可观测性）。
+        D7/Q15 的口径是「envelope 只给 bounded 摘要，完整归因走 result_ref 让父按需
+        inspect」。这里必须与 :meth:`_attribution_summary` 取**不同**的投影：若两者都
+        截断到 top-k，``attribution_ref`` 就只是同一份摘要的副本，父 agent 永远拿不到
+        被省略的节点/边（building-review Round 2 回归）。
         """
-        attribution = self._attribution_summary()
-        if not attribution:
+        bill = self._attribution_bill()
+        if bill is None:
+            return {dim: {} for dim in _ATTRIBUTION_DIMS}
+        return {
+            dim: {
+                key: self._bucket_projection(bucket)
+                for key, bucket in (bill.get(dim) or {}).items()
+            }
+            for dim in _ATTRIBUTION_DIMS
+        }
+
+    def _write_attribution(self) -> None:
+        """结算时一次性落盘**完整**账单，并记录 ``_attribution_ref``（D7/Q15）。
+
+        落盘的是 :meth:`_attribution_full`（不截断），envelope 里的是 top-k 摘要——
+        ``attribution_ref`` 必须能取回被摘要省略的节点/边。落盘失败不影响 workflow
+        完成（与 ``_write_root_result`` 同口径：尽力而为的可观测性）。
+        """
+        attribution = self._attribution_full()
+        if not any(attribution.get(dim) for dim in _ATTRIBUTION_DIMS):
             return
         try:
             self._attribution_ref = self._workflow_store().save_attribution(
@@ -913,12 +994,22 @@ class WorkflowScheduler:
             logger.warning("Failed to persist workflow attribution", exc_info=True)
 
     def _budget_summary(self) -> dict:
-        """``status()``/``_envelope`` 的 ``budget`` 块（D7）。"""
+        """``status()``/``_envelope`` 的 ``budget`` 块（D7）。
+
+        runs 维度报的是**预扣后**的累计值（Q4：它与 C2 的结构闸共用 ``self._runs``）。
+        预扣被拒时实际没有扣款，``self._runs`` 会小于触发值——直接报它会出现
+        ``exceeded=true`` 而 ``used < limit`` 的自相矛盾（foreach 一次预扣 10 项、
+        上限 3 时最明显）。所以取「实际累计」与「触发拒绝的预扣值」的较大者，
+        让 envelope 与 ``WorkflowBudgetExceeded.used`` 口径一致。
+        """
         budget = self._budget
         if budget is None:
             return {}
+        runs_used = self._runs
+        if self._budget_dimension == "runs" and self._budget_projected_runs is not None:
+            runs_used = max(runs_used, self._budget_projected_runs)
         return {
-            "dimensions": budget.dimensions(runs=self._runs),
+            "dimensions": budget.dimensions(runs=runs_used),
             "exceeded": self._budget_stop,
             "exceeded_dimension": self._budget_dimension,
         }
@@ -1065,11 +1156,10 @@ class WorkflowScheduler:
             self._fatal_error = self._fatal_error or exc
             self._accepting = False
         except WorkflowBudgetExceeded as exc:
-            # 预算超限（D2）：不是节点失败——置粘性 stop_new，节点按 blocked 收尾
-            # （根节点由 ``_teardown`` 改标 ``budget_exceeded``，Q5）。
+            # 预算超限（D2）：不是节点失败——置粘性 stop_new，并按 Q5 的规则给节点
+            # 终态（根节点 ``budget_exceeded``、其余 ``blocked``）。
             self._mark_budget_stop(exc.dimension)
-            state.status = "blocked"
-            state.reason = state.reason or str(exc)
+            self._apply_budget_exhausted_status(state, reason=str(exc))
         except Exception as exc:  # noqa: BLE001 - 节点失败不 fail-fast（D4）
             state.status = "failed"
             state.error = f"{type(exc).__name__}: {exc}"
@@ -1228,6 +1318,12 @@ class WorkflowScheduler:
         state.subagent_id = None
         state.run_ids = []
         state.subagent_ids = []
+        # C4 runs 维度的预扣（Q4）：展开项绕过 ``_dispatch``，必须在这里与派发点同源
+        # 地查一次；且刻意先于 ``_expand_plan`` 与 C2 结构闸——同值时由 C4 触发
+        # ``budget_exceeded``（drain），C2 显式更小时才走 ``GraphRecursionError``。
+        delta = len(items) - self._charged_expansions.get(node.id, 0)
+        if delta > 0:
+            self._enforce_c4_runs(self._runs + delta)
         # 展开期复检（Q3）：声明期不可知的展开项数在这里进入执行计划，重新插层。
         self._expand_plan(node.id, len(items))
         self._check_foreach_budget(node, state)

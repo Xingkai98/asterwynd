@@ -324,3 +324,132 @@ async def test_budget_not_configured_is_noop_for_existing_behavior(tmp_path):
     assert result["status"] == "completed"
     assert result["budget"]["exceeded"] is False
     assert result["budget"]["exceeded_dimension"] is None
+
+
+# --- 回归：building-review Round 2 发现的两个缺陷 ---------------------------
+
+
+def _scheduler_with_budget(tmp_path, runs: int, **overrides) -> WorkflowScheduler:
+    """构造一个已装好账本的调度器，并把 ``self._runs`` 设成给定值。"""
+    manager = _manager(tmp_path, StaticLLM(), **overrides)
+    scheduler = WorkflowScheduler(manager)
+    scheduler._budget = WorkflowBudget(_budget_config(manager.config))
+    scheduler._runs = runs
+    return scheduler
+
+
+@pytest.mark.parametrize(
+    "overrides,runs,dimension",
+    [
+        ({"max_total_tokens": 10}, 0, "tokens"),
+        ({"max_total_tokens": 0, "max_total_cost_usd": 0.001}, 0, "cost_usd"),
+        ({"max_total_runs": 2}, 3, "runs"),
+        (
+            {
+                "max_total_tokens": 0,
+                "max_total_cost_usd": 0,
+                "max_total_runs": 0,
+                "max_wall_time_s": 1,
+            },
+            0,
+            "wall_time_s",
+        ),
+    ],
+)
+def test_raise_if_budget_exceeded_handles_every_dimension(
+    tmp_path, overrides, runs, dimension
+):
+    """回归（Round 2）：四维度都必须构造 ``WorkflowBudgetExceeded``，不得 KeyError。
+
+    历史 bug：``_raise_if_budget_exceeded`` 的「维度 → 上限字段」映射漏了 ``"runs"``，
+    而 ``exceeded_dimension`` 会返回 ``"runs"``——foreach 预扣把 ``self._runs`` 推过
+    上限后，下一次派发抛的是 ``KeyError`` 而非 ``WorkflowBudgetExceeded``，异常穿透
+    ``run()``（违反 spec Scenario「超限出口不逃出 run」）。
+    """
+    scheduler = _scheduler_with_budget(tmp_path, runs, **overrides)
+    if dimension == "tokens":
+        scheduler._budget.record_llm_call(
+            model="gpt-4o-mini", input_tokens=20, output_tokens=0
+        )
+    elif dimension == "cost_usd":
+        scheduler._budget.record_llm_call(
+            model="claude-opus-4", input_tokens=1_000_000, output_tokens=0
+        )
+    elif dimension == "wall_time_s":
+        scheduler._budget.started_at = scheduler._budget.started_at - 100
+    with pytest.raises(WorkflowBudgetExceeded) as excinfo:
+        scheduler._raise_if_budget_exceeded()
+    assert excinfo.value.dimension == dimension
+
+
+@pytest.mark.asyncio
+async def test_foreach_expansion_respects_c4_max_total_runs(tmp_path):
+    """回归（Round 2）：foreach 展开必须受 C4 ``max_total_runs`` 约束（Q4）。
+
+    历史 bug：foreach 展开项经 ``_run_foreach_item`` 直接派发、**不经 ``_dispatch``**，
+    而 ``_check_foreach_budget`` 只查 C2 的 ``max_runs``/``max_nodes``——用户把
+    ``budget.max_total_runs`` 配得比 ``spec.max_runs`` 小时，foreach 完全绕过 C4：
+    envelope 报 ``used=10 > limit=3`` 却 ``exceeded=False``、``status=completed``。
+    """
+    manager = _manager(tmp_path, StaticLLM(), max_total_runs=3)
+    spec = {
+        "goal": "g",
+        "nodes": [
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "items": [f"i{i}" for i in range(10)],
+            }
+        ],
+        "edges": [],
+        "terminal": ["fan"],
+    }
+    result = await WorkflowScheduler(manager).run(parse_workflow_spec(spec))
+    assert result["status"] == "budget_exceeded"
+    assert result["budget"]["exceeded"] is True
+    assert result["budget"]["exceeded_dimension"] == "runs"
+    # Q5：terminal 根节点未完成 → 必须标 budget_exceeded（不是 blocked）
+    statuses = {node["id"]: node["status"] for node in result["nodes"]}
+    assert statuses["fan"] == "budget_exceeded"
+    assert result["budget_exceeded"] >= 1
+    # 关键：预扣在展开**之前**拒绝——10 个展开项一个都没跑（不是「跑完再报」）
+    assert result["completed"] == 0
+    assert result["budget"]["dimensions"]["runs"]["used"] == 10  # 触发拒绝的预扣值
+    # envelope 自洽：exceeded 时 used 必须 > limit（预扣被拒的值要如实展现，
+    # 而非报「实际未扣款」的 0，出现 exceeded=true 却 used < limit 的矛盾）
+    assert (
+        result["budget"]["dimensions"]["runs"]["used"]
+        > result["budget"]["dimensions"]["runs"]["limit"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_foreach_budget_stop_returns_envelope_not_keyerror(tmp_path):
+    """回归（Round 2）：foreach 预扣触发 stop 后，后续派发不得让异常逃出 ``run()``。
+
+    覆盖两个缺陷的合流路径：foreach 预扣 → 下游节点派发 → 必须拿到 envelope
+    （``status="budget_exceeded"``），而不是 ``KeyError`` / 任何未捕获异常。
+    """
+    manager = _manager(tmp_path, StaticLLM(), max_total_runs=2)
+    spec = {
+        "goal": "g",
+        "nodes": [
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "items": ["a", "b", "c", "d", "e"],
+                "max_items": 5,
+            },
+            {"id": "tail", "kind": "subagent", "task": "tail"},
+        ],
+        "edges": [{"from": "fan", "to": "tail"}],
+        "terminal": ["tail"],
+    }
+    result = await WorkflowScheduler(manager).run(parse_workflow_spec(spec))
+    assert isinstance(result, dict)
+    assert result["status"] == "budget_exceeded"
+    statuses = {node["id"]: node["status"] for node in result["nodes"]}
+    # tail 是 terminal 根且从未派发（pending）→ 改标 budget_exceeded
+    assert statuses["tail"] == "budget_exceeded"

@@ -1284,11 +1284,13 @@ class SubAgentManager:
         # 实际累计的分量；调用方拿不到分量时退化为「全部记在 input」并**保留
         # total**——宁可粗粒度，也不能报 0。
         if tokens:
-            resolved_input = input_tokens if input_tokens is not None else tokens
-            resolved_output = output_tokens if output_tokens is not None else 0
             if input_tokens is None and output_tokens is None:
-                resolved_input = tokens
-                resolved_output = 0
+                # 调用方拿不到分量：退化为「全部记在 input」并保留 total——
+                # 宁可粗粒度，也不能报 0。
+                resolved_input, resolved_output = tokens, 0
+            else:
+                resolved_input = input_tokens or 0
+                resolved_output = output_tokens or 0
             run.usage = SubagentRunUsage(
                 total_tokens=tokens,
                 input_tokens=resolved_input,

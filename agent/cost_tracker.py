@@ -208,13 +208,21 @@ class CostLedger:
     def total(self) -> float:
         return self._total_cost
 
-    def bill(self) -> dict:
+    def bill(self, *, workflow_id: str | None = None) -> dict:
         """Return per-dimension aggregation.
 
-        legacy 三维：``by_session`` / ``by_phase`` / ``by_tool``（与改造前逐字节一致）。
+        legacy 三维：``by_session`` / ``by_phase`` / ``by_tool``（与改造前逐字节一致，
+        且始终是跨 workflow 的全局财务记录——Q12 的权威口径在 workflow 账本，ledger
+        只是历史）。
+
         四维归因：``by_workflow`` / ``by_node`` / ``by_depth`` / ``by_edge``——只收
         带对应归因键的记录；桶值为 ``{tokens, cost, estimated}``，tokens 口径是
         input+output（不含 cache），cost 单位 USD 且 round 到 :data:`BUCKET_ROUND` 位。
+
+        ``workflow_id`` 给定时，**四维归因**只统计该 workflow 的记录（``None`` = 不过
+        滤）。这是必需的：ledger 被同一个 manager 跨 workflow 共享，而 by_node/by_edge
+        的桶键（node id / edge 串）在不同 workflow 间会重名——不过滤就会把别的
+        workflow 的成本串进本 workflow 的 attribution 快照（D7/Q15）。
         """
         by_session: dict[str, dict] = {}
         by_phase: dict[str, dict] = {}
@@ -234,6 +242,9 @@ class CostLedger:
                 if e["cost"] is not None:
                     bucket["cost"] += e["cost"]
             # 四维归因：键缺失（None）的记录不进桶——不带归因键 = 不进任何归因维度。
+            # 指定 workflow_id 时先按它过滤，避免跨 workflow 的桶键重名串账。
+            if workflow_id is not None and e.get("workflow_id") != workflow_id:
+                continue
             attribution_keys = (
                 (by_workflow, e.get("workflow_id")),
                 (by_node, e.get("node_id")),
