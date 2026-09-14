@@ -192,6 +192,44 @@ async def test_foreach_expansion_is_charged_against_max_nodes(manager):
     assert result2["diagnostics"]["reason"] == "max_nodes"
 
 
+@pytest.mark.asyncio
+async def test_reexpanding_same_foreach_does_not_double_charge_max_nodes(manager):
+    """回归：同一个 foreach 第二次展开（route 回边）不得重复扣 max_nodes 或重复插层。"""
+    raw = {
+        "goal": "g",
+        "nodes": [
+            {"id": "seed", "kind": "subagent", "task": "seed"},
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "source": "seed",
+                "source_field": "items",
+                "max_items": 50,
+            },
+            {"id": "root", "kind": "aggregate", "strategy": "collect"},
+        ],
+        "edges": [
+            {"from": "seed", "to": "fan"},
+            {"from": "fan", "to": "root", "reducer": "concat"},
+        ],
+        "terminal": ["root"],
+    }
+    manager.llm = RecordingLLM(json.dumps({"items": list(range(25))}))
+    scheduler = WorkflowScheduler(manager)
+    await scheduler.run(parse_workflow_spec(raw))
+
+    before_plan = scheduler._plan
+    before_expanded = scheduler._expanded_nodes
+    before_ids = set(scheduler._plan.inserted_nodes)
+
+    # 模拟 route 回边导致的重新展开（同项数）
+    scheduler._expand_plan("fan", 25)
+    assert scheduler._expanded_nodes == before_expanded  # 不重复扣
+    assert set(scheduler._plan.inserted_nodes) == before_ids  # 不重复插
+    assert len(scheduler._plan.nodes) == len(before_plan.nodes)
+
+
 # --- 三 hash 分离 -----------------------------------------------------------
 
 

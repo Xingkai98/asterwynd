@@ -167,6 +167,10 @@ class ExecutionPlan:
     #: 构建本计划用的四档预算（``with_expansion`` 需要它，而不是已被 distance
     #: 覆盖成 per-node 值的 ``budgets``）。
     tiers: Mapping[str, int] = field(default_factory=lambda: dict(DEFAULT_TOKEN_BUDGETS))
+    #: **模型声明的**节点/边（不含自动插入层）。``with_expansion`` 必须从这一份重建，
+    #: 否则第二次展开会把上次插入的 auto 节点当成声明节点，撞上保留前缀校验。
+    declared_nodes: tuple[WorkflowNode, ...] = ()
+    declared_edges: tuple[WorkflowEdge, ...] = ()
     _expansions: Mapping[str, int] = field(default_factory=dict)
     _index: Mapping[str, WorkflowNode] = field(default_factory=dict, repr=False, compare=False)
     _control_sources: frozenset[str] = field(default_factory=frozenset, repr=False, compare=False)
@@ -228,14 +232,16 @@ class ExecutionPlan:
             raise KeyError(f"unknown node id: {node_id}")
         expansions = dict(self._expansions)
         expansions[node_id] = max(int(count), 1)
+        declared = self.declared_nodes or self.nodes
+        declared_edges = self.declared_edges or self.edges
         return ExecutionPlan.build(
             WorkflowSpec(
                 goal="",
-                nodes=self.nodes,
-                edges=self.edges,
+                nodes=declared,
+                edges=declared_edges,
                 entry=self.entry,
                 terminal=self.terminal,
-                _index=self._index,
+                _index={node.id: node for node in declared},
             ),
             max_fan_in=self.max_fan_in,
             budgets=dict(self.tiers),
@@ -328,6 +334,8 @@ class ExecutionPlan:
             budgets=_assign_budgets(node_tuple, edge_tuple, index, control_sources, budgets),
             max_fan_in=max_fan_in,
             tiers=dict(budgets),
+            declared_nodes=declared,
+            declared_edges=tuple(spec.edges),
             _expansions=expansions,
             _index=index,
             _control_sources=frozenset(control_sources),

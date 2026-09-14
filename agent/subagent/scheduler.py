@@ -1204,29 +1204,28 @@ class WorkflowScheduler:
         plan = self._plan
         if plan is None:
             return merged
-        # ``contributions`` 是按**槽**聚合的，所以它的条目数不等于上游数：单槽多上游
-        # 时只有 1 条。判据取「有几个上游节点贡献了内容」。
+        budget = plan.budget_for(state.node.id)
+        if len(merged) <= budget * CHARS_PER_TOKEN:
+            return merged
+        # 传给 summarizer 的是**每个上游一份**的 bounded 产出（而不是已经 concat 好的
+        # 巨型字符串）：compress 的语义是「多份文本 → 一份摘要」。
+        #
+        # 不按上游数提前返回：单个 foreach 容器展开 100 项时上游只有 1 个，但它的
+        # summary 已经是 100 份结果的拼接——正是 Q3 要防的场景，必须压缩。
         upstreams = [
             edge
             for edge in plan.data_incoming(state.node.id)
             if self._states.get(edge.source) is not None
             and self._states[edge.source].status in TERMINAL_NODE_STATUSES
         ]
-        if len(upstreams) < 2:
-            return merged
-        budget = plan.budget_for(state.node.id)
-        if len(merged) <= budget * CHARS_PER_TOKEN:
-            return merged
-        # 传给 summarizer 的是**每个上游一份**的 bounded 产出（而不是已经 concat 好的
-        # 巨型字符串）：compress 的语义是「多份文本 → 一份摘要」。
         texts = [
             text
             for edge in upstreams
             for text in (self._bounded_output(self._states[edge.source], "result"),)
             if text
         ]
-        if len(texts) < 2:
-            return merged
+        if not texts:
+            return self._aggregator.bounded(merged, budget=budget)
         return await self._aggregator.merge(texts, budget=budget)
 
     def _merge_contributions(self, state: NodeState, contributions: dict[str, str]) -> str:

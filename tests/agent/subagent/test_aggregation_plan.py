@@ -243,6 +243,50 @@ def test_expansion_plan_can_be_rebuilt_with_more_leaves():
         assert len(expanded.data_incoming(node_id)) <= 10
 
 
+def test_repeated_expansion_of_the_same_foreach_is_idempotent():
+    """回归：foreach 节点重跑（route 回边/重激活）会再次展开，plan 重建必须稳定。
+
+    第一次展开后 ``plan.nodes`` 里已经含自动插入的 aggregate；重建时若把它们当作
+    「模型声明的节点」再交给 ``build``，会撞上保留前缀校验而抛 ValueError。
+    """
+    raw = {
+        "goal": "g",
+        "nodes": [
+            {"id": "seed", "kind": "subagent", "task": "seed"},
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "source": "seed",
+                "source_field": "items",
+                "max_items": 50,
+            },
+            {"id": "root", "kind": "aggregate", "strategy": "collect"},
+        ],
+        "edges": [
+            {"from": "seed", "to": "fan"},
+            {"from": "fan", "to": "root", "reducer": "concat"},
+        ],
+        "terminal": ["root"],
+    }
+    spec = parse_workflow_spec(raw)
+    first = ExecutionPlan.build(spec, max_fan_in=10, budgets=DEFAULT_BUDGETS)
+    once = first.with_expansion("fan", 25)
+    assert len(once.inserted_nodes) == 3
+
+    # 同一个 foreach 再次展开（同项数）：不应抛错，也不应叠加出重复节点
+    twice = once.with_expansion("fan", 25)
+    assert len(twice.inserted_nodes) == 3
+    assert len(twice.nodes) == len(once.nodes)
+    assert twice.runtime_graph_hash == once.runtime_graph_hash
+    assert twice.declared_spec_hash == first.declared_spec_hash
+
+    # 展开项数变大：只增加差额节点，不重复计数
+    bigger = once.with_expansion("fan", 35)
+    assert len(bigger.inserted_nodes) == 4
+    assert bigger.runtime_graph_hash != once.runtime_graph_hash
+
+
 def test_execution_plan_does_not_mutate_the_declared_spec():
     """Q3：不原地改 WorkflowSpec（spec_hash 是 C5 replay 锚点）。"""
     spec = parse_workflow_spec(_fanout(100))

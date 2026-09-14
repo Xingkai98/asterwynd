@@ -147,6 +147,62 @@ async def test_hundred_leaves_do_not_blow_up_parent_context(manager):
 
 
 @pytest.mark.asyncio
+async def test_single_upstream_collect_aggregate_is_still_bounded(manager):
+    """Q3 的隐蔽场景：foreach 容器展开 100 项、只汇入**一个**上游的 collect aggregate。
+
+    声明期只有 2 个节点、单个上游，所以不会被 fan-in 规则拆层。若汇聚器按「上游数
+    < 2」提前返回，100 份结果的拼接会原样留在槽里并流向下游——正是要防的膨胀。
+    """
+    import json as _json
+
+    class SeedThenBigLLM:
+        """第一个 run（seed）吐出 items；其余 run 吐 20k 大结果。"""
+
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            self.calls += 1
+            content = (
+                _json.dumps({"items": list(range(20))}) if self.calls == 1 else "S" * 20000
+            )
+            return LLMResponse(content=content, stop_reason="end_turn", usage=Usage(5, 5))
+
+    raw = {
+        "goal": "g",
+        "nodes": [
+            {"id": "seed", "kind": "subagent", "task": "seed"},
+            {
+                "id": "fan",
+                "kind": "foreach",
+                "task": "do {item}",
+                "source": "seed",
+                "source_field": "items",
+                "max_items": 50,
+            },
+            {"id": "root", "kind": "aggregate", "strategy": "collect"},
+        ],
+        "edges": [
+            {"from": "seed", "to": "fan"},
+            {"from": "fan", "to": "root", "reducer": "concat"},
+        ],
+        "terminal": ["root"],
+    }
+    manager.llm = SeedThenBigLLM()
+    scheduler = WorkflowScheduler(manager)
+    result = await scheduler.run(parse_workflow_spec(raw))
+
+    assert result["status"] == "completed"
+    assert scheduler._states["fan"].items == 20
+    # 槽与下游文本都按预算有界，不随展开项数线性膨胀
+    root_slot = scheduler._states["root"].slots.get("result", "")
+    assert len(root_slot) < 20 * 20000, "single-upstream collect slot was not compressed"
+    root_task = scheduler._aggregate_task_text(scheduler._states["root"])
+    assert len(root_task) < 20 * 20000
+    assert "S" * 20000 not in _json.dumps(result)
+
+
+@pytest.mark.asyncio
 async def test_hundred_leaves_still_produce_a_readable_root_result(manager):
     """bounded 不等于丢结果：root_result_ref 仍指向完整聚合正文。"""
     manager.llm = StaticLLM("R" * 2000)
