@@ -339,11 +339,16 @@ def parse_workflow_spec(
         if node_id not in seen:
             raise WorkflowValidationError(f"unknown node {node_id!r} in entry/terminal")
     if not entry:
+        # 隐式入口 = 完全没有入边的节点。只被 route 控制边指向的节点（回边目标、
+        # 条件分支出口）不是入口——它们在调度器里等 route 的激活。
         entry = tuple(
-            node.id
-            for node in nodes
-            if not any(edge.required for edge in data_edges if edge.target == node.id)
+            node.id for node in nodes if not any(edge.target == node.id for edge in edges)
         )
+        if not entry:
+            raise WorkflowValidationError(
+                "workflow has no implicit entry (every node has an incoming edge); "
+                "declare spec.entry explicitly"
+            )
     if not terminal:
         terminal = tuple(
             node.id for node in nodes if not any(edge.source == node.id for edge in edges)

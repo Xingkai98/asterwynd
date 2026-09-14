@@ -164,6 +164,7 @@ def test_accepts_cycle_through_route_node():
                     "strategy": "collect",
                 },
             ],
+            entry=["producer"],
             edges=[
                 {"from": "producer", "to": "reviewer"},
                 {"from": "reviewer", "to": "gate"},
@@ -174,6 +175,7 @@ def test_accepts_cycle_through_route_node():
             ],
         )
     )
+    assert spec.entry == ("producer",)
     assert spec.node("gate").max_routes == 3
     assert spec.node("gate").cases[0].when == "APPROVED"
     assert spec.node("gate").cases[0].to == "join"
