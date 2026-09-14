@@ -59,13 +59,18 @@ ready 队列 + 依赖门控：节点只有「所有 required 上游完成」才�
 
 `all_required`（全等齐才汇合）+ `best_effort`（等截止时间，消费已完成结果，保留失败记录）。「失败不 fail-fast」只在 aggregate 层，不进底层 scheduler。
 
+- `best_effort` 的截止时间载体 = aggregate 节点字段 `deadline_s`（从 aggregate 开始等算起，Q3）。
+- 超时臂处置 = `CancelSubagentRun`（写 checkpoint 供后续 resume），标 `status: cancelled`，**不**放任后台跑完（避免占 max_active 名额 + 结果无人消费）。需把 `cancelled` 纳入 TERMINAL_RUN_STATUSES。
+
 ### D5 — reducer 声明（抄 LangGraph）
 
-并行分支写同一结果槽必须声明 reducer（无损合并）；校验阶段对「多入边写同字段」无 reducer 时报 schema 错。join 节点显式声明「等几条臂 + 只执行一次」（防 LangGraph 非 END merge 每路径执行一次的坑）。
+节点加 `outputs: ["<槽名>"]` 声明写哪些槽（Q4）。并行分支写同一结果槽必须声明 reducer；reducer 用受限枚举 `concat` / `merge_dict` / `first_non_empty` / `last`（不执行模型生成代码）。校验阶段对「多入边写同槽」无 reducer 时报 schema 错。join 节点显式声明「等几条臂 + 只执行一次」（防 LangGraph 非 END merge 每路径执行一次的坑）。
 
-### D6 — 图级 recursion_limit
+### D6 — 图级 recursion_limit + 三闸
 
-图级步数上限（默认 25），超限 GraphRecursionError；图级而非节点级（否则单分支死循环饿死其他分支）。
+`recursion_limit`（默认 25）= **图级 superstep 数**（一次调度循环 = 就绪一批→派发→等一批完成 算 1 步），超限 GraphRecursionError；图级而非节点级（否则单分支死循环饿死其他分支）。
+
+三闸（Q5）：`recursion_limit=25`（图级步数）/ `max_nodes=200`（节点数，含 foreach 展开）/ `max_runs=300`（run 总数）。三者与 C1 的 `max_spawns=200` 量纲不同、需在校验期一致性校准（避免「图还没跑完 spawn 预算先耗尽」的误伤）。
 
 ### D7 — 4 pattern → DSL 模板
 
@@ -73,14 +78,16 @@ ready 队列 + 依赖门控：节点只有「所有 required 上游完成」才�
 orchestrator-worker → foreach + aggregate(all_required)
 peer-review         → subagent + subagent + route + 有限循环(max_rounds)
 hierarchical        → subagent(manager, 可嵌套) + foreach
-bidding             → foreach + aggregate(selector)
+bidding             → foreach(proposers) + subagent(selector) + aggregate   ← 修正：selector 是真实子 agent 节点，非 aggregate(strategy=llm) 内联
 ```
 
-`run_pattern()` 保留兼容 adapter，内部编译成 WorkflowSpec；返回字段兼容 + 新增 workflow_id/spec_hash/critical_path_s/peak_active/total_cost。
+`run_pattern()` 保留兼容 adapter，内部编译成 WorkflowSpec；返回字段兼容 + 新增 workflow_id / workflow_spec_hash（改名，避免与 OpenSpec artifact hash 同名）/ critical_path_s / peak_active / total_cost。
 
-### D8 — 前置项:每 orchestration 复位 + root_run_id 计数桶
+- **聚合语义**：pattern 模板「每节点取最新一次 run」而非「取该节点所有 run」（peer-review 跨轮复用同一 session，取最后两次；bidding 的 completed 只数 proposers，selector 不进 workers）。
 
-C1 的累计 spawn 计数取 manager 生命周期保守语义；本 change 引入 workflow/orchestration 身份后，改为「每 orchestration 复位 + `root_run_id` 计数桶」——每个顶层 workflow run 有自己的计数桶，子 run 通过 `root_run_id` 归因，防 #69206 式单次展开爆炸的同时不误伤长会话。
+### D8 — 前置项:workflow_id 计数桶（替代 root_run_id）
+
+C1 的累计 spawn 计数取 manager 生命周期保守语义。本 change 引入 workflow 身份后，改为**「每 workflow run 复位 + `workflow_id` 计数桶」**（Q6）：每个顶层 workflow run 一个桶（两 foreach 共享 200 上限），嵌套 workflow 各自独立桶。无 workflow 的主 loop 沿用 C1 的 manager 生命周期保守语义（每 turn 复位归后续 change）。grill 已确认 `SubagentRunRecord` 无 `root_run_id` 字段、contextvar 也无载体——桶键用既有的 `workflow_id` 而非新增 `root_run_id`。
 
 ## Pre-Implementation Review
 
