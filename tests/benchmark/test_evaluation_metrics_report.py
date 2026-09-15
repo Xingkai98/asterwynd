@@ -89,7 +89,7 @@ def test_task_row_pass_at_k_counts_only_valid_rounds() -> None:
     md = render_report(aggregates)
     # 2 valid rounds, both passed -> Pass@k 1.00, Passes 2/2,
     # Pass^k shows em-dash (below the 3-valid-round threshold)
-    assert "| t1 | local | execution | 1.00 | 2/2 | — |" in md
+    assert "| t1 | local | execution | - | 1.00 | 2/2 | — |" in md
 
 
 def test_task_row_pass_k_marked_no_when_any_valid_round_fails() -> None:
@@ -102,7 +102,7 @@ def test_task_row_pass_k_marked_no_when_any_valid_round_fails() -> None:
     md = render_report(aggregates)
     # pass@2 = "at least one success in 2 rounds" -> 1.00; pass^k (all rounds)
     # shows em-dash because only 2 valid rounds (below threshold).
-    assert "| t1 | local | execution | 1.00 | 1/2 | — |" in md
+    assert "| t1 | local | execution | - | 1.00 | 1/2 | — |" in md
 
 
 def test_render_html_includes_pass_k_columns() -> None:
@@ -132,4 +132,4 @@ def test_task_row_pass_k_yes_when_three_valid_rounds_pass() -> None:
         ]
     )
     md = render_report(aggregates)
-    assert "| t1 | local | execution | 1.00 | 3/3 | yes |" in md
+    assert "| t1 | local | execution | - | 1.00 | 3/3 | yes |" in md

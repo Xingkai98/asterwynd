@@ -394,6 +394,15 @@ class SubAgentManager:
         # workflow in context keep the C1 manager-lifetime semantics.
         self._workflow_spawn_counts: dict[str, int] = {}
         self._workflow_spawn_limits: dict[str, int] = {}
+        # Guardrail rejection/degradation counters (change
+        # ``benchmark-workflow-replay``, D4/Q3). Same bucketing as the spawn
+        # counts: a workflow in context owns the entry, otherwise the counts
+        # fall back to the manager lifetime. Instrumentation only — the
+        # counters sit inside existing branches, they do not add execution
+        # paths. Kinds: ``depth_capped`` (spawn tools withdrawn at max_depth)
+        # and ``spawn_budget`` (``_check_spawn_budget`` rejected a spawn).
+        self._workflow_rejection_counts: dict[str, dict[str, int]] = {}
+        self._rejection_counts: dict[str, int] = {}
         # Workflow registry (grill Q1: manager-scoped, in-memory; persistence for
         # benchmark replay belongs to C5).
         self._workflows: dict[str, object] = {}
@@ -569,6 +578,9 @@ class SubAgentManager:
     def release_workflow_bucket(self, workflow_id: str) -> None:
         self._workflow_spawn_counts.pop(workflow_id, None)
         self._workflow_spawn_limits.pop(workflow_id, None)
+        # Rejection counts are snapshotted into the envelope before this runs
+        # (same reason as the spawn counts — the bucket is gone afterwards).
+        self._workflow_rejection_counts.pop(workflow_id, None)
 
     def spawn_count(self) -> int:
         """Spawns charged in the current context's bucket (introspection/tests)."""
@@ -576,6 +588,33 @@ class SubAgentManager:
         if workflow_id is None:
             return self._spawn_count
         return self._workflow_spawn_counts.get(workflow_id, 0)
+
+    def spawn_count_for(self, workflow_id: str) -> int:
+        """Spawns charged to an explicit workflow bucket (no ambient context).
+
+        The benchmark collector reads this *inside* ``scheduler.run()``, before
+        the bucket is released — afterwards ``spawn_count()`` would fall back to
+        the manager-lifetime counter, a different quantity entirely.
+        """
+        return self._workflow_spawn_counts.get(workflow_id, 0)
+
+    def _count_rejection(self, kind: str) -> None:
+        """Record one guardrail rejection/degradation (change C5, D4/Q3).
+
+        Mirrors :meth:`_count_spawn`'s bucketing so a per-workflow figure exists
+        without a new execution path: the increment sits inside the branch that
+        already decided to reject or withdraw.
+        """
+        workflow_id = current_workflow_id()
+        if workflow_id is None:
+            self._rejection_counts[kind] = self._rejection_counts.get(kind, 0) + 1
+            return
+        bucket = self._workflow_rejection_counts.setdefault(workflow_id, {})
+        bucket[kind] = bucket.get(kind, 0) + 1
+
+    def rejection_counts_for(self, workflow_id: str) -> dict[str, int]:
+        """Per-workflow rejection counts, keyed by kind (``depth_capped`` etc.)."""
+        return dict(self._workflow_rejection_counts.get(workflow_id, {}))
 
     async def run_subagent(
         self,
@@ -1135,6 +1174,11 @@ class SubAgentManager:
         # delayed queue run cannot rely on it.
         if depth is not None and depth >= self.max_depth:
             hidden_tools = SPAWN_TOOL_NAMES
+            # Instrumentation (C5 Q3): one count per *construction*, so
+            # ``depth_capped_runs`` means "runs whose capability was degraded",
+            # not "times the model hit the guardrail". ``depth is None`` keeps
+            # the historical un-gated behaviour and is deliberately not counted.
+            self._count_rejection("depth_capped")
         else:
             hidden_tools = ()
         return AgentLoop(
@@ -1443,6 +1487,7 @@ class SubAgentManager:
             # 无 workflow 的主 loop：沿用 C1 的 manager 生命周期保守语义
             # （Q6 已确认「每 turn 复位」归后续 change）。
             if self._spawn_count >= self.max_spawns:
+                self._count_rejection("spawn_budget")
                 raise RuntimeError(
                     f"subagent spawn budget exceeded: {self._spawn_count} spawns >= "
                     f"max_spawns {self.max_spawns} (per orchestration)"
@@ -1451,6 +1496,7 @@ class SubAgentManager:
         used = self._workflow_spawn_counts.get(workflow_id, 0)
         limit = self._workflow_spawn_limits.get(workflow_id, self.max_spawns)
         if used >= limit:
+            self._count_rejection("spawn_budget")
             raise RuntimeError(
                 f"subagent spawn budget exceeded: {used} spawns >= "
                 f"max_spawns {limit} (workflow {workflow_id})"

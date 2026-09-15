@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,8 +22,15 @@ from benchmarks.models import (
     TaskResult,
     render_summary,
 )
+from benchmarks.report import REPLAY_STATUS
 from benchmarks.statistics import swebench_versions
 from benchmarks.task_schema import LoadedTask, load_task
+from benchmarks.workflow_e2e import (
+    MODE_NOT_EXECUTED,
+    compare_record_and_replay,
+    e2e_fields,
+)
+from benchmarks.workflow_replay import read_workflow_record
 
 
 @dataclass
@@ -90,7 +97,16 @@ class BenchmarkRunner:
         provider: str | None = None,
         max_iterations: int | None = None,
         timeout_seconds: int | None = None,
+        workflow_mode: str | None = None,
+        workflow_record_dir: str | Path | None = None,
     ):
+        # C5: workflow mode is a property of the run (it decides whether the
+        # verifier runs at all), so the runner carries it alongside the agent
+        # runner that actually implements the three paths.
+        self.workflow_mode = workflow_mode
+        self.workflow_record_dir = (
+            Path(workflow_record_dir).resolve() if workflow_record_dir else None
+        )
         self.agent_runner = agent_runner
         self.source_repo = Path(source_repo).resolve()
         self.runs_dir = Path(runs_dir).resolve()
@@ -273,6 +289,98 @@ class BenchmarkRunner:
         (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
         return metadata
 
+    def _annotate_e2e_verification(self, result: TaskResult) -> TaskResult:
+        """record vs replay 的可比性断言 + 降级事实（D6/Q6/Q7）。
+
+        只有 ``dynamic-replay`` 有对照面（它有一份 record 可比）。缺 ``--workflow-record``
+        或记录不可读时记「未执行 + 原因」，**不静默当已验证**（Q7）。
+
+        优先级刻意如此：**先**判定「真实 LLM 侧这次回放到底跑没跑成」，再谈记录可读性
+        ——LLM 不可用会让回放本身失败，那是比「记录文件缺失」更根本的降级事实。
+        """
+        if result.workflow_mode != "dynamic-replay":
+            return result
+        if not self.workflow_record_dir:
+            return replace(
+                result,
+                e2e_llm_verified=False,
+                e2e_verification_mode=MODE_NOT_EXECUTED,
+                e2e_skip_reason=(
+                    "no record run directory was configured (--workflow-record); "
+                    "there is nothing to compare the replay against"
+                ),
+            )
+        if result.workflow_collection_status != "ok":
+            return replace(
+                result,
+                e2e_llm_verified=False,
+                e2e_verification_mode=MODE_NOT_EXECUTED,
+                e2e_skip_reason=(
+                    "no readable workflow record for this task under "
+                    f"{self.workflow_record_dir} "
+                    f"(collection_status={result.workflow_collection_status}); "
+                    "replay was skipped and nothing was compared"
+                ),
+            )
+        fake_llm = self._is_fake_agent()
+        # 真实 LLM 侧没有跑完的回放不算已验证（Q6「无异常完成」/Q7 降级）：
+        # 这是「真实 LLM 不可用」在这次 run 里唯一的可观测形态——replay 会照常为
+        # 每个节点发起真实调用，拿不到 provider 就地标 error/未完成。
+        if not fake_llm and not _replay_completed_cleanly(result):
+            return replace(
+                result,
+                **e2e_fields(
+                    llm_available=False,
+                    skip_reason=(
+                        "the replay run did not complete cleanly against the real "
+                        f"LLM (workflow status "
+                        f"{(result.workflow_envelope or {}).get('status')!r}); only "
+                        "spec_hash equality was checked, cost/run_count were not"
+                    ),
+                ),
+            )
+        record = read_workflow_record(
+            Path(self.workflow_record_dir) / "tasks" / result.task_id
+        )
+        entries = (record or {}).get("workflows") or []
+        if not entries:
+            return replace(
+                result,
+                **e2e_fields(
+                    llm_available=True,
+                    skip_reason="record file not readable for comparison",
+                ),
+            )
+        assertions = compare_record_and_replay(
+            entries[0],
+            {
+                "node_count": result.workflow_node_count,
+                "run_count": result.workflow_run_count,
+                # 图级状态（不是 benchmark 的 ``replayed`` 专值）：Q6 的 status 断言
+                # 比的是「回放有没有复现 record 的完成/异常形态」。
+                "workflow_status": (result.workflow_envelope or {}).get("status"),
+                "workflow_spec_hash": result.workflow_spec_hash,
+                "peak_active": result.workflow_peak_active,
+                "critical_path_s": result.workflow_critical_path_s,
+                "cost_usd": result.workflow_cost_usd,
+            },
+            fake_llm=fake_llm,
+        )
+        return replace(
+            result,
+            **e2e_fields(
+                llm_available=True, assertions=assertions, fake_llm=fake_llm
+            ),
+        )
+
+    def _is_fake_agent(self) -> bool:
+        """Whether the LLM behind this run is scripted/fake (Q6).
+
+        A fake round-trip can assert full equality; a real LLM can only assert
+        ``spec_hash`` — so the record must say which mode actually ran.
+        """
+        return self.agent_name == "fake"
+
     async def run_task(
         self,
         task_dir: str | Path,
@@ -353,8 +461,30 @@ class BenchmarkRunner:
                 if hidden_backup:
                     log("Temporarily hid benchmarks/tasks from agent workspace")
 
-            agent_result = await self._run_agent(loaded, workspace, task_output, trace)
+            agent_result = await self._run_agent(
+                loaded, workspace, task_output, trace, seed
+            )
             log(f"Agent finished with status={agent_result.status}")
+            # Carry the agent-side fields (tokens, iterations, workflow_*) onto
+            # the result **once**, then mutate incrementally below. The three
+            # rebuild points used to reconstruct a TaskResult wholesale and
+            # silently dropped every field they did not list (grill Confirmed
+            # Decision 3) — ``dataclasses.replace`` cannot regress that way.
+            result.apply_agent_run(agent_result)
+
+            if agent_result.status == REPLAY_STATUS:
+                # dynamic-replay 只验证编排协议、不判分（grill Q10 读法 A）：
+                # **不走** verifier，也不跑 test_command。否则同一任务的 record 与
+                # replay 会被双重计数，污染完成率与 $/resolved-task。
+                result = replace(
+                    result,
+                    status=REPLAY_STATUS,
+                    duration_seconds=round(time.time() - start, 1),
+                )
+                result = self._annotate_e2e_verification(result)
+                trace.record_completion(REPLAY_STATUS)
+                log(f"Task result: {REPLAY_STATUS} (orchestration-only, not scored)")
+                return result
 
             if hidden_backup:
                 await asyncio.to_thread(
@@ -374,27 +504,12 @@ class BenchmarkRunner:
             if is_docker_task:
                 patch_text = self._git_patch(workspace)
                 if not patch_text.strip():
-                    result = TaskResult(
-                        task_id=loaded.task.id,
-                        agent=self.agent_name,
-                        model=self.model,
-                        mode=self.run_config.mode.value,
-                        agent_run_id=agent_run_id,
+                    result = replace(
+                        result,
                         status="failed",
                         duration_seconds=round(time.time() - start, 1),
-                        iterations=agent_result.iterations,
-                        tool_calls=agent_result.tool_calls,
-                        edit_count=agent_result.edit_count,
                         test_runs=0,
-                        input_tokens=agent_result.input_tokens,
-                        output_tokens=agent_result.output_tokens,
-                        cache_read_tokens=agent_result.cache_read_tokens,
-                        cache_write_tokens=agent_result.cache_write_tokens,
                         reason=BenchmarkReason.NO_CHANGE.value,
-                        task_family=loaded.task.task_family,
-                        category=loaded.task.category,
-                        temperature=self.temperature,
-                        seed=seed,
                     )
                     trace.record_completion("failed", BenchmarkReason.NO_CHANGE.value)
                     log("Task result: failed (no_change)")
@@ -443,27 +558,12 @@ class BenchmarkRunner:
                 else:
                     status = verifier_status
 
-                result = TaskResult(
-                    task_id=loaded.task.id,
-                    agent=self.agent_name,
-                    model=self.model,
-                    mode=self.run_config.mode.value,
-                    agent_run_id=agent_run_id,
+                result = replace(
+                    result,
                     status=status,
                     duration_seconds=round(time.time() - start, 1),
-                    iterations=agent_result.iterations,
-                    tool_calls=agent_result.tool_calls,
-                    edit_count=agent_result.edit_count,
                     test_runs=1 if verifier_status in {"passed", "failed"} else 0,
-                    input_tokens=agent_result.input_tokens,
-                    output_tokens=agent_result.output_tokens,
-                    cache_read_tokens=agent_result.cache_read_tokens,
-                    cache_write_tokens=agent_result.cache_write_tokens,
                     reason=reason,
-                    task_family=loaded.task.task_family,
-                    category=loaded.task.category,
-                    temperature=self.temperature,
-                    seed=seed,
                     partial=partial,
                 )
                 trace.record_completion(status, reason or "")
@@ -527,28 +627,13 @@ class BenchmarkRunner:
                     else BenchmarkReason.TEST_FAILURE.value
                 )
 
-            result = TaskResult(
-                task_id=loaded.task.id,
-                agent=self.agent_name,
-                model=self.model,
-                mode=self.run_config.mode.value,
-                agent_run_id=agent_run_id,
+            result = replace(
+                result,
                 status=status,
                 test_exit_code=test_exit_code,
                 duration_seconds=round(time.time() - start, 1),
-                iterations=agent_result.iterations,
-                tool_calls=agent_result.tool_calls,
-                edit_count=agent_result.edit_count,
                 test_runs=1,
-                input_tokens=agent_result.input_tokens,
-                output_tokens=agent_result.output_tokens,
-                cache_read_tokens=agent_result.cache_read_tokens,
-                cache_write_tokens=agent_result.cache_write_tokens,
                 reason=reason or agent_result.reason,
-                task_family=loaded.task.task_family,
-                category=loaded.task.category,
-                temperature=self.temperature,
-                seed=seed,
             )
             trace.record_completion(status)
             log(f"Task result: {status}")
@@ -727,7 +812,14 @@ class BenchmarkRunner:
         workspace: Path,
         task_output: Path,
         trace: TraceRecorder,
+        seed: int | None = None,
     ):
+        # 本轮 seed 交给 agent runner（若有该接口）：D2 的 workflow_record 要记
+        # seed，而 ``AgentRunner.run`` 的五参签名按 Q8 不动——只能走这个 setter。
+        # 同一轮里所有任务共享同一个 seed 值，并发写是幂等的。
+        set_seed = getattr(self.agent_runner, "set_run_seed", None)
+        if callable(set_seed):
+            set_seed(seed)
         return await self.agent_runner.run(
             loaded.task,
             loaded.problem_statement,
@@ -941,6 +1033,24 @@ def _run_git(args: list[str], cwd: Path) -> str:
         check=True,
     )
     return proc.stdout.strip()
+
+
+#: Replay 的 workflow 状态里算「异常完成」的那些（Q6 的硬断言前提）。
+_REPLAY_UNHEALTHY_STATUSES = frozenset(
+    {"graph_recursion_exceeded", "cancelled", "error", "declared"}
+)
+
+
+def _replay_completed_cleanly(result: TaskResult) -> bool:
+    """回放是否无异常完成（Q6）。
+
+    ``workflow_envelope`` 缺 status（采集本身失败）时保守判 False——宁可标
+    「未验证」也不要静默当已验证（Q7）。
+    """
+    status = (result.workflow_envelope or {}).get("status")
+    if not status:
+        return False
+    return status not in _REPLAY_UNHEALTHY_STATUSES
 
 
 def _now() -> str:

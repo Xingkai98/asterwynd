@@ -377,6 +377,19 @@ class WorkflowScheduler:
         self._tasks: set[asyncio.Task[None]] = set()
         self._route_counts: dict[str, int] = {}
         self._run_refs: list[Any] = []
+        #: 编排质量指标的 run 级记账（change ``benchmark-workflow-replay``，D4/Q2）：
+        #: 被下游真正读走产出的 run id 集合（``_collect_slots``/``_node_task_text``/
+        #: ``_write_root_result`` 打标）。冗余度的分子就是它的基数——没有它就只能退
+        #: 回「有出边即有用」的结构口径，答不出「冗余」（Q2 口径 A 的问题）。
+        self._consumed_run_ids: set[str] = set()
+        #: 拒绝/降级计数（Q3/Q4）：queue_full 与图级超限在调度器侧落账；深度撤工具与
+        #: spawn 预算拒绝由 manager 的计数器提供（``rejection_counts_for``）。
+        self._queue_full_runs = 0
+        self._graph_recursion_runs = 0
+        #: run() finally 释放 spawn 桶之前取下的快照（Q2/Confirmed Decision 7）：
+        #: 释放后 ``manager.spawn_count()`` 会退化成 manager 生命周期计数，口径不同。
+        self._spawn_count_snapshot: int | None = None
+        self._rejection_counts_snapshot: dict[str, int] = {}
         #: node_id -> 仍在跑的 (subagent_id, run_id)，取消路径据此找到 in-flight run
         self._live_runs: dict[str, list[tuple[str, str]]] = {}
         self._peak_active = 0
@@ -402,6 +415,15 @@ class WorkflowScheduler:
         self._attribution_ref: str | None = None
 
     # -- 生命周期 -----------------------------------------------------------
+
+    @property
+    def started(self) -> bool:
+        """``run()`` 是否已经开跑（``declared`` 态 = 只注册不执行）。
+
+        C5 的 record 采集据此过滤：``DeclareWorkflow`` 只注册不执行，未启动的图
+        不能进 ``workflows`` 列表，否则 replay 会重放出 record 时不存在的行为。
+        """
+        return self._status != "declared"
 
     @property
     def spec(self) -> WorkflowSpec | None:
@@ -549,6 +571,11 @@ class WorkflowScheduler:
         self._budget_stop = False
         self._budget_dimension = None
         self._budget_projected_runs = None
+        self._consumed_run_ids = set()
+        self._queue_full_runs = 0
+        self._graph_recursion_runs = 0
+        self._spawn_count_snapshot = None
+        self._rejection_counts_snapshot = {}
         bus = self.bus or MessageBus()
         self.bus = bus
         self._record_event("workflow_started", status="running")
@@ -562,10 +589,8 @@ class WorkflowScheduler:
         except GraphRecursionError as exc:
             # 运行期复检（自动插入节点吃 max_nodes）：与主循环内触发的图级闸门
             # 走同一个 envelope 诊断出口（Q8：模型看到 envelope，不是异常文本）。
-            self._accepting = False
             await self._cancel_all_in_flight()
-            self._diagnostics = exc.to_dict()
-            self._status = "graph_recursion_exceeded"
+            self._mark_graph_recursion_exceeded(exc)
             if raise_on_recursion:
                 raise
         except WorkflowBudgetExceeded as exc:
@@ -574,6 +599,10 @@ class WorkflowScheduler:
             self._mark_budget_stop(exc.dimension)
         finally:
             await self._teardown()
+            # 快照必须早于 ``release_workflow_bucket``（Q2/Confirmed Decision 7）：
+            # 释放会 pop 掉 workflow 桶，之后 ``spawn_count()`` 在无 workflow 上下文的
+            # 采集点会退化成 manager 生命周期计数——那是「整个任务的全部 spawn」。
+            self._snapshot_spawn_accounting()
             self.manager.release_workflow_bucket(self.workflow_id)
             self._finished_at = time.time()
             self._write_root_result()
@@ -582,6 +611,38 @@ class WorkflowScheduler:
             self._write_attribution()
             self._record_event("workflow_terminal", status=self._status, terminal=True)
         return self.status()
+
+    def _snapshot_spawn_accounting(self) -> None:
+        """把 workflow 桶的 spawn/拒绝计数快照进调度器（Q2/Q3）。
+
+        ``manager.spawn_count_for`` 走显式 workflow_id，不依赖 contextvar——
+        ``run()`` 的 finally 里调用上下文已随节点任务的收尾而清理。
+        """
+        manager = self.manager
+        self._spawn_count_snapshot = int(manager.spawn_count_for(self.workflow_id))
+        self._rejection_counts_snapshot = manager.rejection_counts_for(self.workflow_id)
+
+    def _mark_consumed(self, state: "NodeState") -> None:
+        """打标「该节点的 run 产出被下游读走」（Q2 消费口径）。
+
+        一个节点可能有多次 run（route 回边重跑）或多次展开项（foreach），所以标记
+        按 run id 记而不是按节点记。只加记账状态，不改执行流。
+        """
+        if state.run_id:
+            self._consumed_run_ids.add(state.run_id)
+        for run_id in state.run_ids:
+            self._consumed_run_ids.add(run_id)
+
+    def _mark_graph_recursion_exceeded(self, exc: GraphRecursionError) -> None:
+        """图级闸门的**唯一**收敛出口（Q3 的「图级超限」计数落点）。
+
+        ``_check_declared_limits``（``run()`` 路径）与 ``_drive`` 的内部捕获都会走到
+        这里；计数幂等，避免同一次超限被记两次。
+        """
+        self._accepting = False
+        self._diagnostics = exc.to_dict()
+        self._status = "graph_recursion_exceeded"
+        self._graph_recursion_runs = 1
 
     def _check_declared_limits(self, spec: WorkflowSpec) -> None:
         """运行期记账复检（grill 决策 6）：自动插入的节点也要吃 ``max_nodes``。
@@ -682,10 +743,8 @@ class WorkflowScheduler:
                     return
                 await self._wait_for_progress()
         except GraphRecursionError as exc:
-            self._accepting = False
             await self._cancel_all_in_flight()
-            self._diagnostics = exc.to_dict()
-            self._status = "graph_recursion_exceeded"
+            self._mark_graph_recursion_exceeded(exc)
             if raise_on_recursion:
                 raise
 
@@ -1554,6 +1613,9 @@ class WorkflowScheduler:
             # Q2：准入背压让 workflow 永不撞 queue_full；真撞上时 manager 已经把
             # run record 弹掉了（`_take_back_if_queue_full`），所以这里**不能**索引
             # ``session.runs[-1]``——按可诊断的失败记账，绝不静默丢。
+            # 计数落账（C5 Q3）：这一类在 workflow 内**预期恒为 0**，实现必须能诚实
+            # 报 0 而不是给个看着像有数据的数——所以计数点是这个真实的拒绝分支。
+            self._queue_full_runs += 1
             return {
                 "subagent_id": subagent_id,
                 "run_id": run_id,
@@ -1729,6 +1791,8 @@ class WorkflowScheduler:
                 value = self._node_output(upstream, slot)
                 if value is None:
                     continue
+                # 消费打标（C5 D4/Q2）：这个上游的产出真被下游 reducer 读走了。
+                self._mark_consumed(upstream)
                 groups.setdefault(slot, []).append(value)
                 if edge.reducer:
                     reducers[slot] = edge.reducer
@@ -1767,6 +1831,7 @@ class WorkflowScheduler:
             text = self._bounded_output(upstream, "result")
             if not text:
                 continue
+            self._mark_consumed(upstream)
             ref = self._result_ref_for(upstream)
             suffix = f" (full result: {ref})" if ref else ""
             parts.append(f"Input from {edge.source}{suffix}:\n{text}")
@@ -1790,6 +1855,7 @@ class WorkflowScheduler:
                 text = self._bounded_output(upstream, slot)
                 if not text:
                     continue
+                self._mark_consumed(upstream)
                 ref = self._result_ref_for(upstream)
                 suffix = f" (result_ref: {ref})" if ref else ""
                 parts.append(f"Input from {edge.source} slot {slot}{suffix}:\n{text}")
@@ -1951,6 +2017,52 @@ class WorkflowScheduler:
         except Exception:  # noqa: BLE001
             return 0.0
 
+    def _queue_wait_s(self) -> float | None:
+        """最长单次排队时长（Q4：聚合用 ``max``，不用 sum/p50）。
+
+        数据面今天就在 run record 上（``created_at``/``started_at``，manager 赋值），
+        零新字段、零新分支（Confirmed Decision 5）。``started_at is None`` 的 run 是
+        「排了队但没跑成就被取消」，在这里沉默跳过，单独记 ``queue_cancelled_runs``。
+
+        ``None`` 语义 = 本 workflow 没有任何 run 真的开跑。
+        """
+        return max(
+            (r.started_at - r.created_at for r in self._run_refs if r.started_at),
+            default=None,
+        )
+
+    def _queue_cancelled_runs(self) -> int:
+        """排队期间被取消（从未开跑）的 run 数（Q4）。
+
+        **单列、不并入拒绝降级计数**：它是分母侧的量，语义与 ``queue_full``
+        （根本没排上队）相反，两者不得合并成一个指标。
+        """
+        return sum(1 for r in self._run_refs if r.started_at is None)
+
+    def _redundancy(self) -> float | None:
+        """冗余度 = 有用产出 / spawn 总数（D4，Q2 消费口径）。
+
+        分子 = 被下游真正读走产出的 run 数；分母 = workflow 级 spawn 快照（含
+        ``create_subagent`` + 真实 run，不含 queue_full）。分母为 0 时记 ``None``
+        而不是 0——「没有 spawn」与「spawn 全是冗余」是两回事。值越低越健康。
+        """
+        spawns = self._spawn_count_snapshot
+        if not spawns:
+            return None
+        return round(len(self._consumed_run_ids) / spawns, 6)
+
+    def _rejected_runs(self) -> int:
+        """拒绝降级总量（D4 四类 = queue_full + 深度撤工具 + spawn 预算拒绝 + 图级超限）。
+
+        ``queue_cancelled_runs`` **不**在这里（它是分母侧量，Q4 明确单列）。
+        """
+        return (
+            self._queue_full_runs
+            + self._graph_recursion_runs
+            + self._rejection_counts_snapshot.get("depth_capped", 0)
+            + self._rejection_counts_snapshot.get("spawn_budget", 0)
+        )
+
     def _refresh_peak(self) -> None:
         # Q9：peak_active = 本 workflow 内并发执行的 run 数（不被同 manager 其他
         # pattern 污染），因此从自己的 run record 里统计，而非许可池占用。
@@ -2042,6 +2154,24 @@ class WorkflowScheduler:
             "peak_active": self._peak_active,
             "critical_path_s": round(finished_at - self._started_at, 6) if self._started_at else 0.0,
             "total_cost": round(self._ledger_total() - self._cost_before, 9),
+            # 编排质量指标（change ``benchmark-workflow-replay``，D4）。
+            # ``run_count`` 用 ``_run_refs``（只含派发成功的 run）——**不要**用
+            # ``completed + failed``（漏掉被取消且未登记的 run），更不要用
+            # ``self._runs``（派发前**预扣**的累计值，可能大于实际派发数，
+            # 见 ``_budget_summary`` 的 docstring，Confirmed Decision 7）。
+            "run_count": len(self._run_refs),
+            "queue_wait_s": self._queue_wait_s(),
+            "queue_cancelled_runs": self._queue_cancelled_runs(),
+            "queue_full_runs": self._queue_full_runs,
+            "graph_recursion_exceeded": self._graph_recursion_runs,
+            "useful_runs": len(self._consumed_run_ids),
+            "redundancy": self._redundancy(),
+            "rejected_runs": self._rejected_runs(),
+            "depth_capped_runs": self._rejection_counts_snapshot.get("depth_capped", 0),
+            "spawn_budget_rejected": self._rejection_counts_snapshot.get("spawn_budget", 0),
+            # spawn 快照（Q2/Confirmed Decision 7）：必须在 run() finally 释放桶之前取，
+            # 释放后 ``manager.spawn_count()`` 会退化成 manager 生命周期计数。
+            "workflow_spawn_count": self._spawn_count_snapshot,
             # 四维度预算快照（D7）：与顶层既有的 int 键 ``budget_exceeded`` 共存，
             # 语义不同、不得互相覆盖（Confirmed Decision 7）。
             "budget": self._budget_summary(),
@@ -2101,6 +2231,8 @@ class WorkflowScheduler:
             state = self._states.get(node_id)
             if state is not None and (state.summary or "").strip():
                 text = state.summary
+                # 终态产出进了根结果也算一次消费（Q2）。
+                self._mark_consumed(state)
         if not text:
             text = "\n\n".join(
                 state.summary
