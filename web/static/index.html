@@ -16,6 +16,8 @@
     <nav id="tabs">
       <button class="tab active" data-tab="hub" id="hub-tab">Sessions</button>
       <button class="tab" data-tab="chat" id="chat-tab">Chat</button>
+      <!-- 用户态能力：不放 debug 门禁（D2） -->
+      <button class="tab" data-tab="workflow" id="workflow-tab" hidden>Workflow</button>
       <button class="tab" data-tab="debug" id="debug-tab" style="display:none">Debug</button>
     </nav>
     <div id="session-tabs" class="session-tabs" hidden></div>
@@ -92,6 +94,17 @@
       <div id="chat-panes"></div>
     </section>
 
+    <!-- Workflow View（运行态流程图；用户态，不受 debug 门禁约束） -->
+    <section id="workflow-view" class="view">
+      <div id="workflow-panel" class="workflow-panel">
+        <div id="workflow-tabs" class="workflow-tabs" hidden></div>
+        <div id="workflow-summary" class="workflow-summary"></div>
+        <div id="workflow-canvas" class="workflow-canvas">
+          <div class="workflow-empty">模型启动 workflow 后自动显示流程图。</div>
+        </div>
+      </div>
+    </section>
+
     <!-- Debug View -->
     <section id="debug-view" class="view">
       <div id="timeline-panel" class="timeline-panel">
@@ -107,7 +120,9 @@
 </div>
 
 <script src="/static/markdown.js?v=6"></script>
-<script src="/static/chat.js?v=20"></script>
+<script src="/static/workflow_graph.js?v=1"></script>
+<script src="/static/workflow.js?v=1"></script>
+<script src="/static/chat.js?v=21"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

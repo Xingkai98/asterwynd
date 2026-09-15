@@ -241,6 +241,29 @@ function renderSessionTabs() {
   sessionTabsEl.hidden = tabs.size === 0;
 }
 
+// 顶层视图切换的唯一入口（Sessions / Chat / Workflow / Debug）。
+function showView(viewName) {
+  activeView = viewName;
+  document.querySelectorAll('.tab[data-tab]').forEach(
+    t => t.classList.toggle('active', t.dataset.tab === viewName));
+  hubViewEl.classList.toggle('active', viewName === 'hub');
+  chatViewEl.classList.toggle('active', viewName === 'chat');
+  const workflowViewEl = document.getElementById('workflow-view');
+  if (workflowViewEl) workflowViewEl.classList.toggle('active', viewName === 'workflow');
+  document.getElementById('debug-view').classList.toggle('active', viewName === 'debug');
+  if (viewName === 'workflow' && window.AsterwyndWorkflow) {
+    window.AsterwyndWorkflow.renderPanel(getActiveTab());
+  }
+  if (viewName === 'debug' && typeof renderTimeline === 'function') renderTimeline();
+}
+
+/** workflow_started 到达时的自动跳转（spec Scenario「启动自动显示图」）。 */
+function switchToWorkflowView() {
+  const workflowViewEl = document.getElementById('workflow-view');
+  if (!workflowViewEl) return;
+  showView('workflow');
+}
+
 function switchTab(tabId) {
   const tab = tabs.get(tabId);
   if (!tab) return;
@@ -249,11 +272,8 @@ function switchTab(tabId) {
     if (t.pane) t.pane.classList.toggle('active', t.id === tabId);
   }
   bindActiveTab(tab);
-  activeView = 'chat';
-  document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab === 'chat'));
-  chatViewEl.classList.add('active');
-  hubViewEl.classList.remove('active');
-  document.getElementById('debug-view').classList.remove('active');
+  if (window.AsterwyndWorkflow) window.AsterwyndWorkflow.bindTab(tab);
+  showView('chat');
 }
 
 function closeTab(tabId) {
@@ -278,11 +298,7 @@ function closeTab(tabId) {
 }
 
 function showHub() {
-  activeView = 'hub';
-  document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab === 'hub'));
-  hubViewEl.classList.add('active');
-  chatViewEl.classList.remove('active');
-  document.getElementById('debug-view').classList.remove('active');
+  showView('hub');
   loadHub();
 }
 
@@ -332,15 +348,10 @@ planDocumentToggle.addEventListener('click', () => {
 });
 
 // --- Tab switching ---
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    const viewName = tab.dataset.tab;
-    activeView = viewName;
-    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
-    document.getElementById('chat-view').classList.toggle('active', viewName === 'chat');
-    document.getElementById('debug-view').classList.toggle('active', viewName === 'debug');
-  });
-});
+// 顶层视图切换统一走 ``showView``（在 ``init()`` 里绑定，见文件末尾）——这里不再
+// 另挂一份监听，避免两套逻辑各自维护 active 状态。
+
+
 
 // --- WebSocket ---
 async function connectTab(tab, targetSessionId, workspace) {
@@ -560,6 +571,22 @@ function handleEvent(event) {
     case 'todo_updated':
       renderTodoState(event.data);
       break;
+
+    case 'workflow_started':
+    case 'workflow_snapshot': {
+      // 多图 tab（Q2）：状态挂在**事件所属 tab** 上，按 workflow_id 路由进
+      // ``workflow_id → 图状态`` 的 map（AsterwyndWorkflow 内部维护）。
+      // ``handleTabEvent`` 已经 bind 过事件所属 tab，所以这里取的就是 owner。
+      const wfGraph = window.AsterwyndWorkflow;
+      const owner = getActiveTab();
+      if (wfGraph && owner) {
+        if (!owner.onWorkflowStarted) {
+          owner.onWorkflowStarted = () => switchToWorkflowView();
+        }
+        wfGraph.handleWorkflowEvent(owner, event);
+      }
+      break;
+    }
 
     case 'pong':
       break;
@@ -1813,17 +1840,12 @@ async function init() {
     // 忽略：hub 仍可渲染
   }
 
-  // 视图 tab 切换（Sessions / Chat / Debug）
+  // 视图 tab 切换（Sessions / Chat / Workflow / Debug）
   document.querySelectorAll('.tab[data-tab]').forEach(tabBtn => {
     tabBtn.addEventListener('click', () => {
       const target = tabBtn.dataset.tab;
-      document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t === tabBtn));
-      hubViewEl.classList.toggle('active', target === 'hub');
-      chatViewEl.classList.toggle('active', target === 'chat');
-      document.getElementById('debug-view').classList.toggle('active', target === 'debug');
-      activeView = target;
-      if (target === 'hub') loadHub();
-      if (target === 'debug' && typeof renderTimeline === 'function') renderTimeline();
+      if (target === 'hub') { showHub(); return; }
+      showView(target);
     });
   });
   setupHub();

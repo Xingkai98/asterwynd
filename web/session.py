@@ -2,6 +2,7 @@
 """Session manager: one AgentLoop + message history per browser session."""
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -214,6 +215,207 @@ class WebQuestionHandler:
             )
 
 
+#: 快照合并的时间窗（Q4）：窗内同一 workflow 只保留**最新**一帧。
+GRAPH_SNAPSHOT_WINDOW_S = 0.1
+
+
+def _is_terminal_snapshot(data: dict) -> bool:
+    """终态快照要**立即**发（Q4），不参与时间窗合并。
+
+    ``running``/``declared`` 是过程态；其余（``completed``/``failed``/``cancelled``/
+    ``budget_exceeded``/``graph_recursion_exceeded``）都是图停下的状态。
+    """
+    from agent.subagent.scheduler import _SNAPSHOT_TERMINAL_STATUSES
+
+    return data.get("status") in _SNAPSHOT_TERMINAL_STATUSES
+
+
+class GraphEventForwarder:
+    """session 级 workflow 图事件出口（Q1 方案 A + Q4 合并 + Q11 隔离）。
+
+    为什么不能复用 ``web/session.py`` 的 per-run queue（决策 3）：那个 queue 是
+    ``_run_session_locked`` 的函数局部变量，消费者是同函数内的 drain 循环——父 run
+    一结束 drain 就退出。``StartWorkflow(wait=false)`` 起的后台图在父 run 返回后仍在
+    跑，往那个 queue 里 put 没人消费，快照全丢。
+
+    本对象**持有 session 而非某次 run 的 queue**，因此跨 run 存活；``rebind()`` 让
+    ws 重连把新的 ``ws_send`` 接上同一个 forwarder（Q1 的实现细节：重连走
+    ``resume_session_async`` 命中内存 session，拿到的是同一个 ``AgentSession``）。
+
+    两个硬约束：
+
+    - **永不抛**（Q11）：send 异常一律吞掉。调用点全在节点任务的调用栈里，漏出去
+      会被 ``_run_node`` 的 ``except Exception`` 吞成「节点 failed」。
+    - **按 workflow 分桶合并**（Q4）：窗内只留每个 workflow 的最新快照，避免一张
+      50 节点图推 150 次、3–4 MB 出流量。
+    """
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        ws_send=None,
+        window_s: float = GRAPH_SNAPSHOT_WINDOW_S,
+        loop: asyncio.AbstractEventLoop | None = None,
+    ) -> None:
+        self.session_id = session_id
+        self._ws_send = ws_send
+        self._window_s = window_s
+        self._loop = loop
+        #: workflow_id -> 待发快照（合并缓冲，只留最新）
+        self._pending: dict[str, dict] = {}
+        #: 每个 workflow 的定时 flush 任务（窗口到点自动送出）
+        self._flush_handles: dict[str, asyncio.TimerHandle] = {}
+        #: 在途发送任务（``flush()`` 等它们收尾；失败已被 ``_swallow`` 吞掉）
+        self._in_flight: set[asyncio.Task] = set()
+        self._detached = False
+
+    # -- 绑定生命周期 -------------------------------------------------------
+
+    def rebind(self, ws_send) -> None:
+        """ws 重连：把新的 ``ws_send`` 接上同一个 forwarder（Q1）。"""
+        self._ws_send = ws_send
+        self._detached = False
+
+    def detach(self) -> None:
+        """``reset`` 路径摘掉 sender（Q1）：之后的事件静默丢弃。"""
+        self._detached = True
+        self._ws_send = None
+        for handle in self._flush_handles.values():
+            handle.cancel()
+        self._flush_handles.clear()
+        self._pending.clear()
+
+    # -- sink 接口（scheduler 调用，必须同步返回、绝不抛） ------------------
+
+    def __call__(self, event_type: str, data: dict) -> None:
+        try:
+            payload = self._build_payload(event_type, data)
+            if payload is None:
+                return
+            if event_type == "workflow_started" or _is_terminal_snapshot(data):
+                # 「开一张新图」与「图停下」都不能被合并吃掉（Q4：终态立即发）。
+                # 终态还要**顶掉**该 workflow 的待发过程态：一帧更旧的 running 快照
+                # 绝不能排在终态之后到达（前端会把图倒退回 running）。
+                self._drop_pending(payload["data"].get("workflow_id"))
+                self._send_now(payload)
+                return
+            self._queue_coalesced(payload)
+        except Exception:  # noqa: BLE001 - 可观测性通道绝不打断执行（Q11）
+            logger.debug("graph event dropped", exc_info=True)
+
+    def _build_payload(self, event_type: str, data: dict) -> dict | None:
+        if self._detached or self._ws_send is None:
+            return None
+        if not isinstance(data, dict):
+            return None
+        # Q8：沿用既有两层形状 ``{"type": ..., "data": {...}}``，归属字段进 ``data``。
+        payload = dict(data)
+        payload["session_id"] = self.session_id
+        payload.setdefault("timestamp", time.time())
+        return {"type": event_type, "data": payload}
+
+    # -- 合并缓冲（Q4） -----------------------------------------------------
+
+    def _queue_coalesced(self, payload: dict) -> None:
+        workflow_id = str(payload["data"].get("workflow_id") or "")
+        self._pending[workflow_id] = payload
+        if workflow_id in self._flush_handles:
+            return
+        handle = self._get_loop().call_later(self._window_s, self._flush_one, workflow_id)
+        self._flush_handles[workflow_id] = handle
+
+    def _drop_pending(self, workflow_id) -> None:
+        """丢弃某个 workflow 的待发快照与其定时 flush（被更新的帧取代）。"""
+        key = str(workflow_id or "")
+        handle = self._flush_handles.pop(key, None)
+        if handle is not None:
+            handle.cancel()
+        self._pending.pop(key, None)
+
+    def _flush_one(self, workflow_id: str) -> None:
+        self._flush_handles.pop(workflow_id, None)
+        payload = self._pending.pop(workflow_id, None)
+        if payload is not None:
+            self._send_now(payload)
+
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:  # 无事件循环的同步上下文
+                self._loop = asyncio.get_event_loop()
+        return self._loop
+
+    def _send_now(self, payload: dict) -> None:
+        """送出：``ws_send`` 是 async callable，这里 fire-and-forget。
+
+        失败一律吞（Q11）。用 ``ensure_future`` 而不是 await——scheduler 的 sink
+        调用点是同步的，且推送绝不能让节点任务等待网络。
+        """
+        send = self._ws_send
+        if send is None or self._detached:
+            return
+        try:
+            result = send(payload)
+        except Exception:  # noqa: BLE001 - 同步抛出的 send 同样吞掉
+            logger.debug("graph event send failed", exc_info=True)
+            return
+        if asyncio.iscoroutine(result):
+            task = asyncio.ensure_future(result)
+            self._in_flight.add(task)
+            task.add_done_callback(self._in_flight.discard)
+            task.add_done_callback(self._swallow)
+
+    @staticmethod
+    def _swallow(task: "asyncio.Task") -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.debug("graph event send failed: %s", exc)
+
+    # -- 测试/收尾用的显式 flush -------------------------------------------
+
+    async def flush(self) -> None:
+        """清空合并缓冲并等待在途发送（测试与 agent 收尾用）。"""
+        for workflow_id in list(self._pending):
+            self._flush_one(workflow_id)
+        while self._in_flight:
+            await asyncio.gather(*list(self._in_flight), return_exceptions=True)
+
+
+def build_workflow_resume_payloads(manager, *, session_id: str) -> list[dict]:
+    """ws 重连补发的快照列表（Q2/Q9）。
+
+    口径（用户确认）：**当前 running + 最近 5 张终态**，按 ``started`` property
+    过滤掉仅 ``DeclareWorkflow`` 未启动的图（``declared`` 态不该出现在列表里）。
+
+    排序：注册表 ``_workflows`` 是 Python dict（保序），终态图按**插入序取最后 5 张**
+    ——「最近」在这里是「最后注册」的近似（Q9 已确认该口径）。
+    """
+    from agent.subagent.scheduler import _SNAPSHOT_TERMINAL_STATUSES
+
+    running: list[dict] = []
+    terminal: list[dict] = []
+    for workflow_id in manager.list_workflows():
+        scheduler = manager.get_workflow(workflow_id)
+        if scheduler is None or not getattr(scheduler, "started", False):
+            continue
+        try:
+            data = scheduler.workflow_graph_snapshot()
+        except Exception:  # noqa: BLE001 - 补发是尽力而为
+            logger.debug("workflow resume snapshot failed for %s", workflow_id, exc_info=True)
+            continue
+        data["session_id"] = session_id
+        payload = {"type": "workflow_snapshot", "data": data}
+        if data.get("status") in _SNAPSHOT_TERMINAL_STATUSES:
+            terminal.append(payload)
+        else:
+            running.append(payload)
+    return running + terminal[-5:]
+
+
 class AgentSession:
     """Holds one AgentLoop instance and its message history."""
 
@@ -239,6 +441,10 @@ class AgentSession:
         # per-session run 互斥（issue #117 D8）：同一 session 并发 run 被拒，
         # 避免两个 WebSocket 并发驱动同一 AgentLoop 污染共享可变状态。
         self.run_lock: asyncio.Lock = asyncio.Lock()
+        # workflow 图事件出口（change ``workflow-graph-visualization``，Q1 方案 A）：
+        # session 级、跨 run 存活。在 ``_create_session`` 里装到该 session 的
+        # ``SubAgentManager.graph_sink`` 上；ws 连上/重连时 ``rebind()``。
+        self.graph_forwarder: GraphEventForwarder | None = None
 
     @property
     def current_mode(self) -> str:
@@ -470,6 +676,12 @@ class SessionManager:
         )
         session = AgentSession(session_id, agent, approval_handler, question_handler)
         session.workspace_root = session_workspace
+        # manager 与 session 1:1（Q1）：给该 session 的 manager 装 session 级 sender。
+        # sender 持有 session 而非某次 run 的 queue，因此 ``wait=false`` 的后台图在
+        # 父 run 结束后仍能推快照（决策 3）。
+        forwarder = GraphEventForwarder(session_id=session_id)
+        session.graph_forwarder = forwarder
+        subagent_manager.graph_sink = forwarder
         if resume_snapshot is not None:
             session.resume_snapshot = resume_snapshot
             session.init_messages(resume_snapshot.user_system_prompt)
@@ -484,6 +696,11 @@ class SessionManager:
 
     def remove_session(self, session_id: str, workspace: str | Path | None = None):
         session = self._sessions.pop(session_id, None)
+        # Q1：session 被移除（reset / hub DELETE）时摘掉 sender，避免后台 workflow
+        # 继续往一个已死 session 的 ws 推事件。
+        if session is not None and session.graph_forwarder is not None:
+            session.graph_forwarder.detach()
+            session.graph_forwarder = None
         # workspace 显式传入（hub DELETE 端点，冷会话常态）→ 用该 workspace 的
         # store 删快照；缺省（reset 路径）→ 回退内存 session 的 workspace_root。
         if workspace is not None:

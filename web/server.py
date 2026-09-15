@@ -32,6 +32,33 @@ def _read_index_html() -> str:
     return _INDEX_HTML_CACHE
 
 
+async def bind_workflow_graph_channel(ws: WebSocket, session) -> None:
+    """把一条 ws 连接接到 session 的 workflow 图事件通道（Q1/Q2/Q9）。
+
+    两件事，顺序不能反：
+
+    1. **先补发再绑定转发**：补发的是注册表里的当前态（重连前的图），绑定后到达的
+       是新的迁移事件。反过来的话，补发期间产生的新快照会被旧快照覆盖。
+    2. ``rebind`` 让 forwarder 之后的推送走这条连接（重连后旧连接已断）。
+    """
+    from web.session import build_workflow_resume_payloads
+
+    forwarder = getattr(session, "graph_forwarder", None)
+    manager = getattr(session.agent, "subagent_manager", None)
+    if manager is None:
+        return
+    if forwarder is not None:
+        for payload in build_workflow_resume_payloads(
+            manager, session_id=session.session_id
+        ):
+            try:
+                await ws.send_json(payload)
+            except Exception:  # noqa: BLE001 - 补发尽力而为，不影响连接
+                logger.debug("workflow resume push failed", exc_info=True)
+                break
+        forwarder.rebind(ws.send_json)
+
+
 def create_app(
     llm,
     mode: str | None = None,
@@ -299,6 +326,14 @@ def create_app(
                 "workspace": str(session.workspace_root) if session.workspace_root else None,
             })
             await ws.send_json(build_history_payload(session))
+
+        # workflow 图通道接线（change ``workflow-graph-visualization``，Q1/Q2/Q9）：
+        # 1) 把本连接的 ``ws_send`` 绑到 session 级 forwarder——重连命中的是同一个
+        #    ``AgentSession``（``resume_session_async`` 内存命中直接复用），所以
+        #    forwarder 也是同一个，后台 workflow 的快照不会因为重连而丢；
+        # 2) 从 manager 注册表补发「当前 running + 最近 5 张终态」的图快照
+        #    （按 ``started`` 过滤掉仅 Declare 未启动的图）。
+        await bind_workflow_graph_channel(ws, session)
 
         try:
             while True:

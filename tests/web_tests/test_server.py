@@ -435,7 +435,17 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="hub-session-list"' in index
     assert "/static/markdown.js?v=6" in index
     assert "/static/style.css?v=18" in index
-    assert "/static/chat.js?v=20" in index
+    assert "/static/chat.js?v=21" in index
+    # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层。
+    assert "/static/workflow_graph.js?v=1" in index
+    assert "/static/workflow.js?v=1" in index
+    assert 'id="workflow-view"' in index
+    assert 'id="workflow-tab"' in index
+    assert 'id="workflow-canvas"' in index
+    assert 'id="workflow-tabs"' in index
+    assert "switchToWorkflowView" in script
+    assert "workflow_started" in script
+    assert "workflow_snapshot" in script
     assert "buildTabPane" in script
     assert "addImageFromFile" in script
     assert "pendingImages" in script
