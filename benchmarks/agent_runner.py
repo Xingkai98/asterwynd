@@ -16,7 +16,7 @@ from agent.memory.manager import MemoryManager
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.subagent.bus import MessageBus
 from agent.subagent.manager import SubAgentManager
-from agent.subagent.patterns import PATTERNS, compile_pattern
+from agent.subagent.patterns import compile_pattern
 from agent.subagent.scheduler import WorkflowScheduler
 from agent.tools.builtin.subagents import parse_spec_for_manager
 from agent.tools.factory import build_coding_tool_registry, build_sandbox_from_config
@@ -29,7 +29,6 @@ from benchmarks.task_schema import TaskSpec
 from benchmarks.workflow_replay import (
     COLLECTION_STATUS_FAILED,
     COLLECTION_STATUS_MISSING,
-    COLLECTION_STATUS_NO_WORKFLOW,
     COLLECTION_STATUS_OK,
     build_record,
     collect_workflow_records,
