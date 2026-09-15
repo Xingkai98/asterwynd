@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "benchmark-workflow-replay",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-benchmark-workflow-replay-20260915-r3",
+  "base_sha": "b00dffa",
+  "head_sha": "6da6969",
+  "tasks_hash": "sha256:a8f41bfe3969ddeac2d885e51319006f15101259a2acfabe135609171c919b6e",
+  "spec_hash": "sha256:d7ba9ec013fa6d4a39db36d4b42ea4e58d84223b1eb27362baeb196a790b0d59",
+  "diff_hash": "sha256:d73e7e136629477d33630d374f48b91131136d2097386085eb3568890c780aad",
+  "report_hash": "sha256:7f7ef32465e0526aa74247b845dd33fb3daa71c26ec6bc10d73785d21769a2fe"
+}
