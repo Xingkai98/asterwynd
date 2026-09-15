@@ -991,6 +991,16 @@ def _resolve_workflow_record_dir(
     is per-task, so one path cannot serve N tasks. ``dynamic-record`` with
     ``--e2e-round-trip`` reuses the just-written run as its own source.
     """
+    if workflow_mode is None:
+        return None
+    # 三个模式都只对 asterwynd 有意义：fake/shell/claude 三个 runner 不构造
+    # SubAgentManager，workflow 根本不会被驱动。不拦的话它们会**静默**跑成一次
+    # 普通单 agent benchmark（result.json 里一个 workflow 字段都没有），用户以为
+    # 编排测过了、其实没有任何编排数据。
+    if agent != "asterwynd":
+        raise typer.BadParameter(
+            "--workflow-mode 只支持 --agent asterwynd（fake/shell/claude 不建编排）"
+        )
     if workflow_mode != "dynamic-replay":
         return None
     if workflow_record is None:
@@ -1000,10 +1010,6 @@ def _resolve_workflow_record_dir(
     record_dir = Path(workflow_record).expanduser().resolve()
     if not record_dir.is_dir():
         raise typer.BadParameter(f"--workflow-record 不是目录: {record_dir}")
-    if agent != "asterwynd":
-        raise typer.BadParameter(
-            "--workflow-mode 只支持 --agent asterwynd（fake/shell/claude 不建编排）"
-        )
     return record_dir
 
 
