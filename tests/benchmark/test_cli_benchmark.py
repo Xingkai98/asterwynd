@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 
 from typer.testing import CliRunner
@@ -512,6 +513,20 @@ def _workflow_cli_args(tmp_path, *extra):
     return ["benchmark", str(tmp_path / "tasks"), "--runs-dir", str(tmp_path / "runs"), *extra]
 
 
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Tear off Rich 的 ANSI 着色，再断言错误文案。
+
+    ``typer.BadParameter`` 走 Rich 面板渲染；``GITHUB_ACTIONS`` 置位时（CI）
+    Rich 会强制着色，把 ``--workflow-mode`` 拆成 ``-``/``-workflow``/``-mode``
+    三段、每段各裹一层转义码，整串字面断言在 CI 上必然失败。``CliRunner`` 的
+    ``color=False`` 只管 click 的 ``echo``，拦不住 Rich。
+    """
+    return _ANSI_ESCAPE.sub("", output)
+
+
 def test_workflow_mode_rejects_non_asterwynd_agent(tmp_path):
     """回归：非 asterwynd runner 不建编排，三模式对它都是静默空跑。
 
@@ -525,14 +540,14 @@ def test_workflow_mode_rejects_non_asterwynd_agent(tmp_path):
         _workflow_cli_args(tmp_path, "--agent", "fake", "--workflow-mode", "dynamic-record"),
     )
     assert result.exit_code != 0
-    assert "--workflow-mode 只支持 --agent asterwynd" in result.output
+    assert "--workflow-mode 只支持 --agent asterwynd" in _plain(result.output)
 
     result = CliRunner().invoke(
         cli.app,
         _workflow_cli_args(tmp_path, "--agent", "fake", "--workflow-mode", "template"),
     )
     assert result.exit_code != 0
-    assert "--workflow-mode 只支持 --agent asterwynd" in result.output
+    assert "--workflow-mode 只支持 --agent asterwynd" in _plain(result.output)
 
 
 def test_dynamic_replay_requires_a_record_directory(tmp_path):
@@ -542,7 +557,7 @@ def test_dynamic_replay_requires_a_record_directory(tmp_path):
         _workflow_cli_args(tmp_path, "--agent", "asterwynd", "--workflow-mode", "dynamic-replay"),
     )
     assert result.exit_code != 0
-    assert "--workflow-record" in result.output
+    assert "--workflow-record" in _plain(result.output)
 
 
 def test_unknown_workflow_mode_is_rejected(tmp_path):
@@ -551,4 +566,4 @@ def test_unknown_workflow_mode_is_rejected(tmp_path):
         _workflow_cli_args(tmp_path, "--agent", "asterwynd", "--workflow-mode", "bogus"),
     )
     assert result.exit_code != 0
-    assert "必须是" in result.output
+    assert "必须是" in _plain(result.output)
