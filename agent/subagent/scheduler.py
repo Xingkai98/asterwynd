@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from collections import deque
@@ -68,6 +69,8 @@ from agent.subagent.workflow_store import WorkflowStore
 if TYPE_CHECKING:
     from agent.config import AsterwyndConfig
     from agent.subagent.manager import SubAgentManager
+
+logger = logging.getLogger("asterwynd.subagent")
 
 # 终态节点状态：汇合门控只看这些。
 # ``budget_exceeded`` 是 C4 新增的**节点级**终态（Q5）：被预算停下但未派发的根节点
@@ -547,6 +550,47 @@ class WorkflowScheduler:
         except Exception:  # noqa: BLE001 - 事件日志是尽力而为的可观测性
             pass
 
+    # -- 图事件出口（change ``workflow-graph-visualization``，Q1/Q3/Q11） ----
+
+    def _emit_graph_event(self, event_type: str, data: dict) -> None:
+        """把一条图事件交给 manager 级 sink（默认静默）。
+
+        **调用 sink 永不抛**（Q11）：sink 内部吞异常是它的责任，但调度器不信赖
+        这一点——这里再包一层，因为调用点全在**节点任务的调用栈里**
+        （``_dispatch``/``_run_node``/``cancel``），漏出来的异常会被 ``_run_node``
+        的 ``except Exception`` 吞成「节点 failed」——用户的图会因为关了个页面而失败。
+
+        这条不可观测性通道**不得**反向影响执行（本 change 最隐蔽的耦合）。
+        """
+        sink = getattr(self.manager, "graph_sink", None)
+        if sink is None:
+            return
+        try:
+            sink(event_type, data)
+        except Exception:  # noqa: BLE001 - 可观测性通道绝不打断执行（Q11）
+            logger.debug("workflow graph sink raised; snapshot dropped", exc_info=True)
+
+    def _emit_graph_snapshot(self) -> None:
+        """推一帧完整快照（D4：发完整快照，不发局部 patch，保证可重放）。"""
+        try:
+            payload = self.workflow_graph_snapshot()
+        except Exception:  # noqa: BLE001 - 快照构造失败同样不得打断执行
+            logger.debug("workflow graph snapshot failed", exc_info=True)
+            return
+        self._emit_graph_event("workflow_snapshot", payload)
+
+    def _emit_workflow_started(self) -> None:
+        self._emit_graph_event(
+            "workflow_started",
+            {
+                "workflow_id": self.workflow_id,
+                "spec_hash": self._spec.spec_hash if self._spec else None,
+                "goal": self._spec.goal if self._spec else "",
+                "status": "running",
+                "timestamp": time.time(),
+            },
+        )
+
     def cancel(self) -> dict:
         """Q8：立即返回「取消已提交」envelope（不 gather 等 in-flight 停下）。"""
         self._cancelled = True
@@ -559,7 +603,9 @@ class WorkflowScheduler:
                 asyncio.ensure_future(self._cancel_node(state))
                 state.status = "cancelled"
                 state.reason = state.reason or "cancelled: workflow cancelled"
+        self._status = "cancelled"
         self._progress.set()
+        self._emit_graph_snapshot()
         return {
             "workflow_id": self.workflow_id,
             "status": "cancelling",
@@ -600,6 +646,12 @@ class WorkflowScheduler:
         bus = self.bus or MessageBus()
         self.bus = bus
         self._record_event("workflow_started", status="running")
+        # 图事件触发点（决策 1/2）：就在已有的 ``_record_event("workflow_started")``
+        # hook 处——工具层拿不到 session 事件 sink，而 ``run()`` 是唯一同时知道
+        # 「图真的开跑了」和持有调度器状态的入口。``DeclareWorkflow`` 只注册不调
+        # ``run()``，因此天然不发。
+        self._emit_workflow_started()
+        self._emit_graph_snapshot()
         # 幂等自注册：loop 层的预算记账（Q6 方案 B）按 ``current_workflow_id()`` 反查
         # 调度器，直接构造（不经 Declare/Start 工具）的调度器也必须在注册表里。
         self.manager.register_workflow(self)
@@ -631,6 +683,7 @@ class WorkflowScheduler:
             # bounded 摘要 + ref，完整账单按需 Read（与 C3 的 result_ref 同口径）。
             self._write_attribution()
             self._record_event("workflow_terminal", status=self._status, terminal=True)
+            self._emit_graph_snapshot()
         return self.status()
 
     def _snapshot_spawn_accounting(self) -> None:
@@ -664,6 +717,7 @@ class WorkflowScheduler:
         self._diagnostics = exc.to_dict()
         self._status = "graph_recursion_exceeded"
         self._graph_recursion_runs = 1
+        self._emit_graph_snapshot()
 
     def _check_declared_limits(self, spec: WorkflowSpec) -> None:
         """运行期记账复检（grill 决策 6）：自动插入的节点也要吃 ``max_nodes``。
@@ -888,6 +942,7 @@ class WorkflowScheduler:
             if state.status == "queued":
                 state.status = "cancelled"
                 state.reason = f"budget exceeded ({dimension})"
+        self._emit_graph_snapshot()
 
     def _expired_root_ids(self) -> set[str]:
         """根节点集合（``plan.terminal``，无下游数据边）；fan-out 图是多个。"""
@@ -1212,6 +1267,8 @@ class WorkflowScheduler:
         task = asyncio.create_task(self._run_node(state))
         self._tasks.add(task)
         task.add_done_callback(lambda _task: self._progress.set())
+        # 节点置 started 是一次真实迁移（D4 的迁移点之一），推一帧让前端看到「谁在跑」。
+        self._emit_graph_snapshot()
         return True
 
     async def _run_node(self, state: NodeState) -> None:
@@ -1259,6 +1316,8 @@ class WorkflowScheduler:
                 )
             self._on_node_finished(state)
             self._progress.set()
+            # 节点终态是本 change 里信息量最大的一次迁移（谁跑完了、下游被复位）。
+            self._emit_graph_snapshot()
 
     def _release(self, cost: int) -> None:
         self._in_flight_runs -= cost

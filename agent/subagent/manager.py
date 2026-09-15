@@ -406,6 +406,14 @@ class SubAgentManager:
         # Workflow registry (grill Q1: manager-scoped, in-memory; persistence for
         # benchmark replay belongs to C5).
         self._workflows: dict[str, object] = {}
+        # Workflow 图事件 sink（change ``workflow-graph-visualization``，Q1/Q3）：
+        # web 层在 ``_create_session`` 时注入一个 session 级 forwarder，调度器在
+        # 节点迁移处调用它推 ``workflow_started``/``workflow_snapshot``。
+        # **约定**：sink 是同步可调用对象 ``(event_type, data) -> None``，且自身
+        # 吞掉发送异常——调度器侧还会再包一层 try/except（Q11：调用 sink 永不抛）。
+        # 没有 sink 的路径（benchmark / 纯后端调用）天然静默，这正是 Q3 选的
+        # 「按有没有 sink 分」口径。
+        self.graph_sink: "Callable[[str, dict], None] | None" = None
         self._snapshot_store_impl: SubagentSnapshotStore | None = None
         # Workflow result stores, keyed by workflow_id (change
         # ``workflow-result-aggregation``): results live in their own subtree,
