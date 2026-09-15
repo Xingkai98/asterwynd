@@ -201,58 +201,17 @@ def build_summary(
     # wall time + nodes + peak concurrency + critical path + failure reasons.
     # Read raw-dict style (``r.get(...)``) so older artifacts without workflow
     # keys keep parsing (grill Confirmed Decision 11).
-    orch_rows: list[tuple[str, ...]] = []
-    for name, results in runs:
-        values = list(results.values())
-        if not any(v.get("workflow_mode") for v in values):
-            continue
-        resolved = _resolved_counts(values)
-        total_cost = _run_cost(values)
-        orch_rows.append(
-            (
-                name,
-                str(len(values)),
-                _frac(resolved, len(values)),
-                str(sum(v.get("input_tokens", 0) or 0 for v in values)),
-                str(sum(v.get("output_tokens", 0) or 0 for v in values)),
-                _money(total_cost / resolved if resolved else None),
-                _seconds(values, "duration_seconds"),
-                _mean_int(values, "workflow_node_count"),
-                _mean_int(values, "workflow_peak_active"),
-                _mean_float(values, "workflow_critical_path_s", suffix="s"),
-                _mean_float(values, "workflow_redundancy", digits=3),
-                _failure_reasons(values),
-            )
-        )
+    orch_header, orch_rows = _orchestration_rows(runs)
     if orch_rows:
         lines.append("")
         lines.append("## Orchestration Metrics")
         lines.append("")
-        orch_header = [
-            "Agent",
-            "Tasks",
-            "Completion",
-            "Input Tokens",
-            "Output Tokens",
-            "$/resolved-task",
-            "Wall time (p50)",
-            "Nodes (mean)",
-            "Peak concurrency (mean)",
-            "Critical path (mean)",
-            "Redundancy (mean)",
-            "Failure reasons",
-        ]
         lines.append("| " + " | ".join(orch_header) + " |")
         lines.append("|" + "|".join(["------"] * len(orch_header)) + "|")
         for row in orch_rows:
             lines.append("| " + " | ".join(row) + " |")
         lines.append("")
-        lines.append(
-            "> **$/resolved-task** 的分母是 ``passed`` + ``passed_with_warnings``，"
-            "与 report.py 的 pass@k 同源；``dynamic-replay`` 记录只验编排、不判分，"
-            "已从分母排除。大 N 臂的 ``spawn budget exceeded`` 属**预期压力结果**，"
-            "不是 runner 故障。"
-        )
+        lines.append(_ORCHESTRATION_NOTE)
 
     # Run metadata disclosure (C3): model version / date / cost basis.
     meta_rows = _run_metadata_rows(metas)
@@ -290,6 +249,66 @@ def _resolved_counts(values: list[dict]) -> int:
         if value.get("status") in _RESOLVED_STATUSES:
             resolved += 1
     return resolved
+
+
+#: Orchestration section header shared by the markdown and HTML reports — the same
+#: command writes both, so the columns must not drift apart.
+_ORCHESTRATION_HEADER: tuple[str, ...] = (
+    "Agent",
+    "Tasks",
+    "Completion",
+    "Input Tokens",
+    "Output Tokens",
+    "$/resolved-task",
+    "Wall time (p50)",
+    "Nodes (mean)",
+    "Peak concurrency (mean)",
+    "Critical path (mean)",
+    "Redundancy (mean)",
+    "Failure reasons",
+)
+
+_ORCHESTRATION_NOTE = (
+    "> **$/resolved-task** 的分母是 ``passed`` + ``passed_with_warnings``，"
+    "与 report.py 的 pass@k 同源；``dynamic-replay`` 记录只验编排、不判分，"
+    "已从分母排除。大 N 臂的 ``spawn budget exceeded`` 属**预期压力结果**，"
+    "不是 runner 故障。"
+)
+
+
+def _orchestration_rows(
+    runs: list[tuple[str, dict[str, dict]]],
+) -> tuple[list[str], list[tuple[str, ...]]]:
+    """Orchestration comparison rows (C5 D5), shared by markdown + HTML.
+
+    Runs whose results carry no ``workflow_mode`` are skipped entirely, so a
+    comparison against an older artifact simply omits the section instead of
+    rendering a row of nulls.
+    """
+    rows: list[tuple[str, ...]] = []
+    for name, results in runs:
+        values = list(results.values())
+        if not any(v.get("workflow_mode") for v in values):
+            continue
+        resolved = _resolved_counts(values)
+        total_cost = _run_cost(values)
+        rows.append(
+            (
+                name,
+                str(len(values)),
+                _frac(resolved, len(values)),
+                str(sum(v.get("input_tokens", 0) or 0 for v in values)),
+                str(sum(v.get("output_tokens", 0) or 0 for v in values)),
+                _money(total_cost / resolved if resolved else None),
+                _seconds(values, "duration_seconds"),
+                _mean_int(values, "workflow_node_count"),
+                _mean_int(values, "workflow_peak_active"),
+                _mean_float(values, "workflow_critical_path_s", suffix="s"),
+                _mean_float(values, "workflow_redundancy", digits=3),
+                _failure_reasons(values),
+            )
+        )
+    return list(_ORCHESTRATION_HEADER), rows
 
 
 def _run_cost(values: list[dict]) -> float:
@@ -507,6 +526,27 @@ def build_html(
 
     paired_html = _build_paired_html(runs)
 
+    # Orchestration metrics (C5 D5): the markdown summary already carries this
+    # section and one command writes both files — leaving it out of the HTML
+    # would make the two reports disagree about the same run.
+    orch_header, orch_rows = _orchestration_rows(runs)
+    if orch_rows:
+        orch_html = (
+            "<h2>Orchestration Metrics</h2><table>"
+            "<thead><tr>"
+            + "".join(f"<th>{h}</th>" for h in orch_header)
+            + "</tr></thead><tbody>"
+            + "".join(
+                "<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>"
+                for row in orch_rows
+            )
+            + "</tbody></table><p>"
+            + html.escape(_ORCHESTRATION_NOTE.lstrip("> "))
+            + "</p>"
+        )
+    else:
+        orch_html = ""
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Cross-Agent Benchmark</title>
 <style>
@@ -543,6 +583,7 @@ small {{ color: #888; font-weight: normal; }}
 <thead><tr><th>Agent</th><th>Input Tokens</th><th>Output Tokens</th><th>Est. Cost</th></tr></thead>
 <tbody>{cost_rows}</tbody>
 </table>
+{orch_html}
 {meta_html}
 {paired_html}
 </body></html>"""

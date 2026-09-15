@@ -535,6 +535,42 @@ def test_compare_summary_includes_orchestration_metrics():
     assert "$/resolved-task" in summary
 
 
+def test_compare_html_matches_markdown_orchestration_section():
+    """回归：``compare.py`` 一次写 markdown + HTML 两份报告，两份必须都有编排段。
+
+    markdown 侧加了编排段、HTML 侧漏掉的话，同一份 run 的两份报告会互相矛盾
+    （HTML 看起来像没跑过 workflow）。两边的表头也必须来自同一份声明。
+    """
+    from benchmarks.compare import build_html, build_summary
+
+    runs = [
+        (
+            "arm-small-k",
+            {
+                "t1": {
+                    "status": "passed",
+                    "duration_seconds": 1.0,
+                    "model": "deepseek-v4-flash",
+                    "workflow_mode": "dynamic-record",
+                    "workflow_node_count": 4,
+                    "workflow_peak_active": 3,
+                    "workflow_redundancy": 0.5,
+                    "workflow_critical_path_s": 1.2,
+                }
+            },
+        )
+    ]
+
+    summary = build_summary(runs)
+    page = build_html(runs)
+
+    assert "## Orchestration Metrics" in summary
+    assert "Orchestration Metrics" in page
+    for column in ("Redundancy (mean)", "$/resolved-task", "Peak concurrency (mean)"):
+        assert column in summary, column
+        assert f"<th>{column}</th>" in page, column
+
+
 def test_compare_reads_old_artifacts_without_workflow_keys():
     """raw-dict 宽松读：旧 artifact 缺 workflow 键不得 KeyError。"""
     from benchmarks.compare import build_html, build_summary
