@@ -125,6 +125,28 @@ def test_collect_records_only_running_workflows(tmp_path):
     assert error is None
 
 
+def test_cancelled_declared_workflow_is_not_collected(tmp_path):
+    """回归（workflow-graph-visualization）：``CancelWorkflow`` 取消一张只声明未
+    ``run()`` 的图，**不得**让它变成「跑过」而被 C5 采集。
+
+    ``started`` property 是 ``_status != "declared"``；``cancel()`` 曾无条件写
+    ``_status = "cancelled"``，于是父 run 结束后凭空多出一条没有 ``observed``
+    指标的 record，污染 ``workflows`` 列表与 replay。
+    """
+    manager = _manager(tmp_path)
+    declared = WorkflowScheduler(manager)
+    declared.spec = parse_workflow_spec(_fanout_spec())
+    manager.register_workflow(declared)
+
+    declared.cancel()
+    records, status, error = collect_workflow_records(manager)
+
+    assert declared.started is False
+    assert records == []
+    assert status == COLLECTION_STATUS_NO_WORKFLOW
+    assert error is None
+
+
 @pytest.mark.asyncio
 async def test_collect_records_normalises_spec_and_metadata(tmp_path):
     manager = _manager(tmp_path)

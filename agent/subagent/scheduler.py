@@ -603,9 +603,16 @@ class WorkflowScheduler:
                 asyncio.ensure_future(self._cancel_node(state))
                 state.status = "cancelled"
                 state.reason = state.reason or "cancelled: workflow cancelled"
-        self._status = "cancelled"
+        # ``_status`` 只在图**真的跑过**时才落终态：``started`` property 就是
+        # ``_status != "declared"``，而 C5 的 record 采集 / 指标投影（以及重连补发）
+        # 都拿它当「这张图是否运行过」的判据。``DeclareWorkflow`` 的调度器停在
+        # ``declared``，此时一条快照都没有——若在这里无条件改写 ``_status``，
+        # 一张「只声明、从未 run()」的图会被 C5 记进 ``workflows`` 列表（record 的
+        # ``spec``/``observed`` 全是空跑产物）。没有图可发时也不必发快照。
+        if self._status != "declared":
+            self._status = "cancelled"
+            self._emit_graph_snapshot()
         self._progress.set()
-        self._emit_graph_snapshot()
         return {
             "workflow_id": self.workflow_id,
             "status": "cancelling",

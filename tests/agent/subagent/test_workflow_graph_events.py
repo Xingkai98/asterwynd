@@ -146,11 +146,35 @@ async def test_cancel_emits_terminal_snapshot(manager):
     sink = RecordingSink()
     manager.graph_sink = sink
     scheduler = _scheduler(manager, _chain_spec())
+    scheduler._status = "running"  # 只有跑过的图才发快照（见下一条测试）
 
     scheduler.cancel()
 
     assert sink.snapshots(), "cancel() 必须发一帧"
     assert sink.snapshots()[-1]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_on_declared_only_scheduler_keeps_declared(manager):
+    """``DeclareWorkflow`` 的图被 ``CancelWorkflow`` 取消时**不得**变成 ``started``。
+
+    回归：``cancel()`` 曾无条件写 ``_status = "cancelled"``，而 ``started`` property
+    是 ``_status != "declared"``——于是一张从未 ``run()`` 的图会被 C5 的
+    ``collect_workflow_records`` 记进 ``workflows`` 列表（父 run 结束后凭空多出
+    一条没有 ``observed`` 的 record）。也没有图可发，不该推快照。
+    """
+    sink = RecordingSink()
+    manager.graph_sink = sink
+    scheduler = _scheduler(manager, _chain_spec())
+    manager.register_workflow(scheduler)  # DeclareWorkflow：只注册不 run
+    assert scheduler.started is False
+
+    result = scheduler.cancel()
+
+    assert result["status"] == "cancelling"
+    assert scheduler.started is False, "声明期取消不得把图变成「跑过」"
+    assert scheduler._status == "declared"
+    assert sink.events == [], "从未开跑的图没有快照可发"
 
 
 @pytest.mark.asyncio
@@ -276,6 +300,7 @@ async def test_sink_exception_on_cancel_does_not_break_cancel(manager):
 
     manager.graph_sink = exploding_sink
     scheduler = _scheduler(manager, _chain_spec())
+    scheduler._status = "running"
 
     result = scheduler.cancel()
 
