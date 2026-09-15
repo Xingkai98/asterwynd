@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Mapping
 
 from agent.subagent.aggregation import (
+    AUTO_NODE_PREFIX,
     CHARS_PER_TOKEN,
     DEFAULT_TOKEN_BUDGETS,
     ExecutionPlan,
@@ -54,6 +55,7 @@ from agent.subagent.context import (
 )
 from agent.subagent.workflow import (
     REDUCERS,
+    WorkflowEdge,
     WorkflowNode,
     WorkflowSpec,
     WorkflowValidationError,
@@ -96,6 +98,15 @@ _EVENT_PREVIEW_LIMIT = 80
 _PARENT_NODES_LIMIT = 200
 #: 父投影里单节点文本字段（summary/reason/error）的字符上限。
 _PARENT_FIELD_LIMIT = 200
+
+#: 图快照里带终态计数的 ``status`` 集合（change ``workflow-graph-visualization``）：
+#: 只有整张图停下时计数才有意义，running 中带计数会误导视图头。
+_SNAPSHOT_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "cancelled", "budget_exceeded", "graph_recursion_exceeded"}
+)
+#: 边 ``blocked`` 的两侧状态集合（决策 7）：目标被闸门挡住，或源没有可用产出。
+_EDGE_BLOCKED_TARGET_STATUSES = frozenset({"blocked", "budget_exceeded"})
+_EDGE_BLOCKED_SOURCE_STATUSES = frozenset({"failed", "cancelled"})
 
 #: 成本归因摘要的四维（D7/Q16）。
 _ATTRIBUTION_DIMS = ("by_workflow", "by_node", "by_depth", "by_edge")
@@ -382,6 +393,15 @@ class WorkflowScheduler:
         #: ``_write_root_result`` 打标）。冗余度的分子就是它的基数——没有它就只能退
         #: 回「有出边即有用」的结构口径，答不出「冗余」（Q2 口径 A 的问题）。
         self._consumed_run_ids: set[str] = set()
+        #: 被下游读走产出的**边**集合（change ``workflow-graph-visualization``，
+        #: grill Q5）：边状态 ``passed`` 的一档查表源。记 ``(source, target)`` 而不是
+        #: run id——同一节点的两条出边无法用 run 级记账区分。
+        #:
+        #: **旁新增**（决策 11/12）：只在三个消费循环的 ``_mark_consumed`` 调用点旁
+        #: 顺手 ``add``，``_mark_consumed`` 本体一行不改——``_consumed_run_ids`` 的
+        #: 基数因此逐位不变，C5 的 ``useful_runs``/``redundancy`` 零漂移。第四个调用点
+        #: （``_write_root_result``）遍历的是终态节点、没有 ``edge`` 变量，不覆盖。
+        self._consumed_edges: set[tuple[str, str]] = set()
         #: 拒绝/降级计数（Q3/Q4）：queue_full 与图级超限在调度器侧落账；深度撤工具与
         #: spawn 预算拒绝由 manager 的计数器提供（``rejection_counts_for``）。
         self._queue_full_runs = 0
@@ -572,6 +592,7 @@ class WorkflowScheduler:
         self._budget_dimension = None
         self._budget_projected_runs = None
         self._consumed_run_ids = set()
+        self._consumed_edges = set()
         self._queue_full_runs = 0
         self._graph_recursion_runs = 0
         self._spawn_count_snapshot = None
@@ -1793,6 +1814,7 @@ class WorkflowScheduler:
                     continue
                 # 消费打标（C5 D4/Q2）：这个上游的产出真被下游 reducer 读走了。
                 self._mark_consumed(upstream)
+                self._consumed_edges.add((edge.source, edge.target))
                 groups.setdefault(slot, []).append(value)
                 if edge.reducer:
                     reducers[slot] = edge.reducer
@@ -1832,6 +1854,7 @@ class WorkflowScheduler:
             if not text:
                 continue
             self._mark_consumed(upstream)
+            self._consumed_edges.add((edge.source, edge.target))
             ref = self._result_ref_for(upstream)
             suffix = f" (full result: {ref})" if ref else ""
             parts.append(f"Input from {edge.source}{suffix}:\n{text}")
@@ -1856,6 +1879,7 @@ class WorkflowScheduler:
                 if not text:
                     continue
                 self._mark_consumed(upstream)
+                self._consumed_edges.add((edge.source, edge.target))
                 ref = self._result_ref_for(upstream)
                 suffix = f" (result_ref: {ref})" if ref else ""
                 parts.append(f"Input from {edge.source} slot {slot}{suffix}:\n{text}")
@@ -2111,6 +2135,120 @@ class WorkflowScheduler:
             else:
                 counts["pending_units"] += units
         return counts
+
+    # -- 运行态图快照（change ``workflow-graph-visualization``） -------------
+
+    def workflow_graph_snapshot(self) -> dict:
+        """面向 Web UI 的**运行态图快照**（D3 + grill 决策 4 / Q10）。
+
+        与 ``_envelope`` 的关系：这是**另一条出口**，不是它的投影。``_envelope`` 是
+        父 Agent 契约（含 ``bus``/``attribution``/``latest_events`` 等重字段，且节点
+        走 ``NodeState.to_dict()``），本方法按 Web UI 的需要**显式挑字段**——两者互不
+        影响，本方法一行都不改 ``_envelope``。
+
+        字段口径（Q10）：只含 ``workflow_id``/``spec_hash``/``goal``/``status``/
+        ``nodes``/``edges``/``timestamp``，终态时附 ``total``/``completed``/
+        ``failed`` 计数，超限时附 ``diagnostics``。归属用的 ``session_id`` 由 web 层
+        的 forwarder 补（调度器不知道自己的 ws session，见 Q1/Q8）。节点不含 ``subagent_ids``（foreach
+        每展开项一个 id）/``slots``（concat 后巨型字符串）/``raw``/``error`` 原文；
+        边只含结构字段。
+
+        规模（决策 10）：``nodes`` 长度天然就是 ``len(self._graph().nodes)``，即当前图
+        规模的权威值——不用 ``_expanded_nodes``（那是计费高水位，收缩后不退还）。
+        """
+        plan = self._plan
+        nodes = [
+            self._graph_node_projection(self._states[node.id])
+            for node in (plan.nodes if plan else ())
+            if node.id in self._states
+        ]
+        edges = [
+            {
+                "from": edge.source,
+                "to": edge.target,
+                "channel": edge.channel,
+                "required": edge.required,
+                "reducer": edge.reducer,
+                "kind": "control" if plan is not None and plan.is_control_edge(edge) else "data",
+                "status": self._edge_status(edge),
+            }
+            for edge in (plan.edges if plan else ())
+        ]
+        payload: dict[str, Any] = {
+            "workflow_id": self.workflow_id,
+            "spec_hash": self._spec.spec_hash if self._spec else None,
+            "goal": self._spec.goal if self._spec else "",
+            "status": self._status,
+            "nodes": nodes,
+            "edges": edges,
+            "timestamp": time.time(),
+        }
+        if self._status in _SNAPSHOT_TERMINAL_STATUSES:
+            units = self._unit_counts()
+            payload["total"] = units["total"]
+            payload["completed"] = units["completed_units"]
+            payload["failed"] = units["failed_units"]
+        if self._diagnostics:
+            payload["diagnostics"] = dict(self._diagnostics)
+        return payload
+
+    def _graph_node_projection(self, state: NodeState) -> dict:
+        """一个节点的 bounded 图投影（决策 4：显式挑字段）。"""
+        node: dict[str, Any] = {
+            "id": state.node.id,
+            "kind": state.node.kind,
+            "status": state.status,
+            "runs": state.runs,
+            "summary": (state.summary or "")[:_SUMMARY_LIMIT],
+            "started_at": state.started_at,
+            "finished_at": state.finished_at,
+        }
+        if state.node.kind == "route":
+            # route 的选中出口是控制边高亮的唯一信号（决策 6）。``verdict``/``raw``
+            # 是父 Agent 诊断口径，不进快照。
+            node["targets"] = list(state.targets)
+        if state.node.kind == "foreach" or state.node.id.startswith(AUTO_NODE_PREFIX):
+            # 折叠组的项数（决策 8）：展开项从来不是 ``NodeState``，只体现在这里。
+            node["items"] = state.items
+        return node
+
+    def _edge_status(self, edge: WorkflowEdge) -> str:
+        """边五档状态（决策 7 + Q5）。
+
+        口径（优先级即语义，先命中先返回）：
+
+        1. 控制边：route 已 ``completed`` 且 ``edge.target ∈ state.targets`` → ``passed``；
+           其余（含「route completed 但 targets 被 ``_reset_subtree`` 清空的瞬时态」）
+           → ``inactive``。
+        2. 数据边被下游消费过（``_consumed_edges`` 记账）→ ``passed``。
+        3. 目标 ``blocked``/``budget_exceeded``，或源 ``failed``/``cancelled`` → ``blocked``。
+        4. 源或目标在跑 → ``active``。
+        5. 源 ``completed`` 且目标仍 ``pending`` → ``ready``。
+        6. 兜底 ``inactive``。
+        """
+        source = self._states.get(edge.source)
+        target = self._states.get(edge.target)
+        if self._plan is not None and self._plan.is_control_edge(edge):
+            if source is None or source.status != "completed":
+                return "inactive"
+            return "passed" if edge.target in source.targets else "inactive"
+        if (edge.source, edge.target) in self._consumed_edges:
+            return "passed"
+        if target is not None and target.status in _EDGE_BLOCKED_TARGET_STATUSES:
+            return "blocked"
+        if source is not None and source.status in _EDGE_BLOCKED_SOURCE_STATUSES:
+            return "blocked"
+        if (source is not None and source.status == "started") or (
+            target is not None and target.status == "started"
+        ):
+            return "active"
+        if (
+            source is not None
+            and source.status == "completed"
+            and (target is None or target.status == "pending")
+        ):
+            return "ready"
+        return "inactive"
 
     def _envelope(self, *, status: str) -> dict:
         plan = self._plan
