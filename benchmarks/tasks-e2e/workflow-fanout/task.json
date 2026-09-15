@@ -1,0 +1,12 @@
+{
+  "id": "workflow-fanout",
+  "repo": "local/asterwynd",
+  "base_commit": "REPLACE_WITH_HEAD",
+  "problem_statement_file": "issue.md",
+  "test_command": "test -f WORKFLOW_FANOUT.md",
+  "category": "multi-step-solving",
+  "difficulty": "medium",
+  "scenario": "integration",
+  "track": "A",
+  "timeout_seconds": 300
+}

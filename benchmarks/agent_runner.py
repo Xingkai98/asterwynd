@@ -30,6 +30,7 @@ from benchmarks.workflow_replay import (
     COLLECTION_STATUS_FAILED,
     COLLECTION_STATUS_MISSING,
     COLLECTION_STATUS_NO_WORKFLOW,
+    COLLECTION_STATUS_OK,
     build_record,
     collect_workflow_records,
     read_workflow_record,
@@ -416,8 +417,9 @@ class AsterwyndRunner(AgentRunner):
                 **self._collect_workflow_fields(subagent_manager, output_dir),
             )
         if isinstance(result, _WorkflowModeResult):
-            edit_count = 0
+            edit_count, tool_calls_made = 0, 0
         else:
+            tool_calls_made = len(result.tool_calls_made)
             edit_count = sum(
                 1
                 for call in result.tool_calls_made
@@ -443,14 +445,15 @@ class AsterwyndRunner(AgentRunner):
                 cache_write_tokens=result.cache_creation_input_tokens,
                 **workflow_fields,
             )
+        ended_turn = _stop_reason_value(result.stop_reason) == "end_turn"
         return AgentRunResult(
-            status="completed" if result.stop_reason.value == "end_turn" else "error",
+            status="completed" if ended_turn else "error",
             iterations=counting_llm.call_count,
-            tool_calls=len(result.tool_calls_made),
+            tool_calls=tool_calls_made,
             edit_count=edit_count,
             reason=(
                 None
-                if result.stop_reason.value == "end_turn"
+                if ended_turn
                 else BenchmarkReason.MAX_ITERATIONS.value
             ),
             output=result.content,
@@ -642,15 +645,21 @@ class AsterwyndRunner(AgentRunner):
         }
 
 
+def _stop_reason_value(stop_reason) -> str:
+    """``StopReason`` 枚举或裸字符串都归一成字符串（两条驱动路径共用）。"""
+    return getattr(stop_reason, "value", stop_reason) or ""
+
+
 @dataclass
 class _WorkflowModeResult:
     """``template`` / ``dynamic-replay`` 的返回面。
 
-    只暴露 ``AgentLoop.RunResult`` 在这两条路径上被消费的字段（``content`` 与
-    token 四项），使调用方的超时/采集路径不必按模式分叉。
+    只暴露 ``AgentLoop.RunResult`` 在这两条路径上被消费的字段（``content``、
+    ``stop_reason`` 与 token 四项），使调用方的超时/采集路径不必按模式分叉。
     """
 
     content: str = ""
+    stop_reason: str = "end_turn"
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_input_tokens: int = 0

@@ -334,6 +334,7 @@ class BenchmarkRunner:
                     skip_reason="record file not readable for comparison",
                 ),
             )
+        fake_llm = self._is_fake_agent()
         assertions = compare_record_and_replay(
             entries[0],
             {
@@ -345,10 +346,25 @@ class BenchmarkRunner:
                 "critical_path_s": result.workflow_critical_path_s,
                 "cost_usd": result.workflow_cost_usd,
             },
-            fake_llm=self.agent_name == "fake",
+            fake_llm=fake_llm,
         )
         return replace(
-            result, **e2e_fields(llm_available=True, assertions=assertions)
+            result,
+            **e2e_fields(
+                llm_available=True, assertions=assertions, fake_llm=fake_llm
+            ),
+        )
+
+    def _is_fake_agent(self) -> bool:
+        """Whether the LLM behind this run is a scripted/fake one (Q6).
+
+        A fake round-trip can assert full equality; a real LLM can only assert
+        ``spec_hash`` — so the report must say which mode actually ran.
+        """
+        if self.agent_name == "fake":
+            return True
+        return getattr(self.agent_runner, "llm", None) is not None and (
+            self.agent_name != "asterwynd"
         )
 
     async def run_task(
