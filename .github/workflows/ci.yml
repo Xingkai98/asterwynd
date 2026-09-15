@@ -38,6 +38,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --locked
 
+      # workflow 流程图的跨端布局 / pinch+pan 只能在真浏览器里验收（grill Q7）。
+      # 装 chromium 后 tests/web_tests/test_workflow_graph_browser.py 会真跑（此前与
+      # test_browser.py 一样因为没有浏览器而恒 skip）。node 单测那条路径不依赖它。
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+
       - name: Run tests
         run: uv run pytest -q
 
