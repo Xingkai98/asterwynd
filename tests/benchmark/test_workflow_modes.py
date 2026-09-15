@@ -239,6 +239,88 @@ async def test_dynamic_replay_missing_record_is_reported_not_silent(tmp_path):
     assert result.workflow_collection_status == COLLECTION_STATUS_MISSING
 
 
+# --- 回归：两个真实 LLM e2e 跑出来的 bug ---------------------------------
+
+
+def test_counting_llm_delegates_model_so_cost_is_not_a_fake_zero():
+    """回归（CD14「假 0」）：包装层必须把 ``model`` 透出去。
+
+    不透传时 ledger 记 ``model="unknown"`` → 2 档 ``compute_cost`` 返回 None →
+    ``CostLedger.total()`` 恒 0，``workflow_cost_usd`` 是假数据。
+    """
+    from benchmarks.agent_runner import CountingLLM
+
+    class PricedLLM:
+        model = "deepseek-v4-flash"
+
+    counting = CountingLLM(PricedLLM())
+
+    assert counting.model == "deepseek-v4-flash"
+
+
+@pytest.mark.asyncio
+async def test_replay_task_result_status_is_replayed(tmp_path):
+    """回归：replay 的 ``TaskResult.status`` 必须是 ``replayed`` 而不是默认 error。
+
+    走完整 ``run_task`` 路径（不是只调 ``_annotate_e2e_verification``），否则
+    "结果对象没被标成 replayed" 这类缺陷测不出来。
+    """
+    from benchmarks.runner import BenchmarkRunner
+
+    spec = parse_workflow_spec(_fanout_spec())
+    record_dir = tmp_path / "record-run"
+    write_workflow_record(
+        record_dir / "tasks" / "t1",
+        {
+            "workflow_mode": "dynamic-record",
+            "collection_status": COLLECTION_STATUS_OK,
+            "workflows": [
+                {
+                    "workflow_spec_hash": spec.spec_hash,
+                    "scheduler_version": "workflow.v1",
+                    "spec": spec.to_dict(),
+                    "observed": {"node_count": 4, "run_count": 3, "status": "completed"},
+                }
+            ],
+        },
+    )
+    source_repo = _git_repo(tmp_path / "source")
+    task_dir = tmp_path / "tasks" / "t1"
+    task_dir.mkdir(parents=True)
+    head = _git(source_repo, "rev-parse", "HEAD")
+    (task_dir / "task.json").write_text(
+        json.dumps(
+            {
+                "id": "t1",
+                "repo": "local",
+                "base_commit": head,
+                "problem_statement_file": "issue.md",
+                "test_command": "true",
+            }
+        )
+    )
+    (task_dir / "issue.md").write_text("do it")
+
+    runner = BenchmarkRunner(
+        agent_runner=AsterwyndRunner(
+            llm=CountingLLM(),
+            workflow_mode="dynamic-replay",
+            workflow_record=record_dir,
+        ),
+        source_repo=source_repo,
+        runs_dir=tmp_path / "runs",
+        agent_name="fake",
+        workflow_mode="dynamic-replay",
+        workflow_record_dir=record_dir,
+    )
+
+    result = await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "r1")
+
+    assert result.status == "replayed"
+    assert result.workflow_mode == "dynamic-replay"
+    assert result.workflow_spec_hash == spec.spec_hash
+
+
 # --- 5.1 record → replay 可比性断言（Q6） -----------------------------------
 
 
@@ -412,3 +494,28 @@ async def _drive_fanout(manager: SubAgentManager) -> dict:
     from agent.subagent.scheduler import WorkflowScheduler
 
     return await WorkflowScheduler(manager).run(parse_workflow_spec(_fanout_spec()))
+
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    )
+    return proc.stdout.strip()
+
+
+def _git_repo(path: Path) -> Path:
+    """A tiny real git repo: ``run_task`` creates worktrees from it."""
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
+    (path / "README.md").write_text("hi\n")
+    subprocess.run(["git", "add", "-A"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "init"], cwd=path, check=True
+    )
+    return path

@@ -266,9 +266,22 @@ class ClaudeCodeRunner(AgentRunner):
 
 
 class CountingLLM:
+    """Transparent wrapper that counts ``chat`` calls.
+
+    ``__getattr__`` delegates everything else (``model`` above all) to the
+    wrapped LLM. Without the delegation the cost ledger reads
+    ``getattr(self.llm, "model", "unknown")`` → ``"unknown"`` → the legacy
+    2-tier ``compute_cost`` returns ``None`` for an unpriced model and
+    ``CostLedger.total()`` stays exactly 0 — the same "fake zero" failure mode
+    the ledger injection exists to prevent (grill Confirmed Decision 14).
+    """
+
     def __init__(self, llm):
         self.llm = llm
         self.call_count = 0
+
+    def __getattr__(self, name):
+        return getattr(self.llm, name)
 
     async def chat(self, *args, **kwargs):
         self.call_count += 1

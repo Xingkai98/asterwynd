@@ -1,7 +1,7 @@
 {
   "id": "workflow-fanout",
   "repo": "local/asterwynd",
-  "base_commit": "REPLACE_WITH_HEAD",
+  "base_commit": "683e604519aa65e105d9909f468fe2c302da4dbe",
   "problem_statement_file": "issue.md",
   "test_command": "test -f WORKFLOW_FANOUT.md",
   "category": "multi-step-solving",

@@ -462,6 +462,7 @@ class BenchmarkRunner:
                 # replay 会被双重计数，污染完成率与 $/resolved-task。
                 result = replace(
                     result,
+                    status=REPLAY_STATUS,
                     duration_seconds=round(time.time() - start, 1),
                 )
                 result = self._annotate_e2e_verification(result)
