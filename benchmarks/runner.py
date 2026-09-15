@@ -30,10 +30,7 @@ from benchmarks.workflow_e2e import (
     compare_record_and_replay,
     e2e_fields,
 )
-from benchmarks.workflow_replay import (
-    COLLECTION_STATUS_MISSING,
-    read_workflow_record,
-)
+from benchmarks.workflow_replay import read_workflow_record
 
 
 @dataclass
@@ -359,7 +356,9 @@ class BenchmarkRunner:
             {
                 "node_count": result.workflow_node_count,
                 "run_count": result.workflow_run_count,
-                "status": result.status,
+                # 图级状态（不是 benchmark 的 ``replayed`` 专值）：Q6 的 status 断言
+                # 比的是「回放有没有复现 record 的完成/异常形态」。
+                "workflow_status": (result.workflow_envelope or {}).get("status"),
                 "workflow_spec_hash": result.workflow_spec_hash,
                 "peak_active": result.workflow_peak_active,
                 "critical_path_s": result.workflow_critical_path_s,
@@ -462,7 +461,9 @@ class BenchmarkRunner:
                 if hidden_backup:
                     log("Temporarily hid benchmarks/tasks from agent workspace")
 
-            agent_result = await self._run_agent(loaded, workspace, task_output, trace)
+            agent_result = await self._run_agent(
+                loaded, workspace, task_output, trace, seed
+            )
             log(f"Agent finished with status={agent_result.status}")
             # Carry the agent-side fields (tokens, iterations, workflow_*) onto
             # the result **once**, then mutate incrementally below. The three
@@ -811,7 +812,14 @@ class BenchmarkRunner:
         workspace: Path,
         task_output: Path,
         trace: TraceRecorder,
+        seed: int | None = None,
     ):
+        # 本轮 seed 交给 agent runner（若有该接口）：D2 的 workflow_record 要记
+        # seed，而 ``AgentRunner.run`` 的五参签名按 Q8 不动——只能走这个 setter。
+        # 同一轮里所有任务共享同一个 seed 值，并发写是幂等的。
+        set_seed = getattr(self.agent_runner, "set_run_seed", None)
+        if callable(set_seed):
+            set_seed(seed)
         return await self.agent_runner.run(
             loaded.task,
             loaded.problem_statement,

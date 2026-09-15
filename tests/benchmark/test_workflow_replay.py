@@ -22,7 +22,6 @@ from agent.workspace_policy import WorkspacePolicy
 from benchmarks.models import AgentRunResult, TaskResult
 from benchmarks.workflow_replay import (
     COLLECTION_STATUS_FAILED,
-    COLLECTION_STATUS_MISSING,
     COLLECTION_STATUS_NO_WORKFLOW,
     COLLECTION_STATUS_OK,
     WORKFLOW_RECORD_FILENAME,
@@ -562,6 +561,29 @@ def test_cost_per_resolved_reuses_pass_statuses():
     assert resolved == 2
     assert per_resolved == pytest.approx(total_cost / 2)
     assert PASS_STATUSES == {"passed", "passed_with_warnings"}
+
+
+def test_compare_resolved_count_tracks_invalid_round_reasons(monkeypatch):
+    """回归（CD9）：compare 侧分母必须**跟着** ``INVALID_ROUND_REASONS`` 走。
+
+    CD9 要求「复用 ``PASS_STATUSES`` + ``is_valid_round``，不得自造」。手抄一份
+    原因集在今天是等价的（两边都是那三个），但会在新增无效原因时**静默漂移**——
+    compare 的 ``$/resolved-task`` 与 report 的 pass@k 会对不上。这条断言用
+    monkeypatch 扩展原因集，验证 compare 自动跟随。
+    """
+    from benchmarks import compare, statistics
+    from benchmarks.statistics import INVALID_ROUND_REASONS
+
+    values = [{"status": "passed", "reason": "boom"}]
+
+    assert compare._resolved_counts(values) == 1
+    monkeypatch.setattr(
+        statistics, "INVALID_ROUND_REASONS", INVALID_ROUND_REASONS | {"boom"}
+    )
+    # 归因到新原因后，同一份数据必须不再计入分母（说明它在跟随共享定义）。
+    assert statistics.is_valid_round("passed", "boom") is False
+    assert compare._resolved_counts(values) == 0
+
 
 
 # --- 4.2 对照臂 config ------------------------------------------------------

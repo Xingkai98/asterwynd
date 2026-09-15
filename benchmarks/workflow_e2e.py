@@ -32,6 +32,16 @@ REPORT_ONLY_FIELDS: tuple[str, ...] = (
     "critical_path_s",
 )
 
+#: ``status`` 的两侧口径不同，**不能**直接等值比较：
+#: record 侧是 scheduler envelope 的图级状态（``completed``），replay 侧是
+#: ``TaskResult.status`` 的 benchmark 状态（``replayed``）——后者被 Q10 读法 A
+#: 固定成专值，永远不可能等于前者。fake 场景的 status 断言因此收敛为
+#: 「两侧都**无异常完成**」（复用与 ``_replay_completed_cleanly`` 同源的
+#: 排除集），矛盾（record 无异常 / replay 异常）才算失败。
+UNHEALTHY_WORKFLOW_STATUSES = frozenset(
+    {"graph_recursion_exceeded", "cancelled", "error", "declared"}
+)
+
 
 def compare_record_and_replay(
     record_entry: dict,
@@ -57,6 +67,17 @@ def compare_record_and_replay(
     if fake_llm:
         for field in OBSERVED_FIELDS:
             if field == "status":
+                # 两侧 status 的**口径不同**（record 侧是图级状态、replay 侧是
+                # benchmark 的 ``replayed`` 专值），等值比较恒假；断言收敛为
+                # 「两侧都无异常完成」，矛盾才算失败。
+                record_status = observed.get(field)
+                replay_status = replay_entry.get("workflow_status")
+                comparisons["status"] = {
+                    "record": record_status,
+                    "replay": replay_status,
+                    "equal": _status_comparable(record_status, replay_status),
+                }
+                hard_asserted.append(field)
                 continue
             comparisons[field] = _compare(
                 observed.get(field), replay_entry.get(field)
@@ -102,6 +123,27 @@ def e2e_fields(
         "e2e_skip_reason": skip_reason,
         "e2e_assertions": assertions,
     }
+
+
+def _workflow_completed_cleanly(status: Any) -> bool:
+    """图级状态是否「无异常完成」（与 ``runner._replay_completed_cleanly`` 同源）。"""
+    return bool(status) and status not in UNHEALTHY_WORKFLOW_STATUSES
+
+
+def _status_comparable(record_status: Any, replay_status: Any) -> bool:
+    """record 与 replay 的图级状态是否可比（见 :data:`UNHEALTHY_WORKFLOW_STATUSES`）。
+
+    - 两侧都无异常完成 → 可比；
+    - 两侧都异常完成 → 要求**同一个**异常状态（回放复现了同一种失败）；
+    - 一侧正常一侧异常 → 不可比（回放没复现 record 的行为）。
+    """
+    record_ok = _workflow_completed_cleanly(record_status)
+    replay_ok = _workflow_completed_cleanly(replay_status)
+    if record_ok != replay_ok:
+        return False
+    if record_ok:
+        return True
+    return record_status == replay_status
 
 
 def _compare(expected: Any, actual: Any) -> dict[str, Any]:

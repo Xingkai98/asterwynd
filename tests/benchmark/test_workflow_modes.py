@@ -5,9 +5,9 @@ record→replay 可比性断言（grill Q6 乙：fake 全等、真实 LLM 只断
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -36,12 +36,16 @@ from benchmarks.workflow_replay import (
 
 
 class CountingLLM:
-    def __init__(self, content="worker result"):
+    def __init__(self, content="worker result", latency: float = 0.0):
         self.content = content
         self.calls = 0
+        self.latency = latency
 
     async def chat(self, messages, tools=None, model="gpt-4"):
         self.calls += 1
+        if self.latency:
+            # 真实 LLM 必然在此让出事件循环；并发路径的竞态只有让出后才暴露。
+            await asyncio.sleep(self.latency)
         return LLMResponse(content=self.content, stop_reason="end_turn", usage=Usage(5, 5))
 
 
@@ -100,8 +104,6 @@ async def test_template_mode_runs_pattern_and_reports_orchestration(tmp_path):
 @pytest.mark.asyncio
 async def test_dynamic_record_writes_record_and_does_not_interrupt(tmp_path):
     """记录是旁路：模型自由生成不被阻断，落盘 schema 是 workflows 列表。"""
-    from agent.trace_recorder import TraceRecorder
-
     manager = _manager(tmp_path)
     runner = AsterwyndRunner(
         llm=CountingLLM(),
@@ -138,8 +140,6 @@ async def test_dynamic_record_writes_record_and_does_not_interrupt(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dynamic_record_without_workflow_reports_no_workflow(tmp_path):
-    from agent.trace_recorder import TraceRecorder
-
     runner = AsterwyndRunner(
         llm=CountingLLM(), workflow_mode="dynamic-record", config=AsterwyndConfig()
     )
@@ -239,6 +239,186 @@ async def test_dynamic_replay_missing_record_is_reported_not_silent(tmp_path):
     assert result.workflow_collection_status == COLLECTION_STATUS_MISSING
 
 
+def _nodes(n: int, prefix: str) -> list[dict]:
+    return [
+        {"id": f"{prefix}{i}", "kind": "subagent", "task": f"{prefix}-task-{i}"}
+        for i in range(n)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_parallel_replay_does_not_cross_contaminate_spec_hash(tmp_path):
+    """回归：并发重放时每个任务必须报**自己的** spec_hash。
+
+    ``BenchmarkRunner`` 只持有一个 ``AsterwyndRunner``，而 ``run_all`` 用
+    ``asyncio.gather`` 并发跑任务——把「本任务的记录」放在 runner 实例属性上，先起
+    但跑得久的那个任务会在自己的采集点上读到兄弟任务刚写进去的记录，报出别人的
+    hash。
+
+    这里让 taskA（3 个节点）比 taskB（1 个节点）慢，制造「A 先起、B 先完、A 才读」
+    的交错——正是实例属性方案会读到 B 的那条路径。节点的 LLM 调用带固定延时，
+    交错由事件循环的 await 点保证，不依赖真实网络。
+    """
+    from agent.trace_recorder import TraceRecorder
+
+    record_dir = tmp_path / "record-run"
+    # taskA 的记录里有**两张**图、taskB 只有一张：「本任务的记录」被兄弟任务覆盖时，
+    # workflow_count 立刻暴露（甲读到 1 而非 2）。
+    specs = {
+        "taskA": [
+            {"goal": "goal-A1", "nodes": _nodes(2, "a"), "edges": []},
+            {"goal": "goal-A2", "nodes": _nodes(1, "c"), "edges": []},
+        ],
+        "taskB": [{"goal": "goal-B", "nodes": _nodes(1, "b"), "edges": []}],
+    }
+    expected: dict[str, str] = {}
+    for task_id, spec_dicts in specs.items():
+        parsed = [parse_workflow_spec(s) for s in spec_dicts]
+        expected[task_id] = parsed[0].spec_hash
+        write_workflow_record(
+            record_dir / "tasks" / task_id,
+            {
+                "workflow_mode": "dynamic-record",
+                "collection_status": COLLECTION_STATUS_OK,
+                "workflows": [
+                    {
+                        "workflow_spec_hash": p.spec_hash,
+                        "scheduler_version": "workflow.v1",
+                        "spec": p.to_dict(),
+                        "observed": {},
+                    }
+                    for p in parsed
+                ],
+            },
+        )
+
+    runner = AsterwyndRunner(
+        llm=CountingLLM(latency=0.05),
+        workflow_mode="dynamic-replay",
+        workflow_record=record_dir,
+        config=AsterwyndConfig(),
+    )
+
+    async def one(task_id: str):
+        return await runner.run(
+            task=_task(task_id),
+            problem_statement="x",
+            workspace=tmp_path,
+            output_dir=tmp_path / f"out-{task_id}",
+            trace=TraceRecorder(task_id=task_id),
+        )
+
+    results = dict(zip(("taskA", "taskB"), await asyncio.gather(one("taskA"), one("taskB"))))
+
+    for task_id, spec_hash in expected.items():
+        assert results[task_id].workflow_spec_hash == spec_hash, task_id
+    # 「本任务的记录」必须按任务隔离：taskA 两张图、taskB 一张。
+    assert results["taskA"].workflow_count == 2
+    assert results["taskB"].workflow_count == 1
+
+
+# --- 回归：declared 态图不得顶掉真实图的编排指标 --------------------------
+
+
+@pytest.mark.asyncio
+async def test_declared_graph_does_not_shadow_metrics_of_the_graph_that_ran(tmp_path):
+    """回归：注册顺序里排第一的 ``declared`` 图不能顶掉真正跑过那张图的指标。
+
+    ``DeclareWorkflow`` 只注册不执行（grill Q1 场景里这很常见），而
+    ``_envelope_fields`` 按注册顺序取「第一张」——不过滤 ``declared`` 会让全部
+    编排字段静默变 ``None``，尽管同一份记录里数据是完整的。
+    """
+    from agent.subagent.scheduler import WorkflowScheduler
+
+    manager = _manager(tmp_path)
+    declared = WorkflowScheduler(manager)  # 只注册、不 run
+    manager.register_workflow(declared)
+    await _drive_fanout(manager)
+
+    runner = AsterwyndRunner(
+        llm=CountingLLM(), workflow_mode="dynamic-record", config=AsterwyndConfig()
+    )
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    fields = runner._collect_workflow_fields(manager, output_dir)
+
+    assert len(read_workflow_record(output_dir)["workflows"]) == 1
+    assert fields["workflow_node_count"] == 4
+    assert fields["workflow_run_count"] == 3
+    assert fields["workflow_envelope"]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_template_mode_does_not_write_a_replay_record(tmp_path):
+    """template 的编排由 pattern 名唯一确定、无重放需求 → 不落盘记录。
+
+    运行协议文档与模块 docstring 都这么写；实现若顺手落盘会留下没人读的
+    ``workflow_record.json``，且让人误以为 template 也能 replay。
+    """
+    from agent.trace_recorder import TraceRecorder
+
+    runner = AsterwyndRunner(
+        llm=CountingLLM(), workflow_mode="template", config=AsterwyndConfig()
+    )
+    output_dir = tmp_path / "out"
+    await runner.run(
+        task=_task(),
+        problem_statement="do the thing",
+        workspace=tmp_path,
+        output_dir=output_dir,
+        trace=TraceRecorder(task_id="t1"),
+    )
+
+    assert not (output_dir / "workflow_record.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_run_task_seed_reaches_the_record(tmp_path):
+    """回归：``--seeds`` 的 seed 必须进 ``workflow_record.json``（D2 schema 必填项）。
+
+    ``AgentRunner.run`` 的五参签名按 Q8 不动，seed 只能由 ``BenchmarkRunner``
+    在每次 run 前交给 agent runner——走完整的 ``run_task`` 路径才测得到这条接线；
+    只调 ``set_run_seed`` 会漏掉「没人调用它」这个真实缺陷（schema 里的 seed 恒为
+    None）。
+    """
+    from benchmarks.runner import BenchmarkRunner
+
+    source_repo = _git_repo(tmp_path / "source")
+    task_dir = tmp_path / "tasks" / "t1"
+    task_dir.mkdir(parents=True)
+    head = _git(source_repo, "rev-parse", "HEAD")
+    (task_dir / "task.json").write_text(
+        json.dumps(
+            {
+                "id": "t1",
+                "repo": "local",
+                "base_commit": head,
+                "problem_statement_file": "issue.md",
+                "test_command": "true",
+            }
+        )
+    )
+    (task_dir / "issue.md").write_text("do it")
+
+    agent_runner = AsterwyndRunner(
+        llm=CountingLLM(), workflow_mode="dynamic-record", config=AsterwyndConfig()
+    )
+    runner = BenchmarkRunner(
+        agent_runner=agent_runner,
+        source_repo=source_repo,
+        runs_dir=tmp_path / "runs",
+        agent_name="fake",
+        workflow_mode="dynamic-record",
+    )
+
+    assert agent_runner.seed is None
+    await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "r1", seed=5)
+
+    # seed 必须由 BenchmarkRunner 经 set_run_seed 落到 agent runner 上（它随后进
+    # workflow_record.json 的 seed 字段）。
+    assert agent_runner.seed == 5
+
+
 # --- 回归：两个真实 LLM e2e 跑出来的 bug ---------------------------------
 
 
@@ -333,7 +513,9 @@ def test_fake_round_trip_asserts_full_equality():
         "workflow_spec_hash": "abc",
         "node_count": 4,
         "run_count": 3,
-        "status": "completed",
+        # 图级状态（不是 benchmark 的 ``replayed`` 专值）：见
+        # ``test_fake_status_assertion_compares_workflow_status_not_task_status``。
+        "workflow_status": "completed",
         "peak_active": 9,  # wall-clock/并发噪声：fake 场景也不进硬断言
         "cost_usd": 0.0,
         "critical_path_s": 999.0,
@@ -344,8 +526,52 @@ def test_fake_round_trip_asserts_full_equality():
     assert assertions["all_hard_assertions_passed"]
     assert "node_count" in assertions["hard_asserted"]
     assert "run_count" in assertions["hard_asserted"]
+    assert "status" in assertions["hard_asserted"]
     # 真实 LLM 侧只报不判的字段在 fake 场景同样只报
     assert "peak_active" in assertions["reported_only"]
+
+
+def test_fake_status_assertion_compares_workflow_status_not_task_status():
+    """回归：``status`` 硬断言必须比**图级状态**，不能比 benchmark 的 ``replayed``。
+
+    replay 侧的 ``TaskResult.status`` 被 Q10 读法 A 固定成 ``replayed``，与 record
+    侧 envelope 的 ``completed`` 永远不可能等值——拿它做全等断言则断言恒假。真实
+    run 喂进来的就正是这两个值。
+    """
+    record_entry = {
+        "workflow_spec_hash": "abc",
+        "observed": {"node_count": 4, "run_count": 3, "status": "completed"},
+    }
+    replay = {
+        "workflow_spec_hash": "abc",
+        "node_count": 4,
+        "run_count": 3,
+        "workflow_status": "completed",
+    }
+
+    assertions = compare_record_and_replay(record_entry, replay, fake_llm=True)
+
+    assert assertions["comparisons"]["status"]["equal"] is True
+    assert assertions["all_hard_assertions_passed"]
+
+
+def test_fake_status_assertion_fails_when_replay_did_not_reproduce_record():
+    """回归：record 正常完成而 replay 异常时，status 断言必须失败（不能恒真）。"""
+    record_entry = {
+        "workflow_spec_hash": "abc",
+        "observed": {"node_count": 4, "run_count": 3, "status": "completed"},
+    }
+    replay = {
+        "workflow_spec_hash": "abc",
+        "node_count": 4,
+        "run_count": 3,
+        "workflow_status": "graph_recursion_exceeded",
+    }
+
+    assertions = compare_record_and_replay(record_entry, replay, fake_llm=True)
+
+    assert assertions["comparisons"]["status"]["equal"] is False
+    assert not assertions["all_hard_assertions_passed"]
 
 
 def test_real_llm_round_trip_only_hard_asserts_spec_hash():
@@ -455,6 +681,8 @@ async def test_replay_annotates_assertions_from_the_record_run(tmp_path):
         workflow_collection_status=COLLECTION_STATUS_OK,
         workflow_node_count=4,
         workflow_run_count=3,
+        # 图级状态来自采集到的 envelope（不是 TaskResult.status 的 replayed）。
+        workflow_envelope={"status": "completed"},
     )
 
     annotated = runner._annotate_e2e_verification(result)

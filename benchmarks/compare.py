@@ -14,7 +14,7 @@ from pathlib import Path
 
 from agent.cost_tracker import compute_cost, compute_cost_cached, format_cost
 from benchmarks.models import TaskResult
-from benchmarks.statistics import PairedComparison, paired_comparison
+from benchmarks.statistics import PairedComparison, is_valid_round, paired_comparison
 
 
 RESULT_ORDER = ["passed", "passed_with_warnings", "unsupported", "failed", "error"]
@@ -275,13 +275,17 @@ _RESOLVED_STATUSES = frozenset({"passed", "passed_with_warnings"})
 
 def _resolved_counts(values: list[dict]) -> int:
     """Resolved tasks: ``passed`` + ``passed_with_warnings``，排除 unsupported /
-    ``docker_unavailable`` / ``dynamic-replay``（CD9 + Q10 读法 A）。"""
-    invalid = {"docker_unavailable", "task_family_unsupported", "approval_unavailable"}
+    invalid round / ``dynamic-replay``（CD9 + Q10 读法 A）。
+
+    分母口径直接复用 :func:`benchmarks.statistics.is_valid_round`（CD9 明写要求
+    「复用既有口径、不得自造」）；无效轮次的原因集由那个函数定义，这里不再手抄一份
+    ——手抄的副本会随 ``INVALID_ROUND_REASONS`` 演进漂移。
+    """
     resolved = 0
     for value in values:
         if value.get("workflow_mode") == "dynamic-replay":
             continue
-        if value.get("status") == "unsupported" or value.get("reason") in invalid:
+        if not is_valid_round(value.get("status"), value.get("reason")):
             continue
         if value.get("status") in _RESOLVED_STATUSES:
             resolved += 1

@@ -321,6 +321,15 @@ class AsterwyndRunner(AgentRunner):
         self.temperature = temperature
         self.seed = seed
 
+    def set_run_seed(self, seed: int | None) -> None:
+        """把本轮的采样 seed 交给 runner（``AgentRunner.run`` 签名不动，grill Q8）。
+
+        seed 是**每轮**的采样参数（``run_all(seed=...)``），不是构造期的 runner 配置
+        ——它由 ``BenchmarkRunner`` 在每次 run 前设置，最终进 ``workflow_record.json``
+        的 ``seed`` 字段（D2 schema 的必填项）。
+        """
+        self.seed = seed
+
     async def close(self) -> None:
         close_fn = getattr(self.llm, "close", None)
         if close_fn:
@@ -387,9 +396,15 @@ class AsterwyndRunner(AgentRunner):
         # 既有行为）走 AgentLoop；template 把 pattern 当被测编排；dynamic-replay
         # 离线重放已保存的 spec、不跑规划模型。三条路都返回同一形状的结果对象，
         # 超时边界与采集点因此不需要分叉。
+        # ``dynamic-replay`` 的记录在**本任务**的局部变量里流转，不落在 runner 实例上：
+        # 一个 ``BenchmarkRunner`` 只持有一个 ``AsterwyndRunner``，而 ``run_all`` 用
+        # ``asyncio.gather`` 并发跑多个任务——实例属性会被兄弟任务互相覆盖，导致
+        # 甲任务报告乙任务的 spec_hash。
+        replay_record: dict | None = None
         if self.workflow_mode == "dynamic-replay":
+            replay_record = self._read_replay_record(task.id)
             coro = self._run_dynamic_replay(
-                task=task, subagent_manager=subagent_manager, trace=trace
+                record=replay_record, subagent_manager=subagent_manager, trace=trace
             )
         elif self.workflow_mode == "template":
             coro = self._run_template_pattern(
@@ -426,10 +441,13 @@ class AsterwyndRunner(AgentRunner):
                 tool_calls=tool_count,
                 reason=BenchmarkReason.MODEL_FAILURE.value,
                 output=f"Asterwynd timed out after {effective_timeout}s ({counting_llm.call_count} iterations, {tool_count} tool calls)",
-                **self._collect_workflow_fields(subagent_manager, output_dir),
+                **self._collect_workflow_fields(
+                    subagent_manager, output_dir, replay_record=replay_record
+                ),
             )
         if isinstance(result, _WorkflowModeResult):
             edit_count, tool_calls_made = 0, 0
+            replay_envelopes = result.envelopes
         else:
             tool_calls_made = len(result.tool_calls_made)
             edit_count = sum(
@@ -440,7 +458,13 @@ class AsterwyndRunner(AgentRunner):
                 and not call.result.startswith("[Permission denied")
                 and not call.result.startswith("[Error")
             )
-        workflow_fields = self._collect_workflow_fields(subagent_manager, output_dir)
+            replay_envelopes = []
+        workflow_fields = self._collect_workflow_fields(
+            subagent_manager,
+            output_dir,
+            replay_record=replay_record,
+            replay_envelopes=replay_envelopes,
+        )
         await mcp_manager.aclose()
         if self.workflow_mode == "dynamic-replay":
             # replay 只比编排、不判分（grill Q10 读法 A）：状态用专用值
@@ -507,34 +531,29 @@ class AsterwyndRunner(AgentRunner):
             )
         )
 
+    def _read_replay_record(self, task_id: str) -> dict | None:
+        """本任务的记录文件（缺 ``--workflow-record`` / 文件缺失 → ``None``）。"""
+        if not self.workflow_record:
+            return None
+        return read_workflow_record(Path(self.workflow_record) / "tasks" / task_id)
+
     async def _run_dynamic_replay(
         self,
         *,
-        task: TaskSpec,
+        record: dict | None,
         subagent_manager: SubAgentManager,
         trace: TraceRecorder,
     ) -> "_WorkflowModeResult":
-        """``dynamic-replay``：读记录 → 离线重放全部图（不重跑规划模型）。"""
-        record = (
-            read_workflow_record(Path(self.workflow_record) / "tasks" / task.id)
-            if self.workflow_record
-            else None
-        )
-        self._replay_record = record
+        """``dynamic-replay``：重放记录里的全部图（不重跑规划模型）。"""
         if record is None:
-            trace.record(
-                "workflow_replay",
-                status=COLLECTION_STATUS_MISSING,
-                task_id=task.id,
-            )
+            trace.record("workflow_replay", status=COLLECTION_STATUS_MISSING)
             return _WorkflowModeResult(
-                content=(
-                    f"no workflow record for task {task.id} under "
-                    f"{self.workflow_record}"
-                )
+                envelopes=[],
+                content=f"no workflow record under {self.workflow_record}"
             )
         entries = record.get("workflows") or []
         summaries: list[str] = []
+        replay_envelopes: list[dict] = []
         for entry in entries:
             # parse 必须带 ``_spec_bounds``（D1/Confirmed Decision 13）：否则三闸
             # 退回模块常量而不是 record 时的 ``subagents.workflow.*`` 配置，同一份
@@ -543,24 +562,39 @@ class AsterwyndRunner(AgentRunner):
             scheduler = WorkflowScheduler(subagent_manager, bus=MessageBus())
             subagent_manager.register_workflow(scheduler)
             envelope = await scheduler.run(spec)
+            replay_envelopes.append(envelope)
             summaries.append(
                 f"[{envelope['workflow_id']}] {envelope['status']}: "
                 f"{envelope.get('spec_hash')}"
             )
-        self._replayed_count = len(entries)
-        return _WorkflowModeResult(content="\n".join(summaries))
+        return _WorkflowModeResult(
+            content="\n".join(summaries), envelopes=replay_envelopes
+        )
 
     def _collect_workflow_fields(
-        self, manager: SubAgentManager, output_dir: Path
+        self,
+        manager: SubAgentManager,
+        output_dir: Path,
+        *,
+        replay_record: dict | None = None,
+        replay_envelopes: list[dict] | None = None,
     ) -> dict:
         """采集 workflow 字段（旁路：挂在 ``await agent.run(...)`` 返回之后）。
 
         采集失败**不影响** run 完成（D1 Risks）：异常一律折成 ``failed`` 状态字段。
+
+        ``replay_record``/``replay_envelopes`` 是**本次任务**的回放输入与产出，由
+        :meth:`run` 按任务传进来（不做成实例属性——runner 实例跨任务共享）。
         """
         if self.workflow_mode is None:
             return {}
         try:
-            return self._collect_workflow_fields_inner(manager, output_dir)
+            return self._collect_workflow_fields_inner(
+                manager,
+                output_dir,
+                replay_record=replay_record,
+                replay_envelopes=replay_envelopes or [],
+            )
         except Exception as exc:  # noqa: BLE001 - 采集是旁路，绝不打断 run
             return {
                 "workflow_mode": self.workflow_mode,
@@ -569,28 +603,35 @@ class AsterwyndRunner(AgentRunner):
             }
 
     def _collect_workflow_fields_inner(
-        self, manager: SubAgentManager, output_dir: Path
+        self,
+        manager: SubAgentManager,
+        output_dir: Path,
+        *,
+        replay_record: dict | None,
+        replay_envelopes: list[dict],
     ) -> dict:
         if self.workflow_mode == "dynamic-replay":
-            record = getattr(self, "_replay_record", None)
-            if record is None:
+            if replay_record is None:
                 return {
                     "workflow_mode": self.workflow_mode,
                     "workflow_collection_status": COLLECTION_STATUS_MISSING,
                 }
-            entries = record.get("workflows") or []
+            entries = replay_record.get("workflows") or []
             fields: dict = {
                 "workflow_mode": self.workflow_mode,
                 "workflow_count": len(entries),
-                "workflow_collection_status": record.get(
+                "workflow_collection_status": replay_record.get(
                     "collection_status", COLLECTION_STATUS_OK
                 ),
             }
             if entries:
-                # 唯一可硬断言的字段（Q6 乙）：同一份 spec dict 走同一个
-                # ``parse_workflow_spec``，hash 必然相等。
-                fields["workflow_spec_hash"] = entries[0].get("workflow_spec_hash")
                 fields["scheduler_version"] = entries[0].get("scheduler_version")
+            if replay_envelopes:
+                # 报**真正重放出来的** spec_hash（不是把 record 里的值原样抄回）：
+                # 抄回来会让 Q6 的 spec_hash 相等断言变成恒真的同义反复，损坏/不兼容
+                # 的记录也照样「通过」。真值取自回放那次 envelope 的 ``spec_hash``，
+                # 由 ``compare_record_and_replay`` 与 record 期望值对比才有鉴别力。
+                fields["workflow_spec_hash"] = replay_envelopes[0].get("spec_hash")
             fields.update(self._envelope_fields(manager))
             return fields
 
@@ -600,15 +641,19 @@ class AsterwyndRunner(AgentRunner):
             temperature=self.temperature,
             seed=self.seed,
         )
-        write_workflow_record(
-            output_dir,
-            build_record(
-                workflow_mode=self.workflow_mode,
-                records=records,
-                collection_status=status,
-                collection_error=error,
-            ),
-        )
+        if self.workflow_mode == "dynamic-record":
+            # 只有 dynamic-record 落盘记录（D2 / 模块 docstring / 运行协议文档）：
+            # 它是唯一有「模型自由生成、必须存下来才能复现」问题的模式。template
+            # 的编排由 pattern 名唯一确定、无重放需求，落盘只会留下没人读的文件。
+            write_workflow_record(
+                output_dir,
+                build_record(
+                    workflow_mode=self.workflow_mode,
+                    records=records,
+                    collection_status=status,
+                    collection_error=error,
+                ),
+            )
         fields = {
             "workflow_mode": self.workflow_mode,
             "workflow_count": len(records),
@@ -623,18 +668,17 @@ class AsterwyndRunner(AgentRunner):
     def _envelope_fields(self, manager: SubAgentManager) -> dict:
         """从每张图的 scheduler envelope 汇总编排字段（D3）。
 
-        多图时取**第一张**的字段做代表值（``workflow_count`` 另记图数）；单图场景
-        下这就是全部信息。
+        多图时取**第一张真正跑过的**图的字段做代表值（``workflow_count`` 另记图数）；
+        单图场景下这就是全部信息。
+
+        必须跳过 ``declared`` 态（``DeclareWorkflow`` 只注册不执行）——注册顺序里
+        排第一的常是「声明了但没跑」的图（grill Q1 的场景），取它会让全部编排指标
+        静默变 ``None``，而同一份记录里其实有完整数据。
         """
-        ids = manager.list_workflows()
-        if not ids:
-            return {}
-        scheduler = manager.get_workflow(ids[0])
-        if scheduler is None or not getattr(scheduler, "started", False):
+        scheduler = self._first_started_scheduler(manager)
+        if scheduler is None:
             return {}
         envelope = scheduler.status()
-        if envelope.get("status") == "declared":
-            return {}
         return {
             "workflow_node_count": len(envelope.get("nodes") or []),
             "workflow_run_count": envelope.get("run_count"),
@@ -656,6 +700,21 @@ class AsterwyndRunner(AgentRunner):
             },
         }
 
+    @staticmethod
+    def _first_started_scheduler(manager: SubAgentManager):
+        """注册顺序里第一张**真正跑过**的图的调度器（跳过 ``declared`` 态）。"""
+        for workflow_id in manager.list_workflows():
+            scheduler = manager.get_workflow(workflow_id)
+            if scheduler is None or not getattr(scheduler, "started", False):
+                continue
+            try:
+                if scheduler.status().get("status") == "declared":
+                    continue
+            except Exception:  # noqa: BLE001 - 单张图的查询失败不该拖垮汇总
+                continue
+            return scheduler
+        return None
+
 
 def _stop_reason_value(stop_reason) -> str:
     """``StopReason`` 枚举或裸字符串都归一成字符串（两条驱动路径共用）。"""
@@ -667,7 +726,8 @@ class _WorkflowModeResult:
     """``template`` / ``dynamic-replay`` 的返回面。
 
     只暴露 ``AgentLoop.RunResult`` 在这两条路径上被消费的字段（``content``、
-    ``stop_reason`` 与 token 四项），使调用方的超时/采集路径不必按模式分叉。
+    ``stop_reason``、token 四项与重放 envelope 列表），使调用方的超时/采集路径
+    不必按模式分叉。
     """
 
     content: str = ""
@@ -676,3 +736,6 @@ class _WorkflowModeResult:
     output_tokens: int = 0
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
+    #: ``dynamic-replay`` 每张重放图的 scheduler envelope（按重放顺序）。调用方从
+    #: 它取**实测** spec_hash 上报；实例属性在这里不可用（runner 跨任务共享）。
+    envelopes: list[dict] | None = None
