@@ -258,6 +258,31 @@ async def test_graph_recursion_exceeded_renders_notice_not_graph(page, fake_web_
 
 
 @pytest.mark.asyncio
+async def test_session_without_workflow_is_unaffected(page, fake_web_server):
+    """tasks 6.3 兼容回归：没有 workflow 的会话前端不崩、workflow 入口保持隐藏。
+
+    ``page`` fixture 已经把 pageerror 收集成失败，所以「不崩」在这里是硬断言。
+    """
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+
+    # 普通对话事件流走一遍：工作流通道的存在不得影响既有渲染。
+    await page.evaluate("""() => {
+        const owner = { graphState: window.AsterwyndWorkflow.createGraphState() };
+        window.__t = owner;
+        window.AsterwyndWorkflow.bindTab(owner);
+    }""")
+
+    assert await page.evaluate("() => document.getElementById('workflow-tab').hidden") is True
+    assert await page.evaluate(
+        "() => !document.getElementById('workflow-view').classList.contains('active')") is True
+
+    # 空图状态下 canvas 显示占位而不是报错。
+    await page.evaluate("() => window.AsterwyndWorkflow.renderPanel(window.__t)")
+    assert "模型启动 workflow" in await page.text_content("#workflow-canvas")
+
+
+@pytest.mark.asyncio
 async def test_multi_workflow_tabs_switch(page, fake_web_server):
     """Q2：多图 tab——两张图各占一个 tab，点击可切换。"""
     await page.goto(fake_web_server["url"])
