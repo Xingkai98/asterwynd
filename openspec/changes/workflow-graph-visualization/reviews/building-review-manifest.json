@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-graph-visualization",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-graph-visualization-20260915-r3",
+  "base_sha": "cb9902c",
+  "head_sha": "d206adffc013966d7ae69bed336f9fc633de1b5b",
+  "tasks_hash": "sha256:fc063eff7c79c39765edc9b5d279d8a8ad01087cdabb9fbf405e328a49d41ae8",
+  "spec_hash": "sha256:43a8d6fbc457450fe4e629e5f1d9b01001a67acc0d809dbee554dd31a0eeaf3b",
+  "diff_hash": "sha256:b763f83119ea00f0dcf19c70f424af95d2337653ed21154cdfc3fa3d8b91dd90",
+  "report_hash": "sha256:d173dc04bc0c85e534d914b9d3a95da00d0a322f964cade885c0208da1c26ade"
+}
