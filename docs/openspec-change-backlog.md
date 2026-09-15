@@ -138,3 +138,7 @@
 - 会话工作目录切换 + WorkspacePolicy root 重绑定，worktree 内文件工具路径边界生效。
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
+
+### 第十三批：多 Agent 运行态可视化（wayfinder #170 的观测面 follow-up）
+
+- `workflow-graph-visualization`（issue #189）：**未实现，待 grill**。多 Agent 运行态流程图可视化（模型触发 StartWorkflow/RunWorkflow 时自动显示图，节点七档状态高亮 + 边五档状态 + route 控制边单列；桌面横向 DAG / 手机纵向 DAG，pinch 缩放 + pan 平移，复用 720/380 断点）。依赖 C2 的 ExecutionPlan 运行期图数据 + C5 的观测口径。codex 架构评审 D1–D7 已给推荐。
