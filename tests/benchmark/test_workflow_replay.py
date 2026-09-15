@@ -391,6 +391,47 @@ async def test_queue_cancelled_runs_counted_separately_from_rejections(tmp_path)
     assert scheduler._rejected_runs() == 0
 
 
+@pytest.mark.asyncio
+async def test_replay_is_deterministic_across_two_runs(tmp_path):
+    """同 spec 两次重放结果可比：结构字段全等（Q6 的可重放前提）。"""
+    manager = _manager(tmp_path)
+    spec_dict = _fanout_spec()
+
+    first = await WorkflowScheduler(manager).run(parse_workflow_spec(spec_dict))
+    second = await WorkflowScheduler(manager).run(parse_workflow_spec(spec_dict))
+
+    assert first["spec_hash"] == second["spec_hash"]
+    assert len(first["nodes"]) == len(second["nodes"])
+    assert first["run_count"] == second["run_count"]
+    assert first["status"] == second["status"]
+    assert first["useful_runs"] == second["useful_runs"]
+    assert first["redundancy"] == second["redundancy"]
+
+
+def test_parse_spec_for_manager_is_the_replay_parse_path(tmp_path):
+    """replay 必须走 ``parse_spec_for_manager``：否则三闸退回模块常量（CD13）。"""
+    from agent.config import SubagentsConfig, WorkflowLimitsConfig
+    from agent.subagent.workflow import DEFAULT_MAX_RUNS
+    from agent.tools.builtin.subagents import parse_spec_for_manager
+
+    config = AsterwyndConfig(
+        subagents=SubagentsConfig(
+            workflow=WorkflowLimitsConfig(recursion_limit=7, max_nodes=9, max_runs=11)
+        )
+    )
+    manager = _manager(tmp_path)
+    manager.config = config
+
+    spec = parse_spec_for_manager(manager, _fanout_spec())
+
+    assert spec.max_runs == 11
+    assert spec.max_nodes == 9
+    assert spec.recursion_limit == 7
+    assert spec.max_runs != DEFAULT_MAX_RUNS
+    # 与裸 parse 的差异正是 replay 必须注入 bounds 的理由
+    assert parse_workflow_spec(_fanout_spec()).max_runs == DEFAULT_MAX_RUNS
+
+
 # --- 报告渲染（Q9 选项 α） --------------------------------------------------
 
 
