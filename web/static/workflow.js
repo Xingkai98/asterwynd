@@ -450,24 +450,36 @@
 
   function attachGestures(svg, host, view, applyViewBox) {
     const pointers = new Map();
+    //: 已经 setPointerCapture 过的 pointerId。按**指针**记而不是一个布尔位：
+    //: 双指 pinch 时第一根手指可能已经进入拖动、第二根才落下，两者状态不同步。
+    const captured = new Set();
     let lastCentroid = null;
     let lastDistance = null;
     let dragOrigin = null;
-    let captured = false;
+
+    const capture = (pointerId) => {
+      if (captured.has(pointerId)) return;
+      captured.add(pointerId);
+      // capture 让手指移出元素后仍收得到 move；合成事件（测试）没有活跃
+      // pointer，抛错不影响手势本身，故吞掉。
+      try {
+        if (host.setPointerCapture) host.setPointerCapture(pointerId);
+      } catch (_error) { /* pointer 不活跃：忽略 */ }
+    };
 
     host.addEventListener('pointerdown', (event) => {
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (pointers.size === 1) {
         lastCentroid = { x: event.clientX, y: event.clientY };
         dragOrigin = { x: event.clientX, y: event.clientY };
-        captured = false;
       } else {
-        // 第二根手指落下 = pinch，不再是「点击」。
-        captured = true;
+        // 第二根手指落下 = pinch，不再是「点击」——双指手势不产生 click，
+        // 立刻 capture 不会吃掉节点的点击，还能保住移出元素后的 move 事件。
+        capture(event.pointerId);
       }
-      // 这里**不能**立刻 setPointerCapture：pointer capture 会把后续的 click
-      // 一并重定向到 host，节点上的 click（折叠组展开，D5）就永远收不到。
-      // capture 推迟到指针真的移动超过阈值时（见 pointermove）。
+      // 单指按下时**不能**立刻 capture：pointer capture 会把随后的 click 一并
+      // 重定向到 host，节点上的 click（折叠组展开，D5）就永远收不到。单指的
+      // capture 推迟到位移超过阈值、确定是拖动而不是点击时（见 pointermove）。
     });
 
     host.addEventListener('pointermove', (event) => {
@@ -475,19 +487,14 @@
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       const points = Array.from(pointers.values());
 
-      if (!captured) {
+      if (!captured.has(event.pointerId)) {
         if (!dragOrigin) dragOrigin = { x: event.clientX, y: event.clientY };
         const far = points.length >= 2
           ? distanceOf(points[0], points[1]) > TAP_SLOP
           : Math.abs(event.clientX - dragOrigin.x) > TAP_SLOP
             || Math.abs(event.clientY - dragOrigin.y) > TAP_SLOP;
         if (!far) return; // 还在「点击」范围内：不动图、不 capture
-        captured = true;
-        // capture 让手指移出元素后仍收得到 move；合成事件（测试）没有活跃
-        // pointer，抛错不影响手势本身，故吞掉。
-        try {
-          if (host.setPointerCapture) host.setPointerCapture(event.pointerId);
-        } catch (_error) { /* pointer 不活跃：忽略 */ }
+        capture(event.pointerId);
       }
 
       if (points.length >= 2) {
@@ -516,13 +523,13 @@
 
     const release = (event) => {
       pointers.delete(event.pointerId);
+      captured.delete(event.pointerId);
       if (pointers.size < 2) lastDistance = null;
       const remaining = Array.from(pointers.values());
       lastCentroid = remaining.length ? remaining[0] : null;
       if (!pointers.size) {
         lastCentroid = null;
         dragOrigin = null;
-        captured = false;
       }
     };
     host.addEventListener('pointerup', release);

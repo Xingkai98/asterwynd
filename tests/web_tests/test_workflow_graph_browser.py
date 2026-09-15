@@ -389,3 +389,47 @@ async def test_collapsed_group_shows_aggregated_status(page, fake_web_server):
     stroke = await page.eval_on_selector(
         ".workflow-node[data-node-id='fan'] rect", "e => e.getAttribute('stroke')")
     assert stroke == "#f87171", stroke
+
+
+@pytest.mark.asyncio
+async def test_gestures_pan_after_pinch_release(page, fake_web_server):
+    """5.2 回归：双指 pinch 后抬起一指，剩下的手指仍能继续 pan。
+
+    gesture 层按**指针**记 capture（不是一个全局布尔位）——否则第二根手指落下
+    会把状态置成「已拖动」，抬起后残留的错误状态会让复位逻辑失效。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+
+    result = await page.evaluate("""() => {
+        const host = document.getElementById('workflow-canvas');
+        const svg = host.querySelector('svg');
+        const fire = (type, id, x, y) => host.dispatchEvent(new PointerEvent(type, {
+            pointerId: id, clientX: x, clientY: y, bubbles: true,
+        }));
+        const pinchStart = svg.getAttribute('viewBox');
+
+        // pinch：两指分开 → 放大（viewBox 宽变小）
+        fire('pointerdown', 1, 100, 100);
+        fire('pointerdown', 2, 200, 200);
+        fire('pointermove', 1, 60, 60);
+        fire('pointermove', 2, 260, 260);
+        const pinchEnd = svg.getAttribute('viewBox');
+
+        // 抬起第二指，第一指继续拖动 → 仍应产生 pan（viewBox 原点变化）
+        fire('pointerup', 2, 260, 260);
+        const before = svg.getAttribute('viewBox');
+        fire('pointermove', 1, 120, 120);
+        const after = svg.getAttribute('viewBox');
+        fire('pointerup', 1, 120, 120);
+        return { pinchStart, pinchEnd, before, after };
+    }""")
+
+    width_of = lambda vb: float(vb.split()[2])
+    assert width_of(result["pinchEnd"]) < width_of(result["pinchStart"]), (
+        f"pinch 没放大：{result['pinchStart']} -> {result['pinchEnd']}")
+    assert result["after"] != result["before"], (
+        f"抬指后 pan 失效：{result['before']} -> {result['after']}")
