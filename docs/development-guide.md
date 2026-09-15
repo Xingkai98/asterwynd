@@ -107,6 +107,28 @@ uv run asterwynd benchmark benchmarks/tasks \
   --clone-cache-dir /tmp/swebench-cache
 ```
 
+编排 benchmark（workflow 三模式）：
+
+```bash
+# 记录一次（每任务落 workflow_record.json）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# 重放（--workflow-record 收 run 目录，按 task_id 推导记录路径）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+
+# 对照臂「小 k vs 大 N」：两份 config 各跑一次
+uv run asterwynd benchmark benchmarks/tasks --agent asterwynd \
+  --config configs/workflow-arm-small-k.yaml --runs-dir /tmp/arm-small-k
+uv run asterwynd benchmark benchmarks/tasks --agent asterwynd \
+  --config configs/workflow-arm-large-n.yaml --runs-dir /tmp/arm-large-n
+```
+
+`--workflow-mode dynamic-record --e2e-round-trip` 会在记录完成后自动用 `dynamic-replay` 重放本次 run，并断言两次的 `workflow_spec_hash` 相等（真实 LLM 下的端到端可比性验证）。
+
 如果你当前开发环境本身是一个没有 `systemd` 的容器，可以使用仓库内的辅助脚本手动拉起 Docker daemon：
 
 ```bash

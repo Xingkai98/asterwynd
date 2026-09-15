@@ -407,6 +407,30 @@ uv run asterwynd benchmark benchmarks/tasks \
 
 报告按能力分层（`execution`/`tool-usage`/`context-planning`/`multi-step-solving`）组织，含 Pass@k、均值/标准差、bootstrap 95% 置信区间、延迟 p50/p95/p99、token 成本与失败归因占比，并标注任务所属评测框架（task_family）。评测框架验证经 `VerifierAdapter` 抽象（当前内置 SWE-bench Verified adapter），并发上限按当前环境动态判定（低资源环境自动取 1）。
 
+### 编排 benchmark（workflow 三模式）
+
+`--workflow-mode` 让 benchmark 直接测「编排本身」的质量，而不只是单 agent 解单任务：
+
+| 模式 | 含义 |
+|---|---|
+| `template` | 固定 Pattern/DSL 模板当被测编排，走既有 verifier 判分（固定 baseline） |
+| `dynamic-record` | 模型自由生成 workflow，执行的同时旁路记录规范化 spec 与编排指标 |
+| `dynamic-replay` | 读已保存记录、不重跑规划模型、离线重放；只比编排指标、不判分 |
+
+```bash
+# 记录一次（每任务落一份 workflow_record.json）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# 重放（按 task_id 从同一 run 目录取记录）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+```
+
+报告新增**独立**的 workflow 编排 section（冗余度 / 图级步数 / 拒绝降级计数 / 节点数 / 峰值并发 / 关键路径 / 编排成本），主表只加一列 `workflow_mode`；`dynamic-replay` 记录不进 pass@k 分母。「小 k 高质量 vs 大 N 暴力」对照臂用 `configs/workflow-arm-small-k.yaml` 与 `configs/workflow-arm-large-n.yaml` 两份配置表达。
+
 ### Claw-SWE-Bench 对比评测
 
 详细环境准备见 [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md)。最小命令形态：

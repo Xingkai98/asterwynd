@@ -408,6 +408,30 @@ uv run asterwynd benchmark benchmarks/tasks \
 
 The report is organized by capability layer (`execution`/`tool-usage`/`context-planning`/`multi-step-solving`) and includes Pass@k, mean/std, bootstrap 95% confidence intervals, latency p50/p95/p99, token cost, and failure attribution shares, plus each task's framework family (task_family). Framework verification is abstracted behind `VerifierAdapter` (currently a built-in SWE-bench Verified adapter); the concurrency limit is derived dynamically from the current machine (falls back to 1 on low-resource environments).
 
+### Orchestration Benchmark (Three Workflow Modes)
+
+`--workflow-mode` lets the benchmark measure the quality of the orchestration itself, not just a single agent solving a single task:
+
+| Mode | Meaning |
+|---|---|
+| `template` | A fixed Pattern/DSL template is the orchestration under test and goes through the existing verifier (fixed baseline) |
+| `dynamic-record` | The model freely generates a workflow; a normalized spec plus orchestration metrics are recorded on the side while it runs |
+| `dynamic-replay` | Reads the saved record, skips the planning model entirely, and replays offline; compares orchestration only, does not score |
+
+```bash
+# Record once (one workflow_record.json per task)
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# Replay (records are located by task_id under the same run directory)
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+```
+
+The report gains a **separate** workflow orchestration section (redundancy / graph steps / rejection-degradation counts / node count / peak concurrency / critical path / orchestration cost), and the main table gains only a `workflow_mode` column; `dynamic-replay` records stay out of the pass@k denominator. The "small k high-quality vs large N brute-force" contrast arms are expressed by two configs: `configs/workflow-arm-small-k.yaml` and `configs/workflow-arm-large-n.yaml`.
+
 ### Claw-SWE-Bench Comparison Evaluation
 
 See [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md) for full environment setup. Minimal command shape:

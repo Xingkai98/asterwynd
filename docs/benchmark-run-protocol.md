@@ -56,6 +56,41 @@
 - 两种对照口径**分开写**，不要混读：
   1. **换 agent 对照**（默认）：Asterwynd 主 agent vs 参照 agent（如 `--agent claude`，现有 runner；或开源 agent，可配置），同一任务集、同一 VerifierAdapter 判分、同 `--repeat N` + 同 seed 集合。命令：`uv run python benchmarks/compare.py <run-dir> [run-dir ...]`，输出 per-task delta + 差异 CI（paired bootstrap / McNemar）+ win-rate。
   2. **换 model 对照**（成本-精度叙事）：同 agent、同任务、同 harness、同 repeat/seed，跑本地主力 vs API 前沿，输出 cost@pass 对照。
+  3. **换编排对照**（workflow 三模式 + 「小 k vs 大 N」压力臂）：见 §5.1。
+
+### 5.1 workflow 三模式与编排对照臂
+
+benchmark 支持三种 workflow 运行模式（`--workflow-mode`，缺省不启用，保持既有单 agent 行为）：
+
+| 模式 | 含义 | 记录 |
+|---|---|---|
+| `template` | 固定 Pattern/DSL 模板当**被测编排**，`problem_statement` 作 pattern 的 task 文本，照走既有 verifier 判分 | 不落盘记录 |
+| `dynamic-record` | 模型自由生成 workflow，**执行的同时**旁路记录规范化 spec（不打断生成） | 每任务一份 `workflow_record.json` |
+| `dynamic-replay` | 读已保存记录、**不重跑规划模型**、离线重放 spec；只比编排指标、**不判分**（不进 pass@k 分母） | 需 `--workflow-record <run-dir>` 指定 record 那次跑的 run 目录 |
+
+```bash
+# 记录一次
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# 重放（同 run-dir，按 task_id 找 <run-dir>/tasks/<task_id>/workflow_record.json）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+```
+
+端到端 record→replay 可比性断言的口径：**fake LLM 场景全等**（`spec_hash`/`node_count`/`run_count`/`status`），
+**真实 LLM 场景只硬断言 `spec_hash` 相等 + 无异常完成**，`cost`/`run_count`/`peak_active`/`critical_path_s`
+只报不判（wall-clock 与 token 噪声会 flaky）。真实 LLM 不可用时降级为 fake round-trip，并在每个任务的
+`result.json` 记 `e2e_llm_verified: false` 等机器可读事实，不静默当已验证。
+
+**「小 k 高质量 vs 大 N 暴力」对照臂**用两份 config YAML 表达（`configs/workflow-arm-small-k.yaml`
+= `max_active=3` + `max_spawns=60`；`configs/workflow-arm-large-n.yaml` = `max_active=16` + `max_spawns=24`），
+同一任务集、同一 LLM 配置各跑一次。大 N 臂的 `spawn budget exceeded` 属**预期压力结果**，报告须标注而非当 runner 故障。
+
+编排指标（冗余度 = 被下游实际消费的 run / workflow 级 spawn 快照；图级步数；拒绝降级计数）渲染在结果页的
+独立 section，主表只加一列 `workflow_mode`，不让 null 污染 pass@k 聚合口径。
 
 ## 6. artifact 布局 + 报告元组
 
