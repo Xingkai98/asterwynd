@@ -297,6 +297,9 @@ class BenchmarkRunner:
 
         只有 ``dynamic-replay`` 有对照面（它有一份 record 可比）。缺 ``--workflow-record``
         或记录不可读时记「未执行 + 原因」，**不静默当已验证**（Q7）。
+
+        优先级刻意如此：**先**判定「真实 LLM 侧这次回放到底跑没跑成」，再谈记录可读性
+        ——LLM 不可用会让回放本身失败，那是比「记录文件缺失」更根本的降级事实。
         """
         if result.workflow_mode != "dynamic-replay":
             return result
@@ -322,6 +325,23 @@ class BenchmarkRunner:
                     "replay was skipped and nothing was compared"
                 ),
             )
+        fake_llm = self._is_fake_agent()
+        # 真实 LLM 侧没有跑完的回放不算已验证（Q6「无异常完成」/Q7 降级）：
+        # 这是「真实 LLM 不可用」在这次 run 里唯一的可观测形态——replay 会照常为
+        # 每个节点发起真实调用，拿不到 provider 就地标 error/未完成。
+        if not fake_llm and not _replay_completed_cleanly(result):
+            return replace(
+                result,
+                **e2e_fields(
+                    llm_available=False,
+                    skip_reason=(
+                        "the replay run did not complete cleanly against the real "
+                        f"LLM (workflow status "
+                        f"{(result.workflow_envelope or {}).get('status')!r}); only "
+                        "spec_hash equality was checked, cost/run_count were not"
+                    ),
+                ),
+            )
         record = read_workflow_record(
             Path(self.workflow_record_dir) / "tasks" / result.task_id
         )
@@ -334,7 +354,6 @@ class BenchmarkRunner:
                     skip_reason="record file not readable for comparison",
                 ),
             )
-        fake_llm = self._is_fake_agent()
         assertions = compare_record_and_replay(
             entries[0],
             {
@@ -356,16 +375,12 @@ class BenchmarkRunner:
         )
 
     def _is_fake_agent(self) -> bool:
-        """Whether the LLM behind this run is a scripted/fake one (Q6).
+        """Whether the LLM behind this run is scripted/fake (Q6).
 
         A fake round-trip can assert full equality; a real LLM can only assert
-        ``spec_hash`` — so the report must say which mode actually ran.
+        ``spec_hash`` — so the record must say which mode actually ran.
         """
-        if self.agent_name == "fake":
-            return True
-        return getattr(self.agent_runner, "llm", None) is not None and (
-            self.agent_name != "asterwynd"
-        )
+        return self.agent_name == "fake"
 
     async def run_task(
         self,
@@ -1010,6 +1025,24 @@ def _run_git(args: list[str], cwd: Path) -> str:
         check=True,
     )
     return proc.stdout.strip()
+
+
+#: Replay 的 workflow 状态里算「异常完成」的那些（Q6 的硬断言前提）。
+_REPLAY_UNHEALTHY_STATUSES = frozenset(
+    {"graph_recursion_exceeded", "cancelled", "error", "declared"}
+)
+
+
+def _replay_completed_cleanly(result: TaskResult) -> bool:
+    """回放是否无异常完成（Q6）。
+
+    ``workflow_envelope`` 缺 status（采集本身失败）时保守判 False——宁可标
+    「未验证」也不要静默当已验证（Q7）。
+    """
+    status = (result.workflow_envelope or {}).get("status")
+    if not status:
+        return False
+    return status not in _REPLAY_UNHEALTHY_STATUSES
 
 
 def _now() -> str:

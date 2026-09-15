@@ -463,6 +463,48 @@ async def test_replay_annotates_assertions_from_the_record_run(tmp_path):
     assert annotated.e2e_assertions["all_hard_assertions_passed"] is True
 
 
+def test_unclean_real_llm_replay_is_recorded_as_unverified(tmp_path):
+    """降级不静默（Q7）：真实 LLM 侧回放没跑完时不标「已验证」。
+
+    这是「真实 LLM 不可用」在 run 里的唯一可观测形态——replay 会照常为每个节点
+    发起真实调用，拿不到 provider 就就地失败。断言不变量：**只有真正无异常完成
+    的真实 LLM 回放才配 e2e_llm_verified=True**。
+    """
+    from benchmarks.runner import BenchmarkRunner, _replay_completed_cleanly
+
+    runner = BenchmarkRunner(
+        agent_runner=AsterwyndRunner(llm=CountingLLM()),
+        source_repo=tmp_path,
+        runs_dir=tmp_path / "runs",
+        agent_name="asterwynd",
+        workflow_mode="dynamic-replay",
+        workflow_record_dir=tmp_path,
+    )
+    unhealthy = TaskResult(
+        task_id="t1",
+        agent="asterwynd",
+        status="replayed",
+        workflow_mode="dynamic-replay",
+        workflow_spec_hash="abc",
+        workflow_collection_status=COLLECTION_STATUS_OK,
+        workflow_envelope={"status": "graph_recursion_exceeded"},
+    )
+
+    annotated = runner._annotate_e2e_verification(unhealthy)
+
+    assert annotated.e2e_llm_verified is False
+    assert annotated.e2e_verification_mode == MODE_FAKE
+    assert "did not complete cleanly" in annotated.e2e_skip_reason
+    assert _replay_completed_cleanly(unhealthy) is False
+    # envelope 缺失（采集失败）同样保守判未验证
+    assert _replay_completed_cleanly(TaskResult(task_id="t", agent="x")) is False
+    # 正常完成才算验证过
+    healthy = TaskResult(
+        task_id="t1", agent="asterwynd", workflow_envelope={"status": "completed"}
+    )
+    assert _replay_completed_cleanly(healthy) is True
+
+
 # --- helpers ---------------------------------------------------------------
 
 
