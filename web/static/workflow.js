@@ -229,14 +229,13 @@
       return;
     }
 
+    entry.expandedGroups = entry.expandedGroups || new Set();
     const collapsed = G.collapseGraph(snapshot.nodes || [], snapshot.edges || [], {
       threshold: COLLAPSE_THRESHOLD,
-    });
-    const orientation = G.graphOrientation(window.innerWidth || 1024);
-    const layout = G.layoutGraph(collapsed.nodes, collapsed.edges, {
-      orientation,
       expandedGroups: entry.expandedGroups,
     });
+    const orientation = G.graphOrientation(window.innerWidth || 1024);
+    const layout = G.layoutGraph(collapsed.nodes, collapsed.edges, { orientation });
 
     drawSvg(tab, entry, layout, orientation);
     renderSummary(tab, snapshot, collapsed);
@@ -384,6 +383,7 @@
     group.dataset.nodeId = node.id;
     group.dataset.status = node.status;
     if (node.collapsed) group.classList.add('collapsed');
+    if (node.groupLeader) group.classList.add('group-leader');
 
     const rect = svgEl('rect', {
       width: node.width,
@@ -425,13 +425,14 @@
   }
 
   /**
-   * 点击折叠组切换局部展开（D5）；非折叠节点点击无效。
+   * 点击折叠组切换局部展开/收起（D5）；非组长节点点击无效。
    *
-   * 注意：``node`` 是**布局后**的投影，带 ``collapsed`` 标记；展开时要把组长 id 交给
-   * 折叠算法（``expandedGroups``）才能真的看到成员。
+   * 注意：``node`` 是**布局后**的投影；判据是 ``groupLeader``（展开态也保留），
+   * 而不是 ``collapsed``——否则展开后就没法再点回收起。切换结果交给折叠算法
+   * （``expandedGroups``）才能真的看到/隐藏成员。
    */
   function toggleGroup(tab, entry, node) {
-    if (!node.collapsed) return;
+    if (!node.groupLeader) return;
     const expanded = entry.expandedGroups || (entry.expandedGroups = new Set());
     if (expanded.has(node.id)) {
       expanded.delete(node.id);
@@ -443,27 +444,51 @@
 
   // --- 5.2 pinch 缩放 + pan 平移（pointer events） -----------------------
 
+  //: 判定「这是拖动而不是点击」的位移阈值（px）。低于它不 capture、不平移，
+  //: 让节点自己的 click（折叠组展开，D5）能正常收到事件。
+  const TAP_SLOP = 4;
+
   function attachGestures(svg, host, view, applyViewBox) {
     const pointers = new Map();
     let lastCentroid = null;
     let lastDistance = null;
+    let dragOrigin = null;
+    let captured = false;
 
     host.addEventListener('pointerdown', (event) => {
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (pointers.size === 1) {
         lastCentroid = { x: event.clientX, y: event.clientY };
+        dragOrigin = { x: event.clientX, y: event.clientY };
+        captured = false;
+      } else {
+        // 第二根手指落下 = pinch，不再是「点击」。
+        captured = true;
       }
-      // capture 让手指移出元素后仍收得到 move；合成事件（测试）没有活跃 pointer，
-      // 抛错不影响手势本身，故吞掉。
-      try {
-        if (host.setPointerCapture) host.setPointerCapture(event.pointerId);
-      } catch (_error) { /* pointer 不活跃：忽略 */ }
+      // 这里**不能**立刻 setPointerCapture：pointer capture 会把后续的 click
+      // 一并重定向到 host，节点上的 click（折叠组展开，D5）就永远收不到。
+      // capture 推迟到指针真的移动超过阈值时（见 pointermove）。
     });
 
     host.addEventListener('pointermove', (event) => {
       if (!pointers.has(event.pointerId)) return;
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       const points = Array.from(pointers.values());
+
+      if (!captured) {
+        if (!dragOrigin) dragOrigin = { x: event.clientX, y: event.clientY };
+        const far = points.length >= 2
+          ? distanceOf(points[0], points[1]) > TAP_SLOP
+          : Math.abs(event.clientX - dragOrigin.x) > TAP_SLOP
+            || Math.abs(event.clientY - dragOrigin.y) > TAP_SLOP;
+        if (!far) return; // 还在「点击」范围内：不动图、不 capture
+        captured = true;
+        // capture 让手指移出元素后仍收得到 move；合成事件（测试）没有活跃
+        // pointer，抛错不影响手势本身，故吞掉。
+        try {
+          if (host.setPointerCapture) host.setPointerCapture(event.pointerId);
+        } catch (_error) { /* pointer 不活跃：忽略 */ }
+      }
 
       if (points.length >= 2) {
         const centroid = centroidOf(points);
@@ -494,7 +519,11 @@
       if (pointers.size < 2) lastDistance = null;
       const remaining = Array.from(pointers.values());
       lastCentroid = remaining.length ? remaining[0] : null;
-      if (!pointers.size) lastCentroid = null;
+      if (!pointers.size) {
+        lastCentroid = null;
+        dragOrigin = null;
+        captured = false;
+      }
     };
     host.addEventListener('pointerup', release);
     host.addEventListener('pointercancel', release);

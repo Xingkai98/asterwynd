@@ -232,6 +232,7 @@
         items: node.items === undefined ? null : node.items,
         targets: node.targets || [],
         collapsed: Boolean(node.collapsed),
+        groupLeader: Boolean(node.groupLeader),
         memberCount: node.memberCount || 0,
         itemCount: node.itemCount === undefined ? null : node.itemCount,
         color: nodeColor(node.status),
@@ -364,16 +365,17 @@
     return typeof node.id === 'string' && node.id.indexOf('__auto_agg__') === 0;
   }
 
-  function isCollapsibleContainer(node) {
-    return node.kind === 'foreach' || isAutoNode(node);
-  }
-
-  /** 折叠组聚合状态（D5）：failed 赢，其次 running，其次受阻，全 completed 才 completed。 */
+  /**
+   * 折叠组聚合状态（D5）：failed 赢，其次运行中，其次受阻，全 completed 才 completed。
+   *
+   * 返回值必须落在**节点状态词表**内（``NODE_COLORS`` 的键），否则 ``nodeColor``
+   * 会落到兜底灰：D5 口语里的「running」对应的状态名是 ``started``。
+   */
   function groupStatus(statuses) {
     const list = (statuses || []).filter(Boolean);
     if (!list.length) return 'pending';
     if (list.indexOf('failed') !== -1) return 'failed';
-    if (list.indexOf('started') !== -1) return 'running';
+    if (list.indexOf('started') !== -1) return 'started';
     if (list.some((s) => s === 'pending' || s === 'blocked' || s === 'budget_exceeded')) {
       return 'blocked';
     }
@@ -482,15 +484,20 @@
       .filter((node) => !hidden.has(node.id))
       .map((node) => {
         const group = groups.get(node.id);
-        if (!group || group.memberIds.length <= 1 || expanded.has(group.id)) {
+        if (!group || group.memberIds.length <= 1) {
           return Object.assign({}, node);
         }
+        // ``groupLeader`` 与折叠与否无关：展开态也要保留，否则用户展开后无法再点回收起。
+        if (expanded.has(group.id)) {
+          return Object.assign({}, node, { groupLeader: true });
+        }
         return Object.assign({}, node, {
+          groupLeader: true,
           collapsed: true,
           memberCount: group.memberCount,
           itemCount: group.itemCount,
-          status: node.status,
-          groupStatus: group.status,
+          // D5「折叠组聚合状态」：折叠后组长显示的是**整组**的状态，不是它自己的。
+          status: group.status,
         });
       });
 
@@ -536,16 +543,6 @@
     };
   }
 
-  //: 声明期被拒（无 scheduler、无图）的提示——前端把 tool error 与 workflow error
-  //: 分成两条路径（Q6），这条只负责后者；前者由工具返回的文本走 chat 消息渲染。
-  function declarationRejectedNotice(errorText) {
-    return {
-      level: 'error',
-      reason: 'workflow_declaration_rejected',
-      message: `Workflow 声明被拒（未产生运行图）：${String(errorText || '').trim()}`,
-    };
-  }
-
   window.AsterwyndWorkflowGraph = {
     NODE_COLORS,
     EDGE_STYLES,
@@ -571,10 +568,8 @@
     applyPinch,
     applyPan,
     isAutoNode,
-    isCollapsibleContainer,
     groupStatus,
     collapseGraph,
     graphNotice,
-    declarationRejectedNotice,
   };
 })();

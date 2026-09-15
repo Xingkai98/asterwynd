@@ -1471,7 +1471,7 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   display: block;
 }
 .workflow-node { cursor: default; }
-.workflow-node.collapsed { cursor: pointer; }
+.workflow-node.group-leader { cursor: pointer; }
 .workflow-node text { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
 .workflow-node .node-id { fill: var(--text); font-size: 12px; }
 .workflow-node .node-status { font-size: 10.5px; opacity: 0.9; }

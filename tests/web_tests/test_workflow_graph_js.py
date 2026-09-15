@@ -268,13 +268,39 @@ def test_large_graph_collapses_foreach_and_auto_layers():
 
 
 def test_collapse_group_aggregates_status():
-    """D5 聚合状态：任一 failed→failed；否则任一 started→running；全 completed→completed。"""
+    """D5 聚合状态：任一 failed→failed；否则任一 started→运行中；全 completed→completed。
+
+    返回值必须落在节点状态词表内（``NODE_COLORS`` 的键）——返回表外的词会让
+    ``nodeColor`` 落到兜底灰（回归：曾经返回 D5 口语里的 ``"running"``）。
+    """
+    known = set(call("nodeColors"))
     assert call("groupStatus", ["completed", "completed"]) == "completed"
-    assert call("groupStatus", ["completed", "started"]) == "running"
+    assert call("groupStatus", ["completed", "started"]) == "started"
     assert call("groupStatus", ["completed", "failed"]) == "failed"
     assert call("groupStatus", ["completed", "blocked"]) == "blocked"
     assert call("groupStatus", ["completed", "budget_exceeded"]) == "blocked"
     assert call("groupStatus", []) == "pending"
+    for statuses in ([], ["completed"], ["completed", "started"], ["failed"],
+                     ["blocked"], ["budget_exceeded"], ["pending", "started"]):
+        assert call("groupStatus", statuses) in known, statuses
+
+
+def test_collapsed_leader_carries_group_status():
+    """D5：折叠后的组长显示**整组**聚合状态，不是它自己的状态。"""
+    nodes = _nodes(("src", "subagent", "completed"), ("fan", "foreach", "pending"),
+                   ("__auto_agg__fan_1", "aggregate", "failed"),
+                   ("root", "aggregate", "started"))
+    nodes[1]["items"] = 8
+    edges = [_edge("src", "fan"), _edge("fan", "__auto_agg__fan_1"),
+             _edge("__auto_agg__fan_1", "root")]
+    result = call("collapseGraph", nodes, edges, {"threshold": 3})
+
+    fan = next(node for node in result["nodes"] if node["id"] == "fan")
+    assert fan["collapsed"] is True
+    # 组长自己 pending，但组里有 failed 成员 → 组长按整组显示 failed。
+    assert fan["status"] == "failed"
+    # 聚合状态必须可渲染（落在状态词表内），否则前端会画出兜底灰。
+    assert fan["status"] in set(call("nodeColors"))
 
 
 def test_expanded_group_keeps_members_visible():
@@ -291,6 +317,41 @@ def test_expanded_group_keeps_members_visible():
     assert "__auto_agg__fan_1" in visible
     fan = next(node for node in result["nodes"] if node["id"] == "fan")
     assert not fan.get("collapsed")
+
+
+def test_group_leader_flag_survives_expansion():
+    """回归：展开态下组长仍须带 ``groupLeader``，否则用户无法再点回收起。
+
+    渲染层用 ``groupLeader``（不是 ``collapsed``）判可点击——若展开后标志消失，
+    折叠组就是单向操作。
+    """
+    nodes = _nodes(("fan", "foreach", "started"),
+                   ("__auto_agg__fan_1", "aggregate", "completed"),
+                   ("root", "aggregate", "started"))
+    nodes[0]["items"] = 4
+    edges = [_edge("fan", "__auto_agg__fan_1"), _edge("__auto_agg__fan_1", "root")]
+
+    collapsed = call("collapseGraph", nodes, edges, {"threshold": 2})
+    opened = call("collapseGraph", nodes, edges, {"threshold": 2, "expandedGroups": ["fan"]})
+
+    for result, expected_collapsed in ((collapsed, True), (opened, False)):
+        fan = next(node for node in result["nodes"] if node["id"] == "fan")
+        assert fan["groupLeader"] is True
+        assert bool(fan.get("collapsed")) is expected_collapsed
+
+
+def test_layout_projection_carries_group_leader():
+    """``layoutGraph`` 必须把 ``groupLeader`` 透传给渲染层（否则点击无判据）。"""
+    nodes = _nodes(("fan", "foreach", "started"),
+                   ("__auto_agg__fan_1", "aggregate", "completed"))
+    nodes[0]["items"] = 4
+    edges = [_edge("fan", "__auto_agg__fan_1")]
+    collapsed = call("collapseGraph", nodes, edges, {"threshold": 2})
+    layout = call("layoutGraph", collapsed["nodes"], collapsed["edges"],
+                  {"orientation": "horizontal"})
+    fan = next(node for node in layout["nodes"] if node["id"] == "fan")
+    assert fan["groupLeader"] is True
+    assert fan["collapsed"] is True
 
 
 def test_layout_of_collapsed_large_graph_is_finite():

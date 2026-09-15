@@ -391,3 +391,21 @@ async def test_snapshot_is_idempotent_and_read_only(manager):
 
     assert first["nodes"] == second["nodes"]
     assert first["edges"] == second["edges"]
+
+
+@pytest.mark.asyncio
+async def test_consumed_edges_share_run_scope_lifecycle(manager):
+    """决策 11/12 + 审阅核验：``_consumed_edges`` 与 ``_consumed_run_ids`` 同生命周期。
+
+    ``run()`` 开头把两者一并重置，所以 ``cancel()`` 之后的残留不会被带进下一次
+    run——``passed`` 边状态不会因为上一张图的记账而误亮。
+    """
+    scheduler = _scheduler(manager, _chain_spec())
+    # 伪造「上一张图留下的记账」。
+    scheduler._consumed_edges = {("stale", "edge")}
+    scheduler._consumed_run_ids = {"stale_run"}
+
+    await scheduler.run(scheduler.spec)
+
+    assert scheduler._consumed_edges == {("a", "b"), ("b", "c")}
+    assert len(scheduler._consumed_run_ids) == 2

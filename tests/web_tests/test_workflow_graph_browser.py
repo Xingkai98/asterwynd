@@ -306,3 +306,86 @@ async def test_multi_workflow_tabs_switch(page, fake_web_server):
     active = await page.eval_on_selector(
         "#workflow-tabs .graph-tab.active .graph-tab-label", "e => e.textContent")
     assert active == "first"
+
+
+def _big_foreach_snapshot() -> dict:
+    """>= COLLAPSE_THRESHOLD 节点的图：1 个 foreach 容器 + 3 个 auto 层 + 48 叶子。"""
+    nodes = [{"id": "src", "kind": "subagent", "status": "completed",
+              "runs": 1, "summary": "", "started_at": 0, "finished_at": 1}]
+    nodes.append({"id": "fan", "kind": "foreach", "status": "started",
+                  "runs": 1, "summary": "", "started_at": 1, "finished_at": None,
+                  "items": 12})
+    for i in range(3):
+        nodes.append({"id": f"__auto_agg__fan_{i}", "kind": "aggregate", "status": "failed",
+                      "runs": 1, "summary": "", "started_at": 1, "finished_at": 2})
+    for i in range(48):
+        nodes.append({"id": f"leaf{i}", "kind": "subagent", "status": "completed",
+                      "runs": 1, "summary": "", "started_at": 0, "finished_at": 1})
+    nodes.append({"id": "root", "kind": "aggregate", "status": "started",
+                  "runs": 1, "summary": "", "started_at": 1, "finished_at": None})
+
+    def edge(src, dst, reducer=None):
+        return {"from": src, "to": dst, "channel": "summary", "required": True,
+                "reducer": reducer, "kind": "data", "status": "passed"}
+
+    edges = [edge("src", "fan")]
+    for i in range(3):
+        edges.append(edge("fan", f"__auto_agg__fan_{i}"))
+        edges.append(edge(f"__auto_agg__fan_{i}", "root", "concat"))
+    for i in range(48):
+        edges.append(edge(f"leaf{i}", "root", "concat"))
+
+    return {"workflow_id": "wf_big", "spec_hash": "h", "goal": "big", "status": "running",
+            "timestamp": 1.0, "nodes": nodes, "edges": edges}
+
+
+@pytest.mark.asyncio
+async def test_collapsed_group_click_expands_members(page, fake_web_server):
+    """tasks 4.1 / D5「点击展开局部」：点击折叠组长必须真的放出被折叠的成员。
+
+    回归：``expandedGroups`` 只传给了 layoutGraph（不消费该选项），collapseGraph
+    拿不到 → 点击是空操作，成员永远放不出来。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, _big_foreach_snapshot())
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+
+    before = await page.eval_on_selector_all(
+        ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
+    assert "fan" in before
+    assert "__auto_agg__fan_0" not in before, "前置条件：auto 层默认应被折叠"
+
+    await page.click(".workflow-node[data-node-id='fan']")
+    after = await page.eval_on_selector_all(
+        ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
+    assert "__auto_agg__fan_0" in after, f"展开无效：{after}"
+
+    # 再点一次收回去。
+    await page.click(".workflow-node[data-node-id='fan']")
+    again = await page.eval_on_selector_all(
+        ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
+    assert "__auto_agg__fan_0" not in again, f"收起无效：{again}"
+
+
+@pytest.mark.asyncio
+async def test_collapsed_group_shows_aggregated_status(page, fake_web_server):
+    """D5：折叠组长显示整组聚合状态（不是它自己的），且颜色可辨（不是兜底灰）。
+
+    回归：``groupStatus`` 曾返回状态词表外的 ``"running"``，``nodeColor`` 落到兜底灰。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, _big_foreach_snapshot())
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+
+    # 组长 fan 自身 started，但组里有 failed 成员 → 聚合状态 failed（红），不是兜底灰。
+    status = await page.eval_on_selector(
+        ".workflow-node[data-node-id='fan']", "e => e.dataset.status")
+    assert status == "failed"
+
+    stroke = await page.eval_on_selector(
+        ".workflow-node[data-node-id='fan'] rect", "e => e.getAttribute('stroke')")
+    assert stroke == "#f87171", stroke

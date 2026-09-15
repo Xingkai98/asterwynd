@@ -13,7 +13,7 @@
 ## 2. 事件通道：workflow 事件进 WebSocket
 
 - [x] 2.1 **（meta-review 修正）** `workflow_started` 的触发点是 `scheduler.run()` 里已有的 `_record_event("workflow_started")`（`agent/subagent/scheduler.py:581`）——在该 hook 处新增一次 sink 调用，**不改工具层**（工具拿不到 sink，见 grill 决策 1/2）；`DeclareWorkflow` 只 `register_workflow` 不调 `run()`，天然不发。
-- [x] 2.2 scheduler 节点迁移处（`_dispatch`/`_run_node`/route/取消/预算停止）发 `workflow_snapshot`，经 `AgentLoop.on_event` → session queue → ws 链路。
+- [x] 2.2 **（meta-review 修正）** scheduler 节点迁移处（`_dispatch`/`_run_node`/route/取消/预算停止/图级超限/`run()` 收尾）经 `_emit_graph_snapshot()` 发 `workflow_snapshot`，走 **manager 级 sink（`SubAgentManager.graph_sink`）→ session 级 forwarder（`GraphEventForwarder`）→ ws** 链路。**不是** `AgentLoop.on_event` → session queue：那条链路是 per-run 的，父 run 一结束就退出，`wait=false` 的后台图会丢事件（grill 决策 1/2/3，Q1 拍板方案 A）。
 - [x] 2.3 ws 重连后从 manager 注册表补发当前快照。
 
 ## 3. 前端：Workflow 视图 + SVG 渲染
