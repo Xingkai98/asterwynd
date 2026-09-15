@@ -52,10 +52,16 @@ class BudgetTracker:
         self.max_tokens = max_tokens
         self.max_time_s = max_time_s
         self.tokens = 0
+        #: input/output 分量（C4 task 2.4）：``budget_exceeded`` 收尾要补填 usage，
+        #: 只留 total 会让被杀的 run 报 input=output=0、cost 归因偏低（Q12）。
+        self.input_tokens = 0
+        self.output_tokens = 0
         self.started_at = started_at if started_at is not None else time.time()
 
     def add(self, input_tokens: int, output_tokens: int) -> None:
         self.tokens += input_tokens + output_tokens
+        self.input_tokens += input_tokens
+        self.output_tokens += output_tokens
 
     def token_overrun(self) -> bool:
         return self.max_tokens is not None and self.tokens > self.max_tokens

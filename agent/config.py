@@ -278,6 +278,24 @@ class AggregationConfig:
 
 
 @dataclass(frozen=True)
+class WorkflowBudgetConfig:
+    """workflow run 的四维度总预算（change ``workflow-budget-attribution``，D1/D6）。
+
+    四维度：tokens / cost_usd / runs / wall_time_s。**四个字段均 ``0 = 不限``**
+    （Q11）——注意这与 C2 的结构闸不同：``max_total_runs=0`` 只解除本层运行期
+    预算，``WorkflowLimitsConfig.max_runs`` 仍是声明期结构闸（Q14）。
+
+    默认值与 C2 的 ``max_runs=300`` 对齐（D6/Q4），避免「声明期 300、运行期 200」
+    的误伤；四个字段的解析走 workflow-budget 专用的非负解析函数，显式 ``null``
+    被拒（缺值不得意外关闭安全闸）。
+    """
+    max_total_tokens: int = 200000
+    max_total_cost_usd: float = 5.0
+    max_total_runs: int = 300
+    max_wall_time_s: float = 1800.0
+
+
+@dataclass(frozen=True)
 class WorkflowLimitsConfig:
     """Workflow DSL 的三闸默认值（change ``workflow-dsl-scheduler``，D6/Q5）。
 
@@ -285,12 +303,14 @@ class WorkflowLimitsConfig:
     ``max_nodes`` 数节点（含 foreach 展开），``max_runs`` 数实际 run 总数。
     spec 可以逐项覆盖，缺省时用这里的值（``parse_workflow_spec`` 的默认参数）。
 
-    ``aggregation`` 是分层汇聚配置（change ``workflow-result-aggregation``，D6/Q8）。
+    ``aggregation`` 是分层汇聚配置（change ``workflow-result-aggregation``，D6/Q8）；
+    ``budget`` 是运行期四维度总预算（change ``workflow-budget-attribution``，D6）。
     """
     recursion_limit: int = 25
     max_nodes: int = 200
     max_runs: int = 300
     aggregation: AggregationConfig = field(default_factory=AggregationConfig)
+    budget: WorkflowBudgetConfig = field(default_factory=WorkflowBudgetConfig)
 
 
 @dataclass(frozen=True)
@@ -1454,6 +1474,42 @@ def _parse_workflow_limits(raw: Any, path: Path) -> WorkflowLimitsConfig:
             mapping.get("max_runs", 300), "subagents.workflow.max_runs", path=path
         ),
         aggregation=_parse_aggregation(mapping.get("aggregation", {}), path),
+        budget=_parse_workflow_budget(mapping.get("budget", {}), path),
+    )
+
+
+def _parse_workflow_budget(raw: Any, path: Path) -> WorkflowBudgetConfig:
+    """逐字段显式解析 ``subagents.workflow.budget``（D6，照 ``_parse_aggregation`` 纪律）。
+
+    四字段是**运行期四维度预算**，``0 = 不限``——所以走专用的非负解析函数
+    （:func:`_parse_non_negative_int` / :func:`_parse_non_negative_float`），
+    不能复用会拒绝 0 的全局 ``_validate_positive_int`` / ``_parse_positive_float``
+    （``subagents.budget.*`` 等既有键的正数语义必须保持不变，Q11）。
+
+    显式 ``null`` 一律拒绝：缺值不能让某个安全维度被静默关掉。
+    """
+    mapping = _expect_mapping(raw, path, "subagents.workflow.budget")
+    return WorkflowBudgetConfig(
+        max_total_tokens=_parse_non_negative_int(
+            mapping.get("max_total_tokens", 200000),
+            "subagents.workflow.budget.max_total_tokens",
+            path=path,
+        ),
+        max_total_cost_usd=_parse_non_negative_float(
+            mapping.get("max_total_cost_usd", 5.0),
+            "subagents.workflow.budget.max_total_cost_usd",
+            path=path,
+        ),
+        max_total_runs=_parse_non_negative_int(
+            mapping.get("max_total_runs", 300),
+            "subagents.workflow.budget.max_total_runs",
+            path=path,
+        ),
+        max_wall_time_s=_parse_non_negative_float(
+            mapping.get("max_wall_time_s", 1800.0),
+            "subagents.workflow.budget.max_wall_time_s",
+            path=path,
+        ),
     )
 
 
@@ -1563,6 +1619,52 @@ def _validate_positive_int(
         prefix = f"{path}: " if path else ""
         raise ConfigError(f"{prefix}{field_name} must be a positive integer")
     return raw
+
+
+def _parse_non_negative_int(
+    raw: Any,
+    field_name: str,
+    *,
+    path: Path | None = None,
+) -> int:
+    """workflow 预算专用的非负整数解析（``0 = 不限``，Q11）。
+
+    与 :func:`_validate_positive_int` 分开：后者服务 ``subagents.budget.*`` 等既有
+    键，语义是「必须为正」；把 0 放行到那里会让「关掉某个安全闸」成为全局默认行为。
+    """
+    prefix = f"{path}: " if path else ""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative integer (0 = unlimited)"
+        )
+    return raw
+
+
+def _parse_non_negative_float(
+    raw: Any,
+    field_name: str,
+    *,
+    path: Path | None = None,
+) -> float:
+    """workflow 预算专用的非负浮点解析（``0 = 不限``，Q11；int 可被拓宽）。"""
+    prefix = f"{path}: " if path else ""
+    if isinstance(raw, bool):
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative number (0 = unlimited)"
+        )
+    if isinstance(raw, int):
+        value = float(raw)
+    elif isinstance(raw, float):
+        value = raw
+    else:
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative number (0 = unlimited)"
+        )
+    if value < 0:
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative number (0 = unlimited)"
+        )
+    return value
 
 
 def _parse_positive_float(

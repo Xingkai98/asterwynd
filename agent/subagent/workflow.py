@@ -80,6 +80,40 @@ class WorkflowValidationError(ValueError):
     """WorkflowSpec 校验失败（schema 层拒绝，不进入调度）。"""
 
 
+#: 动态 route 条件源的引用前缀（change ``workflow-budget-attribution``，D4/Q1）：
+#: ``when: "$ref:<node_id>:<slot>"`` —— 读取已声明节点的结果槽，取首个非空行作
+#: **期望标签**，再走 ``matches_route`` 行首匹配。受限可校验，不执行模型生成代码。
+ROUTE_REF_PREFIX = "$ref:"
+
+
+def is_route_ref(when: str) -> bool:
+    """``when`` 是否是 ``$ref:`` 引用（语法前缀判定，不校验内容）。"""
+    return isinstance(when, str) and when.startswith(ROUTE_REF_PREFIX)
+
+
+def parse_route_ref(when: str) -> tuple[str, str] | None:
+    """解析 ``$ref:<node_id>:<slot>`` 成 ``(node_id, slot)``。
+
+    格式非法（段数不对、段为空）返回 ``None``——调用方区分「不是 ref」（字面标签）
+    与「是 ref 但格式错」（校验期拒绝）。
+    """
+    if not is_route_ref(when):
+        return None
+    parts = when[len(ROUTE_REF_PREFIX) :].split(":")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+
+def declared_slots(node: WorkflowNode) -> frozenset[str]:
+    """一个节点对外的**已声明槽**集合（``outputs`` + 隐式 ``result`` 槽，Q3）。
+
+    隐式 ``result`` 始终算已声明：``outputs`` 的缺省值就是 ``("result",)``，模型显式
+    写 ``outputs: ["verdict"]`` 时 ``result`` 仍是 DSL 的通用兜底槽名。
+    """
+    return frozenset(set(node.outputs) | {"result"})
+
+
 @dataclass(frozen=True)
 class RouteCase:
     """``route`` 节点的一条分支：结构化标签 ``when`` 命中则走 ``to``。"""
@@ -343,6 +377,10 @@ def parse_workflow_spec(
     _validate_cycles(nodes, edges)
     _validate_reducers(index, data_edges)
     _validate_kind_specific(index)
+    # Q10：foreach 的 ``source`` 递归只沿数据边向上——若 source 落在 route 参与的
+    # 环里（``_validate_cycles`` 允许「环上有 route」），跨层解析就没有确定终点。
+    # 复用 Tarjan SCC，查「source 是否在环分量里」。
+    _validate_foreach_source_cycles(index, edges)
 
     entry = _parse_id_list(data.get("entry"), "spec.entry")
     terminal = _parse_id_list(data.get("terminal"), "spec.terminal")
@@ -533,7 +571,18 @@ def _parse_max_routes(value: Any, node_id: str) -> int:
 
 
 def _parse_max_items(value: Any, node_id: str) -> int:
-    return _positive_int(value, f"foreach node {node_id!r} max_items")
+    """``max_items`` 专用的**非负**解析（Q9）：``0`` = 不做静态截断。
+
+    不能复用 :func:`_positive_int`——它对 ``value < 1`` 直接拒绝，而该函数还服务
+    ``max_routes``/``recursion_limit``/``max_nodes``/``max_tokens``，把 0 放行到那里
+    会静默删掉 C2 的结构闸语义。
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise WorkflowValidationError(
+            f"foreach node {node_id!r} max_items must be a non-negative integer "
+            f"(0 = expand until the run budget is exhausted)"
+        )
+    return value
 
 
 def _parse_node_max_tokens(value: Any, node_id: str) -> int | None:
@@ -719,6 +768,38 @@ def _validate_reducers(
                 )
 
 
+def _validate_foreach_source_cycles(
+    index: Mapping[str, WorkflowNode], edges: tuple[WorkflowEdge, ...]
+) -> None:
+    """foreach 的 ``source`` 不得指向 route 参与环内的节点（Q10）。
+
+    跨层解析是「沿数据边向上找第一个物化该槽的节点」。若 ``source`` 坐在一个含
+    route 的回边环上，它每次激活都可能看到不同的上游产出，递归也没有确定终点。
+    这里复用 :func:`_strongly_connected_components`（Tarjan）在**全量边图**上找强连通
+    分量：任一 ``source`` 落在环分量里即拒绝。
+
+    用全量边（而不是数据边）：``_validate_cycles`` 保证每个环里都有 route，而 route
+    的出边是控制边——数据边子图因此恒为 DAG，只看数据边永远判不出「source 在环上」。
+    """
+    adjacency: dict[str, list[str]] = {node_id: [] for node_id in index}
+    for edge in edges:
+        adjacency.setdefault(edge.source, []).append(edge.target)
+    cyclic_members: set[str] = set()
+    for component in _strongly_connected_components(tuple(adjacency), adjacency):
+        cyclic = len(component) > 1 or component[0] in adjacency.get(component[0], [])
+        if cyclic:
+            cyclic_members.update(component)
+    for node in index.values():
+        if node.kind != "foreach" or node.source is None:
+            continue
+        if node.source in cyclic_members:
+            raise WorkflowValidationError(
+                f"foreach node {node.id!r} source {node.source!r} lies on a cycle "
+                f"(route back-edge); cross-layer source resolution has no "
+                f"deterministic terminus"
+            )
+
+
 def _validate_kind_specific(index: Mapping[str, WorkflowNode]) -> None:
     for node in index.values():
         if node.kind == "aggregate":
@@ -732,6 +813,30 @@ def _validate_kind_specific(index: Mapping[str, WorkflowNode]) -> None:
                     raise WorkflowValidationError(
                         f"route node {node.id!r} case target {case.to!r} is not a known node"
                     )
+                # 动态条件源（D4/Q3）：校验「节点存在 + 槽已声明（含隐式 result 槽）」。
+                # **不**把数据可达性作 schema 硬条件——ref 目标可以不在 route 的数据
+                # 上游（运行期槽缺失静默走 default，diagnostics 记原因）。
+                if is_route_ref(case.when):
+                    ref = parse_route_ref(case.when)
+                    if ref is None:
+                        raise WorkflowValidationError(
+                            f"route node {node.id!r} case when {case.when!r} is a "
+                            f"malformed $ref; expected '$ref:<node_id>:<slot>'"
+                        )
+                    ref_node_id, ref_slot = ref
+                    ref_node = index.get(ref_node_id)
+                    if ref_node is None:
+                        raise WorkflowValidationError(
+                            f"route node {node.id!r} case when {case.when!r} references "
+                            f"unknown node {ref_node_id!r}"
+                        )
+                    declared = declared_slots(ref_node)
+                    if ref_slot not in declared:
+                        raise WorkflowValidationError(
+                            f"route node {node.id!r} case when {case.when!r} references "
+                            f"slot {ref_slot!r} not declared by node {ref_node_id!r} "
+                            f"(declared: {sorted(declared)})"
+                        )
             if node.default is not None and node.default not in index:
                 raise WorkflowValidationError(
                     f"route node {node.id!r} default {node.default!r} is not a known node"

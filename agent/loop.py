@@ -676,15 +676,7 @@ class AgentLoop:
                 token_counters["output"] += response.usage.output_tokens
                 token_counters["cache_read"] += response.usage.cache_read_input_tokens
                 token_counters["cache_creation"] += response.usage.cache_creation_input_tokens
-                if self.cost_ledger:
-                    self.cost_ledger.record(
-                        model=getattr(self.llm, "model", "unknown"),
-                        input_tokens=response.usage.input_tokens,
-                        output_tokens=response.usage.output_tokens,
-                        session_id=session_id or "unknown",
-                        phase=resolve_phase(self.runtime_state.current_mode.value),
-                        tool_name=self.ledger_tool_name,
-                    )
+                self._record_llm_cost(session_id, response)
             if trace_recorder:
                 trace_recorder.record_iteration(
                     iteration,
@@ -1072,6 +1064,57 @@ class AgentLoop:
             query_parts.append("recently used: " + ", ".join(tool_hints))
         query = " ".join(query_parts)
         return self.tool_registry.select_schemas(query, k=5)
+
+    def _record_llm_cost(self, session_id: str | None, response: LLMResponse) -> None:
+        """记一次 LLM 调用的成本：CostLedger 四维归因 + workflow 四维预算。
+
+        Q6 方案 B（用户确认）：workflow 账本的 token/cost 记账点选**这里**——只有
+        这个位置同时拿得到 ``response.usage`` 的 cache 四档与 run 身份 contextvar
+        （``SubagentRunUsage`` 无 cache 字段，从 run 终态反算会系统性偏低）。
+
+        归因键的取法是**一次查表**（grill 决策 4）：``session_id`` 就是
+        ``session.subagent_id``，``SubagentSessionRecord`` 自带 workflow_id/node_id，
+        图距与 edge 从当前 run 记录读（``current_run_id()`` 在执行上下文里可用）。
+        根 loop（无 workflow 身份）不记 workflow 预算。
+        """
+        usage = response.usage
+        if usage is None:
+            return
+        attribution = None
+        manager = self.subagent_manager
+        if manager is not None:
+            try:
+                attribution = manager.attribution_for(session_id or "")
+            except Exception:  # noqa: BLE001 - 归因是尽力而为的可观测性
+                attribution = None
+        if self.cost_ledger:
+            keys = attribution or {}
+            self.cost_ledger.record(
+                model=getattr(self.llm, "model", "unknown"),
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                session_id=session_id or "unknown",
+                phase=resolve_phase(self.runtime_state.current_mode.value),
+                tool_name=self.ledger_tool_name,
+                workflow_id=keys.get("workflow_id"),
+                node_id=keys.get("node_id"),
+                depth=keys.get("graph_distance"),
+                edge=keys.get("edge"),
+                cache_read_tokens=usage.cache_read_input_tokens,
+                cache_write_tokens=usage.cache_creation_input_tokens,
+            )
+        # workflow 级四维度预算（D1）：只在本上下文属于某个 workflow run 时累加。
+        if manager is not None:
+            try:
+                manager.record_workflow_llm_usage(
+                    model=getattr(self.llm, "model", "unknown"),
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cache_read_tokens=usage.cache_read_input_tokens,
+                    cache_write_tokens=usage.cache_creation_input_tokens,
+                )
+            except Exception:  # noqa: BLE001 - 预算记账失败不能拖垮 LLM 循环
+                pass
 
     async def _call_llm(
         self,

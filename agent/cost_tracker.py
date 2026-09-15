@@ -120,6 +120,24 @@ def format_cost(cost: float | None) -> str:
     return f"${cost:.4f}"
 
 
+#: 四维分桶值的 round 位数（Q16：与 envelope ``total_cost`` 的 9 位对齐）。
+BUCKET_ROUND = 9
+
+#: 图距分桶的上界桶名（与 ``budget_for_distance`` 的 3+=root 同口径）。
+_DEPTH_OVERFLOW_KEY = "3+"
+
+
+def _depth_key(depth: Any) -> str:
+    """图距 -> ``by_depth`` 桶名（0/1/2/3+）。非整数一律折进 leaf 桶。"""
+    if isinstance(depth, bool) or not isinstance(depth, int):
+        return "0"
+    if depth <= 0:
+        return "0"
+    if depth >= 3:
+        return _DEPTH_OVERFLOW_KEY
+    return str(depth)
+
+
 class CostLedger:
     """Cost attribution ledger — records per-call cost across session/phase/tool.
 
@@ -131,6 +149,11 @@ class CostLedger:
     The ledger is the *financial* record, decoupled from the trace (which is
     the *process* record). Persistence is explicit: callers choose when to
     flush (e.g. at run end).
+
+    ``record`` 另接受四个**可选**归因键（``workflow_id`` / ``node_id`` /
+    ``depth`` / ``edge``）与 cache 两档；带键的记录进 ``bill()`` 的四维分桶，
+    不带的记录对三维账单**逐字节无影响**（change ``workflow-budget-attribution``，
+    D3/Q12/Q16）。
     """
 
     def __init__(self) -> None:
@@ -147,16 +170,36 @@ class CostLedger:
         session_id: str,
         phase: str,
         tool_name: str | None = None,
+        workflow_id: str | None = None,
+        node_id: str | None = None,
+        depth: int | None = None,
+        edge: str | None = None,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
         cost = compute_cost(model, input_tokens, output_tokens)
+        # 四维归因的 cost 走 cache-aware 四档定价（Q12：否则 by_node/by_edge 与
+        # workflow 账本对不上）。legacy 三维账单仍用上面的二档 ``cost``——既有断言
+        # 与已 flush 的历史记录都锁定「未知模型记 0 成本」的语义，不能一起改。
+        estimate = compute_cost_cached(
+            model, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens
+        )
         entry = {
             "model": model,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cost": cost,
+            "cost_cached": estimate.cost,
+            "cost_known": estimate.known,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_write_tokens": cache_write_tokens,
             "session_id": session_id,
             "phase": phase,
             "tool_name": tool_name,
+            "workflow_id": workflow_id,
+            "node_id": node_id,
+            "depth": depth,
+            "edge": edge,
         }
         self._entries.append(entry)
         if cost is not None:
@@ -165,11 +208,29 @@ class CostLedger:
     def total(self) -> float:
         return self._total_cost
 
-    def bill(self) -> dict:
-        """Return per-dimension aggregation: by_session / by_phase / by_tool."""
+    def bill(self, *, workflow_id: str | None = None) -> dict:
+        """Return per-dimension aggregation.
+
+        legacy 三维：``by_session`` / ``by_phase`` / ``by_tool``（与改造前逐字节一致，
+        且始终是跨 workflow 的全局财务记录——Q12 的权威口径在 workflow 账本，ledger
+        只是历史）。
+
+        四维归因：``by_workflow`` / ``by_node`` / ``by_depth`` / ``by_edge``——只收
+        带对应归因键的记录；桶值为 ``{tokens, cost, estimated}``，tokens 口径是
+        input+output（不含 cache），cost 单位 USD 且 round 到 :data:`BUCKET_ROUND` 位。
+
+        ``workflow_id`` 给定时，**四维归因**只统计该 workflow 的记录（``None`` = 不过
+        滤）。这是必需的：ledger 被同一个 manager 跨 workflow 共享，而 by_node/by_edge
+        的桶键（node id / edge 串）在不同 workflow 间会重名——不过滤就会把别的
+        workflow 的成本串进本 workflow 的 attribution 快照（D7/Q15）。
+        """
         by_session: dict[str, dict] = {}
         by_phase: dict[str, dict] = {}
         by_tool: dict[str, dict] = {}
+        by_workflow: dict[str, dict] = {}
+        by_node: dict[str, dict] = {}
+        by_depth: dict[str, dict] = {}
+        by_edge: dict[str, dict] = {}
         for e in self._entries:
             for dim, key in (
                 (by_session, e["session_id"]),
@@ -180,10 +241,37 @@ class CostLedger:
                 bucket["tokens"] += e["input_tokens"] + e["output_tokens"]
                 if e["cost"] is not None:
                     bucket["cost"] += e["cost"]
+            # 四维归因：键缺失（None）的记录不进桶——不带归因键 = 不进任何归因维度。
+            # 指定 workflow_id 时先按它过滤，避免跨 workflow 的桶键重名串账。
+            if workflow_id is not None and e.get("workflow_id") != workflow_id:
+                continue
+            attribution_keys = (
+                (by_workflow, e.get("workflow_id")),
+                (by_node, e.get("node_id")),
+                (by_depth, _depth_key(e["depth"]) if e.get("depth") is not None else None),
+                (by_edge, e.get("edge")),
+            )
+            for dim, key in attribution_keys:
+                if key is None:
+                    continue
+                bucket = dim.setdefault(
+                    key, {"tokens": 0, "cost": 0.0, "estimated": False}
+                )
+                bucket["tokens"] += e["input_tokens"] + e["output_tokens"]
+                bucket["cost"] += e.get("cost_cached") or 0.0
+                if not e.get("cost_known", True):
+                    bucket["estimated"] = True
+        for dim in (by_workflow, by_node, by_depth, by_edge):
+            for bucket in dim.values():
+                bucket["cost"] = round(bucket["cost"], BUCKET_ROUND)
         return {
             "by_session": by_session,
             "by_phase": by_phase,
             "by_tool": by_tool,
+            "by_workflow": by_workflow,
+            "by_node": by_node,
+            "by_depth": by_depth,
+            "by_edge": by_edge,
         }
 
     def flush(self, path: str | Path) -> None:

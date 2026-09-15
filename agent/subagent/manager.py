@@ -23,6 +23,7 @@ from agent.trace_recorder import TraceRecorder
 from agent.subagent.budget import BudgetExceededError, BudgetHook, BudgetTracker
 from agent.subagent.context import (
     current_bus,
+    current_graph_distance,
     current_node_id,
     current_run_id,
     current_spawn_depth,
@@ -102,6 +103,12 @@ class SubagentRunRecord:
     workflow_id: str | None = None
     node_id: str | None = None
     depth: int = 0
+    # 成本归因四维的另两把键（change ``workflow-budget-attribution``，D3/Q8/Q13）：
+    # ``edge`` = 实际触发本 run 的拓扑来源（调度器派发点算出后透传，见 Q8 规则）；
+    # ``graph_distance`` = workflow 图距（0=leaf/1=shard/2=domain/3+=root），与
+    # ``depth``（spawn 嵌套深度）是**两个独立字段**，图距绝不影响深度闸。
+    edge: str | None = None
+    graph_distance: int | None = None
     # Workflow result artifacts (change ``workflow-result-aggregation``, D1).
     # ``summary`` above stays the FULL text (Q6); these refs point at the
     # on-disk artifacts written when the run reaches a terminal state.
@@ -477,6 +484,66 @@ class SubAgentManager:
                 return run
         return None
 
+    def active_run(self, subagent_id: str) -> SubagentRunRecord | None:
+        """该 session 当前 active 的 run 记录（无则 None）。"""
+        session = self._sessions.get(subagent_id)
+        if session is None or session.active_run_id is None:
+            return None
+        return self.find_run(subagent_id, session.active_run_id)
+
+    def attribution_for(self, subagent_id: str) -> dict | None:
+        """loop 层 cost 记账的归因键（grill 决策 4：一次查表）。
+
+        ``session_id`` 传的就是 ``session.subagent_id``，而 ``SubagentSessionRecord``
+        自带 ``workflow_id``/``node_id``；图距与 edge 是**run 级**事实，从当前活跃 run
+        读（``current_run_id()`` 在 run 执行上下文里可用，取的是本 run 的记录）。
+
+        不是 workflow 内的调用（根 loop / 普通 spawn）返回 ``None``——归因键全缺省时
+        ``CostLedger.record`` 的三维账单行为与改造前逐字节一致。
+        """
+        session = self._sessions.get(subagent_id)
+        if session is None or session.workflow_id is None:
+            return None
+        run = self.active_run(subagent_id)
+        if run is None:
+            run_id = current_run_id()
+            run = self.find_run(subagent_id, run_id) if run_id else None
+        return {
+            "workflow_id": session.workflow_id,
+            "node_id": session.node_id,
+            "graph_distance": getattr(run, "graph_distance", None),
+            "edge": getattr(run, "edge", None),
+        }
+
+    def record_workflow_llm_usage(
+        self,
+        *,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+    ) -> None:
+        """把一次 LLM 调用累加进当前 workflow 的四维度预算账本（Q6 方案 B）。
+
+        根 loop（``current_workflow_id()`` 为 None）不记——workflow 预算只对 workflow
+        run 生效。workflow 身份经 ``copy_context()`` 随入队快照固定，执行期读取正确。
+        """
+        workflow_id = current_workflow_id()
+        if workflow_id is None:
+            return
+        scheduler = self._workflows.get(workflow_id)
+        record = getattr(scheduler, "record_llm_usage", None)
+        if record is None:
+            return
+        record(
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
+
     # -- workflow registry / spawn buckets (change workflow-dsl-scheduler) ---
 
     def register_workflow(self, scheduler: object) -> None:
@@ -519,6 +586,7 @@ class SubAgentManager:
         timeout_s: float | None = None,
         max_tokens: int | None = None,
         max_time_s: float | None = None,
+        edge: str | None = None,
     ) -> dict:
         session = self._require_session(subagent_id)
         # 准入层（仍 fail-fast）：同 session 已有 active run → 拒绝并等待或取消
@@ -541,6 +609,7 @@ class SubAgentManager:
                 if max_time_s is not None
                 else getattr(budget_defaults, "default_max_time_s", None)
             ),
+            edge=edge,
         )
         await self._enqueue_run(session, run, wait=wait, timeout_s=timeout_s)
         return self._format_run_envelope(session.subagent_id, run)
@@ -609,6 +678,7 @@ class SubAgentManager:
         *,
         max_tokens: int | None,
         max_time_s: float | None,
+        edge: str | None = None,
     ) -> SubagentRunRecord:
         """Create and register a new run record for a session.
 
@@ -630,6 +700,10 @@ class SubAgentManager:
             workflow_id=current_workflow_id(),
             node_id=current_node_id(),
             depth=current_spawn_depth() + 1,
+            # 图距从 contextvar 读（Q13 路径 X）；``edge`` 从调度器派发点透传
+            # （决策 6：``_new_run`` 时没有「上游节点」contextvar，推不出来）。
+            graph_distance=current_graph_distance(),
+            edge=edge,
         )
         session.runs.append(run)
         return run
@@ -977,14 +1051,25 @@ class SubAgentManager:
         except BudgetExceededError as exc:
             self._write_checkpoint(session, run)
             self._mark_budget_exceeded(
-                session, run, exc.dimension, trace, tokens=tracker.tokens
+                session,
+                run,
+                exc.dimension,
+                trace,
+                tokens=tracker.tokens,
+                input_tokens=tracker.input_tokens,
+                output_tokens=tracker.output_tokens,
             )
         except asyncio.CancelledError:
             self._write_checkpoint(session, run)
             if run._budget_kill_reason is not None:
                 self._mark_budget_exceeded(
-                    session, run, run._budget_kill_reason, trace,
+                    session,
+                    run,
+                    run._budget_kill_reason,
+                    trace,
                     tokens=tracker.tokens,
+                    input_tokens=tracker.input_tokens,
+                    output_tokens=tracker.output_tokens,
                 )
             else:
                 self._mark_cancelled(session, run, trace)
@@ -1181,6 +1266,8 @@ class SubAgentManager:
         dimension: str,
         trace: TraceRecorder | None,
         tokens: int | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
     ) -> None:
         if run.status in TERMINAL_RUN_STATUSES:
             return  # already terminal
@@ -1191,8 +1278,24 @@ class SubAgentManager:
         # Backfill cost summary (review M1): the run consumed real tokens even
         # though it never reached a normal completion, so the failure/cost
         # summary must reflect them for benchmark cost attribution.
+        #
+        # C4 task 2.4：过去这里把 input/output 直接写 0，`CostLedger` 按 run.usage
+        # 报的 cost 因此系统性偏低、与 workflow 账本打架（Q12）。现在补填 tracker
+        # 实际累计的分量；调用方拿不到分量时退化为「全部记在 input」并**保留
+        # total**——宁可粗粒度，也不能报 0。
         if tokens:
-            run.usage = SubagentRunUsage(total_tokens=tokens, input_tokens=0, output_tokens=0)
+            if input_tokens is None and output_tokens is None:
+                # 调用方拿不到分量：退化为「全部记在 input」并保留 total——
+                # 宁可粗粒度，也不能报 0。
+                resolved_input, resolved_output = tokens, 0
+            else:
+                resolved_input = input_tokens or 0
+                resolved_output = output_tokens or 0
+            run.usage = SubagentRunUsage(
+                total_tokens=tokens,
+                input_tokens=resolved_input,
+                output_tokens=resolved_output,
+            )
         session.active_run_id = None
         session.status = "idle"
 
