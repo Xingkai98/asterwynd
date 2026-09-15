@@ -178,7 +178,7 @@ def test_report_excludes_truncated_round_from_pass_k():
     agg = AggregateRun(agent="a", model="m", repeat=4, results=results, metadata=metas)
     md = render_report(agg)
     # pass@1 = 3/4, pass^k over non-truncated rounds 0,1,3 = 3/3 -> yes
-    assert "| t1 | local | execution | 1.00 | 3/4 | yes |" in md
+    assert "| t1 | local | execution | - | 1.00 | 3/4 | yes |" in md
 
 
 # ---------------------------------------------------------------------------

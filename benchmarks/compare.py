@@ -12,7 +12,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from agent.cost_tracker import compute_cost, format_cost
+from agent.cost_tracker import compute_cost, compute_cost_cached, format_cost
 from benchmarks.models import TaskResult
 from benchmarks.statistics import PairedComparison, paired_comparison
 
@@ -197,6 +197,63 @@ def build_summary(
             f"| {name} | {total_input} | {total_output} | {format_cost(cost)} |"
         )
 
+    # Orchestration metrics (C5 D5): completion rate + tokens + $/resolved-task +
+    # wall time + nodes + peak concurrency + critical path + failure reasons.
+    # Read raw-dict style (``r.get(...)``) so older artifacts without workflow
+    # keys keep parsing (grill Confirmed Decision 11).
+    orch_rows: list[tuple[str, ...]] = []
+    for name, results in runs:
+        values = list(results.values())
+        if not any(v.get("workflow_mode") for v in values):
+            continue
+        resolved = _resolved_counts(values)
+        total_cost = _run_cost(values)
+        orch_rows.append(
+            (
+                name,
+                str(len(values)),
+                _frac(resolved, len(values)),
+                str(sum(v.get("input_tokens", 0) or 0 for v in values)),
+                str(sum(v.get("output_tokens", 0) or 0 for v in values)),
+                _money(total_cost / resolved if resolved else None),
+                _seconds(values, "duration_seconds"),
+                _mean_int(values, "workflow_node_count"),
+                _mean_int(values, "workflow_peak_active"),
+                _mean_float(values, "workflow_critical_path_s", suffix="s"),
+                _mean_float(values, "workflow_redundancy", digits=3),
+                _failure_reasons(values),
+            )
+        )
+    if orch_rows:
+        lines.append("")
+        lines.append("## Orchestration Metrics")
+        lines.append("")
+        orch_header = [
+            "Agent",
+            "Tasks",
+            "Completion",
+            "Input Tokens",
+            "Output Tokens",
+            "$/resolved-task",
+            "Wall time (p50)",
+            "Nodes (mean)",
+            "Peak concurrency (mean)",
+            "Critical path (mean)",
+            "Redundancy (mean)",
+            "Failure reasons",
+        ]
+        lines.append("| " + " | ".join(orch_header) + " |")
+        lines.append("|" + "|".join(["------"] * len(orch_header)) + "|")
+        for row in orch_rows:
+            lines.append("| " + " | ".join(row) + " |")
+        lines.append("")
+        lines.append(
+            "> **$/resolved-task** 的分母是 ``passed`` + ``passed_with_warnings``，"
+            "与 report.py 的 pass@k 同源；``dynamic-replay`` 记录只验编排、不判分，"
+            "已从分母排除。大 N 臂的 ``spawn budget exceeded`` 属**预期压力结果**，"
+            "不是 runner 故障。"
+        )
+
     # Run metadata disclosure (C3): model version / date / cost basis.
     meta_rows = _run_metadata_rows(metas)
     if meta_rows:
@@ -210,6 +267,85 @@ def build_summary(
             lines.append("| " + " | ".join(row) + " |")
 
     return "\n".join(lines) + "\n"
+
+
+#: Orchestration scoring denominator: same口径 as report.py's pass@k (CD9).
+_RESOLVED_STATUSES = frozenset({"passed", "passed_with_warnings"})
+
+
+def _resolved_counts(values: list[dict]) -> int:
+    """Resolved tasks: ``passed`` + ``passed_with_warnings``，排除 unsupported /
+    ``docker_unavailable`` / ``dynamic-replay``（CD9 + Q10 读法 A）。"""
+    invalid = {"docker_unavailable", "task_family_unsupported", "approval_unavailable"}
+    resolved = 0
+    for value in values:
+        if value.get("workflow_mode") == "dynamic-replay":
+            continue
+        if value.get("status") == "unsupported" or value.get("reason") in invalid:
+            continue
+        if value.get("status") in _RESOLVED_STATUSES:
+            resolved += 1
+    return resolved
+
+
+def _run_cost(values: list[dict]) -> float:
+    total = 0.0
+    for value in values:
+        estimate = compute_cost_cached(
+            value.get("model", "") or "",
+            input_tokens=value.get("input_tokens", 0) or 0,
+            cache_read_tokens=value.get("cache_read_tokens", 0) or 0,
+            cache_write_tokens=value.get("cache_write_tokens", 0) or 0,
+            output_tokens=value.get("output_tokens", 0) or 0,
+        )
+        total += estimate.cost
+    return total
+
+
+def _frac(numerator: int, denominator: int) -> str:
+    if not denominator:
+        return "-"
+    return f"{numerator}/{denominator} ({numerator / denominator:.0%})"
+
+
+def _money(value: float | None) -> str:
+    return format_cost(value) if value is not None else "-"
+
+
+def _seconds(values: list[dict], key: str) -> str:
+    durations = sorted(
+        v[key] for v in values if isinstance(v.get(key), (int, float))
+    )
+    if not durations:
+        return "-"
+    return f"{durations[len(durations) // 2]:.1f}s"
+
+
+def _mean_int(values: list[dict], key: str) -> str:
+    numbers = [v[key] for v in values if isinstance(v.get(key), (int, float))]
+    if not numbers:
+        return "-"
+    return f"{sum(numbers) / len(numbers):.1f}"
+
+
+def _mean_float(values: list[dict], key: str, *, suffix: str = "", digits: int = 2) -> str:
+    numbers = [v[key] for v in values if isinstance(v.get(key), (int, float))]
+    if not numbers:
+        return "-"
+    return f"{sum(numbers) / len(numbers):.{digits}f}{suffix}"
+
+
+def _failure_reasons(values: list[dict]) -> str:
+    """Failure-reason histogram for failed/error records (top 3 by count)."""
+    counts: dict[str, int] = defaultdict(int)
+    for value in values:
+        if value.get("status") not in {"failed", "error"}:
+            continue
+        counts[value.get("reason") or "unknown"] += 1
+    if not counts:
+        return "-"
+    top = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    return ", ".join(f"{reason}×{count}" for reason, count in top)
 
 
 def _paired_data(
