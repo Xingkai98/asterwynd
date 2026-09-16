@@ -891,7 +891,15 @@ class SessionManager:
                 event = await queue.get()
                 if event is None:
                     break
-                await ws_send(event)
+                try:
+                    await ws_send(event)
+                except Exception as exc:  # noqa: BLE001 - ws 断开后继续 send 会抛 RuntimeError，丢弃后续事件让 run 正常收尾（issue #193）
+                    logger.warning(
+                        "websocket send failed for session %s: %s",
+                        session.session_id,
+                        exc,
+                    )
+                    break
         finally:
             session.approval_handler.fail_pending("session run ended")
             session.question_handler.fail_pending("session run ended")

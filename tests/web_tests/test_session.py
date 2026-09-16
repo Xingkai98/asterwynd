@@ -600,3 +600,37 @@ def test_debug_enabled_with_env():
         assert debug_enabled() is False
     finally:
         os.environ["ASTERWYND_DEBUG"] = old
+
+
+@pytest.mark.asyncio
+async def test_run_session_survives_ws_send_failure_after_disconnect():
+    """ws 关闭后 ws_send 抛异常时，run_session 应正常返回、不抛、不悬空（issue #193）。"""
+    mock_llm = ScriptedLLM([
+        stream_script(LLMResponse(content="Hello, user!", stop_reason="end_turn")),
+    ])
+    manager = SessionManager()
+    registry = ToolRegistry()
+    session = AgentSession(
+        session_id="ws-disconnect",
+        agent=AgentLoop(
+            llm=mock_llm,
+            tool_registry=registry,
+            hooks=HookManager(),
+        ),
+        approval_handler=WebApprovalHandler("ws-disconnect"),
+        question_handler=None,
+    )
+    session.init_messages()
+
+    sent = []
+
+    async def fail_after_first(event):
+        sent.append(event)
+        raise RuntimeError("Unexpected ASGI message 'websocket.send'")
+
+    # 不应抛异常：ws_send 失败应被吞掉并正常收尾。
+    await manager.run_session(session, "hi", ws_send=fail_after_first)
+
+    assert len(sent) >= 1
+    # run 正常结束（未悬空）：锁已释放，可再次 run。
+    assert not session.run_lock.locked()
