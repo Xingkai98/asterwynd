@@ -434,8 +434,8 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="chat-panes"' in index
     assert 'id="hub-session-list"' in index
     assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=18" in index
-    assert "/static/chat.js?v=21" in index
+    assert "/static/style.css?v=19" in index
+    assert "/static/chat.js?v=22" in index
     # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层。
     assert "/static/workflow_graph.js?v=1" in index
     assert "/static/workflow.js?v=1" in index
@@ -536,6 +536,17 @@ def test_web_static_assets_include_session_and_run_display():
     assert ".brand-lockup" in styles
     assert ".brand-fallback" in styles
     assert ".markdown-body pre" in styles
+
+    # 补充性源码断言（行为断言见 test_reconnect_pending_interaction_browser.py）：
+    # 卡片幂等守卫、清空注册表、run 占用中文提示。这些只是「改错了会明显不同」的
+    # 廉价护栏，不替代真实浏览器断言。
+    assert "if (approvalCards.has(approvalId)) return;" in script
+    assert "if (questionCards.has(questionId)) return;" in script
+    assert "approvalCards.clear();" in script
+    assert "questionCards.clear();" in script
+    assert "上一条消息仍在执行中" in script
+    assert "未连接，请等待重连后重试" in script
+    assert ".question-hint" in styles
 
     toggle_start = script.index("toggle.addEventListener")
     toggle_end = script.index("controls.appendChild(toggle)", toggle_start)

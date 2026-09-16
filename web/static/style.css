@@ -961,6 +961,14 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   cursor: default;
 }
 
+/* 提交反馈（未连接等）：卡片保持可提交，用可见提示代替静默丢弃 */
+.question-hint {
+  margin-left: 8px;
+  color: var(--danger, #d9534f);
+  font-size: 0.8rem;
+}
+.question-hint[hidden] { display: none; }
+
 /* Loading spinner */
 .spinner {
   display: inline-block;

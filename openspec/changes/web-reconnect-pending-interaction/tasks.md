@@ -33,13 +33,13 @@
 
 ## 4. 前端卡片幂等与反馈（D5）
 
-- [ ] 4.1 `renderApprovalRequest` / `renderQuestionCard` 加同 id 去重守卫（复用已存在卡片，不产生第二张）。
-- [ ] 4.2 两条清空路径都清卡片注册表：`renderHistory` **与** `command_result` 的 `/clear` 分支。
-- [ ] 4.3 `session_history` 分支重置 `currentAssistantMsg = null`（否则后续 `assistant_delta` 写进僵尸 DOM，重连后流式内容不可见）。
-- [ ] 4.4 `sendApprovalDecision` / `sendQuestionAnswer` 调整为**先判 `ws.readyState`、再改 UI**；未就绪时给出可见反馈并保留卡片可提交（不再静默 return / 假 Submitted）。
-- [ ] 4.5 run 占用错误（"another run is already in progress"）的前端展示改为用户可读中文提示（Q4），且只作用于发起连接。
-- [ ] 4.6 补发卡片在重连后能正确渲染（`handleTabEvent` 的 rekey 逻辑不受影响）。
-- [ ] 4.7 `chat.js` 改动后 bump `web/static/index.html` 的 `/static/chat.js?v=21 → v=22`，同步更新 `tests/web_tests/test_server.py:438` 的断言。
+- [x] 4.1 `renderApprovalRequest` / `renderQuestionCard` 加同 id 去重守卫（复用已存在卡片，不产生第二张）。
+- [x] 4.2 两条清空路径都清卡片注册表：`renderHistory` **与** `command_result` 的 `/clear` 分支。
+- [x] 4.3 `session_history` 分支重置 `currentAssistantMsg = null`（否则后续 `assistant_delta` 写进僵尸 DOM，重连后流式内容不可见）。
+- [x] 4.4 `sendApprovalDecision` / `sendQuestionAnswer` 调整为**先判 `ws.readyState`、再改 UI**；未就绪时给出可见反馈并保留卡片可提交（不再静默 return / 假 Submitted）。
+- [x] 4.5 run 占用错误（"another run is already in progress"）的前端展示改为用户可读中文提示（Q4），且只作用于发起连接。
+- [x] 4.6 补发卡片在重连后能正确渲染（`handleTabEvent` 的 rekey 逻辑不受影响）。
+- [x] 4.7 `chat.js` 改动后 bump `web/static/index.html` 的 `/static/chat.js?v=21 → v=22`，同步更新 `tests/web_tests/test_server.py:438` 的断言。
 
 ## 5. 测试
 
@@ -47,7 +47,7 @@
 - [x] 5.2 服务端重连测试：造 pending → 断连 → 重连 → **断言事件类型序列** `["session_resumed","session_history",<卡片>]`；反例「无 pending 不补发」用 `ping`/`pong`。
 - [x] 5.3 断连不杀 run 测试：ws_send/receive 失败后 run 继续执行完毕、`run_lock` 正常释放；drain 在无连接时仍消费（防无界堆积）。
 - [x] 5.4 多连接测试：广播到两条连接、断开其一不影响另一条、先答者胜后提交者 `unavailable`；**各作答路径（run 内 / inline）终态广播一致性**（Q3）；既有 `test_multi_tab_approval_isolation` 保持通过。
-- [ ] 5.5 前端契约测试：优先 Playwright 行为断言——卡片幂等、重连后卡片重新出现且可提交、ws 未就绪提交有反馈、`session_history` 后 `currentAssistantMsg` 重置；chat.js 源码字符串断言只作补充。
+- [x] 5.5 前端契约测试：优先 Playwright 行为断言——卡片幂等、重连后卡片重新出现且可提交、ws 未就绪提交有反馈、`session_history` 后 `currentAssistantMsg` 重置；chat.js 源码字符串断言只作补充。
 - [x] 5.6 更新 issue #193 回归测试 `test_run_session_survives_ws_send_failure_after_disconnect` 到新语义（run 不被取消）。
 - [x] 5.7 `reset` 在 run 期间的语义测试（reset 后 run 仍跑完、pending 已失败），固化 D8 的边界。
 
