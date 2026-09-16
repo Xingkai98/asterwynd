@@ -1,6 +1,7 @@
 # web/session.py
 """Session manager: one AgentLoop + message history per browser session."""
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -13,7 +14,11 @@ from agent.approval import (
     ApprovalResponse,
 )
 from agent.question import Question, QuestionAnswer
-from agent.config import AsterwyndConfig
+from agent.config import (
+    DEFAULT_APPROVAL_TIMEOUT_SECONDS,
+    DEFAULT_QUESTION_TIMEOUT_SECONDS,
+    AsterwyndConfig,
+)
 from agent.loop import AgentLoop
 from agent.message import Message, extract_text
 from agent.mcp import build_mcp_manager
@@ -101,10 +106,8 @@ def build_timeline_payload(session: "AgentSession") -> dict:
     }
 
 
-#: pending 交互的超时缺省（change web-reconnect-pending-interaction, Q1）：
-#: 审批 600s / 提问 300s，均可由 ``WebConfig`` 覆盖（总等待时长语义）。
-DEFAULT_APPROVAL_TIMEOUT_SECONDS = 600
-DEFAULT_QUESTION_TIMEOUT_SECONDS = 300
+# pending 交互超时缺省直接取 ``WebConfig`` 的单一来源常量（Q1/D6），避免 600/300
+# 在 config 与 session 两处各自漂移（见 ``__init__`` 的 timeout_seconds 默认值）。
 
 
 @dataclass
@@ -433,35 +436,66 @@ async def route_interaction_message(
         approval_id = str(raw.get("approval_id", "")).strip()
         decision = str(raw.get("decision", "")).strip()
         accepted = session.approval_handler.submit_response(approval_id, decision)
-        await channel.broadcast({
-            "type": "approval_response",
-            "data": {
-                "approval_id": approval_id,
-                "status": "received" if accepted else "unavailable",
-                "reason": "received" if accepted else "no matching pending approval",
-                "session_id": session.session_id,
+        await _deliver_interaction_receipt(
+            channel,
+            handle,
+            accepted=accepted,
+            payload={
+                "type": "approval_response",
+                "data": {
+                    "approval_id": approval_id,
+                    "status": "received" if accepted else "unavailable",
+                    "reason": "received" if accepted else "no matching pending approval",
+                    "session_id": session.session_id,
+                },
             },
-        })
+        )
         return True
     if msg_type == "user_answer":
         question_id = str(raw.get("question_id", "")).strip()
         answer = str(raw.get("answer", "")).strip()
         accepted = session.question_handler.submit_answer(question_id, answer)
-        await channel.broadcast({
-            "type": "user_answer",
-            "data": {
-                "question_id": question_id,
-                "status": "received" if accepted else "unavailable",
-                "session_id": session.session_id,
+        await _deliver_interaction_receipt(
+            channel,
+            handle,
+            accepted=accepted,
+            payload={
+                "type": "user_answer",
+                "data": {
+                    "question_id": question_id,
+                    "status": "received" if accepted else "unavailable",
+                    "session_id": session.session_id,
+                },
             },
-        })
+        )
         return True
     if msg_type == "ping":
-        pong = {"type": "pong"}
-        if not await channel.send_to(handle, pong):
-            await channel.broadcast(pong)
+        await channel.send_to(handle, {"type": "pong"})
         return True
     return False
+
+
+async def _deliver_interaction_receipt(
+    channel: SessionEventChannel,
+    handle: ConnectionHandle | None,
+    *,
+    accepted: bool,
+    payload: dict,
+) -> None:
+    """投递作答回执：**被接受**的广播给所有连接，**被拒绝**的只回提交者。
+
+    为什么区别对待（终态单调，调研 finding 8 / design Risks）：广播「被拒绝」的回执
+    会把**已经收到终态**的连接也改写掉——先答者胜出后，落败者在另一个 tab 再点一次，
+    所有连接（含胜出方）都会收到 `unavailable`，前端把胜出方卡片从「approved」改成
+    「unavailable」，用户看到「自己批准过的卡片被判为不可用」，而工具其实已经执行。
+    被拒绝的回执是「你这条提交没有生效」的**定向错误应答**，不是该审批的状态变更，
+    因此只回提交者；被接受的才是全 session 共享的终态，按 Q3 广播（run 内 / run 外
+    两条路径都走这里，行为一致）。
+    """
+    if accepted or handle is None:
+        await channel.broadcast(payload)
+        return
+    await channel.send_to(handle, payload)
 
 
 def build_pending_interaction_payloads(session: "AgentSession") -> list[dict]:
@@ -474,16 +508,15 @@ def build_pending_interaction_payloads(session: "AgentSession") -> list[dict]:
     提问与审批在同一 session 内互斥（同一时刻最多一个 pending），顺序不影响语义。
     """
     payloads: list[dict] = []
+    # 访问器返回的已经是载荷副本（见 ``pending_*_payload``），直接在其上补 session_id。
     question = session.question_handler.pending_question_payload()
     if question is not None:
         _, data = question
-        data = dict(data)
         data["session_id"] = session.session_id
         payloads.append({"type": "user_question", "data": data})
     approval = session.approval_handler.pending_approval_payload()
     if approval is not None:
         _, data = approval
-        data = dict(data)
         data["session_id"] = session.session_id
         payloads.append({"type": "approval_request", "data": data})
     return payloads
@@ -1075,22 +1108,35 @@ class SessionManager:
         断连检测点唯一（M2）：``websocket_endpoint`` 在 ``await run_session`` 期间
         不会调用 ``ws.receive_json()``，FastAPI 不会抛 ``WebSocketDisconnect``——这里
         的 ``await ws_receive()`` 抛异常就是唯一可靠的断连信号。
+
+        **循环不因单条畸形消息退出**：``receive_json`` 对非 JSON 文本帧抛
+        ``JSONDecodeError``，那不是「连接没了」。把两者混为一谈会把仍然活着的连接从
+        出口摘掉，run 后续事件全丢（客户端界面停在半截）。因此解码失败只记录并继续
+        下一条；只有 ``ws_receive`` 真的抛（连接层异常）才 detach 退出。
         """
-        try:
-            while True:
+        while True:
+            try:
                 raw = await ws_receive()
-                if not await route_interaction_message(
-                    session, raw, channel, handle=handle
-                ):
-                    msg_type = raw.get("type")
-                    if msg_type in {"reset", "cancel"}:
-                        fail_pending_interactions(session, f"{msg_type} received")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - 断开不是用户放弃，绝不能 fail_pending
-            logger.info("interaction receiver stopped: %s", exc)
-            if handle is not None:
-                handle.detach()
+            except asyncio.CancelledError:
+                raise
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                # 畸形帧 ≠ 断连：这条连接还活着，只是客户端发了一条不是 JSON 的东西。
+                logger.info("ignoring malformed frame from client: %s", exc)
+                continue
+            except Exception as exc:  # noqa: BLE001 - 断开不是用户放弃，绝不能 fail_pending
+                logger.info("interaction receiver stopped: %s", exc)
+                if handle is not None:
+                    handle.detach()
+                return
+            if not isinstance(raw, dict):
+                logger.info(
+                    "ignoring non-object frame from client: %r", type(raw).__name__
+                )
+                continue
+            if not await route_interaction_message(session, raw, channel, handle=handle):
+                msg_type = raw.get("type")
+                if msg_type in {"reset", "cancel"}:
+                    fail_pending_interactions(session, f"{msg_type} received")
 
     async def _run_session_locked(
         self,

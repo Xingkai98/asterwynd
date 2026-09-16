@@ -689,37 +689,39 @@ async def test_run_session_continues_after_send_failure_and_broadcasts_to_surviv
 
 @pytest.mark.asyncio
 async def test_drain_keeps_consuming_after_all_connections_detached():
-    """drain 永远消费 queue（M2）：连接全断开后事件被丢弃，run 仍跑到收尾。
+    """drain 永远消费 queue（M2）：没有观察者时事件被丢弃，run 仍跑到收尾。
 
-    LLM 脚本产出多条流式 delta：第一次 send 失败后该连接被摘掉，出口变为空——
-    drain 必须继续消费到 sentinel，而不是因为没有观察者就退出（退出会让
-    ``run_agent`` 往无界 queue 里灌事件并悬空）。
+    审阅 Issue 3 修正：原版用 ``ScriptedLLM`` 一口气跑完，断言对「drain 是否提前
+    退出」不敏感（把 drain 改回「无观察者即 break」测试照样绿）。这里从**第一条事件
+    起**出口就是空的（run_session 不传 ws_send/handle），并且 LLM 会阻塞到测试放行——
+    提前退出的 drain 会在 run_started 处 break 并 cancel 掉 agent_task，run 就永远
+    到不了 ``finished``。
     """
-    mock_llm = ScriptedLLM([
-        stream_script("Nobody ", "is ", "listening"),
-    ])
+    release = asyncio.Event()
+    llm = _GatedLLM(release)
     manager = SessionManager()
     session = AgentSession(
         session_id="ws-nobody",
-        agent=AgentLoop(llm=mock_llm, tool_registry=ToolRegistry(), hooks=HookManager()),
+        agent=AgentLoop(llm=llm, tool_registry=ToolRegistry(), hooks=HookManager()),
         approval_handler=WebApprovalHandler("ws-nobody"),
         question_handler=None,
     )
     session.init_messages()
-
-    attempts = []
-
-    async def send(event):
-        attempts.append(event["type"])
-        raise RuntimeError("connection gone")
-
-    await manager.run_session(session, "hi", ws_send=send)
-
-    # 只有第一条事件尝试投递（随后连接被摘掉，其余事件直接丢弃）。
-    assert attempts == ["run_started"], attempts
-    assert mock_llm.call_count == 1
-    assert not session.run_lock.locked()
     assert session.event_channel.handles == ()
+
+    run_task = asyncio.create_task(manager.run_session(session, "hi"))
+    # run 已经开始（agent_task 已被调度、锁已持有）但还没跑完。
+    await asyncio.wait_for(llm.started.wait(), timeout=2.0)
+    assert session.run_lock.locked()
+    assert not llm.finished.is_set()
+
+    release.set()
+    await asyncio.wait_for(run_task, timeout=5.0)
+
+    # run 跑完了：drain 没有因为「没人收」就退出并 cancel 掉 agent_task。
+    assert llm.finished.is_set(), "drain 在无观察者时提前退出，run 被打断"
+    assert llm.call_count == 1
+    assert not session.run_lock.locked()
 
 
 @pytest.mark.asyncio
@@ -950,3 +952,19 @@ async def test_handler_timeout_does_not_reset_on_disconnect():
 
     response = await pending
     assert response.status is ApprovalDecisionStatus.UNAVAILABLE
+
+class _GatedLLM(ScriptedLLM):
+    """在 run 中途阻塞的 LLM：把「run 仍在执行」变成确定状态而不是抢时序。"""
+
+    def __init__(self, release: asyncio.Event, response: str = "finished"):
+        super().__init__([LLMResponse(content=response, stop_reason="end_turn")])
+        self._release = release
+        self.started = asyncio.Event()
+        self.finished = asyncio.Event()
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        self.started.set()
+        await self._release.wait()
+        response = await super().chat(messages, tools, model)
+        self.finished.set()
+        return response

@@ -411,3 +411,30 @@ async def test_session_history_clears_card_registry(browser_page, approval_web_s
     assert await page.eval_on_selector_all(
         ".tab-pane.active .approval-card", "els => els.length"
     ) == 1
+
+
+@pytest.mark.asyncio
+async def test_loser_receipt_does_not_rewrite_winner_card(browser_page, approval_web_server):
+    """Issue 2 回归：落败者的 `unavailable` 回执不改写已进入终态的卡片（终态单调）。
+
+    多 tab 下先答者胜；落败者在另一个 tab 的重复提交只会得到一条定向回执。这条回执
+    若被无条件写进卡片，胜出方的用户会看到「自己批准过的卡片被判为不可用」。
+    """
+    page = browser_page
+    await _open_new_session(page, approval_web_server["url"])
+    await _wait_connected(page)
+
+    await page.evaluate("""
+      () => {
+        const dispatch = window.AsterwyndChatTest.dispatch;
+        const approval = { approval_id: 'mono-1', tool_name: 'Bash', risk: 'high' };
+        dispatch({ type: 'approval_request', data: approval });
+        // 先受理（received）再收到真正的终态 approved。
+        dispatch({ type: 'approval_response', data: { approval_id: 'mono-1', status: 'received' } });
+        dispatch({ type: 'approval_response', data: { approval_id: 'mono-1', status: 'approved' } });
+        // 落败者在另一个 tab 的重复提交：不得把胜出方的终态改写成 unavailable。
+        dispatch({ type: 'approval_response', data: { approval_id: 'mono-1', status: 'unavailable' } });
+      }
+    """)
+
+    assert await page.inner_text(".tab-pane.active .approval-status") == "approved"

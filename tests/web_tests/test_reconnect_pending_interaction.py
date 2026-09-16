@@ -455,7 +455,11 @@ async def test_inline_answer_path_broadcasts_terminal_state(web_server):
 
 @pytest.mark.asyncio
 async def test_run_completes_with_no_bound_connection(tmp_path):
-    """断连期间没有 pending 时 run 正常跑完并释放锁（drain 永不退出）。"""
+    """run 跑完后连接断开：锁已释放、出口没有残留 sender。
+
+    注意这条测的是「断连发生在 run 跑完之后」的收尾；「run **进行中**断连仍跑完」
+    由 ``test_run_completes_when_connection_drops_mid_run`` 覆盖（审阅 Issue 3）。
+    """
     app = create_app(
         ScriptedLLM([LLMResponse(content="plain done", stop_reason="end_turn")]),
         workspace_root=tmp_path,
@@ -476,10 +480,11 @@ async def test_run_completes_with_no_bound_connection(tmp_path):
 
 @pytest.mark.asyncio
 async def test_drain_keeps_consuming_after_disconnect(tmp_path):
-    """drain 永远消费 queue：断连期间产生的事件不会让 drain 退出或堆积。
+    """run 结束后主动断开：drain 已收尾、出口被摘干净。
 
-    断开连接后让 run 产生一条事件（重连后从 ``session_history`` 能看到它的效果），
-    再断言 run 仍能正常收尾。
+    同 ``test_run_completes_with_no_bound_connection``，这条覆盖的是收尾态而不是
+    「run 进行中断连」；后者的机械保护在
+    ``test_run_completes_when_connection_drops_mid_run``。
     """
     app = create_app(
         ScriptedLLM([LLMResponse(content="streamed text", stop_reason="end_turn")]),
@@ -496,4 +501,182 @@ async def test_drain_keeps_consuming_after_disconnect(tmp_path):
         # 断开后 drain 仍能收尾（无异常、无残留 sender）。
         assert await _wait_for(lambda: session.event_channel.handles == ())
         assert not session.run_lock.locked()
+        break
+
+
+# ---------------------------------------------------------------------------
+# 审阅修复回归（review-loop R2）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reset_rebinds_connection_to_new_session(tmp_path):
+    """Issue 1 回归：reset 换掉 session 后，本连接必须重绑到新出口。
+
+    不重绑的话 ``detach_all()`` 已经把句柄摘掉，此后 run 事件广播给 0 条连接、
+    定向发送也因 detached 被拒——表现为 reset 之后整个会话彻底静默（一条事件都收不到）。
+    """
+    app = create_app(
+        ScriptedLLM([LLMResponse(content="after reset", stop_reason="end_turn")]),
+        workspace_root=tmp_path,
+    )
+    for server in _run_server(app):
+        async with connect(f"{server.ws_url}/ws/new") as ws:
+            first_id = (await _recv(ws))["session_id"]
+            await ws.send(json.dumps({"type": "reset"}))
+            reset = await _recv(ws)
+            assert reset["type"] == "session_created"
+            assert reset["session_id"] != first_id
+
+            # reset 之后必须还能收到 run 事件。
+            await ws.send(json.dumps({"type": "chat", "content": "还在吗"}))
+            events = await _recv_until(ws, {"done"}, limit=50)
+            assert events[0]["type"] == "run_started", [e["type"] for e in events]
+        break
+
+
+@pytest.mark.asyncio
+async def test_loser_receipt_is_not_broadcast_to_other_connections(web_server):
+    """Issue 2 回归：落败者的 `unavailable` 回执只回提交者，不改写胜出方。
+
+    先答者胜出后，另一个连接再提交 → 提交者收到 unavailable，**胜出方不收到任何
+    改写事件**（否则前端会把「已批准」改成「unavailable」，而工具其实已执行）。
+    """
+    ws1, session_id, approval_id = await _open_run_until_approval(web_server)
+    await ws1.send(json.dumps({
+        "type": "approval_response",
+        "approval_id": approval_id,
+        "decision": "approved",
+    }))
+    await _recv_until(ws1, {"done"}, limit=100)
+
+    async with connect(f"{web_server.ws_url}/ws/{session_id}") as ws2:
+        await _recv_types(ws2, 2)  # session_resumed / session_history（审批已决，不补发）
+        await ws2.send(json.dumps({
+            "type": "approval_response",
+            "approval_id": approval_id,
+            "decision": "denied",
+        }))
+        # 提交者收到 unavailable。
+        reply = await _recv(ws2)
+        assert reply["type"] == "approval_response"
+        assert reply["data"]["status"] == "unavailable"
+        # 胜出方不收到这条改写事件。
+        await ws1.send(json.dumps({"type": "ping"}))
+        assert await _recv(ws1) == {"type": "pong"}
+        await _no_event(ws1)
+    await ws1.close()
+
+
+@pytest.mark.asyncio
+async def test_malformed_frame_does_not_detach_live_connection(tmp_path):
+    """Issue 5 回归：非 JSON 帧不是断连，run 期间连接保持绑定（后续事件照收）。
+
+    之前把 ``receive_json`` 的 ``JSONDecodeError`` 当成断连，会把仍然活着的连接从出口
+    摘掉，run 后续事件全丢、客户端界面停在半截。断言方式：run 进行中发一条畸形帧，
+    随后放行 run —— 事件仍能到达客户端（被摘掉的连接收不到任何东西）。
+    """
+    release = threading.Event()
+    llm = _GatedLLM(release)
+    app = create_app(llm, workspace_root=tmp_path)
+    for server in _run_server(app):
+        async with connect(f"{server.ws_url}/ws/new") as ws:
+            session_id = (await _recv(ws))["session_id"]
+            session = server.app.state.session_manager.get_session(session_id)
+            await ws.send(json.dumps({"type": "chat", "content": "hi"}))
+            try:
+                assert await _wait_for(lambda: llm.started.is_set())
+                before = len(session.event_channel.handles)
+                assert before == 1
+
+                await ws.send("this is not json")
+                await asyncio.sleep(0.3)
+
+                assert len(session.event_channel.handles) == before, (
+                    "畸形帧把仍然活着的连接摘掉了"
+                )
+            finally:
+                release.set()
+
+            # 连接仍然绑定 → run 的剩余事件（含 done）照常到达。
+            events = await _recv_until(ws, {"done"}, limit=50)
+            assert events[-1]["type"] == "done", [e["type"] for e in events]
+        break
+
+
+@pytest.mark.asyncio
+async def test_run_completes_when_connection_drops_mid_run(tmp_path):
+    """Issue 3 回归：run **进行中**断连，run 仍跑到 sentinel 且锁释放。
+
+    已有测试都是「收到 done 之后才 close」，从未在 run 中断连——把 drain 改回
+    「无观察者即 break」时它们照样全绿。这里用一个可放行的 LLM 把 run 卡在执行中：
+    断连发生在 run 真正进行时，随后放行，断言 run 仍然跑完（``finished`` 置位）
+    而不是被断连打断。
+    """
+    release = threading.Event()
+    llm = _GatedLLM(release)
+    app = create_app(llm, workspace_root=tmp_path)
+    for server in _run_server(app):
+        ws = await connect(f"{server.ws_url}/ws/new")
+        session_id = (await _recv(ws))["session_id"]
+        session = server.app.state.session_manager.get_session(session_id)
+        await ws.send(json.dumps({"type": "chat", "content": "hi"}))
+        try:
+            # run 已进入 LLM 调用：锁被持有、事件已在产生。
+            assert await _wait_for(
+                lambda: session.run_lock.locked() and llm.started.is_set()
+            )
+            # run 进行中断连。
+            await ws.close()
+            assert await _wait_for(lambda: session.event_channel.handles == ())
+        finally:
+            # 无论断言是否成立都要放行，否则阻塞的 LLM executor 线程会卡住事件循环收尾。
+            release.set()
+
+        # 放行后 run 必须仍然跑到 sentinel（无观察者也不例外）。
+        assert await _wait_for(lambda: not session.run_lock.locked(), timeout=10)
+        assert llm.finished.is_set(), "断连把 run 打断了（drain 提前退出）"
+        break
+
+
+class _GatedLLM(ScriptedLLM):
+    """在 run 中途阻塞的 LLM，用来把「断连发生在 run 执行期间」做成确定状态。"""
+
+    def __init__(self, release):
+        super().__init__([LLMResponse(content="finished after disconnect", stop_reason="end_turn")])
+        self._release = release
+        self.started = threading.Event()
+        self.finished = threading.Event()
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        self.started.set()
+        await asyncio.get_running_loop().run_in_executor(None, self._release.wait)
+        response = await super().chat(messages, tools, model)
+        self.finished.set()
+        return response
+
+
+@pytest.mark.asyncio
+async def test_ping_is_answered_while_run_is_in_progress(tmp_path):
+    """run 执行期间 ping 仍能拿到 pong。
+
+    主循环此时阻塞在 ``await run_session(...)`` 里，不会再读 socket —— pong 只能由
+    session 级接收任务（``route_interaction_message`` 的 ping 分支）发出。这条分支
+    因此不是死代码，删掉会让「移动端切后台期间的保活 ping」全部超时。
+    """
+    release = threading.Event()
+    llm = _GatedLLM(release)
+    app = create_app(llm, workspace_root=tmp_path)
+    for server in _run_server(app):
+        async with connect(f"{server.ws_url}/ws/new") as ws:
+            await _recv(ws)
+            await ws.send(json.dumps({"type": "chat", "content": "hi"}))
+            try:
+                assert await _wait_for(lambda: llm.started.is_set())
+                await ws.send(json.dumps({"type": "ping"}))
+                events = await _recv_until(ws, {"pong"}, limit=20, timeout=5.0)
+                assert events[-1] == {"type": "pong"}, [e["type"] for e in events]
+            finally:
+                release.set()
+            await _recv_until(ws, {"done"}, limit=50)
         break

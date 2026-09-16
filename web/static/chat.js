@@ -905,7 +905,7 @@ function renderApprovalRequest(data) {
   el.appendChild(controls);
 
   messagesEl.appendChild(el);
-  approvalCards.set(approvalId, { el, approve, deny, status });
+  approvalCards.set(approvalId, { el, approve, deny, status, accepted: false, settled: false });
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -933,13 +933,31 @@ function sendApprovalDecision(approvalId, decision) {
   return true;
 }
 
+// 审批状态推进规则（终态单调，调研 finding 8）：
+// - `received` 只是「你的提交被受理了」的中间回执（run 存活时真正的终态
+//   `approved`/`denied` 稍后由 AgentLoop 发出），它把按钮锁住但**不**落定卡片；
+// - `approved`/`denied`/`unavailable` 是终态，一旦到达就不再被后续事件改写。
+// 拒绝从「已受理」倒回 `unavailable`：多连接下先答者胜，落败者的重复提交只会影响
+// 他自己，若把那条 unavailable 写进胜出方的卡片，用户会看到「自己批准过的卡片被判
+// 为不可用」，而工具其实已经执行了。
+const APPROVAL_TERMINAL_STATUSES = new Set(['approved', 'denied', 'unavailable']);
+
 function renderApprovalResponse(data) {
   const approvalId = data.approval_id;
   const card = approvalCards.get(approvalId);
   if (!card) return;
+  const status = data.status || 'completed';
+  const terminal = APPROVAL_TERMINAL_STATUSES.has(status);
+  if (card.settled) return;
+  if (card.accepted && !terminal) return;
   card.approve.disabled = true;
   card.deny.disabled = true;
-  card.status.textContent = data.status || 'completed';
+  card.status.textContent = status;
+  if (status === 'received') {
+    card.accepted = true;
+  } else if (terminal) {
+    card.settled = true;
+  }
 }
 
 function renderQuestionCard(data) {
@@ -1037,7 +1055,7 @@ function renderQuestionCard(data) {
   el.appendChild(controls);
 
   messagesEl.appendChild(el);
-  questionCards.set(questionId, { el, submitBtn, hint });
+  questionCards.set(questionId, { el, submitBtn, hint, settled: false });
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
@@ -1051,6 +1069,12 @@ function sendQuestionAnswer(questionId, answer) {
     }
     return false;
   }
+  if (card && card.hint) {
+    // 连接已恢复：清掉上一次的「未连接」提示，否则成功提交的卡片旁边会同时挂着
+    // 「Submitted」和一条过期的红色提示。
+    card.hint.hidden = true;
+    card.hint.textContent = '';
+  }
   ws.send(JSON.stringify({
     type: 'user_answer',
     question_id: questionId,
@@ -1063,8 +1087,11 @@ function renderQuestionResponse(data) {
   const questionId = data.question_id;
   const card = questionCards.get(questionId);
   if (!card) return;
+  // 同审批：终态单调，落败者的 unavailable 不改写已收到 received 的卡片。
+  if (card.settled) return;
   card.submitBtn.disabled = true;
   card.submitBtn.textContent = data.status === 'received' ? 'Received' : 'Unavailable';
+  card.settled = true;
 }
 
 function renderPlanningState(state) {

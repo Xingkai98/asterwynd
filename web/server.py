@@ -565,9 +565,12 @@ def create_app(
                     })
 
                 elif msg_type in {"approval_response", "user_answer"}:
-                    # Q3：run 不在时也走与 run 内一致的广播路径——只回提交者会让
-                    # 其他连接的卡片永远停在 pending，两个分支行为必须一致。
-                    await route_interaction_message(session, raw, session.event_channel)
+                    # Q3：run 不在时也走与 run 内一致的路径——被接受的决定广播给所有
+                    # 连接（只回提交者会让其他连接的卡片永远停在 pending），被拒绝的
+                    # 回执只回提交者（见 ``_deliver_interaction_receipt``）。
+                    await route_interaction_message(
+                        session, raw, session.event_channel, handle=handle
+                    )
 
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
@@ -582,6 +585,11 @@ def create_app(
                         mode=old_mode,
                         workspace_root=old_workspace,
                     )
+                    # 会话被换掉了，出口也换了一个：本连接必须重新绑到新 session 的
+                    # ``event_channel``。``remove_session`` 的 ``detach_all()`` 已把本
+                    # 句柄摘掉，不重绑的话此后 run 事件会广播给 0 条连接、定向发送也
+                    # 因 detached 直接被拒——表现为 reset 之后整个会话彻底静默。
+                    await bind_pending_interaction_channel(ws, session, handle)
                     await ws.send_json({
                         "type": "session_created",
                         "session_id": session.session_id,
@@ -612,6 +620,14 @@ def create_app(
 
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected: {session_id}")
+        except RuntimeError:
+            # run 期间的断连帧由 session 级接收任务消费掉；run 跑完后主循环再调
+            # ``ws.receive_json()`` 时 Starlette 会抛 ``RuntimeError: Cannot call
+            # "receive" once a disconnect message has been received``。本 change 把
+            # 「断连后 run 继续跑完」变成正常路径，这条异常因此变成常见日志噪声——
+            # 与 WebSocketDisconnect 同义（连接已经没了），按断开处理，别让 traceback
+            # 逃逸到 uvicorn。
+            logger.info(f"WebSocket already disconnected: {session_id}")
         finally:
             # D3：断开只解绑这条连接——run 继续跑完，pending 保持有效（D2），
             # 重连后由 ``bind_pending_interaction_channel`` 补发并重新绑定。

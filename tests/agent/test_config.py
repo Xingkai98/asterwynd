@@ -817,3 +817,24 @@ web:
         load_config(start_dir=tmp_path)
 
     assert "web.approval_timeout_seconds" in str(excinfo.value)
+
+
+def test_parse_web_pending_interaction_timeouts_reject_bool(tmp_path, monkeypatch):
+    """review Issue 4 回归：YAML 的 ``true`` 不能当正整数接受。
+
+    ``isinstance(True, int)`` 为真，bool 一旦漏过去，``asyncio.wait_for(timeout=True)``
+    等价于 **1 秒**超时——配置「看起来生效」而审批几乎必然 unavailable。
+    """
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+web:
+  approval_timeout_seconds: true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+
+    assert "web.approval_timeout_seconds" in str(excinfo.value)
