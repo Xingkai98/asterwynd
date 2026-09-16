@@ -349,13 +349,20 @@ class SubagentsConfig:
 
 @dataclass(frozen=True)
 class WebConfig:
-    """Web 多 session 入口的 workspace allowlist（issue #117）。
+    """Web 多 session 入口的 workspace allowlist（issue #117）与 pending 交互超时。
 
     ``workspaces`` 是允许 Web 会话操作的工作区路径（绝对路径，``~`` 可展开）。
     allowlist 为空时有效集合退化为 {主 workspace}（CLI ``--workspace`` 或 cwd），
     不改变现有默认行为。有效集合在 ``create_app`` 启动时解析一次。
+
+    ``question_timeout_seconds`` / ``approval_timeout_seconds`` 是 pending 交互的
+    **总等待时长**（change web-reconnect-pending-interaction, Q1）：从 pending 建立
+    时开始计时，WebSocket 断开与保持都不影响计时。审批此前无超时，本 change 起
+    缺省 600 秒并按 fail-closed 收尾。
     """
     workspaces: tuple[Path, ...] = ()
+    question_timeout_seconds: int = 300
+    approval_timeout_seconds: int = 600
 
 
 @dataclass(frozen=True)
@@ -1310,7 +1317,19 @@ def _parse_web_config(raw: Any, path: Path) -> WebConfig:
             continue
         seen.add(ws)
         normalized.append(ws)
-    return WebConfig(workspaces=tuple(normalized))
+    return WebConfig(
+        workspaces=tuple(normalized),
+        question_timeout_seconds=_validate_positive_int(
+            mapping.get("question_timeout_seconds", 300),
+            "web.question_timeout_seconds",
+            path=path,
+        ),
+        approval_timeout_seconds=_validate_positive_int(
+            mapping.get("approval_timeout_seconds", 600),
+            "web.approval_timeout_seconds",
+            path=path,
+        ),
+    )
 
 
 def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:

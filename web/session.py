@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -100,16 +101,54 @@ def build_timeline_payload(session: "AgentSession") -> dict:
     }
 
 
+#: pending 交互的超时缺省（change web-reconnect-pending-interaction, Q1）：
+#: 审批 600s / 提问 300s，均可由 ``WebConfig`` 覆盖（总等待时长语义）。
+DEFAULT_APPROVAL_TIMEOUT_SECONDS = 600
+DEFAULT_QUESTION_TIMEOUT_SECONDS = 300
+
+
+@dataclass
+class _PendingInteraction:
+    """一条等待用户响应的 pending 交互：稳定 id + future + 可重放载荷。
+
+    ``payload`` 是建立时的 ``to_event_data()`` 快照，供 WebSocket 重连补发；
+    它与 id 存在同一对象里，读取时一次取整条记录，不存在「读到 id、读不到载荷」
+    的中间态（M7）。
+    """
+
+    interaction_id: str
+    future: asyncio.Future
+    payload: dict
+
+
 class WebApprovalHandler:
-    def __init__(self, session_id: str):
+    def __init__(
+        self,
+        session_id: str,
+        *,
+        timeout_seconds: float | None = DEFAULT_APPROVAL_TIMEOUT_SECONDS,
+    ):
         self.session_id = session_id
-        self._pending: tuple[str, asyncio.Future[ApprovalResponse]] | None = None
+        #: 总等待时长（秒）；``None`` 表示不设超时（仅供测试/特殊场景）。
+        self.timeout_seconds = timeout_seconds
+        self._pending: _PendingInteraction | None = None
 
     @property
     def pending_approval_id(self) -> str | None:
         if self._pending is None:
             return None
-        return self._pending[0]
+        return self._pending.interaction_id
+
+    def pending_approval_payload(self) -> tuple[str, dict] | None:
+        """原子返回 ``(approval_id, payload)`` 快照；无 pending 时返回 ``None``。
+
+        已 resolve（作答/超时/fail_pending）的 pending 不再算 pending——即使
+        ``_pending`` 尚未在 ``finally`` 里清空，也不能被补发出去（终态单向推进）。
+        """
+        pending = self._pending
+        if pending is None or pending.future.done():
+            return None
+        return pending.interaction_id, dict(pending.payload)
 
     async def request_approval(self, request: ApprovalRequest) -> ApprovalResponse:
         if self._pending is not None:
@@ -119,17 +158,30 @@ class WebApprovalHandler:
                 reason="another approval request is already pending",
             )
         future: asyncio.Future[ApprovalResponse] = asyncio.get_running_loop().create_future()
-        self._pending = (request.approval_id, future)
+        self._pending = _PendingInteraction(
+            interaction_id=request.approval_id,
+            future=future,
+            payload=request.to_event_data(),
+        )
         try:
-            return await future
+            if self.timeout_seconds is None:
+                return await future
+            return await asyncio.wait_for(future, timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            # fail-closed：超时绝不等于「同意」，绝不放行不可逆操作（调研 finding 7/8）。
+            return ApprovalResponse(
+                approval_id=request.approval_id,
+                status=ApprovalDecisionStatus.UNAVAILABLE,
+                reason=f"approval timed out after {self.timeout_seconds}s",
+            )
         finally:
-            if self._pending is not None and self._pending[0] == request.approval_id:
+            if self._pending is not None and self._pending.interaction_id == request.approval_id:
                 self._pending = None
 
     def submit_response(self, approval_id: str, decision: str) -> bool:
-        if self._pending is None or self._pending[0] != approval_id:
+        if self._pending is None or self._pending.interaction_id != approval_id:
             return False
-        future = self._pending[1]
+        future = self._pending.future
         if future.done():
             return False
         normalized = decision.strip().lower()
@@ -149,13 +201,13 @@ class WebApprovalHandler:
         return True
 
     def fail_pending(self, reason: str) -> None:
-        if self._pending is None:
+        pending = self._pending
+        if pending is None:
             return
-        approval_id, future = self._pending
-        if not future.done():
-            future.set_result(
+        if not pending.future.done():
+            pending.future.set_result(
                 ApprovalResponse(
-                    approval_id=approval_id,
+                    approval_id=pending.interaction_id,
                     status=ApprovalDecisionStatus.UNAVAILABLE,
                     reason=reason,
                 )
@@ -163,9 +215,15 @@ class WebApprovalHandler:
 
 
 class WebQuestionHandler:
-    def __init__(self, session_id: str):
+    def __init__(
+        self,
+        session_id: str,
+        *,
+        timeout_seconds: float | None = DEFAULT_QUESTION_TIMEOUT_SECONDS,
+    ):
         self.session_id = session_id
-        self._pending: tuple[str, asyncio.Future] | None = None
+        self.timeout_seconds = timeout_seconds
+        self._pending: _PendingInteraction | None = None
         self._event_sender = None
 
     def set_event_sender(self, sender):
@@ -173,7 +231,14 @@ class WebQuestionHandler:
 
     @property
     def pending_question_id(self) -> str | None:
-        return self._pending[0] if self._pending else None
+        return self._pending.interaction_id if self._pending else None
+
+    def pending_question_payload(self) -> tuple[str, dict] | None:
+        """原子返回 ``(question_id, payload)`` 快照；无 pending 时返回 ``None``。"""
+        pending = self._pending
+        if pending is None or pending.future.done():
+            return None
+        return pending.interaction_id, dict(pending.payload)
 
     async def ask_question(self, question: Question) -> QuestionAnswer:
         if self._pending is not None:
@@ -182,36 +247,45 @@ class WebQuestionHandler:
                 answer="[Error: another question is already pending]",
             )
         future: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._pending = (question.question_id, future)
+        self._pending = _PendingInteraction(
+            interaction_id=question.question_id,
+            future=future,
+            payload=question.to_event_data(),
+        )
         if self._event_sender:
             self._event_sender({"type": "user_question", "data": question.to_event_data()})
         try:
-            return await asyncio.wait_for(future, timeout=300.0)
+            if self.timeout_seconds is None:
+                return await future
+            return await asyncio.wait_for(future, timeout=self.timeout_seconds)
         except asyncio.TimeoutError:
             return QuestionAnswer(
                 question_id=question.question_id,
-                answer="[Error: question timed out after 5 minutes]",
+                answer=f"[Error: question timed out after {self.timeout_seconds}s]",
             )
         finally:
-            if self._pending and self._pending[0] == question.question_id:
+            if self._pending and self._pending.interaction_id == question.question_id:
                 self._pending = None
 
     def submit_answer(self, question_id: str, answer: str) -> bool:
-        if self._pending is None or self._pending[0] != question_id:
+        if self._pending is None or self._pending.interaction_id != question_id:
             return False
-        _, future = self._pending
+        future = self._pending.future
         if future.done():
             return False
         future.set_result(QuestionAnswer(question_id=question_id, answer=answer))
         return True
 
     def fail_pending(self, reason: str) -> None:
-        if self._pending is None:
+        pending = self._pending
+        if pending is None:
             return
-        qid, future = self._pending
-        if not future.done():
-            future.set_result(
-                QuestionAnswer(question_id=qid, answer=f"[Error: {reason}]")
+        if not pending.future.done():
+            pending.future.set_result(
+                QuestionAnswer(
+                    question_id=pending.interaction_id,
+                    answer=f"[Error: {reason}]",
+                )
             )
 
 
@@ -622,8 +696,16 @@ class SessionManager:
         workspace_root: Path | None = None,
     ) -> AgentSession:
         session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
-        approval_handler = WebApprovalHandler(session_id)
-        question_handler = WebQuestionHandler(session_id)
+        # pending 交互超时（change web-reconnect-pending-interaction, Q1/D6）：
+        # 走 ``WebConfig``，两项都必须可配置（正整数校验在 ``_parse_web_config``）。
+        approval_handler = WebApprovalHandler(
+            session_id,
+            timeout_seconds=self.config.web.approval_timeout_seconds,
+        )
+        question_handler = WebQuestionHandler(
+            session_id,
+            timeout_seconds=self.config.web.question_timeout_seconds,
+        )
         resolved_mode = initial_mode or self.initial_mode
         run_config = AgentRunConfig(mode=resolved_mode)
         session_workspace = (

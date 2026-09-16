@@ -5,6 +5,7 @@ import os
 import pytest
 from unittest.mock import MagicMock
 
+from agent.approval import ApprovalDecisionStatus
 from agent.loop import AgentLoop
 from agent.message import Message
 from agent.llm import LLMResponse, ToolCallDelta
@@ -634,3 +635,115 @@ async def test_run_session_survives_ws_send_failure_after_disconnect():
     assert len(sent) >= 1
     # run 正常结束（未悬空）：锁已释放，可再次 run。
     assert not session.run_lock.locked()
+
+
+# ---------------------------------------------------------------------------
+# pending 交互跨连接存活（change web-reconnect-pending-interaction, tasks 1.x/5.1）
+# ---------------------------------------------------------------------------
+
+
+def _web_question(question_id: str = "q-1") -> "Question":
+    from agent.question import Question
+
+    return Question(
+        question_id=question_id,
+        title="选择分支",
+        body="要走哪条路？",
+        options=["a", "b"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_web_approval_handler_keeps_replayable_payload():
+    """tasks 1.2：pending 审批保留 ``to_event_data()`` 载荷，访问器一次返回 (id, payload)。"""
+    handler = WebApprovalHandler("session-1")
+    request = _web_approval_request("approval-1")
+    pending = asyncio.create_task(handler.request_approval(request))
+    await asyncio.sleep(0)
+
+    snapshot = handler.pending_approval_payload()
+    assert snapshot is not None
+    approval_id, payload = snapshot
+    assert approval_id == "approval-1"
+    assert payload == request.to_event_data()
+
+    handler.submit_response("approval-1", "approved")
+    await pending
+    # 作答后（future 已 done）不再处于 pending 集合 → 不补发。
+    assert handler.pending_approval_payload() is None
+
+
+@pytest.mark.asyncio
+async def test_web_question_handler_keeps_replayable_payload():
+    """tasks 1.1：pending 提问保留载荷；访问器原子返回 (question_id, payload)。"""
+    from web.session import WebQuestionHandler
+
+    handler = WebQuestionHandler("session-1")
+    question = _web_question("q-1")
+    pending = asyncio.create_task(handler.ask_question(question))
+    await asyncio.sleep(0)
+
+    snapshot = handler.pending_question_payload()
+    assert snapshot is not None
+    question_id, payload = snapshot
+    assert question_id == "q-1"
+    assert payload == question.to_event_data()
+
+    handler.submit_answer("q-1", "a")
+    await pending
+    assert handler.pending_question_payload() is None
+
+
+@pytest.mark.asyncio
+async def test_pending_payload_accessors_return_none_when_idle():
+    """无 pending 时访问器返回 None（防补发凭空造卡片）。"""
+    from web.session import WebQuestionHandler
+
+    assert WebApprovalHandler("s").pending_approval_payload() is None
+    assert WebQuestionHandler("s").pending_question_payload() is None
+
+
+@pytest.mark.asyncio
+async def test_web_approval_handler_times_out_fail_closed():
+    """tasks 1.3：审批超时一律 fail-closed（UNAVAILABLE），不再无限等待（Q1）。"""
+    handler = WebApprovalHandler("session-1", timeout_seconds=0.05)
+
+    response = await handler.request_approval(_web_approval_request("approval-1"))
+
+    assert response.approval_id == "approval-1"
+    assert response.status is ApprovalDecisionStatus.UNAVAILABLE
+    assert "timed out" in response.reason
+    # 超时后槽位释放，下一个审批可以建立。
+    assert handler.pending_approval_payload() is None
+
+
+@pytest.mark.asyncio
+async def test_web_question_handler_times_out():
+    """tasks 1.3：提问超时走配置值，返回 [Error: ... timed out ...]。"""
+    from web.session import WebQuestionHandler
+
+    handler = WebQuestionHandler("session-1", timeout_seconds=0.05)
+
+    answer = await handler.ask_question(_web_question("q-1"))
+
+    assert answer.question_id == "q-1"
+    assert answer.answer.startswith("[Error:")
+    assert "timed out" in answer.answer
+    assert handler.pending_question_payload() is None
+
+
+@pytest.mark.asyncio
+async def test_handler_timeout_does_not_reset_on_disconnect():
+    """tasks 1.3 / 5.1：超时是「总等待时长」，连接断开不重置计时。
+
+    用「先等一段时间再重连/无重连」的最短路径固化：pending 建立后即使没人作答，
+    到期即失败，不会因为「期间发生过一次未知的断连」而延长。
+    """
+    handler = WebApprovalHandler("session-1", timeout_seconds=0.05)
+    pending = asyncio.create_task(handler.request_approval(_web_approval_request("approval-1")))
+    await asyncio.sleep(0.02)
+    # 断连语义在这个 change 里退化为「什么都不做」（不 fail、不重置计时）。
+    await asyncio.sleep(0.05)
+
+    response = await pending
+    assert response.status is ApprovalDecisionStatus.UNAVAILABLE

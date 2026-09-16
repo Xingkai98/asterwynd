@@ -7,11 +7,11 @@
 
 ## 1. pending 载荷保留与超时（D1/D2/D6）
 
-- [ ] 1.1 `WebQuestionHandler` 保留 `Question.to_event_data()` 载荷，`_pending` 结构扩展；新增**原子**访问器（一次返回 `(question_id, payload)` 快照，不做两次读取）；`question_id` 不变。
-- [ ] 1.2 `WebApprovalHandler` 保留 `ApprovalRequest.to_event_data()` 载荷；新增原子访问器（一次返回 `(approval_id, payload)`）。
-- [ ] 1.3 两个 handler 的等待改为显式超时（`asyncio.wait_for`）：审批缺省 **600s**、提问缺省 300s，都从 pending 建立时计时（连接存亡不影响计时），超时一律 fail-closed（`UNAVAILABLE` / `[Error: ... timed out ...]`）。
-- [ ] 1.4 `WebConfig` 新增 `question_timeout_seconds`（缺省 300）/ `approval_timeout_seconds`（缺省 **600**），`_parse_web_config` 补正整数校验（`_parse_positive_int`），`create_session` 传入 handler；加配置解析测试。
-- [ ] 1.5 `reset` / `cancel` 仍立即 `fail_pending`（既有语义）；`fail_pending` 清理 `_pending` 时机与既有 `finally` 保持一致，避免 race。
+- [x] 1.1 `WebQuestionHandler` 保留 `Question.to_event_data()` 载荷，`_pending` 结构扩展；新增**原子**访问器（一次返回 `(question_id, payload)` 快照，不做两次读取）；`question_id` 不变。
+- [x] 1.2 `WebApprovalHandler` 保留 `ApprovalRequest.to_event_data()` 载荷；新增原子访问器（一次返回 `(approval_id, payload)`）。
+- [x] 1.3 两个 handler 的等待改为显式超时（`asyncio.wait_for`）：审批缺省 **600s**、提问缺省 300s，都从 pending 建立时计时（连接存亡不影响计时），超时一律 fail-closed（`UNAVAILABLE` / `[Error: ... timed out ...]`）。
+- [x] 1.4 `WebConfig` 新增 `question_timeout_seconds`（缺省 300）/ `approval_timeout_seconds`（缺省 **600**），`_parse_web_config` 补正整数校验（`_parse_positive_int`），`create_session` 传入 handler；加配置解析测试。
+- [x] 1.5 `reset` / `cancel` 仍立即 `fail_pending`（既有语义）；`fail_pending` 清理 `_pending` 时机与既有 `finally` 保持一致，避免 race。
 
 ## 2. run 事件出口 session 化（D3/D7/D8）
 
