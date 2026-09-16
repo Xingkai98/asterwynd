@@ -77,7 +77,10 @@
 
 ## User Confirmation
 
-（待主 agent 停轮把 `## Open Questions` 逐条抛给用户；用户答复后按 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>` 格式追加于此。）
+- **Q1**: 用户答复：采用「总等待时长」语义（选项 a），但缺省值改为 **600 秒（10 分钟）**，且必须是**可配置参数**（`WebConfig.approval_timeout_seconds`，正整数校验）；提问超时同样抽成可配置项。连接断开与保持不影响计时（计时从 pending 建立时开始）。；确认时间: 2026-09-17
+- **Q2**: 用户答复：接受断连期间 in-flight 流式文本缺失（选项 a，design 现状）；但必须先把 `session_history` 不清 `currentAssistantMsg` 导致增量写进僵尸 DOM 的缺陷修掉（D5/M12）。；确认时间: 2026-09-17
+- **Q3**: 用户答复：要求**各场景行为一致**（选项 b）——不能出现「run 活着时其他端卡片失效、run 结束时其他端卡片停在 pending」这种不一致。所有作答路径都必须经广播通道，让同一 session 的所有连接在任何情况下都收到一致的终态。；确认时间: 2026-09-17
+- **Q4**: 用户答复：接受断连后 run 继续跑完（选项 a），并同时采纳选项 c——把前端的 "another run is already in progress" 原始英文文案改成用户可读的中文提示。；确认时间: 2026-09-17
 
 ## Codex Recommendations
 

@@ -52,15 +52,16 @@ Web UI 的一条 WebSocket 连接同时承担三件事：接收用户消息、�
 
 `receive_approval_responses` 的 `except` 分支不再调用 `fail_pending("websocket disconnected")`。断开只意味着「本连接的接收端没了」，不意味着用户放弃。
 
-放弃由**显式超时**驱动。**超时的具体口径由 grill Q1 停轮确认后定稿**（见下），三种候选：
+放弃由**显式超时**驱动（grill Q1 用户确认，2026-09-17）：
 
-- **(a) 总等待时长**：审批新增 `asyncio.wait_for(future, timeout=approval_timeout_seconds)`（缺省 300s，与提问对齐），计时从 pending 建立时开始，连接存亡不影响计时。提问保留既有 5 分钟 `wait_for` 并抽成 `WebConfig.question_timeout_seconds`。
-- **(b) 断连宽限窗口**：连续连通时无限等待；仅在断连后启动一个宽限计时，超时才失败。
-- **(c) 审批继续无限等待**：只对提问保留超时，审批零回归（但保留「无人重连则 run 永久挂住」的风险）。
+- **总等待时长语义**：审批新增 `asyncio.wait_for(future, timeout=approval_timeout_seconds)`，**缺省 600 秒（10 分钟）**；提问保留既有超时并抽成 `WebConfig.question_timeout_seconds`（缺省 300s）。计时从 pending 建立时开始，连接断开与保持不影响计时。
+- **两项都必须可配置**：用户明确要求「要是可以配置的参数」，因此走 `WebConfig` 而非硬编码；配正整数校验（D6）。
+- 超时一律 **fail-closed**（判定 `unavailable`，绝不放行不可逆操作）——调研 finding 7/8 的共同底线。
+- `reset` / `cancel` / run 真正结束仍立即 `fail_pending`（既有语义不变）。
 
-无论选哪种，`reset` / `cancel` / run 真正结束仍立即 `fail_pending`（既有语义不变），且超时一律 **fail-closed**（判定 `unavailable`，绝不放行不可逆操作）——这是调研 finding 7/8 的共同底线。
+**这是一次有意的行为变更**：审批从「无超时、可无限等待」变为「缺省 10 分钟超时」。对今天「桌面端挂着卡片 10 分钟以上回来点批准仍生效」的用户，改后会得到 `unavailable`。用户已知悉并选择该口径（换取「无双观察者时 run 永久挂住」的消除）。proposal 的 Impact Analysis 兼容性行与 Risks 必须显式标注；README 文档同步。
 
-**为什么倾向给审批加超时而不是让它无限等**：审批当前无超时，一旦断连后无人重连，`await future` 会让 run 永久挂住，占用 `run_lock` 且用户无从察觉。业界（Ably）默认不施加超时并建议应用层自行清理 stale pending；Temporal / agent-governance-toolkit 等默认 300s。**但**注意这与 issue #195 原文「或改为『断开后留一段可恢复窗口』」的措辞可能错位，且「总等待时长」对今天「挂着卡片 10 分钟回来点批准」的桌面用户是行为回归——这是必须由用户拍板的点（grill Q1）。若最终维持「总时长」语义，Risks 必须显式标注该行为变更，并在 proposal 的 Impact Analysis 兼容性行补一句。
+**为什么不让审批无限等**：审批当前无超时，一旦断连后无人重连，`await future` 会让 run 永久挂住、占用 `run_lock` 且用户无从察觉。业界（Ably）默认不施加超时并建议应用层自行清理 stale pending；Temporal / agent-governance-toolkit 等默认 300s。本 change 取 10 分钟，比业界常见缺省更宽松，兼顾移动端「离开一会儿」的真实场景。
 
 ### D3: run 事件出口 session 化（`SessionEventChannel`）
 
@@ -100,19 +101,20 @@ session_resumed → session_history → pending 卡片补发 → workflow 快照
 - **清空消息区的两条路径都要清卡片注册表（M6）**：`renderHistory`（`chat.js:623-631`）与 `command_result` 的 `/clear` 分支（`chat.js:471-473`）都执行 `messagesEl.textContent = ''`，两处都要同步 `approvalCards.clear()` / `questionCards.clear()`，否则留下指向已移除 DOM 的僵尸条目。
 - **`session_history` 分支要重置 `currentAssistantMsg = null`（M12）**：`renderHistory` 清空 DOM 但不重置 `currentAssistantMsg`，随后到达的 `assistant_delta` 会 `appendAssistantContent(currentAssistantMsg, ...)` 写进**已脱离文档的僵尸节点**（`chat.js:503-513`），用户重连后完全看不到流式增量。这是比重连后「流式过程不可回放」更严重的可见缺陷，必须在 `session_history` 分支修掉。
 - **ws 未就绪时的反馈要「先判连接、再改 UI」（M5）**：当前 `chat.js:980-982` 先把按钮置为 `Submitted` 再调用 `sendQuestionAnswer`，后者在 ws 非 OPEN 时静默 return——用户看到假的「已提交」。审批侧 `chat.js:885-889` 同理。正确顺序是**先检查 `ws.readyState`，未就绪则给出可见提示并保持卡片可提交，就绪才置 UI 状态并发消息**。
+- **run 占用提示改用户可读文案（grill Q4 用户确认）**：断连后 run 继续跑，用户重连后发新消息会收到服务端原始英文 `another run is already in progress`（`web/session.py:744`），前端 `chat.js:549-553` 直接把它插成错误消息。用户确认改为可读提示（例如「上一条消息仍在执行中，请稍候再发送」），且该提示**只回发起连接**（D3/M3），不广播。
 
 去重的 key 用 `approval_id` / `question_id`（服务端生成的 uuid，天然稳定），与业界「按稳定 request_id 建立卡片、已决请求自然不重放」一致。
 
 ### D6: 配置项
 
-`WebConfig`（`agent/config.py:351`）新增（**具体项取决于 D2 的 Q1 口径选择**）：
+`WebConfig`（`agent/config.py:351`）新增（grill Q1 用户确认：两项都必须可配置）：
 
 | 配置项 | 缺省 | 含义 |
 |--------|------|------|
 | `question_timeout_seconds` | `300` | 提问等待用户作答的上限（原为硬编码 300） |
-| `approval_timeout_seconds` | `300` | 审批等待用户决定的上限（原为无超时；若 Q1 选 (c) 则此项不存在） |
+| `approval_timeout_seconds` | `600` | 审批等待用户决定的上限（原为无超时） |
 
-若采用「总等待时长」语义：连接断开与保持对计时没有影响（计时从 pending 建立时开始），语义更简单、也避免「断连重置计时」导致的无限延长。
+采用「总等待时长」语义：连接断开与保持对计时没有影响（计时从 pending 建立时开始），避免「断连重置计时」导致的无限延长。
 
 **必须做正整数校验（M15）**：`_parse_web_config`（`agent/config.py:1294`）目前只解析 `workspaces`；新配置项配 0 或负值会退化成「立即超时」。需按既有 `_parse_positive_int`（用法见 `agent/config.py:526-530`）补校验，并加配置测试。
 
@@ -124,7 +126,9 @@ run 事件出口从「单订阅者、最后连接胜出」改为**多订阅者�
 
 作答仲裁沿用既有的一次性语义：`submit_response` / `submit_answer` 对已 done 的 future 返回 `False`，后提交者得到 `unavailable`（**先答者胜**），不新增仲裁状态。
 
-**终态广播的保证边界（M4/Q3）**：现状有两条作答路径——run 存活时走 `web/session.py:842-867` 的 run 内接收循环（终态 `approval_response` 由 `agent/loop.py` 发进事件流，天然能广播）；run 不在时走 `web/server.py:533-564` 的 inline 分支，它只 `ws.send_json` 回**提交者**。因此「作答成功后所有连接都收到终态」**只在 run 存活时天然成立**。二选一（grill Q3）：让 inline 分支也经 channel 广播，或在 design + spec delta 收窄保证为「run 存活时保证广播，run 不在时不保证其他连接收到终态」。**倾向后者**（改动小、且 run 不在时的陈旧卡片本就是次要场景），但需用户确认。
+**终态广播在所有路径上一致（grill Q3 用户确认，2026-09-17）**：现状有两条作答路径——run 存活时走 `web/session.py:842-867` 的 run 内接收循环（终态 `approval_response` 由 `agent/loop.py` 发进事件流，天然能广播）；run 不在时走 `web/server.py:533-564` 的 inline 分支，它只 `ws.send_json` 回**提交者**。用户明确要求「各个场景要一致」——不能出现「run 活着时其他端卡片失效、run 结束时其他端卡片停在 pending」。
+
+因此**两个分支都必须经广播通道**：inline 分支的 `approval_response` / `user_answer`（提交回执）与终态通知都改为经 session 级 channel 广播给该 session 的所有连接，而不只回提交者。`web/server.py` 的 inline 分支需要拿到 session 的 channel（而不是只持有 `ws`）。这是比「收窄保证」更大的改动量，但用户要求行为一致，采纳之。
 
 `GraphEventForwarder` 本 change **不动**（保持单订阅者 rebind）——它是 workflow 图的既有设计，改动它超出本 issue 范围；若后续要统一，另立 change。
 
@@ -143,16 +147,20 @@ issue #193 的修复（`ws_send` 失败时 `break` 而不是让异常逃逸）�
 开发前已完成独立零记忆 subagent 的设计追问（`/grill`，产出 `reviews/grill-design.md`，run `grill-web-reconnect-pending-interaction-2026-09-16`），并停轮逐项获得用户确认（记录于该文件 `## User Confirmation` 节）。
 
 - 已确认（grill Confirmed Decisions）：pending 载荷保留与重放且不新增第二槽位；run 事件出口新写对象不复用 `GraphEventForwarder`；补发排在 `session_history` 之后；按稳定 uuid 幂等去重 + 清空注册表；多连接广播而非最后连接胜出；保留 issue #193 测试断言。
-- 必须修改项（已整合进 D2/D3/D4/D5/D6/D8 与 Risks）：断连检测点唯一（session 级 receiver）+ drain 循环永不退出；`run_session` 早期返回走定点发送；终态广播的保证边界；`session_history` 重置 `currentAssistantMsg`；ws 未就绪「先判连接再改 UI」；补发载荷原子读取；`remove_session` 统一清理；配置正整数校验；`tasks.md` 补 benchmark smoke。
-- 待用户拍板（grill Open Questions，见 `grill-design.md`）：Q1 审批超时口径、Q2 断连期间 in-flight 流式文本是否补发、Q3 多 tab 卡片失效的保证边界、Q4 断连后 run 是否继续跑完。
+- 必须修改项（已整合进 D2/D3/D4/D5/D6/D8 与 Risks）：断连检测点唯一（session 级 receiver）+ drain 循环永不退出；`run_session` 早期返回走定点发送；`session_history` 重置 `currentAssistantMsg`；ws 未就绪「先判连接再改 UI」；补发载荷原子读取；`remove_session` 统一清理；配置正整数校验；`tasks.md` 补 benchmark smoke。
+- **用户已拍板（grill Open Questions，2026-09-17，见 `grill-design.md` `## User Confirmation`）**：
+  - Q1 → 总等待时长语义，审批缺省 **600 秒**、提问缺省 300 秒，**两项都可配置**（D2/D6）。
+  - Q2 → 接受断连期间 in-flight 流式文本缺失，但必须先修僵尸 DOM 缺陷（D5/M12）。
+  - Q3 → **各场景行为一致**：所有作答路径都经广播通道，run 不在时的 inline 分支也要广播（D7）。
+  - Q4 → 接受断连后 run 继续跑完，并把 run 占用提示改成用户可读文案（D3/D5）。
 - 剩余风险见下节。
 
 ## Risks / Trade-offs
 
 - **断连期间流式输出不可见（中，已知取舍）**：run 继续跑但没人接收事件，断连期间的 `assistant_delta` / `tool_call` 等丢失；重连后靠 `session_history` 恢复消息，但**流式过程**不可回放。另外 `session_history` 分支必须重置 `currentAssistantMsg`（否则后续增量写进僵尸 DOM，见 D5/M12）。是否把 in-flight 文本一并补发见 grill Q2。
 - **run 生命周期延长（中）**：断连不再杀 run，可能让后台 run 在无观察者的情况下继续消耗 token；用户重连后想发新消息会被 `run_lock` 拒绝（原始英文错误）。缓解：这正是「切后台继续跑」的期望行为；预算/迭代上限仍由 AgentLoop 既有机制约束。完整取舍见 grill Q4。
-- **审批超时的行为回归（中，取决于 Q1）**：若采「总时长 300s」语义，今天「挂 10 分钟回来点批准」的桌面用户会从生效变为 `unavailable`——这是本 change 引入的行为变更，必须在 proposal Impact Analysis 兼容性行与 README 文档同步标注。
-- **多 tab 终态广播不完整（中，取决于 Q3）**：run 不在时的 inline 作答分支只回提交者，其他 tab 的陈旧卡片不会自动失效。收窄保证或扩展广播，见 grill Q3。
+- **审批超时的行为回归（中，Q1 已确认）**：审批从「无超时」变为「缺省 600 秒总时长」。今天「挂 10 分钟以上回来点批准」的桌面用户会从生效变为 `unavailable`——这是本 change 有引入的行为变更，已在 proposal Impact Analysis 兼容性行与 Risks 标注，README 文档同步（tasks 6.5/6.6）。
+- **inline 分支广播的改动量（中，Q3 已确认）**：用户要求各场景一致，`web/server.py:533-564` 的 inline 作答分支必须改为经 session 级 channel 广播，比「收窄保证」改动更大；实现时注意该分支拿到的 `session` 要有可用的 channel，且 run 不在时 channel 可能没有绑定连接（此时广播退化为无操作，不应报错）。
 - **多 tab 竞态（中）**：两个 tab 同时收到同一张卡片、都提交 → 服务端 `submit_*` 对已 done 的 future 返回 `False` → 后提交者得到 `unavailable`。符合「先答者胜」，需在测试中固化。
 - **`unavailable` 语义混淆（低）**：现有 `unavailable` 同时表示「无匹配 pending」「另一个审批已 pending」与新的「超时」，前端一律显示裸英文状态。建议在 design/spec 里区分 reason。
 - **fail-closed 后的连锁耗时（低）**：超时 → `UNAVAILABLE` → run 继续；同一轮多个高风险工具会逐个各等一个超时周期，总耗时可能远超用户预期。

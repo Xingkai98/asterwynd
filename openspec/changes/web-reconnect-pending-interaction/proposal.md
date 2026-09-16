@@ -29,8 +29,8 @@
 - **pending 跨连接存活**：`WebQuestionHandler` / `WebApprovalHandler` 建立 pending 时保留完整可重放载荷；WebSocket 断开 SHALL NOT 让 pending 失败。
 - **run 事件出口 session 化**：新增 session 级、可重新绑定的 run 事件出口，断连只解绑出口、不终止 run；重连重新绑定后事件继续送达。
 - **重连补发**：`GET /ws/<session_id>` 命中同一内存 session 时，在 `session_resumed` 与 `session_history` 之后补发仍 pending 的 `user_question` / `approval_request` 卡片。
-- **放弃语义**：审批从「无限等待」改为有显式超时（与提问对齐、可配置）；`reset`/`cancel`/run 真正结束仍立即失败 pending。
-- **前端卡片幂等**：按 `question_id` / `approval_id` 幂等渲染；`session_history` 重绘时清理卡片注册表；ws 未就绪时提交给出可见反馈而不是静默丢弃。
+- **放弃语义**：审批从「无限等待」改为有显式超时（缺省 **600 秒**总等待时长、可配置，fail-closed）；`reset`/`cancel`/run 真正结束仍立即失败 pending。
+- **前端卡片幂等**：按 `question_id` / `approval_id` 幂等渲染；`session_history` 重绘时清理卡片注册表并重置 `currentAssistantMsg`（修僵尸 DOM）；ws 未就绪时提交给出可见反馈而不是静默丢弃。
 
 ## Capabilities
 
@@ -75,5 +75,5 @@
 | `web/static/chat.js` | `renderApprovalRequest` / `renderQuestionCard` 幂等；`renderHistory` 清理卡片注册表；ws 未就绪时提交给出可见反馈。 |
 | `agent/config.py` | `WebConfig` 新增 pending 可恢复窗口/超时配置项（缺省值见 design.md）。 |
 | 测试 | 新增 `tests/web_tests/` 重连补发测试（套 `test_reconnect_resends_running_snapshot` 骨架），更新 issue #193 回归测试语义。 |
-| 兼容性 | 事件形状 `{"type": ..., "data": {...}}` 与 `session_id` 归属约定不变；不触及 AgentLoop 主循环协议与 tool-call 消息链。 |
-| 安全 | 审批是「同意」的唯一来源，补发的卡片 SHALL NOT 被解释为已批准；已答请求 SHALL NOT 被重放成可再次执行。 |
+| 兼容性 | 事件形状 `{"type": ..., "data": {...}}` 与 `session_id` 归属约定不变；不触及 AgentLoop 主循环协议与 tool-call 消息链。**行为变更**：审批从「无超时」变为「缺省 600 秒超时」——今天挂着卡片 10 分钟以上回来点批准仍生效的桌面用户，改后会得到 `unavailable`；该变更由用户确认（grill Q1），需同步 README / architecture 文档。 |
+| 安全 | 审批是「同意」的唯一来源，补发的卡片 SHALL NOT 被解释为已批准；已答请求 SHALL NOT 被重放成可再次执行；超时一律 fail-closed，绝不放行不可逆操作。 |

@@ -51,32 +51,39 @@ WebSocket 重连（`GET /ws/<session_id>` 命中同一内存 session）时，服
 
 ### Requirement: pending 交互的放弃语义
 
-pending 审批 SHALL 有显式的可恢复窗口（配置项，缺省值在 design.md 确定）：窗口内 WebSocket 断开 SHALL NOT 使其失败；窗口到期且仍无用户响应时，服务端 SHALL 判定为失败（`ApprovalDecisionStatus.UNAVAILABLE`）并让 AgentLoop 继续。
+pending 审批 SHALL 有显式超时：等待时长 SHALL 由配置项 `WebConfig.approval_timeout_seconds` 决定（缺省 600 秒），从 pending 建立时开始计时，连接断开与保持 SHALL NOT 影响计时。超时且仍无用户响应时，服务端 SHALL 判定为失败（`ApprovalDecisionStatus.UNAVAILABLE`，fail-closed）并让 AgentLoop 继续。
 
-提问保留既有的 5 分钟自身超时（`asyncio.wait_for`），该超时 SHALL NOT 因 WebSocket 断开而重置或提前。
+提问保留既有超时，等待时长 SHALL 由配置项 `WebConfig.question_timeout_seconds` 决定（缺省 300 秒），该超时 SHALL NOT 因 WebSocket 断开而重置或提前。
 
 会话被显式重置（`reset`）或取消（`cancel`）、或 run 真正结束时，pending SHALL 立即失败（保持既有语义）。
 
-#### Scenario: 可恢复窗口内断连后仍可作答
+#### Scenario: 超时窗口内断连后仍可作答
 
 - **GIVEN** 一个 Web session 有 pending approval，WebSocket 断开
-- **WHEN** 用户在可恢复窗口内重连并提交决定
+- **WHEN** 用户在超时窗口内重连并提交决定
 - **THEN** 该决定 SHALL 被接受并路由回 AgentLoop
 - **AND** AgentLoop SHALL 按该决定执行或拒绝工具
 
-#### Scenario: 超过可恢复窗口判定失败
+#### Scenario: 超过超时窗口判定失败
 
 - **GIVEN** 一个 Web session 有 pending approval，WebSocket 断开且用户始终未重连
-- **WHEN** 可恢复窗口到期
+- **WHEN** `approval_timeout_seconds` 到期
 - **THEN** pending approval SHALL 被判定为 `unavailable`
 - **AND** AgentLoop SHALL 收到失败答复并继续运行，SHALL NOT 永久挂起
+
+#### Scenario: 超时时长可配置
+
+- **GIVEN** 配置中将 `approval_timeout_seconds` / `question_timeout_seconds` 设为某正整数
+- **WHEN** pending 审批或提问建立
+- **THEN** 其超时窗口 SHALL 按该配置值生效
+- **AND** 非法值（0 / 负数 / 非整数）SHALL 被拒绝并给出结构化错误
 
 #### Scenario: reset 或 cancel 立即失败
 
 - **GIVEN** 一个 Web session 有 pending 提问或审批
 - **WHEN** 收到 `reset` 或 `cancel`
 - **THEN** pending SHALL 立即被判定为失败
-- **AND** SHALL NOT 等待可恢复窗口到期
+- **AND** SHALL NOT 等待超时窗口到期
 
 #### Scenario: 多连接首答者胜
 
@@ -85,6 +92,13 @@ pending 审批 SHALL 有显式的可恢复窗口（配置项，缺省值在 desi
 - **THEN** 先提交的决定 SHALL 胜出并路由回 AgentLoop
 - **AND** 后提交者 SHALL 收到 `unavailable`，SHALL NOT 覆盖先到的决定
 - **AND** 作答成功后所有连接 SHALL 收到该审批的终态事件
+
+#### Scenario: 各作答路径的终态广播行为一致
+
+- **GIVEN** 一个 Web session 有多条连接，存在 pending 审批
+- **WHEN** 一条连接提交决定，无论 run 是否仍在执行
+- **THEN** 所有连接 SHALL 收到一致的终态事件
+- **AND** SHALL NOT 出现「run 存活广播、run 不存活只回提交者」的不一致
 
 ### Requirement: run 事件出口跨连接存活
 
