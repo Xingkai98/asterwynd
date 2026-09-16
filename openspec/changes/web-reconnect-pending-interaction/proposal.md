@@ -75,5 +75,5 @@
 | `web/static/chat.js` | `renderApprovalRequest` / `renderQuestionCard` 幂等；`renderHistory` 清理卡片注册表；ws 未就绪时提交给出可见反馈。 |
 | `agent/config.py` | `WebConfig` 新增 pending 可恢复窗口/超时配置项（缺省值见 design.md）。 |
 | 测试 | 新增 `tests/web_tests/` 重连补发测试（套 `test_reconnect_resends_running_snapshot` 骨架），更新 issue #193 回归测试语义。 |
-| 兼容性 | 事件形状 `{"type": ..., "data": {...}}` 与 `session_id` 归属约定不变；不触及 AgentLoop 主循环协议与 tool-call 消息链。**行为变更**：审批从「无超时」变为「缺省 600 秒超时」——今天挂着卡片 10 分钟以上回来点批准仍生效的桌面用户，改后会得到 `unavailable`；该变更由用户确认（grill Q1），需同步 README / architecture 文档。 |
+| 兼容性 | 事件形状 `{"type": ..., "data": {...}}` 与 `session_id` 归属约定不变；不触及 AgentLoop 主循环协议与 tool-call 消息链。**行为变更**：审批从「无超时」变为「缺省 600 秒超时」，语义是**总等待时长**（从 pending 建立时起算，连接断开与保持都不影响计时，不会因断连重置而延长）——今天挂着卡片 10 分钟以上回来点批准仍生效的桌面用户，改后会得到 `unavailable`；提问超时同步从硬编码 300 秒抽为可配置项（缺省值不变）。两项均由用户确认（grill Q1），已在 README / README_EN / docs/architecture.md 同步。 |
 | 安全 | 审批是「同意」的唯一来源，补发的卡片 SHALL NOT 被解释为已批准；已答请求 SHALL NOT 被重放成可再次执行；超时一律 fail-closed，绝不放行不可逆操作。 |
