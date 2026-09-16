@@ -289,6 +289,206 @@ class WebQuestionHandler:
             )
 
 
+class ConnectionHandle:
+    """一条 WebSocket 连接在 session 事件出口上的句柄（D3）。
+
+    出口按句柄而不是裸 callable 管理连接：per-connection detach（M2）与定点发送
+    （M3，run 占用错误只回发起连接）都需要「能定位到具体连接」。``detach()``
+    是幂等的，重复调用不报错。
+    """
+
+    def __init__(self, send, *, label: str = ""):
+        self.send = send
+        self.label = label
+        self._channel: "SessionEventChannel | None" = None
+        self._detached = False
+
+    @property
+    def detached(self) -> bool:
+        return self._detached
+
+    def detach(self) -> None:
+        """把本连接从事务出口摘掉（幂等）。"""
+        self._detached = True
+        channel = self._channel
+        if channel is not None:
+            channel.detach(self)
+
+    def __repr__(self) -> str:  # pragma: no cover - 调试辅助
+        return f"ConnectionHandle(label={self.label!r}, detached={self._detached})"
+
+
+class SessionEventChannel:
+    """session 级、跨 run 存活的 run 事件出口（D3/D7）。
+
+    与 ``GraphEventForwarder`` 的区别：
+
+    - forwarder 的 sink 语义是「同步、绝不抛、失败即丢 + 按 workflow 分桶合并」，
+      适合可观测性的图快照；run 事件需要**顺序投递**与 per-connection 失败感知，
+      因此单独实现而不是把合并逻辑硬塞进 run 事件路径。
+    - 出口支持**多订阅者广播**（D7）：同一 session 的多 tab / 多设备都收到事件，
+      某条连接断开只把自己摘掉，不影响其他连接。``GraphEventForwarder.rebind``
+      是最后连接胜出，沿用会导致第二个 tab 抢走第一个的事件流。
+    - ``send_to`` 提供**定点发送**：``run_session`` 早期返回的「另一个 run 正在
+      执行」错误只回发起连接，走广播会让别的 tab 莫名出现错误消息（M3）。
+
+    ``broadcast`` 永不抛：单条连接失败只摘该连接，drain 循环因此可以「永不退出、
+    永远消费 queue」（M2），断连期间事件被丢弃而不是无界堆积。
+    """
+
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self._handles: list[ConnectionHandle] = []
+
+    @property
+    def handles(self) -> tuple[ConnectionHandle, ...]:
+        return tuple(self._handles)
+
+    def __len__(self) -> int:
+        return len(self._handles)
+
+    def attach(self, handle: ConnectionHandle) -> ConnectionHandle:
+        if handle._channel is self and not handle.detached:
+            return handle
+        if handle not in self._handles:
+            self._handles.append(handle)
+        handle._channel = self
+        handle._detached = False
+        return handle
+
+    def detach(self, handle: ConnectionHandle) -> None:
+        try:
+            self._handles.remove(handle)
+        except ValueError:
+            pass
+        handle._detached = True
+
+    def detach_all(self) -> None:
+        """session 被移除（reset / hub DELETE）时统一摘掉所有连接（M11/D8）。"""
+        for handle in self._handles:
+            handle._detached = True
+            handle._channel = None
+        self._handles.clear()
+
+    async def broadcast(self, payload: dict) -> int:
+        """把事件投给当前所有已绑定连接，返回成功条数。永不抛。"""
+        delivered = 0
+        for handle in list(self._handles):
+            if handle.detached:
+                continue
+            try:
+                await handle.send(payload)
+                delivered += 1
+            except Exception as exc:  # noqa: BLE001 - 断连只是这条连接没了，绝不能打断 run
+                logger.info(
+                    "session %s: sender dropped (%s): %s",
+                    self.session_id,
+                    handle.label or "ws",
+                    exc,
+                )
+                self.detach(handle)
+        return delivered
+
+    async def send_to(self, handle: ConnectionHandle | None, payload: dict) -> bool:
+        """定点发送给一条连接（M3）。句柄不可用时返回 ``False``，不抛。"""
+        if handle is None or handle.detached:
+            return False
+        try:
+            await handle.send(payload)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.info(
+                "session %s: point send failed (%s): %s",
+                self.session_id,
+                handle.label or "ws",
+                exc,
+            )
+            self.detach(handle)
+            return False
+
+
+def fail_pending_interactions(session: "AgentSession", reason: str) -> None:
+    """立刻把该 session 的全部 pending 交互判失败（reset/cancel/run 结束）。"""
+    session.approval_handler.fail_pending(reason)
+    session.question_handler.fail_pending(reason)
+
+
+async def route_interaction_message(
+    session: "AgentSession",
+    raw: dict,
+    channel: SessionEventChannel,
+    *,
+    handle: ConnectionHandle | None = None,
+) -> bool:
+    """把一条客户端消息路由给 session 的 pending 交互（Q3：所有路径共用一份逻辑）。
+
+    返回 ``True`` 表示已处理；``False`` 表示不属于交互消息，调用方自行处理。
+
+    终态一律经 ``channel`` 广播：run 存活时（``agent/loop.py`` 发终态）与 run
+    不在时的 inline 回执必须行为一致，不能出现「run 活着其他端卡片失效、run
+    结束其他端卡片停在 pending」的不一致（grill Q3）。
+    """
+    msg_type = raw.get("type")
+    if msg_type == "approval_response":
+        approval_id = str(raw.get("approval_id", "")).strip()
+        decision = str(raw.get("decision", "")).strip()
+        accepted = session.approval_handler.submit_response(approval_id, decision)
+        await channel.broadcast({
+            "type": "approval_response",
+            "data": {
+                "approval_id": approval_id,
+                "status": "received" if accepted else "unavailable",
+                "reason": "received" if accepted else "no matching pending approval",
+                "session_id": session.session_id,
+            },
+        })
+        return True
+    if msg_type == "user_answer":
+        question_id = str(raw.get("question_id", "")).strip()
+        answer = str(raw.get("answer", "")).strip()
+        accepted = session.question_handler.submit_answer(question_id, answer)
+        await channel.broadcast({
+            "type": "user_answer",
+            "data": {
+                "question_id": question_id,
+                "status": "received" if accepted else "unavailable",
+                "session_id": session.session_id,
+            },
+        })
+        return True
+    if msg_type == "ping":
+        pong = {"type": "pong"}
+        if not await channel.send_to(handle, pong):
+            await channel.broadcast(pong)
+        return True
+    return False
+
+
+def build_pending_interaction_payloads(session: "AgentSession") -> list[dict]:
+    """ws 重连补发的 pending 交互卡片列表（tasks 3.1/D4）。
+
+    读取两个 handler 的**原子快照**（``(id, payload)`` 一次取整条记录），因此不会
+    读到「有 id 无载荷」的中间态（M7）。已作答/已超时/已失败的 pending 不在此列
+    （handler 侧按 future.done() 过滤），守住「已决请求不重放」的安全线。
+
+    提问与审批在同一 session 内互斥（同一时刻最多一个 pending），顺序不影响语义。
+    """
+    payloads: list[dict] = []
+    question = session.question_handler.pending_question_payload()
+    if question is not None:
+        _, data = question
+        data = dict(data)
+        data["session_id"] = session.session_id
+        payloads.append({"type": "user_question", "data": data})
+    approval = session.approval_handler.pending_approval_payload()
+    if approval is not None:
+        _, data = approval
+        data = dict(data)
+        data["session_id"] = session.session_id
+        payloads.append({"type": "approval_request", "data": data})
+    return payloads
+
+
 #: 快照合并的时间窗（Q4）：窗内同一 workflow 只保留**最新**一帧。
 GRAPH_SNAPSHOT_WINDOW_S = 0.1
 
@@ -519,6 +719,10 @@ class AgentSession:
         # session 级、跨 run 存活。在 ``_create_session`` 里装到该 session 的
         # ``SubAgentManager.graph_sink`` 上；ws 连上/重连时 ``rebind()``。
         self.graph_forwarder: GraphEventForwarder | None = None
+        # run 事件出口（change ``web-reconnect-pending-interaction``，D3/D7）：
+        # session 级、跨 run 存活，支持多连接广播与定点发送。ws 连上时 attach，
+        # 断开只 detach 该连接、不终止 run。
+        self.event_channel = SessionEventChannel(session_id)
 
     @property
     def current_mode(self) -> str:
@@ -783,6 +987,9 @@ class SessionManager:
         if session is not None and session.graph_forwarder is not None:
             session.graph_forwarder.detach()
             session.graph_forwarder = None
+        # D8/M11：run 事件出口随 session 一起清理，否则旧 ws sender 仍被 session 引用。
+        if session is not None:
+            session.event_channel.detach_all()
         # workspace 显式传入（hub DELETE 端点，冷会话常态）→ 用该 workspace 的
         # store 删快照；缺省（reset 路径）→ 回退内存 session 的 workspace_root。
         if workspace is not None:
@@ -804,41 +1011,93 @@ class SessionManager:
         self,
         session: AgentSession,
         user_message: str,
-        ws_send,
+        ws_send=None,
         ws_receive=None,
         images: list[dict] | None = None,
+        *,
+        handle: ConnectionHandle | None = None,
     ) -> None:
-        """Run the agent with user message, streaming events via WebSocket.
+        """Run the agent with user message, streaming events via the session channel.
 
         同一 session 并发 run 互斥（issue #117 D8）：锁被占用时回发 error
         事件并返回，不阻塞 WS 连接；成功则整个 run 流程（含 queue drain）都
         在锁内，避免两个 WebSocket 并发驱动同一 AgentLoop。
+
+        ``handle`` 是发起本次 run 的连接（``websocket_endpoint`` 传入，已在
+        session 的 ``event_channel`` 上 attach）。直接调用（测试/内嵌）时可只传
+        ``ws_send``，此时临时造一个句柄挂在同一个出口上，run 结束后摘掉；两者都
+        不传表示「本次 run 没有发起连接」，事件广播给出口上已有的连接（可能为空，
+        广播退化为丢弃，不报错）。
         """
-        # Python 3.12 的 asyncio.Lock 无 acquire_nowait；wait_for(timeout=0)
-        # 会因 acquire 的调度延迟误判（锁可用也超时）。改用 locked() 检查 +
-        # acquire()：asyncio 单线程事件循环下，locked() 检查与 acquire() 的
-        # 锁设置之间无 await 点（acquire 对可用锁是同步路径），故无
-        # check-then-act 竞态；锁被占用时在 if 直接拒绝，不会走到 acquire
-        # 阻塞（区别于 async with 写法）。
-        if session.run_lock.locked():
-            await ws_send({
-                "type": "error",
-                "data": {"message": "another run is already in progress"},
-            })
-            return
-        await session.run_lock.acquire()
+        channel = session.event_channel
+        transient_handle: ConnectionHandle | None = None
+        if handle is None and ws_send is not None:
+            transient_handle = channel.attach(ConnectionHandle(ws_send, label="transient"))
+            handle = transient_handle
         try:
-            await self._run_session_locked(
-                session, user_message, ws_send, ws_receive, images
-            )
+            # Python 3.12 的 asyncio.Lock 无 acquire_nowait；wait_for(timeout=0)
+            # 会因 acquire 的调度延迟误判（锁可用也超时）。改用 locked() 检查 +
+            # acquire()：asyncio 单线程事件循环下，locked() 检查与 acquire() 的
+            # 锁设置之间无 await 点（acquire 对可用锁是同步路径），故无
+            # check-then-act 竞态；锁被占用时在 if 直接拒绝，不会走到 acquire
+            # 阻塞（区别于 async with 写法）。
+            if session.run_lock.locked():
+                # 定点发送（M3）：跑到别的 tab 的 DOM 里会让用户看到莫名其妙的错误。
+                # ``code`` 供前端映射成用户可读文案（Q4）。
+                await channel.send_to(handle, {
+                    "type": "error",
+                    "data": {
+                        "message": "another run is already in progress",
+                        "code": "run_in_progress",
+                    },
+                })
+                return
+            await session.run_lock.acquire()
+            try:
+                await self._run_session_locked(
+                    session, user_message, channel, handle, ws_receive, images
+                )
+            finally:
+                session.run_lock.release()
         finally:
-            session.run_lock.release()
+            if transient_handle is not None:
+                channel.detach(transient_handle)
+
+    async def _receive_interactions(
+        self,
+        session: AgentSession,
+        ws_receive,
+        channel: SessionEventChannel,
+        handle: ConnectionHandle | None,
+    ) -> None:
+        """消费本连接的消息直到断开；断开只退出本循环，不失败 pending（D2/D3）。
+
+        断连检测点唯一（M2）：``websocket_endpoint`` 在 ``await run_session`` 期间
+        不会调用 ``ws.receive_json()``，FastAPI 不会抛 ``WebSocketDisconnect``——这里
+        的 ``await ws_receive()`` 抛异常就是唯一可靠的断连信号。
+        """
+        try:
+            while True:
+                raw = await ws_receive()
+                if not await route_interaction_message(
+                    session, raw, channel, handle=handle
+                ):
+                    msg_type = raw.get("type")
+                    if msg_type in {"reset", "cancel"}:
+                        fail_pending_interactions(session, f"{msg_type} received")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 断开不是用户放弃，绝不能 fail_pending
+            logger.info("interaction receiver stopped: %s", exc)
+            if handle is not None:
+                handle.detach()
 
     async def _run_session_locked(
         self,
         session: AgentSession,
         user_message: str,
-        ws_send,
+        channel: SessionEventChannel,
+        handle: ConnectionHandle | None,
         ws_receive=None,
         images: list[dict] | None = None,
     ) -> None:
@@ -912,79 +1171,24 @@ class SessionManager:
 
         agent_task = asyncio.create_task(run_agent())
         receiver_task = None
-
-        async def receive_approval_responses():
-            try:
-                while True:
-                    raw = await ws_receive()
-                    msg_type = raw.get("type")
-                    if msg_type == "approval_response":
-                        approval_id = str(raw.get("approval_id", "")).strip()
-                        decision = str(raw.get("decision", "")).strip()
-                        accepted = session.approval_handler.submit_response(
-                            approval_id,
-                            decision,
-                        )
-                        if not accepted:
-                            await queue.put({
-                                "type": "approval_response",
-                                "data": {
-                                    "approval_id": approval_id,
-                                    "status": "unavailable",
-                                    "reason": "no matching pending approval",
-                                    "session_id": session.session_id,
-                                },
-                            })
-                        continue
-                    if msg_type == "user_answer":
-                        question_id = str(raw.get("question_id", "")).strip()
-                        answer = str(raw.get("answer", "")).strip()
-                        accepted = session.question_handler.submit_answer(question_id, answer)
-                        await queue.put({
-                            "type": "user_answer",
-                            "data": {
-                                "question_id": question_id,
-                                "status": "received" if accepted else "unavailable",
-                            },
-                        })
-                        continue
-                    if msg_type in {"reset", "cancel"}:
-                        session.approval_handler.fail_pending(
-                            f"{msg_type} received while approval was pending"
-                        )
-                        session.question_handler.fail_pending(
-                            f"{msg_type} received while question was pending"
-                        )
-                        continue
-                    if msg_type == "ping":
-                        await queue.put({"type": "pong"})
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.info("Approval response receiver stopped: %s", exc)
-                session.approval_handler.fail_pending("websocket disconnected")
-                session.question_handler.fail_pending("websocket disconnected")
-
         if ws_receive is not None:
-            receiver_task = asyncio.create_task(receive_approval_responses())
+            receiver_task = asyncio.create_task(
+                self._receive_interactions(session, ws_receive, channel, handle)
+            )
 
         try:
+            # drain 永不退出、永远消费 queue（M2）：无绑定连接时事件被丢弃而不是
+            # 无界堆积；单条连接 send 失败只摘该连接（channel.broadcast 内部处理），
+            # SHALL NOT break、SHALL NOT cancel agent_task（D3）。
             while True:
                 event = await queue.get()
                 if event is None:
                     break
-                try:
-                    await ws_send(event)
-                except Exception as exc:  # noqa: BLE001 - ws 断开后继续 send 会抛 RuntimeError，丢弃后续事件让 run 正常收尾（issue #193）
-                    logger.warning(
-                        "websocket send failed for session %s: %s",
-                        session.session_id,
-                        exc,
-                    )
-                    break
+                await channel.broadcast(event)
         finally:
-            session.approval_handler.fail_pending("session run ended")
-            session.question_handler.fail_pending("session run ended")
+            # run 真正结束：pending 立即失败（既有语义，tasks 2.4）。断连走不到这里——
+            # 断连只摘连接，run 继续跑到 sentinel。
+            fail_pending_interactions(session, "session run ended")
             if receiver_task is not None and not receiver_task.done():
                 receiver_task.cancel()
                 try:

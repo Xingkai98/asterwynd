@@ -14,7 +14,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from web.debug_hook import debug_enabled
-from web.session import SessionManager
+from web.session import (
+    ConnectionHandle,
+    SessionManager,
+    build_pending_interaction_payloads,
+    route_interaction_message,
+)
 
 logger = logging.getLogger("asterwynd.web.server")
 
@@ -57,6 +62,29 @@ async def bind_workflow_graph_channel(ws: WebSocket, session) -> None:
                 logger.debug("workflow resume push failed", exc_info=True)
                 break
         forwarder.rebind(ws.send_json)
+
+
+async def bind_pending_interaction_channel(
+    ws: WebSocket, session, handle: ConnectionHandle
+) -> ConnectionHandle:
+    """重连补发仍 pending 的交互卡片，并把本连接绑到 session 事件出口（D4）。
+
+    顺序钉死为 ``session_resumed → session_history → 补发卡片 → workflow 快照``
+    （``websocket_endpoint`` 里按此调用）：``session_history`` 会让前端整体重绘
+    消息区，补发排在它之前会被清掉。钉死顺序（而非「先后皆可」）才能让服务端测试
+    用事件类型序列断言锁住这个不变量（调研 finding 5 的竞态教训）。
+
+    先 attach 再补发：补发期间如果有新事件（例如用户同时在另一个 tab 作答），
+    本连接也能收到终态。补发尽力而为，单条失败不影响后续与连接本身。
+    """
+    session.event_channel.attach(handle)
+    for payload in build_pending_interaction_payloads(session):
+        try:
+            await ws.send_json(payload)
+        except Exception:  # noqa: BLE001 - 补发尽力而为，不影响连接
+            logger.debug("pending interaction replay failed", exc_info=True)
+            break
+    return handle
 
 
 def create_app(
@@ -327,6 +355,12 @@ def create_app(
             })
             await ws.send_json(build_history_payload(session))
 
+        # pending 交互通道接线（change ``web-reconnect-pending-interaction``，D3/D4）：
+        # 把本连接绑到 session 级事件出口并补发仍 pending 的提问/审批卡片。补发
+        # **必须排在 session_history 之后**（上面已发），否则会被前端整体重绘清掉。
+        handle = ConnectionHandle(ws.send_json, label=session_id)
+        await bind_pending_interaction_channel(ws, session, handle)
+
         # workflow 图通道接线（change ``workflow-graph-visualization``，Q1/Q2/Q9）：
         # 1) 把本连接的 ``ws_send`` 绑到 session 级 forwarder——重连命中的是同一个
         #    ``AgentSession``（``resume_session_async`` 内存命中直接复用），所以
@@ -390,8 +424,8 @@ def create_app(
                             await session_manager.run_session(
                                 session,
                                 agent_input,
-                                ws_send=lambda e: ws.send_json(e),
                                 ws_receive=ws.receive_json,
+                                handle=handle,
                             )
                             continue
                         await ws.send_json({
@@ -410,9 +444,9 @@ def create_app(
                     try:
                         await session_manager.run_session(
                             session, user_text,
-                            ws_send=lambda e: ws.send_json(e),
                             ws_receive=ws.receive_json,
                             images=images,
+                            handle=handle,
                         )
                     except ValueError as exc:
                         await ws.send_json({
@@ -530,38 +564,10 @@ def create_app(
                         },
                     })
 
-                elif msg_type == "approval_response":
-                    approval_id = str(raw.get("approval_id", "")).strip()
-                    decision = str(raw.get("decision", "")).strip()
-                    accepted = session.approval_handler.submit_response(
-                        approval_id,
-                        decision,
-                    )
-                    await ws.send_json({
-                        "type": "approval_response",
-                        "data": {
-                            "approval_id": approval_id,
-                            "status": "received" if accepted else "unavailable",
-                            "reason": (
-                                "received"
-                                if accepted
-                                else "no matching pending approval"
-                            ),
-                            "session_id": session.session_id,
-                        },
-                    })
-
-                elif msg_type == "user_answer":
-                    question_id = str(raw.get("question_id", "")).strip()
-                    answer = str(raw.get("answer", "")).strip()
-                    accepted = session.question_handler.submit_answer(question_id, answer)
-                    await ws.send_json({
-                        "type": "user_answer",
-                        "data": {
-                            "question_id": question_id,
-                            "status": "received" if accepted else "unavailable",
-                        },
-                    })
+                elif msg_type in {"approval_response", "user_answer"}:
+                    # Q3：run 不在时也走与 run 内一致的广播路径——只回提交者会让
+                    # 其他连接的卡片永远停在 pending，两个分支行为必须一致。
+                    await route_interaction_message(session, raw, session.event_channel)
 
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
@@ -606,5 +612,9 @@ def create_app(
 
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected: {session_id}")
+        finally:
+            # D3：断开只解绑这条连接——run 继续跑完，pending 保持有效（D2），
+            # 重连后由 ``bind_pending_interaction_channel`` 补发并重新绑定。
+            handle.detach()
 
     return app

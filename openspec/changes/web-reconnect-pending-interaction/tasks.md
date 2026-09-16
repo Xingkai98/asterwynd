@@ -15,21 +15,21 @@
 
 ## 2. run 事件出口 session 化（D3/D7/D8）
 
-- [ ] 2.1 新增 session 级 run 事件出口（`ConnectionHandle{send, receive, detach}` + sender 集合），由 `AgentSession` 持有；run 事件经它广播，且提供定点发送能力。
-- [ ] 2.2 `_run_session_locked` 的 drain 循环改为经出口广播；**drain 永不退出、永远消费 queue**（无界 queue 防内存堆积）；某连接 detach 后只对该连接丢弃，SHALL NOT break / SHALL NOT cancel `agent_task`。
-- [ ] 2.3 **断连检测点唯一**：session 级接收任务 `await ws_receive()` 抛异常时对**该连接** `channel.detach(handle)`，不再 `fail_pending("websocket disconnected")`。（`websocket_endpoint` 在 `await run_session` 期间不会调用 `ws.receive_json`，不能依赖它检测断连。）
-- [ ] 2.4 `finally` 的 `fail_pending("session run ended")` 仅在 run 真正结束时执行（保持），不因断连提前触发。
-- [ ] 2.5 重连时把新连接绑到出口（`websocket_endpoint` 内），多条连接并存时广播；断连期间无观察者的事件允许丢弃。
-- [ ] 2.6 `run_session` 的 `run_lock` 占用错误**只回发起连接**（定点发送），不走广播（否则别的 tab 会莫名出现错误消息）。
-- [ ] 2.7 多连接仲裁：先答者胜、后提交者得 `unavailable`（沿用既有 `submit_*` 一次性语义）。
-- [ ] 2.8 **各作答路径终态广播一致（Q3）**：`web/server.py:533-564` 的 inline 作答分支改为经 session 级 channel 广播（不再只 `ws.send_json` 回提交者），与 run 内路径行为一致；run 不在且无绑定连接时广播退化为无操作、不报错。
-- [ ] 2.9 `SessionManager.remove_session` 同步摘掉新出口（与 `graph_forwarder.detach()` 同处），避免 reset / hub DELETE 后旧 sender 仍被引用。
+- [x] 2.1 新增 session 级 run 事件出口（`ConnectionHandle{send, receive, detach}` + sender 集合），由 `AgentSession` 持有；run 事件经它广播，且提供定点发送能力。
+- [x] 2.2 `_run_session_locked` 的 drain 循环改为经出口广播；**drain 永不退出、永远消费 queue**（无界 queue 防内存堆积）；某连接 detach 后只对该连接丢弃，SHALL NOT break / SHALL NOT cancel `agent_task`。
+- [x] 2.3 **断连检测点唯一**：session 级接收任务 `await ws_receive()` 抛异常时对**该连接** `channel.detach(handle)`，不再 `fail_pending("websocket disconnected")`。（`websocket_endpoint` 在 `await run_session` 期间不会调用 `ws.receive_json`，不能依赖它检测断连。）
+- [x] 2.4 `finally` 的 `fail_pending("session run ended")` 仅在 run 真正结束时执行（保持），不因断连提前触发。
+- [x] 2.5 重连时把新连接绑到出口（`websocket_endpoint` 内），多条连接并存时广播；断连期间无观察者的事件允许丢弃。
+- [x] 2.6 `run_session` 的 `run_lock` 占用错误**只回发起连接**（定点发送），不走广播（否则别的 tab 会莫名出现错误消息）。
+- [x] 2.7 多连接仲裁：先答者胜、后提交者得 `unavailable`（沿用既有 `submit_*` 一次性语义）。
+- [x] 2.8 **各作答路径终态广播一致（Q3）**：`web/server.py:533-564` 的 inline 作答分支改为经 session 级 channel 广播（不再只 `ws.send_json` 回提交者），与 run 内路径行为一致；run 不在且无绑定连接时广播退化为无操作、不报错。
+- [x] 2.9 `SessionManager.remove_session` 同步摘掉新出口（与 `graph_forwarder.detach()` 同处），避免 reset / hub DELETE 后旧 sender 仍被引用。
 
 ## 3. 重连补发 pending 卡片（D4）
 
-- [ ] 3.1 `web/session.py` 新增待补发载荷构造纯函数（原子读取两个 handler 的当前 pending，返回 `{"type": ..., "data": {...session_id...}}` 列表；无 pending 返回空列表）。
-- [ ] 3.2 `web/server.py` 新增 `bind_pending_interaction_channel(ws, session)`，顺序钉死为 `session_resumed → session_history → 补发卡片 → workflow 快照`。
-- [ ] 3.3 补发容错：单条发送失败不影响后续事件与连接（对齐 `bind_workflow_graph_channel` 的尽力而为语义）。
+- [x] 3.1 `web/session.py` 新增待补发载荷构造纯函数（原子读取两个 handler 的当前 pending，返回 `{"type": ..., "data": {...session_id...}}` 列表；无 pending 返回空列表）。
+- [x] 3.2 `web/server.py` 新增 `bind_pending_interaction_channel(ws, session)`，顺序钉死为 `session_resumed → session_history → 补发卡片 → workflow 快照`。
+- [x] 3.3 补发容错：单条发送失败不影响后续事件与连接（对齐 `bind_workflow_graph_channel` 的尽力而为语义）。
 
 ## 4. 前端卡片幂等与反馈（D5）
 
@@ -43,13 +43,13 @@
 
 ## 5. 测试
 
-- [ ] 5.1 单元测试：handler 载荷保留、原子访问器 `(id, payload)`、超时返回、`reset`/`cancel` 立即失败、配置正整数校验、补发纯函数（有/无 pending、字段与 `session_id`）。
-- [ ] 5.2 服务端重连测试：造 pending → 断连 → 重连 → **断言事件类型序列** `["session_resumed","session_history",<卡片>]`；反例「无 pending 不补发」用 `ping`/`pong`。
-- [ ] 5.3 断连不杀 run 测试：ws_send/receive 失败后 run 继续执行完毕、`run_lock` 正常释放；drain 在无连接时仍消费（防无界堆积）。
-- [ ] 5.4 多连接测试：广播到两条连接、断开其一不影响另一条、先答者胜后提交者 `unavailable`；**各作答路径（run 内 / inline）终态广播一致性**（Q3）；既有 `test_multi_tab_approval_isolation` 保持通过。
+- [x] 5.1 单元测试：handler 载荷保留、原子访问器 `(id, payload)`、超时返回、`reset`/`cancel` 立即失败、配置正整数校验、补发纯函数（有/无 pending、字段与 `session_id`）。
+- [x] 5.2 服务端重连测试：造 pending → 断连 → 重连 → **断言事件类型序列** `["session_resumed","session_history",<卡片>]`；反例「无 pending 不补发」用 `ping`/`pong`。
+- [x] 5.3 断连不杀 run 测试：ws_send/receive 失败后 run 继续执行完毕、`run_lock` 正常释放；drain 在无连接时仍消费（防无界堆积）。
+- [x] 5.4 多连接测试：广播到两条连接、断开其一不影响另一条、先答者胜后提交者 `unavailable`；**各作答路径（run 内 / inline）终态广播一致性**（Q3）；既有 `test_multi_tab_approval_isolation` 保持通过。
 - [ ] 5.5 前端契约测试：优先 Playwright 行为断言——卡片幂等、重连后卡片重新出现且可提交、ws 未就绪提交有反馈、`session_history` 后 `currentAssistantMsg` 重置；chat.js 源码字符串断言只作补充。
-- [ ] 5.6 更新 issue #193 回归测试 `test_run_session_survives_ws_send_failure_after_disconnect` 到新语义（run 不被取消）。
-- [ ] 5.7 `reset` 在 run 期间的语义测试（reset 后 run 仍跑完、pending 已失败），固化 D8 的边界。
+- [x] 5.6 更新 issue #193 回归测试 `test_run_session_survives_ws_send_failure_after_disconnect` 到新语义（run 不被取消）。
+- [x] 5.7 `reset` 在 run 期间的语义测试（reset 后 run 仍跑完、pending 已失败），固化 D8 的边界。
 
 ## 6. 收尾
 
