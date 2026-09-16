@@ -360,8 +360,19 @@ async def test_question_submit_when_ws_down_shows_feedback(
           }
         """)
         await page.click(".tab-pane.active .question-submit")
+        # 直接轮询**被测状态**（hint 隐藏 + 按钮已锁），不要等 'Submitted' 这个瞬态
+        # 文案：服务端回执到达后它会被立刻改写成 'Received'，等待窗口只有 ~10ms，
+        # 负载下必然 flaky（审阅 R3-1）。hint 隐藏是稳定终态，且缺失修复时永不成立，
+        # 因此断言既稳又仍能抓住回归。
         await page.wait_for_function(
-            "document.querySelector('.tab-pane.active .question-submit').textContent === 'Submitted'"
+            """
+            () => {
+              const btn = document.querySelector('.tab-pane.active .question-submit');
+              const hint = document.querySelector('.tab-pane.active .question-hint');
+              return btn.disabled && hint.hidden && hint.textContent === '';
+            }
+            """,
+            timeout=10000,
         )
         hint_hidden = await page.eval_on_selector(
             ".tab-pane.active .question-hint",
