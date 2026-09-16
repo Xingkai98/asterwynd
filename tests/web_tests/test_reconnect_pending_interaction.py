@@ -742,3 +742,44 @@ async def test_reset_rebinds_workflow_graph_channel(tmp_path):
             assert forwarder._ws_send is not None, "reset 后 workflow 图出口没有重绑"
             assert forwarder._detached is False
         break
+
+
+@pytest.mark.asyncio
+async def test_no_runtime_error_escapes_when_endpoint_resumes_reading(tmp_path, capfd):
+    """断连后 run 跑完，endpoint 不得让 RuntimeError 逃逸成 traceback。
+
+    run 期间的断连帧由 session 级接收任务消费掉；run 跑完后主循环再调
+    ``ws.receive_json()`` 时 Starlette 会抛 ``RuntimeError: Cannot call "receive"
+    once a disconnect message has been received``。本 change 让「断连后 run 继续跑完」
+    成为正常路径，这条异常因此是常见情形而非异常——按断开处理（作用域只包
+    ``receive_json`` 一行），不能逃逸。
+
+    断言方式：uvicorn 给 ``"uvicorn"`` logger 设了 ``propagate=False``，caplog 抓不到，
+    但未处理异常会写进 stderr —— 用 ``capfd`` 抓。变异验证：删掉 ``except RuntimeError``
+    分支后本测试变红。
+    """
+    release = threading.Event()
+    llm = _GatedLLM(release)
+    app = create_app(llm, workspace_root=tmp_path)
+    for server in _run_server(app):
+        ws = await connect(f"{server.ws_url}/ws/new")
+        session_id = (await _recv(ws))["session_id"]
+        session = server.app.state.session_manager.get_session(session_id)
+        await ws.send(json.dumps({"type": "chat", "content": "hi"}))
+        try:
+            # 断连必须发生在 run 进行中：断连帧由 session 级接收任务消费，主循环
+            # 之后那次 receive 才会命中 Starlette 的 RuntimeError。
+            assert await _wait_for(
+                lambda: session.run_lock.locked() and llm.started.is_set()
+            )
+            await ws.close()
+            assert await _wait_for(lambda: session.event_channel.handles == ())
+        finally:
+            release.set()
+        assert await _wait_for(lambda: not session.run_lock.locked(), timeout=10)
+        # 给 uvicorn 时间把（可能逃逸的）未处理异常写进 stderr。
+        await asyncio.sleep(0.5)
+        break
+
+    captured = capfd.readouterr()
+    assert 'Cannot call "receive"' not in captured.err, captured.err[-2000:]

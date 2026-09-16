@@ -59,6 +59,6 @@
 - [x] 6.4 项目 artifact checker（`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`）通过。
 - [x] 6.5 文档影响检查（点名，非泛查）：`README.md`（Web Chat 功能描述）、`README_EN.md`（README 改必须同步英文）、`docs/architecture.md`（Web 事件通道 / pending approval 段落）、`AGENTS.md`、`CONTEXT.md`；只更新本变更造成的事实变化。
 - [x] 6.6 在 proposal 的 Impact Analysis 兼容性行补「审批超时（缺省 600s）为行为变更」的说明（Q1 已确认总时长语义）。
-- [ ] 6.7 同步 current spec：把本 change 的 spec delta 合入 `openspec/specs/web-ui/spec.md`（并落 `current_spec_synced` 事件）。
-- [ ] 6.8 归档收尾：change 归档到 `openspec/changes/archive/YYYY-MM-DD-web-reconnect-pending-interaction/`，从 `docs/openspec-change-backlog.md` 移除（落 `change_archived` / `backlog_updated` 事件）。
+- [x] 6.7 同步 current spec：把本 change 的 spec delta 合入 `openspec/specs/web-ui/spec.md`（并落 `current_spec_synced` 事件）。
+- [x] 6.8 归档收尾：change 归档到 `openspec/changes/archive/YYYY-MM-DD-web-reconnect-pending-interaction/`，从 `docs/openspec-change-backlog.md` 移除（落 `change_archived` / `backlog_updated` 事件）。
 - [ ] 6.9 实现 PR 合入后给 issue #195 添加完成说明 comment 并关闭。

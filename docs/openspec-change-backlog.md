@@ -139,27 +139,9 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-### 6. `web-reconnect-pending-interaction`
+### 第十四批：Web 移动端断线重连恢复 pending 交互
 
-状态：未实现（已完成设计追问，待用户确认 Open Questions）。
-
-关联 issue：[#195](https://github.com/Xingkai98/asterwynd/issues/195)（【feature】移动端切后台重连后，恢复 pending 的提问/审批卡片）。
-
-批次：第十四批，与队列中其他 change 无依赖。
-
-建议顺序原因：
-
-- 移动端切后台必然断 ws，重连后 pending 的提问/审批卡片不恢复是真实可用性缺口；issue #193（ws_send 未防护导致 run 悬空）已修，本 change 是其后续。
-- 涉及 pending 生命周期（`WebQuestionHandler` / `WebApprovalHandler`）、run 事件出口 session 化、前端卡片重放三层联动，开发前需 `batch-grill-me` 收敛 design.md 中的开放问题（审批超时口径、断连期间 in-flight 文本、多 tab 卡片失效边界、断连后 run 是否继续）。
-
-主要交付：
-
-- pending 提问/审批跨 WebSocket 连接存活（保留可重放载荷、不因断连失败）。
-- run 事件出口 session 级可重新绑定，断连不终止 run；多连接广播、首答者胜。
-- 重连在 `session_history` 之后补发 pending 卡片。
-- 前端卡片幂等渲染 + 注册表清理 + ws 未就绪时的可见反馈。
-- 单测 + 服务端重连测试（事件序列断言）+ 多连接测试 + Playwright 前端行为测试 + benchmark smoke。
-- 实现 PR 合入时给 issue #195 添加完成 comment 并关闭。
+- `web-reconnect-pending-interaction`（issue #195）：**已合入归档 2026-09-17**。移动端切后台/锁屏导致 WebSocket 断开后，重连同一会话时恢复仍 pending 的提问/审批卡片，用户可直接作答。实现要点：**pending 跨连接存活（D1/D2）**——`WebQuestionHandler`/`WebApprovalHandler` 的槽位从 `(id, future)` 扩为 `_PendingInteraction{id, future, payload}`，保留建立时的 `to_event_data()` 可重放载荷，新增**原子**访问器 `pending_*_payload()`（一次返回 `(id, payload)`，杜绝「读到 id、读不到载荷」的中间态），已 resolve 的立即从可补发集合排除（终态单向推进、已决请求不重放）；断连不再 `fail_pending("websocket disconnected")`。**放弃语义改为显式超时（D2/D6）**——审批 `WebConfig.approval_timeout_seconds` 缺省 **600s**、提问 `question_timeout_seconds` 缺省 300s，均为**总等待时长**（从 pending 建立时起算，断连与保持不影响计时，避免「断连重置计时」无限延长）；超时一律 **fail-closed** 判 `UNAVAILABLE`，绝不放行不可逆操作；`_parse_web_config` 补正整数校验且显式拒绝 YAML `true`（`isinstance(True, int)` 会让它静默退化成 1 秒超时）。**run 事件出口 session 化（D3/D7）**——新增 `ConnectionHandle{send, label, detach}` + `SessionEventChannel`（attach/detach/detach_all/broadcast/send_to），run 事件按 sender 集合广播，drain 循环**永不退出、永远消费 queue**（无界队列防内存堆积，无观察者时丢弃事件），单条连接 send 失败只摘该连接、SHALL NOT break / SHALL NOT cancel `agent_task`；断连检测点唯一（session 级接收任务 `await ws_receive()`，主循环在 `await run_session` 期间不读 socket）；`run_lock` 占用错误改为**定点发送**且带 `code: run_in_progress`（不广播到别的 tab）。**重连补发（D4）**——`bind_pending_interaction_channel` 把顺序钉死为 `session_resumed → session_history → 补发卡片 → workflow 快照`（`session_history` 会整体重绘消息区，补发必须在它之后）；服务端测试用**事件类型序列断言**锁住该不变量。**前端（D5）**——按 `approval_id`/`question_id` 幂等渲染；`renderHistory` 与 `/clear` 两条清空路径都清卡片注册表（否则留下僵尸条目、补发卡片被静默跳过）；`session_history` 重置 `currentAssistantMsg`（否则重连后的 `assistant_delta` 写进已脱离文档的僵尸节点）；提交改为**先判 `ws.readyState` 再改 UI**，未就绪给出可见反馈且卡片保持可提交；run 占用提示改用户可读中文。**终态单调（审阅闭环产出）**——服务端 `_deliver_interaction_receipt`：**被接受**的决定广播给所有连接（Q3 各路径一致），**被拒绝**的回执只回提交者（否则会把已收到终态的胜出方卡片改写成 `unavailable`，用户看到「自己批准过的卡片被判为不可用」而工具其实已执行）；前端 `APPROVAL_TERMINAL_STATUSES` + `card.accepted`/`card.settled` 守卫（`received` 是中间回执，`approved`/`denied`/`unavailable` 落定后不再改写）。**行为变更**：审批从「无超时」变为「缺省 600 秒」，已在 proposal Impact Analysis / README / README_EN / `docs/architecture.md` 显式标注。spec delta 5 个 ADDED + 1 个 MODIFIED Requirement 已同步进 `openspec/changes/archive/2026-09-17-web-reconnect-pending-interaction/` 与 `openspec/specs/web-ui/spec.md`。building 审阅闭环 **4 轮封顶内收敛、最终 verdict = PASS**（reviewer run `review-web-reconnect-pending-interaction-20260917-r4`，report 已绑定 review manifest），四轮共发现 19 个问题（3 中 16 低）全部修复并补回归：R1 修 reset 后连接永久静默、终态非单调、drain 测试变异存活等 10 项；R2 修二进制帧被当断连、`except RuntimeError` 作用域过宽、reset 漏重绑 workflow 图出口等 6 项；R3 修 R2 自身引入的 flaky 断言（等 12ms 瞬态文案）与讲稿行号；R4 用 `capfd` 闭环 RuntimeError 逃逸的覆盖缺口。每条修复均做变异验证（改坏实现 → 测试变红 → 还原），未留假保护。
 
 ### 第十三批：多 Agent 运行态可视化（wayfinder #170 的观测面 follow-up）
 

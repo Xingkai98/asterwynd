@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "web-reconnect-pending-interaction",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-web-reconnect-pending-interaction-20260917-r4",
+  "base_sha": "9b14b5a",
+  "head_sha": "387287d",
+  "tasks_hash": "sha256:aaf3d3756d090bddf49cd659bdeefed57451759c8c6c3a538dc96cb2fd7112ac",
+  "spec_hash": "sha256:2c71e31352d6edbc286412fa6a02448d6afd4d020bb6ba993e6c0b1a14914b6f",
+  "diff_hash": "sha256:20960c81319d122b5c3934c533e2a07487574eacabdda7f2bb3c5528bb9e6946",
+  "report_hash": "sha256:01c5080a1bb6837553226e447def6b25b946d1b15560e088b25fd7e5e476d50c"
+}
