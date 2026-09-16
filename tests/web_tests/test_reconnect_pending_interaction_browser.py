@@ -346,6 +346,28 @@ async def test_question_submit_when_ws_down_shows_feedback(
         assert disabled is False, "连接未就绪时提交按钮被禁用，用户重连后无法再提交"
         label = await page.inner_text(".tab-pane.active .question-submit")
         assert label == "Submit", "连接未就绪却显示了假的 'Submitted'"
+
+        # 连接恢复后，同一张卡片上残留的提示必须在下一次成功提交时被清掉，否则
+        # 卡片旁边会同时挂着「Submitted」和过期的红字（审阅 R1 Issue 7 / R2 N5）。
+        # 这里直接在同一张卡上把提示置回可见（模拟「刚才那次点击留下的提示」），
+        # 再在连接已就绪的情况下提交，断言提示被清除。
+        await _wait_connected(page)
+        await page.evaluate("""
+          () => {
+            const hint = document.querySelector('.tab-pane.active .question-hint');
+            hint.hidden = false;
+            hint.textContent = '未连接，请等待重连后重试';
+          }
+        """)
+        await page.click(".tab-pane.active .question-submit")
+        await page.wait_for_function(
+            "document.querySelector('.tab-pane.active .question-submit').textContent === 'Submitted'"
+        )
+        hint_hidden = await page.eval_on_selector(
+            ".tab-pane.active .question-hint",
+            "el => el.hidden && el.textContent === ''",
+        )
+        assert hint_hidden, "成功提交后残留的「未连接」提示没有被清除"
     finally:
         server.should_exit = True
         thread.join(timeout=5)

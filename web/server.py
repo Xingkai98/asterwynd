@@ -371,7 +371,18 @@ def create_app(
 
         try:
             while True:
-                raw = await ws.receive_json()
+                try:
+                    raw = await ws.receive_json()
+                except RuntimeError:
+                    # run 期间的断连帧由 session 级接收任务消费掉；run 跑完后主循环
+                    # 再调 ``receive_json`` 时 Starlette 会抛 ``RuntimeError: Cannot
+                    # call "receive" once a disconnect message has been received``。
+                    # 本 change 把「断连后 run 继续跑完」变成正常路径，这条异常因此
+                    # 成为常见情形——与 WebSocketDisconnect 同义（连接已经没了）。
+                    # 作用域**只包住这一行**：循环体（run_session / slash command /
+                    # set_mode）里的 RuntimeError 是真 bug，不能被静默当成断连吞掉。
+                    logger.info(f"WebSocket already disconnected: {session_id}")
+                    break
                 msg_type = raw.get("type")
 
                 if msg_type == "chat":
@@ -590,6 +601,11 @@ def create_app(
                     # 句柄摘掉，不重绑的话此后 run 事件会广播给 0 条连接、定向发送也
                     # 因 detached 直接被拒——表现为 reset 之后整个会话彻底静默。
                     await bind_pending_interaction_channel(ws, session, handle)
+                    # workflow 图出口是另一个 session 级通道，同样随会话被换掉了
+                    # （``remove_session`` 会 detach 旧 forwarder，新 session 新建一个）。
+                    # 只重绑 run 事件出口会让 reset 之后的图事件静默丢弃。新 session
+                    # 没有图快照，补发天然为空。
+                    await bind_workflow_graph_channel(ws, session)
                     await ws.send_json({
                         "type": "session_created",
                         "session_id": session.session_id,
@@ -620,14 +636,6 @@ def create_app(
 
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected: {session_id}")
-        except RuntimeError:
-            # run 期间的断连帧由 session 级接收任务消费掉；run 跑完后主循环再调
-            # ``ws.receive_json()`` 时 Starlette 会抛 ``RuntimeError: Cannot call
-            # "receive" once a disconnect message has been received``。本 change 把
-            # 「断连后 run 继续跑完」变成正常路径，这条异常因此变成常见日志噪声——
-            # 与 WebSocketDisconnect 同义（连接已经没了），按断开处理，别让 traceback
-            # 逃逸到 uvicorn。
-            logger.info(f"WebSocket already disconnected: {session_id}")
         finally:
             # D3：断开只解绑这条连接——run 继续跑完，pending 保持有效（D2），
             # 重连后由 ``bind_pending_interaction_channel`` 补发并重新绑定。

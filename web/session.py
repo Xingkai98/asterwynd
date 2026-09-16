@@ -1119,8 +1119,12 @@ class SessionManager:
                 raw = await ws_receive()
             except asyncio.CancelledError:
                 raise
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                # 畸形帧 ≠ 断连：这条连接还活着，只是客户端发了一条不是 JSON 的东西。
+            except (
+                json.JSONDecodeError,   # 文本帧不是合法 JSON
+                UnicodeDecodeError,     # 文本帧不是合法 UTF-8
+                KeyError,               # 二进制帧：starlette 文本模式取 message["text"]
+            ) as exc:
+                # 畸形帧 ≠ 断连：这条连接还活着，只是客户端发了一条我们没法当消息读的东西。
                 logger.info("ignoring malformed frame from client: %s", exc)
                 continue
             except Exception as exc:  # noqa: BLE001 - 断开不是用户放弃，绝不能 fail_pending

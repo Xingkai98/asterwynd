@@ -100,6 +100,11 @@ pending 审批 SHALL 有显式超时：等待时长 SHALL 由配置项 `WebConfi
 - **THEN** 所有连接 SHALL 收到一致的终态事件
 - **AND** SHALL NOT 出现「run 存活广播、run 不存活只回提交者」的不一致
 
+「被接受的决定」与「被拒绝的回执」区分对待，两条路径 SHALL 一致地遵循同一规则：被接受的
+决定（先答者胜出的那次）SHALL 广播给所有连接；被拒绝的回执（提交时已无匹配 pending，
+status `unavailable`）SHALL 只回提交者，SHALL NOT 广播——它表示「你这条提交没有生效」，
+不是该审批的状态变更，广播会违背终态单调（会把已收到终态的胜出方卡片改写成 `unavailable`）。
+
 ### Requirement: run 事件出口跨连接存活
 
 Web session 的 run 事件出口 SHALL 是 session 级、与单条 WebSocket 连接解耦的：WebSocket 断开 SHALL 只解绑该连接，SHALL NOT 终止正在执行的 run。断连期间 run SHALL 继续执行；重连 SHALL 把新连接绑上同一个出口，之后产生的事件 SHALL 送达当前所有已绑定连接。

@@ -605,13 +605,50 @@ async def test_malformed_frame_does_not_detach_live_connection(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_binary_frame_does_not_detach_live_connection(tmp_path):
+    """审阅 R2 Issue N1 回归：二进制帧同样不是断连。
+
+    starlette 的 ``receive_json`` 在文本模式下取 ``message["text"]``，二进制帧会抛
+    ``KeyError('text')``；只把 ``JSONDecodeError`` 当畸形帧的话，二进制帧会被误判成
+    断连，把仍然活着的连接摘掉、run 后续事件全丢。
+    """
+    release = threading.Event()
+    llm = _GatedLLM(release)
+    app = create_app(llm, workspace_root=tmp_path)
+    for server in _run_server(app):
+        async with connect(f"{server.ws_url}/ws/new") as ws:
+            session_id = (await _recv(ws))["session_id"]
+            session = server.app.state.session_manager.get_session(session_id)
+            await ws.send(json.dumps({"type": "chat", "content": "hi"}))
+            try:
+                assert await _wait_for(lambda: llm.started.is_set())
+                assert len(session.event_channel.handles) == 1
+
+                await ws.send(b"\x00\x01\x02 not utf-8 json")
+                await asyncio.sleep(0.3)
+
+                assert len(session.event_channel.handles) == 1, (
+                    "二进制帧把仍然活着的连接摘掉了"
+                )
+            finally:
+                release.set()
+            events = await _recv_until(ws, {"done"}, limit=50)
+            assert events[-1]["type"] == "done", [e["type"] for e in events]
+        break
+
+
+@pytest.mark.asyncio
 async def test_run_completes_when_connection_drops_mid_run(tmp_path):
     """Issue 3 回归：run **进行中**断连，run 仍跑到 sentinel 且锁释放。
 
-    已有测试都是「收到 done 之后才 close」，从未在 run 中断连——把 drain 改回
-    「无观察者即 break」时它们照样全绿。这里用一个可放行的 LLM 把 run 卡在执行中：
-    断连发生在 run 真正进行时，随后放行，断言 run 仍然跑完（``finished`` 置位）
-    而不是被断连打断。
+    已有测试都是「收到 done 之后才 close」，从未在 run 中断连。这里用一个可放行的
+    LLM 把 run 卡在执行中：断连发生在 run 真正进行时，随后放行，断言 run 的 LLM 调用
+    没有被断连取消（``finished`` 置位）、锁正常释放。
+
+    注意覆盖边界（审阅 R2 Issue N4）：``finished`` 在响应返回时就置位，早于事件出队，
+    所以**这条对 drain 提前退出不敏感**——drain 不变量由
+    ``tests/web_tests/test_session.py::test_drain_keeps_consuming_after_all_connections_detached``
+    机械保护（该条在 drain 变异下会红）。这条测的是「断连不取消正在执行的 agent 调用」。
     """
     release = threading.Event()
     llm = _GatedLLM(release)
@@ -679,4 +716,29 @@ async def test_ping_is_answered_while_run_is_in_progress(tmp_path):
             finally:
                 release.set()
             await _recv_until(ws, {"done"}, limit=50)
+        break
+
+
+@pytest.mark.asyncio
+async def test_reset_rebinds_workflow_graph_channel(tmp_path):
+    """审阅 R2 Issue N3 回归：reset 后 workflow 图出口也要重绑到新 session。
+
+    reset 换掉 session 会连 graph_forwarder 一起换新（旧的在 ``remove_session`` 里被
+    detach）。只重绑 run 事件出口的话，新 session 的图快照在 ``_build_payload`` 因
+    ``_ws_send is None`` 被静默丢弃——用户 reset 之后看不到任何 workflow 图。
+    """
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+    for server in _run_server(app):
+        async with connect(f"{server.ws_url}/ws/new") as ws:
+            await _recv(ws)
+            await ws.send(json.dumps({"type": "reset"}))
+            reset = await _recv(ws)
+            assert reset["type"] == "session_created"
+
+            session = server.app.state.session_manager.get_session(reset["session_id"])
+            forwarder = session.graph_forwarder
+            assert forwarder is not None
+            # 重绑生效：forwarder 的 sink 指向本连接（未绑定时 _ws_send 为 None）。
+            assert forwarder._ws_send is not None, "reset 后 workflow 图出口没有重绑"
+            assert forwarder._detached is False
         break
