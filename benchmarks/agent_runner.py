@@ -293,7 +293,7 @@ class AsterwyndRunner(AgentRunner):
         llm,
         model: str = "",
         mode: str | AgentMode = AgentMode.BUILD,
-        max_iterations: int = 20,
+        max_iterations: int | None = None,
         prompt_builder: CodingPromptBuilder | None = None,
         timeout_seconds: int = 1800,
         config: AsterwyndConfig | None = None,

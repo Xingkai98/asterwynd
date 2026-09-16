@@ -38,11 +38,12 @@ async def run(self, messages, on_event=None, trace_recorder=None,
 #### 第 2 步：进入迭代循环（`loop.py:605`）
 
 ```python
-for iteration in range(start_iteration, self.max_iterations):
+iterations = count(start_iteration) if self.max_iterations is None else range(start_iteration, self.max_iterations)
+for iteration in iterations:
     self._iteration = iteration
 ```
 
-默认 `max_iterations=20`。每轮迭代做以下事情：
+默认 `max_iterations=None`（无上限）：模型不再调用工具时自然结束（`end_turn`），不被计次上限掐断。只有显式指定 `--max-iterations` 才设上限，防止死循环。每轮迭代做以下事情：
 
 **2a. 检查后台任务完成情况**（line 608）
 
@@ -137,7 +138,7 @@ LLM 收到工具结果后，下一轮迭代会基于结果继续推理——可�
 
 #### 第 6 步：达到 max_iterations
 
-如果 20 轮还没结束，返回 `RunResult(stop_reason=MAX_ITERATIONS)`。这是一种保护措施，防止 agent 陷入死循环。
+只有显式指定 `max_iterations` 且迭代到上限时，才返回 `RunResult(stop_reason=MAX_ITERATIONS)`——这是可选的防死循环保护。默认不设上限，靠「模型不再调用工具」自然结束。
 
 ### 完整流程图
 
@@ -148,7 +149,7 @@ run(messages)
   └─ 恢复会话? → 还原 mode/todos/skills/messages
   │
   ▼
-for iteration in 0..max_iterations:
+for iteration in 0..(max_iterations 或无穷):
   │
   ├─ 检查后台任务完成 → 注入通知
   ├─ tool_schemas = _select_tool_schemas(messages)  (Top-K / mode 过滤)
@@ -176,7 +177,7 @@ return RunResult(MAX_ITERATIONS)  // 保底
 
 | 要点 | 说明 |
 |------|------|
-| **max_iterations=20** | 防止死循环，20 轮足以完成大多数任务 |
+| **max_iterations=None（默认）** | 默认无上限，模型不再调工具即自然结束；显式指定才设防死循环上限 |
 | **max_tokens 自动续接** | LLM 输出被截断时不会丢上下文，而是自动让 LLM 继续 |
 | **finally 块保底** | 即使崩溃也尝试保存会话、清理后台任务 |
 | **流式 vs 非流式** | 根据 provider 能力自动选择；流式模式下 Web UI 实时看到 LLM 输出 |

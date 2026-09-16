@@ -2235,3 +2235,60 @@ async def test_mcp_tool_error_marks_status_error_and_quality_failure():
     # MCP 失败调用不应被 quality store 记为成功（直接检查窗口内记录）
     window = list(quality._windows["McpFail"])
     assert window and window[0]["success"] is False
+
+
+class SequenceLLM:
+    """LLM 按序列返回响应：前 N 次工具调用，之后返回无工具的最终回复。"""
+
+    def __init__(self, tool_responses: int, final_content: str = "done"):
+        self._tool_responses = tool_responses
+        self._final_content = final_content
+        self.calls = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4") -> LLMResponse:
+        self.calls += 1
+        if self.calls <= self._tool_responses:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallDelta(id=f"c{self.calls}", name="Echo", arguments="{}")],
+            )
+        return LLMResponse(content=self._final_content, stop_reason="end_turn")
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_unbounded_by_default_finishes_naturally():
+    """默认无上限时，模型最终不再调工具即自然结束，不被 max_iterations 掐断。"""
+    mock_llm = SequenceLLM(tool_responses=25)
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+    )
+
+    result = await loop.run([Message(role="user", content="test")])
+    assert result.stop_reason.value == "end_turn"
+    assert result.content == "done"
+    # 25 次工具调用 > 旧默认 20，证明无上限时确实跑满了 25 轮。
+    assert mock_llm.calls == 26
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_explicit_max_iterations_still_enforced():
+    """显式指定 max_iterations 时仍强制上限。"""
+    mock_llm = SequenceLLM(tool_responses=100)
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+
+    loop = AgentLoop(
+        llm=mock_llm,
+        tool_registry=registry,
+        hooks=HookManager(),
+        max_iterations=3,
+    )
+
+    result = await loop.run([Message(role="user", content="test")])
+    assert result.stop_reason.value == "max_iterations"
+    assert len(result.tool_calls_made) == 3
