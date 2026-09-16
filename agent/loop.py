@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import time
+from itertools import count
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Callable, Awaitable, TYPE_CHECKING
@@ -127,7 +128,7 @@ class AgentLoop:
         subagent_manager: Optional[SubAgentManager] = None,
         expose_subagent_tools: bool = False,
         unregistered_subagent_tools: tuple[str, ...] = (),
-        max_iterations: int = 20,
+        max_iterations: int | None = None,
         run_config: AgentRunConfig | None = None,
         tool_result_display: ToolResultDisplayConfig | None = None,
         skill_runtime: SkillRuntime | None = None,
@@ -644,7 +645,12 @@ class AgentLoop:
                     event_data["session_id"] = session_id
                 await on_event("run_started", event_data)
 
-        for iteration in range(start_iteration, self.max_iterations):
+        iterations = (
+            count(start_iteration)
+            if self.max_iterations is None
+            else range(start_iteration, self.max_iterations)
+        )
+        for iteration in iterations:
             self._iteration = iteration
 
             if self.background_manager is not None:

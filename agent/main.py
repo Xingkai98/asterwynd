@@ -349,7 +349,7 @@ def callback(
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
@@ -382,7 +382,7 @@ def run(
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
@@ -403,7 +403,7 @@ def run_single(
     prompt: str,
     model: Optional[str],
     provider: str,
-    max_iterations: int,
+    max_iterations: Optional[int],
     system: Optional[str],
     mode: str = "build",
     config: AsterwyndConfig | None = None,
@@ -454,7 +454,7 @@ def run_single(
 def run_interactive(
     model: Optional[str],
     provider: str,
-    max_iterations: int,
+    max_iterations: Optional[int],
     system: Optional[str],
     initial_prompt: Optional[str] = None,
     mode: str = "build",
@@ -708,7 +708,7 @@ def benchmark(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="Asterwynd LLM provider"
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Asterwynd 模型"),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="Asterwynd 最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     parallel: Optional[int] = typer.Option(None, "--parallel", help="benchmark 并发任务数"),
@@ -1026,7 +1026,7 @@ def _run_e2e_round_trip(
     timeout_seconds: Optional[int],
     provider: str,
     model: Optional[str],
-    max_iterations: int,
+    max_iterations: Optional[int],
     keep_worktrees: bool,
     clone_cache_dir: Optional[Path],
     temperature: Optional[float],
@@ -1109,7 +1109,7 @@ def _build_benchmark_runner(
     timeout_seconds: Optional[int],
     provider: str,
     model: Optional[str],
-    max_iterations: int,
+    max_iterations: Optional[int],
     shell_command: Optional[str],
     fake_edit_file: Optional[str],
     fake_old_string: Optional[str],
@@ -1239,7 +1239,7 @@ def benchmark_gate(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="Asterwynd LLM provider"
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Asterwynd 模型"),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="Asterwynd 最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     parallel: Optional[int] = typer.Option(None, "--parallel", help="benchmark 并发任务数"),
@@ -1414,7 +1414,7 @@ def session_resume(
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商"
     ),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
