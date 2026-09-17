@@ -102,6 +102,23 @@ scheduler SHALL 在 route 节点读取数据上游产出（`_route_verdict`）�
 - **WHEN** 渲染该 route 的数据入边
 - **THEN** 该边 SHALL 判定为 `passed`，SHALL NOT 落到 `inactive` 兜底
 
+### Requirement: workflow 图级终态区分「有失败」
+
+scheduler SHALL 在图收敛时区分两种成功收敛的图级终态：存在任何节点 `failed` 时 SHALL 为 `completed_with_failures`，无节点失败时才 SHALL 为 `completed`。`budget_exceeded` / `cancelled` / `graph_recursion_exceeded` SHALL 优先于二者（预算停与取消是更强的停止原因）。`completed_with_failures` SHALL NOT 使整图算作失败，但前端 SHALL 让用户一眼看到「有节点未成功」。
+
+#### Scenario: 有节点失败的图不再报 completed
+
+- **GIVEN** 一张图中某个节点 `failed`，其余节点正常收敛
+- **WHEN** workflow 收敛
+- **THEN** 图级 status SHALL 为 `completed_with_failures`，SHALL NOT 为 `completed`
+- **AND** 视图头 / tab 徽标 SHALL 明确标示「有失败」，SHALL NOT 只显示成功语义
+
+#### Scenario: 全部成功的图仍是 completed
+
+- **GIVEN** 一张图所有节点都 `completed`
+- **WHEN** workflow 收敛
+- **THEN** 图级 status SHALL 为 `completed`
+
 ### Requirement: workflow 节点异常态语义表达
 
 Workflow 视图 SHALL NOT 仅靠颜色区分节点状态。非成功状态（`failed` / `blocked` / `budget_exceeded` / `cancelled`）SHALL 至少以颜色 + 形状/角标 + 状态词三重编码表达。视图 SHALL 为异常节点提供「为什么是这个状态」的因果说明（如 `blocked` 指明被哪个上游失败挡住、`budget_exceeded` 指明预算维度）。因果说明 SHALL 可在节点上或详情面板中看到，SHALL NOT 仅依赖在移动端不显示的 `<svg:title>`。

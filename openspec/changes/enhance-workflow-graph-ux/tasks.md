@@ -16,7 +16,7 @@
 - [ ] M1.2 **D2b** `TERMINAL_NODE_STATUSES` 加 `skipped`；`_teardown` 的 `pending` 分支加判据（三个条件：`_has_control_incoming` + `activations <= 0` + **每条控制入边的源头 route 都已 `completed`**）；**skipped 判定必须先于 `_budget_stop` 分支**；`_unit_counts` 加独立 `skipped_units` 桶（**不得落 `pending_units`**）。
 - [ ] M1.3 **D2b** `_route_verdict` 读上游产出处**旁加** per-edge 记账（`_consumed_edges.add(...)`，`_mark_consumed` 本体不改，只在 `if text:` 内记账与既有三处同构）；回归 C5 `useful_runs`/`redundancy` 逐位不变。
 - [ ] M1.4 **G12** `explainNode` **扩签名**（现签名看不到图级 status/diagnostics，「图级停止原因优先」无法实现）；`blocked` 因果沿数据入边**穿透 `blocked` 上游**、收集**全部**未完成/失败上游；**去掉「取 `finished_at` 最早」**（无依据，且 G11 修好前不可信）。
-- [ ] M1.5 **G26** 图级 status 纳入节点失败判定（现在 `_drive` 收敛出口只看预算，有节点 failed 仍报 `completed`）——**新增档位名需在实现前确认**（如 `completed_with_failures`）。
+- [ ] M1.5 **G26** 新增图级终态 **`completed_with_failures`**（用户 2026-09-17 拍板，**独立档、不与 `completed` 混用**）：`_drive` 收敛出口若存在任何节点 `failed` → `completed_with_failures`，否则 `completed`；**`budget_exceeded`/`cancelled`/`graph_recursion_exceeded` 仍优先于它**。该档不使整图算失败，但必须让用户一眼看到「有东西没成功」。消费方（benchmark 报告 / `GetWorkflow`）需容忍新值。
 - [ ] M1.6 测试：route 未选中分支记 `skipped`（`_route_spec()` 实跑断言 `no` 节点 status）；「route 从未运行时下游不报 skipped」对照用例；「被上游连累优先」对照用例（**须叠一个未满足的 required 依赖**，见 spec 验收构造说明）；有失败节点的图级 status 用例。
 - [ ] M1.7 契约影响：确认 `NodeState.to_dict()` 直出 status 无需改码，但 `_envelope` 消费方（benchmark 报告 / `GetWorkflow`）容忍新值；docstring/spec 说明。
 
