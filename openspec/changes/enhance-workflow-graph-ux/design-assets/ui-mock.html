@@ -268,7 +268,7 @@ code { background: #0d1626; padding: 1px 5px; border-radius: 4px; font-size: 0.8
   <h3>为什么最终是这两个状态（关键）</h3>
   <div style="font-size:.85rem;line-height:1.8;color:#cbd5e1">
     <div><code>patch</code> = <span style="color:var(--budget);font-weight:600">预算超限 ‖</span> —— 它<strong>被选中了、本该跑</strong>，但 token 预算在跑到它之前就耗尽了。<strong>它是终点节点，所以记 budget_exceeded</strong>（规则：预算停下时，未完成的「尽头节点」记这个）。</div>
-    <div style="margin-top:6px"><code>archive</code> = <span style="color:var(--blocked);font-weight:600">blocked ⊘</span> —— 它<strong>压根没被选中</strong>。gate 走了 APPROVED，DEFAULT 这条分支从未激活，所以它一直等着、最终没跑。<strong>不是失败，是「轮不到它」</strong>。</div>
+    <div style="margin-top:6px"><code>archive</code> = <span style="color:#7f8ea8;font-weight:600">未选中 —（skipped，新增第 8 档）</span> —— 它<strong>压根没被选中</strong>。gate 走了 APPROVED，DEFAULT 这条分支从未激活，所以它一直等着、最终没跑。<strong>不是失败、也不是被挡住，是「条件没走这条」</strong>。<div style="color:var(--warning);font-size:.8rem;margin-top:4px">⚠ 今天系统里它被错标成 <code>blocked</code>（黄）——本 change 新增 <code>skipped</code> 档修正（D2b）。</div></div>
   </div>
 
   <h3>三条边 = 三种完全不同的含义</h3>
@@ -753,7 +753,7 @@ const DETAILS = {
   patch: { kind:'subagent', status:'budget_exceeded', task:'生成修复方案',
     summary:'', reason:'budget exceeded (tokens)',
     msgs:[['user','生成修复方案'],['assistant','正在生成…(中断)']] },
-  archive: { kind:'subagent', status:'blocked', task:'归档本次体检结果',
+  archive: { kind:'subagent', status:'skipped', task:'归档本次体检结果',
     summary:'', reason:'workflow ended before the node became ready' },
 };
 let curNode = null, curTab = 'task';
