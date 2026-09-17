@@ -48,6 +48,8 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 | 条件分支 | `route` | ❌ | **0** | `_execute_route` 只做标签匹配，全程不调 `_launch_run` |
 | 自动插层聚合 | `__auto_agg__` | ✅ | **1:1** | kind 是 `aggregate`，默认 `strategy="llm"`（`aggregation.py:389`） |
 
+**八档状态（本 change 从七档扩为八档，新增 `skipped`）**：`pending` / `started` / `completed` / `failed` / `cancelled` / `blocked` / `budget_exceeded` / **`skipped`（未选中，见 D2b）**。`skipped` 专给「route 条件判断没走这条 → 该分支本来就不该跑」——它与 `blocked`（被上游连累）的区别正是 issue 里用户混淆的那一档。八档在图上以**颜色 + 角标 + 边框形状 + 状态词**四重编码区分。
+
 **结论**：详情面板的「对话」tab 天然有 **3 种形态**（`single` / `candidates` / `none`），它对应**节点类型**而非某个特例：
 
 - **`single`** — subagent / aggregate(llm) / auto-agg → 单条 transcript。
@@ -75,19 +77,19 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 ### 2. 图上的节点（D2 + D5）
 
 ```
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│▌S scan       │   │▌F fan    ▸  │   │▌R gate       │
-│  completed   │   │ ⊘ blocked    │   │  completed   │
-└──────────────┘   │  完成 3/12    │   └──────────────┘
-                   │  被上游 scan  │    ↳ 点击开详情
-   ↳ 点击开详情     │  失败挡住     │    ↳ ▸ 是独立的
-                   └──────────────┘      展开控件
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│▌S scan       │   │▌F fan    ▸  │   │▌R gate       │   │▌S archive —  │
+│  completed   │   │ ⊘ blocked    │   │  completed   │   │ //skipped//  │
+└──────────────┘   │  完成 3/12    │   └──────────────┘   └──────────────┘
+   ↳ 点击开详情     │  被上游 scan  │    ↳ 点击开详情       冷灰蓝 + 虚框 +
+                   │  失败挡住     │    ↳ ▸ 是独立的       「条件没走这条 =  —
+                   └──────────────┘      展开控件         未选中」，不是失败
                      ↑ 计数常显（D5）
-                     ↑ why 小字只
-                       在异常态出现
+                     ↑ why 小字只在异常态出现
 ```
 
-- **三重编码**：状态色（色带 + 描边）+ 角标（`✕`/`⊘`/`⏸`/`⊝`）+ 状态词（异常态加粗）——不靠颜色单独承载语义（D2）。
+- **四重编码**：状态色（色带 + 描边）+ 角标（`✕`/`⊘`/`‖`/`⊝`/`—`）+ 边框形状（实线/虚线/双线）+ 状态词（异常态加粗）——不靠颜色单独承载语义（D2）。
+- **`skipped` 与 `blocked` 必须一眼可分**：一个是「被上游连累没跑成」（黄 + ⊘），一个是「条件没选它，本来就不该跑」（冷灰蓝 + 虚框 + —）。这是本 change 的立项命题之一（D2b）。
 - **`▸` 只对折叠组出现**（`groupLeader`），点它展开/收起，点节点其余区域开详情（D4）。
 
 ### 3. 详情面板（D4，按断点切位置）
@@ -163,9 +165,11 @@ single（subagent / aggregate-llm）     candidates（foreach 容器）        n
 1. **色**（既有）：红 / 黄 / 橙。
 2. **形状 + 角标**（新增）：
    - `failed` → 实线边框 + `✕` 角标；
-   - `blocked` → **虚线边框**（虚线读作「未发生/非终局」，Temporal 的重试态语义）+ `⊘` 角标；
-   - `budget_exceeded` → **双线边框** + `⏸` 角标；
-   - `cancelled` → 深灰 + `⊝` 角标。
+   - `blocked` → **虚线边框** + `⊘` 角标（虚线读作「未发生/非终局」，Temporal 的重试态语义）；
+   - `budget_exceeded` → **双线边框** + `‖` 角标；
+   - `cancelled` → 深灰 + `⊝` 角标；
+   - `skipped`（新增第 8 档，见 D2b）→ **冷灰蓝** + 虚边框 + `—` 角标。
+   - **字形约束（实现时踩到过）**：角标只用**默认字体普遍覆盖**的字符。实测 `⏸`（U+23F8）在多数系统字体缺失，会渲染成豆腐块（□）——已改 `‖`。落地时逐个在目标字体下目视确认。
 3. **状态词**（既有 `label`，强化）：异常态**加粗**显示。
 
 **因果说明（「为什么是这个状态」）**——纯函数层新增 `explainNode(node, edges, nodesById)`，返回一句人话因由；这是调研里**投入产出比最高**的一项（先例：Airflow 在日志里已生成这类因果串却没搬上 UI，用户反复困惑；Tekton 明确改用 status **reason** 而非 message 来区分失败类别）：
@@ -178,6 +182,45 @@ single（subagent / aggregate-llm）     candidates（foreach 容器）        n
 因果句用于三处：**节点 `why` 小字**（仅异常态显示，正常态不占位）、节点 `<title>`、详情面板的「状态」区。**因果推导是纯函数**（拿 nodes + edges 即可算），可在 node+vm 里直接测「12 文件 foreach 超预算」这个真实场景的因果链。
 
 **配色校验**：`blocked=#facc15`/`budget_exceeded=#fb923c`/`pending=#94a3b8` 转灰度后区分度不足——落地时按「拉开**明度**差而非只拉色相」调一轮，用 Chrome DevTools 的 deuteranopia 模拟目视验证（无自动化门禁，记录到 building review）。
+
+### D2b — **后端语义适配**：新增 `skipped` 档 + 补 route 数据入边的 `passed` 记账
+
+> **来源**：用户实测示例图时问「archive 分支没走，应该是灰色吧，为什么是（黄/橙）？」——实跑代码后确认这不是显示问题，是**上游 change 留下的两个真实语义缺口**，且正好落在本 change 的核心命题（异常态语义）上。用户裁决：**「一块搞，这个 change 的目标就是前端易用性，后端有需要适配的都适配」**（方案 A）。
+
+**缺口 1：未选中的分支被标成 `blocked`，但系统里没有「未选中」这一档。**
+
+实跑 `_route_spec()`（正常完成，gate 走 `APPROVED`）得到的真实快照：
+
+```
+node a      completed
+node gate   completed
+node yes    completed     ← 被选中的分支
+node no     blocked       ← 未被选中的分支：错标成 blocked
+edges: a→gate=inactive, gate→yes=passed, gate→no=inactive
+```
+
+`no` 四类都不是：不是自身失败（`failed`）、不是被上游连累（`blocked` 的本义）、不是预算停下（`budget_exceeded`）、也不是被取消（`cancelled`）。它是**「route 判定不走这条，本来就不该跑」**。根因：`_teardown` 的 `pending` 分支只有两个出口——`_budget_stop` 时走 `_apply_budget_exhausted_status`（根→`budget_exceeded` / 其余→`blocked`），否则一律 `blocked`（`scheduler.py:762-772`）。**没有第三种落点**。业界先例：Airflow 专门有 `skipped` 档区分「条件不需要跑」与 `upstream_failed`「被上游连累」；Argo 叫 `Omitted`（`depends` 不满足）vs `Skipped`（`when` 为 false）。
+
+**方案：新增第 8 档节点状态 `skipped`（未选中）。**
+
+- **判据（有权威信号，不需要新记账）**：节点在 `_teardown` 时仍是 `pending`，且 `_has_control_incoming(node) and state.activations <= 0` —— 即「只被 route 控制边门控、且没有任何 route 选中它」。`activations` 是既有计数器（`_execute_route` 命中时 `successor.activations += 1`，`:1450`；派发时清零 `:1261`），`_ready_nodes` 已用它做「回边目标等激活」的门控（`:1184-1189`），**复用它不引入新机制**。
+- **优先级（必须先判 blocked 再判 skipped）**：若节点有数据入边且上游 `failed`/`cancelled`/`blocked` → 记 `blocked`（**被连累优先于未选中**，否则会把「上游挂了」误报成「条件没选它」）。数据依赖本身没问题（或本就没有数据入边）、纯粹因为 route 没选中 → `skipped`。
+- **预算路径同样适用**：预算停下时，未选中节点仍是 `skipped`（**route 没选它跟预算无关**），不参与 `budget_exceeded`/`blocked` 的二分。
+- **状态语义**：`skipped` 是**终态**（要进 `TERMINAL_NODE_STATUSES`，否则 `_teardown`/收敛逻辑会把它当未完成），但是**良性终态**——不使整图 `failed`，要进 `_unit_counts` 的独立计数桶（**不能落进 `pending_units`**，否则「图跑完了还有 pending」自相矛盾）。
+- **前端**：第 8 档配色（**冷灰蓝**，与 `blocked` 的黄明显区隔）、角标 `—`、**虚边框**（沿用 Temporal 的「虚线 = 非终局/未发生」语汇）；图例加一行人话「未选中：条件判断没走这条分支」；`groupStatus` 聚合时 `skipped` **不参与**「最差状态」竞争（它既不是失败也不是受阻）。
+- **下游传播**：`skipped` 节点无产出，其数据出边按既有规则落到 `inactive`（不新增 `_EDGE_BLOCKED_SOURCE_STATUSES` 成员——`skipped` 不是「源挂了」，不该把下游标成 `blocked`；下游若因此永不就绪，会在 `_teardown` 时按缺口 1 的同一条规则各自归位）。
+
+**缺口 2：route 的数据入边永远等不到 `passed`，掉进 `inactive` 兜底。**
+
+同一张实跑快照里 `a→gate` 是 **`inactive`**，但 `a` 明明 `completed`、gate 也确实读到了 `a` 的产出（才判出 APPROVED）。根因：`gate` 是 route，它读上游走 `_route_verdict()` → `_node_output(upstream, "result")`（`scheduler.py:2019-2029`），**这条路径不经过任何 `_mark_consumed` 调用点**（四个调用点分别在 `_collect_slots` / `_node_task_text` / `_aggregate_task_text` / `_write_root_result`，route 一个都不走）。于是 `_consumed_edges` 里没有 `(a, gate)`，`_edge_status` 的 `passed` 档命中不了，掉到 `inactive` 兜底。
+
+**方案**：在 `_route_verdict` 读上游产出处**旁加** per-edge 记账（`_consumed_edges.add((edge.source, edge.target))`），与 #190 决策 7/2026-09-15 的做法**完全同构**——`_mark_consumed` 本体一行不改（grill 决策 12 的红线），C5 的 `_consumed_run_ids`/`useful_runs`/`redundancy` **逐位不变**。
+
+**影响面（比前端项大，必须写清）**：
+- `agent/subagent/scheduler.py`：`TERMINAL_NODE_STATUSES` 加 `skipped`；`_teardown` 的 `pending` 分支加判据；`_unit_counts` 加 `skipped_units` 桶；`_route_verdict` 旁加 per-edge 记账。
+- `agent/subagent/aggregation.py` 或相关：确认自动插层/聚合对 `skipped` 的处理（若无引用则不改）。
+- 契约面：`_envelope` 的节点 `status` 取值集合**新增一个值**（`NodeState.to_dict` 直出 status，不需要改代码，但**消费方**——benchmark 报告、`GetWorkflow`——要容忍新值）。**这是本 change 唯一动到父 Agent 可见契约的地方**，`_envelope` 的**结构**不变、只是 status 多一个可能值。
+- spec：`openspec/specs/multi-agent-collaboration/spec.md` 或 `subagents` 需要一条 MODIFIED 说明「未选中分支记 `skipped` 而非 `blocked`」；本 change 的 delta 里加对应 Requirement。
 
 ### D3 — 数据面：三处**加法**字段，bounded，不动父契约
 

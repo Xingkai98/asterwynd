@@ -64,6 +64,35 @@ Workflow 视图 SHALL 提供常驻可折叠的图例（legend），说明节点�
 - **WHEN** 重建图例内容
 - **THEN** 图例条目 SHALL 自动反映新词表，SHALL NOT 出现图例与图不一致
 
+### Requirement: workflow 未选中分支状态（skipped）
+
+scheduler 对「只被 route 控制边门控、且没有任何 route 选中它的未派发节点」SHALL 标记为 `skipped`（未选中），SHALL NOT 标记为 `blocked`（被上游连累）。判据 SHALL 复用既有控制激活信号（`_has_control_incoming` 且 `activations <= 0`），SHALL NOT 引入新的记账。若节点同时满足「被上游失败/取消/受阻连累」与「未被选中」，SHALL 优先记 `blocked`。`skipped` SHALL 是良性终态（不使整图 failed），SHALL 进独立计数桶。
+
+前端 SHALL 用与 `blocked` 明显区分的编码表达 `skipped`（冷灰蓝 + 虚边框 + `—` 角标 + 状态词），图例 SHALL 说明「未选中：条件判断没走这条分支」。
+
+#### Scenario: 未选中的 route 分支记为 skipped
+
+- **GIVEN** 一个 route 节点命中 `APPROVED` 出口，`DEFAULT` 出口的下游节点未被激活
+- **WHEN** workflow 正常完成
+- **THEN** `DEFAULT` 下游节点 SHALL 标记为 `skipped`，SHALL NOT 标记为 `blocked`
+- **AND** 前端 SHALL 以「未选中」语义（非失败、非受阻）展示该节点
+
+#### Scenario: 被上游连累优先于未选中
+
+- **GIVEN** 一个节点既未被 route 选中，其数据上游又已 `failed`/`cancelled`/`blocked`
+- **WHEN** workflow 收尾
+- **THEN** 该节点 SHALL 标记为 `blocked`（反映真实阻塞原因），SHALL NOT 标记为 `skipped`
+
+### Requirement: route 数据入边的消费记账
+
+scheduler SHALL 在 route 节点读取数据上游产出（`_route_verdict`）处记录该数据入边已被消费，使该边的状态 SHALL 判定为 `passed`（而非 `inactive`）。记账 SHALL 与既有 per-edge 记账同构（旁加，`_mark_consumed` 本体不改），SHALL NOT 改变 `_consumed_run_ids` 基数或 C5 的 `useful_runs`/`redundancy` 口径。
+
+#### Scenario: route 的上游数据边显示为已消费
+
+- **GIVEN** 一个 route 节点读取了已完成上游节点的产出并据此判定
+- **WHEN** 渲染该 route 的数据入边
+- **THEN** 该边 SHALL 判定为 `passed`，SHALL NOT 落到 `inactive` 兜底
+
 ### Requirement: workflow 节点异常态语义表达
 
 Workflow 视图 SHALL NOT 仅靠颜色区分节点状态。非成功状态（`failed` / `blocked` / `budget_exceeded` / `cancelled`）SHALL 至少以颜色 + 形状/角标 + 状态词三重编码表达。视图 SHALL 为异常节点提供「为什么是这个状态」的因果说明（如 `blocked` 指明被哪个上游失败挡住、`budget_exceeded` 指明预算维度）。因果说明 SHALL 可在节点上或详情面板中看到，SHALL NOT 仅依赖在移动端不显示的 `<svg:title>`。

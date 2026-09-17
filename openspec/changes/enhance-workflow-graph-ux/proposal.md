@@ -38,7 +38,11 @@
   - foreach 容器**常显** `N items · 完成 M`（`N` 来自既有 `items`；`M` 需新增 bounded 计数 `items_completed`/`items_failed`）。
   - 统计行改为如实反映「实际绘制的边数」，并对同一对节点的**并行边做垂直偏移**，让 `11 edges` 与可见线条数一致。
 
-**约束**：保持 `workflow_graph_snapshot()` 既有字段语义与 `_envelope`/`parent_envelope` 父 Agent 契约不变（新字段**纯加法且 bounded**）；复用既有 720/380 断点与零依赖 vanilla JS + SVG 自绘，不引入前端框架；不过度设计——不做图历史回放、不做动画过渡、不做 Web 端编排画布（沿用 #190 的 Non-Goals）。
+- **E. 后端语义适配（用户裁决纳入：目标就是前端易用性，后端该适配就适配）**——实跑代码发现两个**上游遗留的真实语义缺口**，正好落在本 change 的核心命题（异常态语义）上：
+  1. **新增第 8 档节点状态 `skipped`（未选中）**：route 未选中的分支今天被错标成 `blocked`（黄），与「被上游失败连累」混为一谈。实跑证据：正常完成走 `APPROVED` 时，`DEFAULT` 分支节点状态是 `blocked`。新增 `skipped` 档（复用既有 `activations` 控制激活信号判定，不引入新记账），前端以冷灰蓝 + 虚框 + `—` 与 `blocked` 明显区分。业界先例：Airflow `skipped`、Argo `Omitted`。
+  2. **补 route 数据入边的 `passed` 记账**：route 读上游走 `_route_verdict`，不经过任何 `_mark_consumed` 调用点，因此 `a→gate` 这类边永远落到 `inactive`（灰）。在 `_route_verdict` 处**旁加** per-edge 记账（与 #190 决策 7 同构，`_mark_consumed` 本体不改）。
+
+**约束**：`workflow_graph_snapshot()` 新字段**纯加法且 bounded**；`_envelope`/`parent_envelope` **结构**不变（唯一变化是节点 `status` 取值集合新增 `skipped`，消费方需容忍）；复用既有 720/380 断点与零依赖 vanilla JS + SVG 自绘，不引入前端框架；不做图历史回放、不做动画过渡、不做 Web 端编排画布（沿用 #190 的 Non-Goals）。
 
 ## Capabilities
 
@@ -48,8 +52,9 @@
 
 ### Modified Capabilities
 
-- `web-ui`: workflow 视图从「能画出节点与边」演进为「可读的观测面板」——新增图例、异常态因果表达、节点详情面板（含 transcript 只读接口）、多图 tab 元信息、foreach 并行计数与边统计口径。
+- `web-ui`: workflow 视图从「能画出节点与边」演进为「可读的观测面板」——新增图例、异常态因果表达、节点详情面板（含 transcript 只读接口）、多图 tab 元信息、foreach 并行计数与边统计口径、第 8 档 `skipped` 状态的展示。
 - `observability`: `workflow_graph_snapshot()` 观测面补齐三处**加法**字段（节点 `reason`、图级 `started_at`/`finished_at`、foreach `items_completed`/`items_failed`），既有字段语义不变。
+- `multi-agent-collaboration`（或 `subagents`）：节点状态语义扩展——未选中的 route 分支记 `skipped` 而非 `blocked`；route 数据入边补消费记账。
 
 ## Impact Analysis
 

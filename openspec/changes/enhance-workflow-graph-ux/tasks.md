@@ -4,6 +4,14 @@
 
 - [ ] 0.1 跑 `batch-grill-me`（或等价独立零记忆 subagent 设计追问）审视 design.md D1–D7，产出 `reviews/grill-design.md`（≥3 Confirmed Decisions + Open Questions 停轮确认）。
 
+## 0b. 后端语义适配（D2b，用户裁决纳入）
+
+- [ ] 0b.1 `TERMINAL_NODE_STATUSES` 加 `skipped`；`_teardown` 的 `pending` 分支加判据：节点只被 route 控制边门控且 `activations <= 0` → `skipped`；同时满足「被上游连累」→ 优先 `blocked`。预算路径下同样适用（route 没选它跟预算无关）。
+- [ ] 0b.2 `_unit_counts` 加独立 `skipped_units` 桶（**不得落进 `pending_units`**）；回归「图终态时 pending_units 为 0」。
+- [ ] 0b.3 `_route_verdict` 读上游产出处**旁加** per-edge 记账（`_consumed_edges.add((edge.source, edge.target))`，`_mark_consumed` 本体不改）；回归 C5 `useful_runs`/`redundancy` 逐位不变。
+- [ ] 0b.4 回归测试：route 未选中分支记 `skipped`（用 `_route_spec()` 实跑，断言 `no` 节点 status 为 `skipped` 且 `a→gate` 边为 `passed`）；「被上游连累」优先于「未选中」的对照用例。
+- [ ] 0b.5 契约影响：确认 `NodeState.to_dict()` 直出 status 无需改码，但 `_envelope` 消费方（benchmark 报告 / `GetWorkflow`）容忍新值；docstring/spec 说明。
+
 ## 1. 数据面：快照加法字段（前端增强优先，后端只补图上看不到的）
 
 - [ ] 1.1 `agent/subagent/scheduler.py::_graph_node_projection` 补 `reason`（**必须在投影层截断到 `_SUMMARY_LIMIT`**，与 `summary` 同口径；`state.reason` 本体不改——它是 `_envelope` 字段；截断额度见 grill Q4）。
@@ -22,7 +30,7 @@
 
 - [ ] 3.1 `legendModel()`：从 `NODE_COLORS`/`EDGE_STYLES`/`KIND_GLYPHS`/`NODE_LABELS` **同源生成**图例内容（节点类型 + 7 档状态 + 5 档边状态 + channel 线型），每条目带人话解释；单测断言 7 档状态全覆盖。
 - [ ] 3.2 `explainNode(node, edges, nodesById)`：failed / blocked（有失败上游 / 无失败上游）/ budget_exceeded / cancelled 的因果句；**回归「12 文件 foreach 超预算」场景**（3 failed + 2 blocked + 1 budget_exceeded）。
-- [ ] 3.3 异常态编码表：状态 → 形状/角标（`failed` ✕ / `blocked` ⊘ 虚边框 / `budget_exceeded` ⏸ 双边框 / `cancelled` ⊝）。
+- [ ] 3.3 异常态编码表（八档）：状态 → 形状/角标（`failed` ✕ / `blocked` ⊘ 虚边框 / `budget_exceeded` ‖ 双边框 / `cancelled` ⊝ / **`skipped` — 冷灰蓝+虚边框**）；**角标字形只用默认字体普遍覆盖的字符**（`⏸` U+23F8 实测渲染成豆腐块，已改 `‖`）。
 - [ ] 3.4 并行边等距偏移：在 `layoutGraph` 的 `layoutEdges` 里**先按 `(from,to)` 分组**（`edgePath` 拿不到 multiplicity），把 `{index,total}`/`offset` 作为**可选参数**传进 `edgePath`（保持导出 API 兼容）；`offset = (k - (n-1)/2) * DELTA`，横向偏 y / 纵向偏 x；n 超上限退化为聚合标注。单测「3 条边路径互不相同且有限」。
 - [ ] 3.5 边统计口径：报**实际绘制路径数**（`collapsed.edges.length`）+ 原始边数（`snapshot.edges.length`）；**两数相等时不加解释后缀**（<50 节点未折叠时边原样透传，去重不发生），不等时才给可解释口径。
 - [ ] 3.6 tab 元信息格式化：`#序号 · 相对时间 · 耗时 · M/N`，运行中/终态两分支 + 运行中排最前。
