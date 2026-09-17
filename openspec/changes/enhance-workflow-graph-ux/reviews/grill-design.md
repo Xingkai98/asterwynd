@@ -38,24 +38,46 @@
 
 ## Open Questions
 
-> 以下 4 条是本审阅员无法从代码/文档收敛、必须用户拍板的设计选择。每条配本 change 真实场景的具体例子，并给推荐答案。收到答复后由主 session 回填 `## User Confirmation`；全部确认前不得写实现代码。
+> **本节已按 2026-09-17 重评估更新**：原 4 条（Q1–Q4）中，**Q1 与 Q4 已被后续设计唯一确定、不再需要用户拍板**（见下节「重评估」的完整论证与原始文本）；**Q2 与 Q3 仍需用户拍板，且推荐答案均被审阅员构造出会出错的反例，故已改写为 Q2/Q3 的新表述**。收到答复后由主 session 回填 `## User Confirmation`；全部确认前不得写实现代码。
 
-- **Q1**: foreach 容器节点的 transcript 语义：候选清单（+ N=1 时直接给单项 transcript）还是一律「无单一 transcript」？这决定路由的返回体形状，也决定 D5 的项列表能不能复用同一份数据。
-  **场景**: 用户跑「代码体检」，12 个文件的 foreach 容器节点 `fan`（`state.items = 12`）并发派发 12 个 item，每个 item 都是一个独立 `SubagentSessionRecord`，`workflow_id` 相同、`node_id` 全是 `fan`（`scheduler.py:1464` 清空容器 `subagent_id` 后 `_run_foreach_item` → `_launch_run` 用容器 id 调 `set_node_id`，`manager.py:475-476` 落进 session）。用户点 `fan` → 打开详情 → 切「对话」tab。**方案 A**：接口返回 `{node_id: "fan", subagent_id: null, reason: "container", items: 12, candidates: [{subagent_id: "a1b2…", status: "completed", summary: "…"}, …12 条]}`，前端画成「该节点是 12 个并行项的容器」+ 12 行可点列表，点某行再发一次请求取那一项的 transcript。**方案 B**（design 现文）：不返回候选，只返回「无单一 transcript，项数 12」，用户拿不到任何单项对话入口。另有一条边界：若某个 foreach 只有 1 项（`items = 1`），按方案 B 会连这唯一一条 transcript 都拒绝掉，而按方案 A 会直接返回它。
-  **推荐**: 方案 A。理由：D5 已经决定要把项列表放进抽屉（`design.md:130`），候选集就是那份列表的数据源；方案 B 会让「foreach 里到底哪个文件失败了」这个最高频的排查动作无处可做——而这正是本 change 的立项动机（用户实测痛点）。N=1 时直接给单项 transcript（不引入特例分支，解析规则统一为「候选 0 条 → 未派发；1 条 → 直接给；>1 条 → 容器清单」）。
+- **Q2: 折叠组的「展开/收起」入口放在哪？**（改写自原 Q2。原三选项均假设「控件画在节点上」，审阅员证明该前提在手机上不成立。）
+  **场景**: 手机（≤720px、纵向 DAG）上一张 60 节点的图，`fan` 容器折叠着 3 个 auto 层节点，用户有两个意图——(a) 展开 `fan` 看看里面有哪些成员，(b) 点 `fan` 看它的详情/产出。**原前提为何不成立**：节点盒是 168×58 **SVG 用户单位**（`workflow_graph.js:96-97`），手机 380px 视口下 `fitToWidth` 缩放后节点实显仅约 **36px 高**（3 节点层）/ **27px**（4 节点层）——「≥44px 按钮」在 SVG 坐标里是**假的**（实显约 27/21px，比节点本身还大）；且 `TAP_SLOP = 4`（`workflow.js:449`）判定点击/拖动，手指漂移超 4px 后 host `setPointerCapture`（`:490-497`）会吃掉 click，手机上最常见的操作必然踩坑。
+  **选项 A（节点内 HTML 覆盖层小控件）**：控件脱离 SVG 变换、按节点屏幕坐标定位随 pinch/pan 重算，才能真正达到 44px；点按钮 = 展开、点节点其余 = 开详情；必须 `pointerdown` 级 `stopPropagation`（只靠 click 的 `stopPropagation` 不够）。**选项 B（展开收进详情抽屉）**：点节点一律开详情，抽屉里给 `groupLeader` 一个「展开成员」动作——零触控目标问题、零手势冲突、实现最省，代价是手机端抽屉占 70vh、展开后要先关抽屉才看得到结果。
+  **推荐**: 选项 A。
 
-- **Q2**: 点击语义拆分后，「展开/收起折叠组」的独立控件做成什么形态？（这是本 change 唯一的**破坏性交互变更**：既有浏览器用例 `test_collapsed_group_click_expands_members` 现在靠点节点本身展开，改完必须同步改。）
-  **场景**: 手机（≤720px、纵向 DAG）上一张 60 节点的图，`fan` 容器折叠着 3 个 auto 层节点，用户有两个意图——(a) 展开 `fan` 看看里面有哪些成员，(b) 点 `fan` 看它的详情/产出。**方案 A（节点内小控件）**：`fan` 节点右下角画一个 `▸/▾` 小按钮（带 `stopPropagation`），点按钮 = 展开，点节点其余区域 = 开详情；手机上小按钮的触控目标要撑到 ≥44px 才符合手指命中。**方案 B（双击展开）**：单击开详情、双击展开——手机上双击与 pinch/pan 手势（`workflow.js:449-538` 的 pointer 层）以及既有 `TAP_SLOP = 4` 的「点击 vs 拖动」判定会打架，且没有视觉提示「这里可以双击」。**方案 C（长按展开）**：与移动端文本选择/浏览器长按菜单冲突。
-  **推荐**: 方案 A。理由：design D4 已经写了这个方向（`design.md:102` 的「item 计数徽标旁的小 ▸/▾」），且它是唯一在触屏和鼠标上都可发现的方案；需要注意实现细节——SVG `<g>` 里的小控件要让 `pointerdown` 不进入 pan 判定，且展开控件只对 `groupLeader` 节点出现（`groupLeader` 在展开态仍保留，`workflow_graph.js:490-493`，所以展开后还能点回收起）。
+- **Q3: tab 的编号与排序——`#N` 按什么算，运行中是否仍排最前？**（改写自原 Q3。原选项缺「排序」这一维。）
+  **场景**: wf1 起后跑 10 分钟，wf2/wf3 随后起并很快结束。按「出现序编号 + 运行中排最前」，tab 条从左到右读作 **`#1 #3 #2``**（`design.md:363` 写「出现顺序」、`:368` 又写「运行中排最前」，二者必然冲突）。**第二个反例**：`_workflows` **永不注销**（`manager.py:408/567`），WS 重连补发（`web/session.py:695-723`）会把前端**早已淘汰**的图塞回来并分配新 `nextSeq` → 同一张图重连前 `#2`、重连后 `#9`，「第几次 run」**答错**。
+  **选项 A（按 `started_at` 排序编号 + 排序也按编号）**：编号与位置一致、跨整页刷新稳定、与用户嘴里的「第几次 run」同义；运行中用徽标区分（不靠排序表达）；代价是淘汰后编号前移。**选项 B（到达序单调计数器 + 保持「运行中排最前」）**：淘汰不重编号，但 tab 序列非单调，且 WS 重连补发会让被淘汰过的图拿到新编号。
+  **推荐**: 选项 A。
 
-- **Q3**: D6 的 tab 序号 `#3` 是什么口径？刷新/重连后是否重新编号？
-  **场景**: 用户手机上一个 session 里模型起了 3 次 workflow（tab 显示 `#1 #2 #3`），看完后下拉刷新页面 → ws 重连 → 服务端用 `build_workflow_resume_payloads`（`web/session.py:695-723`）补发「当前 running + 最近 5 张终态」，前端 `createGraphState()`（`workflow.js:40-46`）是**全新的空 Map**，按补发顺序重建 tab。**方案 A（会话内单调计数）**：`graphState` 里存一个 `nextSeq` 计数器，重建后 3 张图变成 `#1 #2 #3`（顺序可能与刷新前不同，因为补发顺序是「running 在前 + 终态按注册序」）。**方案 B（按 `started_at` 排序后编号）**：刷新前后编号稳定（同一批图永远是 `#1 #2 #3`），代价是编号不再等于「tab 出现顺序」。**方案 C（持久化到后端）**：给 scheduler 加持久序号，成本最高，与 Non-Goal「不做跨 session 历史」冲突。
-  **补充事实**（两条会让实现在这里翻车，无论选哪个方案都要处理）：(a) 不能拿 `Map` 的插入下标当序号——`pruneGraphs` 会 `state.graphs.delete(evicted.id)`（`workflow.js:124-135`），删掉 `#1` 后原来的 `#2` 下标变成 0，编号会整体前移；必须存显式计数器或显式字段。(b) tab 可能在**没有快照**的情况下存在——`workflow_started` 事件一到就 `ensureGraph` 建了 entry（`workflow.js:67-79`），此时 `entry.snapshot === null`，`renderGraphTabs` 已经在用 `entry.snapshot && entry.snapshot.status` 兜底（`:180-189`）；D6 的新增字段 `耗时`/`M/N` 都来自快照，格式化函数必须能吃 `null` 快照并退化成只显示 `#序号 · goal`。
-  **推荐**: 方案 A + 显式计数器，`title` 里放 `started_at` 绝对时间作为跨刷新稳定的权威标识（Temporal 的三格式思路，design D6 已经这么写了）。理由：刷新后重新编号对「我刚看的那张图」这个使用场景是可接受的（用户认的是 goal 和时间，不是编号），而方案 B 要把 `started_at` 拉进排序再编号，会让「运行中排最前」（design D6 第 148 行）与编号顺序互相冲突。
 
-- **Q4**: 快照里的节点 `reason` 截断到多少？400（与 `summary` 同口径）还是给详情面板更长的额度？截断后要不要带「已截断」标志？
-  **场景**: 12 文件体检图触发预算超限后，用户点开三种异常节点。`blocked` 节点的 reason 是 `"workflow ended before the node became ready"`（`scheduler.py:980-984`，32 字符）；`budget_exceeded` 根节点是 `"budget exceeded (tokens)"`（`:977`，23 字符）；而某个 `failed` 节点的 reason 是 `state.error` = `f"{type(exc).__name__}: {exc}"`（`:1309`），实测这类字符串常见 1–3KB（LLM provider 的报错带请求体摘要/堆栈），截到 400 字符会正好切在句子中间。**方案 A**：统一 400，与 `summary` 同用 `_SUMMARY_LIMIT`，详情面板里显示 `reason[:400]` 并在末尾加 `…`；想知道全文的用户去「对话」tab 看该节点的 transcript。**方案 B**：快照里给 reason 一个更大的独立上限（如 2000），理由是它只进详情面板、不随节点数平方膨胀（每节点一个字符串，图有上限）。**方案 C**：快照保持 400 且**附带 `reason_truncated: true`**，前端据此提示「因由已截断」。
-  **推荐**: 方案 A + C 的合并形态——截断到 400（`_SUMMARY_LIMIT`，不引入第二套常量），不加布尔标志而是由前端比较 `reason.length === 400` 判断（或在 payload 里加 `reason_truncated` 布尔，成本一样）。理由：加字段必须保持「加法、bounded、不破坏白名单」的硬约束，方案 B 会引入一个「另一个长度上限」的新契约面并让白名单测试的 `<=` 断言失去「多一个键都是没挑字段」的守卫意义；而完整因由本来就能从 transcript 路由拿到（D4），详情面板「产出」tab 也已有 `result_ref` 出口（design `:99`）。
+## 重评估（2026-09-17）：Q1–Q4 在设计大幅演进后是否仍合理
+
+用户提出：「起 subagent grill 主要是我在想这个比较久了，现在已经改了这么多设计，这几个是否还合理」。派**两名独立零记忆审阅员**（A/B）重新评估 Q1–Q4 的前提是否仍成立。**两名审阅员在 Q1/Q4 上一致，在 Q2/Q3 上分歧**——分歧本身是本次重评估的主要产出。
+
+### 一致的结论：Q1、Q4 已 moot，不需再问
+
+- **Q1（foreach 容器 transcript）**：原二选一（候选清单 vs 一律无入口）已被「界面效果 §0」+ D4 三态 union + G10 唯一确定；方案 B 被 G10 的立项理由否掉（失败项 `summary` 为空 → 不给候选就是「3 个红点、点开每行空白」，正是 issue 原始场景）。
+  **但审阅员 B 找出 design 内部矛盾**：`subagent_ids` 是**稀疏数组**（异常 envelope 走 `continue` 跳过 append，`scheduler.py:1487-1492`），**不能当索引源**——12 项被取消时点开只有 8 行候选，而「还有哪 4 个没跑」恰是用户最想知道的。已修正为「索引源 = `item_states`（index 空间），`subagent_ids` 只做真实性校验」。
+- **Q4（reason 截断额度）**：前提被 G17 证伪——「全文去 transcript 看」不成立（scheduler 侧 reason 从不出现在任何 subagent transcript 里），G17 已强制要求路由返回全文。剩下只是数值，而**截断值对用户不可见**（快照 reason 只用于节点 `why` 小字与详情状态区，都不渲染 2KB；全文阅读走详情面板从路由取）。落为设计裁决：快照 400（`_SUMMARY_LIMIT`）+ `reason_truncated` 布尔；路由 `single`/`candidates`/`none` 返回 `reason_full`/`reason_length`。
+  **审阅员 B 补两处**：(a) **前端比长度判截断是错的**——恰好 400 字符的 reason 会被误判「已截断」，布尔标志是唯一正确做法；(b) `none` union 也须给全文（`blocked`/`budget_exceeded` 恰是最常点的节点，而它们的 reason 属于 `none` 态）。
+
+### 分歧：Q2、Q3 仍需用户拍板，且**推荐答案都有会出错的反例**
+
+两名审阅员对 Q2/Q3 是否需用户拍板判断相反（A 说不需要、B 说需要），**B 给了可复现的反例，故采信 B**：
+
+- **Q2（展开控件）**：审阅员 B 构造出反例——节点盒 168×58 SVG 单位，手机 380px 视口下 `fitToWidth` 缩放后节点实显仅约 36px（3 节点层）/ 27px（4 节点层），**「≥44px 按钮」在 SVG 坐标里是假的**（实显约 27/21px，比节点本身还大）；且 `TAP_SLOP=4` 会让手指漂移超过 4px 后 `setPointerCapture` 吃掉 click（`:490-497`）→ 手机上最常见的操作必然踩坑。**问题前提「控件必须画在节点上」本身要重新审视**。
+- **Q3（tab 序号）**：审阅员 B 构造出反例——`_workflows` 永不注销，重连补发会把前端**早已淘汰**的图塞回来并分配新 `nextSeq`，同一张图重连前 `#2`、重连后 `#9`，「第几次 run」答错；且「按时间编号 + 运行中排最前」的组合必然产生非单调序列（长跑 wf1 + 快结 wf2/wf3 → tab 读作 `#1 #3 #2`），而 Q3 的三个选项里没有「排序」这一维。
+
+**这两条已改写为 Q2′/Q3′ 抛给用户（见 `## User Confirmation`）。**
+
+### 审阅员找出的其他缺口（非用户决策，已直接修正）
+
+1. `TERMINAL_STATUSES` **双副本**（`scheduler.py:104-109` + `workflow.js:16`）必须同步加 `completed_with_failures`，否则那张图被当成 running → 永不淘汰、永久排最前。
+2. 候选集字段三处对不上（spec scenario / design schema / G10），统一为含 `index`/`task`/`reason` 的版本。
+3. D5.3 项列表的 tab 归置与 §3 形态图矛盾（「任务」tab vs 「对话」tab）——定为「对话」tab，否则破掉懒加载契约。
+4. spec delta 缺 G17 的 Requirement（tasks 有、spec 没有 → 做完守不住）。
+5. G19（定位异常节点）/ G21（复制）在 design 里一个字都没有——已补进 Non-Goals 显式记录。
 
 ## User Confirmation
 

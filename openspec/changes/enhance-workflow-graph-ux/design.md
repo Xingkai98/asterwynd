@@ -32,6 +32,8 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 - **不做节点级重跑 / 重试**（需新调度器原语：用户触发复位 + 重派发 + 与 `_accepting`/预算/`activations` 的交互定义；且要回答「重跑已完成的节点？」「下游全级联？」「预算已耗尽还能重跑？」）。**另立 change**（见下 Issue）。
 - **不做运行内事件流 / 状态迁移时间线**（数据齐备：`latest_events` 内存 5 条 + `events.jsonl` 落盘，但要先定暴露口径与容量）。注意：本 Non-Goal **不含**「不做时间轴回放（snapshot scrubber）」以外的含义——**节点级「变化高亮」不做为动画，但作为一次性标记做**（见 D8）。
 - **不做节点搜索 / 筛选**（真过滤会破坏 DAG 布局：隐藏节点需重连边、重算层级）。本 change 只做**压暗（dim）**轻量版（G20 延后，见下）。
+- **不做异常节点定位/聚焦**（G19：统计行异常计数可点 → viewBox 聚焦；零后端成本，但用户裁决不进本 change）——**显式记录为延后**，见下 issue。
+- **不做内容复制**（G21：节点 id / `reason` / transcript 的 copy affordance；成本极低但用户裁决不进）——显式记录为延后。
 - **不做导出 / 分享（PNG / JSON）**（要定导出形态、是否含图例与时间戳）。另立 change。
 - **不做长跑完成通知**（与图耦合度低）。另立 change。
 - 不做时间轴 scrubber 式图历史回放（快照仍只表达当前态）。**措辞收窄**：原写「不做图历史回放（快照只表达当前态）」会连坐「同一次运行内的事件流」，那恰是「为什么报错」的最直接答案——已拆成上面两条。
@@ -301,13 +303,14 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
   → 三态 union（对应「界面效果 §0」的节点↔subagent 三类）：
     {kind: "single",     node_id, subagent_id, status, messages: [...], truncated, included_tool_results}   # subagent / aggregate(llm) / auto-agg
     {kind: "candidates", node_id, node_kind, total, offset, limit, has_more, candidates: [{index, subagent_id, run_id, status, label, summary, started_at, finished_at}]}  # foreach 容器
-    {kind: "none",       node_id, node_kind, reason}   # route / aggregate(collect) / 未派发节点
+    {kind: "none",       node_id, node_kind, reason_full, reason_truncated, reason_length}   # route / aggregate(collect) / 未派发节点
 ```
 
 - **为什么新路由**：`InspectSubagentTranscript` 是 **LLM 面工具**（`Tool` 子类、要 permission、走 AgentLoop 工具注册与协议）。Web 层要用它得绕过工具协议直接调 manager——不如直接暴露一个 HTTP 只读接口。两者底层**复用同一个 `SubAgentManager.inspect_transcript()`**，不复制逻辑。
 - **`inspect_transcript` 的真实口径（grill 决策 7，防实现踩坑）**：它**不按 `run_id` 过滤**——messages 分支取的是 `session.messages[-limit:]`（`manager.py:1035-1038`，即整段 session 消息尾部，跨多次 run 累积），`run_id` 只是**回显**；默认 `limit=5`；**没有单条内容截断**；`scope="summary"` 的返回体**根本没有 `messages` 键**（只有 `summary`）。所以路由必须：显式传 `scope="recent_messages"` + `limit`（上限 200）、**自己在路由层加单条内容截断**、并在 `_require_session` 抛 `KeyError`（`manager.py:1433-1437`）时转结构化响应。`truncated` 的语义是 `len(messages) > limit`（已剔除 tool 角色后）——前端文案别写成「内容被截断」。
 - **node_id → subagent 解析（grill 决策 8 + 「界面效果 §0」+ **审阅员 B 的重大修正**）**：
-  - **权威候选集是 `NodeState.subagent_ids`，不是反查 `manager._sessions`**。反查会被**孙代 session 污染**：`create_subagent`（`manager.py:450-479`）从**当前 contextvar** 取 `workflow_id`/`node_id`，而节点的 AgentLoop 跑在入队时 `copy_context()` 捕获的上下文里（`manager.py:780-786` 捕获、`:1439-1442` 用 `item.context` 启动），且**工具层从不 reset `node_id`/`workflow_id`**（`set_node_id`/`reset_node_id` 在 `agent/tools/`、`agent/loop.py`、`manager.py` 全无命中）。所以**一个普通 subagent 节点只要自己 spawn 过子 agent，就满足「N>1」，会被误判成 `candidates`**，0/1/N 规则随之失准。
+  - **索引源是 `item_states`（index 空间 0..N-1），不是 `subagent_ids`；`subagent_ids` 只做真实性校验**（grill B 反例修正）。`state.subagent_ids` 是**稀疏数组**——append 在 `_execute_foreach` 的 gather 结果循环里，而**异常 envelope 走 `continue` 跳过 append**（`scheduler.py:1487-1492`），`_run_foreach_item` 拿不到 slot 时抛 `CancelledError`（`:1513-1515`）、`_launch_run` 的超限/`queue_full` 路径也返回非 completed。**若拿它当索引源，12 项里被取消/异常的那几项会从候选列表里消失**——而「还有哪几个没跑」正是用户最想知道的。候选必须按 index 空间生成：`item_states[i]` 给状态、`i` 对应的 run record 给 `task`/`reason`。
+  - **不反查 `manager._sessions`**（孙代 session 会污染）。：`create_subagent`（`manager.py:450-479`）从**当前 contextvar** 取 `workflow_id`/`node_id`，而节点的 AgentLoop 跑在入队时 `copy_context()` 捕获的上下文里（`manager.py:780-786` 捕获、`:1439-1442` 用 `item.context` 启动），且**工具层从不 reset `node_id`/`workflow_id`**（`set_node_id`/`reset_node_id` 在 `agent/tools/`、`agent/loop.py`、`manager.py` 全无命中）。所以**一个普通 subagent 节点只要自己 spawn 过子 agent，就满足「N>1」，会被误判成 `candidates`**，0/1/N 规则随之失准。
   - 解析规则（在 `subagent_ids` 上）：**0 条** → `kind:"none"`（未派发，或 route / aggregate(collect) 这类本就不产生 run 的节点）；**1 条** → `kind:"single"`；**N>1 条** → `kind:"candidates"`（**含 N=1 的 foreach 也归 `single`**，不设特例分支）。普通节点重跑复用 `reuse_state.subagent_id`（`:1673-1682`），不会产生第二条。
   - **`index`/`task` 的来源**：候选顺序 ≠ item 序号（`create_subagent` 发生在 `_acquire_slot()` **之后**，并发下 item#5 可能先建 session；`_sessions` 是插入序 dict）。**不要靠 `session.name = f"{node.id}-{index}"` 反解**——用 **`SubagentRunRecord.task`**（= `render_item_task` 的产物，`scheduler.py:1519`）+ **显式落一个 `index` 字段**（来自 `item_states` 的维护序）。
 - **`candidates` 每条必须带 `reason` 与 `task`（G10，issue 原始场景的唯一排查入口）**：失败项 `summary` 通常是空的（异常 envelope 分支 `append("")`，`scheduler.py:1490`），没有 `reason` 就是「3 个红点、点开每行空白」。`reason` 取 **`run.reason`**（`manager._mark_failed` `:1293` 写；`_complete_run` `:1215` 写 `result.error`），**bounded 截断**；`task` 即渲染后的具体任务（「哪个文件」的答案）。`single` union **同样补 `reason`**（失败原因从不追加进 `session.messages`，`_mark_failed` 只写 checkpoint + `run.reason`）。
@@ -347,7 +350,7 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 **方案**：
 1. 容器节点**常显**计数行：`M/N 完成`（M = `items_completed`，N = 既有 `items`），有失败时追加 `· 失败 K`。计数行是**容器状态的补充**，不改变状态语义。
 2. 计数行旁加**迷你堆叠条**（N 小则 N 个 2px 小格各按自身状态着色，N>20 退化为按比例着色的宽条）——对标 Dagster 的分区健康条（「传范围不传 N 个状态」）。
-3. **点容器节点 → 详情面板的「任务」tab 展示项列表**（`#0..#N-1` + 每项状态/摘要，可点进单项；数据源就是 D4 路由返回的**候选集**，见 Q1）。**不把项铺成 N 个 DAG 节点**：项不是 `NodeState`（#190 决策 8），铺节点要新增布局/边/交互一整套，且 Argo 的 Graph view 在 N 大时会爆炸、Airflow 干脆不在 Graph view 展开——两者都选了「列表 + 计数」（Airflow Grid 的 Mapped Instances、Step Functions 的 iteration viewer）。
+3. **点容器节点 → 详情面板的「对话」tab 展示项列表**（`#0..#N-1` + 每项状态/摘要，可点进单项；数据源就是 D4 路由返回的**候选集**，见 Q1）。**放在「对话」tab 而非「任务」tab**（grill A 指出原措辞与此矛盾）：放「任务」tab 意味着**一打开面板就得发 transcript 请求**，破掉 D4 的「切到该 tab 才发请求」懒加载契约。**不把项铺成 N 个 DAG 节点**：项不是 `NodeState`（#190 决策 8），铺节点要新增布局/边/交互一整套，且 Argo 的 Graph view 在 N 大时会爆炸、Airflow 干脆不在 Graph view 展开——两者都选了「列表 + 计数」（Airflow Grid 的 Mapped Instances、Step Functions 的 iteration viewer）。
 4. **上界**：N 超过 50 时项列表只渲染「失败项 + 前若干项 + 聚合统计」，且列表本身做 UI 虚拟化（D4）。
 
 ### D6 — 多图 tab 元信息：序号 + 起止 + 耗时 + 完成计数
@@ -399,6 +402,8 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 - **G15 route 判定诊断**：`route_ref_misses` 进了快照，但前端唯一读 `diagnostics` 的地方 gate 在 `graph_recursion_exceeded`（`workflow_graph.js:528-534`）→ 图正常完成时一个字都不显示。补：route 节点详情 + 图级告警都能显示；`none` union 补 `verdict`/`targets`/`raw`（截断后的上游原文 excerpt，从调度器按 node_id 取，**不进快照**）；对**字面标签不匹配**也记一条 miss（现在只有 `$ref` 未命中记，诊断只覆盖半张网）。
 - **G26 图级 status 修正（P0，主 session 实跑新发现）**：`_drive` 的收敛出口（`:824`）是 `self._status = "budget_exceeded" if self._budget_stop else "completed"`——**只看预算，完全不检查有没有节点失败**。实跑证实：有节点 `failed` 的图，图级 status 仍报 `completed`（而 envelope 里 `failed=1` 数据是对的）。**用户根本不会被告知去看失败**——直接击穿用户原话。
   **决策（用户 2026-09-17 拍板）**：**新增独立的图级终态 `completed_with_failures`，不与 `completed` 混用**。判据：图收敛（`_drive` 收敛出口）时，若存在任何节点 `status == "failed"` → `completed_with_failures`；无节点失败才 `completed`。**优先级**：`budget_exceeded` / `cancelled` / `graph_recursion_exceeded` 仍优先于它（预算停与取消是更强的停止原因）。**影响面**：(a) 图级 status 是 `_envelope` 的字段，消费方（benchmark 报告 / `GetWorkflow` / `_first_started_scheduler`）需容忍新值；(b) 前端 tab 徽标与视图头走**独立 `GRAPH_STATUS_*` 表**（见 D10），不碰 `NODE_COLORS`；(c) 该档的语义是「正常跑完但有节点失败」——**不使整图算失败**，但必须让用户一眼看到「有东西没成功」，这正是 G26 的立项理由。
+  **(d) ⚠ 必须同步两处终态列表（grill B 反例，此前 design/tasks 未点名）**：终态集合有**两个独立副本**——`scheduler.py:104-109` 的 `_SNAPSHOT_TERMINAL_STATUSES` 与 `web/static/workflow.js:16` 的 `TERMINAL_STATUSES`。前者被三处消费（快照计数门控 `:2252`、终态帧绕开 0.1s 合并窗 `web/session.py:535-537`、重连补发分类 `:719`），后者被 `pruneGraphs`（`:124-135`）消费。**任一处漏加 `completed_with_failures`**，一张「跑完了但有节点失败」的图会被当成 **running**：永远排 tab 最前、计时器一直跳、每次重连都补发、**永不进淘汰池**（tab 无限增长）——而这恰是最需要用户看到的图。
+  **(e) 三处 reason 上限口径**（grill B 补充）：父 Agent 面 `_PARENT_FIELD_LIMIT`=200（`scheduler.py:105`）、Web 快照 400（`_SUMMARY_LIMIT`）、D4 路由给全文。三个消费者用途不同、不算错误，但 spec 与文档要写清，否则「为什么父 agent 报告里的 reason 更短」会成为下一个困惑源。
 - **G9 trace 摘要**：`run.trace` 在四个终态落点写入（`manager.py:1223/1295/1310/1329`），session 挂 `manager._sessions`、manager 经 `session.agent.subagent_manager` 可达（`loop.py:152`）。补 bounded `trace_digest`（最近 N 条 `status != ok` 的 `tool_result` + `llm_error`）。**两个坑**：(a) `run.trace` **只在终态写入**，运行中是 `None` → **Goal 5「详情面板能看到此刻在干什么」做不到**，G9 只对**已失败节点**有效，这条必须写进 spec（否则 spec 无法验收）；(b) `trace is None` 有三种成因（queue_full 根本没有 / 排队取消是空 steps 不是 None / `_mark_budget_exceeded` 在 trace is None 时写 None），前端不能把 None 与 `steps==[]` 都显示成「无失败证据」。
 
 ### D10 — 图级超限仍画图（G14）
