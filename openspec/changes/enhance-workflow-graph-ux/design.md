@@ -33,6 +33,113 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 - 不做「跨 session 的 workflow 历史浏览」（详情面板只服务当前 session 的运行态图）。
 - 不做数据虚拟化（我们是快照推送、数据全在内存；只做 **UI 虚拟化**，见 D4）。
 
+## 界面效果（预期的样子）
+
+本节先固定「改完之后，用户看到什么、点什么、得到什么」，D1–D7 是实现它的一组手段。所有形态在桌面（>720px）与手机（≤720px）用**同一份 DOM**、按 720 断点切 class。
+
+### 0. 节点 ↔ subagent 的真实对应（决定详情面板形状的**前置事实**，逐执行器核实）
+
+| 节点 | kind | 有 subagent？ | 数量 | 依据 |
+|---|---|---|---|---|
+| 普通节点 | `subagent` | ✅ | **1:1** | `_execute_subagent` → `_launch_run(reuse_state=state)` 写 `state.subagent_id` |
+| foreach 容器 | `foreach` | ✅（展开项） | **1:N** | 容器自身 `subagent_id=None`（`scheduler.py:1464`），每项独立 session |
+| 聚合（LLM 策略） | `aggregate` `strategy="llm"` | ✅ | **1:1** | `_execute_aggregate` 走 `_launch_run` |
+| 聚合（拼接策略） | `aggregate` `strategy="collect"` | ❌ | **0** | 纯逻辑合并，显式 `state.subagent_id = None; state.run_id = None` |
+| 条件分支 | `route` | ❌ | **0** | `_execute_route` 只做标签匹配，全程不调 `_launch_run` |
+| 自动插层聚合 | `__auto_agg__` | ✅ | **1:1** | kind 是 `aggregate`，默认 `strategy="llm"`（`aggregation.py:389`） |
+
+**结论**：详情面板的「对话」tab 天然有 **3 种形态**（`single` / `candidates` / `none`），它对应**节点类型**而非某个特例：
+
+- **`single`** — subagent / aggregate(llm) / auto-agg → 单条 transcript。
+- **`candidates`** — foreach 容器 → N 个并行项清单，点某项看该项 transcript。
+- **`none`** — route / aggregate(collect) → 「该节点不产生对话」，改显示该类型的**自有信息**（route：命中标签 + 选中出口；collect：合并后的产出）。
+
+这条事实要求 Q1 的接口必须按**三态 union** 设计（`none`/`single`/`candidates`），不能写成「foreach 特例 + 其余走单条」——否则 route / collect 会被塞进错误的兜底分支。
+
+### 1. 图例条（D1）
+
+```
+桌面（默认展开）:
+┌──────────────────────────────────────────────────────────────────────┐
+│ 节点  S 子代理   F 并行展开   R 条件分支   A 聚合                       │
+│ 状态  ■pending ■running ■completed ■failed ■blocked ■budget ■cancelled│
+│       □□给每个状态配一句人话，如 blocked=被上游或预算挡住，未执行        │
+│ 边    ─inactive ─ready ━active ━passed ┄blocked     线型=channel       │
+└──────────────────────────────────────────────────────────────────────┘
+
+手机（默认折叠，点开）:
+  图例 ▾
+  ← 点开后纵向列出上面三段
+```
+
+### 2. 图上的节点（D2 + D5）
+
+```
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│▌S scan       │   │▌F fan    ▸  │   │▌R gate       │
+│  completed   │   │ ⊘ blocked    │   │  completed   │
+└──────────────┘   │  完成 3/12    │   └──────────────┘
+                   │  被上游 scan  │    ↳ 点击开详情
+   ↳ 点击开详情     │  失败挡住     │    ↳ ▸ 是独立的
+                   └──────────────┘      展开控件
+                     ↑ 计数常显（D5）
+                     ↑ why 小字只
+                       在异常态出现
+```
+
+- **三重编码**：状态色（色带 + 描边）+ 角标（`✕`/`⊘`/`⏸`/`⊝`）+ 状态词（异常态加粗）——不靠颜色单独承载语义（D2）。
+- **`▸` 只对折叠组出现**（`groupLeader`），点它展开/收起，点节点其余区域开详情（D4）。
+
+### 3. 详情面板（D4，按断点切位置）
+
+```
+桌面：右侧抽屉（覆盖画布右侧，不挤压）    手机：底部抽屉（可上拖）
+┌────────────────────────────┐        ┌────────────────────────────┐
+│ fan  [foreach]  ⊘ blocked ✕│        │         ────                │
+│ ──────────────────────────│        │ fan [foreach]   ⊘ blocked   │
+│ [任务] [产出] [对话]        │        │ ──────────────────────────│
+│ ──────────────────────────│        │ [任务] [产出] [对话]        │
+│ 状态   blocked              │        │ ──────────────────────────│
+│ 因由   被上游 scan 失败挡住  │        │ 状态   blocked              │
+│ 耗时   —                    │        │ 因由   被上游 scan 失败挡住  │
+│ runs   0                    │        └────────────────────────────┘
+│ 任务   "对每个文件做体检…"   │
+└────────────────────────────┘
+```
+
+**「对话」tab 的三种形态**（对应上表）：
+
+```
+single（subagent / aggregate-llm）     candidates（foreach 容器）        none（route / collect）
+┌──────────────────────────┐      ┌──────────────────────────┐    ┌──────────────────────────┐
+│ user                     │      │ 该节点为 12 个并行项的容器 │    │ 该节点是条件判断，          │
+│   扫描仓库结构…            │      │ ┌──────────────────────┐ │    │ 不产生对话                  │
+│ assistant                │      │ │#0 a.js   ● completed │ │    │                            │
+│   发现 3 处问题…           │      │ │#1 b.js   ✕ failed    │ │    │ 判定结果：APPROVED          │
+│ …（按 50 行聚簇虚拟化）     │      │ │#2 c.js   ● completed │ │    │ 命中出口：→ gate            │
+└──────────────────────────┘      │ └──────────────────────┘ │    └──────────────────────────┘
+                                   │  点某行 → 取该项 transcript│
+                                   └──────────────────────────┘
+```
+
+### 4. 多图 tab（D6）
+
+```
+[● #1 体检                ] [● #2 修复方案            ] [✕]
+    ├ 副行: completed · 2 分钟前 · 2m18s · 5/5
+    └ title: 完整 goal + workflow_id + 绝对起止时间
+
+运行中的图排最前，其余按开始时间倒序；# 为会话内展示序（Q3）。
+```
+
+### 5. 边统计（D7）
+
+```
+改前: 11 nodes · 11 edges · …            ← 报原始边数，图上只有 6 条线
+改后: 11 nodes · 6 paths · …             ← 一致，不解释（小图未折叠，去重不发生）
+      11 nodes · 6 paths (原始 11 edges) · …   ← 不一致时才解释
+```
+
 ## Decisions
 
 ### D1 — 图例：常驻可折叠图例条，每条目配「人话解释」
@@ -110,13 +217,18 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 
 ```
 GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript
-  → {node_id, subagent_id, status, scope, messages: [{role, content, tool_call_id}], truncated, included_tool_results}
+  → 三态 union（对应「界面效果 §0」的节点↔subagent 三类）：
+    {kind: "single",     node_id, subagent_id, status, messages: [...], truncated, included_tool_results}   # subagent / aggregate(llm) / auto-agg
+    {kind: "candidates", node_id, node_kind, total, offset, limit, has_more, candidates: [{index, subagent_id, run_id, status, label, summary, started_at, finished_at}]}  # foreach 容器
+    {kind: "none",       node_id, node_kind, reason}   # route / aggregate(collect) / 未派发节点
 ```
 
 - **为什么新路由**：`InspectSubagentTranscript` 是 **LLM 面工具**（`Tool` 子类、要 permission、走 AgentLoop 工具注册与协议）。Web 层要用它得绕过工具协议直接调 manager——不如直接暴露一个 HTTP 只读接口。两者底层**复用同一个 `SubAgentManager.inspect_transcript()`**，不复制逻辑。
 - **`inspect_transcript` 的真实口径（grill 决策 7，防实现踩坑）**：它**不按 `run_id` 过滤**——messages 分支取的是 `session.messages[-limit:]`（`manager.py:1035-1038`，即整段 session 消息尾部，跨多次 run 累积），`run_id` 只是**回显**；默认 `limit=5`；**没有单条内容截断**；`scope="summary"` 的返回体**根本没有 `messages` 键**（只有 `summary`）。所以路由必须：显式传 `scope="recent_messages"` + `limit`（上限 200）、**自己在路由层加单条内容截断**、并在 `_require_session` 抛 `KeyError`（`manager.py:1433-1437`）时转结构化响应。`truncated` 的语义是 `len(messages) > limit`（已剔除 tool 角色后）——前端文案别写成「内容被截断」。
-- **node_id → subagent 解析（grill 决策 8，必须写成候选集）**：`SubagentSessionRecord` 已有 `workflow_id` + `node_id`（`manager.py:168-169`），但 **(workflow_id, node_id) 在 foreach 容器上是一对多**——容器清空 `subagent_id`（`scheduler.py:1464`）后每项独立建 session，而 `_launch_run` 的 `set_node_id(node.id)`（`:1669`）写的是**容器 id**，于是 `_sessions`（`manager.py:360`）里有 N 条同键记录。解析规则必须是「**收集候选集**」：**0 条** → 未派发（`subagent_id: null`）；**1 条**（普通节点，或恰好 1 项的 foreach）→ 直接给该条 transcript；**N>1 条** → 返回结构化「容器，附 N 个候选（`subagent_id`/`status`/`summary` 摘要）」。**不要**写成「foreach 容器一律无单一 transcript」（会把 N=1 的容器也拒掉）。普通节点重跑**不会**产生第二条候选（`_launch_run` 复用 `reuse_state.subagent_id`，`:1673-1682`），design 早先「按 run_id 取最新」的担心是多余的。
-- **边界（不猜、优雅降级）**：未派发节点（`pending`/`blocked`）→ `subagent_id: null` + 空 messages + 说明，前端显示「该节点未执行，无 transcript」（配合 D2 因果句，这本身就是有用信息）。
+- **node_id → subagent 解析（grill 决策 8 + 「界面效果 §0」，按候选集而非首条）**：`SubagentSessionRecord` 已有 `workflow_id` + `node_id`（`manager.py:168-169`）。解析规则按候选**收集**：**0 条** → `kind:"none"`（未派发，或 route / aggregate(collect) 这类**本就不产生 run** 的节点）；**1 条** → `kind:"single"`；**N>1 条** → `kind:"candidates"`。**foreach 容器**因容器清空 `subagent_id`（`scheduler.py:1464`）后每项独立建 session、而 `_launch_run` 的 `set_node_id(node.id)`（`:1669`）写的是**容器 id**，故 `_sessions`（`manager.py:360`）里有 N 条同键记录 → 走 `candidates`（**含 N=1 的 foreach 也归 `single`**，不设特例分支）。普通节点重跑**不会**产生第二条候选（`_launch_run` 复用 `reuse_state.subagent_id`，`:1673-1682`）。
+- **`candidates` 必须 bounded**：默认 `limit=50`、硬上限 200，带 `total`/`has_more`/`offset`；候选只带短摘要（`summary` 再截断），真正 messages 等点某项时按 `subagent_id`（+`run_id`）再取一次。
+- **`run_id` 过滤（grill 决策 7 的连带约束）**：`inspect_transcript` 当前**不按 `run_id` 过滤**（取 `session.messages[-limit:]`）——候选列表若要精确到某项的 run，必须**先修候选定位与 run 级取数**，否则只是把「展示错 run」换个入口（codex 复核指出的坑）。
+- **边界（不猜、优雅降级）**：未派发节点（`pending`/`blocked`）→ `kind:"none"` + 说明，前端显示「该节点未执行，无对话」（配合 D2 因果句，这本身就是有用信息）；route 节点改为展示**命中标签 + 选中出口**，collect 节点改为展示**合并产出**（`kind:"none"` 时的类型化信息，不是一句「无对话」了事）。
 - **信任级与 session 口径（grill 决策 9）**：「需真实存在的 `session_id`」在本仓库 = **在内存里存在**——既有路由用 `session_manager.get_session()`（`web/server.py:160-175`），只查内存字典（`web/session.py:1013-1014`），冷会话/进程重启后一律 404（与 `/api/sessions/{id}/timeline` 同口径）。**这不是缺陷但要写进 spec/测试**（tasks 2.4 的「未知 session 404」要覆盖「进程重启后同名 session」这个最易误判为 bug 的场景），前端「对话」tab 对 404 降级为「该会话未在本进程加载」。只读、**不调 LLM、不写盘、不改执行状态**、`include_tool_results` 默认 false。
 
 **实时更新**：面板开着时，节点状态/产出随快照**就地刷新**；但**`对话` tab 的 transcript 不跟着重排**（会打断阅读）——沿用 Temporal 的「暂停实时更新以便调查」思路，给一个暂停按钮。

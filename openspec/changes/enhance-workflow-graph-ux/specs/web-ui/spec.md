@@ -95,20 +95,27 @@ Workflow 视图 SHALL 支持点击任意节点打开节点详情面板。详情 
 
 ### Requirement: workflow 节点 transcript 只读接口
 
-Web 服务 SHALL 提供只读接口 `GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript`，复用 `SubAgentManager.inspect_transcript()`，返回该节点的运行 transcript。接口 SHALL bounded（条数上限 + 单条内容截断），SHALL 默认排除工具结果。接口 SHALL NOT 调用 LLM、写盘或改变 workflow 执行状态。
+Web 服务 SHALL 提供只读接口 `GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript`，复用 `SubAgentManager.inspect_transcript()`，按节点的**对话形态**返回三态之一：`single`（1 个对应 subagent：`subagent` / `aggregate(strategy="llm")` / 自动插层聚合）、`candidates`（foreach 容器，N 个展开项）、`none`（`route` / `aggregate(strategy="collect")` / 从未派发的节点——这些节点不产生 run）。接口 SHALL bounded（条数上限 + 单条内容截断 + 候选集分页上限），SHALL 默认排除工具结果。接口 SHALL NOT 调用 LLM、写盘或改变 workflow 执行状态。
 
-#### Scenario: 读取已执行节点的 transcript
+#### Scenario: 读取单 subagent 节点的 transcript
 
-- **GIVEN** 一个 workflow 中已执行的节点（存在对应 subagent）
+- **GIVEN** 一个已执行、恰好对应 1 个 subagent 的节点（普通节点 / LLM 聚合 / 自动插层聚合）
 - **WHEN** 请求该节点 transcript
-- **THEN** SHALL 返回该节点的 messages（bounded）与 `truncated` 标志
+- **THEN** SHALL 返回 `kind: "single"` 与该节点的 messages（bounded）与 `truncated` 标志
 - **AND** SHALL NOT 触发任何 LLM 调用或状态变更
 
-#### Scenario: 无单一 transcript 的节点优雅降级
+#### Scenario: foreach 容器返回候选集
 
-- **GIVEN** 一个 foreach 容器节点（展开项各自独立）或一个从未派发的 `pending`/`blocked` 节点
+- **GIVEN** 一个 foreach 容器节点（N 个展开项各自独立 subagent，且 N>1）
 - **WHEN** 请求该节点 transcript
-- **THEN** 服务端 SHALL 返回结构化说明（容器附项数 / 未派发节点 `subagent_id: null`）
+- **THEN** SHALL 返回 `kind: "candidates"` 与至多 `limit` 条候选（每条含 `subagent_id`/`run_id`/`status`/`summary`），附 `total`/`has_more`
+- **AND** 用户点某一项后 SHALL 能按该项的 `subagent_id` 取到该项自己的 transcript，SHALL NOT 混入同容器其它项的 messages
+
+#### Scenario: 不产生 run 的节点优雅降级
+
+- **GIVEN** 一个 `route` 节点、一个 `strategy="collect"` 的聚合节点，或一个从未派发的 `pending`/`blocked` 节点
+- **WHEN** 请求该节点 transcript
+- **THEN** SHALL 返回 `kind: "none"` 与结构化说明（route 附命中标签与选中出口、collect 附合并产出、未派发节点说明未执行）
 - **AND** SHALL NOT 编造 transcript
 
 ### Requirement: workflow 多图与 foreach 可读性
