@@ -2,6 +2,28 @@
 
 ## MODIFIED Requirements
 
+### Requirement: workflow 图跨端适配
+
+Workflow 视图 SHALL 在桌面（>720px）显示横向 DAG（左→右）、在手机/平板（≤720px）显示纵向 DAG（上→下）。SHALL 支持 pinch 缩放 + pan 平移。50–200 节点 SHALL 折叠 foreach/自动插层（折叠组聚合状态）。
+
+折叠组的展开/收起 SHALL 由节点上的**独立控件**承担（不再由「点击节点」承担）；点击节点 SHALL 打开节点详情面板（见「workflow 节点详情面板」）。`max_nodes` 超限 SHALL 表现为「声明期被拒（无图）/ 运行期 `status == "graph_recursion_exceeded"` + `diagnostics`」两种，前端 SHALL NOT 依赖 `nodes.length > 200` 判断超限，也不存在「渲染一张 >200 节点的图再截断」的路径。
+
+分层布局、状态映射与折叠归类 SHALL 与 DOM 解耦为可单独测试的纯函数。
+
+#### Scenario: 手机端纵向布局
+
+- **GIVEN** 一个 ≤720px 视口的移动端
+- **WHEN** 渲染 workflow 图
+- **THEN** SHALL 显示纵向 DAG（根在上、叶在下）
+- **AND** SHALL 支持 pinch 缩放与 pan 平移
+
+#### Scenario: 折叠组展开与节点点击语义分离
+
+- **GIVEN** 一个折叠的 foreach 容器节点
+- **WHEN** 用户点击该节点（而非其展开控件）
+- **THEN** SHALL 打开节点详情面板
+- **AND** SHALL NOT 因此展开/收起该折叠组（展开由独立控件承担）
+
 ### Requirement: workflow 图快照
 
 scheduler SHALL 提供 `workflow_graph_snapshot()`，返回完整运行期图（nodes + edges + 每节点 status + 每边 status）。该快照 SHALL 基于运行期 `ExecutionPlan`（含自动插层 + foreach 展开），SHALL NOT 改变现有 `_envelope`/`parent_envelope` 的父 Agent 数据契约。快照 SHALL 显式挑选字段（节点不含 `subagent_ids`/`slots`/`raw`，边只含结构字段），SHALL NOT 复用 `NodeState.to_dict()` 直出或整包复用 `_envelope`。
@@ -62,7 +84,7 @@ Workflow 视图 SHALL NOT 仅靠颜色区分节点状态。非成功状态（`fa
 
 ### Requirement: workflow 节点详情面板
 
-Workflow 视图 SHALL 支持点击任意节点打开节点详情面板。详情 SHALL 包含该节点的 id、kind、status、因果说明、起止/耗时、runs 次数、task 与产出 summary。面板 SHALL 在桌面（>720px）以右侧抽屉、在手机（≤720px）以底部抽屉呈现（同一 DOM，按断点切换）。打开面板的点击 SHALL NOT 与折叠组展开/收起复用同一手势；折叠组展开 SHALL 由独立控件承担。
+Workflow 视图 SHALL 支持点击任意节点打开节点详情面板。详情 SHALL 包含该节点的 id、kind、status、因果说明、起止/耗时、runs 次数、task 与产出 summary。面板 SHALL 在桌面（>720px）以右侧抽屉、在手机（≤720px）以底部抽屉呈现（同一 DOM，按断点切换）。点击节点的语义 SHALL 与折叠组展开/收起分离（见「workflow 图跨端适配」的 MODIFIED 口径）。
 
 #### Scenario: 点节点打开详情
 
@@ -70,13 +92,6 @@ Workflow 视图 SHALL 支持点击任意节点打开节点详情面板。详情 
 - **WHEN** 用户点击任意非容器节点
 - **THEN** SHALL 打开该节点的详情面板并显示其状态、因果说明与元信息
 - **AND** 桌面端 SHALL 从右侧滑入、手机端 SHALL 从底部滑入
-
-#### Scenario: 折叠组展开与详情互不干扰
-
-- **GIVEN** 一个折叠的 foreach 容器节点
-- **WHEN** 用户想展开该组的成员 / 想看该容器的详情
-- **THEN** 展开 SHALL 由独立控件触发、详情 SHALL 由点击节点触发
-- **AND** 两个意图 SHALL NOT 被同一次点击同时命中
 
 ### Requirement: workflow 节点 transcript 只读接口
 

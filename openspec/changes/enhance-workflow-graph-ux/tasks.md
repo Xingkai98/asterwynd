@@ -6,16 +6,16 @@
 
 ## 1. 数据面：快照加法字段（前端增强优先，后端只补图上看不到的）
 
-- [ ] 1.1 `agent/subagent/scheduler.py::_graph_node_projection` 补 `reason`（**必须截断到 `_SUMMARY_LIMIT`**，与 `summary` 同口径）。
-- [ ] 1.2 `workflow_graph_snapshot()` 图级补 `started_at`/`finished_at`（取既有 `self._started_at`/`self._finished_at`）。
-- [ ] 1.3 `NodeState` 新增 `items_completed`/`items_failed` 计数，在 `_run_foreach_item` 的 gather 结果循环里**旁加**自增（不改既有 `state.status`/`state.reason` 文案）；`_graph_node_projection` 只对 foreach / `__auto_agg__` 节点输出。
-- [ ] 1.4 更新 `tests/agent/subagent/test_workflow_graph_snapshot.py` 的 `SNAPSHOT_NODE_KEYS`/图级白名单，**保留**排除断言（`subagent_ids`/`slots`/`raw`/`error`/`bus`/`attribution`）与「`_envelope`/`parent_envelope` 逐字节不变」回归。
+- [ ] 1.1 `agent/subagent/scheduler.py::_graph_node_projection` 补 `reason`（**必须在投影层截断到 `_SUMMARY_LIMIT`**，与 `summary` 同口径；`state.reason` 本体不改——它是 `_envelope` 字段；截断额度见 grill Q4）。
+- [ ] 1.2 `workflow_graph_snapshot()` 图级补 `started_at`/`finished_at`——**哨兵统一成 `null`**：`started_at: (self._started_at or None)`（`declared` 态是 `0.0` 哨兵）、`finished_at: self._finished_at`（运行中 `None`）；**不要**复用 `_envelope` 的 `or time.time()` 口径。
+- [ ] 1.3 `NodeState` 新增 `items_completed`/`items_failed`，在 `_run_foreach_item` 的 gather 结果循环里**旁加**自增（失败口径与既有 `failures` 对齐：异常 envelope 与 `status != "completed"` 都算失败）；**同时在 `_execute_foreach` 开头随 `items`/`subagent_ids`/`run_ids` 一起清零**（否则 route 回边重跑累加出 `M > N`）；`CancelledError` 提前 return 时计数停在部分值（前端容忍 `M < N`）。`_graph_node_projection` 只对 foreach / `__auto_agg__` 节点输出。
+- [ ] 1.4 更新 `tests/agent/subagent/test_workflow_graph_snapshot.py`：节点白名单 `SNAPSHOT_NODE_KEYS`（模块级 frozenset，`:34-36`）+ **图级内联白名单字面量**（`:173-176`），**保留**排除断言（`subagent_ids`/`slots`/`raw`/`error`/`bus`/`attribution`）与「`_envelope`/`parent_envelope` 逐字节不变」回归。
 
 ## 2. 后端：只读 transcript 路由
 
-- [ ] 2.1 `web/session.py` 新增「按 `(workflow_id, node_id)` 找 subagent」的解析（遍历 `_sessions` 匹配 `SubagentSessionRecord.workflow_id`/`node_id`），复用 `SubAgentManager.inspect_transcript()`。
-- [ ] 2.2 `web/server.py` 新增只读路由 `GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript`（bounded：条数上限 + 单条长度上限 + `include_tool_results` 默认 false；**不调 LLM、不写盘、不改执行状态**）。
-- [ ] 2.3 边界语义：foreach 容器 → 结构化「无单一 transcript」（附 `items` 计数）；未派发节点 → `subagent_id: null` + 空 messages + 说明；未知 node/session → 404。
+- [ ] 2.1 `web/session.py` 新增「按 `(workflow_id, node_id)` **收集候选集**」的解析（遍历 `_sessions` 匹配 `SubagentSessionRecord.workflow_id`/`node_id`；键在 foreach 容器上一对多），复用 `SubAgentManager.inspect_transcript()`。**注意**：必须显式传 `scope="recent_messages"` + `limit`（`summary` 分支无 `messages` 键）；`inspect_transcript` **不按 run_id 过滤、不截断单条内容**，单条截断要在路由层自己做；`KeyError`（`_require_session`）要转结构化响应。
+- [ ] 2.2 `web/server.py` 新增只读路由 `GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript`（bounded：条数上限 200 + **路由层**单条长度上限 + `include_tool_results` 默认 false；**不调 LLM、不写盘、不改执行状态**）。session 校验用 `session_manager.get_session()`（内存口径，冷会话 404，与 `/timeline` 同）。
+- [ ] 2.3 边界语义（候选集规则）：0 条候选 → 未派发（`subagent_id: null` + 说明）；1 条 → 直接给该条 transcript（含 N=1 的 foreach）；N>1 条 → 结构化「容器，附 N 个候选（`subagent_id`/`status`/`summary`）」（形态见 grill Q1）；未知 node/session → 404。
 - [ ] 2.4 测试：正常 / foreach 容器 / 未派发节点 / 未知 node 404 / 未知 session 404 / bounded。
 
 ## 3. 前端纯函数层（`workflow_graph.js`，node + vm 单测）
@@ -23,8 +23,8 @@
 - [ ] 3.1 `legendModel()`：从 `NODE_COLORS`/`EDGE_STYLES`/`KIND_GLYPHS`/`NODE_LABELS` **同源生成**图例内容（节点类型 + 7 档状态 + 5 档边状态 + channel 线型），每条目带人话解释；单测断言 7 档状态全覆盖。
 - [ ] 3.2 `explainNode(node, edges, nodesById)`：failed / blocked（有失败上游 / 无失败上游）/ budget_exceeded / cancelled 的因果句；**回归「12 文件 foreach 超预算」场景**（3 failed + 2 blocked + 1 budget_exceeded）。
 - [ ] 3.3 异常态编码表：状态 → 形状/角标（`failed` ✕ / `blocked` ⊘ 虚边框 / `budget_exceeded` ⏸ 双边框 / `cancelled` ⊝）。
-- [ ] 3.4 `edgePath()` 平行边等距偏移（`offset = (k - (n-1)/2) * DELTA`，横向偏 y / 纵向偏 x），n 超上限退化为聚合标注；单测「3 条边路径互不相同且有限」。
-- [ ] 3.5 边统计口径：`collapsed.edges.length`（实际路径数）+ 原始边数（`N paths (原始 M edges…)`）。
+- [ ] 3.4 并行边等距偏移：在 `layoutGraph` 的 `layoutEdges` 里**先按 `(from,to)` 分组**（`edgePath` 拿不到 multiplicity），把 `{index,total}`/`offset` 作为**可选参数**传进 `edgePath`（保持导出 API 兼容）；`offset = (k - (n-1)/2) * DELTA`，横向偏 y / 纵向偏 x；n 超上限退化为聚合标注。单测「3 条边路径互不相同且有限」。
+- [ ] 3.5 边统计口径：报**实际绘制路径数**（`collapsed.edges.length`）+ 原始边数（`snapshot.edges.length`）；**两数相等时不加解释后缀**（<50 节点未折叠时边原样透传，去重不发生），不等时才给可解释口径。
 - [ ] 3.6 tab 元信息格式化：`#序号 · 相对时间 · 耗时 · M/N`，运行中/终态两分支 + 运行中排最前。
 - [ ] 3.7 foreach 计数与迷你堆叠条的数据模型（`M/N 完成`、`· 失败 K`、N 大时退化）。
 
@@ -32,7 +32,7 @@
 
 - [ ] 4.1 图例条 `#workflow-legend`（桌面默认展开 / 手机默认折叠为 `图例 ▾`，同一 DOM 切 class）；`index.html` + `style.css`。
 - [ ] 4.2 节点渲染升级：异常态角标 + 虚/双边框 + 加粗状态词 + `why` 小字（仅异常态占位）。
-- [ ] 4.3 **点击语义拆分**：点节点 = 开详情面板；折叠组展开/收起挪到独立小控件；同步更新既有依赖点击语义的测试。
+- [ ] 4.3 **点击语义拆分**：点节点 = 开详情面板；折叠组展开/收起挪到独立小控件（形态见 grill Q2）。**同步更新浏览器 smoke** `tests/web_tests/test_workflow_graph_browser.py:343-369`（`test_collapsed_group_click_expands_members`，现靠点节点展开）+ `web/static/style.css:1482` 的 cursor 口径（普通节点也要可点）。**注意**：`tests/web_tests/test_workflow_graph_js.py` 是纯函数单测，无 click 用例，不需要改。
 - [ ] 4.4 详情抽屉（桌面右侧 / 手机底部，同一 DOM 切 class）+ 分 Tab（任务 / 产出 / 对话）+ `role="dialog"`/`aria-modal`/focus trap/Esc/遮罩关闭；抽屉开合**不改 viewBox**。
 - [ ] 4.5 「对话」tab transcript 懒加载 + **仅 UI 虚拟化**（50 行聚簇、按簇增删 DOM、单条截断）；实时刷新时 transcript 不重排（暂停按钮）。
 - [ ] 4.6 多图 tab 渲染升级：`#序号 · 相对时间 · 耗时 · M/N` + 最差状态色点 + `title` 补全 goal；运行中排最前。

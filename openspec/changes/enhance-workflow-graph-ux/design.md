@@ -11,7 +11,7 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 - **渲染层** `web/static/workflow.js`：SVG 自绘 + 手势 + tab 管理。
 - **数据面** `agent/subagent/scheduler.py::workflow_graph_snapshot()`：显式挑字段的 bounded 快照。
 
-**一个必须先说的事实（调研发现，非体验偏好）**：节点摘要今天走 `<svg:title>`（`workflow.js:418-421`），而 **SVG `<title>` 在移动端触屏上不显示**——手机用户**根本看不到**任何节点摘要。这不是「体验欠佳」，是现有实现在主目标端（手机）上的**功能性缺失**，本 change 必须修掉（并入详情面板 + 自绘 tooltip）。
+**一个必须先说的事实（调研发现 + grill 决策 10 核实，非体验偏好）**：节点摘要今天**唯一**的出口是 `<svg:title>`（`workflow.js:418-421`，`id [kind] label` + `truncate(summary,200)`），而 **SVG `<title>` 在移动端触屏上不显示**——手机用户**根本看不到**任何节点摘要。更糟的是，**非折叠组长的节点点击是纯 no-op**（点击绑定在 `:423`，`toggleGroup` 对非 `groupLeader` 直接 return，`:435`）——这正是 proposal「非折叠组节点点击完全无效」的依据。这不是「体验欠佳」，是现有实现在主目标端（手机）上的**功能性缺失**，本 change 必须修掉（并入详情面板 + 自绘 tooltip + 让普通节点可点）。
 
 ## Goals / Non-Goals
 
@@ -78,17 +78,20 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 
 | 字段 | 位置 | 来源 | 为什么需要 |
 |---|---|---|---|
-| `reason` | node | `NodeState.reason`（既有字段，**今天没进快照**） | B 的因果权威文本 |
+| `reason` | node | `NodeState.reason`（既有字段，**今天没进快照**，grill 决策 1 已核实） | B 的因果权威文本 |
 | `started_at` / `finished_at` | 图级 payload | scheduler 已有 `self._started_at`/`self._finished_at` | D 的多图 tab「何时起 / 耗时」 |
 | `items_completed` / `items_failed` | node（仅 foreach / `__auto_agg__`） | 新增 `NodeState` 计数（见下） | D 的「完成 M/N」 |
 
-**bounded 是硬要求**：
-- `reason` 必须像 `summary` 一样截断——`state.reason` 可能取到 `state.error`（`f"{type(exc).__name__}: {exc}"`，异常文本可长），统一截断到 `_SUMMARY_LIMIT`（400）。**这条不写清，快照 bounded 就是空话**（#190 决策 4 的同类坑）。
-- `items_completed`/`items_failed` 是**标量整数**；图级时间戳是标量——无膨胀风险。
+**bounded 是硬要求（grill 决策 1）**：`state.reason` 可能取到完整异常文本——`_run_node` 的 `except` 分支写 `state.error = f"{type(exc).__name__}: {exc}"` 后 `state.reason = state.reason or state.error`（`scheduler.py:1294-1310`），另一条来自 `envelope["reason"]`（即 `run.reason = result.error`，`manager.py:1215`）。截断必须在**投影里**做（`reason[: _SUMMARY_LIMIT]`，=400）——`state.reason` 本体**不能改**（它是 `_envelope` 的字段）。**这条不写清，快照 bounded 就是空话**（#190 决策 4 的同类坑）。
 
-**`items_completed`/`items_failed` 的记账**：`_run_foreach_item` 的 `gather` 逐个 envelope 回来时，在既有 `state.subagent_ids.append(...)`/`failures += 1` 的循环里**旁加**两个自增计数（`state.items_completed` / `state.items_failed`），**保留既有 `state.reason` 文案**（`f"{failures}/{len(items)} foreach items did not complete"`）不变——既有 foreach 语义与 C4/C5 断言**零漂移**。两个新字段是 `NodeState` 的新增可选字段，非 foreach 节点不进快照（投影按 kind 判断，与既有 `items` 同门槛）。
+**图级时间的哨兵语义（grill 决策 2）**：`self._started_at = 0.0` 是构造期哨兵（`scheduler.py:419`，`declared` 态可取快照，测试 `test_workflow_graph_snapshot.py:341-351` 就断言 `declared`），`self._finished_at: float | None = None`（`:687` 的 finally 才赋值，运行中为 `None`）。快照**必须把「没有值」统一成 `null`**：`started_at: (self._started_at or None)`、`finished_at: self._finished_at`——绝不能让前端把 `0.0` 当 epoch 0 渲染成「56 年前」或算出天文耗时。**不要复用** `_envelope` 的 `self._finished_at or time.time()` 口径（`:2336`）。
 
-**白名单同步**：`tests/agent/subagent/test_workflow_graph_snapshot.py` 的 `SNAPSHOT_NODE_KEYS` 加 `reason`/`items_completed`/`items_failed`（图级白名单加两个时间戳），并**同时保留**「不出现 `subagent_ids`/`slots`/`raw`/`error`/`bus`/`attribution`」的排除断言——白名单是「多一个键都是没挑字段」的守卫，改它必须是**有意识**的。
+**`items_completed`/`items_failed` 的记账（grill 决策 3）**：
+- 在 `_run_foreach_item` 的 `gather` 结果循环里（`scheduler.py:1482-1507`）**旁加**两个自增；**失败口径必须与既有 `failures` 对齐**（异常 envelope 与 `status != "completed"` 都算失败），否则 `M/N` 会与既有 `state.reason` 文案 `f"{failures}/{len(items)} foreach items did not complete"`（`:1505`）自相矛盾。
+- **必须在 `_execute_foreach` 开头（`:1462-1466`，与 `state.items`/`state.subagent_ids`/`state.run_ids` 重置同一处）把两个计数清零**——route 回边激活同一个 foreach 容器重跑（`:1446-1452` 的 `_reset_subtree`）会累加出 `M > N`。
+- `asyncio.CancelledError` 分支是**提前 return**（`:1487-1489`），计数停在部分值——与既有 `state.status = "cancelled"` 一致，前端要容忍 `M < N`。
+
+**白名单同步（grill 决策 4）**：只影响 `tests/agent/subagent/test_workflow_graph_snapshot.py` 一个文件——节点白名单 `SNAPSHOT_NODE_KEYS` 是模块级 `frozenset`（`:34-36`），用 `<=` 断言（`:150`）；**图级白名单是内联 set 字面量**（`:173-176`），加两个时间戳要改那里（没有常量可改）。全仓 grep 确认没有第二个测试断言快照键集（`test_workflow_graph_events.py` 只看 `node["status"]`/`diagnostics`），`test_snapshot_does_not_drift_envelope_contract`（`:358-368`）断言 `_envelope`/`parent_envelope` 键、本 change 不动这两者会继续绿。白名单是「多一个键都是没挑字段」的守卫，改它必须是**有意识**的，且**保留**排除断言（`subagent_ids`/`slots`/`raw`/`error`/`bus`/`attribution`）。
 
 ### D4 — 节点详情：分 Tab 的抽屉面板 + 新增只读 transcript 路由（复用 `inspect_transcript`）
 
@@ -99,7 +102,7 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 2. **产出**：快照里的 bounded summary（截断标注）+ `result_ref`（有则显示）。
 3. **对话**：**完整 transcript，懒加载**——切到该 tab 才发请求、才建 DOM。
 
-**点击语义拆分（重要行为变更）**：今天点节点 = 展开/收起折叠组（`workflow.js:423`/`434-443`）。改为——**点节点 = 打开详情面板；折叠组的展开/收起挪到节点上的一个独立小控件**（item 计数徽标旁的小 `▸/▾`）。否则 foreach 容器的「看详情」与「展开项」两个意图在同一个点击上打架。此变更须同步更新既有 `test_workflow_graph_js.py` 里依赖点击语义的用例。
+**点击语义拆分（重要行为变更；grill 决策 5 修正了要改的测试文件）**：今天点节点 = 展开/收起折叠组（`workflow.js:423` 绑定 → `:434-443` 的 `toggleGroup`，非 `groupLeader` 直接 return）。改为——**点节点 = 打开详情面板；折叠组的展开/收起挪到节点上的一个独立小控件**（形态见 Q2）。否则 foreach 容器的「看详情」与「展开项」两个意图在同一个点击上打架。**真正会红的不是 `test_workflow_graph_js.py`**（那是纯函数单测，无 click 用例），而是浏览器 smoke `tests/web_tests/test_workflow_graph_browser.py:343-369` 的 `test_collapsed_group_click_expands_members`（两次点 `.workflow-node[data-node-id='fan']`）；配套 CSS 是 `web/static/style.css:1482` 的 `.workflow-node.group-leader { cursor: pointer }`——拆分后普通节点也要可点，cursor 口径要一起改。（`test_workflow_graph_js.py:322-354` 的折叠相关断言是 `collapseGraph`/`groupLeader` **数据**断言，与点击无关，本 change 不动。）
 
 **transcript 的渲染（对标 GitHub Actions 大日志工程的结论）**：**只做 UI 虚拟化，不做数据虚拟化**（数据是快照/接口一次取回的，本来就在内存）——按 **50 行一组聚簇**、按簇增删 DOM 而非按行；超长单行截断；不引入可视化库（GitHub 试遍现成库后自研，理由：换行可变行高、文本选择失效、多滚动条——我们零依赖自绘，更不该引库）。
 
@@ -111,12 +114,10 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 ```
 
 - **为什么新路由**：`InspectSubagentTranscript` 是 **LLM 面工具**（`Tool` 子类、要 permission、走 AgentLoop 工具注册与协议）。Web 层要用它得绕过工具协议直接调 manager——不如直接暴露一个 HTTP 只读接口。两者底层**复用同一个 `SubAgentManager.inspect_transcript()`**，不复制逻辑。
-- **node_id → subagent_id 解析**：`SubagentSessionRecord` **已有** `workflow_id` + `node_id` 字段（run 身份在 C 系列就固定了），manager 遍历 `_sessions` 即可按 `(workflow_id, node_id)` 找到对应 subagent。
-- **边界（不猜、优雅降级）**：
-  - foreach 容器节点无单一 subagent（展开项各自独立）→ 返回**结构化「无单一 transcript」**（附 `items` 计数），前端提示「该节点为 N 个并行项的容器」并可展示项列表（D5）。
-  - 未派发节点（`pending`/`blocked`）→ `subagent_id: null` + 空 messages + 说明，前端显示「该节点未执行，无 transcript」（配合 D2 因果句，这本身就是有用信息）。
-  - node 重跑多次 → 按 `run_id` 取**最新 run**（与 `inspect_transcript` 默认口径一致）。
-- **信任级与 bounded**：只读、需真实存在的 `session_id`（与 Chat 视图同信任级——Chat 本已展示这些对话）、`limit` 有默认上限（messages 上限 200、单条内容截断）、`include_tool_results` 默认 false。**不调 LLM、不写盘、不改执行状态**。
+- **`inspect_transcript` 的真实口径（grill 决策 7，防实现踩坑）**：它**不按 `run_id` 过滤**——messages 分支取的是 `session.messages[-limit:]`（`manager.py:1035-1038`，即整段 session 消息尾部，跨多次 run 累积），`run_id` 只是**回显**；默认 `limit=5`；**没有单条内容截断**；`scope="summary"` 的返回体**根本没有 `messages` 键**（只有 `summary`）。所以路由必须：显式传 `scope="recent_messages"` + `limit`（上限 200）、**自己在路由层加单条内容截断**、并在 `_require_session` 抛 `KeyError`（`manager.py:1433-1437`）时转结构化响应。`truncated` 的语义是 `len(messages) > limit`（已剔除 tool 角色后）——前端文案别写成「内容被截断」。
+- **node_id → subagent 解析（grill 决策 8，必须写成候选集）**：`SubagentSessionRecord` 已有 `workflow_id` + `node_id`（`manager.py:168-169`），但 **(workflow_id, node_id) 在 foreach 容器上是一对多**——容器清空 `subagent_id`（`scheduler.py:1464`）后每项独立建 session，而 `_launch_run` 的 `set_node_id(node.id)`（`:1669`）写的是**容器 id**，于是 `_sessions`（`manager.py:360`）里有 N 条同键记录。解析规则必须是「**收集候选集**」：**0 条** → 未派发（`subagent_id: null`）；**1 条**（普通节点，或恰好 1 项的 foreach）→ 直接给该条 transcript；**N>1 条** → 返回结构化「容器，附 N 个候选（`subagent_id`/`status`/`summary` 摘要）」。**不要**写成「foreach 容器一律无单一 transcript」（会把 N=1 的容器也拒掉）。普通节点重跑**不会**产生第二条候选（`_launch_run` 复用 `reuse_state.subagent_id`，`:1673-1682`），design 早先「按 run_id 取最新」的担心是多余的。
+- **边界（不猜、优雅降级）**：未派发节点（`pending`/`blocked`）→ `subagent_id: null` + 空 messages + 说明，前端显示「该节点未执行，无 transcript」（配合 D2 因果句，这本身就是有用信息）。
+- **信任级与 session 口径（grill 决策 9）**：「需真实存在的 `session_id`」在本仓库 = **在内存里存在**——既有路由用 `session_manager.get_session()`（`web/server.py:160-175`），只查内存字典（`web/session.py:1013-1014`），冷会话/进程重启后一律 404（与 `/api/sessions/{id}/timeline` 同口径）。**这不是缺陷但要写进 spec/测试**（tasks 2.4 的「未知 session 404」要覆盖「进程重启后同名 session」这个最易误判为 bug 的场景），前端「对话」tab 对 404 降级为「该会话未在本进程加载」。只读、**不调 LLM、不写盘、不改执行状态**、`include_tool_results` 默认 false。
 
 **实时更新**：面板开着时，节点状态/产出随快照**就地刷新**；但**`对话` tab 的 transcript 不跟着重排**（会打断阅读）——沿用 Temporal 的「暂停实时更新以便调查」思路，给一个暂停按钮。
 
@@ -127,7 +128,7 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 **方案**：
 1. 容器节点**常显**计数行：`M/N 完成`（M = `items_completed`，N = 既有 `items`），有失败时追加 `· 失败 K`。计数行是**容器状态的补充**，不改变状态语义。
 2. 计数行旁加**迷你堆叠条**（N 小则 N 个 2px 小格各按自身状态着色，N>20 退化为按比例着色的宽条）——对标 Dagster 的分区健康条（「传范围不传 N 个状态」）。
-3. **点容器节点 → 详情面板的「任务」tab 展示项列表**（`#0..#N-1` + 每项状态/摘要，可点进单项）。**不把项铺成 N 个 DAG 节点**：项不是 `NodeState`（#190 决策 8），铺节点要新增布局/边/交互一整套，且 Argo 的 Graph view 在 N 大时会爆炸、Airflow 干脆不在 Graph view 展开——两者都选了「列表 + 计数」（Airflow Grid 的 Mapped Instances、Step Functions 的 iteration viewer）。
+3. **点容器节点 → 详情面板的「任务」tab 展示项列表**（`#0..#N-1` + 每项状态/摘要，可点进单项；数据源就是 D4 路由返回的**候选集**，见 Q1）。**不把项铺成 N 个 DAG 节点**：项不是 `NodeState`（#190 决策 8），铺节点要新增布局/边/交互一整套，且 Argo 的 Graph view 在 N 大时会爆炸、Airflow 干脆不在 Graph view 展开——两者都选了「列表 + 计数」（Airflow Grid 的 Mapped Instances、Step Functions 的 iteration viewer）。
 4. **上界**：N 超过 50 时项列表只渲染「失败项 + 前若干项 + 聚合统计」，且列表本身做 UI 虚拟化（D4）。
 
 ### D6 — 多图 tab 元信息：序号 + 起止 + 耗时 + 完成计数
@@ -140,7 +141,7 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 [●] #3 · 2 分钟前 · 2m18s · 3/5
 ```
 
-- `#3` = **该 session 内 workflow 首次出现顺序**（稳定、不随淘汰变化；「第几次」比时间戳好认）。
+- `#3` = **该 session 内 workflow 出现顺序**（口径见 Q3）。**实现注意（grill 决策）**：**不能拿 `Map` 的插入下标当序号**——`pruneGraphs` 会 `state.graphs.delete(evicted.id)`（`workflow.js:124-135`），删掉 `#1` 后原 `#2` 下标变 0、编号整体前移；必须在 `graphState` 上存一个**显式计数器/显式字段**。另外 tab 可能**无快照存在**（`workflow_started` 一到就 `ensureGraph`，`entry.snapshot === null`，`renderGraphTabs` 已用 `entry.snapshot && …` 兜底，`:180-189`）——本 change 新增的耗时/`M/N` 格式化函数**必须能吃 `null` 快照**并退化为只显示 `#序号 · goal`。
 - 相对时间（`2 分钟前`），运行中显示 `已跑 42s` 并**实时跳秒**；`title` 给绝对时间（Temporal 的 UTC/Local/Relative 三格式思路）。
 - 耗时用图级 `started_at`/`finished_at`（D3 补齐）。
 - `3/5` = 完成节点数/总数（「结果差异」最直接的摘要）。
@@ -150,11 +151,15 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 
 ### D7 — 边统计口径如实 + 并行边垂直偏移
 
-**现状根因（已定位）**：`renderSummary()` 报 `snapshot.edges.length`（原始快照边数），而 `collapseGraph` 会按 `from->to:kind` **去重**（`workflow_graph.js:512-515`）→ `edgePath()` 又**没有任何垂直偏移**（`workflow_graph.js:285-300`），所以同一对节点多条边几何重合 → 「`11 edges` 只画 6 条线」。**这是计数口径与渲染口径不一致，不是渲染 bug**。
+**现状根因（grill 决策 11 修正为两条并存的根因）**：
+1. **口径不一致**：`renderSummary()` 报 `snapshot.edges.length`（原始快照边数，`workflow.js:262-265`），而实际画的是 `collapsed.edges`。
+2. **几何重合**：`edgePath()` **没有任何垂直偏移**（`workflow_graph.js:285-300`），同一对节点多条边完全重叠。
+
+**关键修正**：`collapseGraph` 的去重**只在折叠态发生**（节点数 ≥ threshold，`workflow_graph.js:507-516` 的 `seenPairs` 按 `from->to:kind`）；**未折叠时边原样透传**（`:404-406`）——所以 <50 节点的小图上「11 edges 只画 6 条线」**只能由几何重合解释**。实现**不能假设「去重一定发生」**，文案也不能写死「含并行边/折叠合并」。
 
 **方案**：
-1. **统计如实（必做）**：summary 分两段——实际绘制路径数 + 原始边数，如 `6 paths (原始 11 edges，含并行边/折叠合并)`，让数字与可见线条数**一致且可解释**。
-2. **并行边垂直偏移（推荐）**：同一对 `(from,to)` 的第 k 条（共 n 条）可见边在法向等距铺开 `offset = (k - (n-1)/2) * DELTA`（`DELTA` 8–10px，横向布局偏移 y、纵向偏移 x），抄 igraph `curve_multiple()`。**改动局限在 `edgePath()` 一个函数内**（两个贝塞尔控制点各平移 `offset`）。
+1. **统计如实（必做）**：summary 报**实际绘制路径数 + 原始边数**，两个数字相等时不加解释后缀（小图场景 `collapsed.edges.length === snapshot.edges.length`），不等时才给可解释口径（如 `6 paths (原始 11 edges)`）。
+2. **并行边垂直偏移（推荐；grill 决策 6 修正了改动面）**：同一对 `(from,to)` 的第 k 条（共 n 条）可见边在法向等距铺开 `offset = (k - (n-1)/2) * DELTA`（`DELTA` 8–10px，横向偏移 y、纵向偏移 x），抄 igraph `curve_multiple()`。**改动面不止 `edgePath()`**——它的签名 `edgePath(from,to,orientation)` 拿不到 multiplicity，必须在 `layoutGraph` 的 `layoutEdges`（`:248-266`，唯一能同时看到同一对 `(from,to)` 全部边的地方）**先按 `(from,to)` 分组**统计 `n`/`k`，再把 `{index,total}`（或算好的 `offset`）作为**可选参数**传进 `edgePath`（保持对外导出 API `:563` 向后兼容）。分组键用 **`(from,to)` 而不是 `(from,to,kind)`**：同一对端点上控制边与数据边不会共存（route 出边全被 `is_control_edge` 判为控制边，`workflow.py:243-245`），用 `(from,to)` 更简单且不会因未来新增 kind 而漏铺。
 3. **边 `channel` 不要指望线型**：小屏 + 缩放后实/虚/点线基本不可见——边 `title` 明确写 `channel: artifact · status: active · from: X · to: Y`，且 hover 高亮整条链路。
 
 ## Reference Implementation Research
@@ -180,7 +185,8 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 
 ## Pre-Implementation Review
 
-> 本 change 为 feature + web-ui + observability，非平凡、走 grill，实现前须按 AGENTS.md 用独立零记忆 subagent 审视本 design.md 的 D1–D7，产出结构化决策记录到 `reviews/grill-design.md`（≥3 Confirmed Decisions），并经**停轮确认**（grill-confirmation-gate）：每条 Open Question 逐项抛给用户、配具体场景例子，收到答复后回填 `## User Confirmation`，缺一条不得进入实现。本节为占位声明，实际 review 记录以 `reviews/grill-design.md` 为准。
+> **已执行（2026-09-17）**：独立零记忆 grill subagent（paseo 托管，`claude-fable-5[1m]`）审视 D1–D7，产出 `reviews/grill-design.md`（**12 条 Confirmed Decisions + 4 条 Open Questions**），逐条 Read 代码复核并纠正了本 design 的 8 处 file:line/行为断言。本设计已按 12 条 Confirmed Decisions 回写（`reason` 截断在投影层、图级时间哨兵统一 `null`、foreach 计数清零与失败口径、白名单内联字面量、点击语义的**真实**受影响测试是浏览器 smoke、并行边偏移的改动面不止 `edgePath`、`inspect_transcript` 不按 run_id 过滤、`(workflow_id,node_id)` 候选集语义、session 为内存口径）。
+> **停轮中**：4 条 Open Questions（Q1 foreach 容器 transcript 语义 / Q2 展开控件形态 / Q3 tab 序号口径 / Q4 `reason` 截断额度）须逐条抛给用户、收到答复后回填 `reviews/grill-design.md` 的 `## User Confirmation`；**全部确认前不得写实现代码**。
 
 ## Risks / Trade-offs
 
