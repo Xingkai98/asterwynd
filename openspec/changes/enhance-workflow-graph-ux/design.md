@@ -183,11 +183,15 @@ single（subagent / aggregate-llm）     candidates（foreach 容器）        n
 **因果说明（「为什么是这个状态」）**——纯函数层新增 `explainNode(node, edges, nodesById)`，返回一句人话因由；这是调研里**投入产出比最高**的一项（先例：Airflow 在日志里已生成这类因果串却没搬上 UI，用户反复困惑；Tekton 明确改用 status **reason** 而非 message 来区分失败类别）：
 
 - `failed` → 自身 `reason`（`RuntimeError: ...`）→ 「节点自身执行失败：`<reason>`」。
-- `blocked` → **沿入边向上找第一个 `failed`/`cancelled` 的上游** → 「被上游 `<id>` 失败挡住，未执行」；找不到失败上游（预算路径）→ 用自身 `reason` → 「流程结束前该节点一直未就绪」。
-- `budget_exceeded` → 自身 `reason`（`budget exceeded (tokens)`）→ 「预算超限（`tokens` 维度）后停止」。
+- `blocked` → **图级停止原因优先**（若快照 `status` ∈ {`budget_exceeded`/`cancelled`/`graph_recursion_exceeded`}，直接引用它）→ 否则**沿数据入边向上穿透**，收集**全部**未完成/失败的上游（含本身 `blocked` 的）→ 「被上游 `<ids>` 挡住，未执行」；一条都找不到 → 用自身 `reason` → 「流程结束前该节点一直未就绪」。
+- `budget_exceeded` → 自身 `reason`（`budget exceeded (tokens)`）+ **图级 `budget` 数字**（见 D3/G13）→ 「预算超限（`tokens`：用掉 152.3k / 上限 100k）后停止」。
 - `cancelled` → 「流程被取消，未执行完」。
 
-因果句用于三处：**节点 `why` 小字**（仅异常态显示，正常态不占位）、节点 `<title>`、详情面板的「状态」区。**因果推导是纯函数**（拿 nodes + edges 即可算），可在 node+vm 里直接测「12 文件 foreach 超预算」这个真实场景的因果链。
+> **审阅员 B 的两处修正（防 G1 类）**：
+> 1. **`explainNode` 必须扩签名**。原写 `explainNode(node, edges, nodesById)`——它**看不到图级 `status`/`diagnostics`**，而「图级停止原因优先」这条修法在现签名下**无法实现**。签名改为 `explainNode(node, edges, nodesById, graphStatus, diagnostics)`（或直接收整个 snapshot）。
+> 2. **扫描必须穿过 `blocked` 上游**。因为**本调度器里上游 `failed` 时下游会被派发、不会 `blocked`**（实跑证实：`_data_deps_satisfied` 只要求上游 ∈ `TERMINAL_NODE_STATUSES`，而 `failed` 在其中，`:79-81`/`:1161-1168`）。`blocked` 的真正来源是 `_teardown` 的 pending 分支——而那时整条链上的节点常常**一起**是 `blocked`（S 被门控 → R 未就绪 → T 未就绪）。只扫 `failed`/`cancelled` 在整条链上一无所获，会落到兜底句。**同时去掉「取 `finished_at` 最早」**——最早只说明它先失败、不代表它是原因，且 `finished_at` 在 G11 修好前对它自己也不可信。
+
+因果句用于三处：**节点 `why` 小字**（仅异常态显示，正常态不占位）、节点 `<title>`、详情面板的「状态」区。**因果推导是纯函数**（拿 snapshot 即可算），可在 node+vm 里直接测「12 文件 foreach 超预算」这个真实场景的因果链。
 
 **配色校验**：`blocked=#facc15`/`budget_exceeded=#fb923c`/`pending=#94a3b8` 转灰度后区分度不足——落地时按「拉开**明度**差而非只拉色相」调一轮，用 Chrome DevTools 的 deuteranopia 模拟目视验证（无自动化门禁，记录到 building review）。
 
@@ -211,9 +215,15 @@ edges: a→gate=inactive, gate→yes=passed, gate→no=inactive
 
 **方案：新增第 8 档节点状态 `skipped`（未选中）。**
 
-- **判据（有权威信号，不需要新记账）**：节点在 `_teardown` 时仍是 `pending`，且 `_has_control_incoming(node) and state.activations <= 0` —— 即「只被 route 控制边门控、且没有任何 route 选中它」。`activations` 是既有计数器（`_execute_route` 命中时 `successor.activations += 1`，`:1450`；派发时清零 `:1261`），`_ready_nodes` 已用它做「回边目标等激活」的门控（`:1184-1189`），**复用它不引入新机制**。
-- **优先级（必须先判 blocked 再判 skipped）**：若节点有数据入边且上游 `failed`/`cancelled`/`blocked` → 记 `blocked`（**被连累优先于未选中**，否则会把「上游挂了」误报成「条件没选它」）。数据依赖本身没问题（或本就没有数据入边）、纯粹因为 route 没选中 → `skipped`。
-- **预算路径同样适用**：预算停下时，未选中节点仍是 `skipped`（**route 没选它跟预算无关**），不参与 `budget_exceeded`/`blocked` 的二分。
+- **判据（三个条件同时成立；有权威信号，不需要新记账）**：节点在 `_teardown` 时仍是 `pending`，且
+  1. `_has_control_incoming(node)` —— 存在以 route 为源的入边；
+  2. `state.activations <= 0` —— 没有任何 route 选中它；
+  3. **（审阅员 B 补强，防「报假话」）每一条控制入边的源头 route 都已 `completed`** —— 即「确实做过判定，且没选它」。
+  `activations` 是既有计数器（`_execute_route` 命中时 `successor.activations += 1`，`:1450`；派发时清零 `:1261`），`_ready_nodes` 已用它做「回边目标等激活」的门控（`:1184-1189`），**复用它不引入新机制**。
+- **为什么必须有条件 3**：只满足 1+2 时，构造 `S`（被门控、从未激活）→ `R`（route，数据依赖 S）→ `T`（R 的控制出边）就能证伪——图收敛时 S/R/T 全 pending，R 因无控制入边落普通 `blocked`，而 **T 会被标成 `skipped`**。但 T 的真因是「R 根本没跑」，不是「条件没走这条」——**用户读到的是假话**，正是本 change 要消灭的那类错误。加上条件 3（R 未 `completed` → T 不满足 skipped）即落到 `blocked`，语义正确。
+- **优先级（顺序在实现上必须写死）**：`_teardown` 的 pending 分支里，**先判 `skipped`（含条件 3），再判 `_budget_stop`**。否则 `_apply_budget_exhausted_status`（`:961-984`）会抢走判据，把被 route 门控的**根节点**写成 `budget_exceeded` 而非 `skipped`。
+- **优先级（语义上）**：若节点有数据入边且上游 `failed`/`cancelled`/`blocked` → 记 `blocked`（**被连累优先于未选中**，否则会把「上游挂了」误报成「条件没选它」）。数据依赖本身没问题（或本就没有数据入边）、纯粹因为 route 没选中 → `skipped`。
+- **预算路径**：预算停下时，**已确认未选中**的节点仍是 `skipped`（route 没选它跟预算无关），不参与 `budget_exceeded`/`blocked` 的二分；未确认（条件 2/3 不满足）的仍走既有二分。
 - **状态语义**：`skipped` 是**终态**（要进 `TERMINAL_NODE_STATUSES`，否则 `_teardown`/收敛逻辑会把它当未完成），但是**良性终态**——不使整图 `failed`，要进 `_unit_counts` 的独立计数桶（**不能落进 `pending_units`**，否则「图跑完了还有 pending」自相矛盾）。
 - **前端**：第 8 档配色（**冷灰蓝**，与 `blocked` 的黄明显区隔）、角标 `—`、**虚边框**（沿用 Temporal 的「虚线 = 非终局/未发生」语汇）；图例加一行人话「未选中：条件判断没走这条分支」；`groupStatus` 聚合时 `skipped` **不参与**「最差状态」竞争（它既不是失败也不是受阻）。
 - **下游传播**：`skipped` 节点无产出，其数据出边按既有规则落到 `inactive`（不新增 `_EDGE_BLOCKED_SOURCE_STATUSES` 成员——`skipped` 不是「源挂了」，不该把下游标成 `blocked`；下游若因此永不就绪，会在 `_teardown` 时按缺口 1 的同一条规则各自归位）。
@@ -248,15 +258,28 @@ edges: a→gate=inactive, gate→yes=passed, gate→no=inactive
 
 > **G1 修正说明（本 change 的完备性审查发现的设计错误）**：原写「在 `gather` 结果循环里旁加自增」——但那个循环在 `await asyncio.gather(...)`（`scheduler.py:1482`）**之后**才执行（`:1485-1497`）。所以计数只有两种取值：**0 和 N**，整个运行期显示「完成 0/12」，全部跑完才跳到 12。**D5 的立项动机（「看到并行」）在时间维度上完全落空**——这是「按 design 实现完仍然看不到」的缺陷，必须改设计。
 >
-> **正确记账点：每项完成即 +1——在 `_run_foreach_item` 的返回处（`:1517-1525` 的 `try` 返回前 / `finally` 旁），而不是 `_execute_foreach` 的 gather 之后。** 每项的 `_launch_run` 返回时该项已终态，此刻自增；`asyncio.gather` 只是汇总，不承担记账。
+> **正确记账点（审阅员 B 修正了落点）：在 `tasks` 创建处（`:1476-1479`）给每个 task `add_done_callback`，而不是「在 `_run_foreach_item` 的返回处」。** 后者**落不了地**——`_run_foreach_item` 的签名是 `(node, index, item)`（`:1509-1511`），**没有 `state` 形参**，文档指的「返回处 +1」实现者够不到容器 state（除非改签名，那是更大的改动）。`add_done_callback` 一处改动、天然覆盖正常返回与异常路径、不动 gather 循环。
 
-- **失败口径必须与既有 `failures` 对齐**：`_launch_run` 返回的 envelope `status != "completed"` 即算失败（与 gather 循环的判据一致）；`_run_foreach_item` 抛异常/`CancelledError` 的路径也要落到计数（异常不吞、继续抛，但计数在抛前更新）。
-- **必须在 `_execute_foreach` 开头（`:1462-1466`，与 `state.items`/`state.subagent_ids`/`state.run_ids` 重置同一处）把两个计数清零**——route 回边激活同一个 foreach 容器重跑会累加出 `M > N`。
-- **项级状态（G7）**：同时维护 `items_running`（已派发未终态）与 per-item 状态数组（`state.item_states: list[str]`，长度 N）。这是 D5.2 迷你堆叠条的数据源，也是「N 项里有几个在跑/几个在排队」的答案。bounded：N 有 `max_items` 上限（200），状态是短字符串。
-- **每次项级迁移都要推帧（G2）**：否则即使计数对了，前端在 A→B 迁移点之间仍收不到（见 D2c）。用既有 `GraphEventForwarder` 的 0.1s 合并窗削峰，不放大流量。
-- `asyncio.CancelledError` 分支提前 return 时，计数停在部分值——与既有 `state.status = "cancelled"` 一致，前端要容忍 `M < N`。
+- **回调必须区分「完成」与「非失败的中断」**：`_run_foreach_item` 在 `_acquire_slot()` 返回 False 时 `raise asyncio.CancelledError`（`:1513-1515`），`GraphRecursionError`/`WorkflowBudgetExceeded` 也会从该项抛出。**这三类一律不得计入 `items_failed`**（否则前端把「被取消」「图超限」「预算停」谎报成「失败 K」）。判据：`task.cancelled()` 或异常类型属于上述三类 → 只从 `items_running` 减；`task.exception()` 是普通异常、或返回的 envelope `status != "completed"` → `items_failed += 1`；否则 `items_completed += 1`。
+- **必须在 `_execute_foreach` 开头（`:1462-1466`，与 `state.items`/`state.subagent_ids`/`state.run_ids` 重置同一处）把两个计数与 `item_states` 清零**——route 回边激活同一个 foreach 容器重跑会累加出 `M > N`。
+- **项级状态（G7）**：维护 `state.item_states: list[str]`（长度 N）作为**权威 per-item 状态**（`pending`/`queued`/`started`/终态），以及派生计数 `items_running`/`items_completed`/`items_failed`。这是 D5.2 迷你堆叠条的数据源，也是「N 项里有几个在跑/几个在排队」的答案。bounded：N 有 `max_items` 上限（200），状态是短字符串。
+- **`items_running` 的口径（审阅员 B 修正）**：**不能用「已派发未终态」**——那含排队项（`_acquire_slot` 的闸是 `_dispatch_capacity`=25，真跑只有 5），12 项会全画成「在跑」。**从 run record 取**：`manager.find_run(subagent_id, run_id).status == "running"` 才算在跑（`manager.py:1439-1442` 才置 running），其余已派发项算 `queued`。
+- **计数只对 `kind == "foreach"` 输出**：`_graph_node_projection` 现在对 `kind == "foreach"` **或** `id.startswith(AUTO_NODE_PREFIX)` 输出 `items`（`:2276-2278`），但 auto 聚合节点**永不经过 `_execute_foreach`**——给它输出 `items_completed` 会恒定显示「0/3 完成」。计数与 `item_states` 的投影门槛**只认 `kind == "foreach"`**。
+- **`state.subagent_ids` 的下标 ≠ item 下标**：它是 gather 结束后才 append（`:1493-1494`）且异常项走 `continue` 不 append → **不能**用它做 index→session 映射。per-item 身份用 `item_states`（按 index 维护）+ run record（`run.task` 含渲染后的具体任务）。
+- **每次项级迁移都要推帧（G2）**，否则计数对了前端仍收不到（见 D2c）。**但要注意构造成本**：`_emit_graph_snapshot` 先全量重建快照（`:2226-2242`）再交 sink，**scheduler 侧无节流**，0.1s 窗只合并发送、不合并构建。200 项 × O(nodes+edges) 构造全在事件循环上——**项级帧必须在调度器侧就限频**（同一容器最多 N Hz），或用轻量 `workflow_items_progress` 事件而非全量快照。
+- `asyncio.CancelledError` 提前 return 时计数停在部分值——与既有 `state.status = "cancelled"` 一致，前端要容忍 `M < N`。
 
 **白名单同步（grill 决策 4）**：只影响 `tests/agent/subagent/test_workflow_graph_snapshot.py` 一个文件——节点白名单 `SNAPSHOT_NODE_KEYS` 是模块级 `frozenset`（`:34-36`），用 `<=` 断言（`:150`）；**图级白名单是内联 set 字面量**（`:173-176`），加两个时间戳要改那里（没有常量可改）。全仓 grep 确认没有第二个测试断言快照键集（`test_workflow_graph_events.py` 只看 `node["status"]`/`diagnostics`），`test_snapshot_does_not_drift_envelope_contract`（`:358-368`）断言 `_envelope`/`parent_envelope` 键、本 change 不动这两者会继续绿。白名单是「多一个键都是没挑字段」的守卫，改它必须是**有意识**的，且**保留**排除断言（`subagent_ids`/`slots`/`raw`/`error`/`bus`/`attribution`）。
+
+> **注意**：`test_workflow_graph_snapshot.py:173-176` 的禁项列表里**没有** `budget`，图级新增 `budget` 只受 `<=` 白名单约束。
+
+### D3b — 陈旧因由与负耗时（G11，审阅员 B 复核成立）
+
+**问题**：`_reset_subtree`（`:1349-1361`）只重置 `status`/`activations`/`deadline_fired`/`verdict`/`targets`，**不清 `reason`/`error`/`finished_at`/`summary`**。叠加 `state.reason = state.reason or state.error`（`:1310`）的 `or` 语义与 `finished_at` 只在为 `None` 时写（`:1312-1313`）→ route 回边重跑（review 循环，本项目常见形态）后：节点显示**上一轮的失败因由**，且 `finished_at < started_at`（**负耗时**）。**答错比答不出更糟**，而 D4 面板要显示起止耗时、D6 要显示耗时，全踩这个坑。
+
+**方案**：`_reset_subtree` 一并清 `reason`/`error`/`finished_at`/`summary`，以及 foreach 容器的 `items_completed`/`items_failed`/`item_states`（否则从复位到被重新派发之间，前端会显示上一轮的「3/12 完成」配 `pending` 状态）。
+
+**回归**：既有测试**无依赖**（`finished_at` 只在 `test_workflow_graph_snapshot.py:225` 手工设值与 `test_scheduler.py:998` 首次 run 出现；重跑用例 `test_route_default_branch_loops_back` 只断言 `runs == 2`）。新增「route 回边重跑后 `finished_at >= started_at`」回归。
 
 ### D4 — 节点详情：分 Tab 的抽屉面板 + 新增只读 transcript 路由（复用 `inspect_transcript`）
 
@@ -283,9 +306,14 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 
 - **为什么新路由**：`InspectSubagentTranscript` 是 **LLM 面工具**（`Tool` 子类、要 permission、走 AgentLoop 工具注册与协议）。Web 层要用它得绕过工具协议直接调 manager——不如直接暴露一个 HTTP 只读接口。两者底层**复用同一个 `SubAgentManager.inspect_transcript()`**，不复制逻辑。
 - **`inspect_transcript` 的真实口径（grill 决策 7，防实现踩坑）**：它**不按 `run_id` 过滤**——messages 分支取的是 `session.messages[-limit:]`（`manager.py:1035-1038`，即整段 session 消息尾部，跨多次 run 累积），`run_id` 只是**回显**；默认 `limit=5`；**没有单条内容截断**；`scope="summary"` 的返回体**根本没有 `messages` 键**（只有 `summary`）。所以路由必须：显式传 `scope="recent_messages"` + `limit`（上限 200）、**自己在路由层加单条内容截断**、并在 `_require_session` 抛 `KeyError`（`manager.py:1433-1437`）时转结构化响应。`truncated` 的语义是 `len(messages) > limit`（已剔除 tool 角色后）——前端文案别写成「内容被截断」。
-- **node_id → subagent 解析（grill 决策 8 + 「界面效果 §0」，按候选集而非首条）**：`SubagentSessionRecord` 已有 `workflow_id` + `node_id`（`manager.py:168-169`）。解析规则按候选**收集**：**0 条** → `kind:"none"`（未派发，或 route / aggregate(collect) 这类**本就不产生 run** 的节点）；**1 条** → `kind:"single"`；**N>1 条** → `kind:"candidates"`。**foreach 容器**因容器清空 `subagent_id`（`scheduler.py:1464`）后每项独立建 session、而 `_launch_run` 的 `set_node_id(node.id)`（`:1669`）写的是**容器 id**，故 `_sessions`（`manager.py:360`）里有 N 条同键记录 → 走 `candidates`（**含 N=1 的 foreach 也归 `single`**，不设特例分支）。普通节点重跑**不会**产生第二条候选（`_launch_run` 复用 `reuse_state.subagent_id`，`:1673-1682`）。
+- **node_id → subagent 解析（grill 决策 8 + 「界面效果 §0」+ **审阅员 B 的重大修正**）**：
+  - **权威候选集是 `NodeState.subagent_ids`，不是反查 `manager._sessions`**。反查会被**孙代 session 污染**：`create_subagent`（`manager.py:450-479`）从**当前 contextvar** 取 `workflow_id`/`node_id`，而节点的 AgentLoop 跑在入队时 `copy_context()` 捕获的上下文里（`manager.py:780-786` 捕获、`:1439-1442` 用 `item.context` 启动），且**工具层从不 reset `node_id`/`workflow_id`**（`set_node_id`/`reset_node_id` 在 `agent/tools/`、`agent/loop.py`、`manager.py` 全无命中）。所以**一个普通 subagent 节点只要自己 spawn 过子 agent，就满足「N>1」，会被误判成 `candidates`**，0/1/N 规则随之失准。
+  - 解析规则（在 `subagent_ids` 上）：**0 条** → `kind:"none"`（未派发，或 route / aggregate(collect) 这类本就不产生 run 的节点）；**1 条** → `kind:"single"`；**N>1 条** → `kind:"candidates"`（**含 N=1 的 foreach 也归 `single`**，不设特例分支）。普通节点重跑复用 `reuse_state.subagent_id`（`:1673-1682`），不会产生第二条。
+  - **`index`/`task` 的来源**：候选顺序 ≠ item 序号（`create_subagent` 发生在 `_acquire_slot()` **之后**，并发下 item#5 可能先建 session；`_sessions` 是插入序 dict）。**不要靠 `session.name = f"{node.id}-{index}"` 反解**——用 **`SubagentRunRecord.task`**（= `render_item_task` 的产物，`scheduler.py:1519`）+ **显式落一个 `index` 字段**（来自 `item_states` 的维护序）。
+- **`candidates` 每条必须带 `reason` 与 `task`（G10，issue 原始场景的唯一排查入口）**：失败项 `summary` 通常是空的（异常 envelope 分支 `append("")`，`scheduler.py:1490`），没有 `reason` 就是「3 个红点、点开每行空白」。`reason` 取 **`run.reason`**（`manager._mark_failed` `:1293` 写；`_complete_run` `:1215` 写 `result.error`），**bounded 截断**；`task` 即渲染后的具体任务（「哪个文件」的答案）。`single` union **同样补 `reason`**（失败原因从不追加进 `session.messages`，`_mark_failed` 只写 checkpoint + `run.reason`）。
 - **`candidates` 必须 bounded**：默认 `limit=50`、硬上限 200，带 `total`/`has_more`/`offset`；候选只带短摘要（`summary` 再截断），真正 messages 等点某项时按 `subagent_id`（+`run_id`）再取一次。
 - **`run_id` 过滤（grill 决策 7 的连带约束）**：`inspect_transcript` 当前**不按 `run_id` 过滤**（取 `session.messages[-limit:]`）——候选列表若要精确到某项的 run，必须**先修候选定位与 run 级取数**，否则只是把「展示错 run」换个入口（codex 复核指出的坑）。
+- **`reason` 全文出口（G17）**：快照里截断到 400，但**没有任何接口返回全文**（transcript 只是 `session.messages` 尾部，失败时不会追加错误消息）。D4 路由的 `single`/`candidates` **必须返回 `reason` 全文**（或 `reason_full` + `reason_truncated` + `reason_length`），scheduler 侧 reason 才能被用户读到——这类 reason（`budget exceeded (tokens)`、`workflow ended before the node became ready`、`3/12 foreach items did not complete`）**从不出现在任何 subagent transcript 里**。
 - **边界（不猜、优雅降级）**：未派发节点（`pending`/`blocked`）→ `kind:"none"` + 说明，前端显示「该节点未执行，无对话」（配合 D2 因果句，这本身就是有用信息）；route 节点改为展示**命中标签 + 选中出口**，collect 节点改为展示**合并产出**（`kind:"none"` 时的类型化信息，不是一句「无对话」了事）。
 - **信任级与 session 口径（grill 决策 9）**：「需真实存在的 `session_id`」在本仓库 = **在内存里存在**——既有路由用 `session_manager.get_session()`（`web/server.py:160-175`），只查内存字典（`web/session.py:1013-1014`），冷会话/进程重启后一律 404（与 `/api/sessions/{id}/timeline` 同口径）。**这不是缺陷但要写进 spec/测试**（tasks 2.4 的「未知 session 404」要覆盖「进程重启后同名 session」这个最易误判为 bug 的场景），前端「对话」tab 对 404 降级为「该会话未在本进程加载」。只读、**不调 LLM、不写盘、不改执行状态**、`include_tool_results` 默认 false。
 
@@ -353,6 +381,39 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 2. **并行边垂直偏移（推荐；grill 决策 6 修正了改动面）**：同一对 `(from,to)` 的第 k 条（共 n 条）可见边在法向等距铺开 `offset = (k - (n-1)/2) * DELTA`（`DELTA` 8–10px，横向偏移 y、纵向偏移 x），抄 igraph `curve_multiple()`。**改动面不止 `edgePath()`**——它的签名 `edgePath(from,to,orientation)` 拿不到 multiplicity，必须在 `layoutGraph` 的 `layoutEdges`（`:248-266`，唯一能同时看到同一对 `(from,to)` 全部边的地方）**先按 `(from,to)` 分组**统计 `n`/`k`，再把 `{index,total}`（或算好的 `offset`）作为**可选参数**传进 `edgePath`（保持对外导出 API `:563` 向后兼容）。分组键用 **`(from,to)` 而不是 `(from,to,kind)`**：同一对端点上控制边与数据边不会共存（route 出边全被 `is_control_edge` 判为控制边，`workflow.py:243-245`），用 `(from,to)` 更简单且不会因未来新增 kind 而漏铺。
 3. **边 `channel` 不要指望线型**：小屏 + 缩放后实/虚/点线基本不可见——边 `title` 明确写 `channel: artifact · status: active · from: X · to: Y`，且 hover 高亮整条链路。
 
+### D8 — 运行过程可见性（G2/G3/G4/G8，对应 Goal E）
+
+> 来源：`gap-analysis.md` 的运行可见性 7 条（用户裁决全进）。核心事实：**design 在「把已发生的事画好看」上很完整，在「正在发生的事」上基本空白**——八档状态里没有一档表达「在跑 vs 排队」，快照只在迁移点推送，节点没有计时。
+
+- **G2 推送时机**：`_emit_graph_snapshot` 只在 7 个**迁移点**调用（cancel/run 起/run 止/图超限/预算停/dispatch/节点终态），迁移点之间的内部变化**永不外发** → 交互是**跳变**不是渐进。补：项级迁移（见 D5）与节点级进度都要推帧。**但必须先在调度器侧限频**——`_emit_graph_snapshot` 是无条件全量重建（`:2226-2242` 遍历全部 nodes+edges）再交 sink，0.1s 窗只合并发送、不合并构建。
+- **G3 「排队 vs 在跑」——采纳审阅员 B 的投影层省法**：
+  - **不改状态机**。原因：`NodeState.status` **从不写 `queued`**（全仓 `"queued"` 只在读取侧判据 `:600/758/760/866/1772/2385`，是死代码、判据恒为假）；给它加赋值点会让这 6 处判据**同时激活**，其中 `:758` 参与 `_in_flight_nodes` 类收敛判断，而预算 drain 正靠「在跑的 run 归零」落终态——**爆炸半径比 G1 大**。且 `_dispatch` 在 `:1278` 就置 `started`，真正的 `_acquire_slot()` 在 `_launch_run` 内部（`:1644-1723`），中间隔异步边界。
+  - **在 `_graph_node_projection` 里投影**：若 `state.status == "started"` 且 `manager.find_run(state.subagent_id, state.run_id)` 的 `status == "queued"` → 投影成 `"queued"`。**一处函数、不动状态机、不多推一帧**；`_edge_status` 读的是 state 而非投影，边配色不受影响（语义也对：边确实 active）。
+  - **绝不要动 `_dispatch_capacity` 的取值**（= `max_active + max_queued_runs` = 25）：它是「workflow 永不撞 queue_full」不变量的一半（`manager.py:925`）。
+- **G4 节点 elapsed**：`started_at` 早在快照里，但前端从不读、无计时器。补：节点状态词旁常显 elapsed，`started`/`queued` 态按秒 tick。**注意**：快照不到达时没有重绘事件，**必须有一个独立于快照的本地计时器**（否则 A→B 迁移之间计时也是死的）；终态时冻结为 `finished_at - started_at`。
+- **G8 陈旧可见**：payload 里已有 `timestamp`（`:2250`），前端从不读。补「最后更新于 N 秒前」——用户据此区分「慢」与「死」。
+
+### D9 — 诊断数据面（G9/G13/G15/G26，对应 Goal B/C）
+
+- **G13 预算数字**：图级 payload 加 `budget`（复用 `_budget_summary()`，`:1138-1157`）。**运行中取值正确**（`wall_time_s` 自取 `now`、tokens/cost 逐次累加）。**两个边界**：(a) `declared` 态 `self._budget is None` → 返回 `{}`，前端须容忍空 dict；(b) 图级 `budget` 与节点级 `budget_exceeded` 是两回事，别混。用户看到「预算超限（tokens）」的下一个动作必然是「花了多少」——本 change 花整节解释「为什么停」却不给数字，是明显缺口。
+- **G15 route 判定诊断**：`route_ref_misses` 进了快照，但前端唯一读 `diagnostics` 的地方 gate 在 `graph_recursion_exceeded`（`workflow_graph.js:528-534`）→ 图正常完成时一个字都不显示。补：route 节点详情 + 图级告警都能显示；`none` union 补 `verdict`/`targets`/`raw`（截断后的上游原文 excerpt，从调度器按 node_id 取，**不进快照**）；对**字面标签不匹配**也记一条 miss（现在只有 `$ref` 未命中记，诊断只覆盖半张网）。
+- **G26 图级 status 修正（P0，主 session 实跑新发现）**：`_drive` 的收敛出口（`:824`）是 `self._status = "budget_exceeded" if self._budget_stop else "completed"`——**只看预算，完全不检查有没有节点失败**。实跑证实：有节点 `failed` 的图，图级 status 仍报 `completed`（而 envelope 里 `failed=1` 数据是对的）。**用户根本不会被告知去看失败**——直接击穿用户原话。补：图级 status 纳入节点失败判定（新增一档如 `completed_with_failures`，或让 `completed` 的判定把节点失败计入——**这条需要用户/审阅拍板**）。
+- **G9 trace 摘要**：`run.trace` 在四个终态落点写入（`manager.py:1223/1295/1310/1329`），session 挂 `manager._sessions`、manager 经 `session.agent.subagent_manager` 可达（`loop.py:152`）。补 bounded `trace_digest`（最近 N 条 `status != ok` 的 `tool_result` + `llm_error`）。**两个坑**：(a) `run.trace` **只在终态写入**，运行中是 `None` → **Goal 5「详情面板能看到此刻在干什么」做不到**，G9 只对**已失败节点**有效，这条必须写进 spec（否则 spec 无法验收）；(b) `trace is None` 有三种成因（queue_full 根本没有 / 排队取消是空 steps 不是 None / `_mark_budget_exceeded` 在 trace is None 时写 None），前端不能把 None 与 `steps==[]` 都显示成「无失败证据」。
+
+### D10 — 图级超限仍画图（G14）
+
+`workflow.js:225-231` 命中 notice 就 `renderMessage + return` → **用户失去整幅画面**，看不到哪些节点已完成、卡在哪个环。而 `nodes`/`edges` 无条件存在（`:2243-2251`），`total`/`completed`/`failed` 也发（`_SNAPSHOT_TERMINAL_STATUSES` 含 `graph_recursion_exceeded`），`diagnostics` 带 `reason`/`message`/`steps`/`limit`/`current_nodes`。补：**超限时仍然画图**，图上叠告警条；告警条补 `current_nodes`（超限那刻的 ready 节点 = 回边死循环的直接答案）与 `steps`。
+**做法修正（审阅员 B）**：图级 status 的配色走**独立的 `GRAPH_STATUS_COLORS`/`GRAPH_STATUS_LABELS`**，**不塞进 `NODE_COLORS`**——后者是**节点**状态词表，有精确相等契约测试（`test_workflow_graph_js.py:73-80`）与 `groupStatus` 落表断言（`:273-276`），塞图级状态会污染它。（tab 圆点现在走 `G.nodeColor(status)` 兜底成灰，正是「圆点退化」的成因。）
+
+### D11 — 取消运行中的图（G18，对应 Goal F）
+
+**现状**：后端 `scheduler.cancel()` 就绪且立即返回（`:594-620`），但 `web/server.py` 12 条路由**零 workflow**、WS `msg_type` 分支**零 workflow**、前端面板**一个按钮都没有**。命中 issue 主线场景：预算超限是**粘性 stop_new + drain**（只停派发、**不取消在跑的 run**，要等 `_in_flight_nodes==0` 落终态）→ 用户看着橙图继续烧 token 只能干等。**更糟**：`reset` 只 `fail_pending` + `remove_session` + 重建，**从不调 `cancel()`**；而图是 `ensure_future(scheduler.run(spec))` 起的后台任务、`manager._workflows` **永不注销** → **图继续跑、继续烧预算，而 forwarder 已被 detach，用户彻底看不到**。手机端无法 kill。
+
+**方案（采纳审阅员 B：走 WS 而非新 HTTP 路由）**：新增 WS 消息 `cancel_workflow`。WS handler 手里有 `session`，`session.agent.subagent_manager.get_workflow(wf_id)` 就能拿 scheduler；`cancel()` 内部 `ensure_future` 需要 running loop，WS 天然满足；HTTP 还要重做内存口径 session 校验。前端在面板加 toolbar + 运行中显示「停止」+ 二次确认（**不可逆**，`_cancelled`/`_accepting` 全仓无复位点，文案要说清「已跑的 run 会写 checkpoint，但工作流本身不能续」）。**并修 `reset`**：`remove_session` 之前遍历 `list_workflows()` → 逐个 `cancel()`（`cancel()` 对 `declared` 态不改状态，符合预期）。
+
+**必须划清的边界**：`web/session.py:1142-1143` 已有 `if msg_type in {"reset","cancel"}: fail_pending_interactions(...)` —— **前端今天发 `{"type":"cancel"}` 只会让待审批失败，run 照跑**。新增的 `cancel_workflow` 必须与这个既有语义区分开。
+**副作用**：`cancel()` 返回 `{"status":"cancelling"}` **不是终态**（终态要等 `_teardown` 后的快照）；取消是「立即标终态 + 异步 cancel 底层 run」，若 run 恰在取消前完成，`_apply_run_status` 可能把节点从 cancelled 改回 completed（既有行为，按钮要容忍状态闪动）。
+
 ## Reference Implementation Research
 
 - status: enabled
@@ -378,6 +439,10 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 
 > **已执行（2026-09-17）**：独立零记忆 grill subagent（paseo 托管，`claude-fable-5[1m]`）审视 D1–D7，产出 `reviews/grill-design.md`（**12 条 Confirmed Decisions + 4 条 Open Questions**），逐条 Read 代码复核并纠正了本 design 的 8 处 file:line/行为断言。本设计已按 12 条 Confirmed Decisions 回写（`reason` 截断在投影层、图级时间哨兵统一 `null`、foreach 计数清零与失败口径、白名单内联字面量、点击语义的**真实**受影响测试是浏览器 smoke、并行边偏移的改动面不止 `edgePath`、`inspect_transcript` 不按 run_id 过滤、`(workflow_id,node_id)` 候选集语义、session 为内存口径）。
 > **停轮中**：4 条 Open Questions（Q1 foreach 容器 transcript 语义 / Q2 展开控件形态 / Q3 tab 序号口径 / Q4 `reason` 截断额度）须逐条抛给用户、收到答复后回填 `reviews/grill-design.md` 的 `## User Confirmation`；**全部确认前不得写实现代码**。
+
+> **范围审阅（2026-09-17）**：本 change 范围从「纯前端展示」扩到「前端 + scheduler 语义 + 运行期推送 + 诊断数据面 + 控制面」后，派两名独立只读审阅员做范围切分与技术正确性审阅，产出 `reviews/scope-audit.md`。
+> **裁决：不切分**，保持「观测面」定位，但采纳两条降风险省法——**G3 走投影层**（不动状态机，避开「加 `queued` 赋值会同时激活 6 处死代码判据、其中一处参与收敛判断」的爆炸半径）、**G18 走 WS 而非新 HTTP 路由**（handler 手里有 session，`cancel()` 需要的 running loop 天然满足）。tasks 分 M1 语义层 / M2 展示层 / M3 下钻层三个里程碑，**每个以实跑收口**（这正是发现 G1 的方式）。
+> 审阅员另核实出 **9 条必须改**（含 4 条新的 G1 类：`_run_foreach_item` 无 `state` 形参致记账落点写错、G10 候选集反查 `_sessions` 会被孙代 session 污染、`explainNode` 签名看不到图级 status、D2b 判据不查「控制源 route 是否跑过」会报假话），已全部回写本 design 与 tasks。
 
 ## Risks / Trade-offs
 

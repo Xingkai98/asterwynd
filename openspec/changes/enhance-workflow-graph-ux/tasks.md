@@ -1,62 +1,63 @@
 # Tasks: Workflow 流程图可视化体验增强
 
-## 0. 设计追问（实现前门禁）
+> **范围裁决（2026-09-17）**：本 change **不切分**，保持「观测面」定位，按三个里程碑推进，**每个里程碑以实跑收口**（这正是发现 G1 的方式）。`reviews/scope-review.md` 记录了范围审阅的完整论证与两条省法（G3 走投影层、G18 走 WS）。
+>
+> **里程碑依赖**：M1（语义层）→ M2（展示层）/ M3（下钻层），M2 与 M3 可并行但**都必须等 M1**——否则详情面板会显示陈旧 `reason`（G11）、因果句基于错误规则（G12）。
 
-- [ ] 0.1 跑 `batch-grill-me`（或等价独立零记忆 subagent 设计追问）审视 design.md D1–D7，产出 `reviews/grill-design.md`（≥3 Confirmed Decisions + Open Questions 停轮确认）。
+## 0. 设计追问与审阅（实现前门禁）
 
-## 0b. 后端语义适配（D2b，用户裁决纳入）
+- [ ] 0.1 跑独立零记忆 subagent 设计追问 + 完备性查漏 + 范围审阅，产出 `reviews/grill-design.md`（≥3 Confirmed Decisions + Open Questions 停轮确认）、`gap-analysis.md`、`reviews/scope-review.md`。
 
-- [ ] 0b.1 `TERMINAL_NODE_STATUSES` 加 `skipped`；`_teardown` 的 `pending` 分支加判据：节点只被 route 控制边门控且 `activations <= 0` → `skipped`；同时满足「被上游连累」→ 优先 `blocked`。预算路径下同样适用（route 没选它跟预算无关）。
-- [ ] 0b.2 `_unit_counts` 加独立 `skipped_units` 桶（**不得落进 `pending_units`**）；回归「图终态时 pending_units 为 0」。
-- [ ] 0b.3 `_route_verdict` 读上游产出处**旁加** per-edge 记账（`_consumed_edges.add((edge.source, edge.target))`，`_mark_consumed` 本体不改）；回归 C5 `useful_runs`/`redundancy` 逐位不变。
-- [ ] 0b.4 回归测试：route 未选中分支记 `skipped`（用 `_route_spec()` 实跑，断言 `no` 节点 status 为 `skipped` 且 `a→gate` 边为 `passed`）；「被上游连累」优先于「未选中」的对照用例。
-- [ ] 0b.5 契约影响：确认 `NodeState.to_dict()` 直出 status 无需改码，但 `_envelope` 消费方（benchmark 报告 / `GetWorkflow`）容忍新值；docstring/spec 说明。
+---
 
-## 1. 数据面：快照加法字段（前端增强优先，后端只补图上看不到的）
+## M1 · 语义层（状态口径与因由正确性）
 
-- [ ] 1.1 `agent/subagent/scheduler.py::_graph_node_projection` 补 `reason`（**必须在投影层截断到 `_SUMMARY_LIMIT`**，与 `summary` 同口径；`state.reason` 本体不改——它是 `_envelope` 字段；截断额度见 grill Q4）。
-- [ ] 1.2 `workflow_graph_snapshot()` 图级补 `started_at`/`finished_at`——**哨兵统一成 `null`**：`started_at: (self._started_at or None)`（`declared` 态是 `0.0` 哨兵）、`finished_at: self._finished_at`（运行中 `None`）；**不要**复用 `_envelope` 的 `or time.time()` 口径。
-- [ ] 1.3 `NodeState` 新增 `items_completed`/`items_failed`，在 `_run_foreach_item` 的 gather 结果循环里**旁加**自增（失败口径与既有 `failures` 对齐：异常 envelope 与 `status != "completed"` 都算失败）；**同时在 `_execute_foreach` 开头随 `items`/`subagent_ids`/`run_ids` 一起清零**（否则 route 回边重跑累加出 `M > N`）；`CancelledError` 提前 return 时计数停在部分值（前端容忍 `M < N`）。`_graph_node_projection` 只对 foreach / `__auto_agg__` 节点输出。
-- [ ] 1.4 更新 `tests/agent/subagent/test_workflow_graph_snapshot.py`：节点白名单 `SNAPSHOT_NODE_KEYS`（模块级 frozenset，`:34-36`）+ **图级内联白名单字面量**（`:173-176`），**保留**排除断言（`subagent_ids`/`slots`/`raw`/`error`/`bus`/`attribution`）与「`_envelope`/`parent_envelope` 逐字节不变」回归。
+- [ ] M1.1 **G11** `_reset_subtree` 一并清 `reason`/`error`/`finished_at`/`summary`，以及 foreach 容器的 `items_completed`/`items_failed`/`item_states`（现在只清 status/activations/verdict/targets → 重跑显示上一轮因由 + 负耗时）。回归「route 回边重跑后 `finished_at >= started_at`」。
+- [ ] M1.2 **D2b** `TERMINAL_NODE_STATUSES` 加 `skipped`；`_teardown` 的 `pending` 分支加判据（三个条件：`_has_control_incoming` + `activations <= 0` + **每条控制入边的源头 route 都已 `completed`**）；**skipped 判定必须先于 `_budget_stop` 分支**；`_unit_counts` 加独立 `skipped_units` 桶（**不得落 `pending_units`**）。
+- [ ] M1.3 **D2b** `_route_verdict` 读上游产出处**旁加** per-edge 记账（`_consumed_edges.add(...)`，`_mark_consumed` 本体不改，只在 `if text:` 内记账与既有三处同构）；回归 C5 `useful_runs`/`redundancy` 逐位不变。
+- [ ] M1.4 **G12** `explainNode` **扩签名**（现签名看不到图级 status/diagnostics，「图级停止原因优先」无法实现）；`blocked` 因果沿数据入边**穿透 `blocked` 上游**、收集**全部**未完成/失败上游；**去掉「取 `finished_at` 最早」**（无依据，且 G11 修好前不可信）。
+- [ ] M1.5 **G26** 图级 status 纳入节点失败判定（现在 `_drive` 收敛出口只看预算，有节点 failed 仍报 `completed`）——**新增档位名需在实现前确认**（如 `completed_with_failures`）。
+- [ ] M1.6 测试：route 未选中分支记 `skipped`（`_route_spec()` 实跑断言 `no` 节点 status）；「route 从未运行时下游不报 skipped」对照用例；「被上游连累优先」对照用例（**须叠一个未满足的 required 依赖**，见 spec 验收构造说明）；有失败节点的图级 status 用例。
+- [ ] M1.7 契约影响：确认 `NodeState.to_dict()` 直出 status 无需改码，但 `_envelope` 消费方（benchmark 报告 / `GetWorkflow`）容忍新值；docstring/spec 说明。
 
-## 2. 后端：只读 transcript 路由
+## M2 · 展示层（运行可见性 + 诊断数据面）
 
-- [ ] 2.1 `web/session.py` 新增「按 `(workflow_id, node_id)` **收集候选集**」的解析（遍历 `_sessions` 匹配 `SubagentSessionRecord.workflow_id`/`node_id`；键在 foreach 容器上一对多），复用 `SubAgentManager.inspect_transcript()`。**注意**：必须显式传 `scope="recent_messages"` + `limit`（`summary` 分支无 `messages` 键）；`inspect_transcript` **不按 run_id 过滤、不截断单条内容**，单条截断要在路由层自己做；`KeyError`（`_require_session`）要转结构化响应。
-- [ ] 2.2 `web/server.py` 新增只读路由 `GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript`（bounded：条数上限 200 + **路由层**单条长度上限 + `include_tool_results` 默认 false；**不调 LLM、不写盘、不改执行状态**）。session 校验用 `session_manager.get_session()`（内存口径，冷会话 404，与 `/timeline` 同）。
-- [ ] 2.3 边界语义（候选集规则）：0 条候选 → 未派发（`subagent_id: null` + 说明）；1 条 → 直接给该条 transcript（含 N=1 的 foreach）；N>1 条 → 结构化「容器，附 N 个候选（`subagent_id`/`status`/`summary`）」（形态见 grill Q1）；未知 node/session → 404。
-- [ ] 2.4 测试：正常 / foreach 容器 / 未派发节点 / 未知 node 404 / 未知 session 404 / bounded。
+- [ ] M2.1 **G1（D3 修正）** foreach 计数记账点改为 **task `add_done_callback`**（`_run_foreach_item` **没有 `state` 形参**，「返回处 +1」落不了地）；回调**显式排除** `CancelledError`/`GraphRecursionError`/`WorkflowBudgetExceeded` 计成「失败」。
+- [ ] M2.2 **G7** `item_states`（按 index 维护的 per-item 状态）+ `items_running`/`items_completed`/`items_failed`；`items_running` **从 run record 取**（`find_run(...).status == "running"`），不用「已派发未终态」（含 20 个排队）；计数与 `item_states` 投影**只对 `kind == "foreach"`**，不连 `__auto_agg__`。
+- [ ] M2.3 **G2/D2c** 项级迁移推帧 + **调度器侧限频**（`_emit_graph_snapshot` 全量重建且无节流；0.1s 窗只合并发送不合并构建）。复用 `GraphEventForwarder` 的 0.1s 窗削峰。
+- [ ] M2.4 **D3** 快照加法字段：节点 `reason`（**投影层截断** `_SUMMARY_LIMIT`）、**D3b 图的 `started_at`/`finished_at`（哨兵统一 `null`）**、foreach 计数；白名单同步（节点 `SNAPSHOT_NODE_KEYS` + **图级内联字面量** `:173-176`）。
+- [ ] M2.5 **G13** 图级 `budget` 进快照（复用 `_budget_summary()`）；`declared` 态返回 `{}`，前端容忍空 dict。
+- [ ] M2.6 **G3** 「排队 vs 在跑」**走投影层省法**（`_graph_node_projection` 里按 run record 投影 `queued`）——**不动状态机、不动 `_dispatch_capacity`**。
+- [ ] M2.7 **G14** 图级超限**仍画图** + 告警条补 `current_nodes`/`steps`；图级 status 配色走**独立 `GRAPH_STATUS_COLORS`/`GRAPH_STATUS_LABELS`**，不塞 `NODE_COLORS`。
+- [ ] M2.8 **D1** `legendModel()` 从词表同源生成（节点类型 + **8 档**状态 + 5 档边 + channel 线型）+ 图例条 DOM/CSS（桌面展开 / 手机折叠）。
+- [ ] M2.9 **D2** 异常态四重编码（色 + 角标 + 边框形状 + 状态词）；**角标字形只用默认字体普遍覆盖的字符**（`⏸` U+23F8 实测渲染成豆腐块，已改 `‖`）。
+- [ ] M2.10 **G4/G8** 节点 elapsed（**独立于快照的本地计时器**，终态冻结）+「最后更新于 N 秒前」。
+- [ ] M2.11 **D6/D7** 多图 tab 元信息 + 边统计口径 + 并行边等距偏移（在 `layoutGraph` 的 `layoutEdges` 里按 `(from,to)` 分组预扫；`edgePath` 加可选参数保持导出兼容）。
+- [ ] M2.12 **G15** route 判定诊断的渲染落点（route 节点详情 + 图级告警）；`none` union 补 `verdict`/`targets`/`raw` excerpt；**字面标签不匹配也记 miss**。
+- [ ] M2.13 **G5** 节点 `task` 字段进快照（详情面板「任务」tab 的数据源）。
 
-## 3. 前端纯函数层（`workflow_graph.js`，node + vm 单测）
+## M3 · 下钻层（详情面板 + transcript 路由）
 
-- [ ] 3.1 `legendModel()`：从 `NODE_COLORS`/`EDGE_STYLES`/`KIND_GLYPHS`/`NODE_LABELS` **同源生成**图例内容（节点类型 + 7 档状态 + 5 档边状态 + channel 线型），每条目带人话解释；单测断言 7 档状态全覆盖。
-- [ ] 3.2 `explainNode(node, edges, nodesById)`：failed / blocked（有失败上游 / 无失败上游）/ budget_exceeded / cancelled 的因果句；**回归「12 文件 foreach 超预算」场景**（3 failed + 2 blocked + 1 budget_exceeded）。
-- [ ] 3.3 异常态编码表（八档）：状态 → 形状/角标（`failed` ✕ / `blocked` ⊘ 虚边框 / `budget_exceeded` ‖ 双边框 / `cancelled` ⊝ / **`skipped` — 冷灰蓝+虚边框**）；**角标字形只用默认字体普遍覆盖的字符**（`⏸` U+23F8 实测渲染成豆腐块，已改 `‖`）。
-- [ ] 3.4 并行边等距偏移：在 `layoutGraph` 的 `layoutEdges` 里**先按 `(from,to)` 分组**（`edgePath` 拿不到 multiplicity），把 `{index,total}`/`offset` 作为**可选参数**传进 `edgePath`（保持导出 API 兼容）；`offset = (k - (n-1)/2) * DELTA`，横向偏 y / 纵向偏 x；n 超上限退化为聚合标注。单测「3 条边路径互不相同且有限」。
-- [ ] 3.5 边统计口径：报**实际绘制路径数**（`collapsed.edges.length`）+ 原始边数（`snapshot.edges.length`）；**两数相等时不加解释后缀**（<50 节点未折叠时边原样透传，去重不发生），不等时才给可解释口径。
-- [ ] 3.6 tab 元信息格式化：`#序号 · 相对时间 · 耗时 · M/N`，运行中/终态两分支 + 运行中排最前。
-- [ ] 3.7 foreach 计数与迷你堆叠条的数据模型（`M/N 完成`、`· 失败 K`、N 大时退化）。
+- [ ] M3.1 **D4** 详情抽屉（桌面右 / 手机底，同一 DOM 切 class）+ 分 Tab（任务 / 产出 / 对话）+ `role="dialog"`/`aria-modal`/focus trap/Esc/遮罩关闭；抽屉开合**不改 viewBox**。
+- [ ] M3.2 **D4 点击语义拆分**：点节点 = 开详情；折叠组展开/收起挪到独立控件；**同步更新浏览器 smoke** `tests/web_tests/test_workflow_graph_browser.py:343-369`（`test_collapsed_group_click_expands_members`）+ `style.css:1482` 的 cursor 口径。（`test_workflow_graph_js.py` 是纯函数单测，无 click 用例，不需改。）
+- [ ] M3.3 **D4 只读 transcript 路由**（三态 union）+ **候选集以 `NodeState.subagent_ids` 为权威，不反查 `_sessions`**（孙代 session 会污染）；`index`/`task` 从 run record 取，不靠 `name` 反解；bounded（limit 50 / max 200）。
+- [ ] M3.4 **G10** `candidates` 每条补 `reason`（取 `run.reason`，bounded）+ `task`；`single` union 补 `reason`。
+- [ ] M3.5 **G17** `reason` **全文出口**（scheduler 侧 reason 从不出现在 transcript 里）；`reason_truncated`/`reason_length`。
+- [ ] M3.6 **G9** `trace_digest`（bounded：最近 N 条 `status != ok` 的 `tool_result` + `llm_error`）；**区分 `trace is None` 的三种成因**；**写进 spec**：trace 只在 run 终态可用，故「运行中看此刻在干什么」**做不到**。
+- [ ] M3.7 **G18** WS `cancel_workflow` + 前端「停止」按钮（二次确认，文案说清不可逆）+ **修 `reset`**（`remove_session` 前遍历 `list_workflows()` 逐个 `cancel()`）；**与既有 `{"type":"cancel"}` 语义划清边界**（现在它只让待审批失败、run 照跑）。
+- [ ] M3.8 「对话」tab transcript 懒加载 + **仅 UI 虚拟化**（50 行聚簇、按簇增删 DOM）+ 刷新节律**定死**（design 现措辞暗示自动刷新但机制未定）+ 暂停按钮**写进 spec**（现在无验收锚点）。
 
-## 4. 前端渲染层（`workflow.js` + `index.html` + `style.css`）
+## M4 · 测试、文档与收尾
 
-- [ ] 4.1 图例条 `#workflow-legend`（桌面默认展开 / 手机默认折叠为 `图例 ▾`，同一 DOM 切 class）；`index.html` + `style.css`。
-- [ ] 4.2 节点渲染升级：异常态角标 + 虚/双边框 + 加粗状态词 + `why` 小字（仅异常态占位）。
-- [ ] 4.3 **点击语义拆分**：点节点 = 开详情面板；折叠组展开/收起挪到独立小控件（形态见 grill Q2）。**同步更新浏览器 smoke** `tests/web_tests/test_workflow_graph_browser.py:343-369`（`test_collapsed_group_click_expands_members`，现靠点节点展开）+ `web/static/style.css:1482` 的 cursor 口径（普通节点也要可点）。**注意**：`tests/web_tests/test_workflow_graph_js.py` 是纯函数单测，无 click 用例，不需要改。
-- [ ] 4.4 详情抽屉（桌面右侧 / 手机底部，同一 DOM 切 class）+ 分 Tab（任务 / 产出 / 对话）+ `role="dialog"`/`aria-modal`/focus trap/Esc/遮罩关闭；抽屉开合**不改 viewBox**。
-- [ ] 4.5 「对话」tab transcript 懒加载 + **仅 UI 虚拟化**（50 行聚簇、按簇增删 DOM、单条截断）；实时刷新时 transcript 不重排（暂停按钮）。
-- [ ] 4.6 多图 tab 渲染升级：`#序号 · 相对时间 · 耗时 · M/N` + 最差状态色点 + `title` 补全 goal；运行中排最前。
-- [ ] 4.7 foreach 容器计数行 + 迷你堆叠条渲染（常显，不再只在折叠时显示）。
-- [ ] 4.8 `<svg:title>` 在移动端失效的修复：节点/边信息并入详情面板 + 自绘 tooltip（不再单靠 `<svg:title>`）。
+- [ ] M4.1 前端 node+vm 单测覆盖 M2/M3 各项；**`test_node_colors_cover_seven_tiers`（`test_workflow_graph_js.py:73-80`）是精确相等断言，加第 8 档必红——同步改名/改断言**（design/tasks 此前未点名这个测试）。
+- [ ] M4.2 浏览器 smoke（Playwright）：图例可见可折叠、点节点开抽屉、切「对话」tab 触发请求、折叠组独立控件展开。
+- [ ] M4.3 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke` 冒烟通过。
+- [ ] M4.4 兼容回归：既有无 workflow 会话前端不崩；`_envelope`/`parent_envelope` 结构不变（status 多一个取值）；`test_workflow_graph_js.py` 既有用例继续绿。
+- [ ] M4.5 `uv run pytest -q` 全绿；OpenSpec validate + project artifact checker 通过。
+- [ ] M4.6 同步 current spec：把 spec delta 合入 `openspec/specs/web-ui/spec.md`；`skipped` 的 MODIFIED 若定在 `multi-agent-collaboration`/`subagents` 同步。
+- [ ] M4.7 文档影响检查：`docs/openspec-change-backlog.md`、`docs/architecture.md`、`docs/development-guide.md`。
+- [ ] M4.8 **补开另立 change 的 GitHub issue**（节点级重跑 / 运行内事件流 / 搜索筛选 / 导出分享 / 完成通知）——当前 Non-Goals 写了「另立 change」但**无 issue 号**，仓库规则要求每个立项关联 issue。
 
-## 5. 跨端与配色
+## 五类另立 change 的 Non-Goals（见 design Non-Goals 节）
 
-- [ ] 5.1 图例条 / 抽屉 / 计数行在 720 断点两侧行为验证（桌面横向、手机纵向）。
-- [ ] 5.2 节点配色拉开**明度**差（`blocked`/`budget_exceeded`/`pending` 转灰度可辨），Chrome DevTools deuteranopia 模拟目视验证并记录到 building review。
-
-## 6. 测试与收尾
-
-- [ ] 6.1 前端 node+vm 单测覆盖 tasks 3.1–3.7；浏览器 smoke（Playwright）覆盖图例可见可折叠、点节点开抽屉、切「对话」tab 触发请求、折叠组独立控件展开。
-- [ ] 6.2 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke` 冒烟通过（本 change 触及 observability/快照链）。
-- [ ] 6.3 兼容回归：既有无 workflow 会话前端不崩；`test_workflow_graph_js.py` 既有用例（含点击语义）继续绿；`_envelope`/`parent_envelope` 结构不变。
-- [ ] 6.4 `uv run pytest -q` 全绿；OpenSpec validate + project artifact checker 通过。
-- [ ] 6.5 同步 current spec：把 spec delta（含快照加法字段的 MODIFIED Requirement）合入 `openspec/specs/web-ui/spec.md`。
-- [ ] 6.6 文档影响检查：`docs/openspec-change-backlog.md`、`docs/architecture.md`（若有图视图描述）、`docs/development-guide.md`（若新增路由需记）。
+节点级重跑 / 运行内事件流 / 搜索筛选（只做压暗）/ 导出分享 / 完成通知 —— 均写进 design Non-Goals 并各开 issue（M4.8）。

@@ -38,9 +38,18 @@
   - foreach 容器**常显** `N items · 完成 M`（`N` 来自既有 `items`；`M` 需新增 bounded 计数 `items_completed`/`items_failed`）。
   - 统计行改为如实反映「实际绘制的边数」，并对同一对节点的**并行边做垂直偏移**，让 `11 edges` 与可见线条数一致。
 
-- **E. 后端语义适配（用户裁决纳入：目标就是前端易用性，后端该适配就适配）**——实跑代码发现两个**上游遗留的真实语义缺口**，正好落在本 change 的核心命题（异常态语义）上：
-  1. **新增第 8 档节点状态 `skipped`（未选中）**：route 未选中的分支今天被错标成 `blocked`（黄），与「被上游失败连累」混为一谈。实跑证据：正常完成走 `APPROVED` 时，`DEFAULT` 分支节点状态是 `blocked`。新增 `skipped` 档（复用既有 `activations` 控制激活信号判定，不引入新记账），前端以冷灰蓝 + 虚框 + `—` 与 `blocked` 明显区分。业界先例：Airflow `skipped`、Argo `Omitted`。
+- **E. 后端语义适配（用户裁决纳入：目标就是前端易用性，后端该适配就适配）**——实跑代码发现多个**上游遗留的真实语义缺口**，正好落在本 change 的核心命题（异常态语义）上：
+  1. **新增第 8 档节点状态 `skipped`（未选中）**：route 未选中的分支今天被错标成 `blocked`（黄），与「被上游失败连累」混为一谈。实跑证据：正常完成走 `APPROVED` 时，`DEFAULT` 分支节点状态是 `blocked`。新增 `skipped` 档（判据复用既有 `activations` + 要求控制源 route 已 `completed`），前端以冷灰蓝 + 虚框 + `—` 与 `blocked` 明显区分。业界先例：Airflow `skipped`、Argo `Omitted`。
   2. **补 route 数据入边的 `passed` 记账**：route 读上游走 `_route_verdict`，不经过任何 `_mark_consumed` 调用点，因此 `a→gate` 这类边永远落到 `inactive`（灰）。在 `_route_verdict` 处**旁加** per-edge 记账（与 #190 决策 7 同构，`_mark_consumed` 本体不改）。
+  3. **陈旧因由与负耗时（G11）**：`_reset_subtree` 不清 `reason`/`error`/`finished_at` → route 回边重跑后显示上一轮因由 + 负耗时（**答错比答不出更糟**）。
+  4. **图级 status 修正（G26）**：有节点 `failed` 的图仍报 `completed`（`_drive` 收敛出口只看预算）→ 用户**根本不会被告知去看失败**。
+
+- **F. 运行过程可见性与掌控（用户「检查还有没有遗漏」后裁决全进）**——见 `gap-analysis.md`（27 条）与 `reviews/scope-review.md`：
+  - **运行可见性（G1–G8）**：foreach 计数记账点修正（原设计选在不可能产生中间值的时刻，整段运行期恒显示 0）、项级推帧、区分「排队 vs 在跑」、节点 elapsed、图不「假活」。
+  - **可诊断性（G9–G17）**：失败位置（trace 摘要）、foreach 项级因由、预算数字、图级超限仍画图、route 判定诊断、`reason` 全文出口。
+  - **掌控（G18）**：**能取消正在跑的图**（后端 `cancel()` 已就绪但 Web 零入口；预算超限是 drain 语义，用户只能干等烧 token；`reset` 更糟——从不调 `cancel()`，后台继续偷跑）。
+
+**范围裁决**：本 change **不切分**，保持「观测面」定位，tasks 分 M1 语义层 / M2 展示层 / M3 下钻层三个里程碑，**每个以实跑收口**。G3 采纳审阅员的**投影层省法**（不动状态机），G18 标为**独立验收组**。
 
 **约束**：`workflow_graph_snapshot()` 新字段**纯加法且 bounded**；`_envelope`/`parent_envelope` **结构**不变（唯一变化是节点 `status` 取值集合新增 `skipped`，消费方需容忍）；复用既有 720/380 断点与零依赖 vanilla JS + SVG 自绘，不引入前端框架；不做图历史回放、不做动画过渡、不做 Web 端编排画布（沿用 #190 的 Non-Goals）。
 

@@ -49,7 +49,7 @@ scheduler SHALL 提供 `workflow_graph_snapshot()`，返回完整运行期图（
 
 ### Requirement: workflow 图图例
 
-Workflow 视图 SHALL 提供常驻可折叠的图例（legend），说明节点类型（`S` subagent / `F` foreach / `R` route / `A` aggregate）、节点状态七档、边状态五档与 channel 线型语义。图例 SHALL 在桌面（>720px）默认展开、在手机（≤720px）默认折叠。图例每条目 SHALL 包含人话解释（而非仅状态词）。图例内容 SHALL 与状态词表（颜色/线型/代号/状态名）同源生成。
+Workflow 视图 SHALL 提供常驻可折叠的图例（legend），说明节点类型（`S` subagent / `F` foreach / `R` route / `A` aggregate）、节点状态八档、边状态五档与 channel 线型语义。图例 SHALL 在桌面（>720px）默认展开、在手机（≤720px）默认折叠。图例每条目 SHALL 包含人话解释（而非仅状态词）。图例内容 SHALL 与状态词表（颜色/线型/代号/状态名）同源生成。
 
 #### Scenario: 手机端图例可折叠且可见
 
@@ -77,11 +77,20 @@ scheduler 对「只被 route 控制边门控、且没有任何 route 选中它�
 - **THEN** `DEFAULT` 下游节点 SHALL 标记为 `skipped`，SHALL NOT 标记为 `blocked`
 - **AND** 前端 SHALL 以「未选中」语义（非失败、非受阻）展示该节点
 
+#### Scenario: 控制它的 route 从未运行时不报 skipped
+
+- **GIVEN** 一个节点 T 只被 route R 的控制边门控，而 R 自身因某个**未满足的 required 数据依赖**从未运行（R 最终为 `blocked`）
+- **WHEN** workflow 收尾
+- **THEN** T SHALL 标记为 `blocked`（真因是「R 没跑」，不是「R 没选它」）
+- **AND** SHALL NOT 标记为 `skipped`（否则用户读到「条件没走这条」这句假话）
+
 #### Scenario: 被上游连累优先于未选中
 
 - **GIVEN** 一个节点既未被 route 选中，其数据上游又已 `failed`/`cancelled`/`blocked`
 - **WHEN** workflow 收尾
 - **THEN** 该节点 SHALL 标记为 `blocked`（反映真实阻塞原因），SHALL NOT 标记为 `skipped`
+
+> **验收构造说明（审阅员 B）**：上面的 GIVEN 在真实调度器里**不能只靠「数据上游 failed」构造**——`failed`/`cancelled` 都是终态，`_data_deps_satisfied` 随即满足、节点会被**派发**（不是停在 pending）。要构造该场景必须**再叠一个未满足的 required 依赖**（例如另一条 required 入边的上游仍是 `pending`/`blocked`）。测试与实现都按这个构造写。
 
 ### Requirement: route 数据入边的消费记账
 
