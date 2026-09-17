@@ -292,7 +292,8 @@ edges: a→gate=inactive, gate→yes=passed, gate→no=inactive
 2. **产出**：快照里的 bounded summary（截断标注）+ `result_ref`（有则显示）。
 3. **对话**：**完整 transcript，懒加载**——切到该 tab 才发请求、才建 DOM。
 
-**点击语义拆分（重要行为变更；grill 决策 5 修正了要改的测试文件）**：今天点节点 = 展开/收起折叠组（`workflow.js:423` 绑定 → `:434-443` 的 `toggleGroup`，非 `groupLeader` 直接 return）。改为——**点节点 = 打开详情面板；折叠组的展开/收起挪到节点上的一个独立小控件**（形态见 Q2）。否则 foreach 容器的「看详情」与「展开项」两个意图在同一个点击上打架。**真正会红的不是 `test_workflow_graph_js.py`**（那是纯函数单测，无 click 用例），而是浏览器 smoke `tests/web_tests/test_workflow_graph_browser.py:343-369` 的 `test_collapsed_group_click_expands_members`（两次点 `.workflow-node[data-node-id='fan']`）；配套 CSS 是 `web/static/style.css:1482` 的 `.workflow-node.group-leader { cursor: pointer }`——拆分后普通节点也要可点，cursor 口径要一起改。（`test_workflow_graph_js.py:322-354` 的折叠相关断言是 `collapseGraph`/`groupLeader` **数据**断言，与点击无关，本 change 不动。）
+**点击语义拆分（重要行为变更；grill 决策 5 修正了要改的测试文件）**：今天点节点 = 展开/收起折叠组（`workflow.js:423` 绑定 → `:434-443` 的 `toggleGroup`，非 `groupLeader` 直接 return）。改为——**点节点 = 打开详情面板；折叠组的展开/收起收进详情抽屉**（**Q2 用户裁决定案：选 B**）。抽屉里给 `groupLeader` 节点一个「展开成员 / 收起成员」动作，点它切换 `expandedGroups` 并重绘。
+**为什么选 B 而不是「节点上的独立小控件」**：该控件**只服务 ≥50 节点的大图**（`collapseGraph` 的 `COLLAPSE_THRESHOLD`，小图如 12 文件体检 6–7 节点根本够不到，永远看不到它）。而手机纵向 DAG 上图会缩到约 0.5 倍，节点实显仅 27–36px——要在节点上做出真 44px 的触控目标，必须用**脱离 SVG 缩放的 HTML 覆盖层**（按节点屏幕坐标定位、随 pinch/pan 重算），实现复杂；且 `TAP_SLOP=4` 的点击/拖动判定会让手指漂移超过 4px 后 `setPointerCapture`（`workflow.js:490-497`）吃掉 click。**为一个只服务大图的控件付这个代价不划算**；收进抽屉零触控目标问题、零手势冲突。代价（手机抽屉占 70vh、展开后需先关抽屉才能看到结果）用户接受。否则 foreach 容器的「看详情」与「展开项」两个意图在同一个点击上打架。**真正会红的不是 `test_workflow_graph_js.py`**（那是纯函数单测，无 click 用例），而是浏览器 smoke `tests/web_tests/test_workflow_graph_browser.py:343-369` 的 `test_collapsed_group_click_expands_members`（两次点 `.workflow-node[data-node-id='fan']`）；配套 CSS 是 `web/static/style.css:1482` 的 `.workflow-node.group-leader { cursor: pointer }`——拆分后普通节点也要可点，cursor 口径要一起改。（`test_workflow_graph_js.py:322-354` 的折叠相关断言是 `collapseGraph`/`groupLeader` **数据**断言，与点击无关，本 change 不动。）
 
 **transcript 的渲染（对标 GitHub Actions 大日志工程的结论）**：**只做 UI 虚拟化，不做数据虚拟化**（数据是快照/接口一次取回的，本来就在内存）——按 **50 行一组聚簇**、按簇增删 DOM 而非按行；超长单行截断；不引入可视化库（GitHub 试遍现成库后自研，理由：换行可变行高、文本选择失效、多滚动条——我们零依赖自绘，更不该引库）。
 
@@ -363,12 +364,14 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 [●] #3 · 2 分钟前 · 2m18s · 3/5
 ```
 
-- `#3` = **该 session 内 workflow 出现顺序**（口径见 Q3）。**实现注意（grill 决策）**：**不能拿 `Map` 的插入下标当序号**——`pruneGraphs` 会 `state.graphs.delete(evicted.id)`（`workflow.js:124-135`），删掉 `#1` 后原 `#2` 下标变 0、编号整体前移；必须在 `graphState` 上存一个**显式计数器/显式字段**。另外 tab 可能**无快照存在**（`workflow_started` 一到就 `ensureGraph`，`entry.snapshot === null`，`renderGraphTabs` 已用 `entry.snapshot && …` 兜底，`:180-189`）——本 change 新增的耗时/`M/N` 格式化函数**必须能吃 `null` 快照**并退化为只显示 `#序号 · goal`。
+- **`#3` = 按图级 `started_at` 排序的秩**（**Q3 用户裁决定案：选 A**）。**排序也按编号**（即 tab 序列 = `started_at` 升序），**运行中不用位置表达，改用徽标**（如 `●`）区分。
+  **为什么选 A 而不是「到达序计数器 + 运行中排最前」**：(a) 「按出现序编号 + 运行中排最前」**必然产生非单调序列**——长跑 wf1 + 快结 wf2/wf3 → tab 读作 `#1 #3 #2`，(原始 Q3 的三个选项里没有「排序」这一维，这是审阅员补的)；(b) `_workflows` **永不注销**（`manager.py:408/567`），WS 重连补发（`web/session.py:695-723`）会把前端**早已淘汰**的图塞回来并分配新 `nextSeq` → 同一张图重连前 `#2`、重连后 `#9`，「第几次 run」**答错**。按 `started_at` 排序的秩则跨整页刷新稳定、与用户嘴里的「第几次 run」同义。
+  **接受的代价**：淘汰后编号前移（原 `#2` 变 `#1`）。**实现注意**：**不能拿 `Map` 的插入下标当序号**——`pruneGraphs` 会 `state.graphs.delete(evicted.id)`（`workflow.js:124-135`）；秩要**在渲染时按当前可见图的 `started_at` 现算**（`started_at` 已由 D3 进快照）。**排序必须把 `started_at == null`（D3 的哨兵统一）当 unknown**——排到最后，绝不按 epoch 0 排到最前。
 - 相对时间（`2 分钟前`），运行中显示 `已跑 42s` 并**实时跳秒**；`title` 给绝对时间（Temporal 的 UTC/Local/Relative 三格式思路）。
 - 耗时用图级 `started_at`/`finished_at`（D3 补齐）。
-- `3/5` = 完成节点数/总数（「结果差异」最直接的摘要）。
+- `3/5` = 完成**节点**数/总数（「结果差异」最直接的摘要）。**口径注意**：这**不用**快照的 `total/completed/failed`（那是 `_unit_counts()` 的**逻辑单元**口径，foreach 容器按 N+1 计，且 running 帧根本不带——`_SNAPSHOT_TERMINAL_STATUSES` 门控）。**由前端从 `snapshot.nodes` 自行统计**（`renderSummary` 已经就是这么算 per-status 计数的），零后端改动、running 帧天然可用，也顺带解掉 gap-analysis G6 指出的「D6 要 running 计数 vs #190 决策不给」冲突。
 - 状态圆点用**最差状态色**（复用既有 `groupStatus()` 逻辑）。
-- **排序**：运行中的排最前，其余按开始时间倒序（Temporal 的 `NULLS FIRST` 思路）；淘汰策略（最近 5 张终态 + 全部 running）沿用 #190 Q9 **不变**。
+- 淘汰策略（最近 5 张终态 + 全部 running）沿用 #190 Q9 **不变**。**但新增的图级终态 `completed_with_failures`（G26）必须加进 `TERMINAL_STATUSES`（`workflow.js:16`）**，否则那张图被当成 running → 永不淘汰、永久排最前（见 D9/G26 影响面 (d)）。
 - 完整 goal 进 `title`（避免截断信息丢失）。
 
 ### D7 — 边统计口径如实 + 并行边垂直偏移
@@ -444,7 +447,7 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 ## Pre-Implementation Review
 
 > **已执行（2026-09-17）**：独立零记忆 grill subagent（paseo 托管，`claude-fable-5[1m]`）审视 D1–D7，产出 `reviews/grill-design.md`（**12 条 Confirmed Decisions + 4 条 Open Questions**），逐条 Read 代码复核并纠正了本 design 的 8 处 file:line/行为断言。本设计已按 12 条 Confirmed Decisions 回写（`reason` 截断在投影层、图级时间哨兵统一 `null`、foreach 计数清零与失败口径、白名单内联字面量、点击语义的**真实**受影响测试是浏览器 smoke、并行边偏移的改动面不止 `edgePath`、`inspect_transcript` 不按 run_id 过滤、`(workflow_id,node_id)` 候选集语义、session 为内存口径）。
-> **停轮中**：4 条 Open Questions（Q1 foreach 容器 transcript 语义 / Q2 展开控件形态 / Q3 tab 序号口径 / Q4 `reason` 截断额度）须逐条抛给用户、收到答复后回填 `reviews/grill-design.md` 的 `## User Confirmation`；**全部确认前不得写实现代码**。
+> **停轮已解除（2026-09-18）**：Q1–Q4 全部收敛并回填 `reviews/grill-design.md` 的 `## User Confirmation`——**Q1/Q4 被后续设计唯一确定**（Q1 由三态 union、Q4 由 G17 的全文出口取代其前提，见 `reviews/grill-design.md` 的「重评估」节）；**Q2/Q3 经改写后由用户拍板**（Q2 选 B：展开收进详情抽屉；Q3 选 A：按 `started_at` 编号且排序按编号）。**grill 门禁已满足，可进入实现。**
 
 > **范围审阅（2026-09-17）**：本 change 范围从「纯前端展示」扩到「前端 + scheduler 语义 + 运行期推送 + 诊断数据面 + 控制面」后，派两名独立只读审阅员做范围切分与技术正确性审阅，产出 `reviews/scope-audit.md`。
 > **裁决：不切分**，保持「观测面」定位，但采纳两条降风险省法——**G3 走投影层**（不动状态机，避开「加 `queued` 赋值会同时激活 6 处死代码判据、其中一处参与收敛判断」的爆炸半径）、**G18 走 WS 而非新 HTTP 路由**（handler 手里有 session，`cancel()` 需要的 running loop 天然满足）。tasks 分 M1 语义层 / M2 展示层 / M3 下钻层三个里程碑，**每个以实跑收口**（这正是发现 G1 的方式）。

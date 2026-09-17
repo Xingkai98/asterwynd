@@ -32,14 +32,14 @@
 - [ ] M2.8 **D1** `legendModel()` 从词表同源生成（节点类型 + **8 档**状态 + 5 档边 + channel 线型）+ 图例条 DOM/CSS（桌面展开 / 手机折叠）。
 - [ ] M2.9 **D2** 异常态四重编码（色 + 角标 + 边框形状 + 状态词）；**角标字形只用默认字体普遍覆盖的字符**（`⏸` U+23F8 实测渲染成豆腐块，已改 `‖`）。
 - [ ] M2.10 **G4/G8** 节点 elapsed（**独立于快照的本地计时器**，终态冻结）+「最后更新于 N 秒前」。
-- [ ] M2.11 **D6/D7** 多图 tab 元信息 + 边统计口径 + 并行边等距偏移（在 `layoutGraph` 的 `layoutEdges` 里按 `(from,to)` 分组预扫；`edgePath` 加可选参数保持导出兼容）。
+- [ ] M2.11 **D6/D7** 多图 tab 元信息 + 边统计口径 + 并行边等距偏移（在 `layoutGraph` 的 `layoutEdges` 里按 `(from,to)` 分组预扫；`edgePath` 加可选参数保持导出兼容）。**D6 按 Q3 判定（选 A）**：`#N` = 按 `started_at` 排序的秩，**排序也按编号**，运行中用徽标区分；`started_at == null` 排最后；`M/N` 由前端从 `snapshot.nodes` 自算（**不用**快照的 `total/completed/failed`——那是逻辑单元口径且 running 帧不带）；**`TERMINAL_STATUSES`（`workflow.js:16`）加 `completed_with_failures`**。
 - [ ] M2.12 **G15** route 判定诊断的渲染落点（route 节点详情 + 图级告警）；`none` union 补 `verdict`/`targets`/`raw` excerpt；**字面标签不匹配也记 miss**。
 - [ ] M2.13 **G5** 节点 `task` 字段进快照（详情面板「任务」tab 的数据源）。
 
 ## M3 · 下钻层（详情面板 + transcript 路由）
 
 - [ ] M3.1 **D4** 详情抽屉（桌面右 / 手机底，同一 DOM 切 class）+ 分 Tab（任务 / 产出 / 对话）+ `role="dialog"`/`aria-modal`/focus trap/Esc/遮罩关闭；抽屉开合**不改 viewBox**。
-- [ ] M3.2 **D4 点击语义拆分**：点节点 = 开详情；折叠组展开/收起挪到独立控件；**同步更新浏览器 smoke** `tests/web_tests/test_workflow_graph_browser.py:343-369`（`test_collapsed_group_click_expands_members`）+ `style.css:1482` 的 cursor 口径。（`test_workflow_graph_js.py` 是纯函数单测，无 click 用例，不需改。）
+- [ ] M3.2 **D4 点击语义拆分（Q2 判定：选 B）**：点节点 = 开详情；**折叠组展开/收起收进详情抽屉**（抽屉里给 `groupLeader` 一个「展开成员 / 收起成员」动作，切换 `expandedGroups` 并重绘）——**不在节点上画独立控件**。**同步更新浏览器 smoke** `tests/web_tests/test_workflow_graph_browser.py:343-369`（`test_collapsed_group_click_expands_members` 现在靠点节点展开，要改成经抽屉展开）+ `style.css:1482` 的 cursor 口径（普通节点也要可点）。（`test_workflow_graph_js.py` 是纯函数单测，无 click 用例，不需改。）
 - [ ] M3.3 **D4 只读 transcript 路由**（三态 union）+ **候选集以 `NodeState.subagent_ids` 为权威，不反查 `_sessions`**（孙代 session 会污染）；`index`/`task` 从 run record 取，不靠 `name` 反解；bounded（limit 50 / max 200）。
 - [ ] M3.4 **G10** `candidates` 每条补 `reason`（取 `run.reason`，bounded）+ `task`；`single` union 补 `reason`。
 - [ ] M3.5 **G17** `reason` **全文出口**（scheduler 侧 reason 从不出现在 transcript 里）；`reason_truncated`/`reason_length`。
