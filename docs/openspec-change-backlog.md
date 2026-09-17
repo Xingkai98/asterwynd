@@ -139,25 +139,9 @@
 - 结构化错误码、权限元数据、单测 + 集成测试 + benchmark smoke。
 - 实现 PR 合入时给 issue #111 添加完成 comment 并关闭。
 
-### 6. `workflow-budget-unbounded-default`
+### 第十五批：workflow 四维预算默认无上限（C4 follow-up）
 
-状态：未实现（已完成设计追问，待用户确认 Open Questions）。
-
-关联 issue：[#196](https://github.com/Xingkai98/asterwynd/issues/196)（【feature】workflow 四维预算默认无上限，显式配置/CLI 才设上限）。
-
-批次：第十五批（C4 `workflow-budget-attribution` 的 follow-up），与队列中其他 change 无依赖。
-
-建议顺序原因：
-
-- C4 的四维预算默认值（200k / 5.0 / 300 / 1800）对 token 消耗大的任务偏紧，12 文件 foreach 体检实测在约 18 万 token 处被 `budget_exceeded` 腰斩（issue #196）。参照 #192（AgentLoop 迭代默认无上限）先例，把「默认不设上限、显式配置才设限」搬到 workflow 预算层。
-- 机制本身已在 C4 落地（`0 = 不限` 哨兵 + 真值判定），本 change 只改默认值与其配置落点，但会改 `openspec/specs/multi-agent-collaboration/spec.md` 里写死的默认值表述，属受保护路径，需走完整 OpenSpec change 流程。
-- 开发前需 `batch-grill-me` 收敛 design.md 的开放问题（默认值表示法 `0` vs `None`、CLI 是否新增 `--workflow-budget-*` 入参、预算不限后 C2 结构闸是否仍兜底）。
-
-主要交付：
-
-- `WorkflowBudgetConfig` 四字段默认值改为 `0`（不限），`_parse_workflow_budget` 逐字段默认值与 `WorkflowBudget.__init__` 兜底同步。
-- 回归测试：默认配置下累积量越过旧默认的图跑完不触发 `budget_exceeded`；显式配置上限/显式 0/显式 null 语义不变；C2 结构闸仍兜底。
-- spec delta 同步进 `openspec/specs/multi-agent-collaboration/spec.md`；实现 PR 合入时给 issue #196 添加完成 comment 并关闭。
+- `workflow-budget-unbounded-default`（issue #196）：**已合入归档 2026-09-17**。C4 的四维预算默认值（200k / 5.0 / 300 / 1800）对 token 消耗大的任务偏紧（12 文件 foreach 体检实测约 18 万 token 即被 `budget_exceeded` 腰斩），参照 #192（AgentLoop 迭代默认无上限）先例改为**默认不设上限、只有显式配置才设限**。实现要点：**零新增机制**——沿用 C4 Q11 既有 `0 = 不限` 哨兵（四维全部真值判定），`WorkflowBudgetConfig` 四字段默认值改 0、`_parse_workflow_budget` 逐字段 `mapping.get` 默认同步、`WorkflowBudget.__init__` 的 `getattr` 兜底同步（三处默认值必须一致，否则「直构 config」与「yaml 加载」分叉）。**段落级 null 收紧（grill Q2 用户拍板）**——新增 `_require_section`，`subagents` / `subagents.workflow` / `subagents.workflow.budget` 三级「键存在但值为 null」一律 `ConfigError`（键缺失仍=不限）：默认改 0 后段落级 null 会静默把四道闸全关掉，与字段级 null 的明确拒绝口径不一致；范围边界明确不含 `subagents.budget.*`（单 run 预算，另一个概念）。**CLI 不改**（grill Q1 用户拍板）——只走配置文件设上限。**回归测试配对照组（grill 标注的假保护风险）**：`_chain_spec(8)` + 每 run 50k token（累计 400k，真越过旧 200k）默认下 `completed`，同图显式 `max_total_tokens=200000` 时 `budget_exceeded`；另锁住 `max_items=0` 在预算不限时按 C2 `max_runs` 展开（grill 标的「静默空展开」暗雷）。**设计追问**：独立零记忆 subagent 产出 10 Confirmed Decisions + 2 Open Questions（用户答复记录在 `reviews/grill-design.md` 的 `## User Confirmation`）。**审阅闭环**：1 轮 PASS（reviewer run `review-workflow-budget-unbounded-default-20260917-r1`，4 组变异验证全部「改坏→变红→还原」，含 2.3 的假保护检测）。spec delta MODIFIED 1 条 Requirement（默认值口径 + 3 个新 Scenario）已同步进 `openspec/specs/multi-agent-collaboration/spec.md`。行为变更（默认不限、段落级 null 报错）已写进 design/proposal 与 spec。
 
 ### 第十四批：Web 移动端断线重连恢复 pending 交互
 

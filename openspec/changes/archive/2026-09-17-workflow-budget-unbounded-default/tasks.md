@@ -25,8 +25,8 @@
 ## 3. 收尾
 
 - [x] 3.0 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke` 冒烟通过（本 change 触及 agent-runtime / subagent 面，按门禁要求跑）。
-- [ ] 3.1 同步 current spec：把 spec delta 合入 `openspec/specs/multi-agent-collaboration/spec.md` 的「workflow 级四维度总预算」Requirement。
-- [ ] 3.2 文档影响：复核 `asterwynd.example.yaml`、`README.md` / `README_EN.md`、`docs/`（关键词 `workflow budget` / `max_total_` / 预算默认）是否需要同步；README 改动必须同 PR 同步 `README_EN.md`。
-- [ ] 3.3 跑 `/review-loop workflow-budget-unbounded-default` 独立审阅闭环，产出 `reviews/building-review.md`（PASS）+ review manifest。
-- [ ] 3.4 `uv run pytest -q` 全绿；`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` 通过。
-- [ ] 3.5 归档：change 移入 `openspec/changes/archive/2026-09-17-workflow-budget-unbounded-default/`，从 `docs/openspec-change-backlog.md` 移除，写 `current_spec_synced` / `change_archived` / `backlog_updated` 结构化事件。
+- [x] 3.1 同步 current spec：把 spec delta 合入 `openspec/specs/multi-agent-collaboration/spec.md` 的「workflow 级四维度总预算」Requirement。
+- [x] 3.2 文档影响：复核 `asterwynd.example.yaml`、`README.md` / `README_EN.md`、`docs/`（关键词 `workflow budget` / `max_total_` / 预算默认）是否需要同步；README 改动必须同 PR 同步 `README_EN.md`。
+- [x] 3.3 跑 `/review-loop workflow-budget-unbounded-default` 独立审阅闭环，产出 `reviews/building-review.md`（PASS）+ review manifest。
+- [x] 3.4 `uv run pytest -q` 全绿；`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` 通过。
+- [x] 3.5 归档：change 移入 `openspec/changes/archive/2026-09-17-workflow-budget-unbounded-default/`，从 `docs/openspec-change-backlog.md` 移除，写 `current_spec_synced` / `change_archived` / `backlog_updated` 结构化事件。

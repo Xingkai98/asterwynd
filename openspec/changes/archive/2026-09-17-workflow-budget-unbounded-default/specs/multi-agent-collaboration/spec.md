@@ -9,9 +9,10 @@
 #### Scenario: 未配置预算时不设上限
 
 - **GIVEN** 一份未配置 `subagents.workflow.budget` 的配置
-- **WHEN** 一个 workflow run 的累计 token / cost / run 数 / 挂钟时间超过任一旧默认值（200k tokens / 5.0 USD / 300 runs / 1800 s）
+- **WHEN** 一个 workflow run 的累计 token / cost / 挂钟时间超过旧默认值（200k tokens / 5.0 USD / 1800 s）
 - **THEN** 系统 SHALL NOT 因预算中止派发
 - **AND** workflow SHALL 正常跑完，envelope 的 `budget.exceeded` SHALL 为 `false`
+- **AND** run 数维度 SHALL NOT 被本 Requirement 中止（仍受 C2 `max_runs` 结构闸约束，见下方 Scenario）
 
 #### Scenario: token 预算超限停止派发
 
