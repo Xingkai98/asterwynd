@@ -1,14 +1,16 @@
-"""``WorkflowBudgetConfig`` 配置落点（change ``workflow-budget-attribution``，task 4.1）。
+"""``WorkflowBudgetConfig`` 配置落点（change ``workflow-budget-attribution`` task 4.1；
+默认值语义由 ``workflow-budget-unbounded-default`` 修订，issue #196）。
 
-Q11 口径（grill 决策 8 + 用户确认）：
+口径（C4 Q11 + 本 change D1/D7）：
 
 - 四字段（``max_total_tokens`` / ``max_total_cost_usd`` / ``max_total_runs`` /
-  ``max_wall_time_s``）嵌套挂在 ``subagents.workflow.budget`` 下，默认值
-  200000 / 5.0 / 300 / 1800；
+  ``max_wall_time_s``）嵌套挂在 ``subagents.workflow.budget`` 下，**默认值全为 0
+  （不限）**——未配置就不设上限，只有显式写下数值才设闸（参照 #192）；
 - 四字段**均 ``0 = 不限``**，需要 workflow-budget 专用的非负解析函数——
   全局 ``_validate_positive_int`` / ``_parse_positive_float`` 在数值层拒绝 0，
   不能改它们的语义（``subagents.budget.*`` 等既有键依赖原口径）；
-- 显式 ``null`` **拒绝**（避免 YAML 缺值意外关闭安全闸）；
+- 字段级显式 ``null`` **拒绝**；段落级 ``null``（``subagents`` / ``subagents.workflow``
+  / ``subagents.workflow.budget``）同样**拒绝**（D7，避免空段静默关闸）；
 - 逐字段 ``mapping.get``（grill 决策 7：只给 dataclass 默认值不会让 yaml 生效）。
 """
 import dataclasses
@@ -26,12 +28,13 @@ def _write(tmp_path, text: str):
 # --- 默认值 -----------------------------------------------------------------
 
 
-def test_budget_defaults_match_documented_values():
+def test_budget_defaults_are_unlimited():
+    """issue #196 / D1：四维默认全为 0（不限）——未配置就不设上限。"""
     budget = AsterwyndConfig().subagents.workflow.budget
-    assert budget.max_total_tokens == 200000
-    assert budget.max_total_cost_usd == 5.0
-    assert budget.max_total_runs == 300
-    assert budget.max_wall_time_s == 1800.0
+    assert budget.max_total_tokens == 0
+    assert budget.max_total_cost_usd == 0.0
+    assert budget.max_total_runs == 0
+    assert budget.max_wall_time_s == 0.0
 
 
 def test_budget_config_is_frozen_dataclass_nested_under_workflow():
@@ -40,11 +43,12 @@ def test_budget_config_is_frozen_dataclass_nested_under_workflow():
     assert limits.budget.__dataclass_params__.frozen  # type: ignore[attr-defined]
 
 
-def test_max_total_runs_default_matches_structural_max_runs():
-    """D6/Q4：默认值必须与 C2 的 ``max_runs`` 一致，否则会出现「声明期 300、
-    运行期 200」的误伤。"""
+def test_budget_default_does_not_disable_c2_structural_max_runs():
+    """issue #196 / D5：预算默认不限，但 C2 的 ``max_runs`` 结构闸仍是 300——
+    「预算 0」只解除本层运行期预算，不解除声明期结构闸（C4 Q14）。"""
     limits = AsterwyndConfig().subagents.workflow
-    assert limits.budget.max_total_runs == limits.max_runs == 300
+    assert limits.budget.max_total_runs == 0
+    assert limits.max_runs == 300
 
 
 # --- yaml 逐字段落地（grill 决策 7） ----------------------------------------
@@ -73,7 +77,8 @@ subagents:
     assert config.subagents.workflow.max_runs == 300
 
 
-def test_partial_budget_keeps_other_defaults(tmp_path, monkeypatch):
+def test_partial_budget_leaves_other_dimensions_unlimited(tmp_path, monkeypatch):
+    """D1/D7：逐维 opt-in——只写一维时其余三维保持 0（不限），不是「互相校准的默认组」。"""
     monkeypatch.delenv("ASTERWYND_MODE", raising=False)
     config = _write(
         tmp_path,
@@ -86,15 +91,15 @@ subagents:
     )
     budget = config.subagents.workflow.budget
     assert budget.max_total_tokens == 999
-    assert budget.max_total_cost_usd == 5.0
-    assert budget.max_total_runs == 300
-    assert budget.max_wall_time_s == 1800.0
+    assert budget.max_total_cost_usd == 0.0
+    assert budget.max_total_runs == 0
+    assert budget.max_wall_time_s == 0.0
 
 
-def test_missing_budget_section_uses_defaults(tmp_path, monkeypatch):
+def test_missing_budget_section_uses_unlimited_defaults(tmp_path, monkeypatch):
     monkeypatch.delenv("ASTERWYND_MODE", raising=False)
     config = _write(tmp_path, "subagents:\n  workflow:\n    max_runs: 12\n")
-    assert config.subagents.workflow.budget.max_total_tokens == 200000
+    assert config.subagents.workflow.budget.max_total_tokens == 0
     assert config.subagents.workflow.max_runs == 12
 
 
@@ -157,3 +162,39 @@ def test_non_numeric_values_are_rejected(tmp_path, monkeypatch):
         _write(tmp_path, "subagents:\n  workflow:\n    budget:\n      max_total_tokens: many\n")
     with pytest.raises(ConfigError):
         _write(tmp_path, "subagents:\n  workflow:\n    budget:\n      max_total_cost_usd: [1]\n")
+
+
+# --- 段落级 null 拒绝（D7 / grill Q2，issue #196） ---------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "subagents:\n",  # subagents 段整段 null
+        "subagents:\n  workflow:\n",  # subagents.workflow 段整段 null
+        "subagents:\n  workflow:\n    budget:\n",  # subagents.workflow.budget 段整段 null
+    ],
+)
+def test_section_level_null_is_rejected(tmp_path, monkeypatch, text):
+    """D7：段落级显式 null 不得静默当成「未配置」。
+
+    默认值改成 0（不限）后，静默放行会让用户写下空段时四闸全无——与字段级 null
+    的明确拒绝口径也必须一致。用户原则：不写该字段 = 无上限；写了且有值 = 设上限；
+    写了但不给值 = 报错。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    with pytest.raises(ConfigError):
+        _write(tmp_path, text)
+
+
+def test_absent_sections_still_reload_as_unlimited(tmp_path, monkeypatch):
+    """对照组：**不写**这些段落（键缺失）不是错误，按 D1 落到「不限」。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    # subagents 段存在但完全不提 workflow / budget
+    config = _write(tmp_path, "subagents:\n  max_spawns: 5\n")
+    budget = config.subagents.workflow.budget
+    assert budget.max_total_tokens == 0
+    assert budget.max_total_runs == 0
+    assert config.subagents.max_spawns == 5
+    # 顶层 yaml 完全为空 → 全部默认
+    empty = _write(tmp_path, "")
+    assert empty.subagents.workflow.budget.max_total_cost_usd == 0.0

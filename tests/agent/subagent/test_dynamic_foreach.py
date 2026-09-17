@@ -250,6 +250,34 @@ async def test_max_items_zero_truncates_to_remaining_run_budget(manager):
 
 
 @pytest.mark.asyncio
+async def test_max_items_zero_expands_to_c2_bound_when_budget_unlimited(manager):
+    """issue #196：默认预算不限（max_total_runs=0）时，``max_items=0`` 的展开容量
+    退化为 **C2 两闸的最小值**，而不是 0。
+
+    grill 标注的暗雷：``_remaining_expansion_capacity`` 在三个候选上限全为 0/缺失时
+    返回 0，调用方 ``items[:0]`` 是空集——若 C4 维度被默认关掉后没写到 C2 兜底，
+    这里会静默展开成 0 项。本测试锁住「预算不限 ⇒ 仍按 C2 max_runs 展开」。"""
+    manager.llm = ScriptedLLM([json.dumps({"items": list(range(50))}), "worked"])
+    spec = {
+        "goal": "g",
+        "nodes": [
+            {"id": "planner", "kind": "subagent", "task": "plan"},
+            {"id": "fan", "kind": "foreach", "task": "work {item}", "source": "planner", "source_field": "items", "max_items": 0},
+        ],
+        "edges": [{"from": "planner", "to": "fan"}],
+        "terminal": ["fan"],
+        "max_runs": 12,
+    }
+    # manager 用默认配置 → C4 max_total_runs=0（不限）
+    assert manager.config.subagents.workflow.budget.max_total_runs == 0
+    result = await WorkflowScheduler(manager).run(parse_workflow_spec(spec))
+    fan = next(node for node in result["nodes"] if node["id"] == "fan")
+    # C2 max_runs=12：planner 占 1 → 展开应为 11，而不是空集 0
+    assert fan["items"] == 11
+    assert result["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_max_items_zero_respects_c4_max_total_runs(manager):
     """Q9：可展开数取「C4 max_total_runs / C2 max_runs / C2 max_nodes」最小值。"""
     manager.llm = ScriptedLLM([json.dumps({"items": list(range(50))}), "worked"])

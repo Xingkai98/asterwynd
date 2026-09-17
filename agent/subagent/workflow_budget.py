@@ -63,10 +63,13 @@ class WorkflowBudget:
     """
 
     def __init__(self, config: object | None = None, *, started_at: float | None = None) -> None:
-        self.max_tokens = int(getattr(config, "max_total_tokens", 200000))
-        self.max_cost_usd = float(getattr(config, "max_total_cost_usd", 5.0))
-        self.max_runs = int(getattr(config, "max_total_runs", 300))
-        self.max_wall_time_s = float(getattr(config, "max_wall_time_s", 1800.0))
+        # 缺配置 / 配置链路缺失时同样落到 0 = 不限（change
+        # ``workflow-budget-unbounded-default`` D3）：与 ``WorkflowBudgetConfig`` 的
+        # 新默认值一致，否则同一份「未配置」会在 config 与 getattr 两条路径上分叉。
+        self.max_tokens = int(getattr(config, "max_total_tokens", 0))
+        self.max_cost_usd = float(getattr(config, "max_total_cost_usd", 0))
+        self.max_runs = int(getattr(config, "max_total_runs", 0))
+        self.max_wall_time_s = float(getattr(config, "max_wall_time_s", 0))
         self.started_at = time.time() if started_at is None else started_at
         #: 记账累加器（Q6 方案 B：由 loop 层的每次 LLM 调用驱动）。
         self.tokens = 0
