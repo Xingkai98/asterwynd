@@ -15,23 +15,31 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 
 ## Goals / Non-Goals
 
+**总目标（用户原话）**：「尽可能地对整个 workflow 的流程有更多的掌控感，能看到每个节点运行过程中的情况，如果报错了，为什么报错」。下面 A–F 是它的分解。
+
 **Goals**
 
-1. **A 图例**：用户不看文档就能读懂节点类型、7 档状态、5 档边状态与线型/箭头的含义。
-2. **B 异常态语义**：一眼分清 `failed`（自身失败）/ `blocked`（被挡住没跑）/ `budget_exceeded`（预算停下），并能看到「**为什么**是这个状态」的因果说明。
-3. **C 节点详情**：点任意节点 → 打开详情面板，看到该节点的 task / 状态与因由 / 起止耗时 / summary / 完整 transcript（懒加载）。
-4. **D 多图与 foreach 可读性**：多图 tab 能区分「第几次 run / 何时起 / 耗时 / 结果差异」；foreach 容器常显「完成 M/N」；统计行数字与图上可见线条数**一致且可解释**。
-5. 桌面/手机两端都可用，复用既有 720/380 断点，不引入前端框架或新依赖。
+1. **A 图例**：用户不看文档就能读懂节点类型、8 档状态、5 档边状态与线型/箭头的含义。
+2. **B 异常态语义**：一眼分清 `failed`（自身失败）/ `blocked`（被挡住没跑）/ `budget_exceeded`（预算停下）/ `skipped`（条件没走这条），并能看到「**为什么**是这个状态」的因果说明——**含失败位置与预算数字**。
+3. **C 节点详情**：点任意节点 → 打开详情面板，看到该节点的 task / 状态与因由 / 起止耗时 / summary / **失败证据** / 完整 transcript（懒加载、运行中可刷新）。
+4. **D 多图与 foreach 可读性**：多图 tab 能区分「第几次 run / 何时起 / 耗时 / 结果差异」；foreach 容器**运行中**就常显「完成 M/N」；统计行数字与图上可见线条数**一致且可解释**。
+5. **E 运行过程可见性（本 change 补强）**：区分「等上游 / 排队等 slot / 真正在跑」；节点级 elapsed 跳动计时；图不"假活"（陈旧可见）；详情面板能看到**此刻**在干什么。
+6. **F 掌控**：能**取消**一张正在跑的图（尤其预算超限 drain 期间）。
+7. 桌面/手机两端都可用，复用既有 720/380 断点，不引入前端框架或新依赖。
 
 **Non-Goals**
 
-- 不做图历史回放（快照仍只表达当前态）。
-- 不做动画/过渡效果（沿用「状态切换直接重绘」）。
+- **不做节点级重跑 / 重试**（需新调度器原语：用户触发复位 + 重派发 + 与 `_accepting`/预算/`activations` 的交互定义；且要回答「重跑已完成的节点？」「下游全级联？」「预算已耗尽还能重跑？」）。**另立 change**（见下 Issue）。
+- **不做运行内事件流 / 状态迁移时间线**（数据齐备：`latest_events` 内存 5 条 + `events.jsonl` 落盘，但要先定暴露口径与容量）。注意：本 Non-Goal **不含**「不做时间轴回放（snapshot scrubber）」以外的含义——**节点级「变化高亮」不做为动画，但作为一次性标记做**（见 D8）。
+- **不做节点搜索 / 筛选**（真过滤会破坏 DAG 布局：隐藏节点需重连边、重算层级）。本 change 只做**压暗（dim）**轻量版（G20 延后，见下）。
+- **不做导出 / 分享（PNG / JSON）**（要定导出形态、是否含图例与时间戳）。另立 change。
+- **不做长跑完成通知**（与图耦合度低）。另立 change。
+- 不做时间轴 scrubber 式图历史回放（快照仍只表达当前态）。**措辞收窄**：原写「不做图历史回放（快照只表达当前态）」会连坐「同一次运行内的事件流」，那恰是「为什么报错」的最直接答案——已拆成上面两条。
+- 不做动画/过渡效果（沿用「状态切换直接重绘」）；但**新快照到达时对变化节点给一次性高亮标记**（D8），这不是动画。
 - 不做 Web 端编排画布（拖拽设计拓扑）；沿用 #190 的 Non-Goal。
 - 不做力导向布局；**不做边捆绑（edge bundling）**——它是为几百条边的 hairball 设计的，我们同一对节点重叠的边只有 2–4 条，捆绑只会把信息藏得更深（见调研 D6）。
-- **不改** `_envelope`/`parent_envelope` 父 Agent 契约；不改 `InspectSubagentTranscript` 工具（LLM 面）。
-- 不做「跨 session 的 workflow 历史浏览」（详情面板只服务当前 session 的运行态图）。
-- 不做数据虚拟化（我们是快照推送、数据全在内存；只做 **UI 虚拟化**，见 D4）。
+- **不改** `_envelope`/`parent_envelope` 的**结构**契约（唯一变化是节点 `status` 取值集合新增 `skipped`，消费方需容忍）；不改 `InspectSubagentTranscript` 工具（LLM 面）。
+- 不做「跨 session 的 workflow 历史浏览」（详情面板只服务当前 session 的运行态图）。**注意**：这**不覆盖**「同 session 内被淘汰的图找不回来」（G22，前端策略问题），后者另记债务。
 
 ## 界面效果（预期的样子）
 
@@ -236,10 +244,17 @@ edges: a→gate=inactive, gate→yes=passed, gate→no=inactive
 
 **图级时间的哨兵语义（grill 决策 2）**：`self._started_at = 0.0` 是构造期哨兵（`scheduler.py:419`，`declared` 态可取快照，测试 `test_workflow_graph_snapshot.py:341-351` 就断言 `declared`），`self._finished_at: float | None = None`（`:687` 的 finally 才赋值，运行中为 `None`）。快照**必须把「没有值」统一成 `null`**：`started_at: (self._started_at or None)`、`finished_at: self._finished_at`——绝不能让前端把 `0.0` 当 epoch 0 渲染成「56 年前」或算出天文耗时。**不要复用** `_envelope` 的 `self._finished_at or time.time()` 口径（`:2336`）。
 
-**`items_completed`/`items_failed` 的记账（grill 决策 3）**：
-- 在 `_run_foreach_item` 的 `gather` 结果循环里（`scheduler.py:1482-1507`）**旁加**两个自增；**失败口径必须与既有 `failures` 对齐**（异常 envelope 与 `status != "completed"` 都算失败），否则 `M/N` 会与既有 `state.reason` 文案 `f"{failures}/{len(items)} foreach items did not complete"`（`:1505`）自相矛盾。
-- **必须在 `_execute_foreach` 开头（`:1462-1466`，与 `state.items`/`state.subagent_ids`/`state.run_ids` 重置同一处）把两个计数清零**——route 回边激活同一个 foreach 容器重跑（`:1446-1452` 的 `_reset_subtree`）会累加出 `M > N`。
-- `asyncio.CancelledError` 分支是**提前 return**（`:1487-1489`），计数停在部分值——与既有 `state.status = "cancelled"` 一致，前端要容忍 `M < N`。
+**`items_completed`/`items_failed` 的记账（grill 决策 3；⚠ **记账点已按 G1 修正**）**：
+
+> **G1 修正说明（本 change 的完备性审查发现的设计错误）**：原写「在 `gather` 结果循环里旁加自增」——但那个循环在 `await asyncio.gather(...)`（`scheduler.py:1482`）**之后**才执行（`:1485-1497`）。所以计数只有两种取值：**0 和 N**，整个运行期显示「完成 0/12」，全部跑完才跳到 12。**D5 的立项动机（「看到并行」）在时间维度上完全落空**——这是「按 design 实现完仍然看不到」的缺陷，必须改设计。
+>
+> **正确记账点：每项完成即 +1——在 `_run_foreach_item` 的返回处（`:1517-1525` 的 `try` 返回前 / `finally` 旁），而不是 `_execute_foreach` 的 gather 之后。** 每项的 `_launch_run` 返回时该项已终态，此刻自增；`asyncio.gather` 只是汇总，不承担记账。
+
+- **失败口径必须与既有 `failures` 对齐**：`_launch_run` 返回的 envelope `status != "completed"` 即算失败（与 gather 循环的判据一致）；`_run_foreach_item` 抛异常/`CancelledError` 的路径也要落到计数（异常不吞、继续抛，但计数在抛前更新）。
+- **必须在 `_execute_foreach` 开头（`:1462-1466`，与 `state.items`/`state.subagent_ids`/`state.run_ids` 重置同一处）把两个计数清零**——route 回边激活同一个 foreach 容器重跑会累加出 `M > N`。
+- **项级状态（G7）**：同时维护 `items_running`（已派发未终态）与 per-item 状态数组（`state.item_states: list[str]`，长度 N）。这是 D5.2 迷你堆叠条的数据源，也是「N 项里有几个在跑/几个在排队」的答案。bounded：N 有 `max_items` 上限（200），状态是短字符串。
+- **每次项级迁移都要推帧（G2）**：否则即使计数对了，前端在 A→B 迁移点之间仍收不到（见 D2c）。用既有 `GraphEventForwarder` 的 0.1s 合并窗削峰，不放大流量。
+- `asyncio.CancelledError` 分支提前 return 时，计数停在部分值——与既有 `state.status = "cancelled"` 一致，前端要容忍 `M < N`。
 
 **白名单同步（grill 决策 4）**：只影响 `tests/agent/subagent/test_workflow_graph_snapshot.py` 一个文件——节点白名单 `SNAPSHOT_NODE_KEYS` 是模块级 `frozenset`（`:34-36`），用 `<=` 断言（`:150`）；**图级白名单是内联 set 字面量**（`:173-176`），加两个时间戳要改那里（没有常量可改）。全仓 grep 确认没有第二个测试断言快照键集（`test_workflow_graph_events.py` 只看 `node["status"]`/`diagnostics`），`test_snapshot_does_not_drift_envelope_contract`（`:358-368`）断言 `_envelope`/`parent_envelope` 键、本 change 不动这两者会继续绿。白名单是「多一个键都是没挑字段」的守卫，改它必须是**有意识**的，且**保留**排除断言（`subagent_ids`/`slots`/`raw`/`error`/`bus`/`attribution`）。
 

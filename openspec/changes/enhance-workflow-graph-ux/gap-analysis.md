@@ -57,6 +57,36 @@
 | G24 | **暂停按钮在 spec 里没有验收锚点**：design/tasks 写了「transcript 重排时给暂停按钮」，但 spec 的 Requirement 里**没有任何一条**提到它 → 做了守不住、改了没人拦。另 design 措辞暗示存在自动刷新，但**刷新节律与机制未定**，实现者很可能做成「打开时取一次，之后永不更新」。 |
 | G25 | **Non-Goals 措辞两处会导致遗漏**：(a) 没有「运行时控制面」这一栏 → 造成 G18 从未被讨论；(b) 「不做图历史回放（快照只表达当前态）」**连坐**了「同一次运行内的事件流/状态迁移序列」——那恰是「为什么报错」最直接的答案（数据已存在于 `latest_events` 与 `events.jsonl`）。建议收窄为「不做时间轴回放（snapshot scrubber）」。 |
 
+## 四·补、主 session 实跑追加发现（2026-09-17，非三个 agent 产出）
+
+在复核 G12 前提时实跑代码，**又发现两条**（比原查漏更严重，因为直接影响「报错了用户知不知道」）：
+
+### G26（P0）——有节点失败的图，图级 status 仍报 `completed`
+
+**实跑**（`a` 必失败 → `b` 下游）：
+
+```
+节点:  a  status=failed  reason=None(见注)      b  status=completed
+边:    a→b = blocked
+图级:  status = "completed"          ← 有节点失败，却报 completed
+envelope:  completed=1 / failed=1     ← 数据在，标题错了
+```
+
+**根因**：`_drive` 的收敛出口（`scheduler.py:824`）是
+`self._status = "budget_exceeded" if self._budget_stop else "completed"` —— **只看预算，完全不检查有没有节点失败**。
+
+**用户会感受到什么**：一张有节点失败的图，顶部/ tab 显示 **completed（绿）**。用户**根本不会被告知去看失败**——这直接击穿用户原话「如果报错了，为什么报错」：连「报错了」这个前提都没传达。数据（`failed=1`）明明在 envelope 里，只是**标题状态误导**。
+
+**是否 design 遗漏**：是，且**原查漏三视角都没覆盖顶部状态口径**。需要决策：图级 status 是否要新增一档「部分失败」（如 `completed_with_failures`）或让 `completed` 的判定把节点失败纳入。
+
+### G27（P1）——失败节点的 `reason` 在快照里是 `None`（已在计划内，但影响面比预期大）
+
+实跑确认 `run.reason = 'model exploded'`（manager 侧正确记录），但 `state.reason = envelope.get("reason")` 之后**快照投影不输出 `reason` 字段** → 前端拿不到。这条**正是 tasks 1.1 要补的**（design D3 已列），不算新缺陷；但**它意味着：在 1.1 落地之前，「为什么报错」在前端是 100% 无数据的**——不是"信息少"，是"完全没有"。这抬高了 G9/G10/G17 的紧迫度。
+
+### 附：G12 前提**已实跑证实成立**
+
+`_data_deps_satisfied`（`scheduler.py:1157-1164`）只要求上游 **∈ `TERMINAL_NODE_STATUSES`**，而该集合**含 `failed`**（`:79-81`）。所以「上游失败 → 下游被派发」为真（实测 `b` 确实跑了且 `completed`）。→ **D2 现有的「blocked → 沿入边找 failed 上游」规则确实站不住**（多数实跑里下游不会 blocked，而是照跑）。G12 必须改。
+
 ## 五、复核结论
 
 三条 G1/G11 G18 为**最高优先**：
