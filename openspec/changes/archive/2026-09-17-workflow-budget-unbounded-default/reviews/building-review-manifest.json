@@ -5,9 +5,9 @@
   "verdict": "PASS",
   "reviewer_run_id": "review-workflow-budget-unbounded-default-20260917-r1",
   "base_sha": "9f79f105dfaad9c8d7ab7f5034ead11922325392",
-  "head_sha": "0e8f59c669173d5e662cd315003960aafd2ba4c3",
-  "tasks_hash": "sha256:3a3fa2871f96dfe09da54527fc59ec7f4d04399dcc7e5dd87cb838a3c7c90286",
-  "spec_hash": "sha256:485373667829b7d0b4ffbf1097991f6460d27609c10b47bb74672819cf3eb981",
-  "diff_hash": "sha256:10e2c6b68d3ea96fbbdb3cbd08a122a668ed6af64e845d3ad28b557d53239ec7",
+  "head_sha": "3e018943872ba03aa97674ec4a1c6650027e8c1a",
+  "tasks_hash": "sha256:08d2f87087a304cdaa595afabe13b8d5649543d835b66eedcb6d40858eb68ea8",
+  "spec_hash": "sha256:4f68fd2bffdb03b64251d35bd01343d04b27c62259514a637d455da62f066755",
+  "diff_hash": "sha256:1dccca6d4dfbf7e7143d79b2285e7a96b03f7ede088027460def4033a0056e33",
   "report_hash": "sha256:d7f05938c8717593606b9c55bd35ff5c98ce2b9aa2fefc885b2cd2fb92ee1adf"
 }
