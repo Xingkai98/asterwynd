@@ -278,6 +278,27 @@ GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcrip
 
 ### D5 — foreach 并行可见性：容器常显 `完成 M/N` + 项列表进抽屉
 
+**先明确 foreach 的语义（「每个项到底是什么」）**：一个字面**任务是模板、每个 item 展开成一个独立 subagent**：
+
+- 声明层只有**一个** `fan` 节点和它的 `task` 模板（如 `"对 {item} 执行代码体检"`）。
+- 运行时 `_resolve_items` 解析出 N 个 item（静态 `items` 列表，或由上游产出经 `source`/`source_field` 抽取）；`render_item_task(template, item, index)` 把 `{item}`/`{index}`/字典字段替换成具体值 → 得到 N 个**具体任务**（`"对 a.js 执行代码体检"`…）。
+- 每个 item 经 `_run_foreach_item` → `_launch_run` → `create_subagent` 建**一个独立 subagent**（自己的 `SubagentSessionRecord` + `messages` + 完整 `AgentLoop` + 自己的 `subagent_id`/`run_id`/预算/状态/transcript）。**不是「跑一段代码」**——它是一个被派了具体任务的 AI agent，这正是「点进去看它聊了什么」有意义的原因。
+- 并发不是无界：N 个 `asyncio.gather` 提交后各自 `await _acquire_slot()` 排队，**实际并行度受 `max_active` 约束**（12 项可能只同时跑 3–4 个，其余排队）。所以候选列表里会看到部分项仍是排队/未派发态。
+
+**同时必须区分三种「展开」**（本文档后续凡说「展开」都要指明是哪一种，避免歧义）：
+
+| # | 名称 | 触发 | 揭示什么 | 现状 |
+|---|---|---|---|---|
+| ① | **图级折叠展开** | 节点数 ≥50 时点节点上的 `▸`（`collapseGraph` 的 `expandedGroups`） | 被折叠隐藏的**真节点**——即 `__auto_agg__` 自动插层节点（`isAutoNode` 判据），**不是** foreach 的 N 个 item | #190 已有 |
+| ② | **项列表展开**（本 change 的 D5） | 点 foreach 容器节点 → 详情抽屉「对话」tab | 该容器的 N 个**候选项**（`kind:"candidates"`），点某一项再取那一项的 transcript | 本 change 新增 |
+| ③ | **项级画布展开**（**明确不做**） | —— | 把 `fan` 在画布上炸成 N 个节点 | Non-Goal，理由见下 |
+
+**为什么不做 ③（项级画布展开）**：
+- **项不是 `NodeState`，不在 `ExecutionPlan` 里**——`_expand_plan`/`with_expansion` 只把**自动插层的 aggregate 节点**塞进 plan（`aggregation.py:242` 的 `with_expansion` + `inserted_nodes`），展开项本身只体现在容器的 `state.items`（计数）/`subagent_ids`/`run_ids` 上。所以画布上不存在「项节点」这种实体，要做只能**前端凭空合成**：合成的节点没有真实入/出边（N 个项语义上同源同汇）、没有 scheduler 推的状态、布局层与边推导全部要特判——**等于在图里维护第二套假节点**。
+- **规模会爆炸**：`max_items` 上限允许 N 到 200，画布上 = 200 个无边的孤立节点。
+- **业界一致选择「计数 + 列表」而非「铺节点」**（调研结论）：Airflow Graph view 把映射实例叠成一个节点（issue #54229 正在抱怨），Grid view 走 `Mapped Instances` 列表；Step Functions 的 Map 用 **iteration viewer** + 计数；Argo 的 Graph view 在 N 大时会爆炸。**三家都没把 fan-out 铺成 N 个图节点。**
+- 「看到并行」这个诉求由 ② 满足：抽屉里的候选列表本身就是「N 个并行项」的呈现，且能逐项下钻。
+
 **现状**：`N items` 只在 ≥50 节点折叠时才显示，<50 全展开时容器**完全不提并行项数**——「并行」隐形。
 
 **方案**：
