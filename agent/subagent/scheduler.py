@@ -76,8 +76,11 @@ logger = logging.getLogger("asterwynd.subagent")
 # ``budget_exceeded`` 是 C4 新增的**节点级**终态（Q5）：被预算停下但未派发的根节点
 # 标它而不是 ``blocked``。不加进来，被标的上游会让下游的 ``_data_deps_satisfied``
 # 永远为 False（Confirmed Decision 7）。
+# ``skipped``（change ``enhance-workflow-graph-ux`` D2b）是「route 判定没走这条」
+# 的**良性终态**——它既不失败也不受阻，但必须算终态，否则门控会把它的下游
+# 永远卡住、收敛判定也会把它当未完成。
 TERMINAL_NODE_STATUSES = frozenset(
-    {"completed", "failed", "cancelled", "blocked", "budget_exceeded"}
+    {"completed", "failed", "cancelled", "blocked", "budget_exceeded", "skipped"}
 )
 
 # Run 终态（与 manager.TERMINAL_RUN_STATUSES 同口径 + queue_full 这个「从未发生」态）。
@@ -105,7 +108,16 @@ _PARENT_FIELD_LIMIT = 200
 #: 图快照里带终态计数的 ``status`` 集合（change ``workflow-graph-visualization``）：
 #: 只有整张图停下时计数才有意义，running 中带计数会误导视图头。
 _SNAPSHOT_TERMINAL_STATUSES = frozenset(
-    {"completed", "failed", "cancelled", "budget_exceeded", "graph_recursion_exceeded"}
+    {
+        "completed",
+        # G26（D9）：有节点失败但图正常收敛——必须算终态，否则那张图会被当成
+        # running（永远排 tab 最前、永不进淘汰池、每次重连都补发）。
+        "completed_with_failures",
+        "failed",
+        "cancelled",
+        "budget_exceeded",
+        "graph_recursion_exceeded",
+    }
 )
 #: 边 ``blocked`` 的两侧状态集合（决策 7）：目标被闸门挡住，或源没有可用产出。
 _EDGE_BLOCKED_TARGET_STATUSES = frozenset({"blocked", "budget_exceeded"})
@@ -760,9 +772,15 @@ class WorkflowScheduler:
                 if state.status in ("queued", "started"):
                     state.status = "cancelled"
             elif state.status == "pending":
+                # D2b（enhance-workflow-graph-ux）：先判 ``skipped``（route 判定过、
+                # 但没走这条）——**必须先于**预算分支，否则被 route 门控的根节点在
+                # 预算停时会被写成 ``budget_exceeded`` 而不是 ``skipped``。
+                if self._is_skipped(state):
+                    state.status = "skipped"
+                    state.reason = "route did not select this branch"
                 # Q5：预算超限时根节点改 ``budget_exceeded``、其余仍 ``blocked``；
                 # 非预算路径保持原 ``blocked`` 语义（含既有 reason）。
-                if self._budget_stop:
+                elif self._budget_stop:
                     self._apply_budget_exhausted_status(state)
                 else:
                     state.status = "blocked"
@@ -821,7 +839,13 @@ class WorkflowScheduler:
                 if dispatched == 0 and self._in_flight_nodes == 0:
                     # 没有可派发的节点、也没有在途节点：图已收敛（或存在不可达节点）。
                     # 预算超限是**粘性**状态（Q5）：收敛出口不得把它覆盖成 completed。
-                    self._status = "budget_exceeded" if self._budget_stop else "completed"
+                    if self._budget_stop:
+                        self._status = "budget_exceeded"
+                    else:
+                        # G26（D9）：有节点 ``failed`` 的图不得报 ``completed``——
+                        # 否则用户根本不会被告知去看失败。用独立档区分，不让它
+                        # 使整图算失败（其余节点可能都正常跑完了）。
+                        self._status = self._terminal_converged_status()
                     return
                 await self._wait_for_progress()
         except GraphRecursionError as exc:
@@ -1171,6 +1195,52 @@ class WorkflowScheduler:
         plan = self._graph()
         return any(plan.is_control_edge(edge) for edge in plan.incoming(node_id))
 
+    def _terminal_converged_status(self) -> str:
+        """图收敛时的终态（G26/D9）：有节点 ``failed`` → ``completed_with_failures``。
+
+        与 ``completed`` 分开是**用户可见**的：混用会让一张有失败节点的图在
+        tab 上显示「已完成」，用户根本不会去看哪里失败了。
+        """
+        if any(state.status == "failed" for state in self._states.values()):
+            return "completed_with_failures"
+        return "completed"
+
+    def _is_skipped(self, state: NodeState) -> bool:
+        """未被 route 选中的节点（D2b，enhance-workflow-graph-ux）。
+
+        四个条件**同时**成立才算 ``skipped``：
+
+        1. 有控制入边（只被 route 门控的节点才是「未选中」的候选）；
+        2. ``activations <= 0``（没有任何 route 选中它）；
+        3. **每条控制入边的源头 route 都已 ``completed``**——「确实做过判定，
+           且没选它」。缺了它，``route 从未运行``（例如它的数据依赖永远没就绪）
+           会被误报成「条件没走这条」——**用户读到的是假话**。
+        4. **没有失败的 required 数据上游**——「被上游连累」优先于「未选中」。
+           一个节点既没被选中、它的数据上游又挂了，真因是**上游挂了**（即使
+           route 选了它，它也拿不到输入），报 ``skipped`` 同样在误导。
+        """
+        node_id = state.node.id
+        if not self._has_control_incoming(node_id):
+            return False
+        if state.activations > 0:
+            return False
+        # 条件 4：被上游连累优先。
+        plan = self._graph()
+        for edge in plan.data_incoming(node_id):
+            if not edge.required:
+                continue
+            upstream = self._states.get(edge.source)
+            if upstream is not None and upstream.status in _EDGE_BLOCKED_SOURCE_STATUSES:
+                return False
+        plan = self._graph()
+        for edge in plan.incoming(node_id):
+            if not plan.is_control_edge(edge):
+                continue
+            source = self._states.get(edge.source)
+            if source is None or source.status != "completed":
+                return False
+        return True
+
     def _ready_nodes(self) -> list[NodeState]:
         ready: list[NodeState] = []
         for state in self._states.values():
@@ -1347,7 +1417,15 @@ class WorkflowScheduler:
                 self._reset_subtree(successor)
 
     def _reset_subtree(self, state: NodeState) -> None:
-        """数据上游重跑 → 下游必须用新输入重跑（同一 session 复用）。"""
+        """数据上游重跑 → 下游必须用新输入重跑（同一 session 复用）。
+
+        G11（enhance-workflow-graph-ux）：复位必须**一并清上一轮的产出于因由**
+        （``reason``/``error``/``summary``/``finished_at``），否则重跑期间前端
+        会显示上一轮的失败因由（``state.reason = state.reason or ...`` 的 ``or``
+        语义会把它留住），且 ``finished_at`` 不复位会让新 ``started_at`` 大于旧
+        ``finished_at`` → **负耗时**。**答错比答不出更糟**，而 route 回边重跑
+        （review 循环）是本项目的常见形态。
+        """
         if state.status == "pending":
             return
         state.status = "pending"
@@ -1355,6 +1433,10 @@ class WorkflowScheduler:
         state.deadline_fired = False
         state.verdict = None
         state.targets = []
+        state.reason = None
+        state.error = None
+        state.summary = ""
+        state.finished_at = None
         for edge in self._graph().data_outgoing(state.node.id):
             successor = self._states.get(edge.target)
             if successor is not None:
@@ -2017,7 +2099,15 @@ class WorkflowScheduler:
         misses.append({"route": route_id, "when": when, "reason": reason})
 
     def _route_verdict(self, state: NodeState) -> str:
-        """route 的判定文本 = 所有数据上游产出的拼接（只做标签匹配）。"""
+        """route 的判定文本 = 所有数据上游产出的拼接（只做标签匹配）。
+
+        D2b（enhance-workflow-graph-ux）：这里读上游产出的同时也是**一次消费**，
+        必须顺手记 per-edge 账（``_mark_consumed`` 的既有四个调用点都在
+        aggregate/root 路径上，route 一个都不走）——否则 ``a→gate`` 这类
+        route 数据入边永远落 ``inactive`` 兜底，看起来像「数据没流过去」。
+        与既有三处同构：只在 ``if text:`` 内记账，不改 ``_mark_consumed`` 本体
+        （C5 的 ``_consumed_run_ids``/``useful_runs``/``redundancy`` 逐位不变）。
+        """
         parts: list[str] = []
         for edge in self._graph().data_incoming(state.node.id):
             upstream = self._states.get(edge.source)
@@ -2026,6 +2116,7 @@ class WorkflowScheduler:
             text = self._node_output(upstream, "result")
             if text:
                 parts.append(text)
+                self._consumed_edges.add((edge.source, edge.target))
         return "\n".join(parts)
 
     def _resolve_items(self, state: NodeState) -> list[Any]:
@@ -2182,6 +2273,7 @@ class WorkflowScheduler:
             "cancelled_units": 0,
             "budget_exceeded_units": 0,
             "blocked_units": 0,
+            "skipped_units": 0,
             "pending_units": 0,
         }
         for state in self._states.values():
@@ -2198,6 +2290,10 @@ class WorkflowScheduler:
                 counts["budget_exceeded_units"] += units
             elif status == "blocked":
                 counts["blocked_units"] += units
+            elif status == "skipped":
+                # 良性终态，**独立桶**——落 pending_units 会让「图跑完了还有
+                # pending」自相矛盾。
+                counts["skipped_units"] += units
             else:
                 counts["pending_units"] += units
         return counts
