@@ -56,7 +56,7 @@
 - [ ] M4.5 `uv run pytest -q` 全绿；OpenSpec validate + project artifact checker 通过。
 - [ ] M4.6 同步 current spec：把 spec delta 合入 `openspec/specs/web-ui/spec.md`；`skipped` 的 MODIFIED 若定在 `multi-agent-collaboration`/`subagents` 同步。
 - [ ] M4.7 文档影响检查：`docs/openspec-change-backlog.md`、`docs/architecture.md`、`docs/development-guide.md`。
-- [ ] M4.8 **补开另立 change 的 GitHub issue**（节点级重跑 / 运行内事件流 / 搜索筛选 / 导出分享 / 完成通知）——当前 Non-Goals 写了「另立 change」但**无 issue 号**，仓库规则要求每个立项关联 issue。
+- [x] M4.8 **补开另立 change 的 GitHub issue**（已完成 2026-09-18）：节点级重跑 [#201](https://github.com/Xingkai98/asterwynd/issues/201) / 运行内事件流 [#202](https://github.com/Xingkai98/asterwynd/issues/202) / 搜索筛选与异常定位 [#203](https://github.com/Xingkai98/asterwynd/issues/203) / 复制与导出 [#204](https://github.com/Xingkai98/asterwynd/issues/204) / 长跑完成通知 [#205](https://github.com/Xingkai98/asterwynd/issues/205)。design Non-Goals 已回写 issue 号。
 
 ## 五类另立 change 的 Non-Goals（见 design Non-Goals 节）
 

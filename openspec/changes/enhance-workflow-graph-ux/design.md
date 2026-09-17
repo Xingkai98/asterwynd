@@ -29,13 +29,13 @@ C7 `workflow-graph-visualization`（#190，已合入归档）交付了运行态�
 
 **Non-Goals**
 
-- **不做节点级重跑 / 重试**（需新调度器原语：用户触发复位 + 重派发 + 与 `_accepting`/预算/`activations` 的交互定义；且要回答「重跑已完成的节点？」「下游全级联？」「预算已耗尽还能重跑？」）。**另立 change**（见下 Issue）。
-- **不做运行内事件流 / 状态迁移时间线**（数据齐备：`latest_events` 内存 5 条 + `events.jsonl` 落盘，但要先定暴露口径与容量）。注意：本 Non-Goal **不含**「不做时间轴回放（snapshot scrubber）」以外的含义——**节点级「变化高亮」不做为动画，但作为一次性标记做**（见 D8）。
-- **不做节点搜索 / 筛选**（真过滤会破坏 DAG 布局：隐藏节点需重连边、重算层级）。本 change 只做**压暗（dim）**轻量版（G20 延后，见下）。
-- **不做异常节点定位/聚焦**（G19：统计行异常计数可点 → viewBox 聚焦；零后端成本，但用户裁决不进本 change）——**显式记录为延后**，见下 issue。
-- **不做内容复制**（G21：节点 id / `reason` / transcript 的 copy affordance；成本极低但用户裁决不进）——显式记录为延后。
-- **不做导出 / 分享（PNG / JSON）**（要定导出形态、是否含图例与时间戳）。另立 change。
-- **不做长跑完成通知**（与图耦合度低）。另立 change。
+- **不做节点级重跑 / 重试**（需新调度器原语：用户触发复位 + 重派发 + 与 `_accepting`/预算/`activations` 的交互定义；且要回答「重跑已完成的节点？」「下游全级联？」「预算已耗尽还能重跑？」）。**另立 change：[#201](https://github.com/Xingkai98/asterwynd/issues/201)**。
+- **不做运行内事件流 / 状态迁移时间线**（数据齐备：`latest_events` 内存 5 条 + `events.jsonl` 落盘，但要先定暴露口径与容量）。**另立 change：[#202](https://github.com/Xingkai98/asterwynd/issues/202)**。注意：本 Non-Goal **不含**「不做时间轴回放（snapshot scrubber）」以外的含义——**节点级「变化高亮」不做为动画，但作为一次性标记做**（见 D8）。
+- **不做节点搜索 / 筛选**（真过滤会破坏 DAG 布局：隐藏节点需重连边、重算层级）。本 change 只做**压暗（dim）**轻量版（G20 延后）。**另立 change：[#203](https://github.com/Xingkai98/asterwynd/issues/203)**。
+- **不做异常节点定位/聚焦**（G19：统计行异常计数可点 → viewBox 聚焦；零后端成本，但用户裁决不进本 change）——**显式记录为延后：[#203](https://github.com/Xingkai98/asterwynd/issues/203)**。
+- **不做内容复制**（G21：节点 id / `reason` / transcript 的 copy affordance；成本极低但用户裁决不进）——**另立 change：[#204](https://github.com/Xingkai98/asterwynd/issues/204)**。
+- **不做导出 / 分享（PNG / JSON）**（要定导出形态、是否含图例与时间戳）。**另立 change：[#204](https://github.com/Xingkai98/asterwynd/issues/204)**。
+- **不做长跑完成通知**（与图耦合度低）。**另立 change：[#205](https://github.com/Xingkai98/asterwynd/issues/205)**。
 - 不做时间轴 scrubber 式图历史回放（快照仍只表达当前态）。**措辞收窄**：原写「不做图历史回放（快照只表达当前态）」会连坐「同一次运行内的事件流」，那恰是「为什么报错」的最直接答案——已拆成上面两条。
 - 不做动画/过渡效果（沿用「状态切换直接重绘」）；但**新快照到达时对变化节点给一次性高亮标记**（D8），这不是动画。
 - 不做 Web 端编排画布（拖拽设计拓扑）；沿用 #190 的 Non-Goal。
