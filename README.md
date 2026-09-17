@@ -334,6 +334,7 @@ ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
 - **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan` / `bypass`，展示 Plan Document 和 planning state，并在工具需要审批时显示审批卡片
+- **断线重连**：浏览器断开（移动端切后台/锁屏）不会终止正在执行的 run，也不会让等待中的审批/提问失败；重连同一会话后服务端在 `session_history` 之后补发仍 pending 的审批/提问卡片，用户可直接作答，多 tab/多设备同时打开时所有连接共享同一份卡片状态（先答者胜）。pending 超时可配置——提问 `web.question_timeout_seconds` 缺省 300 秒、审批 `web.approval_timeout_seconds` 缺省 600 秒，均为**总等待时长**（从 pending 建立时起算，与连接断开与否无关）；**审批超时是相对旧版本的行为变更**：此前审批无超时，挂起的卡片多久后回来点批准都生效，现在超过窗口即判 `unavailable`（fail-closed，绝不放行不可逆操作）
 - **Debug 界面**：环境变量 `ASTERWYND_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 响应（content、stop_reason、tool_calls；工具参数按审批脱敏规则展示）

@@ -89,6 +89,10 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 
 Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan` / `bypass`。当工具调用需要审批时，服务端发送 `approval_request` 事件，前端展示脱敏参数摘要并回传批准或拒绝；每个 Web session 同一时刻只允许一个 pending approval。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
 
+Web session 的 run 事件出口是 **session 级、与单条 WebSocket 连接解耦**的（`AgentSession.event_channel`）：浏览器断开（移动端切后台/锁屏）只解绑该连接，不会终止正在执行的 run，也不会把 pending 审批/提问判定为失败。重连命中同一内存 session 时，服务端按 `session_resumed → session_history → pending 卡片补发 → workflow 快照` 的顺序推送，把仍处于 pending 的 `approval_request` / `user_question` 卡片补发回前端（已作答/已超时/已取消的请求不补发）。同一 session 存在多条连接（多 tab / 多设备）时 run 事件广播给全部连接，作答采用「先答者胜」，终态广播回所有连接。
+
+pending 交互有显式超时，由 `WebConfig.question_timeout_seconds`（缺省 300 秒）与 `WebConfig.approval_timeout_seconds`（缺省 600 秒）配置，语义是**总等待时长**：从 pending 建立时开始计时，连接断开与保持都不影响计时。提问超时返回 `[Error: ...]` 答复；审批超时按 fail-closed 判定为 `unavailable`（绝不放行不可逆操作），AgentLoop 继续运行而不是永久挂起。`reset` / `cancel` 与 run 真正结束仍立即失败 pending。
+
 ## Skills
 
 Skill 使用目录格式：`skills/<name>/SKILL.md`。`SkillLoader` 解析 frontmatter 和正文，`SkillRuntime` 按配置的 skill roots 加载并保留诊断；配置文件所在目录的 `skills/` 总是先加载，`skills.roots` 中的路径作为追加 roots，重复名称按“先加载者生效”处理。

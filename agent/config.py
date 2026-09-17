@@ -347,15 +347,29 @@ class SubagentsConfig:
         return self.max_active
 
 
+#: pending 交互超时缺省（change web-reconnect-pending-interaction Q1/D6）。
+#: 单一来源：``WebConfig`` 字段缺省与 ``web/session.py`` 的 handler 缺省都引用这里，
+#: 避免两处 600/300 各自漂移。
+DEFAULT_QUESTION_TIMEOUT_SECONDS = 300
+DEFAULT_APPROVAL_TIMEOUT_SECONDS = 600
+
+
 @dataclass(frozen=True)
 class WebConfig:
-    """Web 多 session 入口的 workspace allowlist（issue #117）。
+    """Web 多 session 入口的 workspace allowlist（issue #117）与 pending 交互超时。
 
     ``workspaces`` 是允许 Web 会话操作的工作区路径（绝对路径，``~`` 可展开）。
     allowlist 为空时有效集合退化为 {主 workspace}（CLI ``--workspace`` 或 cwd），
     不改变现有默认行为。有效集合在 ``create_app`` 启动时解析一次。
+
+    ``question_timeout_seconds`` / ``approval_timeout_seconds`` 是 pending 交互的
+    **总等待时长**（change web-reconnect-pending-interaction, Q1）：从 pending 建立
+    时开始计时，WebSocket 断开与保持都不影响计时。审批此前无超时，本 change 起
+    缺省 600 秒并按 fail-closed 收尾。
     """
     workspaces: tuple[Path, ...] = ()
+    question_timeout_seconds: int = DEFAULT_QUESTION_TIMEOUT_SECONDS
+    approval_timeout_seconds: int = DEFAULT_APPROVAL_TIMEOUT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -1310,7 +1324,32 @@ def _parse_web_config(raw: Any, path: Path) -> WebConfig:
             continue
         seen.add(ws)
         normalized.append(ws)
-    return WebConfig(workspaces=tuple(normalized))
+    return WebConfig(
+        workspaces=tuple(normalized),
+        question_timeout_seconds=_parse_timeout_seconds(
+            mapping.get("question_timeout_seconds", DEFAULT_QUESTION_TIMEOUT_SECONDS),
+            "web.question_timeout_seconds",
+            path=path,
+        ),
+        approval_timeout_seconds=_parse_timeout_seconds(
+            mapping.get("approval_timeout_seconds", DEFAULT_APPROVAL_TIMEOUT_SECONDS),
+            "web.approval_timeout_seconds",
+            path=path,
+        ),
+    )
+
+
+def _parse_timeout_seconds(raw: Any, field_name: str, *, path: Path) -> int:
+    """pending 交互超时的配置校验：必须是正整数秒。
+
+    ``_validate_positive_int`` 不能直接用：``isinstance(True, int)`` 为真，YAML 的
+    ``true`` 会被静默接受，随后 ``asyncio.wait_for(timeout=True)`` 等价于 **1 秒**
+    超时——配置「看起来生效」而审批几乎必然 unavailable。bool 在这里一定是用户写错，
+    按「非整数」结构化拒绝（与 ``_parse_non_negative_int`` 的既有约定一致）。
+    """
+    if isinstance(raw, bool):
+        raise ConfigError(f"{path}: {field_name} must be a positive integer")
+    return _validate_positive_int(raw, field_name, path=path)
 
 
 def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:

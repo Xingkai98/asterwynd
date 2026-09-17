@@ -743,3 +743,98 @@ def test_memory_decay_threshold_bool_rejected(tmp_path, monkeypatch):
     )
     with pytest.raises(ConfigError):
         load_config(start_dir=tmp_path)
+
+
+def test_parse_web_pending_interaction_timeouts_default(tmp_path, monkeypatch):
+    """change web-reconnect-pending-interaction tasks 1.4：WebConfig 两项超时缺省值。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    monkeypatch.delenv("ASTERWYND_BENCHMARK_PARALLEL", raising=False)
+
+    config = load_config(start_dir=tmp_path)
+
+    assert config.web.question_timeout_seconds == 300
+    assert config.web.approval_timeout_seconds == 600
+
+
+def test_parse_web_pending_interaction_timeouts_override(tmp_path, monkeypatch):
+    """tasks 1.4：两项超时可配置（Q1 要求必须是可配置参数）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+web:
+  question_timeout_seconds: 42
+  approval_timeout_seconds: 99
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(start_dir=tmp_path)
+
+    assert config.web.question_timeout_seconds == 42
+    assert config.web.approval_timeout_seconds == 99
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("question_timeout_seconds", 0),
+        ("approval_timeout_seconds", 0),
+        ("question_timeout_seconds", -5),
+        ("approval_timeout_seconds", -5),
+    ],
+)
+def test_parse_web_pending_interaction_timeouts_reject_non_positive(
+    tmp_path, monkeypatch, field, value
+):
+    """tasks 1.4/M15：0 或负数会退化成「立即超时」，必须结构化拒绝。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        f"""
+web:
+  {field}: {value}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+
+    assert f"web.{field}" in str(excinfo.value)
+
+
+def test_parse_web_pending_interaction_timeouts_reject_non_integer(tmp_path, monkeypatch):
+    """tasks 1.4：非整数同样拒绝。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+web:
+  approval_timeout_seconds: "soon"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+
+    assert "web.approval_timeout_seconds" in str(excinfo.value)
+
+
+def test_parse_web_pending_interaction_timeouts_reject_bool(tmp_path, monkeypatch):
+    """review Issue 4 回归：YAML 的 ``true`` 不能当正整数接受。
+
+    ``isinstance(True, int)`` 为真，bool 一旦漏过去，``asyncio.wait_for(timeout=True)``
+    等价于 **1 秒**超时——配置「看起来生效」而审批几乎必然 unavailable。
+    """
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+web:
+  approval_timeout_seconds: true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+
+    assert "web.approval_timeout_seconds" in str(excinfo.value)

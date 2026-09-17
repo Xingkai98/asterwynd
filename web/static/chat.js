@@ -443,6 +443,10 @@ function handleEvent(event) {
     case 'session_history':
       if (event.data && Array.isArray(event.data.messages)) {
         renderHistory(event.data.messages);
+        // 重连整体重绘后必须重置流式游标（change web-reconnect-pending-interaction
+        // D5/M12）：renderHistory 清空了消息区但 currentAssistantMsg 仍指向已脱离
+        // 文档的僵尸节点，随后的 assistant_delta 会写进去、用户完全看不到增量。
+        currentAssistantMsg = null;
       }
       break;
 
@@ -470,6 +474,11 @@ function handleEvent(event) {
       const metadata = data.metadata || {};
       if (metadata.command === 'clear') {
         messagesEl.textContent = '';
+        // 与 renderHistory 同源：清空 DOM 就必须清卡片注册表，否则留下指向已移除
+        // DOM 的僵尸条目，后续同 id 事件会以为自己「已有卡片」而跳过渲染（D5/M6）。
+        approvalCards.clear();
+        questionCards.clear();
+        currentAssistantMsg = null;
       }
       if (metadata.transition && metadata.transition.new_mode) {
         syncMode(metadata.transition.new_mode);
@@ -548,7 +557,7 @@ function handleEvent(event) {
 
     case 'error':
       currentAssistantMsg = null;
-      addMessage('error', event.data && event.data.message ? event.data.message : 'Run failed.');
+      addMessage('error', readableErrorMessage(event.data));
       break;
 
     case 'debug':
@@ -600,6 +609,21 @@ function handleEvent(event) {
   }
 }
 
+// 服务端错误 → 用户可读文案（Q4）。断连后 run 仍在后台执行，重连再发消息会被
+// run_lock 拒绝；原始英文 "another run is already in progress" 对用户没有意义。
+// 服务端带 ``code`` 字段时按 code 映射，未知 code 回退到原始 message。
+const ERROR_MESSAGES = {
+  run_in_progress: '上一条消息仍在执行中，请稍候再发送。',
+};
+
+function readableErrorMessage(data) {
+  const payload = data || {};
+  if (payload.code && ERROR_MESSAGES[payload.code]) {
+    return ERROR_MESSAGES[payload.code];
+  }
+  return payload.message ? payload.message : 'Run failed.';
+}
+
 function syncMode(mode) {
   currentMode = mode || currentMode;
   modeValueEl.textContent = currentMode;
@@ -622,6 +646,10 @@ function rememberSessionId(sessionId) {
 
 function renderHistory(messages) {
   messagesEl.textContent = '';
+  // 卡片 DOM 被清空 → 注册表必须同步清（D5/M6）。否则重连后补发的卡片事件会命中
+  // 僵尸条目、静默跳过渲染，用户再也看不到那张卡。
+  approvalCards.clear();
+  questionCards.clear();
   for (const message of messages) {
     if (!message || !message.content) continue;
     const role = message.role === 'assistant' ? 'assistant' : 'user';
@@ -815,6 +843,8 @@ function addToolResultMessage(data) {
 function renderApprovalRequest(data) {
   const approvalId = data.approval_id;
   if (!approvalId) return;
+  // 幂等（D5）：同一 approval_id 重复到达（重连补发）复用已存在的卡片，不产生第二张。
+  if (approvalCards.has(approvalId)) return;
 
   const el = document.createElement('div');
   el.className = 'approval-card';
@@ -875,13 +905,21 @@ function renderApprovalRequest(data) {
   el.appendChild(controls);
 
   messagesEl.appendChild(el);
-  approvalCards.set(approvalId, { el, approve, deny, status });
+  approvalCards.set(approvalId, { el, approve, deny, status, accepted: false, settled: false });
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function sendApprovalDecision(approvalId, decision) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const card = approvalCards.get(approvalId);
+  // 先判连接、再改 UI（D5/M5）：原实现先把卡片置成 'sent' 再检查 ws，连接未就绪时
+  // 静默 return，用户看到假的「已提交」且卡片再也点不动。现在未就绪 → 可见反馈 +
+  // 卡片保持可提交，重连后可再点。
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (card) {
+      card.status.textContent = '未连接，请等待重连后重试';
+    }
+    return false;
+  }
   if (card) {
     card.approve.disabled = true;
     card.deny.disabled = true;
@@ -892,20 +930,41 @@ function sendApprovalDecision(approvalId, decision) {
     approval_id: approvalId,
     decision,
   }));
+  return true;
 }
+
+// 审批状态推进规则（终态单调，调研 finding 8）：
+// - `received` 只是「你的提交被受理了」的中间回执（run 存活时真正的终态
+//   `approved`/`denied` 稍后由 AgentLoop 发出），它把按钮锁住但**不**落定卡片；
+// - `approved`/`denied`/`unavailable` 是终态，一旦到达就不再被后续事件改写。
+// 拒绝从「已受理」倒回 `unavailable`：多连接下先答者胜，落败者的重复提交只会影响
+// 他自己，若把那条 unavailable 写进胜出方的卡片，用户会看到「自己批准过的卡片被判
+// 为不可用」，而工具其实已经执行了。
+const APPROVAL_TERMINAL_STATUSES = new Set(['approved', 'denied', 'unavailable']);
 
 function renderApprovalResponse(data) {
   const approvalId = data.approval_id;
   const card = approvalCards.get(approvalId);
   if (!card) return;
+  const status = data.status || 'completed';
+  const terminal = APPROVAL_TERMINAL_STATUSES.has(status);
+  if (card.settled) return;
+  if (card.accepted && !terminal) return;
   card.approve.disabled = true;
   card.deny.disabled = true;
-  card.status.textContent = data.status || 'completed';
+  card.status.textContent = status;
+  if (status === 'received') {
+    card.accepted = true;
+  } else if (terminal) {
+    card.settled = true;
+  }
 }
 
 function renderQuestionCard(data) {
   const questionId = data.question_id;
   if (!questionId) return;
+  // 幂等（D5）：重连补发的同一 question_id 复用已存在的卡片。
+  if (questionCards.has(questionId)) return;
 
   const el = document.createElement('div');
   el.className = 'question-card';
@@ -977,34 +1036,62 @@ function renderQuestionCard(data) {
       answer = inputEl.value.trim();
     }
     if (!answer) return;
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Submitted';
-    sendQuestionAnswer(questionId, answer);
+    // 先判连接、再改 UI（D5/M5）：原实现先置 'Submitted' 再让 sendQuestionAnswer 在
+    // ws 非 OPEN 时静默 return，用户看到假的「已提交」。
+    if (sendQuestionAnswer(questionId, answer)) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitted';
+    }
   });
 
   controls.appendChild(submitBtn);
+
+  // 提交失败/连接未就绪时的可见反馈（D5）：默认隐藏，避免占位。
+  const hint = document.createElement('span');
+  hint.className = 'question-hint';
+  hint.hidden = true;
+  controls.appendChild(hint);
+
   el.appendChild(controls);
 
   messagesEl.appendChild(el);
-  questionCards.set(questionId, { el, submitBtn });
+  questionCards.set(questionId, { el, submitBtn, hint, settled: false });
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function sendQuestionAnswer(questionId, answer) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const card = questionCards.get(questionId);
+  // 先判连接、再改 UI（D5/M5）：未就绪 → 可见反馈 + 卡片保持可提交。
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (card && card.hint) {
+      card.hint.textContent = '未连接，请等待重连后重试';
+      card.hint.hidden = false;
+    }
+    return false;
+  }
+  if (card && card.hint) {
+    // 连接已恢复：清掉上一次的「未连接」提示，否则成功提交的卡片旁边会同时挂着
+    // 「Submitted」和一条过期的红色提示。
+    card.hint.hidden = true;
+    card.hint.textContent = '';
+  }
   ws.send(JSON.stringify({
     type: 'user_answer',
     question_id: questionId,
     answer,
   }));
+  return true;
 }
 
 function renderQuestionResponse(data) {
   const questionId = data.question_id;
   const card = questionCards.get(questionId);
   if (!card) return;
+  // 同审批：终态单调，落败者的 unavailable 不改写已收到 received 的卡片。
+  if (card.settled) return;
   card.submitBtn.disabled = true;
   card.submitBtn.textContent = data.status === 'received' ? 'Received' : 'Unavailable';
+  card.settled = true;
 }
 
 function renderPlanningState(state) {
@@ -1865,5 +1952,21 @@ async function init() {
     showHub();
   }
 }
+
+// 测试接缝：暴露给浏览器契约测试（与 ``AsterwyndWorkflow`` 等命名空间同风格）。
+// 只暴露入口本身，不改变任何生产行为。
+window.AsterwyndChatTest = {
+  // 构造「同一 id 的卡片事件重复到达」这类真实链路难以单独复现的场景（重连补发
+  // 天然伴随 renderHistory 清空）。
+  dispatch: handleEvent,
+  // 模拟移动端切后台/锁屏导致的连接丢失。``BrowserContext.set_offline`` 只影响
+  // 新建连接，不会拆掉已建立的 WebSocket，所以断开走这条显式入口——断开之后客户端
+  // 仍走生产路径（onclose → 2s 退避 → 重连同一 session），服务端也照常 detach +
+  // 补发，不引入任何测试专用分支。
+  dropConnection: () => {
+    const tab = getActiveTab();
+    if (tab && tab.ws) tab.ws.close();
+  },
+};
 
 init();
