@@ -167,7 +167,9 @@ async def test_collect_records_normalises_spec_and_metadata(tmp_path):
     assert record["model"] == "deepseek-v4-flash"
     assert record["temperature"] == 0.0
     assert record["seed"] == 42
-    assert record["budget_config"]["max_total_cost_usd"] == pytest.approx(5.0)
+    # issue #196：预算默认不限（0），record 如实记录实际配置
+    assert record["budget_config"]["max_total_cost_usd"] == pytest.approx(0.0)
+    assert record["budget_config"]["max_total_tokens"] == 0
     # spec 用 WorkflowSpec.to_dict()，可被 parse_workflow_spec 还原出同一 hash
     restored = parse_workflow_spec(record["spec"])
     assert restored.spec_hash == record["workflow_spec_hash"]

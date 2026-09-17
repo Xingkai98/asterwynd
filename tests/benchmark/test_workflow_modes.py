@@ -178,7 +178,8 @@ async def test_dynamic_replay_reproduces_spec_hash_and_skips_planner(tmp_path):
                     "workflow_spec_hash": envelope["spec_hash"],
                     "scheduler_version": "workflow.v1",
                     "spec": parse_workflow_spec(_fanout_spec()).to_dict(),
-                    "budget_config": {"max_total_runs": 300},
+                    # issue #196：预算默认不限，合成记录用 0 与新默认口径一致
+                    "budget_config": {"max_total_runs": 0},
                     "seed": 7,
                     "model": "deepseek-v4-flash",
                     "temperature": 0.0,

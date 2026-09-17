@@ -279,20 +279,25 @@ class AggregationConfig:
 
 @dataclass(frozen=True)
 class WorkflowBudgetConfig:
-    """workflow run 的四维度总预算（change ``workflow-budget-attribution``，D1/D6）。
+    """workflow run 的四维度总预算（change ``workflow-budget-attribution``，D1/D6；
+    默认值语义见 change ``workflow-budget-unbounded-default``，D1）。
 
     四维度：tokens / cost_usd / runs / wall_time_s。**四个字段均 ``0 = 不限``**
     （Q11）——注意这与 C2 的结构闸不同：``max_total_runs=0`` 只解除本层运行期
     预算，``WorkflowLimitsConfig.max_runs`` 仍是声明期结构闸（Q14）。
 
-    默认值与 C2 的 ``max_runs=300`` 对齐（D6/Q4），避免「声明期 300、运行期 200」
-    的误伤；四个字段的解析走 workflow-budget 专用的非负解析函数，显式 ``null``
-    被拒（缺值不得意外关闭安全闸）。
+    **默认值全为 0（不限）**（issue #196，参照 #192 的「默认无上限、显式才设限」
+    口径）：未显式配置时不给任何上限，只有用户显式写下数值才设闸。旧的
+    200000 / 5.0 / 300 / 1800 默认对 token 消耗大的任务偏紧（12 文件 foreach
+    体检实测约 18 万 token 即被 ``budget_exceeded`` 腰斩）。
+
+    四个字段的解析走 workflow-budget 专用的非负解析函数：显式 ``null`` 被拒
+    （缺值不得意外关闭安全闸——段落级 null 同样拒绝，见 D7）。
     """
-    max_total_tokens: int = 200000
-    max_total_cost_usd: float = 5.0
-    max_total_runs: int = 300
-    max_wall_time_s: float = 1800.0
+    max_total_tokens: int = 0
+    max_total_cost_usd: float = 0.0
+    max_total_runs: int = 0
+    max_wall_time_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -517,7 +522,9 @@ def _load_yaml_config(
         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
         memory=_parse_memory_config(raw.get("memory", {}), path),
         sandbox=_parse_sandbox_config(raw.get("sandbox", {}), path),
-        subagents=_parse_subagents_config(raw.get("subagents", {}), path),
+        subagents=_parse_subagents_config(
+            _require_section(raw, "subagents", path, "subagents"), path
+        ),
         web=_parse_web_config(raw.get("web", {}), path),
     )
 
@@ -1492,7 +1499,9 @@ def _parse_subagents_config(raw: Any, path: Path) -> SubagentsConfig:
             if max_time_s is not None
             else None
         ),
-        workflow=_parse_workflow_limits(mapping.get("workflow", {}), path),
+        workflow=_parse_workflow_limits(
+            _require_section(mapping, "workflow", path, "subagents.workflow"), path
+        ),
     )
 
 
@@ -1513,7 +1522,9 @@ def _parse_workflow_limits(raw: Any, path: Path) -> WorkflowLimitsConfig:
             mapping.get("max_runs", 300), "subagents.workflow.max_runs", path=path
         ),
         aggregation=_parse_aggregation(mapping.get("aggregation", {}), path),
-        budget=_parse_workflow_budget(mapping.get("budget", {}), path),
+        budget=_parse_workflow_budget(
+            _require_section(mapping, "budget", path, "subagents.workflow.budget"), path
+        ),
     )
 
 
@@ -1525,27 +1536,29 @@ def _parse_workflow_budget(raw: Any, path: Path) -> WorkflowBudgetConfig:
     不能复用会拒绝 0 的全局 ``_validate_positive_int`` / ``_parse_positive_float``
     （``subagents.budget.*`` 等既有键的正数语义必须保持不变，Q11）。
 
-    显式 ``null`` 一律拒绝：缺值不能让某个安全维度被静默关掉。
+    **缺省（键不存在）一律落到 0 = 不限**（change ``workflow-budget-unbounded-default``，
+    D1）：未配置就不设上限，只有显式写下数值（含显式 0）才设闸。字段级显式 ``null``
+    仍拒绝（缺值不能让某个安全维度被静默关掉）；段落级 ``null`` 同样拒绝（D7）。
     """
     mapping = _expect_mapping(raw, path, "subagents.workflow.budget")
     return WorkflowBudgetConfig(
         max_total_tokens=_parse_non_negative_int(
-            mapping.get("max_total_tokens", 200000),
+            mapping.get("max_total_tokens", 0),
             "subagents.workflow.budget.max_total_tokens",
             path=path,
         ),
         max_total_cost_usd=_parse_non_negative_float(
-            mapping.get("max_total_cost_usd", 5.0),
+            mapping.get("max_total_cost_usd", 0),
             "subagents.workflow.budget.max_total_cost_usd",
             path=path,
         ),
         max_total_runs=_parse_non_negative_int(
-            mapping.get("max_total_runs", 300),
+            mapping.get("max_total_runs", 0),
             "subagents.workflow.budget.max_total_runs",
             path=path,
         ),
         max_wall_time_s=_parse_non_negative_float(
-            mapping.get("max_wall_time_s", 1800.0),
+            mapping.get("max_wall_time_s", 0),
             "subagents.workflow.budget.max_wall_time_s",
             path=path,
         ),
@@ -1617,6 +1630,27 @@ def _expect_mapping(raw: Any, path: Path, field_name: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: {field_name} must be a mapping")
     return raw
+
+
+def _require_section(
+    mapping: dict[str, Any], key: str, path: Path, field_name: str
+) -> dict[str, Any]:
+    """取一个子段：**键缺失 → 空段（走默认）**；**键存在但值为 ``null`` → 报错**。
+
+    change ``workflow-budget-unbounded-default`` D7（grill Q2 用户确认）：段落级
+    显式 ``null`` 不得静默当成「未配置」。未配置的后果在预算链上是「四维全部不限」，
+    与字段级 ``null`` 的明确拒绝口径必须一致——否则用户写个空段准备稍后填，会
+    静默把整条安全闸关掉。用户原则：不写该字段 = 没有上限；写了且有值 = 设上限；
+    写了但不给值 = 配置错误。
+    """
+    if key not in mapping:
+        return {}
+    value = mapping[key]
+    if value is None:
+        raise ConfigError(f"{path}: {field_name} must not be null")
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: {field_name} must be a mapping")
+    return value
 
 
 def _parse_string_list(raw: Any, path: Path, field_name: str) -> tuple[str, ...]:

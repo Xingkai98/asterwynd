@@ -33,12 +33,17 @@ def _budget(**overrides) -> WorkflowBudget:
     return WorkflowBudget(WorkflowBudgetConfig(**overrides), started_at=0.0)
 
 
-def test_defaults_come_from_config():
+def test_defaults_are_unlimited_without_config():
+    """issue #196 / D3：无 config（或配置链路缺失）时四维兜底为 0 = 不限，
+    与 ``WorkflowBudgetConfig`` 的默认值一致，不再退回旧的 200k 组。"""
     budget = WorkflowBudget()
-    assert budget.max_tokens == 200000
-    assert budget.max_cost_usd == 5.0
-    assert budget.max_runs == 300
-    assert budget.max_wall_time_s == 1800.0
+    assert budget.max_tokens == 0
+    assert budget.max_cost_usd == 0.0
+    assert budget.max_runs == 0
+    assert budget.max_wall_time_s == 0.0
+    # 默认不限 ⇒ 累积任意量都不触发超限
+    budget.record_llm_call(model="claude-opus-4", input_tokens=10_000_000, output_tokens=0)
+    assert budget.exceeded_dimension(runs=10_000, now=10_000_000.0) is None
 
 
 def test_record_llm_call_accumulates_tokens_and_cache_aware_cost():
@@ -100,13 +105,26 @@ def test_wall_time_dimension_exceeded():
 
 
 def test_dimensions_snapshot_shape():
-    budget = _budget(max_total_tokens=100, max_total_runs=7)
+    """快照形状：显式配置的四维按 `{limit, used}` 报告；未配置的维度 limit=0（不限）。"""
+    budget = _budget(
+        max_total_tokens=100, max_total_cost_usd=2.5, max_total_runs=7, max_wall_time_s=60
+    )
     budget.record_llm_call(model="gpt-4o-mini", input_tokens=10, output_tokens=5)
     dims = budget.dimensions(runs=2)
     assert dims["tokens"] == {"limit": 100, "used": 15}
     assert dims["runs"] == {"limit": 7, "used": 2}
-    assert dims["cost_usd"]["limit"] == 5.0
-    assert dims["wall_time_s"]["limit"] == 1800.0
+    assert dims["cost_usd"]["limit"] == 2.5
+    assert dims["wall_time_s"]["limit"] == 60.0
+
+
+def test_dimensions_report_zero_limit_when_unconfigured():
+    """issue #196：未配置维度在快照里报 limit=0（不限）——既有 `0 = 不限` 哨兵口径。"""
+    budget = _budget()
+    dims = budget.dimensions(runs=0)
+    assert dims["tokens"]["limit"] == 0
+    assert dims["cost_usd"]["limit"] == 0
+    assert dims["runs"]["limit"] == 0
+    assert dims["wall_time_s"]["limit"] == 0
 
 
 # --- 调度器接线 -------------------------------------------------------------
@@ -318,12 +336,57 @@ async def test_budget_exceeded_does_not_escape_run(tmp_path):
 
 @pytest.mark.asyncio
 async def test_budget_not_configured_is_noop_for_existing_behavior(tmp_path):
-    """默认预算（200k tokens / $5 / 300 runs / 1800s）不得改变小图的既有行为。"""
+    """未配置预算不得改变小图的既有行为。"""
     manager = _manager(tmp_path, StaticLLM())
     result = await WorkflowScheduler(manager).run(parse_workflow_spec(_leaf_spec(4)))
     assert result["status"] == "completed"
     assert result["budget"]["exceeded"] is False
     assert result["budget"]["exceeded_dimension"] is None
+
+
+# --- 回归：issue #196 默认不设上限（grill 确认的构造口径） -------------------
+
+
+def _token_burn_llm(tokens_per_call: int = 50_000) -> "StaticLLM":
+    """每 run 一次 LLM 调用，每次记 ``tokens_per_call`` token（input+output 口径）。"""
+    return StaticLLM(usage=Usage(tokens_per_call, 0))
+
+
+@pytest.mark.asyncio
+async def test_default_budget_lets_token_heavy_workflow_finish(tmp_path):
+    """issue #196 核心回归：**未配置**预算时，一条真会越过旧 200k 默认的图跑完。
+
+    构造（grill 确认口径，必须照此写否则是假保护）：``_chain_spec(8)`` 配每 run
+    50k token 的 LLM → 8 run 累计 400k，**真越过**旧的 ``max_total_tokens=200000``。
+    改动前这条路径会被 `budget_exceeded` 腰斩（对应 #196 里 12 文件 foreach 体检
+    在约 18 万 token 被掐断）；改动后默认不限，应正常跑完。
+    """
+    manager = _manager(tmp_path, _token_burn_llm(50_000))
+    result = await WorkflowScheduler(manager).run(parse_workflow_spec(_chain_spec(8)))
+
+    assert result["status"] == "completed"
+    assert result["completed"] == 8
+    assert result["budget"]["exceeded"] is False
+    assert result["budget"]["exceeded_dimension"] is None
+    # 默认快照报 limit=0（不限），且用掉确实超过旧默认 200k
+    assert result["budget"]["dimensions"]["tokens"]["limit"] == 0
+    assert result["budget"]["dimensions"]["tokens"]["used"] > 200_000
+
+
+@pytest.mark.asyncio
+async def test_same_graph_exceeds_when_token_budget_explicitly_set(tmp_path):
+    """对照组（grill 要求，否则上一条是假保护）：**同一张图 + 显式旧上限**必须超限。
+
+    证明 ``test_default_budget_lets_token_heavy_workflow_finish`` 里的图**真能**
+    触发旧的 200k 上限——若将来 token 记账失效，这条会红，而那条不会静默恒真。
+    """
+    manager = _manager(tmp_path, _token_burn_llm(50_000), max_total_tokens=200_000)
+    result = await WorkflowScheduler(manager).run(parse_workflow_spec(_chain_spec(8)))
+
+    assert result["status"] == "budget_exceeded"
+    assert result["budget"]["exceeded"] is True
+    assert result["budget"]["exceeded_dimension"] == "tokens"
+    assert result["completed"] < 8
 
 
 # --- 回归：building-review Round 2 发现的两个缺陷 ---------------------------
