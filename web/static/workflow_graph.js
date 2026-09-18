@@ -431,7 +431,7 @@
     // 未来新增 kind 而漏铺。``edgePath`` 是对外导出的 API，偏移走**可选参数**。
     const pairTotals = new Map();
     (edges || []).forEach((edge) => {
-      const key = `${edge.from} ${edge.to}`;
+      const key = `${edge.from}->${edge.to}`;
       pairTotals.set(key, (pairTotals.get(key) || 0) + 1);
     });
     const pairSeen = new Map();
@@ -440,7 +440,7 @@
       const from = placed.get(edge.from);
       const to = placed.get(edge.to);
       const style = edgeStyle(edge);
-      const key = `${edge.from} ${edge.to}`;
+      const key = `${edge.from}->${edge.to}`;
       const index = pairSeen.get(key) || 0;
       pairSeen.set(key, index + 1);
       const offset = parallelEdgeOffset(index, pairTotals.get(key) || 1);
