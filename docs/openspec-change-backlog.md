@@ -101,28 +101,6 @@
 
 ## 未实现队列
 
-### 2. `workflow-gate-only-edge-status`
-
-状态：未实现。
-
-关联 issue：[#207](https://github.com/Xingkai98/asterwynd/issues/207)（【feature】workflow 图：纯门控边显示为灰、看似死线）。
-
-批次：第十三批（多 Agent 运行态可视化）的体验 follow-up，与队列中其他 change 无依赖。
-
-建议顺序原因：
-
-- 用户 #197 实测发现：`scan→fan`（fan 用字面 items、不读 scan 产出）跑完显示为**灰色**，而 `scan→fragile`（读了）是绿的——两条边在「执行顺序」上完全一样，颜色却不同。
-- 根因是 `inactive` 兜底档同时承载两种语义：真·无关边，与「起了门控作用但没传数据」的边。方案 A（已拍板）：新增第 6 档 `satisfied`。
-- 改动小且封闭（`_edge_status` 加一档 + 前端词表加两项），但 **spec 可见**（边词表五档 → 六档），需 spec delta。
-
-主要交付：
-
-- `scheduler::_edge_status` 在 `ready` 后、兜底前加 `satisfied`（`required` + 源 `completed` + 目标越过 `pending`）。
-- 前端 `EDGE_STYLES`/`EDGE_STATUS_TEXT` 各加一项（图例自动跟随），淡绿 + 细实线，与 `passed`/`inactive` 在明度与线宽上可分辨。
-- **不改** `passed` 语义与 C5 口径（`_consumed_edges`/`useful_runs`/`redundancy` 零漂移）。
-- spec delta MODIFIED `openspec/specs/web-ui/spec.md` 两条 Requirement（边五档 → 六档）。
-- 实现 PR 合入时给 issue #207 添加完成 comment 并关闭。
-
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
