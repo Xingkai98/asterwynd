@@ -285,6 +285,33 @@
     });
   }
 
+  /**
+   * 只刷新已存在 tab 的副行文本（D6 的「已跑 Xs 实时跳秒」）。
+   *
+   * **不重建 DOM**：每秒一次 ``renderGraphTabs`` 会不断替换按钮节点，打断用户
+   * 的点击与焦点（与节点只用文本重绘同理）。这里按 ``data-workflow-id`` 找回
+   * 每个 tab，用同一个 ``graphTabMeta`` 重算副行——口径与首渲染**同源**。
+   */
+  function refreshTabMeta(state, now) {
+    if (!state) return;
+    const tabsEl = el('workflow-tabs');
+    if (!tabsEl) return;
+    const {entries, rankById} = rankedEntries(state);
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    tabsEl.querySelectorAll('.graph-tab[data-workflow-id]').forEach((button) => {
+      const entry = byId.get(button.dataset.workflowId);
+      const sub = button.querySelector('.graph-tab-sub');
+      if (!entry || !sub) return;
+      const snapshot = entry.snapshot || {};
+      const meta = G.graphTabMeta(
+        Object.assign({}, snapshot, {started_at: snapshotStartedAt(entry)}),
+        rankById.get(entry.id), now, G.nodeProgress(snapshot.nodes || []),
+      );
+      sub.textContent = [meta.label, meta.relative, meta.duration, meta.progress]
+        .filter(Boolean).join(' · ');
+    });
+  }
+
   function isRunning(status) {
     return status !== 'declared' && TERMINAL_STATUSES.indexOf(status) === -1;
   }
@@ -506,6 +533,11 @@
     if (freshness && typeof snapshot.timestamp === 'number') {
       freshness.textContent = `最后更新于 ${G.formatAge(now - snapshot.timestamp)}`;
     }
+    // D6：运行中 tab 的「已跑 Xs」也要**实时跳秒**——它跟节点 elapsed 同源，
+    // 都靠这个本地计时器，因为快照只在迁移点到达、两帧之间没有重绘事件。
+    // 实测曾出现：图跑了 3 分钟，tab 仍写「已跑 5s」，与同屏「最后更新于 19 秒前」
+    // 自相矛盾。只改**文本**、不重建 tab DOM（每秒重建会打断点击与焦点）。
+    refreshTabMeta(state, now);
     const host = el('workflow-canvas');
     if (!host) return;
     const nodes = nodesById(snapshot);

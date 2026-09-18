@@ -718,3 +718,33 @@ async def test_tick_keeps_foreach_progress_count(page, fake_web_server):
     text = await page.text_content(".workflow-node[data-node-id='fan'] [data-role='status']")
     assert "undefined" not in text, f"tick 把 foreach 进度覆写成了 {text!r}"
     assert "完成 3/12" in text, f"tick 后 foreach 进度丢了：{text!r}"
+
+
+@pytest.mark.asyncio
+async def test_tick_keeps_tab_elapsed_live(page, fake_web_server):
+    """回归（issue #197 follow-up）：运行中 tab 的「已跑 Xs」必须逐秒跳。
+
+    根因：``tick()`` 只重绘节点与「最后更新于」，**不重绘多图 tab**——tab 的
+    elapsed 冻结在最后一次快照到达的时刻（实测：图跑了 3 分钟，tab 仍写「已跑 5s」，
+    而同屏的「最后更新于 19 秒前」在跳，两个数字自相矛盾）。design D6 明确要求
+    运行中「已跑 42s」**实时跳秒**。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
+    snapshot = dict(SNAPSHOT)
+    snapshot["started_at"] = time.time() - 5   # 图级起始时刻 → tab 显示「已跑 5s」
+    await _start_workflow(page, snapshot)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => window.AsterwyndWorkflow.startTicker()")
+
+    selector = ".graph-tab[data-workflow-id='wf_demo'] .graph-tab-sub"
+    before = await page.text_content(selector)
+    assert "已跑" in before, f"tab 未显示运行耗时：{before!r}"
+
+    await page.wait_for_timeout(2500)
+    after = await page.text_content(selector)
+    assert after != before, (
+        f"tab 耗时没有跳秒（tick 不重绘 tab）：{before!r} → {after!r}"
+    )
