@@ -788,9 +788,13 @@ async def test_convo_tab_renders_tool_calls_instead_of_blank_lines(page, fake_we
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    # 等 chat.js 的异步 init 落定再派发：否则它的 showHub() 会在派发之后把
+    # #workflow-view 的 active 摘掉 → svg 变隐藏（与 #191 同源的既有竞态）。
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
-    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+    await page.wait_for_selector(
+        "#workflow-canvas svg.workflow-svg", state="visible")
 
     await page.click(".workflow-node[data-node-id='a']")
     await page.wait_for_selector("#workflow-drawer.open")
@@ -833,9 +837,13 @@ async def test_convo_tab_survives_malformed_tool_arguments(page, fake_web_server
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    # 等 chat.js 的异步 init 落定再派发：否则它的 showHub() 会在派发之后把
+    # #workflow-view 的 active 摘掉 → svg 变隐藏（与 #191 同源的既有竞态）。
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
-    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+    await page.wait_for_selector(
+        "#workflow-canvas svg.workflow-svg", state="visible")
 
     await page.click(".workflow-node[data-node-id='a']")
     await page.wait_for_selector("#workflow-drawer.open")
