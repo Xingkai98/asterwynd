@@ -553,3 +553,70 @@ async def test_dynamic_foreach_consumes_upstream_edge(manager):
     assert by_pair[("planner", "fan")] == "passed", (
         f"动态 foreach 读了产出应判 passed，实际 {by_pair[('planner', 'fan')]!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_foreach_reads_aggregate_result_slot(manager):
+    """Q2 覆盖：``source`` 指向一个**有 result 槽**的 aggregate → 记该边（scheduler.py:2373）。
+
+    审阅 R1 的变异 M5 存活暴露：原测试只走 ``_read`` 闭包那条路径，
+    aggregate 的 ``result`` 槽直取路径没有回归。
+    """
+    spec = {
+        "goal": "foreach-from-aggregate",
+        "nodes": [
+            {"id": "a", "kind": "subagent", "task": "produce"},
+            {"id": "agg", "kind": "aggregate", "strategy": "collect",
+             "outputs": ["result"]},
+            {"id": "fan", "kind": "foreach", "task": "work {item}",
+             "source": "agg", "source_field": "items"},
+        ],
+        "edges": [{"from": "a", "to": "agg"}, {"from": "agg", "to": "fan"}],
+        "entry": ["a"],
+        "terminal": ["fan"],
+    }
+    manager.llm.content = '{"items": ["one", "two"]}'
+    scheduler = _scheduler(manager, spec)
+    await scheduler.run(scheduler.spec)
+
+    snapshot = scheduler.workflow_graph_snapshot()
+    by_pair = {(e["from"], e["to"]): e["status"] for e in snapshot["edges"]}
+    assert by_pair[("agg", "fan")] == "passed", (
+        f"从 aggregate 的 result 槽读产出应记 passed，实际 {by_pair[('agg', 'fan')]!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_foreach_reads_non_subagent_summary(manager):
+    """Q2 覆盖：``source`` 指向**非 subagent、无 slots 但有 summary** 的节点
+    → 记该边（scheduler.py:2360 的 summary 兜底路径，审阅 R1 的变异 M6）。
+
+    构造用 ``foreach → foreach(source:)``（审阅员给的可达形状）：外层的 foreach
+    容器**无 slots**、但物化 ``summary``（各展开项摘要 join），且它对内层的出边是
+    **数据边**（不是 route 的控制边——控制边走规则 1，与消费记账无关，那样测不到
+    本分支）。
+
+    注意 aggregate 不行：它的 ``result`` 槽恒被 ``_collect_slots`` 填充，会先命中
+    上一条分支。
+    """
+    spec = {
+        "goal": "foreach-from-foreach-summary",
+        "nodes": [
+            {"id": "a", "kind": "subagent", "task": "produce"},
+            {"id": "outer", "kind": "foreach", "task": "outer {item}", "items": ["x"]},
+            {"id": "inner", "kind": "foreach", "task": "inner {item}",
+             "source": "outer", "source_field": "items"},
+        ],
+        "edges": [{"from": "a", "to": "outer"}, {"from": "outer", "to": "inner"}],
+        "entry": ["a"],
+        "terminal": ["inner"],
+    }
+    manager.llm.content = '{"items": ["one", "two"]}'
+    scheduler = _scheduler(manager, spec)
+    await scheduler.run(scheduler.spec)
+
+    snapshot = scheduler.workflow_graph_snapshot()
+    by_pair = {(e["from"], e["to"]): e["status"] for e in snapshot["edges"]}
+    assert by_pair[("outer", "inner")] == "passed", (
+        f"从非 subagent 的 summary 读产出应记 passed，实际 {by_pair[('outer', 'inner')]!r}"
+    )

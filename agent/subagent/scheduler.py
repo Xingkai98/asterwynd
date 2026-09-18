@@ -2660,7 +2660,7 @@ class WorkflowScheduler:
         node["items_failed"] = state.items_failed
 
     def _edge_status(self, edge: WorkflowEdge) -> str:
-        """边五档状态（决策 7 + Q5）。
+        """边六档状态（决策 7 + Q5；第 6 档 ``satisfied`` 见 issue #207）。
 
         口径（优先级即语义，先命中先返回）：
 
