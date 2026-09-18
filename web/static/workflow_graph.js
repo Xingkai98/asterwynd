@@ -344,6 +344,42 @@
   }
 
   /**
+   * 把一个**快照原始节点**投影成渲染层读的字段（snake_case → camelCase + 派生
+   * 颜色/状态词/角标）。
+   *
+   * **单一投影来源**：``layoutGraph`` 与渲染层的本地计时器（``tick``）都必须用它。
+   * 曾出的 bug：``tick`` 图省事直接把快照原始节点喂给 ``nodeStatusText``，而后者
+   * 读的是投影字段（``label`` 等），于是每秒一次的重绘把状态词覆写成 ``undefined``。
+   */
+  function projectNode(node) {
+    const encoding = statusEncoding(node.status);
+    return {
+      id: node.id,
+      kind: node.kind,
+      status: node.status,
+      summary: node.summary || '',
+      reason: node.reason || '',
+      runs: node.runs || 0,
+      items: node.items === undefined ? null : node.items,
+      targets: node.targets || [],
+      collapsed: Boolean(node.collapsed),
+      groupLeader: Boolean(node.groupLeader),
+      memberCount: node.memberCount || 0,
+      itemCount: node.itemCount === undefined ? null : node.itemCount,
+      // foreach 的并行进度（G7/D5）：折叠态下由折叠算法补齐，展开态直接用节点自带值。
+      itemsCompleted: node.items_completed === undefined ? null : node.items_completed,
+      itemsFailed: node.items_failed === undefined ? null : node.items_failed,
+      itemsRunning: node.items_running === undefined ? null : node.items_running,
+      itemStates: node.item_states || null,
+      color: nodeColor(node.status),
+      label: nodeLabel(node.status),
+      glyph: kindGlyph(node.kind),
+      badge: encoding.badge,
+      borderStyle: encoding.borderStyle,
+    };
+  }
+
+  /**
    * 分层布局：把 nodes/edges 变成带坐标的 SVG 元素描述。
    *
    * 桌面（``horizontal``）层沿 +x 排布（左→右 DAG）；手机（``vertical``）层沿 +y
@@ -390,35 +426,12 @@
 
     const layoutNodes = nodes.map((node) => {
       const position = placed.get(node.id);
-      const encoding = statusEncoding(node.status);
-      return {
-        id: node.id,
-        kind: node.kind,
-        status: node.status,
-        summary: node.summary || '',
-        reason: node.reason || '',
-        runs: node.runs || 0,
-        items: node.items === undefined ? null : node.items,
-        targets: node.targets || [],
-        collapsed: Boolean(node.collapsed),
-        groupLeader: Boolean(node.groupLeader),
-        memberCount: node.memberCount || 0,
-        itemCount: node.itemCount === undefined ? null : node.itemCount,
-        // foreach 的并行进度（G7/D5）：折叠态下由折叠算法补齐，展开态直接用节点自带值。
-        itemsCompleted: node.items_completed === undefined ? null : node.items_completed,
-        itemsFailed: node.items_failed === undefined ? null : node.items_failed,
-        itemsRunning: node.items_running === undefined ? null : node.items_running,
-        itemStates: node.item_states || null,
-        color: nodeColor(node.status),
-        label: nodeLabel(node.status),
-        glyph: kindGlyph(node.kind),
-        badge: encoding.badge,
-        borderStyle: encoding.borderStyle,
+      return Object.assign(projectNode(node), {
         x: position.x,
         y: position.y,
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
-      };
+      });
     });
 
     // 并行边偏移（D7）：同一对 ``(from,to)`` 的多条边如果都画同一条三次贝塞尔，
@@ -1059,6 +1072,7 @@
     channelDash,
     channelNames,
     kindGlyph,
+    projectNode,
     kindGlyphs,
     // --- enhance-workflow-graph-ux 新增 ---
     graphStatusColor,

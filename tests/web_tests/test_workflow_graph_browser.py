@@ -7,6 +7,7 @@ CI 里没有浏览器时自动 skip（``p.chromium.launch`` 失败），与既�
 同口径；CI 的 validate job 现在会 ``playwright install chromium``，所以这条会真跑。
 """
 import threading
+import time
 
 import pytest
 
@@ -115,6 +116,24 @@ async def _push_workflow_event(page, event_type: str, data: dict) -> None:
         }""",
         [event_type, data],
     )
+
+
+async def _wait_app_ready(page) -> None:
+    """等 app 自身的异步初始化落定，再派发测试事件。
+
+    回归（与 issue #191 同类竞态）：``chat.js`` 的 ws 握手 → 建 tab → ``switchTab``
+    → ``showView('chat')`` 是**异步**的，可能发生在测试派发 workflow 事件之后，
+    把 workflow-view 的 active class 摘掉——表现为 ``#workflow-canvas svg``
+    间歇性不可见。只等 ``window.AsterwyndWorkflow`` 就绪**不够**（那只能说明脚本
+    加载完了，不说明 chat.js 的 tab 初始化跑完了）。
+
+    就绪信号取「chat 视图出现已激活的输入框」（与 ``test_browser.py`` 既有口径一致）；
+    fixture 没有 ws 时降级为短等。
+    """
+    try:
+        await page.wait_for_selector(".tab-pane.active .user-input", timeout=5000)
+    except Exception:  # noqa: BLE001 - 降级：无输入框的 fixture
+        await page.wait_for_timeout(300)
 
 
 async def _start_workflow(page, snapshot: dict) -> None:
@@ -557,6 +576,7 @@ async def test_foreach_node_shows_progress_count(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     snapshot = dict(SNAPSHOT)
     snapshot["nodes"] = [
         {"id": "fan", "kind": "foreach", "status": "started", "runs": 1,
@@ -637,3 +657,64 @@ async def test_gestures_pan_after_pinch_release(page, fake_web_server):
         f"pinch 没放大：{result['pinchStart']} -> {result['pinchEnd']}")
     assert result["after"] != result["before"], (
         f"抬指后 pan 失效：{result['before']} -> {result['after']}")
+
+
+@pytest.mark.asyncio
+async def test_tick_keeps_status_word_and_appends_elapsed(page, fake_web_server):
+    """回归（issue #197 follow-up）：本地计时器 tick 不得把状态词覆写成 ``undefined``。
+
+    根因：``tick`` 读的是**快照原始节点**（snake_case、无 ``label``/``elapsedText``），
+    却喂给读**布局投影字段**的 ``nodeStatusText``（``node.label`` /
+    ``node.elapsedText``）——于是每秒一次的重绘把「completed · 1s」写成
+    「undefined · 1s」。手机端尤其明显（图上所有节点都成了 undefined）。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
+    snapshot = dict(SNAPSHOT)
+    snapshot["nodes"] = [
+        {"id": "scan", "kind": "subagent", "status": "started", "runs": 1,
+         "summary": "", "started_at": time.time(), "finished_at": None},
+    ]
+    snapshot["edges"] = []
+    await _start_workflow(page, snapshot)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    # harness 直接派发事件、绕过了 chat.js 的 showView('workflow')，所以计时器
+    # 得手动启动——**不启动的话 tick 永不运行，测试就是假保护**。
+    await page.evaluate("() => window.AsterwyndWorkflow.startTicker()")
+
+    # 初渲染（renderNode 走布局投影）一定是对的——先确认基线。
+    text = await page.text_content(".workflow-node[data-node-id='scan'] [data-role='status']")
+    assert "undefined" not in text, f"初渲染就不对：{text!r}"
+    assert "running" in text, text
+
+    # 推进本地计时器（tick 每 1s 跑一次），状态词必须还在。
+    await page.wait_for_timeout(2200)
+    text = await page.text_content(".workflow-node[data-node-id='scan'] [data-role='status']")
+    assert "undefined" not in text, f"tick 把状态词覆写成了 {text!r}"
+    assert "running" in text, f"tick 后状态词丢了：{text!r}"
+
+
+@pytest.mark.asyncio
+async def test_tick_keeps_foreach_progress_count(page, fake_web_server):
+    """回归：tick 对 foreach 节点也要保留「完成 M/N」（同样读投影字段）。"""
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    snapshot = dict(SNAPSHOT)
+    snapshot["nodes"] = [
+        {"id": "fan", "kind": "foreach", "status": "started", "runs": 1,
+         "summary": "", "started_at": 1, "finished_at": None, "items": 12,
+         "items_completed": 3, "items_failed": 1, "items_running": 1,
+         "item_states": ["completed"] * 3 + ["failed"] + ["running"] + ["queued"] * 7},
+    ]
+    snapshot["edges"] = []
+    await _start_workflow(page, snapshot)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => window.AsterwyndWorkflow.startTicker()")
+
+    await page.wait_for_timeout(2200)
+    text = await page.text_content(".workflow-node[data-node-id='fan'] [data-role='status']")
+    assert "undefined" not in text, f"tick 把 foreach 进度覆写成了 {text!r}"
+    assert "完成 3/12" in text, f"tick 后 foreach 进度丢了：{text!r}"
