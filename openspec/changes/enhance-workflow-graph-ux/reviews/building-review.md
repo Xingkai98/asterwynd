@@ -2,9 +2,9 @@
 
 ## Verdict
 
-**PASS**（Round 2，2026-09-18）— Round 1 的唯一中等 Issue（foreach 候选项下钻无取数路径）已前后端修通并**经变异验证为真保护**，2 条低风险项按建议处理，无新引入的中等以上问题。详见文末「Round 2 复审」。
+**PASS**（Round 2，2026-09-18）— Round 1 的唯一中等 Issue（foreach 候选项下钻无取数路径）已前后端修通并**经变异验证为真保护**，2 条低风险项按建议处理，审阅中发现的串台测试假保护也已加固并复验，无新引入的中等以上问题。详见文末「Round 2 复审」。
 
-> 历史：Round 1 结论为 **CHANGES_REQUESTED**（head `cba2d6c`），含 1 条中等 + 2 条低。
+> 历史：Round 1 结论为 **CHANGES_REQUESTED**（head `cba2d6c`），含 1 条中等 + 2 条低；修复提交 `4aea153`，串台测试加固 `80304e0`。
 
 ## 审阅基线
 
@@ -13,7 +13,7 @@
 | reviewer | 独立零记忆审阅 subagent（本轮由主 agent 调度，paseo 托管） |
 | change id | `enhance-workflow-graph-ux`（issue #197） |
 | base sha | `0272bcb32eed2ea8a5cc0d8ae2252f8b9580f89d` |
-| head sha | `4aea153`（Round 1 审时为 `cba2d6c`） |
+| head sha | `80304e0`（Round 1 审时为 `cba2d6c`；修复 R1c 为 `4aea153`） |
 | 分支 | `enhance-workflow-graph-ux/2026-09-17` |
 | 审阅时间 | 2026-09-18 |
 | 审阅范围 | `git diff 0272bcb..cba2d6c`（M1/M2 数据面/M2 前端+M3/M4 + 收尾 4 个小提交） |
@@ -131,7 +131,7 @@ M1 的 `skipped` 判据（`_is_skipped` 三条件、`_upstreams_resolved` 上游
 
 ## Round 2 复审
 
-**复审基线**：`git diff cba2d6c..4aea153`（修复提交 `4aea153`，7 文件 / +443 −10）；base 仍 `0272bcb`。
+**复审基线**：`git diff cba2d6c..80304e0`（修复 `4aea153` 7 文件 / +443 −10，加固 `80304e0`）；base 仍 `0272bcb`。
 
 ### Issue #1（Round 1 唯一中等项）—— 确认修好
 
@@ -154,7 +154,8 @@ M1 的 `skipped` 判据（`_is_skipped` 三条件、`_upstreams_resolved` 上游
 | I/J | 下钻**取 item#0 的 session 但回显正确 id**（纯串台，不靠 id 断言兜底） | `test_item_drilldown_does_not_mix_other_items` 等 3 条 | ✅ 变红 |
 
 - 变异 G 直接复现了 Round 1 的缺口（「点了没反应」），是本次修复**真的关掉了那个缺口**的最强证据。
-- 变异 I/J 特意保留正确的 `subagent_id` 回显、只让**取数**串台——仍变红，说明 `_does_not_mix_other_items` 断言的是 messages 归属而非同源的 id，**不是假保护**。
+- 变异 I/J 特意保留正确的 `subagent_id` 回显、只让**取数**串台——**旧版** `_does_not_mix_other_items`（断言只落在回显 id 上）**在我这组变异下没有变红**，暴露出该用例的假保护。已按此发现加固（`80304e0`）：新版让 LLM 产出带**每项独有 task 标记**（`render_item_task` 把 item 值渲染进 task，天然带身份），逐项核对取回的 **messages 内容**只含自己的标记、且**不含**别项标记（`tests/web_tests/test_workflow_node_transcript.py`，双向断言）。**复验**：在 `80304e0` 上重跑「永远取第 0 项、但如实回显 id」的变异 → 新版用例**变红**，确认现在是真的保护。
+- 该加固仅动测试、未改实现（`web/session.py` 在 `80304e0` 相对 `4aea153` 无改动），故 Round 1 修复的取数路径结论不受影响。
 
 **未引入新的越权面**：`SubAgentManager` 是**每 AgentSession 一份**（`web/session.py:1272`，随 `AgentLoop` 构造注入），`_require_session` 只在该 manager 的 `_sessions` 里查；路由先过 `session_manager.get_session(session_id)`（内存口径 404）。跨 session 的 `subagent_id` 取不到。只读性质未变（不调 LLM / 不写盘 / 不改执行状态，`test_item_drilldown_is_bounded_and_read_only` 用 `manager.llm.calls == 0` 断言，且该测试经变异 H 变红，是真保护）。
 
@@ -170,9 +171,9 @@ M1 的 `skipped` 判据（`_is_skipped` 三条件、`_upstreams_resolved` 上游
 
 | 命令 | 结果 |
 |---|---|
-| `uv run pytest tests/web_tests/ -q -p no:randomly` | **290 passed, 7 skipped**（83s，无失败） |
+| `uv run pytest tests/web_tests/ -q -p no:randomly`（`80304e0`） | **290 passed, 7 skipped**（84s，无失败） |
 
-较 Round 1 新增 6 条（后端 4 + 浏览器 smoke 1 + 稀疏数组防回归 1）。本轮**未复现**任何 flake。
+较 Round 1 新增 6 条（后端 4 + 浏览器 smoke 1 + 稀疏数组防回归 1）。本轮**未复现**任何 flake，含 `test_workflow_graph_browser.py` 全部浏览器 smoke。
 
 ### 本轮新增观察（低，不阻塞）
 
@@ -182,4 +183,4 @@ M1 的 `skipped` 判据（`_is_skipped` 三条件、`_upstreams_resolved` 上游
 
 ### Round 2 结论
 
-Round 1 的 1 中等 + 2 低**全部按要求闭环**，修复经 3 组变异验证为真保护，回归测试全绿，未引入新的中等以上问题。**Verdict: PASS**。本轮新增的 #4/#5 为低风险观察项，不阻塞合入。
+Round 1 的 1 中等 + 2 低**全部按要求闭环**，修复经 3 组变异验证为真保护；审阅过程中发现的串台用例假保护亦已加固并复验为真保护。`80304e0` 上 `tests/web_tests/` 全绿（290 passed / 7 skipped），未引入新的中等以上问题。**Verdict: PASS**。本轮新增的 #4/#5 为低风险观察项，不阻塞合入。
