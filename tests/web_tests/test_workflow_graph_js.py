@@ -91,9 +91,32 @@ def test_node_color_falls_back_for_unknown_status():
     assert call("nodeColor", "something_new") == "#94a3b8"
 
 
-def test_edge_status_styles_cover_five_tiers():
+def test_edge_status_styles_cover_six_tiers():
+    """issue #207：边状态六档（新增 ``satisfied``：依赖已满足但产出未被读取）。"""
     styles = call("edgeStatusStyles")
-    assert set(styles) == {"inactive", "ready", "active", "passed", "blocked"}
+    assert set(styles) == {"inactive", "ready", "active", "passed", "satisfied", "blocked"}
+
+
+def test_satisfied_is_distinguishable_from_passed_and_inactive():
+    """``satisfied`` 与 ``passed``/``inactive`` 在**非颜色维度**上可分辨。
+
+    spec delta 要求「明度差 + 线宽差 + 有无流向箭头」三重编码，不能只靠色相——
+    这里锁定前两重（箭头由 renderEdge 的 marker 逻辑天然提供，属渲染层）。
+    """
+    styles = call("edgeStatusStyles")
+    satisfied, passed, inactive = (
+        styles["satisfied"], styles["passed"], styles["inactive"],
+    )
+    # 明度（opacity）三者两两不同。
+    assert len({satisfied["opacity"], passed["opacity"], inactive["opacity"]}) == 3
+    # 线宽：satisfied 介于 passed（粗）与 inactive（细）之间，且都不相等。
+    assert inactive["width"] < satisfied["width"] < passed["width"]
+
+
+def test_satisfied_is_a_solid_line_like_passed():
+    """``satisfied`` 是**实线**（与 passed 同族），不是虚线——虚线留给 blocked。"""
+    styles = call("edgeStatusStyles")
+    assert styles["satisfied"]["dash"] == []
 
 
 def test_edge_style_distinguishes_passed_and_inactive():
