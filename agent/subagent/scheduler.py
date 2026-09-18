@@ -31,7 +31,8 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping
+from functools import partial
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from agent.subagent.aggregation import (
     AUTO_NODE_PREFIX,
@@ -123,6 +124,16 @@ _SNAPSHOT_TERMINAL_STATUSES = frozenset(
 _EDGE_BLOCKED_TARGET_STATUSES = frozenset({"blocked", "budget_exceeded"})
 _EDGE_BLOCKED_SOURCE_STATUSES = frozenset({"failed", "cancelled"})
 
+#: foreach 展开项的**终态**集合（G7/D5.2）：只有这些值会被 done 回调落进
+#: ``item_states``；其余（``pending``/``queued``/``running``）都在投影时现算。
+_ITEM_TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "budget_exceeded"})
+
+#: 项级推帧的调度器侧最小间隔（M2.3/G2）：``_emit_graph_snapshot`` 是**全量重建**
+#: （遍历全部 nodes+edges），而 ``GraphEventForwarder`` 的 0.1s 窗只合并**发送**、
+#: 不合并构建。12–200 项的 foreach 若每项迁移都构建一帧，O(项数 × 图规模) 全压在
+#: 事件循环上——所以限频必须落在调度器侧。窗内只发首帧，窗末补一帧保证不丢尾态。
+_ITEM_FRAME_WINDOW_S = 0.1
+
 #: 成本归因摘要的四维（D7/Q16）。
 _ATTRIBUTION_DIMS = ("by_workflow", "by_node", "by_depth", "by_edge")
 #: 每维回给父 agent 的 top-k（D7：不整表返回，与 C3 的 bounded envelope 同口径）。
@@ -161,6 +172,24 @@ class GraphRecursionError(RuntimeError):
 
 
 @dataclass
+class _ItemRunSlot:
+    """foreach 展开项的 run 身份槽（index → 身份），见 ``NodeState.item_runs``。
+
+    ``_launch_run`` 的 ``reuse_state`` 只需要 ``subagent_id``/``run_id`` 两个可写
+    字段。展开项借它把「index → 本项 run」在**派发那一刻**记下来——这是
+    ``items_running`` 能区分「排队等 slot」与「真正在跑」的唯一依据（G7）：
+    ``state.subagent_ids`` 是 gather 之后才 append 的稀疏数组，且顺序 ≠ item 序号。
+
+    ``on_dispatch`` 让 ``_launch_run`` 在 run 身份落定后回调调度器补一帧项级进度
+    （M2.3）；不设时纯记账。
+    """
+
+    subagent_id: str | None = None
+    run_id: str | None = None
+    on_dispatch: Callable[[], None] | None = None
+
+
+@dataclass
 class NodeState:
     """调度器的节点状态（``WorkflowNode`` 的运行时投影）。"""
 
@@ -187,6 +216,14 @@ class NodeState:
     targets: list[str] = field(default_factory=list)
     items: int | None = None
     error: str | None = None
+    #: foreach 的 per-item 状态（index → 状态），长度 = ``items``。G7：这是
+    #: 「N 项里几个在跑/几个排队」的权威来源，也是 D5.2 堆叠条的数据源。
+    item_states: list[str] = field(default_factory=list)
+    #: foreach 的 per-item run 身份（index → :class:`_ItemRunSlot`）。
+    item_runs: list[_ItemRunSlot] = field(default_factory=list)
+    #: foreach 的项级计数（M2.1：计数点在每项**完成**那一刻的 done 回调上）。
+    items_completed: int = 0
+    items_failed: int = 0
 
     def to_dict(self) -> dict:
         payload: dict[str, Any] = {
@@ -427,6 +464,10 @@ class WorkflowScheduler:
         self._rejection_counts_snapshot: dict[str, int] = {}
         #: node_id -> 仍在跑的 (subagent_id, run_id)，取消路径据此找到 in-flight run
         self._live_runs: dict[str, list[tuple[str, str]]] = {}
+        #: 项级推帧的限频状态（M2.3）：``_item_frame_pending`` = 窗内还有被合并掉的
+        #: 迁移待补发；``_item_frame_last_at`` = 上一帧的单调时刻（``None`` = 无历史）。
+        self._item_frame_pending = False
+        self._item_frame_last_at: float | None = None
         self._peak_active = 0
         self._started_at = 0.0
         self._finished_at: float | None = None
@@ -812,6 +853,10 @@ class WorkflowScheduler:
                 if self._budget_stop and self._in_flight_nodes == 0:
                     self._status = "budget_exceeded"
                     return
+                # 项级限频窗（M2.3）：被窗口合并掉的那一帧在这里补发。下一轮通常紧跟
+                # 在项级迁移之后（``_progress.set()`` 唤醒主循环），所以尾帧不会因为
+                # 「窗口内没有后续迁移」而丢。
+                self._drain_item_frame()
                 self._fire_best_effort_deadlines()
                 ready = self._ready_nodes()
                 dispatched = 0
@@ -1546,6 +1591,15 @@ class WorkflowScheduler:
         state.subagent_id = None
         state.run_ids = []
         state.subagent_ids = []
+        # G7/D3b：项级进度与计数必须在这里一并归零。route 回边重跑同一个容器会
+        # 重新走 ``_execute_foreach``，不归零就会在上一轮的结果上继续 ``+=``
+        # （M2 的计数）或留下上一轮的 per-item 状态（「3/12 完成」配 pending）。
+        state.item_states = ["pending"] * len(items)
+        state.item_runs = [_ItemRunSlot() for _ in items]
+        state.items_completed = 0
+        state.items_failed = 0
+        self._item_frame_pending = False
+        self._item_frame_last_at = None
         # C4 runs 维度的预扣（Q4）：展开项绕过 ``_dispatch``，必须在这里与派发点同源
         # 地查一次；且刻意先于 ``_expand_plan`` 与 C2 结构闸——同值时由 C4 触发
         # ``budget_exceeded``（drain），C2 显式更小时才走 ``GraphRecursionError``。
@@ -1555,10 +1609,16 @@ class WorkflowScheduler:
         # 展开期复检（Q3）：声明期不可知的展开项数在这里进入执行计划，重新插层。
         self._expand_plan(node.id, len(items))
         self._check_foreach_budget(node, state)
-        tasks = [
-            asyncio.create_task(self._run_foreach_item(node, index, item))
-            for index, item in enumerate(items)
-        ]
+        tasks = []
+        for index, item in enumerate(items):
+            slot = _ItemRunSlot()
+            state.item_runs[index] = slot
+            task = asyncio.create_task(self._run_foreach_item(node, index, item, state, slot))
+            # M2.1：计数点必须是**每项完成那一刻**的回调。放在 ``gather`` 之后的
+            # 结果循环里只有 0 和 N 两种取值——整个运行期显示「完成 0/12」，
+            # D5 的立项动机（看到并行）在时间维度上完全落空。
+            task.add_done_callback(partial(self._on_foreach_item_done, state, index))
+            tasks.append(task)
         for task in tasks:
             self._tasks.add(task)
         envelopes = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1589,22 +1649,107 @@ class WorkflowScheduler:
             state.status = "completed"
 
     async def _run_foreach_item(
-        self, node: WorkflowNode, index: int, item: Any
+        self,
+        node: WorkflowNode,
+        index: int,
+        item: Any,
+        state: NodeState,
+        slot: _ItemRunSlot | None = None,
     ) -> dict:
-        """一个展开项的完整生命周期；并发实例由 ``_acquire_slot`` 统一背压。"""
+        """一个展开项的完整生命周期；并发实例由 ``_acquire_slot`` 统一背压。
+
+        身份记账走 ``slot``（index → run），因为 ``state.subagent_ids`` 是 gather
+        之后才 append 的稀疏数组——用它当 index 映射会让被取消/异常的项消失。
+        """
         acquired = await self._acquire_slot()
         if not acquired:
+            state.item_states[index] = "cancelled"
             raise asyncio.CancelledError
         try:
             return await self._launch_run(
                 node=node,
                 task=render_item_task(node.task, item, index=index),
                 mode=node.mode,
-                reuse_state=None,
+                reuse_state=slot,
                 session_name=f"{node.id}-{index}",
             )
         finally:
             self._release(1)
+
+    def _item_live_status(self, slot: _ItemRunSlot) -> str:
+        """一项「已派发但未终态」时此刻的真实状态（G7 的口径修正）。
+
+        ``_dispatch_capacity`` 是 ``max_active + max_queued_runs``（默认 25），所以
+        12 项会被**一次性派发**，但真正在执行只有 ``max_active``（默认 5）个。
+        「已派发未终态」当在跑会把 20 个排队项全画成蓝的——必须问 run record。
+        """
+        if slot.subagent_id is None or slot.run_id is None:
+            return "queued"
+        run = self.manager.find_run(slot.subagent_id, slot.run_id)
+        if run is not None and run.status == "running":
+            return "running"
+        return "queued"
+
+    def _on_foreach_item_done(
+        self,
+        state: NodeState,
+        index: int,
+        task: asyncio.Task,
+    ) -> None:
+        """一项的 done 回调（M2.1）：落 per-item 终态、推进计数、推一帧进度。
+
+        **非失败的中断不得计入 ``items_failed``**：``_acquire_slot`` 返回 False 时
+        抛的 ``CancelledError``、``GraphRecursionError``、``WorkflowBudgetExceeded``
+        都不是「这一项失败了」——把它们计成失败等于向前端谎报。
+        """
+        if index >= len(state.item_states):
+            # 容器被重跑（回边）后旧 task 才收尾：它的 index 属于上一轮，丢弃。
+            return
+        status = "completed"
+        if task.cancelled():
+            status = "cancelled"
+        else:
+            exc = task.exception()
+            if isinstance(exc, asyncio.CancelledError):
+                status = "cancelled"
+            elif isinstance(exc, (GraphRecursionError, WorkflowBudgetExceeded)):
+                status = "cancelled"
+            elif exc is not None:
+                status = "failed"
+            else:
+                envelope = task.result()
+                if envelope.get("status") != "completed":
+                    status = "failed"
+        if status == "completed":
+            state.items_completed += 1
+        elif status == "failed":
+            state.items_failed += 1
+        state.item_states[index] = status
+        self._emit_item_frame()
+
+    def _emit_item_frame(self) -> None:
+        """项级迁移的推帧，**调度器侧限频**（M2.3/G2）。
+
+        每个窗口最多构建一帧（``emit``），窗口末的第二条迁移把该帧标记为
+        ``pending``，由 ``_drain_item_frame`` 在窗口过后的下一次迁移或 ``_drive``
+        的下一轮里补发——所以「限频」只合并构建，不吞掉尾帧。
+        """
+        now = time.monotonic()
+        last = self._item_frame_last_at
+        if last is not None and now - last < _ITEM_FRAME_WINDOW_S:
+            self._item_frame_pending = True
+            return
+        self._item_frame_last_at = now
+        self._item_frame_pending = False
+        self._emit_graph_snapshot()
+
+    def _drain_item_frame(self) -> None:
+        """补发被限频窗口合并掉的那一帧（保证任何状态变化最终都可见）。"""
+        if not self._item_frame_pending:
+            return
+        self._item_frame_pending = False
+        self._item_frame_last_at = time.monotonic()
+        self._emit_graph_snapshot()
 
     def _expand_plan(self, node_id: str, count: int) -> None:
         """展开期复检（Q3）：把 foreach 展开项数记进执行计划并按需插入新层。
@@ -1800,6 +1945,13 @@ class WorkflowScheduler:
             reuse_state.run_id = run_id
         self._live_runs.setdefault(node.id, []).append((subagent_id, run_id))
         self._refresh_peak()
+        # foreach 展开项（M2.3）：run 身份此刻才落定，项级「排队 → 在跑」的迁移帧
+        # 要在这里发——``_run_foreach_item`` 的 finally 发不了（那时 run 已终态）。
+        # ``getattr`` 是必要的：普通节点的 ``reuse_state`` 是 ``NodeState``（没有
+        # 这个字段），只有展开项传的 ``_ItemRunSlot`` 才有。
+        on_dispatch = getattr(reuse_state, "on_dispatch", None)
+        if on_dispatch is not None:
+            on_dispatch()
         terminal = await self._await_run(subagent_id, run_id)
         self._live_runs.get(node.id, []).remove((subagent_id, run_id))
         return terminal
@@ -2344,6 +2496,16 @@ class WorkflowScheduler:
             "nodes": nodes,
             "edges": edges,
             "timestamp": time.time(),
+            # 图级起止（D3）：哨兵**统一成 ``null``**——``self._started_at`` 的构造期
+            # 哨兵是 ``0.0``，前端会把它当 epoch 0 渲染成「56 年前」或算出天文耗时。
+            # 也**不要**复用 ``_envelope`` 的 ``self._finished_at or time.time()``
+            # 口径（那会把「还在跑」谎报成「刚跑完」）。
+            "started_at": self._started_at or None,
+            "finished_at": self._finished_at,
+            # 图级预算（G13）：用户看到「预算超限（tokens）」的下一个动作必然是
+            # 「花了多少」。``declared`` 态 ``self._budget is None`` → ``{}``，
+            # 前端须容忍空 dict。
+            "budget": self._budget_summary(),
         }
         if self._status in _SNAPSHOT_TERMINAL_STATUSES:
             units = self._unit_counts()
@@ -2355,13 +2517,20 @@ class WorkflowScheduler:
         return payload
 
     def _graph_node_projection(self, state: NodeState) -> dict:
-        """一个节点的 bounded 图投影（决策 4：显式挑字段）。"""
+        """一个节点的 bounded 图投影（决策 4：显式挑字段）。
+
+        ``reason`` 的截断在**这里**做（grill 决策 1）：``state.reason`` 可能取到完整
+        异常文本（``_run_node`` 的 except 分支 + ``envelope["reason"]`` 两条链），
+        而它是 ``_envelope`` 的字段、本体不能改——所以 bounded 由投影层保证。
+        """
         node: dict[str, Any] = {
             "id": state.node.id,
             "kind": state.node.kind,
-            "status": state.status,
+            "status": self._projected_status(state),
             "runs": state.runs,
             "summary": (state.summary or "")[:_SUMMARY_LIMIT],
+            "reason": (state.reason or "")[:_SUMMARY_LIMIT] or None,
+            "task": (state.node.task or "")[:_SUMMARY_LIMIT],
             "started_at": state.started_at,
             "finished_at": state.finished_at,
         }
@@ -2369,10 +2538,62 @@ class WorkflowScheduler:
             # route 的选中出口是控制边高亮的唯一信号（决策 6）。``verdict``/``raw``
             # 是父 Agent 诊断口径，不进快照。
             node["targets"] = list(state.targets)
-        if state.node.kind == "foreach" or state.node.id.startswith(AUTO_NODE_PREFIX):
+        if state.node.kind == "foreach":
             # 折叠组的项数（决策 8）：展开项从来不是 ``NodeState``，只体现在这里。
             node["items"] = state.items
+            if state.items is not None:
+                # 项还没解析出来（容器未派发）时不发项级字段：``0/0 完成`` 比不发
+                # 更糟——它会让人以为「派发过了，一项都没成功」。
+                self._add_item_projection(node, state)
+        elif state.node.id.startswith(AUTO_NODE_PREFIX):
+            # 自动插层节点仍带 ``items``（#190 的既有口径），但**不带**项级计数与
+            # ``item_states``——它永不经过 ``_execute_foreach``，恒显「0/3 完成」
+            # 是自相矛盾的数据（M2.2）。
+            node["items"] = state.items
         return node
+
+    def _projected_status(self, state: NodeState) -> str:
+        """节点状态的**投影层**修正（G3/M2.6：不动状态机、不多推一帧）。
+
+        ``NodeState.status`` 从不写 ``queued``，而 ``_dispatch`` 在拿到 slot **之前**
+        就置 ``started``（真正 ``_acquire_slot()`` 在 ``_launch_run`` 内部）。所以
+        「等 slot」与「真正在跑」在图上同形：``_dispatch_capacity`` 是 25，最多 25
+        个节点同时显示 running，其中 20 个其实在排队。
+
+        **绝不给 ``NodeState.status`` 加 ``queued`` 赋值**：全仓 ``"queued"`` 只在
+        读取侧判据出现，给写入点会让它们同时激活，其中一处参与 ``_in_flight_nodes``
+        类收敛判断——预算 drain 正靠「在跑的 run 归零」落终态。
+        """
+        if state.status != "started":
+            return state.status
+        if state.subagent_id is None or state.run_id is None:
+            return state.status
+        run = self.manager.find_run(state.subagent_id, state.run_id)
+        if run is not None and run.status == "queued":
+            return "queued"
+        return state.status
+
+    def _add_item_projection(self, node: dict[str, Any], state: NodeState) -> None:
+        """foreach 的 per-item 投影（G7/M2.2）：状态数组 + 三个派生计数。
+
+        ``item_states`` 在投影时**现算**「已派发但未终态」的那一刻状态（排队 vs
+        真正在跑），终态由 done 回调落盘——两者合起来才是权威 per-item 状态。
+        """
+        states: list[str] = []
+        running = 0
+        for index, recorded in enumerate(state.item_states):
+            if recorded in _ITEM_TERMINAL_STATES:
+                states.append(recorded)
+                continue
+            slot = state.item_runs[index] if index < len(state.item_runs) else None
+            live = "pending" if slot is None else self._item_live_status(slot)
+            if live == "running":
+                running += 1
+            states.append(live)
+        node["item_states"] = states
+        node["items_running"] = running
+        node["items_completed"] = state.items_completed
+        node["items_failed"] = state.items_failed
 
     def _edge_status(self, edge: WorkflowEdge) -> str:
         """边五档状态（决策 7 + Q5）。
