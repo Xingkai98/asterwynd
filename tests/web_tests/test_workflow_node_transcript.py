@@ -547,6 +547,31 @@ class _HugeArgsLLM(_ToolCallingLLM):
 
 
 @pytest.mark.asyncio
+async def test_tool_call_arguments_bounded_even_without_route_limit(manager):
+    """**生产者侧**的兜底截断：不经 web 路由的调用方（模型面 ``InspectSubagentTranscript``
+    工具）也拿不到无界 ``arguments``。
+
+    审阅发现（issue #212 修复 R1）：``InspectSubagentTranscript`` 的 ``limit`` 只有
+    ``minimum`` 没有 ``maximum``，且直接 ``json.dumps`` 结果进模型上下文——不给
+    ``manager`` 加兜底的话，3 轮 20KB 的 ``Write`` 调用会输出约 60K 字符（~15K tokens），
+    比修复前放大两个数量级。
+    """
+    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
+
+    manager.llm = _HugeArgsLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    subagent_id = scheduler._states["a"].subagent_id
+    raw = manager.inspect_transcript(
+        subagent_id=subagent_id, scope="recent_messages", limit=50)
+    calls = [c for m in raw["messages"] for c in (m.get("tool_calls") or [])]
+    assert calls, "带 tool_calls 的消息丢了"
+    assert len(calls[0]["arguments"]) <= TOOL_CALL_ARGUMENT_LIMIT
+    assert calls[0]["arguments_truncated"] is True
+
+
+@pytest.mark.asyncio
 async def test_transcript_tool_call_arguments_are_bounded(manager):
     """arguments 必须走单条内容截断——否则一个写大文件的工具调用就能撑爆响应。
 
@@ -580,3 +605,33 @@ async def test_transcript_tool_results_still_excluded_by_default(manager):
     assert all(m["role"] != "tool" for m in payload["messages"])
     # 但工具调用的**存在**必须可见。
     assert any(m.get("tool_calls") for m in payload["messages"])
+
+
+@pytest.mark.asyncio
+async def test_inspect_tool_clamps_limit_and_arguments(manager):
+    """模型面工具的 bounded：``limit`` 夹到与 web 路由同值 + ``arguments`` 有上限。
+
+    审阅 Issue #1（中）：``InspectSubagentTranscript`` 的 ``limit`` 无上限、输出
+    直接进模型上下文——3 轮 20KB 的 ``Write`` 调用会放大到约 60K 字符。
+    """
+    from agent.tools.builtin.subagents import InspectSubagentTranscriptTool
+    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
+    from web.session import TRANSCRIPT_MAX_LIMIT
+
+    # 两个契约数字必须同值（一处改了另一处忘改 = 两条路径口径漂移）。
+    assert InspectSubagentTranscriptTool.MAX_TRANSCRIPT_LIMIT == TRANSCRIPT_MAX_LIMIT
+
+    manager.llm = _HugeArgsLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    subagent_id = scheduler._states["a"].subagent_id
+
+    tool = InspectSubagentTranscriptTool(manager)
+    out = await tool.execute(subagent_id=subagent_id, scope="recent_messages", limit=100000)
+    payload = json.loads(out)
+    # 夹到上限：不可能因为要 10 万条而拿到 10 万条。
+    assert len(payload["messages"]) <= TRANSCRIPT_MAX_LIMIT
+    # 单条工具调用参数有上限（生产者的兜底截断）。
+    for message in payload["messages"]:
+        for call in message.get("tool_calls") or []:
+            assert len(call["arguments"]) <= TOOL_CALL_ARGUMENT_LIMIT

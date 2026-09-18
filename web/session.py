@@ -743,6 +743,10 @@ def _bounded_messages(payload: dict, *, content_limit: int) -> dict:
 
     工具调用的 ``arguments`` 与消息 ``content`` 同属「单条内容」，走**同一个**
     ``content_limit``：一个 Write 调用能带几 KB 正文，不截断就等于 bounded 是空话。
+
+    ``arguments_truncated`` 与上游（``manager`` 投影）的截断标志**取或**——
+    上游有自己的上限（``TOOL_CALL_ARGUMENT_LIMIT``），它截过而本层预算更宽时
+    不能再报「没截断」。
     """
     messages = []
     for message in payload.get("messages", []) or []:
@@ -754,14 +758,16 @@ def _bounded_messages(payload: dict, *, content_limit: int) -> dict:
         }
         calls = message.get("tool_calls")
         if calls:
-            projected["tool_calls"] = [
-                {
+            bounded_calls = []
+            for call in calls:
+                arguments = str(call.get("arguments") or "")
+                bounded_calls.append({
                     "name": call.get("name"),
-                    "arguments": str(call.get("arguments") or "")[:content_limit],
-                    "arguments_truncated": len(str(call.get("arguments") or "")) > content_limit,
-                }
-                for call in calls
-            ]
+                    "arguments": arguments[:content_limit],
+                    "arguments_truncated": bool(call.get("arguments_truncated"))
+                    or len(arguments) > content_limit,
+                })
+            projected["tool_calls"] = bounded_calls
         messages.append(projected)
     payload["messages"] = messages
     payload["content_limit"] = content_limit
