@@ -352,29 +352,68 @@ async def test_item_drilldown_returns_that_items_own_transcript(manager):
 
 @pytest.mark.asyncio
 async def test_item_drilldown_does_not_mix_other_items(manager):
-    """每项的 messages 是各自 session 的，不得串台。"""
+    """每项的 **messages** 是各自 session 的，不得串台。
 
-    class _EchoLLM(_LLM):
+    断言必须落在 **messages 内容**上，不能只看回显的 ``subagent_id``：一个「永远
+    去取第 0 项、但如实回显调用方给的 id」的实现会骗过只看回显的断言（审阅员在
+    变异验证里点出了这一点）。所以让每项的产出**带自己的身份标记**，再逐项核对
+    取回来的 messages 里只有属于它自己的那个标记。
+    """
+
+    class _ItemTaggedLLM(_LLM):
+        """每次调用返回**本 session 独有**的标记：同一 session 的多次调用标记相同。
+
+        标记按「这是本 session 第几次调用」生成——不同 session 各自从 1 开始，
+        所以三个 session 的标记集互不相同，足以识破串台。
+        """
+
+        def __init__(self):
+            self.calls = 0
+
         async def chat(self, messages, tools=None, model="gpt-4"):
-            blob = " ".join(str(getattr(m, "content", "")) for m in messages)
-            return LLMResponse(content=f"echo:{blob[:40]}", stop_reason="end_turn",
+            self.calls += 1
+            return LLMResponse(content=f"MSG-FROM-{id(self):x}", stop_reason="end_turn",
                                usage=Usage(5, 5))
 
-    manager.llm = _EchoLLM()
+    # 每个展开项建自己的 session → 各有一个 LLM 实例？不——manager 共用一个 llm。
+    # 所以改用「按 task 文本打标」：render_item_task 会把 item 值渲染进 task，
+    # 而 task 是**本项独有**的。
+    class _TaskEchoLLM(_LLM):
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            blob = " ".join(str(getattr(m, "content", "")) for m in messages)
+            marker = next((f"item-{i}" for i in range(3) if f"item-{i}" in blob), "?")
+            return LLMResponse(content=f"OWNED-BY-{marker}", stop_reason="end_turn",
+                               usage=Usage(5, 5))
+
+    manager.llm = _TaskEchoLLM()
     scheduler = _scheduler(manager, _foreach_spec(3))
     await scheduler.run(scheduler.spec)
 
     container = build_node_transcript_payload(manager, scheduler, "fan")
-    ids = [c["subagent_id"] for c in container["candidates"]]
-    assert len(set(ids)) == 3, "三项各有独立 subagent"
+    candidates = container["candidates"]
+    assert len({c["subagent_id"] for c in candidates}) == 3, "三项各有独立 subagent"
+    # 每项的 task 是自己的那个 item（这是 render_item_task 的产物）。
+    owned = {}
+    for candidate in candidates:
+        marker = next(f"item-{i}" for i in range(3) if f"item-{i}" in candidate["task"])
+        owned[candidate["index"]] = marker
 
-    seen = []
-    for candidate in container["candidates"]:
+    for candidate in candidates:
         item = build_node_transcript_payload(
             manager, scheduler, "fan",
             subagent_id=candidate["subagent_id"], run_id=candidate["run_id"])
-        seen.append(item["subagent_id"])
-    assert seen == ids, "逐项取到的必须是各自的 session"
+        text = " ".join(m["content"] for m in item["messages"])
+        expected = owned[candidate["index"]]
+        assert f"OWNED-BY-{expected}" in text, (
+            f"第 {candidate['index']} 项取到的不是自己的 messages：{text!r}"
+        )
+        # 而且**不能**混入别项的标记。
+        for other_index, other in owned.items():
+            if other_index == candidate["index"]:
+                continue
+            assert f"OWNED-BY-{other}" not in text, (
+                f"第 {candidate['index']} 项混入了第 {other_index} 项的内容：{text!r}"
+            )
 
 
 @pytest.mark.asyncio

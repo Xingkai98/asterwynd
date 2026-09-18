@@ -2,7 +2,9 @@
 
 ## Verdict
 
-**CHANGES_REQUESTED** — 全部 `[x]` 均有真实实现、契约红线守住、变异验证有效，但存在一条**spec 已同步却未实现的功能缺口**（foreach 候选项点进去看该项自己的 transcript），需修复后再收口。
+**PASS**（Round 2，2026-09-18）— Round 1 的唯一中等 Issue（foreach 候选项下钻无取数路径）已前后端修通并**经变异验证为真保护**，2 条低风险项按建议处理，无新引入的中等以上问题。详见文末「Round 2 复审」。
+
+> 历史：Round 1 结论为 **CHANGES_REQUESTED**（head `cba2d6c`），含 1 条中等 + 2 条低。
 
 ## 审阅基线
 
@@ -11,7 +13,7 @@
 | reviewer | 独立零记忆审阅 subagent（本轮由主 agent 调度，paseo 托管） |
 | change id | `enhance-workflow-graph-ux`（issue #197） |
 | base sha | `0272bcb32eed2ea8a5cc0d8ae2252f8b9580f89d` |
-| head sha | `cba2d6c` |
+| head sha | `4aea153`（Round 1 审时为 `cba2d6c`） |
 | 分支 | `enhance-workflow-graph-ux/2026-09-17` |
 | 审阅时间 | 2026-09-18 |
 | 审阅范围 | `git diff 0272bcb..cba2d6c`（M1/M2 数据面/M2 前端+M3/M4 + 收尾 4 个小提交） |
@@ -124,3 +126,60 @@ M1 的 `skipped` 判据（`_is_skipped` 三条件、`_upstreams_resolved` 上游
 实现质量高：设计红线（M2.1 计数点、M2.6 `queued` 只投影、M3.3 索引源、契约三条）**逐条实证守住**，关键断言**经变异验证为真保护**，spec 同步与受保护 artifact 事件链完整。唯一需要修的是 **Issue #1**：`foreach` 候选项下钻在前后端**都还没有取数路径**，而该能力已写进正式 spec 并被 design 明确为「可点进单项」——属于「spec 有、实现无」的功能缺口，建议修复并补测试后再合入。
 
 其余为低风险可维护性项，可与本次一并处理，也可另记债务。
+
+---
+
+## Round 2 复审
+
+**复审基线**：`git diff cba2d6c..4aea153`（修复提交 `4aea153`，7 文件 / +443 −10）；base 仍 `0272bcb`。
+
+### Issue #1（Round 1 唯一中等项）—— 确认修好
+
+**前后端取数路径已真通**：
+
+- 后端：`web/session.py:873`（`build_node_transcript_payload` 收 `subagent_id`/`run_id`，非空即走 `_item_drilldown_payload`）；`web/session.py:779`（新增 `_item_drilldown_payload`：按容器 `item_runs` 反查 index → 取**该 subagent 自己**的 session transcript，回显 `index`/`task`/`status`/`reason` 全文）；`web/server.py:186,218`（HTTP 路由收 `?subagent_id=&run_id=` 并透传）。
+- 前端：`web/static/workflow_transcript.js:63-69`（URL 带 `subagent_id`/`run_id`）。
+- **不再依赖容器 payload 缓存命中**：`nodeKey`（`:39`）已纳入 `ctx.subagentId`，下钻与容器各占一格缓存。
+
+**Round 1 指出的两处连带问题均已解决**：
+1. 缓存覆盖 —— 见上，`nodeKey` 含 `subagentId`（`:40`）。
+2. 10s 刷新把单项视图换回候选列表 —— `scheduleAutoRefresh`（`:164`）改用 `current.itemNode || current.node`，下钻时 ctx 带 `itemNode: {id, status: candidate.status}`（`:256`）；关闭/切回由 `stopAutoRefresh` 与 `parentCtx`（`:258`）承担。另补「← 返回并行项列表」入口（`appendBackLink` `:184`）与「第 N 项：<task>」标识（`renderSingle` `:273`），下钻后既有来路也有身份。
+
+**变异验证（3 处，全部变红 → 真保护）**：
+
+| # | 变异 | 目标测试 | 结果 |
+|---|---|---|---|
+| G | 前端 URL 还原为不带 `subagent_id`（即 Round 1 的空操作） | `test_foreach_candidate_drilldown_shows_that_item`（浏览器 smoke） | ✅ 变红 |
+| H | 后端去掉 `if subagent_id` 下钻分支（回落到容器形态） | `test_workflow_node_transcript.py` 4 条下钻用例 | ✅ 变红 |
+| I/J | 下钻**取 item#0 的 session 但回显正确 id**（纯串台，不靠 id 断言兜底） | `test_item_drilldown_does_not_mix_other_items` 等 3 条 | ✅ 变红 |
+
+- 变异 G 直接复现了 Round 1 的缺口（「点了没反应」），是本次修复**真的关掉了那个缺口**的最强证据。
+- 变异 I/J 特意保留正确的 `subagent_id` 回显、只让**取数**串台——仍变红，说明 `_does_not_mix_other_items` 断言的是 messages 归属而非同源的 id，**不是假保护**。
+
+**未引入新的越权面**：`SubAgentManager` 是**每 AgentSession 一份**（`web/session.py:1272`，随 `AgentLoop` 构造注入），`_require_session` 只在该 manager 的 `_sessions` 里查；路由先过 `session_manager.get_session(session_id)`（内存口径 404）。跨 session 的 `subagent_id` 取不到。只读性质未变（不调 LLM / 不写盘 / 不改执行状态，`test_item_drilldown_is_bounded_and_read_only` 用 `manager.llm.calls == 0` 断言，且该测试经变异 H 变红，是真保护）。
+
+### Issue #2（低）—— 处理恰当
+
+`web/session.py:757`（`_reason_fields`）已补语义边界注释：说明本出口给**全文**故 `reason_truncated` 恒 `False`、保留该键是为了让前端不必比长度，并点明三处上限口径（父面 200 / 快照 400 / 路由全文）。与 design D9(e) 一致。
+
+### Issue #3（低）—— 处理恰当
+
+`web/session.py:996`（`_foreach_candidates`）已去掉 `state.subagent_ids[index]` 兜底，取不到 run record 时如实返回 `None`。与 M3.3 红线（`subagent_ids` 只做真实性校验）恢复一致。
+
+### 测试结果（Round 2）
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest tests/web_tests/ -q -p no:randomly` | **290 passed, 7 skipped**（83s，无失败） |
+
+较 Round 1 新增 6 条（后端 4 + 浏览器 smoke 1 + 稀疏数组防回归 1）。本轮**未复现**任何 flake。
+
+### 本轮新增观察（低，不阻塞）
+
+**#4 ｜ 未派发项的候选行点击仍是软 no-op（低）**：`_foreach_candidates` 去掉兜底后，未派发项的 `subagent_id` 为 `None`；前端点击该行时 `ctx.subagentId` 为空 → URL 不带参数 → 后端回落容器形态 → 重渲染候选列表。**不崩、不串台、无循环**，但用户点「尚未派发」的行看不到任何反馈。spec 该 Scenario 的 GIVEN 限定在「N 个展开项各自独立 subagent」，严格讲未覆盖此态；建议后续给该行 disabled 或提示「该项尚未派发」（可与 §Non-Goals 的节点级 follow-up 一并处理，不必在本 change 内修）。
+
+**#5 ｜ `node_id` 与 `subagent_id` 的归属未交叉校验（低，设计如此）**：路由只校验 session 与 workflow，未强制 `subagent_id` 必须属于 `node_id`。同一 session 内可指名读任一 subagent 的 transcript——与 Chat 视图同信任级（design D4 grill 决策 9 明示「Chat 本已展示这些对话」），**非新增漏洞**，记录备查。
+
+### Round 2 结论
+
+Round 1 的 1 中等 + 2 低**全部按要求闭环**，修复经 3 组变异验证为真保护，回归测试全绿，未引入新的中等以上问题。**Verdict: PASS**。本轮新增的 #4/#5 为低风险观察项，不阻塞合入。
