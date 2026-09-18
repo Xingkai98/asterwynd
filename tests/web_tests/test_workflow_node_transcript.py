@@ -635,3 +635,28 @@ async def test_inspect_tool_clamps_limit_and_arguments(manager):
     for message in payload["messages"]:
         for call in message.get("tool_calls") or []:
             assert len(call["arguments"]) <= TOOL_CALL_ARGUMENT_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_truncation_flag_composes_across_producer_and_route(manager):
+    """两层截断标志必须**取或**，不能只看本层长度。
+
+    生产者（``manager``）按 ``TOOL_CALL_ARGUMENT_LIMIT`` 先截到 4000；路由层若拿到
+    更宽的 ``content_limit``（``build_node_transcript_payload`` 的公开参数），只看
+    本层长度会得出「没截断」——而实际上上游已经截过，前端据此会**谎报完整**。
+    """
+    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
+
+    manager.llm = _HugeArgsLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    # 路由预算**大于**生产者上限：上游截过，本层长度检查不会触发。
+    payload = build_node_transcript_payload(
+        manager, scheduler, "a", content_limit=TOOL_CALL_ARGUMENT_LIMIT * 2)
+    calls = [c for m in payload["messages"] for c in (m.get("tool_calls") or [])]
+    assert calls, "带 tool_calls 的消息丢了"
+    assert len(calls[0]["arguments"]) <= TOOL_CALL_ARGUMENT_LIMIT
+    assert calls[0]["arguments_truncated"] is True, (
+        "上游已截断但本层预算更宽——只看本层长度会谎报「未截断」"
+    )
