@@ -748,3 +748,101 @@ async def test_tick_keeps_tab_elapsed_live(page, fake_web_server):
     assert after != before, (
         f"tab 耗时没有跳秒（tick 不重绘 tab）：{before!r} → {after!r}"
     )
+
+
+_TOOL_CALL_SINGLE = {
+    "kind": "single", "node_id": "a", "node_kind": "subagent",
+    "subagent_id": "sa-a", "run_id": "r-a",
+    "messages": [
+        {"role": "system", "content": "你是一个受限的子 agent。"},
+        {"role": "user", "content": "扫描仓库"},
+        # 真实形态：模型这一轮**没有文字**，只有两个工具调用（回归的原始症状）。
+        {"role": "assistant", "content": "",
+         "tool_calls": [
+             {"name": "Read", "arguments": "{\"path\": \"AGENTS.md\"}",
+              "arguments_truncated": False},
+             {"name": "Grep", "arguments": "{\"pattern\": \"workflow\", \"path\": \".\"}",
+              "arguments_truncated": False},
+         ]},
+        {"role": "assistant", "content": "扫描完成：发现 3 处问题。"},
+    ],
+    "truncated": False, "included_tool_results": False,
+    "limit": 50, "content_limit": 4000,
+    "reason_full": "", "reason_length": 0, "reason_truncated": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_renders_tool_calls_instead_of_blank_lines(page, fake_web_server):
+    """回归（用户实测发现）：只发起工具调用、不输出文字的 assistant 轮次**不能变空行**。
+
+    原始症状：transcript 投影丢掉了 ``tool_calls``，于是模型每一个
+    「只调工具、不写文字」的轮次（AgentLoop 里占大多数）都渲染成一行空的
+    「ASSISTANT」——用户看到一连串空行，以为「对话不全」。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+
+    async def _transcript_route(route):
+        await route.fulfill(json=_TOOL_CALL_SINGLE)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".tool-call-block")
+
+    body = await page.text_content(".drawer-body")
+    # 那一轮的工具调用必须可见（名字 + 参数）。
+    assert "Read" in body, body
+    assert "AGENTS.md" in body, body
+    assert "Grep" in body, body
+    # 两个 assistant 轮次都该有自己的角色标签（工具调用那一轮也是 assistant 的动作，
+    # 标签不能省——用户要能分辨「谁在调工具」）。回归的**症状是空文本行**，不是标签。
+    # 注意 ``text-transform: uppercase`` 只在 CSS 层——DOM 里的文本是小写。
+    roles = await page.eval_on_selector_all(
+        ".msg-role",
+        "nodes => nodes.filter(n => n.textContent.toLowerCase() === 'assistant').length")
+    assert roles == 2, f"assistant 轮次标签数不对：{roles}"
+    # 真正的回归判据：不该存在**纯空白**的文本行（旧实现每轮产出一个空行）。
+    blanks = await page.eval_on_selector_all(
+        ".msg-text", "nodes => nodes.filter(n => !n.textContent.trim()).length")
+    assert blanks == 0, f"仍渲染了 {blanks} 行空文本（正是用户看到的空 ASSISTANT）"
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_survives_malformed_tool_arguments(page, fake_web_server):
+    """``arguments`` 不是合法 JSON（流式截断/工具自定义格式）时原样显示，不炸。"""
+    payload = dict(_TOOL_CALL_SINGLE)
+    payload["messages"] = [
+        {"role": "assistant", "content": "",
+         "tool_calls": [{"name": "Bash", "arguments": "not-json{{{",
+                         "arguments_truncated": True}]},
+    ]
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    async def _transcript_route(route):
+        await route.fulfill(json=payload)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".tool-call-block")
+
+    body = await page.text_content(".drawer-body")
+    assert "not-json{{{" in body, body
+    assert "参数已截断" in body, body
+    assert not errors, f"渲染抛异常：{errors}"

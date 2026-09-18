@@ -740,15 +740,29 @@ def _bounded_messages(payload: dict, *, content_limit: int) -> dict:
 
     ``truncated`` 的语义保持 ``inspect_transcript`` 的原义（``len(messages) > limit``，
     已剔除 tool 角色后）——前端文案不能写成「内容被截断」。
+
+    工具调用的 ``arguments`` 与消息 ``content`` 同属「单条内容」，走**同一个**
+    ``content_limit``：一个 Write 调用能带几 KB 正文，不截断就等于 bounded 是空话。
     """
     messages = []
     for message in payload.get("messages", []) or []:
         content = str(message.get("content") or "")
-        messages.append({
+        projected = {
             "role": message.get("role"),
             "content": content[:content_limit],
             "content_truncated": len(content) > content_limit,
-        })
+        }
+        calls = message.get("tool_calls")
+        if calls:
+            projected["tool_calls"] = [
+                {
+                    "name": call.get("name"),
+                    "arguments": str(call.get("arguments") or "")[:content_limit],
+                    "arguments_truncated": len(str(call.get("arguments") or "")) > content_limit,
+                }
+                for call in calls
+            ]
+        messages.append(projected)
     payload["messages"] = messages
     payload["content_limit"] = content_limit
     return payload

@@ -58,6 +58,26 @@ def _bounded_summary(text: str, max_tokens: int | None) -> str:
         return text
     return text[:budget_chars] + "\n…[truncated; full result in result_ref]"
 
+
+def _project_tool_calls(message: Message) -> dict:
+    """投影一条 assistant 消息发起的工具调用（无调用时返回空 dict）。
+
+    AgentLoop 的大多数轮次**只有工具调用、没有文字**（``loop.py:750``：
+    ``Message(role="assistant", content="", tool_calls=[...])``）。只投影
+    ``role``/``content`` 会让这些消息变成一串空行——用户看到「对话不全」。
+
+    ``arguments`` 保持 JSON 字符串原样（与主 chat ``tool_call`` 事件同口径），
+    **截断由调用方按自己的 content 预算做**（路由层的 ``_bounded_messages``）。
+    """
+    if not message.tool_calls:
+        return {}
+    return {
+        "tool_calls": [
+            {"name": call.name, "arguments": call.arguments}
+            for call in message.tool_calls
+        ]
+    }
+
 # Run statuses that no longer change: a queued run cancelled before it ever
 # executed must be skipped by the worker instead of being launched.
 TERMINAL_RUN_STATUSES = frozenset(
@@ -1041,7 +1061,12 @@ class SubAgentManager:
             "run_id": run_id,
             "scope": "recent_messages",
             "messages": [
-                {"role": msg.role, "content": extract_text(msg.content), "tool_call_id": msg.tool_call_id}
+                {
+                    "role": msg.role,
+                    "content": extract_text(msg.content),
+                    "tool_call_id": msg.tool_call_id,
+                    **_project_tool_calls(msg),
+                }
                 for msg in tail
             ],
             "truncated": len(messages) > limit,
