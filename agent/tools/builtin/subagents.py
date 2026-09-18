@@ -191,7 +191,10 @@ class CancelSubagentRunTool(Tool):
             "subagent_id": {"type": "string"},
             "scope": {"type": "string", "enum": ["summary", "recent_messages"]},
             "run_id": {"type": "string"},
-            "limit": {"type": "integer", "minimum": 1},
+            # 上限与 web 路由同口径（``web.session.TRANSCRIPT_MAX_LIMIT``）：
+            # 没有 maximum 时，被检视的 agent 可以一次要 100 条消息、每条再带上限
+            # 长度的工具调用参数——单次回包规模就没有天花板了。
+            "limit": {"type": "integer", "minimum": 1, "maximum": 200},
             "include_tool_results": {"type": "boolean"},
         },
         "required": ["subagent_id"],
@@ -201,15 +204,23 @@ class InspectSubagentTranscriptTool(Tool):
     read_only = True
     permission = SUBAGENT_CONTROL_PERMISSION
 
+    #: 与 ``web.session.TRANSCRIPT_MAX_LIMIT`` 同值。这里不 import：``agent`` 层
+    #: 不依赖 ``web`` 层（反向依赖），两处各自声明同一契约数字，由测试锁定一致。
+    MAX_TRANSCRIPT_LIMIT = 200
+
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
 
     async def execute(self, **kwargs) -> str:
+        requested = kwargs.get("limit", 5)
+        # 在**代码里**也夹一次：JSON schema 的 ``maximum`` 只是给模型的提示，
+        # 直接调用（含绕开 schema 校验的路径）仍然能传超大值。
+        limit = min(max(int(requested) or 1, 1), self.MAX_TRANSCRIPT_LIMIT)
         result = self.manager.inspect_transcript(
             subagent_id=kwargs["subagent_id"],
             scope=kwargs.get("scope", "summary"),
             run_id=kwargs.get("run_id"),
-            limit=kwargs.get("limit", 5),
+            limit=limit,
             include_tool_results=kwargs.get("include_tool_results", False),
         )
         return json.dumps(result, ensure_ascii=False)

@@ -463,3 +463,213 @@ async def test_unknown_subagent_degrades_instead_of_raising(manager):
     payload = build_node_transcript_payload(manager, scheduler, "a")
     assert payload["kind"] in ("single", "none")
     assert payload.get("messages", []) == []
+
+
+# --- 工具调用消息（本轮修复：assistant 的 tool_calls 曾被投影丢弃）-------------
+
+
+class _ToolCallingLLM:
+    """第一轮只发起工具调用（**content 为空**），第二轮才给文字结论。
+
+    这是 AgentLoop 的真实形态：模型大多数轮次不输出文字、只发工具调用
+    （``agent/loop.py:750`` 构造 ``Message(role="assistant", content="", tool_calls=[...])``）。
+    原桩 LLM（``_LLM``）永远返回带文字的 ``end_turn``，所以从未产生过这种消息，
+    投影丢字段的问题在测试里永远踩不到。
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        from agent.llm import ToolCallDelta
+
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallDelta(id="c1", name="Read",
+                                  arguments=json.dumps({"path": "AGENTS.md"})),
+                    ToolCallDelta(id="c2", name="Grep",
+                                  arguments=json.dumps({"pattern": "workflow", "path": "."})),
+                ],
+                stop_reason="tool_calls",
+                usage=Usage(5, 5),
+            )
+        return LLMResponse(content="结论：都读完了。", stop_reason="end_turn",
+                           usage=Usage(5, 5))
+
+
+@pytest.mark.asyncio
+async def test_transcript_keeps_assistant_tool_calls(manager):
+    """带 tool_calls 的 assistant 消息 SHALL NOT 变成空行。
+
+    真实场景（用户实测发现）：一个只发起工具调用、不输出文字的 assistant 轮次，
+    投影后 ``content`` 为空且 ``tool_calls`` 被丢——对话 tab 里显示成一串
+    「ASSISTANT」空行，用户以为「对话不全」。
+    """
+    manager.llm = _ToolCallingLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    payload = build_node_transcript_payload(manager, scheduler, "a")
+    assert payload["kind"] == "single"
+
+    tool_call_messages = [m for m in payload["messages"] if m.get("tool_calls")]
+    assert tool_call_messages, (
+        "带 tool_calls 的 assistant 消息全部丢失——对话会显示成空行："
+        f"{[m['role'] for m in payload['messages']]}"
+    )
+    calls = tool_call_messages[0]["tool_calls"]
+    assert [c["name"] for c in calls] == ["Read", "Grep"]
+    # arguments 是 JSON 字符串（与主 chat 的 ``tool_call`` 事件口径一致）。
+    assert json.loads(calls[0]["arguments"]) == {"path": "AGENTS.md"}
+
+
+class _HugeArgsLLM(_ToolCallingLLM):
+    """工具调用的 arguments 极大——模拟「写一个大文件」这类调用。"""
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        from agent.llm import ToolCallDelta
+
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCallDelta(id="c1", name="Write",
+                                  arguments=json.dumps({"path": "big.py", "content": "x" * 5000})),
+                ],
+                stop_reason="tool_calls",
+                usage=Usage(5, 5),
+            )
+        return LLMResponse(content="写完了。", stop_reason="end_turn", usage=Usage(5, 5))
+
+
+@pytest.mark.asyncio
+async def test_tool_call_arguments_bounded_even_without_route_limit(manager):
+    """**生产者侧**的兜底截断：不经 web 路由的调用方（模型面 ``InspectSubagentTranscript``
+    工具）也拿不到无界 ``arguments``。
+
+    审阅发现（issue #212 修复 R1）：``InspectSubagentTranscript`` 的 ``limit`` 只有
+    ``minimum`` 没有 ``maximum``，且直接 ``json.dumps`` 结果进模型上下文——不给
+    ``manager`` 加兜底的话，3 轮 20KB 的 ``Write`` 调用会输出约 60K 字符（~15K tokens），
+    比修复前放大两个数量级。
+    """
+    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
+
+    manager.llm = _HugeArgsLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    subagent_id = scheduler._states["a"].subagent_id
+    raw = manager.inspect_transcript(
+        subagent_id=subagent_id, scope="recent_messages", limit=50)
+    calls = [c for m in raw["messages"] for c in (m.get("tool_calls") or [])]
+    assert calls, "带 tool_calls 的消息丢了"
+    assert len(calls[0]["arguments"]) <= TOOL_CALL_ARGUMENT_LIMIT
+    assert calls[0]["arguments_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_transcript_tool_call_arguments_are_bounded(manager):
+    """arguments 必须走单条内容截断——否则一个写大文件的工具调用就能撑爆响应。
+
+    ``content_limit`` 是**路由层**的单条截断口径（``_bounded_messages``）；
+    工具调用的 ``arguments`` 与消息 ``content`` 同属「单条内容」，
+    不能绕开它——否则 bounded 是空话。
+    """
+    manager.llm = _HugeArgsLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    payload = build_node_transcript_payload(manager, scheduler, "a", content_limit=40)
+    calls = [c for m in payload["messages"] for c in (m.get("tool_calls") or [])]
+    assert calls, "带 tool_calls 的消息丢了"
+    assert len(calls[0]["arguments"]) <= 40
+    assert calls[0]["arguments_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_transcript_tool_results_still_excluded_by_default(manager):
+    """默认仍排除 ``role="tool"`` 的结果（spec：「SHALL 默认排除工具结果」）。
+
+    补 ``tool_calls`` 是**增量**（assistant 自己的调用记录），不改变这个默认。
+    """
+    manager.llm = _ToolCallingLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    payload = build_node_transcript_payload(manager, scheduler, "a")
+    assert payload["included_tool_results"] is False
+    assert all(m["role"] != "tool" for m in payload["messages"])
+    # 但工具调用的**存在**必须可见。
+    assert any(m.get("tool_calls") for m in payload["messages"])
+
+
+@pytest.mark.asyncio
+async def test_inspect_tool_clamps_limit_and_arguments(manager):
+    """模型面工具的 bounded：``limit`` 夹到与 web 路由同值 + ``arguments`` 有上限。
+
+    审阅 Issue #1（中）：``InspectSubagentTranscript`` 的 ``limit`` 无上限、输出
+    直接进模型上下文——3 轮 20KB 的 ``Write`` 调用会放大到约 60K 字符。
+    """
+    from agent.tools.builtin.subagents import InspectSubagentTranscriptTool
+    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
+    from web.session import TRANSCRIPT_MAX_LIMIT
+
+    # 三个契约数字必须同值（一处改了另一处忘改 = 两条路径口径漂移）。
+    from web.session import TRANSCRIPT_CONTENT_LIMIT
+    assert InspectSubagentTranscriptTool.MAX_TRANSCRIPT_LIMIT == TRANSCRIPT_MAX_LIMIT
+    assert TOOL_CALL_ARGUMENT_LIMIT == TRANSCRIPT_CONTENT_LIMIT, (
+        "生产者的单条上限与路由的单条上限是两个数——不锁死必然漂移"
+    )
+
+    manager.llm = _HugeArgsLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    subagent_id = scheduler._states["a"].subagent_id
+
+    # **必须真的超过上限**：跑出来的消息只有个位数时，「返回 ≤200 条」的断言
+    # 恒真——变异验证证明它抓不到「去掉夹取」（那个变异会返回 301 条）。
+    session = manager._sessions[subagent_id]
+    from agent.message import Message
+    for index in range(TRANSCRIPT_MAX_LIMIT + 100):
+        session.messages.append(Message(role="user", content=f"pad-{index}"))
+
+    tool = InspectSubagentTranscriptTool(manager)
+    out = await tool.execute(subagent_id=subagent_id, scope="recent_messages", limit=100000)
+    payload = json.loads(out)
+    # 夹到上限：不可能因为要 10 万条而拿到 10 万条。
+    assert len(payload["messages"]) == TRANSCRIPT_MAX_LIMIT, (
+        f"limit 未被夹取：拿到 {len(payload['messages'])} 条"
+    )
+    # 单条工具调用参数有上限（生产者的兜底截断）。
+    for message in payload["messages"]:
+        for call in message.get("tool_calls") or []:
+            assert len(call["arguments"]) <= TOOL_CALL_ARGUMENT_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_truncation_flag_composes_across_producer_and_route(manager):
+    """两层截断标志必须**取或**，不能只看本层长度。
+
+    生产者（``manager``）按 ``TOOL_CALL_ARGUMENT_LIMIT`` 先截到 4000；路由层若拿到
+    更宽的 ``content_limit``（``build_node_transcript_payload`` 的公开参数），只看
+    本层长度会得出「没截断」——而实际上上游已经截过，前端据此会**谎报完整**。
+    """
+    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
+
+    manager.llm = _HugeArgsLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    # 路由预算**大于**生产者上限：上游截过，本层长度检查不会触发。
+    payload = build_node_transcript_payload(
+        manager, scheduler, "a", content_limit=TOOL_CALL_ARGUMENT_LIMIT * 2)
+    calls = [c for m in payload["messages"] for c in (m.get("tool_calls") or [])]
+    assert calls, "带 tool_calls 的消息丢了"
+    assert len(calls[0]["arguments"]) <= TOOL_CALL_ARGUMENT_LIMIT
+    assert calls[0]["arguments_truncated"] is True, (
+        "上游已截断但本层预算更宽——只看本层长度会谎报「未截断」"
+    )

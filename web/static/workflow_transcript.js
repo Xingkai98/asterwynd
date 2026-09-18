@@ -299,11 +299,21 @@
     messages.forEach((message) => {
       const role = String(message.role || '');
       const content = String(message.content || '');
+      const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       const parts = content.split('\n');
-      const head = parts.length > 1 ? parts : [content];
-      head.forEach((line, index) => {
-        lines.push(index === 0 ? {role, text: line} : {role: null, text: line});
+      const emitted = [];
+      parts.forEach((line, index) => {
+        emitted.push(index === 0
+          ? {role, text: line, calls}
+          : {role: null, text: line});
       });
+      // 模型只发起工具调用、不输出文字的轮次（AgentLoop 的大多数轮次）content
+      // 是空字符串——上面会产出一行**空文本**，那正是用户看到的一串空 ASSISTANT。
+      // 有调用时不再渲染那行空文本，改由工具调用块承担这一轮的内容。
+      if (calls.length && parts.length === 1 && !parts[0]) {
+        emitted[0] = {role, text: null, calls};
+      }
+      lines.push(...emitted);
     });
     if (!lines.length) {
       body.appendChild(el('div', 'drawer-empty', '（没有可显示的消息）'));
@@ -328,6 +338,34 @@
     observeClusters(body, clusters);
   }
 
+  /** 一条工具调用：``🔧 名字`` + 参数（与主 chat 的 ``addToolCallBlock`` 同口径）。
+
+  一个 assistant 轮次可以并发发起多个调用，逐个列出才看得出那一轮到底干了什么
+  ——那是「这个节点为什么慢/为什么错」最直接的证据。
+  */
+  function toolCallBlock(call) {
+    const block = el('div', 'tool-call-block');
+    block.appendChild(el('span', 'tool-name', `🔧 ${call.name || ''}`));
+    const args = String(call.arguments || '');
+    if (args) {
+      block.appendChild(el('pre', null, prettyArgs(args)));
+    }
+    if (call.arguments_truncated) {
+      block.appendChild(el('span', 'drawer-note', '（参数已截断）'));
+    }
+    return block;
+  }
+
+  /** ``arguments`` 是 JSON 字符串；解析失败就原样显示（工具调用可能被流式截断）。 */
+  function prettyArgs(args) {
+    try {
+      const parsed = JSON.parse(args);
+      return JSON.stringify(parsed, null, 2);
+    } catch (error) {
+      return args;
+    }
+  }
+
   function paintCluster(host, cluster) {
     if (host.dataset.painted) return;
     host.dataset.painted = '1';
@@ -335,7 +373,9 @@
     host.textContent = '';
     cluster.forEach((line) => {
       if (line.role) host.appendChild(el('div', 'msg-role', line.role));
-      host.appendChild(el('div', 'msg-text', line.text));
+      // ``text === null``：该轮只有工具调用，不渲染空文本行。
+      if (line.text !== null) host.appendChild(el('div', 'msg-text', line.text));
+      (line.calls || []).forEach((call) => host.appendChild(toolCallBlock(call)));
     });
   }
 

@@ -58,6 +58,51 @@ def _bounded_summary(text: str, max_tokens: int | None) -> str:
         return text
     return text[:budget_chars] + "\n…[truncated; full result in result_ref]"
 
+
+#: 单条工具调用 ``arguments`` 的字符上限。与 web 路由的 ``TRANSCRIPT_CONTENT_LIMIT``
+#: 同值——「单条内容」在模型面与 HTTP 面是同一个概念，不该有两个数。
+TOOL_CALL_ARGUMENT_LIMIT = 4000
+
+
+def _bounded_arguments(arguments: str) -> tuple[str, bool]:
+    """截断 ``arguments``，返回 ``(文本, 是否被截断)``。
+
+    截断标志必须跟着文本一起回流，不能只留文本——否则下游（路由层）再按自己的
+    预算截一次时，只能看到「已经被上游截短了的串」，从而把「其实截过」报成
+    「没截断」，即一条**假话**。
+    """
+    text = arguments or ""
+    if len(text) <= TOOL_CALL_ARGUMENT_LIMIT:
+        return text, False
+    return text[:TOOL_CALL_ARGUMENT_LIMIT], True
+
+
+def _project_tool_calls(message: Message) -> dict:
+    """投影一条 assistant 消息发起的工具调用（无调用时返回空 dict）。
+
+    AgentLoop 的大多数轮次**只有工具调用、没有文字**（``loop.py:750``：
+    ``Message(role="assistant", content="", tool_calls=[...])``）。只投影
+    ``role``/``content`` 会让这些消息变成一串空行——用户看到「对话不全」。
+
+    ``arguments`` 是 JSON 字符串（与主 chat ``tool_call`` 事件同口径）。这里
+    **按 ``TOOL_CALL_ARGUMENT_LIMIT`` 无条件截断**，而不是把截断留给调用方：
+    一个 ``Write`` 调用能带几十 KB 正文，而 ``inspect_transcript`` 的调用方
+    既有 HTTP 路由（自带 ``content_limit``）也有**模型面工具**
+    （``InspectSubagentTranscript``，其输出直接进上下文）——后者漏截断就是
+    上百倍放大，而「截断与否全看调用方是否记得」是最容易失守的一类契约。
+    """
+    if not message.tool_calls:
+        return {}
+    projected = []
+    for call in message.tool_calls:
+        arguments, truncated = _bounded_arguments(call.arguments)
+        projected.append({
+            "name": call.name,
+            "arguments": arguments,
+            "arguments_truncated": truncated,
+        })
+    return {"tool_calls": projected}
+
 # Run statuses that no longer change: a queued run cancelled before it ever
 # executed must be skipped by the worker instead of being launched.
 TERMINAL_RUN_STATUSES = frozenset(
@@ -1041,7 +1086,12 @@ class SubAgentManager:
             "run_id": run_id,
             "scope": "recent_messages",
             "messages": [
-                {"role": msg.role, "content": extract_text(msg.content), "tool_call_id": msg.tool_call_id}
+                {
+                    "role": msg.role,
+                    "content": extract_text(msg.content),
+                    "tool_call_id": msg.tool_call_id,
+                    **_project_tool_calls(msg),
+                }
                 for msg in tail
             ],
             "truncated": len(messages) > limit,

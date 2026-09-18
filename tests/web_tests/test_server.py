@@ -1,6 +1,7 @@
 # tests/web/test_server.py
 """Integration tests for FastAPI server (HTTP + WebSocket) with fake LLM."""
 import os
+import re
 import base64
 import json
 import subprocess
@@ -433,14 +434,17 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="hub-new-btn"' in index
     assert 'id="chat-panes"' in index
     assert 'id="hub-session-list"' in index
-    assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=19" in index
-    assert "/static/chat.js?v=22" in index
+    # 只断言「资源被引用」，**不钉版本号**：``?v=N`` 是缓存击穿串，每次前端改动
+    # 都要 bump（否则手机/PWA 会一直跑旧 JS）——钉死它等于每次合法 bump 都要改测试，
+    # 而这条断言的意图是「接线没漏」，不是「版本号是几」。
+    assert re.search(r'/static/markdown\.js\?v=\d+', index)
+    assert re.search(r'/static/style\.css\?v=\d+', index)
+    assert re.search(r'/static/chat\.js\?v=\d+', index)
     # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层
     # + 节点详情抽屉的对话面板（change enhance-workflow-graph-ux，D4/M3）。
-    assert "/static/workflow_graph.js?v=2" in index
-    assert "/static/workflow.js?v=2" in index
-    assert "/static/workflow_transcript.js?v=1" in index
+    assert re.search(r'/static/workflow_graph\.js\?v=\d+', index)
+    assert re.search(r'/static/workflow\.js\?v=\d+', index)
+    assert re.search(r'/static/workflow_transcript\.js\?v=\d+', index)
     assert 'id="workflow-view"' in index
     assert 'id="workflow-tab"' in index
     assert 'id="workflow-canvas"' in index
