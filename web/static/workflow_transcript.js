@@ -26,8 +26,13 @@
 
   //: 每个节点缓存一份结果：同一个节点反复切换 tab 不重复请求。
   const cache = new Map();
+  //: 上次取数时刻（节点 key → epoch 秒），刷新节律的判据。
+  const fetchedAt = new Map();
   //: 「暂停实时更新」的节点集合（D4：transcript 不跟着快照重排会打断阅读）。
   const paused = new Set();
+  //: 当前在跑的刷新定时器（切节点/关抽屉要停掉，否则会对已关闭的面板发请求）。
+  let refreshHandle = null;
+  let refreshCtx = null;
 
   function nodeKey(ctx) {
     return `${ctx.workflowId}::${ctx.nodeId}`;
@@ -40,10 +45,14 @@
     return node;
   }
 
-  /** 拉取一个节点的 transcript（**懒加载**：切到「对话」tab 才调）。 */
+  /** 拉取一个节点的 transcript（**懒加载**：切到「对话」tab 才调）。
+   *
+   * ``force`` 为真时绕过缓存（刷新节律到点后的重取）；否则命中缓存直接返回，
+   * 所以同一个节点反复切 tab 不会重复请求。
+   */
   async function fetchTranscript(ctx) {
     const key = nodeKey(ctx);
-    if (cache.has(key)) return cache.get(key);
+    if (!ctx.force && cache.has(key)) return cache.get(key);
     if (!ctx.sessionId) {
       return {kind: 'none', message: '该会话未在本进程加载'};
     }
@@ -61,13 +70,28 @@
     }
     const payload = await response.json();
     cache.set(key, payload);
+    fetchedAt.set(key, Date.now() / 1000);
     return payload;
   }
 
-  /** 进入某个节点的「对话」tab 时调用（``renderDrawerConvo`` 的唯一入口）。 */
+  /** 进入某个节点的「对话」tab 时调用（``renderDrawerConvo`` 的唯一入口）。
+   *
+   * ``ctx.node``（快照里的节点投影）用于判刷新节律——没有它就不排自动刷新，
+   * 只取一次。
+   */
   async function render(host, ctx) {
-    host.textContent = '';
-    host.appendChild(el('div', 'drawer-empty', '加载中…'));
+    stopAutoRefresh();
+    refreshCtx = ctx;
+    await paint(host, ctx, {loading: true});
+    scheduleAutoRefresh(host, ctx);
+  }
+
+  async function paint(host, ctx, options) {
+    const opts = options || {};
+    if (opts.loading) {
+      host.textContent = '';
+      host.appendChild(el('div', 'drawer-empty', '加载中…'));
+    }
     let payload;
     try {
       payload = await fetchTranscript(ctx);
@@ -79,9 +103,69 @@
     // 请求飞行期间用户可能已切走：只有内容还挂在 DOM 上时才覆盖。
     if (!host.isConnected) return;
     host.textContent = '';
-    if (payload.kind === 'single') renderSingle(host, ctx, payload);
+    host.appendChild(toolbar(ctx, payload));
+    if (payload.kind === 'single') renderSingle(host, payload);
     else if (payload.kind === 'candidates') renderCandidates(host, ctx, payload);
     else renderNone(host, payload);
+  }
+
+  /** 对话区工具条：暂停按钮（D4）+ 取数溯源。**三种形态都有**——暂停按钮不是
+   *  single 专属：候选列表同样会随刷新重排。 */
+  function toolbar(ctx, payload) {
+    const key = nodeKey(ctx);
+    const bar = el('div', 'transcript-bar');
+    const button = el('button', 'transcript-pause',
+      paused.has(key) ? '继续实时更新' : '暂停实时更新');
+    button.type = 'button';
+    button.dataset.action = 'pause-transcript';
+    button.addEventListener('click', () => {
+      if (paused.has(key)) paused.delete(key);
+      else paused.add(key);
+      button.textContent = paused.has(key) ? '继续实时更新' : '暂停实时更新';
+    });
+    bar.appendChild(button);
+    const stamp = fetchedAt.get(key);
+    if (typeof stamp === 'number') {
+      bar.appendChild(el('span', 'drawer-note',
+        `最后更新于 ${G.formatAge(Date.now() / 1000 - stamp)}`));
+    } else if (payload.content_limit) {
+      bar.appendChild(el('span', 'drawer-note',
+        `单条上限 ${payload.content_limit} 字符`));
+    }
+    return bar;
+  }
+
+  /**
+   * 按**定死的节律**重取（M3.8）：每 ``TRANSCRIPT_REFRESH_S`` 秒问一次纯函数
+   * ``transcriptRefreshDue``，该不该重取由它说了算（暂停 / 已终态 / 未到点都不取）。
+   *
+   * 这就是 design 里那个「刷新节律定死」的落地：既不是「打开取一次、之后永不
+   * 更新」（用户会以为已经处理完），也不是跟着每个快照重排（打断阅读）。
+   */
+  function scheduleAutoRefresh(host, ctx) {
+    stopAutoRefresh();
+    refreshCtx = ctx;
+    refreshHandle = window.setInterval(() => {
+      const current = refreshCtx;
+      if (!current || !host.isConnected) {
+        stopAutoRefresh();
+        return;
+      }
+      const due = G.transcriptRefreshDue(current.node, {
+        paused: paused.has(nodeKey(current)),
+        lastFetchedAt: fetchedAt.get(nodeKey(current)),
+        now: Date.now() / 1000,
+      });
+      if (!due) return;
+      paint(host, Object.assign({}, current, {force: true}));
+    }, G.TRANSCRIPT_REFRESH_S * 1000);
+  }
+
+  function stopAutoRefresh() {
+    if (refreshHandle === null) return;
+    window.clearInterval(refreshHandle);
+    refreshHandle = null;
+    refreshCtx = null;
   }
 
   function renderNone(host, payload) {
@@ -156,8 +240,7 @@
     }
   }
 
-  function renderSingle(host, ctx, payload) {
-    host.appendChild(transcriptToolbar(ctx, payload));
+  function renderSingle(host, payload) {
     const body = el('div', 'transcript-body');
     host.appendChild(body);
     renderClusters(body, payload.messages || []);
@@ -166,27 +249,6 @@
       // ——文案不能写成「内容被截断」。
       host.appendChild(el('p', 'drawer-note', '只显示了最近的消息（更早的未加载）。'));
     }
-  }
-
-  /** D4 的暂停按钮：transcript 不跟着快照重排（会打断阅读）。 */
-  function transcriptToolbar(ctx, payload) {
-    const bar = el('div', 'transcript-bar');
-    const key = nodeKey(ctx);
-    const button = el('button', 'transcript-pause',
-      paused.has(key) ? '继续实时更新' : '暂停实时更新');
-    button.type = 'button';
-    button.dataset.action = 'pause-transcript';
-    button.addEventListener('click', () => {
-      if (paused.has(key)) paused.delete(key);
-      else paused.add(key);
-      button.textContent = paused.has(key) ? '继续实时更新' : '暂停实时更新';
-    });
-    bar.appendChild(button);
-    if (payload.content_limit) {
-      bar.appendChild(el('span', 'drawer-note',
-        `单条上限 ${payload.content_limit} 字符`));
-    }
-    return bar;
   }
 
   /**
@@ -268,8 +330,10 @@
   window.AsterwyndWorkflowTranscript = {
     render,
     fetchTranscript,
+    stopAutoRefresh,
     CLUSTER_SIZE,
     cache,
     paused,
+    fetchedAt,
   };
 })();

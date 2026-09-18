@@ -967,6 +967,35 @@
       || status === 'budget_exceeded' || status === 'graph_recursion_exceeded';
   }
 
+  //: 「对话」tab 的自动刷新间隔（秒）。design D4 要求**定死刷新节律**：既不是
+  //: 「打开取一次、之后永不更新」（用户的抱怨会被当成已经处理完），也不是跟着
+  //: 每个快照重排（会打断阅读）。只在节点**未到终态**时轮询——跑完了就没有新
+  //: 内容，再轮询纯属浪费。
+  const TRANSCRIPT_REFRESH_S = 10;
+
+  /**
+   * 「此刻要不要重取这条 transcript」（M3.8 的刷新节律，纯函数便于测试）。
+   *
+   * - 暂停 → 永不重取（用户正在读）；
+   * - 节点已终态 → 不再重取（不会再有新消息）；
+   * - 否则距上次取数达到 ``TRANSCRIPT_REFRESH_S`` 才重取。
+   */
+  function transcriptRefreshDue(node, options) {
+    const opts = options || {};
+    if (opts.paused) return false;
+    if (!node || isTerminalNodeStatus(node.status)) return false;
+    const last = typeof opts.lastFetchedAt === 'number' ? opts.lastFetchedAt : null;
+    if (last === null) return true;
+    const now = typeof opts.now === 'number' ? opts.now : 0;
+    return now - last >= TRANSCRIPT_REFRESH_S;
+  }
+
+  /** 该节点状态是否已终态（不再有新内容）。 */
+  function isTerminalNodeStatus(status) {
+    return status === 'completed' || status === 'failed' || status === 'cancelled'
+      || status === 'blocked' || status === 'budget_exceeded' || status === 'skipped';
+  }
+
   /**
    * 统计行的边口径（D7）：报**实际绘制的路径数**，两个数字不等时才给可解释口径。
    *
@@ -1044,6 +1073,9 @@
     rankGraphs,
     graphTabMeta,
     edgeCountLabel,
+    transcriptRefreshDue,
+    isTerminalNodeStatus,
+    TRANSCRIPT_REFRESH_S,
     formatElapsed,
     formatAge,
     truncateText,

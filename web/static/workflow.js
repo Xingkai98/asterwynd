@@ -974,6 +974,11 @@
 
   /** 抽屉的关闭语义（Escape / 遮罩 / × 三处共用）。 */
   function closeDrawer(state) {
+    // 抽屉关了就别再轮询 transcript（否则会对一个不存在的面板持续发请求）。
+    if (window.AsterwyndWorkflowTranscript
+        && window.AsterwyndWorkflowTranscript.stopAutoRefresh) {
+      window.AsterwyndWorkflowTranscript.stopAutoRefresh();
+    }
     const drawer = el('workflow-drawer');
     const scrim = el('workflow-scrim');
     if (drawer) drawer.classList.remove('open');
@@ -1149,10 +1154,13 @@
       return;
     }
     // 懒加载（D4）：切到「对话」tab 才发请求、才建 DOM。
+    // ``node`` 一并交给它：刷新节律要判「这个节点是不是还在跑」（纯函数
+    // ``transcriptRefreshDue`` 需要 status）。
     window.AsterwyndWorkflowTranscript.render(pane, {
       sessionId: activeTab ? activeTab.sessionId : null,
       workflowId: entry.id,
       nodeId: node.id,
+      node,
     });
   }
 

@@ -459,3 +459,39 @@ def test_node_progress_and_tab_meta_share_the_same_progress_shape():
     meta = call("graphTabMeta", {"id": "wf", "status": "completed",
                                  "started_at": 0.0, "finished_at": 1.0}, 1, 1.0, progress)
     assert meta["progress"] == call("progressLabel", progress)
+
+
+# --- M3.8：「对话」tab 的刷新节律（定死，不是「取一次就完」） --------------
+
+
+def test_transcript_refreshes_on_a_pinned_cadence():
+    """design D4 要求刷新节律**定死**：既不是打开取一次就完，也不是每个快照重排。
+
+    窗口值只由纯函数自己判——测试不复制那个数字，否则改节律要改两处。
+    """
+    running = {"id": "a", "status": "started"}
+    # 刚取过 → 不重取（不能每个快照/每一 tick 都重排）。
+    assert call("transcriptRefreshDue", running,
+                {"paused": False, "lastFetchedAt": 1000.0, "now": 1000.0}) is False
+    assert call("transcriptRefreshDue", running,
+                {"paused": False, "lastFetchedAt": 1000.0, "now": 1000.5}) is False
+    # 隔了一分钟 → 一定该重取（节律是有限的，不会「永不更新」）。
+    assert call("transcriptRefreshDue", running,
+                {"paused": False, "lastFetchedAt": 1000.0, "now": 1060.0}) is True
+    # 从没取过 → 立即取。
+    assert call("transcriptRefreshDue", running,
+                {"paused": False, "lastFetchedAt": None, "now": 1000.0}) is True
+
+
+def test_transcript_refresh_stops_for_terminal_nodes():
+    """节点已终态 → 不会再有新消息，轮询是纯浪费。"""
+    for status in ("completed", "failed", "cancelled", "blocked",
+                   "budget_exceeded", "skipped"):
+        assert call("transcriptRefreshDue", {"id": "a", "status": status},
+                    {"paused": False, "lastFetchedAt": 0.0, "now": 99999.0}) is False
+
+
+def test_transcript_refresh_stops_while_paused():
+    """暂停按钮停的就是这条定时器——暂停是**有效**的（不是装饰）。"""
+    assert call("transcriptRefreshDue", {"id": "a", "status": "started"},
+                {"paused": True, "lastFetchedAt": 0.0, "now": 99999.0}) is False

@@ -713,6 +713,15 @@ Web 服务 SHALL 提供只读接口 `GET /api/sessions/{session_id}/workflows/{w
 - **THEN** SHALL 返回 `kind: "none"` 与结构化说明（route 附命中标签与选中出口、collect 附合并产出、未派发节点说明未执行）
 - **AND** SHALL NOT 编造 transcript
 
+前端 SHALL 在切到「对话」tab 时才请求（懒加载），SHALL 按**定死的刷新节律**按需重取（节点已到终态或用户暂停后 SHALL NOT 再重取），且对话区 SHALL 提供暂停/继续实时更新的动作。transcript 的渲染 SHALL 按行聚簇做 UI 虚拟化（SHALL NOT 按行建 DOM）。
+
+#### Scenario: 对话内容的刷新与暂停
+
+- **GIVEN** 一个仍在运行的节点，用户已切到该节点的「对话」tab
+- **WHEN** 达到刷新节律
+- **THEN** SHALL 重取该节点的 transcript
+- **AND** 用户点「暂停实时更新」后 SHALL NOT 再重取（节点到终态后同样不再重取）
+
 ### Requirement: workflow 多图与 foreach 可读性
 
 Workflow 视图的多图 tab SHALL 显示可区分不同运行的元信息（序号 + 起止/相对时间 + 耗时 + 完成计数）。`#N` SHALL 是按图级 `started_at` 排序的秩，且 tab 的空间顺序 SHALL 与编号一致（运行中 SHALL 用徽标而非位置区分）；`started_at` 缺失的图 SHALL 排在最后。foreach 容器节点 SHALL 常显并行计数（`完成 M/N`，缺失信息时退化为项数）并表达并行项的状态分布。图的统计行 SHALL 如实反映实际绘制的边数，SHALL 在存在同对节点并行边或折叠合并时给出可解释的口径差异；同一对节点的多条可见边 SHALL 在法向等距铺开，SHALL NOT 完全重合。
