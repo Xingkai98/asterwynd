@@ -62,7 +62,8 @@
     skipped: { badge: '—', borderStyle: 'dashed' },
   };
 
-  //: 边五档。``opacity`` 与 ``width`` 是「强调度」：passed/active 醒目，inactive 退到背景。
+  //: 边六档（第 6 档 ``satisfied`` 见 issue #207）。``opacity`` 与 ``width`` 是「强调度」：
+  //: passed/active 醒目，inactive 退到背景；``satisfied`` 介于其间（依赖满足但无数据流）。
   const EDGE_STYLES = {
     inactive: { color: '#475569', opacity: 0.28, width: 1.4, dash: [] },
     ready: { color: '#94a3b8', opacity: 0.6, width: 1.8, dash: [] },

@@ -5,7 +5,7 @@
 - 快照含完整 nodes + edges + 每节点/每边 status；
 - 节点八档状态（``pending``/``started``/``completed``/``failed``/``cancelled``/
   ``blocked``/``budget_exceeded``/``skipped``；最后一档由 change
-  ``enhance-workflow-graph-ux`` D2b 新增）与边五档状态（``inactive``/``ready``/
+  ``enhance-workflow-graph-ux`` D2b 新增）与边六档状态（``inactive``/``ready``/
   ``active``/``passed``/``blocked``）；
 - route 控制边 ``kind == "control"``，只高亮 ``targets`` 选中出口；
 - 快照**显式挑字段**（grill 决策 4）：不出现 ``subagent_ids``/``slots``/``raw``/``bus``/
@@ -198,7 +198,7 @@ async def test_snapshot_shape_is_json_serialisable(manager):
     assert "workflow_id" in encoded
 
 
-# --- 1.2 节点八档 / 边五档 --------------------------------------------------
+# --- 1.2 节点八档 / 边六档 --------------------------------------------------
 
 
 @pytest.mark.asyncio
