@@ -101,29 +101,7 @@
 
 ## 未实现队列
 
-### 3. `enhance-workflow-graph-ux`
-
-状态：未实现。
-
-关联 issue：[#197](https://github.com/Xingkai98/asterwynd/issues/197)（【feature】Workflow 流程图可视化体验增强：图例 + 异常态语义 + 节点详情 + 多图可读性）。
-
-批次：第十三批（多 Agent 运行态可视化）的**体验 follow-up**，与队列中其他 change 无依赖（纯前端增强 + 少量加法式后端字段）。
-
-建议顺序原因：
-
-- `workflow-graph-visualization`（#190）已合入，图能画出来但用户实测「看不懂、看不了细节」，本 change 把展示体验缺口一次补齐。
-- 前端增强优先，后端只做**加法式**补字段（节点 `reason`、图级时间戳、foreach 完成计数）与一个只读 transcript 路由，不动物理契约。
-- 走 grill 的非平凡 change（信息架构多条互斥路径），开发前需独立零记忆 subagent 设计追问收敛 design.md 的 D1–D7。
-
-主要交付：
-
-- **A 图例**：常驻可折叠图例条（节点类型 + 7 档状态 + 5 档边状态 + channel 线型），与状态词表同源生成。
-- **B 异常态语义**：色 + 形状/角标 + 状态词三重编码 + 「为什么是这个状态」的因果说明（纯函数推导）。
-- **C 节点详情**：点节点开详情抽屉（桌面右侧 / 手机底部，分 Tab），transcript 懒加载 + 仅 UI 虚拟化；新增只读 transcript 路由复用 `inspect_transcript`。
-- **D 多图/foreach 可读性**：多图 tab 元信息（序号/时间/耗时/完成计数）、foreach 常显 `完成 M/N`、边统计口径如实 + 并行边等距偏移。
-- 实现 PR 合入时给 issue #197 添加完成 comment 并关闭。
-
-### 4. `add-minimal-tui-runtime-view`
+### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -141,7 +119,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 5. `add-worktree-tool`
+### 4. `add-worktree-tool`
 
 状态：未实现。
 
