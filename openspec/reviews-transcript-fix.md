@@ -155,3 +155,137 @@ issue #212 的**缺陷 B**（`trace_digest` 虚假完成）本次未动，与「
 4. **全量 pytest 的干净复跑**：跑了一次全量（`--ignore=tests/web_tests/test_workflow_graph_browser.py`），结果 `2854 passed, 8 skipped, 2 failed, 1 error`，其中 3 条红全部落在 `tests/web_tests/test_multi_session_browser.py`（本次零改动，同属既有 issue #191 的 flake 家族，隔离复跑 3 次中 2 次全绿）。已知无关的既有失败 `tests/test_declarative_flow_engine.py::TestE2eEngineCliSmoke::test_engine_cli_validate_exit_code` 未单独确认（该文件在本次全量中被 `--ignore` 之外的正常收集覆盖，未出现在失败列表里）。**未在无并发争用的环境下做第二次全量复跑**。
 5. **`include_tool_results=True` 路径**：缺陷 A 的默认路径已覆盖，但显式打开工具结果时的载荷大小与截断行为未单独验证。
 6. **issue #212 缺陷 B（`trace_digest`）**：按「本次只修 A」的范围声明，未审。
+
+---
+
+# R2 复审
+
+审阅对象：`1635e42`（R1 修复 `1260a82` + 三条补测 `e8c7e16` / `102994f` / `1635e42`）
+审阅方式：零记忆独立复审 + 独立复现（不复用仓库测试桩）+ 逐轮变异验证（M-R1a/b/c、c′、M5，每轮单独施加、每轮 `git checkout` 还原并复跑基线）
+证据基线：审阅结束时工作区 `git status --porcelain` = 0 行、`git diff HEAD` = 0 行、`HEAD` = `1635e42`；四个源码/测试文件 md5 与本轮开始时逐一相同
+
+## Verdict
+
+**PASS**
+
+R1 的「中」Issue（`InspectSubagentTranscript` 工具路径上下文放大）**已真正修好**，且经独立复现确认放大消除、`limit` 夹取在代码层生效、截断标志两个方向都不谎报。R1 的三条新测试逐个变异验证**全部是真保护**，无假保护、无变异存活。浏览器测试的就绪等待修复（`1635e42`）经反证确认真实有效。修复未引入新的实质问题；下方两条「低」记录均为可选改进，不阻塞。
+
+## R1 Issue 逐条复核
+
+### Issue #1（中）—— 已修好 ✅
+
+**独立复现方法**（刻意不复用仓库测试的 `_HugeArgsLLM`，自己写一个「连续 3 轮各发一次 20KB `Write`」的脚本化 LLM，走完整的 `scheduler → AgentLoop → manager.inspect_transcript → 工具 execute` 链路）：
+
+| `limit` | post-fix（HEAD） | pre-fix 模拟（`_bounded_arguments` 猴补为恒等） |
+|---|---|---|
+| 3 | 8,496 字符 | 40,564 字符 |
+| 5（工具默认） | 12,719 字符 | 60,821 字符 |
+| 100 | 12,807 字符 | 60,909 字符 |
+| 200 | 12,807 字符 | 60,909 字符 |
+| 100000 | 12,807 字符 | 60,909 字符 |
+
+- **放大已消除**：修复后输出**不再随 `limit` 增长**（100 → 100000 三条完全同长，12,807 字符封顶）。修复前是线性增长（40K → 61K）。这与提交信息「修后实测 12,580 字符，limit=100 也仅 12,668」同量级，独立复现数字略高是因为我的 fixture 多了一轮 20KB 的**文字**收尾（`content` 不受 `TOOL_CALL_ARGUMENT_LIMIT` 管，见下「新发现」）。
+- **注意 R1 报告里的 127× 无法用本次的 pre/post 比值复现，也不该复现**：R1 的 320 字符基线是缺陷 A 修复**之前**（`81bca96`，投影层根本不投影 `tool_calls`，所以工具路径近乎空格）。本次比的是「R1 修复前 vs 后」，两者都已有 `tool_calls`，所以比值是 4.8×（60,909 / 12,807），不是 127×。两个数字口径不同，不矛盾。已用 `git show 81bca96:agent/subagent/manager.py` 确认该提交里确实没有 `tool_calls` 投影，320 字符基线成立。
+
+**`limit` 夹取在代码层生效（不只 schema）**：直接对 `InspectSubagentTranscriptTool.execute()` 打表，session 里预置 503 条消息（**必须真的超过上限**，否则「返回 ≤200」恒真）：
+
+| 传入 | 返回条数 |
+|---|---|
+| 不传（默认） | 5 |
+| 100000 | 200 |
+| 201 | 200 |
+| 200 | 200 |
+| 100 | 100 |
+| 0 | 1（夹到 minimum） |
+| -5 | 1（夹到 minimum） |
+
+夹取发生在 `agent/tools/builtin/subagents.py:218` 的 `min(max(int(requested) or 1, 1), self.MAX_TRANSCRIPT_LIMIT)`——**是代码**，不是 `_bounded_arguments` 那种靠 schema 提示。schema 的 `maximum: 200`（`subagents.py:197`）与代码层同值，两层一致。
+
+**截断标志两个方向都正确（不谎报）**：
+
+- 上游截过 + 本层预算更大 → 报 `True`：路由 `content_limit=8000 > TOOL_CALL_ARGUMENT_LIMIT=4000` 时，`arguments` 长度 4000、`arguments_truncated=True`。✅ 这正是 R1 担心的「谎报未截断」，已由 `web/session.py:767` 的 `bool(call.get("arguments_truncated")) or len(arguments) > content_limit` 取或挡住。
+- 上游没截 + 本层截 → 报 `True`：`content_limit=10` 时长度 10、标志 `True`。✅
+- HTTP 默认路径：长度 4000、标志 `True`。✅
+
+### Issue #2（低，浏览器 flake）—— 处置合理 ✅
+
+`1635e42` 只给**新增的两条**测试补就绪等待、不动既有 15 条。这个取舍成立，理由有三条独立证据：
+
+1. **修复真实有效，且是这道竞态的正解**。反证：把新测试里的 `_wait_app_ready(page)` 去掉（**保留** `state="visible"`），单跑 6 次 → **2 failed / 4 passed**。留着则 6/6 全绿。说明 `state="visible"` 是冗余的、`_wait_app_ready` 才是真正的修复（它等 `chat.js` 异步 `init()` 落定，从根上避免 `showHub()` 事后摘掉 `active`）。
+2. **flake 确属既有**。触发竞态的代码（`chat.js` 的 `init`/`showView`/`showHub`、helper `_push_workflow_event`）在本次提交里零改动；issue #191 是已存在的 open 跟踪项（标题即「浏览器测试偶发 flake」）。
+3. **新测试已不再共享该竞态窗口**：新测试 A 单跑 6/6、新测试 B 单跑 6/6、全文件 20 条连跑 3 次皆 `20 passed`。
+
+**保留意见（低，不阻塞）**：只修新增的两条，等于承认既有 15 条仍带同一缺陷。这在本 PR 范围内是对的（R1 也是这么建议的，issue #191 已跟踪），但值得在 PR 描述里显式引用 #191，避免这半个修复被读成「flake 已解决」。
+
+### Issue #3（低，版本号 bump）—— 记录合理 ✅
+
+已核对 `web/static/index.html:162,164`：`workflow_graph.js?v=2→v=3`、`workflow.js?v=2→v=3`，`workflow_transcript.js?v=1→v=2`。前两者本次内容未改，属顺带补历史欠账，方向正确、无副作用。R1 的判断维持。
+
+## 变异验证结果（R1 三条新测试 + 前端）
+
+方法同 R1：每轮单独施加一个变异 → 跑相关测试 → 观察是否变红 → `git checkout -- <file>` 还原 → 复跑基线确认绿。**每轮还原后 `git status --porcelain` 均为 0 行、基线均 `25 passed`。**
+
+| 变异 | 改了什么 | 期望 | 实际 | 是否捕获 |
+|---|---|---|---|---|
+| **M-R1a** | `agent/subagent/manager.py:98` `_bounded_arguments(call.arguments)` → 不截断 | 生产者侧兜底必红 | `test_tool_call_arguments_bounded_even_without_route_limit` + `test_truncation_flag_composes_across_producer_and_route` 红（`assert 5033 <= 4000`）。**2 failed** | ✅ 捕获（2 条） |
+| **M-R1b** | `web/session.py:767` 取或 → 只看本层长度 | 标志取或必红 | `test_truncation_flag_composes_across_producer_and_route` 红（`assert False is True`，文案「上游已截断但本层预算更宽——只看本层长度会谎报」）。**1 failed** | ✅ 捕获（1 条）——正是 `e8c7e16` 补的那个缺口 |
+| **M-R1c** | `agent/tools/builtin/subagents.py:218` 去掉 `min(..., MAX_TRANSCRIPT_LIMIT)` 夹取 | limit 夹取必红 | `test_inspect_tool_clamps_limit_and_arguments` 红：`limit 未被夹取：拿到 304 条`，`assert 304 == 200` | ✅ 捕获 |
+| **M-R1c′**（更弱的变体） | 同上，但夹到**错的**上限 `1000` | 应同样红 | 同上测试红。说明断言钉的是「夹到 200 这个值」，不是「夹过一下」 | ✅ 捕获 |
+| **M5** | `web/static/workflow_transcript.js:353-355` 去掉 `（参数已截断）` 渲染 | 前端标志语义必红 | `test_convo_tab_survives_malformed_tool_arguments` 红（`assert "参数已截断" in body`）。**1 failed** | ✅ 捕获 |
+
+**结论：5 个变异全部被捕获，无一条假保护，无变异存活。**
+
+`102994f` 的补测尤其关键：`102994f` 之前的断言是 `len(payload["messages"]) <= TRANSCRIPT_MAX_LIMIT`，而当时 fixture 只产出个位数消息 → 该断言恒真，M-R1c 会**存活**。改成 `== TRANSCRIPT_MAX_LIMIT` 并补 300 条 padding 之后才真正可判——本次 M-R1c 与 M-R1c′ 均红，证明这个缺口确已补上。
+
+## 新发现
+
+### N1 —— 低 —— 两个 4000 常量**只被单向弱锁**，注释的「同值」承诺没有机械保障
+
+**文件:行号**：`agent/subagent/manager.py:62-64`（`TOOL_CALL_ARGUMENT_LIMIT = 4000`，注释声称与 `TRANSCRIPT_CONTENT_LIMIT` 同值）、`web/session.py:728`（`TRANSCRIPT_CONTENT_LIMIT = 4000`）、`tests/web_tests/test_workflow_node_transcript.py:622`（只锁了 200 那一对）
+
+**核实结果**（逐一实测改常量再跑测试）：
+
+| 改哪一处 | 结果 | 判定 |
+|---|---|---|
+| `manager.TOOL_CALL_ARGUMENT_LIMIT` 4000 → 9999 | 2 failed | 被**间接**捕获 |
+| `manager.TOOL_CALL_ARGUMENT_LIMIT` 4000 → **4001** | **25 passed** | ❌ 漏 |
+| `manager.TOOL_CALL_ARGUMENT_LIMIT` 4000 → **4500** | **25 passed** | ❌ 漏 |
+| `manager.TOOL_CALL_ARGUMENT_LIMIT` 4000 → 1000 | 25 passed | ❌ 漏（放宽方向安全，但没锁住） |
+| `tool.MAX_TRANSCRIPT_LIMIT` 200 → 999 | 1 failed | ✅ 被 `:622` 直接锁定 |
+| `web.TRANSCRIPT_CONTENT_LIMIT` 4000 → 9999 | **全量 web 测试 274 passed，0 failed** | ❌ **完全漏** |
+
+三点事实：
+
+1. **测试文件里根本没有 `TRANSCRIPT_CONTENT_LIMIT`**（`grep` 命中 0 处）。提交信息说「测试锁定了一致」——那锁定的是 `MAX_TRANSCRIPT_LIMIT == TRANSCRIPT_MAX_LIMIT`（200 那一对，`tests/...:622`），**不是** `TOOL_CALL_ARGUMENT_LIMIT == TRANSCRIPT_CONTENT_LIMIT`（4000 那一对）。4000 这一对**没有任何断言**，`grep -S` 全历史也从未存在过。
+2. 4000 对上 manager 侧「改了就红」的那两档（≥5033）是**数值巧合**：`_HugeArgsLLM` 的 arguments 恰好是 5033 字符，超过它才看得出来。`4500` 这种「其实已经漂移、但没跨过 fixture 长度」的改动完全不报，`1000` 这种更不报。这是**侥幸兜底**，不是契约锁定。
+3. web 侧完全无保护：把 `TRANSCRIPT_CONTENT_LIMIT` 改成 9999，全量测试 274 条全绿。若真漂移，路由层会比生产者宽，`arguments_truncated` 的取或逻辑仍正确（不会谎报），但 `content` 截断口径就与模型面不一致了，且注释里「同一个概念不该有两个数」的话会变成假话。
+
+**严重度定低**：不产生错误行为——两个数**当前**同值，取或逻辑在两侧不等时也仍然正确（不谎报），只是放大/截断口径不一致。**建议（可选，不阻塞）**：在 `test_inspect_tool_clamps_limit_and_arguments` 里把 `:622` 的那行扩成两条：
+
+```python
+assert InspectSubagentTranscriptTool.MAX_TRANSCRIPT_LIMIT == TRANSCRIPT_MAX_LIMIT
+assert TOOL_CALL_ARGUMENT_LIMIT == TRANSCRIPT_CONTENT_LIMIT   # 补这一条
+```
+
+一行断言即可把 manager↔web 的 4000 口径钉死，消除「注释写死、机制不锁」的漂移面。
+
+### N2 —— 低 —— 工具路径的 `content` 仍不受限（**既有**，非本次引入）
+
+**文件:行号**：`agent/tools/builtin/subagents.py:219-226`（工具直接 `json.dumps(result)`）、`agent/subagent/manager.py:1091`（`extract_text(msg.content)` 不带截断）
+
+**实测**：子 agent 最后一轮输出 30,000 字符文字（非工具调用）时，`InspectSubagentTranscriptTool` 返回 **34,507 字符**，其中 30,000 来自 `content`——`arguments` 已被兜在 4000，但 `content` 没有。
+
+**判定为既有**：已用 `git show 54d0b2e^:agent/tools/builtin/subagents.py` 确认，缺陷 A 修复**之前**该工具路径就直接 `json.dumps` 且对 `content` 无截断，`extract_text` 同样不受限。本次修复没有让它变糟，也没有义务修它（R1 Issue #1 明确只针对 `arguments` 的量级，且 `content` 的放大不是本提交引入的）。
+
+**严重度低、非本次阻塞**：但它与 N1 是同一个「模型面不受 bounded 约束」的根，建议合并记入 known-debt 或后续 change，而不是留在两处注释的口径缝里。注意它也让本次修复后的上限不是「12.8K 封顶」而是「随子 agent 文字输出线性增长」——我的复现里 12,807 字符 vs 提交里的 12,580 差异就来自这一项。
+
+## 未覆盖
+
+诚实标注 R2 **没有**核实到的部分：
+
+1. **真实 LLM 端到端**：与 R1 相同——全部验证用桩 LLM（脚本化大 `Write` / `_HugeArgsLLM`）。未用真实 provider 跑一次 30 条消息、10 次工具调用的节点。两轮审阅都停在桩层面，这是本次修复遗留的最大验证缺口。
+2. **手机端/PWA 实际缓存行为**：版本号 bump 的有效性仍只由文件内容与版本历史推定，未在真机验证。
+3. **`include_tool_results=True` 路径**：仍未单独验证其载荷大小与截断行为（R1 未覆盖项 5 沿用）。
+4. **既有 15 条浏览器测试的 flake 率**：只定性确认它们仍带同一竞态（issue #191），未测其失败率；本轮全文件连跑 3 次恰好 3 次全绿，不足以反证 flake 不存在（R1 实测其 n=8 约半数失败）。
+5. **`test_declarative_flow_engine.py::TestE2eEngineCliSmoke::test_engine_cli_validate_exit_code`**：按任务说明属 master 同样红的既有失败，本轮全量（`--ignore` 两个 flake 文件）未出现该失败，未单独复跑确认。
+6. **`tests/web_tests/test_reconnect_pending_interaction_browser.py::test_streaming_delta_after_reconnect_lands_in_live_dom`**：本轮全量跑出现 1 次失败，隔离重跑 4 次全绿、该文件本次零改动，判为同族高负载 flake；但**未在 base commit 上做对照复跑**，故「既有」这一判定证据强度弱于 R1 对 #191 的实测。

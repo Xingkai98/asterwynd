@@ -618,8 +618,12 @@ async def test_inspect_tool_clamps_limit_and_arguments(manager):
     from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
     from web.session import TRANSCRIPT_MAX_LIMIT
 
-    # 两个契约数字必须同值（一处改了另一处忘改 = 两条路径口径漂移）。
+    # 三个契约数字必须同值（一处改了另一处忘改 = 两条路径口径漂移）。
+    from web.session import TRANSCRIPT_CONTENT_LIMIT
     assert InspectSubagentTranscriptTool.MAX_TRANSCRIPT_LIMIT == TRANSCRIPT_MAX_LIMIT
+    assert TOOL_CALL_ARGUMENT_LIMIT == TRANSCRIPT_CONTENT_LIMIT, (
+        "生产者的单条上限与路由的单条上限是两个数——不锁死必然漂移"
+    )
 
     manager.llm = _HugeArgsLLM()
     scheduler = _scheduler(manager, _single_spec())
