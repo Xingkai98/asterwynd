@@ -69,16 +69,22 @@ def _edge(source, target, *, kind="data", status="inactive", channel="summary",
 # --- 3.2 状态映射 -----------------------------------------------------------
 
 
-def test_node_colors_cover_seven_tiers():
-    """spec「节点状态高亮」：七档各有颜色，且三档基本色对齐 spec 措辞。"""
+def test_node_colors_cover_eight_tiers():
+    """spec「节点状态高亮」：八档各有颜色，且三档基本色对齐 spec 措辞。
+
+    ``skipped``（未选中）是 change ``enhance-workflow-graph-ux`` D2b 新增的第 8 档
+    ——它与 ``blocked``（被连累）的区别正是该 change 的立项命题之一。
+    """
     colors = call("nodeColors")
     assert set(colors) == {
         "pending", "started", "completed", "failed",
-        "cancelled", "blocked", "budget_exceeded",
+        "cancelled", "blocked", "budget_exceeded", "skipped",
     }
     assert colors["completed"] == "#4ade80"   # 绿
     assert colors["started"] == "#60a5fa"     # 蓝
     assert colors["pending"] == "#94a3b8"     # 灰
+    # 冷灰蓝 ≠ blocked 的黄：灰度下也要分得开（不只拉色相）。
+    assert colors["skipped"] != colors["blocked"]
 
 
 def test_node_color_falls_back_for_unknown_status():

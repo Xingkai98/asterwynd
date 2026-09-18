@@ -98,12 +98,51 @@
     <section id="workflow-view" class="view">
       <div id="workflow-panel" class="workflow-panel">
         <div id="workflow-tabs" class="workflow-tabs" hidden></div>
+        <div id="workflow-actions" class="workflow-actions" hidden>
+          <span id="workflow-freshness" class="workflow-freshness"></span>
+          <button type="button" id="workflow-stop" class="workflow-stop" hidden>停止</button>
+        </div>
         <div id="workflow-summary" class="workflow-summary"></div>
+        <!-- D1 图例条：桌面默认展开、手机默认折叠（同一 DOM，720 断点切 class）。 -->
+        <div id="workflow-legend" class="legend" hidden>
+          <button type="button" class="legend-head" id="legend-toggle"
+                  aria-expanded="false" aria-controls="legend-body">
+            <span>图例</span><span class="legend-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="legend-body" id="legend-body"></div>
+        </div>
+        <!-- G14：超限时图**仍然画**，告警条叠在画布上方。 -->
+        <div id="workflow-notice" class="workflow-notice" hidden></div>
         <div id="workflow-canvas" class="workflow-canvas">
           <div class="workflow-empty">模型启动 workflow 后自动显示流程图。</div>
         </div>
       </div>
     </section>
+
+    <!-- 节点详情抽屉（D4：桌面右侧 / 手机底部，同一 DOM 切 class） -->
+    <div id="workflow-scrim" class="workflow-scrim" hidden></div>
+    <aside id="workflow-drawer" class="drawer" role="dialog" aria-modal="true"
+           aria-label="节点详情" hidden>
+      <div class="drawer-grabber" aria-hidden="true"></div>
+      <button type="button" class="drawer-close" id="drawer-close" aria-label="关闭">×</button>
+      <div class="drawer-head">
+        <div class="drawer-title">
+          <span id="drawer-badge" class="drawer-badge" aria-hidden="true"></span>
+          <strong id="drawer-id"></strong>
+          <span class="kind-badge" id="drawer-kind"></span>
+        </div>
+        <div id="drawer-status" class="drawer-status"></div>
+      </div>
+      <div class="drawer-tabs" role="tablist">
+        <button type="button" class="drawer-tab active" data-tab="task"
+                role="tab" aria-selected="true">任务</button>
+        <button type="button" class="drawer-tab" data-tab="output"
+                role="tab" aria-selected="false">产出</button>
+        <button type="button" class="drawer-tab" data-tab="convo"
+                role="tab" aria-selected="false">对话</button>
+      </div>
+      <div class="drawer-body" id="drawer-body"></div>
+    </aside>
 
     <!-- Debug View -->
     <section id="debug-view" class="view">
@@ -120,8 +159,9 @@
 </div>
 
 <script src="/static/markdown.js?v=6"></script>
-<script src="/static/workflow_graph.js?v=1"></script>
-<script src="/static/workflow.js?v=1"></script>
+<script src="/static/workflow_graph.js?v=2"></script>
+<script src="/static/workflow_transcript.js?v=1"></script>
+<script src="/static/workflow.js?v=2"></script>
 <script src="/static/chat.js?v=22"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>

@@ -436,13 +436,17 @@ def test_web_static_assets_include_session_and_run_display():
     assert "/static/markdown.js?v=6" in index
     assert "/static/style.css?v=19" in index
     assert "/static/chat.js?v=22" in index
-    # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层。
-    assert "/static/workflow_graph.js?v=1" in index
-    assert "/static/workflow.js?v=1" in index
+    # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层
+    # + 节点详情抽屉的对话面板（change enhance-workflow-graph-ux，D4/M3）。
+    assert "/static/workflow_graph.js?v=2" in index
+    assert "/static/workflow.js?v=2" in index
+    assert "/static/workflow_transcript.js?v=1" in index
     assert 'id="workflow-view"' in index
     assert 'id="workflow-tab"' in index
     assert 'id="workflow-canvas"' in index
     assert 'id="workflow-tabs"' in index
+    assert 'id="workflow-legend"' in index
+    assert 'id="workflow-drawer"' in index
     assert "switchToWorkflowView" in script
     assert "workflow_started" in script
     assert "workflow_snapshot" in script

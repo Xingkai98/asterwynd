@@ -101,7 +101,7 @@
 
 ## 未实现队列
 
-### 4. `add-minimal-tui-runtime-view`
+### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 
@@ -119,7 +119,7 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 5. `add-worktree-tool`
+### 4. `add-worktree-tool`
 
 状态：未实现。
 

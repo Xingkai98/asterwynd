@@ -185,6 +185,24 @@ MessageBus SHALL 只承担低延迟广播/非关键提示；权威状态、依�
 - **THEN** workflow SHALL 仍正常完成
 - **AND** 结果正确性 SHALL NOT 受影响
 
+### Requirement: 未选中分支的节点终态（skipped）
+
+节点终态 SHALL 含 `skipped` 一档，专给「**只被 route 控制边门控、且没有任何 route 选中它**的未派发节点」——它与 `blocked`（被上游失败/取消/受阻连累）SHALL 明确区分。判据 SHALL 复用既有控制激活信号（存在 route 源入边、`activations <= 0`、且每条控制入边的源头 route 都已 `completed`），SHALL NOT 引入新的记账；控制它的 route 从未运行过时 SHALL NOT 报 `skipped`。若节点同时被上游失败/取消/受阻连累与未被选中，SHALL 优先记 `blocked`。`skipped` SHALL 是**良性终态**：不使整图 `failed`，且 SHALL 进独立计数桶（SHALL NOT 落入 `pending`）。
+
+判定顺序 SHALL 先于预算分支——否则被 route 门控的根节点在预算停时会被写成 `budget_exceeded`。
+
+#### Scenario: 未选中的 route 分支记为 skipped
+
+- **GIVEN** 一个 route 节点命中某出口，另一出口的下游节点未被激活
+- **WHEN** workflow 收尾
+- **THEN** 未激活分支的下游节点 SHALL 标记为 `skipped`，SHALL NOT 标记为 `blocked`
+
+#### Scenario: 控制它的 route 从未运行时不报 skipped
+
+- **GIVEN** 一个节点只被 route R 的控制边门控，而 R 因未满足的 required 数据依赖从未运行
+- **WHEN** workflow 收尾
+- **THEN** 该节点 SHALL 标记为 `blocked`，SHALL NOT 标记为 `skipped`
+
 ### Requirement: workflow 级四维度总预算
 
 系统 SHALL 对一个 workflow run 施加四维度总预算：`max_total_tokens` / `max_total_cost_usd` / `max_total_runs` / `max_wall_time_s`。四维度**默认均为 `0`（不限）**——只有显式配置（`subagents.workflow.budget.*`）才设上限，`0` SHALL 表示「该维度不限」，但 `max_total_runs=0` SHALL NOT 解除 C2 的 `max_runs` 结构闸。配置 `subagents` / `subagents.workflow` / `subagents.workflow.budget` 中任一段落**键存在但值为 `null`** 时，系统 SHALL 报配置错误（`ConfigError`），SHALL NOT 静默视为「未配置 = 不限」。任一维度超限时系统 SHALL 停止派发新节点、取消排队中未执行的 run、drain 已启动的 run、并将根节点标记为 `budget_exceeded`。

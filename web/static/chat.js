@@ -251,8 +251,15 @@ function showView(viewName) {
   const workflowViewEl = document.getElementById('workflow-view');
   if (workflowViewEl) workflowViewEl.classList.toggle('active', viewName === 'workflow');
   document.getElementById('debug-view').classList.toggle('active', viewName === 'debug');
-  if (viewName === 'workflow' && window.AsterwyndWorkflow) {
-    window.AsterwyndWorkflow.renderPanel(getActiveTab());
+  if (window.AsterwyndWorkflow) {
+    // G4/G8：本地计时器只在 Workflow 视图可见时跑——图不可见时每秒重绘纯属浪费，
+    // 回来时 ``renderPanel`` 会立刻刷一次，不会看到过期数字。
+    if (viewName === 'workflow') {
+      window.AsterwyndWorkflow.renderPanel(getActiveTab());
+      window.AsterwyndWorkflow.startTicker();
+    } else {
+      window.AsterwyndWorkflow.stopTicker();
+    }
   }
   if (viewName === 'debug' && typeof renderTimeline === 'function') renderTimeline();
 }
@@ -1698,6 +1705,19 @@ function sendModeChange() {
   }
   ws.send(JSON.stringify({ type: 'set_mode', mode: nextMode }));
 }
+
+/** G18：停止一张正在跑的 workflow（WS ``cancel_workflow``，不是 HTTP 路由）。
+ *
+ * 与 ``{"type": "cancel"}`` 的边界：那个只让待审批失败、run 照跑；``cancel_workflow``
+ * 才真的停图（后端 ``scheduler.cancel()``）。
+ */
+window.AsterwyndWorkflowStop = function stopWorkflow(workflowId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !workflowId) {
+    return false;
+  }
+  ws.send(JSON.stringify({ type: 'cancel_workflow', workflow_id: workflowId }));
+  return true;
+};
 
 modeApplyBtn.addEventListener('click', sendModeChange);
 

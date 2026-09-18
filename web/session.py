@@ -723,6 +723,306 @@ def build_workflow_resume_payloads(manager, *, session_id: str) -> list[dict]:
     return running + terminal[-5:]
 
 
+#: 单条 transcript 消息的内容上限（bounded 的**单条**维度）。
+#: ``inspect_transcript`` 只保证条数、不保证单条长度——截断必须在路由层做。
+TRANSCRIPT_CONTENT_LIMIT = 4000
+#: transcript 条数默认/硬上限（与 ``InspectSubagentTranscript`` 的默认 5 不同：
+#: UI 要的是一屏可读的窗口，不是给模型省上下文）。
+TRANSCRIPT_DEFAULT_LIMIT = 50
+TRANSCRIPT_MAX_LIMIT = 200
+#: 候选集分页默认/硬上限（D4：N 到 200 时一次全渲染会卡住手机）。
+CANDIDATE_DEFAULT_LIMIT = 50
+CANDIDATE_MAX_LIMIT = 200
+
+
+def _bounded_messages(payload: dict, *, content_limit: int) -> dict:
+    """给 ``inspect_transcript`` 的结果加**单条内容截断**（路由层自带的能力）。
+
+    ``truncated`` 的语义保持 ``inspect_transcript`` 的原义（``len(messages) > limit``，
+    已剔除 tool 角色后）——前端文案不能写成「内容被截断」。
+    """
+    messages = []
+    for message in payload.get("messages", []) or []:
+        content = str(message.get("content") or "")
+        messages.append({
+            "role": message.get("role"),
+            "content": content[:content_limit],
+            "content_truncated": len(content) > content_limit,
+        })
+    payload["messages"] = messages
+    payload["content_limit"] = content_limit
+    return payload
+
+
+def _reason_fields(state) -> dict:
+    """reason 的**全文**出口（G17）。
+
+    scheduler 侧的 reason（``budget exceeded (tokens)``、``workflow ended before the
+    node became ready``、``3/12 foreach items did not complete``）**从不出现在任何
+    subagent transcript 里**——对话只记 assistant/user 消息。所以快照截断到 400 之后，
+    用户就没有任何地方能读到它了。
+    """
+    reason = state.reason if state is not None else None
+    text = str(reason) if reason else ""
+    return {
+        "reason_full": text,
+        "reason_length": len(text),
+        # 本出口给的是**全文**，所以恒为 ``False``；保留这个键是为了让前端**不必**
+        # 比长度——比长度会把「恰好等于上限」的 reason 误判成已截断（审阅员 B）。
+        # 快照那条出口截断到 ``_SUMMARY_LIMIT``（400），父 agent 面是
+        # ``_PARENT_FIELD_LIMIT``（200）——三处上限口径不同、用途不同，见 design D9(e)。
+        "reason_truncated": False,
+    }
+
+
+def _item_drilldown_payload(
+    manager, scheduler, node_id: str, subagent_id: str, run_id: str | None,
+    *, limit: int, content_limit: int, include_tool_results: bool,
+) -> dict:
+    """候选项下钻：取**某一项**自己的 transcript（spec Scenario / D5.3）。
+
+    没有这条路径，「点进单项」就是个空操作——前端拿到的是容器载荷（候选列表），
+    原样重渲染，点了没反应。
+
+    单项的身份由 ``subagent_id`` 决定（``index`` 只用于回显与前端缓存键）。容器
+    节点在 manager 里是 N 条 ``(workflow_id, node_id)`` 相同的 session，所以**必须**
+    由调用方指名是哪一个；这里不再按 node_id 反查——那正是「取到别的项」的来源。
+    """
+    index = None
+    items = []
+    state = scheduler._states.get(node_id) if scheduler is not None else None
+    if state is not None:
+        for position, slot in enumerate(state.item_runs):
+            if getattr(slot, "subagent_id", None) == subagent_id:
+                index = position
+                break
+        items = _foreach_candidates(manager, scheduler, state, content_limit)
+
+    payload: dict = {
+        "kind": "single",
+        "node_id": node_id,
+        "node_kind": state.node.kind if state is not None else None,
+        "subagent_id": subagent_id,
+        "run_id": run_id,
+        "index": index,
+        "messages": [],
+        "truncated": False,
+        "included_tool_results": include_tool_results,
+        "limit": limit,
+        "content_limit": content_limit,
+        **_reason_fields(state),
+    }
+    if index is not None and index < len(items):
+        # 这一项的 task/reason 就是它在候选列表里的那份（同一数据源，不重算）。
+        payload["task"] = items[index].get("task", "")
+        payload["status"] = items[index].get("status")
+        if items[index].get("reason"):
+            payload["reason_full"] = items[index]["reason"]
+            payload["reason_length"] = len(items[index]["reason"])
+    try:
+        raw = manager.inspect_transcript(
+            subagent_id=subagent_id,
+            scope="recent_messages",
+            run_id=run_id,
+            limit=min(max(int(limit) or 1, 1), TRANSCRIPT_MAX_LIMIT),
+            include_tool_results=include_tool_results,
+        )
+    except KeyError:
+        # 该 subagent 已不在内存（进程重启 / 会话被淘汰）：结构化降级，不 500。
+        payload["kind"] = "none"
+        payload["message"] = "该会话未在本进程加载"
+        return payload
+    payload.update(_bounded_messages(raw, content_limit=content_limit))
+    payload.setdefault("status", raw.get("status"))
+    return payload
+
+
+def build_node_transcript_payload(
+    manager,
+    scheduler,
+    node_id: str,
+    *,
+    limit: int = TRANSCRIPT_DEFAULT_LIMIT,
+    offset: int = 0,
+    content_limit: int = TRANSCRIPT_CONTENT_LIMIT,
+    include_tool_results: bool = False,
+    subagent_id: str | None = None,
+    run_id: str | None = None,
+) -> dict:
+    """一个节点的只读 transcript 载荷（三态 union；D4/M3）。
+
+    形态由**节点类型**决定，不是特例兜底：
+
+    - ``single``     — 恰好 1 个对应 subagent（subagent / aggregate(llm) / 自动插层）
+    - ``candidates`` — foreach 容器（N>1 个展开项各自独立 subagent）
+    - ``none``       — 不产生 run 的节点（route / aggregate(collect) / 从未派发）
+
+    候选集的**索引源是 ``item_states``（index 空间）**，不是 ``subagent_ids``：
+    后者是稀疏数组（异常项走 ``continue`` 跳过 append），拿它当索引会让
+    「12 项里被取消的 4 项」从列表里消失——而那正是用户最想知道的。``subagent_ids``
+    只用于真实性校验。``index``/``task`` 从 run record 取，**不靠 name 反解**
+    （``session.name`` 是 ``f"{node.id}-{index}"``，但候选顺序 ≠ item 序号：
+    ``create_subagent`` 发生在 ``_acquire_slot()`` 之后，并发下顺序不定）。
+
+    ``subagent_id`` 非空时走**候选项下钻**（``_item_drilldown_payload``）：取那一项
+    自己的 transcript，而不是容器的候选列表。
+
+    只读：不调 LLM、不写盘、不改执行状态。
+    """
+    if subagent_id:
+        return _item_drilldown_payload(
+            manager, scheduler, node_id, subagent_id, run_id,
+            limit=min(max(int(limit) or 1, 1), TRANSCRIPT_MAX_LIMIT),
+            content_limit=content_limit,
+            include_tool_results=include_tool_results,
+        )
+    state = scheduler._states.get(node_id) if scheduler is not None else None
+    if state is None:
+        return {
+            "kind": "none", "node_id": node_id, "node_kind": None,
+            "message": "该节点不在当前执行计划里",
+            **_reason_fields(None),
+        }
+
+    node = state.node
+    base = {"node_id": node_id, "node_kind": node.kind, **_reason_fields(state)}
+
+    # foreach 容器：按 index 空间给候选集。
+    if node.kind == "foreach" and state.items:
+        total = len(state.item_states)
+        candidates = _foreach_candidates(manager, scheduler, state, content_limit)
+        if total <= 1:
+            # N=1 的容器归 ``single``，不设特例分支（审阅员 B）。
+            return _single_payload(manager, state, base, candidates, node,
+                                   limit=limit, content_limit=content_limit,
+                                   include_tool_results=include_tool_results)
+        capped = min(max(int(limit) or 0, 1), CANDIDATE_MAX_LIMIT)
+        start = max(int(offset) or 0, 0)
+        page = candidates[start:start + capped]
+        return {
+            **base,
+            "kind": "candidates",
+            "total": total,
+            "offset": start,
+            "limit": capped,
+            "has_more": start + len(page) < len(candidates),
+            "candidates": page,
+        }
+
+    # 不产生 run 的节点：给该类型的**自有信息**，不是一句「无对话」。
+    if node.kind == "route":
+        return {
+            **base,
+            "kind": "none",
+            "verdict": state.verdict,
+            "targets": list(state.targets),
+            "raw": str(state.raw or "")[:content_limit],
+        }
+    # 普通节点 / llm 聚合 / 自动插层走 ``subagent_id``（单数）：``subagent_ids``
+    # 只被 ``_execute_foreach`` 填充。collect 聚合显式置 ``subagent_id = None``，
+    # 所以「有没有 run」这一个判据同时覆盖了「未派发」与「纯逻辑节点」。
+    if not state.subagent_id:
+        is_collect = node.kind == "aggregate" and node.strategy == "collect"
+        return {
+            **base,
+            "kind": "none",
+            "summary": (state.summary or "")[:content_limit],
+            "message": (
+                "该节点是纯逻辑聚合，不产生对话" if is_collect
+                else "该节点未执行（未派发或未产生 run）"
+            ),
+        }
+
+    return _single_payload(manager, state, base, None, node,
+                           limit=limit, content_limit=content_limit,
+                           include_tool_results=include_tool_results)
+
+
+def _single_payload(
+    manager, state, base: dict, candidates, node,
+    *, limit: int, content_limit: int, include_tool_results: bool,
+) -> dict:
+    """``single`` 形态：取该节点那一个 subagent 的 transcript 尾部。"""
+    subagent_id = candidates[0]["subagent_id"] if candidates else state.subagent_id
+    payload = {
+        **base,
+        "kind": "single",
+        "subagent_id": subagent_id,
+        "messages": [],
+        "truncated": False,
+        "included_tool_results": include_tool_results,
+        "limit": limit,
+        "content_limit": content_limit,
+    }
+    if subagent_id is None:
+        return payload
+    try:
+        raw = manager.inspect_transcript(
+            subagent_id=subagent_id,
+            scope="recent_messages",
+            limit=min(max(int(limit) or 1, 1), TRANSCRIPT_MAX_LIMIT),
+            include_tool_results=include_tool_results,
+        )
+    except KeyError:
+        # 该 subagent 已不在内存（进程重启 / 会话被淘汰）：结构化降级，不 500。
+        payload["message"] = "该会话未在本进程加载"
+        return payload
+    payload.update(_bounded_messages(raw, content_limit=content_limit))
+    payload["status"] = raw.get("status")
+    return payload
+
+
+def _foreach_candidates(manager, scheduler, state, content_limit: int) -> list[dict]:
+    """按 **index 空间**生成候选（``item_states`` 是索引源）。
+
+    每条的 ``subagent_id``/``run_id`` 从 ``item_runs`` 槽取（``_launch_run`` 在派发
+    那一刻写回），``task`` 从 run record 取（渲染后的具体任务，不靠 name 反解）。
+    """
+    node = state.node
+    candidates: list[dict] = []
+    for index, recorded in enumerate(state.item_states):
+        slot = state.item_runs[index] if index < len(state.item_runs) else None
+        subagent_id = getattr(slot, "subagent_id", None)
+        run_id = getattr(slot, "run_id", None)
+        run = manager.find_run(subagent_id, run_id) if subagent_id and run_id else None
+        task = (getattr(run, "task", "") or "") if run is not None else ""
+        reason = (getattr(run, "reason", "") or "") if run is not None else ""
+        summary = (getattr(run, "summary", "") or "") if run is not None else ""
+        status = recorded
+        if run is not None and run.status not in ("completed", "failed", "cancelled",
+                                                  "budget_exceeded", "queue_full"):
+            status = "running" if run.status == "running" else "queued"
+        if not task:
+            task = render_candidate_task(node, index)
+        candidates.append({
+            "index": index,
+            # **不回落**到 ``subagent_ids[index]``：它是稀疏数组（异常项走
+            # ``continue`` 不 append），下标 ≠ item 下标——回落会拿一个可能错位的
+            # id 冒充（前端据此取数就会展示**别的项**的 transcript）。取不到就
+            # 如实为空，前端显示「该项未派发」。
+            "subagent_id": subagent_id,
+            "run_id": run_id,
+            "status": status,
+            "label": f"#{index}",
+            "summary": summary[:content_limit],
+            "reason": reason[:content_limit],
+            "task": task[:content_limit],
+        })
+    return candidates
+
+
+def render_candidate_task(node, index: int) -> str:
+    """候选的兜底 task（run record 拿不到时，如被取消的项从未派发）。
+
+    这里**只**能是模板原文 + 序号——渲染具体 item 需要 ``state`` 里的解析结果，
+    而那个不在这条路径上。明确标注是模板，不假装是具体任务。
+    """
+    template = (node.task or "").strip()
+    if not template:
+        return f"#{index}"
+    return f"{template}（第 {index} 项）"
+
+
 class AgentSession:
     """Holds one AgentLoop instance and its message history."""
 

@@ -3,9 +3,10 @@
 覆盖 tasks 1.1-1.3：
 
 - 快照含完整 nodes + edges + 每节点/每边 status；
-- 节点七档状态（``pending``/``started``/``completed``/``failed``/``cancelled``/
-  ``blocked``/``budget_exceeded``）与边五档状态（``inactive``/``ready``/``active``/
-  ``passed``/``blocked``）；
+- 节点八档状态（``pending``/``started``/``completed``/``failed``/``cancelled``/
+  ``blocked``/``budget_exceeded``/``skipped``；最后一档由 change
+  ``enhance-workflow-graph-ux`` D2b 新增）与边五档状态（``inactive``/``ready``/
+  ``active``/``passed``/``blocked``）；
 - route 控制边 ``kind == "control"``，只高亮 ``targets`` 选中出口；
 - 快照**显式挑字段**（grill 决策 4）：不出现 ``subagent_ids``/``slots``/``raw``/``bus``/
   ``attribution``/``latest_events``；
@@ -31,8 +32,14 @@ NODE_STATUS_TIERS = frozenset(
 EDGE_STATUS_TIERS = frozenset({"inactive", "ready", "active", "passed", "blocked"})
 
 #: 快照节点**允许**出现的键（显式白名单：多一个都是「没挑字段」）。
+#: ``enhance-workflow-graph-ux`` 加的加法字段：``reason``/``task``（D3/G5）、
+#: ``item_states``/``items_running``/``items_completed``/``items_failed``（G7/D5）。
 SNAPSHOT_NODE_KEYS = frozenset(
-    {"id", "kind", "status", "runs", "summary", "started_at", "finished_at", "targets", "items"}
+    {
+        "id", "kind", "status", "runs", "summary", "reason", "task",
+        "started_at", "finished_at", "targets", "items",
+        "item_states", "items_running", "items_completed", "items_failed",
+    }
 )
 SNAPSHOT_EDGE_KEYS = frozenset(
     {"from", "to", "channel", "required", "reducer", "kind", "status"}
@@ -170,9 +177,12 @@ async def test_snapshot_does_not_inline_parent_envelope_bloat(manager):
     for banned in ("bus", "attribution", "attribution_ref", "latest_events",
                    "inserted_nodes", "declared_spec_hash", "expansion_plan_hash"):
         assert banned not in snapshot
+    # 图级白名单是**内联字面量**（没有常量可改）——本 change 加的加法字段是
+    # ``started_at``/``finished_at``（D3）与 ``budget``（G13）。
     assert set(snapshot) <= {
         "workflow_id", "spec_hash", "goal", "status", "nodes", "edges",
         "total", "completed", "failed", "diagnostics", "timestamp",
+        "started_at", "finished_at", "budget",
     }
 
 
@@ -186,7 +196,7 @@ async def test_snapshot_shape_is_json_serialisable(manager):
     assert "workflow_id" in encoded
 
 
-# --- 1.2 节点七档 / 边五档 --------------------------------------------------
+# --- 1.2 节点八档 / 边五档 --------------------------------------------------
 
 
 @pytest.mark.asyncio

@@ -305,12 +305,18 @@ async def test_backpressure_dispatches_at_most_the_queue_budget(manager_for_sche
 
 @pytest.mark.asyncio
 async def test_all_required_waits_and_records_failure(manager_for_scheduler):
-    """失败不 fail-fast：一条臂失败仍等其余完成，失败记录保留。"""
+    """失败不 fail-fast：一条臂失败仍等其余完成，失败记录保留。
+
+    change ``enhance-workflow-graph-ux``（G26）：有节点 ``failed`` 的图现在报
+    ``completed_with_failures``（不再是 ``completed``）——否则用户在 tab 上看到
+    「已完成」根本不会去看哪里失败了。``completed_with_failures`` 仍属成功收敛
+    （不使整图算失败），本条断言的语义不变、只是状态名更精确。
+    """
     manager_for_scheduler.llm = FailingLLM(fail_on=2)
     result = await _run(
         WorkflowScheduler(manager_for_scheduler), _fanout_spec()
     )
-    assert result["status"] == "completed"
+    assert result["status"] == "completed_with_failures"
     statuses = {node["id"]: node["status"] for node in result["nodes"]}
     assert statuses["join"] == "completed"  # 仍汇合
     assert "failed" in {statuses["a"], statuses["b"], statuses["c"]}
@@ -366,7 +372,11 @@ async def test_best_effort_times_out_and_cancels_slow_arm(tmp_path):
 
 @pytest.mark.asyncio
 async def test_best_effort_degrades_to_partial_results_without_raising(manager_for_scheduler):
-    """Q3/Q8：即使只剩失败臂，best_effort 也按已有记录聚合，不抛异常。"""
+    """Q3/Q8：即使只剩失败臂，best_effort 也按已有记录聚合，不抛异常。
+
+    change ``enhance-workflow-graph-ux``（G26）：有 ``failed`` 臂的图现在报
+    ``completed_with_failures`` 而非 ``completed``（语义不变，状态名更精确）。
+    """
     manager = manager_for_scheduler
     manager.llm = MixedArmLLM(delay=0.5)
     spec = {
@@ -388,7 +398,7 @@ async def test_best_effort_degrades_to_partial_results_without_raising(manager_f
         ],
     }
     result = await _run(WorkflowScheduler(manager), spec)
-    assert result["status"] == "completed"
+    assert result["status"] == "completed_with_failures"  # G26：有 failed 臂
     statuses = {node["id"]: node["status"] for node in result["nodes"]}
     assert statuses["dead"] == "failed"  # 失败臂保留记录
     assert statuses["live"] == "cancelled"  # 超时臂被取消
