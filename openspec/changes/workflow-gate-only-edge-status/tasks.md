@@ -21,6 +21,7 @@
 - [ ] 3.1 `web/static/workflow_graph.js` 的 `EDGE_STYLES` 加 `satisfied: { color: '#86efac', opacity: 0.55, width: 1.6, dash: [] }`。
 - [ ] 3.2 `EDGE_STATUS_TEXT` 加 `satisfied: '依赖已满足，但产出未被下游读取'`（图例内容由此自动跟随，无需改图例代码）。
 - [ ] 3.3 前端纯函数单测：`EDGE_STYLES`/图例覆盖六档；`satisfied` 与 `inactive`、`passed` 在明度或线宽上可分辨（灰度第二重编码）。
+- [ ] 3.4 **更新那条会红的既有前端断言**（grill 实测点名）：`tests/web_tests/test_workflow_graph_js.py:94-96` 的 `assert set(styles) == {五档}` 加 `satisfied`（改名 / 改断言为六档）。（图例那条是动态断言、会自动跟随，**不会**红。）
 
 ## 4. 测试与收尾
 

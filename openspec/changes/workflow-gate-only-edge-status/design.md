@@ -30,9 +30,13 @@
 **新档 `satisfied`**，判据（四个条件同时成立）：
 
 ```python
-edge.required and source.status == "completed" and target.status != "pending"
+# source/target 的 None 是**防御性分支**：真实图不可达
+# （_states 由 plan.nodes 构造，边端点已在解析期校验），但省掉它一旦发生
+# 就是 AttributeError 打断整张图的快照推送。grill 决策 2。
+source is not None and target is not None
+    and edge.required and source.status == "completed" and target.status != "pending"
 ```
-（外加「未被消费」——由优先级链保证：`passed` 的判据在本档**之前**，命中即返回。）
+（外加「未被消费」——由优先级链保证：`passed` 的判据在本档**之前**，命中即返回。**不需要**再写显式的 `not in _consumed_edges`——那会制造两处真相；能执行到本档本身就是「不在该集合」的证明（grill 决策 6）。）
 
 **放哪**：优先级链的**第 5 档之后、兜底之前**（即 `ready` 之后、`inactive` 之前）。
 
@@ -64,6 +68,12 @@ edge.required and source.status == "completed" and target.status != "pending"
 
 **为什么靠明度而不只靠色相**：#197 已确立「不得仅靠颜色承载语义」的口径（节点侧用角标 + 边框形状做了四重编码）。边侧没有角标位，所以用**明度差 + 线宽差**——转灰度后仍可分辨。
 
+### D2b — 无箭头是**第三重编码**（grill 实测补充，非缺陷）
+
+`renderEdge` 只给 `edge.status === 'passed' || 'active'` 的数据边挂实心箭头（`web/static/workflow.js:685-687`），控制边另挂空心箭头（`:682-684`），其余一律无箭头。所以按 D2/D3 的最小改落地后，**`satisfied` 天然无箭头、`passed` 有箭头**——语义上正好是「有没有数据流过去」。
+
+**这条要写进记录防止实现者「顺手补个箭头」把第三重编码抹掉**：`satisfied` 的「无箭头」与 D2 的「明度 + 线宽」共同构成非颜色维度的可分辨性（对应 spec delta 的「非颜色维度可分辨」口径）。
+
 ### D3 — 与 C5 指标的隔离
 
 本档**纯读**既有信号（`edge.required` + `source.status` + `target.status`），**不引入任何新记账**：
@@ -83,7 +93,7 @@ edge.required and source.status == "completed" and target.status != "pending"
 | 源 `skipped` / `blocked` / `budget_exceeded` | `inactive`（或 `blocked`，视规则 3） | 源没产出，「没数据流」是**正确**表达，不是误导 |
 | 源 `failed` / `cancelled` | `blocked`（规则 3） | 既有语义已正确 |
 | route 控制边 | `passed` / `inactive`（规则 1 提前返回） | 控制边不走数据语义 |
-| 目标 `failed`（自身失败，未读输入） | **`satisfied`** | 依赖确实满足了；节点是**自己**挂的，边不该背这个锅 |
+| 目标 `failed`（自身失败） | **`passed`**（**实测**，非本档） | 目标所在的 `_execute_subagent` 在启动 run **之前**先求值 `task=self._node_task_text(node)`，而后者在 `if text:` 内就记了账（`scheduler.py:1541-1546`、`:2203-2204`）——所以只要是「上游有产出且目标读了」，边早在 run 跑起来前就已是 `passed`，目标随后怎么失败都不影响。**只有**「上游产出为空」或「目标根本不读输入（如 foreach 字面 `items`）」时，目标失败才落本档 |
 
 **明确 Non-Goal**：不追求把「源非 completed 但曾起过门控作用」的组合也标成 `satisfied`——那些组合里「没有数据」是**准确**的表达，把它们也染绿反而会稀释本档的含义。
 
@@ -94,7 +104,7 @@ edge.required and source.status == "completed" and target.status != "pending"
 ## Risks / Trade-offs
 
 - **风险**：边词表在 spec 里**明文列举**（`openspec/specs/web-ui/spec.md` 两处「五档」），改实现不改 spec 会造成 drift → **对策**：spec delta 同步 MODIFIED 两条 Requirement，收尾合入 current spec。
-- **风险**：前端既有测试有「边五档」的**精确断言**（`EDGE_STATUS_TIERS` frozenset、图例覆盖五档），加档必红 → **对策**：有意更新（这是 spec 变更的正常代价），并在 tasks 里点名。
+- **风险**：加第 6 档会红**一条**既有前端断言——`tests/web_tests/test_workflow_graph_js.py:94-96` 的 `assert set(styles) == {五档}`（**实测**加 key 后为 False）。**注意（grill 实测修正）**：图例那条**不会**红——`test_workflow_graph_ux_js.py:88-96` 的图例断言是**动态**的（`== set(call("edgeStatusStyles"))`），会随词表自动跟随；浏览器 smoke 只查 4 个文本标签。→ **对策**：更新那一条（改名 / 改断言为六档），这是 spec 变更的正常代价。
 - **Trade-off**：六档比五档多一个视觉状态，图例变长一行 → 换「纯门控边不再像死线」。用户已就此拍板（方案 A）。
 - **Trade-off**：`satisfied` 与 `passed` 同色系，在极小屏 + 低亮度下可能难分 → 用**线宽差**（2.2 vs 1.6）做第二重编码兜底。
 
