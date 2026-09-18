@@ -626,11 +626,20 @@ async def test_inspect_tool_clamps_limit_and_arguments(manager):
     await scheduler.run(scheduler.spec)
     subagent_id = scheduler._states["a"].subagent_id
 
+    # **必须真的超过上限**：跑出来的消息只有个位数时，「返回 ≤200 条」的断言
+    # 恒真——变异验证证明它抓不到「去掉夹取」（那个变异会返回 301 条）。
+    session = manager._sessions[subagent_id]
+    from agent.message import Message
+    for index in range(TRANSCRIPT_MAX_LIMIT + 100):
+        session.messages.append(Message(role="user", content=f"pad-{index}"))
+
     tool = InspectSubagentTranscriptTool(manager)
     out = await tool.execute(subagent_id=subagent_id, scope="recent_messages", limit=100000)
     payload = json.loads(out)
     # 夹到上限：不可能因为要 10 万条而拿到 10 万条。
-    assert len(payload["messages"]) <= TRANSCRIPT_MAX_LIMIT
+    assert len(payload["messages"]) == TRANSCRIPT_MAX_LIMIT, (
+        f"limit 未被夹取：拿到 {len(payload['messages'])} 条"
+    )
     # 单条工具调用参数有上限（生产者的兜底截断）。
     for message in payload["messages"]:
         for call in message.get("tool_calls") or []:
