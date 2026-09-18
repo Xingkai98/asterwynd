@@ -14,7 +14,11 @@
 
   // --- 3.2 状态映射 -------------------------------------------------------
 
-  //: 节点七档（与 scheduler 的终态集合对齐；budget_exceeded 是独立终态）。
+  //: 节点八档（与 scheduler 的终态集合对齐；budget_exceeded 是独立终态）。
+  //: ``skipped``（D2b）是「route 条件判断没走这条」的**良性终态**——它与
+  //: ``blocked``（被上游/预算连累）的区别正是本 change 的立项命题之一，所以配色
+  //: 刻意选**冷灰蓝**、与 ``blocked`` 的黄拉开明度差（不只拉色相：灰度/色觉障碍
+  //: 下也要分得开，WCAG 1.4.1 不得仅用颜色表达状态）。
   const NODE_COLORS = {
     pending: '#94a3b8',
     started: '#60a5fa',
@@ -23,6 +27,7 @@
     cancelled: '#64748b',
     blocked: '#facc15',
     budget_exceeded: '#fb923c',
+    skipped: '#7f8ea8',
   };
   const DEFAULT_NODE_COLOR = NODE_COLORS.pending;
 
@@ -33,7 +38,28 @@
     failed: 'failed',
     cancelled: 'cancelled',
     blocked: 'blocked',
-    budget_exceeded: 'budget exceeded',
+    budget_exceeded: '预算超限',
+    skipped: '未选中',
+  };
+
+  //: G3（M2.6）的 ``queued`` 是**投影层**状态（「已派发、在等执行 slot」），
+  //: scheduler 侧不写它。前端要单独给一档，否则排队项会显示成 running。
+  const QUEUED_COLOR = '#3b82f6';
+  const QUEUED_LABEL = '排队中';
+
+  //: 状态的四重编码（D2）：色 + 角标 + 边框形状 + 状态词。
+  //: **角标字形只用默认字体普遍覆盖的字符**——实测 ``⏸``（U+23F8）在多数系统
+  //: 字体缺失，会渲染成豆腐块（□），所以预算档用 ``‖`` 而不是暂停符。
+  //: 边框语汇沿用 Temporal：实线 = 已发生，虚线 = 未发生/非终局，双线 = 被中断。
+  const STATUS_ENCODINGS = {
+    pending: { badge: '', borderStyle: 'solid' },
+    started: { badge: '', borderStyle: 'solid' },
+    completed: { badge: '', borderStyle: 'solid' },
+    failed: { badge: '✕', borderStyle: 'solid' },
+    cancelled: { badge: '⊝', borderStyle: 'solid' },
+    blocked: { badge: '⊘', borderStyle: 'dashed' },
+    budget_exceeded: { badge: '‖', borderStyle: 'double' },
+    skipped: { badge: '—', borderStyle: 'dashed' },
   };
 
   //: 边五档。``opacity`` 与 ``width`` 是「强调度」：passed/active 醒目，inactive 退到背景。
@@ -61,12 +87,61 @@
     foreach: 'F',
   };
 
+  //: 图级状态走**独立词表**（D10）：``NODE_COLORS`` 是**节点**状态词表，有精确
+  //: 相等契约测试；把图级状态（``running``/``declared``/``completed_with_failures``
+  //: /``graph_recursion_exceeded``）塞进去会污染它，也会让 tab 圆点退化成兜底灰。
+  const GRAPH_STATUS_COLORS = {
+    declared: '#94a3b8',
+    running: '#60a5fa',
+    completed: '#4ade80',
+    //: G26：跑完了但有节点失败——不能显示成绿的，否则用户根本不会去看哪里失败。
+    completed_with_failures: '#fbbf24',
+    failed: '#f87171',
+    cancelled: '#64748b',
+    budget_exceeded: '#fb923c',
+    graph_recursion_exceeded: '#f472b6',
+  };
+  const GRAPH_STATUS_LABELS = {
+    declared: '已声明',
+    running: 'running',
+    completed: 'completed',
+    completed_with_failures: '有失败',
+    failed: 'failed',
+    cancelled: 'cancelled',
+    budget_exceeded: '预算超限',
+    graph_recursion_exceeded: '图超限',
+  };
+
   function nodeColor(status) {
+    if (status === 'queued') return QUEUED_COLOR;
     return NODE_COLORS[status] || DEFAULT_NODE_COLOR;
   }
 
   function nodeLabel(status) {
+    if (status === 'queued') return QUEUED_LABEL;
     return NODE_LABELS[status] || String(status || 'unknown');
+  }
+
+  function graphStatusColor(status) {
+    return GRAPH_STATUS_COLORS[status] || DEFAULT_NODE_COLOR;
+  }
+
+  function graphStatusLabel(status) {
+    return GRAPH_STATUS_LABELS[status] || String(status || 'unknown');
+  }
+
+  function graphStatusColors() {
+    return Object.assign({}, GRAPH_STATUS_COLORS);
+  }
+
+  function statusEncodings() {
+    return JSON.parse(JSON.stringify(STATUS_ENCODINGS));
+  }
+
+  /** 节点状态的编码（色 + 角标 + 边框形状）；``queued`` 走投影态那一档。 */
+  function statusEncoding(status) {
+    if (status === 'queued') return { badge: '', borderStyle: 'solid' };
+    return STATUS_ENCODINGS[status] || { badge: '', borderStyle: 'solid' };
   }
 
   function nodeColors() {
@@ -87,8 +162,100 @@
     return dash ? dash.slice() : [];
   }
 
+  function channelNames() {
+    return Object.keys(CHANNEL_DASH);
+  }
+
   function kindGlyph(kind) {
     return KIND_GLYPHS[kind] || '?';
+  }
+
+  function kindGlyphs() {
+    return Object.assign({}, KIND_GLYPHS);
+  }
+
+  // --- D1 图例（内容模型与词表同源，单测锁定不漂移） ----------------------
+
+  //: 每档状态的**人话解释**（D1：图例条目不是裸术语）。与 D2 的因果文案同源。
+  const NODE_STATUS_TEXT = {
+    pending: '等待上游完成',
+    started: '正在执行',
+    completed: '成功完成',
+    failed: '自身执行失败',
+    cancelled: '被取消，未跑完',
+    blocked: '被上游或预算挡住，未执行',
+    budget_exceeded: '预算耗尽主动停止',
+    skipped: '条件判断没走这条分支，未选中（≠ 失败）',
+  };
+  const NODE_KIND_TEXT = {
+    subagent: '子代理：一个节点跑一个 subagent',
+    foreach: '并行展开：一个容器内并发跑 N 项',
+    route: '条件分支：按标签二选一，不产生对话',
+    aggregate: '聚合：把上游产出合并成一份',
+  };
+  const EDGE_STATUS_TEXT = {
+    inactive: '无数据可传',
+    ready: '上游已就绪，等待下游',
+    active: '源或目标正在运行',
+    passed: '数据已被下游读取',
+    blocked: '目标无法继续',
+  };
+  const CHANNEL_TEXT = {
+    summary: 'summary / result_ref（实线）',
+    result_ref: 'summary / result_ref（实线）',
+    artifact: 'artifact（虚线）',
+    bus: 'bus（点线）',
+  };
+
+  /** 去重后的 channel 列表（线型相同只留一个代表，保持 ``CHANNEL_DASH`` 的键序）。 */
+  function uniqueChannels() {
+    const seen = new Set();
+    const out = [];
+    Object.keys(CHANNEL_DASH).forEach((key) => {
+      const signature = CHANNEL_DASH[key].join(',');
+      if (seen.has(signature)) return;
+      seen.add(signature);
+      out.push(key);
+    });
+    return out;
+  }
+
+  /**
+   * 图例的内容模型（D1）：**从词表同源生成**——改 ``NODE_COLORS`` 等词表时图例
+   * 自动跟随，不会出现「图变了、图例没变」。返回结构直接喂渲染层。
+   */
+  function legendModel() {
+    return {
+      kinds: Object.keys(KIND_GLYPHS).map((key) => ({
+        key,
+        glyph: KIND_GLYPHS[key],
+        label: key,
+        text: NODE_KIND_TEXT[key] || '',
+      })),
+      statuses: Object.keys(NODE_COLORS).map((key) => ({
+        key,
+        color: NODE_COLORS[key],
+        label: NODE_LABELS[key] || key,
+        badge: (STATUS_ENCODINGS[key] || {}).badge || '',
+        borderStyle: (STATUS_ENCODINGS[key] || {}).borderStyle || 'solid',
+        text: NODE_STATUS_TEXT[key] || '',
+      })),
+      edges: Object.keys(EDGE_STYLES).map((key) => ({
+        key,
+        color: EDGE_STYLES[key].color,
+        opacity: EDGE_STYLES[key].opacity,
+        width: EDGE_STYLES[key].width,
+        dash: EDGE_STYLES[key].dash.slice(),
+        text: EDGE_STATUS_TEXT[key] || '',
+      })),
+      // channel 按**去重后的线型**出图例：summary 与 result_ref 画出来是同一条
+      // 实线，各占一行只会让图例变长而没有信息量。
+      channels: uniqueChannels().map((key) => ({
+        key,
+        dash: CHANNEL_DASH[key].slice(),
+        text: CHANNEL_TEXT[key] || key,
+      })),
+    };
   }
 
   // --- 3.2/5.1 分层布局 ---------------------------------------------------
@@ -223,11 +390,13 @@
 
     const layoutNodes = nodes.map((node) => {
       const position = placed.get(node.id);
+      const encoding = statusEncoding(node.status);
       return {
         id: node.id,
         kind: node.kind,
         status: node.status,
         summary: node.summary || '',
+        reason: node.reason || '',
         runs: node.runs || 0,
         items: node.items === undefined ? null : node.items,
         targets: node.targets || [],
@@ -235,9 +404,16 @@
         groupLeader: Boolean(node.groupLeader),
         memberCount: node.memberCount || 0,
         itemCount: node.itemCount === undefined ? null : node.itemCount,
+        // foreach 的并行进度（G7/D5）：折叠态下由折叠算法补齐，展开态直接用节点自带值。
+        itemsCompleted: node.items_completed === undefined ? null : node.items_completed,
+        itemsFailed: node.items_failed === undefined ? null : node.items_failed,
+        itemsRunning: node.items_running === undefined ? null : node.items_running,
+        itemStates: node.item_states || null,
         color: nodeColor(node.status),
         label: nodeLabel(node.status),
         glyph: kindGlyph(node.kind),
+        badge: encoding.badge,
+        borderStyle: encoding.borderStyle,
         x: position.x,
         y: position.y,
         width: NODE_WIDTH,
@@ -245,10 +421,29 @@
       };
     });
 
+    // 并行边偏移（D7）：同一对 ``(from,to)`` 的多条边如果都画同一条三次贝塞尔，
+    // 会在画布上**完全重合**——用户看到 1 条线，统计却说 3 条。这里先按
+    // ``(from,to)`` 预扫出每条边的 ``k``（序号）与 ``n``（总数），再等距铺开
+    // （igraph ``curve_multiple`` 的思路）。
+    //
+    // 分组键用 ``(from,to)`` 而**不是** ``(from,to,kind)``：同一对端点上控制边与
+    // 数据边不会共存（route 的出边全被判为控制边），用两元组更简单、也不会因为
+    // 未来新增 kind 而漏铺。``edgePath`` 是对外导出的 API，偏移走**可选参数**。
+    const pairTotals = new Map();
+    (edges || []).forEach((edge) => {
+      const key = `${edge.from} ${edge.to}`;
+      pairTotals.set(key, (pairTotals.get(key) || 0) + 1);
+    });
+    const pairSeen = new Map();
+
     const layoutEdges = (edges || []).map((edge) => {
       const from = placed.get(edge.from);
       const to = placed.get(edge.to);
       const style = edgeStyle(edge);
+      const key = `${edge.from} ${edge.to}`;
+      const index = pairSeen.get(key) || 0;
+      pairSeen.set(key, index + 1);
+      const offset = parallelEdgeOffset(index, pairTotals.get(key) || 1);
       const item = {
         from: edge.from,
         to: edge.to,
@@ -259,9 +454,10 @@
         opacity: style.opacity,
         width: style.width,
         dash: style.dash,
+        offset,
         path: '',
       };
-      if (from && to) item.path = edgePath(from, to, orientation);
+      if (from && to) item.path = edgePath(from, to, orientation, offset);
       return item;
     });
 
@@ -281,22 +477,50 @@
     };
   }
 
-  /** 端点之间的三次贝塞尔（水平布局从左出右入，纵向布局从上出下入）。 */
-  function edgePath(from, to, orientation) {
+  //: 同一对节点多条边时的法向间距（px）。8–10 是「分得开、又不至于跑到别的节点上」
+  //: 的区间；n 很大时总展宽会超界，所以另有 ``PARALLEL_EDGE_LIMIT`` 收敛。
+  const PARALLEL_EDGE_DELTA = 9;
+  //: 同对边数超过它就不再逐条铺开（总展宽太大，看起来像扇形），改为按上限收敛。
+  const PARALLEL_EDGE_LIMIT = 8;
+
+  /**
+   * 端点之间的三次贝塞尔（水平布局从左出右入，纵向布局从上出下入）。
+   *
+   * ``offset`` 是**可选**的法向偏移（D7 的并行边铺开）：水平布局偏移 y、纵向偏移
+   * x。默认 0 → 与 #190 的旧行为逐字一致（`edgePath` 是对外导出的 API）。
+   */
+  function edgePath(from, to, orientation, offset) {
+    const shift = clampEdgeOffset(offset);
     if (orientation === 'vertical') {
-      const sx = from.x + from.width / 2;
+      const sx = from.x + from.width / 2 + shift;
       const sy = from.y + from.height;
-      const tx = to.x + to.width / 2;
+      const tx = to.x + to.width / 2 + shift;
       const ty = to.y;
       const bend = Math.max((ty - sy) / 2, 16);
       return `M ${sx} ${sy} C ${sx} ${sy + bend} ${tx} ${ty - bend} ${tx} ${ty}`;
     }
     const sx = from.x + from.width;
-    const sy = from.y + from.height / 2;
+    const sy = from.y + from.height / 2 + shift;
     const tx = to.x;
-    const ty = to.y + to.height / 2;
+    const ty = to.y + to.height / 2 + shift;
     const bend = Math.max((tx - sx) / 2, 16);
     return `M ${sx} ${sy} C ${sx + bend} ${sy} ${tx - bend} ${ty} ${tx} ${ty}`;
+  }
+
+  /** 偏移量收敛到有限值（防 NaN/undefined 漏进 SVG 路径变成 ``M NaN``）。 */
+  function clampEdgeOffset(offset) {
+    const value = Number(offset);
+    if (!Number.isFinite(value)) return 0;
+    const bound = (PARALLEL_EDGE_LIMIT - 1) / 2 * PARALLEL_EDGE_DELTA;
+    return Math.max(-bound, Math.min(bound, value));
+  }
+
+  /** 同对 n 条边时第 k 条的偏移（对称铺开，和为 0）。 */
+  function parallelEdgeOffset(index, total) {
+    const count = Math.max(Math.trunc(Number(total)) || 1, 1);
+    const position = Math.min(Math.max(Math.trunc(Number(index)) || 0, 0), count - 1);
+    if (count <= 1) return 0;
+    return clampEdgeOffset((position - (count - 1) / 2) * PARALLEL_EDGE_DELTA);
   }
 
   // --- 5.1 跨端断点 -------------------------------------------------------
@@ -523,6 +747,239 @@
     };
   }
 
+  // --- D2 异常态因果（「为什么是这个状态」） ------------------------------
+
+  //: 图级停止原因（D2）：这几档是**更强的**停止原因，``blocked`` 的因果要优先引用
+  //: 它们，而不是沿着边去猜「被哪个上游挡住」。
+  const GRAPH_STOP_REASONS = {
+    budget_exceeded: '流程因预算超限被停止，该节点没来得及执行',
+    cancelled: '流程被取消，该节点没来得及执行',
+    graph_recursion_exceeded: '流程因图超限被停止，该节点没来得及执行',
+  };
+
+  function truncateText(text, limit) {
+    const value = String(text === undefined || text === null ? '' : text);
+    if (!limit || value.length <= limit) return value;
+    return `${value.slice(0, Math.max(limit - 1, 1))}…`;
+  }
+
+  function formatTokens(value) {
+    const number = Number(value) || 0;
+    if (number >= 1000) return `${(number / 1000).toFixed(1)}k`;
+    return String(Math.round(number));
+  }
+
+  /**
+   * 一句人话的「为什么是这个状态」（D2）。正常态返回 ``null``（不占位）。
+   *
+   * 签名**必须**收图级 ``status``/``diagnostics``（G12 的修正）：原签名只看单个
+   * 节点，而「图级停止原因优先」这条规则在那种签名下**无法实现**。
+   *
+   * ``blocked`` 的扫描要**穿过 blocked 上游**：本调度器里上游 ``failed`` 时下游
+   * 会被照常派发（``failed`` 在 ``TERMINAL_NODE_STATUSES`` 里），所以 ``blocked``
+   * 的真正来源是收尾时整条链一起 blocked——只扫 ``failed``/``cancelled`` 在整条
+   * 链上一无所获，会落到兜底句。也**不取** ``finished_at`` 最早的那个：最早只
+   * 说明它先失败、不代表它是原因。
+   */
+  function explainNode(node, edges, nodesById, graphStatus, diagnostics) {
+    if (!node) return null;
+    const status = node.status;
+    const byId = nodesById || {};
+    const list = edges || [];
+    const diag = diagnostics || {};
+
+    if (status === 'failed') {
+      const reason = node.reason || '';
+      return reason
+        ? `节点自身执行失败：${truncateText(reason, 160)}`
+        : '节点自身执行失败（没有留下错误详情）';
+    }
+
+    if (status === 'skipped') {
+      return '条件判断没走这条分支：它本来就不该跑（不是失败，也不是被挡住）';
+    }
+
+    if (status === 'cancelled') {
+      return '流程被取消，该节点未执行完';
+    }
+
+    if (status === 'budget_exceeded') {
+      const budget = diag.budget || {};
+      const dimension = budget.exceeded_dimension || null;
+      const dims = budget.dimensions || {};
+      const numbers = dimension && dims[dimension]
+        ? `（${dimension}：用掉 ${formatTokens(dims[dimension].used)} / 上限 ${formatTokens(dims[dimension].limit)}）`
+        : '';
+      const reason = node.reason ? `：${truncateText(node.reason, 80)}` : '';
+      return `预算超限${numbers}后停止${reason}`;
+    }
+
+    if (status === 'blocked') {
+      // 优先级 1：图级停止原因——它比「沿边找上游」更准确。
+      if (GRAPH_STOP_REASONS[graphStatus]) return GRAPH_STOP_REASONS[graphStatus];
+      // 优先级 2：沿数据入边向上**穿透 blocked 上游**，收集全部未完成/失败的上游。
+      const roots = blockingUpstreams(node.id, list, byId);
+      if (roots.length) return `被上游 ${roots.join('、')} 挡住，未执行`;
+      // 优先级 3：自身 reason 兜底。
+      if (node.reason) return truncateText(node.reason, 160);
+      return '流程结束前该节点一直未就绪';
+    }
+
+    return null;
+  }
+
+  //: 因果句里最多列几个上游 id（bounded：大图上一条链可能有几十个未完成上游）。
+  const WHY_UPSTREAM_LIMIT = 5;
+
+  /**
+   * 收集「卡住这个节点」的全部上游：沿数据入边向上**穿透**，一路收集未完成的上游。
+   *
+   * 「穿透」是必需的（G12）：本调度器里上游 ``failed`` 时下游会被照常派发，
+   * 所以 ``blocked`` 的真正来源是收尾时**整条链一起** blocked——只扫
+   * ``failed``/``cancelled`` 会在整条链上一无所获，落到没回答问题的兜底句。
+   */
+  function blockingUpstreams(nodeId, edges, nodesById) {
+    const found = [];
+    const visited = new Set([nodeId]);
+    const queue = [nodeId];
+    while (queue.length) {
+      const current = queue.shift();
+      edges
+        .filter((edge) => edge.to === current)
+        .forEach((edge) => {
+          if (visited.has(edge.from)) return;
+          visited.add(edge.from);
+          const upstream = nodesById[edge.from];
+          if (!upstream) return;
+          if (upstream.status === 'completed') return;  // 已完成的上游不解释任何事
+          found.push(edge.from);
+          queue.push(edge.from);  // 继续向上：它自己可能也只是被连累的中转
+        });
+    }
+    return found;
+  }
+
+  // --- D6/D7 tab 元信息与统计 --------------------------------------------
+
+  function nodeProgress(nodes) {
+    const counts = { completed: 0, failed: 0, running: 0, total: 0 };
+    (nodes || []).forEach((node) => {
+      counts.total += 1;
+      const status = node && node.status;
+      if (status === 'completed') counts.completed += 1;
+      else if (status === 'failed' || status === 'budget_exceeded') counts.failed += 1;
+      else if (status === 'started' || status === 'queued') counts.running += 1;
+    });
+    return counts;
+  }
+
+  function progressLabel(progress) {
+    if (!progress || !progress.total) return '';
+    return `${progress.completed}/${progress.total}`;
+  }
+
+  /**
+   * ``#N`` = 按图级 ``started_at`` 排序的秩（D6，**Q3 用户裁决定案选 A**）。
+   *
+   * 排序也按编号——「按时间编号 + 运行中排最前」的组合必然产生非单调序列
+   * （长跑 wf1 + 快结 wf2/wf3 → tab 读作 ``#1 #3 #2``）。运行中改用徽标区分。
+   *
+   * ``_workflows`` 永不注销，WS 重连补发会把前端早已淘汰的图塞回来——按
+   * ``started_at`` 现算秩能跨整页刷新稳定；拿 Map 插入下标当序号则做不到
+   * （``pruneGraphs`` 会 delete 条目）。
+   *
+   * ``started_at == null``（``declared`` 态，D3 的哨兵统一）当 **unknown**，
+   * 排到最后——绝不按 epoch 0 排到最前。
+   */
+  function rankGraphs(entries) {
+    const list = (entries || []).map((entry, index) => ({
+      entry,
+      index,
+      startedAt: entry && typeof entry.started_at === 'number' ? entry.started_at : null,
+    }));
+    list.sort((a, b) => {
+      if (a.startedAt === null && b.startedAt === null) return a.index - b.index;
+      if (a.startedAt === null) return 1;
+      if (b.startedAt === null) return -1;
+      if (a.startedAt !== b.startedAt) return a.startedAt - b.startedAt;
+      return a.index - b.index;
+    });
+    return list.map((item, position) => Object.assign({}, item.entry, { rank: position + 1 }));
+  }
+
+  function formatElapsed(seconds) {
+    const total = Math.max(Math.floor(Number(seconds) || 0), 0);
+    if (total < 60) return `${total}s`;
+    if (total < 3600) {
+      const minutes = Math.floor(total / 60);
+      return `${minutes}m${total % 60}s`;
+    }
+    return `${Math.floor(total / 3600)}h${Math.floor((total % 3600) / 60)}m`;
+  }
+
+  function formatAge(seconds) {
+    const total = Math.max(Math.floor(Number(seconds) || 0), 0);
+    if (total < 60) return `${total} 秒前`;
+    if (total < 3600) return `${Math.floor(total / 60)} 分钟前`;
+    if (total < 86400) return `${Math.floor(total / 3600)} 小时前`;
+    return `${Math.floor(total / 86400)} 天前`;
+  }
+
+  /**
+   * 多图 tab 的元信息（D6）。``now`` 由调用方传入（纯函数层不读时钟，便于测试）。
+   *
+   * ``M/N`` 由**前端从 snapshot.nodes 自算**（``progress`` 参数），不用快照的
+   * ``total/completed/failed``——那是逻辑单元口径（foreach 容器按 N+1 计），
+   * 且 running 帧根本不带（G6）。
+   */
+  function graphTabMeta(entry, rank, now, progress) {
+    const snapshot = entry || {};
+    const status = snapshot.status || 'pending';
+    const startedAt = typeof snapshot.started_at === 'number' ? snapshot.started_at : null;
+    const finishedAt = typeof snapshot.finished_at === 'number' ? snapshot.finished_at : null;
+    const isRunning = GRAPH_STATUS_COLORS[status] && !isGraphTerminal(status);
+    let relative = '';
+    let duration = '';
+    if (startedAt !== null) {
+      if (isRunning || finishedAt === null) {
+        duration = formatElapsed(now - startedAt);
+        relative = `已跑 ${duration}`;
+      } else {
+        duration = formatElapsed(finishedAt - startedAt);
+        relative = formatAge(now - finishedAt);
+      }
+    }
+    return {
+      rank,
+      status,
+      label: graphStatusLabel(status),
+      relative,
+      duration,
+      progress: progressLabel(progress),
+      title: snapshot.goal || snapshot.id || '',
+    };
+  }
+
+  //: 图级终态集合（与 ``workflow.js`` 的 ``TERMINAL_STATUSES`` 同义，这里按词表判）。
+  function isGraphTerminal(status) {
+    return status === 'completed' || status === 'completed_with_failures'
+      || status === 'failed' || status === 'cancelled'
+      || status === 'budget_exceeded' || status === 'graph_recursion_exceeded';
+  }
+
+  /**
+   * 统计行的边口径（D7）：报**实际绘制的路径数**，两个数字不等时才给可解释口径。
+   *
+   * 小图（<50 节点）不发生折叠去重，`collapsed.edges.length === snapshot.edges.length`
+   * ——所以文案不能写死「含并行边/折叠合并」，否则在一致时也会胡说。
+   */
+  function edgeCountLabel(paths, rawEdges) {
+    const drawn = Number(paths) || 0;
+    const raw = Number(rawEdges) || 0;
+    if (drawn === raw) return `${drawn} paths`;
+    return `${drawn} paths（原始 ${raw} edges）`;
+  }
+
   // --- 4.1/Q6 超限告警（不读 nodes.length，决策 9） -----------------------
 
   function graphNotice(snapshot) {
@@ -532,13 +989,25 @@
       ? diagnostics.recursion_limit
       : null;
     const reason = diagnostics.reason || 'graph_recursion_exceeded';
+    const currentNodes = Array.isArray(diagnostics.current_nodes)
+      ? diagnostics.current_nodes.slice()
+      : [];
+    const steps = diagnostics.steps !== undefined && diagnostics.steps !== null
+      ? diagnostics.steps
+      : null;
+    // G14：``current_nodes``（超限那刻还就绪的节点）是「卡在哪个环」的直接答案，
+    // ``steps`` 说明跑了多少 superstep——两者都不能丢。
     const parts = [`图超限，已停止执行（reason: ${reason}`];
     if (limit !== null) parts.push(`, limit: ${limit}`);
+    if (steps !== null) parts.push(`, steps: ${steps}`);
     parts.push('）');
+    if (currentNodes.length) parts.push(`；超限时仍就绪的节点：${currentNodes.join('、')}`);
     return {
       level: 'error',
       reason,
       limit,
+      steps,
+      current_nodes: currentNodes,
       message: parts.join(''),
     };
   }
@@ -547,17 +1016,38 @@
     NODE_COLORS,
     EDGE_STYLES,
     CHANNEL_DASH,
+    GRAPH_STATUS_COLORS,
     NODE_WIDTH,
     NODE_HEIGHT,
     MIN_ZOOM,
     MAX_ZOOM,
+    PARALLEL_EDGE_DELTA,
     nodeColor,
     nodeLabel,
     nodeColors,
     edgeStyle,
     edgeStatusStyles,
     channelDash,
+    channelNames,
     kindGlyph,
+    kindGlyphs,
+    // --- enhance-workflow-graph-ux 新增 ---
+    graphStatusColor,
+    graphStatusLabel,
+    graphStatusColors,
+    statusEncodings,
+    statusEncoding,
+    legendModel,
+    explainNode,
+    nodeProgress,
+    progressLabel,
+    rankGraphs,
+    graphTabMeta,
+    edgeCountLabel,
+    formatElapsed,
+    formatAge,
+    truncateText,
+    parallelEdgeOffset,
     assignLayers,
     layoutGraph,
     edgePath,

@@ -237,8 +237,16 @@ async def test_workflow_graph_pan_and_zoom(page, fake_web_server):
 
 
 @pytest.mark.asyncio
-async def test_graph_recursion_exceeded_renders_notice_not_graph(page, fake_web_server):
-    """Q6/决策 9：超限只渲染告警条，不画图（且不按 nodes.length 判断）。"""
+async def test_graph_recursion_exceeded_still_draws_graph_with_notice(page, fake_web_server):
+    """**G14/D10 反转了 #190 决策 9**：超限时**仍然画图**，告警条叠在画布上方。
+
+    原行为是命中 notice 就 ``renderMessage + return``——用户**失去整幅画面**，
+    看不到哪些节点已完成、卡在哪个环。``nodes``/``edges`` 是无条件存在的，
+    ``diagnostics`` 还带着 ``current_nodes``（超限那刻仍就绪的节点 = 回边死循环的
+    直接答案）与 ``steps``，画出来才用得上。
+
+    判定仍然**不按** ``nodes.length``（决策 9 的那半条不变）。
+    """
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
     await _start_workflow(page, {
@@ -246,15 +254,19 @@ async def test_graph_recursion_exceeded_renders_notice_not_graph(page, fake_web_
         "status": "graph_recursion_exceeded",
         "goal": "too big",
         "timestamp": 1.0,
-        "nodes": [{"id": f"n{i}", "kind": "subagent", "status": "pending"} for i in range(210)],
+        "nodes": [{"id": f"n{i}", "kind": "subagent", "status": "pending"} for i in range(12)],
         "edges": [],
-        "diagnostics": {"reason": "max_nodes", "recursion_limit": 200, "message": "boom"},
+        "diagnostics": {"reason": "max_nodes", "recursion_limit": 200, "message": "boom",
+                        "steps": 11, "current_nodes": ["n0", "n1"]},
     })
 
-    await page.wait_for_selector("#workflow-canvas .graph-notice.error")
-    notice = await page.text_content("#workflow-canvas .graph-notice.error")
+    await page.wait_for_selector("#workflow-notice:not([hidden])")
+    notice = await page.text_content("#workflow-notice")
     assert "max_nodes" in notice
-    assert await page.query_selector("#workflow-canvas svg.workflow-svg") is None
+    assert "n0" in notice and "n1" in notice, "告警条必须带上超限时仍就绪的节点"
+    assert "11" in notice, "告警条必须带上 steps"
+    # 图**仍然画出来**（这正是本 change 的修法）。
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
 
 
 @pytest.mark.asyncio
@@ -297,15 +309,17 @@ async def test_multi_workflow_tabs_switch(page, fake_web_server):
         })
 
     await page.wait_for_selector("#workflow-tabs .graph-tab")
+    # D6/Q3 = A：tab 标签是「#序号 + goal」——两张图都有 ``started_at`` 时按
+    # ``started_at`` 排序编号，这里是同一时刻（都是 1.0）→ 按到达序稳定编号。
     tabs = await page.eval_on_selector_all(
         "#workflow-tabs .graph-tab .graph-tab-label", "els => els.map(e => e.textContent)")
-    assert tabs == ["first", "second"]
+    assert tabs == ["#1 first", "#2 second"]
 
     # 点第一个 tab 切过去（follow 关掉后不再被新事件抢焦点）。
     await page.click("#workflow-tabs .graph-tab:first-child")
     active = await page.eval_on_selector(
         "#workflow-tabs .graph-tab.active .graph-tab-label", "e => e.textContent")
-    assert active == "first"
+    assert active == "#1 first"
 
 
 def _big_foreach_snapshot() -> dict:
@@ -340,11 +354,12 @@ def _big_foreach_snapshot() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_collapsed_group_click_expands_members(page, fake_web_server):
-    """tasks 4.1 / D5「点击展开局部」：点击折叠组长必须真的放出被折叠的成员。
+async def test_collapsed_group_expands_from_the_detail_drawer(page, fake_web_server):
+    """tasks 4.1 / D5 + **Q2 = B**：折叠组的展开/收起由**详情抽屉**承担。
 
-    回归：``expandedGroups`` 只传给了 layoutGraph（不消费该选项），collapseGraph
-    拿不到 → 点击是空操作，成员永远放不出来。
+    点击语义拆分后，点节点 = 开详情（不再是展开）；展开 ```` 收进抽屉里给
+    ``groupLeader`` 的「展开成员」动作。回归：``expandedGroups`` 只传给 layoutGraph
+    而 collapseGraph 拿不到时，这个动作也是空操作，成员永远放不出来。
     """
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
@@ -357,16 +372,134 @@ async def test_collapsed_group_click_expands_members(page, fake_web_server):
     assert "fan" in before
     assert "__auto_agg__fan_0" not in before, "前置条件：auto 层默认应被折叠"
 
+    # 点节点 = 开详情抽屉（**不再**展开折叠组）。
     await page.click(".workflow-node[data-node-id='fan']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    still_collapsed = await page.eval_on_selector_all(
+        ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
+    assert "__auto_agg__fan_0" not in still_collapsed, (
+        f"点节点不应展开折叠组（Q2 = B）：{still_collapsed}"
+    )
+
+    # 抽屉里的「展开成员」才是展开入口。
+    await page.click(".drawer-action[data-action='toggle-group']")
     after = await page.eval_on_selector_all(
         ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
-    assert "__auto_agg__fan_0" in after, f"展开无效：{after}"
+    assert "__auto_agg__fan_0" in after, f"抽屉展开无效：{after}"
 
-    # 再点一次收回去。
-    await page.click(".workflow-node[data-node-id='fan']")
+    # 再点一次（此时按钮已变成「收起成员」）收回去。
+    await page.click(".drawer-action[data-action='toggle-group']")
     again = await page.eval_on_selector_all(
         ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
     assert "__auto_agg__fan_0" not in again, f"收起无效：{again}"
+
+
+@pytest.mark.asyncio
+async def test_click_any_node_opens_detail_drawer(page, fake_web_server):
+    """D4：点**任意**节点都开详情——修复「非折叠组长节点点击是纯 no-op」。"""
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    node_id = await page.text_content("#drawer-id")
+    assert node_id == "a"
+
+    # 抽屉开合**不改 viewBox**（重排会让用户丢失「我在看哪个节点」）。
+    await page.evaluate("""() => {
+        const svg = document.querySelector('#workflow-canvas svg');
+        window.__viewBoxBefore = svg.getAttribute('viewBox');
+    }""")
+    await page.click("#workflow-scrim")
+    await page.wait_for_function(
+        "() => !document.getElementById('workflow-drawer').classList.contains('open')")
+    assert await page.evaluate(
+        "() => document.querySelector('#workflow-canvas svg').getAttribute('viewBox')"
+    ) == await page.evaluate("() => window.__viewBoxBefore")
+
+    # 重新打开后 Esc 也要能关（D4 的三种关闭方式）。
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.keyboard.press("Escape")
+    await page.wait_for_function(
+        "() => !document.getElementById('workflow-drawer').classList.contains('open')")
+
+
+@pytest.mark.asyncio
+async def test_legend_is_visible_and_collapsible(page, fake_web_server):
+    """D1：图例桌面默认展开、可折叠，且八档状态都在。"""
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-legend:not([hidden])")
+
+    text = await page.text_content("#workflow-legend")
+    for label in ("未选中", "预算超限", "blocked", "passed"):
+        assert label in text, f"图例缺少 {label}"
+
+    assert await page.is_visible("#legend-body")
+    await page.click("#legend-toggle")
+    assert not await page.is_visible("#legend-body")
+    await page.click("#legend-toggle")
+    assert await page.is_visible("#legend-body")
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_lazily_fetches_transcript(page, fake_web_server):
+    """M4.2：切「对话」tab **才**触发 transcript 请求（懒加载契约）。
+
+    放在「对话」tab 而非「任务」tab 是刻意的：放「任务」tab 意味着**一打开面板
+    就得发 transcript 请求**，破掉 D4 的懒加载。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    requests = []
+    page.on("request", lambda request: requests.append(request.url))
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    # 测试 tab 没有真实 session（事件是直接派发的），补一个让请求能成形；
+    # 路由本身（404 降级 / 三态）由 ``test_workflow_control_server.py`` 覆盖。
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    # 打开面板（默认「任务」tab）——**不该**有任何 transcript 请求。
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    assert not [u for u in requests if "/transcript" in u], (
+        f"打开面板就发了 transcript 请求（破了懒加载）：{requests}"
+    )
+
+    # 切到「对话」：这时才请求。
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body').textContent.length > 0")
+    assert [u for u in requests if "/transcript" in u], "切到「对话」没有触发请求"
+
+
+@pytest.mark.asyncio
+async def test_foreach_node_shows_progress_count(page, fake_web_server):
+    """D5：foreach 容器**常显**「完成 M/N」（不再只在 ≥50 节点折叠时才提项数）。"""
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    snapshot = dict(SNAPSHOT)
+    snapshot["nodes"] = [
+        {"id": "fan", "kind": "foreach", "status": "started", "runs": 1,
+         "summary": "", "started_at": 1, "finished_at": None, "items": 12,
+         "items_completed": 3, "items_failed": 1, "items_running": 1,
+         "item_states": ["completed"] * 3 + ["failed"] + ["running"] + ["queued"] * 7},
+    ]
+    snapshot["edges"] = []
+    await _start_workflow(page, snapshot)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+
+    text = await page.text_content(".workflow-node[data-node-id='fan']")
+    assert "完成 3/12" in text, text
+    assert "失败 1" in text, text
 
 
 @pytest.mark.asyncio

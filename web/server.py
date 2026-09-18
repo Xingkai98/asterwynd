@@ -174,6 +174,52 @@ def create_app(
             return JSONResponse({"error": "session not found"}, status_code=404)
         return build_timeline_payload(session)
 
+    @app.get(
+        "/api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript"
+    )
+    async def node_transcript(
+        session_id: str,
+        workflow_id: str,
+        node_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ):
+        """节点的**只读** transcript（change ``enhance-workflow-graph-ux``，D4/M3）。
+
+        三态 union（``single``/``candidates``/``none``）由
+        ``build_node_transcript_payload`` 按**节点类型**决定。
+
+        为什么是新的 HTTP 路由而不是复用 ``InspectSubagentTranscript``：后者是
+        **LLM 面工具**（``Tool`` 子类、要 permission、走 AgentLoop 工具注册与协议）。
+        Web 要用它得绕开工具协议直接调 manager——不如直接暴露一个只读 HTTP 接口；
+        两者底层复用同一个 ``SubAgentManager.inspect_transcript()``，不复制逻辑。
+
+        session 校验是**内存口径**（与 ``/api/sessions/{id}/timeline`` 同）：
+        ``session_manager.get_session`` 只查内存字典，冷会话/进程重启后一律 404。
+        """
+        from web.session import build_node_transcript_payload
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        manager = session.agent.subagent_manager
+        scheduler = manager.get_workflow(workflow_id)
+        if scheduler is None:
+            return JSONResponse({"error": "workflow not found"}, status_code=404)
+        try:
+            payload = build_node_transcript_payload(
+                manager, scheduler, node_id, limit=limit, offset=offset,
+            )
+        except Exception as exc:  # noqa: BLE001 - 只读接口绝不因投影失败而 500
+            logger.debug("node transcript failed for %s/%s", workflow_id, node_id,
+                         exc_info=True)
+            return JSONResponse(
+                {"error": f"{type(exc).__name__}: {exc}"}, status_code=500,
+            )
+        payload["workflow_id"] = workflow_id
+        payload["session_id"] = session_id
+        return JSONResponse(payload)
+
     @app.get("/api/slash-commands")
     async def slash_commands():
         command_registry = build_default_slash_command_registry(
@@ -583,9 +629,47 @@ def create_app(
                         session, raw, session.event_channel, handle=handle
                     )
 
+                elif msg_type == "cancel_workflow":
+                    # G18/D11：取消一张正在跑的图。走 WS 而非新 HTTP 路由——handler
+                    # 手里有 ``session``，``get_workflow`` 直接拿到 scheduler；且
+                    # ``cancel()`` 内部 ``ensure_future`` 需要的 running loop 是 WS
+                    # 天然满足的（HTTP 还要重做内存口径的 session 校验）。
+                    #
+                    # 与既有 ``{"type": "cancel"}`` 的边界：那个只让待审批失败、run
+                    # 照跑（见 ``web/session.py`` 的 ``fail_pending_interactions``），
+                    # 本消息才真的停图。
+                    workflow_id = str(raw.get("workflow_id", "")).strip()
+                    workflow = session.agent.subagent_manager.get_workflow(workflow_id)
+                    if workflow is None:
+                        await ws.send_json({
+                            "type": "error",
+                            "data": {"message": f"unknown workflow: {workflow_id}"},
+                        })
+                        continue
+                    result = workflow.cancel()
+                    await ws.send_json({
+                        "type": "workflow_cancelled",
+                        "data": {"workflow_id": workflow_id, "result": result},
+                    })
+
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
                     session.question_handler.fail_pending("session reset")
+                    # G18/D11：``reset`` 在 ``remove_session`` 之前必须**逐个 cancel**
+                    # 在跑的图。图是 ``ensure_future(scheduler.run(spec))`` 起的后台
+                    # 任务、``manager._workflows`` 永不注销——不 cancel 的话图继续跑、
+                    # 继续烧预算，而 forwarder 已被 detach，用户彻底看不到也管不着。
+                    # ``cancel()`` 对 ``declared`` 态不改状态（符合预期）。
+                    reset_manager = session.agent.subagent_manager
+                    for existing_id in list(reset_manager.list_workflows()):
+                        existing = reset_manager.get_workflow(existing_id)
+                        if existing is None:
+                            continue
+                        try:
+                            existing.cancel()
+                        except Exception:  # noqa: BLE001 - reset 不因单张图失败而中断
+                            logger.debug("cancel on reset failed for %s", existing_id,
+                                         exc_info=True)
                     # reset 保留原 workspace/mode（issue #117 grill R7/Q9），
                     # 替换会话用同 workspace + 同 mode 创建。
                     old_workspace = session.workspace_root
