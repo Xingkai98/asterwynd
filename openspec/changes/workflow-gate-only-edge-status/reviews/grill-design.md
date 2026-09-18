@@ -82,7 +82,6 @@
 
 ## User Confirmation
 
-本节先留空：Q1–Q3 需要在停轮确认中由用户逐条答复后，由主 session 回填为
-`- **Q1**: 用户答复：<实质内容>；确认时间: <date>` 形式的记录（每条一行，索引与
-Open Questions 一一对应，缺一条不得进入实现，`workflow_guard` 会在 Open Questions
-未全部确认时拦截代码写入）。审阅员不代用户拍板，以上推荐答案仅是审阅意见。
+- **Q1**: 用户答复：**选 B——目标 `skipped` 时那条 required 数据边判 `inactive`**。判据加 `target.status != "skipped"`。理由：该边从未门控过派发（决定目标不跑的是 route 控制边，不是这条数据边），标 `satisfied` 是假话，也与 spec GIVEN「已因该依赖被放行」自相矛盾；这正符合本 change「只标真正起了作用的边」的立项命题。；确认时间: 2026-09-18
+- **Q2**: 用户答复：**选 (b)——本 change 顺带补记账**。在 `_source_collection` 真正读出上游产出的返回点旁加 `_consumed_edges.add((<被读节点 id>, node.id))`，与 #197 在 `_route_verdict` 的修法完全同构（旁加，`_mark_consumed` 本体不动 → C5 零漂移）。理由：一行改动就把动态 foreach 那条边从「灰」变成正确的 `passed`；另一立 issue 会让本 change 把「无害的灰」升级成「断言式的错话」。；确认时间: 2026-09-18
+- **Q3**: 用户答复：**选 A——`satisfied` 保持无箭头**。理由：`renderEdge` 本就只给 `passed`/`active` 挂箭头，无箭头是天然结果且语义正确（没数据流就不画流向箭头），并自动构成与 `passed` 区分的第三重编码（明度 + 线宽 + 有无箭头）；显式补箭头会削弱这个区分。同时把「线宽 + 有无箭头」一起写进 spec 的「非颜色维度可分辨」口径。；确认时间: 2026-09-18

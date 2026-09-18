@@ -6,14 +6,17 @@
 
 ## 1. 后端：`_edge_status` 加档
 
-- [ ] 1.1 `agent/subagent/scheduler.py::_edge_status` 在优先级链的 `ready` 之后、兜底 `inactive` 之前加 `satisfied`：判据 `edge.required and source.status == "completed" and target.status != "pending"`；更新 docstring 的优先级表（五档 → 六档）。
-- [ ] 1.2 回归确认：**不改** `_consumed_edges` / `_mark_consumed` / `_consumed_run_ids`（C5 口径零漂移）。
+- [ ] 1.1 `agent/subagent/scheduler.py::_edge_status` 在 `ready` 之后、兜底 `inactive` 之前加 `satisfied`：判据 `source/target 非 None`（防御）`and edge.required and source.status == "completed" and target.status != "pending" and target.status != "skipped"`（**Q1 用户拍板 B：排除 skipped**）；更新 docstring 的优先级表（五档 → 六档）。
+- [ ] 1.2 **（Q2 用户拍板 (b)）** `_source_collection` 读出上游产出的返回点旁加 `_consumed_edges.add((<被读节点 id>, node.id))`——与 #197 在 `_route_verdict` 的修法同构（旁加，`_mark_consumed` 本体不动）。
+- [ ] 1.3 回归确认：`_mark_consumed`/`_consumed_run_ids` 本体不动；`useful_runs`/`redundancy` 逐位不变（C5 口径零漂移）。
 
 ## 2. 后端测试
 
 - [ ] 2.1 新增「foreach 用字面 items → `scan→fan` 判 `satisfied`」（**实跑**复现 issue 场景）。
 - [ ] 2.2 新增「`required=False` 的未消费边仍 `inactive`」。
 - [ ] 2.3 新增「目标仍 `pending` → `ready`（不是 `satisfied`）」。
+- [ ] 2.5 新增「**目标 `skipped` → `inactive`**（不是 `satisfied`）」（Q1 判据的回归）。
+- [ ] 2.6 新增「**动态 foreach（`source:`）读上游 → 该边判 `passed`**」（Q2 记账修复的回归，实跑断言 `_consumed_edges` 非空）。
 - [ ] 2.4 更新 `EDGE_STATUS_TIERS` frozenset 加 `satisfied`；既有五档判据回归全绿。
 
 ## 3. 前端：词表 + 图例

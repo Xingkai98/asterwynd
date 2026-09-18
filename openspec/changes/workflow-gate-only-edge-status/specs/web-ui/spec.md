@@ -8,7 +8,7 @@
 
 **边 `satisfied`（依赖已满足但产出未被消费）**：scheduler SHALL 对「`required` 边 + 未被下游消费 + 源 `completed` + 目标已越过 `pending`」判定为 `satisfied`，SHALL NOT 落 `inactive` 兜底。该档表达「这条边确实门控了下游派发，但上游产出没有流过去」——纯顺序依赖（如 foreach 用字面 `items` 而不读 source 产出）SHALL NOT 显示为「没有参与」。`passed` 的语义 SHALL NOT 改变（仍是「上游产出被下游读取」）。
 
-`satisfied` SHALL 与 `inactive`、`passed` 在**非颜色维度**上可分辨（明度差或线宽差），SHALL NOT 仅靠色相区分。
+`satisfied` SHALL 与 `inactive`、`passed` 在**非颜色维度**上可分辨（明度差 + 线宽差 + 有无流向箭头），SHALL NOT 仅靠色相区分。目标为 `skipped`（route 未选中）的边 SHALL NOT 判定为 `satisfied`（该边从未门控派发）。
 
 #### Scenario: 节点状态高亮
 
@@ -24,6 +24,12 @@
 - **THEN** SHALL 只高亮该 route 选中的出口控制边
 - **AND** 未选中的分支 SHALL 保持 inactive
 
+#### Scenario: 动态 foreach 读取上游产出记 passed
+
+- **GIVEN** 一个 `foreach` 节点以 `source`/`source_field` 从上游节点的产出里解析展开项（**确实读了**上游产出）
+- **WHEN** 渲染该数据边
+- **THEN** 该边 SHALL 判定为 `passed`，SHALL NOT 判定为 `satisfied`
+
 #### Scenario: 纯门控边不显示为死线
 
 - **GIVEN** 一条 `required` 数据边，其源节点 `completed`、目标节点已因该依赖被放行并越过 `pending`，但目标**没有读取**源的产出（例如 foreach 使用字面 `items`）
@@ -36,6 +42,13 @@
 - **GIVEN** 一条 `required: false` 的边，下游未读取其产出
 - **WHEN** 渲染该边
 - **THEN** 该边 SHALL 保持 `inactive`（该边从未门控派发，未消费就是真的无关）
+
+#### Scenario: 未选中目标的数据边不染绿
+
+- **GIVEN** 一条 `required` 数据边，其源 `completed`，目标因 route 未选中而 `skipped`
+- **WHEN** 渲染该边
+- **THEN** 该边 SHALL 保持 `inactive`（决定目标不跑的是控制边，不是这条数据边）
+- **AND** SHALL NOT 判定为 `satisfied`
 
 #### Scenario: 等待消费仍是 ready
 

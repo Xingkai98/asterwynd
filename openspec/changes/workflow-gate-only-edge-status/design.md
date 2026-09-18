@@ -34,8 +34,11 @@
 # （_states 由 plan.nodes 构造，边端点已在解析期校验），但省掉它一旦发生
 # 就是 AttributeError 打断整张图的快照推送。grill 决策 2。
 source is not None and target is not None
-    and edge.required and source.status == "completed" and target.status != "pending"
+    and edge.required and source.status == "completed"
+    and target.status != "pending" and target.status != "skipped"
 ```
+
+**为什么排除 `skipped`（grill Q1，用户拍板 B）**：`skipped` 是「route 判定没走这条」的良性终态——目标不跑是**控制边**决定的，**不是这条数据边**；这条边从未门控过派发，标 `satisfied`（淡绿 + 「产出未被下游读取」）对它是假话，也与 spec GIVEN「已因该依赖被放行」自相矛盾。这正符合本 change「只标真正起了作用的边」的立项命题。
 （外加「未被消费」——由优先级链保证：`passed` 的判据在本档**之前**，命中即返回。**不需要**再写显式的 `not in _consumed_edges`——那会制造两处真相；能执行到本档本身就是「不在该集合」的证明（grill 决策 6）。）
 
 **放哪**：优先级链的**第 5 档之后、兜底之前**（即 `ready` 之后、`inactive` 之前）。
@@ -72,7 +75,19 @@ source is not None and target is not None
 
 `renderEdge` 只给 `edge.status === 'passed' || 'active'` 的数据边挂实心箭头（`web/static/workflow.js:685-687`），控制边另挂空心箭头（`:682-684`），其余一律无箭头。所以按 D2/D3 的最小改落地后，**`satisfied` 天然无箭头、`passed` 有箭头**——语义上正好是「有没有数据流过去」。
 
-**这条要写进记录防止实现者「顺手补个箭头」把第三重编码抹掉**：`satisfied` 的「无箭头」与 D2 的「明度 + 线宽」共同构成非颜色维度的可分辨性（对应 spec delta 的「非颜色维度可分辨」口径）。
+**这条要写进记录防止实现者「顺手补个箭头」把第三重编码抹掉**：`satisfied` 的「无箭头」与 D2 的「明度 + 线宽」共同构成非颜色维度的可分辨性（对应 spec delta 的「非颜色维度可分辨」口径）。**grill Q3 用户拍板 A：保持无箭头**，并把「线宽 + 有无箭头」一起写进 spec 的非颜色可分辨口径（不只写「明度差或线宽差」）。
+
+### D2c — 顺带补动态 foreach 的消费记账（grill Q2，用户拍板 (b)）
+
+**问题**：动态 foreach（`source:` 形式）**确实读了**上游产出，却不记 `_consumed_edges`——`_source_collection` 经 `_node_output` 读 `slots["result"]`/`summary` 时没有打标（对比 `_route_verdict` 已在 #197 补过）。实测：`planner → fan(source:"planner", source_field:"items")`，`fan.items == 3`（确实读了）但 `_consumed_edges == set()`。
+
+**后果**：本 change 加档后，这条边会判 `satisfied` → 图例说「产出**未被**下游读取」——**假话**（产出被读了）。
+
+**修法（与 #197 在 `_route_verdict` 的修法完全同构）**：在 `_source_collection` 真正读出上游产出的返回点旁加 `_consumed_edges.add((<被读节点 id>, node.id))`——**旁加**，`_mark_consumed` 本体不动。
+
+**C5 隔离仍成立**：`_consumed_edges` 与 `_consumed_run_ids` 是两个集合；本改动只写前者，`useful_runs`/`redundancy` **逐位不变**（grill 决策 6 已穷举核实写点）。
+
+**收益**：这条边从「灰」直接变成**正确**的 `passed`——比只加档（会得到一句假话）更好。
 
 ### D3 — 与 C5 指标的隔离
 
