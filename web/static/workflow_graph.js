@@ -68,6 +68,10 @@
     ready: { color: '#94a3b8', opacity: 0.6, width: 1.8, dash: [] },
     active: { color: '#60a5fa', opacity: 0.95, width: 2.6, dash: [] },
     passed: { color: '#4ade80', opacity: 0.9, width: 2.2, dash: [] },
+    // issue #207：依赖已满足、但产出**未被**下游读取（纯顺序/门控边）。
+    // 与 passed 同色系以示「都起了作用」，靠**明度 + 线宽**（+ 无箭头，见
+    // workflow.js 的 renderEdge）与 passed / inactive 区分。
+    satisfied: { color: '#86efac', opacity: 0.55, width: 1.6, dash: [] },
     blocked: { color: '#f87171', opacity: 0.75, width: 2.0, dash: [5, 4] },
   };
   const DEFAULT_EDGE_STYLE = EDGE_STYLES.inactive;
@@ -198,6 +202,7 @@
     ready: '上游已就绪，等待下游',
     active: '源或目标正在运行',
     passed: '数据已被下游读取',
+    satisfied: '依赖已满足，但产出未被下游读取',
     blocked: '目标无法继续',
   };
   const CHANNEL_TEXT = {

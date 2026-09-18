@@ -2349,6 +2349,17 @@ class WorkflowScheduler:
         的二次应用（由调用方统一交给 ``extract_collection``）。
         """
         source_id = node.source or ""
+        # Q2（issue #207）：从**哪个节点**读到了产出就记哪条边——动态 foreach
+        # 确实消费了上游产出，不记账会让该边被判成「产出未被下游读取」
+        # （change ``workflow-gate-only-edge-status`` 新增的 ``satisfied`` 档）。
+        # 与 #197 在 ``_route_verdict`` 的修法同构：**旁加** ``_consumed_edges``，
+        # ``_mark_consumed`` 本体不动 → C5 的 ``_consumed_run_ids`` 零漂移。
+        def _read(source_state: NodeState, slot: str = "result") -> Any:
+            value = self._node_output(source_state, slot)
+            if value:
+                self._consumed_edges.add((source_state.node.id, node.id))
+            return value
+
         visited: set[str] = set()
         current = source_id
         while current and current not in visited:
@@ -2357,17 +2368,23 @@ class WorkflowScheduler:
             if source_state is None:
                 return None
             if "result" in source_state.slots:
-                return source_state.slots["result"]
+                value = source_state.slots["result"]
+                if value:
+                    self._consumed_edges.add((source_state.node.id, node.id))
+                return value
             # 非 subagent 节点会物化 summary 作兜底（collect aggregate 的产出）。
             if source_state.node.kind != "subagent" and source_state.summary:
+                self._consumed_edges.add((source_state.node.id, node.id))
                 return source_state.summary
             upstreams = self._graph().data_incoming(current)
             distinct = sorted({edge.source for edge in upstreams})
             if len(distinct) != 1:
                 # 无上游（终止）或多入边歧义（拒绝递归）
-                return self._node_output(source_state, "result")
+                return _read(source_state)
             current = distinct[0]
-        return self._node_output(self._states.get(source_id), "result") if source_id in self._states else None
+        if source_id in self._states:
+            return _read(self._states[source_id])
+        return None
 
     def _remaining_expansion_capacity(self) -> int:
         """``max_items=0`` 的展开上限（Q9）：三个剩余上限的**最小值**。
@@ -2654,7 +2671,14 @@ class WorkflowScheduler:
         3. 目标 ``blocked``/``budget_exceeded``，或源 ``failed``/``cancelled`` → ``blocked``。
         4. 源或目标在跑 → ``active``。
         5. 源 ``completed`` 且目标仍 ``pending`` → ``ready``。
-        6. 兜底 ``inactive``。
+        6. **（change ``workflow-gate-only-edge-status``）** ``required`` 边 + 源
+           ``completed`` + 目标**已越过 pending**（且非 ``skipped``）→ ``satisfied``
+           （依赖已满足，但上游产出未被下游读取）。
+        7. 兜底 ``inactive``。
+
+        ``satisfied`` 的意义（issue #207）：区分「这条边起了门控作用、只是没传数据」
+        与「这条边真的没参与」——两者此前都落兜底 ``inactive``（灰），用户看到
+        `scan→fan`（fan 用字面 items、不读 scan 产出）会以为是条死线。
         """
         source = self._states.get(edge.source)
         target = self._states.get(edge.target)
@@ -2678,6 +2702,22 @@ class WorkflowScheduler:
             and (target is None or target.status == "pending")
         ):
             return "ready"
+        # ``satisfied``：依赖已满足（源 completed、目标已被放行并越过 pending），
+        # 但产出没被读走（未被 ``_consumed_edges`` 记到，规则 2 没命中）。
+        # 排除 ``skipped``：目标不跑是**控制边**决定的，这条数据边从未门控过派发
+        # （grill Q1 用户拍板 B），标它会让「产出未被下游读取」变成假话。
+        # ``source/target`` 的 None 是防御性分支——真实图不可达（_states 由
+        # plan.nodes 构造、边端点解析期已校验），省掉它一旦发生就是 AttributeError
+        # 打断整张图的快照推送（grill 决策 2）。
+        if (
+            source is not None
+            and target is not None
+            and edge.required
+            and source.status == "completed"
+            and target.status != "pending"
+            and target.status != "skipped"
+        ):
+            return "satisfied"
         return "inactive"
 
     def _envelope(self, *, status: str) -> dict:

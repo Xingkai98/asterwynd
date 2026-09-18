@@ -29,7 +29,9 @@ from agent.workspace_policy import WorkspacePolicy
 NODE_STATUS_TIERS = frozenset(
     {"pending", "started", "completed", "failed", "cancelled", "blocked", "budget_exceeded"}
 )
-EDGE_STATUS_TIERS = frozenset({"inactive", "ready", "active", "passed", "blocked"})
+EDGE_STATUS_TIERS = frozenset(
+    {"inactive", "ready", "active", "passed", "satisfied", "blocked"}
+)
 
 #: 快照节点**允许**出现的键（显式白名单：多一个都是「没挑字段」）。
 #: ``enhance-workflow-graph-ux`` 加的加法字段：``reason``/``task``（D3/G5）、
@@ -419,3 +421,135 @@ async def test_consumed_edges_share_run_scope_lifecycle(manager):
 
     assert scheduler._consumed_edges == {("a", "b"), ("b", "c")}
     assert len(scheduler._consumed_run_ids) == 2
+
+
+# --- issue #207：纯门控边的独立状态（change ``workflow-gate-only-edge-status``） ---
+
+
+def _gate_only_spec() -> dict:
+    """``scan`` 有一条 required 边给 ``fan``，但 ``fan`` 用**字面 items**、不读它。
+
+    这正是 issue #207 的场景：边门控了 fan 的派发，但产出从未被消费。
+    """
+    return {
+        "goal": "gate-only",
+        "nodes": [
+            {"id": "scan", "kind": "subagent", "task": "produce"},
+            {"id": "fan", "kind": "foreach", "task": "read {item}",
+             "items": ["a", "b"]},
+        ],
+        "edges": [{"from": "scan", "to": "fan"}],
+        "entry": ["scan"],
+        "terminal": ["fan"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_gate_only_edge_is_satisfied_not_inactive(manager):
+    """issue #207：required 边 + 源 completed + 目标越过 pending 但没读产出 → ``satisfied``。
+
+    改前它落兜底 ``inactive``（灰），用户以为是条死线。
+    """
+    scheduler = _scheduler(manager, _gate_only_spec())
+    await scheduler.run(scheduler.spec)
+
+    snapshot = scheduler.workflow_graph_snapshot()
+    by_pair = {(e["from"], e["to"]): e["status"] for e in snapshot["edges"]}
+
+    assert by_pair[("scan", "fan")] == "satisfied", (
+        f"纯门控边应判 satisfied，实际 {by_pair[('scan', 'fan')]!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_optional_unconsumed_edge_stays_inactive(manager):
+    """``required=False`` 的未消费边仍 ``inactive``：它从未门控派发。"""
+    spec = _gate_only_spec()
+    spec["edges"] = [{"from": "scan", "to": "fan", "required": False}]
+    scheduler = _scheduler(manager, spec)
+    await scheduler.run(scheduler.spec)
+
+    snapshot = scheduler.workflow_graph_snapshot()
+    by_pair = {(e["from"], e["to"]): e["status"] for e in snapshot["edges"]}
+    assert by_pair[("scan", "fan")] == "inactive"
+
+
+@pytest.mark.asyncio
+async def test_pending_target_stays_ready_not_satisfied(manager):
+    """目标仍 ``pending`` → ``ready``（进行中的等待态），不是 ``satisfied``。"""
+    scheduler = _scheduler(manager, _chain_spec())
+    scheduler._states["a"].status = "completed"
+    scheduler._states["a"].finished_at = 1.0
+    scheduler._status = "running"
+
+    mid = scheduler.workflow_graph_snapshot()
+    assert {(e["from"], e["to"]): e["status"] for e in mid["edges"]}[("a", "b")] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_skipped_target_edge_stays_inactive(manager):
+    """目标 ``skipped``（route 没选它）→ 该 required 数据边仍 ``inactive``。
+
+    grill Q1 用户拍板 B：决定目标不跑的是**控制边**，不是这条数据边——
+    标 ``satisfied``（「产出未被下游读取」）对它是假话。
+    """
+    spec = {
+        "goal": "skipped-target",
+        "nodes": [
+            {"id": "u", "kind": "subagent", "task": "produce"},
+            {"id": "gate", "kind": "route",
+             "cases": [{"when": "APPROVED", "to": "picked"}], "default": "t"},
+            {"id": "picked", "kind": "subagent", "task": "picked branch"},
+            {"id": "t", "kind": "subagent", "task": "never activated"},
+        ],
+        "edges": [
+            {"from": "u", "to": "gate"},
+            # u 有一条 required 数据边直连 t（但 t 不跑是 route 决定的）
+            {"from": "u", "to": "t"},
+            {"from": "gate", "to": "picked"},
+            {"from": "gate", "to": "t"},
+        ],
+        "entry": ["u"],
+        "terminal": ["picked", "t"],
+    }
+    manager.llm.content = "APPROVED looks good"
+    scheduler = _scheduler(manager, spec)
+    await scheduler.run(scheduler.spec)
+
+    snapshot = scheduler.workflow_graph_snapshot()
+    nodes = {n["id"]: n["status"] for n in snapshot["nodes"]}
+    by_pair = {(e["from"], e["to"]): e["status"] for e in snapshot["edges"]}
+    assert nodes["picked"] == "completed", nodes
+    assert nodes["t"] == "skipped", nodes
+    assert by_pair[("u", "t")] == "inactive", (
+        f"目标 skipped 的数据边不该染绿，实际 {by_pair[('u', 't')]!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_foreach_consumes_upstream_edge(manager):
+    """Q2：动态 foreach（``source:``）确实读上游产出 → 该边判 ``passed``。
+
+    改前 ``_source_collection`` 不记 per-edge 账，该边会落 ``satisfied``
+    （图例说「产出未被下游读取」——**假话**）。
+    """
+    spec = {
+        "goal": "dynamic-foreach",
+        "nodes": [
+            {"id": "planner", "kind": "subagent", "task": "plan the items"},
+            {"id": "fan", "kind": "foreach", "task": "work {item}",
+             "source": "planner", "source_field": "items"},
+        ],
+        "edges": [{"from": "planner", "to": "fan"}],
+        "entry": ["planner"],
+        "terminal": ["fan"],
+    }
+    manager.llm.content = '{"items": ["one", "two", "three"]}'
+    scheduler = _scheduler(manager, spec)
+    await scheduler.run(scheduler.spec)
+
+    snapshot = scheduler.workflow_graph_snapshot()
+    by_pair = {(e["from"], e["to"]): e["status"] for e in snapshot["edges"]}
+    assert by_pair[("planner", "fan")] == "passed", (
+        f"动态 foreach 读了产出应判 passed，实际 {by_pair[('planner', 'fan')]!r}"
+    )
