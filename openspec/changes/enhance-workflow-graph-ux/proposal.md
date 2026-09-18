@@ -78,3 +78,10 @@
 - **文档**: `docs/openspec-change-backlog.md`（登记 change）；issue #197 跟踪；收尾同步 `openspec/specs/web-ui/spec.md`。
 - **流程（process）**: 独立 change，走 OpenSpec 全套（propose → grill → 独立 worktree TDD → review-loop → archive）；分支 `<change-id>/2026-09-17`。
 - **风险面**: 快照新增字段会触碰既有白名单契约测试（`SNAPSHOT_NODE_KEYS`）——必须同步更新且证明 `_envelope` 未漂移；transcript 接口暴露运行内容，需保持与 Chat 视图同一信任级并 bounded。
+
+## Known Issues（本 change 未修复、非本次引入）
+
+- **`tests/web_tests/test_workflow_graph_browser.py` 的 harness 层竞态**（与 issue #191 记录的同类 flake）：该文件在网页加载后**直接派发** workflow 事件来测视图层，而 `chat.js` 自己的异步 tab 初始化（ws 握手 → 建 tab → `switchTab` → `showView('chat')`）可能在其后跑到、把 workflow-view 的 active class 摘掉——事件确实切了视图，随即被 chat 的初始化覆盖，表现为 `test_multi_workflow_tabs_switch` / `test_legend_is_visible_and_collapsible` 等**间歇性失败**（单独跑稳定通过，与并发负载相关）。
+  - 该测试是 #190 既有测试，**不是本 change 引入**；本 change 只按 M3.2 的设计要求改了它的点击语义断言（点节点开详情、经抽屉展开折叠组）。
+  - 修它要么动 `chat.js` 的初始化时序、要么在 harness 里加 sleep——两者都**超出本 change 范围**（前者是产品代码的时序改动，后者是用 sleep 掩盖竞态），故按「已知 flake」记录、留待专治（建议与 #191 合并处理：给 harness 一个「app 初始化完成」的确定信号，而不是靠时序碰运气）。
+  - 验证口径：本 change 的收口以 `uv run pytest -q`（全量）为准；上述文件单独运行通过。
