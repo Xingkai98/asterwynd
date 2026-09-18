@@ -510,19 +510,23 @@
     if (!host) return;
     const nodes = nodesById(snapshot);
     host.querySelectorAll('.workflow-node').forEach((group) => {
-      const node = nodes[group.dataset.nodeId];
+      const raw = nodes[group.dataset.nodeId];
       const text = group.querySelector('[data-role="status"]');
-      if (!node || !text) return;
+      if (!raw || !text) return;
       // 折叠组长显示整组聚合状态，计时没有意义（组内成员各自在跑）。
-      if (node.collapsed) return;
-      const startedAt = typeof node.started_at === 'number' ? node.started_at : null;
-      const finishedAt = typeof node.finished_at === 'number' ? node.finished_at : null;
+      if (raw.collapsed) return;
+      const startedAt = typeof raw.started_at === 'number' ? raw.started_at : null;
+      const finishedAt = typeof raw.finished_at === 'number' ? raw.finished_at : null;
       let elapsed = '';
       if (startedAt !== null) {
         // 终态**冻结**为 ``finished_at - started_at``（不再跳秒）。
         elapsed = G.formatElapsed(finishedAt !== null ? finishedAt - startedAt : now - startedAt);
       }
-      text.textContent = nodeStatusText(Object.assign({}, node, {elapsedText: elapsed}));
+      // **必须走投影层**：``nodeStatusText`` 读的是投影字段（``label``/
+      // ``itemsCompleted`` 等），直接喂快照原始节点会把状态词覆写成
+      // ``undefined``（曾出的 bug：手机端所有节点每秒变一次 undefined）。
+      const node = Object.assign(G.projectNode(raw), { elapsedText: elapsed });
+      text.textContent = nodeStatusText(node);
     });
   }
 
