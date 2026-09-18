@@ -124,6 +124,12 @@ _SNAPSHOT_TERMINAL_STATUSES = frozenset(
 _EDGE_BLOCKED_TARGET_STATUSES = frozenset({"blocked", "budget_exceeded"})
 _EDGE_BLOCKED_SOURCE_STATUSES = frozenset({"failed", "cancelled"})
 
+#: 收尾判定里「数据上游把下游一起拖住」的集合（D2b 的「被连累优先于未选中」）。
+#: 比 ``_EDGE_BLOCKED_SOURCE_STATUSES`` 多一个 ``blocked``：spec 的第三条 Scenario
+#: 明确把「上游受阻」与「上游失败/取消」并列——漏掉它就会把「被连累」报成
+#: 「条件没选它」，正是本 change 要消灭的那类假话。
+_DOOMED_UPSTREAM_STATUSES = frozenset({"failed", "cancelled", "blocked"})
+
 #: foreach 展开项的**终态**集合（G7/D5.2）：只有这些值会被 done 回调落进
 #: ``item_states``；其余（``pending``/``queued``/``running``）都在投影时现算。
 _ITEM_TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "budget_exceeded"})
@@ -812,22 +818,7 @@ class WorkflowScheduler:
                 await self._cancel_node(state)
                 if state.status in ("queued", "started"):
                     state.status = "cancelled"
-            elif state.status == "pending":
-                # D2b（enhance-workflow-graph-ux）：先判 ``skipped``（route 判定过、
-                # 但没走这条）——**必须先于**预算分支，否则被 route 门控的根节点在
-                # 预算停时会被写成 ``budget_exceeded`` 而不是 ``skipped``。
-                if self._is_skipped(state):
-                    state.status = "skipped"
-                    state.reason = "route did not select this branch"
-                # Q5：预算超限时根节点改 ``budget_exceeded``、其余仍 ``blocked``；
-                # 非预算路径保持原 ``blocked`` 语义（含既有 reason）。
-                elif self._budget_stop:
-                    self._apply_budget_exhausted_status(state)
-                else:
-                    state.status = "blocked"
-                    state.reason = (
-                        state.reason or "workflow ended before the node became ready"
-                    )
+        self._resolve_pending_nodes()
         for task in list(self._tasks):
             task.cancel()
         for task in list(self._tasks):
@@ -1250,39 +1241,95 @@ class WorkflowScheduler:
             return "completed_with_failures"
         return "completed"
 
+    def _resolve_pending_nodes(self) -> None:
+        """把所有未派发节点落成终态，**上游先定**（D2b）。
+
+        逐轮扫，每轮只判「入边源头都已离开 ``pending``」的节点；一轮下来没有任何
+        进展说明剩下的在互相等待——那是 route 回边（环）里的节点，此时按既有规则
+        一次性落定（环内谁先谁后本就无解，取稳定的声明序）。
+        """
+        pending = [s for s in self._states.values() if s.status == "pending"]
+        while pending:
+            progressed = False
+            for state in list(pending):
+                if not self._upstreams_resolved(state):
+                    continue
+                self._resolve_pending_status(state)
+                pending.remove(state)
+                progressed = True
+            if not progressed:
+                for state in pending:
+                    self._resolve_pending_status(state)
+                return
+
+    def _upstreams_resolved(self, state: NodeState) -> bool:
+        """该节点的**全部入边源头**是否都已离开 ``pending``。
+
+        收尾判定必须自**上游先定**，否则同一个节点会因为「上游先被标了 blocked」
+        还是「上游还是 pending」而给出不同答案。而 ``blocked`` 上游这一支恰恰是
+        spec 明确要求「连累优先」的（第三条 Scenario 把 ``blocked`` 与
+        ``failed``/``cancelled`` 并列）——就地判会把「被连累」报成「条件没选它」，
+        用户读到的是**假话**。
+        """
+        plan = self._graph()
+        for edge in plan.incoming(state.node.id):
+            upstream = self._states.get(edge.source)
+            if upstream is not None and upstream.status == "pending":
+                return False
+        return True
+
+    def _resolve_pending_status(self, state: NodeState) -> None:
+        """一个未派发节点的终态落点（``_teardown`` 的唯一出口）。
+
+        顺序是语义的一部分：``skipped`` **必须先于**预算分支，否则被 route 门控的
+        根节点在预算停时会被写成 ``budget_exceeded``。
+        """
+        if self._is_skipped(state):
+            state.status = "skipped"
+            state.reason = "route did not select this branch"
+        elif self._budget_stop:
+            self._apply_budget_exhausted_status(state)
+        else:
+            state.status = "blocked"
+            state.reason = (
+                state.reason or "workflow ended before the node became ready"
+            )
+
     def _is_skipped(self, state: NodeState) -> bool:
         """未被 route 选中的节点（D2b，enhance-workflow-graph-ux）。
 
-        四个条件**同时**成立才算 ``skipped``：
+        三个条件**同时**成立才算 ``skipped``：
 
         1. 有控制入边（只被 route 门控的节点才是「未选中」的候选）；
         2. ``activations <= 0``（没有任何 route 选中它）；
         3. **每条控制入边的源头 route 都已 ``completed``**——「确实做过判定，
            且没选它」。缺了它，``route 从未运行``（例如它的数据依赖永远没就绪）
            会被误报成「条件没走这条」——**用户读到的是假话**。
-        4. **没有失败的 required 数据上游**——「被上游连累」优先于「未选中」。
-           一个节点既没被选中、它的数据上游又挂了，真因是**上游挂了**（即使
-           route 选了它，它也拿不到输入），报 ``skipped`` 同样在误导。
+
+        条件 3 与「被连累优先」是同一件事的两面：控制源没 completed（不管是
+        ``blocked``/``skipped`` 还是仍在 pending），说明「选没选它」这件事**没有
+        发生过**，真因在上游。调用方保证本方法在**上游已定**之后才被调用
+        （``_upstreams_resolved`` 的迭代），所以这里看到的是终态而不是中间态。
         """
         node_id = state.node.id
         if not self._has_control_incoming(node_id):
             return False
         if state.activations > 0:
             return False
-        # 条件 4：被上游连累优先。
-        plan = self._graph()
-        for edge in plan.data_incoming(node_id):
-            if not edge.required:
-                continue
-            upstream = self._states.get(edge.source)
-            if upstream is not None and upstream.status in _EDGE_BLOCKED_SOURCE_STATUSES:
-                return False
         plan = self._graph()
         for edge in plan.incoming(node_id):
             if not plan.is_control_edge(edge):
                 continue
             source = self._states.get(edge.source)
             if source is None or source.status != "completed":
+                return False
+        # 数据上游被连累（failed/cancelled/blocked 都由上游先定后再看）：
+        # 「被连累」优先于「未选中」——即使 route 选了它，它也拿不到输入。
+        for edge in plan.data_incoming(node_id):
+            if not edge.required:
+                continue
+            upstream = self._states.get(edge.source)
+            if upstream is not None and upstream.status in _DOOMED_UPSTREAM_STATUSES:
                 return False
         return True
 

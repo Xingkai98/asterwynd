@@ -215,6 +215,86 @@ async def test_blocked_takes_priority_over_skipped(manager):
     )
 
 
+def _doomed_upstream_spec(*, t_first: bool) -> dict:
+    """构造「既未被选中、其数据上游又被受阻连累」的节点 t。
+
+    图：``start → gate(route)``，gate 默认出口激活 ``gated``（**从未被激活**）；
+    ``gated → u``（u 的 required 数据依赖永远不就绪）；另一条 route ``r`` 有数据
+    依赖 ``start`` 因而跑完，它的两条控制出边指向 ``other``（被选中）与 ``t``
+    （**从未被选中**）；``u → t`` 是 t 的 required 数据入边。
+
+    收尾时 ``gated`` 判 ``skipped``、``u`` 因数据依赖未了就绪落 ``blocked``；
+    ``t`` 的真因是**上游 u 受阻**（即使 route 选了它也拿不到输入），所以按
+    「被连累优先」必须记 ``blocked``——spec delta 的第三条 Scenario 明确把
+    ``blocked`` 上游与 ``failed``/``cancelled`` 并列。
+
+    ``t_first`` 用来把 t 的**声明顺序**提到 u 之前：收尾遍历是按声明序推进的，
+    先判的节点看到的还是上游的**中间态**——所以判据必须与声明顺序无关。
+    """
+    graph = [
+        ("start", {"id": "start", "kind": "subagent", "task": "produce"}),
+        ("gate", {"id": "gate", "kind": "route",
+                  "cases": [{"when": "APPROVED", "to": "picked"}], "default": "gated"}),
+        ("picked", {"id": "picked", "kind": "subagent", "task": "taken branch"}),
+        ("gated", {"id": "gated", "kind": "subagent", "task": "never activated"}),
+        ("u", {"id": "u", "kind": "subagent", "task": "doomed upstream"}),
+        ("r", {"id": "r", "kind": "route",
+               "cases": [{"when": "APPROVED", "to": "other"}], "default": "other"}),
+        ("other", {"id": "other", "kind": "subagent", "task": "taken branch"}),
+        ("t", {"id": "t", "kind": "subagent", "task": "downstream of u and r"}),
+    ]
+    order = [name for name, _ in graph]
+    if t_first:
+        order.remove("t")
+        order.insert(order.index("u"), "t")
+    return {
+        "goal": "doomed-upstream",
+        "nodes": [dict(graph)[name] for name in order],
+        "edges": [
+            {"from": "start", "to": "gate"},
+            {"from": "gate", "to": "picked"},
+            {"from": "gate", "to": "gated"},
+            {"from": "gated", "to": "u"},
+            {"from": "start", "to": "r"},
+            {"from": "r", "to": "other"},
+            {"from": "r", "to": "t"},
+            {"from": "u", "to": "t"},
+        ],
+        "entry": ["start"],
+        "terminal": ["picked", "other", "t"],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("t_first", [False, True])
+async def test_blocked_upstream_also_beats_skipped(manager, t_first):
+    """spec delta Scenario 3 把 ``blocked`` 上游与 ``failed``/``cancelled`` 并列。
+
+    只查 ``failed``/``cancelled``（``_EDGE_BLOCKED_SOURCE_STATUSES``）会漏掉
+    「上游本身也被挡住」这一支——而 ``blocked`` 恰恰是本 change 要区分开的
+    那一档，漏掉就把「被连累」报成了「条件没选它」，正是要消灭的那类假话。
+    """
+    snapshot = await _run(manager, _doomed_upstream_spec(t_first=t_first))
+    nodes = _nodes(snapshot)
+
+    assert nodes["gated"]["status"] == "skipped", "前置：gated 确实未被选中"
+    assert nodes["u"]["status"] == "blocked", "前置：u 确实被连累受阻"
+    assert nodes["t"]["status"] == "blocked", (
+        f"t 的上游 u 受阻 → 必须记 blocked，实际 {nodes['t']['status']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_skipped_verdict_is_independent_of_declaration_order(manager):
+    """收尾判据必须与节点**声明顺序**无关——否则同一张图换个声明序就换一个答案。"""
+    first = _nodes(await _run(manager, _doomed_upstream_spec(t_first=True)))
+    second = _nodes(await _run(manager, _doomed_upstream_spec(t_first=False)))
+    assert first["t"]["status"] == second["t"]["status"], (
+        f"同一张图两种声明序给出不同答案：{first['t']['status']!r} vs "
+        f"{second['t']['status']!r}"
+    )
+
+
 # --- D2b：route 数据入边的消费记账 ------------------------------------------
 
 
