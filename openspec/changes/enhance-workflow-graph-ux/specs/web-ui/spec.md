@@ -6,7 +6,7 @@
 
 Workflow 视图 SHALL 在桌面（>720px）显示横向 DAG（左→右）、在手机/平板（≤720px）显示纵向 DAG（上→下）。SHALL 支持 pinch 缩放 + pan 平移。50–200 节点 SHALL 折叠 foreach/自动插层（折叠组聚合状态）。
 
-折叠组的展开/收起 SHALL 由节点上的**独立控件**承担（不再由「点击节点」承担）；点击节点 SHALL 打开节点详情面板（见「workflow 节点详情面板」）。`max_nodes` 超限 SHALL 表现为「声明期被拒（无图）/ 运行期 `status == "graph_recursion_exceeded"` + `diagnostics`」两种，前端 SHALL NOT 依赖 `nodes.length > 200` 判断超限，也不存在「渲染一张 >200 节点的图再截断」的路径。
+折叠组的展开/收起 SHALL 由**节点详情面板**承担（不再由「点击节点」承担，也不在节点上单独画控件）：点击节点 SHALL 一律打开节点详情面板（见「workflow 节点详情面板」），面板 SHALL 为折叠组组长提供「展开成员 / 收起成员」动作。`max_nodes` 超限 SHALL 表现为「声明期被拒（无图）/ 运行期 `status == "graph_recursion_exceeded"` + `diagnostics`」两种，前端 SHALL NOT 依赖 `nodes.length > 200` 判断超限，也不存在「渲染一张 >200 节点的图再截断」的路径；超限时 SHALL 仍然绘制图并在画布上方叠加告警条（告警条 SHALL 含 `diagnostics.current_nodes` 与 `steps`）。
 
 分层布局、状态映射与折叠归类 SHALL 与 DOM 解耦为可单独测试的纯函数。
 
@@ -20,15 +20,24 @@ Workflow 视图 SHALL 在桌面（>720px）显示横向 DAG（左→右）、在
 #### Scenario: 折叠组展开与节点点击语义分离
 
 - **GIVEN** 一个折叠的 foreach 容器节点
-- **WHEN** 用户点击该节点（而非其展开控件）
+- **WHEN** 用户点击该节点
 - **THEN** SHALL 打开节点详情面板
-- **AND** SHALL NOT 因此展开/收起该折叠组（展开由独立控件承担）
+- **AND** SHALL NOT 因此展开/收起该折叠组（展开由详情面板中的动作承担）
+
+#### Scenario: 图超限时仍可见
+
+- **GIVEN** 一张运行期超限的图（`status == "graph_recursion_exceeded"`）
+- **WHEN** 前端渲染该快照
+- **THEN** SHALL 绘制图并在画布上方显示告警条
+- **AND** 告警条 SHALL 给出超限原因、超限时仍就绪的节点与已跑 superstep 数
 
 ### Requirement: workflow 图快照
 
 scheduler SHALL 提供 `workflow_graph_snapshot()`，返回完整运行期图（nodes + edges + 每节点 status + 每边 status）。该快照 SHALL 基于运行期 `ExecutionPlan`（含自动插层 + foreach 展开），SHALL NOT 改变现有 `_envelope`/`parent_envelope` 的父 Agent 数据契约。快照 SHALL 显式挑选字段（节点不含 `subagent_ids`/`slots`/`raw`，边只含结构字段），SHALL NOT 复用 `NodeState.to_dict()` 直出或整包复用 `_envelope`。
 
-快照 SHALL 额外包含供可读性展示的加法字段：节点 `reason`（截断到与 `summary` 同口径的 bounded 上限）、图级 `started_at`/`finished_at`、foreach/自动插层节点的 `items_completed`/`items_failed`。既有字段的语义 SHALL NOT 改变。
+快照 SHALL 额外包含供可读性展示的加法字段：节点 `reason`（**在投影层**截断到与 `summary` 同口径的 bounded 上限；`state.reason` 本体 SHALL NOT 改变，它是 `_envelope` 的字段）、节点 `task`、图级 `started_at`/`finished_at`（**无值统一为 `null`**——构造期哨兵 `0.0` SHALL NOT 直出，否则前端会渲染成 epoch 0）、图级 `budget`、`kind == "foreach"` 节点的 `item_states`/`items_running`/`items_completed`/`items_failed`。既有字段的语义 SHALL NOT 改变。
+
+节点状态 SHALL 支持「**已派发但仍在等执行 slot**」的投影态 `queued`：该值 SHALL 只在图投影层按 run record 的 `status` 派生，SHALL NOT 写入 `NodeState.status`（后者参与调度器收敛判断）。
 
 #### Scenario: 快照包含边与状态
 
