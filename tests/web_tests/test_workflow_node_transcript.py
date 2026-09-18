@@ -317,6 +317,98 @@ async def test_payload_is_json_serialisable(manager):
         assert node_id in encoded
 
 
+# --- 候选项下钻：取**某一项**自己的 transcript ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_item_drilldown_returns_that_items_own_transcript(manager):
+    """spec Scenario：点候选项后 SHALL 能按该项的 subagent_id 取到**它自己**的
+    transcript，SHALL NOT 混入同容器其它项的 messages。
+
+    没有这条取数路径，「点进单项」就是空操作——候选列表点了没反应（审阅发现的
+    功能缺口）。
+    """
+    manager.llm = _LLM(content="item-specific output")
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+
+    container = build_node_transcript_payload(manager, scheduler, "fan")
+    assert container["kind"] == "candidates"
+    target = container["candidates"][1]
+    assert target["subagent_id"], "前置：候选项必须带 subagent_id"
+
+    item = build_node_transcript_payload(
+        manager, scheduler, "fan",
+        subagent_id=target["subagent_id"],
+        run_id=target["run_id"],
+    )
+    assert item["kind"] == "single", f"应下钻为单项，实际 {item['kind']!r}"
+    assert item["subagent_id"] == target["subagent_id"]
+    assert item["index"] == 1
+    assert item["messages"], "单项 transcript 必须真的取到 messages"
+    # 不能把容器形态（候选列表）当结果返回——那正是「点了没反应」的成因。
+    assert "candidates" not in item
+
+
+@pytest.mark.asyncio
+async def test_item_drilldown_does_not_mix_other_items(manager):
+    """每项的 messages 是各自 session 的，不得串台。"""
+
+    class _EchoLLM(_LLM):
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            blob = " ".join(str(getattr(m, "content", "")) for m in messages)
+            return LLMResponse(content=f"echo:{blob[:40]}", stop_reason="end_turn",
+                               usage=Usage(5, 5))
+
+    manager.llm = _EchoLLM()
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+
+    container = build_node_transcript_payload(manager, scheduler, "fan")
+    ids = [c["subagent_id"] for c in container["candidates"]]
+    assert len(set(ids)) == 3, "三项各有独立 subagent"
+
+    seen = []
+    for candidate in container["candidates"]:
+        item = build_node_transcript_payload(
+            manager, scheduler, "fan",
+            subagent_id=candidate["subagent_id"], run_id=candidate["run_id"])
+        seen.append(item["subagent_id"])
+    assert seen == ids, "逐项取到的必须是各自的 session"
+
+
+@pytest.mark.asyncio
+async def test_item_drilldown_of_unknown_subagent_degrades(manager):
+    """未知 subagent_id（记录已淘汰）优雅降级，不 500。"""
+    scheduler = _scheduler(manager, _foreach_spec(2))
+    await scheduler.run(scheduler.spec)
+
+    payload = build_node_transcript_payload(
+        manager, scheduler, "fan", subagent_id="never-existed")
+    assert payload["kind"] == "none"
+    assert payload["subagent_id"] == "never-existed"
+
+
+@pytest.mark.asyncio
+async def test_item_drilldown_is_bounded_and_read_only(manager):
+    manager.llm = _LLM(content="z" * 9000)
+    scheduler = _scheduler(manager, _foreach_spec(2))
+    await scheduler.run(scheduler.spec)
+
+    container = build_node_transcript_payload(manager, scheduler, "fan")
+    target = container["candidates"][0]
+    manager.llm.calls = 0
+    item = build_node_transcript_payload(
+        manager, scheduler, "fan",
+        subagent_id=target["subagent_id"], run_id=target["run_id"],
+        limit=1, content_limit=100,
+    )
+    assert len(item["messages"]) <= 1
+    for message in item["messages"]:
+        assert len(message["content"]) <= 100
+    assert manager.llm.calls == 0
+
+
 @pytest.mark.asyncio
 async def test_unknown_subagent_degrades_instead_of_raising(manager):
     """``inspect_transcript`` 对未知 subagent 抛 ``KeyError``——路由要转结构化响应。

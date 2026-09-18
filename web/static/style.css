@@ -1730,6 +1730,27 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 }
 .transcript-pause:hover { color: var(--text); border-color: var(--info); }
 .transcript-cluster { contain: content; }
+.transcript-back {
+  display: block;
+  margin: 0 0 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 0.72rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.transcript-back:hover { color: var(--text); border-color: var(--info); }
+.transcript-item-note {
+  font-size: 0.78rem;
+  color: var(--text2);
+  padding: 4px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  word-break: break-word;
+}
 .cand {
   display: flex;
   align-items: center;

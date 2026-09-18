@@ -183,6 +183,8 @@ def create_app(
         node_id: str,
         limit: int = 50,
         offset: int = 0,
+        subagent_id: str | None = None,
+        run_id: str | None = None,
     ):
         """节点的**只读** transcript（change ``enhance-workflow-graph-ux``，D4/M3）。
 
@@ -193,6 +195,10 @@ def create_app(
         **LLM 面工具**（``Tool`` 子类、要 permission、走 AgentLoop 工具注册与协议）。
         Web 要用它得绕开工具协议直接调 manager——不如直接暴露一个只读 HTTP 接口；
         两者底层复用同一个 ``SubAgentManager.inspect_transcript()``，不复制逻辑。
+
+        ``subagent_id``（+``run_id``）是**候选项下钻**的入口：foreach 容器在
+        manager 里是 N 条 ``(workflow_id, node_id)`` 相同的 session，只能由调用方
+        指名要哪一个；不传时按节点类型返回容器形态（三态 union）。
 
         session 校验是**内存口径**（与 ``/api/sessions/{id}/timeline`` 同）：
         ``session_manager.get_session`` 只查内存字典，冷会话/进程重启后一律 404。
@@ -209,6 +215,7 @@ def create_app(
         try:
             payload = build_node_transcript_payload(
                 manager, scheduler, node_id, limit=limit, offset=offset,
+                subagent_id=subagent_id, run_id=run_id,
             )
         except Exception as exc:  # noqa: BLE001 - 只读接口绝不因投影失败而 500
             logger.debug("node transcript failed for %s/%s", workflow_id, node_id,

@@ -34,8 +34,10 @@
   let refreshHandle = null;
   let refreshCtx = null;
 
+  /** 缓存键：**必须带上 subagentId**，否则候选项下钻会覆盖容器那一格缓存
+   *  （审阅发现的连带问题）——下钻后再点回容器，拿到的是上一个单项的内容。 */
   function nodeKey(ctx) {
-    return `${ctx.workflowId}::${ctx.nodeId}`;
+    return `${ctx.workflowId}::${ctx.nodeId}::${ctx.subagentId || ''}`;
   }
 
   function el(tag, className, text) {
@@ -58,7 +60,13 @@
     }
     const url = `/api/sessions/${encodeURIComponent(ctx.sessionId)}`
       + `/workflows/${encodeURIComponent(ctx.workflowId)}`
-      + `/nodes/${encodeURIComponent(ctx.nodeId)}/transcript`;
+      + `/nodes/${encodeURIComponent(ctx.nodeId)}/transcript`
+      // 候选项下钻：指名要**哪一项**的 transcript。foreach 容器在 manager 里是
+      // N 条同 (workflow_id, node_id) 的 session，不指名就只能拿到容器形态。
+      + (ctx.subagentId
+        ? `?subagent_id=${encodeURIComponent(ctx.subagentId)}`
+          + (ctx.runId ? `&run_id=${encodeURIComponent(ctx.runId)}` : '')
+        : '');
     const response = await fetch(url, {headers: {Accept: 'application/json'}});
     if (response.status === 404) {
       // 内存口径的 session 校验：冷会话/进程重启后一律 404——降级为一句
@@ -104,7 +112,9 @@
     if (!host.isConnected) return;
     host.textContent = '';
     host.appendChild(toolbar(ctx, payload));
-    if (payload.kind === 'single') renderSingle(host, payload);
+    appendBackLink(host, ctx);
+    if (payload.kind === 'single') renderSingle(host, ctx, payload);
+    // ``ctx`` 供单项视图回显「第几项」（有的话）——见 renderSingle 的 title 行。
     else if (payload.kind === 'candidates') renderCandidates(host, ctx, payload);
     else renderNone(host, payload);
   }
@@ -151,7 +161,9 @@
         stopAutoRefresh();
         return;
       }
-      const due = G.transcriptRefreshDue(current.node, {
+      // 下钻到某一项时判**那一项**的状态（`itemNode`），否则容器还在跑就会不断
+      // 重取，把单项视图换回候选列表。
+      const due = G.transcriptRefreshDue(current.itemNode || current.node, {
         paused: paused.has(nodeKey(current)),
         lastFetchedAt: fetchedAt.get(nodeKey(current)),
         now: Date.now() / 1000,
@@ -166,6 +178,18 @@
     window.clearInterval(refreshHandle);
     refreshHandle = null;
     refreshCtx = null;
+  }
+
+  /** 单项视图的「返回容器」入口（下钻后没有它就回不去了）。 */
+  function appendBackLink(host, ctx) {
+    if (!ctx.subagentId || !ctx.parentCtx) return;
+    const back = el('button', 'transcript-back', '← 返回并行项列表');
+    back.type = 'button';
+    back.dataset.action = 'transcript-back';
+    back.addEventListener('click', () => {
+      render(host, ctx.parentCtx);
+    });
+    host.appendChild(back);
   }
 
   function renderNone(host, payload) {
@@ -209,6 +233,7 @@
       const row = el('button', 'cand');
       row.type = 'button';
       row.dataset.index = String(candidate.index);
+      row.dataset.subagentId = candidate.subagent_id || '';
       row.appendChild(el('span', 'cand-idx', `#${candidate.index}`));
       const name = el('span', 'cand-name',
         candidate.task ? G.truncateText(candidate.task, 80) : candidate.label);
@@ -225,11 +250,16 @@
       row.appendChild(status);
       row.addEventListener('click', () => {
         // 点某一项 → 按该项自己的 ``subagent_id`` 取它的 transcript
-        // （**不混入**同容器其它项的 messages）。
+        // （**不混入**同容器其它项的 messages）。``node`` 换成该项的投影：刷新
+        // 节律要判「**这一项**还在不在跑」，拿容器的状态会判错，10s 后把单项
+        // 视图换回候选列表。
         render(host, Object.assign({}, ctx, {
-          nodeId: ctx.nodeId,
           subagentId: candidate.subagent_id,
+          runId: candidate.run_id,
           index: candidate.index,
+          itemNode: {id: String(candidate.index), status: candidate.status},
+          // 留一份容器 ctx 供「返回」用。
+          parentCtx: ctx.subagentId ? ctx.parentCtx : ctx,
         }));
       });
       host.appendChild(row);
@@ -240,7 +270,13 @@
     }
   }
 
-  function renderSingle(host, payload) {
+  function renderSingle(host, ctx, payload) {
+    // 单项下钻时标明「这是第几项」——否则用户分不清自己在看容器还是某一项
+    // （两者的消息长得一样，只有身份不同）。
+    if (typeof ctx.index === 'number') {
+      host.appendChild(el('div', 'transcript-item-note',
+        `第 ${ctx.index} 项` + (payload.task ? `：${G.truncateText(payload.task, 120)}` : '')));
+    }
     const body = el('div', 'transcript-body');
     host.appendChild(body);
     renderClusters(body, payload.messages || []);

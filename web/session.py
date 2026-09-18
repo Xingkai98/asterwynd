@@ -767,9 +767,74 @@ def _reason_fields(state) -> dict:
     return {
         "reason_full": text,
         "reason_length": len(text),
-        # 布尔标志是**唯一正确**的判据：前端比长度会把「恰好 400 字符」误判成已截断。
+        # 本出口给的是**全文**，所以恒为 ``False``；保留这个键是为了让前端**不必**
+        # 比长度——比长度会把「恰好等于上限」的 reason 误判成已截断（审阅员 B）。
+        # 快照那条出口截断到 ``_SUMMARY_LIMIT``（400），父 agent 面是
+        # ``_PARENT_FIELD_LIMIT``（200）——三处上限口径不同、用途不同，见 design D9(e)。
         "reason_truncated": False,
     }
+
+
+def _item_drilldown_payload(
+    manager, scheduler, node_id: str, subagent_id: str, run_id: str | None,
+    *, limit: int, content_limit: int, include_tool_results: bool,
+) -> dict:
+    """候选项下钻：取**某一项**自己的 transcript（spec Scenario / D5.3）。
+
+    没有这条路径，「点进单项」就是个空操作——前端拿到的是容器载荷（候选列表），
+    原样重渲染，点了没反应。
+
+    单项的身份由 ``subagent_id`` 决定（``index`` 只用于回显与前端缓存键）。容器
+    节点在 manager 里是 N 条 ``(workflow_id, node_id)`` 相同的 session，所以**必须**
+    由调用方指名是哪一个；这里不再按 node_id 反查——那正是「取到别的项」的来源。
+    """
+    index = None
+    items = []
+    state = scheduler._states.get(node_id) if scheduler is not None else None
+    if state is not None:
+        for position, slot in enumerate(state.item_runs):
+            if getattr(slot, "subagent_id", None) == subagent_id:
+                index = position
+                break
+        items = _foreach_candidates(manager, scheduler, state, content_limit)
+
+    payload: dict = {
+        "kind": "single",
+        "node_id": node_id,
+        "node_kind": state.node.kind if state is not None else None,
+        "subagent_id": subagent_id,
+        "run_id": run_id,
+        "index": index,
+        "messages": [],
+        "truncated": False,
+        "included_tool_results": include_tool_results,
+        "limit": limit,
+        "content_limit": content_limit,
+        **_reason_fields(state),
+    }
+    if index is not None and index < len(items):
+        # 这一项的 task/reason 就是它在候选列表里的那份（同一数据源，不重算）。
+        payload["task"] = items[index].get("task", "")
+        payload["status"] = items[index].get("status")
+        if items[index].get("reason"):
+            payload["reason_full"] = items[index]["reason"]
+            payload["reason_length"] = len(items[index]["reason"])
+    try:
+        raw = manager.inspect_transcript(
+            subagent_id=subagent_id,
+            scope="recent_messages",
+            run_id=run_id,
+            limit=min(max(int(limit) or 1, 1), TRANSCRIPT_MAX_LIMIT),
+            include_tool_results=include_tool_results,
+        )
+    except KeyError:
+        # 该 subagent 已不在内存（进程重启 / 会话被淘汰）：结构化降级，不 500。
+        payload["kind"] = "none"
+        payload["message"] = "该会话未在本进程加载"
+        return payload
+    payload.update(_bounded_messages(raw, content_limit=content_limit))
+    payload.setdefault("status", raw.get("status"))
+    return payload
 
 
 def build_node_transcript_payload(
@@ -781,6 +846,8 @@ def build_node_transcript_payload(
     offset: int = 0,
     content_limit: int = TRANSCRIPT_CONTENT_LIMIT,
     include_tool_results: bool = False,
+    subagent_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict:
     """一个节点的只读 transcript 载荷（三态 union；D4/M3）。
 
@@ -797,8 +864,18 @@ def build_node_transcript_payload(
     （``session.name`` 是 ``f"{node.id}-{index}"``，但候选顺序 ≠ item 序号：
     ``create_subagent`` 发生在 ``_acquire_slot()`` 之后，并发下顺序不定）。
 
+    ``subagent_id`` 非空时走**候选项下钻**（``_item_drilldown_payload``）：取那一项
+    自己的 transcript，而不是容器的候选列表。
+
     只读：不调 LLM、不写盘、不改执行状态。
     """
+    if subagent_id:
+        return _item_drilldown_payload(
+            manager, scheduler, node_id, subagent_id, run_id,
+            limit=min(max(int(limit) or 1, 1), TRANSCRIPT_MAX_LIMIT),
+            content_limit=content_limit,
+            include_tool_results=include_tool_results,
+        )
     state = scheduler._states.get(node_id) if scheduler is not None else None
     if state is None:
         return {
@@ -919,8 +996,11 @@ def _foreach_candidates(manager, scheduler, state, content_limit: int) -> list[d
             task = render_candidate_task(node, index)
         candidates.append({
             "index": index,
-            "subagent_id": subagent_id or (state.subagent_ids[index]
-                                           if index < len(state.subagent_ids) else None),
+            # **不回落**到 ``subagent_ids[index]``：它是稀疏数组（异常项走
+            # ``continue`` 不 append），下标 ≠ item 下标——回落会拿一个可能错位的
+            # id 冒充（前端据此取数就会展示**别的项**的 transcript）。取不到就
+            # 如实为空，前端显示「该项未派发」。
+            "subagent_id": subagent_id,
             "run_id": run_id,
             "status": status,
             "label": f"#{index}",

@@ -480,6 +480,77 @@ async def test_convo_tab_lazily_fetches_transcript(page, fake_web_server):
     assert [u for u in requests if "/transcript" in u], "切到「对话」没有触发请求"
 
 
+_ITEM_CONTAINER = {
+    "kind": "candidates", "node_id": "fan", "node_kind": "foreach",
+    "total": 2, "offset": 0, "limit": 50, "has_more": False,
+    "reason_full": "", "reason_length": 0, "reason_truncated": False,
+    "candidates": [
+        {"index": 0, "subagent_id": "sa-0", "run_id": "r-0", "status": "completed",
+         "label": "#0", "summary": "ok", "reason": "", "task": "对 a.js 体检"},
+        {"index": 1, "subagent_id": "sa-1", "run_id": "r-1", "status": "failed",
+         "label": "#1", "summary": "", "reason": "RuntimeError: boom",
+         "task": "对 b.js 体检"},
+    ],
+}
+
+_ITEM_SINGLE = {
+    "kind": "single", "node_id": "fan", "node_kind": "foreach",
+    "subagent_id": "sa-1", "run_id": "r-1", "index": 1, "status": "failed",
+    "task": "对 b.js 体检",
+    "messages": [{"role": "assistant", "content": "THIS-IS-ITEM-ONE"}],
+    "truncated": False, "included_tool_results": False,
+    "limit": 50, "content_limit": 4000,
+    "reason_full": "RuntimeError: boom", "reason_length": 18,
+    "reason_truncated": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_foreach_candidate_drilldown_shows_that_item(page, fake_web_server):
+    """spec Scenario：点候选项 → 按该 ``subagent_id`` 取**它自己**的 transcript。
+
+    审阅发现的功能缺口：候选项点击原本是**空操作**（前端不读 ``subagentId``、
+    后端也没有按 subagent 取数的入口）——点了没反应，而这条能力已写进正式 spec。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    requests = []
+
+    async def _transcript_route(route):
+        url = route.request.url
+        requests.append(url)
+        if "subagent_id=sa-1" in url:
+            await route.fulfill(json=_ITEM_SINGLE)
+        else:
+            await route.fulfill(json=_ITEM_CONTAINER)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".cand[data-index='1']")
+
+    # 点第二项 → 请求必须**指名**那一项的 subagent_id。
+    await page.click(".cand[data-index='1']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body').textContent.includes('THIS-IS-ITEM-ONE')")
+    assert any("subagent_id=sa-1" in url for url in requests), (
+        f"下钻没有按 subagent_id 取数（点了没反应）：{requests}"
+    )
+    body = await page.text_content(".drawer-body")
+    assert "第 1 项" in body, body
+    assert "对 b.js 体检" in body, body
+
+    # 返回入口：回到候选列表（否则下钻后回不去）。
+    await page.click(".transcript-back")
+    await page.wait_for_selector(".cand[data-index='0']")
+
+
 @pytest.mark.asyncio
 async def test_foreach_node_shows_progress_count(page, fake_web_server):
     """D5：foreach 容器**常显**「完成 M/N」（不再只在 ≥50 节点折叠时才提项数）。"""
