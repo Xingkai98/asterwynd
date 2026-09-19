@@ -75,6 +75,13 @@
 - [x] 6.R.4 **闸门因由超前端展示预算**：新增 `_gate_detail()`（结构化上限值优先）+ `_REASON_DISPLAY_LIMIT=160`，整句落在用户可见范围内（原实现直塞 message 达 271 字符，尾部「本节点未派发」被切）
 - [x] 6.R.5 三处修复均经**变异验证**（还原实现 → 目标测试变红）
 
+### 6.S 审阅闭环修复（Round 2，CHANGES_REQUESTED → 修复）
+
+- [x] 6.S.1 **N1（中）取消图被说成入边互等**：`_blocked_reason` 增加取消态防护（取消是更强的停止原因，链上无环；真因是用户停下流程）。实测 n0(慢)→n1→n2 取消后 n1/n2 的错误因由，前端渲染从「入边互相等待」恢复为「流程被取消，该节点没来得及执行」
+- [x] 6.S.2 **N2（低）互等档无展示预算**：新增 `_WAITING_LIST_LIMIT=3`，上游 id 列表有界（实测 6 个长 id 扇入 179→107 字符，整句落回 160 内）
+- [x] 6.S.3 **N3（低）`limit` 优先无测试锁定**：补 `test_gate_detail_prefers_structured_limit_over_long_message`，把 design 的「SHALL NOT 直接塞入整段异常文本」变成可断言约束
+- [x] 6.S.4 三条均经**变异验证**（去掉取消防护 / 去掉列表上限 / 去掉 limit 优先 → 各自目标测试变红）
+
 - [x] 6.1 变异验证：每个新测试都能被「改坏实现」杀死（至少覆盖四档判据、因由三档、origin 豁免、**`_is_skipped` 条件 2**、三副本同步、**前端 `explainNode()` 优先级**）
 - [x] 6.2 `tests/agent/subagent/` + `tests/web_tests/` 全量回归
 - [x] 6.3 全量 `uv run pytest -q`

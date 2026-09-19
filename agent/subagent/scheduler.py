@@ -100,6 +100,11 @@ _SUMMARY_LIMIT = 400
 #: 但被前端切掉」等于没修（#218/Q4）。
 _REASON_DISPLAY_LIMIT = 160
 
+#: 「入边互相等待」因由里最多列出几个上游 id。上游 id 由节点声明决定、长度不可控
+#: （实测 6 个语义化长 id 扇入时整句 179 字符，前端会在 160 处把「，本节点永远未就绪」
+#: 连同右括号一起切掉），所以列出的数量必须有界。超出的用「等」收尾。
+_WAITING_LIST_LIMIT = 3
+
 #: bounded envelope 里 ``latest_events`` 的条目数上限（Q5：5 条终态迁移事件）。
 _LATEST_EVENTS_LIMIT = 5
 #: 单条 ``latest_events`` 的 ``summary_preview`` 字符上限（Q5：每条分配字符上限，
@@ -1345,9 +1350,8 @@ class WorkflowScheduler:
            永远不就绪而未派发——这是**结构性**原因，不是「工作流提前结束」。
 
         文案按**前端展示预算**压缩（见 :data:`_REASON_DISPLAY_LIMIT`）：闸门细节取
-        ``_gate_detail()``（结构化上限值优先），**不直接把整段异常文本塞进来**——
-        ``recursion_limit`` 的异常文本会列出全部就绪节点（实测 271 字符），塞进来
-        会让前端在 160 字符处把尾部「本节点未派发」切掉。
+        ``_gate_detail()``（结构化上限值优先），互等档按 :data:`_WAITING_LIST_LIMIT`
+        限制列出的上游数——两档都保证整句落在用户可见的那 160 字符内。
 
         **闸门判定看 ``reason`` 键是否存在，不看 ``_diagnostics`` 是否非空**：
         ``_diagnostics`` 也会被**非闸门**诊断填充（典型：``route_ref_misses``，
@@ -1355,13 +1359,22 @@ class WorkflowScheduler:
         说成「图级闸门触发」——又是一句指错方向的假话（正是本 change 要消灭的
         那类）。闸门诊断的唯一写入点是 ``_mark_graph_recursion_exceeded``，它**必带**
         ``reason`` 键。
+
+        **「入边互等」只在图**自然收敛**时才是真因**（用户取消 / 预算停是更强的
+        停止原因，见 D1 的既有口径）。图被取消时节点没就绪是因为**用户停下了它**，
+        链上根本没有环；此时说「永远未就绪」同样是指错方向的假话。故取消态直接
+        走兜底句——前端 ``GRAPH_STOP_REASONS`` 会把它渲染成「流程被取消」。
         """
+        if self._cancelled:
+            return "workflow cancelled before the node became ready"
         reason = str(self._diagnostics.get("reason") or "").strip()
         if reason:
             return f"图级闸门 {reason} 触发（{self._gate_detail()}），本节点未派发"
         waiting = self._waiting_upstreams(state)
         if waiting:
-            return f"入边互相等待（{', '.join(waiting)}），本节点永远未就绪"
+            shown = waiting[:_WAITING_LIST_LIMIT]
+            suffix = " 等" if len(waiting) > _WAITING_LIST_LIMIT else ""
+            return f"入边互相等待（{', '.join(shown)}{suffix}），本节点永远未就绪"
         return "workflow ended before the node became ready"
 
     def _gate_detail(self) -> str:

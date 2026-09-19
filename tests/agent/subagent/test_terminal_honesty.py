@@ -11,6 +11,7 @@
 ``openspec/changes/workflow-terminal-honesty/diagnosis.md``（#220 的 ``default`` 必须指向
 回边分支，否则环转不起来、bug 复现不出）。
 """
+import asyncio
 import re
 from pathlib import Path
 
@@ -315,6 +316,108 @@ async def test_back_edge_does_not_wipe_the_dispatching_route(manager):
     assert edges[("cycle_gate", "body")] == "passed", (
         f"选中的控制边应为 passed，实为 {edges[('cycle_gate', 'body')]!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_graph_does_not_claim_mutual_wait(tmp_path):
+    """回归（Round 2 审阅 N1）：图被**取消**时，节点因由不得说「入边互相等待」。
+
+    取消链上根本没有环——节点没就绪的唯一原因是**用户停下了它**。说「永远未就绪」
+    与说「工作流提前结束」同样是**指错方向的假话**（用户会去查环，而应该看取消）。
+    这里用真实 ``run()`` + ``cancel()`` 复现：``n0``(慢) → ``n1`` → ``n2``，
+    取消后 ``n1``/``n2`` 均为 ``blocked``。
+    """
+    class _SlowLLM:
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            await asyncio.sleep(5)
+            return LLMResponse(content="hi", stop_reason="end_turn", usage=Usage(5, 5))
+
+    manager = SubAgentManager(
+        llm=_SlowLLM(),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BUILD,
+        workspace_policy=WorkspacePolicy(workspace_root=tmp_path),
+    )
+    spec = {
+        "goal": "cancel me",
+        "nodes": [
+            {"id": "n0", "kind": "subagent", "task": "slow"},
+            {"id": "n1", "kind": "aggregate", "strategy": "collect"},
+            {"id": "n2", "kind": "aggregate", "strategy": "collect"},
+        ],
+        "edges": [{"from": "n0", "to": "n1"}, {"from": "n1", "to": "n2"}],
+        "entry": ["n0"], "terminal": ["n2"],
+    }
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(spec)
+    task = asyncio.ensure_future(scheduler.run(scheduler.spec))
+    await asyncio.sleep(0.4)
+    scheduler.cancel()
+    await task
+    snapshot = scheduler.workflow_graph_snapshot()
+
+    assert snapshot["status"] == "cancelled"
+    blocked = [n for n in snapshot["nodes"] if n["status"] == "blocked"]
+    assert blocked, "取消后应有 blocked 节点"
+    for node in blocked:
+        reason = node.get("reason") or ""
+        assert "入边互相等待" not in reason, (
+            f"取消图（无环）不得说入边互等：{node['id']} reason={reason!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_waiting_reason_fits_the_frontend_display_budget(manager):
+    """回归（Round 2 审阅 N2）：互等档因由也必须有展示预算上界。
+
+    上游 id 长度由节点声明决定（实测 6 个语义化长 id 扇入时整句 179 字符），
+    前端在 160 处会把「，本节点永远未就绪」连同右括号一起切掉。
+    """
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(_deadlock_spec())
+    await scheduler.run(scheduler.spec)
+    long_ids = [f"validation_stage_{i}_processor" for i in range(6)]
+
+    class _Edge:
+        def __init__(self, source):
+            self.source, self.target, self.required = source, "target", True
+
+    class _State:
+        status = "blocked"
+
+    class _Node:
+        id = "target"
+
+    scheduler._states = {lid: _State() for lid in long_ids}
+    scheduler._graph = lambda: type(
+        "G", (), {"incoming": staticmethod(lambda _nid: [_Edge(lid) for lid in long_ids])}
+    )()
+    reason = scheduler._blocked_reason(type("St", (), {"node": _Node()})())
+    assert len(reason) <= 160, f"互等因由超展示预算（{len(reason)}）: {reason!r}"
+    assert reason.endswith("本节点永远未就绪"), f"尾部被挤掉：{reason!r}"
+    assert "等" in reason, f"超限上游应以「等」收尾：{reason!r}"
+
+
+@pytest.mark.asyncio
+async def test_gate_detail_prefers_structured_limit_over_long_message(manager):
+    """回归（Round 2 审阅 N3）：闸门细节**优先取结构化 `limit`**，而非截断长 message。
+
+    ``design.md`` 要求「SHALL NOT 直接塞入整段异常文本」。若只靠 message 截断，
+    超长 `reason` 下仍可能超预算，且「limit 优先」这条设计约束没有任何测试锁定。
+    """
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(_route_cap_spec())
+    await scheduler.run(scheduler.spec)
+    scheduler._diagnostics = {
+        "reason": "recursion_limit",
+        "limit": 7,
+        "message": "M" * 500,   # 长 message 必须**不**被采用
+    }
+    state = next(s for s in scheduler._states.values() if s.status == "blocked")
+    reason = scheduler._blocked_reason(state)
+    assert "超过上限 7" in reason, f"未采用结构化 limit：{reason!r}"
+    assert "MMMM" not in reason, f"采用了整段 message 而非结构化 limit：{reason!r}"
+    assert len(reason) <= 160
 
 
 @pytest.mark.asyncio

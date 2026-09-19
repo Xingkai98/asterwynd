@@ -117,6 +117,25 @@ def test_fallback_reason_does_not_hijack_generic_path():
     assert call("isSpecificNodeReason", "入边互相等待（body），本节点永远未就绪") is True
 
 
+def test_cancelled_graph_shows_cancellation_not_mutual_wait():
+    """Q4 反向护栏（Round 2 N1）：取消图上用户看到的是「被取消」，不是「入边互等」。
+
+    取消链上没有环——节点没就绪的真因是用户停下了流程。若把取消当「互等」展示，
+    用户会去查环（不存在），排查方向被指错（正是本 change 要消灭的那类）。
+    """
+    snap = {
+        "status": "cancelled",
+        "nodes": [{"id": "n2", "kind": "aggregate", "status": "blocked",
+                   "reason": "workflow cancelled before the node became ready"}],
+        "edges": [{"from": "n1", "to": "n2", "kind": "data", "status": "blocked"}],
+    }
+    nodes = {n["id"]: n for n in snap["nodes"]}
+    nodes["n1"] = {"id": "n1", "status": "blocked"}
+    text = call("explainNode", nodes["n2"], snap["edges"], nodes, snap["status"], {})
+    assert "取消" in text, f"取消图未说明取消：{text!r}"
+    assert "互相等待" not in text, f"取消图被说成互等：{text!r}"
+
+
 def test_budget_graph_still_takes_the_generic_stop_reason():
     """Q4 回归：预算停的 ``blocked`` 节点仍归图级停止原因（既有 G12 语义不变）。"""
     snap = {
