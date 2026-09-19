@@ -1,13 +1,208 @@
 # Building Review: workflow-terminal-honesty
 
 - **审阅者**: 独立零记忆 subagent（不继承任何开发上下文）
+- **审阅轮次**: Round 3（**封顶轮**：复核 Round 2 的 3 条修复 + 检查修复是否引入新问题）
+- **审阅时间**: 2026-09-19
+- **审阅对象**: 最终 HEAD `45634c8`（完整 diff vs base `f7a248655033ee3f035b79915a1cc4bff69082db`）
+- **工作区**: `/home/happy/.paseo/worktrees/0frj3kg8/workflow-terminal-honesty-2026-09-19`
+- **Round 2 报告**: 见本文件 `## Round 2（历史）`（原文保留，未删改）
+- **Round 1 报告**: 见本文件 `## Round 1（历史）`（原文保留，未删改）
+
+## Verdict (Round 3 — 封顶轮)
+
+**PASS**
+
+Round 2 的三条 issue **全部真正修复**，我用独立构造的输入 + 变异逐一验证过（不依赖修复说明）。本轮另发现 3 条**低severity、非阻塞**的小瑕疵（措辞冗余 / 测试强度 / 一个不可达的优先级理论边界），均不影响正确性，**不阻塞 PR**，建议留作后续。
+
+> **审阅期 HEAD 前进说明（重要）**：我的 Round 3 审阅在 HEAD = `14d2797` 上开始。审阅过程中实现方并行提交了 `45634c8`（「互等因由限整句长度而非仅数量」），修的**正是我在 N2 上独立发现、并正准备记为"残留"的同一个洞**（Round 2 的 N2 修复只限了**数量**，未限 **id 长度**：3 个 60 字符 id 整句 207 字符 → 前端 160 处切掉后缀）。我在确认工作区稳定后把审阅对象**重新钉到 `45634c8`**，全部复核结论以**最终 HEAD** 为准。
+
+> **审阅方式说明（隔离）**：发现工作区有并行开发 agent 在写（`ps` 确认，且我注意到 `scheduler.py` 在我会话期间被改动），为避免污染实现方的文件，我把审阅**完整搬进一个独立的分离式 worktree**（`git worktree add --detach /tmp/wth-review 45634c8`），所有变异/实跑都在那里进行。审阅结束时该 worktree 已删除，主工作区 `git status` 干净（HEAD `45634c8`，无残留改动）。
+
+## Round 2 Issues — 复核结果
+
+### N1（中）取消图被说成「入边互相等待」 — ✅ **关闭**
+
+- **修复位置**: `agent/subagent/scheduler.py:1368-1369`（`_blocked_reason` 顶部取消态防护）
+- **我的独立验证**（真实 `run()` + 真实 `cancel()`，非构造；前端用 node+vm 跑**真实 `explainNode()`**）：
+
+  | 场景 | 结果 |
+  |---|---|
+  | `cancel()` 掉的链式图 `n0(慢)→n1→n2`，图级 status | `cancelled` |
+  | `n1` / `n2` 因由 | `'workflow cancelled before the node became ready'`（**无**「入边互相等待」） |
+  | 用户可见文本（真实 `explainNode()`） | `'流程被取消，该节点没来得及执行'`（题干**正确**，与 base 一致） |
+  | 取消图中说「互等」的 blocked 节点数 | **0** |
+
+- **没有过度防护**（任务点名的第二个边界）：`_cancelled` 为 False 的**自然收敛**死锁图仍必须说「互等」——实测 `_deadlock_spec()` 三节点（`cycle_gate` / `body` / `end`）因由**全部**仍是 `'入边互相等待（…），本节点永远未就绪'`，图级 `stalled`。`test_deadlock_reason_is_not_the_fallback_lie` 与 `test_deadlock_reason_states_mutual_wait_not_upstream` 均绿。
+- **预算停边界**（任务点名的第三个边界，即「`_cancelled` 为 False 时会不会又落回互等的假话」）：**不会**。两条路径都实测排除：
+  1. `_resolve_pending_status` 的 `elif self._budget_stop:` 分支（`:1333`）**先于** `else`（`:1335`，唯一进入 `_blocked_reason` 的入口）拦截——我实跑 `_budget_stop=True` + 节点回 `pending` + `_resolve_pending_status()` → status `blocked`、reason `'workflow ended before the node became ready'`，**不含**「入边互相等待」。
+  2. 预算路径根本不经过 `_blocked_reason`（`_apply_budget_exhausted_status` 自己写 reason）。
+- **前端渲染复核**（任务点名）：喂真实快照确认用户看到的是「取消」而非「互等」；且前端另有两条独立护栏——`isSpecificNodeReason('workflow cancelled before the node became ready') === False`（不误判为具体因由、不提权），以及 `GRAPH_STOP_REASONS['cancelled']` 兜底。
+- **测试质量**：`test_cancelled_graph_does_not_claim_mutual_wait` 用**真实** `run()`+`cancel()`（非 mock），断言 blocked 节点因由不含「入边互相等待」。变异 **M1**（删掉防护）→ **KILLED**；变异 **M2**（把防护串改成含「入边互相等待」）→ **KILLED**。另有前端 `test_cancelled_graph_shows_cancellation_not_mutual_wait`（变异 J1 制造提权 → KILLED）。
+- **结论**: 符合 `design.md:48`「取消是更强的停止原因」，触发路径（Web `cancel_workflow`）已如实表达，**关闭**。
+
+### N2（低）互等档无展示预算 — ✅ **关闭**（由 `45634c8` 落实，含我独立发现的长度轴）
+
+- **修复位置**: `agent/subagent/scheduler.py:1378-1395`（新增 `_waiting_reason()`：先按 `_WAITING_LIST_LIMIT=3` 限**数量**，再按 `_REASON_DISPLAY_LIMIT=160` 限**整句长度**，截 id 中段、**保留后缀**）
+- **任务点名的「最坏情况」——我独立构造并实测**（`_WAITING_LIST_LIMIT` 个**超长** id 扇入）：
+
+  | 构造 | Round 2 修复（仅限数量） | 最终 HEAD（限整句） |
+  |---|---|---|
+  | 6 个语义化长 id | 179 → 前端切尾 | **106** ✅ |
+  | 3 个 60 字符 id | **207** → 前端连右括号一起切 | **159** ✅ |
+  | 3 个 120 字符 id | 381 | **159** ✅ |
+  | 3 个 300 字符 id | 921 | **159** ✅ |
+  | 10 个 60 字符 id | 203 | **159** ✅ |
+
+  修复前「3 个 60 字符 id 会超 160」这个判定**成立**（我实测 207）；`45634c8` 后整句 ≤159、后缀「），本节点永远未就绪」完整可见。**不构成缺陷**。
+- **穷举不变量扫描**（我另做，超出任务要求）：`id_len ∈ {1,2,3,5,8,13,20,30,45,60,80,120,200,500,2000} × n ∈ {1,2,3,4,5,6,8,12,40}` 共 **135** 组，断言三条不变量——`len ≤ 159` / 前缀 `入边互相等待（` / 后缀 `），本节点永远未就绪`——**零违反**，且 `n>3` 时列表**总带**截断标记（无「静默截断」）。
+- **测试质量**：`test_waiting_reason_fits_the_frontend_display_budget` 覆盖三档最坏情况（长 id 扇入 / 超长 id×3 / 极长 id），断言 `len ≤ 160` + 后缀 + 前缀。变异 **M3b**（删掉整句 clamp）→ **KILLED**；**M4b**（clamp 保留但丢后缀）→ **KILLED**。
+- **实现方声明的变异我独立复现**：把 `_waiting_reason` 退回 `14d2797` 的「只限数量」形态 → 目标测试红（`AssertionError: [超长 id ×3] 互等因由超展示预算（207）`）。声明属实。
+- **结论**: 数量与长度**两个轴**都有界、有回归测试锁定，**关闭**。
+
+### N3（低）`limit` 优先无测试锁定 — ✅ **关闭**
+
+- **修复位置**: `tests/agent/subagent/test_terminal_honesty.py:407`（新增 `test_gate_detail_prefers_structured_limit_over_long_message`）
+- **我的独立变异**（Round 2 时 R8 曾**存活**，本轮复跑同一方向）：
+  | 变异 | Round 2 | Round 3 |
+  |---|---|---|
+  | **M5** 让 `_gate_detail` 忽略 `limit`（删掉结构化分支） | R8 存活 | **KILLED（红）** |
+  | **M6** 让闸门因由不再调用 `_gate_detail` | （未测） | **KILLED（红）** |
+- **测试质量核查**：该测试喂 `limit=7, message="M"*500`，断言「含 `超过上限 7`」且「不含 `MMMM`」——直接锁死 `design.md:74` 的「SHALL NOT 直接塞入整段异常文本」。这是一条**真正的**约束（不是靠容忍 message 截断侥幸通过）。
+- **结论**: `limit` 优先分支现在可被机械杀死，**关闭**。
+
+## 新发现 Issues (Round 3)
+
+均**低 severity、不阻塞 PR**。另有一条按任务的「不要以既有偶发 flake 打 CHANGES_REQUESTED」精神排除。
+
+### 新-1（低，不阻塞）`_waiting_reason` 的「等」收尾被统一的 `…` 取代，语义等价但语气微降
+
+- **位置**: `agent/subagent/scheduler.py:1394-1395`
+- **观察**: `14d2797` 用「等」收尾（`…charlie 等），本节点…`），`45634c8` 统一改成 `…`（`…charlie…），本节点…`）。两者都正确表达「列表不完整」，`…` 甚至更明确；只是从「中文语气词」变成「符号」。
+- **影响**: 纯措辞，无语义歧义。**非缺陷**，仅记录。任务点名的「截断后『等』的语义会不会误导」——实测 `n>3` 时**总有**截断标记（135 组扫描零例外），不误导。
+
+### 新-2（低，不阻塞）`_waiting_reason` 的数量上限在「整句 clamp 生效」时不可观测（冗余保护，非缺陷）
+
+- **位置**: `agent/subagent/scheduler.py:1390-1395`
+- **观察**: 变异 **M7 / M8**（分别删掉 `waiting[:_WAITING_LIST_LIMIT]` 数量限制、删掉 `elif more: joined += "…"`）跑 `tests/agent/subagent/` 全量（488 条）**均存活**。原因：当 `len(joined) > room`（142）时，硬字符 clamp 已先截掉尾部，数量上限的结果不可观测；数量上限只在「`n>3` 且总长 ≤142」这一窄窗口内改变输出。
+- **影响**: **不是安全缺口**——`_REASON_DISPLAY_LIMIT` 的 clamp 是真正的安全网，数量上限是冗余的第二道。两条保护**各自充分**，删任一条输出仍在预算内。属**冗余度**观察（`design.md:74` 只要求 bounded，未要求可观测），**非缺陷**。
+
+### 新-3（低，不阻塞，理论不可达）取消态防护在优先级上**先于**闸门分支，理论上可遮蔽闸门真因
+
+- **位置**: `agent/subagent/scheduler.py:1368-1369`（`if self._cancelled: return 兜底句` 置于 `reason` 判据**之前**）
+- **任务点名的边界**（「一张既被取消又撞了闸门的图，因由该说哪个？」）——我构造 `_cancelled=True` + `_diagnostics={reason:max_routes,...}` 直接调 `_blocked_reason`，确认此时闸门信息**被防护遮蔽**，返回兜底句。
+- **可达性判定（关键）**：**实践中不可达**，三条证据：
+  1. 节点因由的**唯一**写入点是 `_resolve_pending_status` → `_blocked_reason`（`:1337`），而该路径**只在 teardown 的 `_resolve_pending_nodes` 里被调用**；`cancel()` 把图级 `_status` 直接设为 `cancelled` 并立即返回，**不**再走这条路径。
+  2. 真实的「先撞闸门、后取消」时序（闸门自然收敛后用户又点取消）我**实跑**了：`node.reason` 保留的是**闸门真因**（`'图级闸门 max_routes 触发（超过上限 1），本节点未派发'`），未被改写——因为 `state.reason = state.reason or self._blocked_reason(state)` 是 **or**，已写过的原因不会被覆盖。
+  3. 「先取消、后撞闸门」在调度器里不存在：`cancel()` 后主循环第一件事就是 `if self._cancelled: self._status = "cancelled"; return`（`:853-855`），不会再产生闸门。
+- **影响**: 无用户可见后果；且若真出现，前端仍会经 `GRAPH_STOP_REASONS` 给出正确的「流程被取消」/「流程因图超限被停止」。**记为理论边界，不阻塞**。若后续要收口，可在防护前先判 `reason` 键（闸门是更强的结构性原因）——但**当前无证据支持该改动是必要的**。
+
+### 明确排除（核查后确认非问题）
+
+- **新防护串是否被前端误判为「具体因由」而提权**（任务点名）：**不会**。实测 `isSpecificNodeReason('workflow cancelled before the node became ready') === False`——它不在 `SPECIFIC_REASON_MARKERS`，且以 `stalled` 为图级 status 时前端回落兜底句。变异 **J1**（把该串加成标记词）→ **KILLED**。
+- **`_waiting_upstreams` 顺序稳定性**（任务点名）：**稳定**。走 `plan.incoming()` 的**声明序**，并对重复 source 去重（`if edge.source not in waiting`）；无集合迭代、无哈希顺序依赖，同图同输入恒同输出（135 组扫描中未见非确定）。
+- **`…` / 上游 id 是否引入 XSS**：无。全链路走 DOM `textContent` 与 `svgEl('title')` 的 `textContent`（Round 1/2 已核，本轮新增字符不改变渲染路径）。
+- **三条修复是否都有对应测试且经变异验证**（任务点名）：**是**。N1 → `test_cancelled_graph_does_not_claim_mutual_wait`（M1/M2 杀）+ 前端 `test_cancelled_graph_shows_cancellation_not_mutual_wait`（J1 杀）；N2 → `test_waiting_reason_fits_the_frontend_display_budget`（M3b/M4b 杀）；N3 → `test_gate_detail_prefers_structured_limit_over_long_message`（M5/M6 杀）。三条**均不靠修复说明自证**。
+- **CI / 门禁外扩**：`git diff f7a2486...HEAD --name-only | grep -E "\.github|scripts/|pyproject|flow/"` 为空——未触及任何门禁配置。
+
+## Mutation Spot-Check (Round 3)
+
+全部由我**自己动手**改源码 → 跑目标测试 → 观察红/绿 → 逐文件 md5 校验还原。**在隔离 worktree（非实现方工作区）中进行**，审阅结束 `git status` 干净。
+
+**后端 `agent/subagent/scheduler.py`**（还原校验：`md5 = 8aa9f808…` OK）
+
+| # | 变异 | 目标测试 | 期望 | 实际 | 结论 |
+|---|---|---|---|---|---|
+| M1 | 删掉 `_blocked_reason` 的取消态防护 | `test_cancelled_graph_does_not_claim_mutual_wait` | 红 | **FAILED** | ✅ 杀死（N1） |
+| M2 | 防护串改成含「入边互相等待」 | 同上 | 红 | **FAILED** | ✅ 杀死 |
+| M3 | 删掉 `waiting[:_WAITING_LIST_LIMIT]` 数量限制 | `test_waiting_reason_…` | 红 | **1 passed（存活）** | ❌ → 新-2（冗余保护，非缺陷） |
+| M3b | 删掉整句长度 clamp | 同上 | 红 | **FAILED** | ✅ 杀死（N2） |
+| M4 | 删掉 `elif more: joined += "…"` | 同上 | 红 | **1 passed（存活）** | ❌ → 新-2 |
+| M4b | clamp 保留但丢掉后缀 | 同上 | 红 | **FAILED** | ✅ 杀死 |
+| M5 | `_gate_detail` 忽略 `limit` | `test_gate_detail_prefers_structured_limit…` | 红 | **FAILED** | ✅ 杀死（N3；Round 2 曾存活） |
+| M6 | 闸门因由不再用 `_gate_detail` | 同上 | 红 | **FAILED** | ✅ 杀死 |
+| M7 | 退回 `14d2797` 的「只限数量」形态 | `test_waiting_reason_…` | 红 | **FAILED**（207 > 160） | ✅ 杀死（复现实现方声明） |
+| M8 | 数量限制删掉，跑 `tests/agent/subagent/` 全量 | 488 条 | 红 | **488 passed（存活）** | ❌ → 新-2 |
+
+**前端 `web/static/workflow_graph.js`**（还原校验：`md5 = 50149b43…` OK）
+
+| # | 变异 | 目标测试 | 期望 | 实际 | 结论 |
+|---|---|---|---|---|---|
+| J1 | 把取消防护串加成「具体因由」标记（提权） | `test_terminal_honesty_js.py` | 红 | **FAILED** | ✅ 杀死（提权通道被堵） |
+| J2 | 删掉优先级 0（具体因由提权） | 同上 | 红 | **FAILED** | ✅ 杀死 |
+| J3 | 把 `GRAPH_STOP_REASONS` 提到具体因由**之前** | 同上 | 红 | **FAILED** | ✅ 杀死（Q4 优先级被锁） |
+
+**小结**：Round 2 三条修复的目标变异（M1/M3b/M4b/M5/M6）**全部被杀**；存活的三条（M3/M4/M8）是**同一处冗余保护**（数量上限在 clamp 生效时不可观测），对应新-2，**不是安全缺口**。
+
+## Tasks Verification
+
+`tasks.md` 里 6.S.1–6.S.4 **全部有真实实现与测试支撑**（逐条读代码确认）；新增的 `45634c8` 有对应测试更新。1.1–6.3 与 6.R.1–6.R.5 的既有结论经本轮复核**继续有效**（本轮改动集中在 `_blocked_reason` 一处方法域，未侵蚀任何既有实现）。
+
+| 任务 | 实现 / 证据 |
+|---|---|
+| 6.S.1 取消防护 | `scheduler.py:1368-1369`；`test_cancelled_graph_does_not_claim_mutual_wait` + 前端 `test_cancelled_graph_shows_cancellation_not_mutual_wait` |
+| 6.S.2 互等档预算 | `scheduler.py:1378-1395`（`_waiting_reason`，数量 + 整句双轴）；`test_waiting_reason_fits_the_frontend_display_budget`（三档最坏情况） |
+| 6.S.3 `limit` 优先测试 | `test_gate_detail_prefers_structured_limit_over_long_message`（`limit=7` vs `message="M"*500`） |
+| 6.S.4 变异验证 | 我独立复跑 M1/M3b/M4b/M5/M6 + M7 全为红，与声明一致 |
+| 6.R.1–6.R.5 | 本轮复跑复核：benchmark 唯一源别名成立、两谓词对 6 种 status 结论**逐一致**、标记词契约测试可杀变异、闸门因由 ≤39 字符 |
+| 1.1–6.3 | 未触及；`tests/agent/subagent/` 488 条 + 全量 2946 条全绿 |
+
+**`stalled` 语义的消费方一致性（我独立复算，6 种 status，两谓词逐项一致）**：
+
+```
+status                    _replay_completed_cleanly   _workflow_completed_cleanly
+stalled                   False                       False
+completed                 True                        True
+graph_recursion_exceeded  False                       False
+cancelled                 False                       False
+failed                    True                        True
+declared                  False                       False
+missing-status envelope   False (保守判未验证)          —
+```
+
+（`failed=True` 是**基线既有**语义——checker 的「干净完成」判据在 base `f7a2486` 就含 `failed`；`stalled` / `graph_recursion_exceeded` / `cancelled` / `declared` 这四个「根本没跑成」的档位现已一致归为非干净。两处同名谓词由**单一源对象别名**保证不再漂移。）
+
+## Test Results
+
+HEAD = **`45634c8`**，工作区干净。全部在隔离 worktree `/tmp/wth-review`（钉在 `45634c8`）中执行。
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest tests/agent/subagent/ tests/web_tests/test_terminal_honesty_js.py tests/benchmark/ -q` | **975 passed, 1 skipped**（31.3s） |
+| `uv run pytest -q`（全量） | **2946 passed, 8 skipped, 0 failed**（256.2s） |
+| `uv run pytest tests/agent/subagent/test_terminal_honesty.py tests/web_tests/test_terminal_honesty_js.py tests/benchmark/test_workflow_modes.py -q` | **53 passed**（2.9s） |
+| `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` | **30 passed, 0 failed**（含 `change/workflow-terminal-honesty`） |
+| `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` | **ERROR: workflow-terminal-honesty: review manifest missing**（见下，预期） |
+| 回归：`tests/web_tests/test_workflow_graph_browser.py` | 全量跑中**未失败**（Round 1 的 2 条浏览器 flaky 本轮未复现） |
+| 回归：`test_declarative_flow_engine.py::TestE2eEngineCliSmoke::test_engine_cli_validate_exit_code` | 全量跑中**未失败** |
+
+**关于 artifact checker 的当前失败**：与 Round 2 同因——`scripts/check_openspec_artifacts.py` 对已存在的 `reviews/building-review.md` 强制要求绑定 reviewer run / base-head sha / tasks·spec·diff·report hash 的 review manifest；manifest 只能在 verdict=PASS 之后由 `/review-loop` 生成写入。本轮 verdict 为 **PASS**，故该失败是**闭环的最后一步**，由 `/review-loop` 落地 manifest 即可消除，**不是缺陷**。
+
+## 结论
+
+**PASS** —— Round 2 的三条修复**都成立**，且都经得起我独立构造的对抗性验证（不是复述修复说明）：
+
+- **N1（中）取消图不再被说成互等**：真实 `run()`+`cancel()` 下 blocked 节点因由不含「入边互相等待」，用户经真实 `explainNode()` 看到的是正确的「流程被取消，该节点没来得及执行」；**无过度防护**（自然收敛死锁图仍说互等），**预算停边界也已排除**（`elif self._budget_stop` 先于唯一入口 `else`）。变异 M1/M2/J1 全杀。
+- **N2（低）互等档落入展示预算**：数量 + 整句**双轴**有界；最坏构造（3 个 60 字符 id）从 207 收敛到 **159**、后缀完整；135 组不变量扫描零违反。变异 M3b/M4b/M7 杀。
+- **N3（低）`limit` 优先被测试锁定**：Round 2 曾存活的 R8 变异本轮 **KILLED**。变异 M5/M6 杀。
+
+**本轮新发现 3 条，全部低 severity、全部不阻塞 PR**：新-1（「等」→「…」措辞）、新-2（数量上限在 clamp 生效时不可观测——**冗余保护，非缺口**）、新-3（取消防护在优先级上先于闸门，**三条证据表明实践中不可达**）。均建议留作后续，不影响本轮放行。
+
+实现主体（图级终态四档、节点因由分档、方案 D、三副本同步、前端 Q4 优先级、G11 红线）在 Round 1/2 已充分验证，本轮改动集中在 `_blocked_reason` 一处方法域，**未侵蚀任何既有实现**。第 0–6.3 节与 6.R.1–6.R.5、6.S.1–6.S.4 的任务全部有真实实现与测试支撑，无未实现项。
+
+**可进入收尾**：由 `/review-loop` 生成 review manifest，随后执行 tasks 6.4–6.9（spec 同步、归档、backlog 清理、PR）。
+
+---
+
+## Round 2（历史）
+
+- **审阅者**: 独立零记忆 subagent（不继承任何开发上下文）
 - **审阅轮次**: Round 2（复核 Round 1 的 3 条修复 + 检查修复是否引入新问题）
 - **审阅时间**: 2026-09-19
 - **审阅对象**: `git diff f7a248655033ee3f035b79915a1cc4bff69082db...HEAD`（HEAD = `e689a6d`）
 - **工作区**: `/home/happy/.paseo/worktrees/0frj3kg8/workflow-terminal-honesty-2026-09-19`
 - **Round 1 报告**: 见本文件末尾 `## Round 1（历史）`（原文保留，未删改）
 
-## Verdict (Round 2)
+### Verdict (Round 2)
 
 **CHANGES_REQUESTED**
 
@@ -15,9 +210,9 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
 
 > **N1**：`cancelled` 的图里，`blocked` 节点的因由现在会断言「入边互相等待（…），本节点永远未就绪」——这是一个**不存在的结构性死锁**；且前端优先级 0 会把它抬到「流程被取消」之上，用户看到的因由从**正确的**变成**指错方向的**。这是本 change 自己明令消灭的那类假话（`design.md:48` 还专门重申「取消是更强的停止原因」），且**没有任何测试覆盖**（我用「加取消防护」的变异证明：改掉它，485 条 subagent 测试全绿）。
 
-## Round 1 Issues — 复核结果
+### Round 1 Issues — 复核结果
 
-### Issue 1（中）非闸门诊断被当作图级闸门 — ✅ **关闭**
+#### Issue 1（中）非闸门诊断被当作图级闸门 — ✅ **关闭**
 
 - **修复位置**: `agent/subagent/scheduler.py:1359`（`reason = str(self._diagnostics.get("reason") or "").strip()` 判据，替代旧 `if self._diagnostics:`）
 - **我的独立验证**（不读修复说明，自己构造）：
@@ -26,7 +221,7 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
   3. 我核查了 `_diagnostics` 的**全部**写入点（`grep`）：只有 `:793`（闸门）与 `:2418`（`route_ref_misses`，用 `setdefault`，不带 `reason` 键）。`WorkflowBudgetExceeded.to_dict()` 也带 `reason` 键，但**没有任何代码路径把它写进 `_diagnostics`**（预算走独立的 `budget` 字段），所以不存在「预算被误报成闸门」。
 - **结论**: 判据正确、与写入点语义等价，**关闭**。
 
-### Issue 2（中）benchmark 两个同名异常状态集合漂移 — ✅ **关闭**
+#### Issue 2（中）benchmark 两个同名异常状态集合漂移 — ✅ **关闭**
 
 - **修复位置**: 唯一源移至 `benchmarks/workflow_e2e.py:50`（含 `stalled`），`benchmarks/runner.py:1045` 改为 `_REPLAY_UNHEALTHY_STATUSES = UNHEALTHY_WORKFLOW_STATUSES`
 - **我的独立验证**:
@@ -46,7 +241,7 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
 - **变异**: MUT-R5（唯一源去掉 `stalled`）→ 目标测试红；MUT-R6（runner 退回自写一份漏 `stalled` 的字面表）→ 目标测试红。**漂移通道确实被堵死**（两种漂移方向各自被杀）。
 - **结论**: 单一源成立、语义一致、有回归测试锁定，**关闭**。
 
-### Issue 3（低）前后端因由标记词静默耦合 — ✅ **关闭**
+#### Issue 3（低）前后端因由标记词静默耦合 — ✅ **关闭**
 
 - **修复位置**: `tests/agent/subagent/test_terminal_honesty.py:489`（`test_frontend_reason_markers_match_backend_emitted_text`），前端标记表 `web/static/workflow_graph.js:892`
 - **我的独立变异**（任务要求「后端改措辞」方向，我自己动手改并还原）：
@@ -58,7 +253,7 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
 - **残留缺口（不单列 issue，属观察）**：契约只覆盖「前端标记词 ⊆ 后端实际产出」。反向的「后端**新增**第三条具体因由分支、前端未同步」不会被该测试发现（两个既有分支仍各自带标记词，测试照样绿）。这条通道比 Round 1 的 M12 窄得多，记为观察项。
 - **结论**: 关闭。
 
-### Issue 4（低，Round 1 记录项）闸门因由顶满 160 字符预算 — ✅ **关闭**（见 N2 的残留说明）
+#### Issue 4（低，Round 1 记录项）闸门因由顶满 160 字符预算 — ✅ **关闭**（见 N2 的残留说明）
 
 - **修复位置**: `scheduler.py:99-101`（`_REASON_DISPLAY_LIMIT = 160`）+ `:1367-1382`（`_gate_detail()`）
 - **我的独立验证**（4 种真实闸门形态实跑，非构造字符串）：
@@ -72,9 +267,9 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
 - **`limit` 为 `0` / `None` 的边界**（任务点名怀疑 `0` 是 falsy 会误落 message 分支）：**实测不会**。判据是 `limit is not None and str(limit).strip()` → `str(0).strip() == "0"` 为真 → 走 `超过上限 0`（`len=33`，本身是准确的表述）。`limit=None` 才落 message 分支。**不构成缺陷**。
 - **结论**: 关闭（但同一类问题在「入边互等」分支上仍未修，见 N2）。
 
-## 新发现 Issues (Round 2)
+### 新发现 Issues (Round 2)
 
-### N1（中）：`cancelled` 图的 `blocked` 节点因由断言一个**不存在的结构性死锁**，且被前端抬到「流程被取消」之上
+#### N1（中）：`cancelled` 图的 `blocked` 节点因由断言一个**不存在的结构性死锁**，且被前端抬到「流程被取消」之上
 
 - **位置**: 后端 `agent/subagent/scheduler.py:1362-1364`（`_waiting_upstreams` 分支）经 `:1332` 进入 `state.reason`；前端 `web/static/workflow_graph.js:875`（优先级 0 提权）配合 `:892`（标记词）。
 - **复现**（真实 `scheduler.run()` + 真实 `cancel()`，非构造）：
@@ -103,7 +298,7 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
   - 前端：`isSpecificNodeReason` 的提权只在 `graphStatus` **不在** `GRAPH_STOP_REASONS` 时生效（保住闸门分支的 Q4 效果，同时不让弱解释压过取消/预算）。
   - 无论走哪条，都要补一条回归测试（被取消的图上断言 blocked 节点因由**不含**「入边互相等待」）。
 
-### N2（低）：新增的「入边互等」分支没有落在展示预算内（Round 1 Issue 4 只在闸门分支上修掉了）
+#### N2（低）：新增的「入边互等」分支没有落在展示预算内（Round 1 Issue 4 只在闸门分支上修掉了）
 
 - **位置**: `scheduler.py:1362-1364`（`f"入边互相等待（{', '.join(waiting)}），本节点永远未就绪"`，无任何截断）↔ `workflow_graph.js:812-816`（`truncateText` 在 160 处切）。
 - **我的构造**（真实图：6 个语义化长 id 扇入 + required 回边锁死）：
@@ -116,13 +311,13 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
 - **严重度**: 低。核心信息（「入边互相等待」+ 大部分上游 id）仍在，未构成假话；只是把「永远未就绪」这个**结论**切掉了，而它恰是这一档要传达的区分点（"未就绪" vs "永远未就绪"）。Round 1 对同构的闸门情形也判「低（记录）」，此处按同一标准。
 - **建议**: 给 `waiting` 列表也加一道上界（如最多列 N 个 + 「…等 M 个」，或整句按 `_REASON_DISPLAY_LIMIT` 压缩），与 `_gate_detail()` 同口径。
 
-### N3（低，观察项）：`_gate_detail()` 的 message 回退分支仍可能在极端 `reason` 下超 160；且该分支的存在意义未被测试锁定
+#### N3（低，观察项）：`_gate_detail()` 的 message 回退分支仍可能在极端 `reason` 下超 160；且该分支的存在意义未被测试锁定
 
 - **上界计算**: message 分支 `budget = max(160 - 48, 1) = 112`，整句 = `5 + len(reason) + 4 + 112 + 8 = 129 + len(reason)`。真实 `reason` 最长 15 字符（`recursion_limit`）→ 144 ≤ 160 **安全**；只有出现 ≥31 字符的闸门名才会超。
 - **变异 MUT-R8**（删掉 `limit` 优先分支、只留 message 分支）→ `test_gate_reason_fits_the_frontend_display_budget` **仍然绿**（因为该用例的 message 截断后 144 字符也满足那条测试的全部四个断言）。所以 `design.md:74` 的「SHALL NOT 直接塞入整段异常文本」这条**没有**被机械锁定：把结构化 `limit` 优先级整个拿掉，测试也发现不了。
 - **严重度**: 低（当前不可达的极端值 + 测试强度问题，不是功能缺陷）。建议给该分支补一条「`limit` 存在时不得回退到 message」的断言，或让测试用更宽的 `reason`。
 
-## 非问题（审阅者主动核查后排除）
+### 非问题（审阅者主动核查后排除）
 
 - **`stalled` 加入黑名单是否误伤既有通过用例**：不误伤。benchmark 记录/回放产物是**本地生成、未入库**（`git ls-files` 无 record/envelope fixture），CI 里 `_status_comparable` 只被 fake 场景的合成 dict 驱动；全量 `tests/benchmark/` + 全仓 2942 条实跑全绿。
 - **`_REPLAY_UNHEALTHY_STATUSES` 是否还有别的调用方依赖 `frozenset` 类型**：没有。全仓 `grep` 只有 `runner.py:1057` 一处 `status not in ...`，且别名保住 `frozenset` 类型，语义零变化。
@@ -131,7 +326,7 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
 - **CI/门禁外扩**：`e689a6d` 只改 3 个源文件 + 测试 + change 文档；`grep` 确认未触及 `.github/`、`scripts/`、`pyproject.toml`、`flow/`。
 - **`_diagnostics` 被闸门整体覆盖会丢掉同轮 `route_ref_misses`**：读 `:793` 确认这是**基线行为**（`644c7be`/`e689a6d` 均未触碰该行），不是本次引入，不记入本轮。
 
-## Mutation Spot-Check (Round 2)
+### Mutation Spot-Check (Round 2)
 
 全部由我**自己动手**改源码 → 跑目标测试 → 观察红/绿 → 用 md5 逐文件校验还原（`scheduler.py = baad30f6…`、`workflow_e2e.py = 5aee649a…`、`runner.py = 155c7e34…`、`workflow_graph.js = 50149b43…`；审阅结束时 `md5sum -c` 全部 OK、`git status` 干净）。
 
@@ -149,7 +344,7 @@ Round 1 的 3 条 issue（Issue 1 已修于 `644c7be`；Issue 2/3/4 修于 `e689
 
 **小结**：Round 1 三条修复各自的目标变异（R1–R6）全部被杀；存活的三条（R7/R8/R9）分别对应 N3（测试强度）与 N1（真实缺陷未被任何断言覆盖）。
 
-## Test Results
+### Test Results
 
 HEAD = `e689a6d`，工作区干净（所有变异已还原）。
 
@@ -166,7 +361,7 @@ HEAD = `e689a6d`，工作区干净（所有变异已还原）。
 
 **关于 artifact checker 的当前失败**：`scripts/check_openspec_artifacts.py` 对已存在的 `reviews/building-review.md` 强制要求绑定 reviewer run / base-head sha / tasks·spec·diff·report hash 的 review manifest（`_check_review_manifests` → `verify_review_manifest`）。这是**审阅闭环的正常时序**：manifest 只能在 verdict=PASS 之后由 `/review-loop` 生成并写入。本轮 verdict 为 CHANGES_REQUESTED，因此该失败是**预期的中间态**，不计入本轮问题；修完 N1（并跑完闭环）后由 `/review-loop` 落地 manifest 即可消除。其余门禁（OpenSpec strict validate、全量 pytest）全绿。
 
-## 结论
+### 结论
 
 **CHANGES_REQUESTED。**
 
