@@ -727,6 +727,18 @@ def test_unclean_real_llm_replay_is_recorded_as_unverified(tmp_path):
     assert _replay_completed_cleanly(unhealthy) is False
     # envelope 缺失（采集失败）同样保守判未验证
     assert _replay_completed_cleanly(TaskResult(task_id="t", agent="x")) is False
+    # workflow-terminal-honesty #217：stalled（零节点成功）不是「干净完成」——
+    # 本判据是**黑名单**式的（不在名单里即算成功），所以新增档位必须显式加入。
+    stalled = TaskResult(
+        task_id="t1",
+        agent="asterwynd",
+        status="replayed",
+        workflow_mode="dynamic-replay",
+        workflow_spec_hash="abc",
+        workflow_collection_status=COLLECTION_STATUS_OK,
+        workflow_envelope={"status": "stalled"},
+    )
+    assert _replay_completed_cleanly(stalled) is False
     # 正常完成才算验证过
     healthy = TaskResult(
         task_id="t1", agent="asterwynd", workflow_envelope={"status": "completed"}

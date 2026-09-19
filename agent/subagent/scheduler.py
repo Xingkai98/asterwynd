@@ -1340,15 +1340,21 @@ class WorkflowScheduler:
 
         文案按**前端展示预算**压缩（前端 ``truncateText`` 在 160 字符处再切，直接塞
         整段异常文本会把关键信息切掉），并满足节点投影的 ``_SUMMARY_LIMIT`` 上界。
+
+        **闸门判定看 ``reason`` 键是否存在，不看 ``_diagnostics`` 是否非空**：
+        ``_diagnostics`` 也会被**非闸门**诊断填充（典型：``route_ref_misses``，
+        即 ``$ref`` 槽未命中这类良性记录）。用「非空」判会把一次 ``$ref`` 未命中
+        说成「图级闸门触发」——又是一句指错方向的假话（正是本 change 要消灭的
+        那类）。闸门诊断的唯一写入点是 ``_mark_graph_recursion_exceeded``，它**必带**
+        ``reason`` 键。
         """
-        if self._diagnostics:
-            reason = str(self._diagnostics.get("reason") or "").strip()
+        reason = str(self._diagnostics.get("reason") or "").strip()
+        if reason:
             message = str(self._diagnostics.get("message") or "").strip()
-            gate = reason or "图级闸门"
             detail = message[:_SUMMARY_LIMIT] if message else ""
             if detail:
-                return f"图级闸门 {gate} 触发（{detail}），本节点未派发"
-            return f"图级闸门 {gate} 触发，本节点未派发"
+                return f"图级闸门 {reason} 触发（{detail}），本节点未派发"
+            return f"图级闸门 {reason} 触发，本节点未派发"
         waiting = self._waiting_upstreams(state)
         if waiting:
             return f"入边互相等待（{', '.join(waiting)}），本节点永远未就绪"

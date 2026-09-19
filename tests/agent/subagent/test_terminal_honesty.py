@@ -318,6 +318,28 @@ async def test_back_edge_does_not_wipe_the_dispatching_route(manager):
 
 
 @pytest.mark.asyncio
+async def test_non_gate_diagnostics_do_not_claim_a_graph_gate_fired(manager):
+    """回归（审阅发现）：``_diagnostics`` 非空 ≠ 图级闸门触发。
+
+    ``route_ref_misses``（``$ref`` 槽未命中）是**良性**诊断，也会填充 ``_diagnostics``；
+    若按「非空」判闸门，节点因由会写成「图级闸门 图级闸门 触发，本节点未派发」——
+    既说了一次没发生的闸门，又是明显的坏文本（闸门名重复）。这正是本 change 要
+    消灭的那类假话。闸门判定必须看 ``reason`` 键是否存在。
+    """
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(_deadlock_spec())
+    await scheduler.run(scheduler.spec)
+    # 非闸门诊断（与 route_ref_misses 同形：**无** reason 键）
+    scheduler._diagnostics = {
+        "route_ref_misses": [{"route": "x", "when": "$ref:a:b", "reason": "missing"}]
+    }
+    state = next(s for s in scheduler._states.values() if s.status == "blocked")
+    reason = scheduler._blocked_reason(state)
+    assert "图级闸门" not in reason, f"非闸门诊断被说成闸门触发：{reason!r}"
+    assert "入边互相等待" in reason, f"应落到结构性成因：{reason!r}"
+
+
+@pytest.mark.asyncio
 async def test_selected_and_executed_node_is_not_reported_skipped(manager):
     """1.5（方案 D 组合回归）：被选中且跑过的节点不得报 ``skipped``（说没选它）。
 
