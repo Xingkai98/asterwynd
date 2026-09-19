@@ -94,6 +94,12 @@ _POLL_INTERVAL_S = 0.01
 
 _SUMMARY_LIMIT = 400
 
+#: 节点因由在前端的**展示预算**（前端 ``workflow_graph.js`` 的 ``truncateText`` 在
+#: 160 字符处再切）。后端注入具体因由（闸门细节等）时按这个预算压缩，保证关键信息
+#: （闸门名、上限值、「本节点未派发」）落在用户可见的那 160 字符内——「后端写了真因
+#: 但被前端切掉」等于没修（#218/Q4）。
+_REASON_DISPLAY_LIMIT = 160
+
 #: bounded envelope 里 ``latest_events`` 的条目数上限（Q5：5 条终态迁移事件）。
 _LATEST_EVENTS_LIMIT = 5
 #: 单条 ``latest_events`` 的 ``summary_preview`` 字符上限（Q5：每条分配字符上限，
@@ -1338,8 +1344,10 @@ class WorkflowScheduler:
         2. **入边互相等待**（无任何图级闸门、``diagnostics`` 为空）：节点因入边
            永远不就绪而未派发——这是**结构性**原因，不是「工作流提前结束」。
 
-        文案按**前端展示预算**压缩（前端 ``truncateText`` 在 160 字符处再切，直接塞
-        整段异常文本会把关键信息切掉），并满足节点投影的 ``_SUMMARY_LIMIT`` 上界。
+        文案按**前端展示预算**压缩（见 :data:`_REASON_DISPLAY_LIMIT`）：闸门细节取
+        ``_gate_detail()``（结构化上限值优先），**不直接把整段异常文本塞进来**——
+        ``recursion_limit`` 的异常文本会列出全部就绪节点（实测 271 字符），塞进来
+        会让前端在 160 字符处把尾部「本节点未派发」切掉。
 
         **闸门判定看 ``reason`` 键是否存在，不看 ``_diagnostics`` 是否非空**：
         ``_diagnostics`` 也会被**非闸门**诊断填充（典型：``route_ref_misses``，
@@ -1350,15 +1358,28 @@ class WorkflowScheduler:
         """
         reason = str(self._diagnostics.get("reason") or "").strip()
         if reason:
-            message = str(self._diagnostics.get("message") or "").strip()
-            detail = message[:_SUMMARY_LIMIT] if message else ""
-            if detail:
-                return f"图级闸门 {reason} 触发（{detail}），本节点未派发"
-            return f"图级闸门 {reason} 触发，本节点未派发"
+            return f"图级闸门 {reason} 触发（{self._gate_detail()}），本节点未派发"
         waiting = self._waiting_upstreams(state)
         if waiting:
             return f"入边互相等待（{', '.join(waiting)}），本节点永远未就绪"
         return "workflow ended before the node became ready"
+
+    def _gate_detail(self) -> str:
+        """图级闸门的**结构化**细节（bounded），供注入节点因由。
+
+        优先取 ``limit``（闸门上限值，人话最短且信息量最高：``超过上限 2``）；
+        无 ``limit`` 时退回**截断到展示预算**的 ``message``——截断在此处做，
+        而不是让整段异常文本流到前端再被切掉尾巴。
+        """
+        limit = self._diagnostics.get("limit")
+        if limit is not None and str(limit).strip():
+            return f"超过上限 {limit}"
+        message = str(self._diagnostics.get("message") or "").strip()
+        if not message:
+            return "无附加信息"
+        # 给「图级闸门 … 触发（」+「），本节点未派发」留出余量。
+        budget = max(_REASON_DISPLAY_LIMIT - 48, 1)
+        return message[:budget]
 
     def _waiting_upstreams(self, state: NodeState) -> list[str]:
         """该节点的入边源头中**永远未就绪**的那些（``blocked`` / ``skipped`` / 未定）。

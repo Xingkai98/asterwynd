@@ -67,6 +67,14 @@
 
 ## 6. 验证与收尾
 
+### 6.R 审阅闭环修复（Round 1，CHANGES_REQUESTED → 修复）
+
+- [x] 6.R.1 **非闸门诊断被说成闸门**：`_blocked_reason` 的闸门判定从「`_diagnostics` 非空」改为「`reason` 键存在」（`route_ref_misses` 会填充 `_diagnostics`，按非空判产出「图级闸门 图级闸门 触发」这种坏文本 + 未发生的闸门）
+- [x] 6.R.2 **benchmark 把 `stalled` 当干净完成**：`_REPLAY_UNHEALTHY_STATUSES` 与 `UNHEALTHY_WORKFLOW_STATUSES` 合并为**唯一源**（`workflow_e2e.UNHEALTHY_WORKFLOW_STATUSES`，含 `stalled`），runner 侧改为别名——同名谓词各写一份是本轮漏检的根因
+- [x] 6.R.3 **前后端标记词静默耦合**：补契约测试 `test_frontend_reason_markers_match_backend_emitted_text`（前端 `SPECIFIC_REASON_MARKERS` 每个词必须是后端真会产出的文本，两条分支各自被覆盖）
+- [x] 6.R.4 **闸门因由超前端展示预算**：新增 `_gate_detail()`（结构化上限值优先）+ `_REASON_DISPLAY_LIMIT=160`，整句落在用户可见范围内（原实现直塞 message 达 271 字符，尾部「本节点未派发」被切）
+- [x] 6.R.5 三处修复均经**变异验证**（还原实现 → 目标测试变红）
+
 - [x] 6.1 变异验证：每个新测试都能被「改坏实现」杀死（至少覆盖四档判据、因由三档、origin 豁免、**`_is_skipped` 条件 2**、三副本同步、**前端 `explainNode()` 优先级**）
 - [x] 6.2 `tests/agent/subagent/` + `tests/web_tests/` 全量回归
 - [x] 6.3 全量 `uv run pytest -q`

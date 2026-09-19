@@ -318,6 +318,34 @@ async def test_back_edge_does_not_wipe_the_dispatching_route(manager):
 
 
 @pytest.mark.asyncio
+async def test_gate_reason_fits_the_frontend_display_budget(manager):
+    """D3/审阅发现：闸门因由必须整句落在**前端展示预算**（160 字符）内。
+
+    ``recursion_limit`` 的异常文本会列出全部就绪节点（实测 271 字符）；直接塞进来
+    会让前端在 160 字符处把尾部「本节点未派发」切掉——关键信息（「未被派发」这一
+    事实）反而丢了。故闸门细节取结构化上限值，且整句长度有界。
+    """
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(_route_cap_spec())
+    await scheduler.run(scheduler.spec)
+    nodes = ", ".join(f"'n{i}'" for i in range(24))
+    scheduler._diagnostics = {
+        "reason": "recursion_limit",
+        "limit": 1,
+        "message": (
+            "GraphRecursionError: workflow reached recursion_limit 1 supersteps; "
+            f"ready nodes: [{nodes}]"
+        ),
+    }
+    state = next(s for s in scheduler._states.values() if s.status == "blocked")
+    reason = scheduler._blocked_reason(state)
+    assert len(reason) <= 160, f"因由超出前端展示预算（{len(reason)}）: {reason!r}"
+    assert "recursion_limit" in reason
+    assert "本节点未派发" in reason, f"尾部事实被挤掉：{reason!r}"
+    assert "1" in reason, f"上限值必须可见：{reason!r}"
+
+
+@pytest.mark.asyncio
 async def test_non_gate_diagnostics_do_not_claim_a_graph_gate_fired(manager):
     """回归（审阅发现）：``_diagnostics`` 非空 ≠ 图级闸门触发。
 
@@ -448,6 +476,46 @@ def _graph_status_copies() -> dict[str, set[str]]:
         "workflow.js": _extract_bracket_list(workflow_js, "TERMINAL_STATUSES"),
         "workflow_graph.js": _extract_isgraphterminal(graph_js),
     }
+
+
+def _frontend_reason_markers() -> set[str]:
+    source = (_REPO / "web" / "static" / "workflow_graph.js").read_text()
+    match = re.search(r"SPECIFIC_REASON_MARKERS\s*=\s*\[(.*?)\]", source, re.S)
+    assert match, "未找到 SPECIFIC_REASON_MARKERS"
+    return set(re.findall(r"'([^']+)'", match.group(1)))
+
+
+@pytest.mark.asyncio
+async def test_frontend_reason_markers_match_backend_emitted_text(manager):
+    """契约回归（审阅发现）：前端提权所依赖的标记词必须**确实是后端会产出的文本**。
+
+    前后端靠字面量耦合：后端 ``_blocked_reason`` 写 ``图级闸门 …`` /
+    ``入边互相等待 …``，前端 ``SPECIFIC_REASON_MARKERS`` 硬编码同样的词做提权。
+    若只改后端措辞（如把「图级闸门」写成「图形层限制」），前端提权会静默失效 ——
+    「后端修好了、用户还是看不到」，正是 Q4 要堵的那条链路。本测试把这条耦合
+    变成可判定的契约：**每个前端标记词都必须是后端真会产出的因由文本的子串**，
+    且两条分支各自都被覆盖。
+
+    因由文本取自**真实实跑**（闸门图 / 死锁图），不复制后端字面量。
+    """
+    markers = _frontend_reason_markers()
+    assert markers, "前端标记词表为空"
+
+    emitted: dict[str, str] = {}
+    for label, spec in (("gate", _route_cap_spec()), ("deadlock", _deadlock_spec())):
+        snapshot = await _run(manager, spec)
+        reasons = [n.get("reason") or "" for n in snapshot["nodes"]]
+        emitted[label] = " || ".join(reasons)
+
+    all_text = " || ".join(emitted.values())
+    for marker in markers:
+        assert marker in all_text, (
+            f"前端标记词 {marker!r} 不是后端会产出的文本；后端实际产出：{all_text!r}"
+        )
+    for label in ("gate", "deadlock"):
+        assert any(m in emitted[label] for m in markers), (
+            f"{label} 档的因由不含任何前端标记词，前端不会提权它：{emitted[label]!r}"
+        )
 
 
 def test_graph_terminal_status_copies_are_equal():
