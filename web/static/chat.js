@@ -92,6 +92,11 @@ const sessionTabsEl = document.getElementById('session-tabs');
 const hubViewEl = document.getElementById('hub-view');
 const chatViewEl = document.getElementById('chat-view');
 const hubWorkspaceSelect = document.getElementById('hub-workspace-select');
+const hubWorkspaceAdd = document.getElementById('hub-workspace-add');
+const hubWorkspaceForm = document.getElementById('hub-workspace-form');
+const hubWorkspaceInput = document.getElementById('hub-workspace-input');
+const hubWorkspaceCancel = document.getElementById('hub-workspace-cancel');
+const hubWorkspaceError = document.getElementById('hub-workspace-error');
 const hubNewMode = document.getElementById('hub-new-mode');
 const hubNewWorkspace = document.getElementById('hub-new-workspace');
 const hubNewBtn = document.getElementById('hub-new-btn');
@@ -1822,24 +1827,28 @@ handleEvent = function(event) {
 };
 
 // --- Hub view (issue #117) ---
+function applyWorkspaceOptions(workspaces) {
+  const list = Array.isArray(workspaces) ? workspaces : [];
+  const options = list.map(w => {
+    const opt = document.createElement('option');
+    opt.value = w.path;
+    opt.textContent = w.is_primary ? `${w.path} (primary)` : w.path;
+    return opt;
+  });
+  hubWorkspaceSelect.textContent = '';
+  hubNewWorkspace.textContent = '';
+  for (const opt of options) {
+    hubWorkspaceSelect.appendChild(opt.cloneNode(true));
+    hubNewWorkspace.appendChild(opt.cloneNode(true));
+  }
+}
+
 async function loadHub() {
   try {
     const wsResp = await fetch('/api/workspaces');
     const wsData = await wsResp.json();
-    const workspaces = Array.isArray(wsData.workspaces) ? wsData.workspaces : [];
-    const options = workspaces.map(w => {
-      const opt = document.createElement('option');
-      opt.value = w.path;
-      opt.textContent = w.is_primary ? `${w.path} (primary)` : w.path;
-      return opt;
-    });
-    hubWorkspaceSelect.textContent = '';
-    hubNewWorkspace.textContent = '';
-    for (const opt of options) {
-      hubWorkspaceSelect.appendChild(opt.cloneNode(true));
-      hubNewWorkspace.appendChild(opt.cloneNode(true));
-    }
-    renderSessionList();
+    applyWorkspaceOptions(wsData.workspaces);
+    await renderSessionList();
   } catch (e) {
     hubSessionList.innerHTML = '<div class="hub-empty">加载失败</div>';
   }
@@ -1907,8 +1916,77 @@ async function renderSessionList() {
   }
 }
 
+// --- 新增 workspace 路径（hub「+ 添加」→ POST /api/workspaces） ---
+
+const WORKSPACE_ERROR_MESSAGES = {
+  missing_path: '请输入绝对路径',
+  workspace_path_invalid: '路径无效',
+  workspace_must_be_absolute: '必须是绝对路径（以 / 开头）',
+  workspace_sensitive_path: '系统敏感目录不能作为 workspace',
+  workspace_not_a_directory: '该路径是一个文件，不是目录',
+  workspace_create_failed: '创建目录失败，请检查父目录权限',
+  workspace_persist_failed: '目录已创建，但写入配置失败，重启后不生效',
+};
+
+function workspaceErrorMessage(code) {
+  return WORKSPACE_ERROR_MESSAGES[code] || `添加失败：${code || '未知错误'}`;
+}
+
+function showWorkspaceError(message) {
+  hubWorkspaceError.textContent = message;
+  hubWorkspaceError.hidden = false;
+}
+
+function setWorkspaceFormVisible(visible) {
+  hubWorkspaceForm.hidden = !visible;
+  hubWorkspaceError.hidden = true;
+  hubWorkspaceError.textContent = '';
+  if (visible) {
+    hubWorkspaceInput.focus();
+  } else {
+    hubWorkspaceInput.value = '';
+  }
+}
+
+async function submitWorkspace() {
+  const path = hubWorkspaceInput.value.trim();
+  if (!path) {
+    showWorkspaceError(WORKSPACE_ERROR_MESSAGES.missing_path);
+    return;
+  }
+  let data = {};
+  try {
+    const resp = await fetch('/api/workspaces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path }),
+    });
+    data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showWorkspaceError(workspaceErrorMessage(data.error));
+      return;
+    }
+  } catch (e) {
+    showWorkspaceError('请求失败，请检查连接');
+    return;
+  }
+  // 新增成功：响应里的 workspaces 就是最新列表，直接重建选项并选中新路径，
+  // 避免再发一次 GET 造成两次并发 renderSessionList 抢写会话列表。
+  applyWorkspaceOptions(data.workspaces);
+  hubWorkspaceSelect.value = data.workspace;
+  hubNewWorkspace.value = data.workspace;
+  await renderSessionList();
+  setWorkspaceFormVisible(false);
+}
+
 function setupHub() {
   hubWorkspaceSelect.addEventListener('change', renderSessionList);
+  hubWorkspaceAdd.addEventListener('click', () => setWorkspaceFormVisible(hubWorkspaceForm.hidden));
+  hubWorkspaceCancel.addEventListener('click', () => setWorkspaceFormVisible(false));
+  hubWorkspaceForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitWorkspace();
+  });
   hubNewBtn.addEventListener('click', () => {
     const mode = hubNewMode.value;
     const workspace = hubNewWorkspace.value;

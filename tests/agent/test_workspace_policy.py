@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from agent.workspace_policy import WorkspacePolicy
+from agent.workspace_policy import WorkspacePolicy, is_sensitive_root
 
 
 def test_workspace_policy_allows_path_inside_root(tmp_path):
@@ -336,3 +336,20 @@ class TestMultiWorkspace:
 
         rel = policy.relative_path(f)
         assert rel == "deep/nested/file.py"
+
+
+# ---------------------------------------------------------------------------
+# is_sensitive_root（CLI /workspace add 与 Web hub「+ 添加」共用的根目录判定）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", ["/", "/etc", "/etc/hosts", "/proc", "/sys", "/dev", "/root", "/boot"])
+def test_is_sensitive_root_rejects_fs_root_and_deny_roots(path):
+    assert is_sensitive_root(path) is True
+
+
+def test_is_sensitive_root_allows_ordinary_dirs(tmp_path):
+    ordinary = tmp_path / "project"
+    ordinary.mkdir()
+    assert is_sensitive_root(ordinary) is False
+    assert is_sensitive_root(tmp_path) is False

@@ -7,7 +7,11 @@ import os
 from pathlib import Path
 
 from agent.commands import CommandContext, build_default_slash_command_registry
-from agent.config import AsterwyndConfig
+from agent.config import (
+    AsterwyndConfig,
+    load_sidecar_workspaces,
+    workspaces_sidecar_path,
+)
 from agent.skills import SkillRuntime
 from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -26,6 +30,12 @@ logger = logging.getLogger("asterwynd.web.server")
 STATIC_DIR = Path(__file__).parent / "static"
 BRAND_ASSETS_DIR = Path(__file__).parent.parent / "docs" / "assets"
 _INDEX_HTML_CACHE: str | None = None
+
+# register_workspace 错误码中属于服务端（OS）失败的部分 → HTTP 500，其余路径
+# 校验类错误 → HTTP 400。
+_SERVER_SIDE_WORKSPACE_ERRORS = frozenset(
+    {"workspace_create_failed", "workspace_persist_failed"}
+)
 
 
 def _read_index_html() -> str:
@@ -99,13 +109,17 @@ def create_app(
     resolved_mode = mode or config.agent.default_mode.value
     app = FastAPI(title="Asterwynd · Asterwynd Web UI", version="0.1.0")
     app.state.resume_session_id = resume
-    # 有效 workspace 集合（issue #117 D4）：主 workspace + allowlist 中存在路径。
-    # allowlist 中不存在或不可解析的路径打 warning 并从有效集合排除。
+    # 有效 workspace 集合（issue #117 D4）：主 workspace + 配置/侧车中存在路径。
+    # 侧车文件（hub「+ 添加」写入）与 yaml 的 web.workspaces 合并后统一过滤：
+    # 不存在或不可解析的路径打 warning 并从有效集合排除。
     primary_workspace = (workspace_root or Path.cwd()).resolve()
+    sidecar_path = workspaces_sidecar_path(
+        config.path.parent if config.path else Path.cwd()
+    )
     allowed_workspaces: list[Path] = []
-    for ws in config.web.workspaces:
+    for ws in [*config.web.workspaces, *load_sidecar_workspaces(sidecar_path)]:
         resolved = ws.resolve() if isinstance(ws, Path) else Path(str(ws)).resolve()
-        if resolved == primary_workspace:
+        if resolved == primary_workspace or resolved in allowed_workspaces:
             continue
         if resolved.exists():
             allowed_workspaces.append(resolved)
@@ -117,6 +131,7 @@ def create_app(
         config=config,
         workspace_root=workspace_root,
         allowed_workspaces=allowed_workspaces,
+        sidecar_path=sidecar_path,
     )
     app.state.session_manager = session_manager
 
@@ -234,26 +249,54 @@ def create_app(
         )
         return {"commands": command_registry.catalog()}
 
-    @app.get("/api/workspaces")
-    async def api_workspaces():
-        """Hub workspace 列表（issue #117 D1）：主 workspace 置顶 + allowlist。
+    def _workspace_entries() -> list[dict]:
+        """Hub workspace 列表投影（GET /api/workspaces 与 POST 复用）。
 
-        ``exists`` 反映运行期目录状态（集合启动时一次性解析）；``session_count``
-        为该 workspace store 下的已保存会话数。
+        ``exists`` 反映运行期目录状态（集合在 create_app 解析，注册路径即时加入）；
+        ``session_count`` 为该 workspace store 下的已保存会话数。
         """
-        workspaces = []
+        entries = []
         for ws, is_primary in session_manager.list_workspaces():
             try:
                 session_count = len(session_manager._store_for(ws).list_sessions())
             except Exception:
                 session_count = 0
-            workspaces.append({
+            entries.append({
                 "path": str(ws),
                 "is_primary": is_primary,
                 "exists": ws.exists(),
                 "session_count": session_count,
             })
-        return {"workspaces": workspaces}
+        return entries
+
+    @app.get("/api/workspaces")
+    async def api_workspaces():
+        """Hub workspace 列表（issue #117 D1）：主 workspace 置顶 + allowlist + 侧车。"""
+        return {"workspaces": _workspace_entries()}
+
+    @app.post("/api/workspaces")
+    async def api_add_workspace(payload: dict):
+        """新增 workspace 路径（hub「+ 添加」），写入侧车文件并同进程立即生效。
+
+        请求体 ``{"path": "<绝对路径>"}``；路径不存在 → mkdir -p 建出来。校验失败
+        → 400 + 结构化 ``error``；建目录/写侧车等 OS 失败 → 500。成功返回新
+        workspace 与重算后的完整列表（``workspaces``），前端一次刷新即可。
+        """
+        raw_path = payload.get("path")
+        try:
+            registration = session_manager.register_workspace(
+                raw_path if isinstance(raw_path, str) else ""
+            )
+        except ValueError as exc:
+            code = str(exc)
+            status = 500 if code in _SERVER_SIDE_WORKSPACE_ERRORS else 400
+            return JSONResponse({"error": code}, status_code=status)
+        return {
+            "workspace": str(registration.path),
+            "created": registration.created,
+            "persisted": registration.persisted,
+            "workspaces": _workspace_entries(),
+        }
 
     @app.get("/api/sessions")
     async def api_sessions(workspace: str | None = None):

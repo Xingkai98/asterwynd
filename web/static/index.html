@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Asterwynd · Asterwynd Web UI</title>
-<link rel="stylesheet" href="/static/style.css?v=19">
+<link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body>
 <div id="app">
@@ -45,7 +45,19 @@
         <div class="hub-sidebar">
           <div class="hub-section">
             <div class="hub-section-header"><span>Workspace</span></div>
-            <select id="hub-workspace-select" aria-label="Workspace"></select>
+            <div class="hub-workspace-row">
+              <select id="hub-workspace-select" aria-label="Workspace"></select>
+              <button id="hub-workspace-add" type="button" title="新增 workspace 路径" aria-label="新增 workspace 路径">+</button>
+            </div>
+            <form id="hub-workspace-form" class="hub-workspace-form" hidden>
+              <input id="hub-workspace-input" type="text" spellcheck="false" autocomplete="off"
+                     placeholder="绝对路径，如 /Users/me/code/foo" aria-label="新 workspace 路径" />
+              <div class="hub-workspace-form-actions">
+                <button id="hub-workspace-submit" type="submit">添加</button>
+                <button id="hub-workspace-cancel" type="button">取消</button>
+              </div>
+              <div id="hub-workspace-error" class="hub-workspace-error" hidden></div>
+            </form>
           </div>
           <div class="hub-section">
             <div class="hub-section-header"><span>新建会话</span></div>
@@ -162,7 +174,7 @@
 <script src="/static/workflow_graph.js?v=3"></script>
 <script src="/static/workflow_transcript.js?v=2"></script>
 <script src="/static/workflow.js?v=3"></script>
-<script src="/static/chat.js?v=22"></script>
+<script src="/static/chat.js?v=23"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

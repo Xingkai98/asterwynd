@@ -2437,7 +2437,7 @@ def _find_scope_root(path):
 
 **文件**：`agent/workspace_policy.py`
 
-核心类 `WorkspacePolicy`（line 140），构造时接受 3 个参数：
+核心类 `WorkspacePolicy`（line 142），构造时接受 3 个参数：
 
 ```python
 def __init__(
@@ -2445,19 +2445,21 @@ def __init__(
     workspace_root: str | Path | None = None,
     denied_patterns: tuple[str, ...] | list[str] | None = None,
     command_denylist: tuple[str, ...] | list[str] | None = None,
-):  # :141-145
+):  # :143-147
 ```
 
-**路径边界**：`is_within_workspace()`（`:164-168`）检查 path 是否在 `workspace_root` 或 `additional_roots` 内。`assert_within_workspace()`（`:207-211`）若越界则直接抛出 `PermissionError`。
+**路径边界**：`is_within_workspace()`（`:166-170`）检查 path 是否在 `workspace_root` 或 `additional_roots` 内。`assert_within_workspace()`（`:208-212`）若越界则直接抛出 `PermissionError`。
 
-**多根目录支持**：`add_root()`（`:170-190`）允许注册额外工作区根目录，但有 3 层防护：
-1. 禁止重复注册已在主 workspace 内的目录（`:173`）
-2. 禁止添加主 workspace 的祖先目录，防止开放主 workspace 外的所有文件（`:174-175`）
-3. 禁止添加系统敏感目录（`/etc`, `/proc`, `/sys`, `/dev`, `/root`, `/boot`）（`:176-178`）
+**多根目录支持**：`add_root()`（`:172-192`）允许注册额外工作区根目录，但有 3 层防护：
+1. 禁止重复注册已在主 workspace 内的目录（`:175`）
+2. 禁止添加主 workspace 的祖先目录，防止开放主 workspace 外的所有文件（`:176-177`）
+3. 禁止添加系统敏感目录（`/etc`, `/proc`, `/sys`, `/dev`, `/root`, `/boot`）（`:178-179`，判定走 `is_sensitive_root()`，Web hub「+ 添加」复用同一函数）
 
 ```python
-_DENY_ROOTS = {Path(p) for p in ("/etc", "/proc", "/sys", "/dev", "/root", "/boot")}  # :137
+_DENY_ROOTS = {Path(p).resolve() for p in ("/etc", "/proc", "/sys", "/dev", "/root", "/boot")}  # :139
 ```
+
+`.resolve()` 不可省：macOS 上 `/etc` 是 `/private/etc` 的符号链接，用未规范化的字面量比较会永不命中，敏感目录守卫可被符号链接绕过。
 
 #### 1.2 敏感文件 deny 模式
 

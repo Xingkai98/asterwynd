@@ -8,6 +8,7 @@ delete (incl. cold sessions), reset workspace preservation.
 import asyncio
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -87,6 +88,256 @@ def test_api_workspaces_excludes_missing_allowlist(tmp_path, caplog):
         assert workspaces[0]["is_primary"] is True
 
     assert any("不存在" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/workspaces（hub「+ 添加」新增 workspace 路径）
+# ---------------------------------------------------------------------------
+
+
+def _sidecar_path(root):
+    """侧车 workspace 配置文件（机器独占写入，用户手写 yaml 不受影响）。"""
+    return root / ".asterwynd" / "workspaces.yaml"
+
+
+def test_add_workspace_creates_directory_and_persists(tmp_path):
+    """不存在的路径 → mkdir -p 建出来 + 写侧车 + 响应含更新后的列表。"""
+    new_ws = tmp_path / "新项目"
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": str(new_ws)})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["workspace"] == str(new_ws.resolve())
+        assert data["created"] is True
+        assert data["persisted"] is True
+        assert new_ws.is_dir()
+        entry = next(w for w in data["workspaces"] if w["path"] == str(new_ws.resolve()))
+        assert entry["is_primary"] is False
+        assert entry["exists"] is True
+
+    assert yaml.safe_load(_sidecar_path(tmp_path).read_text())["workspaces"] == [str(new_ws.resolve())]
+
+
+def test_add_workspace_usable_without_restart(tmp_path):
+    """注册后立即可用：同一进程内 GET /api/sessions 接受该 workspace。"""
+    new_ws = tmp_path / "ws-new"
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        assert client.get("/api/sessions", params={"workspace": str(new_ws)}).status_code == 403
+        assert client.post("/api/workspaces", json={"path": str(new_ws)}).status_code == 200
+        resp = client.get("/api/sessions", params={"workspace": str(new_ws)})
+        assert resp.status_code == 200
+        assert resp.json()["workspace"] == str(new_ws.resolve())
+
+
+def test_add_workspace_persists_across_restart(tmp_path):
+    """重启（新建 app）后侧车里的 workspace 仍在列表内。"""
+    new_ws = tmp_path / "ws-restart"
+    first = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+    with TestClient(first) as client:
+        assert client.post("/api/workspaces", json={"path": str(new_ws)}).status_code == 200
+
+    second = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+    with TestClient(second) as client:
+        paths = [w["path"] for w in client.get("/api/workspaces").json()["workspaces"]]
+    assert paths == [str(tmp_path.resolve()), str(new_ws.resolve())]
+
+
+def test_add_workspace_accepts_existing_directory(tmp_path):
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        data = client.post("/api/workspaces", json={"path": str(existing)}).json()
+        assert data["created"] is False
+        assert data["persisted"] is True
+        assert str(existing.resolve()) in [w["path"] for w in data["workspaces"]]
+
+
+def test_add_workspace_expands_tilde(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path / "primary")
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": "~/tilde-ws"})
+        assert resp.status_code == 200
+        assert resp.json()["workspace"] == str((tmp_path / "tilde-ws").resolve())
+    assert (tmp_path / "tilde-ws").is_dir()
+
+
+def test_add_workspace_idempotent(tmp_path):
+    new_ws = tmp_path / "ws-once"
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        first = client.post("/api/workspaces", json={"path": str(new_ws)}).json()
+        second = client.post("/api/workspaces", json={"path": str(new_ws)}).json()
+        assert first["persisted"] is True
+        assert second["created"] is False
+        assert second["persisted"] is False
+        paths = [w["path"] for w in second["workspaces"]]
+        assert paths.count(str(new_ws.resolve())) == 1
+
+    assert yaml.safe_load(_sidecar_path(tmp_path).read_text())["workspaces"] == [str(new_ws.resolve())]
+
+
+def test_add_workspace_primary_workspace_is_noop(tmp_path):
+    """已注册路径（主 workspace）→ 不建目录、不写侧车。"""
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        data = client.post("/api/workspaces", json={"path": str(tmp_path)}).json()
+        assert data["created"] is False
+        assert data["persisted"] is False
+        assert data["workspace"] == str(tmp_path.resolve())
+
+    assert not _sidecar_path(tmp_path).exists()
+
+
+@pytest.mark.parametrize("payload", [{}, {"path": ""}, {"path": "   "}, {"path": 123}, {"path": None}])
+def test_add_workspace_rejects_missing_path(tmp_path, payload):
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json=payload)
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "missing_path"
+
+    assert not _sidecar_path(tmp_path).exists()
+
+
+def test_add_workspace_rejects_relative_path(tmp_path):
+    """相对路径拒绝（且不能按 cwd 解析建出目录）。"""
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": "relative/dir"})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "workspace_must_be_absolute"
+
+    assert not (tmp_path / "relative").exists()
+    assert not _sidecar_path(tmp_path).exists()
+
+
+def test_add_workspace_rejects_file_path(tmp_path):
+    target = tmp_path / "a-file.txt"
+    target.write_text("x")
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": str(target)})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "workspace_not_a_directory"
+
+    assert not _sidecar_path(tmp_path).exists()
+
+
+@pytest.mark.parametrize("sensitive", ["/", "/etc", "/etc/hosts", "/dev", "/root"])
+def test_add_workspace_rejects_sensitive_path(tmp_path, sensitive):
+    """文件系统根与系统敏感目录拒绝（与 CLI /workspace add 同判定）。"""
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": sensitive})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "workspace_sensitive_path"
+
+    assert not _sidecar_path(tmp_path).exists()
+
+
+def test_add_workspace_rejects_nul_byte_path(tmp_path):
+    """含 NUL 的路径 → 结构化错误码，不透传底层 OS 文案。"""
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": "/tmp/x\x00y"})
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "workspace_path_invalid"
+
+
+def test_add_workspace_reports_create_failure(tmp_path):
+    """mkdir 失败（父级是普通文件）→ 500 + 结构化错误，不注册。"""
+    blocker = tmp_path / "blocker-file"
+    blocker.write_text("not a directory")
+    target = blocker / "sub"
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": str(target)})
+        assert resp.status_code == 500
+        assert resp.json()["error"] == "workspace_create_failed"
+        assert client.get("/api/sessions", params={"workspace": str(target)}).status_code == 403
+
+
+def test_add_workspace_reports_persist_failure(tmp_path):
+    """侧车写入失败 → 500 + workspace_persist_failed，且不注册到运行期集合。"""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")  # base_dir 指向文件 → 侧车父目录无法创建
+    config = AsterwyndConfig(path=blocker / "asterwynd.yaml")
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path, config=config)
+
+    new_ws = tmp_path / "ws-persist-fail"
+    with TestClient(app) as client:
+        resp = client.post("/api/workspaces", json={"path": str(new_ws)})
+        assert resp.status_code == 500
+        assert resp.json()["error"] == "workspace_persist_failed"
+        assert client.get("/api/sessions", params={"workspace": str(new_ws)}).status_code == 403
+
+    assert new_ws.is_dir()  # 目录已建出（已知副作用，见 register_workspace docstring）
+
+
+def test_add_workspace_does_not_touch_user_config(tmp_path):
+    """用户手写的 asterwynd.yaml 零改动；侧车落在配置文件同级 .asterwynd/。"""
+    project = tmp_path / "proj"
+    project.mkdir()
+    config_file = project / "asterwynd.yaml"
+    original = "agent:\n  default_mode: build\n"
+    config_file.write_text(original, encoding="utf-8")
+    config = AsterwyndConfig(path=config_file)
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path, config=config)
+
+    new_ws = tmp_path / "elsewhere" / "ws"
+    with TestClient(app) as client:
+        assert client.post("/api/workspaces", json={"path": str(new_ws)}).status_code == 200
+
+    assert config_file.read_text(encoding="utf-8") == original
+    sidecar = yaml.safe_load((project / ".asterwynd" / "workspaces.yaml").read_text())
+    assert sidecar["workspaces"] == [str(new_ws.resolve())]
+
+
+def test_corrupt_sidecar_is_ignored(tmp_path, caplog):
+    sidecar = _sidecar_path(tmp_path)
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text("workspaces: [unclosed\n", encoding="utf-8")
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        data = client.get("/api/workspaces").json()["workspaces"]
+        assert [w["is_primary"] for w in data] == [True]
+
+    assert any("侧车" in rec.message for rec in caplog.records)
+
+
+def test_sidecar_skips_invalid_entries(tmp_path, caplog):
+    """非字符串 / 相对路径 / 不存在的绝对路径都不进有效集合。"""
+    sidecar = _sidecar_path(tmp_path)
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text(
+        yaml.safe_dump({"workspaces": ["relative/path", 42, "", str(tmp_path / "gone")]}),
+        encoding="utf-8",
+    )
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        data = client.get("/api/workspaces").json()["workspaces"]
+
+    assert [w["is_primary"] for w in data] == [True]
+    assert any("侧车" in rec.message for rec in caplog.records)  # 非法条目被跳过
+    assert any("不存在" in rec.message for rec in caplog.records)  # 不存在的绝对路径被排除
 
 
 # ---------------------------------------------------------------------------

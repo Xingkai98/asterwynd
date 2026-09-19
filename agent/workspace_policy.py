@@ -134,7 +134,9 @@ DEFAULT_DENYLIST = (
 )
 
 
-_DENY_ROOTS = {Path(p) for p in ("/etc", "/proc", "/sys", "/dev", "/root", "/boot")}
+# 比较对象必须是规范化后的真实路径：macOS 上 /etc 是 /private/etc 的符号链接，
+# 用未规范化的字面量比较会永不命中（等于敏感目录守卫可被符号链接绕过）。
+_DENY_ROOTS = {Path(p).resolve() for p in ("/etc", "/proc", "/sys", "/dev", "/root", "/boot")}
 
 
 class WorkspacePolicy:
@@ -173,9 +175,8 @@ class WorkspacePolicy:
             raise ValueError(f"此路径已在主 workspace 范围内: {resolved}")
         if self._is_within(resolved, self.workspace_root):
             raise ValueError(f"不能添加主 workspace 的祖先目录，这会开放主 workspace 外的所有文件访问: {resolved}")
-        for deny_root in _DENY_ROOTS:
-            if resolved == deny_root or self._is_within(deny_root, resolved):
-                raise ValueError(f"禁止添加系统敏感目录: {resolved}")
+        if is_sensitive_root(resolved):
+            raise ValueError(f"禁止添加系统敏感目录: {resolved}")
         if not resolved.exists():
             if create:
                 try:
@@ -269,3 +270,19 @@ class WorkspacePolicy:
         )
         output = (result.stdout or result.stderr).strip()
         return output or "(no changes)"
+
+
+def is_sensitive_root(path: str | Path) -> bool:
+    """路径是否不允许作为 workspace 根：文件系统根 ``/`` 或 ``_DENY_ROOTS`` 及其子路径。
+
+    以它们为根等于把整个文件系统（或系统敏感目录）交给该 workspace 的工具。
+    CLI ``/workspace add``（``WorkspacePolicy.add_root``）与 Web hub「+ 添加」
+    （``SessionManager.register_workspace``）共用本判定，避免两处守卫漂移。
+    """
+    resolved = Path(path).expanduser().resolve()
+    if resolved == Path(resolved.anchor):
+        return True
+    return any(
+        resolved == deny_root or WorkspacePolicy._is_within(deny_root, resolved)
+        for deny_root in _DENY_ROOTS
+    )

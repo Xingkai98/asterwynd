@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -27,9 +29,14 @@ from agent.tool_result_display import ToolResultDisplayConfig
 
 
 CONFIG_FILENAME = "asterwynd.yaml"
+# Web hub 新增 workspace 的侧车目录/文件名（与 <workspace>/.asterwynd/sessions 同族）。
+SIDECAR_DIRNAME = ".asterwynd"
+SIDECAR_WORKSPACES_FILENAME = "workspaces.yaml"
 SUPPORTED_SEARCH_PROVIDER_NAMES = frozenset(
     {"duckduckgo-html", "searxng", "brave", "tavily"}
 )
+
+logger = logging.getLogger("asterwynd.config")
 
 
 class ConfigError(ValueError):
@@ -365,7 +372,8 @@ class WebConfig:
 
     ``workspaces`` 是允许 Web 会话操作的工作区路径（绝对路径，``~`` 可展开）。
     allowlist 为空时有效集合退化为 {主 workspace}（CLI ``--workspace`` 或 cwd），
-    不改变现有默认行为。有效集合在 ``create_app`` 启动时解析一次。
+    不改变现有默认行为。有效集合在 ``create_app`` 启动时解析一次，并叠加
+    hub 页面新增路径写入的侧车文件（见 ``workspaces_sidecar_path``）。
 
     ``question_timeout_seconds`` / ``approval_timeout_seconds`` 是 pending 交互的
     **总等待时长**（change web-reconnect-pending-interaction, Q1）：从 pending 建立
@@ -375,6 +383,87 @@ class WebConfig:
     workspaces: tuple[Path, ...] = ()
     question_timeout_seconds: int = DEFAULT_QUESTION_TIMEOUT_SECONDS
     approval_timeout_seconds: int = DEFAULT_APPROVAL_TIMEOUT_SECONDS
+
+
+def workspaces_sidecar_path(base_dir: str | Path) -> Path:
+    """Hub 新增 workspace 的侧车文件路径（``<base_dir>/.asterwynd/workspaces.yaml``）。
+
+    ``base_dir`` 取配置文件所在目录（``AsterwyndConfig.path.parent``）；无配置文件
+    时取启动目录。侧车是机器独占写入的运行期产物（与 ``.asterwynd/sessions`` 同族），
+    页面新增只改它、不改用户手写的 ``asterwynd.yaml``。
+    """
+    return Path(base_dir) / SIDECAR_DIRNAME / SIDECAR_WORKSPACES_FILENAME
+
+
+def load_sidecar_workspaces(path: str | Path) -> list[Path]:
+    """读取侧车 workspace 列表（去重、保序）。
+
+    文件缺失 → 空列表；文件损坏 / 结构非法 / 单条非法 → 跳过该部分并打 warning。
+    侧车由程序写入，损坏通常来自人工编辑或写盘中断，按尽力恢复处理，不让整个
+    Web 入口起不来。
+    """
+    target = Path(path)
+    if not target.is_file():
+        return []
+    try:
+        raw = yaml.safe_load(target.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, OSError) as exc:
+        logger.warning("workspace 侧车文件不可解析，已忽略: %s (%s)", target, exc)
+        return []
+    if raw is None:
+        return []
+    if not isinstance(raw, dict) or not isinstance(raw.get("workspaces"), list):
+        logger.warning("workspace 侧车文件结构非法，已忽略: %s", target)
+        return []
+    items: list[Path] = []
+    for item in raw["workspaces"]:
+        if not isinstance(item, str) or not item.strip():
+            logger.warning("workspace 侧车条目非法，已跳过: %r (%s)", item, target)
+            continue
+        candidate = Path(item).expanduser()
+        if not candidate.is_absolute():
+            logger.warning("workspace 侧车条目必须是绝对路径，已跳过: %s", item)
+            continue
+        resolved = candidate.resolve()
+        if resolved not in items:
+            items.append(resolved)
+    return items
+
+
+def append_sidecar_workspace(path: str | Path, workspace: Path) -> bool:
+    """把 workspace 追加进侧车列表并落盘；已存在 → 返回 False（幂等）。
+
+    只负责写，不校验路径存在性/类型（调用方 ``SessionManager.register_workspace``
+    已完成校验）。侧车文件由本程序独占，整文件重写即可，不需要保留注释；写入走
+    同目录临时文件 + ``os.replace``，避免中断留下截断文件。
+    """
+    target = Path(path)
+    resolved = Path(workspace).expanduser().resolve()
+    items = load_sidecar_workspaces(target)
+    if resolved in items:
+        return False
+    items.append(resolved)
+    text = yaml.safe_dump(
+        {"workspaces": [str(item) for item in items]},
+        allow_unicode=True,
+        sort_keys=False,
+    )
+    _atomic_write_text(target, text)
+    return True
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle_fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f"{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 @dataclass(frozen=True)
