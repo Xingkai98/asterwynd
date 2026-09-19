@@ -11,7 +11,6 @@
 ``openspec/changes/workflow-terminal-honesty/diagnosis.md``（#220 的 ``default`` 必须指向
 回边分支，否则环转不起来、bug 复现不出）。
 """
-import asyncio
 import re
 from pathlib import Path
 
@@ -20,7 +19,6 @@ import pytest
 from agent.config import AsterwyndConfig
 from agent.llm import LLMResponse, Usage
 from agent.run_config import AgentMode
-from agent.subagent import scheduler as scheduler_mod
 from agent.subagent.manager import SubAgentManager
 from agent.subagent.scheduler import WorkflowScheduler
 from agent.subagent.workflow import parse_workflow_spec
@@ -401,23 +399,40 @@ def _extract_isgraphterminal(source: str) -> set[str]:
     return set(re.findall(r"status === '([a-z_]+)'", match.group(1)))
 
 
-def test_graph_terminal_status_copies_are_equal():
-    """D5：三个图级终态副本的**集合相等**（而非各自「包含 stalled」）——防未来漂移。"""
+def test_stalled_is_treated_as_non_success_by_every_consumer():
+    """Q5：``stalled`` 对所有消费方的语义是**非成功**——不得被「只查 failed」的写法漏掉。
+
+    本仓库没有「``status == 'completed'`` 即通过」的图级判定（图级 status 的消费方
+    只有三副本 + 前端淘汰/计时），所以语义落在：**stalled 必须进终态集合**（否则被
+    当 running），且**不是** ``completed``。这条断言把「新增档位没同步到消费方」的
+    漂移钉死（#197 已踩过同类坑）。
+    """
+    assert "stalled" != "completed"
+    assert "stalled" != "failed"  # 与 failed 分开：行动指引不同
+    for copy in _graph_status_copies().values():
+        assert "stalled" in copy, "stalled 未进终态集合 → 该图会被当成 running"
+
+
+def _graph_status_copies() -> dict[str, set[str]]:
     scheduler_src = (_REPO / "agent" / "subagent" / "scheduler.py").read_text()
     match = re.search(
         r"_SNAPSHOT_TERMINAL_STATUSES\s*=\s*frozenset\(\s*\{(.*?)\}\s*\)", scheduler_src, re.S
     )
     assert match, "未找到 _SNAPSHOT_TERMINAL_STATUSES"
-    backend = set(re.findall(r'"([a-z_]+)"', match.group(1)))
-
     workflow_js = (_REPO / "web" / "static" / "workflow.js").read_text()
-    frontend_list = _extract_bracket_list(workflow_js, "TERMINAL_STATUSES")
-
     graph_js = (_REPO / "web" / "static" / "workflow_graph.js").read_text()
-    frontend_fn = _extract_isgraphterminal(graph_js)
+    return {
+        "scheduler": set(re.findall(r'"([a-z_]+)"', match.group(1))),
+        "workflow.js": _extract_bracket_list(workflow_js, "TERMINAL_STATUSES"),
+        "workflow_graph.js": _extract_isgraphterminal(graph_js),
+    }
 
-    assert backend == frontend_list == frontend_fn, (
-        f"终态集合副本漂移：scheduler={sorted(backend)} "
-        f"workflow.js={sorted(frontend_list)} isGraphTerminal={sorted(frontend_fn)}"
+
+def test_graph_terminal_status_copies_are_equal():
+    """D5：三个图级终态副本的**集合相等**（而非各自「包含 stalled」）——防未来漂移。"""
+    copies = _graph_status_copies()
+    values = list(copies.values())
+    assert values[0] == values[1] == values[2], (
+        f"终态集合副本漂移：{ {k: sorted(v) for k, v in copies.items()} }"
     )
-    assert "stalled" in backend, "新档 stalled 必须进三副本"
+    assert "stalled" in values[0], "新档 stalled 必须进三副本"
