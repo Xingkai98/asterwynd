@@ -1372,10 +1372,27 @@ class WorkflowScheduler:
             return f"图级闸门 {reason} 触发（{self._gate_detail()}），本节点未派发"
         waiting = self._waiting_upstreams(state)
         if waiting:
-            shown = waiting[:_WAITING_LIST_LIMIT]
-            suffix = " 等" if len(waiting) > _WAITING_LIST_LIMIT else ""
-            return f"入边互相等待（{', '.join(shown)}{suffix}），本节点永远未就绪"
+            return self._waiting_reason(waiting)
         return "workflow ended before the node became ready"
+
+    def _waiting_reason(self, waiting: list[str]) -> str:
+        """「入边互相等待」因由——**整句**有界（上游 id 的长度与数量都不可控）。
+
+        先按 :data:`_WAITING_LIST_LIMIT` 限数量，再按 :data:`_REASON_DISPLAY_LIMIT`
+        限**整句长度**（截 id 列表中段、**保留后缀**「本节点永远未就绪」）。只限数量
+        不够：3 个 60 字符的 id 就会把整句推到 207 字符，前端在 160 处会把后缀连同
+        右括号一起切掉，用户看到的是半句断话。
+        """
+        prefix = "入边互相等待（"
+        suffix = "），本节点永远未就绪"
+        more = len(waiting) > _WAITING_LIST_LIMIT
+        joined = ", ".join(waiting[:_WAITING_LIST_LIMIT])
+        room = _REASON_DISPLAY_LIMIT - len(prefix) - len(suffix) - 1  # -1 给省略号
+        if len(joined) > room:
+            joined = joined[: max(room - 1, 1)].rstrip(" ,") + "…"
+        elif more:
+            joined += "…"
+        return prefix + joined + suffix
 
     def _gate_detail(self) -> str:
         """图级闸门的**结构化**细节（bounded），供注入节点因由。

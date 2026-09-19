@@ -370,8 +370,8 @@ async def test_cancelled_graph_does_not_claim_mutual_wait(tmp_path):
 async def test_waiting_reason_fits_the_frontend_display_budget(manager):
     """回归（Round 2 审阅 N2）：互等档因由也必须有展示预算上界。
 
-    上游 id 长度由节点声明决定（实测 6 个语义化长 id 扇入时整句 179 字符），
-    前端在 160 处会把「，本节点永远未就绪」连同右括号一起切掉。
+    上游 id 长度由节点声明决定（6 个语义化长 id 扇入整句 179 字符；3 个 60 字符 id 达 207 字符），
+    前端在 160 处会把「，本节点永远未就绪」连同右括号一起切掉——故必须限**整句长度**。
     """
     scheduler = WorkflowScheduler(manager)
     scheduler.spec = parse_workflow_spec(_deadlock_spec())
@@ -388,14 +388,21 @@ async def test_waiting_reason_fits_the_frontend_display_budget(manager):
     class _Node:
         id = "target"
 
-    scheduler._states = {lid: _State() for lid in long_ids}
-    scheduler._graph = lambda: type(
-        "G", (), {"incoming": staticmethod(lambda _nid: [_Edge(lid) for lid in long_ids])}
-    )()
-    reason = scheduler._blocked_reason(type("St", (), {"node": _Node()})())
-    assert len(reason) <= 160, f"互等因由超展示预算（{len(reason)}）: {reason!r}"
-    assert reason.endswith("本节点永远未就绪"), f"尾部被挤掉：{reason!r}"
-    assert "等" in reason, f"超限上游应以「等」收尾：{reason!r}"
+    # 三档最坏情况：数量多 / id 长 / id 极长。**只限数量不够**——3 个 60 字符的 id
+    # 就会把整句推到 207 字符，前端在 160 处把后缀连同右括号一起切掉。
+    for label, ids in (
+        ("长 id 扇入", [f"validation_stage_{i}_processor" for i in range(6)]),
+        ("超长 id ×3", [f"v{'x' * 59}_{i}" for i in range(3)]),
+        ("极长 id", [f"{'y' * 500}_{i}" for i in range(3)]),
+    ):
+        scheduler._states = {lid: _State() for lid in ids}
+        scheduler._graph = lambda ids=ids: type(
+            "G", (), {"incoming": staticmethod(lambda _nid: [_Edge(lid) for lid in ids])}
+        )()
+        reason = scheduler._blocked_reason(type("St", (), {"node": _Node()})())
+        assert len(reason) <= 160, f"[{label}] 互等因由超展示预算（{len(reason)}）: {reason!r}"
+        assert reason.endswith("本节点永远未就绪"), f"[{label}] 尾部被挤掉：{reason!r}"
+        assert reason.startswith("入边互相等待（"), f"[{label}] 前缀丢了：{reason!r}"
 
 
 @pytest.mark.asyncio
