@@ -36,10 +36,19 @@ REPORT_ONLY_FIELDS: tuple[str, ...] = (
 #: record 侧是 scheduler envelope 的图级状态（``completed``），replay 侧是
 #: ``TaskResult.status`` 的 benchmark 状态（``replayed``）——后者被 Q10 读法 A
 #: 固定成专值，永远不可能等于前者。fake 场景的 status 断言因此收敛为
-#: 「两侧都**无异常完成**」（复用与 ``_replay_completed_cleanly`` 同源的
-#: 排除集），矛盾（record 无异常 / replay 异常）才算失败。
+#: 「两侧都**无异常完成**」，矛盾（record 无异常 / replay 异常）才算失败。
+#:
+#: **本集合是唯一源**：``benchmarks/runner._replay_completed_cleanly`` 直接复用它
+#: （此前两处各写一份字面表，靠人工保持同步——本 change 就漏过一次：``stalled``
+#: 只加进了 runner 那份，两份同名谓词对同一输入给出相反答案）。新增图级档位时
+#: **只改这里**。
+#:
+#: 为何是「黑名单」而不是「白名单（只认 ``completed``）」：``failed`` /
+#: ``completed_with_failures`` 的回放**确实执行过节点**（LLM 被真实调用过），
+#: 所以仍算「无异常完成」（只是没成功）；``stalled`` 则是**零节点成功**
+#: （图根本没跑起来），回放没验证到任何东西，故必须列入异常。
 UNHEALTHY_WORKFLOW_STATUSES = frozenset(
-    {"graph_recursion_exceeded", "cancelled", "error", "declared"}
+    {"graph_recursion_exceeded", "cancelled", "error", "declared", "stalled"}
 )
 
 

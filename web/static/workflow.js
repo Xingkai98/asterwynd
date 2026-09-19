@@ -13,13 +13,14 @@
   const G = window.AsterwyndWorkflowGraph;
   if (!G) return;
 
-  //: 图级终态（D9(d)）：**两个副本必须同步**——这里是 ``pruneGraphs`` 的消费方，
-  //: 另一份是 scheduler 的 ``_SNAPSHOT_TERMINAL_STATUSES``。任一漏加
-  //: ``completed_with_failures``，一张「跑完了但有节点失败」的图就会被当成 running：
-  //: 永远排 tab 最前、计时器一直跳、每次重连都补发、永不进淘汰池（tab 无限增长）
-  //: ——而这恰是最需要用户看到的那张图。
-  const TERMINAL_STATUSES = ['completed', 'completed_with_failures', 'failed', 'cancelled',
-    'budget_exceeded', 'graph_recursion_exceeded'];
+  //: 图级终态（D9(d)）：**三个副本必须同步**——这里是 ``pruneGraphs`` 的消费方，
+  //: 另两份是 scheduler 的 ``_SNAPSHOT_TERMINAL_STATUSES`` 与 ``workflow_graph.js``
+  //: 的 ``isGraphTerminal()``。任一漏加 ``completed_with_failures``，一张「跑完了但
+  //: 有节点失败」的图就会被当成 running：永远排 tab 最前、计时器一直跳、每次重连都
+  //: 补发、永不进淘汰池（tab 无限增长）——而这恰是最需要用户看到的那张图。
+  //: ``stalled``（零节点完成）同理：它同样需要用户看到。
+  const TERMINAL_STATUSES = ['completed', 'completed_with_failures', 'stalled', 'failed',
+    'cancelled', 'budget_exceeded', 'graph_recursion_exceeded'];
   const MAX_TERMINAL_TABS = 5;   // Q9：与重连补发同口径
   const COLLAPSE_THRESHOLD = 50; // D5：<50 全展开
 
@@ -327,7 +328,10 @@
     if (body && !body.childElementCount) {
       const model = G.legendModel();
       body.appendChild(legendRow('节点', model.kinds.map(legendKindItem)));
-      body.appendChild(legendRow('状态', model.statuses.map(legendStatusItem)));
+      body.appendChild(legendRow('节点状态', model.statuses.map(legendStatusItem)));
+      // 图级终态单列一节（workflow-terminal-honesty D6）：`stalled`（图根本没跑起来）
+      // 必须与 `completed` / `budget_exceeded` 在用户眼里可分辨。
+      body.appendChild(legendRow('图状态', model.graphStatuses.map(legendGraphStatusItem)));
       body.appendChild(legendRow('边', model.edges.map(legendEdgeItem)));
       body.appendChild(legendRow('线型', model.channels.map(legendChannelItem)));
       // D1：桌面（>720px）默认**展开**，手机默认折叠成一行「图例 ▾」——默认态由
@@ -382,6 +386,14 @@
     swatch.style.background = entry.color;
     swatch.style.borderStyle = entry.borderStyle === 'solid' ? 'solid' : entry.borderStyle;
     return legendItem(swatch, `${entry.label}${entry.badge ? ` ${entry.badge}` : ''}`, entry.text);
+  }
+
+  /** 图级终态的图例项：圆点（与 tab 上的图级圆点同形），带人话解释。 */
+  function legendGraphStatusItem(entry) {
+    const swatch = document.createElement('span');
+    swatch.className = 'legend-swatch legend-swatch-dot';
+    swatch.style.background = entry.color;
+    return legendItem(swatch, entry.label, entry.text);
   }
 
   function legendEdgeItem(entry) {

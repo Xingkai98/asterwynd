@@ -94,6 +94,17 @@ _POLL_INTERVAL_S = 0.01
 
 _SUMMARY_LIMIT = 400
 
+#: 节点因由在前端的**展示预算**（前端 ``workflow_graph.js`` 的 ``truncateText`` 在
+#: 160 字符处再切）。后端注入具体因由（闸门细节等）时按这个预算压缩，保证关键信息
+#: （闸门名、上限值、「本节点未派发」）落在用户可见的那 160 字符内——「后端写了真因
+#: 但被前端切掉」等于没修（#218/Q4）。
+_REASON_DISPLAY_LIMIT = 160
+
+#: 「入边互相等待」因由里最多列出几个上游 id。上游 id 由节点声明决定、长度不可控
+#: （实测 6 个语义化长 id 扇入时整句 179 字符，前端会在 160 处把「，本节点永远未就绪」
+#: 连同右括号一起切掉），所以列出的数量必须有界。超出的用「等」收尾。
+_WAITING_LIST_LIMIT = 3
+
 #: bounded envelope 里 ``latest_events`` 的条目数上限（Q5：5 条终态迁移事件）。
 _LATEST_EVENTS_LIMIT = 5
 #: 单条 ``latest_events`` 的 ``summary_preview`` 字符上限（Q5：每条分配字符上限，
@@ -114,6 +125,10 @@ _SNAPSHOT_TERMINAL_STATUSES = frozenset(
         # G26（D9）：有节点失败但图正常收敛——必须算终态，否则那张图会被当成
         # running（永远排 tab 最前、永不进淘汰池、每次重连都补发）。
         "completed_with_failures",
+        # workflow-terminal-honesty（#217）：零节点成功的图（图根本没跑起来）。
+        # 三个副本（本集合 / workflow.js 的 TERMINAL_STATUSES / workflow_graph.js
+        # 的 isGraphTerminal）必须集合相等，漏一个就会让该图被当成 running。
+        "stalled",
         "failed",
         "cancelled",
         "budget_exceeded",
@@ -1232,14 +1247,42 @@ class WorkflowScheduler:
         return any(plan.is_control_edge(edge) for edge in plan.incoming(node_id))
 
     def _terminal_converged_status(self) -> str:
-        """图收敛时的终态（G26/D9）：有节点 ``failed`` → ``completed_with_failures``。
+        """图收敛时的终态四档（G26/D9 + change ``workflow-terminal-honesty``）。
+
+        判据按**实际执行结果**（优先级即语义，先命中先返回）：
+
+        1. ``completed > 0`` 且 ``failed > 0`` → ``completed_with_failures``
+        2. ``completed > 0`` 且 ``failed == 0`` → ``completed``
+        3. ``completed == 0`` 且 ``failed > 0`` → ``failed``
+        4. ``completed == 0`` 且 ``failed == 0`` → ``stalled``（图根本没跑起来）
 
         与 ``completed`` 分开是**用户可见**的：混用会让一张有失败节点的图在
         tab 上显示「已完成」，用户根本不会去看哪里失败了。
+
+        第 4 档（``stalled``）修的是同一件事的更强形式（#217）：**零节点成功**的图
+        也不得报 ``completed``——「无成功却说成功」比「有失败却说成功」更糟，用户
+        连排查方向都没有。不并入 ``failed`` 是因为本项目 ``failed`` 已被「节点执行
+        失败」占用（``completed_with_failures`` 依赖它），混用会让「有节点失败」与
+        「图没跑起来」不可分辨，而两者对用户的行动指引完全不同。
+
+        ``completed`` 的计数口径是 ``status == "completed"`` 的**节点**数，**不含**
+        ``skipped``（未选中 ≠ 跑成功）。它**不是**快照的 ``completed`` 计数——后者
+        来自 ``_unit_counts()['completed_units']``（``_logical_units`` 口径，foreach
+        容器按展开项数计），二者不同源，不得混用。
+
+        调用方保证本方法只在 ``self._budget_stop`` 为假的 else 分支里被调用，所以
+        ``budget_exceeded`` / ``cancelled`` / ``graph_recursion_exceeded`` 天然优先。
         """
-        if any(state.status == "failed" for state in self._states.values()):
+        states = list(self._states.values())
+        completed = sum(1 for state in states if state.status == "completed")
+        failed = sum(1 for state in states if state.status == "failed")
+        if completed > 0 and failed > 0:
             return "completed_with_failures"
-        return "completed"
+        if completed > 0:
+            return "completed"
+        if failed > 0:
+            return "failed"
+        return "stalled"
 
     def _resolve_pending_nodes(self) -> None:
         """把所有未派发节点落成终态，**上游先定**（D2b）。
@@ -1291,20 +1334,117 @@ class WorkflowScheduler:
             self._apply_budget_exhausted_status(state)
         else:
             state.status = "blocked"
-            state.reason = (
-                state.reason or "workflow ended before the node became ready"
-            )
+            state.reason = state.reason or self._blocked_reason(state)
+
+    def _blocked_reason(self, state: NodeState) -> str:
+        """``blocked`` 节点的因由——按**真实成因**分档（#218，D3）。
+
+        兜底句 ``workflow ended before the node became ready`` 读起来像「被动受牵连、
+        外部原因」，而真实成因至少有两类，用户按兜底句排查会找错方向：
+
+        1. **图级闸门触发**（``max_routes`` / ``recursion_limit`` / ``max_nodes`` /
+           ``max_runs``）：真因在 ``self._diagnostics`` 里（形如
+           ``GraphRecursionError: route node 'gate' exceeded max_routes 2``），
+           必须**穿透**到节点因由，否则用户只在图级诊断里才看得到。
+        2. **入边互相等待**（无任何图级闸门、``diagnostics`` 为空）：节点因入边
+           永远不就绪而未派发——这是**结构性**原因，不是「工作流提前结束」。
+
+        文案按**前端展示预算**压缩（见 :data:`_REASON_DISPLAY_LIMIT`）：闸门细节取
+        ``_gate_detail()``（结构化上限值优先），互等档按 :data:`_WAITING_LIST_LIMIT`
+        限制列出的上游数——两档都保证整句落在用户可见的那 160 字符内。
+
+        **闸门判定看 ``reason`` 键是否存在，不看 ``_diagnostics`` 是否非空**：
+        ``_diagnostics`` 也会被**非闸门**诊断填充（典型：``route_ref_misses``，
+        即 ``$ref`` 槽未命中这类良性记录）。用「非空」判会把一次 ``$ref`` 未命中
+        说成「图级闸门触发」——又是一句指错方向的假话（正是本 change 要消灭的
+        那类）。闸门诊断的唯一写入点是 ``_mark_graph_recursion_exceeded``，它**必带**
+        ``reason`` 键。
+
+        **「入边互等」只在图**自然收敛**时才是真因**（用户取消 / 预算停是更强的
+        停止原因，见 D1 的既有口径）。图被取消时节点没就绪是因为**用户停下了它**，
+        链上根本没有环；此时说「永远未就绪」同样是指错方向的假话。故取消态直接
+        走兜底句——前端 ``GRAPH_STOP_REASONS`` 会把它渲染成「流程被取消」。
+        """
+        if self._cancelled:
+            return "workflow cancelled before the node became ready"
+        reason = str(self._diagnostics.get("reason") or "").strip()
+        if reason:
+            return f"图级闸门 {reason} 触发（{self._gate_detail()}），本节点未派发"
+        waiting = self._waiting_upstreams(state)
+        if waiting:
+            return self._waiting_reason(waiting)
+        return "workflow ended before the node became ready"
+
+    def _waiting_reason(self, waiting: list[str]) -> str:
+        """「入边互相等待」因由——**整句**有界（上游 id 的长度与数量都不可控）。
+
+        先按 :data:`_WAITING_LIST_LIMIT` 限数量，再按 :data:`_REASON_DISPLAY_LIMIT`
+        限**整句长度**（截 id 列表中段、**保留后缀**「本节点永远未就绪」）。只限数量
+        不够：3 个 60 字符的 id 就会把整句推到 207 字符，前端在 160 处会把后缀连同
+        右括号一起切掉，用户看到的是半句断话。
+        """
+        prefix = "入边互相等待（"
+        suffix = "），本节点永远未就绪"
+        more = len(waiting) > _WAITING_LIST_LIMIT
+        joined = ", ".join(waiting[:_WAITING_LIST_LIMIT])
+        room = _REASON_DISPLAY_LIMIT - len(prefix) - len(suffix) - 1  # -1 给省略号
+        if len(joined) > room:
+            joined = joined[: max(room - 1, 1)].rstrip(" ,") + "…"
+        elif more:
+            joined += "…"
+        return prefix + joined + suffix
+
+    def _gate_detail(self) -> str:
+        """图级闸门的**结构化**细节（bounded），供注入节点因由。
+
+        优先取 ``limit``（闸门上限值，人话最短且信息量最高：``超过上限 2``）；
+        无 ``limit`` 时退回**截断到展示预算**的 ``message``——截断在此处做，
+        而不是让整段异常文本流到前端再被切掉尾巴。
+        """
+        limit = self._diagnostics.get("limit")
+        if limit is not None and str(limit).strip():
+            return f"超过上限 {limit}"
+        message = str(self._diagnostics.get("message") or "").strip()
+        if not message:
+            return "无附加信息"
+        # 给「图级闸门 … 触发（」+「），本节点未派发」留出余量。
+        budget = max(_REASON_DISPLAY_LIMIT - 48, 1)
+        return message[:budget]
+
+    def _waiting_upstreams(self, state: NodeState) -> list[str]:
+        """该节点的入边源头中**永远未就绪**的那些（``blocked`` / ``skipped`` / 未定）。
+
+        只列「没成功」的源头：``completed`` 的源头说明这条边送过数据、不是互等的
+        成因；``failed`` / ``cancelled`` 已有自己的语义（被连累），不在互等之列。
+        返回稳定顺序（声明序）便于测试与阅读。
+        """
+        plan = self._graph()
+        waiting: list[str] = []
+        for edge in plan.incoming(state.node.id):
+            upstream = self._states.get(edge.source)
+            if upstream is None:
+                continue
+            if upstream.status in ("blocked", "pending", "skipped"):
+                if edge.source not in waiting:
+                    waiting.append(edge.source)
+        return waiting
 
     def _is_skipped(self, state: NodeState) -> bool:
         """未被 route 选中的节点（D2b，enhance-workflow-graph-ux）。
 
-        三个条件**同时**成立才算 ``skipped``：
+        四个条件**同时**成立才算 ``skipped``：
 
         1. 有控制入边（只被 route 门控的节点才是「未选中」的候选）；
-        2. ``activations <= 0``（没有任何 route 选中它）；
+        2. ``activations <= 0``（控制激活信号为负）；
         3. **每条控制入边的源头 route 都已 ``completed``**——「确实做过判定，
            且没选它」。缺了它，``route 从未运行``（例如它的数据依赖永远没就绪）
-           会被误报成「条件没走这条」——**用户读到的是假话**。
+           会被误报成「条件没走这条」——**用户读到的是假话**；
+        4. **已完成控制源本次选中的出口不含本节点**（``node_id not in source.targets``）
+           ——（#220，方案 D）。``activations`` 会被子树复位（``_reset_subtree``）
+           清零，而回边场景下 route 可能**已经选中并派发过**本节点；只凭条件 2
+           会把「选过、也跑过」的节点报成 ``route did not select this branch``，
+           又是一句假话。``targets`` 是权威信号：它受发起者豁免保护、不被回边复位
+           清空，且已是 route 选中出口的对外契约。
 
         条件 3 与「被连累优先」是同一件事的两面：控制源没 completed（不管是
         ``blocked``/``skipped`` 还是仍在 pending），说明「选没选它」这件事**没有
@@ -1322,6 +1462,9 @@ class WorkflowScheduler:
                 continue
             source = self._states.get(edge.source)
             if source is None or source.status != "completed":
+                return False
+            # 条件 4：控制源确实选中了本节点 → 不是「未选中」，别报 skipped。
+            if node_id in source.targets:
                 return False
         # 数据上游被连累（failed/cancelled/blocked 都由上游先定后再看）：
         # 「被连累」优先于「未选中」——即使 route 选了它，它也拿不到输入。
@@ -1506,9 +1649,9 @@ class WorkflowScheduler:
             if successor is None:
                 continue
             if successor.status in TERMINAL_NODE_STATUSES:
-                self._reset_subtree(successor)
+                self._reset_subtree(successor, origin=state.node.id)
 
-    def _reset_subtree(self, state: NodeState) -> None:
+    def _reset_subtree(self, state: NodeState, *, origin: str | None = None) -> None:
         """数据上游重跑 → 下游必须用新输入重跑（同一 session 复用）。
 
         G11（enhance-workflow-graph-ux）：复位必须**一并清上一轮的产出于因由**
@@ -1517,7 +1660,15 @@ class WorkflowScheduler:
         语义会把它留住），且 ``finished_at`` 不复位会让新 ``started_at`` 大于旧
         ``finished_at`` → **负耗时**。**答错比答不出更糟**，而 route 回边重跑
         （review 循环）是本项目的常见形态。
+
+        ``origin`` 是**本次派发链的发起者**（#220，D4）：数据边回边（如
+        ``body → cycle_gate``，``body`` 非 route）会让递归沿 ``data_outgoing``
+        走回发起者自己，把它刚写完的 ``status``/``targets``/``summary`` 清空 ——
+        成功被改写成未派发。豁免**只跳过 origin 一个节点**，不停止传播：环上其它
+        节点仍须重跑（G11 的重跑语义）。**只加豁免，不减任何清理项。**
         """
+        if origin is not None and state.node.id == origin:
+            return
         if state.status == "pending":
             return
         state.status = "pending"
@@ -1532,7 +1683,7 @@ class WorkflowScheduler:
         for edge in self._graph().data_outgoing(state.node.id):
             successor = self._states.get(edge.target)
             if successor is not None:
-                self._reset_subtree(successor)
+                self._reset_subtree(successor, origin=origin)
 
     # -- 节点执行 -----------------------------------------------------------
 
@@ -1623,7 +1774,7 @@ class WorkflowScheduler:
                 continue
             successor.activations += 1
             if successor.status in TERMINAL_NODE_STATUSES:
-                self._reset_subtree(successor)
+                self._reset_subtree(successor, origin=state.node.id)
 
     async def _execute_foreach(self, state: NodeState) -> None:
         """展开项**并发**派发（D2「对有限集合展开并行」），受三重闸门控。

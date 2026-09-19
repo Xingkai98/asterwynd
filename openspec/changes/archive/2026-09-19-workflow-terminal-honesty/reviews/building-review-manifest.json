@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-terminal-honesty",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "963c7457-0e2f-470f-bed2-aaab701b8b92",
+  "base_sha": "f7a248655033ee3f035b79915a1cc4bff69082db",
+  "head_sha": "4851fa67fb18dc02ed725ed8b8f005c59c934bdd",
+  "tasks_hash": "sha256:0825dc1c7788b655e1f7bf6d1f42c0f44f79b340a46b6684cf6c51675dbb6cfe",
+  "spec_hash": "sha256:f8a49849bf6bf8cc8bdc894ac9fd245ce3276e419182063f0a0c037bf87681ac",
+  "diff_hash": "sha256:2991021bbf1d93671cd49ba0db4d88d64791d059de3b064c85f118bcd330aefb",
+  "report_hash": "sha256:acc839bf8f36bc31269dfba8a2b071b8d312ade81cb2dd4424d79b7329249f18"
+}

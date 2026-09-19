@@ -99,7 +99,9 @@ Workflow 视图在模型触发多 Agent 流程时自动打开（`workflow_starte
 
 - **节点状态八档**：`pending` / `started` / `completed` / `failed` / `cancelled` / `blocked` / `budget_exceeded` / `skipped`（未选中：route 判定没走这条分支）。前七档分色 + 形状/角标编码（不只靠颜色，Airflow 的 `failed`/`upstream_failed` 在绿色盲下几乎同色是该坑的反面教材），`skipped` 与 `blocked` 刻意拉开明度差。
 - **投影层 `queued`**：scheduler 不把 `queued` 写进 `NodeState.status`（那个值参与收敛判断），而是在 `_graph_node_projection` 里按 run record 的 `status` 派生——所以图上能区分「真正在跑」与「已派发、在等执行 slot」。
-- **图级终态** `completed_with_failures`：有节点失败但图正常收敛时用这一档，不使整图算失败、但让用户一眼看到「有东西没成功」。该值必须同时出现在 scheduler 的 `_SNAPSHOT_TERMINAL_STATUSES` 与前端 `workflow.js` 的 `TERMINAL_STATUSES`，否则那张图会被当成 running、永不进 tab 淘汰池。
+- **图级终态四档**（按实际执行结果，优先级即语义）：`completed_with_failures`（跑了但有节点失败）/ `completed`（跑了且全成功）/ `failed`（零节点成功且有节点失败）/ `stalled`（零节点成功且零节点失败——图根本没跑起来：入口互等 / 全被挡）。`stalled` 与 `failed` 分开是因为二者对用户的行动指引不同（前者指向「为什么一个都没跑」，后者指向「哪个节点失败了」）；`budget_exceeded` / `cancelled` / `graph_recursion_exceeded` 优先于这四档。**`completed` 不再覆盖「零节点成功」的收敛**：图说「完成」而实际什么都没跑会让用户不去排查，并让外部消费方把「图根本没跑起来」判为通过（`stalled` 对消费方的语义是**非成功**）。终态集合必须同时出现在**三个副本**——scheduler 的 `_SNAPSHOT_TERMINAL_STATUSES`、前端 `workflow.js` 的 `TERMINAL_STATUSES`、`workflow_graph.js` 的 `isGraphTerminal()`，否则那张图会被当成 running、永不进 tab 淘汰池、每次重连都补发。
+- **节点因由如实**：`blocked` 节点的因由按真实成因分档——图级闸门触发（穿透 `diagnostics`，含闸门名与上限值）/ 入边互相等待（无闸门时说明结构性原因）/ 兜底。前端 `explainNode()` 让携带具体成因的 `node.reason` 优先于泛化的「流程因图超限被停止」，否则后端写了真因、用户仍看不到。
+- **回边重跑不清空发起者**：数据边回边（如 `body → cycle_gate`）会让子树复位递归走回发起者自己、清掉刚写的 `status`/`targets`。`_reset_subtree(origin=...)` 豁免发起者一个节点（**不**停止传播——环上其它节点仍按 G11 语义重跑）；配套地 `_is_skipped` 用控制源的 `targets` 而非 `activations` 判「是否被选中」，因为后者会被复位清零，会把「选过、也跑过」的节点误报成 `route did not select this branch`。
 - **只读下钻**：`GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript` 按节点类型返回三态 union（`single` / `candidates` / `none`），复用 `SubAgentManager.inspect_transcript()`，bounded 且不调 LLM、不写盘、不改执行状态。session 校验是**内存口径**（与 `/api/sessions/{id}/timeline` 同），冷会话/进程重启后 404。
 - **控制面**：`{"type":"cancel_workflow"}` 经 WebSocket 取消一张运行中的图；`reset` 在替换会话前会先取消该会话内所有在跑的图（否则图继续烧预算而用户已看不到它——forwarder 已 detach）。
 

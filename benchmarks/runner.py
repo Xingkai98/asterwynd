@@ -27,6 +27,7 @@ from benchmarks.statistics import swebench_versions
 from benchmarks.task_schema import LoadedTask, load_task
 from benchmarks.workflow_e2e import (
     MODE_NOT_EXECUTED,
+    UNHEALTHY_WORKFLOW_STATUSES,
     compare_record_and_replay,
     e2e_fields,
 )
@@ -1036,9 +1037,12 @@ def _run_git(args: list[str], cwd: Path) -> str:
 
 
 #: Replay 的 workflow 状态里算「异常完成」的那些（Q6 的硬断言前提）。
-_REPLAY_UNHEALTHY_STATUSES = frozenset(
-    {"graph_recursion_exceeded", "cancelled", "error", "declared"}
-)
+#:
+#: **唯一源在 ``benchmarks.workflow_e2e.UNHEALTHY_WORKFLOW_STATUSES``**——本处只做
+#: 别名，不再各自维护一份字面表。此前两处同名谓词各写一份集合，``stalled``
+#: （change ``workflow-terminal-honesty`` #217：零节点成功 = 回放没验证到任何东西）
+#: 只加进了一份，导致「record 干净 + replay 啥也没跑」被判「两侧一致、通过」。
+_REPLAY_UNHEALTHY_STATUSES = UNHEALTHY_WORKFLOW_STATUSES
 
 
 def _replay_completed_cleanly(result: TaskResult) -> bool:
