@@ -101,6 +101,11 @@
     completed: '#4ade80',
     //: G26：跑完了但有节点失败——不能显示成绿的，否则用户根本不会去看哪里失败。
     completed_with_failures: '#fbbf24',
+    //: workflow-terminal-honesty（#217）：图根本没跑起来。取**深琥珀**（比
+    //: budget_exceeded 的橙 #fb923c 更暗、更褐），到每个既有档的 RGB 欧氏距离
+    //: ≥ 100（既有最近的一对 completed_with_failures↔budget_exceeded 仅 51）。
+    //: 复用 budget_exceeded 的橙会让「预算耗尽而停」与「结构性停」混淆。
+    stalled: '#92400e',
     failed: '#f87171',
     cancelled: '#64748b',
     budget_exceeded: '#fb923c',
@@ -111,6 +116,7 @@
     running: 'running',
     completed: 'completed',
     completed_with_failures: '有失败',
+    stalled: '停滞（无节点完成）',
     failed: 'failed',
     cancelled: 'cancelled',
     budget_exceeded: '预算超限',
@@ -137,6 +143,10 @@
 
   function graphStatusColors() {
     return Object.assign({}, GRAPH_STATUS_COLORS);
+  }
+
+  function graphStatusTexts() {
+    return Object.assign({}, GRAPH_STATUS_TEXT);
   }
 
   function statusEncodings() {
@@ -180,6 +190,21 @@
   }
 
   // --- D1 图例（内容模型与词表同源，单测锁定不漂移） ----------------------
+
+  //: 图级终态的**人话解释**（workflow-terminal-honesty D6）：图级状态与节点状态是
+  //: 两套词表，图例必须能解释「这张图为什么停在这个终态」——尤其 `stalled`
+  //: （图根本没跑起来）与 `completed`/`budget_exceeded` 的区分。
+  const GRAPH_STATUS_TEXT = {
+    declared: '已声明，尚未开跑',
+    running: '正在跑',
+    completed: '所有节点成功完成',
+    completed_with_failures: '跑完了，但有节点失败',
+    stalled: '图收敛时没有任何节点成功执行（互等 / 全被挡）',
+    failed: '没有任何节点成功，且有节点失败',
+    cancelled: '被取消',
+    budget_exceeded: '预算耗尽而停',
+    graph_recursion_exceeded: '图级闸门（步数/节点数/路由数）超限',
+  };
 
   //: 每档状态的**人话解释**（D1：图例条目不是裸术语）。与 D2 的因果文案同源。
   const NODE_STATUS_TEXT = {
@@ -245,6 +270,14 @@
         badge: (STATUS_ENCODINGS[key] || {}).badge || '',
         borderStyle: (STATUS_ENCODINGS[key] || {}).borderStyle || 'solid',
         text: NODE_STATUS_TEXT[key] || '',
+      })),
+      // 图级终态是**独立词表**（D10），单列一节——节点状态与图级状态混在一行
+      // 会让用户以为 ``completed``（节点）与 ``completed``（图）是同一个东西。
+      graphStatuses: Object.keys(GRAPH_STATUS_COLORS).map((key) => ({
+        key,
+        color: GRAPH_STATUS_COLORS[key],
+        label: GRAPH_STATUS_LABELS[key] || key,
+        text: GRAPH_STATUS_TEXT[key] || '',
       })),
       edges: Object.keys(EDGE_STYLES).map((key) => ({
         key,
@@ -834,6 +867,12 @@
     }
 
     if (status === 'blocked') {
+      // 优先级 0（workflow-terminal-honesty Q4）：节点自身的**具体因由**。
+      // 后端 D3 把真实成因（图级闸门名+上限 / 「入边互等」）写进了 ``node.reason``，
+      // 但下面两条泛化规则会把它遮蔽——用户看到「流程因图超限被停止」而看不到
+      // `max_routes` 与上限值，等于 #218 在用户可见层面没修。只有携带**具体信息**
+      // 的 reason 才提权；纯兜底句仍走下面的泛化路径（那里更准确）。
+      if (isSpecificNodeReason(node.reason)) return truncateText(node.reason, 160);
       // 优先级 1：图级停止原因——它比「沿边找上游」更准确。
       if (GRAPH_STOP_REASONS[graphStatus]) return GRAPH_STOP_REASONS[graphStatus];
       // 优先级 2：沿数据入边向上**穿透 blocked 上游**，收集全部未完成/失败的上游。
@@ -845,6 +884,20 @@
     }
 
     return null;
+  }
+
+  //: 后端 ``_resolve_pending_status`` 的因由分档标记（workflow-terminal-honesty D3）。
+  //: 这两个片段出现即说明 reason 携带了**具体成因**，不是无区分度的兜底句——
+  //: 前端据此把它提到泛化文案之前（Q4）。
+  const SPECIFIC_REASON_MARKERS = ['图级闸门', '入边互相等待'];
+
+  /** 该 reason 是否携带具体成因（而非兜底句）。纯函数，便于测试。 */
+  function isSpecificNodeReason(reason) {
+    const value = String(reason || '');
+    if (!value) return false;
+    //: 兜底句本身没有信息量，不得提权（否则会遮掉更准确的图级/上游说明）。
+    if (value === 'workflow ended before the node became ready') return false;
+    return SPECIFIC_REASON_MARKERS.some((marker) => value.includes(marker));
   }
 
   //: 因果句里最多列几个上游 id（bounded：大图上一条链可能有几十个未完成上游）。
@@ -979,10 +1032,12 @@
     };
   }
 
-  //: 图级终态集合（与 ``workflow.js`` 的 ``TERMINAL_STATUSES`` 同义，这里按词表判）。
+  //: 图级终态集合（与 ``workflow.js`` 的 ``TERMINAL_STATUSES`` 和 scheduler 的
+  //: ``_SNAPSHOT_TERMINAL_STATUSES`` 同义，这里按词表判）。三副本必须**集合相等**
+  //: （契约测试锁定）——漏一个就会让该图在 tab 上被当成 running。
   function isGraphTerminal(status) {
     return status === 'completed' || status === 'completed_with_failures'
-      || status === 'failed' || status === 'cancelled'
+      || status === 'stalled' || status === 'failed' || status === 'cancelled'
       || status === 'budget_exceeded' || status === 'graph_recursion_exceeded';
   }
 
@@ -1088,6 +1143,8 @@
     statusEncoding,
     legendModel,
     explainNode,
+    isSpecificNodeReason,
+    graphStatusTexts,
     nodeProgress,
     progressLabel,
     rankGraphs,
