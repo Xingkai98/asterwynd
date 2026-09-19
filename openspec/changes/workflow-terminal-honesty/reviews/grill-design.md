@@ -92,6 +92,25 @@
 
 ## User Confirmation
 
-> 本节由**主 session** 收集用户对上方 `## Open Questions`（Q1–Q5）的答复后回填；本评审者**不**代替用户作答。
-> 每条格式：`- **Q<n>**: 用户答复：<实质内容>；确认时间: 2026-09-19`
-> （占位文本如「待确认」「待主 agent 提交」不计入确认；tasks 全部勾选后 artifact checker 会强制校验每条 Open Question 都有确认记录。）
+- **Q1**: 用户答复：采用**方案 D（组合修）**——保留 `_reset_subtree` 的 origin 豁免，**并且**把 `_is_skipped()` 的「是否被选中」判据从 `activations <= 0` 改为查已完成控制源的 `route.targets`（`node_id in source.targets` → 不是 skipped）。理由：实测证明只用豁免会制造新假话（`body` 被误报 `skipped`「route did not select this branch」，而 route 实际选中了它），两者必须一起改；确认时间: 2026-09-19
+- **Q2**: 用户答复：**接受现状**（route 完成即算「跑了」）；但必须改正 design 里的错描述——删掉「`completed` 计数与快照 `completed` 计数同源」这句，写明本判据用的是「`status == "completed"` 的**节点**数」，而快照的 `completed` 来自 `_unit_counts()['completed_units']`（`_logical_units` 口径，foreach 容器按 N+1 计），两者**不同源**；确认时间: 2026-09-19
+- **Q3**: 用户答复：以 Evidence 块为准修正 `diagnosis.md` 的 Reproduction 段（`default` 必须指向回边分支 `body`，否则环转不起来、#220 复现不出），并加一句说明；tasks 1.4 的回归测试按这一份 spec 写；确认时间: 2026-09-19
+- **Q4**: 用户答复：**连前端一起改**——`explainNode()` 对 `blocked` 的优先序要让「节点自身的具体因由」能显示出来（至少当因由含图级闸门信息 / 「入边互等」时优先于泛化文案）；spec 的 Scenario 要覆盖「用户实际看到的那句话」；确认时间: 2026-09-19
+- **Q5**: 用户答复：**采纳**——在 spec 正文写明「`stalled` 对消费方语义 = 非成功」，并在 `tasks.md` 补一条消费方清单核对；确认时间: 2026-09-19
+
+## 实现期复核补记（主 session 追加）
+
+> 以下两条是主 session 在执行前对 Q1 结论做的独立实测复核，方法与 §Reviewer 的脚本一致（源码级补丁 + 确定性桩 LLM）。
+> 用于支撑 Q1 的「方案 D」选择，并**排除**了一个曾被建议的替代方案。
+
+- **方案 D 实测复核（成立）**：同一空转环 spec（`max_routes=3`、case 与 default 都指向 `body`、回边 `required:false`），三态对照——
+
+  | | 图级 | `cycle_gate.targets` | `body` 终态 | skipped 假话 |
+  |---|---|---|---|---|
+  | 基线 | `graph_recursion_exceeded` | `[]` | `completed` | 无 |
+  | 仅 D4 豁免 | `completed` | `['body']` | **`skipped`** | **有** |
+  | **方案 D（豁免 + `targets` 判据）** | `completed` | `['body']` | `blocked` | 无 |
+
+  两补丁逐行 diff 确认**只差 `_is_skipped` 一处**（`scheduler.py:1326` 的 `if node_id in source.targets: return False`）。
+
+- **否决「只调顺序」（C4 推荐）：实测无效，且在方案 D 之上会反向破坏 #220 修复。** 单独「先 `_reset_subtree` 再 `activations += 1`」的结果与基线**逐字相同**（图级 `graph_recursion_exceeded`、`route.targets=[]`）——因为 `_on_node_finished` 传的 origin 是「刚完成的节点」（`body`），豁免的是 `body`，**不保护 route**。进一步：在方案 D 之上再加该顺序调整，route 派发次数从 2 回到 3，#220 的 `targets=[]` 症状**复发**。故**不采用**顺序调整；起作用的是 origin 的**取值语义**，不是语句顺序。

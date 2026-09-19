@@ -26,7 +26,19 @@
  "entry": ["cycle_gate"], "terminal": ["end"]}
 ```
 
-**#220（空转环）** — 同上但回边加 `"required": false`，`cycle_gate` 加 `"max_routes": 3`。
+**#220（空转环）** — 在 #217 的 spec 上回边加 `"required": false`，`cycle_gate` 加 `"max_routes": 3`，**并把 `cycle_gate` 的 `default` 从 `end` 改成 `body`**：
+
+```python
+{"nodes": [{"id":"cycle_gate","kind":"route","max_routes":3,
+            "cases":[{"when":"CONTINUE","to":"body"}], "default":"body"},   # ← default 必须是 body
+           {"id":"body","kind":"aggregate","strategy":"collect"},
+           {"id":"end","kind":"aggregate","strategy":"collect"}],
+ "edges": [{"from":"cycle_gate","to":"body"},{"from":"cycle_gate","to":"end"},
+           {"from":"body","to":"cycle_gate","required":false}],
+ "entry": ["cycle_gate"], "terminal": ["end"]}
+```
+
+> **`default` 必须指向回边分支（`body`），否则环转不起来。** 本文件早先的 Reproduction 段写「同上但回边加 required:false」（即沿用 #217 的 `default: "end"`）是**错的**——实测那份 spec 下 route 只派发 **1 次**、`_reset_subtree` **一次都没被调用**、`cycle_gate` 报 `completed`/`targets=['end']`，#220 **完全复现不出**。下面是 Evidence 块记录的实测行为（`default -> ['body']`），与 `default: "body"` 这一份一致。本段已按 Evidence 更正（grill Q3 用户确认，2026-09-19）。
 
 **#218 形态 B** — 即 #217 的死锁场景（无图级闸门），观察节点 `reason`。
 
@@ -118,7 +130,12 @@ _reset_subtree 被调用的节点: ['cycle_gate', 'body', 'cycle_gate', 'cycle_g
 | `max_routes` 撞线 → 因由含闸门信息 | 节点 `reason` 含 `max_routes` 与上限值 |
 | 无闸门死锁 → 因由说明「入边互等」 | 节点 `reason` **不含** `workflow ended before` |
 | 数据边回边不清空发起者 | `cycle_gate.status == "completed"`、`targets` 非空、选中出边 `passed` |
-| 三副本集合相等 | scheduler / 快照补发池 / 前端 `TERMINAL_STATUSES` |
+| **被选中且跑过的节点不得报 skipped**（方案 D 组合回归） | 同一张图：被派发节点 `status != "skipped"`，`reason` 不含 `route did not select this branch` |
+| 三副本集合相等 | `_SNAPSHOT_TERMINAL_STATUSES` / `workflow.js` 数组 / `workflow_graph.js` 的 `isGraphTerminal()` |
+| 前端因由可见（Q4） | `max_routes` 图的用户可见文案含 `max_routes`；`stalled` 图含「入边互等」 |
+| `stalled` 配色门槛（D6） | 到每个既有图级档的 RGB 欧氏距离 ≥ 100 |
 | **G11 回归**（必须保持绿） | 陈旧因由 / 负耗时 |
 
 每个新测试都须经**变异验证**（改坏实现 → 测试变红）。
+
+**#220 的复现 spec 以本文件 Evidence 块为准**（`default: "body"`）。

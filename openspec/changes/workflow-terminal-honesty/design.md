@@ -39,7 +39,11 @@
 
 **为什么新增独立档而不是复用 `failed`**：业界 Airflow/Prefect 把「无成功」并入 FAILED 是因为它们的 `failed` 语义本就宽（含 `upstream_failed`）。本项目 `failed` 的语义已被节点级占用且 `completed_with_failures` 依赖它，混用会造成不可分辨。新增 `stalled` 与 `completed_with_failures` 形成对称（「跑了但有失败」/「压根没跑」）。
 
-**`completed_count` 的口径**：`state.status == "completed"` 的**节点**数（与快照 `completed` 计数同源）。**不含** `skipped`——`skipped` 是「未选中」，不等于「跑成功了」。
+**`completed_count` 的口径**：`state.status == "completed"` 的**节点**数。**不含** `skipped`——`skipped` 是「未选中」，不等于「跑成功了」。
+
+> **口径澄清（grill Q2 用户确认，2026-09-19）**：本判据的数**不是**快照的 `completed` 计数。快照的 `completed` 来自 `_unit_counts()['completed_units']`，是 `_logical_units` 口径（`foreach` 容器按展开项数计，见 `scheduler.py:2469`）；本判据数的是**节点**。二者**不同源**，实现时 SHALL NOT 复用 `_unit_counts()`，否则 `foreach` 图上两口径会给出不同结论。
+>
+> **已接受的语义**（用户拍板）：`route` / `collect` 聚合节点完成即计入 `completed_count`。因此「只有一个空 route 完成、真正干活的节点全被挡」的图会报 `completed` —— 这是**有意接受**的（「至少有一个节点成功即算跑起来了」），不额外排除「零产出节点」（加排除会引入新的边条件，让判据更脆）。
 
 **`budget_exceeded` / `cancelled` / `graph_recursion_exceeded` 优先级不变**（既有权衡：预算停与取消是更强的停止原因），仍先于本表的四个档。
 
@@ -63,28 +67,64 @@
 
 **穿透的 bounded 要求**：`diagnostics.message` 可能较长，注入 `state.reason` 时必须**截断**（复用 `_SUMMARY_LIMIT` 同口径）。`state.reason` 是 `_envelope` 的字段，**本体语义不得改变**（既有 spec 已有此约束，见 `web-ui` 的 workflow 快照 Requirement）。
 
-### D4 — `_reset_subtree` 增加「发起者豁免」
+> **前端可见性（grill Q4 用户确认，2026-09-19 — 本 change 范围扩大）**：只改 `state.reason` **不足以**让用户看到真因。前端 `explainNode()`（`web/static/workflow_graph.js:836-846`）对 `blocked` 节点的取因顺序是：① 图级停止固定句（`GRAPH_STOP_REASONS`：`budget_exceeded`/`cancelled`/`graph_recursion_exceeded`，见 `:773-777`）→ ② 沿数据入边穿透找上游（「被上游 X 挡住，未执行」）→ ③ 才用 `node.reason`。实测：`max_routes` 图的三个节点在 UI 上全渲染成「流程因图超限被停止，该节点没来得及执行」，`max_routes` 与上限值一个字都不出现；`stalled` 图渲染成「被上游 body 挡住，未执行」。
+>
+> 故本 change **必须同时改前端 `explainNode()`**：当 `node.reason` 携带**具体闸门信息 / 「入边互等」**时，它 SHALL 优先于泛化文案（优先级 ①/②）。`drawerWhy()`（`workflow.js:1087`）与节点小字（`workflow.js:848/867`）都走同一函数，改一处即全覆盖。**验收口径**：spec 的 Scenario 要看「用户实际看到的那句话」，不是 `state.reason` 字段本身。
+>
+> **截断口径**：节点投影在 `_SUMMARY_LIMIT`(400) 处切，前端 `truncateText` 在 160 处再切。注入 `state.reason` 时 SHALL 按**前端展示预算**压缩（形如 `图级闸门 max_routes 触发（超过上限 2），本节点未派发`），SHALL NOT 直接塞入整段异常文本（否则关键信息会被 160 字符切掉）。
 
-`_reset_subtree(state, *, origin)` 沿 `data_outgoing` 递归时**跳过 `origin`**（本次派发的发起节点）。
+### D4 — `_reset_subtree` 发起者豁免 **+ `_is_skipped` 选中判据修正（方案 D，组合修）**
+
+> **grill Q1 用户拍板：方案 D（组合修）**（2026-09-19）。原 D4 单独实施会制造**新假话**（实测见下），必须与 `_is_skipped` 的判据修正一起做。
+
+**改动 A：`_reset_subtree(state, *, origin)` 沿 `data_outgoing` 递归时跳过 `origin`**
 
 **为什么是豁免而不是停止传播**：回边场景下，`origin` 的下游里既包含「需要重跑的下游」（正常语义，G11 的立项目的），也包含「origin 自己」（回边造成）。只豁免 origin 一个节点，既不破坏 G11 的重跑语义，又避免清空刚写完的结果。
 
-**调用点**（共 3 处，`scheduler.py:1509/1626` 及自身递归）都要透传 origin：
-- `_execute_route` 的派发循环：`origin = state.node.id`（route 自己）
-- 其它调用点：`origin` 为发起重跑的那个节点
+**调用点**（共 3 处，`scheduler.py:1509/1535/1626`）都要透传 origin：
+- `_execute_route` 的派发循环（`:1626`）：`origin = state.node.id`（route 自己）——**这一处是修复生效的关键**，只改 `_on_node_finished` 那处不会有任何效果
+- `_on_node_finished`（`:1509`）：`origin = state.node.id`（刚完成的那个节点）
+- `_reset_subtree` 自身的递归（`:1535`）：透传 `origin`——豁免只发生在递归链上
 
-**G11 回归红线**：`_reset_subtree` 必须仍然清 `reason`/`error`/`summary`/`finished_at`/`status`/`activations`/`verdict`/`targets`（否则「重跑时显示上一轮失败因由」与「负耗时」会回归）。本改动**只加豁免**，不减任何清理项。
+**改动 B：`_is_skipped()` 的「是否被选中」判据增加条件 2**
 
-### D5 — `TERMINAL_STATUSES` 双副本同步（硬要求）
+原判据只有「`activations <= 0` + 控制入边源头 route 已 completed」。但 `activations` 会被 `_reset_subtree` 清零，而回边场景下 route **已经选中并派发过**该节点 —— 仅凭 `activations <= 0` 会把「选过、也跑过」的节点报成 `route did not select this branch`。
+
+**实测证据（主 session 复核，2026-09-19）**：同一空转环 spec（`max_routes=3`、case 与 default 都指向 `body`、回边 `required:false`、`body` 为 subagent）：
+
+| | 图级 | `cycle_gate.targets` | `body` 终态 | skipped 假话 |
+|---|---|---|---|---|
+| 基线 | `graph_recursion_exceeded` | `[]` | `completed`（runs=2） | 无 |
+| **仅改动 A** | `completed` | `['body']` | **`skipped`（runs=1）** | **有**（说没选，实际选了且跑过） |
+| **方案 D（A+B）** | `completed` | `['body']` | `blocked`（runs=1） | 无 |
+
+两补丁逐行 diff 确认**只差 `_is_skipped` 一处**（新增 `if node_id in source.targets: return False`）。
+
+**否决「只调顺序」的替代方案**（曾被建议，实测无效）：单独把 `_execute_route` 派发循环改成「先 `_reset_subtree` 再 `activations += 1`」，结果与基线**逐字相同**（`graph_recursion_exceeded`、`targets=[]`）——因为 `_on_node_finished` 传的 origin 是刚完成的节点（`body`），豁免的是 `body`、**不保护 route**。更进一步：在方案 D 之上再加该顺序调整，route 派发次数从 2 回到 3、#220 的 `targets=[]` **复发**。故**不采用**顺序调整——起作用的是 origin 的**取值语义**，不是语句顺序。
+
+**条件 2 的写法**：对每条控制入边，源头 route 已 `completed` 时，若 `node_id in source.targets` → **不是 skipped**（route 确实选中了它）。`targets` 是权威信号：它受发起者豁免（改动 A）保护，不被回边复位清空；且已成为对外契约（`web-ui` spec 的 route 选中出口、edge `passed` 判定都依赖它）。**只读既有字段，不引入新记账。**
+
+**G11 回归红线**：`_reset_subtree` 必须仍然清 `reason`/`error`/`summary`/`finished_at`/`status`/`activations`/`verdict`/`targets`（否则「重跑时显示上一轮失败因由」与「负耗时」会回归）。改动 A **只加豁免**，不减任何清理项。
+
+**残余项（记录，不在本 change 修复）**：方案 D 下该环节点最终落 `blocked` + 兜底因由 `workflow ended before the node became ready`，而它实际上跑过（`runs>0`）。这条因由由 D3 的分档覆盖（`blocked` 的因由解释为「被结构性原因挡住未派发」在语义上仍不精确）。它的**端到端归属**是「节点在环里重跑后的终态语义」，属 #219 的循环契约面，本 change 只消灭「说没选中」这条最直接的假话。
+
+### D5 — 图级终态集合的三副本同步（硬要求）
+
+> **表述修正（grill 风险 5 + 主 session grep 复核，2026-09-19）**：原文说「scheduler 侧 `TERMINAL_STATUSES`」——**该对象不存在**。`scheduler.py:83` 的 `TERMINAL_NODE_STATUSES` 是**节点**级集合（`{completed, failed, cancelled, blocked, budget_exceeded, skipped}`），与图级终态无关。真实图级副本是下面三个。
 
 新增 `stalled` 必须同时进入：
-- scheduler 侧 `TERMINAL_STATUSES`（`scheduler.py`）
-- 快照补发池 `_SNAPSHOT_TERMINAL_STATUSES`
-- 前端 `web/static/workflow_graph.js` 的 `TERMINAL_STATUSES`
+
+| # | 副本 | 位置 | 消费方 |
+|---|---|---|---|
+| 1 | `_SNAPSHOT_TERMINAL_STATUSES` | `agent/subagent/scheduler.py:111` | 快照是否带计数 + `web/session.py` 的终态立即发送（`_is_terminal_snapshot`） |
+| 2 | `TERMINAL_STATUSES`（数组） | `web/static/workflow.js:21` | `pruneGraphs` 的 tab 淘汰池 + `isRunning` |
+| 3 | `isGraphTerminal()`（函数） | `web/static/workflow_graph.js:983` | `graphTabMeta` 的「已跑 N 秒 / N 分钟前」耗时判据 |
 
 **漏同步的后果**（#197 已踩过同类坑）：该图被当成 running → 永不进入 tab 淘汰池 → 每次 ws 重连都补发。
 
 **机械保障**：补一条测试断言三个副本的集合相等（而非各自断言「包含 stalled」）——前者能防未来新增档时再次漂移。
+
+> **副本 3 的可断言性**：`isGraphTerminal` **未导出**到 `window.AsterwyndWorkflowGraph`（`workflow_graph.js:1075-1116`），而副本 2 是 IIFE 内的数组、只在 `window.AsterwyndWorkflow` 暴露。跨文件集合等价断言 SHALL 走**正则抽取源文本**（既有范式：`tests/web_tests/test_workflow_graph_ux_js.py:444-455` 抽取 `workflow.js` 的 `TERMINAL_STATUSES`），**不新增导出**——理由：导出会把内部判据变成对外 API，扩大契约面；而源文本断言与既有测试同构，成本更低且已证明可用。
 
 ### D6 — 前端编码：`stalled` 的视觉与文案
 
@@ -95,6 +135,10 @@
 - 图例：说明「图收敛时没有任何节点成功执行」
 
 **与 `budget_exceeded` 的区分**：`budget_exceeded` 是「预算耗尽而停」，`stalled` 是「结构性停（互等/全被挡）」。二者可能同时成立——按 D1，**预算优先**（既有口径），即 `stalled` 不会覆盖 `budget_exceeded`。
+
+> **配色可判定性（grill 风险 8，2026-09-19）**：原设计只写「深琥珀/暗橙、不复用 budget_exceeded 的橙」，**没有可机械断言的阈值**，`validate` 与测试都无法验证「可分辨」。实测现有调色板最接近的一对是 `completed_with_failures #fbbf24` ↔ `budget_exceeded #fb923c`（RGB 欧氏距离 51.0）。
+>
+> 因此本 change SHALL 把「可分辨」写成**可断言门槛**：`stalled` 到**每一个既有图级档**（尤其 `budget_exceeded`、`completed_with_failures`、`completed`）的 RGB 欧氏距离 SHALL ≥ **100**，并补一条测试锁定。候选色实测：`#b45309`（到 `budget_exceeded` Δ=107.8）、`#92400e`（Δ=140.9）满足；`#d97706`（Δ=69.3）、`#a16207` 不满足（仍在橙/卡其带内）。具体取值在实现时以「满足门槛 + 视觉可读」定，测试按门槛断言。
 
 ## Pre-Implementation Review
 
@@ -114,6 +158,8 @@
 - **#218 形态 A**：`max_routes` 撞线 → 被牵连节点 `reason` **含** `max_routes` 与上限值；**不含**仅有兜底文案
 - **#218 形态 B**：无图级闸门的死锁（`diagnostics` 为空）→ 节点 `reason` 说明「入边互等」；**不含** `workflow ended before`
 - **#220**：回边为数据边 → `_reset_subtree(body)` 后 `cycle_gate` 的 `status`/`targets`/`summary` **保持**；选中的控制边判 `passed` 而非 `inactive`
+  - **复现 spec 以 `diagnosis.md` 的 Evidence 块为准**（`cycle_gate` 的 `default` 必须是 `body`，即回边分支被选中、环真的转起来）。`default: end` 的写法 route 只派发 1 次、`_reset_subtree` 从不被调用，#220 复现不出（会得到永远为绿的假测试）。
+- **方案 D 的组合回归**：同一张含数据边回边的图，断言 **(a)** `route` 保持 `completed` 且 `targets` 含被派发节点；**(b)** 该被派发节点**不是** `skipped`、其 `reason` 不含 `route did not select this branch`。两条必须一起断言——只断 (a) 会让「仅改动 A」的中间态（制造 `skipped` 假话）通过。
 
 **四档判据的边界矩阵**（每格一条）：
 
@@ -132,11 +178,13 @@
 ### 前端（`tests/web_tests/`）
 
 - `stalled` 的配色 / tab 文案 / 图例与 `completed`、`budget_exceeded` 可分辨
+- **配色门槛断言**：`stalled` 到每个既有图级档的 RGB 欧氏距离 ≥ 100（D6）
+- **`explainNode()` 优先级回归（Q4 新增）**：喂入一张 `max_routes` 撞线的真实快照（节点 `reason` 含闸门信息）→ 断言用户可见文案**含** `max_routes`；喂入一张 `stalled` 死锁快照 → 断言文案说明「入边互等」而非「被上游 X 挡住」。这两条是 Q4 的验收口径（「用户实际看到的那句话」）。
 - 既有前端断言若因新增档位而红（精确集合相等式），按新档位更新并加注释
 
 ### 变异验证（硬要求）
 
-每个新测试都要能被「改坏实现」杀死，至少覆盖：四档判据（逐档去掉该分支）、因由三档（逐档回退成兜底文案）、origin 豁免（去掉跳过）、三副本同步（从某一副本移除 `stalled`）。
+每个新测试都要能被「改坏实现」杀死，至少覆盖：四档判据（逐档去掉该分支）、因由三档（逐档回退成兜底文案）、origin 豁免（去掉跳过）、**`_is_skipped` 条件 2（去掉 `targets` 判据 → 方案 D 的组合回归测试必须变红）**、三副本同步（从某一副本移除 `stalled`）、前端 `explainNode()` 优先级（回退成泛化文案 → Q4 的两条前端断言必须变红）。
 
 ### 全量
 
@@ -163,12 +211,15 @@
 
 | 落点 | 文件:符号 | 说明 |
 |---|---|---|
-| 图级档位 | `scheduler.py:_terminal_converged_status` | 二档 → 四档 |
-| 因由分档 | `scheduler.py:_resolve_pending_status` | 兜底文案 → 三档 |
-| 重跑豁免 | `scheduler.py:_reset_subtree` + 3 处调用点 | 加 `origin` 参数 |
-| 终态集合 | `scheduler.py:TERMINAL_STATUSES` / `_SNAPSHOT_TERMINAL_STATUSES` | 同步 |
-| 前端集合 | `workflow_graph.js:TERMINAL_STATUSES` | 同步 |
-| 前端视觉 | `workflow_graph.js` 的 `GRAPH_STATUS_COLORS` / `NODE_COLORS` 附近 | `stalled` 配色 + 文案 |
+| 图级档位 | `scheduler.py:_terminal_converged_status`（`:1234`） | 二档 → 四档 |
+| 因由分档 | `scheduler.py:_resolve_pending_status`（`:1281`） | 兜底文案 → 三档 |
+| 重跑豁免 | `scheduler.py:_reset_subtree`（`:1511`）+ 3 处调用点（`:1509`/`:1535`/`:1626`） | 加 `origin` 参数 |
+| **选中判据** | `scheduler.py:_is_skipped`（`:1298`） | **新增条件 2**：`node_id in source.targets` → 非 skipped（方案 D） |
+| 终态集合 (1) | `scheduler.py:_SNAPSHOT_TERMINAL_STATUSES`（`:111`） | 同步（**无** `TERMINAL_STATUSES`，原表述有误） |
+| 终态集合 (2) | `web/static/workflow.js:21` 的 `TERMINAL_STATUSES` 数组 | 同步 |
+| 终态集合 (3) | `web/static/workflow_graph.js:983` 的 `isGraphTerminal()` | 同步 |
+| 前端视觉 | `workflow_graph.js` 的 `GRAPH_STATUS_COLORS`(`:98`)/`GRAPH_STATUS_LABELS`(`:109`)/图例 | `stalled` 配色（RGB 距离门槛）+ 文案 + 图例 |
+| **前端因由优先级** | `workflow_graph.js:explainNode()`（`:836-846`）+ `GRAPH_STOP_REASONS`（`:773`） | **Q4：具体因由优先于泛化文案**（节点小字 + 详情面板同一函数） |
 
 **测试影响**
 

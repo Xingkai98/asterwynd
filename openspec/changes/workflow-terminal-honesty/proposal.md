@@ -45,9 +45,15 @@
 - **有图级闸门**（`max_routes` / `recursion_limit` / `max_nodes` / `max_runs`）：穿透 `diagnostics.reason` 到被牵连节点，例如 `图级闸门 max_routes 触发（route 'cycle_gate' 超过上限 2），本节点未派发`
 - **无图级闸门**（入边互相等待的死锁）：说明是「入边互相等待，永远不就绪」而非「工作流提前结束」
 
-**C. 回边重跑不清空发起者（#220）**
+**C. 回边重跑不清空发起者 + 被选中节点不得被误报未选中（#220，方案 D 组合修）**
 
 `_reset_subtree` 的递归不得沿回边走回**本次派发的发起者**。发起者是刚刚完成、正在写结果的那个节点；清空它会让「成功」被改写成「未派发」。
+
+**并且**修正 `_is_skipped()` 的「是否被选中」判据：`activations` 会被子树复位清零，而回边场景下 route 可能**已经选中并派发过**该节点 —— 仅凭 `activations <= 0` 会把「选过、也跑过」的节点报成 `route did not select this branch`。判据需增加一条「已完成控制源的 `targets` 不含本节点」。两条**必须一起做**：只做豁免会制造「说没选中、实际选了」的新假话（实测：`body` 跑过 1 次却报 `skipped`）。
+
+**D. 前端因由可见性（Q4，范围扩大）**
+
+`explainNode()` 对 `blocked` 节点的取因优先级要让**节点自身的具体因由**（含图级闸门信息 / 「入边互等」）优先于泛化的图级停止文案。否则后端写了真因、用户看到的仍是「流程因图超限被停止，该节点没来得及执行」，`max_routes` 与上限值一个字都不出现——#218 在**用户可见层面**没有被修掉。
 
 ## Non-Goals
 
@@ -62,9 +68,12 @@
 
 | 文件 | 改动 | 风险 |
 |---|---|---|
-| `agent/subagent/scheduler.py` | ① `_terminal_converged_status()` 补 `completed > 0` 前置 + `stalled` 档<br>② `_resolve_pending_status()` 的兜底因由穿透图级 diagnostics<br>③ `_reset_subtree()` 增加「发起者豁免」 | **高**（收敛判据 + 状态机 + G11 回归面） |
-| `web/static/workflow_graph.js` | 图级 `stalled` 的配色/文案；前端 `TERMINAL_STATUSES` 副本同步 | 中 |
-| `openspec/specs/web-ui/spec.md` | 图级终态 Requirement（MODIFIED）、节点因由 Requirement | — |
+| `agent/subagent/scheduler.py` | ① `_terminal_converged_status()` 补 `completed > 0` 前置 + `stalled` 档<br>② `_resolve_pending_status()` 的兜底因由穿透图级 diagnostics<br>③ `_reset_subtree()` 增加「发起者豁免」（3 处调用点）<br>④ `_is_skipped()` 增加「已完成控制源的 `targets` 不含本节点」条件（方案 D）<br>⑤ `_SNAPSHOT_TERMINAL_STATUSES` 加 `stalled` | **高**（收敛判据 + 状态机 + 选中判据 + G11 回归面） |
+| `web/static/workflow_graph.js` | 图级 `stalled` 的配色（RGB 距离门槛）/文案/图例 + `isGraphTerminal()` 副本同步 + **`explainNode()` 因由优先级（Q4）** | 中高（Q4 扩大了范围） |
+| `web/static/workflow.js` | `TERMINAL_STATUSES` 数组副本同步 | 低 |
+| `openspec/specs/web-ui/spec.md` | 4 条 Requirement MODIFIED（图级终态 / 节点异常态语义 / skipped 判据 / **新增**回边重跑）+ 1 条 ADDED | — |
+
+**范围变更记录（2026-09-19，grill Q4 用户确认）**：本 change 由「后端改因由文案」扩大为「**用户可见的因由**必须如实」——增改前端 `explainNode()`。理由：只改 `state.reason` 会被前端优先级遮蔽（实测 `max_routes` 信息一个字都进不了 UI），#218 在用户可见层面修不掉。
 
 **契约影响（对外，须谨慎）**
 
