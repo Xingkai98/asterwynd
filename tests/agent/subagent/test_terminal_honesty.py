@@ -200,6 +200,28 @@ async def test_graph_with_failed_and_completed_is_completed_with_failures(manage
 
 
 @pytest.mark.asyncio
+async def test_zero_completed_with_failures_is_failed(manager):
+    """四档矩阵第 3 格：``completed==0`` 且 ``failed>0`` → ``failed``（不是 ``stalled``）。
+
+    ``stalled`` 表示「图根本没跑起来」；一旦有节点**执行失败**，真因是那次失败，
+    必须报 ``failed`` 才能把用户引向「哪个节点失败了」。
+    """
+    spec = {
+        "goal": "all fail",
+        "nodes": [
+            {"id": "d1", "kind": "subagent", "task": "BOOM one"},
+            {"id": "d2", "kind": "subagent", "task": "BOOM two"},
+        ],
+        "edges": [],
+    }
+    snapshot = await _run(manager, spec)
+    nodes = _nodes(snapshot)
+    assert all(node["status"] == "failed" for node in nodes.values())
+    assert snapshot["status"] == "failed", f"零完成+有失败应为 failed，实为 {snapshot['status']!r}"
+    assert snapshot["status"] != "stalled"
+
+
+@pytest.mark.asyncio
 async def test_budget_stop_wins_over_stalled(tmp_path, monkeypatch):
     """四档矩阵第 5 格：预算停优先于 ``stalled``（既有口径不得被覆盖）。
 
