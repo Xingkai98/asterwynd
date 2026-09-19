@@ -335,6 +335,7 @@ ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
 - **Chat view**: Normal conversation, assistant Markdown rendering, tool-call visualization, long tool-result folding by display policy, current session id / run id / session mode, switching between `build` / `read_only` / `plan` / `bypass`, Plan Document plus planning state display, and approval cards for tools that require approval.
+- **Reconnect**: A dropped browser connection (mobile backgrounding / screen lock) neither terminates the running agent nor fails a pending approval/question. When you reconnect to the same session, the server replays any still-pending approval/question cards right after `session_history`, so you can answer them directly; with multiple tabs or devices open, all connections share the same card state (first answer wins). Pending timeouts are configurable — `web.question_timeout_seconds` (default 300s) and `web.approval_timeout_seconds` (default 600s) — and mean **total wait time** measured from when the pending interaction was created, independent of whether the connection stays up. **The approval timeout is a behavior change**: approvals previously had no timeout, so a card left hanging could still be approved later; now a decision arriving after the window is judged `unavailable` (fail-closed — an irreversible action is never allowed through).
 - **Debug view**: Enabled by `ASTERWYND_DEBUG=enabled`; shows each round of:
   - Full message list sent to the LLM, including system prompt, history, and tool results.
   - LLM response, including content, stop_reason, and tool_calls; tool arguments are displayed with approval redaction rules.
@@ -407,6 +408,30 @@ uv run asterwynd benchmark benchmarks/tasks \
 ```
 
 The report is organized by capability layer (`execution`/`tool-usage`/`context-planning`/`multi-step-solving`) and includes Pass@k, mean/std, bootstrap 95% confidence intervals, latency p50/p95/p99, token cost, and failure attribution shares, plus each task's framework family (task_family). Framework verification is abstracted behind `VerifierAdapter` (currently a built-in SWE-bench Verified adapter); the concurrency limit is derived dynamically from the current machine (falls back to 1 on low-resource environments).
+
+### Orchestration Benchmark (Three Workflow Modes)
+
+`--workflow-mode` lets the benchmark measure the quality of the orchestration itself, not just a single agent solving a single task:
+
+| Mode | Meaning |
+|---|---|
+| `template` | A fixed Pattern/DSL template is the orchestration under test and goes through the existing verifier (fixed baseline) |
+| `dynamic-record` | The model freely generates a workflow; a normalized spec plus orchestration metrics are recorded on the side while it runs |
+| `dynamic-replay` | Reads the saved record, skips the planning model entirely, and replays offline; compares orchestration only, does not score |
+
+```bash
+# Record once (one workflow_record.json per task)
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# Replay (records are located by task_id under the same run directory)
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+```
+
+The report gains a **separate** workflow orchestration section (redundancy / graph steps / rejection-degradation counts / node count / peak concurrency / critical path / orchestration cost), and the main table gains only a `workflow_mode` column; `dynamic-replay` records stay out of the pass@k denominator. The "small k high-quality vs large N brute-force" contrast arms are expressed by two configs: `configs/workflow-arm-small-k.yaml` and `configs/workflow-arm-large-n.yaml`.
 
 ### Claw-SWE-Bench Comparison Evaluation
 

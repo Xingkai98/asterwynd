@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-gate-only-edge-status",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-gate-only-edge-status-20260918-r2",
+  "base_sha": "a0b28ef9e9d26347dfab289f2ee3fd0588b2e229",
+  "head_sha": "2cf3d7a0156db4fd2fc9a62978deae599ea1fa25",
+  "tasks_hash": "sha256:fc5956afb4b68ed98d5ac5d572a20723e48311efcbcf2be4ddc5f3ab163b9c18",
+  "spec_hash": "sha256:aadff0566a2a27b263599859f43d95f9a41815395a42086bf20f22f12bc4bf10",
+  "diff_hash": "sha256:05c8a61202bd3d45b46e8e95c2b7b097104cba7d4f784b0027627fe53cb28da2",
+  "report_hash": "sha256:11b783500974ab3b91ad1c6588aa6806e171561f418229f35079510a439adc4c"
+}

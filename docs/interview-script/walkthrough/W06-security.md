@@ -82,8 +82,9 @@
 
 ### 审批链（approval.py + web/session.py:75）
 
-- 3 种 handler：CliApprovalHandler（交互终端）、WebApprovalHandler（web/session.py:75，WebSocket + asyncio.Future 桥接）、FailClosedApprovalHandler（无交互直接拒）。
-- **WebApprovalHandler 细节**（web/session.py:86-134）：`request_approval` 创建 Future 并 await（阻塞直到浏览器响应）；`submit_response` 归一化 decision（approved/approve/allow/yes/y → APPROVED）；`fail_pending` 在 session reset 时把挂起审批置 UNAVAILABLE（web/server.py:399）；**单槽**——同一时刻只允许一个 pending，重复请求直接返回 UNAVAILABLE。
+- 3 种 handler：CliApprovalHandler（交互终端）、WebApprovalHandler（web/session.py:127，WebSocket + asyncio.Future 桥接）、FailClosedApprovalHandler（无交互直接拒）。
+- **等待是有上界的，且超时 fail-closed**（审批 web/session.py:172，提问 web/session.py:263）：审批缺省 600s、提问缺省 300s（`WebConfig.approval_timeout_seconds` / `question_timeout_seconds`，正整数校验），语义是**总等待时长**——从 pending 建立时起算，WebSocket 断开与保持都不影响计时。超时/断连/卡片丢失一律判 `UNAVAILABLE`，绝不等于「同意」，不放行任何不可逆操作。浏览器断线重连后服务端会补发仍 pending 的卡片（web/server.py:67），补发是「重放待答请求」而不是「重放已答决定」，已决请求不在补发集合里。
+- **WebApprovalHandler 细节**（web/session.py:127-217）：`request_approval` 创建 Future 并 await（**有上界**——见上一条的超时/fail-closed 口径，不是无限阻塞）；`submit_response` 归一化 decision（approved/approve/allow/yes/y → APPROVED）；`fail_pending` 在 session reset 时把挂起审批置 UNAVAILABLE（web/server.py:587-588）；**单槽**——同一时刻只允许一个 pending，重复请求直接返回 UNAVAILABLE。
 - **参数脱敏**（redact_value，approval.py:160）：SENSITIVE_KEY_PATTERN（key/token/secret/password/credential/authorization/api_key）key 脱敏 + 字符串模式（Bearer/sk-/api_key=）+ ImageBlock 降级为文件引用。**审批时 LLM 看到的 args 已脱敏**（loop.py:786-790）。
 
 ### 受控浏览器沙箱（browser/policy.py）

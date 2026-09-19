@@ -1,6 +1,7 @@
 # tests/web/test_server.py
 """Integration tests for FastAPI server (HTTP + WebSocket) with fake LLM."""
 import os
+import re
 import base64
 import json
 import subprocess
@@ -433,14 +434,31 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="hub-new-btn"' in index
     assert 'id="chat-panes"' in index
     assert 'id="hub-session-list"' in index
+    # 只断言「资源被引用」，**不钉版本号**：``?v=N`` 是缓存击穿串，每次前端改动
+    # 都要 bump（否则手机/PWA 会一直跑旧 JS）——钉死它等于每次合法 bump 都要改测试，
+    # 而这条断言的意图是「接线没漏」，不是「版本号是几」。
+    assert re.search(r'/static/markdown\.js\?v=\d+', index)
+    assert re.search(r'/static/style\.css\?v=\d+', index)
+    assert re.search(r'/static/chat\.js\?v=\d+', index)
+    # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层
+    # + 节点详情抽屉的对话面板（change enhance-workflow-graph-ux，D4/M3）。
+    assert re.search(r'/static/workflow_graph\.js\?v=\d+', index)
+    assert re.search(r'/static/workflow\.js\?v=\d+', index)
+    assert re.search(r'/static/workflow_transcript\.js\?v=\d+', index)
+    assert 'id="workflow-view"' in index
+    assert 'id="workflow-tab"' in index
+    assert 'id="workflow-canvas"' in index
+    assert 'id="workflow-tabs"' in index
+    assert 'id="workflow-legend"' in index
+    assert 'id="workflow-drawer"' in index
+    assert "switchToWorkflowView" in script
+    assert "workflow_started" in script
+    assert "workflow_snapshot" in script
     # Workspace 新增路径入口（hub「+ 添加」）
     assert 'id="hub-workspace-add"' in index
     assert 'id="hub-workspace-form"' in index
     assert 'id="hub-workspace-input"' in index
     assert 'id="hub-workspace-error"' in index
-    assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=19" in index
-    assert "/static/chat.js?v=22" in index
     assert "hubWorkspaceAdd.addEventListener" in script
     assert "hubWorkspaceForm.addEventListener('submit'" in script
     assert "fetch('/api/workspaces', {" in script
@@ -539,6 +557,17 @@ def test_web_static_assets_include_session_and_run_display():
     assert ".brand-lockup" in styles
     assert ".brand-fallback" in styles
     assert ".markdown-body pre" in styles
+
+    # 补充性源码断言（行为断言见 test_reconnect_pending_interaction_browser.py）：
+    # 卡片幂等守卫、清空注册表、run 占用中文提示。这些只是「改错了会明显不同」的
+    # 廉价护栏，不替代真实浏览器断言。
+    assert "if (approvalCards.has(approvalId)) return;" in script
+    assert "if (questionCards.has(questionId)) return;" in script
+    assert "approvalCards.clear();" in script
+    assert "questionCards.clear();" in script
+    assert "上一条消息仍在执行中" in script
+    assert "未连接，请等待重连后重试" in script
+    assert ".question-hint" in styles
 
     toggle_start = script.index("toggle.addEventListener")
     toggle_end = script.index("controls.appendChild(toggle)", toggle_start)

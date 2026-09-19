@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import time
+from itertools import count
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Callable, Awaitable, TYPE_CHECKING
@@ -43,15 +44,21 @@ from agent.run_identity import new_run_id
 from agent.tools.builtin.plan import ExitPlanModeTool, UpdatePlanTool
 from agent.tools.builtin.subagents import (
     CancelSubagentRunTool,
+    CancelWorkflowTool,
     CreateSubagentTool,
+    DeclareWorkflowTool,
     GetSubagentRunTool,
+    GetWorkflowTool,
     InspectSubagentTranscriptTool,
     ListSubagentsTool,
     PublishBusMessageTool,
     ReadBusTool,
+    ReadWorkflowResultTool,
     ResumeSubagentTool,
     RunPatternTool,
     RunSubagentTool,
+    RunWorkflowTool,
+    StartWorkflowTool,
 )
 from agent.tools.builtin.activate_skill import ActivateSkillTool
 from agent.tools.builtin.tasks import TaskOutputTool, TaskStopTool
@@ -120,7 +127,8 @@ class AgentLoop:
         planning_manager: Optional[PlanningManager] = None,
         subagent_manager: Optional[SubAgentManager] = None,
         expose_subagent_tools: bool = False,
-        max_iterations: int = 20,
+        unregistered_subagent_tools: tuple[str, ...] = (),
+        max_iterations: int | None = None,
         run_config: AgentRunConfig | None = None,
         tool_result_display: ToolResultDisplayConfig | None = None,
         skill_runtime: SkillRuntime | None = None,
@@ -179,7 +187,7 @@ class AgentLoop:
         if self.runtime_state.current_mode is AgentMode.PLAN:
             self._ensure_plan_tools_registered()
         if expose_subagent_tools:
-            self._ensure_subagent_tools_registered()
+            self._ensure_subagent_tools_registered(unregistered=unregistered_subagent_tools)
         self._ensure_todo_tool_registered()
         self._ensure_background_task_tools_registered()
         self._ensure_question_tool_registered()
@@ -355,19 +363,49 @@ class AgentLoop:
         self.tool_registry.register(ExitPlanModeTool(self.submit_plan_document))
         self._plan_tools_registered = True
 
-    def _ensure_subagent_tools_registered(self) -> None:
+    def _ensure_subagent_tools_registered(
+        self,
+        *,
+        unregistered: tuple[str, ...] = (),
+    ) -> None:
+        """Register the subagent tool set, minus an explicit deny list.
+
+        ``unregistered`` withdraws individual tools (change
+        ``subagent-concurrency-queue``, decision D4: a child at ``max_depth``
+        loses the spawn-class tools but keeps the read/cancel/bus tools), as
+        opposed to ``expose_subagent_tools=False``, which withdraws the whole
+        set.
+        """
         if self._subagent_tools_registered:
             return
-        self.tool_registry.register(CreateSubagentTool(self.subagent_manager))
-        self.tool_registry.register(RunSubagentTool(self.subagent_manager))
-        self.tool_registry.register(ListSubagentsTool(self.subagent_manager))
-        self.tool_registry.register(GetSubagentRunTool(self.subagent_manager))
-        self.tool_registry.register(CancelSubagentRunTool(self.subagent_manager))
-        self.tool_registry.register(InspectSubagentTranscriptTool(self.subagent_manager))
-        self.tool_registry.register(PublishBusMessageTool(self.subagent_manager))
-        self.tool_registry.register(ReadBusTool(self.subagent_manager))
-        self.tool_registry.register(ResumeSubagentTool(self.subagent_manager))
-        self.tool_registry.register(RunPatternTool(self.subagent_manager))
+        tools = [
+            CreateSubagentTool(self.subagent_manager),
+            RunSubagentTool(self.subagent_manager),
+            ListSubagentsTool(self.subagent_manager),
+            GetSubagentRunTool(self.subagent_manager),
+            CancelSubagentRunTool(self.subagent_manager),
+            InspectSubagentTranscriptTool(self.subagent_manager),
+            PublishBusMessageTool(self.subagent_manager),
+            ReadBusTool(self.subagent_manager),
+            ResumeSubagentTool(self.subagent_manager),
+            RunPatternTool(self.subagent_manager),
+            # Workflow DSL entry points (change ``workflow-dsl-scheduler``).
+            # ``StartWorkflow``/``RunWorkflow`` are also in ``SPAWN_TOOL_NAMES``
+            # so a depth-capped child cannot raise a whole graph past the gate.
+            DeclareWorkflowTool(self.subagent_manager),
+            StartWorkflowTool(self.subagent_manager),
+            GetWorkflowTool(self.subagent_manager),
+            CancelWorkflowTool(self.subagent_manager),
+            RunWorkflowTool(self.subagent_manager),
+            # Q1: the read channel for result_ref artifacts. Read-only and not a
+            # spawn entry point, so it stays available at max depth.
+            ReadWorkflowResultTool(self.subagent_manager),
+        ]
+        withdrawn = set(unregistered)
+        for tool in tools:
+            if tool.name in withdrawn:
+                continue
+            self.tool_registry.register(tool)
         self._subagent_tools_registered = True
 
     def _ensure_todo_tool_registered(self) -> None:
@@ -607,7 +645,12 @@ class AgentLoop:
                     event_data["session_id"] = session_id
                 await on_event("run_started", event_data)
 
-        for iteration in range(start_iteration, self.max_iterations):
+        iterations = (
+            count(start_iteration)
+            if self.max_iterations is None
+            else range(start_iteration, self.max_iterations)
+        )
+        for iteration in iterations:
             self._iteration = iteration
 
             if self.background_manager is not None:
@@ -639,15 +682,7 @@ class AgentLoop:
                 token_counters["output"] += response.usage.output_tokens
                 token_counters["cache_read"] += response.usage.cache_read_input_tokens
                 token_counters["cache_creation"] += response.usage.cache_creation_input_tokens
-                if self.cost_ledger:
-                    self.cost_ledger.record(
-                        model=getattr(self.llm, "model", "unknown"),
-                        input_tokens=response.usage.input_tokens,
-                        output_tokens=response.usage.output_tokens,
-                        session_id=session_id or "unknown",
-                        phase=resolve_phase(self.runtime_state.current_mode.value),
-                        tool_name=self.ledger_tool_name,
-                    )
+                self._record_llm_cost(session_id, response)
             if trace_recorder:
                 trace_recorder.record_iteration(
                     iteration,
@@ -1035,6 +1070,57 @@ class AgentLoop:
             query_parts.append("recently used: " + ", ".join(tool_hints))
         query = " ".join(query_parts)
         return self.tool_registry.select_schemas(query, k=5)
+
+    def _record_llm_cost(self, session_id: str | None, response: LLMResponse) -> None:
+        """记一次 LLM 调用的成本：CostLedger 四维归因 + workflow 四维预算。
+
+        Q6 方案 B（用户确认）：workflow 账本的 token/cost 记账点选**这里**——只有
+        这个位置同时拿得到 ``response.usage`` 的 cache 四档与 run 身份 contextvar
+        （``SubagentRunUsage`` 无 cache 字段，从 run 终态反算会系统性偏低）。
+
+        归因键的取法是**一次查表**（grill 决策 4）：``session_id`` 就是
+        ``session.subagent_id``，``SubagentSessionRecord`` 自带 workflow_id/node_id，
+        图距与 edge 从当前 run 记录读（``current_run_id()`` 在执行上下文里可用）。
+        根 loop（无 workflow 身份）不记 workflow 预算。
+        """
+        usage = response.usage
+        if usage is None:
+            return
+        attribution = None
+        manager = self.subagent_manager
+        if manager is not None:
+            try:
+                attribution = manager.attribution_for(session_id or "")
+            except Exception:  # noqa: BLE001 - 归因是尽力而为的可观测性
+                attribution = None
+        if self.cost_ledger:
+            keys = attribution or {}
+            self.cost_ledger.record(
+                model=getattr(self.llm, "model", "unknown"),
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                session_id=session_id or "unknown",
+                phase=resolve_phase(self.runtime_state.current_mode.value),
+                tool_name=self.ledger_tool_name,
+                workflow_id=keys.get("workflow_id"),
+                node_id=keys.get("node_id"),
+                depth=keys.get("graph_distance"),
+                edge=keys.get("edge"),
+                cache_read_tokens=usage.cache_read_input_tokens,
+                cache_write_tokens=usage.cache_creation_input_tokens,
+            )
+        # workflow 级四维度预算（D1）：只在本上下文属于某个 workflow run 时累加。
+        if manager is not None:
+            try:
+                manager.record_workflow_llm_usage(
+                    model=getattr(self.llm, "model", "unknown"),
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cache_read_tokens=usage.cache_read_input_tokens,
+                    cache_write_tokens=usage.cache_creation_input_tokens,
+                )
+            except Exception:  # noqa: BLE001 - 预算记账失败不能拖垮 LLM 循环
+                pass
 
     async def _call_llm(
         self,

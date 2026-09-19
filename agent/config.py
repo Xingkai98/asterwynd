@@ -250,31 +250,139 @@ class SkillsConfig:
 
 
 @dataclass(frozen=True)
+class AggregationThresholdsConfig:
+    """自动兜底阈值（change ``workflow-result-aggregation``，D6/Q4）。
+
+    ``max_fan_in`` 是单个 aggregate 能直接消费的上游上限；超过（``>``，恰好等于
+    不触发）时调度器自动插入分层 aggregate。
+    """
+    max_fan_in: int = 10
+
+
+@dataclass(frozen=True)
+class AggregationTokenBudgetsConfig:
+    """四档分层 token 预算（D2/G4 决议，Q4/Q7）。
+
+    语义（Q7 明确）：这是「每 run / 每层」的 **token 总量**口径（不是输出预算、也
+    不是字符数）。档位按「距 leaf 层数」判：leaf 300 / 第 1 层 shard 800 / 再上
+    domain 1500 / 根 root 3000。校验**非递减（允许相等）**，拒绝严格递减（Q8）。
+    """
+    leaf: int = 300
+    shard: int = 800
+    domain: int = 1500
+    root: int = 3000
+
+
+@dataclass(frozen=True)
+class AggregationConfig:
+    """分层汇聚配置（D6/Q8）：阈值 + 四档 token 预算，嵌套挂在 ``workflow`` 下。"""
+    thresholds: AggregationThresholdsConfig = field(
+        default_factory=AggregationThresholdsConfig
+    )
+    token_budgets: AggregationTokenBudgetsConfig = field(
+        default_factory=AggregationTokenBudgetsConfig
+    )
+
+
+@dataclass(frozen=True)
+class WorkflowBudgetConfig:
+    """workflow run 的四维度总预算（change ``workflow-budget-attribution``，D1/D6；
+    默认值语义见 change ``workflow-budget-unbounded-default``，D1）。
+
+    四维度：tokens / cost_usd / runs / wall_time_s。**四个字段均 ``0 = 不限``**
+    （Q11）——注意这与 C2 的结构闸不同：``max_total_runs=0`` 只解除本层运行期
+    预算，``WorkflowLimitsConfig.max_runs`` 仍是声明期结构闸（Q14）。
+
+    **默认值全为 0（不限）**（issue #196，参照 #192 的「默认无上限、显式才设限」
+    口径）：未显式配置时不给任何上限，只有用户显式写下数值才设闸。旧的
+    200000 / 5.0 / 300 / 1800 默认对 token 消耗大的任务偏紧（12 文件 foreach
+    体检实测约 18 万 token 即被 ``budget_exceeded`` 腰斩）。
+
+    四个字段的解析走 workflow-budget 专用的非负解析函数：显式 ``null`` 被拒
+    （缺值不得意外关闭安全闸——段落级 null 同样拒绝，见 D7）。
+    """
+    max_total_tokens: int = 0
+    max_total_cost_usd: float = 0.0
+    max_total_runs: int = 0
+    max_wall_time_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class WorkflowLimitsConfig:
+    """Workflow DSL 的三闸默认值（change ``workflow-dsl-scheduler``，D6/Q5）。
+
+    三者量纲不同、必须一起校准：``recursion_limit`` 数**图级 superstep**，
+    ``max_nodes`` 数节点（含 foreach 展开），``max_runs`` 数实际 run 总数。
+    spec 可以逐项覆盖，缺省时用这里的值（``parse_workflow_spec`` 的默认参数）。
+
+    ``aggregation`` 是分层汇聚配置（change ``workflow-result-aggregation``，D6/Q8）；
+    ``budget`` 是运行期四维度总预算（change ``workflow-budget-attribution``，D6）。
+    """
+    recursion_limit: int = 25
+    max_nodes: int = 200
+    max_runs: int = 300
+    aggregation: AggregationConfig = field(default_factory=AggregationConfig)
+    budget: WorkflowBudgetConfig = field(default_factory=WorkflowBudgetConfig)
+
+
+@dataclass(frozen=True)
 class SubagentsConfig:
     """Subagent collaboration guardrails and budget defaults (issue 79).
 
-    ``max_concurrent_runs`` / ``max_depth`` bound runaway spawning (reference:
-    Codex max_threads/max_depth, Claude Code #68110 unbounded burn).
+    Concurrency is decoupled from declaration (change
+    ``subagent-concurrency-queue``, decision D2): ``max_active`` bounds the
+    instantaneous number of *executing* runs, ``max_queued_runs`` bounds the
+    pending queue (overflow returns a ``queue_full`` signal) and ``max_spawns``
+    is the cumulative per-orchestration spawn budget — ``create_subagent`` and
+    every run launch each count once, so empty session creation cannot bypass
+    counting (reference: Codex max_threads queueing; Claude Code #68110 /
+    #69206 unbounded burn). ``max_depth`` bounds nesting depth.
+
+    ``max_concurrent_runs`` is a legacy alias kept readable for older config
+    files; it reports the effective ``max_active``.
+
     ``default_max_tokens`` / ``default_max_time_s`` are per-run budget defaults
     applied when a run does not override them; the manager hard-kills a run that
     exceeds either limit.
     """
-    max_concurrent_runs: int = 4
+    max_active: int = 5
+    max_queued_runs: int = 20
+    max_spawns: int = 200
     max_depth: int = 3
     default_max_tokens: int | None = None
     default_max_time_s: float | None = None
+    workflow: WorkflowLimitsConfig = field(default_factory=WorkflowLimitsConfig)
+
+    @property
+    def max_concurrent_runs(self) -> int:
+        """Legacy alias for ``max_active`` (pre-queue config key)."""
+        return self.max_active
+
+
+#: pending 交互超时缺省（change web-reconnect-pending-interaction Q1/D6）。
+#: 单一来源：``WebConfig`` 字段缺省与 ``web/session.py`` 的 handler 缺省都引用这里，
+#: 避免两处 600/300 各自漂移。
+DEFAULT_QUESTION_TIMEOUT_SECONDS = 300
+DEFAULT_APPROVAL_TIMEOUT_SECONDS = 600
 
 
 @dataclass(frozen=True)
 class WebConfig:
-    """Web 多 session 入口的 workspace allowlist（issue #117）。
+    """Web 多 session 入口的 workspace allowlist（issue #117）与 pending 交互超时。
 
     ``workspaces`` 是允许 Web 会话操作的工作区路径（绝对路径，``~`` 可展开）。
     allowlist 为空时有效集合退化为 {主 workspace}（CLI ``--workspace`` 或 cwd），
     不改变现有默认行为。有效集合在 ``create_app`` 启动时解析一次，并叠加
     hub 页面新增路径写入的侧车文件（见 ``workspaces_sidecar_path``）。
+
+    ``question_timeout_seconds`` / ``approval_timeout_seconds`` 是 pending 交互的
+    **总等待时长**（change web-reconnect-pending-interaction, Q1）：从 pending 建立
+    时开始计时，WebSocket 断开与保持都不影响计时。审批此前无超时，本 change 起
+    缺省 600 秒并按 fail-closed 收尾。
     """
     workspaces: tuple[Path, ...] = ()
+    question_timeout_seconds: int = DEFAULT_QUESTION_TIMEOUT_SECONDS
+    approval_timeout_seconds: int = DEFAULT_APPROVAL_TIMEOUT_SECONDS
 
 
 def workspaces_sidecar_path(base_dir: str | Path) -> Path:
@@ -503,7 +611,9 @@ def _load_yaml_config(
         benchmark=_parse_benchmark_config(raw.get("benchmark", {}), path),
         memory=_parse_memory_config(raw.get("memory", {}), path),
         sandbox=_parse_sandbox_config(raw.get("sandbox", {}), path),
-        subagents=_parse_subagents_config(raw.get("subagents", {}), path),
+        subagents=_parse_subagents_config(
+            _require_section(raw, "subagents", path, "subagents"), path
+        ),
         web=_parse_web_config(raw.get("web", {}), path),
     )
 
@@ -1310,7 +1420,32 @@ def _parse_web_config(raw: Any, path: Path) -> WebConfig:
             continue
         seen.add(ws)
         normalized.append(ws)
-    return WebConfig(workspaces=tuple(normalized))
+    return WebConfig(
+        workspaces=tuple(normalized),
+        question_timeout_seconds=_parse_timeout_seconds(
+            mapping.get("question_timeout_seconds", DEFAULT_QUESTION_TIMEOUT_SECONDS),
+            "web.question_timeout_seconds",
+            path=path,
+        ),
+        approval_timeout_seconds=_parse_timeout_seconds(
+            mapping.get("approval_timeout_seconds", DEFAULT_APPROVAL_TIMEOUT_SECONDS),
+            "web.approval_timeout_seconds",
+            path=path,
+        ),
+    )
+
+
+def _parse_timeout_seconds(raw: Any, field_name: str, *, path: Path) -> int:
+    """pending 交互超时的配置校验：必须是正整数秒。
+
+    ``_validate_positive_int`` 不能直接用：``isinstance(True, int)`` 为真，YAML 的
+    ``true`` 会被静默接受，随后 ``asyncio.wait_for(timeout=True)`` 等价于 **1 秒**
+    超时——配置「看起来生效」而审批几乎必然 unavailable。bool 在这里一定是用户写错，
+    按「非整数」结构化拒绝（与 ``_parse_non_negative_int`` 的既有约定一致）。
+    """
+    if isinstance(raw, bool):
+        raise ConfigError(f"{path}: {field_name} must be a positive integer")
+    return _validate_positive_int(raw, field_name, path=path)
 
 
 def _parse_benchmark_config(raw: Any, path: Path) -> BenchmarkConfig:
@@ -1425,11 +1560,22 @@ def _parse_subagents_config(raw: Any, path: Path) -> SubagentsConfig:
     budget = _expect_mapping(mapping.get("budget", {}), path, "subagents.budget")
     max_tokens = budget.get("max_tokens")
     max_time_s = budget.get("max_time_s")
-    max_concurrent = mapping.get("max_concurrent_runs", 4)
+    # ``max_active`` supersedes the legacy ``max_concurrent_runs`` key; when
+    # both are present the new key wins.
+    if "max_active" in mapping:
+        max_active = mapping["max_active"]
+    else:
+        max_active = mapping.get("max_concurrent_runs", 5)
     max_depth = mapping.get("max_depth", 3)
     return SubagentsConfig(
-        max_concurrent_runs=_validate_positive_int(
-            max_concurrent, "subagents.max_concurrent_runs", path=path
+        max_active=_validate_positive_int(
+            max_active, "subagents.max_active", path=path
+        ),
+        max_queued_runs=_validate_positive_int(
+            mapping.get("max_queued_runs", 20), "subagents.max_queued_runs", path=path
+        ),
+        max_spawns=_validate_positive_int(
+            mapping.get("max_spawns", 200), "subagents.max_spawns", path=path
         ),
         max_depth=_validate_positive_int(max_depth, "subagents.max_depth", path=path),
         default_max_tokens=(
@@ -1442,6 +1588,128 @@ def _parse_subagents_config(raw: Any, path: Path) -> SubagentsConfig:
             if max_time_s is not None
             else None
         ),
+        workflow=_parse_workflow_limits(
+            _require_section(mapping, "workflow", path, "subagents.workflow"), path
+        ),
+    )
+
+
+def _parse_workflow_limits(raw: Any, path: Path) -> WorkflowLimitsConfig:
+    """``_parse_subagents_config`` 是唯一的解析入口且逐字段显式取值——
+    只给 dataclass 默认值不会让 yaml 生效（C1 grill 的教训）。"""
+    mapping = _expect_mapping(raw, path, "subagents.workflow")
+    return WorkflowLimitsConfig(
+        recursion_limit=_validate_positive_int(
+            mapping.get("recursion_limit", 25),
+            "subagents.workflow.recursion_limit",
+            path=path,
+        ),
+        max_nodes=_validate_positive_int(
+            mapping.get("max_nodes", 200), "subagents.workflow.max_nodes", path=path
+        ),
+        max_runs=_validate_positive_int(
+            mapping.get("max_runs", 300), "subagents.workflow.max_runs", path=path
+        ),
+        aggregation=_parse_aggregation(mapping.get("aggregation", {}), path),
+        budget=_parse_workflow_budget(
+            _require_section(mapping, "budget", path, "subagents.workflow.budget"), path
+        ),
+    )
+
+
+def _parse_workflow_budget(raw: Any, path: Path) -> WorkflowBudgetConfig:
+    """逐字段显式解析 ``subagents.workflow.budget``（D6，照 ``_parse_aggregation`` 纪律）。
+
+    四字段是**运行期四维度预算**，``0 = 不限``——所以走专用的非负解析函数
+    （:func:`_parse_non_negative_int` / :func:`_parse_non_negative_float`），
+    不能复用会拒绝 0 的全局 ``_validate_positive_int`` / ``_parse_positive_float``
+    （``subagents.budget.*`` 等既有键的正数语义必须保持不变，Q11）。
+
+    **缺省（键不存在）一律落到 0 = 不限**（change ``workflow-budget-unbounded-default``，
+    D1）：未配置就不设上限，只有显式写下数值（含显式 0）才设闸。字段级显式 ``null``
+    仍拒绝（缺值不能让某个安全维度被静默关掉）；段落级 ``null`` 同样拒绝（D7）。
+    """
+    mapping = _expect_mapping(raw, path, "subagents.workflow.budget")
+    return WorkflowBudgetConfig(
+        max_total_tokens=_parse_non_negative_int(
+            mapping.get("max_total_tokens", 0),
+            "subagents.workflow.budget.max_total_tokens",
+            path=path,
+        ),
+        max_total_cost_usd=_parse_non_negative_float(
+            mapping.get("max_total_cost_usd", 0),
+            "subagents.workflow.budget.max_total_cost_usd",
+            path=path,
+        ),
+        max_total_runs=_parse_non_negative_int(
+            mapping.get("max_total_runs", 0),
+            "subagents.workflow.budget.max_total_runs",
+            path=path,
+        ),
+        max_wall_time_s=_parse_non_negative_float(
+            mapping.get("max_wall_time_s", 0),
+            "subagents.workflow.budget.max_wall_time_s",
+            path=path,
+        ),
+    )
+
+
+def _parse_aggregation(raw: Any, path: Path) -> AggregationConfig:
+    """逐字段显式解析 ``subagents.workflow.aggregation``（grill 决策 7）。
+
+    只给 dataclass 默认值不会让 yaml 生效——每个新字段都必须在这里 ``mapping.get``
+    一次，否则模型/用户改了配置也读不到。
+    """
+    mapping = _expect_mapping(raw, path, "subagents.workflow.aggregation")
+
+    thresholds = _expect_mapping(
+        mapping.get("thresholds", {}), path, "subagents.workflow.aggregation.thresholds"
+    )
+    budgets = _expect_mapping(
+        mapping.get("token_budgets", {}), path, "subagents.workflow.aggregation.token_budgets"
+    )
+
+    leaf = _validate_positive_int(
+        budgets.get("leaf", 300),
+        "subagents.workflow.aggregation.token_budgets.leaf",
+        path=path,
+    )
+    shard = _validate_positive_int(
+        budgets.get("shard", 800),
+        "subagents.workflow.aggregation.token_budgets.shard",
+        path=path,
+    )
+    domain = _validate_positive_int(
+        budgets.get("domain", 1500),
+        "subagents.workflow.aggregation.token_budgets.domain",
+        path=path,
+    )
+    root = _validate_positive_int(
+        budgets.get("root", 3000),
+        "subagents.workflow.aggregation.token_budgets.root",
+        path=path,
+    )
+    # Q8：四档预算非递减（允许相等）；严格递减是配置错误。
+    tiers = (("leaf", leaf), ("shard", shard), ("domain", domain), ("root", root))
+    for (lower_name, lower), (upper_name, upper) in zip(tiers, tiers[1:]):
+        if lower > upper:
+            raise ConfigError(
+                f"{path}: subagents.workflow.aggregation.token_budgets must be "
+                f"non-decreasing (leaf <= shard <= domain <= root), got "
+                f"{lower_name}={lower} > {upper_name}={upper}"
+            )
+
+    return AggregationConfig(
+        thresholds=AggregationThresholdsConfig(
+            max_fan_in=_validate_positive_int(
+                thresholds.get("max_fan_in", 10),
+                "subagents.workflow.aggregation.thresholds.max_fan_in",
+                path=path,
+            )
+        ),
+        token_budgets=AggregationTokenBudgetsConfig(
+            leaf=leaf, shard=shard, domain=domain, root=root
+        ),
     )
 
 
@@ -1451,6 +1719,27 @@ def _expect_mapping(raw: Any, path: Path, field_name: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ConfigError(f"{path}: {field_name} must be a mapping")
     return raw
+
+
+def _require_section(
+    mapping: dict[str, Any], key: str, path: Path, field_name: str
+) -> dict[str, Any]:
+    """取一个子段：**键缺失 → 空段（走默认）**；**键存在但值为 ``null`` → 报错**。
+
+    change ``workflow-budget-unbounded-default`` D7（grill Q2 用户确认）：段落级
+    显式 ``null`` 不得静默当成「未配置」。未配置的后果在预算链上是「四维全部不限」，
+    与字段级 ``null`` 的明确拒绝口径必须一致——否则用户写个空段准备稍后填，会
+    静默把整条安全闸关掉。用户原则：不写该字段 = 没有上限；写了且有值 = 设上限；
+    写了但不给值 = 配置错误。
+    """
+    if key not in mapping:
+        return {}
+    value = mapping[key]
+    if value is None:
+        raise ConfigError(f"{path}: {field_name} must not be null")
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: {field_name} must be a mapping")
+    return value
 
 
 def _parse_string_list(raw: Any, path: Path, field_name: str) -> tuple[str, ...]:
@@ -1492,6 +1781,52 @@ def _validate_positive_int(
         prefix = f"{path}: " if path else ""
         raise ConfigError(f"{prefix}{field_name} must be a positive integer")
     return raw
+
+
+def _parse_non_negative_int(
+    raw: Any,
+    field_name: str,
+    *,
+    path: Path | None = None,
+) -> int:
+    """workflow 预算专用的非负整数解析（``0 = 不限``，Q11）。
+
+    与 :func:`_validate_positive_int` 分开：后者服务 ``subagents.budget.*`` 等既有
+    键，语义是「必须为正」；把 0 放行到那里会让「关掉某个安全闸」成为全局默认行为。
+    """
+    prefix = f"{path}: " if path else ""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative integer (0 = unlimited)"
+        )
+    return raw
+
+
+def _parse_non_negative_float(
+    raw: Any,
+    field_name: str,
+    *,
+    path: Path | None = None,
+) -> float:
+    """workflow 预算专用的非负浮点解析（``0 = 不限``，Q11；int 可被拓宽）。"""
+    prefix = f"{path}: " if path else ""
+    if isinstance(raw, bool):
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative number (0 = unlimited)"
+        )
+    if isinstance(raw, int):
+        value = float(raw)
+    elif isinstance(raw, float):
+        value = raw
+    else:
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative number (0 = unlimited)"
+        )
+    if value < 0:
+        raise ConfigError(
+            f"{prefix}{field_name} must be a non-negative number (0 = unlimited)"
+        )
+    return value
 
 
 def _parse_positive_float(

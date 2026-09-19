@@ -35,6 +35,7 @@ from agent.anthropic_llm import AnthropicLLM
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.cost_tracker import CostLedger
 from agent.subagent.manager import SubAgentManager
+from benchmarks.agent_runner import DEFAULT_TEMPLATE_PATTERN, WORKFLOW_MODES
 from agent.tools.factory import build_default_tool_registry, build_sandbox_from_config
 from agent.workspace_policy import WorkspacePolicy
 from agent.background import BackgroundTaskManager
@@ -348,7 +349,7 @@ def callback(
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
@@ -381,7 +382,7 @@ def run(
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商: openai / anthropic"
     ),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
@@ -402,7 +403,7 @@ def run_single(
     prompt: str,
     model: Optional[str],
     provider: str,
-    max_iterations: int,
+    max_iterations: Optional[int],
     system: Optional[str],
     mode: str = "build",
     config: AsterwyndConfig | None = None,
@@ -453,7 +454,7 @@ def run_single(
 def run_interactive(
     model: Optional[str],
     provider: str,
-    max_iterations: int,
+    max_iterations: Optional[int],
     system: Optional[str],
     initial_prompt: Optional[str] = None,
     mode: str = "build",
@@ -707,7 +708,7 @@ def benchmark(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="Asterwynd LLM provider"
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Asterwynd 模型"),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="Asterwynd 最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     parallel: Optional[int] = typer.Option(None, "--parallel", help="benchmark 并发任务数"),
@@ -739,9 +740,38 @@ def benchmark(
     preflight_flag: bool = typer.Option(
         False, "--preflight", help="检查环境后退出（0=可跑、1=需 L1 降级、2=Docker 不可用）"
     ),
+    workflow_mode: Optional[str] = typer.Option(
+        None,
+        "--workflow-mode",
+        help="workflow 运行模式：template / dynamic-record / dynamic-replay（缺省不启用）",
+    ),
+    workflow_record: Optional[Path] = typer.Option(
+        None,
+        "--workflow-record",
+        help="dynamic-replay 的记录来源 run 目录；按 task_id 推导 <run-dir>/tasks/<task_id>/workflow_record.json",
+    ),
+    template_pattern: str = typer.Option(
+        DEFAULT_TEMPLATE_PATTERN,
+        "--template-pattern",
+        help="template 模式使用的 pattern 模板",
+    ),
+    e2e_round_trip: bool = typer.Option(
+        False,
+        "--e2e-round-trip",
+        help="跑完后自动用 dynamic-replay 重放本轮的 workflow_record，做 record→replay 可比性断言",
+    ),
 ):
     """运行本地 Coding Agent benchmark"""
     _setup_logging()
+    if workflow_mode is not None and workflow_mode not in WORKFLOW_MODES:
+        raise typer.BadParameter(
+            f"--workflow-mode 必须是 {'/'.join(WORKFLOW_MODES)} 之一"
+        )
+    workflow_record_dir = _resolve_workflow_record_dir(
+        workflow_mode=workflow_mode,
+        workflow_record=workflow_record,
+        agent=agent,
+    )
     if repeat > 5:
         raise typer.BadParameter("--repeat 最大 5（N>=3 才有 pass^k 意义）")
     if 1 < repeat < 3:
@@ -780,6 +810,9 @@ def benchmark(
         clone_cache_dir=clone_cache_dir,
         temperature=temperature,
         model_version=model_version,
+        workflow_mode=workflow_mode,
+        workflow_record_dir=workflow_record_dir,
+        template_pattern=template_pattern,
     )
 
     if preflight_flag:
@@ -790,6 +823,26 @@ def benchmark(
     if repeat == 1:
         metadata = asyncio.run(runner.run_all(tasks_dir, seed=effective_seeds[0]))
         run_path = runs_dir / metadata.run_id
+        if e2e_round_trip and workflow_mode == "dynamic-record":
+            _run_e2e_round_trip(
+                agent=agent,
+                source_repo=source_repo,
+                tasks_dir=tasks_dir,
+                run_path=run_path,
+                runs_dir=runs_dir,
+                config_path=config_path,
+                mode=mode,
+                parallel=parallel,
+                timeout_seconds=timeout_seconds,
+                provider=provider,
+                model=model,
+                max_iterations=max_iterations,
+                keep_worktrees=keep_worktrees,
+                clone_cache_dir=clone_cache_dir,
+                temperature=temperature,
+                model_version=model_version,
+                template_pattern=template_pattern,
+            )
         if effective_cap is not None:
             cost = _round_cost(run_path, model or "")
             if cost > effective_cap:
@@ -926,6 +979,125 @@ def _round_cost(run_dir: Path, model: str) -> float:
     return total
 
 
+def _resolve_workflow_record_dir(
+    *,
+    workflow_mode: Optional[str],
+    workflow_record: Optional[Path],
+    agent: str,
+) -> Optional[Path]:
+    """Where ``dynamic-replay`` reads its records from (grill Q8 修订).
+
+    ``--workflow-record`` takes a **run directory**, not a file path: the record
+    is per-task, so one path cannot serve N tasks. ``dynamic-record`` with
+    ``--e2e-round-trip`` reuses the just-written run as its own source.
+    """
+    if workflow_mode is None:
+        return None
+    # 三个模式都只对 asterwynd 有意义：fake/shell/claude 三个 runner 不构造
+    # SubAgentManager，workflow 根本不会被驱动。不拦的话它们会**静默**跑成一次
+    # 普通单 agent benchmark（result.json 里一个 workflow 字段都没有），用户以为
+    # 编排测过了、其实没有任何编排数据。
+    if agent != "asterwynd":
+        raise typer.BadParameter(
+            "--workflow-mode 只支持 --agent asterwynd（fake/shell/claude 不建编排）"
+        )
+    if workflow_mode != "dynamic-replay":
+        return None
+    if workflow_record is None:
+        raise typer.BadParameter(
+            "--workflow-mode dynamic-replay 需要 --workflow-record <run-dir>"
+        )
+    record_dir = Path(workflow_record).expanduser().resolve()
+    if not record_dir.is_dir():
+        raise typer.BadParameter(f"--workflow-record 不是目录: {record_dir}")
+    return record_dir
+
+
+def _run_e2e_round_trip(
+    *,
+    agent: str,
+    source_repo: Path,
+    tasks_dir: Path,
+    run_path: Path,
+    runs_dir: Path,
+    config_path: Optional[Path],
+    mode: Optional[str],
+    parallel: Optional[int],
+    timeout_seconds: Optional[int],
+    provider: str,
+    model: Optional[str],
+    max_iterations: Optional[int],
+    keep_worktrees: bool,
+    clone_cache_dir: Optional[Path],
+    temperature: Optional[float],
+    model_version: Optional[str],
+    template_pattern: str,
+) -> None:
+    """record → replay round-trip (C5 D6/5.1): replay the run we just recorded.
+
+    The replay uses the same runner configuration but ``dynamic-replay`` mode
+    and the record run as its source, so ``spec_hash`` can be asserted equal.
+    """
+    replay_runner = _build_benchmark_runner(
+        agent=agent,
+        source_repo=source_repo,
+        runs_dir=runs_dir,
+        config_path=config_path,
+        mode=mode,
+        parallel=parallel,
+        timeout_seconds=timeout_seconds,
+        provider=provider,
+        model=model,
+        max_iterations=max_iterations,
+        shell_command=None,
+        fake_edit_file=None,
+        fake_old_string=None,
+        fake_new_string=None,
+        keep_worktrees=keep_worktrees,
+        clone_cache_dir=clone_cache_dir,
+        temperature=temperature,
+        model_version=model_version,
+        workflow_mode="dynamic-replay",
+        workflow_record_dir=run_path,
+        template_pattern=template_pattern,
+    )
+    metadata = asyncio.run(
+        replay_runner.run_all(tasks_dir, run_id=f"{run_path.name}-replay")
+    )
+    replay_path = runs_dir / metadata.run_id
+    typer.echo(f"E2E replay run: {replay_path}")
+    failures = _check_e2e_assertions(run_path, replay_path)
+    if failures:
+        typer.echo("E2E record→replay 可比性断言未全部通过：", err=True)
+        for failure in failures:
+            typer.echo(f"  {failure}", err=True)
+
+
+def _check_e2e_assertions(record_path: Path, replay_path: Path) -> list[str]:
+    """Assert ``spec_hash`` equality per task between record and replay (Q6)."""
+    import json as _json
+
+    failures: list[str] = []
+    record_tasks = record_path / "tasks"
+    for task_dir in sorted(record_tasks.iterdir()):
+        record_file = task_dir / "workflow_record.json"
+        replay_file = replay_path / "tasks" / task_dir.name / "result.json"
+        if not record_file.exists() or not replay_file.exists():
+            continue
+        record = _json.loads(record_file.read_text())
+        replay = _json.loads(replay_file.read_text())
+        entries = record.get("workflows") or []
+        if not entries:
+            continue
+        expected = entries[0].get("workflow_spec_hash")
+        actual = replay.get("workflow_spec_hash")
+        if expected != actual:
+            failures.append(
+                f"{task_dir.name}: workflow_spec_hash {expected!r} != {actual!r}"
+            )
+    return failures
+
+
 def _build_benchmark_runner(
     *,
     agent: str,
@@ -937,7 +1109,7 @@ def _build_benchmark_runner(
     timeout_seconds: Optional[int],
     provider: str,
     model: Optional[str],
-    max_iterations: int,
+    max_iterations: Optional[int],
     shell_command: Optional[str],
     fake_edit_file: Optional[str],
     fake_old_string: Optional[str],
@@ -946,6 +1118,9 @@ def _build_benchmark_runner(
     clone_cache_dir: Optional[Path],
     temperature: Optional[float] = None,
     model_version: Optional[str] = None,
+    workflow_mode: Optional[str] = None,
+    workflow_record_dir: Optional[Path] = None,
+    template_pattern: str = "orchestrator-worker",
 ) -> "BenchmarkRunner":
     """Build a configured BenchmarkRunner shared by ``benchmark`` and ``benchmark-gate``.
 
@@ -990,6 +1165,10 @@ def _build_benchmark_runner(
             mode=normalized_mode,
             config=config,
             timeout_seconds=config.benchmark.timeout_seconds,
+            workflow_mode=workflow_mode,
+            workflow_record=workflow_record_dir,
+            template_pattern=template_pattern,
+            temperature=temperature,
         )
     else:
         typer.echo("Error: --agent must be fake, shell, asterwynd, or claude", err=True)
@@ -1020,6 +1199,8 @@ def _build_benchmark_runner(
         provider=provider,
         max_iterations=max_iterations,
         timeout_seconds=config.benchmark.timeout_seconds,
+        workflow_mode=workflow_mode,
+        workflow_record_dir=workflow_record_dir,
     )
 
 
@@ -1058,7 +1239,7 @@ def benchmark_gate(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="Asterwynd LLM provider"
     ),
     model: Optional[str] = typer.Option(None, "--model", help="Asterwynd 模型"),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="Asterwynd 最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
     parallel: Optional[int] = typer.Option(None, "--parallel", help="benchmark 并发任务数"),
@@ -1233,7 +1414,7 @@ def session_resume(
     provider: str = typer.Option(
         os.environ.get("ASTERWYND_PROVIDER", "openai"), "--provider", help="LLM 提供商"
     ),
-    max_iterations: int = typer.Option(20, "--max-iterations", help="最大迭代次数"),
+    max_iterations: Optional[int] = typer.Option(None, "--max-iterations", help="最大迭代次数（不指定则无上限）"),
     system: Optional[str] = typer.Option(None, "--system", help="系统提示"),
     mode: Optional[str] = typer.Option(None, "--mode", help="Agent mode: build / read_only / plan / bypass"),
     config_path: Optional[Path] = typer.Option(None, "--config", help="asterwynd.yaml 配置文件路径"),
