@@ -101,6 +101,18 @@
 
 ## 未实现队列
 
+### `workflow-terminal-honesty`
+
+状态：未实现（立项完成，待 grill）。
+
+批次：issue #197 实测 follow-up。用户实测 workflow 图时发现**图会骗人且指错排查方向**：零节点执行的图报 `completed`（issue #217）、`max_routes` 撞线时节点因由是假话（issue #218）、回边重跑清空发起者状态（issue #220）。三个问题均为确定性复现。
+
+范围：图级终态四档化（新增 `stalled`——零 `completed` 且零 `failed`）+ 节点因由按真实成因分档（图级闸门穿透 / 入边互等）+ `_reset_subtree` 发起者豁免 + 三个 `TERMINAL_STATUSES` 副本同步。
+
+建议顺序原因：三个 bug 同源于「图的终态与因由没有如实反映实际发生了什么」，修复互不依赖但共享同一批契约面（图级状态词表 + 节点因由），合为一个 change 可一次把契约改到位。参考先例：Airflow `all_tasks_deadlocked`→FAILED、Prefect 子任务失败→flow FAILED。
+
+依赖：无（可立即开始）。跟踪 issue：#217 / #218 / #220。另 #219（循环契约对模型可见）另立 change。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
