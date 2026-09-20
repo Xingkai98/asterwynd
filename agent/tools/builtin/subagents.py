@@ -11,6 +11,7 @@ from agent.subagent.manager import SubAgentManager
 from agent.subagent.patterns import run_pattern
 from agent.subagent.scheduler import WorkflowScheduler
 from agent.subagent.workflow import (
+    WorkflowCycleError,
     WorkflowSpec,
     WorkflowValidationError,
     parse_workflow_spec,
@@ -428,12 +429,30 @@ def parse_spec_for_manager(manager: SubAgentManager, raw: Any) -> WorkflowSpec:
     return parse_workflow_spec(raw, **_spec_bounds(manager))
 
 
+#: 环可启动性拒绝（``WorkflowCycleError``）的指向性 hint。这类错误**没有 workflow_id**
+#: ——模型拿不到可运行的图，只能按 ``reason`` 改 spec 重声明，所以 hint 必须把它说清
+#: （change ``workflow-cycle-contract``，D5）。
+_CYCLE_HINT = (
+    "the spec was NOT declared: there is no workflow_id, and the graph was never "
+    "created. The cycle in `reason` can never start, so fix the spec as its "
+    "'how to fix' section describes — either declare \"required\": false on the "
+    "listed back-edge(s), or give the cycle a node that starts on its own (an entry "
+    "whose required inputs come from outside the cycle) — then call DeclareWorkflow "
+    "again with the corrected spec."
+)
+
+
 def _invalid_spec(exc: Exception) -> str:
+    hint = (
+        _CYCLE_HINT
+        if isinstance(exc, WorkflowCycleError)
+        else "fix the workflow spec (see DeclareWorkflow description) and retry"
+    )
     return json.dumps(
         {
             "status": "invalid_spec",
             "reason": str(exc),
-            "hint": "fix the workflow spec (see DeclareWorkflow description) and retry",
+            "hint": hint,
         },
         ensure_ascii=False,
     )
@@ -462,8 +481,34 @@ def _unknown_workflow(workflow_id: str, manager: SubAgentManager) -> str:
         "outputs, ...}], edges:[{from, to, channel, required, reducer}], entry, "
         "terminal, recursion_limit, max_nodes, max_runs}. Parallel branches "
         "writing the same output slot must declare a reducer "
-        "(concat/merge_dict/first_non_empty/last). Cycles are only allowed "
-        "through a route node."
+        "(concat/merge_dict/first_non_empty/last).\n"
+        "\n"
+        "CYCLES (a loop back through a route node):\n"
+        "- A cycle must contain a node that starts on its own, and that node must "
+        "not wait on anything inside the cycle. Otherwise every node in the cycle "
+        "waits for another and none ever runs — the graph finishes with the whole "
+        "cycle blocked, and DeclareWorkflow rejects it.\n"
+        "- A route's OUTGOING edges are control edges: they never gate. Put the "
+        "back-edge on the route (route -> loop-start) and it is free. A back-edge "
+        "from any other node is a DATA edge and gates by default — either start it "
+        "from the route, or declare \"required\": false on that edge.\n"
+        "- max_routes defaults to 1, is declared per route node (no config-level "
+        "default), and counts per node across all rounds: it is NOT reset when a "
+        "new lap starts. Set it high enough for the laps you expect.\n"
+        "\n"
+        "Correct cycle (route back-edge; the loop body is an entry so it starts "
+        "on its own):\n"
+        "  nodes: producer(subagent), reviewer(subagent), gate(route, max_routes:3), "
+        "join(aggregate, strategy:\"collect\"); entry:[\"producer\"];\n"
+        "  edges: producer->reviewer, reviewer->gate, gate->join (control), "
+        "gate->producer (control back-edge).\n"
+        "Rejected cycle (nothing in the cycle can start: the body waits on the "
+        "route, the route waits on the body):\n"
+        "  nodes: gate(route, default:\"body\"), body(aggregate, strategy:\"collect\"); "
+        "entry:[\"gate\"];\n"
+        "  edges: gate->body (control), body->gate (DATA edge, required by default).\n"
+        "  fix: declare \"required\": false on body->gate, or give the cycle a node "
+        "whose required inputs come from outside it."
     ),
     parameters={
         "type": "object",

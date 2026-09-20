@@ -80,6 +80,15 @@ class WorkflowValidationError(ValueError):
     """WorkflowSpec 校验失败（schema 层拒绝，不进入调度）。"""
 
 
+class WorkflowCycleError(WorkflowValidationError):
+    """环永远跑不起来（声明期拒绝）。
+
+    独立类型只为让工具层的 ``_invalid_spec`` 给**指向性 hint**：该返回体里没有
+    ``workflow_id``，模型拿不到可运行的图，只能按 ``reason`` 改 spec 重声明
+    （change ``workflow-cycle-contract``，D5）。
+    """
+
+
 #: 动态 route 条件源的引用前缀（change ``workflow-budget-attribution``，D4/Q1）：
 #: ``when: "$ref:<node_id>:<slot>"`` —— 读取已声明节点的结果槽，取首个非空行作
 #: **期望标签**，再走 ``matches_route`` 行首匹配。受限可校验，不执行模型生成代码。
@@ -402,6 +411,10 @@ def parse_workflow_spec(
         terminal = tuple(
             node.id for node in nodes if not any(edge.source == node.id for edge in edges)
         )
+
+    # 环的**可启动性**（change ``workflow-cycle-contract``，D1）：环内任一节点可证明
+    # 永不派发即拒绝。放在 entry 解析**之后**——判据要用最终 entry 集（含隐式推导）。
+    _validate_cycle_can_start(index, edges, entry)
 
     return WorkflowSpec(
         goal=goal,
@@ -798,6 +811,254 @@ def _validate_foreach_source_cycles(
                 f"(route back-edge); cross-layer source resolution has no "
                 f"deterministic terminus"
             )
+
+
+# --- 环的可启动性（change ``workflow-cycle-contract``，D1） -------------------
+
+
+def _entry_set(
+    index: Mapping[str, WorkflowNode], edges: tuple[WorkflowEdge, ...], entry: tuple[str, ...]
+) -> set[str]:
+    """显式 entry ∪ 隐式入口（完全没有入边的节点）。
+
+    与 :func:`parse_workflow_spec` 的隐式 entry 推导同源：只被 route 控制边指向的
+    节点（回边目标）**不是**入口——它们在调度器里等 route 的激活。
+    """
+    implicit = {node_id for node_id in index if not any(e.target == node_id for e in edges)}
+    return set(entry) | implicit
+
+
+#: 报错里每段列表最多列几项——超出的折成 ``(+N more)``。环可以很大（``max_nodes``
+#: 默认 200），不设上限时单条报错能到 8k+ 字符（building-review Issue 4）。
+_ERROR_LIST_LIMIT = 8
+
+
+def _bounded(items: Any, sep: str = ", ") -> str:
+    """把列表折成有界的人话串：``a, b, c (+N more)``。
+
+    报错会原样进入模型上下文（仓库里没有工具结果截断层），所以每段列表都要有上界；
+    截断处**必须注明还剩几项**，否则模型会以为环就这么大。
+
+    接受**可迭代对象**（不是单个字符串——传字符串会被逐字符拆开）；``sep`` 让调用方
+    选择分隔符（列表用 ``", "``，逐条句子用 ``"; "``）。
+    """
+    if isinstance(items, str):
+        items = [items]
+    values = [str(v) for v in items]
+    shown = values[:_ERROR_LIST_LIMIT]
+    more = len(values) - len(shown)
+    text = sep.join(shown)
+    return f"{text} (+{more} more)" if more else text
+
+
+def _route_activators(
+    index: Mapping[str, WorkflowNode], edges: tuple[WorkflowEdge, ...]
+) -> dict[str, set[str]]:
+    """每个节点**可能被哪些 route 激活**（``{node_id: {route_id, ...}}``）。
+
+    调度器的激活真相源是 ``_execute_route`` 写入的 ``state.targets``——它由
+    ``cases[].to`` / ``node.default`` 决定，**按 target id 直接** ``activations += 1``，
+    **从不检查是否存在对应的声明边**。而 ``_validate_kind_specific`` 只要求
+    ``cases[].to`` 是已知节点 id，不要求有边。所以「route 的 case/default 指向某节点但
+    没写这条边」是一张调度器会正常跑的合法图，静态模型必须把它算作激活来源，否则会
+    误判该节点「永不派发」（building-review Issue 2）。
+
+    声明边也算来源：``route`` 的出边是控制边，是这条激活最常见的写法。
+    """
+    activators: dict[str, set[str]] = {node_id: set() for node_id in index}
+    for node in index.values():
+        if node.kind != "route":
+            continue
+        for case in node.cases:
+            activators.setdefault(case.to, set()).add(node.id)
+        if node.default is not None:
+            activators.setdefault(node.default, set()).add(node.id)
+    for edge in edges:
+        if index[edge.source].kind == "route":
+            activators.setdefault(edge.target, set()).add(edge.source)
+    return activators
+
+
+def _dispatchable_nodes(
+    index: Mapping[str, WorkflowNode],
+    edges: tuple[WorkflowEdge, ...],
+    entries: set[str],
+) -> set[str]:
+    """调度器派发语义的**过近似**不动点（「有可能跑起来」的节点集）。
+
+    判据的用途是**拒绝**（「这个环永远跑不起来」），所以这个集合必须是真实可派发节点集的
+    **超集**：多算一个节点只会漏报（少拒一张坏图），少算一个才会误报（拒掉一张能跑的图）。
+    因此每条规则都取「有可能」的乐观口径。
+
+    节点 ``n`` 可派发，当且仅当下列任一成立（对应 ``scheduler.py`` 的 ``_ready_nodes``
+    / ``_data_deps_satisfied`` / ``_is_entry`` / ``_fire_best_effort_deadlines``）：
+
+    1. **常规路径**：全部 ``required`` **数据入边**的源头可派发（``required: false``
+       的边不参与门控——``_data_deps_satisfied`` 对它们 ``continue``）；**且**控制闸放行：
+       ``n`` 是 ``entry``、或它没有控制入边、或存在一个可派发的 route 能激活它
+       （``_route_activators``——含「case/default 指向但没写边」的形态）；
+    2. **best_effort 截止路径**：``n`` 是 ``join == "best_effort"`` 且声明了
+       ``deadline_s`` 的 aggregate，且它至少有一个数据入边源头可派发——上游一被派发就
+       武装 ``n`` 的 ``deadline_ref``（``scheduler.py`` 的 ``_launch_run``），到点后
+       ``_fire_best_effort_deadlines`` 置 ``deadline_fired``，``_ready_nodes`` 对该标志
+       **直接放行**，连 ``activations`` 检查都跳过（building-review Issue 1）。
+    """
+    control_sources = {node_id for node_id, node in index.items() if node.kind == "route"}
+    data_incoming: dict[str, list[WorkflowEdge]] = {node_id: [] for node_id in index}
+    control_incoming: dict[str, list[WorkflowEdge]] = {node_id: [] for node_id in index}
+    for edge in edges:
+        if edge.source in control_sources:
+            control_incoming.setdefault(edge.target, []).append(edge)
+        else:
+            data_incoming.setdefault(edge.target, []).append(edge)
+    activators = _route_activators(index, edges)
+
+    dispatchable: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for node_id, node in index.items():
+            if node_id in dispatchable:
+                continue
+            sources = data_incoming.get(node_id, ())
+            data_open = not any(
+                edge.required and edge.source not in dispatchable for edge in sources
+            )
+            if not data_open:
+                continue
+            if (
+                node.kind == "aggregate"
+                and node.join == "best_effort"
+                and node.deadline_s is not None
+                and any(edge.source in dispatchable for edge in sources)
+            ):
+                dispatchable.add(node_id)
+                changed = True
+                continue
+            controllers = control_incoming.get(node_id, ())
+            if (
+                not controllers
+                or node_id in entries
+                or any(source in dispatchable for source in activators.get(node_id, ()))
+            ):
+                dispatchable.add(node_id)
+                changed = True
+    return dispatchable
+
+
+def _cycle_members(
+    index: Mapping[str, WorkflowNode], edges: tuple[WorkflowEdge, ...]
+) -> list[list[str]]:
+    """全量边图上的环分量（大小 > 1 或自环），复用迭代 Tarjan。"""
+    adjacency: dict[str, list[str]] = {node_id: [] for node_id in index}
+    for edge in edges:
+        adjacency.setdefault(edge.source, []).append(edge.target)
+    cycles: list[list[str]] = []
+    for component in _strongly_connected_components(tuple(adjacency), adjacency):
+        cyclic = len(component) > 1 or component[0] in adjacency.get(component[0], [])
+        if cyclic:
+            cycles.append(component)
+    return cycles
+
+
+def _validate_cycle_can_start(
+    index: Mapping[str, WorkflowNode],
+    edges: tuple[WorkflowEdge, ...],
+    entry: tuple[str, ...],
+) -> None:
+    """环内存在**永不派发**的节点即拒绝（D1），报错给三要素（D5）。
+
+    被拒的环**必然**停滞：那个节点满足不了任何一条派发条件，而它所在的环又完全由
+    「等彼此」构成——图收敛时环内零节点跑起来、图级终态却是 ``completed``，用户在
+    返回体里看不到任何异常（这正是 issue #219 的现象）。
+
+    报错必须自足（D5）：工具层的 ``_invalid_spec`` 返回体里**没有 workflow_id**，
+    ``reason`` + ``hint`` 是模型唯一的信息来源。故文案逐条列出「哪个环 / 谁在等谁 /
+    怎么改」，并在环内存在同环 ``required`` 数据入边时点名建议 ``"required": false``
+    （原 D2 的诊断价值并入此处）。
+    """
+    entries = _entry_set(index, edges, entry)
+    dispatchable = _dispatchable_nodes(index, edges, entries)
+    control_sources = {node_id for node_id, node in index.items() if node.kind == "route"}
+    activators = _route_activators(index, edges)
+
+    for component in _cycle_members(index, edges):
+        stuck = [node_id for node_id in component if node_id not in dispatchable]
+        if not stuck:
+            continue
+
+        members = sorted(component)
+        lines = [
+            f"cycle can never start: nodes {_bounded(stuck)} in cycle "
+            f"{_bounded(members)} can never be dispatched, so the cycle stalls at "
+            f"runtime (the graph would report success with every node in this cycle "
+            f"blocked)."
+        ]
+
+        # 缺什么：逐条列出「谁在等谁」（有界——两段各自限条数）。
+        waiting: list[str] = []
+        # 口径必须与门控真相源一致：只列 **required 数据边**（``data_incoming``，
+        # 即排除 route 出边）。列出控制边会给出**改了也没用**的建议——route 出边本来
+        # 就不门控，对它加 ``required: false`` 不改变任何东西（building-review Issue 3）。
+        for node_id in sorted(stuck):
+            for edge in edges:
+                if edge.target != node_id or not edge.required:
+                    continue
+                if edge.source in control_sources:
+                    continue  # route 出边是控制边，不参与数据门控
+                if edge.source in set(component):
+                    waiting.append(
+                        f"{node_id!r} waits for required data from {edge.source!r} "
+                        f"(same cycle)"
+                    )
+                elif edge.source not in dispatchable:
+                    waiting.append(
+                        f"{node_id!r} waits for required data from {edge.source!r} "
+                        f"(outside the cycle and itself never dispatchable)"
+                    )
+            if node_id not in entries:
+                controllers = sorted(
+                    source for source in activators.get(node_id, ())
+                    if source not in dispatchable
+                )
+                if controllers:
+                    waiting.append(
+                        f"{node_id!r} is not an entry: it can only be activated by "
+                        f"route(s) {_bounded(controllers)}, which cannot run either"
+                    )
+        if waiting:
+            lines.append("waiting on: " + _bounded(waiting, sep="; ") + ".")
+
+        # 怎么改：可照做的动作。同环 required 数据边单独点名（D2 的诊断价值）。
+        same_cycle_required = sorted(
+            {
+                f"{edge.source!r} -> {edge.target!r}"
+                for edge in edges
+                if edge.required
+                and edge.source in set(component)
+                and edge.target in set(component)
+                and edge.source not in control_sources
+            }
+        )
+        fixes = []
+        if same_cycle_required:
+            fixes.append(
+                f"declare \"required\": false on the back-edge(s) "
+                f"{_bounded(same_cycle_required)} (or start them from the route node: a "
+                f"route's outgoing edges are control edges and never gate)"
+            )
+        seed = min(members)
+        fixes.append(
+            f"give the cycle a node that starts on its own: make {seed!r} (or another "
+            f"member) an entry whose required inputs come from outside the cycle; if a "
+            f"route also points at it, list it in spec.entry"
+        )
+        fixes.append(
+            "or break the cycle: move one of its edges so the loop is no longer closed"
+        )
+        lines.append("how to fix: " + "; ".join(fixes) + ".")
+
+        raise WorkflowCycleError(" ".join(lines))
 
 
 def _validate_kind_specific(index: Mapping[str, WorkflowNode]) -> None:
