@@ -67,12 +67,12 @@
   - 去掉 `waiting on` / how-to-fix 段落 → 应被 3.4 抓住
 - [x] 6.3 `tests/agent/subagent/` + 全量 `uv run pytest -q`
 - [x] 6.3b 跑通 benchmark smoke（`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke ...`），确认声明期校验未破坏 benchmark 路径
-- [ ] 6.4 **同步 current spec**：把 delta 合入 `openspec/specs/multi-agent-collaboration/spec.md`（受保护路径，需 `workflow-events.jsonl` 事件）
-- [ ] 6.5 `/review-loop` 独立审阅闭环（AGENTS.md #90 机械强制，PASS 或 3 轮封顶）
-- [ ] 6.6 归档到 `openspec/changes/archive/YYYY-MM-DD-workflow-cycle-contract/` + backlog 移除
+- [x] 6.4 **同步 current spec**：把 delta 合入 `openspec/specs/multi-agent-collaboration/spec.md`（受保护路径，需 `workflow-events.jsonl` 事件）
+- [x] 6.5 `/review-loop` 独立审阅闭环（AGENTS.md #90 机械强制）：R1 = CHANGES_REQUESTED（7 条）→ 修复 + 回归测试 → R2 = **PASS**（3 轮封顶内收敛）。权威报告 `reviews/building-review.md` 覆盖两轮，另存 `reviews/building-review-r2.md`
+- [x] 6.6 归档到 `openspec/changes/archive/YYYY-MM-DD-workflow-cycle-contract/` + backlog 移除
 - [x] 6.7 `openspec validate --all --strict` + `check_openspec_artifacts.py` 通过
-- [ ] 6.8 建 PR（含归档收尾）；合入后 comment + close #219
-- [ ] 6.9 文档影响检查：扫描 `docs/`、`AGENTS.md`、`CONTEXT.md` 中涉及 workflow DSL / 循环的段落
+- [x] 6.8 建 PR（含归档收尾）；合入后 comment + close #219
+- [x] 6.9 文档影响检查：扫描 `docs/`、`AGENTS.md`、`CONTEXT.md` 中涉及 workflow DSL / 循环的段落
 
 ## 7. 首轮审阅（building-review）修复
 

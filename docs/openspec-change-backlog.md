@@ -101,18 +101,6 @@
 
 ## 未实现队列
 
-### `workflow-cycle-contract`
-
-状态：未实现（立项完成，待 grill）。
-
-批次：issue #197 实测 follow-up。用户在 session `0a94250da7bf` 实测时，模型自行建的**回边环**图空转到撞 `max_routes`，图和人都不知道原因（issue #219）。排查确认：不是模型能力问题，而是**循环的契约从未写下来**——`DeclareWorkflow` 描述关于循环只有一句「Cycles are only allowed through a route node」，而实际生效的隐式契约有四条（`max_routes` 默认 1 且只能逐节点配 / 回边应从 route 出发 / 环内必须有产出节点 / 计数跨轮累加不重置），全部只能靠踩坑发现。
-
-范围：`DeclareWorkflow` 描述补循环契约（含最小正例与反例）+ 两条**声明期静态校验**（空转环：SCC 内无产出节点；回边死锁：route 有同环内 `required` 数据入边）+ 可操作的报错文案。
-
-建议顺序原因：这是「图修好了」到「模型不会再建出坏图」的最后一环，与已合入的 `workflow-terminal-honesty`（#217/#218/#220）互补——后者修**运行期表达**，前者修**声明期预防**。
-
-依赖：无（`workflow-terminal-honesty` 已合入）。跟踪 issue：#219。
-
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
