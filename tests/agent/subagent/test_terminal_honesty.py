@@ -22,10 +22,51 @@ from agent.llm import LLMResponse, Usage
 from agent.run_config import AgentMode
 from agent.subagent.manager import SubAgentManager
 from agent.subagent.scheduler import WorkflowScheduler
-from agent.subagent.workflow import parse_workflow_spec
+from agent.subagent.workflow import (
+    DEFAULT_MAX_NODES,
+    DEFAULT_MAX_RUNS,
+    DEFAULT_RECURSION_LIMIT,
+    WorkflowSpec,
+    _parse_edge,
+    _parse_node,
+    parse_workflow_spec,
+)
 from agent.workspace_policy import WorkspacePolicy
 
 _REPO = Path(__file__).parents[3]
+
+
+def _spec_without_cycle_check(raw: dict) -> WorkflowSpec:
+    """直接组装 ``WorkflowSpec``，**绕过声明期的「环必须能启动」校验**。
+
+    #217 的死锁图**本来就该**在声明期被拒（change ``workflow-cycle-contract``，D1），
+    但本套件测的是**运行期**诊断：图因入边互等而停滞时，节点因由必须如实说
+    「入边互相等待」、图级终态必须报 ``stalled`` 而不是 ``completed``。新校验只是把
+    触发路径收窄了（从「模型声明出坏图」变成「图在运行期因其它原因陷入互等」），
+    诊断本身没有错，所以继续锁住它（grill Q5 裁决 (甲)）。
+
+    这里用 ``workflow.py`` 的解析 helper 直接构造 dataclass，**不新增生产代码里的旁路**。
+    """
+    nodes = tuple(_parse_node(item) for item in raw["nodes"])
+    edges = tuple(_parse_edge(item) for item in raw.get("edges", []))
+    index = {node.id: node for node in nodes}
+    entry = tuple(raw.get("entry") or (
+        node.id for node in nodes if not any(edge.target == node.id for edge in edges)
+    ))
+    terminal = tuple(raw.get("terminal") or (
+        node.id for node in nodes if not any(edge.source == node.id for edge in edges)
+    ))
+    return WorkflowSpec(
+        goal=raw.get("goal", ""),
+        nodes=nodes,
+        edges=edges,
+        entry=entry,
+        terminal=terminal,
+        recursion_limit=raw.get("recursion_limit", DEFAULT_RECURSION_LIMIT),
+        max_nodes=raw.get("max_nodes", DEFAULT_MAX_NODES),
+        max_runs=raw.get("max_runs", DEFAULT_MAX_RUNS),
+        _index=index,
+    )
 
 
 class _LLM:
@@ -52,9 +93,16 @@ def manager(tmp_path):
     )
 
 
-async def _run(manager, spec: dict) -> dict:
+async def _run(manager, spec: dict, *, bypass: bool = False) -> dict:
+    """跑一张图并取快照。
+
+    ``bypass=True`` 用于**声明期会被拒**的死锁图（见 :func:`_spec_without_cycle_check`）：
+    本套件测的是运行期诊断，需要把图直接塞进调度器。
+    """
     scheduler = WorkflowScheduler(manager)
-    scheduler.spec = parse_workflow_spec(spec)
+    scheduler.spec = (
+        _spec_without_cycle_check(spec) if bypass else parse_workflow_spec(spec)
+    )
     await scheduler.run(scheduler.spec)
     return scheduler.workflow_graph_snapshot()
 
@@ -147,7 +195,7 @@ def _route_cap_spec() -> dict:
 @pytest.mark.asyncio
 async def test_deadlock_graph_is_not_completed(manager):
     """1.1（#217）：零节点完成的图不得报 ``completed``——应为 ``stalled``。"""
-    snapshot = await _run(manager, _deadlock_spec())
+    snapshot = await _run(manager, _deadlock_spec(), bypass=True)
     assert snapshot["status"] != "completed"
     assert snapshot["status"] == "stalled"
 
@@ -158,7 +206,7 @@ async def test_deadlock_graph_needs_no_completed_node(manager):
 
     本图三节点全 ``blocked``（无 ``failed``、无 ``completed``）→ ``stalled``。
     """
-    snapshot = await _run(manager, _deadlock_spec())
+    snapshot = await _run(manager, _deadlock_spec(), bypass=True)
     nodes = _nodes(snapshot)
     assert all(node["status"] != "completed" for node in nodes.values())
     assert all(node["status"] != "failed" for node in nodes.values())
@@ -287,7 +335,7 @@ async def test_deadlock_reason_is_not_the_fallback_lie(manager):
 
     ``diagnostics`` 为空，所以不能靠闸门穿透；必须给出结构性成因。
     """
-    snapshot = await _run(manager, _deadlock_spec())
+    snapshot = await _run(manager, _deadlock_spec(), bypass=True)
     assert not snapshot.get("diagnostics")
     nodes = _nodes(snapshot)
     blocked = [n for n in nodes.values() if n["status"] == "blocked"]
@@ -374,7 +422,7 @@ async def test_waiting_reason_fits_the_frontend_display_budget(manager):
     前端在 160 处会把「，本节点永远未就绪」连同右括号一起切掉——故必须限**整句长度**。
     """
     scheduler = WorkflowScheduler(manager)
-    scheduler.spec = parse_workflow_spec(_deadlock_spec())
+    scheduler.spec = _spec_without_cycle_check(_deadlock_spec())
     await scheduler.run(scheduler.spec)
     long_ids = [f"validation_stage_{i}_processor" for i in range(6)]
 
@@ -465,7 +513,7 @@ async def test_non_gate_diagnostics_do_not_claim_a_graph_gate_fired(manager):
     消灭的那类假话。闸门判定必须看 ``reason`` 键是否存在。
     """
     scheduler = WorkflowScheduler(manager)
-    scheduler.spec = parse_workflow_spec(_deadlock_spec())
+    scheduler.spec = _spec_without_cycle_check(_deadlock_spec())
     await scheduler.run(scheduler.spec)
     # 非闸门诊断（与 route_ref_misses 同形：**无** reason 键）
     scheduler._diagnostics = {
@@ -612,8 +660,11 @@ async def test_frontend_reason_markers_match_backend_emitted_text(manager):
     assert markers, "前端标记词表为空"
 
     emitted: dict[str, str] = {}
-    for label, spec in (("gate", _route_cap_spec()), ("deadlock", _deadlock_spec())):
-        snapshot = await _run(manager, spec)
+    for label, spec, bypass in (
+        ("gate", _route_cap_spec(), False),
+        ("deadlock", _deadlock_spec(), True),
+    ):
+        snapshot = await _run(manager, spec, bypass=bypass)
         reasons = [n.get("reason") or "" for n in snapshot["nodes"]]
         emitted[label] = " || ".join(reasons)
 
