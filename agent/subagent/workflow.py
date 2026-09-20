@@ -828,25 +828,80 @@ def _entry_set(
     return set(entry) | implicit
 
 
+#: 报错里每段列表最多列几项——超出的折成 ``(+N more)``。环可以很大（``max_nodes``
+#: 默认 200），不设上限时单条报错能到 8k+ 字符（building-review Issue 4）。
+_ERROR_LIST_LIMIT = 8
+
+
+def _bounded(items: Any, sep: str = ", ") -> str:
+    """把列表折成有界的人话串：``a, b, c (+N more)``。
+
+    报错会原样进入模型上下文（仓库里没有工具结果截断层），所以每段列表都要有上界；
+    截断处**必须注明还剩几项**，否则模型会以为环就这么大。
+
+    接受**可迭代对象**（不是单个字符串——传字符串会被逐字符拆开）；``sep`` 让调用方
+    选择分隔符（列表用 ``", "``，逐条句子用 ``"; "``）。
+    """
+    if isinstance(items, str):
+        items = [items]
+    values = [str(v) for v in items]
+    shown = values[:_ERROR_LIST_LIMIT]
+    more = len(values) - len(shown)
+    text = sep.join(shown)
+    return f"{text} (+{more} more)" if more else text
+
+
+def _route_activators(
+    index: Mapping[str, WorkflowNode], edges: tuple[WorkflowEdge, ...]
+) -> dict[str, set[str]]:
+    """每个节点**可能被哪些 route 激活**（``{node_id: {route_id, ...}}``）。
+
+    调度器的激活真相源是 ``_execute_route`` 写入的 ``state.targets``——它由
+    ``cases[].to`` / ``node.default`` 决定，**按 target id 直接** ``activations += 1``，
+    **从不检查是否存在对应的声明边**。而 ``_validate_kind_specific`` 只要求
+    ``cases[].to`` 是已知节点 id，不要求有边。所以「route 的 case/default 指向某节点但
+    没写这条边」是一张调度器会正常跑的合法图，静态模型必须把它算作激活来源，否则会
+    误判该节点「永不派发」（building-review Issue 2）。
+
+    声明边也算来源：``route`` 的出边是控制边，是这条激活最常见的写法。
+    """
+    activators: dict[str, set[str]] = {node_id: set() for node_id in index}
+    for node in index.values():
+        if node.kind != "route":
+            continue
+        for case in node.cases:
+            activators.setdefault(case.to, set()).add(node.id)
+        if node.default is not None:
+            activators.setdefault(node.default, set()).add(node.id)
+    for edge in edges:
+        if index[edge.source].kind == "route":
+            activators.setdefault(edge.target, set()).add(edge.source)
+    return activators
+
+
 def _dispatchable_nodes(
     index: Mapping[str, WorkflowNode],
     edges: tuple[WorkflowEdge, ...],
     entries: set[str],
 ) -> set[str]:
-    """静态复刻调度器派发语义的**最小不动点**（可证明能跑起来的节点集）。
+    """调度器派发语义的**过近似**不动点（「有可能跑起来」的节点集）。
 
-    每个节点 must 满足（对应 ``scheduler.py`` 的 ``_ready_nodes`` /
-    ``_data_deps_satisfied`` / ``_is_entry``）：
+    判据的用途是**拒绝**（「这个环永远跑不起来」），所以这个集合必须是真实可派发节点集的
+    **超集**：多算一个节点只会漏报（少拒一张坏图），少算一个才会误报（拒掉一张能跑的图）。
+    因此每条规则都取「有可能」的乐观口径。
 
-    1. 全部 ``required`` **数据入边**的源头可派发——``required: false`` 的边不参与
-       门控（``_data_deps_satisfied`` 对它们 ``continue``）；
-    2. **且**满足其一：该节点是 ``entry``；或它**没有控制入边**；或它存在一个可派发的
-       控制源 route（``_execute_route`` 会给被选中的 target ``activations += 1``，
-       从而放行 ``_ready_nodes`` 里 ``activations <= 0`` 的分支）。
+    节点 ``n`` 可派发，当且仅当下列任一成立（对应 ``scheduler.py`` 的 ``_ready_nodes``
+    / ``_data_deps_satisfied`` / ``_is_entry`` / ``_fire_best_effort_deadlines``）：
 
-    从空集迭代到不再增长，得到的是「可证明可派发」的**最小**集合——因此把它当拒绝
-    依据不会误报：真有节点能跑起来时，按实际执行顺序归纳它必在集合里。判据在控制边上
-    偏乐观（假设 route 可能选中它），而乐观只漏报、不误报，是安全方向。
+    1. **常规路径**：全部 ``required`` **数据入边**的源头可派发（``required: false``
+       的边不参与门控——``_data_deps_satisfied`` 对它们 ``continue``）；**且**控制闸放行：
+       ``n`` 是 ``entry``、或它没有控制入边、或存在一个可派发的 route 能激活它
+       （``_route_activators``——含「case/default 指向但没写边」的形态）；
+    2. **best_effort 截止路径**：``n`` 是 ``join == "best_effort"`` 且声明了
+       ``deadline_s`` 的 aggregate，且它至少有一个数据入边源头可派发——上游一被派发就
+       武装 ``n`` 的 ``deadline_ref``（``scheduler.py`` 的 ``_launch_run``），到点后
+       ``_fire_best_effort_deadlines`` 置 ``deadline_fired``，``_ready_nodes`` 对该标志
+       **直接放行**，连 ``activations`` 检查都跳过（building-review Issue 1）。
     """
     control_sources = {node_id for node_id, node in index.items() if node.kind == "route"}
     data_incoming: dict[str, list[WorkflowEdge]] = {node_id: [] for node_id in index}
@@ -856,27 +911,36 @@ def _dispatchable_nodes(
             control_incoming.setdefault(edge.target, []).append(edge)
         else:
             data_incoming.setdefault(edge.target, []).append(edge)
+    activators = _route_activators(index, edges)
 
     dispatchable: set[str] = set()
     changed = True
     while changed:
         changed = False
-        for node_id in index:
+        for node_id, node in index.items():
             if node_id in dispatchable:
                 continue
-            if any(
-                edge.required and edge.source not in dispatchable
-                for edge in data_incoming.get(node_id, ())
+            sources = data_incoming.get(node_id, ())
+            data_open = not any(
+                edge.required and edge.source not in dispatchable for edge in sources
+            )
+            if not data_open:
+                continue
+            if (
+                node.kind == "aggregate"
+                and node.join == "best_effort"
+                and node.deadline_s is not None
+                and any(edge.source in dispatchable for edge in sources)
             ):
+                dispatchable.add(node_id)
+                changed = True
                 continue
             controllers = control_incoming.get(node_id, ())
-            if not controllers or node_id in entries:
-                blocked_by_control = False
-            else:
-                blocked_by_control = not any(
-                    edge.source in dispatchable for edge in controllers
-                )
-            if not blocked_by_control:
+            if (
+                not controllers
+                or node_id in entries
+                or any(source in dispatchable for source in activators.get(node_id, ()))
+            ):
                 dispatchable.add(node_id)
                 changed = True
     return dispatchable
@@ -916,6 +980,7 @@ def _validate_cycle_can_start(
     entries = _entry_set(index, edges, entry)
     dispatchable = _dispatchable_nodes(index, edges, entries)
     control_sources = {node_id for node_id, node in index.items() if node.kind == "route"}
+    activators = _route_activators(index, edges)
 
     for component in _cycle_members(index, edges):
         stuck = [node_id for node_id in component if node_id not in dispatchable]
@@ -924,17 +989,23 @@ def _validate_cycle_can_start(
 
         members = sorted(component)
         lines = [
-            f"cycle can never start: nodes {sorted(stuck)} in cycle {members} "
-            f"can never be dispatched, so the cycle stalls at runtime "
-            f"(the graph would report success with every node in this cycle blocked)."
+            f"cycle can never start: nodes {_bounded(stuck)} in cycle "
+            f"{_bounded(members)} can never be dispatched, so the cycle stalls at "
+            f"runtime (the graph would report success with every node in this cycle "
+            f"blocked)."
         ]
 
         # 缺什么：逐条列出「谁在等谁」（有界——两段各自限条数）。
         waiting: list[str] = []
+        # 口径必须与门控真相源一致：只列 **required 数据边**（``data_incoming``，
+        # 即排除 route 出边）。列出控制边会给出**改了也没用**的建议——route 出边本来
+        # 就不门控，对它加 ``required: false`` 不改变任何东西（building-review Issue 3）。
         for node_id in sorted(stuck):
             for edge in edges:
                 if edge.target != node_id or not edge.required:
                     continue
+                if edge.source in control_sources:
+                    continue  # route 出边是控制边，不参与数据门控
                 if edge.source in set(component):
                     waiting.append(
                         f"{node_id!r} waits for required data from {edge.source!r} "
@@ -945,19 +1016,18 @@ def _validate_cycle_can_start(
                         f"{node_id!r} waits for required data from {edge.source!r} "
                         f"(outside the cycle and itself never dispatchable)"
                     )
-            if node_id not in entries and any(
-                edge.source in control_sources for edge in edges if edge.target == node_id
-            ):
+            if node_id not in entries:
                 controllers = sorted(
-                    edge.source for edge in edges
-                    if edge.target == node_id and edge.source in control_sources
+                    source for source in activators.get(node_id, ())
+                    if source not in dispatchable
                 )
-                waiting.append(
-                    f"{node_id!r} is not an entry: it can only be activated by "
-                    f"route(s) {controllers}, which cannot run either"
-                )
+                if controllers:
+                    waiting.append(
+                        f"{node_id!r} is not an entry: it can only be activated by "
+                        f"route(s) {_bounded(controllers)}, which cannot run either"
+                    )
         if waiting:
-            lines.append("waiting on: " + "; ".join(waiting[:6]) + ".")
+            lines.append("waiting on: " + _bounded(waiting, sep="; ") + ".")
 
         # 怎么改：可照做的动作。同环 required 数据边单独点名（D2 的诊断价值）。
         same_cycle_required = sorted(
@@ -974,8 +1044,8 @@ def _validate_cycle_can_start(
         if same_cycle_required:
             fixes.append(
                 f"declare \"required\": false on the back-edge(s) "
-                f"{same_cycle_required} (or start them from the route node: a route's "
-                f"outgoing edges are control edges and never gate)"
+                f"{_bounded(same_cycle_required)} (or start them from the route node: a "
+                f"route's outgoing edges are control edges and never gate)"
             )
         seed = min(members)
         fixes.append(

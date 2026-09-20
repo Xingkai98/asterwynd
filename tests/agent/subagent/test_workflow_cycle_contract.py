@@ -327,16 +327,174 @@ def test_builtin_patterns_still_declare(pattern, params, manager):
     assert out["status"] == "declared", out
 
 
+# --- 误报防线（building-review Issue 1/2）：判据必须过近似真实派发规则 -------
+
+
+def _best_effort_cycle_spec() -> dict:
+    """环内是 ``best_effort`` 聚合：调度器对 ``deadline_fired`` 的节点**直接放行**。
+
+    ``_ready_nodes`` 在 ``state.deadline_fired`` 为真时既不看数据门控也不看
+    ``activations``（``scheduler.py`` 的 ``_ready_nodes``）。所以即使 ``body`` 不是
+    entry、且被 ``gate`` 控制，它也会在截止到点时被派发——这张图在 master 上声明成功
+    且真能循环（``gate`` 派发 3 次、``body`` completed）。
+    """
+    return {
+        "goal": "best effort cycle",
+        "recursion_limit": 20,
+        "max_runs": 60,
+        "nodes": [
+            {"id": "seed", "kind": "subagent", "task": "seed", "outputs": ["result"]},
+            {"id": "gate", "kind": "route", "task": "gate", "max_routes": 3,
+             "cases": [{"when": "GO", "to": "body"}], "default": "body"},
+            {"id": "body", "kind": "aggregate", "strategy": "collect",
+             "join": "best_effort", "deadline_s": 0.05, "outputs": ["result"]},
+        ],
+        "edges": [
+            {"from": "seed", "to": "body", "required": False, "reducer": "concat"},
+            {"from": "gate", "to": "body"},
+            {"from": "body", "to": "gate", "reducer": "concat"},
+        ],
+        "entry": ["seed"],
+        "terminal": ["gate"],
+    }
+
+
+def test_best_effort_aggregate_in_cycle_is_not_a_false_positive():
+    """Issue 1：``deadline_fired`` 短路是真派发路径，判据不得据此拒绝能跑的图。"""
+    spec = parse_workflow_spec(_best_effort_cycle_spec())
+    assert spec.node("body").join == "best_effort"
+
+
+def _route_target_without_edge_spec() -> dict:
+    """``route`` 的 ``default`` 指向环内节点，但**没有声明这条边**。
+
+    调度器 ``_execute_route`` 按 ``cases[].to`` / ``node.default`` 的 **target id**
+    直接 ``activations += 1``，从不检查有没有对应声明边；``_validate_kind_specific``
+    也只要求目标是已知节点。所以这条激活路径真实存在，判据必须算上它。
+    """
+    return {
+        "goal": "route target without edge",
+        "recursion_limit": 20,
+        "max_runs": 60,
+        "nodes": [
+            {"id": "B", "kind": "route", "task": "B", "max_routes": 3,
+             "cases": [], "default": "n0"},
+            {"id": "n0", "kind": "subagent", "task": "n0", "outputs": ["result"]},
+            {"id": "n1", "kind": "route", "task": "n1", "max_routes": 3,
+             "cases": [], "default": "n0"},
+        ],
+        "edges": [
+            {"from": "n0", "to": "n1", "reducer": "concat"},
+            {"from": "n1", "to": "n0"},
+        ],
+        "entry": ["B"],
+        "terminal": ["n1"],
+    }
+
+
+def test_route_activation_without_declared_edge_is_not_a_false_positive():
+    """Issue 2：``default`` 目标无声明边也是一条真实激活路径，不得据此拒绝。"""
+    parse_workflow_spec(_route_target_without_edge_spec())
+
+
+def test_self_loop_route_is_accepted():
+    """自环（``route`` 指向自己）走 ``_cycle_members`` 的自环分支：entry 能自启动 → 通过。"""
+    spec = parse_workflow_spec({
+        "goal": "self loop",
+        "nodes": [{"id": "g", "kind": "route", "cases": [], "default": "g",
+                   "max_routes": 3}],
+        "edges": [{"from": "g", "to": "g"}],
+        "entry": ["g"],
+        "terminal": ["g"],
+    })
+    assert spec.node("g").kind == "route"
+
+
+def test_one_stuck_cycle_among_startable_ones_is_rejected():
+    """多个环并存：只要其中一个跑不起来就拒绝，且报错只点名那个环。
+
+    ``live`` 是 entry（能自启动）→ 它的环 ``{live, glive}`` 没问题；``dead`` 不是
+    entry 且被 ``gdead`` 控制、而 ``gdead`` 又在等它 → 环 ``{dead, gdead}`` 跑不起来。
+    """
+    with pytest.raises(WorkflowCycleError) as excinfo:
+        parse_workflow_spec({
+            "goal": "two cycles",
+            "nodes": [
+                {"id": "live", "kind": "subagent", "task": "live",
+                 "outputs": ["result"]},
+                {"id": "glive", "kind": "route", "cases": [], "default": "live",
+                 "max_routes": 2},
+                {"id": "dead", "kind": "aggregate", "strategy": "collect",
+                 "join": "all_required"},
+                {"id": "gdead", "kind": "route", "cases": [], "default": "dead",
+                 "max_routes": 2},
+            ],
+            "edges": [
+                {"from": "live", "to": "glive", "reducer": "concat"},
+                {"from": "glive", "to": "live"},
+                {"from": "gdead", "to": "dead"},
+                {"from": "dead", "to": "gdead", "reducer": "concat"},
+            ],
+            "entry": ["live"],
+            "terminal": ["glive"],
+        })
+    message = str(excinfo.value)
+    # 能启动的环 {live, glive} 不该被点名
+    assert "live" not in message
+    # 跑不起来的环必须被点名
+    assert "gdead" in message and "dead" in message
+
+
+def test_error_message_is_bounded_for_a_large_cycle():
+    """Issue 4：大环的报错不得无界增长；截断处要注明还剩几项。"""
+    n = 58
+    # route 必须在环内（否则先被 ``_validate_cycles`` 的「环上必须有 route」拦下）。
+    raw = {
+        "goal": "big cycle",
+        "max_nodes": 200,
+        "nodes": [
+            {"id": f"n{i}", "kind": "aggregate", "strategy": "collect",
+             "join": "all_required"}
+            for i in range(n)
+        ] + [{"id": "g", "kind": "route", "cases": [], "default": "n0",
+              "max_routes": 2}],
+        "edges": [{"from": f"n{i}", "to": f"n{(i + 1) % n}", "reducer": "concat"}
+                  for i in range(n)]
+        + [{"from": f"n{n - 1}", "to": "g", "reducer": "concat"},
+           {"from": "g", "to": "n0"}],
+        "entry": ["g"],
+        "terminal": ["g"],
+    }
+    with pytest.raises(WorkflowCycleError) as excinfo:
+        parse_workflow_spec(raw)
+    message = str(excinfo.value)
+    assert "more)" in message, "截断必须注明剩余条数"
+    assert len(message) < 2500, f"报错过长（{len(message)} 字符）"
+
+
 # --- 2.x / 3.x 报错三要素：哪个环 / 缺什么 / 怎么改 --------------------------
 
 
 def test_reason_says_what_is_missing():
-    """D5-要素二「缺什么」：逐条说清谁在等谁。"""
+    """D5-要素二「缺什么」：逐条说清谁在等谁（具体到节点与边类型）。"""
     with pytest.raises(WorkflowCycleError) as excinfo:
         parse_workflow_spec(_spin_spec())
-    message = str(excinfo.value).lower()
-    assert "wait" in message
-    assert "required" in message
+    message = str(excinfo.value)
+    assert "waiting on:" in message
+    # 具体到「谁在等谁」，且说明是 required 数据等待
+    assert "'cycle_gate' waits for required data from 'body' (same cycle)" in message
+
+
+def test_reason_does_not_blame_the_control_edge():
+    """Issue 3：``route`` 出边是控制边、不门控——不得把它说成 required 数据等待。
+
+    模型能做的动作是「给这条边加 required: false」，而对控制边做这件事**没有任何效果**
+    （实跑：照做后图仍被拒）。报错把模型指向无效动作，正是本 change 要消灭的那类假话。
+    """
+    with pytest.raises(WorkflowCycleError) as excinfo:
+        parse_workflow_spec(_spin_spec())
+    message = str(excinfo.value)
+    assert "'body' waits for required data from 'cycle_gate'" not in message
 
 
 def test_reason_gives_an_actionable_fix():
@@ -411,10 +569,16 @@ def test_description_covers_the_four_cycle_contracts():
 
 
 def test_description_has_a_positive_example_and_a_counterexample():
-    """4.3 描述附最小正例与反例，而不是只罗列规则。"""
-    text = _declare_description().lower()
-    assert "correct" in text or "valid" in text or "works" in text
-    assert "wrong" in text or "rejected" in text or "bad" in text
+    """4.3 描述附最小正例与反例——断言**具体节点串**，删掉任一段都会变红。"""
+    text = _declare_description()
+    lowered = text.lower()
+    assert "correct cycle" in lowered
+    assert "rejected cycle" in lowered
+    # 正例的骨架：route 回边（控制边）
+    assert "gate->producer" in text
+    # 反例的骨架：数据回边 + 修法
+    assert "body->gate" in text
+    assert "required" in lowered
 
 
 # --- 6.1 声明期拒绝不得伤及运行期诊断（Q5：terminal_honesty 改造后仍覆盖） ---
