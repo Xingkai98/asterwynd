@@ -5,9 +5,9 @@
   "verdict": "PASS",
   "reviewer_run_id": "review-fix-issue-191-2026-09-20-r3",
   "base_sha": "eb50f8a04c818c46146b525950c7ad5effb81fde",
-  "head_sha": "8aa544fdabe45021db13a0dcbcafa79523b1570c",
-  "tasks_hash": "sha256:825d9c3c0fe4383a8eced41d0abf5fa460e8a9f230d3a3680793d37945aef807",
+  "head_sha": "25cc8ff4919f251ac1e8da70d886c0b62af1fa16",
+  "tasks_hash": "sha256:14033b6a35b09529a86ee4da44379be5441a9851edaaf13419af79eb8b27d6ab",
   "spec_hash": "sha256:6f612165b8170a38a2bab854cdf0b0050436f2885182f03c82e373fbd3dbacbf",
-  "diff_hash": "sha256:9d85c38dbc83f0a392867dce667919736785f5775d9c51d46e788dc60244abf6",
+  "diff_hash": "sha256:4bc57d5ff0781feede8c7466d55e2ac2d8f864f59c266484e84f655e19639624",
   "report_hash": "sha256:9da3f9e4f0049c3270c185d7f96fdbcfa3c282bd0306b62e5a107ce64ddae447"
 }
