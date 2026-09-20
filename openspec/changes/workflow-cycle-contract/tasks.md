@@ -73,3 +73,17 @@
 - [x] 6.7 `openspec validate --all --strict` + `check_openspec_artifacts.py` 通过
 - [ ] 6.8 建 PR（含归档收尾）；合入后 comment + close #219
 - [ ] 6.9 文档影响检查：扫描 `docs/`、`AGENTS.md`、`CONTEXT.md` 中涉及 workflow DSL / 循环的段落
+
+## 7. 首轮审阅（building-review）修复
+
+首轮独立审阅 verdict = CHANGES_REQUESTED（blocker 1 / major 2 / minor 2 / low 2），全部已处理：
+
+- [x] 7.1 **Issue 1（blocker）**：不动点补 `deadline_fired` 短路——环内 `best_effort` 聚合不得误拒（实跑该图在基线能声明且真循环）
+- [x] 7.2 **Issue 2（major）**：新增 `_route_activators`，把 `cases[].to`/`default` 目标计入激活来源（调度器按 target id 激活、不要求声明边）
+- [x] 7.3 **Issue 3（major）**：报错「waiting on」段排除 route 出边（控制边不门控，照其修改无效——与 Q3「报错必须能引导改正」冲突）
+- [x] 7.4 **Issue 4（minor）**：`_bounded` 统一截断报错列表并注明 `(+N more)`（此前 60 节点环可到 8k+ 字符）
+- [x] 7.5 **Issue 5（minor）**：勾选已完成的任务复选框，让 review 门禁真正咬合
+- [x] 7.6 **Issue 6（low）**：补 6 条用例（best_effort 环 / route 无声明边 / 自环 / 多环并存 / 报错有界 / 不苛责控制边）+ 加严 2 条弱断言（改断言具体节点串）
+- [x] 7.7 **Issue 7（low）**：backlog 同步（随 6.6 移除整条条目）
+- [x] 7.8 变异验证新增 4 条（revert `deadline_fired` / revert route activator / 恢复控制边苛责 / 去掉截断），全部被杀死
+- [x] 7.9 随机图 fuzz 交叉验证：三个种子共 ~155 张被拒图逐个实跑，零误报

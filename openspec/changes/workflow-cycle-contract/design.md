@@ -43,25 +43,33 @@ issue #219 的实测证明：模型按现有提示写循环图会**大概率写�
 **判据**：对每个 SCC（复用既有 `_strongly_connected_components`，迭代式 Tarjan），若分量大小 > 1
 （或自环），**且分量内没有任何节点可派发** → 拒绝。
 
-**「可派发」的定义**（静态复刻 `scheduler.py::_ready_nodes` + `_data_deps_satisfied` + `_is_entry`
-+ `_execute_route`，取**最小不动点**）：
+**「可派发」的定义**（静态**过近似** `scheduler.py::_ready_nodes` + `_data_deps_satisfied`
++ `_is_entry` + `_execute_route` + `_fire_best_effort_deadlines`，取最小不动点）：
 
-节点 `n` 可派发 ⟺
+节点 `n` 可派发，当且仅当下列**任一**成立：
 
-1. `n` 的全部 `required` **数据入边**源头都可派发（`required: false` 的边不参与门控——
-   `_data_deps_satisfied` 对它们 `continue`）；
-2. **且**满足其一：
-   - `n` 是 `entry`（显式 `spec.entry` 或隐式「无任何入边」）；**或**
-   - `n` **没有控制入边**；**或**
-   - `n` 存在一个**可派发**的控制源 route（`_execute_route` 会给被选中的 target `activations += 1`，
-     从而放行 `_ready_nodes` 的 `activations <= 0` 检查）。
+1. **常规路径**：全部 `required` **数据入边**源头都可派发（`required: false` 的边不参与门控——
+   `_data_deps_satisfied` 对它们 `continue`）；**且**控制闸放行：`n` 是 `entry`（显式或隐式
+   「无任何入边」）、**或**它没有控制入边、**或**存在一个可派发的 route 能激活它。
+   「能激活」的真相源是 `_route_activators`：调度器的 `_execute_route` 按 `cases[].to` /
+   `node.default` 的 **target id** 直接 `activations += 1`，**从不检查是否存在声明边**
+   （`_validate_kind_specific` 也只要求目标是已知节点）——所以这两者与「route 的声明出边」
+   一并计入激活来源。
+2. **best_effort 截止路径**：`n` 是 `join == "best_effort"` 且声明了 `deadline_s` 的 aggregate，
+   且它至少有一个数据入边源头可派发——上游一被派发就武装 `n` 的 `deadline_ref`
+   （`_launch_run`），到点后 `_fire_best_effort_deadlines` 置 `deadline_fired`，而 `_ready_nodes`
+   对该标志**直接放行**，连 `activations` 检查都跳过。
 
-不动点从空集开始迭代到不再增长，得到的**最小**可派发集合即「静态可证明能跑起来的节点」。
+不动点从空集开始迭代到不再增长。
 
-> **为什么取最小不动点**：它是「可证明可派发」的最小集合——加进来的每个节点都有完整的理由链
-> （required 数据源都已可派发 + 有启动方式）。因此**拒绝（不动点为空）不会误报**；反之若有节点
-> 真能跑起来，它一定在不动点里（按实际执行顺序归纳）。代价是判据偏**乐观**（控制边假设「route 可能
-> 选中它」）——乐观只会漏报、不会误报，是安全方向。
+> **为什么这个方向是安全的**：判据的用途是**拒绝**（「这个环永远跑不起来」），所以可派发集合必须是
+> 真实可派发节点集的**超集**——多算一个节点只会漏报（少拒一张坏图），少算一个才会误报（拒掉一张
+> 能跑的图）。因此每条规则都取「有可能」的乐观口径（控制边假设「route 可能选中它」、deadline 路径
+> 假设「截止会到」）。
+>
+> **这条安全论证必须逐条覆盖真实派发路径**——本 change 的首轮审阅正是在这里抓到两个误报：
+> 漏掉 `deadline_fired` 短路（best_effort 聚合在环内时误拒）与漏掉 `cases`/`default` 激活
+> （route 目标无声明边时误拒）。新增派发路径时，这里要同步。
 
 **为什么它替换了原来的「环内无产出节点」**：产出节点（`subagent` / `aggregate(strategy="llm")` /
 `foreach`）**既非必要条件也非充分条件**——实测（`reviews/grill-design.md` 的决策 4 与 Q1 场景）：
@@ -131,8 +139,13 @@ D4 是**预防**。两者互补。
 | 要素 | 内容 |
 |---|---|
 | **哪个环** | 环的成员节点 id（有界列出，超出截断并注明还有几个） |
-| **缺什么** | 逐条「谁在等谁」：`'body' waits for required data from 'cycle_gate' (same cycle)`、`'gate' is only activated by route '...'` |
+| **缺什么** | 逐条「谁在等谁」——**只列 required 数据边**（即 `data_incoming`，**排除 route 出边**）：`'cycle_gate' waits for required data from 'body' (same cycle)`；以及 `'body' is not an entry: it can only be activated by route(s) [...], which cannot run either` |
 | **怎么改** | 可照做的动作：对同环 `required` 数据边点名建议 `"required": false`；或「给环加一个能自己启动的节点（required 输入来自环外；若还有 route 指向它，要列进 `spec.entry`）」；或「把环的一条边挪到环外」 |
+
+> **口径必须与门控真相源一致**（首轮审阅 Issue 3）：把 `route` 出边说成「required 数据等待」是
+> 假话——`route` 出边是控制边、不参与门控，模型照该条去加 `"required": false` **没有任何效果**
+> （实测：照做后图仍被拒）。这正是 `workflow-terminal-honesty` 立下的「答错比答不出更糟」标准
+> 要消灭的那类文案，故必须排除控制边，并有反向断言锁住。
 
 配套：`_invalid_spec` 对本类错误给**指向性 hint**（而非通用句），说明「返回体里没有 workflow_id，
 请按 reason 的 how-to-fix 改 spec 后重新 Declare」。
@@ -149,7 +162,7 @@ D4 是**预防**。两者互补。
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| **误伤合法图**（判据过严） | **高** | 判据取**最小不动点**（只拒绝可证明跑不起来的环）；官方 4 pattern 全部仍通过（测试锁定）；既有 `tests/agent/subagent/` 全量回归 |
+| **误伤合法图**（判据过严） | **高** | 可派发集取**过近似**（超集才安全）；每条真实派发路径都要复刻进去（首轮审阅已因此抓到 2 个误报）；官方 4 pattern 全部仍通过（测试锁定）；随机图 fuzz 交叉验证（被拒图逐个实跑，看被点名节点是否真的没跑） |
 | 拒绝路径破坏既有测试里的环图 | 中 | 实测爆炸半径 6 条（全在 `test_terminal_honesty.py`，因其**故意**构造死锁图）——按 grill Q5 裁决改为绕过声明期校验、直接构造 `WorkflowSpec`，保住运行期诊断覆盖 |
 | 提示面文案过长挤占工具描述预算 | 低 | grill 实测：仓库**不存在**工具描述长度上限/截断代码（`DeclareWorkflow` 现 489 字符，`GetWorkflow` 644）；仍用最小示例控制长度 |
 | 模型绕过校验（直接构造 spec） | 低 | 声明期校验在 `parse_workflow_spec` 内，所有入口共用；测试里的绕过是**测试专用**的（用解析 helper 直接构造对象），不新增公开旁路 |
@@ -173,7 +186,11 @@ D4 是**预防**。两者互补。
 - 回边从 route 出发（控制边，peer-review 形态）→ **通过**
 - 回边 `required: false` 且环能启动 → **通过**
 - 环外节点 `required` 数据边喂进环、环内无 entry → **拒绝**
+- **环内有 `best_effort` 聚合**（`deadline_fired` 短路会让它真被派发）→ **通过**（首轮审阅 Issue 1）
+- **route 的 `cases`/`default` 指向环内节点但无声明边** → **通过**（首轮审阅 Issue 2）
+- 自环 route（能自启动）→ **通过**；多个环并存、只有一个跑不起来 → **拒绝且只点名那个环**
 - 报错三要素（哪个环 / 缺什么 / 怎么改）逐条断言，并用「模型视角」核对能否据此改对
+- 报错**不得**把控制边说成 required 数据等待；大环的报错**必须有界**并注明 `(+N more)`
 
 **回归红线**：
 
@@ -195,9 +212,12 @@ D4 是**预防**。两者互补。
 - **删掉 `required` 判断**（把 `required: false` 的边也当门控边）→ 带 `required: false` 回边的合法环
   被误拒 → 应被「回边 `required: false` 通过」这条测试抓住
 - **删掉「是 entry」分支** → `peer-review` 的 `producer` 不再可派发 → 应被官方 pattern 回归抓住
-- **把不动点改成「任一节点可派发即整个 SCC 通过」之外的形式**（如只看环内有无 subagent）→ 应被
-  grill Q1 场景（环内有两个 subagent 但互等）抓住
-- **去掉 `waiting on` / how-to-fix 段落** → 应被报错三要素测试抓住
+- **把不动点退化成「环内有无 subagent」** → 应被 grill Q1 场景（环内有两个 subagent 但互等）抓住
+- **删掉 `deadline_fired` 短路** → `best_effort` 环被误拒 → 应被 best_effort 用例抓住（首轮审阅 Issue 1）
+- **删掉 `cases`/`default` 激活来源** → route 目标无声明边的图被误拒 → 应被 Issue 2 用例抓住
+- **恢复控制边苛责**（waiting 段不排除 route 出边）→ 应被「不苛责控制边」的反向断言抓住（Issue 3）
+- **去掉 `_bounded` 截断** → 大环报错超长 → 应被「报错有界」用例抓住（Issue 4）
+- **去掉 how-to-fix 段落** → 应被报错三要素测试抓住
 
 ### 全量
 
@@ -210,11 +230,16 @@ D4 是**预防**。两者互补。
 
 | 落点 | 文件:符号 | 说明 |
 |---|---|---|
-| 新校验 | `workflow.py::parse_workflow_spec` 的校验段（与 `_validate_cycles` / `_validate_foreach_source_cycles` 并列，置于其后） | 复用 `_strongly_connected_components` |
+| 新校验 | `workflow.py::_validate_cycle_can_start`，由 `workflow.py::parse_workflow_spec` 调用 | 复用 `_strongly_connected_components` |
+| 不动点 | `workflow.py::_dispatchable_nodes` + `workflow.py::_route_activators` | 过近似真实派发规则（见 D1） |
 | 新异常 | `workflow.py::WorkflowCycleError`（`WorkflowValidationError` 子类） | 让 `_invalid_spec` 能给指向性 hint |
 | 复用 | `workflow.py::_strongly_connected_components` | 既有迭代式 Tarjan，**不改** |
 | 提示面 | `agent/tools/builtin/subagents.py::_invalid_spec` + `DeclareWorkflowTool` 描述 | hint + 文案 |
 | 测试改造 | `tests/agent/subagent/test_terminal_honesty.py` | 绕过声明期校验、直接构造 `WorkflowSpec`（grill Q5） |
+
+> **落点与调用顺序**：新校验由 `parse_workflow_spec` 在校验段的**最后**调用——在全量既有校验
+> 与 `entry`/`terminal` 解析**之后**，因为判据要用含隐式推导的最终 entry 集。既有报错优先级
+> 未被改写：无 route 的环仍由 `_validate_cycles` 先报（实测确认）。
 
 **受保护路径**：`openspec/specs/**`、`docs/openspec-change-backlog.md` 的改动需 `workflow-events.jsonl`
 结构化解释事件。
