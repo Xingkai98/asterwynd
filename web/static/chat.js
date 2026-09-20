@@ -23,6 +23,9 @@ function createTab(tabId, sessionId, workspace, mode) {
     shouldReconnect: true,
     slashMatches: [],
     activeSlashIndex: 0,
+    // 该 tab 输入框失焦后挂起的「延迟收起」定时器句柄。归属到 tab（而不是全局）
+    // 才能保证回调只影响它自己的建议列表 —— issue #191 的根因就是这个动作没有归属。
+    blurHideTimer: null,
     inFlight: false,
     uploadWaiters: new Map(),
     pane: null,
@@ -153,14 +156,46 @@ function buildTabPane(tab) {
     tab.imageFileInput.value = '';
   });
   tab.inputEl.addEventListener('input', () => { switchTab(tab.id); updateSlashSuggestions(); });
-  tab.inputEl.addEventListener('blur', () => { setTimeout(hideSlashSuggestions, 100); });
+  // 延迟收起（100ms 宽限窗，保留既有语义：失焦后极短时间内点回输入框不算数）。
+  // 关键：收起动作必须**归属到本 tab**。hideSlashSuggestions 走的是「当前 active
+  // tab」的全局代理，而无归属的回调会在触发时刻读到别的 tab —— 于是 A tab 的失焦
+  // 会收掉 B tab 的建议（issue #191 的跨 tab 泄漏）。两道守卫：
+  //   1. 失焦的不是当前 tab → 不归我管（异步回调期间 active 可能已经变了）；
+  //   2. 焦点已经回到本 tab 的输入框 → 收起与用户当前状态矛盾。
+  tab.inputEl.addEventListener('blur', () => {
+    if (tab.blurHideTimer) clearTimeout(tab.blurHideTimer);
+    tab.blurHideTimer = setTimeout(() => {
+      tab.blurHideTimer = null;
+      if (getActiveTab() !== tab) return;
+      if (document.activeElement === tab.inputEl) return;
+      hideSlashSuggestions();
+    }, 100);
+  });
   tab.inputEl.addEventListener('keydown', (e) => {
     switchTab(tab.id);
     const suggestions = tab.slashSuggestionsEl;
     if (suggestions && !suggestions.hidden) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashSelection(1); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); moveSlashSelection(-1); return; }
-      if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); applySlashSuggestion(activeSlashIndex); return; }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        // 列表可见时 Enter 的含义，按「应用建议项会不会改变输入」分两种：
+        //   - 会改变（如 /mode → '/mode '，带 argument_hint 的补全）：沿用自动补全的
+        //     既有语义，接受补全。用户再按一次 Enter 即发送。
+        //   - 不会改变（如 /status → '/status'，insert_text 与输入完全相同）：应用它
+        //     是**空操作**，只会顺手吞掉这次发送。此时 Enter 的意图只能是发送。
+        // 为什么需要后一条：列表可见本身不表示用户想选它 —— 切换标签页的收敛也会让
+        // 列表重新可见（见 switchTab 的收敛分支），而用户此前可能已按 Escape 收起过它。
+        const picked = slashMatches[activeSlashIndex];
+        const insertText = picked ? (picked.insert_text || picked.command) : null;
+        if (e.key === 'Enter' && !e.shiftKey
+            && (insertText === null || userInput.value === insertText)) {
+          sendMessage();
+          return;
+        }
+        applySlashSuggestion(activeSlashIndex);
+        return;
+      }
       if (e.key === 'Escape') { e.preventDefault(); hideSlashSuggestions(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -279,11 +314,22 @@ function switchToWorkflowView() {
 function switchTab(tabId) {
   const tab = tabs.get(tabId);
   if (!tab) return;
+  // 「是不是真的从别的 tab 切过来」。收敛只对真正的切换生效：inputEl 的
+  // keydown/input 处理器也会调 switchTab(tab.id)（已是当前 tab），那种调用
+  // 不是切换，不能借机把建议列表重新展开 —— 否则 Escape 收起后按 Enter 会被
+  // 重新展开的列表劫持成「应用建议项」，消息永远发不出去（issue #191）。
+  const wasActive = activeTabId === tabId;
   syncActiveTab();
   for (const t of tabs.values()) {
     if (t.pane) t.pane.classList.toggle('active', t.id === tabId);
   }
   bindActiveTab(tab);
+  if (!wasActive) {
+    // 切回本 tab：取消切走时挂起的收起动作（否则「切走又立刻切回」会被自己的
+    // 定时器收掉），并让可见性收敛到「由本 tab 输入内容决定」的状态。
+    if (tab.blurHideTimer) { clearTimeout(tab.blurHideTimer); tab.blurHideTimer = null; }
+    if (slashSuggestionsEl.hidden) updateSlashSuggestions();
+  }
   if (window.AsterwyndWorkflow) window.AsterwyndWorkflow.bindTab(tab);
   showView('chat');
 }
@@ -291,6 +337,9 @@ function switchTab(tabId) {
 function closeTab(tabId) {
   const tab = tabs.get(tabId);
   if (!tab) return;
+  // 已关闭 tab 的挂起收起动作不应再触发（其 DOM 已移除）。blur 回调自身也有
+  // active 归属守卫，这里显式清理是为了不留下无主的定时器。
+  if (tab.blurHideTimer) { clearTimeout(tab.blurHideTimer); tab.blurHideTimer = null; }
   if (tab.ws) {
     tab.shouldReconnect = false;
     try { tab.ws.close(); } catch (e) { /* ignore */ }
