@@ -81,6 +81,12 @@ change 文档、仓库代码与**我自建的 playwright 探针实测输出**。
   - **选法二**：主张 bugfix 已有 design.md 就够、诊断章节冗余，走结构关键词理由申请豁免。**注意**：实测 checker 对该路径**没有豁免分支**（`if all_types & DIAGNOSIS_TYPES` 无条件要求文件），选法二需要先改 checker，属于扩大本 change 范围。
   - 需要你确认的是「按选法一补文档」还是「认为门禁该松、另开 issue 治理」。
 
+## User Confirmation
+
+- **Q1**: 用户答复：**选「弹回来」**——即「可见性由该 tab 输入内容唯一决定」这条语义**覆盖**用户的主动收起。用户操作序列为：敲 `/s` → 点消息区空白处把列表收掉 → 切到另一个 tab 再切回 → 列表**重新出现**（因输入框仍为 `/s`）。同理，从列表里点选某个命令（输入框留下完整命令、列表收起）后切走再切回，列表也重新出现。接受该语义的代价：不引入 `userDismissed` 标志、不做「主动收起 vs 切换顺带收起」的区分，实现与测试面保持最小。；确认时间: 2026-09-20
+- **Q2**: 用户答复：**选「先判断是不是真换了 tab」**——`switchTab` 记录调用前的 `wasActive = activeTabId === tabId`，**仅当 `!wasActive`**（即确实从别的 tab 切过来）才执行收敛（取消挂起定时器 + 按输入内容重算）。这样 `inputEl` keydown 处理器开头的 `switchTab(tab.id)`（调用时 `wasActive === true`）不会复活列表，`Escape` 后的 `Enter` 正常发送消息。用户已看过两方案的具体交互对照（线上发 2 条 / 朴素写法只发 1 条 / 本修法恢复 2 条）后选定。；确认时间: 2026-09-20
+- **Q3**: 用户答复：**选「补齐文档，按门禁走」**——补 `diagnosis.md`（6 章：Symptom / Reproduction / Evidence / Root Cause / Recommended Direction / Regression Tests，素材从已有 proposal/design 的根因分析与探针实测数据整理）并在 `tasks.md` 增加 current spec 同步任务（含「当前规格」+ `openspec/specs` 字样）。两项均已落实，`check_openspec_artifacts.py` 与 OpenSpec strict validate 现均通过。；确认时间: 2026-09-20
+
 ## 风险
 
 - **R1（必须改）**: `diagnosis.md` 缺失 → `check_openspec_artifacts.py` 硬失败。这是 CI 门禁项（AGENTS.md「baseline CI 门禁包含…项目 artifact checker」），PR 前必过。处置：见 Q3。

@@ -158,12 +158,14 @@ B 为 `hidden=false`。该场景是真实操作（误点空白后马上回来继
 | spec Scenario 3 不可证伪 | 关闭 tab 的挂起回调只写到自身 detach 元素，ORIG 与 B 均不违反（grill R5 插桩实测） | 已改写为可证伪断言，见 spec delta |
 | 该假设被其它浏览器测试共享 | 别的测试可能压在同一竞态上 | 跑全量 `tests/web_tests/` |
 
-## Open Questions
+## 用户已拍板（grill 停轮确认，记录见 `reviews/grill-design.md` 的 `## User Confirmation`）
 
-1. **「可见性由输入内容唯一决定」是否要覆盖「用户主动收起」？**（决定 c3/c4 行为变更是否算 bug；
-   选「不覆盖」需在 tab 上多记一个 `userDismissed` 位。）
-2. **Escape→Enter 回归的修法**：区分调用来源（D1b）还是改成纯「空匹配→非空匹配」的函数式判定？
-3. **`diagnosis.md` 与 spec-sync 任务**：按门禁要求补齐，还是主张该门禁对 bugfix 过严、另开 issue？
+1. **「可见性由输入内容唯一决定」覆盖「用户主动收起」**——切走再切回时按输入内容重算，
+   列表重新出现。**不做** `userDismissed` 区分：不引入「主动收起 vs 切换顺带收起」的分支，
+   实现与测试面保持最小。（D1 的收敛语义即此，无需改动。）
+2. **Escape→Enter 回归采用 D1b**：`switchTab` 只在 `!wasActive`（确实从别的 tab 切过来）
+   时收敛，keydown 代理触发的同 tab `switchTab` 不收敛。
+3. **门禁补齐**：补 `diagnosis.md` + tasks 的 current spec 同步任务（已落实）。
 
 ## Pre-Implementation Review
 
