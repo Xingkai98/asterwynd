@@ -150,3 +150,23 @@
 ### 第十三批：多 Agent 运行态可视化（wayfinder #170 的观测面 follow-up）
 
 - `workflow-graph-visualization`（issue #189）：**已合入归档 2026-09-15**。多 Agent 运行态流程图可视化（模型触发 StartWorkflow/RunWorkflow 时自动显示图，节点七档状态高亮 + 边五档状态 + route 控制边单列；桌面横向 DAG / 手机纵向 DAG，pinch 缩放 + pan 平移，复用 720/380 断点）。实现要点：**数据面**——scheduler 新增独立 `workflow_graph_snapshot()`（`scheduler.py:2199-2249`），基于运行期 `ExecutionPlan`（含自动插层 + foreach 展开）输出完整 nodes + edges + 每节点/每边 status，**不动** `_envelope`/`parent_envelope` 父 Agent 数据契约（逐字节未变，回归 `test_snapshot_does_not_drift_envelope_contract`）；节点投影走显式挑字段（`_graph_node_projection`，不复用 `NodeState.to_dict()`，排除 `subagent_ids`/`slots`/`raw`/`error`/`verdict`，`summary` 截断 400），边界白名单断言严格（`SNAPSHOT_NODE_KEYS`/`SNAPSHOT_EDGE_KEYS`）。**状态语义**——节点七档 = `_SNAPSHOT_TERMINAL_STATUSES` + `started`/`pending`，与 scheduler 终态集合对齐；边五档 inactive/ready/active/passed/blocked（`_edge_status` 优先级链），`passed` 是 per-edge 记账、加在三个消费循环的 `_mark_consumed` **旁**（`_mark_consumed` 本体未改 → `_consumed_run_ids` 基数与 C5 有用产出口径逐位不变）；route 控制边 `kind: "control"` 单列、只高亮 `targets` 实际选中出口、容忍 `_reset_subtree` 清空 targets 的瞬时态；channel 用线型区分（summary/result_ref 实线、artifact 虚线、bus 点线）。**事件通道**——触发点在 `scheduler.run()` 的 `_record_event("workflow_started")` hook（**不是**工具层：工具只持有 `SubAgentManager` 拿不到 session sink；`DeclareWorkflow` 只注册不 `run()` 天然零事件），六处节点迁移点推快照（`_dispatch`/`_run_node` 终态/`run()` 启动收尾/`_mark_budget_stop`/`_mark_graph_recursion_exceeded`/`cancel()`）；出口是 session 级、跨 run 存活的 manager sink → `web/session.py` forwarder → WebSocket（`workflow_started`/`workflow_snapshot`），按 100ms 时间窗按 workflow 合并、终态立即发；重连经 `build_workflow_resume_payloads` 按 `started` property 过滤 declared、补发 running + 最近 5 张终态，`bind_workflow_graph_channel` **先补发再 rebind**；快照推送失败（ws 已断）不影响 workflow 执行状态或节点终态（三层隔离测试）。**前端**——`#workflow-tab`/`#workflow-view` 在 debug 门禁外，零依赖 SVG 自绘（`workflow_graph.js` 分层布局），`chat.js` 由 `workflow_started` 自动跳转；规模分级 <50 全展开 / 50–200 折叠 foreach（组状态聚合，点击展开）+ `__auto_agg__` 自动插层 / >200 不按 `nodes.length` 判断而只看 `status === 'graph_recursion_exceeded'` 且超限不画图（声明期被拒无 scheduler 无图）。**跨端**——>720 横向 / <720 纵向 DAG（`graphOrientation`），pointer events + viewBox transform 实现 pinch 缩放 + pan 平移，复用既有 720/380 断点 + safe-area，不加新断点；CI 加装 Playwright chromium 真跑浏览器 smoke（`test_workflow_graph_browser.py` 此前恒 skip）。spec delta 5 个 ADDED Requirement 已同步进 `openspec/specs/web-ui/spec.md:475-544`（相对 delta 有三处经 grill Q5/Q10/Q11 确认的口径补强：快照显式挑字段、session 级跨 run 事件出口 + 100ms 合并、推送失败不影响执行）。依赖 C2 的 ExecutionPlan 运行期图数据 + C5 的观测口径。building 审阅闭环 3 轮封顶内收敛、最终 verdict = **PASS**（reviewer run `review-workflow-graph-visualization-20260915-r3`，report 已绑定 review manifest），逐轮修掉 4 个缺陷：折叠组点击无法展开、折叠组聚合状态词表外、pan-after-pinch 手势 capture 未按指针记账、`cancel()` 把「只声明未启动」的图误标为已运行（C5 观测回归）。
+
+### 第十七批：模型面子 agent 文本一律 bounded（issue #213）
+
+- `fix-issue-213-transcript-item-bound`（issue #213）：**未实现**。模型面出现的子 agent 文本**单条无上限**——
+  HTTP 路由那条路截到 4000，模型面这条无界；同一份 inspect 结果两面口径不一致（与 #212 同根）。
+  实测：子 agent 输出 30000 字 → 工具返回 30000 字、无截断标记。排查后**范围比 issue 标题更大**，
+  共 4 个无界出口（实测确认）：(1) `InspectSubagentTranscript` 的 `content`/`summary`；
+  (2) **`GetSubagentRun`** 的 `to_result_dict()["summary"]` 是全文——而这是「取子 agent 结果」的默认
+  方式，很可能是最常被踩到的那个；(3) `RunSubagent`/`CancelSubagentRun`（同走 `_format_run_envelope`）；
+  (4) `RunPattern`（N 个 worker × 全文拼接，一次调用放大 N 倍）。**讽刺之处**：`to_result_dict()` 已经
+  同时提供 `bounded_summary`（裁剪早就算好了），只是模型面消费的是全文那一份——不是「少了功能」，
+  是「算好了没用」。**顺带发现的确定性假话**：`_bounded_summary` 截断后追加
+  「…[truncated; full result in result_ref]」，但无 workflow 身份时 `result_ref` 是 `None`（全文根本没
+  落盘），实测确认同一条记录里两者自相矛盾；一旦把 `bounded_summary` 接进更多出口，假话会从 1 处扩散到
+  4 处。修复方向：inspect 两个 scope 加单条内容上限（与 HTTP 面同数 4000）+ 布尔截断标志；
+  `_format_run_envelope` **默认 bounded**（安全侧默认，调度器显式要全量，因为它要喂 `state.summary`
+  做下游聚合）；`RunPattern` worker 同口径；修截断标记假话；常量改名 `TRANSCRIPT_ITEM_LIMIT`
+  并保留旧名 alias；HTTP 层截断标志改取或（否则生产者截了、路由报「没截断」= 谎报，与 #212 在
+  `arguments` 上修过的是同一 bug 的第二例）。**截断只发生在出口投影**：`run.summary` 保持全文
+  （两条既有测试钉死该不变量）。用户已拍板：4 个出口一起修 / 假话一并修 / 常量改名+alias。
