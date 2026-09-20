@@ -75,6 +75,9 @@ async def _dismiss_suggestions(page, *, frozen=False):
         "document.querySelector('.tab-pane.active .user-input').blur()"
     )
     if frozen:
+        # 假时钟已暂停：推进虚拟时间会**同步**触发挂起的收起动作，下面那句
+        # wait_for_function 于是立刻满足（它是复合检查，不是真的在等）。
+        # 保持它是因为 frozen=False 的调用点仍需要等真实墙钟。
         await _advance_past_grace_window(page)
     try:
         await page.wait_for_function(
@@ -574,6 +577,49 @@ async def test_escape_switch_back_then_enter_still_sends_message(page, seeded_we
         f"（用户消息数 {before} → {before + 1}）；实际 {before} → {after}，"
         f"输入框残留 {remaining!r}。"
         "若未发出，说明「应用一条等于当前输入的建议」这个空操作吞掉了发送。"
+    )
+
+
+@pytest.mark.asyncio
+async def test_hint_command_enter_completes_then_sends(page, seeded_web_server):
+    """带参数提示的命令：列表可见时 Enter 先补全、再按一次才发送（D1c 的有意边界）。
+
+    `/mode` 的 insert_text 是 `/mode `（补一个空格），应用它是**真实补全**而非空操作，
+    所以沿用自动补全的既有语义（Enter = 接受补全）。这与 `/status` 的「空操作 → 直接
+    发送」形成对照，两种行为都是契约的一部分，各自有测试钉住。
+    """
+    await _open_two_tabs_frozen(page, seeded_web_server)
+
+    # 敲出带提示命令的前缀，列表首项即为该命令
+    await page.fill(INPUT_SELECTOR, "/mode")
+    await page.wait_for_selector(".tab-pane.active .slash-suggestions:not([hidden])",
+                                 timeout=BROWSER_TIMEOUT_MS)
+    before = await page.evaluate(
+        "document.querySelectorAll('.tab-pane.active .message.user').length"
+    )
+
+    await page.press(INPUT_SELECTOR, "Enter")
+    await page.wait_for_timeout(600)
+    after_first = await page.evaluate(
+        "document.querySelectorAll('.tab-pane.active .message.user').length"
+    )
+    value = await page.evaluate(
+        "document.querySelector('.tab-pane.active .user-input').value"
+    )
+
+    assert after_first == before, (
+        "列表可见时按 Enter 应接受带参数提示的补全（不发送）；"
+        f"实际用户消息数 {before} → {after_first}，输入框 {value!r}。"
+    )
+    assert value.strip() == "/mode", f"补全后输入框应为 /mode（可带尾随空格）；实际 {value!r}"
+
+    await page.press(INPUT_SELECTOR, "Enter")
+    await page.wait_for_timeout(800)
+    after_second = await page.evaluate(
+        "document.querySelectorAll('.tab-pane.active .message.user').length"
+    )
+    assert after_second == before + 1, (
+        f"补全后再按一次 Enter 应发送消息（{before} → {before + 1}）；实际 {after_second}。"
     )
 
 

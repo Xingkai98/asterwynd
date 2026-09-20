@@ -121,9 +121,24 @@ if (e.key === 'Enter' && !e.shiftKey
 applySlashSuggestion(activeSlashIndex);
 ```
 
-保留 `Tab` / 值为真的 `Enter` 走原有的「应用建议项」语义（那是自动补全的既有行为）。
 判据落在「输入框现有内容」上，而不是「用户是否曾按过 Escape」——后者要在 tab 上多存一个
 状态位，且无法覆盖「输入内容本来就等于某条命令」的其他入口。
+
+**边界（D1c 的有意契约，R3 审阅要求写明）**：判据只覆盖**应用为空操作**的命令。带
+`argument_hint` 的命令（`/mode`、`/skills` → `insert_text = command + ' '`）在**同一路径**上
+仍走「应用建议项」：列表可见时 `Enter` 先把输入补成 `/mode ` 并收起列表，**再按一次**才发送。
+
+这是**有意的**，理由是两种命令在「应用」上的性质不同：
+
+| 命令 | `insert_text` | 应用的效果 | 列表可见时 `Enter` 的含义 |
+|---|---|---|---|
+| `/status`、`/clear` | 与 command 相同 | **什么都不做** | 只可能是发送 → 走 `sendMessage` |
+| `/mode`、`/skills` | command + 空格 | **真实补全**（输入框可见地变化） | 接受补全（自动补全既有语义），再按一次发送 |
+
+即：列表可见时 `Enter = 接受补全` 是自动补全的既有约定；D1c 只对「接受补全是个空操作」这一
+退化情形例外。代价是同一段用户历史（Escape → 切换 → 回归）因命令是否带参数提示而有两种
+交互，**该摩擦已被接受**（非静默数据丢失——输入框变化肉眼可见，且再次 `Enter` 即发出）。
+判据由 `test_hint_command_enter_completes_then_sends` 钉住。
 
 **规格同步**：spec 的 Requirement 第 3 段与 Scenario 4 一并改口径——从「收敛 SHALL NOT 覆盖
 显式收起」（与用户 Q1「弹回来」的拍板自相矛盾）改为「收敛 SHALL NOT 由同标签页按键触发」+
