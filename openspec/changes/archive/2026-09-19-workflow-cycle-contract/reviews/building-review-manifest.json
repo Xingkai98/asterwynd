@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-cycle-contract",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-cycle-contract-20260920-r2",
+  "base_sha": "b0a6604",
+  "head_sha": "a280b83",
+  "tasks_hash": "sha256:873c777b33f2f3ffb949f510a0af3aa521225487bd50341bde688b95034d8be2",
+  "spec_hash": "sha256:b55fcb152278a953cf66a55dc3a39a050eb87311ea0a2a3c05d083263722eee9",
+  "diff_hash": "sha256:5fec29e1437f54f97b62251b457915d4cc91f605dbc729b335e767cff05943d4",
+  "report_hash": "sha256:6f80eb56300498cfc5d2bd687bd2d122dbbf3f514a8cf7484df9e3f5d252a1ff"
+}
