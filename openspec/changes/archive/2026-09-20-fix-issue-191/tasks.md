@@ -30,6 +30,9 @@
 - [x] 测试 fixture 处理 tab id rekey 陷阱：操作前 `wait_for_function` 等到 `.session-tab` 的 id
       不再以 `new-` 开头（否则新测试自身成为新 flake 源）
 - [x] `tests/web_tests/` 浏览器等待加显式超时 + 可读失败信息（回应 issue #191「偶发失败无输出」）
+- [x] 新增 `tests/web_tests/test_python_version_compat.py`：按 `requires-python` 的**最低**
+      版本起子进程解析全仓源码。PR 首轮 CI 因「f-string 里含反斜杠」在 3.11 上 collect
+      失败（本地 3.12 的 PEP 701 允许、无任何提示），该守卫把这类版本差异变成本地可跑断言
 - [x] 变异验证：逐条把实现改回坏版本（无归属 / 无收敛 / 无条件收敛 / 去 activeElement 守卫）
       → 对应测试必须变红 → 还原后变绿
 - [x] 确定性验证：对旧实现连续复跑，**每次得到同一组红灯**（而非「三次里红一次」）

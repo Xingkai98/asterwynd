@@ -141,11 +141,15 @@ async def _show_slash_suggestions(page, text="/s"):
             timeout=BROWSER_TIMEOUT_MS,
         )
     except Exception as exc:  # noqa: BLE001 - 转成可读失败信息
+        # f-string 里不能出现反斜杠（Python < 3.12 的语法限制，CI 跑 3.11），
+        # 所以先求值再插值。
+        active_tab = await page.evaluate(
+            "document.querySelector('.tab-pane.active').dataset.tabId"
+        )
         raise AssertionError(
             f"在输入框填入 {text!r} 后，当前标签页的 slash 建议未在 "
             f"{BROWSER_TIMEOUT_MS}ms 内出现；建议列表状态="
-            f"{await _suggestions_visible(page)!r}，当前 tab="
-            f"{await page.evaluate('document.querySelector(\".tab-pane.active\").dataset.tabId')!r}"
+            f"{await _suggestions_visible(page)!r}，当前 tab={active_tab!r}"
         ) from exc
 
 
