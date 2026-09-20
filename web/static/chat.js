@@ -177,7 +177,23 @@ function buildTabPane(tab) {
     if (suggestions && !suggestions.hidden) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashSelection(1); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); moveSlashSelection(-1); return; }
-      if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); applySlashSuggestion(activeSlashIndex); return; }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        // 「应用」一条已经等于当前输入的建议是**空操作**（如 /status 的 insert_text
+        // 就是 '/status'）。此时按 Enter，用户的意图是发送消息 —— 不能把同一段文本
+        // 重填一遍、顺手把这次发送吞掉。
+        // 列表可见本身不表示用户想选它：切换标签页的收敛也会让列表重新可见
+        // （见 switchTab 的收敛分支），而用户此前可能已经按 Escape 收起过它。
+        const picked = slashMatches[activeSlashIndex];
+        const insertText = picked ? (picked.insert_text || picked.command) : null;
+        if (e.key === 'Enter' && !e.shiftKey
+            && (insertText === null || userInput.value === insertText)) {
+          sendMessage();
+          return;
+        }
+        applySlashSuggestion(activeSlashIndex);
+        return;
+      }
       if (e.key === 'Escape') { e.preventDefault(); hideSlashSuggestions(); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }

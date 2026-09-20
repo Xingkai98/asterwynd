@@ -8,6 +8,7 @@ import socket
 import threading
 import time
 import urllib.request
+from datetime import datetime
 
 import pytest
 
@@ -30,14 +31,23 @@ BROWSER_TIMEOUT_MS = 15000
 
 
 async def _install_fake_clock(page):
-    """装假时钟，把「100ms 宽限窗」交给测试显式推进，彻底去掉墙钟依赖。
+    """装**已暂停**的假时钟，把「100ms 宽限窗」交给测试显式推进，去掉墙钟依赖。
 
-    必须**在导航之前**调用（Playwright 只接管安装之后创建的定时器）。装好之后页面
-    定时器不会自行触发，只能由 `page.clock.fast_forward(ms)` 推进 —— 于是「宽限窗
-    到点了没」变成测试的确定输入，而不是机器负载的函数。这正是 issue #191 的教训：
-    断言跑在定时器之前时，坏实现也能「碰巧通过」。
+    必须**在导航之前**调用（Playwright 只接管安装之后创建的定时器）。
+
+    只调 `clock.install()` 是**不够**的：实测装完后墙钟照常前进、`setTimeout(…, 100)`
+    在真实 100ms 后仍会自行触发 —— 那样测试依旧活在墙钟里，只是多了一个可以加速
+    的通道。真正让「宽限窗到点没」变成确定输入的是 `pause_at`：暂停后页面定时器
+    **只能**由 `fast_forward(ms)` 推进（实测暂停后真实 elapsed 0.6s 不触发、
+    `fast_forward(150)` 才触发）。
+
+    这正是 issue #191 的教训：断言跑在定时器之前时，坏实现也能「碰巧通过」。
+    暂停时钟把这个「之前/之后」变成测试的显式选择，而不是机器负载的函数。
     """
     await page.clock.install()
+    # pause_at 要求目标时刻不在过去（Playwright 内部是 fast-forward-to），用一个
+    # 足够远的未来常量，避免依赖 `datetime.now()` 而引入新的墙钟输入。
+    await page.clock.pause_at(datetime(2099, 1, 1, 12, 0, 0))
 
 
 async def _advance_past_grace_window(page):
@@ -488,6 +498,82 @@ async def test_escape_then_enter_still_sends_message(page, seeded_web_server):
         f"实际 {before} → {after}，输入框残留 {remaining!r}。"
         "若消息未发出，说明 switchTab 的收敛在 keydown 路径上把列表复活、"
         "Enter 被误判为「应用建议项」而吞掉。"
+    )
+
+
+@pytest.mark.asyncio
+async def test_dismissed_suggestions_not_reopened_by_keypress(page, seeded_web_server):
+    """Escape 收起后，**同一标签页内的按键**不得让列表自行重新展开。
+
+    收敛只对「真的从别的 tab 切过来」生效。若收敛无条件执行，keydown 处理器开头的
+    `switchTab(tab.id)`（本来就是当前 tab）会顺手把列表重新展开 —— 用户明明按了
+    Escape 表达「不想从列表里选」，下一次按键列表又冒出来。
+    """
+    await _open_two_tabs_frozen(page, seeded_web_server)
+    await _show_slash_suggestions(page, "/status")
+
+    await page.press(INPUT_SELECTOR, "Escape")
+    await page.wait_for_function(
+        "document.querySelector('.tab-pane.active .slash-suggestions').hidden",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+
+    # 按一个会走 keydown 处理器、但不会改变输入内容的键
+    await page.press(INPUT_SELECTOR, "ArrowDown")
+    await _advance_past_grace_window(page)
+
+    assert not await _suggestions_visible(page), (
+        "Escape 收起后，同一标签页内按键不应让建议列表自行重新展开。"
+        "若列表又可见，说明收敛被无条件执行（keydown 处理器开头的 switchTab "
+        "把「已是当前 tab」的调用也当成了切换）。"
+    )
+
+
+@pytest.mark.asyncio
+async def test_escape_switch_back_then_enter_still_sends_message(page, seeded_web_server):
+    """Escape 收起 → 切走 → 切回（列表按收敛重新出现）→ Enter 仍须发送消息。
+
+    这条路径与上一条**不同**：上一条是同 tab 内 Escape 后直接 Enter（收敛不介入），
+    本条是「收敛把用户已收起的列表重新展开」之后再 Enter。列表重新出现是按输入内容
+    收敛的**预期**结果（用户已拍板「弹回来」），但用户此前的 Escape 表达的是
+    「我不想从列表里选」；此时按 Enter 的意图是发送，不能因为列表恰好又可见
+    就把这次发送吞掉（`/status` 的 insert_text 就是 '/status'，应用它等于什么都没做）。
+    """
+    tab2 = await _open_two_tabs_frozen(page, seeded_web_server)
+    await _show_slash_suggestions(page, "/status")
+
+    # Escape 收起 → 切到 tab1 → 切回 tab2（收敛按输入内容重新展开）
+    await page.press(INPUT_SELECTOR, "Escape")
+    await page.wait_for_function(
+        "document.querySelector('.tab-pane.active .slash-suggestions').hidden",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    await page.click('.session-tab[data-tab-id="aaaa11111111"]')
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active',
+                                 timeout=BROWSER_TIMEOUT_MS)
+    await page.click(f'.session-tab[data-tab-id="{tab2}"]')
+    await page.wait_for_selector(f'.tab-pane[data-tab-id="{tab2}"].active',
+                                 timeout=BROWSER_TIMEOUT_MS)
+    await _advance_past_grace_window(page)
+    assert await _suggestions_visible(page), "前置条件：切回后列表应按输入内容重新可见"
+
+    before = await page.evaluate(
+        "document.querySelectorAll('.tab-pane.active .message.user').length"
+    )
+    await page.press(INPUT_SELECTOR, "Enter")
+    await page.wait_for_timeout(800)
+    after = await page.evaluate(
+        "document.querySelectorAll('.tab-pane.active .message.user').length"
+    )
+    remaining = await page.evaluate(
+        "document.querySelector('.tab-pane.active .user-input').value"
+    )
+
+    assert after == before + 1, (
+        f"切回后列表虽按输入内容重新可见，但按 Enter 的意图是发送消息"
+        f"（用户消息数 {before} → {before + 1}）；实际 {before} → {after}，"
+        f"输入框残留 {remaining!r}。"
+        "若未发出，说明「应用一条等于当前输入的建议」这个空操作吞掉了发送。"
     )
 
 

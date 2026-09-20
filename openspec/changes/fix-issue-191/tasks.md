@@ -56,7 +56,14 @@
       断言落在宽限窗之后；Issue 2（关闭标签页 Scenario 不可证伪）→ 改写为「关闭当前活跃
       标签页后收敛」并补判别测试；Issue 3（宽限窗测试自带墙钟依赖）→ 改同 turn 的
       `blur()`+`focus()`；Issue 5（Scenario 1 两档无覆盖）→ 断言点改为宽限窗之后
-- [ ] Round 2 独立 subagent 审阅（复跑本文件 + ORIG/变异对照）
+- [x] Round 2 独立 subagent 审阅（run `review-fix-issue-191-2026-09-20-r2`）→ **CHANGES_REQUESTED**
+      （R1 的五条修复全部验证成立；R2 新发现一条确定性功能回归）
+- [x] Round 2 修复：跨 tab 收敛路径下 `Enter` 被吞（D1c）——`Enter` 的意图判定从「列表是否
+      可见」改为「应用建议项是否为空操作」；补 `test_escape_switch_back_then_enter_still_sends_message`；
+      spec 第 3 段与 Scenario 4 的口径改写（原文与用户 Q1「弹回来」拍板自相矛盾）；
+      假时钟 docstring 更正为 `pause_at`（实测 `install()` 不冻结墙钟）；
+      `closeTab` 的 `activeTabId` 残留按 R2 建议记入 `docs/known-debt.md`（含结构化事件）
+- [ ] Round 3 独立 subagent 审阅（复跑本文件 + ORIG/变异对照）
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
 
 ## 验证

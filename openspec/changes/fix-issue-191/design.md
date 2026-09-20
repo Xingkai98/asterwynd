@@ -87,6 +87,48 @@ tab.inputEl.addEventListener('keydown', (e) => {
 语义：**收敛是「切换」的语义，不是「keydown 恰好调了 switchTab」的语义**——已经是当前 tab
 时不存在需要收敛的切换。
 
+## 决策 D1c：收敛重新展开的列表不得劫持下一次 `Enter`（R2 审阅发现）
+
+D1b 只堵住了「同一标签页内按键」这条路径。**真正的跨 tab 路径仍在**（R2 审阅实测，3/3 确定性）：
+
+```
+tab2 输入 /status → 按 Escape 收起 → 切到 tab1 → 切回 tab2
+  → 收敛按输入内容重新展开列表（用户已拍板「弹回来」，是预期行为）
+  → 按 Enter
+  → 列表可见，keydown 落入 applySlashSuggestion 分支
+  → 而被选中的 /status 的 insert_text 就是 '/status'：**应用它等于什么都没做**，
+     消息却发不出去（输入框仍留着 /status）
+```
+
+对照组实测（固定版修复前 / ORIG 基线）：
+
+| 实现 | `/status` → Escape → 切走 → 切回 → Enter |
+|---|---|
+| ORIG | 消息正常发出 |
+| 仅 D1b 修正 | **0 条发出**（被吞，3/3 确定性） |
+| 加 D1c | 消息正常发出 |
+
+**修正**：`Enter` 的意图判定不能只看「列表是否可见」，而要看**「应用建议项是不是空操作」**：
+
+```js
+const picked = slashMatches[activeSlashIndex];
+const insertText = picked ? (picked.insert_text || picked.command) : null;
+if (e.key === 'Enter' && !e.shiftKey
+    && (insertText === null || userInput.value === insertText)) {
+  sendMessage();   // 应用它是空操作 → 用户的意图是发送
+  return;
+}
+applySlashSuggestion(activeSlashIndex);
+```
+
+保留 `Tab` / 值为真的 `Enter` 走原有的「应用建议项」语义（那是自动补全的既有行为）。
+判据落在「输入框现有内容」上，而不是「用户是否曾按过 Escape」——后者要在 tab 上多存一个
+状态位，且无法覆盖「输入内容本来就等于某条命令」的其他入口。
+
+**规格同步**：spec 的 Requirement 第 3 段与 Scenario 4 一并改口径——从「收敛 SHALL NOT 覆盖
+显式收起」（与用户 Q1「弹回来」的拍板自相矛盾）改为「收敛 SHALL NOT 由同标签页按键触发」+
+「`Enter` 的意图判定 SHALL 以应用是否为空操作为准」。
+
 ## 决策 D2：`activeSlashIndex` 的重置
 
 `if (hidden) updateSlashSuggestions()` 会把 `activeSlashIndex` 置 0。两种情形：
