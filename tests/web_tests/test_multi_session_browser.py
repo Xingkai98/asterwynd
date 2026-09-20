@@ -29,6 +29,55 @@ SEND_SELECTOR = ".tab-pane.active .send-btn"
 BROWSER_TIMEOUT_MS = 15000
 
 
+async def _install_fake_clock(page):
+    """装假时钟，把「100ms 宽限窗」交给测试显式推进，彻底去掉墙钟依赖。
+
+    必须**在导航之前**调用（Playwright 只接管安装之后创建的定时器）。装好之后页面
+    定时器不会自行触发，只能由 `page.clock.fast_forward(ms)` 推进 —— 于是「宽限窗
+    到点了没」变成测试的确定输入，而不是机器负载的函数。这正是 issue #191 的教训：
+    断言跑在定时器之前时，坏实现也能「碰巧通过」。
+    """
+    await page.clock.install()
+
+
+async def _advance_past_grace_window(page):
+    """把虚拟时间推过 blur 收起动作的 100ms 宽限窗，让所有挂起的收起动作确定性地
+    触发（或确定性地已被取消）。"""
+    await page.clock.fast_forward(500)
+
+
+async def _open_two_tabs_frozen(page, base_url):
+    """同 `_open_two_tabs`，但先装假时钟 —— 定时器只能由测试显式推进。
+
+    用于「挂起的收起动作是否生效」类断言：把该动作的触发时机从墙钟解放出来，
+    使坏实现确定性变红、好实现确定性变绿（见 `_install_fake_clock`）。
+    """
+    await _install_fake_clock(page)
+    return await _open_two_tabs(page, base_url)
+
+
+async def _dismiss_suggestions(page, *, frozen=False):
+    """让当前 active tab 的输入框失焦并等建议收起（显式收起的确定性写法）。
+
+    ``frozen=True`` 时先推进虚拟时间，让挂起的收起动作确定性地触发。
+    """
+    await page.evaluate(
+        "document.querySelector('.tab-pane.active .user-input').blur()"
+    )
+    if frozen:
+        await _advance_past_grace_window(page)
+    try:
+        await page.wait_for_function(
+            "document.querySelector('.tab-pane.active .slash-suggestions').hidden",
+            timeout=BROWSER_TIMEOUT_MS,
+        )
+    except Exception as exc:  # noqa: BLE001 - 转成可读失败信息
+        raise AssertionError(
+            "输入框失焦后建议列表未收起；可见性="
+            f"{await _suggestions_visible(page)!r}"
+        ) from exc
+
+
 async def _open_two_tabs(page, base_url):
     """打开预置会话 tab1 + 新建 tab2，返回 tab2 的 tab-id。
 
@@ -291,7 +340,7 @@ async def test_multi_tab_slash_suggestion_isolation(page, seeded_web_server):
     时触发，把 tab2 自己的建议收掉（探针实测：0ms 间隔失败、150ms 通过）。
     现在改为**不依赖间隔**：收敛由该 tab 的输入内容决定，interval 取任意值结果一致。
     """
-    tab2 = await _open_two_tabs(page, seeded_web_server)
+    tab2 = await _open_two_tabs_frozen(page, seeded_web_server)
 
     # tab2（active）输 /s：建议只出现在 tab2
     await _show_slash_suggestions(page)
@@ -303,13 +352,21 @@ async def test_multi_tab_slash_suggestion_isolation(page, seeded_web_server):
     assert not await _suggestions_visible(page, '.tab-pane[data-tab-id="aaaa11111111"]'), \
         "切到 tab1 后 tab1 自己的建议不应可见（它没输入过内容）"
 
-    # 切回 tab2：建议仍在。这里**不等待**，即刻意取最短间隔 —— 原实现在此失败。
+    # 切回 tab2，然后**把虚拟时间推过 100ms 宽限窗**再断言。
+    #
+    # 断言必须落在宽限窗之后：切走时 tab2 的输入框失焦挂起了一个收起动作，
+    # 「谁赢」取决于定时器与切回操作的相对顺序。假时钟让这个顺序由测试显式决定
+    # （推进 = 定时器确定性地触发），而不是由两次 click 的墙钟耗时决定。
+    # 若断言提前到定时器之前，无归属的实现（ORIG）也能「碰巧读到可见」而通过 ——
+    # 那正是本轮审阅打回的 Issue 1。
     await page.click(f'.session-tab[data-tab-id="{tab2}"]')
     await page.wait_for_selector(f'.tab-pane[data-tab-id="{tab2}"].active',
                                  timeout=BROWSER_TIMEOUT_MS)
+    await _advance_past_grace_window(page)
     assert await _suggestions_visible(page), (
-        "切回 tab2 后其 slash 建议应仍可见（间隔取最短）。"
-        "若失败，说明可见性仍依赖切走→切回的墙钟间隔（issue #191 的根因）。"
+        "切回 tab2 并越过 100ms 宽限窗后，其 slash 建议应仍可见。"
+        "若失败，说明挂起的收起动作收掉了本 tab 自己的建议"
+        "（issue #191 的根因：收起动作没有归属到触发它的 tab）。"
     )
 
 
@@ -320,7 +377,7 @@ async def test_cross_tab_blur_does_not_hide_active_suggestions(page, seeded_web_
     复现 issue #191 的实现层根因：blur 收起动作读「触发时刻的 active tab」，
     与「哪个 tab 失焦」解耦，于是 tab1 的失焦可以收掉 tab2 的列表。
     """
-    tab2 = await _open_two_tabs(page, seeded_web_server)
+    tab2 = await _open_two_tabs_frozen(page, seeded_web_server)
     await _show_slash_suggestions(page)
 
     # 切到 tab1，在其输入框里输入（让 tab1 拿到焦点、产生属于它的失焦源）
@@ -334,8 +391,8 @@ async def test_cross_tab_blur_does_not_hide_active_suggestions(page, seeded_web_
     await page.wait_for_selector(f'.tab-pane[data-tab-id="{tab2}"].active',
                                  timeout=BROWSER_TIMEOUT_MS)
     await page.click(INPUT_SELECTOR)
-    # 等过宽限期，让 tab1 的挂起定时器确实触发
-    await page.wait_for_timeout(400)
+    # 推进虚拟时间，让 tab1 的挂起定时器确定性触发（而非等墙钟）
+    await _advance_past_grace_window(page)
 
     assert await _suggestions_visible(page), (
         "tab1 的失焦定时器触发时不应收起 tab2 的建议列表 —— "
@@ -350,18 +407,22 @@ async def test_focus_returned_within_grace_window_keeps_suggestions(page, seeded
     用户点开空白处又把焦点移回输入框（在 100ms 宽限窗内），是「误点后马上回来继续
     输入」的真实操作。此时挂起的收起动作不应生效 —— 去掉 activeElement 守卫的实现
     会在这里把列表错误收掉。
+
+    「失焦 → 重新聚焦」在**同一个 JS turn 内**用 DOM API 完成，间隔由浏览器决定
+    （几毫秒），而不是两次 Playwright click 的墙钟间隔 —— 后者的裕度只有几十毫秒
+    （空载约 40–49ms、满负载 51–74ms，而守卫边界是 100ms），会变成又一个时序 flake。
     """
-    await _open_two_tabs(page, seeded_web_server)
+    await _open_two_tabs_frozen(page, seeded_web_server)
     await _show_slash_suggestions(page)
 
-    # 点消息区空白处：真实失焦（非切 tab），挂起收起定时器
-    await page.click(".tab-pane.active .tab-messages")
-    # 在宽限窗内把焦点移回输入框
-    await page.click(INPUT_SELECTOR)
-    await page.wait_for_timeout(300)  # 让挂起的定时器确实触发
+    await page.evaluate(
+        "() => { const el = document.querySelector('.tab-pane.active .user-input');"
+        " el.blur(); el.focus(); }"
+    )
+    await _advance_past_grace_window(page)  # 让挂起的收起动作确实触发
 
     assert await _suggestions_visible(page), (
-        "在 100ms 宽限窗内把焦点移回输入框后，建议列表应保持可见；"
+        "失焦后焦点又回到本 tab 输入框时，建议列表应保持可见；"
         "若被收起，说明 blur 守卫缺少「焦点已回到本 tab 输入框」这一检查。"
     )
 
@@ -373,17 +434,12 @@ async def test_reopened_tab_reevaluates_suggestions_from_input(page, seeded_web_
     这是「归属化但无收敛」与「有收敛」实现之间的唯一区分器之一：
     仅做 blur 归属化的实现会保持收起，本测试必须杀掉它。
     """
-    tab2 = await _open_two_tabs(page, seeded_web_server)
+    tab2 = await _open_two_tabs_frozen(page, seeded_web_server)
     await _show_slash_suggestions(page)
 
     # 显式收起（模拟用户点页面空白处）
-    await page.evaluate(
-        "document.querySelector('.tab-pane.active .user-input').blur()"
-    )
-    await page.wait_for_function(
-        "document.querySelector('.tab-pane.active .slash-suggestions').hidden",
-        timeout=BROWSER_TIMEOUT_MS,
-    )
+    await _dismiss_suggestions(page, frozen=True)
+    assert not await _suggestions_visible(page), "前置条件：建议应已被显式收起"
 
     # 切走再切回：输入框内容仍是 /s，收敛后应重新可见
     await page.click('.session-tab[data-tab-id="aaaa11111111"]')
@@ -392,6 +448,7 @@ async def test_reopened_tab_reevaluates_suggestions_from_input(page, seeded_web_
     await page.click(f'.session-tab[data-tab-id="{tab2}"]')
     await page.wait_for_selector(f'.tab-pane[data-tab-id="{tab2}"].active',
                                  timeout=BROWSER_TIMEOUT_MS)
+    await _advance_past_grace_window(page)
 
     assert await _suggestions_visible(page), (
         "切回 tab2 后建议应按其输入内容（/s）重新判定为可见；"
@@ -441,28 +498,60 @@ async def test_slow_click_then_return_keeps_suggestions(page, seeded_web_server)
     仅做 blur 归属化（无收敛）的实现在此失败：定时器在 switchTab 之前触发，
     此刻 active 仍是原 tab，归属守卫放行 → 列表被收，切回不恢复。
     """
-    tab2 = await _open_two_tabs(page, seeded_web_server)
+    tab2 = await _open_two_tabs_frozen(page, seeded_web_server)
     await _show_slash_suggestions(page)
 
-    # 在 tab1 的 tab 按钮上按下并按住 >100ms 再释放：模拟慢 click
+    # 在 tab1 的 tab 按钮上按下并**保持按住**，其间把虚拟时间推过宽限窗：
+    # 此刻 click 还没发生、active 仍是 tab2，于是挂起的收起动作既通过 active 归属
+    # 守卫、也通过聚焦守卫 → 收掉 tab2 的列表。这就是「仅归属化」实现的缺陷场景。
     tab1_btn = page.locator('.session-tab[data-tab-id="aaaa11111111"]')
     box = await tab1_btn.bounding_box()
     await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     await page.mouse.down()
-    await page.wait_for_timeout(200)  # 超过 100ms 宽限期
+    await _advance_past_grace_window(page)  # 定时器在切换之前触发
     await page.mouse.up()
     await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active',
                                  timeout=BROWSER_TIMEOUT_MS)
 
-    # 切回 tab2：收敛后应可见
+    # 切回 tab2：收敛后应可见（仅归属化的实现会保持收起）
     await page.click(f'.session-tab[data-tab-id="{tab2}"]')
+    await page.wait_for_selector(f'.tab-pane[data-tab-id="{tab2}"].active',
+                                 timeout=BROWSER_TIMEOUT_MS)
+    await _advance_past_grace_window(page)
+
+    assert await _suggestions_visible(page), (
+        "按住标签页按钮越过宽限窗再切走、然后切回 tab2 时，其建议应仍可见。"
+        "若失败，说明实现只做了 blur 归属化、缺少 switchTab 收敛 —— "
+        "收起动作在切换之前触发时归属守卫会放行并收掉列表。"
+    )
+
+
+@pytest.mark.asyncio
+async def test_closing_active_tab_converges_remaining_tab(page, seeded_web_server):
+    """关闭当前活跃 tab 后，被切到的 tab 应重新收敛其建议可见性。
+
+    关闭活跃 tab 会经 `closeTab` → `switchTab(next)`（`chat.js` 的 closeTab）走到
+    收敛路径。这个构造是可证伪的关键：tab2 的建议**已被显式收起**但输入框仍是
+    `/s`，切回它时「按输入内容应当可见」。无收敛的实现会把它留在收起状态。
+    """
+    tab2 = await _open_two_tabs_frozen(page, seeded_web_server)
+
+    # tab2 输入 /s 后**显式收起**（输入框内容仍是 /s）
+    await _show_slash_suggestions(page)
+    await _dismiss_suggestions(page, frozen=True)
+    assert not await _suggestions_visible(page), "前置条件：tab2 的建议应已被收起"
+
+    # 切到 tab1 并关闭它（此刻它是活跃 tab）→ closeTab 会 switchTab 到 tab2
+    await page.click('.session-tab[data-tab-id="aaaa11111111"]')
+    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active',
+                                 timeout=BROWSER_TIMEOUT_MS)
+    await page.click('.session-tab[data-tab-id="aaaa11111111"] .session-tab-close')
     await page.wait_for_selector(f'.tab-pane[data-tab-id="{tab2}"].active',
                                  timeout=BROWSER_TIMEOUT_MS)
 
     assert await _suggestions_visible(page), (
-        "慢 click（按住 >100ms）切走再切回后，tab2 的建议应仍可见。"
-        "若失败，说明实现只做了 blur 归属化、缺少 switchTab 收敛 —— "
-        "定时器在切换前触发时归属守卫会放行并收掉列表。"
+        "关闭活跃 tab 后切到的 tab2 应按其自身输入内容（/s）收敛为建议可见。"
+        "若仍收起，说明切换路径没有做收敛（仅归属化的实现会停在这里）。"
     )
 
 

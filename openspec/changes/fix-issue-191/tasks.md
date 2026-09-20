@@ -13,20 +13,27 @@
 
 ## 测试
 
-- [ ] 改造 `test_multi_tab_slash_suggestion_isolation`：去掉对两次 click 间隔的墙钟依赖，
-      断言「切回后建议可见」，并显式覆盖「间隔短于宽限期」（原失败档位）
+- [ ] 测试装 **playwright 假时钟**（`page.clock.install()` + `fast_forward`），把「100ms 宽限窗
+      是否到点」变成测试的确定输入，而不是机器负载的函数（R1 Issue 1 的根因修复）
+- [ ] 改造 `test_multi_tab_slash_suggestion_isolation`：**断言点落在宽限窗之后**（推进虚拟时间），
+      使其对旧实现确定性变红 —— 断言早于定时器会让坏实现「碰巧通过」（R1 Issue 1）
 - [ ] 新增判别性回归 t_b：**非活跃标签页的失焦不干扰活跃标签页**（对旧实现 100% 失败）
 - [ ] 新增判别性回归 t_c：**收起后切走再切回按输入内容重新判定**（对「归属化但无收敛」失败，
       是 A/half 与 B 的唯一区分器之一）
-- [ ] 新增判别性回归 t_d：**慢 click（mousedown 后按住 >100ms 再释放）后切回**（对「仅归属化」
-      失败，A 的翻转缺陷判别器）
+- [ ] 新增判别性回归 t_d：**按住标签页按钮越过宽限窗再切走、切回**（对「仅归属化」失败，
+      A 的翻转缺陷判别器）
+- [ ] 新增判别性回归：**关闭当前活跃标签页后被切到的标签页按输入内容收敛**（R1 Issue 2
+      把原「关闭标签页」Scenario 从不可证伪改写为可证伪）
 - [ ] 新增回归：**`Escape` 后 `Enter` 仍能发送消息**（对「无条件收敛」实现 100% 失败）
+- [ ] 宽限窗测试用**同一 JS turn 内的 `blur()`+`focus()`**，不用两次 click（后者的墙钟裕度
+      只有几十毫秒，本身就是一类新 flake —— R1 Issue 3）
 - [ ] 测试 fixture 处理 tab id rekey 陷阱：操作前 `wait_for_function` 等到 `.session-tab` 的 id
       不再以 `new-` 开头（否则新测试自身成为新 flake 源）
 - [ ] `tests/web_tests/` 浏览器等待加显式超时 + 可读失败信息（回应 issue #191「偶发失败无输出」）
 - [ ] 变异验证：逐条把实现改回坏版本（无归属 / 无收敛 / 无条件收敛 / 去 activeElement 守卫）
       → 对应测试必须变红 → 还原后变绿
-- [ ] 去 flake 验证：修复后在**同一台机器、同一序列**重复跑 N 次（含 0ms 间隔档）必须全绿
+- [ ] 确定性验证：对旧实现连续复跑，**每次得到同一组红灯**（而非「三次里红一次」）
+- [ ] 去 flake 验证：修复后在**同一台机器、同一序列**重复跑 N 次必须全绿
 - [ ] 回归：`tests/web_tests/` 全量通过
 
 ## 文档
@@ -43,7 +50,13 @@
 
 ## 审阅闭环
 
-- [ ] Round 1 独立 subagent 审阅（`/review-loop`）
+- [x] Round 1 独立 subagent 审阅（`/review-loop`）→ **CHANGES_REQUESTED**
+      （run `review-fix-issue-191-2026-09-20-r1`，报告 `reviews/building-review.md`）
+- [x] Round 1 修复：Issue 1（isolation 测试断言早于定时器，对旧实现只 1/3 变红）→ 假时钟 +
+      断言落在宽限窗之后；Issue 2（关闭标签页 Scenario 不可证伪）→ 改写为「关闭当前活跃
+      标签页后收敛」并补判别测试；Issue 3（宽限窗测试自带墙钟依赖）→ 改同 turn 的
+      `blur()`+`focus()`；Issue 5（Scenario 1 两档无覆盖）→ 断言点改为宽限窗之后
+- [ ] Round 2 独立 subagent 审阅（复跑本文件 + ORIG/变异对照）
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
 
 ## 验证
