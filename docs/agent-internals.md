@@ -979,11 +979,26 @@ def inspect_transcript(self, *, subagent_id, scope="summary"):
     if scope == "summary":
         return {
             "subagent_id": subagent_id, "run_id": run_id, "scope": "summary",
-            "summary": session.runs[-1].summary if session.runs else "",
-            "truncated": ..., "included_tool_results": ...,
+            "summary": ...,            # 按 TRANSCRIPT_ITEM_LIMIT 截断
+            "summary_truncated": ...,  # 单条内容是否被截
+            "truncated": False,        # 条数语义（本分支恒 False）
+            "included_tool_results": ...,
         }
     # scope == "recent_messages" → 返回最后 limit 条（默认 5），默认过滤 tool 结果
+    # 每条带 content / content_truncated（与 arguments 同一上限）
 ```
+
+**模型面单条内容上限**（issue #213）：`arguments` / `content` / `summary` 三者都是「子 agent
+撰写的原始文本」，统一受 `TRANSCRIPT_ITEM_LIMIT`（4000，与 web 路由的
+`TRANSCRIPT_CONTENT_LIMIT` 同值）约束，截断时随文本回流布尔标志。
+
+该上限**固定**、不随 run 预算（`max_tokens`）浮动——后者由发起调用的模型自行设定且无上界
+校验，若上限随其浮动，被检视的子 agent 就能靠调大自己的预算来决定父 agent 收到多少。
+
+`_format_run_envelope` 默认走 bounded（模型面出口），调度器等内部消费显式传
+`full_summary=True` 取全量——聚合器用 `len(merged)` 判断要不要调 summarizer 压缩，提前裁短
+会让它误判「没超预算」而静默跳过压缩。全文始终可通过 `result_ref` / `summary_ref` 按需读取；
+`summary_chars` 给出全文长度，模型据此判断值不值得翻页。
 
 ### 完整生命周期
 
