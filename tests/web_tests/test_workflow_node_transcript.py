@@ -755,6 +755,12 @@ async def test_run_summary_limit_does_not_scale_with_max_tokens(manager):
         f"上限随 max_tokens 放大到 {len(payload['summary'])} 字符 —— "
         "界必须独立于 run 预算，否则子 agent 能自己决定父 agent 收到多少"
     )
+    # **整包断言**（审阅 R1 的 blocker）：只断言某一个键会漏掉同一 payload 里的别的
+    # 键——``bounded_summary`` 当初就是这么漏的（它也随 max_tokens 放大，max_tokens
+    # 够大时就是全文）。这里对**序列化后的整个返回体**断言，任何键再犯都会变红。
+    assert HUGE not in json.dumps(payload, ensure_ascii=False), (
+        "工具返回体里仍含子 agent 全文——换了个键继续泄漏"
+    )
 
 
 @pytest.mark.asyncio
@@ -874,27 +880,51 @@ async def test_truncation_marker_does_not_promise_missing_ref(manager, tmp_path)
 
 @pytest.mark.asyncio
 async def test_worker_entry_summary_is_bounded_and_navigable(manager):
-    """出口 4：``RunPattern`` 的 worker 条目。
+    """出口 4：``RunPattern`` 的 worker 条目（经真实 ``run_pattern`` 路径）。
 
     (a) summary 有上限（N 个 worker × 全文 = 一次调用放大 N 倍）；
-    (b) 条目必须**带 result_ref**——否则它说「全文在 result_ref」而模型拿不到该 ref，
-        等于在出口 4 复制本 change 正要消灭的假话。
+    (b) 条目**无条件带 result_ref**——模型的认知是「被裁过就能按 ref 取全文」，
+        若条目没带该字段，模型按图索骥会扑空，等于在出口 4 复制本 change 正要消灭的假话。
+
+    经由 ``run_pattern`` 而非直调 ``_worker_entry``：后者会绕过
+    ``_legacy_result`` 的拼接路径，中途任何一环改写都测不到（审阅 R1 Issue 6）。
     """
     from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+    from agent.subagent.patterns import run_pattern
 
     manager.llm = _HugeOutputLLM()
-    scheduler = _scheduler(manager, _single_spec())
-    await scheduler.run(scheduler.spec)
+    result = await run_pattern(manager, pattern="orchestrator-worker", task="t")
+    workers = result.get("workers") or []
+    assert workers, f"没拿到 worker 条目：{list(result)}"
 
-    from agent.subagent.patterns import _worker_entry
-    run = manager.find_run(scheduler._states["a"].subagent_id,
-                           scheduler._states["a"].run_id)
-    entry = _worker_entry(scheduler._states["a"].subagent_id, run)
-
-    assert len(entry["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
-        f"worker summary 无界：{len(entry['summary'])} 字符"
-    )
-    if "result_ref" in entry["summary"]:
-        assert entry.get("result_ref"), (
-            "条目声称「全文在 result_ref」却没带该字段——模型拿不到它"
+    for entry in workers:
+        assert len(entry["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
+            f"worker summary 无界：{len(entry['summary'])} 字符"
         )
+        if entry.get("summary_truncated"):
+            # 被裁过就必须能导航到全文——这是 (b) 的可判别形式（无条件断言，
+            # 不再用「如果 summary 里有字样」那种恒真的条件）。
+            assert "result_ref" in entry, (
+                "条目被截断却没带 result_ref——模型拿不到全文，成了空头承诺"
+            )
+    assert HUGE not in json.dumps(result, ensure_ascii=False), (
+        "RunPattern 返回体里仍含 worker 全文"
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_entry_without_workflow_identity_does_not_lie(manager):
+    """无 workflow 身份的 run（全文未落盘）：条目不得声称「全文在 X」。
+
+    与上一条互补——上一条锁「有 ref 时必须给」，这条锁「没有 ref 时不说谎」。
+    """
+    from agent.subagent.patterns import _worker_entry
+    from agent.subagent.manager import SubagentRunRecord
+
+    run = SubagentRunRecord(run_id="r", task="t", status="completed", summary=HUGE)
+    entry = _worker_entry("s", run)
+
+    assert entry.get("result_ref") is None, "构造前提：该 run 没有落盘引用"
+    assert "result_ref" not in json.dumps(entry, ensure_ascii=False), (
+        "没有落盘引用却提 result_ref——模型按图索骥会扑空，是一句假话"
+    )

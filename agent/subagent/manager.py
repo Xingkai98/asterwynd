@@ -59,10 +59,16 @@ def _bounded_summary(
     声称「full result in result_ref」是一句**假话**——读者按图索骥会扑空。
     调用方必须如实传入，不能读 ``run.result_ref`` 属性推断（见
     ``_write_result_artifacts`` 的赋值顺序陷阱：那里 ref 在调用**之后**才写回）。
+
+    预算**上限钉死**在 ``TRANSCRIPT_ITEM_LIMIT``（issue #213）：``max_tokens`` 是 run
+    预算、由发起调用的模型自设且无上界校验，若预算随它无限放大，这个「bounded」字段
+    本身就是一条无界通道——它和 ``summary`` 在同一个返回体里，只修后者等于没修
+    （审阅 R1 的 blocker：``max_tokens=500000`` 时它返回 30000 字全文）。
     """
     budget_chars = BOUNDED_SUMMARY_CHARS
     if max_tokens:
         budget_chars = max(budget_chars, max_tokens * 4)
+    budget_chars = min(budget_chars, TRANSCRIPT_ITEM_LIMIT)
     if len(text) <= budget_chars:
         return text
     marker = (
@@ -216,7 +222,10 @@ class SubagentRunRecord:
             "run_id": self.run_id,
             "status": self.status,
             "summary": self.summary,
-            "summary_chars": len(self.summary),
+            # 命名带 ``full_`` 前缀以消歧（审阅 R1 Issue 5）：模型面出口的 ``summary``
+            # 会被裁短，而同 payload 的这个数是**全文**长度——不写清楚极易被读成
+            # ``len(summary)``。模型据此判断「被裁掉多少、值不值得按 ref 翻页」。
+            "summary_full_chars": len(self.summary),
             "bounded_summary": _bounded_summary(
                 self.summary, self.max_tokens, has_ref=bool(self.result_ref or self.summary_ref)
             ),

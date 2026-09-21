@@ -21,7 +21,7 @@
       **补 `result_ref` 字段**，否则条目说「全文在 result_ref」而模型拿不到该 ref（Q5）
 - [x] `agent/subagent/manager.py`：`_bounded_summary` 截断标记只在**确有 ref** 时提「全文在 X」，
       否则只说已截断（D4）；落盘调用点**显式传**「有 ref」，不读属性（D3b 顺序陷阱）
-- [x] `agent/subagent/manager.py`：`to_result_dict()` 增 `summary_chars`（原有长度），
+- [x] `agent/subagent/manager.py`：`to_result_dict()` 增 `summary_full_chars`（**全文**长度，与出口被裁短的 `summary` 消歧），
       让模型知道被裁了多少、值不值得翻页（Q3）
 - [x] `web/session.py`：`content_truncated` 改为**取或**（与 `arguments_truncated` 对称），
       并透传上游标志（D7）；同步 docstring 与常量注释

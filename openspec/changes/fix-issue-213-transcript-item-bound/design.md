@@ -219,7 +219,7 @@ to_result_dict() → "summary": self.summary              # 全文
 的字面范围内。
 
 **用户已拍板（Q2）：本 change 不纳入 bus，但措辞必须如实。** 原 Non-Goal 那句
-「bus 已有各自的 bounded 口径」是**假话**，已删除；改为下面的如实描述，并另立 issue 跟踪
+「bus 已有各自的 bounded 口径」是**假话**，已删除；改为下面的如实描述，并另立 issue **#224** 跟踪
 （对应 codex 建议的 PR2）。本 change 的标题承诺相应收敛为
 「**结果出口**的模型面文本一律 bounded」。
 
@@ -248,7 +248,7 @@ to_result_dict() → "summary": self.summary              # 全文
 本 change 聚焦 PR1（4 个结果出口）；bus 另立 issue。（见「明确不做」节已改写。）
 
 **Q3｜要不要给「被截掉多少」的元数据 → 给。**
-只给布尔时模型不知道被裁了 28000 字，可能误判「这就是全部」。补 `summary_chars`（原有长度），
+只给布尔时模型不知道被裁了 28000 字，可能误判「这就是全部」。补 `summary_full_chars`（全文长度），
 让模型能判断值不值得翻页。
 
 **Q4｜UI 是否提示 content 截断 → 补。**

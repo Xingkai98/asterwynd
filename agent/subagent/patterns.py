@@ -364,7 +364,12 @@ def _worker_entry(subagent_id: str, run: Any) -> dict:
     }
     if truncated:
         entry["summary_truncated"] = True
-        entry["result_ref"] = getattr(run, "result_ref", None)
+        # 只在**确有**引用时才放这个键。放一个值为 ``None`` 的 ``result_ref``
+        # 同样是在承诺「全文在那」，而模型按图索骥会扑空——那就是本 change 要
+        # 消灭的那句假话换了个形式。
+        ref = getattr(run, "result_ref", None)
+        if ref:
+            entry["result_ref"] = ref
     return entry
 
 

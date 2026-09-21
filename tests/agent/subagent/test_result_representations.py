@@ -92,7 +92,7 @@ async def test_three_representations_are_distinct(manager):
     )
     assert LONG not in json.dumps(run_envelope)
     assert run_envelope["summary_truncated"] is True
-    assert run_envelope["summary_chars"] == len(LONG), (
+    assert run_envelope["summary_full_chars"] == len(LONG), (
         "被裁掉多少要如实给出，模型才知道值不值得翻页"
     )
     # 全量仍可显式取得——调度器等内部消费走这条（否则聚合会静默跳过压缩）。

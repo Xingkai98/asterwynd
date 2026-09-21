@@ -165,3 +165,38 @@ async def test_non_workflow_run_writes_no_refs(tmp_path):
     assert result["summary"] == "plain"
     assert result["result_ref"] is None
     assert result["artifact_refs"] == []
+
+
+@pytest.mark.asyncio
+async def test_artifact_summary_ref_is_navigable(tmp_path):
+    """落盘的 ``summary_ref`` 必须**带导航**（说得出全文在哪）。
+
+    审阅 R1 Issue 4：``_write_result_artifacts`` 里 ``_bounded_summary`` 的调用发生在
+    ``run.result_ref = ...`` **之前**——若实现改成读属性（``has_ref=bool(run.result_ref)``），
+    此刻恒为 ``None``，落盘件会**永远**只说「已截断」而不给导航，且没有任何测试会变红。
+    这条钉住「确有落盘时就要给出可导航的标记」。
+    """
+    long_text = "x" * 5000
+    manager = SubAgentManager(
+        llm=StaticLLM(long_text),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BUILD,
+        workspace_policy=WorkspacePolicy(workspace_root=tmp_path),
+    )
+    from agent.subagent.scheduler import WorkflowScheduler
+    from agent.subagent.workflow import parse_workflow_spec
+
+    scheduler = WorkflowScheduler(manager)
+    await scheduler.run(parse_workflow_spec(
+        {"goal": "g", "nodes": [{"id": "a", "kind": "subagent", "task": "do it"}], "edges": []}
+    ))
+    run = manager.find_run(scheduler._states["a"].subagent_id, scheduler._states["a"].run_id)
+    store = manager.workflow_store(scheduler.workflow_id)
+
+    summary_ref_text = store.load(run.summary_ref)
+    assert run.result_ref, "构造前提：workflow run 有落盘引用"
+    assert len(summary_ref_text) < len(long_text), "落盘件应是 bounded 的"
+    assert "result_ref" in summary_ref_text, (
+        "落盘件说了「full result in result_ref」才算给了导航；"
+        "读属性会因赋值顺序恒得 None，静默降级成「只说到此为止」"
+    )

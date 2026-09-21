@@ -84,9 +84,17 @@ HTTP 面同数）截断，并回流 `summary_truncated` / `content_truncated` �
 - **不承诺「响应总量有上限」**：单条消息里 `tool_calls` 的**条数**没有代码上限（provider 层面的
   隐性限制不算契约）。spec 措辞只能是「单条内容」。
 - **不截 `run_id`**：它是调用方传入的回显参数，不是放大路径。
-- **不动 bus / `ReadWorkflowResult` / `GetWorkflow`**：它们已有各自的 bounded 口径
-  （`ReadWorkflowResult` 分页 + `total_chars`/`truncated`；`GetWorkflow` 走
-  `parent_envelope()`，节点文本已裁到 `_PARENT_FIELD_LIMIT`）。
+- **不动 `ReadWorkflowResult`**：它已有 bounded 口径（分页 + `total_chars`/`truncated`）。
+- **不动 `GetWorkflow`**：走 `parent_envelope()`，节点文本已裁到 `_PARENT_FIELD_LIMIT`。
+- **不动 message bus——但必须说清楚：它当前是****无界**的，不是「已有 bounded 口径」**。
+  实测（本 change 排查期独立复现）：`ReadBus` 的单条消息可原样返回 30,000 字；
+  `RunPattern` 返回体里的 `result["bus"]`（`bus.snapshot_payload()`）100 条 × 1600 字
+  → **172,703 字符**全部进模型上下文。这两处返回的都是**子 agent 撰写的内容**，
+  落在本 change 的动机范围内，**只是不在本 change 的交付边界内**：
+  按 codex 建议的范围划分，bus 属独立的 PR2（与本 change 的 4 个结果出口不同路径、
+  不同数据结构），另立 issue **#224** 跟踪。本 change 的标题承诺因此收敛为
+  「**结果出口**的模型面文本一律 bounded」，不说「所有模型面出口」。
+  （初版此条写「bus 已有各自的 bounded 口径」——**那是假话**，已按审阅 R1 Issue 2 更正。）
 - **不在工具侧加第二道截断**：生产者已兜底，双份截断会产生「谁的标志为准」的新问题。
 - **不修 `web/session.py` 的 `payload["status"]` 覆盖问题**：与 bounded 无关的既有瑕疵，另记。
 
