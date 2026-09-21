@@ -364,6 +364,9 @@ def _cmd_discover_text(
     print(f"{'Change':<50} {'Phase':<14} {'SubState':<22}")
     print("-" * 86)
     for cid in changes:
+        # legacy：无 handoff.json 的当代 change 在此被静默跳过（文本模式零行输出，
+        # JSON 模式 active_count 与实际列表不一致）。本次不改（issue #199 只解除受保护
+        # 写通道前置），跟踪 issue #227。
         data = _load_handoff(cid)
         if data is None:
             continue
@@ -537,6 +540,9 @@ def cmd_resume_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_current(args: argparse.Namespace) -> int:
+    # legacy：读的是已停用状态机的 handoff.json，对当代 change 恒报缺失。
+    # 当代等价物是 `flow status`（打印投影 state）。本次不改（issue #199 只解除受保护
+    # 写通道前置），跟踪 issue #227。
     data = _load_handoff(args.change)
     if data is None:
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
@@ -844,6 +850,38 @@ def _awaiting_recovery_target(change_dir: Path, awaiting: str, current_state: di
     return _AWAITING_RECOVERY_DEFAULTS.get(awaiting, DEFAULT_SEED_STATE)
 
 
+def _require_change_target(change_id: str) -> Path | None:
+    """受保护写通道的目标合法性判定（issue #199）。
+
+    前置为「change 目录存在 且（`proposal.md` 或 `handoff.json` 存在）」：
+
+    - 当代 change 立项即产出 `proposal.md`，它是合法目标的最低配置锚点；
+      不要求 `workflow-events.jsonl`——首次 `artifact-event` 恰是创建该文件的动作，
+      以事件日志为前置会自锁。
+    - `handoff.json` 分支保留老世代目标的可写性：`cmd_spawn` 生成的子 change
+      只有 `handoff.json` 而**没有** `proposal.md`，只认 `proposal.md` 会把它们
+      从「可写」打回 exit 1。
+    """
+    # change_id 必须是单段目录名：`CHANGES_ROOT / change_id` 对绝对路径会整体替换
+    # 根（可指向仓库外），对含 `/` 的相对路径会解析到子目录，而下游按
+    # `change_dir.name` 重拼路径（`_save_handoff`）会落到不存在的位置抛裸 traceback。
+    # 仓库内所有调用方都传裸 id，故直接拒绝（issue #199 R2 审阅 New-1 / 问题 4）。
+    if Path(change_id).is_absolute() or "/" in change_id or "\\" in change_id:
+        print(f"错误：change id '{change_id}' 非法（应为单段目录名）", file=sys.stderr)
+        return None
+    change_dir = CHANGES_ROOT / change_id
+    if not change_dir.exists():
+        print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
+        return None
+    if not (change_dir / "proposal.md").exists() and not (change_dir / "handoff.json").exists():
+        print(
+            f"错误：change '{change_id}' 不是合法 change（缺 proposal.md 且无 handoff.json）",
+            file=sys.stderr,
+        )
+        return None
+    return change_dir
+
+
 def _flow_refresh_after_event(change_dir: Path) -> None:
     """写事件后刷新投影：gen-1 同步 handoff.json，gen-2 写 workflow-state.json + 映射 handoff。"""
     if _flow_is_gen1(change_dir):
@@ -873,6 +911,9 @@ def _refresh_workflow_state(change_dir: Path, projection: dict | None = None) ->
 
 
 def cmd_spawn(args: argparse.Namespace) -> int:
+    # legacy：wayfinding 时代的子 change 派生命令，要求父 change 处于
+    # `wayfinding.<gate>`（停用状态机后无此 phase 推进，实际不可用）。本次不改
+    # （issue #199 只解除受保护写通道前置），跟踪 issue #227。
     if not is_workflow_enabled(_PROJECT_ROOT):
         print("错误：workflow 已在 workflow_methods.json 中禁用，spawn 不可用", file=sys.stderr)
         return 1
@@ -935,9 +976,8 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    change_dir = CHANGES_ROOT / args.change
-    if not (change_dir / "handoff.json").exists():
-        print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
+    change_dir = _require_change_target(args.change)
+    if change_dir is None:
         return 1
 
     try:
@@ -953,6 +993,7 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
+    _flow_refresh_after_event(change_dir)
     print(f"已记录 artifact 事件: {args.event_type} ({args.artifact_path})")
     return 0
 
@@ -964,9 +1005,8 @@ def cmd_review_manifest(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    change_dir = CHANGES_ROOT / args.change
-    if not (change_dir / "handoff.json").exists():
-        print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
+    change_dir = _require_change_target(args.change)
+    if change_dir is None:
         return 1
 
     repo_root = Path.cwd()
@@ -989,11 +1029,14 @@ def cmd_review_manifest(args: argparse.Namespace) -> int:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
+    _flow_refresh_after_event(change_dir)
     print(f"已写入 review manifest: {path}")
     return 0
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
+    # legacy：校验的是已停用状态机的 handoff.json 结构，对当代 change 恒报缺失。
+    # 本次不改（issue #199 只解除受保护写通道前置），跟踪 issue #227。
     data = _load_handoff(args.change)
     if data is None:
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
