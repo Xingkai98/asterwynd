@@ -31,6 +31,7 @@
 - [ ] **当前规格同步**：delta 已合入 `openspec/specs/{change-documentation,dev-workflow-state-machine}/spec.md`（含 `current_spec_synced` 事件 ×2）
 - [x] 关键词扫描 `docs/`、`AGENTS.md`、`docs/development-guide.md` 中与 handoff.json / artifact-event / review-manifest 相关的段落，只更新本次造成的事实变化
 - [ ] `docs/openspec-change-backlog.md` 已移除本 change 条目（含 `backlog_updated` 事件）
+- [ ] **收尾纪律**：确认本 change 未跟踪 `handoff.json` / `workflow-state.json`（自愈产物，非本 change 资产）。R1 提交曾因 `git add -A` 误吞二者，已 `git rm --cached` 并删除工作区文件；收尾**不得用 `git add -A` / `git add .`**，只显式列路径（`flow status` 会自愈重建这两个文件，`-A` 会再次吞入；根因见 #228 债务条目）
 
 ## 审阅闭环
 
