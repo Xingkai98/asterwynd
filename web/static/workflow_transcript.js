@@ -313,6 +313,11 @@
       if (calls.length && parts.length === 1 && !parts[0]) {
         emitted[0] = {role, text: null, calls};
       }
+      // 单条内容被截断（issue #213）：截断处是**裸切**，读起来是通顺的，用户看不出
+      // 内容断了——必须在末尾如实标注，否则「正文看着完整、其实是残的」。
+      if (message.content_truncated && emitted.length) {
+        emitted[emitted.length - 1].note = '（内容已截断）';
+      }
       lines.push(...emitted);
     });
     if (!lines.length) {
@@ -376,6 +381,7 @@
       // ``text === null``：该轮只有工具调用，不渲染空文本行。
       if (line.text !== null) host.appendChild(el('div', 'msg-text', line.text));
       (line.calls || []).forEach((call) => host.appendChild(toolCallBlock(call)));
+      if (line.note) host.appendChild(el('span', 'drawer-note', line.note));
     });
   }
 

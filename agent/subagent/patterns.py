@@ -331,6 +331,16 @@ def _workers_from_node(node: dict, manager: "SubAgentManager") -> list[dict]:
 
 
 def _worker_entry(subagent_id: str, run: Any) -> dict:
+    """把一个 run 投影成历史 ``workers[]`` 条目——**模型面**出口，故 summary bounded。
+
+    issue #213：``RunPattern`` 的返回体会一次带上 N 个 worker，各自原样塞全文
+    （N × 30000 字）。这里与 run envelope 出口同口径：裁到固定的单条内容上限。
+
+    截断时**必须同时给出 ``result_ref``**——条目会写「全文在 result_ref」，
+    而模型拿不到这个字段的话，就是在出口 4 复制一句正要消灭的假话。
+    """
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT, _clip
+
     if run is None:
         return {
             "subagent_id": subagent_id,
@@ -339,10 +349,11 @@ def _worker_entry(subagent_id: str, run: Any) -> dict:
             "reason": None,
             "usage": {},
         }
-    return {
+    summary, truncated = _clip(run.summary, TRANSCRIPT_ITEM_LIMIT)
+    entry = {
         "subagent_id": subagent_id,
         "status": run.status,
-        "summary": run.summary,
+        "summary": summary,
         "reason": run.reason,
         "usage": {
             "total_tokens": run.usage.total_tokens,
@@ -351,6 +362,10 @@ def _worker_entry(subagent_id: str, run: Any) -> dict:
             "output_tokens": run.usage.output_tokens,
         },
     }
+    if truncated:
+        entry["summary_truncated"] = True
+        entry["result_ref"] = getattr(run, "result_ref", None)
+    return entry
 
 
 def _legacy_result(pattern: str, task: str, envelope: dict, manager: "SubAgentManager") -> dict:
