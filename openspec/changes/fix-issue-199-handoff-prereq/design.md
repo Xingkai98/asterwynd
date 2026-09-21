@@ -117,7 +117,7 @@ Q1 的或分支只体现在**前置谓词**里，不引入世代判定（不需�
 |---|---|---|
 | `新建 change 时初始化 workflow event log 和 handoff.json` | 改写为只保留事件日志初始化（两代共用 `workflow-events.jsonl`），删除「同时生成 handoff.json」的当代断言 | 当代 change 不再产出 `handoff.json`（本 change 的核心事实） |
 | `agent 读取当前状态` | 改写为两代口径（老世代读 `handoff.json`，当代读 `workflow-state.json`） | 读取目标随世代而变；语义不变，表述需对齐 |
-| `WorkflowEngine 更新状态` | 改写为两代口径（重新生成该世代的投影，校验磁盘投影与 replay 一致） | 同上册 |
+| `WorkflowEngine 更新状态` | 改写为两代口径（重新生成该世代的投影，校验磁盘投影与 replay 一致） | 同上 |
 | `handoff.json 被手动篡改` | 改写为「投影被手动篡改」，两代口径：gen-1 比 `handoff.json`，gen-2 比 `workflow-state.json` | `verify_projection`（`event_log.py:481`）已按两代实现，spec 应对齐 |
 | `非状态 artifact 事件` | 改写措辞（去 `handoff.json` 专指，保留 event type 清单） | 承载「支持的 artifact event type 至少含 4 类」，本 change 依赖该清单 |
 | `当代 change 投影为 workflow-state.json` | 原样保留 | 既有 |
@@ -126,7 +126,7 @@ Q1 的或分支只体现在**前置谓词**里，不引入世代判定（不需�
 
 **本 change 新增 3 条 Scenario**：`受保护写通道不要求 handoff.json`、`受保护写通道拒绝非法目标`、`老世代 change 的受保护写通道保持可用`。
 
-汇总：既有 8 条**全部保留**（其中 4 条按两代口径改写、4 条原样），加新增 3 条 = delta 共 11 条；无 Scenario 因 delta 缺省而消失。
+汇总：既有 8 条**全部保留**（其中 5 条按两代口径改写、3 条原样），加新增 3 条 = delta 共 11 条；无 Scenario 因 delta 缺省而消失。
 
 ### D7: 两条命令成功写入后刷新投影（grill Q6 确认）
 

@@ -121,3 +121,17 @@ issue [#227](https://github.com/Xingkai98/asterwynd/issues/227)。
 
 **处置**：不在 fix-issue-199 内修（属门禁加固的独立 effort）。跟踪见
 issue [#229](https://github.com/Xingkai98/asterwynd/issues/229)。
+
+## 受保护写通道的 change id 前置未拒绝 `..`（fix-issue-199 R3 审阅观察项，issue #231）
+
+`fix-issue-199` 在 `scripts/workflow_state.py` 的 `_require_change_target` 加了 id 合法性前置
+（拒绝绝对路径与含 `/` `\` 的 id，封住「绝对路径可把事件写到仓库外」与 gen-1 路径型目标的裸
+traceback 回归），但 `--change ..` 未覆盖：`Path("..").is_absolute()` 为假且不含 `/`，
+`CHANGES_ROOT / ".."` 会解析到 `openspec/`。
+
+**实测不可利用且非本次引入**：本仓库 `openspec/proposal.md` 与 `openspec/handoff.json` 均不存在，
+`..` 在锚点检查处即 exit 1；base 提交对同一输入同样不受锚点约束（既有属性）；spec delta 把拒绝面
+限定为「绝对路径或含 `/`」，实现与规格一致。
+
+**处置**：不在 fix-issue-199 内修（R3 审阅判 PASS 并归为 Low/不阻塞；改代码会超出审阅 3 轮封顶而
+未被复审）。跟踪见 issue [#231](https://github.com/Xingkai98/asterwynd/issues/231)。
