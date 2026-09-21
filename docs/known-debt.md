@@ -135,3 +135,25 @@ traceback 回归），但 `--change ..` 未覆盖：`Path("..").is_absolute()` �
 
 **处置**：不在 fix-issue-199 内修（R3 审阅判 PASS 并归为 Low/不阻塞；改代码会超出审阅 3 轮封顶而
 未被复审）。跟踪见 issue [#231](https://github.com/Xingkai98/asterwynd/issues/231)。
+
+## 归档 change 的 review manifest 写入/校验双盲区（fix-issue-199 收尾实测，issue #232）
+
+**A. 写入盲区**：`scripts/workflow_state.py` 的 `_require_change_target` 用 `CHANGES_ROOT / change_id`
+定位目标、**只看 active 目录**，不回退 `archive/`（对照 `_flow_resolve_change_dir` 有归档回退）。
+故 `fix-issue-199` 修好的 CLI 只覆盖「归档前」写 manifest；归档后再需要生成只能绕底层
+`write_review_manifest(..., archived=True)`。实测：对已归档 change 调 `review-manifest` 报
+「change ... 不存在」。
+
+**B. 校验盲区**：`.github/workflows/ci.yml` 跑的是 `check_openspec_artifacts.py --base-ref ... --require-base`，
+**不带 `--check-archived`**；默认模式把 `archive/` 显式排除在扫描外，归档 change 只在
+`--check-archived` 下才走 `_check_review_manifests(..., archived=True)`（`:1425-1435`）。
+AGENTS.md 要求「归档收尾与实现同一 PR」，于是**归档动作本身把 change 移出了 CI 校验范围**——
+恰在变得可合入的那一刻脱离 manifest 校验。实测对照：缺 manifest 时默认模式 `checks passed`（漏检），
+`--check-archived` 报 `review manifest missing`（能抓）。
+
+注：`_check_review_manifests` 对已存在的 `*-review.md` 逐个 verify，**能**报出 missing manifest；
+漏检的真因是默认模式根本不进 archive 目录，而非「glob 枚举不到」。
+
+**处置**：不在 fix-issue-199 内修（改 CI / checker 属独立门禁加固，超出该 bugfix 边界）。
+本 change 已用底层函数按 `archived=True` 生成并验证 manifest。跟踪见
+issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
