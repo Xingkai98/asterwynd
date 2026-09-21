@@ -22,3 +22,6 @@ benchmarks/swebench_candidates.json
 .handoff/
 .performance_findings.json
 docs/research/
+
+# 本地推进件（旧仪式残留，勿提交）
+**/handoff.json

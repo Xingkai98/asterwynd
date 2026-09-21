@@ -764,35 +764,46 @@ class MessageBus:
 ##### Layer 2: Publish-Side Summarization — 发布端压缩（`subagents.py:208-237`）
 
 ```python
-# subagents.py:208
-max_tokens = kwargs.get("max_tokens", 400)    # 默认每条约 400 token
+# subagents.py（PublishBusMessageTool.execute）
+requested = kwargs.get("max_tokens", 400)                          # 默认每条约 400 token
+max_tokens = min(max(int(requested), 1), BUS_PUBLISH_MAX_TOKENS)   # 钳到 1000（issue #224 D5）
 summary = content
-token_count = estimate_tokens(content)         # ~4 chars/token
-if token_count > max_tokens:
-    summary = await self._summarize(content, max_tokens)   # LLM 摘要
+token_count = estimate_tokens(content)                             # ~4 chars/token
+if token_count >= max_tokens:                                      # 含等号：向下取整不留缝（Q6）
+    summary = await self._summarize(content, max_tokens)           # LLM 摘要
 ```
 
-`_summarize()` 调 `LLMSummarizer` 做真正的摘要（`:222-237`），LLM 不可用时退化到 `content[:max_tokens * 4]` 截断。
+`_summarize()` 调 `LLMSummarizer` 做真正的摘要，LLM 不可用时退化到 `content[:max_tokens * 4]` 截断。
+注意钳住 `max_tokens` 只对齐了**阈值**：LLM 摘要分支是建议性的（提示词里写"约 400 token"，不是硬保证），
+单条的**硬保证在消费侧 `read()`**。
 
-##### Layer 3: Consume-Side Token Window — 消费端窗口（`bus.py:92-125`）
+##### Layer 3: Consume-Side Token Window — 消费端窗口（`bus.py`）
 
 ```python
-def read(self, *, max_tokens: int | None = None, ...):
-    budget = max_tokens if max_tokens is not None else self.max_read_tokens  # :105
-    # 默认 max_read_tokens = 2000                                             # :58
-    for msg in reversed(self._messages):  # 从最新开始                        # :109
+def read(self, *, max_tokens: int | None = None, limit: int | None = None, ...):
+    budget = max_tokens if max_tokens is not None else self.max_read_tokens
+    # 默认 max_read_tokens = 2000
+    budget = min(budget, BUS_SNAPSHOT_LIMIT * BUS_PUBLISH_MAX_TOKENS)   # 总量钳制（D4b/Q1）
+    effective_limit = BUS_SNAPSHOT_LIMIT if limit is None else min(limit, BUS_SNAPSHOT_LIMIT)
+    for msg in reversed(self._messages):  # 从最新开始
         if used + msg.token_count > budget:
             if not collected:
-                collected.append(msg)       # 单条超预算也保留最新一条         # :117-118
+                collected.append(msg)       # 单条超预算也保留最新一条
             break
         collected.append(msg)
         used += msg.token_count
-    collected.reverse()  # 返回时 oldest-first                              # :124
+        if len(collected) >= effective_limit:
+            break
+    collected.reverse()  # 返回时 oldest-first
+    return [_bounded_message(m) for m in collected]   # 截断件是新实例，队列保留全文（D10）
 ```
 
 **核心语义**（LangGraph `trim_messages` 风格）：
 - 从最新消息开始往前累加，直到 token 预算耗尽
-- 单条消息即使超过整个窗口，也保留最新一条（消费者不盲目于最新状态）
+- 单条消息即使超过整个窗口，也保留最新一条（消费者不盲目于最新状态）——但该条自身仍被截到
+  `BUS_MESSAGE_LIMIT` 并带 `summary_truncated` 标志（issue #224 D3）
+- `max_tokens` / `limit` 由调用方（模型）给，故**两者都被钳到固定上界**：不钳的话
+  `ReadBus(max_tokens=10**9)` 在满载 100 条的 bus 上返回约 300 万字符，单条截断形同虚设
 - 支持 `topics` 过滤、`limit` 截断、`ttl_s` 过期检查
 
 #### 2.3 Bus 生命周期与上下文传递
@@ -811,21 +822,28 @@ async def run_pattern(...):
         reset_bus(token)           # 清理 contextvar
 ```
 
-**snapshot_payload**（`:135-139`）：包含 messages 列表 + `max_read_tokens`。这个 payload 可以被 recovery 路径注入到续传上下文（`snapshot.py:46-73` 中 `bus_summary` 字段）。
+**snapshot_payload**（`bus.py`）：包含 messages 列表 + `max_read_tokens` + `messages_total` /
+`messages_omitted`。它是 `RunPattern` 的 `result["bus"]`，也是**模型面出口之一**，故 enforce
+issue #224 的二维界——条数 ≤ `BUS_SNAPSHOT_LIMIT`（20，取最近）、单条 ≤ `BUS_MESSAGE_LIMIT`（4000），
+界施加在**方法本身**（`RunPattern` 与 `scheduler._envelope()` 共用同一处，只加固调用点等于留漏口）。
+超出条数上限时用 `messages_omitted` 显式报告，不静默丢弃。这个 payload 也可以被 recovery 路径注入到
+续传上下文（`snapshot.py` 中 `bus_summary` 字段，走的是 `compact_summary()`，仍是队列全文）。
 
 #### 2.4 LLM 可见工具
 
 | 工具 | 文件:行号 | 功能 |
 |------|-----------|------|
-| `PublishBusMessage` | `subagents.py:181-237` | 发布摘要到 bus（sender/topic/content/max_tokens） |
-| `ReadBus` | `subagents.py:240-280` | 消费 bus 摘要（topics/max_tokens/limit 过滤） |
+| `PublishBusMessage` | `subagents.py`（PublishBusMessageTool） | 发布摘要到 bus（sender/topic/content/max_tokens） |
+| `ReadBus` | `subagents.py`（ReadBusTool） | 消费 bus 摘要（topics/max_tokens/limit 过滤） |
 
 这两个工具是子 agent 通过 bus 协作的唯一接口。所有消息经过 `PublishBusMessage` 的统一摘要压缩才进入 bus。
+`PublishBusMessage` 的**回包**（`msg.to_dict()`）与 `ReadBus` 的返回都是模型面出口，两者都受 issue #224
+的单条上限约束。
 
 #### 2.5 数据结构
 
 ```python
-# bus.py:33-40
+# bus.py
 @dataclass
 class BusMessage:
     message_id: str           # uuid4().hex[:8]
@@ -834,6 +852,7 @@ class BusMessage:
     summary: str              # 语义摘要内容
     token_count: int          # 估算 token 数（~4 chars/token）
     timestamp: float          # time.time()
+    truncated: bool = False   # 该条是否在出口投影时被截断（issue #224）
 ```
 
 ---

@@ -265,6 +265,27 @@ truncated=True)` 构造**新实例**返回，SHALL NOT 直接对 `msg.summary` �
 Q1（ReadBus 总量是否一并钳死）、Q2（DeclareWorkflow 措辞修正方式）、Q3（截断后 `token_count` 是否同步）、
 Q4（既有测试改造 + 发布侧闸门取 `>=` 两处小修正）。
 
+## Non-Goals
+
+- **`RunPattern` 未 bounded（grill R2）**：本 change 只修 **bus 出口**。实测
+  `run_pattern(params={"workers": 300})` 总 165,763 字符，其中 `workers[]` 85,180、顶层 `summary`
+  80,239、`bus` 仅 41——`workers[]` 的条数由无上限的 `params["workers"]` 决定，`_legacy_result`
+  又把 N 条 summary 拼成顶层 `summary`。`BUS_SNAPSHOT_LIMIT = 20` 对这两项**零作用**，
+  `agent-runtime` 的 delta spec 措辞不得被读成「`RunPattern` 返回体已 bounded」——它承诺的是
+  **`bus` 快照那一项**。`workers[]` / 顶层 `summary` 的条数维另案处理。
+- **`DeclareWorkflow` 不在范围内（grill Q2）**：实测 `DeclareWorkflowTool.execute()` 返回键无
+  `bus`（`subagents.py:538-562` 手工构造固定 dict，从不调 `snapshot_payload()`）。它**不是**
+  bus 出口，本 change 不改它、也不给它加 bus。
+- **`scheduler._envelope()` 的 `bus` 是纵深防御路径**（grill Q2）：`scheduler.py:2955-2956` 的
+  `_envelope()["bus"]` 当前模型面不可达（`run()` 返回值在 `subagents.py:620`、`:835` 两处被丢弃，
+  `parent_envelope()` 在 `scheduler.py:2973` 把它 pop 掉）。加固放在 `snapshot_payload()` **方法
+  本身**后这条路径自动受界，使未来若有工具直接吐出 `run()` 返回值时不成为新漏口——但本 change
+  **不**声称它当前是一条模型面出口。
+- **发布侧对 LLM 摘要分支没有硬界（grill R5）**：`_summarize` 的 LLM 分支把预算作为建议拼进
+  prompt（`agent/context/summarizer.py`：budget「advisory … not a hard guarantee」），产出可能
+  超过 `max_tokens`。单条的**硬保证在消费侧 `read()`**；发布侧只做「阈值对齐」。措辞不得声称
+  「发布侧严格 ≤ 单条上限」或「两侧同界」这种对 LLM 分支不成立的断言。
+
 ## Impact Analysis
 
 见 `proposal.md` 的 `## Impact Analysis` 节（同源，避免两处漂移）。补充设计侧要点：

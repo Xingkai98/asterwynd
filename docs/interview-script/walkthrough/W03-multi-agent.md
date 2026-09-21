@@ -34,11 +34,18 @@ agent/subagent/
 
 **worker 失败不 fail-fast**：聚合信封逐 worker 报 `{subagent_id, status, summary, usage}` + 模式级计数（_aggregate），保证 benchmark 完成率/成本可比。
 
-### 消息总线三层预算（bus.py:9-18）
+### 消息总线三层预算（bus.py）
 
 1. **有界队列**：max_messages=100，满了 drop-oldest（NATS DiscardOld 语义）
-2. **发布侧摘要**：PublishBusMessageTool 用 `_summarize` 先把内容折叠到 `max_tokens`（默认 400）以下再发——调 `LLMSummarizer.summarize`，LLM 不可用时降级截断 `content[:max_tokens*4]`（subagents.py:222-237）
-3. **消费侧 token 窗口**：read() 只返回最近、能装进 max_read_tokens=2000 的（LangGraph trim_messages 语义）；单条超窗消息仍会浮出（bus.py:114-119）
+2. **发布侧摘要**：PublishBusMessageTool 用 `_summarize` 先把内容折叠到 `max_tokens`（默认 400，**上限钳到 1000**——否则把它调大就能让摘要分支永不触发）以下再发——调 `LLMSummarizer.summarize`，LLM 不可用时降级截断 `content[:max_tokens*4]`；闸门是 `>=`（`estimate_tokens` 向下取整，严格大于会留缝）
+3. **消费侧 token 窗口**：read() 只返回最近、能装进 max_read_tokens=2000 的（LangGraph trim_messages 语义）；单条超窗消息仍会浮出，但该条自身截到 `BUS_MESSAGE_LIMIT`
+
+**出口一律有界（issue #213/#224）**：三层预算管"正常路径装多少"，但出口的界不能被被检视方左右。
+bus 的两条模型面出口（ReadBus 与 RunPattern 的 `result["bus"]`）在**单条**（≤ `TRANSCRIPT_ITEM_LIMIT`
+= 4000）与**总量**（≤ `BUS_SNAPSHOT_LIMIT` = 20 条）两个维度都有固定上限：`read()` 的
+`max_tokens`/`limit` 由调用方（模型）给，两者都被钳到与 `snapshot_payload()` 同界——不钳的话
+`ReadBus(max_tokens=10**9)` 会一次返回约 300 万字符。截断在**出口投影**发生（队列保留全文，
+`compact_summary()` 不受影响），截断条带 `summary_truncated` 标志。bus 不落盘，故不声称"全文在 X"。
 
 bus 每次编排 run 新建，contextvar 注入，run 结束 reset。**换语义摘要，不换原始转录**。
 

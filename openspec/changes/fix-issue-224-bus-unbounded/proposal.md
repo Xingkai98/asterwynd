@@ -16,12 +16,17 @@ issue #224 报告：issue #213 的排查认定 message bus 属「已有 bounded 
 | # | 出口 | 现状 | 实测 |
 |---|---|---|---|
 | 1 | `ReadBusTool`（`subagents.py` → `bus.read`） | 单条 `summary` 无任何上限。`read()` 有一条「单条超窗仍返回最新一条」的规则（`bus.py:122-127`，由 `test_read_returns_newest_when_single_message_exceeds_window` 钉死） | 单条 30,000 字消息**原样返回** 30,000 字符 |
+| 1b | `ReadBusTool` 的**总量**（`max_tokens` / `limit` 两个调用方参数） | 两个参数都由调用方（模型）给且无上界 | 满载 100 条 × 30000 字时 `ReadBus(max_tokens=10**9)` 返回 **100 条 / 3,000,000 字符** |
 | 2 | `RunPattern` 返回体的 `result["bus"]`（`patterns.py:458` 的 `bus.snapshot_payload()`） | `snapshot_payload()` 既无条数上限也无单条上限 | 100 条 × 1600 字 → **172,703 字符**全部进父 agent 上下文 |
-| 3 | 声明期 `DeclareWorkflow` 的 bus（`scheduler.py:2956` 同一处 `snapshot_payload()`） | 同 #2（同一个未加固的方法） | 同 #2 |
-| 4 | 发布侧 `PublishBusMessageTool` 的 `max_tokens` | 调用方给、**无最大值约束**；只有 `estimate_tokens(content) > max_tokens` 时才 summarize | `max_tokens=10**9` 时该 summarize 分支永不触发，原文直入 bus |
+| 3 | 发布侧 `PublishBusMessageTool` 的 `max_tokens` | 调用方给、**无最大值约束**；只有 `estimate_tokens(content) > max_tokens` 时才 summarize | `max_tokens=10**9` 时该 summarize 分支永不触发，原文直入 bus |
+| 4 | `PublishBusMessageTool` 的**回包**（`subagents.py:274` 的 `msg.to_dict()`） | 即发布者刚发的那条（含 `summary`），随 #3 一同无界 | `max_tokens=10**9` + 30,000 字 `content` → 回包 30,000 字符 |
 
-`snapshot_payload()` 是 #2 与 #3 的共同来源——只修 `patterns.py` 的调用点等于留一个同类漏口，必须
-在方法本身加固。
+**`snapshot_payload()` 是唯一的模型面 bus 出口来源**（唯一调用点是 `patterns.py:458` 的
+`RunPattern`；`scheduler._envelope()` 也调它，但那条路径当前模型面不可达，加固后成为纵深防御）——只修
+`patterns.py` 的调用点等于留一个同类漏口，必须在方法本身加固。
+
+**出口 4（发布回包）是 #213 家族的同一形状**：它把子 agent 刚写的文本原样回给发起的模型，`max_tokens`
+钳住后 ≤ 单条上限（与出口 1/2 同界）。
 
 **唯一有界的** `compact_summary(max_chars=2000)` 只被 `manager.py:1492` 用于**会话恢复注入**，不是
 `read()` / `RunPattern` / `DeclareWorkflow` 的路径——所以「bus 已有 bounded 口径」不成立。
@@ -40,12 +45,17 @@ bus 的两条出口**逐条违反**：单条无上限、总量无上限、上限
 
 ## What Changes
 
-**A. `MessageBus.read()`：单条消息按固定上限截断并回流标志**
+**A. `MessageBus.read()`：单条截断（+ 标志）与**总量**钳制**
 
 `read()` 返回的每条 `BusMessage.summary` 截到 `BUS_MESSAGE_LIMIT`（= `TRANSCRIPT_ITEM_LIMIT` = 4000，
 与模型面其它出口同数），新增 `BusMessage.truncated: bool` 布尔标志；`to_dict()` 透出
-`summary_truncated`。**保留**「单条超窗仍返回最新一条」的既有语义（消费者不该因窗口小于单条而失明），
-但返回的是**截断后**的单条，而非全文。
+`summary_truncated`；被截断条的 `token_count` 同步为重算值。**保留**「单条超窗仍返回最新一条」的
+既有语义（消费者不该因窗口小于单条而失明），但返回的是**截断后**的单条，而非全文。
+
+**总量维**（`max_tokens` / `limit` 是调用方参数，单条截断不足以定界）：两个参数 SHALL 被钳到与
+`snapshot_payload()` 同界的固定上界（`BUS_SNAPSHOT_LIMIT` 条 / `BUS_SNAPSHOT_LIMIT *
+BUS_PUBLISH_MAX_TOKENS` token）。不钳则修完单条后总量**反而**比修复前更大（100 条 × 3000 字 →
+3,000,000 字符），「界不可被被检视对象影响」不成立。
 
 **B. `snapshot_payload()`：加条数上限 + 单条上限**
 
@@ -55,11 +65,15 @@ bus 的两条出口**逐条违反**：单条无上限、总量无上限、上限
 - 单条上限同上（`BUS_MESSAGE_LIMIT`），复用 `read()` 的同一截断路径。
 - **只截 bus 消息**，不动 `max_read_tokens` 等既有键。
 
-**C. 发布侧 `max_tokens` 补上界**
+**C. 发布侧 `max_tokens` 补上界 + 闸门含等号**
 
 `PublishBusMessageTool` 的 `max_tokens` 钳到 `BUS_PUBLISH_MAX_TOKENS`（= `BUS_MESSAGE_LIMIT // 4`，
-即与单条字符上限等价的 token 数），使「summarize 阈值」不可能被调到单条上限之上——发布侧与消费侧
-从此同界，不存在「发布侧承诺 ≤N、消费侧再截一次」的双重截断。
+即与单条字符上限等价的 token 数），使「summarize 阈值」不可能被调到单条上限之上；summarize 闸门由
+严格大于改为**大于等于**（`estimate_tokens` 向下取整，`>` 会留 4001–4003 字的缝）。
+
+**如实措辞**：这只对齐了**阈值**——`_summarize` 的 LLM 分支是 advisory、非硬界
+（`agent/context/summarizer.py`：预算「not a hard guarantee」），单条的**硬保证在消费侧 `read()`**。
+发布侧是「阈值对齐 + 消费侧兜底」，**不是**「发布侧也有硬界」。
 
 **D. 常量单一源**
 
@@ -80,6 +94,14 @@ TRANSCRIPT_ITEM_LIMIT`），保持「模型面单条内容只有一个数」的�
   persisted across runs」）。没有权威落盘件可指，因此**不得**声称「全文在 X」——#213 修掉的
   「假话」不得在 bus 出口复现。截断就是截断，只回流标志。
 - **不截 `message_id` / `sender` / `topic`**：它们是调用方与运行时的短标识，不是放大路径。
+- **`RunPattern` 仍未 bounded**（grill R2，务必别读成「本 change 修好了 RunPattern」）：实测
+  `run_pattern(pattern="orchestrator-worker", params={"workers": 300})` 的总返回体是 165,763 字符，
+  其中 `workers[]` **85,180**、顶层 `summary` **80,239**、`bus` 仅 **41**。`workers[]` 的条数由
+  `params["workers"]`（无上限）决定，`_legacy_result` 再把 N 条 summary 拼成顶层 `summary`——
+  `BUS_SNAPSHOT_LIMIT = 20` 一个字都碰不到这两项。本 change 的标题与范围限定为 **bus 出口**
+  （issue #224），`workers[]` / 顶层 `summary` 的条数维**仍无界，另案处理**。
+- **`DeclareWorkflow` 不在范围内**：实测其返回键无 `bus`（`subagents.py:538-562` 手工构造固定
+  dict，从不调 `snapshot_payload()`）。它**不是** bus 出口，本 change 不改它。
 
 ## Capabilities
 
