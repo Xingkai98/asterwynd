@@ -844,6 +844,31 @@ def _awaiting_recovery_target(change_dir: Path, awaiting: str, current_state: di
     return _AWAITING_RECOVERY_DEFAULTS.get(awaiting, DEFAULT_SEED_STATE)
 
 
+def _require_change_target(change_id: str) -> Path | None:
+    """受保护写通道的目标合法性判定（issue #199）。
+
+    前置为「change 目录存在 且（`proposal.md` 或 `handoff.json` 存在）」：
+
+    - 当代 change 立项即产出 `proposal.md`，它是合法目标的最低配置锚点；
+      不要求 `workflow-events.jsonl`——首次 `artifact-event` 恰是创建该文件的动作，
+      以事件日志为前置会自锁。
+    - `handoff.json` 分支保留老世代目标的可写性：`cmd_spawn` 生成的子 change
+      只有 `handoff.json` 而**没有** `proposal.md`，只认 `proposal.md` 会把它们
+      从「可写」打回 exit 1。
+    """
+    change_dir = CHANGES_ROOT / change_id
+    if not change_dir.exists():
+        print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
+        return None
+    if not (change_dir / "proposal.md").exists() and not (change_dir / "handoff.json").exists():
+        print(
+            f"错误：change '{change_id}' 不是合法 change（缺 proposal.md 且无 handoff.json）",
+            file=sys.stderr,
+        )
+        return None
+    return change_dir
+
+
 def _flow_refresh_after_event(change_dir: Path) -> None:
     """写事件后刷新投影：gen-1 同步 handoff.json，gen-2 写 workflow-state.json + 映射 handoff。"""
     if _flow_is_gen1(change_dir):
@@ -935,9 +960,8 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    change_dir = CHANGES_ROOT / args.change
-    if not (change_dir / "handoff.json").exists():
-        print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
+    change_dir = _require_change_target(args.change)
+    if change_dir is None:
         return 1
 
     try:
@@ -953,6 +977,7 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
+    _flow_refresh_after_event(change_dir)
     print(f"已记录 artifact 事件: {args.event_type} ({args.artifact_path})")
     return 0
 
@@ -964,9 +989,8 @@ def cmd_review_manifest(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    change_dir = CHANGES_ROOT / args.change
-    if not (change_dir / "handoff.json").exists():
-        print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
+    change_dir = _require_change_target(args.change)
+    if change_dir is None:
         return 1
 
     repo_root = Path.cwd()
@@ -989,6 +1013,7 @@ def cmd_review_manifest(args: argparse.Namespace) -> int:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
+    _flow_refresh_after_event(change_dir)
     print(f"已写入 review manifest: {path}")
     return 0
 

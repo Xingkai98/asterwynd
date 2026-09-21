@@ -21,10 +21,12 @@
 ## 需求
 
 1. `artifact-event` 与 `review-manifest` 不再要求 `handoff.json` 存在；当代 change（无 `handoff.json`）与老世代 change（有 `handoff.json`）都能正常写入。
-2. 合法性判定改为**当代语义**：change 目录存在且是合法 change（判定锚点见 design.md 决策）；不存在的 change、缺 `proposal.md` 的目录仍以明确错误拒绝（不退化为「任意路径都能写受保护事件」）。
-3. 不破坏老世代归档 change 的兼容性（首事件 `initialized` + 有 `handoff.json` 的路径行为不变）。
-4. 核对并处置 `workflow_state.py` 其余 `handoff.json` 引用（`:542` `cmd_current` / `:881` `cmd_spawn` / `:999` `cmd_validate`），作为显式决策记录（清理或保留 + 理由），避免半清理。
-5. 新增回归测试：无 `handoff.json` 的新 change 能走 `artifact-event` 与 `review-manifest`；老世代仍可写；非法目标仍被拒。
+2. 合法性判定改为**当代语义**：change 目录存在且是合法 change（判定锚点见 design.md D1：`proposal.md` 存在**或** `handoff.json` 存在）；不存在的 change、既无 `proposal.md` 也无 `handoff.json` 的目录仍以明确错误拒绝（不退化为「任意路径都能写受保护事件」）。
+3. 不破坏老世代 change 的兼容性：首事件 `initialized` + 有 `handoff.json` 的路径行为不变；**且 `spawn` 生成的子 change（只有 `handoff.json`、无 `proposal.md`）仍可写**——这是 grill Q1 实测发现的回归面，锚点若只认 `proposal.md` 会把这类老目标从 exit 0 打回 exit 1，而现有测试全绿也发现不了。
+4. 核对并处置 `workflow_state.py` 其余 `handoff.json` 引用（实测四处：`:539` `cmd_current` / `:881` `cmd_spawn` / `:996` `cmd_validate` / `discover` 的 `_cmd_discover_text:364-374`），作为显式决策记录（清理或保留 + 理由），避免半清理。四处保留不改，记入 `docs/known-debt.md`，跟踪 issue [#227](https://github.com/Xingkai98/asterwynd/issues/227)。
+5. 两条命令成功写入后刷新投影（design D7），使写入结果可立即被 `check_openspec_artifacts.py` 校验，端到端验收不依赖调用顺序。
+6. 新增回归测试：无 `handoff.json` 的当代 change 能走 `artifact-event` 与 `review-manifest`；老世代仍可写（含无 `proposal.md` 但有 `handoff.json` 的 spawn 子 change）；非法目标仍被拒。
+7. spec delta 正文补全为变更后的完整 Requirement 正文（design D6）：`openspec archive` 整段替换 Requirement 体，正文不全将静默删除既有 Scenario。
 
 ## 背景
 
