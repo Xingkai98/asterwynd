@@ -54,10 +54,15 @@ class PublishThenFinishLLM:
 
     这是唯一能在**真实编排 run 内**把超长子 agent 文本塞进 bus 的方式——静态 LLM
     不会调工具，bus 就永远是空的（那样契约测试无判别力）。
+
+    第二次调用同时充当 ``_summarize`` 的 LLM 分支，返回一个**超预算**的摘要
+    （advisory 预算允许发生），使 bus 里真的躺一条超限消息——否则摘要恰好奇短时，
+    端到端断言「≤ 上限」恒真、失去判别力。
     """
 
-    def __init__(self, payload: str):
+    def __init__(self, payload: str, summary: str):
         self.payload = payload
+        self.summary = summary
         self.calls = 0
 
     async def chat(self, messages, tools=None, model="gpt-4"):
@@ -81,6 +86,8 @@ class PublishThenFinishLLM:
                 stop_reason="tool_use",
                 usage=Usage(5, 5),
             )
+        if self.calls == 2:  # ``PublishBusMessage`` → ``_summarize`` 的 LLM 分支
+            return LLMResponse(content=self.summary, stop_reason="end_turn", usage=Usage(5, 5))
         return LLMResponse(content="done", stop_reason="end_turn", usage=Usage(5, 5))
 
 
@@ -178,26 +185,37 @@ async def test_snapshot_payload_export_is_bounded(manager):
 
 @pytest.mark.asyncio
 async def test_run_pattern_bus_export_is_bounded(manager):
-    """出口 2 端到端：真实 ``run_pattern`` 里 worker 发布的超长消息被界住。"""
-    manager.llm = PublishThenFinishLLM("x" * _OVERSIZED)
+    """出口 2 端到端：真实 ``run_pattern`` 里 bus 里的超长消息被出口投影界住。
+
+    worker 发布 30,000 字 → ``_summarize`` 返回**超预算**摘要 → bus 里真的躺一条超限
+    消息（上面实测确认），故「≤ 上限」不是恒真断言。
+    """
+    manager.llm = PublishThenFinishLLM("x" * _OVERSIZED, summary="s" * 6000)
     result = await run_pattern(
         manager, pattern="orchestrator-worker", task="t", params={"workers": 1}
     )
-    assert result["bus"]["messages"], "worker 应已发布一条消息（否则断言无判别力）"
-    _assert_bounded(result["bus"]["messages"])
+    messages = result["bus"]["messages"]
+    assert messages, "worker 应已发布一条消息（否则断言无判别力）"
+    _assert_bounded(messages)
+    # 判别力锚点：``summary_truncated`` 只有在**原文真超限**时才为 True（上面实测
+    # bus 里躺的是 6000 字）。没有这一条，去掉出口投影后本测试仍会绿。
+    assert messages[0]["summary_truncated"] is True, "bus 里必须真有一条超限消息"
     assert len(json.dumps(result["bus"])) < BUS_SNAPSHOT_LIMIT * TRANSCRIPT_ITEM_LIMIT * 2
 
 
 @pytest.mark.asyncio
 async def test_run_pattern_tool_export_is_bounded(manager):
     """``RunPatternTool`` 的 JSON 出口与 ``run_pattern`` 同界。"""
-    manager.llm = PublishThenFinishLLM("x" * _OVERSIZED)
+    manager.llm = PublishThenFinishLLM("x" * _OVERSIZED, summary="s" * 6000)
     data = json.loads(
         await RunPatternTool(manager).execute(
             pattern="orchestrator-worker", task="t", params={"workers": 1}
         )
     )
     _assert_bounded(data["bus"]["messages"])
+    assert data["bus"]["messages"][0]["summary_truncated"] is True, (
+        "bus 里必须真有一条超限消息（否则断言无判别力）"
+    )
 
 
 @pytest.mark.asyncio

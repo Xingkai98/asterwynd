@@ -118,13 +118,15 @@
 **闸门改 `>=`（grill Q6，用户确认）**：`estimate_tokens` 是 `max(1, len // 4)`（`bus.py:36-38`），
 向下取整，而原闸门是**严格大于**（`subagents.py:265`：`if token_count > max_tokens`）。实推：
 `content` 长 4001/4002/4003 → `estimate_tokens` = 1000，**不**满足 `> 1000` → 不 summarize，原文直入
-bus → 仍需 `read()` 再截一次，即「发布侧承诺 ≤N、消费侧再截一次」的双重截断。初稿 proposal 声称
-「两侧同界、不存在双重截断」**是假话**。改为 `if token_count >= max_tokens` 后，4000 字即触发
-summarize，发布侧严格 ≤ 单条上限。
+bus → 仍需 `read()` 再截一次，即「发布侧承诺 ≤N、消费侧再截一次」的双重截断。改为
+`if token_count >= max_tokens` 后，4000 字即触发 summarize，**summarize 必然触发**。
 
-**边界补充**：`_summarize` 的 LLM 分支是 **advisory、非硬界**——`agent/context/summarizer.py:33-35`
-明说预算「not a hard guarantee」，只把它拼进 prompt（`:169-172`）。故**单条的硬保证在消费侧
-`read()`**；发布侧是「阈值对齐 + 消费侧兜底」，design 与 spec 均不得声称发布侧对 LLM 摘要分支有硬界。
+**边界补充（R5 + 审阅 R1 修正）**：`_summarize` 的 LLM 分支是 **advisory、非硬界**——`agent/context/summarizer.py:33-35`
+明说预算「not a hard guarantee」，只把它拼进 prompt（`:169-172`）。故**发布侧对 LLM 摘要分支没有硬界**，
+「发布侧承诺 ≤N」这句在 LLM 分支上是假话。**发布侧的模型面输出由出口投影保证**：`PublishBusMessage`
+的回包（第 5 条出口）与消费侧同走 `_bounded_message`，超限时截断并带 `summary_truncated`；bus 队列
+仍保留原文（D2）。design 与 spec 均不得声称发布侧对 LLM 摘要分支有硬界，也不得声称「两侧同界」——
+准确表述是「**出口投影**保证两侧的模型面输出同界」。
 
 **备选与弃用**：
 - *不管发布侧，只在消费侧截* → 部分弃用：消费侧截断是**兜底**，但发布侧无界会让 bus 内存里塞满

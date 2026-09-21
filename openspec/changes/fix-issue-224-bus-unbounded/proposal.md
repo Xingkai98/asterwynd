@@ -25,8 +25,9 @@ issue #224 报告：issue #213 的排查认定 message bus 属「已有 bounded 
 `RunPattern`；`scheduler._envelope()` 也调它，但那条路径当前模型面不可达，加固后成为纵深防御）——只修
 `patterns.py` 的调用点等于留一个同类漏口，必须在方法本身加固。
 
-**出口 4（发布回包）是 #213 家族的同一形状**：它把子 agent 刚写的文本原样回给发起的模型，`max_tokens`
-钳住后 ≤ 单条上限（与出口 1/2 同界）。
+**出口 4（发布回包）是 #213 家族的同一形状**：它把子 agent 刚写的文本原样回给发起的模型。钳住
+`max_tokens` 只保证 summarize **触发**、不保证它**产出有界**（LLM 分支 advisory，见 C 节），故回包
+与其它出口一样走**出口投影**才 ≤ 单条上限（与出口 1/2 同界）。
 
 **唯一有界的** `compact_summary(max_chars=2000)` 只被 `manager.py:1492` 用于**会话恢复注入**，不是
 `read()` / `RunPattern` / `DeclareWorkflow` 的路径——所以「bus 已有 bounded 口径」不成立。
