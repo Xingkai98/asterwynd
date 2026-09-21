@@ -121,8 +121,9 @@ to_result_dict() → "summary": self.summary              # 全文
 落盘件会**永远**只说「已截断」而不给导航——恰好与 D4 的意图相反。
 
 **修正**：落盘路径必须**显式传**「ref 必然存在」（该分支 `store.save_result` 已成功，`manager.py:1301`），
-不能读属性。且 D9 落地后调用点是**三个**（`to_result_dict` / `_write_result_artifacts` /
-`patterns._worker_entry`），第三个的语义见 Open Question Q4。
+不能读属性。**实际调用点是两个**：`to_result_dict`（按 `result_ref or summary_ref` 判）与
+`_write_result_artifacts`（显式传 `True`）。`patterns._worker_entry` **不走** `_bounded_summary`
+——D9 落地时它改用 `_clip` + 手工补 `result_ref` 键，故不涉及 `has_ref` 参数。
 
 ## 决策 D4：`_bounded_summary` 的截断标记不再撒谎
 

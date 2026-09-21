@@ -69,7 +69,9 @@
       `tests/agent/memory/test_persistent.py::TestFindScopeRoot` 的两条——**在 master（7c23059）上
       同样失败**，与本 change 无关（git-dir 探测，不碰本 change 的代码路径）
 - [x] OpenSpec strict validate 通过（30/30）
-- [x] OpenSpec artifact checker 通过
+- [ ] OpenSpec artifact checker 通过（**需先产出 review manifest**：checker 对
+      tasks 全勾的 change 强制要求 `reviews/building-review-manifest.json`，
+      而 manifest 只能在审阅 PASS 后生成——故此项在 manifest 落盘前保持未勾）
 - [x] 端到端验收：30000 字 run 逐个走 4 个出口——envelope 4000 / full_summary=True 30000 /
       inspect content 4000+标志 / worker summary 4000；假话修复实测（无 ref 只说 truncated，有 ref 才提 result_ref）
 - [x] **benchmark smoke**：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-213`
