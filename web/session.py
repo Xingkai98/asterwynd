@@ -724,8 +724,10 @@ def build_workflow_resume_payloads(manager, *, session_id: str) -> list[dict]:
     return running + terminal[-5:]
 
 
-#: 单条 transcript 消息的内容上限（bounded 的**单条**维度）。
-#: ``inspect_transcript`` 只保证条数、不保证单条长度——截断必须在路由层做。
+#: 单条 transcript 消息的内容上限（bounded 的**单条**维度）。与 ``manager`` 侧的
+#: ``TRANSCRIPT_ITEM_LIMIT`` 同值（``agent`` 层不依赖 ``web`` 层，两处各自声明同一
+#: 契约数字，由测试锁定一致）。自 issue #213 起生产者（``inspect_transcript``）也已
+#: 按该上限截断并回流标志；路由层这一道是**同口径的兜底与更窄预算能力**，取或用。
 TRANSCRIPT_CONTENT_LIMIT = 4000
 #: transcript 条数默认/硬上限（与 ``InspectSubagentTranscript`` 的默认 5 不同：
 #: UI 要的是一屏可读的窗口，不是给模型省上下文）。
@@ -745,9 +747,12 @@ def _bounded_messages(payload: dict, *, content_limit: int) -> dict:
     工具调用的 ``arguments`` 与消息 ``content`` 同属「单条内容」，走**同一个**
     ``content_limit``：一个 Write 调用能带几 KB 正文，不截断就等于 bounded 是空话。
 
-    ``arguments_truncated`` 与上游（``manager`` 投影）的截断标志**取或**——
-    上游有自己的上限（``TOOL_CALL_ARGUMENT_LIMIT``），它截过而本层预算更宽时
-    不能再报「没截断」。
+    ``content_truncated`` / ``arguments_truncated`` 都与上游（``manager`` 投影）的
+    截断标志**取或**——上游有自己的上限（``TRANSCRIPT_ITEM_LIMIT``），它截过而本层
+    预算更宽时不能再报「没截断」。只比较本层长度会**谎报完整**（issue #213 的第二例，
+    与 #212 在 ``arguments`` 上修过的是同一个 bug）。
+
+    ``summary_truncated`` 原样透传（summary scope 的返回不进本函数，不冲突）。
     """
     messages = []
     for message in payload.get("messages", []) or []:
@@ -755,7 +760,8 @@ def _bounded_messages(payload: dict, *, content_limit: int) -> dict:
         projected = {
             "role": message.get("role"),
             "content": content[:content_limit],
-            "content_truncated": len(content) > content_limit,
+            "content_truncated": bool(message.get("content_truncated"))
+            or len(content) > content_limit,
         }
         calls = message.get("tool_calls")
         if calls:

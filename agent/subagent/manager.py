@@ -49,32 +49,77 @@ logger = logging.getLogger("asterwynd.subagent")
 BOUNDED_SUMMARY_CHARS = 2000
 
 
-def _bounded_summary(text: str, max_tokens: int | None) -> str:
-    """把全文裁成 bounded summary 落盘件（短文本 no-op，见 grill 风险「中」）。"""
+def _bounded_summary(
+    text: str, max_tokens: int | None, *, has_ref: bool = True
+) -> str:
+    """把全文裁成 bounded summary 落盘件（短文本 no-op，见 grill 风险「中」）。
+
+    ``has_ref`` 决定截断标记**敢不敢**提「全文在哪」。没有落盘引用时（普通
+    ``RunSubagent`` 的 run 没有 workflow 身份，``result_ref`` 为 ``None``），
+    声称「full result in result_ref」是一句**假话**——读者按图索骥会扑空。
+    调用方必须如实传入，不能读 ``run.result_ref`` 属性推断（见
+    ``_write_result_artifacts`` 的赋值顺序陷阱：那里 ref 在调用**之后**才写回）。
+
+    预算**上限钉死**在 ``TRANSCRIPT_ITEM_LIMIT``（issue #213）：``max_tokens`` 是 run
+    预算、由发起调用的模型自设且无上界校验，若预算随它无限放大，这个「bounded」字段
+    本身就是一条无界通道——它和 ``summary`` 在同一个返回体里，只修后者等于没修
+    （审阅 R1 的 blocker：``max_tokens=500000`` 时它返回 30000 字全文）。
+    """
     budget_chars = BOUNDED_SUMMARY_CHARS
     if max_tokens:
         budget_chars = max(budget_chars, max_tokens * 4)
+    budget_chars = min(budget_chars, TRANSCRIPT_ITEM_LIMIT)
     if len(text) <= budget_chars:
         return text
-    return text[:budget_chars] + "\n…[truncated; full result in result_ref]"
+    marker = (
+        "\n…[truncated; full result in result_ref]"
+        if has_ref
+        else "\n…[truncated]"
+    )
+    return text[:budget_chars] + marker
 
 
-#: 单条工具调用 ``arguments`` 的字符上限。与 web 路由的 ``TRANSCRIPT_CONTENT_LIMIT``
-#: 同值——「单条内容」在模型面与 HTTP 面是同一个概念，不该有两个数。
-TOOL_CALL_ARGUMENT_LIMIT = 4000
+#: 模型面**单条内容**的字符上限。约束一次投影里单条的 ``arguments`` / ``content`` /
+#: ``summary``——三者都是「子 agent 撰写的原始文本」，在模型面与 HTTP 面是同一个概念，
+#: 不该有两个数（与 web 路由的 ``TRANSCRIPT_CONTENT_LIMIT`` 同值）。
+#:
+#: 这个上限**固定**、不随 run 预算（``max_tokens``）浮动：``max_tokens`` 由发起调用的
+#: 模型自行设定且无上界校验，若上限随其浮动，**被检视的子 agent 就能通过调大自己的
+#: 预算来决定父 agent 收到多少**——那不是界，是旋钮。
+TRANSCRIPT_ITEM_LIMIT = 4000
+
+#: 历史名（issue #212 引入，当时只约束 ``arguments``）。语义已扩宽到单条内容的三处，
+#: 保留为兼容别名以免制造「半改半不改」；新代码请用 ``TRANSCRIPT_ITEM_LIMIT``。
+TOOL_CALL_ARGUMENT_LIMIT = TRANSCRIPT_ITEM_LIMIT
 
 
-def _bounded_arguments(arguments: str) -> tuple[str, bool]:
-    """截断 ``arguments``，返回 ``(文本, 是否被截断)``。
+def _clip(text: str, limit: int) -> tuple[str, bool]:
+    """按 ``limit`` 截断，返回 ``(文本, 是否被截断)``。
 
     截断标志必须跟着文本一起回流，不能只留文本——否则下游（路由层）再按自己的
     预算截一次时，只能看到「已经被上游截短了的串」，从而把「其实截过」报成
     「没截断」，即一条**假话**。
     """
-    text = arguments or ""
-    if len(text) <= TOOL_CALL_ARGUMENT_LIMIT:
+    text = text or ""
+    if len(text) <= limit:
         return text, False
-    return text[:TOOL_CALL_ARGUMENT_LIMIT], True
+    return text[:limit], True
+
+
+def _bounded_arguments(arguments: str) -> tuple[str, bool]:
+    """截断 ``arguments``（``_clip`` 的具名封装，保留 #212 的调用形状）。"""
+    return _clip(arguments, TRANSCRIPT_ITEM_LIMIT)
+
+
+def _bounded_content(content: str) -> tuple[str, bool]:
+    """截断消息 ``content`` / ``summary``（与 ``arguments`` 同一上限）。"""
+    return _clip(content, TRANSCRIPT_ITEM_LIMIT)
+
+
+def _bounded_content_message(content: str) -> dict:
+    """投影一条消息的 ``content`` + 截断标志（与 ``_project_tool_calls`` 对称）。"""
+    text, truncated = _bounded_content(content)
+    return {"content": text, "content_truncated": truncated}
 
 
 def _project_tool_calls(message: Message) -> dict:
@@ -168,15 +213,22 @@ class SubagentRunRecord:
     def to_result_dict(self) -> dict:
         """Parent/public run envelope（D7 的第三种表示，Q6）。
 
-        ``summary`` 保留**全文**（Q6：改成裁剪版会经 ``state.summary`` 一路传导到
-        下游）；父 agent / 普通工具消费的 bounded 版是独立的 ``bounded_summary``，
-        与 ``summary_ref`` 落盘件同源。
+        本方法保留 ``summary`` **全文**（Q6：改成裁剪版会经 ``state.summary`` 一路
+        传导到下游）；**模型面**的 bounded 化在 ``_format_run_envelope`` 出口做
+        （issue #213：那里才区分「谁在看」）。``summary_full_chars`` 给出全文长度，让模型
+        知道被裁掉多少、值不值得按 ref 翻页。
         """
         return {
             "run_id": self.run_id,
             "status": self.status,
             "summary": self.summary,
-            "bounded_summary": _bounded_summary(self.summary, self.max_tokens),
+            # 命名带 ``full_`` 前缀以消歧（审阅 R1 Issue 5）：模型面出口的 ``summary``
+            # 会被裁短，而同 payload 的这个数是**全文**长度——不写清楚极易被读成
+            # ``len(summary)``。模型据此判断「被裁掉多少、值不值得按 ref 翻页」。
+            "summary_full_chars": len(self.summary),
+            "bounded_summary": _bounded_summary(
+                self.summary, self.max_tokens, has_ref=bool(self.result_ref or self.summary_ref)
+            ),
             "reason": self.reason,
             "max_tokens": self.max_tokens,
             "max_time_s": self.max_time_s,
@@ -1063,6 +1115,11 @@ class SubAgentManager:
         session = self._require_session(subagent_id)
         if scope == "summary":
             latest_run = session.runs[-1] if session.runs else None
+            raw_summary = latest_run.summary if latest_run is not None else ""
+            # 单条内容截断（issue #213）：summary 是子 agent 的**原始输出**全文
+            # （``_complete_run`` 的 ``run.summary = result.content``），不是浓缩件
+            # ——它和 recent_messages 的 content 同源同质，必须同一口径。
+            summary, summary_truncated = _bounded_content(raw_summary)
             # ``summary`` is empty for a run that has not produced output yet;
             # the run status tells the caller whether that means "still queued"
             # or "already terminal without output" (queueing makes the queued
@@ -1072,7 +1129,9 @@ class SubAgentManager:
                 "run_id": run_id,
                 "scope": "summary",
                 "status": latest_run.status if latest_run is not None else None,
-                "summary": latest_run.summary if latest_run is not None else "",
+                "summary": summary,
+                "summary_truncated": summary_truncated,
+                # ``truncated`` 仍是**条数**语义（本分支恒 False），与单条截断分开。
                 "truncated": False,
                 "included_tool_results": include_tool_results,
             }
@@ -1088,8 +1147,10 @@ class SubAgentManager:
             "messages": [
                 {
                     "role": msg.role,
-                    "content": extract_text(msg.content),
                     "tool_call_id": msg.tool_call_id,
+                    # 单条 content 与 arguments 同一上限（issue #213）：tools 结果
+                    # （一次 Read/Bash 的整份输出）是超长文本最常见的来源。
+                    **_bounded_content_message(extract_text(msg.content)),
                     **_project_tool_calls(msg),
                 }
                 for msg in tail
@@ -1304,8 +1365,12 @@ class SubAgentManager:
                 run.run_id, [message.to_dict() for message in session.messages]
             )
             refs.append(transcript_ref)
+            # ``has_ref=True`` 是**显式**的：``result_ref`` 在本行之后（:run.result_ref =）
+            # 才写回 run，读属性此刻恒为 None，会让落盘件永远丢掉导航信息。
+            # 本分支已成功 ``save_result``，全文确有落盘，故可如实声称。
             summary_ref = store.save_summary(
-                run.run_id, _bounded_summary(run.summary, run.max_tokens)
+                run.run_id,
+                _bounded_summary(run.summary, run.max_tokens, has_ref=True),
             )
             refs.append(summary_ref)
             run.result_ref = result_ref
@@ -1475,9 +1540,29 @@ class SubAgentManager:
         self,
         subagent_id: str,
         run: SubagentRunRecord,
+        *,
+        full_summary: bool = False,
     ) -> dict:
+        """Run envelope。默认把 ``summary`` 裁成**模型面单条上限**（issue #213）。
+
+        默认值取 bounded 是刻意的：这是模型面出口（``GetSubagentRun`` / ``RunSubagent``
+        / ``CancelSubagentRun`` 都经它），新增调用方忘记传参时必须落在**安全侧**。
+
+        唯一需要全文的是调度器——它拿 ``summary`` 喂 ``state.summary``，而聚合器
+        ``_merge_contributions_bounded`` 用 ``len(merged) <= budget*4`` 判断**要不要**
+        调 summarizer 压缩；提前裁短会让它误判「没超预算」而**静默跳过压缩**，聚合
+        质量无声下降。所以那一处显式传 ``full_summary=True``。
+
+        上限用**固定**的 ``TRANSCRIPT_ITEM_LIMIT``，不读 ``run.max_tokens``：后者由
+        发起调用的模型自设且无上界校验，拿它当预算等于让被检视的子 agent 决定父 agent
+        能收到多少。
+        """
         payload = {"subagent_id": subagent_id}
         payload.update(run.to_result_dict())
+        if not full_summary:
+            text, truncated = _bounded_content(payload["summary"])
+            payload["summary"] = text
+            payload["summary_truncated"] = truncated
         return payload
 
     def _require_session(self, subagent_id: str) -> SubagentSessionRecord:

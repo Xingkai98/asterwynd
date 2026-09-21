@@ -10,6 +10,10 @@ grill 决策 8 + Q6 拍板：**不能只做 ``to_result_dict`` 出口裁剪**—
 3. **parent/public envelope**：bounded summary + refs。
 
 同时锁定：``run.summary`` 保留**全文**（Q6），bounded 只发生在出口投影与落盘件。
+
+issue #213 更正了 ③ 的口径：envelope 的 ``summary`` 在**模型面出口**按固定单条上限
+（``TRANSCRIPT_ITEM_LIMIT``）裁剪，不再等于 ``run.summary`` 全文——记录层不受影响，
+内部消费可显式传 ``full_summary=True`` 取全量。
 """
 import json
 
@@ -76,12 +80,26 @@ async def test_three_representations_are_distinct(manager):
     assert len(node_a["summary"]) <= 400
     assert LONG not in json.dumps(result)
 
-    # ③' run 级 parent envelope（to_result_dict）同样提供独立的 bounded 字段，
-    # 而 summary 保留全文（Q6：改 summary 语义会一路传导到下游）
+    # ③' run 级 parent envelope：**出口**按模型面单条上限裁剪（issue #213），
+    # 但 ``run.summary`` 记录层仍是全文（见下一条测试）——两者不再是同一份文本。
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+
     run_envelope = manager._format_run_envelope(
         scheduler._states["a"].subagent_id, run_a
     )
-    assert run_envelope["summary"] == LONG
+    assert len(run_envelope["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
+        "模型面出口的 summary 必须 bounded（issue #213）"
+    )
+    assert LONG not in json.dumps(run_envelope)
+    assert run_envelope["summary_truncated"] is True
+    assert run_envelope["summary_full_chars"] == len(LONG), (
+        "被裁掉多少要如实给出，模型才知道值不值得翻页"
+    )
+    # 全量仍可显式取得——调度器等内部消费走这条（否则聚合会静默跳过压缩）。
+    full_envelope = manager._format_run_envelope(
+        scheduler._states["a"].subagent_id, run_a, full_summary=True
+    )
+    assert full_envelope["summary"] == LONG
     assert len(run_envelope["bounded_summary"]) < len(LONG)
     assert run_envelope["result_ref"] == run_a.result_ref
 

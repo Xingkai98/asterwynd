@@ -185,7 +185,12 @@ class CancelSubagentRunTool(Tool):
 
 @tool_parameters(
     name="InspectSubagentTranscript",
-    description="Inspect a bounded summary or recent messages from a child subagent transcript.",
+    description=(
+        "Inspect a bounded summary or recent messages from a child subagent transcript. "
+        "Each item's text is capped at a fixed character limit; truncated items carry a "
+        "`summary_truncated` / `content_truncated` flag. Read the full text via the "
+        "`result_ref` / `summary_ref` from GetSubagentRun or ReadWorkflowResult."
+    ),
     parameters={
         "type": "object",
         "properties": {

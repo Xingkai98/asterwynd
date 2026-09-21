@@ -2166,7 +2166,12 @@ class WorkflowScheduler:
             run = manager.find_run(subagent_id, run_id)
             if run is not None and run.status in TERMINAL_RUN_STATUSES:
                 self._refresh_peak()
-                return manager._format_run_envelope(subagent_id, run)  # type: ignore[arg-type]
+                # 内部消费：envelope 的 summary 会喂 state.summary → 下游聚合。
+                # 必须取全量——聚合器用 len(merged) 判断要不要调 summarizer 压缩，
+                # 提前裁短会让它误判「没超预算」而静默跳过压缩（issue #213 D2）。
+                return manager._format_run_envelope(  # type: ignore[arg-type]
+                    subagent_id, run, full_summary=True
+                )
             self._refresh_peak()
             await asyncio.sleep(_POLL_INTERVAL_S)
 
