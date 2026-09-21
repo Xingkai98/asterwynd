@@ -12,6 +12,8 @@
 
 该界 SHALL 施加在 `snapshot_payload()` **本身**（唯一模型面调用点是 `RunPattern` 的 `patterns.py:458`），SHALL NOT 只在某个调用点加固：调度器的 `_envelope()` 同样调用该方法，只加固一处等于留一个同类漏口。
 
+本 Requirement 只约束 `bus` 快照这一项。`RunPattern` 返回体中的 `workers[]` 与顶层 `summary` 的条数维**不在**本 Requirement 范围内（另案处理）——读者 SHALL NOT 把本 Requirement 读成「`RunPattern` 返回体已整体 bounded」。
+
 #### Scenario: RunPattern 返回体的 bus 快照有界
 
 - **GIVEN** 一次 `RunPattern` 编排里，100 个 worker 各发布了一条 1600 字的 bus 消息

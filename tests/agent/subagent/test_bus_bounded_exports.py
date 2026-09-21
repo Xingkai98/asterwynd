@@ -221,6 +221,46 @@ async def test_publish_bus_message_clamps_max_tokens(manager):
     assert len(bus._messages[0].summary) <= BUS_MESSAGE_LIMIT
 
 
+class OverBudgetLLM:
+    """Advisory 预算下**允许**发生的形状：摘要比预算大（如实返回，不截断）。
+
+    ``_summarize`` 的 LLM 分支只把预算拼进 prompt，不保证产出 ≤ 预算
+    （``agent/context/summarizer.py``：「not a hard guarantee」）。
+    """
+
+    def __init__(self, content: str):
+        self.content = content
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        return LLMResponse(content=self.content, stop_reason="end_turn", usage=Usage(5, 5))
+
+
+@pytest.mark.asyncio
+async def test_publish_reply_is_bounded_when_summary_over_budget(manager):
+    """回归（审阅 R1）：回包是第 5 条出口，不得因摘要超预算而越界。
+
+    summarize 的 LLM 分支是 advisory，可能返回 6000 字的摘要。修复前该值原样进回包
+    （实测 6000 > 4000）——发布侧「有界」是假的。界必须由**出口投影**保证。
+    """
+    manager.llm = OverBudgetLLM("y" * 6000)  # 远超 4000
+    bus = MessageBus()
+    token = set_bus(bus)
+    try:
+        out = json.loads(
+            await PublishBusMessageTool(manager).execute(
+                sender="w", topic="t", content="x" * _OVERSIZED, max_tokens=10**9
+            )
+        )
+    finally:
+        reset_bus(token)
+    assert len(out["summary"]) <= BUS_MESSAGE_LIMIT, "摘要超预算时回包越界"
+    assert out["summary_truncated"] is True
+    assert out["token_count"] == max(1, len(out["summary"]) // 4)
+    # D2：队列保留全文（截断只发生在出口投影）
+    assert len(bus._messages[0].summary) == 6000
+    assert bus._messages[0].truncated is False
+
+
 @pytest.mark.asyncio
 async def test_publish_bus_message_threshold_is_inclusive(manager):
     """Q6 边界：4001 字（``estimate_tokens`` 向下取整到 1000）必须触发 summarize。

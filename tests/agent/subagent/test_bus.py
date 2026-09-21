@@ -72,17 +72,20 @@ def test_read_returns_newest_when_single_message_exceeds_window():
 def test_bus_message_limit_derives_from_transcript_item_limit():
     """D1/D7：单条上限**派生**自 ``TRANSCRIPT_ITEM_LIMIT``，不是第二个数。
 
-    本测试锁的是「派生关系没被改成字面量」——把它改成 ``BUS_MESSAGE_LIMIT = 4000``
-    时，下面的 ``is`` 断言仍绿（小整数缓存），故再断言模块源码里确实是 import 派生。
+    本测试锁的是「派生关系没被改成字面量」——单靠 ``==`` 锁不住（改成字面量 ``4000``
+    时数值仍相等，小整数缓存下 ``is`` 也仍绿），故断言模块源码里 ``BUS_MESSAGE_LIMIT``
+    的赋值右侧**就是** ``TRANSCRIPT_ITEM_LIMIT``（改字面量 → 本测试变红）。
     """
     import inspect
+    import re
 
     import agent.subagent.bus as bus_module
 
     assert BUS_MESSAGE_LIMIT == TRANSCRIPT_ITEM_LIMIT
     src = inspect.getsource(bus_module)
-    assert "from agent.subagent.manager import" in src
-    assert "TRANSCRIPT_ITEM_LIMIT" in src
+    assert re.search(r"^BUS_MESSAGE_LIMIT\s*=\s*TRANSCRIPT_ITEM_LIMIT\s*$", src, re.M), (
+        "BUS_MESSAGE_LIMIT 必须直接派生自 TRANSCRIPT_ITEM_LIMIT（不得写成字面量）"
+    )
     assert BUS_SNAPSHOT_LIMIT == 20
     assert BUS_PUBLISH_MAX_TOKENS == BUS_MESSAGE_LIMIT // 4
 

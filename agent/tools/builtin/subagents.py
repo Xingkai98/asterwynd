@@ -10,6 +10,7 @@ from agent.subagent.bus import (
     BUS_PUBLISH_MAX_TOKENS,
     BUS_SNAPSHOT_LIMIT,
     MessageBus,
+    _bounded_message,
     estimate_tokens,
 )
 from agent.subagent.context import current_bus
@@ -288,7 +289,11 @@ class PublishBusMessageTool(Tool):
             summary=summary,
             token_count=token_count,
         )
-        return json.dumps(msg.to_dict(), ensure_ascii=False)
+        # 回包是**第 5 条模型面出口**（它直接进发起者的上下文）。钳住阈值只保证
+        # summarize **必然触发**，不保证它**产出有界**——``_summarize`` 的 LLM 分支是
+        # advisory（``agent/context/summarizer.py``：预算「not a hard guarantee」），可能
+        # 返回超预算的摘要。故回包同样经出口投影（D2：队列保留全文，投影才截断）。
+        return json.dumps(_bounded_message(msg).to_dict(), ensure_ascii=False)
 
     async def _summarize(self, content: str, max_tokens: int) -> str:
         """Fold content into a summary under ``max_tokens`` (publish-side layer)."""

@@ -65,15 +65,18 @@ BUS_PUBLISH_MAX_TOKENS` token）。不钳则修完单条后总量**反而**比�
 - 单条上限同上（`BUS_MESSAGE_LIMIT`），复用 `read()` 的同一截断路径。
 - **只截 bus 消息**，不动 `max_read_tokens` 等既有键。
 
-**C. 发布侧 `max_tokens` 补上界 + 闸门含等号**
+**C. 发布侧 `max_tokens` 补上界 + 闸门含等号 + 回包走出口投影**
 
 `PublishBusMessageTool` 的 `max_tokens` 钳到 `BUS_PUBLISH_MAX_TOKENS`（= `BUS_MESSAGE_LIMIT // 4`，
 即与单条字符上限等价的 token 数），使「summarize 阈值」不可能被调到单条上限之上；summarize 闸门由
-严格大于改为**大于等于**（`estimate_tokens` 向下取整，`>` 会留 4001–4003 字的缝）。
+严格大于改为**大于等于**（`estimate_tokens` 向下取整，`>` 会留 4001–4003 字的缝），使 summarize
+**必然触发**。
 
-**如实措辞**：这只对齐了**阈值**——`_summarize` 的 LLM 分支是 advisory、非硬界
-（`agent/context/summarizer.py`：预算「not a hard guarantee」），单条的**硬保证在消费侧 `read()`**。
-发布侧是「阈值对齐 + 消费侧兜底」，**不是**「发布侧也有硬界」。
+**发布侧的界由出口投影保证，不由阈值保证**：`_summarize` 的 LLM 分支是 advisory、**不保证**产出
+≤ 上限（`agent/context/summarizer.py`：预算「not a hard guarantee」，只拼进 prompt）。因此发布侧的
+**模型面输出**——`PublishBusMessage` 的回包（第 5 条出口，`msg.to_dict()`）——同样走出口投影
+（`_bounded_message`），被截断时带 `summary_truncated`。**SHALL NOT** 声称「阈值钳制使发布侧严格
+不超过上限」这种对 LLM 分支不成立的断言。bus 队列本身仍保留原文（D2）。
 
 **D. 常量单一源**
 

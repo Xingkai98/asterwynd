@@ -75,9 +75,28 @@
 
 ## 审阅闭环
 
-- [x] Round 1 独立 subagent 审阅（`/review-loop fix-issue-224-bus-unbounded`）
-- [x] 按 verdict 修复 + 加回归测试，直到 PASS 或 3 轮封顶
-- [x] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
+- [x] Round 1 独立 subagent 审阅（`/review-loop fix-issue-224-bus-unbounded`）→ CHANGES_REQUESTED
+- [x] 按 verdict 修复 + 加回归测试（见下「审阅修复」节）
+- [ ] Round 2 独立 subagent 复审
+- [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
+
+### 审阅修复（Round 1 → Round 2）
+
+- **R1（中等）**：`PublishBusMessage` 的**回包**（第 5 条模型面出口）在 `_summarize` 的 LLM 分支
+  返回超预算摘要时**越界**——实测 `OverBudgetLLM` 返回 6000 字时回包 6000 字。钳住阈值只保证
+  summarize **触发**、不保证它**产出有界**（该分支是 advisory）。修法：回包同样走出口投影
+  `_bounded_message`（队列仍保留全文，符合 D2）。同步修正 `specs/subagents/spec.md`（delta + 权威）
+  与 `proposal.md` 里「使发布侧严格不超过单条上限」这句**对 LLM 分支不成立**的断言，改为「发布侧的
+  界由出口投影保证，不由阈值保证」+ 新增 Scenario「发布回包不因摘要超预算而越界」。
+  回归测试：`test_publish_reply_is_bounded_when_summary_over_budget`（覆盖 LLM 分支，此前测试只覆盖
+  `llm=None` 的降级分支）。
+- **R2（中等）**：常量「派生锁」是假保护——`test_bus_message_limit_derives_from_transcript_item_limit`
+  只查 `from agent.subagent.manager import` / `TRANSCRIPT_ITEM_LIMIT` 两个子串，而该 import 行因 `_clip`
+  无论如何都在；实测把 `BUS_MESSAGE_LIMIT` 改成字面量 `4000` 该测试**仍 passed**。修法：改为正则断言
+  赋值右侧就是 `TRANSCRIPT_ITEM_LIMIT`。
+- **R3（低）**：`.gitignore` 新增 `**/handoff.json` 属越界改动 → 回滚，`handoff.json` 用完即删。
+- **R4（低）**：`specs/agent-runtime/spec.md` 的 delta 比已同步的权威 spec 少 grill R2 的限定段
+  （delta 与合入结果漂移）→ 补齐，两处逐字一致。
 
 ## 验证
 
