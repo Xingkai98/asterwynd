@@ -138,11 +138,31 @@ traceback 回归），但 `--change ..` 未覆盖：`Path("..").is_absolute()` �
 
 ## 归档 change 的 review manifest 写入/校验双盲区（fix-issue-199 收尾实测，issue #232）
 
-**A. 写入盲区**：`scripts/workflow_state.py` 的 `_require_change_target` 用 `CHANGES_ROOT / change_id`
-定位目标、**只看 active 目录**，不回退 `archive/`（对照 `_flow_resolve_change_dir` 有归档回退）。
-故 `fix-issue-199` 修好的 CLI 只覆盖「归档前」写 manifest；归档后再需要生成只能绕底层
+**A. 写入盲区**（**已由 fix-issue-232-archive-write 收口**，2026-09-21）：`scripts/workflow_state.py`
+的 `_require_change_target` 原用 `CHANGES_ROOT / change_id` 定位目标、**只看 active 目录**，不回退
+`archive/`。故 `fix-issue-199` 修好的 CLI 只覆盖「归档前」写 manifest；归档后再需要生成只能绕底层
 `write_review_manifest(..., archived=True)`。实测：对已归档 change 调 `review-manifest` 报
 「change ... 不存在」。
+
+收口内容（PR 见 change `2026-09-21-fix-issue-232-archive-write`）：目标解析改为 active 优先 →
+归档回退，**委托 `review_manifest.change_dir_for(archived=True)`**（不是复用
+`_flow_resolve_change_dir`——后者回退拼裸 id，对仓库全部带 `YYYY-MM-DD-` 前缀的归档目录是**死代码**）；
+`cmd_review_manifest` 据解析结果传 `archived=`；归档目标跳过投影刷新（避免在已提交的归档目录写出
+`handoff.json` / `workflow-state.json`）并做只读 `verify_projection` 告警；归档目标要求解析结果目录名
+为裸 `<id>` 或 `<date>-<id>`、`--change` 拒绝带日期前缀的 id（否则写入的 `change_id` 会触发 CI
+`change_id mismatch`）。
+
+**A-遗留 1（`flow status` 归档查询，仍开放）**：`_flow_resolve_change_dir` 对归档 id 仍返回 `None`
+（`flow status --change <归档 id>` 实测 exit 1「不存在」）。它与写通道无关、属既存缺陷，本 change
+按非目标未修，仍留在 issue [#232](https://github.com/Xingkai98/asterwynd/issues/232) 跟踪。
+
+**A-遗留 2（`change_dir_for` 前缀正则缺 `$`，仍开放）**：`agent/workflow/review_manifest.py:47` 的
+`re.match(rf"\d{{4}}-\d{{2}}-\d{{2}}-{escaped}", name)` 无 `$` 锚点，归档下并存 `alpha` 与
+`alpha-beta` 时查询 `alpha` 会命中 **`alpha-beta`**（另一个 change）的目录，且结果依赖 `iterdir()`
+顺序。当前仓库 89 个归档 id 实测无前缀碰撞（潜在而非现实故障）。本 change 已在调用侧加事后断言
+fail-closed（解析目录名必须为裸 `<id>` 或 `<date>-<id>`），**未改 `change_dir_for` 本身**（它被 checker
+`--check-archived` 共用，改动面超出该 bugfix）。收紧正则属独立决策，跟踪见
+issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
 
 **B. 校验盲区**：`.github/workflows/ci.yml` 跑的是 `check_openspec_artifacts.py --base-ref ... --require-base`，
 **不带 `--check-archived`**；默认模式把 `archive/` 显式排除在扫描外，归档 change 只在
