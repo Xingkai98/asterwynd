@@ -4,9 +4,14 @@
 
 父 AgentLoop SHALL 通过显式运行时接口创建、启动、查询、等待、取消和检查子 session / 子 run，而不是通过自动消息注入或伪造 tool result 把子结果并入父 messages。
 
-这些接口返回给**模型面**的 run envelope SHALL bounded：`summary` 字段 SHALL 不超过该 run 的摘要预算，
-SHALL NOT 默认返回子 agent 的全文输出。全文 SHALL 通过 envelope 里的显式引用（`result_ref` /
-`summary_ref`）按需读取。
+这些接口返回给**模型面**的 run envelope SHALL bounded：`summary` 字段 SHALL 不超过一个**固定**的
+单条内容上限，SHALL NOT 默认返回子 agent 的全文输出。全文 SHALL 通过 envelope 里的显式引用
+（`result_ref` / `summary_ref`）按需读取。
+
+该上限 SHALL **独立于 run 预算**（`max_tokens` 等）：`max_tokens` 由发起调用的模型自行设定且无上界
+校验，若上限随其浮动，则「被检视的子 agent」可通过调大自身预算来放大父 agent 收到的内容——
+上限 SHALL NOT 具有这一性质。该上限 SHALL 与消息 `content` 的单条上限同值（两者都是子 agent
+撰写的原始文本，SHALL NOT 有两套口径）。
 
 bounded 化 SHALL 只发生在**出口投影**：run 记录本身 SHALL 保留全文（下游聚合依赖它）。
 调度器等内部消费方 SHALL 能显式取得全量 summary，SHALL NOT 因出口 bounded 而丢失聚合输入。
@@ -23,11 +28,19 @@ bounded 化 SHALL 只发生在**出口投影**：run 记录本身 SHALL 保留�
 
 #### Scenario: 超长子 agent 输出在模型面被 bounded
 
-- **GIVEN** 子 run 输出了远超摘要预算的文本（例如 30,000 字）
+- **GIVEN** 子 run 输出了远超单条上限的文本（例如 30,000 字）
 - **WHEN** 父 agent 调用 `GetSubagentRun`
-- **THEN** 返回的 `summary` SHALL 不超过摘要预算
+- **THEN** 返回的 `summary` SHALL 不超过固定的单条内容上限
 - **AND** 返回体 SHALL 提供可取回全文的引用
 - **AND** run 记录本身的 `summary` SHALL 仍为全文（受影响的是出口投影，不是记录）
+
+#### Scenario: 上限不随 run 预算放大
+
+- **GIVEN** 同一个子 run 的输出长度固定且远超单条上限
+- **AND** 该 run 的预算配置（`max_tokens`）取一个很大的值
+- **WHEN** 父 agent 调用 `GetSubagentRun`
+- **THEN** 返回的 `summary` SHALL 仍不超过该固定上限
+- **AND** 结果 SHALL NOT 随 `max_tokens` 的取值变化
 
 #### Scenario: 截断标记不指向不存在的引用
 

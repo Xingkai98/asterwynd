@@ -232,6 +232,16 @@ Open Questions。
   docstring 宽于职责）。请拍板 docstring 的准确措辞，例如是否写成
   「约束**模型面消息投影**的 `arguments`/`content`，以及 inspect 出口的 `summary`」。
 
+## User Confirmation
+
+- **Q1**: 用户答复：**出口 2/3/4 用固定的单条内容上限（`TRANSCRIPT_ITEM_LIMIT = 4000`），不随 run 预算浮动**。用户认可的原则：截断的界**不可被「被检视的对象」影响**——子 agent 产出多长不该决定父 agent 能收到多少；`max_tokens` 恰是被检视侧能设定的参数，当不了安全阀。且主 agent 追赋值链后更正了「summary 是派生数据」的说法（实测 `run.summary = result.content`，即子 agent 最终输出全文；`bounded_summary` 只是它的截断版），确认 `summary` 与 `content` 同源同质，故 4000 是**统一口径**而非引入第三个数。；确认时间: 2026-09-21
+- **Q2**: 用户答复：**本 change 不纳入 bus**（`ReadBus` + `RunPattern.result.bus`），另立 issue 跟踪；但 Non-Goal 的措辞必须从「bus 已有各自的 bounded 口径」（实测为假话）改成如实描述。本 change 标题承诺相应收敛为「**结果出口**的模型面文本一律 bounded」。；确认时间: 2026-09-21
+- **Q3**: 用户答复：**给「被截掉多少」的元数据**——`to_result_dict()` 增 `summary_chars`（原有长度）。理由：只给布尔时模型不知道被裁了多少，可能误判「这就是全部」。；确认时间: 2026-09-21
+- **Q4**: 用户答复：**UI 一并补 content 截断提示**，对称于既有的 `arguments_truncated` 提示。；确认时间: 2026-09-21
+- **Q5**: 用户答复：**给 `patterns._worker_entry` 补 `result_ref` 字段**，然后传「有 ref」——否则条目说「全文在 result_ref」而模型拿不到该 ref，等于在出口 4 复制本 change 正要消灭的假话。；确认时间: 2026-09-21
+- **Q6**: 用户答复：**按 D3c 更正后可如实写**——`TRANSCRIPT_ITEM_LIMIT` 的 docstring 可写「约束模型面单条内容：消息 `content`、`summary`、工具调用 `arguments`」，因为三者已确认为同质，不再构成「用新名字说旧谎」。；确认时间: 2026-09-21
+- **Q7**: 用户答复：**与 Q6 同题（grill 编号重复），答复同 Q6**——Q7 的前提「出口 2 的 summary 由 run 预算决定」已被 Q1 的固定上限决策取代，故 docstring 可如实写「约束模型面单条内容：`content` / `summary` / `arguments`」；两条模型面路径的 `summary` 现在同值，不再有「两个数」。；确认时间: 2026-09-21
+
 ## 风险
 
 - **风险（高）：D3 的「界」可被模型自己放大**（决策 3 / Q1）。这是本次审阅最重要的新发现：

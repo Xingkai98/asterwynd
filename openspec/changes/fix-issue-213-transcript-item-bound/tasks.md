@@ -2,9 +2,11 @@
 
 ## 实现
 
-- [ ] `agent/subagent/manager.py`：新增 `TRANSCRIPT_ITEM_LIMIT = 4000`（docstring 说明它约束
-      `arguments` / `content` / `summary` 三处、与 `web.session.TRANSCRIPT_CONTENT_LIMIT` 同值）；
-      `TOOL_CALL_ARGUMENT_LIMIT` 降为兼容别名（D5）
+- [ ] `agent/subagent/manager.py`：新增 `TRANSCRIPT_ITEM_LIMIT = 4000`（docstring 按 D3c 如实说明
+      它约束模型面单条内容——`content`/`summary`/`arguments` 三者同质、与
+      `web.session.TRANSCRIPT_CONTENT_LIMIT` 同值）；`TOOL_CALL_ARGUMENT_LIMIT` 降为兼容别名（D5）
+- [ ] `agent/subagent/manager.py`：`_format_run_envelope` 的 bounded 化**用固定上限**，
+      不读 `max_tokens`（D3：界不可被被检视对象影响）
 - [ ] `agent/subagent/manager.py`：抽 `_clip(text, limit) -> (text, bool)`；
       `_bounded_arguments` 改为薄封装（签名/返回值不变）；新增 `_bounded_content`（D6）
 - [ ] `agent/subagent/manager.py`：`inspect_transcript` 的 **summary 分支**截断 `summary` +
@@ -14,11 +16,16 @@
 - [ ] `agent/subagent/manager.py`：`_format_run_envelope(..., *, full_summary: bool = False)`
       默认 bounded（用 `bounded_summary` 的值替换 `summary`），保留 `bounded_summary` 键（D2/D3）
 - [ ] `agent/subagent/scheduler.py`：内部消费点（喂 `state.summary`）显式传 `full_summary=True`
-- [ ] `agent/subagent/patterns.py`：`_worker_entry` 的 `summary` 走 `_bounded_summary`（D9）
+- [ ] `agent/subagent/patterns.py`：`_worker_entry` 的 `summary` 走固定上限（D9）；
+      **补 `result_ref` 字段**，否则条目说「全文在 result_ref」而模型拿不到该 ref（Q5）
 - [ ] `agent/subagent/manager.py`：`_bounded_summary` 截断标记只在**确有 ref** 时提「全文在 X」，
-      否则只说已截断（D4）
+      否则只说已截断（D4）；落盘调用点**显式传**「有 ref」，不读属性（D3b 顺序陷阱）
+- [ ] `agent/subagent/manager.py`：`to_result_dict()` 增 `summary_chars`（原有长度），
+      让模型知道被裁了多少、值不值得翻页（Q3）
 - [ ] `web/session.py`：`content_truncated` 改为**取或**（与 `arguments_truncated` 对称），
       并透传上游标志（D7）；同步 docstring 与常量注释
+- [ ] `web/static/workflow_transcript.js`：content 截断补 UI 提示（对称于既有
+      `arguments_truncated` 的「（参数已截断）」）（Q4）
 - [ ] `agent/tools/builtin/subagents.py`：`InspectSubagentTranscript` 描述校正——明说单条内容有上限、
       全文走 `GetSubagentRun` 的 ref / `ReadWorkflowResult`（D8）；**不在工具侧加第二道截断**
 

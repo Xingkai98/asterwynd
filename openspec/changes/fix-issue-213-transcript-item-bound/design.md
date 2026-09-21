@@ -78,8 +78,39 @@ _bounded_summary('字'*30000, 500000)                 → 30000 字符（完全�
 （测试若只用默认 `max_tokens=None` 构造会全绿）。这直接推翻本 change 的标题承诺
 「模型面子 agent 文本**一律** bounded」——那不是界，是调用方可调的旋钮。
 
-**修正**：出口 2/3/4 需要一个**独立于 run 预算的硬上限**。具体取值与是否同时给 `max_tokens`
-加上界校验，见 Open Question Q1（需用户拍板）。
+**修正（用户已拍板）**：出口 2/3/4 用一个**独立于 run 预算的固定上限**
+`TRANSCRIPT_ITEM_LIMIT = 4000`。
+
+## 决策 D3c：`summary` 与 `content` 是同一类数据，本就该同口径
+
+**这条推翻了初版把 `summary` 当「派生数据」的论证。** 追赋值链发现字段名在骗人：
+
+```
+AgentLoop.run() → RunResult(content=response.content)   # 子 agent 最后那条 assistant 消息
+manager.py:1264 → run.summary = result.content          # 原样存下，无任何压缩
+to_result_dict() → "summary": self.summary              # 全文
+                   "bounded_summary": _bounded_summary  # 同一份文本的截断版
+```
+
+`_bounded_summary`（`manager.py:52-59`）只是 `text[:n] + "…[truncated]"`——**是纯截断，不是语义摘要**。
+仓库里真正的 LLM 摘要在 `agent/context/summarizer.py`，只被 workflow 聚合器用。
+
+所以：**`summary` 是原始输出，与 `inspect_transcript` 的 `content` 同源同质**。
+既然 `arguments` / `content` 已有「模型面与 HTTP 面同数」的既定契约，把 `summary` 一并纳入
+是**让口径统一，而不是引入第三个数**——初版担心的「第三个数」是伪问题（它本来就不该分家）。
+
+> 这也更正了主 agent 早先「summary 是派生数据、契约不同」的说法——该说法错误，已作废。
+
+## 决策 D3d：仓库已有「记录存全文、消费时裁剪」的成熟模式
+
+`scheduler.py:2393` 的 `_bounded_output` 就是这条模式（下游视角按节点预算档裁剪），
+其 docstring 写明理由是「100 个 leaf 会把 100 份完整结果灌进一个 prompt」。
+
+**本 change 只是把这条已确立的模式补到模型面出口**——那里缺的正是这一道。
+
+**副作用需处理**：`state.summary` 若被提前裁短，聚合器 `_merge_contributions_bounded` 会用
+`len(merged) <= budget*4` 误判「没超预算」而**跳过语义压缩**（grill 实测：不传 `full_summary=True`
+时 `test_collect_aggregate_compresses_through_the_summarizer` 变红）。故调度器那一处必须显式要全量。
 
 ## 决策 D3b：`_bounded_summary` 的「ref 是否存在」不能靠读属性（grill 发现顺序陷阱）
 
@@ -185,7 +216,12 @@ _bounded_summary('字'*30000, 500000)                 → 30000 字符（完全�
 **会话恢复注入**，不是 `ReadBus` / `RunPattern` 的路径。
 
 这两处返回的都是**子 agent 撰写的内容**，落在本 change 标题「模型面子 agent 文本一律 bounded」
-的字面范围内。**纳入本 change 还是如实改写 Non-Goal 措辞另开 issue，见 Open Question Q2。**
+的字面范围内。
+
+**用户已拍板（Q2）：本 change 不纳入 bus，但措辞必须如实。** 原 Non-Goal 那句
+「bus 已有各自的 bounded 口径」是**假话**，已删除；改为下面的如实描述，并另立 issue 跟踪
+（对应 codex 建议的 PR2）。本 change 的标题承诺相应收敛为
+「**结果出口**的模型面文本一律 bounded」。
 
 ## 风险
 
@@ -201,22 +237,37 @@ _bounded_summary('字'*30000, 500000)                 → 30000 字符（完全�
 | UI 无提示 | 前端只对 `arguments_truncated` 提示 | 记入 design 的有意边界（content 截断在 UI 上暂无提示），避免范围蔓延 |
 | 「响应总量」措辞过满 | tool_calls 条数无上限 | spec 措辞限定为「单条内容」 |
 
-## Open Questions（grill 产出，需用户拍板）
+## 用户已拍板（grill 停轮确认）
 
-1. **出口 2/3/4 的「界」由谁定？**（最关键，grill 推翻了初版 D3）实测：
-   `RunPattern(params={"workers":1,"worker_max_tokens":50000})` → 单 worker 上限 **200,000 字符**；
-   `RunWorkflow` 的 `nodes[0].max_tokens=500000` → 上限 **2,000,000 字符**，都可由模型自己写。
-   三选一：(a) 出口加**独立硬上限**（如 4000，与 `TRANSCRIPT_ITEM_LIMIT` 同值）；
-   (b) 保留「随 run 预算」但对 `max_tokens` 加显式上界校验；(c) 接受现状 + 如实写明边界
-   （则本 change 不能声称「一律 bounded」）。**`RunPattern` 的 worker 上限取值随本决策确定。**
-2. **bus（`ReadBus` + `RunPattern` 的 `result["bus"]`）是否纳入本 change？**
-   （实测 172,700 字符无界，见上节）
-3. **`GetSubagentRun` 的 `summary` 变 bounded 后，要不要给「被截掉了多少」的元数据**，
-   还是只给布尔 + ref？
-4. **UI 上要不要提示 content 被截断？** 现状前端只对 `arguments_truncated` 显示「（参数已截断）」，
-   content 截断无提示且是裸切（截断处没有省略号）。
-5. **`_bounded_summary` 新增参数的第三个调用点（`patterns._worker_entry`）传什么？**
-   该 dict 不含 `result_ref` 字段——传「有 ref」会让模型看到「全文在 result_ref」却拿不到该 ref，
-   等于在出口 4 复制本 change 正要消灭的假话。
-6. **`TRANSCRIPT_ITEM_LIMIT` 的 docstring 措辞**：不得声称它约束 `summary`（出口 2 的 summary
-   由 run 预算决定，不受该常量管），否则是**用新名字说同一句旧谎**。
+**Q1｜出口 2/3/4 的界由谁定 → 固定硬上限 `TRANSCRIPT_ITEM_LIMIT = 4000`。**
+理由（用户认可）：界**不可被被检视对象影响**——子 agent 产出多长不该决定父 agent 收到多少。
+`max_tokens` 恰好是被检视侧能影响的参数，当不了安全阀。且经 D3c 更正后，4000 不是「第三个数」
+（`summary` 与 `content` 本就同口径）。
+
+**Q2｜bus 是否纳入 → 不纳入本 change，但 Non-Goal 措辞必须改成如实描述。**
+本 change 聚焦 PR1（4 个结果出口）；bus 另立 issue。（见「明确不做」节已改写。）
+
+**Q3｜要不要给「被截掉多少」的元数据 → 给。**
+只给布尔时模型不知道被裁了 28000 字，可能误判「这就是全部」。补 `summary_chars`（原有长度），
+让模型能判断值不值得翻页。
+
+**Q4｜UI 是否提示 content 截断 → 补。**
+对称于既有的 `arguments_truncated` 提示（约 3 行 JS）。
+
+**Q5｜第三个调用点（`patterns._worker_entry`）传什么 → 补 `result_ref` 字段再传「有 ref」。**
+不给 ref 却说「全文在 result_ref」，等于在出口 4 复制本 change 正要消灭的那句假话。
+
+**Q6｜`TRANSCRIPT_ITEM_LIMIT` 的 docstring → 按 D3c 更正后可如实写。**
+`summary` 与 `content` 同口径（都是子 agent 原始文本），故 docstring 可写
+「约束模型面单条内容：消息 `content`、`summary`、工具调用 `arguments`」——
+**这不是说谎，因为 D3c 已确立三者同质**（初版担心「summary 由 run 预算决定」已被 D3 的固定上限取代）。
+
+## 本 change 的交付边界（对应 codex 建议的 PR1）
+
+只做 4 个**结果出口**（`InspectSubagentTranscript` / `GetSubagentRun` / `RunSubagent` /
+`CancelSubagentRun`）+ 固定安全阀 + 修假话 + HTTP 取或。
+
+**不在本 change**（各立 issue，codex 建议的 PR2/PR3/PR4）：
+- bus（`ReadBus` + `RunPattern.result.bus`）——PR2
+- `loop.py` 的工具响应总预算第二道防线——PR3
+- `max_tokens` 可达范围约束——PR4（独立的运行资源边界，与本 change 动机不同）
