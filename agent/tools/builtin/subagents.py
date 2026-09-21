@@ -5,7 +5,14 @@ import json
 from typing import Any
 
 from agent.message import Message
-from agent.subagent.bus import MessageBus, estimate_tokens
+from agent.subagent.bus import (
+    BUS_MESSAGE_LIMIT,
+    BUS_PUBLISH_MAX_TOKENS,
+    BUS_SNAPSHOT_LIMIT,
+    MessageBus,
+    _bounded_message,
+    estimate_tokens,
+)
 from agent.subagent.context import current_bus
 from agent.subagent.manager import SubAgentManager
 from agent.subagent.patterns import run_pattern
@@ -242,7 +249,12 @@ class InspectSubagentTranscriptTool(Tool):
             "sender": {"type": "string", "description": "Name identifying the publishing agent."},
             "topic": {"type": "string", "description": "Message topic (e.g. 'finding', 'proposal', 'review')."},
             "content": {"type": "string", "description": "The finding/fact to share."},
-            "max_tokens": {"type": "integer", "description": "Token budget for the published summary."},
+            "max_tokens": {
+                "type": "integer",
+                # 上界如实写进 schema，但**执行侧仍会钳**（`maximum` 不被所有 provider 强制）。
+                "description": "Token budget for the published summary "
+                f"(clamped to at most {BUS_PUBLISH_MAX_TOKENS}).",
+            },
         },
         "required": ["sender", "topic", "content"],
     },
@@ -259,10 +271,16 @@ class PublishBusMessageTool(Tool):
         if bus is None:
             return json.dumps({"error": "no active message bus"}, ensure_ascii=False)
         content = kwargs["content"]
-        max_tokens = kwargs.get("max_tokens", 400)
+        # ``max_tokens`` 是 summarize 的**阈值**，由调用方（模型）给出。不钳上界时，传
+        # ``10**9`` 会让 summarize 分支永不触发、原文直入 bus（issue #224 D5）。
+        requested = kwargs.get("max_tokens", 400)
+        max_tokens = min(max(int(requested), 1), BUS_PUBLISH_MAX_TOKENS)
         summary = content
         token_count = estimate_tokens(content)
-        if token_count > max_tokens:
+        # 闸门必须**含等号**：``estimate_tokens`` 向下取整（``max(1, len // 4)``），严格大于
+        # 会留下 4001–4003 字的缝——那些长度算出 1000 token，不满足 ``> 1000``，原文直入 bus，
+        # 使发布侧「先 summarize」这一步在本该触发时被跳过（issue #224 Q6）。
+        if token_count >= max_tokens:
             summary = await self._summarize(content, max_tokens)
             token_count = estimate_tokens(summary)
         msg = bus.publish(
@@ -271,7 +289,11 @@ class PublishBusMessageTool(Tool):
             summary=summary,
             token_count=token_count,
         )
-        return json.dumps(msg.to_dict(), ensure_ascii=False)
+        # 回包是**第 5 条模型面出口**（它直接进发起者的上下文）。钳住阈值只保证
+        # summarize **必然触发**，不保证它**产出有界**——``_summarize`` 的 LLM 分支是
+        # advisory（``agent/context/summarizer.py``：预算「not a hard guarantee」），可能
+        # 返回超预算的摘要。故回包同样经出口投影（D2：队列保留全文，投影才截断）。
+        return json.dumps(_bounded_message(msg).to_dict(), ensure_ascii=False)
 
     async def _summarize(self, content: str, max_tokens: int) -> str:
         """Fold content into a summary under ``max_tokens`` (publish-side layer)."""
@@ -294,7 +316,10 @@ class PublishBusMessageTool(Tool):
 @tool_parameters(
     name="ReadBus",
     description="Read recent summaries from the active orchestration message bus "
-    "within a strict token budget.",
+    "within a strict token budget. The result is always bounded: each summary is "
+    f"capped at {BUS_MESSAGE_LIMIT} characters and at most {BUS_SNAPSHOT_LIMIT} "
+    "messages are returned, regardless of the requested window/limit; a truncated "
+    "summary carries `summary_truncated: true`.",
     parameters={
         "type": "object",
         "properties": {
@@ -303,8 +328,17 @@ class PublishBusMessageTool(Tool):
                 "items": {"type": "string"},
                 "description": "Optional topic filter.",
             },
-            "max_tokens": {"type": "integer", "description": "Consume-side token window."},
-            "limit": {"type": "integer", "description": "Max number of messages to return."},
+            "max_tokens": {
+                "type": "integer",
+                # 两个参数都被钳到固定上界（issue #224 D4b）：界不可被被检视对象影响。
+                # 工具侧**不加第二道截断**——硬界在 ``MessageBus.read()`` 一处，避免
+                # 「发布侧承诺 ≤N、消费侧再截一次」式的双重口径（D2）。
+                "description": "Consume-side token window (clamped to a fixed maximum).",
+            },
+            "limit": {
+                "type": "integer",
+                "description": f"Max number of messages to return (at most {BUS_SNAPSHOT_LIMIT}).",
+            },
         },
         "required": [],
     },

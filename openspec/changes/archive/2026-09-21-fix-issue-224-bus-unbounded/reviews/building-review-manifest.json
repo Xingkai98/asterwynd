@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-224-bus-unbounded",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "ad7b0b26c68e88869",
+  "base_sha": "abdcedfe397273936c3bf1659796445d30dec9d0",
+  "head_sha": "1fad39ee884198e30e3557ed79b6a16e4bf1f56c",
+  "tasks_hash": "sha256:c4aa0b9c8206a5086412dde2c07ce6fc167f858bbe163e2402c588af655b7781",
+  "spec_hash": "sha256:2b692ab70d49eb9625abaa706d78fbd5661b98b2883bfa65b1c67bd6e2c01a07",
+  "diff_hash": "sha256:3978b718e2f3d2fdcf0426d3a53ed72b1aeb89a2f433ff63f4e2a1abae4af21f",
+  "report_hash": "sha256:1ff6919e3a45969a05c40b6957878084d28efe11b05d8ee159e8922d85b23251"
+}

@@ -46,9 +46,13 @@ SubAgentManager.create_subagent (manager.py:175) → run_subagent (209) → _lau
 - `BudgetHook`（69 行）：Hook 监控每个生命周期点（run started / iteration / LLM call / tool execute / completion），超限抛 `BudgetExceededError`。
 
 **`agent/subagent/bus.py`**
-- `MessageBus`（53 行）：子 agent 间消息队列。
-- `publish`（70 行）/`read`（92 行）：发布/读取（支持范围）。
-- `compact_summary`（127 行）：总线内容压缩成摘要——防上下文爆炸。
+- `MessageBus`（224 行）：子 agent 间消息队列。**模型面出口一律 bounded**（issue #224）——`BusMessage`
+  单条 ≤ `TRANSCRIPT_ITEM_LIMIT`（4000）、单次投影条数 ≤ `BUS_SNAPSHOT_LIMIT`（20），截断带
+  `summary_truncated` 标志。
+- `publish`（131 行）/`read`（153 行）：发布/读取；`read()` 的 `max_tokens`/`limit` 被钳到固定上界
+  （调用方不能放大返回体）。
+- `snapshot_payload`（207 行）：`RunPattern` 的 `result["bus"]`，二维有界并报告 `messages_omitted`。
+- `compact_summary`（199 行）：总线内容压缩成摘要——防上下文爆炸；走队列全文，不受出口截断影响。
 
 **`agent/subagent/patterns.py`**
 - 编排模式库：orchestrator-worker / peer-review / hierarchical / 竞标（auction）。
