@@ -74,6 +74,11 @@ PASS 后 closeout 提交若修改 tasks.md/spec（如补充审阅修复节、实
   （各有 `proposal.md` + `change_created` 事件日志）下文本模式零行输出，`--format json` 报
   `"active_count": 2` 但 `"active_changes": []`。它是 CLI usage 里的**默认命令**。
   另有 AGENTS.md「不再需要 discover/advance/approve」与 spec 仍描述 discover 的口径漂移。
+- **文档口径漂移**：`docs/requirements-process.md` 的「开发流程」节仍把 change 生命周期描述为
+  「四个活跃阶段（phase），由 `agent/workflow/` 状态机驱动，`handoff.json` 是由事件 replay 生成的
+  projection」。该段写于 2026-07-31，早于四阶段状态机停用（AGENTS.md 已声明「旧的四阶段状态机仪式
+  （phase/sub_state 推进、handoff.json、gate 停止）已停用」），属**既有**漂移、非 fix-issue-199 引入；
+  fix-issue-199 只解除写通道前置，未使该段更不准确，故不在该 bugfix 内改写流程文档，随本条一并跟踪。
 
 **处置**：不在 fix-issue-199 内修（超出该 bugfix 的验收面，且删 `spawn` 会连带删既有测试、
 `discover` 有完整实现面 `path/next_action/gate_check`，属独立 API 变更）。跟踪见

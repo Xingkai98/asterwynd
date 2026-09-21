@@ -167,6 +167,9 @@ def test_review_manifest_works_without_handoff_json(tmp_path):
     manifest_path = review_dir / "building-review-manifest.json"
     assert manifest_path.exists()
     assert verify_review_manifest(tmp_path, "test-change", "building") == []
+    # D7 同样覆盖 review-manifest 这条命令：写入后投影即新鲜（删除该刷新会让本断言变红）
+    assert (change_dir / "workflow-state.json").exists()
+    assert verify_projection(change_dir) == []
 
 
 def test_artifact_event_refreshes_projection_without_flow_status(tmp_path):

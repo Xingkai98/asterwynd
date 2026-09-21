@@ -364,6 +364,9 @@ def _cmd_discover_text(
     print(f"{'Change':<50} {'Phase':<14} {'SubState':<22}")
     print("-" * 86)
     for cid in changes:
+        # legacy：无 handoff.json 的当代 change 在此被静默跳过（文本模式零行输出，
+        # JSON 模式 active_count 与实际列表不一致）。本次不改（issue #199 只解除受保护
+        # 写通道前置），跟踪 issue #227。
         data = _load_handoff(cid)
         if data is None:
             continue
@@ -537,6 +540,9 @@ def cmd_resume_audit(args: argparse.Namespace) -> int:
 
 
 def cmd_current(args: argparse.Namespace) -> int:
+    # legacy：读的是已停用状态机的 handoff.json，对当代 change 恒报缺失。
+    # 当代等价物是 `flow status`（打印投影 state）。本次不改（issue #199 只解除受保护
+    # 写通道前置），跟踪 issue #227。
     data = _load_handoff(args.change)
     if data is None:
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)
@@ -898,6 +904,9 @@ def _refresh_workflow_state(change_dir: Path, projection: dict | None = None) ->
 
 
 def cmd_spawn(args: argparse.Namespace) -> int:
+    # legacy：wayfinding 时代的子 change 派生命令，要求父 change 处于
+    # `wayfinding.<gate>`（停用状态机后无此 phase 推进，实际不可用）。本次不改
+    # （issue #199 只解除受保护写通道前置），跟踪 issue #227。
     if not is_workflow_enabled(_PROJECT_ROOT):
         print("错误：workflow 已在 workflow_methods.json 中禁用，spawn 不可用", file=sys.stderr)
         return 1
@@ -1019,6 +1028,8 @@ def cmd_review_manifest(args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
+    # legacy：校验的是已停用状态机的 handoff.json 结构，对当代 change 恒报缺失。
+    # 本次不改（issue #199 只解除受保护写通道前置），跟踪 issue #227。
     data = _load_handoff(args.change)
     if data is None:
         print(f"错误：change '{args.change}' 没有 handoff.json", file=sys.stderr)

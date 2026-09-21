@@ -109,7 +109,7 @@ Q1 的或分支只体现在**前置谓词**里，不引入世代判定（不需�
 
 **关键约束（grill 实测：`openspec archive` 是整段替换 Requirement 体，不是按 Scenario 合并）**：`openspec archive` 用 delta 正文**整段替换**正式 spec 中同名 Requirement 的正文。仓库既有先例支持「delta 正文 = 变更后完整正文」——`archive/2026-09-19-workflow-terminal-honesty/specs/web-ui/spec.md` 的 MODIFIED Requirement 正文与归档后正式 spec **逐字节相同**（含保留全部既有 Scenario）。
 
-因此 delta 正文必须补全为**变更后的完整正文**。当前正式 spec 的「工作流事件日志与 handoff.json projection」有 8 条 Scenario，现 delta 只带 6 条（其中 3 条复用既有名），归档会静默删掉 5 条。补全后应覆盖既有的 8 条（按两代口径改写）+ 本 change 新增的 3 条。
+因此 delta 正文必须补全为**变更后的完整正文**。正式 spec 的「工作流事件日志与 handoff.json projection」有 8 条 Scenario；**本 change 初版 delta 只带 6 条（其中 3 条复用既有名），归档会静默删掉 5 条**——这正是 D6 要求补全的原因。补全后的 delta 现带 11 条 = 既有 8 条（按两代口径改写后保留）+ 本 change 新增 3 条；已用 scratch 副本实跑 `openspec archive` 验证归档后 8 条既有 Scenario 全部在位（改写而非删除），无静默丢失。
 
 **退役清单（显式列出，不靠 delta 缺省静默消失）**：
 
