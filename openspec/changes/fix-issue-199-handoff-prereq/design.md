@@ -116,15 +116,17 @@ Q1 的或分支只体现在**前置谓词**里，不引入世代判定（不需�
 | 既有 Scenario | 处置 | 理由 |
 |---|---|---|
 | `新建 change 时初始化 workflow event log 和 handoff.json` | 改写为只保留事件日志初始化（两代共用 `workflow-events.jsonl`），删除「同时生成 handoff.json」的当代断言 | 当代 change 不再产出 `handoff.json`（本 change 的核心事实） |
-| `agent 读取当前状态` | 保留 | 状态读取语义两代不变 |
-| `WorkflowEngine 更新状态` | 保留 | 状态更新语义两代不变 |
+| `agent 读取当前状态` | 改写为两代口径（老世代读 `handoff.json`，当代读 `workflow-state.json`） | 读取目标随世代而变；语义不变，表述需对齐 |
+| `WorkflowEngine 更新状态` | 改写为两代口径（重新生成该世代的投影，校验磁盘投影与 replay 一致） | 同上册 |
 | `handoff.json 被手动篡改` | 改写为「投影被手动篡改」，两代口径：gen-1 比 `handoff.json`，gen-2 比 `workflow-state.json` | `verify_projection`（`event_log.py:481`）已按两代实现，spec 应对齐 |
-| `非状态 artifact 事件` | 原样保留 | 承载「支持的 artifact event type 至少含 4 类」，本 change 依赖该清单 |
+| `非状态 artifact 事件` | 改写措辞（去 `handoff.json` 专指，保留 event type 清单） | 承载「支持的 artifact event type 至少含 4 类」，本 change 依赖该清单 |
 | `当代 change 投影为 workflow-state.json` | 原样保留 | 既有 |
 | `老世代 change 仍可投影` | 原样保留 | 既有 |
 | `任意 change 可查询状态` | 原样保留 | 既有 |
 
 **本 change 新增 3 条 Scenario**：`受保护写通道不要求 handoff.json`、`受保护写通道拒绝非法目标`、`老世代 change 的受保护写通道保持可用`。
+
+汇总：既有 8 条**全部保留**（其中 4 条按两代口径改写、4 条原样），加新增 3 条 = delta 共 11 条；无 Scenario 因 delta 缺省而消失。
 
 ### D7: 两条命令成功写入后刷新投影（grill Q6 确认）
 
@@ -133,6 +135,8 @@ Q1 的或分支只体现在**前置谓词**里，不引入世代判定（不需�
 **问题**（grill 实测）：不刷新时，`artifact-event` 追加事件后 `verify_projection` 立刻返回 `['workflow-state.json projection does not match workflow-events.jsonl']`，`check_openspec_artifacts.py` 据此 FAIL，必须再跑一次 `flow status`（stale 自愈）才恢复。这恰好命中本 change 自己的端到端验收（tasks.md「新建无 `handoff.json` 的 change，两命令成功写入且通过 checker」）——不修则验收只在「写完之后恰好又跑了一次 `flow status`」时通过，属顺序依赖的假保护。注意：**冷状态（无 `workflow-state.json`）与 CI 新 checkout 不受影响**（`verify_projection` 在投影文件不存在时返回 `[]`），所以这是本地/顺序依赖的 papercut，不是 CI 门禁失败。
 
 **决策**：采纳「写入后刷新」。理由：既有 spec 正文本就规定「所有状态变化 SHALL 通过 CLI 追加事件并**重新生成投影**」，刷新使实现与 spec 对齐，且让本 change 的端到端验收不依赖顺序。实现复用 `_flow_refresh_after_event(change_dir)`，不新增逻辑分支。
+
+**R2 审阅补丁（New-1）**：刷新对 **gen-1 + 路径型 `--change`**（绝对路径或含 `/`）会走 `_save_handoff` 按 `change_dir.name` 重拼路径，落到不存在的父目录抛裸 `FileNotFoundError` traceback 且半写（base 同输入 exit 0，属本次 D7 引入的回归）。已在 `_require_change_target` 加一道 id 合法性前置：`is_absolute()` 或含 `/` `\` 时明确拒绝（exit 1）。仓内所有调用方都传裸 id，故不误伤；该前置同时封住 R1 问题 4「绝对路径可写到仓库外」。回归测试 `test_artifact_event_rejects_path_bearing_change_id`，变异验证：去掉该前置 → 该用例变红。
 
 ## Pre-Implementation Review
 

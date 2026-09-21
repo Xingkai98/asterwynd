@@ -862,6 +862,13 @@ def _require_change_target(change_id: str) -> Path | None:
       只有 `handoff.json` 而**没有** `proposal.md`，只认 `proposal.md` 会把它们
       从「可写」打回 exit 1。
     """
+    # change_id 必须是单段目录名：`CHANGES_ROOT / change_id` 对绝对路径会整体替换
+    # 根（可指向仓库外），对含 `/` 的相对路径会解析到子目录，而下游按
+    # `change_dir.name` 重拼路径（`_save_handoff`）会落到不存在的位置抛裸 traceback。
+    # 仓库内所有调用方都传裸 id，故直接拒绝（issue #199 R2 审阅 New-1 / 问题 4）。
+    if Path(change_id).is_absolute() or "/" in change_id or "\\" in change_id:
+        print(f"错误：change id '{change_id}' 非法（应为单段目录名）", file=sys.stderr)
+        return None
     change_dir = CHANGES_ROOT / change_id
     if not change_dir.exists():
         print(f"错误：change '{change_id}' 不存在", file=sys.stderr)

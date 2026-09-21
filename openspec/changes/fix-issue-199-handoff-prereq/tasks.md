@@ -19,6 +19,7 @@
 - [x] 无 `proposal.md` 但有 `handoff.json`（spawn 子 change 形态）→ 两命令仍 exit 0（Q1 兼容分支）
 - [x] 不存在的 change → 两命令 exit 1（不退化为任意路径可写）
 - [x] 存在目录但既无 `proposal.md` 也无 `handoff.json` → 两命令 exit 1
+- [x] 路径型 `--change`（绝对路径 / 含 `/`）→ 两命令 exit 1、不抛裸 traceback（R2 审阅 New-1：D7 刷新对 gen-1+路径型目标抛裸 `FileNotFoundError` 的回归；同时封住 R1 问题 4「绝对路径可写到仓库外」）
 - [x] 写入后 `verify_projection` 为空（D7 刷新生效，不需再跑 `flow status`）
 - [x] 变异验证：把前置改回「必须有 `handoff.json`」→ 当代 change 测试变红；把前置整个去掉（任意路径可写）→ 非法目标测试变红；还原后变绿
 - [x] 回归：`uv run pytest tests/test_workflow_state_cli.py -v` 通过 + 全量 `uv run pytest -q`

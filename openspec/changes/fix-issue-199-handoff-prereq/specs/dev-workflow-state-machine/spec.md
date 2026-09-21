@@ -70,9 +70,10 @@
 
 #### Scenario: 受保护写通道拒绝非法目标
 
-- **WHEN** 对一个不存在的 change，或一个既无 `proposal.md` 也无 `handoff.json` 的目录运行 `artifact-event` 或 `review-manifest`
+- **WHEN** 对一个不存在的 change、一个既无 `proposal.md` 也无 `handoff.json` 的目录，或一个路径型 `--change`（绝对路径或含 `/`，非单段 change id）运行 `artifact-event` 或 `review-manifest`
 - **THEN** 系统 SHALL 以明确错误退出（exit 1）
 - **AND** SHALL NOT 写入任何事件或 manifest
+- **AND** SHALL NOT 抛出未捕获的 traceback，也 SHALL NOT 写入仓库外路径
 
 #### Scenario: 老世代 change 的受保护写通道保持可用
 

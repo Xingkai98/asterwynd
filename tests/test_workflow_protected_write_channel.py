@@ -253,6 +253,26 @@ def test_artifact_event_rejects_dir_without_proposal_or_handoff(tmp_path):
     assert not (change_dir / "workflow-events.jsonl").exists()
 
 
+def test_artifact_event_rejects_path_bearing_change_id(tmp_path):
+    """R2 审阅 New-1：`--change` 传绝对路径 / 含分隔符的 id 必须被明确拒绝。
+
+    否则 `CHANGES_ROOT / change_id` 对绝对路径整体替换根（可写到仓库外），对含
+    `/` 的相对路径会解析到子目录，而下游按 `change_dir.name` 重拼路径
+    （`_save_handoff`）会在不存在的父目录上抛裸 FileNotFoundError traceback。
+    """
+    nested = tmp_path / "openspec" / "changes" / "group" / "leg"
+    nested.mkdir(parents=True)
+    (nested / "proposal.md").write_text(PROPOSAL_TEXT, encoding="utf-8")
+    (nested / "handoff.json").write_text("{}", encoding="utf-8")
+
+    for bad_id in ("group/leg", str(nested)):
+        for args in (_artifact_event_args(bad_id), _review_manifest_args(bad_id)):
+            result = _run_cli(tmp_path, *args)
+            assert result.returncode == 1, f"{args[0]} {bad_id!r} 应被拒绝"
+            assert "非法" in result.stderr, f"{args[0]} {bad_id!r} 应有明确错误文案，实际: {result.stderr!r}"
+            assert "Traceback" not in result.stderr, f"{args[0]} {bad_id!r} 不应抛裸 traceback"
+
+
 def test_review_manifest_rejects_dir_without_proposal_or_handoff(tmp_path):
     change_dir = tmp_path / "openspec" / "changes" / "empty-dir"
     change_dir.mkdir(parents=True)
