@@ -29,19 +29,19 @@
 - [x] `diagnosis.md`：bugfix 门禁要求的 6 章（已产出）
 - [x] spec delta：`specs/change-documentation/spec.md`（MODIFIED「Handoff state file artifact」）+ `specs/dev-workflow-state-machine/spec.md`（MODIFIED「工作流事件日志与 handoff.json projection」）——**正文补全为变更后完整正文**，保留既有 8 条 Scenario（按两代口径改写），退役项在 design.md D6 显式列出（grill Q5）
 - [x] `docs/known-debt.md` 新增债务条目（配 `protected_artifact_explained` 事件）：四处 CLI 漏网（`discover` 单列）+ D4 三层债务 + 伪造目录缺口
-- [ ] **当前规格同步**：delta 已合入 `openspec/specs/{change-documentation,dev-workflow-state-machine}/spec.md`（含 `current_spec_synced` 事件 ×2）
+- [x] **当前规格同步**：delta 已合入 `openspec/specs/{change-documentation,dev-workflow-state-machine}/spec.md`（含 `current_spec_synced` 事件 ×2）
 - [x] 关键词扫描 `docs/`、`AGENTS.md`、`docs/development-guide.md` 中与 handoff.json / artifact-event / review-manifest 相关的段落，只更新本次造成的事实变化
-- [ ] `docs/openspec-change-backlog.md` 已移除本 change 条目（含 `backlog_updated` 事件）
-- [ ] **收尾纪律**：确认本 change 未跟踪 `handoff.json` / `workflow-state.json`（自愈产物，非本 change 资产）。R1 提交曾因 `git add -A` 误吞二者，已 `git rm --cached` 并删除工作区文件；收尾**不得用 `git add -A` / `git add .`**，只显式列路径（`flow status` 会自愈重建这两个文件，`-A` 会再次吞入；根因见 #228 债务条目）
+- [x] `docs/openspec-change-backlog.md` 已移除本 change 条目（含 `backlog_updated` 事件）
+- [x] **收尾纪律**：确认本 change 未跟踪 `handoff.json` / `workflow-state.json`（自愈产物，非本 change 资产）。R1 提交曾因 `git add -A` 误吞二者，已 `git rm --cached` 并删除工作区文件；收尾**不得用 `git add -A` / `git add .`**，只显式列路径（`flow status` 会自愈重建这两个文件，`-A` 会再次吞入；根因见 #228 债务条目）
 
 ## 审阅闭环
 
 - [x] 独立 subagent 审阅（`/review-loop`）→ 判 verdict → CHANGES_REQUESTED 则修复 + 回归，再审直到 PASS 或 3 轮封顶
-- [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（verify OK）
+- [x] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（verify OK）
 
 ## 验证
 
-- [ ] 全量 `uv run pytest -q` 通过（与本 change 无关的既有失败如实记录）
+- [x] 全量 `uv run pytest -q` 通过（与本 change 无关的既有失败如实记录）
 - [x] OpenSpec strict validate 通过（`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`）
 - [x] OpenSpec artifact checker 通过（`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`）
 - [x] 端到端验收（issue #199 验收原文）：新建一个无 `handoff.json` 的 change，`artifact-event` 与 `review-manifest` 均成功写入且**无需先跑 `flow status`** 即通过 `scripts/check_openspec_artifacts.py`
