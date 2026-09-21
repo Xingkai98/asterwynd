@@ -77,7 +77,8 @@
 
 - [x] Round 1 独立 subagent 审阅（`/review-loop fix-issue-224-bus-unbounded`）→ CHANGES_REQUESTED
 - [x] 按 verdict 修复 + 加回归测试（见下「审阅修复」节）
-- [ ] Round 2 独立 subagent 复审
+- [x] Round 2 独立 subagent 复审 → PASS
+- [x] Round 3 delta 复审（head `a308e39`，审阅者要求覆盖真正合入的 head）→ PASS
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
 
 ### 审阅修复（Round 1 → Round 2）
@@ -97,6 +98,18 @@
 - **R3（低）**：`.gitignore` 新增 `**/handoff.json` 属越界改动 → 回滚，`handoff.json` 用完即删。
 - **R4（低）**：`specs/agent-runtime/spec.md` 的 delta 比已同步的权威 spec 少 grill R2 的限定段
   （delta 与合入结果漂移）→ 补齐，两处逐字一致。
+
+### 审阅修复（Round 2 → Round 3）
+
+- **L1（低）**：`proposal.md` / `design.md` 仍把发布侧的界归因于「阈值钳制」。修法：统一因果为
+  「阈值钳制只保证 summarize **触发**；回包与其它出口一样由**出口投影**保证有界」，并把准确表述写死为
+  「出口投影保证两侧的模型面输出同界」，不是「发布侧与消费侧同界」。D5 理由段、备选段、Non-Goals
+  的 R5 条、grill R6 记录四处同步。
+- **L2（低）**：`max_read_tokens` 键与 80k 快照不自洽——既有键，design 已显式 Non-Goal 不动，保持现状。
+- **L3（低但有实义）**：两条 `run_pattern` 端到端测试自称界住「超长消息」，实测 bus 里只有 4 字
+  （`_summarize` 的 LLM 分支返回了 worker 的收尾文本）——去掉 snapshot 逐条投影后仍绿，无判别力。
+  修法：fake LLM 在 `_summarize` 那一步返回 6000 字超预算摘要，并以 `summary_truncated is True`
+  作判别力锚点。实测去掉逐条投影后变红测试数 1 → 3。
 
 ## 验证
 

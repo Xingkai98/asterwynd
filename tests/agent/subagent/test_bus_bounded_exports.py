@@ -283,7 +283,8 @@ async def test_publish_reply_is_bounded_when_summary_over_budget(manager):
 async def test_publish_bus_message_threshold_is_inclusive(manager):
     """Q6 边界：4001 字（``estimate_tokens`` 向下取整到 1000）必须触发 summarize。
 
-    闸门若是 ``>``，4001–4003 字会**不**触发、原文直入 bus，把「两侧同界」变成假话。
+    闸门若是 ``>``，4001–4003 字会**不**触发、原文直入 bus，发布侧「先 summarize」这一步
+    在该触发时被跳过（队列原文与模型面输出的差距即由此处放大）。
     """
     manager.llm = None  # 走确定性降级分支：content[: max_tokens * 4]
     bus = MessageBus()

@@ -279,7 +279,7 @@ class PublishBusMessageTool(Tool):
         token_count = estimate_tokens(content)
         # 闸门必须**含等号**：``estimate_tokens`` 向下取整（``max(1, len // 4)``），严格大于
         # 会留下 4001–4003 字的缝——那些长度算出 1000 token，不满足 ``> 1000``，原文直入 bus，
-        # 把「发布侧与消费侧同界」变成一句假话（issue #224 Q6）。
+        # 使发布侧「先 summarize」这一步在本该触发时被跳过（issue #224 Q6）。
         if token_count >= max_tokens:
             summary = await self._summarize(content, max_tokens)
             token_count = estimate_tokens(summary)
