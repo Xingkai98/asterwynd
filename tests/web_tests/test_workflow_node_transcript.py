@@ -673,3 +673,228 @@ async def test_truncation_flag_composes_across_producer_and_route(manager):
     assert calls[0]["arguments_truncated"] is True, (
         "上游已截断但本层预算更宽——只看本层长度会谎报「未截断」"
     )
+
+
+# ─── issue #213：模型面出现的子 agent 文本一律 bounded ───────────────────────
+
+#: 真·超长文本。**必须远超上限**——既有测试写过这条教训（见 test_inspect_tool_clamps
+#: 的注释）：输入只有几千字时「返回 ≤4000」恒真，抓不到任何变异。
+HUGE = "超长内容" * 7500  # 30000 字符
+
+
+class _HugeOutputLLM:
+    """子 agent 产出 30000 字最终回复——模拟「跑了一大段分析然后总结」这类 run。"""
+
+    def __init__(self, content: str = HUGE):
+        self.content = content
+        self.calls = 0
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        self.calls += 1
+        if self.calls == 1:
+            from agent.llm import ToolCallDelta
+            return LLMResponse(
+                content="",
+                tool_calls=[ToolCallDelta(id="c1", name="Read",
+                                          arguments=json.dumps({"path": "x.py"}))],
+                stop_reason="tool_calls",
+                usage=Usage(5, 5),
+            )
+        return LLMResponse(content=self.content, stop_reason="end_turn", usage=Usage(5, 5))
+
+
+@pytest.mark.asyncio
+async def test_run_summary_is_bounded_at_fixed_limit(manager):
+    """出口 2：``GetSubagentRun`` 的 ``summary`` 不得超过**固定**单条上限。
+
+    issue #213：``to_result_dict()["summary"]`` 是 ``run.summary`` 全文（30000 字
+    原样进父 agent 上下文）。这里锁死「模型面看到的是 bounded 版」。
+    """
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+
+    manager.llm = _HugeOutputLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    subagent_id = scheduler._states["a"].subagent_id
+    run_id = scheduler._states["a"].run_id
+
+    payload = await manager.get_subagent_run(subagent_id=subagent_id, run_id=run_id)
+    assert len(payload["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
+        f"GetSubagentRun 的 summary 无界：{len(payload['summary'])} 字符"
+    )
+    # 全文仍可取：记录层没被截，ref 指向全文。
+    run = manager.find_run(subagent_id, run_id)
+    assert run.summary == HUGE, "记录层必须保留全文（下游聚合依赖它）"
+    assert run.result_ref is not None
+    store = manager.workflow_store(scheduler.workflow_id)
+    assert store.load(run.result_ref) == HUGE
+
+
+@pytest.mark.asyncio
+async def test_run_summary_limit_does_not_scale_with_max_tokens(manager):
+    """出口 2 的界**不可被被检视对象放大**：``max_tokens`` 拉到很大，上限不变。
+
+    grill 实测：初版方案复用 ``_bounded_summary(text, max_tokens)``（预算
+    ``max(2000, max_tokens*4)``），而 ``max_tokens`` 由发起调用的模型自己写、无上界
+    校验——``max_tokens=500000`` 时 30000 字**完全不截**，issue #213 静默不修。
+    """
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+
+    manager.llm = _HugeOutputLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    subagent_id = scheduler._states["a"].subagent_id
+    run_id = scheduler._states["a"].run_id
+
+    # 把 run 预算调到足以「容纳全文」的量级（模拟模型自设大 max_tokens）。
+    run = manager.find_run(subagent_id, run_id)
+    run.max_tokens = 500000
+
+    payload = await manager.get_subagent_run(subagent_id=subagent_id, run_id=run_id)
+    assert len(payload["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
+        f"上限随 max_tokens 放大到 {len(payload['summary'])} 字符 —— "
+        "界必须独立于 run 预算，否则子 agent 能自己决定父 agent 收到多少"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inspect_summary_scope_is_bounded(manager):
+    """出口 1 的 summary scope（工具的**默认** scope）：同样有上限 + 标志。"""
+    from agent.tools.builtin.subagents import InspectSubagentTranscriptTool
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+
+    manager.llm = _HugeOutputLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    subagent_id = scheduler._states["a"].subagent_id
+
+    tool = InspectSubagentTranscriptTool(manager)
+    payload = json.loads(await tool.execute(subagent_id=subagent_id, scope="summary"))
+    assert len(payload["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
+        f"summary scope 无界：{len(payload['summary'])} 字符"
+    )
+    assert payload["summary_truncated"] is True, "截断了却不说 = 让模型以为这就是全部"
+
+
+@pytest.mark.asyncio
+async def test_inspect_message_content_is_bounded(manager):
+    """出口 1 的 recent_messages scope：单条 ``content`` 有上限 + 标志。"""
+    from agent.tools.builtin.subagents import InspectSubagentTranscriptTool
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+
+    manager.llm = _HugeOutputLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    subagent_id = scheduler._states["a"].subagent_id
+
+    tool = InspectSubagentTranscriptTool(manager)
+    payload = json.loads(await tool.execute(
+        subagent_id=subagent_id, scope="recent_messages", limit=50))
+    huge = [m for m in payload["messages"] if len(m["content"]) > 100]
+    assert huge, f"没找到长消息，构造无效：{[len(m['content']) for m in payload['messages']]}"
+    for message in payload["messages"]:
+        assert len(message["content"]) <= TRANSCRIPT_ITEM_LIMIT, (
+            f"content 无界：{len(message['content'])} 字符"
+        )
+    assert any(m.get("content_truncated") is True for m in huge), "截断了却不说"
+
+
+@pytest.mark.asyncio
+async def test_inspect_tool_result_message_content_is_bounded(manager):
+    """``include_tool_results=True`` 时 tool 角色消息的 content 同口径。
+
+    这是 30000 字最可能的真实来源（一次 Read/Bash 的整份输出），既有测试恰好把
+    tool 消息过滤掉了，所以必须单独覆盖。
+    """
+    from agent.tools.builtin.subagents import InspectSubagentTranscriptTool
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+    from agent.message import tool_result_message
+
+    manager.llm = _HugeOutputLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    subagent_id = scheduler._states["a"].subagent_id
+
+    manager._sessions[subagent_id].messages.append(
+        tool_result_message("c1", HUGE))
+    tool = InspectSubagentTranscriptTool(manager)
+    payload = json.loads(await tool.execute(
+        subagent_id=subagent_id, scope="recent_messages",
+        limit=50, include_tool_results=True))
+    tools = [m for m in payload["messages"] if m["role"] == "tool"]
+    assert tools, "tool 消息没返回"
+    for message in tools:
+        assert len(message["content"]) <= TRANSCRIPT_ITEM_LIMIT
+    assert tools[-1].get("content_truncated") is True
+
+
+@pytest.mark.asyncio
+async def test_route_content_truncated_ors_producer_flag(manager):
+    """HTTP 层的 ``content_truncated`` 必须与生产者标志**取或**。
+
+    生产者开始截 ``content`` 后，路由层若只看本层长度，会在「生产者截了、本层预算
+    更宽」时报「没截断」——与 #212 在 ``arguments`` 上修过的是同一个 bug 的第二例。
+    """
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+
+    manager.llm = _HugeOutputLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    payload = build_node_transcript_payload(
+        manager, scheduler, "a", content_limit=TRANSCRIPT_ITEM_LIMIT * 2)
+    long_messages = [m for m in payload["messages"] if len(m["content"]) > 100]
+    assert long_messages, "没找到长消息，构造无效"
+    assert long_messages[0]["content_truncated"] is True, (
+        "上游已截断但本层预算更宽——只看本层长度会谎报「未截断」"
+    )
+
+
+@pytest.mark.asyncio
+async def test_truncation_marker_does_not_promise_missing_ref(manager, tmp_path):
+    """截断标记不得声称全文在某个**不存在**的引用里。
+
+    无 workflow 身份的 run（普通 ``RunSubagent``）不落盘，``result_ref`` 为 ``None``；
+    而 ``_bounded_summary`` 无条件追加「…[truncated; full result in result_ref]」
+    ——实测同一条记录里两者自相矛盾，是一句**假话**。
+    """
+    from agent.subagent.manager import _bounded_summary
+
+    text = "x" * 10000
+    rendered = _bounded_summary(text, None, has_ref=False)
+    assert "result_ref" not in rendered, (
+        "没有落盘引用却声称「full result in result_ref」——这是假话"
+    )
+    assert "truncated" in rendered, "仍须如实表达已截断"
+
+    # 有 ref 时保留导航信息（不能因噎废食）。
+    with_ref = _bounded_summary(text, None, has_ref=True)
+    assert "result_ref" in with_ref
+
+
+@pytest.mark.asyncio
+async def test_worker_entry_summary_is_bounded_and_navigable(manager):
+    """出口 4：``RunPattern`` 的 worker 条目。
+
+    (a) summary 有上限（N 个 worker × 全文 = 一次调用放大 N 倍）；
+    (b) 条目必须**带 result_ref**——否则它说「全文在 result_ref」而模型拿不到该 ref，
+        等于在出口 4 复制本 change 正要消灭的假话。
+    """
+    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
+
+    manager.llm = _HugeOutputLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    from agent.subagent.patterns import _worker_entry
+    run = manager.find_run(scheduler._states["a"].subagent_id,
+                           scheduler._states["a"].run_id)
+    entry = _worker_entry(scheduler._states["a"].subagent_id, run)
+
+    assert len(entry["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
+        f"worker summary 无界：{len(entry['summary'])} 字符"
+    )
+    if "result_ref" in entry["summary"]:
+        assert entry.get("result_ref"), (
+            "条目声称「全文在 result_ref」却没带该字段——模型拿不到它"
+        )
