@@ -101,26 +101,6 @@
 
 ## 未实现队列
 
-### 5. `fix-issue-199-handoff-prereq`
-
-状态：未实现。
-
-关联 issue：[#199](https://github.com/Xingkai98/asterwynd/issues/199)（【debt】workflow_state.py 的 artifact-event / review-manifest 因强制要求 handoff.json 而实际不可用）。
-
-批次：债务修复，与队列中其他 change 无依赖；优先于新功能（它使归档收尾与审阅 manifest 的 CLI 写入通道对**所有**新 change 恢复可用）。
-
-建议顺序原因：
-
-- 受保护路径门禁与 guard 白名单要求受保护 artifact 只走 `workflow_state.py` CLI，但该 CLI 的两条关键子命令对无 `handoff.json` 的当代 change 恒报错，形成死锁——每个 change 的收尾都只能绕底层写通道，削弱门禁证据链。
-- 修复面小且明确（移除停用状态机的遗留前置 + 复用既有 `_flow_is_gen1` 世代判定 + 回归测试）。
-
-主要交付：
-
-- `artifact-event` / `review-manifest` 解除 `handoff.json` 前置，改按当代合法性判定（目录存在 + `proposal.md` 存在）。
-- 其余 `handoff.json` 引用（`cmd_current` / `cmd_spawn` / `cmd_validate`）的显式处置决策。
-- CLI 层回归测试（无 `handoff.json` 可写 / 老世代兼容 / 非法目标拒绝）+ spec delta 同步。
-- 实现 PR 合入时给 issue #199 添加完成 comment 并关闭。
-
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
