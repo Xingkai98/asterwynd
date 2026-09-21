@@ -52,16 +52,20 @@
 - [x] `diagnosis.md`：bugfix 门禁要求的 6 章
 - [x] spec delta：`specs/subagents/spec.md`（MODIFIED「子 transcript inspect 默认受限」）+
       `specs/agent-runtime/spec.md`（MODIFIED「父 run 通过显式运行时接口管理子 session」）
-- [ ] **当前规格同步**：把 delta 合入 `openspec/specs/`（受保护路径，需 `current_spec_synced` 事件）
+- [x] **当前规格同步**：delta 已合入 `openspec/specs/{subagents,agent-runtime}/spec.md`
+      （含 `current_spec_synced` 事件 ×2）
 - [x] `docs/agent-internals.md` 的 inspect 示例已过时（只列 3 键、无截断说明）→ 更新
 - [x] 关键词扫描 `docs/`、`README.md`、`CONTEXT.md`、`docs/architecture.md` 中与子 agent 结果/
       transcript/bounded 相关的段落
-- [ ] `docs/openspec-change-backlog.md` 登记本 change（需 `backlog_updated` 事件），完成后移除
+- [x] `docs/openspec-change-backlog.md` 已移除本 change 条目（含 `backlog_updated` 事件）
 
 ## 审阅闭环
 
-- [ ] Round 1 独立 subagent 审阅（`/review-loop`）
-- [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
+- [x] Round 1 独立 subagent 审阅 → **CHANGES_REQUESTED**（1 blocker + 2 major + 4 minor）
+- [x] Round 2 独立 subagent 审阅 → **CHANGES_REQUESTED**（blocker 已修复，另 4 条新问题）
+- [x] Round 3 独立 subagent 审阅 → **PASS**（R2 四条独立验证全修复、核心设计复核成立）
+- [x] 生成 review manifest 绑定 reviewer run `review-fix-issue-213-2026-09-21-r3` /
+      base·head sha / tasks·spec·diff·report hash（verify OK）
 
 ## 验证
 
@@ -69,9 +73,7 @@
       `tests/agent/memory/test_persistent.py::TestFindScopeRoot` 的两条——**在 master（7c23059）上
       同样失败**，与本 change 无关（git-dir 探测，不碰本 change 的代码路径）
 - [x] OpenSpec strict validate 通过（30/30）
-- [ ] OpenSpec artifact checker 通过（**需先产出 review manifest**：checker 对
-      tasks 全勾的 change 强制要求 `reviews/building-review-manifest.json`，
-      而 manifest 只能在审阅 PASS 后生成——故此项在 manifest 落盘前保持未勾）
+- [x] OpenSpec artifact checker 通过（manifest 已在审阅 PASS 后生成并 verify OK）
 - [x] 端到端验收：30000 字 run 逐个走 4 个出口——envelope 4000 / full_summary=True 30000 /
       inspect content 4000+标志 / worker summary 4000；假话修复实测（无 ref 只说 truncated，有 ref 才提 result_ref）
 - [x] **benchmark smoke**：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-213`
