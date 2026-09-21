@@ -6,7 +6,9 @@
 
 受保护 artifact 的写入通道（`workflow_state.py` 的 `artifact-event` 与 `review-manifest`）SHALL 以 change 的合法性（change 目录存在且含 `proposal.md`）为前置，SHALL NOT 要求 `handoff.json` 存在——`handoff.json` 是停用的四阶段状态机产物，当代 change 不产生它。为兼容老世代目标（例如 `spawn` 生成的子 change，只有 `handoff.json` 而无 `proposal.md`），前置 SHALL 接受 `proposal.md` **或** `handoff.json` 任一存在。
 
-目标解析 SHALL 与 `flow status` 的既有口径一致：**active 目录优先，已归档 change 回退到 `openspec/changes/archive/<date>-<id>/`**。对已归档目标，写入 SHALL 落在归档目录内（manifest 落在 `archive/<date>-<id>/reviews/`，事件追加到归档目录的 `workflow-events.jsonl`），SHALL NOT 在 active 路径新建目录。已归档 change 的投影为**只读历史**：对归档目标的写入 SHALL NOT 触发投影刷新，SHALL NOT 在归档目录中产出 `handoff.json` / `workflow-state.json` 等投影文件。对 active 目标，两条命令成功写入后 SHALL 重新生成投影，使写入结果可立即被校验。
+目标解析 SHALL 采用**写通道自身**的口径：**active 目录优先，否则回退到 `openspec/changes/archive/<date>-<id>/`**。该回退 SHALL NOT 依赖 `flow status` 的解析（后者对已归档 change id 不可用，属既存缺陷）。解析结果 SHALL 与查询的 change id 一致——目录名 SHALL 为裸 `<id>` 或 `<date>-<id>`，否则 SHALL 以明确错误拒绝（exit 1），SHALL NOT 把事件或 manifest 写进另一个 change 的目录。`--change` SHALL 只接受裸 change id，SHALL NOT 接受带 `<date>-` 前缀的 id。
+
+对已归档目标，写入 SHALL 落在归档目录内（manifest 落在 `archive/<date>-<id>/reviews/`，事件追加到归档目录的 `workflow-events.jsonl`），SHALL NOT 在 active 路径新建目录。已归档 change 的投影为**只读历史**：对归档目标的写入 SHALL NOT 触发投影刷新，SHALL NOT 在归档目录中产出 `handoff.json` / `workflow-state.json` 等投影文件；写入后 SHALL 只读校验投影与事件日志是否一致，不一致时 SHALL 告警但 SHALL NOT 落盘、SHALL NOT 因此失败。对 active 目标，两条命令成功写入后 SHALL 重新生成投影，使写入结果可立即被校验。
 
 #### Scenario: 当代 change 投影为 workflow-state.json
 
@@ -86,8 +88,15 @@
 #### Scenario: 受保护写通道支持已归档 change
 
 - **GIVEN** 一个已归档 change（存在于 `openspec/changes/archive/<date>-<id>/`，active 目录不存在）
-- **WHEN** 以该 change id 运行 `workflow_state.py artifact-event` 或 `workflow_state.py review-manifest`
+- **WHEN** 以该 change id（裸 id）运行 `workflow_state.py artifact-event` 或 `workflow_state.py review-manifest`
 - **THEN** 系统 SHALL 成功写入（exit 0），SHALL NOT 报「change 不存在」
 - **AND** review manifest SHALL 落在 `archive/<date>-<id>/reviews/`，事件 SHALL 追加到归档目录的 `workflow-events.jsonl`
 - **AND** SHALL NOT 在 active 路径 `openspec/changes/<id>/` 新建任何目录或文件
 - **AND** 归档目录 SHALL NOT 新增 `handoff.json` / `workflow-state.json` 等投影文件（归档投影为只读历史）
+- **AND** 若归档目录中已存在投影且因本次写入与事件日志不一致，系统 SHALL 告警，但 SHALL NOT 因该不一致而失败或落盘
+
+#### Scenario: 受保护写通道拒绝归档语境下的非法 change id
+
+- **WHEN** 对一个已归档 change 运行 `artifact-event` 或 `review-manifest`，且 `--change` 为带 `<date>-` 前缀的 id（如 `2026-09-21-<id>`），或解析出的目录名不是裸 `<id>` / `<date>-<id>`
+- **THEN** 系统 SHALL 以明确错误退出（exit 1）
+- **AND** SHALL NOT 把事件或 manifest 写进任何 change 目录，也 SHALL NOT 报「change 不存在」以外的误导性成功

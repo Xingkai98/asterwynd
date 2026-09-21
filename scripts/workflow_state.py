@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -60,7 +61,7 @@ from agent.workflow.event_log import (  # noqa: E402
     workflow_state_path,
     write_init_event,
 )
-from agent.workflow.review_manifest import write_review_manifest  # noqa: E402
+from agent.workflow.review_manifest import change_dir_for, write_review_manifest  # noqa: E402
 from agent.workflow.routing import is_workflow_enabled  # noqa: E402
 from agent.workflow.resume_audit import (  # noqa: E402
     record_resume_reconciliation,
@@ -850,8 +851,25 @@ def _awaiting_recovery_target(change_dir: Path, awaiting: str, current_state: di
     return _AWAITING_RECOVERY_DEFAULTS.get(awaiting, DEFAULT_SEED_STATE)
 
 
-def _require_change_target(change_id: str) -> Path | None:
-    """受保护写通道的目标合法性判定（issue #199）。
+def _archive_dir_matches_change_id(change_dir: Path, change_id: str) -> bool:
+    """归档目录名是否**就是**该 change（裸 `<id>` 或 `<date>-<id>`，不允许更长前缀）。
+
+    `review_manifest.change_dir_for` 的前缀正则用 `re.match` 且无 `$` 锚点
+    （`review_manifest.py:47`），`alpha` 会命中 `2026-09-22-alpha-beta`——**另一个
+    change** 的目录，且结果依赖 `iterdir()` 顺序。本处做调用侧事后断言，不一致时
+    fail-closed（宁可不写也不写错 change）。修复该正则属独立决策，记在
+    `docs/known-debt.md`。
+    """
+    name = change_dir.name
+    if name == change_id:
+        return True
+    return re.fullmatch(rf"\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(change_id)}", name) is not None
+
+
+def _require_change_target(change_id: str) -> tuple[Path, bool] | None:
+    """受保护写通道的目标合法性判定（issue #199）+ 归档回退（issue #232 盲区 A）。
+
+    返回 `(change_dir, is_archived)`；失败打印错误并返回 `None`。
 
     前置为「change 目录存在 且（`proposal.md` 或 `handoff.json` 存在）」：
 
@@ -861,6 +879,12 @@ def _require_change_target(change_id: str) -> Path | None:
     - `handoff.json` 分支保留老世代目标的可写性：`cmd_spawn` 生成的子 change
       只有 `handoff.json` 而**没有** `proposal.md`，只认 `proposal.md` 会把它们
       从「可写」打回 exit 1。
+
+    目标解析为 **active 优先 → 归档回退**。归档回退委托
+    `review_manifest.change_dir_for(archived=True)`，而非 `_flow_resolve_change_dir`：
+    后者的回退拼裸 id（`archive/<id>`），对仓库全部带 `YYYY-MM-DD-` 前缀的归档目录
+    是死代码（实测返回 `None`）。委托它还保证「事件落点」与「manifest 落点」由同一
+    算法决定，避免两个解析入口再次漂移（issue #232）。
     """
     # change_id 必须是单段目录名：`CHANGES_ROOT / change_id` 对绝对路径会整体替换
     # 根（可指向仓库外），对含 `/` 的相对路径会解析到子目录，而下游按
@@ -869,17 +893,65 @@ def _require_change_target(change_id: str) -> Path | None:
     if Path(change_id).is_absolute() or "/" in change_id or "\\" in change_id:
         print(f"错误：change id '{change_id}' 非法（应为单段目录名）", file=sys.stderr)
         return None
-    change_dir = CHANGES_ROOT / change_id
-    if not change_dir.exists():
-        print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
+    # 归档目录带日期前缀，查询串必须是裸 id：否则写入事件的 `change_id` 字段会带
+    # 日期，CI 的 `_change_id_for_event_log` 剥前缀后比对不上（`change_id mismatch`），
+    # PR 门禁红且难查（issue #232 Q4）。
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}-.+", change_id):
+        print(
+            f"错误：change id '{change_id}' 非法（请用不含日期前缀的裸 change id）",
+            file=sys.stderr,
+        )
         return None
+    change_dir = CHANGES_ROOT / change_id
+    is_archived = False
+    if not change_dir.exists():
+        # 归档回退：委托 change_dir_for。repo_root 由 CHANGES_ROOT.parent.parent 推导，
+        # **不能**用 _PROJECT_ROOT——后者是仓库绝对路径，会让测试/子进程在别处解析。
+        archived_dir = change_dir_for(CHANGES_ROOT.parent.parent, change_id, archived=True)
+        if not archived_dir.exists():
+            print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
+            return None
+        if not _archive_dir_matches_change_id(archived_dir, change_id):
+            print(
+                f"错误：change '{change_id}' 解析到归档目录 '{archived_dir.name}'，"
+                "目录名与 change id 不匹配（拒绝写入以避免污染其它 change）",
+                file=sys.stderr,
+            )
+            return None
+        change_dir = archived_dir
+        is_archived = True
     if not (change_dir / "proposal.md").exists() and not (change_dir / "handoff.json").exists():
         print(
             f"错误：change '{change_id}' 不是合法 change（缺 proposal.md 且无 handoff.json）",
             file=sys.stderr,
         )
         return None
-    return change_dir
+    return change_dir, is_archived
+
+
+def _after_protected_write(change_dir: Path, is_archived: bool) -> None:
+    """受保护写通道成功写入后的收尾（issue #232 盲区 A）。
+
+    - active 目标：刷新投影，使写入结果可立即被校验（#199 行为不变）。
+    - 归档目标：**不刷新**——归档目录是已提交的历史，`_flow_refresh_after_event` 会
+      在其中写出 `handoff.json` + `workflow-state.json` 等未跟踪产物（#228 类污染，
+      落在归档目录比 active 更严重）。改为做一次**只读**一致性校验：若归档目录里
+      已有投影且与事件日志不一致（仓库实测 1/89 命中），仅告警、不落盘、不失败——
+      既点亮盲区，又不阻断收尾。
+    """
+    if not is_archived:
+        _flow_refresh_after_event(change_dir)
+        return
+    try:
+        errors = verify_projection(change_dir)
+    except Exception as exc:  # 只读校验不得影响写入结果
+        print(f"警告：归档投影校验未能完成（{exc}）", file=sys.stderr)
+        return
+    if errors:
+        print(
+            "警告：归档投影与事件日志不一致（只读校验，未落盘）：" + "；".join(errors),
+            file=sys.stderr,
+        )
 
 
 def _flow_refresh_after_event(change_dir: Path) -> None:
@@ -976,9 +1048,10 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    change_dir = _require_change_target(args.change)
-    if change_dir is None:
+    target = _require_change_target(args.change)
+    if target is None:
         return 1
+    change_dir, is_archived = target
 
     try:
         append_protected_artifact_event(
@@ -993,7 +1066,7 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
-    _flow_refresh_after_event(change_dir)
+    _after_protected_write(change_dir, is_archived)
     print(f"已记录 artifact 事件: {args.event_type} ({args.artifact_path})")
     return 0
 
@@ -1005,9 +1078,10 @@ def cmd_review_manifest(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    change_dir = _require_change_target(args.change)
-    if change_dir is None:
+    target = _require_change_target(args.change)
+    if target is None:
         return 1
+    change_dir, is_archived = target
 
     repo_root = Path.cwd()
     base_sha = args.base_sha or _resolve_review_base_sha(repo_root)
@@ -1024,12 +1098,13 @@ def cmd_review_manifest(args: argparse.Namespace) -> int:
             base_sha=base_sha,
             head_sha=args.head_sha,
             verdict=args.verdict,
+            archived=is_archived,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"错误：{exc}", file=sys.stderr)
         return 1
 
-    _flow_refresh_after_event(change_dir)
+    _after_protected_write(change_dir, is_archived)
     print(f"已写入 review manifest: {path}")
     return 0
 
