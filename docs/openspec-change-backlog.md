@@ -101,6 +101,26 @@
 
 ## 未实现队列
 
+### 6. `fix-issue-232-archive-write`
+
+状态：未实现。
+
+关联 issue：[#232](https://github.com/Xingkai98/asterwynd/issues/232)（【debt】归档 change 的 review manifest 存在写入与校验双盲区）。本 change 只做**盲区 A（写入侧）**。
+
+批次：债务修复，优先于新功能——它是 #199 收尾接缝的补全（受保护写通道对**已归档** change 不可用），且是后续清理归档 manifest 漂移的工具前置。
+
+建议顺序原因：
+
+- #199（PR #233）修好了写通道对当代 change 的可用性，但**目标解析只看 active 目录**，change 归档后 CLI 即失效——manifest 必须绑定归档后最终 head，收尾只能绕底层函数。
+- 立项实测发现下游两处会因归档目标而**写错或污染**：`write_review_manifest` 未传 `archived=` 会写进 active 幽灵目录；`_flow_refresh_after_event` 会在**已提交的归档目录**里写出 `handoff.json` + `workflow-state.json`。
+- 修复面小（复用既有 `_flow_resolve_change_dir` 口径 + 传 `archived=` + 归档跳过刷新），但需 spec delta（写通道 Requirement 钉了目标口径）。
+
+主要交付：
+
+- `_require_change_target` 增 archive 回退；归档目标传 `archived=True`；归档目标跳过投影刷新。
+- 归档写通道回归测试（含污染判别用例）+ spec delta 同步。
+- **盲区 B（CI 校验侧）不做**：实测 `--check-archived` 有 15 条既有 `tasks hash mismatch`，开启前需先决策「重绑 vs 容忍」，仍留在 #232 跟踪。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
