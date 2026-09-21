@@ -64,9 +64,9 @@
 
 按 #199 教训：`openspec archive` 是整段替换 Requirement，delta 必须含变更后的**完整**正文。
 
-grill 实测核对：正式 spec 该 Requirement 有 **11** 条 Scenario，delta 有 **12** 条；集合差 = 丢失 0 / 新增 {受保护写通道支持已归档 change}；Requirement 正文 diff 只有「新增目标解析段 + 旧末句并入新段末尾」两处，语义退役 **0**。
+grill 实测核对：正式 spec 该 Requirement 有 **11** 条 Scenario，delta 起初为 **12** 条（新增 {受保护写通道支持已归档 change}），既有 11 条零丢失、语义退役 **0**。
 
-**本次修文档时同步补 delta**：删除「目标解析 SHALL 与 `flow status` 的既有口径一致」这条**不成立的事实**（`flow status` 对归档 id 实测 exit 1），改为写明写通道自身的解析口径；补入 Q2 一致性断言与 Q4 拒绝日期前缀 id 的契约。
+**修文档时同步补 delta**：删除「目标解析 SHALL 与 `flow status` 的既有口径一致」这条**不成立的事实**（`flow status` 对归档 id 实测 exit 1），改为写明写通道自身的解析口径；并补入 Q2 一致性断言与 Q4 拒绝日期前缀 id 的契约 → 新增第 2 条 Scenario「受保护写通道拒绝归档语境下的非法 change id」，delta 最终为 **13** 条（既有 11 + 新增 2）。
 
 ### D6: 非目标锁定——盲区 B 不在本 change
 

@@ -175,6 +175,63 @@ def test_archived_write_does_not_create_active_ghost_dir(tmp_path):
     assert not _active_dir(tmp_path, "archived-change").is_symlink()
 
 
+def test_archived_write_supports_bare_id_archive_dir(tmp_path):
+    """归档目录名为**裸 `<id>`**（无日期前缀）时同样可写。
+
+    覆盖 `_archive_dir_matches_change_id` 与 `change_dir_for` 的 `name == change_id`
+    分支——否则该分支无测试执行（审阅 O2-①）。
+    """
+    change_dir = _seed_archived_change(tmp_path, change_id="bare-dir", dir_name="bare-dir")
+    assert change_dir.name == "bare-dir"
+
+    result = _run_cli(tmp_path, *_artifact_event_args("bare-dir"))
+
+    assert result.returncode == 0, result.stderr
+    assert '"event_type": "protected_artifact_explained"' in event_log_path(change_dir).read_text(
+        encoding="utf-8"
+    )
+    for name in HOLLOW_PROJECTIONS:
+        assert not (change_dir / name).exists()
+
+
+def test_archived_write_supports_gen1_change_with_only_handoff(tmp_path):
+    """归档的**老世代** change（只有 `handoff.json`，无 `proposal.md`）仍可写。
+
+    对应 spec 既有 Scenario「老世代 change 的受保护写通道保持可用」在归档语境的延伸
+    （审阅 O2-②）：#199 的 handoff 兼容分支不得因归档回退而失效。
+    """
+    change_dir = tmp_path / "openspec" / "changes" / "archive" / f"{ARCHIVE_DATE}-legacy-arch"
+    change_dir.mkdir(parents=True)
+    handoff = {"schema_version": "1.0", "change_id": "legacy-arch", "state": {}, "transitions": []}
+    (change_dir / "handoff.json").write_text(json.dumps(handoff, ensure_ascii=False), encoding="utf-8")
+    handoff_before = (change_dir / "handoff.json").read_text(encoding="utf-8")
+    assert not (change_dir / "proposal.md").exists()
+
+    result = _run_cli(tmp_path, *_artifact_event_args("legacy-arch"))
+
+    assert result.returncode == 0, result.stderr
+    assert '"event_type": "protected_artifact_explained"' in event_log_path(change_dir).read_text(
+        encoding="utf-8"
+    )
+    # 归档跳过刷新：handoff.json 不得被 replay 改写，也不得新增投影
+    assert (change_dir / "handoff.json").read_text(encoding="utf-8") == handoff_before
+    assert not (change_dir / "workflow-state.json").exists()
+
+
+def test_archived_write_rejects_unknown_change(tmp_path):
+    """审阅 O2-③：归档语境下不存在的 id 仍 exit 1（不退化为「任意 id 都能写」）。"""
+    _seed_archived_change(tmp_path)
+
+    for args in (
+        _artifact_event_args("no-such-archived-change"),
+        _review_manifest_args("no-such-archived-change"),
+    ):
+        result = _run_cli(tmp_path, *args)
+        assert result.returncode == 1
+        assert "不存在" in result.stderr
+        assert "Traceback" not in result.stderr
+
+
 # --- 归档目标契约：日期前缀 id / 解析一致性 -----------------------------------
 
 

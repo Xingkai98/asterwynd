@@ -851,6 +851,15 @@ def _awaiting_recovery_target(change_dir: Path, awaiting: str, current_state: di
     return _AWAITING_RECOVERY_DEFAULTS.get(awaiting, DEFAULT_SEED_STATE)
 
 
+def _is_archived_change_dir(change_dir: Path) -> bool:
+    """change 目录是否位于 `CHANGES_ROOT/archive/` 之下（用路径前缀判定，不猜目录名）。
+
+    active 优先解析下，本判据与「active 目录不存在」等价（`change_dir_for(archived=True)`
+    的返回值恒在 archive 下）；取路径前缀更直接，且不依赖调用方记得在哪一步置位。
+    """
+    return CHANGES_ROOT / "archive" in change_dir.parents
+
+
 def _archive_dir_matches_change_id(change_dir: Path, change_id: str) -> bool:
     """归档目录名是否**就是**该 change（裸 `<id>` 或 `<date>-<id>`，不允许更长前缀）。
 
@@ -903,7 +912,6 @@ def _require_change_target(change_id: str) -> tuple[Path, bool] | None:
         )
         return None
     change_dir = CHANGES_ROOT / change_id
-    is_archived = False
     if not change_dir.exists():
         # 归档回退：委托 change_dir_for。repo_root 由 CHANGES_ROOT.parent.parent 推导，
         # **不能**用 _PROJECT_ROOT——后者是仓库绝对路径，会让测试/子进程在别处解析。
@@ -919,14 +927,15 @@ def _require_change_target(change_id: str) -> tuple[Path, bool] | None:
             )
             return None
         change_dir = archived_dir
-        is_archived = True
     if not (change_dir / "proposal.md").exists() and not (change_dir / "handoff.json").exists():
         print(
             f"错误：change '{change_id}' 不是合法 change（缺 proposal.md 且无 handoff.json）",
             file=sys.stderr,
         )
         return None
-    return change_dir, is_archived
+    # 归档与否由**解析结果**决定（路径前缀），不由「走了哪条分支」决定：调用方无法
+    # 忘记置位，也避免将来新增解析路径时漏判。
+    return change_dir, _is_archived_change_dir(change_dir)
 
 
 def _after_protected_write(change_dir: Path, is_archived: bool) -> None:

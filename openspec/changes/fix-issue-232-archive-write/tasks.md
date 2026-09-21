@@ -33,7 +33,7 @@
 ## 文档
 
 - [ ] `diagnosis.md`：bugfix 门禁 6 章（已产出）
-- [ ] spec delta：`specs/dev-workflow-state-machine/spec.md`（MODIFIED「工作流事件日志与 handoff.json projection」——**补全为变更后完整正文**，保留全部 11 条既有 Scenario + 新增 1 条归档 Scenario；退役项 0）
+- [ ] spec delta：`specs/dev-workflow-state-machine/spec.md`（MODIFIED「工作流事件日志与 handoff.json projection」——**补全为变更后完整正文**，保留全部 11 条既有 Scenario + 新增 2 条（归档写通道、归档语境下拒绝非法 id）；退役项 0）
 - [ ] **当前规格同步**：delta 已合入 `openspec/specs/dev-workflow-state-machine/spec.md`（含 `current_spec_synced` 事件）
 - [ ] `docs/known-debt.md`：按本 change 只收口盲区 A 的范围更新 #232 相关说明（盲区 B 仍开放）；并新增一条 `change_dir_for` 前缀正则缺 `$` 的债务（Q2），配 `protected_artifact_explained` 事件
 - [ ] 关键词扫描 `docs/`、`AGENTS.md`、`docs/development-guide.md` 中与 artifact-event / review-manifest / 归档相关的段落
@@ -41,7 +41,13 @@
 
 ## 审阅闭环
 
-- [ ] 独立 subagent 审阅（`/review-loop`）→ 判 verdict → CHANGES_REQUESTED 则修复 + 回归，再审直到 PASS 或 3 轮封顶
+- [x] 独立 subagent 审阅（`/review-loop`）Round 1 → **PASS**（run `89e2eb23-7af9-4cd2-b9ac-c0655f115e53`，报告 `reviews/building-review.md`）
+- [x] 审阅后加固（PASS 但落实低 severity 观察，提升可维护性与覆盖）：
+  - O1：`is_archived` 改由**解析结果**路径前缀判定（`_is_archived_change_dir`），与 design D3 措辞一致，不再靠「走了哪条分支」置位
+  - O2：补 3 条用例——裸 `<id>` 归档目录、归档老世代（只有 `handoff.json`）、归档语境下不存在 id（用例 11 → 14 条）
+  - O5：修 `design.md` D5 与 `tasks.md` 的 Scenario 计数漂移（delta 实为 13 条 / 新增 2 条）
+  - 加固后重新变异：去「归档跳过刷新」5 红、`is_archived` 恒 False 7 红 → 判别力保持
+  - O4（`--change ..` 可写到 `openspec/`，先于本 change 存在）与 O3（`docs/known-debt.md` 待更新）分别另案/收尾处理
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（verify OK）
 
 ## 验证
