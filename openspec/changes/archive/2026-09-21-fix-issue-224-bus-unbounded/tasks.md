@@ -79,7 +79,9 @@
 - [x] 按 verdict 修复 + 加回归测试（见下「审阅修复」节）
 - [x] Round 2 独立 subagent 复审 → PASS
 - [x] Round 3 delta 复审（head `a308e39`，审阅者要求覆盖真正合入的 head）→ PASS
-- [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
+- [x] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
+      （reviewer run = `ad7b0b26c68e88869`；复审覆盖到 `a308e39`，其后 `1fad39e` 只按审阅者 L1 建议
+      清理 design/proposal 措辞，无代码变化——manifest 的 `head_sha` 绑定实际合入 head）
 
 ### 审阅修复（Round 1 → Round 2）
 
