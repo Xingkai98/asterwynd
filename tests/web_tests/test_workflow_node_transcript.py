@@ -615,13 +615,19 @@ async def test_inspect_tool_clamps_limit_and_arguments(manager):
     直接进模型上下文——3 轮 20KB 的 ``Write`` 调用会放大到约 60K 字符。
     """
     from agent.tools.builtin.subagents import InspectSubagentTranscriptTool
-    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT
+    from agent.subagent.manager import TOOL_CALL_ARGUMENT_LIMIT, TRANSCRIPT_ITEM_LIMIT
     from web.session import TRANSCRIPT_MAX_LIMIT
 
-    # 三个契约数字必须同值（一处改了另一处忘改 = 两条路径口径漂移）。
+    # 契约数字必须同值（一处改了另一处忘改 = 路径口径漂移）：
+    # 条数两处 + 单条内容**三处**（新名 / 旧别名 / web 常量）。
+    # 审阅 R1 Issue 7 指出此前只断言了两处（别名传递等价），故显式把新名也钉上——
+    # 否则「alias 被拆开」或「新名与 web 常量漂移」都不会变红。
     from web.session import TRANSCRIPT_CONTENT_LIMIT
     assert InspectSubagentTranscriptTool.MAX_TRANSCRIPT_LIMIT == TRANSCRIPT_MAX_LIMIT
-    assert TOOL_CALL_ARGUMENT_LIMIT == TRANSCRIPT_CONTENT_LIMIT, (
+    assert TOOL_CALL_ARGUMENT_LIMIT == TRANSCRIPT_ITEM_LIMIT, (
+        "旧别名必须仍指向新名——否则是半改半不改"
+    )
+    assert TRANSCRIPT_ITEM_LIMIT == TRANSCRIPT_CONTENT_LIMIT, (
         "生产者的单条上限与路由的单条上限是两个数——不锁死必然漂移"
     )
 
@@ -897,16 +903,25 @@ async def test_worker_entry_summary_is_bounded_and_navigable(manager):
     workers = result.get("workers") or []
     assert workers, f"没拿到 worker 条目：{list(result)}"
 
+    truncated_entries = []
     for entry in workers:
         assert len(entry["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
             f"worker summary 无界：{len(entry['summary'])} 字符"
         )
-        if entry.get("summary_truncated"):
-            # 被裁过就必须能导航到全文——这是 (b) 的可判别形式（无条件断言，
-            # 不再用「如果 summary 里有字样」那种恒真的条件）。
-            assert "result_ref" in entry, (
-                "条目被截断却没带 result_ref——模型拿不到全文，成了空头承诺"
-            )
+        if entry["summary_truncated"]:
+            truncated_entries.append(entry)
+    # **无条件**断言被裁过的条目确实存在——否则下面的循环可以是空转，
+    # 而「去掉 summary_truncated 标志」这种变异就抓不到（审阅 R2 Issue 2）。
+    assert truncated_entries, (
+        f"构造无效：没有一条 worker summary 被裁（原文 {len(HUGE)} 字，"
+        f"上限 {TRANSCRIPT_ITEM_LIMIT}）；条目状态={[e.get('summary_truncated') for e in workers]}"
+    )
+    for entry in truncated_entries:
+        # 被裁过就必须能导航到全文——模型的认知是「被裁就能按 ref 取全文」，
+        # 没带该字段就成了空头承诺。
+        assert "result_ref" in entry, (
+            "条目被截断却没带 result_ref——模型拿不到全文，成了空头承诺"
+        )
     assert HUGE not in json.dumps(result, ensure_ascii=False), (
         "RunPattern 返回体里仍含 worker 全文"
     )

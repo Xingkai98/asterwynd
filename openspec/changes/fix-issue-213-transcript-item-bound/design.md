@@ -8,7 +8,7 @@
 |---|---|---|---|
 | HTTP 单条内容上限 `TRANSCRIPT_CONTENT_LIMIT` | `web/session.py` | 4000（固定） | 截断 + `*_truncated` 布尔 |
 | 生产者单条上限 `TOOL_CALL_ARGUMENT_LIMIT` | `manager.py:62-64` | 4000（固定，**与上者同值**） | `_bounded_arguments` → `(text, bool)` |
-| run 摘要预算 `BOUNDED_SUMMARY_CHARS` / `_bounded_summary` | `manager.py:49-59` | `max(2000, max_tokens*4)`（**随节点预算浮动**） | 文本（自带截断标记） |
+| run 摘要预算 `BOUNDED_SUMMARY_CHARS` / `_bounded_summary` | `manager.py:49-59` | `min(max(2000, max_tokens*4), TRANSCRIPT_ITEM_LIMIT)`（**上限被钳死**，见 D3） | 文本（自带截断标记） |
 
 前两个是**同一个概念的模型面/HTTP 面两面**（注释已定死「不该有两个数」）；第三个是**另一个概念**
 （落盘件与信封的摘要预算）。本 change 的四个出口里，出口 1 属于前者，出口 2/3/4 属于后者。
@@ -191,7 +191,27 @@ to_result_dict() → "summary": self.summary              # 全文
 `patterns.py:345` 的 `_worker_entry` 把 `run.summary` 全文塞进 worker dict，`:366-372` 再拼成
 一条长文本——**N 个 worker × 全文**，一次调用放大 N 倍。
 
-与出口 2/3 同口径（同一个「run 结果摘要」概念）→ 复用 `_bounded_summary(run.summary, run.max_tokens)`。
+与出口 2/3 同口径（同一个「run 结果摘要」概念）→ 走**固定的** `TRANSCRIPT_ITEM_LIMIT`
+（经 `_clip`），不读 `run.max_tokens`——理由同 D3：界不可被被检视对象放大。
+
+## 决策 D10：`bounded_summary` 的预算也要钳（审阅 R1 blocker 的修法）
+
+初版只裁了 `_format_run_envelope` 的 `summary` 键，**同 payload 的 `bounded_summary` 没动**
+——它仍由 `max(2000, max_tokens*4)` 生成，`max_tokens` 够大时就是全文。审阅 R1 端到端实测：
+模型自撰 `max_tokens=500000` 时 `GetSubagentRunTool` 返回 **34,394 字符**
+（`summary=4000` 修好了，`bounded_summary=30000` 是全文）——**比 issue 报告的修复前 34,507 还大**。
+「只修一个键 = 没修」。
+
+修法：`_bounded_summary` 的预算钳到 `TRANSCRIPT_ITEM_LIMIT`：
+`budget_chars = min(budget_chars, TRANSCRIPT_ITEM_LIMIT)`。
+回归测试改成**整包断言**（`HUGE not in json.dumps(payload)`）——因为「只断言一个键」
+正是这个洞上一轮溜过去的原因。
+
+**已知副作用（审阅 R2 复核为良性，如实记录以免后人误判为回归）**：`bounded_summary` 同时是
+落盘件 `summary_ref` 的来源，钳制后大预算节点的落盘摘要件会**变短**（如 30000 → 4040 字）。
+审阅 R2 核对：`save_summary` 只有一个生产写入点、**没有任何生产代码读取其内容**
+（下游聚合走 `_bounded_output` 与 `result_ref`，不是 `summary_ref`），全文仍由 `result_ref`
+完整保留，故无功能破坏。
 
 ## 明确不做
 

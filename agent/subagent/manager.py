@@ -215,7 +215,7 @@ class SubagentRunRecord:
 
         本方法保留 ``summary`` **全文**（Q6：改成裁剪版会经 ``state.summary`` 一路
         传导到下游）；**模型面**的 bounded 化在 ``_format_run_envelope`` 出口做
-        （issue #213：那里才区分「谁在看」）。``summary_chars`` 给出全文长度，让模型
+        （issue #213：那里才区分「谁在看」）。``summary_full_chars`` 给出全文长度，让模型
         知道被裁掉多少、值不值得按 ref 翻页。
         """
         return {

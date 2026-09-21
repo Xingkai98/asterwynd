@@ -998,7 +998,7 @@ def inspect_transcript(self, *, subagent_id, scope="summary"):
 `_format_run_envelope` 默认走 bounded（模型面出口），调度器等内部消费显式传
 `full_summary=True` 取全量——聚合器用 `len(merged)` 判断要不要调 summarizer 压缩，提前裁短
 会让它误判「没超预算」而静默跳过压缩。全文始终可通过 `result_ref` / `summary_ref` 按需读取；
-`summary_chars` 给出全文长度，模型据此判断值不值得翻页。
+`summary_full_chars` 给出全文长度，模型据此判断值不值得翻页。
 
 ### 完整生命周期
 
