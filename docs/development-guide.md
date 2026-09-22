@@ -248,6 +248,22 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。
 
+## Review manifest 纪律（收尾）
+
+`building-review-manifest.json` 的 `tasks_hash` 绑定的是**审阅时刻**的 `tasks.md`。收尾阶段（spec sync / 归档 move / backlog 移除 / 补勾任务项）**会继续改 `tasks.md`**，所以必须遵守：
+
+- **manifest SHALL 在该 change 的 `tasks.md` 最终化之后生成**——即收尾的所有 `tasks.md` 编辑（含归档 move 之后的最终 head）都完成后，再跑 `/review-loop` 收尾写 manifest。`#199` / `#232` 都是在归档 move 之后绑定 manifest 的正确范例。
+- order 反了会怎样：manifest 早绑 → 后续勾选/补行使 `tasks_hash` 漂移。**active** 语境校验仍强判 `tasks hash mismatch`（本 change 收窄了「降级」只作用于归档语境），CI 会红——不会静默放过。
+- **archived** 语境不再以 `tasks_hash` 判失败（`tasks.md` 是贯穿到归档的活文档，其字节哈希在归档后不构成漂移证据）；归档 change 仍强校验 manifest 存在性、字段完整性与 `report_hash` / `spec_hash` / git span。该降级**不静默**：`--check-archived` 会输出一行汇总说明。
+- **归档后不要再编辑该 change 的 `reviews/building-review.md` 或 `tasks.md`**：前者被 `report_hash` 强校验（会红），后者被归档降级跳过（不会红，但也意味着归档后改 tasks 不再有校验兜底）。
+
+归档校验命令（`validate` job 已接入 CI）：
+
+```bash
+PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
+  --check-archived --skip-protected-paths --skip-backlog
+```
+
 ## 业界调研门禁
 
 方案设计（proposal/design）前须按改动性质分流调研业界最新实践或框架（核心规则见 AGENTS.md「业界调研门禁」节；机械校验由 artifact checker 执行）。本小节给判据举例、豁免 reason 写法示范与常见误用。

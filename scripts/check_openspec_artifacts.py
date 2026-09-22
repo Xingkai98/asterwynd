@@ -1425,14 +1425,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_archived and not args.change:
         archive_root = changes_root / "archive"
         if archive_root.exists():
+            tasks_hash_skipped = 0
             for change_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
                 change_type = parse_change_type((change_dir / "proposal.md").read_text(encoding="utf-8"))[0] \
                     if (change_dir / "proposal.md").exists() else None
                 if change_type is None:
                     continue
                 errors.extend(_check_review_manifests(change_dir, change_type, archived=True))
+                # #232 B 盲区：归档语境的 tasks_hash 降级（见 review_manifest.py）
+                # 不得静默。这里按 change 计数，循环后汇总一行到 stderr——不逐
+                # change 刷屏、不进 errors（进 errors 会被当成 error 而误红）。
+                if any((change_dir / "reviews").glob("*-review-manifest.json")):
+                    tasks_hash_skipped += 1
                 # Q5/代码层修正 2：归档 change 只验可投影（结构合法 + 类型可识别）
                 errors.extend(_check_archived_projectable(change_dir))
+            if tasks_hash_skipped:
+                print(
+                    f"[archived manifest check] tasks_hash 已按归档语境跳过"
+                    f"（{tasks_hash_skipped} 个 change；其余 hash 与字段仍校验）",
+                    file=sys.stderr,
+                )
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))

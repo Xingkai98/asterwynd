@@ -6,7 +6,7 @@
 
 存续期（active）change 的 manifest SHALL 在其 `tasks.md` **最终化之后**生成（含归档移动之后的最终 head），使 `tasks_hash` 绑定的是该 change 的最终任务清单而非收尾中途的快照。
 
-`tasks_hash` 的校验 SHALL 按 change 存续期分别处理：**active** change SHALL 校验 `tasks_hash` 与当前 `tasks.md` 一致；**已归档** change SHALL NOT 以 `tasks_hash` 判定失败——`tasks.md` 是贯穿到归档的活文档，其收尾清单项在 manifest 生成后仍会被勾选，故其字节哈希在归档语境下不构成漂移证据。该降级 SHALL NOT 静默：校验输出 SHALL 说明归档语境跳过 `tasks_hash`。归档 change 的 manifest 存在性、字段完整性与 `report_hash` / `spec_hash` / git span SHALL 仍被校验（这些才承载「审阅了什么」的实质证据）。
+`tasks_hash` 的校验 SHALL 按 change 存续期分别处理：**active** change SHALL 校验 `tasks_hash` 与当前 `tasks.md` 一致；**已归档** change SHALL NOT 以 `tasks_hash` 判定失败——`tasks.md` 是贯穿到归档的活文档，其收尾清单项在 manifest 生成后仍会被勾选或补写，故其字节哈希在归档语境下不构成漂移证据。该降级的代价 SHALL 被明示：归档语境**不再检测 `tasks.md` 的任何编辑，含 checkbox 行内的描述级编辑**；承载「审阅了什么」的实质证据是 `report_hash`（审阅报告原文）与 `spec_hash`（当时已冻结的规格 delta）。该降级 SHALL NOT 静默：归档校验的输出 SHALL 可见地说明 `tasks_hash` 已按归档语境跳过（可为汇总行，无需逐 change 逐行）。归档 change 的 manifest 存在性、字段完整性与 `report_hash` / `spec_hash` / git span SHALL 仍被校验。
 
 CI SHALL 对已归档 change 执行 manifest 校验（`check_openspec_artifacts.py --check-archived`），使 change 归档后不脱离校验范围。
 
@@ -23,8 +23,8 @@ CI SHALL 对已归档 change 执行 manifest 校验（`check_openspec_artifacts.
 - **WHEN** 校验 review manifest
 - **THEN** manifest SHALL 声明 `schema`、`change_id`、`phase`、`verdict`、`reviewer_run_id`、`base_sha`、`head_sha`、`tasks_hash`、`spec_hash`、`diff_hash`、`report_hash`
 - **AND** `verdict` SHALL 为 `PASS`
-- **AND** checker SHALL 验证 `report_hash`、`tasks_hash`、`spec_hash`
-- **AND** 当 repo root 是 git repo 时，checker SHALL 验证 `head_sha` 匹配当前 `HEAD`，`base_sha` / `head_sha` 均为 commit，且 `diff_hash` 匹配 `git diff --binary <base_sha> <head_sha>` 的 sha256
+- **AND** checker SHALL 验证 `report_hash`、`tasks_hash`（**已归档** change 除外，见下述归档 Scenario）、`spec_hash`
+- **AND** 当 repo root 是 git repo 时，checker SHALL 验证 `base_sha` / `head_sha` 均为 commit，且 `diff_hash` 匹配 `git diff --binary <base_sha> <head_sha>` 的 sha256
 
 #### Scenario: 归档 change 的 manifest 校验不因 tasks_hash 漂移而失败
 
