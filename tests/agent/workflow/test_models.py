@@ -3,19 +3,16 @@ from __future__ import annotations
 import pytest
 
 from agent.workflow.models import (
-    DEFAULT_ROUTING,
     GATE_SUB_STATE,
     PHASE_ORDER,
     PHASE_SUB_STATES,
     PHASE_TO_ROLE,
     PHASES,
-    SESSION_MODES,
     TRIGGERS,
     Blocker,
     CurrentAgent,
     LastGate,
     NextHints,
-    PhaseRouting,
     StateSnapshot,
     Transition,
 )
@@ -37,11 +34,6 @@ class TestEnums:
         assert "human_review" in TRIGGERS
         assert "human_rollback" in TRIGGERS
         assert len(TRIGGERS) == 4
-
-    def test_session_modes(self):
-        assert "same" in SESSION_MODES
-        assert "new" in SESSION_MODES
-        assert "ask" in SESSION_MODES
 
     def test_gate_sub_state_is_ready_for_review(self):
         assert GATE_SUB_STATE == "ready_for_review"
@@ -157,12 +149,6 @@ class TestBlocker:
         assert d["resolved_at"] == "2024-01-02T00:00:00Z"
 
 
-class TestPhaseRouting:
-    def test_to_dict(self):
-        r = PhaseRouting(executor="subagent", session_mode="new")
-        assert r.to_dict() == {"executor": "subagent", "session_mode": "new"}
-
-
 class TestNextHints:
     def test_empty(self):
         h = NextHints()
@@ -204,11 +190,3 @@ class TestPhaseOrder:
     def test_done_is_greater_than_all_active_phases(self):
         for phase in _ACTIVE_PHASES:
             assert PHASE_ORDER["done"] > PHASE_ORDER[phase]
-
-
-class TestDefaultRouting:
-    def test_all_phases_have_defaults(self):
-        for phase in _ACTIVE_PHASES:
-            assert phase in DEFAULT_ROUTING
-            assert DEFAULT_ROUTING[phase].executor in ("inline", "subagent", "claude-code", "codex")
-            assert DEFAULT_ROUTING[phase].session_mode in ("same", "new", "ask")

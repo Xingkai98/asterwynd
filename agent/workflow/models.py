@@ -15,12 +15,6 @@ TRIGGERS: tuple[Trigger, ...] = ("auto", "handoff", "human_review", "human_rollb
 
 ActorType = Literal["agent", "human"]
 
-Executor = Literal["inline", "subagent", "claude-code", "codex"]
-EXECUTORS: tuple[Executor, ...] = ("inline", "subagent", "claude-code", "codex")
-
-SessionMode = Literal["same", "new", "ask"]
-SESSION_MODES: tuple[SessionMode, ...] = ("same", "new", "ask")
-
 Decision = Literal["approved", "skip", "rollback"]
 
 RoleAgentType = Literal["wayfinder", "planner", "builder", "closer"]
@@ -186,15 +180,6 @@ class Blocker:
 
 
 @dataclass
-class PhaseRouting:
-    executor: Executor
-    session_mode: SessionMode
-
-    def to_dict(self) -> dict:
-        return {"executor": self.executor, "session_mode": self.session_mode}
-
-
-@dataclass
 class NextHints:
     recommended_agent: RoleAgentType | None = None
     entry_point: str | None = None
@@ -209,11 +194,3 @@ class NextHints:
         if self.priority_hints:
             d["priority_hints"] = self.priority_hints
         return d
-
-
-DEFAULT_ROUTING: dict[Phase, PhaseRouting] = {
-    "wayfinding": PhaseRouting(executor="inline", session_mode="same"),
-    "planning": PhaseRouting(executor="inline", session_mode="same"),
-    "building": PhaseRouting(executor="inline", session_mode="same"),
-    "closing": PhaseRouting(executor="inline", session_mode="same"),
-}
