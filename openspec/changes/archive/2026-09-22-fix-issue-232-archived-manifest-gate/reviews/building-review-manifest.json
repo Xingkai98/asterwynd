@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-232-archived-manifest-gate",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "cf4bb6d7-f877-4bc7-a2bb-7ffb6c07787b (R1 PASS) + 906241b0-efc7-4839-b6a5-95079a83bd03 (R2 PASS)",
+  "base_sha": "cea1e53a521d37d5c18d23700c811909f1095d6c",
+  "head_sha": "e095bdd7a16fa7618084310d63444bac1156f6ac",
+  "tasks_hash": "sha256:c5ea85875e6599c6cb02c6c4ae10e731967b72feb1fb570c37abb09d6989ad52",
+  "spec_hash": "sha256:93d1aa53fdc21221e2fe1b7bd6df77a13916ae683bb20950a1488880203c529d",
+  "diff_hash": "sha256:bedadc3d86e361a51987a0a127736c624707eb1cfc3289e693a11249b9c61a55",
+  "report_hash": "sha256:d0799632761b8acabe9b3f73521d6c5318e5f888c25ba2ce24e8e933da906304"
+}
