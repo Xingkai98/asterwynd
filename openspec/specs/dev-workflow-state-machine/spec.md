@@ -8,11 +8,13 @@
 
 每个 change 目录下 SHALL 存在一个 `workflow-events.jsonl` 文件，作为该 change 开发流程的权威事实来源。投影分为两代：老世代（归档 change）SHALL 由事件日志 replay 生成 `handoff.json` projection；当代（新 change）SHALL 由事件日志 replay 生成 `workflow-state.json` projection。Agent 不 SHALL 直接编辑投影文件来声明状态变化；所有状态变化 SHALL 通过 CLI 追加事件并重新生成投影。
 
-受保护 artifact 的写入通道（`workflow_state.py` 的 `artifact-event` 与 `review-manifest`）SHALL 以 change 的合法性（change 目录存在且含 `proposal.md`）为前置，SHALL NOT 要求 `handoff.json` 存在——`handoff.json` 是停用的四阶段状态机产物，当代 change 不产生它。为兼容老世代目标（例如 `spawn` 生成的子 change，只有 `handoff.json` 而无 `proposal.md`），前置 SHALL 接受 `proposal.md` **或** `handoff.json` 任一存在。
+自本 change 起，**当代 change 的投影刷新 SHALL NOT 产出 `handoff.json`**：`workflow_state.py` 的 `_refresh_workflow_state` SHALL 只写 `workflow-state.json`（#228 层 1）。老世代（gen-1）change 的 `handoff.json` 是其**唯一**投影载体，其刷新行为 SHALL 与修复前保持一致——该分支不属「映射写」。
 
-目标解析 SHALL 采用**写通道自身**的口径：**active 目录优先，否则回退到 `openspec/changes/archive/<date>-<id>/`**。该回退 SHALL NOT 依赖 `flow status` 的解析（后者对已归档 change id 不可用，属既存缺陷）。解析结果 SHALL 与查询的 change id 一致——目录名 SHALL 为裸 `<id>` 或 `<date>-<id>`，否则 SHALL 以明确错误拒绝（exit 1），SHALL NOT 把事件或 manifest 写进另一个 change 的目录。`--change` SHALL 只接受裸 change id，SHALL NOT 接受带 `<date>-` 前缀的 id。
+受保护 artifact 的写入通道（`workflow_state.py` 的 `artifact-event` 与 `review-manifest`）SHALL 以 change 的合法性（change 目录存在且含 `proposal.md`）为前置，SHALL NOT 要求 `handoff.json` 存在。为兼容老世代目标（历史 `spawn` 子 change，只有 `handoff.json` 而无 `proposal.md`），前置 SHALL 接受 `proposal.md` **或** `handoff.json` 任一存在。
 
-对已归档目标，写入 SHALL 落在归档目录内（manifest 落在 `archive/<date>-<id>/reviews/`，事件追加到归档目录的 `workflow-events.jsonl`），SHALL NOT 在 active 路径新建目录。已归档 change 的投影为**只读历史**：对归档目标的写入 SHALL NOT 触发投影刷新，SHALL NOT 在归档目录中产出 `handoff.json` / `workflow-state.json` 等投影文件；写入后 SHALL 只读校验投影与事件日志是否一致，不一致时 SHALL 告警但 SHALL NOT 落盘、SHALL NOT 因此失败。对 active 目标，两条命令成功写入后 SHALL 重新生成投影，使写入结果可立即被校验。
+目标解析 SHALL 采用**写通道自身**的口径：**active 目录优先，否则回退到 `openspec/changes/archive/<date>-<id>/`**。该回退 SHALL NOT 依赖 `flow status` 的解析。解析结果 SHALL 与查询的 change id 一致——目录名 SHALL 为裸 `<id>` 或 `<date>-<id>`，否则 SHALL 以明确错误拒绝（exit 1），SHALL NOT 把事件或 manifest 写进另一个 change 的目录。`--change` SHALL 只接受裸 change id，SHALL NOT 接受带 `<date>-` 前缀的 id。
+
+对已归档目标，写入 SHALL 落在归档目录内（manifest 落在 `archive/<date>-<id>/reviews/`，事件追加到归档目录的 `workflow-events.jsonl`），SHALL NOT 在 active 路径新建目录。已归档 change 的投影为**只读历史**：对归档目标的写入 SHALL NOT 触发投影刷新，SHALL NOT 在归档目录中产出 `handoff.json` / `workflow-state.json` 等投影文件；写入后 SHALL 只读校验投影与事件日志是否一致，不一致时 SHALL 告警但 SHALL NOT 落盘、SHALL NOT 因此失败。对 active 目标，两条命令成功写入后 SHALL 重新生成投影（只写 `workflow-state.json`），使写入结果可立即被校验。
 
 #### Scenario: 当代 change 投影为 workflow-state.json
 
@@ -41,24 +43,10 @@
 - **AND** 当代 change SHALL NOT 被要求生成 `handoff.json`（其状态由 `workflow-state.json` 投影承载）
 - **AND** 老世代 change 的 `handoff.json` 生成行为 SHALL 与修复前保持一致
 
-#### Scenario: agent 读取当前状态
-
-- **WHEN** 任一角色 agent 开始处理 change
-- **THEN** agent SHALL 首先读取该 change 的投影状态（老世代读 `handoff.json`，当代读 `workflow-state.json`）获取当前 state
-- **AND** agent SHALL 根据 `state.phase` 和 `state.sub_state` 确定自己的工作起点
-
-#### Scenario: WorkflowEngine 更新状态
-
-- **WHEN** agent 完成一个 sub_state 内的任务并准备转移到下一个 sub_state 或 phase
-- **THEN** agent SHALL 请求 WorkflowEngine/CLI 执行状态推进
-- **AND** WorkflowEngine SHALL 追加一条 `workflow-events.jsonl` 事件
-- **AND** WorkflowEngine SHALL 重新生成该 change 世代的投影（老世代 `handoff.json`，当代 `workflow-state.json`）
-- **AND** 校验器 SHALL 验证磁盘投影与 `workflow-events.jsonl` replay 结果一致
-
 #### Scenario: 投影被手动篡改
 
 - **GIVEN** `workflow-events.jsonl` replay 的当前状态与磁盘投影不一致（老世代为 `handoff.json`，当代为 `workflow-state.json`）
-- **WHEN** 运行 gate 或 CI 校验
+- **WHEN** 运行 CI 校验
 - **THEN** 系统 SHALL 拒绝通过
 - **AND** SHALL 报告该投影与事件日志不一致
 
@@ -69,12 +57,18 @@
 - **AND** SHALL 忽略这些事件对投影的影响
 - **AND** 支持的 artifact event type SHALL 至少包含 `protected_artifact_explained`、`current_spec_synced`、`backlog_updated`、`change_archived`
 
+#### Scenario: 自愈不再产出 handoff.json
+
+- **WHEN** 对一个当代 change 运行 `flow status` 且其投影缺失/损坏/stale
+- **THEN** 系统 SHALL 由事件 replay 重建并落盘 `workflow-state.json`
+- **AND** 该 change 目录 SHALL NOT 新增 `handoff.json`
+
 #### Scenario: 受保护写通道不要求 handoff.json
 
 - **WHEN** 对一个无 `handoff.json` 的当代 change 运行 `workflow_state.py artifact-event` 或 `workflow_state.py review-manifest`
 - **THEN** 系统 SHALL 成功写入对应事件 / manifest（exit 0）
 - **AND** SHALL NOT 因缺少 `handoff.json` 而拒绝
-- **AND** 写入后该 change 的投影 SHALL 被重新生成，无需额外运行 `flow status` 即可通过投影一致性校验
+- **AND** 写入后该 change 的投影 SHALL 被重新生成（只落 `workflow-state.json`，不落 `handoff.json`），无需额外运行 `flow status` 即可通过投影一致性校验
 
 #### Scenario: 受保护写通道拒绝非法目标
 
@@ -85,9 +79,9 @@
 
 #### Scenario: 老世代 change 的受保护写通道保持可用
 
-- **WHEN** 对一个有 `handoff.json` 的老世代 change（含无 `proposal.md` 的 `spawn` 子 change）运行 `artifact-event` 或 `review-manifest`
+- **WHEN** 对一个有 `handoff.json` 的老世代 change（含无 `proposal.md` 的历史 `spawn` 子 change）运行 `artifact-event` 或 `review-manifest`
 - **THEN** 系统 SHALL 成功写入（exit 0）
-- **AND** 行为 SHALL 与修复前保持一致
+- **AND** 系统 SHALL 刷新其 `handoff.json` 投影（gen-1 的唯一投影载体），行为与修复前保持一致
 
 #### Scenario: 受保护写通道支持已归档 change
 
@@ -180,29 +174,29 @@ CI SHALL 对已归档 change 执行 manifest 校验（`check_openspec_artifacts.
 
 ### Requirement: Workflow 总开关
 
-`scripts/workflow_methods.json` SHALL 提供 `workflow.enabled` 布尔开关，默认值为 `true`。当其为 `false` 时，workflow automation SHALL 视为未启用：`discover` 不 SHALL 暴露活跃 change，PreToolUse 门禁不 SHALL 阻止写操作，`check_phase_done.py` 不 SHALL 因 phase gate 阻塞，`WorkflowDispatcher` 不 SHALL 继续分发 workflow phase。系统 SHALL 支持本地 resume audit baseline；通过 workflow CLI 禁用 workflow 时 SHALL 记录当前 git `HEAD`，重新启用时 SHALL 对 baseline 之后的非 workflow 管理文件改动执行恢复审计。
+`scripts/workflow_methods.json` SHALL 提供 `workflow.enabled` 布尔开关，默认值为 `true`。当其为 `false` 时，workflow automation SHALL 视为未启用：受保护写通道（`artifact-event` / `review-manifest`）SHALL 拒绝写入，PreToolUse 门禁 SHALL NOT 阻止写操作。系统 SHALL 支持本地 resume audit baseline；通过 workflow CLI 禁用 workflow 时 SHALL 记录当前 git `HEAD`，重新启用时 SHALL 对 baseline 之后的非 workflow 管理文件改动执行恢复审计。
 
-#### Scenario: workflow 未启用时不暴露活跃 change
+自本 change 起，原口径中依赖 `discover` 与 `check_phase_done.py` 的表述 SHALL 移除——此二者随四阶段状态机退役删除。
 
-- **GIVEN** `workflow.enabled = false`
-- **WHEN** agent 运行 `python3 scripts/workflow_state.py discover`
-- **THEN** 系统 SHALL 报告没有活跃 change
-- **AND** existing handoff state SHALL 不影响 discover 结果
-
-#### Scenario: workflow 未启用时 gate 和门禁退化
+#### Scenario: workflow 未启用时写通道拒绝
 
 - **GIVEN** `workflow.enabled = false`
-- **WHEN** PreToolUse 门禁或 `check_phase_done.py` 运行
-- **THEN** 系统 SHALL 不阻止写操作
-- **AND** 系统 SHALL 视 workflow gate 为 no-op
+- **WHEN** 调用 `workflow_state.py artifact-event` 或 `review-manifest`
+- **THEN** 系统 SHALL 以明确错误拒绝（exit 1）
+
+#### Scenario: workflow 未启用时门禁退化
+
+- **GIVEN** `workflow.enabled = false`
+- **WHEN** PreToolUse 门禁运行
+- **THEN** 系统 SHALL NOT 阻止写操作
 
 #### Scenario: 禁用期间存在未恢复改动
 
 - **GIVEN** workflow CLI 禁用 workflow 时已写入 resume baseline
 - **AND** baseline 之后存在非 workflow 管理文件改动
-- **WHEN** workflow 被重新启用或 agent 运行 `discover`
+- **WHEN** workflow 被重新启用或 agent 运行 `resume-audit`
 - **THEN** 系统 SHALL 报告需要 resume audit reconciliation
-- **AND** PreToolUse 门禁 SHALL 阻止继续写入，直到改动被归入某个 change
+- **AND** 系统 SHALL 阻止 workflow 被重新启用（`enable` 以非零退出），直到改动被归入某个 change
 
 #### Scenario: 禁用期间改动被恢复确认
 
@@ -210,413 +204,18 @@ CI SHALL 对已归档 change 执行 manifest 校验（`check_openspec_artifacts.
 - **WHEN** 人通过 `workflow_state.py resume-audit --reconcile-change <id>` 将改动归入某个 change
 - **THEN** 系统 SHALL 向该 change 的 `workflow-events.jsonl` 追加 `resume_audit_reconciled` 事件
 - **AND** 事件 SHALL 记录 `baseline_sha`、`head_sha`、`changed_paths_hash`、`changed_paths`、`reason` 和 `approved_by`
-- **AND** replay `handoff.json` projection 时 SHALL 忽略该非状态事件
-
-### Requirement: 四阶段生命周期
-
-开发流程 SHALL 建模为四个活跃 phase：`wayfinding`、`planning`、`building`、`closing`。独立设计审查和代码审查 SHALL 内嵌为各 phase 的 `reviewing_*` sub_state。每个活跃 phase SHALL 包含若干 sub_state，最后一个 sub_state SHALL 为 `ready_for_review`，作为 human review gate。
-
-#### Scenario: 正常四阶段流转
-
-- **GIVEN** 一个 change 从 `init` 状态开始
-- **WHEN** 按顺序完成 wayfinding、planning、building、closing 四个阶段
-- **THEN** change 到达 `done` 终态
-
-#### Scenario: 内嵌设计审查
-
-- **GIVEN** change 处于 `planning.writing_tickets`
-- **WHEN** planning 产物已完成
-- **THEN** 状态 SHALL 进入 `planning.reviewing_artifacts`
-- **AND** 独立子 Agent SHALL 审阅 proposal、design、spec delta 和 tasks
-- **AND** 审阅通过后才可进入 `planning.ready_for_review`
-
-#### Scenario: 内嵌代码审查
-
-- **GIVEN** change 处于 `building.smoke_validating`
-- **WHEN** 实现和验证已完成
-- **THEN** 状态 SHALL 进入 `building.reviewing_impl`
-- **AND** 独立子 Agent SHALL 对照 tasks、spec 和 diff 审阅实现
-- **AND** 审阅通过后才可进入 `building.ready_for_review`
-
-### Requirement: Phase 内部 sub_state 定义
-
-每个 phase SHALL 拥有明确的 sub_state 序列，用于追踪同一 agent 内部的工作进度。
-
-#### Scenario: planning sub_state 序列
-
-- **GIVEN** change 处于 `planning` phase
-- **THEN** sub_state 序列 SHALL 为: `exploring` → `writing_proposal` → `writing_design` → `writing_spec` → `writing_tickets` → `reviewing_artifacts` → `ready_for_review`
-- **AND** batch-grill-me 或等价设计追问 SHALL 在 `exploring` 到 `writing_design` 期间完成，逐项确认实现细节、依赖、风险、测试策略和文档影响
-- **AND** 同 phase 内 sub_state 间流转 trigger SHALL 为 `auto`
-- **AND** `writing_tickets` 生成的 tracer-bullet tickets SHALL 发布到配置的 issue tracker backend，默认 backend 为 GitHub Issues
-
-#### Scenario: wayfinding sub_state 序列
-
-- **GIVEN** change 处于 `wayfinding` phase
-- **THEN** sub_state 序列 SHALL 为: `charting_map` → `working_tickets` → `map_cleared` → `reviewing_map` → `ready_for_review`
-- **AND** `reviewing_map` SHALL 由独立子 Agent 审阅探路地图、决策闭合度和子 change 依赖关系
-- **AND** `working_tickets` 阶段生成的 decision tickets SHALL 发布到配置的 issue tracker backend，默认 backend 为 GitHub Issues
-
-#### Scenario: building sub_state 序列
-
-- **GIVEN** change 处于 `building` phase
-- **THEN** sub_state 序列 SHALL 为: `writing_tests` ⇄ `test_failing` → `implementing` ⇄ `all_tests_passing` → `smoke_validating` → `reviewing_impl` → `ready_for_review`
-- **AND** `writing_tests` 与 `test_failing` 之间可以来回（TDD 循环）
-- **AND** `implementing` 与 `all_tests_passing` 之间可以来回
-- **AND** `smoke_validating` 失败时 SHALL 回退到 `implementing`
-- **AND** `reviewing_impl` SHALL 由独立子 Agent 审阅代码实现、任务完成度、测试覆盖和安全性
-
-#### Scenario: closing sub_state 序列
-
-- **GIVEN** change 处于 `closing` phase
-- **THEN** sub_state 序列 SHALL 为: `syncing_specs` → `archiving` → `updating_backlog` → `validating` → `pr_ready` → `reviewing_archive` → `ready_for_review`
-- **AND** `ready_for_review` 通过后到达 `done` 终态
-- **AND** `merged` 为 done 之后的 post-merge 确认步骤，不作为 gate 前状态
-
-### Requirement: Human review gate
-
-每个 phase 末端 SHALL 设置 human review gate。gate 的 sub_state 名称为 `ready_for_review`。从 gate 发起的 phase 间流转 trigger SHALL 为 `human_review`。从 gate 发起的回退流转 trigger SHALL 为 `human_rollback`。
-
-#### Scenario: 人在 gate 点确认通过
-
-- **GIVEN** change 处于某 phase 的 `ready_for_review`
-- **WHEN** 人确认通过
-- **THEN** 状态 SHALL 流转到下一 phase 的第一个 sub_state
-- **AND** transition trigger SHALL 为 `human_review`
-
-#### Scenario: 人在 gate 点发起回退
-
-- **GIVEN** change 处于某 phase 的 `ready_for_review`
-- **WHEN** 人发现问题并发起回退
-- **THEN** 状态 SHALL 流转到指定 phase 的指定 sub_state
-- **AND** transition trigger SHALL 为 `human_rollback`
-- **AND** transition SHALL 包含 `rollback_reason`
-
-#### Scenario: 人在任意时刻发起回退
-
-- **GIVEN** change 处于任意 phase 和 sub_state
-- **WHEN** 人发现问题并发起回退
-- **THEN** 状态 SHALL 流转到指定 phase 的指定 sub_state
-- **AND** transition trigger SHALL 为 `human_rollback`
-- **AND** transition SHALL 包含 `rollback_reason`
-- **AND** 回退前的状态 SHALL 保留在 `transitions` 日志中
-
-### Requirement: Agent 间 handoff
-
-phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，为接手下一 phase 的 agent 提供上下文。
-
-`handoff` trigger 标记 agent 完成工作并生成 handoff note 的时刻，但不改变 state.phase。实际跨 phase 状态变更由 human gate 的 `human_review` trigger 驱动。handoff note 在 agent 到达 `ready_for_review` 时生成，transition 中记录 `trigger: handoff` 和 handoff note 路径；人确认后追加 `trigger: human_review` 的 transition 完成 phase 流转。
-
-#### Scenario: 生成 handoff note
-
-- **WHEN** agent 完成一个 phase 并准备交接给下一个 agent
-- **THEN** agent SHALL 在 `.handoff/<change-id>/` 目录下生成 handoff note
-- **AND** handoff note SHALL 包含: 本阶段完成内容、关键决策及原因、未选方案、待解决问题或风险、下一阶段入口点和优先级
-
-#### Scenario: handoff skill 可用时
-
-- **GIVEN** 当前环境可用 `handoff` skill
-- **WHEN** 需要生成 handoff note
-- **THEN** agent SHALL 优先使用 `handoff` skill 生成交接笔记
-
-#### Scenario: handoff skill 不可用时
-
-- **GIVEN** 当前环境无 `handoff` skill
-- **WHEN** 需要生成 handoff note
-- **THEN** agent SHALL 使用内置等价 prompt 生成交接笔记
-- **AND** 笔记内容 SHALL 覆盖相同的必含要素
-
-#### Scenario: 同一 agent 连续处理多阶段
-
-- **GIVEN** 同一个 agent 连续完成多个 phase
-- **THEN** agent 可以在最后一个 phase 结束时生成一份汇总 handoff note
-- **AND** phase 间的 `human_review` trigger 仍然需要人确认
-
-### Requirement: handoff.json schema
-
-`handoff.json` SHALL 遵循固定 schema，包含 `schema_version`、`change_id`、`state`、`transitions`、`current_agent`、`last_gate`、`blockers` 和 `routing` 字段。
-
-#### Scenario: schema_version 字段
-
-- **WHEN** 读取 `handoff.json`
-- **THEN** `schema_version` SHALL 为语义化版本字符串
-- **AND** 初始版本 SHALL 为 `"1.0"`
-- **AND** 解析器 SHALL 检查 schema_version 兼容性
-
-#### Scenario: state 字段
-
-- **WHEN** 读取 `handoff.json`
-- **THEN** `state` SHALL 包含 `phase`（枚举值: `wayfinding` / `planning` / `building` / `closing` / `blocked` / `done`）
-- **AND** `state` SHALL 包含 `sub_state`（string），当 phase 为 `blocked` 或 `done` 时可为 `null`
-- **AND** awaiting 态（`blocked.awaiting_*`）SHALL 承载 sub_state，普通 `blocked`（非 awaiting）sub_state 仍为 `null`
-
-#### Scenario: transitions 字段
-
-- **WHEN** 读取 `handoff.json`
-- **THEN** `transitions` SHALL 为数组，每项包含: `from`、`to`、`trigger`、`actor_type`、`actor_id`、`timestamp`
-- **AND** `actor_type` 枚举值为 `agent` / `human`
-- **AND** `actor_id` 为 agent 的 `run_id` 或人的标识
-- **AND** `trigger` 枚举值为 `auto` / `handoff` / `human_review` / `human_rollback`
-- **AND** `trigger` 为 `handoff` 时 SHALL 包含 `handoff_note` 路径
-- **AND** `trigger` 为 `human_review` 时 SHALL 包含 `decision`（approved / skip / rollback）和可选的 `reason`
-- **AND** `trigger` 为 `human_rollback` 时 SHALL 包含 `rollback_reason`
-- **AND** trigger 为 `human_review` 且跳过了下一阶段时 SHALL 包含 `skip_reason`
-
-#### Scenario: current_agent 字段
-
-- **WHEN** 读取 `handoff.json`
-- **THEN** `current_agent` SHALL 包含 `run_id` 和 `type`
-- **AND** `type` 枚举值为 `wayfinder` / `planner` / `builder` / `closer`
-
-#### Scenario: last_gate 字段
-
-- **WHEN** change 处于某 phase 的 `ready_for_review` sub_state
-- **THEN** `last_gate` SHALL 包含当前 gate 的 `phase`、`sub_state` 和 `awaiting: "human_review"`
-- **AND** 当 change 不处于 gate 状态时 `last_gate` SHALL 为 `null`
-
-#### Scenario: blockers 字段
-
-- **WHEN** change 状态为 `blocked`
-- **THEN** `blockers` SHALL 为非空数组
-- **AND** 每项 SHALL 包含 `blocked_from`（被阻塞时的 phase + sub_state）、`reason`、`blocked_at`
-- **AND** 阻塞解除时 SHALL 填写 `resolved_at`
-
-### Requirement: 合法流转表
-
-系统 SHALL 校验所有流转是否符合预定义的合法流转表。
-
-#### Scenario: 合法跨 phase 流转
-
-- **WHEN** 验证流转 `from` → `to`
-- **THEN** 以下流转 SHALL 视为合法:
-  - `wayfinding.ready_for_review` → `planning.exploring`
-  - `planning.ready_for_review` → `building.writing_tests`
-  - `building.ready_for_review` → `closing.syncing_specs`
-  - `closing.ready_for_review` → `done`
-
-#### Scenario: 合法回退流转
-
-- **WHEN** 验证回退流转
-- **THEN** 从任意 phase 回退到 `wayfinding` / `planning` / `building` / `closing` SHALL 视为合法
-- **AND** 回退目标 phase SHALL 早于当前 phase（禁止回退到自身或更晚的阶段）
-- **AND** 回退到 `planning` 时 sub_state 可为 `exploring` / `writing_design` / `writing_spec` / `writing_tickets`
-
-#### Scenario: 合法阻塞流转
-
-- **WHEN** 验证阻塞相关流转
-- **THEN** 以下流转 SHALL 视为合法:
-  - 任意 phase.sub_state → `blocked`（trigger: `auto` 或 `human_rollback`）
-  - `blocked` → 进入阻塞前的 phase.sub_state（trigger: `auto`，从 `blockers[i].blocked_from` 恢复）
-
-#### Scenario: 非法流转拒绝
-
-- **WHEN** 尝试执行不在合法流转表中的流转
-- **THEN** 系统 SHALL 拒绝
-- **AND** SHALL 提示最近的合法目标
-
-### Requirement: 流程状态机声明化
-
-流程状态机 SHALL 可声明化：`flow/statechart.json`（或等价声明文件）SHALL 声明状态（`<phase>.<sub_state>`）、初始状态与转移表（每条转移带 `trigger`），语义对齐现有 Python 常量（awaiting 三态建模为 `blocked.awaiting_*`）。薄引擎 SHALL 消费声明文件提供等价派生与转移，并与现有 Python 行为 parity 等价 pin 住（golden 断言）。
-
-#### Scenario: 声明文件定义状态机
-
-- **WHEN** 查看 `flow/statechart.json`
-- **THEN** 它 SHALL 声明 `initial`、`states`（每个含 `on` 转移表）
-- **AND** 状态名 SHALL 为 `<phase>.<sub_state>` 形式
-- **AND** awaiting 态 SHALL 建模为 `blocked.awaiting_*`
-
-#### Scenario: 引擎与现有 Python parity 等价
-
-- **WHEN** 对同一事件序列运行薄引擎与现有 Python 派生
-- **THEN** 结果 SHALL 一致（parity golden 断言，完整投影 dict）
-- **AND** 引擎对未知事件类型的处理 SHALL 与现有 Python 一致（raise）
-- **AND** 「容忍异构」SHALL 仅指无 seed 事件（首事件非 `change_created`）仍可投影，不抛错
-
-#### Scenario: 改规则不改 Python
-
-- **WHEN** 在声明文件中新增状态或转移（如 test fixture 注入 `awaiting_design_confirmation`）
-- **THEN** 引擎 SHALL 正确派生新态与转移
-- **AND** 现有 Python 逻辑 SHALL 不需要修改
-- **AND** 本 change SHALL 不要求现有 Python 处理该新态（未知 sub_state 由既有校验拒绝，属已知边界）
-
-### Requirement: 状态机声明与执行方法分工
-
-流程状态机声明（`statechart`）与每个状态使用的执行方法（`workflow_methods.json`）SHALL 分工不重叠：statechart 描述状态流转，workflow_methods 描述每个状态用哪个 skill/command/agent 执行。
-
-#### Scenario: 状态流转变更只改 statechart
-
-- **WHEN** 调整状态转移（如新增 transition）
-- **THEN** 只需修改 `statechart` 声明文件
-- **AND** `workflow_methods.json` 的执行方法映射 SHALL 不变
-
-#### Scenario: 执行方法变更只改 workflow_methods
-
-- **WHEN** 更换某状态使用的 skill/command
-- **THEN** 只需修改 `workflow_methods.json`
-- **AND** `statechart` 声明文件 SHALL 不变
-
-### Requirement: 角色 Agent 类型
-
-系统 SHALL 定义四种开发角色 agent 类型，分别对应四个活跃开发阶段。
-
-#### Scenario: Wayfinder agent
-
-- **WHEN** 路由系统选择 Wayfinder agent
-- **THEN** Wayfinder SHALL 负责 `wayfinding` phase 的全部 sub_state
-- **AND** 产出决策地图、decision tickets 和子 change 依赖关系
-- **AND** 到达 `ready_for_review` 后等待 human review
-
-#### Scenario: Planner agent
-
-- **WHEN** 路由系统选择 Planner agent
-- **THEN** Planner SHALL 负责 `planning` phase 的全部 sub_state
-- **AND** 产出 proposal.md、design.md、spec delta、tasks.md
-- **AND** 到达 `ready_for_review` 后等待 human review
-
-#### Scenario: Builder agent
-
-- **WHEN** 路由系统选择 Builder agent
-- **THEN** Builder SHALL 负责 `building` phase 的全部 sub_state
-- **AND** 产出测试代码和实现代码
-- **AND** 到达 `ready_for_review` 后等待 human review
-
-#### Scenario: Closer agent
-
-- **WHEN** 路由系统选择 Closer agent
-- **THEN** Closer SHALL 负责 `closing` phase 的全部 sub_state
-- **AND** 完成 spec 同步、归档、backlog 更新、校验
-- **AND** 到达 `done` 终态
-
-### Requirement: 单 Agent 全流程兼容
-
-系统 SHALL 允许同一个 agent 连续完成全部四个活跃 phase，不强制切换 agent。
-
-#### Scenario: 同一 agent 贯穿全流程
-
-- **GIVEN** 同一个 agent 的 `run_id` 贯穿全部 phase
-- **WHEN** 每个 phase 到达 `ready_for_review`
-- **THEN** human review gate SHALL 仍然要求人确认
-- **AND** phase 间 handoff note 可简化或合并
-- **AND** `transitions` 日志 SHALL 仍然逐条记录
-
-#### Scenario: routing 字段
-
-- **WHEN** 读取 `handoff.json`
-- **THEN** `routing` SHALL 为 object，key 为 phase 名称
-- **AND** 每个 phase entry SHALL 包含 `executor` 和 `session_mode`
-- **AND** `executor` 枚举值为 `inline` / `subagent` / `claude-code` / `codex`
-- **AND** `session_mode` 枚举值为 `same` / `new` / `ask`
-
-### Requirement: 路由配置
-
-系统 SHALL 支持为每个 phase 配置独立的 executor 和 session 模式。项目 SHALL 维护全局默认路由配置，per-change 配置 SHALL 可覆盖全局默认值。
-
-#### Scenario: 全局默认路由配置
-
-- **WHEN** 创建新 change 时
-- **THEN** `handoff.json` 的 `routing` 字段 SHALL 从项目配置文件（`openspec/config.yaml` 的路由段）继承默认值
-- **AND** 四个活跃 phase 均 SHALL 有默认 executor 和 session_mode
-
-#### Scenario: Per-change 路由覆盖
-
-- **WHEN** 人在创建 change 或 gate 点修改路由配置
-- **THEN** `handoff.json` 的 `routing` SHALL 更新被修改的 phase entry
-- **AND** 未修改的 phase SHALL 保持原值
-
-#### Scenario: 创建 change 时提示路由配置
-
-- **WHEN** 用户通过自然语言启动一个新 change
-- **THEN** 系统 SHALL 读取项目默认路由配置
-- **AND** SHALL 向人展示当前路由配置并询问是否需要调整
-- **AND** 人可接受默认值或覆盖任意 phase 的 executor / session_mode
-
-#### Scenario: Gate 点询问路由
-
-- **GIVEN** change 处于某 phase 的 `ready_for_review`
-- **AND** 下一 phase 的路由配置中 `session_mode` 为 `ask`
-- **WHEN** 人在 gate 点确认通过
-- **THEN** 系统 SHALL 询问下一 phase 使用哪个 executor 和 session 模式
-- **AND** 人的选择 SHALL 写入 `handoff.json` 的 `routing`
-
-#### Scenario: executor inline 行为
-
-- **GIVEN** phase 的 `executor` 为 `inline`
-- **WHEN** 进入该 phase
-- **THEN** 系统 SHALL 在当前 agent session 中直接处理
-- **AND** 不启动新的子 session 或外部进程
-
-#### Scenario: executor subagent 行为
-
-- **GIVEN** phase 的 `executor` 为 `subagent`
-- **WHEN** 进入该 phase
-- **THEN** 系统 SHALL 创建对应角色 agent 类型的子 session
-- **AND** 子 session SHALL 接收 handoff note 和 change 文档路径作为上下文
-
-#### Scenario: executor claude-code 行为
-
-- **GIVEN** phase 的 `executor` 为 `claude-code`
-- **WHEN** 进入该 phase
-- **THEN** 系统 SHALL 通过 `claude` CLI 子进程执行
-- **AND** 子进程 SHALL 接收 handoff note 内容和 change 目录路径
-
-#### Scenario: executor codex 行为
-
-- **GIVEN** phase 的 `executor` 为 `codex`
-- **WHEN** 进入该 phase
-- **THEN** 系统 SHALL 通过 Codex CLI 子进程执行
-- **AND** 子进程 SHALL 接收 handoff note 内容和 change 目录路径
-
-#### Scenario: session_mode same
-
-- **GIVEN** phase 的 `session_mode` 为 `same`
-- **WHEN** 进入该 phase
-- **THEN** 系统 SHALL 尽可能复用当前 session
-- **AND** 仅在 `executor` 为 `inline` 时 `same` 语义有效
-- **AND** 当 `executor` 非 `inline`（`subagent` / `claude-code` / `codex`）且 `session_mode` 为 `same` 时，系统 SHALL 降级为 `new` 并记录警告
-
-#### Scenario: session_mode new
-
-- **GIVEN** phase 的 `session_mode` 为 `new`
-- **WHEN** 进入该 phase
-- **THEN** 系统 SHALL 创建新的 session 或进程
-
-#### Scenario: session_mode ask
-
-- **GIVEN** phase 的 `session_mode` 为 `ask`
-- **WHEN** 该 phase 即将进入
-- **THEN** 系统 SHALL 询问人：使用哪个 executor、是否新 session
+- **AND** replay 投影时 SHALL 忽略该非状态事件
 
 ### Requirement: 阻塞状态
 
-系统 SHALL 支持任意 phase 进入 awaiting 态，用于等待外部依赖或决策。等待合法化不弱化执法：awaiting 期间写操作 SHALL 仍被 guard 拦截（exit 2），用户确认后才放行。awaiting 态 SHALL 建模为 `blocked` phase 的 sub_state（如 `blocked.awaiting_proposal_confirmation`），普通 `blocked`（非 awaiting）sub_state 为 null。awaiting 态集合 SHALL 包含 `awaiting_proposal_confirmation`（激活，proposal 完成后进入）、`awaiting_human_review` 与 `awaiting_user_confirmation`；`review_blocked` 不 SHALL 计入 awaiting 集。
+系统 SHALL 在投影层保留 awaiting 态建模：awaiting 态 SHALL 建模为 `blocked` phase 的 sub_state（如 `blocked.awaiting_proposal_confirmation`），普通 `blocked`（非 awaiting）sub_state 为 null；awaiting 态集合 SHALL 包含 `awaiting_proposal_confirmation`、`awaiting_human_review` 与 `awaiting_user_confirmation`；`review_blocked` 不 SHALL 计入 awaiting 集。等待合法化不弱化执法：awaiting 期间写操作 SHALL 仍被 guard 拦截（exit 2）。
 
-#### Scenario: 进入等待态
-
-- **WHEN** agent 完成 proposal 阶段（含调研结论）或用户主动 block，进入需要外部确认的状态
-- **THEN** 完成命令或 `flow block` SHALL 追加 `blocked_entered` 事件（复用 v1 blocked 事件类型，不新增类型）
-- **AND** 投影状态 SHALL 变为对应的 `blocked.awaiting_*` 态
-- **AND** `blocked_entered` SHALL 只由进入 awaiting 的完成命令或 `flow block` 写入（写路径唯一化）
-- **AND** proposal 完成后写 `blocked_entered` 进入 `awaiting_proposal_confirmation`，用户 `flow confirm` 写 `blocked_resolved` 后才允许进入开发
-
-#### Scenario: 解除等待态
-
-- **WHEN** 用户确认解除等待
-- **THEN** `flow confirm` SHALL 追加 `blocked_resolved` 事件（复用 v1 blocked 事件类型）
-- **AND** `blocked_resolved` SHALL 只由 `flow confirm` 写入（写路径唯一化）
-- **AND** `blocked_resolved` 的 payload SHALL 从当前投影 awaiting 态推导（from=当前 `blocked.awaiting_*`，to=恢复目标），兼容无 `blocked_entered` 前置记录的 change
-- **AND** 状态 SHALL 恢复到进入 awaiting 之前的阶段
-
-#### Scenario: flow approve 阶段 gate 通过
-
-- **WHEN** change 处于某 phase 的 `ready_for_review`（gate）且运行 `flow approve --phase <phase>`
-- **THEN** 系统 SHALL 追加 `transition_applied` 事件（trigger: `human_review`）完成跨阶段推进到下一 phase 首 sub_state
-- **AND** 不写 `blocked_resolved`（awaiting 解除只由 `flow confirm` 承担）
-- **AND** phase 机械检查未通过时 SHALL 拒绝批准
+自本 change 起，awaiting 态的**进入 / 解除 CLI 通道已随四阶段状态机退役删除**（`flow block` / `flow confirm` / `flow approve`）：`blocked_entered` 与 `blocked_resolved` 事件不再有 CLI 写入者。guard 的 awaiting 执法**保留且不弱化**——处于 `blocked.awaiting_*` 的 change 仍会被门禁拦截写操作。该残留面（执法保留但无 CLI 解除通道）SHALL 记录于 `docs/known-debt.md`。
 
 #### Scenario: checker 派生物一致性
 
-- **WHEN** 项目 artifact checker 校验 tasks 全勾的 change
-- **THEN** 它 SHALL 校验磁盘投影（workflow-state.json）与从事件 replay 重建的投影一致（投影 == replay）
+- **WHEN** 项目 artifact checker 校验 change
+- **THEN** 它 SHALL 校验磁盘投影（`workflow-state.json`）与从事件 replay 重建的投影一致（投影 == replay）
 - **AND** 不一致时 SHALL 失败（exit 2），防止自锁
 
 #### Scenario: guard 读投影执法
@@ -629,27 +228,28 @@ phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，�
 
 ### Requirement: flow 命令与受保护路径
 
-系统 SHALL 提供 `flow status` / `flow confirm` / `flow approve` / `flow block` / `flow advance` 命令，作为投影查询、等待态确认与阶段推进的 CLI 通道；`workflow-state.json` 与 `workflow-events.jsonl` SHALL 纳入受保护路径（governance=cli_written），只允许 CLI 写入。
+`workflow_state.py` 的 `flow` 子命令组 SHALL 仅保留 `flow status`（投影查询）。原 gate 家族子命令（`flow approve` / `flow advance` / `flow block` / `flow confirm`）SHALL 删除，因为四阶段状态机已停用且它们无生产调用方。`workflow-state.json` 与 `workflow-events.jsonl` SHALL 纳入受保护路径（governance=cli_written），只允许 CLI 写入。
+
+已删除的子命令 SHALL NOT 再被 guard 的写通道豁免列为合法通道。
 
 #### Scenario: flow status 展示投影
 
 - **WHEN** 运行 `flow status [--change <id>|--all]`
 - **THEN** 系统 SHALL 输出各 change 的投影状态（state / milestones / source_event_seq），唯一/默认格式为 JSON
 - **AND** 事件文件不一致时 SHALL 提示 stale
-- **AND** 投影缺失/损坏/stale 时 SHALL 先用事件 replay 自动重建，重建成功即输出；仅事件不完整导致重建失败时 SHALL 报「事件不完整，检查 seq N」
+- **AND** 投影缺失/损坏/stale 时 SHALL 先用事件 replay 自动重建（只落 `workflow-state.json`，不落 `handoff.json`），重建成功即输出；仅事件不完整导致重建失败时 SHALL 报「事件不完整，检查 seq N」
 
-#### Scenario: flow block / flow advance
+#### Scenario: 已删子命令不再存在
 
-- **WHEN** 运行 `flow block --change <id> --awaiting <type>`
-- **THEN** 系统 SHALL 追加 `blocked_entered` 事件并进入对应 `blocked.awaiting_*` 态
-- **WHEN** 运行 `flow advance --change <id> --to <sub_state>`
-- **THEN** 系统 SHALL 追加 `transition_applied` 事件推进 sub_state
+- **WHEN** 调用 `workflow_state.py flow approve`（或 `advance` / `block` / `confirm`），或调用 legacy 子命令 `discover` / `current` / `validate` / `spawn`
+- **THEN** CLI SHALL 以明确错误退出（未知子命令，非零退出），SHALL NOT 静默成功
+- **AND** SHALL NOT 产生任何副作用（不写事件、不落投影、不新建 change 目录）
 
 #### Scenario: 受保护路径只准 CLI 写
 
 - **WHEN** agent 直接 Write/Edit `workflow-state.json` 或 `workflow-events.jsonl`
 - **THEN** guard SHALL 拦截（exit 2）
-- **AND** `flow` / `policy-*` CLI 作为合法写通道 SHALL 被 guard 豁免
+- **AND** `flow status` / `policy-*` / `artifact-event` / `review-manifest` CLI 作为合法写通道 SHALL 被 guard 豁免
 
 ### Requirement: 开发流程精简为 OpenSpec 主干 + 强制审阅闭环
 
@@ -701,7 +301,9 @@ phase 间交接时，完成当前 phase 的 agent SHALL 生成 handoff note，�
 
 ### Requirement: guard 写操作门禁顺序与路径归一化
 
-guard 对 Bash 命令 SHALL 在 is_write 判定之前先扫描受保护路径；对 Write/Edit 的 `file_path` SHALL 先做路径归一化（normpath / 剥离 `./`、解析 `..`）再匹配。已知绕过形态（`echo > file`、`cat <<EOF`、`pathlib.write_text`、`docs/./` 变体）SHALL 被拦截。`workflow_state.py (artifact-event|review-manifest|policy-*|flow (status|confirm|approve|block|advance))` 作为合法写通道 SHALL 被豁免，但豁免 SHALL 仅限独立调用（无 `&&`/`;`/`|` 链式、无重定向、无命令替换、无换行）。
+guard 对 Bash 命令 SHALL 在 is_write 判定之前先扫描受保护路径；对 Write/Edit 的 `file_path` SHALL 先做路径归一化（normpath / 剥离 `./`、解析 `..`）再匹配。已知绕过形态（`echo > file`、`cat <<EOF`、`pathlib.write_text`、`docs/./` 变体）SHALL 被拦截。`workflow_state.py (artifact-event|review-manifest|policy-*|flow status)` 作为合法写通道 SHALL 被豁免，但豁免 SHALL 仅限独立调用（无 `&&`/`;`/`|` 链式、无重定向、无命令替换、无换行）。
+
+自本 change 起，豁免清单 SHALL 收窄为**仅 `flow status`**——已删除的 gate 家族（`flow approve` / `advance` / `block` / `confirm`）SHALL NOT 再被豁免。
 
 #### Scenario: Bash 命令绕过受保护路径被拦截
 
@@ -720,6 +322,12 @@ guard 对 Bash 命令 SHALL 在 is_write 判定之前先扫描受保护路径；
 - **GIVEN** Bash 命令以 `workflow_state.py` 合法子命令开头但通过 `&&`、`;`、`|` 或换行链式拼接写命令
 - **WHEN** 该命令尝试改写受保护 artifact
 - **THEN** guard SHALL 拒绝豁免并拦截（exit 2）
+
+#### Scenario: 已删 gate 子命令不再被豁免
+
+- **GIVEN** Bash 命令调用 `workflow_state.py flow approve`（或 `advance` / `block` / `confirm`）
+- **WHEN** guard 判定该命令是否为豁免的合法写通道
+- **THEN** guard SHALL NOT 豁免它（与子命令已删除的事实一致）
 
 ### Requirement: 内容门槛阶段感知
 
