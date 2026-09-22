@@ -164,16 +164,63 @@ fail-closed（解析目录名必须为裸 `<id>` 或 `<date>-<id>`），**未改
 `--check-archived` 共用，改动面超出该 bugfix）。收紧正则属独立决策，跟踪见
 issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
 
-**B. 校验盲区**：`.github/workflows/ci.yml` 跑的是 `check_openspec_artifacts.py --base-ref ... --require-base`，
-**不带 `--check-archived`**；默认模式把 `archive/` 显式排除在扫描外，归档 change 只在
-`--check-archived` 下才走 `_check_review_manifests(..., archived=True)`（`:1425-1435`）。
-AGENTS.md 要求「归档收尾与实现同一 PR」，于是**归档动作本身把 change 移出了 CI 校验范围**——
-恰在变得可合入的那一刻脱离 manifest 校验。实测对照：缺 manifest 时默认模式 `checks passed`（漏检），
-`--check-archived` 报 `review manifest missing`（能抓）。
+**B. 校验盲区**（**已由 fix-issue-232-archived-manifest-gate 收口**，2026-09-22）：`.github/workflows/ci.yml`
+原来跑的是 `check_openspec_artifacts.py --base-ref ... --require-base`，**不带 `--check-archived`**；
+默认模式把 `archive/` 显式排除在扫描外，归档 change 只在 `--check-archived` 下才走
+`_check_review_manifests(..., archived=True)`（`:1425-1435`）。AGENTS.md 要求「归档收尾与实现同一 PR」，
+于是**归档动作本身把 change 移出了 CI 校验范围**——恰在变得可合入的那一刻脱离 manifest 校验。实测对照：
+缺 manifest 时默认模式 `checks passed`（漏检），`--check-archived` 报 `review manifest missing`（能抓）。
 
 注：`_check_review_manifests` 对已存在的 `*-review.md` 逐个 verify，**能**报出 missing manifest；
 漏检的真因是默认模式根本不进 archive 目录，而非「glob 枚举不到」。
 
-**处置**：不在 fix-issue-199 内修（改 CI / checker 属独立门禁加固，超出该 bugfix 边界）。
-本 change 已用底层函数按 `archived=True` 生成并验证 manifest。跟踪见
-issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
+收口内容（PR 见 change `2026-09-22-fix-issue-232-archived-manifest-gate`）：直接把 `--check-archived`
+接进 CI 会红——**实测恰好 15 条既有归档 change 报 `tasks hash mismatch`**。根因是流程顺序而非篡改：
+manifest 在**审阅 PASS 时**生成（tasks 未全勾），收尾阶段（spec sync / 归档 / backlog 移除）还会再勾项或补行，
+15 条的差异行**全部落在 checkbox 行上**（勾选翻转、同行描述更新、一条纯新增；`spec_hash`/`report_hash`/git diff
+全过）。因此本 change：
+
+1. `verify_review_manifest` 的 `tasks_hash` 校验加 `not archived` 前置——**归档语境不以此判失败，active 语境仍强校验**；
+   其余校验（manifest 存在性 / 字段 / `spec_hash` / `report_hash` / git span）**全部保留**。
+2. 该降级**不静默**：`--check-archived` 在 stderr 输出一行汇总（`tasks_hash 已按归档语境跳过（N 个 change）`），
+   note **不混入** `verify_review_manifest` 的返回列表（否则会被当 error → exit 1，降级失效）。
+3. `.github/workflows/ci.yml` 的 `validate` job 增 `--check-archived --skip-protected-paths --skip-backlog` 步骤；
+   加 `--skip-*` 是为避免默认 `--base-ref master` 在 CI 上解析失败打出无意义 WARNING 与重复检查（该 WARNING
+   只在 CI 现形，本地 `master` 可解析看不到）。
+4. 立「manifest 在该 change 的 `tasks.md` 最终化之后生成」纪律，写入 spec 与 `docs/development-guide.md`。
+
+**B-残余风险（已接受，勿误读为「归档 manifest 不用管」）**：归档语境**不再检测 `tasks.md` 的任何编辑，含
+checkbox 行内的描述级编辑**（如把 `1813 passed` 改成 `1814`、或把某条任务描述改成与事实不符的表述）。
+承载「审阅了什么」的实质证据是 `report_hash`（审阅报告原文）与 `spec_hash`（当时已冻结的规格 delta），
+二者仍被强校验。三个「保住 tasks 检查力」的替代方案已实测排除：①「忽略勾选」归一化 → 剥离 checkbox 行后
+只剩 8–18 行标题（任务描述本身就在 checkbox 行里），等于废检、属假绿；② checkbox 归一为 `[TASK]` → 仍 2 条红；
+③ 绑定 `head_sha` 处的 `git show` blob → 32 过/10 红（manifest 用工作区而非提交时刻的 tasks.md 计算哈希）。
+
+### head_sha 校验口径债（A′ 收尾时对齐措辞，issue #232）
+
+spec `dev-workflow-state-machine/spec.md` 的「manifest 字段和 hash 校验」Scenario 原写「checker SHALL 验证
+`head_sha` 匹配当前 `HEAD`」，但实现 `_verify_git_span`（`agent/workflow/review_manifest.py:209-232`）**从不做此校验**
+——它只查 `base_sha`/`head_sha` 是否为存在的 commit + `diff_hash` 匹配。该断言语义上**不可满足**：实测 44 份归档
+manifest 中 **0 份** `head_sha == HEAD`（37 份是 HEAD 祖先、7 份不可达），且「生成 manifest」这个动作本身就移动
+HEAD（例：`2026-09-14-subagent-concurrency-queue` 的 manifest 记 `head_sha=ea22b65c`，而写入它的 commit 是
+`357cec0`）——除非把 manifest amend 进同一 commit，否则永不成立。反向「修实现使其校验」会让 43/43 历史 manifest
+转红，不可行。
+
+**处置**：已在 fix-issue-232-archived-manifest-gate 中把该 Scenario **改措辞与实现对齐**（删去「匹配当前 `HEAD`」，
+保留「`base_sha`/`head_sha` 均为 commit + `diff_hash` 匹配」），原始意图记录于此，不再声称未做的检查。
+跟踪见 issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
+
+**B-覆盖面隐含上界（记录，不处理）**：`--check-archived` 是**漂移检测**而非「归档必须有审阅」的补票门，两处上界
+（审阅 R1 指出，均非本 change 引入、修复方向超出本 change 边界）：
+
+1. **无 `Change Type` 的归档目录整段跳过**：`scripts/check_openspec_artifacts.py:1428-1433` 对
+   `parse_change_type` 返回 `None` 的目录 `continue`。实测 90 个归档目录中 4 个（均 `2026-06-21-*` 老世代）被跳过；
+   当前这 4 个都没有 `reviews/`。
+2. **压根没有 `reviews/` 的归档 change 不被要求补 manifest**：`_check_review_manifests` 在
+   `review_dir` 不存在时直接 `return []`，且 `requires_building_review` 对 `archived=True` 恒为 False（设计意图：
+   「归档 change 要么早于本门禁、要么已满足」，不为历史 change 追溯索取审阅）。实测 42 个非 docs 归档 change
+   完全无 `*-review.md` 却通过 `--check-archived`；**只覆盖已有 `*-review.md` 的 change 的漂移**。
+   `openspec/changes/archive/**` 的写入仍受 `change_archived` 事件约束，但事件不蕴含 manifest 存在。
+
+即 AGENTS.md 新增段落的「归档 change 也在校验范围内」应读作：**已有审阅报告的归档 change 不再脱离校验**，
+而非「每个归档 change 都必须有 manifest」。若要把后者也变成门禁，属独立 change（需为历史 change 补审阅或豁免）。

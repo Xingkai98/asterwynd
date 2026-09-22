@@ -61,6 +61,15 @@ jobs:
           fi
           uv run python scripts/check_openspec_artifacts.py --base-ref "$BASE_REF" --require-base
 
+      - name: Check archived change manifests
+        run: |
+          # #232 B 盲区：归档 change 也要脱离校验——归档后 tasks.md 仍会被勾选，
+          # 故归档语境的 tasks_hash 降级（可见汇总见 stderr），其余 hash/字段仍校验。
+          # --skip-protected-paths / --skip-backlog：第一步已带 base-ref 覆盖，这里
+          # 避免默认 --base-ref master 在 CI 上解析失败打出无意义 WARNING 与重复检查。
+          uv run python scripts/check_openspec_artifacts.py \
+            --check-archived --skip-protected-paths --skip-backlog
+
   benchmark-gate:
     name: benchmark-gate
     runs-on: ubuntu-latest

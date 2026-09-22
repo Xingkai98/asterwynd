@@ -108,6 +108,7 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 - 审阅通过后生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）
 - **机械强制**：`scripts/check_openspec_artifacts.py` 对非 docs + 有 spec delta + **tasks.md 全部 `[x]` 勾选**（实现完成）的 change 强制 building-review.md + manifest 存在且 PASS——缺审阅直接报错。这是 PR 合入前必跑的门禁；提案/部分实现的 change 不受此拦截
 - 受保护 artifact（`docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`openspec/changes/archive/**`、`docs/openspec-change-backlog.md`）的修改仍需 `workflow-events.jsonl` 结构化解释事件；阶段 review report 需对应 review manifest
+- **归档 change 的 manifest 不再脱离校验**（issue #232 B）：CI 的 `validate` job 另跑 `check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog`。归档语境的 `tasks_hash` 因 `tasks.md` 是贯穿到归档的活文档而被降级跳过（该降级不静默，stderr 输出一行汇总），但 manifest 存在性 / 字段 / `spec_hash` / `report_hash` / git span 仍强校验。注意这是**漂移检测**：只对已有 `reviews/*-review.md` 的归档 change 生效，不追溯要求历史归档 change 补 manifest（覆盖面隐含上界见 `docs/known-debt.md`）。相应地，**manifest 必须在该 change 的 `tasks.md` 最终化（含归档 move）之后生成**，详见 [开发指南](./docs/development-guide.md) 的「Review manifest 纪律」
 
 ### Worktree 隔离规则
 

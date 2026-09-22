@@ -166,7 +166,13 @@ def verify_review_manifest(
     elif manifest.get("report_hash") != file_sha256(report_path):
         errors.append("review report hash mismatch")
     change_dir = change_dir_for(repo_root, change_id, archived=archived)
-    if manifest.get("tasks_hash") and manifest.get("tasks_hash") != artifact_hash(change_dir / "tasks.md"):
+    # tasks.md keeps being ticked through closing (spec sync / archive / backlog),
+    # so its post-PASS byte hash is not drift evidence once the change is
+    # archived — the review is bound to report_hash / spec_hash instead. Active
+    # changes keep the strict check. The "skip is visible" requirement is met by
+    # the caller (scripts/check_openspec_artifacts.py --check-archived), which
+    # prints a summary; this function stays a pure error list.
+    if not archived and manifest.get("tasks_hash") and manifest.get("tasks_hash") != artifact_hash(change_dir / "tasks.md"):
         errors.append("tasks hash mismatch")
     if manifest.get("spec_hash") and manifest.get("spec_hash") != artifact_hash(change_dir / "specs"):
         errors.append("spec hash mismatch")

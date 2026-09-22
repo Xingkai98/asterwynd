@@ -1662,7 +1662,12 @@ def test_change_id_from_dir_name_strips_date_prefix():
 
 def test_verify_review_manifest_archived_path(tmp_path):
     """Regression (grill Q6): verify_review_manifest must resolve archived
-    change paths (openspec/changes/archive/<date>-<id>) for drift detection."""
+    change paths (openspec/changes/archive/<date>-<id>) for drift detection.
+
+    #232 (A′): archived 语境**不再以 tasks_hash 判失败**（tasks.md 是贯穿到归档
+    的活文档，收尾勾选/补行必然使其字节哈希漂移），但**其余校验保留**——该测试
+    同时锁住这两侧：tasks 漂移不报错、spec 漂移仍报错。判别性对照（同一漂移在
+    active 语境必须报错）见 tests/agent/workflow/test_review_manifest.py。"""
     import json
 
     from agent.workflow.review_manifest import (
@@ -1700,10 +1705,15 @@ def test_verify_review_manifest_archived_path(tmp_path):
     errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
     assert errors == []
 
-    # Now mutate tasks.md → drift must be detected.
+    # tasks.md 在归档后仍会被勾选/补行 → archived 语境下该漂移不构成失败。
     (archive / "tasks.md").write_text("- [x] task\n- [x] another\n", encoding="utf-8")
     errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
-    assert any("tasks hash mismatch" in e for e in errors)
+    assert errors == []
+
+    # 但归档语境的其余校验保留：spec 漂移仍须判失败（本 change 不放过这一侧）。
+    (archive / "specs" / "extra.md").write_text("spec changed\n", encoding="utf-8")
+    errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
+    assert any("spec hash mismatch" in e for e in errors)
 
 
 # ── workflow-state.json 投影一致性 + 归档可投影（flow-event-projection P1）──
@@ -1842,3 +1852,137 @@ def test_check_archived_no_seed_projectable(tmp_path):
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
     assert _check_archived_projectable(change) == []
+
+
+def _write_archived_change_with_manifest(changes_root, dir_name, change_id):
+    """Build an archived change whose manifest has drifted tasks_hash.
+
+    The manifest deliberately records a stale ``tasks_hash`` (post-PASS 勾选漂移
+    的等价物) so the archive path must tolerate it while still checking the rest.
+    """
+    from agent.workflow.review_manifest import artifact_hash, file_sha256
+
+    change = changes_root / "archive" / dir_name
+    (change / "reviews").mkdir(parents=True)
+    (change / "specs").mkdir()
+    (change / "tasks.md").write_text("- [x] task\n- [x] added during closing\n", encoding="utf-8")
+    (change / "proposal.md").write_text("# Proposal\n\n## Change Type\n\n- primary: process\n", encoding="utf-8")
+    report = change / "reviews" / "building-review.md"
+    report.write_text("# Review\n\nPASS\n", encoding="utf-8")
+    manifest = {
+        "schema": "review-manifest/v1",
+        "change_id": change_id,
+        "phase": "building",
+        "verdict": "PASS",
+        "reviewer_run_id": "r1",
+        "base_sha": "abc123",
+        "head_sha": "def456",
+        "tasks_hash": "sha256:stale-does-not-match",
+        "spec_hash": artifact_hash(change / "specs"),
+        "diff_hash": "sha256:unavailable",
+        "report_hash": file_sha256(report),
+    }
+    (change / "reviews" / "building-review-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    return change
+
+
+def test_check_archived_prints_visible_tasks_hash_skip_summary(tmp_path, capsys):
+    """#232 B（A′ 的可见性）：--check-archived 必须 exit 0（tasks 漂移被降级），
+    且在 stderr 输出**一行**汇总说明，证明降级不静默。
+
+    这条锁住「降级可见」落在调用方而非返回值：若 note 混进 verify_review_manifest
+    的返回列表，它会被 `errors.extend` 收走 → 打成 ERROR → exit 1，本用例转红。
+    """
+    from scripts.check_openspec_artifacts import main
+
+    changes_root = tmp_path / "openspec" / "changes"
+    _write_archived_change_with_manifest(changes_root, "2026-08-02-sample-change", "sample-change")
+
+    exit_code = main(
+        [
+            "--changes-root",
+            str(changes_root),
+            "--check-archived",
+            "--skip-protected-paths",
+            "--skip-backlog",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "tasks_hash 已按归档语境跳过" in captured.err
+    assert captured.err.count("tasks_hash 已按归档语境跳过") == 1
+    assert "ERROR" not in captured.err
+
+
+def test_check_archived_still_fails_on_spec_drift(tmp_path, capsys):
+    """A′ 只放宽 tasks_hash：归档 change 的 spec_hash 漂移仍须 exit 1。"""
+    from scripts.check_openspec_artifacts import main
+
+    changes_root = tmp_path / "openspec" / "changes"
+    change = _write_archived_change_with_manifest(changes_root, "2026-08-02-sample-change", "sample-change")
+    # 归档后改 specs → spec_hash 漂移（manifest 绑定的是改动前的哈希）。
+    (change / "specs" / "extra.md").write_text("changed\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--changes-root",
+            str(changes_root),
+            "--check-archived",
+            "--skip-protected-paths",
+            "--skip-backlog",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "spec hash mismatch" in capsys.readouterr().err
+
+
+def _yaml_step_containing(text: str, needle: str) -> str:
+    """Return the YAML step block (``- name:`` … next ``- name:``) holding needle,
+    with YAML comment lines removed.
+
+    绑定到 step 结构而非整文件子串；**剥掉注释行**是关键——否则 step 内解释
+    参数的注释会冒充真正的命令行参数，让「flag 被从命令里删掉」探测不到。
+    """
+    lines = text.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if needle in line),
+        None,
+    )
+    assert start is not None, f"{needle!r} not found in ci.yml"
+    step_start = next(
+        (i for i in range(start, -1, -1) if lines[i].lstrip().startswith("- name:")),
+        0,
+    )
+    step_end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("- name:")),
+        len(lines),
+    )
+    block = lines[step_start:step_end]
+    return "\n".join(line for line in block if not line.lstrip().startswith("#"))
+
+
+def test_ci_validate_job_runs_check_archived():
+    """D4：CI 的 validate job 必须运行 --check-archived 且参数钉死
+    （--skip-protected-paths / --skip-backlog，避免默认 --base-ref master 在 CI
+    上解析失败打出无意义 WARNING 与重复检查）。防该步骤被无声移除或参数退化。
+
+    断言的 flag 必须出现在**命令行**（注释已剥离），且三条同属一个 step。"""
+    ci = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+
+    assert "--check-archived" in text, "CI 缺少归档 manifest 校验步骤"
+    step = _yaml_step_containing(text, "--check-archived")
+
+    # 门禁不得被弱化：不接受 continue-on-error / 条件跳过。
+    assert "continue-on-error" not in step
+    assert "|| true" not in step
+
+    # 参数钉死：同 step 的命令行必须带这两个 skip flag。
+    assert "--skip-protected-paths" in step
+    assert "--skip-backlog" in step
+    # 且确实在跑 checker 脚本。
+    assert "check_openspec_artifacts.py" in step
