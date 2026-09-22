@@ -3663,7 +3663,7 @@ class VerifierAdapter(Protocol):
 
 #### 11.1 任务计数确认（合并 master 后已核实）
 
-`benchmarks/tasks/` 下共有 **74 个 task.json**（`benchmarks/tasks/*/task.json` glob 结果）：
+`benchmarks/tasks/` 下共有 **73 个 task.json**（33 本地 + 38 Verified + 2 gate-smoke）：
 
 | 类别 | 数量 | 说明 |
 |------|------|------|
