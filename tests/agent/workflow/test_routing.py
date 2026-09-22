@@ -5,8 +5,9 @@
 
 - **活面**：`load_workflow_methods` / `is_workflow_enabled`（`resume_audit.py` 与
   `workflow_state.py` 在用）。
-- **负向回归**：已删的 routing 符号必须真的不存在——它们只服务已退役的四阶段
-  路由，恢复任何一个都意味着清理被回退。
+- **负向回归**：已删符号必须真的不存在——它们只服务已退役的四阶段路由，恢复
+  任何一个都意味着清理被回退。覆盖 `routing.py` 与 `models.py` 两侧（后者是
+  随 routing 一并失去消费者的连带符号，见 `test_models.py` 的对称覆盖）。
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import json
 
 import pytest
 
-from agent.workflow import routing
+from agent.workflow import models, routing
 from agent.workflow.routing import is_workflow_enabled, load_workflow_methods
 
 REMOVED_ROUTING_SYMBOLS = (
@@ -32,6 +33,16 @@ REMOVED_ROUTING_SYMBOLS = (
     "ROUTING_CONFIG_KEY",
     "_get_openspec_config_path",
     "_ACTIVE_PHASES",
+)
+
+# 随 routing 一并失去消费者的 models.py 死符号（issue #239 同一清理面）。
+REMOVED_MODELS_SYMBOLS = (
+    "Executor",
+    "EXECUTORS",
+    "SessionMode",
+    "SESSION_MODES",
+    "PhaseRouting",
+    "DEFAULT_ROUTING",
 )
 
 
@@ -83,4 +94,20 @@ class TestRemovedRoutingSymbols:
         assert not hasattr(routing, symbol), (
             f"routing.{symbol} 应已在 issue #239 清理中删除——"
             "它只服务已退役的四阶段路由（`路由配置` Requirement 已 REMOVED）"
+        )
+
+
+class TestRemovedModelsSymbols:
+    """对称覆盖：`models.py` 的 6 个连带死符号同样不得复活。
+
+    审阅（PR #241）指出原负向回归只覆盖 `routing.py` 一侧，属不对称覆盖——
+    这些符号与 routing 同源（`Executor`/`SessionMode`/`PhaseRouting`/
+    `DEFAULT_ROUTING` 等只被 routing 使用），恢复同样意味着清理被回退。
+    """
+
+    @pytest.mark.parametrize("symbol", REMOVED_MODELS_SYMBOLS)
+    def test_symbol_is_gone(self, symbol):
+        assert not hasattr(models, symbol), (
+            f"models.{symbol} 应已在 issue #239 清理中删除——"
+            "它是随 routing 失去消费者的连带死符号"
         )
