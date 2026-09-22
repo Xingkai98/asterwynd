@@ -115,7 +115,7 @@
 | Hook 切面 | 7 个 | `hooks/manager.py:15` |
 | 编排模式 | 4 种 | `subagent/patterns.py:203` |
 | 评测任务 | 71（33 本地 + 38 SWE-bench） | `benchmarks/tasks/` |
-| 评测任务（升级目标） | ~90（A 轨 20–24 + B 轨 12–16 + Verified 50；当前已落 72，剩余 = Verified 扩到 50） | C1 `evaluation-task-spec` |
+| 评测任务（升级目标） | ~90（A 轨 20–24 + B 轨 12–16 + Verified 50；当前已落 71，剩余 = Verified 扩到 50） | C1 `evaluation-task-spec` |
 | pass^k | 全部 k 次成功（可靠性指标） | statistics.py 新增聚合（C2） |
 | cost@pass | $/resolved-task，cache-aware 四档定价 | cost_tracker 扩展（C2/C3） |
 | fault_owner | {agent, task, environment, unknown} | C2 |

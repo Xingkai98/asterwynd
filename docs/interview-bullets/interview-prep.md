@@ -554,7 +554,7 @@ Benchmark 评测侧，71 个 coding 任务——33 个本地任务分双轨（22
 
 33 个本地任务分双轨。**A 轨是历史重建回归基线（22 个）**——从本仓库 2026-06 前合入特性的 git 历史重建，任务是"回到过去改同一个 bug / 加同一个功能"，验证命令是确定性的 pytest。它的定位是回归基线而非公平评测：agent 在完整 git 历史里运行，base_commit 之后的提交可见，有答案泄漏面，所以结果页必须披露"A 轨非公平评测"。
 
-**B 轨是当前演进（12 个）**——基于当前 HEAD 的真实缺陷和增强构造，是面试核心。覆盖面包括沙箱执行器、benchmark CLI、LSP diagnostics、ListRunningBenchmarks 只读工具装配链、statechart 新态、结果页 track 分组、SwebenchAdapter model name 转义回归、memory project scope 隔离、记忆注入归属下沉等。B 轨任务刻意不给文件路径，只给行为症状，agent 需要自己通读管线定位；验证是确定性 test_command + test.patch 新增回归断言，base 红/gold 绿可复现。
+**B 轨是当前演进（11 个）**——基于当前 HEAD 的真实缺陷和增强构造，是面试核心。覆盖面包括沙箱执行器、benchmark CLI、LSP diagnostics、ListRunningBenchmarks 只读工具装配链、结果页 track 分组、SwebenchAdapter model name 转义回归、memory project scope 隔离、记忆注入归属下沉等。B 轨任务刻意不给文件路径，只给行为症状，agent 需要自己通读管线定位；验证是确定性 test_command + test.patch 新增回归断言，base 红/gold 绿可复现。
 
 关键设计是每个任务有可自动验证的正确性标准，且 task 文件在 agent 执行前被移动到 .hidden 目录——防止 agent 读取测试文件"作弊"。worktree 隔离保证任务间的文件变更不互相污染。
 

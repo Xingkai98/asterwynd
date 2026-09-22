@@ -3673,7 +3673,7 @@ class VerifierAdapter(Protocol):
 
 **coding 任务合计 = 71**（33 本地 + 38 Verified）。`run_all()`（runner.py:192-195）对 `benchmarks/tasks` 做一层 `iterdir()`，默认加载全部 71 个；gate-smoke 在二级目录，只有 `benchmark-gate` 命令显式指定才跑。
 
-> **数字口径**：上一版口径为 36（26 本地 + 10 SWE-bench 外部）；master 合并后本地任务经 B 轨扩展为 34（22 A + 12 B），Verified 子集经 build-subset 管线生成为 38（原 10 + 本机生成 28），合计 72。`docs/benchmark-run-protocol.md` 的协议目标口径为 82–90（A 轨 20–24 + B 轨 12–16 + Verified 50），是升级方向而非现状。
+> **数字口径**：上一版口径为 36（26 本地 + 10 SWE-bench 外部）；master 合并后本地任务经 B 轨扩展为 34（22 A + 12 B），后因 `retire-4phase-state-machine`（2026-09-22）退役四阶段状态机删除 B 轨任务 `asterwynd-b03-awaiting-grill-state` 而变为 33（22 A + 11 B）；Verified 子集经 build-subset 管线生成为 38（原 10 + 本机生成 28），合计 71。`docs/benchmark-run-protocol.md` 的协议目标口径为 82–90（A 轨 20–24 + B 轨 12–16 + Verified 50），是升级方向而非现状。
 
 #### 11.2 本地任务 33 = 22 A 轨 + 11 B 轨
 
@@ -3693,7 +3693,7 @@ class VerifierAdapter(Protocol):
 | asterwynd-010-agent-loop | asterwynd-022-collaborative-context-audit |
 | asterwynd-011-repeater-fix | asterwynd-readme-title |
 
-**B 轨·当前演进（12）**：基于当前 HEAD 真实缺陷/增强构造的任务（面试核心），每个任务 issue.md 不给路径 + 确定性 test_command + base 红/gold 绿红绿可复现：
+**B 轨·当前演进（11）**：基于当前 HEAD 真实缺陷/增强构造的任务（面试核心），每个任务 issue.md 不给路径 + 确定性 test_command + base 红/gold 绿红绿可复现：
 
 | 任务 ID | 覆盖点 |
 |---------|--------|
@@ -3703,7 +3703,6 @@ class VerifierAdapter(Protocol):
 | asterwynd-021-lsp-diagnostics | LSP diagnostics |
 | asterwynd-b01-report-family-summary | 结果页 family 摘要（CP-3） |
 | asterwynd-b02-running-benchmarks | ListRunningBenchmarks 只读工具装配链（CP-1） |
-| asterwynd-b03-awaiting-grill-state | statechart 新态（CP-2） |
 | asterwynd-b04-report-track-grouping | 结果页 track 分组 |
 | asterwynd-b05-model-name-escaping | SwebenchAdapter model name 转义合成回归 |
 | asterwynd-b06-save-memory-project-scope | LT-MEM-1 project scope 隔离 |
@@ -3814,7 +3813,7 @@ Benchmark gate **仅在 PR 和 push to master 时触发**（line 3-7）。本地
 
 `docs/benchmark-run-protocol.md` 是 C3 转正的评测运行协议（跟踪 issue #159）：**只定协议；是否实际跑数、预算大小由使用者按需决定**。协议内容要点：
 
-- **任务集口径**：A 轨 20–24 + B 轨 12–16 + Verified 50 = 82–90（协议目标形态，与当前 72 现状的差异需区分）
+- **任务集口径**：A 轨 20–24 + B 轨 12–16 + Verified 50 = 82–90（协议目标形态，与当前 71 现状的差异需区分）
 - **采样约定**：`--repeat 5`（N≥3 才有 pass^k 意义）、固定 seed 集合 `--seeds 0 1 2 3 4`、`--temperature 0.2`（pass@1 口径）；每轮记录 `(temperature, seed, model version)`，可复现性声明限定 (model version, provider, harness) 内
 - **无效轮次不进分母**：`unsupported` / `approval-unavailable` / `docker-unavailable` 不计入 pass@1 与 pass^k 分母
 - **自洽性五门禁**（`scripts/self_check.py`）：同模型同 harness 复现 / seed 复现 / 失败归因闭环 / 披露段齐全 / 报告元组完整
