@@ -101,6 +101,27 @@
 
 ## 未实现队列
 
+### 7. `fix-issue-232-archived-manifest-gate`
+
+状态：未实现。
+
+关联 issue：[#232](https://github.com/Xingkai98/asterwynd/issues/232)（【debt】归档 change 的 review manifest 写入与校验双盲区）。本 change 做**盲区 B（校验侧）**；盲区 A（写入侧）已由 `fix-issue-232-archive-write`（PR #234）收口。
+
+批次：债务修复，接续盲区 A；收口后 #232 两盲区全清。
+
+建议顺序原因：
+
+- 盲区 A 修好了「写得到」，盲区 B 才谈得上「验得着」——否则 manifest 写得进去却没人校验，change 归档即脱离校验范围。
+- 直接开 CI 的 `--check-archived` 会红：**15 条既有归档 change 报 `tasks hash mismatch`**。立项已逐条查清：差异**全部落在 checkbox 行**（收尾勾选 + 同行描述更新 + 一条纯新增），零条实质改动；根因是 manifest 在审阅 PASS 时生成、收尾仍会勾任务。
+- 因此先定 `tasks_hash` 的归档语义（A′ 显式降级、不伪装）+ 立「manifest 最后生成」纪律（C′）防复发，再开门。
+
+主要交付：
+
+- `verify_review_manifest` 的 `tasks_hash` 校验只在 active 语境生效；归档语境显式降级且**可见**（`spec_hash`/`report_hash`/字段/存在性仍强校验）。
+- `.github/workflows/ci.yml` 的 validate job 增 `--check-archived`；全仓 exit 0。
+- 「manifest 在 tasks.md 最终化后生成」写进 spec + 开发指南。
+- **不改写 15 条历史 manifest**（B′ 已否决）。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
