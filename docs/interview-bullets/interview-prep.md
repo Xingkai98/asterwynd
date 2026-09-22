@@ -504,7 +504,7 @@ MCP 工具是外部注入的，不在 Asterwynd 的编译时安全控制范围�
 
 ## Bullet 7 面试讲稿：全链路可观测体系与 Benchmark
 
-> 建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；72 个 coding 任务（34 本地 = 22 A 轨回归基线 + 12 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
+> 建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；71 个 coding 任务（33 本地 = 22 A 轨回归基线 + 11 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
 
 ---
 
@@ -518,7 +518,7 @@ CostLedger 是成本归因系统，bill 方法返回三层聚合——by_session
 
 ErrorClassifier 是错误自动打标，5 大类：PERMISSION_DENIED、NETWORK_TIMEOUT、MODEL_ERROR、PARAMETER_ERROR、UNKNOWN。三级优先级分类——结构化 error_type 最优先（17 条映射），finish_reason 次之，文本正则 fallback 兜底。我用的是确定性规则而非 LLM 分类，保证打标的稳定性和零成本。
 
-Benchmark 评测侧，72 个 coding 任务——34 个本地任务分双轨（22 个 A 轨历史重建回归基线 + 12 个 B 轨当前演进），38 个 SWE-bench Verified 子集覆盖 requests/flask/pytest/sympy/seaborn/pylint 外部仓库。本地任务通过 git worktree 隔离执行，task 文件隐藏防止作弊；SWE-bench 通过 SwebenchAdapter 调用官方 Docker 验证器。指标分三层：pass@1 是用户实际获得的有效轮通过率，pass@k 是能力上限，pass^k 是全部有效轮成功的可靠性；成本用 cache-aware 定价算 $/resolved-task，失败轮次用 reason × fault_owner 交叉表归因。任务按 scenario × difficulty 双标签分层，套件级能力覆盖矩阵机械校验；跨 Agent 对比用配对统计（per-task delta + 差异 CI + win-rate）。CI 回归门禁检查 success_rate 绝对下降不超过 5pp 和 p95 延迟回归不超过 5%。
+Benchmark 评测侧，71 个 coding 任务——33 个本地任务分双轨（22 个 A 轨历史重建回归基线 + 11 个 B 轨当前演进），38 个 SWE-bench Verified 子集覆盖 requests/flask/pytest/sympy/seaborn/pylint 外部仓库。本地任务通过 git worktree 隔离执行，task 文件隐藏防止作弊；SWE-bench 通过 SwebenchAdapter 调用官方 Docker 验证器。指标分三层：pass@1 是用户实际获得的有效轮通过率，pass@k 是能力上限，pass^k 是全部有效轮成功的可靠性；成本用 cache-aware 定价算 $/resolved-task，失败轮次用 reason × fault_owner 交叉表归因。任务按 scenario × difficulty 双标签分层，套件级能力覆盖矩阵机械校验；跨 Agent 对比用配对统计（per-task delta + 差异 CI + win-rate）。CI 回归门禁检查 success_rate 绝对下降不超过 5pp 和 p95 延迟回归不超过 5%。
 
 ---
 
@@ -548,11 +548,11 @@ Benchmark 评测侧，72 个 coding 任务——34 个本地任务分双轨（22
 
 ---
 
-### 追问 3：34 个本地任务怎么设计出来的？A 轨和 B 轨怎么分工？
+### 追问 3：33 个本地任务怎么设计出来的？A 轨和 B 轨怎么分工？
 
 **回答（~250 字）：**
 
-34 个本地任务分双轨。**A 轨是历史重建回归基线（22 个）**——从本仓库 2026-06 前合入特性的 git 历史重建，任务是"回到过去改同一个 bug / 加同一个功能"，验证命令是确定性的 pytest。它的定位是回归基线而非公平评测：agent 在完整 git 历史里运行，base_commit 之后的提交可见，有答案泄漏面，所以结果页必须披露"A 轨非公平评测"。
+33 个本地任务分双轨。**A 轨是历史重建回归基线（22 个）**——从本仓库 2026-06 前合入特性的 git 历史重建，任务是"回到过去改同一个 bug / 加同一个功能"，验证命令是确定性的 pytest。它的定位是回归基线而非公平评测：agent 在完整 git 历史里运行，base_commit 之后的提交可见，有答案泄漏面，所以结果页必须披露"A 轨非公平评测"。
 
 **B 轨是当前演进（12 个）**——基于当前 HEAD 的真实缺陷和增强构造，是面试核心。覆盖面包括沙箱执行器、benchmark CLI、LSP diagnostics、ListRunningBenchmarks 只读工具装配链、statechart 新态、结果页 track 分组、SwebenchAdapter model name 转义回归、memory project scope 隔离、记忆注入归属下沉等。B 轨任务刻意不给文件路径，只给行为症状，agent 需要自己通读管线定位；验证是确定性 test_command + test.patch 新增回归断言，base 红/gold 绿可复现。
 

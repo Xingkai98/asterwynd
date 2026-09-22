@@ -86,7 +86,7 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 ## 开发流程：OpenSpec 主干 + 强制审阅闭环
 
-**这是最高优先级行为规则。** 本仓库的开发流程精简为两部分：**OpenSpec 主干**（需求→设计→实现→收尾）加 **实现完成后强制独立 subagent 审阅闭环**。旧的四阶段状态机仪式（phase/sub_state 推进、handoff.json、gate 停止）已停用，不再需要 discover/advance/approve。
+**这是最高优先级行为规则。** 本仓库的开发流程精简为两部分：**OpenSpec 主干**（需求→设计→实现→收尾）加 **实现完成后强制独立 subagent 审阅闭环**。旧的四阶段状态机仪式（phase/sub_state 推进、handoff.json、gate 停止）已停用，其实现（含 `discover`/`advance`/`approve` 等 CLI 子命令）已随子系统退役删除。
 
 ### 主干流程
 
@@ -189,31 +189,28 @@ uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-
 
 ### flow 命令组（开发流程事件投影）
 
-每个 change 的 `workflow-events.jsonl` 是权威事件日志，`flow` 命令组负责投影查询与等待态执法（`workflow-state.json` 每当代 change 落盘一份，guard/checker 读它判断 awaiting 与一致性）：
+每个 change 的 `workflow-events.jsonl` 是权威事件日志，`flow status` 负责投影查询（`workflow-state.json` 每当代 change 落盘一份，guard/checker 读它判断 awaiting 与一致性）：
 
 ```bash
 uv run python scripts/workflow_state.py flow status --change <id>    # 投影 JSON（缺失/stale 自动重建）
 uv run python scripts/workflow_state.py flow status --all
-uv run python scripts/workflow_state.py flow block --change <id> --awaiting awaiting_proposal_confirmation
-uv run python scripts/workflow_state.py flow confirm --change <id>   # 解除 awaiting（写 blocked_resolved）
-uv run python scripts/workflow_state.py flow approve --change <id> --phase <phase>  # gate 通过跨阶段
-uv run python scripts/workflow_state.py flow advance --change <id> --to <sub_state> # 推进 sub_state
 ```
 
-废旧 `advance`/`approve` 子命令已删除；`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow`/`policy-*` CLI 写。
+**四阶段状态机的 gate 家族已随子系统退役删除**（`flow approve` / `flow advance` / `flow block` / `flow confirm`，以及 legacy 子命令 `discover` / `current` / `validate` / `spawn`）——它们无生产调用方，`flow approve` 对当代 change 必报错。开发流程推进由 OpenSpec 主干承担，不再有 CLI 的 phase/sub_state 推进通道。`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow status`/`policy-*`/`artifact-event`/`review-manifest` CLI 写。
 
-### 配置架构（四类配置文件，P4 declarative-flow-engine）
+> **残留面**：awaiting 态的**进入/解除通道**（`flow block`/`flow confirm`）已删除，但 guard 的 awaiting 硬拦截保留（`workflow_guard.py:_awaiting_block_reason`）——即处于 `blocked.*` 的 change 仍会被门禁拦截写操作，而解除只能手写事件日志（受保护路径，需解释事件）。合入时全仓 awaiting change 数为 0。
 
-开发流程的规则按职责拆在四个配置文件中，改规则时按维度选文件改、不互相污染：
+### 配置架构（配置文件，按职责分工）
+
+开发流程的规则按职责拆在配置文件中，改规则时按维度选文件改、不互相污染：
 
 | 配置文件 | 负责维度 | 说明 |
 | --- | --- | --- |
 | `scripts/flow-policy.json` | 执法 | 受保护路径规则表（governance=event_explained 等），guard 与 checker 同源加载，单一策略源 |
-| `flow/statechart.json` | 流转 | 流程状态机声明（P4 新增）：`id`/`initial`/`states`/`on` 转移表（每转移带 trigger）+ awaiting 态 `recovery` 语义；状态集权威声明 |
-| `scripts/workflow_methods.json` | 执行 | 每状态执行方法映射（skill/command/agent），`_method_hint`/`_build_path` 直接索引，**不删 phase/sub_state 段** |
+| `scripts/workflow_methods.json` | 执行 | 退役后仅保留活配置：`doc_artifact` 路径、`ticket_tracker` 后端、`workflow` 总开关与 `resume_audit`。原 phase/sub_state 方法映射已随子系统删除（其读者 `_method_hint`/`_build_path`/`discover` 同删） |
 | `scripts/platform-gate.json` | 平台 | GitHub branch protection 目标状态声明（platform-gate 平台闸门） |
 
-`flow/statechart.json` 由 `flow/engine.py`（stdlib-only 薄引擎）消费，与现有 Python 状态机（`agent/workflow/event_log.py` + `state_machine.py`）parity 并存：parity 测试锁定完整投影与合法目标等价；`validate()` 对提交的 statechart 做结构校验 + 对 `validate_transition` 的 parity 交叉校验（漂移在 CI 拦截）。statechart 不在受保护路径，保持 agent 可编辑（「改规则不改 Python」的编辑通道）。流转结构与执行方法分工：改转移只改 statechart、改执行 skill 只改 workflow_methods（共享状态名，职责不重叠）。
+原 `flow/statechart.json`（四阶段状态机声明）与 `flow/engine.py`（stdlib-only 薄引擎）已随子系统退役删除；`state_machine.py` 保留转移校验原语（`validate_transition` 等），由 `tests/agent/workflow/test_state_machine.py` 的符号级单测直接锁定。
 
 ### platform-gate 平台闸门（合入门禁）
 

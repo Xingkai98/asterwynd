@@ -58,55 +58,57 @@ PASS 后 closeout 提交若修改 tasks.md/spec（如补充审阅修复节、实
 `closeTab` 在 `tabs.delete` 后立即把 `activeTabId` 置为 `next`（或 `null`），并让
 `socket.onclose` / `onerror` 在 `tabs.has(tab.id)` 为假时直接返回、不重绑全局代理。
 
-## workflow_state.py 四个 legacy 子命令对当代 change 失效（fix-issue-199 实测，issue #227）
+## 四阶段状态机退役的能力面净损失（retire-4phase-state-machine 收口，issue #235）
 
-`fix-issue-199`（2026-09-21）解除 `artifact-event` / `review-manifest` 两条受保护写通道的
-`handoff.json` 硬前置时，实测出同源漏网共**四处**（issue #199 原文与立项文档只点到三处）：
+`retire-4phase-state-machine`（2026-09-22 合入）退役了整套四阶段状态机实现
+（`check_phase_done.py`、`doc_artifact_protocol*.py`、`dispatcher.py`、`role_registry.py`、
+`manager.py`、`handoff_note.py`、`flow/` 引擎与声明，及 `discover`/`current`/`validate`/`spawn`
+与 gate 家族子命令）。被删实现承载**两项在新机制中没有等价替代**的完成度门禁——这是**能力面
+净损失，不是替代**，须显式记录而非静默消失：
 
-- `cmd_current`（`scripts/workflow_state.py`）：读 handoff 状态打印 `state`，对当代 change 恒报
-  「没有 handoff.json」。当代等价物是 `flow status`（打印投影 state）。
-- `cmd_spawn`：wayfinding 时代子 change 派生命令，要求父 change 处于 `wayfinding.<gate>`；
-  停用四阶段状态机后无 wayfinding phase 推进，实际不可用。它还有两条既有测试
-  （`tests/test_workflow_state_cli.py` 的 spawn 用例）直接依赖 `handoff.json`。
-- `cmd_validate`：校验 `handoff.json` 结构，对当代 change 恒报「没有 handoff.json」。
-- **`discover`（实测补出的第四处，最易误导）**：`_cmd_discover_text` / `_cmd_discover_json` 在
-  `_load_handoff` 返回 None 时直接 `continue`，**对当代 change 完全静默**。实测两个 gen-2 change
-  （各有 `proposal.md` + `change_created` 事件日志）下文本模式零行输出，`--format json` 报
-  `"active_count": 2` 但 `"active_changes": []`。它是 CLI usage 里的**默认命令**。
-  另有 AGENTS.md「不再需要 discover/advance/approve」与 spec 仍描述 discover 的口径漂移。
-- **文档口径漂移**：`docs/requirements-process.md` 的「开发流程」节仍把 change 生命周期描述为
-  「四个活跃阶段（phase），由 `agent/workflow/` 状态机驱动，`handoff.json` 是由事件 replay 生成的
-  projection」。该段写于 2026-07-31，早于四阶段状态机停用（AGENTS.md 已声明「旧的四阶段状态机仪式
-  （phase/sub_state 推进、handoff.json、gate 停止）已停用」），属**既有**漂移、非 fix-issue-199 引入；
-  fix-issue-199 只解除写通道前置，未使该段更不准确，故不在该 bugfix 内改写流程文档，随本条一并跟踪。
+1. **「100% 要求全勾」变薄**：原 `doc_artifact_protocol_openspec.py:123-125` 的
+   `ContentRequirement(..., "checkboxes_all_checked")` 要求 tasks.md **全部** checkbox 为 `[x]`。
+   删除后，完成度检查只剩 `check_openspec_artifacts.py:1027` 的 `requires_building_review`，
+   而它由 `_tasks_all_complete`（`:982`）驱动——**「全勾才查」的触发器**：tasks 未全勾
+   → 整个分支不进入 → **无任何检查**。
+2. **TODO 残留扫描消失**：原 `check_phase_done.py:210` 的 `_find_todo_residuals` / `:183` 的
+   `_load_known_debt` 会对**改动过的 `.py` 源码行**扫 `TODO`/`TBD`/`FIXME`/`HACK` 并与本文件比对。
+   退役后只剩 `check_openspec_artifacts.py:92` 的 `SELF_ADMITTED_INCOMPLETE_PHRASES`
+   （只扫 `Reference Implementation Research` 字段的自认未完成短语）——**只查一个 section 的散文，
+   不查源码行**，覆盖是结构性下降。
 
-**处置**：不在 fix-issue-199 内修（超出该 bugfix 的验收面，且删 `spawn` 会连带删既有测试、
-`discover` 有完整实现面 `path/next_action/gate_check`，属独立 API 变更）。跟踪见
-issue [#227](https://github.com/Xingkai98/asterwynd/issues/227)。
+**触发条件（具体场景）**：本 change 合入后，若某后续 change 在 `agent/foo.py` 留下
+`# TODO: 处理边界` 且 tasks.md 已全勾，则——退役前 `flow approve --phase building` 会调用
+`check_phase_done` 报「发现 1 处 TODO/TBD/FIXME/HACK 残留」并拒绝批准；退役后 CLI 无此通道，
+PR 照常合入。同理，若某 change 只勾了部分 tasks 就提交 PR，退役前的 100% 全勾要求会拒绝，
+退役后 `requires_building_review` 因不满足前置而不触发，**等于绕开**。
 
-## 当代 change 与 handoff.json 的三层残留耦合（fix-issue-199 实测，issue #228）
+**口径定性**：退役前是「旧机制兜底 + 新机制更薄」，退役后是「**只剩薄的那层**」——本退役**放大**了
+issue [#235](https://github.com/Xingkai98/asterwynd/issues/235) 的缺口（主 session 已在 #235 加评论
+交叉引用本退役）。
 
-`handoff.json` 是已停用的四阶段状态机遗物，当代 change 不产生它，但代码库仍有三层耦合，
-拆除需同步改三处，只改一层会立刻引发新 FAIL：
+**处置（grill D9 裁定，用户 2026-09-22 确认）：显式接受消失，不顺带移植 checker。** 反对移植的理由：
+`_find_todo_residuals` 依赖 `git diff --name-only origin/master`（`check_phase_done.py:200`），而
+checker 走 `--base-ref`（CI 传 `${{ github.event.pull_request.base.sha }}`，`.github/workflows/ci.yml`），
+直接搬运会在 CI 上退化为「与 master 比」的**语义漂移**；正确移植需重新设计 diff 基线，属**新增能力面**
+而非退役配套。收口入口见 issue [#235](https://github.com/Xingkai98/asterwynd/issues/235)。
 
-1. **自愈仍产出退役 artifact**：`_refresh_workflow_state`（`scripts/workflow_state.py`）在写
-   `workflow-state.json` 的同时**同步映射写 `handoff.json`**；`flow status` 的 stale 自愈
-   （`_flow_status_projection`）与写事件后的 `_flow_refresh_after_event` 都会走到它。
-   后果之一是**顺序依赖掩蔽**：冷状态（新 worktree / 新 clone）下 `artifact-event` 报错 exit 1，
-   但只要先跑一次 `flow status`，自愈写出 `handoff.json`，同一命令立刻变可用——
-   这正是 issue #199 长期不易复现的原因。
-2. **phase 协议层仍把 `handoff.json` 当必填**：`agent/workflow/doc_artifact_protocol_openspec.py`
-   的 `FileRequirement(..., "handoff.json")` 与 `scripts/check_phase_done.py` 的
-   `_check_handoff_at_gate`。实测在 gen-2 change 上删掉 `handoff.json` 后，`flow approve --phase planning`
-   的 FAIL 从 4 条变 6 条（新增「Missing required file: .../handoff.json」与「handoff.json 不存在」）。
-   即真正的耦合在协议层必填文件表，不在自愈。
-3. **该文件未被 gitignore**：`handoff.json` / `workflow-state.json` 在 active change 下既不被 git
-   跟踪也不在 `.gitignore`，自愈产物以未跟踪文件形式出现在 `git status`，收尾 `git add -A` 有被
-   误提交的风险。（口径限定：归档目录里 `archive/2026-08-15-flow-event-projection/workflow-state.json`
-   确实被跟踪，属历史遗留。）
+## awaiting 态无 CLI 进入/解除通道（retire-4phase-state-machine 残留面）
 
-**处置**：fix-issue-199 只解除写通道前置，按证据维持 `_refresh_workflow_state` 不变（改它会让
-协议层 FAIL 增多，改动面大于收益）。跟踪见 issue [#228](https://github.com/Xingkai98/asterwynd/issues/228)。
+`retire-4phase-state-machine` 删除了 `flow block` / `flow confirm`（及 `flow approve`）后，
+`blocked_entered` 与 `blocked_resolved` 两个事件**不再有任何 CLI 写入者**（原写入者
+`workflow_state.py` 的 `cmd_flow_block` / `cmd_flow_confirm` 与 `manager.py` 的 `block`/`unblock`
+均已删除）。但 guard 的 awaiting 执法**保留且不弱化**——`scripts/workflow_guard.py` 的
+`_awaiting_block_reason` 仍会对 `is_awaiting_state` 为真的 change 拦截所有写操作（exit 2），
+且不可经 Bash 绕过。
+
+**触发条件**：若某 change 的事件日志投影为 `blocked.awaiting_*`（进入方式只剩手写
+`workflow-events.jsonl`），合入后将**无法用 CLI 解除**——`flow confirm` 已不存在。唯一出路是手写
+`workflow-events.jsonl` 追加 `blocked_resolved`（该文件受保护，需配解释事件）。
+
+**实测现状**：本 change 合入时全仓 awaiting change 数为 **0**，故不会立刻自锁。这是**保留执法、
+放弃通道**的有意取舍（执法不弱化是红线，进入通道无生产调用方故随之删除），不是待修缺口。
+若未来重新需要 awaiting 流程，应按新能力重新设计进入/解除通道，而非恢复已退役的 gate 家族。
 
 ## 受保护路径解释门禁是「防误改」而非「防伪造」（fix-issue-229 实测复核，issue #229）
 

@@ -33,7 +33,7 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **MCP Adapter** | Connects stdio / Streamable HTTP MCP servers, registers MCP tools, and injects prompt/resource context through `/mcp-prompt` and `/mcp-resource`. |
 | **SubAgentManager** | Sub-session runtime with independent transcripts, multiple sub-sessions, repeated runs per sub-session, and explicit inspect. |
 | **TraceRecorder** | Full trace recording for iterations, tool calls, edits, and tests. |
-| **Benchmark** | 34 local coding-agent tasks (22 track-A regression baseline + 12 track-B current-evolution), a curated SWE-bench Verified subset (10 fixtures, target 50), and a Claw-SWE-Bench multi-agent comparison entry point. |
+| **Benchmark** | 33 local coding-agent tasks (22 track-A regression baseline + 11 track-B current-evolution), a curated SWE-bench Verified subset (10 fixtures, target 50), and a Claw-SWE-Bench multi-agent comparison entry point. |
 
 ## Quick Start
 
@@ -372,7 +372,7 @@ ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real
 
 Asterwynd currently has two benchmark paths:
 
-- `benchmarks/`: the built-in project runner, using 27 local tasks (track A/B) and a `swebench-*` Verified subset (target 50) to validate the Asterwynd coding-agent loop.
+- `benchmarks/`: the built-in project runner, using 33 local tasks (track A/B) and a `swebench-*` Verified subset (target 50) to validate the Asterwynd coding-agent loop.
 - `claw-swe-bench/`: the Claw-SWE-Bench unified harness, comparing Asterwynd, Aider, OpenCode, and other external coding agents on the same SWE-bench Verified instances.
 
 ### Quick Validation (Fake Agent, Deterministic)

@@ -3,15 +3,17 @@
 **冷状态构造约束（本文件所有用例必须遵守，D4b）**：
 
 1. 种子方式：直接向 `workflow-events.jsonl` 落盘 `change_created` 首事件，
-   **不得**用 `WorkflowManager(...).init()`——`init` 内部写的是首事件
-   `initialized` + 生成 `handoff.json`，得到的是 **gen-1** change；旧实现
-   （硬前置 `handoff.json`）会把它判为合法，测试因此**恒绿**，失去判别力。
-   既有 `tests/test_workflow_state_cli.py:293` / `:329` 正是这种种子方式。
+   **不得**用会使 change 变成 gen-1 的种子（写 `initialized` 首事件 + 生成
+   `handoff.json`）——旧实现（硬前置 `handoff.json`）会把它判为合法，测试因此
+   **恒绿**，失去判别力。
 2. 调用 CLI 前断言目标目录**没有** `handoff.json`，确保测试跑在冷状态。
-3. 用例内**不得**先跑 `flow status` / `flow block` / `flow confirm` /
-   `flow approve` / `flow advance`：`flow status` 的 stale 自愈
+3. **层 1 之后（issue #228）**：`flow status` 的 stale 自愈
    （`workflow_state.py:_flow_status_projection` → `_refresh_workflow_state`）
-   会凭空写出 `handoff.json`，把本 bug 顺序依赖地掩盖掉。
+   **不再**产出 `handoff.json`——故原「用例内不得先跑 flow status」的顺序约束
+   已无理由。判别点改为**调用后**断言：自愈只落 `workflow-state.json`、
+   绝不落 `handoff.json`（见各用例的 post-call 断言与
+   `test_flow_status_self_heal_does_not_write_handoff_json`）。去掉层 1 改动
+   → 这些 post-call 断言变红。
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ from pathlib import Path
 
 from agent.workflow.event_log import event_log_path, verify_projection
 from agent.workflow.review_manifest import verify_review_manifest
-from agent.workflow.state_machine import init_handoff_json
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_STATE = REPO_ROOT / "scripts" / "workflow_state.py"
@@ -57,18 +58,32 @@ def _seed_gen2_change(tmp_path, change_id="test-change", *, proposal=True):
     return change_dir
 
 
+def _handoff_seed(change_id="legacy-change"):
+    """gen-1 首载荷字典（等价已删除的 `init_handoff_json(change_id)`，纯构造不落盘）。"""
+    return {
+        "schema_version": "1.0",
+        "change_id": change_id,
+        "state": {"phase": "planning", "sub_state": "exploring"},
+        "transitions": [],
+        "current_agent": None,
+        "last_gate": None,
+        "blockers": [],
+        "routing": {},
+        "next_hints": {},
+    }
+
+
 def _seed_gen1_change(tmp_path, change_id="legacy-change", *, proposal=True, handoff=True):
     """老世代（gen-1）change 冷状态种子：`initialized` 首事件 + 可选 handoff.json。
 
     `initialized` 事件必须内嵌 `handoff` 载荷（`replay_handoff_projection` 从
-    `first["handoff"]` 起 replay），故用 `init_handoff_json` 造字典（纯构造，不落盘），
-    不用 `WorkflowManager.init()`（那会额外写文件、且是我们要避开的路径）。
+    `first["handoff"]` 起 replay），故用 `_handoff_seed` 造等价字典（纯构造，不落盘）。
     """
     change_dir = tmp_path / "openspec" / "changes" / change_id
     change_dir.mkdir(parents=True)
     if proposal:
         (change_dir / "proposal.md").write_text(PROPOSAL_TEXT, encoding="utf-8")
-    handoff_data = init_handoff_json(change_id)
+    handoff_data = _handoff_seed(change_id)
     (change_dir / "workflow-events.jsonl").write_text(
         json.dumps(
             {
@@ -154,6 +169,9 @@ def test_artifact_event_works_without_handoff_json(tmp_path):
     log = event_log_path(change_dir).read_text(encoding="utf-8")
     assert '"event_type": "protected_artifact_explained"' in log
     assert '"artifact_path": "docs/known-debt.md"' in log
+    # 层 1 判别性（post-call）：写通道只落 workflow-state.json，绝不落 handoff.json
+    assert (change_dir / "workflow-state.json").exists()
+    assert not (change_dir / "handoff.json").exists()
 
 
 def test_review_manifest_works_without_handoff_json(tmp_path):
@@ -182,6 +200,8 @@ def test_artifact_event_refreshes_projection_without_flow_status(tmp_path):
     assert result.returncode == 0, result.stderr
     assert (change_dir / "workflow-state.json").exists()
     assert verify_projection(change_dir) == []
+    # 层 1 判别性（post-call）：自愈不再凭空写出 handoff.json
+    assert not (change_dir / "handoff.json").exists()
 
 
 # --- 老世代兼容：行为不变 -----------------------------------------------------
@@ -210,9 +230,10 @@ def test_review_manifest_still_works_for_gen1_change(tmp_path):
 
 
 def test_spawn_style_child_without_proposal_still_writable(tmp_path):
-    """Q1 兼容分支：`cmd_spawn` 生成的子 change 只有 handoff.json，没有 proposal.md。
+    """Q1 兼容分支：历史 spawn 子 change 只有 handoff.json，没有 proposal.md。
 
     锚点若只认 `proposal.md`，这类老目标会从「可写」退化为 exit 1。
+    （`cmd_spawn` 本身已随四阶段状态机退役删除，但归档/历史目录里仍可能存在这类目标。）
     """
     change_dir = _seed_gen1_change(tmp_path, change_id="child-b", proposal=False)
     assert not (change_dir / "proposal.md").exists()

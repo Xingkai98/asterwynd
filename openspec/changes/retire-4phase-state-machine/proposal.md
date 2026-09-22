@@ -61,6 +61,7 @@ flow approve ──→ check_phase_done.py (591行) ──→ doc_artifact_proto
 | 开发流程 CLI | `workflow_state.py` 删除 8 个子命令（4 legacy + 4 gate 家族），保留 `flow status` / `artifact-event` / `review-manifest` / `policy-*` |
 | 代码删除 | `check_phase_done.py`(591) + `doc_artifact_protocol*.py`(845) + `dispatcher.py`(243) + `role_registry.py`(154) + `workflow_state.py` 内 legacy 段 ≈ **1800+ 行** |
 | 测试删除/改写 | 约 850 行（`test_check_phase_done.py` 487 + `test_dispatcher.py` 254 + `test_role_registry.py` 112 + `test_workflow_state_cli.py` 部分 + `test_declarative_flow_engine.py` 部分） |
+| **CI 门禁（净损失）** | `check_phase_done.py` 承载的「100% 要求全勾」与 TODO 残留扫描（`_find_todo_residuals` / `_load_known_debt`）**在新机制中无等价替代**：checker 的 `requires_building_review` 由 `_tasks_all_complete` 驱动（不勾即绕开），`SELF_ADMITTED_INCOMPLETE_PHRASES` 只扫自认未完成短语。属能力面净损失，**放大 issue #235**——处置见 D9（迁入 checker 或记 `docs/known-debt.md`） |
 | `handoff.json` 耦合 | 三层全消（#228） |
 | `workflow_methods.json` | phase/sub_state 段删除（随 `discover`）；`review_protocol` 段无代码读者、可去可留（见 D4） |
 | Benchmark | 1 个 B-track 任务可能作废（见 D3） |

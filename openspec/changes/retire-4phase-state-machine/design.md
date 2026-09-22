@@ -57,9 +57,11 @@
 
 - `track: B`、`difficulty: hard`、`scenario: refactor`；
 - `base_commit: 597d121`（master 祖先，距 HEAD 213 提交）；
-- `test_command` 指向 `tests/test_declarative_flow_engine.py::TestE2eDemoIntegration::test_awaiting_grill_confirmation_wired_end_to_end` ——**该函数现已不存在**（0 命中）。
+- `test_command` 指向 `tests/test_declarative_flow_engine.py::TestE2eDemoIntegration::test_awaiting_grill_confirmation_wired_end_to_end`。
 
-即该任务在**本次删除之前就已失效**（其目标测试早已移除）。
+**⚠ 本节原前提已被 grill 实测推翻（2026-09-22）**：原文称「该函数现已不存在（0 命中）→ 该任务在本次删除之前就已失效」，**这是错的**。该函数由**该任务自己的 `test.patch` 新增**（`test.patch` 内 `+    def test_awaiting_...`）——SWE-bench 式任务的定义就是「`test.patch` 在 `base_commit` 上先失败、`gold.patch` 后通过」，故它在 HEAD 0 命中是**设计使然**。grill 已在 `597d121` 上实跑完整生命周期：`test.patch` → 1 failed（AssertionError）→ `+gold.patch` → 31 passed，且两个 patch 均能干净 `git apply --check`。
+
+**修正后的删除理由**：该任务的目标能力面（statechart 新增 awaiting 态 + 引擎驱动 flow 生命周期 + `flow block`/`flow confirm` 恢复默认值表）**正是本 change 要退役的对象**；任务本身仍可自洽复现，但退役后**已无教学/评测意义**。
 
 > **grill 必答**：该任务应 (a) 随子系统删除（并核算任务集数量/覆盖矩阵影响）、(b) 改写指向替代测试、还是 (c) 标记作废但保留文件。注意 B-track 任务数是 `docs/openspec-change-backlog.md` 与评测叙事引用过的数字。
 
@@ -96,11 +98,15 @@
 
 > **grill 确认**：层 1 改动后，`test_workflow_protected_write_channel.py` 的冷状态断言（"调用前断言无 `handoff.json`"）与 `test_openspec_artifact_checker.py` 的"`flow status` 会同步映射写 `handoff.json`"用例会失效，需同步改写——确认改法。
 
-### D7: guard 白名单与 flow-policy 同步
+### D7: guard 白名单同步（**机制已由 grill 更正**）
 
-`scripts/flow-policy.json` 的写通道豁免含 `flow (status|confirm|approve|block|advance)`（`workflow_guard.py:271` 同源）。子命令删除后须收窄为 `flow status`。
+**⚠ 原文机制描述错误**：原文称白名单在 `scripts/flow-policy.json`、须用 `policy-set` CLI 收窄。**实际不是**——
 
-**约束**：`flow-policy.json` 是受保护路径（`governance=cli_written`），只能用 `python scripts/workflow_state.py policy-set` 修改，不能手改。
+- 白名单是 `scripts/workflow_guard.py:266-274` 的 `_is_privileged_cli` **硬编码正则**（`(?:\b|_)flow\s+(?:status|confirm|approve|block|advance)`），实测 `flow-policy.json` 全文**无** `flow`/子命令字样；
+- `policy-set` CLI（`workflow_state.py:1238-1285`）只写 `protected_paths` 数组，**改不到该正则**；
+- 故 **`flow-policy.json` 本次无需任何改动**，tasks.md 里「用 policy-set 收窄」那条是**错的方向**，须改。
+
+**正确改法**：直接改 `workflow_guard.py` 的正则为 `flow\s+status`（该文件**不在**受保护路径，agent 可直改）+ 改 `tests/test_workflow_guard.py:552-566`（现断言 4 条命令被豁免，收窄后其中 3 条应转为「拒绝豁免」断言）。
 
 ### D8: spec delta 面
 
@@ -112,6 +118,90 @@
 按 #199/#232 教训：`openspec archive` 是**整段替换 Requirement**，REMOVED 段必须列全、MODIFIED 段必须给变更后完整正文。
 
 > **grill 必答**：逐条给出 REMOVED / MODIFIED / 保留 的清单与理由，特别是 `Workflow 总开关`（它引用了 `discover`）与 `阶段执行者 agent schema 定义`（`role_registry` 删除后是否还有对象）。
+
+### D9: 退役的净损失——完成度门禁与 TODO 残留扫描（关联 issue #235）
+
+`check_phase_done.py` 承担两项在新机制中**没有等价替代**的职责：
+
+1. **「100% 要求全勾」**：其 docstring 与 `workflow_methods.json` 均记载「Checkbox 只是
+   Agent 的『声称做完』声明（由 `check_phase_done` 100% 要求）」。删除后完成度检查只剩
+   `check_openspec_artifacts` 里由 `_tasks_all_complete` 驱动的 `requires_building_review`
+   ——后者是「**全勾才查**」的触发器（不勾即绕开），比「100% 要求」**薄**。
+2. **TODO 残留扫描**：`_find_todo_residuals` / `_load_known_debt`（对 `docs/known-debt.md`
+   比对）。`check_openspec_artifacts` 只查 `SELF_ADMITTED_INCOMPLETE_PHRASES`，是其**子集**。
+
+**这是能力面净损失，不是替代**，须显式记录而非静默消失。且本退役**放大**了 issue #235
+的缺口：退役前是「旧机制兜底 + 新机制更薄」，退役后是「**只剩薄的那层**」。
+（主 session 已在 #235 加评论交叉引用本退役。）
+
+处置待 grill 裁定：
+- 是否把这两项**迁入** `check_openspec_artifacts`（重建）？
+- 还是**显式接受其消失**，在 `docs/known-debt.md` 记为已知边界？
+
+> **grill 必答**：本退役应连带补上这两项，还是显式接受其消失并记债？
+> 注意与 D1「零生产调用方」的张力：`check_phase_done` 确实无调用方，
+> 但它承载的**能力**是否也该无替代地消失，是另一个问题。
+
+## Grill 裁定整合（2026-09-22，run id `grill-zero-memory`）
+
+零记忆独立 subagent 逐项实测复核，完整报告见 `reviews/grill-design.md`。核心裁定与**对本文档的更正**：
+
+### 对 D1 删除面的补充（原文漏列）
+
+| 补充目标 | 依据 |
+|---|---|
+| **`agent/workflow/__init__.py` 的导出行**（:1 `dispatcher`、:2 `manager`、:26-38 `role_registry`/`routing` 死亡部分、:45-52 `state_machine` 死亡部分、`__all__`） | **【高】它是包的 `__init__`**：checker 的 `from agent.workflow.event_log import verify_projection`（`check_openspec_artifacts.py:959`）与 guard 的 `from agent.workflow.event_log import ...`（`workflow_guard.py:552`）**都会先执行它**。删文件不删导出 = `ModuleNotFoundError`，直接打崩 CI 与 PreToolUse 门禁 |
+| **`agent/workflow/handoff_note.py`（103 行）** | 全仓 import **0 处**；属四阶段 handoff 机制（与 `Agent 间 handoff` Requirement 同源）。不删则留下新的一文件死代码 |
+| **`agent/workflow/manager.py`（372 行）** | `WorkflowManager` 的生产消费者只有 `dispatcher.py`（同删）+ `workflow_state.py:45` 的**死导入**；活消费者全在测试里（`test_workflow_guard.py:32` 等） |
+| **`WORKTREE_REQUIRED_PHASES` 导入**（`workflow_state.py:42`） | 唯一使用点 :416 在 `_cmd_discover_json`（删除面内）→ 成为未用导入 |
+
+### D2 裁定：`flow/` 全删 (a)
+
+删 `flow/engine.py` + `flow/statechart.json` + `tests/test_declarative_flow_engine.py`。`validate_transition` **保留**（活：`event_log.py:12→:540 _validate_transition_dict`），其**传递闭包**（`get_legal_targets` / `get_recommended_role` / `_is_gate` / `WITHIN_PHASE_ADJACENT` / `CROSS_PHASE_FORWARD` / `_phase_index` / `_validate_sub_state`）一并保留。
+**关键认识**：删 statechart 失去的只是「声明与 Python 常量必须同步」这一条**冗余声明约束**，**不是**四阶段模型本身——四阶段转移表全量留在 `state_machine.py`，由 `tests/agent/workflow/test_state_machine.py`（459 行符号级单测）继续 pin 住。
+
+### D4 裁定：删 phase 段（并连带清理其读者）
+
+`AGENTS.md:213` 那条规则的**原始意图**（`declarative-flow-engine` grill Q3，2026-08-16）就是「`_method_hint`/`_build_path` 直接索引会 KeyError」——而这两个函数正在删除面内，意图已自然兑现。
+**连带删除**：`_method_hint` / `_method_review_dims` / `_ticket_tracker_label` / `_build_path` / `_next_action` + 3 条相关活测试。
+**必须保留**：`workflow` 节（`is_workflow_enabled`）、`doc_artifact` 节（`_resolve_changes_root`、guard 的 `change_dir_template`）、`ticket_tracker` 视 `_ticket_tracker_label` 去留而定。
+
+### D5 更正：`get_recommended_role` / `get_legal_targets` 必须**保留**
+
+原文标为「评估」是**错的**。活链：`event_log.py:286` → `compute_next_hints:449-453` → `get_recommended_role` + `get_legal_targets` → `_is_gate` + `WITHIN_PHASE_ADJACENT`/`CROSS_PHASE_FORWARD`。该链在当前仓库**实测 0 触发**（全仓无 `transition_applied` 事件），但 checker 的 `_check_archived_projectable`（`check_openspec_artifacts.py:1057`）对**每个**归档 change 跑投影——任何 gen-1 change 一旦含该事件即 AttributeError。**这是「0 命中 ≠ 死代码」的典型陷阱。** 逐符号完整表见 `reviews/grill-design.md`。
+
+### D6 限定：层 1 只去 **gen-2 映射**
+
+改点是 `_refresh_workflow_state`（`workflow_state.py:977-992`）尾部 6 行。**不要动** `_flow_refresh_after_event` 的 **gen-1 分支**（:968-972）——那写的是 gen-1 的**唯一**投影，不是「映射写」。
+`_require_change_target` 的 `or handoff.json` 分支**保留**（零成本保护历史 gen-1 可写性，且有活测试依赖）；仅把 docstring 里「`cmd_spawn` 生成的子 change」的举例改为「历史 spawn 子 change」。
+
+### D8 裁定：delta **不能按现状归档**
+
+10 条 Requirement 名与正式 spec **逐字全匹配**（「阻塞状态」本次**正确**，历史误写未复现）。但：
+
+1. **MODIFIED 段静默删除 22 条仍活 Scenario**（详见 `reviews/grill-design.md` 的逐 Scenario 比对）——`openspec archive` 是整段替换，未列出的 Scenario 会被删掉，而活测试仍在断言它们；
+2. **漏列 5 条应 REMOVED**：`Agent 间 handoff` / `handoff.json schema` / `合法流转表` / `流程状态机声明化` / `状态机声明与执行方法分工`；
+3. **漏列 1 条 MODIFIED**：`guard 写操作门禁顺序与路径归一化`（其正文含子命令白名单，须随 D7 收窄）；
+4. `阻塞状态` 整条 REMOVED 前**必须先迁出 2 条活 Scenario**（`checker 派生物一致性`、`guard 读投影执法`——后者有 10 条活测试专测）；
+5. `阶段执行者 agent schema 定义` 裁定**保留不动**：它挂在 `flow-policy.json` 的 `phases.<phase>.agent` schema，不挂 `role_registry.py`。
+
+### D9 裁定：(b) 显式接受 + 记 `docs/known-debt.md`
+
+两项「无等价替代」断言**实测均成立**（100% 全勾的实现实为 `doc_artifact_protocol_openspec.py:123-125` + `:356-375`，归因较原文略修正但删除面不变）。**反对迁入 checker**：`_find_todo_residuals` 依赖 `git diff origin/master`，而 checker 走 `--base-ref`（CI 传 PR base sha），直接搬运会产生语义漂移——正确移植属**新增能力面**而非退役配套。
+
+### 新增风险（grill 发现，原文未列）
+
+| 风险 | 缓解 |
+|---|---|
+| **【高】awaiting 死锁面**：`flow block`/`flow confirm` 删除后 `blocked_entered`/`blocked_resolved` **无任何写入者**，而 guard 的 awaiting 硬拦截保留且不可经 Bash 绕过 | 合入前检查全仓 awaiting 状态（grill 实测当前为 **0**），并在 change 文档声明「awaiting 执法保留但无 CLI 解除通道」；或保留 `flow confirm` 作为纯恢复命令 |
+| **【中】SPAWN 悬空指针对称问题**：`cmd_spawn` 删除后 `_require_change_target` docstring 仍以「`cmd_spawn` 生成的子 change」举例 | 改举例措辞（见 D6 限定） |
+| **【低】`docs/benchmark-run-protocol.md:22`** 声明「B 轨 12–16」，删 b03 后为 **11**（低于下界） | 属**协议目标口径**非现状，**不必改**，但在 change 文档记录该偏差 |
+| **【低】`docs/benchmark-plan.md:22`「27 个本地任务」** 是**既有漂移**（现状 34） | 与本次数字更新**分开**记录，不同一改动混改 |
+| **【中】`test_workflow_guard.py:32` `_seed_active_change` 依赖 `WorkflowManager(...).init()`** | 删 `manager.py` 会打断**活路径回归核心测试**；按 `_seed_gen1_change` 的等价字面量改写。原文 tasks.md **未列**此项 |
+
+### 任务集数量影响（D3，grill 实测）
+
+本地任务 34 → **33**（A 轨 22 不变，B 轨 12 → **11**）；Verified 38 不变；总数 72 → **71**；`benchmarks/tasks/manifest.json` 的 `coverage` 段 34 → 33 条。
 
 ## Pre-Implementation Review
 
@@ -130,6 +220,7 @@
 | benchmark 任务数字漂移未记录 | D3 裁定后核算任务集数量影响并记入 change 文档 |
 | `handoff.json` 层 1 改动打红既有冷状态测试 | D6 同步改写，且**不得**弱化"冷状态"判别力（#199 教训） |
 | AGENTS.md 显式规则被违反 | D4 同步改规则文本，不悄悄绕过 |
+| **退役移除 `check_phase_done` 的 100% 全勾要求与 TODO 残留扫描，且无等价替代（放大 issue #235）** | D9 显式记录：either 迁入 `check_openspec_artifacts`，or 记入 `docs/known-debt.md` 为已知边界——不得静默消失 |
 
 ## Testing Strategy
 

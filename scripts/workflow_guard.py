@@ -263,12 +263,13 @@ def _is_privileged_cli(command: str) -> bool:
     # 复合/重定向/命令替换/换行（多行 Bash 可换行接写命令）→ 非独立调用
     if re.search(r"&&|\|\||[;|`]|\$\(|[\r\n]|>\s*[^=]", stripped):
         return False
-    # flow 子命令白名单（Q10/代码层修正 8）：status|confirm|approve|block|advance
+    # flow 子命令白名单：仅 status。gate 家族（approve/advance/block/confirm）已随
+    # 四阶段状态机退役删除，不再豁免——调用它们是未知子命令、退出非零。
     return bool(
         re.match(
             r"^(?:python3?|uv\s+run\s+python3?)\s+scripts/workflow_state\.py\s+"
             r"(?:artifact-event|review-manifest|policy-[a-z-]+"
-            r"|flow\s+(?:status|confirm|approve|block|advance))\b",
+            r"|flow\s+status)\b",
             stripped,
         )
     )

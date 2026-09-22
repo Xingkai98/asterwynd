@@ -3075,7 +3075,7 @@ class CliApprovalHandler:
 
 ## Bullet 7: 全链路可观测体系与 Benchmark 评测闭环 — 代码走读
 
-> 简历原文：建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；72 个 coding 任务（34 本地 = 22 A 轨回归基线 + 12 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
+> 简历原文：建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；71 个 coding 任务（33 本地 = 22 A 轨回归基线 + 11 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
 
 ---
 
@@ -3403,7 +3403,7 @@ SCENARIO_ORDER = ("bug-fix", "feature-dev", "refactor", "debug", "integration")
 - 每个场景列（5 枚举）至少有一个本地 A/B 任务
 - **按轨能力覆盖**（`REQUIRED_TRACK_COVERAGE` line 39-43）：`context-planning` / `long-term-memory` / `long-context` 三列必须分别有 **B 轨**任务登记——这是 spec delta 的机械强制
 
-manifest 存储于 `benchmarks/tasks/manifest.json`：`coverage` 段登记 34 个本地任务的能力列覆盖，`verified` 段单独披露 Verified 子集摘要（count / by_repo / by_difficulty，`update_manifest_verified` 由 build-subset 管线维护）。
+manifest 存储于 `benchmarks/tasks/manifest.json`：`coverage` 段登记 33 个本地任务的能力列覆盖，`verified` 段单独披露 Verified 子集摘要（count / by_repo / by_difficulty，`update_manifest_verified` 由 build-subset 管线维护）。
 
 ---
 
@@ -3659,7 +3659,7 @@ class VerifierAdapter(Protocol):
 
 ---
 
-### 11. 任务数据集 — 72 个 coding 任务
+### 11. 任务数据集 — 71 个 coding 任务
 
 #### 11.1 任务计数确认（合并 master 后已核实）
 
@@ -3667,15 +3667,15 @@ class VerifierAdapter(Protocol):
 
 | 类别 | 数量 | 说明 |
 |------|------|------|
-| 本地任务（`task_family=local`） | **34** | 22 A 轨回归基线 + 12 B 轨当前演进 |
+| 本地任务（`task_family=local`） | **33** | 22 A 轨回归基线 + 11 B 轨当前演进 |
 | SWE-bench Verified 子集（`task_family=swebench`） | **38** | 全部 `track=verified`，dataset = `princeton-nlp/SWE-bench_Verified` |
 | gate-smoke（CI 门禁专用） | 2 | 在 `gate-smoke/` 二级目录，不计入 coding 任务 |
 
-**coding 任务合计 = 72**（34 本地 + 38 Verified）。`run_all()`（runner.py:192-195）对 `benchmarks/tasks` 做一层 `iterdir()`，默认加载全部 72 个；gate-smoke 在二级目录，只有 `benchmark-gate` 命令显式指定才跑。
+**coding 任务合计 = 71**（33 本地 + 38 Verified）。`run_all()`（runner.py:192-195）对 `benchmarks/tasks` 做一层 `iterdir()`，默认加载全部 71 个；gate-smoke 在二级目录，只有 `benchmark-gate` 命令显式指定才跑。
 
 > **数字口径**：上一版口径为 36（26 本地 + 10 SWE-bench 外部）；master 合并后本地任务经 B 轨扩展为 34（22 A + 12 B），Verified 子集经 build-subset 管线生成为 38（原 10 + 本机生成 28），合计 72。`docs/benchmark-run-protocol.md` 的协议目标口径为 82–90（A 轨 20–24 + B 轨 12–16 + Verified 50），是升级方向而非现状。
 
-#### 11.2 本地任务 34 = 22 A 轨 + 12 B 轨
+#### 11.2 本地任务 33 = 22 A 轨 + 11 B 轨
 
 **A 轨·历史重建回归基线（22）**：基于 2026-06 前合入特性的历史重建任务，作为回归基线（有答案泄漏面，结果页强制披露，非公平评测）：
 
@@ -3898,5 +3898,5 @@ uv run asterwynd benchmark benchmarks/tasks \
 | `benchmarks/tasks/manifest.json` | 任务集 manifest — coverage 登记 + anti_cheat_disclosure + verified 摘要 |
 | `benchmarks/baseline.json` | 当前 baseline（fake agent, gate-smoke, success_rate=1.0） |
 | `.github/workflows/ci.yml` | CI pipeline — validate + benchmark-gate 两个 job |
-| `benchmarks/tasks/` | 74 个 task.json — 34 本地 + 38 Verified + 2 gate-smoke |
+| `benchmarks/tasks/` | 73 个 task.json — 33 本地 + 38 Verified + 2 gate-smoke |
 | `docs/benchmark-run-protocol.md` | 评测运行协议（C3 转正）— 采样/预算/对照口径/披露段/self_check 五门禁 |

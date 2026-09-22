@@ -1,42 +1,21 @@
 from __future__ import annotations
 
-import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
-
 from agent.workflow.models import (
-    DEFAULT_ROUTING,
     GATE_SUB_STATE,
     PHASE_ORDER,
     PHASE_SUB_STATES,
     PHASE_TO_ROLE,
-    PHASES,
-    REVIEW_SUB_STATES,
-    Blocker,
-    CurrentAgent,
-    Decision,
-    LastGate,
     NextHints,
     Phase,
-    PhaseRouting,
     RoleAgentType,
     StateSnapshot,
     SubState,
-    Transition,
     Trigger,
 )
 
 
 class StateMachineError(ValueError):
     pass
-
-
-def _validate_phase(phase: str) -> Phase:
-    if phase not in PHASES:
-        raise StateMachineError(f"invalid phase: {phase!r}, expected one of {PHASES}")
-    return phase
 
 
 def _validate_sub_state(phase: Phase, sub_state: str | None) -> SubState | None:
@@ -249,189 +228,6 @@ def get_legal_targets(from_state: StateSnapshot) -> list[StateSnapshot]:
             targets.append(StateSnapshot(phase=t_phase, sub_state=t_sub))
 
     return targets
-
-
-def create_transition(
-    from_state: StateSnapshot,
-    to_state: StateSnapshot,
-    trigger: Trigger,
-    actor_type: str,
-    actor_id: str,
-    handoff_note: str | None = None,
-    decision: Decision | None = None,
-    reason: str | None = None,
-    rollback_reason: str | None = None,
-    skip_reason: str | None = None,
-) -> Transition:
-    return Transition(
-        from_state=from_state,
-        to_state=to_state,
-        trigger=trigger,
-        actor_type=actor_type,
-        actor_id=actor_id,
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        handoff_note=handoff_note,
-        decision=decision,
-        reason=reason,
-        rollback_reason=rollback_reason,
-        skip_reason=skip_reason,
-    )
-
-
-def init_handoff_json(
-    change_id: str,
-    routing: dict[Phase, PhaseRouting] | None = None,
-) -> dict[str, Any]:
-    """Generate the initial handoff.json content for a new change."""
-    resolved_routing: dict[str, dict] = {}
-    defaults = routing or DEFAULT_ROUTING
-    active_phases = [p for p in PHASES if p not in ("blocked", "done")]
-    for phase in active_phases:
-        r = defaults.get(phase, DEFAULT_ROUTING.get(phase))
-        if r is None:
-            r = PhaseRouting(executor="inline", session_mode="same")
-        resolved_routing[phase] = r.to_dict()
-
-    return {
-        "schema_version": "1.0",
-        "change_id": change_id,
-        "state": {"phase": "planning", "sub_state": "exploring"},
-        "transitions": [],
-        "current_agent": None,
-        "last_gate": None,
-        "blockers": [],
-        "routing": resolved_routing,
-        "next_hints": {},
-    }
-
-
-def load_handoff_json(change_dir: str | Path) -> dict[str, Any]:
-    path = Path(change_dir) / "handoff.json"
-    if not path.exists():
-        raise StateMachineError(f"handoff.json not found at {path}")
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    _validate_handoff_json_structure(data)
-    return data
-
-
-def save_handoff_json(change_dir: str | Path, data: dict[str, Any]) -> None:
-    path = Path(change_dir) / "handoff.json"
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, str(path))
-
-
-def _validate_handoff_json_structure(data: dict[str, Any]) -> None:
-    required = ["schema_version", "change_id", "state", "transitions"]
-    for key in required:
-        if key not in data:
-            raise StateMachineError(f"handoff.json missing required field: {key}")
-
-    state = data["state"]
-    if "phase" not in state:
-        raise StateMachineError("handoff.json state missing phase")
-    phase = state["phase"]
-    _validate_phase(phase)
-    if "sub_state" not in state:
-        raise StateMachineError("handoff.json state missing sub_state")
-    _validate_sub_state(phase, state["sub_state"])
-
-    if not isinstance(data["transitions"], list):
-        raise StateMachineError("handoff.json transitions must be an array")
-
-
-def apply_transition(
-    data: dict[str, Any],
-    transition: Transition,
-    current_agent: CurrentAgent | None = None,
-) -> dict[str, Any]:
-    """Apply a validated transition to the handoff.json data, returning updated data."""
-    validate_transition(transition.from_state, transition.to_state, transition.trigger)
-
-    data["state"] = transition.to_state.to_dict()
-    data["transitions"].append(transition.to_dict())
-
-    if current_agent is not None:
-        data["current_agent"] = current_agent.to_dict()
-
-    # update last_gate
-    if _is_gate(transition.to_state):
-        data["last_gate"] = LastGate(
-            phase=transition.to_state.phase,
-            sub_state=transition.to_state.sub_state,
-        ).to_dict()
-    else:
-        data["last_gate"] = None
-
-    return data
-
-
-def enter_blocked(
-    data: dict[str, Any],
-    reason: str,
-    actor_id: str,
-) -> dict[str, Any]:
-    """Transition into blocked state."""
-    current = StateSnapshot(
-        phase=data["state"]["phase"],
-        sub_state=data["state"]["sub_state"],
-    )
-    if current.phase == "blocked":
-        raise StateMachineError("already blocked")
-    if current.phase == "done":
-        raise StateMachineError("cannot block from done")
-
-    now = datetime.now(timezone.utc).isoformat()
-    blocker = Blocker(blocked_from=current, reason=reason, blocked_at=now)
-
-    transition = create_transition(
-        from_state=current,
-        to_state=StateSnapshot(phase="blocked", sub_state=None),
-        trigger="auto",
-        actor_type="human",
-        actor_id=actor_id,
-        reason=reason,
-    )
-
-    data["state"] = {"phase": "blocked", "sub_state": None}
-    data["transitions"].append(transition.to_dict())
-    data["last_gate"] = None
-    data["blockers"].append(blocker.to_dict())
-    return data
-
-
-def resolve_blocked(
-    data: dict[str, Any],
-    blocker_index: int = 0,
-) -> dict[str, Any]:
-    """Resolve the last blocker and restore state from blocked_from."""
-    if data["state"]["phase"] != "blocked":
-        raise StateMachineError("not currently blocked")
-    if not data["blockers"]:
-        raise StateMachineError("no blockers to resolve")
-
-    blocker = data["blockers"][blocker_index]
-    blocked_from = StateSnapshot(
-        phase=blocker["blocked_from"]["phase"],
-        sub_state=blocker["blocked_from"]["sub_state"],
-    )
-    now = datetime.now(timezone.utc).isoformat()
-    blocker["resolved_at"] = now
-
-    transition = create_transition(
-        from_state=StateSnapshot(phase="blocked", sub_state=None),
-        to_state=blocked_from,
-        trigger="auto",
-        actor_type="human",
-        actor_id="system",
-        reason=f"blocker resolved: {blocker.get('reason', '')}",
-    )
-
-    data["state"] = blocked_from.to_dict()
-    data["transitions"].append(transition.to_dict())
-    return data
 
 
 def get_recommended_role(state: StateSnapshot) -> RoleAgentType | None:
