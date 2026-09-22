@@ -101,6 +101,28 @@
 
 ## 未实现队列
 
+### 8. `retire-4phase-state-machine`
+
+状态：未实现。
+
+关联 issue：[#227](https://github.com/Xingkai98/asterwynd/issues/227)（四个 legacy 子命令对当代 change 失效）+ [#228](https://github.com/Xingkai98/asterwynd/issues/228)（当代 change 与 handoff.json 三层耦合）。**两 issue 是同一根问题的两面，本 change 一并收口。**
+
+批次：架构级退役，债务清理收口。**规模远大于原 issue 描述**——不是「修 4 个子命令」，而是**整个四阶段状态机子系统退役**。
+
+建议顺序原因：
+
+- 盘点（2026-09-22 实测）显示 AGENTS.md 已声明四阶段停用，但整套子系统仍在，且**无生产调用方**：`check_phase_done.py`(591行) 唯一调用方是 `flow approve`（CI 无引用）、`doc_artifact_protocol*.py`(845行) 只被前者调、`dispatcher.py`+`role_registry.py` 只有测试、四个 legacy 子命令均无生产调用方。
+- 保留它们的唯一效果是误导：`discover` 对当代 change 静默零输出、`flow approve` 必报错、`spawn` 指向已停用阶段。
+- 分开修会出现半清理（如删了 `spawn` 却发现协议层还要 `handoff.json`），故合并为单一架构级 change。
+
+主要交付：
+
+- 删 8 个 CLI 子命令（4 legacy + 4 gate 家族），删 4 个实现文件（≈1800 行）+ 对应测试（≈850 行）。
+- `handoff.json` 三层耦合全消（自愈不再产出 / 协议层必填随删 / 加 gitignore）。
+- 同步受保护 spec（REMOVED 7 + MODIFIED 3 Requirement）、`AGENTS.md` 规则、`docs/requirements-process.md` 漂移、guard 白名单（`policy-set` CLI）。
+- 处置 1 个 B-track benchmark 任务（`asterwynd-b03-awaiting-grill-state`，其目标测试早已不存在）——由 grill 裁定。
+- 实现 PR 合入时给 issue #227 与 #228 添加完成 comment 并关闭。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
