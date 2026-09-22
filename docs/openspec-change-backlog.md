@@ -103,25 +103,29 @@
 
 ### 8. `retire-4phase-state-machine`
 
-状态：未实现。
+状态：**已实现并归档**（2026-09-22，PR 收口 issue #227 + #228）。
 
-关联 issue：[#227](https://github.com/Xingkai98/asterwynd/issues/227)（四个 legacy 子命令对当代 change 失效）+ [#228](https://github.com/Xingkai98/asterwynd/issues/228)（当代 change 与 handoff.json 三层耦合）。**两 issue 是同一根问题的两面，本 change 一并收口。**
+关联 issue：[#227](https://github.com/Xingkai98/asterwynd/issues/227)（四个 legacy 子命令对当代 change 失效）+ [#228](https://github.com/Xingkai98/asterwynd/issues/228)（当代 change 与 handoff.json 三层耦合）。**两 issue 由本 change 一并收口。**
 
-批次：架构级退役，债务清理收口。**规模远大于原 issue 描述**——不是「修 4 个子命令」，而是**整个四阶段状态机子系统退役**。
+批次：架构级退役，债务清理收口。
 
-建议顺序原因：
+实际交付（与立项时的预估有出入，见下）：
 
-- 盘点（2026-09-22 实测）显示 AGENTS.md 已声明四阶段停用，但整套子系统仍在，且**无生产调用方**：`check_phase_done.py`(591行) 唯一调用方是 `flow approve`（CI 无引用）、`doc_artifact_protocol*.py`(845行) 只被前者调、`dispatcher.py`+`role_registry.py` 只有测试、四个 legacy 子命令均无生产调用方。
-- 保留它们的唯一效果是误导：`discover` 对当代 change 静默零输出、`flow approve` 必报错、`spawn` 指向已停用阶段。
-- 分开修会出现半清理（如删了 `spawn` 却发现协议层还要 `handoff.json`），故合并为单一架构级 change。
+- 删 8 个 CLI 子命令（4 legacy + 4 gate 家族），删 **7 个实现文件**（`check_phase_done.py` / `doc_artifact_protocol{,_openspec}.py` / `dispatcher.py` / `role_registry.py` / `manager.py` / `handoff_note.py`）+ `flow/` 引擎与声明（grill 补出 `manager.py` 与 `handoff_note.py` 两个立项时漏列的文件）。
+- `state_machine.py` 按**符号级**切分：保留活符号 `StateMachineError` / `compute_next_hints` / `validate_transition` 及其传递闭包（`get_recommended_role` / `get_legal_targets` / `_is_gate` / `WITHIN_PHASE_ADJACENT` / `CROSS_PHASE_FORWARD` 等）。
+- `agent/workflow/__init__.py` 去 re-export：它是包 `__init__`，残留导出会让 checker/guard 的 `from agent.workflow.event_log import ...` 直接崩（grill 补出的高危项）。
+- `handoff.json` 三层耦合全消（自愈不再产出 / 协议层必填随删 / 加 `.gitignore`——只匹配 active change 目录，归档投影保持可跟踪）。
+- 同步受保护 spec（`dev-workflow-state-machine` REMOVED 11 + MODIFIED 5；`change-documentation` REMOVED 1 + MODIFIED 1）——**比立项预估的「REMOVED 7 + MODIFIED 3」多**，因 grill 查出 delta 漏列 5 条应 REMOVED、1 条应 MODIFIED，且 4 条 MODIFIED 的正文会静默丢 22 条活 Scenario。
+- 文档同步：`AGENTS.md`（flow 命令段 + 配置架构表 + P4 段）、`docs/requirements-process.md`（四阶段描述 + handoff note + manifest 路径订正）、README / 评测叙事（任务集数字 34→33 / 12→11 / 72→71）。
+- 处置 B-track benchmark 任务 `asterwynd-b03-awaiting-grill-state`：**删除**。
+- 新增负向回归：8 个已删子命令 → 未知子命令非零退出且无副作用；`flow status` 自愈不再产出 `handoff.json` 的判别性断言。
 
-主要交付：
+立项时两处判断被 grill 推翻（留档以免后续误引）：
 
-- 删 8 个 CLI 子命令（4 legacy + 4 gate 家族），删 4 个实现文件（≈1800 行）+ 对应测试（≈850 行）。
-- `handoff.json` 三层耦合全消（自愈不再产出 / 协议层必填随删 / 加 gitignore）。
-- 同步受保护 spec（REMOVED 7 + MODIFIED 3 Requirement）、`AGENTS.md` 规则、`docs/requirements-process.md` 漂移、guard 白名单（`policy-set` CLI）。
-- 处置 1 个 B-track benchmark 任务（`asterwynd-b03-awaiting-grill-state`，其目标测试早已不存在）——由 grill 裁定。
-- 实现 PR 合入时给 issue #227 与 #228 添加完成 comment 并关闭。
+- 「b03 任务的目标测试早已不存在、任务已失效」**不成立**——该测试由任务自己的 `test.patch` **新增**（SWE-bench 式设计：test.patch 在 base 先红、gold.patch 后绿）。真实删除理由是「其目标能力面正是本次要退役的对象」。
+- guard 白名单**不在** `flow-policy.json`（该文件本次无需改动），而在 `scripts/workflow_guard.py` 的硬编码正则里，`policy-set` CLI 改不到它。
+
+残留面（记入 `docs/known-debt.md`）：退役移除 `check_phase_done` 的「100% 全勾」要求与 TODO 残留扫描，**无等价替代**（放大 issue #235）；`flow block`/`flow confirm` 删除后 awaiting 态无 CLI 进入/解除通道，而 guard 的 awaiting 执法保留。
 
 ### 3. `add-minimal-tui-runtime-view`
 
