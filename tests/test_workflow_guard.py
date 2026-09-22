@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 import pytest
 
-from agent.workflow.manager import WorkflowManager
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUARD = REPO_ROOT / "scripts" / "workflow_guard.py"
 
@@ -28,8 +26,26 @@ def _run_guard(tmp_path: Path, payload: dict) -> subprocess.CompletedProcess[str
 
 
 def _seed_active_change(tmp_path: Path) -> None:
+    """活跃 change 的冷状态种子：`change_created` 首事件（无 handoff.json）。
+
+    原实现用 `WorkflowManager(...).init()`（已随四阶段状态机退役删除）；它在此唯一
+    作用是「创建目录 + 写一条可投影的事件日志」。
+    """
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    WorkflowManager(change_dir, repo_root=tmp_path).init("test-change")
+    change_dir.mkdir(parents=True)
+    (change_dir / "workflow-events.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 1,
+                "event_type": "change_created",
+                "change_id": "test-change",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _seed_reviewing_change(tmp_path: Path) -> None:
@@ -546,20 +562,40 @@ def test_guard_allows_change_doc_writes_during_awaiting(tmp_path):
     assert result.returncode == 0
 
 
-def test_guard_allows_flow_cli_commands(tmp_path):
+def test_guard_allows_flow_status_cli_command(tmp_path):
     _seed_awaiting_change(tmp_path)
 
     for command in [
         "python3 scripts/workflow_state.py flow status --change test-change",
-        "uv run python scripts/workflow_state.py flow block --change test-change --awaiting awaiting_human_review",
-        "python3 scripts/workflow_state.py flow confirm --change test-change",
-        "python3 scripts/workflow_state.py flow advance --change test-change --to writing_proposal",
+        "uv run python scripts/workflow_state.py flow status --change test-change --all",
     ]:
         result = _run_guard(
             tmp_path,
             {"tool_name": "Bash", "tool_input": {"command": command}},
         )
-        assert result.returncode == 0, f"flow 命令应豁免: {command}"
+        assert result.returncode == 0, f"flow status 应豁免: {command}"
+
+
+def test_guard_narrowed_whitelist_drops_removed_flow_subcommands(tmp_path):
+    """D7：白名单收窄为 `flow status`，已退役的 gate 家族不再豁免。
+
+    判别性：把守卫正则改回 `flow\\s+(?:status|confirm|approve|block|advance)`
+    → 本用例变红。用守卫自身的 `_is_privileged_cli` 直接断言豁免集合。
+    """
+    import scripts.workflow_guard as guard
+
+    assert guard._is_privileged_cli(
+        "python3 scripts/workflow_state.py flow status --change test-change"
+    )
+    for removed in ("approve", "advance", "block", "confirm"):
+        cmd = f"python3 scripts/workflow_state.py flow {removed} --change test-change"
+        assert not guard._is_privileged_cli(cmd), f"{removed} 不应再被豁免: {cmd}"
+
+    # 其余活通道仍豁免
+    assert guard._is_privileged_cli(
+        "python3 scripts/workflow_state.py artifact-event --change x --event-type y"
+    )
+    assert guard._is_privileged_cli("python3 scripts/workflow_state.py policy-show")
 
 
 def test_guard_blocks_flow_chain_hijack(tmp_path):

@@ -1,9 +1,73 @@
-# dev-workflow-state-machine 规格
+## REMOVED Requirements
 
-## Purpose
+### Requirement: 四阶段生命周期
 
-定义开发流程状态机，包括 change 生命周期 phase/sub_state 模型、`handoff.json` 全局状态文件 schema、合法流转规则、human review gate 和回退机制。
-## Requirements
+**Reason**: 四阶段状态机（`wayfinding` / `planning` / `building` / `closing`）已停用（AGENTS.md 声明；本 change 退役其实现）。开发流程精简为「OpenSpec 主干 + 强制独立审阅闭环」，不再由 phase/sub_state 推进驱动，`flow approve` 等 gate 家族子命令一并删除。
+
+**Migration**: 流程推进改由 OpenSpec 主干（proposal → grill → worktree → TDD → spec sync → PR）与 `/review-loop` 承担；状态查询用 `flow status`（读事件投影）。
+
+### Requirement: Phase 内部 sub_state 定义
+
+**Reason**: 随四阶段生命周期退役——`sub_state` 概念仅服务于已停用的 phase 推进，无活消费者（`discover` / `flow advance` / `flow approve` 均已删除）。
+
+**Migration**: 无。状态观测改用 `flow status` 输出的投影 state。
+
+### Requirement: Human review gate
+
+**Reason**: gate 停止机制属已停用仪式（AGENTS.md 明列）；`flow approve` / `awaiting_human_review` 等无生产调用方（实测）。
+
+**Migration**: 人工介入改由 OpenSpec 主干中的人确认节点（如 grill 停轮确认）与 PR review 承担。
+
+### Requirement: Agent 间 handoff
+
+**Reason**: handoff note 机制随四阶段状态机退役——`agent/workflow/handoff_note.py` 实测全仓 0 处 import，属四阶段子系统（其 `FALLBACK_HANDOFF_PROMPT` 引导 agent 生成 handoff note 并「append to transitions, update current state」）。该模块及其配套的 `.handoff/` 目录约定一并删除。
+
+**Migration**: 跨 session / 跨 agent 的上下文交接改由 change 自身的 OpenSpec 文档（proposal / design / tasks）与 `reviews/` 审阅记录承载；不再有独立的 handoff note 文件。
+
+### Requirement: handoff.json schema
+
+**Reason**: `handoff.json` 作为投影载体退役（#228 三层耦合全消）：层 1 `_refresh_workflow_state` 不再映射写该文件；层 2 其唯一来源 `doc_artifact_protocol` 的 `FileRequirement(handoff.json)` 随 `check_phase_done.py` / `doc_artifact_protocol*.py` 删除而消失；层 3 其落盘产物已入 `.gitignore`。schema 的校验实现（`_validate_handoff_json_structure` / `load_handoff_json`）与产出器（`init_handoff_json` / `save_handoff_json`）一并删除。
+
+**Migration**: 状态载体统一为 `workflow-state.json`（由 `workflow-events.jsonl` replay 生成）。历史归档目录中既存的 `handoff.json` 作为只读历史保留，不再被产出或更新。
+
+### Requirement: 合法流转表
+
+**Reason**: 四阶段流转表（`CROSS_PHASE_FORWARD` / `WITHIN_PHASE_ADJACENT` 驱动的跨 phase 与 phase 内推进）的**推进通道**已退役——`flow approve` / `flow advance` 删除后无 CLI 可施加该流转。校验原语 `validate_transition` 本身作为活符号保留（`event_log.py` 依赖），但不再有流程推进语义的对外契约。
+
+**Migration**: 无。流程推进改由 OpenSpec 主干承担，不再以状态机流转建模。
+
+### Requirement: 流程状态机声明化
+
+**Reason**: `flow/statechart.json`（30 个状态的声明）与 `flow/engine.py`（stdlib 薄引擎）随子系统删除——engine 的唯一消费者是 parity 测试，而 statechart 描述的是已停用流程（文档与事实不符）。删除后 `state_machine.py` 的四阶段转移常量仍全量保留，由 `tests/agent/workflow/test_state_machine.py` 的符号级单测直接 pin 住。
+
+**Migration**: 无。若未来需要「声明式流程规则」，应作为新能力重新设计（届时需重新建立与 Python 常量的 parity 约束）。
+
+### Requirement: 状态机声明与执行方法分工
+
+**Reason**: 该 Requirement 描述「改转移只改 statechart、改执行 skill 只改 workflow_methods」的分工。声明文件 `flow/statechart.json` 已随本 change 删除，分工无对象；`workflow_methods.json` 的 phase/sub_state 方法映射亦随之清理（其读者 `_method_hint` / `_build_path` / `discover` 同删）。
+
+**Migration**: 无。
+
+### Requirement: 角色 Agent 类型
+
+**Reason**: `agent/workflow/role_registry.py` 只被测试与 `dispatcher.py` 消费，二者均无生产调用方（实测）；角色分派依赖已停用的 phase。`RoleAgentType` 类型与 `PHASE_TO_ROLE` 常量因被活链 `compute_next_hints → get_recommended_role` 使用而保留，但「按角色 spawn 执行者」的契约退役。
+
+**Migration**: 子 Agent 角色由调用方在 `RunSubagent` 的 task 中直接描述；本仓库的 grill / review-loop 已各自指定独立零记忆 reviewer，不依赖角色注册表。
+
+### Requirement: 单 Agent 全流程兼容
+
+**Reason**: 该 Requirement 描述的是「单 agent 走完四个 phase」的兼容语义，随四阶段退役消失。
+
+**Migration**: 无。流程不再以「走完 phase」建模。
+
+### Requirement: 路由配置
+
+**Reason**: `routing` 是 `handoff.json` schema 的一部分（phase → executor 映射），随 handoff 与四阶段退役消失；其配置面（`routing.py` 的 `load_global_defaults` / `merge_routing` / `get_routing_for_phase` / `build_routing_config_prompt`）与消费者（`dispatcher.py` / `manager.py`）均已删除，无活消费者。
+
+**Migration**: 无。执行者选择由调用方在 OpenSpec 主干各步骤直接决定。
+
+## MODIFIED Requirements
+
 ### Requirement: 工作流事件日志与 handoff.json projection
 
 每个 change 目录下 SHALL 存在一个 `workflow-events.jsonl` 文件，作为该 change 开发流程的权威事实来源。投影分为两代：老世代（归档 change）SHALL 由事件日志 replay 生成 `handoff.json` projection；当代（新 change）SHALL 由事件日志 replay 生成 `workflow-state.json` projection。Agent 不 SHALL 直接编辑投影文件来声明状态变化；所有状态变化 SHALL 通过 CLI 追加事件并重新生成投影。
@@ -99,79 +163,6 @@
 - **THEN** 系统 SHALL 以明确错误退出（exit 1）
 - **AND** SHALL NOT 把事件或 manifest 写进任何 change 目录，也 SHALL NOT 报「change 不存在」以外的误导性成功
 
-### Requirement: Protected artifact 变更解释
-
-工作流保护的项目级 artifact 被修改时，CI/gate SHALL 要求对应 `workflow-events.jsonl` 中存在结构化解释事件。解释事件 SHALL 包含 `artifact_path`、`reason`、`approved_by` 和匹配的 `change_id`，不得只依赖自然语言对话或手写无证据 review 文本。受保护路径清单 SHALL 从 `scripts/flow-policy.json` 中 `governance == event_explained` 的规则子集加载（flow-policy-source P0 单一策略源），checker 不保留独立硬编码清单；策略文件缺失/损坏时 checker SHALL fail-closed。
-
-#### Scenario: known issues/debt 文档变更
-
-- **GIVEN** PR diff 修改 `docs/known-issues.md` 或 `docs/known-debt.md`
-- **WHEN** 运行项目 artifact checker
-- **THEN** checker SHALL 要求存在 `protected_artifact_explained` 事件
-- **AND** 事件的 `artifact_path` SHALL 覆盖被修改路径
-
-#### Scenario: current spec 变更
-
-- **GIVEN** PR diff 修改 `openspec/specs/**`
-- **WHEN** 运行项目 artifact checker
-- **THEN** checker SHALL 要求存在 `current_spec_synced` 事件
-- **AND** 事件 SHALL 说明该 current spec 由哪个已批准变更同步而来
-
-#### Scenario: backlog 变更
-
-- **GIVEN** PR diff 修改 `docs/openspec-change-backlog.md`
-- **WHEN** 运行项目 artifact checker
-- **THEN** checker SHALL 要求存在 `backlog_updated` 事件
-- **AND** 事件 SHALL 说明 backlog 更新发生在 closing 收尾语境中
-
-#### Scenario: archive 变更
-
-- **GIVEN** PR diff 修改 `openspec/changes/archive/**`
-- **WHEN** 运行项目 artifact checker
-- **THEN** checker SHALL 要求存在 `change_archived` 事件
-- **AND** archive 目录名为 `YYYY-MM-DD-<change-id>` 时，事件 `change_id` SHALL 使用原始 `<change-id>`
-
-### Requirement: Review evidence manifest
-
-每个阶段的独立 review report SHALL 绑定机器可验证的 manifest。review report 文件为 `.handoff/<change-id>/<phase>-review.md`，manifest 文件为 `.handoff/<change-id>/<phase>-review-manifest.json`。gate/CI 不得只根据 review report 文本中的 `PASS` 判断审查通过。
-
-存续期（active）change 的 manifest SHALL 在其 `tasks.md` **最终化之后**生成（含归档移动之后的最终 head），使 `tasks_hash` 绑定的是该 change 的最终任务清单而非收尾中途的快照。
-
-`tasks_hash` 的校验 SHALL 按 change 存续期分别处理：**active** change SHALL 校验 `tasks_hash` 与当前 `tasks.md` 一致；**已归档** change SHALL NOT 以 `tasks_hash` 判定失败——`tasks.md` 是贯穿到归档的活文档，其收尾清单项在 manifest 生成后仍会被勾选或补写，故其字节哈希在归档语境下不构成漂移证据。该降级的代价 SHALL 被明示：归档语境**不再检测 `tasks.md` 的任何编辑，含 checkbox 行内的描述级编辑**；承载「审阅了什么」的实质证据是 `report_hash`（审阅报告原文）与 `spec_hash`（当时已冻结的规格 delta）。该降级 SHALL NOT 静默：归档校验的输出 SHALL 可见地说明 `tasks_hash` 已按归档语境跳过（可为汇总行，无需逐 change 逐行）。归档 change 的 manifest 存在性、字段完整性与 `report_hash` / `spec_hash` / git span SHALL 仍被校验。
-
-CI SHALL 对已归档 change 执行 manifest 校验（`check_openspec_artifacts.py --check-archived`），使 change 归档后不脱离校验范围。
-
-#### Scenario: review report 缺少 manifest
-
-- **GIVEN** `.handoff/<change-id>/<phase>-review.md` 存在
-- **AND** 对应 review manifest 不存在
-- **WHEN** 运行 gate 或项目 artifact checker
-- **THEN** 系统 SHALL 拒绝通过
-- **AND** SHALL 报告 review manifest 缺失
-
-#### Scenario: manifest 字段和 hash 校验
-
-- **WHEN** 校验 review manifest
-- **THEN** manifest SHALL 声明 `schema`、`change_id`、`phase`、`verdict`、`reviewer_run_id`、`base_sha`、`head_sha`、`tasks_hash`、`spec_hash`、`diff_hash`、`report_hash`
-- **AND** `verdict` SHALL 为 `PASS`
-- **AND** checker SHALL 验证 `report_hash`、`tasks_hash`（**已归档** change 除外，见下述归档 Scenario）、`spec_hash`
-- **AND** 当 repo root 是 git repo 时，checker SHALL 验证 `base_sha` / `head_sha` 均为 commit，且 `diff_hash` 匹配 `git diff --binary <base_sha> <head_sha>` 的 sha256
-
-#### Scenario: 归档 change 的 manifest 校验不因 tasks_hash 漂移而失败
-
-- **GIVEN** 一个已归档 change，其 manifest 的 `tasks_hash` 与当前 `tasks.md` 不一致（因收尾清单项在 manifest 生成后被勾选）
-- **WHEN** 对归档语境运行 manifest 校验
-- **THEN** 系统 SHALL NOT 以 `tasks_hash` 不一致判定失败
-- **AND** SHALL 在输出中说明归档语境跳过 `tasks_hash` 校验（该降级不得静默）
-- **AND** manifest 存在性、字段完整性、`report_hash`、`spec_hash` 与 git span SHALL 仍被校验，任一不符 SHALL 判定失败
-
-#### Scenario: active change 的 tasks_hash 漂移仍判失败
-
-- **GIVEN** 一个 active（未归档）change，其 manifest 的 `tasks_hash` 与当前 `tasks.md` 不一致
-- **WHEN** 对该 change 运行 manifest 校验
-- **THEN** 系统 SHALL 判定失败并报告 `tasks hash mismatch`
-- **AND** 该判据 SHALL NOT 因归档语境的降级而放宽
-
 ### Requirement: Workflow 总开关
 
 `scripts/workflow_methods.json` SHALL 提供 `workflow.enabled` 布尔开关，默认值为 `true`。当其为 `false` 时，workflow automation SHALL 视为未启用：受保护写通道（`artifact-event` / `review-manifest`）SHALL 拒绝写入，PreToolUse 门禁 SHALL NOT 阻止写操作。系统 SHALL 支持本地 resume audit baseline；通过 workflow CLI 禁用 workflow 时 SHALL 记录当前 git `HEAD`，重新启用时 SHALL 对 baseline 之后的非 workflow 管理文件改动执行恢复审计。
@@ -251,54 +242,6 @@ CI SHALL 对已归档 change 执行 manifest 校验（`check_openspec_artifacts.
 - **THEN** guard SHALL 拦截（exit 2）
 - **AND** `flow status` / `policy-*` / `artifact-event` / `review-manifest` CLI 作为合法写通道 SHALL 被 guard 豁免
 
-### Requirement: 开发流程精简为 OpenSpec 主干 + 强制审阅闭环
-
-开发流程 SHALL 精简为「OpenSpec 主干」（proposal → batch-grill-me → worktree → TDD → spec sync → PR）加「实现完成后强制独立 subagent 审阅闭环」。原四阶段状态机仪式（phase/sub_state 推进、handoff.json、gate 停止）SHALL 停用，不再作为开发流程的强制要求。审阅证据 SHALL 存放于 `openspec/changes/<id>/reviews/`（随 change 进 PR，CI 可机械校验），非 docs + 有 spec delta + tasks 全部勾选的 change SHALL 有 building-review.md + manifest 且 verdict 为 PASS。
-
-#### Scenario: 实现完成的新 change 提交 PR
-
-- **GIVEN** 一个非 docs change 已实现且 tasks.md 全部勾选
-- **WHEN** 提交 PR 前运行 artifact checker
-- **THEN** 检查器 SHALL 验证 `openspec/changes/<id>/reviews/building-review.md` 存在
-- **AND** 对应 manifest 存在且 verdict 为 PASS
-- **AND** 缺审阅证据 SHALL 报错并阻止合入
-
-#### Scenario: 部分实现的 change 不受拦截
-
-- **GIVEN** 一个 change 处于提案或部分实现阶段（tasks.md 有未勾选项）
-- **WHEN** 运行 artifact checker
-- **THEN** 检查器 SHALL 不要求审阅证据（避免误伤在途 change）
-
-#### Scenario: 状态机仪式停用
-
-- **GIVEN** 开发流程精简已生效
-- **WHEN** agent 开始新 change 开发
-- **THEN** 无需 phase/sub_state 推进、handoff.json 或 gate 停止
-- **AND** 开发流程遵循 OpenSpec 主干 + 实现完成后 `/review-loop` 审阅闭环
-
-### Requirement: 开发流程策略单一源
-
-受保护路径治理规则 SHALL 收敛到单一策略文件 `scripts/flow-policy.json`，作为 guard（PreToolUse hook）与 CI artifact checker 的共同规则来源。该文件 SHALL 以 JSON 承载受保护路径规则表，每条规则 SHALL 声明 `match_type(exact|prefix|contains)`、`governance(guard_only|event_explained|manifest_verified|cli_written)` 与可空 `event_types`。系统 SHALL 禁止 agent 直接改写该策略文件（governance=cli_written），仅允许人类直改或 `policy-*` CLI 子命令更新。
-
-#### Scenario: guard 与 checker 同源加载受保护路径规则
-
-- **WHEN** guard 或 checker 需要判断某路径是否受保护
-- **THEN** 系统 SHALL 从 `scripts/flow-policy.json` 读取规则表，而不再使用各自硬编码的独立清单
-- **AND** guard 与 checker 对同一路径 SHALL 得出一致的受保护判定
-
-#### Scenario: 策略文件缺失或损坏时 guard fail-closed
-
-- **GIVEN** `scripts/flow-policy.json` 缺失、损坏或非法
-- **WHEN** guard 拦截代码写操作
-- **THEN** guard SHALL fail-closed（exit 2），不得静默放行
-- **AND** guard SHALL 在错误信息中指明策略文件问题与恢复方向
-
-#### Scenario: 策略文件规则与 guard 内嵌默认表保持一致
-
-- **WHEN** 运行 parity 测试
-- **THEN** 磁盘上的 `flow-policy.json` 规则表 SHALL 与 guard 源码内嵌的默认规则表一致
-- **AND** checker 的受保护路径规则集 SHALL 是策略表 `event_explained` 子集
-
 ### Requirement: guard 写操作门禁顺序与路径归一化
 
 guard 对 Bash 命令 SHALL 在 is_write 判定之前先扫描受保护路径；对 Write/Edit 的 `file_path` SHALL 先做路径归一化（normpath / 剥离 `./`、解析 `..`）再匹配。已知绕过形态（`echo > file`、`cat <<EOF`、`pathlib.write_text`、`docs/./` 变体）SHALL 被拦截。`workflow_state.py (artifact-event|review-manifest|policy-*|flow status)` 作为合法写通道 SHALL 被豁免，但豁免 SHALL 仅限独立调用（无 `&&`/`;`/`|` 链式、无重定向、无命令替换、无换行）。
@@ -328,37 +271,3 @@ guard 对 Bash 命令 SHALL 在 is_write 判定之前先扫描受保护路径；
 - **GIVEN** Bash 命令调用 `workflow_state.py flow approve`（或 `advance` / `block` / `confirm`）
 - **WHEN** guard 判定该命令是否为豁免的合法写通道
 - **THEN** guard SHALL NOT 豁免它（与子命令已删除的事实一致）
-
-### Requirement: 内容门槛阶段感知
-
-CI artifact checker 对 `Reference Implementation Research` 字段的检查 SHALL 区分结构门槛与内容门槛：change 处于 proposal 阶段时 SHALL 只要求 section 存在且非空；tasks 全部勾选（实现完成）时 SHALL 额外检查「自认未完成」短语级模式，命中 SHALL 报错（exit 2）并指明命中短语与字段。
-
-#### Scenario: 实现完成的 change 含自认未完成占位
-
-- **GIVEN** 一个 change 的 tasks 全部勾选
-- **WHEN** 其 Reference Implementation Research 字段包含「尚未完成」「待补充」等自认未完成短语
-- **THEN** checker SHALL exit 2
-- **AND** 错误信息 SHALL 指明命中短语与所在字段
-
-#### Scenario: proposal 阶段含占位不触发内容门槛
-
-- **GIVEN** 一个 change 处于 proposal 阶段（tasks 未全勾）
-- **WHEN** 其 Reference Implementation Research 字段含占位文本
-- **THEN** checker SHALL 只按结构门槛检查（section 存在 + 非空），不触发内容门槛报错
-
-### Requirement: 阶段执行者 agent schema 定义
-
-`scripts/flow-policy.json` SHALL 支持可选的 `phases.<phase>.agent = {provider, model}` 与顶层 `review.agent` 声明，用于表达每阶段与审阅节点的执行者选择。本 requirement 只定义 schema 并做结构校验，不实现按阶段 spawn 执行者（后续阶段实现）。
-
-#### Scenario: 合法 agent schema 通过校验
-
-- **GIVEN** `flow-policy.json` 声明 `phases.building.agent` 或 `review.agent`，字段为合法 provider/model 字符串
-- **WHEN** 运行 artifact checker
-- **THEN** checker SHALL 通过 schema 校验
-
-#### Scenario: 非法 agent schema 被拒绝
-
-- **GIVEN** `flow-policy.json` 声明未知 phase 键、非字符串 provider/model 或额外未知字段
-- **WHEN** 运行 artifact checker
-- **THEN** checker SHALL 报错并指明非法字段
-

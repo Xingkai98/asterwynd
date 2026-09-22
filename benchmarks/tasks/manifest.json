@@ -110,9 +110,6 @@
       "tool-usage",
       "multi-step-solving"
     ],
-    "asterwynd-b03-awaiting-grill-state": [
-      "context-planning"
-    ],
     "asterwynd-b04-report-track-grouping": [
       "context-planning",
       "multi-step-solving"

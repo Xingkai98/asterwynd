@@ -10,7 +10,6 @@ from scripts.check_openspec_artifacts import (
     main,
     parse_change_type,
 )
-from agent.workflow.manager import WorkflowManager
 
 
 @pytest.fixture(autouse=True)
@@ -145,11 +144,57 @@ def write_review_evidence(repo_root: Path, change_id: str, phase: str = "buildin
     )
 
 
+def _seed_gen1_change(change: Path, change_id: str) -> None:
+    """老世代（gen-1）种子：`initialized` 首事件 + handoff.json 投影 + 一次 sub_state 推进。
+
+    原实现用 `WorkflowManager(...)`（已随四阶段状态机退役删除）。
+    """
+    change.mkdir(parents=True)
+    handoff = {
+        "schema_version": "1.0",
+        "change_id": change_id,
+        "state": {"phase": "planning", "sub_state": "exploring"},
+        "transitions": [],
+        "current_agent": None,
+        "last_gate": None,
+        "blockers": [],
+        "routing": {},
+        "next_hints": {},
+    }
+    events = [
+        {
+            "schema": "workflow-event/v1",
+            "seq": 1,
+            "event_type": "initialized",
+            "change_id": change_id,
+            "handoff": handoff,
+        },
+        {
+            "schema": "workflow-event/v1",
+            "seq": 2,
+            "event_type": "transition_applied",
+            "change_id": change_id,
+            "transition": {
+                "from": {"phase": "planning", "sub_state": "exploring"},
+                "to": {"phase": "planning", "sub_state": "writing_proposal"},
+                "trigger": "auto",
+                "actor_type": "agent",
+                "actor_id": "system",
+            },
+        },
+    ]
+    (change / "workflow-events.jsonl").write_text(
+        "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8"
+    )
+    handoff["state"] = {"phase": "planning", "sub_state": "writing_proposal"}
+    (change / "handoff.json").write_text(
+        json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def test_check_change_rejects_handoff_projection_mismatch(tmp_path):
     change = tmp_path / "tampered-change"
-    mgr = WorkflowManager(change, repo_root=tmp_path)
-    mgr.init("tampered-change")
-    mgr.advance_sub_state("writing_proposal")
+    _seed_gen1_change(change, "tampered-change")
     handoff_path = change / "handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     handoff["state"] = {"phase": "building", "sub_state": "writing_tests"}
@@ -1751,7 +1796,7 @@ def _seed_gen2_projection(change: Path, *, tamper: bool = False) -> None:
     (change / "workflow-state.json").write_text(
         json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    # flow status 会同步映射写 handoff.json
+    # gen-1 目标才由写通道刷新 handoff.json；此处手工落盘以构造被检对象
     handoff = {
         "schema_version": "1.0",
         "change_id": change.name,

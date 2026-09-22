@@ -3075,7 +3075,7 @@ class CliApprovalHandler:
 
 ## Bullet 7: 全链路可观测体系与 Benchmark 评测闭环 — 代码走读
 
-> 简历原文：建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；72 个 coding 任务（34 本地 = 22 A 轨回归基线 + 12 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
+> 简历原文：建立全链路可观测体系与 Benchmark 评测闭环：TraceRecorder 全链轨迹记录 + CostLedger 三层成本归因 + ErrorClassifier 错误类型自动打标；71 个 coding 任务（33 本地 = 22 A 轨回归基线 + 11 B 轨当前演进 + 38 SWE-bench Verified 子集）在 git worktree / Docker 隔离执行，pass@1/pass^k/成本（cache-aware）与 fault_owner 归因统计，场景×难度分层覆盖矩阵，支持跨 Agent 配对比较与 CI 回归门禁
 
 ---
 
@@ -3403,7 +3403,7 @@ SCENARIO_ORDER = ("bug-fix", "feature-dev", "refactor", "debug", "integration")
 - 每个场景列（5 枚举）至少有一个本地 A/B 任务
 - **按轨能力覆盖**（`REQUIRED_TRACK_COVERAGE` line 39-43）：`context-planning` / `long-term-memory` / `long-context` 三列必须分别有 **B 轨**任务登记——这是 spec delta 的机械强制
 
-manifest 存储于 `benchmarks/tasks/manifest.json`：`coverage` 段登记 34 个本地任务的能力列覆盖，`verified` 段单独披露 Verified 子集摘要（count / by_repo / by_difficulty，`update_manifest_verified` 由 build-subset 管线维护）。
+manifest 存储于 `benchmarks/tasks/manifest.json`：`coverage` 段登记 33 个本地任务的能力列覆盖，`verified` 段单独披露 Verified 子集摘要（count / by_repo / by_difficulty，`update_manifest_verified` 由 build-subset 管线维护）。
 
 ---
 
@@ -3659,23 +3659,23 @@ class VerifierAdapter(Protocol):
 
 ---
 
-### 11. 任务数据集 — 72 个 coding 任务
+### 11. 任务数据集 — 71 个 coding 任务
 
 #### 11.1 任务计数确认（合并 master 后已核实）
 
-`benchmarks/tasks/` 下共有 **74 个 task.json**（`benchmarks/tasks/*/task.json` glob 结果）：
+`benchmarks/tasks/` 下共有 **73 个 task.json**（33 本地 + 38 Verified + 2 gate-smoke）：
 
 | 类别 | 数量 | 说明 |
 |------|------|------|
-| 本地任务（`task_family=local`） | **34** | 22 A 轨回归基线 + 12 B 轨当前演进 |
+| 本地任务（`task_family=local`） | **33** | 22 A 轨回归基线 + 11 B 轨当前演进 |
 | SWE-bench Verified 子集（`task_family=swebench`） | **38** | 全部 `track=verified`，dataset = `princeton-nlp/SWE-bench_Verified` |
 | gate-smoke（CI 门禁专用） | 2 | 在 `gate-smoke/` 二级目录，不计入 coding 任务 |
 
-**coding 任务合计 = 72**（34 本地 + 38 Verified）。`run_all()`（runner.py:192-195）对 `benchmarks/tasks` 做一层 `iterdir()`，默认加载全部 72 个；gate-smoke 在二级目录，只有 `benchmark-gate` 命令显式指定才跑。
+**coding 任务合计 = 71**（33 本地 + 38 Verified）。`run_all()`（runner.py:192-195）对 `benchmarks/tasks` 做一层 `iterdir()`，默认加载全部 71 个；gate-smoke 在二级目录，只有 `benchmark-gate` 命令显式指定才跑。
 
-> **数字口径**：上一版口径为 36（26 本地 + 10 SWE-bench 外部）；master 合并后本地任务经 B 轨扩展为 34（22 A + 12 B），Verified 子集经 build-subset 管线生成为 38（原 10 + 本机生成 28），合计 72。`docs/benchmark-run-protocol.md` 的协议目标口径为 82–90（A 轨 20–24 + B 轨 12–16 + Verified 50），是升级方向而非现状。
+> **数字口径**：上一版口径为 36（26 本地 + 10 SWE-bench 外部）；master 合并后本地任务经 B 轨扩展为 34（22 A + 12 B），后因 `retire-4phase-state-machine`（2026-09-22）退役四阶段状态机删除 B 轨任务 `asterwynd-b03-awaiting-grill-state` 而变为 33（22 A + 11 B）；Verified 子集经 build-subset 管线生成为 38（原 10 + 本机生成 28），合计 71。`docs/benchmark-run-protocol.md` 的协议目标口径为 82–90（A 轨 20–24 + B 轨 12–16 + Verified 50），是升级方向而非现状。
 
-#### 11.2 本地任务 34 = 22 A 轨 + 12 B 轨
+#### 11.2 本地任务 33 = 22 A 轨 + 11 B 轨
 
 **A 轨·历史重建回归基线（22）**：基于 2026-06 前合入特性的历史重建任务，作为回归基线（有答案泄漏面，结果页强制披露，非公平评测）：
 
@@ -3693,7 +3693,7 @@ class VerifierAdapter(Protocol):
 | asterwynd-010-agent-loop | asterwynd-022-collaborative-context-audit |
 | asterwynd-011-repeater-fix | asterwynd-readme-title |
 
-**B 轨·当前演进（12）**：基于当前 HEAD 真实缺陷/增强构造的任务（面试核心），每个任务 issue.md 不给路径 + 确定性 test_command + base 红/gold 绿红绿可复现：
+**B 轨·当前演进（11）**：基于当前 HEAD 真实缺陷/增强构造的任务（面试核心），每个任务 issue.md 不给路径 + 确定性 test_command + base 红/gold 绿红绿可复现：
 
 | 任务 ID | 覆盖点 |
 |---------|--------|
@@ -3703,7 +3703,6 @@ class VerifierAdapter(Protocol):
 | asterwynd-021-lsp-diagnostics | LSP diagnostics |
 | asterwynd-b01-report-family-summary | 结果页 family 摘要（CP-3） |
 | asterwynd-b02-running-benchmarks | ListRunningBenchmarks 只读工具装配链（CP-1） |
-| asterwynd-b03-awaiting-grill-state | statechart 新态（CP-2） |
 | asterwynd-b04-report-track-grouping | 结果页 track 分组 |
 | asterwynd-b05-model-name-escaping | SwebenchAdapter model name 转义合成回归 |
 | asterwynd-b06-save-memory-project-scope | LT-MEM-1 project scope 隔离 |
@@ -3814,7 +3813,7 @@ Benchmark gate **仅在 PR 和 push to master 时触发**（line 3-7）。本地
 
 `docs/benchmark-run-protocol.md` 是 C3 转正的评测运行协议（跟踪 issue #159）：**只定协议；是否实际跑数、预算大小由使用者按需决定**。协议内容要点：
 
-- **任务集口径**：A 轨 20–24 + B 轨 12–16 + Verified 50 = 82–90（协议目标形态，与当前 72 现状的差异需区分）
+- **任务集口径**：A 轨 20–24 + B 轨 12–16 + Verified 50 = 82–90（协议目标形态，与当前 71 现状的差异需区分）
 - **采样约定**：`--repeat 5`（N≥3 才有 pass^k 意义）、固定 seed 集合 `--seeds 0 1 2 3 4`、`--temperature 0.2`（pass@1 口径）；每轮记录 `(temperature, seed, model version)`，可复现性声明限定 (model version, provider, harness) 内
 - **无效轮次不进分母**：`unsupported` / `approval-unavailable` / `docker-unavailable` 不计入 pass@1 与 pass^k 分母
 - **自洽性五门禁**（`scripts/self_check.py`）：同模型同 harness 复现 / seed 复现 / 失败归因闭环 / 披露段齐全 / 报告元组完整
@@ -3898,5 +3897,5 @@ uv run asterwynd benchmark benchmarks/tasks \
 | `benchmarks/tasks/manifest.json` | 任务集 manifest — coverage 登记 + anti_cheat_disclosure + verified 摘要 |
 | `benchmarks/baseline.json` | 当前 baseline（fake agent, gate-smoke, success_rate=1.0） |
 | `.github/workflows/ci.yml` | CI pipeline — validate + benchmark-gate 两个 job |
-| `benchmarks/tasks/` | 74 个 task.json — 34 本地 + 38 Verified + 2 gate-smoke |
+| `benchmarks/tasks/` | 73 个 task.json — 33 本地 + 38 Verified + 2 gate-smoke |
 | `docs/benchmark-run-protocol.md` | 评测运行协议（C3 转正）— 采样/预算/对照口径/披露段/self_check 五门禁 |

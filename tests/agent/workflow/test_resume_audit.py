@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
-from agent.workflow.manager import WorkflowManager
 from agent.workflow.resume_audit import (
     record_resume_reconciliation,
     run_resume_audit,
@@ -29,6 +29,30 @@ def _init_repo(repo: Path) -> None:
     (repo / "README.md").write_text("# Test\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-m", "initial")
+
+
+def _seed_change_dir(repo: Path, change_id: str) -> Path:
+    """造一个最小 change 目录（`change_created` 首事件），供 resume reconciliation 落事件。
+
+    原实现用 `WorkflowManager(...).init()`（已随四阶段状态机退役删除）；它在此唯一
+    作用是「创建目录 + 写一条可被投影的事件日志」，等价于下面两行。
+    """
+    change_dir = repo / "openspec" / "changes" / change_id
+    change_dir.mkdir(parents=True)
+    (change_dir / "workflow-events.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 1,
+                "event_type": "change_created",
+                "change_id": change_id,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return change_dir
 
 
 def test_resume_audit_detects_changed_paths_since_baseline(tmp_path):
@@ -68,8 +92,7 @@ def test_resume_reconciliation_event_satisfies_audit_and_clears_baseline(tmp_pat
     changed.parent.mkdir()
     changed.write_text("print('changed')\n", encoding="utf-8")
 
-    change_dir = tmp_path / "openspec" / "changes" / "recovery-change"
-    WorkflowManager(change_dir, repo_root=tmp_path).init("recovery-change")
+    _seed_change_dir(tmp_path, "recovery-change")
 
     audit_before = run_resume_audit(tmp_path)
     event_path = record_resume_reconciliation(
@@ -98,8 +121,7 @@ def test_resume_audit_accepts_matching_reconciliation_event(tmp_path):
     changed.parent.mkdir()
     changed.write_text("print('changed')\n", encoding="utf-8")
 
-    change_dir = tmp_path / "openspec" / "changes" / "recovery-change"
-    WorkflowManager(change_dir, repo_root=tmp_path).init("recovery-change")
+    _seed_change_dir(tmp_path, "recovery-change")
     audit = run_resume_audit(tmp_path)
     record_resume_reconciliation(
         tmp_path,

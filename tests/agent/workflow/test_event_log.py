@@ -15,7 +15,6 @@ from agent.workflow.event_log import (
     verify_projection,
     workflow_state_path,
 )
-from agent.workflow.manager import WorkflowManager
 from agent.workflow.state_machine import StateMachineError
 
 
@@ -42,11 +41,103 @@ def _transition(from_state, to_state, trigger="auto"):
     return {"from": from_state, "to": to_state, "trigger": trigger}
 
 
+# ── gen-1（老世代）种子：直接落 initialized + 后续事件，不经已退役的 WorkflowManager ──
+
+
+def _handoff_seed(change_id="test-change"):
+    """等价于已删除的 `init_handoff_json(change_id)` 的字典形状（gen-1 首载荷）。"""
+    return {
+        "schema_version": "1.0",
+        "change_id": change_id,
+        "state": {"phase": "planning", "sub_state": "exploring"},
+        "transitions": [],
+        "current_agent": None,
+        "last_gate": None,
+        "blockers": [],
+        "routing": {},
+        "next_hints": {},
+    }
+
+
+def _sync_handoff(change_dir) -> None:
+    """把 `handoff.json` 写成事件日志的 replay 结果（gen-1 的投影载体）。
+
+    原实现由 `WorkflowManager.save_handoff_json` 在每次状态变更后同步；此处直接
+    由事件日志 replay 得到等价内容。
+    """
+    (change_dir / "handoff.json").write_text(
+        json.dumps(replay_handoff_projection(change_dir), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _seed_gen1_change(tmp_path, change_id="test-change"):
+    change_dir = tmp_path / "openspec" / "changes" / change_id
+    change_dir.mkdir(parents=True)
+    _append_raw_event(
+        change_dir, "initialized", 1, change_id=change_id, handoff=_handoff_seed(change_id)
+    )
+    _sync_handoff(change_dir)
+    return change_dir
+
+
+def _gen1_transition(from_state, to_state, trigger="auto"):
+    return {
+        "from": from_state,
+        "to": to_state,
+        "trigger": trigger,
+        "actor_type": "agent",
+        "actor_id": "system",
+    }
+
+
+def _advance(change_dir, seq, next_sub_state, from_sub_state="exploring", change_id="test-change"):
+    _append_raw_event(
+        change_dir,
+        "transition_applied",
+        seq,
+        change_id=change_id,
+        transition=_gen1_transition(
+            {"phase": "planning", "sub_state": from_sub_state},
+            {"phase": "planning", "sub_state": next_sub_state},
+        ),
+    )
+    _sync_handoff(change_dir)
+
+
+def _block_unblock_routing(change_dir, seq=3, change_id="test-change"):
+    """block → unblock → routing_updated 三段事件（等价旧 `mgr.block/unblock/update_routing`）。"""
+    blocker = {
+        "blocked_from": {"phase": "planning", "sub_state": "writing_proposal"},
+        "reason": "need API clarification",
+        "blocked_at": "2026-01-01T00:00:00+00:00",
+    }
+    _append_raw_event(
+        change_dir, "blocked_entered", seq, change_id=change_id,
+        transition=_gen1_transition(
+            {"phase": "planning", "sub_state": "writing_proposal"},
+            {"phase": "blocked", "sub_state": None},
+        ),
+        blocker=dict(blocker),
+    )
+    _append_raw_event(
+        change_dir, "blocked_resolved", seq + 1, change_id=change_id,
+        transition=_gen1_transition(
+            {"phase": "blocked", "sub_state": None},
+            {"phase": "planning", "sub_state": "writing_proposal"},
+        ),
+        blocker_index=0,
+        blocker={**blocker, "resolved_at": "2026-01-01T01:00:00+00:00"},
+    )
+    _append_raw_event(
+        change_dir, "routing_updated", seq + 2, change_id=change_id,
+        phase="planning",
+        routing={"executor": "codex", "session_mode": "new"},
+    )
+    _sync_handoff(change_dir)
 def test_projection_verification_rejects_manual_state_edit(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir)
-    mgr.init("test-change")
-    mgr.advance_sub_state("writing_proposal", actor_id="planner-1")
+    change_dir = _seed_gen1_change(tmp_path)
+    _advance(change_dir, 2, "writing_proposal")
 
     assert verify_handoff_projection(change_dir) == []
 
@@ -64,9 +155,7 @@ def test_projection_verification_rejects_manual_state_edit(tmp_path):
 
 
 def test_projection_verification_ignores_non_state_artifact_events(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir)
-    mgr.init("test-change")
+    change_dir = _seed_gen1_change(tmp_path)
     with event_log_path(change_dir).open("a", encoding="utf-8") as f:
         f.write(
             json.dumps(
@@ -88,9 +177,7 @@ def test_projection_verification_ignores_non_state_artifact_events(tmp_path):
 
 
 def test_projection_verification_ignores_resume_reconciliation_event(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir)
-    mgr.init("test-change")
+    change_dir = _seed_gen1_change(tmp_path)
     append_resume_audit_reconciled_event(
         change_dir,
         "test-change",
@@ -107,21 +194,15 @@ def test_projection_verification_ignores_resume_reconciliation_event(tmp_path):
 
 
 def test_projection_verification_replays_block_unblock_and_routing_updates(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir)
-    mgr.init("test-change")
-    mgr.advance_sub_state("writing_proposal")
-    mgr.block("need API clarification", "human-1")
-    mgr.unblock()
-    mgr.update_routing("planning", executor="codex", session_mode="new")
+    change_dir = _seed_gen1_change(tmp_path)
+    _advance(change_dir, 2, "writing_proposal")
+    _block_unblock_routing(change_dir, seq=3)
 
     assert verify_handoff_projection(change_dir) == []
 
 
 def test_projection_verification_replays_wayfinding_children(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir)
-    mgr.init("test-change")
+    change_dir = _seed_gen1_change(tmp_path)
     append_wayfinding_children_event(change_dir, "test-change", ["child-a", "child-b"])
 
     projection = replay_handoff_projection(change_dir)
@@ -282,10 +363,8 @@ def test_project_empty_log_raises(tmp_path):
 
 
 def test_project_gen1_maps_handoff_to_workflow_state(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir, repo_root=tmp_path)
-    mgr.init("test-change")
-    mgr.advance_sub_state("writing_proposal", actor_id="planner-1")
+    change_dir = _seed_gen1_change(tmp_path)
+    _advance(change_dir, 2, "writing_proposal")
 
     projection = project_workflow_state(change_dir)
 
@@ -298,12 +377,9 @@ def test_project_gen1_maps_handoff_to_workflow_state(tmp_path):
 def test_gen1_replay_shape_unchanged_parity(tmp_path):
     """parity（task 2.2）：老世代 replay_handoff_projection 仍返回 handoff 形状，
     与修复前一致——统一投影只新增 workflow-state 映射，不改既有 replay 输出。"""
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir, repo_root=tmp_path)
-    mgr.init("test-change")
-    mgr.advance_sub_state("writing_proposal", actor_id="planner-1")
-    mgr.block("need API clarification", "human-1")
-    mgr.unblock()
+    change_dir = _seed_gen1_change(tmp_path)
+    _advance(change_dir, 2, "writing_proposal")
+    _block_unblock_routing(change_dir, seq=3)
 
     projection = replay_handoff_projection(change_dir)
 
@@ -341,10 +417,8 @@ def test_verify_projection_gen2_no_disk_projection_passes(tmp_path):
 
 
 def test_verify_projection_gen1_handoff_consistency(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    mgr = WorkflowManager(change_dir, repo_root=tmp_path)
-    mgr.init("test-change")
-    mgr.advance_sub_state("writing_proposal", actor_id="planner-1")
+    change_dir = _seed_gen1_change(tmp_path)
+    _advance(change_dir, 2, "writing_proposal")
 
     assert verify_projection(change_dir) == []
 
