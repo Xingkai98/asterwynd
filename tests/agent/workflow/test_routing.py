@@ -6,8 +6,9 @@
 - **活面**：`load_workflow_methods` / `is_workflow_enabled`（`resume_audit.py` 与
   `workflow_state.py` 在用）。
 - **负向回归**：已删符号必须真的不存在——它们只服务已退役的四阶段路由，恢复
-  任何一个都意味着清理被回退。覆盖 `routing.py` 与 `models.py` 两侧（后者是
-  随 routing 一并失去消费者的连带符号，见 `test_models.py` 的对称覆盖）。
+  任何一个都意味着清理被回退。覆盖 `routing.py`（`TestRemovedRoutingSymbols`）
+  与 `models.py`（`TestRemovedModelsSymbols`）两侧；后者是随 routing 一并失去
+  消费者的连带符号。
 """
 
 from __future__ import annotations
