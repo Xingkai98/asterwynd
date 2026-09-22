@@ -93,9 +93,14 @@ spec `dev-workflow-state-machine/spec.md:158` 写「checker SHALL 验证 `head_s
 
 ### D6: spec delta 完整性
 
-按 #199/#232 教训：`openspec archive` 整段替换 Requirement，delta 必须含**变更后的完整正文**。本 change 的 delta 保留「Review evidence manifest」Requirement 的全部既有 Scenario（2 条，**逐字相同**，grill 已实测比对）+ 新增 **2 条** Scenario（「归档 change 的 manifest 校验不因 tasks_hash 漂移而失败」+「active change 的 tasks_hash 漂移仍判失败」），退役项 0。
+按 #199/#232 教训：`openspec archive` 整段替换 Requirement，delta 必须含**变更后的完整正文**。本 change 的 delta 保留「Review evidence manifest」Requirement 的全部既有 Scenario（2 条）+ 新增 **2 条** Scenario（「归档 change 的 manifest 校验不因 tasks_hash 漂移而失败」+「active change 的 tasks_hash 漂移仍判失败」），退役项 0。
 
-> 原文误写「新增 1 条」；grill 逐条数出正式 spec 该 Requirement 恰 2 条 Scenario、delta 4 条，**新增数为 2**。归档前需按 2 核对。
+保留的 2 条的逐字程度**不同**（审阅 R1 核对后修正）：
+
+- 「review report 缺少 manifest」：**逐字相同**。
+- 「manifest 字段和 hash 校验」：**有意改措辞两处**——① `checker SHALL 验证 report_hash、tasks_hash、spec_hash` 句加「（**已归档** change 除外，见下述归档 Scenario）」限定；② 删去「`head_sha` 匹配当前 `HEAD`」（D5/Q4，与实现对齐）。两处均为本 change 声明的变更，非静默删除。
+
+> 原文误写「新增 1 条」；grill 逐条数出正式 spec 该 Requirement 恰 2 条 Scenario、delta 4 条，**新增数为 2**。原「保留项逐字相同」的说法对第 2 条不成立，已按 R1 审阅结论修正。
 
 ## Pre-Implementation Review
 

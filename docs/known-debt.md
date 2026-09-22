@@ -210,6 +210,17 @@ HEAD（例：`2026-09-14-subagent-concurrency-queue` 的 manifest 记 `head_sha=
 保留「`base_sha`/`head_sha` 均为 commit + `diff_hash` 匹配」），原始意图记录于此，不再声称未做的检查。
 跟踪见 issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
 
-**B-覆盖面隐含上界（记录，不处理）**：`--check-archived` 的循环对「无 `Change Type` 的归档目录」整段 `continue`
-（`scripts/check_openspec_artifacts.py:1428-1433`）。实测 90 个归档目录中 4 个（均 `2026-06-21-*` 老世代）因
-`parse_change_type` 返回 `None` 被跳过；当前这 4 个都没有 `reviews/`，**不构成盲区**。
+**B-覆盖面隐含上界（记录，不处理）**：`--check-archived` 是**漂移检测**而非「归档必须有审阅」的补票门，两处上界
+（审阅 R1 指出，均非本 change 引入、修复方向超出本 change 边界）：
+
+1. **无 `Change Type` 的归档目录整段跳过**：`scripts/check_openspec_artifacts.py:1428-1433` 对
+   `parse_change_type` 返回 `None` 的目录 `continue`。实测 90 个归档目录中 4 个（均 `2026-06-21-*` 老世代）被跳过；
+   当前这 4 个都没有 `reviews/`。
+2. **压根没有 `reviews/` 的归档 change 不被要求补 manifest**：`_check_review_manifests` 在
+   `review_dir` 不存在时直接 `return []`，且 `requires_building_review` 对 `archived=True` 恒为 False（设计意图：
+   「归档 change 要么早于本门禁、要么已满足」，不为历史 change 追溯索取审阅）。实测 42 个非 docs 归档 change
+   完全无 `*-review.md` 却通过 `--check-archived`；**只覆盖已有 `*-review.md` 的 change 的漂移**。
+   `openspec/changes/archive/**` 的写入仍受 `change_archived` 事件约束，但事件不蕴含 manifest 存在。
+
+即 AGENTS.md 新增段落的「归档 change 也在校验范围内」应读作：**已有审阅报告的归档 change 不再脱离校验**，
+而非「每个归档 change 都必须有 manifest」。若要把后者也变成门禁，属独立 change（需为历史 change 补审阅或豁免）。

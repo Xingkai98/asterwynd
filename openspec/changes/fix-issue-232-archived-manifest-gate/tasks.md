@@ -36,8 +36,15 @@
 
 ## 审阅闭环
 
-- [ ] 独立 subagent 审阅（`/review-loop`）→ verdict → CHANGES_REQUESTED 则修复 + 回归，再审直到 PASS 或 3 轮封顶
-- [ ] **manifest 在 tasks.md 最终化之后生成**（本 change 自身要遵守 D3 立的纪律）
+- [x] 独立 subagent 审阅（`/review-loop`）→ verdict → CHANGES_REQUESTED 则修复 + 回归，再审直到 PASS 或 3 轮封顶
+  - R1（paseo agent `cf4bb6d7-f877-4bc7-a2bb-7ffb6c07787b`，`origin/master...678347e`）：**PASS**，8 维度 + 3 组变异独立复现（去 `not archived` 3 红 / 降级扩到 active 2 红 / note 塞返回值 3 红且端到端 exit 1）
+  - R1 三条低危观察项（非阻塞），逐条落实：
+    - L1（归档无 `reviews/` 的 change 不被要求补 manifest，AGENTS.md 全称表述易误读）→ 已在 `AGENTS.md` 与 `docs/known-debt.md` 补覆盖面限定
+    - L2（CI 步骤测试为整文件子串匹配、强度偏弱）→ 改为锚定 step 块 + **剥注释行** + 断言无 `continue-on-error`/`|| true`；变异复验：删 flag 红、加 `continue-on-error` 红
+    - L3（计数按「有 manifest」而非「确有跳过」，全仓 0 例实际影响）→ 记录，不改（无实际影响）
+  - D6 计数/逐字性修正：delta 保留项**并非全部逐字相同**（第 2 条有意改措辞两处），已按 R1 核对结论改写 `design.md` D6
+  - 因 R1 后仍有上述改动 → 按纪律补跑 **R2** 覆盖最终 head
+- [ ] **manifest 在 tasks.md 最终化之后生成**（本 change 自身要遵守 D3 立的纪律；归档 move 与全部收尾勾选之后）
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（verify OK）
 
 ## 验证

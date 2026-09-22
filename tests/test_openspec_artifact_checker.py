@@ -1940,13 +1940,49 @@ def test_check_archived_still_fails_on_spec_drift(tmp_path, capsys):
     assert "spec hash mismatch" in capsys.readouterr().err
 
 
+def _yaml_step_containing(text: str, needle: str) -> str:
+    """Return the YAML step block (``- name:`` … next ``- name:``) holding needle,
+    with YAML comment lines removed.
+
+    绑定到 step 结构而非整文件子串；**剥掉注释行**是关键——否则 step 内解释
+    参数的注释会冒充真正的命令行参数，让「flag 被从命令里删掉」探测不到。
+    """
+    lines = text.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if needle in line),
+        None,
+    )
+    assert start is not None, f"{needle!r} not found in ci.yml"
+    step_start = next(
+        (i for i in range(start, -1, -1) if lines[i].lstrip().startswith("- name:")),
+        0,
+    )
+    step_end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("- name:")),
+        len(lines),
+    )
+    block = lines[step_start:step_end]
+    return "\n".join(line for line in block if not line.lstrip().startswith("#"))
+
+
 def test_ci_validate_job_runs_check_archived():
     """D4：CI 的 validate job 必须运行 --check-archived 且参数钉死
     （--skip-protected-paths / --skip-backlog，避免默认 --base-ref master 在 CI
-    上解析失败打出无意义 WARNING 与重复检查）。防该步骤被无声移除。"""
+    上解析失败打出无意义 WARNING 与重复检查）。防该步骤被无声移除或参数退化。
+
+    断言的 flag 必须出现在**命令行**（注释已剥离），且三条同属一个 step。"""
     ci = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
 
-    assert "--check-archived" in text
-    assert "--skip-protected-paths" in text
-    assert "--skip-backlog" in text
+    assert "--check-archived" in text, "CI 缺少归档 manifest 校验步骤"
+    step = _yaml_step_containing(text, "--check-archived")
+
+    # 门禁不得被弱化：不接受 continue-on-error / 条件跳过。
+    assert "continue-on-error" not in step
+    assert "|| true" not in step
+
+    # 参数钉死：同 step 的命令行必须带这两个 skip flag。
+    assert "--skip-protected-paths" in step
+    assert "--skip-backlog" in step
+    # 且确实在跑 checker 脚本。
+    assert "check_openspec_artifacts.py" in step
