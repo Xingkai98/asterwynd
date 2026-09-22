@@ -12,4 +12,4 @@
 
 - [x] `check_openspec_artifacts.py --base-ref <base> --require-base` 通过
 - [x] OpenSpec strict validate 通过
-- [ ] 收尾：关闭 issue #229 与 #231（记录即处置）
+- [x] 收尾：关闭 issue #229 与 #231（记录即处置）
