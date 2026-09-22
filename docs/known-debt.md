@@ -108,33 +108,46 @@ issue [#227](https://github.com/Xingkai98/asterwynd/issues/227)。
 **处置**：fix-issue-199 只解除写通道前置，按证据维持 `_refresh_workflow_state` 不变（改它会让
 协议层 FAIL 增多，改动面大于收益）。跟踪见 issue [#228](https://github.com/Xingkai98/asterwynd/issues/228)。
 
-## 受保护路径解释门禁可被伪造 change 目录糊过（fix-issue-199 实测，issue #229）
+## 受保护路径解释门禁是「防误改」而非「防伪造」（fix-issue-229 实测复核，issue #229）
 
-实测（`fix-issue-199` 立项期）：在仓库里构造一个假的 change 目录
-（`openspec/changes/<fake>/proposal.md` + 一条 `protected_artifact_explained` 事件），
-`scripts/check_openspec_artifacts.py` 的 `check_protected_path_explanations` 返回 **PASS**——
-门禁只校验「存在结构化解释事件」，不校验目标 change 是否真实立项。
+`scripts/check_openspec_artifacts.py` 的 `check_protected_path_explanations` 判定「受保护路径被改动时，
+是否存在覆盖它的结构化解释事件」。它**只校验事件日志里有匹配的 `event_type` + `artifact_path` + 必填字段**，
+不校验发起该事件的 change 是否真实立项。
 
-该缺口是**既有属性**，不是 fix-issue-199 引入或放大的：修复前同样可行——先跑
-`flow status --change <fake>` 让 CLI 自愈写出 `handoff.json`（首条为非状态事件也能投影成功），
-旧前置随即放行。本次锚点放宽（`proposal.md` 或 `handoff.json`）不使其变差。
+**黑盒复现（fix-issue-229 在 master 上隔离 worktree 实测）**：
 
-**处置**：不在 fix-issue-199 内修（属门禁加固的独立 effort）。跟踪见
-issue [#229](https://github.com/Xingkai98/asterwynd/issues/229)。
+| 伪造形态 | checker 结果 |
+|----------|--------------|
+| 裸目录（只有 `workflow-events.jsonl`，无 `proposal.md`） | **exit 1**（`missing required file: proposal.md`） |
+| 完整伪造 change（`proposal.md` 含各必填节 + `diagnosis.md` + 一条自述 `protected_artifact_explained`） | **exit 0，整体放行** |
 
-## 受保护写通道的 change id 前置未拒绝 `..`（fix-issue-199 R3 审阅观察项，issue #231）
+即：伪造者手写一行 JSON 即可为任意受保护路径改动「背书」，无需跑任何 CLI。
 
-`fix-issue-199` 在 `scripts/workflow_state.py` 的 `_require_change_target` 加了 id 合法性前置
-（拒绝绝对路径与含 `/` `\` 的 id，封住「绝对路径可把事件写到仓库外」与 gen-1 路径型目标的裸
-traceback 回归），但 `--change ..` 未覆盖：`Path("..").is_absolute()` 为假且不含 `/`，
+**该缺口是既有属性**，不是 fix-issue-199 引入：修复前用「先跑 `flow status --change <fake>` 让 CLI
+自愈写出 `handoff.json`」同样可过闸（旧前置只看 `handoff.json` 存在）。
+
+**处置：机械加固不可行，不引入新机制——本条定位为「已知边界」而非「待修缺口」。** 三条设想路径均已实测排除：
+
+1. **`approved_by` 绑定真实身份**——`_validate_protected_artifact_event`（`check_openspec_artifacts.py:1153`）
+   只查**字段存在性**，值是完全自由字符串，bot 无法区分真人；
+2. **靠 PR 审批背书**——仓库 `required_approving_review_count = 0`（无第二 reviewer 可依赖；平台门本身见 #231）；
+3. **收紧锚点（要求 `tasks.md`／backlog 登记）**——解释门禁只看事件日志，不读其它文件，
+   任何「伪造者能顺手补上」的文件当不了门槛。
+
+故该门禁的定位是**防误改**（防漏配事件、防手滑），**不是防伪造**；真正的信任边界在仓库外——
+**谁拥有 push 权限**。tracker 见 issue [#229](https://github.com/Xingkai98/asterwynd/issues/229)（按本结论关闭）。
+
+## 受保护写通道的 change id 前置未专门拒绝 `..`（fix-issue-229 复核，issue #231）
+
+`_require_change_target`（`workflow_state.py`）的 id 合法性前置只拒绝**绝对路径**与含 `/` `\` 的 id
+（#199 加），`..` 不在其列。`fix-issue-231` 记录：`Path("..").is_absolute()` 为假且不含分隔符，
 `CHANGES_ROOT / ".."` 会解析到 `openspec/`。
 
-**实测不可利用且非本次引入**：本仓库 `openspec/proposal.md` 与 `openspec/handoff.json` 均不存在，
-`..` 在锚点检查处即 exit 1；base 提交对同一输入同样不受锚点约束（既有属性）；spec delta 把拒绝面
-限定为「绝对路径或含 `/`」，实现与规格一致。
-
-**处置**：不在 fix-issue-199 内修（R3 审阅判 PASS 并归为 Low/不阻塞；改代码会超出审阅 3 轮封顶而
-未被复审）。跟踪见 issue [#231](https://github.com/Xingkai98/asterwynd/issues/231)。
+**复核结论（fix-issue-229 实测）**：`--change ..` 现在**已被拦下**（实测 `artifact-event --change ..`
+→ exit 1），但拦住它的是**锚点兜底**（`..` 解析到 `openspec/`，该目录无 `proposal.md` 且无 `handoff.json`），
+而非专门的路径校验规则。故「没有专门拒绝 `..`」这一点在实现层面仍成立，但**当前不可利用**
+（依赖 `openspec/` 下不存在锚点文件；#199 的 R3 审阅已实测同一结论）。属**低危已知边界**，
+不单独加固；tracker 见 issue [#231](https://github.com/Xingkai98/asterwynd/issues/231)。
 
 ## 归档 change 的 review manifest 写入/校验双盲区（fix-issue-199 收尾实测，issue #232）
 
