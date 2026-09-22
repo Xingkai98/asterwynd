@@ -29,10 +29,10 @@
 
 - [x] spec delta：`specs/dev-workflow-state-machine/spec.md`（MODIFIED「Review evidence manifest」——**补全为变更后完整正文**，保留全部既有 2 条 Scenario + 新增 2 条，退役项 0）
 - [x] spec delta 的「manifest 字段和 hash 校验」Scenario：**顺手改措辞**删除「`head_sha` 匹配当前 `HEAD`」（与实现对齐，D5/Q4），保留「`base_sha`/`head_sha` 均为 commit + `diff_hash` 匹配」
-- [ ] **当前规格同步**：delta 已合入 `openspec/specs/dev-workflow-state-machine/spec.md`（含 `current_spec_synced` 事件）
+- [x] **当前规格同步**：delta 已合入 `openspec/specs/dev-workflow-state-machine/spec.md`（含 `current_spec_synced` 事件）
 - [x] `docs/known-debt.md`：按本 change 收口盲区 B 的范围更新 #232 说明（盲区 A/B 均已收口 → 本条可标记完成）；登记残余风险（归档语境不再检测 tasks.md 任何编辑，含行内描述级篡改，Q5）；新增 `head_sha == HEAD` 原始意图的不可满足结论（D5，`_verify_git_span` 未校验且 spec 已改措辞对齐实现）
 - [x] 关键词扫描 `docs/`、`AGENTS.md`、`docs/development-guide.md` 中与 manifest / `--check-archived` / tasks_hash 相关的段落
-- [ ] `docs/openspec-change-backlog.md`：登记本 change（立项）+ 收尾移除（含 `backlog_updated` 事件 ×2）
+- [x] `docs/openspec-change-backlog.md`：登记本 change（立项）+ 收尾移除（含 `backlog_updated` 事件 ×2）
 
 ## 审阅闭环
 
@@ -44,8 +44,8 @@
     - L3（计数按「有 manifest」而非「确有跳过」，全仓 0 例实际影响）→ 记录，不改（无实际影响）
   - D6 计数/逐字性修正：delta 保留项**并非全部逐字相同**（第 2 条有意改措辞两处），已按 R1 核对结论改写 `design.md` D6
   - 因 R1 后仍有上述改动 → 按纪律补跑 **R2** 覆盖最终 head
-- [ ] **manifest 在 tasks.md 最终化之后生成**（本 change 自身要遵守 D3 立的纪律；归档 move 与全部收尾勾选之后）
-- [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（verify OK）
+- [x] **manifest 在 tasks.md 最终化之后生成**（本 change 自身要遵守 D3 立的纪律；归档 move 与全部收尾勾选之后）
+- [x] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（verify OK）
 
 ## 验证
 
@@ -53,4 +53,4 @@
 - [x] OpenSpec strict validate 通过（`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`）
 - [x] OpenSpec artifact checker 通过（`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`）
 - [x] 端到端验收（issue #232 盲区 B 原文）：CI 的 `validate` job 对归档 change 执行 manifest 校验，且全仓 exit 0
-- [ ] 收尾：issue #232 添加 comment 说明**盲区 A + B 均已收口**；若两盲区都已处理完，**关闭 #232**（与盲区 A 那次「保持 OPEN」不同——本次是其最后一块）
+- [x] 收尾：issue #232 添加 comment 说明**盲区 A + B 均已收口**；若两盲区都已处理完，**关闭 #232**（与盲区 A 那次「保持 OPEN」不同——本次是其最后一块）
