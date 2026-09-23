@@ -28,68 +28,68 @@
 
 ## 实现（后端投影）
 
-- [ ] `web/session.py`：新增失败证据常量（条目上限 `FAILURE_EVIDENCE_LIMIT = 5`、轻量上限
+- [x] `web/session.py`：新增失败证据常量（条目上限 `FAILURE_EVIDENCE_LIMIT = 5`、轻量上限
       `FAILURE_EVIDENCE_PREVIEW_LIMIT = 400`、单条文本复用 `TRANSCRIPT_CONTENT_LIMIT` 口径），
       docstring 说明「为什么不是新采集」
-- [ ] `web/session.py`：新增 `_failure_evidence(run_or_missing, *, full: bool)` 投影函数——**只遍历不复制**
+- [x] `web/session.py`：新增 `_failure_evidence(run_or_missing, *, full: bool)` 投影函数——**只遍历不复制**
       trace steps，过滤 `tool_result` 的 `status != "ok"` 与全部 `llm_error`；返回
       `state` / `total` / `truncated` / `message` / `items`
-- [ ] `web/session.py`：状态枚举**七态**落地（`present` / `clean` / `running` / `empty_trace` /
+- [x] `web/session.py`：状态枚举**七态**落地（`present` / `clean` / `running` / `empty_trace` /
       `no_trace` / `unavailable` / `not_applicable`），每个负向态配**可读原因文案**，不折叠「无数据」与「无错误」
-- [ ] `web/session.py`：条目 bounded——只取**最近** N 条（按 trace 步骤序号），显示顺序为时间正序；
+- [x] `web/session.py`：条目 bounded——只取**最近** N 条（按 trace 步骤序号），显示顺序为时间正序；
       单条 `observation` / `message` 截断到单条上限并置 `text_truncated`（**grill 订正**：不是
       `observation_truncated`）；`llm_error` 条目的 `status` 由投影固定为 `"error"`（trace 里没有这个键）
-- [ ] `web/session.py`：`build_node_transcript_payload` 的**三态分支**（`single` / `candidates` /
+- [x] `web/session.py`：`build_node_transcript_payload` 的**三态分支**（`single` / `candidates` /
       `none`）各挂载 `failure_evidence`；`none` 分支按 D1 判据表（`state is None` → `unavailable`；
       route / collect → `not_applicable`；未派发 → `unavailable` + 文案）；`candidates` 用**轻量**形态，
       `_item_drilldown_payload` 用**完整**形态
-- [ ] `web/session.py`：终态判据复用 `:1019-1021` 那份字面量（D7），不新造第四份
+- [x] `web/session.py`：终态判据复用 `:1019-1021` 那份字面量（D7），不新造第四份
 
 ## 实现（快照计数，Q6 方案 D）
 
-- [ ] `agent/subagent/scheduler.py`：`NodeState` 与 `_ItemRunSlot` 新增有界计数字段（三态 `None`/`0`/`N`）
-- [ ] `agent/subagent/scheduler.py`：在 `_launch_run` 的 `await self._await_run(...)` 之后**每 run 算一次**
+- [x] `agent/subagent/scheduler.py`：`NodeState` 与 `_ItemRunSlot` 新增有界计数字段（三态 `None`/`0`/`N`）
+- [x] `agent/subagent/scheduler.py`：在 `_launch_run` 的 `await self._await_run(...)` 之后**每 run 算一次**
       （普通节点与 foreach 展开项共用这一处埋点）；`queue_full` 早退路径不经过埋点 → 计数保持 `None`
-- [ ] `agent/subagent/scheduler.py`：`_graph_node_projection` 投影该字段
+- [x] `agent/subagent/scheduler.py`：`_graph_node_projection` 投影该字段
 
 ## 实现（前端）
 
-- [ ] `web/static/workflow_transcript.js`：「对话」tab 新增失败证据区——在 `paint()` 里三形态共用挂载点
+- [x] `web/static/workflow_transcript.js`：「对话」tab 新增失败证据区——在 `paint()` 里三形态共用挂载点
       （`single` 置于消息体之前；`candidates` 每行只显示计数线索；`none` 按取值显示/不显示）
-- [ ] `web/static/workflow_graph.js`：新增「`state` → 文案」与「条目 → 一行摘要」**纯函数**（供 node+vm 测试锁定）
-- [ ] `web/static/workflow.js`：详情抽屉「任务」tab 的 `drawer-why` 之后加**一行快照计数线索**
+- [x] `web/static/workflow_graph.js`：新增「`state` → 文案」与「条目 → 一行摘要」**纯函数**（供 node+vm 测试锁定）
+- [x] `web/static/workflow.js`：详情抽屉「任务」tab 的 `drawer-why` 之后加**一行快照计数线索**
       （`0` 淡色「已检查、无失败」/ `N>0` 「⚠ 本 run 内 N 次工具失败 →『对话』tab 查看」/ `None` 不显示）
-- [ ] `web/static/style.css`：失败证据区样式（复用既有 drawer 类，不新增框架/依赖）
+- [x] `web/static/style.css`：失败证据区样式（复用既有 drawer 类，不新增框架/依赖）
 
 ## 测试
 
-- [ ] `tests/web_tests/test_workflow_node_transcript.py`：`completed` + trace 含失败步骤 →
+- [x] `tests/web_tests/test_workflow_node_transcript.py`：`completed` + trace 含失败步骤 →
       `state == "present"`，条目字段完整（工具名 / 步序 / `status` / `error_type`）
-- [ ] trace 有步骤但无失败 → `state == "clean"`（**不是** `no_trace`）
-- [ ] run 未到终态 → `state == "running"`（**不是** `no_trace`）
-- [ ] 终态 + `trace is None` → `state == "no_trace"`（**不是** `clean`）
-- [ ] 终态 + `steps == []` → `state == "empty_trace"`（**不是** `no_trace`、**不是** `clean`）
-- [ ] `queue_full`（run 被弹出 `session.runs`）→ `state == "unavailable"`（**不是** `clean`）；
+- [x] trace 有步骤但无失败 → `state == "clean"`（**不是** `no_trace`）
+- [x] run 未到终态 → `state == "running"`（**不是** `no_trace`）
+- [x] 终态 + `trace is None` → `state == "no_trace"`（**不是** `clean`）
+- [x] 终态 + `steps == []` → `state == "empty_trace"`（**不是** `no_trace`、**不是** `clean`）
+- [x] `queue_full`（run 被弹出 `session.runs`）→ `state == "unavailable"`（**不是** `clean`）；
       用例注释写明「生产路径在 workflow 内预期 0 次」，构造方式是半合成的
-- [ ] route 节点 / collect 聚合 → `state == "not_applicable"`（**不是** `unavailable`）
-- [ ] 未派发节点 → `state == "unavailable"` + 「尚未派发」文案
-- [ ] `llm_error` 条目 → `status == "error"`（投影合成）、`tool_name is None`、文本在 `message`
-- [ ] 失败条目多于 N → 只回最近 N 条、按时间正序、`total` 为真实总数、`truncated is True`
-- [ ] 超长 `observation`（用 30000 字，**必须真超上限**）→ 不超过单条上限且 `text_truncated is True`
+- [x] route 节点 / collect 聚合 → `state == "not_applicable"`（**不是** `unavailable`）
+- [x] 未派发节点 → `state == "unavailable"` + 「尚未派发」文案
+- [x] `llm_error` 条目 → `status == "error"`（投影合成）、`tool_name is None`、文本在 `message`
+- [x] 失败条目多于 N → 只回最近 N 条、按时间正序、`total` 为真实总数、`truncated is True`
+- [x] 超长 `observation`（用 30000 字，**必须真超上限**）→ 不超过单条上限且 `text_truncated is True`
       （参数教训：输入必须真的超限，否则断言恒真）
-- [ ] **体积有界**（grill 指定的断言形状）：300 步全失败 × 每条 30000 字的 trace →
+- [x] **体积有界**（grill 指定的断言形状）：300 步全失败 × 每条 30000 字的 trace →
       `len(items) <= N`、`sum(len(observation)+len(message)) <= N * content_limit`、`total == 300`、
       `truncated is True`（**不得**写成整包长度比较）
-- [ ] 三态挂载各有用例：`candidates` 每候选各带**轻量**证据（≤1 条 × ≤400 字符）；`_item_drilldown_payload`
+- [x] 三态挂载各有用例：`candidates` 每候选各带**轻量**证据（≤1 条 × ≤400 字符）；`_item_drilldown_payload`
       顶层带**完整**证据；`none` 形态的取值与文案
-- [ ] 快照计数：终态 run 有 N 条失败 → 快照节点带 `N`；零失败 → `0`；无 trace / 未派发 → `None`
-- [ ] `tests/web_tests/test_workflow_graph_ux_js.py`：前端「七态 → 文案」纯函数映射（node+vm harness）
-- [ ] 空 `observation` / 缺字段 → 不抛异常、给出可读降级
-- [ ] 既有 34 条 transcript 用例 + 既有浏览器懒加载用例（`test_workflow_graph_browser.py`）不因新增键变红
-- [ ] 变异验证：把 `no_trace` 与 `empty_trace` 折叠 / 把 `clean` 当 `no_trace` / 把 `not_applicable` 当
+- [x] 快照计数：终态 run 有 N 条失败 → 快照节点带 `N`；零失败 → `0`；无 trace / 未派发 → `None`
+- [x] `tests/web_tests/test_workflow_graph_ux_js.py`：前端「七态 → 文案」纯函数映射（node+vm harness）
+- [x] 空 `observation` / 缺字段 → 不抛异常、给出可读降级
+- [x] 既有 34 条 transcript 用例 + 既有浏览器懒加载用例（`test_workflow_graph_browser.py`）不因新增键变红
+- [x] 变异验证：把 `no_trace` 与 `empty_trace` 折叠 / 把 `clean` 当 `no_trace` / 把 `not_applicable` 当
       `unavailable` / 去掉截断标志 / 改成取**最早** N 条 / `llm_error` 的 `status` 不合成 → 对应测试必须变红
       → 还原后变绿
-- [ ] 回归：`tests/web_tests/` 全量 + `tests/agent/subagent/` 全量通过
+- [x] 回归：`tests/web_tests/` 全量 + `tests/agent/subagent/` 全量通过
 
 ## 文档
 

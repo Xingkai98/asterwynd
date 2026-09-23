@@ -239,7 +239,12 @@
       host.appendChild(el('div', 'drawer-note', G.failureEvidenceText(evidence.state)));
       return;
     }
-    host.appendChild(el('h3', null, '失败证据'));
+    // Q1：不做「已恢复」推断，改为给**事实**——失败条数直接进标题，run 状态由
+    // 后端 message 给（前端不猜重试轨迹，那归 #202）。
+    const heading = evidence.total > 0
+      ? `失败证据（共 ${evidence.total} 条）`
+      : '失败证据';
+    host.appendChild(el('h3', null, heading));
     host.appendChild(el('div', 'drawer-text', G.failureEvidenceText(evidence.state)));
     (evidence.items || []).forEach((item) => {
       const row = el('div', 'failure-item');

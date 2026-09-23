@@ -1537,8 +1537,10 @@ async def test_snapshot_failure_count_is_zero_when_checked_and_clean(manager):
 async def test_snapshot_failure_count_is_none_without_usable_trace(manager):
     """没有可用 trace 的节点 → ``None``，**不得**报成 ``0``。
 
-    变异点：把 ``count_failures`` 的「空 trace 返回 None」改成返回 0 → 本条变红，
-    后果是「没数据」在 UI 上被显示成「已检查、无失败」。
+    注意范围：本条只证明「未派发 → 快照字段是 None」这一条**结果**，它**不能**证明
+    ``count_failures`` 自己区分了「无数据」与「零失败」（未派发节点根本没走到那个
+    函数）。该函数的判定由 ``test_count_failures_distinguishes_no_data_from_zero``
+    直接锁定——实测把空 trace 改成返回 0 时，**只有**那条直接单测会红。
     """
     scheduler = _scheduler(manager, _route_spec())
     # 不 run：全部节点停在 pending，从未派发 → 没有 trace。
@@ -1584,3 +1586,114 @@ async def test_snapshot_failure_count_field_is_bounded(manager):
     assert isinstance(node["failure_count"], int)
     assert set(node) >= {"failure_count"}
     assert "items" not in node and "evidence" not in node, "快照只给计数，不给证据"
+
+
+# --- count_failures / iter_failure_steps 的直接单测 ---------------------------
+#
+# 快照那几条用例走的是**真实执行路径**（计数在 run 终态时算一次），所以它们证明的是
+# 「埋点接上了」，**不能**证明 ``count_failures`` 自己对各种 trace 形状的判定。
+# 实测教训：把 ``count_failures`` 的「空 trace 返回 None」改成返回 ``0``，
+# 快照那组用例**全绿**——因为「未派发节点」的计数根本没被算过（保持在 dataclass
+# 默认 ``None``），根本没经过这个函数。所以这两个助手必须有**直接**单测。
+
+
+def test_count_failures_distinguishes_no_data_from_zero():
+    """``None``（没有可用 trace）与 ``0``（采集到了、零失败）不得折叠。
+
+    这是 OTel ``Unset`` 重载那个坑的机械防线：折叠后「没数据」会在 UI 上显示成
+    「已检查、无失败」——后者是**正向声明**，不能白给。
+    """
+    from agent.trace_recorder import count_failures
+
+    assert count_failures(None) is None, "没有 trace → None（不是 0）"
+    assert count_failures({"steps": []}) is None, "空 trace → None（不是 0，也不是「没事」）"
+    assert count_failures({"steps": [{"step": 1, "type": "llm_iteration", "data": {}}]}) == 0, (
+        "有步骤、零失败 → 0（这才是「已检查、没事」）"
+    )
+    assert count_failures({}) is None, "缺 steps 键 → 按没有可用 trace 处理"
+    assert count_failures("not a dict") is None, "非 dict → 不抛异常"
+    assert count_failures({"steps": [_llm_error(1, "timeout")]}) == 1
+
+
+def test_iter_failure_steps_only_yields_failures():
+    """失败判据：``status != "ok"`` 的 ``tool_result`` + 全部 ``llm_error``。
+
+    变异点：把判据写成 ``status == "error"``（只认显式 error）→ 会把
+    ``status`` 为其它非 ok 值（如 ``cancelled``）的失败漏掉；把 ``llm_error``
+    去掉 → 本条变红。
+    """
+    from agent.trace_recorder import iter_failure_steps
+
+    steps = [
+        _llm_iteration(1),
+        _tool_result(2, "Read", "ok", "fine"),
+        _tool_result(3, "Bash", "error", "3 failed", "tool_error"),
+        _llm_error(4, "network_timeout"),
+        _tool_result(5, "Edit", "cancelled", "interrupted"),
+    ]
+    kinds = [(s["type"], s["data"].get("status")) for s in iter_failure_steps(steps)]
+    assert kinds == [("tool_result", "error"), ("llm_error", None),
+                     ("tool_result", "cancelled")], (
+        "只应产出失败步骤：非 ok 的 tool_result（不只是 error）+ 全部 llm_error"
+    )
+
+
+def test_iter_failure_steps_tolerates_malformed_steps():
+    """残缺 step 不得把整段投影带崩（非 dict / 缺 data / data 不是 dict）。"""
+    from agent.trace_recorder import iter_failure_steps
+
+    steps = [
+        "not a dict",
+        {"step": 1, "type": "tool_result"},
+        {"step": 2, "type": "tool_result", "data": "not a dict"},
+        {"step": 3, "type": "llm_error", "data": {"error_type": "x"}},
+        None,
+    ]
+    assert [s["step"] for s in iter_failure_steps(steps)] == [3]
+    assert list(iter_failure_steps(None)) == []
+
+
+# --- `state is None` 分支（节点不在当前执行计划里） --------------------------
+#
+# 用户确认的判据（Q4）：``state is None`` → ``unavailable``（**不是**
+# ``not_applicable``——「不在计划里」不是「结构上不可能产生 run」，后者是
+# route/collect 的语义）。这条分支此前**零测试覆盖**（grep「不在当前执行计划」在
+# tests/ 下零命中），是个实现-测试缺口。
+
+
+@pytest.mark.asyncio
+async def test_unknown_node_is_unavailable_not_not_applicable(manager):
+    """节点不在调度器的 ``_states`` 里 → ``unavailable`` + 说明文案。
+
+    与 route/collect 的 ``not_applicable`` **必须不同**：后者是「这个节点类型天然
+    没有 run」，本条是「这个节点现在拿不到证据」（例如前端拿着过期 node_id 来查、
+    或图已重置）。两者对用户的行动指引不同，折叠会误导。
+    """
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    payload = build_node_transcript_payload(manager, scheduler, "nope")
+    assert payload["kind"] == "none"
+    evidence = payload["failure_evidence"]
+    assert evidence["state"] == "unavailable", (
+        "用户确认的映射是 state is None → unavailable，不是 not_applicable"
+    )
+    assert evidence["state"] != "not_applicable"
+    assert evidence["message"] == _FAILURE_EVIDENCE_MESSAGES["unavailable"] or (
+        "不在当前执行计划" in evidence["message"]
+    )
+    assert evidence["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_node_message_matches_its_state(manager):
+    """自定义文案也必须与 state 配对（不能只改文案不改 state，或反之）。"""
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "nope")["failure_evidence"]
+    assert isinstance(evidence["message"], str) and evidence["message"].strip()
+    assert "不产生 run" not in evidence["message"], (
+        "unavailable 的文案不得说成「该节点类型不产生 run」——那是 not_applicable 的话"
+    )
