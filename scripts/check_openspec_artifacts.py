@@ -1062,8 +1062,8 @@ def _untagged_unchecked_tasks(change_dir: Path) -> list[str]:
     return untagged
 
 
-def _tasks_missing_evidence(change_dir: Path) -> bool:
-    """True when tasks.md carries no proof that anything was completed.
+def _tasks_missing_evidence(change_dir: Path) -> str | None:
+    """Return a reason string when tasks.md carries no proof of completion.
 
     ``tasks.md`` is the only evidence carrier for the completion dimension, so
     three shapes make ``_untagged_unchecked_tasks`` return nothing and the gate
@@ -1077,11 +1077,14 @@ def _tasks_missing_evidence(change_dir: Path) -> bool:
        actually done. 8 historical archives have this shape.
 
     So the floor is ">=1 checked box", matching ``_tasks_all_complete``'s
-    ``checked > 0`` clause. Reported rather than treated as "nothing to check".
+    ``checked > 0`` clause. The reason is returned (not a bare bool) so the
+    error names the actual shape — an all-unchecked file reads very differently
+    from a missing one, and a single message covering both misdescribes the
+    former (building-review R3 finding 2).
     """
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
-        return True
+        return "tasks.md 缺失"
     boxes = [
         match
         for match in (
@@ -1091,8 +1094,10 @@ def _tasks_missing_evidence(change_dir: Path) -> bool:
         if match is not None
     ]
     if not boxes:
-        return True
-    return not any(match.group(1).lower() == "x" for match in boxes)
+        return "tasks.md 无任何 checkbox 行"
+    if not any(match.group(1).lower() == "x" for match in boxes):
+        return "tasks.md 的 checkbox 行全部未勾选"
+    return None
 
 
 def _change_id_from_dir_name(dir_name: str) -> str:
@@ -1620,10 +1625,11 @@ def _check_archived_completion_gate(change_dir: Path) -> list[str]:
     # 检查会静默通过——与留一条 `- [ ]` 同构的绕开路径，必须显式报错而不是跳过。
     # 对 docs 归档同样要求：否则「删掉 tasks.md」就成了 docs 的关闸路径（语料实测
     # 0/93 个 docs 归档缺 tasks.md，统一口径不产生假阳性）。
-    if _tasks_missing_evidence(change_dir):
+    missing_evidence = _tasks_missing_evidence(change_dir)
+    if missing_evidence is not None:
         errors.append(
-            prefix + "tasks.md 缺失或无任何 checkbox 行 —— 归档点无法评估完成度。"
-            "请提供含勾选项的 tasks.md（closeout 类未完成项请标 `(post-merge)`）。"
+            prefix + f"{missing_evidence} —— 归档点无法评估完成度。"
+            "tasks.md 至少要有 ≥1 条已勾选任务（closeout 类未完成项请标 `(post-merge)`）。"
         )
     else:
         for line in _untagged_unchecked_tasks(change_dir):

@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 import subprocess
 
 import pytest
@@ -2562,7 +2563,7 @@ def test_archived_gate_flags_tasks_md_without_checkbox_lines(tmp_path, body):
     (change / "tasks.md").write_text(body, encoding="utf-8")
 
     errors = mod._check_archived_completion_gate(change)
-    assert any("tasks.md 缺失或无任何 checkbox 行" in e for e in errors), (body, errors)
+    assert any("tasks.md" in e and "归档点无法评估完成度" in e for e in errors), (body, errors)
 
 
 def test_archived_gate_flags_all_post_merge_zero_checked(tmp_path):
@@ -2581,7 +2582,7 @@ def test_archived_gate_flags_all_post_merge_zero_checked(tmp_path):
         building_review=True,
     )
     errors = mod._check_archived_completion_gate(change)
-    assert any("tasks.md 缺失或无任何 checkbox 行" in e for e in errors), errors
+    assert any("全部未勾选" in e for e in errors), errors
 
 
 def test_archived_gate_passes_when_at_least_one_task_checked(tmp_path):
@@ -2596,7 +2597,7 @@ def test_archived_gate_passes_when_at_least_one_task_checked(tmp_path):
         building_review=True,
     )
     errors = mod._check_archived_completion_gate(change)
-    assert not any("tasks.md 缺失或无任何 checkbox 行" in e for e in errors), errors
+    assert not any("归档点无法评估完成度" in e for e in errors), errors
 
 
 def test_archived_gate_docs_only_missing_tasks_md_is_flagged(tmp_path):
@@ -2674,9 +2675,42 @@ def _change_dir_in_any_form(repo_root: Path, change_id: str) -> Path | None:
     archive_root = repo_root / "openspec" / "changes" / "archive"
     if archive_root.exists():
         for candidate in sorted(archive_root.glob(f"*-{change_id}")):
-            if (candidate / "workflow-events.jsonl").exists():
-                return candidate
+            # Glob `*-<id>` is a suffix match, so a decoy such as
+            # `2026-01-01-add-<id>` would match too. Require an exact
+            # `<date>-<id>` archive name (building-review R3 finding 3).
+            if not (candidate / "workflow-events.jsonl").exists():
+                continue
+            if _strip_archive_date_prefix(candidate.name) != change_id:
+                continue
+            return candidate
     return None
+
+
+def _strip_archive_date_prefix(dir_name: str) -> str:
+    match = re.match(r"\d{4}-\d{2}-\d{2}-(.+)", dir_name)
+    return match.group(1) if match else dir_name
+
+
+def test_change_dir_in_any_form_rejects_suffix_decoy(tmp_path):
+    """building-review R3 finding 3：`glob("*-<id>")` 是后缀匹配，诱饵目录会排在前。
+
+    例如 change_id = `fix-issue-235` 时，`2026-01-01-add-fix-issue-235` 也匹配
+    `*-fix-issue-235`，且按字典序可能排在真身之前；若诱饵带着事件日志，测试会
+    假绿。修复要求归档名去掉日期前缀后**精确等于** change_id。
+    """
+    change_id = "fix-issue-235"
+    archive = tmp_path / "openspec" / "changes" / "archive"
+    decoy = archive / f"2026-01-01-add-{change_id}"
+    decoy.mkdir(parents=True)
+    (decoy / "workflow-events.jsonl").write_text('{"seq": 1}\n', encoding="utf-8")
+
+    # 只有诱饵时：不得被当成目标 change
+    assert _change_dir_in_any_form(tmp_path, change_id) is None
+
+    real = archive / f"2026-09-23-{change_id}"
+    real.mkdir(parents=True)
+    (real / "workflow-events.jsonl").write_text('{"seq": 1}\n', encoding="utf-8")
+    assert _change_dir_in_any_form(tmp_path, change_id) == real
 
 
 def test_own_change_explains_protected_artifact_with_its_own_event():
