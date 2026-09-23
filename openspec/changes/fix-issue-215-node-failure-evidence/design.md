@@ -97,9 +97,9 @@ OTel 三种 span status 构成全序 `Ok > Error > Unset`；`Unset` 是**默认�
 
 ## Decisions
 
-### D1 — 状态枚举六值，每个负向态对应一个**实测确认过**的代码成因
+### D1 — 状态枚举**七值**，每个负向态对应一个**实测确认过**的代码成因
 
-字段名 `state`，取值：
+字段名 `state`，取值（**Q4 已确认：扩到七个，新增 `not_applicable`**）：
 
 | 取值 | 含义 | 代码成因（**grill 逐条复核后订正**） |
 |---|---|---|
@@ -108,16 +108,20 @@ OTel 三种 span status 构成全序 `Ok > Error > Unset`；`Unset` 是**默认�
 | `running` | run 未到终态，trace 按设计尚未写入 | 用 `web/session.py:1019-1021` 那份终态字面量判（见 D7），不新造第四份 |
 | `empty_trace` | trace 存在但 `steps == []` | **两个**调用点：排队取消 `manager.py:**1086**`；`cancel_subagent_run` 的 running 分支 `manager.py:**1100**`（后者是第二道兜底，常规路径会被 `_run_loop` 的 CancelledError 处理器先置终态）。文案**不得**只写「排队阶段被取消」 |
 | `no_trace` | 终态且 `run.trace is None` | `manager.py:1524` 传 `trace=None` 写法存在，但**前置条件 `run.status == "queued"` 恒假**（`_start_task` 在创建 monitor 前已把 status 置 `running`，全仓无写回点）——grill 判定该分支**当前无活跃生产者**，故成因按**防御性**口径写，spec 不得暗示存在活的触发路径 |
-| `unavailable` | 解析不到 run 记录 | 至少三条：`queue_full` 把 run 弹出 `session.runs`（`manager.py:**1035**`，守卫在 `:1034`；workflow 内因准入背压预期恒为 0 次，测试只能半合成）；`manager.find_run` 找不到 `run_id`（`manager.py:591-598`）；subagent session 已不在内存（`manager.py:1574-1583` 抛 KeyError 的降级路径） |
+| `unavailable` | 该有 run 但**解析不到**记录 | 三条：`queue_full` 把 run 弹出 `session.runs`（`manager.py:**1035**`，守卫在 `:1034`；workflow 内因准入背压预期恒为 0 次，测试只能半合成）；`manager.find_run` 找不到 `run_id`（`manager.py:591-598`）；subagent session 已不在内存（`manager.py:1574-1583` 抛 KeyError 的降级路径）。**另含「该节点尚未派发」**（`not state.subagent_id` 且非结构上不产生 run，`web/session.py:951-961`）——它的文案要与「run 记录被弹出」区分开 |
+| `not_applicable` | **结构上不可能**产生 run | route 节点（`web/session.py:940-947`）与 `aggregate(strategy="collect")`（`web/session.py:951-961` 的 `is_collect` 分支）。这两类节点「不产生 run」是设计使然，报 `unavailable` 会让用户以为数据丢了 |
 
-**为什么是六个而不是 OTel 式的三四个**：这六个不是分类学上的拆分，而是**代码里真实存在的六条路径**
+**为什么是七个而不是 OTel 式的三四个**：这些取值不是分类学上的拆分，而是**代码里真实存在的路径**
 （上表右列逐条复核）。少一个就会把某条路径错报成另一条——`empty_trace` 与 `no_trace` 尤其不能合并
-（前者是「跑都没跑」，后者是「跑了但没留证据」，用户的下一步动作完全不同）。
+（前者是「跑都没跑」，后者是「跑了但没留证据」，用户的下一步动作完全不同）；`not_applicable` 与
+`unavailable` 也不能合并（前者是「本来就没有」，后者是「应该有但取不到」）。
 
-**grill 反向挑战的缺口（Q4）**：上表漏了 `none` 形态的**四条**路径（route / collect / 未派发 / 下钻时
-session 不在内存，`web/session.py:940-947`/`:951-961`/`:906-912`/`:857-861`）。把「route/collect 结构上
-不产生 run」与「run 记录解析不到」折叠进同一个 `unavailable`，正是本 Decision 自己禁止的折叠。
-grill 推荐新增第七个取值 `not_applicable`，**待用户拍板**。
+**`none` 形态的判据（Q4 确认，按此落代码）**：
+
+- `state is None`（节点不在当前执行计划里，`web/session.py:906-912`）→ `unavailable`
+- `node.kind == "route"` 或 `aggregate(strategy="collect")` → `not_applicable`
+- `not state.subagent_id` 且非上述 → `unavailable` + 文案「该节点尚未派发」
+- 下钻时 subagent 已不在内存（`web/session.py:857-861`，`kind` 被改写成 `none`）→ `unavailable`
 
 **`clean` 是正向声明**：只有在真的把 `steps` 走完、且零失败时才给。这条要写进 spec（见 spec delta 的
 「已检查、未发现失败」Scenario）——对应 F2 的教训：`ok` 不能是默认值。
@@ -159,13 +163,16 @@ grill 推荐新增第七个取值 `not_applicable`，**待用户拍板**。
 
 规则统一为「与 `reason` 同落点」：
 
-- `single` 形态 → 顶层 `failure_evidence`
-- `candidates` 形态 → **每个候选**各自带 `failure_evidence`（`_foreach_candidates` 已经解析出 `run`，
-  顺手投影，不新增解析）
-- `_item_drilldown_payload`（候选项下钻）→ 顶层 `failure_evidence`
-- `none` 形态 → 顶层 `failure_evidence`，按节点类型给 `unavailable` 或「该节点不产生 run」的说明
+- `single` 形态 → 顶层 `failure_evidence`（**完整**：最近 5 条 × 单条 4000）
+- `_item_drilldown_payload`（候选项下钻）→ 顶层 `failure_evidence`（**完整**）
+- `candidates` 形态 → **每个候选**各自带**轻量** `failure_evidence`（**Q5 确认**：只带
+  `state` / `total` / `truncated` + **至多 1 条**最新失败，单条 ≤400 字符；字段同 D3）。
+  完整证据只在下钻与 `single` 形态给。理由：默认 `limit=50`、上限 200，若每候选都带完整证据
+  （5 × 4000），最坏响应可达 ~4MB；轻量化后压到 ~90KB 量级。
+- `none` 形态 → 顶层 `failure_evidence`，取值按 D1 的判据表（`not_applicable` / `unavailable`）
 
 **理由**：用户点进某个候选，问的就是「这一项为什么不对」；把证据留在容器级会让他再点一次才能看见。
+但容器级一次渲染 N 项，体积必须另设更小的预算——所以「容器轻量、下钻完整」。
 
 ### D5 — 纯读取侧投影，不动写入侧
 
@@ -175,27 +182,46 @@ grill 推荐新增第七个取值 `not_applicable`，**待用户拍板**。
 **不做 F4 第三条的写入期物化**：那是为了解决跨存储 join 的代价；本 change 的数据源已在内存、且随 run
 一起生命周期结束（HTTP 路由本身是内存口径，冷会话一律 404），读取期投影更简单且不引入新的持久化面。
 
-### D6 — 前端落点：**grill 判定原方案不成立，待 Q6 拍板**
+### D6 — 前端落点：证据主体在「对话」tab，线索在「任务」tab（**Q6 已确认方案 D**）
 
-原方案是「在既有『任务』tab 里、`drawer-why` 之后加失败证据区，不新增 tab」（理由：F4 显示 W&B Weave
-把错误放在 Call tab；「任务」tab 已承载状态/因由/任务，同属「这个节点发生了什么」的问题域）。
-
-**但那条只证明了*渲染*可行，没证明*取数*可行——这是阻塞性缺陷**：
-
-- `renderDrawerTask`（`web/static/workflow.js:1115-1165`）整个函数体**零 `fetch`**，唯一数据源是
-  `entry.snapshot` 投影出的 `node`；
-- 而 `failure_evidence` 按 D4 只挂在 `/nodes/{id}/transcript` 载荷上，该载荷全仓**唯一**取数入口是
-  「对话」tab 的 `fetchTranscript`（`web/static/workflow_transcript.js:55-82`）；
-- 两端不在同一条数据通路上，不是「顺手多渲染一段」能补的。
+**原方案（证据区直接放「任务」tab）经 grill 证伪并已废弃**：`renderDrawerTask`
+（`web/static/workflow.js:1115-1165`）整个函数体**零 `fetch`**，唯一数据源是 `entry.snapshot` 投影出的
+`node`；而 `failure_evidence` 按 D4 只挂在 `/nodes/{id}/transcript` 载荷上，该载荷全仓**唯一**取数入口是
+「对话」tab 的 `fetchTranscript`（`web/static/workflow_transcript.js:55-82`）。两端不在同一条数据通路上。
 
 叠加两条硬约束：抽屉**默认**打开在「任务」tab（`web/static/workflow.js:52`/`:1045`）；而正式 spec
 明写「前端 SHALL 在切到「对话」tab 时才请求（懒加载）」（`openspec/specs/web-ui/spec.md:836`），
 既有浏览器用例 `tests/web_tests/test_workflow_graph_browser.py:488-493` 直接断言打开面板时**不得**有
-`/transcript` 请求（该决策的理由写在用例 docstring `:474-476`）。因此「保留任务 tab + 打开即取数」
-等于反转一条有成本理由的既往决策。
+`/transcript` 请求（该决策的理由写在用例 docstring `:474-476`）。**这两条在本 change 里一个字都不动。**
 
-grill 的推荐是**方案 D**：「对话」tab 承载证据主体 + 「任务」tab 一行来自快照的**有界计数**线索。
-逐方案的成本/收益/违反面与三个具体场景例子见 `reviews/grill-design.md` 的 Q6。**待用户拍板后本节重写。**
+**确认落地的方案 D（两段式）**：
+
+1. **证据主体进「对话」tab**：在 `web/static/workflow_transcript.js` 的 `paint()` 里、
+   `appendBackLink` 之后、按 `payload.kind` 分派之前挂一次 `appendFailureEvidence(host, payload, ctx)`
+   ——三形态共用一段逻辑，`failure_evidence` 缺失时静默跳过（老载荷/降级路径不炸）。
+   - `single`：区块放在 `transcript-item-note` 之后、`transcript-body` 之前——先看到「有 N 条失败」，
+     再往下读对话。
+   - `candidates`：每候选行只显示**计数线索**（复用既有 `cand-sub` 子行），详情靠下钻。
+   - `none`：`not_applicable` 什么都不显示；`unavailable` 显示一行淡色文案。
+2. **「任务」tab 加一行自快照的计数线索**（零请求）：`0` 显示淡色「已检查、无失败」，
+   `N>0` 显示「⚠ 本 run 内 N 次工具失败 →『对话』tab 查看」，`None`（无 trace / 不可用）**不显示**。
+
+**快照计数（Q6 确认的粒度与埋点）**：
+
+- 字段三态 `None` / `0` / `N`（`None` 不显示，避免把「没数据」与「没失败」混为一谈）。
+- **在 `_launch_run` 的 `terminal = await self._await_run(...)`（`agent/subagent/scheduler.py:2167`）
+  之后算一次**并存进 `reuse_state`（普通节点是 `NodeState`，展开项是 `_ItemRunSlot`）——
+  `_run_foreach_item` 复用同一条路径，**一处埋点同时覆盖普通节点与 foreach 展开项**。
+  **不**在 `_graph_node_projection` 里每帧现算（那会是每帧 O(节点数 × 步数)）。
+- `queue_full` 的早退路径（`:2124-2136`）在 `_await_run` **之前** return，不经过埋点 → 计数为 `None`
+  （正是「无数据」该有的取值）。
+- 快照 requirement 的加法字段清单 ADDED 一项（`openspec/specs/web-ui/spec.md:497-499`），
+  与归档 change 加 `item_states`/`budget` 时走的是同一条路。
+
+**前端文案映射抽纯函数**：把「各 `state` → 文案」与「条目 → 一行摘要」抽成
+`web/static/workflow_graph.js` 上的纯函数（先例：`nodeLabel`/`nodeColor`/`explainNode`），
+用既有 node+vm harness（`tests/web_tests/test_workflow_graph_ux_js.py:20-33`）锁定——这样不加浏览器
+smoke，前端也纳入了变异可见的测试面。
 
 ### D7 — 终态判据复用 web 层既有字面量，不新造第四份
 
@@ -206,68 +232,26 @@ grill 的推荐是**方案 D**：「对话」tab 承载证据主体 + 「任务�
 本 change **复用 `web/session.py:1019-1021` 那份**（必要时提为模块级常量再引用），**不**在投影函数里
 新写第四份字面量——同一语义四份副本会让后续改动漏改一处。
 
-## Open Questions
+## Open Questions（**已全部确认，无未决项**）
 
-**独立零记忆 subagent 的 grill 已完成**（`reviews/grill-design.md`，6 条 Confirmed Decisions）。逐项确认中；
-每条配具体场景例子，grill 的推荐答案一并记在各条末尾（推荐≠确认，须用户答复后才写进
-`reviews/grill-design.md` 的 `## User Confirmation`）。Q4–Q7 为 grill 新发现的开放项，全文见 grill 记录。
+7 条开放项经独立零记忆 subagent grill 后逐项抛用户确认，**用户全部采纳 grill 推荐**。答复原文与确认时间
+记录在 `reviews/grill-design.md` 的 `## User Confirmation` 节（机械校验：7/7 已确认，0 未确认）。
+结论已回写进上面的 Decision：**Q1 → D2/前端区块标题**、**Q2 → D2**、**Q3 → D6/前端文案**、
+**Q4 → D1（七值）**、**Q5 → D4**、**Q6 → D6（含快照计数埋点）**、**Q7 → 收尾记 `docs/known-debt.md`**。
 
-### Q1 — 是否加「已恢复」标记（`recovered`）？
+要点摘录：
 
-**背景**：调研的 F3 发现 OpenInference 用 `exception.escaped: bool` 区分「异常被吸收（重试后成功）」与
-「异常逃出去干掉了 run」。对绿色节点而言，「失败了 3 次但最后成功了」与「失败了 3 次就没再管」是完全不同的
-两件事——前者是健康的自愈，后者是隐患。
+| 项 | 结论 |
+|---|---|
+| Q1 `recovered` | **不加**。区块标题改为**事实**表述：「该 run 已完成（`completed`）；本 run 内出现 N 次工具失败」。重试轨迹语义归 #202 |
+| Q2 条目上限 | `FAILURE_EVIDENCE_LIMIT = 5` 保留；载荷单条仍截 4000；**前端预览另设 ~300 字符** + 复用既有 note 模式标注「预览已截断，全文见『对话』tab」 |
+| Q3 `clean` 显示 | **(b)** 一行淡色「已检查，无失败记录（trace N 步）」。**负向态（`running`/`no_trace`/`empty_trace`/`unavailable`/`not_applicable`）也必须各显示一行文案**，不得退化成「不显示 = 没事」 |
+| Q4 `none` 形态 | **扩到七值**，新增 `not_applicable`；判据表见 D1 |
+| Q5 candidates 体积 | 每候选只带**轻量**证据（`state`/`total`/`truncated` + 至多 1 条最新失败，≤400 字符）；完整证据只在下钻与 `single` |
+| Q6 前端落点 | **方案 D**：「对话」tab 承载证据主体 + 「任务」tab 一行快照计数；计数在 `_launch_run` 的 `_await_run` 之后每 run 算一次 |
+| Q6 计数粒度 | **None/0/N 三态**；`0` 显示淡色「已检查、无失败」，`None` 不显示 |
+| Q7 死代码归档 | **记 `docs/known-debt.md` 一条**（合并 `StopReason.ERROR` 死分支 + `no_trace` 无活跃生产者），走 `artifact-event` 通道 |
 
-**场景例子**：节点 A 的 trace 里 `Bash` 在 step 7 失败（`3 failed`）、step 13 同样命令成功 → 若只报
-「失败 1 条」，用户会以为这个绿节点有问题；若报「失败 1 条（已恢复）」，用户就知道 agent 重试成功了。
-节点 B 的 trace 里 `Bash` 在 step 7 失败后再没有同工具的成功步骤 → 报「失败 1 条（未恢复）」。
-
-**代价**：要定义「恢复」判据（同 `tool_name` 的后继 `status == ok`？还是任意后继成功？）并多一轮
-trace 扫描。是本 change 的**可选增强**，不加也不影响核心需求成立。
-
-**grill 推荐：不加**——判据在代码上可算（`agent/loop.py:920-926` 的 `tool_call` 步带完整 `arguments`），
-但**语义不可靠**：同工具的后继成功可能是另一次不同的调用。改用**事实性**替代：区块标题带 run 上下文
-（「该 run 已完成（`completed`）；本 run 内出现 3 次工具失败」）。详细反例见 `reviews/grill-design.md` Q1。
-
-### Q2 — 条目上限 N 取多少？
-
-`FAILURE_EVIDENCE_LIMIT = 5` 是调研里见到的通行默认。取值影响：N 越大用户越不容易漏掉早期失败，但抽屉里
-的列表越长。**场景例子**：一个 40 步的 run 里有 9 条失败 → N=5 时用户看到最近 5 条 + 「共 9 条，已截断」。
-
-**grill 推荐：保留 5**，但**前端预览另设短上限**（约 300 字符 + 「预览已截断」note）。理由：4000 是
-「单条消息」口径（`web/session.py:727-731`），不是「抽屉里一行」口径；N 只该决定条目数、不该决定体积。
-
-### Q3 — `state == "clean"` 时前端显示什么？
-
-三种候选：(a) 什么都不显示（「没失败」是常态，不占空间）；(b) 显示一行淡色「已检查，无失败记录」；
-(c) 只在用户展开时显示。**场景例子**：用户点开一个正常完成的节点，`clean` 态下他应该看到「没有需要担心的
-东西」的明确信号，还是干脆看不到这一区（因而也无从知道系统**检查过**）？F2 的教训倾向 (b)——但 (a) 更省
-空间。
-
-**grill 推荐：(b)**，且**负向态也必须各显示一行文案**（不能只有 `clean` 显示），否则会退化成
-「不显示 = 没事」。详细场景见 `reviews/grill-design.md` Q3。
-
-### Q4 — `none` 形态（route / collect / 未派发）往哪放？（grill 新发现）
-
-D1 的六值里没有它们的容身之处（详见 D1 后的「grill 反向挑战的缺口」）。**grill 推荐扩到 7 个取值**，
-新增 `not_applicable`：`state is None` → `unavailable`；`route` / `aggregate+collect` → `not_applicable`；
-`not state.subagent_id` 且非上述 → `unavailable` + 「该节点尚未派发」。场景例子见
-`reviews/grill-design.md` Q4。
-
-### Q5 — `candidates` 形态每候选带完整证据会放大响应？（grill 新发现）
-
-最坏 200 候选 × 20KB ≈ **4MB** 单个 JSON 响应。**grill 推荐每项带轻量证据**（`state`/`total`/`truncated`
-+ 至多 1 条最新失败，单条 ≤400 字符），完整证据只在下钻与 `single` 形态给。详见 `reviews/grill-design.md` Q5。
-
-### Q6 —（阻塞）失败证据的前端落点（grill 判定原 D6 不成立）
-
-见 D6。grill 推荐方案 D，四个方案的改动面/违反面/场景对比见 `reviews/grill-design.md` Q6。
-
-### Q7 — `diagnosis.md` 的两条「死代码」发现怎么归档？（grill 新发现）
-
-`StopReason.ERROR` 死分支（已排除在范围外）+ grill 新发现的 `no_trace` 无活跃生产者。
-**grill 推荐记 `docs/known-debt.md` 一条**（受保护路径，需 `artifact-event` 结构化事件）。
-拍板：记或不记（不记须说明理由）。详见 `reviews/grill-design.md` Q7。
 
 ## Pre-Implementation Review
 

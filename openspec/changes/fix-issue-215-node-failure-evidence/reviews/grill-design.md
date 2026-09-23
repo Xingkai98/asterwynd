@@ -107,4 +107,15 @@
 
 ## User Confirmation
 
-（停轮中：Q1–Q7 逐项抛用户确认，收到答复后逐条写入本节的 `- **Q<n>**: 用户答复：…；确认时间: …` 记录。在全部确认前不写实现代码。）
+用户已逐项答复 Q1–Q7（含 Q6 的后续粒度问题），**全部采纳 grill 的推荐答案**。实现按本节的结论落地。
+
+- **Q1**: 用户答复：**不加**「已恢复」标记（`recovered`）；改为区块标题带 run 上下文——写「该 run 已完成（`completed`）；本 run 内出现 N 次工具失败」这类**事实**表述，不依赖推断；重试轨迹语义归 #202；确认时间: 2026-09-23
+- **Q2**: 用户答复：**保留 `FAILURE_EVIDENCE_LIMIT = 5`**；载荷里单条仍截到 `TRANSCRIPT_CONTENT_LIMIT`(4000) 与既有口径一致，**前端预览另设 ~300 字符**短上限并复用既有 note 模式显式标注「预览已截断，全文见『对话』tab」；确认时间: 2026-09-23
+- **Q3**: 用户答复：**选 (b)**——`state == "clean"` 时显示一行淡色「已检查，无失败记录（trace N 步）」；且 `running` / `no_trace` / `empty_trace` / `unavailable` / `not_applicable` **也必须各显示一行自己的文案**，不得退化成「不显示 = 没事」；确认时间: 2026-09-23
+- **Q4**: 用户答复：**新增第七个取值 `not_applicable`**（扩到 7 值），用于「结构上不可能产生 run」的节点（route / `aggregate(strategy="collect")`）；判据落代码版本：`state is None` → `unavailable`；`node.kind == "route"` 或 collect 聚合 → `not_applicable`；`not state.subagent_id` 且非上述 → `unavailable` + 文案「该节点尚未派发」；确认时间: 2026-09-23
+- **Q5**: 用户答复：**candidates 每项只带轻量证据**——`state` / `total` / `truncated` + 至多 1 条最新失败（单条 ≤400 字符，字段同 D3）；完整证据（最近 5 条 × 4000）只在**下钻**（`_item_drilldown_payload`）与 `single` 形态给；确认时间: 2026-09-23
+- **Q6**: 用户答复：**选方案 D**——「对话」tab 承载证据主体 + 「任务」tab 一行来自快照的有界计数；计数在 `_launch_run` 的 `await self._await_run(...)` 之后**每 run 算一次**（普通节点与 foreach 展开项共用这一处埋点），不在 `_graph_node_projection` 里每帧现算；快照加法字段清单 ADDED 一项；**不得**动 spec 的懒加载条款（`openspec/specs/web-ui/spec.md:836`）与既有浏览器用例（`tests/web_tests/test_workflow_graph_browser.py:488-493`）；确认时间: 2026-09-23
+- **Q6-grain**: 用户答复：快照计数取 **None/0/N 三态**——`0` 也显示一行淡色「已检查、无失败」，与 Q3 的正向声明一致；`None`（无 trace / 不可用）不显示，避免把「没数据」与「没失败」混为一谈；确认时间: 2026-09-23
+- **Q7**: 用户答复：**记 `docs/known-debt.md` 一条**（合并写两条死代码发现：① `StopReason.ERROR` 全仓零赋值点；② `manager.py:1524` 的 `trace=None` 分支不可达、`no_trace` 当前无活跃生产者），标注「本 change 显式不做」；走 `python3 scripts/workflow_state.py artifact-event --event-type protected_artifact_explained` 结构化事件通道；`tasks.md` 补上这条任务；确认时间: 2026-09-23
+
+**结论**：7 条 Open Question 全部确认，无未决项，实现（building）阶段解锁。
