@@ -1,140 +1,250 @@
-# Building Review: fix-issue-235-completion-gate (Round 2)
+# Building Review: fix-issue-235-completion-gate (Round 3)
 
 ## Reviewer
 
-- run id: r2-6b1c9f24（独立零记忆 subagent，未继承开发上下文；结论仅来自实读代码 / 实跑输出 / change 文档）
+- run id: `d4524b50-50b8-4c85-b606-cea8ca2bb854`（独立零记忆 subagent，未继承开发上下文；结论仅来自实读代码 / 实跑输出 / change 文档）
 - 时间: 2026-09-23
-- base: `4424f54882179ef1ec53d2eaa1a7d373280b91fb`（origin/master） head: `396bd44d3725737f5aae866c99a1e3c94198b7c4`
-- 本轮针对: R1（run `3ce1e878`）的 4 个 issue（M1 / low-1 / low-3 / info）
+- base: `4424f54882179ef1ec53d2eaa1a7d373280b91fb`（origin/master，merge-base） head: `bdfd9fade48d191bb9833e7a999d66e17b18e3ce`
+- 本轮针对: R2（run `7c72c707`）的 3 个 issue（M1′ landmine / M2 零勾选 / low docs 对称性）
 - 审阅方法（全部实跑，作者自述一律不作依据）：
-  - 5 个 `git init` 探针仓库（`/tmp/p235_{normal,missing,empty,prose,docsmissing}`）复现「归档目录缺/空/散文式 tasks.md」，用 **CI 第一步真实参数** `--base-ref <sha> --require-base` 端到端跑 `scripts/check_openspec_artifacts.py`
-  - 8 个 low-1 边界探针（`/tmp/low1_*`）覆盖 `archive/.gitkeep`、`archive/notes.md`、真正的无日期目录、既有非规范目录内新增文件、嵌套目录等
-  - 3 个**真实 clone**（`/tmp/pmclean`、`/tmp/pmfut`、早前的 `/tmp/pm3`，非 `cp -a`）模拟「归档 move 后」「本 PR 合入后未来 PR 触碰 docs/known-debt.md」「origin/master 不可解析」三种状态
-  - 变异测试 4 条（M1 回退 / low-1 回退 / low-1 过度收敛 / 去掉自己的 protected 事件），`cp` 备份 + `diff -q` 核对还原，`git status` 干净
-  - 边界探针：M1 的 docs 豁免、all-post-merge tasks.md、checkbox 语法变体、`--skip-protected-paths` 是否关掉 M1
-  - 实跑 `pytest tests/test_openspec_artifact_checker.py`（118 passed）、`tests/agent/workflow/ + test_workflow_guard.py + test_flow_policy.py`（165 passed）、全量 `uv run pytest -q`（6 failed，全为已知环境失败）、OpenSpec strict validate（30/30）、`--check-archived --skip-protected-paths --skip-backlog`（归档段 exit 0）
-  - 93 个历史归档的 tasks.md 证据形态全量扫描
-
-> **关于 HEAD 变动与并发未提交改动**：进入审阅时 HEAD = `177041d`，审阅期间作者并发提交了 `396bd44`（修 backlog 重复标题 + 加锁，未触碰 `scripts/`）。本报告**以 `396bd44` 为准**。审阅末期，作者又在工作区留下**未提交**的改动（`scripts/check_openspec_artifacts.py` +45/-15、`tests/…` +108/-18），内容正是对本报告两条 medium 的修复——属并发在途修复，**尚未进入被审阅的 HEAD**，故不计入 verdict；但我独立验证了它的效果（见文末「并发在途修复」节）。
+  - **6 个真实 clone**（`git clone`，非 `cp -a`）：`/tmp/r3-clone`（M1′ 四态）、`/tmp/r3-b`（归档态 checker）、`/tmp/r3-c`（AR 判别性）、`/tmp/r3-d`（M1′ 变异）、`/tmp/r3-e`（最终归档模拟）、`/tmp/r3-h`（可满足性端到端）
+  - M1′ 四态实跑：active 态 / `git mv` 归档后 / 模拟未来无关 PR 触碰 `docs/known-debt.md` / change 整个移出树；另加 `git remote remove origin` 下的两态（change 在 / 不在）
+  - 93 个历史归档的 tasks.md 证据形态全量扫描（零勾选、缺 tasks.md、无 checkbox 行、post-merge 语义计数）
+  - 变异 4 条（M2 下限回退 / docs 豁免回退 / AR→A / **M1′ landmine 重引入**），`cp` 备份 + `diff -q` 核对还原，`git status` 干净
+  - 实跑 `pytest tests/test_openspec_artifact_checker.py`（121 passed）、`tests/agent/workflow/ + test_workflow_guard.py + test_flow_policy.py`（165 passed）、全量 `uv run pytest -q`（4 failed，全为已知环境失败）、OpenSpec strict validate（30/30）、checker 三种模式
+  - 逐条核对 `tasks.md` 的 `[x]`（含 R1/R2 两节）与实现位置
 
 ## Verdict
 
-**CHANGES_REQUESTED**
+**PASS**
 
-理由：R1 的 **4 项修复本身全部成立**——M1 的三形态端到端报错、low-1 收敛且不 fail-open、low-3 有自己的事件且测试判别、info 已写入开发指南，四者均有实跑证据（见下）。**但修复新增的第 5 条测试 `test_own_change_explains_protected_artifact_with_its_own_event` 是一个必炸的 landmine**：它硬编码 `openspec/changes/fix-issue-235-completion-gate/`（active 路径）且无存在性保护，而 `docs/known-debt.md` 内容永久留在 master 上。后果是——**本 change 自己在归档时刻**（AGENTS.md 强制的归档 move）该测试即 `FileNotFoundError` 转红，CI `pytest` 必挂；且此后**任何**触碰 `docs/known-debt.md` 的未来 PR 也会因 `origin/master...HEAD` 的 diff 非空而触发同一条红。这是新引入的中等缺陷（red CI，不是 fail-open），按 Verdict 规则判 CHANGES_REQUESTED。另有一条 M1 边界（全部标 post-merge、零勾选仍可关闸）在其修复范围内未覆盖。
+R2 的三条 issue **全部确已修复**，且修复本身**没有引入新的 landmine、误红或 fail-open**——这一点是我本轮最重点验的：R1→R2 之间发生过「修复即新缺陷」，所以我对每条修复都做了「最小回退后判别性归零」的变异验证（4/4 转红），并专门复现了 R2 亲手抓到的那个 `FileNotFoundError` 形态以确认新测试仍有真实判别力、不是空过。全部实跑证据见下。
 
-> **重要**：审阅末期我观察到作者已在工作区写下**未提交**的修复，同时覆盖上述两条 medium 与一条 low；我独立复跑验证其确实成立（见文末「并发在途修复」节）。若按该草稿提交，本报告的两条 medium 即消解，verdict 可转 PASS（届时需以含该提交的新 head 重新确认）。
+发现的 3 条 low + 1 条 info 均不阻塞（文档措辞、测试 helper 的边界、以及一条 R2 报告自身的口径误差）。核心功能（issue #235 的两条绕开路径）与 R1/R2 已确认的结论均未被破坏。
 
-## R1 Issues 复核
+## R2 Issues 复核
 
-- **M1（medium，fail-open）— 已修复**。
-  证据（CI 第一步真实参数，探针仓库 `--base-ref <sha> --require-base`）：
-  - `/tmp/p235_missing`（无 tasks.md）→ `ERROR: 2026-09-23-demo-gate: tasks.md 缺失或无任何 checkbox 行 ……`，**EXIT=1**
-  - `/tmp/p235_empty`（0 字节 tasks.md）→ 同上，**EXIT=1**
-  - `/tmp/p235_prose`（散文式，零 checkbox）→ 同上，**EXIT=1**
-  - `/tmp/p235_normal`（正常归档，`- [x]` + `- [ ] (post-merge)`）→ `OpenSpec artifact checks passed`，**EXIT=0**
-  - `/tmp/p235_docsmissing`（docs-only 归档，无 tasks.md）→ `passed`，**EXIT=0**（M1 只作用于非 docs，边界正确）
-  - `--skip-protected-paths --skip-backlog` 下 M1 仍报错（EXIT=1）——门不在可关的分支里。
-  单测侧直接调用 `_check_archived_completion_gate`：缺/空/散文三形态全部报 `tasks.md 缺失或无任何 checkbox 行`。实现位置 `scripts/check_openspec_artifacts.py:1065`（`_tasks_missing_evidence`）+ `:1608`（非 docs 判定）。
-  **但**：修复只堵住了「无 checkbox 行」这一面，`tasks.md` **有** checkbox 行、却**全被 `(post-merge)` 标掉、零勾选**时门仍静默通过（`all_tagged_none_checked` 探针：`missing_evidence=False`、`untagged=[]`、`gate_errors=[]`）。见 Issues M2。
+### **M1′（medium，landmine）— 已修复**
 
-- **low-1（假阳性）— 已修复，且未修成 fail-open**。
-  证据（`/tmp/low1_*`，`_new_archive_dirs_since_base` 实跑）：
-  - `archive/.gitkeep` + `archive/notes.md`（归档根下普通文件）→ `non_conforming=[]` ✅（R1 的假阳性已消）
-  - `archive/foo/proposal.md`（真正无日期目录）→ `non_conforming=['openspec/changes/archive/foo/proposal.md']` ✅（仍报错）
-  - `archive/2026-9-23-foo/`（月份未补零）→ 仍进 `non_conforming` ✅（正则边界未松）
-  - `archive/2026-09-23-bar/reviews/building-review.md` → `new_dirs=['2026-09-23-bar']` ✅（正常归档未受影响）
-  - 既有非规范目录内新增文件（`archive/foo/NEW.md`）→ 仍进 `non_conforming`（R1 记录的「不受 base 树条件约束」仍在，属既有严格化，非新增缺陷）
-  实现位置 `scripts/check_openspec_artifacts.py:108`（`ARCHIVE_DIR_SEGMENT_RE`）+ `:1512`（收敛守卫）。**注意其收敛面**：`archive/<seg>/` 只要有目录段就评命名，故 `archive/unknown-1.0/file.md` 这类非 change 目录会被标为命名不合规（当前语料 0 命中），见 Issues L1。
+`tests/test_openspec_artifact_checker.py:2661`（`_change_dir_in_any_form`）+ `:2682`（测试体）。触发条件已从 `origin/master...HEAD` 的 diff 改为「本树存在本 change 的事件日志」，路径解析改为 active→archive 双形态 + 存在性保护。**六态实跑**（真实 clone）：
 
-- **low-3（证据污染）— 已修复（本 change 侧）+ 机制弱点已记账**。
-  证据：`git show HEAD:openspec/changes/fix-issue-235-completion-gate/workflow-events.jsonl` 第 2 条 = `seq 2, protected_artifact_explained, artifact_path=docs/known-debt.md, reason_len=179, approved_by=human` ✅；`docs/known-debt.md`「既存机制弱点」小节已写入（rglob 全仓命中的描述准确）。新测试判别性**已实测**：`cp` 备份事件日志 → 删掉本 change 的 `protected_artifact_explained` 行 → `test_own_change_explains_protected_artifact_with_its_own_event` **1 failed** → 还原 `diff -q` 一致。**但该测试本身有致命脆性**，见 M1′（列在 Issues）。
+| 状态 | 命令 | 结果 |
+|---|---|---|
+| active 形态 | `/tmp/r3-clone`（HEAD） | `1 passed` |
+| **`git mv` 归档后** | `git mv … archive/2026-09-23-fix-issue-235-completion-gate` + commit | **`1 passed`** ✅（这正是 R2 在旧 HEAD 上抓到 `FileNotFoundError` 的那一态） |
+| 模拟未来无关 PR 触碰 `docs/known-debt.md` | 归档态上 `echo >> docs/known-debt.md` + commit | `1 passed` ✅ |
+| change 整个移出树 | `mv <archive-dir> /tmp/…` + commit | `1 skipped`（`本 change 不在本树（active/archive 均无）`）✅ 非 error |
+| `origin/master` 不可解析 ∧ change 在树 | `git remote remove origin` | `1 passed` ✅ 不报错 |
+| `origin/master` 不可解析 ∧ change 不在树 | 同上 | `1 skipped` ✅ 不报错 |
 
-- **info（写法提示）— 已落地**。
-  证据：`git show HEAD:docs/development-guide.md` 第 269 行「**标记必须紧邻复选框**（中间只允许编号/粗体）。行尾追加的写法**不**被识别，例如 `- [ ] 收尾：关 issue。(post-merge)` ✗、`- [ ] 5.5 收尾 (post-merge)` ✓」；第 271 行补了「`tasks.md` 必须存在且含 ≥1 条 checkbox 行」。方向为 fail-closed（行尾追加会报错不静默），与 `POST_MERGE_TAG_RE` 口径一致。
+**判别力未退化为空过**（这是「拆 landmine」最容易踩的坑）：变异 4 把 `_change_dir_in_any_form` 退回硬编码 active 路径 `return repo_root/"openspec"/"changes"/change_id`，在归档态下实跑 → `FileNotFoundError: /tmp/r3-d/openspec/changes/fix-issue-235-completion-gate/workflow-events.jsonl`，`1 failed`。即新测试在归档态**仍然真的在断言**，不是靠 skip 蒙混。
+
+边界（low，见 Issues L1）：glob `*-<change_id>` 是**后缀匹配**，实跑确认 `2026-01-01-x-fix-issue-235-completion-gate` 这样的诱饵目录会被选中（`sorted()` 下 `2026-01-01` 排在真目录前）。
+
+### **M2（medium，fail-open 边界）— 已修复**
+
+`scripts/check_openspec_artifacts.py:1063`（`_tasks_missing_evidence`）下限已提到「≥1 条被勾选」（`return not any(match.group(1).lower() == "x" …)`），与 `_tasks_all_complete` 的 `checked > 0` 对齐。实跑三态：
+
+- 零勾选（全 `(post-merge)`）→ **报错**：`tasks.md 缺失或无任何 checkbox 行 —— 归档点无法评估完成度 …` ✅
+- 一条 `- [x]` + 一条 `- [ ] (post-merge)` → `[]`（**不误红**）✅
+- 变异 1（下限回退为 `return False`）→ `test_archived_gate_flags_all_post_merge_zero_checked` **1 failed** ✅
+
+**作者称「历史归档真实存在 8/93」——实跑复核完全吻合**，且清单逐条对上：
+
+```
+2026-07-08-multi-agent-dev-workflow          2026-07-12-add-context-builder-architecture
+2026-07-09-add-persistent-cross-session-memory 2026-07-12-add-context-compression-strategies
+2026-07-09-add-semantic-code-search          2026-07-12-implement-context-injection-pipeline
+2026-07-09-improve-agent-execution-foundation 2026-07-12-improve-system-prompt-architecture
+```
+
+（全量扫描：93 个归档中「有 checkbox 行但零勾选」恰为 8 个；「无 tasks.md」0 个；「有 tasks.md 但无 checkbox 行」0 个。）
+
+### **low（对称性）— 已修复**
+
+归档门对 docs 也要求 `tasks.md` 证据（`scripts/check_openspec_artifacts.py:1617`，统一口径不再按 `primary != "docs"` 分流）。实跑四态：
+
+- docs-only 归档**缺** tasks.md → **报错** ✅
+- docs-only 归档**有** tasks.md（一条勾选 + 一条 `(post-merge)`）→ `[]` ✅
+- 变异 2（把文档豁免加回 `change_type.primary != "docs" and _tasks_missing_evidence(...)`）→ `test_archived_gate_docs_only_missing_tasks_md_is_flagged` **1 failed** ✅
+- **语料 0 假阳性**：93 个归档中 `primary == "docs"` 的只有 2 个（`2026-08-03-interview-script`、`2026-09-22-fix-issue-229-231-debt-wording`），**两个都有 tasks.md** ⇒ 统一口径零假阳性。作者「0/93」的分母写法偏松（93 是全部归档数、非 docs 数），实质结论成立。
 
 ## Tasks Verification
 
-### R1 修复小节（`tasks.md:65-85`）逐条核对——5 条 `[x]` 全部真实落地
+### R1 修复小节（`tasks.md:65-85`）——4 条 `[x]` 真实落地
 
-- [x] `tasks.md:69` **M1**：`_tasks_missing_evidence`（`:1065`）+ 归档门接线（`:1608`）②三条回归测试（`:2536` / `:2555`）**真实存在且判别**（变异 1 转红 3 条）。
-- [x] `tasks.md:74` **low-1**：`ARCHIVE_DIR_SEGMENT_RE`（`:108`）+ 守卫（`:1512`）②两条回归测试（`:2568` / `:2587`）**真实存在且判别**（变异 2 转红 1 条；变异 4「过度收敛」转红 2 条，说明两侧都锁住了）。
-- [x] `tasks.md:79` **low-3**：自己的事件（`seq 2`）+ 回归测试（`:2604`）**真实存在且判别**（变异 3 转红）。
-- [x] `tasks.md:84` **info**：开发指南两段 **真实存在**（`docs/development-guide.md:269` / `:271`）。
+- [x] `tasks.md:69` **M1**：`_tasks_missing_evidence`（`scripts/check_openspec_artifacts.py:1063`）+ 归档门接线（`:1617`）；测试 `:2509` / `:2528` 存在且判别（变异 1 波及）。
+- [x] `tasks.md:74` **low-1**：`ARCHIVE_DIR_SEGMENT_RE`（`:108`）+ 收敛守卫（`:1512`）；测试 `:2607` / `:2629` 存在。
+- [x] `tasks.md:79` **low-3**：本 change 自己的事件存在——实读 `workflow-events.jsonl` 第 2 条 = `seq 2 / protected_artifact_explained / artifact_path=docs/known-debt.md / change_id=fix-issue-235-completion-gate`，含 `reason` + `approved_by` ✅；测试 `:2682`。
+- [x] `tasks.md:84` **info**：`docs/development-guide.md:269` / `:271` 两段存在 ✅（**但 `:269` 的 ✓ 例写错，见 L2**）。
 
-### 前序实现任务（`tasks.md` 实现/测试/文档节）——逐条抽查，无「`[x]` 无实现」
+### R2 修复小节（`tasks.md:92-108`）——3 条 `[x]` 真实落地
 
-- [x] `tasks.md:5-6` 设计追问证据 — `reviews/grill-design.md` 存在（R1 已核，本轮未变）。
-- [ ] `tasks.md:17-28`（仍未勾，属收尾前正常）— 实现**均存在**：归档点求值 `:1691-1698`、`_new_archive_dirs_since_base:1464`、`ARCHIVE_PATH_RE:103`、非规范进 errors `:1639-1643`、`--require-base` 消费 `:1635-1638`、`_check_archived_completion_gate:1545`、building-review 只做存在性 `:1596-1604`、A′ 参数 `:529`/`:739` + 三处判据 `:612`/`:763`/`:782`、`check_change` 一行未动（`git diff origin/master...HEAD -- scripts/check_openspec_artifacts.py | grep check_change` 只命中注释 `:257`）。
-- [ ] `tasks.md:32-47` 测试项 — 全部存在于 `tests/test_openspec_artifact_checker.py`；本轮实跑 118 passed。
-- [ ] `tasks.md:52-58` 文档 — `AGENTS.md` 触发点改挂归档点 + `(post-merge)` 段；`docs/development-guide.md`；`docs/known-debt.md` 残余面；spec delta；backlog。
+- [x] `tasks.md:96` **M1′**：`_change_dir_in_any_form`（`tests/test_openspec_artifact_checker.py:2661`）+ 测试重写（`:2682`）✅ 六态实跑通过。
+- [x] `tasks.md:99` **M2**：`_tasks_missing_evidence` 下限（`scripts/check_openspec_artifacts.py:1063`）；正向测试 `:2566` + 反向测试 `:2588`（防误红）✅。
+- [x] `tasks.md:104` **low（对称性）**：归档门 docs 口径统一（`scripts/check_openspec_artifacts.py:1617`）；测试 `:2605` ✅。
+- [ ] `tasks.md:107` **low（记录待办）**：`archive/unknown-1.0/file.md` 类非 change 目录仍评命名——作者有意接受的严格化，语料 0 命中，**不阻塞**（符合本轮审阅说明）。
 
-### 新增第 6 条测试（`tasks.md` 之外的 `396bd44`）
+### 前序实现/测试/文档任务（`tasks.md:17-58`，仍未勾，属收尾前正常）
 
-- [x] `test_backlog_has_no_duplicate_section_headings`（`:2640`）— 真实存在，锁住立项提交误伤的 `### 3. X### 3. X`。属合理附带修复（本 change 自己弄脏的 backlog 行）。
+逐条抽查**实现均存在**，无「`[x]` 无实现」：
 
-**未勾且未实现**：无。
+- 归档点求值在 `--skip-protected-paths` 块**之外**且用 `not args.check_archived and not args.change` 显式守卫 — `scripts/check_openspec_artifacts.py:1735-1748` ✅
+- `_new_archive_dirs_since_base`（`:1477`）：`--diff-filter=AR`（`:1504`）+ 「base 树不存在」判定（`_archive_dir_names_in_base` `:1540`）✅
+- 非规范归档目录进 `errors`（`:1653-1657`）；`--require-base` 语义（`:1648-1652`）✅
+- 四道门复用现有判定函数；A′ 参数 `assume_implemented` 在 `:529` / `:739`，三处判据 `:612` / `:763` / `:782` ✅
+- **`check_change` 一行未动**：`git diff origin/master...HEAD -- scripts/check_openspec_artifacts.py | grep "def check_change"` 无命中 ✅
+- 新增测试全部存在于 `tests/test_openspec_artifact_checker.py`（121 passed）✅
+- `AGENTS.md` 触发点改挂归档点 + `(post-merge)` 段；`docs/development-guide.md` 新节；`docs/known-debt.md` 残余面；spec delta（`## MODIFIED Requirements` 103 行）✅
 
 ## Issues
 
-- **medium** `tests/test_openspec_artifact_checker.py:2604-2637`（`test_own_change_explains_protected_artifact_with_its_own_event`）— **本 change 归档即转红，且会误伤未来触碰 `docs/known-debt.md` 的 PR**。测试第 `:2614` 行硬编码 active 路径 `openspec/changes/fix-issue-235-completion-gate`，并**无存在性保护**地读 `…/workflow-events.jsonl`（`:2625`）；而 `:2617` 的触发条件是 `git diff --name-only origin/master...HEAD -- docs/known-debt.md` 非空——该文件内容永久留在 master 上，故**任何后续 PR 只要再动一次 `docs/known-debt.md`**，条件即为真。实测（真实 clone，非 `cp -a`）：
-  - `/tmp/pmclean`：`git mv` 本 change 到 `archive/2026-09-23-…`（AGENTS.md 强制的归档收尾步）后 → `FileNotFoundError: …/openspec/changes/fix-issue-235-completion-gate/workflow-events.jsonl`，**1 failed**。
-  - `/tmp/pmfut`：把本 change 合入 master（含归档 move）后，再模拟一个**无关未来 PR** 追加一行 `docs/known-debt.md` → diff 非空 → **同样 FileNotFoundError 1 failed**。
-  - `/tmp/noremote235`（`origin/master` 不可解析，如某些 CI 检出形态）→ 该测试 **silently skip**（`1 skipped`），判别力归零。
-  **期望**：触发条件改为「本 change 自己的 `workflow-events.jsonl` **在本树**存在」时才有意义地断言，且路径要**同时**支持 active 与 archive 两形态（例如 `change_dir` 取 `openspec/changes/<id>`，若不存在再回退到 `openspec/changes/archive/*-<id>`，两者都缺则跳过或直接失败），并去掉对 `origin/master` 硬编码（它只在开发者本地存在，CI 上是 `github.event.pull_request.base.sha`）。当前写法把「一次性证据校验」写成了「永久地在 master 上必炸的测试」。
-  **（工作区已有未提交修复，见我独立复跑验证。）**
-
-- **medium** `scripts/check_openspec_artifacts.py:1608`（`_tasks_missing_evidence` 判定过窄）— M1 只堵住「tasks.md 无 checkbox 行」，**未堵住「有 checkbox 行但零勾选」**。实测：`tasks.md` 内容仅 `- [ ] (post-merge) 只有 closeout 项` 时，`_tasks_missing_evidence=False`、`_untagged_unchecked_tasks=[]`、`_check_archived_completion_gate` 返回 `[]`（静默通过）——即「把所有任务都标成 post-merge、一个都不勾」仍可关闸，与 M1 描述的「靠不勾 checkbox 自我关闸」是同一类结构性绕开。该形态在历史归档中**真实存在**：93 个归档里有 **8 个** tasks.md 有 checkbox 行但零勾选（`2026-07-08-multi-agent-dev-workflow`、`2026-07-09-add-persistent-cross-session-memory`、`2026-07-09-add-semantic-code-search`、`2026-07-09-improve-agent-execution-foundation`、`2026-07-12-add-context-builder-architecture`、`2026-07-12-add-context-compression-strategies`、`2026-07-12-implement-context-injection-pipeline`、`2026-07-12-improve-system-prompt-architecture`）。本 PR 的实际语料不受影响（本 change 的 tasks.md 有大量 `[x]`），故非阻塞。**期望**：非 docs 归档在 `_tasks_missing_evidence` 之外补一条「≥1 条 checkbox 被勾选」的下限（即复用 `_tasks_all_complete` 语义的 `checked > 0` 部分），或至少写入 `docs/known-debt.md` 残余面清单（当前 D7/known-debt 只列了「完全不归档」「无日期前缀」两条）。**（工作区已有未提交修复，见我独立复跑验证。）**
-
-- **low** `scripts/check_openspec_artifacts.py:1608`（对称性）— 非 docs 新增了「缺 tasks.md 即报错」，但 **docs-only 归档缺 `tasks.md` 一律豁免**（实测 `/tmp/p235_docsmissing` EXIT=0、直接调用返回 `[]`）。这在「docs 无实现」口径下自洽；但需注意 `tasks.md` 存在时 docs 归档的未勾任务**仍会**报错（实测 `docs + untagged unchecked` → 报错），即 docs 归档缺 tasks.md 放行、有未勾 tasks.md 报错，是一条**隐含的「删掉 tasks.md 即可关闸」**路径。触发条件极窄（仅 docs + 同时需要删文件、且归档路径须在 `docs/` 下），且与 R1 记录的 8 条历史形态不冲突，不阻塞；建议在 known-debt 提一句或把 docs 也纳入「缺 tasks.md 报错」的统一口径。**（工作区已有未提交修复，见我独立复跑验证。）**
-
-- **low** `scripts/check_openspec_artifacts.py:108`（`ARCHIVE_DIR_SEGMENT_RE` 收敛面）— 收敛后凡 `archive/<seg>/…`（有目录段）即评命名，故 `archive/unknown-1.0/file.md`、`archive/scratch/x` 这类**非 change 目录**仍会被报「归档目录命名不合规」。当前语料 0 命中，且方向 fail-closed（会报错不静默），属可接受的严格化；仅记录边界。
+- **low** `docs/development-guide.md:269` — **文档的 ✓ 例子是错的**。该行写「行尾追加的写法**不**被识别，例如 `- [ ] 收尾：关 issue。(post-merge)` ✗、`- [ ] 5.5 收尾 (post-merge)` ✓」，但实跑 `POST_MERGE_TAG_RE` 对这两个串**都是 FLAGGED**（`(?:\d+(?:\.\d+)*)?` 之后必须紧跟 `[（(]`，故 `5.5 收尾` 里的「收尾」把它顶掉）。读者会把 ✓ 理解成「这种写法可以」，照着写就会在归档点吃一条红。方向是 fail-closed（报错不静默），但这段文字的全部目的就是防这条红，写着 ✓ 反把坑指反了。**期望**：把 ✓ 例改成真正被豁免的形态 `- [ ] 5.5 (post-merge) 收尾`（编号在前、tag 紧邻复选框），或删掉 ✓ 以免误导。
+- **low** `scripts/check_openspec_artifacts.py:1622` — **零勾选形态的错误文案误导**。`_tasks_missing_evidence` 现在覆盖「有 checkbox 行但零勾选」，但复用同一句 `tasks.md 缺失或无任何 checkbox 行`。实跑一个 tasks.md 内容为 `- [ ] (post-merge) 关 issue。` 的归档，报的是「**缺失或无任何 checkbox 行**」——文件在、checkbox 行也在，唯事实是「一个都没勾」。按文案排查会往「文件是不是丢了」的方向走，而真因是「把所有任务都标成 closeout」。**期望**：文案拆成两支（缺失/无行 vs 有行但零勾选），或改为「tasks.md 缺失、无 checkbox 行、或零勾选」。
+- **low** `tests/test_openspec_artifact_checker.py:2676` — `_change_dir_in_any_form` 的 `archive_root.glob(f"*-{change_id}")` 是**后缀匹配**，实跑确认诱饵目录 `2026-01-01-x-fix-issue-235-completion-gate` 会被 `sorted()` 选中（排在 `2026-09-23-…` 之前）。当前语料无此类诱饵、且该 helper 只服务一条一次性证据测试，影响面窄；但若诱饵恰好含 `protected_artifact_explained` 而真 change 不含，该测试会**假绿**（判据落到了别的目录上）。**期望**：`glob(f"*-{change_id}")` 收成日期前缀精确式（如 `re.fullmatch(r"\d{4}-\d{2}-\d{2}-" + re.escape(change_id), candidate.name)`），与生产代码 `ARCHIVE_PATH_RE` 的口径一致。
+- **info** R2 报告称「把 active 目录移出后**归档段 exit 0**」——**在 `396bd44` 与 `bdfd9fa` 两个 HEAD 上都不复现**：实跑 `--check-archived --skip-protected-paths --skip-backlog`（真实 clone，active 已 `git mv` 走）两边都是 `exit 1`，唯一错因是 `review manifest missing: …/reviews/building-review-manifest.json`（该 change 有 `building-review.md` 而无 manifest）。这是 `_check_review_manifests(archived=True)` 的**既有**行为（`#232 B`），非本 change 引入，也非缺陷——对应 `tasks.md:63` 那条**显式未勾**的「生成 review manifest」。记此仅为纠正 R2 报告的口径，不影响 verdict。
 
 ## Test Results
 
 | 命令 | 结果 |
 |---|---|
-| `uv run pytest -q tests/test_openspec_artifact_checker.py` | **118 passed**（R1 时 111 → +7：M1×1 + 参数化散文/空×2 + low-1×2 + low-3×1 + backlog×1） |
-| `uv run pytest -q tests/agent/workflow/ tests/test_workflow_guard.py tests/test_flow_policy.py` | **165 passed** |
-| `uv run pytest -q`（全量） | **6 failed, 2957 passed, 10 skipped** in 458.52s → 6 条**全为已知环境失败**（见下） |
+| `uv run pytest -q tests/test_openspec_artifact_checker.py` | **121 passed** in 2.07s |
+| `uv run pytest -q tests/agent/workflow/ tests/test_workflow_guard.py tests/test_flow_policy.py` | **165 passed** in 20.45s |
+| `uv run pytest -q`（全量） | **4 failed, 2962 passed, 10 skipped** in 505s → 4 条**全为已知环境失败** |
 | `npx @fission-ai/openspec@1.4.1 validate --all --strict` | **30 passed, 0 failed** |
-| `uv run python scripts/check_openspec_artifacts.py`（`--base-ref <merge-base> --require-base`） | exit 1：`fix-issue-235-completion-gate: review manifest missing`（在途 change 未生成 manifest 的**预期**红，对应未勾任务 `tasks.md:63`） |
-| `… --check-archived --skip-protected-paths --skip-backlog`（真实仓库 93 归档） | exit 1：`fix-issue-235-completion-gate: review manifest missing`（文件名来自 **active** 目录；把 active 目录移出后**归档段 exit 0** + stderr「tasks_hash 已按归档语境跳过（45 个）」）。R1 记录的 exit 0 是旧 HEAD 的观测，**非本 change 引入** |
-| `R1 关注测试`：`test_partial_change_does_not_require_building_review` | **1 passed**（未反转） |
+| `check_openspec_artifacts.py`（`--base-ref <base> --require-base`，归档态终局模拟） | **exit 0**（`OpenSpec artifact checks passed`） |
+| `check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog`（active 移出后） | exit 1：`review manifest missing`（**既有**行为，对应未勾任务 `tasks.md:63`；见 Issues info） |
+| `R1 关注测试`：`test_partial_change_does_not_require_building_review` | **1 passed**（未反转 `f4a4272`） |
 
-**已知环境失败（非本 change 引入）**——与已知清单吻合：
+**已知环境失败（非本 change 引入，如实记录）**——与给定清单吻合：
 
-- `tests/agent/memory/test_persistent.py::TestFindScopeRoot::{test_returns_none_for_non_git_dir, test_malformed_git_file_falls_back_to_scan}` — pristine master 已复现。
-- `tests/agent/tools/test_factory_sandbox_wiring.py::…::test_docker_backend`、`tests/agent/tools/test_sandbox_backends.py::…::test_docker_backend_available` — 无 docker。
-- `tests/web_tests/test_workflow_graph_browser.py::{test_collapsed_group_shows_aggregated_status, test_gestures_pan_after_pinch_release}` — 浏览器 flaky（本次无 chromium）。
-- 本次 tree-sitter Java/Kotlin 用例 **未**失败（可能被 skip），不改变结论。
+- `tests/agent/memory/test_persistent.py::TestFindScopeRoot::{test_returns_none_for_non_git_dir, test_malformed_git_file_falls_back_to_scan}`
+- `tests/agent/tools/test_factory_sandbox_wiring.py::TestBuildSandboxFromConfig::test_docker_backend`
+- `tests/agent/tools/test_sandbox_backends.py::TestBackendSelection::test_docker_backend_available`（无 docker）
+
+本次 tree-sitter Java/Kotlin 用例**未**失败（skip），浏览器用例本次未失败。
 
 **变异测试 4/4**（`cp` 备份 → 改码 → 跑测试 → 还原，`diff -q` 核对，`git status --porcelain` 干净）：
 
 | 变异 | 结果 |
 |---|---|
-| 回退 M1（去掉 `_tasks_missing_evidence` 分支） | `test_archived_gate_flags_missing_tasks_md` + `…without_checkbox_lines[2 参数]` 红（3 failed / 115 passed） |
-| 去掉 `ARCHIVE_DIR_SEGMENT_RE` 守卫（low-1 回退） | `test_archived_gate_does_not_flag_plain_file_under_archive_root` 红（1 failed / 117 passed） |
-| low-1 过度收敛（无日期目录静默丢弃 = fail-open） | `test_archived_gate_reports_non_conforming_archive_dir` + `…still_flags_non_dated_archive_directory` 红（2 failed / 116 passed） |
-| 删掉本 change 自己的 `protected_artifact_explained` 事件 | `test_own_change_explains_protected_artifact_with_its_own_event` 红（1 failed） |
+| 回退 M2 下限（`_tasks_missing_evidence` 零勾选不再 True） | `test_archived_gate_flags_all_post_merge_zero_checked` 红（1 failed / 5 passed） |
+| 回退 docs 对称性（`change_type.primary != "docs" and …`） | `test_archived_gate_docs_only_missing_tasks_md_is_flagged` 红（1 failed / 3 passed） |
+| `--diff-filter=AR` → `A` | `test_archived_gate_ar_catches_pure_rename_where_a_only_misses` 红（1 failed / 2 passed） |
+| **M1′ landmine 重引入**（helper 退回硬编码 active 路径） | 归档态下 `FileNotFoundError` **1 failed**（新测试仍有真实判别力） |
 
-## 并发在途修复（未提交，不计入 verdict）
+**AR 判别性单测**（真实 clone `/tmp/r3-c`，`git mv` 归档本 change）：`--diff-filter=A` 命中 **0** 个路径、`--diff-filter=AR` 命中 **8** 个，`--name-status -M` 显示 `R100` ——两个字母确实缺一不可。
 
-审阅末期工作区出现未提交改动（`git status`：`M scripts/check_openspec_artifacts.py`、`M tests/test_openspec_artifact_checker.py`；`reviews/building-review.md` 的 `M` 是我自己的写入）。我未对它做任何写入，只读地取证并**独立复跑验证**：
-
-- **M1′ landmine**：新增 `_change_dir_in_any_form(repo_root, change_id)`（active 命中优先，否则 glob `archive/*-<change_id>`，都没有返回 None），测试改为「两形态都不存在才 skip」，**删掉了 `origin/master...HEAD` 依赖**。我把该草稿 overlay 到干净 clone 后双向实跑：active 形态 **1 passed**；执行 AGENTS.md 强制的归档 move 之后 **1 passed**（对照 HEAD 上同一状态是 `FileNotFoundError` 1 failed）；该状态下整份 checker 测试 **121 passed**。
-- **M2（零勾选下限）**：`_tasks_missing_evidence` 改为「无 checkbox 行 **或** 零个 `[x]` 即 True」，与 `_tasks_all_complete` 的 `checked > 0` 口径对齐；配两条测试（正例 `test_archived_gate_flags_all_post_merge_zero_checked` + 反例 `test_archived_gate_passes_when_at_least_one_task_checked` 防误红）。
-- **low（docs 对称性）**：归档门对 docs 也要求 `tasks.md` 证据（注释引用语料 0/93 无假阳性）；配 `test_archived_gate_docs_only_missing_tasks_md_is_flagged`。
-- 工作区实跑：`pytest tests/test_openspec_artifact_checker.py` → **121 passed**（相对 HEAD 的 118 新增 3 条，且原 `…without_checkbox_lines` 参数化用例在改动后仍断言「tasks.md 缺失或无任何 checkbox 行」，与新错误文案一致、未失效）。
-
-**提请作者注意**：这些改动在被审阅的 HEAD（`396bd44`）上尚不存在，审判以 HEAD 为准；提交后本报告两条 medium 与一条 low 即消解，但需以新 head 重新确认（且 `test_own_change_explains_protected_artifact_with_its_own_event` 在归档提交落地后仍应保持绿——这正是 M1′ 要求的行为）。
+**可满足性**（本轮新增，证明门不是「必然红」）：在真实 clone 里把本 change 按收尾要求终局化（未实现项全部完成并勾选、纯 closeout 项标 `(post-merge)`、backlog 移除、补 `change_archived` 事件、`git mv` 归档）→ CI 第一步真实参数 `--base-ref <base> --require-base` **exit 0**。
 
 ## 结论
 
-**CHANGES_REQUESTED**，两条中等项需修，其余全部通过。
+**PASS**。R2 的三条 issue 我用实跑逐条确认**真的修复**，且修复没有把 R1→R2 的覆辙再走一遍：M1′ 在六种树态下全部给出预期结果（归档 pass / 未来 PR pass / 移出树 skip / 无 remote 不报错），并且我用「回退成硬编码路径」的变异证明这条测试在归档态**仍有真实判别力、不是靠 skip 空过**——这才是「拆 landmine」与「把测试改成永远绿」的分界线；M2 的下限提升既堵住了零勾选（8/93 语料形态真实存在，清单逐条对上）又没误红「一条勾选 + 一条 post-merge」；docs 对称性统一口径后语料零假阳性（2 个 docs 归档都带 tasks.md）。R1/R2 已确认的结论（`f4a4272` 未反转、AR 判别性、`--check-archived` 的既有时序、OpenSpec 30/30、全量 pytest 仅 4 条已知环境失败）均未被破坏，全部变异各自只让对应用例转红并已还原。
 
-R1 的四项修复我都用实跑证据确认**真的成立**，而且没有把修复做成新的 fail-open：M1 在缺/空/散文三形态上用 CI 第一步真实参数都报了红、正常归档与 docs-only 归档都仍绿、`--skip-protected-paths` 关不掉；low-1 的收敛既消掉了 `archive/.gitkeep` 假阳性，又保住了「真正的无日期目录仍报错」（变异证明两侧都锁住）；low-3 有了本 change 自己的 `protected_artifact_explained` 事件，判别性测试去掉事件即转红；info 落进了开发指南。核心功能（issue #235 的两条绕开路径）也未被破坏。
+留下 3 条 low 与 1 条 info，都不阻塞合入：开发指南的 ✓ 例子把「行尾追加」标成了可用（实为 FLAGGED，照着写会吃红）、零勾选形态复用了「缺失或无 checkbox 行」的误导文案、测试 helper 的 glob 后缀匹配存在诱饵目录面，以及 R2 报告里「归档段 exit 0」的一句口径误差（两 HEAD 上实为 exit 1，错因是既有的 manifest 缺席、对应显式未勾任务）。这些是「更好」，不是「不能合」。
 
-保留意见有两条。第一条是**新引入的必炸测试**：`test_own_change_explains_protected_artifact_with_its_own_event` 硬编码 active 目录路径 + `origin/master...HEAD` 触发条件，而 `docs/known-debt.md` 的内容永久留在 master 上——结果是本 change 一执行 AGENTS.md 强制的归档 move，该测试就 `FileNotFoundError` 转红，CI 的 `pytest` 步必挂；此后任何触碰该文档的未来 PR 也会被同一条件误伤（真实 clone 双向实测，且 `origin/master` 不可解析时它还会静默 skip）。这条测试的意图是对的，但写法把一次性证据校验做成了长期 landmine，必须改成 active/archive 双形态 + 存在性保护。第二条是 M1 的边界仍偏窄：「有 checkbox 行但零勾选（全部标 post-merge）」仍能静默关闸，历史归档里这种 tasks.md 真实存在 8 份——按本 change 自己立的标准（静默无门必须消灭或显式记账），应补「≥1 条被勾选」的下限或把该面写进 known-debt。附带两条 low（docs 归档删 tasks.md 的隐含关闸路径、`archive/unknown-1.0/` 类非 change 目录被评命名）当前语料均 0 命中，记录待办即可。
+---
 
-需要说明的是，审阅末期我观察到作者已在工作区写下覆盖这三条的**未提交**修复，并独立复跑验证其成立（active/archive 双形态都绿、零勾选被拦、docs 口径统一，121 passed）。因此本轮的 CHANGES_REQUESTED 是**针对被审阅 HEAD `396bd44` 的状态**；若作者把在途草稿按现状提交，该判决即应随之翻为 PASS（以含该提交的新 head 重新确认为准）。
+# Building Review: fix-issue-235-completion-gate (Round 4)
+
+## Reviewer
+
+- run id: `a5f8b3e1-c854-4d33-b999-28fff1f98400`（独立零记忆 subagent，未继承开发上下文；结论仅来自实读代码 / 实跑输出 / change 文档）
+- 时间: 2026-09-23
+- base: `4424f54882179ef1ec53d2eaa1a7d373280b91fb`（origin/master，merge-base） head: `f4fcb1ef71ee99caf6d01a674865c7e4417867c7`
+- 本轮针对: R3（run `d4524b50`）判 PASS 后作者追加提交 `f4fcb1e` 修的三条 low（非阻塞）
+- 审阅方法（全部实跑，作者自述一律不作依据）：
+  - **low-1**：`import scripts.check_openspec_artifacts as mod` 取 `POST_MERGE_TAG_RE`，把 `docs/development-guide.md:270-276` 表格里 5 个例子**逐条**喂给正则，比对文档 ✓/✗ 标注
+  - **low-2**：造三个归档目录（缺 `tasks.md` / 散文体零 checkbox / 有 checkbox 全未勾选），用 **CI 第一步真实参数** `--base-ref <sha> --require-base` 端到端跑 CLI，并单独直接调用 `_check_archived_completion_gate`
+  - **low-3**：`git worktree add --detach`（**避免 `cp -a` 共享 `.git`**）造「真身 active + `2026-01-01-add-<id>` 诱饵」，跑 helper；再做一次**去掉精确名校验**的变异验证判别性；另模拟「真身已归档」态对照旧后缀匹配
+  - **回归**：三套 pytest、OpenSpec strict validate、`--check-archived`、纯 rename 归档形态 + `--diff-filter=AR → A` 变异
+  - **断言强度**：把「三形态」相关测试放在**四组变异 checker**上跑判别力探针（含把散文消息塌回「缺失」），`cp` 备份 + `diff -q` 核对还原
+
+## Verdict
+
+**PASS**
+
+三条 low 全部**确已修复**，且逐一实跑确认；回归面无新增中等以上问题（R3 的 PASS 结论仍成立）。发现一条**新的 low（维护性）**：low-2 引入的「散文形态」消息串未被任何断言钉住（变异可塌回「缺失」而 122 条全绿），属判别力缺口而非功能缺陷——不影响 verdict，建议顺手补一条断言。
+
+## R3 low Issues 复核
+
+- **low-1（文档示例指向红）— 已修复**。
+  证据（`POST_MERGE_TAG_RE` 实跑，`scripts/check_openspec_artifacts.py:114`）——表格 5 行与文档标注**逐条一致**：
+  | 文档例子 | 标注 | 实跑 |
+  |---|---|---|
+  | `- [ ] (post-merge) 收尾：关 issue` | ✓ | True ✓ |
+  | `- [ ] 5.5 (post-merge) 收尾：关 issue` | ✓ | True ✓ |
+  | `- [ ] **6.9** (post-merge) 收尾` | ✓ | True ✓ |
+  | `- [ ] 收尾：关 issue。(post-merge)` | ✗ 行尾 | False ✓ |
+  | `- [ ] 5.5 收尾：关 issue (post-merge)` | ✗ 正文插中间 | False ✓ |
+  额外探针：全角 `（post-merge）`、`(POST-MERGE)`、`* [ ]`、`+ [ ]`、缩进子项、无空格 `(post-merge)收尾` 均识别。**端到端**也验了：把文档 ✓ 的三条作为**唯一 closeout 项**（配一条 `[x]`）跑 `_check_archived_completion_gate` → 全部放行；文档 ✗ 的两条 → 全部报「未勾且未标 (post-merge)」（fail-closed 方向正确）。原缺陷（把本要防的红标成 ✓）已消除。
+
+- **low-2（错误消息误述）— 已修复**。
+  `_tasks_missing_evidence` 由 `bool` 改返回**原因串**（`scripts/check_openspec_artifacts.py:1065-1100`），CLI 侧 `:1628-1633` 用 `missing_evidence is not None` 分流。**CI 第一步真实参数**（`--base-ref <sha> --require-base`，探针仓库）三形态消息**各不相同且准确**：
+  - `… 归档点无法评估完成度`，前置串分别为：
+    - `2026-09-23-shape-one-no-tasks: ` **`tasks.md 缺失`**
+    - `2026-09-23-shape-two-prose-only: ` **`tasks.md 无任何 checkbox 行`**
+    - `2026-09-23-shape-three-all-unchecked: ` **`tasks.md 的 checkbox 行全部未勾选`**
+  - 三例 **EXIT=1**（fail-closed 未变）。散文/零勾选两例不再被描述成「缺失」，误述已消。单测侧调用同形同文。
+
+- **low-3（诱饵 glob 假绿）— 已修复且判别**。
+  `_change_dir_in_any_form`（`tests/test_openspec_artifact_checker.py:2662-2687`）新增 `_strip_archive_date_prefix(candidate.name) != change_id → continue` 精确名校验。
+  - **只有诱饵**（`archive/2026-01-01-add-<id>/workflow-events.jsonl`）→ helper 返回 **None** ✓
+  - **诱饵 + 真身**（含真身已归档态）→ 返回**真身** `2026-09-23-fix-issue-235-completion-gate` ✓
+  - **回退 low-3 修复**（还原成旧后缀匹配）在同一「真身已归档 + 诱饵」态 → 返回**诱饵** `2026-01-01-add-…`（字典序在真身之前）——证明 R3 的担忧是**真实的潜在假绿**，修复是承重的，不是纯净化。
+  - **变异判别性**：去掉精确名校验 → `test_change_dir_in_any_form_rejects_suffix_decoy` **1 failed** ✓，还原后 `diff -q` 一致。
+  - 附带说明：该缺口在**当前** HEAD（真身 active）不会显形，因为 `:2673` 的 active 分支先命中；真正暴露是在**归档后**（恰是本 change 下一步要做的）。测试用「真身已归档」形态覆盖了它，正确。
+
+## 回归确认
+
+R3 已 PASS 的结论**仍成立**，本轮的 66 行改动（仅 3 文件：`docs/development-guide.md` / `scripts/check_openspec_artifacts.py` / `tests/test_openspec_artifact_checker.py`）未破坏任何既有面：
+
+- `uv run pytest -q tests/test_openspec_artifact_checker.py` → **122 passed**（与作者自述一致；未新增 xfail/skip/monkeypatch）
+- `uv run pytest -q tests/agent/workflow/ tests/test_workflow_guard.py tests/test_flow_policy.py` → **165 passed**
+- `test_partial_change_does_not_require_building_review` → **1 passed**（active 门不被降级，R2 M1′ 的修复未被回退）
+- `npx @fission-ai/openspec@1.4.1 validate --all --strict` → **30 passed, 0 failed**
+- 归档点门核心判别性（纯 rename 形态，`git init` 探针）：`git mv` 字节相同的归档 move 被 `--diff-filter=AR` 取到，`_new_archive_dirs_since_base` → `['2026-09-23-demo-change']` ✓；变异 `AR → A` → `new_dirs=[]`（纯 rename 漏检 ⇒ 门静默通过），证明 AR 的 `R` 是承重的 ✓（已还原核对）
+- 全量 `uv run pytest -q` → **4 failed, 2963 passed, 10 skipped**，4 条**全为已知环境失败**（`TestFindScopeRoot`×2、docker×2），在 `/tmp/pristine-235` 上逐条复现，非本 change 引入
+
+## Tasks Verification
+
+- [x] `docs/development-guide.md:268-276` **low-1**：把「行尾追加 ✗ / 紧邻 ✓」的口径换成 ✓/✗ 对照表 —— 表格与 `POST_MERGE_TAG_RE` 逐条实跑一致（见上）
+- [x] `docs/development-guide.md:278-281` **low-2 文档侧**：「以下**三种**形态都会被归档点报错——缺文件；写成散文或空文件（零 checkbox 行）；**有 checkbox 行但一条都没勾**……下限是**至少勾选一条**」—— 与实现三形态一一对应，措辞准确
+- [x] `scripts/check_openspec_artifacts.py:1065-1100` **low-2 实现侧**：`_tasks_missing_evidence` 返回三态原因串（`:1087` 缺失 / `:1097` 无 checkbox / `:1099` 全未勾选），`return None` 收敛为「有证据」
+- [x] `scripts/check_openspec_artifacts.py:1628-1633` **接线**：`missing_evidence = …; if missing_evidence is not None:` —— 三态消息进各自的 `errors`
+- [x] `tests/test_openspec_artifact_checker.py:2662-2687` **low-3 实现侧**：精确名校验 + `_strip_archive_date_prefix`
+- [x] `tests/test_openspec_artifact_checker.py:2694-2713` **low-3 测试侧**：`test_change_dir_in_any_form_rejects_suffix_decoy` 双向断言（只诱饵→None；诱饵+真身→真身），变异转红
+- [ ] `tasks.md:17-28 / 32-47 / 52-58`（仍未勾）—— 属收尾前正常；抽查确认**无「`[x]` 无实现」**，亦**无「未勾但未实现」**：例如 `tasks.md:36` 的 `test_partial_change_does_not_require_building_review` 虽未勾，本轮实跑**通过**，属已实现未勾
+
+## Issues
+
+- **low（维护性 / 判别力缺口）** `tests/test_openspec_artifact_checker.py:2565` — low-2 新增的三条消息里，**散文形态那条没被任何断言钉住**。`:2557` 只在 **docstring** 里写了「无任何 checkbox 行」，实际断言是 `assert any("tasks.md" in e and "归档点无法评估完成度" in e …)`，其合取项 `"tasks.md" in e` 因错误模板**恒定包含** `tasks.md` 而**恒真**（探针证实：把原因串换成任意胡话，该合取项仍为真）。**实测**：变异 `scripts/check_openspec_artifacts.py:1097` 的 `"tasks.md 无任何 checkbox 行"` → `"tasks.md 缺失"`（正是 low-2 要防的「把存在的文件误述成缺失」），`pytest tests/test_openspec_artifact_checker.py` 仍 **122 passed**。
+  **期望**：把该断言钉到新增的区分串上（如 `:2565` 改为 `any("无任何 checkbox 行" in e for e in errors)`），并把恒真的 `"tasks.md" in e` 合取项去掉。属**非阻塞**（归档点门本身不是 fail-open，方向 fail-closed，且「全部未勾选」「缺失」两条已被 `:2585` / `:2552` 钉住）；仅建议顺手补，不影响 verdict。
+
+## Test Results
+
+| 命令 | 结果 |
+|---|---|
+| `uv run pytest -q tests/test_openspec_artifact_checker.py` | **122 passed** in 14.98s |
+| `uv run pytest -q tests/agent/workflow/ tests/test_workflow_guard.py tests/test_flow_policy.py` | **165 passed** in 56.44s |
+| `uv run pytest -q`（全量） | **4 failed, 2963 passed, 10 skipped** in 359.31s |
+| `… -k test_partial_change_does_not_require_building_review` | **1 passed** |
+| `npx @fission-ai/openspec@1.4.1 validate --all --strict` | **30 passed, 0 failed** |
+| `--base-ref <sha> --require-base`（三形态探针） | 三条**互异**消息，**EXIT=1** |
+| `--check-archived --skip-protected-paths --skip-backlog`（真实仓库） | exit 1：`fix-issue-235-completion-gate: review manifest missing`（在途 change 未生成 manifest 的**预期**红，对应未勾任务 `tasks.md:63`；**非本轮引入**） |
+| 4 条已知环境失败在 `/tmp/pristine-235` 复现 | 4 failed —— 与本 change 无关 |
+
+**变异测试 4/4**（`cp` 备份 → 改码 → 跑 → 还原，`diff -q` 核对，`git status --porcelain` 干净；测试代码变异在**独立 `git worktree`**，script 变异直接 `cp` 还原）：
+
+| 变异 | 结果 |
+|---|---|
+| 去掉 low-3 精确名校验（`_change_dir_in_any_form` 回退后缀匹配） | `test_change_dir_in_any_form_rejects_suffix_decoy` **1 failed** ✓ |
+| `--diff-filter=AR` → `--diff-filter=A` | 纯 rename 归档 `new_dirs=[]`（漏检）✓ |
+| `_tasks_missing_evidence` 散文消息 `无任何 checkbox 行` → `缺失` | **122 passed（未捕获）** ← 见 Issues low |
+| 回退 low-3 后的「真身已归档 + 诱饵」态 | helper 返回**诱饵**（R3 担忧属实的潜证）✓ |
+
+**审阅环境自述（如实说明）**：我在 `/tmp/shape-probe` 用 `cp -a` 建探测仓库，因拷入的 `.git` 是 **gitfile**（指回真实 worktree 的 git object store），探针的 `git add/commit` 意外落在了真实仓库的远端跟踪 ref `refs/remotes/origin/fix-issue-235-completion-gate/2026-09-23` 上。已发现并清理：`git reset --hard f4fcb1e`（分支回到被审阅 HEAD）、`update-ref` 还原远端跟踪 ref、`rm -rf /tmp/shape-probe`、`git worktree prune`。**已核实 GitHub 从未收到该探针 commit**（`git ls-remote` 显示 `refs/heads/fix-issue-235-completion-gate/2026-09-23` = `f4fcb1e`；`d9a9e10` 是全仓 refs 0 命中）。当前 `git status --porcelain` 仅 `M openspec/changes/.../reviews/building-review.md`（即本报告），与会话开始一致；后续 low-3 探针一律改用**独立 `git worktree`**，不再触碰真实仓库。
+
+## 结论
+
+**PASS**。R3 判 PASS 后作者追加的 `f4fcb1e` 三条 low 修复，我逐条实跑复核，**全部成立**：开发指南的 ✓/✗ 对照表与 `POST_MERGE_TAG_RE` 逐条吻合（含端到端 fail-closed 方向验证）；错误消息真的分成三态、经 CI 第一步真实参数在 CLI 上各自准确、不再用「缺失」描述一个存在的文件；诱饵 glob 的精确名校验既拒了诱饵、又没丢真身，且变异与「真身已归档」对照证明该修复是承重的（旧代码确实会选中字典序在前的诱饵 `2026-01-01-add-…`）。回归面干净：三套 pytest、30/30 strict validate、`--check-archived`、纯 rename 的 `AR` 判别性全部复现，4 条失败均为已知环境失败并在 pristine 上复现，R3 的 PASS 结论未被破坏。唯一新发现是一条**非阻塞 low**——low-2 的散文消息串没被断言钉住（可塌回「缺失」而 122 条全绿，且现有断言的 `"tasks.md" in e` 合取项恒真），属判别力缺口而非功能缺陷，建议顺手补一条精确断言即可，不改变 verdict。

@@ -2563,7 +2563,9 @@ def test_archived_gate_flags_tasks_md_without_checkbox_lines(tmp_path, body):
     (change / "tasks.md").write_text(body, encoding="utf-8")
 
     errors = mod._check_archived_completion_gate(change)
-    assert any("tasks.md" in e and "归档点无法评估完成度" in e for e in errors), (body, errors)
+    # 必须钉死**区分性**子串（R4 发现：`"tasks.md" in e` 是恒真项，因为模板里
+    # 永远有 "tasks.md"——把消息误退回「缺失」也能绿）。这里要求明确说「无 checkbox 行」。
+    assert any("tasks.md 无任何 checkbox 行" in e for e in errors), (body, errors)
 
 
 def test_archived_gate_flags_all_post_merge_zero_checked(tmp_path):
