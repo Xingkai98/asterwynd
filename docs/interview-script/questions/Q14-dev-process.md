@@ -40,8 +40,8 @@ AGENTS.md（开发流程规则）→ openspec/changes/<id>/（proposal/design/ta
 - 文档类写操作豁免（`_is_change_doc_write` 340 行）：proposal/design/tasks/specs/reviews 可写（避免死锁）。
 
 **`scripts/check_openspec_artifacts.py`**
-- `_check_design_review_task`（438 行）：grill 门禁的 checker 侧——tasks 全勾选的完成 change 必须有 grill 证据（≥3 决策 + Open Questions 全确认）。
-- `_check_review_manifests`（732 行）：审阅门禁——非 docs + 有 spec delta + tasks 全勾选的 change 必须有 `reviews/building-review.md` + manifest 且 PASS。
+- `_check_design_review_task`：grill 门禁的 checker 侧——active change 由「tasks 全勾选」触发；归档点则由 `_check_archived_completion_gate` 传 `assume_implemented=True` 直接求值（issue #235），必须有 grill 证据（≥3 决策 + Open Questions 全确认）。
+- `_check_review_manifests`：审阅门禁——active 侧判据为非 docs + 有 spec delta + tasks 全勾选；交付侧改挂**归档点**（本 PR 新建的归档目录，issue #235），必须有 `reviews/building-review.md`（归档点只验存在性）+ manifest 且 PASS（完整性由 CI 第二步 `--check-archived` 承担）。
 - `_check_benchmark_smoke_task` / `_check_current_spec_sync_task`：benchmark 冒烟 + spec 同步任务校验。
 
 **`.claude/commands/grill.md` / `.claude/commands/review-loop.md`** — grill 与审阅闭环的本地命令。

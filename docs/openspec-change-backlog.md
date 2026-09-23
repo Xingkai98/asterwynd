@@ -101,28 +101,6 @@
 
 ## 未实现队列
 
-### 9. `fix-issue-235-completion-gate`
-
-状态：未实现。
-
-关联 issue：[#235](https://github.com/Xingkai98/asterwynd/issues/235)（任务完成度无机械兜底：`_tasks_all_complete` 是「全勾才开门」的触发器，不勾反而绕开门禁；归档路径完全不查）。
-
-批次：流程门禁修复。**经五轮独立方案审阅（R1–R5）收敛**，R5 判 PASS。
-
-建议顺序原因：
-
-- 它是「problem 一（留一条不勾即绕开四道门）+ 问题二（归档路径完全不查）」的共同收口，且 `retire-4phase-state-machine` 退役 `check_phase_done` 后缺口扩大（见 #235 的交叉引用评论）。
-- 方案形态经五轮审阅从「修 4 个 CLI 子命令」演化到**归档点门**——根本依据：门要阻止坏 change **合入**，而 AGENTS.md:25 强制「实现 PR 必含归档」⇒ 归档点是唯一必要且充分的评估点。
-
-主要交付：
-
-- 触发点改挂**归档点**（`--diff-filter=AR` 的 archive 路径），评估全四道门 + 未勾任务。
-- 引入 `(post-merge)` tag 约定（closeout 任务豁免），并文档化进 `AGENTS.md` + 开发指南。
-- **不反转 `f4a4272`**（active 阶段行为不变）；**不追溯**既有 93 个归档。
-- spec delta：`dev-workflow-state-machine` MODIFIED 2 条（审阅门触发 + 内容门槛触发）。
-- 残余面（「实现 PR 完全不归档」+ 无日期前缀归档）记 `docs/known-debt.md`。
-- 实现 PR 合入时给 issue #235 添加完成 comment 并关闭。
-
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。

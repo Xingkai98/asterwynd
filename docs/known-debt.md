@@ -267,3 +267,8 @@ change 的日志里有一条指向同一路径的陈旧事件，门禁就会放�
 本 change 已为自己的 `docs/known-debt.md` 修改写了事件，并以测试
 `test_own_change_explains_protected_artifact_with_its_own_event` 钉死这一点；但把该门收窄为「只认本 change 的事件」
 属独立改动面，超出本 change 边界。
+
+**归档目录名收敛后的边界（R2 low，记录不处理）**：非规范归档判定收敛为「凡 `archive/<seg>/…`（有目录段）
+即评命名」后，`archive/unknown-1.0/file.md`、`archive/scratch/x` 这类**非 change 目录**也会被报
+「归档目录命名不合规」。当前语料 0 命中，方向 fail-closed（报错而非静默放行），故接受该严格化；
+若将来确需在归档根下放非 change 目录，再收窄判定。
