@@ -248,6 +248,28 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。
 
+## 完成度门禁与 `(post-merge)` 任务标记
+
+完成度门禁（审阅证据 / grill 证据 / Open Question 确认 / RIR 内容门槛）的触发点是**归档点**，不是「tasks 全勾」（issue #235）。判据是：本 PR 的 `--diff-filter=AR` diff 中出现的 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` 路径，**且该归档目录在 base 树不存在**（后者排除「往既有归档目录补文件」被误判成新归档）。门在**归档目录**上评估四道门 + 未勾任务，**不因 tasks 未全勾而降级**。
+
+### `(post-merge)` 标记
+
+closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 issue 添加 comment 并关闭」）在归档时刻**结构上无法完成**，因此必须在行内标注 `(post-merge)`，否则归档 PR 会被完成度门禁判红：
+
+```markdown
+- [ ] (post-merge) 收尾：给 issue #235 添加完成 comment 并关闭。
+```
+
+**语法**：`(post-merge)` 必须带括号（全角 `（post-merge）` 或半角皆可），大小写不敏感，允许编号/粗体在其前（`- [ ] 5.5 (post-merge)`、`- [ ] **6.9** (post-merge)`），`-`/`*`/`+` 三种列表标记与缩进子项都识别。
+
+**为什么需要**：归档时 PR 尚未合入，「合入后关 issue」这类任务不可能勾选；没有豁免机制则每个格式正确的新归档都会误红。实测 93 个历史归档中 35 个有未勾项，其中 9 个的未勾项全部属 post-merge 类。
+
+**只有带标记的未勾行被豁免**。无标记的未勾行一律视为「实现未完成」并报错——留一条 `- [ ]` 正是 issue #235 记录的绕开路径（它会让四道门全部关闭）。**不做标题级 legacy 兜底**：那是唯一能 fail-open 的面。
+
+### 归档目录命名
+
+归档目录 MUST 为 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。缺日期前缀（如 `archive/<id>/`）会被完成度门禁**直接报错**——这类目录既不匹配归档正则、又被 `iter_change_dirs` 排除在 active 之外，否则会落进「谁都不管」的静默面。
+
 ## Review manifest 纪律（收尾）
 
 `building-review-manifest.json` 的 `tasks_hash` 绑定的是**审阅时刻**的 `tasks.md`。收尾阶段（spec sync / 归档 move / backlog 移除 / 补勾任务项）**会继续改 `tasks.md`**，所以必须遵守：

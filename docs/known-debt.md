@@ -239,3 +239,20 @@ HEAD（例：`2026-09-14-subagent-concurrency-queue` 的 manifest 记 `head_sha=
 
 即 AGENTS.md 新增段落的「归档 change 也在校验范围内」应读作：**已有审阅报告的归档 change 不再脱离校验**，
 而非「每个归档 change 都必须有 manifest」。若要把后者也变成门禁，属独立 change（需为历史 change 补审阅或豁免）。
+
+### 完成度门禁的残余面（issue #235）
+
+归档点完成度门（`_check_new_archived_completion_gates`）把审阅证据类门禁的触发点从「tasks 全勾」改挂「归档点」，
+已知两处残余面，均为**流程违规**而非静默绕过：
+
+1. **实现 PR 完全不归档** → 门不触发。这违反 AGENTS.md「OpenSpec 收尾」硬规则（实现 PR 必须含归档收尾），
+   但该 change 仍以 active 形态可见，不会被静默吞掉。要机械兜住需另立「active change 存在时长 / 未归档检测」门，
+   超出本 change 边界。
+2. **归档到无日期前缀目录** → 已由本 change **直接报错**兜住（不再只是记债）：`--diff-filter=AR` diff 中出现
+   `openspec/changes/archive/` 下但不匹配 `<YYYY-MM-DD>-<id>/` 的路径会进 `errors`。此条记债仅为说明
+   「为何该守卫是必需的」——缺了它，这类目录既不匹配归档正则、又被 `iter_change_dirs` 排除在 active 之外，
+   会落成「谁都不管」的静默面。当前语料触发面为零（93/93 归档目录都带日期前缀）。
+
+另外，**本门不追溯既有归档**：只有本 PR 新建的归档目录（`AR` diff ∩ base 树不存在）才被求值。对 89 个可解析
+历史归档实跑四道门，69 个会失败（48 个连 `reviews/` 目录都没有）——这正是必须叠加「base 树不存在」条件的原因，
+否则任何「往旧归档补文件」的 PR（`#234`/`#236`/`#238` 的形态）都会触发对陈旧 change 的误判。

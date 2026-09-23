@@ -59,3 +59,20 @@
 - **【新风险｜低-中】D3 路线 B 的「两处调用不漂移」比 design 描述更严重，是结构性覆盖分歧。** design.md:115 把代价描述为「四道门判定逻辑在两处被调用」，但实际差异不止调用点：`check_change`（`:1199-1275`）跑约 10 类检查（required sections、impact analysis、diagnosis、handoff、benchmark smoke、current spec mapping、current spec sync task…），而归档侧按 D2 只跑 5 类。两条路径的**检查集合不同**，未来 `check_change` 增删检查时归档侧不会跟随，漂移是必然而非偶发。若采纳 Q3 的 A′（复用同一对函数 + 参数），这个分歧被压缩到「归档侧少调 5 类检查」这一处**有意的**差异，而不是两套独立实现的差异——这是 A′ 相对 B 的第二个优势。建议加一条测试同时断言 active 与归档两条路径对同一份 gate 输入的结论一致。
 
 - **【低】spec delta 未覆盖 `--check-archived` 与新门「互斥」的规格化。** 当前 delta 的两个 Scenario（`specs/dev-workflow-state-machine/spec.md:32-42`）都只描述「不在本 PR 归档路径中 → 不要求」，没有一条明确写「`--check-archived` 模式 SHALL NOT 触发归档点门」。具体例子：`--check-archived --skip-backlog`（不带 `--skip-protected-paths`）跑在含归档 commit 的分支上——若实现漏了守卫，这个组合会触发新门并在 89 个历史归档上报一片错。建议在 delta 里补一条 Scenario 把它钉死，别只靠 tasks 里的 test 项。
+
+## User Confirmation
+
+用户于 2026-09-23 对上述全部 7 条 Open Question 与 3 条新风险逐项拍板。
+
+- **Q1**: 用户答复：采纳建议，两条测试都补——(a) docs-only 归档 → 四门不报（验豁免继承）；(b) 无 reviews/ 的非 docs 归档 → 报需要 grill 证据（验触发覆盖，这才是真正要防的洞）。；确认时间: 2026-09-23
+- **Q2**: 用户答复：采纳建议，新门放在 `if not args.skip_protected_paths:` 块之外，用 `not args.check_archived` 显式守卫，不靠 --skip-protected-paths 的副作用。；确认时间: 2026-09-23
+- **Q3**: 用户答复：采纳 A′ 裁决——给 _check_reference_implementation_research 与 _check_design_review_task 各加 `*, assume_implemented: bool = False`，函数内三处判据改为 `assume_implemented or _tasks_all_complete(change_dir)`（:585 / :733 / :750）；check_change 一行不动；归档侧传 True。；确认时间: 2026-09-23
+- **Q4**: 用户答复：采纳建议，spec delta 正文把内容门槛展开为两个子检查（自认未完成短语 + tier↔status 闭环与 exempt 证据），并在文档中修正 D2 的错误理由（实为 review manifest missing / active 路径解析，非 tasks_hash mismatch）。；确认时间: 2026-09-23
+- **Q5**: 用户答复：采纳「报错 + known-debt 双写」——--diff-filter=AR 里 startswith("openspec/changes/archive/") 但不匹配日期正则的路径直接进 errors（报归档目录命名不合规，无法评估完成度门），同时在 docs/known-debt.md 记一笔。；确认时间: 2026-09-23
+- **Q6**: 用户答复：采纳建议，O6a 保留（有 review 无 manifest → 第二步报 review manifest missing，锁死分工闭环）；O6b 命题换成「同 PR 对旧归档目录新增文件（A 路径）→ 不评估该旧 id」加「新归档（AR）→ 评估」。；确认时间: 2026-09-23
+- **Q7**: 用户答复：更正为 9/3/23——在本 change 的 proposal 里改，注明原 issue #235 表 12 有误（9+12+23=44≠35），实测为 3；收尾给 #235 写完成 comment 时用更正后的数。；确认时间: 2026-09-23
+- **风险②**: 用户答复：采纳修正——追加「该 archive 子目录在 base 树不存在」判定（git ls-tree -d <base>:openspec/changes/archive 与 HEAD 取差集），排除旧 id、保留纯 rename 案例，并加判别性测试。；确认时间: 2026-09-23
+- **风险小a**: 用户答复：采纳——--change <id> 非空时跳过新门，并加测试锁定。；确认时间: 2026-09-23
+- **风险小b**: 用户答复：采纳——新门自己兑现 --require-base 语义（复用 _changed_paths_since_base 的 warning，防浅检出 fail-open），并加测试。；确认时间: 2026-09-23
+- **风险小c**: 用户答复：采纳——spec delta 补一条 Scenario 钉死「--check-archived 模式 SHALL NOT 触发归档点门」。；确认时间: 2026-09-23
+- **风险③**: 用户答复：确认——给本 change 的 tasks.md:65 收尾项打 (post-merge) tag。；确认时间: 2026-09-23

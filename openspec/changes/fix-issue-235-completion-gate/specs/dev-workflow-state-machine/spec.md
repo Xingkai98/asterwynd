@@ -41,6 +41,34 @@
 - **WHEN** 运行 artifact checker（含 `--check-archived`）
 - **THEN** 检查器 SHALL NOT 要求该 change 补审阅证据或补勾任务
 
+#### Scenario: 向既有归档目录新增文件不被当成新归档
+
+- **GIVEN** 本 PR 向一个**在 base 树中已存在**的归档目录新增了文件（例如补一份 review manifest），该路径以 `A` 出现在 diff 中
+- **WHEN** 运行 artifact checker
+- **THEN** 检查器 SHALL NOT 把该归档目录的 change 当作本 PR 新归档求值
+- **AND** 判据 SHALL 为「该归档子目录在 base 树不存在」，SHALL NOT 仅凭路径匹配正则
+
+#### Scenario: 归档目录命名不合规即报错
+
+- **GIVEN** 本 PR 把 change 移入 `openspec/changes/archive/<id>/`（缺 `YYYY-MM-DD-` 日期前缀）
+- **WHEN** 运行 artifact checker
+- **THEN** 检查器 SHALL 报错，说明该归档目录命名不合规、无法评估完成度门
+- **AND** 该 change SHALL NOT 静默落在「既不在 active 也不在归档门」的无人覆盖区
+
+#### Scenario: 归档点门不因 tasks 未全勾而降级
+
+- **GIVEN** 一个本 PR 新归档的非 docs change，其 `tasks.md` 存在未勾选项且 `reviews/grill-design.md` 不存在
+- **WHEN** 运行 artifact checker
+- **THEN** 检查器 SHALL 在该归档目录上评估 grill 证据并报缺失
+- **AND** 该评估 SHALL NOT 因 tasks 未全勾而静默跳过
+
+#### Scenario: 归档点门与 manifest 校验模式互斥
+
+- **GIVEN** 运行 artifact checker 时带有 `--check-archived`
+- **WHEN** 本 PR 的 diff 中含新归档路径
+- **THEN** 归档点完成度门 SHALL NOT 被触发（该模式 SHALL 只做既有 manifest 的漂移检测）
+- **AND** 单 change 模式（`--change <id>`）SHALL 同样不触发归档点门
+
 #### Scenario: 状态机仪式停用
 
 - **GIVEN** 开发流程精简已生效
@@ -50,7 +78,7 @@
 
 ### Requirement: 内容门槛阶段感知
 
-CI artifact checker 对 `Reference Implementation Research` 字段的检查 SHALL 区分结构门槛与内容门槛：change 处于 proposal 阶段时 SHALL 只要求 section 存在且非空；当 change **在本 PR 归档**时 SHALL 额外检查「自认未完成」短语级模式，命中 SHALL 报错（exit 2）并指明命中短语与字段。
+CI artifact checker 对 `Reference Implementation Research` 字段的检查 SHALL 区分结构门槛与内容门槛：change 处于 proposal 阶段时 SHALL 只要求 section 存在且非空；当 change **在本 PR 归档**时 SHALL 额外执行**两**项内容检查——(1)「自认未完成」短语级模式，命中 SHALL 报错（exit 2）并指明命中短语与字段；(2) **`research_tier` 与 `status` 的闭环校验**：`research_tier: full|light` 时 `status` SHALL 为 `enabled`，`research_tier: exempt` 时 `status` SHALL 为 `disabled` 且 `reason` SHALL 命中结构性豁免关键词或引用证据（`#<数字>` 或 `docs/`、`openspec/changes/archive/`、`reviews/` 路径），违反 SHALL 报错。
 
 （原触发条件「tasks 全部勾选（实现完成）」SHALL 改为「本 PR 归档」——与本 change 的审阅门触发条件对齐；未归档的 active change SHALL 仍只按结构门槛检查。）
 
@@ -60,6 +88,13 @@ CI artifact checker 对 `Reference Implementation Research` 字段的检查 SHAL
 - **WHEN** 其 Reference Implementation Research 字段包含「尚未完成」「待补充」等自认未完成短语
 - **THEN** checker SHALL exit 2
 - **AND** 错误信息 SHALL 指明命中短语与所在字段
+
+#### Scenario: 归档的 change 的 tier 与 status 不闭环
+
+- **GIVEN** 一个本 PR 新归档的 change，其 Reference Implementation Research 声明 `research_tier: exempt` 而 `status: enabled`
+- **WHEN** checker 在该归档目录上求值内容门槛
+- **THEN** checker SHALL 报错，指明 `research_tier: exempt` 在归档时 `status` 必须为 `disabled`
+- **AND** 该检查 SHALL NOT 因该 change 的 tasks 未全勾而被跳过
 
 #### Scenario: proposal 阶段含占位不触发内容门槛
 

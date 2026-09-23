@@ -98,6 +98,21 @@ SELF_ADMITTED_INCOMPLETE_PHRASES = (
     "待确认",
 )
 
+# 归档点完成度门（issue #235）：触发路径与任务行解析。
+# 归档目录固定形如 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。
+ARCHIVE_PATH_RE = re.compile(r"^openspec/changes/archive/(\d{4}-\d{2}-\d{2}-[^/]+)/")
+ARCHIVE_ROOT_PREFIX = "openspec/changes/archive/"
+# 复选框行：`-`/`*`/`+` 三种标记 + `[ ]`/`[x]`/`[X]`（缩进子项也算——调用方
+# 先 strip）。原实现只认 `- [x]`/`* [x]`，漏掉 `[X]` 与 `+`。
+CHECKBOX_RE = re.compile(r"^[-*+]\s*\[([ xX])\]")
+# closeout 类任务的 `(post-merge)` 标记：容忍编号/粗体在前、全半角括号、大小写。
+# 例：`- [ ] 5.5 (post-merge)` / `- [ ] **6.9** (post-merge)` / `- [ ] （post-merge）`。
+POST_MERGE_TAG_RE = re.compile(
+    r"^\s*[-*+]\s*\[[ xX]\]\s*(?:\*\*)?(?:\d+(?:\.\d+)*)?(?:\*\*)?\s*"
+    r"[（(]\s*post-merge\s*[)）]",
+    re.IGNORECASE,
+)
+
 
 def _self_admitted_incomplete(text: str) -> str | None:
     lowered = text.lower()
@@ -503,7 +518,11 @@ def _exempt_reason_satisfies(reason: str) -> bool:
 
 
 def _check_reference_implementation_research(
-    change_dir: Path, proposal_text: str, change_type: ChangeType
+    change_dir: Path,
+    proposal_text: str,
+    change_type: ChangeType,
+    *,
+    assume_implemented: bool = False,
 ) -> list[str]:
     if change_type.primary == "docs":
         return []
@@ -582,7 +601,11 @@ def _check_reference_implementation_research(
     # 内容门槛（#123 阶段感知）：仅当 tasks 全勾（实现完成）时生效。proposal
     # 阶段只查结构门槛（上述 section 存在 + 非空），不触发内容门槛，避免在途
     # change 被误伤。命中「自认未完成」短语 → exit 2，错误指明短语 + 字段。
-    if _tasks_all_complete(change_dir):
+    #
+    # 归档点门（issue #235 / D3 A′）：归档侧传 assume_implemented=True，使内容
+    # 门槛不因归档 change 残留未勾任务而降级——否则一条 `- [ ]` 就能让本门静默
+    # 返回空，正是本 change 要堵的绕开路径。
+    if assume_implemented or _tasks_all_complete(change_dir):
         content_fields = ("reason",)
         if normalized_status == "enabled":
             content_fields += ("research questions", "findings", "design impact")
@@ -708,7 +731,9 @@ def _check_current_spec_sync_task(
     return []
 
 
-def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list[str]:
+def _check_design_review_task(
+    change_dir: Path, change_type: ChangeType, *, assume_implemented: bool = False
+) -> list[str]:
     if not (change_type.all_types & DESIGN_TYPES):
         return []
 
@@ -730,7 +755,8 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
         # User Confirmation coverage (grill-confirmation-gate): only enforced
         # on a completed change (tasks all checked). In-flight changes may keep
         # open questions while the user clarifies mid-development.
-        if _tasks_all_complete(change_dir):
+        # 归档点门（D3 A′）：归档侧 assume_implemented=True 让该覆盖不被未勾项降级。
+        if assume_implemented or _tasks_all_complete(change_dir):
             missing = _unconfirmed_open_questions(text)
             if missing:
                 errors.append(
@@ -747,7 +773,9 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
         return ["missing required file: tasks.md"]
-    if _tasks_all_complete(change_dir) and _changed_capabilities(change_dir):
+    # 归档点门（D3 A′）：归档侧不因未勾项退回字面标记兜底——否则留一条 `- [ ]`
+    # 就能让证据门静默通过（issue #235 的绕开路径）。
+    if (assume_implemented or _tasks_all_complete(change_dir)) and _changed_capabilities(change_dir):
         return [
             "reviews/grill-design.md missing — 实现已完成但独立 subagent design grilling 证据缺失。"
             "请用 /grill 跑独立设计追问并产出结构化决策记录。"
@@ -980,10 +1008,14 @@ def _repo_root_for_change_dir(change_dir: Path) -> Path:
 
 
 def _tasks_all_complete(change_dir: Path) -> bool:
-    """Return True when every checkbox line in tasks.md is ``[x]``.
+    """Return True when every checkbox line in tasks.md is checked.
 
     A tasks.md with no checkbox lines is treated as incomplete (no evidence of
     implementation), so the review gate does not fire prematurely.
+
+    Scan is widened (issue #235 D4) to all three list markers and both checkbox
+    cases: the old ``- [x]``/``* [x]`` pair silently ignored ``+ [ ]`` and
+    ``[X]``, which would have let a ``+ [ ]`` line escape the completion gate.
     """
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
@@ -992,12 +1024,38 @@ def _tasks_all_complete(change_dir: Path) -> bool:
     checked = 0
     unchecked = 0
     for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- [x]") or stripped.startswith("* [x]"):
+        match = CHECKBOX_RE.match(line.strip())
+        if match is None:
+            continue
+        if match.group(1).lower() == "x":
             checked += 1
-        elif stripped.startswith("- [ ]") or stripped.startswith("* [ ]"):
+        else:
             unchecked += 1
     return checked > 0 and unchecked == 0
+
+
+def _untagged_unchecked_tasks(change_dir: Path) -> list[str]:
+    """Return unchecked task lines that lack a ``(post-merge)`` tag.
+
+    Closing tasks that run *after* the PR merges ("关 issue" 类) are
+    structurally impossible to tick at archive time, so they are exempted by an
+    explicit ``(post-merge)`` marker. Everything else unchecked means the
+    implementation is not finished (issue #235 D4) — silently tolerating it is
+    exactly the bypass this change closes.
+    """
+    tasks = change_dir / "tasks.md"
+    if not tasks.exists():
+        return []
+    untagged: list[str] = []
+    for line in tasks.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        match = CHECKBOX_RE.match(stripped)
+        if match is None or match.group(1).lower() == "x":
+            continue
+        if POST_MERGE_TAG_RE.match(line):
+            continue
+        untagged.append(stripped)
+    return untagged
 
 
 def _change_id_from_dir_name(dir_name: str) -> str:
@@ -1379,6 +1437,180 @@ def _changed_paths_since_base(
     return paths, None
 
 
+def _new_archive_dirs_since_base(
+    repo_root: Path, base_ref: str
+) -> tuple[list[str], list[str], str | None]:
+    """Return (new_archive_dirs, non_conforming_paths, warning).
+
+    ``new_archive_dirs`` are the ``<date>-<id>`` archive directory names that
+    **this** diff newly creates — the change's archive point, i.e. the delivery
+    moment the completeness gate must evaluate (issue #235 D1).
+
+    Two filters, both load-bearing:
+
+    * ``--diff-filter=AR``, not ``A``: when the source change directory exists
+      in the base tree git reports the archive move as a rename (``R``), and
+      ``A`` alone yields nothing for a byte-identical ``git mv``. Both forms
+      produce the archive path, so both letters are required.
+    * the directory must be **absent from the base tree**. Path matching alone
+      cannot tell "newly archived in this PR" from "a file was added to an
+      already-archived change" — and the latter is real (#234/#236/#238
+      retrofitted manifests into archives). Without this filter, touching an
+      old archive would drag that stale change through the full gate.
+
+    ``non_conforming_paths`` are paths under the archive root that do **not**
+    match the dated naming rule. Those are invisible to both this gate and
+    ``iter_change_dirs`` (which skips ``archive``), so they must be reported
+    rather than silently dropped.
+    """
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=AR", base_ref, "--"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        warning = (
+            f"could not resolve base ref '{base_ref}' for archived completion gate"
+            f" (exit {result.returncode}): {result.stderr.strip()[:200]}"
+        )
+        return [], [], warning
+
+    archive_names_in_base = _archive_dir_names_in_base(repo_root, base_ref)
+
+    new_dirs: list[str] = []
+    non_conforming: list[str] = []
+    seen: set[str] = set()
+    for raw in result.stdout.splitlines():
+        path = raw.strip()
+        if not path or not path.startswith(ARCHIVE_ROOT_PREFIX):
+            continue
+        match = ARCHIVE_PATH_RE.match(path)
+        if match is None:
+            non_conforming.append(path)
+            continue
+        dir_name = match.group(1)
+        if dir_name in archive_names_in_base or dir_name in seen:
+            continue
+        seen.add(dir_name)
+        new_dirs.append(dir_name)
+    return sorted(new_dirs), sorted(non_conforming), None
+
+
+def _archive_dir_names_in_base(repo_root: Path, base_ref: str) -> set[str]:
+    """Archive directory names present in the base tree (empty on any failure).
+
+    Failure to list the base tree degrades to "treat every matched dir as new",
+    which is the stricter direction; the caller's ``--require-base`` handling
+    covers the unresolvable-base case.
+    """
+    result = subprocess.run(
+        ["git", "ls-tree", "-d", "--name-only", f"{base_ref}:openspec/changes/archive"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _check_archived_completion_gate(change_dir: Path) -> list[str]:
+    """Evaluate the four completeness gates + unchecked tasks on an archive dir.
+
+    Mirrors what ``check_change`` enforces for an active change, but on the
+    **archive point** and without the ``_tasks_all_complete`` trigger: a change
+    that leaves one box unticked must not thereby switch its own gates off
+    (issue #235 D2/D3).
+
+    building-review is checked for **existence only**. Reusing
+    ``_check_review_manifests`` here would resolve paths against the *active*
+    directory (``change_dir_for(..., archived=False)``) and report
+    ``review manifest missing`` for a change that is correctly archived;
+    manifest completeness is the job of the ``--check-archived`` pass, which
+    knows the archived semantics.
+
+    Exemptions are inherited from the reused predicates rather than restated:
+    docs-only (``primary == "docs"``), no spec delta (``_changed_capabilities``),
+    and non-design types (``DESIGN_TYPES``) each skip their gate.
+    """
+    if not change_dir.exists():
+        return []
+    proposal = change_dir / "proposal.md"
+    if not proposal.exists():
+        return [
+            f"{change_dir.name}: 新归档目录缺 proposal.md，无法评估完成度门",
+        ]
+    proposal_text = proposal.read_text(encoding="utf-8")
+    change_type = parse_change_type(proposal_text)[0]
+    if change_type is None:
+        return [
+            f"{change_dir.name}: proposal.md 缺合法 Change Type，无法评估完成度门",
+        ]
+
+    prefix = f"{change_dir.name}: "
+    errors: list[str] = []
+
+    if change_type.primary != "docs":
+        errors.extend(
+            prefix + error
+            for error in _check_reference_implementation_research(
+                change_dir, proposal_text, change_type, assume_implemented=True
+            )
+        )
+
+    errors.extend(
+        prefix + error
+        for error in _check_design_review_task(
+            change_dir, change_type, assume_implemented=True
+        )
+    )
+
+    if (
+        change_type.primary != "docs"
+        and _changed_capabilities(change_dir)
+        and not (change_dir / "reviews" / "building-review.md").exists()
+    ):
+        errors.append(
+            prefix + "building-review.md missing — 归档点要求独立 subagent 审阅证据。"
+            "请用 /review-loop 跑审阅闭环（审→改→再审直到 PASS 或 3 轮封顶）。"
+        )
+
+    for line in _untagged_unchecked_tasks(change_dir):
+        errors.append(
+            prefix
+            + f"归档 change 存在未勾且未标 (post-merge) 的任务：{line}"
+            + " ——closeout 类任务（合入后动作）请标 `(post-merge)`；其余请完成后再归档。"
+        )
+
+    return errors
+
+
+def _check_new_archived_completion_gates(
+    repo_root: Path,
+    changes_root: Path,
+    base_ref: str,
+    *,
+    require_base: bool,
+) -> list[str]:
+    """Run the archive-point completion gate over this diff's newly archived changes."""
+    new_dirs, non_conforming, warning = _new_archive_dirs_since_base(repo_root, base_ref)
+    errors: list[str] = []
+    if warning is not None:
+        if require_base:
+            errors.append(warning)
+        else:
+            print(f"WARNING: {warning}", file=sys.stderr)
+    for path in non_conforming:
+        errors.append(
+            f"{path}: 归档目录命名不合规（应为 openspec/changes/archive/"
+            f"<YYYY-MM-DD>-<change-id>/），无法评估完成度门"
+        )
+    for dir_name in new_dirs:
+        errors.extend(_check_archived_completion_gate(changes_root / "archive" / dir_name))
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--changes-root", default="openspec/changes")
@@ -1448,6 +1680,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
+
+    # 归档点完成度门（issue #235 D6）：**刻意放在 --skip-protected-paths 块之外**。
+    # CI 第二步命令行是 `--check-archived --skip-protected-paths --skip-backlog`，
+    # 若本门在块内，那个 flag 就成了事实上的区分开关，与「不能被它关掉」冲突；
+    # 而 AGENTS.md 速查表推荐本地跑不加该 flag 的 `--check-archived`，那样本门会
+    # 在全部历史归档上求值。区分一律靠显式守卫：
+    #   - --check-archived：只做既有 manifest 漂移检测，不进本门（守爆炸半径）
+    #   - --change <id>：单 change 查询，不应额外评估本分支上的归档 id
+    if not args.check_archived and not args.change:
+        errors.extend(
+            _check_new_archived_completion_gates(
+                _repo_root_for_changes_root(changes_root),
+                changes_root,
+                args.base_ref,
+                require_base=args.require_base,
+            )
+        )
 
     if not args.skip_protected_paths:
         repo_root = _repo_root_for_changes_root(changes_root)
