@@ -814,6 +814,12 @@ def _failure_evidence(
         payload["message"] = message or _FAILURE_EVIDENCE_MESSAGES[value]
         return payload
 
+    if state is not None and state not in FAILURE_EVIDENCE_STATES:
+        # 显式传入的 state 必须是枚举里的取值。放过去会让调用方以为「我指定了
+        # unavailable」，实际却按 trace 内容继续走成 present/clean——静默用错取值
+        # 比直接报错更难查（本项目的历史病根就是「文档承诺了、实现漂了」）。
+        raise ValueError(f"unknown failure_evidence state: {state!r}")
+
     if state is not None and state in ("not_applicable", "unavailable", "running"):
         return settle(state)
 

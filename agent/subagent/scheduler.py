@@ -1690,6 +1690,11 @@ class WorkflowScheduler:
         state.error = None
         state.summary = ""
         state.finished_at = None
+        # 失败计数也必须复位（fix-issue-215 审阅 R1）：它与 ``reason`` 属同一类
+        # 「上一轮的失败痕迹」。不复位会让重跑期间前端显示**上一轮**的失败线索
+        # （实测：``status=pending`` 配 ``failure_count=7``），而这一轮根本还没派发
+        # ——正是本函数 docstring 说的「答错比答不出更糟」。
+        state.failure_count = None
         for edge in self._graph().data_outgoing(state.node.id):
             successor = self._states.get(edge.target)
             if successor is not None:

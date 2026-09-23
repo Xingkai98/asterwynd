@@ -687,3 +687,57 @@ def test_graph_terminal_status_copies_are_equal():
         f"终态集合副本漂移：{ {k: sorted(v) for k, v in copies.items()} }"
     )
     assert "stalled" in values[0], "新档 stalled 必须进三副本"
+
+
+@pytest.mark.asyncio
+async def test_reset_subtree_clears_stale_failure_count(manager):
+    """``_reset_subtree`` 必须清 ``failure_count``（fix-issue-215 审阅 R1）。
+
+    它与 ``reason``/``error``/``summary`` 属**同一类**「上一轮的失败痕迹」：不复位
+    会让重跑期间前端显示上一轮的失败线索，而这一轮根本还没派发——实测症状是
+    ``status=pending`` 配 ``failure_count=7``，即本函数 docstring 说的「答错比答不出
+    更糟」。变异点：删掉 `state.failure_count = None` → 本条必须变红。
+    """
+    spec = {
+        "goal": "loop-back",
+        "nodes": [
+            {"id": "a", "kind": "subagent", "task": "produce"},
+            {"id": "gate", "kind": "route",
+             "cases": [{"when": "RETRY", "to": "a"}], "default": "done"},
+            {"id": "done", "kind": "subagent", "task": "finish"},
+        ],
+        "edges": [
+            {"from": "a", "to": "gate"},
+            {"from": "gate", "to": "a"},
+            {"from": "gate", "to": "done"},
+        ],
+        "entry": ["a"], "terminal": ["done"],
+    }
+    manager.llm = _LLM(content="RETRY")
+    scheduler = WorkflowScheduler(manager)
+    scheduler.spec = parse_workflow_spec(spec)
+    await scheduler.run(scheduler.spec)
+
+    # 取一个真实节点状态，人为置成「上一轮跑过且有失败」再复位。
+    state = next(iter(scheduler._states.values()))
+    state.status = "completed"
+    state.reason = "boom"
+    state.summary = "old output"
+    state.finished_at = 123.0
+    state.failure_count = 7
+
+    scheduler._reset_subtree(state, origin=None)
+
+    assert state.status == "pending"
+    assert state.reason is None
+    assert state.summary == ""
+    assert state.finished_at is None
+    assert state.failure_count is None, (
+        "重跑期间不得留着上一轮的失败计数——它会让「任务」tab 显示"
+        "「本 run 内 7 次工具失败」，而这一轮根本还没派发"
+    )
+    # 快照投影也必须干净（计数是投影直接读的字段）。
+    node = next(n for n in scheduler.workflow_graph_snapshot()["nodes"]
+                if n["id"] == state.node.id)
+    assert node["status"] == "pending"
+    assert node["failure_count"] is None

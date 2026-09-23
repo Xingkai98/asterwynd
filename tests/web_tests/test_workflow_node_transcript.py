@@ -1697,3 +1697,28 @@ async def test_unknown_node_message_matches_its_state(manager):
     assert "不产生 run" not in evidence["message"], (
         "unavailable 的文案不得说成「该节点类型不产生 run」——那是 not_applicable 的话"
     )
+
+
+def test_failure_evidence_rejects_unknown_explicit_state(manager):
+    """显式传入的 ``state=`` 必须是枚举取值——不认识就报错，不静默按 trace 继续走。
+
+    放过去会让调用方以为「我指定了 unavailable」，实际却按 trace 内容走成
+    clean/present。静默用错取值比直接报错难查得多（本项目的历史病根就是
+    「文档承诺了、实现漂了」）。
+    """
+    from web.session import _failure_evidence
+
+    for bogus in ("clena", "PRESENT", "", "unavailable "):
+        with pytest.raises(ValueError):
+            _failure_evidence(None, state=bogus)
+
+
+@pytest.mark.asyncio
+async def test_real_callers_only_pass_declared_states(manager):
+    """所有真实调用点传的 state 都在枚举内（上面那条守卫不会误伤自家调用）。"""
+    manager.llm = _LLM(content="APPROVED: go")
+    scheduler = _scheduler(manager, _route_spec())
+    await scheduler.run(scheduler.spec)
+    for node_id in ("a", "gate", "yes", "no", "nope"):
+        payload = build_node_transcript_payload(manager, scheduler, node_id)
+        assert payload["failure_evidence"]["state"] in FAILURE_EVIDENCE_STATES

@@ -293,9 +293,16 @@
       // 失败线索（change fix-issue-215 Q5）：容器一次渲染 N 项，所以候选行只给
       // **计数**，不给证据正文（正文在下钻后的「对话」视图里，避免响应放大）。
       const evidence = candidate.failure_evidence;
-      if (evidence && evidence.total > 0) {
-        name.appendChild(el('div', 'cand-sub cand-failure',
-          `⚠ ${evidence.total} 条工具/LLM 失败（点进去看）`));
+      if (evidence) {
+        if (evidence.total > 0) {
+          name.appendChild(el('div', 'cand-sub cand-failure',
+            `⚠ ${evidence.total} 条工具/LLM 失败（点进去看）`));
+        } else if (evidence.state !== 'not_applicable') {
+          // Q3 的精神：负向态也要有一行，否则「不显示」会被读成「没问题」。
+          // 这里文案取后端给的 state message（容器级已轻量化，不再展开条目）。
+          name.appendChild(el('div', 'cand-sub',
+            G.failureEvidenceText(evidence.state)));
+        }
       }
       row.appendChild(name);
       const status = el('span', 'cand-status', G.nodeLabel(candidate.status));

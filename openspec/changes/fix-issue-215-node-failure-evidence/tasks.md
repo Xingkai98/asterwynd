@@ -93,7 +93,7 @@
 
 ## 文档
 
-- [ ] `diagnosis.md`：bugfix 门禁要求的 6 章（已完成，含实测探针输出）
+- [x] `diagnosis.md`：bugfix 门禁要求的 6 章（含实测探针输出）
 - [ ] **当前规格同步**：delta 合入 `openspec/specs/web-ui/spec.md`（`current_spec_synced` 事件）
 - [ ] **快照加法字段**：`openspec/specs/web-ui/spec.md` 的 workflow 图快照 requirement 加法字段清单
       ADDED 一项（Q6 方案 D 的计数）
