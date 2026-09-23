@@ -495,3 +495,71 @@ def test_transcript_refresh_stops_while_paused():
     """暂停按钮停的就是这条定时器——暂停是**有效**的（不是装饰）。"""
     assert call("transcriptRefreshDue", {"id": "a", "status": "started"},
                 {"paused": True, "lastFetchedAt": 0.0, "now": 99999.0}) is False
+
+
+# --- 失败证据的前端纯函数层（change fix-issue-215，Q6 方案 D） ----------------
+
+
+def test_failure_evidence_text_covers_every_backend_state():
+    """后端 ``FAILURE_EVIDENCE_STATES`` 的**每一个**取值都要有前端文案。
+
+    这条是「前端版本落后于后端」的机械防线：后端加一个新 state 而前端没跟上时，
+    用户看到的会是空白——而空白会被读成「没问题」，正是本 change 要消灭的误读。
+    """
+    from web.session import FAILURE_EVIDENCE_STATES
+
+    texts = call("failureEvidenceTexts")
+    missing = sorted(set(FAILURE_EVIDENCE_STATES) - set(texts))
+    assert not missing, f"后端有、前端没有文案的 state：{missing}"
+    for state in FAILURE_EVIDENCE_STATES:
+        assert texts[state].strip(), f"{state} 缺文案"
+    # 七态文案互不相同——串台会让用户读到与自己处境相反的结论。
+    assert len(set(texts.values())) == len(texts)
+
+
+def test_failure_evidence_text_degrades_readably_for_unknown_state():
+    """未知 state 必须给可读降级，不能返回空串/undefined。"""
+    for unknown in ("brand_new_state", "", "PRESENT", None):
+        text = call("failureEvidenceText", unknown)
+        assert isinstance(text, str) and text.strip(), f"{unknown!r} 降级成了空"
+    assert call("failureEvidenceText", "present") == call("failureEvidenceTexts")["present"]
+
+
+def test_failure_count_hint_separates_no_data_from_zero():
+    """「任务」tab 的一行线索：``None`` 不显示、``0`` 显示正向声明、``N`` 显示计数。
+
+    变异点：把 ``None`` 与 ``0`` 折叠成同一句 → 本条必须变红（折叠后用户会重新落回
+    「没显示 = 没事」的旧误读，而 ``0`` 恰恰是「系统检查过」的证据）。
+    """
+    assert call("failureCountHint", None) is None, "没有数据 → 不显示"
+    assert call("failureCountHint", 0) == "已检查、无失败。"
+    assert call("failureCountHint", 1).startswith("⚠") and "1 次" in call("failureCountHint", 1)
+    assert "3 次" in call("failureCountHint", 3)
+    assert call("failureCountHint", 0) != call("failureCountHint", None)
+
+
+def test_failure_item_summary_shows_tool_step_and_error_type():
+    """条目摘要至少含工具名、步序、错误类型——那是「哪个工具失败了」的答案。"""
+    summary = call("failureItemSummary", {
+        "type": "tool_result", "step": 7, "tool_name": "Bash",
+        "status": "error", "error_type": "tool_error",
+        "observation": "3 failed, 12 passed\nmore lines", "text_truncated": False,
+    })
+    assert "Bash" in summary and "7" in summary and "tool_error" in summary
+    assert "3 failed" in summary
+    assert "\n" not in summary, "摘要必须是单行"
+
+
+def test_failure_item_summary_handles_llm_error_and_truncation():
+    """``llm_error`` 条目的文本在 ``message`` 上（没有 ``tool_name``/``observation``）——
+    摘要不得因此变成空串；被截断时必须显式标注，否则用户以为正文就这么短。"""
+    summary = call("failureItemSummary", {
+        "type": "llm_error", "step": 9, "tool_name": None, "status": "error",
+        "error_type": "network_timeout", "message": "upstream timed out",
+        "text_truncated": True,
+    })
+    assert "network_timeout" in summary and "upstream timed out" in summary
+    assert "已截断" in summary, "截断必须显式标注"
+
+    empty = call("failureItemSummary", {"type": "llm_error", "step": 2})
+    assert isinstance(empty, str), "缺字段不得返回 undefined"

@@ -113,6 +113,10 @@
     host.textContent = '';
     host.appendChild(toolbar(ctx, payload));
     appendBackLink(host, ctx);
+    // 失败证据（change fix-issue-215）：三形态共用一个挂载点，``payload`` 缺这个键
+    // （老载荷 / 降级路径）时静默跳过。放在消息体**之前**——用户先知道「这个 run
+    // 里有失败」，再往下读对话。
+    appendFailureEvidence(host, payload);
     if (payload.kind === 'single') renderSingle(host, ctx, payload);
     // ``ctx`` 供单项视图回显「第几项」（有的话）——见 renderSingle 的 title 行。
     else if (payload.kind === 'candidates') renderCandidates(host, ctx, payload);
@@ -218,6 +222,43 @@
     appendReason(host, payload);
   }
 
+  /** 失败证据区（change fix-issue-215 D6：证据主体在「对话」tab）。
+   *
+   * 七态各显示**自己**的一句文案——「clean 显示、其它不显示」会退化成
+   * 「不显示 = 没事」，那正是本 change 要消灭的误读（OTel ``Unset`` 的教训）。
+   * 条目按「工具名 · 步序 · 错误类型 + 文本首行」逐条列出，文本用既有 note 模式
+   * 标注截断——预览短上限不等于正文就这么短（issue #213 的同一类坑）。
+   */
+  function appendFailureEvidence(host, payload) {
+    const evidence = payload && payload.failure_evidence;
+    if (!evidence || !evidence.state) return;
+    const isPresent = evidence.state === 'present';
+    if (evidence.state === 'not_applicable' && !isPresent) {
+      // 结构上不产生的节点（route/collect）说这句话是噪音——它们的详情自有一句
+      // 「不产生对话」。其余**所有**取值都必须显示，否则又回到「不显示 = 没事」。
+      host.appendChild(el('div', 'drawer-note', G.failureEvidenceText(evidence.state)));
+      return;
+    }
+    host.appendChild(el('h3', null, '失败证据'));
+    host.appendChild(el('div', 'drawer-text', G.failureEvidenceText(evidence.state)));
+    (evidence.items || []).forEach((item) => {
+      const row = el('div', 'failure-item');
+      row.appendChild(el('div', 'failure-summary', G.failureItemSummary(item)));
+      const text = item.observation || item.message;
+      if (text) {
+        row.appendChild(el('pre', 'failure-text', G.truncateText(text, 300)));
+        if (item.text_truncated || text.length > 300) {
+          row.appendChild(el('span', 'drawer-note', '预览已截断，全文见本条记录。'));
+        }
+      }
+      host.appendChild(row);
+    });
+    if (evidence.truncated) {
+      host.appendChild(el('p', 'drawer-note',
+        `共 ${evidence.total} 条，只显示了最近 ${(evidence.items || []).length} 条。`));
+    }
+  }
+
   /** G17：reason 的**全文**出口——scheduler 侧 reason 从不出现在 transcript 里，
    *  快照里又被截断到 400，所以这里是用户唯一能读到全文的地方。 */
   function appendReason(host, payload) {
@@ -243,6 +284,13 @@
         name.appendChild(el('div', 'cand-sub', G.truncateText(candidate.reason, 80)));
       } else if (candidate.summary) {
         name.appendChild(el('div', 'cand-sub', G.truncateText(candidate.summary, 80)));
+      }
+      // 失败线索（change fix-issue-215 Q5）：容器一次渲染 N 项，所以候选行只给
+      // **计数**，不给证据正文（正文在下钻后的「对话」视图里，避免响应放大）。
+      const evidence = candidate.failure_evidence;
+      if (evidence && evidence.total > 0) {
+        name.appendChild(el('div', 'cand-sub cand-failure',
+          `⚠ ${evidence.total} 条工具/LLM 失败（点进去看）`));
       }
       row.appendChild(name);
       const status = el('span', 'cand-status', G.nodeLabel(candidate.status));

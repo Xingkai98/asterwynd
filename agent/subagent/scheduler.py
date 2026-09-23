@@ -66,6 +66,7 @@ from agent.subagent.workflow import (
 )
 from agent.subagent.workflow_budget import WorkflowBudget, WorkflowBudgetExceeded
 from agent.subagent.workflow_store import WorkflowStore
+from agent.trace_recorder import count_failures
 
 if TYPE_CHECKING:
     from agent.config import AsterwyndConfig
@@ -208,6 +209,10 @@ class _ItemRunSlot:
     subagent_id: str | None = None
     run_id: str | None = None
     on_dispatch: Callable[[], None] | None = None
+    #: 本项 run 的失败步骤数（三态：``None`` = 无可用 trace / ``0`` = 已检查、零失败 /
+    #: ``N`` = N 条失败）。与 ``NodeState.failure_count`` 同口径——展开项的容器快照
+    #: 要靠它显示「这一项里面有没有工具失败」。
+    failure_count: int | None = None
 
 
 @dataclass
@@ -245,6 +250,11 @@ class NodeState:
     #: foreach 的项级计数（M2.1：计数点在每项**完成**那一刻的 done 回调上）。
     items_completed: int = 0
     items_failed: int = 0
+    #: 本节点 run 的失败步骤数，**三态**（change fix-issue-215 的 Q6 方案 D）：
+    #: ``None`` = 没有可用 trace（未派发 / 排队被拒 / trace 为空），**不显示**；
+    #: ``0`` = 已检查、零失败（正向声明）；``N`` = N 条失败。
+    #: ``None`` 与 ``0`` 不得折叠——前者是「没数据」，后者是「检查过、没事」。
+    failure_count: int | None = None
 
     def to_dict(self) -> dict:
         payload: dict[str, Any] = {
@@ -2072,7 +2082,7 @@ class WorkflowScheduler:
         node: WorkflowNode,
         task: str,
         mode: str | None,
-        reuse_state: NodeState | None,
+        reuse_state: NodeState | _ItemRunSlot | None,
         session_name: str | None = None,
     ) -> dict:
         """在**入队上下文**里 set workflow/node/bus 身份后调用 ``run_subagent``。
@@ -2152,6 +2162,14 @@ class WorkflowScheduler:
             on_dispatch()
         terminal = await self._await_run(subagent_id, run_id)
         self._live_runs.get(node.id, []).remove((subagent_id, run_id))
+        # 失败计数（change fix-issue-215 Q6 方案 D）：run 此刻已终态、trace 必然写完，
+        # **每 run 算一次**——不放在 ``_graph_node_projection`` 里每帧现算（那会是每帧
+        # O(节点数 × 步数)，而快照按节点事件推进）。普通节点与 foreach 展开项都走这条
+        # 路径（共用 ``reuse_state`` 这一个身份槽），所以埋一处就够。
+        # 只读 ``run.trace``，不改写入侧那四个终态落点。
+        self._record_failure_count(
+            reuse_state, count_failures(getattr(manager.find_run(subagent_id, run_id),
+                                                "trace", None)))
         return terminal
 
     async def _await_run(self, subagent_id: str, run_id: str) -> dict:
@@ -2174,6 +2192,14 @@ class WorkflowScheduler:
                 )
             self._refresh_peak()
             await asyncio.sleep(_POLL_INTERVAL_S)
+
+    @staticmethod
+    def _record_failure_count(reuse_state: Any, count: int | None) -> None:
+        """把失败计数写回调用方给的身份槽（普通节点是 ``NodeState``，展开项是
+        ``_ItemRunSlot``）。两处共用 ``_launch_run`` 这一个埋点，不埋第二处。
+        """
+        if reuse_state is not None and hasattr(reuse_state, "failure_count"):
+            reuse_state.failure_count = count
 
     def _apply_run_status(self, state: NodeState, status: str) -> None:
         state.runs += 1
@@ -2753,6 +2779,12 @@ class WorkflowScheduler:
             "task": (state.node.task or "")[:_SUMMARY_LIMIT],
             "started_at": state.started_at,
             "finished_at": state.finished_at,
+            # 失败计数（change fix-issue-215 Q6 方案 D）：**一个有界整数**，不是证据
+            # 列表——证据本身在 transcript 载荷里（「对话」tab 才取），这里只给
+            # 「这个绿节点里面有没有工具失败」的线索，供「任务」tab 零请求地渲染一行。
+            # 三态：``None`` = 没数据（不显示）、``0`` = 已检查无失败、``N`` = N 条。
+            # 计数在 ``_launch_run`` 的终态点算好存进 ``NodeState``，这里只读取。
+            "failure_count": state.failure_count,
         }
         if state.node.kind == "route":
             # route 的选中出口是控制边高亮的唯一信号（决策 6）。``verdict``/``raw``

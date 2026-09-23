@@ -1134,6 +1134,17 @@
       body.appendChild(box);
     }
 
+    // 失败线索（change fix-issue-215 Q6 方案 D）：**零请求**——数据来自快照节点的
+    // 有界整数 ``failure_count``，所以「任务」tab（抽屉默认 tab）就能显示「这个绿
+    // 节点里面有没有工具失败」。证据正文在「对话」tab，懒加载契约一个字不动。
+    const hint = G.failureCountHint(node.failure_count);
+    if (hint) {
+      const box = document.createElement('div');
+      box.className = node.failure_count > 0 ? 'drawer-failure-hint' : 'drawer-note';
+      box.textContent = hint;
+      body.appendChild(box);
+    }
+
     // Q2 = B：折叠组的展开/收起是抽屉里的动作，不在节点上画独立控件。
     if (node.groupLeader) {
       const expanded = entry.expandedGroups && entry.expandedGroups.has(node.id);

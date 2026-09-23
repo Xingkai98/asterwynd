@@ -25,7 +25,11 @@ from agent.subagent.manager import SubAgentManager
 from agent.subagent.scheduler import WorkflowScheduler
 from agent.subagent.workflow import parse_workflow_spec
 from agent.workspace_policy import WorkspacePolicy
-from web.session import build_node_transcript_payload
+from web.session import (
+    FAILURE_EVIDENCE_STATES,
+    _FAILURE_EVIDENCE_MESSAGES,
+    build_node_transcript_payload,
+)
 
 
 class _LLM:
@@ -943,3 +947,640 @@ async def test_worker_entry_without_workflow_identity_does_not_lie(manager):
     assert "result_ref" not in json.dumps(entry, ensure_ascii=False), (
         "没有落盘引用却提 result_ref——模型按图索骥会扑空，是一句假话"
     )
+
+
+# --- 失败证据投影（change fix-issue-215-node-failure-evidence） ----------------
+#
+# 数据源是 ``run.trace.steps`` 里**已经存在**的失败信号（``status != "ok"`` 的
+# ``tool_result`` + 全部 ``llm_error``）——本 change 只加读取侧投影，不新增采集。
+# 状态枚举七值逐个落测；「无数据」与「无失败」不得折叠成同一个取值。
+
+
+def _tool_result(step: int, name: str, status: str, observation="out",
+                 error_type=None) -> dict:
+    return {"step": step, "type": "tool_result",
+            "data": {"tool_name": name, "status": status, "duration_ms": 1.0,
+                     "observation": observation, "error_type": error_type}}
+
+
+def _llm_error(step: int, error_type: str, message: str = "boom") -> dict:
+    return {"step": step, "type": "llm_error",
+            "data": {"error_type": error_type, "message": message}}
+
+
+def _llm_iteration(step: int) -> dict:
+    return {"step": step, "type": "llm_iteration", "data": {"iteration": step}}
+
+
+def _trace(steps: list[dict]) -> dict:
+    return {"steps": steps, "schema_version": "1.1"}
+
+
+async def _completed_node(manager, node_id: str = "a"):
+    """跑一个单节点 spec，返回 (scheduler, state, run)。"""
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    state = scheduler._states[node_id]
+    run = manager.find_run(state.subagent_id, state.run_id)
+    return scheduler, state, run
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_present_on_completed_run_with_tool_failure(manager):
+    """spec Scenario「run 完成但中途有工具失败」：绿节点也要能读出失败证据。
+
+    这是 issue #215 的主场景——run 终态 ``completed``、``reason`` 为空，但 trace 里
+    躺着两条失败（工具错误 + LLM 错误）。
+    """
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = _trace([
+        {"step": 1, "type": "tool_call",
+         "data": {"tool_name": "Bash", "arguments": {"command": "uv run pytest -q"}}},
+        _tool_result(2, "Bash", "error", "3 failed, 12 passed", "tool_error"),
+        _llm_iteration(3),
+        _llm_error(4, "network_timeout", "upstream timed out"),
+    ])
+
+    assert run.status == "completed", "前置：run 是终态 completed（绿节点）"
+    assert run.reason is None, "前置：整体 run 没失败，所以 reason 是空的"
+
+    payload = build_node_transcript_payload(manager, scheduler, "a")
+    evidence = payload["failure_evidence"]
+    assert evidence["state"] == "present"
+    assert evidence["total"] == 2
+    assert evidence["truncated"] is False
+    # message 必须与 state **配对**：这里是回归——present 分支一度漏设 message，
+    # 于是带着初始的 unavailable 文案返回，成了「状态说有失败、文案说取不到」。
+    assert evidence["message"] == _FAILURE_EVIDENCE_MESSAGES["present"]
+    assert evidence["message"] != _FAILURE_EVIDENCE_MESSAGES["unavailable"]
+
+    tool_item, llm_item = evidence["items"]
+    assert tool_item["type"] == "tool_result"
+    assert tool_item["tool_name"] == "Bash"
+    assert tool_item["step"] == 2
+    assert tool_item["status"] == "error"
+    assert tool_item["error_type"] == "tool_error"
+    assert "3 failed" in tool_item["observation"]
+    assert tool_item["text_truncated"] is False
+
+    assert llm_item["type"] == "llm_error"
+    assert llm_item["error_type"] == "network_timeout"
+    assert llm_item["tool_name"] is None
+    assert "upstream timed out" in llm_item["message"]
+
+
+@pytest.mark.asyncio
+async def test_llm_error_item_status_is_synthesised(manager):
+    """``llm_error`` 的 trace step **没有** ``status`` 键（``trace_recorder.py:226``
+    只写 ``error_type``/``message``）——条目仍须带 ``status``，由投影固定为 ``error``。
+
+    变异点：把合成那一行删掉（直接透传 ``data.get("status")``）→ 本条必须变红。
+    """
+    scheduler, _state, run = await _completed_node(manager)
+    raw_step = _llm_error(1, "rate_limited")
+    assert "status" not in raw_step["data"], "前置：生产者确实不写 status"
+    run.trace = _trace([raw_step])
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["items"][0]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_clean_is_a_positive_statement(manager):
+    """spec Scenario「trace 存在且没有任何失败步骤」：``clean`` 是**正向声明**。
+
+    变异点：把 ``clean`` 当 ``no_trace`` → 本条必须变红（用户在前者可以放心，
+    在后者不能——这正是 change 要区分开的东西）。
+    """
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = _trace([_llm_iteration(1), _tool_result(2, "Read", "ok", "file body")])
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "clean", "走完 trace 且零失败 = 已检查、干净"
+    assert evidence["items"] == []
+    assert evidence["total"] == 0
+    assert evidence["truncated"] is False
+    assert "检查" in evidence["message"] or "无失败" in evidence["message"], (
+        "clean 必须带「已检查过」的文案，否则用户分不清「没失败」与「没看过」"
+    )
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_running_is_not_no_trace(manager):
+    """spec Scenario「run 仍在运行」：``running`` 时 trace 还没写（按设计），
+    但**不得**报成 ``no_trace``（两者成因不同，用户的下一步也不同）。
+    """
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    state = scheduler._states["a"]
+    run = manager.find_run(state.subagent_id, state.run_id)
+    run.status = "running"
+    run.trace = None
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "running"
+    assert evidence["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_no_trace_when_terminal_without_trace(manager):
+    """spec Scenario「run 到终态但从未记录 trace」：``no_trace`` ≠ ``clean``。
+
+    变异点：把 ``no_trace`` 折进 ``clean`` → 本条必须变红。
+    """
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = None
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "no_trace"
+    assert evidence["total"] == 0
+    assert "未记录" in evidence["message"] or "没有采集" in evidence["message"]
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_empty_trace_is_not_no_trace(manager):
+    """spec Scenario「trace 存在但该 run 没有执行过任何步骤」：``empty_trace``
+    必须与 ``no_trace``（以及 ``clean``）都是不同取值。
+
+    成因是排队取消路径 ``manager.py:1086``（以及 ``:1100`` 的兜底）新建的**空**
+    TraceRecorder——它 ``to_dict()`` 出 ``steps == []``，与「压根没 trace」不同。
+    """
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = _trace([])
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "empty_trace"
+    assert evidence["state"] not in ("no_trace", "clean")
+    assert "未执行任何步骤" in evidence["message"]
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_unavailable_when_run_record_is_gone(manager):
+    """spec Scenario「解析不到该节点的 run 记录」：``unavailable`` ≠ ``clean``。
+
+    半合成用例：workflow 内的 ``queue_full`` 因准入背压**预期恒为 0 次**
+    （``scheduler.py`` 的 ``_dispatch_capacity = max_active + max_queued_runs``），
+    所以这里直接构造「run 记录已不在 session.runs 里」的形状，而不是跑一个真实
+    workflow 去撞它——真实路径为 0 次是本 change 的既定事实，不是测试缺陷。
+    """
+    scheduler, state, _run = await _completed_node(manager)
+    session = manager._sessions[state.subagent_id]
+    assert session.runs, "前置：确实有一条 run 记录"
+    session.runs.pop()
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "unavailable"
+    assert evidence["items"] == []
+    assert "无法解析" in evidence["message"]
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_not_applicable_for_route_and_collect(manager):
+    """spec Scenario「结构上不可能产生 run 的节点」：route / collect 报
+    ``not_applicable``，**不得**报 ``unavailable``。
+
+    变异点：把 ``not_applicable`` 当 ``unavailable`` → 本条必须变红。
+    """
+    manager.llm = _LLM(content="APPROVED: go")
+    scheduler = _scheduler(manager, _route_spec())
+    await scheduler.run(scheduler.spec)
+
+    route_evidence = build_node_transcript_payload(
+        manager, scheduler, "gate")["failure_evidence"]
+    assert route_evidence["state"] == "not_applicable"
+    assert route_evidence["items"] == []
+
+    scheduler2 = _scheduler(manager, _single_spec())
+    await scheduler2.run(scheduler2.spec)
+    agg_evidence = build_node_transcript_payload(
+        manager, scheduler2, "c")["failure_evidence"]
+    assert agg_evidence["state"] == "not_applicable", "collect 聚合不产生 run"
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_unavailable_for_never_dispatched_node(manager):
+    """未派发的节点：``unavailable`` + 「尚未派发」文案（与 route/collect 区分开，
+    也与「run 记录被弹出」区分开——三者的下一步动作不同）。
+    """
+    scheduler = _scheduler(manager, _route_spec())
+    # 不 run：全部节点停在 pending。
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "yes")["failure_evidence"]
+    assert evidence["state"] == "unavailable"
+    assert "派发" in evidence["message"] or "未执行" in evidence["message"]
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_returns_most_recent_n_in_time_order(manager):
+    """bounded：只回**最近** N 条（按 trace 步骤序号），显示顺序为时间正序，
+    ``total`` 是**真实**失败总数。
+
+    变异点一：改成取**最早** N 条 → 本条必须变红。
+    变异点二：``total`` 改成返回条数 → 本条必须变红。
+    """
+    from web.session import FAILURE_EVIDENCE_LIMIT
+
+    scheduler, _state, run = await _completed_node(manager)
+    steps = [_llm_iteration(1)]
+    for index in range(1, 10):  # 9 条失败
+        steps.append(_tool_result(index + 1, f"Tool{index}", "error", f"fail-{index}"))
+    run.trace = _trace(steps)
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["total"] == 9, "total 必须是真实失败总数，不是返回条数"
+    assert evidence["truncated"] is True
+    assert len(evidence["items"]) == FAILURE_EVIDENCE_LIMIT
+
+    observed = [item["observation"] for item in evidence["items"]]
+    assert observed == [f"fail-{i}" for i in range(5, 10)], (
+        f"必须取最近 {FAILURE_EVIDENCE_LIMIT} 条且按时间正序，实际 {observed}"
+    )
+    step_numbers = [item["step"] for item in evidence["items"]]
+    assert step_numbers == sorted(step_numbers), "条目必须按 trace 步骤序号正序"
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_truncates_long_text(manager):
+    """单条文本截断：输入**必须真的超过上限**（30000 字），否则「不超上限」是恒真断言。
+
+    变异点：去掉截断（或去掉 ``text_truncated`` 标志）→ 本条必须变红。
+    """
+    from web.session import TRANSCRIPT_CONTENT_LIMIT
+
+    huge = "e" * 30000
+    assert len(huge) > TRANSCRIPT_CONTENT_LIMIT, "构造前提：输入必须真的超上限"
+
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = _trace([_tool_result(1, "Bash", "error", huge, "tool_error"),
+                        _llm_error(2, "timeout", huge)])
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    tool_item, llm_item = evidence["items"]
+    assert len(tool_item["observation"]) <= TRANSCRIPT_CONTENT_LIMIT
+    assert tool_item["text_truncated"] is True
+    assert len(llm_item["message"]) <= TRANSCRIPT_CONTENT_LIMIT
+    assert llm_item["text_truncated"] is True, (
+        "llm_error 被截断的是 message——标志必须对它同样成立"
+    )
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_response_is_bounded_under_huge_trace(manager):
+    """体积有界（grill 指定的断言形状）。
+
+    ``run.trace`` **从不进入响应**，所以「响应体积有界」不是一句「整包长度小于某个
+    宽松常数」就能验的（没有失败时本来就小）。改用可杀变异的最小断言集：
+    条数上限、单条文本总量上限、真实总数、截断标志——「不截断」「不设上限」
+    「total 报成返回条数」三条变异都必红。
+    """
+    from web.session import FAILURE_EVIDENCE_LIMIT, TRANSCRIPT_CONTENT_LIMIT
+
+    huge = "z" * 30000
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = _trace([
+        _tool_result(index + 1, f"Tool{index}", "error", huge, "tool_error")
+        for index in range(300)
+    ])
+
+    payload = build_node_transcript_payload(manager, scheduler, "a")
+    evidence = payload["failure_evidence"]
+    assert len(evidence["items"]) <= FAILURE_EVIDENCE_LIMIT
+    total_text = sum(
+        len(item.get("observation") or "") + len(item.get("message") or "")
+        for item in evidence["items"]
+    )
+    assert total_text <= FAILURE_EVIDENCE_LIMIT * TRANSCRIPT_CONTENT_LIMIT, (
+        f"失败证据文本总量无界：{total_text}"
+    )
+    assert evidence["total"] == 300, "total 必须是真实失败总数（300），不是返回条数"
+    assert evidence["truncated"] is True
+    # 全量 observation 不得原样出现在响应里。
+    assert huge not in json.dumps(payload, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_tolerates_missing_and_empty_fields(manager):
+    """空 / 缺字段不得抛异常，且要给出可读降级（生产者可能写空字符串）。"""
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = _trace([
+        {"step": 1, "type": "tool_result", "data": {"tool_name": "Bash",
+                                                    "status": "error"}},
+        {"step": 2, "type": "tool_result", "data": {"status": "error",
+                                                    "observation": None}},
+        {"step": 3, "type": "llm_error", "data": {}},
+        {"step": 4, "type": "tool_result", "data": {"status": "error",
+                                                    "observation": ["block", "list"]}},
+    ])
+
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "present"
+    assert evidence["total"] == 4
+    for item in evidence["items"]:
+        assert isinstance(item["observation"], (str, type(None)))
+        assert isinstance(item["message"], (str, type(None)))
+        assert isinstance(item["text_truncated"], bool)
+    json.dumps(evidence, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_projection_is_read_only(manager):
+    """只读：投影不得改写 trace，也不得改变执行状态。"""
+    scheduler, state, run = await _completed_node(manager)
+    run.trace = _trace([_tool_result(1, "Bash", "error", "3 failed", "tool_error")])
+    before = json.dumps(run.trace, sort_keys=True)
+    snapshot_before = json.dumps(
+        scheduler.workflow_graph_snapshot()["nodes"], sort_keys=True)
+
+    build_node_transcript_payload(manager, scheduler, "a")
+
+    assert json.dumps(run.trace, sort_keys=True) == before, "投影不得改写 trace"
+    assert json.dumps(scheduler.workflow_graph_snapshot()["nodes"],
+                      sort_keys=True) == snapshot_before
+
+
+# --- 三态挂载：candidates 轻量 / 下钻完整 -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_candidates_carry_lightweight_failure_evidence(manager):
+    """Q5：容器一次渲染 N 项，所以每候选只带**轻量**证据（≤1 条 × ≤400 字符）。
+
+    变异点：把 candidates 改成完整形态（5 条 × 4000）→ 本条必须变红。
+    """
+    from web.session import FAILURE_EVIDENCE_PREVIEW_LIMIT
+
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+    state = scheduler._states["fan"]
+    for index, slot in enumerate(state.item_runs):
+        run = manager.find_run(slot.subagent_id, slot.run_id)
+        if run is None:
+            continue
+        run.trace = _trace([
+            _tool_result(step, f"Tool{step}", "error", "x" * 30000, "tool_error")
+            for step in range(1, 8)
+        ])
+
+    payload = build_node_transcript_payload(manager, scheduler, "fan")
+    assert payload["kind"] == "candidates"
+    checked = 0
+    for candidate in payload["candidates"]:
+        evidence = candidate["failure_evidence"]
+        assert evidence["state"] == "present"
+        assert evidence["total"] == 7, "轻量形态仍须报真实总数"
+        assert evidence["truncated"] is True
+        assert len(evidence["items"]) <= 1, "轻量形态至多 1 条"
+        for item in evidence["items"]:
+            text = item.get("observation") or item.get("message") or ""
+            assert len(text) <= FAILURE_EVIDENCE_PREVIEW_LIMIT, (
+                f"轻量条目文本应 ≤{FAILURE_EVIDENCE_PREVIEW_LIMIT}，实际 {len(text)}"
+            )
+        checked += 1
+    assert checked == 3, "三个展开项都要挂上证据"
+
+
+@pytest.mark.asyncio
+async def test_item_drilldown_carries_full_failure_evidence(manager):
+    """Q5 的另一半：下钻到某一项时给**完整**证据（最近 5 条 × 单条 4000）。
+
+    容器轻量、下钻完整——两者必须真的不同，否则「点进去看细节」没有意义。
+    """
+    from web.session import FAILURE_EVIDENCE_LIMIT
+
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+    container = build_node_transcript_payload(manager, scheduler, "fan")
+    target = container["candidates"][0]
+    slot_run = manager.find_run(target["subagent_id"], target["run_id"])
+    slot_run.trace = _trace([
+        _tool_result(step, f"Tool{step}", "error", "y" * 30000, "tool_error")
+        for step in range(1, 8)
+    ])
+
+    item = build_node_transcript_payload(
+        manager, scheduler, "fan",
+        subagent_id=target["subagent_id"], run_id=target["run_id"],
+    )
+    evidence = item["failure_evidence"]
+    assert evidence["state"] == "present"
+    assert len(evidence["items"]) == FAILURE_EVIDENCE_LIMIT, "下钻给完整形态（5 条）"
+    assert all(item_["text_truncated"] is True for item_ in evidence["items"])
+
+
+@pytest.mark.asyncio
+async def test_drilldown_without_run_id_still_resolves_the_run(manager):
+    """下钻时调用方可以不带 ``run_id``（前端只在 truthy 时才带）。
+
+    ``SubAgentManager.find_run`` 在 ``run_id is None`` 时**恒返回 None**（逐条比较
+    id），直译实现会把这条最常见的路径谎报成 ``unavailable``——必须回落到该
+    session 的最近一次 run（与 ``inspect_transcript`` 对 None 的既有语义一致）。
+    """
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+    container = build_node_transcript_payload(manager, scheduler, "fan")
+    target = container["candidates"][0]
+    slot_run = manager.find_run(target["subagent_id"], target["run_id"])
+    slot_run.trace = _trace([_tool_result(1, "Bash", "error", "3 failed", "tool_error")])
+
+    item = build_node_transcript_payload(
+        manager, scheduler, "fan", subagent_id=target["subagent_id"], run_id=None,
+    )
+    assert item["failure_evidence"]["state"] == "present", (
+        "不带 run_id 的常见路径被谎报成 unavailable"
+    )
+    assert item["failure_evidence"]["items"][0]["tool_name"] == "Bash"
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_key_is_additive_for_all_shapes(manager):
+    """三种形态都带 ``failure_evidence`` 键——加性契约，既有键语义不变。"""
+    manager.llm = _LLM(content="APPROVED: go")
+    scheduler = _scheduler(manager, _route_spec())
+    await scheduler.run(scheduler.spec)
+    for node_id in ("a", "gate", "yes"):
+        payload = build_node_transcript_payload(manager, scheduler, node_id)
+        assert "failure_evidence" in payload, f"{node_id} 缺 failure_evidence"
+
+    scheduler2 = _scheduler(manager, _foreach_spec(3))
+    await scheduler2.run(scheduler2.spec)
+    container = build_node_transcript_payload(manager, scheduler2, "fan")
+    assert container["kind"] == "candidates"
+    assert container["candidates"], "前置：容器确实展开了候选"
+    assert all("failure_evidence" in candidate for candidate in container["candidates"]), (
+        "容器形态的证据挂在**每个候选**上（用户点进哪一项就问哪一项）"
+    )
+
+
+@pytest.mark.parametrize("state", sorted(FAILURE_EVIDENCE_STATES))
+def test_every_failure_evidence_state_has_a_distinct_readable_message(state):
+    """七态**每一态**都配有非空、且**与其他态不同**的文案。
+
+    这条防的是「以后再加一个 state 忘了配 message」：文案表缺键时
+    ``_FAILURE_EVIDENCE_MESSAGES[state]`` 直接 KeyError；而文案互相串台
+    （如 present 用着 unavailable 的话）会让用户读到与自己处境相反的结论——
+    本 change 要消灭的就是这类「说假话」。
+    """
+    assert _FAILURE_EVIDENCE_MESSAGES[state].strip(), f"{state} 缺文案"
+    texts = [_FAILURE_EVIDENCE_MESSAGES[s] for s in FAILURE_EVIDENCE_STATES]
+    assert len(set(texts)) == len(FAILURE_EVIDENCE_STATES), "七态文案不得重复"
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_message_always_matches_state(manager):
+    """端到端一致性：不管走哪条分支，``message`` 都必须是**该 state 自己**的文案。
+
+    这条覆盖主路径（present）与各负向态——把 message 与 state 分开写的实现
+    会在其中某条路径上露馅。
+    """
+    scheduler, _state, run = await _completed_node(manager)
+
+    cases = [
+        (_trace([_tool_result(1, "Bash", "error", "3 failed", "tool_error")]), "present"),
+        (_trace([_llm_iteration(1)]), "clean"),
+        (_trace([]), "empty_trace"),
+        (None, "no_trace"),
+    ]
+    for trace, expected in cases:
+        run.trace = trace
+        evidence = build_node_transcript_payload(
+            manager, scheduler, "a")["failure_evidence"]
+        assert evidence["state"] == expected
+        assert evidence["message"] == _FAILURE_EVIDENCE_MESSAGES[expected], (
+            f"{expected} 的 message 串台成了别的状态的文案"
+        )
+
+    # running：run 未到终态。
+    run.trace = None
+    run.status = "running"
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "running"
+    assert evidence["message"] == _FAILURE_EVIDENCE_MESSAGES["running"]
+    run.status = "completed"
+
+    # unavailable：run 记录被弹出。
+    manager._sessions[scheduler._states["a"].subagent_id].runs.pop()
+    evidence = build_node_transcript_payload(
+        manager, scheduler, "a")["failure_evidence"]
+    assert evidence["state"] == "unavailable"
+    assert evidence["message"] == _FAILURE_EVIDENCE_MESSAGES["unavailable"]
+
+
+# --- 快照失败计数（Q6 方案 D：「任务」tab 的零请求线索） ----------------------
+#
+# 计数在 run 终态那一刻算一次并存进 ``NodeState``/``_ItemRunSlot``，所以这些用例
+# 必须让 trace **在跑的过程中**就带上失败步骤（一个会炸的 LLM 会经
+# ``record_llm_error`` 写进 trace），而不是跑完再去改 ``run.trace``——后者测的是
+# 「改内存能不能反映到快照」，不是本 change 的埋点。
+
+
+class _SelectiveBoomLLM(_LLM):
+    """只对含指定标记的 task 抛异常，其余正常返回。
+
+    foreach 展开项共用同一个 llm 实例，所以要靠 task 文本区分「哪一项该失败」。
+    """
+
+    def __init__(self, markers):
+        super().__init__()
+        self.markers = tuple(markers)
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        blob = " ".join(str(getattr(m, "content", "")) for m in messages)
+        if any(marker in blob for marker in self.markers):
+            raise RuntimeError("model exploded: " + "x" * 200)
+        return await super().chat(messages, tools=tools, model=model)
+
+
+def _node_by_id(snapshot: dict, node_id: str) -> dict:
+    return next(node for node in snapshot["nodes"] if node["id"] == node_id)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_carries_failure_count_for_terminal_run(manager):
+    """终态 run 的 trace 里有 N 条失败 → 快照节点带 ``N``。
+
+    走真实路径：``_BoomLLM`` 抛异常 → ``record_llm_error`` 把 ``llm_error`` 写进该
+    run 的 trace → 终态那一刻被计数。变异点：把 ``_launch_run`` 的计数埋点删掉 →
+    快照字段恒为 ``None``，本条必须变红。
+    """
+    manager.llm = _BoomLLM()
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    node = _node_by_id(scheduler.workflow_graph_snapshot(), "a")
+    assert node["failure_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_count_is_zero_when_checked_and_clean(manager):
+    """零失败 → ``0``（**不是** ``None``）：``0`` 是正向声明「检查过、没事」，
+    ``None`` 是「没数据」——两者在「任务」tab 上的显示行为不同（Q6 粒度确认）。
+    """
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+
+    node = _node_by_id(scheduler.workflow_graph_snapshot(), "a")
+    assert node["failure_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_count_is_none_without_usable_trace(manager):
+    """没有可用 trace 的节点 → ``None``，**不得**报成 ``0``。
+
+    变异点：把 ``count_failures`` 的「空 trace 返回 None」改成返回 0 → 本条变红，
+    后果是「没数据」在 UI 上被显示成「已检查、无失败」。
+    """
+    scheduler = _scheduler(manager, _route_spec())
+    # 不 run：全部节点停在 pending，从未派发 → 没有 trace。
+    node = _node_by_id(scheduler.workflow_graph_snapshot(), "yes")
+    assert node["failure_count"] is None
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_count_covers_foreach_items(manager):
+    """展开项的计数走**同一处**埋点（``_launch_run`` 的 ``reuse_state`` 身份槽）。
+
+    这条是「一处埋点覆盖两种身份」的证据：若只在普通节点路径埋点，展开项会恒为
+    ``None``（容器快照上「这一项里面有失败」就永远是空白）。
+    """
+    manager.llm = _SelectiveBoomLLM(["item-1"])
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+    state = scheduler._states["fan"]
+
+    counts = [slot.failure_count for slot in state.item_runs]
+    assert counts[1] == 1, f"失败那一项必须带计数，实际 {counts}"
+    assert counts[0] == 0 and counts[2] == 0, f"正常项应为 0，实际 {counts}"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_failure_count_field_is_bounded(manager):
+    """快照加法字段是**有界整数**，不是证据列表（Q6：快照按事件推送，不能塞证据）。
+
+    变异点：把整份证据塞进节点投影 → 字段类型不再是 int，本条变红；单测层面再用
+    一条 300 步 × 4000 字的 trace 证明计数本身与文本长度无关。
+    """
+    from agent.trace_recorder import count_failures
+
+    huge_trace = _trace([
+        _tool_result(index, "Bash", "error", "x" * 4000, "tool_error")
+        for index in range(1, 301)
+    ])
+    assert count_failures(huge_trace) == 300, "计数不得随文本长度失真"
+
+    scheduler = _scheduler(manager, _single_spec())
+    await scheduler.run(scheduler.spec)
+    node = _node_by_id(scheduler.workflow_graph_snapshot(), "a")
+    assert isinstance(node["failure_count"], int)
+    assert set(node) >= {"failure_count"}
+    assert "items" not in node and "evidence" not in node, "快照只给计数，不给证据"

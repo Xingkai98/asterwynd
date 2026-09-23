@@ -1750,6 +1750,32 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   line-height: 1.5;
 }
 .drawer-text { font-size: 0.85rem; color: #cbd5e1; white-space: pre-wrap; word-break: break-word; }
+/* 失败证据（change fix-issue-215）：「任务」tab 的一行线索 + 「对话」tab 的条目列表。
+   复用既有抽屉排版语汇，不引入新框架/依赖。 */
+.drawer-failure-hint {
+  background: rgba(248, 113, 113, 0.12);
+  border-left: 3px solid var(--error);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 10px;
+  margin: 10px 0;
+  font-size: 0.83rem;
+  line-height: 1.5;
+}
+.failure-item { margin: 8px 0; }
+.failure-summary { font-size: 0.82rem; color: #cbd5e1; }
+.failure-text {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: rgba(148, 163, 184, 0.08);
+  border-radius: 6px;
+  font-size: 0.76rem;
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+.cand-failure { color: var(--error); }
 .drawer-note { color: var(--text2); font-size: 0.72rem; margin: 6px 0 0; }
 .drawer-action {
   display: block;
