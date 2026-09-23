@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "fix-issue-215-node-failure-evidence", "artifact_path": "docs/openspec-change-backlog.md", "reason": "登记新立项 change fix-issue-215-node-failure-evidence（issue #215）到未实现队列第十六批：M3.6 trace_digest 虚假完成的收窄版补实现（节点失败证据投影）", "approved_by": "user (立项讨论)"}
