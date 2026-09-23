@@ -153,8 +153,10 @@
   M3.6（G9 `trace_digest`）标了 `[x]` 但全仓零实现——本条是其**收窄版补实现**：在 workflow **节点 transcript
   载荷**里加 bounded 的**失败证据**投影（`run.trace.steps` 中 `status != ok` 的 `tool_result` + 全部
   `llm_error`，数据已存在、不新增采集），并用**显式状态枚举**区分「没有 trace」与「trace 里没有失败」——归档
-  design.md:410 坑 (b) 点名的 `trace is None` 三种成因各有独立取值（实测确认：`empty_trace` = 排队取消建空
-  trace / `no_trace` = 排队中撞时间预算写 `None` / `unavailable` = `queue_full` 弹出 run 记录）。
+  design.md:410 坑 (b) 点名的 `trace is None` 成因各有独立取值（实测确认：`empty_trace` = 排队取消建空
+  trace，**两处**调用点 / `unavailable` = `queue_full` 弹出 run 记录等 / `no_trace` = 终态无 trace，
+  其既有写入路径前置条件恒假故属**防御性**取值，详见 `docs/known-debt.md`），并新增第七值
+  `not_applicable`（route / collect 结构上不产生 run）。
   **与 #213 不重叠**（#213 修长度维度、本条修投影维度；探针实证：完成的 run 其 trace 有 2 条失败步骤而载荷
   零命中）。通用 `trace_digest`（含正常步骤）与运行中实时可见性归 #202。依赖既有 trace 数据面
   （`openspec/specs/observability/`）。

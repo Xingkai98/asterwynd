@@ -1699,6 +1699,13 @@ async def test_unknown_node_message_matches_its_state(manager):
     )
 
 
+class _FakeRun:
+    """投影只读 ``status`` 与 ``trace``——用最小替身把「可断言 state」语义钉死。"""
+
+    def __init__(self, status, trace):
+        self.status = status
+        self.trace = trace
+
 def test_failure_evidence_rejects_unknown_explicit_state(manager):
     """显式传入的 ``state=`` 必须是枚举取值——不认识就报错，不静默按 trace 继续走。
 
@@ -1711,6 +1718,17 @@ def test_failure_evidence_rejects_unknown_explicit_state(manager):
     for bogus in ("clena", "PRESENT", "", "unavailable "):
         with pytest.raises(ValueError):
             _failure_evidence(None, state=bogus)
+    # 从 trace 推出的取值**也不能**由调用方断言——静默忽略会让人以为「我指定了」，
+    # 照做则会谎报（例如调用方说 present 而 trace 里其实干净）。fail-fast。
+    trace_with_failure = _trace([_tool_result(1, "Bash", "error", "3 failed", "tool_error")])
+    for derived in ("present", "clean", "empty_trace", "no_trace"):
+        with pytest.raises(ValueError):
+            _failure_evidence(_FakeRun("completed", trace_with_failure), state=derived)
+    # 三个可断言的取值必须被**尊重**（不是被忽略后按 trace 重算）。
+    assert _failure_evidence(None, state="unavailable")["state"] == "unavailable"
+    assert _failure_evidence(_FakeRun("completed", trace_with_failure),
+                             state="not_applicable")["state"] == "not_applicable"
+    assert _failure_evidence(_FakeRun("running", None), state="running")["state"] == "running"
 
 
 @pytest.mark.asyncio
@@ -1722,3 +1740,63 @@ async def test_real_callers_only_pass_declared_states(manager):
     for node_id in ("a", "gate", "yes", "no", "nope"):
         payload = build_node_transcript_payload(manager, scheduler, node_id)
         assert payload["failure_evidence"]["state"] in FAILURE_EVIDENCE_STATES
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_honours_content_limit(manager):
+    """``content_limit`` 必须透传到失败证据的条目截断（review R2 Issue 3）。
+
+    此前三个挂载点都没往下传，于是载荷声明 ``content_limit=100`` 而条目文本仍是
+    4000——契约漂移。变异点：把任一处 ``content_limit=content_limit`` 去掉 → 本条变红。
+    """
+    scheduler, _state, run = await _completed_node(manager)
+    run.trace = _trace([_tool_result(1, "Bash", "error", "z" * 30000, "tool_error")])
+
+    payload = build_node_transcript_payload(manager, scheduler, "a", content_limit=100)
+    assert payload["content_limit"] == 100
+    item = payload["failure_evidence"]["items"][0]
+    assert len(item["observation"]) <= 100, (
+        f"载荷声明单条上限 100，条目却给了 {len(item['observation'])} 字符"
+    )
+    assert item["text_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_failure_evidence_content_limit_applies_to_candidates(manager):
+    """容器形态同样要认 ``content_limit``（轻量上限与它取交集）。"""
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+    for slot in scheduler._states["fan"].item_runs:
+        slot_run = manager.find_run(slot.subagent_id, slot.run_id)
+        if slot_run is not None:
+            slot_run.trace = _trace([_tool_result(1, "Bash", "error", "z" * 30000)])
+
+    payload = build_node_transcript_payload(manager, scheduler, "fan", content_limit=50)
+    for candidate in payload["candidates"]:
+        for item in candidate["failure_evidence"]["items"]:
+            assert len(item["observation"]) <= 50
+
+
+def test_terminal_run_statuses_has_a_single_source():
+    """终态清单在 web 层只有一处定义（D7：不新造第四份）。
+
+    ``_foreach_candidates`` 曾经内联着同一份字面量，改常量不会波及它——实测把
+    模块常量的 ``queue_full`` 删掉，全量 web 测试**全绿**（漂移无人发现）。本条把
+    「两处必须一致」钉死：候选判据现在直接引用模块常量。
+    """
+    import inspect
+
+    import web.session as session_module
+
+    source = inspect.getsource(session_module)
+    # 「内联字面量」的特征是**括号里成串**出现（常量自身的定义会长成 frozenset({\n   ...})，
+    # 形状不同）；这里查的是 `not in ("completed", "failed", ...)` 那种调用点写法。
+    for inline in ('("completed", "failed", "cancelled"',
+                   '("completed",\n',
+                   '"completed", "failed", "cancelled", "budget_exceeded", "queue_full")'):
+        assert inline not in source, (
+            f"web/session.py 里仍有内联的终态字面量 {inline!r}——应引用 _TERMINAL_RUN_STATUSES"
+        )
+    assert session_module._TERMINAL_RUN_STATUSES == frozenset(
+        {"completed", "failed", "cancelled", "budget_exceeded", "queue_full"}
+    ), "终态取值不得悄悄增减（与 manager/scheduler 的既有口径对齐）"

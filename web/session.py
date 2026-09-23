@@ -762,6 +762,11 @@ FAILURE_EVIDENCE_STATES = frozenset({
 })
 
 
+#: 调用方**可以断言**的 state：它们不依赖 trace 内容（结构性 / 解析结果 / 运行态），
+#: 所以投影必须照单全收。其余取值由 trace 推出，显式传入属误用（见 ``_failure_evidence``）。
+_ASSERTABLE_STATES = frozenset({"not_applicable", "unavailable", "running"})
+
+
 def _failure_evidence(
     run,
     *,
@@ -814,13 +819,16 @@ def _failure_evidence(
         payload["message"] = message or _FAILURE_EVIDENCE_MESSAGES[value]
         return payload
 
-    if state is not None and state not in FAILURE_EVIDENCE_STATES:
-        # 显式传入的 state 必须是枚举里的取值。放过去会让调用方以为「我指定了
-        # unavailable」，实际却按 trace 内容继续走成 present/clean——静默用错取值
-        # 比直接报错更难查（本项目的历史病根就是「文档承诺了、实现漂了」）。
-        raise ValueError(f"unknown failure_evidence state: {state!r}")
-
-    if state is not None and state in ("not_applicable", "unavailable", "running"):
+    if state is not None:
+        # 显式 ``state=`` 是**调用方断言**，只当它落在「不依赖 trace 内容」的三个
+        # 取值上时才成立；其余取值（``present``/``clean``/``empty_trace``/
+        # ``no_trace``）是**从 trace 推出来的**，调用方无从断言——静默忽略会让人
+        # 以为「我指定了」，静默照做又会谎报。两种都错，所以 fail-fast。
+        if state not in _ASSERTABLE_STATES:
+            raise ValueError(
+                f"failure_evidence state {state!r} cannot be asserted by the caller; "
+                f"expected one of {sorted(_ASSERTABLE_STATES)}"
+            )
         return settle(state)
 
     trace = getattr(run, "trace", None)
@@ -1005,7 +1013,8 @@ def _item_drilldown_payload(
         "limit": limit,
         "content_limit": content_limit,
         # 下钻给**完整**形态（Q5）：容器一次渲染 N 项才需要收窄，点进单项就是要看细节。
-        "failure_evidence": _failure_evidence(_resolve_run(manager, subagent_id, run_id), full=True),
+        "failure_evidence": _failure_evidence(_resolve_run(manager, subagent_id, run_id),
+                                              full=True, content_limit=content_limit),
         **_reason_fields(state),
     }
     if index is not None and index < len(items):
@@ -1165,7 +1174,7 @@ def _single_payload(
         "limit": limit,
         "content_limit": content_limit,
         # ``single`` 形态给**完整**证据（Q5）。
-        "failure_evidence": _failure_evidence(run, full=True),
+        "failure_evidence": _failure_evidence(run, full=True, content_limit=content_limit),
     }
     if subagent_id is None:
         return payload
@@ -1202,8 +1211,7 @@ def _foreach_candidates(manager, scheduler, state, content_limit: int) -> list[d
         reason = (getattr(run, "reason", "") or "") if run is not None else ""
         summary = (getattr(run, "summary", "") or "") if run is not None else ""
         status = recorded
-        if run is not None and run.status not in ("completed", "failed", "cancelled",
-                                                  "budget_exceeded", "queue_full"):
+        if run is not None and run.status not in _TERMINAL_RUN_STATUSES:
             status = "running" if run.status == "running" else "queued"
         if not task:
             task = render_candidate_task(node, index)
@@ -1223,7 +1231,7 @@ def _foreach_candidates(manager, scheduler, state, content_limit: int) -> list[d
             # 容器一次渲染 N 项（默认 50、上限 200），所以每项只给**轻量**形态：
             # state/total/truncated 报真实值，条目至多 1 条、单条截到 preview 上限。
             # 完整证据在下钻（``_item_drilldown_payload``）与 ``single`` 形态。
-            "failure_evidence": _failure_evidence(run, full=False),
+            "failure_evidence": _failure_evidence(run, full=False, content_limit=content_limit),
         })
     return candidates
 

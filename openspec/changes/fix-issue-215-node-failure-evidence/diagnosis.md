@@ -140,10 +140,31 @@ run.status = "completed" if result.stop_reason is not StopReason.ERROR else "fai
   - `present` — trace 有失败步骤
   - `clean` — trace 有步骤、无失败（**已检查，干净**）
   - `running` — run 未到终态，trace 按设计尚未写入
-  - `empty_trace` — trace 存在但 `steps == []`（**排队取消**：`manager.py:1085` 新建空 `TraceRecorder`）
-  - `no_trace` — 终态且 trace 为 `None`（**排队中撞时间预算**：`manager.py:1524` 传 `trace=None`）
-  - `unavailable` — run 记录根本不存在（**queue_full** 把 run 弹出 `session.runs`，`manager.py:1033-1034`）
+  - `empty_trace` — trace 存在但 `steps == []`（**两个**调用点：排队取消 `manager.py:1086`；
+    `cancel_subagent_run` 的 running 分支 `manager.py:1100`，后者是第二道兜底）
+  - `no_trace` — 终态且 trace 为 `None`。**成因按防御性口径**：写 `None` 的代码路径存在
+    （`manager.py:1524`），但其前置条件 `run.status == "queued"` **恒假**（`_start_task` 在创建
+    monitor 前已把 status 置 `running`，全仓无写回点），故该分支**当前无活跃生产者**——详见下文
+    「Grill 订正」与 `docs/known-debt.md`
+  - `unavailable` — 该有 run 却解析不到记录（`queue_full` 把 run 弹出 `session.runs`，
+    `manager.py:1035`；`find_run` 找不到 `run_id`；subagent session 已不在内存），
+    以及「该节点尚未派发」（文案与前者区分）
+  - `not_applicable` — **结构上不可能**产生 run（route / `aggregate(strategy="collect")`）
 - 不做通用 `trace_digest`（含正常步骤），不做运行中实时可见性——归 #202。
+
+## Grill 订正（2026-09-23）
+
+本节上方「Recommended Direction」的状态枚举是**立项时**的版本；独立零记忆 subagent 的 grill（`reviews/grill-design.md`）
+逐条复核代码后订正了三处行号/成因，并新增第七个取值。已回写 `design.md`，此处同步以免同一 change 内口径打架：
+
+| 项 | 立项时写法 | 复核结论 |
+|---|---|---|
+| `empty_trace` 成因 | `manager.py:1085` | 实为 `:1086`，且 `:1100` 还有第二个调用点（兜底） |
+| `no_trace` 成因 | 「排队中撞时间预算」 | 该分支前置条件恒假 → **当前无活跃生产者**，改按防御性口径写 |
+| `unavailable` 行号 | `manager.py:1033-1034` | `pop()` 实为 `:1035`（守卫在 `:1034`） |
+| 取值个数 | 六个 | **七个**（新增 `not_applicable`：route / collect 结构上不产生 run） |
+| 截断标志名 | `observation_truncated` | 改 `text_truncated`（`llm_error` 被截的是 `message`，原名名实不符） |
+| `llm_error` 的 `status` | 假定来自 trace | trace 里**没有**该键，由投影合成 `"error"` |
 
 ## Regression Tests
 

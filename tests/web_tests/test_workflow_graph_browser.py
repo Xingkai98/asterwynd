@@ -505,10 +505,19 @@ _ITEM_CONTAINER = {
     "reason_full": "", "reason_length": 0, "reason_truncated": False,
     "candidates": [
         {"index": 0, "subagent_id": "sa-0", "run_id": "r-0", "status": "completed",
-         "label": "#0", "summary": "ok", "reason": "", "task": "对 a.js 体检"},
+         "label": "#0", "summary": "ok", "reason": "", "task": "对 a.js 体检",
+         "failure_evidence": {"state": "clean", "total": 0, "truncated": False,
+                              "message": "已检查，无失败记录。", "items": []}},
         {"index": 1, "subagent_id": "sa-1", "run_id": "r-1", "status": "failed",
          "label": "#1", "summary": "", "reason": "RuntimeError: boom",
-         "task": "对 b.js 体检"},
+         "task": "对 b.js 体检",
+         "failure_evidence": {"state": "present", "total": 3, "truncated": True,
+                              "message": "该 run 已结束；其执行记录里有失败步骤。",
+                              "items": [{"type": "tool_result", "step": 7,
+                                         "tool_name": "Bash", "status": "error",
+                                         "error_type": "tool_error",
+                                         "observation": "3 failed, 12 passed",
+                                         "message": None, "text_truncated": False}]}},
     ],
 }
 
@@ -854,3 +863,81 @@ async def test_convo_tab_survives_malformed_tool_arguments(page, fake_web_server
     assert "not-json{{{" in body, body
     assert "参数已截断" in body, body
     assert not errors, f"渲染抛异常：{errors}"
+
+
+@pytest.mark.asyncio
+async def test_candidate_rows_show_failure_clues(page, fake_web_server):
+    """候选项行必须渲染失败线索——含 R1 新增的**负向态**分支。
+
+    review R2 Issue 1 实证：这条渲染块此前**零覆盖**（既有的 `_ITEM_CONTAINER`
+    fixture 的候选字典根本没有 `failure_evidence` 键，`if (evidence)` 恒假，整块被
+    跳过），删掉它测试全绿——假保护。本条把三种态都渲染出来：
+    `present`（计数线索）、`clean`（负向态也要有一行，Q3 的精神：不显示 != 没事）。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+
+    async def _transcript_route(route):
+        await route.fulfill(json=_ITEM_CONTAINER)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".cand[data-index='1']")
+
+    row0 = await page.text_content(".cand[data-index='0']")
+    assert "已检查，无失败记录" in row0, (
+        f"clean 的候选行必须有正向声明（负向态也各配一行文案，Q3）：{row0!r}"
+    )
+    row1 = await page.text_content(".cand[data-index='1']")
+    assert "3 条工具/LLM 失败" in row1, f"present 的候选行必须给计数线索：{row1!r}"
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_prefers_backend_message(page, fake_web_server):
+    """证据区文案**优先用后端** `message`（review R2 Issue 2）。
+
+    后端为「尚未派发」等情形写了专用文案（设计 D1 要求与「取不到记录」分开说）；
+    前端若一律用自建表，那些区分就到不了用户眼前。这里给一个**只有后端会写**的
+    句子，验证它真的被渲染出来。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    payload = {
+        "kind": "none", "node_id": "a", "node_kind": "subagent",
+        "message": "该节点未执行（未派发或未产生 run）",
+        "reason_full": "", "reason_length": 0, "reason_truncated": False,
+        "failure_evidence": {
+            "state": "unavailable",
+            "total": 0, "truncated": False,
+            "message": "该节点尚未派发，暂时没有失败证据。",
+            "items": [],
+        },
+    }
+
+    async def _transcript_route(route):
+        await route.fulfill(json=payload)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body').textContent.includes('失败证据')"
+        " || document.querySelector('.drawer-body').textContent.includes('尚未派发')")
+
+    body = await page.text_content(".drawer-body")
+    assert "该节点尚未派发" in body, (
+        f"前端丢弃了后端 message——「尚未派发」与「取不到记录」的区分在 UI 层落空：{body!r}"
+    )

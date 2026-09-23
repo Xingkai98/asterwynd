@@ -229,6 +229,19 @@
    * 条目按「工具名 · 步序 · 错误类型 + 文本首行」逐条列出，文本用既有 note 模式
    * 标注截断——预览短上限不等于正文就这么短（issue #213 的同一类坑）。
    */
+  /** 证据区的文案：**优先用后端** ``message``，前端表只作兜底。
+   *
+   * 后端在载荷里给了 ``message``（spec 要求的字段），且为「该节点尚未派发」这类
+   * 情形写了**专用文案**——前端若一律用自建表，那些区分就到不了用户眼前（设计 D1
+   * 明确要求「尚未派发」与「取不到记录」分开说）。前端表退化为「后端没给文案时」
+   * 的兜底，同时保住「前端版本落后于后端」时不显示空白。
+   */
+  function failureText(evidence) {
+    const fromBackend = evidence && evidence.message;
+    if (typeof fromBackend === 'string' && fromBackend.trim()) return fromBackend;
+    return G.failureEvidenceText(evidence && evidence.state);
+  }
+
   function appendFailureEvidence(host, payload) {
     const evidence = payload && payload.failure_evidence;
     if (!evidence || !evidence.state) return;
@@ -236,7 +249,7 @@
     if (evidence.state === 'not_applicable' && !isPresent) {
       // 结构上不产生的节点（route/collect）说这句话是噪音——它们的详情自有一句
       // 「不产生对话」。其余**所有**取值都必须显示，否则又回到「不显示 = 没事」。
-      host.appendChild(el('div', 'drawer-note', G.failureEvidenceText(evidence.state)));
+      host.appendChild(el('div', 'drawer-note', failureText(evidence)));
       return;
     }
     // Q1：不做「已恢复」推断，改为给**事实**——失败条数直接进标题，run 状态由
@@ -245,7 +258,7 @@
       ? `失败证据（共 ${evidence.total} 条）`
       : '失败证据';
     host.appendChild(el('h3', null, heading));
-    host.appendChild(el('div', 'drawer-text', G.failureEvidenceText(evidence.state)));
+    host.appendChild(el('div', 'drawer-text', failureText(evidence)));
     (evidence.items || []).forEach((item) => {
       const row = el('div', 'failure-item');
       row.appendChild(el('div', 'failure-summary', G.failureItemSummary(item)));
@@ -300,8 +313,7 @@
         } else if (evidence.state !== 'not_applicable') {
           // Q3 的精神：负向态也要有一行，否则「不显示」会被读成「没问题」。
           // 这里文案取后端给的 state message（容器级已轻量化，不再展开条目）。
-          name.appendChild(el('div', 'cand-sub',
-            G.failureEvidenceText(evidence.state)));
+          name.appendChild(el('div', 'cand-sub', failureText(evidence)));
         }
       }
       row.appendChild(name);

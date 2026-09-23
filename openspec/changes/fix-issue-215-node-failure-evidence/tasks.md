@@ -97,17 +97,18 @@
 - [ ] **当前规格同步**：delta 合入 `openspec/specs/web-ui/spec.md`（`current_spec_synced` 事件）
 - [ ] **快照加法字段**：`openspec/specs/web-ui/spec.md` 的 workflow 图快照 requirement 加法字段清单
       ADDED 一项（Q6 方案 D 的计数）
-- [ ] 关键词扫描 `docs/`、`README.md`、`CONTEXT.md`、`docs/architecture.md` 中与 workflow 图 /
+- [x] 关键词扫描 `docs/`、`README.md`、`CONTEXT.md`、`docs/architecture.md` 中与 workflow 图 /
       节点详情 / 诊断相关的段落（**grill 点名 `docs/architecture.md:105` 的返回形态描述已不完整**），
       只更新本次变更造成的事实变化
-- [ ] `docs/known-debt.md`：记两条死代码发现（`StopReason.ERROR` 零赋值点 + `no_trace` 无活跃生产者），
+- [x] `docs/known-debt.md`：记两条死代码发现（`StopReason.ERROR` 零赋值点 + `no_trace` 无活跃生产者），
       标注「本 change 显式不做」（受保护路径，走 `artifact-event` 事件通道）
 - [ ] `docs/openspec-change-backlog.md` 移除本 change 条目（`backlog_updated` 事件）
 
 ## 审阅闭环
 
-- [ ] Round 1 独立 subagent 审阅（`/review-loop`）
-- [ ] 按 verdict 修复（CHANGES_REQUESTED 则修复 + 加回归测试再审，最多 3 轮）
+- [x] Round 1 独立 subagent 审阅（`/review-loop`）→ CHANGES_REQUESTED（1 中 + 3 低），已修
+- [x] Round 2 独立 subagent 审阅 → CHANGES_REQUESTED（2 中 + 4 低），已修（见下）
+- [x] 按 verdict 修复（两轮均 CHANGES_REQUESTED，均已修复 + 加回归测试）
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
 
 ## 验证
