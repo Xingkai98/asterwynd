@@ -14,6 +14,20 @@
 - [ ] grill 产出的 `## Open Questions` **停轮**抛用户确认（每条配真实场景例子），答复写入
       `reviews/grill-design.md` 的 `## User Confirmation`
 
+### Grill 已完成（2026-09-23）——待用户确认 Q1–Q7
+
+独立零记忆 subagent（paseo 托管，plan 模式）产出 6 条 Confirmed Decisions + 7 条 Open Questions，
+已回写 design.md 的 D1/D3/D6/D7 与 Testing Strategy。**阻塞项：Q6（前端落点在代码里没有取数通路）**，
+必须用户拍板后才能写前端实现代码。
+
+- [ ] 用户确认 Q1（是否加 `recovered`；grill 推荐：不加，改带 run 上下文）
+- [ ] 用户确认 Q2（`FAILURE_EVIDENCE_LIMIT`；grill 推荐：保留 5 + 前端预览另设短上限）
+- [ ] 用户确认 Q3（`clean` 时显示什么；grill 推荐：(b) 一行淡色「已检查，无失败记录」，且负向态各配文案）
+- [ ] 用户确认 Q4（`none` 形态是否新增第七取值 `not_applicable`；grill 推荐：新增）
+- [ ] 用户确认 Q5（candidates 每候选是否只带轻量证据；grill 推荐：轻量）
+- [ ] 用户确认 Q6（**阻塞**：前端落点；grill 推荐方案 D =「对话」tab 承载证据 + 「任务」tab 一行快照计数）
+- [ ] 用户确认 Q7（两条死代码发现是否记 `docs/known-debt.md`；grill 推荐：记一条）
+
 ## 实现
 
 - [ ] `web/session.py`：新增失败证据常量（条目上限 `FAILURE_EVIDENCE_LIMIT`、单条文本复用

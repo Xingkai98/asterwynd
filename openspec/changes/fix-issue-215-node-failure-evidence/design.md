@@ -101,18 +101,23 @@ OTel 三种 span status 构成全序 `Ok > Error > Unset`；`Unset` 是**默认�
 
 字段名 `state`，取值：
 
-| 取值 | 含义 | 代码成因（实测确认） |
+| 取值 | 含义 | 代码成因（**grill 逐条复核后订正**） |
 |---|---|---|
 | `present` | trace 里有失败步骤 | — |
 | `clean` | trace 已遍历、**零失败**（正向声明「检查过」） | — |
-| `running` | run 未到终态，trace 按设计尚未写入 | `TERMINAL_RUN_STATUSES` 不含当前 status |
-| `empty_trace` | trace 存在但 `steps == []` | 排队取消：`manager.py:1085` 新建空 `TraceRecorder` |
-| `no_trace` | 终态且 `run.trace is None` | 排队中撞时间预算：`manager.py:1524` 传 `trace=None` |
-| `unavailable` | 解析不到 run 记录 | `queue_full` 把 run 弹出 `session.runs`（`manager.py:1033-1034`） |
+| `running` | run 未到终态，trace 按设计尚未写入 | 用 `web/session.py:1019-1021` 那份终态字面量判（见 D7），不新造第四份 |
+| `empty_trace` | trace 存在但 `steps == []` | **两个**调用点：排队取消 `manager.py:**1086**`；`cancel_subagent_run` 的 running 分支 `manager.py:**1100**`（后者是第二道兜底，常规路径会被 `_run_loop` 的 CancelledError 处理器先置终态）。文案**不得**只写「排队阶段被取消」 |
+| `no_trace` | 终态且 `run.trace is None` | `manager.py:1524` 传 `trace=None` 写法存在，但**前置条件 `run.status == "queued"` 恒假**（`_start_task` 在创建 monitor 前已把 status 置 `running`，全仓无写回点）——grill 判定该分支**当前无活跃生产者**，故成因按**防御性**口径写，spec 不得暗示存在活的触发路径 |
+| `unavailable` | 解析不到 run 记录 | 至少三条：`queue_full` 把 run 弹出 `session.runs`（`manager.py:**1035**`，守卫在 `:1034`；workflow 内因准入背压预期恒为 0 次，测试只能半合成）；`manager.find_run` 找不到 `run_id`（`manager.py:591-598`）；subagent session 已不在内存（`manager.py:1574-1583` 抛 KeyError 的降级路径） |
 
 **为什么是六个而不是 OTel 式的三四个**：这六个不是分类学上的拆分，而是**代码里真实存在的六条路径**
-（上表右列逐条实测确认）。少一个就会把某条路径错报成另一条——`empty_trace` 与 `no_trace` 尤其不能合并
+（上表右列逐条复核）。少一个就会把某条路径错报成另一条——`empty_trace` 与 `no_trace` 尤其不能合并
 （前者是「跑都没跑」，后者是「跑了但没留证据」，用户的下一步动作完全不同）。
+
+**grill 反向挑战的缺口（Q4）**：上表漏了 `none` 形态的**四条**路径（route / collect / 未派发 / 下钻时
+session 不在内存，`web/session.py:940-947`/`:951-961`/`:906-912`/`:857-861`）。把「route/collect 结构上
+不产生 run」与「run 记录解析不到」折叠进同一个 `unavailable`，正是本 Decision 自己禁止的折叠。
+grill 推荐新增第七个取值 `not_applicable`，**待用户拍板**。
 
 **`clean` 是正向声明**：只有在真的把 `steps` 走完、且零失败时才给。这条要写进 spec（见 spec delta 的
 「已检查、未发现失败」Scenario）——对应 F2 的教训：`ok` 不能是默认值。
@@ -123,14 +128,25 @@ OTel 三种 span status 构成全序 `Ok > Error > Unset`；`Unset` 是**默认�
 - 取向：**最近** N 条（按 trace `step` 序号），显示顺序为**时间正序**——用户看失败序列是从因到果。
 - 单条可变长文本（`tool_result.observation` / `llm_error.message`）截断到 `TRANSCRIPT_CONTENT_LIMIT`
   （4000，与节点 transcript 的单条上限**同口径**，复用既有常量而非新造数字），超出置
-  `observation_truncated`。
+  `text_truncated`（**grill 订正**：原名 `observation_truncated` 对 `llm_error` 名实不符，见 D3）。
 - 返回 `total`（**真实失败总数**，超过 N 时仍报真实值）+ `truncated`（`total > 返回条数`）。
 
 ### D3 — 条目字段沿用既有键名，不造第二套词表
 
 每条：`type`（`tool_result` / `llm_error`）、`step`（trace 步骤序号）、`status`、`error_type`、
 `tool_name`（`llm_error` 为 `None`）、`observation`（工具结果 truncated 文本）/ `message`（LLM 错误文本）、
-`observation_truncated`。
+`text_truncated`（本条可变长文本被截断）。
+
+**grill 修正两处（原设计不成立）**：
+
+- **`llm_error` 没有 `status`**。`record_llm_error` 只写 `error_type`/`message`（`agent/trace_recorder.py:226`），
+  `data` 里**无 `status` 键**，直接 `get("status")` 会得 `None`，与「条目 SHALL 含 `status`」冲突。
+  取值写死为：`llm_error` 条目的 `status` **恒为 `"error"`**（由投影合成，不假装来自 trace）。
+- **截断标志不能叫 `observation_truncated`**。`llm_error` 被截断的是 `message` 不是 `observation`，
+  用 `observation_truncated` 会让键名与被截字段对不上——正是 F3 警告的「同一个词指两件事」。
+  统一改名 **`text_truncated`**（对两种条目同义：本条的可变长文本被截断）。
+  也**不可**用 `truncated`：该键在载荷顶层已是「条数被截断」语义（`agent/subagent/manager.py:1158`），
+  复用会造成语义碰撞。
 
 **命名理由（F3）**：`status` / `error_type` 已是 trace step 与 `specs/observability/` 的既有键，改名会制造
 第二套词表；`error_type` 的值域已含 `tool_error`（与 OTel MCP 约定的同名哨兵一致）。
@@ -159,15 +175,42 @@ OTel 三种 span status 构成全序 `Ok > Error > Unset`；`Unset` 是**默认�
 **不做 F4 第三条的写入期物化**：那是为了解决跨存储 join 的代价；本 change 的数据源已在内存、且随 run
 一起生命周期结束（HTTP 路由本身是内存口径，冷会话一律 404），读取期投影更简单且不引入新的持久化面。
 
-### D6 — 前端落在「任务」tab 内，不做第四个 tab
+### D6 — 前端落点：**grill 判定原方案不成立，待 Q6 拍板**
 
-在既有详情抽屉的「任务」tab 里、`drawer-why` 之后加「失败证据」区。**不新增 tab**——F4 的调研显示
-W&B Weave 把错误放在 Call tab（没有专门的 error tab），且已有一个「任务」tab 承载状态/因由/任务，失败证据
-与它们同属「这个节点发生了什么」的问题域。
+原方案是「在既有『任务』tab 里、`drawer-why` 之后加失败证据区，不新增 tab」（理由：F4 显示 W&B Weave
+把错误放在 Call tab；「任务」tab 已承载状态/因由/任务，同属「这个节点发生了什么」的问题域）。
+
+**但那条只证明了*渲染*可行，没证明*取数*可行——这是阻塞性缺陷**：
+
+- `renderDrawerTask`（`web/static/workflow.js:1115-1165`）整个函数体**零 `fetch`**，唯一数据源是
+  `entry.snapshot` 投影出的 `node`；
+- 而 `failure_evidence` 按 D4 只挂在 `/nodes/{id}/transcript` 载荷上，该载荷全仓**唯一**取数入口是
+  「对话」tab 的 `fetchTranscript`（`web/static/workflow_transcript.js:55-82`）；
+- 两端不在同一条数据通路上，不是「顺手多渲染一段」能补的。
+
+叠加两条硬约束：抽屉**默认**打开在「任务」tab（`web/static/workflow.js:52`/`:1045`）；而正式 spec
+明写「前端 SHALL 在切到「对话」tab 时才请求（懒加载）」（`openspec/specs/web-ui/spec.md:836`），
+既有浏览器用例 `tests/web_tests/test_workflow_graph_browser.py:488-493` 直接断言打开面板时**不得**有
+`/transcript` 请求（该决策的理由写在用例 docstring `:474-476`）。因此「保留任务 tab + 打开即取数」
+等于反转一条有成本理由的既往决策。
+
+grill 的推荐是**方案 D**：「对话」tab 承载证据主体 + 「任务」tab 一行来自快照的**有界计数**线索。
+逐方案的成本/收益/违反面与三个具体场景例子见 `reviews/grill-design.md` 的 Q6。**待用户拍板后本节重写。**
+
+### D7 — 终态判据复用 web 层既有字面量，不新造第四份
+
+`running` 的判据需要一份「run 终态」清单。项目里已有三份同义副本：`agent/subagent/manager.py:153-155`
+（4 值）、`agent/subagent/scheduler.py:88-90`（5 值，含 `queue_full`）、以及 `web/session.py:1019-1021`
+的硬编码字面量元组（`("completed", "failed", "cancelled", "budget_exceeded", "queue_full")`）。
+
+本 change **复用 `web/session.py:1019-1021` 那份**（必要时提为模块级常量再引用），**不**在投影函数里
+新写第四份字面量——同一语义四份副本会让后续改动漏改一处。
 
 ## Open Questions
 
-（待 grill 后与用户逐项确认；每条配具体场景例子。）
+**独立零记忆 subagent 的 grill 已完成**（`reviews/grill-design.md`，6 条 Confirmed Decisions）。逐项确认中；
+每条配具体场景例子，grill 的推荐答案一并记在各条末尾（推荐≠确认，须用户答复后才写进
+`reviews/grill-design.md` 的 `## User Confirmation`）。Q4–Q7 为 grill 新发现的开放项，全文见 grill 记录。
 
 ### Q1 — 是否加「已恢复」标记（`recovered`）？
 
@@ -182,10 +225,17 @@ W&B Weave 把错误放在 Call tab（没有专门的 error tab），且已有一
 **代价**：要定义「恢复」判据（同 `tool_name` 的后继 `status == ok`？还是任意后继成功？）并多一轮
 trace 扫描。是本 change 的**可选增强**，不加也不影响核心需求成立。
 
+**grill 推荐：不加**——判据在代码上可算（`agent/loop.py:920-926` 的 `tool_call` 步带完整 `arguments`），
+但**语义不可靠**：同工具的后继成功可能是另一次不同的调用。改用**事实性**替代：区块标题带 run 上下文
+（「该 run 已完成（`completed`）；本 run 内出现 3 次工具失败」）。详细反例见 `reviews/grill-design.md` Q1。
+
 ### Q2 — 条目上限 N 取多少？
 
 `FAILURE_EVIDENCE_LIMIT = 5` 是调研里见到的通行默认。取值影响：N 越大用户越不容易漏掉早期失败，但抽屉里
 的列表越长。**场景例子**：一个 40 步的 run 里有 9 条失败 → N=5 时用户看到最近 5 条 + 「共 9 条，已截断」。
+
+**grill 推荐：保留 5**，但**前端预览另设短上限**（约 300 字符 + 「预览已截断」note）。理由：4000 是
+「单条消息」口径（`web/session.py:727-731`），不是「抽屉里一行」口径；N 只该决定条目数、不该决定体积。
 
 ### Q3 — `state == "clean"` 时前端显示什么？
 
@@ -193,6 +243,31 @@ trace 扫描。是本 change 的**可选增强**，不加也不影响核心需�
 (c) 只在用户展开时显示。**场景例子**：用户点开一个正常完成的节点，`clean` 态下他应该看到「没有需要担心的
 东西」的明确信号，还是干脆看不到这一区（因而也无从知道系统**检查过**）？F2 的教训倾向 (b)——但 (a) 更省
 空间。
+
+**grill 推荐：(b)**，且**负向态也必须各显示一行文案**（不能只有 `clean` 显示），否则会退化成
+「不显示 = 没事」。详细场景见 `reviews/grill-design.md` Q3。
+
+### Q4 — `none` 形态（route / collect / 未派发）往哪放？（grill 新发现）
+
+D1 的六值里没有它们的容身之处（详见 D1 后的「grill 反向挑战的缺口」）。**grill 推荐扩到 7 个取值**，
+新增 `not_applicable`：`state is None` → `unavailable`；`route` / `aggregate+collect` → `not_applicable`；
+`not state.subagent_id` 且非上述 → `unavailable` + 「该节点尚未派发」。场景例子见
+`reviews/grill-design.md` Q4。
+
+### Q5 — `candidates` 形态每候选带完整证据会放大响应？（grill 新发现）
+
+最坏 200 候选 × 20KB ≈ **4MB** 单个 JSON 响应。**grill 推荐每项带轻量证据**（`state`/`total`/`truncated`
++ 至多 1 条最新失败，单条 ≤400 字符），完整证据只在下钻与 `single` 形态给。详见 `reviews/grill-design.md` Q5。
+
+### Q6 —（阻塞）失败证据的前端落点（grill 判定原 D6 不成立）
+
+见 D6。grill 推荐方案 D，四个方案的改动面/违反面/场景对比见 `reviews/grill-design.md` Q6。
+
+### Q7 — `diagnosis.md` 的两条「死代码」发现怎么归档？（grill 新发现）
+
+`StopReason.ERROR` 死分支（已排除在范围外）+ grill 新发现的 `no_trace` 无活跃生产者。
+**grill 推荐记 `docs/known-debt.md` 一条**（受保护路径，需 `artifact-event` 结构化事件）。
+拍板：记或不记（不记须说明理由）。详见 `reviews/grill-design.md` Q7。
 
 ## Pre-Implementation Review
 
@@ -208,6 +283,22 @@ Open Questions 停轮抛用户确认后写入 `## User Confirmation`。
 3. **Q3 `clean` 态的 UI 处理**——直接关系到 F2 的教训能否落地（用户是否知道系统**检查过**）。
 4. **D1 六值枚举是否有过度设计**——需独立审阅者挑战：六个取值是否都有真实路径支撑（design 已逐条给成因，
    但要复审者复核代码）。
+
+### Grill 执行结果（2026-09-23）
+
+独立零记忆 subagent（paseo 托管 `claude/claude-fable-5[1m]`，plan 模式）逐条复核了 design 的代码事实断言，
+产出 6 条 Confirmed Decisions 与 7 条 Open Questions，全文见 `reviews/grill-design.md`。**关键结果**：
+
+- **一处阻塞性缺陷**：D6 的「任务」tab 落点在代码里**没有取数通路**（该 tab 零 `fetch`），且改走
+  「打开即取数」会违反正式 spec 的懒加载条款（`openspec/specs/web-ui/spec.md:836`）与既有浏览器用例
+  ——改判为 Q6 待用户拍板。原报告曾把 D6 列为 Confirmed，**该条已由审阅者主动撤回**。
+- **三处代码事实订正**（已回写 D1/D3/D6/D7）：`empty_trace` 行号与第二调用点、`no_trace` 分支**不可达**、
+  `queue_full` 弹出点行号。
+- **两处字段契约缺口**：`llm_error` 没有 `status` 键；截断标志 `observation_truncated` 对 `llm_error`
+  名实不符（改 `text_truncated`）。
+- **三处测试/覆盖要求**：体积有界断言须按可杀变异的形状写、三态挂载要有用例、前端文案映射抽纯函数进
+  既有 node+vm harness。
+- **四个新开放项**（Q4–Q7）：`none` 形态的第七取值、candidates 体积放大、前端落点、两条死代码的去向。
 
 ## Risks / Trade-offs
 
@@ -237,6 +328,20 @@ Open Questions 停轮抛用户确认后写入 `## User Confirmation`。
 **参数教训**（沿用 #213 的教训）：测「超长 observation 被截断」时输入**必须真的超过上限**（用 30000 字），
 否则「返回 ≤ 4000」是恒真断言，测不出东西。
 
+**grill 追加的断言形状要求（「体积有界」那条）**：`run.trace` **从不进入 HTTP 响应**，体积有界完全由
+「只取 ≤N 条 + 单条截断」保证，与「只遍历不复制」无关。因此**不得**写成
+`len(json.dumps(payload)) < 宽松常数`（无失败时本来就小，杀不掉变异）。最小断言集：
+
+1. `len(items) <= FAILURE_EVIDENCE_LIMIT`；
+2. `sum(len(item["observation"] or "") + len(item["message"] or "")) <= N * content_limit`；
+3. `total == 300`（真实总数，≠ 返回条数）；
+4. 构造 **300 步全失败、每条 observation 各 30000 字** 的 trace，使「不截断」「不设上限」两条变异必红。
+
+**grill 追加的覆盖要求**：三态挂载各要有用例（`candidates` 每候选各带、下钻顶层带、`none` 形态状态与文案）；
+前端「各 `state` → 文案」的映射抽成 `web/static/workflow_graph.js` 的纯函数，用既有 node+vm harness
+（`tests/web_tests/test_workflow_graph_ux_js.py:20-33`）锁定——这样既不加浏览器 smoke，又让
+「把 `clean` 当 `no_trace`」这类变异在前端层也可见。
+
 **不做**：不新增浏览器 smoke（前端改动是既有抽屉内加一个区，复用既有 DOM 模式；既有 smoke 已覆盖抽屉
 开合与 tab 切换）。若审阅认为需要，可在收尾阶段追加。
 
@@ -246,11 +351,16 @@ Open Questions 停轮抛用户确认后写入 `## User Confirmation`。
 
 | 文件 | 改动性质 |
 |---|---|
-| `web/session.py` | 新增 `FAILURE_EVIDENCE_LIMIT` 常量 + `_failure_evidence(...)` 投影函数；`build_node_transcript_payload` 的三个形态分支 + `_item_drilldown_payload` + `_foreach_candidates` 挂载 |
-| `web/static/workflow.js` | `renderDrawerTask` 新增「失败证据」区渲染 |
+| `web/session.py` | 新增 `FAILURE_EVIDENCE_LIMIT` 常量 + `_failure_evidence(...)` 投影函数；`build_node_transcript_payload` 的三个形态分支 + `_item_drilldown_payload` + `_foreach_candidates` 挂载；复用 `:1019-1021` 的终态字面量（D7） |
+| `web/static/workflow.js` | **原定** `renderDrawerTask` 新增「失败证据」区——**grill 判定取数通路不存在，落点待 Q6 拍板**（若走方案 A/D，实际改动落在 `workflow_transcript.js`） |
+| `web/static/workflow_transcript.js` | 若 Q6 取方案 A/D：`paint()` 统一挂载失败证据区（三形态共用） |
+| `web/static/workflow_graph.js` | 若按 grill 建议：新增「`state` → 文案」纯函数，供 node+vm 测试锁定 |
 | `web/static/style.css` | 失败证据区样式（复用既有 drawer 类） |
 | `tests/web_tests/test_workflow_node_transcript.py` | 新增回归测试（见 tasks.md） |
-| `openspec/specs/web-ui/spec.md` | 收尾阶段同步 ADDED requirement |
+| `tests/web_tests/test_workflow_graph_ux_js.py` | 若抽纯函数：前端文案映射用例 |
+| `agent/subagent/scheduler.py` | **仅当 Q6 取方案 D**：`NodeState`/`_ItemRunSlot` 加有界计数字段 + `_launch_run` 埋点 + `_graph_node_projection` 投影 |
+| `openspec/specs/web-ui/spec.md` | 收尾阶段同步 ADDED requirement（若 Q6 取方案 D，快照加法字段清单另需 MODIFIED；若 Q4 增设第七取值，spec delta 相应扩 Scenario） |
+| `docs/architecture.md` | 收尾阶段同步该路由返回形态的描述（grill 指出 `:105` 已不完整） |
 
 ### 契约影响
 
@@ -263,7 +373,7 @@ Open Questions 停轮抛用户确认后写入 `## User Confirmation`。
 
 | 风险 | 缓解 |
 |---|---|
-| `run.trace.to_dict()` 含每次 `tool_call` 的完整 arguments 与 `tool_result` 的 observation，大 trace 会把响应撑大 | 投影**只遍历不复制**，只对选中的 ≤N 条做单条截断；加「大 trace 响应体积有界」回归测试 |
+| `run.trace.to_dict()` 含每次 `tool_call` 的完整 arguments 与 `tool_result` 的 observation | **grill 订正**：真实成本是 **CPU**（O(steps) 遍历），不是响应体积——`run.trace` 从不进入响应。投影只遍历不复制、只对选中的 ≤N 条截断；「体积有界」测试按 Testing Strategy 的四条最小断言写（**不得**写成整包长度比较） |
 | `observation` / `message` 可能缺失或为空 | 逐字段 `get` + 空值降级，测试覆盖「空 observation 不抛异常」 |
 | 六个状态取值有被后续改动悄悄合并的风险 | 用**变异验证**锁定：把 `no_trace`/`empty_trace` 折叠、把 `clean` 当 `no_trace` → 对应测试必须变红 |
 | 候选集 N 项 × 每项投影 → 请求放大 | 单条截断 + 候选数上限（既有 `CANDIDATE_MAX_LIMIT`）双重约束，响应体积仍线性有界 |
