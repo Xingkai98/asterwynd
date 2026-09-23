@@ -1063,23 +1063,36 @@ def _untagged_unchecked_tasks(change_dir: Path) -> list[str]:
 
 
 def _tasks_missing_evidence(change_dir: Path) -> bool:
-    """True when tasks.md is absent or has no checkbox line at all.
+    """True when tasks.md carries no proof that anything was completed.
 
-    ``tasks.md`` is the only evidence carrier for the completion dimension, so a
-    missing (or prose-only / empty) file makes ``_untagged_unchecked_tasks``
-    return nothing and the gate go silent. That is the same structural bypass as
-    leaving one ``- [ ]`` — closing the gate by not writing a checkbox rather
-    than by not ticking one — so it must be reported rather than treated as
-    "nothing to check". Mirrors the existing stance in ``_tasks_all_complete``,
-    which already treats a checkbox-free tasks.md as incomplete.
+    ``tasks.md`` is the only evidence carrier for the completion dimension, so
+    three shapes make ``_untagged_unchecked_tasks`` return nothing and the gate
+    go silent — each is the same structural bypass as leaving one ``- [ ]``,
+    i.e. closing the gate by *not writing* (or not ticking) a checkbox:
+
+    1. no ``tasks.md`` at all;
+    2. a prose / empty ``tasks.md`` with no checkbox line;
+    3. checkbox lines that are **all unchecked** — e.g. every item tagged
+       ``(post-merge)``, so the untagged scan finds nothing while nothing was
+       actually done. 8 historical archives have this shape.
+
+    So the floor is ">=1 checked box", matching ``_tasks_all_complete``'s
+    ``checked > 0`` clause. Reported rather than treated as "nothing to check".
     """
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
         return True
-    return not any(
-        CHECKBOX_RE.match(line.strip())
-        for line in tasks.read_text(encoding="utf-8").splitlines()
-    )
+    boxes = [
+        match
+        for match in (
+            CHECKBOX_RE.match(line.strip())
+            for line in tasks.read_text(encoding="utf-8").splitlines()
+        )
+        if match is not None
+    ]
+    if not boxes:
+        return True
+    return not any(match.group(1).lower() == "x" for match in boxes)
 
 
 def _change_id_from_dir_name(dir_name: str) -> str:
@@ -1603,9 +1616,11 @@ def _check_archived_completion_gate(change_dir: Path) -> list[str]:
             "请用 /review-loop 跑审阅闭环（审→改→再审直到 PASS 或 3 轮封顶）。"
         )
 
-    # tasks.md 是「完成度」唯一的证据载体：缺了它（或没有 checkbox 行），未勾任务
+    # tasks.md 是「完成度」唯一的证据载体：缺了它（或没有可证明完成的行），未勾任务
     # 检查会静默通过——与留一条 `- [ ]` 同构的绕开路径，必须显式报错而不是跳过。
-    if change_type.primary != "docs" and _tasks_missing_evidence(change_dir):
+    # 对 docs 归档同样要求：否则「删掉 tasks.md」就成了 docs 的关闸路径（语料实测
+    # 0/93 个 docs 归档缺 tasks.md，统一口径不产生假阳性）。
+    if _tasks_missing_evidence(change_dir):
         errors.append(
             prefix + "tasks.md 缺失或无任何 checkbox 行 —— 归档点无法评估完成度。"
             "请提供含勾选项的 tasks.md（closeout 类未完成项请标 `(post-merge)`）。"

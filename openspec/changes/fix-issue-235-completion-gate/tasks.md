@@ -84,6 +84,29 @@
 - [x] **info（写法提示）**：tag 必须紧邻复选框，行尾追加写法不被识别（fail-closed 方向，会报错不静默）。
       已写入 `docs/development-guide.md` 的「完成度门禁与 (post-merge) 任务标记」节
 
+### R2 审阅发现与修复（独立零记忆 subagent `7c72c707`，CHANGES_REQUESTED）
+
+R2 用实跑确认 R1 四项修复**全部成立**（M1 三形态端到端报错、low-1 两侧都锁住、low-3 事件判别、info 已落地），
+但 R1 的修复自身引入/遗留两条中等项：
+
+- [x] **M1′（medium，landmine）**：R1 新增的 `test_own_change_explains_protected_artifact_with_its_own_event`
+      硬编码 **active** 路径且以 `origin/master...HEAD` 触碰 `docs/known-debt.md` 为触发条件——而该文件内容
+      **永久留在 master**。后果：本 change 执行 AGENTS.md 强制的**归档 move** 时该测试 `FileNotFoundError` 转红
+      （CI 的 pytest 步必挂），且此后**任何**触碰该文档的未来 PR 都会被同一条件误伤；`origin/master` 不可解析时
+      还会静默 skip。修复：抽出 `_change_dir_in_any_form`（active → archive 双形态 + 存在性保护），
+      触发条件改为「本树存在本 change 的事件日志」，两个形态都无则 skip。**实跑验证三态**：
+      归档后 pass、模拟未来 PR 触碰该文件 pass、change 离开本树 skip。
+- [x] **M2（medium，fail-open 边界窄）**：M1 只堵「无 checkbox 行」，未堵「有 checkbox 行但**零勾选**」
+      （全部标 `(post-merge)`、一个都不勾）。该形态历史归档真实存在 **8/93**（已实测复现）。
+      修复：`_tasks_missing_evidence` 的下限提到「≥1 条被勾选」（对齐 `_tasks_all_complete` 的 `checked > 0`）。
+      回归测试：`test_archived_gate_flags_all_post_merge_zero_checked` +
+      `test_archived_gate_passes_when_at_least_one_task_checked`（防误红）。变异：回退即转红。
+- [x] **low（对称性）**：docs 归档缺 `tasks.md` 曾一律豁免 ⇒ 「删掉 tasks.md」成了 docs 的关闸路径。
+      修复：`_tasks_missing_evidence` 判定改为对 docs 同样生效（语料实测 **0/93** 个 docs 归档缺 tasks.md，
+      统一口径不产生假阳性）。回归测试：`test_archived_gate_docs_only_missing_tasks_md_is_flagged`。
+- [ ] **low（记录待办）**：`ARCHIVE_DIR_SEGMENT_RE` 收敛后，`archive/unknown-1.0/file.md` 这类**非 change
+      目录**仍会被评命名（当前语料 0 命中，方向 fail-closed）。记录边界，不阻塞。
+
 ## 验证
 
 - [ ] 全量 `uv run pytest -q` 通过

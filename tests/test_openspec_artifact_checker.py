@@ -2565,6 +2565,63 @@ def test_archived_gate_flags_tasks_md_without_checkbox_lines(tmp_path, body):
     assert any("tasks.md 缺失或无任何 checkbox 行" in e for e in errors), (body, errors)
 
 
+def test_archived_gate_flags_all_post_merge_zero_checked(tmp_path):
+    """R2 M2：有 checkbox 行但**零勾选**（全标 post-merge）仍能关闸，须报错。
+
+    历史归档里这种形态真实存在（8/93）。「把所有任务都标成 post-merge、一个
+    都不勾」与「不写 checkbox」是同一类结构性绕开。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [ ] (post-merge) 关 issue。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("tasks.md 缺失或无任何 checkbox 行" in e for e in errors), errors
+
+
+def test_archived_gate_passes_when_at_least_one_task_checked(tmp_path):
+    """反向：只要有一条勾选（其余是带 tag 的 closeout 项）→ 通过，别修成误红。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] (post-merge) 关 issue。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("tasks.md 缺失或无任何 checkbox 行" in e for e in errors), errors
+
+
+def test_archived_gate_docs_only_missing_tasks_md_is_flagged(tmp_path):
+    """R2 low（对称性）：docs 归档缺 tasks.md 也曾放行——「删文件即关闸」的隐含路径。
+
+    语料实测 0/93 个 docs 归档缺 tasks.md，统一口径不产生假阳性。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-docs-only",
+        change_type="docs",
+        tasks="## 1. 文档\n\n- [ ] 一条未勾的文档任务。\n",
+        spec_delta=None,
+        design=None,
+        grill=None,
+        building_review=False,
+    )
+    (change / "tasks.md").unlink()
+
+    errors = mod._check_archived_completion_gate(change)
+    assert any("tasks.md 缺失" in e for e in errors), errors
+
+
 def test_archived_gate_does_not_flag_plain_file_under_archive_root(tmp_path):
     """building-review R1 low-1：`archive/.gitkeep` 这类普通文件不是命名不合规的归档目录。"""
     import scripts.check_openspec_artifacts as mod
@@ -2601,24 +2658,43 @@ def test_archived_gate_still_flags_non_dated_archive_directory(tmp_path):
     assert non_conforming == ["openspec/changes/archive/foo/proposal.md"]
 
 
-def test_own_change_explains_protected_artifact_with_its_own_event():
-    """building-review R1 low-3：本 change 改了受保护文件 `docs/known-debt.md`，
-    必须由**它自己**的 workflow-events.jsonl 给出 `protected_artifact_explained`
-    事件，而不是靠 checker 全仓 rglob 撞上别的 change 的陈旧事件。
+def _change_dir_in_any_form(repo_root: Path, change_id: str) -> Path | None:
+    """Locate a change directory in active or archived form (None if neither).
 
-    后者是既存机制弱点（`_protected_artifact_explanation_errors` 用 rglob 搜全仓、
-    `_change_id_for_event_log` 用事件日志自身目录推导 expected id），CI 绿不等于
-    承诺的证据存在。本测试把「本 change 自带证据」钉死。
+    Reviewers found the first draft of the protected-artifact test hard-coded the
+    *active* path, so the mandatory archive move turned it into a
+    ``FileNotFoundError`` landmine — and the ``origin/master...HEAD`` trigger
+    re-fired for every future PR touching the same file. Resolving both forms
+    and keying off tree state (not a remote ref) keeps the check honest wherever
+    it runs.
+    """
+    active = repo_root / "openspec" / "changes" / change_id
+    if (active / "workflow-events.jsonl").exists():
+        return active
+    archive_root = repo_root / "openspec" / "changes" / "archive"
+    if archive_root.exists():
+        for candidate in sorted(archive_root.glob(f"*-{change_id}")):
+            if (candidate / "workflow-events.jsonl").exists():
+                return candidate
+    return None
+
+
+def test_own_change_explains_protected_artifact_with_its_own_event():
+    """本 change 改了受保护文件 `docs/known-debt.md`，必须由**它自己**的
+    workflow-events.jsonl 给出 `protected_artifact_explained` 事件。
+
+    既存机制弱点是全仓 rglob 命中事件（`_protected_artifact_explanation_errors`
+    搜全仓、`_change_id_for_event_log` 用事件日志自身目录推导 expected id），
+    所以别的 change 的陈旧事件也能让门禁变绿——CI 绿不等于承诺的证据存在。
+
+    触发条件是**本树里的本 change 事件日志存在**（active 或 archive 形态皆可），
+    不依赖 `origin/master`（CI 上只有 `github.event.pull_request.base.sha`）；
+    两个形态都不存在时说明该 change 已离开本树，跳过而非误红。
     """
     repo_root = Path(__file__).resolve().parents[1]
-    change_dir = repo_root / "openspec" / "changes" / "fix-issue-235-completion-gate"
-
-    changed = subprocess.run(
-        ["git", "diff", "--name-only", "origin/master...HEAD", "--", "docs/known-debt.md"],
-        cwd=repo_root, capture_output=True, text=True,
-    ).stdout.strip()
-    if not changed:
-        pytest.skip("本 change 未修改 docs/known-debt.md")
+    change_dir = _change_dir_in_any_form(repo_root, "fix-issue-235-completion-gate")
+    if change_dir is None:
+        pytest.skip("本 change 不在本树（active/archive 均无）")
 
     events = [
         json.loads(line)
@@ -2631,8 +2707,8 @@ def test_own_change_explains_protected_artifact_with_its_own_event():
         and e.get("artifact_path") == "docs/known-debt.md"
     ]
     assert explained, (
-        "docs/known-debt.md 被本 change 修改，但本 change 的 workflow-events.jsonl "
-        "没有 protected_artifact_explained 事件（当前证据来自别的 change，属污染）"
+        f"{change_dir.name} 改了 docs/known-debt.md，但其自己的 workflow-events.jsonl "
+        "没有 protected_artifact_explained 事件（此时门禁若变绿，证据来自别的 change）"
     )
     assert explained[0].get("reason"), "protected_artifact_explained 事件缺 reason"
 
