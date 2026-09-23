@@ -1,5 +1,7 @@
 from pathlib import Path
 import json
+import re
+import subprocess
 
 import pytest
 
@@ -2031,3 +2033,733 @@ def test_ci_validate_job_runs_check_archived():
     assert "--skip-backlog" in step
     # 且确实在跑 checker 脚本。
     assert "check_openspec_artifacts.py" in step
+
+
+# ── issue #235: 完成度门禁改挂归档点 ──────────────────────────────────
+#
+# 三条判别性主线（缺任何一条，本 change 就退化成「看起来在工作」）：
+#   1. 触发必须用 --diff-filter=AR（纯 rename 归档 git 报 R，A-only 会漏）
+#   2. 触发必须叠「该归档目录在 base 树不存在」（否则往旧归档补文件会误伤旧 change）
+#   3. 四道门在归档侧必须**不因 tasks 未全勾而降级**（A′ 的 assume_implemented）
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def _git_commit(repo: Path, message: str) -> str:
+    _git_out(repo, "add", "-A")
+    _git_out(repo, "commit", "-qm", message)
+    return _git_out(repo, "rev-parse", "HEAD").strip()
+
+
+def _init_git_repo(repo: Path) -> None:
+    repo.mkdir(parents=True, exist_ok=True)
+    _git_out(repo, "init", "-q", ".")
+    _git_out(repo, "config", "user.email", "t@t")
+    _git_out(repo, "config", "user.name", "t")
+    _git_out(repo, "config", "commit.gpgsign", "false")
+
+
+def test_archived_gate_ar_catches_pure_rename_where_a_only_misses(tmp_path):
+    """D1：整目录 `git mv` 归档时 git 报 R，`--diff-filter=A` 输出为空 ⇒ 必须用 AR。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    change = tmp_path / "openspec" / "changes" / "my-change"
+    change.mkdir(parents=True)
+    (change / "proposal.md").write_text("x\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "base")
+
+    (tmp_path / "openspec" / "changes" / "archive").mkdir(parents=True)
+    _git_out(
+        tmp_path, "mv",
+        "openspec/changes/my-change",
+        "openspec/changes/archive/2026-09-23-my-change",
+    )
+    _git_commit(tmp_path, "archive")
+
+    # A-only 漏掉（这正是必须 AR 的原因）
+    a_only = _git_out(tmp_path, "diff", "--name-only", "--diff-filter=A", base, "--")
+    assert "openspec/changes/archive/2026-09-23-my-change/proposal.md" not in a_only
+
+    new_dirs, bad_paths, warning = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert new_dirs == ["2026-09-23-my-change"]
+    assert bad_paths == []
+    assert warning is None
+
+
+def test_archived_gate_ar_catches_same_pr_create_then_move(tmp_path):
+    """D1 的 A 侧：源目录不在 base 树（同 PR 内先建后 mv）时 git 报 A，AR 同样取到。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "base")
+
+    archive = tmp_path / "openspec" / "changes" / "archive" / "2026-09-24-fresh"
+    archive.mkdir(parents=True)
+    (archive / "proposal.md").write_text("x\n", encoding="utf-8")
+    _git_commit(tmp_path, "add archived change directly")
+
+    new_dirs, _, _ = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert new_dirs == ["2026-09-24-fresh"]
+
+
+def test_archived_gate_ignores_file_added_to_existing_archive(tmp_path):
+    """grill 风险②：往**既有**归档目录补文件会产出 A 路径，但不得当成「本 PR 新归档」。
+
+    #234/#236/#238 干的正是「给归档补 manifest」——不叠「base 树不存在」条件
+    就会对旧的、不该追溯的 change 求值四道门（实测 89 个归档里 69 个会红）。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    old = tmp_path / "openspec" / "changes" / "archive" / "2026-09-01-old-change"
+    old.mkdir(parents=True)
+    (old / "proposal.md").write_text("x\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "旧归档已存在")
+
+    # 后续 PR 补一份 manifest —— 这是 A 路径，正则也会命中
+    (old / "reviews").mkdir()
+    (old / "reviews" / "building-review-manifest.json").write_text("{}", encoding="utf-8")
+    _git_commit(tmp_path, "补 manifest")
+
+    a_only = _git_out(tmp_path, "diff", "--name-only", "--diff-filter=A", base, "--")
+    assert "2026-09-01-old-change" in a_only  # 反证：A 路径确实出现
+
+    new_dirs, bad_paths, _ = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert new_dirs == [], "旧归档目录被误判成本 PR 新归档"
+    assert bad_paths == []
+
+
+def test_archived_gate_reports_non_conforming_archive_dir(tmp_path):
+    """Q5：`archive/<id>/`（缺日期前缀）既不匹配正则、又被 active 迭代排除
+    ⇒ 会落进「谁都不管」的静默面，必须报错。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "base")
+
+    bad_dir = tmp_path / "openspec" / "changes" / "archive" / "foo"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "proposal.md").write_text("x\n", encoding="utf-8")
+    _git_commit(tmp_path, "漏日期前缀的归档")
+
+    new_dirs, bad_paths, _ = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert new_dirs == []
+    assert "openspec/changes/archive/foo/proposal.md" in bad_paths
+
+
+def _archived_change(
+    tmp_path: Path,
+    dir_name: str,
+    *,
+    change_type: str = "feature",
+    tasks: str = "## 1. 实现\n\n- [x] 做完。\n",
+    spec_delta: str | None = "web-ui",
+    design: str | None = VALID_DESIGN,
+    grill: str | None = None,
+    building_review: bool = False,
+) -> Path:
+    """构造一个归档目录下的 change（无 git，供门评估单测用）。"""
+    change = tmp_path / "openspec" / "changes" / "archive" / dir_name
+    write_change(change, proposal_for(change_type), design=design)
+    write_tasks(change, tasks)
+    if spec_delta:
+        write_spec_delta(change, spec_delta)
+    if grill is not None:
+        review_dir = change / "reviews"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        (review_dir / "grill-design.md").write_text(grill, encoding="utf-8")
+    if building_review:
+        review_dir = change / "reviews"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        (review_dir / "building-review.md").write_text("## Verdict\n\n**PASS**\n", encoding="utf-8")
+    return change
+
+
+GRILL_EVIDENCE_OK = """# Grill
+
+## Confirmed Decisions
+
+- **决策**: 决策一；理由: 理由一；来源: run-1
+- **决策**: 决策二；理由: 理由二；来源: run-1
+- **决策**: 决策三；理由: 理由三；来源: run-1
+
+## Open Questions
+
+- 无
+"""
+
+
+def test_archived_gate_flags_missing_building_review(tmp_path):
+    """问题二：本 PR 新归档的非 docs change 缺 building-review.md → 门触发。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-09-23-demo", grill=GRILL_EVIDENCE_OK, building_review=False
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("building-review.md missing" in e for e in errors), errors
+
+
+def test_archived_gate_flags_untagged_unchecked_task(tmp_path):
+    """问题一：未勾且未标 (post-merge) 的任务 → 报错（不得静默）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] 忘了勾的一项。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("忘了勾的一项" in e for e in errors), errors
+
+
+def test_archived_gate_post_merge_tag_exempts_unchecked_task(tmp_path):
+    """同一 fixture 加 (post-merge) → 不报。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] (post-merge) PR 合入后关 issue。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("post-merge" in e for e in errors), errors
+    assert not any("未勾" in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- [ ] (post-merge) 收尾",
+        "- [ ] 5.5 (post-merge) 收尾",
+        "- [ ] **6.9** (post-merge) 收尾",
+        "- [ ] （post-merge）收尾",       # 全角括号
+        "- [ ] (POST-MERGE) 收尾",        # 大小写
+        "+ [ ] (post-merge) 收尾",        # + 标记
+        "* [ ] (post-merge) 收尾",        # * 标记
+        "  - [ ] (post-merge) 收尾",      # 缩进子项
+    ],
+)
+def test_archived_gate_tag_syntax_variants_all_exempt(tmp_path, line):
+    """D4：tag 语法 8 变体全部识别为豁免（编号/粗体在前、全半角括号、大小写、标记符、缩进）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks=f"## 1. 实现\n\n- [x] 做完。\n{line}\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("未勾" in e for e in errors), (line, errors)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- [ ] 收尾（无 tag）",
+        "- [ ] (pre-merge) 收尾",
+        "- [ ] post-merge 无括号",
+    ],
+)
+def test_archived_gate_tag_negative_cases_still_reported(tmp_path, line):
+    """D4 反例：无 tag / 错 tag / 缺括号 → 仍算未完成。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks=f"## 1. 实现\n\n- [x] 做完。\n{line}\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("未勾" in e for e in errors), (line, errors)
+
+
+def test_archived_gate_requires_grill_evidence_even_when_tasks_incomplete(tmp_path):
+    """Q1b / A′ 的判别性断言：归档侧四道门**不因 tasks 未全勾而降级**。
+
+    这是整个 change 的核心——不修的话，归档 change 只要留一条未勾任务，
+    grill 证据门就静默返回空（绿着归档），正是 issue #235 要堵的洞。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        # tasks 里带 batch-grill 字面标记，且有一条未勾 —— 正是「静默通过」的形态
+        tasks="## 1. 实现\n\n- [x] 跑 batch-grill-me。\n- [ ] 一条无 tag 未勾任务。\n",
+        grill=None,
+        building_review=True,
+    )
+
+    # active 语义（假定未实现）：字面标记兜底 → 静默通过，这就是被绕开的路径
+    from scripts.check_openspec_artifacts import _check_design_review_task, parse_change_type
+
+    proposal_text = (change / "proposal.md").read_text(encoding="utf-8")
+    change_type = parse_change_type(proposal_text)[0]
+    assert _check_design_review_task(change, change_type) == []
+
+    # 归档语义（A′）：必须报 grill 证据缺失
+    errors = mod._check_archived_completion_gate(change)
+    assert any("reviews/grill-design.md missing" in e for e in errors), errors
+
+
+def test_archived_gate_flags_unconfirmed_open_question_when_tasks_incomplete(tmp_path):
+    """A′：归档侧的 OpenQuestion 确认覆盖同样不因未全勾而降级。"""
+    import scripts.check_openspec_artifacts as mod
+
+    grill = GRILL_EVIDENCE_OK.replace(
+        "## Open Questions\n\n- 无\n", "## Open Questions\n\n- **Q1**: 未决项。\n"
+    )
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] 一条未勾任务。\n",
+        grill=grill,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("未确认的 Open Question" in e for e in errors), errors
+
+
+def test_archived_gate_rir_content_threshold_applies_when_tasks_incomplete(tmp_path):
+    """A′：RIR 内容门槛（含 tier↔status 闭环）在归档侧不因未全勾而降级。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] 一条未勾任务。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    # exempt + enabled 不闭环（tasks 未全勾时 active 侧不报）
+    proposal = (change / "proposal.md").read_text(encoding="utf-8")
+    proposal = proposal.replace("research_tier: full", "research_tier: exempt")
+    (change / "proposal.md").write_text(proposal, encoding="utf-8")
+
+    errors = mod._check_archived_completion_gate(change)
+    assert any("tier/status" in e or "exempt" in e for e in errors), errors
+
+
+def test_archived_gate_docs_only_archive_is_exempt(tmp_path):
+    """Q1a：docs-only 归档 → 四道门都不要求（豁免继承）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-docs-only",
+        change_type="docs",
+        tasks="## 1. 文档\n\n- [ ] 一条未勾的文档任务。\n",
+        spec_delta=None,
+        design=None,
+        grill=None,
+        building_review=False,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    # docs 豁免四道门；未 tag 的未勾任务仍报（那是任务约定，不属四道门豁免面）
+    assert not any("building-review.md missing" in e for e in errors), errors
+    assert not any("grill-design.md missing" in e for e in errors), errors
+    assert not any("Reference Implementation Research" in e for e in errors), errors
+
+
+def test_archived_gate_bugfix_archive_is_exempt_from_grill(tmp_path):
+    """Q1a：bugfix 不在 DESIGN_TYPES → 不要求 grill 证据（豁免继承）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-bugfix",
+        change_type="bugfix",
+        tasks="## 1. 修复\n\n- [x] 修完。\n",
+        grill=None,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("grill-design.md missing" in e for e in errors), errors
+
+
+def test_archived_gate_no_spec_delta_does_not_require_building_review(tmp_path):
+    """D2 继承的 `_changed_capabilities` 豁免：无 spec delta → 不要求 building-review。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        spec_delta=None,
+        tasks="## 1. 实现\n\n- [x] 做完。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=False,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("building-review.md missing" in e for e in errors), errors
+
+
+def _minimal_changes_root(tmp_path: Path) -> Path:
+    changes_root = tmp_path / "openspec" / "changes"
+    (changes_root / "archive").mkdir(parents=True)
+    specs_root = tmp_path / "openspec" / "specs"
+    specs_root.mkdir(parents=True)
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.parent.mkdir(parents=True, exist_ok=True)
+    backlog.write_text(
+        "# OpenSpec Change 实现队列\n\n## 未实现队列\n\n当前无。\n\n## 已完成待归档\n\n当前无。\n",
+        encoding="utf-8",
+    )
+    return changes_root
+
+
+def _main_args(changes_root: Path, tmp_path: Path, *extra: str) -> list[str]:
+    return [
+        "--changes-root", str(changes_root),
+        "--current-specs-root", str(tmp_path / "openspec" / "specs"),
+        "--backlog", str(tmp_path / "docs" / "openspec-change-backlog.md"),
+        *extra,
+    ]
+
+
+def test_main_runs_archived_gate_with_skip_protected_paths(tmp_path, monkeypatch):
+    """D6：新门**不能**被 `--skip-protected-paths` 关掉（它必须在该块之外）。
+
+    CI 第二步同时也传这个 flag，若新门放在块内，该 flag 就成了事实上的
+    区分开关，与 D6 明文冲突。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    changes_root = _minimal_changes_root(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        mod, "_check_new_archived_completion_gates",
+        lambda *a, **k: calls.append("called") or [],
+    )
+
+    exit_code = main(
+        _main_args(changes_root, tmp_path, "--skip-protected-paths", "--skip-backlog")
+    )
+
+    assert calls == ["called"], "新门被 --skip-protected-paths 关掉了"
+    assert exit_code == 0
+
+
+def test_main_skips_archived_gate_in_check_archived_mode(tmp_path, monkeypatch):
+    """D6：`--check-archived` 模式不触发新门（守 48 个历史归档的爆炸半径）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    changes_root = _minimal_changes_root(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        mod, "_check_new_archived_completion_gates",
+        lambda *a, **k: calls.append("called") or [],
+    )
+
+    main(_main_args(changes_root, tmp_path, "--check-archived", "--skip-backlog"))
+
+    assert calls == [], "--check-archived 触发了归档点门"
+
+
+def test_main_skips_archived_gate_for_single_change_mode(tmp_path, monkeypatch):
+    """风险小a：`--change <id>` 时跳过新门，避免「以为只查一个 change」却多报。"""
+    import scripts.check_openspec_artifacts as mod
+
+    changes_root = _minimal_changes_root(tmp_path)
+    only = changes_root / "some-change"
+    write_change(only, proposal_for("feature"), design=VALID_DESIGN)
+    write_tasks(only, ALL_TASKS_CHECKED)
+    write_spec_delta(only, "web-ui")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        mod, "_check_new_archived_completion_gates",
+        lambda *a, **k: calls.append("called") or [],
+    )
+
+    main(_main_args(changes_root, tmp_path, "--change", "some-change"))
+
+    assert calls == [], "--change 模式触发了归档点门"
+
+
+def test_archived_gate_fails_closed_when_base_unresolvable(tmp_path, monkeypatch):
+    """风险小b：新门独立算 diff，必须自己兑现 --require-base，否则浅检出 fail-open。"""
+    import scripts.check_openspec_artifacts as mod
+
+    changes_root = _minimal_changes_root(tmp_path)
+    monkeypatch.setattr(
+        mod, "_new_archive_dirs_since_base",
+        lambda repo_root, base_ref: (
+            [], [], f"could not resolve base ref '{base_ref}' for archived completion gate"
+        ),
+    )
+
+    strict = mod._check_new_archived_completion_gates(
+        tmp_path, changes_root, "master", require_base=True
+    )
+    assert any("could not resolve base ref" in e for e in strict), strict
+
+    # 非严格模式：降级为可见 warning，不报错（与既有 protected-path 行为一致）
+    lenient = mod._check_new_archived_completion_gates(
+        tmp_path, changes_root, "master", require_base=False
+    )
+    assert lenient == []
+
+
+def test_archived_gate_bad_dir_path_is_reported_by_main(tmp_path, monkeypatch):
+    """Q5 端到端：非规范归档目录经 main() 进 errors（不是只在 helper 里可见）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    changes_root = _minimal_changes_root(tmp_path)
+    monkeypatch.setattr(
+        mod, "_new_archive_dirs_since_base",
+        lambda repo_root, base_ref: (
+            [], ["openspec/changes/archive/foo/proposal.md"], None,
+        ),
+    )
+
+    exit_code = main(
+        _main_args(changes_root, tmp_path, "--skip-protected-paths", "--skip-backlog")
+    )
+
+    assert exit_code == 1
+
+
+def test_archived_gate_flags_missing_tasks_md(tmp_path):
+    """building-review R1 M1：归档非 docs change 缺 tasks.md → 报错（不得静默）。
+
+    `_untagged_unchecked_tasks` 在文件缺失时返回空 ⇒ 完成度维度唯一证据载体
+    消失、门静默通过。这与「留一条 `- [ ]` 自我关闸」同构（靠「不写 checkbox」
+    而非「不勾 checkbox」），必须显式报错。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-09-23-demo", grill=GRILL_EVIDENCE_OK, building_review=True
+    )
+    (change / "tasks.md").unlink()
+
+    errors = mod._check_archived_completion_gate(change)
+    assert any("tasks.md 缺失" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("body", ["这是一段散文，没有任何勾选项。\n", ""])
+def test_archived_gate_flags_tasks_md_without_checkbox_lines(tmp_path, body):
+    """同上，散文式 / 空 tasks.md（无任何 checkbox 行）同样无从评估完成度。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-09-23-demo", grill=GRILL_EVIDENCE_OK, building_review=True
+    )
+    (change / "tasks.md").write_text(body, encoding="utf-8")
+
+    errors = mod._check_archived_completion_gate(change)
+    # 必须钉死**区分性**子串（R4 发现：`"tasks.md" in e` 是恒真项，因为模板里
+    # 永远有 "tasks.md"——把消息误退回「缺失」也能绿）。这里要求明确说「无 checkbox 行」。
+    assert any("tasks.md 无任何 checkbox 行" in e for e in errors), (body, errors)
+
+
+def test_archived_gate_flags_all_post_merge_zero_checked(tmp_path):
+    """R2 M2：有 checkbox 行但**零勾选**（全标 post-merge）仍能关闸，须报错。
+
+    历史归档里这种形态真实存在（8/93）。「把所有任务都标成 post-merge、一个
+    都不勾」与「不写 checkbox」是同一类结构性绕开。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [ ] (post-merge) 关 issue。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("全部未勾选" in e for e in errors), errors
+
+
+def test_archived_gate_passes_when_at_least_one_task_checked(tmp_path):
+    """反向：只要有一条勾选（其余是带 tag 的 closeout 项）→ 通过，别修成误红。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-demo",
+        tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] (post-merge) 关 issue。\n",
+        grill=GRILL_EVIDENCE_OK,
+        building_review=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("归档点无法评估完成度" in e for e in errors), errors
+
+
+def test_archived_gate_docs_only_missing_tasks_md_is_flagged(tmp_path):
+    """R2 low（对称性）：docs 归档缺 tasks.md 也曾放行——「删文件即关闸」的隐含路径。
+
+    语料实测 0/93 个 docs 归档缺 tasks.md，统一口径不产生假阳性。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path,
+        "2026-09-23-docs-only",
+        change_type="docs",
+        tasks="## 1. 文档\n\n- [ ] 一条未勾的文档任务。\n",
+        spec_delta=None,
+        design=None,
+        grill=None,
+        building_review=False,
+    )
+    (change / "tasks.md").unlink()
+
+    errors = mod._check_archived_completion_gate(change)
+    assert any("tasks.md 缺失" in e for e in errors), errors
+
+
+def test_archived_gate_does_not_flag_plain_file_under_archive_root(tmp_path):
+    """building-review R1 low-1：`archive/.gitkeep` 这类普通文件不是命名不合规的归档目录。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "base")
+
+    archive_root = tmp_path / "openspec" / "changes" / "archive"
+    archive_root.mkdir(parents=True)
+    (archive_root / ".gitkeep").write_text("", encoding="utf-8")
+    (archive_root / "notes.md").write_text("x\n", encoding="utf-8")
+    _git_commit(tmp_path, "archive root files")
+
+    new_dirs, non_conforming, _ = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert new_dirs == []
+    assert non_conforming == [], "归档根下的普通文件被判成命名不合规"
+
+
+def test_archived_gate_still_flags_non_dated_archive_directory(tmp_path):
+    """收敛判定后，真正的「无日期前缀归档目录」仍须报错（别把修复做成 fail-open）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "base")
+
+    bad = tmp_path / "openspec" / "changes" / "archive" / "foo"
+    bad.mkdir(parents=True)
+    (bad / "proposal.md").write_text("x\n", encoding="utf-8")
+    _git_commit(tmp_path, "bad archive dir")
+
+    _, non_conforming, _ = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert non_conforming == ["openspec/changes/archive/foo/proposal.md"]
+
+
+def _change_dir_in_any_form(repo_root: Path, change_id: str) -> Path | None:
+    """Locate a change directory in active or archived form (None if neither).
+
+    Reviewers found the first draft of the protected-artifact test hard-coded the
+    *active* path, so the mandatory archive move turned it into a
+    ``FileNotFoundError`` landmine — and the ``origin/master...HEAD`` trigger
+    re-fired for every future PR touching the same file. Resolving both forms
+    and keying off tree state (not a remote ref) keeps the check honest wherever
+    it runs.
+    """
+    active = repo_root / "openspec" / "changes" / change_id
+    if (active / "workflow-events.jsonl").exists():
+        return active
+    archive_root = repo_root / "openspec" / "changes" / "archive"
+    if archive_root.exists():
+        for candidate in sorted(archive_root.glob(f"*-{change_id}")):
+            # Glob `*-<id>` is a suffix match, so a decoy such as
+            # `2026-01-01-add-<id>` would match too. Require an exact
+            # `<date>-<id>` archive name (building-review R3 finding 3).
+            if not (candidate / "workflow-events.jsonl").exists():
+                continue
+            if _strip_archive_date_prefix(candidate.name) != change_id:
+                continue
+            return candidate
+    return None
+
+
+def _strip_archive_date_prefix(dir_name: str) -> str:
+    match = re.match(r"\d{4}-\d{2}-\d{2}-(.+)", dir_name)
+    return match.group(1) if match else dir_name
+
+
+def test_change_dir_in_any_form_rejects_suffix_decoy(tmp_path):
+    """building-review R3 finding 3：`glob("*-<id>")` 是后缀匹配，诱饵目录会排在前。
+
+    例如 change_id = `fix-issue-235` 时，`2026-01-01-add-fix-issue-235` 也匹配
+    `*-fix-issue-235`，且按字典序可能排在真身之前；若诱饵带着事件日志，测试会
+    假绿。修复要求归档名去掉日期前缀后**精确等于** change_id。
+    """
+    change_id = "fix-issue-235"
+    archive = tmp_path / "openspec" / "changes" / "archive"
+    decoy = archive / f"2026-01-01-add-{change_id}"
+    decoy.mkdir(parents=True)
+    (decoy / "workflow-events.jsonl").write_text('{"seq": 1}\n', encoding="utf-8")
+
+    # 只有诱饵时：不得被当成目标 change
+    assert _change_dir_in_any_form(tmp_path, change_id) is None
+
+    real = archive / f"2026-09-23-{change_id}"
+    real.mkdir(parents=True)
+    (real / "workflow-events.jsonl").write_text('{"seq": 1}\n', encoding="utf-8")
+    assert _change_dir_in_any_form(tmp_path, change_id) == real
+
+
+def test_own_change_explains_protected_artifact_with_its_own_event():
+    """本 change 改了受保护文件 `docs/known-debt.md`，必须由**它自己**的
+    workflow-events.jsonl 给出 `protected_artifact_explained` 事件。
+
+    既存机制弱点是全仓 rglob 命中事件（`_protected_artifact_explanation_errors`
+    搜全仓、`_change_id_for_event_log` 用事件日志自身目录推导 expected id），
+    所以别的 change 的陈旧事件也能让门禁变绿——CI 绿不等于承诺的证据存在。
+
+    触发条件是**本树里的本 change 事件日志存在**（active 或 archive 形态皆可），
+    不依赖 `origin/master`（CI 上只有 `github.event.pull_request.base.sha`）；
+    两个形态都不存在时说明该 change 已离开本树，跳过而非误红。
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    change_dir = _change_dir_in_any_form(repo_root, "fix-issue-235-completion-gate")
+    if change_dir is None:
+        pytest.skip("本 change 不在本树（active/archive 均无）")
+
+    events = [
+        json.loads(line)
+        for line in (change_dir / "workflow-events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    explained = [
+        e for e in events
+        if e.get("event_type") == "protected_artifact_explained"
+        and e.get("artifact_path") == "docs/known-debt.md"
+    ]
+    assert explained, (
+        f"{change_dir.name} 改了 docs/known-debt.md，但其自己的 workflow-events.jsonl "
+        "没有 protected_artifact_explained 事件（此时门禁若变绿，证据来自别的 change）"
+    )
+    assert explained[0].get("reason"), "protected_artifact_explained 事件缺 reason"
+
+
+def test_backlog_has_no_duplicate_section_headings():
+    """本 change 的立项提交曾把 `### 3.` 标题复制成 `### 3. …### 3. …`。
+
+    那是一次 Edit 的误伤（`old_string` 命中后把整行重写了两遍），既弄脏了文档、
+    也会让 backlog 的章节结构错乱。加一条机械锁：未实现队列里的 `### N. \\`id\\``
+    标题不得在同一次提交里被拼接成一行出现两次。
+    """
+    backlog = Path(__file__).resolve().parents[1] / "docs" / "openspec-change-backlog.md"
+    text = backlog.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("### "):
+            continue
+        assert stripped.count("### ") == 1, f"backlog 标题重复拼接: {stripped!r}"

@@ -239,3 +239,36 @@ HEAD（例：`2026-09-14-subagent-concurrency-queue` 的 manifest 记 `head_sha=
 
 即 AGENTS.md 新增段落的「归档 change 也在校验范围内」应读作：**已有审阅报告的归档 change 不再脱离校验**，
 而非「每个归档 change 都必须有 manifest」。若要把后者也变成门禁，属独立 change（需为历史 change 补审阅或豁免）。
+
+### 完成度门禁的残余面（issue #235）
+
+归档点完成度门（`_check_new_archived_completion_gates`）把审阅证据类门禁的触发点从「tasks 全勾」改挂「归档点」，
+已知两处残余面，均为**流程违规**而非静默绕过：
+
+1. **实现 PR 完全不归档** → 门不触发。这违反 AGENTS.md「OpenSpec 收尾」硬规则（实现 PR 必须含归档收尾），
+   但该 change 仍以 active 形态可见，不会被静默吞掉。要机械兜住需另立「active change 存在时长 / 未归档检测」门，
+   超出本 change 边界。
+2. **归档到无日期前缀目录** → 已由本 change **直接报错**兜住（不再只是记债）：`--diff-filter=AR` diff 中出现
+   `openspec/changes/archive/` 下但不匹配 `<YYYY-MM-DD>-<id>/` 的路径会进 `errors`。此条记债仅为说明
+   「为何该守卫是必需的」——缺了它，这类目录既不匹配归档正则、又被 `iter_change_dirs` 排除在 active 之外，
+   会落成「谁都不管」的静默面。当前语料触发面为零（93/93 归档目录都带日期前缀）。
+
+另外，**本门不追溯既有归档**：只有本 PR 新建的归档目录（`AR` diff ∩ base 树不存在）才被求值。对 89 个可解析
+历史归档实跑四道门，69 个会失败（48 个连 `reviews/` 目录都没有）——这正是必须叠加「base 树不存在」条件的原因，
+否则任何「往旧归档补文件」的 PR（`#234`/`#236`/`#238` 的形态）都会触发对陈旧 change 的误判。
+
+**既存机制弱点（本 change 未引入、也未修复）：受保护路径的解释事件是全仓搜索命中的。**
+`_protected_artifact_explanation_errors`（`scripts/check_openspec_artifacts.py`）用
+`changes_root.rglob("workflow-events.jsonl")` 遍历**整个仓库**的事件日志，而 `_change_id_for_event_log` 的
+expected id 取自事件日志**自身所在目录**——两者都不校验「该事件是否属于当前正在改这个文件的那个 change」。
+后果：一个 change 修改 `docs/known-debt.md` 却**没写自己的** `protected_artifact_explained` 事件时，只要**任意**历史
+change 的日志里有一条指向同一路径的陈旧事件，门禁就会放行（实测：只留本 change 的事件 → 报
+`changed without workflow event explanation`；再叠加一条陈旧归档事件 → GREEN）。**即 CI 绿不等于承诺的证据存在。**
+本 change 已为自己的 `docs/known-debt.md` 修改写了事件，并以测试
+`test_own_change_explains_protected_artifact_with_its_own_event` 钉死这一点；但把该门收窄为「只认本 change 的事件」
+属独立改动面，超出本 change 边界。
+
+**归档目录名收敛后的边界（R2 low，记录不处理）**：非规范归档判定收敛为「凡 `archive/<seg>/…`（有目录段）
+即评命名」后，`archive/unknown-1.0/file.md`、`archive/scratch/x` 这类**非 change 目录**也会被报
+「归档目录命名不合规」。当前语料 0 命中，方向 fail-closed（报错而非静默放行），故接受该严格化；
+若将来确需在归档根下放非 change 目录，再收窄判定。

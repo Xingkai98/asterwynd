@@ -36,8 +36,8 @@ GitHub Actions (.github/workflows/ci.yml)
 **`scripts/check_openspec_artifacts.py`**
 - `_check_impact_analysis`（248 行）：非平凡 change 必须维护结构化 Impact Analysis。
 - `_check_reference_implementation_research`（304 行）：非 docs change 必须记录参考实现调研。
-- `_check_design_review_task`（438 行）：**grill 门禁**——非 docs + 有 spec delta 的 change，写代码前必须有 `reviews/grill-design.md`（≥3 条决策 + Open Questions 全确认）。
-- `_check_review_manifests`（732 行）：**审阅闭环门禁**——tasks 全勾选的完成 change，必须 building-review.md + manifest（绑定 reviewer run、base/head sha、报告 hash）且 PASS。
+- `_check_design_review_task`：**grill 门禁**——非 docs + 有 spec delta 的 change，写代码前必须有 `reviews/grill-design.md`（≥3 条决策 + Open Questions 全确认）。归档侧传 `assume_implemented=True`（issue #235），使其不因归档 change 残留未勾项而静默降级。
+- `_check_review_manifests`：**审阅闭环门禁**——active 阶段由「tasks 全勾选」触发；交付阶段改由**归档点**触发（见 `_check_new_archived_completion_gates`，issue #235）：本 PR 通过 `--diff-filter=AR` **新建**的归档目录（须在 base 树不存在）必须 building-review.md + manifest（绑定 reviewer run、base/head sha、报告 hash）且 PASS。
 - `_check_benchmark_smoke_task`（594 行）：coding-agent 核心变更必须有 benchmark smoke 验证项。
 - `_check_current_spec_sync_task`（421 行）：有 spec delta 的 change 必须含"当前规格同步"任务。
 
