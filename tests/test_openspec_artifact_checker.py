@@ -2531,3 +2531,107 @@ def test_archived_gate_bad_dir_path_is_reported_by_main(tmp_path, monkeypatch):
     )
 
     assert exit_code == 1
+
+
+def test_archived_gate_flags_missing_tasks_md(tmp_path):
+    """building-review R1 M1：归档非 docs change 缺 tasks.md → 报错（不得静默）。
+
+    `_untagged_unchecked_tasks` 在文件缺失时返回空 ⇒ 完成度维度唯一证据载体
+    消失、门静默通过。这与「留一条 `- [ ]` 自我关闸」同构（靠「不写 checkbox」
+    而非「不勾 checkbox」），必须显式报错。
+    """
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-09-23-demo", grill=GRILL_EVIDENCE_OK, building_review=True
+    )
+    (change / "tasks.md").unlink()
+
+    errors = mod._check_archived_completion_gate(change)
+    assert any("tasks.md 缺失" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("body", ["这是一段散文，没有任何勾选项。\n", ""])
+def test_archived_gate_flags_tasks_md_without_checkbox_lines(tmp_path, body):
+    """同上，散文式 / 空 tasks.md（无任何 checkbox 行）同样无从评估完成度。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-09-23-demo", grill=GRILL_EVIDENCE_OK, building_review=True
+    )
+    (change / "tasks.md").write_text(body, encoding="utf-8")
+
+    errors = mod._check_archived_completion_gate(change)
+    assert any("tasks.md 缺失或无任何 checkbox 行" in e for e in errors), (body, errors)
+
+
+def test_archived_gate_does_not_flag_plain_file_under_archive_root(tmp_path):
+    """building-review R1 low-1：`archive/.gitkeep` 这类普通文件不是命名不合规的归档目录。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "base")
+
+    archive_root = tmp_path / "openspec" / "changes" / "archive"
+    archive_root.mkdir(parents=True)
+    (archive_root / ".gitkeep").write_text("", encoding="utf-8")
+    (archive_root / "notes.md").write_text("x\n", encoding="utf-8")
+    _git_commit(tmp_path, "archive root files")
+
+    new_dirs, non_conforming, _ = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert new_dirs == []
+    assert non_conforming == [], "归档根下的普通文件被判成命名不合规"
+
+
+def test_archived_gate_still_flags_non_dated_archive_directory(tmp_path):
+    """收敛判定后，真正的「无日期前缀归档目录」仍须报错（别把修复做成 fail-open）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    base = _git_commit(tmp_path, "base")
+
+    bad = tmp_path / "openspec" / "changes" / "archive" / "foo"
+    bad.mkdir(parents=True)
+    (bad / "proposal.md").write_text("x\n", encoding="utf-8")
+    _git_commit(tmp_path, "bad archive dir")
+
+    _, non_conforming, _ = mod._new_archive_dirs_since_base(tmp_path, base)
+    assert non_conforming == ["openspec/changes/archive/foo/proposal.md"]
+
+
+def test_own_change_explains_protected_artifact_with_its_own_event():
+    """building-review R1 low-3：本 change 改了受保护文件 `docs/known-debt.md`，
+    必须由**它自己**的 workflow-events.jsonl 给出 `protected_artifact_explained`
+    事件，而不是靠 checker 全仓 rglob 撞上别的 change 的陈旧事件。
+
+    后者是既存机制弱点（`_protected_artifact_explanation_errors` 用 rglob 搜全仓、
+    `_change_id_for_event_log` 用事件日志自身目录推导 expected id），CI 绿不等于
+    承诺的证据存在。本测试把「本 change 自带证据」钉死。
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    change_dir = repo_root / "openspec" / "changes" / "fix-issue-235-completion-gate"
+
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", "origin/master...HEAD", "--", "docs/known-debt.md"],
+        cwd=repo_root, capture_output=True, text=True,
+    ).stdout.strip()
+    if not changed:
+        pytest.skip("本 change 未修改 docs/known-debt.md")
+
+    events = [
+        json.loads(line)
+        for line in (change_dir / "workflow-events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    explained = [
+        e for e in events
+        if e.get("event_type") == "protected_artifact_explained"
+        and e.get("artifact_path") == "docs/known-debt.md"
+    ]
+    assert explained, (
+        "docs/known-debt.md 被本 change 修改，但本 change 的 workflow-events.jsonl "
+        "没有 protected_artifact_explained 事件（当前证据来自别的 change，属污染）"
+    )
+    assert explained[0].get("reason"), "protected_artifact_explained 事件缺 reason"

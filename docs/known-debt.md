@@ -256,3 +256,14 @@ HEAD（例：`2026-09-14-subagent-concurrency-queue` 的 manifest 记 `head_sha=
 另外，**本门不追溯既有归档**：只有本 PR 新建的归档目录（`AR` diff ∩ base 树不存在）才被求值。对 89 个可解析
 历史归档实跑四道门，69 个会失败（48 个连 `reviews/` 目录都没有）——这正是必须叠加「base 树不存在」条件的原因，
 否则任何「往旧归档补文件」的 PR（`#234`/`#236`/`#238` 的形态）都会触发对陈旧 change 的误判。
+
+**既存机制弱点（本 change 未引入、也未修复）：受保护路径的解释事件是全仓搜索命中的。**
+`_protected_artifact_explanation_errors`（`scripts/check_openspec_artifacts.py`）用
+`changes_root.rglob("workflow-events.jsonl")` 遍历**整个仓库**的事件日志，而 `_change_id_for_event_log` 的
+expected id 取自事件日志**自身所在目录**——两者都不校验「该事件是否属于当前正在改这个文件的那个 change」。
+后果：一个 change 修改 `docs/known-debt.md` 却**没写自己的** `protected_artifact_explained` 事件时，只要**任意**历史
+change 的日志里有一条指向同一路径的陈旧事件，门禁就会放行（实测：只留本 change 的事件 → 报
+`changed without workflow event explanation`；再叠加一条陈旧归档事件 → GREEN）。**即 CI 绿不等于承诺的证据存在。**
+本 change 已为自己的 `docs/known-debt.md` 修改写了事件，并以测试
+`test_own_change_explains_protected_artifact_with_its_own_event` 钉死这一点；但把该门收窄为「只认本 change 的事件」
+属独立改动面，超出本 change 边界。

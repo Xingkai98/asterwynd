@@ -62,6 +62,28 @@
 - [ ] `/review-loop` 独立零记忆 subagent 审阅 → PASS 或 3 轮封顶
 - [ ] 生成 review manifest（绑归档后最终 head）
 
+### R1 审阅发现与修复（独立零记忆 subagent `3ce1e878`，CHANGES_REQUESTED）
+
+核心功能经对方实跑确认成立（两条绕开路径都堵住、4 条变异各自只让对应用例转红），修复以下 4 项：
+
+- [x] **M1（medium，fail-open）**：归档目录缺 `tasks.md`、或 tasks.md 无任何 checkbox 行（散文/空文件）时，
+      `_untagged_unchecked_tasks` 返回空 ⇒ 完成度维度静默通过。这与「留一条 `- [ ]` 自我关闸」同构
+      （靠「不写 checkbox」而非「不勾 checkbox」）。修复：新增 `_tasks_missing_evidence`，非 docs 新归档
+      在缺证据时报错。回归测试：`test_archived_gate_flags_missing_tasks_md` +
+      `test_archived_gate_flags_tasks_md_without_checkbox_lines`（参数化散文/空文件两形态）
+- [x] **low-1（假阳性）**：非规范归档判定过宽——`archive/.gitkeep` 这类归档根下的普通文件被判成
+      「归档目录命名不合规」，且该分支不受「base 树不存在」约束（触碰历史非规范目录会红）。
+      修复：新增 `ARCHIVE_DIR_SEGMENT_RE`，只对「有目录段」的路径评命名。回归测试：
+      `test_archived_gate_does_not_flag_plain_file_under_archive_root` +
+      `test_archived_gate_still_flags_non_dated_archive_directory`（防修成 fail-open）
+- [x] **low-3（证据污染）**：本 change 改了受保护文件 `docs/known-debt.md`，但 HEAD 上**没有自己的**
+      `protected_artifact_explained` 事件——CI 绿只因 checker 全仓 rglob 撞上别的 change 的陈旧事件。
+      修复：写入本 change 自己的事件（seq 2）；回归测试
+      `test_own_change_explains_protected_artifact_with_its_own_event`（去掉事件即转红，已验证）。
+      该机制弱点本身（收窄为「只认本 change 的事件」）已记 `docs/known-debt.md`
+- [x] **info（写法提示）**：tag 必须紧邻复选框，行尾追加写法不被识别（fail-closed 方向，会报错不静默）。
+      已写入 `docs/development-guide.md` 的「完成度门禁与 (post-merge) 任务标记」节
+
 ## 验证
 
 - [ ] 全量 `uv run pytest -q` 通过
