@@ -266,7 +266,7 @@
       if (text) {
         row.appendChild(el('pre', 'failure-text', G.truncateText(text, 300)));
         if (item.text_truncated || text.length > 300) {
-          row.appendChild(el('span', 'drawer-note', '预览已截断，全文见本条记录。'));
+          row.appendChild(el('span', 'drawer-note', '预览已截断（最多 300 字符）。'));
         }
       }
       host.appendChild(row);

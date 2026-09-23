@@ -27,7 +27,9 @@ from agent.subagent.workflow import parse_workflow_spec
 from agent.workspace_policy import WorkspacePolicy
 from web.session import (
     FAILURE_EVIDENCE_STATES,
+    TRANSCRIPT_CONTENT_LIMIT,
     _FAILURE_EVIDENCE_MESSAGES,
+    _foreach_candidates,
     build_node_transcript_payload,
 )
 
@@ -1376,6 +1378,17 @@ async def test_item_drilldown_carries_full_failure_evidence(manager):
     assert len(evidence["items"]) == FAILURE_EVIDENCE_LIMIT, "下钻给完整形态（5 条）"
     assert all(item_["text_truncated"] is True for item_ in evidence["items"])
 
+    # 下钻挂载点也要认 ``content_limit``——R3 实证：三处里只有两处被锁，
+    # 删掉下钻那处 `content_limit=content_limit` 时原先全绿。
+    tightened = build_node_transcript_payload(
+        manager, scheduler, "fan",
+        subagent_id=target["subagent_id"], run_id=target["run_id"],
+        content_limit=100,
+    )
+    for item_ in tightened["failure_evidence"]["items"]:
+        assert len(item_.get("observation") or "") <= 100
+        assert len(item_.get("message") or "") <= 100
+
 
 @pytest.mark.asyncio
 async def test_drilldown_without_run_id_still_resolves_the_run(manager):
@@ -1775,6 +1788,33 @@ async def test_failure_evidence_content_limit_applies_to_candidates(manager):
     for candidate in payload["candidates"]:
         for item in candidate["failure_evidence"]["items"]:
             assert len(item["observation"]) <= 50
+
+
+@pytest.mark.asyncio
+async def test_queue_full_run_is_not_reported_as_queued_for_candidates(manager):
+    """``queue_full`` 属终态：候选投影**不得**把它改写成 ``queued``（D7 的行为断言）。
+
+    R3 实证：原来的守卫只是「源码里不得出现某个字符串」，把集合少写一个
+    ``queue_full`` 的等价漂移能存活——而那正是 D7 要防的「取值集合漂移」。
+    这里改成**行为断言**：真造一个 ``queue_full`` 的 run，看候选怎么报。
+    """
+    scheduler = _scheduler(manager, _foreach_spec(3))
+    await scheduler.run(scheduler.spec)
+    state = scheduler._states["fan"]
+    target = state.item_runs[0]
+    run = manager.find_run(target.subagent_id, target.run_id)
+    run.status = "queue_full"
+
+    candidates = _foreach_candidates(manager, scheduler, state, TRANSCRIPT_CONTENT_LIMIT)
+    reported = [c["status"] for c in candidates
+                if c["subagent_id"] == target.subagent_id]
+    # 候选状态取**项级记录**（`item_states`）的真相；只有当 run 处于**非终态**时
+    # 才会被改写成 running/queued。``queue_full`` 属终态 ⇒ 如实保留记录值。
+    # 变异（把 queue_full 从终态清单里删掉）→ 会被改写成 "queued" → 本条变红。
+    assert "queued" not in reported, (
+        f"queue_full 是终态，被改写成 queued 了——终态清单漂移（D7 要防的正是这个）：{reported}"
+    )
+    assert reported == ["completed"], f"候选状态应保留项级记录值：{reported}"
 
 
 def test_terminal_run_statuses_has_a_single_source():

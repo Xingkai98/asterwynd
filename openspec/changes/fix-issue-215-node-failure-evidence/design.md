@@ -244,7 +244,7 @@ smoke，前端也纳入了变异可见的测试面。
 | 项 | 结论 |
 |---|---|
 | Q1 `recovered` | **不加**。区块标题改为**事实**表述：「该 run 已完成（`completed`）；本 run 内出现 N 次工具失败」。重试轨迹语义归 #202 |
-| Q2 条目上限 | `FAILURE_EVIDENCE_LIMIT = 5` 保留；载荷单条仍截 4000；**前端预览另设 ~300 字符** + 复用既有 note 模式标注「预览已截断，全文见『对话』tab」 |
+| Q2 条目上限 | `FAILURE_EVIDENCE_LIMIT = 5` 保留；载荷单条仍截 4000；**前端预览另设 300 字符** + note 标注 **「预览已截断（最多 300 字符）」**——R3 订正：「全文见 X」是假承诺，这条路径上并无读到更长文本的入口 |
 | Q3 `clean` 显示 | **(b)** 一行淡色「已检查，无失败记录（trace N 步）」。**负向态（`running`/`no_trace`/`empty_trace`/`unavailable`/`not_applicable`）也必须各显示一行文案**，不得退化成「不显示 = 没事」 |
 | Q4 `none` 形态 | **扩到七值**，新增 `not_applicable`；判据表见 D1 |
 | Q5 candidates 体积 | 每候选只带**轻量**证据（`state`/`total`/`truncated` + 至多 1 条最新失败，≤400 字符）；完整证据只在下钻与 `single` |
@@ -289,7 +289,7 @@ Open Questions 停轮抛用户确认后写入 `## User Confirmation`。
 | 风险 | 缓解 |
 |------|------|
 | 大 trace 把 HTTP 响应撑大（`to_dict()` 含全部 steps 的完整 arguments/observation） | 投影**只遍历不复制**，只对选中的 ≤N 条做单条截断；加「大 trace 响应体积有界」回归测试（任务已列） |
-| 六个状态取值被后续改动悄悄合并（正是 issue #215 的失败模式：文档承诺了、实现漂了） | **变异验证**锁定：把 `no_trace`/`empty_trace` 折叠、把 `clean` 当 `no_trace` → 对应测试必须变红 |
+| 七个状态取值被后续改动悄悄合并（正是 issue #215 的失败模式：文档承诺了、实现漂了） | **变异验证**锁定：把 `no_trace`/`empty_trace` 折叠、把 `clean` 当 `no_trace` → 对应测试必须变红 |
 | `observation` / `message` 缺失或为空导致投影抛异常 | 逐字段 `get` + 空值降级；专用测试「空 observation 不抛异常」 |
 | 候选集 N 项 × 每项投影 → 请求放大 | 单条截断 + 既有 `CANDIDATE_MAX_LIMIT` 双重约束；响应体积仍线性有界 |
 | 加键破坏既有 34 条 transcript 用例 | 已确认**无**载荷键集精确相等断言（`grep` 零命中）；全量回归兜底 |
@@ -359,7 +359,7 @@ Open Questions 停轮抛用户确认后写入 `## User Confirmation`。
 |---|---|
 | `run.trace.to_dict()` 含每次 `tool_call` 的完整 arguments 与 `tool_result` 的 observation | **grill 订正**：真实成本是 **CPU**（O(steps) 遍历），不是响应体积——`run.trace` 从不进入响应。投影只遍历不复制、只对选中的 ≤N 条截断；「体积有界」测试按 Testing Strategy 的四条最小断言写（**不得**写成整包长度比较） |
 | `observation` / `message` 可能缺失或为空 | 逐字段 `get` + 空值降级，测试覆盖「空 observation 不抛异常」 |
-| 六个状态取值有被后续改动悄悄合并的风险 | 用**变异验证**锁定：把 `no_trace`/`empty_trace` 折叠、把 `clean` 当 `no_trace` → 对应测试必须变红 |
+| 七个状态取值有被后续改动悄悄合并的风险 | 用**变异验证**锁定：把 `no_trace`/`empty_trace` 折叠、把 `clean` 当 `no_trace` → 对应测试必须变红 |
 | 候选集 N 项 × 每项投影 → 请求放大 | 单条截断 + 候选数上限（既有 `CANDIDATE_MAX_LIMIT`）双重约束，响应体积仍线性有界 |
 
 ### 与既有 spec 的关系

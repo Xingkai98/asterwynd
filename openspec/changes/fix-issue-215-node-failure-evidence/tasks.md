@@ -107,8 +107,10 @@
 ## 审阅闭环
 
 - [x] Round 1 独立 subagent 审阅（`/review-loop`）→ CHANGES_REQUESTED（1 中 + 3 低），已修
-- [x] Round 2 独立 subagent 审阅 → CHANGES_REQUESTED（2 中 + 4 低），已修（见下）
-- [x] 按 verdict 修复（两轮均 CHANGES_REQUESTED，均已修复 + 加回归测试）
+- [x] Round 2 独立 subagent 审阅 → CHANGES_REQUESTED（2 中 + 4 低），已修
+- [x] Round 3 独立 subagent 审阅 → CHANGES_REQUESTED（1 中 + 5 低），已修
+- [x] 按 verdict 修复（三轮均 CHANGES_REQUESTED + 修复 + 补回归；每条修复均做变异验证）
+- [ ] **封顶轮后待用户授权**：R3 是第 3 轮（封顶），按 `/review-loop` 规则须停轮等用户就「是否授权一轮定向验证（R4）」拍板；授权前不生成 review manifest、不归档、不开 PR
 - [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash
 
 ## 验证

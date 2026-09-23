@@ -99,7 +99,7 @@ issue 的「事实勘误」comment 要求开工第一步先**重估**：原 issu
   - **本地参考仓库不可用**：本工作区 `.dev/reference-repos.txt` 不存在（无本地参考仓库）。findings 全部
     来自业界调研（权威框架官方文档 + OTel 规范原文），已在 design.md「业界调研结论」节逐条附引用。
 - design impact:
-  - **状态枚举六值**（`present` / `clean` / `running` / `empty_trace` / `no_trace` / `unavailable`），
+  - **状态枚举七值**（`present` / `clean` / `running` / `empty_trace` / `no_trace` / `unavailable` / `not_applicable`——末者为 Q4 确认新增：route / collect 结构上不产生 run），
     每个负向态对应一条**实测确认过**的代码路径；`clean` 是**正向声明**（走完 trace 且零失败才给），
     直接落实 F2 的「`ok` 不能是默认值」。
   - **字段名不造第二套词表**（F3）：条目沿用 trace step 的既有键 `status` / `error_type`；节点级用 `state`

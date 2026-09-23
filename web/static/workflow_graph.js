@@ -1158,7 +1158,13 @@
     if (item && item.error_type) parts.push(item.error_type);
     const head = [item && item.observation, item && item.message]
       .find((value) => typeof value === 'string' && value);
-    if (head) parts.push(head.split('\n')[0]);
+    if (head) {
+      // 摘要只取**开头一小段**：它是「扫一眼知道是哪条」，不是正文出口。不加这个
+      // 上限的话，一条没有换行的超长 observation 会让摘要本身无界——预览的 300
+      // 字符上限就被绕过了（正文出口在下面的 <pre>）。
+      const firstLine = head.split('\n')[0];
+      parts.push(firstLine.length > 120 ? `${firstLine.slice(0, 120)}…` : firstLine);
+    }
     const line = parts.join(' · ');
     return (item && item.text_truncated) ? `${line}（文本已截断）` : line;
   }
