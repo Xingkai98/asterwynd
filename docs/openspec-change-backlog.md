@@ -123,7 +123,7 @@
 - 残余面（「实现 PR 完全不归档」+ 无日期前缀归档）记 `docs/known-debt.md`。
 - 实现 PR 合入时给 issue #235 添加完成 comment 并关闭。
 
-### 3. `add-minimal-tui-runtime-view`### 3. `add-minimal-tui-runtime-view`
+### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
 

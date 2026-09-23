@@ -2635,3 +2635,19 @@ def test_own_change_explains_protected_artifact_with_its_own_event():
         "没有 protected_artifact_explained 事件（当前证据来自别的 change，属污染）"
     )
     assert explained[0].get("reason"), "protected_artifact_explained 事件缺 reason"
+
+
+def test_backlog_has_no_duplicate_section_headings():
+    """本 change 的立项提交曾把 `### 3.` 标题复制成 `### 3. …### 3. …`。
+
+    那是一次 Edit 的误伤（`old_string` 命中后把整行重写了两遍），既弄脏了文档、
+    也会让 backlog 的章节结构错乱。加一条机械锁：未实现队列里的 `### N. \\`id\\``
+    标题不得在同一次提交里被拼接成一行出现两次。
+    """
+    backlog = Path(__file__).resolve().parents[1] / "docs" / "openspec-change-backlog.md"
+    text = backlog.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("### "):
+            continue
+        assert stripped.count("### ") == 1, f"backlog 标题重复拼接: {stripped!r}"
