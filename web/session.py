@@ -26,6 +26,7 @@ from agent.mcp import build_mcp_manager
 from agent.run_identity import new_session_id
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
 from agent.session import SessionSnapshot, SessionStore
+from agent.trace_recorder import iter_failure_steps
 from agent.skills import SkillRuntime
 from agent.subagent.manager import SubAgentManager
 from agent.tools.factory import build_default_tool_registry, build_sandbox_from_config
@@ -736,6 +737,180 @@ TRANSCRIPT_MAX_LIMIT = 200
 #: 候选集分页默认/硬上限（D4：N 到 200 时一次全渲染会卡住手机）。
 CANDIDATE_DEFAULT_LIMIT = 50
 CANDIDATE_MAX_LIMIT = 200
+#: 失败证据的条目上限：只回**最近**这么多条（更早的靠 ``total`` 与 ``truncated`` 告知）。
+FAILURE_EVIDENCE_LIMIT = 5
+#: 候选集形态下每候选证据的单条文本上限。容器一次渲染 N 项（默认 50、上限 200），
+#: 若每项都带完整的 ``TRANSCRIPT_CONTENT_LIMIT``（4000）正文，最坏响应可达 MB 级；
+#: 所以容器只给「有没有失败、多少条」的线索，完整证据下沉到**下钻**与 ``single`` 形态。
+FAILURE_EVIDENCE_PREVIEW_LIMIT = 400
+
+#: run 的终态集合——**复用** ``_foreach_candidates`` 里那份字面量的同一语义，不新造
+#: 第四份副本（项目里另有两份同义清单：``manager.TERMINAL_RUN_STATUSES`` 与
+#: ``scheduler.TERMINAL_RUN_STATUSES``，取值口径各不相同）。失败证据投影靠它判
+#: 「run 是否还会再写 trace」。
+_TERMINAL_RUN_STATUSES = frozenset(
+    {"completed", "failed", "cancelled", "budget_exceeded", "queue_full"}
+)
+
+#: ``failure_evidence.state`` 的取值集合（D1）。七值不是分类学拆分，而是代码里
+#: 真实存在的七条路径；少一个就会把某条路径错报成另一条：
+#: - ``clean`` 与 ``no_trace``/``empty_trace`` 不能折叠（用户在前者可以放心，在后者不能）；
+#: - ``not_applicable``（结构上不可能有 run）与 ``unavailable``（该有却取不到）不能折叠。
+FAILURE_EVIDENCE_STATES = frozenset({
+    "present", "clean", "running", "empty_trace", "no_trace",
+    "unavailable", "not_applicable",
+})
+
+
+#: 调用方**可以断言**的 state：它们不依赖 trace 内容（结构性 / 解析结果 / 运行态），
+#: 所以投影必须照单全收。其余取值由 trace 推出，显式传入属误用（见 ``_failure_evidence``）。
+_ASSERTABLE_STATES = frozenset({"not_applicable", "unavailable", "running"})
+
+
+def _failure_evidence(
+    run,
+    *,
+    state: str | None = None,
+    full: bool = True,
+    content_limit: int = TRANSCRIPT_CONTENT_LIMIT,
+    message: str | None = None,
+) -> dict:
+    """一个 run 的失败证据投影（**只读**，change ``fix-issue-215`` D1–D5）。
+
+    数据来源是该 run **已经写入**的执行 trace（``run.trace.steps``）——本函数
+    **不新增采集、不调 LLM、不写盘、不改执行状态**。全仓此前唯一读 ``run.trace``
+    的地方只数 ``llm_iteration`` 步数，失败信号没有任何用户面出口。
+
+    ``state`` 为七值枚举（见 spec delta 的 requirement）。两个负向态尤其不能折叠：
+
+    - ``no_trace``（终态但 trace 为 ``None``）与 ``empty_trace``（trace 存在但
+      ``steps == []``）：前者是「跑了但没留证据」，后者是「跑都没跑」，用户的下一步
+      动作完全不同。
+    - ``clean``（走完 trace 且零失败）是**正向声明**——只有真的把 ``steps`` 遍历完
+      才给，绝不当默认值（OTel ``Unset`` 重载的教训，见 design F2）。
+    - ``not_applicable``（route / collect 这类结构上不产生 run 的节点）与
+      ``unavailable``（该有 run 却解析不到记录）也是两件事：前者无需担心，后者是
+      数据缺口。
+
+    ``full=False`` 时走**轻量**形态（candidates 容器用）：至多 1 条条目、单条文本
+    截到 ``FAILURE_EVIDENCE_PREVIEW_LIMIT``，但 ``state``/``total``/``truncated``
+    仍报真实值——体积收窄不得变成「谎报没失败」。
+    """
+    if state is None:
+        # 判据：解析不到 run → ``unavailable``；run 还没到终态 → ``running``（trace 按
+        # 设计只在终态写入）；否则往下按 trace 内容在 ``clean``/``empty_trace``/
+        # ``no_trace``/``present`` 之间定。``TERMINAL_RUN_STATUSES`` 不含
+        # ``running``/``queued``，所以「还没写 trace」与「写了但没失败」不会串。
+        if run is None:
+            state = "unavailable"
+        elif str(getattr(run, "status", "") or "") not in _TERMINAL_RUN_STATUSES:
+            state = "running"
+    payload: dict = {"state": state or "unavailable", "total": 0,
+                     "truncated": False, "message": "", "items": []}
+
+    def settle(value: str) -> dict:
+        """落定 ``state`` 并**成对**取文案。
+
+        state 与 message 必须一起设置——两者分开写就会出现「状态说有失败、文案说
+        取不到」的自相矛盾（present 分支漏设 message 时就是这句
+        ``unavailable`` 的文案，审阅已实证）。走这一个出口就不会漏。
+        """
+        payload["state"] = value
+        payload["message"] = message or _FAILURE_EVIDENCE_MESSAGES[value]
+        return payload
+
+    if state is not None:
+        # 显式 ``state=`` 是**调用方断言**，只当它落在「不依赖 trace 内容」的三个
+        # 取值上时才成立；其余取值（``present``/``clean``/``empty_trace``/
+        # ``no_trace``）是**从 trace 推出来的**，调用方无从断言——静默忽略会让人
+        # 以为「我指定了」，静默照做又会谎报。两种都错，所以 fail-fast。
+        if state not in _ASSERTABLE_STATES:
+            raise ValueError(
+                f"failure_evidence state {state!r} cannot be asserted by the caller; "
+                f"expected one of {sorted(_ASSERTABLE_STATES)}"
+            )
+        return settle(state)
+
+    trace = getattr(run, "trace", None)
+    if trace is None:
+        return settle("no_trace")
+    steps = trace.get("steps") if isinstance(trace, dict) else None
+    if not steps:
+        return settle("empty_trace")
+
+    # 只遍历不复制：一次 O(steps) 扫描拿到全部失败 step 的引用，再对**选中的** ≤N 条
+    # 做复制与截断。``run.trace`` 从不进入响应，所以这里省的是内存与 CPU，不是体积。
+    failures = list(iter_failure_steps(steps))
+    payload["total"] = len(failures)
+    if not failures:
+        return settle("clean")
+
+    limit = 1 if not full else FAILURE_EVIDENCE_LIMIT
+    text_limit = content_limit if full else min(content_limit, FAILURE_EVIDENCE_PREVIEW_LIMIT)
+    selected = failures[-limit:]  # 最近 N 条（trace 列表序即时间序）
+    payload["items"] = [_failure_item(step, text_limit) for step in selected]
+    payload["truncated"] = len(failures) > len(selected)
+    return settle("present")
+
+
+#: 七态各自的**可读原因文案**。负向态一律给文案、不给空列表了事——「证据不可得」
+#: 时必须说清是「没采集到」「没跑」「取不到」还是「本来就没有」，否则用户会像
+#: OpenTelemetry 的 ``Unset`` 那样把「没事」与「没看过」读成同一件事。
+_FAILURE_EVIDENCE_MESSAGES: dict[str, str] = {
+    # Q1 确认：不给「已恢复」推断（同工具的后继成功可能是另一次不同调用，判据不可靠），
+    # 只给**事实**——run 走到终态了、记录里有 N 条失败。重试轨迹语义归 #202。
+    "present": "该 run 已结束；其执行记录里有失败步骤（下面是最近的几条）。",
+    "clean": "已检查本 run 的执行记录（trace 非空），未发现失败步骤。",
+    "running": "该 run 尚未结束，执行 trace 按设计只在终态写入——现在还没有失败证据，不代表没有失败。",
+    "empty_trace": "该 run 的执行 trace 存在，但未执行任何步骤（例如在排队阶段就被取消）。",
+    "no_trace": "该 run 没有采集到执行 trace（不是「采集到了、是空的」）。",
+    "unavailable": "无法解析该 run 的记录，因此拿不到失败证据。",
+    "not_applicable": "该节点类型不产生 run，因此没有失败证据可言。",
+}
+
+
+def _failure_item(step: dict, text_limit: int) -> dict:
+    """一条失败条目。字段沿用 trace step 的**既有键名**，不造第二套词表（D3）。
+
+    ``llm_error`` 的 step **没有** ``status`` 键（``record_llm_error`` 只写
+    ``error_type``/``message``），所以这里的 ``status`` 是**投影合成**的 ``"error"``
+    ——不假装它来自 trace。截断标志叫 ``text_truncated`` 而不是
+    ``observation_truncated``：``llm_error`` 被截断的是 ``message``，用 observation
+    命名会让键名与被截字段对不上。
+    """
+    data = step.get("data") or {}
+    step_type = str(step.get("type") or "")
+    _raw = data.get("observation") if step_type == "tool_result" else data.get("message")
+    text = _raw if isinstance(_raw, str) else ("" if _raw is None else str(_raw))
+    return {
+        "type": step_type,
+        "step": step.get("step"),
+        "status": str(data.get("status") or "") if step_type == "tool_result" else "error",
+        "error_type": data.get("error_type"),
+        "tool_name": data.get("tool_name"),
+        "observation": text[:text_limit] if step_type == "tool_result" else None,
+        "message": text[:text_limit] if step_type == "llm_error" else None,
+        "text_truncated": len(text) > text_limit,
+    }
+
+
+def _resolve_run(manager, subagent_id, run_id):
+    """解析一个 run 记录，**取不到就返回 None**（不抛）。
+
+    ``SubAgentManager.find_run`` 在 ``run_id is None`` 时恒返回 None（它逐条比较
+    ``run.run_id == run_id``，None 不匹配任何 run）。而前端**只在 truthy 时才带**
+    ``run_id``（``workflow_transcript.js``），所以「不带 run_id」是常见路径，不是
+    异常——那时必须回落到该 session 的**最近一次** run，与 ``inspect_transcript``
+    对 ``None`` 的既有语义（``session.runs[-1]``）一致；否则最常见的下钻会被谎报成
+    ``unavailable``。
+    """
+    if not subagent_id:
+        return None
+    if run_id:
+        return manager.find_run(subagent_id, run_id)
+    session = getattr(manager, "_sessions", {}).get(subagent_id)
+    runs = getattr(session, "runs", None) or []
+    return runs[-1] if runs else None
 
 
 def _bounded_messages(payload: dict, *, content_limit: int) -> dict:
@@ -837,6 +1012,9 @@ def _item_drilldown_payload(
         "included_tool_results": include_tool_results,
         "limit": limit,
         "content_limit": content_limit,
+        # 下钻给**完整**形态（Q5）：容器一次渲染 N 项才需要收窄，点进单项就是要看细节。
+        "failure_evidence": _failure_evidence(_resolve_run(manager, subagent_id, run_id),
+                                              full=True, content_limit=content_limit),
         **_reason_fields(state),
     }
     if index is not None and index < len(items):
@@ -908,6 +1086,10 @@ def build_node_transcript_payload(
         return {
             "kind": "none", "node_id": node_id, "node_kind": None,
             "message": "该节点不在当前执行计划里",
+            # 节点根本不在计划里 = 该有 run 却解析不到（D1 的 unavailable）。
+            "failure_evidence": _failure_evidence(
+                None, state="unavailable",
+                message="该节点不在当前执行计划里，拿不到失败证据。"),
             **_reason_fields(None),
         }
 
@@ -944,6 +1126,8 @@ def build_node_transcript_payload(
             "verdict": state.verdict,
             "targets": list(state.targets),
             "raw": str(state.raw or "")[:content_limit],
+            # route 只做结构化匹配，**结构上**不产生 run（D1 的 not_applicable）。
+            "failure_evidence": _failure_evidence(None, state="not_applicable"),
         }
     # 普通节点 / llm 聚合 / 自动插层走 ``subagent_id``（单数）：``subagent_ids``
     # 只被 ``_execute_foreach`` 填充。collect 聚合显式置 ``subagent_id = None``，
@@ -958,6 +1142,14 @@ def build_node_transcript_payload(
                 "该节点是纯逻辑聚合，不产生对话" if is_collect
                 else "该节点未执行（未派发或未产生 run）"
             ),
+            # collect 聚合**结构上**不产生 run（D1 判据：not_applicable）；未派发的
+            # 节点则属于「该有 run 却还没有」——两者对用户的含义完全不同。
+            "failure_evidence": _failure_evidence(
+                None,
+                state="not_applicable" if is_collect else "unavailable",
+                message=("该节点是纯逻辑聚合，不产生 run。" if is_collect
+                         else "该节点尚未派发，暂时没有失败证据。"),
+            ),
         }
 
     return _single_payload(manager, state, base, None, node,
@@ -971,6 +1163,7 @@ def _single_payload(
 ) -> dict:
     """``single`` 形态：取该节点那一个 subagent 的 transcript 尾部。"""
     subagent_id = candidates[0]["subagent_id"] if candidates else state.subagent_id
+    run = _resolve_run(manager, subagent_id, state.run_id)
     payload = {
         **base,
         "kind": "single",
@@ -980,6 +1173,8 @@ def _single_payload(
         "included_tool_results": include_tool_results,
         "limit": limit,
         "content_limit": content_limit,
+        # ``single`` 形态给**完整**证据（Q5）。
+        "failure_evidence": _failure_evidence(run, full=True, content_limit=content_limit),
     }
     if subagent_id is None:
         return payload
@@ -1016,8 +1211,7 @@ def _foreach_candidates(manager, scheduler, state, content_limit: int) -> list[d
         reason = (getattr(run, "reason", "") or "") if run is not None else ""
         summary = (getattr(run, "summary", "") or "") if run is not None else ""
         status = recorded
-        if run is not None and run.status not in ("completed", "failed", "cancelled",
-                                                  "budget_exceeded", "queue_full"):
+        if run is not None and run.status not in _TERMINAL_RUN_STATUSES:
             status = "running" if run.status == "running" else "queued"
         if not task:
             task = render_candidate_task(node, index)
@@ -1034,6 +1228,10 @@ def _foreach_candidates(manager, scheduler, state, content_limit: int) -> list[d
             "summary": summary[:content_limit],
             "reason": reason[:content_limit],
             "task": task[:content_limit],
+            # 容器一次渲染 N 项（默认 50、上限 200），所以每项只给**轻量**形态：
+            # state/total/truncated 报真实值，条目至多 1 条、单条截到 preview 上限。
+            # 完整证据在下钻（``_item_drilldown_payload``）与 ``single`` 形态。
+            "failure_evidence": _failure_evidence(run, full=False, content_limit=content_limit),
         })
     return candidates
 

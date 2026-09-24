@@ -214,3 +214,68 @@ def test_reset_cancels_running_workflows(tmp_path):
 
     assert first._cancelled is True, "reset 没有 cancel 掉第一张图"
     assert second._cancelled is True, "reset 没有 cancel 掉第二张图"
+
+
+def test_transcript_route_exposes_failure_evidence_end_to_end(tmp_path):
+    """端到端验收（change fix-issue-215）：真实 HTTP 路由上读得出**失败证据**。
+
+    走完整链路：真跑一个会在中途工具失败的 workflow → ``run.trace`` 记录失败 step →
+    **经 HTTP 路由**（不是直接调投影函数）取回节点载荷 → 失败证据可读。
+
+    这是 issue #215 的症状面：改动前这个节点是绿的、reason 是空的、载荷里一个字都
+    不提失败，用户无从知道「为什么报错」。
+    """
+    from tests.web_tests.test_workflow_node_transcript import _BoomLLM
+
+    mock_llm = _BoomLLM()
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            session_id = ws.receive_json()["session_id"]
+        session = app.state.session_manager.get_session(session_id)
+        manager = session.agent.subagent_manager
+
+        scheduler = WorkflowScheduler(manager)
+        scheduler.spec = parse_workflow_spec(_chain_spec())
+        manager.register_workflow(scheduler)
+        client.portal.call(scheduler.run, scheduler.spec)
+
+        response = client.get(
+            f"/api/sessions/{session_id}/workflows/{scheduler.workflow_id}"
+            f"/nodes/a/transcript")
+        assert response.status_code == 200
+        evidence = response.json()["failure_evidence"]
+
+        # 失败经 `record_llm_error` 落进 trace，投影把它变成一条可读条目。
+        assert evidence["state"] == "present"
+        assert evidence["total"] >= 1
+        assert evidence["items"], "有失败就必须给出条目，不能只报一个数字"
+        assert evidence["items"][0]["type"] == "llm_error"
+        assert evidence["items"][0]["error_type"]
+        assert evidence["message"] != evidence["items"], "文案与条目是两样东西"
+
+        # 同一份证据也让「任务」tab 的零请求线索可用（快照侧的有界计数）。
+        node = next(n for n in scheduler.workflow_graph_snapshot()["nodes"]
+                    if n["id"] == "a")
+        assert node["failure_count"] == evidence["total"]
+
+
+def test_transcript_route_keeps_failure_evidence_additive(tmp_path):
+    """加性契约：新键不改变既有键的语义（既有路由用例继续成立）。"""
+    mock_llm = ScriptedLLM([LLMResponse(content="unused")])
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            session_id = ws.receive_json()["session_id"]
+        session = app.state.session_manager.get_session(session_id)
+        scheduler = _running_scheduler(session.agent.subagent_manager)
+
+        payload = client.get(
+            f"/api/sessions/{session_id}/workflows/{scheduler.workflow_id}"
+            f"/nodes/a/transcript").json()
+        assert payload["kind"] == "none"
+        assert payload["node_id"] == "a"
+        # 未派发的普通节点：该有 run 却还没有 → unavailable（不是 not_applicable）。
+        assert payload["failure_evidence"]["state"] == "unavailable"

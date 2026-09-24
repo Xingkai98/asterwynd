@@ -113,6 +113,10 @@
     host.textContent = '';
     host.appendChild(toolbar(ctx, payload));
     appendBackLink(host, ctx);
+    // 失败证据（change fix-issue-215）：三形态共用一个挂载点，``payload`` 缺这个键
+    // （老载荷 / 降级路径）时静默跳过。放在消息体**之前**——用户先知道「这个 run
+    // 里有失败」，再往下读对话。
+    appendFailureEvidence(host, payload);
     if (payload.kind === 'single') renderSingle(host, ctx, payload);
     // ``ctx`` 供单项视图回显「第几项」（有的话）——见 renderSingle 的 title 行。
     else if (payload.kind === 'candidates') renderCandidates(host, ctx, payload);
@@ -218,6 +222,61 @@
     appendReason(host, payload);
   }
 
+  /** 失败证据区（change fix-issue-215 D6：证据主体在「对话」tab）。
+   *
+   * 七态各显示**自己**的一句文案——「clean 显示、其它不显示」会退化成
+   * 「不显示 = 没事」，那正是本 change 要消灭的误读（OTel ``Unset`` 的教训）。
+   * 条目按「工具名 · 步序 · 错误类型 + 文本首行」逐条列出，文本用既有 note 模式
+   * 标注截断——预览短上限不等于正文就这么短（issue #213 的同一类坑）。
+   */
+  /** 证据区的文案：**优先用后端** ``message``，前端表只作兜底。
+   *
+   * 后端在载荷里给了 ``message``（spec 要求的字段），且为「该节点尚未派发」这类
+   * 情形写了**专用文案**——前端若一律用自建表，那些区分就到不了用户眼前（设计 D1
+   * 明确要求「尚未派发」与「取不到记录」分开说）。前端表退化为「后端没给文案时」
+   * 的兜底，同时保住「前端版本落后于后端」时不显示空白。
+   */
+  function failureText(evidence) {
+    const fromBackend = evidence && evidence.message;
+    if (typeof fromBackend === 'string' && fromBackend.trim()) return fromBackend;
+    return G.failureEvidenceText(evidence && evidence.state);
+  }
+
+  function appendFailureEvidence(host, payload) {
+    const evidence = payload && payload.failure_evidence;
+    if (!evidence || !evidence.state) return;
+    const isPresent = evidence.state === 'present';
+    if (evidence.state === 'not_applicable' && !isPresent) {
+      // 结构上不产生的节点（route/collect）说这句话是噪音——它们的详情自有一句
+      // 「不产生对话」。其余**所有**取值都必须显示，否则又回到「不显示 = 没事」。
+      host.appendChild(el('div', 'drawer-note', failureText(evidence)));
+      return;
+    }
+    // Q1：不做「已恢复」推断，改为给**事实**——失败条数直接进标题，run 状态由
+    // 后端 message 给（前端不猜重试轨迹，那归 #202）。
+    const heading = evidence.total > 0
+      ? `失败证据（共 ${evidence.total} 条）`
+      : '失败证据';
+    host.appendChild(el('h3', null, heading));
+    host.appendChild(el('div', 'drawer-text', failureText(evidence)));
+    (evidence.items || []).forEach((item) => {
+      const row = el('div', 'failure-item');
+      row.appendChild(el('div', 'failure-summary', G.failureItemSummary(item)));
+      const text = item.observation || item.message;
+      if (text) {
+        row.appendChild(el('pre', 'failure-text', G.truncateText(text, 300)));
+        if (item.text_truncated || text.length > 300) {
+          row.appendChild(el('span', 'drawer-note', '预览已截断（最多 300 字符）。'));
+        }
+      }
+      host.appendChild(row);
+    });
+    if (evidence.truncated) {
+      host.appendChild(el('p', 'drawer-note',
+        `共 ${evidence.total} 条，只显示了最近 ${(evidence.items || []).length} 条。`));
+    }
+  }
+
   /** G17：reason 的**全文**出口——scheduler 侧 reason 从不出现在 transcript 里，
    *  快照里又被截断到 400，所以这里是用户唯一能读到全文的地方。 */
   function appendReason(host, payload) {
@@ -243,6 +302,19 @@
         name.appendChild(el('div', 'cand-sub', G.truncateText(candidate.reason, 80)));
       } else if (candidate.summary) {
         name.appendChild(el('div', 'cand-sub', G.truncateText(candidate.summary, 80)));
+      }
+      // 失败线索（change fix-issue-215 Q5）：容器一次渲染 N 项，所以候选行只给
+      // **计数**，不给证据正文（正文在下钻后的「对话」视图里，避免响应放大）。
+      const evidence = candidate.failure_evidence;
+      if (evidence) {
+        if (evidence.total > 0) {
+          name.appendChild(el('div', 'cand-sub cand-failure',
+            `⚠ ${evidence.total} 条工具/LLM 失败（点进去看）`));
+        } else if (evidence.state !== 'not_applicable') {
+          // Q3 的精神：负向态也要有一行，否则「不显示」会被读成「没问题」。
+          // 这里文案取后端给的 state message（容器级已轻量化，不再展开条目）。
+          name.appendChild(el('div', 'cand-sub', failureText(evidence)));
+        }
       }
       row.appendChild(name);
       const status = el('span', 'cand-status', G.nodeLabel(candidate.status));

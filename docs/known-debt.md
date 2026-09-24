@@ -272,3 +272,38 @@ change 的日志里有一条指向同一路径的陈旧事件，门禁就会放�
 即评命名」后，`archive/unknown-1.0/file.md`、`archive/scratch/x` 这类**非 change 目录**也会被报
 「归档目录命名不合规」。当前语料 0 命中，方向 fail-closed（报错而非静默放行），故接受该严格化；
 若将来确需在归档根下放非 change 目录，再收窄判定。
+
+### 两条不可达的 run 终态路径（fix-issue-215 发现，本 change 显式不做）
+
+`fix-issue-215-node-failure-evidence` 为「节点失败证据投影」逐条复核失败/终态路径时实测确认两处**死代码**。
+两者都不在本 change 范围（前者属 run 状态机语义，后者只是防御性分支），记录在案以免反复重新发现：
+
+1. **`StopReason.ERROR` 全仓零赋值点**。`agent/subagent/manager.py` 的
+   `run.status = "completed" if result.stop_reason is not StopReason.ERROR else "failed"` 里那个 `failed`
+   分支实际不可达：`StopReason.ERROR` 只有定义（`agent/result.py`）与一处值断言（`tests/agent/test_result.py`），
+   `agent/loop.py` 只产出 `END_TURN` / `MAX_ITERATIONS`。后果：run 只能经异常路径 `_mark_failed` 变 `failed`，
+   **`completed` 覆盖了「跑完了但中途有工具失败」的全部情况**——这正是本 change 要在投影层补可见性的前提。
+   修复它属于 run 状态机语义（会改变 `completed`/`failed` 判据），须独立 change。
+
+2. **`agent/subagent/manager.py` 的 `_mark_budget_exceeded(..., trace=None)` 分支不可达**。该调用的前置条件
+   `run.status == "queued"` 恒假：monitor 只在 `_start_task` 里创建，而 `_start_task` 在创建 monitor **之前**
+   已同步把 `run.status` 置为 `"running"`，全仓没有任何写回 `"queued"` 的点。后果：`SubagentRunRecord.trace`
+   实际**没有活跃的 `None` 生产者**（仍可能是 `None` 只因字段默认值）。本 change 的 `no_trace` 状态因此保留为
+   **防御性**取值（成因按「可能发生」而非「实测可触发」表述），并直接构造 `run.trace = None` 的单测锁定；
+   若将来该路径被修活或新增别的 `trace=None` 落点，`no_trace` 会自然生效，无需改投影。
+
+两条均**不影响**本 change 的正确性：失败证据的数据源是 trace 里**已经存在**的步骤，`completed` 的 run 一样能读到。
+
+### `switchToWorkflowView` 只有字符串匹配断言（fix-issue-215 审阅 R6 发现，本 change 显式不做）
+
+`web/static/chat.js` 的 `switchToWorkflowView`（把 workflow-view 设为激活视图）在测试侧**只有一条
+字符串匹配断言**（`tests/web_tests/test_server.py` 检查其源码文本），没有行为测试。后果：把它的
+目标元素改错/改坏，全量测试仍绿——这段切换逻辑实际处于无守护状态。
+
+**为什么记债而不是修**：它**不是本 change 引入的**（早于 fix-issue-215 存在），本 change 的
+审阅者是在复核「浏览器用例间歇红」时顺带发现的。修它需要给 workflow 视图切换补行为用例
+（浏览器或 node+vm），属独立改动面。
+
+**与既有 flake 的关系**：本 change 已给受影响的浏览器用例补了确定性视图守卫
+（`_ensure_workflow_view`，走测试自装的 `window.__testTab.onWorkflowStarted`），把
+「渲染了但被切走」这一类间歇红治住；但**「切换目标本身是坏的」这一类**仍无断言守护——即本债务。

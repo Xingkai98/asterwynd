@@ -1115,6 +1115,78 @@
     };
   }
 
+  // --- 节点失败证据（change fix-issue-215） --------------------------------
+  //
+  // 七个状态取值与后端 ``web/session.py`` 的 ``FAILURE_EVIDENCE_STATES`` 一一对应。
+  // 放在这里（而不是 workflow_transcript.js 的 DOM 代码里）是为了让「哪一态说什么话」
+  // 能被 node+vm 纯函数测试锁住——否则前端这一层只能在浏览器 smoke 里验，成本高、
+  // 覆盖也薄。
+  const FAILURE_EVIDENCE_TEXTS = {
+    present: '本 run 的执行记录里有失败步骤（下面是最近的几条）。',
+    clean: '已检查，无失败记录。',
+    running: '该 run 尚未结束，执行 trace 只会在终态写入——现在没有失败证据，不代表没有失败。',
+    empty_trace: '该 run 的执行 trace 存在，但未执行任何步骤。',
+    no_trace: '该 run 没有采集到执行 trace。',
+    unavailable: '无法解析该 run 的记录，因此拿不到失败证据。',
+    not_applicable: '该节点类型不产生 run，因此没有失败证据可言。',
+  };
+
+  /** 七态文案表（node+vm 测试经它取全量；也让后端的状态集合可被机械比对）。 */
+  function failureEvidenceTexts() {
+    return Object.assign({}, FAILURE_EVIDENCE_TEXTS);
+  }
+
+  /** 失败证据的标题（``state`` → 一句话）。
+   *
+   * 未知取值**必须**给出可读降级而不是空白：后端加一个新 state 而前端还没跟上时，
+   * 显示空白会让用户以为「没问题」——那正是本 change 要消灭的误读。
+   */
+  function failureEvidenceText(state) {
+    return FAILURE_EVIDENCE_TEXTS[state]
+      || '失败证据状态未知（前端版本落后于后端）。';
+  }
+
+  /** 一条失败条目的单行摘要：``工具名 · 步序 · 错误类型`` + 文本首行。
+   *
+   * 文本取 ``observation``（工具结果）或 ``message``（LLM 错误）——两种条目的文本
+   * 字段不同名，但都经 ``text_truncated`` 表达截断，这里统一按「本条文本」处理。
+   */
+  function failureItemSummary(item) {
+    const parts = [];
+    parts.push(item && item.tool_name ? item.tool_name : '（未知工具）');
+    if (item && item.step !== undefined && item.step !== null) parts.push(`step ${item.step}`);
+    if (item && item.error_type) parts.push(item.error_type);
+    const head = [item && item.observation, item && item.message]
+      .find((value) => typeof value === 'string' && value);
+    if (head) {
+      // 摘要只取**开头一小段**：它是「扫一眼知道是哪条」，不是正文出口。不加这个
+      // 上限的话，一条没有换行的超长 observation 会让摘要本身无界——预览的 300
+      // 字符上限就被绕过了（正文出口在下面的 <pre>）。
+      const firstLine = head.split('\n')[0];
+      parts.push(firstLine.length > 120 ? `${firstLine.slice(0, 120)}…` : firstLine);
+    }
+    const line = parts.join(' · ');
+    return (item && item.text_truncated) ? `${line}（文本已截断）` : line;
+  }
+
+  /** 「任务」tab 的一行快照线索（Q6 方案 D）。
+   *
+   * 三态：``null``/``undefined`` = 没有数据 → **什么都不显示**（返回 ``null``，
+   * 调用方据此跳过）；``0`` = 已检查、无失败；``N`` = N 条失败（工具失败 + LLM 错误）。
+   * ``0`` 与「没有数据」在这里必须分开——把它们折叠成同一句会让用户重新落回
+   * 「没显示 = 没事」的旧误读。
+   */
+  function failureCountHint(count) {
+    if (count === null || count === undefined) return null;
+    if (count === 0) return '已检查、无失败。';
+    // 措辞必须覆盖**两种**失败：计数口径是「工具失败 + LLM 错误」
+    // （agent/trace_recorder.py 的 count_failures）。只写「工具失败」会在
+    // run 因 LLM 调用失败而红时把用户带去查工具——兄弟出口
+    // （workflow_transcript.js 的候选行）用的是准确措辞，这里跟它一致。
+    if (count === 1) return '⚠ 本 run 内 1 次工具/LLM 失败 →「对话」tab 查看';
+    return `⚠ 本 run 内 ${count} 次工具/LLM 失败 →「对话」tab 查看`;
+  }
+
   window.AsterwyndWorkflowGraph = {
     NODE_COLORS,
     EDGE_STYLES,
@@ -1156,6 +1228,12 @@
     formatElapsed,
     formatAge,
     truncateText,
+    // --- fix-issue-215：失败证据的纯函数层 ---
+    FAILURE_EVIDENCE_TEXTS,
+    failureEvidenceTexts,
+    failureEvidenceText,
+    failureItemSummary,
+    failureCountHint,
     parallelEdgeOffset,
     assignLayers,
     layoutGraph,

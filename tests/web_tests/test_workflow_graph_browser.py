@@ -74,9 +74,11 @@ SNAPSHOT = {
     "timestamp": 1.0,
     "nodes": [
         {"id": "a", "kind": "subagent", "status": "completed", "runs": 1,
-         "summary": "done", "started_at": 0, "finished_at": 1},
+         "summary": "done", "started_at": 0, "finished_at": 1,
+         "failure_count": 3},
         {"id": "b", "kind": "subagent", "status": "started", "runs": 1,
-         "summary": "", "started_at": 1, "finished_at": None},
+         "summary": "", "started_at": 1, "finished_at": None,
+         "failure_count": 0},
         {"id": "join", "kind": "aggregate", "status": "pending", "runs": 0,
          "summary": "", "started_at": None, "finished_at": None},
     ],
@@ -134,6 +136,20 @@ async def _wait_app_ready(page) -> None:
         await page.wait_for_selector(".tab-pane.active .user-input", timeout=5000)
     except Exception:  # noqa: BLE001 - 降级：无输入框的 fixture
         await page.wait_for_timeout(300)
+
+
+async def _ensure_workflow_view(page) -> None:
+    """确保 ``#workflow-view`` 处于激活态，再继续交互（治理 fixture 固有竞态）。
+
+    ``_wait_app_ready`` 在**没有 ws** 的 fixture 里只能降级为固定等待（见其
+    docstring），因此无法保证 ``chat.js`` 的异步初始化一定在我们派发事件**之前**
+    跑完；它若后到，会把 workflow-view 的 active 摘掉，导致 svg 间歇性不可见
+    （R4/R5 实测失败率与既有用例同量级）。这里在派发之后**确定性**地把视图拉回
+    激活态：走的是测试自己装的 ``window.__testTab.onWorkflowStarted``（harness
+    自有口径），不触碰产品代码的行为。
+    """
+    await page.evaluate("() => { window.__testTab.onWorkflowStarted(); }")
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg", state="visible")
 
 
 async def _start_workflow(page, snapshot: dict) -> None:
@@ -479,8 +495,9 @@ async def test_convo_tab_lazily_fetches_transcript(page, fake_web_server):
     page.on("request", lambda request: requests.append(request.url))
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
-    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
     # 测试 tab 没有真实 session（事件是直接派发的），补一个让请求能成形；
     # 路由本身（404 降级 / 三态）由 ``test_workflow_control_server.py`` 覆盖。
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
@@ -505,12 +522,26 @@ _ITEM_CONTAINER = {
     "reason_full": "", "reason_length": 0, "reason_truncated": False,
     "candidates": [
         {"index": 0, "subagent_id": "sa-0", "run_id": "r-0", "status": "completed",
-         "label": "#0", "summary": "ok", "reason": "", "task": "对 a.js 体检"},
+         "label": "#0", "summary": "ok", "reason": "", "task": "对 a.js 体检",
+         "failure_evidence": {"state": "clean", "total": 0, "truncated": False,
+                              "message": "已检查，无失败记录。", "items": []}},
         {"index": 1, "subagent_id": "sa-1", "run_id": "r-1", "status": "failed",
          "label": "#1", "summary": "", "reason": "RuntimeError: boom",
-         "task": "对 b.js 体检"},
+         "task": "对 b.js 体检",
+         "failure_evidence": {"state": "present", "total": 3, "truncated": True,
+                              "message": "该 run 已结束；其执行记录里有失败步骤。",
+                              "items": [{"type": "tool_result", "step": 7,
+                                         "tool_name": "Bash", "status": "error",
+                                         "error_type": "tool_error",
+                                         "observation": "3 failed, 12 passed",
+                                         "message": None, "text_truncated": False}]}},
     ],
 }
+
+#: 下钻载荷带**完整形态**的失败证据：它是唯一能渲染出「条目正文」的路径
+#: （候选行只给计数线索）。`observation` 刻意超过前端 300 字符的预览上限，
+#: 用来锁住「预览已截断」的标注——不标注会让用户以为正文就这么短（#212/#213 的坑）。
+_LONG_OBSERVATION = "3 failed, 12 passed in 4.21s；" + "x" * 400
 
 _ITEM_SINGLE = {
     "kind": "single", "node_id": "fan", "node_kind": "foreach",
@@ -521,6 +552,20 @@ _ITEM_SINGLE = {
     "limit": 50, "content_limit": 4000,
     "reason_full": "RuntimeError: boom", "reason_length": 18,
     "reason_truncated": False,
+    "failure_evidence": {
+        "state": "present", "total": 9, "truncated": True,
+        "message": "该 run 已结束；其执行记录里有失败步骤（下面是最近的几条）。",
+        "items": [
+            {"type": "tool_result", "step": 7, "tool_name": "Bash",
+             "status": "error", "error_type": "tool_error",
+             "observation": _LONG_OBSERVATION, "message": None,
+             "text_truncated": True},
+            {"type": "llm_error", "step": 9, "tool_name": None,
+             "status": "error", "error_type": "network_timeout",
+             "observation": None, "message": "upstream timed out",
+             "text_truncated": False},
+        ],
+    },
 }
 
 
@@ -854,3 +899,231 @@ async def test_convo_tab_survives_malformed_tool_arguments(page, fake_web_server
     assert "not-json{{{" in body, body
     assert "参数已截断" in body, body
     assert not errors, f"渲染抛异常：{errors}"
+
+
+@pytest.mark.asyncio
+async def test_candidate_rows_show_failure_clues(page, fake_web_server):
+    """候选项行必须渲染失败线索——含 R1 新增的**负向态**分支。
+
+    review R2 Issue 1 实证：这条渲染块此前**零覆盖**（既有的 `_ITEM_CONTAINER`
+    fixture 的候选字典根本没有 `failure_evidence` 键，`if (evidence)` 恒假，整块被
+    跳过），删掉它测试全绿——假保护。本条把三种态都渲染出来：
+    `present`（计数线索）、`clean`（负向态也要有一行，Q3 的精神：不显示 != 没事）。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+
+    async def _transcript_route(route):
+        await route.fulfill(json=_ITEM_CONTAINER)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".cand[data-index='1']")
+
+    row0 = await page.text_content(".cand[data-index='0']")
+    assert "已检查，无失败记录" in row0, (
+        f"clean 的候选行必须有正向声明（负向态也各配一行文案，Q3）：{row0!r}"
+    )
+    row1 = await page.text_content(".cand[data-index='1']")
+    assert "3 条工具/LLM 失败" in row1, f"present 的候选行必须给计数线索：{row1!r}"
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_prefers_backend_message(page, fake_web_server):
+    """证据区文案**优先用后端** `message`（review R2 Issue 2）。
+
+    后端为「尚未派发」等情形写了专用文案（设计 D1 要求与「取不到记录」分开说）；
+    前端若一律用自建表，那些区分就到不了用户眼前。这里给一个**只有后端会写**的
+    句子，验证它真的被渲染出来。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    payload = {
+        "kind": "none", "node_id": "a", "node_kind": "subagent",
+        "message": "该节点未执行（未派发或未产生 run）",
+        "reason_full": "", "reason_length": 0, "reason_truncated": False,
+        "failure_evidence": {
+            "state": "unavailable",
+            "total": 0, "truncated": False,
+            "message": "该节点尚未派发，暂时没有失败证据。",
+            "items": [],
+        },
+    }
+
+    async def _transcript_route(route):
+        await route.fulfill(json=payload)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _start_workflow(page, SNAPSHOT)
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body').textContent.includes('失败证据')"
+        " || document.querySelector('.drawer-body').textContent.includes('尚未派发')")
+
+    body = await page.text_content(".drawer-body")
+    assert "该节点尚未派发" in body, (
+        f"前端丢弃了后端 message——「尚未派发」与「取不到记录」的区分在 UI 层落空：{body!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_renders_failure_evidence_body(page, fake_web_server):
+    """「对话」tab 的失败证据**正文区**：标题条数 + 两条条目 + 预览截断标注 + 截断页脚。
+
+    这是本 change 的**头号交付物**——issue #215 要回答的「哪个工具失败了、为什么」，
+    答案正文只长在这段渲染里。review R3 实证：删掉整段条目渲染、删掉文本、关掉截断
+    页脚、去掉标题条数，四条变异在 949 条测试下**全部存活**（用户直接退回
+    「绿节点、零信号」的原始症状而无人报警）。本条把这四条一次锁死。
+
+    同时锁住 grill Q2 用户确认的「前端预览 300 字符 + 显式截断标注」——
+    「预览比正文短却不告知」是本仓库已踩过两次的坑（#212/#213）。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+
+    async def _transcript_route(route):
+        await route.fulfill(json=_ITEM_SINGLE)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
+    await _start_workflow(page, SNAPSHOT)
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+    await page.wait_for_selector(
+        "#workflow-canvas svg.workflow-svg", state="visible")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".failure-item")
+
+    body = await page.text_content(".drawer-body")
+    # 标题带**真实条数**（不是只写「失败证据」）。断言必须落在**标题元素**上：
+    # 页脚的「共 9 条，只显示了最近 2 条」也含同样的子串，用 body 会漏掉这条变异
+    # （实测：改标题为裸「失败证据」时 body 断言仍绿）。
+    heading = await page.text_content(".drawer-body h3")
+    assert "共 9 条" in heading, f"标题丢了真实条数：{heading!r}"
+    # 条目正文：工具名 + 步序 + 错误类型 + 文本首行（tool_result 走 observation）。
+    assert "Bash" in body and "step 7" in body and "tool_error" in body, body
+    assert "3 failed, 12 passed" in body, f"失败文本没渲染出来：{body!r}"
+    # 第二条走 message（llm_error 没有 observation）。
+    assert "network_timeout" in body and "upstream timed out" in body, body
+    # 预览截断必须**显式标注**（Q2 用户确认；#212/#213 的坑）。
+    assert "预览已截断" in body, f"预览截断没有标注——用户会以为正文就这么短：{body!r}"
+    # 截断页脚报告「省略了多少」。
+    assert "共 9 条，只显示了最近 2 条" in body, f"截断页脚缺失：{body!r}"
+
+    # 预览确实被截到 300 字符量级（不是把全文灌进来），且**摘要也不得无界**——
+    # 一条没有换行的超长 observation 会让摘要绕过预览上限（review R3 后由本条发现）。
+    pre_text = await page.text_content(".failure-text")
+    assert len(pre_text) <= 300, f"预览未收窄：{len(pre_text)} 字符"
+    summary_text = await page.text_content(".failure-summary")
+    assert len(summary_text) <= 200, f"条目摘要无界：{len(summary_text)} 字符"
+    assert body.count("x") < 429, "全量失败文本仍出现在 DOM 里"
+
+
+@pytest.mark.asyncio
+async def test_task_tab_shows_failure_clue_from_snapshot(page, fake_web_server):
+    """「任务」tab 的快照失败线索三态（Q6 方案 D）。
+
+    这是本抽屉**默认**打开的 tab，也是「绿节点有没有隐藏失败」的唯一零请求线索。
+    review R3 实证：`SNAPSHOT` fixture 的节点根本没有 `failure_count` 键，
+    `failureCountHint(undefined)` 恒返回 `null`，整段被跳过——把它换成 `null`
+    全量测试照样绿。本条把三态都锁住：
+    `N>0` → ⚠ 计数；`0` → 淡色「已检查、无失败」；无该键 → **不显示**。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
+    await _start_workflow(page, SNAPSHOT)
+    await _ensure_workflow_view(page)
+
+    # N>0：默认「任务」tab 上要有 ⚠ 计数线索。
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    body_a = await page.text_content(".drawer-body")
+    assert "3 次工具/LLM 失败" in body_a and "⚠" in body_a, (
+        f"有失败的节点在「任务」tab 上没有线索（用户不会知道要点进「对话」）：{body_a!r}"
+    )
+    hint_a = await page.text_content(".drawer-failure-hint")
+    assert "对话" in hint_a, f"线索要指路到「对话」tab：{hint_a!r}"
+
+    # 0：仍是正向声明（已检查、无失败），不是什么都不显示。
+    await page.keyboard.press("Escape")
+    await page.click(".workflow-node[data-node-id='b']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    body_b = await page.text_content(".drawer-body")
+    assert "已检查、无失败" in body_b, (
+        f"零失败必须显示正向声明（Q3 的精神：不显示 != 没事）：{body_b!r}"
+    )
+
+    # 无该键（None）：**不显示**——「没数据」不得冒充「已检查」。
+    await page.keyboard.press("Escape")
+    await page.click(".workflow-node[data-node-id='join']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    body_join = await page.text_content(".drawer-body")
+    assert "已检查、无失败" not in body_join
+    assert "失败" not in body_join
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_falls_back_when_backend_message_is_missing(page, fake_web_server):
+    """后端**没给** `message` 时，前端退化为自己的文案表——而不是显示空白。
+
+    这条守的是 `failureText` 的兜底分支（review R3 实证：把它删成 `return ''`
+    全量浏览器用例仍绿）。真实场景是老载荷 / 降级路径：只有 `state`、没有 `message`。
+    显示空白会被读成「没问题」，正是本 change 要消灭的误读。
+    """
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    payload = {
+        "kind": "single", "node_id": "a", "node_kind": "subagent",
+        "subagent_id": "sa-x", "run_id": "r-x",
+        "messages": [{"role": "assistant", "content": "hi"}],
+        "truncated": False, "included_tool_results": False,
+        "limit": 50, "content_limit": 4000,
+        "reason_full": "", "reason_length": 0, "reason_truncated": False,
+        # 只有 state，**没有** message（老载荷 / 降级）。
+        "failure_evidence": {"state": "clean", "total": 0, "truncated": False,
+                             "items": []},
+    }
+
+    async def _transcript_route(route):
+        await route.fulfill(json=payload)
+
+    await page.route("**/transcript*", _transcript_route)
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    # chat.js 的 ws 握手 → 建 tab → showView('chat') 是**异步**的，可能发生在派发
+    # 之后并把 workflow-view 的 active 摘掉（svg 间歇性 hidden）。下面两道一起用：
+    # `_wait_app_ready` 尽量等初始化跑完（无 ws 的 fixture 里它会降级为固定等待），
+    # 派发后的 `_ensure_workflow_view` 再确定性地把视图拉回激活态。
+    # 不写具体条数：它会随用例增减漂移，写死即成假话。
+    await _wait_app_ready(page)
+    await _start_workflow(page, SNAPSHOT)
+    await _ensure_workflow_view(page)
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+    await page.click(".workflow-node[data-node-id='a']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body').textContent.includes('失败证据')")
+
+    body = await page.text_content(".drawer-body")
+    assert "已检查，无失败记录" in body, (
+        f"后端没给 message 时前端兜底表应出文案，而不是空白（空白会被读成没问题）：{body!r}"
+    )

@@ -29,6 +29,9 @@ SNAPSHOT_NODE_KEYS = frozenset(
         "id", "kind", "status", "runs", "summary", "reason", "task",
         "started_at", "finished_at", "targets", "items",
         "item_states", "items_running", "items_completed", "items_failed",
+        #: ``fix-issue-215`` 加的加法字段：失败计数（三态 ``None``/``0``/``N``）。
+        #: 快照只给**有界整数**线索，证据正文在 transcript 载荷里（懒加载）。
+        "failure_count",
     }
 )
 
