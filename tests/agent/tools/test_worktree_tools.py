@@ -293,7 +293,11 @@ async def test_enter_worktree_cleanup_fail_closed_when_list_unreadable(
     await enter.execute(name="keepme")
     wt_path = git_repo / WT_DIR / "keepme"
     precious = wt_path / "precious.txt"
+    # 已提交内容：未跟踪文件即使走到 remove 也会被 git 拒绝删除，
+    # 会削弱「是否真的发生数据丢失」的判别力
     precious.write_text("valuable\n")
+    _run_git(wt_path, "add", "-A")
+    _run_git(wt_path, "commit", "-m", "precious")
     await exit_tool.execute(keep=True)
     policy.workspace_root = git_repo.resolve()
 
@@ -316,6 +320,59 @@ async def test_enter_worktree_cleanup_fail_closed_when_list_unreadable(
 
     assert result.error_type == "worktree_create_failed"
     assert removed == [], "枚举失败时不得执行任何 worktree remove"
+    assert precious.exists() and precious.read_text() == "valuable\n"
+    assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
+    assert policy.workspace_root == git_repo.resolve()
+
+
+@pytest.mark.asyncio
+async def test_enter_worktree_cleanup_fail_closed_on_asymmetric_list_failure(
+    git_repo, policy, monkeypatch
+):
+    """R8 回归：**只有 before 快照**读不到时也不得清理（非对称失败）。
+
+    上一条用例让每次 `worktree list` 都失败（对称），恰好落在「两侧都返回 None
+    → 空集差集也为空 → 不触发删除」这一畸形实现仍安全的情形，因此测不出调用侧
+    的 fail-open：一旦 before 侧读不到，空集 `before` 会把**用户已有的 worktree**
+    读成「本次新增的残留」而删掉它。这里只让 before 那一次失败（`_in_worktree`
+    也会调 list，故按第 2 次命中），断言不执行 remove 且内容存活。
+    """
+    import agent.tools.builtin.worktree as wt_mod
+
+    enter = EnterWorktreeTool(policy=policy)
+    exit_tool = ExitWorktreeTool(policy=policy)
+
+    await enter.execute(name="keepme")
+    wt_path = git_repo / WT_DIR / "keepme"
+    precious = wt_path / "precious.txt"
+    precious.write_text("valuable\n")
+    _run_git(wt_path, "add", "-A")
+    _run_git(wt_path, "commit", "-m", "precious")
+    await exit_tool.execute(keep=True)
+    policy.workspace_root = git_repo.resolve()
+
+    real_run_git = wt_mod._run_git
+    removed: list[list] = []
+    list_calls = {"n": 0}
+
+    def _inject(*args, **kwargs):
+        git_args = args[1:] if len(args) > 1 else ()
+        if "worktree" in git_args and "list" in git_args:
+            list_calls["n"] += 1
+            if list_calls["n"] == 2:  # 第 1 次是 _in_worktree 的嵌套判定
+                return subprocess.CompletedProcess(
+                    args, returncode=128, stdout="", stderr="list-boom"
+                )
+        if "remove" in git_args:
+            removed.append(list(git_args))
+        return real_run_git(*args, **kwargs)
+
+    monkeypatch.setattr(wt_mod, "_run_git", _inject)
+
+    result = await enter.execute(name="keepme")
+
+    assert result.error_type == "worktree_create_failed"
+    assert removed == [], "before 快照不可读时不得执行任何 worktree remove"
     assert precious.exists() and precious.read_text() == "valuable\n"
     assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
     assert policy.workspace_root == git_repo.resolve()
