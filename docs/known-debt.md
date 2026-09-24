@@ -293,3 +293,17 @@ change 的日志里有一条指向同一路径的陈旧事件，门禁就会放�
    若将来该路径被修活或新增别的 `trace=None` 落点，`no_trace` 会自然生效，无需改投影。
 
 两条均**不影响**本 change 的正确性：失败证据的数据源是 trace 里**已经存在**的步骤，`completed` 的 run 一样能读到。
+
+### `switchToWorkflowView` 只有字符串匹配断言（fix-issue-215 审阅 R6 发现，本 change 显式不做）
+
+`web/static/chat.js` 的 `switchToWorkflowView`（把 workflow-view 设为激活视图）在测试侧**只有一条
+字符串匹配断言**（`tests/web_tests/test_server.py` 检查其源码文本），没有行为测试。后果：把它的
+目标元素改错/改坏，全量测试仍绿——这段切换逻辑实际处于无守护状态。
+
+**为什么记债而不是修**：它**不是本 change 引入的**（早于 fix-issue-215 存在），本 change 的
+审阅者是在复核「浏览器用例间歇红」时顺带发现的。修它需要给 workflow 视图切换补行为用例
+（浏览器或 node+vm），属独立改动面。
+
+**与既有 flake 的关系**：本 change 已给受影响的浏览器用例补了确定性视图守卫
+（`_ensure_workflow_view`，走测试自装的 `window.__testTab.onWorkflowStarted`），把
+「渲染了但被切走」这一类间歇红治住；但**「切换目标本身是坏的」这一类**仍无断言守护——即本债务。

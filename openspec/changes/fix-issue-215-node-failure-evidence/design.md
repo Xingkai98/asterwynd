@@ -253,6 +253,28 @@ smoke，前端也纳入了变异可见的测试面。
 | Q7 死代码归档 | **记 `docs/known-debt.md` 一条**（合并 `StopReason.ERROR` 死分支 + `no_trace` 无活跃生产者），走 `artifact-event` 通道 |
 
 
+
+## 审阅闭环记录（报告与 head 的对应关系）
+
+审阅闭环共 6 轮，**每轮都在隔离检出（`/tmp/rev-215`）里跑，零记忆 subagent，审阅者不写本工作区**。
+manifest 绑定的是**最终 head**；下表显式说明「PASS 的树」与「后续 commit」的关系（不留猜测空间）：
+
+| 轮次 | verdict | 审阅范围 | 之后的改动 |
+|---|---|---|---|
+| R1 | CHANGES_REQUESTED（1 中 3 低） | `1a7df92..c37c267` | 修复 + 回归（`bea27d6`） |
+| R2 | CHANGES_REQUESTED（2 中 4 低） | `..bea27d6` | 修复 + 回归（`80d2c2b`） |
+| R3 | CHANGES_REQUESTED（1 中 5 低） | `..80d2c2b` | 修复 + 回归（`e892e00`） |
+| R4 | **PASS**（37 变异 36 杀） | `1a7df92..e892e00` | 4 条低危修复（`63b098d`、`05882d9`，含一处线索措辞口径） |
+| R5 | **PASS**（post-PASS 定向确认） | `e892e00..05882d9` | 测试基础设施改动（`91ce796`：确定性视图守卫 + **订正我自己写错的一条注释**） |
+| R6 | **PASS**（定向确认，无中等及以上） | `05882d9..91ce796` | 仅订正 R6 指出的两处注释引用错误（本次 commit） |
+
+**口径**：R4/R5/R6 均判 PASS；其后的 commit 都是**低危修复 / 测试基础设施 / 注释订正**，
+不含行为变更（唯一的行为相关改动是 `failureCountHint` 的措辞从「工具失败」改为「工具/LLM 失败」，
+已在 R5 定向确认）。R6 另报的第三条低危（`switchToWorkflowView` 无行为测试）是**既有**缺口，
+按「PASS 后不追低危」的收敛纪律记入 `docs/known-debt.md`、本 change 显式不做。
+历轮报告全部随 change 归档（`reviews/building-review.md` + `-r2`…`-r6`），其中 `building-review.md`
+是 manifest 绑定的规范报告路径。
+
 ## Pre-Implementation Review
 
 非平凡 change（新增 spec requirement + 新增用户面投影字段 + 动既有 HTTP 载荷契约），进入实现前由独立零记忆

@@ -1107,12 +1107,11 @@ async def test_convo_tab_falls_back_when_backend_message_is_missing(page, fake_w
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
-    # 注：本行末尾的 state="visible" 是 playwright 的**默认值**（no-op），
-    # 保留只为与同文件既有写法一致；真正治竞态的是上一行的 `_wait_app_ready`。
     # chat.js 的 ws 握手 → 建 tab → showView('chat') 是**异步**的，可能发生在派发
-    # 之后并把 workflow-view 的 active 摘掉（svg 间歇性 hidden）。本文件里带这个
-    # 守卫的用例都靠它治这个竞态，新增用例必须跟上，否则守护「头号交付物」的断言
-    # 在 CI 里靠运气（不写具体条数：它会随用例增减漂移，写死即成假话）。
+    # 之后并把 workflow-view 的 active 摘掉（svg 间歇性 hidden）。下面两道一起用：
+    # `_wait_app_ready` 尽量等初始化跑完（无 ws 的 fixture 里它会降级为固定等待），
+    # 派发后的 `_ensure_workflow_view` 再确定性地把视图拉回激活态。
+    # 不写具体条数：它会随用例增减漂移，写死即成假话。
     await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await _ensure_workflow_view(page)
