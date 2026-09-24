@@ -256,40 +256,69 @@ async def test_enter_worktree_base_branch_option_injection_rejected(git_repo, po
     assert policy.workspace_root == git_repo.resolve()
 
 
+def test_registered_worktree_paths_none_when_list_fails(git_repo, monkeypatch):
+    """R6 O2 契约：`worktree list` 失败须返回 None（未知），不得返回空集。
+
+    空集会被差集读成「此前一个 worktree 都没有」，从而把用户已有的 worktree
+    误判成本次残留去删。这是 R7 变异 B 的定点回归——只 monkeypatch 调用方会
+    绕过 helper 自身的返回契约，测不出这条回归。
+    """
+    import agent.tools.builtin.worktree as wt_mod
+
+    def _list_fails(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args, returncode=128, stdout="", stderr="list-boom"
+        )
+
+    monkeypatch.setattr(wt_mod, "_run_git", _list_fails)
+
+    assert wt_mod._registered_worktree_paths(git_repo) is None
+
+
 @pytest.mark.asyncio
 async def test_enter_worktree_cleanup_fail_closed_when_list_unreadable(
     git_repo, policy, monkeypatch
 ):
-    """R6 O2 回归：worktree 列表读不到时不得清理（fail-closed）。
+    """R6 O2 回归：worktree 列表读不到时不得清理，且已有 worktree 完好。
 
-    残留判定依赖 `worktree list` 的前后差集；若枚举失败被当成空集，「此前没有
-    任何 worktree」会把别人的 worktree 误判成本次残留去删。
+    用**真实** helper 跑完整失败路径（只让 `worktree list` 失败，其余 git 调用
+    真实执行），断言不执行 remove、已有 worktree 与内容保存在。
     """
     import agent.tools.builtin.worktree as wt_mod
 
-    tool = EnterWorktreeTool(policy=policy)
+    enter = EnterWorktreeTool(policy=policy)
+    exit_tool = ExitWorktreeTool(policy=policy)
+
+    # 先造出「同名 worktree 已存在」现场（保留 worktree 是设计内用法）
+    await enter.execute(name="keepme")
+    wt_path = git_repo / WT_DIR / "keepme"
+    precious = wt_path / "precious.txt"
+    precious.write_text("valuable\n")
+    await exit_tool.execute(keep=True)
+    policy.workspace_root = git_repo.resolve()
+
     real_run_git = wt_mod._run_git
     removed: list[list] = []
 
     def _inject(*args, **kwargs):
         git_args = args[1:] if len(args) > 1 else ()
-        if "add" in git_args:
+        if "worktree" in git_args and "list" in git_args:
             return subprocess.CompletedProcess(
-                args, returncode=255, stdout="", stderr="boom"
+                args, returncode=128, stdout="", stderr="list-boom"
             )
         if "remove" in git_args:
             removed.append(list(git_args))
-            return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
         return real_run_git(*args, **kwargs)
 
     monkeypatch.setattr(wt_mod, "_run_git", _inject)
-    monkeypatch.setattr(wt_mod, "_registered_worktree_paths", lambda repo: None)
 
-    result = await tool.execute(name="test-wt")
+    result = await enter.execute(name="keepme")
 
     assert result.error_type == "worktree_create_failed"
     assert removed == [], "枚举失败时不得执行任何 worktree remove"
-    assert "无法确认" in result.text
+    assert precious.exists() and precious.read_text() == "valuable\n"
+    assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
+    assert policy.workspace_root == git_repo.resolve()
 
 
 @pytest.mark.asyncio
