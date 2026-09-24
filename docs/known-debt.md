@@ -304,6 +304,39 @@ change 的日志里有一条指向同一路径的陈旧事件，门禁就会放�
 审阅者是在复核「浏览器用例间歇红」时顺带发现的。修它需要给 workflow 视图切换补行为用例
 （浏览器或 node+vm），属独立改动面。
 
-**与既有 flake 的关系**：本 change 已给受影响的浏览器用例补了确定性视图守卫
-（`_ensure_workflow_view`，走测试自装的 `window.__testTab.onWorkflowStarted`），把
-「渲染了但被切走」这一类间歇红治住；但**「切换目标本身是坏的」这一类**仍无断言守护——即本债务。
+**~~与既有 flake 的关系~~（口径更正，fix-issue-226 诊断证伪）**：原文称本 change「已给受影响的浏览器
+用例补了确定性视图守卫（`_ensure_workflow_view`…），把『渲染了但被切走』这一类间歇红治住」——
+**该断言不成立，已作废**。issue #226 的定位（见 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
+的 diagnosis）实测证明：`_ensure_workflow_view` 当时只覆盖 3 条用例，另有 15 条零屏障 + 6 条只有
+「死等」；且该 helper **只恢复视图激活态、不恢复 ticker**（`showView()` 对非 workflow 视图会
+`stopTicker()`），因此它既不构成有效屏障、也兜不住 tick 类用例的假保护。真正治住这一类的是
+issue #226 的修复：`chat.js` 暴露 `AsterwyndChatTest.initDone` 就绪信号 + `_wait_app_ready` 改等它
+并删除吞异常降级 + `_ensure_workflow_view` 补 `startTicker()`。
+
+**剩余面**：**「切换目标本身是坏的」这一类仍无断言守护**——即本债务，与上述 flake 无关，继续保留。
+
+## 浏览器测试负载下 flake 根治（issue #226）✅ 已解决
+
+issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、隔离跑全绿、失败数逐次波动」，
+**已由 `fix-issue-226-browser-test-flake`（2026-09-24 归档）解决**。根因是两个相互独立的**测试侧**
+时序缺陷（非生产 bug，判据见 change 的 `diagnosis.md`）：
+
+1. **根因 A**（`test_multi_session_browser.py` 3 条）：新建 tab 的 WebSocket 尚未 OPEN 就点击发送，
+   命中 `chat.js` 的 `readyState !== OPEN` 守卫，**消息从未发出**。修法：改用本文件已有的
+   `_open_two_tabs`（rekey 屏障 ⟹ 已收到 `session_created` ⟹ 已 OPEN）。
+2. **根因 B**（`test_workflow_graph_browser.py` 15 条）：`chat.js` 的异步 `init()` 若在测试派发
+   workflow 事件**之后**跑完，`showHub()` 会把 `#workflow-view` 的 `active` 摘掉，而 `showHub()`
+   不清 canvas ⇒ svg 永久留 DOM 但 hidden。修法：`chat.js` 在既有测试接缝上暴露
+   `AsterwyndChatTest.initDone`（`init()` resolve 后置位，**只增不改**），`_wait_app_ready` 改等该
+   信号并删除吞异常降级；`_ensure_workflow_view` 补 `startTicker()`。
+
+**残留债（本条目保留的部分）**：
+
+- `_ensure_workflow_view` 仍是**后置补救层**，不是主屏障。主屏障是修好的 `_wait_app_ready`
+  （判据失效会 fail-loud 超时）。两层都留是有意的冗余；若日后清理，须先确认主屏障仍独立有效。
+- `chat.js` 的 `AsterwyndChatTest.initDone` 是**测试专用**接缝（生产路径不读它）。**不得当死代码
+  移除** —— 已写进 `openspec/specs/web-ui/spec.md`，并由
+  `test_chat_init_seam_reports_completion` 守护（本仓库无 JS lint / 死代码检测，该测试是唯一守护）。
+- 诊断期发现的「`test_workflow_graph_browser.py` 相关用例中 6 条一度『只有死等』」已随本次修复消除；
+  但该文件**后续新增**用例若忘了接就绪屏障，仍会以同类形态偶发 —— 契约已写进 web-ui spec 的
+  「浏览器回归的就绪屏障」Requirement，审阅时据此检查。

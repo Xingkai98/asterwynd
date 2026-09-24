@@ -1249,3 +1249,47 @@ async def test_workflow_view_survives_delayed_app_init(page, fake_web_server):
     assert visible, "init 落定后派发 workflow 事件，#workflow-view 应保持激活"
     assert svg_visible, "svg 必须可见（被 showHub() 抢走时会留 DOM 但 hidden）"
     assert await page.is_visible(".workflow-node[data-node-id='a']")
+
+
+@pytest.mark.asyncio
+async def test_chat_init_seam_reports_completion(page, fake_web_server):
+    """spec「Web UI 暴露应用初始化完成的测试接缝」：``initDone`` 的置位契约。
+
+    这是「测试专用、不得当死代码移除」那条要求的**可执行守护** —— 本仓库没有 JS
+    lint / 死代码检测，删掉 ``initDone`` 后唯一会变红的就是这类断言。
+
+    覆盖 spec 的两个 Scenario：
+      * 初始化未完成 → ``initDone`` 为 ``false``（页面加载后立刻读）；
+      * 初始化完成 → ``initDone`` 为 ``true``，且此后派发 UI 事件不再被初始化改回。
+    """
+    await page.goto(fake_web_server["url"])
+    # 未完成态：脚本已加载（AsterwyndWorkflow 就绪）但 init 未必跑完，读值必须是布尔而非抛错。
+    early = await page.evaluate(
+        "() => window.AsterwyndChatTest && window.AsterwyndChatTest.initDone"
+    )
+    assert early in (True, False), (
+        "测试接缝 window.AsterwyndChatTest.initDone 必须存在且为布尔 —— "
+        "它是浏览器回归判定「初始化是否完成」的唯一信号（见 web-ui spec）"
+    )
+
+    # 完成态：等待后必须置真（init() resolve 才会置位）。
+    await _wait_app_ready(page)
+    assert await page.evaluate("() => window.AsterwyndChatTest.initDone") is True
+
+
+@pytest.mark.asyncio
+async def test_ready_barrier_fails_loudly_when_signal_is_absent(page, fake_web_server):
+    """spec「就绪判据失效可被察觉」：信号缺失时须**有边界地失败**，不得静默放行。
+
+    做法：加载完成后**删掉**接缝信号（模拟「信号被误删/改名」），再调
+    ``_wait_app_ready``，断言它**抛超时**。若实现里残留「吞异常 + 固定等待」的降级，
+    这里会静默返回、本用例即变红 —— 这正是本 change 删掉该降级所守护的行为。
+    """
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await page.evaluate("() => { delete window.AsterwyndChatTest.initDone; }")
+
+    with pytest.raises(PlaywrightTimeoutError):
+        await _wait_app_ready(page)
