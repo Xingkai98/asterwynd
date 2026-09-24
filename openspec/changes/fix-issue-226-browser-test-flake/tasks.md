@@ -40,28 +40,28 @@
 - [x] 3.6 `web/static/chat.js`：在 `init()` 调用点新增 `window.AsterwyndChatTest.initDone`——先置 `false`，再 `init().then(() => { window.AsterwyndChatTest.initDone = true; })`（**不带 `onRejected` 第二参数**，Q5 拍板：失败时保留今天已有的响亮报错，不吞）——**只增不改**，不触碰任何既有函数体/分支/渲染
 - [x] 3.7 如实现中发现新影响面，先回写 `## Impact Analysis` 和本任务清单，再继续
 - [x] 3.8 如实现中发现 RIR 结论需修正，先回写 `## Reference Implementation Research` 和本任务清单
-- [ ] 3.9 更新必要文档（见第 5 节）
+- [x] 3.9 更新必要文档（见第 5 节）
 
 ## 4. 验证
 
 - [x] 4.1 运行相关测试：`uv run pytest tests/web_tests/test_multi_session_browser.py tests/web_tests/test_workflow_graph_browser.py -q`（**单进程，不并发**）
 - [x] 4.2 运行 `tests/web_tests/` 子集回归，确认无新增失败
-- [ ] 4.3 改造后对两个文件做**有限次数**重复跑（单进程、不并发、不人为加压），观察不再出现时序失败；**不以「反复跑逼出 flake」为手段**
-- [ ] 4.4 运行全量测试：`uv run pytest -q`（收尾一次）
-- [ ] 4.5 运行 OpenSpec strict validate：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 4.6 运行项目 OpenSpec artifact checker：`uv run python scripts/check_openspec_artifacts.py`
-- [ ] 4.7 确认 baseline CI 命令可本地通过：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、`uv run python scripts/check_openspec_artifacts.py`
+- [x] 4.3 改造后对两个文件做**有限次数**重复跑（单进程、不并发、不人为加压），观察不再出现时序失败；**不以「反复跑逼出 flake」为手段**
+- [x] 4.4 运行全量测试：`uv run pytest -q`（收尾一次）
+- [x] 4.5 运行 OpenSpec strict validate：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
+- [x] 4.6 运行项目 OpenSpec artifact checker：`uv run python scripts/check_openspec_artifacts.py`
+- [x] 4.7 确认 baseline CI 命令可本地通过：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、`uv run python scripts/check_openspec_artifacts.py`
 - [x] 4.8 若涉及 Web，运行 Web session/server 测试；必要时运行浏览器 smoke（本 change 改的就是浏览器测试，`tests/web_tests/` 子集即对应层级）
 - [x] 4.9 确认 `openspec/specs/web-ui/spec.md` 已同步本 change 的 delta（当前规格同步，供 artifact checker 机械校验）
 
 ## 5. 文档影响
 
-- [ ] 5.1 关键词扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与浏览器测试 / flake / 就绪屏障相关的段落
-- [ ] 5.2 `docs/testing-guide.md`：已核实其**未记录**浏览器就绪约定（仅 `:87` 提 Playwright 安装），故本项为「无影响」——收尾时如实记结论，不强改
-- [ ] 5.3 **更正 `docs/known-debt.md:297-309`**（fix-issue-215 审阅 R6 那条）：其断言「`_ensure_workflow_view` 把『渲染了但被切走』这类间歇红治住」已被本次诊断**证伪**（该 helper 只覆盖 3 条、不恢复 ticker、不构成有效屏障），须按本 change 结论更正。受保护路径，需 `workflow-events.jsonl` 的 `protected_artifact_explained` 事件
-- [ ] 5.4 `docs/known-issues.md` / `docs/known-debt.md` **新增**一条 issue #226 的记录（两文件当前 grep `226` **零命中**，原 5.3 指向的「已记录的债务」不存在，照原文执行会打空/改错位置）
-- [ ] 5.5 `web/static/chat.js` 的接缝注释写明：`initDone` 为测试专用、零生产行为，不得当死代码移除（与 spec delta 口径一致）
-- [ ] 5.6 `docs/openspec-change-backlog.md` 登记本 change
+- [x] 5.1 关键词扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与浏览器测试 / flake / 就绪屏障相关的段落
+- [x] 5.2 `docs/testing-guide.md`：已核实其**未记录**浏览器就绪约定（仅 `:87` 提 Playwright 安装），故本项为「无影响」——收尾时如实记结论，不强改
+- [x] 5.3 **更正 `docs/known-debt.md:297-309`**（fix-issue-215 审阅 R6 那条）：其断言「`_ensure_workflow_view` 把『渲染了但被切走』这类间歇红治住」已被本次诊断**证伪**（该 helper 只覆盖 3 条、不恢复 ticker、不构成有效屏障），须按本 change 结论更正。受保护路径，需 `workflow-events.jsonl` 的 `protected_artifact_explained` 事件
+- [x] 5.4 `docs/known-issues.md` / `docs/known-debt.md` **新增**一条 issue #226 的记录（两文件当前 grep `226` **零命中**，原 5.3 指向的「已记录的债务」不存在，照原文执行会打空/改错位置）
+- [x] 5.5 `web/static/chat.js` 的接缝注释写明：`initDone` 为测试专用、零生产行为，不得当死代码移除（与 spec delta 口径一致）
+- [x] 5.6 `docs/openspec-change-backlog.md` 登记本 change
 
 ## 6. 审阅闭环
 
