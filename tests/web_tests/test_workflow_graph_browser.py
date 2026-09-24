@@ -138,6 +138,20 @@ async def _wait_app_ready(page) -> None:
         await page.wait_for_timeout(300)
 
 
+async def _ensure_workflow_view(page) -> None:
+    """确保 ``#workflow-view`` 处于激活态，再继续交互（治理 fixture 固有竞态）。
+
+    ``_wait_app_ready`` 在**没有 ws** 的 fixture 里只能降级为固定等待（见其
+    docstring），因此无法保证 ``chat.js`` 的异步初始化一定在我们派发事件**之前**
+    跑完；它若后到，会把 workflow-view 的 active 摘掉，导致 svg 间歇性不可见
+    （R4/R5 实测失败率与既有用例同量级）。这里在派发之后**确定性**地把视图拉回
+    激活态：走的是测试自己装的 ``window.__testTab.onWorkflowStarted``（harness
+    自有口径），不触碰产品代码的行为。
+    """
+    await page.evaluate("() => { window.__testTab.onWorkflowStarted(); }")
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg", state="visible")
+
+
 async def _start_workflow(page, snapshot: dict) -> None:
     """模拟一条完整的真实事件流：``workflow_started`` → ``workflow_snapshot``。"""
     await _push_workflow_event(page, "workflow_started", {
@@ -481,8 +495,9 @@ async def test_convo_tab_lazily_fetches_transcript(page, fake_web_server):
     page.on("request", lambda request: requests.append(request.url))
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
-    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
     # 测试 tab 没有真实 session（事件是直接派发的），补一个让请求能成形；
     # 路由本身（404 降级 / 三态）由 ``test_workflow_control_server.py`` 覆盖。
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
@@ -1035,7 +1050,7 @@ async def test_task_tab_shows_failure_clue_from_snapshot(page, fake_web_server):
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
     await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
-    await page.wait_for_selector("#workflow-canvas svg.workflow-svg", state="visible")
+    await _ensure_workflow_view(page)
 
     # N>0：默认「任务」tab 上要有 ⚠ 计数线索。
     await page.click(".workflow-node[data-node-id='a']")
@@ -1092,13 +1107,16 @@ async def test_convo_tab_falls_back_when_backend_message_is_missing(page, fake_w
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    # 注：本行末尾的 state="visible" 是 playwright 的**默认值**（no-op），
+    # 保留只为与同文件既有写法一致；真正治竞态的是上一行的 `_wait_app_ready`。
     # chat.js 的 ws 握手 → 建 tab → showView('chat') 是**异步**的，可能发生在派发
-    # 之后并把 workflow-view 的 active 摘掉（svg 间歇性 hidden）。既有 13 条用例都
-    # 走这个守卫，新增用例必须跟上，否则守护「头号交付物」的断言在 CI 里靠运气。
+    # 之后并把 workflow-view 的 active 摘掉（svg 间歇性 hidden）。本文件里带这个
+    # 守卫的用例都靠它治这个竞态，新增用例必须跟上，否则守护「头号交付物」的断言
+    # 在 CI 里靠运气（不写具体条数：它会随用例增减漂移，写死即成假话）。
     await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
+    await _ensure_workflow_view(page)
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
-    await page.wait_for_selector("#workflow-canvas svg.workflow-svg", state="visible")
 
     await page.click(".workflow-node[data-node-id='a']")
     await page.wait_for_selector("#workflow-drawer.open")
