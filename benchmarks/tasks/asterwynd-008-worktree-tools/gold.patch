@@ -1,5 +1,5 @@
 diff --git a/agent/tools/builtin/worktree.py b/agent/tools/builtin/worktree.py
-index de3e406..d0e3ca8 100644
+index de3e406..165ec36 100644
 --- a/agent/tools/builtin/worktree.py
 +++ b/agent/tools/builtin/worktree.py
 @@ -20,6 +20,18 @@ from agent.workspace_policy import WorkspacePolicy
@@ -52,15 +52,39 @@ index de3e406..d0e3ca8 100644
  
  
  def _is_git_repo(repo: Path) -> bool:
-@@ -76,6 +96,20 @@ def _current_branch(repo: Path) -> str:
+@@ -61,6 +81,22 @@ def _main_workspace(repo: Path) -> Path | None:
+     return None
+ 
+ 
++def _registered_worktree_paths(repo: Path) -> set[str]:
++    """已注册 worktree 的绝对路径集合（porcelain 首列，resolve 归一化）。
++
++    用于区分「本次 add 真正留下的残留注册」与「路径上本来就有的用户 worktree」
++    ——失败清理只能动前者（review-loop R5 Issue 1）。
++    """
++    result = _run_git(repo, "worktree", "list", "--porcelain")
++    if result.returncode != 0:
++        return set()
++    paths: set[str] = set()
++    for line in result.stdout.splitlines():
++        if line.startswith("worktree "):
++            paths.add(str(Path(line[len("worktree "):]).resolve()))
++    return paths
++
++
+ def _in_worktree(repo: Path) -> bool:
+     """当前 cwd 是否位于某个 linked worktree 中（禁止嵌套的判定）。"""
+     toplevel = _toplevel(repo)
+@@ -76,6 +112,21 @@ def _current_branch(repo: Path) -> str:
      return branch or "HEAD"  # detached HEAD 时以 HEAD 为基准
  
  
 +def _is_valid_worktree_name(repo: Path, name: str) -> bool:
 +    """worktree 名同时是分支名与目录成分，前置校验（review-loop R1-4）。
 +
-+    ``git check-ref-format`` 校验分支名合法性（禁止 ``..``/空格/特殊字符/
-+    以 ``-`` 开头等），同时防路径穿越；用 ``--allow-onelevel`` 允许单成分名。
++    ``git check-ref-format`` 校验分支名合法性（禁止 ``..``/空格/特殊字符等，
++    允许 ``-`` 开头但分支创建会拒绝），同时防路径穿越；用 ``--allow-onelevel``
++    允许单成分名。name 不得含 ``/``（目录成分必须单层）。
 +    """
 +    if not name or "/" in name or name in (".", ".."):
 +        return False
@@ -73,7 +97,7 @@ index de3e406..d0e3ca8 100644
  @tool_parameters(
      name="EnterWorktree",
      description=(
-@@ -118,14 +152,20 @@ class EnterWorktreeTool(Tool):
+@@ -118,14 +169,49 @@ class EnterWorktreeTool(Tool):
                  text="Error: 当前已在 worktree 中，禁止嵌套 worktree",
                  error_type=ERROR_ALREADY_IN_WORKTREE,
              )
@@ -86,17 +110,47 @@ index de3e406..d0e3ca8 100644
          wt_path = (repo / WORKTREE_SUBDIR / name).resolve()
          wt_path.parent.mkdir(parents=True, exist_ok=True)
          base = base_branch or _current_branch(repo)
-         result = _run_git(repo, "worktree", "add", "-b", name, str(wt_path), base)
+-        result = _run_git(repo, "worktree", "add", "-b", name, str(wt_path), base)
++        before = _registered_worktree_paths(repo)
++        # `--` 隔离位置参数（review-loop R5 Issue 3）：否则 base_branch 里的
++        # `--force` 之类选项会被 git 当选项吞掉，base 静默失效。
++        result = _run_git(repo, "worktree", "add", "-b", name, "--", str(wt_path), base)
          if result.returncode != 0:
 -            # git 自清理（branch 冲突 exit 255 无残留注册）；目录残留由
 -            # .asterwynd/ 约定忽略，text 区分 branch/path 冲突两类原因
-+            # D2 显式 verify：git 自清理（branch 冲突 exit 255 无残留注册），
-+            # 但非 branch 冲突失败可能残留注册，remove 兜底；text 区分原因
-+            _run_git(repo, "worktree", "remove", str(wt_path))
++            # D2 显式 verify（review-loop R5 Issue 1）：只清「本次 add 新增的
++            # 注册」。同名分支/worktree 已存在时 `wt_path` 上本就可能有用户的
++            # worktree（典型路径：keep=true 保留后重入），无条件 remove 会把它
++            # 连同内容删掉。失败文案区分「被占用」与「真残留」两种事实。
++            residue = _registered_worktree_paths(repo) - before
++            if str(wt_path) in residue:
++                cleanup = _run_git(repo, "worktree", "remove", str(wt_path))
++                if cleanup.returncode != 0:
++                    return ToolResult(
++                        text=(
++                            f"Error: worktree 创建失败且清理未完成，worktree 可能残留: "
++                            f"{wt_path}: {result.stderr.strip()}; "
++                            f"清理: {cleanup.stderr.strip()}"
++                        ),
++                        error_type=ERROR_WORKTREE_CREATE_FAILED,
++                    )
++                return ToolResult(
++                    text=f"Error: worktree 创建失败（本次残留已清理）: {result.stderr.strip()}",
++                    error_type=ERROR_WORKTREE_CREATE_FAILED,
++                )
++            if wt_path.exists():
++                return ToolResult(
++                    text=(
++                        f"Error: worktree 创建失败：{wt_path} 已被占用（分支或目录已存在），"
++                        f"未改动它；请换一个 name，或先 ExitWorktree 退出该 worktree: "
++                        f"{result.stderr.strip()}"
++                    ),
++                    error_type=ERROR_WORKTREE_CREATE_FAILED,
++                )
              return ToolResult(
                  text=f"Error: worktree 创建失败: {result.stderr.strip()}",
                  error_type=ERROR_WORKTREE_CREATE_FAILED,
-@@ -134,7 +174,15 @@ class EnterWorktreeTool(Tool):
+@@ -134,7 +220,15 @@ class EnterWorktreeTool(Tool):
          try:
              self._rebind_workspace(wt_path)
          except Exception as exc:
@@ -113,7 +167,7 @@ index de3e406..d0e3ca8 100644
              return ToolResult(
                  text=f"Error: worktree 创建失败（切换失败，已回滚）: {exc}",
                  error_type=ERROR_WORKTREE_CREATE_FAILED,
-@@ -151,7 +199,8 @@ class EnterWorktreeTool(Tool):
+@@ -151,7 +245,8 @@ class EnterWorktreeTool(Tool):
      name="ExitWorktree",
      description=(
          "离开当前 worktree 回到主工作区；keep=false 时删除该 worktree"
@@ -123,7 +177,7 @@ index de3e406..d0e3ca8 100644
      ),
      parameters={
          "type": "object",
-@@ -182,6 +231,14 @@ class ExitWorktreeTool(Tool):
+@@ -182,6 +277,14 @@ class ExitWorktreeTool(Tool):
                  text="Error: 当前不在任何 worktree 中",
                  error_type=ERROR_NOT_IN_WORKTREE,
              )

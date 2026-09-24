@@ -270,3 +270,11 @@ Browser tools SHALL 声明权限元数据（capability=BROWSER_CONTROL、risk_le
 - **GIVEN** agent 当前不在任何 worktree 中
 - **WHEN** 调用 ExitWorktree
 - **THEN** 系统 SHALL 返回结构化错误
+
+#### Scenario: 拒绝退出非本工具创建的 worktree
+
+- **GIVEN** agent 位于一个非 EnterWorktree 创建的 worktree 中（如编排层或 benchmark 任务 worktree）
+- **WHEN** 调用 ExitWorktree
+- **THEN** 系统 SHALL 返回结构化错误
+- **AND** SHALL NOT 退出或删除该 worktree
+- **AND** 工作目录保持不变

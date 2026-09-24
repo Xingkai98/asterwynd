@@ -193,12 +193,90 @@ async def test_enter_worktree_branch_conflict(git_repo, policy):
 
 
 @pytest.mark.asyncio
+async def test_enter_worktree_existing_worktree_not_deleted(git_repo, policy):
+    """R5 Issue 1 回归：同名 worktree 已存在时，失败不得删除它及其内容。
+
+    最典型触发路径是设计内的正常用法——keep=true 保留 worktree 后重新进入。
+    """
+    enter = EnterWorktreeTool(policy=policy)
+    exit_tool = ExitWorktreeTool(policy=policy)
+
+    await enter.execute(name="keepme")
+    wt_path = git_repo / WT_DIR / "keepme"
+    precious = wt_path / "precious.txt"
+    precious.write_text("valuable\n")
+
+    # keep=true 明确保留 worktree 与分支
+    await exit_tool.execute(keep=True)
+    assert len(_linked_worktrees(git_repo)) == 1
+
+    # 同名重入：分支已存在 → add 失败，但已有 worktree 必须原样保留
+    result = await enter.execute(name="keepme")
+
+    assert result.error_type == "worktree_create_failed"
+    assert precious.exists() and precious.read_text() == "valuable\n"
+    assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
+    assert policy.workspace_root == git_repo.resolve()
+    # 文案说明「被占用、未改动它」，不得让 agent 误以为现场被清理过
+    assert "占用" in result.text
+
+
+@pytest.mark.asyncio
+async def test_enter_worktree_dirty_existing_worktree_not_deleted(git_repo, policy):
+    """R5 Issue 1/2 回归：同名 worktree 有未提交改动时也不得删除，且文案不误导。"""
+    enter = EnterWorktreeTool(policy=policy)
+    exit_tool = ExitWorktreeTool(policy=policy)
+
+    await enter.execute(name="keepme")
+    wt_path = git_repo / WT_DIR / "keepme"
+    dirty = wt_path / "dirty.txt"
+    dirty.write_text("uncommitted\n")  # 未提交改动：git 会拒绝 remove
+    await exit_tool.execute(keep=True)
+
+    result = await enter.execute(name="keepme")
+
+    assert result.error_type == "worktree_create_failed"
+    assert dirty.exists() and dirty.read_text() == "uncommitted\n"
+    assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
+    # 文案不得声称「清理未完成/可能残留」——现场其实是完好的
+    assert "清理未完成" not in result.text
+    assert "占用" in result.text
+
+
+@pytest.mark.asyncio
+async def test_enter_worktree_base_branch_option_injection_rejected(git_repo, policy):
+    """R5 Issue 3 回归：base_branch 里的 git 选项不得被当选项吞掉。"""
+    tool = EnterWorktreeTool(policy=policy)
+
+    result = await tool.execute(name="test-wt", base_branch="--force")
+
+    # `--` 分隔后 `--force` 是非法引用 → 失败；关键是不能静默按 HEAD 建成功
+    assert result.error_type == "worktree_create_failed"
+    assert _linked_worktrees(git_repo) == []
+    assert policy.workspace_root == git_repo.resolve()
+
+
+@pytest.mark.asyncio
 async def test_enter_worktree_add_failure_cleanup_checked(git_repo, policy, monkeypatch):
-    """add 失败后 remove 兜底失败时返回部分成功 text（R2-4）。"""
+    """add 确实留下新注册时，清理失败返回残留 text（R2-4）。
+
+    R5 Issue 1 之后清理只对「本次 add 新增的注册」生效；git 2.43 实测
+    branch/dir 冲突均无残留注册，故这里注入残留态来覆盖该分支。
+    """
     import agent.tools.builtin.worktree as wt_mod
 
     tool = EnterWorktreeTool(policy=policy)
     real_run_git = wt_mod._run_git
+    wt_path = (git_repo / WT_DIR / "test-wt").resolve()
+    calls = {"n": 0}
+
+    def _fake_registered(repo):
+        # 第一次（add 前）报告现状；第二次（add 后）报告 wt_path 被本次注册
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return set()
+        return {str(wt_path)}
+
     # 前置 git 检查（is_git_repo / in_worktree / name 校验 / mkdir）走真实 git，
     # 只在 add 与 remove 调用时注入失败：按 args 里的 "add"/"remove" 区分
     def _inject(*args, **kwargs):
@@ -215,12 +293,14 @@ async def test_enter_worktree_add_failure_cleanup_checked(git_repo, policy, monk
         return real_run_git(*args, **kwargs)
 
     monkeypatch.setattr(wt_mod, "_run_git", _inject)
+    monkeypatch.setattr(wt_mod, "_registered_worktree_paths", _fake_registered)
 
     result = await tool.execute(name="test-wt")
 
     assert isinstance(result, ToolResult)
     assert result.error_type == "worktree_create_failed"
     assert "清理未完成" in result.text
+    assert str(wt_path) in result.text
     assert policy.workspace_root == git_repo.resolve()
 
 

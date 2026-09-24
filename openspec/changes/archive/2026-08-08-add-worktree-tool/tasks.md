@@ -37,6 +37,17 @@
 - **R1-5 [低] git 超时未落错误码**：修复：`_run_git` 捕获 TimeoutExpired 映射 returncode 124（text 带超时说明），落入 `worktree_create_failed`。
 - **R1-6 [低] 测试缺口**：修复：补 detached HEAD、非法 name、非工具自建 worktree 拒绝测试。
 
+## 审阅修复记录（review-loop R5，基线复验轮）
+
+PR #113 合并 master 后在今天基线上重新审阅，发现 R1/R3 修复自身引入的缺陷：
+
+- **R5-1 [高] EnterWorktree 失败兜底会删除已存在的 worktree（数据丢失）**：`worktree add` 失败后无条件 `worktree remove`，而同名分支已存在（最常见路径：`keep=true` 保留后重入）时该路径上本就有用户的合法 worktree，`remove` 返回 0 → 已有 worktree 连同内容被静默删除。修复：引入 `_registered_worktree_paths`，失败后只清「本次 add 新增的注册」（`after - before`）；路径被占用时改为返回「已被占用、未改动它」的准确文案。测试：`test_enter_worktree_existing_worktree_not_deleted`、`test_enter_worktree_dirty_existing_worktree_not_deleted`（变异验证：还原破坏性 remove → 两条立即变红）。
+- **R5-2 [中] 失败文案与事实相反**：dirty 同名 worktree 实际完好保留，文案却说「清理未完成、worktree 可能残留」，误导 agent 做补救动作。修复：区分「被占用（未改动）」与「真残留（已清理/清理失败）」三类文案。
+- **R5-3 [低] `base_branch` 未校验（参数注入）**：`base_branch="--force"` 会被 git 当选项吞掉，base 静默失效按 HEAD 创建。修复：`git worktree add ... -- <path> <base>` 加 `--` 隔离位置参数；测试 `test_enter_worktree_base_branch_option_injection_rejected`。
+- **R5-4 [低] 测试缺口**：原 `test_enter_worktree_branch_conflict` 只造「分支存在但无对应 worktree」，恰好绕开 R5-1 路径。已按 R5-1 补两条回归。
+- **R5-5 [低] spec 滞后于实现**：R1 追加的「ExitWorktree 仅对工具自建 worktree 生效」边界有实现（`_is_tool_created_worktree`）和测试，但 7 个 Scenario 未覆盖。修复：delta 与主规格同步补 `#### Scenario: 拒绝退出非本工具创建的 worktree`（现 8 个 Scenario，两侧 `diff` IDENTICAL）。
+- **R5-6 [低] benchmark 交付物固化缺陷**：`gold.patch` 是 R1 diff，含同一条破坏性 remove。修复：随实现重新生成 `gold.patch`（= base→当前实现），并实测复现 base 红 → gold 绿闭环。
+
 ## 4. 验证
 
 - [x] 4.1 运行相关单元/集成测试。
