@@ -87,4 +87,4 @@
 - [x] 7.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`（**D1 拍板后须清理**）
 - [x] 7.4 确认 RIR 已记录最终状态、发现和设计影响，且未把本地参考仓库路径写成项目依赖
 - [x] 7.5 再次运行 OpenSpec strict validate + artifact checker
-- [ ] 7.6 PR 合入后给 issue #226 添加完成说明 comment 并关闭 issue **(post-merge)**
+- [ ] 7.6 (post-merge) PR 合入后给 issue #226 添加完成说明 comment 并关闭 issue

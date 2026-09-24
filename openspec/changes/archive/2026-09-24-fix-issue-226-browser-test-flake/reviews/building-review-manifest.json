@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-226-browser-test-flake",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a7cc3bafbce7440f5",
+  "base_sha": "d7576834c0f1121f871793d8a26abc0c1685921f",
+  "head_sha": "5914c7fc2f5ce4ed50efa5d99b0ddbac80444af8",
+  "tasks_hash": "sha256:7f8e99d02448b2fed9e45fdc1ac8b19546a078a81c5efaa9723f1d30c1fac7f1",
+  "spec_hash": "sha256:7e8484084a0dc156fde056f5a43ca893fb5fbc011ab0ddff2837dc6ba27dfbb4",
+  "diff_hash": "sha256:c5040d79297d2555a0925e9f5e5c0f67d884907d215e186f693f02b556ad0233",
+  "report_hash": "sha256:4990d1549638596dd46d4973bb165ff6b2046de5460259ad4c33f1338823e945"
+}
