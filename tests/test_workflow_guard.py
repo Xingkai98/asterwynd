@@ -25,6 +25,26 @@ def _run_guard(tmp_path: Path, payload: dict) -> subprocess.CompletedProcess[str
     )
 
 
+def _isolate_changes_dir(mod, monkeypatch, tmp_path: Path) -> None:
+    """Point the guard's CHANGES_DIR at an empty tmp dir for in-process tests.
+
+    In-process tests call ``mod.main()`` directly, so unlike ``_run_guard`` they
+    cannot pass ``_GUARD_TEST_CHANGES_DIR``. Without this the guard falls back to
+    ``_current_change_id()``'s "exactly one active change" rule and picks up
+    whatever the checkout happens to contain — which is checkout-dependent, not
+    behavior under test. Concretely: when this branch's own change is still
+    active the repo has 2 active changes and the fallback stays inert, but on a
+    detached CI HEAD (where the branch-name rule yields nothing) it resolves to
+    the single remaining active change and the grill gate then blocks a write
+    these tests expect to be allowed. Both ``CHANGES_DIR`` and ``REQUIRED_BASE``
+    are patched because the guard derives the latter from the former.
+    """
+    changes_dir = tmp_path / "openspec" / "changes"
+    changes_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(mod, "CHANGES_DIR", changes_dir)
+    monkeypatch.setattr(mod, "REQUIRED_BASE", tmp_path)
+
+
 def _seed_active_change(tmp_path: Path) -> None:
     """活跃 change 的冷状态种子：`change_created` 首事件（无 handoff.json）。
 
@@ -126,6 +146,7 @@ def test_guard_noops_when_workflow_disabled(tmp_path, monkeypatch):
     """issue #90：状态机停用后，普通写操作放行（exit 0）。"""
     import scripts.workflow_guard as mod
 
+    _isolate_changes_dir(mod, monkeypatch, tmp_path)
     monkeypatch.setattr(
         sys,
         "stdin",
@@ -173,6 +194,7 @@ def test_guard_resume_audit_no_longer_blocks_writes(tmp_path, monkeypatch):
     """issue #90：resume audit 门禁已停用（状态机仪式），普通写操作放行。"""
     import scripts.workflow_guard as mod
 
+    _isolate_changes_dir(mod, monkeypatch, tmp_path)
     monkeypatch.setattr(
         sys,
         "stdin",

@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "add-worktree-tool",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a14809cc0a09e9aff",
+  "base_sha": "1e16ee14e8103b06786eb5407a50be36dd466f57",
+  "head_sha": "868cba1a76c86dc1cd7ccac64a4881714ce8e830",
+  "tasks_hash": "sha256:a0c95a9b9ad58169590623bda30aff771277f19927c1e932597b7c4823379ef7",
+  "spec_hash": "sha256:7f22b0baab50c32e924b4d1296db9b444e34c0e53503b57793e2a7fa76fb2574",
+  "diff_hash": "sha256:bd91148d4088edccad3c4c9006ecc5aa76606ababd6b374d8979ab2dca0b4f22",
+  "report_hash": "sha256:00523ea4e456de04a38c97a3ac4ca40e129ca510e7c51f150a50f4e0beb527cf"
+}

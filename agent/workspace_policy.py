@@ -42,6 +42,8 @@ DEFAULT_DENIED_PATTERNS = (
     ".ruff_cache/**",
     "benchmarks/runs",
     "benchmarks/runs/**",
+    # 工具创建的隔离 worktree（add-worktree-tool）：主模式工具不可直接读写
+    ".asterwynd/worktrees/**",
 )
 
 def _match_allowlist(command: str) -> bool:

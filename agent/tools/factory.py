@@ -37,6 +37,7 @@ from agent.tools.builtin.memory import (
     SearchMemoryTool,
 )
 from agent.tools.builtin.write import WriteTool
+from agent.tools.builtin.worktree import EnterWorktreeTool, ExitWorktreeTool
 from agent.tools.builtin.browser_tools import BROWSER_TOOL_CLASSES
 from agent.tools.registry import ToolRegistry
 from agent.tools.sandbox import ExecutionBackend, build_execution_backend
@@ -107,6 +108,8 @@ KNOWN_BUILTIN_TOOL_NAMES = {
     "BrowserListTabs",
     "BrowserSwitchTab",
     "BrowserCloseTab",
+    "EnterWorktree",
+    "ExitWorktree",
 }
 
 
@@ -328,6 +331,8 @@ def get_default_tools(
         WebFetchTool(),
         GrepTool(policy=policy),
         InspectGitDiffTool(policy=policy),
+        EnterWorktreeTool(policy=policy),
+        ExitWorktreeTool(policy=policy),
         RepoMapTool(
             policy=policy,
             ignore_patterns=ignore_patterns,
@@ -439,6 +444,8 @@ def get_coding_tools(
             code_intelligence_config=code_intelligence_config,
         ),
         GrepTool(policy=policy),
+        EnterWorktreeTool(policy=policy),
+        ExitWorktreeTool(policy=policy),
         BashTool(policy=policy, sandbox=sandbox),
         *_build_lsp_tools(policy, lsp_manager),
         SaveMemoryTool(
