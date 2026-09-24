@@ -22,7 +22,7 @@
 - [x] 2.1 **回归测试 A**（`test_new_tab_send_survives_slow_handshake`，落在 `tests/web_tests/test_multi_session_browser.py`）：延迟注入（CDP `Network.emulateNetworkConditions`，**注入值 3000ms**）拉长 WS 握手往返 → 先等 rekey 就绪屏障再发送，断言消息送达
       （`LLM calls ≥ 1` / assistant 回复出现）。**只保留正向半场**：Q4 原文只要求「注入 ≥3000ms + 断言实测等待 ≥ 注入值」，起草时附带的「负向半场（断言无屏障时发不出）」会与机器速度赛跑、自身即是新 flake 来源，经监督侧裁定移除（判别力不受影响：去掉屏障后发送落空 → 消息不送达 → 仍必红，见 2.4 的变异验证）
 - [x] 2.2 **回归测试 B**（落在 `tests/web_tests/test_workflow_graph_browser.py`）：`page.route` 延迟 `init()` 依赖的两个 fetch（`/api/slash-commands`、`/api/debug-status`），**注入延迟 ≥6000ms**（旧 helper 固定耗时 ≈5.3s，必须显著超过）→ 断言「派发 workflow 事件后，视图最终保持 workflow 且 svg 可见」。**该测试只调修后的 `_wait_app_ready`，SHALL NOT 调 `_ensure_workflow_view`**（否则第二层把视图强行拉回 ⇒ 未修也恒绿、自证）
-- [x] 2.3 **断言注入确实生效**（两条都要）：回归 A 断言「屏障实测等待 ≥ 注入值」；回归 B 断言「`initDone` 在延迟窗口内确为 `false`」或等价的路由命中/延迟证据。理由：CDP `emulateNetworkConditions` 在新版 Chromium 已被 `emulateNetworkConditionsByRule` 取代，命令若失效测试只会**总绿**、判别力静默归零
+- [x] 2.3 **断言注入确实生效**（两条都要）：回归 A 断言「屏障实测等待 ≥ 注入值 × 0.5」（偏离拍板原文的「≥ 注入值」——实测余量仅 ~3%，照原文反而自造 flake；50% 已足以区分「注入生效/失效」，且已有实测佐证：注入失效侧 99ms vs 阈值 1500ms、生效侧 3095ms，两侧余量均充足。见 design D4）；回归 B 断言「`initDone` 在延迟窗口内确为 `false`」或等价的路由命中/延迟证据。理由：CDP `emulateNetworkConditions` 在新版 Chromium 已被 `emulateNetworkConditionsByRule` 取代，命令若失效测试只会**总绿**、判别力静默归零
 - [x] 2.4 **变异验证**（判别力证明）：去掉屏障 → 2.1/2.2 必红；还原 → 必绿。记录两向实测结果
 - [x] 2.5 **`initDone` 语义验证 ×2**（对应 spec 两个 Scenario，也是「不得当死代码移除」条款的**唯一可执行守护** —— 本仓库无 JS lint/死代码检测）：①正常加载下最终 `initDone === true`；②延迟 init 的两个 fetch 时，屏障把派发推迟到 `initDone` 置位之后
 - [x] 2.6 覆盖负向路径：断言「就绪判据失效时表现为失败/有边界超时，而非恒真通过」（对应 spec 的「就绪判据失效可被察觉」Scenario）

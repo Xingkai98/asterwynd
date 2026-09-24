@@ -68,16 +68,17 @@ FAILED tests/web_tests/test_workflow_graph_browser.py::test_collapsed_group_show
 
 CI 日志佐证：三条失败的 captured stderr 中，teardown 时服务端打印 `WebSocket disconnected: new` —— 新建 tab 的 socket 在服务端**仍以 `new` 为键**（rekey 需收到 `session_created`），说明握手事件在该次运行里几乎没推进。
 
-暴露面（全文件扫描）：
+暴露面（全文件扫描，**修复前**的口径；计数经审阅 R3 校正为实测值）：
 
 | 用例 | 同开两 tab | 在 tab 上发消息 |
 |---|---|---|
-| `test_multi_tab_independent_messages`(`:253`) | 否（inline preamble） | **是** |
-| `test_multi_tab_exit_does_not_affect_other_tab_reconnect`(`:728`) | 否（inline preamble） | **是** |
-| `test_multi_tab_approval_isolation`(`:768`) | 否（inline preamble） | **是** |
-| 其余 15 条 | 是（`_open_two_tabs`，含 rekey 屏障） | 否 / 已屏障 |
+| `test_multi_tab_independent_messages`（修复前 `:253`） | 否（inline preamble） | **是** |
+| `test_multi_tab_exit_does_not_affect_other_tab_reconnect`（修复前 `:728`） | 否（inline preamble） | **是** |
+| `test_multi_tab_approval_isolation`（修复前 `:768`） | 否（inline preamble） | **是** |
 
-即「在新 tab 上发消息、却没等握手完成」的用例**恰好只有这 3 条**。
+全文件 19 条用例的构成（实测）：**13 条**用 `_open_two_tabs`（含上表 3 条修复后的归属）、**3 条**用 inline preamble（`test_new_session_respects_mode` / `test_multi_tab_image_preview_isolation` / 新回归 `test_new_tab_send_survives_slow_handshake`）、**3 条**单 tab（`test_hub_lists_session_and_opens_tab` / `test_refresh_returns_to_recent_session` / `test_delete_session_closes_tab`）。
+
+即「在新 tab 上发消息、却没等握手完成」的用例**恰好只有这 3 条**（其余 inline/单 tab 用例不发消息，或虽发消息但已等 `#status === 'connected'`）。
 
 ### 根因 B（`test_workflow_graph_browser.py` 15 条）
 
@@ -138,7 +139,7 @@ candidate barrier B（等「加载中…」被替换）: 延迟注入下正确�
 
 | 回归测试 | 覆盖根因 | 判别力来源 |
 |---|---|---|
-| 延迟握手（CDP `emulateNetworkConditions`）下，新 tab 未等就绪即发送 → 发不出（前置条件）；补屏障后 → 成功发出并收到 assistant 回复 | A | **未加屏障必红** |
+| CDP 注入 3000ms 握手延迟下，等 rekey 就绪屏障后发送 → 消息送达、收到 assistant 回复（**只保留正向半场**；负向半场「断言无屏障时发不出」与机器速度赛跑、自身即新 flake 来源，起草时的附带产物，经裁定移除） | A | **去掉屏障则发送落空 ⇒ 必红** |
 | 延迟 `init()` 的两个 fetch 后派发 workflow 事件 → 视图最终保持 workflow、svg 可见 | B | **不修 `_wait_app_ready` 必红** |
 
 两条均须做**变异验证**：去掉屏障 → 变红；还原 → 变绿。**不以「反复连跑逼出 flake」为验证手段**（仓库资源纪律禁止人为加压）。
