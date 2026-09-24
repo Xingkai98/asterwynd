@@ -701,7 +701,12 @@ async def test_closing_active_tab_converges_remaining_tab(page, seeded_web_serve
 
 @pytest.mark.asyncio
 async def test_multi_tab_image_preview_isolation(page, seeded_web_server):
-    """图片预览只落各自 tab：tab2 传图，tab1 预览区为空。"""
+    """图片预览只落各自 tab：tab2 传图，tab1 预览区为空。
+
+    注：本用例**不发消息**（只上传文件），故不属于 issue #226 根因 A 的暴露面，
+    其 inline preamble 保持原样（审阅 I5 指出这是第 4 份重复 preamble；收敛它属
+    纯重构、与本 bugfix 无关，未在本 change 扩大范围）。
+    """
     await page.goto(seeded_web_server)
     await page.wait_for_selector("#hub-view.active")
     await page.click(".hub-session-open")

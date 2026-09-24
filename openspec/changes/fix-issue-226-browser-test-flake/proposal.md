@@ -90,7 +90,7 @@ chat.js init 跑完后 : {svgInDom: True, svgVisible: False, wfViewActive: False
 - **不改任何生产行为**（方案 A 完全不动生产代码；方案 B 只新增一个只读就绪信号，不改变任何既有分支与渲染）。
 - **不重构 `chat.js` 的初始化结构**（`init()` 的 fetch 顺序、`showHub`/`showView` 语义均不动）。
 - **不把 15 条用例逐条改写**：只接上统一 helper，保持各用例原有断言。
-- **不覆盖 `test_browser.py` / `test_reconnect_pending_interaction_browser.py`**：已核实它们建新会话后都等了 `connected`，不受本类 flake 影响。
+- **不覆盖 `test_browser.py` / `test_reconnect_pending_interaction_browser.py`**：它们建新会话后都等了 `#status === 'connected'`，**发送腿**（根因 A 的主要形态）已受屏障保护；但**点击腿**仍有同名竞态残留——两处 `#hub-new-btn` 点击紧跟在 `#hub-view.active` 之后，而该 class 在 `index.html:43` **静态即满足**，`setupHub()` 的处理器可能尚未挂上（审阅 I4 收窄）。该残留与 issue #226 报告的失败形态不同源、未在本 change 观察到实际失败，**记为已知残余面**（见 `docs/known-debt.md` 的 issue #226 条目），不在本 change 扩大范围。
 - **不引入测试重试插件**（如 `pytest-rerunfailures`）——等于用重试掩盖缺陷。
 
 ## Impact Analysis

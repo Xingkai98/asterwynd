@@ -306,7 +306,7 @@ change 的日志里有一条指向同一路径的陈旧事件，门禁就会放�
 
 **~~与既有 flake 的关系~~（口径更正，fix-issue-226 诊断证伪）**：原文称本 change「已给受影响的浏览器
 用例补了确定性视图守卫（`_ensure_workflow_view`…），把『渲染了但被切走』这一类间歇红治住」——
-**该断言不成立，已作废**。issue #226 的定位（见 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
+**该断言不成立（就「治住」而言已被实测推翻），已作废**。issue #226 的定位（见 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
 的 diagnosis）实测证明：`_ensure_workflow_view` 当时只覆盖 3 条用例，另有 15 条零屏障 + 6 条只有
 「死等」；且该 helper **只恢复视图激活态、不恢复 ticker**（`showView()` 对非 workflow 视图会
 `stopTicker()`），因此它既不构成有效屏障、也兜不住 tick 类用例的假保护。真正治住这一类的是
@@ -340,3 +340,10 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 - 诊断期发现的「`test_workflow_graph_browser.py` 相关用例中 6 条一度『只有死等』」已随本次修复消除；
   但该文件**后续新增**用例若忘了接就绪屏障，仍会以同类形态偶发 —— 契约已写进 web-ui spec 的
   「浏览器回归的就绪屏障」Requirement，审阅时据此检查。
+- **点击腿竞态残留（审阅 I4）**：`test_browser.py` 与 `test_reconnect_pending_interaction_browser.py`
+  中点击 `#hub-new-btn` 紧跟在 `#hub-view.active` 之后，而该 class 在 `index.html:43` **静态即满足**，
+  `setupHub()` 的处理器可能尚未挂上（点击会静默落空）。两者在**发送腿**上已等 `#status === 'connected'`，
+  故 issue #226 报告的失败形态（消息发不出）已被覆盖；点击腿本身未在本 change 观察到实际失败，
+  属**已知残余面**，未扩大范围处理。若后续要收口，方向是改用 `AsterwyndChatTest.initDone` 作前置。
+- 本条目引用的归档路径 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
+  在本条目写入时**尚未归档**，随本 change 的归档 commit 落地（归档目录缺失时以 change 的 active 路径为准）。

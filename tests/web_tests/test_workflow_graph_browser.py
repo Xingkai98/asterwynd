@@ -805,6 +805,9 @@ async def test_tick_keeps_foreach_progress_count(page, fake_web_server):
     await _start_workflow(page, snapshot)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
     await _ensure_workflow_view(page)
+    # 本用例的断言全部依赖「ticker 正在跑」，这里**显式**再起一次（幂等）作为局部
+    # 声明：不把该前提隐式挂在 `_ensure_workflow_view` 上，日后若有人改动那个 helper，
+    # 这里的依赖仍然自明（审阅 I6）。
     await page.evaluate("() => window.AsterwyndWorkflow.startTicker()")
 
     await page.wait_for_timeout(2200)
@@ -1281,7 +1284,7 @@ async def test_chat_init_seam_reports_completion(page, fake_web_server):
 async def test_ready_barrier_fails_loudly_when_signal_is_absent(page, fake_web_server):
     """spec「就绪判据失效可被察觉」：信号缺失时须**有边界地失败**，不得静默放行。
 
-    做法：加载完成后**删掉**接缝信号（模拟「信号被误删/改名」），再调
+    做法：等 ``init()`` **落定**后**删掉**接缝信号（模拟「信号被误删/改名」），再调
     ``_wait_app_ready``，断言它**抛超时**。若实现里残留「吞异常 + 固定等待」的降级，
     这里会静默返回、本用例即变红 —— 这正是本 change 删掉该降级所守护的行为。
     """
@@ -1289,6 +1292,11 @@ async def test_ready_barrier_fails_loudly_when_signal_is_absent(page, fake_web_s
 
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    # **先等 init resolve 再删**：置位发生在 `init().then(...)` 回调里，若在 init 尚未
+    # resolve 时就删掉，回调随后会把它**重新置回 true** —— 那样 `_wait_app_ready` 立即
+    # 返回，本断言变成活竞态（审阅 I1）。等到置位后 `init()` 已 resolve，其 `.then`
+    # 只会触发这一次，删除才是稳定的。
+    await _wait_app_ready(page)
     await page.evaluate("() => { delete window.AsterwyndChatTest.initDone; }")
 
     with pytest.raises(PlaywrightTimeoutError):

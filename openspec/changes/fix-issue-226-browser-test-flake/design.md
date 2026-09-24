@@ -121,11 +121,11 @@ init().then(() => { window.AsterwyndChatTest.initDone = true; });
 - **回归 B 不得调用 `_ensure_workflow_view`**：它会把视图强行拉回 ⇒ 未修也恒绿（自证）。回归 B 只调修好后的 `_wait_app_ready`。
 - **必须断言注入确实生效**：CDP `Network.emulateNetworkConditions` 在新版 Chromium 已被 `Network.emulateNetworkConditionsByRule` 取代；若 CDP 调用静默失效，注入为 0，未修也绿。故回归 B 须断言「`initDone` 在延迟窗口内确实为 `false`」（或等价地断言实测延迟 ≥ 注入值）。
 
-**根因 A 回归同理**：诊断实测 latency=800ms 时屏障等待仅 1.41s，**余量约 0.6s** —— 满载机上四步 Playwright 往返一旦超 ~1.4s，WS 已 OPEN，「LLM calls: 0」的前置断言就会失败（**新 flake**）。故 A 的注入延迟 **≥3000ms**，并断言「实测等待 ≥ 注入值」以证明注入生效。
+**根因 A 回归同理**：诊断实测 latency=800ms 时屏障等待仅 1.41s，**余量约 0.6s** —— 满载机上四步 Playwright 往返一旦超 ~1.4s，WS 已 OPEN，「LLM calls: 0」的前置断言就会失败（**新 flake**）。故 A 的注入延迟取 **3000ms**，并断言「实测等待 ≥ 注入值的 50%」以证明注入生效。**实现期修正（审阅 I2）**：拍板原文写「实测等待 ≥ 注入值」，但实测 `handshake_ms=3095ms`（注入 3000ms）只剩约 3% 余量，满载机上反而会自造 flake —— 该断言的目的只是「证明注入生效」（区分「注入了」与「没注入」），取 50% 已有充分判别力且留出安全余量。
 
 **共同原则**：两条回归都要**断言注入生效**，不能只断言期望结果——否则注入失效时测试恒绿、失去守护。
 
-- **根因 A 回归**：CDP `Network.emulateNetworkConditions(latency=...)` 拉长握手往返；断言「无屏障时消息发不出（前置条件），有屏障时成功发出并收到 assistant 回复」。判别力来自「**瓶颈障则必红**」。
+- **根因 A 回归**：CDP `Network.emulateNetworkConditions(latency=3000)` 拉长握手往返；**只保留正向半场** —— 先等 rekey 就绪屏障再发送，断言消息送达。判别力来自「去掉屏障则发送落空 ⇒ 必红」（已两向实测）。**负向半场（断言「无屏障时发不出」）已移除**：它与机器速度赛跑、自身即是新 flake 来源（起草时的附带产物，非 Q4 要求）。
 - **根因 B 回归**：`page.route` 延迟 `init()` 依赖的两个 fetch；断言「不管 init 何时完成，视图最终保持 workflow、svg 可见」。判别力来自「**不修 `_wait_app_ready` 则必红**」。
 
 **为什么不用「跑 N 次逼出偶发」**：仓库环境 4 核/7GB 且需与他人共享，反复连跑属禁止行为；且概率性复现对 CI 无诊断力（失败时说不清哪一步）。确定性注入**同时**满足「一定能复现」与「不依赖机器负载」。
@@ -188,7 +188,7 @@ init().then(() => { window.AsterwyndChatTest.initDone = true; });
 ## Testing Strategy
 
 - **回归测试（新增，2 条）**：各覆盖一条根因，用延迟注入构造确定性输入；须做**变异验证**（去掉屏障 → 必红；还原 → 必绿）。
-  - **根因 A 回归**：CDP `Network.emulateNetworkConditions(latency=…)` 拉长握手往返 → 断言「未等就绪即发送 ⇒ 消息发不出（前置条件）」；加屏障后 ⇒ 成功发出并收到 assistant 回复。判别力 = **瓶颈障必红**。
+  - **根因 A 回归**（`test_new_tab_send_survives_slow_handshake`）：CDP 注入 3000ms 往返延迟 → 等 rekey 就绪屏障后发送 ⇒ 送达。判别力 = **去掉屏障则发送落空、必红**（已两向实测）。只保留正向半场，理由见上。
   - **根因 B 回归**：`page.route` 延迟 `/api/slash-commands` + `/api/debug-status` → 断言「派发 workflow 事件后，视图最终保持 workflow 且 svg 可见」。判别力 = **不修 `_wait_app_ready` 必红**。
 - **`initDone` 语义验证（新增，2 条）**：对应 spec 的两个 Scenario —— ①正常加载下最终 `initDone === true` 且此后派发事件不被抢视图；②延迟 init 的两个 fetch 时，屏障把派发推迟到 `initDone` 置位之后（断言「派发前 `initDone` 已为 true」）。后者同时锁住 D1.2 的 fail-loud 语义：若实现把标志在失败/未完成路径提前置位，该断言会抓到。
 - **改造用例（18 条）**：3 条（A）+ 15 条（B）接上就绪屏障；断言保持原样。其中 `:168` 有插入位置约束（见 D3）、`:708`/`:745`/`:769` 有 ticker 依赖（见 D3）。

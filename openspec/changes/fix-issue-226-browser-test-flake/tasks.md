@@ -70,6 +70,16 @@
 - [ ] 6.3 复审至 PASS（或 3 轮封顶）
 - [ ] 6.4 生成 review manifest（绑定 reviewer run / base·head sha / tasks·spec·diff·report hash），**在该 change 的 `tasks.md` 最终化（含归档 move）之后生成**
 
+### 审阅修复（Round 1 → Round 2）
+
+- **I1（major）**：`test_ready_barrier_fails_loudly_when_signal_is_absent` 有活竞态 —— `delete initDone` 若发生在 `init()` 尚未 resolve 时，`init().then` 回调随后会把它重新置位，用例变成偶发失败。修法：**先 `await _wait_app_ready(page)` 再 delete**（此时 init 已 resolve，`.then` 只触发一次），删除才是稳定的。
+- **I2（minor）**：回归 A 的注入守卫实为「实测等待 ≥ 注入值 × 0.5」，与拍板原文「≥ 注入值」不符。实测 `handshake_ms=3095`（注入 3000）余量仅 ~3%，照原文反而自造 flake ⇒ 保留 50% 阈值但回写 design D4/Testing Strategy 记录该偏离及理由。
+- **I3（minor）**：`design.md` 仍写已移除的「负向半场」与「≥ 注入值」⇒ 同步为「只保留正向半场 + 50% 阈值 + 理由」。
+- **I4（minor）**：`proposal.md` 称 `test_browser.py` / `test_reconnect_*`「不受本类 flake 影响」口径过宽 —— 它们的**发送腿**已受 `connected` 屏障保护，但**点击腿**（`#hub-new-btn` 紧跟静态即满足的 `#hub-view.active`）仍有同名竞态残留。修法：收窄措辞并把该残余面记入 `docs/known-debt.md`。
+- **I5（minor）**：第 4 份重复 preamble（`test_multi_tab_image_preview_isolation`）未收敛 —— 该用例**不发消息**、不属根因 A 暴露面，收敛属纯重构，不在本 bugfix 扩大范围；已加注释说明。
+- **I6（minor）**：`_ensure_workflow_view` 之后的 `startTicker()` 看似冗余（helper 已起）⇒ 保留调用（幂等）但改写注释，说明它是该用例对「ticker 在跑」这一断面前提的局部显式声明。
+- **I8（minor）**：`docs/known-debt.md` 引用尚未存在的 archive 路径 + 措辞略绝对 ⇒ 补「写入时尚未归档，随归档 commit 落地」的说明，并把「证伪」精确为「就『治住』而言已被实测推翻」。
+
 ## 7. PR 收尾
 
 - [ ] 7.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-fix-issue-226-browser-test-flake/`（**日期前缀为硬性要求**）
