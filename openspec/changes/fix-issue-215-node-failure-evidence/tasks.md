@@ -111,8 +111,10 @@
 - [x] Round 3 独立 subagent 审阅 → CHANGES_REQUESTED（1 中 + 5 低），已修
 - [x] 按 verdict 修复（三轮均 CHANGES_REQUESTED + 修复 + 补回归；每条修复均做变异验证）
 - [x] 封顶轮后已向用户报告；用户拍板**继续跑审阅闭环且不设轮次上限**（解除 3 轮封顶），此后每轮 CHANGES_REQUESTED 照旧「修复 + 补可失败的回归测试 + 变异验证」直到 PASS
-- [ ] Round 4 独立 subagent 审阅 → 待出 verdict
-- [ ] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（PASS 后）
+- [x] Round 4 独立 subagent 审阅 → **PASS**（37 条变异 36 杀，18 条历史不变式全部重跑复核）
+- [x] Round 5（post-PASS 定向确认）→ **PASS**（本批改动成立、未破坏既有防线）
+- [x] Round 6（post-PASS 定向确认）→ **PASS**（无中等及以上；低危按收敛纪律不追）
+- [x] 生成 review manifest 绑定 reviewer run / base·head sha / tasks·spec·diff·report hash（PASS 后）
 
 ## 验证
 
