@@ -2114,6 +2114,15 @@ window.AsterwyndChatTest = {
     const tab = getActiveTab();
     if (tab && tab.ws) tab.ws.close();
   },
+  // 应用异步初始化是否已完成（issue #226 根因 B）。init() 的完成时刻决定**初始
+  // 激活视图**：后到的 showHub() 会把被测视图的 active 摘掉。浏览器回归必须等它
+  // 置位再派发 UI 事件，否则可能在一个尚未被初始化决定的视图上做断言。
+  //
+  // 该标志为**测试专用**（生产路径不读它），但 SHALL NOT 当死代码移除 —— 它是
+  // 唯一能区分「静态初始态」与「初始化完成态」的信号，已写进 web-ui spec。
+  // 置位只发生在 init() resolve 之后；init 失败/挂住时保持 false（屏障失守要
+  // fail-loud：测试超时失败，而不是误判就绪）。
+  initDone: false,
 };
 
-init();
+init().then(() => { window.AsterwyndChatTest.initDone = true; });
