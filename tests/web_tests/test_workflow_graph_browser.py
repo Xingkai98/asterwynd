@@ -19,6 +19,16 @@ from web.server import create_app
 
 import socket
 
+# 就绪屏障的显式上限（与 ``test_multi_session_browser.py`` 同口径：Playwright 默认
+# 30s 会把「真·元素永不出现」和「机器慢」混在一起，超时信息里又只有选择器 —— 见
+# issue #226 / #191）。本文件自有一份常量而非跨测试模块 import：本 change 的
+# Non-Goal 是不引入统一的浏览器测试基建。
+BROWSER_TIMEOUT_MS = 15000
+
+# issue #226 回归 B 的注入延迟：必须显著超过旧 `_wait_app_ready` 的固定耗时
+# （5s 超时 + 300ms 等待 ≈ 5.3s），否则未修版在它返回时 init 早已完成、回归无判别力。
+INIT_DELAY_MS = 6000
+
 
 @pytest.fixture
 def fake_web_server(tmp_path):
@@ -123,32 +133,44 @@ async def _push_workflow_event(page, event_type: str, data: dict) -> None:
 async def _wait_app_ready(page) -> None:
     """等 app 自身的异步初始化落定，再派发测试事件。
 
-    回归（与 issue #191 同类竞态）：``chat.js`` 的 ws 握手 → 建 tab → ``switchTab``
-    → ``showView('chat')`` 是**异步**的，可能发生在测试派发 workflow 事件之后，
-    把 workflow-view 的 active class 摘掉——表现为 ``#workflow-canvas svg``
-    间歇性不可见。只等 ``window.AsterwyndWorkflow`` 就绪**不够**（那只能说明脚本
-    加载完了，不说明 chat.js 的 tab 初始化跑完了）。
+    回归（issue #226 根因 B）：``chat.js`` 的 ``init()`` 是**异步**的（先 await
+    两个 fetch，最后才 ``showHub()``）。它若在测试派发 workflow 事件之后才跑完，
+    ``showHub() → showView('hub')`` 会把 ``#workflow-view`` 的 active class 摘掉
+    —— 而 ``showHub()`` 不清 canvas，于是 ``svg`` 永久留在 DOM 里但 hidden（CI
+    失败正文正是 ``locator resolved to hidden <svg class="workflow-svg">``）。
+    只等 ``window.AsterwyndWorkflow`` 就绪**不够**（那只能说明脚本加载完了）。
 
-    就绪信号取「chat 视图出现已激活的输入框」（与 ``test_browser.py`` 既有口径一致）；
-    fixture 没有 ws 时降级为短等。
+    就绪判据取 ``window.AsterwyndChatTest.initDone``（``chat.js`` 在 ``init()``
+    resolve 后置位；见 web-ui spec「Web UI 暴露应用初始化完成的测试接缝」）。
+
+    **不吞异常、不降级**：判据失效（信号没置位）时 SHALL 直接超时失败，SHALL NOT
+    退化成固定等待 —— 否则后置的 ``_ensure_workflow_view`` 会把视图拉回，用例全绿
+    而屏障实际已失效（静默失效，正是本 change 要消灭的失败模式）。
     """
-    try:
-        await page.wait_for_selector(".tab-pane.active .user-input", timeout=5000)
-    except Exception:  # noqa: BLE001 - 降级：无输入框的 fixture
-        await page.wait_for_timeout(300)
+    await page.wait_for_function(
+        "() => window.AsterwyndChatTest && window.AsterwyndChatTest.initDone === true",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
 
 
 async def _ensure_workflow_view(page) -> None:
-    """确保 ``#workflow-view`` 处于激活态，再继续交互（治理 fixture 固有竞态）。
+    """确保 ``#workflow-view`` 处于激活态**且 ticker 在跑**，再继续交互。
 
-    ``_wait_app_ready`` 在**没有 ws** 的 fixture 里只能降级为固定等待（见其
-    docstring），因此无法保证 ``chat.js`` 的异步初始化一定在我们派发事件**之前**
-    跑完；它若后到，会把 workflow-view 的 active 摘掉，导致 svg 间歇性不可见
-    （R4/R5 实测失败率与既有用例同量级）。这里在派发之后**确定性**地把视图拉回
-    激活态：走的是测试自己装的 ``window.__testTab.onWorkflowStarted``（harness
-    自有口径），不触碰产品代码的行为。
+    这是 ``_wait_app_ready`` 之外的**后置补充**：主屏障保证「不会再有后到的
+    ``showHub()`` 抢视图」，本 helper 则在派发之后确定性地把视图拉回激活态（走测试
+    自己装的 ``window.__testTab.onWorkflowStarted``，harness 自有口径，不触碰产品
+    代码行为），使断言面对的始终是「视图可用」的状态。
+
+    **必须一并恢复 ticker**（issue #226 grill 发现）：``showView()`` 对非 workflow
+    视图会调 ``window.AsterwyndWorkflow.stopTicker()``（``chat.js:301``）。只把
+    ``active`` 拉回而不开 ticker，则 ``test_tick_*`` 看到的是**停摆的计时器**——
+    断言「文本没变坏」的用例会恒真（假保护），断言「耗时跳秒」的用例会以误导正文
+    变红（说「没跳秒」，真因其实是视图被抢走）。``startTicker`` 幂等（已跑则不重开）。
     """
-    await page.evaluate("() => { window.__testTab.onWorkflowStarted(); }")
+    await page.evaluate(
+        "() => { window.__testTab.onWorkflowStarted();"
+        " window.AsterwyndWorkflow.startTicker(); }"
+    )
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg", state="visible")
 
 
@@ -169,11 +191,13 @@ async def test_workflow_view_auto_opens_and_draws_svg(page, fake_web_server):
     """tasks 3.1/3.2：``workflow_started`` 自动打开视图并画出节点与边。"""
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
 
     await _start_workflow(page, SNAPSHOT)
 
     assert await page.is_visible("#workflow-view")
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     node_ids = await page.eval_on_selector_all(
         ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
@@ -200,8 +224,10 @@ async def test_workflow_view_desktop_horizontal_layout(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     xs = await page.eval_on_selector_all(
         ".workflow-node",
@@ -218,8 +244,10 @@ async def test_workflow_view_mobile_vertical_layout(page, fake_web_server):
     await page.set_viewport_size({"width": 380, "height": 720})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     ys = await page.eval_on_selector_all(
         ".workflow-node",
@@ -235,8 +263,10 @@ async def test_workflow_graph_pan_and_zoom(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     before = await page.get_attribute("#workflow-canvas svg", "viewBox")
 
@@ -284,6 +314,7 @@ async def test_graph_recursion_exceeded_still_draws_graph_with_notice(page, fake
     """
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, {
         "workflow_id": "wf_big",
         "status": "graph_recursion_exceeded",
@@ -302,6 +333,7 @@ async def test_graph_recursion_exceeded_still_draws_graph_with_notice(page, fake
     assert "11" in notice, "告警条必须带上 steps"
     # 图**仍然画出来**（这正是本 change 的修法）。
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
 
 @pytest.mark.asyncio
@@ -334,6 +366,7 @@ async def test_multi_workflow_tabs_switch(page, fake_web_server):
     """Q2：多图 tab——两张图各占一个 tab，点击可切换。"""
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
 
     for wf_id, goal in (("wf_one", "first"), ("wf_two", "second")):
         await _push_workflow_event(page, "workflow_started", {
@@ -343,6 +376,7 @@ async def test_multi_workflow_tabs_switch(page, fake_web_server):
             **SNAPSHOT, "workflow_id": wf_id, "goal": goal,
         })
 
+    await _ensure_workflow_view(page)
     await page.wait_for_selector("#workflow-tabs .graph-tab")
     # D6/Q3 = A：tab 标签是「#序号 + goal」——两张图都有 ``started_at`` 时按
     # ``started_at`` 排序编号，这里是同一时刻（都是 1.0）→ 按到达序稳定编号。
@@ -399,8 +433,10 @@ async def test_collapsed_group_expands_from_the_detail_drawer(page, fake_web_ser
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, _big_foreach_snapshot())
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     before = await page.eval_on_selector_all(
         ".workflow-node", "els => els.map(e => e.dataset.nodeId)")
@@ -435,8 +471,10 @@ async def test_click_any_node_opens_detail_drawer(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     await page.click(".workflow-node[data-node-id='a']")
     await page.wait_for_selector("#workflow-drawer.open")
@@ -469,7 +507,9 @@ async def test_legend_is_visible_and_collapsible(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
+    await _ensure_workflow_view(page)
     await page.wait_for_selector("#workflow-legend:not([hidden])")
 
     text = await page.text_content("#workflow-legend")
@@ -590,8 +630,10 @@ async def test_foreach_candidate_drilldown_shows_that_item(page, fake_web_server
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
 
     await page.click(".workflow-node[data-node-id='a']")
@@ -647,8 +689,10 @@ async def test_collapsed_group_shows_aggregated_status(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, _big_foreach_snapshot())
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     # 组长 fan 自身 started，但组里有 failed 成员 → 聚合状态 failed（红），不是兜底灰。
     status = await page.eval_on_selector(
@@ -670,8 +714,10 @@ async def test_gestures_pan_after_pinch_release(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
 
     result = await page.evaluate("""() => {
         const host = document.getElementById('workflow-canvas');
@@ -747,6 +793,7 @@ async def test_tick_keeps_foreach_progress_count(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     snapshot = dict(SNAPSHOT)
     snapshot["nodes"] = [
         {"id": "fan", "kind": "foreach", "status": "started", "runs": 1,
@@ -757,6 +804,10 @@ async def test_tick_keeps_foreach_progress_count(page, fake_web_server):
     snapshot["edges"] = []
     await _start_workflow(page, snapshot)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
+    # 本用例的断言全部依赖「ticker 正在跑」，这里**显式**再起一次（幂等）作为局部
+    # 声明：不把该前提隐式挂在 `_ensure_workflow_view` 上，日后若有人改动那个 helper，
+    # 这里的依赖仍然自明（审阅 I6）。
     await page.evaluate("() => window.AsterwyndWorkflow.startTicker()")
 
     await page.wait_for_timeout(2200)
@@ -918,8 +969,10 @@ async def test_candidate_rows_show_failure_clues(page, fake_web_server):
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
 
     await page.click(".workflow-node[data-node-id='a']")
@@ -962,8 +1015,10 @@ async def test_convo_tab_prefers_backend_message(page, fake_web_server):
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await _ensure_workflow_view(page)
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
 
     await page.click(".workflow-node[data-node-id='a']")
@@ -1127,3 +1182,122 @@ async def test_convo_tab_falls_back_when_backend_message_is_missing(page, fake_w
     assert "已检查，无失败记录" in body, (
         f"后端没给 message 时前端兜底表应出文案，而不是空白（空白会被读成没问题）：{body!r}"
     )
+
+
+# ─── issue #226 回归：init 就绪屏障（确定性注入，非重跑碰运气）─────────────────
+
+
+async def _delay_init_fetches(route):
+    """把 ``init()`` 依赖的请求推迟到「旧 helper 的固定耗时」之外。
+
+    注入值必须 **> 旧 ``_wait_app_ready`` 的固定耗时（≈5.3s）**：旧实现在 5s 超时后
+    只等 300ms 就返回，若注入比它短，未修版派发时 init 早已完成、视图不会被抢 ——
+    回归就变成「未修也绿」、毫无判别力（grill 钉死的参数）。
+    """
+    import asyncio
+    await asyncio.sleep(INIT_DELAY_MS / 1000)
+    await route.continue_()
+
+
+@pytest.mark.asyncio
+async def test_workflow_view_survives_delayed_app_init(page, fake_web_server):
+    """回归 issue #226 根因 B：init 晚到时，workflow 视图必须不被抢走。
+
+    判别力（「未修必红、修了必绿」）：
+      * **修后**：``_wait_app_ready`` 等 ``AsterwyndChatTest.initDone``（init resolve
+        后才置位）→ 派发 workflow 事件时视图已定，之后不会再有 ``showHub()`` 抢走
+        → svg 可见 → **绿**。
+      * **未修**（旧 helper 等一个在本 fixture 永不出现的元素，5s 超时后只等 300ms）：
+        它在 init 完成**之前**就返回，测试随即派发事件、视图一度可见；等 init 跑完
+        ``showHub() → showView('hub')`` 把 ``#workflow-view`` 的 active 摘掉，而
+        ``showHub()`` 不清 canvas → svg 永久留 DOM 但 hidden → **红**。
+
+    **本用例只调修后的 ``_wait_app_ready``，不调 ``_ensure_workflow_view``**：后者会把
+    视图强行拉回激活态，若在此处使用，未修版也会变绿（自证、恒绿）。
+
+    **断言「注入确实生效」**：先断言延迟窗口内 ``initDone`` 仍为 ``false`` —— 若
+    路由拦截失效（或延迟没打上），该断言会失败，而不是让本回归悄悄退化成恒绿。
+    """
+    await page.route("**/api/slash-commands", _delay_init_fetches)
+    await page.route("**/api/debug-status", _delay_init_fetches)
+
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+
+    # 自证注入生效：延迟窗口内 init 尚未完成（若拦截失效，此处会先失败）。
+    early = await page.evaluate(
+        "() => !!(window.AsterwyndChatTest && window.AsterwyndChatTest.initDone)"
+    )
+    assert early is False, (
+        "注入延迟未被观察到：init 在路由延迟窗口内就已完成，"
+        "本回归会失去判别力（注入载体可能失效）"
+    )
+
+    # 就绪屏障（修后版本）：init resolve 后才继续。
+    await _wait_app_ready(page)
+
+    await _start_workflow(page, SNAPSHOT)
+
+    # 同步点：等 init **确定完成**（`initDone` ⟹ 其内部 `showHub()` 已跑过）。
+    # 这一步必须放在派发**之后**且不能依赖墙钟余量：若屏障失效（派发早于 init 完成），
+    # 迟到的 `showHub()` 会在 initDone 置位前把视图摘走，断言因而确定性变红；
+    # 屏障生效时 initDone 早已为真，此步立即返回、视图保持。用固定 `wait_for_timeout`
+    # 会退化成「赌延迟窗口够不够」，正是不可靠的来源。
+    await page.wait_for_function(
+        "() => window.AsterwyndChatTest && window.AsterwyndChatTest.initDone === true",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    visible = await page.is_visible("#workflow-view")
+    svg_visible = await page.is_visible("#workflow-canvas svg.workflow-svg")
+    assert visible, "init 落定后派发 workflow 事件，#workflow-view 应保持激活"
+    assert svg_visible, "svg 必须可见（被 showHub() 抢走时会留 DOM 但 hidden）"
+    assert await page.is_visible(".workflow-node[data-node-id='a']")
+
+
+@pytest.mark.asyncio
+async def test_chat_init_seam_reports_completion(page, fake_web_server):
+    """spec「Web UI 暴露应用初始化完成的测试接缝」：``initDone`` 的置位契约。
+
+    这是「测试专用、不得当死代码移除」那条要求的**可执行守护** —— 本仓库没有 JS
+    lint / 死代码检测，删掉 ``initDone`` 后唯一会变红的就是这类断言。
+
+    覆盖 spec 的两个 Scenario：
+      * 初始化未完成 → ``initDone`` 为 ``false``（页面加载后立刻读）；
+      * 初始化完成 → ``initDone`` 为 ``true``，且此后派发 UI 事件不再被初始化改回。
+    """
+    await page.goto(fake_web_server["url"])
+    # 未完成态：脚本已加载（AsterwyndWorkflow 就绪）但 init 未必跑完，读值必须是布尔而非抛错。
+    early = await page.evaluate(
+        "() => window.AsterwyndChatTest && window.AsterwyndChatTest.initDone"
+    )
+    assert early in (True, False), (
+        "测试接缝 window.AsterwyndChatTest.initDone 必须存在且为布尔 —— "
+        "它是浏览器回归判定「初始化是否完成」的唯一信号（见 web-ui spec）"
+    )
+
+    # 完成态：等待后必须置真（init() resolve 才会置位）。
+    await _wait_app_ready(page)
+    assert await page.evaluate("() => window.AsterwyndChatTest.initDone") is True
+
+
+@pytest.mark.asyncio
+async def test_ready_barrier_fails_loudly_when_signal_is_absent(page, fake_web_server):
+    """spec「就绪判据失效可被察觉」：信号缺失时须**有边界地失败**，不得静默放行。
+
+    做法：等 ``init()`` **落定**后**删掉**接缝信号（模拟「信号被误删/改名」），再调
+    ``_wait_app_ready``，断言它**抛超时**。若实现里残留「吞异常 + 固定等待」的降级，
+    这里会静默返回、本用例即变红 —— 这正是本 change 删掉该降级所守护的行为。
+    """
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    # **先等 init resolve 再删**：置位发生在 `init().then(...)` 回调里，若在 init 尚未
+    # resolve 时就删掉，回调随后会把它**重新置回 true** —— 那样 `_wait_app_ready` 立即
+    # 返回，本断言变成活竞态（审阅 I1）。等到置位后 `init()` 已 resolve，其 `.then`
+    # 只会触发这一次，删除才是稳定的。
+    await _wait_app_ready(page)
+    await page.evaluate("() => { delete window.AsterwyndChatTest.initDone; }")
+
+    with pytest.raises(PlaywrightTimeoutError):
+        await _wait_app_ready(page)

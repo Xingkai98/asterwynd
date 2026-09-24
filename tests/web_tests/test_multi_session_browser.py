@@ -91,6 +91,20 @@ async def _dismiss_suggestions(page, *, frozen=False):
         ) from exc
 
 
+async def _wait_app_ready(page) -> None:
+    """等 ``chat.js`` 的异步 ``init()`` 落定再交互（issue #226 根因 B 的同一信号）。
+
+    必要性：``#hub-new-btn`` 等控件**静态就在 HTML 里**，而给它们挂事件处理器的
+    ``setupHub()`` 在 ``init()`` 中段才跑。只等 ``#hub-view.active``（静态即满足）
+    就点击，处理器可能还没挂上 —— 点击静默落空。判据取 ``AsterwyndChatTest.initDone``
+    （``init()`` resolve 后置位），与 ``test_workflow_graph_browser.py`` 同一口径。
+    """
+    await page.wait_for_function(
+        "() => window.AsterwyndChatTest && window.AsterwyndChatTest.initDone === true",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+
+
 async def _open_two_tabs(page, base_url):
     """打开预置会话 tab1 + 新建 tab2，返回 tab2 的 tab-id。
 
@@ -252,19 +266,13 @@ async def test_hub_lists_session_and_opens_tab(page, seeded_web_server):
 @pytest.mark.asyncio
 async def test_multi_tab_independent_messages(page, seeded_web_server):
     """两个 tab 各自独立消息容器，切换 tab 后互不串扰。"""
-    await page.goto(seeded_web_server)
-    await page.wait_for_selector("#hub-view.active")
-    # 打开预置会话 tab
-    await page.click(".hub-session-open")
-    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
-    # 回 hub 新建第二个会话
-    await page.click("#hub-tab")
-    await page.wait_for_selector("#hub-view.active")
-    await page.click("#hub-new-btn")
-    await page.wait_for_selector(INPUT_SELECTOR)
-    await page.wait_for_function(
-        "document.querySelectorAll('.session-tab').length === 2"
-    )
+    # 开预置会话 tab1 + 新建 tab2，并等 tab2 完成 WS 握手与 rekey。
+    # 必须走这个屏障：`#hub-new-btn` 的处理是「同步建 pane + 异步 connectTab」，
+    # 建 pane 后 `.session-tab` 立刻为 2、`.user-input` 立刻可见，但 WS 仍是
+    # CONNECTING —— 此时发送会命中 `chat.js` 的 `readyState !== OPEN` 守卫，
+    # 消息根本发不出去（issue #226 根因 A：failure body 里 server 端仍以 `new`
+    # 为键，证明握手事件没推进）。rekey 完成 ⟹ 已收到 session_created ⟹ OPEN。
+    await _open_two_tabs(page, seeded_web_server)
 
     # 在新建（active）tab 发消息
     await page.fill(INPUT_SELECTOR, "第二条消息")
@@ -693,7 +701,12 @@ async def test_closing_active_tab_converges_remaining_tab(page, seeded_web_serve
 
 @pytest.mark.asyncio
 async def test_multi_tab_image_preview_isolation(page, seeded_web_server):
-    """图片预览只落各自 tab：tab2 传图，tab1 预览区为空。"""
+    """图片预览只落各自 tab：tab2 传图，tab1 预览区为空。
+
+    注：本用例**不发消息**（只上传文件），故不属于 issue #226 根因 A 的暴露面，
+    其 inline preamble 保持原样（审阅 I5 指出这是第 4 份重复 preamble；收敛它属
+    纯重构、与本 bugfix 无关，未在本 change 扩大范围）。
+    """
     await page.goto(seeded_web_server)
     await page.wait_for_selector("#hub-view.active")
     await page.click(".hub-session-open")
@@ -727,17 +740,9 @@ async def test_multi_tab_image_preview_isolation(page, seeded_web_server):
 @pytest.mark.asyncio
 async def test_multi_tab_exit_does_not_affect_other_tab_reconnect(page, seeded_web_server):
     """一个 tab 结束（/exit → continue_session=false）不影响另一 tab reconnect。"""
-    await page.goto(seeded_web_server)
-    await page.wait_for_selector("#hub-view.active")
-    await page.click(".hub-session-open")
-    await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
-    await page.click("#hub-tab")
-    await page.wait_for_selector("#hub-view.active")
-    await page.click("#hub-new-btn")
-    await page.wait_for_selector(INPUT_SELECTOR)
-    await page.wait_for_function(
-        "document.querySelectorAll('.session-tab').length === 2"
-    )
+    # 屏障（issue #226 根因 A）：建 pane 同步、connectTab 异步；不等 rekey 完成就 /exit，命令会因 WS 未 OPEN
+    # 而根本发不出去，后面的 `.message.system` 便永不到来。
+    await _open_two_tabs(page, seeded_web_server)
     # tab2（active）执行 /exit → 该 tab 会话结束
     await page.fill(INPUT_SELECTOR, "/exit")
     await page.click(SEND_SELECTOR)
@@ -795,18 +800,9 @@ async def test_multi_tab_approval_isolation(page, tmp_path):
         except Exception:
             time.sleep(0.1)
     try:
-        await page.goto(base_url)
-        await page.wait_for_selector("#hub-view.active")
-        await page.click(".hub-session-open")
-        await page.wait_for_selector('.tab-pane[data-tab-id="aaaa11111111"].active')
-        # tab2 新建并激活
-        await page.click("#hub-tab")
-        await page.wait_for_selector("#hub-view.active")
-        await page.click("#hub-new-btn")
-        await page.wait_for_selector(INPUT_SELECTOR)
-        await page.wait_for_function(
-            "document.querySelectorAll('.session-tab').length === 2"
-        )
+        # 屏障（issue #226 根因 A）：建 pane 同步、connectTab 异步；不等 rekey
+        # 完成就发消息，命令根本发不出去，`.approval-card` 便永不到来。
+        await _open_two_tabs(page, base_url)
         # 在 tab2（active）发消息触发 Bash 工具 → approval_request
         await page.fill(INPUT_SELECTOR, "run bash")
         await page.click(SEND_SELECTOR)
@@ -823,3 +819,89 @@ async def test_multi_tab_approval_isolation(page, tmp_path):
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+
+
+# ─── issue #226 回归：就绪屏障（确定性注入，非重跑碰运气）────────────────────
+
+
+async def _inject_ws_latency(page, latency_ms: int):
+    """拉长网络往返，模拟 CI 负载下「WS 握手慢」的时序。
+
+    把「负载下才偶发」变成**确定性输入**：注入生效时握手必然远晚于建 tab，因此
+    「不等就绪就发送」的实现必然失败、「等就绪再发送」的实现必然成功。延迟由
+    网络栈提供，不占用 CPU、不依赖机器速度。返回 CDP session 供复位。
+    """
+    cdp = await page.context.new_cdp_session(page)
+    await cdp.send("Network.enable")
+    await cdp.send("Network.emulateNetworkConditions", {
+        "offline": False,
+        "latency": latency_ms,
+        "downloadThroughput": -1,
+        "uploadThroughput": -1,
+    })
+    return cdp
+
+
+async def _clear_injected_latency(cdp) -> None:
+    """复位注入的延迟，让「等回复」在正常往返下进行（否则每一帧都要 +latency）。"""
+    await cdp.send("Network.emulateNetworkConditions", {
+        "offline": False,
+        "latency": 0,
+        "downloadThroughput": -1,
+        "uploadThroughput": -1,
+    })
+
+
+@pytest.mark.asyncio
+async def test_new_tab_send_survives_slow_handshake(page, seeded_web_server):
+    """回归 issue #226 根因 A：慢握手下的发送必须仍然送达。
+
+    判别力（「未修必红、修了必绿」）：
+      * **修后**：先等 tab 完成握手（rekey ⟸ 已收到 ``session_created`` ⟸ 已 OPEN）
+        再发送 → 消息送达、收到 fake 回复 → **绿**。
+      * **未修**（去掉这道等待，即 issue #226 里 3 条用例的原始写法）：注入延迟下
+        点击发送时 WS 仍是 CONNECTING，`sendMessage` 命中 ``readyState !== OPEN``
+        守卫直接 return（消息根本没出门）→ 等不到 assistant → **红**。
+
+    沿用既有惯例的「就绪屏障」写法，并以「实测等待 ≥ 注入值」自证注入确实生效 ——
+    否则注入静默失效时本回归会退化成恒绿、判别力归零。
+
+    **注入时机**：在 ``init()`` 落定**之后**才注入。``emulateNetworkConditions``
+    作用于**所有**请求（含页面静态资源与 init 的两个 fetch）；若在导航前注入，
+    页面与 init 本身就被拖慢十几秒，屏障会先超时 —— 那不是被测量的握手延迟。
+    """
+    injection_ms = 3000
+    await page.goto(seeded_web_server)
+    await page.wait_for_selector("#hub-view.active", timeout=BROWSER_TIMEOUT_MS)
+    # 等 init 落定：`#hub-new-btn` 的处理器在 init 中段才挂上，此前点击会静默落空。
+    await _wait_app_ready(page)
+
+    cdp = await _inject_ws_latency(page, injection_ms)
+
+    # 建 tab：`.session-tab`/`.user-input` 会**同步**出现，而 WS 仍在 CONNECTING。
+    t_click = time.monotonic()
+    await page.click("#hub-new-btn")
+    await page.wait_for_selector(INPUT_SELECTOR, timeout=BROWSER_TIMEOUT_MS)
+
+    # 就绪屏障：rekey 完成 ⟸ 已收到 `session_created` ⟸ WS 已 OPEN。
+    await page.wait_for_function(
+        "[...document.querySelectorAll('.session-tab')]"
+        ".every(t => !t.dataset.tabId.startsWith('new-'))",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    handshake_ms = (time.monotonic() - t_click) * 1000
+    assert handshake_ms >= injection_ms * 0.5, (
+        f"从建 tab 到握手完成仅 {handshake_ms:.0f}ms，远低于注入值 {injection_ms}ms "
+        "—— 注入可能未生效，本回归的判别力会归零"
+    )
+
+    # 复位延迟后发送：验证「等就绪再发」确实送达（业务往返不再被逐帧拖慢）。
+    await _clear_injected_latency(cdp)
+    await page.fill(INPUT_SELECTOR, "慢握手之后的消息")
+    await page.click(SEND_SELECTOR)
+    await page.wait_for_selector(
+        ".tab-pane.active .message.assistant", timeout=BROWSER_TIMEOUT_MS
+    )
+    pane = await page.inner_text(".tab-pane.active .tab-messages")
+    assert "慢握手之后的消息" in pane, pane
+    assert "Fake browser response" in pane, pane
