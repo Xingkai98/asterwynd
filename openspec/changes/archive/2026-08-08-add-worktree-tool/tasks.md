@@ -48,6 +48,14 @@ PR #113 合并 master 后在今天基线上重新审阅，发现 R1/R3 修复自
 - **R5-5 [低] spec 滞后于实现**：R1 追加的「ExitWorktree 仅对工具自建 worktree 生效」边界有实现（`_is_tool_created_worktree`）和测试，但 7 个 Scenario 未覆盖。修复：delta 与主规格同步补 `#### Scenario: 拒绝退出非本工具创建的 worktree`（现 8 个 Scenario，两侧 `diff` IDENTICAL）。
 - **R5-6 [低] benchmark 交付物固化缺陷**：`gold.patch` 是 R1 diff，含同一条破坏性 remove。修复：随实现重新生成 `gold.patch`（= base→当前实现），并实测复现 base 红 → gold 绿闭环。
 
+## 审阅修复记录（review-loop R6–R9，收尾轮）
+
+- **R6 [低] 残留判定 fail-open**：`_registered_worktree_paths` 枚举失败返回空集，差集会把「此前无 worktree」读成现实，`worktree list` 自身失败时会误删别人的 worktree。修复：返回 `None`（未知），调用侧任一为空即不清理（fail-closed）+ 对应文案。
+- **R7 [低] fail-closed 回归测试保护强度不足**：测试把被测 helper 也 monkeypatch 掉，绕过其返回契约——只改 helper 的 `return None` → `return set()` 时全绿（变异存活），而该变异正是数据丢失路径。修复：新增 `test_registered_worktree_paths_none_when_list_fails` 直接锁 helper 契约。
+- **R8 [低] R7 的修法丢了调用侧覆盖**：重写后的用例让每次 `worktree list` 都失败（对称失败），恰好落在畸形实现仍安全的情形；实测「只让 before 快照失败」（非对称）会执行 remove。修复：新增 `test_enter_worktree_cleanup_fail_closed_on_asymmetric_list_failure`；相关用例现场改用**已提交**内容，避免未跟踪文件被 git 拒删而削弱判别力。
+- **R9（最终确认）PASS**：变异 B/C/D 均被测试抓住（分别为 `2 failed` / `1 failed` / `4 failed`）；独立复现同一数据丢失场景在 HEAD 下 `SAFE`、在变异 B/C 下 `UNSAFE`；生产代码未改动，R9 报告无剩余 Open Questions。
+- **收敛说明（用户指令）**：审阅目的为验证而非无限加固。R8 报告已明确「`head` 的生产代码本身在所有可构造路径上都是安全的」「安全性等价，属可选打磨，不阻塞」；本 PR 已从 R5 修到 R9、超出「3 轮封顶」约定，按指令以 R9 PASS 收敛，不再开新一轮审阅。
+
 ## 4. 验证
 
 - [x] 4.1 运行相关单元/集成测试。
