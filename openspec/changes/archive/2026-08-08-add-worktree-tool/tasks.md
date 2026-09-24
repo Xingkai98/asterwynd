@@ -8,7 +8,7 @@
 - [x] 1.4 维护 `## Impact Analysis`，列出影响、不影响和待确认影响面；开发前把待确认项清理为明确结论或阻塞项。
 - [x] 1.5 维护 `## Reference Implementation Research`；记录最终调研状态、发现和设计影响。
 - [x] 1.6 在 `design.md` 的 `## Pre-Implementation Review` 记录已解决问题、备选方案、否决方案、最终确认和剩余风险。
-- [ ] 1.7 当前规格同步：把 tool-system spec delta 合并到 `openspec/specs/tool-system/spec.md`，确认未实现能力没有被写成已实现，并配 workflow-events.jsonl 解释事件。
+- [x] 1.7 当前规格同步：把 tool-system spec delta 合并到 `openspec/specs/tool-system/spec.md`，确认未实现能力没有被写成已实现，并配 workflow-events.jsonl 解释事件。**（PR #113 复验补做）** 原归档收尾提交 `be1828c` 声称已合并 delta 并删除 delta 文件，但主规格实际未写入、事件日志缺 `seq 2`（`backlog_updated` → `change_archived` 跳号）、归档目录缺 `specs/`——三者是同一次遗漏的三个症状。本次补齐：`openspec/specs/tool-system/spec.md` 新增 Requirement「Worktree 隔离工具」+ 7 个 Scenario（与归档 delta 逐条一致），delta 文件回填归档目录，事件日志补 `current_spec_synced`。
 
 ## 2. 测试
 
@@ -48,9 +48,9 @@
 
 ## 5. PR 收尾
 
-- [ ] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。
-- [ ] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
-- [ ] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
-- [ ] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
-- [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 5.6 PR 合入时，给关联 GitHub issue（标题【feature】）添加完成说明 comment 并关闭。
+- [x] 5.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`。（已于 `be1828c` 完成：归档到 `openspec/changes/archive/2026-08-08-add-worktree-tool/`；PR #113 复验补回了本次遗漏的 `specs/` 子目录。）
+- [x] 5.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。（已于 `be1828c` 完成：未实现队列 5 号条目移除，第十批标记已归档。PR #113 合并 master 时该清理被保留。）
+- [x] 5.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。（复验确认：proposal.md / design.md 零命中。）
+- [x] 5.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。（复验确认：`research_tier: full` / `status: enabled`，reason/findings/design impact 齐全；`.dev/reference-repos.txt` 仅作为「不可用」事实记录，未写成项目依赖。）
+- [x] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。（PR #113 复验实跑通过，结果记录在 `reviews/building-review.md`。）
+- [ ] 5.6 (post-merge) PR 合入时，给关联 GitHub issue（标题【feature】）添加完成说明 comment 并关闭。
