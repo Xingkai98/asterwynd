@@ -1,0 +1,25 @@
+diff --git a/tests/benchmark/test_report.py b/tests/benchmark/test_report.py
+index 0aca41d..3bf895f 100644
+--- a/tests/benchmark/test_report.py
++++ b/tests/benchmark/test_report.py
+@@ -319,3 +319,20 @@ def test_render_report_empty_aggregates() -> None:
+     md = render_report([])
+     assert md.startswith("# Benchmark Evaluation Report")
+     assert "(no failures)" in md
++
++
++def test_render_report_contains_track_section() -> None:
++    aggregates = aggregate_results(
++        [
++            [
++                TaskResult(task_id="asterwynd-b01-xyz", agent="fake", model="m", status="passed", track="B"),
++                TaskResult(task_id="swebench-abc", agent="fake", model="m", status="failed", reason="test_failure", track="verified"),
++                TaskResult(task_id="asterwynd-001", agent="fake", model="m", status="passed", track="A"),
++            ]
++        ]
++    )
++    md = render_report(aggregates)
++    assert "## By Track" in md
++    assert "| A | 1 | 1.00 |" in md
++    assert "| B | 1 | 1.00 |" in md
++    assert "| verified | 1 | 0.00 |" in md

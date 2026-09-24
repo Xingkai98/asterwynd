@@ -1,0 +1,43 @@
+diff --git a/tests/benchmark/test_collab_audit_structure.py b/tests/benchmark/test_collab_audit_structure.py
+new file mode 100644
+index 0000000..be3f9920ffd824a579a8a75ccdc3a817f0fff2d1
+--- /dev/null
++++ b/tests/benchmark/test_collab_audit_structure.py
+@@ -0,0 +1,37 @@
++"""Hidden test for the collaborative context audit report (D4 / tasks 3.3).
++
++Strengthens the previous weak grep-based check into a deterministic
++structure assertion: the report must contain the three required sections in
++order, each with substantive content, and must reflect the real Summarizer
++strategies / compaction config fields present in the repo at the task's
++base commit.
++"""
++import pathlib
++import re
++
++REPORT = pathlib.Path("docs/collab-context-audit.md")
++REQUIRED_HEADINGS = [
++    "Summarizers",
++    "Compaction Triggers",
++    "Improvement Suggestion",
++]
++
++
++def test_audit_report_structure():
++    assert REPORT.exists(), "审计报告未生成：docs/collab-context-audit.md 缺失"
++    text = REPORT.read_text()
++    headings = re.findall(r"^## (.+)$", text, flags=re.M)
++    assert headings[:3] == REQUIRED_HEADINGS, (
++        f"三章节缺失或顺序错误：{headings[:3]}"
++    )
++    sections = re.split(r"^## ", text, flags=re.M)[1:]
++    for name, body in zip(headings, sections):
++        substantive = [line for line in body.splitlines() if line.strip()]
++        assert len(substantive) >= 2, f"章节 {name} 实质内容不足（至少 2 个非空行）"
++    # 内容真实性：反映 base_commit 时代的真实 Summarizer 策略与配置字段
++    assert re.search(
++        r"LLMSummarizer|TruncationSummarizer|\bllm\b|truncation", text
++    ), "Summarizers 节未反映真实 Summarizer 策略"
++    assert re.search(
++        r"max_tokens|compaction_gap|compact_trigger_tokens", text
++    ), "Compaction Triggers 节未反映真实配置字段"

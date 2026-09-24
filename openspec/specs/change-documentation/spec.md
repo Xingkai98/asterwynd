@@ -189,15 +189,20 @@ throughout the change lifecycle.
 
 ### Requirement: Reference implementation research gate
 Non-docs OpenSpec changes SHALL explicitly record whether reference
-implementation research is enabled or disabled before implementation begins.
+implementation research is enabled or disabled before implementation begins,
+and SHALL declare the expected research tier as
+`research_tier: full|light|exempt`.
 
 #### Scenario: Non-docs change records enabled research
 - **WHEN** an OpenSpec change has `primary` other than `docs`
 - **AND** reference implementation research is enabled
 - **THEN** the change records `## Reference Implementation Research` in
   `proposal.md` or `design.md`
+- **AND** the section records `research_tier: full` or `research_tier: light`
 - **AND** the section records `status: enabled`
-- **AND** records the reason, research questions, findings, and design impact
+- **AND** records the reason, findings, and design impact
+- **AND** records research questions when `research_tier: full` (omittable
+  for `research_tier: light`)
 
 #### Scenario: Non-docs change disables research
 - **WHEN** an OpenSpec change has `primary` other than `docs`
@@ -205,8 +210,37 @@ implementation research is enabled or disabled before implementation begins.
   useful or not applicable
 - **THEN** the change records `## Reference Implementation Research` in
   `proposal.md` or `design.md`
+- **AND** the section records `research_tier: exempt`
 - **AND** the section records `status: disabled`
-- **AND** records a non-empty reason
+- **AND** records a non-empty reason that hits a structural exemption keyword
+  (for example `docs-only`, `bugfix`, `上游决策锁定`, `无设计决策`) or cites
+  evidence such as a closed decision issue (`#<number>`) or a review/decision
+  document path (`docs/`, `openspec/changes/archive/`, `reviews/`)
+
+#### Scenario: Research tier is validated in proposal phase
+- **WHEN** the project artifact checker validates a non-docs change whose tasks
+  are not all complete
+- **THEN** it checks that `research_tier` is present and is one of `full`,
+  `light`, `exempt`
+- **AND** it does not enforce tier-specific content checks yet
+
+#### Scenario: Completed full or light research change must be finished
+- **WHEN** the project artifact checker validates a non-docs change whose tasks
+  are all complete
+- **AND** the section records `research_tier: full` or `research_tier: light`
+- **THEN** the checker SHALL fail (exit 2) when findings or design impact
+  contain self-admitted incomplete phrases from the `#123` word list (defined
+  in `dev-workflow-state-machine/spec.md`; not restated here to avoid drift)
+- **AND** the checker SHALL fail (exit 2) when `status` is `disabled`
+
+#### Scenario: Completed exempt research change must justify exemption
+- **WHEN** the project artifact checker validates a non-docs change whose tasks
+  are all complete
+- **AND** the section records `research_tier: exempt`
+- **THEN** the checker SHALL fail (exit 2) when `status` is not `disabled`
+- **AND** the checker SHALL fail (exit 2) when the reason is empty, hits a
+  placeholder phrase from the `#123` word list, or neither hits a structural
+  exemption keyword nor cites evidence
 
 #### Scenario: Local reference repositories are unavailable
 - **WHEN** reference implementation research is enabled
@@ -225,11 +259,43 @@ implementation research is enabled or disabled before implementation begins.
 - **WHEN** the project artifact checker validates an active non-docs change
 - **THEN** it checks that reference implementation research status is present
   and is either `enabled` or `disabled`
-- **AND** it checks that enabled research has non-empty reason, research
-  questions, findings, and design impact
+- **AND** it checks that enabled research has non-empty reason, findings, and
+  design impact
+- **AND** it checks that research questions are non-empty when
+  `research_tier: full`
 - **AND** it checks that disabled research has a non-empty reason
 - **AND** it does not judge research quality or verify local reference
   repository paths
+
+### Requirement: Research tier triage
+OpenSpec changes SHALL triage the expected research depth before design, so that
+industry research is not skipped for design-bearing changes and is not mandated
+for changes with no design space. The triage SHALL be recorded as
+`research_tier` in the `## Reference Implementation Research` section.
+
+#### Scenario: Architecture-level change requires full research
+- **WHEN** a change involves architectural restructuring, introduces a new
+  framework, dependency, or protocol, benchmarks against an industry product,
+  or is non-trivial enough to require pre-implementation design grilling
+- **THEN** the change SHALL record `research_tier: full`
+- **AND** SHALL produce the complete research record (reason, research
+  questions, findings, and design impact)
+
+#### Scenario: Routine enhancement requires light research
+- **WHEN** a change is a routine enhancement or applies an established pattern
+  locally
+- **THEN** the change SHALL record `research_tier: light`
+- **AND** SHALL record a findings paragraph and a conclusion in the proposal,
+  while research questions may be omitted
+
+#### Scenario: Change with no design space is exempt with a reason
+- **WHEN** a change is docs-only, a bugfix with no new capability surface and
+  regression tests, or its design is locked by closed decision issues or
+  architecture review conclusions with no open design item
+- **THEN** the change MAY record `research_tier: exempt`
+- **AND** SHALL record a non-empty reason that cites the objective basis
+- **AND** placeholder text (such as `待确认` or self-admitted incomplete
+  phrases) SHALL NOT count as a reason
 
 ### Requirement: Pre-implementation review record
 Non-trivial OpenSpec changes SHALL record a concise pre-implementation review
@@ -261,39 +327,48 @@ description.
 
 ### Requirement: Handoff state file artifact
 
-Every OpenSpec change SHALL include a `handoff.json` artifact that records the
-current state machine state and transition history of the change lifecycle.
+老世代 OpenSpec change（事件日志首事件为 `initialized`）的 `handoff.json` SHALL 作为**只读历史投影**保留：它记录该 change 生命周期在退役前的 state 与 transition 历史。当代 change（事件日志首事件为 `change_created`，或异构派生且无 `handoff.json`）SHALL NOT 被要求包含 `handoff.json`：其开发流程状态由 `workflow-events.jsonl` replay 生成的 `workflow-state.json` 投影承载（见 `dev-workflow-state-machine` 规格）。
 
-#### Scenario: handoff.json is created with the change
+自本 change 起，四阶段状态机实现已退役，**不再有任何流程产出新的老世代 change**（原生产者 `cmd_spawn` 已删除）：`handoff.json` 的**创建与推进通道不复存在**，既存归档目录中的 `handoff.json` 仅作历史保留，不再被更新。当代 change 的投影刷新 SHALL NOT 产出 `handoff.json`。停用的四阶段状态机不再作为开发流程的强制要求。
 
-- **WHEN** a new OpenSpec change is created
-- **THEN** `handoff.json` is initialized alongside the change
-- **AND** the initial state is `planning.exploring`
+#### Scenario: 当代 change 不要求 handoff.json
 
-#### Scenario: handoff.json is updated on state change
+- **WHEN** a 当代 change（首事件 `change_created`，无 `handoff.json`）is created or 推进到归档
+- **THEN** 系统 SHALL NOT 要求该 change 存在 `handoff.json`
+- **AND** 其状态 SHALL 由 `workflow-state.json` 投影承载
+- **AND** 受保护 artifact 写入（`artifact-event` / `review-manifest`）SHALL 对该 change 可用，SHALL NOT 因缺少 `handoff.json` 而被拒绝
+- **AND** 对其运行 `flow status` SHALL NOT 产出 `handoff.json`
 
-- **WHEN** any agent completes a sub-state or phase transition
-- **THEN** `handoff.json` state and transitions are updated accordingly
+#### Scenario: 老世代 handoff.json 作为只读历史保留
 
-#### Scenario: handoff.json is submitted with the change
+- **GIVEN** 一个既存的老世代 change（事件日志首事件为 `initialized`，含 `handoff.json`）
+- **WHEN** 运行 `flow status` 或校验投影
+- **THEN** 系统 SHALL 沿用既有 handoff.json projection 路径读取它，不抛错
+- **AND** 系统 SHALL NOT 把它改写成当代投影，也 SHALL NOT 为其产出 `workflow-state.json` 于 active 路径之外
+- **AND** 系统 SHALL NOT 要求为它补建 `proposal.md`
 
-- **WHEN** a change is ready for PR
-- **THEN** `handoff.json` reflects the final state of the change
-- **AND** it is committed as part of the change directory
+#### Scenario: 没有流程再产出老世代 change
 
-### Requirement: Handoff notes directory
+- **WHEN** 一个新 change 被创建
+- **THEN** 其事件日志首事件 SHALL 为 `change_created`（当代）
+- **AND** 系统 SHALL NOT 为其生成 `handoff.json`
+- **AND** 唯一可能产出 `handoff.json` 的旧命令（`spawn`）SHALL 已不存在
 
-Agent-to-agent handoff notes SHALL be stored in `.handoff/<change-id>/` and
-SHALL be excluded from version control.
+### Requirement: 机械门禁的信任边界
 
-#### Scenario: handoff notes are generated on phase transition
+项目 artifact checker 的受保护路径解释门禁 SHALL 定位为**防误改**（防止改动受保护路径时漏配解释事件）而非**防伪造**。它 SHALL 只校验存在匹配的结构化解释事件（`event_type` / `artifact_path` / 必填字段齐全），SHALL NOT 尝试判定该事件是否出自真实的人类授权——`approved_by` 是自由字符串，无法被机械校验。
 
-- **WHEN** an agent completes a phase and hands off to the next agent
-- **THEN** a handoff note is written to `.handoff/<change-id>/<from_phase>-to-<to_phase>.md`
+文档 SHALL NOT 声称该门禁提供了防伪造保证；其信任边界 SHALL 明文记录该边界位于仓库写权限（谁拥有 push 权限），而非门禁本身。
 
-#### Scenario: handoff directory is gitignored
+#### Scenario: 解释门禁只校验事件的存在与形状
 
-- **WHEN** `.handoff/` directory exists in the repository
-- **THEN** it is listed in `.gitignore`
-- **AND** handoff notes are not committed to version control
+- **WHEN** 一个受保护路径被改动
+- **THEN** checker SHALL 要求存在覆盖该路径的结构化解释事件（匹配的 `event_type` 与 `artifact_path`，且必填字段齐全）
+- **AND** checker SHALL NOT 校验发起事件的 change 是否真实立项、或 `approved_by` 是否对应真实身份
+
+#### Scenario: 信任边界有明文记录
+
+- **WHEN** 维护者查阅受保护路径门禁的保证强度
+- **THEN** `docs/known-debt.md` SHALL 将其记录为「防误改而非防伪造」，并说明三条加固设想（绑定真实身份 / PR 审批背书 / 收紧锚点）均已排除
+- **AND** 该边界 SHALL NOT 只以「待加固」措辞记录而暗示机械加固可行
 

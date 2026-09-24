@@ -17,6 +17,13 @@ logs/
 benchmarks/runs/
 benchmarks/swebench_candidates.json
 *.external_repo/
+.gold-check*
+
 .handoff/
+# 四阶段状态机退役（#228 层 3）：投影落盘产物不再入库。
+# 只匹配 active change 目录（changes/<id>/，单层），**不**匹配
+# changes/archive/<date>-<id>/（嵌套两层）——归档投影是已提交历史，保持可跟踪。
+openspec/changes/*/handoff.json
+openspec/changes/*/workflow-state.json
 .performance_findings.json
 docs/research/

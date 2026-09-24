@@ -1,0 +1,37 @@
+diff --git a/agent/tools/command_guard.py b/agent/tools/command_guard.py
+index 1bfb395..b8af0a7 100644
+--- a/agent/tools/command_guard.py
++++ b/agent/tools/command_guard.py
+@@ -164,15 +164,28 @@ class CommandGuard:
+     # --- High-risk sentence patterns --------------------------------------
+ 
+     def _has_pipe_to_shell(self, command: str) -> bool:
+-        """Detect ``<cmd> | sh`` / ``| bash`` chains (arbitrary code exec)."""
++        """Detect ``<cmd> | sh`` / ``| bash`` chains (arbitrary code exec).
++
++        Covers bare names (``sh``/``bash``) and absolute-path shells
++        (``/bin/sh``, ``/usr/bin/env bash``) — a pipe to any shell
++        interpreter is arbitrary code execution regardless of the path
++        prefix, so the bare-name check runs on the final path segment.
++        """
+         parts = re.split(r"\s*\|\s*", command)
+         if len(parts) < 2:
+             return False
+         last = parts[-1].strip()
+-        # ``sh``/``bash`` alone, or ``sh -c``/``bash -c`` wrapper.
+-        if last in _SHELL_INTERPRETERS:
++        # ``sh``/``bash`` alone, or absolute-path shells (``/bin/sh``).
++        # Skip an env/command wrapper, then take the command name with any
++        # path prefix stripped (``/usr/bin/env bash`` -> ``bash``).
++        tokens = last.split()
++        if tokens and tokens[0].split("/")[-1] in ("env", "command"):
++            tokens = tokens[1:]
++        name = tokens[0].split("/")[-1] if tokens else ""
++        if name in _SHELL_INTERPRETERS:
+             return True
+-        m = re.match(r"^(?:/usr/bin/env\s+)?(?:ba|z|k|d)?sh\s+-c\b", last)
++        # ``sh -c``/``bash -c`` wrapper, with optional absolute path prefix.
++        m = re.match(r"^(?:/usr/bin/env\s+)?(?:/bin/|/usr/bin/)?(?:ba|z|k|d)?sh\s+-c\b", last)
+         return bool(m)
+ 
+     def _has_protected_redirect(self, command: str) -> bool:

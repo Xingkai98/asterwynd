@@ -1,0 +1,8 @@
+Is this something that's in the pipeline (or going to make it)? Type hinting is becoming more and more common, and this  will be a huge benefit towards working with `pyreverse`. Especially as it's considered Python idiomatic (and sensible) to use `None` as a default parameter for mutable data structures.
+@pohutukawa We don't have a pipeline per se, but the one we have is represented by the milestones and the issues we assign to each milestone. Regarding this one, it's not currently in pipeline and most likely it's not going to be too soon, mostly due to limited resources on our end (e.g. I can only focus on maybe 1, 2 issues per day).
+@PCManticore Thanks for the heads up. That's OK, just thought to ask as the ticket's already almost a year and a half old. Nice to have, but understandable.
+Keep chipping away, and good job on the tools provided in the first place!
+I understand your resources are limited, so I understand if you can't add this to the milestone just yet.  
+
+I think that with type-hints becoming more important with each Python release (e.g. `typing.NamedTuple` in Python 3.6, `dataclasses.Dataclass` in Python 3.7, `typing.TypedDict` in Python 3.8, etc) this would be a phenomenally useful addition to pyreverse if you get a chance to implement it.
+@PCManticore -- if someone were interested in helping with this issue, what would be the best way to engage? Do you have any design guidance or recommendations?

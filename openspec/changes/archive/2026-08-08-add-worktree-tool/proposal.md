@@ -81,6 +81,7 @@
 
 ## Reference Implementation Research
 
+- research_tier: full
 - status: enabled
 - reason: Claude Code 内置 `EnterWorktree` / `ExitWorktree` 工具是直接参考实现；本地参考仓库不可用（`.dev/reference-repos.txt` 不存在，已确认工作区无可用参考仓库），改为以 Claude Code 工具公开行为（本会话环境中可直接观察）和公开文档作为依据。
 - research questions:

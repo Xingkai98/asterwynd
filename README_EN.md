@@ -33,7 +33,7 @@ Stars guide direction. Wind carries motion. Traces prove the journey.
 | **MCP Adapter** | Connects stdio / Streamable HTTP MCP servers, registers MCP tools, and injects prompt/resource context through `/mcp-prompt` and `/mcp-resource`. |
 | **SubAgentManager** | Sub-session runtime with independent transcripts, multiple sub-sessions, repeated runs per sub-session, and explicit inspect. |
 | **TraceRecorder** | Full trace recording for iterations, tool calls, edits, and tests. |
-| **Benchmark** | 34 local coding-agent tasks, SWE-bench Docker harness tasks, and a Claw-SWE-Bench multi-agent comparison entry point. |
+| **Benchmark** | 33 local coding-agent tasks (22 track-A regression baseline + 11 track-B current-evolution), a curated SWE-bench Verified subset (10 fixtures, target 50), and a Claw-SWE-Bench multi-agent comparison entry point. |
 
 ## Quick Start
 
@@ -44,7 +44,7 @@ uv sync --extra dev              # runtime + development/test dependencies
 # Configure API key and model
 cp .env.example .env
 # Edit .env and set OPENAI_API_KEY or ANTHROPIC_API_KEY
-# Optional: set OPENAI_BASE_URL for another OpenAI-compatible API, such as DeepSeek
+# Optional: set OPENAI_BASE_URL for any OpenAI-compatible API, such as DeepSeek, OrcaRouter, etc.
 # Optional: set ASTERWYND_PROVIDER (openai / anthropic) and ASTERWYND_MODEL as defaults
 
 # Run CLI (OpenAI by default, using ASTERWYND_MODEL from .env)
@@ -175,7 +175,7 @@ agent/
     └── ...                  # Terminal UI runtime view
 
 benchmarks/                  # Local benchmark runner
-├── tasks/                   # 34 coding tasks (asterwynd-* + swebench-*)
+├── tasks/                   # 44 coding tasks (asterwynd-* local + swebench-* Verified subset)
 ├── runner.py                # BenchmarkRunner + SWE-bench style isolation
 ├── agent_runner.py          # AgentRunner adapters: fake/shell/asterwynd
 ├── models.py                # Failure taxonomy + metric models
@@ -335,6 +335,7 @@ ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
 - **Chat view**: Normal conversation, assistant Markdown rendering, tool-call visualization, long tool-result folding by display policy, current session id / run id / session mode, switching between `build` / `read_only` / `plan` / `bypass`, Plan Document plus planning state display, and approval cards for tools that require approval.
+- **Reconnect**: A dropped browser connection (mobile backgrounding / screen lock) neither terminates the running agent nor fails a pending approval/question. When you reconnect to the same session, the server replays any still-pending approval/question cards right after `session_history`, so you can answer them directly; with multiple tabs or devices open, all connections share the same card state (first answer wins). Pending timeouts are configurable — `web.question_timeout_seconds` (default 300s) and `web.approval_timeout_seconds` (default 600s) — and mean **total wait time** measured from when the pending interaction was created, independent of whether the connection stays up. **The approval timeout is a behavior change**: approvals previously had no timeout, so a card left hanging could still be approved later; now a decision arriving after the window is judged `unavailable` (fail-closed — an irreversible action is never allowed through).
 - **Debug view**: Enabled by `ASTERWYND_DEBUG=enabled`; shows each round of:
   - Full message list sent to the LLM, including system prompt, history, and tool results.
   - LLM response, including content, stop_reason, and tool_calls; tool arguments are displayed with approval redaction rules.
@@ -371,7 +372,7 @@ ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real
 
 Asterwynd currently has two benchmark paths:
 
-- `benchmarks/`: the built-in project runner, using 34 local tasks and a small number of `swebench-*` external tasks to validate the Asterwynd coding-agent loop.
+- `benchmarks/`: the built-in project runner, using 33 local tasks (track A/B) and a `swebench-*` Verified subset (target 50) to validate the Asterwynd coding-agent loop.
 - `claw-swe-bench/`: the Claw-SWE-Bench unified harness, comparing Asterwynd, Aider, OpenCode, and other external coding agents on the same SWE-bench Verified instances.
 
 ### Quick Validation (Fake Agent, Deterministic)
@@ -408,6 +409,30 @@ uv run asterwynd benchmark benchmarks/tasks \
 
 The report is organized by capability layer (`execution`/`tool-usage`/`context-planning`/`multi-step-solving`) and includes Pass@k, mean/std, bootstrap 95% confidence intervals, latency p50/p95/p99, token cost, and failure attribution shares, plus each task's framework family (task_family). Framework verification is abstracted behind `VerifierAdapter` (currently a built-in SWE-bench Verified adapter); the concurrency limit is derived dynamically from the current machine (falls back to 1 on low-resource environments).
 
+### Orchestration Benchmark (Three Workflow Modes)
+
+`--workflow-mode` lets the benchmark measure the quality of the orchestration itself, not just a single agent solving a single task:
+
+| Mode | Meaning |
+|---|---|
+| `template` | A fixed Pattern/DSL template is the orchestration under test and goes through the existing verifier (fixed baseline) |
+| `dynamic-record` | The model freely generates a workflow; a normalized spec plus orchestration metrics are recorded on the side while it runs |
+| `dynamic-replay` | Reads the saved record, skips the planning model entirely, and replays offline; compares orchestration only, does not score |
+
+```bash
+# Record once (one workflow_record.json per task)
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# Replay (records are located by task_id under the same run directory)
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+```
+
+The report gains a **separate** workflow orchestration section (redundancy / graph steps / rejection-degradation counts / node count / peak concurrency / critical path / orchestration cost), and the main table gains only a `workflow_mode` column; `dynamic-replay` records stay out of the pass@k denominator. The "small k high-quality vs large N brute-force" contrast arms are expressed by two configs: `configs/workflow-arm-small-k.yaml` and `configs/workflow-arm-large-n.yaml`.
+
 ### Claw-SWE-Bench Comparison Evaluation
 
 See [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md) for full environment setup. Minimal command shape:
@@ -426,7 +451,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ### Task Set
 
-34 tasks are extracted from the project git history and cover several categories:
+27 tasks are extracted from the project git history and cover several categories:
 
 | Category | Example |
 |------|------|
@@ -469,5 +494,9 @@ Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken (optional)
 - `docs/coding-agent-roadmap.md`: Coding Agent roadmap
 - `docs/benchmark-plan.md`: benchmark design for the local runner, SWE-bench Docker harness, and Claw-SWE-Bench comparison path
 - `CLAW-SWE-BENCH.md`: Claw-SWE-Bench integration and running guide
+
+## Acknowledgements
+
+- [OrcaRouter](https://www.orcarouter.ai/ref/ref_4c1cf5a5bb71174f474d) — a multi-model gateway with free models such as DeepSeek and Qwen. Set `OPENAI_BASE_URL` to `https://api.orcarouter.ai/v1` to use it with asterwynd.
 
 > Chinese source: [README.md](./README.md)

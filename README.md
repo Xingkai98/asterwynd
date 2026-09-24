@@ -33,7 +33,7 @@
 | **MCP Adapter** | 连接 stdio / Streamable HTTP MCP server，注册 MCP tools，并通过 `/mcp-prompt`、`/mcp-resource` 注入上下文 |
 | **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
 | **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
-| **Benchmark** | 34 个本地 coding-agent 任务、SWE-bench Docker harness 任务，以及 Claw-SWE-Bench 多 agent 对比入口 |
+| **Benchmark** | 33 个本地 coding-agent 任务（22 A 轨回归基线 + 11 B 轨当前演进）、SWE-bench Verified 精选子集（10 fixture，目标 50），以及 Claw-SWE-Bench 多 agent 对比入口 |
 
 ## 快速开始
 
@@ -44,7 +44,7 @@ uv sync --extra dev              # 运行时 + 开发/测试依赖
 # 配置 API Key 和模型
 cp .env.example .env
 # 编辑 .env，填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
-# 可选：改 OPENAI_BASE_URL 指向其他 OpenAI 兼容 API（如 DeepSeek）
+# 可选：改 OPENAI_BASE_URL 指向任意 OpenAI 兼容 API（如 DeepSeek、OrcaRouter 等）
 # 可选：设置 ASTERWYND_PROVIDER（openai / anthropic）和 ASTERWYND_MODEL 作为默认值
 
 # 运行 CLI（OpenAI，默认；用 .env 配置的 ASTERWYND_MODEL）
@@ -175,7 +175,7 @@ agent/
     └── ...                  # 终端 UI 运行时视图
 
 benchmarks/                  # 本地 benchmark runner
-├── tasks/                   # 34 个编码任务（asterwynd-* + swebench-*）
+├── tasks/                   # 44 个编码任务（asterwynd-* 本地 + swebench-* Verified 子集）
 ├── runner.py                # BenchmarkRunner + SWE-bench 风格隔离
 ├── agent_runner.py          # AgentRunner（fake/shell/asterwynd 适配器）
 ├── models.py                # 失败分类 + 指标模型
@@ -334,6 +334,7 @@ ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
 ```
 
 - **Chat 界面**：正常对话，assistant Markdown 渲染，工具调用可视化，长工具结果按展示策略折叠，展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan` / `bypass`，展示 Plan Document 和 planning state，并在工具需要审批时显示审批卡片
+- **断线重连**：浏览器断开（移动端切后台/锁屏）不会终止正在执行的 run，也不会让等待中的审批/提问失败；重连同一会话后服务端在 `session_history` 之后补发仍 pending 的审批/提问卡片，用户可直接作答，多 tab/多设备同时打开时所有连接共享同一份卡片状态（先答者胜）。pending 超时可配置——提问 `web.question_timeout_seconds` 缺省 300 秒、审批 `web.approval_timeout_seconds` 缺省 600 秒，均为**总等待时长**（从 pending 建立时起算，与连接断开与否无关）；**审批超时是相对旧版本的行为变更**：此前审批无超时，挂起的卡片多久后回来点批准都生效，现在超过窗口即判 `unavailable`（fail-closed，绝不放行不可逆操作）
 - **Debug 界面**：环境变量 `ASTERWYND_DEBUG=enabled` 开启，逐轮展示：
   - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
   - LLM 响应（content、stop_reason、tool_calls；工具参数按审批脱敏规则展示）
@@ -370,7 +371,7 @@ ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real
 
 Asterwynd 当前有两条 benchmark 路径：
 
-- `benchmarks/`：项目内置 runner，用 34 个本地任务和少量 `swebench-*` 外部任务验证 Asterwynd 的 coding-agent 闭环。
+- `benchmarks/`：项目内置 runner，用 33 个本地任务（22 A 轨 + 11 B 轨）和 `swebench-*` Verified 子集（目标 50）验证 Asterwynd 的 coding-agent 闭环。
 - `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用同一批 SWE-bench Verified 实例对比 Asterwynd、Aider、OpenCode 等外部 coding agent。
 
 ### 快速验证（fake agent，确定性地）
@@ -407,6 +408,30 @@ uv run asterwynd benchmark benchmarks/tasks \
 
 报告按能力分层（`execution`/`tool-usage`/`context-planning`/`multi-step-solving`）组织，含 Pass@k、均值/标准差、bootstrap 95% 置信区间、延迟 p50/p95/p99、token 成本与失败归因占比，并标注任务所属评测框架（task_family）。评测框架验证经 `VerifierAdapter` 抽象（当前内置 SWE-bench Verified adapter），并发上限按当前环境动态判定（低资源环境自动取 1）。
 
+### 编排 benchmark（workflow 三模式）
+
+`--workflow-mode` 让 benchmark 直接测「编排本身」的质量，而不只是单 agent 解单任务：
+
+| 模式 | 含义 |
+|---|---|
+| `template` | 固定 Pattern/DSL 模板当被测编排，走既有 verifier 判分（固定 baseline） |
+| `dynamic-record` | 模型自由生成 workflow，执行的同时旁路记录规范化 spec 与编排指标 |
+| `dynamic-replay` | 读已保存记录、不重跑规划模型、离线重放；只比编排指标、不判分 |
+
+```bash
+# 记录一次（每任务落一份 workflow_record.json）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# 重放（按 task_id 从同一 run 目录取记录）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+```
+
+报告新增**独立**的 workflow 编排 section（冗余度 / 图级步数 / 拒绝降级计数 / 节点数 / 峰值并发 / 关键路径 / 编排成本），主表只加一列 `workflow_mode`；`dynamic-replay` 记录不进 pass@k 分母。「小 k 高质量 vs 大 N 暴力」对照臂用 `configs/workflow-arm-small-k.yaml` 与 `configs/workflow-arm-large-n.yaml` 两份配置表达。
+
 ### Claw-SWE-Bench 对比评测
 
 详细环境准备见 [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md)。最小命令形态：
@@ -425,7 +450,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ### 任务集
 
-34 个任务从项目 git 历史中提取，覆盖多个类别：
+27 个任务从项目 git 历史中提取，覆盖多个类别：
 
 | 类别 | 示例 |
 |------|------|
@@ -468,3 +493,7 @@ Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken（可选）
 - `docs/coding-agent-roadmap.md` — 编码 Agent 路线图
 - `docs/benchmark-plan.md` — benchmark 设计（本地 runner、SWE-bench Docker harness、Claw-SWE-Bench 对比入口）
 - `CLAW-SWE-BENCH.md` — Claw-SWE-Bench 集成和运行指南
+
+## 致谢
+
+- [OrcaRouter](https://www.orcarouter.ai/ref/ref_4c1cf5a5bb71174f474d) — 多模型网关（含 DeepSeek、千问 等免费模型）。把 `OPENAI_BASE_URL` 设为 `https://api.orcarouter.ai/v1` 即可通过 asterwynd 使用。

@@ -131,12 +131,13 @@ async def test_depth_guard_rejects_without_run_record():
 
 
 @pytest.mark.asyncio
-async def test_concurrency_guard_rejects_overflow():
+async def test_concurrency_overflow_queues_rather_than_rejects():
+    """D2：瞬时并发超限进入队列，不再 fail-fast（旧 ``concurrency limit`` 语义）。"""
     manager = SubAgentManager(
         llm=SlowLLM(),
         config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
-        max_concurrent_runs=1,
+        max_active=1,
     )
     first = manager.create_subagent(name="one")
     second = manager.create_subagent(name="two")
@@ -145,27 +146,49 @@ async def test_concurrency_guard_rejects_overflow():
         task="task one",
         wait=False,
     )
-    with pytest.raises(RuntimeError, match="concurrency limit"):
-        await manager.run_subagent(
-            subagent_id=second["subagent_id"],
-            task="task two",
-            wait=False,
-        )
+    queued = await manager.run_subagent(
+        subagent_id=second["subagent_id"],
+        task="task two",
+        wait=False,
+    )
+    assert queued["status"] == "queued"
+    assert manager._sessions[second["subagent_id"]].runs[-1].status == "queued"
 
 
 @pytest.mark.asyncio
-async def test_concurrency_limit_counts_active_runs_not_sessions():
-    """Sessions may exist freely; only concurrently *running* runs are capped."""
+async def test_concurrency_limit_counts_executing_runs_not_sessions():
+    """Sessions may exist freely; only concurrently *executing* runs use permits."""
     manager = SubAgentManager(
         llm=SlowLLM(),
         config=AsterwyndConfig(),
         parent_mode=AgentMode.BUILD,
-        max_concurrent_runs=2,
+        max_active=2,
     )
     one = manager.create_subagent(name="one")
     two = manager.create_subagent(name="two")
     three = manager.create_subagent(name="three")
     await manager.run_subagent(subagent_id=one["subagent_id"], task="t1", wait=False)
     await manager.run_subagent(subagent_id=two["subagent_id"], task="t2", wait=False)
-    with pytest.raises(RuntimeError, match="concurrency limit"):
-        await manager.run_subagent(subagent_id=three["subagent_id"], task="t3", wait=False)
+    queued = await manager.run_subagent(subagent_id=three["subagent_id"], task="t3", wait=False)
+    assert queued["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_depth_limit_removes_spawn_tools_from_child_loop():
+    """D4：深度到限撤 spawn 工具（读类工具保留），仍保留程序性 fail-fast 兜底。"""
+    manager = SubAgentManager(
+        llm=StaticLLM(),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BUILD,
+        max_depth=1,
+    )
+    names = {
+        schema["function"]["name"]
+        for schema in manager._build_subagent_loop(AgentMode.BUILD, depth=1).tool_registry.get_all_schemas()
+    }
+    assert "CreateSubagent" not in names
+    assert "RunSubagent" not in names
+    assert "RunPattern" not in names
+    assert "ResumeSubagent" not in names
+    assert "GetSubagentRun" in names
+    assert "ListSubagents" in names

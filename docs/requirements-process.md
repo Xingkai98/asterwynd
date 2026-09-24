@@ -28,39 +28,30 @@
 
 ## 开发流程
 
-每个 change 的生命周期建模为四个活跃阶段（phase），由 `agent/workflow/` 状态机驱动。`openspec/changes/<change-id>/workflow-events.jsonl` 是权威事件日志，`handoff.json` 是由事件 replay 生成的 projection：
+开发流程精简为 **OpenSpec 主干 + 强制独立审阅闭环**（详见 `AGENTS.md` 的「开发流程：OpenSpec 主干 + 强制审阅闭环」）。旧的四阶段状态机（phase/sub_state 推进、`handoff.json` 驱动、gate 停止）**已停用并退役删除**——其 CLI 子命令（`discover` / `current` / `validate` / `spawn`、`flow approve` / `advance` / `block` / `confirm`）、orchestrator、`dispatch`/`role_registry`、doc-artifact protocol 与 `flow/` 声明式引擎均不再存在。
 
-| 阶段 | 角色 Agent | 核心产出 |
-|------|-----------|---------|
-| `wayfinding` | Wayfinder | 决策地图、decision tickets、子 change 依赖关系；tickets 默认发布到配置的 issue tracker backend，当前为 GitHub Issues |
-| `planning` | Planner | proposal.md, design.md, spec delta, tasks.md；tracer-bullet tickets 默认发布到配置的 issue tracker backend |
-| `building` | Builder | 测试代码和实现代码 |
-| `closing` | Closer | spec 同步、归档、backlog 更新 |
+每个 change 的 `openspec/changes/<change-id>/workflow-events.jsonl` 仍是权威事件日志，投影到 `workflow-state.json`；`flow status` 是仅存的流程查询入口。
 
-每个 phase 包含若干 sub_state，末端为 `ready_for_review`（human review gate）。独立审阅内嵌在各 phase 的 `reviewing_*` sub_state 中；人在 gate 点确认通过后进入下一 phase，也可以回退。
-
-`scripts/workflow_methods.json` 里的 `workflow.enabled` 是工作流总开关；设为 `false` 时，`discover`、gate 检查和 PreToolUse 门禁都应退化为 no-op，agent 视为当前仓库没有启用 workflow。建议通过 `python3 scripts/workflow_state.py disable --reason ...` 和 `python3 scripts/workflow_state.py enable ...` 切换开关：`disable` 会在 `.dev/workflow-resume-baseline.json` 写入本地 baseline；重新启用时如果 baseline 之后存在代码改动，必须先运行 `resume-audit --reconcile-change <id>` 将这些改动归入某个 change 并记录 `resume_audit_reconciled` 事件。手工直接改 `enabled` 无法追溯关闭期间的起点，只能退化为普通 no-op。
+主干步骤如下：
 
 1. 提出想法。
 2. 讨论目标、边界和面试价值。
-3. 写需求文档（planning phase）。
+3. 写需求文档（proposal / design）。
 4. 创建关联 GitHub issue：issue 标题以【feature】开头标明类型（例如【feature】xxxx），正文写明背景、需求、OpenSpec change 路径和跟踪约定；change 文档与 backlog 记录 issue 号。
-5. 写详细设计文档（planning phase）。
-6. 维护 `## Reference Implementation Research`，默认启用参考实现调研；如果关闭，记录明确原因。
-7. 使用 `batch-grill-me` 对 `design.md` 做开发前设计追问，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
-8. 独立子 Agent 审阅 planning 产物，并在 planning gate 等待人工批准。
-9. 实现测试（building phase）。
-10. 实现功能（building phase）。
-11. 独立子 Agent 审阅实现（building.reviewing_impl）。
-12. 运行验证（closing phase）。
-13. 更新文档和能力证明链（closing phase）。
-14. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
+5. 写详细设计文档。
+6. 维护 `## Reference Implementation Research`，按改动性质分流调研档位；如果关闭，记录明确原因。
+7. 使用 `batch-grill-me` 对 `design.md` 做开发前设计追问（独立零记忆 subagent），逐项确认实现细节、依赖、风险、测试策略和文档影响；产出 `reviews/grill-design.md` 并停轮等用户确认 `## Open Questions`。
+8. 按 tasks 测试先行实现（TDD），在独立 worktree 中进行。
+9. 运行 `/review-loop` 独立零记忆审阅闭环（审 → 改 → 再审直到 PASS 或 3 轮封顶），产出 `reviews/building-review.md` + review manifest。
+10. 运行验证。
+11. 更新文档和能力证明链。
+12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
 
-各阶段之间通过 handoff note（存储在 `.handoff/<change-id>/`）传递上下文。同一 agent 可贯穿多个 phase，不强制切换。路由配置（executor、session_mode）支持全局默认 + per-change 覆盖。
+`scripts/workflow_methods.json` 里的 `workflow.enabled` 是工作流总开关；设为 `false` 时，受保护写通道与 PreToolUse 门禁退化为 no-op，agent 视为当前仓库没有启用 workflow。建议通过 `python3 scripts/workflow_state.py disable --reason ...` 和 `python3 scripts/workflow_state.py enable ...` 切换开关：`disable` 会在 `.dev/workflow-resume-baseline.json` 写入本地 baseline；重新启用时如果 baseline 之后存在代码改动，必须先运行 `resume-audit --reconcile-change <id>` 将这些改动归入某个 change 并记录 `resume_audit_reconciled` 事件。手工直接改 `enabled` 无法追溯关闭期间的起点，只能退化为普通 no-op。
 
 decision tickets 和 tracer-bullet tickets 的后端通过 `scripts/workflow_methods.json` 的 `ticket_tracker` 配置控制；默认 backend 为 GitHub Issues。
 
-工作流受保护 artifact 不能只靠自然语言说明来证明合法。修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须在相关 change 的 `workflow-events.jsonl` 中追加结构化 artifact 解释事件。阶段 review report 必须同时提供 `.handoff/<change-id>/<phase>-review-manifest.json`，绑定 reviewer run、base/head sha、tasks/spec/diff/report hash；gate 和 CI 不只看 review 文本里的 `PASS`。
+工作流受保护 artifact 不能只靠自然语言说明来证明合法。修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须在相关 change 的 `workflow-events.jsonl` 中追加结构化 artifact 解释事件。阶段 review report 必须同时提供 `openspec/changes/<change-id>/reviews/<phase>-review-manifest.json`，绑定 reviewer run、base/head sha、tasks/spec/diff/report hash；CI 不只看 review 文本里的 `PASS`。
 
 ## 参考实现调研
 
@@ -214,7 +205,7 @@ ADR 文件命名格式为 `NNNN-slug.md`（如 `0001-auth-token-storage.md`）�
 - **Consequences**：正面影响、负面影响和需要的相关变更。
 - **Revisit Conditions**：在什么条件下应该重新审视这个决策。
 
-ADR 创建后，在 handoff note 的 Key Decisions 章节中引用 ADR 文件名。如果 ADR 是在 handoff note 阶段首次产生，handoff note 必须内联完整 ADR 格式记录，待实现阶段再拆分到独立的 ADR 文件。
+ADR 创建后，在 change 的 `design.md`（或阶段 review report）的 Key Decisions 章节中引用 ADR 文件名。如果 ADR 是在设计阶段首次产生，设计文档必须内联完整 ADR 格式记录，待实现阶段再拆分到独立的 ADR 文件。
 
 已接受的 ADR 是稳定设计资产；被替代或拒绝的 ADR 保留在 `docs/adr/` 中作为历史记录，状态更新为 `rejected` 或 `superseded` 并注明替代它的 ADR。
 

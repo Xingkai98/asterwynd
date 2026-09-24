@@ -15,28 +15,36 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - **文档语言**: 除 `README_EN.md` 作为 `README.md` 的英文同步翻译外，所有项目文档使用中文；代码、代码注释和公开 API 命名使用英文；提交信息使用中文。
 - **需求先行**: 新功能必须先完成需求讨论和需求文档，再进入开发。没有把目标、边界、验收标准、测试策略聊清楚之前，不写实现代码。
 - **Issue 关联**: 每个 OpenSpec 立项必须关联一个 GitHub issue 作为跟踪入口，issue 标题以【feature】开头标明类型（例如【feature】xxxx）；issue 正文写明背景、需求、OpenSpec change 路径和跟踪约定，change 文档与 backlog 记录 issue 号。change 实现 PR 合入时，必须给对应 issue 添加完成说明 comment 并关闭。
-- **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `batch-grill-me` skill（设计树逐轮追问，一轮问整个 frontier，效率更高）审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `batch-grill-me`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。**机械强制（issue #95）**：grill 由独立零记忆 subagent 执行（`/grill` 命令），产出结构化决策记录到 `openspec/changes/<id>/reviews/grill-design.md`；workflow_guard 在写代码前检查该证据，缺失则阻止写操作；artifact checker 对完成 change 验证证据存在且 ≥3 条决策。**停轮确认（grill-confirmation-gate）**：grill 产出后，agent 必须**停轮**把 `## Open Questions` 逐项抛给用户并等待明确答复；收到答复前不得写实现代码。用户答复记录进 `grill-design.md` 的 `## User Confirmation` 节（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。workflow_guard 在 Open Questions 未全部确认时仍拦截代码写；artifact checker 对 tasks 全勾选的完成 change 校验每个 Open Question 都有确认记录。占位文本（`待确认`/`待主 agent 提交` 等）不计入确认。**分支纪律**：每次开发必须切 `<change-id>/<YYYY-MM-DD>` 分支（门禁依赖分支名推导 change-id）。
-- **参考实现调研门禁**: 非 docs OpenSpec change 默认必须启用参考实现调研，并在 `proposal.md` 或 `design.md` 维护 `## Reference Implementation Research`，记录 `status`、`reason`、`research questions`、`findings` 和 `design impact`。确实不适用时可写 `status: disabled`，但必须说明原因。该门禁由项目 artifact checker 和 CI 机械检查；checker 不读取本地 `.dev/reference-repos.txt`，本地参考仓库不可用时必须在 change 文档中记录不可用事实和替代依据。
+- **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `batch-grill-me` skill（设计树逐轮追问，一轮问整个 frontier，效率更高）审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `batch-grill-me`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。**机械强制（issue #95）**：grill 由独立零记忆 subagent 执行（`/grill` 命令），产出结构化决策记录到 `openspec/changes/<id>/reviews/grill-design.md`；workflow_guard 在写代码前检查该证据，缺失则阻止写操作；artifact checker 对完成 change 验证证据存在且 ≥3 条决策。**停轮确认（grill-confirmation-gate）**：grill 产出后，agent 必须**停轮**把 `## Open Questions` 逐项抛给用户并等待明确答复；**每条 Open Question 必须配一个具体例子/场景讲解**（用该 change 的真实场景构造，具体到参数/输入输出/前后对比，帮助用户快速判断，不写空泛描述）；收到答复前不得写实现代码。用户答复记录进 `grill-design.md` 的 `## User Confirmation` 节（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。workflow_guard 在 Open Questions 未全部确认时仍拦截代码写；artifact checker 对 tasks 全勾选的完成 change 校验每个 Open Question 都有确认记录。占位文本（`待确认`/`待主 agent 提交` 等）不计入确认。**分支纪律**：每次开发必须切 `<change-id>/<YYYY-MM-DD>` 分支（门禁依赖分支名推导 change-id）。
+- **业界调研门禁**: 方案设计（proposal/design）前必须按改动性质分流调研业界最新实践或框架，并在 `proposal.md` 或 `design.md` 维护 `## Reference Implementation Research`（必填 `research_tier: full|light|exempt`）。三档判据与豁免质量门槛见下节「业界调研门禁」：`full` 必调研、`light` 浅调研、`exempt` 须 reason 引用客观依据（结构关键词或已关闭决策 issue/评审路径），占位文本不计入。该门禁由 artifact checker 与 CI 机械校验（proposal 阶段查结构，tasks 全勾时按 tier 查完成闭环）；checker 不读取本地 `.dev/reference-repos.txt`，「本地参考仓库不可用」不构成豁免理由，但须在 findings 记录不可用事实和替代依据。
 - **问题定位**: 定位问题时，先查清根因并给出解决方案，待确认后再实际修改代码。
 - **测试要求**: 每个 bug fix 必须新增回归测试；涉及 CLI、Web、benchmark、工具协议或 AgentLoop 的变更必须覆盖对应层级测试。
 - **CI 与影响分析**: 非平凡 OpenSpec change 必须维护结构化 `Impact Analysis`，并在开发中发现新影响面时先回写 change 文档和任务清单；baseline CI 门禁包含全量 pytest、OpenSpec strict validate 和项目 artifact checker。`unknown` / `TBD` / `待确认` 可在 proposal 阶段短暂存在，但归档前必须清理为明确结论或阻塞项。
 - **文档影响检查**: 收尾阶段必须检查文档影响，但不要无边界全量改文档。至少检查 change 自身 OpenSpec 文档、`docs/openspec-change-backlog.md`、文档地图中的相关入口文档，并用关键词扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与本次变更相关的段落；只更新当前变更造成的事实变化，历史口径问题另记债务或单独处理。
-- **受保护 artifact 证据**: 修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须有 `workflow-events.jsonl` 中的结构化解释事件；阶段 review report 必须有对应 review manifest 绑定 reviewer run、base/head sha、tasks/spec/diff/report hash。禁止只靠手写 `PASS` 文本通过 gate。
-- **OpenSpec 收尾**: OpenSpec change 的实现 PR 必须同时包含归档收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 `docs/openspec-change-backlog.md` 移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只做确认：active change 目录不再存在、backlog 干净、本地 `master` 已快进到 `origin/master`。
+- **受保护 artifact 证据**: 修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须有 `workflow-events.jsonl` 中的结构化解释事件；阶段 review report 必须有对应 review manifest 绑定 reviewer run、base/head sha、tasks/spec/diff/report hash。禁止只靠手写 `PASS` 文本通过 gate。受保护路径规则表位于 `scripts/flow-policy.json`（单一策略源，guard 与 checker 同源加载；策略文件缺失/损坏 guard fail-closed exit 2）。`workflow_state.py policy-show/validate/set` 提供查询、校验与结构化更新（policy-set 是 agent 合法写通道）。
+- **OpenSpec 收尾**: OpenSpec change 的实现 PR 必须同时包含归档收尾：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`（日期前缀为硬性要求，缺前缀会被完成度门禁报错），从 `docs/openspec-change-backlog.md` 移除，并运行 OpenSpec 校验和项目 artifact checker。归档时刻结构上无法完成的 closeout 任务（如「关闭关联 issue」）必须在 `tasks.md` 中标注 `(post-merge)`，否则归档 PR 会被完成度门禁判红。PR 合入后只做确认：active change 目录不再存在、backlog 干净、本地 `master` 已快进到 `origin/master`。
 - **自然语言路由**: 用户不需要反复提醒“按 OpenSpec lifecycle 走”。当用户用自然语言表达讨论、立项、开发、同步 spec、收尾或合入意图时，agent 必须自动映射到本文件的 OpenSpec 流程和 `/opsx:*` 等价步骤；如果当前客户端不能直接调用 slash command，也要按同等步骤执行。
 - **协议约束**: 保持 tool-call 消息链合法；不要在 `max_iterations` 路径中用工具结果伪造最终 assistant 回复。
 - **工作区约束**: 不提交 `.codegraph/`、`.understand-anything/`、`.dev/`、本地 `.env*`、日志、benchmark runs 等生成或本地文件，除非用户明确要求。
 - **已有改动**: 可能存在用户未提交改动。不要回滚不是自己产生的改动；如果影响当前任务，先理解并基于它继续。
 
-## 参考实现调研
+## 业界调研门禁
 
-当需要设计或对比某个 coding-agent 能力的实现方式时，应先查找当前工作区可用的参考仓库，并用 codegraph 加速调用链、类型关系和模块边界分析。非 docs OpenSpec change 默认启用该调研；若关闭，必须在 change 文档中显式写明原因。
+方案设计（proposal/design）前必须充分调研业界最新实践或框架，按改动性质分流，不允许一句「方案明确」豁免。分流判据表：
+
+| 档位 | 判据（命中任一） | 调研深度要求 |
+|------|------|---------|
+| `full` 必调研 | 架构级改造；引入新框架/新依赖/新协议；对标业界产品；走 grill 的非平凡 change | 完整 RIR（status/reason/research questions/findings/design impact 全字段） |
+| `light` 浅调研 | 常规功能增强；成熟模式的局部应用 | findings 一段 + 结论；research questions 可省略 |
+| `exempt` 可豁免（须 reason） | docs-only；bugfix（无新增能力面 + 回归测试）；上游决策锁定（引用已关闭决策 issue/架构评审结论，无待定设计项） | reason 须命中结构关键词或引用证据（`#<数字>` 或 `docs/`、`openspec/changes/archive/`、`reviews/` 路径），占位不计入 |
+
+豁免 reason 写法示范与常见误用（占位文本、无证据空话、判断性豁免须带引用）见 [docs/development-guide.md](./docs/development-guide.md) 的「业界调研门禁」小节。业界调研渠道为「业界实践/框架调研 + 本地参考仓库对比」两层，`## Reference Implementation Research` 的 findings 可同时含业界调研与参考仓库对比结果。
 
 - 当前工作区参考仓库路径应写在本地配置 `.dev/reference-repos.txt` 中，每行一个目录路径；该文件不提交。
 - 这些路径只是当前工作区的参考资料位置，不是项目依赖，也不要求其他开发者拥有相同目录结构。
 - 不要把参考仓库路径、`.codegraph/` 产物或本地索引结果作为可提交项目资产；若需要沉淀结论，应写入本仓库的需求、设计、ADR 或讨论纪要。
 - 调研时优先用 codegraph 理解跨文件关系，再用 `rg`、文件阅读和测试补充验证；不要只凭关键词搜索下结论。
-- 如果 codegraph 或本地参考仓库不可用，应在 `## Reference Implementation Research` 的 findings 中记录不可用事实，并说明改用的依据。
+- 如果 codegraph 或本地参考仓库不可用，应在 `## Reference Implementation Research` 的 findings 中记录不可用事实，并说明改用的依据；「本地参考仓库不可用」不构成 exempt 豁免理由。
 
 ## Agent skills
 
@@ -68,9 +76,17 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `batch-grill-me`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
 
+### paseo 会话长任务提示
+
+用户主要从手机经 paseo 操作本仓库时，当前会话是一个 paseo 托管进程：paseo 会在 agent **空闲约 2 分钟后回收其运行时**（`IDLE_AGENT_RUNTIME_TTL_MS`，daemon 日志见「Collected idle agent runtime」）。因此：
+
+- **长任务 / 并行子任务一律用 paseo 托管 agent（`mcp__paseo__create_agent`）**，不要用 Claude Code 内置的 Workflow / 后台 Agent 工具——后者是会话内子进程，随本会话进程被回收而中断（实测：workflow 在回合结束后被回收杀掉）。
+- create_agent 用法：provider 形如 `claude/claude-fable-5[1m]`；只读审阅/调研任务设 `modeId: "plan"` 防写和防权限卡住；配 `notifyOnFinish` 等完成通知。
+- paseo 托管 agent 运行期间是 `running` 态、不在 idle 回收范围，且独立于本会话进程；任务完成后再被回收属正常，产出在其 transcript/落盘文件中可恢复。
+
 ## 开发流程：OpenSpec 主干 + 强制审阅闭环
 
-**这是最高优先级行为规则。** 本仓库的开发流程精简为两部分：**OpenSpec 主干**（需求→设计→实现→收尾）加 **实现完成后强制独立 subagent 审阅闭环**。旧的四阶段状态机仪式（phase/sub_state 推进、handoff.json、gate 停止）已停用，不再需要 discover/advance/approve。
+**这是最高优先级行为规则。** 本仓库的开发流程精简为两部分：**OpenSpec 主干**（需求→设计→实现→收尾）加 **实现完成后强制独立 subagent 审阅闭环**。旧的四阶段状态机仪式（phase/sub_state 推进、handoff.json、gate 停止）已停用，其实现（含 `discover`/`advance`/`approve` 等 CLI 子命令）已随子系统退役删除。
 
 ### 主干流程
 
@@ -90,8 +106,12 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 - 审阅维度（沿用 `scripts/workflow_methods.json` `building.reviewing_impl`）：任务逐项验证、正确性、Spec 对齐、冗余度、测试覆盖、安全性、可维护性、CI 完整性
 - 报告产出到 `openspec/changes/<change-id>/reviews/building-review.md`（随 change 进 PR，CI 可机械校验），含 `PASS`/`CHANGES_REQUESTED`/`BLOCKED` verdict + 逐条任务验证 + 带 `文件:行号` 证据的 issues
 - 审阅通过后生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）
-- **机械强制**：`scripts/check_openspec_artifacts.py` 对非 docs + 有 spec delta + **tasks.md 全部 `[x]` 勾选**（实现完成）的 change 强制 building-review.md + manifest 存在且 PASS——缺审阅直接报错。这是 PR 合入前必跑的门禁；提案/部分实现的 change 不受此拦截
+- **机械强制的触发点是「归档点」**（issue #235）：`scripts/check_openspec_artifacts.py` 对本 PR `--diff-filter=AR` diff 中**新建**的 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` 目录（须在 base 树不存在，以免「往既有归档补文件」被误判），在**归档目录**上评估四道门（building-review 存在性 / grill 证据 / Open Question 确认 / RIR 内容门槛）+ 未勾任务，**不因 tasks 未全勾而降级**。依据：留一条 `- [ ]` 会让旧实现的四道门全部关闭（绕开路径），而 AGENTS.md 强制「实现 PR 必含归档」⇒ 归档 commit 是 PR 最后一个 commit，归档点是唯一必要且充分的评估点
+- **`(post-merge)` 任务标记**：closeout 类任务（PR 合入后才执行，如「关闭关联 issue」）在归档时刻结构上无法完成，MUST 在行内标注 `(post-merge)`（带括号，全/半角皆可，大小写不敏感，容忍编号/粗体在前）；未标注的未勾任务在归档点 SHALL 报错。**只有带标记的未勾行被豁免**，无标记一律算实现未完成。归档目录 MUST 带 `YYYY-MM-DD-` 日期前缀，否则门禁直接报错。详见 [开发指南](./docs/development-guide.md) 的「完成度门禁与 (post-merge) 任务标记」
+- **active 阶段不受影响**：active change 的审阅门仍由「tasks 全勾」触发，部分实现的在途 change SHALL NOT 被拦截；解耦靠判定函数的 `assume_implemented` 参数（`check_change` 行为不变）
+- **manifest 校验仍是第二步**：归档点的 building-review 只做**存在性**，manifest 完整性与 PASS verdict 由 CI 第二步 `--check-archived` 承担（归档点门被 `--check-archived` 显式跳过，守历史归档的爆炸半径）
 - 受保护 artifact（`docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`openspec/changes/archive/**`、`docs/openspec-change-backlog.md`）的修改仍需 `workflow-events.jsonl` 结构化解释事件；阶段 review report 需对应 review manifest
+- **归档 change 的 manifest 不再脱离校验**（issue #232 B）：CI 的 `validate` job 另跑 `check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog`。归档语境的 `tasks_hash` 因 `tasks.md` 是贯穿到归档的活文档而被降级跳过（该降级不静默，stderr 输出一行汇总），但 manifest 存在性 / 字段 / `spec_hash` / `report_hash` / git span 仍强校验。注意这是**漂移检测**：只对已有 `reviews/*-review.md` 的归档 change 生效，不追溯要求历史归档 change 补 manifest（覆盖面隐含上界见 `docs/known-debt.md`）。相应地，**manifest 必须在该 change 的 `tasks.md` 最终化（含归档 move）之后生成**，详见 [开发指南](./docs/development-guide.md) 的「Review manifest 纪律」
 
 ### Worktree 隔离规则
 
@@ -169,6 +189,40 @@ uv run asterwynd run "用 Read 工具读 /tmp"
 uv run asterwynd web --port 8000
 uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke
 ```
+
+### flow 命令组（开发流程事件投影）
+
+每个 change 的 `workflow-events.jsonl` 是权威事件日志，`flow status` 负责投影查询（`workflow-state.json` 每当代 change 落盘一份，guard/checker 读它判断 awaiting 与一致性）：
+
+```bash
+uv run python scripts/workflow_state.py flow status --change <id>    # 投影 JSON（缺失/stale 自动重建）
+uv run python scripts/workflow_state.py flow status --all
+```
+
+**四阶段状态机的 gate 家族已随子系统退役删除**（`flow approve` / `flow advance` / `flow block` / `flow confirm`，以及 legacy 子命令 `discover` / `current` / `validate` / `spawn`）——它们无生产调用方，`flow approve` 对当代 change 必报错。开发流程推进由 OpenSpec 主干承担，不再有 CLI 的 phase/sub_state 推进通道。`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow status`/`policy-*`/`artifact-event`/`review-manifest` CLI 写。
+
+> **残留面**：awaiting 态的**进入/解除通道**（`flow block`/`flow confirm`）已删除，但 guard 的 awaiting 硬拦截保留（`workflow_guard.py:_awaiting_block_reason`）——即处于 `blocked.*` 的 change 仍会被门禁拦截写操作，而解除只能手写事件日志（受保护路径，需解释事件）。合入时全仓 awaiting change 数为 0。
+
+### 配置架构（配置文件，按职责分工）
+
+开发流程的规则按职责拆在配置文件中，改规则时按维度选文件改、不互相污染：
+
+| 配置文件 | 负责维度 | 说明 |
+| --- | --- | --- |
+| `scripts/flow-policy.json` | 执法 | 受保护路径规则表（governance=event_explained 等），guard 与 checker 同源加载，单一策略源 |
+| `scripts/workflow_methods.json` | 执行 | 退役后仅保留活配置：`doc_artifact` 路径、`ticket_tracker` 后端、`workflow` 总开关与 `resume_audit`。原 phase/sub_state 方法映射已随子系统删除（其读者 `_method_hint`/`_build_path`/`discover` 同删） |
+| `scripts/platform-gate.json` | 平台 | GitHub branch protection 目标状态声明（platform-gate 平台闸门） |
+
+原 `flow/statechart.json`（四阶段状态机声明）与 `flow/engine.py`（stdlib-only 薄引擎）已随子系统退役删除；`state_machine.py` 保留转移校验原语（`validate_transition` 等），由 `tests/agent/workflow/test_state_machine.py` 的符号级单测直接锁定。
+
+### platform-gate 平台闸门（合入门禁）
+
+`master` 合入门禁由 GitHub branch protection 强制（`scripts/platform-gate.json` 目标状态声明 + `scripts/platform_gate.py` 幂等脚本，配置即代码，走 git PR 流程 review）：
+
+- **合入硬性要求**：PR 合入 `master` 必须 required status checks 全绿（`validate` + `benchmark-gate`，strict 模式）且 PR conversations 全部 resolve（`required_conversation_resolution` 开启）；`enforce_admins` 开启（admin 也不 bypass）。
+- **approve=1 暂缓**：`required_approving_review_count` 保持 0。触发条件 = 仓库出现第二个有权限 reviewer（能 approve 且非 PR 作者的身份，read 以上权限即可 approve）时开启：改 `scripts/platform-gate.json` 的 `required_approving_review_count` 为 1 + `python scripts/platform_gate.py --apply`；开启前必须用测试 PR 让第二 reviewer 实际 approve 一次验证有效性；锁死应急回滚 = 改回 0 + `--apply`（幂等，随时可回）。
+- **配置漂移检查**：怀疑平台配置被手动改漂移时运行 `python scripts/platform_gate.py --verify`（只读，漂移 exit 1 并输出逐字段 diff）。
+- **配置落地**：`python scripts/platform_gate.py --apply`（GET-modify-PUT 幂等，apply 前打印目标 vs 实况 diff 供确认，需 admin PAT，由主 session 在 PR 合入后执行——合入前 apply 会把对话 resolution 闸门锁住 PR 自身）。
 
 更多命令见 [开发指南](./docs/development-guide.md)。
 

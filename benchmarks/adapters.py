@@ -26,6 +26,12 @@ class Verdict:
     reason: str | None = None
     detail: str = ""
     score: float | None = None
+    # SWE-bench strict resolved boolean (None when the framework does not
+    # provide one). C2: passed-with-warnings handling and strict-resolved
+    # pass-through for $/resolved-task denominators.
+    resolved: bool | None = None
+    # Partial-success fields (e.g. SWE-bench f2p_rate/p2p_rate/reward).
+    partial: dict | None = None
 
 
 class VerifierAdapter(Protocol):
@@ -57,6 +63,15 @@ class SwebenchAdapter:
         if self.model:
             return f"{self.agent_name}:{self.model}"
         return self.agent_name
+
+    @staticmethod
+    def _report_model_dir(model_name: str) -> str:
+        """SWE-bench harness 目录命名把 '/' 归一化为 '__'。
+
+        报告目录按 model_name_or_path 生成；lookup 路径必须与 harness 命名一致，
+        否则 model 名含 '/' 时报告目录找不到。
+        """
+        return model_name.replace("/", "__")
 
     def verify(
         self,
@@ -116,7 +131,7 @@ class SwebenchAdapter:
             / "logs"
             / "run_evaluation"
             / run_id
-            / model_name.replace("/", "__")
+            / self._report_model_dir(model_name)
             / (task.instance_id or "")
             / "report.json"
         )
@@ -130,10 +145,17 @@ class SwebenchAdapter:
         report = json.loads(report_path.read_text())
         instance_report = report.get(task.instance_id or "", {})
         resolved = bool(instance_report.get("resolved"))
+        partial = {
+            key: instance_report[key]
+            for key in ("f2p_rate", "p2p_rate", "reward")
+            if key in instance_report
+        }
         return Verdict(
             status="passed" if resolved else "failed",
             reason=None if resolved else BenchmarkReason.TEST_FAILURE.value,
             detail=detail,
+            resolved=resolved,
+            partial=partial or None,
         )
 
 

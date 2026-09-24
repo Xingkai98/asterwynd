@@ -344,7 +344,7 @@ class PlanModeSource:
     """P5: plan-mode instructions when agent is in plan mode."""
     name = "PlanMode"
     priority = 5
-    budget = 2500  # ~2.5K (shared in P5 5K budget with PlanningState + Todo)
+    budget = 2500  # ~2.5K (shared in P5 4K budget with PlanningState)
     critical = False
 
     async def render(self, context: BuildContext) -> str:
@@ -379,9 +379,14 @@ class PlanningStateSource:
 
 
 class TodoSource:
-    """P5: execution-progress todo list in build / read_only modes."""
+    """P2: execution-progress todo list in build / read_only modes.
+
+    Priority is raised to P2 (same tier as MemoryIndex) so that the agent's
+    current execution progress survives budget trimming after P4 (skills) and
+    P5 (plan mode / planning state) layers are truncated.  See issue #107.
+    """
     name = "Todo"
-    priority = 5
+    priority = 2
     budget = 1000  # ~1K
     critical = False
 

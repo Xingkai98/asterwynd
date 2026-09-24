@@ -1,0 +1,90 @@
+diff --git a/agent/tools/builtin/benchmarks.py b/agent/tools/builtin/benchmarks.py
+new file mode 100644
+index 0000000..561fcd7
+--- /dev/null
++++ b/agent/tools/builtin/benchmarks.py
+@@ -0,0 +1,48 @@
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++from agent.tools.base import Tool, tool_parameters
++from agent.tool_permissions import WORKSPACE_READ_PERMISSION
++
++
++@tool_parameters(
++    name="ListRunningBenchmarks",
++    description=(
++        "列出 benchmark 评测输出目录中的评测轮次：每轮次一个子目录（目录名即 "
++        "run_id），已完成的含 run.json 元数据（status/passed/task_count），"
++        "尚无元数据的视为进行中（in_progress）。"
++    ),
++    parameters={"type": "object", "properties": {}},
++)
++class ListRunningBenchmarksTool(Tool):
++    """只读工具：列出 benchmark 评测轮次及其状态。"""
++
++    read_only = True
++    parallelizable = True
++    permission = WORKSPACE_READ_PERMISSION
++
++    def __init__(self, runs_dir: str | Path | None = None):
++        self.runs_dir = Path(runs_dir) if runs_dir else Path("benchmarks/runs")
++
++    async def execute(self, **kwargs) -> str:
++        if not self.runs_dir.is_dir():
++            return "(no benchmark runs)"
++        lines: list[str] = []
++        for run_dir in sorted(p for p in self.runs_dir.iterdir() if p.is_dir()):
++            meta = run_dir / "run.json"
++            if meta.is_file():
++                try:
++                    data = json.loads(meta.read_text(encoding="utf-8"))
++                    status = data.get("status", "unknown")
++                    passed = data.get("passed", "?")
++                    total = data.get("task_count", "?")
++                    lines.append(f"{run_dir.name} | {status} | {passed}/{total}")
++                except (ValueError, OSError):
++                    lines.append(f"{run_dir.name} | unknown")
++            else:
++                lines.append(f"{run_dir.name} | in_progress")
++        if not lines:
++            return "(no benchmark runs)"
++        return "\n".join(lines)
+diff --git a/agent/tools/factory.py b/agent/tools/factory.py
+index 1fdd997..aaa958a 100644
+--- a/agent/tools/factory.py
++++ b/agent/tools/factory.py
+@@ -10,6 +10,7 @@ from agent.mcp.manager import McpManager
+ from agent.mcp.tools import McpTool
+ from agent.tools.base import Tool
+ from agent.tools.builtin.bash import BashTool
++from agent.tools.builtin.benchmarks import ListRunningBenchmarksTool
+ from agent.tools.builtin.code_intelligence import RepoMapTool, SymbolSearchTool
+ from agent.tools.builtin.edit import EditTool
+ from agent.tools.builtin.find import FindTool
+@@ -88,6 +89,7 @@ KNOWN_BUILTIN_TOOL_NAMES = {
+     "LspDocumentSymbols",
+     "LspWorkspaceSymbols",
+     "LspDiagnostics",
++    "ListRunningBenchmarks",
+     "WebFetch",
+     "WebSearch",
+     "Write",
+@@ -327,6 +329,7 @@ def get_default_tools(
+         WebSearchTool(provider_configs=(web_search_config or WebSearchConfig()).providers),
+         WebFetchTool(),
+         GrepTool(policy=policy),
++        ListRunningBenchmarksTool(),
+         InspectGitDiffTool(policy=policy),
+         RepoMapTool(
+             policy=policy,
+@@ -427,6 +430,7 @@ def get_coding_tools(
+         EditTool(policy=policy, lsp_manager=lsp_manager),
+         InspectGitDiffTool(policy=policy),
+         ListFilesTool(policy=policy, ignore_patterns=ignore_patterns),
++        ListRunningBenchmarksTool(),
+         FindTool(policy=policy, ignore_patterns=ignore_patterns),
+         RepoMapTool(
+             policy=policy,

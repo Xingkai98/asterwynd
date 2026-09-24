@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-budget-unbounded-default",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-budget-unbounded-default-20260917-r1",
+  "base_sha": "9f79f105dfaad9c8d7ab7f5034ead11922325392",
+  "head_sha": "3e018943872ba03aa97674ec4a1c6650027e8c1a",
+  "tasks_hash": "sha256:08d2f87087a304cdaa595afabe13b8d5649543d835b66eedcb6d40858eb68ea8",
+  "spec_hash": "sha256:4f68fd2bffdb03b64251d35bd01343d04b27c62259514a637d455da62f066755",
+  "diff_hash": "sha256:1dccca6d4dfbf7e7143d79b2285e7a96b03f7ede088027460def4033a0056e33",
+  "report_hash": "sha256:d7f05938c8717593606b9c55bd35ff5c98ce2b9aa2fefc885b2cd2fb92ee1adf"
+}

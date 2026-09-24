@@ -42,6 +42,7 @@ CLI 单轮和 Web UI 已存在，但终端中缺少一个适合 coding-agent 长
 
 ## Reference Implementation Research
 
+- research_tier: full
 - status: enabled
 - reason: TUI 是成熟 coding agent 的核心交互面，应参考其他项目对实时运行视图、命令入口、工具调用展示和降级策略的处理。
 - research questions:

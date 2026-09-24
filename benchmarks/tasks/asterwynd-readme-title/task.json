@@ -7,5 +7,7 @@
   "timeout_seconds": 60,
   "gold_patch_file": "gold.patch",
   "category": "feature",
-  "difficulty": "easy"
+  "difficulty": "easy",
+  "track": "A",
+  "scenario": "feature-dev"
 }

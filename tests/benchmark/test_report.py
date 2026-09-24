@@ -179,10 +179,10 @@ def test_failure_attribution_counts_reasons_and_rounds() -> None:
         ),
     ]
     attribution = failure_attribution(aggregates)
-    assert set(attribution) == {"test_failure", "tool_error", "docker_unavailable"}
+    # unsupported (docker_unavailable) is an invalid round, not a failure
+    assert set(attribution) == {"test_failure", "tool_error"}
     assert attribution["test_failure"] == [("t1", 0), ("t1", 1)]
     assert attribution["tool_error"] == [("t2", 0)]
-    assert attribution["docker_unavailable"] == [("t2", 1)]
 
 
 def test_failure_attribution_excludes_passed_and_none_reason() -> None:
@@ -276,7 +276,8 @@ def test_render_report_task_row_has_pass_at_k_and_tokens() -> None:
         ]
     )
     md = render_report(aggregates)
-    assert "| asterwynd-001 | local | execution | 1.00 | 2/2 |" in md
+    # workflow_mode column (C5): non-workflow tasks render "-".
+    assert "| asterwynd-001 | local | execution | - | 1.00 | 2/2 |" in md
     assert "| 20 | 10 |" in md  # input/output tokens summed across both rounds
 
 

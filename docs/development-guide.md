@@ -107,6 +107,28 @@ uv run asterwynd benchmark benchmarks/tasks \
   --clone-cache-dir /tmp/swebench-cache
 ```
 
+编排 benchmark（workflow 三模式）：
+
+```bash
+# 记录一次（每任务落 workflow_record.json）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+
+# 重放（--workflow-record 收 run 目录，按 task_id 推导记录路径）
+uv run asterwynd benchmark benchmarks/tasks \
+  --agent asterwynd --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
+
+# 对照臂「小 k vs 大 N」：两份 config 各跑一次
+uv run asterwynd benchmark benchmarks/tasks --agent asterwynd \
+  --config configs/workflow-arm-small-k.yaml --runs-dir /tmp/arm-small-k
+uv run asterwynd benchmark benchmarks/tasks --agent asterwynd \
+  --config configs/workflow-arm-large-n.yaml --runs-dir /tmp/arm-large-n
+```
+
+`--workflow-mode dynamic-record --e2e-round-trip` 会在记录完成后自动用 `dynamic-replay` 重放本次 run，并断言两次的 `workflow_spec_hash` 相等（真实 LLM 下的端到端可比性验证）。
+
 如果你当前开发环境本身是一个没有 `systemd` 的容器，可以使用仓库内的辅助脚本手动拉起 Docker daemon：
 
 ```bash
@@ -225,3 +247,90 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - 不要提交本地环境文件、日志、缓存和生成产物。
 - 对 benchmark 相关变更，至少运行 `tests/benchmark` 和 fake-runner smoke；如果改动影响内置 runner 的 `swebench-*` 执行路径，额外验证 Docker preflight 或单任务 SWE-bench smoke；如果改动影响 `claw-swe-bench/`，至少跑一个 Claw-SWE-Bench 单实例 smoke。
 - 对 Web 相关变更，至少运行 session/server 测试；浏览器测试按需运行。
+
+## 完成度门禁与 `(post-merge)` 任务标记
+
+完成度门禁（审阅证据 / grill 证据 / Open Question 确认 / RIR 内容门槛）的触发点是**归档点**，不是「tasks 全勾」（issue #235）。判据是：本 PR 的 `--diff-filter=AR` diff 中出现的 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` 路径，**且该归档目录在 base 树不存在**（后者排除「往既有归档目录补文件」被误判成新归档）。门在**归档目录**上评估四道门 + 未勾任务，**不因 tasks 未全勾而降级**。
+
+### `(post-merge)` 标记
+
+closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 issue 添加 comment 并关闭」）在归档时刻**结构上无法完成**，因此必须在行内标注 `(post-merge)`，否则归档 PR 会被完成度门禁判红：
+
+```markdown
+- [ ] (post-merge) 收尾：给 issue #235 添加完成 comment 并关闭。
+```
+
+**语法**：`(post-merge)` 必须带括号（全角 `（post-merge）` 或半角皆可），大小写不敏感，允许编号/粗体在其前（`- [ ] 5.5 (post-merge)`、`- [ ] **6.9** (post-merge)`），`-`/`*`/`+` 三种列表标记与缩进子项都识别。
+
+**为什么需要**：归档时 PR 尚未合入，「合入后关 issue」这类任务不可能勾选；没有豁免机制则每个格式正确的新归档都会误红。实测 93 个历史归档中 35 个有未勾项，其中 9 个的未勾项全部属 post-merge 类。
+
+**只有带标记的未勾行被豁免**。无标记的未勾行一律视为「实现未完成」并报错——留一条 `- [ ]` 正是 issue #235 记录的绕开路径（它会让四道门全部关闭）。**不做标题级 legacy 兜底**：那是唯一能 fail-open 的面。
+
+**标记必须紧邻复选框**——标签与 `[ ]` 之间只允许编号或粗体，**不能有任务正文**：
+
+| 写法 | 是否识别 |
+|------|---------|
+| `- [ ] (post-merge) 收尾：关 issue` | ✓ |
+| `- [ ] 5.5 (post-merge) 收尾：关 issue` | ✓ |
+| `- [ ] **6.9** (post-merge) 收尾` | ✓ |
+| `- [ ] 收尾：关 issue。(post-merge)` | ✗ 标在行尾 |
+| `- [ ] 5.5 收尾：关 issue (post-merge)` | ✗ 正文插在中间 |
+
+不识别时**会报错提示**（fail-closed，不会静默放行），但写法要注意：把标记紧跟在 `[ ]`（或编号/粗体）之后。
+
+**`tasks.md` 必须能证明完成了事**：它是「完成度」这一维度唯一的证据载体。以下三种形态都会被归档点报错——缺文件；写成散文或空文件（零 checkbox 行）；**有 checkbox 行但一条都没勾**（例如把所有任务都标成 `(post-merge)`）。否则「不写 checkbox」「一条都不勾」就成了与「留一条 `- [ ]`」同构的绕开路径。下限是**至少勾选一条**。
+
+### 归档目录命名
+
+归档目录 MUST 为 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。缺日期前缀（如 `archive/<id>/`）会被完成度门禁**直接报错**——这类目录既不匹配归档正则、又被 `iter_change_dirs` 排除在 active 之外，否则会落进「谁都不管」的静默面。
+
+## Review manifest 纪律（收尾）
+
+`building-review-manifest.json` 的 `tasks_hash` 绑定的是**审阅时刻**的 `tasks.md`。收尾阶段（spec sync / 归档 move / backlog 移除 / 补勾任务项）**会继续改 `tasks.md`**，所以必须遵守：
+
+- **manifest SHALL 在该 change 的 `tasks.md` 最终化之后生成**——即收尾的所有 `tasks.md` 编辑（含归档 move 之后的最终 head）都完成后，再跑 `/review-loop` 收尾写 manifest。`#199` / `#232` 都是在归档 move 之后绑定 manifest 的正确范例。
+- order 反了会怎样：manifest 早绑 → 后续勾选/补行使 `tasks_hash` 漂移。**active** 语境校验仍强判 `tasks hash mismatch`（本 change 收窄了「降级」只作用于归档语境），CI 会红——不会静默放过。
+- **archived** 语境不再以 `tasks_hash` 判失败（`tasks.md` 是贯穿到归档的活文档，其字节哈希在归档后不构成漂移证据）；归档 change 仍强校验 manifest 存在性、字段完整性与 `report_hash` / `spec_hash` / git span。该降级**不静默**：`--check-archived` 会输出一行汇总说明。
+- **归档后不要再编辑该 change 的 `reviews/building-review.md` 或 `tasks.md`**：前者被 `report_hash` 强校验（会红），后者被归档降级跳过（不会红，但也意味着归档后改 tasks 不再有校验兜底）。
+
+归档校验命令（`validate` job 已接入 CI）：
+
+```bash
+PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
+  --check-archived --skip-protected-paths --skip-backlog
+```
+
+## 业界调研门禁
+
+方案设计（proposal/design）前须按改动性质分流调研业界最新实践或框架（核心规则见 AGENTS.md「业界调研门禁」节；机械校验由 artifact checker 执行）。本小节给判据举例、豁免 reason 写法示范与常见误用。
+
+### 三档判据举例
+
+| 档位 | 适用示例 | 反例（不属于该档） |
+|------|---------|------------------|
+| `full` 必调研 | 引入新框架/新依赖/新协议；架构级改造；对标业界产品（如"参考 Herdr/Orca 的桌面端编排"）；走 grill 的非平凡 change | 给已有工具加一个可选参数（→ light） |
+| `light` 浅调研 | 常规功能增强；成熟模式的局部应用；给已有工具扩展参数 | 引入全新消息协议（→ full） |
+| `exempt` 可豁免（须 reason） | docs-only；纯 bugfix（无新增能力面 + 回归测试）；上游决策锁定（方案已由已关闭决策 issue/架构评审锁定，无待定设计项） | 有设计空间的新功能标 exempt（→ 至少 light） |
+
+### 豁免 reason 写法示范
+
+**好例子**（checker 可机械通过）：
+
+- `- reason: 纯 bugfix（修复 X 越界），无新增能力面，带回归测试。` —— 命中关键词 `bugfix`
+- `- reason: 方案已由 #128 决策 issue 完整讨论并记录，无待定设计项。` —— 命中 `方案已由.*决策` + 引用 `#<数字>`
+- `- reason: 决策已记录于 docs/adr/0007-gate.md 与 openspec/changes/archive/2026-08-14-flow-policy-source/。` —— 引用 `docs/`、`openspec/changes/archive/` 路径
+- `- reason: 上游决策锁定——依赖 #121 cross-cutting 规则与既有 checker 实现，无外部同类可比。` —— 命中关键词 `上游决策锁定` + issue 引用
+
+**坏例子**（checker 拒绝）：
+
+- `- reason: 方案明确。` —— 无关键词、无引用、非实质依据（占位）
+- `- reason: 待确认。` / `- reason: 待补充。` —— 命中 #123 占位词表
+- `- reason: 与已有模块 X 等价改造。` —— 判断性豁免但**无引用**；判断性豁免必须带引用（`#<数字>` issue 或 `docs/`、`openspec/changes/archive/`、`reviews/` 下的文档路径，代码路径如 `agent/`、`scripts/` 不在证据路径清单内）
+- `- reason: 本地参考仓库不可用。` —— 不构成豁免理由；业界调研不依赖本地参考仓库，应在 full/light 的 findings 中记录不可用事实与替代依据
+
+### 常见误用
+
+- **占位文本**：`待确认`/`待补充`/`待调研`/`TBD`/`todo` 等（#123 词表）出现在 full/light 的 findings/design impact 或 exempt 的 reason 里，tasks 全勾时 exit 2。
+- **无证据空话**：一句「方案明确」「无需调研」不命中关键词也无引用 → exempt 证据校验失败。
+- **tier 与 status 不一致**：`exempt` + `status: enabled`（声言豁免却完成了调研）→ 完成时被「exempt 必须 disabled」拦下；正确做法是**如实改 tier 为 light/full + status: enabled**。
+- **full/light 完成时仍 disabled**：proposal 阶段允许 full/light + disabled 在途（只查结构），但 tasks 全勾时必调研档必须已完成调研 → 完成时改 `status: enabled`。

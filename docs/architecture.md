@@ -85,9 +85,26 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/server.py`: FastAPI app、WebSocket endpoint、静态文件服务。
 - `web/session.py`: 会话管理，每个 session 维护一组消息和 AgentLoop。
 - `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送，payload 含 before/after messages·tokens 与压缩层级元数据。
-- `web/static/`: Chat 与 Debug 页面前端资源。
+- `web/static/`: Chat、Debug 与 Workflow 页面前端资源。
 
-Web UI 当前包含 Chat 和 Debug 两个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan` / `bypass`。当工具调用需要审批时，服务端发送 `approval_request` 事件，前端展示脱敏参数摘要并回传批准或拒绝；每个 Web session 同一时刻只允许一个 pending approval。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
+Web UI 当前包含 Hub、Chat、Workflow 和 Debug 四个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Hub 视图按 workspace 组织已保存会话，workspace 选择器列出主 workspace（启动目录或 `--workspace`）与配置 `web.workspaces` allowlist；`Workspace → +` 可新增任意绝对路径（不存在则创建目录），新路径写入 `<配置目录>/.asterwynd/workspaces.yaml` 并在同进程内立即生效，不修改用户手写的 `asterwynd.yaml`。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 和工具调用过程；用户可以在同一 session 内切换 `build` / `read_only` / `plan` / `bypass`。当工具调用需要审批时，服务端发送 `approval_request` 事件，前端展示脱敏参数摘要并回传批准或拒绝；每个 Web session 同一时刻只允许一个 pending approval。工具结果事件会带 display metadata，前端按配置折叠长结果并保留可展开全文。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 气泡，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。
+
+Web session 的 run 事件出口是 **session 级、与单条 WebSocket 连接解耦**的（`AgentSession.event_channel`）：浏览器断开（移动端切后台/锁屏）只解绑该连接，不会终止正在执行的 run，也不会把 pending 审批/提问判定为失败。重连命中同一内存 session 时，服务端按 `session_resumed → session_history → pending 卡片补发 → workflow 快照` 的顺序推送，把仍处于 pending 的 `approval_request` / `user_question` 卡片补发回前端（已作答/已超时/已取消的请求不补发）。同一 session 存在多条连接（多 tab / 多设备）时 run 事件广播给全部连接，作答采用「先答者胜」，终态广播回所有连接。
+
+pending 交互有显式超时，由 `WebConfig.question_timeout_seconds`（缺省 300 秒）与 `WebConfig.approval_timeout_seconds`（缺省 600 秒）配置，语义是**总等待时长**：从 pending 建立时开始计时，连接断开与保持都不影响计时。提问超时返回 `[Error: ...]` 答复；审批超时按 fail-closed 判定为 `unavailable`（绝不放行不可逆操作），AgentLoop 继续运行而不是永久挂起。`reset` / `cancel` 与 run 真正结束仍立即失败 pending。注意 `{"type":"cancel"}` 只失败 pending 交互、**不停止 workflow run**；真正停图走 `{"type":"cancel_workflow"}`。
+
+### Workflow 视图
+
+Workflow 视图在模型触发多 Agent 流程时自动打开（`workflow_started` 事件），由 scheduler 的 `workflow_graph_snapshot()` 经 session 级 forwarder 推送到前端。桌面（>720px）显示横向 DAG、手机（≤720px）纵向 DAG，同一份 DOM 按 720 断点切 class；分层布局 / 状态映射 / 折叠归类是 `web/static/workflow_graph.js` 里的纯函数，由 node + vm 单测与 Playwright 浏览器 smoke 双层覆盖。
+
+- **节点状态八档**：`pending` / `started` / `completed` / `failed` / `cancelled` / `blocked` / `budget_exceeded` / `skipped`（未选中：route 判定没走这条分支）。前七档分色 + 形状/角标编码（不只靠颜色，Airflow 的 `failed`/`upstream_failed` 在绿色盲下几乎同色是该坑的反面教材），`skipped` 与 `blocked` 刻意拉开明度差。
+- **投影层 `queued`**：scheduler 不把 `queued` 写进 `NodeState.status`（那个值参与收敛判断），而是在 `_graph_node_projection` 里按 run record 的 `status` 派生——所以图上能区分「真正在跑」与「已派发、在等执行 slot」。
+- **图级终态四档**（按实际执行结果，优先级即语义）：`completed_with_failures`（跑了但有节点失败）/ `completed`（跑了且全成功）/ `failed`（零节点成功且有节点失败）/ `stalled`（零节点成功且零节点失败——图根本没跑起来：入口互等 / 全被挡）。`stalled` 与 `failed` 分开是因为二者对用户的行动指引不同（前者指向「为什么一个都没跑」，后者指向「哪个节点失败了」）；`budget_exceeded` / `cancelled` / `graph_recursion_exceeded` 优先于这四档。**`completed` 不再覆盖「零节点成功」的收敛**：图说「完成」而实际什么都没跑会让用户不去排查，并让外部消费方把「图根本没跑起来」判为通过（`stalled` 对消费方的语义是**非成功**）。终态集合必须同时出现在**三个副本**——scheduler 的 `_SNAPSHOT_TERMINAL_STATUSES`、前端 `workflow.js` 的 `TERMINAL_STATUSES`、`workflow_graph.js` 的 `isGraphTerminal()`，否则那张图会被当成 running、永不进 tab 淘汰池、每次重连都补发。
+- **节点因由如实**：`blocked` 节点的因由按真实成因分档——图级闸门触发（穿透 `diagnostics`，含闸门名与上限值）/ 入边互相等待（无闸门时说明结构性原因）/ 兜底。前端 `explainNode()` 让携带具体成因的 `node.reason` 优先于泛化的「流程因图超限被停止」，否则后端写了真因、用户仍看不到。
+- **回边重跑不清空发起者**：数据边回边（如 `body → cycle_gate`）会让子树复位递归走回发起者自己、清掉刚写的 `status`/`targets`。`_reset_subtree(origin=...)` 豁免发起者一个节点（**不**停止传播——环上其它节点仍按 G11 语义重跑）；配套地 `_is_skipped` 用控制源的 `targets` 而非 `activations` 判「是否被选中」，因为后者会被复位清零，会把「选过、也跑过」的节点误报成 `route did not select this branch`。
+- **只读下钻**：`GET /api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript` 按节点类型返回三态 union（`single` / `candidates` / `none`），复用 `SubAgentManager.inspect_transcript()`，bounded 且不调 LLM、不写盘、不改执行状态。session 校验是**内存口径**（与 `/api/sessions/{id}/timeline` 同），冷会话/进程重启后 404。
+- **失败证据投影**：同一载荷另带 `failure_evidence`（`state` / `total` / `truncated` / `message` / `items`），数据源是该 run 已经写入的 `run.trace.steps` 中 `status != "ok"` 的 `tool_result` 与全部 `llm_error`——**只读投影，不新增采集**（issue #215：这些信号此前在用户面零出口，一个 `completed` 的绿节点可以内部失败多次而不露痕迹）。`state` 是七值枚举 `present` / `clean` / `running` / `empty_trace` / `no_trace` / `unavailable` / `not_applicable`，其中 `clean`（走完 trace 且零失败）是**正向声明**，与「没有 trace」严格分开——所有负向态都带可读原因文案，不返回空列表了事。bounded：只回最近 `FAILURE_EVIDENCE_LIMIT` 条、单条文本截到 `TRANSCRIPT_CONTENT_LIMIT` 并置 `text_truncated`。容器形态（`candidates`）每候选只带**轻量**证据（≤1 条 × 400 字符），完整证据在下钻与 `single` 形态给。前端证据正文在「对话」tab（沿用懒加载不变），「任务」tab 另有一行来自快照的零请求线索（节点 `failure_count` 三态：`null` 不显示 / `0` 已检查无失败 / `N` 次失败）。
+- **控制面**：`{"type":"cancel_workflow"}` 经 WebSocket 取消一张运行中的图；`reset` 在替换会话前会先取消该会话内所有在跑的图（否则图继续烧预算而用户已看不到它——forwarder 已 detach）。
 
 ## Skills
 

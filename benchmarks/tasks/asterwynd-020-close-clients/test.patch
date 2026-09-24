@@ -1,7 +1,15 @@
-diff --git a/tests/benchmark/test_asterwynd_runner.py b/tests/benchmark/test_asterwynd_runner.py
+commit dfd1e11c203adad5a0bbe0aeb00fe8bbc18b1f41
+Author: Xingkai98 <xingkai98@126.com>
+Date:   Sun Jun 14 18:04:34 2026 +0800
+
+    Close MyAgent runner LLM clients
+    
+    Co-authored-by: Claude <noreply@anthropic.com>
+
+diff --git a/tests/benchmark/test_myagent_runner.py b/tests/benchmark/test_myagent_runner.py
 index 7793659..8c7e978 100644
---- a/tests/benchmark/test_asterwynd_runner.py
-+++ b/tests/benchmark/test_asterwynd_runner.py
+--- a/tests/benchmark/test_myagent_runner.py
++++ b/tests/benchmark/test_myagent_runner.py
 @@ -13,6 +13,7 @@ class ScriptedLLM:
      def __init__(self):
          self.calls = 0
@@ -20,7 +28,7 @@ index 7793659..8c7e978 100644
  
  def test_coding_prompt_builder_includes_task_and_not_patch_names():
      task = TaskSpec(
-@@ -97,6 +101,7 @@ async def test_asterwynd_runner_uses_agent_loop_and_coding_tools(tmp_path):
+@@ -97,6 +101,7 @@ async def test_myagent_runner_uses_agent_loop_and_coding_tools(tmp_path):
      assert result.tool_calls == 2
      assert result.edit_count == 1
      assert (tmp_path / "app.py").read_text() == "# Version 2\n"

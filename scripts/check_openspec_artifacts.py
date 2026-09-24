@@ -66,12 +66,64 @@ DIAGNOSIS_SECTIONS = [
 ]
 REFERENCE_RESEARCH_SECTION = "Reference Implementation Research"
 REFERENCE_RESEARCH_FIELDS = (
+    "research_tier",
     "status",
     "reason",
     "research questions",
     "findings",
     "design impact",
 )
+RESEARCH_TIER_VALUES = ("full", "light", "exempt")
+# exempt 结构性豁免关键词（D3 + Q3 确认：不扩展证据路径清单，判断性豁免示例
+# 「与已有模块 X 等价改造」类必须带引用才通过）。「方案已由.*决策」用正则，
+# 其余子串匹配；证据 = issue 引用 #<数字> 或评审文档路径
+# （docs/、openspec/changes/archive/、reviews/）。
+STRUCTURAL_EXEMPTION_KEYWORDS = (
+    "docs-only",
+    "bugfix",
+    "上游决策锁定",
+    "无设计决策",
+)
+STRUCTURAL_EXEMPTION_RE_PATTERNS = (re.compile(r"方案已由.*决策"),)
+EXEMPT_EVIDENCE_PATH_PATTERNS = ("docs/", "openspec/changes/archive/", "reviews/")
+# 内容门槛（#123 阶段感知）：tasks 全勾（实现完成）时命中即红的「自认未完成」
+# 短语级模式（grill Q6 确认，删 暂无/未完成 避免误伤「暂无参考仓库可用」类
+# 合法 finding）；语义化占位漏检记 docs/known-debt.md，不无限扩表。
+SELF_ADMITTED_INCOMPLETE_PHRASES = (
+    "尚未完成",
+    "待补充",
+    "待调研",
+    "tbd",
+    "todo",
+    "待确认",
+)
+
+# 归档点完成度门（issue #235）：触发路径与任务行解析。
+# 归档目录固定形如 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。
+ARCHIVE_PATH_RE = re.compile(r"^openspec/changes/archive/(\d{4}-\d{2}-\d{2}-[^/]+)/")
+ARCHIVE_ROOT_PREFIX = "openspec/changes/archive/"
+# 归档根下的**目录段**（`archive/<seg>/…`）。判定非规范归档只认「有一个目录段」
+# 的路径：`archive/.gitkeep` 这类归档根下的普通文件没有目录段，不该被当成命名
+# 不合规的归档目录（building-review R1 Issue low-1 的假阳性）。
+ARCHIVE_DIR_SEGMENT_RE = re.compile(r"^openspec/changes/archive/([^/]+)/")
+# 复选框行：`-`/`*`/`+` 三种标记 + `[ ]`/`[x]`/`[X]`（缩进子项也算——调用方
+# 先 strip）。原实现只认 `- [x]`/`* [x]`，漏掉 `[X]` 与 `+`。
+CHECKBOX_RE = re.compile(r"^[-*+]\s*\[([ xX])\]")
+# closeout 类任务的 `(post-merge)` 标记：容忍编号/粗体在前、全半角括号、大小写。
+# 例：`- [ ] 5.5 (post-merge)` / `- [ ] **6.9** (post-merge)` / `- [ ] （post-merge）`。
+POST_MERGE_TAG_RE = re.compile(
+    r"^\s*[-*+]\s*\[[ xX]\]\s*(?:\*\*)?(?:\d+(?:\.\d+)*)?(?:\*\*)?\s*"
+    r"[（(]\s*post-merge\s*[)）]",
+    re.IGNORECASE,
+)
+
+
+def _self_admitted_incomplete(text: str) -> str | None:
+    lowered = text.lower()
+    for phrase in SELF_ADMITTED_INCOMPLETE_PHRASES:
+        if phrase.lower() in lowered:
+            return phrase
+    return None
 
 PLACEHOLDER_ONLY = {
     "todo",
@@ -119,13 +171,149 @@ PROTECTED_ARTIFACT_EVENT = "protected_artifact_explained"
 CURRENT_SPEC_SYNC_EVENT = "current_spec_synced"
 BACKLOG_UPDATED_EVENT = "backlog_updated"
 CHANGE_ARCHIVED_EVENT = "change_archived"
-PROTECTED_PATH_RULES = (
-    ("exact", "docs/known-debt.md", (PROTECTED_ARTIFACT_EVENT,)),
-    ("exact", "docs/known-issues.md", (PROTECTED_ARTIFACT_EVENT,)),
-    ("exact", "docs/openspec-change-backlog.md", (BACKLOG_UPDATED_EVENT,)),
-    ("prefix", "openspec/specs/", (CURRENT_SPEC_SYNC_EVENT,)),
-    ("prefix", "openspec/changes/archive/", (CHANGE_ARCHIVED_EVENT,)),
-)
+
+# 受保护路径规则从 scripts/flow-policy.json 加载（flow-policy-source P0 单一策略源），
+# 替换原硬编码 PROTECTED_PATH_RULES。取 governance == event_explained 的条目。
+_POLICY_REL_PATH = Path("scripts") / "flow-policy.json"
+
+
+def _load_protected_path_rules(repo_root: Path) -> tuple[tuple[str, str, tuple[str, ...]], ...] | None:
+    """Load event_explained rules from scripts/flow-policy.json.
+
+    Returns None when the policy file is missing/corrupt (fail-closed: the CI
+    gate must not silently skip protected-path checks). Raises RuntimeError on
+    an event_explained rule without event_types (invalid policy schema).
+    """
+    policy = repo_root / _POLICY_REL_PATH
+    try:
+        data = json.loads(policy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    rules = data.get("protected_paths")
+    if not isinstance(rules, list):
+        return None
+    out: list[tuple[str, str, tuple[str, ...]]] = []
+    for rule in rules:
+        if not isinstance(rule, dict) or rule.get("governance") != "event_explained":
+            continue
+        path = rule.get("path")
+        mt = rule.get("match_type")
+        et = rule.get("event_types")
+        if not isinstance(path, str) or not path:
+            continue
+        if mt not in ("exact", "prefix", "contains"):
+            continue
+        if not isinstance(et, (list, tuple)) or not et:
+            raise RuntimeError(
+                f"scripts/flow-policy.json: event_explained rule for '{path}' "
+                "missing event_types (invalid policy schema)"
+            )
+        out.append((mt, path, tuple(et)))
+    return tuple(out)
+
+
+ALLOWED_POLICY_PHASES = {"wayfinding", "planning", "building", "closing"}
+_POLICY_META_KEYS = {"_description"}
+
+
+def _validate_agent_content(prefix: str, agent: object) -> list[str]:
+    """Validate a direct ``{provider, model}`` agent content (#127 P0 schema)."""
+    errors: list[str] = []
+    if agent is None:
+        return errors
+    if not isinstance(agent, dict):
+        return [f"flow-policy.json `{prefix}` must be an object"]
+    if not agent:
+        return errors
+    for k in ("provider", "model"):
+        if k not in agent:
+            errors.append(f"flow-policy.json `{prefix}` missing `{k}`")
+        elif not isinstance(agent[k], str) or not agent[k]:
+            errors.append(f"flow-policy.json `{prefix}.{k}` must be a non-empty string")
+    extra = set(agent.keys()) - {"provider", "model"}
+    if extra:
+        errors.append(
+            f"flow-policy.json `{prefix}` has unknown keys: " + ", ".join(sorted(extra))
+        )
+    return errors
+
+
+def _validate_agent_decl(prefix: str, val: object) -> list[str]:
+    """Validate a ``{agent: {provider, model}}`` phase declaration (#127 P0 schema).
+
+    Accepts an empty dict (schema placeholder) or a ``{agent: {...}}`` wrapper;
+    a bare ``{provider, model}`` (direct agent content) is also accepted for
+    symmetry with ``review.agent``.
+    """
+    errors: list[str] = []
+    if val is None:
+        return errors
+    if not isinstance(val, dict):
+        return [f"flow-policy.json `{prefix}` must be an object"]
+    if not val:
+        return errors
+    non_meta = set(val.keys()) - _POLICY_META_KEYS
+    if "agent" not in val:
+        # bare {provider, model} direct content form (review.agent style)
+        if non_meta <= {"provider", "model"}:
+            return _validate_agent_content(prefix, val)
+        errors.append(
+            f"flow-policy.json `{prefix}` has unknown keys (expected `agent`): "
+            + ", ".join(sorted(non_meta))
+        )
+        return errors
+    if len(non_meta) > 1:
+        errors.append(
+            f"flow-policy.json `{prefix}` has unknown extra keys: "
+            + ", ".join(sorted(non_meta - {"agent"}))
+        )
+    return _validate_agent_content(f"{prefix}.agent", val.get("agent"))
+
+
+def _validate_policy_agent_schema(repo_root: Path) -> list[str]:
+    """Validate the phases/review agent schema of flow-policy.json (#127 P0).
+
+    Missing/corrupt policy is left to ``_load_protected_path_rules`` fail-closed;
+    here we only structurally validate the optional phases/review sections.
+    """
+    errors: list[str] = []
+    policy = repo_root / _POLICY_REL_PATH
+    try:
+        data = json.loads(policy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return errors
+    if not isinstance(data, dict):
+        return errors
+
+    phases = data.get("phases")
+    if phases is not None and not isinstance(phases, dict):
+        errors.append("flow-policy.json `phases` must be an object")
+    elif isinstance(phases, dict):
+        for key, val in phases.items():
+            if key in _POLICY_META_KEYS:
+                continue
+            if key not in ALLOWED_POLICY_PHASES:
+                errors.append(
+                    f"flow-policy.json unknown phase `{key}` "
+                    f"(allowed: {', '.join(sorted(ALLOWED_POLICY_PHASES))})"
+                )
+                continue
+            errors.extend(_validate_agent_decl(f"phases.{key}", val))
+
+    review = data.get("review")
+    if review is not None and not isinstance(review, dict):
+        errors.append("flow-policy.json `review` must be an object")
+    elif isinstance(review, dict):
+        for key, val in review.items():
+            if key in _POLICY_META_KEYS:
+                continue
+            if key != "agent":
+                errors.append(f"flow-policy.json unknown review key `{key}` (allowed: agent)")
+                continue
+            errors.extend(_validate_agent_decl("review.agent", val))
+    return errors
 
 
 @dataclass(frozen=True)
@@ -162,10 +350,25 @@ def _is_placeholder_body(text: str) -> bool:
     return cleaned in PLACEHOLDER_ONLY
 
 
+def _inside_fence(text: str, pos: int) -> bool:
+    """True when ``pos`` falls inside a fenced code block (``` ... ```)."""
+    fences = [m.start() for m in re.finditer(r"^```", text, flags=re.MULTILINE)]
+    open_fence = None
+    for f in fences:
+        if f >= pos:
+            break
+        open_fence = None if open_fence is not None else f
+    return open_fence is not None
+
+
 def _extract_h2_sections(text: str) -> dict[str, str]:
     matches = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
     sections: dict[str, str] = {}
     for index, match in enumerate(matches):
+        # Skip ## inside fenced code blocks (flow-policy-source P0 正则修复，
+        # 与 workflow_guard._h2_section 同步).
+        if _inside_fence(text, match.start()):
+            continue
         title = match.group(1).strip()
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
@@ -301,8 +504,29 @@ def _find_reference_research_section(
     return None
 
 
+def _exempt_reason_satisfies(reason: str) -> bool:
+    """True when an exempt reason hits a structural keyword or cites evidence.
+
+    判断性豁免必须带客观依据（Q3 口径）：结构性豁免关键词、`#<数字>` issue 引用、
+    或评审文档路径（docs/、openspec/changes/archive/、reviews/）。「与已有模块 X
+    等价改造」类无引用表述不通过。
+    """
+    lowered = reason.lower()
+    if any(keyword.lower() in lowered for keyword in STRUCTURAL_EXEMPTION_KEYWORDS):
+        return True
+    if any(pattern.search(reason) for pattern in STRUCTURAL_EXEMPTION_RE_PATTERNS):
+        return True
+    if re.search(r"#\d+", reason):
+        return True
+    return any(path in lowered for path in EXEMPT_EVIDENCE_PATH_PATTERNS)
+
+
 def _check_reference_implementation_research(
-    change_dir: Path, proposal_text: str, change_type: ChangeType
+    change_dir: Path,
+    proposal_text: str,
+    change_type: ChangeType,
+    *,
+    assume_implemented: bool = False,
 ) -> list[str]:
     if change_type.primary == "docs":
         return []
@@ -321,21 +545,41 @@ def _check_reference_implementation_research(
             f"## {REFERENCE_RESEARCH_SECTION}"
         ]
 
+    errors: list[str] = []
+
+    # research_tier（结构门槛，proposal 阶段即生效）：必填枚举 full|light|exempt。
+    normalized_tier: str | None = None
+    tier = _extract_record_field(body, "research_tier")
+    if tier is None or _is_placeholder_body(tier):
+        errors.append(
+            f"{source} section must declare `research_tier: full|light|exempt`: "
+            f"## {REFERENCE_RESEARCH_SECTION}"
+        )
+    else:
+        normalized_tier = tier.splitlines()[0].strip().lower()
+        if normalized_tier not in RESEARCH_TIER_VALUES:
+            errors.append(
+                f"{source} section has invalid research_tier `{normalized_tier}` "
+                f"(allowed: full, light, exempt)"
+            )
+            normalized_tier = None
+
     status = _extract_record_field(body, "status")
     if status is None or _is_placeholder_body(status):
-        return [
+        errors.append(
             f"{source} section must declare `status: enabled` or "
             f"`status: disabled`: ## {REFERENCE_RESEARCH_SECTION}"
-        ]
+        )
+        return errors
 
     normalized_status = status.splitlines()[0].strip().lower()
     if normalized_status not in {"enabled", "disabled"}:
-        return [
+        errors.append(
             f"{source} section has invalid reference implementation research "
             f"status `{normalized_status}` (allowed: enabled, disabled)"
-        ]
+        )
+        return errors
 
-    errors: list[str] = []
     reason = _extract_record_field(body, "reason")
     if reason is None or _is_placeholder_body(reason):
         errors.append(
@@ -344,7 +588,12 @@ def _check_reference_implementation_research(
         )
 
     if normalized_status == "enabled":
-        for field in ("research questions", "findings", "design impact"):
+        # light 档可省略 research questions（D2 + spec「Routine enhancement
+        # requires light research」），findings 与 design impact 仍必填。
+        enabled_fields = ("research questions", "findings", "design impact")
+        if normalized_tier == "light":
+            enabled_fields = ("findings", "design impact")
+        for field in enabled_fields:
             value = _extract_record_field(body, field)
             if value is None or _is_placeholder_body(value):
                 errors.append(
@@ -352,6 +601,57 @@ def _check_reference_implementation_research(
                     f"reference implementation research is enabled: "
                     f"## {REFERENCE_RESEARCH_SECTION}"
                 )
+
+    # 内容门槛（#123 阶段感知）：仅当 tasks 全勾（实现完成）时生效。proposal
+    # 阶段只查结构门槛（上述 section 存在 + 非空），不触发内容门槛，避免在途
+    # change 被误伤。命中「自认未完成」短语 → exit 2，错误指明短语 + 字段。
+    #
+    # 归档点门（issue #235 / D3 A′）：归档侧传 assume_implemented=True，使内容
+    # 门槛不因归档 change 残留未勾任务而降级——否则一条 `- [ ]` 就能让本门静默
+    # 返回空，正是本 change 要堵的绕开路径。
+    if assume_implemented or _tasks_all_complete(change_dir):
+        content_fields = ("reason",)
+        if normalized_status == "enabled":
+            content_fields += ("research questions", "findings", "design impact")
+        for field in content_fields:
+            value = _extract_record_field(body, field)
+            if not value:
+                continue
+            hit = _self_admitted_incomplete(value)
+            if hit:
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 `{field}` 命中"
+                    f"「自认未完成」短语「{hit}」——tasks 已全勾，内容门槛拒绝占位"
+                )
+
+        # tier 内容门槛（D4 + Q4 确认）：tasks 全勾时 tier 与 status/证据组合闭环。
+        if normalized_tier in ("full", "light"):
+            if normalized_status == "disabled":
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 "
+                    f"`research_tier: {normalized_tier}` 在 tasks 已全勾时 "
+                    f"`status` 不得为 `disabled`——必调研档必须已完成调研（完成时闭环）"
+                )
+        elif normalized_tier == "exempt":
+            if normalized_status != "disabled":
+                errors.append(
+                    f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 "
+                    f"`research_tier: exempt` 在 tasks 已全勾时 `status` 必须为 "
+                    f"`disabled`——做了调研就如实改 full/light + enabled（Q4 口径）"
+                )
+            if reason and not _is_placeholder_body(reason):
+                hit = _self_admitted_incomplete(reason)
+                if hit:
+                    # #123 内容门槛已报占位短语，这里不重复报
+                    pass
+                elif not _exempt_reason_satisfies(reason):
+                    errors.append(
+                        f"{source} ## {REFERENCE_RESEARCH_SECTION} 的 `reason` "
+                        f"未命中结构性豁免关键词（docs-only/bugfix/上游决策锁定/"
+                        f"无设计决策/方案已由.*决策）也未引用证据（#<数字> 或 "
+                        f"docs/、openspec/changes/archive/、reviews/ 路径），"
+                        f"exempt 证据校验不通过——请引用已关闭决策 issue 或评审文档路径"
+                    )
 
     return errors
 
@@ -435,7 +735,9 @@ def _check_current_spec_sync_task(
     return []
 
 
-def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list[str]:
+def _check_design_review_task(
+    change_dir: Path, change_type: ChangeType, *, assume_implemented: bool = False
+) -> list[str]:
     if not (change_type.all_types & DESIGN_TYPES):
         return []
 
@@ -457,7 +759,8 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
         # User Confirmation coverage (grill-confirmation-gate): only enforced
         # on a completed change (tasks all checked). In-flight changes may keep
         # open questions while the user clarifies mid-development.
-        if _tasks_all_complete(change_dir):
+        # 归档点门（D3 A′）：归档侧 assume_implemented=True 让该覆盖不被未勾项降级。
+        if assume_implemented or _tasks_all_complete(change_dir):
             missing = _unconfirmed_open_questions(text)
             if missing:
                 errors.append(
@@ -474,7 +777,9 @@ def _check_design_review_task(change_dir: Path, change_type: ChangeType) -> list
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
         return ["missing required file: tasks.md"]
-    if _tasks_all_complete(change_dir) and _changed_capabilities(change_dir):
+    # 归档点门（D3 A′）：归档侧不因未勾项退回字面标记兜底——否则留一条 `- [ ]`
+    # 就能让证据门静默通过（issue #235 的绕开路径）。
+    if (assume_implemented or _tasks_all_complete(change_dir)) and _changed_capabilities(change_dir):
         return [
             "reviews/grill-design.md missing — 实现已完成但独立 subagent design grilling 证据缺失。"
             "请用 /grill 跑独立设计追问并产出结构化决策记录。"
@@ -549,7 +854,9 @@ def _extract_user_confirmation_indexes(text: str) -> list[str]:
     indexes: list[str] = []
     for line in section.splitlines():
         stripped = line.strip()
-        m = re.match(r"^-\s+\*\*Q(\d+)\*\*\s*[:：]", stripped)
+        # 容忍 `**Q8**（分支命名）:` 后缀（flow-policy-source P0 正则修复，
+        # 与 workflow_guard._extract_user_confirmation_indexes 同步).
+        m = re.match(r"^-\s+\*\*Q(\d+)\*\*(?:[^：:]*)\s*[:：]", stripped)
         if not m:
             continue
         answer_match = re.search(r"用户答复\s*[:：]\s*(.*?)(?:[；;]\s*确认时间|\s*$)", stripped)
@@ -679,9 +986,11 @@ def _check_handoff_json(change_dir: Path) -> list[str]:
         errors.append(f"{change_name}: handoff.json blockers must be an array")
 
     if (change_dir / "workflow-events.jsonl").exists():
-        from agent.workflow.event_log import verify_handoff_projection
+        # Q11/代码层修正 11：verify_handoff_projection 扩为 verify_projection——
+        # gen-1 校验 handoff.json == replay；gen-2 校验磁盘 workflow-state.json == replay。
+        from agent.workflow.event_log import verify_projection
 
-        errors.extend(verify_handoff_projection(change_dir))
+        errors.extend(verify_projection(change_dir))
 
     return errors
 
@@ -703,10 +1012,14 @@ def _repo_root_for_change_dir(change_dir: Path) -> Path:
 
 
 def _tasks_all_complete(change_dir: Path) -> bool:
-    """Return True when every checkbox line in tasks.md is ``[x]``.
+    """Return True when every checkbox line in tasks.md is checked.
 
     A tasks.md with no checkbox lines is treated as incomplete (no evidence of
     implementation), so the review gate does not fire prematurely.
+
+    Scan is widened (issue #235 D4) to all three list markers and both checkbox
+    cases: the old ``- [x]``/``* [x]`` pair silently ignored ``+ [ ]`` and
+    ``[X]``, which would have let a ``+ [ ]`` line escape the completion gate.
     """
     tasks = change_dir / "tasks.md"
     if not tasks.exists():
@@ -715,12 +1028,76 @@ def _tasks_all_complete(change_dir: Path) -> bool:
     checked = 0
     unchecked = 0
     for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- [x]") or stripped.startswith("* [x]"):
+        match = CHECKBOX_RE.match(line.strip())
+        if match is None:
+            continue
+        if match.group(1).lower() == "x":
             checked += 1
-        elif stripped.startswith("- [ ]") or stripped.startswith("* [ ]"):
+        else:
             unchecked += 1
     return checked > 0 and unchecked == 0
+
+
+def _untagged_unchecked_tasks(change_dir: Path) -> list[str]:
+    """Return unchecked task lines that lack a ``(post-merge)`` tag.
+
+    Closing tasks that run *after* the PR merges ("关 issue" 类) are
+    structurally impossible to tick at archive time, so they are exempted by an
+    explicit ``(post-merge)`` marker. Everything else unchecked means the
+    implementation is not finished (issue #235 D4) — silently tolerating it is
+    exactly the bypass this change closes.
+    """
+    tasks = change_dir / "tasks.md"
+    if not tasks.exists():
+        return []
+    untagged: list[str] = []
+    for line in tasks.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        match = CHECKBOX_RE.match(stripped)
+        if match is None or match.group(1).lower() == "x":
+            continue
+        if POST_MERGE_TAG_RE.match(line):
+            continue
+        untagged.append(stripped)
+    return untagged
+
+
+def _tasks_missing_evidence(change_dir: Path) -> str | None:
+    """Return a reason string when tasks.md carries no proof of completion.
+
+    ``tasks.md`` is the only evidence carrier for the completion dimension, so
+    three shapes make ``_untagged_unchecked_tasks`` return nothing and the gate
+    go silent — each is the same structural bypass as leaving one ``- [ ]``,
+    i.e. closing the gate by *not writing* (or not ticking) a checkbox:
+
+    1. no ``tasks.md`` at all;
+    2. a prose / empty ``tasks.md`` with no checkbox line;
+    3. checkbox lines that are **all unchecked** — e.g. every item tagged
+       ``(post-merge)``, so the untagged scan finds nothing while nothing was
+       actually done. 8 historical archives have this shape.
+
+    So the floor is ">=1 checked box", matching ``_tasks_all_complete``'s
+    ``checked > 0`` clause. The reason is returned (not a bare bool) so the
+    error names the actual shape — an all-unchecked file reads very differently
+    from a missing one, and a single message covering both misdescribes the
+    former (building-review R3 finding 2).
+    """
+    tasks = change_dir / "tasks.md"
+    if not tasks.exists():
+        return "tasks.md 缺失"
+    boxes = [
+        match
+        for match in (
+            CHECKBOX_RE.match(line.strip())
+            for line in tasks.read_text(encoding="utf-8").splitlines()
+        )
+        if match is not None
+    ]
+    if not boxes:
+        return "tasks.md 无任何 checkbox 行"
+    if not any(match.group(1).lower() == "x" for match in boxes):
+        return "tasks.md 的 checkbox 行全部未勾选"
+    return None
 
 
 def _change_id_from_dir_name(dir_name: str) -> str:
@@ -774,14 +1151,42 @@ def _check_review_manifests(
     return errors
 
 
+def _check_archived_projectable(change_dir: Path) -> list[str]:
+    """归档 change 可投影校验（Q5/代码层修正 2）。
+
+    只验证结构合法 + 所有 event_type 可识别（_apply / NON_STATE / milestones 集），
+    不要求 seed 事件、不要求磁盘 workflow-state.json（老世代不落盘，Q13）。
+    """
+    if not (change_dir / "workflow-events.jsonl").exists():
+        return []
+    try:
+        from agent.workflow.event_log import project_workflow_state
+
+        project_workflow_state(change_dir)
+    except Exception as exc:
+        return [f"{change_dir.name}: archived change 事件日志不可投影: {exc}"]
+    return []
+
+
 def check_protected_path_explanations(
     repo_root: Path,
     *,
     changed_paths: set[str],
 ) -> list[str]:
     errors: list[str] = []
+    try:
+        rules = _load_protected_path_rules(repo_root)
+    except RuntimeError as exc:
+        # schema 非法（event_explained 缺 event_types 等）：不抛裸 traceback，
+        # 以可读错误 fail-closed（building-review Issue 3）。
+        return [f"scripts/flow-policy.json schema 非法: {exc}"]
+    if rules is None:
+        return [
+            "scripts/flow-policy.json 缺失或损坏：受保护路径检查无法执行（fail-closed）。"
+            "请修复策略文件后重跑。"
+        ]
     for path in sorted(changed_paths):
-        allowed_event_types = _allowed_event_types_for_protected_path(path)
+        allowed_event_types = _allowed_event_types_for_protected_path(path, rules)
         if allowed_event_types is None:
             continue
         explanation_errors = _protected_artifact_explanation_errors(
@@ -860,11 +1265,15 @@ def _validate_protected_artifact_event(
     return errors
 
 
-def _allowed_event_types_for_protected_path(path: str) -> tuple[str, ...] | None:
-    for match_type, pattern, event_types in PROTECTED_PATH_RULES:
+def _allowed_event_types_for_protected_path(
+    path: str, rules: tuple[tuple[str, str, tuple[str, ...]], ...]
+) -> tuple[str, ...] | None:
+    for match_type, pattern, event_types in rules:
         if match_type == "exact" and path == pattern:
             return event_types
         if match_type == "prefix" and path.startswith(pattern):
+            return event_types
+        if match_type == "contains" and pattern in path:
             return event_types
     return None
 
@@ -1070,6 +1479,194 @@ def _changed_paths_since_base(
     return paths, None
 
 
+def _new_archive_dirs_since_base(
+    repo_root: Path, base_ref: str
+) -> tuple[list[str], list[str], str | None]:
+    """Return (new_archive_dirs, non_conforming_paths, warning).
+
+    ``new_archive_dirs`` are the ``<date>-<id>`` archive directory names that
+    **this** diff newly creates — the change's archive point, i.e. the delivery
+    moment the completeness gate must evaluate (issue #235 D1).
+
+    Two filters, both load-bearing:
+
+    * ``--diff-filter=AR``, not ``A``: when the source change directory exists
+      in the base tree git reports the archive move as a rename (``R``), and
+      ``A`` alone yields nothing for a byte-identical ``git mv``. Both forms
+      produce the archive path, so both letters are required.
+    * the directory must be **absent from the base tree**. Path matching alone
+      cannot tell "newly archived in this PR" from "a file was added to an
+      already-archived change" — and the latter is real (#234/#236/#238
+      retrofitted manifests into archives). Without this filter, touching an
+      old archive would drag that stale change through the full gate.
+
+    ``non_conforming_paths`` are paths under the archive root that do **not**
+    match the dated naming rule. Those are invisible to both this gate and
+    ``iter_change_dirs`` (which skips ``archive``), so they must be reported
+    rather than silently dropped.
+    """
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=AR", base_ref, "--"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        warning = (
+            f"could not resolve base ref '{base_ref}' for archived completion gate"
+            f" (exit {result.returncode}): {result.stderr.strip()[:200]}"
+        )
+        return [], [], warning
+
+    archive_names_in_base = _archive_dir_names_in_base(repo_root, base_ref)
+
+    new_dirs: list[str] = []
+    non_conforming: list[str] = []
+    seen: set[str] = set()
+    for raw in result.stdout.splitlines():
+        path = raw.strip()
+        if not path or not path.startswith(ARCHIVE_ROOT_PREFIX):
+            continue
+        if ARCHIVE_DIR_SEGMENT_RE.match(path) is None:
+            # 归档根下的普通文件（如 `.gitkeep`）：不是归档目录，不评命名。
+            continue
+        match = ARCHIVE_PATH_RE.match(path)
+        if match is None:
+            non_conforming.append(path)
+            continue
+        dir_name = match.group(1)
+        if dir_name in archive_names_in_base or dir_name in seen:
+            continue
+        seen.add(dir_name)
+        new_dirs.append(dir_name)
+    return sorted(new_dirs), sorted(non_conforming), None
+
+
+def _archive_dir_names_in_base(repo_root: Path, base_ref: str) -> set[str]:
+    """Archive directory names present in the base tree (empty on any failure).
+
+    Failure to list the base tree degrades to "treat every matched dir as new",
+    which is the stricter direction; the caller's ``--require-base`` handling
+    covers the unresolvable-base case.
+    """
+    result = subprocess.run(
+        ["git", "ls-tree", "-d", "--name-only", f"{base_ref}:openspec/changes/archive"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _check_archived_completion_gate(change_dir: Path) -> list[str]:
+    """Evaluate the four completeness gates + unchecked tasks on an archive dir.
+
+    Mirrors what ``check_change`` enforces for an active change, but on the
+    **archive point** and without the ``_tasks_all_complete`` trigger: a change
+    that leaves one box unticked must not thereby switch its own gates off
+    (issue #235 D2/D3).
+
+    building-review is checked for **existence only**. Reusing
+    ``_check_review_manifests`` here would resolve paths against the *active*
+    directory (``change_dir_for(..., archived=False)``) and report
+    ``review manifest missing`` for a change that is correctly archived;
+    manifest completeness is the job of the ``--check-archived`` pass, which
+    knows the archived semantics.
+
+    Exemptions are inherited from the reused predicates rather than restated:
+    docs-only (``primary == "docs"``), no spec delta (``_changed_capabilities``),
+    and non-design types (``DESIGN_TYPES``) each skip their gate.
+    """
+    if not change_dir.exists():
+        return []
+    proposal = change_dir / "proposal.md"
+    if not proposal.exists():
+        return [
+            f"{change_dir.name}: 新归档目录缺 proposal.md，无法评估完成度门",
+        ]
+    proposal_text = proposal.read_text(encoding="utf-8")
+    change_type = parse_change_type(proposal_text)[0]
+    if change_type is None:
+        return [
+            f"{change_dir.name}: proposal.md 缺合法 Change Type，无法评估完成度门",
+        ]
+
+    prefix = f"{change_dir.name}: "
+    errors: list[str] = []
+
+    if change_type.primary != "docs":
+        errors.extend(
+            prefix + error
+            for error in _check_reference_implementation_research(
+                change_dir, proposal_text, change_type, assume_implemented=True
+            )
+        )
+
+    errors.extend(
+        prefix + error
+        for error in _check_design_review_task(
+            change_dir, change_type, assume_implemented=True
+        )
+    )
+
+    if (
+        change_type.primary != "docs"
+        and _changed_capabilities(change_dir)
+        and not (change_dir / "reviews" / "building-review.md").exists()
+    ):
+        errors.append(
+            prefix + "building-review.md missing — 归档点要求独立 subagent 审阅证据。"
+            "请用 /review-loop 跑审阅闭环（审→改→再审直到 PASS 或 3 轮封顶）。"
+        )
+
+    # tasks.md 是「完成度」唯一的证据载体：缺了它（或没有可证明完成的行），未勾任务
+    # 检查会静默通过——与留一条 `- [ ]` 同构的绕开路径，必须显式报错而不是跳过。
+    # 对 docs 归档同样要求：否则「删掉 tasks.md」就成了 docs 的关闸路径（语料实测
+    # 0/93 个 docs 归档缺 tasks.md，统一口径不产生假阳性）。
+    missing_evidence = _tasks_missing_evidence(change_dir)
+    if missing_evidence is not None:
+        errors.append(
+            prefix + f"{missing_evidence} —— 归档点无法评估完成度。"
+            "tasks.md 至少要有 ≥1 条已勾选任务（closeout 类未完成项请标 `(post-merge)`）。"
+        )
+    else:
+        for line in _untagged_unchecked_tasks(change_dir):
+            errors.append(
+                prefix
+                + f"归档 change 存在未勾且未标 (post-merge) 的任务：{line}"
+                + " ——closeout 类任务（合入后动作）请标 `(post-merge)`；其余请完成后再归档。"
+            )
+
+    return errors
+
+
+def _check_new_archived_completion_gates(
+    repo_root: Path,
+    changes_root: Path,
+    base_ref: str,
+    *,
+    require_base: bool,
+) -> list[str]:
+    """Run the archive-point completion gate over this diff's newly archived changes."""
+    new_dirs, non_conforming, warning = _new_archive_dirs_since_base(repo_root, base_ref)
+    errors: list[str] = []
+    if warning is not None:
+        if require_base:
+            errors.append(warning)
+        else:
+            print(f"WARNING: {warning}", file=sys.stderr)
+    for path in non_conforming:
+        errors.append(
+            f"{path}: 归档目录命名不合规（应为 openspec/changes/archive/"
+            f"<YYYY-MM-DD>-<change-id>/），无法评估完成度门"
+        )
+    for dir_name in new_dirs:
+        errors.extend(_check_archived_completion_gate(changes_root / "archive" / dir_name))
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--changes-root", default="openspec/changes")
@@ -1116,15 +1713,46 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_archived and not args.change:
         archive_root = changes_root / "archive"
         if archive_root.exists():
+            tasks_hash_skipped = 0
             for change_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
                 change_type = parse_change_type((change_dir / "proposal.md").read_text(encoding="utf-8"))[0] \
                     if (change_dir / "proposal.md").exists() else None
                 if change_type is None:
                     continue
                 errors.extend(_check_review_manifests(change_dir, change_type, archived=True))
+                # #232 B 盲区：归档语境的 tasks_hash 降级（见 review_manifest.py）
+                # 不得静默。这里按 change 计数，循环后汇总一行到 stderr——不逐
+                # change 刷屏、不进 errors（进 errors 会被当成 error 而误红）。
+                if any((change_dir / "reviews").glob("*-review-manifest.json")):
+                    tasks_hash_skipped += 1
+                # Q5/代码层修正 2：归档 change 只验可投影（结构合法 + 类型可识别）
+                errors.extend(_check_archived_projectable(change_dir))
+            if tasks_hash_skipped:
+                print(
+                    f"[archived manifest check] tasks_hash 已按归档语境跳过"
+                    f"（{tasks_hash_skipped} 个 change；其余 hash 与字段仍校验）",
+                    file=sys.stderr,
+                )
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
+
+    # 归档点完成度门（issue #235 D6）：**刻意放在 --skip-protected-paths 块之外**。
+    # CI 第二步命令行是 `--check-archived --skip-protected-paths --skip-backlog`，
+    # 若本门在块内，那个 flag 就成了事实上的区分开关，与「不能被它关掉」冲突；
+    # 而 AGENTS.md 速查表推荐本地跑不加该 flag 的 `--check-archived`，那样本门会
+    # 在全部历史归档上求值。区分一律靠显式守卫：
+    #   - --check-archived：只做既有 manifest 漂移检测，不进本门（守爆炸半径）
+    #   - --change <id>：单 change 查询，不应额外评估本分支上的归档 id
+    if not args.check_archived and not args.change:
+        errors.extend(
+            _check_new_archived_completion_gates(
+                _repo_root_for_changes_root(changes_root),
+                changes_root,
+                args.base_ref,
+                require_base=args.require_base,
+            )
+        )
 
     if not args.skip_protected_paths:
         repo_root = _repo_root_for_changes_root(changes_root)
@@ -1139,6 +1767,8 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(
             check_protected_path_explanations(repo_root, changed_paths=changed_paths)
         )
+        # #127 P0：flow-policy.json 的 phases/review agent schema 结构校验
+        errors.extend(_validate_policy_agent_schema(repo_root))
 
     if errors:
         for error in errors:

@@ -3,7 +3,8 @@
 
 const debugContent = document.getElementById('debug-content');
 const timelineContent = document.getElementById('timeline-content');
-let iterBlocks = {};
+// iterBlocks 由 chat.js 声明并作为 per-tab 状态代理（bindActiveTab 时指向
+// 当前 tab 的 debugIterBlocks），debug.js 只消费全局值。
 
 // --- Tool Call Timeline panel ---
 // Fetches the session timeline API and renders horizontal bars (backend shapes

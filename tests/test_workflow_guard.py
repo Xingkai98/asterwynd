@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 import pytest
 
-from agent.workflow.manager import WorkflowManager
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUARD = REPO_ROOT / "scripts" / "workflow_guard.py"
 
@@ -28,8 +26,26 @@ def _run_guard(tmp_path: Path, payload: dict) -> subprocess.CompletedProcess[str
 
 
 def _seed_active_change(tmp_path: Path) -> None:
+    """活跃 change 的冷状态种子：`change_created` 首事件（无 handoff.json）。
+
+    原实现用 `WorkflowManager(...).init()`（已随四阶段状态机退役删除）；它在此唯一
+    作用是「创建目录 + 写一条可投影的事件日志」。
+    """
     change_dir = tmp_path / "openspec" / "changes" / "test-change"
-    WorkflowManager(change_dir, repo_root=tmp_path).init("test-change")
+    change_dir.mkdir(parents=True)
+    (change_dir / "workflow-events.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 1,
+                "event_type": "change_created",
+                "change_id": "test-change",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _seed_reviewing_change(tmp_path: Path) -> None:
@@ -337,3 +353,265 @@ def test_guard_grill_evidence_extraction_parity_with_checker(tmp_path):
         assert ck_confirm(text) == exp_confirm, text
         assert wg._extract_open_question_indexes(text) == exp_open, text
         assert wg._extract_user_confirmation_indexes(text) == exp_confirm, text
+
+
+# ── awaiting gate（flow-event-projection P1）────────────────────────────
+
+
+def _seed_awaiting_change(tmp_path: Path, *, awaiting=True, with_state=True, with_proposal=True) -> Path:
+    """Seed a gen-2 change whose projection is (or is not) in awaiting state."""
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    change_dir.mkdir(parents=True)
+    if with_proposal:
+        (change_dir / "proposal.md").write_text(
+            "## Change Type\n\nprimary: feature\n", encoding="utf-8"
+        )
+    events = [
+        {"schema": "workflow-event/v1", "seq": 1, "event_type": "change_created", "change_id": "test-change"},
+    ]
+    if awaiting:
+        events.append(
+            {
+                "schema": "workflow-event/v1",
+                "seq": 2,
+                "event_type": "blocked_entered",
+                "change_id": "test-change",
+                "transition": {
+                    "from": {"phase": "planning", "sub_state": "writing_design"},
+                    "to": {"phase": "blocked", "sub_state": "awaiting_proposal_confirmation"},
+                    "trigger": "auto",
+                },
+                "blocker": {
+                    "blocked_from": {"phase": "planning", "sub_state": "writing_design"},
+                    "reason": "proposal done",
+                },
+            }
+        )
+    with (change_dir / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    if with_state:
+        state = (
+            {"phase": "blocked", "sub_state": "awaiting_proposal_confirmation"}
+            if awaiting
+            else {"phase": "planning", "sub_state": "exploring"}
+        )
+        ws = {
+            "schema": "workflow-state/v1",
+            "change_id": "test-change",
+            "state": state,
+            "milestones": [],
+            "source_event_seq": len(events),
+        }
+        (change_dir / "workflow-state.json").write_text(
+            json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    return change_dir
+
+
+def test_guard_blocks_write_when_awaiting(tmp_path):
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_blocks_write_when_awaiting_despite_missing_projection(tmp_path):
+    """事件已 awaiting、磁盘无投影 → 仍拦截（不因投影缺失放行）。"""
+    _seed_awaiting_change(tmp_path, with_state=False)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_blocks_write_when_awaiting_despite_stale_projection(tmp_path):
+    """building-review Issue 2：事件已 awaiting、磁盘 stale → 仍拦截（fail-closed）。"""
+    _seed_awaiting_change(tmp_path)
+    ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
+    ws = json.loads(ws_path.read_text(encoding="utf-8"))
+    ws["source_event_seq"] = 99  # 人为过期
+    ws_path.write_text(json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_blocks_write_when_events_awaiting_but_disk_stale_non_awaiting(tmp_path):
+    """building-review Issue 2 具体场景：磁盘 stale 且显示非 awaiting，但事件已 blocked_entered。"""
+    _seed_awaiting_change(tmp_path)
+    ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
+    ws = json.loads(ws_path.read_text(encoding="utf-8"))
+    ws["state"] = {"phase": "planning", "sub_state": "exploring"}  # 磁盘显示非 awaiting
+    ws["source_event_seq"] = 1  # stale
+    ws_path.write_text(json.dumps(ws, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_blocks_write_when_awaiting_despite_corrupt_projection(tmp_path):
+    """事件已 awaiting、磁盘投影损坏 → 仍拦截（不因投影损坏放行）。"""
+    _seed_awaiting_change(tmp_path)
+    ws_path = tmp_path / "openspec" / "changes" / "test-change" / "workflow-state.json"
+    ws_path.write_text("{not valid json", encoding="utf-8")
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_allows_write_for_non_awaiting_change_without_projection(tmp_path):
+    """building-review Issue 3：无投影的非 awaiting gen-0 change 不被误拦（不额外误拦）。"""
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+    change_dir.mkdir(parents=True)
+    (change_dir / "proposal.md").write_text(
+        "## Change Type\n\nprimary: feature\n", encoding="utf-8"
+    )
+    with (change_dir / "workflow-events.jsonl").open("w", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "schema": "workflow-event/v1",
+                    "seq": 1,
+                    "event_type": "backlog_updated",
+                    "change_id": "test-change",
+                    "artifact_path": "docs/x.md",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_blocks_bash_write_when_awaiting(tmp_path):
+    """building-review Issue 1：awaiting 期间 Bash 写代码文件被拦（红线 1 不可经 Bash 绕过）。"""
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "echo code > agent/foo.py"}},
+    )
+
+    assert result.returncode == 2
+    assert "awaiting" in result.stderr
+
+
+def test_guard_allows_bash_read_when_awaiting(tmp_path):
+    """awaiting 期间只读 Bash 放行。"""
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "git status"}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_allows_write_when_not_awaiting(tmp_path):
+    _seed_awaiting_change(tmp_path, awaiting=False)
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "agent" / "feature.py")}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_allows_change_doc_writes_during_awaiting(tmp_path):
+    _seed_awaiting_change(tmp_path)
+    change_dir = tmp_path / "openspec" / "changes" / "test-change"
+
+    result = _run_guard(
+        tmp_path,
+        {"tool_name": "Write", "tool_input": {"file_path": str(change_dir / "design.md")}},
+    )
+
+    assert result.returncode == 0
+
+
+def test_guard_allows_flow_status_cli_command(tmp_path):
+    _seed_awaiting_change(tmp_path)
+
+    for command in [
+        "python3 scripts/workflow_state.py flow status --change test-change",
+        "uv run python scripts/workflow_state.py flow status --change test-change --all",
+    ]:
+        result = _run_guard(
+            tmp_path,
+            {"tool_name": "Bash", "tool_input": {"command": command}},
+        )
+        assert result.returncode == 0, f"flow status 应豁免: {command}"
+
+
+def test_guard_narrowed_whitelist_drops_removed_flow_subcommands(tmp_path):
+    """D7：白名单收窄为 `flow status`，已退役的 gate 家族不再豁免。
+
+    判别性：把守卫正则改回 `flow\\s+(?:status|confirm|approve|block|advance)`
+    → 本用例变红。用守卫自身的 `_is_privileged_cli` 直接断言豁免集合。
+    """
+    import scripts.workflow_guard as guard
+
+    assert guard._is_privileged_cli(
+        "python3 scripts/workflow_state.py flow status --change test-change"
+    )
+    for removed in ("approve", "advance", "block", "confirm"):
+        cmd = f"python3 scripts/workflow_state.py flow {removed} --change test-change"
+        assert not guard._is_privileged_cli(cmd), f"{removed} 不应再被豁免: {cmd}"
+
+    # 其余活通道仍豁免
+    assert guard._is_privileged_cli(
+        "python3 scripts/workflow_state.py artifact-event --change x --event-type y"
+    )
+    assert guard._is_privileged_cli("python3 scripts/workflow_state.py policy-show")
+
+
+def test_guard_blocks_flow_chain_hijack(tmp_path):
+    _seed_awaiting_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    "python3 scripts/workflow_state.py flow status --change test-change "
+                    "&& echo x > docs/known-debt.md"
+                )
+            },
+        },
+    )
+
+    assert result.returncode == 2

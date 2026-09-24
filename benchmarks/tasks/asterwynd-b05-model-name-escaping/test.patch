@@ -1,0 +1,17 @@
+diff --git a/tests/benchmark/test_adapters.py b/tests/benchmark/test_adapters.py
+index badbf91..a414c4e 100644
+--- a/tests/benchmark/test_adapters.py
++++ b/tests/benchmark/test_adapters.py
+@@ -240,3 +240,12 @@ def test_any_adapter_verdict_carries_contract_fields(tmp_path, monkeypatch) -> N
+     }
+     # Deterministic verifiers do not set a score yet; the field stays None.
+     assert verdict.score is None
++
++
++def test_report_model_dir_escapes_slash_like_harness() -> None:
++    """路径转义与 harness 目录命名一致：model 名含 '/' 时报告目录可定位。"""
++    adapter = SwebenchAdapter(model="claude/claude-fable-5[1m]")
++    model_name = adapter._prediction_model_name()
++    assert model_name == "asterwynd:claude/claude-fable-5[1m]"
++    assert adapter._report_model_dir(model_name) == "asterwynd:claude__claude-fable-5[1m]"
++    assert "/" not in adapter._report_model_dir(model_name)

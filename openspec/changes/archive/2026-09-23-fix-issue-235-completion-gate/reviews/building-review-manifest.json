@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-235-completion-gate",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a5f8b3e1-c854-4d33-b999-28fff1f98400",
+  "base_sha": "4424f54882179ef1ec53d2eaa1a7d373280b91fb",
+  "head_sha": "24e7da334a8850aaea6fb3b849f0f3685a0b0b25",
+  "tasks_hash": "sha256:164af68f7a601f67256d1688bd6bb48a7e3fc45e054f4dce7dfac6592fe05e3b",
+  "spec_hash": "sha256:09a01c28669b628685882e9567379334aa3cc3d877bb8d73e7c6b2c77fbc0142",
+  "diff_hash": "sha256:97d949d48812019ad8fb59611c232d05ab2871923fef857e3ea15a8fa29da6e2",
+  "report_hash": "sha256:25df5e18c3813a279416001bbdfb544005a6a8cf7fcf2515d5133320d516762f"
+}

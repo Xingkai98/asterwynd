@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-213-transcript-item-bound",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-fix-issue-213-2026-09-21-r3",
+  "base_sha": "7c23059d28f7b55e65f3cb7d397f93b3d3f0ced5",
+  "head_sha": "f797b6ef03586571c8f7c410689561299d26f71d",
+  "tasks_hash": "sha256:dd68601f856fd1242c942bba2a96185c7f039173a3a4ee3bdaa483d65e562a30",
+  "spec_hash": "sha256:c807efa24f3c11367b1d2e5d7c7f65aa9a1b5f4a9eb6894662900b8def821300",
+  "diff_hash": "sha256:ff3a6b46c802f8f434e3dcc07ce2bd691b5970468ce96a2c50d1feec3b2fee20",
+  "report_hash": "sha256:79a3cc5c5454cb308c4dc3f90e58320038463d45b18784971157653c189486ed"
+}

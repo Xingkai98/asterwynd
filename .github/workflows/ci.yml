@@ -38,6 +38,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --locked
 
+      # workflow 流程图的跨端布局 / pinch+pan 只能在真浏览器里验收（grill Q7）。
+      # 装 chromium 后 tests/web_tests/test_workflow_graph_browser.py 会真跑（此前与
+      # test_browser.py 一样因为没有浏览器而恒 skip）。node 单测那条路径不依赖它。
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
+
       - name: Run tests
         run: uv run pytest -q
 
@@ -54,6 +60,15 @@ jobs:
             BASE_REF="$GITHUB_SHA"
           fi
           uv run python scripts/check_openspec_artifacts.py --base-ref "$BASE_REF" --require-base
+
+      - name: Check archived change manifests
+        run: |
+          # #232 B 盲区：归档 change 也要脱离校验——归档后 tasks.md 仍会被勾选，
+          # 故归档语境的 tasks_hash 降级（可见汇总见 stderr），其余 hash/字段仍校验。
+          # --skip-protected-paths / --skip-backlog：第一步已带 base-ref 覆盖，这里
+          # 避免默认 --base-ref master 在 CI 上解析失败打出无意义 WARNING 与重复检查。
+          uv run python scripts/check_openspec_artifacts.py \
+            --check-archived --skip-protected-paths --skip-backlog
 
   benchmark-gate:
     name: benchmark-gate

@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-215-node-failure-evidence",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-subagent-215-r6",
+  "base_sha": "1a7df92cbd90ab442342a8481d59857b8c4ebf54",
+  "head_sha": "c5437b9caecdb3686a88c248ca57f0abf051af04",
+  "tasks_hash": "sha256:f194bbed39d05291a0eb7924775babb3d14f963d4478c1a19f9913b0fae12c75",
+  "spec_hash": "sha256:53c70c88048db4601803e7fc12aa5f5f8f366612775d1fdc059cd5c16684f39c",
+  "diff_hash": "sha256:a872869cc64b5436033176814ab6c853d9c2e53d42106876d9e3d3fb612f769f",
+  "report_hash": "sha256:6fd9d3e7d666491c6ff3e39533169b43f832a2363cbb7dfbb6783e0fb2863bc4"
+}

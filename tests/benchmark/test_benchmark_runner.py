@@ -643,3 +643,83 @@ def _git_out(repo: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+@pytest.mark.asyncio
+async def test_docker_task_passes_partial_to_task_result(repo, tmp_path, monkeypatch):
+    """SWE-bench partial-success fields survive from Verdict into TaskResult."""
+    base_commit = _git_out(repo, "rev-parse", "HEAD")
+    task_dir = _task_dir(
+        tmp_path,
+        base_commit=base_commit,
+        test_command="pytest",
+        task_id="swebench-psf__requests-1142",
+        repo_name="psf/requests",
+        task_family="swebench",
+        execution_environment="docker",
+        external_repo=str(repo),
+        instance_id="psf__requests-1142",
+        dataset_name="princeton-nlp/SWE-bench_Verified",
+        dataset_split="test",
+    )
+    runner = BenchmarkRunner(
+        agent_runner=CompleteEditRunner(),
+        source_repo=repo,
+        runs_dir=tmp_path / "runs",
+    )
+    monkeypatch.setattr(
+        runner,
+        "_get_docker_preflight_result",
+        lambda: DockerPreflightResult(available=True, reason="ok", detail="docker info succeeded"),
+    )
+
+    class _PartialVerifier:
+        def verify(self, loaded, task_output, patch_text, log=None):
+            return Verdict(
+                status="passed",
+                reason=None,
+                detail="ok",
+                resolved=True,
+                partial={"f2p_rate": 0.8, "p2p_rate": 0.5, "reward": 0.3},
+            )
+
+    monkeypatch.setattr(
+        "benchmarks.runner.get_verifier",
+        lambda task_family, **kwargs: _PartialVerifier(),
+    )
+
+    result = await runner.run_task(
+        task_dir, run_dir=tmp_path / "runs" / "run-partial"
+    )
+    assert result.status == "passed"
+    assert result.partial == {"f2p_rate": 0.8, "p2p_rate": 0.5, "reward": 0.3}
+
+
+@pytest.mark.asyncio
+async def test_run_all_records_swebench_versions(repo, tmp_path, monkeypatch):
+    """SWE-bench dataset/package versions land in RunMetadata (D11)."""
+    base_commit = _git_out(repo, "rev-parse", "HEAD")
+    task_dir = _task_dir(
+        tmp_path,
+        base_commit=base_commit,
+        test_command="grep -q 'Version 2' app.py",
+    )
+    monkeypatch.setattr(
+        "benchmarks.runner.swebench_versions",
+        lambda loaded_tasks: ("v1.0", "1.0.10"),
+    )
+    runner = BenchmarkRunner(
+        agent_runner=AssertHiddenAndEditRunner(),
+        source_repo=repo,
+        runs_dir=tmp_path / "runs",
+    )
+
+    metadata = await runner.run_all(tmp_path / "tasks", run_id="run-swebench")
+    assert metadata.swebench_dataset_version == "v1.0"
+    assert metadata.swebench_package_version == "1.0.10"
+
+    run = json.loads(
+        (tmp_path / "runs" / "run-swebench" / "run.json").read_text()
+    )
+    assert run["swebench_dataset_version"] == "v1.0"
+    assert run["swebench_package_version"] == "1.0.10"

@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "evaluation-verified-subset",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-evaluation-verified-subset-round2-2026-08-18",
+  "base_sha": "7d47ce4157e0f7446ded5f525146be113531ab18",
+  "head_sha": "e135014337d486655140cb503d6fca520b35041f",
+  "tasks_hash": "sha256:f2d62bb8759b32e5f9d3ed2b942941abb596776100df103e6747a021c5117beb",
+  "spec_hash": "sha256:544ca9a050e213a6fbe03b6d166f156d509660405cdbdb04e537451864803709",
+  "diff_hash": "sha256:ba66d6aa9b46cbdbe4ab7e44fa73169023f83a99513595706a1fae531b720489",
+  "report_hash": "sha256:e3ecc9decfed196d771f12311b068ae2bae2cb52ab9497dd38263ff728910f08"
+}

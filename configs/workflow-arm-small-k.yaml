@@ -1,0 +1,12 @@
+# 对照臂 A「小 k 高质量」（change benchmark-workflow-replay，D5 / grill Q5 通道 X）。
+#
+# 同一批 benchmark 任务、同一份 LLM 配置，只差编排资源配额：
+#
+#   uv run asterwynd benchmark benchmarks/tasks --agent asterwynd \
+#       --config configs/workflow-arm-small-k.yaml --runs-dir /tmp/arm-small-k
+#
+# 语义：同时最多 3 个 subagent 在执行（质量优先，避免并发争抢），
+# 总共允许 60 次 spawn。与 workflow-arm-large-n.yaml 构成「小 k vs 大 N」对照。
+subagents:
+  max_active: 3
+  max_spawns: 60

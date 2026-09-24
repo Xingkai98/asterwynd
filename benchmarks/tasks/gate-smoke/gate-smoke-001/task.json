@@ -5,6 +5,7 @@
   "problem_statement_file": "issue.md",
   "test_command": "python3 -c \"import sys; sys.exit(0)\"",
   "category": "execution",
-  "difficulty": "trivial",
-  "timeout_seconds": 30
+  "difficulty": "easy",
+  "timeout_seconds": 30,
+  "track": "A"
 }

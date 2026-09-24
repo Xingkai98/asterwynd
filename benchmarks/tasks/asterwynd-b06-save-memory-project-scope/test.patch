@@ -1,0 +1,61 @@
+diff --git a/tests/agent/tools/test_memory_tools.py b/tests/agent/tools/test_memory_tools.py
+index f9c9b96..2778cfa 100644
+--- a/tests/agent/tools/test_memory_tools.py
++++ b/tests/agent/tools/test_memory_tools.py
+@@ -3,6 +3,7 @@ import pytest
+ from pathlib import Path
+ 
+ from agent.memory.dedup import Judgment
++from agent.context.sources import MemoryIndexSource
+ from agent.memory.persistent import PersistentMemory
+ from agent.tool_permissions import ToolCapability, ToolRiskLevel
+ from agent.tools.builtin.memory import SaveMemoryTool, RecallMemoryTool, SearchMemoryTool
+@@ -272,3 +273,48 @@ class TestSaveMemoryToolDedup:
+         )
+         assert "saved" in result
+         assert mem._load_entry_by_name("deadline").importance == 5
++
++
++class TestSaveMemoryToolProjectScope:
++    """LT-MEM-1：SaveMemory --project + MemoryIndexSource 按 project 过滤（双端闭合）。"""
++
++    @pytest.fixture
++    def fake_base(self, tmp_path, monkeypatch):
++        fake_base = tmp_path / "fake-claude" / "projects"
++        monkeypatch.setattr("agent.memory.persistent._MEMORY_DIR_BASE", fake_base)
++        return fake_base
++
++    @pytest.mark.asyncio
++    async def test_write_a_invisible_from_b_reuse_from_a(self, tmp_path, fake_base):
++        from types import SimpleNamespace
++
++        proj_a = tmp_path / "projA"
++        proj_b = tmp_path / "projB"
++        proj_a.mkdir()
++        proj_b.mkdir()
++        mem_a = PersistentMemory(proj_a)
++        mem_b = PersistentMemory(proj_b)
++        assert mem_a.project_hash != mem_b.project_hash
++
++        # 写 A 项目记忆（SaveMemory 的 project 参数显式指向 A）
++        tool = SaveMemoryTool(memory=mem_a)
++        result = await tool.execute(
++            type="project",
++            name="a-secret",
++            description="A key",
++            body="A secret for project A",
++            project=mem_a.project_hash,
++        )
++        assert "saved" in result
++
++        # B 项目注入源不可见
++        src_b = MemoryIndexSource(persistent_memory=mem_a, project=mem_b.project_hash)
++        b_text = await src_b.render(SimpleNamespace())
++        assert "a-secret" not in b_text
++        assert "## Project Memory" not in b_text
++
++        # A 项目注入源可见（回 A 复用）
++        src_a = MemoryIndexSource(persistent_memory=mem_a, project=mem_a.project_hash)
++        a_text = await src_a.render(SimpleNamespace())
++        assert "a-secret" in a_text
++        assert "## Project Memory" in a_text

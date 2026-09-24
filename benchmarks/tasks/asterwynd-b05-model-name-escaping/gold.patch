@@ -1,0 +1,29 @@
+diff --git a/benchmarks/adapters.py b/benchmarks/adapters.py
+index 42f830d..fd1634f 100644
+--- a/benchmarks/adapters.py
++++ b/benchmarks/adapters.py
+@@ -64,6 +64,15 @@ class SwebenchAdapter:
+             return f"{self.agent_name}:{self.model}"
+         return self.agent_name
+ 
++    @staticmethod
++    def _report_model_dir(model_name: str) -> str:
++        """SWE-bench harness 目录命名把 '/' 归一化为 '__'。
++
++        报告目录按 model_name_or_path 生成；lookup 路径必须与 harness 命名一致，
++        否则 model 名含 '/' 时报告目录找不到。
++        """
++        return model_name.replace("/", "__")
++
+     def verify(
+         self,
+         loaded: LoadedTask,
+@@ -122,7 +131,7 @@ class SwebenchAdapter:
+             / "logs"
+             / "run_evaluation"
+             / run_id
+-            / model_name
++            / self._report_model_dir(model_name)
+             / (task.instance_id or "")
+             / "report.json"
+         )

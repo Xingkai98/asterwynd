@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-budget-attribution",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-budget-attribution-20260914-r2",
+  "base_sha": "73c4005",
+  "head_sha": "443e1ff",
+  "tasks_hash": "sha256:936ff9e3112a08ac8c02c1e0b1415dbb877a63d5502fce87a51eecb46d756288",
+  "spec_hash": "sha256:5f74dab9861d266729ee8bbd94cedc4c0b97f4d0dde6bc27c340e182d940dc31",
+  "diff_hash": "sha256:27d412e24e014128f65500423dc3520339fe6949376414caac7df9147eb9d9eb",
+  "report_hash": "sha256:ec7ee2ae88db8ffc312e47ed74561ada82b760afb1ddb4bb3a2e0eeaadbb24ee"
+}

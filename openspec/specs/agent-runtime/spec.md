@@ -143,12 +143,91 @@ Agent runtime SHALL 支持在 LLM 生成过程中发布 `assistant_delta` 事件
 
 父 AgentLoop SHALL 通过显式运行时接口创建、启动、查询、等待、取消和检查子 session / 子 run，而不是通过自动消息注入或伪造 tool result 把子结果并入父 messages。
 
+这些接口返回给**模型面**的 run envelope SHALL bounded：`summary` 字段 SHALL 不超过一个**固定**的
+单条内容上限，SHALL NOT 默认返回子 agent 的全文输出。全文 SHALL 通过 envelope 里的显式引用
+（`result_ref` / `summary_ref`）按需读取。
+
+该上限 SHALL **独立于 run 预算**（`max_tokens` 等）：`max_tokens` 由发起调用的模型自行设定且无上界
+校验，若上限随其浮动，则「被检视的子 agent」可通过调大自身预算来放大父 agent 收到的内容——
+上限 SHALL NOT 具有这一性质。该上限 SHALL 与消息 `content` 的单条上限同值（两者都是子 agent
+撰写的原始文本，SHALL NOT 有两套口径）。
+
+bounded 化 SHALL 只发生在**出口投影**：run 记录本身 SHALL 保留全文（下游聚合依赖它）。
+调度器等内部消费方 SHALL 能显式取得全量 summary，SHALL NOT 因出口 bounded 而丢失聚合输入。
+
+截断发生时返回体 SHALL 说明这一点（截断标记 / 可导航的引用），SHALL NOT 出现「声称全文在某个引用、
+而该引用不存在」的表述。
+
 #### Scenario: 父 run 查询子 run 结果
 
 - **GIVEN** 一个已存在的子 session 和其最近一次子 run
 - **WHEN** 父 agent 调用 `GetSubagentRun`
 - **THEN** 系统 SHALL 返回结构化结果
 - **AND** SHALL NOT 直接修改父 run 的 messages transcript
+
+#### Scenario: 超长子 agent 输出在模型面被 bounded
+
+- **GIVEN** 子 run 输出了远超单条上限的文本（例如 30,000 字）
+- **WHEN** 父 agent 调用 `GetSubagentRun`
+- **THEN** 返回的 `summary` SHALL 不超过固定的单条内容上限
+- **AND** 返回体 SHALL 提供可取回全文的引用
+- **AND** run 记录本身的 `summary` SHALL 仍为全文（受影响的是出口投影，不是记录）
+
+#### Scenario: 上限不随 run 预算放大
+
+- **GIVEN** 同一个子 run 的输出长度固定且远超单条上限
+- **AND** 该 run 的预算配置（`max_tokens`）取一个很大的值
+- **WHEN** 父 agent 调用 `GetSubagentRun`
+- **THEN** 返回的 `summary` SHALL 仍不超过该固定上限
+- **AND** 结果 SHALL NOT 随 `max_tokens` 的取值变化
+
+#### Scenario: 截断标记不指向不存在的引用
+
+- **GIVEN** 一个没有 workflow 身份、因而全文未落盘的子 run，其输出超过摘要预算
+- **WHEN** 该 run 的结果经模型面出口返回
+- **THEN** 截断相关的文本 SHALL NOT 声称全文可从某个引用取得
+- **AND** SHALL 仍然如实表达「内容已被截断」
+
+#### Scenario: 调度器内部消费仍取全量
+
+- **GIVEN** 一个 workflow 节点由子 run 的结果驱动，其输出超过摘要预算
+- **WHEN** 调度器读取该 run 的结果用于下游聚合
+- **THEN** 调度器 SHALL 取得**全量** summary
+- **AND** SHALL NOT 使用被出口投影截断后的版本
+
+### Requirement: 编排结果中的 bus 快照有界
+
+编排 pattern（`RunPattern`）返回体中的 `bus` 快照（`MessageBus.snapshot_payload()`）SHALL bounded：每条消息的 `summary` SHALL 不超过与其它模型面出口同值的固定单条上限，返回的消息条数 SHALL 有固定上限。
+
+该快照是一次编排里所有 worker 发布消息折进父上下文的注入路径，故条数上限 SHALL 存在——否则「一次调用注入多少父上下文」由被检视的子 agent 决定。
+
+超出条数上限时，快照 SHALL **显式报告**被省略的条数（例如 `messages_omitted` / `messages_total`），SHALL NOT 静默丢弃。
+
+该界 SHALL 施加在 `snapshot_payload()` **本身**（唯一模型面调用点是 `RunPattern` 的 `patterns.py:458`），SHALL NOT 只在某个调用点加固：调度器的 `_envelope()` 同样调用该方法，只加固一处等于留一个同类漏口。
+
+本 Requirement 只约束 `bus` 快照这一项。`RunPattern` 返回体中的 `workers[]` 与顶层 `summary` 的条数维**不在**本 Requirement 范围内（另案处理）——读者 SHALL NOT 把本 Requirement 读成「`RunPattern` 返回体已整体 bounded」。
+
+#### Scenario: RunPattern 返回体的 bus 快照有界
+
+- **GIVEN** 一次 `RunPattern` 编排里，100 个 worker 各发布了一条 1600 字的 bus 消息
+- **WHEN** 父 agent 收到 `RunPattern` 的返回体
+- **THEN** 返回体 `bus.messages` 的条数 SHALL 不超过固定上限
+- **AND** 其中每条 `summary` SHALL 不超过固定的单条内容上限
+- **AND** 返回体 SHALL 显式报告被省略的消息条数
+
+#### Scenario: bus 快照的界施加在方法本身
+
+- **GIVEN** `snapshot_payload()` 是 `RunPattern` 与调度器 `_envelope()` 的共同来源
+- **WHEN** 直接调用 `MessageBus.snapshot_payload()`
+- **THEN** 返回体的条数与单条上限 SHALL 已生效（不依赖任何调用点额外处理）
+- **AND** SHALL 显式报告被省略的条数
+
+#### Scenario: bus 快照的界不随调用方参数放大
+
+- **GIVEN** 同一个已满载的 bus
+- **WHEN** 父 agent 通过不同的调用参数（含超大的发布侧 `max_tokens`）取得快照
+- **THEN** 快照的条数与单条上限 SHALL 保持不变
+- **AND** 结果 SHALL NOT 随调用方传入的数值变化
 
 ### Requirement: 子 session mode 是 session 级状态
 

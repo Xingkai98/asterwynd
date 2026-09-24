@@ -4,6 +4,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+# G1/D1: 任务级双标签。scenario 为代码改动类型 5 枚举（主组织轴），difficulty 归一化 3 档。
+SCENARIOS = {"bug-fix", "feature-dev", "refactor", "debug", "integration"}
+DIFFICULTIES = {"easy", "medium", "hard"}
+# D3/OQ-1: 任务集三来源 track，单一事实源写在 task.json。
+TRACKS = {"A", "B", "verified"}
+
 
 @dataclass(frozen=True)
 class TaskSpec:
@@ -18,6 +24,8 @@ class TaskSpec:
     hints_text: str | None = None
     category: str | None = None
     difficulty: str | None = None
+    scenario: str | None = None
+    track: str | None = None
     task_family: str = "local"
     execution_environment: str = "local"
     external_repo: str | None = None  # e.g. "https://github.com/psf/requests.git"
@@ -50,6 +58,8 @@ class TaskSpec:
             hints_text=data.get("hints_text"),
             category=data.get("category"),
             difficulty=data.get("difficulty"),
+            scenario=data.get("scenario"),
+            track=data.get("track"),
             task_family=data.get("task_family", "local"),
             execution_environment=data.get("execution_environment", "local"),
             external_repo=data.get("external_repo"),
@@ -70,15 +80,28 @@ class TaskSpec:
             raise ValueError("execution_environment must be 'local' or 'docker'")
         if not self.task_family:
             raise ValueError("task_family must not be empty")
+        if self.scenario is not None and self.scenario not in SCENARIOS:
+            raise ValueError(
+                "scenario must be one of bug-fix/feature-dev/refactor/debug/integration"
+            )
+        if self.difficulty is not None and self.difficulty not in DIFFICULTIES:
+            raise ValueError("difficulty must be one of easy/medium/hard")
+        if self.track is not None and self.track not in TRACKS:
+            raise ValueError("track must be one of A/B/verified")
         if self.task_family == "swebench":
-            if self.execution_environment != "docker":
-                raise ValueError("swebench tasks must use execution_environment='docker'")
-            if not self.instance_id:
-                raise ValueError("swebench docker tasks require instance_id")
-            if not self.dataset_name:
-                raise ValueError("swebench docker tasks require dataset_name")
-            if not self.dataset_split:
-                raise ValueError("swebench docker tasks require dataset_split")
+            # L1/L2 分级（D6）：docker 走 SwebenchAdapter + instance 元数据；
+            # local 走本地 test_command 验证（免 Docker），不需要 instance 元数据。
+            if self.execution_environment == "docker":
+                if not self.instance_id:
+                    raise ValueError("swebench docker tasks require instance_id")
+                if not self.dataset_name:
+                    raise ValueError("swebench docker tasks require dataset_name")
+                if not self.dataset_split:
+                    raise ValueError("swebench docker tasks require dataset_split")
+            elif self.execution_environment != "local":
+                raise ValueError(
+                    "swebench execution_environment must be 'local' or 'docker'"
+                )
 
 
 @dataclass(frozen=True)

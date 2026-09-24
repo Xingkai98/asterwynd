@@ -1,0 +1,21 @@
+{
+  "id": "swebench-pylint-dev__pylint-4604",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "1e55ae64624d28c5fe8b63ad7979880ee2e6ef3f",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest tests/checkers/unittest_variables.py::TestVariablesChecker::test_bitbucket_issue_78 tests/checkers/unittest_variables.py::TestVariablesChecker::test_no_name_in_module_skipped tests/checkers/unittest_variables.py::TestVariablesChecker::test_all_elements_without_parent tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_ignored tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_custom_modules tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_modname_not_ignored tests/checkers/unittest_variables.py::TestVariablesChecker::test_redefined_builtin_in_function tests/checkers/unittest_variables.py::TestVariablesChecker::test_unassigned_global tests/checkers/unittest_variables.py::TestVariablesChecker::test_listcomp_in_decorator tests/checkers/unittest_variables.py::TestVariablesChecker::test_listcomp_in_ancestors tests/checkers/unittest_variables.py::TestVariablesChecker::test_return_type_annotation tests/checkers/unittest_variables.py::TestVariablesChecker::test_attribute_in_type_comment tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_custom_callback_string tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_redefined_builtin_modname_not_ignored tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_redefined_builtin_in_function tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_import_as_underscore tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_lambda_in_classdef tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_nested_lambda tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_ignored_argument_names_no_message tests/checkers/unittest_variables.py::TestVariablesCheckerWithTearDown::test_ignored_argument_names_starred_args tests/checkers/unittest_variables.py::TestMissingSubmodule::test_package_all --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "medium",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://github.com/pylint-dev/pylint.git",
+  "version": "2.9",
+  "instance_id": "pylint-dev__pylint-4604",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

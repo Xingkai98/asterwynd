@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "enhance-workflow-graph-ux",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-enhance-workflow-graph-ux-20260918-r2",
+  "base_sha": "0272bcb32eed2ea8a5cc0d8ae2252f8b9580f89d",
+  "head_sha": "52f1a7bdcb4736fbd1f7e38fc5e3c9b9211eeb24",
+  "tasks_hash": "sha256:0cb3257b4aa4ea9424cfd9a4d10dd789d12c1023bb2da1da9b18e5ecbee4ae52",
+  "spec_hash": "sha256:8c5449b38d07181a601b9a004bc2dea1319ddd6171bbe85d7f57aa7bfdf7a674",
+  "diff_hash": "sha256:6783e219c72f5713ebc0e845e4d89d33e4d53b136262bab0e8c544ed0ca77efb",
+  "report_hash": "sha256:55f92d55acde6f8c8e6bfae23dd1a37b9c26714a285c19d4cf81d3818ac1be2f"
+}

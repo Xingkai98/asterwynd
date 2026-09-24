@@ -1,0 +1,21 @@
+{
+  "id": "swebench-pytest-dev__pytest-5631",
+  "repo": "pytest-dev/pytest",
+  "base_commit": "cb828ebe70b4fa35cd5f9a7ee024272237eab351",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest testing/python/integration.py::TestMockDecoration::test_mock_sentinel_check_against_numpy_like --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "medium",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://gitee.com/mirrors/pytest.git",
+  "version": "5.0",
+  "instance_id": "pytest-dev__pytest-5631",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Asterwynd · Asterwynd Web UI</title>
-<link rel="stylesheet" href="/static/style.css?v=15">
+<link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body>
 <div id="app">
@@ -14,9 +14,13 @@
       <span class="brand-fallback">Asterwynd</span>
     </div>
     <nav id="tabs">
-      <button class="tab active" data-tab="chat">Chat</button>
+      <button class="tab active" data-tab="hub" id="hub-tab">Sessions</button>
+      <button class="tab" data-tab="chat" id="chat-tab">Chat</button>
+      <!-- 用户态能力：不放 debug 门禁（D2） -->
+      <button class="tab" data-tab="workflow" id="workflow-tab" hidden>Workflow</button>
       <button class="tab" data-tab="debug" id="debug-tab" style="display:none">Debug</button>
     </nav>
+    <div id="session-tabs" class="session-tabs" hidden></div>
     <div id="identity-bar" aria-label="runtime identifiers">
       <span>Session <code id="session-id">pending</code></span>
       <span>Run <code id="run-id">none</code></span>
@@ -35,31 +39,122 @@
   </header>
 
   <main>
-    <!-- Chat View -->
-    <section id="chat-view" class="view active">
-      <div id="plan-document-panel" class="plan-document-panel" hidden>
-        <div class="plan-document-header">Plan Document</div>
-        <div id="plan-document-title" class="plan-document-title"></div>
-        <div id="plan-document-body" class="markdown-body"></div>
-      </div>
-      <div id="planning-panel" class="planning-panel" hidden>
-        <div class="planning-panel-header">Plan</div>
-        <ol id="planning-items" class="planning-items"></ol>
-      </div>
-      <div id="messages"></div>
-      <div id="input-area">
-        <div id="input-shell">
-          <div id="slash-suggestions" role="listbox" aria-label="Slash commands" hidden></div>
-          <div id="image-previews"></div>
-          <div id="input-row">
-            <textarea id="user-input" placeholder="输入消息..." rows="2" autocomplete="off"></textarea>
-            <input type="file" id="image-file-input" accept="image/*" multiple hidden>
-            <button id="upload-btn" type="button" title="上传图片">+</button>
-            <button id="send-btn">发送</button>
+    <!-- Hub View -->
+    <section id="hub-view" class="view active">
+      <div class="hub-layout">
+        <div class="hub-sidebar">
+          <div class="hub-section">
+            <div class="hub-section-header"><span>Workspace</span></div>
+            <div class="hub-workspace-row">
+              <select id="hub-workspace-select" aria-label="Workspace"></select>
+              <button id="hub-workspace-add" type="button" title="新增 workspace 路径" aria-label="新增 workspace 路径">+</button>
+            </div>
+            <form id="hub-workspace-form" class="hub-workspace-form" hidden>
+              <input id="hub-workspace-input" type="text" spellcheck="false" autocomplete="off"
+                     placeholder="绝对路径，如 /Users/me/code/foo" aria-label="新 workspace 路径" />
+              <div class="hub-workspace-form-actions">
+                <button id="hub-workspace-submit" type="submit">添加</button>
+                <button id="hub-workspace-cancel" type="button">取消</button>
+              </div>
+              <div id="hub-workspace-error" class="hub-workspace-error" hidden></div>
+            </form>
+          </div>
+          <div class="hub-section">
+            <div class="hub-section-header"><span>新建会话</span></div>
+            <div class="hub-new-form">
+              <select id="hub-new-mode" aria-label="Mode">
+                <option value="build">build</option>
+                <option value="read_only">read_only</option>
+                <option value="plan">plan</option>
+                <option value="bypass">bypass</option>
+              </select>
+              <select id="hub-new-workspace" aria-label="Workspace"></select>
+              <button id="hub-new-btn" type="button">新建</button>
+            </div>
+          </div>
+        </div>
+        <div class="hub-list">
+          <div class="hub-section-header">
+            <span>已保存会话</span>
+            <span id="hub-list-count" class="hub-list-count"></span>
+          </div>
+          <div id="hub-session-list" class="hub-session-list">
+            <div class="hub-empty">加载中…</div>
           </div>
         </div>
       </div>
     </section>
+
+    <!-- Chat View -->
+    <section id="chat-view" class="view">
+      <div id="plan-document-panel" class="plan-document-panel" hidden>
+        <div class="plan-document-header">
+          <button id="plan-document-toggle" class="planning-toggle" type="button" aria-expanded="true" aria-controls="plan-document-body" aria-label="Collapse panel" title="Collapse">&#x25BC;</button>
+          <span class="plan-document-header-title">Plan Document</span>
+        </div>
+        <div id="plan-document-title" class="plan-document-title"></div>
+        <div id="plan-document-body" class="markdown-body"></div>
+      </div>
+      <div id="planning-panel" class="planning-panel" hidden>
+        <div class="planning-panel-header">
+          <button id="planning-toggle" class="planning-toggle" type="button" aria-expanded="true" aria-controls="planning-items" aria-label="Collapse panel" title="Collapse">&#x25BC;</button>
+          <span id="planning-title" class="planning-title">Plan</span>
+          <span id="planning-count" class="planning-count" hidden></span>
+        </div>
+        <ol id="planning-items" class="planning-items"></ol>
+      </div>
+      <div id="chat-panes"></div>
+    </section>
+
+    <!-- Workflow View（运行态流程图；用户态，不受 debug 门禁约束） -->
+    <section id="workflow-view" class="view">
+      <div id="workflow-panel" class="workflow-panel">
+        <div id="workflow-tabs" class="workflow-tabs" hidden></div>
+        <div id="workflow-actions" class="workflow-actions" hidden>
+          <span id="workflow-freshness" class="workflow-freshness"></span>
+          <button type="button" id="workflow-stop" class="workflow-stop" hidden>停止</button>
+        </div>
+        <div id="workflow-summary" class="workflow-summary"></div>
+        <!-- D1 图例条：桌面默认展开、手机默认折叠（同一 DOM，720 断点切 class）。 -->
+        <div id="workflow-legend" class="legend" hidden>
+          <button type="button" class="legend-head" id="legend-toggle"
+                  aria-expanded="false" aria-controls="legend-body">
+            <span>图例</span><span class="legend-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="legend-body" id="legend-body"></div>
+        </div>
+        <!-- G14：超限时图**仍然画**，告警条叠在画布上方。 -->
+        <div id="workflow-notice" class="workflow-notice" hidden></div>
+        <div id="workflow-canvas" class="workflow-canvas">
+          <div class="workflow-empty">模型启动 workflow 后自动显示流程图。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 节点详情抽屉（D4：桌面右侧 / 手机底部，同一 DOM 切 class） -->
+    <div id="workflow-scrim" class="workflow-scrim" hidden></div>
+    <aside id="workflow-drawer" class="drawer" role="dialog" aria-modal="true"
+           aria-label="节点详情" hidden>
+      <div class="drawer-grabber" aria-hidden="true"></div>
+      <button type="button" class="drawer-close" id="drawer-close" aria-label="关闭">×</button>
+      <div class="drawer-head">
+        <div class="drawer-title">
+          <span id="drawer-badge" class="drawer-badge" aria-hidden="true"></span>
+          <strong id="drawer-id"></strong>
+          <span class="kind-badge" id="drawer-kind"></span>
+        </div>
+        <div id="drawer-status" class="drawer-status"></div>
+      </div>
+      <div class="drawer-tabs" role="tablist">
+        <button type="button" class="drawer-tab active" data-tab="task"
+                role="tab" aria-selected="true">任务</button>
+        <button type="button" class="drawer-tab" data-tab="output"
+                role="tab" aria-selected="false">产出</button>
+        <button type="button" class="drawer-tab" data-tab="convo"
+                role="tab" aria-selected="false">对话</button>
+      </div>
+      <div class="drawer-body" id="drawer-body"></div>
+    </aside>
 
     <!-- Debug View -->
     <section id="debug-view" class="view">
@@ -76,7 +171,10 @@
 </div>
 
 <script src="/static/markdown.js?v=6"></script>
-<script src="/static/chat.js?v=18"></script>
+<script src="/static/workflow_graph.js?v=3"></script>
+<script src="/static/workflow_transcript.js?v=3"></script>
+<script src="/static/workflow.js?v=3"></script>
+<script src="/static/chat.js?v=24"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

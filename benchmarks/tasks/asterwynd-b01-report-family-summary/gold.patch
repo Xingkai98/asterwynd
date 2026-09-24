@@ -1,0 +1,26 @@
+diff --git a/benchmarks/report.py b/benchmarks/report.py
+index feec30e..6829185 100644
+--- a/benchmarks/report.py
++++ b/benchmarks/report.py
+@@ -192,6 +192,21 @@ def _render(
+         )
+     lines.append("")
+ 
++    # ---- Task-family-level aggregation ------------------------------------
++    present_families = {aggregate.task_family for aggregate in aggregates}
++    if present_families:
++        lines.append("## By Task Family")
++        lines.append("")
++        lines.append("| Family | Tasks | Pass@k |")
++        lines.append("|--------|-------|--------|")
++        for family in sorted(present_families):
++            family_aggregates = [a for a in aggregates if a.task_family == family]
++            family_results = [r for a in family_aggregates for r in a.results]
++            rounds = [_is_pass(r) for r in family_results]
++            rate = pass_at_k(sum(rounds), len(rounds))
++            lines.append(f"| {family} | {len(family_aggregates)} | {rate:.2f} |")
++        lines.append("")
++
+     # ---- Task-level table ---------------------------------------------------
+     lines.append("## By Task")
+     lines.append("")

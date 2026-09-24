@@ -11,29 +11,14 @@ from agent.workflow.state_machine import (
     CROSS_PHASE_FORWARD,
     WITHIN_PHASE_ADJACENT,
     StateMachineError,
-    apply_transition,
     compute_next_hints,
-    create_transition,
     get_legal_targets,
     get_recommended_role,
-    init_handoff_json,
     validate_transition,
     _is_gate,
 )
 
 _ACTIVE_PHASES = ("wayfinding", "planning", "building", "closing")
-
-
-class TestValidatePhase:
-    def test_valid_phases(self):
-        from agent.workflow.state_machine import _validate_phase
-        for p in ALL_PHASES:
-            assert _validate_phase(p) == p
-
-    def test_invalid_phase_raises(self):
-        from agent.workflow.state_machine import _validate_phase
-        with pytest.raises(StateMachineError, match="invalid phase"):
-            _validate_phase("nonexistent")
 
 
 class TestIsGate:
@@ -184,41 +169,6 @@ class TestGetLegalTargets:
         assert any(t.phase == "blocked" for t in targets)
 
 
-class TestApplyTransition:
-    def test_sets_last_gate_when_entering_gate(self):
-        data = init_handoff_json("test-change")
-        t = create_transition(
-            from_state=StateSnapshot(phase="planning", sub_state="reviewing_artifacts"),
-            to_state=StateSnapshot(phase="planning", sub_state="ready_for_review"),
-            trigger="auto", actor_type="agent", actor_id="test",
-        )
-        result = apply_transition(data, t)
-        assert result["last_gate"] is not None
-        assert result["last_gate"]["phase"] == "planning"
-
-    def test_clears_last_gate_when_leaving_gate(self):
-        data = init_handoff_json("test-change")
-        data["state"] = {"phase": "planning", "sub_state": "ready_for_review"}
-        data["last_gate"] = {"phase": "planning", "sub_state": "ready_for_review", "awaiting": "human_review"}
-        t = create_transition(
-            from_state=StateSnapshot(phase="planning", sub_state="ready_for_review"),
-            to_state=StateSnapshot(phase="building", sub_state="writing_tests"),
-            trigger="human_review", actor_type="human", actor_id="human-1",
-        )
-        result = apply_transition(data, t)
-        assert result["last_gate"] is None
-
-    def test_rejects_invalid_transition(self):
-        data = init_handoff_json("test-change")
-        t = create_transition(
-            from_state=StateSnapshot(phase="planning", sub_state="exploring"),
-            to_state=StateSnapshot(phase="building", sub_state="writing_tests"),
-            trigger="auto", actor_type="agent", actor_id="test",
-        )
-        with pytest.raises(StateMachineError, match="cross-phase"):
-            apply_transition(data, t)
-
-
 class TestHelpers:
     def test_get_recommended_role(self):
         assert get_recommended_role(StateSnapshot(phase="wayfinding", sub_state="charting_map")) == "wayfinder"
@@ -234,19 +184,6 @@ class TestHelpers:
         hints = compute_next_hints(StateSnapshot(phase="planning", sub_state="ready_for_review"))
         assert hints.recommended_agent == "planner"
         assert len(hints.priority_hints) >= 1
-
-
-class TestInitHandoffJson:
-    def test_default_output(self):
-        data = init_handoff_json("test-change")
-        assert data["change_id"] == "test-change"
-        assert data["state"]["phase"] == "planning"
-        assert data["state"]["sub_state"] == "exploring"
-
-    def test_routing_has_active_phases(self):
-        data = init_handoff_json("test-change")
-        for p in _ACTIVE_PHASES:
-            assert p in data["routing"]
 
 
 class TestCrossoverCoverage:

@@ -19,7 +19,7 @@ benchmark 需要回答：
 
 当前实现已有两条互补路径：
 
-- `benchmarks/`：项目内置 runner，覆盖本仓库 34 个本地任务和 `swebench-*` 外部任务。
+- `benchmarks/`：项目内置 runner，覆盖本仓库 27 个本地任务（A 轨回归基线 + B 轨当前演进）和 `swebench-*` Verified 精选子集（目标 50）。
 - `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用 SWE-bench Verified / mini 实例对比 Asterwynd、Aider、OpenCode 等 agent。
 
 ## 2. Industry References
@@ -73,7 +73,7 @@ Useful concepts:
 
 **本地 runner（`benchmarks/`）**
 
-- 34 local Asterwynd tasks and SWE-bench-style external task fixtures.
+- 27 local Asterwynd tasks (track A regression baseline + track B current-evolution) and a curated SWE-bench Verified subset (10 fixtures, target 50).
 - Each task starts from a `base_commit`.
 - Each task has an issue-style problem statement.
 - Each task has a validation command.

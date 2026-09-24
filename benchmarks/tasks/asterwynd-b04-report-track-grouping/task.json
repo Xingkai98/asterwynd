@@ -1,0 +1,15 @@
+{
+  "id": "asterwynd-b04-report-track-grouping",
+  "repo": "local/asterwynd",
+  "base_commit": "597d12172f541bf2f588fb4e96b9c512d97e2498",
+  "problem_statement_file": "issue.md",
+  "test_command": "pytest -q tests/benchmark/test_report.py",
+  "category": "benchmark",
+  "difficulty": "medium",
+  "scenario": "integration",
+  "track": "B",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "hints_text": "数据链 = 结果数据模型（TaskResult）加 track 字段 + 执行器 4 处 TaskResult 构造点填 track + 聚合层 _infer_track 兜底（swebench-/asterwynd-b/其它）+ 渲染层两套输出（markdown _render 与 HTML render_html）新增 By Track 块。参照既有 task_family 的推断与分族块。"
+}

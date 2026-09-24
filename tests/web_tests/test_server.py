@@ -1,6 +1,7 @@
 # tests/web/test_server.py
 """Integration tests for FastAPI server (HTTP + WebSocket) with fake LLM."""
 import os
+import re
 import base64
 import json
 import subprocess
@@ -12,8 +13,9 @@ from fastapi.testclient import TestClient
 
 from agent.llm import LLMResponse, ToolCallDelta
 from agent.config import AsterwyndConfig, AgentConfig, SkillsConfig
-from agent.message import extract_text
+from agent.message import Message, extract_text
 from agent.run_config import AgentMode
+from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 from agent.tools.base import Tool, tool_parameters
 from web.server import create_app
 from web.debug_hook import debug_enabled
@@ -43,8 +45,8 @@ def mock_llm():
 
 
 @pytest.fixture
-def app(mock_llm):
-    return create_app(mock_llm)
+def app(mock_llm, tmp_path):
+    return create_app(mock_llm, workspace_root=tmp_path)
 
 
 @pytest.mark.asyncio
@@ -418,15 +420,54 @@ def test_web_static_assets_include_session_and_run_display():
     assert 'id="mode-value"' in index
     assert 'id="mode-select"' in index
     assert 'id="mode-apply"' in index
-    assert 'id="slash-suggestions"' in index
     assert 'id="plan-document-panel"' in index
-    assert "/static/markdown.js?v=6" in index
-    assert "/static/style.css?v=15" in index
-    assert "/static/chat.js?v=18" in index
-    assert 'id="image-previews"' in index
-    assert 'id="image-file-input"' in index
-    assert 'id="upload-btn"' in index
-    assert "uploadBtn.addEventListener" in script
+    assert 'id="plan-document-toggle"' in index
+    assert 'aria-controls="plan-document-body"' in index
+    assert 'id="planning-toggle"' in index
+    assert 'id="planning-title"' in index
+    assert 'id="planning-count"' in index
+    assert 'aria-expanded="true"' in index
+    assert 'aria-controls="planning-items"' in index
+    # Multi-session hub (issue #117): hub view + dynamic per-tab panes
+    assert 'id="hub-view"' in index
+    assert 'id="session-tabs"' in index
+    assert 'id="hub-new-btn"' in index
+    assert 'id="chat-panes"' in index
+    assert 'id="hub-session-list"' in index
+    # 只断言「资源被引用」，**不钉版本号**：``?v=N`` 是缓存击穿串，每次前端改动
+    # 都要 bump（否则手机/PWA 会一直跑旧 JS）——钉死它等于每次合法 bump 都要改测试，
+    # 而这条断言的意图是「接线没漏」，不是「版本号是几」。
+    assert re.search(r'/static/markdown\.js\?v=\d+', index)
+    assert re.search(r'/static/style\.css\?v=\d+', index)
+    assert re.search(r'/static/chat\.js\?v=\d+', index)
+    # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层
+    # + 节点详情抽屉的对话面板（change enhance-workflow-graph-ux，D4/M3）。
+    assert re.search(r'/static/workflow_graph\.js\?v=\d+', index)
+    assert re.search(r'/static/workflow\.js\?v=\d+', index)
+    assert re.search(r'/static/workflow_transcript\.js\?v=\d+', index)
+    assert 'id="workflow-view"' in index
+    assert 'id="workflow-tab"' in index
+    assert 'id="workflow-canvas"' in index
+    assert 'id="workflow-tabs"' in index
+    assert 'id="workflow-legend"' in index
+    assert 'id="workflow-drawer"' in index
+    assert "switchToWorkflowView" in script
+    assert "workflow_started" in script
+    assert "workflow_snapshot" in script
+    # Workspace 新增路径入口（hub「+ 添加」）
+    assert 'id="hub-workspace-add"' in index
+    assert 'id="hub-workspace-form"' in index
+    assert 'id="hub-workspace-input"' in index
+    assert 'id="hub-workspace-error"' in index
+    assert "hubWorkspaceAdd.addEventListener" in script
+    assert "hubWorkspaceForm.addEventListener('submit'" in script
+    assert "fetch('/api/workspaces', {" in script
+    assert "method: 'POST'" in script
+    assert "workspaceErrorMessage" in script
+    # 新增成功后直接用 POST 响应重建选项（避免并发 renderSessionList 抢写）
+    assert "applyWorkspaceOptions" in script
+    assert ".hub-workspace-form" in styles
+    assert "buildTabPane" in script
     assert "addImageFromFile" in script
     assert "pendingImages" in script
     assert "prepareImageForSend" in script
@@ -435,6 +476,28 @@ def test_web_static_assets_include_session_and_run_display():
     assert "HTTP_UPLOAD_TIMEOUT_MS" in script
     assert "WS_UPLOAD_EVENT_TIMEOUT_MS" in script
     assert "256 * 1024" in script
+    assert "planningToggle.addEventListener" in script
+    assert "setPlanningPanelCollapsed" in script
+    assert "planningTitle.textContent" in script
+    assert "planningCount.hidden" in script
+    assert "wasCollapsed" in script
+    assert "closest('.planning-content')" in script
+    assert "aria-expanded" in script
+    # JS: plan document panel collapse/expand
+    assert "setPlanDocumentCollapsed" in script
+    assert "planDocumentToggle.addEventListener" in script
+    assert "planDocumentPanel.classList.toggle('collapsed')" in script
+    # CSS: new planning panel features
+    assert ".planning-toggle" in styles
+    assert ".planning-title" in styles
+    assert ".planning-count" in styles
+    assert ".planning-panel.collapsed" in styles
+    assert ".planning-content.expanded" in styles
+    assert ".planning-content:hover" in styles
+    # CSS: plan document panel collapse/expand — must hide title AND body,
+    # not just the one-line title (body element is id plan-document-body)
+    assert ".plan-document-panel.collapsed .plan-document-title" in styles
+    assert ".plan-document-panel.collapsed #plan-document-body" in styles
     assert "30000" in script
     assert "45000" in script
     assert "AbortController" in script
@@ -488,12 +551,23 @@ def test_web_static_assets_include_session_and_run_display():
     assert ".plan-document-panel" in styles
     assert ".tool-result-toggle" in styles
     assert ".message.system" in styles
-    assert "#slash-suggestions" in styles
+    assert ".slash-suggestions" in styles
     assert ".slash-suggestion.active" in styles
     assert "#mode-controls" in styles
     assert ".brand-lockup" in styles
     assert ".brand-fallback" in styles
     assert ".markdown-body pre" in styles
+
+    # 补充性源码断言（行为断言见 test_reconnect_pending_interaction_browser.py）：
+    # 卡片幂等守卫、清空注册表、run 占用中文提示。这些只是「改错了会明显不同」的
+    # 廉价护栏，不替代真实浏览器断言。
+    assert "if (approvalCards.has(approvalId)) return;" in script
+    assert "if (questionCards.has(questionId)) return;" in script
+    assert "approvalCards.clear();" in script
+    assert "questionCards.clear();" in script
+    assert "上一条消息仍在执行中" in script
+    assert "未连接，请等待重连后重试" in script
+    assert ".question-hint" in styles
 
     toggle_start = script.index("toggle.addEventListener")
     toggle_end = script.index("controls.appendChild(toggle)", toggle_start)
@@ -814,6 +888,172 @@ def test_websocket_ping_and_reset(app):
             assert reset["type"] == "session_created"
             assert reset["session_id"] != first_session
             assert reset["mode"] == "build"
+
+
+def _make_snapshot(session_id: str = "deadbeef0000", content: str = "hello"):
+    return SessionSnapshot(
+        schema_version=CURRENT_SCHEMA_VERSION,
+        session_id=session_id,
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+        messages=[Message(role="user", content=content)],
+        mode=AgentMode.BUILD,
+        todos=[],
+        active_skills=[],
+        run_id="run-1",
+        iteration=0,
+        user_system_prompt="",
+        runtime_fingerprint={},
+    )
+
+
+def test_websocket_reuses_inmemory_session_with_same_id():
+    """同一 session id 二次连接复用内存 session，不新建（刷新不丢会话的入口）。"""
+    mock_llm = ScriptedLLM()
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+            sid = created["session_id"]
+
+        with client.websocket_connect(f"/ws/{sid}") as ws:
+            resumed = ws.receive_json()
+            assert resumed["type"] == "session_resumed"
+            assert resumed["session_id"] == sid
+            assert resumed["mode"] == "build"
+
+    assert sid in app.state.session_manager._sessions
+
+
+def test_websocket_unknown_session_creates_new():
+    """未知 session id 且无持久化快照 → 新建 session 并发送 session_created。"""
+    mock_llm = ScriptedLLM()
+    app = create_app(mock_llm)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/doesnotexist12") as ws:
+            created = ws.receive_json()
+            assert created["type"] == "session_created"
+            assert created["session_id"] != "doesnotexist12"
+
+
+def test_websocket_resumes_from_store_after_process_restart(tmp_path):
+    """进程重启后按 id 从持久化快照恢复，且原 session 可继续接着用。"""
+    from agent.session import SessionStore
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    store.save(_make_snapshot(content="恢复我"))
+
+    mock_llm = ScriptedLLM([LLMResponse(content="好的，继续")])
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/deadbeef0000") as ws:
+            resumed = ws.receive_json()
+            assert resumed["type"] == "session_resumed"
+            assert resumed["session_id"] == "deadbeef0000"
+            assert resumed["mode"] == "build"
+
+            history = ws.receive_json()
+            assert history["type"] == "session_history"
+            texts = [m["content"] for m in history["data"]["messages"]]
+            assert "恢复我" in texts
+
+            # 原 session 可继续接着用：同一 session id 发起新 run
+            # （resume run 按 AgentLoop 既有语义不重复发 run_started）
+            ws.send_json({"type": "chat", "content": "继续"})
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["type"] == "done":
+                    break
+            assert events[-1]["data"]["content"] == "好的，继续"
+            assert app.state.session_manager.get_session("deadbeef0000") is not None
+
+    # 恢复后首次 run 的 LLM 上下文不得把快照历史重复送入（issue #110 回归：
+    # 快照历史由 AgentLoop 从 resume_snapshot 重建，session.messages 不含预填副本）。
+    llm_messages = mock_llm.last_messages
+    assert llm_messages is not None
+    texts = [extract_text(m.content) for m in llm_messages if m.role == "user"]
+    assert texts.count("恢复我") == 1, f"快照历史重复送入 LLM: {texts}"
+
+
+def test_web_run_persists_session_to_store(tmp_path):
+    """Web run 结束后 session 自动落盘到 SessionStore。"""
+    from agent.session import SessionStore
+
+    mock_llm = ScriptedLLM([LLMResponse(content="hi")])
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            sid = created["session_id"]
+            ws.send_json({"type": "chat", "content": "hi"})
+            while True:
+                event = ws.receive_json()
+                if event["type"] == "done":
+                    break
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    sessions = store.list_sessions()
+    match = next((s for s in sessions if s["session_id"] == sid), None)
+    assert match is not None
+    assert match["messages"] == 2  # user + assistant
+
+
+def test_reset_removes_session_from_store(tmp_path):
+    """reset 后 session 从内存与磁盘快照中一并移除，旧 id 无法被复活。"""
+    from agent.session import SessionStore
+
+    mock_llm = ScriptedLLM([LLMResponse(content="hi")])
+    app = create_app(mock_llm, workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            created = ws.receive_json()
+            sid = created["session_id"]
+            ws.send_json({"type": "chat", "content": "hi"})
+            while True:
+                event = ws.receive_json()
+                if event["type"] == "done":
+                    break
+
+            ws.send_json({"type": "reset"})
+            reset = ws.receive_json()
+            assert reset["type"] == "session_created"
+            assert reset["session_id"] != sid
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    assert store.load(sid) is None, "reset 后磁盘快照应被删除，旧 id 不应被复活"
+
+
+def test_websocket_resume_cli_param_preloads_session(tmp_path):
+    """asterwynd web --resume <id>：首次连 /ws/new 时恢复指定 session。"""
+    from agent.session import SessionStore
+
+    store = SessionStore(str(tmp_path / ".asterwynd" / "sessions"))
+    store.save(_make_snapshot())
+
+    mock_llm = ScriptedLLM()
+    app = create_app(mock_llm, resume="deadbeef0000", workspace_root=tmp_path)
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/new") as ws:
+            resumed = ws.receive_json()
+            assert resumed["type"] == "session_resumed"
+            assert resumed["session_id"] == "deadbeef0000"
+
+
+def test_resume_route_returns_html(app):
+    """GET /resume 是显式恢复入口，返回 Chat 页面 HTML（桌面端与移动端通用）。"""
+    with TestClient(app) as client:
+        resp = client.get("/resume")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
 
 
 def test_websocket_slash_status_does_not_start_agent_run():

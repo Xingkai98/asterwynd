@@ -1,0 +1,14 @@
+# 对照臂 B「大 N 暴力」（change benchmark-workflow-replay，D5 / grill Q5 通道 X）。
+#
+#   uv run asterwynd benchmark benchmarks/tasks --agent asterwynd \
+#       --config configs/workflow-arm-large-n.yaml --runs-dir /tmp/arm-large-n
+#
+# 语义：同时最多 16 个 subagent 在执行（并发拉满），但总共只允许 24 次 spawn。
+#
+# 注意：24 < 2 × 图规模时，图会在第 12 个 run 前后抛
+# ``RuntimeError: subagent spawn budget exceeded``，被调度器的兜底 except 折成节点
+# failed。这是本臂**预期的压力结果**，不是 runner 故障——报告里必须标注，
+# 否则 benchmark 结果看起来像基础设施坏了（grill Q5 取值说明）。
+subagents:
+  max_active: 16
+  max_spawns: 24

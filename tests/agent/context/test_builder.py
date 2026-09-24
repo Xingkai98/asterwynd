@@ -3,6 +3,7 @@
 import pytest
 from agent.context.protocol import BuildContext, ContextSource
 from agent.context.builder import ContextBuilder
+from agent.context.sources import TodoSource
 from agent.run_config import AgentMode
 
 
@@ -159,6 +160,36 @@ class TestContextBuilderTruncation:
         # Rough check: result shouldn't be wildly over budget
         # 100 tokens ≈ 400 chars (chars/4 estimate); allow margin
         assert len(result) < 600
+
+    async def test_todo_source_priority_is_p2(self):
+        """Regression test for issue #107: TodoSource must stay at P2 so it is
+        not trimmed before P4/P5 layers.  Binds the priority data change itself."""
+        assert TodoSource.priority == 2
+
+    async def test_real_todo_survives_after_p4_p5_trimmed(self):
+        """Regression test for issue #107: the real TodoSource (P2) is trimmed
+        only after P4/P5 — under budget pressure Todo survives fully while
+        P4/P5 layers get cut from their tails."""
+        builder = ContextBuilder(total_budget=100)
+        todo_content = "TODO: Task 1 [in_progress], Task 2 [pending]"
+        # P4: Skill listing — should be trimmed before Todo
+        skill_content = "SKILL_LIST " * 50
+        # P5: Planning state — should be trimmed before Todo
+        plan_content = "PLAN_STATE " * 50
+        builder.register(TodoSource(todo_renderer=lambda: todo_content))
+        builder.register(FakeSource(name="SkillIndex", priority=4, content=skill_content,
+                                    budget=200))
+        builder.register(FakeSource(name="PlanningState", priority=5, content=plan_content,
+                                    budget=200))
+        ctx = make_context()
+
+        result = await builder.build(ctx)
+        # Todo (P2) must survive intact — if it were trimmed first (the bug),
+        # the tail cut would have removed part of todo_content.
+        assert todo_content in result
+        # P4/P5 were trimmed (their full content is gone) before Todo was touched
+        assert skill_content not in result
+        assert plan_content not in result
 
 
 class TestSetBudget:

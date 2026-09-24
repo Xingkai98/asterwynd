@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 
 from typer.testing import CliRunner
@@ -212,7 +213,7 @@ class _FakeBenchmarkRunner:
         self.kwargs = kwargs
         self.run_all_calls: list[tuple[str, str | None]] = []
 
-    async def run_all(self, tasks_dir, run_id=None):
+    async def run_all(self, tasks_dir, run_id=None, seed=None):
         self.run_all_calls.append((str(tasks_dir), run_id))
         return _FakeRunMetadata(run_id=run_id or "auto-run")
 
@@ -437,7 +438,7 @@ def test_benchmark_cli_repeat_aggregates_real_results(tmp_path, monkeypatch):
     runs_dir = tmp_path / "runs"
 
     class _WritingRunner(_FakeBenchmarkRunner):
-        async def run_all(self, tasks_dir, run_id=None):
+        async def run_all(self, tasks_dir, run_id=None, seed=None):
             self.run_all_calls.append((str(tasks_dir), run_id))
             rid = run_id or "auto-run"
             task_out = runs_dir / rid / "tasks" / "task-1"
@@ -503,3 +504,66 @@ def _git_out(repo, *args):
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+# --- C5: --workflow-mode 的 CLI 门禁 ---------------------------------------
+
+
+def _workflow_cli_args(tmp_path, *extra):
+    return ["benchmark", str(tmp_path / "tasks"), "--runs-dir", str(tmp_path / "runs"), *extra]
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Tear off Rich 的 ANSI 着色，再断言错误文案。
+
+    ``typer.BadParameter`` 走 Rich 面板渲染；``GITHUB_ACTIONS`` 置位时（CI）
+    Rich 会强制着色，把 ``--workflow-mode`` 拆成 ``-``/``-workflow``/``-mode``
+    三段、每段各裹一层转义码，整串字面断言在 CI 上必然失败。``CliRunner`` 的
+    ``color=False`` 只管 click 的 ``echo``，拦不住 Rich。
+    """
+    return _ANSI_ESCAPE.sub("", output)
+
+
+def test_workflow_mode_rejects_non_asterwynd_agent(tmp_path):
+    """回归：非 asterwynd runner 不建编排，三模式对它都是静默空跑。
+
+    ``fake``/``shell``/``claude`` 三个 runner 都不构造 ``SubAgentManager``——不拦的
+    话它们会**静默**跑成一次普通单 agent benchmark，``result.json`` 里一个 workflow
+    字段都没有，用户却以为编排测过了。三个模式必须一致地报错（此前只有
+    ``dynamic-replay`` 拦）。
+    """
+    result = CliRunner().invoke(
+        cli.app,
+        _workflow_cli_args(tmp_path, "--agent", "fake", "--workflow-mode", "dynamic-record"),
+    )
+    assert result.exit_code != 0
+    assert "--workflow-mode 只支持 --agent asterwynd" in _plain(result.output)
+
+    result = CliRunner().invoke(
+        cli.app,
+        _workflow_cli_args(tmp_path, "--agent", "fake", "--workflow-mode", "template"),
+    )
+    assert result.exit_code != 0
+    assert "--workflow-mode 只支持 --agent asterwynd" in _plain(result.output)
+
+
+def test_dynamic_replay_requires_a_record_directory(tmp_path):
+    """``dynamic-replay`` 缺 ``--workflow-record`` 时在参数校验期就拒绝。"""
+    result = CliRunner().invoke(
+        cli.app,
+        _workflow_cli_args(tmp_path, "--agent", "asterwynd", "--workflow-mode", "dynamic-replay"),
+    )
+    assert result.exit_code != 0
+    assert "--workflow-record" in _plain(result.output)
+
+
+def test_unknown_workflow_mode_is_rejected(tmp_path):
+    result = CliRunner().invoke(
+        cli.app,
+        _workflow_cli_args(tmp_path, "--agent", "asterwynd", "--workflow-mode", "bogus"),
+    )
+    assert result.exit_code != 0
+    assert "必须是" in _plain(result.output)

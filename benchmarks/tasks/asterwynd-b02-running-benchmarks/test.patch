@@ -1,0 +1,59 @@
+diff --git a/tests/agent/tools/test_list_running_benchmarks.py b/tests/agent/tools/test_list_running_benchmarks.py
+new file mode 100644
+index 0000000..5567386
+--- /dev/null
++++ b/tests/agent/tools/test_list_running_benchmarks.py
+@@ -0,0 +1,53 @@
++import json
++from pathlib import Path
++
++from agent.tools.builtin.benchmarks import ListRunningBenchmarksTool
++from agent.tools.factory import build_coding_tool_registry, build_default_tool_registry
++
++
++def _write_run(runs_dir: Path, run_id: str, *, status: str, passed: int, total: int) -> None:
++    run_dir = runs_dir / run_id
++    run_dir.mkdir(parents=True)
++    (run_dir / "run.json").write_text(
++        json.dumps(
++            {
++                "run_id": run_id,
++                "status": status,
++                "passed": passed,
++                "task_count": total,
++            }
++        )
++    )
++
++
++async def test_lists_finished_and_in_progress_runs(tmp_path):
++    _write_run(tmp_path, "run-a", status="passed", passed=3, total=5)
++    _write_run(tmp_path, "run-b", status="passed", passed=2, total=2)
++    (tmp_path / "run-c").mkdir()  # no run.json yet -> in_progress
++
++    tool = ListRunningBenchmarksTool(runs_dir=tmp_path)
++    out = await tool.execute()
++
++    assert "run-a | passed | 3/5" in out
++    assert "run-b | passed | 2/2" in out
++    assert "run-c | in_progress" in out
++
++
++async def test_empty_runs_dir_returns_placeholder(tmp_path):
++    tool = ListRunningBenchmarksTool(runs_dir=tmp_path)
++    out = await tool.execute()
++    assert out == "(no benchmark runs)"
++
++
++async def test_missing_runs_dir_returns_placeholder(tmp_path):
++    tool = ListRunningBenchmarksTool(runs_dir=tmp_path / "nope")
++    out = await tool.execute()
++    assert out == "(no benchmark runs)"
++
++
++async def test_tool_registered_in_both_registries():
++    for builder in (build_default_tool_registry, build_coding_tool_registry):
++        registry = builder()
++        schemas = registry.get_all_schemas()
++        names = {s["function"]["name"] for s in schemas}
++        assert "ListRunningBenchmarks" in names

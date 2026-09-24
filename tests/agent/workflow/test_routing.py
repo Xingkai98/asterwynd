@@ -1,123 +1,114 @@
+"""routing.py 的活面测试 + 已删符号的负向回归（issue #239）。
+
+四阶段状态机退役（`retire-4phase-state-machine`）后，`routing` 概念随之消失
+（其 `路由配置` Requirement 已 REMOVED）。本文件覆盖清理后的真实状态：
+
+- **活面**：`load_workflow_methods` / `is_workflow_enabled`（`resume_audit.py` 与
+  `workflow_state.py` 在用）。
+- **负向回归**：已删符号必须真的不存在——它们只服务已退役的四阶段路由，恢复
+  任何一个都意味着清理被回退。覆盖 `routing.py`（`TestRemovedRoutingSymbols`）
+  与 `models.py`（`TestRemovedModelsSymbols`）两侧；后者是随 routing 一并失去
+  消费者的连带符号。
+"""
+
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
+import json
 
 import pytest
-import yaml
 
-from agent.workflow.models import DEFAULT_ROUTING, PhaseRouting
-from agent.workflow.routing import (
-    RoutingConfigError,
-    _apply_degradation,
-    _parse_routing_dict,
-    build_routing_config_prompt,
-    get_routing_for_phase,
-    load_global_defaults,
-    merge_routing,
-    routing_to_dict,
+from agent.workflow import models, routing
+from agent.workflow.routing import is_workflow_enabled, load_workflow_methods
+
+REMOVED_ROUTING_SYMBOLS = (
+    "load_global_defaults",
+    "merge_routing",
+    "get_routing_for_phase",
+    "build_routing_config_prompt",
+    "RoutingConfigError",
+    "routing_to_dict",
+    "_parse_routing_dict",
+    "_parse_phase_routing",
+    "_apply_degradation",
+    "FALLBACK_CONFIG_PATH",
+    "ROUTING_CONFIG_KEY",
+    "_get_openspec_config_path",
+    "_ACTIVE_PHASES",
+)
+
+# 随 routing 一并失去消费者的 models.py 死符号（issue #239 同一清理面）。
+REMOVED_MODELS_SYMBOLS = (
+    "Executor",
+    "EXECUTORS",
+    "SessionMode",
+    "SESSION_MODES",
+    "PhaseRouting",
+    "DEFAULT_ROUTING",
 )
 
 
-class TestApplyDegradation:
-    def test_degrade_same_session_non_inline(self):
-        result = _apply_degradation(PhaseRouting(executor="subagent", session_mode="same"), "planning")
-        assert result.executor == "subagent"
-        assert result.session_mode == "new"
+class TestLoadWorkflowMethods:
+    def test_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_workflow_methods(tmp_path) == {}
 
-    def test_no_degradation_for_inline(self):
-        result = _apply_degradation(PhaseRouting(executor="inline", session_mode="same"), "planning")
-        assert result.session_mode == "same"
+    def test_malformed_json_returns_empty_dict(self, tmp_path):
+        p = tmp_path / "scripts" / "workflow_methods.json"
+        p.parent.mkdir(parents=True)
+        p.write_text("{ not json", encoding="utf-8")
+        assert load_workflow_methods(tmp_path) == {}
 
-    def test_no_degradation_for_new(self):
-        result = _apply_degradation(PhaseRouting(executor="subagent", session_mode="new"), "planning")
-        assert result.session_mode == "new"
+    def test_non_dict_payload_returns_empty_dict(self, tmp_path):
+        p = tmp_path / "scripts" / "workflow_methods.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+        assert load_workflow_methods(tmp_path) == {}
 
-
-class TestParseRoutingDict:
-    def test_empty_dict_falls_back_to_defaults(self):
-        result = _parse_routing_dict({})
-        # All active phases should be present with defaults
-        for phase in ("wayfinding", "planning", "building", "closing"):
-            assert phase in result
-            assert isinstance(result[phase], PhaseRouting)
-
-    def test_codex_executor(self):
-        result = _parse_routing_dict({"planning": {"executor": "codex", "session_mode": "new"}})
-        assert result["planning"].executor == "codex"
-        assert result["planning"].session_mode == "new"
-
-    def test_missing_phase_uses_default(self):
-        result = _parse_routing_dict({"planning": {"executor": "codex", "session_mode": "new"}})
-        assert result["building"] == DEFAULT_ROUTING["building"]
-
-    def test_degradation_applied_during_parse(self):
-        result = _parse_routing_dict({"building": {"executor": "codex", "session_mode": "same"}})
-        assert result["building"].session_mode == "new"  # degraded
-
-    def test_invalid_type_raises(self):
-        with pytest.raises(RoutingConfigError, match="must be a mapping"):
-            _parse_routing_dict({"planning": "not-a-dict"})
+    def test_loads_real_payload(self, tmp_path):
+        p = tmp_path / "scripts" / "workflow_methods.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"workflow": {"enabled": False}}), encoding="utf-8")
+        assert load_workflow_methods(tmp_path) == {"workflow": {"enabled": False}}
 
 
-class TestLoadGlobalDefaults:
-    def test_missing_file_returns_hardcoded(self):
-        result = load_global_defaults("/nonexistent/path")
-        for phase in ("wayfinding", "planning", "building", "closing"):
-            assert phase in result
+class TestIsWorkflowEnabled:
+    def test_default_true_when_missing(self, tmp_path):
+        assert is_workflow_enabled(tmp_path) is True
 
-    def test_yaml_with_routing(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            openspec_dir = Path(tmpdir) / "openspec"
-            openspec_dir.mkdir()
-            config = openspec_dir / "config.yaml"
-            config.write_text(yaml.dump({
-                "routing": {
-                    "planning": {"executor": "codex", "session_mode": "new"},
-                }
-            }))
-            result = load_global_defaults(tmpdir)
-            assert result["planning"].executor == "codex"
-            assert result["planning"].session_mode == "new"
+    def test_false_when_disabled(self, tmp_path):
+        p = tmp_path / "scripts" / "workflow_methods.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"workflow": {"enabled": False}}), encoding="utf-8")
+        assert is_workflow_enabled(tmp_path) is False
+
+    def test_non_dict_workflow_section_defaults_true(self, tmp_path):
+        p = tmp_path / "scripts" / "workflow_methods.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"workflow": "nonsense"}), encoding="utf-8")
+        assert is_workflow_enabled(tmp_path) is True
 
 
-class TestMergeRouting:
-    def test_per_change_override(self):
-        global_defaults = dict(DEFAULT_ROUTING)
-        per_change = {"planning": {"executor": "subagent", "session_mode": "new"}}
-        result = merge_routing(global_defaults, per_change)
-        assert result["planning"].executor == "subagent"
-        assert result["planning"].session_mode == "new"
-        # other phases unchanged
-        assert result["building"] == global_defaults["building"]
+class TestRemovedRoutingSymbols:
+    """判别性：任一符号被恢复（即清理回退）时本类必须变红。"""
 
-    def test_none_per_change_leaves_unchanged(self):
-        result = merge_routing(dict(DEFAULT_ROUTING), None)
-        assert result == dict(DEFAULT_ROUTING)
-
-    def test_degradation_on_per_change(self):
-        per_change = {"building": {"executor": "codex", "session_mode": "same"}}
-        result = merge_routing(dict(DEFAULT_ROUTING), per_change)
-        assert result["building"].session_mode == "new"
+    @pytest.mark.parametrize("symbol", REMOVED_ROUTING_SYMBOLS)
+    def test_symbol_is_gone(self, symbol):
+        assert not hasattr(routing, symbol), (
+            f"routing.{symbol} 应已在 issue #239 清理中删除——"
+            "它只服务已退役的四阶段路由（`路由配置` Requirement 已 REMOVED）"
+        )
 
 
-class TestGetRoutingForPhase:
-    def test_valid_phase(self):
-        routing = dict(DEFAULT_ROUTING)
-        result = get_routing_for_phase(routing, "planning")
-        assert isinstance(result, PhaseRouting)
+class TestRemovedModelsSymbols:
+    """对称覆盖：`models.py` 的 6 个连带死符号同样不得复活。
 
-    def test_terminal_phase_raises(self):
-        with pytest.raises(RoutingConfigError):
-            get_routing_for_phase(dict(DEFAULT_ROUTING), "blocked")
-        with pytest.raises(RoutingConfigError):
-            get_routing_for_phase(dict(DEFAULT_ROUTING), "done")
+    审阅（PR #241）指出原负向回归只覆盖 `routing.py` 一侧，属不对称覆盖——
+    这些符号与 routing 同源（`Executor`/`SessionMode`/`PhaseRouting`/
+    `DEFAULT_ROUTING` 等只被 routing 使用），恢复同样意味着清理被回退。
+    """
 
-
-class TestRoutingToDict:
-    def test_output_format(self):
-        result = routing_to_dict(dict(DEFAULT_ROUTING))
-        for phase in ("wayfinding", "planning", "building", "closing"):
-            assert phase in result
-            assert "executor" in result[phase]
-            assert "session_mode" in result[phase]
+    @pytest.mark.parametrize("symbol", REMOVED_MODELS_SYMBOLS)
+    def test_symbol_is_gone(self, symbol):
+        assert not hasattr(models, symbol), (
+            f"models.{symbol} 应已在 issue #239 清理中删除——"
+            "它是随 routing 失去消费者的连带死符号"
+        )

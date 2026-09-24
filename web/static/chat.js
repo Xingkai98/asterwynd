@@ -1,21 +1,111 @@
 // web/static/chat.js
-// Chat UI: message list, input box, WebSocket communication
+// Chat UI: message list, input box, WebSocket communication, multi-session tabs.
 
+// --- Multi-session tab state (issue #117) ---
+let tabs = new Map();          // tabId -> tab
+let activeTabId = null;
+let newTabSeq = 0;             // 新建会话临时 tabId 递增，避免固定 'new' 覆盖键
+
+// 每个会话一个 Tab，独立持有 WebSocket、消息容器与运行状态。
+function createTab(tabId, sessionId, workspace, mode) {
+  const tab = {
+    id: tabId,
+    sessionId: sessionId || null,
+    workspace: workspace || null,
+    mode: mode || 'build',
+    ws: null,
+    currentAssistantMsg: null,
+    debugEvents: [],
+    debugIterBlocks: {},
+    approvalCards: new Map(),
+    questionCards: new Map(),
+    pendingImages: [],
+    shouldReconnect: true,
+    slashMatches: [],
+    activeSlashIndex: 0,
+    // 该 tab 输入框失焦后挂起的「延迟收起」定时器句柄。归属到 tab（而不是全局）
+    // 才能保证回调只影响它自己的建议列表 —— issue #191 的根因就是这个动作没有归属。
+    blurHideTimer: null,
+    inFlight: false,
+    uploadWaiters: new Map(),
+    pane: null,
+    messagesEl: null,
+    inputEl: null,
+    previewsEl: null,
+    slashSuggestionsEl: null,
+    sendBtn: null,
+    uploadBtn: null,
+    imageFileInput: null,
+  };
+  tabs.set(tabId, tab);
+  return tab;
+}
+
+function getActiveTab() {
+  return activeTabId ? tabs.get(activeTabId) : null;
+}
+
+// 全局状态变量作为「当前 active tab 上下文」的代理：渲染/事件函数读写的就是
+// 当前 tab 的状态，切换 tab 时 bindActiveTab 重新指向。
 let ws = null;
 let sessionId = null;
 let currentMode = 'build';
 let currentAssistantMsg = null;
 let debugEvents = [];
-let activeView = 'chat';
+let activeView = 'hub';
 let slashCommands = [];
 let slashMatches = [];
 let activeSlashIndex = 0;
 let shouldReconnect = true;
-const approvalCards = new Map();
-const questionCards = new Map();
+let approvalCards = new Map();
+let questionCards = new Map();
 let pendingImages = [];
 let sendInFlight = false;
-const wsUploadWaiters = new Map();
+let wsUploadWaiters = new Map();
+let iterBlocks = {};  // debug 迭代块索引（per-tab，见 debug.js）
+// per-tab DOM（在 tab pane 内动态创建；bindActiveTab 时指向 active tab）
+let messagesEl = null;
+let userInput = null;
+let slashSuggestionsEl = null;
+let sendBtn = null;
+let imagePreviewsEl = null;
+let imageFileInput = null;
+let uploadBtn = null;
+// 全局 chrome（header/面板，保持单例）
+const statusEl = document.getElementById('status');
+const sessionIdEl = document.getElementById('session-id');
+const runIdEl = document.getElementById('run-id');
+const modeValueEl = document.getElementById('mode-value');
+const modeSelectEl = document.getElementById('mode-select');
+const modeApplyBtn = document.getElementById('mode-apply');
+const debugTabBtn = document.getElementById('debug-tab');
+const chatTabBtn = document.getElementById('chat-tab');
+const hubTabBtn = document.getElementById('hub-tab');
+const planDocumentPanel = document.getElementById('plan-document-panel');
+const planDocumentTitleEl = document.getElementById('plan-document-title');
+const planDocumentBodyEl = document.getElementById('plan-document-body');
+const planDocumentToggle = document.getElementById('plan-document-toggle');
+const planningPanel = document.getElementById('planning-panel');
+const planningItemsEl = document.getElementById('planning-items');
+const planningToggle = document.getElementById('planning-toggle');
+const planningTitle = document.getElementById('planning-title');
+const planningCount = document.getElementById('planning-count');
+const chatPanesEl = document.getElementById('chat-panes');
+const sessionTabsEl = document.getElementById('session-tabs');
+const hubViewEl = document.getElementById('hub-view');
+const chatViewEl = document.getElementById('chat-view');
+const hubWorkspaceSelect = document.getElementById('hub-workspace-select');
+const hubWorkspaceAdd = document.getElementById('hub-workspace-add');
+const hubWorkspaceForm = document.getElementById('hub-workspace-form');
+const hubWorkspaceInput = document.getElementById('hub-workspace-input');
+const hubWorkspaceCancel = document.getElementById('hub-workspace-cancel');
+const hubWorkspaceError = document.getElementById('hub-workspace-error');
+const hubNewMode = document.getElementById('hub-new-mode');
+const hubNewWorkspace = document.getElementById('hub-new-workspace');
+const hubNewBtn = document.getElementById('hub-new-btn');
+const hubSessionList = document.getElementById('hub-session-list');
+const hubListCount = document.getElementById('hub-list-count');
+
 const MAX_IMAGE_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_CHAT_PAYLOAD_CHARS = 12 * 1024 * 1024;
 const WS_UPLOAD_CHUNK_CHARS = 256 * 1024;
@@ -27,74 +117,370 @@ const JPEG_QUALITY = 0.82;
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const HEIC_IMAGE_TYPES = new Set(['image/heic', 'image/heif']);
 
-// --- DOM refs ---
-const messagesEl = document.getElementById('messages');
-const userInput = document.getElementById('user-input');
-const slashSuggestionsEl = document.getElementById('slash-suggestions');
-const sendBtn = document.getElementById('send-btn');
-const statusEl = document.getElementById('status');
-const sessionIdEl = document.getElementById('session-id');
-const runIdEl = document.getElementById('run-id');
-const modeValueEl = document.getElementById('mode-value');
-const modeSelectEl = document.getElementById('mode-select');
-const modeApplyBtn = document.getElementById('mode-apply');
-const debugTabBtn = document.getElementById('debug-tab');
-const planDocumentPanel = document.getElementById('plan-document-panel');
-const planDocumentTitleEl = document.getElementById('plan-document-title');
-const planDocumentBodyEl = document.getElementById('plan-document-body');
-const planningPanel = document.getElementById('planning-panel');
-const planningItemsEl = document.getElementById('planning-items');
-const imagePreviewsEl = document.getElementById('image-previews');
-const imageFileInput = document.getElementById('image-file-input');
-const uploadBtn = document.getElementById('upload-btn');
+// --- Tab lifecycle ---
+function buildTabPane(tab) {
+  const pane = document.createElement('div');
+  pane.className = 'tab-pane';
+  pane.dataset.tabId = tab.id;
+  pane.innerHTML = `
+    <div class="tab-messages"></div>
+    <div class="input-area">
+      <div class="input-shell">
+        <div class="slash-suggestions" role="listbox" aria-label="Slash commands" hidden></div>
+        <div class="image-previews" hidden></div>
+        <div class="input-row">
+          <textarea class="user-input" placeholder="输入消息..." rows="2" autocomplete="off"></textarea>
+          <input type="file" class="image-file-input" accept="image/*" multiple hidden>
+          <button type="button" class="upload-btn" title="上传图片">+</button>
+          <button type="button" class="send-btn">发送</button>
+        </div>
+      </div>
+    </div>`;
+  tab.pane = pane;
+  tab.messagesEl = pane.querySelector('.tab-messages');
+  tab.inputEl = pane.querySelector('.user-input');
+  tab.slashSuggestionsEl = pane.querySelector('.slash-suggestions');
+  tab.previewsEl = pane.querySelector('.image-previews');
+  tab.imageFileInput = pane.querySelector('.image-file-input');
+  tab.uploadBtn = pane.querySelector('.upload-btn');
+  tab.sendBtn = pane.querySelector('.send-btn');
 
-// --- Tab switching ---
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    const viewName = tab.dataset.tab;
-    activeView = viewName;
-    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
-    document.getElementById('chat-view').classList.toggle('active', viewName === 'chat');
-    document.getElementById('debug-view').classList.toggle('active', viewName === 'debug');
+  // 输入区事件绑定（闭包捕获 tab）：先切到该 tab 再执行，保证全局代理指向它。
+  tab.sendBtn.addEventListener('click', () => { switchTab(tab.id); sendMessage(); });
+  tab.uploadBtn.addEventListener('click', () => { switchTab(tab.id); tab.imageFileInput.click(); });
+  tab.imageFileInput.addEventListener('change', () => {
+    switchTab(tab.id);
+    const files = tab.imageFileInput.files;
+    if (!files || files.length === 0) return;
+    for (const file of files) addImageFromFile(file);
+    tab.imageFileInput.value = '';
   });
+  tab.inputEl.addEventListener('input', () => { switchTab(tab.id); updateSlashSuggestions(); });
+  // 延迟收起（100ms 宽限窗，保留既有语义：失焦后极短时间内点回输入框不算数）。
+  // 关键：收起动作必须**归属到本 tab**。hideSlashSuggestions 走的是「当前 active
+  // tab」的全局代理，而无归属的回调会在触发时刻读到别的 tab —— 于是 A tab 的失焦
+  // 会收掉 B tab 的建议（issue #191 的跨 tab 泄漏）。两道守卫：
+  //   1. 失焦的不是当前 tab → 不归我管（异步回调期间 active 可能已经变了）；
+  //   2. 焦点已经回到本 tab 的输入框 → 收起与用户当前状态矛盾。
+  tab.inputEl.addEventListener('blur', () => {
+    if (tab.blurHideTimer) clearTimeout(tab.blurHideTimer);
+    tab.blurHideTimer = setTimeout(() => {
+      tab.blurHideTimer = null;
+      if (getActiveTab() !== tab) return;
+      if (document.activeElement === tab.inputEl) return;
+      hideSlashSuggestions();
+    }, 100);
+  });
+  tab.inputEl.addEventListener('keydown', (e) => {
+    switchTab(tab.id);
+    const suggestions = tab.slashSuggestionsEl;
+    if (suggestions && !suggestions.hidden) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashSelection(1); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); moveSlashSelection(-1); return; }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        // 列表可见时 Enter 的含义，按「应用建议项会不会改变输入」分两种：
+        //   - 会改变（如 /mode → '/mode '，带 argument_hint 的补全）：沿用自动补全的
+        //     既有语义，接受补全。用户再按一次 Enter 即发送。
+        //   - 不会改变（如 /status → '/status'，insert_text 与输入完全相同）：应用它
+        //     是**空操作**，只会顺手吞掉这次发送。此时 Enter 的意图只能是发送。
+        // 为什么需要后一条：列表可见本身不表示用户想选它 —— 切换标签页的收敛也会让
+        // 列表重新可见（见 switchTab 的收敛分支），而用户此前可能已按 Escape 收起过它。
+        const picked = slashMatches[activeSlashIndex];
+        const insertText = picked ? (picked.insert_text || picked.command) : null;
+        if (e.key === 'Enter' && !e.shiftKey
+            && (insertText === null || userInput.value === insertText)) {
+          sendMessage();
+          return;
+        }
+        applySlashSuggestion(activeSlashIndex);
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); hideSlashSuggestions(); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  chatPanesEl.appendChild(pane);
+  return tab;
+}
+
+function bindActiveTab(tab) {
+  if (!tab) return;
+  activeTabId = tab.id;
+  ws = tab.ws;
+  sessionId = tab.sessionId;
+  currentMode = tab.mode;
+  currentAssistantMsg = tab.currentAssistantMsg;
+  debugEvents = tab.debugEvents;
+  approvalCards = tab.approvalCards;
+  questionCards = tab.questionCards;
+  pendingImages = tab.pendingImages;
+  shouldReconnect = tab.shouldReconnect;
+  slashMatches = tab.slashMatches;
+  activeSlashIndex = tab.activeSlashIndex;
+  sendInFlight = tab.inFlight;
+  wsUploadWaiters = tab.uploadWaiters;
+  iterBlocks = tab.debugIterBlocks;
+  messagesEl = tab.messagesEl;
+  userInput = tab.inputEl;
+  slashSuggestionsEl = tab.slashSuggestionsEl;
+  sendBtn = tab.sendBtn;
+  imagePreviewsEl = tab.previewsEl;
+  imageFileInput = tab.imageFileInput;
+  uploadBtn = tab.uploadBtn;
+  // header chrome
+  sessionIdEl.textContent = tab.sessionId || 'pending';
+  modeValueEl.textContent = tab.mode;
+  modeSelectEl.value = tab.mode;
+  runIdEl.textContent = 'none';
+  statusEl.textContent = tab.ws && tab.ws.readyState === WebSocket.OPEN ? 'connected' : (tab.shouldReconnect ? 'disconnected' : 'ended');
+  syncMode(tab.mode);
+  renderSessionTabs();
+}
+
+function syncActiveTab() {
+  const tab = getActiveTab();
+  if (!tab) return;
+  tab.ws = ws;
+  tab.sessionId = sessionId;
+  tab.mode = currentMode;
+  tab.currentAssistantMsg = currentAssistantMsg;
+  tab.debugEvents = debugEvents;
+  tab.approvalCards = approvalCards;
+  tab.questionCards = questionCards;
+  tab.pendingImages = pendingImages;
+  tab.shouldReconnect = shouldReconnect;
+  tab.slashMatches = slashMatches;
+  tab.activeSlashIndex = activeSlashIndex;
+  tab.inFlight = sendInFlight;
+  tab.uploadWaiters = wsUploadWaiters;
+  tab.debugIterBlocks = iterBlocks;
+}
+
+function renderSessionTabs() {
+  if (!sessionTabsEl) return;
+  sessionTabsEl.textContent = '';
+  for (const tab of tabs.values()) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'session-tab' + (tab.id === activeTabId ? ' active' : '');
+    btn.dataset.tabId = tab.id;
+    btn.textContent = tab.sessionId ? tab.sessionId.slice(0, 8) : 'new';
+    btn.title = tab.sessionId || 'new session';
+    btn.addEventListener('click', () => switchTab(tab.id));
+    const close = document.createElement('span');
+    close.className = 'session-tab-close';
+    close.textContent = '×';
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTab(tab.id);
+    });
+    btn.appendChild(close);
+    sessionTabsEl.appendChild(btn);
+  }
+  sessionTabsEl.hidden = tabs.size === 0;
+}
+
+// 顶层视图切换的唯一入口（Sessions / Chat / Workflow / Debug）。
+function showView(viewName) {
+  activeView = viewName;
+  document.querySelectorAll('.tab[data-tab]').forEach(
+    t => t.classList.toggle('active', t.dataset.tab === viewName));
+  hubViewEl.classList.toggle('active', viewName === 'hub');
+  chatViewEl.classList.toggle('active', viewName === 'chat');
+  const workflowViewEl = document.getElementById('workflow-view');
+  if (workflowViewEl) workflowViewEl.classList.toggle('active', viewName === 'workflow');
+  document.getElementById('debug-view').classList.toggle('active', viewName === 'debug');
+  if (window.AsterwyndWorkflow) {
+    // G4/G8：本地计时器只在 Workflow 视图可见时跑——图不可见时每秒重绘纯属浪费，
+    // 回来时 ``renderPanel`` 会立刻刷一次，不会看到过期数字。
+    if (viewName === 'workflow') {
+      window.AsterwyndWorkflow.renderPanel(getActiveTab());
+      window.AsterwyndWorkflow.startTicker();
+    } else {
+      window.AsterwyndWorkflow.stopTicker();
+    }
+  }
+  if (viewName === 'debug' && typeof renderTimeline === 'function') renderTimeline();
+}
+
+/** workflow_started 到达时的自动跳转（spec Scenario「启动自动显示图」）。 */
+function switchToWorkflowView() {
+  const workflowViewEl = document.getElementById('workflow-view');
+  if (!workflowViewEl) return;
+  showView('workflow');
+}
+
+function switchTab(tabId) {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  // 「是不是真的从别的 tab 切过来」。收敛只对真正的切换生效：inputEl 的
+  // keydown/input 处理器也会调 switchTab(tab.id)（已是当前 tab），那种调用
+  // 不是切换，不能借机把建议列表重新展开 —— 否则 Escape 收起后按 Enter 会被
+  // 重新展开的列表劫持成「应用建议项」，消息永远发不出去（issue #191）。
+  const wasActive = activeTabId === tabId;
+  syncActiveTab();
+  for (const t of tabs.values()) {
+    if (t.pane) t.pane.classList.toggle('active', t.id === tabId);
+  }
+  bindActiveTab(tab);
+  if (!wasActive) {
+    // 切回本 tab：取消切走时挂起的收起动作（否则「切走又立刻切回」会被自己的
+    // 定时器收掉），并让可见性收敛到「由本 tab 输入内容决定」的状态。
+    if (tab.blurHideTimer) { clearTimeout(tab.blurHideTimer); tab.blurHideTimer = null; }
+    if (slashSuggestionsEl.hidden) updateSlashSuggestions();
+  }
+  if (window.AsterwyndWorkflow) window.AsterwyndWorkflow.bindTab(tab);
+  showView('chat');
+}
+
+function closeTab(tabId) {
+  const tab = tabs.get(tabId);
+  if (!tab) return;
+  // 已关闭 tab 的挂起收起动作不应再触发（其 DOM 已移除）。blur 回调自身也有
+  // active 归属守卫，这里显式清理是为了不留下无主的定时器。
+  if (tab.blurHideTimer) { clearTimeout(tab.blurHideTimer); tab.blurHideTimer = null; }
+  if (tab.ws) {
+    tab.shouldReconnect = false;
+    try { tab.ws.close(); } catch (e) { /* ignore */ }
+  }
+  if (tab.pane) tab.pane.remove();
+  tabs.delete(tabId);
+  if (activeTabId === tabId) {
+    const next = Array.from(tabs.keys())[0];
+    if (next) switchTab(next);
+    else {
+      activeTabId = null;
+      showHub();
+    }
+  } else {
+    renderSessionTabs();
+  }
+}
+
+function showHub() {
+  showView('hub');
+  loadHub();
+}
+
+function openSessionTab(sessionId, workspace) {
+  // 已打开的 tab 直接激活
+  if (tabs.has(sessionId)) {
+    switchTab(sessionId);
+    return;
+  }
+  const tab = createTab(sessionId, sessionId, workspace, 'build');
+  buildTabPane(tab);
+  switchTab(sessionId);
+  connectTab(tab, sessionId, workspace);
+}
+
+// --- Planning panel toggle ---
+function setPlanningPanelCollapsed(collapsed) {
+  planningPanel.classList.toggle('collapsed', collapsed);
+  planningToggle.classList.toggle('collapsed', collapsed);
+  planningToggle.setAttribute('aria-expanded', String(!collapsed));
+  planningToggle.setAttribute('aria-label', collapsed ? 'Expand panel' : 'Collapse panel');
+  planningToggle.title = collapsed ? 'Expand' : 'Collapse';
+}
+
+planningToggle.addEventListener('click', () => {
+  setPlanningPanelCollapsed(planningPanel.classList.toggle('collapsed'));
 });
 
+// Tap/click a truncated progress item to expand it (touch devices have no hover tooltip).
+planningItemsEl.addEventListener('click', (e) => {
+  const content = e.target.closest('.planning-content');
+  if (!content) return;
+  content.classList.toggle('expanded');
+});
+
+// --- Plan document panel toggle ---
+function setPlanDocumentCollapsed(collapsed) {
+  planDocumentPanel.classList.toggle('collapsed', collapsed);
+  planDocumentToggle.classList.toggle('collapsed', collapsed);
+  planDocumentToggle.setAttribute('aria-expanded', String(!collapsed));
+  planDocumentToggle.setAttribute('aria-label', collapsed ? 'Expand panel' : 'Collapse panel');
+  planDocumentToggle.title = collapsed ? 'Expand' : 'Collapse';
+}
+
+planDocumentToggle.addEventListener('click', () => {
+  setPlanDocumentCollapsed(planDocumentPanel.classList.toggle('collapsed'));
+});
+
+// --- Tab switching ---
+// 顶层视图切换统一走 ``showView``（在 ``init()`` 里绑定，见文件末尾）——这里不再
+// 另挂一份监听，避免两套逻辑各自维护 active 状态。
+
+
+
 // --- WebSocket ---
-async function connect() {
+async function connectTab(tab, targetSessionId, workspace) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${location.host}/ws/${sessionId || 'new'}`;
+  const params = new URLSearchParams();
+  if (workspace) params.set('workspace', workspace);
+  // 新建会话时把用户选择的 mode 传给服务端；恢复已有会话不传（用快照 mode）。
+  if (targetSessionId === 'new' && tab.mode) params.set('mode', tab.mode);
+  const qs = params.toString();
+  const wsUrl = `${protocol}//${location.host}/ws/${targetSessionId || 'new'}${qs ? '?' + qs : ''}`;
 
   return new Promise((resolve, reject) => {
-    ws = new WebSocket(wsUrl);
-    ws.onopen = () => {
+    const socket = new WebSocket(wsUrl);
+    tab.ws = socket;
+    socket.onopen = () => {
+      bindActiveTab(tab);
       statusEl.textContent = 'connected';
       resolve();
     };
-    ws.onmessage = (e) => {
+    socket.onmessage = (e) => {
       const event = JSON.parse(e.data);
-      handleEvent(event);
+      handleTabEvent(tab, event);
     };
-    ws.onclose = (event) => {
+    socket.onclose = (event) => {
+      bindActiveTab(tab);
       if (event.code === 1009) {
         addMessage('error', 'Image message too large. Try a smaller image.');
-        sendBtn.disabled = false;
-        sendInFlight = false;
-      } else if (sendInFlight) {
+        tab.sendBtn.disabled = false;
+        tab.inFlight = false;
+      } else if (tab.inFlight) {
         addMessage('error', 'Connection closed before the message was sent. Reconnect and try again.');
-        sendBtn.disabled = false;
-        sendInFlight = false;
+        tab.sendBtn.disabled = false;
+        tab.inFlight = false;
       }
       rejectWsUploadWaiters(new Error('connection closed during image upload'));
-      statusEl.textContent = shouldReconnect ? 'disconnected' : 'ended';
-      if (shouldReconnect) {
-        setTimeout(connect, 2000);
+      statusEl.textContent = tab.shouldReconnect ? 'disconnected' : 'ended';
+      if (tab.shouldReconnect) {
+        setTimeout(() => connectTab(tab, tab.sessionId, tab.workspace), 2000);
       }
     };
-    ws.onerror = () => {
+    socket.onerror = () => {
+      bindActiveTab(tab);
       statusEl.textContent = 'error';
       reject(new Error('WebSocket error'));
     };
   });
+}
+
+// 事件路由到指定 tab：bind 该 tab 后执行原 handleEvent，再写回并恢复原 active。
+function handleTabEvent(tab, event) {
+  const prevTab = getActiveTab();
+  bindActiveTab(tab);
+  handleEvent(event);
+  syncActiveTab();
+  const sid = event && (event.session_id || (event.data && event.data.session_id));
+  if (sid && tab.id !== sid) {
+    const oldId = tab.id;
+    tabs.delete(oldId);
+    tab.id = sid;
+    tab.sessionId = sid;
+    tabs.set(sid, tab);
+    // 新建会话 rekey（'new' → 真实 sid）后同步 activeTabId，避免指向已删除键
+    if (activeTabId === oldId) activeTabId = sid;
+    // 同步 pane 的 data-tab-id，paste/drag-drop 事件委托按它反查 tab（design review I7）
+    if (tab.pane) tab.pane.dataset.tabId = sid;
+    renderSessionTabs();
+  }
+  if (prevTab && prevTab !== tab && tabs.has(prevTab.id)) bindActiveTab(prevTab);
 }
 
 function handleEvent(event) {
@@ -104,6 +490,25 @@ function handleEvent(event) {
       sessionIdEl.textContent = sessionId;
       runIdEl.textContent = 'none';
       syncMode(event.mode || currentMode);
+      rememberSessionId(sessionId);
+      break;
+
+    case 'session_resumed':
+      sessionId = event.session_id;
+      sessionIdEl.textContent = sessionId;
+      runIdEl.textContent = 'none';
+      syncMode(event.mode || currentMode);
+      rememberSessionId(sessionId);
+      break;
+
+    case 'session_history':
+      if (event.data && Array.isArray(event.data.messages)) {
+        renderHistory(event.data.messages);
+        // 重连整体重绘后必须重置流式游标（change web-reconnect-pending-interaction
+        // D5/M12）：renderHistory 清空了消息区但 currentAssistantMsg 仍指向已脱离
+        // 文档的僵尸节点，随后的 assistant_delta 会写进去、用户完全看不到增量。
+        currentAssistantMsg = null;
+      }
       break;
 
     case 'run_started':
@@ -130,6 +535,11 @@ function handleEvent(event) {
       const metadata = data.metadata || {};
       if (metadata.command === 'clear') {
         messagesEl.textContent = '';
+        // 与 renderHistory 同源：清空 DOM 就必须清卡片注册表，否则留下指向已移除
+        // DOM 的僵尸条目，后续同 id 事件会以为自己「已有卡片」而跳过渲染（D5/M6）。
+        approvalCards.clear();
+        questionCards.clear();
+        currentAssistantMsg = null;
       }
       if (metadata.transition && metadata.transition.new_mode) {
         syncMode(metadata.transition.new_mode);
@@ -208,7 +618,7 @@ function handleEvent(event) {
 
     case 'error':
       currentAssistantMsg = null;
-      addMessage('error', event.data && event.data.message ? event.data.message : 'Run failed.');
+      addMessage('error', readableErrorMessage(event.data));
       break;
 
     case 'debug':
@@ -232,6 +642,22 @@ function handleEvent(event) {
       renderTodoState(event.data);
       break;
 
+    case 'workflow_started':
+    case 'workflow_snapshot': {
+      // 多图 tab（Q2）：状态挂在**事件所属 tab** 上，按 workflow_id 路由进
+      // ``workflow_id → 图状态`` 的 map（AsterwyndWorkflow 内部维护）。
+      // ``handleTabEvent`` 已经 bind 过事件所属 tab，所以这里取的就是 owner。
+      const wfGraph = window.AsterwyndWorkflow;
+      const owner = getActiveTab();
+      if (wfGraph && owner) {
+        if (!owner.onWorkflowStarted) {
+          owner.onWorkflowStarted = () => switchToWorkflowView();
+        }
+        wfGraph.handleWorkflowEvent(owner, event);
+      }
+      break;
+    }
+
     case 'pong':
       break;
 
@@ -244,14 +670,53 @@ function handleEvent(event) {
   }
 }
 
+// 服务端错误 → 用户可读文案（Q4）。断连后 run 仍在后台执行，重连再发消息会被
+// run_lock 拒绝；原始英文 "another run is already in progress" 对用户没有意义。
+// 服务端带 ``code`` 字段时按 code 映射，未知 code 回退到原始 message。
+const ERROR_MESSAGES = {
+  run_in_progress: '上一条消息仍在执行中，请稍候再发送。',
+};
+
+function readableErrorMessage(data) {
+  const payload = data || {};
+  if (payload.code && ERROR_MESSAGES[payload.code]) {
+    return ERROR_MESSAGES[payload.code];
+  }
+  return payload.message ? payload.message : 'Run failed.';
+}
+
 function syncMode(mode) {
   currentMode = mode || currentMode;
   modeValueEl.textContent = currentMode;
   modeSelectEl.value = currentMode;
   planningItemsEl.textContent = '';
   planningPanel.hidden = true;
-  planningPanel.querySelector('.planning-panel-header').textContent =
-    currentMode === 'plan' ? 'Plan' : 'Progress';
+  planningCount.hidden = true;
+  planningTitle.textContent = currentMode === 'plan' ? 'Plan' : 'Progress';
+}
+
+// 记忆最近使用的 session id 与 workspace，刷新/重开页面后优先回到原 session。
+function rememberSessionId(sessionId) {
+  if (!sessionId) return;
+  localStorage.setItem('asterwynd.session_id', sessionId);
+  const tab = getActiveTab();
+  if (tab && tab.workspace) {
+    localStorage.setItem('asterwynd.session_workspace', tab.workspace);
+  }
+}
+
+function renderHistory(messages) {
+  messagesEl.textContent = '';
+  // 卡片 DOM 被清空 → 注册表必须同步清（D5/M6）。否则重连后补发的卡片事件会命中
+  // 僵尸条目、静默跳过渲染，用户再也看不到那张卡。
+  approvalCards.clear();
+  questionCards.clear();
+  for (const message of messages) {
+    if (!message || !message.content) continue;
+    const role = message.role === 'assistant' ? 'assistant' : 'user';
+    addMessage(role, message.content);
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 // --- Message rendering ---
@@ -439,6 +904,8 @@ function addToolResultMessage(data) {
 function renderApprovalRequest(data) {
   const approvalId = data.approval_id;
   if (!approvalId) return;
+  // 幂等（D5）：同一 approval_id 重复到达（重连补发）复用已存在的卡片，不产生第二张。
+  if (approvalCards.has(approvalId)) return;
 
   const el = document.createElement('div');
   el.className = 'approval-card';
@@ -499,13 +966,21 @@ function renderApprovalRequest(data) {
   el.appendChild(controls);
 
   messagesEl.appendChild(el);
-  approvalCards.set(approvalId, { el, approve, deny, status });
+  approvalCards.set(approvalId, { el, approve, deny, status, accepted: false, settled: false });
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function sendApprovalDecision(approvalId, decision) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const card = approvalCards.get(approvalId);
+  // 先判连接、再改 UI（D5/M5）：原实现先把卡片置成 'sent' 再检查 ws，连接未就绪时
+  // 静默 return，用户看到假的「已提交」且卡片再也点不动。现在未就绪 → 可见反馈 +
+  // 卡片保持可提交，重连后可再点。
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (card) {
+      card.status.textContent = '未连接，请等待重连后重试';
+    }
+    return false;
+  }
   if (card) {
     card.approve.disabled = true;
     card.deny.disabled = true;
@@ -516,20 +991,41 @@ function sendApprovalDecision(approvalId, decision) {
     approval_id: approvalId,
     decision,
   }));
+  return true;
 }
+
+// 审批状态推进规则（终态单调，调研 finding 8）：
+// - `received` 只是「你的提交被受理了」的中间回执（run 存活时真正的终态
+//   `approved`/`denied` 稍后由 AgentLoop 发出），它把按钮锁住但**不**落定卡片；
+// - `approved`/`denied`/`unavailable` 是终态，一旦到达就不再被后续事件改写。
+// 拒绝从「已受理」倒回 `unavailable`：多连接下先答者胜，落败者的重复提交只会影响
+// 他自己，若把那条 unavailable 写进胜出方的卡片，用户会看到「自己批准过的卡片被判
+// 为不可用」，而工具其实已经执行了。
+const APPROVAL_TERMINAL_STATUSES = new Set(['approved', 'denied', 'unavailable']);
 
 function renderApprovalResponse(data) {
   const approvalId = data.approval_id;
   const card = approvalCards.get(approvalId);
   if (!card) return;
+  const status = data.status || 'completed';
+  const terminal = APPROVAL_TERMINAL_STATUSES.has(status);
+  if (card.settled) return;
+  if (card.accepted && !terminal) return;
   card.approve.disabled = true;
   card.deny.disabled = true;
-  card.status.textContent = data.status || 'completed';
+  card.status.textContent = status;
+  if (status === 'received') {
+    card.accepted = true;
+  } else if (terminal) {
+    card.settled = true;
+  }
 }
 
 function renderQuestionCard(data) {
   const questionId = data.question_id;
   if (!questionId) return;
+  // 幂等（D5）：重连补发的同一 question_id 复用已存在的卡片。
+  if (questionCards.has(questionId)) return;
 
   const el = document.createElement('div');
   el.className = 'question-card';
@@ -601,34 +1097,62 @@ function renderQuestionCard(data) {
       answer = inputEl.value.trim();
     }
     if (!answer) return;
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Submitted';
-    sendQuestionAnswer(questionId, answer);
+    // 先判连接、再改 UI（D5/M5）：原实现先置 'Submitted' 再让 sendQuestionAnswer 在
+    // ws 非 OPEN 时静默 return，用户看到假的「已提交」。
+    if (sendQuestionAnswer(questionId, answer)) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Submitted';
+    }
   });
 
   controls.appendChild(submitBtn);
+
+  // 提交失败/连接未就绪时的可见反馈（D5）：默认隐藏，避免占位。
+  const hint = document.createElement('span');
+  hint.className = 'question-hint';
+  hint.hidden = true;
+  controls.appendChild(hint);
+
   el.appendChild(controls);
 
   messagesEl.appendChild(el);
-  questionCards.set(questionId, { el, submitBtn });
+  questionCards.set(questionId, { el, submitBtn, hint, settled: false });
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function sendQuestionAnswer(questionId, answer) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const card = questionCards.get(questionId);
+  // 先判连接、再改 UI（D5/M5）：未就绪 → 可见反馈 + 卡片保持可提交。
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (card && card.hint) {
+      card.hint.textContent = '未连接，请等待重连后重试';
+      card.hint.hidden = false;
+    }
+    return false;
+  }
+  if (card && card.hint) {
+    // 连接已恢复：清掉上一次的「未连接」提示，否则成功提交的卡片旁边会同时挂着
+    // 「Submitted」和一条过期的红色提示。
+    card.hint.hidden = true;
+    card.hint.textContent = '';
+  }
   ws.send(JSON.stringify({
     type: 'user_answer',
     question_id: questionId,
     answer,
   }));
+  return true;
 }
 
 function renderQuestionResponse(data) {
   const questionId = data.question_id;
   const card = questionCards.get(questionId);
   if (!card) return;
+  // 同审批：终态单调，落败者的 unavailable 不改写已收到 received 的卡片。
+  if (card.settled) return;
   card.submitBtn.disabled = true;
   card.submitBtn.textContent = data.status === 'received' ? 'Received' : 'Unavailable';
+  card.settled = true;
 }
 
 function renderPlanningState(state) {
@@ -640,19 +1164,25 @@ function renderPlanningState(state) {
     return;
   }
 
-  planningPanel.querySelector('.planning-panel-header').textContent = 'Plan';
+  planningTitle.textContent = 'Plan';
+  planningCount.textContent = items.length;
   planningPanel.hidden = false;
+
+  const wasCollapsed = planningPanel.classList.contains('collapsed');
+  const statusLabels = { pending: '○', in_progress: '▶', completed: '✓', failed: '✗', skipped: '⏭' };
+
   for (const item of items) {
     const row = document.createElement('li');
     row.className = `planning-item status-${item.status}`;
 
     const status = document.createElement('span');
     status.className = 'planning-status';
-    status.textContent = item.status;
+    status.textContent = statusLabels[item.status] || item.status;
 
     const content = document.createElement('span');
     content.className = 'planning-content';
     content.textContent = item.content || '';
+    content.title = item.content || '';
 
     row.appendChild(status);
     row.appendChild(content);
@@ -665,6 +1195,11 @@ function renderPlanningState(state) {
     }
 
     planningItemsEl.appendChild(row);
+  }
+
+  // Restore collapsed state
+  if (wasCollapsed) {
+    setPlanningPanelCollapsed(true);
   }
 }
 
@@ -677,9 +1212,12 @@ function renderTodoState(state) {
     return;
   }
 
-  planningPanel.querySelector('.planning-panel-header').textContent = 'Progress';
+  planningTitle.textContent = 'Progress';
+  planningCount.textContent = items.length;
   planningPanel.hidden = false;
-  const statusLabels = { pending: ' ', in_progress: '▶', completed: '✓' };
+
+  const wasCollapsed = planningPanel.classList.contains('collapsed');
+  const statusLabels = { pending: '○', in_progress: '▶', completed: '✓' };
   for (const item of items) {
     const row = document.createElement('li');
     row.className = `planning-item status-${item.status}`;
@@ -691,6 +1229,7 @@ function renderTodoState(state) {
     const content = document.createElement('span');
     content.className = 'planning-content';
     content.textContent = item.content || '';
+    content.title = item.content || '';
 
     row.appendChild(status);
     row.appendChild(content);
@@ -703,6 +1242,11 @@ function renderTodoState(state) {
     }
 
     planningItemsEl.appendChild(row);
+  }
+
+  // Restore collapsed state
+  if (wasCollapsed) {
+    setPlanningPanelCollapsed(true);
   }
 }
 
@@ -721,6 +1265,7 @@ function renderPlanDocument(document) {
     return;
   }
 
+  const wasCollapsed = planDocumentPanel.classList.contains('collapsed');
   planDocumentPanel.hidden = false;
   const status = document && document.status === 'submitted' ? 'Submitted' : 'Draft';
   planDocumentTitleEl.textContent = title ? `${status}: ${title}` : status;
@@ -730,22 +1275,22 @@ function renderPlanDocument(document) {
   } else {
     planDocumentBodyEl.textContent = markdown;
   }
+  // Restore collapsed state
+  if (wasCollapsed) {
+    setPlanDocumentCollapsed(true);
+  }
 }
 
 // --- Image upload ---
-uploadBtn.addEventListener('click', () => imageFileInput.click());
-
-imageFileInput.addEventListener('change', () => {
-  const files = imageFileInput.files;
-  if (!files || files.length === 0) return;
-  for (const file of files) {
-    addImageFromFile(file);
-  }
-  imageFileInput.value = '';
-});
-
+// 上传按钮 / file input 的绑定在 buildTabPane 内（per-tab）；这里用委托处理
+// 全局的 paste 与拖拽，路由到焦点所在的 tab pane。
 document.addEventListener('paste', (e) => {
-  if (document.activeElement !== userInput) return;
+  const active = document.activeElement;
+  const pane = active && active.closest ? active.closest('.tab-pane') : null;
+  if (!pane) return;
+  const tab = tabs.get(pane.dataset.tabId);
+  if (!tab) return;
+  switchTab(tab.id);
   const items = e.clipboardData && e.clipboardData.items;
   if (!items) return;
   for (const item of items) {
@@ -756,42 +1301,60 @@ document.addEventListener('paste', (e) => {
   }
 });
 
-// Drag and drop
-const inputArea = document.getElementById('input-area');
-let dragCounter = 0;
+// Drag and drop：委托到 chat-panes（tab pane 的 input-area 都在里面）
+const dragPaneState = { pane: null, counter: 0 };
 
-inputArea.addEventListener('dragover', (e) => {
+chatPanesEl.addEventListener('dragover', (e) => {
   e.preventDefault();
   e.stopPropagation();
 });
 
-inputArea.addEventListener('dragenter', (e) => {
+chatPanesEl.addEventListener('dragenter', (e) => {
   e.preventDefault();
   e.stopPropagation();
-  dragCounter++;
-  inputArea.classList.add('drag-over');
-});
-
-inputArea.addEventListener('dragleave', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  dragCounter--;
-  if (dragCounter <= 0) {
-    dragCounter = 0;
-    inputArea.classList.remove('drag-over');
+  const pane = e.target.closest ? e.target.closest('.tab-pane') : null;
+  if (pane) {
+    if (dragPaneState.pane !== pane) {
+      dragPaneState.pane = pane;
+      dragPaneState.counter = 0;
+    }
+    dragPaneState.counter++;
+    pane.classList.add('drag-over');
   }
 });
 
-inputArea.addEventListener('drop', (e) => {
+chatPanesEl.addEventListener('dragleave', (e) => {
   e.preventDefault();
   e.stopPropagation();
-  dragCounter = 0;
-  inputArea.classList.remove('drag-over');
-  const files = e.dataTransfer && e.dataTransfer.files;
-  if (!files || files.length === 0) return;
-  for (const file of files) {
-    if (isImageFile(file)) {
-      addImageFromFile(file);
+  const pane = e.target.closest ? e.target.closest('.tab-pane') : null;
+  if (pane && dragPaneState.pane === pane) {
+    dragPaneState.counter--;
+    if (dragPaneState.counter <= 0) {
+      dragPaneState.counter = 0;
+      dragPaneState.pane = null;
+      pane.classList.remove('drag-over');
+    }
+  }
+});
+
+chatPanesEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const pane = e.target.closest ? e.target.closest('.tab-pane') : null;
+  if (pane) {
+    dragPaneState.pane = null;
+    dragPaneState.counter = 0;
+    pane.classList.remove('drag-over');
+    const tab = tabs.get(pane.dataset.tabId);
+    if (tab) {
+      switchTab(tab.id);
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      for (const file of files) {
+        if (isImageFile(file)) {
+          addImageFromFile(file);
+        }
+      }
     }
   }
 });
@@ -1197,40 +1760,20 @@ function sendModeChange() {
   ws.send(JSON.stringify({ type: 'set_mode', mode: nextMode }));
 }
 
-sendBtn.addEventListener('click', sendMessage);
+/** G18：停止一张正在跑的 workflow（WS ``cancel_workflow``，不是 HTTP 路由）。
+ *
+ * 与 ``{"type": "cancel"}`` 的边界：那个只让待审批失败、run 照跑；``cancel_workflow``
+ * 才真的停图（后端 ``scheduler.cancel()``）。
+ */
+window.AsterwyndWorkflowStop = function stopWorkflow(workflowId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !workflowId) {
+    return false;
+  }
+  ws.send(JSON.stringify({ type: 'cancel_workflow', workflow_id: workflowId }));
+  return true;
+};
+
 modeApplyBtn.addEventListener('click', sendModeChange);
-userInput.addEventListener('input', updateSlashSuggestions);
-userInput.addEventListener('blur', () => {
-  setTimeout(hideSlashSuggestions, 100);
-});
-userInput.addEventListener('keydown', (e) => {
-  if (slashSuggestionsEl && !slashSuggestionsEl.hidden) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      moveSlashSelection(1);
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      moveSlashSelection(-1);
-      return;
-    }
-    if (e.key === 'Tab' || e.key === 'Enter') {
-      e.preventDefault();
-      applySlashSuggestion(activeSlashIndex);
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      hideSlashSuggestions();
-      return;
-    }
-  }
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
 
 // --- Slash command suggestions ---
 function slashQueryFromInput() {
@@ -1332,22 +1875,254 @@ handleEvent = function(event) {
   }
 };
 
+// --- Hub view (issue #117) ---
+function applyWorkspaceOptions(workspaces) {
+  const list = Array.isArray(workspaces) ? workspaces : [];
+  const options = list.map(w => {
+    const opt = document.createElement('option');
+    opt.value = w.path;
+    opt.textContent = w.is_primary ? `${w.path} (primary)` : w.path;
+    return opt;
+  });
+  hubWorkspaceSelect.textContent = '';
+  hubNewWorkspace.textContent = '';
+  for (const opt of options) {
+    hubWorkspaceSelect.appendChild(opt.cloneNode(true));
+    hubNewWorkspace.appendChild(opt.cloneNode(true));
+  }
+}
+
+async function loadHub() {
+  try {
+    const wsResp = await fetch('/api/workspaces');
+    const wsData = await wsResp.json();
+    applyWorkspaceOptions(wsData.workspaces);
+    await renderSessionList();
+  } catch (e) {
+    hubSessionList.innerHTML = '<div class="hub-empty">加载失败</div>';
+  }
+}
+
+async function renderSessionList() {
+  const workspace = hubWorkspaceSelect.value;
+  try {
+    const resp = await fetch(`/api/sessions?workspace=${encodeURIComponent(workspace)}`);
+    if (!resp.ok) {
+      hubSessionList.innerHTML = '<div class="hub-empty">workspace 不可用</div>';
+      return;
+    }
+    const data = await resp.json();
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    hubListCount.textContent = `${sessions.length} 个`;
+    hubSessionList.textContent = '';
+    if (sessions.length === 0) {
+      hubSessionList.innerHTML = '<div class="hub-empty">暂无会话，新建一个开始</div>';
+      return;
+    }
+    for (const s of sessions) {
+      const row = document.createElement('div');
+      row.className = 'hub-session-row';
+      row.title = `session ${s.session_id}`;
+      const info = document.createElement('div');
+      info.className = 'hub-session-info';
+      const idLine = document.createElement('div');
+      idLine.className = 'hub-session-id';
+      idLine.textContent = s.session_id;
+      const meta = document.createElement('div');
+      meta.className = 'hub-session-meta';
+      meta.textContent = `mode=${s.mode} · ${s.messages} msgs · ${new Date(s.updated_at).toLocaleString()}`;
+      info.appendChild(idLine);
+      info.appendChild(meta);
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'hub-session-open';
+      openBtn.textContent = '打开';
+      openBtn.addEventListener('click', () => openSessionTab(s.session_id, workspace));
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'hub-session-delete';
+      delBtn.textContent = '删除';
+      delBtn.addEventListener('click', async () => {
+        if (!confirm(`删除会话 ${s.session_id}？`)) return;
+        try {
+          await fetch(`/api/sessions/${encodeURIComponent(s.session_id)}?workspace=${encodeURIComponent(workspace)}`, { method: 'DELETE' });
+          closeTab(s.session_id);
+          renderSessionList();
+        } catch (e) {
+          alert('删除失败');
+        }
+      });
+      const actions = document.createElement('div');
+      actions.className = 'hub-session-actions';
+      actions.appendChild(openBtn);
+      actions.appendChild(delBtn);
+      row.appendChild(info);
+      row.appendChild(actions);
+      hubSessionList.appendChild(row);
+    }
+  } catch (e) {
+    hubSessionList.innerHTML = '<div class="hub-empty">加载失败</div>';
+  }
+}
+
+// --- 新增 workspace 路径（hub「+ 添加」→ POST /api/workspaces） ---
+
+const WORKSPACE_ERROR_MESSAGES = {
+  missing_path: '请输入绝对路径',
+  workspace_path_invalid: '路径无效',
+  workspace_must_be_absolute: '必须是绝对路径（以 / 开头）',
+  workspace_sensitive_path: '系统敏感目录不能作为 workspace',
+  workspace_not_a_directory: '该路径是一个文件，不是目录',
+  workspace_create_failed: '创建目录失败，请检查父目录权限',
+  workspace_persist_failed: '目录已创建，但写入配置失败，重启后不生效',
+};
+
+function workspaceErrorMessage(code) {
+  return WORKSPACE_ERROR_MESSAGES[code] || `添加失败：${code || '未知错误'}`;
+}
+
+function showWorkspaceError(message) {
+  hubWorkspaceError.textContent = message;
+  hubWorkspaceError.hidden = false;
+}
+
+function setWorkspaceFormVisible(visible) {
+  hubWorkspaceForm.hidden = !visible;
+  hubWorkspaceError.hidden = true;
+  hubWorkspaceError.textContent = '';
+  if (visible) {
+    hubWorkspaceInput.focus();
+  } else {
+    hubWorkspaceInput.value = '';
+  }
+}
+
+async function submitWorkspace() {
+  const path = hubWorkspaceInput.value.trim();
+  if (!path) {
+    showWorkspaceError(WORKSPACE_ERROR_MESSAGES.missing_path);
+    return;
+  }
+  let data = {};
+  try {
+    const resp = await fetch('/api/workspaces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path }),
+    });
+    data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      showWorkspaceError(workspaceErrorMessage(data.error));
+      return;
+    }
+  } catch (e) {
+    showWorkspaceError('请求失败，请检查连接');
+    return;
+  }
+  // 新增成功：响应里的 workspaces 就是最新列表，直接重建选项并选中新路径，
+  // 避免再发一次 GET 造成两次并发 renderSessionList 抢写会话列表。
+  applyWorkspaceOptions(data.workspaces);
+  hubWorkspaceSelect.value = data.workspace;
+  hubNewWorkspace.value = data.workspace;
+  await renderSessionList();
+  setWorkspaceFormVisible(false);
+}
+
+function setupHub() {
+  hubWorkspaceSelect.addEventListener('change', renderSessionList);
+  hubWorkspaceAdd.addEventListener('click', () => setWorkspaceFormVisible(hubWorkspaceForm.hidden));
+  hubWorkspaceCancel.addEventListener('click', () => setWorkspaceFormVisible(false));
+  hubWorkspaceForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitWorkspace();
+  });
+  hubNewBtn.addEventListener('click', () => {
+    const mode = hubNewMode.value;
+    const workspace = hubNewWorkspace.value;
+    // 每次新建用递增临时 id，避免固定 'new' 覆盖 Map 键（design review I5）
+    newTabSeq += 1;
+    const tempId = `new-${newTabSeq}`;
+    const tab = createTab(tempId, null, workspace, mode);
+    buildTabPane(tab);
+    switchTab(tempId);
+    connectTab(tab, 'new', workspace).catch(() => {
+      statusEl.textContent = 'connection failed';
+    });
+  });
+}
+
 // --- Init ---
 async function init() {
+  // 初始 session 优先级：URL ?session=<id>（显式恢复，可带 ?workspace=）→
+  // localStorage 记忆的最近会话（刷新恢复）→ hub（无默认会话则展示列表）。
+  const urlParams = new URLSearchParams(location.search);
+  const urlSession = urlParams.get('session');
+  const urlWorkspace = urlParams.get('workspace') || null;
+  const rememberedSession = localStorage.getItem('asterwynd.session_id');
+  const rememberedWorkspace = localStorage.getItem('asterwynd.session_workspace') || null;
+
   try {
-    await connect();
     const commandResp = await fetch('/api/slash-commands');
     const commandCatalog = await commandResp.json();
     slashCommands = Array.isArray(commandCatalog.commands) ? commandCatalog.commands : [];
-    // Check debug status
     const resp = await fetch('/api/debug-status');
     const dbg = await resp.json();
     if (dbg.enabled) {
       debugTabBtn.style.display = '';
     }
   } catch (e) {
-    statusEl.textContent = 'connection failed';
+    // 忽略：hub 仍可渲染
+  }
+
+  // 视图 tab 切换（Sessions / Chat / Workflow / Debug）
+  document.querySelectorAll('.tab[data-tab]').forEach(tabBtn => {
+    tabBtn.addEventListener('click', () => {
+      const target = tabBtn.dataset.tab;
+      if (target === 'hub') { showHub(); return; }
+      showView(target);
+    });
+  });
+  setupHub();
+
+  const targetSession = urlSession || rememberedSession;
+  if (targetSession) {
+    const workspace = urlWorkspace || rememberedWorkspace;
+    const tab = createTab(targetSession, targetSession, workspace, 'build');
+    buildTabPane(tab);
+    switchTab(targetSession);
+    try {
+      await connectTab(tab, targetSession, workspace);
+    } catch (e) {
+      statusEl.textContent = 'connection failed';
+    }
+  } else {
+    showHub();
   }
 }
 
-init();
+// 测试接缝：暴露给浏览器契约测试（与 ``AsterwyndWorkflow`` 等命名空间同风格）。
+// 只暴露入口本身，不改变任何生产行为。
+window.AsterwyndChatTest = {
+  // 构造「同一 id 的卡片事件重复到达」这类真实链路难以单独复现的场景（重连补发
+  // 天然伴随 renderHistory 清空）。
+  dispatch: handleEvent,
+  // 模拟移动端切后台/锁屏导致的连接丢失。``BrowserContext.set_offline`` 只影响
+  // 新建连接，不会拆掉已建立的 WebSocket，所以断开走这条显式入口——断开之后客户端
+  // 仍走生产路径（onclose → 2s 退避 → 重连同一 session），服务端也照常 detach +
+  // 补发，不引入任何测试专用分支。
+  dropConnection: () => {
+    const tab = getActiveTab();
+    if (tab && tab.ws) tab.ws.close();
+  },
+  // 应用异步初始化是否已完成（issue #226 根因 B）。init() 的完成时刻决定**初始
+  // 激活视图**：后到的 showHub() 会把被测视图的 active 摘掉。浏览器回归必须等它
+  // 置位再派发 UI 事件，否则可能在一个尚未被初始化决定的视图上做断言。
+  //
+  // 该标志为**测试专用**（生产路径不读它），但 SHALL NOT 当死代码移除 —— 它是
+  // 唯一能区分「静态初始态」与「初始化完成态」的信号，已写进 web-ui spec。
+  // 置位只发生在 init() resolve 之后；init 失败/挂住时保持 false（屏障失守要
+  // fail-loud：测试超时失败，而不是误判就绪）。
+  initDone: false,
+};
+
+init().then(() => { window.AsterwyndChatTest.initDone = true; });

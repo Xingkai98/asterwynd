@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "evaluation-btrack-expansion",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a7ff8dd448046b98d",
+  "base_sha": "c69d0a40ad95d2007fef3df1f6c0d25cb68e50b6",
+  "head_sha": "486a46fd1f7e2477140119f66db56612a2cf9a4c",
+  "tasks_hash": "sha256:16d228e3da4be921bf815b5ddc974c639c35f618e985b2e1178687919a8fcd7d",
+  "spec_hash": "sha256:91d77b8b494e823028b459c5febb3b1c8f61ebb1e7256c7b88fe435a0b54a5b0",
+  "diff_hash": "sha256:08068384eb04ff8e8172803818f751d3fec789d144f2ca8ebc4567fd16ed28b6",
+  "report_hash": "sha256:1c5142cec5cbcc74ad3b22c68d19f0f62bc3aed27a7dee179b33599f36b7ec18"
+}

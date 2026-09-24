@@ -1,0 +1,21 @@
+{
+  "id": "swebench-pytest-dev__pytest-5809",
+  "repo": "pytest-dev/pytest",
+  "base_commit": "8aba863a634f40560e25055d179220f0eefabe9a",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest testing/test_pastebin.py::TestPaste::test_create_new_paste --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "easy",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://gitee.com/mirrors/pytest.git",
+  "version": "4.6",
+  "instance_id": "pytest-dev__pytest-5809",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

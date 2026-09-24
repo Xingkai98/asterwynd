@@ -125,10 +125,38 @@ subagents:
         encoding="utf-8",
     )
     config = load_config(start_dir=tmp_path)
+    # 旧键 max_concurrent_runs 迁到 max_active（兼容别名仍可读）
+    assert config.subagents.max_active == 6
     assert config.subagents.max_concurrent_runs == 6
     assert config.subagents.max_depth == 2
     assert config.subagents.default_max_tokens == 12000
     assert config.subagents.default_max_time_s == 45.5
+
+
+def test_load_config_parses_subagents_queue_section(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+subagents:
+  max_active: 7
+  max_queued_runs: 3
+  max_spawns: 42
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.subagents.max_active == 7
+    assert config.subagents.max_queued_runs == 3
+    assert config.subagents.max_spawns == 42
+
+
+def test_load_config_max_active_wins_over_legacy_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "subagents:\n  max_active: 7\n  max_concurrent_runs: 2\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.subagents.max_active == 7
 
 
 def test_load_config_subagents_defaults_when_absent(tmp_path, monkeypatch):
@@ -137,7 +165,10 @@ def test_load_config_subagents_defaults_when_absent(tmp_path, monkeypatch):
         "agent:\n  default_mode: plan\n", encoding="utf-8"
     )
     config = load_config(start_dir=tmp_path)
-    assert config.subagents.max_concurrent_runs == 4
+    assert config.subagents.max_active == 5
+    assert config.subagents.max_concurrent_runs == 5
+    assert config.subagents.max_queued_runs == 20
+    assert config.subagents.max_spawns == 200
     assert config.subagents.max_depth == 3
     assert config.subagents.default_max_tokens is None
 
@@ -712,3 +743,98 @@ def test_memory_decay_threshold_bool_rejected(tmp_path, monkeypatch):
     )
     with pytest.raises(ConfigError):
         load_config(start_dir=tmp_path)
+
+
+def test_parse_web_pending_interaction_timeouts_default(tmp_path, monkeypatch):
+    """change web-reconnect-pending-interaction tasks 1.4：WebConfig 两项超时缺省值。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    monkeypatch.delenv("ASTERWYND_BENCHMARK_PARALLEL", raising=False)
+
+    config = load_config(start_dir=tmp_path)
+
+    assert config.web.question_timeout_seconds == 300
+    assert config.web.approval_timeout_seconds == 600
+
+
+def test_parse_web_pending_interaction_timeouts_override(tmp_path, monkeypatch):
+    """tasks 1.4：两项超时可配置（Q1 要求必须是可配置参数）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+web:
+  question_timeout_seconds: 42
+  approval_timeout_seconds: 99
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(start_dir=tmp_path)
+
+    assert config.web.question_timeout_seconds == 42
+    assert config.web.approval_timeout_seconds == 99
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("question_timeout_seconds", 0),
+        ("approval_timeout_seconds", 0),
+        ("question_timeout_seconds", -5),
+        ("approval_timeout_seconds", -5),
+    ],
+)
+def test_parse_web_pending_interaction_timeouts_reject_non_positive(
+    tmp_path, monkeypatch, field, value
+):
+    """tasks 1.4/M15：0 或负数会退化成「立即超时」，必须结构化拒绝。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        f"""
+web:
+  {field}: {value}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+
+    assert f"web.{field}" in str(excinfo.value)
+
+
+def test_parse_web_pending_interaction_timeouts_reject_non_integer(tmp_path, monkeypatch):
+    """tasks 1.4：非整数同样拒绝。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+web:
+  approval_timeout_seconds: "soon"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+
+    assert "web.approval_timeout_seconds" in str(excinfo.value)
+
+
+def test_parse_web_pending_interaction_timeouts_reject_bool(tmp_path, monkeypatch):
+    """review Issue 4 回归：YAML 的 ``true`` 不能当正整数接受。
+
+    ``isinstance(True, int)`` 为真，bool 一旦漏过去，``asyncio.wait_for(timeout=True)``
+    等价于 **1 秒**超时——配置「看起来生效」而审批几乎必然 unavailable。
+    """
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+web:
+  approval_timeout_seconds: true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+
+    assert "web.approval_timeout_seconds" in str(excinfo.value)

@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "retire-4phase-state-machine",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-loop-r3-paseo-claude-fable5",
+  "base_sha": "ac0ccd7",
+  "head_sha": "966791b",
+  "tasks_hash": "sha256:7809d0eea5ea3a1ca2fd387521ed7a6f3f4479594354ff3773d72c891285c64c",
+  "spec_hash": "sha256:1546b752d740128522425741cd34722e338fbebe40cb8649850eb6bead40cc23",
+  "diff_hash": "sha256:1c7c5186b73157dd752e4fde4657de54d0f63c0d3963829057da7dd62b5d2389",
+  "report_hash": "sha256:b4fb74d0756f6ad72dbbac61da94d1a201302349d928f664ff3624ab2cfd3b94"
+}

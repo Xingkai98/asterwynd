@@ -7,20 +7,35 @@ import os
 from pathlib import Path
 
 from agent.commands import CommandContext, build_default_slash_command_registry
-from agent.config import AsterwyndConfig
+from agent.config import (
+    AsterwyndConfig,
+    load_sidecar_workspaces,
+    workspaces_sidecar_path,
+)
 from agent.skills import SkillRuntime
 from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from web.debug_hook import debug_enabled
-from web.session import SessionManager
+from web.session import (
+    ConnectionHandle,
+    SessionManager,
+    build_pending_interaction_payloads,
+    route_interaction_message,
+)
 
 logger = logging.getLogger("asterwynd.web.server")
 
 STATIC_DIR = Path(__file__).parent / "static"
 BRAND_ASSETS_DIR = Path(__file__).parent.parent / "docs" / "assets"
 _INDEX_HTML_CACHE: str | None = None
+
+# register_workspace 错误码中属于服务端（OS）失败的部分 → HTTP 500，其余路径
+# 校验类错误 → HTTP 400。
+_SERVER_SIDE_WORKSPACE_ERRORS = frozenset(
+    {"workspace_create_failed", "workspace_persist_failed"}
+)
 
 
 def _read_index_html() -> str:
@@ -30,6 +45,56 @@ def _read_index_html() -> str:
         html_path = STATIC_DIR / "index.html"
         _INDEX_HTML_CACHE = html_path.read_text(encoding="utf-8") if html_path.exists() else ""
     return _INDEX_HTML_CACHE
+
+
+async def bind_workflow_graph_channel(ws: WebSocket, session) -> None:
+    """把一条 ws 连接接到 session 的 workflow 图事件通道（Q1/Q2/Q9）。
+
+    两件事，顺序不能反：
+
+    1. **先补发再绑定转发**：补发的是注册表里的当前态（重连前的图），绑定后到达的
+       是新的迁移事件。反过来的话，补发期间产生的新快照会被旧快照覆盖。
+    2. ``rebind`` 让 forwarder 之后的推送走这条连接（重连后旧连接已断）。
+    """
+    from web.session import build_workflow_resume_payloads
+
+    forwarder = getattr(session, "graph_forwarder", None)
+    manager = getattr(session.agent, "subagent_manager", None)
+    if manager is None:
+        return
+    if forwarder is not None:
+        for payload in build_workflow_resume_payloads(
+            manager, session_id=session.session_id
+        ):
+            try:
+                await ws.send_json(payload)
+            except Exception:  # noqa: BLE001 - 补发尽力而为，不影响连接
+                logger.debug("workflow resume push failed", exc_info=True)
+                break
+        forwarder.rebind(ws.send_json)
+
+
+async def bind_pending_interaction_channel(
+    ws: WebSocket, session, handle: ConnectionHandle
+) -> ConnectionHandle:
+    """重连补发仍 pending 的交互卡片，并把本连接绑到 session 事件出口（D4）。
+
+    顺序钉死为 ``session_resumed → session_history → 补发卡片 → workflow 快照``
+    （``websocket_endpoint`` 里按此调用）：``session_history`` 会让前端整体重绘
+    消息区，补发排在它之前会被清掉。钉死顺序（而非「先后皆可」）才能让服务端测试
+    用事件类型序列断言锁住这个不变量（调研 finding 5 的竞态教训）。
+
+    先 attach 再补发：补发期间如果有新事件（例如用户同时在另一个 tab 作答），
+    本连接也能收到终态。补发尽力而为，单条失败不影响后续与连接本身。
+    """
+    session.event_channel.attach(handle)
+    for payload in build_pending_interaction_payloads(session):
+        try:
+            await ws.send_json(payload)
+        except Exception:  # noqa: BLE001 - 补发尽力而为，不影响连接
+            logger.debug("pending interaction replay failed", exc_info=True)
+            break
+    return handle
 
 
 def create_app(
@@ -44,11 +109,29 @@ def create_app(
     resolved_mode = mode or config.agent.default_mode.value
     app = FastAPI(title="Asterwynd · Asterwynd Web UI", version="0.1.0")
     app.state.resume_session_id = resume
+    # 有效 workspace 集合（issue #117 D4）：主 workspace + 配置/侧车中存在路径。
+    # 侧车文件（hub「+ 添加」写入）与 yaml 的 web.workspaces 合并后统一过滤：
+    # 不存在或不可解析的路径打 warning 并从有效集合排除。
+    primary_workspace = (workspace_root or Path.cwd()).resolve()
+    sidecar_path = workspaces_sidecar_path(
+        config.path.parent if config.path else Path.cwd()
+    )
+    allowed_workspaces: list[Path] = []
+    for ws in [*config.web.workspaces, *load_sidecar_workspaces(sidecar_path)]:
+        resolved = ws.resolve() if isinstance(ws, Path) else Path(str(ws)).resolve()
+        if resolved == primary_workspace or resolved in allowed_workspaces:
+            continue
+        if resolved.exists():
+            allowed_workspaces.append(resolved)
+        else:
+            logger.warning("web.workspaces 路径不存在，已排除: %s", resolved)
     session_manager = SessionManager(
         debug_enabled=debug_enabled(),
         mode=resolved_mode,
         config=config,
         workspace_root=workspace_root,
+        allowed_workspaces=allowed_workspaces,
+        sidecar_path=sidecar_path,
     )
     app.state.session_manager = session_manager
 
@@ -60,6 +143,17 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def chat_page():
+        html = _read_index_html()
+        if not html:
+            return HTMLResponse("<h1>index.html not found</h1>", status_code=404)
+        return HTMLResponse(html)
+
+    @app.get("/resume", response_class=HTMLResponse)
+    async def resume_page():
+        """显式恢复入口：返回 Chat 页面 HTML，前端配合 ``?session=<id>`` 恢复。
+
+        桌面端与移动端共用同一页面（无额外依赖）。
+        """
         html = _read_index_html()
         if not html:
             return HTMLResponse("<h1>index.html not found</h1>", status_code=404)
@@ -95,12 +189,148 @@ def create_app(
             return JSONResponse({"error": "session not found"}, status_code=404)
         return build_timeline_payload(session)
 
+    @app.get(
+        "/api/sessions/{session_id}/workflows/{workflow_id}/nodes/{node_id}/transcript"
+    )
+    async def node_transcript(
+        session_id: str,
+        workflow_id: str,
+        node_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        subagent_id: str | None = None,
+        run_id: str | None = None,
+    ):
+        """节点的**只读** transcript（change ``enhance-workflow-graph-ux``，D4/M3）。
+
+        三态 union（``single``/``candidates``/``none``）由
+        ``build_node_transcript_payload`` 按**节点类型**决定。
+
+        为什么是新的 HTTP 路由而不是复用 ``InspectSubagentTranscript``：后者是
+        **LLM 面工具**（``Tool`` 子类、要 permission、走 AgentLoop 工具注册与协议）。
+        Web 要用它得绕开工具协议直接调 manager——不如直接暴露一个只读 HTTP 接口；
+        两者底层复用同一个 ``SubAgentManager.inspect_transcript()``，不复制逻辑。
+
+        ``subagent_id``（+``run_id``）是**候选项下钻**的入口：foreach 容器在
+        manager 里是 N 条 ``(workflow_id, node_id)`` 相同的 session，只能由调用方
+        指名要哪一个；不传时按节点类型返回容器形态（三态 union）。
+
+        session 校验是**内存口径**（与 ``/api/sessions/{id}/timeline`` 同）：
+        ``session_manager.get_session`` 只查内存字典，冷会话/进程重启后一律 404。
+        """
+        from web.session import build_node_transcript_payload
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        manager = session.agent.subagent_manager
+        scheduler = manager.get_workflow(workflow_id)
+        if scheduler is None:
+            return JSONResponse({"error": "workflow not found"}, status_code=404)
+        try:
+            payload = build_node_transcript_payload(
+                manager, scheduler, node_id, limit=limit, offset=offset,
+                subagent_id=subagent_id, run_id=run_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - 只读接口绝不因投影失败而 500
+            logger.debug("node transcript failed for %s/%s", workflow_id, node_id,
+                         exc_info=True)
+            return JSONResponse(
+                {"error": f"{type(exc).__name__}: {exc}"}, status_code=500,
+            )
+        payload["workflow_id"] = workflow_id
+        payload["session_id"] = session_id
+        return JSONResponse(payload)
+
     @app.get("/api/slash-commands")
     async def slash_commands():
         command_registry = build_default_slash_command_registry(
             SkillRuntime.from_roots(config.skills.roots)
         )
         return {"commands": command_registry.catalog()}
+
+    def _workspace_entries() -> list[dict]:
+        """Hub workspace 列表投影（GET /api/workspaces 与 POST 复用）。
+
+        ``exists`` 反映运行期目录状态（集合在 create_app 解析，注册路径即时加入）；
+        ``session_count`` 为该 workspace store 下的已保存会话数。
+        """
+        entries = []
+        for ws, is_primary in session_manager.list_workspaces():
+            try:
+                session_count = len(session_manager._store_for(ws).list_sessions())
+            except Exception:
+                session_count = 0
+            entries.append({
+                "path": str(ws),
+                "is_primary": is_primary,
+                "exists": ws.exists(),
+                "session_count": session_count,
+            })
+        return entries
+
+    @app.get("/api/workspaces")
+    async def api_workspaces():
+        """Hub workspace 列表（issue #117 D1）：主 workspace 置顶 + allowlist + 侧车。"""
+        return {"workspaces": _workspace_entries()}
+
+    @app.post("/api/workspaces")
+    async def api_add_workspace(payload: dict):
+        """新增 workspace 路径（hub「+ 添加」），写入侧车文件并同进程立即生效。
+
+        请求体 ``{"path": "<绝对路径>"}``；路径不存在 → mkdir -p 建出来。校验失败
+        → 400 + 结构化 ``error``；建目录/写侧车等 OS 失败 → 500。成功返回新
+        workspace 与重算后的完整列表（``workspaces``），前端一次刷新即可。
+        """
+        raw_path = payload.get("path")
+        try:
+            registration = session_manager.register_workspace(
+                raw_path if isinstance(raw_path, str) else ""
+            )
+        except ValueError as exc:
+            code = str(exc)
+            status = 500 if code in _SERVER_SIDE_WORKSPACE_ERRORS else 400
+            return JSONResponse({"error": code}, status_code=status)
+        return {
+            "workspace": str(registration.path),
+            "created": registration.created,
+            "persisted": registration.persisted,
+            "workspaces": _workspace_entries(),
+        }
+
+    @app.get("/api/sessions")
+    async def api_sessions(workspace: str | None = None):
+        """Hub 会话列表：复用 ``SessionStore.list_sessions()`` 元数据。
+
+        缺省 workspace 用主 workspace；workspace 不在有效集合或路径不存在 →
+        HTTP 403 + 结构化错误。
+        """
+        try:
+            ws = session_manager.resolve_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        sessions = session_manager._store_for(ws).list_sessions()
+        return {"workspace": str(ws), "sessions": sessions}
+
+    @app.delete("/api/sessions/{session_id}")
+    async def api_delete_session(session_id: str, workspace: str | None = None):
+        """删除会话（issue #117 D1）：内存 + 指定 workspace store 的磁盘快照。
+
+        workspace 必须显式传入（冷会话无内存 workspace_root 可查）；缺省 →
+        400；未授权 → 403。畸形 session_id 由 SessionStore._validate_session_id
+        拒绝 → 400（design review I4）。
+        """
+        if not workspace:
+            return JSONResponse({"error": "missing_workspace"}, status_code=400)
+        try:
+            ws = session_manager.resolve_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        try:
+            session_manager.remove_session(session_id, workspace=ws)
+        except ValueError:
+            return JSONResponse({"error": "invalid_session_id"}, status_code=400)
+        return {"deleted": True, "session_id": session_id, "workspace": str(ws)}
 
     @app.post("/api/upload-image")
     async def upload_image(request: dict):
@@ -154,22 +384,101 @@ def create_app(
     async def websocket_endpoint(ws: WebSocket, session_id: str):
         await ws.accept()
         upload_buffers: dict[str, dict] = {}
+        query = ws.query_params
+        requested_mode = str(query.get("mode", "")).strip()
+        requested_workspace = str(query.get("workspace", "")).strip()
+        # /ws/new 带显式参数（mode 或 workspace）→ 跳过 --resume 拦截直接新建
+        # （issue #117 grill R2/Q8）；仅裸 /ws/new 保留 --resume 语义。
+        has_explicit_new_params = session_id == "new" and bool(requested_mode or requested_workspace)
+        # 恢复路径的 workspace 参数先校验（issue #117 R1/Q7）：非法 → error 后关闭。
+        resume_workspace: Path | None = None
+        if requested_workspace:
+            try:
+                resume_workspace = session_manager.resolve_workspace(requested_workspace)
+            except ValueError:
+                await ws.send_json({"error": "workspace_not_allowed"})
+                await ws.close()
+                return
 
         session = session_manager.get_session(session_id)
-        if not session:
-            session = await session_manager.create_session_async(llm)
+        if session is None:
+            # /ws/new 是默认入口：若 CLI 传了 --resume 且无显式新建参数，则用
+            # resume 目标；其他 session id 直接用该 id 尝试恢复。
+            resume_target = (
+                session_id if session_id != "new" else app.state.resume_session_id
+            )
+            if has_explicit_new_params:
+                resume_target = None
+            if resume_target:
+                session = await session_manager.resume_session_async(
+                    resume_target, llm, workspace=resume_workspace,
+                )
+
+        if session is None:
+            # 新建：校验 mode / workspace（issue #117 D2）。
+            create_mode: str | None = None
+            create_workspace: Path | None = None
+            if requested_mode:
+                try:
+                    from agent.run_config import parse_agent_mode
+                    parse_agent_mode(requested_mode)
+                    create_mode = requested_mode
+                except ValueError:
+                    await ws.send_json({"error": "invalid_mode"})
+                    await ws.close()
+                    return
+            if requested_workspace:
+                create_workspace = resume_workspace
+            session = await session_manager.create_session_async(
+                llm,
+                mode=create_mode,
+                workspace_root=create_workspace,
+            )
             await ws.send_json({
                 "type": "session_created",
                 "session_id": session.session_id,
                 "mode": session.current_mode,
+                "workspace": str(session.workspace_root) if session.workspace_root else None,
             })
+        else:
+            from web.session import build_history_payload
 
-        elif session.session_id != session_id:
-            session = session_manager.get_session(session.session_id)
+            await ws.send_json({
+                "type": "session_resumed",
+                "session_id": session.session_id,
+                "mode": session.current_mode,
+                "workspace": str(session.workspace_root) if session.workspace_root else None,
+            })
+            await ws.send_json(build_history_payload(session))
+
+        # pending 交互通道接线（change ``web-reconnect-pending-interaction``，D3/D4）：
+        # 把本连接绑到 session 级事件出口并补发仍 pending 的提问/审批卡片。补发
+        # **必须排在 session_history 之后**（上面已发），否则会被前端整体重绘清掉。
+        handle = ConnectionHandle(ws.send_json, label=session_id)
+        await bind_pending_interaction_channel(ws, session, handle)
+
+        # workflow 图通道接线（change ``workflow-graph-visualization``，Q1/Q2/Q9）：
+        # 1) 把本连接的 ``ws_send`` 绑到 session 级 forwarder——重连命中的是同一个
+        #    ``AgentSession``（``resume_session_async`` 内存命中直接复用），所以
+        #    forwarder 也是同一个，后台 workflow 的快照不会因为重连而丢；
+        # 2) 从 manager 注册表补发「当前 running + 最近 5 张终态」的图快照
+        #    （按 ``started`` 过滤掉仅 Declare 未启动的图）。
+        await bind_workflow_graph_channel(ws, session)
 
         try:
             while True:
-                raw = await ws.receive_json()
+                try:
+                    raw = await ws.receive_json()
+                except RuntimeError:
+                    # run 期间的断连帧由 session 级接收任务消费掉；run 跑完后主循环
+                    # 再调 ``receive_json`` 时 Starlette 会抛 ``RuntimeError: Cannot
+                    # call "receive" once a disconnect message has been received``。
+                    # 本 change 把「断连后 run 继续跑完」变成正常路径，这条异常因此
+                    # 成为常见情形——与 WebSocketDisconnect 同义（连接已经没了）。
+                    # 作用域**只包住这一行**：循环体（run_session / slash command /
+                    # set_mode）里的 RuntimeError 是真 bug，不能被静默当成断连吞掉。
+                    logger.info(f"WebSocket already disconnected: {session_id}")
+                    break
                 msg_type = raw.get("type")
 
                 if msg_type == "chat":
@@ -222,8 +531,8 @@ def create_app(
                             await session_manager.run_session(
                                 session,
                                 agent_input,
-                                ws_send=lambda e: ws.send_json(e),
                                 ws_receive=ws.receive_json,
+                                handle=handle,
                             )
                             continue
                         await ws.send_json({
@@ -242,9 +551,9 @@ def create_app(
                     try:
                         await session_manager.run_session(
                             session, user_text,
-                            ws_send=lambda e: ws.send_json(e),
                             ws_receive=ws.receive_json,
                             images=images,
+                            handle=handle,
                         )
                     except ValueError as exc:
                         await ws.send_json({
@@ -362,48 +671,80 @@ def create_app(
                         },
                     })
 
-                elif msg_type == "approval_response":
-                    approval_id = str(raw.get("approval_id", "")).strip()
-                    decision = str(raw.get("decision", "")).strip()
-                    accepted = session.approval_handler.submit_response(
-                        approval_id,
-                        decision,
+                elif msg_type in {"approval_response", "user_answer"}:
+                    # Q3：run 不在时也走与 run 内一致的路径——被接受的决定广播给所有
+                    # 连接（只回提交者会让其他连接的卡片永远停在 pending），被拒绝的
+                    # 回执只回提交者（见 ``_deliver_interaction_receipt``）。
+                    await route_interaction_message(
+                        session, raw, session.event_channel, handle=handle
                     )
-                    await ws.send_json({
-                        "type": "approval_response",
-                        "data": {
-                            "approval_id": approval_id,
-                            "status": "received" if accepted else "unavailable",
-                            "reason": (
-                                "received"
-                                if accepted
-                                else "no matching pending approval"
-                            ),
-                            "session_id": session.session_id,
-                        },
-                    })
 
-                elif msg_type == "user_answer":
-                    question_id = str(raw.get("question_id", "")).strip()
-                    answer = str(raw.get("answer", "")).strip()
-                    accepted = session.question_handler.submit_answer(question_id, answer)
+                elif msg_type == "cancel_workflow":
+                    # G18/D11：取消一张正在跑的图。走 WS 而非新 HTTP 路由——handler
+                    # 手里有 ``session``，``get_workflow`` 直接拿到 scheduler；且
+                    # ``cancel()`` 内部 ``ensure_future`` 需要的 running loop 是 WS
+                    # 天然满足的（HTTP 还要重做内存口径的 session 校验）。
+                    #
+                    # 与既有 ``{"type": "cancel"}`` 的边界：那个只让待审批失败、run
+                    # 照跑（见 ``web/session.py`` 的 ``fail_pending_interactions``），
+                    # 本消息才真的停图。
+                    workflow_id = str(raw.get("workflow_id", "")).strip()
+                    workflow = session.agent.subagent_manager.get_workflow(workflow_id)
+                    if workflow is None:
+                        await ws.send_json({
+                            "type": "error",
+                            "data": {"message": f"unknown workflow: {workflow_id}"},
+                        })
+                        continue
+                    result = workflow.cancel()
                     await ws.send_json({
-                        "type": "user_answer",
-                        "data": {
-                            "question_id": question_id,
-                            "status": "received" if accepted else "unavailable",
-                        },
+                        "type": "workflow_cancelled",
+                        "data": {"workflow_id": workflow_id, "result": result},
                     })
 
                 elif msg_type == "reset":
                     session.approval_handler.fail_pending("session reset")
                     session.question_handler.fail_pending("session reset")
+                    # G18/D11：``reset`` 在 ``remove_session`` 之前必须**逐个 cancel**
+                    # 在跑的图。图是 ``ensure_future(scheduler.run(spec))`` 起的后台
+                    # 任务、``manager._workflows`` 永不注销——不 cancel 的话图继续跑、
+                    # 继续烧预算，而 forwarder 已被 detach，用户彻底看不到也管不着。
+                    # ``cancel()`` 对 ``declared`` 态不改状态（符合预期）。
+                    reset_manager = session.agent.subagent_manager
+                    for existing_id in list(reset_manager.list_workflows()):
+                        existing = reset_manager.get_workflow(existing_id)
+                        if existing is None:
+                            continue
+                        try:
+                            existing.cancel()
+                        except Exception:  # noqa: BLE001 - reset 不因单张图失败而中断
+                            logger.debug("cancel on reset failed for %s", existing_id,
+                                         exc_info=True)
+                    # reset 保留原 workspace/mode（issue #117 grill R7/Q9），
+                    # 替换会话用同 workspace + 同 mode 创建。
+                    old_workspace = session.workspace_root
+                    old_mode = session.current_mode
                     session_manager.remove_session(session.session_id)
-                    session = await session_manager.create_session_async(llm)
+                    session = await session_manager.create_session_async(
+                        llm,
+                        mode=old_mode,
+                        workspace_root=old_workspace,
+                    )
+                    # 会话被换掉了，出口也换了一个：本连接必须重新绑到新 session 的
+                    # ``event_channel``。``remove_session`` 的 ``detach_all()`` 已把本
+                    # 句柄摘掉，不重绑的话此后 run 事件会广播给 0 条连接、定向发送也
+                    # 因 detached 直接被拒——表现为 reset 之后整个会话彻底静默。
+                    await bind_pending_interaction_channel(ws, session, handle)
+                    # workflow 图出口是另一个 session 级通道，同样随会话被换掉了
+                    # （``remove_session`` 会 detach 旧 forwarder，新 session 新建一个）。
+                    # 只重绑 run 事件出口会让 reset 之后的图事件静默丢弃。新 session
+                    # 没有图快照，补发天然为空。
+                    await bind_workflow_graph_channel(ws, session)
                     await ws.send_json({
                         "type": "session_created",
                         "session_id": session.session_id,
                         "mode": session.current_mode,
+                        "workspace": str(session.workspace_root) if session.workspace_root else None,
                     })
 
                 elif msg_type == "set_mode":
@@ -429,5 +770,9 @@ def create_app(
 
         except WebSocketDisconnect:
             logger.info(f"WebSocket disconnected: {session_id}")
+        finally:
+            # D3：断开只解绑这条连接——run 继续跑完，pending 保持有效（D2），
+            # 重连后由 ``bind_pending_interaction_channel`` 补发并重新绑定。
+            handle.detach()
 
     return app

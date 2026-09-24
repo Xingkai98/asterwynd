@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "subagent-concurrency-queue",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-subagent-concurrency-queue-20260914-r2",
+  "base_sha": "bdd0edaa4942aa69f03069055a46f4ce6c7542d9",
+  "head_sha": "ea22b65ca18357ef56265e999553bd1f83a37303",
+  "tasks_hash": "sha256:4fccf496d6e7c1074fb0a010946ea09f233cfcc2f4c6d481bd156c573a378fb5",
+  "spec_hash": "sha256:b7b6e79bb3f68ea60a925bc6176b2fe6bd9e467ad52639ad7401600a57eac96f",
+  "diff_hash": "sha256:4f7a7a1cd5c08877e18a7d4a9f891ec700bf2bced378a7f3f52317fad66769c0",
+  "report_hash": "sha256:d82155a90ab4eb85928370c0e8941a970c260474c4beb6db7c755209cdbb554e"
+}

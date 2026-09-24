@@ -1,0 +1,21 @@
+{
+  "id": "swebench-pylint-dev__pylint-6903",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "ca80f03a43bc39e4cc2c67dc99817b3c9f13b8a6",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest tests/test_pylint_runners.py::test_pylint_run_jobs_equal_zero_dont_crash_with_cpu_fraction --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "easy",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://github.com/pylint-dev/pylint.git",
+  "version": "2.15",
+  "instance_id": "pylint-dev__pylint-6903",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

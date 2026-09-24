@@ -1,0 +1,21 @@
+{
+  "id": "swebench-pylint-dev__pylint-4551",
+  "repo": "pylint-dev/pylint",
+  "base_commit": "99589b08de8c5a2c6cc61e13a37420a868c80599",
+  "problem_statement_file": "issue.md",
+  "test_command": "python -m pytest tests/unittest_pyreverse_writer.py::test_dot_files[packages_No_Name.dot] tests/unittest_pyreverse_writer.py::test_dot_files[classes_No_Name.dot] tests/unittest_pyreverse_writer.py::test_get_visibility[names0-special] tests/unittest_pyreverse_writer.py::test_get_visibility[names1-private] tests/unittest_pyreverse_writer.py::test_get_visibility[names2-public] tests/unittest_pyreverse_writer.py::test_get_visibility[names3-protected] tests/unittest_pyreverse_writer.py::test_get_annotation_annassign[a: tests/unittest_pyreverse_writer.py::test_get_annotation_assignattr[def tests/unittest_pyreverse_writer.py::test_infer_node_1 tests/unittest_pyreverse_writer.py::test_infer_node_2 --tb=short -p no:warnings",
+  "timeout_seconds": 300,
+  "gold_patch_file": "gold.patch",
+  "test_patch_file": "test.patch",
+  "category": "bug_fix",
+  "difficulty": "hard",
+  "task_family": "swebench",
+  "execution_environment": "docker",
+  "external_repo": "https://github.com/pylint-dev/pylint.git",
+  "version": "2.9",
+  "instance_id": "pylint-dev__pylint-4551",
+  "dataset_name": "princeton-nlp/SWE-bench_Verified",
+  "dataset_split": "test",
+  "track": "verified",
+  "scenario": "bug-fix"
+}

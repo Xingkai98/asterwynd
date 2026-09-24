@@ -255,6 +255,44 @@ class TraceRecorder:
         Path(path).write_text(self.to_json() + "\n", errors="replace")
 
 
+def iter_failure_steps(steps: Any):
+    """按时间序产出 trace 里的**失败步骤**。
+
+    失败判据是**读取侧**的：``status`` 不为 ``"ok"`` 的 ``tool_result``（该字段由
+    ``agent/loop.py`` 的生产者算出，见 ``record_tool_result``）+ 全部 ``llm_error``。
+    本函数只读不改——本仓库的失败信号此前没有任何用户面出口（issue #215）。
+
+    容忍残缺 step：非 dict、缺 ``data``、``data`` 不是 dict 一律跳过，不让一条
+    脏记录把整段投影带崩。
+    """
+    for step in steps or ():
+        if not isinstance(step, dict):
+            continue
+        data = step.get("data")
+        if not isinstance(data, dict):
+            continue
+        step_type = step.get("type")
+        if step_type == "llm_error":
+            yield step
+        elif step_type == "tool_result" and str(data.get("status") or "") != "ok":
+            yield step
+
+
+def count_failures(trace: dict | None) -> int | None:
+    """trace 里的失败步骤数；``None`` 表示**没有可用的 trace**。
+
+    ``None`` 与 ``0`` 是两件事，调用方不得折叠：前者的意思是「没有采集到」
+    （无 trace，或 trace 存在但一步都没跑），后者的意思是「采集到了、零失败」。
+    这正是 OTel ``Unset`` 重载踩过的坑（change fix-issue-215 的 D1/F2）。
+    """
+    if not isinstance(trace, dict):
+        return None
+    steps = trace.get("steps") or []
+    if not steps:
+        return None
+    return sum(1 for _ in iter_failure_steps(steps))
+
+
 class TraceRecorderSandboxSink:
     """SandboxEventSink adapter that records into a TraceRecorder.
 
