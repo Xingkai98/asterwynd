@@ -65,10 +65,10 @@
 
 ## 6. 审阅闭环
 
-- [ ] 6.1 Round 1 独立 subagent 审阅（`/review-loop fix-issue-226-browser-test-flake`）→ verdict
-- [ ] 6.2 按 verdict 修复 + 补回归测试（若有 CHANGES_REQUESTED）
-- [ ] 6.3 复审至 PASS（或 3 轮封顶）
-- [ ] 6.4 生成 review manifest（绑定 reviewer run / base·head sha / tasks·spec·diff·report hash），**在该 change 的 `tasks.md` 最终化（含归档 move）之后生成**
+- [x] 6.1 Round 1 独立 subagent 审阅（`/review-loop fix-issue-226-browser-test-flake`）→ verdict
+- [x] 6.2 按 verdict 修复 + 补回归测试（若有 CHANGES_REQUESTED）
+- [x] 6.3 复审至 PASS（或 3 轮封顶）
+- [x] 6.4 生成 review manifest（绑定 reviewer run / base·head sha / tasks·spec·diff·report hash），**在该 change 的 `tasks.md` 最终化（含归档 move）之后生成**
 
 ### 审阅修复（Round 1 → Round 2）
 
@@ -82,9 +82,9 @@
 
 ## 7. PR 收尾
 
-- [ ] 7.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-fix-issue-226-browser-test-flake/`（**日期前缀为硬性要求**）
-- [ ] 7.2 从 `docs/openspec-change-backlog.md` 移除本 change
-- [ ] 7.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`（**D1 拍板后须清理**）
-- [ ] 7.4 确认 RIR 已记录最终状态、发现和设计影响，且未把本地参考仓库路径写成项目依赖
-- [ ] 7.5 再次运行 OpenSpec strict validate + artifact checker
+- [x] 7.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-fix-issue-226-browser-test-flake/`（**日期前缀为硬性要求**）
+- [x] 7.2 从 `docs/openspec-change-backlog.md` 移除本 change
+- [x] 7.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`（**D1 拍板后须清理**）
+- [x] 7.4 确认 RIR 已记录最终状态、发现和设计影响，且未把本地参考仓库路径写成项目依赖
+- [x] 7.5 再次运行 OpenSpec strict validate + artifact checker
 - [ ] 7.6 PR 合入后给 issue #226 添加完成说明 comment 并关闭 issue **(post-merge)**
