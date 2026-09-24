@@ -81,15 +81,20 @@ def _main_workspace(repo: Path) -> Path | None:
     return None
 
 
-def _registered_worktree_paths(repo: Path) -> set[str]:
+def _registered_worktree_paths(repo: Path) -> set[str] | None:
     """已注册 worktree 的绝对路径集合（porcelain 首列，resolve 归一化）。
 
     用于区分「本次 add 真正留下的残留注册」与「路径上本来就有的用户 worktree」
     ——失败清理只能动前者（review-loop R5 Issue 1）。
+
+    无法枚举时返回 ``None`` 而非空集（review-loop R6 O2）：空集会被差集读成
+    「此前一个 worktree 都没有」，一旦 ``worktree list`` 自身失败，残留判定就会
+    把别人的 worktree 当成自己的残留去删——正是 Issue 1 要防的破坏。调用方必须
+    把 ``None`` 当作「未知、不得清理」（fail-closed）。
     """
     result = _run_git(repo, "worktree", "list", "--porcelain")
     if result.returncode != 0:
-        return set()
+        return None
     paths: set[str] = set()
     for line in result.stdout.splitlines():
         if line.startswith("worktree "):
@@ -187,8 +192,10 @@ class EnterWorktreeTool(Tool):
             # 注册」。同名分支/worktree 已存在时 `wt_path` 上本就可能有用户的
             # worktree（典型路径：keep=true 保留后重入），无条件 remove 会把它
             # 连同内容删掉。失败文案区分「被占用」与「真残留」两种事实。
-            residue = _registered_worktree_paths(repo) - before
-            if str(wt_path) in residue:
+            after = _registered_worktree_paths(repo)
+            # 任一侧枚举失败 → 残留未知，一律不清理（fail-closed，R6 O2）
+            residue = None if before is None or after is None else after - before
+            if residue is not None and str(wt_path) in residue:
                 cleanup = _run_git(repo, "worktree", "remove", str(wt_path))
                 if cleanup.returncode != 0:
                     return ToolResult(
@@ -209,6 +216,15 @@ class EnterWorktreeTool(Tool):
                         f"Error: worktree 创建失败：{wt_path} 已被占用（分支或目录已存在），"
                         f"未改动它；请换一个 name，或先 ExitWorktree 退出该 worktree: "
                         f"{result.stderr.strip()}"
+                    ),
+                    error_type=ERROR_WORKTREE_CREATE_FAILED,
+                )
+            if residue is None:
+                return ToolResult(
+                    text=(
+                        f"Error: worktree 创建失败，且无法确认是否留下残留注册"
+                        f"（worktree 列表读取失败），未做任何清理；请手动检查 "
+                        f"`git worktree list`: {result.stderr.strip()}"
                     ),
                     error_type=ERROR_WORKTREE_CREATE_FAILED,
                 )

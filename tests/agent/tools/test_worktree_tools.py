@@ -257,6 +257,42 @@ async def test_enter_worktree_base_branch_option_injection_rejected(git_repo, po
 
 
 @pytest.mark.asyncio
+async def test_enter_worktree_cleanup_fail_closed_when_list_unreadable(
+    git_repo, policy, monkeypatch
+):
+    """R6 O2 回归：worktree 列表读不到时不得清理（fail-closed）。
+
+    残留判定依赖 `worktree list` 的前后差集；若枚举失败被当成空集，「此前没有
+    任何 worktree」会把别人的 worktree 误判成本次残留去删。
+    """
+    import agent.tools.builtin.worktree as wt_mod
+
+    tool = EnterWorktreeTool(policy=policy)
+    real_run_git = wt_mod._run_git
+    removed: list[list] = []
+
+    def _inject(*args, **kwargs):
+        git_args = args[1:] if len(args) > 1 else ()
+        if "add" in git_args:
+            return subprocess.CompletedProcess(
+                args, returncode=255, stdout="", stderr="boom"
+            )
+        if "remove" in git_args:
+            removed.append(list(git_args))
+            return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
+        return real_run_git(*args, **kwargs)
+
+    monkeypatch.setattr(wt_mod, "_run_git", _inject)
+    monkeypatch.setattr(wt_mod, "_registered_worktree_paths", lambda repo: None)
+
+    result = await tool.execute(name="test-wt")
+
+    assert result.error_type == "worktree_create_failed"
+    assert removed == [], "枚举失败时不得执行任何 worktree remove"
+    assert "无法确认" in result.text
+
+
+@pytest.mark.asyncio
 async def test_enter_worktree_add_failure_cleanup_checked(git_repo, policy, monkeypatch):
     """add 确实留下新注册时，清理失败返回残留 text（R2-4）。
 

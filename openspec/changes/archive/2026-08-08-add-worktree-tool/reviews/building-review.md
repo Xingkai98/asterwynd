@@ -1,101 +1,175 @@
-# Building Review: add-worktree-tool（Round 5）
+# Building Review: add-worktree-tool（Round 6）
 
-**Verdict**: CHANGES_REQUESTED
+**Verdict**: PASS
 
-**审阅基线**: base_sha=1e16ee14e8103b06786eb5407a50be36dd466f57（origin/master） head_sha=9ef7bfa1416fb6278a525c40f7a39f31c3a848c6
+**审阅基线**: base_sha=1e16ee14e8103b06786eb5407a50be36dd466f57（origin/master） head_sha=5a26adc3a42e9030eaec8107a619a4073564332d
 **审阅时间**: 2026-09-24
 
-> 说明：本报告是 8 周前 PR #113 合并 master 后的**基线复验审阅**，非原 Round 4 的续写。
-> 复审重点是三处复验修复（提交 `9ef7bfa`）是否真的落地、是否引入新问题。
-> **关键结论：R1 修复（提交 `922bc45`）引入了一条数据丢失缺陷，见 Issue 1。**
+> 本轮为 R5（CHANGES_REQUESTED）修复后的**独立复核**。逐一复核 R5 的 6 项 issue，并在临时
+> 仓库中独立复现数据丢失场景、做变异验证证明新回归测试不是假保护。
+> **结论：R5 的 6 项全部确认修复，未发现中等及以上新问题。** 唯一遗留是归档 manifest 需在
+> 本报告写入后重新生成（`/review-loop` 的收尾步骤，非代码缺陷），另有 2 条低危观察项。
 
-## Tasks Verification
+## R5 Issue 复核
 
-| 任务 | 声称产出 | 核验结果 | 证据 |
+| # | 上一轮问题 | 结论 | 实测证据 |
 | --- | --- | --- | --- |
-| 1.1 | tool-system spec delta | ✅ 存在 | `openspec/changes/archive/2026-08-08-add-worktree-tool/specs/tool-system/spec.md`（ADDED 1 Requirement + 7 Scenario） |
-| 1.2 | 范围/非目标/验收标准 | ✅ 存在 | `proposal.md`「## 非目标」「## 验收」 |
-| 1.3 | grill 设计追问 + 用户停轮确认 | ✅ 存在 | `reviews/grill-design.md`，`## User Confirmation` 8 条（Q1-Q8）全带实质答复与时间 `2026-08-07` |
-| 1.4 | Impact Analysis | ✅ 存在 | `proposal.md`「## Impact Analysis」表（11 行，无 `unknown`/`TBD`/`待确认`） |
-| 1.5 | Reference Implementation Research | ✅ 存在 | `proposal.md:82-92`：`research_tier: full` / `status: enabled` / reason / findings / design impact 齐全 |
-| 1.6 | Pre-Implementation Review | ✅ 存在 | `design.md:85-92`（已确定/已否决/剩余风险） |
-| 1.7 | **规格同步**（复验补做） | ✅ 存在且逐字节一致 | `openspec/specs/tool-system/spec.md:221-272`；与归档 delta 的 Requirement 块 `diff` 结果 **IDENTICAL**（各 52 行）；归档目录含 `specs/`；事件日志补 `seq 2 current_spec_synced`（见验证命令节） |
-| 2.1 | Enter/Exit 单测 | ✅ 存在 | `tests/agent/tools/test_worktree_tools.py`（21 例） |
-| 2.2 | tmp_path 真实 git 仓库全流程 | ✅ 存在 | 同上 `test_enter_worktree_creates_and_rebinds` / `test_file_tool_boundary_rebound_into_worktree`（`test_worktree_tools.py:375-389`） |
-| 2.3 | 负向路径 + 失败回滚 | ✅ 存在 | `test_enter_worktree_not_a_git_repo`、`test_enter_worktree_nested_rejected`、`test_exit_worktree_dirty_rejected_state_unchanged`、`test_enter_worktree_rollback_on_post_add_failure` |
-| 2.4 | AgentLoop 层测试 | ⚠️ 部分 | `test_registry_enter_exit_updates_policy_root:396-413` 是 **ToolRegistry 层**（register + `registry.execute`），不是 AgentLoop 层。核心断言（调用后 policy root 正确）已覆盖，口径偏窄 |
-| 2.5 | benchmark smoke 沉淀 | ✅ 存在并实测闭环 | `benchmarks/tasks/asterwynd-008-worktree-tools/`（task.json/issue.md/gold.patch/test.patch）+ `tests/agent/tools/test_worktree_benchmark_smoke.py`；base 红 → gold 绿**本次实测复现** |
-| 3.1-3.2 | Enter 创建+切换 / Exit keep+remove | ✅ 存在 | `agent/tools/builtin/worktree.py:135-285` |
-| 3.3 | policy root 重绑定 + 权限元数据 + deny pattern | ✅ 存在 | `worktree.py:203-204`；`agent/workspace_policy.py:45-46`（`.asterwynd/worktrees/**`）；权限元数据由类属性提供，测试 `test_permission_metadata` 断言通过 |
-| 3.4 | 注册进 ToolRegistry + schema | ✅ 存在 | `agent/tools/factory.py:40/111-112/334-335/447-448`；smoke 测试断言 `get_all_schemas()` 含两名 |
-| 3.5 | 新影响面回写 | ✅ 存在 | `design.md:57`（D3 回写 R1 越权边界）、`design.md:92` 剩余风险已回写 |
-| 3.6 | 调研结论修正回写 | ✅ 无需修正 | 调研结论（Claude Code 对标）未被实现推翻 |
-| 3.7 | 更新必要文档 | ⚠️ 部分 | 本分支相对 origin/master **只改了 `docs/openspec-change-backlog.md`**（`git diff --name-status origin/master...HEAD -- docs/`）。`docs/architecture.md` 内置工具表（`:44-58`）**未**列 EnterWorktree/ExitWorktree；`docs/interview-script/` 无对应内容。任务文案带「如有新能力线」限定词，故判⚠️而非❌ |
-| 4.1-4.6 | 验证 | ✅ 存在 | 见「验证命令实跑结果」节，均本地复现通过（4.2 的两条失败见下文说明） |
-| 5.1 | 归档 | ✅ 存在 | `openspec/changes/archive/2026-08-08-add-worktree-tool/`；active 目录（`openspec/changes/add-worktree-tool/`）已不存在 |
-| 5.2 | backlog 清理 | ✅ 存在 | `docs/openspec-change-backlog.md:78` 标「✅ 已合入并归档（2026-08-08）」；未实现队列条目已移除 |
-| 5.3 | 无残留 TBD/unknown/待确认 | ✅ 存在 | `grep -n "TBD\|unknown\|待确认" proposal.md design.md` → 零命中 |
-| 5.4 | 调研记录最终化 | ✅ 存在 | 同 1.5；`.dev/reference-repos.txt` 不可用仅记为事实，未写成项目依赖 |
-| 5.5 | OpenSpec validate + artifact checker | ✅ 实跑通过 | 见验证命令节 |
-| 5.6 | `(post-merge)` 标记 | ✅ 恰当 | issue #111 的 comment+关闭本质是合入后动作，标 `(post-merge)` 门禁认可（`scripts/check_openspec_artifacts.py:112-116`） |
+| 1 | [高] `EnterWorktree` 失败兜底删除已存在的 worktree（数据丢失） | ✅ 已修复 | 见「独立复现」：clean / dirty 两种场景下 worktree 与文件**均完好保留**，main 只剩 2 条注册未被改动；文案改为「已被占用（分支或目录已存在），未改动它」 |
+| 2 | [中] 失败文案与事实相反（dirty 场景谎称「清理未完成/可能残留」） | ✅ 已修复 | dirty 场景实测文案为 `...已被占用（分支或目录已存在），未改动它；请换一个 name，或先 ExitWorktree 退出该 worktree`，**不含**「清理未完成」；回归测试断言 `assert "清理未完成" not in result.text` 且变异后变红 |
+| 3 | [低] `base_branch` 参数注入（`--force` 被当选项吞掉、base 静默失效） | ✅ 已修复 | `worktree.py:184` 已加 `--`：`add -b <name> -- <path> <base>`。实测 `base_branch="--force"` → `fatal: invalid reference: --force`、`error_type=worktree_create_failed`、无 worktree 建成（修复前会静默成功建在 HEAD）；`base_branch="basebr"` 仍被正确采纳（新 worktree 含 base 分支独有文件） |
+| 4 | [低] 测试缺口：无「同名 worktree 已存在」回归 | ✅ 已修复 | 新增 `test_enter_worktree_existing_worktree_not_deleted:196`、`test_enter_worktree_dirty_existing_worktree_not_deleted:225`，另有 `test_enter_worktree_base_branch_option_injection_rejected:247`；三条均经变异验证确实变红（见「变异验证」） |
+| 5 | [低] spec 滞后：越权边界无 Scenario | ✅ 已修复 | 主规格与归档 delta **同步**补 `#### Scenario: 拒绝退出非本工具创建的 worktree`；两侧 Requirement 块各 60 行、`diff` **IDENTICAL**、Scenario 数 8；实现侧 `worktree.py:283-287` 与测试 `test_exit_worktree_rejects_non_tool_created:321` 支撑该 Scenario 全部 4 条断言 |
+| 6 | [低] benchmark `gold.patch` 固化破坏性 remove | ✅ 已修复 | 现 `gold.patch` 与 `git diff 454bebe HEAD -- agent/tools/builtin/worktree.py` **IDENTICAL**；已不含无条件 remove，改为 `before/after` 差集清理（`gold.patch:114-127`）。base→gold 红绿闭环独立复现成立（见下） |
 
-## Issues
+补充核验（R5 未列但同批需确认）：
 
-### 1. [高] `EnterWorktree` 失败兜底会**删除已存在的 worktree**（数据丢失）
+- **残留分支是否可达**：R5 曾质疑「D2 里非 branch 冲突残留」是否存在。实测**存在**——`git worktree
+  add` 在 `post-checkout` hook 失败时会留下注册（见「独立复现」C 节）。因此保留 `residue` 清理分支
+  是**正确取舍**，而非死代码；`test_enter_worktree_add_failure_cleanup_checked` 用注入方式覆盖它同样合理。
+- **branch / dir / 非法 base / 非法 rev 冲突**：`worktree list --porcelain` 前后对比**均无新增注册**
+  （git 2.43.0），证实「只清本次新增注册」的差集在常规失败路径上恒为空集 → 不触发任何删除，回到 base 安全语义。
 
-- **位置**：`agent/tools/builtin/worktree.py:166-181`（关键行 `:169`）
-- **问题**：`git worktree add -b <name> ...` 失败后**无条件**执行 `git worktree remove <wt_path>`，且该返回值被当作"清理成功"直接静默接受。但当失败原因是**分支已存在**（`exit 255`，最常见）时，`<wt_path>` 上很可能本来就有属于用户的、合法的 worktree——`remove` 成功返回 0，于是**用户的 worktree 连同其内容被删除**，而返回给 agent 的 text 只说"worktree 创建失败"，完全没有提示刚刚删掉了一个已有 worktree。
-- **真实触发路径**（均为设计内的正常用法）：
-  1. `EnterWorktree(name="fix-x")` → `ExitWorktree(keep=true)`（D3 明确：keep=true **保留** worktree 与分支）→ 再次 `EnterWorktree(name="fix-x")` 想接着干 → 分支已存在 → add 失败 → **删除上一轮保留的 worktree**。
-  2. 上一次会话/用户手工留下的 `.asterwynd/worktrees/<name>`，同名重入同样被删。
-- **实测证据**（临时 git 仓库，见「变异验证」节复现脚本）：
+## 独立复现
+
+**A. Issue 1 原始 bug 场景（本轮必须做）** — 临时 git 仓库，直接调用工具类，`policy.workspace_root=repo`：
+
+```
+===== SCENARIO A (clean existing worktree) =====
+after first enter error_type: None
+exit(keep=True): {"workspace": "/tmp/r6-w83ky4m1", "removed": false}
+porcelain after exit: ['/tmp/r6-...', '/tmp/r6-....asterwynd/worktrees/keepme']
+re-enter error_type: worktree_create_failed
+re-enter text: Error: worktree 创建失败：/tmp/....asterwynd/worktrees/keepme 已被占用
+              （分支或目录已存在），未改动它；请换一个 name，或先 ExitWorktree 退出该 worktree:
+              Preparing worktree (new branch 'keepme') / fatal: a branch named 'keepme' already exists
+wt exists AFTER: True
+precious AFTER: True
+porcelain AFTER: ['/tmp/r6-...', '/tmp/r6-....asterwynd/worktrees/keepme']
+-> RESULT: worktree_preserved=True file_preserved=True
+
+===== SCENARIO B (dirty existing worktree) =====
+re-enter error_type: worktree_create_failed
+re-enter text: Error: worktree 创建失败：... 已被占用（分支或目录已存在），未改动它；...
+wt exists AFTER: True
+precious AFTER: True
+dirty AFTER: True
+-> RESULT: worktree_preserved=True file_preserved=True
+```
+
+对照 R5 报告的同场景记录（`wt exists AFTER: False` / `file AFTER: False` / 只剩主工作区）：
+**破坏性删除已彻底消失，两条回归路径均安全**。另查 `.git/worktrees/` 目录条目：重入前后均为
+`['keepme']`，未被误删；worktree 目录内容 `['.git','R','f.txt']` 完整。
+
+**B. 残留探测（决定 `residue` 分支可达性）**：
+
+```
+branch-conflict  rc: 255   new registrations: set()
+dir-conflict     rc: 128   new registrations: set()
+invalid base     rc: 128   new registrations: set()      (fatal: invalid reference: --force)
+bad rev          rc: 128   new registrations: set()
+```
+
+即：常规冲突路径 **无残留注册** → 差集为空 → **不执行任何 remove**（正是 base 的安全语义）。
+
+**C. 真正可达的残留分支（post-checkout hook 失败）**：
+
+```
+porcelain before: ['/tmp/r6h-...']
+error_type: worktree_create_failed
+text: Error: worktree 创建失败（本次残留已清理）: Preparing worktree (new branch 'hookfail')
+porcelain AFTER: ['/tmp/r6h-...']      path exists: False
+```
+
+证明「本次 add 确实留下注册 → 清理 → 精确文案」这条正路径**真实存在且工作正常**（R5 曾怀疑它是死代码）。
+
+**D. 新逻辑边界探测**：
+
+- 分支被**另一路径**的 worktree 占用：`error_type=worktree_create_failed`，文案退化为裸
+  「创建失败」（`wt_path` 不存在故不走「被占用」分支）；两个 worktree 均未被触碰。文案**未撒谎**，只是引导性弱 → 记为观察项 O1。
+- 合法 `base_branch`：新 worktree 同时含 base 分支独有文件与主分支文件，`--` 未破坏正常语义。
+
+## 变异验证
+
+在**一次性 detached worktree** `/tmp/r2-mut`（`git worktree add --detach /tmp/r2-mut HEAD`）中做「改坏 → 变红 → 还原」，**被审检出从未被写入**。
+
+**变异 A：把失败兜底改回「无条件 remove」**（还原 R5 Issue 1 的原始缺陷）
+
+```
+$ .venv/bin/python -m pytest tests/agent/tools/test_worktree_tools.py -q
+FAILED tests/agent/tools/test_worktree_tools.py::test_enter_worktree_existing_worktree_not_deleted
+FAILED tests/agent/tools/test_worktree_tools.py::test_enter_worktree_dirty_existing_worktree_not_deleted
+2 failed, 22 passed in 2.16s        EXIT=1
+```
+
+失败的**正是两条新增回归**，且 dirty 用例的失败断言为 `assert '清理未完成' not in result.text`
+（说明 Issue 2 的文案断言同样是真保护，非摆设）。
+
+**变异 B：去掉 `--` 分隔符**（还原 R5 Issue 3）
+
+```
+FAILED tests/agent/tools/test_worktree_tools.py::test_enter_worktree_base_branch_option_injection_rejected
+1 failed, 23 passed in 1.98s        EXIT=1
+```
+
+失败证据：`assert None == 'worktree_create_failed'` where `error_type=None`、
+`text='{"worktree": ".../test-wt", "branch": "test-wt"}'` —— 即去掉 `--` 后 `--force` 被吞、
+**静默按 HEAD 建成功**，与 R5 描述完全一致 → 回归测试有效。
+
+**还原确认**：`git checkout -- agent/tools/builtin/worktree.py` 后 `git status --porcelain` **空**；
+`git worktree remove --force /tmp/r2-mut` 已执行，`git worktree list` 中无 `/tmp/r2-mut`。
+被审检出 `git status --porcelain` 与 `git diff --stat` **均为空**，无任何未还原改动（唯一写入是本报告）。
+
+**benchmark 红→绿闭环（独立复现，未采信历史报告）**：在 `454bebe` 检出上
+
+```
+base + test.patch                → 1 failed, 2 passed   EXIT=1
+  （失败：test_rejected_in_orchestration_worktree，text 显示 removed:true / error_type=None）
+base + test.patch + gold.patch   → 3 passed            EXIT=0
+```
+
+`git apply --check --reverse gold.patch` 于 HEAD → rc=0；`test.patch` 同样 reverse-apply 干净。
+
+## 新引入问题检查
+
+逐项核对 E 节关注点，**未发现中等及以上新问题**。以下为低危观察：
+
+- **O1 [低] 失败文案覆盖不全（分支被异路径 worktree 占用）**：`worktree.py:206` 用
+  `wt_path.exists()` 判定「被占用」，只覆盖「路径被占」；若分支被**另一个路径**的 worktree 占用，
+  文案退化为裸「创建失败」，不提示「换 name / 先 ExitWorktree」。行为安全（未删任何东西），仅引导性弱。
+  另外 `wt_path` 是陈旧非空目录时文案会顺带建议「先 ExitWorktree 退出该 worktree」，而那种情况下
+  并无注册 worktree——措辞轻微不精确。两者均不影响正确性。
+- **O2 [低] `before` 快照取不到时是 fail-open 方向**：`residue = after - before`，若
+  `_registered_worktree_paths` 在**第一次（before）**调用失败（函数在 `git worktree list` 非 0 时
+  `return set()`，含 30s 超时映射），则已有 worktree 会被算进 `residue` → 破坏性 remove 回归。
+  实测用故障注入复现可触发（`before` 返回空集时 `wt exists AFTER: False / precious AFTER: False`）。
+  触发条件苛刻（同一条 git 命令在 before 调用上瞬时失败、在 after 调用上成功，且 add 恰好因
+  分支冲突失败），故判低危；建议改为 **fail-closed**：before 快照不可得时直接跳过清理，只回文案。
+- **O3 [提示] 归档 manifest 在本次修复后已失去绑定**：修复改动了 `specs/`（manifest 的 `spec_hash`
+  源）与本报告（`report_hash`），故 `--check-archived` 现在报两条错：
+
   ```
-  预置 worktree keepme（clean，含已提交文件 newfile.py）
-  → EnterWorktree(name="keepme")
-  error_type: worktree_create_failed
-  text: Error: worktree 创建失败: ... fatal: a branch named 'keepme' already exists
-  wt exists AFTER: False   ← worktree 被删除
-  file AFTER: False        ← 内容丢失
-  worktrees AFTER: ['worktree /tmp/tmpiez0erlk']    ← 只剩主工作区
+  ERROR: review report hash mismatch
+  ERROR: spec hash mismatch
   ```
-- **归因**：`base`（`454bebe`）没有这行 remove，失败时只返回错误、现场完好。该破坏性行为由 review-loop **R1 修复**（提交 `922bc45`）引入，并被 **R3 修复**（提交 `43ffd4a`）补上返回值检查（补的正是"清理失败"分支，反而把 clean 情形的静默删除固化成两条分支）。也就是说：**这是本轮要复验的 R1/R3 修复自身引入的新问题。**
-- **影响面延伸**：`benchmarks/tasks/asterwynd-008-worktree-tools/gold.patch` 就是 R1 的 diff，**同样含这条破坏性 remove**（该缺陷已进入 benchmark 交付物，只是 smoke 测试不覆盖该路径）。
-- **建议修法**：add 失败时不要无条件 remove。二选一：
-  - 仅在能证明"这次 add 确实留下了注册"时才清理（例如失败后 `git worktree list --porcelain` 中该 path 存在，且此前不存在）；或
-  - 直接回到 base 语义：add 失败只返回结构化错误、不做任何 remove（git 对 `-b` 冲突本就无残留注册，D2 里"非 branch 冲突可能残留"的场景应单独用"先探测 path 是否为空目录"来判定）。
-  - 无论哪种，都必须补一条回归测试：**预置一个同名 worktree → 调 EnterWorktree → 断言 worktree 与文件仍在**。
 
-### 2. [中] 失败文案与事实不符（dirty 保留场景误导 agent）
+  R5 时只有 `report_hash` 一条；新增的 `spec_hash` 失配是本次（合法、必要）修改 specs 所致。
+  这属于 `/review-loop` 收尾「重生成 manifest 绑定新报告」的预期中间态，**不是缺陷**；但**必须**
+  在开出/更新 PR 前重生成 manifest（绑定新的 report/spec/tasks/diff hash），否则 CI 第二步
+  （`.github/workflows/ci.yml:70-71`）会红。
+- **O4 [提示] 受保护路径事件文本已过时**：`workflow-events.jsonl` seq 2 的 reason 写「7 个 Scenario」，
+  而本次 spec 已增至 8 个。事件门禁机械上仍通过（存在覆盖该路径的 `current_spec_synced` 事件，
+  且第一条 checker 命令 exit 0），仅文字与现状不符，属历史记录口径，不阻断。
 
-- **位置**：`agent/tools/builtin/worktree.py:169-177`
-- **问题**：当已有 worktree **有未提交改动**时，`git worktree remove` 被 git 拒绝，代码走 `cleanup.returncode != 0` 分支，返回：
-  `"Error: worktree 创建失败且清理未完成，worktree 可能残留: ...; 清理: fatal: '...' is not a working tree"`
-  实测该 worktree 其实是**完好保留**的（`dirty file AFTER: True`）。文案 "清理未完成 / worktree 可能残留" 会让 agent 误判环境脏了、进而做出更多破坏性补救动作；而事实恰恰相反——现场是安全的，真正的问题是"名字被占用"。同理，Issue 1 的 clean 场景返回的"创建失败"也未告知 worktree 已被删除。
-- **建议修法**：区分三类失败并给出准确文案——(a) 分支/名字已被占用（提示换名或 `ExitWorktree` 退出后再进）；(b) 本次 add 确实残留注册（提示残留路径）；(c) 已有 worktree 完好保留（明说未受影响）。
+其余 E 节关注点核对结论：
 
-### 3. [低] `base_branch` 未做校验，存在参数注入/语义静默改变
-
-- **位置**：`agent/tools/builtin/worktree.py:127-131`（schema）、`:164-165`（直接拼进 git argv）
-- **问题**：`base_branch` 原样作为 `git worktree add -b <name> <path> <base_branch>` 的尾参，git 允许选项出现在任意位置，因此实测 `base_branch="--force"` **被接受**，结果是 base 被静默忽略、按 HEAD 创建（无报错），调用方以为拿到了指定基线；`base_branch="--detach"` 则直接失败。相比之下 `name` 已用 `check-ref-format` 做了前置校验（R1-4），base 同属"外部输入进 argv"却漏了。
-- **建议修法**：对 `base_branch` 做与 `name` 同级的校验（`git check-ref-format` 或 `rev-parse --verify`），或改用 `--` 分隔符隔离位置参数。
-
-### 4. [低] 测试缺口：没有"同名 worktree 已存在"的回归测试
-
-- **位置**：`tests/agent/tools/test_worktree_tools.py:182-193`（`test_enter_worktree_branch_conflict`）
-- **问题**：该用例只造了"分支已存在、但**没有**对应 worktree"（`git branch test-wt`，故 remove 报 `not a working tree`），恰好绕开了 Issue 1 的破坏路径，所以 24 例全绿也没能挡住这个缺陷。Issue 1、2 的修法都必须配回归测试。
-- **建议修法**：补两个用例——干净同名 worktree（断言不删）、dirty 同名 worktree（断言不删 + 文案准确）。
-
-### 5. [低] 任务勾选口径略宽
-
-- **位置**：归档 `tasks.md` 2.4 / 3.7
-- **问题**：2.4 声称的 "AgentLoop 层测试" 实际是 ToolRegistry 层；3.7 声称"更新必要文档（架构说明、工具文档、面试讲稿）"但本分支仅改了 backlog。两者都有"如/如有"限定词或已覆盖核心断言，不构成事实错误，但勾选依据弱于字面。
-- **建议修法**：后续 change 把这类任务文案写成可机械核验的形式（如显式列出目标文件），或勾选时在任务行注明实际交付物。
-
-### 6. [提示] 归档 manifest 已失效（本报告写入后）
-
-- **位置**：`reviews/building-review-manifest.json`
-- **问题**：该 manifest 绑定的是上一轮报告（`report_hash: sha256:017dab2a...`，`head_sha: 43ffd4a`），其 `verdict: PASS`。本报告一旦覆盖 `reviews/building-review.md`，`report_hash` 将不再匹配，`--check-archived` 归档 manifest 校验会失败。**这是预期状态，不要当作回退**：当前 HEAD 上存在 Issue 1 的数据丢失缺陷，本 change 不应以 PASS 合入。
-- **建议修法**：修完 Issue 1（及 2/3/4）+ 复验通过后，再由 `/review-loop` 重新生成绑定新报告的 manifest。
+- **`_rebind_workspace` 抛错的回滚路径未受影响**：回滚仍在 `add` 成功之后（`worktree.py:220-235`），
+  此时路径必然是本次新建的注册，`worktree remove` 前后语义正确；`test_enter_worktree_rollback_on_post_add_failure:350` 通过。
+- **是否可能误删**：仅当 `wt_path ∈ (after - before)` 才删，即 git 在本次调用中确实在该路径注册过，
+  且此前未注册——语义上不可能指向用户既有 worktree。唯一例外即 O2 的 before 快照失效。
+- **是否漏清真残留**：hook 失败场景实测被正确清理（C 节），未漏清。
+- **文案自相矛盾**：三类文案（被占用未改动 / 真残留已清理 / 清理未完成残留）互斥且与实测一致，无矛盾。
+- **`.git` 外副作用 / 路径归一化**：`before/after` 与 `wt_path` 均经 `Path(...).resolve()` 归一化，
+  集合比较口径一致；`.git/worktrees/` 条目实测未被波及（前后均为 `['keepme']`）。
 
 ## 验证命令实跑结果
 
@@ -104,102 +178,78 @@ export PATH=/home/happy/.local/bin:$PATH
 cd /home/happy/my-agent/.claude/worktrees/add-worktree-tool+2026-08-07
 ```
 
-1. `uv run pytest tests/agent/tools/test_worktree_tools.py tests/agent/tools/test_worktree_benchmark_smoke.py -q`
-   → `24 passed in 1.99s`，exit 0
+| # | 命令 | 真实输出 | exit |
+| --- | --- | --- | --- |
+| 1 | `uv run pytest tests/agent/tools/test_worktree_tools.py tests/agent/tools/test_worktree_benchmark_smoke.py -q` | `27 passed in 2.29s` | 0 |
+| 2 | `uv run pytest tests/test_workflow_guard.py -q` | `26 passed in 10.87s` | 0 |
+| 3 | `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` | `Totals: 28 passed, 0 failed (28 items)`（含 `✓ spec/tool-system`） | 0 |
+| 4 | `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref 1e16ee14e8103b06786eb5407a50be36dd466f57 --require-base` | `OpenSpec artifact checks passed` | 0 |
+| 5 | `uv run pytest -q`（全量，可选） | `2 failed, 3053 passed, 9 skipped, 77 warnings in 341.45s (0:05:41)` | 1 |
 
-2. `uv run pytest tests/test_workflow_guard.py -q`
-   → `26 passed in 11.39s`，exit 0
+第 5 项的两条失败为任务书声明的**已知无害项**，与本次 change 无关：
+`tests/agent/memory/test_persistent.py::TestFindScopeRoot::test_returns_none_for_non_git_dir` 与
+`...::test_malformed_git_file_falls_back_to_scan`（本机 `/tmp` 自身是 git 仓库；base 同样失败、CI 不复现）。
 
-3. `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-   → `Totals: 28 passed, 0 failed (28 items)`，exit 0（含 `✓ spec/tool-system`）
-
-4. `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog`
-   → `[archived manifest check] tasks_hash 已按归档语境跳过（49 个 change；其余 hash 与字段仍校验）` / `OpenSpec artifact checks passed`，exit 0
-
-5. **`--base-ref` 命令的 base sha 有误（非仓库问题）**：任务书给的 `1e16ee148103b06786eb5407a50be36dd466f57` 长度 39 位，git 无法解析（`fatal: bad revision`，checker exit 1）。`origin/master` 的真实 sha 是 **`1e16ee14e8103b06786eb5407a50be36dd466f57`**（我实测 `git rev-parse origin/master`）。用正确 sha 重跑：
-   `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref 1e16ee14e8103b06786eb5407a50be36dd466f57 --require-base`
-   → `OpenSpec artifact checks passed`，exit 0
-
-6. 全量 `uv run pytest -q`
-   → `2 failed, 3050 passed, 9 skipped, 77 warnings in 350.49s (0:05:50)`，exit 1
-   两条失败均为任务书声明的已知无害项，且**与本次 change 无关**：
-   `tests/agent/memory/test_persistent.py::TestFindScopeRoot::test_returns_none_for_non_git_dir`
-   `tests/agent/memory/test_persistent.py::TestFindScopeRoot::test_malformed_git_file_falls_back_to_scan`
-   失败原因是本机 `/tmp` 自身是 git 仓库（断言 `assert PosixPath('/tmp') is None`），非本次引入。
-
-7. 归档一致性抽查：
-   - `grep "Requirement: Worktree 隔离工具" openspec/specs/tool-system/spec.md` → `221:### Requirement: Worktree 隔离工具`（7 个 Scenario 齐全）
-   - 主规格 Requirement 块 vs 归档 delta Requirement 块 `diff` → `IDENTICAL`（各 52 行）
-   - 事件日志：`seq 1 backlog_updated` → `seq 2 current_spec_synced` → `seq 3 change_archived`（修复前为 `seq 1` → `seq 3` 跳号；`seq 3` 的 `artifact_path` 亦已由 `docs/openspec-change-backlog.md` 修正为归档目录）
-
-## 变异验证
-
-**A. 证明 `9ef7bfa` 的 `_isolate_changes_dir` 修复真实有效（不只是"看起来对"）**
-
-在**一次性 detached worktree**（`git worktree add --detach /home/happy/mut-verify HEAD`，不改动被审检出）中做"改坏→变红→还原"：
-
-| 步骤 | 操作 | 观察 |
-| --- | --- | --- |
-| A1 | detached HEAD（`git branch --show-current` 为空串），修复**保留** | `uv run pytest tests/test_workflow_guard.py -q` → `26 passed`，exit 0 |
-| A2 | 注释掉 helper 内两行 `monkeypatch.setattr(mod, "CHANGES_DIR"/"REQUIRED_BASE", ...)` | `2 failed, 24 passed`，exit 1 —— 失败正是 `test_guard_noops_when_workflow_disabled` 与 `test_guard_resume_audit_no_longer_blocks_writes`；stderr 显示 `⛔ change 'add-minimal-tui-runtime-view' 尚未完成独立 subagent design grilling ... 请先运行 /grill`，`SystemExit(2)` |
-| A3 | `git checkout -- tests/test_workflow_guard.py` 还原 | `diff -q` 与改动前文件逐字节一致 |
-
-结论：修复**确实是**把 in-process 测试从"依赖检出状态"解耦的那一步；变异后立刻变红，且失败原因与 helper docstring 描述完全吻合（detached CI HEAD 下 branch 名规则失效 → 落到"唯一 active change"兜底 → grill 门禁拦截）。**有效，非假保护。**
-
-**B. benchmark task 红→绿闭环（独立复现，未采信历史报告）**
-
-在一次性 detached worktree 检出 `base_commit=454bebe`：
-
-- `git apply --check test.patch` → rc=0（`git ls-tree 454bebe` 确认 smoke 文件在 base 树不存在，new-file patch 适用）
-- base + `test.patch` → `1 failed, 2 passed`，失败断言 `exit_res.error_type == "not_in_worktree"` 实际为 `None`（`ToolResult(text='{"workspace": ...", "removed": true}', error_type=None)`）——base 上 ExitWorktree 确实会越权删除编排层 worktree，issue.md 描述与 base 状态一致
-- base + `test.patch` + `gold.patch` → `3 passed`
-- `gold.patch` 与 `git diff 454bebe 922bc45 -- agent/tools/builtin/worktree.py` → `IDENTICAL`（历史报告的溯源声明成立）
-- `git apply --check --reverse test.patch` 于 HEAD → rc=0，主套件 smoke 文件与 `test.patch` 逐字节一致
-
-**C. Issue 1 破坏性行为的独立复现**（临时 `tmp_path` git 仓库，`policy`/工具直接调用）
+附带项（`--check-archived`，见 O3）：
 
 ```
-enter("keepme") → exit(keep=True)       # 设计内的"保留 worktree"正常用法
-预置已提交文件 newfile.py 于该 worktree
-enter("keepme") 再次调用
-  → error_type: worktree_create_failed
-  → text 只说 "创建失败"（未提删除）
-  → wt exists AFTER: False / file AFTER: False / worktrees AFTER 只剩主工作区
-对照：dirty 同名 worktree → 文件保留（git 拒绝 remove），但文案说"清理未完成"
-对照：base(454bebe) 同一路径 → 不执行 remove，worktree 完好
+$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog
+[archived manifest check] tasks_hash 已按归档语境跳过（49 个 change；其余 hash 与字段仍校验）
+ERROR: review report hash mismatch
+ERROR: spec hash mismatch
+exit=1
 ```
 
-**D. 还原确认**：两个临时 worktree（`/home/happy/mut-verify`、`/home/happy/bench-repro`）均已 `git worktree remove --force` 清除，`git worktree list` 无残留；被审检出 `git status --porcelain` **空**、`git diff --stat` **空**。评审过程中**未留下任何未还原的修改**（唯一写入是本报告文件）。
+同一命令在 `origin/master`（1e16ee1）为 `OpenSpec artifact checks passed`、在修复前的 `9ef7bfa`
+同样 passed —— **该失配是本次合法修改 + 未重生成 manifest 共同造成，需在收尾步骤消除。**
 
 ## Spec 对齐检查
 
-三层一致性结论：**主规格 ≡ 归档 delta ≡ 实现行为，唯一偏差是 R1 新增的越权边界未进规格（低）**。
+三层一致性：**主规格 ≡ 归档 delta ≡ 实现，且实现/测试覆盖全部 8 个 Scenario。无偏差。**
 
-1. **主规格 vs 归档 delta**：`openspec/specs/tool-system/spec.md:221-272` 的 Requirement「Worktree 隔离工具」块与归档 `specs/tool-system/spec.md` 的对应块 `diff` 结果 **IDENTICAL**（各 52 行，ADDED 1 Requirement + 7 Scenario 逐条一致）。任务 1.7 声称的"补写主规格 + 回填 delta + 补事件"三项已**逐项实证**，非纸面声明。
-2. **规格 vs 实现（逐 Scenario 回核）**：
-   - 创建并进入 → `worktree.py:135-201`，返回 `{"worktree","branch"}` ✅
-   - 非 git 仓库拒绝且工作目录不变 → `:146-150` + 测试 `test_enter_worktree_not_a_git_repo` ✅
-   - 嵌套拒绝且当前 worktree 不变 → `:151-155` + `test_enter_worktree_nested_rejected` ✅
-   - 退出保留 → `:265-285` + `test_exit_worktree_keep_true` ✅
-   - 退出删除 → `:268-279` + `test_exit_worktree_keep_false_removes` ✅
-   - 删除含未提交改动被拒且状态不变 → `:254-263` + `test_exit_worktree_dirty_rejected_state_unchanged` ✅
-   - 不在 worktree 中返回错误 → `:237-242` + `test_exit_worktree_not_in_worktree` ✅
-   未见"规格写了代码没做"或反之。
-3. **规格未覆盖的实现行为**：R1 追加的 `_is_tool_created_worktree` 越权边界（`worktree.py:24-33`、`:246-250`）**没有**对应 Scenario——7 个 Scenario 里没有"非工具自建 worktree 内 ExitWorktree 被拒且状态不变"。该边界已有实现与测试（`test_exit_worktree_rejects_non_tool_created`、smoke `test_rejected_in_orchestration_worktree`），属**规格滞后于实现**。Round 4 报告已把它记为 [低] 并建议"同步时补该场景"，而本次 1.7 补做只做了"把 delta 原样复制进主规格"，**未补该场景**。建议随 Issue 1 的修复一并补一个 Scenario。
+1. **主规格 vs 归档 delta**：`openspec/specs/tool-system/spec.md` 与
+   `openspec/changes/archive/2026-08-08-add-worktree-tool/specs/tool-system/spec.md` 的
+   Requirement「Worktree 隔离工具」块各 **60 行**，逐行 `diff` = **IDENTICAL**；Scenario 计数两侧均为 **8**。
+   R5 指出的「第 8 个 Scenario 缺失」已在两侧同步补齐（主规格 `:274-281`）。
+2. **规格 vs 实现**（8/8 逐条可回核）：创建并进入 → `worktree.py:184/236-238` + `test_enter_worktree_creates_and_rebinds:122`；
+   非 git 拒绝 → `:162-166` + `test_enter_worktree_not_a_git_repo:156`；嵌套拒绝 → `:167-171` + `test_enter_worktree_nested_rejected:169`；
+   退出保留 → `:302/318-322` + `test_exit_worktree_keep_true:371`；退出删除 → `:305-316` + `test_exit_worktree_keep_false_removes:390`；
+   含未提交改动被拒 → `:291-300` + `test_exit_worktree_dirty_rejected_state_unchanged:408`；
+   不在 worktree 中 → `:275-279` + `test_exit_worktree_not_in_worktree:441`；
+   **拒绝退出非本工具创建** → `:283-287` + `test_exit_worktree_rejects_non_tool_created:321`（`keep=False` 但
+   `error_type=not_in_worktree`，且断言 policy root 未变、任务 worktree 未被删 —— 与 Scenario 的
+   `SHALL NOT 退出或删除` / `工作目录保持不变` 完全对应）。
+3. **实现写了规格没写**：未发现。R1 追加的越权边界本轮已进规格（R5 Issue 5 闭合）。
+4. 归档 change 目录含 `specs/` delta，`openspec validate --strict` 覆盖 28 项全通过。
 
 ## 结论
 
-**Verdict: CHANGES_REQUESTED。**
+**Verdict: PASS。**
 
-- 三处复验修复中，**规格同步（1.7）与 guard 测试隔离两项经实证确实落地**：主规格与归档 delta 逐字节一致、`specs/` 已回填、事件日志 seq 连续；guard 修复经"改坏→变红→还原"变异验证确认真实有效。benchmark task 的 base 红 / gold 绿闭环也独立复现成立。
-- 但 **R1 修复引入了一条高危数据丢失缺陷**（Issue 1）：`EnterWorktree` 在"同名 worktree 已存在"时会把**已有的 worktree 及其内容删除**，且返回文案完全不提；最典型的触发路径正是设计内的正常用法（`keep=true` 保留 worktree 后重入）。这是本次审阅最重要的发现，必须修复并补回归测试（Issue 4）后才能放行。
-- Issue 2（文案与事实相反）、Issue 3（`base_branch` 未校验）建议同批修掉；Issue 5、6 为口径与流程项，不阻断。
-- 测试侧：24 例 worktree 用例、26 例 guard 用例全绿；全量 3050 passed，仅 2 条与本次无关的 `/tmp` 环境已知失败。**测试全绿不等于无缺陷**——现有用例恰好绕开了 Issue 1 的路径。
-- 不判 BLOCKED：核心功能（创建/进入/退出/边界重绑定/越权拒绝）真实可用且测试充分，缺陷是失败分支上的破坏性副作用，属可定点修复的中等及以上问题。
+- R5 的 6 项 issue **逐条确认为真修复**，且都拿到了实测证据而非纸面声明：Issue 1 的原始数据丢失
+  场景在 clean / dirty 两种形态下均复现为「worktree 与文件完好保留」；Issue 3 的 `--` 分隔符经
+  故障注入证明有效；Issue 4/6 经变异验证与 base→gold 红绿闭环证实不是假保护。
+- **未引入中等及以上新问题**：`before/after` 差集只可能指向本次新增注册，`_rebind_workspace`
+  失败回滚路径未被波及，`residue` 分支经 hook 失败场景证明真实可达且工作正常，文案三类互斥自洽。
+- 遗留 4 条均为低危/流程项：O1 文案覆盖不全（行为安全）、O2 before 快照 fail-open（触发条件苛刻，
+  建议改 fail-closed）、O3 manifest 需重生成（收尾步骤，非缺陷）、O4 事件文本过时（门禁通过）。
+  **O2/O3 建议在收尾时顺手处理**：O3 是硬要求（否则 CI 第二步红），O2 是两行防御性改动。
+- 测试侧：worktree 27 例 + guard 26 例 + OpenSpec 28 项 + 第一条 artifact checker 全绿；
+  全量 3053 passed，仅 2 条任务书声明的 `/tmp` 环境已知失败。
+
+**放行条件（收尾必做）**：由 `/review-loop` 重新生成
+`reviews/building-review-manifest.json`，绑定本轮 `report_hash` 与新的 `spec_hash`（以及
+tasks/diff hash），使 `--check-archived` 恢复 exit 0。本报告写入后该 manifest 必然失配，属预期。
 
 ## Open Questions
 
-1. **Issue 1 的修法取向**：倾向"add 失败时完全不做 remove、回到 base 语义（git 对 `-b` 冲突无残留注册）"，还是"加前置探测、确实残留才清理"？前者更简单安全，但要确认 D2 里"非 branch 冲突可能残留注册"的场景是否真实存在（建议先构造一个来验证，否则可整段删掉）。
-2. **`base_branch` 是否保留**：该参数在真实使用中价值有限（缺省即当前分支），却带来参数注入面。是否考虑直接下线，只保留 `name`？
-3. **3.7 文档口径**：`docs/architecture.md` 内置工具表是否补 EnterWorktree/ExitWorktree 两行？任务带"如有新能力线"限定词，两种口径都说得通，请拍板后按同一口径回写 tasks.md。
-4. **benchmark gold.patch 是否随修复重生成**：若 Issue 1 修复改动 `worktree.py`，`gold.patch`（= R1 diff）里的同一段破坏性 remove 需要同步，否则 benchmark 交付物会固化缺陷。
+1. **O2 是否本轮一并改为 fail-closed**（before 快照不可得则跳过清理、绝不 remove）？我判低危不阻断，
+   但这是把「唯一的删除动作」从「依赖快照可靠」改为「默认不删」的一行防御性改动，成本极低。
+2. **O1 是否补全「分支被异路径 worktree 占用」的文案**？可让所有 `add` 失败都带
+   「换 name / 先 ExitWorktree」引导，而不只依赖 `wt_path.exists()`。
+3. **O4 是否追加一条 `workflow-events.jsonl` 事件**记录本轮 spec 从 7 个 Scenario 增至 8 个？
+   事件门禁当前已通过（机械合规），追加纯粹为可追溯性。
+4. **R5 Open Question 3（3.7 文档口径）仍未拍板**：`docs/architecture.md` 内置工具表是否补
+   EnterWorktree/ExitWorktree 两行？R5 提过、本轮未变（本分支相对 master 的 `docs/` 改动仍只有
+   `docs/openspec-change-backlog.md`）。任务 3.7 带「如有新能力线」限定词，两种口径都讲得通，
+   但既然已连续两轮挂起，建议明确拍板以免继续悬空。
