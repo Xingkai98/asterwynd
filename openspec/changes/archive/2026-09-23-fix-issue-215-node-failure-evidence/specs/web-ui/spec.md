@@ -80,3 +80,27 @@ Web 服务的 workflow 节点 transcript 只读接口 SHALL 在同一个载荷�
 - **WHEN** 请求该容器节点的 transcript
 - **THEN** 每个候选 SHALL 各自携带 `failure_evidence`，且其为**轻量**形态：`state` / `total` / `truncated` 齐全，`items` SHALL 至多 1 条最新失败条目且该条文本 SHALL 不超过 400 字符
 - **AND** 候选项下钻（指名 `subagent_id`）时，载荷顶层的 `failure_evidence` SHALL 为**完整**形态（最近 `N` 条 × 单条内容上限），SHALL NOT 被轻量上限约束
+
+## MODIFIED Requirements
+
+### Requirement: workflow 图快照
+
+scheduler SHALL 提供 `workflow_graph_snapshot()`，返回完整运行期图（nodes + edges + 每节点 status + 每边 status）。该快照 SHALL 基于运行期 `ExecutionPlan`（含自动插层 + foreach 展开），SHALL NOT 改变现有 `_envelope`/`parent_envelope` 的父 Agent 数据契约。快照 SHALL 显式挑选字段（节点不含 `subagent_ids`/`slots`/`raw`，边只含结构字段），SHALL NOT 复用 `NodeState.to_dict()` 直出或整包复用 `_envelope`。
+
+快照 SHALL 额外包含供可读性展示的加法字段：节点 `reason`（**在投影层**截断到与 `summary` 同口径的 bounded 上限；`state.reason` 本体 SHALL NOT 改变，它是 `_envelope` 的字段）、节点 `task`、图级 `started_at`/`finished_at`（**无值统一为 `null`——构造期哨兵 `0.0` SHALL NOT 直出，否则前端会渲染成 epoch 0）、图级 `budget`、`kind == "foreach"` 节点的 `item_states`/`items_running`/`items_completed`/`items_failed`、以及节点级 `failure_count`（本 run 执行 trace 里的失败步骤数，**三态**：`null` = 没有可用 trace、`0` = 已检查且零失败、`N` = N 条失败；它是**有界整数**，证据正文在 transcript 载荷的 `failure_evidence` 里，快照 SHALL NOT 携带证据列表）。既有字段的语义 SHALL NOT 改变。
+
+节点状态 SHALL 支持「**已派发但仍在等执行 slot**」的投影态 `queued`：该值 SHALL 只在图投影层按 run record 的 `status` 派生，SHALL NOT 写入 `NodeState.status`（后者参与调度器收敛判断）。
+
+#### Scenario: 快照包含边与状态
+
+- **GIVEN** 一个运行中的 workflow
+- **WHEN** 调用 `workflow_graph_snapshot()`
+- **THEN** 返回 SHALL 含 nodes（每节点 status）
+- **AND** SHALL 含 edges（每边 status）
+
+#### Scenario: 快照加法字段 bounded
+
+- **GIVEN** 一个节点带超长错误文本的 workflow
+- **WHEN** 调用 `workflow_graph_snapshot()`
+- **THEN** 节点 `reason`/`summary`/`task` SHALL 不超过 bounded 上限
+- **AND** `failure_count` SHALL 是整数或 `null`，SHALL NOT 携带失败证据列表

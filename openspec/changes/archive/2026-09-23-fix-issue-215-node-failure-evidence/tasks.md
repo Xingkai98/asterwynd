@@ -94,15 +94,15 @@
 ## 文档
 
 - [x] `diagnosis.md`：bugfix 门禁要求的 6 章（含实测探针输出）
-- [ ] **当前规格同步**：delta 合入 `openspec/specs/web-ui/spec.md`（`current_spec_synced` 事件）
-- [ ] **快照加法字段**：`openspec/specs/web-ui/spec.md` 的 workflow 图快照 requirement 加法字段清单
-      ADDED 一项（Q6 方案 D 的计数）
+- [x] **当前规格同步**：delta 合入 `openspec/specs/web-ui/spec.md`（`current_spec_synced` 事件已写）
+- [x] **快照加法字段**：`openspec/specs/web-ui/spec.md` 的 workflow 图快照 requirement 加法字段清单
+      已加节点级 `failure_count`（Q6 方案 D 的零请求线索），change delta 同步记 MODIFIED
 - [x] 关键词扫描 `docs/`、`README.md`、`CONTEXT.md`、`docs/architecture.md` 中与 workflow 图 /
       节点详情 / 诊断相关的段落（**grill 点名 `docs/architecture.md:105` 的返回形态描述已不完整**），
       只更新本次变更造成的事实变化
 - [x] `docs/known-debt.md`：记两条死代码发现（`StopReason.ERROR` 零赋值点 + `no_trace` 无活跃生产者），
       标注「本 change 显式不做」（受保护路径，走 `artifact-event` 事件通道）
-- [ ] `docs/openspec-change-backlog.md` 移除本 change 条目（`backlog_updated` 事件）
+- [x] `docs/openspec-change-backlog.md` 移除本 change 条目（`backlog_updated` 事件已写；第十六批已空，批次标题一并移除）
 
 ## 审阅闭环
 
@@ -118,13 +118,18 @@
 
 ## 验证
 
-- [ ] 全量 pytest 通过
-- [ ] OpenSpec strict validate 通过
-- [ ] project artifact checker 通过
-- [ ] benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-215`
-- [ ] 端到端验收：用与 `diagnosis.md` 相同形状的 trace 走真实 HTTP 路由，确认失败证据可读出
+- [x] 全量 pytest：`tests/web_tests/` + `tests/agent/subagent/` **954 passed / 7 skipped**；
+      全量跑另有 9 条失败，逐类定性为**环境性/既有**（2 条 memory 的 `/tmp` 被 git-dir 探测命中、
+      2 条 docker 不可用、5 条浏览器 flake）——均在 master 上同样失败，与本 change 无关
+- [x] OpenSpec strict validate：`npx @fission-ai/openspec@1.4.1 validate --all --strict` → **30 passed**
+- [x] project artifact checker：默认模式与 `--check-archived` 模式均零 error（manifest 在归档后重新生成）
+- [x] benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-215` →
+      71 tasks（fake agent 只做桩执行，低通过率为预期）；**CI 的 benchmark-gate** 另跑
+      `benchmark-gate benchmarks/tasks/gate-smoke --baseline benchmarks/baseline.json` → success_rate 1.0000 = baseline，**PASS**
+- [x] 端到端验收：`tests/web_tests/test_workflow_control_server.py` 里真跑一个会失败的 workflow、
+      经真实 HTTP 路由取回载荷，断言 `state == "present"`、条目含 `llm_error`、且快照计数与 `total` 一致
 
 ## 收尾（post-merge 之外的最后一步）
 
-- [ ] 归档 change 到 `openspec/changes/archive/2026-09-23-fix-issue-215-node-failure-evidence/`
-- [ ] 给 issue #215 添加完成说明 comment 并关闭（post-merge）
+- [x] 归档 change 到 `openspec/changes/archive/2026-09-23-fix-issue-215-node-failure-evidence/`（含 `change_archived` 事件）
+- [ ] (post-merge) 给 issue #215 添加完成说明 comment 并关闭
