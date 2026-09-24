@@ -1179,8 +1179,12 @@
   function failureCountHint(count) {
     if (count === null || count === undefined) return null;
     if (count === 0) return '已检查、无失败。';
-    if (count === 1) return '⚠ 本 run 内 1 次工具失败 →「对话」tab 查看';
-    return `⚠ 本 run 内 ${count} 次工具失败 →「对话」tab 查看`;
+    // 措辞必须覆盖**两种**失败：计数口径是「工具失败 + LLM 错误」
+    // （agent/trace_recorder.py 的 count_failures）。只写「工具失败」会在
+    // run 因 LLM 调用失败而红时把用户带去查工具——兄弟出口
+    // （workflow_transcript.js 的候选行）用的是准确措辞，这里跟它一致。
+    if (count === 1) return '⚠ 本 run 内 1 次工具/LLM 失败 →「对话」tab 查看';
+    return `⚠ 本 run 内 ${count} 次工具/LLM 失败 →「对话」tab 查看`;
   }
 
   window.AsterwyndWorkflowGraph = {

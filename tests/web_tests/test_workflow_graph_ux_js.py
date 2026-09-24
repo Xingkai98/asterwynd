@@ -525,6 +525,19 @@ def test_failure_evidence_text_degrades_readably_for_unknown_state():
     assert call("failureEvidenceText", "present") == call("failureEvidenceTexts")["present"]
 
 
+def test_failure_count_hint_wording_covers_llm_errors_too():
+    """线索措辞必须覆盖**两种**失败口径。
+
+    计数口径（`count_failures`）是「工具失败 + LLM 错误」，只写「工具失败」会在
+    run 因 LLM 调用失败而红时把用户带去查工具（review R4 低 1：端到端实测一个工具
+    都没失败、只有 `llm_error`，而抽屉默认 tab 说「工具失败」）。兄弟出口
+    （`workflow_transcript.js` 的候选行）已用准确措辞，这里跟它对齐。
+    """
+    for count in (1, 3):
+        hint = call("failureCountHint", count)
+        assert "工具/LLM 失败" in hint, f"{count} 条的线索措辞没覆盖 LLM 错误：{hint!r}"
+
+
 def test_failure_count_hint_separates_no_data_from_zero():
     """「任务」tab 的一行线索：``None`` 不显示、``0`` 显示正向声明、``N`` 显示计数。
 

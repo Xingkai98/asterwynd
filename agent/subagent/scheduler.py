@@ -210,8 +210,12 @@ class _ItemRunSlot:
     run_id: str | None = None
     on_dispatch: Callable[[], None] | None = None
     #: 本项 run 的失败步骤数（三态：``None`` = 无可用 trace / ``0`` = 已检查、零失败 /
-    #: ``N`` = N 条失败）。与 ``NodeState.failure_count`` 同口径——展开项的容器快照
-    #: 要靠它显示「这一项里面有没有工具失败」。
+    #: ``N`` = N 条失败）。与 ``NodeState.failure_count`` 同口径，由 ``_launch_run``
+    #: 的同一处埋点写入。
+    #:
+    #: **当前无生产读取方**：容器快照读的是 ``NodeState.failure_count``（容器自身没有
+    #: 单一 run，故恒为 ``None``），容器级线索由既有的 ``items_failed`` 承担。本字段
+    #: 目前只被测试消费，为 #202（运行内事件流）的项级线索预留——不是「已接线」。
     failure_count: int | None = None
 
 

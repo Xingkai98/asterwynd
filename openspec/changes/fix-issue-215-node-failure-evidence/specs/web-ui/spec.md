@@ -2,7 +2,7 @@
 
 ### Requirement: workflow 节点失败证据只读投影
 
-Web 服务的 workflow 节点 transcript 只读接口 SHALL 在同一个载荷中以键名 `failure_evidence` 提供该 run 的**失败证据**投影（bounded），数据来源 SHALL 是该 run 的执行 trace（`run.trace.steps`）中 `status` 不为 `ok` 的 `tool_result` step 与全部 `llm_error` step；该投影 SHALL NOT 新增采集、SHALL NOT 调用 LLM、SHALL NOT 写盘或改变 workflow 执行状态。
+Web 服务的 workflow 节点 transcript 只读接口 SHALL 在同一个载荷中以键名 `failure_evidence` 提供该 run 的**失败证据**投影（bounded）——`candidates` 容器形态下该键 SHALL 挂在**每个候选**上而不是容器顶层（容器没有单一的 run，见下方该 Scenario），数据来源 SHALL 是该 run 的执行 trace（`run.trace.steps`）中 `status` 不为 `ok` 的 `tool_result` step 与全部 `llm_error` step；该投影 SHALL NOT 新增采集、SHALL NOT 调用 LLM、SHALL NOT 写盘或改变 workflow 执行状态。
 
 `failure_evidence` SHALL 含 `state`（节点级状态枚举）、`total`（**真实失败总数**，不是返回条数）、`truncated`（布尔，`total` 是否大于返回条数）、`message`（可读原因文案）与 `items`（条目列表）。
 

@@ -1033,14 +1033,15 @@ async def test_task_tab_shows_failure_clue_from_snapshot(page, fake_web_server):
     await page.set_viewport_size({"width": 1280, "height": 800})
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
-    await page.wait_for_selector("#workflow-canvas svg.workflow-svg")
+    await page.wait_for_selector("#workflow-canvas svg.workflow-svg", state="visible")
 
     # N>0：默认「任务」tab 上要有 ⚠ 计数线索。
     await page.click(".workflow-node[data-node-id='a']")
     await page.wait_for_selector("#workflow-drawer.open")
     body_a = await page.text_content(".drawer-body")
-    assert "3 次工具失败" in body_a and "⚠" in body_a, (
+    assert "3 次工具/LLM 失败" in body_a and "⚠" in body_a, (
         f"有失败的节点在「任务」tab 上没有线索（用户不会知道要点进「对话」）：{body_a!r}"
     )
     hint_a = await page.text_content(".drawer-failure-hint")
@@ -1061,7 +1062,7 @@ async def test_task_tab_shows_failure_clue_from_snapshot(page, fake_web_server):
     await page.wait_for_selector("#workflow-drawer.open")
     body_join = await page.text_content(".drawer-body")
     assert "已检查、无失败" not in body_join
-    assert "次工具失败" not in body_join
+    assert "失败" not in body_join
 
 
 @pytest.mark.asyncio
@@ -1091,6 +1092,10 @@ async def test_convo_tab_falls_back_when_backend_message_is_missing(page, fake_w
     await page.route("**/transcript*", _transcript_route)
     await page.goto(fake_web_server["url"])
     await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    # chat.js 的 ws 握手 → 建 tab → showView('chat') 是**异步**的，可能发生在派发
+    # 之后并把 workflow-view 的 active 摘掉（svg 间歇性 hidden）。既有 13 条用例都
+    # 走这个守卫，新增用例必须跟上，否则守护「头号交付物」的断言在 CI 里靠运气。
+    await _wait_app_ready(page)
     await _start_workflow(page, SNAPSHOT)
     await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
     await page.wait_for_selector("#workflow-canvas svg.workflow-svg", state="visible")

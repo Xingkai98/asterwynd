@@ -204,7 +204,7 @@ OTel 三种 span status 构成全序 `Ok > Error > Unset`；`Unset` 是**默认�
    - `candidates`：每候选行只显示**计数线索**（复用既有 `cand-sub` 子行），详情靠下钻。
    - `none`：`not_applicable` 什么都不显示；`unavailable` 显示一行淡色文案。
 2. **「任务」tab 加一行自快照的计数线索**（零请求）：`0` 显示淡色「已检查、无失败」，
-   `N>0` 显示「⚠ 本 run 内 N 次工具失败 →『对话』tab 查看」，`None`（无 trace / 不可用）**不显示**。
+   `N>0` 显示「⚠ 本 run 内 N 次工具/LLM 失败 →『对话』tab 查看」（措辞覆盖两种失败口径），`None`（无 trace / 不可用）**不显示**。
 
 **快照计数（Q6 确认的粒度与埋点）**：
 
