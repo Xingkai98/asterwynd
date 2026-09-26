@@ -78,6 +78,9 @@ _SHELL_WRAPPERS = frozenset({"env", "command", "nohup"})
 #: Wrapper options that consume the following token as their value
 #: (`env -u FOO …`, `env -C dir …`).
 _WRAPPER_OPTS_WITH_VALUE = frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})
+#: Of those, the ones whose value *is* the command to run (`env -S '<cmd>'`),
+#: so the value must stay in the token stream rather than be skipped.
+_SPLIT_STRING_OPTS = frozenset({"-S", "--split-string"})
 #: A short-option cluster that carries the shell's command string: `-c`, `-lc`.
 #: Deliberately excludes long options (`--norc`) and `--` prefixes.
 _DASH_C_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*\Z")
@@ -144,12 +147,23 @@ def _shell_dash_c_payloads(tokens: list[str]) -> list[str]:
     """Every command string a ``<shell> -c <string>`` segment runs.
 
     A segment may carry more than one ``-c`` (``bash -c a -c b`` runs both),
-    so all payloads are returned and the caller checks each.
+    so all payloads are returned and the caller checks each. For each ``-c``
+    two candidates are produced: the **first** argument on its own (a shell
+    takes it as the script and the rest as ``$0``/``$1``) and the **joined**
+    remainder (an unquoted `bash -c cp a b` reaches the destination only when
+    joined). Both are checked — either being denied fails the segment (review
+    Round 4 I-2).
     """
+    payloads: list[str] = []
+    # `env -S '<cmd>'` runs `<cmd>` (split on spaces) with no shell involved,
+    # so its value is itself a command line. `_strip_wrappers` deliberately
+    # leaves the option in the stream for this case (review Round 4 I-3).
+    for i, token in enumerate(tokens):
+        if token in _SPLIT_STRING_OPTS and i + 1 < len(tokens):
+            payloads.append(tokens[i + 1])
     stripped = _strip_wrappers(tokens)
     if len(stripped) < 3 or stripped[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
-        return []
-    payloads: list[str] = []
+        return payloads
     index = 1
     while index < len(stripped):
         if _DASH_C_FLAG.fullmatch(stripped[index]):
@@ -161,9 +175,12 @@ def _shell_dash_c_payloads(tokens: list[str]) -> list[str]:
                 ),
                 len(stripped),
             )
-            payload = " ".join(stripped[index + 1 : end])
-            if payload:
-                payloads.append(payload)
+            args = stripped[index + 1 : end]
+            if args:
+                payloads.append(args[0])
+                joined = " ".join(args)
+                if joined != args[0]:
+                    payloads.append(joined)
             index = end
             continue
         index += 1
@@ -171,15 +188,24 @@ def _shell_dash_c_payloads(tokens: list[str]) -> list[str]:
 
 
 def _strip_wrappers(tokens: list[str]) -> list[str]:
-    """Drop leading ``env``/``command``/``nohup`` wrappers and their options."""
+    """Drop leading shell keywords and ``env``/``command``/``nohup`` wrappers.
+
+    Both are skipped **here**, at the single entry point shared by the argv
+    and payload channels: `if true; then bash -c …; fi` splits on `;` into a
+    segment led by `then`, and fixing only the argv channel left the payload
+    channel blind (review Round 4 I-1).
+    """
     index = 0
-    while index < len(tokens) and tokens[index].rsplit("/", 1)[-1] in _SHELL_WRAPPERS:
+    while index < len(tokens):
+        name = tokens[index].rsplit("/", 1)[-1]
+        if name not in _SHELL_KEYWORDS and name not in _SHELL_WRAPPERS:
+            break
         index += 1
+        # Consume this wrapper's own options / assignments. `env -S '<cmd>'`
+        # is special: its value *is* the command, so that option is left in
+        # the stream for the caller (review Round 4 I-3).
         while index < len(tokens) and tokens[index].startswith("-"):
-            # Options taking a separate argument consume the next token:
-            # `env -u FOO bash -c …` — without this, `FOO` looks like the
-            # command name and the payload is never reached (review Round 5).
-            if tokens[index] in _WRAPPER_OPTS_WITH_VALUE:
+            if tokens[index] in _WRAPPER_OPTS_WITH_VALUE and tokens[index] not in _SPLIT_STRING_OPTS:
                 index += 1
             index += 1
         while index < len(tokens) and not tokens[index].startswith("-") and (
@@ -417,20 +443,17 @@ class CommandGuard:
     def _check_argv_segment(self, tokens: list[str]) -> CommandVerdict:
         if not tokens:
             return CommandVerdict.ALLOW
-        # Skip leading shell keywords: `if true; then cp x ~/.ssh/id_rsa; fi`
-        # splits on `;` into a segment that starts with `then`, so the `cp`
-        # would otherwise never be examined (review Round 2).
-        while len(tokens) > 1 and tokens[0] in _SHELL_KEYWORDS:
-            tokens = tokens[1:]
-        # Normalize command name: strip /bin/, /usr/bin/, env, command wrappers.
+        # Leading shell keywords / wrappers are dropped by `_strip_wrappers`,
+        # the entry point shared with the payload channel (review Round 4 I-1).
+        tokens = _strip_wrappers(tokens)
+        if not tokens:
+            return CommandVerdict.ALLOW
+        # Normalize command name: strip /bin/, /usr/bin/ prefixes. Wrapper
+        # commands (`env`/`command`/`nohup`) were already dropped by
+        # `_strip_wrappers` above, so no wrapper branch is needed here.
         cmd_name = tokens[0]
         if cmd_name in ("/bin/rm", "/usr/bin/rm"):
             cmd_name = "rm"
-        elif cmd_name in ("env", "command", "nohup"):
-            # Skip wrapper, check the wrapped command.
-            if len(tokens) > 1:
-                return self._check_argv(tokens[1:])
-            return CommandVerdict.ALLOW
 
         if cmd_name == "rm":
             return self._check_rm(tokens)

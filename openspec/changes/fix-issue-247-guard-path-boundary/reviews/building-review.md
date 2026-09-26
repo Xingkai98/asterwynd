@@ -2,14 +2,16 @@
 
 - reviewer: 独立零记忆 subagent（未参与实现）
 - base: `369d99d`（**与 `master` 的 `command_guard.py` 字节相同**，sha256 `13d1f995…`；故下文的「vs base」等价于「vs master」。`master` 现为 `14f6e24`，那 1 个额外 commit 不触及本文件）
-- head（最新，Round 3）: 已提交 `fd00131`；**审阅时工作区另有一份未提交改动**（`git status` = `M agent/tools/command_guard.py` + `M tests/...`，内容为 `_SHELL_KEYWORDS` 段首跳过），下称 **R5**。R5 的 guard/测试 sha256 分别为 `38b10aca…` / `402e7c5a…`，已快照比对。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4
-- 方式：只读审阅 + 独立复算。把 base/R1/R2/R3/R4/R5 **六版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试
+- head（最新，Round 5）: **工作区未提交状态 R7**（guard sha256 `06e9c658…`，测试 `c4cc74d2…`）。已提交 head = `e3007df`（在 `bef15e6` = R6 之上仅加 spec 文本，**guard 仍是 R6**）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6
+- 方式：只读审阅 + 独立复算。把 base/R1/R2/R3/R4/R5/R6/R7 **八版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试；另用**真实 `bash`** 复核每个可疑形态是否真的执行
 
 ## Verdict
 
-**CHANGES_REQUESTED**（Round 3 复审；R3→R4→R5 逐轮修好了换行、分组、组合 flag、`env` 赋值、shell 关键字五类，但仍有 **DENY→ALLOW 收缩面 vs master** 未闭，见 Round 3 节）
+**PASS**（对象：**工作区 R7**；前置条件：**必须把 R7 提交**——已提交 head `e3007df` 的 guard 仍是 R6，仍含 Round 4 的 3 条 major，只有 R7 落地后本 verdict 才成立）
 
-### 三轮累计进度（结论）
+我 R5 报的 11 条、R4 报的 I-1/I-2/I-3 共 **14 条收缩面在 R7 全部回到 DENY**；攻击集 50/54 不变；良性 0 误报；315 条组合语料对 base 的**非预期收缩为 0**；R7 新测试对 R6 guard **必红 11 条**。无新增 major。仅余 2 条 minor（见 Round 5 §5）。
+
+### 五轮累计进度
 
 | 轮 | 主 session 修了什么 | 我复核结果 |
 |---|---|---|
@@ -18,6 +20,8 @@
 | R3 `41cbd76` | `\n` 作段边界 | 换行族**确认修复**；我报分组/`-lc`/`env`/`\r` 四类 |
 | R4 `fd00131` | 分组 `(){}`、组合 flag、env 赋值、嵌套上界 | 前 3 类**确认修复**；但组合 flag 的改法**新引入** `--norc`/`--rcfile` 回归；`env -i`/`\r` 仍漏 |
 | R5（未提交） | shell 关键字段首跳过 | 关键字族**确认修复**（另 7 条净收紧）；`env -i`/`--norc`/`\r` 仍漏 |
+| R6 `bef15e6` | `env` 选项剥离、短选项簇正则、多 payload、`\r` 段边界 | 我报的 **11/11 确认修复**；3 条同源新面未闭（I-1/I-2/I-3） |
+| R7（未提交） | `_strip_wrappers` 统一跳关键字、payload 增「首参单独」候选、`-S` 值送检 | **3/3 确认修复**；无新面 → PASS |
 
 ### Round 1（I1/I2）→ 已修复
 
@@ -358,3 +362,162 @@ R3 新加的 `cd /tmp\r\ncp evil .env` 用例恰好把 `\r` 落在无害 token �
 6. 顺带：`walkthrough.md` §2.4/§2.5 行号仍为旧值（本 change 移动了行号）。
 
 以上 1–3 是**同一段代码**（`_shell_dash_c_payload` 的 wrapper/flag/payload 解析），一次改完，配 6–8 条参数化用例即可。改完给我同一组向量我再复算一轮即可转 PASS。
+
+---
+
+## Round 4（独立复审：`bef15e6` = R6）
+
+脚本：`/tmp/247-verify/v/{final_r6,residual_r6,whichround,wrapsweep,launchers}.py`。base 列 = master 列（`369d99d:command_guard.py` 与 `master:command_guard.py` sha256 相同）。
+
+### 1. 我 R5 报的 11 条 —— 11/11 确认修好
+
+逐条实测 base=D、R6=D（R5 时全为 A）：
+
+| 命令 | base | R1 | R2 | R3 | R4 | R5 | R6 |
+|---|---|---|---|---|---|---|---|
+| `env -i bash -c 'cp evil a/.env'` | D | A | A | A | A | A | **D** |
+| `env -u FOO bash -c '…'` | D | A | A | A | A | A | **D** |
+| `env --ignore-environment bash -c '…'` | D | A | A | A | A | A | **D** |
+| `env -i -- bash -c '…'` | D | A | A | A | A | A | **D** |
+| `bash --norc -c '…'` | D | A | D | D | A | A | **D** |
+| `sh --norc -c '…'` | D | A | D | D | A | A | **D** |
+| `bash --rcfile foo -c '…'` | D | A | A | A | A | A | **D** |
+| `bash -c 'echo hi' -c 'cp evil a/.env'` | D | A | A | A | A | A | **D** |
+| `bash -c ls -c 'cp evil a/.env'` | D | A | A | A | A | A | **D** |
+| `cp evil a/.env\r\nls` | D | A | A | A | A | A | **D** |
+| `cp evil a/.env \r\nls` | D | A | A | A | A | A | **D** |
+
+我另外构造的 34 条新向量里 31 条也回到 DENY（含 `env -u FOO -u BAR …`、`env -C /tmp …`、`env --unset/--chdir`、`/usr/bin/env -i …`、`bash -O extglob -c`、`bash -o pipefail -c`、`bash -ac`/`-ca`、`bash --noprofile --norc -c`、`nohup env -i …`、`cp evil a/.env\rls`、`\rcp evil a/.env`、`echo x\r\ncp evil .env`）。**主 session 的修法（wrapper 选项剥离 / 短选项簇正则 / 多 payload / `[\r\n]` 段边界）都成立。**
+
+### 2. 仍有 3 条收缩面（均与最新 diff 同源）
+
+均经**真实 `bash`** 执行验证（写文件成功），非理论推演。
+
+**I-1（major）· `_strip_wrappers` 不跳 shell 关键字 —— R5 的关键字修复只做了一半**
+
+R5 在 `_check_argv_segment` 里加了 `_SHELL_KEYWORDS` 跳过，但 payload 通道走的 `_strip_wrappers`（`agent/tools/command_guard.py:173-189`）没跳。于是「关键字 + `bash -c`」的段里，两条通道都放行。
+
+| 命令（真实执行成功） | master | R6 |
+|---|---|---|
+| `if true; then bash -c 'cp evil ~/.ssh/authorized_keys'; fi` | D | **A** |
+| `for f in *; do env -i bash -c 'cp evil ~/.ssh/authorized_keys'; done` | D | **A** |
+| `! bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `eval bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `time bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `exec env -u FOO bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+
+修法：在 `_strip_wrappers` 里同样（循环）跳过 `_SHELL_KEYWORDS`——即让关键字跳过发生在**两条通道共用的入口**，而不是只写在 `_check_argv_segment` 里。这是把 R5 的修复补完，不是新增要求。
+
+**I-2（major）· payload rejoin 把 script 与 `$0`/位置参数混为一谈**
+
+`_shell_dash_c_payloads` 把 `-c` 之后的 token 全部 join（`:161`）。但 `bash -c 'SCRIPT' arg0 arg1` 里 `arg0`/`arg1` 是 `$0`/`$1`，不是 script 的一部分；join 后 `_check_mv_cp` 取**最后一个** arg 当 dest，于是 dest 变成 `arg0`。
+
+| 命令（真实执行成功） | master | R6 |
+|---|---|---|
+| `bash -c 'cp evil ~/.ssh/authorized_keys' extra` | D | **A** |
+| `env -i bash -c 'cp evil ~/.ssh/authorized_keys' extra` | D | **A** |
+| `cd /tmp && bash -c 'cp evil ~/.ssh/authorized_keys' extra more` | D | **A** |
+
+修法：把 `tokens[index+1]` **单独**当一个 payload 检查，**并且**再检查 join 后的整串（两条都送 `self.check`，任一 DENY 即拒）。这样同时保住未加引号形态（`bash -c cp evil a/.env`，需要 join 才能看出 dest）与带 `$0` 的形态。
+
+**I-3（minor）· `env -S` / `--split-string` 的值被识别成「选项参数」后丢弃**
+
+R6 新把 `-S`/`--split-string` 加进 `_WRAPPER_OPTS_WITH_VALUE`，于是它吃掉的值被直接跳过——但 `env -S '<cmd>'` 里那个值**就是**要执行的命令。
+
+| 命令（真实执行成功） | master | R6 |
+|---|---|---|
+| `env -S 'bash -c "cp evil ~/.ssh/authorized_keys"'` | D | **A** |
+| `env -S 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `env --split-string '…'` | D | **A** |
+
+修法：对 `-S`/`--split-string` 消费掉的值调用 `self.check(value)`（env 会把该串再分词后执行），而不是丢弃。
+
+### 3. 明确**不作为**阻塞项：广谱 launcher 尾巴（known-debt，需 sign-off）
+
+我用「14 wrapper × 18 shell 形态」的组合语料扫出 117 条 base-D→R6-A；除去上面 3 个根因，还有一大批**别的启动器**：
+
+`nice/setsid/stdbuf/taskset/ionice/unshare/watch/screen/flock bash -c '…'`、`busybox sh -c '…'`、`toybox sh -c '…'`、`xargs sh -c '…'`、`find . -exec sh -c '…' \;`、`bash -s <<< '…'`、`bash <<< '…'`、`sh -s <<< '…'`、`echo '…' | env -i bash`、`make -f <(echo '…')`、`sed 's/x/…/e' f`、`at now <<< '…'`。
+
+**我把这一类判为不阻塞**，理由（请主 session/用户明确接受或驳回）：
+
+- master 对它们的拦截是**「对整条原始命令串跑字面正则」的副产物**（`\S*/\.[a-z]+\b` 恰好匹配到命令文本里的 `~/.ssh`），而本 change 的 design 正是**刻意**把这条通道换成结构化 argv 解析（D1/D4/非目标「不做 shell 语义模拟」）。要求逐一把它们收回来，等于要求恢复被删掉的那条通道。
+- proposal 对 Goal #4 的**操作定义**是「`benchmarks/attacks/attacks.json` 的 guard-deny 用例拦截数不得下降」——实测 **50/54 不变**，满足。
+- 这些形态都要求**刻意叠加启动器做混淆**（`nice` + `bash -c` + 引号），而 `cp x ~/.ssh/authorized_keys` 的朴素写法已被拦；guard 自述且 spec 认可「guardrail, not boundary」，真实边界在执行后端。
+- 这是一个**开放集合**（我还能继续生成 `systemd-run`、`chroot`、`script` 等），不设边界地追会与 Non-Goals 冲突。
+
+如果用户/主 session 认为这一桶也必须收（即采用严格的「任何 master-D→head-A 都算回归」口径），请明确告知，我按同一口径重列清单——但那样本 change 的范围会显著扩大，需要回到 design 层面（而不是再补一个正则）。
+
+**注**：我在 R1/R2/R3/R5 各轮用的是严格口径（当时报的形态都是**朴素可达**的，如 `cd /tmp && cp evil ~/.ssh/authorized_keys`，不需要任何混淆），本轮的 I-1/I-2/I-3 我也按同一口径判为阻塞——但第 3 节的 launcher 桶我主动降级，并在此明确标注这是**我的判断**，需 sign-off。
+
+### 4. 攻击集 / 误报 / 变异 / 全量（七版一致）
+
+- 攻击集（54 例）：base/R1/R2/R3/R4/R5/R6 **均 50/54**，直方图逐项相同 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}`，未拦 4 例始终 `sensitive-read-001..004`。**主 session 的「50/54 不变」属实。**
+- 良性命令（64 条电池）：base 6 误拒 → R1–R6 **均 0 误拒**。主 session 的「0 误拒」属实（我用 64 条，不比他的 25 条弱）。另外我组合语料里 6 条「误拒」全是 `echo x | bash -c '…'`，base 也拒（走 `pipe_to_shell`），**非新增误伤**。
+- 变异验证（影子树，head 测试 vs 旧 guard）：vs **R5** = `11 failed`、vs **R4** = `18 failed`、vs **base** = `49 failed`、vs **R6** = `169 passed`。新测试**有判别力、非自证**。
+- 全量 pytest（R6 守卫，我独立跑）：`3 failed, 3190 passed, 9 skipped in 569.92s`。前 2 条 = `tests/agent/memory/test_persistent.py::TestFindScopeRoot`，本机 `/tmp` 是 git 仓库导致，`TMPDIR` 改指非 git 目录即全绿——与我 R1 的结论一致，**非本 change 引入**。
+- 第 3 条：主 session 报的是 `test_workflow_graph_browser.py::test_workflow_view_survives_delayed_app_init`，**我这次跑到的是另一条** `test_reconnect_pending_interaction_browser.py::test_reconnect_replays_question_card_and_it_is_actionable`。两条我都隔离重跑过：分别 **1 passed**（20.7s / 7.1s）。两次全量跑挂的**不是同一个**浏览器用例，这比单个数据点更强地证明是**非确定性的既有浏览器 flake**；两条都不 import `command_guard`，diff 对 `web/` 改动为 0 个文件。**「既有浏览器 flake」成立，主 session 的归因正确。**
+- 递归安全：R6 有 `_MAX_NESTED_COMMAND_DEPTH = 4` 上界；深度 1–40 无 `RecursionError`、无挂起。**上界的必要性我独立复算过**（把上界抬到 `10**9` 后，深度 400 耗时 1.58s 近二次增长，深度 800 抛 `RecursionError`，而 `BashTool.execute` 对该调用外无 try/except），所以接受该取舍。
+
+### 5. 转 PASS 的最小清单（3 处，都在同一个函数区，一次改完）
+
+1. **I-1**：`_strip_wrappers` 补跳 `_SHELL_KEYWORDS`（与 `_check_argv_segment` 共用同一段跳过逻辑）。补 `if true; then bash -c '…'; fi`、`! bash -c '…'` 用例。
+2. **I-2**：payload 同时送检「`-c` 后第一个 token 单独」与「join 整串」。补 `bash -c 'cp x a/.env' extra` 用例。
+3. **I-3**：`-S`/`--split-string` 的值送 `self.check`。补 `env -S 'bash -c "cp x a/.env"'` 用例。
+4. 收尾：把 `_MAX_NESTED_COMMAND_DEPTH` 上界 + 第 3 节 launcher 桶写进 spec delta 或 `docs/known-debt.md`；`walkthrough.md` §2.4/§2.5 行号仍为旧值。
+
+改完把这 3 组向量丢回来，我再跑一遍同一套七版对比即可转 PASS（第 3 节的 launcher 桶我不会再作为阻塞项重复提出）。
+
+---
+
+## Round 5（最终复审：工作区 R7，`e3007df` + 未提交改动）
+
+对象：工作区 `agent/tools/command_guard.py`（sha256 `06e9c658…`）+ `tests/agent/tools/test_command_guard.py`（`c4cc74d2…`）。已提交 head `e3007df` 只加了 spec 文本，**guard 仍是 R6**，故本轮结论绑定 R7 而非 `e3007df`。
+
+### 1. R4 的 3 条 major（I-1/I-2/I-3）—— 3/3 确认修复
+
+| 命令（真实 `bash` 执行成功） | base | R6 | R7 |
+|---|---|---|---|
+| `if true; then bash -c 'cp evil ~/.ssh/authorized_keys'; fi` | D | A | **D** |
+| `for f in *; do env -i bash -c 'cp evil ~/.ssh/authorized_keys'; done` | D | A | **D** |
+| `! bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `eval bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `time bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `exec env -u FOO bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `bash -c 'cp evil ~/.ssh/authorized_keys' extra` | D | A | **D** |
+| `cd /tmp && bash -c 'cp evil ~/.ssh/authorized_keys' extra more` | D | A | **D** |
+| `env -S 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `env --split-string 'bash -c "cp evil ~/.ssh/authorized_keys"'` | D | A | **D** |
+
+修法与我在 R4 给的建议一致：关键字跳过下沉到 `_strip_wrappers`（`:188-215`，argv 与 payload 两条通道的**共用入口**，I-1）；每个 `-c` 产出「首参单独」与「join 整串」两个候选（`:170-186`，I-2）；`-S`/`--split-string` 的值留在 token 流并送检（`:83-85`、`:153-158`，I-3）。
+
+我另构造 16 条针对 R7 新代码的向量（`env -i -u FOO …`、`env -S '…' extra`、`bash -c '…' -c 'echo hi'`、`nohup nohup …`、`env env …`、`command env -i …`、`then bash -c …`、`eval env -S …`、`\rcp evil …`、`if true; then bash -c "bash -c '…'"; fi` 等）**全部 DENY**，无新面。
+
+### 2. R5 的 11 条 —— 仍全部为 DENY（未因 R7 重构倒退）
+
+逐条复测：`env -i`/`-u FOO`/`--ignore-environment`/`-i --`、`bash --norc -c`、`bash --rcfile foo -c`、`sh --norc -c`、重复 `-c` ×2、`\r\n` 残留 ×2 —— **11/11 保持 D**。R1/R2 的原始向量（`cd /tmp && cp evil ~/.ssh/authorized_keys`、`true; cp evil sub/.env/secrets`、`cd /tmp && cp evil /dev/null/../sda`）亦保持 D。
+
+### 3. 数字复核（我的实测，非采信）
+
+- **攻击集**：base/R6/R7 **均 50/54**，直方图 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}` 逐项相同，未拦 4 例仍 `sensitive-read-001..004`。主 session 的「50/54 不变」属实。
+- **良性误报**：62 条电池 base 6 误拒 → **R7 0 误拒**（主 session 称 0/25，我用 62 条，口径更宽仍为 0）。另测 20 条使用 `-S` 的良性命令（`sort -S 1G f`、`curl -sS`、`ssh -S /tmp/sock`、`python3 -S x.py` 等）**0 误拒**——新加的 `-S` 全 token 扫描未见副作用。
+- **组合语料**：21 prefix × 15 payload = 315 条，base-DENY → R7-ALLOW 的**非预期**收缩为 **0**（扣除设计上刻意的 `/dev/null` 与 `/various.txt` 两类）。
+- **变异验证**（影子树，R7 测试 vs 旧 guard）：vs **R6** = `11 failed`（正是本轮 3 条 major 的用例）、vs **R4** = `29 failed`、vs **base** = 更多；vs **R7** = `182 passed`。**新测试有判别力、非自证。**
+- **测试**：`tests/agent/tools/test_command_guard.py` + `tests/benchmark/test_attack_suite.py` → `238 passed`；`tests/agent` + `tests/benchmark` 全量 → `2 failed, 2502 passed, 2 skipped`，2 条失败仍是 `tests/agent/memory/test_persistent.py::TestFindScopeRoot` 的本机 `/tmp` 是 git 仓库导致（非本 change 引入，`TMPDIR` 改指非 git 目录即全绿）。
+- **全量 pytest（R6 守卫）**：`3 failed, 3190 passed, 9 skipped`。3 条 = 2 条 memory（同上）+ 1 条浏览器 flake；**我这次跑挂的是 `test_reconnect_pending_interaction_browser.py::test_reconnect_replays_question_card_and_it_is_actionable`，与主 session 报的 `test_workflow_graph_browser.py::test_workflow_view_survives_delayed_app_init` 不是同一条**；两条我都隔离重跑过（分别 20.7s / 7.1s）**均通过**。两次全量跑挂不同用例，比单个数据点更强地证明是**非确定性既有浏览器 flake**；两条都不 import `command_guard`，diff 对 `web/` 改动为 0 个文件。**主 session 的归因正确。**
+
+### 4. `e3007df` 的 spec 提交 —— 方向正确，且 R7 落地后与实现一致
+
+新增「argv SHALL 覆盖每一段 + 关键字之后 SHALL 受检 + `-c` payload 递归受检且有界」与两个 Scenario，正是把我 R1/R4 指出的**契约变更**写进正式规格（我 R4 §5 第 4 条的诉求）。注意：该 spec 文本中「关键字之后的 `-c` payload 受检」一条，在**已提交的 R6 guard 上不成立**（`if true; then bash -c '…'; fi` 为 ALLOW），**R7 落地后即一致**——这是必须提交 R7 的另一个理由。
+
+### 5. 剩余 minor（不阻塞）
+
+- **M-1（minor，冗余/死代码）**：R7 让 `_check_argv_segment` 先调 `_strip_wrappers`（`:447`），此后 `tokens[0]` 不可能再是 `env`/`command`/`nohup`，于是紧随其后的 `elif cmd_name in ("env", "command", "nohup"): return self._check_argv(tokens[1:])` 分支（`:455-459`）**已不可达**。实测 `_strip_wrappers(['env','bash','-c','x']) == ['bash','-c','x']`，确认不可达。建议删掉该分支（它同时是唯一保留 `_check_argv` 自递归的路径，删掉后递归只剩 payload 通道，更易推理）。功能无影响。
+- **M-2（minor，文档收尾）**：`docs/interview-bullets/walkthrough.md` §2.4/§2.5 的行号仍是旧值（本 change 多次移动行号）；R4 提的 `_MAX_NESTED_COMMAND_DEPTH` 上界已由 `e3007df` 的 spec 补齐（好）。
+
+### 6. 关于我 R4 第 3 节的 launcher 桶（`nice`/`setsid`/`xargs`/`busybox`/heredoc 等）
+
+本轮**重申不作为阻塞项**，理由同 R4（那批形态的 master 拦截是「对整条原始命令串跑字面正则」的副产物，而本 change 的 design 刻意把它换成结构化 argv 解析；proposal Goal #4 的操作定义「攻击集拦截数不下降」已满足；属开放集合，不设界追会与 Non-Goals 冲突）。**此降级是我的判断，需用户/主 session 明确接受或驳回**；若要求严格口径（任何 master-D→head-A 都算回归），请告知，我重列清单，但那需回到 design 层面而非再补正则。
+
+### 7. 结论
+
+R7 的代码改动**实质正确、可审阅**：14 条我报过的收缩面全闭、攻击集不退化、无误报、测试有判别力、无新的 major。**把 R7（guard + 测试）连同已提交的 `e3007df` spec 一起提交后，本 change 的 building 审阅即可判 PASS。** 建议顺手清掉 M-1 的死代码并补 `walkthrough.md` 行号（M-2），二者不影响 verdict。

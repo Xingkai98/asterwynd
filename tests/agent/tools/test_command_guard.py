@@ -672,3 +672,64 @@ class TestShellPayloadParsingEdgeCases:
     def test_crlf_destination_not_masked_by_carriage_return(self, command: str) -> None:
         """`\\r` 若不切分，会粘在目标末尾使 `a/.env` 变成 `a/.env\\r`。"""
         assert CommandGuard().check(command) is CommandVerdict.DENY
+
+
+class TestPayloadChannelSharesKeywordStripping:
+    """关键字跳过必须在 argv 与 payload 两条通道的共用入口（review R4 I-1）。
+
+    R2 只在 `_check_argv_segment` 里跳关键字，payload 通道（`_strip_wrappers`）
+    没跳，于是 `if true; then bash -c '…'; fi` 两条通道都放行。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "if true; then bash -c 'cp evil ~/.ssh/authorized_keys'; fi",
+            "for f in *; do env -i bash -c 'cp evil ~/.ssh/authorized_keys'; done",
+            "! bash -c 'cp evil ~/.ssh/authorized_keys'",
+            "eval bash -c 'cp evil ~/.ssh/authorized_keys'",
+            "time bash -c 'cp evil ~/.ssh/authorized_keys'",
+            "exec env -u FOO bash -c 'cp evil ~/.ssh/authorized_keys'",
+        ],
+    )
+    def test_keyword_led_payload_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+
+class TestPayloadPositionalArgsDoNotMaskScript:
+    """`bash -c 'SCRIPT' $0 $1` 的位置参数不得掩盖 SCRIPT（review R4 I-2）。
+
+    join 后的串末尾被当作 dest，于是真正的 script 被位置参数顶掉。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "bash -c 'cp evil ~/.ssh/authorized_keys' extra",
+            "env -i bash -c 'cp evil ~/.ssh/authorized_keys' extra",
+            "cd /tmp && bash -c 'cp evil ~/.ssh/authorized_keys' extra more",
+        ],
+    )
+    def test_positional_arg_does_not_mask_script(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    def test_unquoted_payload_still_joined(self) -> None:
+        """未加引号形态仍需 join 才能看出 dest（这条守住 I-2 的修法不倒退）。"""
+        assert CommandGuard().check("bash -c cp evil a/.env") is CommandVerdict.DENY
+
+
+class TestEnvSplitString:
+    """`env -S '<cmd>'` 的值就是要执行的命令（review R4 I-3）。"""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "env -S 'cp evil ~/.ssh/authorized_keys'",
+            "env --split-string 'cp evil ~/.ssh/authorized_keys'",
+        ],
+    )
+    def test_split_string_value_checked(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    def test_split_string_benign_allowed(self) -> None:
+        assert CommandGuard().check("env -S 'ls -la'") is CommandVerdict.ALLOW

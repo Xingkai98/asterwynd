@@ -12,7 +12,7 @@ mv/cp 目标命中敏感点目录（`.git`/`.ssh`/`.env`/`.aws`/`.gnupg`/`.kube`
 
 rm 递归+强制的目标 SHALL NOT 等于工作区根（`rm -rf <workspace_root>` SHALL 拒绝），且 SHALL NOT 位于工作区之外。
 
-argv 语义检查 SHALL 覆盖**命令行的每一段**，SHALL NOT 只检查首段——命令分隔符（`&&`/`||`/`;`/`|`/`&`/换行）与分组符号（`(`/`)`/`{`/`}`）之后、以及 shell 关键字（`then`/`do`/`else`/`fi`/`done`/`time`/`exec`/`eval` 等）之后的命令 SHALL 同样受检。`<shell> -c <string>` 形态（含 `-lc`/`-ic` 等短选项簇、`env`/`command`/`nohup` 前缀及其选项、重复 `-c`）SHALL 对每个 payload 递归执行同样的校验；递归 SHALL 有深度上界，超出上界时 SHALL 停止解包而 SHALL NOT 无界递归（护栏不是边界，真实边界在执行后端）。
+argv 语义检查 SHALL 覆盖**命令行的每一段**，SHALL NOT 只检查首段——命令分隔符（`&&`/`||`/`;`/`|`/`&`/换行）与分组符号（`(`/`)`/`{`/`}`）之后、以及 shell 关键字（`then`/`do`/`else`/`fi`/`done`/`time`/`exec`/`eval` 等）之后的命令 SHALL 同样受检。`<shell> -c <string>` 形态（含 `-lc`/`-ic` 等短选项簇、`env`/`command`/`nohup` 前缀及其选项、重复 `-c`）SHALL 对每个 payload 递归执行同样的校验；递归 SHALL 有深度上界，超出上界时 SHALL 停止解包而 SHALL NOT 无界递归（护栏不是边界，真实边界在执行后端）。shell 关键字（`then`/`do`/`else`/`fi`/`done`/`time`/`exec`/`eval` 等）前缀的剥离 SHALL 发生在 argv 与 payload 两条通道的**共用入口**，SHALL NOT 只在其中一条上生效。`<shell> -c SCRIPT $0 $1` 的位置参数 SHALL NOT 掩盖 SCRIPT 本身；`env -S <string>` / `env --split-string <string>` 的值 SHALL 被当作待执行的命令检查。
 
 #### Scenario: rm 目标越界拒绝
 
