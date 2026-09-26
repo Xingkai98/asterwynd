@@ -8,7 +8,7 @@
 
 **重定向目标**与 **mv/cp 目标**的判定 SHALL 豁免设备文件 `/dev/null`、`/dev/stdout`、`/dev/stderr`——它们是黑洞设备与进程标准流的别名，不属于「受保护的系统目录内容」语义。该豁免 SHALL NOT 扩展到 rm/chmod/curl-wget 的目标判定（`rm -rf /dev/null` SHALL 保持拒绝）；其余 `/dev/*` 目标 SHALL 保持拒绝。
 
-mv/cp 目标命中敏感点目录（`.git`/`.ssh`/`.env`/`.aws`/`.gnupg`/`.kube`/`.docker`/`.netrc`/`.npmrc`/`.pypirc`）SHALL 被拒绝，判定 SHALL 同时覆盖两条通道：**路径段**比较（`.gitignore`、`.env.example`、`.github/` 是普通文件/目录，SHALL NOT 被误判），以及**全命令文本**扫描（覆盖 launcher 前缀 / herestring / pipe 形态——`nice bash -c '…'`、`bash <<< '…'`、`echo '…' | env -i bash` 里的 `cp … .env` SHALL 同样被拒）；两条通道 SHALL 都覆盖裸形态（`.env`）与嵌套形态（`src/.git/hooks/x`）。
+mv/cp 目标命中敏感点目录（`.git`/`.ssh`/`.env`/`.aws`/`.gnupg`/`.kube`/`.docker`/`.netrc`/`.npmrc`/`.pypirc`）SHALL 被拒绝，判定 SHALL 覆盖两条**互补**通道，各自的覆盖面 SHALL 被如实描述：（1）**路径段**通道——在 `mv`/`cp` 居命令段首时按路径段比较，同时覆盖裸形态（`.env`）与嵌套形态（`src/.git/hooks/x`），并 SHALL NOT 误判 `.gitignore`、`.env.example`、`.github/` 这类普通文件/目录；（2）**全命令文本**通道——兜底 launcher / herestring / pipe 形态（`nice bash -c '…'`、`bash <<< '…'`、`echo '…' | env -i bash` 里的写命令），该通道 SHALL 只匹配**带路径分隔符**的敏感名（`…/.ssh/id_rsa`、`…/dev/sda`），SHALL NOT 匹配引号内作为**数据**提及的裸名（`grep -rn "cp x .env" docs/` SHALL 放行）。
 
 rm 递归+强制的目标 SHALL NOT 等于工作区根（`rm -rf <workspace_root>` SHALL 拒绝），且 SHALL NOT 位于工作区之外。
 

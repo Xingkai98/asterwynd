@@ -395,7 +395,7 @@ class TestDeviceExemptIsExactMatch:
     早期实现用 lookahead 在正则里排豁免目标，但 `\b` 不是 `/` 感知的，
     `/dev/null/sda` 里 `null` 后接 `/` 同样满足 `\b`，被误判为「设备豁免」。
     现在豁免的判定归 `_check_mv_cp`（精确相等），全文扫描的 `/dev/` 分支
-    用**后继分隔符**做 lookahead（`[\s;"'|]` 或行尾），不再依赖 `\b`。
+    用**后继分隔符**做 lookahead（空白/分号/引号/管道 或行尾），不再依赖 `\\b`。
 
     断言**行为**而非实现：不检查正则里有没有 `/dev/`（那是实现细节，
     R7-1 已把 `/dev/` 的全文覆盖加回来）。
@@ -819,3 +819,48 @@ class TestDevWholeTextCoverage:
     )
     def test_dev_null_prefixed_targets_not_exempt(self, command: str) -> None:
         assert CommandGuard().check(command) is CommandVerdict.DENY
+
+
+class TestFullTextChannelScope:
+    """全文扫描通道的**覆盖面边界**（review R8-1 / R7-2 的守护）。
+
+    这条通道只匹配**带路径分隔符**的敏感名，两个方向都锁：
+    - 引号内作为**数据**提及裸名（`grep -rn "cp x .env" docs/`）→ 放行；
+    - launcher/herestring/pipe 里的**写命令**（带斜杠）→ 拒绝。
+
+    没有这组测试，R7-2 的收窄是**无守护**的：将来若把斜杠要求放宽回去，
+    CI 会全绿（review R8 明确指出）。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'grep -rn "cp x .env" docs/',
+            'rg -F "cp x .env" tests/',
+            'git log --grep="mv x .git/config"',
+            'sed -n "/cp x .env/p"',
+            'printf "%s" "cp x .env"',
+            'git commit -m "add cp x .env regression test"',
+            'awk "/cp x .env/"',
+            'echo "cp x .env"',
+        ],
+    )
+    def test_quoted_mention_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "nice cp x src/.ssh/id_rsa",
+            "setsid cp x src/.git/config",
+            "bash <<< 'cp x src/.env'",
+            "echo 'cp x /var/log/f' | env -i bash",
+            "nice cp evil /dev/sda",
+        ],
+    )
+    def test_launcher_write_with_separator_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    def test_bare_name_at_segment_head_still_denied(self) -> None:
+        """裸 `.env` 由**段级**通道负责 —— 这条锁住两通道的分工。"""
+        assert CommandGuard().check("cp x .env") is CommandVerdict.DENY
