@@ -347,3 +347,11 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
   属**已知残余面**，未扩大范围处理。若后续要收口，方向是改用 `AsterwyndChatTest.initDone` 作前置。
 - 本条目引用的归档路径 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
   在本条目写入时**尚未归档**，随本 change 的归档 commit 落地（归档目录缺失时以 change 的 active 路径为准）。
+
+## SSE 解析失败时未重置 event_type（fix-issue-249 显式不做）
+
+`agent/llm.py` 的 `BaseLLM._stream_events` 在单条 `data:` 行解析失败时 `continue`。本 change（issue #249）只给它**补了 warning 日志**，**未**改变控制流 —— 具体地，失败后 `event_type` 仍保留上一条 `event:` 的值，下一条成功的 `data:` 行会与这个**过期的** event_type 配对。
+
+**为何本轮不改**：这是控制流变更而非日志增强，会超出本 bugfix「让截断不崩溃」的范围，且它是否是真实缺陷未经实测（需要构造「事件行紧邻坏数据行」的端点行为才能判定影响面）。按 issue #249 的相邻隐患记录，未在本 change 观察到实际故障。
+
+**若后续收口**：方向是在 `except` 分支里 `event_type = None`（或显式跳过到下一个 `event:`），并用「两行 data 夹一个坏行」的 SSE 夹具验证「坏行不污染后续事件类型」。改动面小，但需要先确认现有端点不会合法地发送「一个 event 多个 data」的分片形态（若会，则简单重置反而会破坏合法分片）。
