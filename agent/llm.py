@@ -11,6 +11,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("asterwynd.llm")
 
+#: SSE `data:` 行里的流结束哨兵（OpenAI 协议的 `[DONE]`）。它按约定不是 JSON，
+#: 不应进 JSON 解析、更不该被记成「丢弃坏行」（issue #251）。
+_SSE_STREAM_END_SENTINEL = "[DONE]"
+
+
+def _is_sse_stream_end(data_str: str) -> bool:
+    return data_str.strip() == _SSE_STREAM_END_SENTINEL
+
 
 @dataclass
 class ToolCallDelta:
@@ -126,6 +134,11 @@ class BaseLLM:
                 elif line.startswith("data: "):
                     data_str = line[6:]
                     import json as _json
+                    if _is_sse_stream_end(data_str):
+                        # 流结束哨兵（OpenAI 的 `[DONE]`）不是 JSON，不该被记成
+                        # 坏行（issue #251）。放行、不告警：它本就不产生事件，
+                        # 控制流与旧行为一致。
+                        continue
                     try:
                         data = _json.loads(data_str)
                     except _json.JSONDecodeError:

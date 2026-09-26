@@ -348,3 +348,67 @@ async def test_unknown_model_retries_without_images_on_400():
         assert isinstance(second_content, str) or all(
             b["type"] == "text" for b in second_content
         )
+
+
+@pytest.mark.asyncio
+async def test_done_sentinel_does_not_log_dropped_line_warning(caplog):
+    """issue #251：[DONE] 是 OpenAI 协议的正常结束哨兵，不该被记成「丢弃坏行」。"""
+    import logging
+
+    llm = OpenAILLM(api_key="test-key")
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream([
+            'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ])
+        with caplog.at_level(logging.WARNING, logger="asterwynd.llm"):
+            events = [event async for event in llm.stream_chat([Message(role="user", content="Hi")])]
+
+    assert events[-1].response.content == "Hi"
+    dropped = [r for r in caplog.records if "unparseable SSE data line" in r.getMessage()]
+    assert dropped == [], f"[DONE] 不该触发丢弃告警，实际: {[r.getMessage() for r in dropped]}"
+
+
+@pytest.mark.asyncio
+async def test_genuinely_bad_sse_line_still_logs_warning(caplog):
+    """issue #251 反向守护：真正的坏行仍须告警（修复不能把可观测性一起关掉）。"""
+    import logging
+
+    llm = OpenAILLM(api_key="test-key")
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream([
+            'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}',
+            "data: {this is not json",
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ])
+        with caplog.at_level(logging.WARNING, logger="asterwynd.llm"):
+            events = [event async for event in llm.stream_chat([Message(role="user", content="Hi")])]
+
+    assert events[-1].response.content == "Hi"
+    dropped = [r for r in caplog.records if "unparseable SSE data line" in r.getMessage()]
+    assert len(dropped) == 1, "真正的坏行必须仍产生一条告警"
+
+
+@pytest.mark.asyncio
+async def test_legal_json_containing_done_literal_is_parsed_not_skipped(caplog):
+    """issue #251 spec Scenario 3：合法 JSON 含 `[DONE]` 字面量时按正常 JSON 解析，
+    不得因「包含该字面量」而被当作结束哨兵跳过。"""
+    import logging
+
+    llm = OpenAILLM(api_key="test-key")
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream([
+            'data: {"choices":[{"delta":{"content":"[DONE]"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ])
+        with caplog.at_level(logging.WARNING, logger="asterwynd.llm"):
+            events = [event async for event in llm.stream_chat([Message(role="user", content="Hi")])]
+
+    # 字面量所在行必须被正常解析成 content delta（而非被当哨兵丢掉）
+    assert [e.type for e in events] == ["assistant_delta", "complete"]
+    assert events[0].delta == "[DONE]"
+    assert events[-1].response.content == "[DONE]"
+    assert [r for r in caplog.records if "unparseable" in r.getMessage()] == []
