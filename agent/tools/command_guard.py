@@ -12,9 +12,18 @@ Design: default-allow (unknown commands pass, preserving existing workflows);
 denylist patterns are kept and extended; argv semantic checks apply to
 dangerous commands; high-risk sentence patterns (pipe-to-shell, redirect to
 protected paths) are denied outright.
+
+Path containment (``path`` inside a protected prefix / the workspace) is judged
+by **path segment** after normalization, never by bare string prefix
+(fix-issue-247): ``/various.txt`` is not under ``/var``, ``/tmp/ws-evil`` is not
+inside workspace ``/tmp/ws``, and ``/tmp/ws/../etc`` normalizes out of the
+workspace. Redirection / mv-cp targets that are the ``/dev/null`` family are
+exempt (they are black-hole / std-stream aliases, not protected assets); the
+exemption deliberately does NOT extend to rm/chmod/curl targets.
 """
 from __future__ import annotations
 
+import os
 import re
 from enum import Enum
 from pathlib import Path
@@ -23,6 +32,56 @@ from agent.workspace_policy import DEFAULT_DENYLIST
 
 # Protected paths: writing to these is always denied.
 _DENY_PATHS = ("/etc", "/proc", "/sys", "/dev", "/root", "/boot", "/var")
+# Device files that are black-hole / std-stream aliases rather than protected
+# assets. Only exempt for redirection and mv/cp targets (fix-issue-247 Q2/Q3).
+_DEVICE_EXEMPT = ("/dev/null", "/dev/stdout", "/dev/stderr")
+# Dot-directories carrying credentials or repo metadata. Compared per path
+# **segment** (never by prefix), so `.gitignore` / `.github/` / `.env.example`
+# pass while `.git/config` and `src/.git/hooks/x` are caught.
+_SENSITIVE_DOTDIRS = frozenset(
+    {".git", ".ssh", ".env", ".aws", ".gnupg", ".kube", ".docker", ".netrc", ".npmrc", ".pypirc"}
+)
+_SENSITIVE_DOTFILES = frozenset(
+    {".env", ".netrc", ".npmrc", ".pypirc", ".gitconfig", ".git-credentials"}
+)
+
+
+def _normalize_path(path: str) -> str:
+    """Normalize a raw command token for containment checks (issue #247).
+
+    Resolves ``.``/``..`` segments so ``/tmp/ws/../etc`` cannot masquerade as
+    a path inside ``/tmp/ws``. Relative overflows (``a/../../etc``) stay
+    relative and therefore compare as "not contained" — the safe direction for
+    the workspace check.
+    """
+    return os.path.normpath(path)
+
+
+def _within(path: str, prefix: str) -> bool:
+    """True when ``path`` equals ``prefix`` or sits **under** it (segment-wise).
+
+    Bare ``startswith`` treats ``/various.txt`` as being under ``/var``; a
+    segment boundary requires either exact equality or ``prefix + "/"``.
+    """
+    if not path or not prefix:
+        return False
+    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+
+def _is_device_exempt(target: str) -> bool:
+    return target in _DEVICE_EXEMPT
+
+
+def _dest_is_sensitive(dest: str) -> bool:
+    """True when ``dest`` carries credentials / repo metadata (fix-issue-247 R1).
+
+    Segment-wise: any path segment equal to a sensitive dot-directory, or a
+    basename equal to a sensitive dot-file.
+    """
+    parts = [part for part in dest.split("/") if part not in ("", ".")]
+    if any(part in _SENSITIVE_DOTDIRS for part in parts):
+        return True
+    return bool(parts) and parts[-1] in _SENSITIVE_DOTFILES
 # Shell interpreters that, when piped to, imply arbitrary code execution.
 _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "ksh", "dash", "fish"}
 # Arbitrary code execution interpreters.
@@ -45,7 +104,13 @@ _EXTRA_DENYLIST = (
     # base64 decode then execute
     r"base64\s+-d\s*\|\s*(ba)?sh",
     # mv/cp target into protected path
-    r"\b(mv|cp)\s+[^\s]+\s+(/etc/|/proc/|/sys/|/dev/|/var/|\S*/\.[a-z]+\b)",
+    # mv/cp into protected roots. Kept alongside ``_check_mv_cp`` because this
+    # pattern also fires on ``cp`` nested in a command chain (where argv sees
+    # only the first token). ``/dev/`` exempts the ``_DEVICE_EXEMPT`` targets
+    # here too — a device write is not a protected-asset write (fix-issue-247
+    # Q2). The lookahead must stay in sync with ``_DEVICE_EXEMPT``; a test
+    # asserts exactly that.
+    r"\b(mv|cp)\s+[^\s]+\s+(/etc/|/proc/|/sys/|/var/|/dev/(?!null\b|stdout\b|stderr\b))",
     # exfiltration via netcat / /dev/tcp
     r"\bnc\s+\S+\s+\d+",
     r"/dev/tcp/",
@@ -176,12 +241,18 @@ class CommandGuard:
         return bool(m)
 
     def _has_protected_redirect(self, command: str) -> bool:
-        """Detect redirects (``>``/``>>``) into protected paths."""
+        """Detect redirects (``>``/``>>``) into protected paths.
+
+        Segment-wise and device-exempt: ``2>/dev/null`` is a black-hole write,
+        not a protected asset, and ``/various.txt`` is not under ``/var``.
+        """
         tokens = tokenize_command(command)
         for i, tok in enumerate(tokens):
             if tok in (">", ">>") and i + 1 < len(tokens):
-                target = tokens[i + 1]
-                if any(target.startswith(p) for p in _DENY_PATHS):
+                target = _normalize_path(tokens[i + 1])
+                if _is_device_exempt(target):
+                    continue
+                if any(_within(target, p) for p in _DENY_PATHS):
                     return True
         return False
 
@@ -221,22 +292,38 @@ class CommandGuard:
             return CommandVerdict.ALLOW
         for target in targets:
             # $IFS expands to whitespace, so "$IFS/" is effectively "/".
-            normalized = target.replace("$IFS", "")
-            if normalized in ("/", "$HOME", "~") or any(normalized.startswith(p) for p in _DENY_PATHS):
+            normalized = _normalize_path(target.replace("$IFS", ""))
+            if normalized in ("/", "$HOME", "~") or any(
+                _within(normalized, p) for p in _DENY_PATHS
+            ):
                 self.last_reason = "rm_target_escape"
                 return CommandVerdict.DENY
-            if self._workspace and normalized.startswith("/") and not normalized.startswith(self._workspace):
-                self.last_reason = "rm_target_escape"
-                return CommandVerdict.DENY
+            if self._workspace:
+                ws = _normalize_path(self._workspace)
+                if normalized.startswith("/") and not _within(normalized, ws):
+                    self.last_reason = "rm_target_escape"
+                    return CommandVerdict.DENY
+                # Deleting the workspace root itself is as destructive as
+                # escaping it (fix-issue-247 Q1).
+                if normalized == ws:
+                    self.last_reason = "rm_target_escape"
+                    return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
     def _check_mv_cp(self, tokens: list[str]) -> CommandVerdict:
-        """mv/cp whose destination lands in a protected path is denied."""
+        """mv/cp whose destination lands in a protected path is denied.
+
+        Segment-wise, device-exempt, and sensitive-dot-dir aware
+        (fix-issue-247): ``/various.txt`` is not under ``/var``, ``cp x
+        /dev/null`` is a black-hole write, and ``.gitignore`` is not ``.git``.
+        """
         args = [t for t in tokens[1:] if not t.startswith("-")]
         if len(args) < 2:
             return CommandVerdict.ALLOW
-        dest = args[-1]
-        if any(dest.startswith(p) for p in _DENY_PATHS):
+        dest = _normalize_path(args[-1])
+        if _is_device_exempt(dest):
+            return CommandVerdict.ALLOW
+        if any(_within(dest, p) for p in _DENY_PATHS) or _dest_is_sensitive(dest):
             self.last_reason = "mv_cp_dest"
             return CommandVerdict.DENY
         return CommandVerdict.ALLOW
@@ -246,8 +333,8 @@ class CommandGuard:
         args = [t for t in tokens[1:] if not t.startswith("-")]
         if len(args) < 2:
             return CommandVerdict.ALLOW
-        mode, target = args[0], args[1]
-        if any(target.startswith(p) for p in _DENY_PATHS):
+        mode, target = args[0], _normalize_path(args[1])
+        if any(_within(target, p) for p in _DENY_PATHS):
             self.last_reason = "chmod_bits"
             return CommandVerdict.DENY
         # 0777 / 777 / a+rwx on root or /tmp.
@@ -261,9 +348,11 @@ class CommandGuard:
         sensitive file) is denied. Plain fetch/upload without a file arg passes.
         """
         for arg in tokens[1:]:
-            if arg.startswith("@") and any(arg[1:].startswith(p) for p in _DENY_PATHS):
-                self.last_reason = "curl_exfil"
-                return CommandVerdict.DENY
+            if arg.startswith("@"):
+                target = _normalize_path(arg[1:])
+                if any(_within(target, p) for p in _DENY_PATHS):
+                    self.last_reason = "curl_exfil"
+                    return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
     def _check_timeout(self, tokens: list[str]) -> CommandVerdict:

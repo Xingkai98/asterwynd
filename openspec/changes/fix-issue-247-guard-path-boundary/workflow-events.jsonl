@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "current_spec_synced", "change_id": "fix-issue-247-guard-path-boundary", "artifact_path": "openspec/specs/workspace-safety/spec.md", "reason": "fix-issue-247：把路径段边界判定 + 设备文件豁免（限重定向与 mv/cp）+ ..穿越规范化 + rm 工作区根拒绝同步进 workspace-safety 正式规格的命令护栏 Requirement，新增 5 条 Scenario", "approved_by": "user:2026-09-26 Q1/Q2/Q3/Q6 拍板"}

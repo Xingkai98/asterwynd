@@ -2624,25 +2624,25 @@ if self._guard.check(cmd) is CommandVerdict.DENY:
 
 #### 2.2 轻量级命令分词器
 
-`tokenize_command()`（`:68-113`）是一个**非完整 Bash 解析器**——支持单/双引号、管道、重定向、分号的 token 分割，但不解析 heredoc、进程替换 `<(cmd)`、brace expansion 等复杂语法。设计目标是足够的 argv 级精度，用于后续语义检查。
+`tokenize_command()`（`:133-178`）是一个**非完整 Bash 解析器**——支持单/双引号、管道、重定向、分号的 token 分割，但不解析 heredoc、进程替换 `<(cmd)`、brace expansion 等复杂语法。设计目标是足够的 argv 级精度，用于后续语义检查。
 
 #### 2.3 扩展黑名单——绕过变体覆盖
 
-`_EXTRA_DENYLIST`（`:32-60`）定义了 **18 个** 额外正则模式，专门覆盖基础 denylist（`workspace_policy.py` 的 `DEFAULT_DENYLIST` 42 个）未能捕获的绕过变体：
+`_EXTRA_DENYLIST`（`:91-125`）定义了 **16 个** 额外正则模式，专门覆盖基础 denylist（`workspace_policy.py` 的 `DEFAULT_DENYLIST` 42 个）未能捕获的绕过变体：
 
 | 绕过类别 | 原始变体能被绕过的原因 | 扩展覆盖 | 行号 |
 |------|------|------|------|
-| `rm` flag 重排 | `rm -fr /` vs `rm -rf /`（原只匹配 `rm -rf`） | `rm -[a-z]*f[a-z]*r[a-z]*` + `rm` with `--` | `:33-35` |
-| `chmod` 八进制/符号变体 | 原只匹配 `chmod 777 /` | 0?[0-7]{3,4} (前导零), 符号模式 `[a-z+=]+` 组合 | `:37-38` |
-| `kill` 信号名变体 | 原只匹配 `kill -9` | `kill -(SIGKILL\|KILL\|9)\s+\d+` | `:40` |
-| 任意代码执行 | 原缺 `node -e`, `deno eval`, `awk ... system()` | 新增 node/deno/awk 模式 | `:42-44` |
-| base64 管道到 shell | 原 `curl\|sh` 没覆盖 base64 | `base64 -d \| (ba)?sh` | `:46` |
-| mv/cp 目标落在保护路径 | 原只匹配 "移动文件到 /etc" 不精确 | 完整保护路径 + 隐藏文件后缀 | `:48` |
-| nc 数据外泄 | 原缺 | `nc` + `/dev/tcp/` 反向 shell | `:50-51` |
-| fork bomb | 原缺 | `:(){ :` pattern | `:53` |
-| `$IFS` 变量空格绕过 | `rm$IFS/` 等价于 `rm /` | `\$IFS` literal | `:55` |
-| 反斜杠逃逸命令名 | `r\m` 在某些 shell 中等价于 `rm` | `\\[a-z]\s` | `:57` |
-| 资源耗尽 | 原缺 | `yes > /dev/null` (无限写 null) | `:59` |
+| `rm` flag 重排 | `rm -fr /` vs `rm -rf /`（原只匹配 `rm -rf`） | `rm -[a-z]*f[a-z]*r[a-z]*` + `rm` with `--` | `:93-94` |
+| `chmod` 八进制/符号变体 | 原只匹配 `chmod 777 /` | 0?[0-7]{3,4} (前导零), 符号模式 `[a-z+=]+` 组合 | `:96-97` |
+| `kill` 信号名变体 | 原只匹配 `kill -9` | `kill -(SIGKILL\|KILL\|9)\s+\d+` | `:99` |
+| 任意代码执行 | 原缺 `node -e`, `deno eval`, `awk ... system()` | 新增 node/deno/awk 模式 | `:101-103` |
+| base64 管道到 shell | 原 `curl\|sh` 没覆盖 base64 | `base64 -d \| (ba)?sh` | `:105` |
+| mv/cp 目标落在保护路径 | 原只匹配 "移动文件到 /etc" 不精确 | 完整保护路径（隐藏点目录改由 argv 段级判定，见 `_check_mv_cp`） | `:113` |
+| nc 数据外泄 | 原缺 | `nc` + `/dev/tcp/` 反向 shell | `:115-116` |
+| fork bomb | 原缺 | `:(){ :` pattern | `:118` |
+| `$IFS` 变量空格绕过 | `rm$IFS/` 等价于 `rm /` | `\$IFS` literal | `:120` |
+| 反斜杠逃逸命令名 | `r\m` 在某些 shell 中等价于 `rm` | `\\[a-z]\s` | `:122` |
+| 资源耗尽 | 原缺 | `yes > /dev/null` (无限写 null) | `:124` |
 
 #### 2.4 argv 语义检查
 
@@ -2656,7 +2656,7 @@ if self._guard.check(cmd) is CommandVerdict.DENY:
 | `timeout` | `_check_timeout()` | 超时值 0 < t <= 600 秒；然后**递归检查被包装的命令**（`timeout 5 rm -rf /` 不能绕过） | `:269-287` |
 | `curl` / `wget` | `_check_curl_wget()` | `@<protected-path>` 数据外泄参数 → DENY | `:259-267` |
 
-**`rm` 的特殊处理**（`:139`）：denylist 中的 `rm` 模式被排除（因为 `rm -rf /` 正则会匹配任何包含 `/` 的 workspace 内路径导致误杀），rm 的判断完全交给 argv 语义检查。
+**`rm` 的特殊处理**（`:200`）：denylist 中的 `rm` 模式被排除（因为 `rm -rf /` 正则会匹配任何包含 `/` 的 workspace 内路径导致误杀），rm 的判断完全交给 argv 语义检查。
 
 #### 2.5 高危句式检测
 

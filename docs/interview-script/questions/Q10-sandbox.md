@@ -34,12 +34,12 @@ BashTool (agent/tools/builtin/) → CommandGuard.check (agent/tools/command_guar
 - `check(command)`（128 行）：返回 `CommandVerdict`（allow/deny）。
 - 第 1 层：扩展 denylist（`_EXTRA_DENYLIST` 覆盖常规绕过变体，31 行）。
 - 第 2 层：argv 级检查——
-  - `_check_rm`（213 行）：`rm -rf /` 等危险 rm。
-  - `_check_mv_cp`（233 行）：`mv`/`cp` 覆盖 workspace 外文件。
-  - `_check_chmod`（244 行）：`chmod +x` 写 shell。
-  - `_check_curl_wget`（259 行）：`curl -o`/`wget -O` 下载到 workspace 外。
-  - `_check_timeout`（269 行）：`timeout` 命令边界。
-- `_has_pipe_to_shell`（166 行）/`_has_protected_redirect`（178 行）：管道/重定向危险检测。
+  - `_check_rm`（284 行）：`rm -rf /` 等危险 rm。
+  - `_check_mv_cp`（313 行）：`mv`/`cp` 覆盖 workspace 外文件。
+  - `_check_chmod`（331 行）：`chmod +x` 写 shell。
+  - `_check_curl_wget`（346 行）：`curl -o`/`wget -O` 下载到 workspace 外。
+  - `_check_timeout`（358 行）：`timeout` 命令边界。
+- `_has_pipe_to_shell`（231 行）/`_has_protected_redirect`（243 行）：管道/重定向危险检测。
 - 默认 allow：只拦明确危险，不拦未知。
 
 **`agent/tools/sandbox/factory.py`**

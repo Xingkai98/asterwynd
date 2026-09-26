@@ -118,8 +118,12 @@ class TestCommandGuardTimeoutWrapper:
     def test_wrapped_destructive_command_denied(self) -> None:
         # A wrapped mv into a protected path must not pass just because
         # `timeout` is the first word (argv recursion into the wrapped command).
+        # Target is `/root/foo`, not `/var/log/foo`: the latter is caught by the
+        # denylist first, so the argv branch under test would never run
+        # (fix-issue-247 R2 — this assertion previously used the look-alike
+        # path `/etc-passwd/foo`, which is NOT under `/etc`).
         g = CommandGuard()
-        assert g.check("timeout 5 mv /tmp/x /etc-passwd/foo") is CommandVerdict.DENY
+        assert g.check("timeout 5 mv /tmp/x /root/foo") is CommandVerdict.DENY
         assert g.last_reason == "mv_cp_dest"
 
     def test_wrapped_rm_rf_still_denied(self) -> None:
@@ -158,10 +162,12 @@ class TestCommandGuardLastReason:
         assert g.last_reason == "pipe_to_shell"
 
     def test_reason_protected_redirect(self) -> None:
-        # Target starts with a protected prefix but is not matched by the
-        # denylist regex (which requires literal /etc/), so the argv check fires.
+        # Target is genuinely under a protected root but not covered by the
+        # denylist's redirect regex (which requires literal /etc/, /proc/, /sys/),
+        # so the argv check fires. Target is `/var/log/foo`, not the look-alike
+        # `/etc-passwd/foo` (fix-issue-247 R2: the latter is not under /etc).
         g = CommandGuard()
-        g.check("echo x > /etc-passwd/foo")
+        g.check("echo x > /var/log/foo")
         assert g.last_reason == "protected_redirect"
 
     def test_reason_rm_target_escape(self) -> None:
@@ -170,10 +176,12 @@ class TestCommandGuardLastReason:
         assert g.last_reason == "rm_target_escape"
 
     def test_reason_mv_cp_dest(self) -> None:
-        # Target starts with a protected prefix but is not matched by the
-        # denylist regex (which requires literal /etc/), so the argv check fires.
+        # Target is genuinely under a protected root but not covered by the
+        # denylist's mv/cp regex (which requires literal /etc/, /proc/, /sys/,
+        # /var/), so the argv check fires. Target is `/root/foo`, not the
+        # look-alike `/etc-passwd/foo` (fix-issue-247 R2).
         g = CommandGuard()
-        g.check("mv /tmp/x /etc-passwd/foo")
+        g.check("mv /tmp/x /root/foo")
         assert g.last_reason == "mv_cp_dest"
 
     def test_reason_chmod_bits(self) -> None:
@@ -199,3 +207,206 @@ class TestCommandGuardLastReason:
         assert g.last_reason == "denylist"
         g.check("git status")
         assert g.last_reason is None
+
+
+# --- fix-issue-247: 路径段边界 / 设备豁免 / `..` 穿越 -----------------------
+
+
+class TestPathSegmentBoundary:
+    """受保护路径与工作区边界按**路径段**判定（issue #247 根因）。
+
+    裸 `str.startswith(prefix)` 会把 `/various.txt` 当作 `/var` 下的路径，
+    也会把 `/tmp/ws-evil` 当作工作区 `/tmp/ws` 内的路径。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # fd 前缀重定向：tokenizer 把 2>/dev/null 拆成 '2' '>' '/dev/null'
+            "ls -la 2>/dev/null",
+            "echo hi > /dev/null",
+            "cmd > /dev/null 2>&1",
+            "python3 x.py > /dev/null 2>&1",
+            "git log 2>/dev/null | head",
+            "cat f 2>/dev/null",
+        ],
+    )
+    def test_fd_redirect_to_devnull_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # 假朋友前缀：与 /var /root /boot /etc /proc /sys /dev 仅字符串相同
+            "echo x > /various.txt",
+            "echo x > /variable",
+            "echo x > /rooted.log",
+            "echo x > /bootstrap.log",
+            "echo x > /etcetera.conf",
+            "echo x > /sysadmin.log",
+            "echo x > /procmail.rc",
+            "echo x > /devops.txt",
+        ],
+    )
+    def test_lookalike_prefix_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp r.md docs/.draft/x.md",
+            "mv x src/.cache/",
+            "cp x /tmp/.hidden/",
+        ],
+    )
+    def test_ordinary_dotdir_allowed(self, command: str) -> None:
+        """普通点目录不是敏感目标（原 `\\S*/\\.[a-z]+\\b` 无差别命中）。"""
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # workspace=/tmp/ws 时，这些都在工作区之外
+            "rm -rf /tmp/ws-evil",
+            "rm -rf /tmp/ws-evil/sub",
+            "rm -rf /tmp/wsX",
+        ],
+    )
+    def test_workspace_prefix_collision_denied(self, command: str) -> None:
+        """前缀相同不构成包含关系：/tmp/ws-evil 不在 /tmp/ws 之下。"""
+        g = CommandGuard(workspace="/tmp/ws")
+        assert g.check(command) is CommandVerdict.DENY
+        assert g.last_reason == "rm_target_escape"
+
+    def test_workspace_inside_still_allowed(self) -> None:
+        g = CommandGuard(workspace="/tmp/ws")
+        assert g.check("rm -rf /tmp/ws/build") is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm -rf /tmp/ws/../etc",
+            "rm -rf /tmp/ws/../../etc",
+            "rm -rf /tmp/ws/../etc/passwd",
+        ],
+    )
+    def test_dotdot_traversal_denied(self, command: str) -> None:
+        """`..` 规范化后落在工作区之外，不得因字面前缀匹配而放行。"""
+        g = CommandGuard(workspace="/tmp/ws")
+        assert g.check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize("command", ["rm -rf /tmp/ws", "rm -rf /tmp/ws/"])
+    def test_workspace_root_denied(self, command: str) -> None:
+        """删工作区根本身的破坏性与越界相当。"""
+        g = CommandGuard(workspace="/tmp/ws")
+        assert g.check(command) is CommandVerdict.DENY
+
+
+class TestSensitiveDotDirectories:
+    """`_check_mv_cp` 的敏感点目录判定按**段**比较（不是正则前缀）。"""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # 误报检查：以敏感点目录名为**前缀**的普通文件/目录
+            "cp x .gitignore",
+            "cp x .env.example",
+            "cp x .dockerignore",
+            "cp x .github/workflows/ci.yml",
+            "cp x src/.gitignore",
+            "cp x .environment",
+        ],
+    )
+    def test_sensitive_lookalike_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # 裸形态
+            "cp x .env",
+            "mv y .ssh/id_rsa",
+            "cp x .git/config",
+            # 嵌套形态（原 `\\S*/\\.[a-z]+\\b` 能拦，正则白名单会漏）
+            "cp x src/.git/hooks/pre-commit",
+            "cp x sub/.env/secrets",
+            "cp x proj/.npmrc",
+            "cp x a/.git/",
+        ],
+    )
+    def test_sensitive_dotdir_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+
+class TestDeviceExemptionScope:
+    """设备豁免只覆盖重定向 + mv/cp（用户拍板 Q2/Q3）。"""
+
+    def test_redirect_to_devnull_allowed(self) -> None:
+        assert CommandGuard().check("echo x > /dev/null") is CommandVerdict.ALLOW
+
+    def test_cp_to_devnull_allowed(self) -> None:
+        assert CommandGuard().check("cp x /dev/null") is CommandVerdict.ALLOW
+
+    def test_rm_devnull_still_denied(self) -> None:
+        """豁免不扩展到 rm（Q2 拍板：不放宽 rm 对 /dev/ 的拦截面）。"""
+        assert CommandGuard().check("rm -rf /dev/null") is CommandVerdict.DENY
+
+    def test_dev_fd_not_exempt(self) -> None:
+        """Q3 拍板：/dev/fd/* 不纳入豁免。"""
+        assert CommandGuard().check("echo x > /dev/fd/1") is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo x > /dev/sda",
+            "dd if=/dev/zero of=/dev/sda",
+            "yes > /dev/null",
+        ],
+    )
+    def test_other_dev_targets_still_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+
+class TestRealProtectedTargetsStillDenied:
+    """真危险对照：修复不得放松任何既有拦截面。"""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo x > /etc/passwd",
+            "echo x > /var/log/syslog",
+            "echo x > /etc/shadow",
+            "rm -rf /",
+            "rm -rf /var",
+            "rm -rf /etc",
+            "cp a /etc/x",
+            "cp a /var/log/x",
+            "chmod 777 /",
+            "mv x /etc/passwd",
+        ],
+    )
+    def test_real_protected_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+
+class TestDeviceExemptSyncWithDenylist:
+    """denylist 里 mv/cp 的 `/dev/` lookahead 必须与 `_DEVICE_EXEMPT` 同步。
+
+    grill R1/R3 指出：两处各写一份豁免清单会漂移，而漂移的表现是「argv 放行、
+    denylist 抢先拒绝」这类静默不一致（`cp x /dev/null` 曾经就是这样）。
+    """
+
+    def test_denylist_lookahead_covers_exactly_device_exempt(self) -> None:
+        import re
+
+        from agent.tools.command_guard import _DEVICE_EXEMPT, _EXTRA_DENYLIST
+
+        pattern = next(p for p in _EXTRA_DENYLIST if "/dev/" in p and "mv|cp" in p)
+        for target in _DEVICE_EXEMPT:
+            command = f"cp x {target}"
+            assert not re.search(pattern, command), (
+                f"{target} 在 _DEVICE_EXEMPT 内，但 denylist 的 mv/cp 分支仍会拦它"
+            )
+        # 非豁免的 /dev 目标必须仍被 denylist 拦（不因 lookahead 而放开）
+        for target in ("/dev/sda", "/dev/fd/1", "/dev/tcp/x"):
+            assert re.search(pattern, f"cp x {target}"), f"{target} 应被 denylist 拦"
