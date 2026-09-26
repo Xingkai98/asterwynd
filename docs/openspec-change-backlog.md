@@ -101,10 +101,6 @@
 
 ## 未实现队列
 
-### 第十六批：流式 tool call 截断健壮性（issue #249）
-
-- `fix-issue-249-streaming-tool-args-truncation`（issue #249）：**进行中**（本 PR 内实现 + 归档）。根因：`agent/anthropic_llm.py` 流式路径在**终局解析 tool call 参数**时无保护——`_build_response` 与 `_build_payload` 两处裸 `json.loads`，`max_tokens` 截断或流中断留下未闭合 JSON 时直接抛 `JSONDecodeError` 终止整个 run（会话 `edd3b6ded5eb` 实测 `iteration=3` 崩溃，报错列号已用仓库自身代码复现到逐字节一致）。放大因素：`loop.py` 的 `max_tokens` 续接藏在 `if not response.tool_calls:` 内，恰好在「模型写大块 tool 参数」这一最易触发截断的场景不可达；截断参数串进入历史后还会在下一轮重放时二次崩溃。路径不对称是结构特征：非流式取端点已解析的 `block["input"]`，OpenAI 路径不解析交给 loop 的 guard，只有 Anthropic 流式裸奔。修法：按 `stop_reason` 分流——`max_tokens` 丢弃不完整调用并保持 `stop_reason`（使续接可达、不产生孤立 `tool_use`），其它情况保留原始串交给 `_parse_arguments` 降级为可恢复 tool error；`_build_payload` 重放时降级 `{}`（与前者成对，否则二次崩溃）；`_stream_events` 的静默 `continue` 补 warning 日志。**明确不做**：不调大/参数化 `max_tokens`（非病因，截断在 7811 字符处远小于 16384 token 容量）；不做 JSON 修复（会让未完整表达的意图被执行）。回归测试 7 条（5 条修复前 RED）+ 变异验证；spec delta ADDED 1 条 Requirement（4 个 Scenario）已同步进 `openspec/specs/agent-runtime/spec.md`。
-
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
