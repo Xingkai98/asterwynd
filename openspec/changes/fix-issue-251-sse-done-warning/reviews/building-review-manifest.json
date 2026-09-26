@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-251-sse-done-warning",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "b38c68be-3c78-49a8-b48b-3fa4c3f9ce94",
+  "base_sha": "14f6e24",
+  "head_sha": "784b109",
+  "tasks_hash": "sha256:19056986238ed70a7bb8e0b398c7421571760b1348158fadff1c0e2dff523112",
+  "spec_hash": "sha256:a45d5f0fd7d5126c48d16b1d044275d336100bbe5f5c546df8d4f60fbc4bab98",
+  "diff_hash": "sha256:7280d0a0aa2a1701c57cc54f050a87bde5b4ec75e223bff0523aafd4eb108535",
+  "report_hash": "sha256:90ebd3f2814398ca8d0ef48f89cfd09e399af5a5accbdb40b60ed8322a45cf3d"
+}
