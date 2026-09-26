@@ -101,10 +101,6 @@
 
 ## 未实现队列
 
-### 第十六批：SSE 可观测性误报收口（issue #251）
-
-- `fix-issue-251-sse-done-warning`（issue #251）：**进行中**（本 PR 内实现 + 归档）。根因：issue #249（PR #250）给 `BaseLLM._stream_events` 新增的「SSE 单行解析失败」告警未特判 OpenAI 协议的流结束哨兵 `data: [DONE]`（它按约定不是 JSON，`json.loads` 必抛 `JSONDecodeError`），导致每次走 OpenAI provider 的请求结束都刷一条误导性「Dropping unparseable SSE data line」——文案与事实不符（该行本就不产生事件、无数据被丢）。修法：在 `json.loads` **之前**放行哨兵（`strip()` 精确等于 `[DONE]`），抽 `_is_sse_stream_end()` + 常量；同时用反向守护测试固定「真实坏行仍须告警恰好 1 条」，防止修复退化成「用静默换安静」。spec delta 新增 Requirement「SSE 可观测性区分协议控制帧与坏行」（3 Scenario：哨兵不告警 / 坏行仍告警 / 含哨兵字面量的合法 JSON 不被误判），已同步进 `openspec/specs/agent-runtime/spec.md`。
-
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
