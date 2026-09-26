@@ -72,8 +72,16 @@ def _is_device_exempt(target: str) -> bool:
     return target in _DEVICE_EXEMPT
 
 
-#: Tokenizer output tokens that separate one command from the next.
-_SEGMENT_SEPARATORS = frozenset({"&&", "||", ";", "|", "&"})
+#: How many nested ``<shell> -c "…"`` payloads are re-checked. Beyond this the
+#: payload is skipped: nesting is unbounded in shell, and re-checking without a
+#: cap recurses until the interpreter dies (review Round 2).
+_MAX_NESTED_COMMAND_DEPTH = 4
+#: Tokenizer output tokens that separate one command from the next. Grouping
+#: punctuation is a boundary too: `(cp x .env)` and `{ cp x .env; }` run `cp`
+#: as their own command (review Round 2).
+_SEGMENT_SEPARATORS = frozenset(
+    {"&&", "||", ";", "|", "&", "(", ")", "{", "}"}
+)
 
 
 def _split_command_segments(tokens: list[str]) -> list[list[str]]:
@@ -120,17 +128,44 @@ def _check_command_text(command: str) -> list[list[str]]:
 def _shell_dash_c_payload(tokens: list[str]) -> str | None:
     """Return the command string of a ``<shell> -c <string>`` segment, if any.
 
-    ``bash -c "cp evil .env"`` arrives as ``['bash', '-c', 'cp evil .env']``
-    (quotes are consumed by the tokenizer), so the payload is just the last
-    token. Only shells that the guard already recognises as interpreters are
-    unpacked, and the payload is re-checked as a full command line.
+    Quoted (``bash -c "cp evil .env"``) arrives as one token after ``-c``;
+    unquoted (``bash -c cp evil .env``) arrives as several. Both forms run the
+    same payload, so the **rest of the segment is rejoined** — returning only
+    ``tokens[index + 1]`` silently dropped everything after the first word
+    (review Round 2: ``bash -c "bash -c cp x .env"`` came back ALLOW).
+
+    The flag is matched as *any* token that starts with ``-`` and contains
+    ``c`` so combined forms (``bash -lc``, ``zsh -ic``) unpack too — they run
+    the same payload as ``-c``.
     """
+    # Strip leading `env` / `command` / `nohup` wrappers first: `/usr/bin/env
+    # bash -c "…"` runs the same payload, but `tokens[0]` is `env` (review
+    # Round 2). Wrapper args that look like `VAR=value` assignments are
+    # skipped along with the wrapper name itself.
+    index = 0
+    while index < len(tokens) and tokens[index].rsplit("/", 1)[-1] in (
+        "env",
+        "command",
+        "nohup",
+    ):
+        index += 1
+        while index < len(tokens) and "=" in tokens[index] and not tokens[index].startswith("-"):
+            index += 1
+    tokens = tokens[index:]
     if len(tokens) < 3 or tokens[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
         return None
-    if "-c" not in tokens[1:3]:
+    index = next(
+        (
+            i
+            for i, token in enumerate(tokens[1:], start=1)
+            if token.startswith("-") and "c" in token
+        ),
+        None,
+    )
+    if index is None:
         return None
-    index = tokens.index("-c")
-    return tokens[index + 1] if index + 1 < len(tokens) else None
+    payload = " ".join(tokens[index + 1 :])
+    return payload or None
 
 
 def _dest_is_sensitive(dest: str) -> bool:
@@ -224,7 +259,7 @@ def tokenize_command(command: str) -> list[str]:
             if current:
                 tokens.append(current)
                 current = ""
-        elif ch in "|>&;<":
+        elif ch in "|>&;<(){}":
             if current:
                 tokens.append(current)
                 current = ""
@@ -248,6 +283,8 @@ class CommandGuard:
         # Granular rejection category from the most recent check() (None when
         # allowed). Lets sandbox trace events carry a meaningful reason.
         self.last_reason: str | None = None
+        # Current nesting depth of `<shell> -c "…"` re-checks (review Round 2).
+        self._nested_depth = 0
 
     def check(self, command: str) -> CommandVerdict:
         self.last_reason = None
@@ -340,10 +377,19 @@ class CommandGuard:
             if verdict is CommandVerdict.DENY:
                 return CommandVerdict.DENY
             # `bash -c "cp evil .env"`: the payload is a nested command line.
+            # Bounded depth: `bash -c "bash -c '…'"` nests arbitrarily and an
+            # unbounded re-check recurses until the interpreter dies (review
+            # Round 2). Past the limit the payload is left unexamined — the
+            # guard is a guardrail, and the sandbox backend is the boundary.
             payload = _shell_dash_c_payload(segment)
-            if payload and self.check(payload) is CommandVerdict.DENY:
-                self.last_reason = self.last_reason or "denylist"
-                return CommandVerdict.DENY
+            if payload and self._nested_depth < _MAX_NESTED_COMMAND_DEPTH:
+                self._nested_depth += 1
+                try:
+                    if self.check(payload) is CommandVerdict.DENY:
+                        self.last_reason = self.last_reason or "denylist"
+                        return CommandVerdict.DENY
+                finally:
+                    self._nested_depth -= 1
         return CommandVerdict.ALLOW
 
     def _check_argv_segment(self, tokens: list[str]) -> CommandVerdict:

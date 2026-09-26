@@ -531,3 +531,63 @@ class TestNewlineSeparatedCommands:
     )
     def test_newline_separated_benign_allowed(self, command: str) -> None:
         assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestShellGroupingAndFlags:
+    """分组与组合 flag 的覆盖（review R2 第二轮）。
+
+    `(...)` / `{ ...; }` 里的命令是独立命令；`bash -lc` / `zsh -ic` 与 `-c`
+    跑同样的 payload；`env` 前缀不改变被执行的命令。这些形态在修复过程中
+    一度从 DENY 退化成 ALLOW（master 上都是 DENY）。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp && (cp evil ~/.ssh/authorized_keys)",
+            "(cp evil ~/.ssh/authorized_keys)",
+            "cd /tmp && { cp evil a/.env; }",
+            "cd /tmp && { cp evil /dev/sda; }",
+            "(cd /tmp; cp evil ~/.ssh/authorized_keys)",
+        ],
+    )
+    def test_grouped_command_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'bash -lc "cp evil a/.env"',
+            'zsh -ic "cp evil a/.env"',
+            '/usr/bin/env bash -c "cp evil a/.env"',
+            'bash -c "cp evil a/.env"',
+            'sh -c "cp evil a/.env"',
+        ],
+    )
+    def test_shell_flags_and_env_prefix_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["(ls)", "cd /tmp && (ls -la)", "bash -lc ls", "bash -c true"],
+    )
+    def test_grouping_and_flags_benign_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestNestedShellRecursionIsBounded:
+    """`bash -c "bash -c …"` 嵌套必须有界（review R2 实测无限递归）。"""
+
+    def test_nested_within_limit_denied(self) -> None:
+        inner = 'cp evil a/.env'
+        for depth in range(1, 4):
+            command = "bash -c " * depth + f'"{inner}"'
+            assert CommandGuard().check(command) is CommandVerdict.DENY, depth
+
+    def test_deep_nesting_terminates(self) -> None:
+        # 超过上限即停止解包：不挂、不抛 RecursionError（护栏不是边界）。
+        command = "bash -c " * 20 + '"cp evil a/.env"'
+        assert CommandGuard().check(command) in (
+            CommandVerdict.ALLOW,
+            CommandVerdict.DENY,
+        )
