@@ -811,10 +811,18 @@ class TestDevWholeTextCoverage:
     @pytest.mark.parametrize(
         "command",
         [
-            # /dev/ 的 lookahead 必须按后继分隔符判定，不能退回 `\\b`
+            # /dev/ 的 lookahead 必须按后继分隔符判定，不能退回 `\\b`。
+            # 段首形态（`cp x /dev/null/sda`）会被 `_check_mv_cp` 的
+            # `_within(dest, "/dev")` 兜住、**测不到**全文通道的 lookahead；
+            # 必须用 launcher 前缀形态才能真锁住它（review R9-1）。
             "cp x /dev/null/sda",
             "cp x /dev/nullx",
             "cp x /dev/null.txt",
+            "nice cp evil /dev/null/sda",
+            "setsid cp evil /dev/null/sda",
+            "echo hi && nice cp evil /dev/nullx",
+            "busybox cp evil /dev/null.txt",
+            "nice cp evil /dev/null/../sda",
         ],
     )
     def test_dev_null_prefixed_targets_not_exempt(self, command: str) -> None:

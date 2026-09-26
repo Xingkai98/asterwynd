@@ -379,7 +379,7 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 对应收口方向：per-wrapper 参数模式表（`flock <file> cmd`、`chroot <dir> cmd` 的位置参数与选项混排）。
 
 **乙类：本 change 引入的收缩（应视为待收口缺陷）**：
-`cp x ~/.ss\h/id_rsa`（反斜杠转义）、`cp x ~/.ss*/f`（glob）、`cp x ~/.s[h]h/f`（字符类）等**混淆形态** —— master 的全文正则能拦，本 change 改成「段级判定 + 精确全文扫描」后漏掉。同族变体（反斜杠 / `?` / `*` / 字符类 / brace 展开 × 10 个敏感名）实测约 40/60 属此类。
+`cp x ~/.ss\h/id_rsa`（反斜杠转义）、`cp x ~/.ss*/f`（glob）、`cp x ~/.s[h]h/f`（字符类）等**混淆形态** —— master 的全文正则能拦，本 change 改成「段级判定 + 精确全文扫描」后漏掉。同族变体（反斜杠 / `?` / `*` / 字符类 / brace 展开 5 种 × 10 个敏感名）实测 **50/50** 属此类（review R9 指出初版的「40/60」取自另一组 6 变体样本）。
 
 **已确认**：`setsid dd of=/dev/sda`、`cp x $HOME/.env`、`bash -c "$(cat payload.txt)"` 在 master 与 head 上**均被拦截**，**不是**残余（本条初版曾误列，review R8-3 指出）。
 

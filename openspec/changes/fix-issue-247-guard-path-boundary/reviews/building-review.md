@@ -2,18 +2,20 @@
 
 - reviewer: 独立零记忆 subagent（未参与实现）
 - base: `369d99d`（**与 `master` 的 `command_guard.py` 字节相同**，sha256 `13d1f995…`；故下文的「vs base」等价于「vs master」。`master` 现为 `14f6e24`，那 1 个额外 commit 不触及本文件）
-- head（最新，Round 8）: 已提交 **`9561669`**（guard sha256 `04dc8f21…`；在 `52d7701` 上把点目录全文分支收窄为**要求斜杠**、并新增 `/dev/` 全文分支）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6、`e3007df` = spec-only、`8fe2faf` = R7、`d695f92` = docs、`52d7701` = R8、`9561669` = R9
+- head（最新，Round 9 / 终态）: 已提交 **`b783fe6`**（guard 与 `9561669` **sha256 相同** `04dc8f21…`——本轮只动 spec/known-debt/测试，未动代码）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6、`e3007df` = spec-only、`8fe2faf` = R7、`d695f92` = docs、`52d7701` = R8、`9561669` = R9
 - 方式：只读审阅 + 独立复算。把 base/R1…R10 **多版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试；另用**真实 `bash`** 复核可疑形态。
 
 ## Verdict
 
-**CHANGES_REQUESTED**（Round 8；`9561669` 把 R7-1/R7-2 的**代码行为**都修对了，但**新写入的 spec delta 与 known-debt 与实现事实不符**，且一类收缩面仍未记录）
+**PASS**（对象：已提交 `b783fe6`）
 
-**代码侧全部达标（我逐项复算）**：R7-1 的 45 条 `/dev/` 形态 **45/45 恢复 DENY**（我扩样 15 条亦全 DENY）；R7-2 的引号提及族 **0 新误报**（9 条 r9 误报全部消除）；点目录覆盖无退化；攻击集 **50/54** 不变；390 条组合语料非预期收缩 **0**；全量 pytest `2 failed, 3236 passed`（2 条为本机 `/tmp` 是 git 仓库的环境问题）。**你们报的数字都对。**
+至此**八个 blocking 项全部闭合**，我逐项独立复算确认：
 
-**但 R6-1/R7-3 的「记录订正」这一轮又写错了**——这才是本轮 blocking 点：
+- **spec 措辞已与实现一致**（R8-1 闭合）：改用「两条**互补**通道、各自覆盖面 SHALL 被如实描述」的写法——段级通道「在 `mv`/`cp` 居命令段首时」覆盖裸形态与嵌套形态；全文通道明说「SHALL 只匹配**带路径分隔符**的敏感名」且「SHALL NOT 匹配引号内作为数据提及的裸名」。**我把该段的每一句断言逐条对照 `b783fe6` 的行为跑了一遍，全部成立**（详见 Round 9 §2）；且 delta 与 `openspec/specs/` 正式规格**逐字相同**。
+- **known-debt 表格 17/17 行与实测一致**（R8-2/R8-3 闭合）：见 Round 9 §1。三个曾被误列为「残余」的例子已正确改标「两版均拦」；R8-4 的混淆形态族已按「**本 change 引入**」如实记为乙类。
+- **新测试确实锁住了 R7-2 的收窄**（测试缺口闭合）：影子树里把斜杠要求放宽回可选 → **8 条必红**；另三个方向（删点目录分支 / 删 `/dev` 分支 / 去点目录否定前瞻）分别 **12 / 10 / 1 条必红**。
 
-- **R8-1（major）· spec delta 与实现事实冲突，且用了自己举的反例**。delta `specs/workspace-safety/spec.md:11`（正式规格 `:213` 同文）写：「…`nice bash -c '…'`、`bash <<< '…'`、`echo '…' | env -i bash` 里的 `cp … .env` SHALL 同样被拒；**两条通道 SHALL 都覆盖裸形态（`.env`）与嵌套形态（`src/.git/hooks/x`）**」。实测 `9561669`：`nice cp x .env`、`nice bash -c 'cp x .env'`、`bash <<< 'cp x .env'`、`echo 'cp x .env' | env -i bash` **全部 ALLOW**。原因正是你们本轮 R7-2 的修法——全文分支改成**要求斜杠**（`:263` 的 `\S*/\.`），裸 `.env` 交回段级通道，而段级通道在 launcher 前缀下不触发。我实测全文分支对 `cp x .env` 也**不匹配**（无斜杠），故「两条通道**都**覆盖裸形态」这句**对全文通道而言恒假**，与 launcher 无关。这与我在 R1 报的「spec 无条件 SHALL、实现不成立」同类。
+**唯一遗留：R9-1（minor）· `/dev` 分支的 lookahead 无测试守护**——把 `:269` 的前瞻退回 `\b`（即 R2 的 I2 那个错法）后**测试全绿**（228 passed），而它会让 `nice cp evil /dev/null/sda` 变 ALLOW（master 为 DENY）。原因是 `TestDevNullPrefixedTargetsNotExempt` 的三条用例都是**段首**形态，被段级通道兜住，压根没走全文通道。详见 Round 9 §3。**不阻塞**（发布代码本身正确），但建议补 3 条 launcher 前缀用例。
 - **R8-2（minor）· `known-debt.md:359` 的表格把 ALLOW 写成 DENY**。该行断言 head = **DENY**，实测 11/11 **ALLOW**（`nice cp x .env`、`nice -n 10 …`、`setsid`/`xargs`/`busybox`/`stdbuf`/`taskset`/`ionice`/`flock`/`chroot`/`doas`）。R7 那轮这张表写错方向（该 ALLOW 写成 ALLOW 但实际 DENY），本轮改成 DENY 又错（实际 ALLOW）——建议**停止手写该列**，或注明取样口径。
 - **R8-3（minor）· `known-debt.md:365,368` 的「master 上同样不覆盖」实测为假**。`:365` 举的 `cp x $HOME/.env` 与 `:364` 的 `setsid dd of=/dev/sda`、`:365` 的 `bash -c "$(cat payload.txt)"` **在 master 与 head 都是 DENY**（不是残余）；而 `:365` 的 `cp x ~/.ss\h/id_rsa` 是 **master-DENY → head-ALLOW**（是真残余，但归因写反了）。即该段举的 4 例里 3 例根本不是残余、1 例是本 change 引入的收缩。
 - **R8-4（minor）· 一类系统性收缩未记录**：把敏感点目录名做 shell 混淆后，**40/60** 变体 master-DENY → head-ALLOW（反斜杠转义 `~/.s\sh/`、glob `?`/`*`（`~/.s?h/`、`~/.s*h/`）、brace `~/.s{s,s}h/`，× 10 个敏感名）。这些在 shell 里**真的**解析到 `.ssh`/`.git`/…，base 的宽松正则偶然覆盖、本轮收窄为字面清单后丢失。我验了修法：对段/路径先做 glob 转义还原（`fnmatch` 翻译后比对敏感名）可精确恢复，且不重新引入 R7-2 的引号误报（`?`/`*` 精确命中，`{a,b}` 需补一步展开）。
@@ -826,3 +828,86 @@ cp x ~/.s*h/id_rsa       base=D r10=A      cp x ~/.s{s,s}h/id_rsa base=D r10=A
 2. **R8-2/R8-3（必须）**：`known-debt.md` 的表格列与「master 同样不覆盖」段按我给的逐例实测订正（3 例删掉、1 例改归因）。
 3. **R8-4（建议）**：要么按 glob 还原修掉该族，要么按「本 change 引入」如实记入 known-debt。
 4. **test gap（建议）**：给「引号提及 → ALLOW」与「launcher + 裸 `.env` 的实际行为」各补 1 条参数化用例，锁住 R7-2 的收窄。
+
+---
+
+## Round 9（终审 `b783fe6`：spec 措辞 / known-debt 数据 / 测试守护）
+
+对象：已提交 `b783fe6`。**guard sha 与 `9561669` 完全相同**（`04dc8f21…`）——本轮只改 spec / known-debt / 测试，代码零改动，故 Round 8 的代码复算全部沿用。
+
+### 1. ✅ known-debt 表格 17/17 行与实测一致（R8-2/R8-3 闭合）
+
+我把表里每一行拿 `base`（= master）与 `head` 的 guard 直读对账：
+
+| 表中命令 | 表里 master/head | 实测 master/head | |
+|---|---|---|---|
+| `nice/setsid/xargs/busybox/stdbuf -o0/taskset -c 0/flock /tmp/l` + `cp x .env` | ALLOW/ALLOW | ALLOW/ALLOW | ✅ |
+| `nice bash -c 'cp x src/.env'` / `bash <<< 'cp x src/.env'` | DENY/DENY | DENY/DENY | ✅ |
+| `nice tee ~/.ssh/authorized_keys` | ALLOW/ALLOW | ALLOW/ALLOW | ✅ |
+| `setsid dd of=/dev/sda` | DENY/DENY | DENY/DENY | ✅（原误列残余，已更正） |
+| `cp x $HOME/.env` | DENY/DENY | DENY/DENY | ✅（同上） |
+| `bash -c "$(cat payload.txt)"` | DENY/DENY | DENY/DENY | ✅（同上） |
+| `cp x ~/.ss\h/id_rsa` | DENY/ALLOW | DENY/ALLOW | ✅ |
+| `cp x ~/.ssh?/f` | DENY/DENY | DENY/DENY | ✅ |
+| `cp x ~/.ss*/f` | DENY/ALLOW | DENY/ALLOW | ✅ |
+| `cp x ~/.s[h]h/f` | DENY/ALLOW | DENY/ALLOW | ✅ |
+
+**0 行与实测矛盾。** R8-2（表格写反）与 R8-3（把 master 能拦的例子列为「master 也不覆盖」）都已修正；「记录纪律」一段也已写入。甲/乙分类正确：`cp x ~/.ss\h/id_rsa`、`~/.ss*/f`、`~/.s[h]h/f` 标为**本 change 引入**（乙类），与我 R8-4 的判定一致。
+
+> 小 nit（不影响）：`:382` 写「同族变体（反斜杠 / `?` / `*` / 字符类 / brace 展开 × 10 个敏感名）实测**约 40/60**」。按该括号里描述的 **5 变体 × 10 名 = 50** 复算，实测是 **50/50**（即该族**全部**是乙类）；`40/60` 是我 R8 用 6 变体 × 10 名（含 `plain` 与引号形态）得到的数。建议改成「按 5 变体 × 10 名实测 50/50」或将变体集写明。
+
+### 2. ✅ spec 措辞与实现一致（R8-1 闭合）——逐句对账
+
+新措辞（delta `specs/workspace-safety/spec.md:11`，与 `openspec/specs/workspace-safety/spec.md:213` **逐字相同**）不再声称「两条通道都覆盖裸形态」，改为如实的互补分工。我按其每一句断言跑行为：
+
+| spec 断言 | 实测（`b783fe6`） | |
+|---|---|---|
+| （1）段级通道在 `mv`/`cp` 居段首时覆盖**裸形态** | `cp x .env` → DENY | ✅ |
+| （1）段级通道覆盖**嵌套形态** | `cp x src/.git/hooks/pre-commit` → DENY；`cp x sub/.env/secrets` → DENY | ✅ |
+| （1）SHALL NOT 误判普通文件/目录 | `cp x .gitignore` / `.env.example` / `.github/w.yml` / `.dockerignore` → 全 ALLOW | ✅ |
+| （2）全文通道兜底 launcher/herestring/pipe 的**写命令** | `nice bash -c 'cp x src/.ssh/id_rsa'` → DENY；`setsid cp x src/.git/config` → DENY；`bash <<< 'cp x src/.env'` → DENY；`nice cp x /dev/sda` → DENY | ✅ |
+| （2）全文通道**只匹配带路径分隔符**的敏感名 | `nice cp x .env`（裸名，无分隔符）→ ALLOW，与「只匹配带分隔符」自洽 | ✅ |
+| （2）SHALL NOT 匹配引号内作为**数据**提及的裸名 | `grep -rn "cp x .env" docs/` / `rg -F` / `git log --grep` / `sed -n` / `printf` / `git commit -m "…"` / `awk` / `echo "cp x .env"` → 全 ALLOW | ✅ |
+
+**没有发现任何 spec 说 SHALL 而代码不做的条目**（这正是 R8-1 的核心关切）。spec 里也不再出现「launcher + 裸 `.env` 会被拒」这类与实现冲突的表述——该形态现在是**如实描述的通道边界**（两通道都不覆盖），且已在 known-debt 甲类中记录为「两版同为漏洞」。
+
+### 3. ✅ 新测试锁住了 R7-2 的收窄（M1 必红）——但发现一处未锁（R9-1）
+
+**M1（把 `:263` 的斜杠要求放宽回可选，即撤销 R7-2）→ 8 条必红**（全部在 `TestFullTextChannelScope::test_quoted_mention_allowed`）。**你们报的「试着放宽斜杠要求会变红」属实**，R7-2 的收窄现在有 CI 守护。
+
+我把其余分支也逐个变异，确认守护面：
+
+| 变异 | 结果 | 是否被锁 |
+|---|---|---|
+| M1 斜杠要求放宽为可选（撤销 R7-2） | 8 failed | ✅ |
+| M2 删除 `/dev/` 全文分支（撤销 R7-1） | 10 failed | ✅ |
+| M4 删除点目录全文分支（撤销 R6-1） | 12 failed | ✅ |
+| M5 去掉点目录否定前瞻 `(?![\w.-])` | 1 failed | ✅（较弱，1 条） |
+| **M3 `/dev/` 前瞻退回 `\b`（R2 的 I2 错法）** | **228 passed** | ❌ **未锁** |
+
+**R9-1（minor）**：M3 变异不红，且它**真的**会开一个口子——`nice cp evil /dev/null/sda`（以及 `setsid`/`echo hi && nice …` 等 launcher 形态）在 M3 下变 **ALLOW**，而 master 是 **DENY**。根因：`tests/...:820` 的 `TestDevNullPrefixedTargetsNotExempt` 三条用例（`cp x /dev/null/sda`、`cp x /dev/nullx`、`cp x /dev/null.txt`）**都是段首形态**——`mv`/`cp` 居段首时 `_check_mv_cp` 的 `_within(dest, "/dev")` 就把它拦了，根本没走全文通道。所以该测试对「全文分支的 lookahead 用什么边界」零判别力（它通过的原因与它 docstring 声称要守护的东西无关）。
+
+**注：发布代码本身是正确的**（`b783fe6` 下 `nice cp evil /dev/null/sda` 实测 DENY），故不阻塞。建议补 3 条用例把全文通道的 lookahead 也钉住：
+
+```python
+"nice cp evil /dev/null/sda",       # launcher 前缀 + 应被全文分支拒
+"setsid cp evil /dev/null/sda",
+"echo hi && nice cp evil /dev/nullx",
+```
+
+### 4. 其余数字复核（我的实测，非采信）
+
+| 指标 | 我的实测 |
+|---|---|
+| 攻击集（base / r6 / r8 / r9 / r10=`b783fe6`） | 50/54 · 50/54 · 50/54 · 50/54 · **50/54**（直方图逐项相同，未拦 4 例仍 `sensitive-read-001..004`） |
+| `tests/agent/tools/test_command_guard.py` + `test_attack_suite.py` | **284 passed** |
+| 全量 pytest | **`2 failed, 3250 passed, 9 skipped in 322s`**——2 条失败 = `tests/agent/memory/test_persistent.py::TestFindScopeRoot`（本机 `/tmp` 是 git 仓库所致，与本 change 无关）。**与主 session 的「3250 passed / 2 条 /tmp 环境失败」逐字一致。** |
+| OpenSpec strict validate | **29 passed, 0 failed** |
+| artifact checker（`--base-ref 369d99d`） | 仅报 `review manifest missing`——即我方 PASS 后需生成的 manifest，与主 session 说法一致 |
+| 点目录覆盖 / 良性误报 / 组合语料 | 与 Round 8 一致（must-deny 16 / must-allow 14 全对；良性 FP 1/50 且源自 base；390 语料非预期收缩 0） |
+
+### 5. 结论
+
+`b783fe6` **PASS**。八轮累计：R1 的 I1/I2、R3 的换行/分组/flag/env/`\r`、R4 的 I-1/I-2/I-3、R6-1（点目录全文覆盖）、R7-1（`/dev` 全文覆盖）、R7-2（全文扫描误报）、R8-1（spec 与实现一致）、R8-2/R8-3（记录数据）、R8-4（如实记录乙类）——**全部闭合**。spec、known-debt 与代码三者现在互相一致，且有变异可验证的测试守护（除 R9-1 那一处）。
+
+**可以生成 review manifest 并进入归档收尾。** 唯一建议（不阻塞）：补 §3 的 3 条 launcher `/dev` 用例，去掉 `TestDevNullPrefixedTargetsNotExempt` 那处「通过理由与声称无关」的弱测试；顺手把 `known-debt.md:382` 的 `40/60` 订正为按所述变体集的实测值。
