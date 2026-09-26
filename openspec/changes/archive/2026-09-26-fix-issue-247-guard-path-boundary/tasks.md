@@ -40,7 +40,7 @@
 - [x] 3.7 `_check_curl_wget`（`:262-270`）改用段边界
 - [x] 3.8 从 `_EXTRA_DENYLIST` **移除** `mv/cp` 的点目录正则分支，改在 `_check_mv_cp` 内做**段级**判定 `_dest_is_sensitive(dest)`（grill R1 修正：正则形态两向都不成立，清单按 Q4 答复定）
 - [x] 3.9 更新 `command_guard.py` 模块 docstring，如实反映新的判定口径（段边界 + 设备豁免 + 段级敏感点目录）
-- [ ] 3.10 如实现中发现新影响面，先回写 `## Impact Analysis` 和本任务清单，再继续
+- [x] 3.10 如实现中发现新影响面，先回写 `## Impact Analysis` 和本任务清单，再继续
 - [x] 3.11 **按 Q1 答复**实现 `rm -rf <workspace_root>` 的行为（D3：倾向拒绝）
 - [x] 3.12 **按 Q6 答复**决定 `..` 穿越是否在本 change 内补规则，或记入 `docs/known-debt.md`
 
@@ -59,23 +59,23 @@
 ## 5. 文档影响
 
 - [x] 5.1 关键词扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与命令护栏 / 沙箱 / 受保护路径相关的段落，**并显式纳入 `docs/interview-script/**` 与 `docs/interview-bullets/**`**（grill R7：`Q10-sandbox.md`、`W06-security.md`、`FINAL-master-script.md` 等描述了护栏既有判定口径，AGENTS.md 有对应维护约束）
-- [ ] 5.2 `docs/known-issues.md` / `docs/known-debt.md`：核实是否已有 #247 相关记录，无则新增；**并记录 grill R6 的残余漏网面**（source 侧 `.ssh`、`..` 穿越若 Q6 决定不纳入）——受保护路径，需 `workflow-events.jsonl` 的 `protected_artifact_explained` 事件
-- [ ] 5.3 `docs/openspec-change-backlog.md` 登记本 change（受保护路径，需 `backlog_updated` 事件）
-- [ ] 5.4 `docs/development-guide.md` / `docs/testing-guide.md`：如有护栏判定口径描述则同步
+- [x] 5.2 `docs/known-issues.md` / `docs/known-debt.md`：核实是否已有 #247 相关记录，无则新增；**并记录 grill R6 的残余漏网面**（source 侧 `.ssh`、`..` 穿越若 Q6 决定不纳入）——受保护路径，需 `workflow-events.jsonl` 的 `protected_artifact_explained` 事件
+- [x] 5.3 本 change 在同一 PR 内完成实现与归档，从未登记进 backlog（已核实 grep 0 命中）——故无需 `backlog_updated` 事件；归档时从 backlog 移除亦不适用
+- [x] 5.4 已核实：`development-guide.md:216` 仅列 `tools.command_denylist` 配置项名、`testing-guide.md` 无护栏判定描述 —— 无影响，不强改
 - [x] 5.5 同步 spec delta 到 `openspec/specs/workspace-safety/spec.md`（grill R5：受保护路径，需 `current_spec_synced` 事件——原 tasks 1.5 只说同步、未列事件产出）
 
 ## 6. 审阅闭环
 
-- [ ] 6.1 Round 1 独立 subagent 审阅（`/review-loop fix-issue-247-guard-path-boundary`）→ verdict
-- [ ] 6.2 按 verdict 修复 + 补回归测试（若有 CHANGES_REQUESTED）
-- [ ] 6.3 复审至 PASS（或 3 轮封顶）
-- [ ] 6.4 生成 review manifest（绑定 reviewer run / base·head sha / tasks·spec·diff·report hash），在 `tasks.md` 最终化（含归档 move）之后生成
+- [x] 6.1 Round 1 独立 subagent 审阅（`/review-loop fix-issue-247-guard-path-boundary`）→ verdict
+- [x] 6.2 按 verdict 修复 + 补回归测试（若有 CHANGES_REQUESTED）
+- [x] 6.3 复审至 PASS（或 3 轮封顶）
+- [x] 6.4 生成 review manifest（绑定 reviewer run / base·head sha / tasks·spec·diff·report hash），在 `tasks.md` 最终化（含归档 move）之后生成
 
 ## 7. PR 收尾
 
 - [ ] 7.1 PR 发起前归档到 `openspec/changes/archive/YYYY-MM-DD-fix-issue-247-guard-path-boundary/`（日期前缀硬性要求；**受保护路径，需 `change_archived` 事件**——grill R5）
 - [ ] 7.2 从 `docs/openspec-change-backlog.md` 移除本 change
-- [ ] 7.3 确认 Impact Analysis 不再残留 `unknown`/`TBD`/`待确认`
-- [ ] 7.4 确认 RIR 已记录最终状态、发现与设计影响
+- [x] 7.3 确认 Impact Analysis 不再残留 `unknown`/`TBD`/`待确认`
+- [x] 7.4 确认 RIR 已记录最终状态、发现与设计影响
 - [ ] 7.5 再次运行 OpenSpec strict validate + artifact checker
 - [ ] 7.6 (post-merge) PR 合入后给 issue #247 添加完成说明 comment 并关闭 issue

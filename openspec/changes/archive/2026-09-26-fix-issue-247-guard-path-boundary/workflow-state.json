@@ -1,0 +1,10 @@
+{
+  "schema": "workflow-state/v1",
+  "change_id": "fix-issue-247-guard-path-boundary",
+  "state": {
+    "phase": "planning",
+    "sub_state": "exploring"
+  },
+  "milestones": [],
+  "source_event_seq": 7
+}
