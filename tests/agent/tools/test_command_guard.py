@@ -390,23 +390,16 @@ class TestRealProtectedTargetsStillDenied:
 
 
 class TestDeviceExemptIsExactMatch:
-    """设备豁免是**精确匹配**，不是前缀（review I2 回归）。
+    """设备豁免是**精确匹配**，不是前缀（review I2 / R7-1）。
 
-    早期实现把 `/dev/` 留在 `_EXTRA_DENYLIST` 的正则里，用一个 lookahead 排
-    除豁免目标；但 `\\b` 不是 `/` 感知的，`/dev/null/sda` 里 `null` 后接 `/`
-    同样满足 `\\b`，于是该目标被误判为「设备豁免」。现在 `/dev/` 不在这条
-    正则里，豁免由 `_DEVICE_EXEMPT` 的精确相等判断唯一决定。
+    早期实现用 lookahead 在正则里排豁免目标，但 `\b` 不是 `/` 感知的，
+    `/dev/null/sda` 里 `null` 后接 `/` 同样满足 `\b`，被误判为「设备豁免」。
+    现在豁免的判定归 `_check_mv_cp`（精确相等），全文扫描的 `/dev/` 分支
+    用**后继分隔符**做 lookahead（`[\s;"'|]` 或行尾），不再依赖 `\b`。
+
+    断言**行为**而非实现：不检查正则里有没有 `/dev/`（那是实现细节，
+    R7-1 已把 `/dev/` 的全文覆盖加回来）。
     """
-
-    def test_denylist_mv_cp_branch_does_not_claim_dev(self) -> None:
-        from agent.tools.command_guard import _EXTRA_DENYLIST
-
-        for pattern in _EXTRA_DENYLIST:
-            if "mv|cp" in pattern:
-                assert "/dev/" not in pattern, (
-                    "mv/cp 的 denylist 分支不应包含 /dev/：设备豁免是精确匹配，"
-                    "正则无法表达 `\\b` 的 `/` 边界"
-                )
 
     @pytest.mark.parametrize(
         "target",
@@ -774,3 +767,55 @@ class TestSensitiveDotdirWholeTextScan:
     )
     def test_dotdir_lookalikes_still_allowed(self, command: str) -> None:
         assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestDevWholeTextCoverage:
+    """`/dev/` 目标的**全文覆盖**（review R7-1）。
+
+    `_check_mv_cp` 的精确豁免只在 `mv`/`cp` 居段首时生效；launcher 前缀
+    （`nice cp evil /dev/sda`）走不到它，故全文扫描必须也覆盖 `/dev/`。
+    45 条 launcher×target 组合在 R7-1 时 master-DENY → head-ALLOW。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "nice cp evil /dev/sda",
+            "nice -n 10 cp evil /dev/sda",
+            "setsid cp evil /dev/nvme0n1",
+            "xargs cp evil /dev/sdb",
+            "busybox cp evil /dev/mmcblk0",
+            "find . -exec cp evil /dev/sda ;",
+            "nice bash -c 'cp x /dev/sda'",
+            "bash <<< 'cp x /dev/sda'",
+            "echo 'cp x /dev/sda' | env -i bash",
+        ],
+    )
+    def test_launcher_dev_target_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp x /dev/null",
+            "nice cp x /dev/null",
+            "echo hi > /dev/null",
+            "ls -la 2>/dev/null",
+            "cmd > /dev/null 2>&1",
+            "cp x /dev/stdout",
+        ],
+    )
+    def test_device_exempt_targets_still_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # /dev/ 的 lookahead 必须按后继分隔符判定，不能退回 `\\b`
+            "cp x /dev/null/sda",
+            "cp x /dev/nullx",
+            "cp x /dev/null.txt",
+        ],
+    )
+    def test_dev_null_prefixed_targets_not_exempt(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY

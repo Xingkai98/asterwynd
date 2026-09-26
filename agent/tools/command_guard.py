@@ -253,13 +253,20 @@ _EXTRA_DENYLIST = (
     # segment-wise, and every command segment now reaches it (review I1).
     r"\b(mv|cp)\s+[^\s]+\s+(/etc/|/proc/|/sys/|/var/)",
     # mv/cp into a credential/repo dot-directory, matched over the **whole
-    # command text**. The segment-wise `_dest_is_sensitive` cannot see past a
-    # launcher (`nice bash -c '…'`), a herestring (`bash <<< '…'`) or a pipe
-    # (`echo '…' | env -i bash`); this scan restores master's whole-text
-    # coverage for those without re-introducing the `.env.example` false
-    # positive that motivated moving to segments: the negative lookahead
-    # rejects a dot-name continued by `-`/`.`/word (fix-issue-247 review R6-1).
-    r"\b(mv|cp)\s+\S+\s+(?:\S*/)?\.(?:git|ssh|env|aws|gnupg|kube|docker|netrc|npmrc|pypirc)(?![\w.-])",
+    # command text** so a launcher (`nice bash -c '…'`), a herestring
+    # (`bash <<< '…'`) or a pipe (`echo '…' | env -i bash`) does not hide it.
+    # The dot name must be preceded by a slash: a bare `.env` is left to the
+    # segment-wise `_dest_is_sensitive` (which sees `cp x .env` as a command),
+    # while quoting it as data (`grep "cp x .env"`) is not a write and must not
+    # match (fix-issue-247 review R7-2). The negative lookahead rejects names
+    # continued by `-`/`.`/word (`.env.example`, `.gitignore`).
+    r"\b(mv|cp)\s+\S+\s+\S*/\.(?:git|ssh|env|aws|gnupg|kube|docker|netrc|npmrc|pypirc)(?![\w.-])",
+    # mv/cp into `/dev/…`, same whole-text reason as above. `_check_mv_cp`
+    # owns the exact device exemption, but it only runs when `mv`/`cp` leads a
+    # segment — an unstripped launcher never reaches it (review R7-1). The
+    # lookahead must test the **delimiter that follows**, not `\b`: `\b` is not
+    # `/`-aware and let `/dev/null/sda` through (review I2).
+    r"\b(mv|cp)\s+\S+\s+(?:\S*/)?/dev/(?!null(?:[\s;\"'|]|$)|stdout(?:[\s;\"'|]|$)|stderr(?:[\s;\"'|]|$))",
     # exfiltration via netcat / /dev/tcp
     r"\bnc\s+\S+\s+\d+",
     r"/dev/tcp/",

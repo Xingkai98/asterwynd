@@ -2,16 +2,22 @@
 
 - reviewer: 独立零记忆 subagent（未参与实现）
 - base: `369d99d`（**与 `master` 的 `command_guard.py` 字节相同**，sha256 `13d1f995…`；故下文的「vs base」等价于「vs master」。`master` 现为 `14f6e24`，那 1 个额外 commit 不触及本文件）
-- head（最新，Round 6 / 终态）: 已提交 **`d695f92`**（其 guard 与 `8fe2faf` 的 **sha256 相同** `1b735b49…`，后者是 R7 落盘的 commit；测试 `c4cc74d2…`）。R7 相对我 Round 5 复核的工作区 R7（guard `06e9c658…`）**唯一差异是删掉 M-1 的不可达 wrapper 分支**（`diff` 已核，语义等价）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6、`e3007df` = spec-only、`8fe2faf` = R7
-- 方式：只读审阅 + 独立复算。把 base/R1…R8 **多版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试；另用**真实 `bash`** 复核每个可疑形态是否真的执行
+- head（最新，Round 7）: 已提交 **`52d7701`**（guard sha256 `bc1fc2c9…`，在 `8fe2faf` 基础上**新增全文扫描正则** `command_guard.py:262`）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6、`e3007df` = spec-only、`8fe2faf` = R7、`d695f92` = docs
+- 方式：只读审阅 + 独立复算。把 base/R1…R9 **多版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试；另用**真实 `bash`** 复核可疑形态。
 
 ## Verdict
 
-**PASS**（对象：已提交 `8fe2faf`，Round 6 重新复算确认）
+**CHANGES_REQUESTED**（Round 7；`52d7701` 修好了 R6-1 的点目录半边，但**同一根因的 `/dev/` 半边未修**，且**新引入一类误报**）
 
-我 R5 报的 11 条、R4 报的 I-1/I-2/I-3 共 **14 条收缩面全部回到 DENY**；攻击集 50/54 不变；良性 0 误报；315 条组合语料对 base 的**非预期收缩为 0**；R7/R8 新测试对 R6 guard **必红 11 条**。M-1 死代码已清、语义等价（已 diff 复核）。**无 major。**
+`52d7701` 的正面：R6-1 的 9 条 launcher/herestring/pipe 点目录形态**已全部恢复 DENY**（我复算 9/9，扩到 14 条 launcher 亦全 DENY）；攻击集 **50/54** 不变；`253 passed`；新测试对 R8 guard **必红 9 条**，判别力成立。
 
-**两条待办（不影响 PASS，但归档前建议清掉）**：R6-1（`docs/known-debt.md` 的 launcher 条目**记录口径不准**，把子族写成「非回归」，实为「本 change 引入、刻意延后」）；R6-2（M-2 文档行号残留，已给出精确位置）。
+**但仍有 1 条 major + 2 条 minor**：
+
+- **R7-1（major）· `/dev/` 目标的全文覆盖没有恢复**——与 R6-1 **同一根因、同一类形态**，只修了「点目录」半边。base/master **DENY** → `52d7701` **ALLOW**，实测 **45 条**（9 个未剥离 wrapper × 5 个 `/dev` 目标）。见 Round 7 §2。
+- **R7-2（minor）· 全文扫描正则新引入一类误报**：把 `cp … .dotdir` 当作**文本**出现在引号里的命令被拒（`grep -rn "cp x .env" docs/`、`rg -F "cp x .env" tests/`、`git log --grep=…`、`sed -n "/cp x .env/p"`、`printf "%s" "cp x .env"`、`git commit -m "… cp x .env …"` 等）。base/r8 均 ALLOW → `52d7701` DENY。这与本 change 的 Goal #1「消除误报」及「良性误拒 0」的说法冲突；现有 `test_dotdir_lookalikes_still_allowed` 只覆盖直接 `cp x .env.example`，覆盖不到这一类。见 Round 7 §1。
+- **R7-3（minor）· `known-debt.md` 表格的「fix-issue-247 后」列已失真**：该列对纯 `cp` launcher 行仍写 `ALLOW`，但 `52d7701` 实际已 **DENY**（`nice cp x .env`、`nice -n 10 …`、`setsid`/`xargs`/`busybox`/`stdbuf`/`taskset`/`ionice`/`flock`/`chroot`/`doas` 共 11 条实测 DENY）。见 Round 7 §3。
+
+fix 方向我已实测验证（见 Round 7 §2 的补丁）：给 `_EXTRA_DENYLIST` 增加一条 `/dev/` 全文分支，用**精确**设备豁免前瞻（`(?!null(?:[\s;"'|]|$)|stdout(?:…)|stderr(?:…))`，注意 `\b` 不可用——R2 的 I2 就是栽在 `\b` 上），可在不破坏攻击集、不破坏 `cp x /dev/null` 系列良性的前提下恢复全部 45 条。
 
 ### 五轮累计进度
 
@@ -609,3 +615,108 @@ R7 的代码改动**实质正确、可审阅**：14 条我报过的收缩面全�
 建议在归档 PR 里一并带上两处文档修正（都是文档，不触及代码语义、不改 verdict）：
 1. **R6-1**：`docs/known-debt.md:365` 的「master 与 head 同为 ALLOW / 非本 change 引入」需按「纯 launcher」与「launcher + `-c`/heredoc」两段改写（后者是本 change 引入的收缩，9/9 实测）。
 2. **R6-2**：`walkthrough.md` §2.4/§2.5 的 8 处陈旧行号 + `_EXTRA_DENYLIST` 的 `234-268`→`234-266`；`Q10-sandbox.md` 全表 9 处（`d695f92` 未触碰）。
+
+---
+
+## Round 7（复审 `52d7701`：全文扫描正则）
+
+对象：已提交 `52d7701`（guard sha256 `bc1fc2c9…`）。新增正则（`agent/tools/command_guard.py:262`）：
+
+```
+\b(mv|cp)\s+\S+\s+(?:\S*/)?\.(?:git|ssh|env|aws|gnupg|kube|docker|netrc|npmrc|pypirc)(?![\w.-])
+```
+
+### 1. ✅ R6-1 的 9 条已恢复（我复算 9/9，扩样 14/14）
+
+`nice/setsid/xargs/busybox/stdbuf -o0/watch/flock/screen/chroot/doas bash -c '…'`、`find . -exec sh -c '…'`、`bash -s <<< '…'`、`bash <<< '…'`、`echo '…' | env -i bash` —— base=D、r6/r8=A、**r9=D**，全部回到 master 行为。**主 session 的「9/9 恢复」属实。**
+
+负向前瞻对点目录「假朋友」也有效（直测正则）：`.env`✓拒 / `.env.example`✗放 / `.envrc`✗ / `.environment`✗ / `.gitignore`✗ / `.github/w.yml`✗ / `.dockerignore`✗ / `.env-backup`✗ / `.kubeconfig`✗ / `.netrc.example`✗；而 `.git/config`✓ / `src/.git/hooks/p`✓ / `.ssh/id_rsa`✓ / `sub/.env/secrets`✓ / `.aws/credentials`✓ 仍拒。**设计 D4 的意图保住了。**
+
+### 2. ❌ R7-1（major）· `/dev/` 目标的全文覆盖没恢复 —— 与 R6-1 同一根因的另一半
+
+R2 的 I2 修复把 `/dev/` 从 mv/cp 全文分支**移除**（`:254` 现仅剩 `/etc/|/proc/|/sys/|/var/`），理由是「设备豁免是精确匹配，`_check_mv_cp` 唯一拥有」。这条对**段首 mv/cp** 成立；但对**未剥离的 wrapper** 不成立——argv 通道根本不触发，全文通道又已删掉 `/dev/`。`52d7701` 用新正则补回了点目录，**没补 `/dev/`**。
+
+实测（`base` = master 的 guard）：**45 条 base-DENY → r9-ALLOW**，例如
+
+| 命令 | base | r6 | r8 | **r9** |
+|---|---|---|---|---|
+| `nice cp evil /dev/sda` | D | A | A | **A** |
+| `setsid cp evil /dev/nvme0n1` | D | A | A | **A** |
+| `xargs cp evil /dev/sdb` | D | A | A | **A** |
+| `busybox cp evil /dev/mmcblk0` | D | A | A | **A** |
+| `find . -exec cp evil /dev/sda` | D | A | A | **A** |
+| `watch cp evil /dev/fd/1` | D | A | A | **A** |
+| `doas cp evil /dev/sda` / `chroot / cp evil /dev/sda` | D | A | A | **A** |
+| `nice bash -c 'cp x /dev/sda'` | D | A | A | **A** |
+| `bash <<< 'cp x /dev/sda'` | D | A | A | **A** |
+| `echo 'cp x /dev/sda' \| env -i bash` | D | A | A | **A** |
+
+（段首形态仍正确：`cp evil /dev/sda`→D、`timeout 5 cp evil /dev/sda`→D、`env cp evil /dev/sda`→D。）
+
+**为什么算 major**：这是**本 change 引入**的收缩（R2 起），是你们自己确立并刚刚用于 R6-1 的 bar（「本 change 引入的收缩必须清零」）下的未清项，形态与 R6-1 **完全同类**（wrapper 掩盖 + 全文通道缺项），且**`known-debt.md` 里没有记录这一半**（该条目只谈点目录纯 `cp`）。写裸块设备是经典破坏操作，master 是无差别拒绝的。
+
+**fix 方向（我已实测验证）**：给 `_EXTRA_DENYLIST` 再加一条 `/dev/` 全文分支，豁免用**精确**前瞻（不能用 `\b`——R2 的 I2 正是栽在 `\b` 非 `/` 感知）：
+
+```
+\b(mv|cp)\s+\S+\s+(?:\S*/)?/dev/(?!null(?:[\s;"'|]|$)|stdout(?:[\s;"'|]|$)|stderr(?:[\s;"'|]|$))
+```
+
+我在内存里把它追加进 r9 的 denylist 复算：**45/45 恢复 DENY**（含 `/dev/fd/1`、`/dev/null/sda` 这类「是 `/dev/` 但不是精确豁免目标」）；**攻击集 50/54 不变**（直方图同）；良性 `cp x /dev/null`、`echo hi > /dev/null`、`cmd > /dev/null 2>&1`、`ls -la 2>/dev/null`、`cp x /dev/null;`、`cp x /dev/stdout` 全部保持 ALLOW。建议连同 `/dev/null/../sda`、`/dev/null/x`、`cp x /dev/null;` 三个边界用例一起加进回归。
+
+### 3. ❌ R7-2（minor）· 全文扫描把「引号里提到的 `cp … .dotdir`」也拒了
+
+新正则是**整条命令文本** `re.search`，因此命令**只是提到**这个模式（写在引号/herestring 里）也会命中：
+
+| 命令 | base | r6 | r8 | **r9** |
+|---|---|---|---|---|
+| `grep -rn "cp x .env" docs/` | A | A | A | **D** |
+| `rg -F "cp x .env" tests/` | A | A | A | **D** |
+| `rg "mv z .git/config" src` | A | A | A | **D** |
+| `git log --oneline --grep="mv x .git/config"` | A | A | A | **D** |
+| `sed -n "/cp x .env/p" f` | A | A | A | **D** |
+| `awk "/cp x .env/" f` | A | A | A | **D** |
+| `printf "%s\n" "cp x .env"` | A | A | A | **D** |
+| `git commit -m "add cp x .env regression test"` | A | A | A | **D** |
+| `echo 'cp y .env'` | A | A | A | **D** |
+
+15 条探测里 11 条是 base-ALLOW → r9-DENY。这不是安全问题（放行→拒绝），但它**违背本 change 的 Goal #1（消除误报）**，也与「良性误拒 0」的说法冲突；`test_dotdir_lookalikes_still_allowed` 只覆盖直接 `cp x .env.example` 形态，盖不到这一类。
+
+**根因**：旧正则 `\S*/\.[a-z]+\b` 要求点名前有 `/`，所以 `cp x .env`（裸 `.env`，无斜杠）在引号里**不会**被 base 命中；新正则把斜杠做成可选 `(?:\S*/)?`，于是引号里的裸形态也被命中——覆盖面扩大的同时把「文本提及」一起收进来了。
+
+**可选缓解**（不改 verdict，供决策）：把该分支从「整串 `re.search`」改为**按命令分隔符切段后再匹配**（复用已有的 `_split_command_segments` / `_check_command_text`），使匹配只在命令段内生效而非任意文本；或接受该误报并记入 known-debt（护栏不是边界口径）。若接受，请在 `known-debt.md` 写明「全文通道会对引号内文本误报」，避免以后被当成 bug 反复报。
+
+### 4. ❌ R7-3（minor）· `known-debt.md` 表格「fix-issue-247 后」列已失真
+
+该表（`docs/known-debt.md` 约 `:355-361`）「fix-issue-247 后」列对纯 `cp` launcher 行仍写 `ALLOW`，但实测 `52d7701` 已 **DENY**：
+
+| 命令 | master | 表里写的 head | **实测 head(`52d7701`)** |
+|---|---|---|---|
+| `nice cp x .env` / `nice -n 10 cp x .env` | ALLOW | ALLOW | **DENY** |
+| `setsid cp x .env` | ALLOW | ALLOW | **DENY** |
+| `xargs cp x .env` | ALLOW | ALLOW | **DENY** |
+| `busybox cp x .env` | ALLOW | ALLOW | **DENY** |
+| `stdbuf -o0 cp x .env` / `taskset -c 0 …` / `ionice -c 2 …` | ALLOW | ALLOW | **DENY** |
+| `flock /tmp/l cp x .env` / `chroot / cp x .env` / `doas cp x .env` | ALLOW | ALLOW | **DENY** |
+
+（11/11 实测 DENY。）即该子族的**点目录形态其实已被覆盖**，条目描述的「缺口」比实际大；真正未覆盖的是**同一子族的 `/dev/` 形态**（R7-1）。建议把条目改写为「纯 `cp` launcher + **`/dev/` 目标**仍未覆盖；点目录形态已由全文扫描覆盖」，并把 R7-1 一并纳入。
+
+### 5. 数字复核（我的实测）
+
+| 指标 | 我的实测 |
+|---|---|
+| R6-1 的 9 条（扩样 14 条 launcher/herestring/pipe） | **14/14 = DENY**（已恢复，主 session 说法属实） |
+| 攻击集（base / r6 / r8 / r9） | 50/54 · 50/54 · 50/54 · **50/54**（直方图逐项相同） |
+| 良性误拒 | base 9/83 → r8 **4/83** → r9 **8/83**（**r9 比 r8 多 4 条**，即 R7-2） |
+| 组合语料 base-DENY→r9-ALLOW（非预期） | **5**（全部是 `launcher + cp … /dev/sda` 一族，即 R7-1；点目录侧为 0） |
+| 变异验证（head 测试 vs 旧 guard） | vs **r8** = `9 failed`、vs **r6** = `20 failed`、vs **base** = `49 failed`、vs **r9** = `197 passed` |
+| 测试 | `tests/agent/tools/test_command_guard.py` + `test_attack_suite.py` = **253 passed** |
+
+### 6. 结论
+
+`52d7701` 的方向对（恢复全文通道）、点目录半边修得干净、测试有判别力，但**修得只做了一半**：同一根因下 `/dev/` 目标的全文覆盖仍缺（R7-1，45 条 base-DENY→head-ALLOW），并且新正则带来一类新误报（R7-2）。建议一次性做完：
+
+1. **R7-1**：按 §2 的补丁加 `/dev/` 全文分支（我已实测：45/45 恢复、攻击集不变、良性不破）；
+2. **R7-2**：决定「把全文扫描限定在命令段内」还是「接受并记 known-debt」；
+3. **R7-3**：改写 known-debt 条目，并让 spec delta 的两条通道描述同时涵盖 `/dev/`。
+
+改完把这三组向量丢回来，我按同一套九版对比复算即可转 PASS。

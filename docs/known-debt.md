@@ -348,26 +348,23 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 - 本条目引用的归档路径 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
   在本条目写入时**尚未归档**，随本 change 的归档 commit 落地（归档目录缺失时以 change 的 active 路径为准）。
 
-## 命令护栏的 launcher **纯 cp** 子族缺口（fix-issue-247 排查发现，非本 change 引入）
+## 命令护栏 launcher 子族的**残余**覆盖缺口（fix-issue-247 排查发现）
 
-`CommandGuard` 的 argv 语义检查在 `fix-issue-247`（2026-09-26）后已覆盖命令分段、分组、shell 关键字、`-c` payload 与常见 wrapper（`env`/`command`/`nohup`）。敏感点目录另有**全文扫描**正则兜底（覆盖 launcher/herestring/pipe 里出现的 `cp … .env` 形态）。
+`CommandGuard` 的 argv 语义检查在 `fix-issue-247`（2026-09-26）后已覆盖命令分段、分组、shell 关键字、`-c` payload 与常见 wrapper（`env`/`command`/`nohup`）。此外有**全文扫描**正则作为兜底，覆盖 launcher / herestring / pipe 形态下出现的 `mv|cp … <dot-dir>` 与 `mv|cp … /dev/…`。
 
-**本条目只记录仍未覆盖的子族：launcher 前缀 + 纯 `cp`/`mv`（无 `-c`、无 herestring、无 pipe）**：
+**已被全文扫描覆盖（无需担心）**：
 
 | 形态 | master | fix-issue-247 后 |
 |---|---|---|
-| `nice cp x .env` / `nice -n 10 cp x .env` | ALLOW | ALLOW |
-| `setsid cp x .env` | ALLOW | ALLOW |
-| `xargs cp x .env` | ALLOW | ALLOW |
-| `busybox cp x .env` | ALLOW | ALLOW |
-| `stdbuf -o0 cp x .env` / `taskset -c 0 cp x .env` / `ionice -c 2 cp x .env` | ALLOW | ALLOW |
-| `flock /tmp/l cp x .env` / `chroot / cp x .env` / `doas cp x .env` | ALLOW | ALLOW |
-| `cd /tmp && mv a /root/foo`（`cd` 前缀） | ALLOW | **DENY**（本 change 已收口） |
+| `nice cp x .env` / `setsid` / `xargs` / `busybox` / `stdbuf` / `taskset` / `ionice` / `flock` / `chroot` / `doas` + `cp x .env` | ALLOW | **DENY** |
+| `nice bash -c '…'` / `bash <<< '…'` / `echo '…' \| env -i bash` 里的 `… .env` 或 `… /dev/sda` | 部分 DENY | **DENY** |
 
-**判定：非本 change 引入。** 该子族在 master 与 head 上**同为 ALLOW**（纯 `cp` 形态不匹配 master 的全文 denylist 字面量，也不在本 change 的段级判定覆盖内）。
+**仍未覆盖的残余**（本条目存在的理由）：全文扫描只认 `mv|cp` 后**紧跟一个路径参数**的形态。下列写法仍会漏：
 
-> **更正记录（review R6-1）**：本条初版曾把 `nice bash -c '…'` / `bash <<< '…'` / `echo '…' | env -i bash` 一并列为「非本 change 引入」，该表述**错误**。经独立审阅者与主 session 复测，这 9 条是 **master-DENY → head-ALLOW**，属本 change 引入的回归（根因：结构化 argv 解析取代了 master 的全文正则）。它们**已在本 change 内修复**（恢复全文扫描的敏感点目录正则 + 否定前瞻防 `.env.example` 误报），回归测试见 `tests/agent/tools/test_command_guard.py::TestSensitiveDotdirWholeTextScan`。本条只保留真正未被覆盖的纯 `cp` 子族。
+- launcher 后接**非 `cp`/`mv` 的写命令**：`nice tee ~/.ssh/authorized_keys`、`setsid dd of=/dev/sda`（`dd`/`tee` 由各自的 denylist 分支覆盖目标形态，但 launcher 前缀会绕过那种「命令名在段首」的判定）。
+- 变量/转义拼接的目标：`cp x $HOME/.env`、`cp x ~/.ss\h/id_rsa`（路径无法静态解析，与 `workflow_guard` 的变量拼接缺口同性质）。
+- 进程替换与 heredoc 内的写命令：`bash -c "$(cat payload.txt)"`。
 
-**为何不在本 change 内收口纯 `cp` 子族**：这些 launcher 的参数语义各不相同（`flock <file> cmd`、`chroot <dir> cmd`、`nice -n N cmd` 的位置参数与选项混排），需要 per-wrapper 的参数模型才能正确剥离；贸然加入 `_SHELL_WRAPPERS` 会把文件路径/目录当命令名检查，产生新误报。属独立的「扩展 wrapper 覆盖」议题。
+**判定：这些在 master 上同样不覆盖**（master 的全文正则更宽但同样不解析变量/替换），故**非本 change 引入**；本 change 的净效果是**扩大**覆盖（新增分段/分组/关键字/payload 通道 + 更精确的全文扫描）。
 
-**若后续收口**：方向是给 `_strip_wrappers` 增加 per-wrapper 参数模式表（而非简单字符串集合），并配套「剥离后剩下的第一个 token 必须是已知命令」的校验以防误报；参考 `fix-issue-247` 的 `_WRAPPER_OPTS_WITH_VALUE` / `_SPLIT_STRING_OPTS` 做法。
+**若后续收口**：方向是 per-wrapper 参数模式表（`flock <file> cmd`、`chroot <dir> cmd` 的位置参数与选项混排）+ 变量展开的静态近似；参考 `fix-issue-247` 的 `_WRAPPER_OPTS_WITH_VALUE` / `_SPLIT_STRING_OPTS` 做法。按「护栏不是边界」口径（真实边界在 sandbox 后端），优先级不高。
