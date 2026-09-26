@@ -29,15 +29,17 @@
 ## 4. 验证
 
 - [x] 4.1 `tests/agent/test_openai_llm.py` 全量通过
-- [x] 4.2 全量 pytest 通过（改动在共享 LLM 层）
+- [x] 4.2 全量 pytest 通过（改动在共享 LLM 层）；实测 `3 failed, 3066 passed`，3 条均为**预先存在**的环境失败（tree-sitter Java/Kotlin grammar 缺失；`tests/agent/memory/test_persistent.py::TestFindScopeRoot` 两条因本机 `/tmp` 是 git 仓库），已在独立 worktree `14f6e24` 上核验同样失败
 - [x] 4.3 端到端复验：`asterwynd run --provider openai` 不再出现该告警
 - [x] 4.4 OpenSpec strict validate 通过
 - [x] 4.5 项目 artifact checker 通过
 
 ## 5. 收尾
 
-- [ ] 5.1 运行独立审阅闭环，产出 `reviews/building-review.md` + manifest（PASS）
+- [x] 5.1 运行独立审阅闭环，产出 `reviews/building-review.md` + manifest（PASS）
+- [x] 5.1a 落实审阅 Issue 1：补 `test_done_like_variant_is_not_treated_as_sentinel` 锁定 D2 精确匹配意图（变异验证：`==` 改 `startswith` 后该测试变红）
+- [x] 5.1b 落实审阅 Issue 3/4/5：修正 4.2 文案、勾选 5.3、第三条测试 docstring 与 spec 举例对齐
 - [x] 5.2 文档影响检查（本 change 无用户可见行为变更；确认 `docs/known-debt.md` 相邻债务条目不受影响、无需回写）
-- [ ] 5.3 同步 backlog（受保护路径，写 `backlog_updated` 事件）
+- [x] 5.3 同步 backlog（受保护路径，写 `backlog_updated` 事件）
 - [ ] 5.4 归档 change 到 `openspec/changes/archive/2026-09-26-fix-issue-251-sse-done-warning/`，从 backlog 移除
 - [ ] 5.5 (post-merge) 发起 PR；合入时给 issue #251 添加完成说明 comment 并关闭

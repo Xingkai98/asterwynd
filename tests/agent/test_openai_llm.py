@@ -394,7 +394,11 @@ async def test_genuinely_bad_sse_line_still_logs_warning(caplog):
 @pytest.mark.asyncio
 async def test_legal_json_containing_done_literal_is_parsed_not_skipped(caplog):
     """issue #251 spec Scenario 3：合法 JSON 含 `[DONE]` 字面量时按正常 JSON 解析，
-    不得因「包含该字面量」而被当作结束哨兵跳过。"""
+    不得因「包含该字面量」而被当作结束哨兵跳过。
+
+    spec 举例用 `{"text":"[DONE]"}`；此处喂 OpenAI chunk 形态
+    `{"choices":[{"delta":{"content":"[DONE]"}}]}`（语义等价，且是真实上游形态）。
+    """
     import logging
 
     llm = OpenAILLM(api_key="test-key")
@@ -412,3 +416,28 @@ async def test_legal_json_containing_done_literal_is_parsed_not_skipped(caplog):
     assert events[0].delta == "[DONE]"
     assert events[-1].response.content == "[DONE]"
     assert [r for r in caplog.records if "unparseable" in r.getMessage()] == []
+
+
+@pytest.mark.asyncio
+async def test_done_like_variant_is_not_treated_as_sentinel(caplog):
+    """issue #251 审阅 Issue 1：锁定 D2 的精确匹配设计意图。
+
+    `[DONE]extra` 不是哨兵（哨兵须 strip() 后**恰好**等于），须仍按坏行告警。
+    这条断言拦住「把 == 改成 startswith」的变异——那种写法会把 `[DONE]extra`
+    这类真坏行静默吞掉（design.md D2 已否决 startswith，此前无测试锁定）。
+    """
+    import logging
+
+    llm = OpenAILLM(api_key="test-key")
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream([
+            'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}',
+            "data: [DONE]extra",
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        ])
+        with caplog.at_level(logging.WARNING, logger="asterwynd.llm"):
+            events = [event async for event in llm.stream_chat([Message(role="user", content="Hi")])]
+
+    assert events[-1].response.content == "Hi"
+    dropped = [r for r in caplog.records if "unparseable SSE data line" in r.getMessage()]
+    assert len(dropped) == 1, "`[DONE]extra` 不是哨兵，须仍按坏行告警（恰好 1 条）"
