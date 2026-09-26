@@ -73,9 +73,9 @@
 
 ## 7. PR 收尾
 
-- [ ] 7.1 PR 发起前归档到 `openspec/changes/archive/YYYY-MM-DD-fix-issue-247-guard-path-boundary/`（日期前缀硬性要求；**受保护路径，需 `change_archived` 事件**——grill R5）
-- [ ] 7.2 从 `docs/openspec-change-backlog.md` 移除本 change
+- [x] 7.1 PR 发起前归档到 `openspec/changes/archive/YYYY-MM-DD-fix-issue-247-guard-path-boundary/`（日期前缀硬性要求；**受保护路径，需 `change_archived` 事件**——grill R5）
+- [x] 7.2 从 `docs/openspec-change-backlog.md` 移除本 change
 - [x] 7.3 确认 Impact Analysis 不再残留 `unknown`/`TBD`/`待确认`
 - [x] 7.4 确认 RIR 已记录最终状态、发现与设计影响
-- [ ] 7.5 再次运行 OpenSpec strict validate + artifact checker
+- [x] 7.5 再次运行 OpenSpec strict validate + artifact checker
 - [ ] 7.6 (post-merge) PR 合入后给 issue #247 添加完成说明 comment 并关闭 issue
