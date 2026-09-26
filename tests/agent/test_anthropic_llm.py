@@ -833,3 +833,25 @@ async def test_agent_loop_survives_truncated_streaming_tool_call():
     assert "Done!" in (result.content or "")
     # 续接提示应进入历史
     assert any(m.role == "user" and "Please continue" in (m.content or "") for m in messages)
+
+
+def test_build_response_mixed_valid_and_truncated_under_max_tokens():
+    """issue #249 审阅 M1：混合响应（合法 call + 截断 call，max_tokens）——
+    合法的保留、截断的丢弃、stop_reason 保持 max_tokens。
+
+    该场景是 spec Scenario 1 第二条 AND 的依据：此时 response.tool_calls 非空，
+    AgentLoop 会照常执行合法 call 而非追加续接消息（审查发现原 spec 的
+    无条件「走续接路径」表述过宽，已修正）。
+    """
+    llm = AnthropicLLM(api_key="test-key")
+    blocks = {
+        0: {"type": "tool_use", "id": "good", "name": "Echo",
+            "text_parts": [], "json_parts": ['{"a": 1}']},
+        1: _truncated_tool_block(),
+    }
+
+    response = llm._build_response(blocks, "max_tokens", usage=None)
+
+    assert [tc.id for tc in response.tool_calls] == ["good"]
+    assert _json.loads(response.tool_calls[0].arguments) == {"a": 1}
+    assert response.stop_reason == "max_tokens"

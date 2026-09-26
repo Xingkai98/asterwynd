@@ -28,15 +28,17 @@ import sys; sys.path.insert(0, '.')
 from agent.anthropic_llm import AnthropicLLM
 llm = AnthropicLLM(api_key="k")
 
-head = '{"pad":"' + 'x' * 7700 + '","spec":{"goal":"'
-prefix = head[:7811]                      # 截断在字符串内部
+# 让未闭合字符串的起始引号恰好落在 index 7810（= 用户报错的 char 7810）
+prefix = '{"pad":"' + 'x' * 7793 + '","goal":"'   # len == 7811，最后引号在 index 7810
 blocks = {0: {"type": "tool_use", "id": "t1", "name": "DeclareWorkflow",
               "text_parts": [], "json_parts": [prefix]}}
 llm._build_response(blocks, "max_tokens", usage=None)
 # 修复前 => JSONDecodeError: Unterminated string starting at: line 1 column 7811 (char 7810)
 ```
 
-该构造的列号与用户报错**逐字节一致**，确认机制：`input_json_delta` 分片拼出的 JSON 在字符串中间断掉。
+该构造的报错列号与用户报错**逐字节一致**（`column 7811 (char 7810)`），确认机制：`input_json_delta` 分片拼出的 JSON 在字符串中间断掉。
+
+> 注：列号一致是**构造出来的**——原始会话里具体断在哪个字符由模型输出与截断点决定，不可复得。这里只证明「同样的报错可由同一条代码路径产生」，不声称构造的字节内容与原始响应相同。
 
 **链路 B — `_build_payload` 重放无效 arguments**：
 
@@ -110,7 +112,7 @@ if not response.tool_calls:
 
 ```
 === 链路 A: _build_response 流式 block 参数被截断 ===
-  A: CRASH JSONDecodeError: Unterminated string starting at: line 1 column 7726 (char 7725)
+  A: CRASH JSONDecodeError: Unterminated string starting at: line 1 column 7811 (char 7810)
 === 链路 B: _build_payload 重放无效 arguments ===
   B: CRASH JSONDecodeError: Unterminated string starting at: line 1 column 19 (char 18)
 ```

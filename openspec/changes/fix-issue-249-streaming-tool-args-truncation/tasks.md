@@ -41,7 +41,8 @@
 ## 5. 收尾
 
 - [ ] 5.1 运行 `/review-loop` 独立审阅闭环，产出 `reviews/building-review.md` + manifest（PASS）
-- [x] 5.2 文档影响检查：`docs/agent-internals.md` 已更新；`docs/known-issues.md` 新增记录（受保护路径，写 `protected_artifact_explained` 事件）；扫描 `README.md`/`AGENTS.md`/`CONTEXT.md` 相关段落
+- [x] 5.2 文档影响检查：`docs/agent-internals.md` 已更新（补 tool call 截断的边界）；`docs/known-debt.md` 新增债务条目「SSE 解析失败时未重置 event_type（本 change 显式不做）」（受保护路径，已写 `protected_artifact_explained` 事件）；扫描 `README.md`/`AGENTS.md`/`CONTEXT.md` 无相关段落需改（本 change 不涉及用户可见行为与项目词汇）
+      （更正：初稿此处误写为 `docs/known-issues.md`；该文件是机械豁免模式表、非叙述记录处，实际记录落在 `docs/known-debt.md`）
 - [x] 5.3 同步 backlog（`docs/openspec-change-backlog.md`，受保护路径，写 `backlog_updated` 事件）
 - [ ] 5.4 归档 change 到 `openspec/changes/archive/2026-09-26-fix-issue-249-streaming-tool-args-truncation/`，从 backlog 移除
 - [ ] 5.5 发起 PR；合入时给 issue #249 添加完成说明 comment 并关闭

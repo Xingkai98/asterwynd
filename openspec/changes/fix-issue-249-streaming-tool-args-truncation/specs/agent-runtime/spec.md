@@ -19,8 +19,9 @@ Agent runtime SHALL 在流式响应中拿到**不完整**的 tool call 参数时
 - **THEN** runtime SHALL NOT 抛出 JSON 解析异常
 - **AND** `LLMResponse.tool_calls` SHALL NOT 包含该不完整 tool call
 - **AND** `LLMResponse.stop_reason` SHALL 仍为 `max_tokens`
-- **AND** AgentLoop SHALL 走既有续接路径（追加续接消息并继续迭代），而不是终止 run
 - **AND** 消息历史 SHALL NOT 出现无配对 `tool_result` 的 `tool_use` block
+- **AND** 若该响应中**没有**其它参数完整的 tool call，AgentLoop SHALL 走既有续接路径（追加续接消息并继续迭代），而不是终止 run
+- **AND** 若该响应中**存在**其它参数完整的 tool call，AgentLoop SHALL 照常执行它们并继续运行（不因截断而终止；此时本 Scenario 不要求追加续接消息）
 
 #### Scenario: 非截断场景保留原始参数串并降级为 tool error
 
