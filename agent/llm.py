@@ -1,5 +1,6 @@
 # agent/llm.py
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, Optional, runtime_checkable, TYPE_CHECKING
 
@@ -7,6 +8,8 @@ import httpx
 
 if TYPE_CHECKING:
     from agent.message import Message
+
+logger = logging.getLogger("asterwynd.llm")
 
 
 @dataclass
@@ -126,6 +129,12 @@ class BaseLLM:
                     try:
                         data = _json.loads(data_str)
                     except _json.JSONDecodeError:
+                        # 静默丢行会让同类问题无声消失（issue #249 相邻隐患）；
+                        # 只补日志，不改变控制流。
+                        logger.warning(
+                            "Dropping unparseable SSE data line (event=%r, %d chars)",
+                            event_type, len(data_str),
+                        )
                         continue
                     yield event_type, data
                     event_type = None
