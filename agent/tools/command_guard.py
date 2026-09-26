@@ -72,6 +72,20 @@ def _is_device_exempt(target: str) -> bool:
     return target in _DEVICE_EXEMPT
 
 
+#: Wrapper commands that run their remaining argv as-is. Their own options and
+#: `VAR=value` assignments are skipped before looking for the real command.
+_SHELL_WRAPPERS = frozenset({"env", "command", "nohup"})
+#: Wrapper options that consume the following token as their value
+#: (`env -u FOO …`, `env -C dir …`).
+_WRAPPER_OPTS_WITH_VALUE = frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})
+#: A short-option cluster that carries the shell's command string: `-c`, `-lc`.
+#: Deliberately excludes long options (`--norc`) and `--` prefixes.
+_DASH_C_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*\Z")
+#: Shell keywords that can lead a command segment. `if true; then cp x .env; fi`
+#: splits on `;`, leaving `then` in front of the command (review Round 2).
+_SHELL_KEYWORDS = frozenset(
+    {"then", "do", "else", "elif", "fi", "done", "esac", "in", "!", "time", "exec", "eval"}
+)
 #: How many nested ``<shell> -c "…"`` payloads are re-checked. Beyond this the
 #: payload is skipped: nesting is unbounded in shell, and re-checking without a
 #: cap recurses until the interpreter dies (review Round 2).
@@ -112,9 +126,10 @@ def _split_command_segments(tokens: list[str]) -> list[list[str]]:
 
 
 #: Raw-text command separators the tokenizer would otherwise fold away.
-#: ``\\r\\n`` is handled by splitting on ``\\n`` (the ``\\r`` ends up as trailing
-#: whitespace on the previous segment's last token).
-_RAW_SEPARATORS = re.compile(r"\n")
+#: ``\r`` is included so a CRLF line ending does not leave ``\r`` glued to the
+#: previous segment's last token (review Round 5: `cp evil a/.env\r\nls` kept
+#: the destination as `a/.env\r`, which matched no sensitive name).
+_RAW_SEPARATORS = re.compile(r"[\r\n]")
 
 
 def _check_command_text(command: str) -> list[list[str]]:
@@ -125,47 +140,53 @@ def _check_command_text(command: str) -> list[list[str]]:
     return segments
 
 
-def _shell_dash_c_payload(tokens: list[str]) -> str | None:
-    """Return the command string of a ``<shell> -c <string>`` segment, if any.
+def _shell_dash_c_payloads(tokens: list[str]) -> list[str]:
+    """Every command string a ``<shell> -c <string>`` segment runs.
 
-    Quoted (``bash -c "cp evil .env"``) arrives as one token after ``-c``;
-    unquoted (``bash -c cp evil .env``) arrives as several. Both forms run the
-    same payload, so the **rest of the segment is rejoined** — returning only
-    ``tokens[index + 1]`` silently dropped everything after the first word
-    (review Round 2: ``bash -c "bash -c cp x .env"`` came back ALLOW).
-
-    The flag is matched as *any* token that starts with ``-`` and contains
-    ``c`` so combined forms (``bash -lc``, ``zsh -ic``) unpack too — they run
-    the same payload as ``-c``.
+    A segment may carry more than one ``-c`` (``bash -c a -c b`` runs both),
+    so all payloads are returned and the caller checks each.
     """
-    # Strip leading `env` / `command` / `nohup` wrappers first: `/usr/bin/env
-    # bash -c "…"` runs the same payload, but `tokens[0]` is `env` (review
-    # Round 2). Wrapper args that look like `VAR=value` assignments are
-    # skipped along with the wrapper name itself.
-    index = 0
-    while index < len(tokens) and tokens[index].rsplit("/", 1)[-1] in (
-        "env",
-        "command",
-        "nohup",
-    ):
+    stripped = _strip_wrappers(tokens)
+    if len(stripped) < 3 or stripped[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
+        return []
+    payloads: list[str] = []
+    index = 1
+    while index < len(stripped):
+        if _DASH_C_FLAG.fullmatch(stripped[index]):
+            end = next(
+                (
+                    i
+                    for i in range(index + 1, len(stripped))
+                    if _DASH_C_FLAG.fullmatch(stripped[i])
+                ),
+                len(stripped),
+            )
+            payload = " ".join(stripped[index + 1 : end])
+            if payload:
+                payloads.append(payload)
+            index = end
+            continue
         index += 1
-        while index < len(tokens) and "=" in tokens[index] and not tokens[index].startswith("-"):
+    return payloads
+
+
+def _strip_wrappers(tokens: list[str]) -> list[str]:
+    """Drop leading ``env``/``command``/``nohup`` wrappers and their options."""
+    index = 0
+    while index < len(tokens) and tokens[index].rsplit("/", 1)[-1] in _SHELL_WRAPPERS:
+        index += 1
+        while index < len(tokens) and tokens[index].startswith("-"):
+            # Options taking a separate argument consume the next token:
+            # `env -u FOO bash -c …` — without this, `FOO` looks like the
+            # command name and the payload is never reached (review Round 5).
+            if tokens[index] in _WRAPPER_OPTS_WITH_VALUE:
+                index += 1
             index += 1
-    tokens = tokens[index:]
-    if len(tokens) < 3 or tokens[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
-        return None
-    index = next(
-        (
-            i
-            for i, token in enumerate(tokens[1:], start=1)
-            if token.startswith("-") and "c" in token
-        ),
-        None,
-    )
-    if index is None:
-        return None
-    payload = " ".join(tokens[index + 1 :])
-    return payload or None
+        while index < len(tokens) and not tokens[index].startswith("-") and (
+            "=" in tokens[index] or tokens[index] == "--"
+        ):
+            index += 1
+    return tokens[index:]
 
 
 def _dest_is_sensitive(dest: str) -> bool:
@@ -381,8 +402,9 @@ class CommandGuard:
             # unbounded re-check recurses until the interpreter dies (review
             # Round 2). Past the limit the payload is left unexamined — the
             # guard is a guardrail, and the sandbox backend is the boundary.
-            payload = _shell_dash_c_payload(segment)
-            if payload and self._nested_depth < _MAX_NESTED_COMMAND_DEPTH:
+            if self._nested_depth >= _MAX_NESTED_COMMAND_DEPTH:
+                continue
+            for payload in _shell_dash_c_payloads(segment):
                 self._nested_depth += 1
                 try:
                     if self.check(payload) is CommandVerdict.DENY:
@@ -395,6 +417,11 @@ class CommandGuard:
     def _check_argv_segment(self, tokens: list[str]) -> CommandVerdict:
         if not tokens:
             return CommandVerdict.ALLOW
+        # Skip leading shell keywords: `if true; then cp x ~/.ssh/id_rsa; fi`
+        # splits on `;` into a segment that starts with `then`, so the `cp`
+        # would otherwise never be examined (review Round 2).
+        while len(tokens) > 1 and tokens[0] in _SHELL_KEYWORDS:
+            tokens = tokens[1:]
         # Normalize command name: strip /bin/, /usr/bin/, env, command wrappers.
         cmd_name = tokens[0]
         if cmd_name in ("/bin/rm", "/usr/bin/rm"):

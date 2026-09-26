@@ -2,12 +2,22 @@
 
 - reviewer: 独立零记忆 subagent（未参与实现）
 - base: `369d99d`（**与 `master` 的 `command_guard.py` 字节相同**，sha256 `13d1f995…`；故下文的「vs base」等价于「vs master」。`master` 现为 `14f6e24`，那 1 个额外 commit 不触及本文件）
-- head（本轮，R3）: `41cbd76`（前序：`be480dd` = R1、`ee893ba` = R2）
-- 方式：只读审阅 + 独立复算。把 base/R1/R2/R3 四版 `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑新测试
+- head（最新，Round 3）: 已提交 `fd00131`；**审阅时工作区另有一份未提交改动**（`git status` = `M agent/tools/command_guard.py` + `M tests/...`，内容为 `_SHELL_KEYWORDS` 段首跳过），下称 **R5**。R5 的 guard/测试 sha256 分别为 `38b10aca…` / `402e7c5a…`，已快照比对。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4
+- 方式：只读审阅 + 独立复算。把 base/R1/R2/R3/R4/R5 **六版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试
 
 ## Verdict
 
-**CHANGES_REQUESTED**（Round 2 复审；R3 已修好 R2 的换行漏检，但仍有 **DENY→ALLOW 收缩面**未闭）
+**CHANGES_REQUESTED**（Round 3 复审；R3→R4→R5 逐轮修好了换行、分组、组合 flag、`env` 赋值、shell 关键字五类，但仍有 **DENY→ALLOW 收缩面 vs master** 未闭，见 Round 3 节）
+
+### 三轮累计进度（结论）
+
+| 轮 | 主 session 修了什么 | 我复核结果 |
+|---|---|---|
+| R1 `be480dd` | 段边界 + 设备豁免 + `..` | 引入 I1（链式全漏）、I2（`\b` 非 `/` 感知） |
+| R2 `ee893ba` | 段切分 + `/dev/` 移出 denylist | I1/I2 **确认修复**（23 条向量全部回到 DENY） |
+| R3 `41cbd76` | `\n` 作段边界 | 换行族**确认修复**；我报分组/`-lc`/`env`/`\r` 四类 |
+| R4 `fd00131` | 分组 `(){}`、组合 flag、env 赋值、嵌套上界 | 前 3 类**确认修复**；但组合 flag 的改法**新引入** `--norc`/`--rcfile` 回归；`env -i`/`\r` 仍漏 |
+| R5（未提交） | shell 关键字段首跳过 | 关键字族**确认修复**（另 7 条净收紧）；`env -i`/`--norc`/`\r` 仍漏 |
 
 ### Round 1（I1/I2）→ 已修复
 
@@ -238,3 +248,113 @@ R2 引入的 per-segment 分派 + I2 的「`/dev/` 移出 denylist、豁免由 `
 | 变异验证 | R3 新测试 vs R2 guard = 5 red；vs R1 guard = 17 red；vs R3 = 179 green |
 | 递归安全 | 1–3000 层嵌套无 RecursionError |
 | 全量 pytest | 见下 |
+
+---
+
+## Round 3（独立复审：`fd00131` = R4 已提交，+ R5 未提交工作区）
+
+base 列的 `369d99d` 与 `master` 的 `command_guard.py` **sha256 相同**（`13d1f995…`），故下表 base 列 = master 列。脚本：`/tmp/247-verify/v/{r4check,r5check,final5}.py`。
+
+### 1. 逐轮声称的修复 —— 全部核实为真
+
+**R3 的换行族**（R2=A → R3=D）：`cd /tmp\ncp evil ~/.ssh/authorized_keys`、`cd /tmp\ncp evil a/.env`、`echo hi\ncp evil /dev/sda`、`cd /tmp\r\ncp evil .env`（后者 base=A → R3=D，净收紧）。
+
+**R4 的分组 / 组合 flag / env 赋值**：
+
+| 命令 | base | R1 | R2 | R3 | R4 | R5 |
+|---|---|---|---|---|---|---|
+| `(cp evil ~/.ssh/authorized_keys)` | D | A | A | A | **D** | D |
+| `cd /tmp && { cp evil a/.env; }` | D | A | A | A | **D** | D |
+| `cd /tmp && (cd sub && cp evil a/.env)` | D | A | A | A | **D** | D |
+| `bash -lc 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `zsh -ic 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `/usr/bin/env bash -c 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `env FOO=1 bash -c 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `bash -c cp evil a/.env`（无引号） | D | A | A | A | **D** | D |
+
+**R5 的 shell 关键字族**：`if true; then cp x ~/.ssh/authorized_keys; fi`、`for f in *; do cp $f .env; done`、`while true; do cp x .env; done`、`time/exec/eval/! cp x .env` 均 base=D / R4=A → **R5=D**；且 R5 相对 base 另有 7 条**净收紧**（`if true; then cp x .env; fi`、`for…do cp $f .env` 等 master 上的既有洞）。关键字跳过未见误伤（`time make -j4`、`if [ -f f ]; then cat f; fi`、`for i in 1 2 3; do echo $i; done` 等 19 条关键字/分组良性命令全 ALLOW）。
+
+### 2. 仍然存在的 DENY→ALLOW 收缩面（base/master 能拦，最新状态放行）
+
+**2a. `env` 带选项时不剥 wrapper（major）**
+
+| 命令 | base | R4 | R5 |
+|---|---|---|---|
+| `env -i bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env -u FOO bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env --ignore-environment bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env -i -- bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env FOO=1 bash -c 'cp evil a/.env'` | D | D | D |
+
+R4 的 wrapper 剥除循环只跳「含 `=` 且非 `-` 开头」的 token，`-i` / `-u FOO` / `--ignore-environment` 既非赋值也非 wrapper 名，于是 `tokens[0]` 停在 `-i`，`_shell_dash_c_payload` 直接返回 None。修法：剥 wrapper 时同时跳过 `-` 开头的选项 token（注意 `-u`/`-C` 这类**带值**选项要再跳一格）。
+
+**2b. 长选项含 `c` 会劫持 payload 索引（major；R4 新引入）**
+
+| 命令 | base | R3 | R4 | R5 |
+|---|---|---|---|---|
+| `bash --norc -c 'cp evil a/.env'` | D | **D** | **A** | **A** |
+| `bash --rcfile foo -c 'cp evil a/.env'` | D | A | **A** | **A** |
+| `sh --norc -c 'cp evil a/.env'` | D | D | **A** | **A** |
+| `bash --noprofile -c '…'` / `--login` / `--posix` / `-O extglob` / `-o pipefail` | D | D/A | D | D |
+
+R3 的 `"-c" in tokens[1:3]` 恰好接住了 `--norc`（`-c` 在 index 2），R4 把匹配放宽成「以 `-` 开头且含 `c`」后，`--norc`（index 1）抢先命中，payload 变成 rejoin 的 `'-c cp evil a/.env'` → tokenize 后 `tokens[0] == '-c'` → 不是已知命令 → **ALLOW**。即 **R4 的这次改法在修好 `-lc` 的同时，把 R3 本该拦的 `--norc` 打开了**，属本轮 diff 自己引入的回归。修法：只接受**短选项簇**（`re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", tok)`）而非「含 `c` 的任意 dash-token」。
+
+**2c. 重复 `-c`（minor）**
+
+`bash -c 'echo hi' -c 'cp evil a/.env'` / `bash -c ls -c 'cp evil a/.env'`：base=D，R4/R5=A——payload 取**第一个** `-c` 之后的内容。真实 bash 也只执行第一个 `-c` 的 payload 并把其余当位置参数，所以危害有限；但 base 能拦，建议把「找到 `-c` 后其后的 token 全部 rejoin」改成「对每个 `-c` 之后的残余都查一次」或直接对整个 segment 做 `mv|cp` 文本扫描兜底。
+
+**2d. `\r` 残留 token（minor；R2 已报，仍未修）**
+
+`_check_command_text` 按 `\n` 切，`\r` 留在上一段末 token；tokenizer 不把 `\r` 当空白，于是 `a/.env\r` 逃过 `_dest_is_sensitive`。
+
+| 命令 | base | R4 | R5 |
+|---|---|---|---|
+| `cp evil a/.env\r\nls` | D | A | **A** |
+| `cp evil a/.env \r\nls` | D | A | **A** |
+
+R3 新加的 `cd /tmp\r\ncp evil .env` 用例恰好把 `\r` 落在无害 token 上，所以测不出这一支。修法：在 `_check_command_text` 里按 `\r\n|\r|\n` 切（或把 `\r` 加入 tokenizer 空白集）。
+
+**2e. 深嵌套 ≥ 5（Accepted-by-design，记录备查）**
+
+`bash -c 'bash -c "bash -c \'bash -c "bash -c …"?` 到第 5 层起 payload 不再检查（base=D，R4/R5=A）。**我独立验证了加上限的必要性**：把 `_MAX_NESTED_COMMAND_DEPTH` 抬到 `10**9` 后，深度 200 耗时 0.43s、400 耗时 1.58s（近二次增长），深度 800 抛 `RecursionError`（`BashTool.execute` 的 `self._guard.check(cmd)` 外没有 try/except，会直接冒泡）。所以上界是**必要**且**有据**的取舍，接受；但它是本 change 引入的、base 能拦的显式例外，建议在 spec delta 的 Scenario 或 `docs/known-debt.md` 里落一句，避免以后被当成遗漏。
+
+### 3. 攻击集与误报（六版一致）
+
+| 版本 | 攻击集 DENY | 良性误拒 |
+|---|---|---|
+| base | 50/54 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}` | 6/50 |
+| R1 / R2 | 50/54（直方图同） | 0/50 |
+| R3 / R4 / R5 | 50/54（直方图同） | 0/50 |
+
+未拦 4 例始终是 `sensitive-read-001..004`（有意放行）。**攻击集不退化**；良性侧除 base 自身既有误报外无新增误拒。
+
+### 4. 变异验证（判别力）
+
+| head 测试 vs 旧 guard | 结果 |
+|---|---|
+| R4 测试文件 vs **base** guard | `49 failed` |
+| R4 测试文件 vs **R1** guard | `27 failed` |
+| R4 测试文件 vs **R2** guard | `13 failed` |
+| R4 测试文件 vs **R3** guard | `8 failed`（分组/组合 flag） |
+| R4 测试文件 vs **R4** guard | `214 passed` |
+| R5 新增关键字测试 vs **R4** guard | `7 failed`（正是关键字族） |
+| R5 全文件 vs **R5** guard | `214 passed`（含 attack suite） |
+
+每一轮的新测试对上一版 guard 都**必红**，判别力成立、非自证。
+
+### 5. 其他独立核验
+
+- R3 全量 pytest（影子树，R3 guard）：`2 failed, 3155 passed, 8 skipped in 594s`，2 条失败仍是 `tests/agent/memory/test_persistent.py::TestFindScopeRoot` 的 `/tmp/.git` 环境问题（`TMPDIR` 改指非 git 目录即全绿），与 guard 无关。
+- R5 边界探测：六版均无 `RecursionError` 泄漏（R5 由于上界更不会）；`bash -c` payload 的 rejoin 未引入崩溃。
+- R5 未提交：`git status` = `M agent/tools/command_guard.py` + `M tests/agent/tools/test_command_guard.py`。**审阅时上游宣称的 R5 修复还没有进 commit**，PR 可审内容是 `fd00131`（R4），而 R4 含 2b 的 `--norc` 回归。
+
+### 6. 转 PASS 的最小清单
+
+1. **2b**：`_shell_dash_c_payload` 的 flag 匹配改成短选项簇正则（`-[A-Za-z]*c[A-Za-z]*`），补 `bash --norc -c '…'`、`bash --rcfile foo -c '…'`、`sh --norc -c '…'` 回归用例。
+2. **2a**：剥 wrapper 时跳过 `-` 开头选项（`-i`、`--ignore-environment`、带值的 `-u FOO`/`-C dir`），补 `env -i bash -c '…'`、`env -u FOO bash -c '…'` 用例。
+3. **2c**：payload 不只取第一个 `-c`；补重复 `-c` 用例。
+4. **2d**：`\r` 作为段边界（或 tokenizer 空白），补 `cp evil a/.env\r\nls` 用例。
+5. **提交 R5**（含关键字测试），并在 spec delta / known-debt 里记录 **2e** 的嵌套上界。
+6. 顺带：`walkthrough.md` §2.4/§2.5 行号仍为旧值（本 change 移动了行号）。
+
+以上 1–3 是**同一段代码**（`_shell_dash_c_payload` 的 wrapper/flag/payload 解析），一次改完，配 6–8 条参数化用例即可。改完给我同一组向量我再复算一轮即可转 PASS。

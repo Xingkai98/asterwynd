@@ -591,3 +591,84 @@ class TestNestedShellRecursionIsBounded:
             CommandVerdict.ALLOW,
             CommandVerdict.DENY,
         )
+
+
+class TestShellKeywordPrefixedSegments:
+    """shell 关键字引领的段里，命令仍须被检查（review R2 第三轮）。
+
+    `if true; then cp x ~/.ssh/id_rsa; fi` 按 `;` 切分后，第二段以 `then`
+    开头，`cp` 不是 tokens[0] —— master 靠「正则搜全文」拦住它，段级方案
+    需要显式跳过关键字。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "if true; then cp x ~/.ssh/authorized_keys; fi",
+            "if true; then cp x .env; fi",
+            "for f in *; do cp $f .env; done",
+            "while true; do cp x .env; done",
+            "time cp x .env",
+            "exec cp x .env",
+            "eval cp x .env",
+        ],
+    )
+    def test_keyword_prefixed_command_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "if true; then ls; fi",
+            "for f in *; do echo $f; done",
+            "while true; do sleep 1; break; done",
+        ],
+    )
+    def test_keyword_prefixed_benign_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestShellPayloadParsingEdgeCases:
+    """`-c` payload 解析的边界（review R5，全部实测 master 为 DENY）。"""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "env -i bash -c 'cp evil a/.env'",
+            "env -u FOO bash -c 'cp evil a/.env'",
+            "env --ignore-environment bash -c 'cp evil a/.env'",
+            "env -i -- bash -c 'cp evil a/.env'",
+        ],
+    )
+    def test_env_with_options_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "bash --norc -c 'cp evil a/.env'",
+            "sh --norc -c 'cp evil a/.env'",
+            "bash --rcfile foo -c 'cp evil a/.env'",
+        ],
+    )
+    def test_long_option_must_not_hijack_dash_c(self, command: str) -> None:
+        """`--norc` 含字母 c，但只有短选项簇能携带 `-c`（review R5 回归）。"""
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "bash -c 'echo hi' -c 'cp evil a/.env'",
+            "bash -c ls -c 'cp evil a/.env'",
+        ],
+    )
+    def test_repeated_dash_c_checks_every_payload(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["cp evil a/.env\r\nls", "cp evil a/.env \r\nls"],
+    )
+    def test_crlf_destination_not_masked_by_carriage_return(self, command: str) -> None:
+        """`\\r` 若不切分，会粘在目标末尾使 `a/.env` 变成 `a/.env\\r`。"""
+        assert CommandGuard().check(command) is CommandVerdict.DENY
