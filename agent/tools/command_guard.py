@@ -252,6 +252,14 @@ _EXTRA_DENYLIST = (
     # so `/dev/null/sda` slipped through). ``_check_mv_cp`` owns that judgment
     # segment-wise, and every command segment now reaches it (review I1).
     r"\b(mv|cp)\s+[^\s]+\s+(/etc/|/proc/|/sys/|/var/)",
+    # mv/cp into a credential/repo dot-directory, matched over the **whole
+    # command text**. The segment-wise `_dest_is_sensitive` cannot see past a
+    # launcher (`nice bash -c '…'`), a herestring (`bash <<< '…'`) or a pipe
+    # (`echo '…' | env -i bash`); this scan restores master's whole-text
+    # coverage for those without re-introducing the `.env.example` false
+    # positive that motivated moving to segments: the negative lookahead
+    # rejects a dot-name continued by `-`/`.`/word (fix-issue-247 review R6-1).
+    r"\b(mv|cp)\s+\S+\s+(?:\S*/)?\.(?:git|ssh|env|aws|gnupg|kube|docker|netrc|npmrc|pypirc)(?![\w.-])",
     # exfiltration via netcat / /dev/tcp
     r"\bnc\s+\S+\s+\d+",
     r"/dev/tcp/",

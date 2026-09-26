@@ -2628,7 +2628,7 @@ if self._guard.check(cmd) is CommandVerdict.DENY:
 
 #### 2.3 扩展黑名单——绕过变体覆盖
 
-`_EXTRA_DENYLIST`（`:234-268`）定义了 **16 个** 额外正则模式，专门覆盖基础 denylist（`workspace_policy.py` 的 `DEFAULT_DENYLIST` 42 个）未能捕获的绕过变体：
+`_EXTRA_DENYLIST`（`:234-272`）定义了 **16 个** 额外正则模式，专门覆盖基础 denylist（`workspace_policy.py` 的 `DEFAULT_DENYLIST` 42 个）未能捕获的绕过变体：
 
 | 绕过类别 | 原始变体能被绕过的原因 | 扩展覆盖 | 行号 |
 |------|------|------|------|
@@ -2646,29 +2646,29 @@ if self._guard.check(cmd) is CommandVerdict.DENY:
 
 #### 2.4 argv 语义检查
 
-`_check_argv()`（`:190-211`）对 7 个危险命令做逐 token 语义级检查：
+`_check_argv()`（`:412-449`）对 7 个危险命令做逐 token 语义级检查：
 
 | 命令 | 检查方法 | 逻辑 | 行号 |
 |------|------|------|------|
-| `rm` | `_check_rm()` | 仅当 `-r` + `-f` 同时存在时检查目标是否命中 `_DENY_PATHS` 或 workspace 外路径。`$IFS` 变体归一化后再判断 | `:213-231` |
+| `rm` | `_check_rm()` | 仅当 `-r` + `-f` 同时存在时检查目标是否命中 `_DENY_PATHS` 或 workspace 外路径。`$IFS` 变体归一化后再判断 | `:478-505` |
 | `mv` / `cp` | `_check_mv_cp()` | 目标落在 `_DENY_PATHS`（段级）或敏感点目录 → DENY | `:499-515` |
-| `chmod` | `_check_chmod()` | 目标以 `_DENY_PATHS` 前缀开头 → DENY。0777/777/a+rwx/a=rwx 在 `/` 或 `/tmp` → DENY | `:244-257` |
-| `timeout` | `_check_timeout()` | 超时值 0 < t <= 600 秒；然后**递归检查被包装的命令**（`timeout 5 rm -rf /` 不能绕过） | `:269-287` |
-| `curl` / `wget` | `_check_curl_wget()` | `@<protected-path>` 数据外泄参数 → DENY | `:259-267` |
+| `chmod` | `_check_chmod()` | 目标以 `_DENY_PATHS` 前缀开头 → DENY。0777/777/a+rwx/a=rwx 在 `/` 或 `/tmp` → DENY | `:525-538` |
+| `timeout` | `_check_timeout()` | 超时值 0 < t <= 600 秒；然后**递归检查被包装的命令**（`timeout 5 rm -rf /` 不能绕过） | `:552-570` |
+| `curl` / `wget` | `_check_curl_wget()` | `@<protected-path>` 数据外泄参数 → DENY | `:540-550` |
 
-**`rm` 的特殊处理**（`:200`）：denylist 中的 `rm` 模式被排除（因为 `rm -rf /` 正则会匹配任何包含 `/` 的 workspace 内路径导致误杀），rm 的判断完全交给 argv 语义检查。
+**`rm` 的特殊处理**（`:355`）：denylist 中的 `rm` 模式被排除（因为 `rm -rf /` 正则会匹配任何包含 `/` 的 workspace 内路径导致误杀），rm 的判断完全交给 argv 语义检查。
 
 #### 2.5 高危句式检测
 
 两个独立的高危句式检测方法，不依赖 denylist：
 
-**`_has_pipe_to_shell()`**（`:166-176`）：检测 `| sh` / `| bash` 以及 `/usr/bin/env sh -c` 链路。支持 6 种 shell（`":27": _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "ksh", "dash", "fish"}`）。
+**`_has_pipe_to_shell()`**（`:382-392`）：检测 `| sh` / `| bash` 以及 `/usr/bin/env sh -c` 链路。支持 6 种 shell（`":229": _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "ksh", "dash", "fish"}`）。
 
-**`_has_protected_redirect()`**（`:386-403`）：对 tokenized 命令流检测 `>` / `>>` 后接 `_DENY_PATHS`（`/etc`, `/proc`, `/sys`, `/dev`, `/root`, `/boot`, `/var`——共 7 个，`:25`）。
+**`_has_protected_redirect()`**（`:386-403`）：对 tokenized 命令流检测 `>` / `>>` 后接 `_DENY_PATHS`（`/etc`, `/proc`, `/sys`, `/dev`, `/root`, `/boot`, `/var`——共 7 个，`:34`）。
 
 #### 2.6 默认放行设计
 
-`check()`（`:128-162`）的核心逻辑：
+`check()`（`:344-378`）的核心逻辑：
 
 ```
 ① rm 以外 → 扩展 denylist 正则扫描 → 命中 → DENY

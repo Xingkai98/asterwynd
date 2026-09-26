@@ -19,7 +19,7 @@
 ### 入口与调用链
 
 ```
-BashTool (agent/tools/builtin/) → CommandGuard.check (agent/tools/command_guard.py:128)
+BashTool (agent/tools/builtin/) → CommandGuard.check (agent/tools/command_guard.py:344)
   → ExecutionBackend (agent/tools/sandbox/factory.py:27) → ProcessBackend/DockerBackend
   → cgroup v2 资源限制 (agent/tools/sandbox/cgroup.py)
 ```
@@ -31,15 +31,15 @@ BashTool (agent/tools/builtin/) → CommandGuard.check (agent/tools/command_guar
 - 定义哪些路径可写、哪些命令可用、哪些是敏感文件。
 
 **`agent/tools/command_guard.py` `class CommandGuard`**
-- `check(command)`（128 行）：返回 `CommandVerdict`（allow/deny）。
-- 第 1 层：扩展 denylist（`_EXTRA_DENYLIST` 覆盖常规绕过变体，31 行）。
+- `check(command)`（344 行）：返回 `CommandVerdict`（allow/deny）。
+- 第 1 层：扩展 denylist（`_EXTRA_DENYLIST` 覆盖常规绕过变体，234-272 行）。
 - 第 2 层：argv 级检查——
-  - `_check_rm`（284 行）：`rm -rf /` 等危险 rm。
-  - `_check_mv_cp`（313 行）：`mv`/`cp` 覆盖 workspace 外文件。
-  - `_check_chmod`（331 行）：`chmod +x` 写 shell。
-  - `_check_curl_wget`（346 行）：`curl -o`/`wget -O` 下载到 workspace 外。
-  - `_check_timeout`（358 行）：`timeout` 命令边界。
-- `_has_pipe_to_shell`（231 行）/`_has_protected_redirect`（243 行）：管道/重定向危险检测。
+  - `_check_rm`（478 行）：`rm -rf /` 等危险 rm。
+  - `_check_mv_cp`（507 行）：`mv`/`cp` 覆盖 workspace 外文件。
+  - `_check_chmod`（525 行）：`chmod +x` 写 shell。
+  - `_check_curl_wget`（540 行）：`curl -o`/`wget -O` 下载到 workspace 外。
+  - `_check_timeout`（552 行）：`timeout` 命令边界。
+- `_has_pipe_to_shell`（382 行）/`_has_protected_redirect`（394 行）：管道/重定向危险检测。
 - 默认 allow：只拦明确危险，不拦未知。
 
 **`agent/tools/sandbox/factory.py`**

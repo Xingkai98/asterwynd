@@ -2,14 +2,16 @@
 
 - reviewer: 独立零记忆 subagent（未参与实现）
 - base: `369d99d`（**与 `master` 的 `command_guard.py` 字节相同**，sha256 `13d1f995…`；故下文的「vs base」等价于「vs master」。`master` 现为 `14f6e24`，那 1 个额外 commit 不触及本文件）
-- head（最新，Round 5）: **工作区未提交状态 R7**（guard sha256 `06e9c658…`，测试 `c4cc74d2…`）。已提交 head = `e3007df`（在 `bef15e6` = R6 之上仅加 spec 文本，**guard 仍是 R6**）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6
-- 方式：只读审阅 + 独立复算。把 base/R1/R2/R3/R4/R5/R6/R7 **八版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试；另用**真实 `bash`** 复核每个可疑形态是否真的执行
+- head（最新，Round 6 / 终态）: 已提交 **`d695f92`**（其 guard 与 `8fe2faf` 的 **sha256 相同** `1b735b49…`，后者是 R7 落盘的 commit；测试 `c4cc74d2…`）。R7 相对我 Round 5 复核的工作区 R7（guard `06e9c658…`）**唯一差异是删掉 M-1 的不可达 wrapper 分支**（`diff` 已核，语义等价）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6、`e3007df` = spec-only、`8fe2faf` = R7
+- 方式：只读审阅 + 独立复算。把 base/R1…R8 **多版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试；另用**真实 `bash`** 复核每个可疑形态是否真的执行
 
 ## Verdict
 
-**PASS**（对象：**工作区 R7**；前置条件：**必须把 R7 提交**——已提交 head `e3007df` 的 guard 仍是 R6，仍含 Round 4 的 3 条 major，只有 R7 落地后本 verdict 才成立）
+**PASS**（对象：已提交 `8fe2faf`，Round 6 重新复算确认）
 
-我 R5 报的 11 条、R4 报的 I-1/I-2/I-3 共 **14 条收缩面在 R7 全部回到 DENY**；攻击集 50/54 不变；良性 0 误报；315 条组合语料对 base 的**非预期收缩为 0**；R7 新测试对 R6 guard **必红 11 条**。无新增 major。仅余 2 条 minor（见 Round 5 §5）。
+我 R5 报的 11 条、R4 报的 I-1/I-2/I-3 共 **14 条收缩面全部回到 DENY**；攻击集 50/54 不变；良性 0 误报；315 条组合语料对 base 的**非预期收缩为 0**；R7/R8 新测试对 R6 guard **必红 11 条**。M-1 死代码已清、语义等价（已 diff 复核）。**无 major。**
+
+**两条待办（不影响 PASS，但归档前建议清掉）**：R6-1（`docs/known-debt.md` 的 launcher 条目**记录口径不准**，把子族写成「非回归」，实为「本 change 引入、刻意延后」）；R6-2（M-2 文档行号残留，已给出精确位置）。
 
 ### 五轮累计进度
 
@@ -521,3 +523,89 @@ R6 新把 `-S`/`--split-string` 加进 `_WRAPPER_OPTS_WITH_VALUE`，于是它吃
 ### 7. 结论
 
 R7 的代码改动**实质正确、可审阅**：14 条我报过的收缩面全闭、攻击集不退化、无误报、测试有判别力、无新的 major。**把 R7（guard + 测试）连同已提交的 `e3007df` spec 一起提交后，本 change 的 building 审阅即可判 PASS。** 建议顺手清掉 M-1 的死代码并补 `walkthrough.md` 行号（M-2），二者不影响 verdict。
+
+---
+
+## Round 6（终审：`8fe2faf`；launcher 决策与 M-2 定位）
+
+### 1. `8fe2faf` 复核 —— PASS 有效（并已延伸确认到 `d695f92`）
+
+- **与我 Round 5 复核的 R7 逐字等价（除 M-1）**：`diff /tmp/247-verify/v/r7_guard.py <(git show 8fe2faf:agent/tools/command_guard.py)` 只显示删除了 `_check_argv_segment` 里 `elif cmd_name in ("env","command","nohup")` 分支 + 注释措辞变化。该分支在 `_strip_wrappers` 前置后不可达（我 R5 §5 M-1 已实测 `_strip_wrappers(['env','bash','-c','x']) == ['bash','-c','x']`），**属语义等价清理**。测试文件 sha 与我 R5 快照完全相同（`c4cc74d2…`）。
+- **重跑全部验证（对象 = 已提交 `8fe2faf` guard）**：14 条收缩面 **14/14 = DENY**；攻击集 **50/54**（直方图不变）；良性 **0/62 误报**；315 条组合语料**非预期收缩 = 0**。与 Round 5 结论一致，**PASS 成立**。
+- **复审期间 `d695f92` 落地（docs-only）**：`git show --stat` 只改 `walkthrough.md` / `known-debt.md` / `workflow-events.jsonl`；`git show HEAD:agent/tools/command_guard.py` 与 `8fe2faf` 的 **sha256 完全相同**（`1b735b49…`），测试亦同。**故 PASS 对本轮 HEAD `d695f92` 同样有效**——代码未被触碰。
+
+### 2. R6-1（minor，须修正记录）· launcher 决策的**理由**不成立，但决策本身我接受
+
+**决策我接受**：不在本 change 内收口该 bucket（这正是我 R4 主动降级并请你 sign-off 的提议；你们接受，流程闭环）。
+
+**但「该 bucket 在 master 上就全是 ALLOW，不构成回归」这一量化理由只有一半对。** 我独立复算（对象 = `d695f92` 的 guard，即 `1b735b49…`）：
+
+| 形态 | master | head |
+|---|---|---|
+| `nice cp x .env` / `nice -n 10 …` / `setsid` / `xargs` / `busybox` / `stdbuf` / `taskset` / `ionice` / `flock` / `chroot` / `doas` + `cp x .env` | ALLOW | ALLOW |
+| `nice bash -c 'cp x ~/.ssh/authorized_keys'` | **DENY** | ALLOW |
+| `setsid bash -c '…'` | **DENY** | ALLOW |
+| `xargs sh -c '…'` | **DENY** | ALLOW |
+| `busybox sh -c '…'` | **DENY** | ALLOW |
+| `stdbuf -o0 bash -c '…'` | **DENY** | ALLOW |
+| `find . -exec sh -c '…' \;` | **DENY** | ALLOW |
+| `bash -s <<< '…'` / `bash <<< '…'` | **DENY** | ALLOW |
+| `echo '…' \| env -i bash` | **DENY** | ALLOW |
+
+即：**launcher + 纯 `cp` 子族**在 master 上确为 ALLOW（你们的表对）；但 **launcher + `bash/sh -c '<payload>'` 子族（以及 heredoc `<<<`、`| env -i bash`）在 master 上是 DENY**——我这一子族 **9/9 全部** master-DENY → head-ALLOW。你们的 15 条向量似乎全取了纯 `cp` 形态，因此漏掉了这一子族。
+
+**这条必须修的不是代码，是记录**：`docs/known-debt.md:365` 的判定句「该 bucket 在 master 与 head 上**同为 ALLOW**」及其「**非本 change 引入，且非回归**」的结论，对上述 `-c` 子族**不成立**。按你们自己声明的 bar（「本 change 引入的收缩必须清零」），`nice bash -c '…'` 正是**本 change 引入**的收缩（R1 起存在，根因同我 R1 的 I1）。该条目已在 `d695f92` 提交进仓库（受保护路径，带 `protected_artifact_explained` 事件），**故建议在归档 PR 内一并订正为两段**：
+
+- 纯 launcher + 命令：master/head 同 ALLOW，**非回归**；
+- launcher + `-c` payload / heredoc / `| env -i bash`：master DENY → head ALLOW，**是本 change 引入的收缩，本次刻意延后**（修法 = `_strip_wrappers` 增加 per-wrapper 参数模型，让 `-c` payload 通道对这些 launcher 也能到达）。
+
+这样 known-debt 才如实反映「有一个已知回归被有意 defer」，而不是「这里本来就没问题」——后者会让后续读者不去收口。**注意：这是记录准确性问题，不改 verdict**（我 R4 已明确该 bucket 不阻塞且不再重提，你们据此决策，我尊重该约定）。
+
+### 3. R6-2（minor）· M-2 精确位置（你说没找到——确实有残留；`d695f92` 只修了其中 6 处）
+
+`d695f92`（commit message 称「更新面试文档行号」）**确实修了 6 处**：`tokenize_command` `:133-178`→`:274-319`、`_EXTRA_DENYLIST` `:91-125`→`:234-268`、denylist mv/cp 行 `:113`→`:256`、`_check_mv_cp` `:233-242`→`:499-515`、`_has_protected_redirect` `:178-186`→`:386-403`、「扩展黑名单 (18)」→`(16)`。**但同一表格内仍有 8 处陈旧**（这解释了为何你说「没找到」——改过的地方看着是对的）：
+
+**`docs/interview-bullets/walkthrough.md`**（实际值取 `inspect.getsourcelines`，对象 = `d695f92` 的 guard）：
+
+| 行 | 文中写的 | 实际 | 状态 |
+|---|---|---|---|
+| 2649 | `_check_argv()`（`:190-211`） | `:404` | **未修** |
+| 2653 | `_check_rm` `:213-231` | `:470` | **未修** |
+| 2655 | `_check_chmod` `:244-257` | `:517` | **未修** |
+| 2656 | `_check_timeout` `:269-287` | `:544` | **未修** |
+| 2657 | `_check_curl_wget` `:259-267` | `:532` | **未修** |
+| 2659 | 「`rm` 的特殊处理」（`:200`） | `:347` | **未修** |
+| 2665 | `_has_pipe_to_shell()`（`:166-176`） | `:374` | **未修** |
+| 2665 | `":27": _SHELL_INTERPRETERS` | `:229` | **未修** |
+| 2671 | `check()`（`:128-162`） | `:336` | **未修** |
+| 2631 | `_EXTRA_DENYLIST`（`:234-268`） | `:234-266`（`(` 在 234，`)` 在 266） | 差 2 行（已改但值不对） |
+
+**`docs/interview-script/questions/Q10-sandbox.md`（`d695f92` 完全未触碰，全部失效）**：
+
+| 行 | 文中写的 | 实际 |
+|---|---|---|
+| 22 | `command_guard.py:128` | `:336` |
+| 34 | `check(command)`（128 行） | `:336` |
+| 35 | `_EXTRA_DENYLIST` …「31 行」 | `:234-266` |
+| 37 | `_check_rm`（284 行） | `:470` |
+| 38 | `_check_mv_cp`（313 行） | `:499` |
+| 39 | `_check_chmod`（331 行） | `:517` |
+| 40 | `_check_curl_wget`（346 行） | `:532` |
+| 41 | `_check_timeout`（358 行） | `:544` |
+| 42 | `_has_pipe_to_shell`（231 行）/`_has_protected_redirect`（243 行） | `:374` / `:386` |
+
+（同表 2654 `_check_mv_cp` `:499-515` 与 2667 `_has_protected_redirect` `:386-403` **正确**，所以是同一表格内新旧混杂——这也是你「找不到」的原因：改过的行看着是对的。）
+
+**`docs/interview-script/questions/Q10-sandbox.md`**：`d695f92` 完全未触碰，而代码已从 376 行长到 561 行，**全部再次失效**（见上表）。
+
+**`docs/interview-bullets/interview-prep.md:429,445`**：「18 个扩展模式」——实际 `len(_EXTRA_DENYLIST) == 16`（master 亦 16）。你们先前的处理（master 已漂移、按历史口径另记）我**接受**，不列为本 change 待办。
+
+**根因提示（供决策）**：这类绝对行号是**结构性易腐**的——每改一次 `command_guard.py` 就集体失效，本 change 已让它漂移两轮。建议**要么**改为只写符号名（`_check_rm()`，不带行号），**要么**明确声明该目录的行号不承诺准确、由独立 maintenance 任务批量校准。继续在每次 change 里手改，下一轮还会漂。
+
+### 4. 结论
+
+`8fe2faf` 的 **PASS 有效**，且**同样适用于当前 HEAD `d695f92`**（我核过 `d695f92` 的 guard 与 `8fe2faf` 的 guard **sha256 完全相同** `1b735b49…`，`d695f92` 只动文档）。生成 review manifest / 归档收尾可以进行。
+
+建议在归档 PR 里一并带上两处文档修正（都是文档，不触及代码语义、不改 verdict）：
+1. **R6-1**：`docs/known-debt.md:365` 的「master 与 head 同为 ALLOW / 非本 change 引入」需按「纯 launcher」与「launcher + `-c`/heredoc」两段改写（后者是本 change 引入的收缩，9/9 实测）。
+2. **R6-2**：`walkthrough.md` §2.4/§2.5 的 8 处陈旧行号 + `_EXTRA_DENYLIST` 的 `234-268`→`234-266`；`Q10-sandbox.md` 全表 9 处（`d695f92` 未触碰）。

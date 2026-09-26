@@ -733,3 +733,44 @@ class TestEnvSplitString:
 
     def test_split_string_benign_allowed(self) -> None:
         assert CommandGuard().check("env -S 'ls -la'") is CommandVerdict.ALLOW
+
+
+class TestSensitiveDotdirWholeTextScan:
+    """敏感点目录必须**全文扫描**，不能只靠段级 argv（review R6-1）。
+
+    `nice bash -c '…'`、`bash <<< '…'`、`echo '…' | env -i bash` 里的 `cp`
+    既不段首、也不在 argv 通道可见的位置；段级判定看不见，master 靠全文正则
+    能拦。移除非正则后这 9 条从 DENY 变 ALLOW（本 change 引入的回归）。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "nice bash -c 'cp evil ~/.ssh/authorized_keys'",
+            "setsid bash -c 'cp evil ~/.ssh/authorized_keys'",
+            "xargs sh -c 'cp evil ~/.ssh/authorized_keys'",
+            "busybox sh -c 'cp evil ~/.ssh/authorized_keys'",
+            "stdbuf -o0 bash -c 'cp evil ~/.ssh/authorized_keys'",
+            "find . -exec sh -c 'cp evil ~/.ssh/authorized_keys' ;",
+            "bash -s <<< 'cp evil ~/.ssh/authorized_keys'",
+            "bash <<< 'cp evil ~/.ssh/authorized_keys'",
+            "echo 'cp evil ~/.ssh/authorized_keys' | env -i bash",
+        ],
+    )
+    def test_launcher_and_pipe_forms_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # 否定前瞻必须挡住「点目录名后接 -/./词字符」的普通文件
+            "cp x .env.example",
+            "cp x .gitignore",
+            "cp x .github/w.yml",
+            "cp x .dockerignore",
+            "cp x .environment",
+            "cp x .netrc.example",
+        ],
+    )
+    def test_dotdir_lookalikes_still_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
