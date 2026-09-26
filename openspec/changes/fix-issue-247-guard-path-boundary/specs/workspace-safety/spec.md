@@ -8,7 +8,11 @@
 
 **重定向目标**与 **mv/cp 目标**的判定 SHALL 豁免设备文件 `/dev/null`、`/dev/stdout`、`/dev/stderr`——它们是黑洞设备与进程标准流的别名，不属于「受保护的系统目录内容」语义。该豁免 SHALL NOT 扩展到 rm/chmod/curl-wget 的目标判定（`rm -rf /dev/null` SHALL 保持拒绝）；其余 `/dev/*` 目标 SHALL 保持拒绝。
 
+mv/cp 目标命中敏感点目录（`.git`/`.ssh`/`.env`/`.aws`/`.gnupg`/`.kube`/`.docker`/`.netrc`/`.npmrc`/`.pypirc`）SHALL 被拒绝，判定 SHALL 按**路径段**比较（`.gitignore`、`.env.example`、`.github/` 是普通文件/目录，SHALL NOT 被误判），且 SHALL 同时覆盖裸形态（`.env`）与嵌套形态（`src/.git/hooks/x`）。
+
 rm 递归+强制的目标 SHALL NOT 等于工作区根（`rm -rf <workspace_root>` SHALL 拒绝），且 SHALL NOT 位于工作区之外。
+
+argv 语义检查 SHALL 覆盖**命令行的每一段**，SHALL NOT 只检查首段——命令分隔符（`&&`/`||`/`;`/`|`/`&`/换行）与分组符号（`(`/`)`/`{`/`}`）之后、以及 shell 关键字（`then`/`do`/`else`/`fi`/`done`/`time`/`exec`/`eval` 等）之后的命令 SHALL 同样受检。`<shell> -c <string>` 形态（含 `-lc`/`-ic` 等短选项簇、`env`/`command`/`nohup` 前缀及其选项、重复 `-c`）SHALL 对每个 payload 递归执行同样的校验；递归 SHALL 有深度上界，超出上界时 SHALL 停止解包而 SHALL NOT 无界递归（护栏不是边界，真实边界在执行后端）。
 
 #### Scenario: rm 目标越界拒绝
 
@@ -51,6 +55,25 @@ rm 递归+强制的目标 SHALL NOT 等于工作区根（`rm -rf <workspace_root
 - **GIVEN** `echo x > /various.txt` 或 `echo x > /rooted.log` 或 `echo x > /bootstrap.log` 或 `echo x > /etcetera.conf`
 - **WHEN** 命令护栏校验
 - **THEN** SHALL 放行（这些路径与 `/var`、`/root`、`/boot`、`/etc` 无包含关系，仅前缀字符串相同）
+
+#### Scenario: 敏感点目录按段判定
+
+- **GIVEN** `cp x .gitignore` / `cp x .env.example` / `cp x .github/w.yml`（普通文件与目录）与 `cp x .env` / `cp x src/.git/hooks/pre-commit` / `cp x sub/.env/secrets`（敏感点目录，裸形态与嵌套形态）
+- **WHEN** 命令护栏校验
+- **THEN** 前者 SHALL 放行、后者 SHALL 拒绝
+
+#### Scenario: 链式与分组命令的每一段都被检查
+
+- **GIVEN** `cd /tmp && cp evil ~/.ssh/authorized_keys` 或 `true; cp evil sub/.env/secrets` 或 `(cp evil a/.env)` 或 `if true; then cp x .env; fi`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝（命令不在首段也 SHALL 受检）
+
+#### Scenario: shell `-c` payload 递归受检且有界
+
+- **GIVEN** `bash -c "cp evil a/.env"`、`bash -lc "…"`、`env -u FOO bash -c "…"`、`bash --norc -c "…"`、`bash -c a -c "cp evil a/.env"`
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝（payload 被解包并当独立命令行检查；长选项 `--norc` SHALL NOT 被误认为 `-c`）
+- **AND** 形如 `bash -c "bash -c …"` 的深层嵌套 SHALL 在有界深度内终止，SHALL NOT 无限递归
 
 #### Scenario: 默认放行未知命令
 
