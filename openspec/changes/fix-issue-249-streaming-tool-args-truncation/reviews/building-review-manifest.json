@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-249-streaming-tool-args-truncation",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "af6475c0-a389-4a96-bf01-97cb960cab71",
+  "base_sha": "369d99d",
+  "head_sha": "d55d802",
+  "tasks_hash": "sha256:cd501e87f2bdb6669cbc6d5c952ea4660972c4d98d2f4a64122c1df19356f753",
+  "spec_hash": "sha256:bacd4f3fe4758dd68970510a0505c5fbbb6bf0d4c0ebbdb92c98cb8fec06585f",
+  "diff_hash": "sha256:d99f6586f07fb7662a0fcf8755bf1eaa8d662b2afdd09a11b5276079a21a3a47",
+  "report_hash": "sha256:5e90e61fb0ca8abc43a5f55a7d0d1d5a16860d2fb7c61c2c10f4ae1bad497c34"
+}
