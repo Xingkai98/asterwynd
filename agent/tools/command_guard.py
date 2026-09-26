@@ -79,9 +79,15 @@ _SEGMENT_SEPARATORS = frozenset({"&&", "||", ";", "|", "&"})
 def _split_command_segments(tokens: list[str]) -> list[list[str]]:
     """Split a token stream into per-command segments (fix-issue-247 I1).
 
-    ``tokenize_command`` emits separators as their own tokens, so
-    ``['cd','/tmp','&','&','cp','x','y']`` becomes two segments. Each segment
-    is checked independently; a single-word separator token cannot.
+    ``tokenize_command`` emits ``|``/``;``/``&``/``<``/``>`` as their own
+    tokens, so ``['cd','/tmp','&','&','cp','x','y']`` becomes two segments.
+    A newline is a command separator in shell but the tokenizer folds it into
+    whitespace, so ``\\n`` is **pre-split on the raw command text** before
+    tokenizing (review Round 2: ``cd /tmp\\ncp evil a/.env`` was a single
+    segment and the ``cp`` went unchecked).
+
+    Subshell / brace grouping is deliberately *not* modelled: this guard is a
+    guardrail, not a bash parser, and the real boundary is the sandbox backend.
     """
     segments: list[list[str]] = []
     current: list[str] = []
@@ -94,6 +100,20 @@ def _split_command_segments(tokens: list[str]) -> list[list[str]]:
         current.append(token)
     if current:
         segments.append(current)
+    return segments
+
+
+#: Raw-text command separators the tokenizer would otherwise fold away.
+#: ``\\r\\n`` is handled by splitting on ``\\n`` (the ``\\r`` ends up as trailing
+#: whitespace on the previous segment's last token).
+_RAW_SEPARATORS = re.compile(r"\n")
+
+
+def _check_command_text(command: str) -> list[list[str]]:
+    """Tokenize every newline-separated command line of ``command``."""
+    segments: list[list[str]] = []
+    for line in _RAW_SEPARATORS.split(command):
+        segments.extend(_split_command_segments(tokenize_command(line)))
     return segments
 
 
@@ -258,7 +278,7 @@ class CommandGuard:
         tokens = tokenize_command(cmd)
         if not tokens:
             return CommandVerdict.ALLOW
-        argv_verdict = self._check_argv(tokens)
+        argv_verdict = self._check_argv(tokens, raw=cmd)
         if argv_verdict is CommandVerdict.DENY:
             return CommandVerdict.DENY
 
@@ -297,7 +317,7 @@ class CommandGuard:
 
     # --- argv semantic checks ---------------------------------------------
 
-    def _check_argv(self, tokens: list[str]) -> CommandVerdict:
+    def _check_argv(self, tokens: list[str], *, raw: str | None = None) -> CommandVerdict:
         """Run the argv checks against **every command segment**.
 
         ``tokens[0]`` is only the first word of the whole line, so a chained
@@ -305,10 +325,17 @@ class CommandGuard:
         ``cd /tmp && cp evil ~/.ssh/authorized_keys`` was never examined for
         ``cp`` (fix-issue-247 review I1). Splitting on the tokenizer's
         separators (``&&``, ``;``, ``|``, ``&``) and checking each segment
-        closes that gap. The ``bash -c "…"`` form is handled by unpacking the
-        quoted payload and checking it as its own command line.
+        closes that gap; ``raw`` lets the newline case (which the tokenizer
+        folds into whitespace) be split too. The ``bash -c "…"`` form is
+        handled by unpacking the quoted payload and checking it as its own
+        command line.
         """
-        for segment in _split_command_segments(tokens):
+        segments = (
+            _check_command_text(raw)
+            if raw is not None
+            else _split_command_segments(tokens)
+        )
+        for segment in segments:
             verdict = self._check_argv_segment(segment)
             if verdict is CommandVerdict.DENY:
                 return CommandVerdict.DENY

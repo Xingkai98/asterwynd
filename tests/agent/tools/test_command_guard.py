@@ -498,3 +498,36 @@ class TestDeviceLookaheadSegmentBoundary:
     )
     def test_exact_device_target_still_exempt(self, command: str) -> None:
         assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestNewlineSeparatedCommands:
+    """`\\n` 是 shell 的命令分隔符，但 tokenizer 把它折成空白（review R2）。
+
+    `cd /tmp\\ncp evil a/.env` 在 shell 里是两条命令；修复前它是**单个 segment**，
+    第二个 `cp` 完全不检查（master 上 DENY → 修复后 ALLOW）。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp\ncp evil ~/.ssh/authorized_keys",
+            "cd /tmp\ncp evil a/.env",
+            "echo hi\ncp evil /dev/sda",
+            "cd /tmp\nmv evil sub/.env/secrets",
+            "ls\nrm -rf /var",
+            "cd /tmp\r\ncp evil .env",
+        ],
+    )
+    def test_newline_separated_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp\nls -la",
+            "git add .\ngit commit -m x",
+            "pytest -q\nuv run ruff check",
+        ],
+    )
+    def test_newline_separated_benign_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
