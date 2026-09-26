@@ -389,24 +389,112 @@ class TestRealProtectedTargetsStillDenied:
         assert CommandGuard().check(command) is CommandVerdict.DENY
 
 
-class TestDeviceExemptSyncWithDenylist:
-    """denylist 里 mv/cp 的 `/dev/` lookahead 必须与 `_DEVICE_EXEMPT` 同步。
+class TestDeviceExemptIsExactMatch:
+    """设备豁免是**精确匹配**，不是前缀（review I2 回归）。
 
-    grill R1/R3 指出：两处各写一份豁免清单会漂移，而漂移的表现是「argv 放行、
-    denylist 抢先拒绝」这类静默不一致（`cp x /dev/null` 曾经就是这样）。
+    早期实现把 `/dev/` 留在 `_EXTRA_DENYLIST` 的正则里，用一个 lookahead 排
+    除豁免目标；但 `\\b` 不是 `/` 感知的，`/dev/null/sda` 里 `null` 后接 `/`
+    同样满足 `\\b`，于是该目标被误判为「设备豁免」。现在 `/dev/` 不在这条
+    正则里，豁免由 `_DEVICE_EXEMPT` 的精确相等判断唯一决定。
     """
 
-    def test_denylist_lookahead_covers_exactly_device_exempt(self) -> None:
-        import re
+    def test_denylist_mv_cp_branch_does_not_claim_dev(self) -> None:
+        from agent.tools.command_guard import _EXTRA_DENYLIST
 
-        from agent.tools.command_guard import _DEVICE_EXEMPT, _EXTRA_DENYLIST
+        for pattern in _EXTRA_DENYLIST:
+            if "mv|cp" in pattern:
+                assert "/dev/" not in pattern, (
+                    "mv/cp 的 denylist 分支不应包含 /dev/：设备豁免是精确匹配，"
+                    "正则无法表达 `\\b` 的 `/` 边界"
+                )
 
-        pattern = next(p for p in _EXTRA_DENYLIST if "/dev/" in p and "mv|cp" in p)
-        for target in _DEVICE_EXEMPT:
-            command = f"cp x {target}"
-            assert not re.search(pattern, command), (
-                f"{target} 在 _DEVICE_EXEMPT 内，但 denylist 的 mv/cp 分支仍会拦它"
-            )
-        # 非豁免的 /dev 目标必须仍被 denylist 拦（不因 lookahead 而放开）
-        for target in ("/dev/sda", "/dev/fd/1", "/dev/tcp/x"):
-            assert re.search(pattern, f"cp x {target}"), f"{target} 应被 denylist 拦"
+    @pytest.mark.parametrize(
+        "target",
+        ["/dev/sda", "/dev/fd/1", "/dev/tcp/x", "/dev/null/sda", "/dev/null/../sda"],
+    )
+    def test_non_exempt_dev_targets_denied(self, target: str) -> None:
+        assert CommandGuard().check(f"cp x {target}") is CommandVerdict.DENY
+
+
+class TestChainedCommandSegments:
+    """链式命令里每一段都要过 argv 检查（review I1/I2 回归）。
+
+    `_check_argv` 原先只看 `tokens[0]`，所以 `cd /tmp && cp evil ~/.ssh/x`
+    里的 `cp` 完全不检查——修复前该形态在 master 上被 denylist 拦住，
+    移除点目录正则后变成 ALLOW（拦截面收缩）。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp && cp evil ~/.ssh/authorized_keys",
+            'bash -c "cp evil ~/.ssh/authorized_keys"',
+            "true; cp evil sub/.env/secrets",
+            "cd /tmp && cp evil .git/hooks/pre-commit",
+            "cd /tmp && cp evil a/.env",
+            "echo x && cp evil .env",
+            "ls && mv evil .git/config",
+        ],
+    )
+    def test_chained_sensitive_dotdir_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp && mv a /root/foo",
+            "true; mv a /boot/foo",
+            "cd /tmp && cp a /etc/x",
+            "echo x && chmod 777 /etc/x",
+            "cd /tmp && rm -rf /var",
+        ],
+    )
+    def test_chained_protected_target_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp && cp x .gitignore",
+            "cd /tmp && ls -la 2>/dev/null",
+            "echo a && echo b",
+            "git add . && git commit -m x",
+            "cd /tmp && cp x out.txt",
+            "pytest -q && git status",
+        ],
+    )
+    def test_chained_benign_still_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestDeviceLookaheadSegmentBoundary:
+    """豁免的 lookahead 必须按段判定（review I2）。
+
+    `\\b` 不是 `/` 感知的：`/dev/null/sda` 里 `null` 后接 `/`，`\\b` 成立，
+    于是该目标被误判为「设备豁免」，绕过了 `_EXTRA_DENYLIST` 的 mv/cp 分支。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cd /tmp && cp evil /dev/null/sda",
+            "echo hi && cp evil /dev/null/sda",
+            "cd /tmp && cp evil /dev/null/../sda",
+            "cp evil /dev/null/sda",
+            "cp evil /dev/fd/1",
+        ],
+    )
+    def test_dev_subpath_not_exempt(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp x /dev/null",
+            "echo x > /dev/null",
+            "cmd > /dev/null 2>&1",
+            "cp x /dev/stdout",
+        ],
+    )
+    def test_exact_device_target_still_exempt(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW

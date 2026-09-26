@@ -205,3 +205,32 @@ def _dest_is_sensitive(dest: str) -> bool:
 ## Reference Implementation Research
 
 见 `proposal.md` 的 `## Reference Implementation Research`（`research_tier: exempt`）。
+
+## Review Round 1 修复（I1/I2，均为主 session 独立复现后确认）
+
+独立 reviewer（零记忆 subagent）判 `CHANGES_REQUESTED`，两个 major 都是本 change 引入的**拦截面收缩**（与 proposal Goal #4「不削弱任何既有攻击拦截」直接冲突）：
+
+**I1：链式命令里的 `cp`/`mv` 完全不检查。** `_check_argv` 只看 `tokens[0]`，而 `_check_mv_cp` 仅在 `tokens[0]` 字面是 `mv`/`cp` 时被调用。原设计从 `_EXTRA_DENYLIST` 移除点目录正则、改由 argv 段级判定，两条通道就都覆盖不到链式形态：
+
+| 命令 | master | 修复前 | 修复后 |
+|---|---|---|---|
+| `cd /tmp && cp evil ~/.ssh/authorized_keys` | DENY | **ALLOW** | DENY |
+| `true; cp evil sub/.env/secrets` | DENY | **ALLOW** | DENY |
+
+**修法**：`_check_argv` 改为按 tokenizer 的分隔符（`&&`/`||`/`;`/`|`/`&`）**切分命令段**，逐段跑 argv 检查；`bash -c "<payload>"` 形态解包后当独立命令行再查（`_split_command_segments` / `_shell_dash_c_payload`）。
+
+**I2：`/dev/` 的 lookahead 用 `\b`，不是 `/` 感知的。** `/dev/null/sda` 的 `null` 后接 `/` 同样满足 `\b`，于是被误判为「设备豁免」而放行（master 上 DENY）。
+
+**修法**：把 `/dev/` 从 `_EXTRA_DENYLIST` 的 mv/cp 分支**移除**——设备豁免是精确匹配（`_DEVICE_EXEMPT`），正则无法表达段边界。豁免判定现在由 `_check_mv_cp` 唯一拥有，不存在两份清单漂移的可能。
+
+**修复后的净效应（主 session 独立复算）**：
+
+- 攻击集 50/54 → **50/54**（不变）
+- 良性命令误拒 17/26 → **0/33**（含新增的日常链式命令）
+- 与 master 逐条对比 **零回归**，另有 **4 处 ALLOW→DENY**：`cd /tmp && cp evil .git/hooks/pre-commit`、`echo x && cp evil .env`、`ls && mv evil .git/config`、`cd /tmp && mv a /root/foo` —— 这些是 master 上就存在的既有洞（`_check_argv` 只看首 token），本次一并堵上。
+- 变异验证：新增回归测试在还原修复后必红（12 条），应用后必绿。
+
+**reviewer 的另外两条（minor）与本轮处理**：
+
+- **I3 行号失效**：reviewer 指出 `walkthrough.md` §2.4/§2.5 仍有陈旧行号与「18 个」计数（实际 16）。已修正 §2.2/§2.3 覆盖到的部分；`18` 这个数字在 master 上**本就已漂移**（实际 16），属历史口径问题，按仓库规则另记而非在本 change 内静默修正。`interview-prep.md` 同。
+- **I4 良性电池未落库**：reviewer 复建 26 条得 base 21 误拒 / head 0——与 proposal 的「17/26」不同（电池构造有差异）。已在 `tasks.md` 2.9 落为可执行测试数据；本轮的 33 条电池也已固化进测试。

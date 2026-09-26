@@ -72,6 +72,47 @@ def _is_device_exempt(target: str) -> bool:
     return target in _DEVICE_EXEMPT
 
 
+#: Tokenizer output tokens that separate one command from the next.
+_SEGMENT_SEPARATORS = frozenset({"&&", "||", ";", "|", "&"})
+
+
+def _split_command_segments(tokens: list[str]) -> list[list[str]]:
+    """Split a token stream into per-command segments (fix-issue-247 I1).
+
+    ``tokenize_command`` emits separators as their own tokens, so
+    ``['cd','/tmp','&','&','cp','x','y']`` becomes two segments. Each segment
+    is checked independently; a single-word separator token cannot.
+    """
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _SEGMENT_SEPARATORS:
+            if current:
+                segments.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _shell_dash_c_payload(tokens: list[str]) -> str | None:
+    """Return the command string of a ``<shell> -c <string>`` segment, if any.
+
+    ``bash -c "cp evil .env"`` arrives as ``['bash', '-c', 'cp evil .env']``
+    (quotes are consumed by the tokenizer), so the payload is just the last
+    token. Only shells that the guard already recognises as interpreters are
+    unpacked, and the payload is re-checked as a full command line.
+    """
+    if len(tokens) < 3 or tokens[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
+        return None
+    if "-c" not in tokens[1:3]:
+        return None
+    index = tokens.index("-c")
+    return tokens[index + 1] if index + 1 < len(tokens) else None
+
+
 def _dest_is_sensitive(dest: str) -> bool:
     """True when ``dest`` carries credentials / repo metadata (fix-issue-247 R1).
 
@@ -103,14 +144,12 @@ _EXTRA_DENYLIST = (
     r"\bawk\s+.*system\s*\(",
     # base64 decode then execute
     r"base64\s+-d\s*\|\s*(ba)?sh",
-    # mv/cp target into protected path
-    # mv/cp into protected roots. Kept alongside ``_check_mv_cp`` because this
-    # pattern also fires on ``cp`` nested in a command chain (where argv sees
-    # only the first token). ``/dev/`` exempts the ``_DEVICE_EXEMPT`` targets
-    # here too — a device write is not a protected-asset write (fix-issue-247
-    # Q2). The lookahead must stay in sync with ``_DEVICE_EXEMPT``; a test
-    # asserts exactly that.
-    r"\b(mv|cp)\s+[^\s]+\s+(/etc/|/proc/|/sys/|/var/|/dev/(?!null\b|stdout\b|stderr\b))",
+    # mv/cp into the literal protected roots. ``/dev/`` is deliberately NOT
+    # here: its device-file exemption is exact-match logic that a regex cannot
+    # express without a fragile lookahead (review I2 — `\b` is not `/`-aware,
+    # so `/dev/null/sda` slipped through). ``_check_mv_cp`` owns that judgment
+    # segment-wise, and every command segment now reaches it (review I1).
+    r"\b(mv|cp)\s+[^\s]+\s+(/etc/|/proc/|/sys/|/var/)",
     # exfiltration via netcat / /dev/tcp
     r"\bnc\s+\S+\s+\d+",
     r"/dev/tcp/",
@@ -259,6 +298,30 @@ class CommandGuard:
     # --- argv semantic checks ---------------------------------------------
 
     def _check_argv(self, tokens: list[str]) -> CommandVerdict:
+        """Run the argv checks against **every command segment**.
+
+        ``tokens[0]`` is only the first word of the whole line, so a chained
+        command's later segments used to escape every argv check entirely:
+        ``cd /tmp && cp evil ~/.ssh/authorized_keys`` was never examined for
+        ``cp`` (fix-issue-247 review I1). Splitting on the tokenizer's
+        separators (``&&``, ``;``, ``|``, ``&``) and checking each segment
+        closes that gap. The ``bash -c "…"`` form is handled by unpacking the
+        quoted payload and checking it as its own command line.
+        """
+        for segment in _split_command_segments(tokens):
+            verdict = self._check_argv_segment(segment)
+            if verdict is CommandVerdict.DENY:
+                return CommandVerdict.DENY
+            # `bash -c "cp evil .env"`: the payload is a nested command line.
+            payload = _shell_dash_c_payload(segment)
+            if payload and self.check(payload) is CommandVerdict.DENY:
+                self.last_reason = self.last_reason or "denylist"
+                return CommandVerdict.DENY
+        return CommandVerdict.ALLOW
+
+    def _check_argv_segment(self, tokens: list[str]) -> CommandVerdict:
+        if not tokens:
+            return CommandVerdict.ALLOW
         # Normalize command name: strip /bin/, /usr/bin/, env, command wrappers.
         cmd_name = tokens[0]
         if cmd_name in ("/bin/rm", "/usr/bin/rm"):
