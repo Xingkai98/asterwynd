@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-247-guard-path-boundary",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a713d842c70a91f37",
+  "base_sha": "369d99d",
+  "head_sha": "dea3445d526ef5075be8c0ae93ae8eb82f2efaaf",
+  "tasks_hash": "sha256:478c2198fa67ec2609319d6317737db992428c7efc98bd61e0ed3422e2bafbea",
+  "spec_hash": "sha256:8010540ba790d124249f3fd07c787943874c829a5778dfecf653bce63b820694",
+  "diff_hash": "sha256:e8f5ce72ea8df640f1f1faf98ee0c2e48dbccad1e5adf191a29abbb7f32f0a2f",
+  "report_hash": "sha256:8d4471f3253f2cf97472676242fec54ebce7eb97e00c9f51faf77ad229db48ba"
+}

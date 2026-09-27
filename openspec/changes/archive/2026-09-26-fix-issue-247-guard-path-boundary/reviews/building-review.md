@@ -1,0 +1,913 @@
+# Building Review: fix-issue-247-guard-path-boundary
+
+- reviewer: 独立零记忆 subagent（未参与实现）
+- base: `369d99d`（**与 `master` 的 `command_guard.py` 字节相同**，sha256 `13d1f995…`；故下文的「vs base」等价于「vs master」。`master` 现为 `14f6e24`，那 1 个额外 commit 不触及本文件）
+- head（最新，Round 9 / 终态）: 已提交 **`b783fe6`**（guard 与 `9561669` **sha256 相同** `04dc8f21…`——本轮只动 spec/known-debt/测试，未动代码）。前序：`be480dd` = R1、`ee893ba` = R2、`41cbd76` = R3、`fd00131` = R4、`bef15e6` = R6、`e3007df` = spec-only、`8fe2faf` = R7、`d695f92` = docs、`52d7701` = R8、`9561669` = R9
+- 方式：只读审阅 + 独立复算。把 base/R1…R10 **多版** `command_guard.py` 各自独立加载成模块、对同一语料逐条对比；变异验证用影子树（其余全软链 head，仅换 guard）装回旧 guard 跑 head 测试；另用**真实 `bash`** 复核可疑形态。
+
+## Verdict
+
+**PASS**（对象：已提交 `b783fe6`）
+
+至此**八个 blocking 项全部闭合**，我逐项独立复算确认：
+
+- **spec 措辞已与实现一致**（R8-1 闭合）：改用「两条**互补**通道、各自覆盖面 SHALL 被如实描述」的写法——段级通道「在 `mv`/`cp` 居命令段首时」覆盖裸形态与嵌套形态；全文通道明说「SHALL 只匹配**带路径分隔符**的敏感名」且「SHALL NOT 匹配引号内作为数据提及的裸名」。**我把该段的每一句断言逐条对照 `b783fe6` 的行为跑了一遍，全部成立**（详见 Round 9 §2）；且 delta 与 `openspec/specs/` 正式规格**逐字相同**。
+- **known-debt 表格 17/17 行与实测一致**（R8-2/R8-3 闭合）：见 Round 9 §1。三个曾被误列为「残余」的例子已正确改标「两版均拦」；R8-4 的混淆形态族已按「**本 change 引入**」如实记为乙类。
+- **新测试确实锁住了 R7-2 的收窄**（测试缺口闭合）：影子树里把斜杠要求放宽回可选 → **8 条必红**；另三个方向（删点目录分支 / 删 `/dev` 分支 / 去点目录否定前瞻）分别 **12 / 10 / 1 条必红**。
+
+**唯一遗留：R9-1（minor）· `/dev` 分支的 lookahead 无测试守护**——把 `:269` 的前瞻退回 `\b`（即 R2 的 I2 那个错法）后**测试全绿**（228 passed），而它会让 `nice cp evil /dev/null/sda` 变 ALLOW（master 为 DENY）。原因是 `TestDevNullPrefixedTargetsNotExempt` 的三条用例都是**段首**形态，被段级通道兜住，压根没走全文通道。详见 Round 9 §3。**不阻塞**（发布代码本身正确），但建议补 3 条 launcher 前缀用例。
+- **R8-2（minor）· `known-debt.md:359` 的表格把 ALLOW 写成 DENY**。该行断言 head = **DENY**，实测 11/11 **ALLOW**（`nice cp x .env`、`nice -n 10 …`、`setsid`/`xargs`/`busybox`/`stdbuf`/`taskset`/`ionice`/`flock`/`chroot`/`doas`）。R7 那轮这张表写错方向（该 ALLOW 写成 ALLOW 但实际 DENY），本轮改成 DENY 又错（实际 ALLOW）——建议**停止手写该列**，或注明取样口径。
+- **R8-3（minor）· `known-debt.md:365,368` 的「master 上同样不覆盖」实测为假**。`:365` 举的 `cp x $HOME/.env` 与 `:364` 的 `setsid dd of=/dev/sda`、`:365` 的 `bash -c "$(cat payload.txt)"` **在 master 与 head 都是 DENY**（不是残余）；而 `:365` 的 `cp x ~/.ss\h/id_rsa` 是 **master-DENY → head-ALLOW**（是真残余，但归因写反了）。即该段举的 4 例里 3 例根本不是残余、1 例是本 change 引入的收缩。
+- **R8-4（minor）· 一类系统性收缩未记录**：把敏感点目录名做 shell 混淆后，**40/60** 变体 master-DENY → head-ALLOW（反斜杠转义 `~/.s\sh/`、glob `?`/`*`（`~/.s?h/`、`~/.s*h/`）、brace `~/.s{s,s}h/`，× 10 个敏感名）。这些在 shell 里**真的**解析到 `.ssh`/`.git`/…，base 的宽松正则偶然覆盖、本轮收窄为字面清单后丢失。我验了修法：对段/路径先做 glob 转义还原（`fnmatch` 翻译后比对敏感名）可精确恢复，且不重新引入 R7-2 的引号误报（`?`/`*` 精确命中，`{a,b}` 需补一步展开）。
+
+### 八轮累计进度
+
+| 轮 | 主 session 修了什么 | 我复核结果 |
+|---|---|---|
+| R1 `be480dd` | 段边界 + 设备豁免 + `..` | 引入 I1（链式全漏）、I2（`\b` 非 `/` 感知） |
+| R2 `ee893ba` | 段切分 + `/dev/` 移出 denylist | I1/I2 **确认修复**（23 条向量全部回到 DENY） |
+| R3 `41cbd76` | `\n` 作段边界 | 换行族**确认修复**；我报分组/`-lc`/`env`/`\r` 四类 |
+| R4 `fd00131` | 分组 `(){}`、组合 flag、env 赋值、嵌套上界 | 前 3 类**确认修复**；新引入 `--norc`/`--rcfile` 回归；`env -i`/`\r` 仍漏 |
+| R5（未提交） | shell 关键字段首跳过 | 关键字族**确认修复**；`env -i`/`--norc`/`\r` 仍漏 |
+| R6 `bef15e6` | `env` 选项剥离、短选项簇正则、多 payload、`\r` 段边界 | 11/11 **确认修复**；新暴露 I-1/I-2/I-3 |
+| R7 `8fe2faf` | 关键字下沉共用入口、payload 首参单列、`-S` 值送检 | I-1/I-2/I-3 **确认修复** → 我判 PASS |
+| R8 `52d7701` | 恢复点目录全文扫描 | R6-1 **9/9 恢复**；但 `/dev/` 半边缺（我报 R7-1，45 条）+ 新误报（R7-2） |
+| R9 `9561669` | `/dev/` 全文分支 + 点目录收斜杠 | **代码行为全部修对**；但 spec/known-debt 记录与实现冲突（R8-1…R8-4） |
+| R6 `bef15e6` | `env` 选项剥离、短选项簇正则、多 payload、`\r` 段边界 | 我报的 **11/11 确认修复**；3 条同源新面未闭（I-1/I-2/I-3） |
+| R7（未提交） | `_strip_wrappers` 统一跳关键字、payload 增「首参单独」候选、`-S` 值送检 | **3/3 确认修复**；无新面 → PASS |
+
+### Round 1（I1/I2）→ 已修复
+
+R1 报的 I1（链式命令 `cd /tmp && cp …` 不检查）与 I2（`/dev/` lookahead 用 `\b` 非 `/` 感知）**均已确认修复**：R1 报的 23 条向量在 R3 全部由 ALLOW 回到 DENY（见「Round 2 独立复算」§1）。攻击集 50/54 四版不变，无误伤新增。
+
+### Round 2（仍未闭）
+
+R3 的修法把 argv 检查改成「按分隔符切段」，但**切分粒度仍落后于 shell 语法**，且 `bash -c` 解包只覆盖了部分 wrapper 形态。对 base（= master）逐条对比，下列真实可执行命令仍然是 **master DENY → R3 ALLOW**：
+
+1. **shell `-c` wrapper 只解包了一部分**（major）：`bash -lc '…'`、`bash -ic '…'`、`zsh -ic '…'` 是全 ALLOW（组合短选项未识别）；`/usr/bin/env bash -c '…'`、`/usr/bin/env sh -c '…'`、`env -i bash -c '…'` 也全 ALLOW（`env` 解包只认字面 `env`，不认 `/usr/bin/env`，也不跳 `-i`）。注意 `bash -c '…'` 本身在 R2 起已 DENY——**同一语义的写法却因 wrapper 细节漏一半**，绕过成本几乎为零。
+2. **subshell / brace 分组未切段**（major at R3）：`(cp evil ~/.ssh/authorized_keys)`、`cd /tmp && (cp evil a/.env)`、`cd /tmp && { cp evil a/.env; }`、`cd /tmp && (cd sub && cp evil a/.env)` 均 ALLOW。
+3. **`\r` 残留 token**（minor）：`\n` 切分后 `\r` 落在**上一段最后一个 token** 上，而 tokenizer 不把 `\r` 当空白 ⇒ `cp evil a/.env\r\nls` 的 dest 变成 `a/.env\r`，`_dest_is_sensitive` 不认识 → ALLOW（base DENY）。R3 新加的 `cd /tmp\r\ncp evil .env` 用例恰好把 `\r` 落在无害 token 上，所以测不出这一支。
+
+以上 1/2/3 都**不是本 change 逐轮新引入**（除 §1 表格标记 `NEW vs R1` 的一条外），但它们是 base（master）能拦、现在拦不住的面，与 proposal Goal #4「不削弱任何既有攻击拦截」同 I1 属一类。
+
+### 未提交的在制品（WIP）已覆盖大部分，但不能计入本 verdict
+
+审阅时工作区存在**未提交**改动（`git status` = `M agent/tools/command_guard.py`），内容：`_SEGMENT_SEPARATORS` 增加 `()`/`{}`、tokenizer 的元字符集加 `(){}`、`_shell_dash_c_payload` 改为「任意含 `c` 的 dash-token」。实测该 WIP 把上面第 2 类（subshell/brace）与第 1 类的 `-lc`/`-ic` 部分修好了。**但**：(a) 未提交，不是可审阅产物；(b) 未配套测试（`tests/` 无任何改动，无 `(cp …)`/`bash -lc` 回归用例）；(c) 仍留 `/usr/bin/env bash -c`、`env -i bash -c`、`\r` 三处。WIP 的 tokenizer 改动对 26 条良性命令的 verdict 无变化（仅对未加引号的 `a{2}`/`(a)` 切分不同），未见新误报。
+
+**结论**：把 WIP 提交并补 3 条测试（subshell/brace、`bash -lc`、`/usr/bin/env bash -c` 或 `env -i`），再处理 `\r`（在 `_check_command_text` 里按 `\r\n|\r|\n` 切，或把 `\r` 加入 tokenizer 空白集），并给每类补回归用例，即可转 PASS。范围很小。
+
+## 任务逐项验证
+
+| 任务 | 声称 | 核验结论 | 证据 |
+|---|---|---|---|
+| 0.1–0.4 grill + 停轮 + 回填 | 已完成 | 完成：`reviews/grill-design.md` 有 7 条 `## Confirmed Decisions`、6 条 Open Questions、4 条 `## User Confirmation`（Q1/Q2/Q3/Q6 均含实质答复 + 时间），design/proposal 的 `待确认` 已清理为结论 | `reviews/grill-design.md:11-31`；`design.md:47-127` |
+| 1.1–1.4 spec delta / Impact / RIR / Pre-Impl Review | 已完成 | 完成，MODIFIED Requirement + 5 条新 Scenario 与 design 一致 | `specs/workspace-safety/spec.md:1-60` |
+| 1.5 落地到正式 spec | 已完成 | 完成，`openspec/specs/workspace-safety/spec.md` 与 delta 逐段一致（唯一例外见 I1：spec 无条件 SHALL，实现在链式命令下不成立） | `openspec/specs/workspace-safety/spec.md:206-267` |
+| 2.1–2.6 / 2.3b / 2.3c 回归用例 | 已写 | 已写且**判别力足够**（变异验证见下） | `tests/agent/tools/test_command_guard.py:215-360` |
+| 2.7「运行新测试确认必红」 | 已记录 | **证据缺失**：change 目录内无任何红测输出记录（`grep -rn "红\\|变异"` 只命中 tasks/proposal/design/diagnosis 的**计划**文字）。但该结论**可独立复现**（见「独立复算」变异验证），故非实质缺陷 | `tasks.md:28`、`tasks.md:51` |
+| 2.8 不依赖时序 | 已完成 | 成立：新用例全是纯函数调用，无 sleep / IO | `tests/agent/tools/test_command_guard.py:215-410` |
+| 2.9「电池全集固化为测试数据」 | 已勾选 | **未真正落地**：仓库内无「26 条良性电池」fixture（`grep -rln 良性命令` 只命中 change 文档）。新用例覆盖了各家族但打散在参数化表里，且**不含** proposal 表格逐条枚举的 26 条全集 → 4.4「与预测数字对齐」仍缺可复算基线（R4 未真正闭） | `tests/agent/tools/test_command_guard.py:215-340`；无 fixture 文件 |
+| 3.1–3.9、3.11–3.12 实现 | 已完成 | 已实现：`_normalize_path`/`_within`/`_is_device_exempt`/`_dest_is_sensitive`、5 处调用点改段边界、`..` 规范化、rm 工作区根拒绝、docstring 更新。**但 3.8 的落地方式引入回归**（I1） | `agent/tools/command_guard.py:49-84, 243-257, 284-356` |
+| 3.10（条件任务） | 未勾 | 合理未勾；但实现期确实发现新影响面（I1）却**未回写 Impact Analysis**，该任务实为被绕过 |
+| 4.1 command_guard 用例 | 全绿 | 实测 `91 passed` | `uv run pytest tests/agent/tools/test_command_guard.py -q` |
+| 4.2 攻击集 | 全绿 ≥50 | 实测 `56 passed`（50 guard-deny + 4 sensitive-read + 2 结构），拦截数 50/50 不降 | `uv run pytest tests/benchmark/test_attack_suite.py -q` |
+| 4.3 变异验证 | 双向已记录 | **可复现**：影子树装回 base 版 guard → 新测试 `32 failed, 59 passed`；装回 head 版 → 全绿。判别力成立 | `/tmp/247-verify/mut`（base 版 guard + head 测试） |
+| 4.4 仿真复算对齐 | 17→0、50/54 | **部分成立**：攻击集 50/54 复算一致；误报**方向**一致（我的 26 条重建电池 21→0）。但「17」这一精确数字**不可复现**——电池未落库，无基准可对齐（同 2.9） | 见「独立复算」 |
+| 4.5 全量 pytest | 全绿（2 条 memory 失败为 master 既有） | **数字属实**：实测 `2 failed, 3113 passed, 9 skipped in 825s`，2 条失败均为 `tests/agent/memory/test_persistent.py::TestFindScopeRoot`。**「既有」说法独立证实**：该测试文件未被本 diff 触碰；失败根因是本机 `/tmp/.git` 目录存在（`/tmp` 是 git 仓库），测试从 `tmp_path` 上溯把 `/tmp` 当成 scope root；把 `TMPDIR` 指向非 git 目录后同样两条**全绿**（`5 passed`）。与 guard 改动无关 | `TMPDIR=~/.cache/247-tmp uv run pytest tests/agent/memory/test_persistent.py::TestFindScopeRoot -q` |
+| 4.6 OpenSpec strict validate | 通过 | 实测 `29 passed, 0 failed` | `npx @fission-ai/openspec@1.4.1 validate --all --strict` |
+| 4.7 artifact checker | 通过 | 以真实 base 运行 `--base-ref 369d99d` → `OpenSpec artifact checks passed`（exit 0）。默认 `--base-ref master` 会报 `2026-09-26-fix-issue-249-...` 归档缺事件——那是 master 上**另一个** change（`14f6e24`）的产物，与本 change 无关 | `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref 369d99d` |
+| 4.8 Bash 层未受影响 | 已确认 | 未单独复跑，但 4.5 全量通过已覆盖 `tests/agent/tools/test_bash*` | 全量 pytest |
+| 4.9 benchmark smoke | 已跑，结论可信 | **可信**：`/tmp/smoke-247` 与 base 对照 `/tmp/smoke-247-base` 的逐任务 pass/fail **完全一致**（同一 fake agent 基线）。注：fake agent 不执行真实 Bash（trace 里 tool_calls 为空），该 smoke 只能证明主循环未崩，**不能**作为护栏判定行为的证据 | `diff` `/tmp/smoke-247/2026-09-26T02-44-50/summary.md` vs `/tmp/smoke-247-base/2026-09-26T02-46-19/summary.md` |
+| 5.1 文档扫描 + 纳入 interview 目录 | 已完成 | 部分完成：`walkthrough.md` §2.2/§2.3、`Q10-sandbox.md` 行号已同步；但 §2.4/§2.5 的行号、`_EXTRA_DENYLIST` 残留口径未同步 → I3 | 见 I3 |
+| 5.2 / 5.3 / 5.4 文档收尾 | 未勾 | 尚未执行（acceptable：属 PR 前收尾阶段），但 R6 残余面记入 `known-debt.md` 的任务仍未落地 → I4 |
+| 6.x / 7.x | 未勾 | 未执行（本审阅即 6.1） |
+
+## Issues
+
+- **I1 (major)**: 链式命令中的 mv/cp 敏感点目录写入**不再被拦**——base 能拦、新代码放行，净拦截面缩小。
+  实现把点目录正则分支从 `_EXTRA_DENYLIST` 删除（`agent/tools/command_guard.py:113`，现仅剩 `/etc/|/proc/|/sys/|/var/|/dev/(?!null\b|stdout\b|stderr\b)`），改为只在 `_check_mv_cp` 里做段级判定（`:313-329`）。但 `_check_mv_cp` **只在 `tokens[0]` 是 `mv`/`cp` 时被调用**（`_check_argv`，`:261-282`；分派点 `:274`）。命令链（`cd`/`echo`/`true`/`bash -c` 打头）下 argv 通道完全不触发，而正则通道又被删掉了点目录分支 ⇒ **两通道均不覆盖**。
+  实测（我自己构造的向量，`old` = `369d99d` 版 guard，`new` = `be480dd` 版）：
+  | 命令（单次 Bash 调用，真实可执行） | old | new |
+  |---|---|---|
+  | `cd /tmp && cp evil ~/.ssh/authorized_keys` | DENY/denylist | **ALLOW** |
+  | `cd /tmp && mv evil ~/.ssh/authorized_keys` | DENY | **ALLOW** |
+  | `bash -c "cp evil ~/.ssh/authorized_keys"` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil ~/.git/hooks/pre-commit` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil ~/.gitconfig` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil ~/.docker/config.json` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil ~/.aws/credentials` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil ~/.kube/config` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil ~/.gnupg/secring.gpg` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil ~/.npmrc` / `~/.pypirc` / `~/.netrc` / `~/.git-credentials` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil a/.env` / `~/.env` | DENY | **ALLOW** |
+  | `cd /tmp && cp evil proj/.git/hooks/pre-commit` | DENY | **ALLOW** |
+  | `true; cp evil sub/.env/secrets` | DENY | **ALLOW** |
+  纯 mv/cp 形式（非链式）仍正确拦截，说明判定逻辑本身对、**只是没接上链式路径**。
+  这与 proposal `Goal #4`/`Non-Goals`「不削弱任何既有攻击拦截」、`spec` 的 SHALL「mv/cp 目标命中敏感点目录 SHALL 被拒绝」（`openspec/specs/workspace-safety/spec.md:210` 无「仅限首 token」限定）**直接冲突**；`50/54` 攻击集没有链式点目录用例，故该验收口径测不出（grill `R1` 已预警这个盲区，`reviews/grill-design.md:35`，现在确实发生了）。
+  建议：把点目录判定从「首 token 的 argv 通道」提升为**命令级扫描**——按 `&&`/`;`/`|`/换行切分命令串，对每个子命令跑 `_check_mv_cp`（或对每个 `mv`/`cp` 出现位置做段级检查）；等价地，在 `_EXTRA_DENYLIST` 保留一个**段感知**的点目录分支兜底。并补链式回归用例（含 `~/.ssh/authorized_keys`、`bash -c` 包裹）。
+
+- **I2 (major, 与 I1 同源)**: `_DEVICE_EXEMPT` 与 denylist lookahead 并**未真正同步**，注释与测试的保证不成立。
+  `agent/tools/command_guard.py:113` 用 `\b` 作词边界（`(?!/null\b...)`），`\b` 不是 `/` 感知的：`/dev/null/sda` 中 `null` 后接 `/` 已构成词边界，故 lookahead 判为「豁免」——但按段语义 `/dev/null/sda` **不在** `_DEVICE_EXEMPT` 内。实测 regex：`cp x /dev/null` 不匹配（对，豁免）、`cp x /dev/null/../sda` **不匹配**（错）、`cp x /dev/null/sda` **不匹配**（错）、`cp x /dev/nullx` 匹配（对）。因此链式下 `echo hi && cp evil /dev/null/sda`、`echo hi && cp evil /dev/stdout/../sda` 由 base 的 DENY 变 **ALLOW**（argv 通道在链式下不触发，正则已被 lookahead 放走）。
+  `:111-112` 的注释「The lookahead must stay in sync with `_DEVICE_EXEMPT`; a test asserts exactly that」与 `tests/agent/tools/test_command_guard.py:392-410` 的测试都**只覆盖 `cp x /dev/null` 等价形式**与 `/dev/sda`、`/dev/fd/1`、`/dev/tcp/x`，**未覆盖 `/dev/null/<sub>` 与 `/dev/null/../*`**，因此无法发现该失配。
+  建议：lookahead 改为 `/` 感知（如 `(?!/null(/|$)|stdout(/|$)|stderr(/|$))`），并给同步测试加 `/dev/null/x`、`/dev/null/../sda`、`/dev/stdout/x` 三个反例。（注：`/dev/null/x` 在真实内核是 ENOTDIR，危害有限；但 `/dev/null/../sda` 类写法与 I1 同属「链式下两通道皆空」的模式，应一并收口。）
+
+- **I3 (minor)**: 文档行号/口径同步不完整（本 change 自身移动了行号，属于本次引入的事实变化）。
+  - `docs/interview-bullets/walkthrough.md:2649` `_check_argv()（:190-211）`、`:2653-2657` 的 `:213-231`/`:233-242`/`:244-257`/`:269-287`/`:259-267`、`:2665` 的 `:166-176` 全是**旧行号**（新值分别为 261-282、284-311、313-329、331-344、358-376、346-356、231-241），而同一文件的 §2.2/§2.3 已更新为新行号——同文档内自相矛盾。
+  - `walkthrough.md:3054/3058` 仍写「扩展黑名单 (18)」，与 §2.3 已改成的「16 个」矛盾（实测 `len(_EXTRA_DENYLIST) == 16`，base 亦为 16 → §2.3 的 16 是对的，18 是历史错误值）。
+  - `docs/interview-bullets/interview-prep.md:429,445` 仍写「18 个扩展模式」（未被本 change 触碰）。
+  - `docs/interview-script/questions/Q10-sandbox.md:35` 「`_EXTRA_DENYLIST` … 31 行」未更新（base 29 行 / head 35 行，本就失准）。
+  建议：一并把上述行号与计数改为新值，或至少不再新增错误口径；同时补 `docs/known-debt.md` 的 R6 残余面（tasks 5.2 未勾）。
+
+- **I4 (minor)**: `tasks.md:30`（2.9）与 `:52`（4.4）的可复算基线要求未真正满足——「26 条良性电池」没有作为 fixture 落库，`4.4` 的「17」不可机械复现（我重建 26 条得 base 误拒 21、fix 后 0；精确 17 依赖具体取样）。建议把电池写成参数化用例表或 JSON fixture，使 4.4 有参照物。
+
+## 独立复算
+
+- **攻击集拦截（base vs head，`benchmarks/attacks/attacks.json` 全 54 例）**：base `50/54`（reason 直方图 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}`，未拦 4 例为 `sensitive-read-001..004`）；head `50/54`，直方图**逐项相同**，未拦 4 例相同。限定 guard-deny 子集：base `50/50`、head `50/50`；sensitive-read 两侧均 `4/4 ALLOW`。**结论：攻击集侧不退化，实现方与 grill 的数字属实。**
+- **自构造绕过尝试（我独立构造，非照抄文档）**：
+  - 链式点目录族：12+ 条 base DENY → head **ALLOW**（见 I1 表）。
+  - 链式 `/dev/null/<sub>` 族：`echo hi && cp evil /dev/null/sda`、`... /dev/null/../sda`、`... /dev/stdout/../sda`、`echo hi && mv evil /dev/stderr/../sda` 均 base DENY → head **ALLOW**（见 I2）。
+  - `bash -c "cp evil ~/.ssh/authorized_keys"`：base DENY → head **ALLOW**。
+  - 正对照（head 仍拦，未放松）：`cp x src/.git/hooks/pre-commit`→DENY/`mv_cp_dest`；`cp x .env`→DENY；`cp x /dev/null/../sda`（非链式）→DENY/`mv_cp_dest`；`rm -rf /dev/null`→DENY；`echo x > /dev/fd/1`→DENY；`echo x > /dev/null/../sda`→DENY（重定向通道用等值判定，不受 I2 的 `\b` 问题影响，**这条通道是干净的**）。
+  - workspace 侧：head 新增拦截 `/tmp/ws/../etc`、`/tmp/ws/../../etc`、`/tmp/ws/..`、`/tmp/ws`、`/tmp/ws/`、`/tmp/ws-evil`、`/tmp/wsX`（均 DENY/`rm_target_escape`），且仍放行 `/tmp/ws/build`、`/tmp/ws//evil`、`rm -rf build`（相对路径）——**收紧方向正确，无误伤**。`_check_rm` 的分支顺序（先 `_within` 判越界、再 `== ws` 判根）**无逻辑漏洞**：`_within(ws, ws)` 为真故不会误入第一支，第二支能正确接住根。
+  - `/dev/null/../sda`、`/dev//sda`、`/dev/./sda`（重定向）经 `_normalize_path` 均正确 DENY——**规范化有效**。
+- **良性命令电池**：按文档家族重建 26 条 → base 误拒 21/26、head 误拒 **0/26**。方向与「误报清零」一致；文档的精确「17」因无落库 fixture 无法逐条对齐（见 I4）。
+- **变异验证**：影子树 `/tmp/247-verify/mut`（其余全软链 head，仅 `agent/tools/command_guard.py` 换回 `369d99d` 版）跑 head 的 `tests/agent/tools/test_command_guard.py` → `32 failed, 59 passed`；换回 head 版 → `91 passed`。**新测试判别力成立，非自证。**
+- **全量 pytest**：`2 failed, 3113 passed, 9 skipped in 825.00s`。2 条失败 = `tests/agent/memory/test_persistent.py::TestFindScopeRoot::{test_returns_none_for_non_git_dir,test_malformed_git_file_falls_back_to_scan}`；`TMPDIR` 改指非 git 目录后 `5 passed`，确认是本机 `/tmp/.git` 导致的环境问题，**非本 change 引入**。实现方「2 条 memory 失败是既有」的说法**成立**。
+- **OpenSpec strict validate**：`29 passed, 0 failed`。
+- **artifact checker**：`--base-ref 369d99d` → `OpenSpec artifact checks passed`（exit 0）。
+- **benchmark smoke**：`/tmp/smoke-247` 存在且与 `/tmp/smoke-247-base` 逐任务 pass/fail 完全一致；但 fake agent tool_calls 为空，该 smoke 不构成护栏行为证据。
+
+## 备注
+
+- 未修改任何仓库文件，仅新增本 review 报告。所有复算脚本位于 `/tmp/247-verify/`（`verify.py`、`probe*.py`、`battery.py`、`mut/` 影子树）。
+- I1/I2 是**同一根因的两个表现**（点目录/设备豁免从「命令级正则」搬到「仅首 token 的 argv 通道」），建议一并修并在同一轮复审；I3/I4 可同轮清掉。
+
+---
+
+## Round 1 修复记录（主 session 复核后）
+
+reviewer 的 I1/I2 经主 session 独立复现**均确认属实**，且都是本 change 引入的拦截面收缩：
+
+- **I1**：`cd /tmp && cp evil ~/.ssh/authorized_keys` 等链式形态，master DENY → 修复后 ALLOW。
+  已修：`_check_argv` 改按命令段切分（`_split_command_segments`），逐段检查；`bash -c "…"` 解包后独立检查（`_shell_dash_c_payload`）。
+- **I2**：`/dev/null/sda` 因 `\b` 非 `/` 感知而被误豁免，master DENY → ALLOW。
+  已修：`/dev/` 从 `_EXTRA_DENYLIST` 的 mv/cp 分支移除，设备豁免由 `_DEVICE_EXEMPT` 精确匹配唯一拥有。
+
+**修复后复算**：攻击集 50/54（不变）；良性误拒 0/33；与 master 逐条对比零回归，另有 4 处 ALLOW→DENY（`ls && mv evil .git/config` 等 master 上的既有洞一并堵上）；新增 12 条链式回归测试在未修时必红。
+
+I3（行号）：已修正本 change 触及的引用；`18 个` 计数在 master 上即已漂移（实际 16），按仓库规则另记，不在本 change 内静默修正。
+I4（电池未落库）：本轮 33 条电池已固化进测试；proposal 的「17/26」为早期电池构造，与 reviewer 复建的 26 条口径不同，以测试数据为准。
+
+---
+
+## Round 2（独立复审：`ee893ba` = R2 → `41cbd76` = R3）
+
+四版 `command_guard.py`（base `369d99d` / R1 `be480dd` / R2 `ee893ba` / R3 `41cbd76`）各自独立加载，对同一语料逐条对比。base 与 `master` 的该文件 sha256 相同（`13d1f995…`），故 base 列即 master 列。脚本：`/tmp/247-verify/v/{compare,final,final5,sweep2,residual,deep}.py`。
+
+### 1. R1 的 I1/I2 是否真修好 —— 是
+
+R1 报告里逐条列出的 23 条向量（17 条链式点目录 + 6 条 `/dev/null/<sub>`），在 R3 **全部回到 DENY**（reason `mv_cp_dest`），base 也是 DENY。例：
+
+| 命令 | base | R1 | R2 | R3 |
+|---|---|---|---|---|
+| `cd /tmp && cp evil ~/.ssh/authorized_keys` | D | A | A | **D** |
+| `bash -c "cp evil ~/.ssh/authorized_keys"` | D | A | A | **D** |
+| `true; cp evil sub/.env/secrets` | D | A | A | **D** |
+| `echo hi && cp evil /dev/null/sda` | D | A | A | **D** |
+| `cd /tmp && cp evil /dev/null/../sda` | D | A | A | **D** |
+| `echo hi && mv evil /dev/stderr/../sda` | D | A | A | **D** |
+
+R2 引入的 per-segment 分派 + I2 的「`/dev/` 移出 denylist、豁免由 `_check_mv_cp` 精确拥有」都成立，且未见 ALLOW→DENY 误伤。
+
+### 2. R3 声称的「换行修复」—— 属实
+
+`cd /tmp\ncp evil ~/.ssh/authorized_keys`、`cd /tmp\ncp evil a/.env`、`echo hi\ncp evil /dev/sda`、`cd /tmp\nmv evil sub/.env/secrets`、`echo hi\r\ncp evil a/.env`：R2=A → R3=D。`cd /tmp\r\ncp evil .env` 更是 base=A → R3=D（净收紧，因为 base 的 `\r` 让 `/tmp\r` 也不匹配，且该形态 base 靠正则漏掉）。良性多行命令（`cd /tmp\nls -la`、`git add .\ngit commit -m x`）仍 ALLOW。
+
+### 3. 仍然存在的 DENY→ALLOW 收缩面（base/master 能拦，R3 放行）
+
+格式：`base / R1 / R2 / R3`
+
+**3a. shell `-c` wrapper 只解包一部分（major）**
+
+| 命令 | base | R1 | R2 | R3 |
+|---|---|---|---|---|
+| `bash -lc 'cp evil a/.env'` | D | A | A | **A** |
+| `bash -ic 'cp evil a/.env'` | D | A | A | **A** |
+| `zsh -ic 'cp evil a/.env'` | D | A | A | **A** |
+| `/usr/bin/env bash -c 'cp evil a/.env'` | D | A | A | **A** |
+| `/usr/bin/env sh -c 'cp evil a/.env'` | D | A | A | **A** |
+| `env -i bash -c 'cp evil a/.env'` | D | A | A | **A** |
+| `bash -c 'cp evil a/.env'` | D | A | **D** | **D** |
+| `sudo bash -c 'cp evil a/.env'` | D | D | D | D |
+
+即：`bash -c` 已拦，但**组合短选项 `-lc`/`-ic`** 与 **`/usr/bin/env` / `env -i` 前缀**未覆盖。修法：`_shell_dash_c_payload` 已在 WIP 里改成「任一 `-…c…` token」；还需 (a) `env` 解包接受 `…/env`（`rsplit('/')[-1] == 'env'`）并跳过 `-i`/`-u X` 等选项，(b) 或在 segment 归一化阶段剥 wrapper。
+
+**3b. subshell / brace 分组未切段（major at R3；WIP 已修）**
+
+| 命令 | base | R1 | R2 | R3 |
+|---|---|---|---|---|
+| `(cp evil ~/.ssh/authorized_keys)` | D | A | A | **A** |
+| `cd /tmp && (cp evil a/.env)` | D | A | A | **A** |
+| `cd /tmp && ( cp evil a/.env )` | D | A | A | **A** |
+| `cd /tmp && { cp evil a/.env; }` | D | A | A | **A** |
+| `cd /tmp && (cd sub && cp evil a/.env)` | D | A | A | **A** |
+| `cd /tmp && (cp evil /dev/sda)` | D | **D** | A | **A** ← 注：R2 起是**新出现**的 vs R1 收缩（R1 靠 denylist 的 `/dev/` 拦到，R2 移除后无通道接管） |
+| `cd /tmp && { cp evil /dev/sda; }` | D | **D** | A | **A** ← 同上 |
+
+**3c. `\r` 残留 token（minor）**
+
+`_check_command_text` 按 `\n` 切，`\r` 留在上一段末尾；tokenizer 不把 `\r` 当空白，于是 `a/.env\r` 逃过 `_dest_is_sensitive`。
+
+| 命令 | base | R1 | R2 | R3 |
+|---|---|---|---|---|
+| `cp evil a/.env\r\nls` | D | A | A | **A** |
+| `cp evil a/.env \r\nls` | D | A | A | **A** |
+
+**3d. 未提交 WIP 仍未覆盖的**
+
+`/usr/bin/env bash -c …`、`/usr/bin/env sh -c …`、`env -i bash -c …`、以及 3c 的两条 —— WIP 列均为 A。
+
+### 4. 攻击集 / 误报（四版一致）
+
+- 攻击集（`benchmarks/attacks/attacks.json`，54 例）：base/R1/R2/R3 **均 50/54**，reason 直方图逐项相同 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}`，未拦 4 例仍是 `sensitive-read-001..004`。**不退化。**
+- 良性命令（50 条重建电池）：base 14 误拒 → R1/R2/R3/WIP **1 误拒**。唯一「误拒」是 `cp .env.example .env`（dest 是 `.env`，命中 `_SENSITIVE_DOTFILES`）——这是 base 放行、现在拒绝的**收紧**（与 workspace policy 的 `DEFAULT_DENIED_PATTERNS` 含 `.env` 口径一致），非误伤回归；但它是 agent 的常见 bootstrap 步骤，值得在 PR 描述里点明。
+- 组合扫描（192 语料：12 prefix × 16 payload）：R3 相对 base 的 DENY→ALLOW 共 34 条，其中 31 条是**设计上刻意**的设备豁免（`/dev/null`）与前缀假朋友（`/various.txt`），3 条属 3b/3c 的未闭面。
+
+### 5. 变异验证（判别力）
+
+- R3 的 `TestNewlineSeparatedCommands` 对 **R2 guard** 必红：`5 failed, 127 passed`（5 条全是换行用例）。
+- R3 全测试文件对 **R1 guard** 必红：`17 failed, 115 passed`。
+- R3 全测试文件对 **R3 guard**：`179 passed`（含 attack suite 56 条）。
+- 结论：新测试**有判别力、非自证**；但 3a/3b/3c 三类**没有对应测试**（这正是它们能残留的原因）。
+
+### 6. 递归 / 崩溃安全（新逻辑 `_shell_dash_c_payload` + `self.check(payload)`）
+
+用交替引号构造 1–3000 层嵌套 `bash -c`：无 `RecursionError`、无异常，最深实测 0.03s。原因是本 tokenizer 对深层嵌套会先「打散」payload，实际递归深度封顶在 ~2 层。指数级转义的深度 16（命令长 131KB）也在 0.27s 内返回 DENY。**`BashTool.execute` 不会因该路径崩（无需 try/except 兜底）。**
+
+### 7. R3 仍未解决的问题（与 R1 的 I3/I4 合流）
+
+- **I3'（major）**：3a 的 wrapper 家族。
+- **I4'（major at R3）**：3b 的 subshell/brace 分组（WIP 已修但未提交、无测试）。
+- **I5'（minor）**：3c 的 `\r` 残留。
+- **I6'（minor, 流程）**：WIP 未提交且**无配套测试**（仓库硬规则：每个 fix 必须有回归测试）；`git status` 为 `M agent/tools/command_guard.py` 而 `tests/` 未动。
+- R1 的 I3（文档行号）与 I4（电池落库）在主 session 说明中已按「本 change 不复修 master 既有漂移」处理，**接受**；但 `walkthrough.md` §2.4/§2.5 的行号仍是旧值（本 change 移动了行号），建议在收尾一并更新。
+
+### 独立复算小结（本轮）
+
+| 指标 | 我的实测 |
+|---|---|
+| 攻击集（base / R1 / R2 / R3） | 50/54 · 50/54 · 50/54 · 50/54（直方图一致，未拦 4 例同） |
+| R1 报的 23 条向量在 R3 | 全部回到 DENY（I1/I2 确认修复） |
+| 仍存 DENY→ALLOW（vs base/master） | 3a 6 条 + 3b 7 条 + 3c 2 条 = **15 条** |
+| 其中 WIP 已修 | 3b 全 7 条 + 3a 的 `-lc`/`-ic`/`-zic` 3 条 |
+| WIP 仍缺 | 3a 的 `/usr/bin/env`(2) + `env -i`(1)，3c 的 `\r`(2) |
+| 良性误报 | base 14/50 → R3 **1/50**（`cp .env.example .env`，收紧非误伤） |
+| 变异验证 | R3 新测试 vs R2 guard = 5 red；vs R1 guard = 17 red；vs R3 = 179 green |
+| 递归安全 | 1–3000 层嵌套无 RecursionError |
+| 全量 pytest | 见下 |
+
+---
+
+## Round 3（独立复审：`fd00131` = R4 已提交，+ R5 未提交工作区）
+
+base 列的 `369d99d` 与 `master` 的 `command_guard.py` **sha256 相同**（`13d1f995…`），故下表 base 列 = master 列。脚本：`/tmp/247-verify/v/{r4check,r5check,final5}.py`。
+
+### 1. 逐轮声称的修复 —— 全部核实为真
+
+**R3 的换行族**（R2=A → R3=D）：`cd /tmp\ncp evil ~/.ssh/authorized_keys`、`cd /tmp\ncp evil a/.env`、`echo hi\ncp evil /dev/sda`、`cd /tmp\r\ncp evil .env`（后者 base=A → R3=D，净收紧）。
+
+**R4 的分组 / 组合 flag / env 赋值**：
+
+| 命令 | base | R1 | R2 | R3 | R4 | R5 |
+|---|---|---|---|---|---|---|
+| `(cp evil ~/.ssh/authorized_keys)` | D | A | A | A | **D** | D |
+| `cd /tmp && { cp evil a/.env; }` | D | A | A | A | **D** | D |
+| `cd /tmp && (cd sub && cp evil a/.env)` | D | A | A | A | **D** | D |
+| `bash -lc 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `zsh -ic 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `/usr/bin/env bash -c 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `env FOO=1 bash -c 'cp evil a/.env'` | D | A | A | A | **D** | D |
+| `bash -c cp evil a/.env`（无引号） | D | A | A | A | **D** | D |
+
+**R5 的 shell 关键字族**：`if true; then cp x ~/.ssh/authorized_keys; fi`、`for f in *; do cp $f .env; done`、`while true; do cp x .env; done`、`time/exec/eval/! cp x .env` 均 base=D / R4=A → **R5=D**；且 R5 相对 base 另有 7 条**净收紧**（`if true; then cp x .env; fi`、`for…do cp $f .env` 等 master 上的既有洞）。关键字跳过未见误伤（`time make -j4`、`if [ -f f ]; then cat f; fi`、`for i in 1 2 3; do echo $i; done` 等 19 条关键字/分组良性命令全 ALLOW）。
+
+### 2. 仍然存在的 DENY→ALLOW 收缩面（base/master 能拦，最新状态放行）
+
+**2a. `env` 带选项时不剥 wrapper（major）**
+
+| 命令 | base | R4 | R5 |
+|---|---|---|---|
+| `env -i bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env -u FOO bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env --ignore-environment bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env -i -- bash -c 'cp evil a/.env'` | D | A | **A** |
+| `env FOO=1 bash -c 'cp evil a/.env'` | D | D | D |
+
+R4 的 wrapper 剥除循环只跳「含 `=` 且非 `-` 开头」的 token，`-i` / `-u FOO` / `--ignore-environment` 既非赋值也非 wrapper 名，于是 `tokens[0]` 停在 `-i`，`_shell_dash_c_payload` 直接返回 None。修法：剥 wrapper 时同时跳过 `-` 开头的选项 token（注意 `-u`/`-C` 这类**带值**选项要再跳一格）。
+
+**2b. 长选项含 `c` 会劫持 payload 索引（major；R4 新引入）**
+
+| 命令 | base | R3 | R4 | R5 |
+|---|---|---|---|---|
+| `bash --norc -c 'cp evil a/.env'` | D | **D** | **A** | **A** |
+| `bash --rcfile foo -c 'cp evil a/.env'` | D | A | **A** | **A** |
+| `sh --norc -c 'cp evil a/.env'` | D | D | **A** | **A** |
+| `bash --noprofile -c '…'` / `--login` / `--posix` / `-O extglob` / `-o pipefail` | D | D/A | D | D |
+
+R3 的 `"-c" in tokens[1:3]` 恰好接住了 `--norc`（`-c` 在 index 2），R4 把匹配放宽成「以 `-` 开头且含 `c`」后，`--norc`（index 1）抢先命中，payload 变成 rejoin 的 `'-c cp evil a/.env'` → tokenize 后 `tokens[0] == '-c'` → 不是已知命令 → **ALLOW**。即 **R4 的这次改法在修好 `-lc` 的同时，把 R3 本该拦的 `--norc` 打开了**，属本轮 diff 自己引入的回归。修法：只接受**短选项簇**（`re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", tok)`）而非「含 `c` 的任意 dash-token」。
+
+**2c. 重复 `-c`（minor）**
+
+`bash -c 'echo hi' -c 'cp evil a/.env'` / `bash -c ls -c 'cp evil a/.env'`：base=D，R4/R5=A——payload 取**第一个** `-c` 之后的内容。真实 bash 也只执行第一个 `-c` 的 payload 并把其余当位置参数，所以危害有限；但 base 能拦，建议把「找到 `-c` 后其后的 token 全部 rejoin」改成「对每个 `-c` 之后的残余都查一次」或直接对整个 segment 做 `mv|cp` 文本扫描兜底。
+
+**2d. `\r` 残留 token（minor；R2 已报，仍未修）**
+
+`_check_command_text` 按 `\n` 切，`\r` 留在上一段末 token；tokenizer 不把 `\r` 当空白，于是 `a/.env\r` 逃过 `_dest_is_sensitive`。
+
+| 命令 | base | R4 | R5 |
+|---|---|---|---|
+| `cp evil a/.env\r\nls` | D | A | **A** |
+| `cp evil a/.env \r\nls` | D | A | **A** |
+
+R3 新加的 `cd /tmp\r\ncp evil .env` 用例恰好把 `\r` 落在无害 token 上，所以测不出这一支。修法：在 `_check_command_text` 里按 `\r\n|\r|\n` 切（或把 `\r` 加入 tokenizer 空白集）。
+
+**2e. 深嵌套 ≥ 5（Accepted-by-design，记录备查）**
+
+`bash -c 'bash -c "bash -c \'bash -c "bash -c …"?` 到第 5 层起 payload 不再检查（base=D，R4/R5=A）。**我独立验证了加上限的必要性**：把 `_MAX_NESTED_COMMAND_DEPTH` 抬到 `10**9` 后，深度 200 耗时 0.43s、400 耗时 1.58s（近二次增长），深度 800 抛 `RecursionError`（`BashTool.execute` 的 `self._guard.check(cmd)` 外没有 try/except，会直接冒泡）。所以上界是**必要**且**有据**的取舍，接受；但它是本 change 引入的、base 能拦的显式例外，建议在 spec delta 的 Scenario 或 `docs/known-debt.md` 里落一句，避免以后被当成遗漏。
+
+### 3. 攻击集与误报（六版一致）
+
+| 版本 | 攻击集 DENY | 良性误拒 |
+|---|---|---|
+| base | 50/54 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}` | 6/50 |
+| R1 / R2 | 50/54（直方图同） | 0/50 |
+| R3 / R4 / R5 | 50/54（直方图同） | 0/50 |
+
+未拦 4 例始终是 `sensitive-read-001..004`（有意放行）。**攻击集不退化**；良性侧除 base 自身既有误报外无新增误拒。
+
+### 4. 变异验证（判别力）
+
+| head 测试 vs 旧 guard | 结果 |
+|---|---|
+| R4 测试文件 vs **base** guard | `49 failed` |
+| R4 测试文件 vs **R1** guard | `27 failed` |
+| R4 测试文件 vs **R2** guard | `13 failed` |
+| R4 测试文件 vs **R3** guard | `8 failed`（分组/组合 flag） |
+| R4 测试文件 vs **R4** guard | `214 passed` |
+| R5 新增关键字测试 vs **R4** guard | `7 failed`（正是关键字族） |
+| R5 全文件 vs **R5** guard | `214 passed`（含 attack suite） |
+
+每一轮的新测试对上一版 guard 都**必红**，判别力成立、非自证。
+
+### 5. 其他独立核验
+
+- R3 全量 pytest（影子树，R3 guard）：`2 failed, 3155 passed, 8 skipped in 594s`，2 条失败仍是 `tests/agent/memory/test_persistent.py::TestFindScopeRoot` 的 `/tmp/.git` 环境问题（`TMPDIR` 改指非 git 目录即全绿），与 guard 无关。
+- R5 边界探测：六版均无 `RecursionError` 泄漏（R5 由于上界更不会）；`bash -c` payload 的 rejoin 未引入崩溃。
+- R5 未提交：`git status` = `M agent/tools/command_guard.py` + `M tests/agent/tools/test_command_guard.py`。**审阅时上游宣称的 R5 修复还没有进 commit**，PR 可审内容是 `fd00131`（R4），而 R4 含 2b 的 `--norc` 回归。
+
+### 6. 转 PASS 的最小清单
+
+1. **2b**：`_shell_dash_c_payload` 的 flag 匹配改成短选项簇正则（`-[A-Za-z]*c[A-Za-z]*`），补 `bash --norc -c '…'`、`bash --rcfile foo -c '…'`、`sh --norc -c '…'` 回归用例。
+2. **2a**：剥 wrapper 时跳过 `-` 开头选项（`-i`、`--ignore-environment`、带值的 `-u FOO`/`-C dir`），补 `env -i bash -c '…'`、`env -u FOO bash -c '…'` 用例。
+3. **2c**：payload 不只取第一个 `-c`；补重复 `-c` 用例。
+4. **2d**：`\r` 作为段边界（或 tokenizer 空白），补 `cp evil a/.env\r\nls` 用例。
+5. **提交 R5**（含关键字测试），并在 spec delta / known-debt 里记录 **2e** 的嵌套上界。
+6. 顺带：`walkthrough.md` §2.4/§2.5 行号仍为旧值（本 change 移动了行号）。
+
+以上 1–3 是**同一段代码**（`_shell_dash_c_payload` 的 wrapper/flag/payload 解析），一次改完，配 6–8 条参数化用例即可。改完给我同一组向量我再复算一轮即可转 PASS。
+
+---
+
+## Round 4（独立复审：`bef15e6` = R6）
+
+脚本：`/tmp/247-verify/v/{final_r6,residual_r6,whichround,wrapsweep,launchers}.py`。base 列 = master 列（`369d99d:command_guard.py` 与 `master:command_guard.py` sha256 相同）。
+
+### 1. 我 R5 报的 11 条 —— 11/11 确认修好
+
+逐条实测 base=D、R6=D（R5 时全为 A）：
+
+| 命令 | base | R1 | R2 | R3 | R4 | R5 | R6 |
+|---|---|---|---|---|---|---|---|
+| `env -i bash -c 'cp evil a/.env'` | D | A | A | A | A | A | **D** |
+| `env -u FOO bash -c '…'` | D | A | A | A | A | A | **D** |
+| `env --ignore-environment bash -c '…'` | D | A | A | A | A | A | **D** |
+| `env -i -- bash -c '…'` | D | A | A | A | A | A | **D** |
+| `bash --norc -c '…'` | D | A | D | D | A | A | **D** |
+| `sh --norc -c '…'` | D | A | D | D | A | A | **D** |
+| `bash --rcfile foo -c '…'` | D | A | A | A | A | A | **D** |
+| `bash -c 'echo hi' -c 'cp evil a/.env'` | D | A | A | A | A | A | **D** |
+| `bash -c ls -c 'cp evil a/.env'` | D | A | A | A | A | A | **D** |
+| `cp evil a/.env\r\nls` | D | A | A | A | A | A | **D** |
+| `cp evil a/.env \r\nls` | D | A | A | A | A | A | **D** |
+
+我另外构造的 34 条新向量里 31 条也回到 DENY（含 `env -u FOO -u BAR …`、`env -C /tmp …`、`env --unset/--chdir`、`/usr/bin/env -i …`、`bash -O extglob -c`、`bash -o pipefail -c`、`bash -ac`/`-ca`、`bash --noprofile --norc -c`、`nohup env -i …`、`cp evil a/.env\rls`、`\rcp evil a/.env`、`echo x\r\ncp evil .env`）。**主 session 的修法（wrapper 选项剥离 / 短选项簇正则 / 多 payload / `[\r\n]` 段边界）都成立。**
+
+### 2. 仍有 3 条收缩面（均与最新 diff 同源）
+
+均经**真实 `bash`** 执行验证（写文件成功），非理论推演。
+
+**I-1（major）· `_strip_wrappers` 不跳 shell 关键字 —— R5 的关键字修复只做了一半**
+
+R5 在 `_check_argv_segment` 里加了 `_SHELL_KEYWORDS` 跳过，但 payload 通道走的 `_strip_wrappers`（`agent/tools/command_guard.py:173-189`）没跳。于是「关键字 + `bash -c`」的段里，两条通道都放行。
+
+| 命令（真实执行成功） | master | R6 |
+|---|---|---|
+| `if true; then bash -c 'cp evil ~/.ssh/authorized_keys'; fi` | D | **A** |
+| `for f in *; do env -i bash -c 'cp evil ~/.ssh/authorized_keys'; done` | D | **A** |
+| `! bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `eval bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `time bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `exec env -u FOO bash -c 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+
+修法：在 `_strip_wrappers` 里同样（循环）跳过 `_SHELL_KEYWORDS`——即让关键字跳过发生在**两条通道共用的入口**，而不是只写在 `_check_argv_segment` 里。这是把 R5 的修复补完，不是新增要求。
+
+**I-2（major）· payload rejoin 把 script 与 `$0`/位置参数混为一谈**
+
+`_shell_dash_c_payloads` 把 `-c` 之后的 token 全部 join（`:161`）。但 `bash -c 'SCRIPT' arg0 arg1` 里 `arg0`/`arg1` 是 `$0`/`$1`，不是 script 的一部分；join 后 `_check_mv_cp` 取**最后一个** arg 当 dest，于是 dest 变成 `arg0`。
+
+| 命令（真实执行成功） | master | R6 |
+|---|---|---|
+| `bash -c 'cp evil ~/.ssh/authorized_keys' extra` | D | **A** |
+| `env -i bash -c 'cp evil ~/.ssh/authorized_keys' extra` | D | **A** |
+| `cd /tmp && bash -c 'cp evil ~/.ssh/authorized_keys' extra more` | D | **A** |
+
+修法：把 `tokens[index+1]` **单独**当一个 payload 检查，**并且**再检查 join 后的整串（两条都送 `self.check`，任一 DENY 即拒）。这样同时保住未加引号形态（`bash -c cp evil a/.env`，需要 join 才能看出 dest）与带 `$0` 的形态。
+
+**I-3（minor）· `env -S` / `--split-string` 的值被识别成「选项参数」后丢弃**
+
+R6 新把 `-S`/`--split-string` 加进 `_WRAPPER_OPTS_WITH_VALUE`，于是它吃掉的值被直接跳过——但 `env -S '<cmd>'` 里那个值**就是**要执行的命令。
+
+| 命令（真实执行成功） | master | R6 |
+|---|---|---|
+| `env -S 'bash -c "cp evil ~/.ssh/authorized_keys"'` | D | **A** |
+| `env -S 'cp evil ~/.ssh/authorized_keys'` | D | **A** |
+| `env --split-string '…'` | D | **A** |
+
+修法：对 `-S`/`--split-string` 消费掉的值调用 `self.check(value)`（env 会把该串再分词后执行），而不是丢弃。
+
+### 3. 明确**不作为**阻塞项：广谱 launcher 尾巴（known-debt，需 sign-off）
+
+我用「14 wrapper × 18 shell 形态」的组合语料扫出 117 条 base-D→R6-A；除去上面 3 个根因，还有一大批**别的启动器**：
+
+`nice/setsid/stdbuf/taskset/ionice/unshare/watch/screen/flock bash -c '…'`、`busybox sh -c '…'`、`toybox sh -c '…'`、`xargs sh -c '…'`、`find . -exec sh -c '…' \;`、`bash -s <<< '…'`、`bash <<< '…'`、`sh -s <<< '…'`、`echo '…' | env -i bash`、`make -f <(echo '…')`、`sed 's/x/…/e' f`、`at now <<< '…'`。
+
+**我把这一类判为不阻塞**，理由（请主 session/用户明确接受或驳回）：
+
+- master 对它们的拦截是**「对整条原始命令串跑字面正则」的副产物**（`\S*/\.[a-z]+\b` 恰好匹配到命令文本里的 `~/.ssh`），而本 change 的 design 正是**刻意**把这条通道换成结构化 argv 解析（D1/D4/非目标「不做 shell 语义模拟」）。要求逐一把它们收回来，等于要求恢复被删掉的那条通道。
+- proposal 对 Goal #4 的**操作定义**是「`benchmarks/attacks/attacks.json` 的 guard-deny 用例拦截数不得下降」——实测 **50/54 不变**，满足。
+- 这些形态都要求**刻意叠加启动器做混淆**（`nice` + `bash -c` + 引号），而 `cp x ~/.ssh/authorized_keys` 的朴素写法已被拦；guard 自述且 spec 认可「guardrail, not boundary」，真实边界在执行后端。
+- 这是一个**开放集合**（我还能继续生成 `systemd-run`、`chroot`、`script` 等），不设边界地追会与 Non-Goals 冲突。
+
+如果用户/主 session 认为这一桶也必须收（即采用严格的「任何 master-D→head-A 都算回归」口径），请明确告知，我按同一口径重列清单——但那样本 change 的范围会显著扩大，需要回到 design 层面（而不是再补一个正则）。
+
+**注**：我在 R1/R2/R3/R5 各轮用的是严格口径（当时报的形态都是**朴素可达**的，如 `cd /tmp && cp evil ~/.ssh/authorized_keys`，不需要任何混淆），本轮的 I-1/I-2/I-3 我也按同一口径判为阻塞——但第 3 节的 launcher 桶我主动降级，并在此明确标注这是**我的判断**，需 sign-off。
+
+### 4. 攻击集 / 误报 / 变异 / 全量（七版一致）
+
+- 攻击集（54 例）：base/R1/R2/R3/R4/R5/R6 **均 50/54**，直方图逐项相同 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}`，未拦 4 例始终 `sensitive-read-001..004`。**主 session 的「50/54 不变」属实。**
+- 良性命令（64 条电池）：base 6 误拒 → R1–R6 **均 0 误拒**。主 session 的「0 误拒」属实（我用 64 条，不比他的 25 条弱）。另外我组合语料里 6 条「误拒」全是 `echo x | bash -c '…'`，base 也拒（走 `pipe_to_shell`），**非新增误伤**。
+- 变异验证（影子树，head 测试 vs 旧 guard）：vs **R5** = `11 failed`、vs **R4** = `18 failed`、vs **base** = `49 failed`、vs **R6** = `169 passed`。新测试**有判别力、非自证**。
+- 全量 pytest（R6 守卫，我独立跑）：`3 failed, 3190 passed, 9 skipped in 569.92s`。前 2 条 = `tests/agent/memory/test_persistent.py::TestFindScopeRoot`，本机 `/tmp` 是 git 仓库导致，`TMPDIR` 改指非 git 目录即全绿——与我 R1 的结论一致，**非本 change 引入**。
+- 第 3 条：主 session 报的是 `test_workflow_graph_browser.py::test_workflow_view_survives_delayed_app_init`，**我这次跑到的是另一条** `test_reconnect_pending_interaction_browser.py::test_reconnect_replays_question_card_and_it_is_actionable`。两条我都隔离重跑过：分别 **1 passed**（20.7s / 7.1s）。两次全量跑挂的**不是同一个**浏览器用例，这比单个数据点更强地证明是**非确定性的既有浏览器 flake**；两条都不 import `command_guard`，diff 对 `web/` 改动为 0 个文件。**「既有浏览器 flake」成立，主 session 的归因正确。**
+- 递归安全：R6 有 `_MAX_NESTED_COMMAND_DEPTH = 4` 上界；深度 1–40 无 `RecursionError`、无挂起。**上界的必要性我独立复算过**（把上界抬到 `10**9` 后，深度 400 耗时 1.58s 近二次增长，深度 800 抛 `RecursionError`，而 `BashTool.execute` 对该调用外无 try/except），所以接受该取舍。
+
+### 5. 转 PASS 的最小清单（3 处，都在同一个函数区，一次改完）
+
+1. **I-1**：`_strip_wrappers` 补跳 `_SHELL_KEYWORDS`（与 `_check_argv_segment` 共用同一段跳过逻辑）。补 `if true; then bash -c '…'; fi`、`! bash -c '…'` 用例。
+2. **I-2**：payload 同时送检「`-c` 后第一个 token 单独」与「join 整串」。补 `bash -c 'cp x a/.env' extra` 用例。
+3. **I-3**：`-S`/`--split-string` 的值送 `self.check`。补 `env -S 'bash -c "cp x a/.env"'` 用例。
+4. 收尾：把 `_MAX_NESTED_COMMAND_DEPTH` 上界 + 第 3 节 launcher 桶写进 spec delta 或 `docs/known-debt.md`；`walkthrough.md` §2.4/§2.5 行号仍为旧值。
+
+改完把这 3 组向量丢回来，我再跑一遍同一套七版对比即可转 PASS（第 3 节的 launcher 桶我不会再作为阻塞项重复提出）。
+
+---
+
+## Round 5（最终复审：工作区 R7，`e3007df` + 未提交改动）
+
+对象：工作区 `agent/tools/command_guard.py`（sha256 `06e9c658…`）+ `tests/agent/tools/test_command_guard.py`（`c4cc74d2…`）。已提交 head `e3007df` 只加了 spec 文本，**guard 仍是 R6**，故本轮结论绑定 R7 而非 `e3007df`。
+
+### 1. R4 的 3 条 major（I-1/I-2/I-3）—— 3/3 确认修复
+
+| 命令（真实 `bash` 执行成功） | base | R6 | R7 |
+|---|---|---|---|
+| `if true; then bash -c 'cp evil ~/.ssh/authorized_keys'; fi` | D | A | **D** |
+| `for f in *; do env -i bash -c 'cp evil ~/.ssh/authorized_keys'; done` | D | A | **D** |
+| `! bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `eval bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `time bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `exec env -u FOO bash -c 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `bash -c 'cp evil ~/.ssh/authorized_keys' extra` | D | A | **D** |
+| `cd /tmp && bash -c 'cp evil ~/.ssh/authorized_keys' extra more` | D | A | **D** |
+| `env -S 'cp evil ~/.ssh/authorized_keys'` | D | A | **D** |
+| `env --split-string 'bash -c "cp evil ~/.ssh/authorized_keys"'` | D | A | **D** |
+
+修法与我在 R4 给的建议一致：关键字跳过下沉到 `_strip_wrappers`（`:188-215`，argv 与 payload 两条通道的**共用入口**，I-1）；每个 `-c` 产出「首参单独」与「join 整串」两个候选（`:170-186`，I-2）；`-S`/`--split-string` 的值留在 token 流并送检（`:83-85`、`:153-158`，I-3）。
+
+我另构造 16 条针对 R7 新代码的向量（`env -i -u FOO …`、`env -S '…' extra`、`bash -c '…' -c 'echo hi'`、`nohup nohup …`、`env env …`、`command env -i …`、`then bash -c …`、`eval env -S …`、`\rcp evil …`、`if true; then bash -c "bash -c '…'"; fi` 等）**全部 DENY**，无新面。
+
+### 2. R5 的 11 条 —— 仍全部为 DENY（未因 R7 重构倒退）
+
+逐条复测：`env -i`/`-u FOO`/`--ignore-environment`/`-i --`、`bash --norc -c`、`bash --rcfile foo -c`、`sh --norc -c`、重复 `-c` ×2、`\r\n` 残留 ×2 —— **11/11 保持 D**。R1/R2 的原始向量（`cd /tmp && cp evil ~/.ssh/authorized_keys`、`true; cp evil sub/.env/secrets`、`cd /tmp && cp evil /dev/null/../sda`）亦保持 D。
+
+### 3. 数字复核（我的实测，非采信）
+
+- **攻击集**：base/R6/R7 **均 50/54**，直方图 `{denylist:40, rm_target_escape:7, pipe_to_shell:2, curl_exfil:1}` 逐项相同，未拦 4 例仍 `sensitive-read-001..004`。主 session 的「50/54 不变」属实。
+- **良性误报**：62 条电池 base 6 误拒 → **R7 0 误拒**（主 session 称 0/25，我用 62 条，口径更宽仍为 0）。另测 20 条使用 `-S` 的良性命令（`sort -S 1G f`、`curl -sS`、`ssh -S /tmp/sock`、`python3 -S x.py` 等）**0 误拒**——新加的 `-S` 全 token 扫描未见副作用。
+- **组合语料**：21 prefix × 15 payload = 315 条，base-DENY → R7-ALLOW 的**非预期**收缩为 **0**（扣除设计上刻意的 `/dev/null` 与 `/various.txt` 两类）。
+- **变异验证**（影子树，R7 测试 vs 旧 guard）：vs **R6** = `11 failed`（正是本轮 3 条 major 的用例）、vs **R4** = `29 failed`、vs **base** = 更多；vs **R7** = `182 passed`。**新测试有判别力、非自证。**
+- **测试**：`tests/agent/tools/test_command_guard.py` + `tests/benchmark/test_attack_suite.py` → `238 passed`；`tests/agent` + `tests/benchmark` 全量 → `2 failed, 2502 passed, 2 skipped`，2 条失败仍是 `tests/agent/memory/test_persistent.py::TestFindScopeRoot` 的本机 `/tmp` 是 git 仓库导致（非本 change 引入，`TMPDIR` 改指非 git 目录即全绿）。
+- **全量 pytest（R6 守卫）**：`3 failed, 3190 passed, 9 skipped`。3 条 = 2 条 memory（同上）+ 1 条浏览器 flake；**我这次跑挂的是 `test_reconnect_pending_interaction_browser.py::test_reconnect_replays_question_card_and_it_is_actionable`，与主 session 报的 `test_workflow_graph_browser.py::test_workflow_view_survives_delayed_app_init` 不是同一条**；两条我都隔离重跑过（分别 20.7s / 7.1s）**均通过**。两次全量跑挂不同用例，比单个数据点更强地证明是**非确定性既有浏览器 flake**；两条都不 import `command_guard`，diff 对 `web/` 改动为 0 个文件。**主 session 的归因正确。**
+
+### 4. `e3007df` 的 spec 提交 —— 方向正确，且 R7 落地后与实现一致
+
+新增「argv SHALL 覆盖每一段 + 关键字之后 SHALL 受检 + `-c` payload 递归受检且有界」与两个 Scenario，正是把我 R1/R4 指出的**契约变更**写进正式规格（我 R4 §5 第 4 条的诉求）。注意：该 spec 文本中「关键字之后的 `-c` payload 受检」一条，在**已提交的 R6 guard 上不成立**（`if true; then bash -c '…'; fi` 为 ALLOW），**R7 落地后即一致**——这是必须提交 R7 的另一个理由。
+
+### 5. 剩余 minor（不阻塞）
+
+- **M-1（minor，冗余/死代码）**：R7 让 `_check_argv_segment` 先调 `_strip_wrappers`（`:447`），此后 `tokens[0]` 不可能再是 `env`/`command`/`nohup`，于是紧随其后的 `elif cmd_name in ("env", "command", "nohup"): return self._check_argv(tokens[1:])` 分支（`:455-459`）**已不可达**。实测 `_strip_wrappers(['env','bash','-c','x']) == ['bash','-c','x']`，确认不可达。建议删掉该分支（它同时是唯一保留 `_check_argv` 自递归的路径，删掉后递归只剩 payload 通道，更易推理）。功能无影响。
+- **M-2（minor，文档收尾）**：`docs/interview-bullets/walkthrough.md` §2.4/§2.5 的行号仍是旧值（本 change 多次移动行号）；R4 提的 `_MAX_NESTED_COMMAND_DEPTH` 上界已由 `e3007df` 的 spec 补齐（好）。
+
+### 6. 关于我 R4 第 3 节的 launcher 桶（`nice`/`setsid`/`xargs`/`busybox`/heredoc 等）
+
+本轮**重申不作为阻塞项**，理由同 R4（那批形态的 master 拦截是「对整条原始命令串跑字面正则」的副产物，而本 change 的 design 刻意把它换成结构化 argv 解析；proposal Goal #4 的操作定义「攻击集拦截数不下降」已满足；属开放集合，不设界追会与 Non-Goals 冲突）。**此降级是我的判断，需用户/主 session 明确接受或驳回**；若要求严格口径（任何 master-D→head-A 都算回归），请告知，我重列清单，但那需回到 design 层面而非再补正则。
+
+### 7. 结论
+
+R7 的代码改动**实质正确、可审阅**：14 条我报过的收缩面全闭、攻击集不退化、无误报、测试有判别力、无新的 major。**把 R7（guard + 测试）连同已提交的 `e3007df` spec 一起提交后，本 change 的 building 审阅即可判 PASS。** 建议顺手清掉 M-1 的死代码并补 `walkthrough.md` 行号（M-2），二者不影响 verdict。
+
+---
+
+## Round 6（终审：`8fe2faf`；launcher 决策与 M-2 定位）
+
+### 1. `8fe2faf` 复核 —— PASS 有效（并已延伸确认到 `d695f92`）
+
+- **与我 Round 5 复核的 R7 逐字等价（除 M-1）**：`diff /tmp/247-verify/v/r7_guard.py <(git show 8fe2faf:agent/tools/command_guard.py)` 只显示删除了 `_check_argv_segment` 里 `elif cmd_name in ("env","command","nohup")` 分支 + 注释措辞变化。该分支在 `_strip_wrappers` 前置后不可达（我 R5 §5 M-1 已实测 `_strip_wrappers(['env','bash','-c','x']) == ['bash','-c','x']`），**属语义等价清理**。测试文件 sha 与我 R5 快照完全相同（`c4cc74d2…`）。
+- **重跑全部验证（对象 = 已提交 `8fe2faf` guard）**：14 条收缩面 **14/14 = DENY**；攻击集 **50/54**（直方图不变）；良性 **0/62 误报**；315 条组合语料**非预期收缩 = 0**。与 Round 5 结论一致，**PASS 成立**。
+- **复审期间 `d695f92` 落地（docs-only）**：`git show --stat` 只改 `walkthrough.md` / `known-debt.md` / `workflow-events.jsonl`；`git show HEAD:agent/tools/command_guard.py` 与 `8fe2faf` 的 **sha256 完全相同**（`1b735b49…`），测试亦同。**故 PASS 对本轮 HEAD `d695f92` 同样有效**——代码未被触碰。
+
+### 2. R6-1（minor，须修正记录）· launcher 决策的**理由**不成立，但决策本身我接受
+
+**决策我接受**：不在本 change 内收口该 bucket（这正是我 R4 主动降级并请你 sign-off 的提议；你们接受，流程闭环）。
+
+**但「该 bucket 在 master 上就全是 ALLOW，不构成回归」这一量化理由只有一半对。** 我独立复算（对象 = `d695f92` 的 guard，即 `1b735b49…`）：
+
+| 形态 | master | head |
+|---|---|---|
+| `nice cp x .env` / `nice -n 10 …` / `setsid` / `xargs` / `busybox` / `stdbuf` / `taskset` / `ionice` / `flock` / `chroot` / `doas` + `cp x .env` | ALLOW | ALLOW |
+| `nice bash -c 'cp x ~/.ssh/authorized_keys'` | **DENY** | ALLOW |
+| `setsid bash -c '…'` | **DENY** | ALLOW |
+| `xargs sh -c '…'` | **DENY** | ALLOW |
+| `busybox sh -c '…'` | **DENY** | ALLOW |
+| `stdbuf -o0 bash -c '…'` | **DENY** | ALLOW |
+| `find . -exec sh -c '…' \;` | **DENY** | ALLOW |
+| `bash -s <<< '…'` / `bash <<< '…'` | **DENY** | ALLOW |
+| `echo '…' \| env -i bash` | **DENY** | ALLOW |
+
+即：**launcher + 纯 `cp` 子族**在 master 上确为 ALLOW（你们的表对）；但 **launcher + `bash/sh -c '<payload>'` 子族（以及 heredoc `<<<`、`| env -i bash`）在 master 上是 DENY**——我这一子族 **9/9 全部** master-DENY → head-ALLOW。你们的 15 条向量似乎全取了纯 `cp` 形态，因此漏掉了这一子族。
+
+**这条必须修的不是代码，是记录**：`docs/known-debt.md:365` 的判定句「该 bucket 在 master 与 head 上**同为 ALLOW**」及其「**非本 change 引入，且非回归**」的结论，对上述 `-c` 子族**不成立**。按你们自己声明的 bar（「本 change 引入的收缩必须清零」），`nice bash -c '…'` 正是**本 change 引入**的收缩（R1 起存在，根因同我 R1 的 I1）。该条目已在 `d695f92` 提交进仓库（受保护路径，带 `protected_artifact_explained` 事件），**故建议在归档 PR 内一并订正为两段**：
+
+- 纯 launcher + 命令：master/head 同 ALLOW，**非回归**；
+- launcher + `-c` payload / heredoc / `| env -i bash`：master DENY → head ALLOW，**是本 change 引入的收缩，本次刻意延后**（修法 = `_strip_wrappers` 增加 per-wrapper 参数模型，让 `-c` payload 通道对这些 launcher 也能到达）。
+
+这样 known-debt 才如实反映「有一个已知回归被有意 defer」，而不是「这里本来就没问题」——后者会让后续读者不去收口。**注意：这是记录准确性问题，不改 verdict**（我 R4 已明确该 bucket 不阻塞且不再重提，你们据此决策，我尊重该约定）。
+
+### 3. R6-2（minor）· M-2 精确位置（你说没找到——确实有残留；`d695f92` 只修了其中 6 处）
+
+`d695f92`（commit message 称「更新面试文档行号」）**确实修了 6 处**：`tokenize_command` `:133-178`→`:274-319`、`_EXTRA_DENYLIST` `:91-125`→`:234-268`、denylist mv/cp 行 `:113`→`:256`、`_check_mv_cp` `:233-242`→`:499-515`、`_has_protected_redirect` `:178-186`→`:386-403`、「扩展黑名单 (18)」→`(16)`。**但同一表格内仍有 8 处陈旧**（这解释了为何你说「没找到」——改过的地方看着是对的）：
+
+**`docs/interview-bullets/walkthrough.md`**（实际值取 `inspect.getsourcelines`，对象 = `d695f92` 的 guard）：
+
+| 行 | 文中写的 | 实际 | 状态 |
+|---|---|---|---|
+| 2649 | `_check_argv()`（`:190-211`） | `:404` | **未修** |
+| 2653 | `_check_rm` `:213-231` | `:470` | **未修** |
+| 2655 | `_check_chmod` `:244-257` | `:517` | **未修** |
+| 2656 | `_check_timeout` `:269-287` | `:544` | **未修** |
+| 2657 | `_check_curl_wget` `:259-267` | `:532` | **未修** |
+| 2659 | 「`rm` 的特殊处理」（`:200`） | `:347` | **未修** |
+| 2665 | `_has_pipe_to_shell()`（`:166-176`） | `:374` | **未修** |
+| 2665 | `":27": _SHELL_INTERPRETERS` | `:229` | **未修** |
+| 2671 | `check()`（`:128-162`） | `:336` | **未修** |
+| 2631 | `_EXTRA_DENYLIST`（`:234-268`） | `:234-266`（`(` 在 234，`)` 在 266） | 差 2 行（已改但值不对） |
+
+**`docs/interview-script/questions/Q10-sandbox.md`（`d695f92` 完全未触碰，全部失效）**：
+
+| 行 | 文中写的 | 实际 |
+|---|---|---|
+| 22 | `command_guard.py:128` | `:336` |
+| 34 | `check(command)`（128 行） | `:336` |
+| 35 | `_EXTRA_DENYLIST` …「31 行」 | `:234-266` |
+| 37 | `_check_rm`（284 行） | `:470` |
+| 38 | `_check_mv_cp`（313 行） | `:499` |
+| 39 | `_check_chmod`（331 行） | `:517` |
+| 40 | `_check_curl_wget`（346 行） | `:532` |
+| 41 | `_check_timeout`（358 行） | `:544` |
+| 42 | `_has_pipe_to_shell`（231 行）/`_has_protected_redirect`（243 行） | `:374` / `:386` |
+
+（同表 2654 `_check_mv_cp` `:499-515` 与 2667 `_has_protected_redirect` `:386-403` **正确**，所以是同一表格内新旧混杂——这也是你「找不到」的原因：改过的行看着是对的。）
+
+**`docs/interview-script/questions/Q10-sandbox.md`**：`d695f92` 完全未触碰，而代码已从 376 行长到 561 行，**全部再次失效**（见上表）。
+
+**`docs/interview-bullets/interview-prep.md:429,445`**：「18 个扩展模式」——实际 `len(_EXTRA_DENYLIST) == 16`（master 亦 16）。你们先前的处理（master 已漂移、按历史口径另记）我**接受**，不列为本 change 待办。
+
+**根因提示（供决策）**：这类绝对行号是**结构性易腐**的——每改一次 `command_guard.py` 就集体失效，本 change 已让它漂移两轮。建议**要么**改为只写符号名（`_check_rm()`，不带行号），**要么**明确声明该目录的行号不承诺准确、由独立 maintenance 任务批量校准。继续在每次 change 里手改，下一轮还会漂。
+
+### 4. 结论
+
+`8fe2faf` 的 **PASS 有效**，且**同样适用于当前 HEAD `d695f92`**（我核过 `d695f92` 的 guard 与 `8fe2faf` 的 guard **sha256 完全相同** `1b735b49…`，`d695f92` 只动文档）。生成 review manifest / 归档收尾可以进行。
+
+建议在归档 PR 里一并带上两处文档修正（都是文档，不触及代码语义、不改 verdict）：
+1. **R6-1**：`docs/known-debt.md:365` 的「master 与 head 同为 ALLOW / 非本 change 引入」需按「纯 launcher」与「launcher + `-c`/heredoc」两段改写（后者是本 change 引入的收缩，9/9 实测）。
+2. **R6-2**：`walkthrough.md` §2.4/§2.5 的 8 处陈旧行号 + `_EXTRA_DENYLIST` 的 `234-268`→`234-266`；`Q10-sandbox.md` 全表 9 处（`d695f92` 未触碰）。
+
+---
+
+## Round 7（复审 `52d7701`：全文扫描正则）
+
+对象：已提交 `52d7701`（guard sha256 `bc1fc2c9…`）。新增正则（`agent/tools/command_guard.py:262`）：
+
+```
+\b(mv|cp)\s+\S+\s+(?:\S*/)?\.(?:git|ssh|env|aws|gnupg|kube|docker|netrc|npmrc|pypirc)(?![\w.-])
+```
+
+### 1. ✅ R6-1 的 9 条已恢复（我复算 9/9，扩样 14/14）
+
+`nice/setsid/xargs/busybox/stdbuf -o0/watch/flock/screen/chroot/doas bash -c '…'`、`find . -exec sh -c '…'`、`bash -s <<< '…'`、`bash <<< '…'`、`echo '…' | env -i bash` —— base=D、r6/r8=A、**r9=D**，全部回到 master 行为。**主 session 的「9/9 恢复」属实。**
+
+负向前瞻对点目录「假朋友」也有效（直测正则）：`.env`✓拒 / `.env.example`✗放 / `.envrc`✗ / `.environment`✗ / `.gitignore`✗ / `.github/w.yml`✗ / `.dockerignore`✗ / `.env-backup`✗ / `.kubeconfig`✗ / `.netrc.example`✗；而 `.git/config`✓ / `src/.git/hooks/p`✓ / `.ssh/id_rsa`✓ / `sub/.env/secrets`✓ / `.aws/credentials`✓ 仍拒。**设计 D4 的意图保住了。**
+
+### 2. ❌ R7-1（major）· `/dev/` 目标的全文覆盖没恢复 —— 与 R6-1 同一根因的另一半
+
+R2 的 I2 修复把 `/dev/` 从 mv/cp 全文分支**移除**（`:254` 现仅剩 `/etc/|/proc/|/sys/|/var/`），理由是「设备豁免是精确匹配，`_check_mv_cp` 唯一拥有」。这条对**段首 mv/cp** 成立；但对**未剥离的 wrapper** 不成立——argv 通道根本不触发，全文通道又已删掉 `/dev/`。`52d7701` 用新正则补回了点目录，**没补 `/dev/`**。
+
+实测（`base` = master 的 guard）：**45 条 base-DENY → r9-ALLOW**，例如
+
+| 命令 | base | r6 | r8 | **r9** |
+|---|---|---|---|---|
+| `nice cp evil /dev/sda` | D | A | A | **A** |
+| `setsid cp evil /dev/nvme0n1` | D | A | A | **A** |
+| `xargs cp evil /dev/sdb` | D | A | A | **A** |
+| `busybox cp evil /dev/mmcblk0` | D | A | A | **A** |
+| `find . -exec cp evil /dev/sda` | D | A | A | **A** |
+| `watch cp evil /dev/fd/1` | D | A | A | **A** |
+| `doas cp evil /dev/sda` / `chroot / cp evil /dev/sda` | D | A | A | **A** |
+| `nice bash -c 'cp x /dev/sda'` | D | A | A | **A** |
+| `bash <<< 'cp x /dev/sda'` | D | A | A | **A** |
+| `echo 'cp x /dev/sda' \| env -i bash` | D | A | A | **A** |
+
+（段首形态仍正确：`cp evil /dev/sda`→D、`timeout 5 cp evil /dev/sda`→D、`env cp evil /dev/sda`→D。）
+
+**为什么算 major**：这是**本 change 引入**的收缩（R2 起），是你们自己确立并刚刚用于 R6-1 的 bar（「本 change 引入的收缩必须清零」）下的未清项，形态与 R6-1 **完全同类**（wrapper 掩盖 + 全文通道缺项），且**`known-debt.md` 里没有记录这一半**（该条目只谈点目录纯 `cp`）。写裸块设备是经典破坏操作，master 是无差别拒绝的。
+
+**fix 方向（我已实测验证）**：给 `_EXTRA_DENYLIST` 再加一条 `/dev/` 全文分支，豁免用**精确**前瞻（不能用 `\b`——R2 的 I2 正是栽在 `\b` 非 `/` 感知）：
+
+```
+\b(mv|cp)\s+\S+\s+(?:\S*/)?/dev/(?!null(?:[\s;"'|]|$)|stdout(?:[\s;"'|]|$)|stderr(?:[\s;"'|]|$))
+```
+
+我在内存里把它追加进 r9 的 denylist 复算：**45/45 恢复 DENY**（含 `/dev/fd/1`、`/dev/null/sda` 这类「是 `/dev/` 但不是精确豁免目标」）；**攻击集 50/54 不变**（直方图同）；良性 `cp x /dev/null`、`echo hi > /dev/null`、`cmd > /dev/null 2>&1`、`ls -la 2>/dev/null`、`cp x /dev/null;`、`cp x /dev/stdout` 全部保持 ALLOW。建议连同 `/dev/null/../sda`、`/dev/null/x`、`cp x /dev/null;` 三个边界用例一起加进回归。
+
+### 3. ❌ R7-2（minor）· 全文扫描把「引号里提到的 `cp … .dotdir`」也拒了
+
+新正则是**整条命令文本** `re.search`，因此命令**只是提到**这个模式（写在引号/herestring 里）也会命中：
+
+| 命令 | base | r6 | r8 | **r9** |
+|---|---|---|---|---|
+| `grep -rn "cp x .env" docs/` | A | A | A | **D** |
+| `rg -F "cp x .env" tests/` | A | A | A | **D** |
+| `rg "mv z .git/config" src` | A | A | A | **D** |
+| `git log --oneline --grep="mv x .git/config"` | A | A | A | **D** |
+| `sed -n "/cp x .env/p" f` | A | A | A | **D** |
+| `awk "/cp x .env/" f` | A | A | A | **D** |
+| `printf "%s\n" "cp x .env"` | A | A | A | **D** |
+| `git commit -m "add cp x .env regression test"` | A | A | A | **D** |
+| `echo 'cp y .env'` | A | A | A | **D** |
+
+15 条探测里 11 条是 base-ALLOW → r9-DENY。这不是安全问题（放行→拒绝），但它**违背本 change 的 Goal #1（消除误报）**，也与「良性误拒 0」的说法冲突；`test_dotdir_lookalikes_still_allowed` 只覆盖直接 `cp x .env.example` 形态，盖不到这一类。
+
+**根因**：旧正则 `\S*/\.[a-z]+\b` 要求点名前有 `/`，所以 `cp x .env`（裸 `.env`，无斜杠）在引号里**不会**被 base 命中；新正则把斜杠做成可选 `(?:\S*/)?`，于是引号里的裸形态也被命中——覆盖面扩大的同时把「文本提及」一起收进来了。
+
+**可选缓解**（不改 verdict，供决策）：把该分支从「整串 `re.search`」改为**按命令分隔符切段后再匹配**（复用已有的 `_split_command_segments` / `_check_command_text`），使匹配只在命令段内生效而非任意文本；或接受该误报并记入 known-debt（护栏不是边界口径）。若接受，请在 `known-debt.md` 写明「全文通道会对引号内文本误报」，避免以后被当成 bug 反复报。
+
+### 4. ❌ R7-3（minor）· `known-debt.md` 表格「fix-issue-247 后」列已失真
+
+该表（`docs/known-debt.md` 约 `:355-361`）「fix-issue-247 后」列对纯 `cp` launcher 行仍写 `ALLOW`，但实测 `52d7701` 已 **DENY**：
+
+| 命令 | master | 表里写的 head | **实测 head(`52d7701`)** |
+|---|---|---|---|
+| `nice cp x .env` / `nice -n 10 cp x .env` | ALLOW | ALLOW | **DENY** |
+| `setsid cp x .env` | ALLOW | ALLOW | **DENY** |
+| `xargs cp x .env` | ALLOW | ALLOW | **DENY** |
+| `busybox cp x .env` | ALLOW | ALLOW | **DENY** |
+| `stdbuf -o0 cp x .env` / `taskset -c 0 …` / `ionice -c 2 …` | ALLOW | ALLOW | **DENY** |
+| `flock /tmp/l cp x .env` / `chroot / cp x .env` / `doas cp x .env` | ALLOW | ALLOW | **DENY** |
+
+（11/11 实测 DENY。）即该子族的**点目录形态其实已被覆盖**，条目描述的「缺口」比实际大；真正未覆盖的是**同一子族的 `/dev/` 形态**（R7-1）。建议把条目改写为「纯 `cp` launcher + **`/dev/` 目标**仍未覆盖；点目录形态已由全文扫描覆盖」，并把 R7-1 一并纳入。
+
+### 5. 数字复核（我的实测）
+
+| 指标 | 我的实测 |
+|---|---|
+| R6-1 的 9 条（扩样 14 条 launcher/herestring/pipe） | **14/14 = DENY**（已恢复，主 session 说法属实） |
+| 攻击集（base / r6 / r8 / r9） | 50/54 · 50/54 · 50/54 · **50/54**（直方图逐项相同） |
+| 良性误拒 | base 9/83 → r8 **4/83** → r9 **8/83**（**r9 比 r8 多 4 条**，即 R7-2） |
+| 组合语料 base-DENY→r9-ALLOW（非预期） | **5**（全部是 `launcher + cp … /dev/sda` 一族，即 R7-1；点目录侧为 0） |
+| 变异验证（head 测试 vs 旧 guard） | vs **r8** = `9 failed`、vs **r6** = `20 failed`、vs **base** = `49 failed`、vs **r9** = `197 passed` |
+| 测试 | `tests/agent/tools/test_command_guard.py` + `test_attack_suite.py` = **253 passed** |
+
+### 6. 结论
+
+`52d7701` 的方向对（恢复全文通道）、点目录半边修得干净、测试有判别力，但**修得只做了一半**：同一根因下 `/dev/` 目标的全文覆盖仍缺（R7-1，45 条 base-DENY→head-ALLOW），并且新正则带来一类新误报（R7-2）。建议一次性做完：
+
+1. **R7-1**：按 §2 的补丁加 `/dev/` 全文分支（我已实测：45/45 恢复、攻击集不变、良性不破）；
+2. **R7-2**：决定「把全文扫描限定在命令段内」还是「接受并记 known-debt」；
+3. **R7-3**：改写 known-debt 条目，并让 spec delta 的两条通道描述同时涵盖 `/dev/`。
+
+改完把这三组向量丢回来，我按同一套九版对比复算即可转 PASS。
+
+---
+
+## Round 8（复审 `9561669`：R7-1 `/dev/` 全文分支 + R7-2 收窄）
+
+对象：已提交 `9561669`（guard sha256 `04dc8f21…`）。新增/改动（`agent/tools/command_guard.py`）：
+- `:263` 点目录全文分支由 `(?:\S*/)?\.(…)` 收窄为 `\S*/\.(…)`（**要求斜杠**）
+- `:269` 新增 `/dev/` 全文分支 `\b(mv|cp)\s+\S+\s+(?:\S*/)?/dev/(?!null(?:[\s;"'|]|$)|stdout(?:…)|stderr(?:…))`
+
+### 1. ✅ R7-1 已修 —— 45/45 恢复（我扩样 15 条亦全 DENY）
+
+| 命令 | base | r6 | r8 | **r9(=r10)** |
+|---|---|---|---|---|
+| `nice cp evil /dev/sda` / `setsid … /dev/nvme0n1` / `xargs … /dev/sdb` | D | A | A | **D** |
+| `busybox cp evil /dev/mmcblk0` / `find . -exec cp evil /dev/sda` | D | A | A | **D** |
+| `watch cp evil /dev/sda` / `doas …` / `chroot / cp evil /dev/sda` / `stdbuf -o0 …` | D | A | A | **D** |
+| `nice bash -c 'cp x /dev/sda'` / `bash <<< 'cp x /dev/sda'` / `echo 'cp x /dev/sda' \| env -i bash` | D | A | A | **D** |
+| `nice cp evil /dev/fd/1` / `nice cp evil /dev/null/sda` | D | A | A | **D** |
+
+**主 session 的「9/9 / 45 全 DENY」属实。** lookahead 用后继分隔符而非 `\b` 是正确的（`/dev/null/sda`、`/dev/nullx`、`/dev/null.txt` 仍拒；`cp x /dev/null`/`/dev/stdout`/`/dev/stderr`、`nice cp x /dev/null` 仍放行）。
+
+### 2. ✅ R7-2 已修 —— 引号提及族 0 新误报
+
+`grep -rn "cp x .env" docs/`、`rg -F "cp x .env" tests/`、`rg "mv z .git/config" src`、`git log --oneline --grep="…"`、`sed -n "/cp x .env/p"`、`awk "/cp x .env/"`、`printf "%s" "cp x .env"`、`git commit -m "… cp x .env …"`、`echo 'cp y .env'` —— r9 全 DENY，**r10 全部 ALLOW**，与 base/r8 一致。**「0 误报」属实。**
+
+### 3. ✅ 其余数字复核
+
+| 指标 | 我的实测 |
+|---|---|
+| 攻击集（base/r6/r8/r9/r10） | 50/54 · 50/54 · 50/54 · 50/54 · **50/54**（直方图逐项相同） |
+| 点目录覆盖（must-deny 16 / must-allow 14 条） | **0 处不符**（`.env.example`/`.gitignore`/`.github/w.yml`/`.dockerignore` 仍放行；`sub/.env/secrets`/`src/.git/hooks/p`/`.aws/credentials` 仍拒） |
+| 良性电池 FP | base 15/50 → r8 **1/50** → **r10 1/50**（未因本轮变差；那 1 条是 `cp .env.example out.txt`，源自 `DEFAULT_DENYLIST` 的 `\.env\.` 匹配 **source**，base 也有，非本 change） |
+| 390 条组合语料 base-DENY→r10-ALLOW（非预期） | **0** |
+| 变异验证（head 测试 vs 旧 guard） | vs **r9** = 9 failed（正是本轮 `/dev/` 用例）、vs **r8** = 18、vs **r6** = 29、vs **base** = 54；vs **r10** = 214 passed |
+| 全量 pytest | **`2 failed, 3236 passed, 9 skipped`**（2 条 = `tests/agent/memory/test_persistent.py::TestFindScopeRoot` 的本机 `/tmp` 是 git 仓库导致；本轮未复现浏览器 flake） |
+
+`TestDeviceExemptIsExactMatch` 里那条「denylist 正则不得含 `/dev/`」的实现细节断言已被改为行为断言——**改得对**（原断言的前提随 R8 恢复全文扫描而失效）。
+
+### 4. ❌ R8-1（major）· spec delta 与实现事实冲突
+
+delta `specs/workspace-safety/spec.md:11`（正式规格 `openspec/specs/workspace-safety/spec.md:213` 同文）断言：
+
+> …**全命令文本**扫描（覆盖 launcher 前缀 / herestring / pipe 形态——`nice bash -c '…'`、`bash <<< '…'`、`echo '…' | env -i bash` 里的 `cp … .env` SHALL 同样被拒）；**两条通道 SHALL 都覆盖裸形态（`.env`）与嵌套形态（`src/.git/hooks/x`）**。
+
+**该句在 `9561669` 上不成立**，且违反的正是它自己举的形态：
+
+| 命令 | base | r10 | delta 断言 |
+|---|---|---|---|
+| `nice bash -c 'cp x .env'` | A | **A** | SHALL 拒 |
+| `bash <<< 'cp x .env'` | A | **A** | SHALL 拒 |
+| `echo 'cp x .env' \| env -i bash` | A | **A** | SHALL 拒 |
+| `nice cp x .env` | A | **A** | SHALL 拒（「两条通道都覆盖裸形态」） |
+
+根因就是本轮 R7-2 的修法：`:263` 变成 `\S*/\.`（**要求斜杠**），裸 `.env` 交回段级通道，而段级通道在 launcher 前缀下不触发。我直测该正则对 `cp x .env` **不匹配**，故「两条通道**都**覆盖裸形态」这句**对全文通道恒假**——与有没有 launcher 无关。launcher 只是让段级通道也失效，从而整体放行。
+
+这与我在 R1 报的「spec 写了无条件 SHALL、实现不成立」**同一类**；`openspec/specs/workspace-safety/spec.md` 是受保护路径，一旦 spec 与实现不符，后续 artifact checker / manifest 绑定的是一个假契约。
+
+### 5. ❌ R8-2（minor）· `known-debt.md:359` 表格把 ALLOW 写成 DENY
+
+| 表里写的 | 实测 r10 |
+|---|---|
+| `nice cp x .env` / `setsid` / `xargs` / `busybox` / `stdbuf` / `taskset` / `ionice` / `flock` / `chroot` / `doas` + `cp x .env` → **DENY** | **ALLOW**（11/11） |
+
+R7 那轮这张表写反了一次（把 DENY 状态写成 ALLOW），本轮改成 DENY 又错（实际 ALLOW）。**建议不要手写这一列**：要么删掉「fix-issue-247 后」列改由测试断言承载，要么注明取样命令。
+
+### 6. ❌ R8-3（minor）· `known-debt.md:365,368` 的「master 上同样不覆盖」实测为假
+
+`:368` 写「**这些在 master 上同样不覆盖** … 故**非本 change 引入**」。逐例实测：
+
+| `:364-365` 举的例子 | master | head | 该段定性 |
+|---|---|---|---|
+| `setsid dd of=/dev/sda` | **D** | **D** | 说「仍未覆盖」→ 实际两边都覆盖，**不是残余** |
+| `cp x $HOME/.env` | **D** | **D** | 同上，**不是残余** |
+| `bash -c "$(cat payload.txt)"` | **D** | **D** | 同上（`\$\(.*\)` 兜住），**不是残余** |
+| `nice tee ~/.ssh/authorized_keys` | A | A | 真残余 ✅ |
+| `cp x ~/.ss\h/id_rsa` | **D** | **A** | 真残余，但**归因写反**：这是本 change 引入的收缩 |
+
+即该段 5 例里 3 例根本不是残余、1 例把「本 change 引入」写成「master 同样不覆盖」。**这正是 R6-1 的老毛病重现**：记录说「这里本来没问题」，会阻止后续收口。
+
+### 7. ❌ R8-4（minor）· 一类系统性收缩未记录：敏感点目录名混淆
+
+把 10 个敏感点目录名做 shell 混淆（反斜杠转义 / glob `?`、`*` / brace `{a,b}`），**60 个变体中 40 个** master-DENY → r10-ALLOW：
+
+```
+cp x ~/.s\sh/id_rsa      base=D r10=A      cp x ~/.s?h/id_rsa    base=D r10=A
+cp x ~/.s*h/id_rsa       base=D r10=A      cp x ~/.s{s,s}h/id_rsa base=D r10=A
+（× .git/.env/.aws/.gnupg/.kube/.docker/.netrc/.npmrc/.pypirc，同族）
+```
+
+这些在 shell 里**真的**解析到 `.ssh`/`.git`/…（`?` 匹配单字符、`*` 匹配多字符、`\h`→`h`），所以是真实绕过而非理论形态。base 的宽松 `\S*/\.[a-z]+\b` 偶然覆盖、本轮收窄为**字面清单 + 字面 `\.`** 后丢失。测试用例里**没有**任何一条覆盖该族（我 grep 过）。
+
+**修法我已验证可行**：对路径段先做 glob 还原再比对敏感名（`fnmatch.fnmatchcase` 对 `?`/`*` 精确命中；`{a,b}` 需补一步展开、`\x` 还原为 `x`），实测可恢复该族且**不重新引入 R7-2 的引号误报**（`cp x .env*` 判拒是对的；`.gitignore`/`.env.example`/`grep "cp x .env"` 仍放行）。若判定不值得改，则**必须**在 known-debt 里按「本 change 引入（base 靠宽松正则偶然覆盖）」如实记录，而不是写成「master 同样不覆盖」。
+
+**另注（test gap）**：R7-2 的收窄（**要求斜杠**）**没有测试**——我 grep 了 `grep -rn`/`commit -m`/`printf`/`sed -n`/`awk` 等引号提及形态，测试文件里一条都没有；`nice cp x .env` 的放行行为也没有断言。故 R7-2 的修法与 R8-1 的「事实不符」都**无 CI 保护**，将来re-widen 不会被拦。
+
+### 8. 结论（转 PASS 的最小清单）
+
+代码行为本轮已经全部正确，剩下的都是**记录与契约**问题，但其中 R8-1 是受保护路径上的假契约，必须清：
+
+1. **R8-1（必须）**：把 delta 与正式规格那句改为**与实现一致的通道分工**——例如「**路径段**通道覆盖裸形态（`.env`）与嵌套形态（`src/.git/hooks/x`）；**全命令文本**通道覆盖含斜杠/`/dev/` 形态的 launcher/herestring/pipe 写法」。**不要再声称全文通道覆盖裸形态**；若要保留「launcher + 裸 `.env` 也被拒」，就得改代码去覆盖它（但那会与 R7-2 的修法冲突，需二选一并写清）。
+2. **R8-2/R8-3（必须）**：`known-debt.md` 的表格列与「master 同样不覆盖」段按我给的逐例实测订正（3 例删掉、1 例改归因）。
+3. **R8-4（建议）**：要么按 glob 还原修掉该族，要么按「本 change 引入」如实记入 known-debt。
+4. **test gap（建议）**：给「引号提及 → ALLOW」与「launcher + 裸 `.env` 的实际行为」各补 1 条参数化用例，锁住 R7-2 的收窄。
+
+---
+
+## Round 9（终审 `b783fe6`：spec 措辞 / known-debt 数据 / 测试守护）
+
+对象：已提交 `b783fe6`。**guard sha 与 `9561669` 完全相同**（`04dc8f21…`）——本轮只改 spec / known-debt / 测试，代码零改动，故 Round 8 的代码复算全部沿用。
+
+### 1. ✅ known-debt 表格 17/17 行与实测一致（R8-2/R8-3 闭合）
+
+我把表里每一行拿 `base`（= master）与 `head` 的 guard 直读对账：
+
+| 表中命令 | 表里 master/head | 实测 master/head | |
+|---|---|---|---|
+| `nice/setsid/xargs/busybox/stdbuf -o0/taskset -c 0/flock /tmp/l` + `cp x .env` | ALLOW/ALLOW | ALLOW/ALLOW | ✅ |
+| `nice bash -c 'cp x src/.env'` / `bash <<< 'cp x src/.env'` | DENY/DENY | DENY/DENY | ✅ |
+| `nice tee ~/.ssh/authorized_keys` | ALLOW/ALLOW | ALLOW/ALLOW | ✅ |
+| `setsid dd of=/dev/sda` | DENY/DENY | DENY/DENY | ✅（原误列残余，已更正） |
+| `cp x $HOME/.env` | DENY/DENY | DENY/DENY | ✅（同上） |
+| `bash -c "$(cat payload.txt)"` | DENY/DENY | DENY/DENY | ✅（同上） |
+| `cp x ~/.ss\h/id_rsa` | DENY/ALLOW | DENY/ALLOW | ✅ |
+| `cp x ~/.ssh?/f` | DENY/DENY | DENY/DENY | ✅ |
+| `cp x ~/.ss*/f` | DENY/ALLOW | DENY/ALLOW | ✅ |
+| `cp x ~/.s[h]h/f` | DENY/ALLOW | DENY/ALLOW | ✅ |
+
+**0 行与实测矛盾。** R8-2（表格写反）与 R8-3（把 master 能拦的例子列为「master 也不覆盖」）都已修正；「记录纪律」一段也已写入。甲/乙分类正确：`cp x ~/.ss\h/id_rsa`、`~/.ss*/f`、`~/.s[h]h/f` 标为**本 change 引入**（乙类），与我 R8-4 的判定一致。
+
+> 小 nit（不影响）：`:382` 写「同族变体（反斜杠 / `?` / `*` / 字符类 / brace 展开 × 10 个敏感名）实测**约 40/60**」。按该括号里描述的 **5 变体 × 10 名 = 50** 复算，实测是 **50/50**（即该族**全部**是乙类）；`40/60` 是我 R8 用 6 变体 × 10 名（含 `plain` 与引号形态）得到的数。建议改成「按 5 变体 × 10 名实测 50/50」或将变体集写明。
+
+### 2. ✅ spec 措辞与实现一致（R8-1 闭合）——逐句对账
+
+新措辞（delta `specs/workspace-safety/spec.md:11`，与 `openspec/specs/workspace-safety/spec.md:213` **逐字相同**）不再声称「两条通道都覆盖裸形态」，改为如实的互补分工。我按其每一句断言跑行为：
+
+| spec 断言 | 实测（`b783fe6`） | |
+|---|---|---|
+| （1）段级通道在 `mv`/`cp` 居段首时覆盖**裸形态** | `cp x .env` → DENY | ✅ |
+| （1）段级通道覆盖**嵌套形态** | `cp x src/.git/hooks/pre-commit` → DENY；`cp x sub/.env/secrets` → DENY | ✅ |
+| （1）SHALL NOT 误判普通文件/目录 | `cp x .gitignore` / `.env.example` / `.github/w.yml` / `.dockerignore` → 全 ALLOW | ✅ |
+| （2）全文通道兜底 launcher/herestring/pipe 的**写命令** | `nice bash -c 'cp x src/.ssh/id_rsa'` → DENY；`setsid cp x src/.git/config` → DENY；`bash <<< 'cp x src/.env'` → DENY；`nice cp x /dev/sda` → DENY | ✅ |
+| （2）全文通道**只匹配带路径分隔符**的敏感名 | `nice cp x .env`（裸名，无分隔符）→ ALLOW，与「只匹配带分隔符」自洽 | ✅ |
+| （2）SHALL NOT 匹配引号内作为**数据**提及的裸名 | `grep -rn "cp x .env" docs/` / `rg -F` / `git log --grep` / `sed -n` / `printf` / `git commit -m "…"` / `awk` / `echo "cp x .env"` → 全 ALLOW | ✅ |
+
+**没有发现任何 spec 说 SHALL 而代码不做的条目**（这正是 R8-1 的核心关切）。spec 里也不再出现「launcher + 裸 `.env` 会被拒」这类与实现冲突的表述——该形态现在是**如实描述的通道边界**（两通道都不覆盖），且已在 known-debt 甲类中记录为「两版同为漏洞」。
+
+### 3. ✅ 新测试锁住了 R7-2 的收窄（M1 必红）——但发现一处未锁（R9-1）
+
+**M1（把 `:263` 的斜杠要求放宽回可选，即撤销 R7-2）→ 8 条必红**（全部在 `TestFullTextChannelScope::test_quoted_mention_allowed`）。**你们报的「试着放宽斜杠要求会变红」属实**，R7-2 的收窄现在有 CI 守护。
+
+我把其余分支也逐个变异，确认守护面：
+
+| 变异 | 结果 | 是否被锁 |
+|---|---|---|
+| M1 斜杠要求放宽为可选（撤销 R7-2） | 8 failed | ✅ |
+| M2 删除 `/dev/` 全文分支（撤销 R7-1） | 10 failed | ✅ |
+| M4 删除点目录全文分支（撤销 R6-1） | 12 failed | ✅ |
+| M5 去掉点目录否定前瞻 `(?![\w.-])` | 1 failed | ✅（较弱，1 条） |
+| **M3 `/dev/` 前瞻退回 `\b`（R2 的 I2 错法）** | **228 passed** | ❌ **未锁** |
+
+**R9-1（minor）**：M3 变异不红，且它**真的**会开一个口子——`nice cp evil /dev/null/sda`（以及 `setsid`/`echo hi && nice …` 等 launcher 形态）在 M3 下变 **ALLOW**，而 master 是 **DENY**。根因：`tests/...:820` 的 `TestDevNullPrefixedTargetsNotExempt` 三条用例（`cp x /dev/null/sda`、`cp x /dev/nullx`、`cp x /dev/null.txt`）**都是段首形态**——`mv`/`cp` 居段首时 `_check_mv_cp` 的 `_within(dest, "/dev")` 就把它拦了，根本没走全文通道。所以该测试对「全文分支的 lookahead 用什么边界」零判别力（它通过的原因与它 docstring 声称要守护的东西无关）。
+
+**注：发布代码本身是正确的**（`b783fe6` 下 `nice cp evil /dev/null/sda` 实测 DENY），故不阻塞。建议补 3 条用例把全文通道的 lookahead 也钉住：
+
+```python
+"nice cp evil /dev/null/sda",       # launcher 前缀 + 应被全文分支拒
+"setsid cp evil /dev/null/sda",
+"echo hi && nice cp evil /dev/nullx",
+```
+
+### 4. 其余数字复核（我的实测，非采信）
+
+| 指标 | 我的实测 |
+|---|---|
+| 攻击集（base / r6 / r8 / r9 / r10=`b783fe6`） | 50/54 · 50/54 · 50/54 · 50/54 · **50/54**（直方图逐项相同，未拦 4 例仍 `sensitive-read-001..004`） |
+| `tests/agent/tools/test_command_guard.py` + `test_attack_suite.py` | **284 passed** |
+| 全量 pytest | **`2 failed, 3250 passed, 9 skipped in 322s`**——2 条失败 = `tests/agent/memory/test_persistent.py::TestFindScopeRoot`（本机 `/tmp` 是 git 仓库所致，与本 change 无关）。**与主 session 的「3250 passed / 2 条 /tmp 环境失败」逐字一致。** |
+| OpenSpec strict validate | **29 passed, 0 failed** |
+| artifact checker（`--base-ref 369d99d`） | 仅报 `review manifest missing`——即我方 PASS 后需生成的 manifest，与主 session 说法一致 |
+| 点目录覆盖 / 良性误报 / 组合语料 | 与 Round 8 一致（must-deny 16 / must-allow 14 全对；良性 FP 1/50 且源自 base；390 语料非预期收缩 0） |
+
+### 5. 结论
+
+`b783fe6` **PASS**。八轮累计：R1 的 I1/I2、R3 的换行/分组/flag/env/`\r`、R4 的 I-1/I-2/I-3、R6-1（点目录全文覆盖）、R7-1（`/dev` 全文覆盖）、R7-2（全文扫描误报）、R8-1（spec 与实现一致）、R8-2/R8-3（记录数据）、R8-4（如实记录乙类）——**全部闭合**。spec、known-debt 与代码三者现在互相一致，且有变异可验证的测试守护（除 R9-1 那一处）。
+
+**可以生成 review manifest 并进入归档收尾。** 唯一建议（不阻塞）：补 §3 的 3 条 launcher `/dev` 用例，去掉 `TestDevNullPrefixedTargetsNotExempt` 那处「通过理由与声称无关」的弱测试；顺手把 `known-debt.md:382` 的 `40/60` 订正为按所述变体集的实测值。

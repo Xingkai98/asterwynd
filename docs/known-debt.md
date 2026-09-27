@@ -348,6 +348,44 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 - 本条目引用的归档路径 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
   在本条目写入时**尚未归档**，随本 change 的归档 commit 落地（归档目录缺失时以 change 的 active 路径为准）。
 
+## 命令护栏的残余覆盖缺口（fix-issue-247，数据为实测）
+
+`CommandGuard` 在 `fix-issue-247`（2026-09-26）后覆盖：命令分段、分组、shell 关键字、`-c` payload、常见 wrapper（`env`/`command`/`nohup`），以及**全文扫描**通道（兜底 launcher / herestring / pipe 形态下带路径分隔符的敏感目标）。
+
+下表**由实测脚本生成**（`_CommandGuard().check()` 直读，非手写）：
+
+| 命令 | master | fix-issue-247 后 | 性质 |
+|---|---|---|---|
+| `nice cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
+| `setsid cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
+| `xargs cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
+| `busybox cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
+| `stdbuf -o0 cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
+| `taskset -c 0 cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
+| `flock /tmp/l cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
+| `nice bash -c 'cp x src/.env'` | DENY | DENY | 两版均拦 |
+| `bash <<< 'cp x src/.env'` | DENY | DENY | 两版均拦 |
+| `nice tee ~/.ssh/authorized_keys` | ALLOW | ALLOW | 两版同为漏洞 |
+| `setsid dd of=/dev/sda` | DENY | DENY | 两版均拦 |
+| `cp x $HOME/.env` | DENY | DENY | 两版均拦 |
+| `cp x ~/.ss\h/id_rsa` | DENY | ALLOW | **本 change 引入** |
+| `cp x ~/.ssh?/f` | DENY | DENY | 两版均拦 |
+| `cp x ~/.ss*/f` | DENY | ALLOW | **本 change 引入** |
+| `cp x ~/.s[h]h/f` | DENY | ALLOW | **本 change 引入** |
+| `bash -c "$(cat payload.txt)"` | DENY | DENY | 两版均拦 |
+
+**甲类：非本 change 引入**（master 与 head 同判，均为漏洞但不是本 change 造成）：
+`nice cp x .env`、`setsid`/`xargs`/`busybox`/`stdbuf`/`taskset`/`flock` + `cp x .env`（launcher + 纯命令 + **裸点名**）、`nice tee ~/.ssh/authorized_keys`。
+对应收口方向：per-wrapper 参数模式表（`flock <file> cmd`、`chroot <dir> cmd` 的位置参数与选项混排）。
+
+**乙类：本 change 引入的收缩（应视为待收口缺陷）**：
+`cp x ~/.ss\h/id_rsa`（反斜杠转义）、`cp x ~/.ss*/f`（glob）、`cp x ~/.s[h]h/f`（字符类）等**混淆形态** —— master 的全文正则能拦，本 change 改成「段级判定 + 精确全文扫描」后漏掉。同族变体（反斜杠 / `?` / `*` / 字符类 / brace 展开 5 种 × 10 个敏感名）实测 **50/50** 属此类（review R9 指出初版的「40/60」取自另一组 6 变体样本）。
+
+**已确认**：`setsid dd of=/dev/sda`、`cp x $HOME/.env`、`bash -c "$(cat payload.txt)"` 在 master 与 head 上**均被拦截**，**不是**残余（本条初版曾误列，review R8-3 指出）。
+
+**乙类收口方向**：在全文扫描前对目标做**近似归一化**——去反斜杠转义、展开字符类、用 `fnmatch` 反向匹配（敏感名是否能被该 glob 模式匹配）、brace 展开；难点是既不能漏（混淆形态）也不能误报（`.env.example` 这类字面名）。参考 `_dest_is_sensitive` 的段级清单与 `_EXTRA_DENYLIST` 的否定前瞻写法。
+
+> **记录纪律**：本条目在两轮 review 中被指出**表格数据写错方向**（R8-2）与**把 master 能拦的例子列为「master 也不覆盖」**（R8-3）。此后本表的每一行 SHALL 由实测脚本生成，不手写判定结果。
 ## SSE 解析失败时未重置 event_type（fix-issue-249 显式不做）
 
 `agent/llm.py` 的 `BaseLLM._stream_events` 在单条 `data:` 行解析失败时 `continue`。本 change（issue #249）只给它**补了 warning 日志**，**未**改变控制流 —— 具体地，失败后 `event_type` 仍保留上一条 `event:` 的值，下一条成功的 `data:` 行会与这个**过期的** event_type 配对。
