@@ -598,6 +598,14 @@ function handleEvent(event) {
       break;
     }
 
+    case 'reasoning_disabled': {
+      // 上游拒绝了 thinking 回传、本会话已降级（issue #256 D7/Q8：状态须 UI 可见）。
+      const data = event.data || {};
+      addMessage('system', '本会话已停止回传思维链（上游拒绝了 reasoning 内容）。');
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      break;
+    }
+
     case 'tool_call':
       currentAssistantMsg = null;
       addToolCallBlock(event.data.name, event.data.arguments);

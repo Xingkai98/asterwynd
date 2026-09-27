@@ -24,7 +24,7 @@
 - [x] 2.4 **事件隔离**：reasoning 增量走独立事件、不混入 `assistant_delta`
 - [x] 2.5 **压缩**：compaction 保留最新轮 reasoning、可丢更早轮
 - [x] 2.6 **端到端不回归**：无 reasoning 的 provider 全链路逐字段不变
-- [x] 2.7 **浏览器回归**：折叠区默认关闭 / 单击展开 / 无 reasoning 不渲染 / 展开态流式追加
+- [x] 2.7 **浏览器回归**（`tests/web_tests/test_browser.py`）：折叠区默认关闭 / 单击展开 / 再点折叠 / 正文不被污染 / 无 reasoning 不渲染 / 降级事件 UI 可见。审阅 Round 3 指出初版虚勾（无对应测试），本轮补 3 条真实 Playwright 断言并做变异验证（默认展开 → 变红）
 - [x] 2.8 每条测试做**变异验证**（改坏实现 → 必红；还原 → 必绿）并记录
 
 ## 3. 实现
