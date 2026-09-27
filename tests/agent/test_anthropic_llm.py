@@ -651,3 +651,207 @@ async def test_anthropic_llm_stream_chat_carries_cache_usage_in_complete_event()
     assert response.usage.cache_read_input_tokens == 40
     assert response.usage.cache_creation_input_tokens == 5
     assert response.usage.output_tokens == 25
+
+
+# ---------------------------------------------------------------------------
+# issue #249: 流式 tool call 参数被截断时的降级
+# ---------------------------------------------------------------------------
+
+def _truncated_tool_block(name: str = "DeclareWorkflow") -> dict:
+    """构造一个参数在字符串内部被截断的 tool_use block（模拟 input_json_delta 拼接结果）。"""
+    partial = '{"pad":"' + "x" * 7700 + '","spec":{"goal":"'
+    return {
+        "type": "tool_use",
+        "id": "tool_trunc_1",
+        "name": name,
+        "text_parts": [],
+        "json_parts": [partial],
+    }
+
+
+def test_build_response_truncated_tool_call_max_tokens_drops_call():
+    """issue #249 链路 A：max_tokens 截断 → 不抛异常、丢弃该 call、stop_reason 保持 max_tokens。"""
+    llm = AnthropicLLM(api_key="test-key")
+    blocks = {0: _truncated_tool_block()}
+
+    # 修复前：这里会抛 JSONDecodeError
+    response = llm._build_response(blocks, "max_tokens", usage=None)
+
+    assert response.tool_calls == []
+    assert response.stop_reason == "max_tokens"
+
+
+def test_build_response_truncated_tool_call_non_truncation_keeps_raw():
+    """issue #249 链路 A：非 max_tokens 截断 → 不抛异常、保留 call、arguments 为原始串。"""
+    llm = AnthropicLLM(api_key="test-key")
+    blocks = {0: _truncated_tool_block()}
+
+    response = llm._build_response(blocks, "tool_calls", usage=None)
+
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "DeclareWorkflow"
+    # 原始串（非合法 JSON）原样传出，交给 AgentLoop._parse_arguments 降级
+    assert response.tool_calls[0].arguments == "".join(blocks[0]["json_parts"])
+
+
+def test_build_response_valid_tool_call_unchanged():
+    """issue #249：合法参数路径行为不变（回归保护）。"""
+    llm = AnthropicLLM(api_key="test-key")
+    blocks = {0: {
+        "type": "tool_use", "id": "tool_ok", "name": "Echo",
+        "text_parts": [], "json_parts": ['{"a": 1, "b": "x"}'],
+    }}
+
+    response = llm._build_response(blocks, "tool_calls", usage=None)
+
+    assert len(response.tool_calls) == 1
+    assert _json.loads(response.tool_calls[0].arguments) == {"a": 1, "b": "x"}
+
+
+def test_build_payload_truncated_arguments_degrades_to_empty():
+    """issue #249 链路 B：重放历史中非法 arguments → 不抛异常、input 降级为 {}。"""
+    llm = AnthropicLLM(api_key="test-key")
+    msg = Message(role="assistant", content="hi", tool_calls=[
+        ToolCallDelta(id="c1", name="DeclareWorkflow", arguments='{"spec": {"goal": "aaa'),
+    ])
+
+    payload = llm._build_payload([msg], None, "m", force_vision=False)
+
+    tool_use = payload["messages"][0]["content"][-1]
+    assert tool_use["type"] == "tool_use"
+    assert tool_use["input"] == {}
+
+
+def test_build_payload_valid_arguments_unchanged():
+    """issue #249：重放合法 arguments 行为不变（回归保护）。"""
+    llm = AnthropicLLM(api_key="test-key")
+    msg = Message(role="assistant", content="hi", tool_calls=[
+        ToolCallDelta(id="c1", name="Echo", arguments='{"a": 1}'),
+    ])
+
+    payload = llm._build_payload([msg], None, "m", force_vision=False)
+
+    tool_use = payload["messages"][0]["content"][-1]
+    assert tool_use["input"] == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_truncated_tool_json_does_not_crash():
+    """issue #249 端到端（真实 SSE 路径）：参数在流中被截断 → stream_chat 不崩、丢弃 call、保留 max_tokens。"""
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+
+    truncated_json = '{"pad":"' + "x" * 7700 + '","spec":{"goal":"'
+    lines = [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"m1","role":"assistant","model":"claude","content":[]}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"DeclareWorkflow","input":{}}}',
+        "event: content_block_delta",
+        "data: " + _json.dumps({"type": "content_block_delta", "index": 0,
+                                "delta": {"type": "input_json_delta", "partial_json": truncated_json}}),
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: message_delta",
+        'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":8192}}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(lines)
+        events = [event async for event in llm.stream_chat([Message(role="user", content="hi")])]
+
+    response = events[-1].response
+    assert response.stop_reason == "max_tokens"
+    assert response.tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_survives_truncated_streaming_tool_call():
+    """issue #249 端到端（AgentLoop + 真实 AnthropicLLM 流式路径）：
+    第一轮被 max_tokens 截断在 tool 参数中间 → run 不崩、走续接、第二轮正常结束。"""
+    from agent.loop import AgentLoop
+    from agent.tools.registry import ToolRegistry
+    from agent.tools.base import Tool
+
+    class EchoTool(Tool):
+        name = "Echo"
+        description = "Echo"
+        parameters = {}
+        async def execute(self, **kwargs):
+            return "echo!"
+
+    truncated_json = '{"pad":"' + "x" * 7700 + '","spec":{"goal":"'
+
+    def _truncated_stream():
+        return [
+            "event: message_start",
+            'data: {"type":"message_start","message":{"id":"m1","role":"assistant","model":"claude","content":[]}}',
+            "event: content_block_start",
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_1","name":"Echo","input":{}}}',
+            "event: content_block_delta",
+            "data: " + _json.dumps({"type": "content_block_delta", "index": 0,
+                                    "delta": {"type": "input_json_delta", "partial_json": truncated_json}}),
+            "event: content_block_stop",
+            'data: {"type":"content_block_stop","index":0}',
+            "event: message_delta",
+            'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":8192}}',
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+        ]
+
+    def _done_stream():
+        return [
+            "event: message_start",
+            'data: {"type":"message_start","message":{"id":"m2","role":"assistant","model":"claude","content":[]}}',
+            "event: content_block_start",
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Done!"}}',
+            "event: content_block_stop",
+            'data: {"type":"content_block_stop","index":0}',
+            "event: message_delta",
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}',
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+        ]
+
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(llm=llm, tool_registry=registry)
+
+    messages = [Message(role="user", content="do it")]
+    with patch("httpx.AsyncClient.stream", side_effect=[_mock_sse_stream(_truncated_stream()),
+                                                        _mock_sse_stream(_done_stream())]):
+        # 修复前：这里会抛 JSONDecodeError 逃出 run()
+        result = await loop.run(messages)
+
+    assert result.stop_reason.value == "end_turn"
+    assert "Done!" in (result.content or "")
+    # 续接提示应进入历史
+    assert any(m.role == "user" and "Please continue" in (m.content or "") for m in messages)
+
+
+def test_build_response_mixed_valid_and_truncated_under_max_tokens():
+    """issue #249 审阅 M1：混合响应（合法 call + 截断 call，max_tokens）——
+    合法的保留、截断的丢弃、stop_reason 保持 max_tokens。
+
+    该场景是 spec Scenario 1 第二条 AND 的依据：此时 response.tool_calls 非空，
+    AgentLoop 会照常执行合法 call 而非追加续接消息（审查发现原 spec 的
+    无条件「走续接路径」表述过宽，已修正）。
+    """
+    llm = AnthropicLLM(api_key="test-key")
+    blocks = {
+        0: {"type": "tool_use", "id": "good", "name": "Echo",
+            "text_parts": [], "json_parts": ['{"a": 1}']},
+        1: _truncated_tool_block(),
+    }
+
+    response = llm._build_response(blocks, "max_tokens", usage=None)
+
+    assert [tc.id for tc in response.tool_calls] == ["good"]
+    assert _json.loads(response.tool_calls[0].arguments) == {"a": 1}
+    assert response.stop_reason == "max_tokens"

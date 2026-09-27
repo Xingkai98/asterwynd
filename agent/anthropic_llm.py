@@ -1,6 +1,7 @@
 # agent/anthropic_llm.py
 import asyncio
 import json
+import logging
 import re
 from typing import Optional, TYPE_CHECKING
 
@@ -13,6 +14,8 @@ from agent.message import Message, TextBlock, ImageBlock
 
 if TYPE_CHECKING:
     from agent.message import ContentBlock
+
+logger = logging.getLogger("asterwynd.llm.anthropic")
 
 # Python string 中不允许出现的 surrogate character (U+D800-U+DFFF)
 SURROGATE_PATTERN = re.compile(r"[\ud800-\udfff]")
@@ -96,6 +99,26 @@ class AnthropicLLM(BaseLLM):
             else:
                 return await self._chat_nonstream(payload)
 
+    @staticmethod
+    def _parse_replayed_arguments(tc: ToolCallDelta) -> dict:
+        """解析历史消息里的 tool call 参数用于**重放**。
+
+        与 ``_build_response`` 不同，这里只构造下一次请求体，该 tool call 的
+        结果已在历史里、不会再被执行。非法 JSON（截断残留）降级为 ``{}``，
+        避免重放时二次崩溃（issue #249 链路 B）。
+        """
+        if not isinstance(tc.arguments, str):
+            return tc.arguments
+        try:
+            return json.loads(tc.arguments)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Replayed tool call %r has invalid JSON arguments (%d chars); "
+                "degrading to empty object",
+                tc.name, len(tc.arguments),
+            )
+            return {}
+
     def _build_payload(
         self,
         messages: list[Message],
@@ -121,7 +144,7 @@ class AnthropicLLM(BaseLLM):
                     if assistant_text:
                         content_parts.append({"type": "text", "text": assistant_text})
                 for tc in msg.tool_calls:
-                    input_dict = json.loads(tc.arguments) if isinstance(tc.arguments, str) else tc.arguments
+                    input_dict = self._parse_replayed_arguments(tc)
                     content_parts.append({
                         "type": "tool_use",
                         "id": tc.id,
@@ -493,7 +516,32 @@ class AnthropicLLM(BaseLLM):
                     text_content.append(text)
             elif blk["type"] == "tool_use":
                 json_str = "".join(blk["json_parts"])
-                args = json.loads(json_str) if json_str else {}
+                try:
+                    args = json.loads(json_str) if json_str else {}
+                except json.JSONDecodeError:
+                    # 流式 tool call 的参数是分片拼接的，被 max_tokens 截断或
+                    # 连接中断时会留下未闭合的 JSON（issue #249）。这里绝不把
+                    # fragment 当结果：截断时丢弃该 call，让 stop_reason 保持
+                    # max_tokens 交给 AgentLoop 的续接路径；其它情况保留原始串，
+                    # 由 loop 的 _parse_arguments 降级为可恢复的 tool error。
+                    if stop_reason == "max_tokens":
+                        logger.warning(
+                            "Dropping truncated tool call %r: arguments incomplete "
+                            "under stop_reason=max_tokens (%d chars)",
+                            blk.get("name"), len(json_str),
+                        )
+                        continue
+                    logger.warning(
+                        "Tool call %r has incomplete JSON arguments (%d chars); "
+                        "passing raw string to the loop parser",
+                        blk.get("name"), len(json_str),
+                    )
+                    tool_calls.append(ToolCallDelta(
+                        id=blk["id"],
+                        name=blk["name"],
+                        arguments=json_str,
+                    ))
+                    continue
                 tool_calls.append(ToolCallDelta(
                     id=blk["id"],
                     name=blk["name"],

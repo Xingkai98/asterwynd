@@ -1,5 +1,6 @@
 # agent/llm.py
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Literal, Protocol, Optional, runtime_checkable, TYPE_CHECKING
 
@@ -7,6 +8,16 @@ import httpx
 
 if TYPE_CHECKING:
     from agent.message import Message
+
+logger = logging.getLogger("asterwynd.llm")
+
+#: SSE `data:` 行里的流结束哨兵（OpenAI 协议的 `[DONE]`）。它按约定不是 JSON，
+#: 不应进 JSON 解析、更不该被记成「丢弃坏行」（issue #251）。
+_SSE_STREAM_END_SENTINEL = "[DONE]"
+
+
+def _is_sse_stream_end(data_str: str) -> bool:
+    return data_str.strip() == _SSE_STREAM_END_SENTINEL
 
 
 @dataclass
@@ -123,9 +134,20 @@ class BaseLLM:
                 elif line.startswith("data: "):
                     data_str = line[6:]
                     import json as _json
+                    if _is_sse_stream_end(data_str):
+                        # 流结束哨兵（OpenAI 的 `[DONE]`）不是 JSON，不该被记成
+                        # 坏行（issue #251）。放行、不告警：它本就不产生事件，
+                        # 控制流与旧行为一致。
+                        continue
                     try:
                         data = _json.loads(data_str)
                     except _json.JSONDecodeError:
+                        # 静默丢行会让同类问题无声消失（issue #249 相邻隐患）；
+                        # 只补日志，不改变控制流。
+                        logger.warning(
+                            "Dropping unparseable SSE data line (event=%r, %d chars)",
+                            event_type, len(data_str),
+                        )
                         continue
                     yield event_type, data
                     event_type = None

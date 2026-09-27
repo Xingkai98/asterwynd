@@ -386,3 +386,10 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 **乙类收口方向**：在全文扫描前对目标做**近似归一化**——去反斜杠转义、展开字符类、用 `fnmatch` 反向匹配（敏感名是否能被该 glob 模式匹配）、brace 展开；难点是既不能漏（混淆形态）也不能误报（`.env.example` 这类字面名）。参考 `_dest_is_sensitive` 的段级清单与 `_EXTRA_DENYLIST` 的否定前瞻写法。
 
 > **记录纪律**：本条目在两轮 review 中被指出**表格数据写错方向**（R8-2）与**把 master 能拦的例子列为「master 也不覆盖」**（R8-3）。此后本表的每一行 SHALL 由实测脚本生成，不手写判定结果。
+## SSE 解析失败时未重置 event_type（fix-issue-249 显式不做）
+
+`agent/llm.py` 的 `BaseLLM._stream_events` 在单条 `data:` 行解析失败时 `continue`。本 change（issue #249）只给它**补了 warning 日志**，**未**改变控制流 —— 具体地，失败后 `event_type` 仍保留上一条 `event:` 的值，下一条成功的 `data:` 行会与这个**过期的** event_type 配对。
+
+**为何本轮不改**：这是控制流变更而非日志增强，会超出本 bugfix「让截断不崩溃」的范围，且它是否是真实缺陷未经实测（需要构造「事件行紧邻坏数据行」的端点行为才能判定影响面）。按 issue #249 的相邻隐患记录，未在本 change 观察到实际故障。
+
+**若后续收口**：方向是在 `except` 分支里 `event_type = None`（或显式跳过到下一个 `event:`），并用「两行 data 夹一个坏行」的 SSE 夹具验证「坏行不污染后续事件类型」。改动面小，但需要先确认现有端点不会合法地发送「一个 event 多个 data」的分片形态（若会，则简单重置反而会破坏合法分片）。

@@ -93,6 +93,13 @@ if not response.tool_calls:
 
 如果 LLM 返回了文本但没有工具调用，说明它认为任务完成了。唯一的例外是 `stop_reason == "max_tokens"`——LLM 的输出被 token 上限截断了，此时先把已产生的 assistant 文本追加进历史，再追加一条 "Please continue" 让 LLM 接着输出。
 
+**边界：截断发生在 tool 参数中间时**（issue #249）。上面这条续接分支的前提是「无 tool_calls」。但模型写**大块 tool 参数**（如 `DeclareWorkflow` 的 spec）恰恰最容易触发输出上限，此时流式累积的工具参数 JSON 会不完整。`AnthropicLLM._build_response` 对此降级处理，绝不把半成品当结果：
+
+- `stop_reason == "max_tokens"`：**丢弃**该不完整 tool call，`stop_reason` 保持 `max_tokens` —— 于是它不进入 `response.tool_calls`，续接分支自然可达，模型在续接轮重新输出完整参数。
+- 其它情况（流中断等）：保留该 tool call，`arguments` 传**原始串**，由 Phase 1 的 `_parse_arguments` 降级为可恢复的 tool error（模型看到错误后重试）。
+
+配套地，`_build_payload` 重放历史 assistant 消息时，若某个 tool call 的参数不是合法 JSON（即上述降级留下的原始串），会降级为 `{}` 而不是抛异常——该 call 的结果已在历史里、不会再被执行。这两个降级必须成对存在，否则「保留原始串」会在下一轮重放时二次崩溃。
+
 #### 第 3 步：工具执行（三阶段）
 
 当 LLM 返回了 `tool_calls` 时，进入工具执行管道：
@@ -178,7 +185,7 @@ return RunResult(MAX_ITERATIONS)  // 保底
 | 要点 | 说明 |
 |------|------|
 | **max_iterations=None（默认）** | 默认无上限，模型不再调工具即自然结束；显式指定才设防死循环上限 |
-| **max_tokens 自动续接** | LLM 输出被截断时不会丢上下文，而是自动让 LLM 继续 |
+| **max_tokens 自动续接** | LLM 输出被截断时不会丢上下文，而是自动让 LLM 继续；截断落在 tool 参数中间时丢弃不完整调用并续接（issue #249） |
 | **finally 块保底** | 即使崩溃也尝试保存会话、清理后台任务 |
 | **流式 vs 非流式** | 根据 provider 能力自动选择；流式模式下 Web UI 实时看到 LLM 输出 |
 | **事件回调解耦** | AgentLoop 本身不关心事件发给谁——CLI、Web、trace 都可以独立订阅 |
