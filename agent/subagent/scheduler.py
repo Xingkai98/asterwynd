@@ -46,7 +46,6 @@ from agent.subagent.aggregation import (
 from agent.context.summarizer import LLMSummarizer, Summarizer
 from agent.subagent.bus import MessageBus
 from agent.subagent.context import (
-    current_mode_ceiling,
     reset_bus,
     reset_graph_distance,
     reset_mode_ceiling,

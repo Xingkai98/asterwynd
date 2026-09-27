@@ -58,7 +58,7 @@
 - [x] 6.3 Artifact checker：`uv run python scripts/check_openspec_artifacts.py --base-ref <PR base SHA>`
 - [x] 6.4 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`（本 change 触及 AgentLoop 路径）
 - [x] 6.5 维护本 change 的 `## Reference Implementation Research`：如调研结论变化，先回写 change 文档
-- [ ] 6.6 运行 `/review-loop fix-issue-255-mode-ceiling`，产出 `reviews/building-review.md`（PASS 或 3 轮封顶）
-- [ ] 6.7 生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）；**在 tasks.md 最终化之后再生成**
-- [ ] 6.8 归档：`openspec/changes/archive/YYYY-MM-DD-fix-issue-255-mode-ceiling/`，从 `docs/openspec-change-backlog.md` 移除
+- [x] 6.6 运行 `/review-loop fix-issue-255-mode-ceiling`，产出 `reviews/building-review.md`（PASS 或 3 轮封顶）
+- [x] 6.7 生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）；**在 tasks.md 最终化之后再生成**
+- [x] 6.8 归档：`openspec/changes/archive/YYYY-MM-DD-fix-issue-255-mode-ceiling/`，从 `docs/openspec-change-backlog.md` 移除
 - [ ] 6.9 (post-merge) 关闭关联 issue #255 并加完成说明 comment

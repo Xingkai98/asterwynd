@@ -412,6 +412,8 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 
 **影响**：会话建好后切到更严的 mode，重跑该 session 不会跟着收紧（安全方向是过宽，但要求攻击者先能改会话 mode）。`RunSubagent` 路径不经 `_clamp_mode`，故上限通道对它能读到但不用。
 
+**影响面不止该 session 自身（review R1 观察项 1，探针实测）**：重跑既有 session 时，挂载 A 会把上限**放宽**为 `session.mode`（创建期冻结值），且该值经执行上下文**传播给该 run 内新派生的子孙**——即一个 `build` session 在被切到 `read_only` 的会话里重跑时，其运行期内新起的孙辈会拿到 `build` 上限，越过当前会话上限。**该行为在 change 前的缺陷实现下完全相同**（review 用变异探针确认），故非本 change 引入的回归，但登记口径应从「该 session 自身」扩写为「该 session 及其运行期内新派生的子孙」。
+
 **若后续收口**：可在 `run_subagent` / `resume_subagent` 入口对 `session.mode` 与当前上限取 min（并落 diagnostics），但需先确认「重跑是否应重新钳制」是产品语义而非仅实现选择——本 change 的实现期把现状锁进回归测试（`tests/agent/subagent/test_mode_ceiling.py::test_resubmitting_an_existing_session_does_not_reclamp`），以免被误当回归。
 
 ## AgentLoop 复用 tool_registry.mode_policy.runtime_state 的共享态（fix-issue-255 横向发现）
