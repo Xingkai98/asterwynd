@@ -73,6 +73,16 @@ source → parse/tokenize → command IR → policy evaluators → decision
 
 `docs/known-debt.md`「命令护栏的残余覆盖缺口」一节记录的**甲类**（launcher + 纯命令 + 裸点名、launcher + 非 `cp`/`mv` 写命令）与**乙类**（混淆形态 50/50）逐项给出「修」或「不修 + 理由」。
 
+### 5. 能力范围声明必须写实（grill 拦下的三处失真）
+
+设计追问（4 个独立零记忆 subagent）用 grep/实跑证伪了草案里的三处表述，本 change 的交付必须按事实写：
+
+- **默认执行后端没有边界**。`ProcessBackend` 是宿主机子进程 + 可选 cgroup v2 资源限制；`grep -rnE "landlock|bwrap|seccomp|unshare" agent/` 零命中。只有 opt-in 的 `DockerBackend` 有 `--network none` + 只挂载 workspace，且它也没有 `--read-only`/`--cap-drop`/`--user`。能力范围声明**不得**用「后端兜住」掩盖默认配置下的空缺。
+- **全文 denylist 通道承载着 34/54 条攻击用例**。清空 `_denylist` 后攻击集拦截数 54 → 20。它**不能**被「降级为 evaluator」而不补覆盖；真实目标改为「同一语义不再有两个实现」。
+- **`ask` 无法复用既有审批路径**。`BashTool` 与 `Tool` 基类都没有 approval 引用，`AgentLoop` 只在工具**执行前**按 `ToolPermission` 元数据审批、看不到 `cmd`。打通「执行中请求审批」是本 change 的一项实打实的改造面，不是「新增一个调用点」。
+
+另修掉首版自身会引入的一处**安全回归**：分句规则若写成「heredoc 正文一律是数据」，会让 `bash <<EOF` + 危险正文 + `EOF` 从今天的 deny（靠分词器误报的巧合）变成 allow。正确规则按 **heredoc 绑定到谁**分流（绑定解释器 ⇒ 正文是代码）。
+
 ## Capabilities
 
 ### New Capabilities

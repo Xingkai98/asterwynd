@@ -42,6 +42,7 @@ dependencies = [
     "tree-sitter-java>=0.23.0",
     "tree-sitter-kotlin>=1.0.0",
     "mcp>=1.28.1",
+    "tree-sitter-bash>=0.25.1",
 ]
 
 [project.optional-dependencies]
