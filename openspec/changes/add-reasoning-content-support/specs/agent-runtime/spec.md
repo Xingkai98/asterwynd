@@ -7,7 +7,7 @@ Agent runtime SHALL 从 provider 响应中采集思维链（reasoning / thinking
 具体地：
 
 - runtime SHALL 把 reasoning 表达为**结构化的段**，每段含**可展示文本**与**可选的 opaque 回传载荷**（如 Anthropic 的 `signature`）。
-- opaque 载荷 SHALL 在「采集 → 持久化 → 回放」全链路**逐字节不变**：SHALL NOT 解析、SHALL NOT 改写、SHALL NOT 重排。
+- opaque 载荷 SHALL 在「采集 → 持久化 → 回放」全链路**逐字节不变**：SHALL NOT 解析、SHALL NOT 改写、SHALL NOT 重排。该不变量适用于**合法 Unicode 文本**（真实端点的签名均为 ASCII）；若 opaque 含 lone surrogate（非合法 Unicode 文本、无法持久化），runtime SHALL 降级丢弃该 opaque 并保留同段的可展示文本，SHALL NOT 让持久化崩溃。
 - 采集 SHALL 覆盖 Anthropic Messages 的 `thinking` block（流式经 `thinking_delta` + `signature_delta`）与 OpenAI 兼容端点的 `reasoning_content`。
 - 回传 SHALL 按 provider 规则：Anthropic 系 SHALL 在 assistant 消息中带回 thinking block（含 opaque 载荷）；OpenAI 兼容路径 SHALL 回传 `reasoning_content`。
 - provider 未返回 reasoning 时，runtime SHALL NOT 产生该字段，且全链路行为 SHALL NOT 改变。

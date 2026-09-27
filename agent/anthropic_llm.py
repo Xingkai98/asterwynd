@@ -26,13 +26,26 @@ logger = logging.getLogger("asterwynd.llm.anthropic")
 CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
 
-#: 命中 reasoning 相关 400 后的 session 级降级标志（issue #256 D7）。
-#: 用 ContextVar 而非实例属性：LLM 实例在 web 下是**应用级单例**、被所有 session
-#: 共享（`web/server.py` 创建一个 llm 传给所有 session），实例属性会让一个会话的
-#: 签名失配污染其余会话。而每个 session 的 run 跑在独立 asyncio task 里
-#: （`web/session.py` 的 `asyncio.create_task(run_agent())`），ContextVar 恰好按
-#: task 隔离 —— 既满足「本会话记住降级」，又不跨会话泄漏。
+#: 命中 reasoning 相关 400 后的降级标志（issue #256 D7）。
+#:
+#: **作用域 = 一次 run 的上下文，不是 session 的持久状态**。理由：`ContextVar`
+#: 按 asyncio task 隔离，而 web 下每个用户回合都是新 task
+#: （`web/session.py` 的 `asyncio.create_task(run_agent())`），所以标志天然止于
+#: 本回合。要让「本会话持续禁用」成立，**由 session 侧持有真值并在每次 run 开始时
+#: 注入**（见 `set_reasoning_disabled` 与 `web/session.py` 的 run 入口）——
+#: LLM 实例在 web 下是应用级单例（`web/server.py` 创建一个 llm 传给所有 session），
+#: 所以真值绝不能放在 LLM 实例属性上（会跨会话泄漏）。
 _reasoning_disabled: "ContextVar[bool]" = ContextVar("reasoning_disabled", default=False)
+
+
+def set_reasoning_disabled(disabled: bool) -> None:
+    """设置当前 run 上下文的 reasoning 降级标志（由 session 在 run 开始时注入）。"""
+    _reasoning_disabled.set(disabled)
+
+
+def is_reasoning_disabled() -> bool:
+    """读取当前 run 上下文的 reasoning 降级标志（供 session 回写自己的状态）。"""
+    return _reasoning_disabled.get()
 
 
 # reasoning 相关 400 的错误文案族（issue #256 D7）。两类失败模式不同，需分别匹配：
@@ -280,6 +293,12 @@ class AnthropicLLM(BaseLLM):
             payload["system"] = system_content
         if tools:
             payload["tools"] = [self._convert_tool(tool) for tool in tools]
+        if self.enable_thinking_binding_controls:
+            # 前缀绑定失配时丢弃该 block 而非硬 400（issue #256 D7b）：
+            # compaction 改写历史后不会让整个 run 崩掉。
+            payload["thinking"] = {
+                "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+            }
 
         self._apply_cache_plan(payload)
         return payload

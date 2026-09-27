@@ -2292,3 +2292,68 @@ async def test_agent_loop_explicit_max_iterations_still_enforced():
     result = await loop.run([Message(role="user", content="test")])
     assert result.stop_reason.value == "max_iterations"
     assert len(result.tool_calls_made) == 3
+
+
+@pytest.mark.asyncio
+async def test_loop_forwards_reasoning_delta_as_own_event():
+    """issue #256 D5：loop 必须把 reasoning 增量转发成 reasoning_delta。
+
+    审阅 M7 变异（loop 转发成 assistant_delta）此前能全身而过。
+    """
+    from agent.llm import LLMResponse, LLMStreamEvent
+    from agent.message import ReasoningBlock
+
+    class ReasoningLLM:
+        async def chat(self, messages, tools=None, model=None):
+            return LLMResponse(content="答", reasoning=[ReasoningBlock(text="想")])
+
+        async def stream_chat(self, messages, tools=None, model=None):
+            yield LLMStreamEvent(type="reasoning_delta", delta="想", content="想")
+            yield LLMStreamEvent(type="assistant_delta", delta="答", content="答")
+            yield LLMStreamEvent(type="complete", response=LLMResponse(
+                content="答", reasoning=[ReasoningBlock(text="想")], stop_reason="end_turn"))
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(llm=ReasoningLLM(), tool_registry=registry, hooks=HookManager())
+
+    seen = []
+    async def on_event(t, data):
+        seen.append((t, data.get("delta")))
+
+    await loop.run([Message(role="user", content="hi")], on_event=on_event)
+
+    reasoning_events = [d for t, d in seen if t == "reasoning_delta"]
+    assistant_events = [d for t, d in seen if t == "assistant_delta"]
+    assert reasoning_events == ["想"], f"reasoning 增量未正确转发: {seen}"
+    assert assistant_events == ["答"], f"reasoning 混入了正文: {seen}"
+
+
+@pytest.mark.asyncio
+async def test_loop_stores_reasoning_in_assistant_message():
+    """issue #256：loop 必须把 reasoning 存进 assistant 消息（供下一轮回传）。
+
+    审阅 M8 变异（不拷 reasoning 进 Message）此前能全身而过。
+    """
+    from agent.llm import LLMResponse, LLMStreamEvent
+    from agent.message import ReasoningBlock
+
+    class ReasoningLLM:
+        def __init__(self): self.calls = 0
+        async def chat(self, messages, tools=None, model=None):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(content="ok", reasoning=[ReasoningBlock(text="我的思考")],
+                                   stop_reason="end_turn")
+            return LLMResponse(content="done", stop_reason="end_turn")
+
+    registry = ToolRegistry()
+    registry.register(EchoTool())
+    loop = AgentLoop(llm=ReasoningLLM(), tool_registry=registry, hooks=HookManager())
+    messages = [Message(role="user", content="hi")]
+    await loop.run(messages)
+
+    assistants = [m for m in messages if m.role == "assistant"]
+    assert assistants, "无 assistant 消息"
+    assert assistants[0].reasoning, "reasoning 未存进 assistant 消息"
+    assert assistants[0].reasoning[0].text == "我的思考"

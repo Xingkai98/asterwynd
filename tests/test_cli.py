@@ -104,7 +104,7 @@ def test_cli_single_prompt_uses_mock_agent(monkeypatch):
 
 def test_cli_single_prompt_runtime_smoke_uses_real_agent_loop(monkeypatch):
     llm = ScriptedLLM([LLMResponse(content="runtime response", stop_reason="end_turn")])
-    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None, config=None: llm)
 
     result = CliRunner().invoke(cli.app, ["run", "hello runtime"])
 
@@ -121,7 +121,7 @@ def test_cli_single_prompt_runtime_smoke_uses_real_agent_loop(monkeypatch):
 
 def test_cli_single_prompt_runtime_smoke_streams_without_reprinting(monkeypatch):
     llm = ScriptedLLM([stream_script("Hel", "lo")], stream=True)
-    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None, config=None: llm)
 
     result = CliRunner().invoke(cli.app, ["run", "hello"])
 
@@ -150,7 +150,7 @@ def test_cli_single_prompt_runtime_smoke_summarizes_tool_call(monkeypatch, tmp_p
         ),
         LLMResponse(content="tool done", stop_reason="end_turn"),
     ])
-    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None, config=None: llm)
 
     result = CliRunner().invoke(
         cli.app,
@@ -182,7 +182,7 @@ def test_cli_single_prompt_high_risk_tool_fails_closed_without_approval(monkeypa
         ),
         LLMResponse(content="blocked", stop_reason="end_turn"),
     ])
-    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: llm)
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None, config=None: llm)
 
     result = CliRunner().invoke(
         cli.app,
@@ -798,7 +798,7 @@ def test_web_resume_forwards_workspace_root(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli, "_load_resume_snapshot", fake_load_resume_snapshot)
     monkeypatch.setattr(cli, "_setup_logging", lambda: None)
-    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: type("FakeLLM", (), {"model": "fake-model"})())
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None, config=None: type("FakeLLM", (), {"model": "fake-model"})())
 
     from web import server
     fake_app = object()

@@ -49,6 +49,22 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class ReasoningConfig:
+    """思维链（reasoning/thinking）相关配置（issue #256）。
+
+    ``context_management``：开启后发 ``context-management-2025-06-27`` beta 头，
+    在 keep-all 模型上按需回收历史 thinking 占用的上下文窗口（保留则缓存命中、
+    清掉则该点缓存失效）。默认关（保持既有请求头不变）。
+
+    ``thinking_binding_controls``：开启后发 ``thinking-binding-controls-2026-08-01``
+    beta 头并启用 ``drop_block`` 退路，避免历史被改写（如 compaction）后签名
+    前缀失配导致硬 400。默认关。
+    """
+    context_management: bool = False
+    thinking_binding_controls: bool = False
+
+
+@dataclass(frozen=True)
 class ModeConfig:
     deny_tools: tuple[str, ...] = ()
     permission_profile: str | None = None
@@ -470,6 +486,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 class AsterwyndConfig:
     path: Path | None = None
     agent: AgentConfig = field(default_factory=AgentConfig)
+    reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
     modes: dict[AgentMode, ModeConfig] = field(default_factory=dict)
     permissions: PermissionsConfig = field(default_factory=PermissionsConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
@@ -603,6 +620,7 @@ def _load_yaml_config(
     return AsterwyndConfig(
         path=path,
         agent=_parse_agent_config(raw.get("agent", {}), path),
+        reasoning=_parse_reasoning_config(raw.get("reasoning", {}), path),
         modes=_parse_modes_config(raw.get("modes", {}), path),
         permissions=_parse_permissions_config(raw.get("permissions", {}), path),
         tools=_parse_tools_config(raw.get("tools", {}), path),
@@ -673,6 +691,44 @@ def _apply_cli_overrides(config: AsterwyndConfig, overrides: ConfigOverrides) ->
         )
 
     return replace(config, agent=agent, benchmark=benchmark)
+
+
+_BOOL_TRUE = {"true", "yes", "on", "1"}
+_BOOL_FALSE = {"false", "no", "off", "0"}
+
+
+def _parse_optional_bool(value: Any, field: str, path: Path) -> bool:
+    """把 YAML 值解析为 bool；显式拒绝字符串数字以外的非法值。
+
+    注意：Python 的 ``bool`` 是 ``int`` 的子类，且 YAML ``true`` 会解析成
+    ``bool``。这里只接受真正的 bool 或常见真假字符串，避免静默误判。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _BOOL_TRUE:
+            return True
+        if lowered in _BOOL_FALSE:
+            return False
+    raise ConfigError(
+        f"{path}: reasoning.{field} must be a boolean, got {value!r}"
+    )
+
+
+def _parse_reasoning_config(raw: Any, path: Path) -> ReasoningConfig:
+    if raw is None:
+        return ReasoningConfig()
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{path}: `reasoning` must be a mapping")
+    return ReasoningConfig(
+        context_management=_parse_optional_bool(
+            raw.get("context_management", False), "context_management", path
+        ),
+        thinking_binding_controls=_parse_optional_bool(
+            raw.get("thinking_binding_controls", False), "thinking_binding_controls", path
+        ),
+    )
 
 
 def _parse_agent_config(raw: Any, path: Path) -> AgentConfig:

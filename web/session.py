@@ -1287,6 +1287,11 @@ class AgentSession:
         # session 级、跨 run 存活，支持多连接广播与定点发送。ws 连上时 attach，
         # 断开只 detach 该连接、不终止 run。
         self.event_channel = SessionEventChannel(session_id)
+        # reasoning 回传降级标志（issue #256 D7）：**session 级、跨 run 存活**。
+        # LLM 层用 ContextVar 表达「本 run 是否降级」，但每个用户回合都是新 task、
+        # ContextVar 会重置，所以真值必须由 session 持有：run 开始时注入、结束时
+        # 回收。作用域正确性是 Q8 明确要求的（「session 级」+ UI/debug 可见）。
+        self.reasoning_disabled = False
 
     @property
     def current_mode(self) -> str:
@@ -1763,6 +1768,12 @@ class SessionManager:
         """``run_session`` 的锁内实现：实际驱动 AgentLoop 与 queue drain。"""
         queue: asyncio.Queue = asyncio.Queue()
 
+        # reasoning 降级标志的注入/回收（issue #256 D7）：真值存在 session 上
+        # （跨 run 存活），每次 run 开始时注入当前上下文的 ContextVar —— 因为
+        # 每个用户回合都是新 task，ContextVar 不注入就会重置成默认、等于没记。
+        from agent.anthropic_llm import is_reasoning_disabled, set_reasoning_disabled
+        set_reasoning_disabled(session.reasoning_disabled)
+
         async def on_event(event_type: str, data: dict):
             await queue.put({"type": event_type, "data": data})
 
@@ -1848,6 +1859,11 @@ class SessionManager:
             # run 真正结束：pending 立即失败（既有语义，tasks 2.4）。断连走不到这里——
             # 断连只摘连接，run 继续跑到 sentinel。
             fail_pending_interactions(session, "session run ended")
+            # reasoning 降级状态回写 session（issue #256 D7）：LLM 层在命中
+            # reasoning 相关 400 时置位当前上下文；这里回收进 session，使
+            # 「本会话持续禁用」跨 run 成立（Q8 拍板的 session 级语义）。
+            if is_reasoning_disabled():
+                session.reasoning_disabled = True
             if receiver_task is not None and not receiver_task.done():
                 receiver_task.cancel()
                 try:

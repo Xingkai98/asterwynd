@@ -1003,3 +1003,23 @@ def test_build_history_payload_without_reasoning_is_none():
 
     payload = build_history_payload(session)
     assert payload["data"]["messages"][0]["reasoning"] is None
+
+
+# ── reasoning 降级标志的 session 级语义（issue #256 D7 / 审阅 S-1）─────
+
+def test_session_holds_reasoning_disabled_across_runs():
+    """降级标志必须是 session 级（跨 run 存活），不能因每回合新 task 而重置。
+
+    审阅 S-1 实测证伪的形态：纯 ContextVar 在 web 下每回合都是新 task，
+    标志回到默认 False，等于「本轮降级」而没「记住」。修复后真值存 session。
+    """
+    session = AgentSession("s-d7", None)
+    assert session.reasoning_disabled is False
+
+    # 模拟「某次 run 命中 reasoning 400 并回写」
+    session.reasoning_disabled = True
+
+    # 下一个 run（新 task）注入时应拿到 True
+    from agent.anthropic_llm import set_reasoning_disabled, is_reasoning_disabled
+    set_reasoning_disabled(session.reasoning_disabled)
+    assert is_reasoning_disabled() is True, "session 级降级未跨 run 保持"

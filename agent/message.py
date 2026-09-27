@@ -1,8 +1,20 @@
 # agent/message.py
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, asdict, field
 from typing import Literal, Optional, Any
+
+logger = logging.getLogger("asterwynd.message")
+
+
+def _has_lone_surrogate(text: str) -> bool:
+    """文本是否含 lone surrogate（U+D800–U+DFFF）。
+
+    这类字符不是合法 Unicode 文本，`json.dump(ensure_ascii=False)` 无法编码；
+    真实端点的 reasoning 签名不会出现它们（issue #256 审阅 S-3）。
+    """
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in text)
 
 
 # ── Content Block types ──────────────────────────────────────────────
@@ -107,7 +119,19 @@ class ReasoningBlock:
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"text": self.text}
         if self.opaque is not None:
-            d["opaque"] = self.opaque
+            # 不变量边界：opaque 必须是**合法 Unicode 文本**（不含 lone surrogate）。
+            # 真实端点的签名都是 ASCII（Anthropic 为 base64、DeepSeek 为 UUID），
+            # 不会有 surrogate；但 lone surrogate 本身不是合法 Unicode 文本，
+            # `json.dump(ensure_ascii=False)` 会抛 UnicodeEncodeError 让整个
+            # session 保存崩掉（issue #256 审阅 S-3）。这里按「丢弃该 opaque、
+            # 保留 text」降级——比崩掉保存更安全，且不变量在合法输入上仍成立。
+            if _has_lone_surrogate(self.opaque):
+                logger.warning(
+                    "Dropping reasoning opaque payload containing lone surrogates "
+                    "(not valid Unicode text; cannot be persisted)"
+                )
+            else:
+                d["opaque"] = self.opaque
         return d
 
     @classmethod

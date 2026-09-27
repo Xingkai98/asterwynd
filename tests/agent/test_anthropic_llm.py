@@ -1093,3 +1093,85 @@ async def test_chat_stream_path_collects_thinking():
     assert response.reasoning[0].text == "先看文件"
     assert response.reasoning[0].opaque == "sig-END"
     assert response.content == "结果"
+
+
+def test_thinking_binding_controls_emits_drop_block_config():
+    """开启前缀绑定控制时，payload 带 drop_block 退路（issue #256 D7b）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message
+    llm = AnthropicLLM(api_key="k")
+    llm.enable_thinking_binding_controls = True
+    payload = llm._build_payload([Message(role="user", content="hi")], None, "m", force_vision=False)
+
+    assert payload["thinking"]["block_binding"]["prefix_mismatch_behavior"] == "drop_block"
+
+
+def test_thinking_binding_controls_off_by_default():
+    """默认不注入该配置（保持既有请求体不变）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message
+    llm = AnthropicLLM(api_key="k")
+    payload = llm._build_payload([Message(role="user", content="hi")], None, "m", force_vision=False)
+
+    assert "thinking" not in payload
+
+
+@pytest.mark.asyncio
+async def test_reasoning_delta_event_not_mixed_into_assistant_delta():
+    """issue #256 D5：anthropic 流式的 thinking 增量必须走 reasoning_delta。
+
+    审阅 M1 变异（把 reasoning_delta 改成 assistant_delta）此前能全身而过。
+    """
+    from agent.anthropic_llm import AnthropicLLM
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+    lines = [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"m1","role":"assistant","model":"claude","content":[]}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"想想"}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(lines)
+        events = [e async for e in llm.stream_chat([Message(role="user", content="hi")])]
+
+    types = [e.type for e in events]
+    assert "reasoning_delta" in types, f"thinking 增量未走 reasoning_delta: {types}"
+    assert "assistant_delta" not in types, f"thinking 混入了 assistant_delta: {types}"
+
+
+def test_build_llm_applies_reasoning_config(monkeypatch):
+    """build_llm 必须把 config.reasoning 的开关应用到 LLM 实例（issue #256 S-2）。
+
+    审阅指出两个 beta flag 是死开关（无生产调用方）；这条守护「配置→实例」链路。
+    """
+    import os
+    from agent import main as cli
+    from agent.config import ReasoningConfig, AsterwyndConfig
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    cfg = AsterwyndConfig(reasoning=ReasoningConfig(
+        context_management=True, thinking_binding_controls=True))
+    llm = cli.build_llm("anthropic", config=cfg)
+
+    assert llm.enable_context_management is True
+    assert llm.enable_thinking_binding_controls is True
+    # 头里应带上两个 beta
+    h = llm._get_headers()
+    assert "anthropic-beta" in h
+
+
+def test_build_llm_without_config_leaves_betas_off(monkeypatch):
+    """不传 config 时 beta 保持关闭（不改变既有行为）。"""
+    from agent import main as cli
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    llm = cli.build_llm("anthropic")
+
+    assert llm.enable_context_management is False
+    assert llm.enable_thinking_binding_controls is False

@@ -280,3 +280,35 @@ def test_no_reasoning_omits_field():
 
     assert "reasoning" not in d
     assert "reasoning_content" not in d
+
+
+def test_opaque_with_lone_surrogate_degrades_not_crash():
+    """含 lone surrogate 的 opaque 无法持久化，应降级丢弃而非让保存崩溃（审阅 S-3）。
+
+    lone surrogate 不是合法 Unicode 文本，json.dump(ensure_ascii=False) 会抛
+    UnicodeEncodeError。真实端点签名都是 ASCII，此路径只作防御。
+    """
+    import json as _json
+    from agent.message import ReasoningBlock
+
+    msg = Message(role="assistant", content="x", reasoning=[
+        ReasoningBlock(text="文本保留", opaque="sig\ud800tail"),
+    ])
+    d = msg.to_dict()
+    # 不崩，且能序列化
+    encoded = _json.dumps(d, ensure_ascii=False).encode("utf-8")
+    assert encoded  # 没抛异常
+    # text 保留、非法的 opaque 被丢弃
+    assert d["reasoning"][0]["text"] == "文本保留"
+    assert "opaque" not in d["reasoning"][0]
+
+
+def test_opaque_without_surrogate_still_preserved():
+    """正常 opaque（含非 ASCII）仍逐字节保留（不变量在合法输入上成立）。"""
+    from agent.message import ReasoningBlock
+
+    sig = "签名-with-非ASCII-中文"
+    msg = Message(role="assistant", content="x", reasoning=[ReasoningBlock(text="t", opaque=sig)])
+    d = msg.to_dict()
+
+    assert d["reasoning"][0]["opaque"] == sig
