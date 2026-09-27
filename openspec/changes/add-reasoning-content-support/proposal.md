@@ -87,11 +87,12 @@ Anthropic 的 `signature` 是**不透明值**（官方明确 "should not be inte
 |---|---|---|
 | `agent/llm.py` | `LLMResponse` 增 reasoning 结构化载荷；`LLMStreamEvent` 增 reasoning 事件类型 | 中（核心数据结构，所有 provider 共享） |
 | `agent/message.py` | `Message` 的 reasoning 表达结构化 + 序列化兼容 | 中（影响会话持久化格式与所有消费方） |
-| `agent/anthropic_llm.py` | 流式解析 thinking/signature；`_build_payload` 回传 thinking block | 中（触碰流式主路径） |
+| `agent/anthropic_llm.py` | 流式解析 thinking/signature；`_build_payload` 回传 thinking block；**新建 `anthropic-beta` 头通道**（`context-management-2025-06-27` 清理策略 + `thinking-binding-controls-2026-08-01` 前缀绑定退路）；reasoning 相关 400 的两套文案自愈 | 中（触碰流式主路径） |
 | `agent/openai_llm.py` | 接入统一模型（回传行为不变） | 低 |
 | `agent/loop.py` | 透传 reasoning 到事件与消息 | 低 |
 | `web/static/chat.js` + `style.css` | 折叠展示区 + 流式增量 | 中（新增 UI 面） |
-| `web/server.py` | 转发 reasoning 事件 | 低 |
+| `web/session.py` | `build_history_payload` 携带 reasoning（重连重绘）+ `on_event` 转发 reasoning 增量 | 中（grill 发现的遗漏：不补则重连后折叠区消失） |
+| `web/static/chat.js` 的 `renderHistory` | 历史重绘时渲染折叠区 | 低 |
 | `tests/**`（增补） | 四条路径的采集/回传/展示回归 | — |
 
 **契约影响（对外）**
@@ -108,7 +109,10 @@ Anthropic 的 `signature` 是**不透明值**（官方明确 "should not be inte
 
 **待确认影响面**
 
-- **Q1（消息模型形态）**、**Q2（展示的流式粒度）**、**Q3（是否提供关闭 thinking 开关）**、**Q4（compaction 对旧轮 reasoning 的处理）** —— 见 `design.md` 的 `## Open Questions`，需用户确认后定案。
+- 无。Q1–Q9 已由用户逐项拍板（记录见 `reviews/grill-design.md` 的 `## User Confirmation`）：
+  - Q1 保留旧字段只读；Q2 展示合并一个折叠区；Q3 不做关闭开关（另案）；
+  - Q4/Q5 「全带」= 存活的都带、recent 内原样保留；Q6 全带 + beta 头清理通道；
+  - Q7 主动配置 `drop_block`；Q8 本轮降级 + session 状态；Q9 快照对比 + DOM 断言。
 
 **测试影响**
 

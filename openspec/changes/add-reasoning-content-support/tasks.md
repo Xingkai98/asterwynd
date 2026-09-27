@@ -5,8 +5,8 @@
 - [x] 0.1 建跟踪 issue #256 并在 proposal 关联
 - [x] 0.2 维护 `## Reference Implementation Research`（`research_tier: full`，五个 research questions + F1–F5 findings + design impact）
 - [x] 0.3 写 `design.md`（D1 消息模型 / D2 回传策略 / D5 事件隔离 / D6 压缩边界 / D7 自愈）
-- [ ] 0.4 **停轮**把 `design.md` 的 `## Open Questions`（Q1–Q4）逐项抛给用户确认，每条配具体场景例子；记录答复到 `reviews/grill-design.md` 的 `## User Confirmation`
-- [ ] 0.5 运行 batch-grill-me（`/grill`，独立零记忆 subagent 设计追问），产出 `reviews/grill-design.md`（≥3 条 Confirmed Decisions + Open Questions 的 User Confirmation）
+- [x] 0.4 **停轮**把 Open Questions（Q1–Q9）逐项抛给用户确认，每条配具体场景例子；答复已记录到 `reviews/grill-design.md` 的 `## User Confirmation`（Q6 经用户追问「业界对 keep-all 模型咋做的」后二次确认）
+- [x] 0.5 运行 batch-grill-me（`/grill`，独立零记忆 subagent 设计追问），产出 `reviews/grill-design.md`（5 条 Confirmed Decisions + 9 条 Open Questions + 挑战记录；证伪 D2 一处事实、发现 `build_history_payload` 遗漏）
 
 ## 1. 规格
 
@@ -35,9 +35,10 @@
 - [ ] 3.4 `agent/openai_llm.py`：接入统一模型（回传语义不变）
 - [ ] 3.5 `agent/loop.py`：透传 reasoning 到事件与消息
 - [ ] 3.6 `agent/memory/manager.py`：compaction 保留最新轮 reasoning
-- [ ] 3.7 `web/server.py`：转发 reasoning 增量事件
-- [ ] 3.8 `web/static/chat.js` + `style.css`：通用折叠区（默认关闭、单击展开、流式追加）
-- [ ] 3.9 `agent/anthropic_llm.py`：reasoning 相关 400 的自愈降级（D7）
+- [ ] 3.7 `web/session.py`：`build_history_payload` 携带 reasoning（重连重绘，grill 发现的遗漏）+ `on_event` 转发 reasoning 增量
+- [ ] 3.8 `web/static/chat.js` + `style.css`：通用折叠区（默认关闭、单击展开、流式追加）；`renderHistory` 历史重绘也渲染折叠区
+- [ ] 3.9 `agent/anthropic_llm.py`：**新建 `anthropic-beta` 头通道**（`clear_thinking_20251015` 清理 + `block_binding.prefix_mismatch_behavior=drop_block`）
+- [ ] 3.10 `agent/anthropic_llm.py`：reasoning 相关 400 的**两套**文案自愈（缺回传 / 签名失配），降级粒度为「本轮 + session 状态」（D7）
 
 ## 4. 验证
 
