@@ -186,6 +186,44 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .message-body {
   min-width: 0;
 }
+/* 思维链折叠区（issue #256）：通用样式、默认关闭、单击展开。
+   与正文分离，折叠时不占正文空间。 */
+.message-reasoning {
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  font-size: 0.85rem;
+  max-width: 100%;
+}
+.message-reasoning-toggle {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  color: var(--text2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.message-reasoning-toggle::before {
+  content: '▸ ';
+}
+.message-reasoning-toggle[aria-expanded="true"]::before {
+  content: '▾ ';
+}
+.message-reasoning-toggle:hover {
+  color: var(--text);
+}
+.message-reasoning-content {
+  padding: 0 10px 8px;
+  color: var(--text2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
 .message-images {
   display: flex;
   flex-wrap: wrap;

@@ -4,7 +4,7 @@ import logging
 from typing import Optional, TYPE_CHECKING
 
 from agent.llm import BaseLLM, LLMResponse, LLMStreamEvent, ToolCallDelta, Usage, supports_vision, vision_mode, _messages_have_images, _is_400_error, sanitize_payload_for_logging
-from agent.message import Message, TextBlock, ImageBlock, ContentBlock, extract_text
+from agent.message import Message, ReasoningBlock, TextBlock, ImageBlock, ContentBlock, extract_text
 
 if TYPE_CHECKING:
     pass
@@ -107,6 +107,9 @@ class OpenAILLM(BaseLLM):
         )
 
         reasoning_content = message.get("reasoning_content")
+        reasoning = (
+            [ReasoningBlock(text=reasoning_content)] if reasoning_content else []
+        )
 
         if "tool_calls" in message and message["tool_calls"]:
             tool_calls = [
@@ -121,7 +124,7 @@ class OpenAILLM(BaseLLM):
                 content=message.get("content"),
                 tool_calls=tool_calls,
                 stop_reason=choice.get("finish_reason"),
-                reasoning_content=reasoning_content,
+                reasoning=reasoning,
                 usage=usage,
             )
 
@@ -129,7 +132,7 @@ class OpenAILLM(BaseLLM):
             content=message.get("content"),
             tool_calls=[],
             stop_reason=choice.get("finish_reason"),
-            reasoning_content=reasoning_content,
+            reasoning=reasoning,
             usage=usage,
         )
 
@@ -203,7 +206,14 @@ class OpenAILLM(BaseLLM):
             delta = choice.get("delta") or {}
 
             if delta.get("reasoning_content"):
-                reasoning_parts.append(delta["reasoning_content"])
+                # 思维链增量走独立事件，不混入 assistant_delta（issue #256 D5）。
+                reasoning_delta = delta["reasoning_content"]
+                reasoning_parts.append(reasoning_delta)
+                yield LLMStreamEvent(
+                    type="reasoning_delta",
+                    delta=reasoning_delta,
+                    content="".join(reasoning_parts),
+                )
 
             if delta.get("content"):
                 text_delta = delta["content"]
@@ -238,7 +248,7 @@ class OpenAILLM(BaseLLM):
             content="".join(content_parts) or None,
             tool_calls=tool_calls,
             stop_reason=stop_reason,
-            reasoning_content="".join(reasoning_parts) or None,
+            reasoning=[ReasoningBlock(text="".join(reasoning_parts))] if reasoning_parts else [],
             usage=usage,
         )
         yield LLMStreamEvent(
@@ -261,8 +271,9 @@ class OpenAILLM(BaseLLM):
                 }
                 for tc in msg.tool_calls
             ]
-        if msg.reasoning_content:
-            d["reasoning_content"] = msg.reasoning_content
+        if msg.reasoning:
+            # 回传时可展示文本（opaque 是 Anthropic 专有；OpenAI 兼容端点只用文本）
+            d["reasoning_content"] = msg.reasoning_text
         return d
 
     def _build_openai_messages(

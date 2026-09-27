@@ -582,6 +582,22 @@ function handleEvent(event) {
       break;
     }
 
+    case 'reasoning_delta': {
+      // 思维链增量：写进折叠区，绝不进 markdown 正文（issue #256 D5）。
+      const data = event.data || {};
+      if (data.delta) {
+        if (!currentAssistantMsg) {
+          currentAssistantMsg = addMessage('assistant', '');
+        }
+        const messageEl = currentAssistantMsg.closest('.message');
+        if (messageEl) {
+          renderReasoning(messageEl, data.delta);
+        }
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+      break;
+    }
+
     case 'tool_call':
       currentAssistantMsg = null;
       addToolCallBlock(event.data.name, event.data.arguments);
@@ -712,15 +728,63 @@ function renderHistory(messages) {
   approvalCards.clear();
   questionCards.clear();
   for (const message of messages) {
-    if (!message || !message.content) continue;
+    // 只含 reasoning、无 content 的 assistant 消息也要渲染（否则重连后折叠区消失）。
+    if (!message || (!message.content && !message.reasoning)) continue;
     const role = message.role === 'assistant' ? 'assistant' : 'user';
-    addMessage(role, message.content);
+    addMessage(role, message.content, message.reasoning);
   }
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// --- Reasoning (thinking) folding area, issue #256 ---
+// 通用折叠区：默认关闭、单击展开、跨 provider 统一样式。思维链与正文分离，
+// 绝不混进 markdown 正文。
+function ensureReasoningArea(messageEl) {
+  let area = messageEl.querySelector('.message-reasoning');
+  if (area) return area;
+
+  area = document.createElement('div');
+  area.className = 'message-reasoning';
+  area.dataset.reasoningSource = '';
+
+  const reasonToggle = document.createElement('button');
+  reasonToggle.type = 'button';
+  reasonToggle.className = 'message-reasoning-toggle';
+  reasonToggle.setAttribute('aria-expanded', 'false');
+  reasonToggle.textContent = '思考过程';
+
+  const content = document.createElement('div');
+  content.className = 'message-reasoning-content';
+  content.hidden = true;
+
+  reasonToggle.addEventListener('click', () => {
+    const expanded = reasonToggle.getAttribute('aria-expanded') === 'true';
+    reasonToggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+    content.hidden = expanded;
+  });
+
+  area.appendChild(reasonToggle);
+  area.appendChild(content);
+  // 折叠区放在正文之前（思考发生在回答之前）。
+  messageEl.insertBefore(area, messageEl.firstChild);
+  return area;
+}
+
+function appendReasoningContent(area, delta) {
+  const source = (area.dataset.reasoningSource || '') + (delta || '');
+  area.dataset.reasoningSource = source;
+  const content = area.querySelector('.message-reasoning-content');
+  if (content) content.textContent = source;
+}
+
+function renderReasoning(messageEl, text) {
+  if (!text) return;
+  const area = ensureReasoningArea(messageEl);
+  appendReasoningContent(area, text);
+}
+
 // --- Message rendering ---
-function addMessage(role, content) {
+function addMessage(role, content, reasoning) {
   const el = document.createElement('div');
   el.className = `message ${role}`;
   if (role === 'tool') {
@@ -728,6 +792,10 @@ function addMessage(role, content) {
     header.className = 'message-header';
     header.textContent = 'tool result';
     el.appendChild(header);
+  }
+  // 有 reasoning 时才渲染折叠区（无则不渲染，对无 reasoning 的 provider 零副作用）。
+  if (role === 'assistant' && reasoning) {
+    renderReasoning(el, reasoning);
   }
   const body = document.createElement('div');
   body.className = 'message-body';

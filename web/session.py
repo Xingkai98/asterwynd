@@ -58,7 +58,13 @@ def build_history_payload(session: "AgentSession") -> dict:
         "data": {
             "session_id": session.session_id,
             "messages": [
-                {"role": message.role, "content": extract_text(message.content)}
+                {
+                    "role": message.role,
+                    "content": extract_text(message.content),
+                    # 思维链必须随历史一起补发，否则重连后前端重绘时折叠区消失
+                    # （issue #256 D9）。opaque 不外发，前端只需要可展示文本。
+                    "reasoning": message.reasoning_text or None,
+                }
                 for message in messages
             ],
         },

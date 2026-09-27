@@ -968,3 +968,38 @@ class _GatedLLM(ScriptedLLM):
         response = await super().chat(messages, tools, model)
         self.finished.set()
         return response
+
+
+# ── 历史补发携带 reasoning（issue #256 D9）─────────────────────────────
+
+def test_build_history_payload_includes_reasoning():
+    """重连补发的 session_history 必须携带 reasoning，否则重连后折叠区消失。"""
+    from web.session import build_history_payload
+    from agent.message import Message, ReasoningBlock
+
+    session = AgentSession("s-reason", None)
+    session.messages = [
+        Message(role="user", content="读文件"),
+        Message(role="assistant", content="已读", reasoning=[
+            ReasoningBlock(text="先看文件A", opaque="sig-A"),
+        ]),
+    ]
+
+    payload = build_history_payload(session)
+    msgs = payload["data"]["messages"]
+
+    assert msgs[1]["reasoning"] == "先看文件A", "历史补发丢了 reasoning"
+    # opaque 不外发（前端只消费可展示文本）
+    assert "sig-A" not in str(msgs[1])
+
+
+def test_build_history_payload_without_reasoning_is_none():
+    """无 reasoning 的消息该字段为 None（前端据此不渲染折叠区）。"""
+    from web.session import build_history_payload
+    from agent.message import Message
+
+    session = AgentSession("s-noreason", None)
+    session.messages = [Message(role="assistant", content="直接回答")]
+
+    payload = build_history_payload(session)
+    assert payload["data"]["messages"][0]["reasoning"] is None
