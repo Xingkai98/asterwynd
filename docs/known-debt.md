@@ -403,3 +403,23 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 **为何本轮不改**：抽公共 helper 属于重构，会扩大本 change 的面；两份实现当前功能一致（已由测试固定）。
 
 **若后续收口**：抽出共享的 `_consume_sse_blocks(events) -> (blocks, stop_reason, usage)`，让两条路径都调它；或至少加一条测试断言两条路径对同一份输入产出相同结果。
+
+## 既有 session 重跑不重新钳制 mode（fix-issue-255 已知残留）
+
+`SubAgentManager._clamp_mode` 只在 `create_subagent` 调用一次，把有效 mode **冻结**在 session 上。此后会话 mode 变更（`runtime_state.set_mode`）、或 manager 的静态 `parent_mode` 变更，都**不会**改写既有 session 的 mode：模型对同一 `subagent_id` 再调 `RunSubagent` / `ResumeSubagent` 仍用它创建时的 mode。
+
+`fix-issue-255`（2026-09-27）修的是**钳制基准**（共享 provider → 执行上下文上限）与 **workflow 节点 / 新 spawn 的 run 起点**面，**未**触及这条「会话创建期冻结」的既有设计——两者边界不同：本 change 保证「一次 run 的能力边界自始至终一致」，而本残留是「同一 session 跨 run 的 mode 不随时间收紧」。
+
+**影响**：会话建好后切到更严的 mode，重跑该 session 不会跟着收紧（安全方向是过宽，但要求攻击者先能改会话 mode）。`RunSubagent` 路径不经 `_clamp_mode`，故上限通道对它能读到但不用。
+
+**若后续收口**：可在 `run_subagent` / `resume_subagent` 入口对 `session.mode` 与当前上限取 min（并落 diagnostics），但需先确认「重跑是否应重新钳制」是产品语义而非仅实现选择——本 change 的实现期把现状锁进回归测试（`tests/agent/subagent/test_mode_ceiling.py::test_resubmitting_an_existing_session_does_not_reclamp`），以免被误当回归。
+
+## AgentLoop 复用 tool_registry.mode_policy.runtime_state 的共享态（fix-issue-255 横向发现）
+
+`AgentLoop.__init__` 复用传入 registry 上已有的 `mode_policy.runtime_state`（`agent/loop.py`：`policy_state = getattr(self.tool_registry.mode_policy, "runtime_state", None)`）。因此**同一个 `ToolRegistry` 被两个 `AgentLoop` 复用**时，两个 loop 共享同一个 `AgentRuntimeState`：后构造 loop 的 `run_config.mode` 被前者已写入的 `runtime_state` 静默吞掉，其 `runtime_state.current_mode` 会解析成**前者的** mode。
+
+这与 issue #255 同根因（把**执行作用域**量挂在会被多方复用的共享对象上）。`fix-issue-255` 通过 mode 上限走 contextvar 修掉了它的**直接**影响面（钳制不再读共享态），但这条共享本身仍在。
+
+**当前不可达**：生产路径每个 loop 各自 `build_default_tool_registry`（`agent/main.py`、`web/session.py`、`agent/subagent/manager.py:_build_subagent_loop`），无实测影响（grill 探针 `probe_F_scan.py` 实测 `loop2.runtime_state IS loop1.runtime_state` 仅在人为复用同一 registry 时成立）。
+
+**若后续收口**：让 `AgentLoop` 只在 registry 尚无 `runtime_state` 时创建，或把 mode 也改为执行上下文量；并加注释说明「registry 与 loop 不得跨 mode 复用」。

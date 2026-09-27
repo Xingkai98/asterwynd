@@ -24,6 +24,7 @@ from agent.subagent.budget import BudgetExceededError, BudgetHook, BudgetTracker
 from agent.subagent.context import (
     current_bus,
     current_graph_distance,
+    current_mode_ceiling,
     current_node_id,
     current_run_id,
     current_spawn_depth,
@@ -438,7 +439,6 @@ class SubAgentManager:
         config: "AsterwyndConfig | None" = None,
         workspace_policy: WorkspacePolicy | None = None,
         parent_mode: AgentMode = AgentMode.BUILD,
-        parent_mode_provider: Callable[[], AgentMode] | None = None,
         cost_ledger: "CostLedger | None" = None,
         sandbox: "ExecutionBackend | None" = None,
         max_active: int | None = None,
@@ -450,8 +450,12 @@ class SubAgentManager:
         self.llm = llm
         self.config = config
         self.workspace_policy = workspace_policy or WorkspacePolicy()
+        #: Conservative static lower bound for the mode clamp, used when the
+        #: execution context carries no ceiling (see ``_parent_mode``). It is a
+        #: *static* value on purpose: the previous ``parent_mode_provider``
+        #: callback was overwritten by every subagent loop construction, which
+        #: made concurrent nodes clobber each other's bound (issue #255).
         self.parent_mode = parent_mode
-        self.parent_mode_provider = parent_mode_provider
         self.cost_ledger = cost_ledger
         self.sandbox = sandbox
         self._sessions: dict[str, SubagentSessionRecord] = {}
@@ -533,7 +537,6 @@ class SubAgentManager:
         llm: "LLM | None" = None,
         config: "AsterwyndConfig | None" = None,
         workspace_policy: WorkspacePolicy | None = None,
-        parent_mode_provider: Callable[[], AgentMode] | None = None,
     ) -> None:
         if llm is not None:
             self.llm = llm
@@ -541,8 +544,6 @@ class SubAgentManager:
             self.config = config
         if workspace_policy is not None:
             self.workspace_policy = workspace_policy
-        if parent_mode_provider is not None:
-            self.parent_mode_provider = parent_mode_provider
 
     def create_subagent(
         self,
@@ -1598,9 +1599,41 @@ class SubAgentManager:
         return requested
 
     def _parent_mode(self) -> AgentMode:
-        if self.parent_mode_provider is not None:
-            return self.parent_mode_provider()
+        """The mode clamp's upper bound for the current execution unit.
+
+        Prefers the execution-context ceiling (installed at the run start and
+        narrowed at the scheduler dispatch point) so concurrent nodes and nested
+        spawns each carry their own bound. Falls back to the **static**
+        ``parent_mode`` when the context carries none — a conservative lower
+        bound, never "unbounded" (issue #255 / change O3).
+        """
+        ceiling = current_mode_ceiling()
+        if ceiling is not None:
+            return ceiling
         return self.parent_mode
+
+    def mode_ceiling(self) -> AgentMode:
+        """Public read of the current mode ceiling (the "session mode channel").
+
+        This is the channel the scheduler and the workflow-asset path read
+        (``workflow-asset-persistence``, issue #245). It never returns an
+        "unbounded" value: when no ceiling is installed it falls back to the
+        conservative static ``parent_mode``.
+        """
+        return self._parent_mode()
+
+    def effective_mode(self, declared: str | AgentMode | None) -> AgentMode:
+        """``min(declared mode, current ceiling)`` for one workflow node.
+
+        ``declared=None`` (a node with no explicit ``mode``) resolves to the
+        ceiling itself. The result is always ``<=`` the ceiling, so installing
+        it as the context bound for a dispatch narrows and never widens.
+        """
+        ceiling = self._parent_mode()
+        if declared is None:
+            return ceiling
+        requested = declared if isinstance(declared, AgentMode) else parse_agent_mode(declared)
+        return self._clamp_mode(requested)
 
     def _check_admission(self) -> None:
         """Fail-fast admission layer before any run record exists (decision D2).

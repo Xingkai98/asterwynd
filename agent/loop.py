@@ -38,6 +38,7 @@ from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
 from agent.observability import ErrorCategory, ErrorClassifier, exception_error_type, resolve_phase
 from agent.planning import PlanStatus, PlanningManager
+from agent.subagent.context import current_mode_ceiling, set_mode_ceiling
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
 from agent.run_identity import new_run_id
@@ -150,10 +151,7 @@ class AgentLoop:
         self.persistent_memory = persistent_memory
         self._planning = planning_manager or PlanningManager()
         self.subagent_manager = subagent_manager or SubAgentManager()
-        self.subagent_manager.configure_runtime(
-            llm=llm,
-            parent_mode_provider=lambda: self.runtime_state.current_mode,
-        )
+        self.subagent_manager.configure_runtime(llm=llm)
         self.max_iterations = max_iterations
         self.run_config = run_config or AgentRunConfig()
         policy_state = getattr(self.tool_registry.mode_policy, "runtime_state", None)
@@ -546,6 +544,14 @@ class AgentLoop:
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
         previous_sandbox_sink = current_sandbox_sink()
+        # Mount A (change fix-issue-255-mode-ceiling): snapshot this run's mode
+        # ceiling so the whole run has one consistent capability bound, and
+        # every nested spawn inherits it. Restoring the *previous value* via
+        # ``set`` (not ``reset(token)``) matters: this coroutine may be awaited
+        # from a long-lived task, and leaving a stale ceiling behind would let a
+        # later direct-driven scheduler read the wrong session's bound (#255).
+        previous_ceiling = current_mode_ceiling()
+        set_mode_ceiling(self.runtime_state.current_mode)
         self._active_on_event = on_event
         self._active_trace_recorder = trace_recorder
         if trace_recorder:
@@ -573,6 +579,7 @@ class AgentLoop:
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
             set_sandbox_sink(previous_sandbox_sink)
+            set_mode_ceiling(previous_ceiling)
             if self.cost_ledger is not None:
                 try:
                     self.cost_ledger.flush(_default_ledger_path())
@@ -603,6 +610,9 @@ class AgentLoop:
 
             if resume_snapshot.mode != self.runtime_state.current_mode:
                 await self.set_mode(resume_snapshot.mode, source="resume")
+                # Re-snapshot the ceiling to the restored mode (mount A): the
+                # bound installed in ``run`` predates this resume restoration.
+                set_mode_ceiling(self.runtime_state.current_mode)
             self._execution_todos = list(resume_snapshot.todos)
             self._sync_todo_next_id()
             if self.skill_runtime is not None and resume_snapshot.active_skills:

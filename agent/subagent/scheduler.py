@@ -46,12 +46,15 @@ from agent.subagent.aggregation import (
 from agent.context.summarizer import LLMSummarizer, Summarizer
 from agent.subagent.bus import MessageBus
 from agent.subagent.context import (
+    current_mode_ceiling,
     reset_bus,
     reset_graph_distance,
+    reset_mode_ceiling,
     reset_node_id,
     reset_workflow_id,
     set_bus,
     set_graph_distance,
+    set_mode_ceiling,
     set_node_id,
     set_workflow_id,
 )
@@ -2113,6 +2116,13 @@ class WorkflowScheduler:
         token_node = set_node_id(node.id)
         token_distance = set_graph_distance(self._graph_distance_for(node.id))
         token_bus = set_bus(self.bus)
+        # 节点 mode 上限的收紧点（change ``fix-issue-255-mode-ceiling``，挂载 B）：
+        # 在 ``create_subagent`` **之前**把上限压到 ``min(node.mode, 当前上限)``——
+        # 节点自身的 mode 就是在 ``create_subagent`` 里冻结的，晚于此处就改不了了。
+        # 该 set 与既有 4 个身份 contextvar 同形态（本函数是调度器 task 内被 await 的
+        # 普通协程），故带 ``finally reset`` 是安全的；执行点 ``_execute_run_in_context``
+        # 则**不能** reset（跨 context teardown 会抛 ``ValueError``）。
+        token_ceiling = set_mode_ceiling(manager.effective_mode(node.mode))
         try:
             subagent_id = reuse_state.subagent_id if reuse_state and reuse_state.subagent_id else None
             if subagent_id is None:
@@ -2135,6 +2145,7 @@ class WorkflowScheduler:
                 edge=self._edge_for(node.id),
             )
         finally:
+            reset_mode_ceiling(token_ceiling)
             reset_bus(token_bus)
             reset_graph_distance(token_distance)
             reset_node_id(token_node)
