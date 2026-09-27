@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from agent.anthropic_llm import is_reasoning_disabled, set_reasoning_disabled
 from agent.approval import (
     ApprovalDecisionStatus,
     ApprovalRequest,
@@ -58,7 +59,13 @@ def build_history_payload(session: "AgentSession") -> dict:
         "data": {
             "session_id": session.session_id,
             "messages": [
-                {"role": message.role, "content": extract_text(message.content)}
+                {
+                    "role": message.role,
+                    "content": extract_text(message.content),
+                    # 思维链必须随历史一起补发，否则重连后前端重绘时折叠区消失
+                    # （issue #256 D9）。opaque 不外发，前端只需要可展示文本。
+                    "reasoning": message.reasoning_text or None,
+                }
                 for message in messages
             ],
         },
@@ -1281,6 +1288,11 @@ class AgentSession:
         # session 级、跨 run 存活，支持多连接广播与定点发送。ws 连上时 attach，
         # 断开只 detach 该连接、不终止 run。
         self.event_channel = SessionEventChannel(session_id)
+        # reasoning 回传降级标志（issue #256 D7）：**session 级、跨 run 存活**。
+        # LLM 层用 ContextVar 表达「本 run 是否降级」，但每个用户回合都是新 task、
+        # ContextVar 会重置，所以真值必须由 session 持有：run 开始时注入、结束时
+        # 回收。作用域正确性是 Q8 明确要求的（「session 级」+ UI/debug 可见）。
+        self.reasoning_disabled = False
 
     @property
     def current_mode(self) -> str:
@@ -1757,6 +1769,12 @@ class SessionManager:
         """``run_session`` 的锁内实现：实际驱动 AgentLoop 与 queue drain。"""
         queue: asyncio.Queue = asyncio.Queue()
 
+        # reasoning 降级标志的注入（issue #256 D7）：真值存在 session 上（跨 run
+        # 存活），每次 run 开始时注入当前上下文的 ContextVar —— 因为每个用户回合
+        # 都是新 task，ContextVar 不注入就会重置成默认、等于没记。
+        # 回写在 `run_agent` 的 finally（子 task 内），见那里的注释。
+        set_reasoning_disabled(session.reasoning_disabled)
+
         async def on_event(event_type: str, data: dict):
             await queue.put({"type": event_type, "data": data})
 
@@ -1820,6 +1838,23 @@ class SessionManager:
                 # resume_snapshot 只消费一次：run 完成后恢复上下文已并入
                 # session.messages，后续 run 不再重复恢复。
                 session.resume_snapshot = None
+                # reasoning 降级状态回写（issue #256 D7）：**必须在这个子 task 内做**——
+                # 置位发生在 LLM（同一子 task 的调用链），而 ContextVar 是单向的
+                # （父写子可见、子写父不可见），放到 `_run_session_locked` 的
+                # finally（父 task）会永远读到 False。session 是跨 task 共享对象，
+                # 从这里写才能让「本会话持续禁用」在下一次 run 生效。
+                # 只在**首次**降级时推事件（此后 session 已为 True，不再重复），
+                # 满足 Q8 的「UI/debug 可见」。
+                if is_reasoning_disabled() and not session.reasoning_disabled:
+                    session.reasoning_disabled = True
+                    await queue.put({
+                        "type": "reasoning_disabled",
+                        "data": {
+                            "session_id": session.session_id,
+                            "reason": "upstream rejected reasoning blocks; "
+                                      "this session will stop sending them back",
+                        },
+                    })
                 await queue.put(None)  # sentinel
 
         agent_task = asyncio.create_task(run_agent())

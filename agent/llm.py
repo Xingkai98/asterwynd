@@ -7,7 +7,7 @@ from typing import Literal, Protocol, Optional, runtime_checkable, TYPE_CHECKING
 import httpx
 
 if TYPE_CHECKING:
-    from agent.message import Message
+    from agent.message import Message, ReasoningBlock
 
 logger = logging.getLogger("asterwynd.llm")
 
@@ -68,13 +68,20 @@ class LLMResponse:
     content: Optional[str]
     tool_calls: list[ToolCallDelta] = field(default_factory=list)
     stop_reason: Optional[str] = None
-    reasoning_content: Optional[str] = None
+    reasoning: list["ReasoningBlock"] = field(default_factory=list)
     usage: Optional[Usage] = None
+
+    @property
+    def reasoning_text(self) -> str:
+        """可展示的思维链文本（忽略 opaque 回传载荷）。"""
+        return "".join(block.text for block in self.reasoning)
 
 
 @dataclass
 class LLMStreamEvent:
-    type: Literal["assistant_delta", "complete"]
+    # reasoning_delta 是思维链增量，独立于 assistant_delta（后者是可见回复的
+    # 增量，消费方会写入正文）——两者混用会污染正文渲染（issue #256 D5）。
+    type: Literal["assistant_delta", "reasoning_delta", "complete"]
     delta: str = ""
     content: str = ""
     stop_reason: Optional[str] = None

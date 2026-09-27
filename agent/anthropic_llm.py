@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import re
+from contextvars import ContextVar
 from typing import Optional, TYPE_CHECKING
 
 from agent.llm import (
@@ -10,12 +11,89 @@ from agent.llm import (
     supports_vision, vision_mode, _messages_have_images, _is_400_error,
     sanitize_payload_for_logging,
 )
-from agent.message import Message, TextBlock, ImageBlock
+from agent.message import Message, ReasoningBlock, TextBlock, ImageBlock
 
 if TYPE_CHECKING:
     from agent.message import ContentBlock
 
 logger = logging.getLogger("asterwynd.llm.anthropic")
+
+# Anthropic beta 能力（issue #256）：
+# - context-management-2025-06-27：clear_thinking_20251015 上下文编辑策略，
+#   在 keep-all 模型上回收历史 thinking 占用的窗口（保留则缓存命中、清掉则失效）。
+# - thinking-binding-controls-2026-08-01：thinking block 前缀绑定的控制，
+#   配 block_binding.prefix_mismatch_behavior="drop_block" 避免 history 被改写后硬 400。
+CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
+THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+
+#: 命中 reasoning 相关 400 后的降级标志（issue #256 D7）。
+#:
+#: **作用域 = 一次 run 的上下文，不是 session 的持久状态**。理由：`ContextVar`
+#: 按 asyncio task 隔离，而 web 下每个用户回合都是新 task
+#: （`web/session.py` 的 `asyncio.create_task(run_agent())`），所以标志天然止于
+#: 本回合。要让「本会话持续禁用」成立，**由 session 侧持有真值并在每次 run 开始时
+#: 注入**（见 `set_reasoning_disabled` 与 `web/session.py` 的 run 入口）——
+#: LLM 实例在 web 下是应用级单例（`web/server.py` 创建一个 llm 传给所有 session），
+#: 所以真值绝不能放在 LLM 实例属性上（会跨会话泄漏）。
+_reasoning_disabled: "ContextVar[bool]" = ContextVar("reasoning_disabled", default=False)
+
+
+def set_reasoning_disabled(disabled: bool) -> None:
+    """设置当前 run 上下文的 reasoning 降级标志（由 session 在 run 开始时注入）。"""
+    _reasoning_disabled.set(disabled)
+
+
+def is_reasoning_disabled() -> bool:
+    """读取当前 run 上下文的 reasoning 降级标志（供 session 回写自己的状态）。"""
+    return _reasoning_disabled.get()
+
+
+# reasoning 相关 400 的错误文案族（issue #256 D7）。两类失败模式不同，需分别匹配：
+# (a) 缺回传；(b) 签名/前缀失配。
+REASONING_400_PATTERNS = (
+    "thinking",          # "The content[].thinking ... must be passed back"
+    "reasoning_content",  # OpenAI 兼容端点的同义文案
+    "signature",         # "invalid signature in thinking block"
+    "bound to a different conversation",
+    "prefix mismatch",
+)
+
+
+def _is_reasoning_400(error_text: str) -> bool:
+    """判断 400 文案是否指向 reasoning 回传问题（issue #256 D7）。"""
+    lowered = (error_text or "").lower()
+    return any(pat in lowered for pat in REASONING_400_PATTERNS)
+
+
+def _http_error_text(exc: Exception) -> str:
+    """取 HTTP 错误体文本。
+
+    前提「错误体不被包装」已实测成立：httpx 0.28.1 下即使 streaming 上下文，
+    ``HTTPStatusError.response.text`` 仍可读（issue #256 D7）。错误文案在
+    ``error.message`` 里。取不到时返回空串（不抛）。
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return ""
+    try:
+        return response.text or ""
+    except Exception:
+        return ""
+
+
+def _strip_reasoning_from_messages(messages: list["Message"]) -> list["Message"]:
+    """返回去掉所有 reasoning 的消息副本（自愈降级用，不改原对象）。"""
+    return [
+        Message(
+            role=m.role,
+            content=m.content,
+            tool_call_id=m.tool_call_id,
+            reasoning=[],
+            tool_calls=m.tool_calls,
+        )
+        for m in messages
+    ]
+
 
 # Python string 中不允许出现的 surrogate character (U+D800-U+DFFF)
 SURROGATE_PATTERN = re.compile(r"[\ud800-\udfff]")
@@ -48,13 +126,26 @@ class AnthropicLLM(BaseLLM):
         super().__init__(api_key=api_key, base_url=base_url, model=model, max_tokens=max_tokens)
         self.cache_plan: CachePlan | None = None
         self._last_cache_plan: CachePlan | None = None
+        # beta 能力开关（issue #256 D2/D7b）：
+        # - context_management: clear_thinking_20251015（keep-all 模型上回收 thinking）
+        # - thinking_binding: 前缀绑定的 drop_block 退路（compaction 改写历史后不硬崩）
+        self.enable_context_management = False
+        self.enable_thinking_binding_controls = False
 
     def _get_headers(self) -> dict:
-        return {
+        headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         }
+        betas: list[str] = []
+        if self.enable_context_management:
+            betas.append(CONTEXT_MANAGEMENT_BETA)
+        if self.enable_thinking_binding_controls:
+            betas.append(THINKING_BINDING_BETA)
+        if betas:
+            headers["anthropic-beta"] = ",".join(betas)
+        return headers
 
     async def chat(
         self,
@@ -78,6 +169,20 @@ class AnthropicLLM(BaseLLM):
             if not _is_400_error(e):
                 raise
             logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            # reasoning 相关 400 的自愈（issue #256 D7）：本轮去掉 thinking 重试，
+            # 并记 session 级降级标志（本轮降级 + 记状态，用户拍板 Q8）。
+            if _is_reasoning_400(_http_error_text(e)):
+                logger.warning(
+                    "400 points at reasoning blocks — retrying without them "
+                    "(session-level reasoning disabled from now on)"
+                )
+                _reasoning_disabled.set(True)
+                payload = self._strip_cache_control(payload) if self._payload_has_cache_control(payload) else payload
+                payload = self._build_payload(messages, tools, model, force_vision=force_vision)
+                if self.stream:
+                    return await self._chat_stream(payload)
+                else:
+                    return await self._chat_nonstream(payload)
             # Some Anthropic-compatible endpoints (e.g. DeepSeek-anthropic)
             # reject `cache_control`; retry once without it.
             if self._payload_has_cache_control(payload):
@@ -138,6 +243,15 @@ class AnthropicLLM(BaseLLM):
                 anthropic_messages.append({"role": "user", "content": self._content_to_anthropic(msg.content, resolved_model, force_vision=force_vision)})
             elif msg.role == "assistant":
                 content_parts = []
+                # thinking block 必须在 text/tool_use 之前，且顺序与原始响应一致
+                # （官方要求「连续的 thinking 块序列不可重排」，issue #256 D2）。
+                # reasoning_disabled 为真时整段跳过（命中 400 后的 session 级降级，D7）。
+                for rb in ([] if _reasoning_disabled.get() else msg.reasoning):
+                    block: dict = {"type": "thinking", "thinking": rb.text}
+                    if rb.opaque is not None:
+                        # opaque 原样回传，不经任何清洗（issue #256 D1）。
+                        block["signature"] = rb.opaque
+                    content_parts.append(block)
                 # text must come before tool_use blocks (required by DeepSeek Anthropic endpoint)
                 if msg.content:
                     assistant_text = _strip_surrogates(msg.content) if isinstance(msg.content, str) else ""
@@ -179,6 +293,12 @@ class AnthropicLLM(BaseLLM):
             payload["system"] = system_content
         if tools:
             payload["tools"] = [self._convert_tool(tool) for tool in tools]
+        if self.enable_thinking_binding_controls:
+            # 前缀绑定失配时丢弃该 block 而非硬 400（issue #256 D7b）：
+            # compaction 改写历史后不会让整个 run 崩掉。
+            payload["thinking"] = {
+                "block_binding": {"prefix_mismatch_behavior": "drop_block"},
+            }
 
         self._apply_cache_plan(payload)
         return payload
@@ -263,6 +383,22 @@ class AnthropicLLM(BaseLLM):
             if not _is_400_error(e):
                 raise
             logger = __import__("logging").getLogger("asterwynd.llm.anthropic")
+            # reasoning 相关 400 的自愈（issue #256 D7）：本轮去掉 thinking 重试，
+            # 并记 session 级降级标志（本轮降级 + 记状态，用户拍板 Q8）。
+            if _is_reasoning_400(_http_error_text(e)):
+                logger.warning(
+                    "Stream 400 points at reasoning blocks — retrying without them "
+                    "(session-level reasoning disabled from now on)"
+                )
+                _reasoning_disabled.set(True)
+                async for event in self._stream_chat_impl(
+                    messages,
+                    tools,
+                    resolved_model,
+                    force_vision=force_vision,
+                ):
+                    yield event
+                return
             # Some Anthropic-compatible endpoints reject `cache_control`; retry once
             # without it (mirrors the non-streaming path in chat()).  The plan was
             # consumed by the first _stream_chat_impl's _build_payload, so the
@@ -309,6 +445,7 @@ class AnthropicLLM(BaseLLM):
         blocks: dict = {}
         stop_reason = None
         text_content = ""
+        reasoning_text = ""
         usage = None
 
         async for event_type, data in self._stream_events(
@@ -324,6 +461,8 @@ class AnthropicLLM(BaseLLM):
                     "name": block.get("name"),
                     "text_parts": [],
                     "json_parts": [],
+                    "signature": block.get("signature") or None,
+                    "reasoning_parts": [],
                 }
 
             elif event_type == "content_block_delta":
@@ -342,6 +481,22 @@ class AnthropicLLM(BaseLLM):
                             delta=text_delta,
                             content=text_content,
                         )
+                elif delta["type"] == "thinking_delta":
+                    # 思维链增量走独立事件，绝不混入 assistant_delta（否则前端
+                    # 会把它写进 markdown 正文，issue #256 D5）。
+                    thinking_delta = _strip_surrogates(delta.get("thinking", ""))
+                    blk["reasoning_parts"].append(thinking_delta)
+                    reasoning_text += thinking_delta
+                    if thinking_delta:
+                        yield LLMStreamEvent(
+                            type="reasoning_delta",
+                            delta=thinking_delta,
+                            content=reasoning_text,
+                        )
+                elif delta["type"] == "signature_delta":
+                    # opaque 载荷：原样保存，**不经 _strip_surrogates**（清洗会
+                    # 改写字节，破坏回传校验，issue #256 D1）。
+                    blk["signature"] = delta.get("signature")
                 elif delta["type"] == "input_json_delta":
                     blk["json_parts"].append(delta["partial_json"])
 
@@ -395,6 +550,8 @@ class AnthropicLLM(BaseLLM):
                     "name": block.get("name"),
                     "text_parts": [],
                     "json_parts": [],
+                    "signature": block.get("signature") or None,
+                    "reasoning_parts": [],
                 }
 
             elif event_type == "content_block_delta":
@@ -405,6 +562,10 @@ class AnthropicLLM(BaseLLM):
                     continue
                 if delta["type"] == "text_delta":
                     blk["text_parts"].append(delta["text"])
+                elif delta["type"] == "thinking_delta":
+                    blk["reasoning_parts"].append(delta.get("thinking", ""))
+                elif delta["type"] == "signature_delta":
+                    blk["signature"] = delta.get("signature")
                 elif delta["type"] == "input_json_delta":
                     blk["json_parts"].append(delta["partial_json"])
 
@@ -471,6 +632,7 @@ class AnthropicLLM(BaseLLM):
         if data.get("content"):
             tool_calls = []
             text_content = []
+            reasoning: list[ReasoningBlock] = []
 
             for block in data["content"]:
                 if block["type"] == "tool_use":
@@ -478,6 +640,12 @@ class AnthropicLLM(BaseLLM):
                         id=block["id"],
                         name=block["name"],
                         arguments=json.dumps(block["input"]) if isinstance(block["input"], dict) else str(block["input"]),
+                    ))
+                elif block["type"] == "thinking":
+                    # 文本走清洗、签名原样（issue #256 D1）。
+                    reasoning.append(ReasoningBlock(
+                        text=_strip_surrogates(block.get("thinking", "")),
+                        opaque=block.get("signature"),
                     ))
                 elif block["type"] == "text":
                     text_content.append(_strip_surrogates(block["text"]))
@@ -487,6 +655,7 @@ class AnthropicLLM(BaseLLM):
                     content="\n".join(text_content) if text_content else None,
                     tool_calls=tool_calls,
                     stop_reason=api_stop_reason,
+                    reasoning=reasoning,
                     usage=usage,
                 )
 
@@ -494,6 +663,7 @@ class AnthropicLLM(BaseLLM):
                 content="\n".join(text_content) if text_content else None,
                 tool_calls=[],
                 stop_reason=api_stop_reason,
+                reasoning=reasoning,
                 usage=usage,
             )
 
@@ -508,12 +678,20 @@ class AnthropicLLM(BaseLLM):
         """将流式累积的 block 转换为 LLMResponse"""
         tool_calls = []
         text_content = []
+        reasoning: list[ReasoningBlock] = []
 
         for blk in blocks.values():
             if blk["type"] == "text":
                 text = _strip_surrogates("".join(blk["text_parts"]))
                 if text:
                     text_content.append(text)
+            elif blk["type"] == "thinking":
+                # 一段 thinking = 可展示文本 + opaque 签名。文本走清洗，签名
+                # **绝不**走清洗（改写字节会破坏回传校验，issue #256 D1）。
+                block_text = _strip_surrogates("".join(blk.get("reasoning_parts", [])))
+                signature = blk.get("signature")
+                if block_text or signature:
+                    reasoning.append(ReasoningBlock(text=block_text, opaque=signature))
             elif blk["type"] == "tool_use":
                 json_str = "".join(blk["json_parts"])
                 try:
@@ -553,6 +731,7 @@ class AnthropicLLM(BaseLLM):
                 content="\n".join(text_content) if text_content else None,
                 tool_calls=tool_calls,
                 stop_reason=stop_reason or "tool_calls",
+                reasoning=reasoning,
                 usage=usage,
             )
 
@@ -560,6 +739,7 @@ class AnthropicLLM(BaseLLM):
             content="\n".join(text_content) if text_content else None,
             tool_calls=[],
             stop_reason=stop_reason or "end_turn",
+            reasoning=reasoning,
             usage=usage,
         )
 

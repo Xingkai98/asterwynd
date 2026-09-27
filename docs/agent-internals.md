@@ -601,7 +601,7 @@ class LLMResponse:
     content: Optional[str]              # 文本回复
     tool_calls: list[ToolCallDelta]     # 工具调用列表（有默认工厂）
     stop_reason: Optional[str]          # "end_turn" | "max_tokens" | ...
-    reasoning_content: Optional[str]    # 推理过程（o1 等模型）
+    reasoning: list[ReasoningBlock]     # 思维链（可展示文本 + opaque 回传载荷）
     usage: Optional[Usage]              # token 用量（input/output）
 
 @dataclass
@@ -733,7 +733,7 @@ class Message:
     role: Literal["system", "user", "assistant", "tool"]
     content: str | list[ContentBlock]   # 纯文本 或 多模态内容块列表
     tool_call_id: Optional[str]         # tool 消息的回溯 ID
-    reasoning_content: Optional[str]    # 推理过程
+    reasoning: list[ReasoningBlock]     # 思维链段（text 可展示 / opaque 只回传）
     tool_calls: list                     # assistant 消息的工具调用列表
 
 # 内容块
@@ -750,7 +750,7 @@ msg.to_dict()   # → {"role": "user", "content": "...", ...}
 msg.from_dict(d)  # 反向还原，包括深层嵌套的 ContentBlock 和 ToolCallDelta
 ```
 
-`to_dict()` 只在字段非 None / 非空时写入（`tool_call_id`、`reasoning_content`、`tool_calls`），不会输出 null 字段。序列化用于会话持久化（`messages.json`）和 WebSocket 传输。
+`to_dict()` 只在字段非 None / 非空时写入（`tool_call_id`、`reasoning`、`tool_calls`），不会输出 null 字段。序列化用于会话持久化（`messages.json`）和 WebSocket 传输。
 
 ### 5.2 Token 计数
 

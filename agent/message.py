@@ -1,8 +1,20 @@
 # agent/message.py
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, asdict, field
 from typing import Literal, Optional, Any
+
+logger = logging.getLogger("asterwynd.message")
+
+
+def _has_lone_surrogate(text: str) -> bool:
+    """文本是否含 lone surrogate（U+D800–U+DFFF）。
+
+    这类字符不是合法 Unicode 文本，`json.dump(ensure_ascii=False)` 无法编码；
+    真实端点的 reasoning 签名不会出现它们（issue #256 审阅 S-3）。
+    """
+    return any(0xD800 <= ord(ch) <= 0xDFFF for ch in text)
 
 
 # ── Content Block types ──────────────────────────────────────────────
@@ -87,6 +99,48 @@ def count_tokens_for_content(content: str | list[ContentBlock], counter) -> int:
     return total
 
 
+# ── ReasoningBlock ────────────────────────────────────────────────────
+
+@dataclass
+class ReasoningBlock:
+    """思维链的一段（issue #256）。
+
+    一段 = **可展示文本** + **可选的 opaque 回传载荷**。二者职责严格分离：
+
+    - ``text``：供展示与日志使用。
+    - ``opaque``：provider 的不透明回传载荷（如 Anthropic 的 ``signature``）。
+      它 **只回传、永不展示、永不解析**，且在「采集 → 持久化 → 回放」全链路
+      必须 **逐字节不变** —— 绝不可经 ``_strip_surrogates`` 之类的清洗函数，
+      否则签名会被改写导致回传校验失败。
+    """
+    text: str = ""
+    opaque: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        d: dict[str, Any] = {"text": self.text}
+        if self.opaque is not None:
+            # 不变量边界：opaque 必须是**合法 Unicode 文本**（不含 lone surrogate）。
+            # 真实端点的签名都是 ASCII（Anthropic 为 base64、DeepSeek 为 UUID），
+            # 不会有 surrogate；但 lone surrogate 本身不是合法 Unicode 文本，
+            # `json.dump(ensure_ascii=False)` 会抛 UnicodeEncodeError 让整个
+            # session 保存崩掉（issue #256 审阅 S-3）。这里按「丢弃该 opaque、
+            # 保留 text」降级——比崩掉保存更安全，且不变量在合法输入上仍成立。
+            if _has_lone_surrogate(self.opaque):
+                logger.warning(
+                    "Dropping reasoning opaque payload containing lone surrogates "
+                    "(not valid Unicode text; cannot be persisted)"
+                )
+            else:
+                d["opaque"] = self.opaque
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ReasoningBlock":
+        if isinstance(data, ReasoningBlock):
+            return data
+        return cls(text=data.get("text", ""), opaque=data.get("opaque"))
+
+
 # ── Message ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -95,10 +149,15 @@ class Message:
     role: Literal["system", "user", "assistant", "tool"]
     content: str | list[ContentBlock]
     tool_call_id: Optional[str] = None
-    reasoning_content: Optional[str] = None
+    reasoning: list[ReasoningBlock] = field(default_factory=list)
     tool_calls: list = field(default_factory=list)
     # 非序列化 token 计数缓存（增量计数用；to_dict/from_dict 不包含）
     _tokens: Optional[int] = field(default=None, repr=False, compare=False)
+
+    @property
+    def reasoning_text(self) -> str:
+        """所有段的可展示文本按序拼接（供展示层消费；忽略 opaque）。"""
+        return "".join(block.text for block in self.reasoning)
 
     def to_dict(self) -> dict:
         d: dict[str, Any] = {"role": self.role}
@@ -108,8 +167,8 @@ class Message:
             d["content"] = [content_block_to_dict(b) for b in self.content]
         if self.tool_call_id is not None:
             d["tool_call_id"] = self.tool_call_id
-        if self.reasoning_content is not None:
-            d["reasoning_content"] = self.reasoning_content
+        if self.reasoning:
+            d["reasoning"] = [block.to_dict() for block in self.reasoning]
         if self.tool_calls:
             d["tool_calls"] = [
                 {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
@@ -133,11 +192,15 @@ class Message:
             )
             for call in data.get("tool_calls", [])
         ]
+        reasoning = [ReasoningBlock.from_dict(b) for b in data.get("reasoning", [])]
+        if not reasoning and data.get("reasoning_content"):
+            # 旧会话兼容（Q1：旧字段只读，读入即包成单段；新写入只写 reasoning）
+            reasoning = [ReasoningBlock(text=data["reasoning_content"])]
         return cls(
             role=data["role"],
             content=content,
             tool_call_id=data.get("tool_call_id"),
-            reasoning_content=data.get("reasoning_content"),
+            reasoning=reasoning,
             tool_calls=tool_calls,
         )
 

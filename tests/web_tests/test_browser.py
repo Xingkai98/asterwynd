@@ -375,3 +375,65 @@ async def test_multi_turn_with_tool(page, web_server):
     # Turn 2 的回复不应与 Turn 1 完全相同（不重复 pwd 结果）
     assert text_turn2.strip() != text_turn1.strip(), \
         f"Turn 2 should not repeat Turn 1 verbatim:\n  T1: {text_turn1[:100]}\n  T2: {text_turn2[:100]}"
+
+
+# ─── 思维链折叠区（issue #256）────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reasoning_folding_area_default_closed_and_toggles(page, fake_web_server):
+    """折叠区：默认关闭、单击展开、再点折叠（issue #256 spec web-ui Scenario 1/2）。"""
+    await page.goto(fake_web_server)
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
+
+    # 驱动一次 reasoning 增量（走既有测试接缝派发事件）
+    await page.evaluate(
+        "window.AsterwyndChatTest.dispatch({type:'reasoning_delta',"
+        "data:{delta:'先看文件A', content:'先看文件A'}})"
+    )
+    await page.wait_for_selector(".message-reasoning")
+    # 默认关闭：内容不可见
+    assert await page.locator(".message-reasoning-content").is_hidden()
+    # 正文不受污染
+    body = await page.locator(".message.assistant .message-body").last.inner_text()
+    assert "先看文件A" not in body
+
+    # 单击展开
+    await page.click(".message-reasoning-toggle")
+    assert await page.locator(".message-reasoning-content").is_visible()
+    assert "先看文件A" in await page.locator(".message-reasoning-content").inner_text()
+
+    # 再点折叠
+    await page.click(".message-reasoning-toggle")
+    assert await page.locator(".message-reasoning-content").is_hidden()
+
+
+@pytest.mark.asyncio
+async def test_no_reasoning_renders_no_folding_area(page, fake_web_server):
+    """无 reasoning 的消息不渲染折叠区（issue #256 spec web-ui Scenario 3）。"""
+    await page.goto(fake_web_server)
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
+
+    await page.fill(INPUT_SELECTOR, "hello")
+    await page.click(SEND_SELECTOR)
+    await page.wait_for_selector(".message.assistant")
+
+    assert await page.locator(".message-reasoning").count() == 0
+
+
+@pytest.mark.asyncio
+async def test_reasoning_disabled_event_is_visible(page, fake_web_server):
+    """降级事件在 UI 可见（issue #256 D7/Q8）。"""
+    await page.goto(fake_web_server)
+    await page.wait_for_selector("#hub-view.active")
+    await _open_chat(page)
+
+    await page.evaluate(
+        "window.AsterwyndChatTest.dispatch({type:'reasoning_disabled',"
+        "data:{session_id:'s1', reason:'upstream rejected'}})"
+    )
+    await page.wait_for_function(
+        "Array.from(document.querySelectorAll('.message.system'))"
+        ".some(el => el.textContent.includes('停止回传思维链'))"
+    )

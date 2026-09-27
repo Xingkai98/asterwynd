@@ -393,3 +393,13 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 **为何本轮不改**：这是控制流变更而非日志增强，会超出本 bugfix「让截断不崩溃」的范围，且它是否是真实缺陷未经实测（需要构造「事件行紧邻坏数据行」的端点行为才能判定影响面）。按 issue #249 的相邻隐患记录，未在本 change 观察到实际故障。
 
 **若后续收口**：方向是在 `except` 分支里 `event_type = None`（或显式跳过到下一个 `event:`），并用「两行 data 夹一个坏行」的 SSE 夹具验证「坏行不污染后续事件类型」。改动面小，但需要先确认现有端点不会合法地发送「一个 event 多个 data」的分片形态（若会，则简单重置反而会破坏合法分片）。
+
+## Anthropic 路径有两份重复的流式 SSE 解析实现（issue #256 审阅 S-6）
+
+`agent/anthropic_llm.py` 里 `_chat_stream`（被 `chat()` 用）与 `_stream_chat_impl`（被 `stream_chat()` 用）是两份**几乎逐行重复**的 SSE 解析实现。
+
+**为什么危险**：issue #256 实现期已经踩过一次——thinking 采集最初只加进了 `_stream_chat_impl`，导致 `chat()` 路径的 reasoning 段数为 0（端到端实测才发现，见该 change 的 diagnosis）。虽然已修好并补了覆盖两条路径的回归测试，但**没有机制阻止下次漂移**（无共享 helper、无一致性测试）。
+
+**为何本轮不改**：抽公共 helper 属于重构，会扩大本 change 的面；两份实现当前功能一致（已由测试固定）。
+
+**若后续收口**：抽出共享的 `_consume_sse_blocks(events) -> (blocks, stop_reason, usage)`，让两条路径都调它；或至少加一条测试断言两条路径对同一份输入产出相同结果。

@@ -448,7 +448,7 @@ class MemoryManager:
                 role=m.role,
                 content=content,
                 tool_call_id=m.tool_call_id,
-                reasoning_content=m.reasoning_content,
+                reasoning=list(m.reasoning),
                 tool_calls=m.tool_calls,
             ))
         return annotated

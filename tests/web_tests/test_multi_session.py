@@ -767,7 +767,7 @@ def test_cli_web_default_host_is_127_0_0_1(monkeypatch, tmp_path):
         captured["port"] = port
 
     monkeypatch.setattr(cli, "_setup_logging", lambda: None)
-    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None: type("FakeLLM", (), {"model": "fake-model"})())
+    monkeypatch.setattr(cli, "build_llm", lambda provider, model=None, config=None: type("FakeLLM", (), {"model": "fake-model"})())
     import uvicorn
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)
 

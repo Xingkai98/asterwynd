@@ -968,3 +968,122 @@ class _GatedLLM(ScriptedLLM):
         response = await super().chat(messages, tools, model)
         self.finished.set()
         return response
+
+
+# ── 历史补发携带 reasoning（issue #256 D9）─────────────────────────────
+
+def test_build_history_payload_includes_reasoning():
+    """重连补发的 session_history 必须携带 reasoning，否则重连后折叠区消失。"""
+    from web.session import build_history_payload
+    from agent.message import Message, ReasoningBlock
+
+    session = AgentSession("s-reason", None)
+    session.messages = [
+        Message(role="user", content="读文件"),
+        Message(role="assistant", content="已读", reasoning=[
+            ReasoningBlock(text="先看文件A", opaque="sig-A"),
+        ]),
+    ]
+
+    payload = build_history_payload(session)
+    msgs = payload["data"]["messages"]
+
+    assert msgs[1]["reasoning"] == "先看文件A", "历史补发丢了 reasoning"
+    # opaque 不外发（前端只消费可展示文本）
+    assert "sig-A" not in str(msgs[1])
+
+
+def test_build_history_payload_without_reasoning_is_none():
+    """无 reasoning 的消息该字段为 None（前端据此不渲染折叠区）。"""
+    from web.session import build_history_payload
+    from agent.message import Message
+
+    session = AgentSession("s-noreason", None)
+    session.messages = [Message(role="assistant", content="直接回答")]
+
+    payload = build_history_payload(session)
+    assert payload["data"]["messages"][0]["reasoning"] is None
+
+
+# ── reasoning 降级标志的 session 级语义（issue #256 D7 / 审阅 S-1）─────
+
+@pytest.mark.asyncio
+async def test_reasoning_disabled_written_back_from_real_run_path():
+    """降级标志必须经**真实 run 路径**回写到 session（issue #256 S-1）。
+
+    Round 2 审阅证伪的形态：回写曾放在 `_run_session_locked` 的 finally（父
+    task），而 LLM 的置位发生在 `run_agent` 子 task —— ContextVar 单向
+    （父写子可见、子写父不可见），父 task 永远读到 False。测试必须走真实
+    `SessionManager.run_session`，否则「删掉回写」这种变异不会被捕获。
+    """
+    from agent.anthropic_llm import _reasoning_disabled
+
+    class _DegradingAgent:
+        """模拟 LLM 命中 reasoning 400 时置位 ContextVar 的行为。"""
+        class _RS:
+            current_mode = type("M", (), {"value": "build"})()
+        runtime_state = _RS()
+
+        async def run(self, messages, on_event=None, session_id=None, resume_snapshot=None):
+            # 真实路径下这里在 run_agent 子 task 内执行
+            _reasoning_disabled.set(True)
+
+    manager = SessionManager()
+    session = AgentSession("s-d7-real", _DegradingAgent())
+    session.init_messages()
+
+    await manager.run_session(session, "hi")
+
+    assert session.reasoning_disabled is True, "回写未从子 task 到达 session"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_disabled_injected_into_next_run():
+    """session 上的降级标志必须在后续 run 注入上下文（跨 run 生效）。"""
+    from agent.anthropic_llm import _reasoning_disabled
+
+    seen = {}
+
+    class _SpyAgent:
+        class _RS:
+            current_mode = type("M", (), {"value": "build"})()
+        runtime_state = _RS()
+
+        async def run(self, messages, on_event=None, session_id=None, resume_snapshot=None):
+            seen["injected"] = _reasoning_disabled.get()
+
+    manager = SessionManager()
+    session = AgentSession("s-d7-inject", _SpyAgent())
+    session.init_messages()
+    session.reasoning_disabled = True   # 上一轮留下的降级
+
+    await manager.run_session(session, "hi")
+
+    assert seen["injected"] is True, "降级标志未注入到下一次 run"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_disabled_emits_visible_event_once():
+    """首次降级时推 reasoning_disabled 事件（Q8：UI/debug 可见），且只推一次。"""
+    from agent.anthropic_llm import _reasoning_disabled
+
+    class _DegradingAgent:
+        class _RS:
+            current_mode = type("M", (), {"value": "build"})()
+        runtime_state = _RS()
+
+        async def run(self, messages, on_event=None, session_id=None, resume_snapshot=None):
+            _reasoning_disabled.set(True)
+
+    manager = SessionManager()
+    session = AgentSession("s-d7-event", _DegradingAgent())
+    session.init_messages()
+
+    events = []
+    async def collect(e):
+        events.append(e)
+
+    await manager.run_session(session, "hi", ws_send=collect)
+    types = [e["type"] for e in events]
+    assert types.count("reasoning_disabled") == 1, f"应恰好一次可见事件: {types}"
+    assert session.reasoning_disabled is True

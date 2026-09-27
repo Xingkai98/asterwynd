@@ -733,7 +733,7 @@ class AgentLoop:
                         "content": response.content or "",
                         "stop_reason": "end_turn",
                     })
-                messages.append(Message(role="assistant", content=response.content or "", reasoning_content=response.reasoning_content))
+                messages.append(Message(role="assistant", content=response.content or "", reasoning=list(response.reasoning)))
                 self._flush_tool_quality()
                 return RunResult(
                     content=response.content or "",
@@ -747,7 +747,7 @@ class AgentLoop:
                 )
 
             # Bug 3: assistant 消息只追加一次（移到 for 循环之外）
-            messages.append(Message(role="assistant", content=response.content or "", tool_calls=list(response.tool_calls), reasoning_content=response.reasoning_content))
+            messages.append(Message(role="assistant", content=response.content or "", tool_calls=list(response.tool_calls), reasoning=list(response.reasoning)))
 
             # Phase 1: Pre-process tool calls (parse, validate, approve)
             pending: list[dict] = []
@@ -1140,6 +1140,16 @@ class AgentLoop:
             content = ""
             stream_chat = getattr(self.llm, "stream_chat")
             async for event in stream_chat(messages=messages, tools=tools):
+                if event.type == "reasoning_delta":
+                    # 思维链增量走独立事件，前端渲染到折叠区而非正文（issue #256 D5）。
+                    reasoning_text = event.content or ""
+                    if on_event and event.delta:
+                        await on_event("reasoning_delta", {
+                            "delta": event.delta,
+                            "content": reasoning_text,
+                        })
+                    continue
+
                 if event.type == "assistant_delta":
                     content = event.content or f"{content}{event.delta}"
                     if on_event and event.delta:

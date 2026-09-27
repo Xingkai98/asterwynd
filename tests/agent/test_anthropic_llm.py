@@ -855,3 +855,323 @@ def test_build_response_mixed_valid_and_truncated_under_max_tokens():
     assert [tc.id for tc in response.tool_calls] == ["good"]
     assert _json.loads(response.tool_calls[0].arguments) == {"a": 1}
     assert response.stop_reason == "max_tokens"
+
+
+# ── reasoning 采集与回传（issue #256）──────────────────────────────────
+
+def test_build_response_collects_thinking_with_signature():
+    """流式 thinking block → reasoning 段（文本 + opaque 签名）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    llm = AnthropicLLM(api_key="k")
+    blocks = {0: {
+        "type": "thinking", "id": None, "name": None, "text_parts": [], "json_parts": [],
+        "reasoning_parts": ["先看文件A"], "signature": "sig-A",
+    }}
+    r = llm._build_response(blocks, "end_turn", usage=None)
+
+    assert len(r.reasoning) == 1
+    assert r.reasoning[0].text == "先看文件A"
+    assert r.reasoning[0].opaque == "sig-A"
+
+
+def test_build_payload_emits_thinking_block_with_signature():
+    """含 reasoning 的 assistant 消息 → 回传带 signature 的 thinking block。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message, ReasoningBlock
+    llm = AnthropicLLM(api_key="k")
+    msg = Message(role="assistant", content="done", reasoning=[
+        ReasoningBlock(text="思考内容", opaque="sig-XYZ"),
+    ])
+    payload = llm._build_payload([msg], None, "m", force_vision=False)
+
+    parts = payload["messages"][0]["content"]
+    assert parts[0] == {"type": "thinking", "thinking": "思考内容", "signature": "sig-XYZ"}
+    assert parts[1]["type"] == "text"
+
+
+def test_build_payload_thinking_before_text_and_tool_use():
+    """thinking block 必须在 text/tool_use 之前（官方要求顺序不可重排）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message, ReasoningBlock
+    from agent.llm import ToolCallDelta
+    llm = AnthropicLLM(api_key="k")
+    msg = Message(role="assistant", content="ok", reasoning=[
+        ReasoningBlock(text="想", opaque="s"),
+    ], tool_calls=[ToolCallDelta(id="c1", name="Echo", arguments="{}")])
+    parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+
+    assert [p["type"] for p in parts] == ["thinking", "text", "tool_use"]
+
+
+def test_build_payload_no_reasoning_unchanged():
+    """无 reasoning 时 payload 逐字段与既有行为一致（回归保护）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message
+    llm = AnthropicLLM(api_key="k")
+    msg = Message(role="assistant", content="hi")
+    parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+
+    assert parts == [{"type": "text", "text": "hi"}]
+
+
+def test_opaque_signature_not_stripped_by_surrogates():
+    """opaque 绝不能经 _strip_surrogates 清洗（会改字节、破坏回传校验）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message, ReasoningBlock
+    llm = AnthropicLLM(api_key="k")
+    weird = "sig\ud800tail"          # 含 surrogate，清洗会把它换成 �
+    msg = Message(role="assistant", content="", reasoning=[
+        ReasoningBlock(text="t", opaque=weird),
+    ])
+    parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+
+    assert parts[0]["signature"] == weird, "opaque 被清洗改写了"
+
+
+def test_nonstream_collects_thinking_block():
+    """非流式路径也采集 thinking。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import ReasoningBlock
+    import json as _j, asyncio
+
+    llm = AnthropicLLM(api_key="k")
+    body = {"content": [
+        {"type": "thinking", "thinking": "非流式思考", "signature": "sig-N"},
+        {"type": "text", "text": "结果"},
+    ], "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return body
+
+    class _Client:
+        async def post(self, *a, **kw): return _Resp()
+
+    async def _run():
+        return await llm._chat_nonstream({})
+
+    # 通过替换 _get_client 注入
+    llm._client = _Client()
+    r = asyncio.run(_run())
+    assert len(r.reasoning) == 1
+    assert r.reasoning[0].text == "非流式思考"
+    assert r.reasoning[0].opaque == "sig-N"
+    assert r.content == "结果"
+
+
+# ── beta 头通道与 reasoning 400 自愈（issue #256 D2/D7）────────────────
+
+def test_beta_headers_absent_by_default():
+    """默认不发 anthropic-beta（不改变既有请求头）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    llm = AnthropicLLM(api_key="k")
+    assert "anthropic-beta" not in llm._get_headers()
+
+
+def test_beta_headers_include_enabled_capabilities():
+    """开启后 beta 头包含对应能力值。"""
+    from agent.anthropic_llm import (
+        AnthropicLLM, CONTEXT_MANAGEMENT_BETA, THINKING_BINDING_BETA,
+    )
+    llm = AnthropicLLM(api_key="k")
+    llm.enable_context_management = True
+    llm.enable_thinking_binding_controls = True
+    h = llm._get_headers()
+    assert CONTEXT_MANAGEMENT_BETA in h["anthropic-beta"]
+    assert THINKING_BINDING_BETA in h["anthropic-beta"]
+
+
+def test_is_reasoning_400_matches_both_failure_families():
+    """两类失败模式（缺回传 / 签名失配）都要能识别。"""
+    from agent.anthropic_llm import _is_reasoning_400
+    assert _is_reasoning_400("The content[].thinking in the thinking mode must be passed back")
+    assert _is_reasoning_400("The reasoning_content in the thinking mode must be passed back")
+    assert _is_reasoning_400("Invalid signature in thinking block")
+    assert _is_reasoning_400("block is bound to a different conversation")
+    # 无关错误不误判
+    assert not _is_reasoning_400("invalid model name")
+    assert not _is_reasoning_400("")
+
+
+def test_reasoning_disabled_omits_thinking_blocks():
+    """降级标志为真时 _build_payload 不带 thinking block（D7）。"""
+    from agent.anthropic_llm import AnthropicLLM, _reasoning_disabled
+    from agent.message import Message, ReasoningBlock
+    llm = AnthropicLLM(api_key="k")
+    _reasoning_disabled.set(True)
+    try:
+        msg = Message(role="assistant", content="ok", reasoning=[ReasoningBlock(text="想", opaque="s")])
+        parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+        assert all(p["type"] != "thinking" for p in parts)
+    finally:
+        _reasoning_disabled.set(False)
+
+
+def test_reasoning_disabled_is_context_scoped_not_instance_global():
+    """降级标志必须按上下文隔离，不能是 LLM 实例属性。
+
+    依据：web 下 LLM 是应用级单例、被所有 session 共享（web/server.py 创建
+    一个 llm 传给所有 session）；实例属性会让一个会话的签名失配污染其余会话。
+    这里用两个独立 Context 验证互不影响。
+    """
+    import contextvars
+    from agent.anthropic_llm import AnthropicLLM, _reasoning_disabled
+    from agent.message import Message, ReasoningBlock
+
+    llm = AnthropicLLM(api_key="k")
+    msg = Message(role="assistant", content="ok", reasoning=[ReasoningBlock(text="想", opaque="s")])
+
+    def _has_thinking():
+        parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+        return any(p["type"] == "thinking" for p in parts)
+
+    # 会话 A：降级
+    ctx_a = contextvars.copy_context()
+    ctx_a.run(_reasoning_disabled.set, True)
+
+    # 会话 B：独立上下文，不应受影响
+    ctx_b = contextvars.copy_context()
+
+    assert ctx_a.run(_has_thinking) is False, "会话 A 应降级"
+    assert ctx_b.run(_has_thinking) is True, "会话 B 被会话 A 的降级污染了"
+    # 且 llm 实例上不应残留该状态
+    assert not hasattr(llm, "reasoning_disabled")
+
+
+def test_strip_reasoning_from_messages_returns_copies():
+    """降级辅助返回副本、不改原对象。"""
+    from agent.anthropic_llm import _strip_reasoning_from_messages
+    from agent.message import Message, ReasoningBlock
+    original = Message(role="assistant", content="x", reasoning=[ReasoningBlock(text="t", opaque="s")])
+    stripped = _strip_reasoning_from_messages([original])
+
+    assert stripped[0].reasoning == []
+    assert original.reasoning[0].opaque == "s", "原对象被修改了"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_path_collects_thinking():
+    """issue #256：`chat()` 走 _chat_stream（与 stream_chat 的 _stream_chat_impl
+    是两份实现），thinking 采集必须在两条路径都生效。
+
+    此用例来自端到端实测暴露的盲区：最初只改了 _stream_chat_impl，
+    `chat()` 路径的 reasoning 段数为 0。
+    """
+    from agent.anthropic_llm import AnthropicLLM
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+
+    lines = [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"m1","role":"assistant","model":"claude","content":[]}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"先看文件"}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-END"}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"结果"}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":1}',
+        "event: message_delta",
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(lines)
+        response = await llm.chat([Message(role="user", content="hi")])
+
+    assert len(response.reasoning) == 1, "chat() 路径未采集 thinking"
+    assert response.reasoning[0].text == "先看文件"
+    assert response.reasoning[0].opaque == "sig-END"
+    assert response.content == "结果"
+
+
+def test_thinking_binding_controls_emits_drop_block_config():
+    """开启前缀绑定控制时，payload 带 drop_block 退路（issue #256 D7b）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message
+    llm = AnthropicLLM(api_key="k")
+    llm.enable_thinking_binding_controls = True
+    payload = llm._build_payload([Message(role="user", content="hi")], None, "m", force_vision=False)
+
+    assert payload["thinking"]["block_binding"]["prefix_mismatch_behavior"] == "drop_block"
+
+
+def test_thinking_binding_controls_off_by_default():
+    """默认不注入该配置（保持既有请求体不变）。"""
+    from agent.anthropic_llm import AnthropicLLM
+    from agent.message import Message
+    llm = AnthropicLLM(api_key="k")
+    payload = llm._build_payload([Message(role="user", content="hi")], None, "m", force_vision=False)
+
+    assert "thinking" not in payload
+
+
+@pytest.mark.asyncio
+async def test_reasoning_delta_event_not_mixed_into_assistant_delta():
+    """issue #256 D5：anthropic 流式的 thinking 增量必须走 reasoning_delta。
+
+    审阅 M1 变异（把 reasoning_delta 改成 assistant_delta）此前能全身而过。
+    """
+    from agent.anthropic_llm import AnthropicLLM
+    llm = AnthropicLLM(api_key="test-key")
+    llm.stream = True
+    lines = [
+        "event: message_start",
+        'data: {"type":"message_start","message":{"id":"m1","role":"assistant","model":"claude","content":[]}}',
+        "event: content_block_start",
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}',
+        "event: content_block_delta",
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"想想"}}',
+        "event: content_block_stop",
+        'data: {"type":"content_block_stop","index":0}',
+        "event: message_stop",
+        'data: {"type":"message_stop"}',
+    ]
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream(lines)
+        events = [e async for e in llm.stream_chat([Message(role="user", content="hi")])]
+
+    types = [e.type for e in events]
+    assert "reasoning_delta" in types, f"thinking 增量未走 reasoning_delta: {types}"
+    assert "assistant_delta" not in types, f"thinking 混入了 assistant_delta: {types}"
+
+
+def test_build_llm_applies_reasoning_config(monkeypatch):
+    """build_llm 必须把 config.reasoning 的开关应用到 LLM 实例（issue #256 S-2）。
+
+    审阅指出两个 beta flag 是死开关（无生产调用方）；这条守护「配置→实例」链路。
+    """
+    import os
+    from agent import main as cli
+    from agent.config import ReasoningConfig, AsterwyndConfig
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    cfg = AsterwyndConfig(reasoning=ReasoningConfig(
+        context_management=True, thinking_binding_controls=True))
+    llm = cli.build_llm("anthropic", config=cfg)
+
+    assert llm.enable_context_management is True
+    assert llm.enable_thinking_binding_controls is True
+    # 头里应带上两个 beta
+    h = llm._get_headers()
+    assert "anthropic-beta" in h
+
+
+def test_build_llm_without_config_leaves_betas_off(monkeypatch):
+    """不传 config 时 beta 保持关闭（不改变既有行为）。"""
+    from agent import main as cli
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    llm = cli.build_llm("anthropic")
+
+    assert llm.enable_context_management is False
+    assert llm.enable_thinking_binding_controls is False

@@ -94,7 +94,11 @@ class CliQuestionHandler:
 app = typer.Typer()
 
 
-def build_llm(provider: str, model: Optional[str] = None) -> LLM:
+def build_llm(
+    provider: str,
+    model: Optional[str] = None,
+    config: "AsterwyndConfig | None" = None,
+) -> LLM:
     if model is None:
         model = os.environ.get("ASTERWYND_MODEL")
     kwargs = {}
@@ -108,6 +112,10 @@ def build_llm(provider: str, model: Optional[str] = None) -> LLM:
         base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
         llm = AnthropicLLM(api_key=api_key, base_url=base_url, **kwargs)
         llm.stream = _streaming_enabled()
+        # reasoning 相关 beta 能力（issue #256 D2/D7b）：默认关，按配置开启。
+        if config is not None:
+            llm.enable_context_management = config.reasoning.context_management
+            llm.enable_thinking_binding_controls = config.reasoning.thinking_binding_controls
         return llm
     else:
         # openai (default)
@@ -238,7 +246,7 @@ def _build_agent_core(
     workspace_root: Path | None = None,
 ) -> AgentLoop:
     config = config or AsterwyndConfig()
-    llm = build_llm(provider, model)
+    llm = build_llm(provider, model, config=config)
     run_config = AgentRunConfig(mode=parse_agent_mode(_normalize_user_mode(mode)))
     workspace_policy = WorkspacePolicy(
         workspace_root=workspace_root,
@@ -687,7 +695,7 @@ def web(
             normalized_mode = resume_snapshot.mode.value
             typer.echo(f"Resuming session: {resume}")
 
-    llm = build_llm(provider, model)
+    llm = build_llm(provider, model, config=config)
     typer.echo(f"{BRAND_NAME} Web UI  →  http://{display_host}:{port}")
     typer.echo(f"Provider: {provider} | Model: {llm.model}")
     typer.echo(f"Mode: {normalized_mode}")
@@ -1157,7 +1165,7 @@ def _build_benchmark_runner(
     elif agent == "claude":
         runner_impl = ClaudeCodeRunner(timeout_seconds=config.benchmark.timeout_seconds)
     elif agent == "asterwynd":
-        llm = build_llm(provider, model)
+        llm = build_llm(provider, model, config=config)
         runner_impl = AsterwyndRunner(
             llm=llm,
             model=getattr(llm, "model", model or ""),
