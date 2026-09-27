@@ -441,3 +441,57 @@ async def test_done_like_variant_is_not_treated_as_sentinel(caplog):
     assert events[-1].response.content == "Hi"
     dropped = [r for r in caplog.records if "unparseable SSE data line" in r.getMessage()]
     assert len(dropped) == 1, "`[DONE]extra` 不是哨兵，须仍按坏行告警（恰好 1 条）"
+
+
+# ── reasoning 事件隔离与回传（issue #256）───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_openai_reasoning_delta_is_separate_event():
+    """思维链增量必须走 reasoning_delta，绝不混入 assistant_delta（issue #256 D5）。
+
+    这条守护 OpenAI 路径的事件隔离——审查 M5 变异（把 reasoning 混入
+    assistant_delta + content_parts）此前能全身而过。
+    """
+    llm = OpenAILLM(api_key="test-key")
+    with patch("httpx.AsyncClient.stream") as mock_stream:
+        mock_stream.return_value = _mock_sse_stream([
+            'data: {"choices":[{"delta":{"reasoning_content":"想A"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"reasoning_content":"想B"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"回答"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ])
+        events = [event async for event in llm.stream_chat([Message(role="user", content="Hi")])]
+
+    types = [e.type for e in events]
+    assert types == ["reasoning_delta", "reasoning_delta", "assistant_delta", "complete"], types
+    # 思维链内容不得出现在正文 delta 里
+    assistant_deltas = [e.delta for e in events if e.type == "assistant_delta"]
+    assert assistant_deltas == ["回答"], assistant_deltas
+    # complete 的 content 只含正文，reasoning 单独承载
+    final = events[-1].response
+    assert final.content == "回答"
+    assert "".join(b.text for b in final.reasoning) == "想A想B"
+
+
+@pytest.mark.asyncio
+async def test_openai_reasoning_content_sent_back_on_replay():
+    """历史 assistant 消息的 reasoning 必须回传为 reasoning_content（D3 回归）。"""
+    llm = OpenAILLM(api_key="test-key")
+    from agent.message import ReasoningBlock
+
+    msg = Message(role="assistant", content="ok", reasoning=[ReasoningBlock(text="之前在想")])
+    messages = llm._build_openai_messages([msg])
+
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert assistant_msgs[0]["reasoning_content"] == "之前在想", "reasoning 未回传"
+
+
+@pytest.mark.asyncio
+async def test_openai_no_reasoning_omits_field():
+    """无 reasoning 时请求体不含 reasoning_content（回归保护）。"""
+    llm = OpenAILLM(api_key="test-key")
+    msg = Message(role="assistant", content="ok")
+    messages = llm._build_openai_messages([msg])
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert "reasoning_content" not in assistant_msgs[0]

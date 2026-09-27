@@ -206,13 +206,13 @@ class OpenAILLM(BaseLLM):
             delta = choice.get("delta") or {}
 
             if delta.get("reasoning_content"):
+                # 思维链增量走独立事件，不混入 assistant_delta（issue #256 D5）。
                 reasoning_delta = delta["reasoning_content"]
                 reasoning_parts.append(reasoning_delta)
-                content_parts.append(reasoning_delta)
                 yield LLMStreamEvent(
-                    type="assistant_delta",
+                    type="reasoning_delta",
                     delta=reasoning_delta,
-                    content="".join(content_parts),
+                    content="".join(reasoning_parts),
                 )
 
             if delta.get("content"):
