@@ -51,7 +51,7 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 运行 `/review-loop` 独立审阅闭环，产出 `reviews/building-review.md` + manifest（PASS）
+- [x] 5.1 运行 `/review-loop` 独立审阅闭环，产出 `reviews/building-review.md` + manifest（PASS）
 - [ ] 5.2 文档影响检查：`docs/architecture.md`、`docs/agent-internals.md` 同步；`docs/known-issues.md` / `docs/known-debt.md` 按结论记录（含「DS 端点 id 启发式」这一未文档化依赖）；扫描 `README.md`/`AGENTS.md`/`CONTEXT.md`
 - [ ] 5.3 同步 backlog（受保护路径，写 `backlog_updated` 事件）
 - [ ] 5.4 归档 change 到 `openspec/changes/archive/2026-09-27-add-reasoning-content-support/`，从 backlog 移除
