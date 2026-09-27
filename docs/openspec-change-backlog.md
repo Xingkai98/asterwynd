@@ -101,6 +101,10 @@
 
 ## 未实现队列
 
+### 第十七批：思维链采集/回传/展示（issue #256）
+
+- `add-reasoning-content-support`（issue #256）：**进行中**（本 PR 内实现 + 归档）。需求：兼容 Anthropic 原生 / OpenAI 官方 / DeepSeek 的 Anthropic 兼容端点 / DeepSeek 的 OpenAI 兼容端点四条路径，**既展示也回传**思维链，展示形态为「通用样式、默认关闭、单击展开」。背景：DeepSeek V4 默认开启 thinking（官方文档逐字 "enabled by default"），这些 token 已计入 output token 但 asterwynd 完全不展示；且 Anthropic 路径对 `thinking` 零处理，目前靠 DS 端点的 tool_use id 格式启发式（`call_00_ET_` 前缀才豁免回传要求）**碰巧免于 400**——一旦启发式或 id 格式变更即崩。修法：消息模型引入结构化 reasoning 段（可展示文本 + opaque 回传载荷，opaque 全链路逐字节不变）；Anthropic 采集 thinking/signature 并按其规则回传；流式事件与 `assistant_delta` 隔离；compaction 旧轮可丢新轮必留；前端跨 provider 统一折叠组件。spec delta：`agent-runtime` 3 条 + `web-ui` 2 条 ADDED Requirement。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
