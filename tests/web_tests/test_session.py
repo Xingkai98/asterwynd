@@ -1007,19 +1007,83 @@ def test_build_history_payload_without_reasoning_is_none():
 
 # ── reasoning 降级标志的 session 级语义（issue #256 D7 / 审阅 S-1）─────
 
-def test_session_holds_reasoning_disabled_across_runs():
-    """降级标志必须是 session 级（跨 run 存活），不能因每回合新 task 而重置。
+@pytest.mark.asyncio
+async def test_reasoning_disabled_written_back_from_real_run_path():
+    """降级标志必须经**真实 run 路径**回写到 session（issue #256 S-1）。
 
-    审阅 S-1 实测证伪的形态：纯 ContextVar 在 web 下每回合都是新 task，
-    标志回到默认 False，等于「本轮降级」而没「记住」。修复后真值存 session。
+    Round 2 审阅证伪的形态：回写曾放在 `_run_session_locked` 的 finally（父
+    task），而 LLM 的置位发生在 `run_agent` 子 task —— ContextVar 单向
+    （父写子可见、子写父不可见），父 task 永远读到 False。测试必须走真实
+    `SessionManager.run_session`，否则「删掉回写」这种变异不会被捕获。
     """
-    session = AgentSession("s-d7", None)
-    assert session.reasoning_disabled is False
+    from agent.anthropic_llm import _reasoning_disabled
 
-    # 模拟「某次 run 命中 reasoning 400 并回写」
-    session.reasoning_disabled = True
+    class _DegradingAgent:
+        """模拟 LLM 命中 reasoning 400 时置位 ContextVar 的行为。"""
+        class _RS:
+            current_mode = type("M", (), {"value": "build"})()
+        runtime_state = _RS()
 
-    # 下一个 run（新 task）注入时应拿到 True
-    from agent.anthropic_llm import set_reasoning_disabled, is_reasoning_disabled
-    set_reasoning_disabled(session.reasoning_disabled)
-    assert is_reasoning_disabled() is True, "session 级降级未跨 run 保持"
+        async def run(self, messages, on_event=None, session_id=None, resume_snapshot=None):
+            # 真实路径下这里在 run_agent 子 task 内执行
+            _reasoning_disabled.set(True)
+
+    manager = SessionManager()
+    session = AgentSession("s-d7-real", _DegradingAgent())
+    session.init_messages()
+
+    await manager.run_session(session, "hi")
+
+    assert session.reasoning_disabled is True, "回写未从子 task 到达 session"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_disabled_injected_into_next_run():
+    """session 上的降级标志必须在后续 run 注入上下文（跨 run 生效）。"""
+    from agent.anthropic_llm import _reasoning_disabled
+
+    seen = {}
+
+    class _SpyAgent:
+        class _RS:
+            current_mode = type("M", (), {"value": "build"})()
+        runtime_state = _RS()
+
+        async def run(self, messages, on_event=None, session_id=None, resume_snapshot=None):
+            seen["injected"] = _reasoning_disabled.get()
+
+    manager = SessionManager()
+    session = AgentSession("s-d7-inject", _SpyAgent())
+    session.init_messages()
+    session.reasoning_disabled = True   # 上一轮留下的降级
+
+    await manager.run_session(session, "hi")
+
+    assert seen["injected"] is True, "降级标志未注入到下一次 run"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_disabled_emits_visible_event_once():
+    """首次降级时推 reasoning_disabled 事件（Q8：UI/debug 可见），且只推一次。"""
+    from agent.anthropic_llm import _reasoning_disabled
+
+    class _DegradingAgent:
+        class _RS:
+            current_mode = type("M", (), {"value": "build"})()
+        runtime_state = _RS()
+
+        async def run(self, messages, on_event=None, session_id=None, resume_snapshot=None):
+            _reasoning_disabled.set(True)
+
+    manager = SessionManager()
+    session = AgentSession("s-d7-event", _DegradingAgent())
+    session.init_messages()
+
+    events = []
+    async def collect(e):
+        events.append(e)
+
+    await manager.run_session(session, "hi", ws_send=collect)
+    types = [e["type"] for e in events]
+    assert types.count("reasoning_disabled") == 1, f"应恰好一次可见事件: {types}"
+    assert session.reasoning_disabled is True
