@@ -107,6 +107,28 @@
 
 ## 未实现队列
 
+### 4. `bash-command-guard-redesign`
+
+状态：未实现（立项完成，proposal/design/tasks/spec delta 齐备，待设计追问的用户确认）。
+
+批次：独立跟进，不挂在既有批次链上。它是 `fix-issue-247`（PR #253）的**直接下游**：那次修对了路径段边界，代价是把 `command_guard.py` 从 300 行变成 577 行并形成三套并行判定机制，本 change 负责把这个代价收回去。
+
+建议顺序原因：
+
+- 无强前置依赖，可立即开始；但它是 `workspace-safety` 能力域的核心重构，实现期间会大改 `agent/tools/command_guard.py`，**与任何同时改 Bash 工具或安全策略的 change 应错开合入**。
+- 排在 `add-minimal-tui-runtime-view` 之前：后者不触碰命令护栏。
+
+主要交付：
+
+- **业界调研（full 档）**：6 个本地参考仓库实读（codex / deepseek-harness / kimi-code / zcode / opencode / pi）+ 6 组公开材料（Gemini CLI / Cline / OpenHands / SWE-agent / Aider / 产品观察）+ 隔离技术与 CVE 失败史核验 + 151 条语料的解析器对比实验。核心结论：业界共识是「护栏不是边界」，决策模型是三态（allow/deny/ask），解析失败一律 fail-closed；`tree-sitter` 已是本项目依赖，加 bash 只多一个 226 KiB wheel。
+- **可证伪的能力范围声明**：按输入形态给出 `Guard guarantees` / `Backend guarantees` / `Unsupported·ask` 三方矩阵，每行带可执行测试证据，不用「安全」这类不可证伪措辞。
+- **单一解析管线**：`source → parse/tokenize → command IR → policy evaluators → decision`，全文 denylist / 重定向扫描 / argv 检查不再各自拥有独立解析入口。
+- **未知与失败策略**：parse error / dynamic word / unsupported node / budget abort / 嵌套超深 / backend unavailable 各自处置显式化，不允许静默放行。
+- **已知残余收口**：`docs/known-debt.md`「命令护栏的残余覆盖缺口」的甲类（launcher + 纯命令 + 裸点名）与乙类（混淆形态 50/50）逐项给出「修」或「不修 + 理由」。
+- **实测缺陷修复**（本 change 自立项前已复现）：heredoc 正文被当成命令导致误报（`cat <<'EOF'` + 正文 + `EOF` 当前判 deny）、brace 展开销毁目标参数导致漏报（`cp x ~/.{ssh}/f` 当前判 allow）。
+
+跟踪：issue [#254](https://github.com/Xingkai98/asterwynd/issues/254)。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
