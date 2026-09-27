@@ -995,15 +995,48 @@ def test_is_reasoning_400_matches_both_failure_families():
 
 
 def test_reasoning_disabled_omits_thinking_blocks():
-    """reasoning_disabled 为真时 _build_payload 不带 thinking block（D7 降级）。"""
-    from agent.anthropic_llm import AnthropicLLM
+    """降级标志为真时 _build_payload 不带 thinking block（D7）。"""
+    from agent.anthropic_llm import AnthropicLLM, _reasoning_disabled
     from agent.message import Message, ReasoningBlock
     llm = AnthropicLLM(api_key="k")
-    llm.reasoning_disabled = True
-    msg = Message(role="assistant", content="ok", reasoning=[ReasoningBlock(text="想", opaque="s")])
-    parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+    _reasoning_disabled.set(True)
+    try:
+        msg = Message(role="assistant", content="ok", reasoning=[ReasoningBlock(text="想", opaque="s")])
+        parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+        assert all(p["type"] != "thinking" for p in parts)
+    finally:
+        _reasoning_disabled.set(False)
 
-    assert all(p["type"] != "thinking" for p in parts)
+
+def test_reasoning_disabled_is_context_scoped_not_instance_global():
+    """降级标志必须按上下文隔离，不能是 LLM 实例属性。
+
+    依据：web 下 LLM 是应用级单例、被所有 session 共享（web/server.py 创建
+    一个 llm 传给所有 session）；实例属性会让一个会话的签名失配污染其余会话。
+    这里用两个独立 Context 验证互不影响。
+    """
+    import contextvars
+    from agent.anthropic_llm import AnthropicLLM, _reasoning_disabled
+    from agent.message import Message, ReasoningBlock
+
+    llm = AnthropicLLM(api_key="k")
+    msg = Message(role="assistant", content="ok", reasoning=[ReasoningBlock(text="想", opaque="s")])
+
+    def _has_thinking():
+        parts = llm._build_payload([msg], None, "m", force_vision=False)["messages"][0]["content"]
+        return any(p["type"] == "thinking" for p in parts)
+
+    # 会话 A：降级
+    ctx_a = contextvars.copy_context()
+    ctx_a.run(_reasoning_disabled.set, True)
+
+    # 会话 B：独立上下文，不应受影响
+    ctx_b = contextvars.copy_context()
+
+    assert ctx_a.run(_has_thinking) is False, "会话 A 应降级"
+    assert ctx_b.run(_has_thinking) is True, "会话 B 被会话 A 的降级污染了"
+    # 且 llm 实例上不应残留该状态
+    assert not hasattr(llm, "reasoning_disabled")
 
 
 def test_strip_reasoning_from_messages_returns_copies():

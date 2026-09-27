@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import re
+from contextvars import ContextVar
 from typing import Optional, TYPE_CHECKING
 
 from agent.llm import (
@@ -24,6 +25,15 @@ logger = logging.getLogger("asterwynd.llm.anthropic")
 #   配 block_binding.prefix_mismatch_behavior="drop_block" 避免 history 被改写后硬 400。
 CONTEXT_MANAGEMENT_BETA = "context-management-2025-06-27"
 THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01"
+
+#: 命中 reasoning 相关 400 后的 session 级降级标志（issue #256 D7）。
+#: 用 ContextVar 而非实例属性：LLM 实例在 web 下是**应用级单例**、被所有 session
+#: 共享（`web/server.py` 创建一个 llm 传给所有 session），实例属性会让一个会话的
+#: 签名失配污染其余会话。而每个 session 的 run 跑在独立 asyncio task 里
+#: （`web/session.py` 的 `asyncio.create_task(run_agent())`），ContextVar 恰好按
+#: task 隔离 —— 既满足「本会话记住降级」，又不跨会话泄漏。
+_reasoning_disabled: "ContextVar[bool]" = ContextVar("reasoning_disabled", default=False)
+
 
 # reasoning 相关 400 的错误文案族（issue #256 D7）。两类失败模式不同，需分别匹配：
 # (a) 缺回传；(b) 签名/前缀失配。
@@ -106,10 +116,8 @@ class AnthropicLLM(BaseLLM):
         # beta 能力开关（issue #256 D2/D7b）：
         # - context_management: clear_thinking_20251015（keep-all 模型上回收 thinking）
         # - thinking_binding: 前缀绑定的 drop_block 退路（compaction 改写历史后不硬崩）
-        # - reasoning_disabled: 命中 reasoning 相关 400 后的 session 级降级标志（D7）
         self.enable_context_management = False
         self.enable_thinking_binding_controls = False
-        self.reasoning_disabled = False
 
     def _get_headers(self) -> dict:
         headers = {
@@ -155,7 +163,7 @@ class AnthropicLLM(BaseLLM):
                     "400 points at reasoning blocks — retrying without them "
                     "(session-level reasoning disabled from now on)"
                 )
-                self.reasoning_disabled = True
+                _reasoning_disabled.set(True)
                 payload = self._strip_cache_control(payload) if self._payload_has_cache_control(payload) else payload
                 payload = self._build_payload(messages, tools, model, force_vision=force_vision)
                 if self.stream:
@@ -225,7 +233,7 @@ class AnthropicLLM(BaseLLM):
                 # thinking block 必须在 text/tool_use 之前，且顺序与原始响应一致
                 # （官方要求「连续的 thinking 块序列不可重排」，issue #256 D2）。
                 # reasoning_disabled 为真时整段跳过（命中 400 后的 session 级降级，D7）。
-                for rb in ([] if self.reasoning_disabled else msg.reasoning):
+                for rb in ([] if _reasoning_disabled.get() else msg.reasoning):
                     block: dict = {"type": "thinking", "thinking": rb.text}
                     if rb.opaque is not None:
                         # opaque 原样回传，不经任何清洗（issue #256 D1）。
@@ -363,7 +371,7 @@ class AnthropicLLM(BaseLLM):
                     "Stream 400 points at reasoning blocks — retrying without them "
                     "(session-level reasoning disabled from now on)"
                 )
-                self.reasoning_disabled = True
+                _reasoning_disabled.set(True)
                 async for event in self._stream_chat_impl(
                     messages,
                     tools,
