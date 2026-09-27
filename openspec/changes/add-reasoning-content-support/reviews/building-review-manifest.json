@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "add-reasoning-content-support",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "de3e09e6-fa40-4e07-adda-10bd49d60f6b",
+  "base_sha": "5752ca0",
+  "head_sha": "2600875",
+  "tasks_hash": "sha256:9d2962b7efcf487cbbd3ffb620a161a721e9d8213f530f18f94c785649148066",
+  "spec_hash": "sha256:c8650ed53f5dc3cb40bf021667ea9b7c631015fa5913e6f772c3fb5b2404f65c",
+  "diff_hash": "sha256:65e22c878221cf6b0efb8e041c53cc701c5502229b80d7819702fb06d6d084d3",
+  "report_hash": "sha256:a6099202726900b203fb949ac7cc6b0aa3cd28c412d69ddb3dc7b70476e1c9e0"
+}
