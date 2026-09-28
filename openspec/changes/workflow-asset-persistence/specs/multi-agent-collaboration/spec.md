@@ -143,11 +143,11 @@
 - **THEN** 既有 `parse_workflow_spec` SHALL 拒绝该 spec 并给出自足的错误信息
 - **AND** 系统 SHALL NOT 为资产加载引入第二套校验规则
 
-### Requirement: 加载期闸值与能力面钳制
+### Requirement: 加载期闸值钳制与资产能力面呈现
 
 从磁盘加载资产时系统 SHALL 把 spec 自声明的结构闸值（`recursion_limit` / `max_nodes` / `max_runs`）与**当前配置**取最小值后**在读取处应用**，SHALL NOT 采信文件内的声明值，并 SHALL 在返回体中显式报告被钳制的字段（declared 与 applied 两值）。该钳制 SHALL NOT 改写 spec 对象本身、SHALL NOT 改写资产文件、SHALL NOT 改变资产的内容指纹（`spec_hash`）——资产加载后原样重存 SHALL 判定为「未变更」。系统 SHALL 保证**所有对外报出限制值的出口都报实际生效值**而非声明值。该钳制 SHALL 只作用于加载路径，模型当轮声明的 spec SHALL 保持既有行为不变。
 
-资产携带的节点 `mode` SHALL 只允许**收窄**，SHALL NOT 放宽。节点有效 mode SHALL 为 `min(节点声明 mode, 当前会话 mode 上限)`；该上限 SHALL 由 workflow **启动时快照**的发起会话 mode 确定——运行途中切换会话 mode SHALL NOT 改变本次 run 已确定的上限。嵌套 spawn 的子孙上限 SHALL 为其**父节点的有效 mode**，SHALL 逐层收紧（SHALL NOT 一律回落到发起会话的 mode）。上限 SHALL NOT 由跨 run 共享、会被并发构造覆盖的可变状态推导。降级 SHALL 记 diagnostics；返回体 SHALL 列出将以声明 mode 运行的节点。本 Requirement 的 mode 收窄语义依赖既有缺陷修复（见 issue #255）；在上限推导尚不可靠时，系统 SHALL NOT 对外承诺该列表可信。系统 SHALL NOT 为取得资产元数据而求值任何文本——元数据是纯数据。
+资产携带的节点 `mode` SHALL 只允许**收窄**，SHALL NOT 放宽：加载资产 SHALL NOT 授予高于当前会话能力面的 mode。节点 mode 的收窄机制（有效 mode 的定义、上限在 run 起点快照、嵌套逐层收紧、并发节点互不覆盖、上限来源通道）**由既有机制保证**，规格见本能力域的「workflow 节点 mode 有效值受会话上限钳制」Requirement——本 Requirement SHALL NOT 复述或另立一套收窄语义。本 Requirement 只规定资产面的**呈现**义务：当资产的声明 mode 被收窄时系统 SHALL 记录 diagnostics（含该节点标识与 declared / applied 两值），且返回体 SHALL 列出该资产中**将以声明 mode 运行**的节点（声明未被收窄、按原声明生效者），使父 agent 在按名批准前可见该资产声明的能力面。该列表的可信度依赖上述既有机制的基准正确性（见 issue #255）；在基准尚不可靠时系统 SHALL NOT 对外承诺该列表可信。系统 SHALL NOT 为取得资产元数据而求值任何文本——元数据是纯数据。
 
 #### Scenario: 文件内声明的闸值被当前配置钳制
 
@@ -185,50 +185,22 @@
 - **THEN** 三个出口 SHALL 都报钳制后的**实际生效值**
 - **AND** SHALL NOT 有任一出口报资产声明值
 
-#### Scenario: 节点 mode 只收窄不放宽
+#### Scenario: 资产节点的声明 mode 被收窄时记 diagnostics
 
 - **GIVEN** 一份资产的节点声明 `mode: "build"`，而当前会话只允许只读
 - **WHEN** 调用该资产
-- **THEN** 该节点 SHALL 降级为只读并记录 diagnostics
-- **AND** 返回体 SHALL 列出将以声明 mode 运行的节点
+- **THEN** 该节点的实际生效 mode SHALL 被收窄（收窄语义见「workflow 节点 mode 有效值受会话上限钳制」）
+- **AND** 返回体 SHALL 在 diagnostics 中给出该节点与其 declared / applied 两值
+- **AND** 该节点 SHALL NOT 出现在「将以声明 mode 运行」的节点清单中
 - **AND** 系统 SHALL NOT 因资产声明而放宽当前会话的能力面
 
-#### Scenario: 会话 mode 上限在启动时快照
+#### Scenario: 资产声明的能力面在返回体中可见
 
-- **GIVEN** 一个 workflow 以其发起会话的当前 mode 确定了本轮上限
-- **WHEN** 运行途中发起会话切换了 mode
-- **THEN** 本次 run 已确定的上限 SHALL NOT 改变
-- **AND** 该会话后续**新启动**的 workflow SHALL 按新的会话 mode 确定上限
-- **AND** 该上限的取定 SHALL 不依赖任何会被并发 run 覆写的共享可变状态（否则同一会话先后两张图会互相污染）
-
-#### Scenario: 节点自身的 mode 受上限约束
-
-- **GIVEN** 发起会话只允许只读，而某个节点声明 `mode: "build"`
-- **WHEN** 该节点被派发
-- **THEN** 该节点 SHALL 以只读运行（其自身声明的 mode 被上限收窄）
-- **AND** 该收窄 SHALL 在节点**被派发时**就生效，SHALL NOT 晚于其自身 mode 的确定
-
-#### Scenario: 嵌套 spawn 逐层收紧
-
-- **GIVEN** 根会话允许写，其下一个节点的有效 mode 已被收窄为只读
-- **WHEN** 该节点再派生子 agent
-- **THEN** 子孙的 mode 上限 SHALL 等于该节点的**有效** mode（只读）
-- **AND** SHALL NOT 回落到根会话的 mode（写）
-
-#### Scenario: 跨图嵌套同样继承有效 mode
-
-- **GIVEN** 会话允许写，图 A 的某节点有效 mode 已被收窄为只读
-- **WHEN** 该节点的 run 内又启动了**另一张** workflow 图 B（B 有独立的 workflow 标识）
-- **THEN** 图 B 中节点的 mode 上限 SHALL 等于该节点的**有效** mode（只读）
-- **AND** SHALL NOT 按「新图」重新快照会话 mode（写）
-- **AND** 该继承 SHALL NOT 因图 B 拥有独立的运行配额而重置（能力面随继承链收紧，不随命名空间重置）
-
-#### Scenario: 并发节点互不覆盖上限
-
-- **GIVEN** 同一张图里并行存在一个收窄节点与一个未收窄节点
-- **WHEN** 两者各自派生子 agent
-- **THEN** 各自的子 agent SHALL 得到各自正确的 mode 上限
-- **AND** SHALL NOT 因并发构造顺序不同而互相覆盖
+- **GIVEN** 一份资产的某节点声明 `mode: "build"`，而当前会话允许写（声明未被收窄）
+- **WHEN** 调用该资产
+- **THEN** 返回体 SHALL 把该节点列入「将以声明 mode 运行」的节点清单
+- **AND** 该清单 SHALL 让父 agent 在按名批准前看到该资产声明的能力面
+- **AND** 未被收窄的节点 SHALL NOT 产生收窄 diagnostics
 
 ### Requirement: 资产命名与同名语义
 
