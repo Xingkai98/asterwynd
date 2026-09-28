@@ -436,6 +436,42 @@ def _maybe_json(value: Any) -> Any:
         return value
 
 
+# --- 结构闸钳制（change ``workflow-asset-persistence``，Q8 方案 C） ----------
+#
+# 资产的声明值可能远高于当前配置（``_positive_int`` 只要求 ``>= 1``、无上界），
+# 而 ``_resolve_limits`` 对声明值照单全收。钳制挂在**读取处**而非解析处，因此
+# ``WorkflowSpec`` 对象、资产文件与 ``spec_hash`` 都不被运行时配置污染；钳制也
+# 因此成为「纯执行期读值」，模型当轮声明路径（无 ceiling）行为逐字不变。
+_LIMIT_FIELDS = ("recursion_limit", "max_nodes", "max_runs")
+
+
+def clamp_limit(declared: int, ceiling: int | None) -> int:
+    """``min(declared, ceiling)``；``ceiling`` 为 ``None`` 时原样返回声明值。"""
+    return declared if ceiling is None else min(declared, ceiling)
+
+
+def limits_report(
+    spec: WorkflowSpec | None, ceiling: Mapping[str, int]
+) -> dict[str, dict[str, int | bool]]:
+    """三个结构闸的 ``{declared, applied, clamped}`` 报告（对外报生效值）。
+
+    与读取路径共用 ``clamp_limit``，所以「对内钳的值」与「对外报的值」不会分叉
+    ——这正是 Q8 附加要求防的那类假面（对内钳、对外报声明值）。
+    """
+    if spec is None:
+        return {}
+    report: dict[str, dict[str, int | bool]] = {}
+    for field in _LIMIT_FIELDS:
+        declared = getattr(spec, field)
+        applied = clamp_limit(declared, ceiling.get(field))
+        report[field] = {
+            "declared": declared,
+            "applied": applied,
+            "clamped": applied != declared,
+        }
+    return report
+
+
 # --- 调度器 -----------------------------------------------------------------
 
 
@@ -448,10 +484,23 @@ class WorkflowScheduler:
         *,
         bus: MessageBus | None = None,
         workflow_id: str | None = None,
+        limit_ceiling: Mapping[str, int] | None = None,
     ) -> None:
         self.manager = manager
         self.workflow_id = workflow_id or f"wf_{uuid.uuid4().hex[:8]}"
         self.bus = bus
+        #: 结构闸的**读取处上限**（change ``workflow-asset-persistence``，Q8 方案 C）。
+        #: 只有资产加载路径会传它（Q2=A：模型当轮声明路径行为逐字不变）。钳制不改写
+        #: ``WorkflowSpec``，只在读取处取 ``min(declared, ceiling)``——这样
+        #: ``spec_hash`` 与资产原文都不被运行时配置污染（若把钳制值写回 spec，
+        #: ``to_dict()`` 会丢弃「等于模块默认」的键，hash 随之漂移）。
+        self._limit_ceiling = dict(limit_ceiling or {})
+        #: 资产的来源溯源（change ``workflow-asset-persistence``，D1）。默认 DSL——
+        #: ``RunWorkflow`` 路径**从不**设置 ``scheduler.spec``，若只在 ``run_pattern``
+        #: 里 ad-hoc 赋值，dsl 路径上该字段永不存在，「缺失即降级」就成了异常路径而
+        #: 非防御分支。**纯附加字段**：不在 ``_envelope``/``parent_envelope`` 的显式
+        #: 挑字段清单内，故不污染契约、不改 ``run_pattern`` 返回结构。
+        self.asset_source: dict[str, Any] = {"kind": "dsl"}
         self._spec: WorkflowSpec | None = None
         self._plan: ExecutionPlan | None = None
         self._states: dict[str, NodeState] = {}
@@ -546,6 +595,30 @@ class WorkflowScheduler:
     def plan(self) -> ExecutionPlan | None:
         """当前执行计划（含自动插入层 + 预算档），未 attach 时为 ``None``。"""
         return self._plan
+
+    def _eff_limit(self, field: str) -> int:
+        """``min(spec 声明值, 读取处上限)``——结构闸的**唯一**读取入口（Q8 方案 C）。
+
+        资产的声明值可能远高于当前配置（``_positive_int`` 只要求 ``>= 1``、无上界，
+        ``workflow.py:451``），而 ``_resolve_limits`` 对声明值照单全收。钳制挂在读取
+        处而非解析处，因此 ``WorkflowSpec`` 对象、资产文件与 ``spec_hash`` 都不被
+        运行时配置污染。
+
+        ``self._limit_ceiling`` 为空（模型当轮声明路径）时退化为声明值本身，行为
+        与钳制引入前逐字一致。
+        """
+        spec = self._spec
+        if spec is None:
+            raise RuntimeError("workflow spec is not attached")
+        return clamp_limit(getattr(spec, field), self._limit_ceiling.get(field))
+
+    def _limits_report(self) -> dict[str, dict[str, int | bool]]:
+        """三个结构闸的 ``{declared, applied, clamped}`` 报告（对外报生效值）。
+
+        走模块级 ``limits_report``——与 ``_eff_limit`` 共用同一个 ``clamp_limit``，
+        因此「对内钳的值」与「对外报的值」在结构上不可能分叉。
+        """
+        return limits_report(self._spec, self._limit_ceiling)
 
     @spec.setter
     def spec(self, value: WorkflowSpec) -> None:
@@ -752,7 +825,7 @@ class WorkflowScheduler:
         # 幂等自注册：loop 层的预算记账（Q6 方案 B）按 ``current_workflow_id()`` 反查
         # 调度器，直接构造（不经 Declare/Start 工具）的调度器也必须在注册表里。
         self.manager.register_workflow(self)
-        self.manager.register_workflow_bucket(self.workflow_id, spec.max_runs * 2)
+        self.manager.register_workflow_bucket(self.workflow_id, self._eff_limit("max_runs") * 2)
         try:
             self._check_declared_limits(spec)
             await self._drive(raise_on_recursion=raise_on_recursion)
@@ -824,16 +897,16 @@ class WorkflowScheduler:
         shard/domain 层完全失效——与 C2 grill Q5 的「max_nodes = 节点数（含 foreach
         展开）」口径直接矛盾。
         """
-        if len(self._plan.nodes) > spec.max_nodes:
+        if len(self._plan.nodes) > self._eff_limit("max_nodes"):
             raise GraphRecursionError(
                 steps=0,
-                limit=spec.max_nodes,
+                limit=self._eff_limit("max_nodes"),
                 current_nodes=[node.id for node in self._plan.nodes],
                 reason="max_nodes",
                 message=(
                     f"GraphRecursionError: workflow expands to {len(self._plan.nodes)} "
                     f"nodes (including {len(self._plan.inserted_nodes)} auto-inserted "
-                    f"aggregate nodes), exceeding max_nodes {spec.max_nodes}"
+                    f"aggregate nodes), exceeding max_nodes {self._eff_limit('max_nodes')}"
                 ),
             )
 
@@ -883,15 +956,15 @@ class WorkflowScheduler:
                 ready = self._ready_nodes()
                 dispatched = 0
                 if ready:
-                    if self._steps >= spec.recursion_limit:
+                    if self._steps >= self._eff_limit("recursion_limit"):
                         raise GraphRecursionError(
                             steps=self._steps,
-                            limit=spec.recursion_limit,
+                            limit=self._eff_limit("recursion_limit"),
                             current_nodes=[state.node.id for state in ready],
                             reason="recursion_limit",
                             message=(
                                 f"GraphRecursionError: workflow reached recursion_limit "
-                                f"{spec.recursion_limit} supersteps; "
+                                f"{self._eff_limit('recursion_limit')} supersteps; "
                                 f"ready nodes: {[state.node.id for state in ready]}"
                             ),
                         )
@@ -1550,15 +1623,15 @@ class WorkflowScheduler:
                 self._check_budget_before_dispatch(state, cost)
             except WorkflowBudgetExceeded:
                 return False
-        if self._runs + cost > spec.max_runs:
+        if self._runs + cost > self._eff_limit("max_runs"):
             raise GraphRecursionError(
                 steps=self._steps,
-                limit=spec.max_runs,
+                limit=self._eff_limit("max_runs"),
                 current_nodes=[state.node.id],
                 reason="max_runs",
                 message=(
                     f"GraphRecursionError: workflow run budget exhausted "
-                    f"({self._runs}/{spec.max_runs}); ready node {state.node.id!r}"
+                    f"({self._runs}/{self._eff_limit('max_runs')}); ready node {state.node.id!r}"
                 ),
             )
         if cost and self._in_flight_runs + cost > self._dispatch_capacity():
@@ -2004,16 +2077,16 @@ class WorkflowScheduler:
         added_nodes = len(new_ids)
         # foreach 展开项本身也要吃 max_nodes：展开前预检保留给 `_check_foreach_budget`，
         # 这里只把**新增的 auto aggregate 节点**记进已声明节点数并复检。
-        if self._expanded_nodes + added_nodes > spec.max_nodes:
+        if self._expanded_nodes + added_nodes > self._eff_limit("max_nodes"):
             raise GraphRecursionError(
                 steps=self._steps,
-                limit=spec.max_nodes,
+                limit=self._eff_limit("max_nodes"),
                 current_nodes=new_ids,
                 reason="max_nodes",
                 message=(
                     f"GraphRecursionError: node {node_id!r} expansion requires "
                     f"{added_nodes} auto-inserted aggregate nodes, exceeding max_nodes "
-                    f"{spec.max_nodes} ({self._expanded_nodes} already declared)"
+                    f"{self._eff_limit('max_nodes')} ({self._expanded_nodes} already declared)"
                 ),
             )
         self._expanded_nodes += added_nodes
@@ -2057,27 +2130,27 @@ class WorkflowScheduler:
         delta = count - charged
         if delta <= 0:
             return  # 已计费过这份（或更大量）展开，不重复扣
-        if self._runs + delta > spec.max_runs:
+        if self._runs + delta > self._eff_limit("max_runs"):
             raise GraphRecursionError(
                 steps=self._steps,
-                limit=spec.max_runs,
+                limit=self._eff_limit("max_runs"),
                 current_nodes=[node.id],
                 reason="max_runs",
                 message=(
                     f"GraphRecursionError: foreach node {node.id!r} would expand "
-                    f"{count} runs ({delta} new), exceeding max_runs {spec.max_runs} "
+                    f"{count} runs ({delta} new), exceeding max_runs {self._eff_limit('max_runs')} "
                     f"({self._runs} already used)"
                 ),
             )
-        if self._expanded_nodes + delta > spec.max_nodes:
+        if self._expanded_nodes + delta > self._eff_limit("max_nodes"):
             raise GraphRecursionError(
                 steps=self._steps,
-                limit=spec.max_nodes,
+                limit=self._eff_limit("max_nodes"),
                 current_nodes=[node.id],
                 reason="max_nodes",
                 message=(
                     f"GraphRecursionError: foreach node {node.id!r} would expand "
-                    f"{count} nodes ({delta} new), exceeding max_nodes {spec.max_nodes} "
+                    f"{count} nodes ({delta} new), exceeding max_nodes {self._eff_limit('max_nodes')} "
                     f"({self._expanded_nodes} already declared)"
                 ),
             )
@@ -2600,8 +2673,8 @@ class WorkflowScheduler:
         budget = self._budget
         if budget is not None and budget.max_runs:
             limits.append(max(budget.max_runs - self._runs, 0))
-        limits.append(max(spec.max_runs - self._runs, 0))
-        limits.append(max(spec.max_nodes - self._expanded_nodes, 0))
+        limits.append(max(self._eff_limit("max_runs") - self._runs, 0))
+        limits.append(max(self._eff_limit("max_nodes") - self._expanded_nodes, 0))
         return min(limits) if limits else 0
 
     # -- 度量 ---------------------------------------------------------------
@@ -2758,6 +2831,8 @@ class WorkflowScheduler:
             "spec_hash": self._spec.spec_hash if self._spec else None,
             "goal": self._spec.goal if self._spec else "",
             "status": self._status,
+            # 结构闸生效值（Q8）：与 ``_envelope`` 同口径，报钳制后的实际生效值。
+            "limits": self._limits_report(),
             "nodes": nodes,
             "edges": edges,
             "timestamp": time.time(),
@@ -2966,6 +3041,9 @@ class WorkflowScheduler:
             "attribution": self._attribution_summary(),
             "attribution_ref": self._attribution_ref,
             "steps": self._steps,
+            # 结构闸生效值（Q8）：报**实际生效值**而非声明值，否则会形成
+            # 「对内钳、对外报声明值」的假面。钳制只可能来自资产加载路径。
+            "limits": self._limits_report(),
             "peak_active": self._peak_active,
             "critical_path_s": round(finished_at - self._started_at, 6) if self._started_at else 0.0,
             "total_cost": round(self._ledger_total() - self._cost_before, 9),

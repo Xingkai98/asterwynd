@@ -184,11 +184,12 @@ async def test_snapshot_does_not_inline_parent_envelope_bloat(manager):
                    "inserted_nodes", "declared_spec_hash", "expansion_plan_hash"):
         assert banned not in snapshot
     # 图级白名单是**内联字面量**（没有常量可改）——本 change 加的加法字段是
-    # ``started_at``/``finished_at``（D3）与 ``budget``（G13）。
+    # ``started_at``/``finished_at``（D3）与 ``budget``（G13）；
+    # ``workflow-asset-persistence`` 加了 ``limits``（Q8：对外报结构闸生效值）。
     assert set(snapshot) <= {
         "workflow_id", "spec_hash", "goal", "status", "nodes", "edges",
         "total", "completed", "failed", "diagnostics", "timestamp",
-        "started_at", "finished_at", "budget",
+        "started_at", "finished_at", "budget", "limits",
     }
 
 

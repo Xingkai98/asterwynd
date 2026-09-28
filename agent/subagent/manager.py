@@ -428,6 +428,10 @@ SPAWN_TOOL_NAMES = (
     "ResumeSubagent",
     "StartWorkflow",
     "RunWorkflow",
+    # ``workflow-asset-persistence``: running a saved asset is equivalent to
+    # starting a whole graph, so it joins the gate. The read/save asset tools
+    # (ListWorkflowAssets/GetWorkflowAsset/SaveWorkflowAsset) stay available.
+    "RunWorkflowAsset",
 )
 
 
@@ -1313,6 +1317,10 @@ class SubAgentManager:
             tool_result_display=config.tools.display if config else None,
             cost_ledger=self.cost_ledger,
             ledger_tool_name="subagent",
+            # Q9: the workflow-asset index is injected into root/session loops
+            # only. Making it a construction-time fact beats inferring "am I
+            # root?" from spawn depth at render time.
+            include_workflow_asset_index=False,
         )
 
     def _complete_run(
