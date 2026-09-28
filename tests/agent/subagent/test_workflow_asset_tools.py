@@ -403,8 +403,6 @@ async def test_get_workflow_rejects_slug(asset_base, tmp_path):
 
 def test_run_asset_consumes_mode_ceiling_channel():
     """RunWorkflowAsset 走 manager.effective_mode（#255 的 scheduler 可读通道）。"""
-    import inspect
-
     from agent.subagent import manager as manager_module
 
     assert hasattr(manager_module.SubAgentManager, "effective_mode")
