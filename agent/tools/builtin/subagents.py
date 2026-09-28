@@ -16,7 +16,7 @@ from agent.subagent.bus import (
 from agent.subagent.context import current_bus
 from agent.subagent.manager import SubAgentManager
 from agent.subagent.patterns import compile_pattern, run_pattern
-from agent.subagent.scheduler import WorkflowScheduler
+from agent.subagent.scheduler import WorkflowScheduler, limits_report
 from agent.subagent.workflow import (
     WorkflowCycleError,
     WorkflowSpec,
@@ -902,13 +902,6 @@ def _asset_error(status: str, reason: str, **extra: Any) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _spec_for_asset(manager: SubAgentManager, workflow_id: str) -> WorkflowSpec | None:
-    scheduler = manager.get_workflow(workflow_id)
-    if scheduler is None:
-        return None
-    return getattr(scheduler, "spec", None)
-
-
 def _asset_from_scheduler(
     scheduler: Any,
     *,
@@ -1119,6 +1112,14 @@ def _apply_asset_overrides(
         allowed = declared.get(node_id)
         if allowed is None:
             return f"override_not_declared: node {node_id!r} is not declared as overridable"
+        # 声明了覆盖面但 spec 里没有这个节点（资产被手改/漂移）：这是信任边界上的
+        # 输入，必须给结构化拒绝而非裸 KeyError——否则调用方看到的是
+        # ``[Error: 'ghost']``，既不自足也不可诊断。
+        if node_id not in nodes:
+            return (
+                f"override_not_declared: node {node_id!r} is declared as overridable "
+                f"but is not present in this asset's spec"
+            )
         if not isinstance(fields, dict):
             return f"override_not_declared: overrides for {node_id!r} must be an object"
         for field_name, value in fields.items():
@@ -1219,14 +1220,16 @@ class RunWorkflowAssetTool(Tool):
         scheduler = WorkflowScheduler(self.manager, bus=MessageBus(), limit_ceiling=ceiling)
         self.manager.register_workflow(scheduler)
 
+        # 结构闸报告从**已解析的 spec** 直接算（而非从 scheduler 取），这样
+        # ``wait=False`` 的返回体与 ``wait=True`` 口径一致——后者在协程跑起来之前
+        # ``scheduler._spec`` 还是 ``None``，取 scheduler 会得到空报告。
+        limits = limits_report(spec, ceiling)
         payload: dict[str, Any] = {}
         if not kwargs.get("wait", True):
             asyncio.ensure_future(scheduler.run(spec))
-            envelope = scheduler.status()
+            payload.update(scheduler.status())
         else:
-            envelope = await scheduler.run(spec)
-        limits = scheduler._limits_report()
-        payload.update(envelope)
+            payload.update(await scheduler.run(spec))
         payload["limits"] = limits
         payload["limits_clamped"] = {
             field: {"declared": info["declared"], "applied": info["applied"]}

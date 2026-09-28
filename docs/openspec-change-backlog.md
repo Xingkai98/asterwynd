@@ -142,7 +142,7 @@
 - 命名语义：内置 4 个 pattern 名保留；资产同名覆盖可见化（`action` + `previous_spec_hash`），同 `spec_hash` 判 `unchanged` 不写盘。
 - 可发现面：只注入 root 会话的**资产名 + 单行截断 description**（20 条 / 120 字符 / slug 上限 64），不进子 agent，`cacheable=False`。
 - 资产库按**仓库**作用域（所有 worktree 共享），落 `~/.asterwynd/projects/<hash>/workflow-assets/`。
-- spec delta：`multi-agent-collaboration` 6 条 ADDED Requirement（可寻址性 / 仓库级作用域 / 可发现面 / 显式保存 / 两类载体与覆盖面 / 加载期闸值钳制与资产能力面呈现）+ 1 条 MODIFIED（`subagents` 深度闸工具枚举）。其中 mode 的**机制**语义归 #255 的主 spec，本 change 只保留资产面（呈现 diagnostics 与「以声明 mode 运行」清单）。
+- spec delta：`multi-agent-collaboration` **7** 条 ADDED Requirement（可寻址性 / 仓库级作用域 / 可发现面 / 显式保存 / 两类载体与覆盖面 / 加载期闸值钳制与资产能力面呈现 / 命名与同名语义）+ 1 条 MODIFIED（`subagents` 深度闸工具枚举）。其中 mode 的**机制**语义归 #255 的主 spec，本 change 只保留资产面（呈现 diagnostics 与「以声明 mode 运行」清单）。
 
 立项阶段的调研结论（详见 change 的 `## Reference Implementation Research`）：Claude Code 的双落点 + 项目级优先 + symlink 门；AutoGen 的「蓝图 vs 运行时状态」二分与 trusted-sources 警告（**风险类型不同**——本 change 的 spec 无可执行字段，真实风险是「持久化的资源/能力声明」而非反序列化 RCE）；LangGraph 的 `thread_id`（运行时）与图定义（设计时）分离，且它**没有**图模板注册表（该层留给应用，本 change 须自建）；CrewAI 的 resume/fork 二分（资产复用一律 fork，永不污染资产本体）。
 

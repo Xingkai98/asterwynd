@@ -71,14 +71,6 @@ def asset_base(tmp_path, monkeypatch):
     return base
 
 
-class _Ctx:
-    """保存/运行工具共用的 fake 上下文（cwd + session mode）。"""
-
-    def __init__(self, cwd, mode: AgentMode):
-        self.cwd = str(cwd)
-        self.session_mode = mode
-
-
 def _manager(tmp_path, *, mode=AgentMode.BUILD, recursion_limit=25, max_runs=300) -> SubAgentManager:
     config = AsterwyndConfig(
         subagents=SubagentsConfig(
@@ -280,6 +272,64 @@ async def test_run_asset_clamps_node_mode_to_session(asset_base, tmp_path):
     writer_diag = next(d for d in out["mode_diagnostics"] if d["node"] == "writer")
     assert writer_diag["declared"] == "build"
     assert writer_diag["applied"] == "read_only"
+
+
+@pytest.mark.asyncio
+async def test_run_asset_rejects_override_for_missing_node(asset_base, tmp_path):
+    """覆盖面声明了 spec 中不存在的节点 ⇒ 结构化拒绝，不是裸 KeyError。
+
+    M1 回归（building review Round 1）：磁盘上的资产可能被手改/漂移，覆盖面指向
+    一个已不存在的节点 id。这条路径必须给出自足的 `override_not_declared`，而不是
+    让 `KeyError` 逃逸成 `[Error: 'ghost']`。**对照**：合法节点覆盖必须成功（见
+    `test_run_asset_applies_declared_override`）。
+    """
+    from agent.subagent.workflow_assets import WorkflowAsset
+    from agent.tools.builtin.subagents import parse_spec_for_manager
+
+    manager = _manager(tmp_path)
+    spec = parse_spec_for_manager(manager, FANOUT_SPEC)
+    _store(tmp_path).save(
+        WorkflowAsset(
+            name="drifted",
+            description="x",
+            source="dsl",
+            goal=spec.goal,
+            spec=spec.to_dict(),
+            overrides={"ghost": ["task"]},
+            spec_hash=spec.spec_hash,
+            node_count=len(spec.nodes),
+        )
+    )
+    out = json.loads(
+        await RunWorkflowAssetTool(manager).execute(
+            name="drifted", overrides={"ghost": {"task": "rewritten"}}, wait=True
+        )
+    )
+    assert out["status"] == "override_not_declared"
+    assert "ghost" in out["reason"]
+
+
+@pytest.mark.asyncio
+async def test_run_asset_reports_limits_when_not_waiting(asset_base, tmp_path):
+    """``wait=False`` 的返回体也报生效值（L1 回归）。
+
+    ``wait=True`` 在协程尚未跑起来时会取到空的 scheduler 报告；报告改为从已解析的
+    spec 直接算，两条路径口径一致。
+    """
+    manager = _manager(tmp_path, max_runs=300)
+    declared = json.loads(
+        await RunWorkflowTool(manager).execute(
+            spec={**FANOUT_SPEC, "max_runs": 5000}, wait=True
+        )
+    )
+    await SaveWorkflowAssetTool(manager).execute(
+        workflow_id=declared["workflow_id"], name="big-fanout", description="x"
+    )
+    out = json.loads(
+        await RunWorkflowAssetTool(manager).execute(name="big-fanout", wait=False)
+    )
+    assert out["limits"]["max_runs"] == {"declared": 5000, "applied": 300, "clamped": True}
+    assert out["limits_clamped"]["max_runs"] == {"declared": 5000, "applied": 300}
 
 
 @pytest.mark.asyncio

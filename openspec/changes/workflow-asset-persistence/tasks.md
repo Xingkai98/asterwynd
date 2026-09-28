@@ -107,3 +107,14 @@
 - [ ] 5.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
 - [ ] 5.6 运行 `/review-loop workflow-asset-persistence`，产出 `reviews/building-review.md` 与 review manifest（manifest 必须在 `tasks.md` 最终化之后生成）。
 - [ ] 5.7 (post-merge) 在实现 PR 合入后，给 issue #245 添加完成说明 comment（写明 PR 号与验证结果）并关闭。
+
+## 6. 审阅闭环修复记录
+
+- [x] 6.1 **Round 1（`reviews/building-review.md`）：CHANGES_REQUESTED**，独立零记忆 subagent 审阅。逐条修复：
+  - **M1（中）覆盖面声明了 spec 中不存在的节点 ⇒ 未捕获 `KeyError`**：`_apply_asset_overrides` 增加节点存在性检查，返回结构化 `override_not_declared`。**回归测试**：`test_workflow_asset_tools.py::test_run_asset_rejects_override_for_missing_node`（对照：合法节点覆盖仍成功，见 `test_run_asset_applies_declared_override`）。
+  - **L1（低）`RunWorkflowAsset(wait=False)` 返回体不报生效值**：报告改从**已解析的 spec** 直接算（`limits_report(spec, ceiling)`），两条路径口径一致。**回归测试**：`test_run_asset_reports_limits_when_not_waiting`。
+  - **L2（低）任务 1.3 标 `[x]` 但 delta 未同步**：本轮完成 spec 同步（`openspec/specs/multi-agent-collaboration/spec.md` 7 条 ADDED + `openspec/specs/subagents/spec.md` 1 条 MODIFIED），1.3 的勾选此时为真。
+  - **L3（整洁度）**：删除无调用方的 `_spec_for_asset`、`workflow_assets.py` 未用的 `import os`/`import uuid`、测试里未用的 `_Ctx`。
+  - **I1（非本 change）**：`workflow.py` 的 `with_limits` 死代码系 `workflow-dsl-scheduler` 遗留（`git log -S` 指向 `4923883`，base 亦存在），不在本 change 责任面。
+  - **I2**：mode 六条回归锁由 #255（`tests/agent/subagent/test_mode_ceiling.py`，`291ed7c` 引入）交付；本 change 的净新增是消费侧断言。
+  - 修复后复跑：`tests/agent/subagent` 639 passed；全量 pytest 与门禁见 4.x。

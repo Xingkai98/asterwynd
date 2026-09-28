@@ -436,6 +436,42 @@ def _maybe_json(value: Any) -> Any:
         return value
 
 
+# --- 结构闸钳制（change ``workflow-asset-persistence``，Q8 方案 C） ----------
+#
+# 资产的声明值可能远高于当前配置（``_positive_int`` 只要求 ``>= 1``、无上界），
+# 而 ``_resolve_limits`` 对声明值照单全收。钳制挂在**读取处**而非解析处，因此
+# ``WorkflowSpec`` 对象、资产文件与 ``spec_hash`` 都不被运行时配置污染；钳制也
+# 因此成为「纯执行期读值」，模型当轮声明路径（无 ceiling）行为逐字不变。
+_LIMIT_FIELDS = ("recursion_limit", "max_nodes", "max_runs")
+
+
+def clamp_limit(declared: int, ceiling: int | None) -> int:
+    """``min(declared, ceiling)``；``ceiling`` 为 ``None`` 时原样返回声明值。"""
+    return declared if ceiling is None else min(declared, ceiling)
+
+
+def limits_report(
+    spec: WorkflowSpec | None, ceiling: Mapping[str, int]
+) -> dict[str, dict[str, int | bool]]:
+    """三个结构闸的 ``{declared, applied, clamped}`` 报告（对外报生效值）。
+
+    与读取路径共用 ``clamp_limit``，所以「对内钳的值」与「对外报的值」不会分叉
+    ——这正是 Q8 附加要求防的那类假面（对内钳、对外报声明值）。
+    """
+    if spec is None:
+        return {}
+    report: dict[str, dict[str, int | bool]] = {}
+    for field in _LIMIT_FIELDS:
+        declared = getattr(spec, field)
+        applied = clamp_limit(declared, ceiling.get(field))
+        report[field] = {
+            "declared": declared,
+            "applied": applied,
+            "clamped": applied != declared,
+        }
+    return report
+
+
 # --- 调度器 -----------------------------------------------------------------
 
 
@@ -574,24 +610,15 @@ class WorkflowScheduler:
         spec = self._spec
         if spec is None:
             raise RuntimeError("workflow spec is not attached")
-        declared = getattr(spec, field)
-        ceiling = self._limit_ceiling.get(field)
-        return declared if ceiling is None else min(declared, ceiling)
+        return clamp_limit(getattr(spec, field), self._limit_ceiling.get(field))
 
     def _limits_report(self) -> dict[str, dict[str, int | bool]]:
-        """三个结构闸的 ``{declared, applied, clamped}`` 报告（对外报生效值）。"""
-        report: dict[str, dict[str, int | bool]] = {}
-        if self._spec is None:
-            return report
-        for field in ("recursion_limit", "max_nodes", "max_runs"):
-            declared = getattr(self._spec, field)
-            applied = self._eff_limit(field)
-            report[field] = {
-                "declared": declared,
-                "applied": applied,
-                "clamped": applied != declared,
-            }
-        return report
+        """三个结构闸的 ``{declared, applied, clamped}`` 报告（对外报生效值）。
+
+        走模块级 ``limits_report``——与 ``_eff_limit`` 共用同一个 ``clamp_limit``，
+        因此「对内钳的值」与「对外报的值」在结构上不可能分叉。
+        """
+        return limits_report(self._spec, self._limit_ceiling)
 
     @spec.setter
     def spec(self, value: WorkflowSpec) -> None:

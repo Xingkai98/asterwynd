@@ -20,8 +20,6 @@ D2/D4/D5/D6 与 ``reviews/grill-design.md`` 的 Q1/Q4/Q6/Q9。
 from __future__ import annotations
 
 import json
-import os
-import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
