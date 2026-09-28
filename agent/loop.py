@@ -24,6 +24,7 @@ from agent.llm import LLMResponse, ToolCallDelta, CachePlan
 from agent.hooks.manager import HookManager
 from agent.tools.registry import ToolRegistry
 from agent.context import BuildContext, ContextBuilder
+from agent.context.workflow_asset_source import WorkflowAssetIndexSource
 from agent.context.sources import (
     AsterMdSource,
     MemoryIndexSource,
@@ -49,16 +50,20 @@ from agent.tools.builtin.subagents import (
     CreateSubagentTool,
     DeclareWorkflowTool,
     GetSubagentRunTool,
+    GetWorkflowAssetTool,
     GetWorkflowTool,
     InspectSubagentTranscriptTool,
     ListSubagentsTool,
+    ListWorkflowAssetsTool,
     PublishBusMessageTool,
     ReadBusTool,
     ReadWorkflowResultTool,
     ResumeSubagentTool,
     RunPatternTool,
     RunSubagentTool,
+    RunWorkflowAssetTool,
     RunWorkflowTool,
+    SaveWorkflowAssetTool,
     StartWorkflowTool,
 )
 from agent.tools.builtin.activate_skill import ActivateSkillTool
@@ -141,6 +146,7 @@ class AgentLoop:
         context_builder: ContextBuilder | None = None,
         cost_ledger: "CostLedger | None" = None,
         ledger_tool_name: str | None = None,
+        include_workflow_asset_index: bool = True,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -159,6 +165,9 @@ class AgentLoop:
         self.tool_registry.mode_policy.runtime_state = self.runtime_state
         self.tool_result_display = tool_result_display or ToolResultDisplayConfig()
         self.skill_runtime = skill_runtime
+        # Whether this loop injects the workflow-asset index (Q9: root only).
+        # A construction-time fact, deliberately not inferred from spawn depth.
+        self.include_workflow_asset_index = include_workflow_asset_index
         if context_builder is not None:
             self.context_builder = context_builder
         else:
@@ -398,6 +407,13 @@ class AgentLoop:
             # Q1: the read channel for result_ref artifacts. Read-only and not a
             # spawn entry point, so it stays available at max depth.
             ReadWorkflowResultTool(self.subagent_manager),
+            # Workflow asset layer (change ``workflow-asset-persistence``).
+            # ``RunWorkflowAsset`` is in ``SPAWN_TOOL_NAMES``; the other three
+            # are not (they neither start a graph nor spend concurrency).
+            SaveWorkflowAssetTool(self.subagent_manager),
+            ListWorkflowAssetsTool(self.subagent_manager),
+            GetWorkflowAssetTool(self.subagent_manager),
+            RunWorkflowAssetTool(self.subagent_manager),
         ]
         withdrawn = set(unregistered)
         for tool in tools:
@@ -1464,6 +1480,12 @@ class AgentLoop:
         builder.register(AsterMdSource())
         # P2: Memory index + Todo (execution progress, Todo raised from P5 per issue #107)
         builder.register(MemoryIndexSource(persistent_memory=self.persistent_memory))
+        # P2: workflow-asset index (Q4=B). Root loops only — a subagent loop is
+        # constructed with include_workflow_asset_index=False (see
+        # ``SubAgentManager._build_subagent_loop``), so this text never reaches
+        # every child's system prompt.
+        if self.include_workflow_asset_index:
+            builder.register(WorkflowAssetIndexSource(manager=self.subagent_manager))
         builder.register(TodoSource(todo_renderer=self._todo_context))
         # P4: Skill index + active skill
         builder.register(SkillIndexSource(skill_runtime=self.skill_runtime))

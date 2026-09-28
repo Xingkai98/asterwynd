@@ -450,6 +450,16 @@ async def run_pattern(
     started_at = time.time()
     try:
         scheduler = WorkflowScheduler(manager, bus=bus)
+        # Pattern provenance for the asset layer (change
+        # ``workflow-asset-persistence``, D1): the compiled spec has already lost
+        # the recipe, so record it before the run starts. Pure additive field —
+        # it never reaches ``_envelope``/``_legacy_result``.
+        scheduler.asset_source = {
+            "kind": "pattern",
+            "pattern": pattern,
+            "params": dict(params or {}),
+            "task": task,
+        }
         manager.register_workflow(scheduler)
         envelope = await scheduler.run(spec)
     finally:
