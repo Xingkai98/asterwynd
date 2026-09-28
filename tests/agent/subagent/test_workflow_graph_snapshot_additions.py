@@ -36,10 +36,11 @@ SNAPSHOT_NODE_KEYS = frozenset(
 )
 
 #: 快照**图级**允许出现的键（原为内联 set 字面量，本 change 抽出常量便于两处共用）。
+#: ``limits`` 由 ``workflow-asset-persistence`` 加入（Q8：对外报结构闸生效值）。
 SNAPSHOT_TOP_KEYS = frozenset(
     {
         "workflow_id", "spec_hash", "goal", "status", "nodes", "edges",
-        "timestamp", "started_at", "finished_at", "budget",
+        "timestamp", "started_at", "finished_at", "budget", "limits",
         "total", "completed", "failed", "diagnostics",
     }
 )
