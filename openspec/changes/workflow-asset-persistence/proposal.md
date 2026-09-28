@@ -23,7 +23,7 @@
 
 ## What Changes
 
-- **新增可寻址的 workflow 资产层**：`<workspace_root>/.asterwynd/workflow-assets/<slug>.json` + `index.json`。资产是**跨会话可寻址**的命名单元，取代「只有随机 `wf_<uuid8>`」的现状。
+- **新增可寻址的 workflow 资产层**：`~/.asterwynd/projects/<repo-hash>/workflow-assets/<slug>.json` + `index.json`（落点由 Q1 拍板为**仓库级**，跨 worktree 共享；`<repo-hash>` 经 git common dir 解析，与 memory 同作用域规则）。资产是**跨会话可寻址**的命名单元，取代「只有随机 `wf_<uuid8>`」的现状。
 - **新增 4 个模型面工具**（拟定名，实现阶段可微调）：
   - `SaveWorkflowAsset`：把**刚跑过的图**存成命名资产（输入 `workflow_id` + `name`/`description`，spec 由服务端取出，**不穿过模型输出**）。
   - `ListWorkflowAssets`：有界列出可用资产（name/description/kind/参数面摘要）。
@@ -89,11 +89,13 @@
   - `subagents`: 「深度到限撤 spawn 工具」的工具枚举扩展（加入按名启动资产的工具）。
 - **代码**（实现期细化，下述为当前已核实的影响面）:
   - 新增 `agent/subagent/workflow_assets.py`（或同级模块）：资产 schema、slug 校验、读写纪律、索引、`asset_schema_version` 判定。
-  - `agent/subagent/workflow.py`：`parse_workflow_spec` 增加**闸值上限**通道（当前 `_resolve_limits` 对 spec 自声明值照单全收，`workflow.py:433-448`）；节点 `mode` 的收窄校验（`_parse_node` 目前只校验枚举，`workflow.py:492-496`）。
-  - `agent/subagent/manager.py`: `SPAWN_TOOL_NAMES`（`manager.py:423-430`）加入按名启动资产的工具；资产层实例挂到 manager（与 `_workflow_stores`、`_workflows` 并列，`manager.py:505-520`）。
-  - `agent/tools/builtin/subagents.py`：新增 4 个工具类 + 注册；`_spec_bounds()`（`subagents.py:456-463`）的配置读取需被加载路径复用。
-  - `agent/loop.py`：工具注册（`loop.py:391-402` 一带）。
-  - `agent/config.py`：`SubagentsConfig` / `WorkflowLimitsConfig`（`config.py:312-355`）是否需要资产层开关与钳制上限配置。
+  - `agent/subagent/workflow.py`：**不落笔**。原计划的「`parse_workflow_spec` 增加闸值上限通道」已被 Q8 方案 C 否决（那会把钳制值写回 spec、改变 `spec_hash`）。
+  - `agent/subagent/scheduler.py`：`_eff_limit(field)` 统一访问器 + `limit_ceiling` 构造参数 + `limits` 报值出口（Q8 方案 C）；`asset_source` 附加字段（pattern 溯源）。
+  - `agent/subagent/manager.py`: `SPAWN_TOOL_NAMES` 加入 `RunWorkflowAsset`；子 loop 构造期传 `include_workflow_asset_index=False`（Q9）。
+  - `agent/tools/builtin/subagents.py`：新增 4 个工具类 + `_spec_bounds()` 被资产加载路径复用。
+  - `agent/loop.py`：工具注册 + `include_workflow_asset_index` 构造参数 + 注册 `WorkflowAssetIndexSource`（root）。
+  - 新增 `agent/context/workflow_asset_source.py`：受限可发现面注入源（P2，`cacheable=False`）。
+  - `agent/config.py`：**无改动**——资产层列表上限等常量落在 `agent/subagent/workflow_assets.py`，未新增配置面。
   - `agent/subagent/patterns.py` + `agent/subagent/scheduler.py`：**补 pattern 溯源**——今天 `run_pattern` 只在返回给模型的 result dict 里带 `pattern`（`patterns.py:447-461`），而 `manager` 注册的是 scheduler 对象（`manager.py:663-664`），scheduler 上没有任何来源字段。所以「存配方」这条载体在现状下**落不了地**（保存时只能拿到展开后的 spec、配方与 params 已丢失）。对策：在 `WorkflowScheduler` 上声明一个默认值为 `{"kind": "dsl"}` 的 `asset_source` 附加字段，由 `run_pattern` 覆盖为 pattern 溯源（见 design.md D1 的「实现前提」）。这是本 change **直接**改动既有运行路径的一处，且是**纯附加、不改返回结构**。**另有第二处既有运行路径的修复作为前置依赖**：workflow 节点 `mode` 钳制的比较基准错误（fail-open + 静默降级），已立项为独立 bug issue [#255](https://github.com/Xingkai98/asterwynd/issues/255)，本 change 以它为**前置阻塞项**（资产的 mode 批准面依赖它），修复本身在 #255 内落地。
 - **测试**: 新增资产 round-trip、slug/逃逸拒绝、`asset_schema_version` 高低版本分支、闸值钳制回落、`mode` 收窄、内置名占用拒绝、同名覆盖与 `spec_hash` 去重、索引有界、跨会话可寻址、坏资产不炸整体；回归「既有 `StartWorkflow`/`RunWorkflow`/`RunPattern` 行为逐字不变」。
 - **文档**: `docs/openspec-change-backlog.md`（新增条目 + 并行批次）；`docs/architecture.md` 的 subagent/workflow 段落（如提及结果落点）；`README.md` + `README_EN.md`（如工具清单被列出）。**关键文档影响检查项**：确认 `.asterwynd/` 已在 `.gitignore:11`，资产目录**不应**需要新增 ignore 条目；若最终落点改到可提交路径，则本 change 的 Non-Goals 被违反，必须回写。
@@ -102,12 +104,12 @@
   - benchmark 的 `workflow_record.json` 语义不变（它是观测/回归对照记录，不是资产）。
   - 内置 4 个 pattern 的编译结果不变（资产层只**引用** `compile_pattern`）。
   - 不做可提交（团队共享）的资产路径——见 Non-Goals（design.md）。
-- **待确认影响面**（开发前必须清成结论或阻塞项，见 design.md Open Questions）:
-  1. 落点是 per-checkout（`<workspace_root>/.asterwynd/`）还是 per-repo（照 memory 的 git common dir 解析，跨 worktree 共享）？
-  2. 闸值钳制只作用于「从磁盘加载的资产」，还是**同时**作用于「模型当轮声明的 spec」？（后者会改变既有行为）
-  3. DSL 资产是否引入显式覆盖面（可参数化），还是只做「冻结 spec 的原样复用」？
-  4. 资产是否需要进入模型的可发现面（工具描述 / 系统提示自动列出）？还是只靠显式 `ListWorkflowAssets`？
-  5. `mode` 字段在资产里允许出现到什么程度？
+- **影响面结论**（原「待确认影响面」5 项，均已由用户拍板为结论；逐条见 design.md 的 ✅ 块与 `reviews/grill-design.md` 的 `## User Confirmation`）:
+  1. 落点 = **per-repo**（`~/.asterwynd/projects/<hash>/workflow-assets/`，照 memory 的 git common dir 解析，跨 worktree 共享）——Q1=B。
+  2. 闸值钳制**只作用于资产加载路径**，模型当轮声明 spec 的路径行为逐字不变；「模型声明路径是否也该钳」记为独立 follow-up——Q2=A。
+  3. DSL 资产**引入显式声明的覆盖面**（`overrides: {node_id: [field]}`），覆盖在 `parse_spec_for_manager` 之前应用，未声明组合拒绝——Q3=B。
+  4. 资产进入**受限可发现面**（只注入资产名 + 单行截断 description，20 条 / 120 字符 / slug 64，只注入 root 会话，`cacheable=False`）——Q4=B + Q9。
+  5. 资产里的 `mode` **只收窄不放宽**，收窄机制由 [#255](https://github.com/Xingkai98/asterwynd/issues/255) 提供，本 change 只做资产面呈现（diagnostics + 「以声明 mode 运行」清单）——Q5=B + Q7。
 
 ## 与既有 change 的边界
 

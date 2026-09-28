@@ -121,15 +121,15 @@
 
 ### 4. `workflow-asset-persistence`
 
-状态：**立项已完成（2026-09-27），待实现**。proposal / design / spec delta / tasks 均已产出；两轮独立 `grill` 设计追问全部收口——**Q1–Q11 + 2 条实现期确认项全部拍板，无未决 Open Question**。**执行顺序（用户确认）：[#255](https://github.com/Xingkai98/asterwynd/issues/255) → 本 change（#245）→ #246。** 本 change 的 mode 相关任务 **blocked by #255**（依赖外部 issue，非「待确认」），在 #255 合入前不得标完成。
+状态：**实现已完成（2026-09-28，待归档）**。proposal / design / spec delta / tasks 均已产出；两轮独立 `grill` 设计追问全部收口——**Q1–Q11 + 2 条实现期确认项全部拍板，无未决 Open Question**。**前置依赖 [#255](https://github.com/Xingkai98/asterwynd/issues/255) 已合入**（PR #259，master `bab8e72`），提供了 `SubAgentManager.mode_ceiling()` / `effective_mode()` 的 scheduler 可读会话 mode 通道（Q11 候选 A 的前置条件已满足），故本 change 的 mode 相关任务**已解禁**。执行顺序 [#255](https://github.com/Xingkai98/asterwynd/issues/255) → 本 change（#245）→ #246 中的第一环已完成。
 
-批次：第十六批，**可立即开始**（前序 C1–C5 与 `workflow-graph-visualization` 均已合入归档）。它是 #246（内置模板归一）的**前置**——#246 要以本 change 的资产寻址与加载契约作地基。依赖：**#255 必须先合入**（否则资产按名调用时的 mode 批准面不可信）。
+批次：第十六批。前序 C1–C5 与 `workflow-graph-visualization` 均已合入归档；前置 #255 已合入。它是 #246（内置模板归一）的**前置**——#246 要以本 change 的资产寻址与加载契约作地基。依赖已清零。
 
 建议顺序原因：
 
 - 本 change 独立交付「跑过的图可复用」这一完整价值，不依赖其他在途 change。
 - 与 #246 有明确先后：本 change 定资产层的命名/落点/版本/加载路径契约，#246 只负责把内置模板归一到代码内注册表，不重复定契约。
-- 执行顺序 **#255 → 本 change → #246**（用户确认）：本 change 的 DSL 资产以「保留显式节点 mode」为卖点，而现有 mode 钳制读的是被并发覆盖的共享字段（fail-open + 静默降级），**批准面依赖它**；#255 修好 contextvar 上限**并提供 scheduler 可读的会话 mode 通道**后本 change 的 mode 语义才成立（Q11）。若 #255 未合入或未提供该通道，本 change 的 mode 相关实现须停在降级口径（只记 diagnostics，不承诺列表正确）或回退「工具层显式传参」。
+- 执行顺序 **#255 → 本 change → #246**（用户确认）：本 change 的 DSL 资产以「保留显式节点 mode」为卖点，而 mode 钳制的批准面依赖 #255。**#255 已合入并提供 scheduler 可读的会话 mode 通道**（`mode_ceiling()` / `effective_mode()`，Q11 候选 A），本 change 的 mode 语义据此成立——`RunWorkflowAsset` 直接消费该通道，无需回退「工具层显式传参」。
 - 与 `add-minimal-tui-runtime-view`（未实现队列第 3 条）无交集（一个动 subagent 资产面，一个动 TUI 运行视图），可并行。
 - 实现期注意：可发现面（资产名列表 + 截断 description）会触及**系统提示装配路径**（新 `ContextSource`），需与任何同时改系统提示的 change 错开合入——尽管 Q9 已把范围收窄为**只注入 root 会话**（不进子 agent）。
 
@@ -142,7 +142,7 @@
 - 命名语义：内置 4 个 pattern 名保留；资产同名覆盖可见化（`action` + `previous_spec_hash`），同 `spec_hash` 判 `unchanged` 不写盘。
 - 可发现面：只注入 root 会话的**资产名 + 单行截断 description**（20 条 / 120 字符 / slug 上限 64），不进子 agent，`cacheable=False`。
 - 资产库按**仓库**作用域（所有 worktree 共享），落 `~/.asterwynd/projects/<hash>/workflow-assets/`。
-- 新 spec delta 5 条 ADDED Requirement（`multi-agent-collaboration`）+ 1 条 MODIFIED（`subagents` 深度闸工具枚举）。
+- spec delta：`multi-agent-collaboration` 6 条 ADDED Requirement（可寻址性 / 仓库级作用域 / 可发现面 / 显式保存 / 两类载体与覆盖面 / 加载期闸值钳制与资产能力面呈现）+ 1 条 MODIFIED（`subagents` 深度闸工具枚举）。其中 mode 的**机制**语义归 #255 的主 spec，本 change 只保留资产面（呈现 diagnostics 与「以声明 mode 运行」清单）。
 
 立项阶段的调研结论（详见 change 的 `## Reference Implementation Research`）：Claude Code 的双落点 + 项目级优先 + symlink 门；AutoGen 的「蓝图 vs 运行时状态」二分与 trusted-sources 警告（**风险类型不同**——本 change 的 spec 无可执行字段，真实风险是「持久化的资源/能力声明」而非反序列化 RCE）；LangGraph 的 `thread_id`（运行时）与图定义（设计时）分离，且它**没有**图模板注册表（该层留给应用，本 change 须自建）；CrewAI 的 resume/fork 二分（资产复用一律 fork，永不污染资产本体）。
 

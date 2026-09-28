@@ -55,6 +55,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | WebSearch / WebFetch | network_read / low | 搜索网页或抓取网页正文 |
 | ActivateSkill | agent_state / medium | 在当前 run 内激活已加载 skill，使下一次 LLM 调用获得完整 skill prompt |
 | 子 session 工具 | subagent_control / medium | 创建、运行、查询、取消和检查子 session |
+| workflow 资产工具 | subagent_control / medium（`SaveWorkflowAsset` 为 agent_state / medium） | `SaveWorkflowAsset` / `ListWorkflowAssets` / `GetWorkflowAsset` / `RunWorkflowAsset`：把跑过的图沉淀为命名资产并按名复用；`RunWorkflowAsset` 属 spawn 类，进深度闸 |
 | UpdatePlan / ExitPlanMode | agent_state / medium，plan-only | 更新或定稿 Plan Document，并将高层步骤同步为 planning state |
 | BrowserNavigate / BrowserScreenshot / BrowserGetContent / BrowserScroll / BrowserTabs | browser_read / low | 受控只读浏览器操作，含 URL/域白名单和敏感数据遮蔽 |
 

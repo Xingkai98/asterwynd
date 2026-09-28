@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "workflow-asset-persistence", "artifact_path": "docs/openspec-change-backlog.md", "reason": "更新 backlog 里本 change 的状态与依赖：#255 已合入（PR #259），mode 相关任务解禁；订正 spec delta 条数口径（6 条 ADDED）；记录实现期 design/proposal 的回写订正", "approved_by": "user (implementation phase approved 2026-09-28)"}

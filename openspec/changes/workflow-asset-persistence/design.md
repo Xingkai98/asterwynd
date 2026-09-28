@@ -22,6 +22,8 @@ C1–C5（队列化并发 → Workflow DSL 调度器 → 结果聚合 → 预算
 
 **对策（进 tasks 3.2/3.5）**：在 `WorkflowScheduler.__init__` **声明并默认** `asset_source = {"kind": "dsl"}`，由 `run_pattern` 在 `scheduler.run()` 前覆盖为 `{"kind": "pattern", "pattern": pattern, "params": params, "task": task}`。`SaveWorkflowAsset` 读该字段决定载体；字段缺失（老路径/未预期入口）**一律降级为 `source: "dsl"`**，不猜。**纯附加字段**——不改 `run_pattern` 的返回结构、不改 `_legacy_result`、不加新执行分支；该字段不在 `_envelope`/`parent_envelope` 的显式挑字段清单内，故不污染契约。
 > **口径订正（2026-09-26，Q7 拍板后）**：本 change 改动既有运行路径的地方**不再是「一处」**。原口径（只有 pattern 溯源这一处）在 Q7 走 contextvar 方案后失效——mode 上限的 contextvar 安装点（`_execute_run_in_context`，与既有 `set_spawn_depth`/`set_current_run_id` 同处）虽属 **#255 的修复范围**而非本 change 直接落笔，但本 change **消费**其语义且**依赖**它作为前置。因此本 change 的准确口径是：**直接改动既有运行路径 1 处（pattern 溯源，纯附加字段）；依赖另一处既有运行路径的修复（#255 的 mode 上限 contextvar，本 change 不落笔但以它为前置阻塞项）**。
+**实现期订正（2026-09-28，以实际代码为准）**：`run_pattern` 的溯源实现**没有**改 `run_pattern` 的返回结构——`scheduler.asset_source` 是纯附加字段（默认 `{"kind": "dsl"}`，在 `WorkflowScheduler.__init__` 声明），只有 `run_pattern` 在 `scheduler.run()` 前覆盖它。`run_pattern` 返回键集经**新的键集锁测试**钉死为 13 键（既有 `test_run_pattern_keeps_legacy_fields_and_adds_new_ones` 只做存在性断言、挡不住意外加字段）。
+
 **已知代价**：一份 pattern 资产被 `GetWorkflowAsset` 取出、经 `RunWorkflow` 再跑一次后若再保存，会退化成 DSL 资产（溯源在往返中丢失）。这是可接受的行为，需在工具描述里写明。
 
 ## Goals / Non-Goals
@@ -99,6 +101,7 @@ C1–C5（队列化并发 → Workflow DSL 调度器 → 结果聚合 → 预算
 - **推荐 B**。理由：本仓库的开发流程（AGENTS.md）强制 worktree，per-checkout 会让资产库静默碎片化——在 worktree 里攒的资产回主仓库看不到，反之亦然。「跨会话复用」是资产的全部价值，作用域比 checkout 更细就兑现不了。
 - 两者都是**本机、不共享、不提交**（`~/.asterwynd/` 与 `.asterwynd/` 都不在版本控制内），所以 D2 的选择不影响「不做共享路径」这条 Non-Goal。
 - 落点在实现期由 `WorkflowAssetStore.for_workspace(workspace_root)` 这类构造器集中决定，调用方不感知（便于 Q1 拍板后单向切换）。
+> **实现期订正（2026-09-28）**：最终落点为 Q1 拍板的 B（`~/.asterwynd/projects/<hash>/workflow-assets/`），实现复用 memory 的 `_find_scope_root` / `_compute_project_hash`（`agent/memory/persistent.py`）解析仓库根与桶名，**未**新写 scope 解析。单测用伪造的 `.git` 文件 + `commondir` 钉住跨 worktree 共享与跨仓库隔离两个方向（照 `tests/agent/memory/test_persistent.py` 的既有 harness）。
 - 已知代价（写进 Risks）：资产不再落在项目目录内，「删掉项目目录」不会带走资产；反过来，用户若期望 `ls .asterwynd/` 能看到资产，需要文档说明。
 
 ### D3 — 加载路径是新的信任边界
@@ -111,10 +114,12 @@ C1–C5（队列化并发 → Workflow DSL 调度器 → 结果聚合 → 预算
 
 **对策（✅ Q8 已确认 = 方案 C，2026-09-26）**：**不回写 spec**。在 **scheduler 读取** `spec.max_runs` / `spec.max_nodes` / `spec.recursion_limit` 的入口处取 `min(declared, config)`，`WorkflowSpec` 对象本身**保持声明值不变**。
 **为什么不改 `parse_workflow_spec`（原设计的 `limit_ceiling` 通道，已否决）**：`WorkflowSpec.to_dict()` 只在值**不等于模块默认**时才输出这三个键（`workflow.py:279-294`），而 `spec_hash` 取该 dict 的 canonical JSON（`workflow.py:297-300`）。把钳制过的值写回 spec 会让「等于默认值」的键被**丢弃**，hash 随之改变——实测：声明 `max_runs=5000, max_nodes=900` 的 hash 为 `5bb392f41782ea7b`，钳到 `(300, 200)` 后变成 `d1130d802fff9a0b`。连带三处失效：round-trip 断言在配置 ≠ 模块默认值时必红；D4 的 `unchanged` 去重把「未变」误判为「已更新」并重写资产；**「加载后重存」会让资产永久遗忘自己声明过的上限**（下次配置调大时它已经只记得 300）。方案 C 让钳制成为**纯执行期读值**，资产原文与指纹都不被运行时配置污染。
-**实现约束（grill 第二轮订正：这是「新增字段」而非「订正既有假面」）**：实测（`/tmp/probe_exits.py` 与主 session 复核）`status()` / `parent_envelope()` / `workflow_graph_snapshot()` / `_envelope()` 四个出口今天**根本不报**这三个限制值——唯一报值处是 `DeclareWorkflowTool` 的返回体（`agent/tools/builtin/subagents.py:589-591`），而那是**模型当轮声明路径**（Q2=A 不钳，报声明值正确）。所以本条的准确表述是：**若为可观测性新增这三个字段的报值出口，则报的必须是实际生效值**；**不是**去订正一个已存在的漂移。**实现期禁止**照「断言既有键 == 生效值」去写测试——既有的键不存在，会写成一条永远为真（或永远报错）的假测试。
+**实现约束（grill 第二轮订正：这是「新增字段」而非「订正既有假面」）**：实测（`/tmp/probe_exits.py` 与主 session 复核）`status()` / `parent_envelope()` / `workflow_graph_snapshot()` / `_envelope()` 四个出口今天**根本不报**这三个限制值——唯一报值处是 `DeclareWorkflowTool` 的返回体，而那是**模型当轮声明路径**（Q2=A 不钳，报声明值正确）。所以本条的准确表述是：**若为可观测性新增这三个字段的报值出口，则报的必须是实际生效值**；**不是**去订正一个已存在的漂移。**实现期禁止**照「断言既有键 == 生效值」去写测试——既有的键不存在，会写成一条永远为真（或永远报错）的假测试。
+> **实现期落点（2026-09-28）**：三个出口（`_envelope` / `status()` / `workflow_graph_snapshot()`）新增顶层键 `limits`，值为 `{recursion_limit|max_nodes|max_runs: {declared, applied, clamped}}`，**报钳制后的实际生效值**。`workflow_graph_snapshot()` 的既有顶层键白名单（`SNAPSHOT_TOP_KEYS` 与另一处内联字面量）按它们自己的约定登记 `limits`——那两条 drift-guard 测试正是为「新增键必须是有意识的」而写，实现期确实被它们拦下并逐一登记（见 `test_workflow_graph_snapshot.py`、`test_workflow_graph_snapshot_additions.py`）。
 **返回体仍须显式报 `limits_clamped`**（`{max_runs: {declared: 5000, applied: 300}}`），不静默。
-**读取落点必须穷举（grill 第二轮给出完整清单）**：scheduler 内对三个字段的读取共 **9 处**（跨 8 个方法），全是 `spec.<field>` 点属性读，无「预烘进结构体」或「跨 await 缓存」的反例，因此「在读取处取 min」可达：`scheduler.py:753`（`register_workflow_bucket(spec.max_runs * 2)`——**派生值，最易漏**）、`:825`（`_check_declared_limits` 的 `max_nodes`）、`:884`（主循环 `self._steps >= spec.recursion_limit`）、`:1551`（`_dispatch` 的 `max_runs`）、`:2005`（`_expand_plan` 的 `max_nodes`）、`:2058` / `:2070`（`_check_foreach_budget`）、`:2593` / `:2594`（`_remaining_expansion_capacity`）。**展开期那几处（`:2005`/`:2058`/`:2070`/`:2593`/`:2594`）最容易漏**——漏掉会让「资产声明 `max_items=0` 的动态 foreach」按声明值而非配置值决定展开上限，钳制对动态展开整条路径失效。跨模块范围核对：`web/` 与 `benchmarks/` 对这三个字段**零读取**。
-**作用范围**（✅ Q2 已确认 = 方案 A）：只作用于**资产加载路径**，模型当轮声明路径行为逐字不变。
+**读取落点必须穷举（grill 第二轮给出完整清单）**：scheduler 内对三个字段的读取共 **9 处**（跨 8 个方法），全是 `spec.<field>` 点属性读，无「预烘进结构体」或「跨 await 缓存」的反例，因此「在读取处取 min」可达：`register_workflow_bucket(spec.max_runs * 2)`（**派生值，最易漏**）、`_check_declared_limits` 的 `max_nodes`、主循环 `self._steps >= spec.recursion_limit`、`_dispatch` 的 `max_runs`、`_expand_plan` 的 `max_nodes`、`_check_foreach_budget`（`max_runs` + `max_nodes`）、`_remaining_expansion_capacity`（`max_runs` + `max_nodes`）。**展开期那几处最容易漏**——漏掉会让「资产声明 `max_items=0` 的动态 foreach」按声明值而非配置值决定展开上限，钳制对动态展开整条路径失效。跨模块范围核对：`web/` 与 `benchmarks/` 对这三个字段**零读取**。
+> **实现期订正（2026-09-28，以实际代码为准）**：上面那份 `scheduler.py:NNN` 行号清单来自旧 master（`369d99d`），已全数漂移（后续 change 改动）。实现按**符号**而非行号定位，9 处全部改为统一访问器 `WorkflowScheduler._eff_limit(field)`（`min(声明值, self._limit_ceiling[field])`），未直接内联 9 段 `min(...)`。实测确认：改完之后 `grep 'spec\.\(max_runs\|max_nodes\|recursion_limit\)'` 在 `scheduler.py` **零命中**，即 9 处读取点确已穷举、无遗漏。
+**作用范围**（✅ Q2 已确认 = 方案 A）：只作用于**资产加载路径**，模型当轮声明路径行为逐字不变。实现手段 = 新增 `WorkflowScheduler(..., limit_ceiling=...)` 构造参数，只有 `RunWorkflowAsset` 传它；`limit_ceiling` 为空时 `_eff_limit` 退化为声明值本身。
 
 **(2) 能力授予（`mode` 字段）——依赖前置修复 issue #255。** `_parse_node` 接受 `mode ∈ {build, read_only, plan}`（`workflow.py:492-496`），该 mode 决定子 agent 拿到哪些工具。所以一份资产可以**持久化地**授予写权限。
 
@@ -215,7 +220,7 @@ C1–C5（队列化并发 → Workflow DSL 调度器 → 结果聚合 → 预算
 `SPAWN_TOOL_NAMES` 现状为 `CreateSubagent`/`RunSubagent`/`RunPattern`/`ResumeSubagent`/`StartWorkflow`/`RunWorkflow`（`manager.py:423-430`），语义是「一次性拉起一张图/一次 spawn」。`RunWorkflowAsset` 与 `StartWorkflow` 语义等价，**必须一并纳入**，否则深度到限的子 agent 可以绕过图级上限——这正是「深度到限撤 spawn 工具」requirement 存在的理由，而该 requirement 的工具枚举是**写死的**（`openspec/specs/subagents/spec.md` 的「深度到限撤 spawn 工具」逐字列出 `StartWorkflow`/`RunWorkflow`），因此需要 MODIFIED。
 `SaveWorkflowAsset` **不进**闸：保存不消耗并发也不起图，把它撤掉只会让深度到限的子 agent 无法保存自己刚跑完的图，而它并没有因此获得任何额外能力。
 
-权限档位：4 个工具统一用 `SUBAGENT_CONTROL_PERMISSION`（与 `agent/tools/builtin/subagents.py` 现有工具一致）。`SaveWorkflowAsset` 是否需要更高的 `AGENT_STATE_PERMISSION` 档（照 `SaveMemoryTool`，`agent/tools/builtin/memory.py:57`）留作实现期确认项——见 Open Questions 尾注。
+权限档位：`SaveWorkflowAsset` 取 **`AGENT_STATE_PERMISSION`**（✅ 实现期确认项 1 已拍板，2026-09-26；理由是资产属跨会话状态层、写入后果与 Q4=B 的可发现面耦合）——这是本组 4 个工具里唯一的 agent_state 档，实现时**不得**顺手改成与现有 subagent 工具一致的 `SUBAGENT_CONTROL_PERMISSION`。其余 3 个（`ListWorkflowAssets` / `GetWorkflowAsset` / `RunWorkflowAsset`）取 `SUBAGENT_CONTROL_PERMISSION`（`RunWorkflowAsset` 与 `StartWorkflow` / `RunWorkflow` 同档）。`RunWorkflowAsset` 另标 `parallelizable = False`，与 `RunWorkflow` 同因（一张图会抢并发槽位，不允许一轮内被 gather）。
 
 工具描述必须写进的**行为引导**（这是「模型会不会用」的关键，但**不是**可发现面，见 Q4）：在 `DeclareWorkflow`/`RunWorkflow`/`RunPattern` 的描述里加一句「从零声明拓扑前，先 `ListWorkflowAssets` 看有没有可复用的资产」。这是低成本的引导，不占系统提示 token，也不把本地文本提升为系统指令。
 
