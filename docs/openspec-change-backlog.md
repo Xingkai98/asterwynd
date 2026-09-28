@@ -119,33 +119,6 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
-### 4. `workflow-asset-persistence`
-
-状态：**实现已完成（2026-09-28，待归档）**。proposal / design / spec delta / tasks 均已产出；两轮独立 `grill` 设计追问全部收口——**Q1–Q11 + 2 条实现期确认项全部拍板，无未决 Open Question**。**前置依赖 [#255](https://github.com/Xingkai98/asterwynd/issues/255) 已合入**（PR #259，master `bab8e72`），提供了 `SubAgentManager.mode_ceiling()` / `effective_mode()` 的 scheduler 可读会话 mode 通道（Q11 候选 A 的前置条件已满足），故本 change 的 mode 相关任务**已解禁**。执行顺序 [#255](https://github.com/Xingkai98/asterwynd/issues/255) → 本 change（#245）→ #246 中的第一环已完成。
-
-批次：第十六批。前序 C1–C5 与 `workflow-graph-visualization` 均已合入归档；前置 #255 已合入。它是 #246（内置模板归一）的**前置**——#246 要以本 change 的资产寻址与加载契约作地基。依赖已清零。
-
-建议顺序原因：
-
-- 本 change 独立交付「跑过的图可复用」这一完整价值，不依赖其他在途 change。
-- 与 #246 有明确先后：本 change 定资产层的命名/落点/版本/加载路径契约，#246 只负责把内置模板归一到代码内注册表，不重复定契约。
-- 执行顺序 **#255 → 本 change → #246**（用户确认）：本 change 的 DSL 资产以「保留显式节点 mode」为卖点，而 mode 钳制的批准面依赖 #255。**#255 已合入并提供 scheduler 可读的会话 mode 通道**（`mode_ceiling()` / `effective_mode()`，Q11 候选 A），本 change 的 mode 语义据此成立——`RunWorkflowAsset` 直接消费该通道，无需回退「工具层显式传参」。
-- 与 `add-minimal-tui-runtime-view`（未实现队列第 3 条）无交集（一个动 subagent 资产面，一个动 TUI 运行视图），可并行。
-- 实现期注意：可发现面（资产名列表 + 截断 description）会触及**系统提示装配路径**（新 `ContextSource`），需与任何同时改系统提示的 change 错开合入——尽管 Q9 已把范围收窄为**只注入 root 会话**（不进子 agent）。
-
-主要交付：
-
-- 跨会话可寻址的 workflow 资产层（slug 命名 + 索引 + `asset_schema_version` 版本纪律 + 单文件损坏容错）。
-- 四个模型面工具：`SaveWorkflowAsset` / `ListWorkflowAssets` / `GetWorkflowAsset` / `RunWorkflowAsset`（最后一个进 `SPAWN_TOOL_NAMES` 深度闸）。
-- 两类载体：pattern 配方（参数化保留）与 DSL spec（显式声明的覆盖面，零新方言）。
-- 加载路径的信任边界：结构闸值在 **scheduler 读取处**取 `min(声明值, 当前配置)` 并显式报告钳制（**不回写 spec**，保护 `spec_hash`）；节点 `mode` 只收窄不放宽（走 contextvar 上限，依赖 #255）；高版本资产明确拒绝。
-- 命名语义：内置 4 个 pattern 名保留；资产同名覆盖可见化（`action` + `previous_spec_hash`），同 `spec_hash` 判 `unchanged` 不写盘。
-- 可发现面：只注入 root 会话的**资产名 + 单行截断 description**（20 条 / 120 字符 / slug 上限 64），不进子 agent，`cacheable=False`。
-- 资产库按**仓库**作用域（所有 worktree 共享），落 `~/.asterwynd/projects/<hash>/workflow-assets/`。
-- spec delta：`multi-agent-collaboration` **7** 条 ADDED Requirement（可寻址性 / 仓库级作用域 / 可发现面 / 显式保存 / 两类载体与覆盖面 / 加载期闸值钳制与资产能力面呈现 / 命名与同名语义）+ 1 条 MODIFIED（`subagents` 深度闸工具枚举）。其中 mode 的**机制**语义归 #255 的主 spec，本 change 只保留资产面（呈现 diagnostics 与「以声明 mode 运行」清单）。
-
-立项阶段的调研结论（详见 change 的 `## Reference Implementation Research`）：Claude Code 的双落点 + 项目级优先 + symlink 门；AutoGen 的「蓝图 vs 运行时状态」二分与 trusted-sources 警告（**风险类型不同**——本 change 的 spec 无可执行字段，真实风险是「持久化的资源/能力声明」而非反序列化 RCE）；LangGraph 的 `thread_id`（运行时）与图定义（设计时）分离，且它**没有**图模板注册表（该层留给应用，本 change 须自建）；CrewAI 的 resume/fork 二分（资产复用一律 fork，永不污染资产本体）。
-
 ### 第十五批：workflow 四维预算默认无上限（C4 follow-up）
 
 - `workflow-budget-unbounded-default`（issue #196）：**已合入归档 2026-09-17**。C4 的四维预算默认值（200k / 5.0 / 300 / 1800）对 token 消耗大的任务偏紧（12 文件 foreach 体检实测约 18 万 token 即被 `budget_exceeded` 腰斩），参照 #192（AgentLoop 迭代默认无上限）先例改为**默认不设上限、只有显式配置才设限**。实现要点：**零新增机制**——沿用 C4 Q11 既有 `0 = 不限` 哨兵（四维全部真值判定），`WorkflowBudgetConfig` 四字段默认值改 0、`_parse_workflow_budget` 逐字段 `mapping.get` 默认同步、`WorkflowBudget.__init__` 的 `getattr` 兜底同步（三处默认值必须一致，否则「直构 config」与「yaml 加载」分叉）。**段落级 null 收紧（grill Q2 用户拍板）**——新增 `_require_section`，`subagents` / `subagents.workflow` / `subagents.workflow.budget` 三级「键存在但值为 null」一律 `ConfigError`（键缺失仍=不限）：默认改 0 后段落级 null 会静默把四道闸全关掉，与字段级 null 的明确拒绝口径不一致；范围边界明确不含 `subagents.budget.*`（单 run 预算，另一个概念）。**CLI 不改**（grill Q1 用户拍板）——只走配置文件设上限。**回归测试配对照组（grill 标注的假保护风险）**：`_chain_spec(8)` + 每 run 50k token（累计 400k，真越过旧 200k）默认下 `completed`，同图显式 `max_total_tokens=200000` 时 `budget_exceeded`；另锁住 `max_items=0` 在预算不限时按 C2 `max_runs` 展开（grill 标的「静默空展开」暗雷）。**设计追问**：独立零记忆 subagent 产出 10 Confirmed Decisions + 2 Open Questions（用户答复记录在 `reviews/grill-design.md` 的 `## User Confirmation`）。**审阅闭环**：1 轮 PASS（reviewer run `review-workflow-budget-unbounded-default-20260917-r1`，4 组变异验证全部「改坏→变红→还原」，含 2.3 的假保护检测）。spec delta MODIFIED 1 条 Requirement（默认值口径 + 3 个新 Scenario）已同步进 `openspec/specs/multi-agent-collaboration/spec.md`。行为变更（默认不限、段落级 null 报错）已写进 design/proposal 与 spec。

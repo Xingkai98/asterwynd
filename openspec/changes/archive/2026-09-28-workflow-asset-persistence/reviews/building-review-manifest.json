@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-asset-persistence",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-asset-persistence-20260928-r2",
+  "base_sha": "bab8e725bfe26fb06071f434bb56e5c783eb9438",
+  "head_sha": "14740e1070b32c662e58f33d0b64d864115520dd",
+  "tasks_hash": "sha256:410306eff20063cb9ab6c97c44e8b8718978afc0199c1e6aa268f643f2075019",
+  "spec_hash": "sha256:86edf9010aa2f6d13aa83ac2e379d57ae6e9e624cfb212eae366fa92b8a79e6a",
+  "diff_hash": "sha256:1a3f4e2ea403f75012bee7127fe8e3de51d2609c1e7c4efa1fdc86fc1c1ded3e",
+  "report_hash": "sha256:a10ce370104ec59138fbe7dee6caabb2379086d5e6541fc872d0efda869e1426"
+}
