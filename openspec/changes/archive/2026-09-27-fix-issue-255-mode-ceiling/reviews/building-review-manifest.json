@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-255-mode-ceiling",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-fix-issue-255-mode-ceiling-20260927-r1",
+  "base_sha": "5752ca0",
+  "head_sha": "c3d482e",
+  "tasks_hash": "sha256:44beb0afe427bfa83cee097ce90a11c062a3ef515125bad5973001400ca7738f",
+  "spec_hash": "sha256:12400b366eb2bba301886cdd14491deafa140cd3b44416492e9d194c415ce715",
+  "diff_hash": "sha256:385d8d65136946175e7139cb180b2b771eb18756eed9aa47189505446cdb98be",
+  "report_hash": "sha256:773e4f5de109a183037cb1c9e75dd2d2db60fd19c051c563e4a47dc1115eb29f"
+}

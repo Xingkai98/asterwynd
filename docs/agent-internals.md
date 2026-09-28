@@ -908,6 +908,8 @@ def _clamp_mode(self, requested: AgentMode) -> AgentMode:
 
 父 agent 在 BUILD 模式 → 子 agent 最高只能是 BUILD。父 agent 在 READ_ONLY → 子 agent 只能是 READ_ONLY。**子代理永远不能获得比父代理更高的权限。**
 
+> **基准口径（issue #255，2026-09-27）**：`_parent_mode()` 读的是**当前执行上下文的 mode 上限**（contextvar，见 `agent/subagent/context.py`），该上限在 run 起点快照为发起会话的 mode、在 workflow 派发点收紧为 `min(节点声明 mode, 上限)`，并由子孙逐层继承；上限缺失时回落**静态** `parent_mode`（保守下界）。此前它读的是一个 manager 上的共享字段、会被每次子 loop 构造覆盖——并发节点会互相污染并造成 fail-open，该实现已被删除。
+
 #### 第 3 步：运行子 agent（`manager.py:209`）
 
 ```python
