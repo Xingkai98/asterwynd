@@ -1026,7 +1026,7 @@ def inspect_transcript(self, *, subagent_id, scope="summary"):
   ├─ (可选) ListSubagentsTool → 列出子 agent
   ├─ (可选) CancelSubagentRunTool → 取消运行中的子 agent
   ├─ (可选) InspectSubagentTranscriptTool → 查看子 agent 对话记录
-  ├─ (可选) ResumeSubagentTool / RunPatternTool → 恢复/复用运行模式
+  ├─ (可选) ResumeSubagentTool → 恢复运行；RunWorkflowTool(template=…) → 复用内置编排模板
   ├─ (可选) PublishBusMessageTool / ReadBusTool → 消息总线通信
   │
   └─ 子 agent 完成 → _complete_run() → status="completed" 或 "failed"

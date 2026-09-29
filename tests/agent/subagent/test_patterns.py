@@ -1,8 +1,9 @@
-"""Orchestration pattern library and new subagent tools (issue 79).
+"""编排模板语义 + bus 工具 + run 预算字段。
 
-Covers tasks 4.1-4.6 (OrcPattern, four patterns, bidding e2e) and task 7.x
-(ResumeSubagent / RunPattern / PublishBusMessage / ReadBus tools, budget fields
-in GetSubagentRun).
+变化 ``workflow-builtin-templates``：``RunPattern`` / ``run_pattern`` 退役，模板语义
+改经统一入口 ``RunWorkflow(template=…)`` 断言——返回体是 bounded ``parent_envelope``，
+pattern 专属扁平字段（``workers`` / ``selected`` / ``selector`` / ``summary``）不再存在，
+节点明细在 ``nodes[]`` 里。
 """
 import json
 
@@ -14,11 +15,10 @@ from agent.run_config import AgentMode
 from agent.subagent.bus import MessageBus
 from agent.subagent.context import current_bus, reset_bus, set_bus
 from agent.subagent.manager import SubAgentManager
-from agent.subagent.patterns import run_pattern
 from agent.tools.builtin.subagents import (
     PublishBusMessageTool,
     ReadBusTool,
-    RunPatternTool,
+    RunWorkflowTool,
 )
 from agent.workspace_policy import WorkspacePolicy
 
@@ -55,102 +55,58 @@ def manager(tmp_path):
     )
 
 
-# --- run_pattern / OrcPattern ---
+async def _run(manager, **kwargs) -> dict:
+    return json.loads(await RunWorkflowTool(manager).execute(**kwargs))
 
 
-@pytest.mark.asyncio
-async def test_run_pattern_unknown_pattern(manager):
-    with pytest.raises(KeyError, match="unknown pattern"):
-        await run_pattern(manager, pattern="nope", task="t")
+def _node(envelope: dict, node_id: str) -> dict:
+    return next(n for n in envelope["nodes"] if n["id"] == node_id)
+
+
+# --- 模板语义（经统一入口） -------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_worker_aggregates(manager):
-    result = await run_pattern(
-        manager,
-        pattern="orchestrator-worker",
-        task="research",
-        params={"workers": 3},
-    )
-    assert result["pattern"] == "orchestrator-worker"
-    assert result["completed"] == 3
-    assert result["failed"] == 0
-    assert len(result["workers"]) == 3
-    assert all(w["status"] == "completed" for w in result["workers"])
+    out = await _run(manager, template="orchestrator-worker", task="research", params={"workers": 3})
+    assert out["status"] == "completed"
+    assert out["completed"] == 3  # run 口径：3 个 worker
+    assert out["failed"] == 0
+    assert _node(out, "workers")["status"] == "completed"
+    assert _node(out, "workers")["items"] == 3
 
 
 @pytest.mark.asyncio
 async def test_peer_review_approves_first_round(manager):
     manager.llm = ScriptedLLM(["proposal draft", "APPROVED looks good"])
-    result = await run_pattern(manager, pattern="peer-review", task="write proposal")
-    assert result["pattern"] == "peer-review"
-    assert result["completed"] == 2
+    out = await _run(manager, template="peer-review", task="write proposal")
+    assert out["status"] == "completed"
+    # 节点口径下是 2 条终态节点；run 口径下每节点各一次 run ⇒ 2
+    assert out["completed"] == 2
+    assert _node(out, "producer")["status"] == "completed"
+    assert _node(out, "reviewer")["status"] == "completed"
 
 
 @pytest.mark.asyncio
 async def test_peer_review_critique_loop_until_approved(manager):
     manager.llm = ScriptedLLM(
-        [
-            "draft v1",
-            "CRITIQUE missing rationale",
-            "draft v2 addressing critique",
-            "APPROVED now complete",
-        ]
+        ["draft v1", "CRITIQUE missing rationale", "draft v2 addressing critique", "APPROVED now complete"]
     )
-    result = await run_pattern(manager, pattern="peer-review", task="write proposal")
-    assert result["completed"] == 2  # producer + reviewer terminal runs
+    out = await _run(manager, template="peer-review", task="write proposal")
+    assert out["status"] == "completed"
     assert manager.llm.calls >= 4  # producer + reviewer both ran twice
-
-
-@pytest.mark.asyncio
-async def test_peer_review_max_rounds_falls_back_to_real_runs(manager):
-    """Review M4/N1: when max_rounds is reached without approval, the aggregate
-    reports the real producer/reviewer runs — not a synthetic entry."""
-    manager.llm = ScriptedLLM(
-        [
-            "draft v1",
-            "CRITIQUE needs work",
-            "draft v2",
-            "CRITIQUE still needs work",
-            "draft v3",
-        ]
-    )
-    result = await run_pattern(
-        manager,
-        pattern="peer-review",
-        task="write proposal",
-        params={"max_rounds": 2},
-    )
-    # max_rounds=2 => producer ran 2x + reviewer ran 2x (both real runs)
-    assert result["completed"] == 2
-    # every worker entry is a real session run, not a synthetic summary
-    for worker in result["workers"]:
-        assert worker["status"] == "completed"
-        assert "reached max review rounds" not in worker.get("summary", "")
-        # the subagent_id exists in the manager's sessions
-        assert worker["subagent_id"] in manager._sessions
 
 
 @pytest.mark.asyncio
 async def test_bidding_selects_best(manager):
     manager.llm = ScriptedLLM(
-        [
-            "proposal A",
-            "proposal B",
-            "proposal C",
-            "SELECTED 2: proposal B is most complete",
-        ]
+        ["proposal A", "proposal B", "proposal C", "SELECTED 2: proposal B is most complete"]
     )
-    result = await run_pattern(
-        manager,
-        pattern="bidding",
-        task="solve X",
-        params={"proposers": 3},
-    )
-    assert result["pattern"] == "bidding"
-    assert result["completed"] == 3
-    assert "SELECTED 2" in result["selected"]
-    assert result["selector"]["status"] == "completed"
+    out = await _run(manager, template="bidding", task="solve X", params={"proposers": 3})
+    assert out["status"] == "completed"
+    selector = _node(out, "selector")
+    assert selector["status"] == "completed"
+    assert "SELECTED 2" in (selector.get("summary") or "")
 
 
 @pytest.mark.asyncio
@@ -166,29 +122,21 @@ async def test_worker_failure_not_fail_fast(manager):
             return LLMResponse(content="ok", stop_reason="end_turn", usage=Usage(5, 5))
 
     manager.llm = FailingWorkerLLM()
-    result = await run_pattern(
-        manager,
-        pattern="orchestrator-worker",
-        task="research",
-        params={"workers": 2},
-    )
-    # gather concurrency: exactly one worker failed, the other completed
-    assert result["completed"] + result["failed"] == 2
-    assert result["failed"] >= 1
+    out = await _run(manager, template="orchestrator-worker", task="research", params={"workers": 2})
+    # 失败不 fail-fast：图仍收敛，失败被如实计入 run 口径
+    assert out["completed"] + out["failed"] == 2
+    assert out["failed"] >= 1
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_sets_and_resets_bus_context(manager):
+async def test_template_run_resets_bus_context(manager):
+    """统一入口跑完后 bus context 复位（_launch_run 派发点 set/finally reset）。"""
     assert current_bus() is None
-    result = await run_pattern(manager, pattern="orchestrator-worker", task="t", params={"workers": 1})
-    # bus context reset after the pattern returns
+    await _run(manager, template="orchestrator-worker", task="t", params={"workers": 1})
     assert current_bus() is None
-    # result carries a bus snapshot payload
-    assert "bus" in result
-    assert "messages" in result["bus"]
 
 
-# --- bus tools ---
+# --- bus 工具 -----------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -213,22 +161,6 @@ async def test_bus_tools_no_active_bus(manager):
     pub = PublishBusMessageTool(manager)
     out = await pub.execute(sender="w", topic="t", content="x")
     assert json.loads(out) == {"error": "no active message bus"}
-
-
-# --- RunPattern tool ---
-
-
-@pytest.mark.asyncio
-async def test_run_pattern_tool(manager):
-    tool = RunPatternTool(manager)
-    out = await tool.execute(
-        pattern="orchestrator-worker",
-        task="research",
-        params={"workers": 2},
-    )
-    data = json.loads(out)
-    assert data["pattern"] == "orchestrator-worker"
-    assert data["completed"] == 2
 
 
 # --- budget fields in run envelope ---

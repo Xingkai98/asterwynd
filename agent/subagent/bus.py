@@ -1,8 +1,9 @@
 """Lightweight orchestration message bus for subagents (issue 79, decision D5).
 
-A bus is created per orchestration run (by ``RunPattern``), exposed to the
-orchestrating parent and every worker through a contextvar (``agent/subagent/
-context.py``), and lives only for the duration of that run. It exchanges
+A bus is created per orchestration run (by the Workflow entry, installed at the
+scheduler's dispatch point), exposed to the orchestrating parent and every worker
+through a contextvar (``agent/subagent/context.py``), and lives only for the
+duration of that run. It exchanges
 *semantic summaries*, never raw transcripts, under a strict token budget to
 prevent context explosion.
 
@@ -205,10 +206,10 @@ class MessageBus:
         return text
 
     def snapshot_payload(self) -> dict:
-        """Bounded projection for the model-facing ``RunPattern`` result.
+        """Bounded projection for the model-facing bus snapshots.
 
         条数与单条**两个维度**都有界（issue #224 D4），且界施加在**方法本身**——
-        ``RunPattern`` 与调度器 ``_envelope()`` 共用这一处，只加固某个调用点等于留一个
+        ``ReadBus`` 与调度器 ``_envelope()`` 共用这一处，只加固某个调用点等于留一个
         同类漏口。超出条数上限时取**最近** ``BUS_SNAPSHOT_LIMIT`` 条（与 ``read()`` 的
         「取最近」和 ``max_messages`` 的 drop-oldest 一致），并用 ``messages_total`` /
         ``messages_omitted`` **显式报告**省略量——静默丢弃会把「没消息」与「消息被省略」

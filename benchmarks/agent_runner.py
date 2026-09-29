@@ -515,7 +515,7 @@ class AsterwyndRunner(AgentRunner):
         """
         spec = compile_pattern(self.template_pattern, task=problem_statement)
         scheduler = WorkflowScheduler(subagent_manager, bus=MessageBus())
-        # 与 ``RunPatternTool`` 同路：先注册再驱动，``run()`` 内部会幂等自注册。
+        # 与 Workflow 入口同路：先注册再驱动，``run()`` 内部会幂等自注册。
         subagent_manager.register_workflow(scheduler)
         envelope = await scheduler.run(spec)
         trace.record(

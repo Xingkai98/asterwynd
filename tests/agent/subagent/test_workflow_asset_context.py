@@ -20,7 +20,6 @@ from agent.subagent.manager import SubAgentManager
 from agent.subagent.workflow_assets import WorkflowAsset, WorkflowAssetStore
 from agent.tools.builtin.subagents import (
     GetWorkflowAssetTool,
-    RunPatternTool,
     RunWorkflowTool,
     SaveWorkflowAssetTool,
 )
@@ -162,8 +161,8 @@ async def test_asset_is_usable_from_a_fresh_manager(asset_base, tmp_path):
 
     manager = _manager(tmp_path)
     run = json.loads(
-        await RunPatternTool(manager).execute(
-            pattern="orchestrator-worker", task="体检", params={"workers": 2}
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="体检", params={"workers": 2}
         )
     )
     await SaveWorkflowAssetTool(manager).execute(
@@ -188,43 +187,77 @@ async def test_asset_is_usable_from_a_fresh_manager(asset_base, tmp_path):
     assert path.read_bytes() == before
 
 
-# --- 键集锁：run_pattern 返回结构逐字不变（task 2.6b） ---------------------
+# --- 键集锁：统一入口返回结构逐字不变（task 2.6b，迁移自 run_pattern） ----
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_result_keyset_is_locked(tmp_path):
-    """``run_pattern`` 的返回键集是契约：加字段必须是有意识的。"""
-    from agent.subagent.patterns import run_pattern
+async def test_run_workflow_result_keyset_is_locked(tmp_path):
+    """统一入口的返回键集是契约：加字段必须是有意识的。
 
+    变化 ``workflow-builtin-templates``：``run_pattern`` 退役后，这条键集锁的语义
+    （「出口加字段必须是有意识的」）改挂到统一入口 ``RunWorkflow`` 的返回体上。
+    """
     manager = _manager(tmp_path)
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="t", params={"workers": 2}
+    result = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="t", params={"workers": 2}
+        )
     )
     assert set(result) == {
         "workflow_id",
-        "workflow_spec_hash",
-        "workflow_status",
-        "summary",
-        "workers",
+        "spec_hash",
+        "goal",
+        "status",
+        "nodes",
         "completed",
         "failed",
+        "total",
+        "cancelled",
+        "budget_exceeded",
+        "blocked",
+        "pending",
+        "latest_events",
+        "root_result_ref",
+        "attribution",
+        "attribution_ref",
+        "steps",
+        "limits",
         "peak_active",
         "critical_path_s",
         "total_cost",
-        "bus",
-        "pattern",
-        "task",
+        "run_count",
+        "queue_wait_s",
+        "queue_cancelled_runs",
+        "queue_full_runs",
+        "graph_recursion_exceeded",
+        "useful_runs",
+        "redundancy",
+        "rejected_runs",
+        "depth_capped_runs",
+        "spawn_budget_rejected",
+        "workflow_spawn_count",
+        "budget",
+        "started_at",
+        "finished_at",
+        "current_nodes",
+        "diagnostics",
+        "declared_spec_hash",
+        "expansion_plan_hash",
+        "runtime_graph_hash",
+        "inserted_nodes",
+        "nodes_total",
+        "nodes_omitted",
     }
 
 
 @pytest.mark.asyncio
 async def test_asset_source_field_does_not_leak_into_result(tmp_path):
-    """溯源字段是纯附加：不污染 run_pattern 返回体（键集锁的对照面）。"""
-    from agent.subagent.patterns import run_pattern
-
+    """溯源字段是纯附加：不污染统一入口返回体（键集锁的对照面）。"""
     manager = _manager(tmp_path)
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="t", params={"workers": 2}
+    result = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="t", params={"workers": 2}
+        )
     )
     assert "asset_source" not in result
 

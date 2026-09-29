@@ -67,14 +67,22 @@
 
 ### Requirement: 深度到限撤 spawn 工具
 
-当子 session 的 spawn 深度达到 `max_depth` 时，系统 SHALL 从该子 agent 的工具注册中移除 spawn 类工具（`CreateSubagent`/`RunSubagent`/`RunPattern`/`ResumeSubagent` **以及 `StartWorkflow`/`RunWorkflow`/`RunWorkflowAsset`**，后三者语义上等价于一次性拉起整张图），让子 agent 自行完成任务，而非返回错误。资产的**读取与保存**类工具（`ListWorkflowAssets`/`GetWorkflowAsset`/`SaveWorkflowAsset`）SHALL NOT 被撤除——它们既不起图也不消耗并发许可，撤除只会让深度到限的子 agent 无法保存自己刚跑完的图。
+当子 session 的 spawn 深度达到 `max_depth` 时，系统 SHALL 从该子 agent 的工具注册中移除 spawn 类工具（`CreateSubagent`/`RunSubagent`/`ResumeSubagent` **以及 `StartWorkflow`/`RunWorkflow`/`RunWorkflowAsset`**，后三者语义上等价于一次性拉起整张图），让子 agent 自行完成任务，而非返回错误。`RunPattern` SHALL NOT 再出现在该枚举中（该工具随统一 Workflow 入口的 `template` 入参退役；模板调用现在经 `RunWorkflow` 触达，故仍受本闸约束）。资产的**读取与保存**类工具（`ListWorkflowAssets`/`GetWorkflowAsset`/`SaveWorkflowAsset`）SHALL NOT 被撤除——它们既不起图也不消耗并发许可，撤除只会让深度到限的子 agent 无法保存自己刚跑完的图。
 
 #### Scenario: 深度到限子 agent 无 spawn 工具
 
 - **GIVEN** 一个子 session 的 spawn 深度已达到 `max_depth`
 - **WHEN** 构建该子 agent 的工具注册
 - **THEN** 其工具集 SHALL NOT 包含 spawn 类工具（含 `StartWorkflow`/`RunWorkflow`/`RunWorkflowAsset`）
+- **AND** SHALL NOT 包含 `RunPattern`（该工具已不存在）
 - **AND** SHALL 保留其余工具（含只读的 `GetWorkflow`/`DeclareWorkflow`/`CancelWorkflow`）完成自身任务
+
+#### Scenario: 模板调用在深度到限时同样被撤
+
+- **GIVEN** 一个子 session 的 spawn 深度已达到 `max_depth`
+- **WHEN** 它尝试通过统一入口跑一个内置模板
+- **THEN** `RunWorkflow` SHALL 已从它的工具集撤除，故该模板路径 SHALL NOT 可达
+- **AND** 它 SHALL NOT 有任何其它工具能绕开该闸拉起一张模板图
 
 #### Scenario: 深度到限仍可保存与列出资产
 
@@ -83,6 +91,7 @@
 - **THEN** 其工具集 SHALL 保留资产读取与保存类工具（`ListWorkflowAssets`/`GetWorkflowAsset`/`SaveWorkflowAsset`）
 - **AND** 它 SHALL 能保存该图并列出已有资产
 - **AND** 它 SHALL NOT 能按名启动一张新的图（`RunWorkflowAsset` 已撤）
+
 ### Requirement: 累计 spawn 计数上限
 
 系统 SHALL 对累计 spawn 计数（create 与每次 run 各计一次）执行 `max_spawns`（默认 200）上限，超限时拒绝新的 spawn。计数的 orchestration 边界 SHALL 是 workflow run（桶键 = `workflow_id`）：一个 workflow run 的展开项共享一个桶，嵌套 workflow 各自独立成桶；无 workflow 的主 loop SHALL 沿用按 manager 生命周期的累计语义（每 turn 复位归后续 change）。
@@ -351,3 +360,4 @@ bus 消息**不落盘**，因此截断 SHALL NOT 声称「全文可从某个引�
 - **WHEN** 该 run 被取消或以跨上下文的方式被 teardown
 - **THEN** 系统 SHALL NOT 因上限的 token reset 抛出 `ValueError`
 - **AND** 该 run 的终态 SHALL 与未引入上限时一致
+

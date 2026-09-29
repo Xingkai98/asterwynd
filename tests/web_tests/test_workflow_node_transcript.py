@@ -891,64 +891,78 @@ async def test_truncation_marker_does_not_promise_missing_ref(manager, tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_worker_entry_summary_is_bounded_and_navigable(manager):
-    """出口 4：``RunPattern`` 的 worker 条目（经真实 ``run_pattern`` 路径）。
+async def test_foreach_item_refs_are_navigable_and_bounded(manager):
+    """出口语义迁移（原出口 4）：foreach 的 per-worker 明细经 ``item_refs``。
 
-    (a) summary 有上限（N 个 worker × 全文 = 一次调用放大 N 倍）；
-    (b) 条目**无条件带 result_ref**——模型的认知是「被裁过就能按 ref 取全文」，
-        若条目没带该字段，模型按图索骥会扑空，等于在出口 4 复制本 change 正要消灭的假话。
+    变化 ``workflow-builtin-templates``：``RunPattern`` / ``_worker_entry`` 退役，per-worker
+    明细改由 ``GetWorkflow(detail='nodes')`` 的 ``item_refs`` 承载（issue #213 的回归保护
+    语义迁移到此）。
 
-    经由 ``run_pattern`` 而非直调 ``_worker_entry``：后者会绕过
-    ``_legacy_result`` 的拼接路径，中途任何一环改写都测不到（审阅 R1 Issue 6）。
+    (a) 成功项**带 result_ref**——模型的认知是「能按 ref 取全文」，缺了就是空头承诺；
+    (b) 父 agent 收到的 envelope **不含 worker 全文**（bounded）。
     """
-    from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT
-    from agent.subagent.patterns import run_pattern
+    from agent.tools.builtin.subagents import GetWorkflowTool, RunWorkflowTool
 
     manager.llm = _HugeOutputLLM()
-    result = await run_pattern(manager, pattern="orchestrator-worker", task="t")
-    workers = result.get("workers") or []
-    assert workers, f"没拿到 worker 条目：{list(result)}"
-
-    truncated_entries = []
-    for entry in workers:
-        assert len(entry["summary"]) <= TRANSCRIPT_ITEM_LIMIT, (
-            f"worker summary 无界：{len(entry['summary'])} 字符"
+    envelope = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="t", params={"workers": 3}
         )
-        if entry["summary_truncated"]:
-            truncated_entries.append(entry)
-    # **无条件**断言被裁过的条目确实存在——否则下面的循环可以是空转，
-    # 而「去掉 summary_truncated 标志」这种变异就抓不到（审阅 R2 Issue 2）。
-    assert truncated_entries, (
-        f"构造无效：没有一条 worker summary 被裁（原文 {len(HUGE)} 字，"
-        f"上限 {TRANSCRIPT_ITEM_LIMIT}）；条目状态={[e.get('summary_truncated') for e in workers]}"
     )
-    for entry in truncated_entries:
-        # 被裁过就必须能导航到全文——模型的认知是「被裁就能按 ref 取全文」，
-        # 没带该字段就成了空头承诺。
-        assert "result_ref" in entry, (
-            "条目被截断却没带 result_ref——模型拿不到全文，成了空头承诺"
+    assert HUGE not in json.dumps(envelope, ensure_ascii=False), (
+        "统一入口返回体里仍含 worker 全文"
+    )
+    detail = json.loads(
+        await GetWorkflowTool(manager).execute(
+            workflow_id=envelope["workflow_id"], detail="nodes"
         )
-    assert HUGE not in json.dumps(result, ensure_ascii=False), (
-        "RunPattern 返回体里仍含 worker 全文"
     )
+    fan = next(n for n in detail["nodes"] if n.get("kind") == "foreach")
+    assert fan["item_refs"], f"没拿到 item_refs：{fan}"
+    for entry in fan["item_refs"]:
+        # 成功项必须能导航到全文——没带 ref 就成了空头承诺（#213 语义）
+        assert entry["result_ref"].startswith("artifact://workflow/"), entry
+        assert entry["status"] == "completed"
 
 
 @pytest.mark.asyncio
-async def test_worker_entry_without_workflow_identity_does_not_lie(manager):
-    """无 workflow 身份的 run（全文未落盘）：条目不得声称「全文在 X」。
+async def test_foreach_item_refs_do_not_lie_for_failed_items(manager):
+    """失败项不落盘 ⇒ ``item_refs`` 条目不得声称「全文在 X」。
 
-    与上一条互补——上一条锁「有 ref 时必须给」，这条锁「没有 ref 时不说谎」。
+    与上一条互补——上一条锁「成功项必须给 ref」，这条锁「失败项不说谎」。
     """
-    from agent.subagent.patterns import _worker_entry
-    from agent.subagent.manager import SubagentRunRecord
 
-    run = SubagentRunRecord(run_id="r", task="t", status="completed", summary=HUGE)
-    entry = _worker_entry("s", run)
+    class _FailSecondLLM:
+        def __init__(self):
+            self.n = 0
 
-    assert entry.get("result_ref") is None, "构造前提：该 run 没有落盘引用"
-    assert "result_ref" not in json.dumps(entry, ensure_ascii=False), (
-        "没有落盘引用却提 result_ref——模型按图索骥会扑空，是一句假话"
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            self.n += 1
+            if self.n == 2:
+                raise RuntimeError("boom")
+            return LLMResponse(content=HUGE, stop_reason="end_turn", usage=Usage(5, 5))
+
+    from agent.tools.builtin.subagents import GetWorkflowTool, RunWorkflowTool
+
+    manager.llm = _FailSecondLLM()
+    envelope = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="t", params={"workers": 3}
+        )
     )
+    detail = json.loads(
+        await GetWorkflowTool(manager).execute(
+            workflow_id=envelope["workflow_id"], detail="nodes"
+        )
+    )
+    fan = next(n for n in detail["nodes"] if n.get("kind") == "foreach")
+    failed = [e for e in fan["item_refs"] if e.get("status") == "failed"]
+    assert failed, f"构造无效：没有失败的 item（{fan['item_refs']}）"
+    for entry in failed:
+        # 失败 run 不落盘：条目不得提供 result_ref（含 null），否则模型按图索骥会扑空。
+        assert "result_ref" not in entry, (
+            "失败项没有落盘引用却提 result_ref——模型按图索骥会扑空，是一句假话"
+        )
 
 
 # --- 失败证据投影（change fix-issue-215-node-failure-evidence） ----------------

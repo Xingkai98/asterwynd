@@ -14,9 +14,10 @@ agent/subagent/
 ├── context.py       ← contextvar（bus、spawn_depth）
 └── parent_channel_hook.py
 
-工具面（loop.py:358-371 注入，10 个）：CreateSubagent / RunSubagent / ListSubagents /
+工具面（loop.py 注入，9 个核心）：CreateSubagent / RunSubagent / ListSubagents /
   GetSubagentRun / CancelSubagentRun / InspectSubagentTranscript /
-  PublishBusMessage / ReadBus / ResumeSubagent / RunPattern
+  PublishBusMessage / ReadBus / ResumeSubagent
+  （编排模板经统一 Workflow 入口 RunWorkflow 触达，不再有独立 RunPattern 工具）
 ```
 
 ## 核心逻辑
@@ -41,7 +42,7 @@ agent/subagent/
 3. **消费侧 token 窗口**：read() 只返回最近、能装进 max_read_tokens=2000 的（LangGraph trim_messages 语义）；单条超窗消息仍会浮出，但该条自身截到 `BUS_MESSAGE_LIMIT`
 
 **出口一律有界（issue #213/#224）**：三层预算管"正常路径装多少"，但出口的界不能被被检视方左右。
-bus 的两条模型面出口（ReadBus 与 RunPattern 的 `result["bus"]`）在**单条**（≤ `TRANSCRIPT_ITEM_LIMIT`
+bus 的模型面出口（`ReadBus` 与调度器权威 `_envelope()` 的 bus 快照，共用 `snapshot_payload()`）在**单条**（≤ `TRANSCRIPT_ITEM_LIMIT`
 = 4000）与**总量**（≤ `BUS_SNAPSHOT_LIMIT` = 20 条）两个维度都有固定上限：`read()` 的
 `max_tokens`/`limit` 由调用方（模型）给，两者都被钳到与 `snapshot_payload()` 同界——不钳的话
 `ReadBus(max_tokens=10**9)` 会一次返回约 300 万字符。截断在**出口投影**发生（队列保留全文，

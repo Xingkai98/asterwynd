@@ -25,7 +25,6 @@ from agent.tool_permissions import AGENT_STATE_PERMISSION
 from agent.tools.builtin.subagents import (
     GetWorkflowAssetTool,
     ListWorkflowAssetsTool,
-    RunPatternTool,
     RunWorkflowAssetTool,
     RunWorkflowTool,
     SaveWorkflowAssetTool,
@@ -115,11 +114,15 @@ async def test_save_dsl_asset_from_workflow_id(asset_base, tmp_path):
 
 @pytest.mark.asyncio
 async def test_save_pattern_asset_keeps_recipe(asset_base, tmp_path):
-    """pattern 路径的溯源落在 scheduler.asset_source 上（task 2.5c）。"""
+    """pattern 路径的溯源落在 scheduler.asset_source 上（task 2.5c）。
+
+    变化 ``workflow-builtin-templates``：RunPattern 退役，模板图由 RunWorkflow 的
+    ``template`` 入参产出；asset_source 的写入点随之迁移。
+    """
     manager = _manager(tmp_path)
     run = json.loads(
-        await RunPatternTool(manager).execute(
-            pattern="orchestrator-worker", task="体检", params={"workers": 2}
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="体检", params={"workers": 2}
         )
     )
     out = json.loads(
