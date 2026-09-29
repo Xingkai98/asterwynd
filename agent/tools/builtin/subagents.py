@@ -16,7 +16,12 @@ from agent.subagent.bus import (
 from agent.subagent.context import current_bus
 from agent.subagent.manager import SubAgentManager
 from agent.subagent.patterns import compile_pattern, run_pattern
-from agent.subagent.scheduler import WorkflowScheduler, limits_report
+from agent.subagent.scheduler import (
+    _PARENT_FIELD_LIMIT,
+    _PARENT_NODES_LIMIT,
+    WorkflowScheduler,
+    limits_report,
+)
 from agent.subagent.workflow import (
     WorkflowCycleError,
     WorkflowSpec,
@@ -779,6 +784,10 @@ class GetWorkflowTool(Tool):
                 ref = refs.get(node["id"])
                 if ref:
                     node["result_ref"] = ref
+            # foreach 节点的 per-worker ref（Q1/变化 workflow-builtin-templates）：
+            # 容器节点没有单一 subagent_id（身份在 item_runs），故 _node_refs 给不出
+            # ref —— 这里按 item 投影出 item_refs，让 per-worker 全文可寻。
+            _attach_item_refs(payload["nodes"], scheduler)
         elif detail == "events":
             payload["nodes"] = []
         elif detail == "attribution":
@@ -801,6 +810,58 @@ def _node_refs(scheduler: WorkflowScheduler) -> dict[str, str]:
         if ref:
             refs[node_id] = ref
     return refs
+
+
+def _attach_item_refs(nodes: list[dict], scheduler: WorkflowScheduler) -> None:
+    """给 foreach 节点补 per-worker ref 投影（Q1；变化 ``workflow-builtin-templates``）。
+
+    形状：``item_refs: [{index, subagent_id, run_id, status, reason, result_ref?}]``，
+    外加 ``items_total`` / ``item_refs_omitted``。
+
+    三条硬约束（R2 实测）：
+    1. ``result_ref`` **仅成功项**出现——失败/取消/预算超限的 run 不落盘（只有
+       ``_complete_run`` → ``_write_result_artifacts`` 写 ref），其信号以 ``status`` +
+       有界 ``reason`` 呈现（与 legacy ``_worker_entry`` 同口径，不声称「全文在 ref」）。
+    2. **跳过未派发的空槽**（预算 drain 前被拦时槽为默认 ``_ItemRunSlot()``，身份为空）。
+    3. **自带界**：``item_refs`` 长度 ≤ ``_PARENT_NODES_LIMIT``，超出进
+       ``item_refs_omitted``——展开项数无上界（``items`` 可达 ``max_runs``），此处
+       SHALL NOT 退化成随规模线性的数组。
+
+    字段定义（钉死）：``items_total = len(state.item_runs)``（本轮展开项数，含空槽），
+    ``item_refs_omitted = items_total - len(item_refs)``（涵盖空槽 + 超上限两类）。
+    只反映容器**最后一轮**展开（``route`` 回边重跑会重置 ``item_runs``）。
+    """
+    manager = scheduler.manager
+    by_id = {node["id"]: node for node in nodes}
+    for node_id, state in scheduler._states.items():
+        projection = by_id.get(node_id)
+        if projection is None or projection.get("kind") != "foreach":
+            continue
+        item_runs = getattr(state, "item_runs", None) or []
+        entries: list[dict[str, Any]] = []
+        for index, slot in enumerate(item_runs):
+            if not slot.subagent_id or not slot.run_id:
+                continue  # 空槽：未派发（约束 2）
+            if len(entries) >= _PARENT_NODES_LIMIT:
+                break  # 自带界（约束 3）
+            run = manager.find_run(slot.subagent_id, slot.run_id)
+            entry: dict[str, Any] = {
+                "index": index,
+                "subagent_id": slot.subagent_id,
+                "run_id": slot.run_id,
+                "status": getattr(run, "status", None) if run is not None else None,
+            }
+            reason = getattr(run, "reason", None) if run is not None else None
+            if reason:
+                entry["reason"] = str(reason)[:_PARENT_FIELD_LIMIT]
+            ref = getattr(run, "result_ref", None) if run is not None else None
+            if ref:  # 仅成功项（约束 1）
+                entry["result_ref"] = ref
+            entries.append(entry)
+        total = len(item_runs)
+        projection["item_refs"] = entries
+        projection["items_total"] = total
+        projection["item_refs_omitted"] = total - len(entries)
 
 
 @tool_parameters(
