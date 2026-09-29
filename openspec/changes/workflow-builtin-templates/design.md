@@ -138,6 +138,21 @@
 
 **必须同时做值级校验（R2 新增，Q5）**：设计初稿只写了「未知键」一维，漏了「值非法」维。实测：`params={"workers": "abc"}` 在 `_template_*` 抛**未捕获** `ValueError`（`int("abc")`）、`{"workers": None}`/`{"teams": [1,2]}` 抛 `TypeError`，经 `execute_with_retry` 折成模型可见的**裸 `[Error: invalid literal for int()…]`**（非结构化、不可重试、无自足 reason），与 D1 规则 #5 的口径冲突。故校验须含值类型：计数键要求「可安全 `int()` 且为正整数」、`worker_max_*` 要求数值；非法值 → `invalid_input`。**clamp 保留**（`0/-5 → 下界`是既有语义，实测 `workers:0 → 1`，不宜改）——只把「无法转成数」这类从裸异常改成结构化拒绝。是否接受见 Open Questions Q5。
 
+**上界校验（Q6 + Q7 拍板，按模板分别取界、不造第二套上界）**：
+
+| 键 | 界 | 界的来源（`reason` 须写明） | 超界后果 |
+|---|---|---|---|
+| `workers` / `teams` / `proposers` | `max_items`（默认 20） | 既有展开项截断闸 `max_items` | `invalid_input` |
+| `max_rounds` | `recursion_limit`（默认 25，图级 superstep） | 既有图级递归闸 `recursion_limit` | `invalid_input` |
+
+**为什么拒绝超界（两层理由，须如实写全）**：
+1. **编译期内存放大（不只执行期截断）**：实测 `compile_pattern("orchestrator-worker", params={"workers": 100000})` 在**编译期**就造出 **100000 个 item 对象**（`spec.node("workers").items` 长度 = 100000）——执行期虽被 `max_items=20` 截断（只跑 20 个），但**内存放大已经发生**。拒绝超界同时消除这两层问题。
+2. **消除「静默截断」假象**：`workers=50` 实测只跑 20 个、`max_rounds=100000` 实测只跑约 9 轮（`steps=25`）——模型以为参数生效了，实际没有。
+
+**量纲不匹配警告（修正 2，必须写进工具描述）**：`max_rounds` 数的是**循环轮数**，`recursion_limit` 数的是**图级 superstep**；peer-review 一轮约消耗 **3 个 superstep**（producer + reviewer + gate）。实测 `max_rounds=25` 与 `100000` 读数**逐字相同**（`steps=25`、producer 约 9 轮）——**界取到 25 也跑不满 25 轮**。故工具描述**必须**写明「实际轮数受图级 `recursion_limit` 约束，可能显著少于 `max_rounds`」，否则只是把假象从参数层推到图结构层。
+
+**两个界都是既有闸（`max_items` / `recursion_limit`）**，本校验不新增任何上界；`max_items` 与 `recursion_limit` 本身均不改。
+
 **依据**：RIR 显示所有参考实现都把参数化放在代码/配置层，占位符集封闭且启动前校验；Asterwynd 的 `compile_pattern` 已经是这个容器，#245 的 `ALLOWED_OVERRIDE_FIELDS` 封闭子集已示范同一门槛（零新方言、直接赋值、覆盖后重校验）。
 
 ### D4 — 与 #245 归一：共用一条编译路径与 `recipe` 概念
@@ -208,9 +223,9 @@
 - **删净检查**：全仓 `rg 'run_pattern|RunPattern|_legacy_result'` 零命中（除本 change 的 change 文档与 archive 历史）。
 - 全量 `uv run pytest -q` 绿 + `openspec validate --all --strict` + artifact checker。
 
-## Open Questions（Q1–Q6 ✅ 已确认 2026-09-29；**Q7 ⏳ 待确认，阻塞实现**）
+## Open Questions（全部 ✅ 已确认 2026-09-29，无未决）
 
-> 完整版（含逐条具体例子与推荐）见 `reviews/grill-design.md` 的三轮 `## Open Questions`；用户答复记录于同文件的 `## User Confirmation`。**Q1–Q6 已拍板；R3 新增的 Q7 尚未拍板，grill-confirmation-gate 在 Q7 确认前仍拦截代码写。**
+> 完整版（含逐条具体例子与推荐）见 `reviews/grill-design.md` 的三轮 `## Open Questions`；用户答复记录于同文件的 `## User Confirmation`。**Q1–Q7 均已拍板，grill-confirmation-gate 全部通过，实现可开工。**
 
 1. ✅ **已确认（2026-09-29）：per-worker 通道「补」。** 用户答复：落 `GetWorkflow(detail='nodes')`，形状 `item_refs: [{index, subagent_id, run_id, result_ref?}]` + `items_total`/`item_refs_omitted`；跳过未派发的空槽；**只有成功项有 `result_ref`**（失败/取消/预算超限恒为 `None`），spec delta 措辞须与 legacy `_worker_entry` 同口径，**不得暗示失败项可读全文**。
 2. ✅ **已确认（2026-09-29）：接受 run 口径，不改名。** 用户答复：`completed`/`failed` 数的是 run 不是 subagent；不改名（改名要连 `_envelope` 一起动、约 20 处断言，性价比不抵）。**必须在工具描述里写明**「completed/failed 数的是 run，不是 subagent」。主 session 补充：实测 `parent_envelope()` 是 `_envelope()` 的派生（`scheduler.py:3100` 起手 `self._envelope(status=…)` 再 pop + bounded），「只改父投影」结构上不可行，故撤回改名提议。
@@ -221,5 +236,9 @@
    **实测结论（本 session 探针 `/tmp/probe_maxitems.py`）**：**该上界已经存在**——`WorkflowNode.max_items` 默认 **20**，`_resolve_items` 在执行期做 `items[:max_items]` 静态截断（`scheduler.py:2611-2614`），模板不设 `max_items`（`patterns.py` 零命中）故一律吃默认 20。实测：`workers=100000`→`state.items=20`、`workers=50`→`20`、`workers=20`→`20`、`workers=5`→`5`（均 `status=completed`）。**即 `workers=100000` 的真实效果是「静默只跑 20 个」**——与 Q3/Q5 要消灭的「以为 params 生效了」是**同一类假象，只是发生在值层**。
    **归位决定**：**不新增上界**（三闸已是唯一权威：`max_items` 截断展开项数、`max_nodes` 计展开节点、`max_runs` 计 run）。校验层**拒绝**「计数键 > 既有 `max_items`」的输入并报 `invalid_input`（`reason` 写明该模板的位次上限来自 `max_items`），使「只跑 20 个」不再静默；**`max_items` 本身不改**（既有语义，且它是三闸之一，改它会波及非模板路径）。`workers=100000` 因此在**校验期**被拒，不会走到执行期截断——避免「校验过了但展开被三闸截断」的双重语义。**唯一权威边界仍是三闸**，校验只是把「超出既有边界」从静默变显式。
 
-7. ⏳ **待确认（2026-09-29 R3 新增，阻塞「Q6 闭环」判定）——`max_rounds` 的静默截断是否同样归位？** R3 实测：`max_rounds` 落到 route 的 `max_routes`，受 `recursion_limit`=25 约束（不吃 `max_items`）。`peer-review` 在永不批准时 `max_rounds=3/20/25/100000` **全部**停在 `graph_recursion_exceeded`、`steps=25`、`producer.runs=9`——即 `max_rounds=100000` 的真实效果是「静默只跑约 9 轮」，与 Q6 要消灭的 `workers=100000` **同类**，但逃出了「计数键 > max_items」规则。两条朴素修法都不好（跳过 → 假象存续；套 `max_items=20` → 误拒合法的 `max_rounds=25`）。
-   **R3 推荐**：按模板分别取界——`workers`/`teams`/`proposers` 对 `max_items`（20），**`max_rounds` 对 `recursion_limit`（25）**（两个界都是既有闸，不造第二套上界）；超界一律 `invalid_input` 并在 `reason` 写明界的来源。若用户认为 `max_rounds` 的静默截断可接受，则须在 design/spec **显式声明**「`max_rounds` 不在本校验范围内、超 `recursion_limit` 由既有闸处理」——不能留白。**此项拍板前，Q6 不得判定为完整闭环，实现不得开工。**
+7. ✅ **已确认（2026-09-29）：`max_rounds` 同样归位，界取 `recursion_limit`；但三条修正一并落定。** 用户答复：**采纳 R3 方向**（超界显式拒绝、不造第二套上界），并作三点修正/补充：
+   - **修正 1（理由要写全——编译期放大）**：`workers`/`teams`/`proposers` 的问题**不只是执行期截断**。主 session 实测（本 session 复核 `/tmp/probe_verify.py` 确认）：`compile_pattern("orchestrator-worker", params={"workers": 100000})` 在**编译期**就造出 **100000 个 item 对象**（`spec.node("workers").items` 长度 = 100000）。执行期确被 `max_items=20` 截断（只跑 20 个），但**内存放大发生在编译期**。故拒绝超界的理由**两层都要如实写明**：既是消除「静默截断」假象，**也是阻止编译期的内存放大**——不要只说「执行期被截断」。
+   - **修正 2（量纲不匹配——光设界不够，须在工具描述写明）**：本 session 复核实测（`/tmp/probe_verify.py`，`producer` 计 `run_ids`）：`max_rounds=3` → `steps=11`（producer 4 轮）、`max_rounds=25` → `steps=25`（9 轮）、`max_rounds=100000` → `steps=25`（9 轮，**与 25 逐字相同**）。`max_rounds` 数的是**循环轮数**，而 `recursion_limit`（25）数的是**图级 superstep**——peer-review 一轮约消耗 **3 个 superstep**（producer + reviewer + gate）。**所以即使界取到 25，`max_rounds=25` 本身也跑不满 25 轮**（实测约 9 轮即撞限）。**要求**：界取 `recursion_limit` 是对的，但**必须额外在工具描述里写明**「实际轮数受图级 `recursion_limit` 约束，可能显著少于 `max_rounds`」——否则只是把「静默截断」从参数校验层推到图结构层，**换个地方留同一个假象**。
+   - **修正 3（界与来源可追溯）**：超界一律 `invalid_input`，且 `reason` 里**写明界的来源**（`max_items` 还是 `recursion_limit`）。两个界都是既有闸，不造第二套上界。
+
+   **最终口径**：`workers`/`teams`/`proposers` 超 `max_items`(20) → `invalid_input`（`reason` 写明界来自 `max_items`，并说明编译期放大的风险）；`max_rounds` 超 `recursion_limit`(25) → `invalid_input`（`reason` 写明界来自 `recursion_limit`）；工具描述须写明「实际轮数受 `recursion_limit` 约束、可能显著少于 `max_rounds`」。

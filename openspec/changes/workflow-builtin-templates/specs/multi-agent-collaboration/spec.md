@@ -85,7 +85,7 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 
 ### Requirement: 统一 Workflow 入口的模板输入
 
-统一 Workflow 入口 `RunWorkflow` SHALL 接受 **exactly one of** `{spec, template}`：`spec` 为模型手写的 DAG spec，`template` 为内置模板名（封闭枚举：orchestrator-worker / peer-review / hierarchical / bidding）。`template` 路径 SHALL 要求 `task`（必填），SHALL 接受可选 `params`（封闭键集：`workers` / `teams` / `proposers` / `max_rounds` / `worker_max_tokens` / `worker_max_time_s`）。系统 SHALL 对非法组合**结构化拒绝**（返回自足的 `reason`，指明期望的入参形态）而 SHALL NOT 静默取其一或忽略多余入参。模板参数化 SHALL 只发生在 Python（`compile_pattern`），系统 SHALL NOT 引入 spec 内的模板字段、占位符插值、表达式求值或静态模板文件。
+统一 Workflow 入口 `RunWorkflow` SHALL 接受 **exactly one of** `{spec, template}`：`spec` 为模型手写的 DAG spec，`template` 为内置模板名（封闭枚举：orchestrator-worker / peer-review / hierarchical / bidding）。`template` 路径 SHALL 要求 `task`（必填），SHALL 接受可选 `params`（封闭键集：`workers` / `teams` / `proposers` / `max_rounds` / `worker_max_tokens` / `worker_max_time_s`）。系统 SHALL 对非法组合**结构化拒绝**（返回自足的 `reason`，指明期望的入参形态）而 SHALL NOT 静默取其一或忽略多余入参。模板参数化 SHALL 只发生在 Python（`compile_pattern`），系统 SHALL NOT 引入 spec 内的模板字段、占位符插值、表达式求值或静态模板文件。`params` 的校验 SHALL 落在 `compile_pattern` 这一唯一编译入口（统一入口与资产路径共用），SHALL 同时覆盖**键名**（按模板各自的封闭子集）与**值**（类型/可转换性/上界）；任何非法 `params` SHALL 在**编译前**被结构化拒绝，SHALL NOT 让裸 `ValueError`/`TypeError` 逃逸到模型上下文。计数的上界 SHALL 复用**既有**闸（fan-out 键对 `max_items`、`max_rounds` 对 `recursion_limit`），系统 SHALL NOT 引入第二套与既有闸互不知情的上界；超界被拒时 `reason` SHALL 写明该界的来源。
 
 #### Scenario: template 与 spec 互斥
 
@@ -114,6 +114,14 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 - **WHEN** 系统编译该模板
 - **THEN** 展开后的 `foreach.items` / route 的 `max_routes` 等 SHALL 由 Python 直接生成具体值
 - **AND** 系统 SHALL NOT 要求模型在 spec 中书写占位符，也 SHALL NOT 为展开求值任何模型生成的文本
+
+#### Scenario: 非法 params 在编译前被结构化拒绝
+
+- **GIVEN** `params` 含该模板无效的键（如 `peer-review` + `workers`）、非整数值（如 `workers: "abc"`）、`null`、或超界值（`workers` 超 `max_items`、`max_rounds` 超 `recursion_limit`）
+- **WHEN** 调用统一入口或按名运行模板资产
+- **THEN** 系统 SHALL 在**编译前**返回结构化拒绝（`invalid_input` 或 `invalid_asset`），`reason` 列出该模板的可用键与取值约束、并写明被违反的界来自 `max_items` 还是 `recursion_limit`
+- **AND** SHALL NOT 让 `int()`/`TypeError` 之类的裸异常进入模型上下文
+- **AND** `workers: 0` / `-5` SHALL 仍按既有语义 clamp 到有效下界（不报错）
 
 ### Requirement: 编排入口返回单一的 bounded 投影
 

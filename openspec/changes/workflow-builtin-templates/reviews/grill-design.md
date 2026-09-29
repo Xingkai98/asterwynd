@@ -102,6 +102,7 @@
 - **Q4**: 用户答复：**接受 `wait=false` 回执为「正交第二形状」**；工具描述硬写「回执非结果」（`status:"running"` 与终态集合不相交，`wait` 是显式入参）。；确认时间: 2026-09-29
 - **Q5**: 用户答复：**做值级校验**。非法值（非整数 / null / 不可转数）→ `invalid_input` 结构化拒绝，列出可用键与取值约束；**clamp 保留**（`workers=0/-5 → 下界`是既有语义，不动）。；确认时间: 2026-09-29
 - **Q6（主 session 取证时新增约束）**: 用户答复：`params` 计数键**无上界**（实测 `workers=100000` 造 10 万 spec items），要求明确它在 Q3/Q5 校验设计里的归位（拒绝还是钳到某个上界？），并与既有三闸（`max_items`/`max_nodes`/`max_runs`）的关系写清楚，**不得造出第二套互不知情的上界**。本 session 实测结论与归位决定见 design.md 的 Open Question 6（✅ 已确认）：既有 `max_items`（默认 20）**已经是**该上界（`_resolve_items` 执行期 `items[:max_items]` 截断），故**不新增上界**，改为「计数键 > `max_items` → `invalid_input` 拒绝」，把今天的静默截断（`workers=50` 只跑 20）变为显式拒绝。；确认时间: 2026-09-29
+- **Q7（R3 新增，本轮拍板）**: 用户答复：**采纳 R3 方向（超界显式拒绝、不造第二套上界），界取 `recursion_limit`，并作三点修正**——①**理由写全**：`workers`/`teams`/`proposers` 的问题**不只执行期截断**，编译期就造出 N 个 item 对象（主 session 实测 `workers=100000` → `spec.items` 长度 100000；本 session 复核 `/tmp/probe_verify.py` 确认），故拒绝超界**既是消除静默截断、也是阻止编译期内存放大**；②**量纲不匹配、光设界不够**：`max_rounds` 数循环轮数、`recursion_limit` 数图级 superstep，peer-review 一轮约 3 个 superstep，故 `max_rounds=25` 也跑不满 25 轮（本 session 复核实测 `max_rounds=25` 与 `100000` 逐字相同：`steps=25`、producer 约 9 轮），**必须额外在工具描述写明「实际轮数受 `recursion_limit` 约束、可能显著少于 `max_rounds`」**，否则只是把假象从参数层推到图结构层；③**界与来源可追溯**：超界一律 `invalid_input`，`reason` 写明界来自 `max_items` 还是 `recursion_limit`。两个界都是既有闸。；确认时间: 2026-09-29
 
 ## Round 2
 

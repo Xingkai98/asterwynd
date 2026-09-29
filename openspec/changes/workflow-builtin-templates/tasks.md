@@ -2,22 +2,23 @@
 
 > 实现前须完成 grill（`reviews/grill-design.md`）与停轮确认。测试先行（TDD）：每条实现任务先落回归/新测试再落代码。
 
-## 0. 实现前设计追问（batch-grill-me）——Q7 待确认前仍阻塞
+## 0. 实现前设计追问（batch-grill-me）——已全部解除阻塞
 
-> **状态（2026-09-29）**：三轮独立 grill 完成。**Q1–Q6 已拍板**并记录于 `reviews/grill-design.md` 的 `## User Confirmation` 与 `design.md`。**但 R3 新增 Q7（`max_rounds` 上界归位）尚未拍板**——grill-confirmation-gate 在 Q7 确认前**仍拦截代码写**（Q7 是 Q6 的同类缺口，留白会让「照 tasks 写完仍留一个未被任何任务发现的静默截断」）。
+> **状态（2026-09-29）**：三轮独立 grill 完成，**Q1–Q7 全部拍板**并记录于 `reviews/grill-design.md` 的 `## User Confirmation` 与 `design.md` 的 `## Open Questions（全部 ✅ 已确认，无未决）`。**grill-confirmation-gate 全部通过，实现可开工。**
 
 - [x] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`，逐项审视 design.md，产出结构化决策记录到 `reviews/grill-design.md`（R1 11 决策 + 4 OQ；R2 12 决策 + 新增 Q5；R3 7 决策 + 新增 Q7）
 - [x] 0.2 停轮把 Q1–Q6 逐条配具体例子交用户确认，答复记录进 `grill-design.md` 的 `## User Confirmation`
 - [x] 0.3 按 Q1–Q6 答复回写 design D2/D3、Non-Goals、spec delta 与 tasks
-- [ ] 0.4 **停轮把 R3 新增的 Q7（`max_rounds` 是否同样按 `recursion_limit` 拒绝超界）交用户拍板**；答复记录进 `grill-design.md` 的 `## User Confirmation`。**Q7 确认前不写实现代码**
+- [x] 0.4 停轮把 R3 新增的 Q7（`max_rounds` 上界归位 + 三条修正）交用户拍板；答复记录进 `grill-design.md` 的 `## User Confirmation`
+- [x] 0.5 按 Q7 答复回写 design D3（编译期放大两层理由 / max_rounds 量纲警告 / reason 界来源）与 tasks 1.2b/1.2c/2.2c
 
 ## 1. 共享配方编译路径（D3 / D4）
 
 - [ ] 1.1 在 `agent/subagent/patterns.py` 落共享 helper `_compile_recipe(pattern, task, params) -> WorkflowSpec`（实现期定名）：内部即 `compile_pattern`，统一「未知模板名 → 结构化拒绝」的措辞；被统一入口与资产路径共用
 - [ ] 1.2 在 `agent/subagent/patterns.py` 落 **per-template** `params` 校验（R2 订正：不是全局并集）——按模型各自的封闭键子集（orchestrator-worker: `workers`/`worker_max_*`；hierarchical: `teams`/`worker_max_*`；bidding: `proposers`/`worker_max_*`；peer-review: `max_rounds`/`worker_max_*`），不属该模板的键结构化拒绝并在 `reason` 列出该模板可用键
 - [ ] 1.2a 落 **值级校验**（Q5）：计数键要求可安全 `int()` 且为正整数、`worker_max_*` 要求数值；非整数/null/不可转数 → `invalid_input` 结构化拒绝（今天抛未捕获 `ValueError`/`TypeError` → 模型见裸 `[Error: …]`）。**clamp 保留**（`0/-5 → 下界`是既有语义）
-- [ ] 1.2b 落 **上界归位**（Q6）：计数键（`workers`/`teams`/`proposers`）**> 既有 `max_items`（默认 20）→ `invalid_input` 拒绝**，`reason` 写明该上限来自既有 `max_items` 闸。**不新增任何上界**——三闸（`max_items`/`max_nodes`/`max_runs`）仍是唯一权威边界；本校验只把今天的**静默截断**（实测 `workers=50` 只跑 20）变为显式拒绝。**`max_items` 本身不改**
-- [ ] 1.2c **`max_rounds` 上界归位（R3 Q7，待用户拍板后方可实现）**：`max_rounds` 落到 route 的 `max_routes`、受 `recursion_limit`（25）约束，不吃 `max_items`——实测 `max_rounds=100000` 静默停在约 9 轮（`graph_recursion_exceeded`），与 Q6 同类。**R3 推荐**：对 `max_rounds` 用 `recursion_limit` 作界、超界 `invalid_input`（两个界都是既有闸）。**Q7 拍板前本任务不得实现**
+- [ ] 1.2b 落 **fan-out 键上界**（Q6）：`workers`/`teams`/`proposers` **> 既有 `max_items`（默认 20）→ `invalid_input`**，`reason` 写明「界的来源 = `max_items`」。拒绝理由须覆盖**两层**（写进代码注释与 `reason` 文案）：①消除静默截断（实测 `workers=50` 只跑 20）；②**阻止编译期内存放大**（实测 `workers=100000` 编译期即造 100000 个 item 对象）。**不新增任何上界**，`max_items` 本身不改
+- [ ] 1.2c **`max_rounds` 上界**（Q7，已拍板可实现）：`max_rounds` **> `recursion_limit`（默认 25）→ `invalid_input`**，`reason` 写明「界的来源 = `recursion_limit`（图级 superstep）」。**界取既有 `recursion_limit`，不造第二套上界**。注意量纲差异（见 2.2c 的工具描述义务）——校验只能挡住「参数远超图级上限」，挡不住「`max_rounds` 在界内但实际跑不满」，后者靠 2.2c 的描述澄清
 - [ ] 1.3 单测：helper 对 `{"workers": 3}` 的产出与 `compile_pattern("orchestrator-worker", task=…, params={"workers": 3})` 的 `spec_hash` 相等；未知键 / 跨模板键（`peer-review + workers:7`）/ 非整数值（`workers:"abc"`）/ `null` / 超上界（`workers:50`）各一条结构化拒绝；`workers:0` 仍 clamp 为 1（不报错）
 - [ ] 1.4 回归：确认 `workers`≤20 的既有调用方（测试实测最大用 3）与 benchmark `template` 臂（不传 params）不受新校验影响；`uv run pytest tests/benchmark/ -q` 须保持绿（R3 基线：475 passed, 1 skipped）
 - [ ] 1.5 **异常类型契约（R3 建议的最省落法）**：新校验统一抛 `WorkflowValidationError`（它是 `ValueError` 子类，实测 mro）——`RunWorkflowAsset` 的既有 `except (KeyError, WorkflowValidationError)` **自动兜住**（零改动）；`RunWorkflow` 侧新增 `except WorkflowValidationError -> invalid_input`。避免另造异常类型导致资产路径漏兜
@@ -29,6 +30,7 @@
 - [ ] 2.2 扩展 `RunWorkflowTool`（`agent/tools/builtin/subagents.py`）的 `tool_parameters`：新增 `template`/`task`/`params`，并**摘掉 `"required": ["spec"]`**（R2 实测：否则 `RunWorkflow(template=…)` 在模型侧被判缺参）
 - [ ] 2.2a **工具描述文案（Q2/Q4 拍板要求）**：`RunWorkflow` 描述里写明 ①「exactly one of `spec`/`template`」；②「`completed`/`failed` 数的是 **run**，不是 subagent」；③「`wait=false` 返回**启动回执**（`status:"running"`）而非结果，结果经 `GetWorkflow` 轮询取」
 - [ ] 2.2b **Q2 口径覆盖全部模型可见出口（R3 实测精度订正）**：返回含 run 口径 `completed`/`failed` 的工具共 **4 个**，逐一确认描述已带「数的是 run」说明——`RunWorkflow(wait=true)`、`StartWorkflow(wait=true)`（两者返回 `parent_envelope()`）、`GetWorkflow`（任意 detail 返回 `parent_envelope()`）、**`RunWorkflowAsset(wait=true)`（返回**权威 `_envelope()`，46 键、含 `bus`，非 bounded——R3 实测）**。其中 `StartWorkflow`/`RunWorkflowAsset` 不属本 change 新增但同源同字段，须一并加口径说明
+- [ ] 2.2c **`max_rounds` 量纲警告写进工具描述（Q7 修正 2，必须做）**：`RunWorkflow`（及 `RunWorkflowAsset`，若其 params 面暴露 `max_rounds`）描述里写明「`max_rounds` 是**循环轮数**，实际轮数受图级 `recursion_limit`（superstep 上限）约束，**可能显著少于 `max_rounds`**」。依据：peer-review 一轮约消耗 3 个 superstep，实测 `max_rounds=25` 与 `100000` 同样只跑约 9 轮——光设界不写清量纲，等于把静默截断从参数层推到图结构层
 - [ ] 2.3 实现入参判别：exactly-one-of 校验 + 五条结构化拒绝（沿用 `_invalid_spec` 风格的 `invalid_input`）
 - [ ] 2.4 template 分支调 1.1 的 helper 编译出 spec，与 spec 分支汇合到同一条 `parse_spec_for_manager` → scheduler 路径
 - [ ] 2.5 单测：`RunWorkflow(template=…)` 编译出的 spec 与 `compile_pattern(…)` 逐字一致；`template` 与 `spec` 两路径返回体键集相等
