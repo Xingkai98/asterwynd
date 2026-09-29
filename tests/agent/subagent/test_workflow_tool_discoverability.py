@@ -20,14 +20,19 @@ from agent.config import AsterwyndConfig
 from agent.llm import LLMResponse, Usage
 from agent.run_config import AgentMode
 from agent.subagent import workflow as workflow_dsl
-from agent.subagent.manager import SubAgentManager
+from agent.subagent.manager import TRANSCRIPT_SCOPES, SubAgentManager
+from agent.subagent.patterns import PATTERNS
 from agent.subagent.workflow import (
     WorkflowValidationError,
     parse_workflow_spec,
 )
 from agent.tools.builtin.subagents import (
+    CreateSubagentTool,
     DeclareWorkflowTool,
+    GetWorkflowTool,
+    InspectSubagentTranscriptTool,
     RunWorkflowTool,
+    _GET_WORKFLOW_DETAILS,
     _workflow_spec_schema,
 )
 from agent.workspace_policy import WorkspacePolicy
@@ -135,6 +140,100 @@ def test_tool_schema_matches_freshly_derived_schema(tool):
     from agent.tools.builtin.subagents import _workflow_spec_schema
 
     assert _spec_schema(tool) == _workflow_spec_schema()
+
+
+# --- T1b：spec **之外**的模型可见 enum 也纳入 parity ------------------------
+#
+# 审阅闭环（改后修订）抓到的缺口：T1 的 ``_SCHEMA_ENUM_BINDINGS`` 只覆盖 ``spec``
+# **嵌套内**的 enum（``spec.properties.nodes/edges.items.properties``）。而
+# ``CreateSubagent.mode`` 是**顶层参数**（``parameters.properties.mode``）——Q6 的
+# 「一并派生」在代码里成立了，却**没有任何测试保护**：把它的 enum 改回手写字面量
+# （漏掉 ``plan``）36 个测试全绿。以下把 spec 外的每个模型可见 enum 也钉到各自
+# 的单一来源上，并加一条清单守卫防未来再出现无守卫的 enum。
+
+
+def test_create_subagent_mode_enum_matches_node_modes():
+    """Q6：``CreateSubagent.mode`` 的 enum 必须与 ``workflow.NODE_MODES`` 逐字相等。
+
+    这是审阅闭环发现的**假保护**缺口：``mode`` 在 ``CreateSubagent`` 的**顶层参数**
+    上，不在 ``spec`` 嵌套里，故 T1 的绑定表够不到它。改成手写 ``["build","read_only"]``
+    （漏 ``plan``）时本断言必红。
+    """
+    enum = CreateSubagentTool.parameters["properties"]["mode"]["enum"]
+    assert tuple(enum) == tuple(workflow_dsl.NODE_MODES)
+
+
+def test_run_workflow_template_enum_matches_pattern_registry():
+    """``RunWorkflow.template`` 的 enum 从 ``patterns.PATTERNS`` 派生（单一来源）。
+
+    模板注册表加/删模板时，schema 必须自动跟；手写副本会漂移。
+    """
+    enum = RunWorkflowTool.parameters["properties"]["template"]["enum"]
+    assert tuple(enum) == tuple(PATTERNS)
+
+
+def test_get_workflow_detail_enum_matches_runtime_validator():
+    """``GetWorkflow.detail`` 的 enum 与运行期校验的 ``_DETAILS`` 同源（单一来源）。"""
+    enum = GetWorkflowTool.parameters["properties"]["detail"]["enum"]
+    assert tuple(enum) == tuple(GetWorkflowTool._DETAILS)
+
+
+#: 全部**模型可见**的顶层 enum 参数：(工具, 参数名, 期望的单一来源 callable)。
+#: 新增任何带 enum 的工具参数时，必须在这里登记一个来源——否则清单守卫会红。
+_TOP_LEVEL_ENUM_BINDINGS = [
+    (CreateSubagentTool, "mode", lambda: workflow_dsl.NODE_MODES),
+    (RunWorkflowTool, "template", lambda: PATTERNS),
+    (GetWorkflowTool, "detail", lambda: _GET_WORKFLOW_DETAILS),
+    (InspectSubagentTranscriptTool, "scope", lambda: TRANSCRIPT_SCOPES),
+]
+
+
+@pytest.mark.parametrize(
+    "tool, field, source",
+    _TOP_LEVEL_ENUM_BINDINGS,
+    ids=[f"{t.__name__}.{f}" for t, f, _ in _TOP_LEVEL_ENUM_BINDINGS],
+)
+def test_top_level_enum_matches_source(tool, field, source):
+    enum = tool.parameters["properties"][field]["enum"]
+    assert tuple(enum) == tuple(source())
+
+
+def test_no_unguarded_model_visible_enum():
+    """清单守卫：subagents.py 里**每个**模型可见的顶层 enum 都已被登记。
+
+    扫描每个工具 ``parameters.properties.*.enum``，若出现一个不在
+    ``_TOP_LEVEL_ENUM_BINDINGS``（顶层）也不在嵌套 spec 绑定表里的 enum，本条变红——
+    逼迫新增 enum 时同补一条 parity，杜绝再一次「代码对了但没有测试保护」。
+    """
+    import inspect
+
+    from agent.tools.base import Tool
+    from agent.tools.builtin import subagents as mod
+
+    # 顶层已守卫的 (工具名, 字段)
+    guarded_top = {(t.name, f) for t, f, _ in _TOP_LEVEL_ENUM_BINDINGS}
+    # spec 嵌套内的字段（由 _SCHEMA_ENUM_BINDINGS 经 T1 守卫）；`spec` 参数名本身不算顶层 enum
+    spec_nested_fields = {f for f, _, _ in _SCHEMA_ENUM_BINDINGS}
+
+    unguarded: list[str] = []
+    for _name, cls in inspect.getmembers(mod, inspect.isclass):
+        if not (issubclass(cls, Tool) and cls.__module__ == mod.__name__):
+            continue
+        if not getattr(cls, "name", None):
+            continue
+        for field, schema in (cls.parameters.get("properties") or {}).items():
+            if not isinstance(schema, dict) or "enum" not in schema:
+                continue
+            if field == "spec":
+                continue  # 嵌套 spec 由 T1 单独覆盖
+            if field in spec_nested_fields:
+                continue
+            if (cls.name, field) not in guarded_top:
+                unguarded.append(f"{cls.name}.{field}")
+    assert not unguarded, (
+        f"model-visible enum(s) without a parity guard: {unguarded}; "
+        f"add them to _TOP_LEVEL_ENUM_BINDINGS (or the spec-nested table)."
+    )
 
 
 # --- T2：描述内容断言 --------------------------------------------------------

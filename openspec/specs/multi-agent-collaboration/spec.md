@@ -458,6 +458,8 @@ foreach 节点的 `source` SHALL 支持跨层递归解析（沿数据边向上�
 
 系统 SHALL 提供测试，断言 schema 中每个 `enum` 与其源码常量**逐字相等**（元素与顺序），使「schema 与常量一致」成为机械可验的性质，SHALL NOT 依赖人工同步。
 
+该 parity SHALL 覆盖**全部模型可见 enum**——不止 `spec` 嵌套内的字段，也含工具**顶层参数**上的 enum（`CreateSubagent` 的 `mode`、`RunWorkflow` 的 `template`、`GetWorkflow` 的 `detail`、`InspectSubagentTranscript` 的 `scope`）。系统 SHALL 提供一个**清单守卫测试**：当任一工具新增一个带 `enum` 的参数而无对应 parity 绑定时，该测试 SHALL 失败——SHALL NOT 允许「enum 存在但无机械保护」的状态。
+
 #### Scenario: schema 暴露枚举
 
 - **GIVEN** 模型在调用前读取 `DeclareWorkflow` 的 `spec` 参数 schema

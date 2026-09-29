@@ -93,6 +93,12 @@ TRANSCRIPT_ITEM_LIMIT = 4000
 #: 保留为兼容别名以免制造「半改半不改」；新代码请用 ``TRANSCRIPT_ITEM_LIMIT``。
 TOOL_CALL_ARGUMENT_LIMIT = TRANSCRIPT_ITEM_LIMIT
 
+#: ``inspect_transcript`` 的合法 ``scope``（change ``workflow-tool-discoverability`` 的
+#: 改后修订，D2 纪律）：原本只有 ``InspectSubagentTranscript`` 的工具 schema 手写一份，
+#: 运行期按 ``scope == "summary"`` 分支**无镜像常量**——schema 改了、运行期不跟就会静默
+#: 漂移。提为模块常量作为**单一来源**，工具层 schema 从它派生。
+TRANSCRIPT_SCOPES = ("summary", "recent_messages")
+
 
 def _clip(text: str, limit: int) -> tuple[str, bool]:
     """按 ``limit`` 截断，返回 ``(文本, 是否被截断)``。

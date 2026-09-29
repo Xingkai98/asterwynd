@@ -271,6 +271,7 @@ issue #248 方向 5 提出：「当前唯一校验入口 `DeclareWorkflow` 会**
 ## Testing Strategy
 
 **T1 — schema ↔ 常量 parity（最重要的单条测试）**
+> **改后修订（合入前复核）**：parity 的覆盖面 SHALL 含**所有模型可见 enum**，不止 `spec` 嵌套内——顶层参数 enum（`CreateSubagent.mode`、`RunWorkflow.template`、`GetWorkflow.detail`、`InspectSubagentTranscript.scope`）SHALL 各自绑定一个单一来源并断言逐字相等；且 SHALL 有清单守卫（`test_no_unguarded_model_visible_enum`）在新增无守卫 enum 时报错。**教训**：Q6「一并派生」最初只有代码、没有断言覆盖其容器路径，改回手写字面量 36 测试全绿——「有保护」必须以「改坏会红」为准，而非「测试通过」。
 断言 `DeclareWorkflow.spec` 与 `RunWorkflow.spec` 的 `parameters` 中，每个 enum 与对应源码常量**逐字相等**：`kind`↔`NODE_KINDS`、`channel`↔`CHANNELS`、`reducer`↔`REDUCERS`、`strategy`↔`AGGREGATE_STRATEGIES`、`join`↔`JOIN_SEMANTICS`、`mode`↔`NODE_MODES`。**配变异验证**：临时改一个常量，测试必须红（防「恒真断言」——这是 #246 R3 与 #196 都踩过的坑）。
 
 **T2 — 描述内容断言**

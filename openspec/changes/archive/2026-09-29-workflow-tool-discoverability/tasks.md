@@ -22,7 +22,7 @@
 
 ## 2. 测试（TDD：先落测试再落代码）
 
-- [x] 2.1 **T1 schema↔常量 parity**（最重要的单条）：断言 `DeclareWorkflow.spec` 与 `RunWorkflow.spec` 的 schema 中，`kind`/`channel`/`reducer`/`strategy`/`join`/`mode` 的 enum 与对应源码常量（`NODE_KINDS`/`CHANNELS`/`REDUCERS`/`AGGREGATE_STRATEGIES`/`JOIN_SEMANTICS`/`NODE_MODES`）**逐字相等**（元素 + 顺序）
+- [x] 2.1 **T1 schema↔常量 parity**（最重要的单条）：断言 `DeclareWorkflow.spec` 与 `RunWorkflow.spec` 的 schema 中，`kind`/`channel`/`reducer`/`strategy`/`join`/`mode` 的 enum 与对应源码常量（`NODE_KINDS`/`CHANNELS`/`REDUCERS`/`AGGREGATE_STRATEGIES`/`JOIN_SEMANTICS`/`NODE_MODES`）**逐字相等**（元素 + 顺序）。**改后修订（合入前主 session 复核发现的缺口）**：T1 原只覆盖 `spec` **嵌套内**的 enum；`CreateSubagent.mode` 是**顶层参数**，Q6 的「一并派生」有代码无测试保护——改回手写（漏 `plan`）36 测试全绿。已补 (a) `CreateSubagent.mode`/`RunWorkflow.template`/`GetWorkflow.detail`/`InspectSubagentTranscript.scope` 四个顶层 enum 的 parity；(b) `test_no_unguarded_model_visible_enum` 清单守卫（新增无守卫 enum 即红）；(c) 把 `template` 改为从 `PATTERNS` 派生、`detail` 从 `_GET_WORKFLOW_DETAILS` 派生、`scope` 从新增的 `manager.TRANSCRIPT_SCOPES` 派生（消除手写副本）。四条变异验证全部「改坏→变红→还原」。
 - [x] 2.1a T1 的**变异验证**：临时改一个常量，测试必须变红；改回必须变绿（防恒真断言——#246 R3 / #196 都踩过）
 - [x] 2.2 **T2 描述内容断言**（沿 `tests/agent/subagent/test_workflow_cycle_contract.py:545-575` 范式）：`control` 在 `DeclareWorkflow` 描述中**零命中**；`cases` 语义句存在（行首/`startswith`/first-match 措辞）；per-kind 字段表存在（`join`/`items`/`source` 作为**字段名**出现）；`$ref:` 出现
 - [x] 2.2a T2 回归：既有循环契约断言（`"defaults to 1"` 等）**全部保持绿**——只插入与纠错，不删既有契约文字

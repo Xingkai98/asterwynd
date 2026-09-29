@@ -14,8 +14,8 @@ from agent.subagent.bus import (
     estimate_tokens,
 )
 from agent.subagent.context import current_bus
-from agent.subagent.manager import SubAgentManager
-from agent.subagent.patterns import compile_recipe
+from agent.subagent.manager import TRANSCRIPT_SCOPES, SubAgentManager
+from agent.subagent.patterns import PATTERNS, compile_recipe
 from agent.subagent.scheduler import (
     _PARENT_FIELD_LIMIT,
     _PARENT_NODES_LIMIT,
@@ -216,7 +216,8 @@ class CancelSubagentRunTool(Tool):
         "type": "object",
         "properties": {
             "subagent_id": {"type": "string"},
-            "scope": {"type": "string", "enum": ["summary", "recent_messages"]},
+            # 从 manager.TRANSCRIPT_SCOPES 派生（单一来源，D2 纪律）：不留手写副本。
+            "scope": {"type": "string", "enum": list(TRANSCRIPT_SCOPES)},
             "run_id": {"type": "string"},
             # 上限与 web 路由同口径（``web.session.TRANSCRIPT_MAX_LIMIT``）：
             # 没有 maximum 时，被检视的 agent 可以一次要 100 条消息、每条再带上限
@@ -948,6 +949,11 @@ class ReadWorkflowResultTool(Tool):
         return json.dumps(page, ensure_ascii=False)
 
 
+#: ``GetWorkflow(detail=...)`` 的合法值——**单一来源**：schema 的 enum 与运行期校验
+#: 的 ``GetWorkflowTool._DETAILS`` 都引用它（D2 纪律：不留手写第二份）。
+_GET_WORKFLOW_DETAILS = ("summary", "nodes", "events", "attribution")
+
+
 @tool_parameters(
     name="GetWorkflow",
     description=(
@@ -970,7 +976,9 @@ class ReadWorkflowResultTool(Tool):
             "workflow_id": {"type": "string"},
             "detail": {
                 "type": "string",
-                "enum": ["summary", "nodes", "events", "attribution"],
+                # 从类常量派生（单一来源，D2 纪律）：避免 enum 与运行期校验的
+                # ``_DETAILS`` 各写一份而漂移。类定义见下方 ``GetWorkflowTool``。
+                "enum": list(_GET_WORKFLOW_DETAILS),
                 "description": "Response focus. Defaults to 'summary'.",
             },
         },
@@ -981,7 +989,8 @@ class GetWorkflowTool(Tool):
     read_only = True
     permission = SUBAGENT_CONTROL_PERMISSION
 
-    _DETAILS = ("summary", "nodes", "events", "attribution")
+    #: 与 schema enum 同源（见模块级 ``_GET_WORKFLOW_DETAILS``）。
+    _DETAILS = _GET_WORKFLOW_DETAILS
 
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
@@ -1157,7 +1166,8 @@ _RUN_WORKFLOW_DESCRIPTION = (
             "spec": _workflow_spec_schema(),
             "template": {
                 "type": "string",
-                "enum": ["orchestrator-worker", "peer-review", "hierarchical", "bidding"],
+                # 从模板注册表派生（单一来源）：PATTERNS 加模板则 enum 自动跟，不留手写副本。
+                "enum": list(PATTERNS),
                 "description": (
                     "Builtin template name. Requires `task`. Provide either `spec` "
                     "or `template`, not both."
