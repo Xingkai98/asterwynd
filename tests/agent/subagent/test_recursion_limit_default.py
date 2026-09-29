@@ -165,16 +165,30 @@ async def test_explicit_smaller_recursion_limit_still_applies(tmp_path, monkeypa
     assert result["diagnostics"]["recursion_limit"] == 7
 
 
-@pytest.mark.asyncio
-async def test_declared_above_config_is_not_raised(tmp_path):
-    """``_eff_limit`` 的 min 方向不变：spec 声明高于配置时不抬高到声明值。"""
+def test_declared_above_config_is_kept_at_parse_but_clamped_at_read(tmp_path):
+    """min 钳制方向不变：spec 声明高于配置时，解析保留声明值，生效值取 min。
+
+    两段断言缺一不可——解析**不**改写声明值（``spec_hash`` / 资产文件不被污染），
+    钳制发生在读取处（``_eff_limit``）。只断言 `解析后 == 配置值` 会掩盖该路径
+    （那其实是「未声明」的结论）；这里显式声明 ``recursion_limit=500``。
+    """
     config = AsterwyndConfig(
         subagents=SubagentsConfig(
             workflow=WorkflowLimitsConfig(recursion_limit=7, max_nodes=200, max_runs=300)
         )
     )
-    spec = parse_spec_for_manager(_manager(tmp_path, config), _raw_loop_spec())
-    assert spec.recursion_limit == 7
+    raw = {**_raw_loop_spec(), "recursion_limit": 500}
+    spec = parse_spec_for_manager(_manager(tmp_path, config), raw)
+
+    # 解析保留声明值（钳制不在解析处发生）。
+    assert spec.recursion_limit == 500
+
+    # 生效值在读取处取 min(声明, 配置)，方向不被抬高。
+    scheduler = WorkflowScheduler(
+        _manager(tmp_path, config), limit_ceiling={"recursion_limit": 7}
+    )
+    scheduler.spec = spec
+    assert scheduler._eff_limit("recursion_limit") == 7
 
 
 def _raw_loop_spec() -> dict:
