@@ -36,7 +36,7 @@
 - [x] 3.2 文档影响：复核 `README.md` / `README_EN.md` / `asterwynd.example.yaml` / `docs/` 是否记载该默认值（已扫描，预期无命中；README 若改必须同 PR 同步 `README_EN.md`）；`docs/openspec-change-backlog.md` 的历史 C2 条目按「不改历史」保留。
 - [x] 3.3 跑 `/review-loop workflow-recursion-limit-default` 独立审阅闭环，产出 `reviews/building-review.md`（PASS）+ review manifest。
 - [x] 3.4 `uv run pytest -q` 全绿；`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 与 `uv run python scripts/check_openspec_artifacts.py` 通过。
-- [ ] 3.5 归档：change 移入 `openspec/changes/archive/YYYY-MM-DD-workflow-recursion-limit-default/`，从 `docs/openspec-change-backlog.md` 移除，写 `current_spec_synced` / `change_archived` / `backlog_updated` 结构化事件。
+- [x] 3.5 归档：change 移入 `openspec/changes/archive/YYYY-MM-DD-workflow-recursion-limit-default/`，从 `docs/openspec-change-backlog.md` 移除，写 `current_spec_synced` / `change_archived` / `backlog_updated` 结构化事件。
 - [ ] 3.6 （post-merge）PR 合入后给 issue #262 加完成说明 comment 并关闭。
 
 ## 4. 审阅闭环修复（Round 1 → Round 2）
