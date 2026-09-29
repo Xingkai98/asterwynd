@@ -55,11 +55,12 @@ def test_build_subagent_loop_exposes_subagent_tools(manager):
         "GetSubagentRun",
         "CancelSubagentRun",
         "InspectSubagentTranscript",
-        # issue 79 additions: bus + resume + patterns are available to children
+        # issue 79 additions: bus + resume + workflow entry are available to children
         "PublishBusMessage",
         "ReadBus",
         "ResumeSubagent",
-        "RunPattern",
+        # 变化 workflow-builtin-templates：RunPattern 退役，模板经 RunWorkflow 触达
+        "RunWorkflow",
     ):
         assert loop.tool_registry.get_tool(name) is not None, name
 
@@ -188,7 +189,8 @@ async def test_depth_limit_removes_spawn_tools_from_child_loop():
     }
     assert "CreateSubagent" not in names
     assert "RunSubagent" not in names
-    assert "RunPattern" not in names
+    # 变化 workflow-builtin-templates：RunPattern 已退役；RunWorkflow（模板入口）仍在闸内
+    assert "RunWorkflow" not in names
     assert "ResumeSubagent" not in names
     assert "GetSubagentRun" in names
     assert "ListSubagents" in names

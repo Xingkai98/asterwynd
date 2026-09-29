@@ -8,8 +8,9 @@ contextual values the subagent system needs:
 - ``spawn_depth`` — nesting depth of the current run (root loop = 0, a child
   run = parent depth + 1). ``SubAgentManager.run_subagent`` increments it and
   rejects spawns beyond ``max_depth``.
-- ``bus`` — the active orchestration message bus (created by ``RunPattern``),
-  shared by the orchestrating parent and every worker spawned beneath it.
+- ``bus`` — the active orchestration message bus (created by the Workflow entry,
+  installed at the scheduler dispatch point), shared by the orchestrating parent
+  and every worker spawned beneath it.
 - ``current_run_id`` — run id of the subagent run whose loop is executing in
   this context, so a spawn can record its logical ``parent_run_id`` before it
   is queued (decision D6).

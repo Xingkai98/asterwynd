@@ -59,7 +59,6 @@ from agent.tools.builtin.subagents import (
     ReadBusTool,
     ReadWorkflowResultTool,
     ResumeSubagentTool,
-    RunPatternTool,
     RunSubagentTool,
     RunWorkflowAssetTool,
     RunWorkflowTool,
@@ -395,7 +394,6 @@ class AgentLoop:
             PublishBusMessageTool(self.subagent_manager),
             ReadBusTool(self.subagent_manager),
             ResumeSubagentTool(self.subagent_manager),
-            RunPatternTool(self.subagent_manager),
             # Workflow DSL entry points (change ``workflow-dsl-scheduler``).
             # ``StartWorkflow``/``RunWorkflow`` are also in ``SPAWN_TOOL_NAMES``
             # so a depth-capped child cannot raise a whole graph past the gate.

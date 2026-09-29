@@ -31,12 +31,12 @@ from agent.subagent.context import (
 from agent.subagent.manager import SubAgentManager
 from agent.tools.builtin.subagents import (
     GetSubagentRunTool,
-    RunPatternTool,
     RunSubagentTool,
+    RunWorkflowTool,
 )
 from agent.workspace_policy import WorkspacePolicy
 
-SPAWN_TOOLS = ("CreateSubagent", "RunSubagent", "RunPattern", "ResumeSubagent")
+SPAWN_TOOLS = ("CreateSubagent", "RunSubagent", "RunWorkflow", "ResumeSubagent")
 READ_TOOLS = (
     "ListSubagents",
     "GetSubagentRun",
@@ -519,7 +519,7 @@ async def test_deep_child_agent_runs_without_spawn_tools():
     for schema_names in seen:
         assert "CreateSubagent" not in schema_names
         assert "RunSubagent" not in schema_names
-        assert "RunPattern" not in schema_names
+        assert "RunWorkflow" not in schema_names
         assert "ResumeSubagent" not in schema_names
         assert "GetSubagentRun" in schema_names
 
@@ -650,7 +650,7 @@ async def test_get_subagent_run_wait_after_terminal_does_not_raise():
 def test_run_subagent_and_get_run_are_parallelizable():
     assert RunSubagentTool.parallelizable is True
     assert GetSubagentRunTool.parallelizable is True
-    assert RunPatternTool.parallelizable is False
+    assert RunWorkflowTool.parallelizable is False
 
 
 def test_tool_descriptions_explain_queue_semantics():

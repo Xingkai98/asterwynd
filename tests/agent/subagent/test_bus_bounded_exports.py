@@ -5,8 +5,10 @@ run envelope 出口，却把 bus 误判为「已有 bounded 口径」而排除�
 
 1. ``ReadBus`` 工具出口——单条 ≤ ``TRANSCRIPT_ITEM_LIMIT``、条数 ≤ ``BUS_SNAPSHOT_LIMIT``，
    且**不随调用方传入的 ``max_tokens`` / ``limit`` 放大**（总量维，Q1 阻塞项）；
-2. ``RunPattern`` 的 ``result["bus"]``（``patterns.py`` 里的 ``snapshot_payload()``）——
-   同样两个维度；
+2. 编排图运行期的 bus 快照（``_envelope()`` 与已退役 ``RunPattern`` 共用的
+   ``snapshot_payload()``，见 ``agent/subagent/bus.py``）——同样两个维度；
+   （变化 ``workflow-builtin-templates``：``RunPattern`` 退役，模型面 bus 出口收敛到
+   ``ReadBus``；底层 ``snapshot_payload()`` 的界是唯一加固点，仍被本模块锁住）
 3. 发布侧 ``PublishBusMessage`` 的 ``max_tokens`` 阈值被钳住，且其**回包**（第 5 条出口）
    也随之有界。
 
@@ -27,11 +29,10 @@ from agent.subagent.bus import (
 )
 from agent.subagent.context import reset_bus, set_bus
 from agent.subagent.manager import TRANSCRIPT_ITEM_LIMIT, SubAgentManager
-from agent.subagent.patterns import run_pattern
 from agent.tools.builtin.subagents import (
     PublishBusMessageTool,
     ReadBusTool,
-    RunPatternTool,
+    RunWorkflowTool,
 )
 from agent.workspace_policy import WorkspacePolicy
 
@@ -171,9 +172,10 @@ async def test_readbus_tool_reports_truncation_flag(manager):
 
 @pytest.mark.asyncio
 async def test_snapshot_payload_export_is_bounded(manager):
-    """出口 2：``run_pattern`` 的 ``result["bus"]`` 就是 ``snapshot_payload()``。
+    """出口：``snapshot_payload()`` **本身**有界（ReadBus 与调度器 ``_envelope()`` 共用）。
 
-    与 ``test_readbus_tool_export_is_bounded`` 共用同一份 bus 内容，两条出口逐条对齐。
+    变化 ``workflow-builtin-templates``：``RunPattern`` 退役后，模型面 bus 出口收敛到
+    ``ReadBus``；本测试锁住底层的 ``snapshot_payload()`` 界（唯一加固点，见 #224）。
     """
     bus = _saturated_bus()
     payload = bus.snapshot_payload()
@@ -184,42 +186,29 @@ async def test_snapshot_payload_export_is_bounded(manager):
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_bus_export_is_bounded(manager):
-    """出口 2 端到端：真实 ``run_pattern`` 里 bus 里的超长消息被出口投影界住。
+async def test_template_bus_snapshot_is_bounded_end_to_end(manager):
+    """端到端：真实图里 worker 发的超长 bus 消息，在调度器 bus 快照里被界住。
+
+    原「出口 2」（``run_pattern`` 的 ``result["bus"]``）随 ``RunPattern`` 退役；模型面
+    的 bus 出口收敛到 ``ReadBus``（下方单测）与调度器权威 ``_envelope()``。本测试走
+    真实统一入口驱动图，再读调度器的 bus 快照校验界。
 
     worker 发布 30,000 字 → ``_summarize`` 返回**超预算**摘要 → bus 里真的躺一条超限
-    消息（上面实测确认），故「≤ 上限」不是恒真断言。
+    消息，故「≤ 上限」不是恒真断言。
     """
     manager.llm = PublishThenFinishLLM("x" * _OVERSIZED, summary="s" * 6000)
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="t", params={"workers": 1}
-    )
-    messages = result["bus"]["messages"]
-    assert messages, "worker 应已发布一条消息（否则断言无判别力）"
-    _assert_bounded(messages)
-    # 判别力锚点：``summary_truncated`` 只有在**原文真超限**时才为 True（上面实测
-    # bus 里躺的是 6000 字）。没有这一条，去掉出口投影后本测试仍会绿。
-    assert messages[0]["summary_truncated"] is True, "bus 里必须真有一条超限消息"
-    assert len(json.dumps(result["bus"])) < BUS_SNAPSHOT_LIMIT * TRANSCRIPT_ITEM_LIMIT * 2
-
-
-@pytest.mark.asyncio
-async def test_run_pattern_tool_export_is_bounded(manager):
-    """``RunPatternTool`` 的 JSON 出口与 ``run_pattern`` 同界。"""
-    manager.llm = PublishThenFinishLLM("x" * _OVERSIZED, summary="s" * 6000)
-    data = json.loads(
-        await RunPatternTool(manager).execute(
-            pattern="orchestrator-worker", task="t", params={"workers": 1}
+    out = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="t", params={"workers": 1}
         )
     )
-    _assert_bounded(data["bus"]["messages"])
-    assert data["bus"]["messages"][0]["summary_truncated"] is True, (
-        "bus 里必须真有一条超限消息（否则断言无判别力）"
-    )
-
-
-@pytest.mark.asyncio
-async def test_publish_bus_message_clamps_max_tokens(manager):
+    scheduler = manager.get_workflow(out["workflow_id"])
+    messages = scheduler.bus.snapshot_payload()["messages"]
+    assert messages, "worker 应已发布一条消息（否则断言无判别力）"
+    _assert_bounded(messages)
+    # 判别力锚点：``summary_truncated`` 只有在**原文真超限**时才为 True（bus 里躺的
+    # 是 6000 字）。没有这一条，去掉出口投影后本测试仍会绿。
+    assert messages[0]["summary_truncated"] is True, "bus 里必须真有一条超限消息"
     """出口 4 + 出口 5：发布侧 ``max_tokens=10**9`` 不得让原文直入并原样回包。"""
     manager.llm = None  # 确定性降级分支：content[: max_tokens * 4]
     bus = MessageBus()

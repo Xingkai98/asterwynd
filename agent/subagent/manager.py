@@ -424,7 +424,6 @@ class _ExecutionPermits:
 SPAWN_TOOL_NAMES = (
     "CreateSubagent",
     "RunSubagent",
-    "RunPattern",
     "ResumeSubagent",
     "StartWorkflow",
     "RunWorkflow",

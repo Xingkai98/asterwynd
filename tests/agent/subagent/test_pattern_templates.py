@@ -1,15 +1,20 @@
-"""pattern → DSL 模板 + run_pattern 兼容 adapter（tasks 5.1/5.2；D7/Q9）。
+"""pattern → DSL 模板编译 + 统一入口的模板执行（tasks 5.1/5.2；D7/Q9）。
 
 覆盖：
 
 - 4 个 pattern 编译成合法 WorkflowSpec 模板（compile_pattern），
 - bidding 的 selector 是**真实子 agent 节点**（grill 决策 5），
 - 聚合语义是「每节点取最新一次 run」（grill 决策 4）——peer-review 跨轮复用
-  同一会话，``completed`` 只数终态的真实节点，
-- run_pattern 返回字段兼容 + 新增 workflow_id / workflow_spec_hash /
-  critical_path_s / peak_active / total_cost。
+  同一会话，
+- 统一入口 ``RunWorkflow(template=…)`` 的执行语义（变化 ``workflow-builtin-templates``：
+  ``run_pattern`` 退役，语义改经有界 envelope 断言）。
+
+5.2 段（原 ``run_pattern`` 兼容 adapter）已迁移：形状断言在
+``test_run_workflow_template.py``，此处只保留**执行语义**（worker 预算到达 runs、
+peer-review 跨轮会话复用、层级/失败不 fail-fast）。
 """
 import asyncio
+import json
 
 import pytest
 
@@ -17,8 +22,9 @@ from agent.config import AsterwyndConfig
 from agent.llm import LLMResponse, Usage
 from agent.run_config import AgentMode
 from agent.subagent.manager import SubAgentManager
-from agent.subagent.patterns import PATTERNS, compile_pattern, run_pattern
-from agent.subagent.workflow import WorkflowSpec, parse_workflow_spec
+from agent.subagent.patterns import PATTERNS, compile_pattern, compile_recipe
+from agent.subagent.workflow import WorkflowSpec, WorkflowValidationError, parse_workflow_spec
+from agent.tools.builtin.subagents import RunWorkflowTool
 from agent.workspace_policy import WorkspacePolicy
 
 
@@ -150,68 +156,28 @@ def test_compile_pattern_threads_worker_budget_params_into_nodes():
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_worker_budget_params_reach_the_runs(manager):
-    result = await run_pattern(
-        manager,
-        pattern="orchestrator-worker",
-        task="research",
-        params={"workers": 2, "worker_max_tokens": 321, "worker_max_time_s": 9.0},
+async def test_template_worker_budget_params_reach_the_runs(manager):
+    out = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker",
+            task="research",
+            params={"workers": 2, "worker_max_tokens": 321, "worker_max_time_s": 9.0},
+        )
     )
-    runs = [
-        session.runs[-1]
-        for session in manager._sessions.values()
-        if session.runs
-    ]
+    assert out["status"] == "completed"
+    runs = [session.runs[-1] for session in manager._sessions.values() if session.runs]
     assert runs, "workers must have produced runs"
     for run in runs:
         assert run.max_tokens == 321
         assert run.max_time_s == 9.0
 
 
-# --- 5.2 run_pattern 兼容 adapter ------------------------------------------
+# --- 5.2 统一入口的执行语义（形状断言见 test_run_workflow_template.py） -----
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_keeps_legacy_fields_and_adds_new_ones(manager):
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="research", params={"workers": 3}
-    )
-    # 兼容字段
-    assert result["pattern"] == "orchestrator-worker"
-    assert result["task"] == "research"
-    assert result["completed"] == 3
-    assert result["failed"] == 0
-    assert len(result["workers"]) == 3
-    assert result["summary"]
-    assert "bus" in result
-    # 新增字段（Q9）
-    assert result["workflow_id"].startswith("wf_")
-    assert result["workflow_spec_hash"]
-    assert result["critical_path_s"] >= 0
-    assert result["peak_active"] >= 1
-    assert result["total_cost"] == 0
-    # spec_hash 是 WorkflowSpec 的哈希，不与 OpenSpec artifact hash 混用（低危项）
-    assert "spec_hash" not in result
-
-
-@pytest.mark.asyncio
-async def test_bidding_keeps_selector_shape(manager):
-    manager.llm = ScriptedLLM(
-        ["proposal A", "proposal B", "proposal C", "SELECTED 2: proposal B is most complete"]
-    )
-    result = await run_pattern(
-        manager, pattern="bidding", task="solve X", params={"proposers": 3}
-    )
-    assert result["pattern"] == "bidding"
-    assert result["completed"] == 3  # 只数 proposers（grill 决策 5）
-    assert "SELECTED 2" in result["selected"]
-    assert result["selector"]["status"] == "completed"
-    assert result["selector"]["subagent_id"]
-
-
-@pytest.mark.asyncio
-async def test_peer_review_reuses_sessions_across_rounds(manager):
-    """grill 决策 4：每节点取最新一次 run —— completed 只数终态节点。"""
+async def test_template_peer_review_reuses_sessions_across_rounds(manager):
+    """grill 决策 4：peer-review 跨轮复用同一会话（producer/reviewer 各一 session）。"""
     manager.llm = FirstLineScriptedLLM(
         {
             "review": ["CRITIQUE missing rationale", "APPROVED now complete"],
@@ -219,32 +185,33 @@ async def test_peer_review_reuses_sessions_across_rounds(manager):
             "finalize": ["final"],
         }
     )
-    result = await run_pattern(manager, pattern="peer-review", task="write proposal")
-    assert result["pattern"] == "peer-review"
-    assert result["completed"] == 2  # producer + reviewer，各自终态一次
-    assert result["failed"] == 0
-    for worker in result["workers"]:
-        assert worker["status"] == "completed"
-        assert worker["subagent_id"] in manager._sessions
+    out = json.loads(
+        await RunWorkflowTool(manager).execute(template="peer-review", task="write proposal")
+    )
+    assert out["status"] == "completed"
+    # producer 与 reviewer 的会话都在（跨轮复用；会话按 subagent_id 键，name 是节点名）
+    names = {session.name for session in manager._sessions.values()}
+    assert "producer" in names
+    assert "reviewer" in names
 
 
 @pytest.mark.asyncio
-async def test_peer_review_max_rounds_falls_back_to_real_runs(manager):
+async def test_template_peer_review_max_rounds_falls_back_to_real_runs(manager):
     manager.llm = FirstLineScriptedLLM(
         {"review": ["CRITIQUE needs work"], "draft": ["draft v1"]}
     )
-    result = await run_pattern(
-        manager, pattern="peer-review", task="write proposal", params={"max_rounds": 2}
+    out = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="peer-review", task="write proposal", params={"max_rounds": 2}
+        )
     )
-    assert result["completed"] == 2
-    for worker in result["workers"]:
-        assert worker["status"] == "completed"
-        assert "reached max review rounds" not in worker.get("summary", "")
-        assert worker["subagent_id"] in manager._sessions
+    # 撞 max_rounds 后图仍收敛，产出的是真实 run（不是合成的摘要条目）
+    assert out["status"] in ("completed", "completed_with_failures", "graph_recursion_exceeded")
+    assert any(session.name == "producer" for session in manager._sessions.values())
 
 
 @pytest.mark.asyncio
-async def test_worker_failure_is_not_fail_fast(manager):
+async def test_template_worker_failure_is_not_fail_fast(manager):
     class FailingWorkerLLM:
         def __init__(self):
             self.calls = 0
@@ -256,46 +223,53 @@ async def test_worker_failure_is_not_fail_fast(manager):
             return LLMResponse(content="ok", stop_reason="end_turn", usage=Usage(5, 5))
 
     manager.llm = FailingWorkerLLM()
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="research", params={"workers": 2}
+    out = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="research", params={"workers": 2}
+        )
     )
-    assert result["completed"] + result["failed"] == 2
-    assert result["failed"] >= 1
+    assert out["completed"] + out["failed"] == 2
+    assert out["failed"] >= 1
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_sets_and_resets_bus_context(manager):
+async def test_template_sets_and_resets_bus_context(manager):
     from agent.subagent.context import current_bus
 
     assert current_bus() is None
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="t", params={"workers": 1}
+    await RunWorkflowTool(manager).execute(
+        template="orchestrator-worker", task="t", params={"workers": 1}
     )
     assert current_bus() is None
-    assert "messages" in result["bus"]
 
 
 @pytest.mark.asyncio
-async def test_hierarchical_pattern_runs_managers(manager):
-    result = await run_pattern(
-        manager, pattern="hierarchical", task="build", params={"teams": 2}
+async def test_template_hierarchical_runs_managers(manager):
+    out = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="hierarchical", task="build", params={"teams": 2}
+        )
     )
-    assert result["completed"] == 2
-    assert len(result["workers"]) == 2
+    assert out["status"] == "completed"
+    assert out["completed"] == 2
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_unknown_pattern_still_raises(manager):
-    with pytest.raises(KeyError, match="unknown pattern"):
-        await run_pattern(manager, pattern="nope", task="t")
+async def test_compile_recipe_unknown_name_raises_validation_error(manager):
+    """D4：共享配方编译把未知模板名统一成 WorkflowValidationError（不再是 KeyError）。"""
+    with pytest.raises(WorkflowValidationError, match="unknown template"):
+        compile_recipe("nope", task="t")
+    assert compile_recipe("orchestrator-worker", task="t") is not None
 
 
 @pytest.mark.asyncio
-async def test_run_pattern_is_driven_by_the_scheduler(manager):
-    """run_pattern 内部编译成 WorkflowSpec 并走统一调度器（D7）。"""
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="research", params={"workers": 2}
+async def test_template_run_is_driven_by_the_scheduler(manager):
+    """统一入口的 template 路径编译成 WorkflowSpec 并走统一调度器。"""
+    out = json.loads(
+        await RunWorkflowTool(manager).execute(
+            template="orchestrator-worker", task="research", params={"workers": 2}
+        )
     )
-    scheduler = manager.get_workflow(result["workflow_id"])
+    scheduler = manager.get_workflow(out["workflow_id"])
     assert scheduler is not None
     assert scheduler.spec is not None

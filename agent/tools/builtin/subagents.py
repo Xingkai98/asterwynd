@@ -15,7 +15,7 @@ from agent.subagent.bus import (
 )
 from agent.subagent.context import current_bus
 from agent.subagent.manager import SubAgentManager
-from agent.subagent.patterns import compile_pattern, compile_recipe, run_pattern
+from agent.subagent.patterns import compile_recipe
 from agent.subagent.scheduler import (
     _PARENT_FIELD_LIMIT,
     _PARENT_NODES_LIMIT,
@@ -413,45 +413,6 @@ class ResumeSubagentTool(Tool):
             timeout_s=kwargs.get("timeout_s"),
             max_tokens=kwargs.get("max_tokens"),
             max_time_s=kwargs.get("max_time_s"),
-        )
-        return json.dumps(result, ensure_ascii=False)
-
-
-@tool_parameters(
-    name="RunPattern",
-    description="Run an orchestration pattern (orchestrator-worker / peer-review / "
-    "hierarchical / bidding) over subagents and return the aggregate result. "
-    "Before building a topology from scratch, call ListWorkflowAssets to see "
-    "whether a reusable asset already covers this job.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "pattern": {
-                "type": "string",
-                "enum": ["orchestrator-worker", "peer-review", "hierarchical", "bidding"],
-            },
-            "task": {"type": "string", "description": "The goal handed to the participating subagents."},
-            "params": {
-                "type": "object",
-                "description": "Pattern params: workers/teams/proposers count, max_rounds, worker_max_tokens, worker_max_time_s.",
-            },
-        },
-        "required": ["pattern", "task"],
-    },
-)
-class RunPatternTool(Tool):
-    read_only = True
-    permission = SUBAGENT_CONTROL_PERMISSION
-
-    def __init__(self, manager: SubAgentManager):
-        self.manager = manager
-
-    async def execute(self, **kwargs) -> str:
-        result = await run_pattern(
-            self.manager,
-            pattern=kwargs["pattern"],
-            task=kwargs["task"],
-            params=kwargs.get("params"),
         )
         return json.dumps(result, ensure_ascii=False)
 
@@ -1106,9 +1067,10 @@ def _asset_from_scheduler(
         "Pass the workflow_id plus a kebab-case name and a one-line description; "
         "the spec body is taken from the registry server-side, so you never "
         "re-emit the topology. The asset persists across sessions, scoped to this "
-        "repository (all its worktrees share one asset library). RunPattern-sourced "
-        "graphs keep their recipe and can be re-run with different params; "
-        "DSL-sourced graphs are stored as the expanded spec. Builtin pattern names "
+        "repository (all its worktrees share one asset library). Template-sourced "
+        "graphs (run with RunWorkflow's `template` input) keep their recipe and can "
+        "be re-run with different params; DSL-sourced graphs are stored as the "
+        "expanded spec. Builtin template names "
         "(orchestrator-worker/peer-review/hierarchical/bidding) are reserved. "
         "Re-saving the same name overwrites in place (no history) and reports "
         "action created/updated/unchanged."
@@ -1118,7 +1080,7 @@ def _asset_from_scheduler(
         "properties": {
             "workflow_id": {
                 "type": "string",
-                "description": "The workflow_id returned by RunPattern/DeclareWorkflow/RunWorkflow.",
+                "description": "The workflow_id returned by RunWorkflow/DeclareWorkflow.",
             },
             "name": {
                 "type": "string",

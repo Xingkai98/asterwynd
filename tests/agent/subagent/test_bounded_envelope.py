@@ -26,6 +26,8 @@ from agent.subagent.workflow import parse_workflow_spec
 from agent.tools.builtin.subagents import (
     DeclareWorkflowTool,
     GetWorkflowTool,
+    PublishBusMessageTool,
+    ReadBusTool,
     RunWorkflowTool,
     StartWorkflowTool,
 )
@@ -204,10 +206,22 @@ async def test_run_workflow_tool_returns_bounded_envelope(manager):
 
 @pytest.mark.asyncio
 async def test_bus_is_still_reachable_through_its_own_channel(manager):
-    """去掉内联不等于抹掉能力：bus 仍可经 RunPattern/ReadBus 读取（非权威通道）。"""
-    from agent.subagent.patterns import run_pattern
+    """去掉内联不等于抹掉能力：bus 仍可经 ReadBus 读取（非权威通道）。
 
-    result = await run_pattern(
-        manager, pattern="orchestrator-worker", task="t", params={"workers": 1}
-    )
-    assert "messages" in result["bus"]
+    变化 ``workflow-builtin-templates``：``RunPattern`` 退役，其 ``result["bus"]`` 出口
+    随之消失；本测试改走仍存的模型面出口 ``ReadBus``。
+    """
+    from agent.subagent.bus import MessageBus
+    from agent.subagent.context import reset_bus, set_bus
+
+    bus = MessageBus()
+    token = set_bus(bus)
+    try:
+        await PublishBusMessageTool(manager).execute(
+            sender="w1", topic="finding", content="short finding"
+        )
+        data = json.loads(await ReadBusTool(manager).execute())
+        assert data["count"] == 1
+        assert data["messages"][0]["summary"] == "short finding"
+    finally:
+        reset_bus(token)
