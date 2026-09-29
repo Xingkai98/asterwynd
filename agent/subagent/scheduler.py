@@ -495,11 +495,13 @@ class WorkflowScheduler:
         #: ``spec_hash`` 与资产原文都不被运行时配置污染（若把钳制值写回 spec，
         #: ``to_dict()`` 会丢弃「等于模块默认」的键，hash 随之漂移）。
         self._limit_ceiling = dict(limit_ceiling or {})
-        #: 资产的来源溯源（change ``workflow-asset-persistence``，D1）。默认 DSL——
-        #: ``RunWorkflow`` 路径**从不**设置 ``scheduler.spec``，若只在 ``run_pattern``
-        #: 里 ad-hoc 赋值，dsl 路径上该字段永不存在，「缺失即降级」就成了异常路径而
-        #: 非防御分支。**纯附加字段**：不在 ``_envelope``/``parent_envelope`` 的显式
-        #: 挑字段清单内，故不污染契约、不改 ``run_pattern`` 返回结构。
+        #: 资产的来源溯源（change ``workflow-asset-persistence``，D1）。默认 DSL。
+        #: 内建模板路径（``RunWorkflow`` 的 ``template`` 分支）把它覆盖为
+        #: ``{"kind": "pattern", "pattern", "params", "task}``；``DeclareWorkflow`` /
+        #: ``RunWorkflow(spec=...)`` 路径保持默认。**纯附加字段**：不在
+        #: ``_envelope``/``parent_envelope`` 的显式挑字段清单内，故不污染契约。
+        #: 现在有两个读取方：``SaveWorkflowAsset``（存 recipe）与截断诊断
+        #: （``_truncation_diagnostics`` 取 ``params.max_rounds``，D7）。
         self.asset_source: dict[str, Any] = {"kind": "dsl"}
         self._spec: WorkflowSpec | None = None
         self._plan: ExecutionPlan | None = None

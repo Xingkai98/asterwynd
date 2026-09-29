@@ -365,6 +365,31 @@ def compile_pattern(
     return PATTERNS[pattern](task=task, params=params).compile()
 
 
+def compile_recipe(
+    pattern: str,
+    *,
+    task: str,
+    params: dict[str, Any] | None = None,
+) -> WorkflowSpec:
+    """编译一个「配方」——内置模板名 + task + params（变化 ``workflow-builtin-templates``，D4）。
+
+    统一入口的 ``template`` 路径与 #245 的 pattern 资产路径**共用这一条**编译路径：
+    内置模板 = 随代码走的配方，用户资产 = 随 workspace 走的配方，两者在此归一。
+
+    与 :func:`compile_pattern` 的唯一差别是错误类型：未知模板名与非法 params 一律抛
+    :class:`~agent.subagent.workflow.WorkflowValidationError`（``ValueError`` 子类），
+    两个调用方各自翻译成结构化拒绝（``invalid_input`` / ``invalid_asset``）；避免
+    ``run_pattern`` 时代的 ``KeyError`` 分叉让资产路径漏兜。
+
+    ``template`` 是**服务端配方的引用**（封闭枚举），SHALL NOT 被当作模型可写的模板串
+    ——没有占位符求值面（见 design D3）。
+    """
+    try:
+        return compile_pattern(pattern, task=task, params=params)
+    except KeyError as exc:
+        raise WorkflowValidationError(str(exc)) from exc
+
+
 #: 模板里「进 workers[] 的节点」白名单（其余节点只出现在新增字段里）。
 _AGGREGATE_NODE_IDS = {
     "orchestrator-worker": ("workers",),

@@ -15,7 +15,7 @@ from agent.subagent.bus import (
 )
 from agent.subagent.context import current_bus
 from agent.subagent.manager import SubAgentManager
-from agent.subagent.patterns import compile_pattern, run_pattern
+from agent.subagent.patterns import compile_pattern, compile_recipe, run_pattern
 from agent.subagent.scheduler import (
     _PARENT_FIELD_LIMIT,
     _PARENT_NODES_LIMIT,
@@ -511,6 +511,19 @@ def _invalid_spec(exc: Exception) -> str:
     )
 
 
+def _invalid_input(reason: str) -> str:
+    """统一入口的入参形态错误（变化 ``workflow-builtin-templates``，D1）。
+
+    与 ``_invalid_spec``（spec 内容非法）分开：这是**调用形态**错（spec/template 二选一
+    违反、template 缺 task、spec 路径带 params/task、未知模板名 / 非法 params）。返回
+    自足的 ``reason``，SHALL NOT 让调用方去猜期望形态。
+    """
+    return json.dumps(
+        {"status": "invalid_input", "reason": reason},
+        ensure_ascii=False,
+    )
+
+
 def _unknown_workflow(workflow_id: str, manager: SubAgentManager) -> str:
     return json.dumps(
         {
@@ -617,9 +630,13 @@ class DeclareWorkflowTool(Tool):
         "Start a workflow declared with DeclareWorkflow. With wait=true (default) "
         "blocks until the workflow reaches a terminal state and returns the "
         "bounded run envelope; with wait=false returns immediately with a "
-        "'running' envelope that GetWorkflow can poll. A run that exceeds the "
-        "graph recursion limit returns status 'graph_recursion_exceeded' with "
-        "diagnostics (steps / current nodes / reason), not an exception."
+        "'running' envelope that GetWorkflow can poll (a START RECEIPT, not a "
+        "result). The `completed`/`failed` counters count RUNS, not subagents. A "
+        "run that exceeds the graph recursion limit returns status "
+        "'graph_recursion_exceeded' with diagnostics (steps / current nodes / "
+        "reason), not an exception; for a template graph whose `max_rounds` was cut "
+        "short, the diagnostics also carry declared_max_rounds / "
+        "rounds_actually_run / limit_source so you can adjust."
     ),
     parameters={
         "type": "object",
@@ -892,28 +909,73 @@ class CancelWorkflowTool(Tool):
         return json.dumps(scheduler.cancel(), ensure_ascii=False)
 
 
+_RUN_WORKFLOW_DESCRIPTION = (
+    "Run a workflow: give EITHER a hand-written `spec` (the DAG DSL, see "
+    "DeclareWorkflow) OR a builtin `template` name + `task` — exactly one of the "
+    "two. Templates (orchestrator-worker / peer-review / hierarchical / bidding) "
+    "compile a fixed topology server-side, so you pass two fields instead of a "
+    "whole graph; pass `params` to tune them. Use DeclareWorkflow/StartWorkflow "
+    "when you want to inspect or cancel the graph between the two steps. Before "
+    "building a topology from scratch, call ListWorkflowAssets to see whether a "
+    "reusable asset already covers this job.\n"
+    "\n"
+    "Returns a bounded envelope. `completed`/`failed` count RUNS, not subagents "
+    "(a node that runs twice contributes two). Higher-level fields to read: "
+    "`status`, `nodes[]` (bounded per-node summaries), `root_result_ref` (read the "
+    "full text with ReadWorkflowResult); for a foreach node, "
+    "GetWorkflow(detail='nodes') lists each item's `item_refs`.\n"
+    "\n"
+    "`template` params: `workers`/`teams`/`proposers` (fan-out count, bounded by "
+    "max_items=20), `max_rounds` (peer-review; this is a DESIRED round count — the "
+    "actual rounds are capped by the graph-level recursion_limit and may be far "
+    "fewer; if truncated, the diagnostics report declared_max_rounds / "
+    "rounds_actually_run / limit_source), `worker_max_tokens`/`worker_max_time_s` "
+    "(per-worker run budget).\n"
+    "\n"
+    "With `wait=false` you get a START RECEIPT ({status, workflow_id, spec_hash, "
+    "nodes}) — NOT a result; poll GetWorkflow for the outcome."
+)
+
+
 @tool_parameters(
     name="RunWorkflow",
-    description=(
-        "Convenience: declare a workflow spec and start it in one call "
-        "(Declare+Start). Use DeclareWorkflow/StartWorkflow when you want to "
-        "inspect or cancel the graph between the two steps. Before building a "
-        "topology from scratch, call ListWorkflowAssets to see whether a reusable "
-        "asset already covers this job."
-    ),
+    description=_RUN_WORKFLOW_DESCRIPTION,
     parameters={
         "type": "object",
         "properties": {
             "spec": {
                 "type": "object",
-                "description": "The workflow spec (see DeclareWorkflow).",
+                "description": (
+                    "The workflow spec (see DeclareWorkflow). Provide either `spec` "
+                    "or `template`, not both."
+                ),
+            },
+            "template": {
+                "type": "string",
+                "enum": ["orchestrator-worker", "peer-review", "hierarchical", "bidding"],
+                "description": (
+                    "Builtin template name. Requires `task`. Provide either `spec` "
+                    "or `template`, not both."
+                ),
+            },
+            "task": {
+                "type": "string",
+                "description": "The goal handed to the template's subagents (template path only).",
+            },
+            "params": {
+                "type": "object",
+                "description": (
+                    "Template params (template path only): workers/teams/proposers, "
+                    "max_rounds, worker_max_tokens, worker_max_time_s."
+                ),
             },
             "wait": {
                 "type": "boolean",
                 "description": "Block until the workflow terminates. Defaults to true.",
             },
         },
-        "required": ["spec"],
+        # `spec` is intentionally NOT required: the model may instead pass `template`.
+        "required": [],
     },
 )
 class RunWorkflowTool(Tool):
@@ -923,14 +985,54 @@ class RunWorkflowTool(Tool):
         self.manager = manager
 
     async def execute(self, **kwargs) -> str:
-        try:
-            spec = parse_spec_for_manager(self.manager, kwargs["spec"])
-        except WorkflowValidationError as exc:
-            return _invalid_spec(exc)
-        scheduler = WorkflowScheduler(self.manager, bus=MessageBus())
+        spec_field = kwargs.get("spec")
+        template_field = kwargs.get("template")
+        task_field = kwargs.get("task")
+        params_field = kwargs.get("params")
+        has_spec = spec_field is not None
+        has_template = template_field is not None
+        if has_spec == has_template:
+            return _invalid_input(
+                "pass exactly one of `spec` or `template`"
+                + (" (got both)" if has_spec else " (got neither)")
+            )
+        if has_template:
+            if not task_field:
+                return _invalid_input(
+                    "`template` requires `task` (the goal handed to the subagents)"
+                )
+            try:
+                # D1/D4：统一入口的 template 路径走共享配方编译（唯一 choke point）。
+                spec = compile_recipe(
+                    template_field, task=task_field, params=params_field
+                )
+            except WorkflowValidationError as exc:
+                return _invalid_input(str(exc))
+            scheduler = WorkflowScheduler(self.manager, bus=MessageBus())
+            scheduler.spec = spec
+            # D4：pattern 溯源（原 run_pattern 的唯一写入点迁移至此）——SaveWorkflowAsset
+            # 据此把该图存成 recipe 资产而非 DSL 资产；截断诊断（D7）也读它取
+            # declared_max_rounds。
+            scheduler.asset_source = {
+                "kind": "pattern",
+                "pattern": template_field,
+                "params": dict(params_field or {}),
+                "task": task_field,
+            }
+        else:
+            if task_field is not None or params_field is not None:
+                return _invalid_input(
+                    "`task`/`params` are only valid with `template`, not with `spec`"
+                )
+            try:
+                spec = parse_spec_for_manager(self.manager, spec_field)
+            except WorkflowValidationError as exc:
+                return _invalid_spec(exc)
+            scheduler = WorkflowScheduler(self.manager, bus=MessageBus())
+            scheduler.spec = spec
         self.manager.register_workflow(scheduler)
         if not kwargs.get("wait", True):
-            asyncio.ensure_future(scheduler.run(spec))
+            asyncio.ensure_future(_drive_scheduler(scheduler))
             return json.dumps(
                 {
                     "status": "running",
@@ -940,9 +1042,7 @@ class RunWorkflowTool(Tool):
                 },
                 ensure_ascii=False,
             )
-        # 父 agent 拿到的是 bounded 投影（D3/Issue 4），与 StartWorkflow 同口径。
-        await scheduler.run(spec)
-        return json.dumps(scheduler.parent_envelope(), ensure_ascii=False)
+        return json.dumps(await _drive_scheduler(scheduler), ensure_ascii=False)
 
 
 # --- Workflow 资产工具（change ``workflow-asset-persistence``，D7） ----------
@@ -1203,7 +1303,11 @@ def _apply_asset_overrides(
         "the asset, and the response reports the effective values plus limits_clamped. "
         "Node modes never widen the session: nodes clamped by the session ceiling are "
         "reported in mode_diagnostics, and declared_mode_nodes lists the nodes that "
-        "run with their declared mode."
+        "run with their declared mode. "
+        "The `completed`/`failed` counters count RUNS, not subagents. For pattern "
+        "assets, `max_rounds` is a DESIRED round count — actual rounds are capped by "
+        "the graph-level recursion_limit and may be far fewer; if truncated, the "
+        "diagnostics report declared_max_rounds / rounds_actually_run / limit_source."
     ),
     parameters={
         "type": "object",
@@ -1259,12 +1363,14 @@ class RunWorkflowAssetTool(Tool):
             merged = dict(recipe.get("params") or {})
             merged.update(kwargs.get("params") or {})
             try:
-                spec = compile_pattern(
+                # D4：与统一入口 template 路径共用同一条配方编译（键/值/上界校验在
+                # compile_recipe 内，资产路径自动享受）。
+                spec = compile_recipe(
                     recipe.get("pattern"),
                     task=recipe.get("task") or asset.goal,
                     params=merged,
                 )
-            except (KeyError, WorkflowValidationError) as exc:
+            except WorkflowValidationError as exc:
                 return _asset_error("invalid_asset", f"pattern asset cannot compile: {exc}")
         else:
             patched = _apply_asset_overrides(
