@@ -5,14 +5,15 @@
 ## 0. 实现前设计追问（batch-grill-me）
 
 - [ ] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`（等价设计追问），逐项审视 design.md 的 D1–D6，产出结构化决策记录到 `reviews/grill-design.md`（≥3 条决策 + `## Open Questions` + `## User Confirmation`）
-- [ ] 0.2 停轮把 `## Open Questions`（Q1 per-worker ref 通道 / Q2 completed 口径 / Q3 params 按模板封闭 / Q4 wait=false 回执）逐条配具体例子交用户确认，答复记录进 `grill-design.md` 的 `## User Confirmation`；收到答复前不写实现代码
-- [ ] 0.3 按 Q1 答复回写 design D2 与 tasks 5.6（补 `item_refs` 投影 或 显式记录损失缩水）；按 Q3 答复回写 design D3 与 spec delta
+- [ ] 0.2 停轮把 `## Open Questions`（Q1 per-worker ref 通道 / Q2 completed 口径 / Q3 params 按模板封闭 / Q4 wait=false 回执 / **Q5 params 值级校验**）逐条配具体例子交用户确认，答复记录进 `grill-design.md` 的 `## User Confirmation`；收到答复前不写实现代码
+- [ ] 0.3 按 Q1 答复回写 design D2 与 tasks 4.6/5.6（补 `item_refs` 投影 或 显式记录损失缩水）；按 Q3/Q5 答复回写 design D3 与 spec delta
 
 ## 1. 共享配方编译路径（D3 / D4）
 
 - [ ] 1.1 在 `agent/subagent/patterns.py` 落共享 helper `_compile_recipe(pattern, task, params) -> WorkflowSpec`（实现期定名）：内部即 `compile_pattern`，统一「未知模板名 → 结构化拒绝」的措辞；被统一入口与资产路径共用
-- [ ] 1.2 在 `agent/subagent/patterns.py` 落 `params` 键集校验（封闭集合：`workers`/`teams`/`proposers`/`max_rounds`/`worker_max_tokens`/`worker_max_time_s`），未知键结构化拒绝（消灭「以为传了」的假象）
-- [ ] 1.3 单测：helper 对 `{"workers": 3}` 的产出与 `compile_pattern("orchestrator-worker", task=…, params={"workers": 3})` 的 `spec_hash` 相等；未知名/未知键各一条结构化拒绝
+- [ ] 1.2 在 `agent/subagent/patterns.py` 落 **per-template** `params` 校验（R2 订正：不是全局并集）——按模型各自的封闭键子集（orchestrator-worker: `workers`/`worker_max_*`；hierarchical: `teams`/`worker_max_*`；bidding: `proposers`/`worker_max_*`；peer-review: `max_rounds`/`worker_max_*`），不属该模板的键结构化拒绝并在 `reason` 列出该模板可用键
+- [ ] 1.2a 落 **值级校验**（R2 Q5）：计数键要求可安全 `int()` 且为正整数、`worker_max_*` 要求数值；非整数/null/不可转数 → `invalid_input` 结构化拒绝（今天抛未捕获 `ValueError`/`TypeError` → 模型见裸 `[Error: …]`）。**clamp 保留**（`0/-5 → 下界`是既有语义）
+- [ ] 1.3 单测：helper 对 `{"workers": 3}` 的产出与 `compile_pattern("orchestrator-worker", task=…, params={"workers": 3})` 的 `spec_hash` 相等；未知键 / 跨模板键（`peer-review + workers:7`）/ 非整数值（`workers:"abc"`）/ `null` 各一条结构化拒绝；`workers:0` 仍 clamp 为 1（不报错）
 
 ## 2. 统一 Workflow 入口的 template 输入（D1）
 
@@ -33,8 +34,9 @@
 - [ ] 4.1 测试先行：两条路径的返回体键集相等，且均不含 `pattern`/`workers`/`selected`/`selector`/`bus`
 - [ ] 4.2 测试先行：投影 `nodes[]` 每节点文本 ≤ `_PARENT_FIELD_LIMIT`；`nodes_total`/`nodes_omitted` 正确；`bus` 不在投影内
 - [ ] 4.3 测试先行：`wait=false` 回执 `status == "running"`，与终态 status 集合不相交
-- [ ] 4.4 template 分支与 spec 分支统一返回 `scheduler.parent_envelope()`（`wait=true`）；`wait=false` 保持既有回执形状
+- [ ] 4.4 template 分支与 spec 分支统一返回 `scheduler.parent_envelope()`（`wait=true`）；`wait=false` 保持既有回执形状，工具描述硬写「回执非结果」
 - [ ] 4.5 确认 `agent/subagent/scheduler.py` 的 `_envelope`/`parent_envelope` **逐字不动**；回归 `test_bounded_envelope.py` 的键集与界断言
+- [ ] 4.6 **补 foreach per-worker ref 通道**（依赖 Q1 拍板）：`GetWorkflow(detail='nodes')` 对 `kind=="foreach"` 节点读 `state.item_runs` 吐 `item_refs: [{index, subagent_id, run_id, result_ref?}]`（**R2 三条硬约束**：①`result_ref` 仅成功项出现，失败/取消/超限项无 ref 只给 bounded `reason`；②跳过未派发空槽；③附 `items_total`/`item_refs_omitted` 固定界，禁止线性无界）
 
 ## 5. 删除面与引用清理（D5）
 
@@ -42,13 +44,15 @@
 - [ ] 5.2 删除 `run_pattern` / `_legacy_result` / `_workers_from_node` / `_worker_entry` / `_AGGREGATE_NODE_IDS`（`agent/subagent/patterns.py`）；改写模块 docstring 中描述 `run_pattern` 返回形状的段落
 - [ ] 5.3 `manager.py` 的 `SPAWN_TOOL_NAMES` 去掉 `"RunPattern"`
 - [ ] 5.4 订正 `agent/subagent/bus.py` 的 `snapshot_payload()` docstring 中「模型面调用点是 RunPattern」的措辞（界本身不落笔）
-- [ ] 5.5 改写受影响测试：`test_patterns.py` / `test_pattern_templates.py` 5.2 段 / `test_bus_bounded_exports.py` 出口 2 / `test_bounded_envelope.py` / `test_guardrails.py` / `test_concurrency_queue.py`
+- [ ] 5.5 改写受影响测试：`test_patterns.py` / `test_pattern_templates.py` 5.2 段 / `test_bounded_envelope.py` / `test_guardrails.py` / `test_concurrency_queue.py`
+- [ ] 5.5b **`test_bus_bounded_exports.py` 整体处理**（R2 精度订正）：该文件有**两个** `RunPattern` 相关测试（`:187` 出口 2 经 `run_pattern`、`:207` 经 `RunPatternTool`）+ **模块级 tool import**（`:34`）——必须整体处理（含删 `:34` 的 import），否则收集期 ImportError；出口 2 的 bounded 语义须迁移到仍存的 bus 出口（`ReadBus`）上钉住
 - [ ] 5.5a **#245 回归测试迁移**（实测确认这三个文件用 `RunPatternTool` 产出 pattern 图）：`test_workflow_asset_tools.py:121`、`test_workflow_asset_context.py:165` 改用 `RunWorkflow(template=…)` 产出 pattern 图；`test_workflow_asset_context.py:195` 的 `test_run_pattern_result_keyset_is_locked`（键集锁）随 `run_pattern` 退役删除，其「加字段必须是有意识的」语义改挂到统一入口返回体的键集锁上
 - [ ] 5.6 **出口 4 语义迁移**（**依赖 Open Question Q1 拍板**）：把 `test_workflow_node_transcript.py:894-932` 的「worker 条目 bounded + `result_ref` 补偿」断言改挂到新出口，**不删断言语义**（issue #213 回归保护）。**注意**：grill 实测 `GetWorkflow(detail='nodes')` 的 `_node_refs()` 对 foreach 节点返回空（身份在 `item_runs`），故若 Q1 = 不补通道，本任务必须显式缩水并记录损失，**禁止**静默降级成「只断言 `root_result_ref`」；若 Q1 = 补通道，则先落 `item_refs` 投影再迁移断言
 - [ ] 5.6a 处理 `test_workflow_node_transcript.py:942-946`（`test_worker_entry_without_workflow_identity_does_not_lie`）**直接 import `_worker_entry`** 的测试——删 `_worker_entry` 会让该文件收集期 ImportError，须一并删除或改写
 - [ ] 5.7 深度闸测试：深度到限子 agent 工具集不含 `RunWorkflow` 与 `RunPattern`
 - [ ] 5.8 删净检查：`rg 'run_pattern|RunPattern|_legacy_result|_worker_entry'` 在 `agent/` `tests/` `benchmarks/` `web/` **以及 `openspec/specs/`** 零命中（`openspec/specs/` 必须纳入——grill 查出存量 spec 另有两条 Requirement 硬引用 `RunPattern`，见 6.6a）
-- [ ] 5.9 订正 `bus.py:3` / `context.py:11` 的模块 docstring 与 `benchmarks/agent_runner.py:518` 注释里的 `RunPattern` 措辞
+- [ ] 5.9 订正 docstring/注释里的 `RunPattern` 措辞：`bus.py:3`、`context.py:11`（模块 docstring）、`benchmarks/agent_runner.py:518`（注释）、`scheduler.py:499-502`（`asset_source` 注释自述「`RunWorkflow` 路径从不设置 `scheduler.spec`」，与 `run()` 在 `:795` 的 `self._spec = spec` 矛盾，R2 顺手订正）
+- [ ] 5.10 **改写（非删除）**留存工具的模型面文案：`SaveWorkflowAsset` 描述里的 `RunPattern` 引用（`subagents.py:948-951`「RunPattern-sourced graphs…」、`:960`「workflow_id returned by RunPattern/…」）改为统一入口口径——5.8 的 grep 会命中，但性质是**改写**不是删净
 
 ## 6. 文档与收尾
 

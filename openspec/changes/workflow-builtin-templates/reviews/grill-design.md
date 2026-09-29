@@ -95,3 +95,119 @@
 ## User Confirmation
 
 - （待用户答复后由主 session 填入）
+
+## Round 2
+
+### 第二轮 Reviewer
+
+- **run id**: `grill-workflow-builtin-templates-20260929-r2`；paseo agent id：`3d9ab70a-0f68-40d3-b666-1adc34303409`（零记忆独立评审者，与主 session 及第一轮 reviewer 均无共享上下文）
+- **时间**: 2026-09-29
+- **审视对象**: 第一轮订正后的 design.md D1–D6（尤重 D2 的「⚠️ 实测订正」块与 D3 的「按模板封闭」块）与最终 spec delta / tasks
+- **工作区**: `/home/happy/.paseo/worktrees/0frj3kg8/workflow-builtin-templates-2026-09-29`, 分支 `workflow-builtin-templates/2026-09-29`, HEAD `8e34f53`（基线 master `ee06df7`）
+- **前提**: 第一轮的 11 条决策与 4 条 Open Questions 逐字保留于上文；本轮只追加
+- **评审方法（零记忆独立复核，探针优先）**:
+  - 实读：`agent/subagent/scheduler.py`（`_ItemRunSlot` 198-221、`NodeState` 224-291、`_bounded_node` 383-405、`_envelope` 3005-3086、`parent_envelope` 3088-3110、`_write_root_result` 3112-3140、`_execute_foreach` 1873-1941、`_run_foreach_item` 1943-1969、`_launch_run` 2163-2242、`run()` 789-857、`_check_budget_before_dispatch` 1037-1149+）、`agent/tools/builtin/subagents.py`（`RunPatternTool` 415-451、`GetWorkflowTool` 722-803、`_node_refs` 792-803、`RunWorkflowTool` 834-884、`_asset_from_scheduler` 905-938、`SaveWorkflowAsset` 941-1005、`RunWorkflowAsset` 1135-1242）、`agent/subagent/patterns.py`（全量 472 行）、`agent/subagent/manager.py`（`SubagentRunRecord` 189-250、`find_run` 596-604、`_complete_run`/`_write_result_artifacts` 1326-1393、`_mark_failed`/`_mark_cancelled`）、`agent/subagent/workflow_assets.py`、`web/session.py:1004,1207,1213`、`benchmarks/agent_runner.py:505-529`、四个 spec delta、`openspec/changes/archive/2026-09-28-workflow-asset-persistence/{design,proposal,specs}.md`
+  - **探针（全在 `/tmp`，直接驱动真实调度器/工具/资产层；本轮重点，逐个实测）**：
+    - `/tmp/probe_r2_d2.py`——模板 foreach 经真实 `WorkflowScheduler` 到终态，dump `item_runs`（全成功 / 一个失败 / 取消 / per-worker 预算超限四态）
+    - `/tmp/probe_r2_d2b.py`——手写 DSL foreach，精确让 index=1 失败、派发后取消，dump 每 item 的 `find_run` 解析与 `result_ref`
+    - `/tmp/probe_r2_d2c.py`——`_bounded_node` 对 50 项 foreach 节点的投影形状；`_acquire_slot` 拒绝路径
+    - `/tmp/probe_r2_d2d.py`——容器级预算 drain（`max_total_runs=2` / 6 项）导致「未派发项」的空槽
+    - `/tmp/probe_r2_d3.py`——`compile_pattern` 未知键静默忽略、非整数值 `int()` 抛错、`max(1, int())` clamp 与封闭键集的关系
+    - `/tmp/probe_r2_q1q2.py` + `/tmp/probe_r2_q2b.py`——**真实 DSL foreach 图**（非模板）的 per-worker ref 可达性；`parent_envelope` vs `_legacy_result` 的 completed/failed 口径对照
+    - `/tmp/probe_r2_q3.py`——`RunWorkflowAsset` 的 pattern 分支合并 params 是否放行跨模板键（真实资产层）
+    - `/tmp/probe_r2_keys.py`——`parent_envelope()` 实测键集（43 键）
+    - `/tmp/probe_r2_huge.py`——`params={"workers": N}` 无上界 clamp
+  - 测试命令：`uv run pytest tests/agent/subagent/test_pattern_templates.py test_patterns.py test_bounded_envelope.py test_bus_bounded_exports.py test_workflow_asset_tools.py test_workflow_asset_context.py -q` → **78 passed**；`npx @fission-ai/openspec@1.4.1 validate --all --strict` → **29 passed, 0 failed**（含本 change）
+  - 注：本轮对 HEAD `8e34f53`（含作者补入的两条 asset Requirement delta、tasks 5.5a/5.6a/5.8 收口）评估；第一轮的 delta 覆盖缺口已在该 commit 修复（见下文决策 12）
+
+### 第二轮 Confirmed Decisions
+
+- **决策**: D2 的补偿路径（`_node_refs()` 读 `state.item_runs` 吐 `item_refs`）**技术上可行**——`item_runs` 在所有「已派发 run」的终态下都带真实 `subagent_id`/`run_id` 且 `manager.find_run` 能解析；但设计漏了三个必须订正的细节（见下条）。**不推翻 R1 的 D2 结论，仅收紧其措辞。**
+  理由: 探针 `/tmp/probe_r2_d2.py`（模板全成功态）与 `/tmp/probe_r2_d2b.py`（精确单 item 失败 / 派发后取消）实测——每个已派发项 `item[i] subagent_id=<hex> run_id=<hex> find_run=OK`；`item_runs` 由 `_execute_foreach` 在展开时初始化（`scheduler.py:1890`）、`_launch_run` 在派发那一刻写回 `reuse_state.subagent_id`/`run_id`（`scheduler.py:2199-2208,2225`），故与 run 身份一一对应。`web/session.py:_foreach_candidates`（`:1207,1213`）已是同款「`item_runs[i]` → `find_run`」读法，证明该投影是既有成熟用法而非新面。
+  来源: 探针 `/tmp/probe_r2_d2.py`、`/tmp/probe_r2_d2b.py`；`agent/subagent/scheduler.py:1890,2199-2208,2225`；`web/session.py:1207,1213`
+
+- **决策（HIGH，订正 D2/spec delta 的过度承诺）**: `item_refs` 只能恢复**成功项**的 `result_ref`；失败/取消/预算超限的 run **`result_ref` 恒为 `None``，因为只有成功路径 `_complete_run` → `_write_result_artifacts` 落盘并写 ref，`_mark_failed`/`_mark_cancelled`/`_mark_budget_exceeded` 都不写。** 本 change 的 spec delta（`specs/multi-agent-collaboration/spec.md:142`）写「对 `kind=="foreach"` 节点…暴露每个展开项的 `result_ref`，使 per-worker 全文在统一出口下**可达**」——这是对**失败项**的过度承诺，须改为「成功项可达 / 失败项只有 bounded `reason`（与既有 legacy `_worker_entry` 同口径）」。
+  理由: 探针 `/tmp/probe_r2_d2b.py` 的 B2 用例——index=1 项失败：`item[1] run.status='failed' result_ref=None`，而 `item[0]`/`item[2]` 成功项 `result_ref='artifact://workflow/wf_5ef0b943/...'`；C2 取消用例：三项全 `status='cancelled' result_ref=None`；`/tmp/probe_r2_d2.py` 的 D 用例（`worker_max_tokens=5`）：三项全 `status='budget_exceeded' result_ref=None`。这与 legacy `_worker_entry` 的行为**一致**（`patterns.py:365-372` 只在 `truncated and ref` 时注入），所以不是净回归，但 spec delta 的「每个展开项…可达」字面承诺在失败态下不成立。
+  来源: 探针 `/tmp/probe_r2_d2b.py`（B2/C2）、`/tmp/probe_r2_d2.py`（D）；`agent/subagent/manager.py:1213-1242,1326-1388`；`agent/subagent/patterns.py:365-372`
+
+- **决策（HIGH，D2 补偿的新增约束）**: `item_runs` 的槽在「未派发」时是**空槽**（默认 `_ItemRunSlot()`，`subagent_id=None`/`run_id=None`），`item_refs` 投影必须跳过空槽；且 `params` 的计数键**无上界 clamp**，`item_refs` 的长度在原则上无界，补偿投影**必须自带界**（≤ `max_runs`）否则会把「bounded 读出口」重新撑成随规模线性的数组——正是投影纪律要消灭的形态。
+  理由: 探针 `/tmp/probe_r2_d2d.py`（`max_total_runs=2` / 6 项 foreach）：`fan: status=blocked item_states=['pending']*6`，六个槽全 `subagent_id=None run_id=None find_run=MISS`（派发前被预算 drain 拦下，槽未填）。探针 `/tmp/probe_r2_huge.py`：`compile_pattern("orchestrator-worker", params={"workers": 100000})` → `foreach items=100000`（`_template_orchestrator_worker` 只做 `max(1, int(...))`，无上界）。单个 `item_ref` 约 131 字节，1000 项即 131 KB。故「每项一个 ref」在成功态虽被 `max_runs`（默认 300，成功项 ≤ 约 298）间接界定，但**设计文本没有任何界声明**；`test_get_workflow_detail_nodes_stays_bounded`（`tests/agent/subagent/test_bounded_envelope.py:176-191`）也只覆盖 100 个 **leaf** 节点、不含 foreach，无法兜住。
+  来源: 探针 `/tmp/probe_r2_d2d.py`、`/tmp/probe_r2_huge.py`；`agent/subagent/patterns.py:80-81`（`max(1, int(params.get("workers", 3)))`）；`tests/agent/subagent/test_bounded_envelope.py:176-191`
+
+- **决策**: challenge 1 提出的「更小改法」——把 per-item 投影直接塞进 `parent_envelope()` 的 `_bounded_node`——**应否决**：它同时违反本 change 的 Non-Goal（「不改 `parent_envelope()` / `_envelope()` 的内容……逐字不动」，`design.md:36`）与投影纪律（`_bounded_node` 明写「丢弃随图规模线性增长的数组」，`scheduler.py:389-405`，`subagent_ids` 即因此被丢）。**设计选 `GetWorkflow(detail='nodes')`（经 `_node_refs`）是对的**，那个出口本就允许逐节点 `result_ref`（`subagents.py:775-781`）。
+  理由: 实测 `_bounded_node` 对 50 项 foreach 节点的产物键集为 `['id','items','kind','reason','runs','status','subagent_id','summary']`（探针 `/tmp/probe_r2_d2c.py` 的 H 用例）——`items` 只保留 **int 计数**（=50），正是「丢线性数组、留标量」的证据；把线性 `item_refs` 塞回这里就是反其道而行。反向验证：加 `item_refs` 到 `GetWorkflow` 出口**不破坏**任何既有精确键集测试——`test_workflow_graph_snapshot.py:376-387` 与 `test_workflow_graph_snapshot_additions.py:285-297` 用的是超集断言（`set(...) >= {...}`）且不覆盖 foreach 节点；`test_get_workflow_detail_nodes_lists_refs`（`test_workflow_read_tools.py:156-170`）只断 leaf 节点。
+  来源: 探针 `/tmp/probe_r2_d2c.py`；`agent/subagent/scheduler.py:389-405`；`agent/tools/builtin/subagents.py:775-781`；`tests/agent/subagent/test_workflow_graph_snapshot.py:376-387`
+
+- **决策（D3，新增 gap）**: 「封闭键集」校验应落在 **`compile_pattern` 这一唯一 choke point**（三个生产调用方共用），且**必须同时做值级类型校验**——今天 `params={"workers": "abc"}` 会在 `_template_*` 里抛**未捕获**的 `ValueError`（`int("abc")`），`{"workers": None}` / `{"teams": [1,2]}` 抛 `TypeError`，在 AgentLoop 里经 `execute_with_retry` 折成模型可见的裸 `[Error: invalid literal for int() with base 10: 'abc']`（不可重试 → 直接进上下文），既非结构化拒绝也非 `invalid_input`——与 D1 规则 #5「非法入参结构化拒绝」的口径冲突。设计只写了「未知键」这一维，漏了「值非法」维。
+  理由: 探针 `/tmp/probe_r2_d3.py`——`orchestrator-worker {'workers': 'abc'} -> ValueError: invalid literal for int() with base 10: 'abc'`；`{'workers': None} -> TypeError`;`hierarchical {'teams': [1,2]} -> TypeError`。`agent/loop.py:1330-1345` + `agent/hooks/builtin/retry.py:42-61`：非 retryable 异常包成 `ToolResult(text=f"[Error: {msg}]")`。落点选择证据：三个生产调用方为 `run_pattern`（`patterns.py:447`，本 change 删）、`RunWorkflowAsset` pattern 分支（`subagents.py:1201`）、benchmark `_run_template_pattern`（`agent_runner.py:516`，**不传 params**），故在 `compile_pattern` 内校验不会破坏任何既有测试/调用方（既有测试全部只用模板自身的键）。
+  来源: 探针 `/tmp/probe_r2_d3.py`；`agent/subagent/patterns.py:234-243,447`；`agent/tools/builtin/subagents.py:1201`；`benchmarks/agent_runner.py:516`；`agent/hooks/builtin/retry.py:42-61`
+
+- **决策（D3/clamp 正交）**: 封闭键集校验与 `max(1, int(...))` clamp **正交**、不冲突——clamp 作用于**值的下界**（`workers:0 → 1`、`workers:-5 → 1`、`proposers:0 → 2`），键集校验作用于**键名归属**。设计无需为 clamp 改口径；但二者叠加仍拦不住「值非整数」（见上条）。
+  理由: 探针 `/tmp/probe_r2_d3.py`——`orchestrator-worker {'workers': 0} -> foreach items=[1]`、`{'workers': -5} -> items=[1]`、`bidding {'proposers': 0} -> items=[2]`，均 clamp 而非拒绝；`agent/subagent/patterns.py:81,108,136,179`。
+  来源: 探针 `/tmp/probe_r2_d3.py`；`agent/subagent/patterns.py:81,108,136,179`
+
+- **决策（Q2 量化，修正 R1 的「24 处」）**: `completed`/`failed` 的命名变更 blast radius 精确为：**权威 `_envelope`（`scheduler.run()` 返回）约 18 处断言**（`test_scheduler.py`、`test_workflow_spawn_bucket.py`、`test_aggregation_runtime.py`、`test_workflow_budget.py`、`test_budget_compat.py`）+ **父投影 2 处**（`test_bounded_envelope.py:163`、`test_workflow_tools.py:95`）+ **随 `run_pattern` 退役的 legacy 17 处**（`test_patterns.py`/`test_pattern_templates.py`，已在本 change 删除面）。R1 引用的「C2 的 24 处」来自 `scheduler.py:3010` 注释与 `workflow-result-aggregation` 归档评审，量级正确但口径不精确。**关键**: 父投影的 `completed`/`failed` **无任何 web/模型面消费者**（`web/static/workflow.js` 只用 per-node `item_states`/`itemsFailed`，不读 envelope 计数；全仓无 `parent_envelope()["completed"]` 断言）。
+  理由: `rg '\["completed"\]|\["failed"\]' tests/` 实测 37 处，分类后如上；`rg 'parent_envelope\(\)\[' tests/` 空；`web/static/workflow.js:785,842` 读的是节点级 `itemsFailed`，非 envelope 计数。**「投影内重命名」这条路径不成立**：`parent_envelope()` 就是 `_envelope()` 的输出再 `pop("bus")` + `_bounded_node`（`scheduler.py:3100-3109`），字段名无法只在一侧改而不制造「同一字段两名并存」的第二语义。
+  来源: `rg` 全仓统计；`agent/subagent/scheduler.py:3010,3100-3109`；`web/static/workflow.js:785,842`；`agent/tools/builtin/subagents.py`（无枚举消费）
+
+- **决策（Q1 边界，前提成立）**: 「per-worker 明细不可达」的前提**成立且可复现**——per-worker 的 `result_ref` **只在 `RunPattern` 路径可达**，删它就构成**能力回归**，故补 `item_refs` 是**恢复**（in scope）而非新能力。同时它也是**纯 DSL foreach 路径的净新增能力**（今天一样拿不到），但二者共用同一套 `foreach` 机制，补在 `GetWorkflow` 上同时覆盖两类用户，故留在本 change 正当。
+  理由: 探针 `/tmp/probe_r2_q1q2.py` 用**真实 DSL foreach 图**（非模板，`fan` 节点 3 项、worker 输出 6000 字触发落盘）：manager 里 `item[0..2] run.result_ref='artifact://workflow/wf_e2e6337e/...'` **存在**，但 `GetWorkflow(detail='nodes')` 返回的 `fan` 节点键集为 `['id','items','kind','reason','runs','status','subagent_id','summary']`——**无 `result_ref`、无 `item_refs`**；`_node_refs`（`subagents.py:792-803`）只读 `state.subagent_id`/`state.run_id`，foreach 容器节点这两字段恒 `None`（`scheduler.py:1883-1884`），故对该节点返回空。
+  来源: 探针 `/tmp/probe_r2_q1q2.py`；`agent/tools/builtin/subagents.py:792-803`；`agent/subagent/scheduler.py:1883-1884`
+
+- **决策（Q2 语义翻转复现）**: peer-review 在「producer 改一稿才获批」下，legacy（节点口径）`completed=2`、统一出口（run 口径）`completed=4`，**同一 `spec_hash`（`6ae2bf4e059a9283`）**；`parent_envelope` 与 `_envelope` 的 `completed`/`failed` 逐字相等（同一数据源）。R1 的对照实测本轮独立复现，无偏差。
+  理由: 探针 `/tmp/probe_r2_q2b.py`——`legacy completed=2 failed=0 len(workers)=2` vs `envelope completed=4` / `parent completed=4`；`node runs: {'producer': 2, 'reviewer': 2, 'gate': 0, 'aggregate': 0}`。设计 `design.md:86` 的量化描述方向正确。
+  来源: 探针 `/tmp/probe_r2_q2b.py`；`agent/subagent/patterns.py:386`（节点口径）、`agent/subagent/scheduler.py:3011-3020`（run 口径）
+
+- **决策（Q3 vs #245 Non-Goal，重大澄清）**: 「资产工具对外行为不变」这条 Non-Goal **是本 change（#246）自己的设计约束**（`design.md:37`、`proposal.md:128`），**不是 #245 的承诺**——#245 的 Non-Goals（归档 `design.md:40-49`）根本没有此项，且它**显式把内置模板归一划给 #246**（原文：「**不做内置模板归一。** 内置 4 个 pattern 走代码内注册表（`PATTERNS`，`patterns.py:303-308`），不进磁盘资产层——那是 #246 的范畴。」）。故把按模板封闭的键校验应用到 `RunWorkflowAsset` 的 pattern 分支**不违反 #245**，只触碰 #246 自设的 Non-Goal，而 #246 有权在同一 change 内修订它。**实测资产路径今天确实放行跨模板键**：caller `params={"workers": 7}` 打到 peer-review 资产 → `status: graph_recursion_exceeded`（正常执行，`workers` 被静默忽略）；recipe 自身存 `{"workers": 9}` → 同样接受。
+  理由: `rg '对外行为|资产工具|不改资产' openspec/changes/archive/2026-09-28-workflow-asset-persistence/{proposal,design}.md` **零命中**；`design.md:43`（#245）原文划界；探针 `/tmp/probe_r2_q3.py` 两用例均「接受 + 静默忽略」。
+  来源: `openspec/changes/archive/2026-09-28-workflow-asset-persistence/design.md:40-49`；`openspec/changes/workflow-builtin-templates/design.md:37,121`；探针 `/tmp/probe_r2_q3.py`
+
+- **决策（第 6 项，覆盖已闭合）**: 第一轮查出的两条未覆盖 Requirement（`multi-agent-collaboration/spec.md:540,560`）**已由 commit `8e34f53` 补入 delta**（本 change 的 `specs/multi-agent-collaboration/spec.md` 现含 6 条 Requirement，含「资产保存是显式的…」「资产的两类载体与参数化复用」两条 MODIFIED）。本轮全量复核：`openspec/specs/` 下 `RunPattern|run_pattern|OrcPattern` 共 **17 处命中 / 4 个文件**（multi-agent-collaboration 8、agent-runtime 7、subagents 1、web-ui 1），**全部**落在 4 个 delta 的 MODIFIED Requirement 覆盖内；四个 delta 无引用「改后不存在」的符号（`compile_pattern`/`RunWorkflow`/`spec_hash`/`GetWorkflow` 均存活）。`openspec/project.md` 零命中。
+  理由: `git diff --stat 09e5fe8 8e34f53` 显示 delta 新增 57 行（两条 asset Requirement + 场景）；`rg -n 'RunPattern|run_pattern|OrcPattern' openspec/specs/` 输出 17 行逐条比对 delta 标题；`npx @fission-ai/openspec@1.4.1 validate --all --strict` → `29 passed, 0 failed`。
+  来源: `git diff 09e5fe8 8e34f53 -- openspec/changes/workflow-builtin-templates/specs/`；`rg` 全量；OpenSpec validate 输出
+
+- **决策（第 7 项，工具面/文档）**: 删除面引用清理**基本完整但有两处精度缺口**。(a) `web/` 零 `RunPattern` 命中，无需改 web 工具清单；(b) 模块级 `RunPatternTool` import 共 **5 个测试文件**（`test_workflow_asset_tools.py:28`、`test_bus_bounded_exports.py:34`、`test_concurrency_queue.py:34`、`test_workflow_asset_context.py:23`、`test_patterns.py:21`），tasks 5.5/5.5a 点名了其中 4 个的处理，但 `test_bus_bounded_exports.py:34` 的模块级 import 与 `:207` 的 `test_run_pattern_tool_export_is_bounded` **未被 5.5 显式点名**（5.5 只说「出口 2」= `run_pattern` 的 bus 导出，未覆盖该文件里第二个测试与它的 tool import）——若只改「出口 2」会在收集期 ImportError；(c) **`SaveWorkflowAsset` 的工具描述字符串**（`subagents.py:948-951`「RunPattern-sourced graphs…」、`:960`「workflow_id returned by RunPattern/…」）是**留存工具的模型面文案**，需**改写**（非删除），tasks 未显式点名（5.8 的 grep 会命中，但「删净」措辞掩盖了「改写」性质）。`_worker_entry` 直调测试（`test_workflow_node_transcript.py:942`）已由 5.6a 覆盖；其余 D5 符号（`_AGGREGATE_NODE_IDS`/`_workers_from_node`/`_legacy_result`）在 `agent/`/`tests/`/`web/`/`benchmarks/` 下**无存活代码引用**（仅 `test_workflow_node_transcript.py:902` 一句注释提到 `_legacy_result`）。
+  理由: `rg -n 'RunPattern|run_pattern' web/` 空；`rg -n 'RunPatternTool' tests/` 列出 5 个模块级 import；`rg -n 'RunPattern' agent/tools/builtin/subagents.py` 出 `:18`(import)`/416/437/445`(删)`)` 与 `:948,960`(描述文案)；`rg -n '_AGGREGATE_NODE_IDS|_workers_from_node|_legacy_result' agent/ tests/ web/ benchmarks/ | grep -v patterns.py` 仅注释。
+  来源: `rg` 全量（见上）；`agent/tools/builtin/subagents.py:948-951,960`
+
+### 第二轮 Open Questions
+
+> Q1–Q4 推荐**整体不变**（第一轮方向正确），但 Q1/Q3 各补两条必须落进 design/spec 的订正；新增 Q5（值级参数校验）。每条配本 change 真实场景例子。
+
+- **Q1（推荐不变；补三条订正证据）**: per-worker 的 `result_ref` 通道**必须补**（`GetWorkflow(detail='nodes')` 读 `item_runs` 吐 `item_refs`）。
+  **具体场景（补订正）**：`RunWorkflow(template="orchestrator-worker", task="审查 3 个模块", params={"workers": 3})`，worker-1 失败、worker-2/3 成功。补 `item_refs` 后父 agent 收到 `item_refs: [{index:0, result_ref:"artifact://…"}（成功）, {index:1, result_ref:null, reason:"simulated failure"}（失败，**无 ref**）, {index:2, result_ref:"artifact://…"}]`——实测失败项 `run.result_ref=None`（`_mark_failed` 不落盘），所以**只有成功项可 `ReadWorkflowResult`**，这与 legacy `_worker_entry` 完全一致（不是净回归）；但 spec delta `line 142` 的「每个展开项的 `result_ref`…**可达**」在失败态下**说不到**，须改写为「成功项的 `result_ref` 经只读投影可达；失败项给出 bounded `reason`」。另一订正：若容器因预算 drain（如 `max_total_runs=2`）在派发前被拦，实测 6 个槽全 `subagent_id=None`——`item_refs` 必须**跳过空槽**，且整条数组应带一个显式的界（成功项 ≤ `max_runs`）或 `item_refs_omitted` 计数，否则 `params={"workers":100000}`（实测无上界 clone 成 10 万 item）会把只读出口重新撑成线性大数组。
+  **推荐**：补——落到 `GetWorkflow(detail='nodes')`（非 `parent_envelope`，后者受本次 Non-Goal 与投影纪律双重保护），投影形状定为 `item_refs: [{index, subagent_id, run_id, result_ref?}]`（`result_ref` 仅成功项出现），并对空槽/超界明确处置。
+
+- **Q2（推荐不变）**: 接受 run 口径 + 工具描述写明「`completed`/`failed` 数的是 run，不是 subagent」。
+  **具体场景（本轮量化）**：peer-review 改一稿才获批 → legacy `completed=2`、统一出口 `completed=4`（同 `spec_hash`）。改名方案的实测代价：**权威 `_envelope` 约 18 处断言** + 父投影 2 处断言会红；**无 web/模型消费者**受影响。而「只在父投影里改名」不可行——`parent_envelope()` 是 `_envelope()` 的 `pop("bus")`+`_bounded_node`，改名会制造同字段双语义。故 (a) 接受 + 文档 是**最便宜也最安全**；(b) 改名收益（可读性）不抵 18+2 处断言与双语义维护成本；(c) 并暴露两字段翻倍契约面。
+  **推荐**：维持 (a)。
+
+- **Q3（推荐不变 + 修正 Non-Goal 归属 + 补值级校验）**: 按模板封闭，校验落 `compile_pattern`；**同步收紧 `RunWorkflowAsset`**。
+  **具体场景（补订正）**：① 归属订正——「资产工具对外行为不变」是 **#246 自己**的 Non-Goal（`design.md:37`），#245 **无此承诺**且把模板归一显式划给 #246，故收紧资产路径**不违反 #245**，只需在本 change 内修订自己的 Non-Goal 口径（写成「仅拒绝对该模板无效的键，不改变有效键的语义」）。② 资产路径实测：给 peer-review 资材传 `params={"workers":7}` 今天被**静默忽略**（正常起图）——这正是 D1#5 要消灭的「以为 params 生效了」假象，若只紧 `RunWorkflow` 而放过 `RunWorkflowAsset`，该假象在资产路径原样存留。③ 落点：`compile_pattern` 是唯一 choke point（`run_pattern` 待删、`RunWorkflowAsset:1201`、benchmark `agent_runner.py:516` 不传 params），在此校验零破坏既有测试。
+  **推荐**：在 `compile_pattern` 内做「按模板封闭键集」校验，`RunWorkflowAsset` 自动享受；同步修订 #246 自己的 Non-Goal 措辞。
+
+- **Q4（推荐不变）**: `wait=false` 回执作为显式判别子的「正交第二形状」可接受。
+  **具体场景（本轮补证）**：`RunWorkflow(template="bidding", task="选方案", wait=false)` 返回 `{status:"running", workflow_id, spec_hash, nodes:[]}`——本轮实测 `parent_envelope()` 为 **43 键**，与该 4 键回执键集不相交；回执 `status:"running"` 与终态集合不相交（`design.md:136` 的 7 个终态）。`wait` 是调用方显式声明，非服务端推断，符合 RIR「显式判别子」门槛。
+  **推荐**：确认接受 + 工具描述硬写「回执非结果」；若要更稳可加 `started: true`。
+
+- **Q5（新增）**: `params` 的校验是否**只有键名维**，还是**同时校验值类型/范围**？
+  **具体场景**：模型（或资产 recipe）给出 `RunWorkflow(template="orchestrator-worker", task="t", params={"workers": "abc"})`——今天实测抛 `ValueError: invalid literal for int() with base 10: 'abc'`，经 AgentLoop 的 retry 折成**裸 `[Error: invalid literal…]`** 进入上下文（既非 `invalid_input`、也无自足 `reason`、还不可重试）；`{"workers": null}` 抛 `TypeError`。而 `{"workers": -5}` 被静默 clamp 成 1（不报、不提示）。三个值域问题（非整数 / null / 越界）今天的表现各不相同，这恰是 D1 规则 #5 与 D3 想统一的「入参校验」面。
+  **推荐**：**同时校验值**——在 `compile_pattern` 的封闭键集校验里，对计数键要求「正整数（或可安全 `int()`）」、对 `worker_max_*` 要求数值，非法值一律 `invalid_input` 结构化拒绝（列出该模板可用键与取值约束）；**clamp 保留**（`0/-5 → 下界`是既有语义，不宜改），只把「无法转成数」这一类从裸异常改为结构化拒绝。**是否接受此口径变更请用户拍板**。
+
+### 第二轮 Review Notes
+
+- **（HIGH，须回写 spec delta 才可进入实现）** `specs/multi-agent-collaboration/spec.md:142` 的「对 `kind=="foreach"` 节点…暴露每个展开项的 `result_ref`，使 per-worker 全文在统一出口下**可达**」是对**失败/取消/预算超限项**的过度承诺（实测这些 run `result_ref` 恒 `None`）。必须改写为「成功项的 `result_ref` 可达；失败项给 bounded `reason`」，否则实现期为满足字面契约会去给失败 run 造 ref（超出本 change 范围）。
+
+- **（HIGH）** `item_refs` 需显式界。`params={"workers": N}` 无上界（`patterns.py:81`），成功项数受 `max_runs`（默认 300）间接限制，但设计文本未声明该界，且既有 bounded 回归测试不覆盖 foreach。建议 `item_refs` 投影附 `item_refs_omitted`/`items_total`，并复用 `_PARENT_FIELD_LIMIT` 之外的一个固定数组上限。
+
+- **（中）** `SaveWorkflowAsset` 描述（`subagents.py:948-951,960`）与 `run-pattern-web-demo.md`（整份）是**需改写**的模型面/文档文案，非单纯删除；tasks 5.8 的「零命中」措辞会把「改写」误当「删净」，建议在任务里显式区分。
+
+- **（中，tasks 精度）** `test_bus_bounded_exports.py` 有**两个** `RunPattern` 相关测试（`:187` 出口 2 经 `run_pattern`、`:207` 经 `RunPatternTool`）与**一个模块级 tool import**（`:34`）；tasks 5.5 只以「出口 2」一词概括，实现时须把该文件整体处理（含删 `:34` 的 import），否则收集期 ImportError。
+
+- **（低）** `bus.py:3` / `context.py:11` 模块 docstring 与 `scheduler.py:499-502` 的 `asset_source` 注释（自述「`RunWorkflow` 路径**从不**设置 `scheduler.spec`」，与 `run()` 在 `scheduler.py:795` 的 `self._spec = spec` 矛盾）三处措辞订正，tasks 5.4/5.9 已覆盖；本轮确认 `asset_source` 的唯一 pattern 写入点确为 `patterns.py:457-462`（与 R1 一致）。
+
+- **（低，未解疑点）** Q1 的 `item_refs` 若落 `GetWorkflow(detail='nodes')`，其 `nodes` 上限是 `_PARENT_NODES_LIMIT=200`，但 `item_refs` 是**嵌套**在每个 foreach 节点下、不受该 200 约束——是否需要第二个「节点内 item_refs 上限」由实现定；本报告只判定「需要一个界」，具体数值留给实现。
+
+### 第二轮结论
+
+**可以进入实现**，但**先须用户答复 Q1（补 `item_refs` 的三条订正：跳过空槽 / 不承诺失败项 ref / 自带界）与 Q3（是否把按模板封闭的键校验同步到 `RunWorkflowAsset`，即修订 #246 自设的 Non-Goal）与新增 Q5（值级参数校验口径）**；Q2/Q4 推荐维持第一轮不动。**在 Q1/Q3/Q5 得到明确答复前，grill-confirmation-gate 仍拦截代码写。**

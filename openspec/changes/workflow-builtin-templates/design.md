@@ -34,7 +34,7 @@
 - **不做静态模板文件（JSON/YAML）**。`WorkflowSpec` 没有模板/参数概念，`foreach.items` 是具体元组。纯文件模板需要发明「参数占位 → 展开」的求值规则，且新增可写面，与仓库「DSL 受限可校验、不执行模型生成代码」的安全姿态相悖（`agent/subagent/workflow.py:15-16, 27-32`）。模板参数化留在 Python 或 #245 的配方层。
 - **不做模型手写 prompt 模板**（kimi/codex 那种单一 `{{item}}`/`{column}` 字面替换）。本 change 的 `template` 是**服务端配方的引用**，不是模型可写的字符串——开了这个口就等于打开本 change 要避开的占位符求值面。
 - **不改 `parent_envelope()` / `_envelope()` 的内容**（除「谁是它的调用方」外逐字不动）。`_envelope` 仍是权威 envelope（C2 断言依赖），`parent_envelope` 的投影规则、`nodes_omitted` 语义、`_PARENT_*` 上限全不动。
-- **不改资产 schema 与 4 个资产工具的对外行为**（`workflow_assets.py` 不动）。是否把 `RunWorkflowAsset` 也并入统一入口是独立判断（见 Open Questions）。
+- **不改资产 schema 与 4 个资产工具的对外行为**（`workflow_assets.py` 不动）。是否把 `RunWorkflowAsset` 也并入统一入口是独立判断（见 Open Questions）。**R2 订正**：本条的准确口径是「不改资产 **schema**、不改变**有效键的语义**」——把模板封闭键校验同步到 `RunWorkflowAsset` 的 pattern 分支（拒绝该模板无效的键）**不算违反本条**：它只拒绝本就无效的输入，不改变任何有效输入的行为。该收紧的最终取舍见 Open Questions Q3。
 - **不改 benchmark 三模式**、不改 `workflow_id` 生成与 per-run 结果落点、不改内置模板编译结果。
 - **不改模型当轮声明 spec 的行为**（#245 的「声明路径不钳制」口径逐字不变）。
 
@@ -95,7 +95,14 @@
 >
 > 而**今天** legacy 出口的每个 worker 条目**确实**带 `result_ref`（`_worker_entry` 截断时注入，`patterns.py:365-372`，实测 workers=3 时三条各自可 `ReadWorkflowResult`）。所以删 `_legacy_result` 是**净损失**一条能力，不是「多一跳」。
 >
-> 最小补偿改法（若拍板补）：让 `_node_refs()`（或 `GetWorkflow(detail='nodes')`）对 `kind=="foreach"` 节点读 `state.item_runs`，吐 `item_refs: [{index, subagent_id, run_id, result_ref}]`——纯读投影，`item_runs` 已是权威身份源（`web/session.py` 同款用法已存在）。**这是本 change 实现前必须拍板项**（Open Questions Q1）：补则 task 5.6 的断言可落地；不补则 task 5.6 必须显式缩水并记录损失，SHALL NOT 静默降级成「只断言 `root_result_ref`」。
+> 最小补偿改法（若拍板补）：让 `_node_refs()`（或 `GetWorkflow(detail='nodes')`）对 `kind=="foreach"` 节点读 `state.item_runs`，吐 `item_refs: [{index, subagent_id, run_id, result_ref?}]`——纯读投影，`item_runs` 已是权威身份源（`web/session.py:1207,1213` 同款用法已存在）。**这是本 change 实现前必须拍板项**（Open Questions Q1）：补则 task 5.6 的断言可落地；不补则 task 5.6 必须显式缩水并记录损失，SHALL NOT 静默降级成「只断言 `root_result_ref`」。
+>
+> **⚠️ R2 实测再订正（三条硬约束，实现必遵，见 `reviews/grill-design.md` 第二轮 Confirmed Decisions）**：
+> 1. **只承诺成功项的 ref**。`result_ref` 只在成功路径 `_complete_run` → `_write_result_artifacts` 写（`manager.py:1326-1388`）；`_mark_failed`/`_mark_cancelled`/`_mark_budget_exceeded` **都不落盘**。实测：失败项 `result_ref=None`、取消项 `None`、`worker_max_tokens` 超限项 `None`。故 `item_refs` 里 `result_ref` **仅对成功项出现**，失败项给有界 `reason` + 状态——与 legacy `_worker_entry`（只在 `truncated and ref` 时注入，`patterns.py:365-372`）**同口径**，不是净回归。spec delta 已按此改写（初稿「每个展开项…可达」是过度承诺）。
+> 2. **跳过未派发的空槽**。`item_runs` 槽在派发前是默认 `_ItemRunSlot()`（`subagent_id=None`/`run_id=None`）。实测（`max_total_runs=2` / 6 项 foreach）容器被预算 drain 拦下时 6 个槽全空（`fan: status=blocked item_states=['pending']*6`）。投影须跳过空槽。
+> 3. **自带界**。计数键无上界（`patterns.py:81` 是 `max(1, int(...))`，实测 `params={"workers": 100000}` → 10 万 item）。成功项数被 `max_runs`（默认 300）间接界定，但设计文本必须显式声明该界，并附 `items_total`/`item_refs_omitted`——否则把「只读出口」重新撑成随规模线性的数组，正是投影纪律要消灭的形态。
+>
+> **「更小改法」（在 `parent_envelope()._bounded_node` 里直接带 per-item 投影）——R2 明确否决**：它同时违反本 change 的 Non-Goal（`parent_envelope`/`_envelope` 逐字不动，见 §Non-Goals）与投影纪律（`_bounded_node` 明写「丢弃随图规模线性增长的数组」，`scheduler.py:389-405`）。选 `GetWorkflow(detail='nodes')` 那个出口是对的——它本就允许逐节点 `result_ref`（`subagents.py:775-781`）。
 
 **替代方案与否决理由**：
 - **按入参返回两种形状**（template → legacy，spec → envelope）——否决。这是 RIR 明确警告的形态：调用方无法在不知道入参的情况下解析返回体；MCP/function-calling 文献把它列为记录在案的坑。本 change 的核心诉求正是消除这个认知负担，不能用一个新版本重建它。
@@ -118,7 +125,13 @@
 | `bidding` | `proposers` / `worker_max_tokens` / `worker_max_time_s` |
 | `peer-review` | `max_rounds` / `worker_max_tokens` / `worker_max_time_s` |
 
-不属于该模板的键 → 结构化拒绝，`reason` 列出该模板的可用键。**这是行为变更**：`RunWorkflowAsset` 的 pattern 分支今天会把 recipe 默认 params 与调用方 params 合并后直接编译（`subagents.py:1198-1199`），历史上允许「多传无关键」；收紧后若某资产 recipe 存着跨模板键会被拒。是否让 `RunWorkflowAsset` 同步享受该收紧（会触碰「资产工具对外行为不变」这条 Non-Goal），见 Open Questions Q3。
+不属于该模板的键 → 结构化拒绝，`reason` 列出该模板的可用键。
+
+**校验落点（R2 实测）**：落在 **`compile_pattern` 这一唯一 choke point**，三个生产调用方共用——`RunWorkflowAsset` 的 pattern 分支（`subagents.py:1201`）、benchmark `_run_template_pattern`（`agent_runner.py:516`，**不传 params**）、以及本 change 的统一入口。既有测试全部只用模板自身的键，在此校验**零破坏**。`RunWorkflowAsset` 因此**自动享受**同一校验。
+
+**Q3 归属澄清（R2 实测订正）**：「资产工具对外行为不变」这条 Non-Goal 是**本 change（#246）自己**的设计约束（`design.md` §Non-Goals、`proposal.md` §Non-Goals），**不是 #245 的承诺**——#245 的 Non-Goals 无此项，且它**显式把内置模板归一划给 #246**（归档 design 原文：「**不做内置模板归一。** 内置 4 个 pattern 走代码内注册表（`PATTERNS`）……那是 #246 的范畴」）。故把按模板封闭的键校验同步到 `RunWorkflowAsset` **不违反 #245**，只需在本 change 内把该 Non-Goal 措辞修订为「仅拒绝对该模板无效的键，不改变有效键的语义」。实测资产路径今天确实放行跨模板键（caller `params={"workers": 7}` 打到 peer-review 资产 → 起图正常、`workers` 被静默忽略）——这正是本条要消灭的假象。是否接受收紧见 Open Questions Q3。
+
+**必须同时做值级校验（R2 新增，Q5）**：设计初稿只写了「未知键」一维，漏了「值非法」维。实测：`params={"workers": "abc"}` 在 `_template_*` 抛**未捕获** `ValueError`（`int("abc")`）、`{"workers": None}`/`{"teams": [1,2]}` 抛 `TypeError`，经 `execute_with_retry` 折成模型可见的**裸 `[Error: invalid literal for int()…]`**（非结构化、不可重试、无自足 reason），与 D1 规则 #5 的口径冲突。故校验须含值类型：计数键要求「可安全 `int()` 且为正整数」、`worker_max_*` 要求数值；非法值 → `invalid_input`。**clamp 保留**（`0/-5 → 下界`是既有语义，实测 `workers:0 → 1`，不宜改）——只把「无法转成数」这类从裸异常改成结构化拒绝。是否接受见 Open Questions Q5。
 
 **依据**：RIR 显示所有参考实现都把参数化放在代码/配置层，占位符集封闭且启动前校验；Asterwynd 的 `compile_pattern` 已经是这个容器，#245 的 `ALLOWED_OVERRIDE_FIELDS` 封闭子集已示范同一门槛（零新方言、直接赋值、覆盖后重校验）。
 
@@ -196,5 +209,6 @@
 
 1. **per-worker 明细损失**：统一出口下 foreach 类模板（三个模板）的 per-worker `result_ref` 不可达（实测）。是接受损失，还是补 `_node_refs` 的 `item_runs` 投影？
 2. **`completed`/`failed` 口径**：从节点口径翻成 run 口径（实测 peer-review 2→4）。是否接受「run 口径 + 工具描述写明」？
-3. **`params` 校验按模板封闭**：是否接受「跨模板键结构化拒绝」这一行为变更，以及 `RunWorkflowAsset` 的合并路径是否同步收紧？
+3. **`params` 校验按模板封闭**：是否接受「跨模板键结构化拒绝」这一行为变更，以及 `RunWorkflowAsset` 的合并路径是否同步收紧？（R2 澄清：这不违反 #245，仅需修订本 change 自设的 Non-Goal。）
 4. **`wait=false` 回执**：与终态 `parent_envelope()` 形状完全不同，是否确认为可接受的「正交第二形状」？
+5. **`params` 值级校验（R2 新增）**：是否在封闭键集之外同时校验值（非整数 / null / 越界），把今天的裸 `ValueError`/`TypeError` 改为 `invalid_input` 结构化拒绝？clamp 保留。
