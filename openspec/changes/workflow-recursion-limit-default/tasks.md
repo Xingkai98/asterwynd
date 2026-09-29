@@ -5,8 +5,8 @@
 ## 0. 设计追问（实现前门禁）
 
 - [x] 0.1 跑 `batch-grill-me`（`/grill` 等价流程：独立零记忆 subagent）审视 design.md D1–D5 与 Open Questions，产出 `reviews/grill-design.md`（≥3 条决策记录 + `## Open Questions` + `## User Confirmation`）。已产出 5 条 Confirmed Decisions + 6 条 Design Corrections + 6 条 Open Questions。
-- [ ] 0.2 停轮把 `## Open Questions` 逐条配具体例子交用户拍板；答复记录进 `reviews/grill-design.md` 的 `## User Confirmation`（每条含实质内容 + 确认时间）。**当前停在停轮点，等用户答复 Q1–Q6。**
-- [ ] 0.3 把 grill 结论与用户答复回写 design.md 的 `## Pre-Implementation Review`，并把 D1/D3/D5 的结论按答复定稿。（grill 结论与 5 条 Design Corrections 已回写；用户答复结论待 Q1–Q6 拍板后补。）
+- [x] 0.2 停轮把 `## Open Questions` 逐条配具体例子交用户拍板；答复记录进 `reviews/grill-design.md` 的 `## User Confirmation`。**Q1–Q6 已全部确认（2026-09-29）**：Q1 不收敛 / Q2 维持 100 / Q3 接受指纹变化 / Q4 归属 #246（change-id `workflow-builtin-templates`）/ Q5 只做 peer-review 拓扑回归 / Q6 保留覆盖语义句。
+- [x] 0.3 把 grill 结论与用户答复回写 design.md 的 `## Pre-Implementation Review`，并把 D1/D3/D5 的结论按答复定稿。已完成：D1/D3/D5 的「备选（未采纳）」均已标 **✅ 已确认（2026-09-29）**；Q1–Q6 在 Open Questions 节各有答复实质；换算比一节同时写明 superstep/轮 与 run/轮 两个比值。
 
 ## 1. 默认值改为 100（四处定义点 + docstring 同步）
 

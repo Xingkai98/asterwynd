@@ -64,4 +64,16 @@
 
 ## User Confirmation
 
-待主 session 回填
+> 停轮确认结果（2026-09-29）：Q1–Q6 全部由用户拍板，均采纳推荐方案 A（Q2 为「维持 100」）。逐条答复实质如下。
+
+- **Q1**: 用户答复：方案 A——**不收敛**四处默认值字面量，只改数值 + 用测试锁三路径一致，不为「只调默认值」引入 `agent/config.py` → `agent/subagent/workflow.py` 层间依赖；确认时间: 2026-09-29
+- **Q2**: 用户答复：**维持 100**——100（≈33 轮、67 run）是「显著改善现状（9 → 33 轮）」与「远离 `max_runs=300` 冲突」的交点，且可被配置覆盖、日后偏紧再调成本低；并**要求 design 如实写明**：调研没有支持 100 是业界共识值（LangGraph 10007 / deepseek-harness 256 / opencode 与 kimi-code 不限），100 的正当性来自**本仓内部约束**（与 `max_runs=300` 共存）而非外部先例；确认时间: 2026-09-29
+- **Q3**: 用户答复：方案 A——**接受**「显式写 25/100 的资产 `spec_hash` 一次性变化」，不改哨兵设计（不做「总是序列化三闸」，避免每个存量资产指纹都变）；确认时间: 2026-09-29
+- **Q4**: 用户答复：方案 A——本 change 只声明「诊断反馈不属本 change」；**归属确认为 #246**（主 session 核验：`declared_max_rounds`/`rounds_actually_run`/`limit_source` 已在 #246 的 change 文档 `workflow-builtin-templates` 的 `design.md` D7 里，只是未回填 issue #246 正文，故本 change 查证「正文 0 处命中」属实但归属仍是 #246）；并要求在 proposal/design 里把交叉引用写实（引 change-id `workflow-builtin-templates` 而非 issue 正文）；确认时间: 2026-09-29
+- **Q5**: 用户答复：方案 A——**只做 peer-review 拓扑回归**，其它拓扑由既有 `max_runs`/`max_nodes` 测试覆盖，不额外补 foreach 断言；确认时间: 2026-09-29
+- **Q6**: 用户答复：方案 A——**保留** spec delta 新增的「配置项覆盖语义」规范句（固化既有 `_eff_limit` min 钳制方向，便于后续 `RunWorkflowAsset` 钳制相关 change 引用）；确认时间: 2026-09-29
+
+## Cross-Reference（用户澄清，2026-09-29）
+
+- **换算比两个量纲都对**（用户主 session 核验）：`limit/轮`（superstep/轮）收敛 **3.00**，`runs/轮` 收敛 **2.00**。本 change 原表述「≈3 × 轮数」指前者、「1.9」指后者，二者不矛盾、量纲不同。design Context 已同时列出两个比值，并注明「取回归测试 N 时须按 superstep/轮（3）反推」——避免实现期混用（按 run/轮 ≈2 反推会把 N 取小、使对照组失效）。
+- **诊断反馈归属**：issue #262 正文说「归 #246」。本 change 初查发现 **issue #246 正文**无那三个字段名（该查证属实），但**归属确实是 #246**——机制写在 change **`workflow-builtin-templates`** 的 `design.md` D7（5 处），只是没回填到 issue 正文。故本 change 的 proposal/design 交叉引用改为引 **change-id**。两侧无顺序依赖。

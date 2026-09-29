@@ -24,7 +24,7 @@ C2 `workflow-dsl-scheduler`（issue #181，已合入归档 2026-09-14）把图�
 | 100 | 67 | ~34 |
 | 300 | 200 | ~100 |
 
-换算比约 `recursion_limit ≈ 3 × 轮数`（peer-review 一轮约 1.9 superstep），**且依赖模板拓扑**。两个后果：
+换算比**依赖模板拓扑**，且同一组数据有**两个量纲**须分清（详见 design Context 的比值表）：`recursion_limit ≈ 3 × 轮数` 说的是 **superstep/轮**（收敛 3.00，图级闸口径）；`≈ 1.9 run/轮` 说的是 **run/轮**（收敛 2.00，记账口径）。取回归测试的 `N` 必须按前者。两个后果：
 
 1. **迭代式任务默认约 9 轮就撞顶**（例如「把方案改到批准」这类 `route` 回边循环），远低于用户直觉预期；用户看到 `graph_recursion_exceeded` 时容易误判成自己参数写错。
 2. **调大 `max_rounds` 完全无效**：peer-review 的 `max_rounds` 只落到 route 节点的 `max_routes`（`agent/subagent/patterns.py:179,211`），而图级 `recursion_limit` 先于它触发（`agent/subagent/scheduler.py:959`）。实测 `max_rounds=9` 与 `max_rounds=100000` 输出逐字相同。
@@ -97,5 +97,5 @@ C2 `workflow-dsl-scheduler`（issue #181，已合入归档 2026-09-14）把图�
   - **资产加载/重跑路径不受破坏**：`WorkflowAsset.spec_hash` 保存时冻结、加载不重算（`workflow_assets.py:213`）；`RunWorkflowAsset` 重跑走 `parse_spec_for_manager` 重解析（`subagents.py:1209-1215`），故未声明键的存量资产**按新默认 100 生效**（本 change 的收益），显式 25 的资产仍按 25 生效、`limit_ceiling` 现为 100（钳制方向不变）。
 - **代价权衡（issue #262 明确要求如实记录）**: `recursion_limit` 是默认配置下主要的结构后盾之一，调大 4 倍意味着**一次失控循环最坏烧掉的 run 数从约 17 涨到约 67**（peer-review 实测），而四维成本预算默认**不限**（#196），即最坏情况下没有成本闸兜底。这是**有意**的取舍：与 #196 同口径（不与「默认不限」精神冲突——`recursion_limit` 是结构闸，不是成本软闸），且 67 仍 **远低于** `max_runs=300`，两个结构闸不打架。缓解面：①`max_runs=300` 与 `max_nodes=200` 仍是硬上限；②用户可显式写回 `subagents.workflow.recursion_limit`（含调小）恢复旧行为；③route 节点自身的 `max_routes` 仍是环的第一道闸。
 - **流程（process）**: 本 change 触及受保护路径 `openspec/specs/**`，需 `current_spec_synced` 结构化事件 + grill 证据 + building review；收尾按 OpenSpec archive 流程归档。实现须在独立 worktree、`workflow-recursion-limit-default/2026-09-29` 分支。
-- **与 #246 的边界（避免重叠）**: 本 change **只调默认值**，不含任何诊断/反馈机制。`graph_recursion_exceeded` 诊断增补 `declared_max_rounds` / `rounds_actually_run` / `limit_source` 一类「让模型知道该调什么」的反馈，**不在本 change 范围**。issue #262 正文把该反馈机制记为「归 #246」，但经核实 **#246 的实际内容是「内置模板归一：RunPattern 融合进 Workflow DSL 入口」，其正文与 0 条评论里均无 `graph_recursion_exceeded` / `declared_max_rounds` / `limit_source` 字样**；全仓（代码 + 文档）也搜不到这三个标识符。故本 proposal 只声明「诊断反馈机制不属本 change」，**不断言它归哪个 issue**——该归属待用户澄清（见 Open Questions）。
-- **未知/待确认**: ①候选值 100 的最终确认（调研显示业界取值跨越 30–10000，100 偏保守但符合本仓 `max_runs` 约束）；②四处字面量是否收敛为单一常量；③诊断反馈机制的归属 issue。均列入 design 的 Open Questions。
+- **与 #246 的边界（避免重叠）**: 本 change **只调默认值**，不含任何诊断/反馈机制。`graph_recursion_exceeded` 诊断增补 `declared_max_rounds` / `rounds_actually_run` / `limit_source` 一类「让模型知道该调什么」的反馈，**不在本 change 范围**，由 change **`workflow-builtin-templates`**（issue #246）承担——该机制已定在该 change 的 `design.md` **D7**（增 `GraphRecursionError.to_dict()` 字段 + 用 `asset_source` 取 `declared_max_rounds`），并正在随其实现。**注意交叉引用方式**：机制写在 change 文档而非 issue #246 正文（正文无这三个字段名），故此处引 change-id 而非 issue 正文。两侧无顺序依赖（本 change 先合入或 `workflow-builtin-templates` 先合入均成立）。
+- **已确认结论（2026-09-29，用户拍板）**: ①候选值 **100 维持**（正当性来自本仓 `max_runs=300` 约束而非业界先例，design D1 已如实写明）；②四处默认值字面量 **不收敛**（design D5）；③诊断反馈机制归属 **#246 / `workflow-builtin-templates`**（上一条）。详见 design 的 `## Open Questions`（Q1–Q6 全部 ✅ 已确认）与 `reviews/grill-design.md` 的 `## User Confirmation`。
