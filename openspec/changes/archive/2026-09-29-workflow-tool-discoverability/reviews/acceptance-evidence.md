@@ -115,23 +115,21 @@ proposal 的门槛是「**无探针 workflow（S0 = 0）且原任务完成（S6 
   证伪并弃用，见上。）**本 change 未达它自己立下的主指标门槛。**
 - **趋势口径**：S0 从基线 9 降到改后均值 5.67（≈37% 降幅），迭代数 43→34，且**探针的性质发生了
   质变**——见下。
-- **诚实结论**：本 change 使「域不可见」这一类失败**归零**（见下表，这是它设计要解决的），但
-  **没有把探针数压到 0**；剩余探针集中在它**不覆盖**的「运行期语义」层。
+- **诚实结论**：本 change 使「域不可见」这一类失败**大幅减少（4/5 → 1/4）但未归零**，探针数也**没有压到 0**（剩余探针集中在它不覆盖的「运行期语义」层）。**它未达自己立下的主指标门槛。**
 
-### 关键质性发现：本 change 针对的**错误类**被消除，但探针未归零
+### 关键质性发现：本 change 针对的**错误类**大幅减少（未归零），探针未归零
 
 按「错误/探针的**成因**」分类（这是判断 change 是否命中目标的核心，而非只看 S0 数字）：
 
 | 成因类 | 基线 | 改后 |
 |---|---|---|
-| **域不可见**（自造 enum 值 / 自造字段名） | **4/5 次 `invalid_spec`**（逐条可复核）：`edge 'dispatch' -> 'w1' channel must be one of [...]`（自造 `channel` 值）、`unknown edge field(s): ['label']`、`unknown node field(s): ['routes']`、`unknown node field(s): ['task_note_unused']`；另有 `probe route cases schema (dict form)` 这类**专门探 schema** 的探针 | **0 次**。改后 2 次 `invalid_spec` **全部**是 `node 'a'/'agg' slot 'result' is written by multiple upstreams ... declare no reducer`（一条**已在描述与 schema 里写明**的图构造规则，属「模型没照做」而非「模型看不到域」） |
-| **运行期语义不可见**（foreach item 如何注入、route 读的是谁的文本、回边是否传数据） | 有（如 `probe whether a route back-edge delivers input to the loop start`） | **是改后探针的全部**（run 1 6 条、run 2 7 条、run 3b 4 条，共 17 条：foreach item 模板注入、`route 出边/非必需数据边是否传递上游内容`、`bus channel`、占位符写法、route 读谁的文本）。**这一类不在本 change 的范围内**——本 change 补的是**声明期的域**（枚举/字段），不是**运行期的数据投递语义**（后者更接近 issue #208 的「运行后可观测性」与更深层的 DSL 文档）。**改后 0 条探针属「域不可见」类** |
+| **域不可见**（自造 enum 值 / 自造字段名） | **4/5 次 `invalid_spec`**（逐条可复核）：`edge 'dispatch' -> 'w1' channel must be one of [...]`（自造 `channel` 值）、`unknown edge field(s): ['label']`、`unknown node field(s): ['routes']`、`unknown node field(s): ['task_note_unused']`；另有 `probe route cases schema (dict form)` 这类**专门探 schema** 的探针 | **由 4/5 降到 1/4**（**不是 0——此处早前写「0」是过度声称，已订正**）：改后 3 次合计 4 条 `invalid_spec`，其中 **3 条**是 `... slot 'result' is written by multiple upstreams ... declare no reducer`（**已在描述与 schema 里写明**的图构造规则，属「模型没照做」）；**1 条**是 run 3b 的 `unknown node field(s): ['desc_placeholder']`——模型为一个**运行时模板占位符约定**自造了一个节点字段（该约定不属 schema 可枚举的声明域，与基线的 `channel`/`routes` 不同子类，但**确是一条 `unknown node field` 形态的域外错误**） |
+| **运行期语义不可见**（foreach item 如何注入、route 读的是谁的文本、回边是否传数据） | 有（如 `probe whether a route back-edge delivers input to the loop start`） | **是改后探针的全部**（run 1 6 条、run 2 7 条、run 3b 4 条，共 17 条：foreach item 模板注入、`route 出边/非必需数据边是否传递上游内容`、`bus channel`、占位符写法、route 读谁的文本）。**这一类不在本 change 的范围内**——本 change 补的是**声明期的域**（枚举/字段），不是**运行期的数据投递语义**（后者更接近 issue #208 的「运行后可观测性」与更深层的 DSL 文档）。**改后 17 条探针全部属这一类、0 条属「域不可见」类**（注意：这是**探针**口径；`invalid_spec` 仍残留 1 条域外错误，见上行） |
 
 > 基线的第 5 次 `invalid_spec` 是 **shape 类**（`route node 'gate' cases must be a list`——把 `cases`
 > 写成了对象而非数组），不属「域不可见」；改后 schema 已把 `cases` 标为 `"type":"array"`，该类也归零。
 
-**读法**：改后模型**不再探「这个字段有哪些合法值」**（schema 已可见），转而探**「这条边在运行时
-到底把谁的文本交给了谁」**——后者是另一个问题域。S0 未归零，主要来自这第二类。
+**读法（订正后、更保守）**：改后模型**基本不再探「这个字段有哪些合法值」**——17 条探针**全部**属「运行期语义」类（foreach item 如何注入、route/边读谁的文本、bus channel 行为），**0 条属「域不可见」类**；`invalid_spec` 里的域不可见类由 4/5 降到 **1/4**（残留 1 条是 run 3b 为模板占位符自造的 `desc_placeholder` 字段）。S0 未归零，探针全在第二类；且**残留 1 条域外错误**说明「域不可见」未被**完全**消除。
 
 ### 软判断（主 session 视角，回答 proposal 的「理解工具 vs 理解任务」）
 
