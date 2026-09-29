@@ -43,14 +43,33 @@ def current_sandbox_sink() -> SandboxEventSink:
     return _current_sink.get()
 
 
-def set_sandbox_sink(sink: SandboxEventSink) -> None:
-    """Set the active sink for the current execution context.
+def set_sandbox_sink(sink: SandboxEventSink) -> Any:
+    """Set the active sink for the current execution context; return the token.
 
-    Callers are responsible for save/restore (mirror the loop's
-    ``_active_trace_recorder`` pattern) so nested runs and runs without a
-    recorder do not leak events into the wrong trace.
+    Restore with ``reset_sandbox_sink`` — *not* by re-``set``-ing the previous
+    sink. Sinks are scoped to the execution context that installed them, so the
+    caller must name the context it is restoring in; the token does exactly
+    that, and ``reset`` rejects a token from another Context (see
+    ``reset_sandbox_sink``).
     """
-    _current_sink.set(sink)
+    return _current_sink.set(sink)
+
+
+def reset_sandbox_sink(token: Any) -> None:
+    """Restore the sink that was active when ``token`` was created.
+
+    ``ContextVar.reset`` only accepts a token in the Context it was created in,
+    raising ``ValueError`` otherwise. That is the desired behaviour, not an
+    obstacle: an abandoned Task finalised by GC after its loop closed runs this
+    restore in whatever Context happens to be *live* (issue #264), and skipping
+    the write there is exactly what keeps a later run's event ownership intact.
+
+    Note the exception is ``ValueError`` for a foreign Context but
+    ``RuntimeError`` for a token that was already consumed once — that second
+    case stays uncaught by design, since a token created by a single
+    ``AgentLoop.run`` is consumed at most once.
+    """
+    _current_sink.reset(token)
 
 
 def _truncate_command(command: str, max_len: int = MAX_COMMAND_LEN) -> str:

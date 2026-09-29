@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-264-sandbox-sink-context",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a7031697fe9edcb6e",
+  "base_sha": "7acde2b396229e3729dc177032f90f29bfe891b9",
+  "head_sha": "d811c46c7cbcebddd3b0bbfce753df66f145b0c2",
+  "tasks_hash": "sha256:0792a5f8247925d3bf6c588a67e6d18a8ede768b051746344fa4741966e9ee37",
+  "spec_hash": "sha256:34b713bd5f40eba96929adca2f2024b44b13960dd4b61d0f18b0986b32c8a0be",
+  "diff_hash": "sha256:b83b1cbcb0cf0e69f744c979fd79efe39aa59de6642d8c19a95e00a6f812b76f",
+  "report_hash": "sha256:2ec7514eefa91e75d6ab19425807ded6dec021119633396a493907ad5f18eefc"
+}
