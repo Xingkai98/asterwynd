@@ -882,12 +882,41 @@ class WorkflowScheduler:
 
         ``_check_declared_limits``（``run()`` 路径）与 ``_drive`` 的内部捕获都会走到
         这里；计数幂等，避免同一次超限被记两次。
+
+        Q7 方案 A（D7）：模板图（携带 ``max_rounds`` 声明）被截断时，诊断补
+        ``declared_max_rounds`` / ``rounds_actually_run`` / ``limit_source``——把诚实
+        放进错误里，让模型知道是自己的声明过大而非只看到「超了递归上限」。
         """
         self._accepting = False
         self._diagnostics = exc.to_dict()
+        self._diagnostics.update(self._truncation_diagnostics(exc))
         self._status = "graph_recursion_exceeded"
         self._graph_recursion_runs = 1
         self._emit_graph_snapshot()
+
+    def _truncation_diagnostics(self, exc: GraphRecursionError) -> dict[str, Any]:
+        """模板 ``max_rounds`` 被图级闸门截断时的可行动诊断（Q7 方案 A / D7）。
+
+        仅当图由**内置模板**产出且其配方携带 ``max_rounds`` 声明时填充；纯 DSL 图
+        （无 ``max_rounds`` 概念）三字段一律 ``None``——不臆造。``asset_source`` 是
+        pattern 溯源（D4），``declared_max_rounds`` 直接取自它的 ``params``，零新增通道。
+        """
+        source = getattr(self, "asset_source", None) or {}
+        params = source.get("params") or {}
+        if source.get("kind") != "pattern" or "max_rounds" not in params:
+            return {
+                "declared_max_rounds": None,
+                "rounds_actually_run": None,
+                "limit_source": None,
+            }
+        return {
+            "declared_max_rounds": params.get("max_rounds"),
+            # 轮数口径 = route 穿越次数（与 ``max_rounds`` 语义最近；见 D7）。
+            "rounds_actually_run": max(self._route_counts.values(), default=0),
+            # 界来源 + 数值：``reason`` 是闸名（recursion_limit / max_routes / ...），
+            # ``limit`` 是其数值。Q7 修正 3 要求「界与来源可追溯」。
+            "limit_source": f"{exc.reason}:{exc.limit}",
+        }
 
     def _check_declared_limits(self, spec: WorkflowSpec) -> None:
         """运行期记账复检（grill 决策 6）：自动插入的节点也要吃 ``max_nodes``。
