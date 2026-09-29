@@ -2,23 +2,28 @@
 
 > 实现前须完成 grill（`reviews/grill-design.md`）与停轮确认。测试先行（TDD）：每条实现任务先落回归/新测试再落代码。
 
-## 0. 实现前设计追问（batch-grill-me）
+## 0. 实现前设计追问（batch-grill-me）——已解除阻塞
 
-- [ ] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`（等价设计追问），逐项审视 design.md 的 D1–D6，产出结构化决策记录到 `reviews/grill-design.md`（≥3 条决策 + `## Open Questions` + `## User Confirmation`）
-- [ ] 0.2 停轮把 `## Open Questions`（Q1 per-worker ref 通道 / Q2 completed 口径 / Q3 params 按模板封闭 / Q4 wait=false 回执 / **Q5 params 值级校验**）逐条配具体例子交用户确认，答复记录进 `grill-design.md` 的 `## User Confirmation`；收到答复前不写实现代码
-- [ ] 0.3 按 Q1 答复回写 design D2 与 tasks 4.6/5.6（补 `item_refs` 投影 或 显式记录损失缩水）；按 Q3/Q5 答复回写 design D3 与 spec delta
+> **阻塞已解除（2026-09-29）**：两轮独立 grill 完成，Q1–Q6 全部拍板并记录于 `reviews/grill-design.md` 的 `## User Confirmation` 与 `design.md` 的 `## Open Questions（全部 ✅ 已确认）`。grill-confirmation-gate 已满足，实现可开工。
+
+- [x] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`（等价设计追问），逐项审视 design.md 的 D1–D6，产出结构化决策记录到 `reviews/grill-design.md`（第一轮 11 决策 + 4 OQ；第二轮 12 决策 + 新增 Q5）
+- [x] 0.2 停轮把 `## Open Questions`（Q1 per-worker ref 通道 / Q2 completed 口径 / Q3 params 按模板封闭 / Q4 wait=false 回执 / Q5 params 值级校验 / **Q6 workers 上界归位**）逐条配具体例子交用户确认，答复记录进 `grill-design.md` 的 `## User Confirmation`
+- [x] 0.3 按 Q1 答复回写 design D2 与 tasks 4.6/5.6；按 Q3/Q5/Q6 答复回写 design D3、Non-Goals 与 spec delta
 
 ## 1. 共享配方编译路径（D3 / D4）
 
 - [ ] 1.1 在 `agent/subagent/patterns.py` 落共享 helper `_compile_recipe(pattern, task, params) -> WorkflowSpec`（实现期定名）：内部即 `compile_pattern`，统一「未知模板名 → 结构化拒绝」的措辞；被统一入口与资产路径共用
 - [ ] 1.2 在 `agent/subagent/patterns.py` 落 **per-template** `params` 校验（R2 订正：不是全局并集）——按模型各自的封闭键子集（orchestrator-worker: `workers`/`worker_max_*`；hierarchical: `teams`/`worker_max_*`；bidding: `proposers`/`worker_max_*`；peer-review: `max_rounds`/`worker_max_*`），不属该模板的键结构化拒绝并在 `reason` 列出该模板可用键
-- [ ] 1.2a 落 **值级校验**（R2 Q5）：计数键要求可安全 `int()` 且为正整数、`worker_max_*` 要求数值；非整数/null/不可转数 → `invalid_input` 结构化拒绝（今天抛未捕获 `ValueError`/`TypeError` → 模型见裸 `[Error: …]`）。**clamp 保留**（`0/-5 → 下界`是既有语义）
-- [ ] 1.3 单测：helper 对 `{"workers": 3}` 的产出与 `compile_pattern("orchestrator-worker", task=…, params={"workers": 3})` 的 `spec_hash` 相等；未知键 / 跨模板键（`peer-review + workers:7`）/ 非整数值（`workers:"abc"`）/ `null` 各一条结构化拒绝；`workers:0` 仍 clamp 为 1（不报错）
+- [ ] 1.2a 落 **值级校验**（Q5）：计数键要求可安全 `int()` 且为正整数、`worker_max_*` 要求数值；非整数/null/不可转数 → `invalid_input` 结构化拒绝（今天抛未捕获 `ValueError`/`TypeError` → 模型见裸 `[Error: …]`）。**clamp 保留**（`0/-5 → 下界`是既有语义）
+- [ ] 1.2b 落 **上界归位**（Q6）：计数键（`workers`/`teams`/`proposers`）**> 既有 `max_items`（默认 20）→ `invalid_input` 拒绝**，`reason` 写明该上限来自既有 `max_items` 闸。**不新增任何上界**——三闸（`max_items`/`max_nodes`/`max_runs`）仍是唯一权威边界；本校验只把今天的**静默截断**（实测 `workers=50` 只跑 20）变为显式拒绝。**`max_items` 本身不改**
+- [ ] 1.3 单测：helper 对 `{"workers": 3}` 的产出与 `compile_pattern("orchestrator-worker", task=…, params={"workers": 3})` 的 `spec_hash` 相等；未知键 / 跨模板键（`peer-review + workers:7`）/ 非整数值（`workers:"abc"`）/ `null` / 超上界（`workers:50`）各一条结构化拒绝；`workers:0` 仍 clamp 为 1（不报错）
+- [ ] 1.4 回归：确认 `workers`≤20 的既有调用方（测试实测最大用 3）与 benchmark `template` 臂（不传 params）不受新校验影响
 
 ## 2. 统一 Workflow 入口的 template 输入（D1）
 
 - [ ] 2.1 测试先行：`RunWorkflow` 的四条非法组合各一条（同时给 spec+template / 都不给 / template 缺 task / 未知模板名）+ spec 路径带 params 或 task 拒绝
-- [ ] 2.2 扩展 `RunWorkflowTool`（`agent/tools/builtin/subagents.py`）的 `tool_parameters`：新增 `template`/`task`/`params`，描述里写明「exactly one of spec/template」与「`wait=false` 返回启动回执而非结果」
+- [ ] 2.2 扩展 `RunWorkflowTool`（`agent/tools/builtin/subagents.py`）的 `tool_parameters`：新增 `template`/`task`/`params`，并**摘掉 `"required": ["spec"]`**（R2 实测：否则 `RunWorkflow(template=…)` 在模型侧被判缺参）
+- [ ] 2.2a **工具描述文案（Q2/Q4 拍板要求）**：`RunWorkflow` 描述里写明 ①「exactly one of `spec`/`template`」；②「`completed`/`failed` 数的是 **run**，不是 subagent」；③「`wait=false` 返回**启动回执**（`status:"running"`）而非结果，结果经 `GetWorkflow` 轮询取」。**检查其余模型可见出口**（`GetWorkflow`/`DeclareWorkflow`/`SaveWorkflowAsset` 描述）是否也需要同款口径说明，避免遗漏
 - [ ] 2.3 实现入参判别：exactly-one-of 校验 + 五条结构化拒绝（沿用 `_invalid_spec` 风格的 `invalid_input`）
 - [ ] 2.4 template 分支调 1.1 的 helper 编译出 spec，与 spec 分支汇合到同一条 `parse_spec_for_manager` → scheduler 路径
 - [ ] 2.5 单测：`RunWorkflow(template=…)` 编译出的 spec 与 `compile_pattern(…)` 逐字一致；`template` 与 `spec` 两路径返回体键集相等

@@ -203,12 +203,15 @@
 - **删净检查**：全仓 `rg 'run_pattern|RunPattern|_legacy_result'` 零命中（除本 change 的 change 文档与 archive 历史）。
 - 全量 `uv run pytest -q` 绿 + `openspec validate --all --strict` + artifact checker。
 
-## Open Questions
+## Open Questions（全部 ✅ 已确认 2026-09-29）
 
-> 完整版（含逐条具体例子与推荐）见 `reviews/grill-design.md` 的 `## Open Questions`；用户答复回填同文件的 `## User Confirmation`。本 change 在停轮确认（grill-confirmation-gate）前不得写实现代码。
+> 完整版（含逐条具体例子与推荐）见 `reviews/grill-design.md` 的两轮 `## Open Questions`；用户答复记录于同文件的 `## User Confirmation`。5 条均已拍板，**实现可开工**。
 
-1. **per-worker 明细损失**：统一出口下 foreach 类模板（三个模板）的 per-worker `result_ref` 不可达（实测）。是接受损失，还是补 `_node_refs` 的 `item_runs` 投影？
-2. **`completed`/`failed` 口径**：从节点口径翻成 run 口径（实测 peer-review 2→4）。是否接受「run 口径 + 工具描述写明」？
-3. **`params` 校验按模板封闭**：是否接受「跨模板键结构化拒绝」这一行为变更，以及 `RunWorkflowAsset` 的合并路径是否同步收紧？（R2 澄清：这不违反 #245，仅需修订本 change 自设的 Non-Goal。）
-4. **`wait=false` 回执**：与终态 `parent_envelope()` 形状完全不同，是否确认为可接受的「正交第二形状」？
-5. **`params` 值级校验（R2 新增）**：是否在封闭键集之外同时校验值（非整数 / null / 越界），把今天的裸 `ValueError`/`TypeError` 改为 `invalid_input` 结构化拒绝？clamp 保留。
+1. ✅ **已确认（2026-09-29）：per-worker 通道「补」。** 用户答复：落 `GetWorkflow(detail='nodes')`，形状 `item_refs: [{index, subagent_id, run_id, result_ref?}]` + `items_total`/`item_refs_omitted`；跳过未派发的空槽；**只有成功项有 `result_ref`**（失败/取消/预算超限恒为 `None`），spec delta 措辞须与 legacy `_worker_entry` 同口径，**不得暗示失败项可读全文**。
+2. ✅ **已确认（2026-09-29）：接受 run 口径，不改名。** 用户答复：`completed`/`failed` 数的是 run 不是 subagent；不改名（改名要连 `_envelope` 一起动、约 20 处断言，性价比不抵）。**必须在工具描述里写明**「completed/failed 数的是 run，不是 subagent」。主 session 补充：实测 `parent_envelope()` 是 `_envelope()` 的派生（`scheduler.py:3100` 起手 `self._envelope(status=…)` 再 pop + bounded），「只改父投影」结构上不可行，故撤回改名提议。
+3. ✅ **已确认（2026-09-29）：按模板封闭键校验 + 同步收紧资产路径。** 用户答复：校验落 `compile_pattern`（唯一 choke point）；同步修订本 change 自设的 Non-Goal 措辞（**不违反 #245**，见下方 Non-Goals 的 R2 订正）。
+4. ✅ **已确认（2026-09-29）：接受 `wait=false` 回执为「正交第二形状」。** 用户答复：工具描述硬写「回执非结果」（`status:"running"` 与终态集合不相交，`wait` 是显式入参）。
+5. ✅ **已确认（2026-09-29）：做值级校验。** 用户答复：非法值（非整数 / null / 不可转数）→ `invalid_input` 结构化拒绝，列出可用键与取值约束；**clamp 保留**（`workers=0/-5 → 下界`是既有语义，不动）。
+6. ✅ **已确认（2026-09-29）：`workers` 上界归位——不造第二套上界，复用既有 `max_items`，但须把「静默截断」改为显式报告。** 用户答复（主 session 取证后新增的约束）：`params` 计数键无上界（实测 `workers=100000` 造 10 万 spec items）；要求明确它在 Q3/Q5 校验设计里的归位，并与既有三闸（`max_items`/`max_nodes`/`max_runs`）的关系写清，**不得造第二套互不知情的上界**。
+   **实测结论（本 session 探针 `/tmp/probe_maxitems.py`）**：**该上界已经存在**——`WorkflowNode.max_items` 默认 **20**，`_resolve_items` 在执行期做 `items[:max_items]` 静态截断（`scheduler.py:2611-2614`），模板不设 `max_items`（`patterns.py` 零命中）故一律吃默认 20。实测：`workers=100000`→`state.items=20`、`workers=50`→`20`、`workers=20`→`20`、`workers=5`→`5`（均 `status=completed`）。**即 `workers=100000` 的真实效果是「静默只跑 20 个」**——与 Q3/Q5 要消灭的「以为 params 生效了」是**同一类假象，只是发生在值层**。
+   **归位决定**：**不新增上界**（三闸已是唯一权威：`max_items` 截断展开项数、`max_nodes` 计展开节点、`max_runs` 计 run）。校验层**拒绝**「计数键 > 既有 `max_items`」的输入并报 `invalid_input`（`reason` 写明该模板的位次上限来自 `max_items`），使「只跑 20 个」不再静默；**`max_items` 本身不改**（既有语义，且它是三闸之一，改它会波及非模板路径）。`workers=100000` 因此在**校验期**被拒，不会走到执行期截断——避免「校验过了但展开被三闸截断」的双重语义。**唯一权威边界仍是三闸**，校验只是把「超出既有边界」从静默变显式。

@@ -94,7 +94,14 @@
 
 ## User Confirmation
 
-- （待用户答复后由主 session 填入）
+> 本节为两轮 grill 的 Open Questions 的用户答复汇总；两轮 `## Confirmed Decisions` / `## Open Questions` / `## Review Notes` 原文逐字保留。答复时间均为 2026-09-29。
+
+- **Q1**: 用户答复：**补 per-worker 通道**。落 `GetWorkflow(detail='nodes')`，形状 `item_refs: [{index, subagent_id, run_id, result_ref?}]` + `items_total` / `item_refs_omitted`；**跳过未派发的空槽**；**只有成功项有 `result_ref`**（失败/取消/预算超限恒为 `None`）。spec delta 措辞须与 legacy `_worker_entry` 同口径，**不得暗示失败项可读全文**。；确认时间: 2026-09-29
+- **Q2**: 用户答复：**接受 run 口径，不改名**。`completed`/`failed` 数的是 run 不是 subagent；改名要连 `_envelope` 一起动（约 20 处断言），性价比不抵，故不改名。**必须在工具描述里写明**「completed/failed 数的是 run，不是 subagent」。主 session 补充：实测 `parent_envelope()` 是 `_envelope()` 的派生（`scheduler.py:3100` 起手 `self._envelope(status=…)` 再 pop + bounded），「只改父投影」结构上不可行，故主 session 撤回其改名提议、接受 reviewer 结论。；确认时间: 2026-09-29
+- **Q3**: 用户答复：**按模板封闭键校验 + 同步收紧资产路径**。校验落 `compile_pattern`（唯一 choke point）；同步修订本 change 自设的 Non-Goal 措辞（**不违反 #245**——#245 无此承诺且显式把模板归一划给 #246）。；确认时间: 2026-09-29
+- **Q4**: 用户答复：**接受 `wait=false` 回执为「正交第二形状」**；工具描述硬写「回执非结果」（`status:"running"` 与终态集合不相交，`wait` 是显式入参）。；确认时间: 2026-09-29
+- **Q5**: 用户答复：**做值级校验**。非法值（非整数 / null / 不可转数）→ `invalid_input` 结构化拒绝，列出可用键与取值约束；**clamp 保留**（`workers=0/-5 → 下界`是既有语义，不动）。；确认时间: 2026-09-29
+- **Q6（主 session 取证时新增约束）**: 用户答复：`params` 计数键**无上界**（实测 `workers=100000` 造 10 万 spec items），要求明确它在 Q3/Q5 校验设计里的归位（拒绝还是钳到某个上界？），并与既有三闸（`max_items`/`max_nodes`/`max_runs`）的关系写清楚，**不得造出第二套互不知情的上界**。本 session 实测结论与归位决定见 design.md 的 Open Question 6（✅ 已确认）：既有 `max_items`（默认 20）**已经是**该上界（`_resolve_items` 执行期 `items[:max_items]` 截断），故**不新增上界**，改为「计数键 > `max_items` → `invalid_input` 拒绝」，把今天的静默截断（`workers=50` 只跑 20）变为显式拒绝。；确认时间: 2026-09-29
 
 ## Round 2
 

@@ -125,7 +125,7 @@
 - **不影响**:
   - benchmark 三模式（`template`/`dynamic-record`/`dynamic-replay`）与 `workflow_record.json` 语义不变——C5 template 臂直调 `compile_pattern`。
   - `StartWorkflow` / `DeclareWorkflow` / `GetWorkflow` / `CancelWorkflow` 行为逐字不变。
-  - #245 的 4 个资产工具（Save/List/Get/RunWorkflowAsset）对外行为不变（除 `RunWorkflowAsset` 与 `RunWorkflow` 共用编译 helper 的重构）。
+  - #245 的 4 个资产工具（Save/List/Get/RunWorkflowAsset）**schema 与有效输入的语义**不变（除 `RunWorkflowAsset` 与 `RunWorkflow` 共用编译 helper 的重构）。**R2/Q3 订正**：`RunWorkflowAsset` 的 pattern 分支**同步享受**按模板封闭的键校验（拒绝该模板无效的键）——这是本 change 自己的 Non-Goal 措辞收紧，**不违反 #245**（#245 无「资产工具对外行为不变」承诺，且显式把模板归一划给 #246）。
   - `workflow_id` 生成、per-run 结果落点、scheduler 的 `_envelope`/`parent_envelope` 内容不动。
   - 内置 4 个 pattern 的编译结果（模板本体）逐字不变。
 
