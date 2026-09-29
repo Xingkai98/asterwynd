@@ -107,7 +107,7 @@
 
 ### 1. `workflow-builtin-templates`
 
-状态：未实现（立项完成：proposal / design / spec delta / tasks 已就绪；**两轮独立 grill 完成、Q1–Q6 已拍板**，grill-confirmation-gate 已满足，可进入实现）。
+状态：未实现（立项完成：proposal / design / spec delta / tasks 已就绪；**三轮独立 grill 完成，Q1–Q6 已拍板，R3 新增 Q7 待用户拍板**——Q7 确认前 grill-confirmation-gate 仍拦截实现）。
 
 批次：第十六批，依赖前置 #245（workflow-asset-persistence，已合入）与 #255（mode 钳制，已合入）。
 

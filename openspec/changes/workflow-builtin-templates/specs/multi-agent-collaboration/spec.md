@@ -141,7 +141,8 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 - **AND** 系统 SHALL 经 `GetWorkflow(detail='nodes')` 提供逐节点 `result_ref`，供 `ReadWorkflowResult` 读回全文
 - **AND** 对 `kind=="foreach"` 节点，系统 SHALL 经该出口的只读投影暴露**每个已成功展开项**的 `result_ref`（`item_runs` 已是权威身份源），使成功项的 per-worker 全文在统一出口下可达
 - **AND** 失败 / 取消 / 预算超限的展开项 SHALL NOT 被承诺 `result_ref`（这些 run 不落盘，`result_ref` 恒为 `None`），其失败信号 SHALL 以 bounded `reason` 与状态呈现——与既有 `_worker_entry` 只对有 ref 的成功项注入 ref 同口径
-- **AND** 该投影 SHALL 跳过未派发的空槽，且自带固定条数上限并显式报告被省略的项数（`items_total` / `item_refs_omitted`）——`params` 的计数键无上界，展开项数 SHALL NOT 让该只读出口重新退化为随规模线性的数组
+- **AND** 该投影 SHALL 跳过未派发的空槽，且自带固定条数上限并显式报告被省略的项数——字段定义 SHALL 单一可测：`items_total = len(state.item_runs)`（= 本轮展开项数，含空槽），`item_refs_omitted = items_total - len(item_refs)`（涵盖**空槽**与**超固定上限**两类来源）。`item_refs` 的长度 SHALL 不超过一个固定常数上限（复用既有的 `_PARENT_NODES_LIMIT` = 200，不新增常数）；`params` 的计数键无上界，展开项数 SHALL NOT 让该只读出口重新退化为随规模线性的数组
+- **AND** `item_refs` SHALL 只反映容器的**最后一轮**展开（route 回边重跑容器时 `item_runs` 被既有语义整体重置），SHALL NOT 声称覆盖历史各轮的累计展开
 
 #### Scenario: 启动回执与终态结果有显式判别子
 

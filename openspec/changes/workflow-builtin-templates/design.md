@@ -34,7 +34,7 @@
 - **不做静态模板文件（JSON/YAML）**。`WorkflowSpec` 没有模板/参数概念，`foreach.items` 是具体元组。纯文件模板需要发明「参数占位 → 展开」的求值规则，且新增可写面，与仓库「DSL 受限可校验、不执行模型生成代码」的安全姿态相悖（`agent/subagent/workflow.py:15-16, 27-32`）。模板参数化留在 Python 或 #245 的配方层。
 - **不做模型手写 prompt 模板**（kimi/codex 那种单一 `{{item}}`/`{column}` 字面替换）。本 change 的 `template` 是**服务端配方的引用**，不是模型可写的字符串——开了这个口就等于打开本 change 要避开的占位符求值面。
 - **不改 `parent_envelope()` / `_envelope()` 的内容**（除「谁是它的调用方」外逐字不动）。`_envelope` 仍是权威 envelope（C2 断言依赖），`parent_envelope` 的投影规则、`nodes_omitted` 语义、`_PARENT_*` 上限全不动。
-- **不改资产 schema 与 4 个资产工具的对外行为**（`workflow_assets.py` 不动）。是否把 `RunWorkflowAsset` 也并入统一入口是独立判断（见 Open Questions）。**R2 订正**：本条的准确口径是「不改资产 **schema**、不改变**有效键的语义**」——把模板封闭键校验同步到 `RunWorkflowAsset` 的 pattern 分支（拒绝该模板无效的键）**不算违反本条**：它只拒绝本就无效的输入，不改变任何有效输入的行为。该收紧的最终取舍见 Open Questions Q3。
+- **不改资产 schema、不改变资产工具有效输入的语义**（`workflow_assets.py` 不动）。是否把 `RunWorkflowAsset` 也并入统一入口是独立判断（见 Open Questions）。**R2/R3 订正**：本条原标题「不改 4 个资产工具的**对外行为**」与 Q3 的「收紧资产路径」**字面冲突**（实现者只读标题会以为不能动资产路径校验），已改为现标题。准确口径是「不改资产 **schema**、不改变**有效键的语义**」——把模板封闭键校验同步到 `RunWorkflowAsset` 的 pattern 分支（拒绝该模板无效的键）**不算违反本条**：它只拒绝本就无效的输入，不改变任何有效输入的行为。**不违反 #245**（#245 无「资产工具对外行为不变」承诺，且 `#245` design.md:45 逐字把模板归一划给 #246）。该收紧的最终取舍见 Open Questions Q3（已确认收紧）。
 - **不改 benchmark 三模式**、不改 `workflow_id` 生成与 per-run 结果落点、不改内置模板编译结果。
 - **不改模型当轮声明 spec 的行为**（#245 的「声明路径不钳制」口径逐字不变）。
 
@@ -103,6 +103,11 @@
 > 3. **自带界**。计数键无上界（`patterns.py:81` 是 `max(1, int(...))`，实测 `params={"workers": 100000}` → 10 万 item）。成功项数被 `max_runs`（默认 300）间接界定，但设计文本必须显式声明该界，并附 `items_total`/`item_refs_omitted`——否则把「只读出口」重新撑成随规模线性的数组，正是投影纪律要消灭的形态。
 >
 > **「更小改法」（在 `parent_envelope()._bounded_node` 里直接带 per-item 投影）——R2 明确否决**：它同时违反本 change 的 Non-Goal（`parent_envelope`/`_envelope` 逐字不动，见 §Non-Goals）与投影纪律（`_bounded_node` 明写「丢弃随图规模线性增长的数组」，`scheduler.py:389-405`）。选 `GetWorkflow(detail='nodes')` 那个出口是对的——它本就允许逐节点 `result_ref`（`subagents.py:775-781`）。
+>
+> **⚠️ R3 实测再订正（字段定义与语义，实现前必钉）**：
+> 1. **`items_total` / `item_refs_omitted` 定义钉死**：`items_total = len(state.item_runs)`（= 本轮展开项数，含空槽），`item_refs_omitted = items_total - len(item_refs)`（**涵盖空槽 + 超固定上限两类**）。R3 实测：预算 drain 用例 6 槽全空 → `items_total=6`、`item_refs=[]`、`omitted=6`（全部来自空槽）。**不钉死会让测试写不出唯一期望值**（spec delta 初稿把 omitted 只绑「超上限」，与空槽来源冲突）。
+> 2. **只反映最后一轮**：`_execute_foreach` 每次进入都把 `state.item_runs` 整体重置（`scheduler.py:1890-1896`，与 `state.items`/`item_states` 同批归零）。R3 实测带 route 回边的容器 `fan.runs=2`（跨轮累计）但 `len(item_runs)=2`（仅最后一轮）。这是**既有正确语义**（否则会吐同一 index 的陈旧 run），但实现/测试须知道「`item_refs` 长度对 `runs`（跨轮累计）对不上是正常的」。
+> 3. **固定上限取既有常数**：`item_refs` 长度上限**复用 `_PARENT_NODES_LIMIT` = 200**（不新增常数）——模板路径因 `max_items`=20 实际到不了 200，纯 DSL foreach 路径可到 `max_runs`≈300，超 200 的进 `item_refs_omitted`。
 
 **替代方案与否决理由**：
 - **按入参返回两种形状**（template → legacy，spec → envelope）——否决。这是 RIR 明确警告的形态：调用方无法在不知道入参的情况下解析返回体；MCP/function-calling 文献把它列为记录在案的坑。本 change 的核心诉求正是消除这个认知负担，不能用一个新版本重建它。
@@ -203,9 +208,9 @@
 - **删净检查**：全仓 `rg 'run_pattern|RunPattern|_legacy_result'` 零命中（除本 change 的 change 文档与 archive 历史）。
 - 全量 `uv run pytest -q` 绿 + `openspec validate --all --strict` + artifact checker。
 
-## Open Questions（全部 ✅ 已确认 2026-09-29）
+## Open Questions（Q1–Q6 ✅ 已确认 2026-09-29；**Q7 ⏳ 待确认，阻塞实现**）
 
-> 完整版（含逐条具体例子与推荐）见 `reviews/grill-design.md` 的两轮 `## Open Questions`；用户答复记录于同文件的 `## User Confirmation`。5 条均已拍板，**实现可开工**。
+> 完整版（含逐条具体例子与推荐）见 `reviews/grill-design.md` 的三轮 `## Open Questions`；用户答复记录于同文件的 `## User Confirmation`。**Q1–Q6 已拍板；R3 新增的 Q7 尚未拍板，grill-confirmation-gate 在 Q7 确认前仍拦截代码写。**
 
 1. ✅ **已确认（2026-09-29）：per-worker 通道「补」。** 用户答复：落 `GetWorkflow(detail='nodes')`，形状 `item_refs: [{index, subagent_id, run_id, result_ref?}]` + `items_total`/`item_refs_omitted`；跳过未派发的空槽；**只有成功项有 `result_ref`**（失败/取消/预算超限恒为 `None`），spec delta 措辞须与 legacy `_worker_entry` 同口径，**不得暗示失败项可读全文**。
 2. ✅ **已确认（2026-09-29）：接受 run 口径，不改名。** 用户答复：`completed`/`failed` 数的是 run 不是 subagent；不改名（改名要连 `_envelope` 一起动、约 20 处断言，性价比不抵）。**必须在工具描述里写明**「completed/failed 数的是 run，不是 subagent」。主 session 补充：实测 `parent_envelope()` 是 `_envelope()` 的派生（`scheduler.py:3100` 起手 `self._envelope(status=…)` 再 pop + bounded），「只改父投影」结构上不可行，故撤回改名提议。
@@ -215,3 +220,6 @@
 6. ✅ **已确认（2026-09-29）：`workers` 上界归位——不造第二套上界，复用既有 `max_items`，但须把「静默截断」改为显式报告。** 用户答复（主 session 取证后新增的约束）：`params` 计数键无上界（实测 `workers=100000` 造 10 万 spec items）；要求明确它在 Q3/Q5 校验设计里的归位，并与既有三闸（`max_items`/`max_nodes`/`max_runs`）的关系写清，**不得造第二套互不知情的上界**。
    **实测结论（本 session 探针 `/tmp/probe_maxitems.py`）**：**该上界已经存在**——`WorkflowNode.max_items` 默认 **20**，`_resolve_items` 在执行期做 `items[:max_items]` 静态截断（`scheduler.py:2611-2614`），模板不设 `max_items`（`patterns.py` 零命中）故一律吃默认 20。实测：`workers=100000`→`state.items=20`、`workers=50`→`20`、`workers=20`→`20`、`workers=5`→`5`（均 `status=completed`）。**即 `workers=100000` 的真实效果是「静默只跑 20 个」**——与 Q3/Q5 要消灭的「以为 params 生效了」是**同一类假象，只是发生在值层**。
    **归位决定**：**不新增上界**（三闸已是唯一权威：`max_items` 截断展开项数、`max_nodes` 计展开节点、`max_runs` 计 run）。校验层**拒绝**「计数键 > 既有 `max_items`」的输入并报 `invalid_input`（`reason` 写明该模板的位次上限来自 `max_items`），使「只跑 20 个」不再静默；**`max_items` 本身不改**（既有语义，且它是三闸之一，改它会波及非模板路径）。`workers=100000` 因此在**校验期**被拒，不会走到执行期截断——避免「校验过了但展开被三闸截断」的双重语义。**唯一权威边界仍是三闸**，校验只是把「超出既有边界」从静默变显式。
+
+7. ⏳ **待确认（2026-09-29 R3 新增，阻塞「Q6 闭环」判定）——`max_rounds` 的静默截断是否同样归位？** R3 实测：`max_rounds` 落到 route 的 `max_routes`，受 `recursion_limit`=25 约束（不吃 `max_items`）。`peer-review` 在永不批准时 `max_rounds=3/20/25/100000` **全部**停在 `graph_recursion_exceeded`、`steps=25`、`producer.runs=9`——即 `max_rounds=100000` 的真实效果是「静默只跑约 9 轮」，与 Q6 要消灭的 `workers=100000` **同类**，但逃出了「计数键 > max_items」规则。两条朴素修法都不好（跳过 → 假象存续；套 `max_items=20` → 误拒合法的 `max_rounds=25`）。
+   **R3 推荐**：按模板分别取界——`workers`/`teams`/`proposers` 对 `max_items`（20），**`max_rounds` 对 `recursion_limit`（25）**（两个界都是既有闸，不造第二套上界）；超界一律 `invalid_input` 并在 `reason` 写明界的来源。若用户认为 `max_rounds` 的静默截断可接受，则须在 design/spec **显式声明**「`max_rounds` 不在本校验范围内、超 `recursion_limit` 由既有闸处理」——不能留白。**此项拍板前，Q6 不得判定为完整闭环，实现不得开工。**
