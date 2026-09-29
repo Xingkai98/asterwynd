@@ -103,6 +103,8 @@
 
 - `workflow-builtin-templates`（issue #246）：**已归档 2026-09-29**（含 backfill 记录：三轮独立 grill、Q1–Q7 全部拍板、`/review-loop` R1 CHANGES_REQUESTED→修）。把 `RunPattern` 融合进统一 Workflow 入口——`RunWorkflow` 接受 exactly one of `{spec, template}`（`template` = 四个内置模板名 + `task`/`params`），父 agent 从编排入口收到的形状不随入参变化（统一 `parent_envelope()` bounded 投影，`bus` 不进父上下文），删除 `run_pattern()` 兼容 adapter 与四个 pattern 专属扁平字段。模板参数化继续留在 Python（`compile_pattern`）；`params` 键/值/上界校验落 `compile_pattern`（唯一 choke point，fan-out 键对 `max_items` 拒绝，`max_rounds` 不做静态上界、由截断诊断报告 `declared_max_rounds`/`rounds_actually_run`/`limit_source`）。`GetWorkflow(detail='nodes')` 补 foreach `item_refs`（仅成功项有 ref）。与 #245 归一：内置模板 = 随代码走的配方，用户资产 = 随 workspace 走的配方，共用同一条编译路径与 `recipe` 概念；`asset_source` 溯源写入点从 `run_pattern` 迁到统一入口的 template 分支（保 #245 的 recipe 资产能力不静默退化）。spec delta 已同步进 `openspec/specs/`（`multi-agent-collaboration` ADDED 2 / MODIFIED 5，`subagents`/`agent-runtime`/`web-ui` 各 MODIFIED 1）并归档到 `openspec/changes/archive/2026-09-29-workflow-builtin-templates/`。research_tier = full。
 
+- `workflow-tool-discoverability`（issue #248）：**已归档 2026-09-29**。把 `DeclareWorkflow`/`RunWorkflow` 的 `spec` 从裸 `{"type":"object"}` 升级为**嵌套 schema**（`properties`/`items`/`enum`），`kind`/`channel`/`reducer`/`strategy`/`join`/`mode` 六个封闭域**从 `agent/subagent/workflow.py` 的源码常量程序化派生**（`NODE_MODES` 从 `_parse_node` 内联元组提为模块常量，`CreateSubagentTool` 的 `mode` enum 一并引用它）；描述分节化并纠错——删掉 4 处 `control`（其中 3 处是非法 `channel` 示例，来源是**可观测层** `edge.kind ∈ {control,data}` 与 **DSL 层** `edge.channel` 混词）、新增 `cases` 匹配语义（行首 `startswith` + first-match-wins + 具体在前正反例）、门控与 `channel` 正交、per-kind 字段适用表；route 节点带 `task` 的处置按用户拍板选 **(b) 声明期 warnings**——`DeclareWorkflow` 的 `declared` 返回体与 `RunWorkflow(spec=...)` 的 run envelope **两条入口**都给**可行动**提示（「route 从不执行 `task`，判定逻辑写进 `cases[].when`」）；per-kind 字段错配的误导性报错改按节点**实际** kind 命名（`{"kind":"route","strategy":"concat"}` 不再误报 `aggregate node`）。grill 8 条设计修正（C1–C8，含 `workflow.py` 行号系统性漂移的订正）已逐条落实。spec delta 已同步进 `openspec/specs/multi-agent-collaboration/spec.md`（MODIFIED 1 + ADDED 1）并归档到 `openspec/changes/archive/2026-09-29-workflow-tool-discoverability/`。research_tier = full。Q4 的只读 `ValidateWorkflow` 决策**不引入、另开** issue #268 承载（含「模型是否会用它探路」的实测验证）。**验收如实记录**：改后 3 次 rollout 的探针数 S0 = 5/7/0（基线 9），严格门槛（S0=0 且任务完成）**仅 1/3 达标**，但**基线里 4/5 次 `invalid_spec` 属「域不可见」类**（自造 `channel` 值 / 自造字段名）改后降为 **0**；剩余探针转向**运行期语义**（foreach item 注入、route 读谁的文本），**不在本 change 范围**。证据落 `reviews/acceptance-evidence.md` + 三个 transcript。
+
 ## 未实现队列
 
 ### 3. `add-minimal-tui-runtime-view`
@@ -122,27 +124,6 @@
 - AgentLoop 事件流消费。
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
-
-### 4. `workflow-tool-discoverability`
-
-状态：未实现（已立项，**停在 4 条 Open Questions**，等 grill 停轮确认）。
-
-批次：第十六批（subagent 编排入口归一的 follow-up）。与 `workflow-builtin-templates`（issue #246，已归档 2026-09-29）、`workflow-recursion-limit-default`（issue #262，已归档 2026-09-29）改的是**同一个工具面**，故排在其后，基于二者合入后的 master（`db79b05`）立项。
-
-建议顺序原因：
-
-- 前置已就位：#246 把模型侧入口收敛为 `RunWorkflow(spec|template)`，本 change 只改 `spec` 的**内容契约**，不改入口形状；#262 已把 `recursion_limit` 默认值校准，本 change 明确**不依赖**它（实测本 issue 的超限 `reason` 是 `max_routes`，另一条代码路径）。
-- 无并行冲突：本 change 只触 `agent/tools/builtin/subagents.py` 的工具描述与 schema、`agent/subagent/workflow.py` 的常量出口与错误文案；不触调度语义、不动 Web/benchmark runner。
-- `primary: feature` → 实现前必须先 `batch-grill-me` + 停轮确认（grill-confirmation-gate 未通过，实现不得开工）。
-
-主要交付（详见 `openspec/changes/workflow-tool-discoverability/`）：
-
-- **P0 纠错**：改写描述里 4 处 `control` 字样（`agent/tools/builtin/subagents.py:518,530,531,536`，其中 3 处是非法示例），讲清「route 出边不 gate，与 `channel` 取值正交」。**新发现的来源**：`control` 是**可观测层** `edge.kind ∈ {control, data}`（`agent/subagent/scheduler.py:2855`）的真实取值，被抄进了 **DSL 层**的 `channel` 位置——两层正交概念共用了一个位置。
-- **P0 补语义**：`cases` 的**行首匹配 + 声明顺序 first-match-wins + 具体模式排在宽泛模式之前**写进描述，配 `"GAPS: none"` 在 `"GAPS"` 之前的正例。
-- **P1 结构化 schema**：`spec` 从裸 `{"type":"object"}` 升级为带嵌套 `properties`/`items`/`enum` 的 schema，枚举**从源码常量派生**（`NODE_KINDS`/`CHANNELS`/`REDUCERS`/`AGGREGATE_STRATEGIES`/`JOIN_SEMANTICS` + 新提的 `NODE_MODES`），配 schema↔常量 parity 测试。
-- **P1 消除静默**：route 的 `task` 被接受但运行期丢弃（`_execute_route` 不读 `node.task`）；per-kind 字段错配时「值合法则静默丢弃、值非法则错误信息指错 kind」（实测 `{"kind":"route","strategy":"concat"}` → 报 `aggregate node 'g' ...`）。前者三方案（拒绝 / warning / 仅描述）**留给 grill**，后者修文案。
-- **验收**：不是客观硬指标——「跑真实 LLM 看它能否低成本理解并直接用对」（由主 session 主观判断 + 监督）。硬前件 = 固定提示词跑 3 次，主指标 **探针 workflow 数**，门槛 = **无探针且原任务完成**；基线 = 19 次声明 / 20 个探针 / 4 次 `invalid_spec` / 54 迭代 / 398,590 token（498% 预算）。对照物 = 基线跑出的资产 `fanout-review-loop.json`（10 节点）。**验收节只进 proposal、不进 spec**（spec 写 DSL 语义规则，不写「模型应该表现成什么样」）。
-- **注意**：实测前须清空全局资产库 `~/.asterwynd/projects/<hash>/workflow-assets/`，否则残留资产污染 `ListWorkflowAssets`。
 
 ### 第十五批：workflow 四维预算默认无上限（C4 follow-up）
 

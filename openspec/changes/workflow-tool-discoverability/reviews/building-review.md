@@ -13,9 +13,12 @@
 
 ## Verdict
 
-**CHANGES_REQUESTED**
+**PASS**（Round 2 更新：R1 的两条实现类 issue 已修复并经独立复核；剩余为收尾流程项，不阻塞）
 
-实现主体正确、schema 派生真实、D6(b)/D7 落地无误、测试与 spec 对齐良好；**但有一处直接违背本 change 自己声明的 P0 不变式**（模型可见面零 `control` token）的残留缺陷，需修一行 + 扩一条断言；另有 tasks 勾选与 review head 一致性两处流程项待处理。
+- **Round 1 verdict（historical）**：`CHANGES_REQUESTED` —— 实现主体正确、schema 派生真实、D6(b)/D7 落地无误、测试与 spec 对齐良好，但有一处直接违背本 change 自己声明的 P0 不变式（模型可见面零 `control` token）的残留缺陷（Issue #1），以及 tasks 勾选（#2）与 manifest head 绑定（#3）两处流程项。
+- **Round 2 verdict（current）**：`PASS` —— Issue #1 已修复且断言补强到位、无夹带；#2/#3 经确认属**收尾流程项**，不阻塞对本 delta 的 verdict。
+
+R1 审阅 head = `75d5a1b`；R2 审阅 head = `0114be4`。详见文末「Round 2」。
 
 ---
 
@@ -237,3 +240,60 @@ quarantine 污染记忆、`cwd=/tmp`、独立 checkout 三项均有对应痕迹�
 - 未重跑真实 LLM rollout（proposal 指定，reviewer 不跑）。
 - 未在 base 上跑 benchmark smoke 对照（低风险，见 Issues #4）。
 - 未独立验证 after 轮次 memory 检索返回内容（低风险，见「未验证项」）。
+
+---
+
+# Round 2（复审）
+
+- 复审对象 head: `0114be47d89833eec69759f74d4ec457be451d9c`
+- 上一轮 head: `75d5a1bbcde1b538ba0fe27c5cfe143bf1cc4c3e`
+- delta: `git diff 75d5a1b 0114be4`（单 commit `0114be4`）
+- 复审范围：聚焦 delta（不重跑全量 pytest，依实现方与 R1 的既有实跑）。
+
+## Round 2 Verdict
+
+**PASS** —— R1 的两条实现类 issue（#1 control token、T2 断言范围）均已修复且经独立复核；无夹带；#2/#3 确属收尾流程项，不阻塞本 delta。
+
+## Delta 范围核对（是否恰好只动声明项 + 无夹带）
+
+`git diff --name-only 75d5a1b 0114be4` 恰为 5 个文件，**全部与声明一致，无夹带**：
+
+| 文件 | 声明改动 | 判定 |
+|---|---|---|
+| `agent/tools/builtin/subagents.py` | 1 行（edge `required` schema 描述） | ✅ 见下 |
+| `tests/agent/subagent/test_workflow_tool_discoverability.py` | +31 行（2 条新测试） | ✅ 见下 |
+| `openspec/changes/.../design.md` | T2 口径 + T10 OQ4 回写（issue #268） | ✅ 属声明范围 |
+| `openspec/changes/.../reviews/acceptance-evidence.md` | R1 期间的自纠（S0/S1 口径修正） | ✅ 已在 R1 复核 |
+| `openspec/changes/.../reviews/building-review.md` | R1 报告本身 | ✅ 属落盘 |
+
+- `git diff 75d5a1b 0114be4` 中 **`spec.md` / `tasks.md` / `backlog.md` 均未出现**（那三者仍是工作树未提交的收尾改动，不在本 commit）。✅
+- 本 commit **未触** `workflow.py`、`scheduler.py`、`patterns.py`、任何调度语义路径。✅
+
+## Issue #1 复核（control token）
+
+- **修复正确**：`agent/tools/builtin/subagents.py:634` 由 `"...which are control edges."` 改为 `"...which never gate."`。删掉了诱导 token，且新表述保留了「route 出边不 gate」的原意（与描述里同段语义一致，非机械删词）。
+- **全文件零命中**：`grep -c "control" agent/tools/builtin/subagents.py == 0`（独立实跑）。剩余 19 处 case-insensitive 命中全为 `SUBAGENT_CONTROL_PERMISSION`（**Python 标识符**，不进入任何模型可见字符串）——非风险。✅
+- **模型可见面全量扫描**：我额外全仓扫了 `agent/tools/` 下所有工具描述/schema，唯一残留的 `control` 出现在 `agent/tools/sandbox/{docker_backend,process_backend,cgroup}.py`——均为沙箱**实现代码**（非 `description`/`parameters` 文本），不进入模型可见面。**无其他工具 schema 残留诱导性 token**。✅
+
+## Issue #1 断言补强复核（模型可见面覆盖度）
+
+- **新断言**：`tests/.../test_workflow_tool_discoverability.py:155` `test_model_visible_surface_has_no_control_token`，参数化 `_TOOLS = [DeclareWorkflowTool, RunWorkflowTool]`（**两条入口都覆盖**），对 `tool.description` 与 `json.dumps(tool.parameters, ensure_ascii=False)` **两者**各断言 `"control" not in x` **且** `"control" not in x.lower()`（R-A 的「两处自伤面」口径保留）。
+- **覆盖面判定**：`json.dumps(parameters)` 序列化的是**整棵 schema 树**（顶层 + `spec` + `nodes.items` + `edges.items` + `cases.items` 的每一层 `description`），故 R1 漏掉的 edge `required` 字段描述这类嵌套措辞**今后会被捕获**。这是对「模型每次调用可见的全部 surface」的正确覆盖——因为模型拿到的恰恰是 `description` + 逐字透传的 `parameters`（`agent/tools/base.py:53-61` → `anthropic_llm.py:746-753`），别无可注入的模型可见文本位。✅
+- **变异验证可信**：实现方实测「注回 token → 2 failed, 34 passed → 还原 36 passed」。我独立复跑该文件得 **36 passed**，与「还原后」一致。✅
+- **补充肯定**：同 commit 另含 `test_tool_schema_matches_freshly_derived_schema`（`:126`），把烘焙 `parameters` 与测试期现算的派生结果逐字比对——封死「手写字面量恰与常量同值」这一 T1+T1a 的联合缺口。方向正确，属加强而非引入风险。
+
+## Issue #2 / #3 定性确认
+
+- **#2（tasks 勾选）**：属**收尾流程项**。`tasks.md` 未勾是「记账滞后」，非实现缺陷；且工作树已在改动它（未提交），归档前最终化即可。**不阻塞**本 delta。
+- **#3（manifest head 绑定）**：属**收尾流程项**。AGENTS.md 要求 manifest 在该 change 的 `tasks.md` 最终化（含归档 move）**之后**生成——即 manifest 本就应绑定一个**晚于** `0114be4` 的 head。故它与「本 delta 是否可信」无关。**不阻塞**本 delta。
+- 两条均已在 R1 报告中建议按既定步骤处理，实现方确认照此执行，判定一致。
+
+## Round 2 残留（非阻塞）
+
+| 级别 | 项 | 说明 |
+|---|---|---|
+| 低 | benchmark smoke 未在 base 对照（R1 #4） | 未变；本 delta 不触 benchmark runner。 |
+| 低 | after 轮次 memory 检索返回内容未独立核验（R1 未验证项） | 未变；本 delta 不触 memory 路径。 |
+| 流程 | 8 个模型可见文案里的中文标点 `\`task\`` 等 | 非 token 类，D3 只约束 `control`，无影响。 |
+
+**Round 2 结论：无阻塞项，`PASS`。** 收尾时按 AGENTS.md 完成 tasks 勾选、spec sync 落事件、manifest 在 tasks 最终化后生成即可。
