@@ -85,7 +85,7 @@
 ## Reference Implementation Research
 
 - research_tier: exempt
-- status: enabled
+- status: disabled
 - reason: 本 change 属**纯 bugfix，无新增能力面**（不引入新通道 / 新依赖 / 新协议），且
   设计已被上游决策锁定——命中的是分流表 `exempt` 的「bugfix（无新增能力面 + 回归测试）」
   与「上游决策锁定」。**客观证据**：

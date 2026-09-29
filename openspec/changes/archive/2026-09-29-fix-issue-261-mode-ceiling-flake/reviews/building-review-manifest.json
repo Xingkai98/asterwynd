@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-issue-261-mode-ceiling-flake",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-fix-issue-261-mode-ceiling-flake-20260929-r1",
+  "base_sha": "ee06df7",
+  "head_sha": "db19c37",
+  "tasks_hash": "sha256:72e8b85f6b689d1b3495ffb06cba39676c7af79830495c15520fb3f247f7c98b",
+  "spec_hash": "sha256:0863a2b490486f5d1bd7943af86f5b4c4144c0ae02431fa3ab494d084918a1c9",
+  "diff_hash": "sha256:e1033d0bff12168a118881359e3d6e784a1916b18c95e15d039488f0bdb03440",
+  "report_hash": "sha256:2dc7c6d1c5bf4debd1b47000f0346127add9c950d7afa38db3ad086f6637b9d8"
+}
