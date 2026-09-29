@@ -42,6 +42,7 @@
 - [ ] 5.3 `manager.py` 的 `SPAWN_TOOL_NAMES` 去掉 `"RunPattern"`
 - [ ] 5.4 订正 `agent/subagent/bus.py` 的 `snapshot_payload()` docstring 中「模型面调用点是 RunPattern」的措辞（界本身不落笔）
 - [ ] 5.5 改写受影响测试：`test_patterns.py` / `test_pattern_templates.py` 5.2 段 / `test_bus_bounded_exports.py` 出口 2 / `test_bounded_envelope.py` / `test_guardrails.py` / `test_concurrency_queue.py`
+- [ ] 5.5a **#245 回归测试迁移**（实测确认这三个文件用 `RunPatternTool` 产出 pattern 图）：`test_workflow_asset_tools.py:121`、`test_workflow_asset_context.py:165` 改用 `RunWorkflow(template=…)` 产出 pattern 图；`test_workflow_asset_context.py:195` 的 `test_run_pattern_result_keyset_is_locked`（键集锁）随 `run_pattern` 退役删除，其「加字段必须是有意识的」语义改挂到统一入口返回体的键集锁上
 - [ ] 5.6 **出口 4 语义迁移**：把 `test_workflow_node_transcript.py` 的「worker 条目 bounded + `result_ref` 补偿」断言改挂到新出口（`GetWorkflow(detail='nodes')` 的 `result_ref` 或 `root_result_ref`），**不删断言语义**（issue #213 回归保护）
 - [ ] 5.7 深度闸测试：深度到限子 agent 工具集不含 `RunWorkflow` 与 `RunPattern`
 - [ ] 5.8 删净检查：`rg 'run_pattern|RunPattern|_legacy_result'` 在 `agent/` `tests/` `benchmarks/` `web/` 零命中
