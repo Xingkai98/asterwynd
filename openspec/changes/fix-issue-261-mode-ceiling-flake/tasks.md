@@ -56,23 +56,27 @@
       （本 change 触及 `AgentLoop` 路径，按 AGENTS.md 需跑）
 - [x] 5.5 OpenSpec strict validate：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
 - [x] 5.6 Artifact checker：`uv run python scripts/check_openspec_artifacts.py --base-ref ee06df7`
-- [ ] 5.7 **同步 current spec**：把本 change 的 delta 合并进 `openspec/specs/subagents/spec.md`
+- [x] 5.7 **同步 current spec**：把本 change 的 delta 合并进 `openspec/specs/subagents/spec.md`
       （MODIFIED 既有 Requirement「子 agent mode 上限按执行上下文继承」+ 新增 Scenario
       「被遗留 run 的迟后收尾不改变活跃 run 的上限」）
 
 ## 6. 审阅闭环
 
-- [ ] 6.1 运行独立审阅闭环（零记忆 subagent），产出 `reviews/building-review.md`
-      （verdict + 逐条任务验证 + 带 `文件:行号` 证据的 issues；CHANGES_REQUESTED 则修 → 再审，3 轮封顶）
-- [ ] 6.2 生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）；
+- [x] 6.1 运行独立审阅闭环（零记忆 subagent），产出 `reviews/building-review.md`
+      （**verdict = PASS**，1 轮收敛；reviewer 亲自复跑最小复现/真实路径 A/B/变异验证/门禁；
+      2 条非阻塞 follow-up 见该报告 `## Issues`）
+- [x] 6.2 生成 review manifest（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）；
       **在 tasks.md 最终化之后再生成**
 
 ## 7. 文档影响与收尾
 
-- [ ] 7.1 文档影响检查：扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与
+- [x] 7.1 文档影响检查：扫描 `docs/`、`README.md`、`AGENTS.md`、`CONTEXT.md` 中与
       mode 上限 / sandbox sink 相关的段落，只更新本变更造成的事实变化
-- [ ] 7.2 同步 `docs/openspec-change-backlog.md`（立项登记 → 归档时移除）
-- [ ] 7.3 受保护路径（backlog、归档目录）的修改写 `workflow-events.jsonl` 结构化解释事件
-- [ ] 7.4 归档到 `openspec/changes/archive/2026-09-29-fix-issue-261-mode-ceiling-flake/`
+      （结论：无需更新——`docs/known-debt.md` 的 mode 条目描述的是另一条不受影响的残留）
+- [x] 7.2 同步 `docs/openspec-change-backlog.md`（立项登记 → 归档时移除）
+- [x] 7.3 受保护路径（backlog、归档目录、当前规格）的修改写 `workflow-events.jsonl` 结构化解释事件
+- [x] 7.4 归档到 `openspec/changes/archive/2026-09-29-fix-issue-261-mode-ceiling-flake/`
 - [ ] 7.5 (post-merge) 关闭关联 issue #261 并加完成说明 comment（含「issue 正文的测试侧
       判断已被否证」的订正说明）
+- [ ] 7.6 (post-merge) 为审阅报告 `## Issues` 1 开的 follow-up issue：`set_sandbox_sink`
+      跨上下文收尾污染（已知悉，独立载体、本 change 未修）——由主 session 决定是否开单
