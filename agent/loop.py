@@ -39,7 +39,7 @@ from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
 from agent.observability import ErrorCategory, ErrorClassifier, exception_error_type, resolve_phase
 from agent.planning import PlanStatus, PlanningManager
-from agent.subagent.context import current_mode_ceiling, set_mode_ceiling
+from agent.subagent.context import reset_mode_ceiling, set_mode_ceiling
 from agent.subagent.manager import SubAgentManager
 from agent.run_config import AgentMode, AgentRunConfig, AgentRuntimeState
 from agent.run_identity import new_run_id
@@ -559,13 +559,18 @@ class AgentLoop:
         previous_trace_recorder = self._active_trace_recorder
         previous_sandbox_sink = current_sandbox_sink()
         # Mount A (change fix-issue-255-mode-ceiling): snapshot this run's mode
-        # ceiling so the whole run has one consistent capability bound, and
-        # every nested spawn inherits it. Restoring the *previous value* via
-        # ``set`` (not ``reset(token)``) matters: this coroutine may be awaited
-        # from a long-lived task, and leaving a stale ceiling behind would let a
-        # later direct-driven scheduler read the wrong session's bound (#255).
-        previous_ceiling = current_mode_ceiling()
-        set_mode_ceiling(self.runtime_state.current_mode)
+        # ceiling so the whole run has one consistent capability bound, and every
+        # nested spawn inherits it. Restore via ``reset(token)`` — NOT a plain
+        # ``set(previous)`` (issue #261). A subagent run is an independent Task;
+        # when such a task is abandoned and later finalised by GC (its event loop
+        # already closed), ``GeneratorExit`` unwinds every nested ``finally`` —
+        # including this restore — in whatever Context is *currently running*.
+        # A plain ``set`` would then clobber a *later* run's live ceiling with a
+        # stale value, silently widening that run's capability bound. ``reset``
+        # names the Context it was created in and raises ``ValueError`` when that
+        # differs, so the cross-context teardown becomes a no-op instead of a
+        # write into the wrong context (the ``except`` below).
+        ceiling_token = set_mode_ceiling(self.runtime_state.current_mode)
         self._active_on_event = on_event
         self._active_trace_recorder = trace_recorder
         if trace_recorder:
@@ -593,7 +598,15 @@ class AgentLoop:
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
             set_sandbox_sink(previous_sandbox_sink)
-            set_mode_ceiling(previous_ceiling)
+            try:
+                reset_mode_ceiling(ceiling_token)
+            except ValueError:
+                # The token belongs to a different Context: this ``finally`` ran
+                # in an out-of-band teardown (an abandoned Task finalised by GC
+                # after its loop closed, issue #261). The ceiling it would restore
+                # died with that Task's Context; touching the *live* Context here
+                # would clobber a later run's bound, so skip.
+                pass
             if self.cost_ledger is not None:
                 try:
                     self.cost_ledger.flush(_default_ledger_path())

@@ -17,6 +17,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
+
 import pytest
 
 from agent.config import AsterwyndConfig
@@ -484,3 +487,99 @@ async def test_resubmitting_an_existing_session_does_not_reclamp(tmp_path):
     manager.parent_mode = AgentMode.READ_ONLY
     await manager.run_subagent(subagent_id=created["subagent_id"], task="t", wait=True)
     assert manager.get_subagent(created["subagent_id"])["mode"] == "build"
+
+
+# --- 10. 挂载 A 的跨上下文恢复（issue #261） ---------------------------------
+
+
+_CHILD_TASK = "__CHILD_HANG__"
+
+
+class _HangingChildLLM(_StaticLLM):
+    """子 run（task 文本含 ``_CHILD_TASK``）挂住，其余轮次立即返回。
+
+    让子 run 停在 ``AgentLoop.run`` 内部的 await 上——这正是它日后被 GC 终结时
+    会展开挂载 A ``finally`` 的挂起点。
+    """
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        if _CHILD_TASK in _last_user(messages):
+            await asyncio.sleep(9999)
+        return LLMResponse(content="ok", stop_reason="end_turn", usage=Usage(1, 1))
+
+
+def _plant_abandoned_pending_run(tmp_path) -> None:
+    """在一个**独立 event loop** 上跑一个会挂住的子 run，然后关闭该 loop。
+
+    loop 关闭后 task 仍 pending——CI 日志 ``Task was destroyed but it is pending!``
+    描述的就是这一状态。丢弃全部本地引用后，task 会在日后被 GC 终结：终结会把
+    ``GeneratorExit`` 抛进协程并展开 ``AgentLoop.run`` 的 ``finally``（挂载 A 的
+    恢复），而该恢复运行在**当时正在运行的**上下文里。
+    """
+    manager = SubAgentManager(
+        llm=_HangingChildLLM(),
+        config=AsterwyndConfig(),
+        parent_mode=AgentMode.BUILD,
+        workspace_policy=WorkspacePolicy(workspace_root=tmp_path),
+    )
+    loop = asyncio.new_event_loop()
+
+    async def plant():
+        child = manager.create_subagent(name="abandoned", mode="build")
+        await manager.run_subagent(
+            subagent_id=child["subagent_id"], task=_CHILD_TASK, wait=False
+        )
+        await asyncio.sleep(0.05)  # 让子 run 进入 AgentLoop.run 并挂起
+
+    loop.run_until_complete(plant())
+    loop.close()  # 不 cancel：task 保持 pending
+    # 丢弃全部引用（manager 与 task 经 ``_active_tasks`` 互引，构成可回收的环）。
+    del loop, plant
+
+
+def _run_live_readonly_session(tmp_path) -> dict[str, str]:
+    """跑 read_only 会话的真实 run，并在其**派发点**强制 GC 后返回各节点 mode。
+
+    派发点的 ``gc.collect()`` 让「先前遗留 task 的迟后终结」确定性地落在
+    本 run 的上限生效窗口内——即 issue #261 在 CI 负载下偶发命中的那一时刻。
+    """
+    manager = _manager(tmp_path)  # 静态 parent_mode=BUILD
+    loop = _root_loop(manager, AgentMode.READ_ONLY)
+    llm = manager.llm
+    spec = _build_spec("bw", "build")
+
+    async def chat(messages, tools=None, model="gpt-4"):
+        if _ROOT_MARKER in _last_user(messages):
+            gc.collect()  # 终结遗留 task —— 就在本 run 的上下文里
+            await _dispatch_spec(manager, spec)
+        return LLMResponse(content="ok", stop_reason="end_turn", usage=Usage(1, 1))
+
+    original = llm.chat
+    llm.chat = chat
+    try:
+        asyncio.run(loop.run([Message(role="user", content=_ROOT_MARKER)], on_event=None))
+    finally:
+        llm.chat = original
+    return _modes_by_name(manager)
+
+
+def test_abandoned_pending_run_teardown_does_not_clobber_live_ceiling(tmp_path):
+    """issue #261 回归：遗留 pending 子 run 的迟后终结不得清空**当前活跃**的上限。
+
+    机制（详见 change 的 ``diagnosis.md`` 的 ``## Root Cause``）：子 run 是独立
+    ``Task``；其所属 event loop 关闭后，遗留的 pending task 被 GC 终结时，
+    ``GeneratorExit`` 会展开该协程**所有嵌套的** ``finally``——包括
+    ``AgentLoop.run`` 里挂载 A 的恢复。该恢复跑在**当时正在运行的**上下文里；
+    若它用普通 ``set_mode_ceiling(previous)``，就会把后续用例正在使用的只读上限
+    清成 ``None``，使节点回落静态 ``parent_mode``（BUILD）而被授予 ``build``
+    （fail-open）——这正是 CI 里 ``assert 'build' == 'read_only'`` 的来源。
+
+    **变异验证**：把实现改回 ``set_mode_ceiling(previous_ceiling)``，本用例必须变红。
+    """
+    _plant_abandoned_pending_run(tmp_path)
+
+    modes = _run_live_readonly_session(tmp_path)
+
+    assert modes["bw"] == "read_only", (
+        "遗留 run 的跨上下文收尾把活跃的只读上限清空了（节点被授予 build，fail-open）"
+    )
