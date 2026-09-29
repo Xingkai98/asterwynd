@@ -99,7 +99,29 @@
 - `workflow-budget-attribution`（issue #185）：**C4**（**已合入归档 2026-09-14**）。workflow 级四维度总预算（max_total_tokens/max_total_cost_usd/max_total_runs/max_wall_time_s，任一维度 `0`=该维度不限、但 `max_total_runs=0` 不解除 C2 结构闸；超限停新 + 取消排队 + drain 在跑 + 根节点 `budget_exceeded`，超限出口不逃出 run、映射为 envelope）+ 成本归因四维账单（`CostLedger` 增 by_workflow/by_node/by_depth/by_edge，归因键随每次 LLM 调用透传；by_depth 口径 = workflow 图距 ≠ spawn_depth；不带归因键时保持既有 by_session/by_phase/by_tool 三维不变）+ 动态 route（`when` 支持 `$ref:<node>:<slot>` 引用上游结果槽，只读已声明/已落盘 slots、不执行模型生成代码，槽缺失走 default + diagnostics）/ 动态 foreach（跨层 source 递归解析：只沿数据边、多入边歧义拒绝、环检测复用 Tarjan SCC；`source_field` 只应用一次；`max_items=0` 展开到图级 run 预算耗尽、按剩余容量截断）。修复 C3 遗留：`_mark_budget_exceeded` 补填 usage，避免被预算杀的 run 在 by_node 里 cost 为 0。spec delta 已同步进 `openspec/specs/multi-agent-collaboration/`（ADDED 4 条 Requirement / 9 个 Scenario）。依赖 C2 调度器 + C1 身份 + C3 result_ref。
 - `benchmark-workflow-replay`（issue #187）：**C5**（**已合入归档 2026-09-15**）。benchmark 三模式（`template` 固定 Pattern/DSL 回归 baseline / `dynamic-record` 模型自由生成 workflow + 旁路保存规范化记录（spec + spec_hash + scheduler_version + budget_config + seed/model/temperature）、不打断自由生成 / `dynamic-replay` 不重跑规划模型、离线重放已保存 `workflow_record.json`；CLI `--workflow-mode` + `--workflow-record <run-dir>` 透传 `AsterwyndRunner` 构造参数，`AgentRunner.run` 五参签名不动）+ 编排质量指标（冗余度 = 有用产出 / spawn 总数，消费口径 = `_collect_slots` 打标被消费的 run + terminal 进 root result；图级步数 = 调度器 steps；拒绝降级计数四类 queue_full + 深度撤工具 + spawn 拒绝 + 图级超限并入，`depth_capped_runs` 按构造次数计、`queue_cancelled_runs` 单列不并入）+ workflow 全字段报告（workflow_mode/workflow_spec_hash/scheduler_version/node_count/run_count/peak_active/queue_wait_s/critical_path_s/workflow_cost_usd，无 workflow 任务全为 null、报告不崩；渲染为**独立 section**，主表只加一列 `workflow_mode`）+ 比较口径扩展（完成率 + 总 token + $/resolved-task + wall time + 节点数 + 峰值并发 + 关键路径 + 失败原因；对照臂 `configs/workflow-arm-small-k.yaml`（3/60）vs `workflow-arm-large-n.yaml`（16/24））+ 端到端真实 LLM fan-out 验证（`benchmarks/tasks-e2e/workflow-fanout/`，不进主任务集）。实现要点：`workflow_record.json` 一任务一份、顶层 `workflows` 列表（grill Q1 写法 B）、只记真正 `run()` 过的图、`collection_status` 区分 `ok`/`no_workflow`/`failed`；`AsterwyndRunner` 注入 `CostLedger` 并透传 manager（此前 benchmark 路径没挂 ledger，`workflow_cost_usd` 会是假 0）；`TaskResult`/`AgentRunResult` 成对增字段、`runner.py` 三处重建点改 `dataclasses.replace` 增量写法；编排指标挂 scheduler envelope、spawn/拒绝计数在 `run()` finally 释放桶前快照、`_first_started_scheduler` 跳过 `declared` 态图避免顶掉真实图指标；`dynamic-replay` 不走 verifier、标 `replayed`、在 `_valid_results` 显式排除（不进 pass@k 分母）。spec delta 已同步进 `openspec/specs/benchmark/spec.md`（ADDED 5 条 Requirement / 14 个 Scenario）。依赖 C2 的 spec 可哈希 + C4 的预算归因数据。C5 为串行主链 C1→C2→C3→C4→C5 的终点，完成后 wayfinder #170 的「subagent 编排自由度」目的地全部落地。
 
+### 第十六批：subagent 编排入口归一（#245/#246 follow-up）
+
+- `workflow-builtin-templates`（issue #246）：**未实现**。把 `RunPattern` 融合进统一 Workflow 入口——`RunWorkflow` 接受 exactly one of `{spec, template}`（`template` = 四个内置模板名 + `task`/`params`），父 agent 从编排入口收到的形状不随入参变化（统一 `parent_envelope()` bounded 投影，`bus` 不进父上下文），删除 `run_pattern()` 兼容 adapter 与四个 pattern 专属扁平字段。模板参数化继续留在 Python（`compile_pattern`），不做静态模板文件、不引入 spec 内占位符方言。与 #245 归一：内置模板 = 随代码走的配方，用户资产 = 随 workspace 走的配方，共用同一条编译路径与 `recipe` 概念；`asset_source` 溯源写入点从 `run_pattern` 迁到统一入口的 template 分支（保 #245 的 recipe 资产能力不静默退化）。前置 #245（已合入 PR #260）与 #255（已合入）。spec 契约 MODIFY：`multi-agent-collaboration`（Orchestration Pattern Library + 内置模式降级为 DSL 模板 + 新增统一入口与单一投影两条）、`subagents`（深度到限撤 spawn 工具去 `RunPattern`）、`agent-runtime`（bus 快照出口改挂）、`web-ui`（Workflow 视图触发列表去 `RunPattern`）。research_tier = full。
+
 ## 未实现队列
+
+### 1. `workflow-builtin-templates`
+
+状态：未实现（立项完成：proposal / design / spec delta / tasks 已就绪，待 grill 停轮确认后进入实现）。
+
+批次：第十六批，依赖前置 #245（workflow-asset-persistence，已合入）与 #255（mode 钳制，已合入）。
+
+建议顺序原因：
+
+- 前置 #245 提供 `recipe` 载体与加载协议，#255 修正 `mode` 上限基准；两者均已合入，本 change 无阻塞项。
+- 与 #261（flaky 修复）并行推进；两者只有本文件（`docs/openspec-change-backlog.md`）可能冲突，冲突在合入时解。
+
+主要交付：
+
+- `RunWorkflow` 新增 `template`/`task`/`params` 入参 + exactly-one-of 判别 + 结构化拒绝。
+- 删除 `RunPattern` 工具、`run_pattern()` adapter、四个 pattern 专属扁平字段与 `_legacy_result` 链路。
+- 编排入口返回单一 bounded 投影（`parent_envelope()`），`bus` 不进父上下文。
+- `asset_source` 溯源写入点迁移，保 #245 recipe 资产能力。
 
 ### 3. `add-minimal-tui-runtime-view`
 
