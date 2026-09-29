@@ -5,7 +5,8 @@
 ## 0. 实现前设计追问（batch-grill-me）
 
 - [ ] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`（等价设计追问），逐项审视 design.md 的 D1–D6，产出结构化决策记录到 `reviews/grill-design.md`（≥3 条决策 + `## Open Questions` + `## User Confirmation`）
-- [ ] 0.2 停轮把 `## Open Questions` 逐条配具体例子交用户确认，答复记录进 `grill-design.md` 的 `## User Confirmation`；收到答复前不写实现代码
+- [ ] 0.2 停轮把 `## Open Questions`（Q1 per-worker ref 通道 / Q2 completed 口径 / Q3 params 按模板封闭 / Q4 wait=false 回执）逐条配具体例子交用户确认，答复记录进 `grill-design.md` 的 `## User Confirmation`；收到答复前不写实现代码
+- [ ] 0.3 按 Q1 答复回写 design D2 与 tasks 5.6（补 `item_refs` 投影 或 显式记录损失缩水）；按 Q3 答复回写 design D3 与 spec delta
 
 ## 1. 共享配方编译路径（D3 / D4）
 
@@ -43,9 +44,11 @@
 - [ ] 5.4 订正 `agent/subagent/bus.py` 的 `snapshot_payload()` docstring 中「模型面调用点是 RunPattern」的措辞（界本身不落笔）
 - [ ] 5.5 改写受影响测试：`test_patterns.py` / `test_pattern_templates.py` 5.2 段 / `test_bus_bounded_exports.py` 出口 2 / `test_bounded_envelope.py` / `test_guardrails.py` / `test_concurrency_queue.py`
 - [ ] 5.5a **#245 回归测试迁移**（实测确认这三个文件用 `RunPatternTool` 产出 pattern 图）：`test_workflow_asset_tools.py:121`、`test_workflow_asset_context.py:165` 改用 `RunWorkflow(template=…)` 产出 pattern 图；`test_workflow_asset_context.py:195` 的 `test_run_pattern_result_keyset_is_locked`（键集锁）随 `run_pattern` 退役删除，其「加字段必须是有意识的」语义改挂到统一入口返回体的键集锁上
-- [ ] 5.6 **出口 4 语义迁移**：把 `test_workflow_node_transcript.py` 的「worker 条目 bounded + `result_ref` 补偿」断言改挂到新出口（`GetWorkflow(detail='nodes')` 的 `result_ref` 或 `root_result_ref`），**不删断言语义**（issue #213 回归保护）
+- [ ] 5.6 **出口 4 语义迁移**（**依赖 Open Question Q1 拍板**）：把 `test_workflow_node_transcript.py:894-932` 的「worker 条目 bounded + `result_ref` 补偿」断言改挂到新出口，**不删断言语义**（issue #213 回归保护）。**注意**：grill 实测 `GetWorkflow(detail='nodes')` 的 `_node_refs()` 对 foreach 节点返回空（身份在 `item_runs`），故若 Q1 = 不补通道，本任务必须显式缩水并记录损失，**禁止**静默降级成「只断言 `root_result_ref`」；若 Q1 = 补通道，则先落 `item_refs` 投影再迁移断言
+- [ ] 5.6a 处理 `test_workflow_node_transcript.py:942-946`（`test_worker_entry_without_workflow_identity_does_not_lie`）**直接 import `_worker_entry`** 的测试——删 `_worker_entry` 会让该文件收集期 ImportError，须一并删除或改写
 - [ ] 5.7 深度闸测试：深度到限子 agent 工具集不含 `RunWorkflow` 与 `RunPattern`
-- [ ] 5.8 删净检查：`rg 'run_pattern|RunPattern|_legacy_result'` 在 `agent/` `tests/` `benchmarks/` `web/` 零命中
+- [ ] 5.8 删净检查：`rg 'run_pattern|RunPattern|_legacy_result|_worker_entry'` 在 `agent/` `tests/` `benchmarks/` `web/` **以及 `openspec/specs/`** 零命中（`openspec/specs/` 必须纳入——grill 查出存量 spec 另有两条 Requirement 硬引用 `RunPattern`，见 6.6a）
+- [ ] 5.9 订正 `bus.py:3` / `context.py:11` 的模块 docstring 与 `benchmarks/agent_runner.py:518` 注释里的 `RunPattern` 措辞
 
 ## 6. 文档与收尾
 
@@ -55,6 +58,7 @@
 - [ ] 6.4 处理 `docs/` 下 `RunPattern` 命中文件（逐个显式决定：更新 or 记债务，不静默留错）：`docs/interview-script/run-pattern-web-demo.md`（整份文件，8 处）、`docs/interview-bullets/walkthrough.md`（14 处，含「10 个 spawn 工具」口径）、`docs/interview-script/walkthrough/W03-multi-agent.md`（2 处）、`docs/interview-script/questions/Q08-multi-agent.md`（1 处）、`docs/interview-bullets/interview-prep.md`（1 处）；工具数 10→9 的叙述一并订正
 - [ ] 6.5 受保护 artifact（`openspec/specs/**`）修改落 `workflow-events.jsonl` 结构化解释事件
 - [ ] 6.6 把 spec delta 同步到 current spec（`openspec/specs/<capability>/spec.md`：multi-agent-collaboration / subagents / agent-runtime / web-ui）并归档到 `openspec/changes/archive/YYYY-MM-DD-workflow-builtin-templates/`，从 backlog 移除
+- [ ] 6.6a **补 MODIFY 两条被 grill 查出的存量 Requirement**：`openspec/specs/multi-agent-collaboration/spec.md` 的「资产保存是显式的，且 spec 不穿过模型输出」（`:534-543`，Scenario GIVEN 写 `RunPattern`）与「资产的两类载体与参数化复用」（`:558-567`，正文与 Scenario 写 `RunPattern(pattern=…)`）——delta 已含此两条（本 change `specs/multi-agent-collaboration/spec.md`），确认同步后存量文件零 `RunPattern`
 - [ ] 6.7 跑 `/review-loop`（独立审阅闭环）至 PASS 或 3 轮封顶，产出 `reviews/building-review.md` + manifest
 - [ ] 6.8 全量 `uv run pytest -q` + benchmark smoke（`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`，确认 `template` 臂不受影响）+ `openspec validate --all --strict` + `check_openspec_artifacts.py`
 - [ ] 6.9 发起 PR 并合入

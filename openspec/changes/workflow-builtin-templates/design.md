@@ -52,6 +52,8 @@
 | `params` | object | 仅 `template` 路径：`workers`/`teams`/`proposers`/`max_rounds`/`worker_max_tokens`/`worker_max_time_s`。 |
 | `wait` | boolean | 既有：`true`（默认）等待终态，`false` 立即返回启动回执。 |
 
+**schema 层约束（grill R1 实测）**：`tool_parameters` 把参数字典原样传给模型（`agent/tools/base.py:18-56` → `agent/anthropic_llm.py:750-753`），而 Anthropic API 拒绝顶层 `oneOf`/`anyOf`（RIR）。**故「exactly one of」在 schema 层不可表达，只能是运行期判别**；且 `RunWorkflow` 现有的 `"required": ["spec"]`（`subagents.py:855`）**必须摘掉**，否则 `RunWorkflow(template=…)` 在模型侧就被判缺参。模型实际看到的是「两个可选字段 + 描述文本里的显式规则」。这与 RIR「判别子应在 required 语义上无歧义」的自我要求存在张力，只能靠描述 + 运行期拒绝弥合——形态与 `pi` 的单工具多模式一致（同为全可选 + 运行期 `modeCount` 判别）。
+
 判别规则（四种非法组合一律**结构化拒绝**，不静默取其一）：
 
 1. `spec` 与 `template` 同时给出 → `invalid_input`（`reason` 指明二选一）。
@@ -81,9 +83,19 @@
 - `GetWorkflow(detail='nodes')`：逐节点 `result_ref`，按需读。
 
 **已知的具体落差**（须在 Open Questions 让用户拍板，不藏在设计里）：
-- `completed`/`failed` 的**语义变了**。`_legacy_result` 数的是**终态节点**（peer-review 的 producer 跑两轮仍算一条 worker，`patterns.py:386`）；envelope 的 `completed`/`failed` 数的是 **run**（`scheduler.py:3005-3019`）。合并后父 agent 看到的是 run 口径。
-- **per-worker 明细不再内联**。foreach 节点在父投影里是**一条**（`subagent_ids` 是随展开数线性的数组，被 `_bounded_node` 丢弃，`scheduler.py:389-397`）。要看「哪个 worker 失败」，走 `GetWorkflow(detail='nodes')` → `result_ref` → `ReadWorkflowResult`。
+- `completed`/`failed` 的**语义变了**。`_legacy_result` 数的是**终态节点**（peer-review 的 producer 跑两轮仍算一条 worker，`patterns.py:386`）；envelope 的 `completed`/`failed` 数的是 **run**（`scheduler.py:3005-3019`）。实测对照：peer-review legacy `completed=2` / envelope `completed=4`；bidding legacy `3` / envelope `4`（同一 `spec_hash`）。
 - **bidding 的 `selected` 不再抽取**。selector 在投影里是一条 `{id: "selector", kind: "subagent", ...}` 的节点摘要（≤200 字）；长 justification 会被截断，全文经 `result_ref` 读回。
+
+> **⚠️ 实测订正（grill R1，见 `reviews/grill-design.md` 的 Confirmed Decisions）——本设计初稿的「per-worker 明细经 `GetWorkflow(detail='nodes')` 读回」是错的，必须按本条实现或拍板补通道。**
+>
+> 实测（探针 `/tmp/probe_refs2.py`、`/tmp/probe_itemrefs.py`）：foreach 类模板（orchestrator-worker / hierarchical / bidding 的 proposers，即四个模板里的三个）的 **per-worker `result_ref` 在统一出口下不可达**：
+> - `_bounded_node` 丢弃 `subagent_ids`/`item_runs`（`scheduler.py:384-405`），父投影里 foreach 节点只有 `{id, kind, status, runs, subagent_id: None, items, summary≤200, reason≤200}`。
+> - `GetWorkflow(detail='nodes')` 的 ref 来自 `_node_refs()`（`subagents.py:792-803`），它只读 `state.subagent_id`/`state.run_id`——foreach 容器节点这两个字段恒为 `None`（身份在 `state.item_runs`）。实测 `_node_refs` 对 orchestrator-worker / hierarchical 返回 `{}`，对 bidding 只返回 selector，对 peer-review 返回 producer/reviewer。
+> - `root_result_ref` 只落终态节点的最后一条 summary（实测内容不含各 worker 正文）。
+>
+> 而**今天** legacy 出口的每个 worker 条目**确实**带 `result_ref`（`_worker_entry` 截断时注入，`patterns.py:365-372`，实测 workers=3 时三条各自可 `ReadWorkflowResult`）。所以删 `_legacy_result` 是**净损失**一条能力，不是「多一跳」。
+>
+> 最小补偿改法（若拍板补）：让 `_node_refs()`（或 `GetWorkflow(detail='nodes')`）对 `kind=="foreach"` 节点读 `state.item_runs`，吐 `item_refs: [{index, subagent_id, run_id, result_ref}]`——纯读投影，`item_runs` 已是权威身份源（`web/session.py` 同款用法已存在）。**这是本 change 实现前必须拍板项**（Open Questions Q1）：补则 task 5.6 的断言可落地；不补则 task 5.6 必须显式缩水并记录损失，SHALL NOT 静默降级成「只断言 `root_result_ref`」。
 
 **替代方案与否决理由**：
 - **按入参返回两种形状**（template → legacy，spec → envelope）——否决。这是 RIR 明确警告的形态：调用方无法在不知道入参的情况下解析返回体；MCP/function-calling 文献把它列为记录在案的坑。本 change 的核心诉求正是消除这个认知负担，不能用一个新版本重建它。
@@ -94,8 +106,19 @@
 `template` 路径的处理是：`compile_pattern(template, task=task, params=params)` → `WorkflowSpec` → 与 `spec` 路径**汇合**到同一个 `parse_spec_for_manager` / 校验 / 调度路径。
 
 - `WorkflowSpec` **不加**任何模板/占位字段。`foreach.items` 仍是具体元组。
-- **不新增可写面**：没有模板文件、没有占位符插值、没有表达式求值。`params` 的键是封闭集合（未知键拒绝或忽略按既有 `_worker_budget`/`_template_*` 的 `params.get(...)` 语义——实现期定，倾向**未知键结构化拒绝**以消灭「以为传了」的假象）。
+- **不新增可写面**：没有模板文件、没有占位符插值、没有表达式求值。`params` 的键按**每个模板各自的封闭子集**校验（见下）。
 - 安全姿态：`agent/subagent/workflow.py:15-16` 的模块纪律（不执行模型生成代码、只做结构与语义校验）**不动**；本 change 不引入任何新的求值面。
+
+**`params` 校验必须按模板封闭，不能只做全局封闭键集（grill R1 订正）**：实测 `compile_pattern` 今天对未知键**静默忽略**——`compile_pattern("peer-review", params={"workers": 7})` 的 `spec_hash` 与空参**逐字节相同**（`658b47f0aa7d5495`）。若只定义「全局封闭键集」（六个键的并集），`peer-review + workers:7` 会被放行而毫无效果，正是 D1 规则 #5 要消灭的「以为 params 生效了」假象在 template 路径复现。故每个模板自身的键子集：
+
+| 模板 | 接受的 params 键 |
+|---|---|
+| `orchestrator-worker` | `workers` / `worker_max_tokens` / `worker_max_time_s` |
+| `hierarchical` | `teams` / `worker_max_tokens` / `worker_max_time_s` |
+| `bidding` | `proposers` / `worker_max_tokens` / `worker_max_time_s` |
+| `peer-review` | `max_rounds` / `worker_max_tokens` / `worker_max_time_s` |
+
+不属于该模板的键 → 结构化拒绝，`reason` 列出该模板的可用键。**这是行为变更**：`RunWorkflowAsset` 的 pattern 分支今天会把 recipe 默认 params 与调用方 params 合并后直接编译（`subagents.py:1198-1199`），历史上允许「多传无关键」；收紧后若某资产 recipe 存着跨模板键会被拒。是否让 `RunWorkflowAsset` 同步享受该收紧（会触碰「资产工具对外行为不变」这条 Non-Goal），见 Open Questions Q3。
 
 **依据**：RIR 显示所有参考实现都把参数化放在代码/配置层，占位符集封闭且启动前校验；Asterwynd 的 `compile_pattern` 已经是这个容器，#245 的 `ALLOWED_OVERRIDE_FIELDS` 封闭子集已示范同一门槛（零新方言、直接赋值、覆盖后重校验）。
 
@@ -127,7 +150,13 @@
 
 **保留**（模板本体，被三处共用）：`compile_pattern`、`PATTERNS`、`OrcPattern` 及四个子类、`_template_orchestrator_worker` / `_template_peer_review` / `_template_hierarchical` / `_template_bidding`、`_items`、`_worker_budget`、`_AGGREGATE_INSTRUCTION`。
 
-> **注意**：`_workers_from_node` / `_worker_entry` 目前**同时**服务于 `_legacy_result` 与 `test_workflow_node_transcript.py` 的「出口 4」断言。删除前须确认该测试的断言改为走 envelope 的 `nodes[]` + ref，而非直接删测试——出口 4（worker 条目 bounded + `result_ref` 补偿）是 issue #213 的回归保护，其**语义**必须在新出口上继续被钉住（见 Testing Strategy）。
+> **注意 1**：`_workers_from_node` / `_worker_entry` 目前**同时**服务于 `_legacy_result` 与 `test_workflow_node_transcript.py` 的「出口 4」断言。删除前须确认该测试的断言改为走 envelope 的 `nodes[]` + ref，而非直接删测试——出口 4（worker 条目 bounded + `result_ref` 补偿）是 issue #213 的回归保护，其**语义**必须在新出口上继续被钉住（见 Testing Strategy）。**但**该语义的迁移依赖 Q1 拍板补 ref 通道，否则迁移不可能（见 D2 的实测订正）。
+>
+> **注意 2（grill R1 补，实现必踩）**：`_worker_entry` 还被 `tests/web_tests/test_workflow_node_transcript.py:942-946` **直接 import 调用**（`test_worker_entry_without_workflow_identity_does_not_lie`）。删 `_worker_entry` 会让该测试在**收集期 ImportError**；D5/tasks 5.6 初稿只点了「出口 4 经 `run_pattern`」那条（`:894-932`），漏了这条直调测试，须一并删除或改写。
+>
+> **注意 3（grill R1 补）**：`agent/subagent/bus.py:3` 与 `agent/subagent/context.py:11` 的模块 docstring 也写「bus is created by `RunPattern`」，与 `bus.py` 的 `snapshot_payload()` docstring 共三处措辞须一并订正（tasks 5.8 的 `rg` 会兜住）。
+>
+> **注意 4（grill R1 补）**：`benchmarks/agent_runner.py:518` 的注释引用 `RunPatternTool`（「与 `RunPatternTool` 同路」），tasks 5.8 的扫描范围已含 `benchmarks/`，会被抓住；该文件**逻辑不受影响**（C5 template 臂直调 `compile_pattern`）。
 
 ### D6 — `wait=False` 的回执形状是正交的第二形状，但带显式判别子
 
@@ -163,4 +192,9 @@
 
 ## Open Questions
 
-> 由 `reviews/grill-design.md` 填充并逐条配具体例子；本 change 在停轮确认（grill-confirmation-gate）前不得写实现代码。
+> 完整版（含逐条具体例子与推荐）见 `reviews/grill-design.md` 的 `## Open Questions`；用户答复回填同文件的 `## User Confirmation`。本 change 在停轮确认（grill-confirmation-gate）前不得写实现代码。
+
+1. **per-worker 明细损失**：统一出口下 foreach 类模板（三个模板）的 per-worker `result_ref` 不可达（实测）。是接受损失，还是补 `_node_refs` 的 `item_runs` 投影？
+2. **`completed`/`failed` 口径**：从节点口径翻成 run 口径（实测 peer-review 2→4）。是否接受「run 口径 + 工具描述写明」？
+3. **`params` 校验按模板封闭**：是否接受「跨模板键结构化拒绝」这一行为变更，以及 `RunWorkflowAsset` 的合并路径是否同步收紧？
+4. **`wait=false` 回执**：与终态 `parent_envelope()` 形状完全不同，是否确认为可接受的「正交第二形状」？

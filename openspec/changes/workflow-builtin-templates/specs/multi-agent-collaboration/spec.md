@@ -25,6 +25,62 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 - **THEN** 系统 SHALL 经既有模板编译器编译为 WorkflowSpec 并走统一调度器
 - **AND** 编译出的 spec SHALL 与 `compile_pattern("orchestrator-worker", task="research", params={"workers": 3})` 逐字一致（`spec_hash` 相等）
 
+### Requirement: 资产保存是显式的，且 spec 不穿过模型输出
+
+系统 SHALL 提供显式保存动作：把**已声明或已运行过**的图按 `workflow_id` 沉淀为命名资产，`name`/`description` 由调用方给出，而 spec 正文 SHALL 由服务端从该 `workflow_id` 取出，SHALL NOT 要求模型重新输出 spec 正文。保存 SHALL 复用既有写盘纪律：原子写（tmp + `os.replace`）、路径段级白名单校验（拒绝 `.`/`..` 与越界字符）、写入目标路径上任一环节为 symlink 时 SHALL 拒绝穿透写入。slug SHALL 同时满足 `^[a-z0-9-]+$` 与既有路径段白名单的交集约束。系统 SHALL NOT 因「跑过一张图」而自动入库。
+
+#### Scenario: 保存刚跑过的图不要求模型重述 spec
+
+- **GIVEN** 模型刚通过统一 Workflow 入口（`RunWorkflow` 的 `spec` 或 `template` 入参）跑完一张图并拿到 `workflow_id`
+- **WHEN** 调用保存动作并只给出 `workflow_id` + `name` + `description`
+- **THEN** 系统 SHALL 从该 `workflow_id` 取出 spec 并落盘为资产
+- **AND** 该调用 SHALL NOT 需要模型在参数中携带 spec 正文
+
+#### Scenario: 非法 slug 与 symlink 写入被拒绝
+
+- **GIVEN** 一个 `name` 为 `../escape`、`a/b`、`A-B`（含大写）或空串
+- **WHEN** 调用保存动作
+- **THEN** 系统 SHALL 拒绝该次写入
+- **AND** 当目标路径上任一环节是 symlink 时，系统 SHALL 拒绝穿透写入而非跟随链接
+
+#### Scenario: 未保存的图不入库
+
+- **GIVEN** 一个会话跑了一张图但从未调用保存动作
+- **WHEN** 在一次新会话中列出资产
+- **THEN** 该图 SHALL NOT 出现
+
+### Requirement: 资产的两类载体与参数化复用
+
+资产 SHALL 支持两类载体，由图的**来源路径**决定：从内置编排模式（经统一 Workflow 入口的 `template` 入参触达）产出的图 SHALL 保存为**配方**（`{pattern, params, task}`），加载时经既有模板编译器重新编译；从 `DeclareWorkflow`/`RunWorkflow`（`spec` 入参）产出的图 SHALL 保存为 **spec 正文**（`WorkflowSpec.to_dict()` 的结果），因为该路径的输入已是展开后的 spec、不存在可还原的配方。DSL 资产 SHALL 允许保存者声明一个**覆盖面**（`overrides: {node_id: [field, ...]}`），其中的 `field` SHALL 限制在一个封闭子集内（`task` / `items` / `max_items` / `max_tokens` / `max_time_s`）；调用时对未声明的 `(node_id, field)` 组合 SHALL 拒绝。覆盖面 SHALL 以对既有 spec 字段的直接赋值实现，SHALL NOT 引入插值、表达式求值或 item 名模板等新方言。覆盖面 SHALL 在既有 `parse_workflow_spec` 校验**之前**应用，因此 reducer 冲突、环的可启动性、节点数与闸值上限等既有校验 SHALL 全部照常生效。
+
+#### Scenario: pattern 资产保留参数化
+
+- **GIVEN** 资产由 `RunWorkflow(template="orchestrator-worker", task=…, params={"workers": 3})` 跑出后保存
+- **WHEN** 以 `params={"workers": 5}` 调用该资产
+- **THEN** 系统 SHALL 经既有模板编译器重新编译，展开出 5 个 foreach 项
+- **AND** SHALL NOT 需要保存者或调用者手改 spec 的 `items` 列表
+
+#### Scenario: DSL 资产按声明的覆盖面参数化
+
+- **GIVEN** 一份 DSL 资产声明 `overrides: {"workers": ["items"]}`
+- **WHEN** 调用时给出 `overrides={"workers": {"items": [12 个项]}}`
+- **THEN** 系统 SHALL 把覆盖应用到该节点的 `items` 字段后再走校验与调度
+- **AND** 覆盖后的 spec SHALL 通过既有 `parse_workflow_spec` 的全部校验
+
+#### Scenario: 未声明的覆盖面被拒绝
+
+- **GIVEN** 一份 DSL 资产声明的覆盖面只有 `{"workers": ["items"]}`
+- **WHEN** 调用时给出 `overrides={"workers": {"task": "改过的任务"}}`
+- **THEN** 系统 SHALL 拒绝该次调用并报 `override_not_declared`
+- **AND** SHALL NOT 静默忽略该覆盖后照常运行
+
+#### Scenario: 覆盖破坏既有不变量时由既有校验拒绝
+
+- **GIVEN** 一次覆盖把某节点的 `items` 置为空列表
+- **WHEN** 加载该资产
+- **THEN** 既有 `parse_workflow_spec` SHALL 拒绝该 spec 并给出自足的错误信息
+- **AND** 系统 SHALL NOT 为资产加载引入第二套校验规则
+
 ## ADDED Requirements
 
 ### Requirement: 统一 Workflow 入口的模板输入
@@ -83,6 +139,7 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 - **WHEN** 父 agent 需要某个 worker 的完整产出
 - **THEN** 该 foreach 节点在投影里 SHALL 是一条 bounded 摘要（`subagent_ids` 等线性数组 SHALL NOT 出现）
 - **AND** 系统 SHALL 经 `GetWorkflow(detail='nodes')` 提供逐节点 `result_ref`，供 `ReadWorkflowResult` 读回全文
+- **AND** 对 `kind=="foreach"` 节点，系统 SHALL 经只读投影暴露每个展开项的 `result_ref`（`item_runs` 已是权威身份源），使 per-worker 全文在统一出口下**可达**——`SHALL NOT` 只给节点级摘要而让 per-worker 产出无 ref 可取（本 Requirement 的补偿义务对 foreach 类模板同样成立）
 
 #### Scenario: 启动回执与终态结果有显式判别子
 
