@@ -13,12 +13,13 @@
 
 ## Verdict
 
-**PASS**（Round 2 更新：R1 的两条实现类 issue 已修复并经独立复核；剩余为收尾流程项，不阻塞）
+**PASS（实现本身）／ 验收门槛未达标（交用户决策是否迭代）**（Round 3 更新）
 
 - **Round 1 verdict（historical）**：`CHANGES_REQUESTED` —— 实现主体正确、schema 派生真实、D6(b)/D7 落地无误、测试与 spec 对齐良好，但有一处直接违背本 change 自己声明的 P0 不变式（模型可见面零 `control` token）的残留缺陷（Issue #1），以及 tasks 勾选（#2）与 manifest head 绑定（#3）两处流程项。
-- **Round 2 verdict（current）**：`PASS` —— Issue #1 已修复且断言补强到位、无夹带；#2/#3 经确认属**收尾流程项**，不阻塞对本 delta 的 verdict。
+- **Round 2 verdict**：`PASS` —— Issue #1 已修复且断言补强到位、无夹带；#2/#3 经确认属**收尾流程项**，不阻塞对本 delta 的 verdict。
+- **Round 3 verdict（current）**：**对「实现（代码）」维持 `PASS`；对「本 change 自己的验收门槛」判定为 `未达标`**——收尾期发现两处验收证据问题（run 3 被 run 2 的 `SaveMemory` 记忆 priming、`desc_placeholder` 属域外错误被漏归类），订正后门槛结论由「1/3 达标」降为 **0/3 严格达标**、域外错误由 `4/5` 降为 **`1/4`（未归零）`**。这两处**只影响验收结论，不影响实现代码的正确性/spec 对齐/测试覆盖**（后者在 R1/R2 已独立验证且未被本轮 delta 触碰）。**实现可以合入；但「本 change 是否达到它自己立的主指标门槛」的答案是否定的，须交用户决定是否迭代**（见文末「Round 3」）。
 
-R1 审阅 head = `75d5a1b`；R2 审阅 head = `0114be4`。详见文末「Round 2」。
+R1 审阅 head = `75d5a1b`；R2 审阅 head = `0114be4`；R3 审阅 head = `bf1760b`（归档后）。详见文末「Round 2」「Round 3」。
 
 ---
 
@@ -297,3 +298,83 @@ quarantine 污染记忆、`cwd=/tmp`、独立 checkout 三项均有对应痕迹�
 | 流程 | 8 个模型可见文案里的中文标点 `\`task\`` 等 | 非 token 类，D3 只约束 `control`，无影响。 |
 
 **Round 2 结论：无阻塞项，`PASS`。** 收尾时按 AGENTS.md 完成 tasks 勾选、spec sync 落事件、manifest 在 tasks 最终化后生成即可。
+
+---
+
+# Round 3（收尾期验收证据订正复核）
+
+- 复审 head: `bf1760bd0bece10edc5f4ed3cb3e8aa2697dcce2`（change 已归档到 `openspec/changes/archive/2026-09-29-workflow-tool-discoverability/`；本报告随归档移动）
+- 触发：收尾期自查出「run 3 被 run 2 的 `SaveMemory` 记忆 priming」+「`desc_placeholder` 域外错误被漏归类」，两处均**改变门槛结论**。
+- 复审范围：只核验收证据订正；不重跑 pytest/rollout（依 R1/R2 既有实跑 + 本轮 transcript 复算）。
+
+## Round 3 Verdict
+
+**对「实现（代码）」：维持 `PASS`。对「验收门槛」：`未达标`（0/3 严格口径），须交用户决策。**
+
+判决理由：本轮两处订正**改变的是验收证据的可信度与结论，不是实现代码**。实现代码的正确性（schema 派生 / D6(b) 两条入口 / D7 文案不变行为）、spec 对齐、测试覆盖、T1–T6 齐备，在 R1/R2 已逐条独立验证；`bf1760b` 与 R2 审阅 head `0114be4` 之间**代码零改动**（归档 move + evidence/报告订正 + manifest）。因此「实现 PASS」不受影响。但本 change **自己立的主指标门槛（S0=0）确实未达**，且这一事实此前被两处证据问题部分掩盖——这是**必须交给用户**的决策点（是否迭代 / 放宽门槛口径 / 接受现状合入）。
+
+## 订正 1 复核：run 3 的 memory priming（污染机制是否成立）
+
+**结论：机制论证成立，我独立复核了每一环。**
+
+1. **`SaveMemory` 确实在 run 2 末尾发生**：`after-transcript-2026-09-29.log:1063`，`00:38:55,508` 执行 `SaveMemory({'type':'project','name':'asterwynd-workflow-engine-gotchas', ...})`，`importance:4`；`:1064` `00:38:55,634` 返回 `saved`。该记忆的 `body` 逐条含「route 回边只传控制、不传数据」「`max_routes` 用尽 → blocked」等**正是 run 3 探针要回答的问题**。
+2. **run 3 在 55 秒后启动**：`:1230` `Session ID: a57094603ad8`，`:1234` `00:39:51,855 [Iteration 0]`（首 iteration 即 2 条消息，含系统提示 = 新 session）。**时间差 ≈ 56 秒**，与 evidence 所述一致。
+3. **注入通道存在且确实每 session 生效**：`agent/context/sources.py:278-307` 的 `MemoryIndexSource.render()` 读 `persistent_memory.load_summary()` 并把摘要拼进 `## Project Memory`，且该源 `static = False`（注释明写「每轮重渲染（非 static）」）→ **每个新 session 起始上下文都会带 active 记忆摘要**。故 run 3 的 S0=0 **不可信**这一判断成立。
+4. **改后 run 1 / run 2 不受此路径污染**：run 1 起始该 scope 记忆已在基线节被 quarantine；run 2 起始时 run 1 未写记忆（run 1 transcript 中 `SaveMemory` 计数为 0）。✅
+5. **干净重跑 run 3b**：`reviews/after3b-transcript-2026-09-30.log`（session `e1e3cf133945`，单 session，`SearchMemory=0` / `SaveMemory=0` 实跑计数）→ 起始无记忆注入痕迹，替代可信。
+
+> **残余注意（非阻塞）**：run 3b 本身在**其执行期间**（00:46 前后，见 `after-transcript` 中原 run 3 的 `SaveMemory` 是另一条）——不影响 3b 起始上下文；3b 自己的 `SaveMemory=0` 已确认无自污染。
+
+## 订正 2 复核：run 3b 的 S0 与 `desc_placeholder` 归类
+
+**S0 = 4：我独立复算为 3，与 evidence 的 4 有 ±1 差。** 用 evidence 声明的**同一双语分类器**逐条跑 run 3b 的 `goal`，命中 3 条（`探针：route 出边/非必需数据边…`、`探针：上游内容在 task 里的占位符写法`、`探针：bus channel…`）；`诊断 foreach item 的模板注入约定` **未被分类器命中**（它不含 `probe`/`探针`，也不以 `test/verify/check/validation` 开头），但 evidence 把它计入探针（=第 4 条）。
+
+- 该条**语义上确属探针**（「诊断…约定」= 只为验证语义、无业务目标），故 evidence 的「4」在**语义口径**下成立；但**用其声明的机械分类器算不出 4，只能算出 3**。这是一处**分类器与人工判定不一致**的口径瑕疵（与 R1 抓到的同类问题同源）。
+- **对结论方向无影响**：无论 3 还是 4，均 > 0 ⇒ 门槛仍 `0/3 严格达标`。**故不改判**，但登记为低危口径项（见下）。
+
+**`desc_placeholder` 归类：同意。** `after3b-transcript-2026-09-30.log` 中该次 `DeclareWorkflow` 返回 `unknown node field(s): ['desc_placeholder']` —— 属 `unknown node field` 形态，与基线的 `unknown node field(s): ['routes']` / `['task_note_unused']` **同类**（模型自造字段名以求「运行时模板占位符」能力）。归为**域外错误**成立。evidence 把「改后域不可见类 = 0」订正为 **`1/4`（未归零）**、并由「探针口径」单独声明，是**正确的收紧**。
+
+**我独立抽取的全部 `invalid_spec` reason（可复核）**：
+
+| 组 | 次数 | reason | 归类 |
+|---|---|---|---|
+| 基线 | 5 | `channel must be one of [...]`、`unknown edge field ['label']`、`unknown node field ['routes']`、`unknown node field ['task_note_unused']`、`route node 'gate' cases must be a list` | 域外 ×4 + shape ×1 |
+| 改后 run1 | 1 | `slot 'result' is written by multiple upstreams [...] declare no reducer` | 规则未照做 |
+| 改后 run2 | 1 | 同上（`agg`） | 规则未照做 |
+| 改后 run3b | 2 | `unknown node field ['desc_placeholder']`、`slot 'result' ... no reducer` | **域外 ×1** + 规则未照做 ×1 |
+
+⇒ 改后域外错误 = **1/4**（不是 0），evidence 订正后的表述与 transcript 逐字对得上。**未发现第三处被漏归类的 `invalid_spec`**。探针 17 条逐条看也确为「运行期语义」类（foreach 注入、route/边读谁的文本、bus channel、占位符写法），无「域不可见」类——探针口径的表述成立。
+
+## 对实现本身的 PASS 是否维持（明确回答）
+
+**维持 `PASS`。** 论据：
+
+- 本轮两处订正**全部落在 `reviews/acceptance-evidence.md` 与 rollout transcript 层**，**不触任何实现代码**。`git diff 0114be4 bf1760b` 的实现侧为零（详见下方范围核对）。
+- 实现正确性在 R1/R2 已独立验证且本轮无新反证：schema 派生真实（`_workflow_spec_schema` 读时取常量）、D6(b) 两条入口产可行动 warning、D7 只改文案未改接受/拒绝、T1–T6 齐备、spec delta 逐条对齐、`control` 模型可见面零命中。
+- 「实现好不好」与「change 效果是否达标」是两个问题：前者 PASS，后者 **0/3 未达标**。二者不矛盾——一个正确实现了一个**方向对但收益不完全**的 change，正是本 change 的真实形态（域外错误 4/5→1/4、探针 9→5.67，改善真实但未归零）。
+
+## 需用户决策（**阻塞项**）
+
+> 这是本 change 真正的待决点，主 session 须停轮交用户。
+
+**决策：本 change 是否达到可合入的验收标准？** 客观事实：
+
+- 主指标门槛（S0=0）**未达标**：改后严格 **0/3**（S0 = 6/7/4），非此前误报的 1/3。
+- 但 change 针对的错误类**确有实质改善**：`invalid_spec` 中的域外错误 `4/5 → 1/4`；探针数 9 → 5.67；剩余探针 **100% 属本 change 不覆盖的「运行期语义」层**（foreach 注入 / route 读谁的文本 / bus channel）。
+- proposal 早已明写「这不是客观硬指标……由主 session 主观判断」且「不设 token 阈值」。
+
+**可选处置**（供用户拍板）：
+- **(A) 接受现状合入**：认定「消除一整类无效动作（域不可见类）」这一收益落地，剩余探针属另开 issue 的范畴（#208 / 运行期语义文档）。
+- **(B) 迭代**：另开 change 补「运行期语义」可发现性（本 change Non-Goals 已明确排除，属范围扩张，需新立项）。
+- **(C) 放宽/重定义门槛**：不推荐——proposal 的门槛是用户当初拍板的口径，事后放宽会让验收失去意义。
+
+**我的建议**：**(A)**。实现正确、spec 对齐、域外错误显著下降且剩余探针与工具契约根因无关；把「运行期语义」作为独立 issue 跟进更符合范围纪律。但**这是用户的判断，不是 reviewer 的**。
+
+## Round 3 残留（非阻塞）
+
+| 级别 | 项 | 说明 |
+|---|---|---|
+| 中 | 验收门槛未达标交用户决策 | 见上「需用户决策」，**这是阻塞合入判断的项**。 |
+| 低 | S0 分类器与人工判定不一致（run 3b 的 `诊断 foreach…` 条） | 机械分类器算 3、evidence 算 4；方向不变。建议 evidence 明确「含 1 条人工判定」，消除口径歧义。 |
+| 低 | benchmark smoke 未在 base 对照（R1 #4） | 未变；本 delta 不触 benchmark runner。 |
+| 低 | run 3b 起始 memory 状态未独立读盘核验 | evidence 声称「0 条 active 记忆」；我用 `SearchMemory=0/SaveMemory=0` 佐证，但未直读 `~/.asterwynd/projects/<hash>/memory/` 与 `MEMORY.md`。低风险。 |

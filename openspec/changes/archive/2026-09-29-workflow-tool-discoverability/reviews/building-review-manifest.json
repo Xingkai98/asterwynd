@@ -3,11 +3,11 @@
   "change_id": "workflow-tool-discoverability",
   "phase": "building",
   "verdict": "PASS",
-  "reviewer_run_id": "review-workflow-tool-discoverability-20260929-r2",
+  "reviewer_run_id": "review-workflow-tool-discoverability-20260929-r3",
   "base_sha": "db79b051e479fd0e261144e683bac91ffba061ef",
-  "head_sha": "5116094bf43eebfb38c62c0464eda3963cdbaebb",
-  "tasks_hash": "sha256:5002a5b469c0b0186cc7b48ffbeef5c9c5081b880bc42958bc5e2281c7b06286",
+  "head_sha": "669702900d41d44f7f2906e7333e26456789ec87",
+  "tasks_hash": "sha256:d8197bca8c60baba279d7c7bfd81486cff0d96e2deb4f3ebf7e55994f29ff5dd",
   "spec_hash": "sha256:f09903ccc0383b777368e246b802a8bc1e204c16e5727669286dd98071d8d90b",
-  "diff_hash": "sha256:abfdaab1734882d1c23fc398cedc0f89c19d696ddf3f387daf1be147f37922b4",
-  "report_hash": "sha256:49fcdb15ef5a64c6db0471eabdf380a221688d3b3beb9359884574b7c459428d"
+  "diff_hash": "sha256:cf5721d1145210d6f8f65184e2a0389ed529dfd1098ea8f69936ea2b25d07a90",
+  "report_hash": "sha256:59e69abe277fe4681f94a00322747c725cfe9e290cd17213e4745e92885c4e4c"
 }

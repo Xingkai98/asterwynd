@@ -57,7 +57,7 @@
 - [x] 4.3 跑**改后** 3 次：同提示词、同模型，记录 S0–S6
 - [x] 4.4 落盘证据到 `reviews/`（`acceptance-evidence.md` + 三个 transcript；隔离修正与 S0 口径发现一并记录）（基线表 + 改后表 + 原始 transcript 路径 + 资产文件对照）
 - [x] 4.5 主 session 软判断：读 transcript 回答「它在**理解工具** vs **理解任务**上花了多少」（两者必须分开）
-- [x] 4.6 通过门槛判定：**严格口径仅 1/3 达标**（改后 S0 = 5/7/0，基线 9；S6 三次均成立）。已按未达标分支**记录实际差异与归因**——基线 4/5 次 `invalid_spec` 属「域不可见」类（自造 `channel`/字段名），改后该类归 **0**；剩余探针转向**运行期语义**（不在本 change 范围）。交主 session 决定是否迭代（见 `acceptance-evidence.md`）
+- [x] 4.6 通过门槛判定：**严格口径 0/3 达标**（改后 S0 = 6/7/4，基线 9；S6 三次均成立）。已按未达标分支**记录实际差异与归因**——`invalid_spec` 中「域不可见」类由 **4/5 降到 1/4**（未归零；残留 run 3b 的 `unknown node field 'desc_placeholder'`）；剩余探针 100% 属**运行期语义**（不在本 change 范围）。**两项订正**：①改后 run 3 初次 S0=0 系 run 2 末尾 SaveMemory 注入 run 3 起始上下文所致，已 quarantine 后干净重跑（run 3b，S0=4）；②「域不可见类归零」订正为「1/4 未归零」。**交主 session 决定是否迭代**（见 `acceptance-evidence.md` 与 `building-review.md` 的「需用户决策」）
 
 ## 5. 验证
 

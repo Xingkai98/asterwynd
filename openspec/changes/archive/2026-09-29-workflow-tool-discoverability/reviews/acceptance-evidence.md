@@ -198,7 +198,7 @@ def is_probe(goal: str) -> bool:
 | 基线 | 9 条（`probe route schema` / `probe route dup cases` / `probe substring match` / `probe: ...` 等，见基线 transcript 的 `'goal'` 行） | 9 条（「为『本地优先的笔记应用』设计…」等） |
 | 改后 run 1 | 6 条（全为 `probe: ...` 前缀的 RunWorkflow(spec)） | 4 条（中文「N 维度并行评审…」） |
 | 改后 run 2 | 7 条（`路由前缀匹配语义探针` 与 6 条 `探针：…`） | 7 条（`演示复杂拓扑…` + `v2..v6`） |
-| 改后 run 3b（干净重跑） | 4 条（`诊断 foreach item 的模板注入约定` + 3 条 `探针：…`） | 8 条（中文业务目标与「完整循环演示」） |
+| 改后 run 3b（干净重跑） | 4 条（3 条 `探针：…` + **1 条人工判定**：`诊断 foreach item 的模板注入约定`——机械分类器只算 3，该条不含 `probe/探针` 也不以 `test/verify/check/validation` 开头，但语义上是「只为验证语义、无业务目标」，故**人工计入**） | 8 条（中文业务目标与「完整循环演示」） |
 
 > **口径备注**：S0 按**声明尝试**计数（`DeclareWorkflow` + 带 `spec` 的 `RunWorkflow`）。
 > proposal 原文的 S0 定义含「或『只为验证语义、不含业务目标』的声明」这一**语义**分支，
