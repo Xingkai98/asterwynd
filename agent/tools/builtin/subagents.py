@@ -22,6 +22,7 @@ from agent.subagent.scheduler import (
     WorkflowScheduler,
     limits_report,
 )
+from agent.subagent import workflow as workflow_dsl
 from agent.subagent.workflow import (
     WorkflowCycleError,
     WorkflowSpec,
@@ -48,7 +49,8 @@ from agent.tool_permissions import AGENT_STATE_PERMISSION, SUBAGENT_CONTROL_PERM
         "properties": {
             "name": {"type": "string"},
             "description": {"type": "string"},
-            "mode": {"type": "string", "enum": ["build", "read_only", "plan"]},
+            # Q6：与 workflow 节点 `mode` 共用同一声明（workflow.NODE_MODES），不手写第二份。
+            "mode": {"type": "string", "enum": list(workflow_dsl.NODE_MODES)},
         },
         "required": ["name"],
     },
@@ -499,26 +501,275 @@ def _unknown_workflow(workflow_id: str, manager: SubAgentManager) -> str:
     )
 
 
+# --- spec 的嵌套 schema（change ``workflow-tool-discoverability``，D2） -------
+#
+# 分工原则（D1）：**schema 管域**（单个字段的封闭合法值集合），**描述管形**（字段之间
+# 怎么组合成合法图）。封闭域以 ``enum`` 暴露；跨字段约束（``join`` 只属 aggregate、
+# ``cases`` 只属 route）退回描述——用 ``oneOf`` 表达在 Anthropic API 上被拒（顶层
+# ``oneOf``/``anyOf``），且本仓 ``parameters`` 是逐字透传 ``input_schema``。
+#
+# 派生纪律（D2）：每个 ``enum`` 都**在读时**从 ``agent/subagent/workflow.py`` 的常量取，
+# 工具层不写第二份字面量——常量改则 schema 改，中间不留手写副本。parity 测试（T1）与
+# 变异验证（T1a）把它钉成机械可验的性质。
+
+
+def _workflow_spec_schema() -> dict[str, Any]:
+    """从 ``agent/subagent/workflow.py`` 的常量程序化展开 ``spec`` 的嵌套 schema。
+
+    每次调用都重新读常量（不缓存）——这样测试可以用 monkeypatch 改常量来验证
+    「schema 是派生的、不是硬编码的」（T1a 变异验证）。
+    """
+    node_schema = {
+        "type": "object",
+        # R-C：**不写**节点级 `required`。`task` 对 subagent/foreach 必填、对 aggregate
+        # 可选、对 route 无意义；`items`/`source` 二选一——这些无法在不引入 `oneOf` 的
+        # 前提下表达，写死会凭空造出一批 schema 层拒绝。缺省要求由运行期校验承担。
+        "properties": {
+            "id": {"type": "string", "description": "Unique node id within the graph."},
+            "kind": {
+                "type": "string",
+                "enum": list(workflow_dsl.NODE_KINDS),
+                "description": "Node kind. Determines which fields below apply.",
+            },
+            "task": {
+                "type": "string",
+                "description": (
+                    "The prompt for this node. Required for subagent/foreach; "
+                    "optional for aggregate; IGNORED for route (route decisions come "
+                    "from `cases`/`default`)."
+                ),
+            },
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "mode": {
+                "type": "string",
+                "enum": list(workflow_dsl.NODE_MODES),
+                "description": "Agent mode for this node's run.",
+            },
+            "outputs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Result slots this node writes. Defaults to [\"result\"].",
+            },
+            "join": {
+                "type": "string",
+                "enum": list(workflow_dsl.JOIN_SEMANTICS),
+                "description": (
+                    "aggregate only: how to wait for upstream branches. `best_effort` "
+                    "requires an explicit `deadline_s`."
+                ),
+            },
+            "strategy": {
+                "type": "string",
+                "enum": list(workflow_dsl.AGGREGATE_STRATEGIES),
+                "description": "aggregate only: how to combine the inputs.",
+            },
+            "deadline_s": {
+                "type": "number",
+                "description": "aggregate only: positive seconds; required for `best_effort`.",
+            },
+            "cases": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    # R-D：`when` 是**开放域**（字面标签或 `$ref:<node>:<slot>`），
+                    # SHALL NOT 加 enum——加了会堵死 `$ref:` 形态。
+                    "properties": {
+                        "when": {"type": "string"},
+                        "to": {"type": "string"},
+                    },
+                },
+                "description": (
+                    "route only: prefix-match cases, evaluated in declaration order "
+                    "(first match wins). Put specific patterns before broad ones."
+                ),
+            },
+            "default": {
+                "type": "string",
+                "description": "route only: node id to route to when no case matches.",
+            },
+            "max_routes": {
+                "type": "integer",
+                "description": (
+                    "route only: max dispatches for this node, counted across all "
+                    "rounds and never reset. Defaults to 1."
+                ),
+            },
+            "items": {
+                "type": "array",
+                "description": "foreach only: literal items to iterate; exclusive with `source`.",
+            },
+            "source": {
+                "type": "string",
+                "description": (
+                    "foreach only: node id to pull items from; requires `source_field`."
+                ),
+            },
+            "source_field": {"type": "string", "description": "foreach only."},
+            "max_items": {
+                "type": "integer",
+                "description": "foreach only: default 20; 0 = no static truncation.",
+            },
+            "max_tokens": {"type": "integer", "description": "Run token budget for this node."},
+            "max_time_s": {"type": "number", "description": "Run time budget for this node."},
+        },
+    }
+    edge_schema = {
+        "type": "object",
+        "properties": {
+            "from": {"type": "string", "description": "Source node id."},
+            "to": {"type": "string", "description": "Target node id."},
+            "channel": {
+                "type": "string",
+                "enum": list(workflow_dsl.CHANNELS),
+                "description": (
+                    "How data is passed downstream. This is orthogonal to gating: a "
+                    "route's outgoing edges never gate regardless of channel value."
+                ),
+            },
+            "required": {
+                "type": "boolean",
+                "description": (
+                    "Data-edge gating (default true). Meaningless on a route's "
+                    "outgoing edges, which are control edges."
+                ),
+            },
+            "reducer": {
+                "type": "string",
+                "enum": list(workflow_dsl.REDUCERS),
+                "description": (
+                    "How to merge parallel writes to the same output slot. Required "
+                    "when more than one incoming edge writes the same slot."
+                ),
+            },
+        },
+    }
+    return {
+        "type": "object",
+        "description": "The workflow spec (see the tool description for the graph rules).",
+        "properties": {
+            "goal": {"type": "string", "description": "Free-text goal for this workflow."},
+            "schema_version": {
+                "type": "string",
+                "description": f"Spec version; the only legal value is {workflow_dsl.SCHEMA_VERSION!r}.",
+            },
+            "nodes": {
+                "type": "array",
+                "items": node_schema,
+                "description": "Nodes of the graph. Must be non-empty.",
+            },
+            "edges": {
+                "type": "array",
+                "items": edge_schema,
+                "description": "Edges of the graph. May be empty.",
+            },
+            "entry": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Node ids that may start without waiting. Defaults to nodes with "
+                    "no incoming edge; a loop body must be listed here to be restartable."
+                ),
+            },
+            "terminal": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Node ids that end the graph. Defaults to nodes with no outgoing edge.",
+            },
+            "recursion_limit": {"type": "integer", "description": "Graph-level step cap."},
+            "max_nodes": {"type": "integer", "description": "Node-count cap."},
+            "max_runs": {"type": "integer", "description": "Total run cap."},
+        },
+    }
+
+
+def _spec_schema_parameters(*, required: list[str]) -> dict[str, Any]:
+    """``{"type":"object","properties":{"spec": <derived>}, "required": ...}``。
+
+    ``required`` 是**参数化**的（R-B）：``DeclareWorkflow`` 要求 ``["spec"]``，而
+    ``RunWorkflow`` 的 ``spec`` 与 ``template`` 二选一，故为 ``[]``（被
+    ``test_run_workflow_template.py::test_schema_drops_required_spec`` 钉死）。
+    """
+    return {
+        "type": "object",
+        "properties": {"spec": _workflow_spec_schema()},
+        "required": required,
+    }
+
+
+def _route_task_warnings(spec: WorkflowSpec) -> list[str]:
+    """D6 选 (b)：route 节点带 ``task`` 时的**可行动**提示。
+
+    文案 SHALL 同时给出「哪里错了」与「改到哪里去」（用户 Q1 追加要求）：`task` 在
+    route 上**不会被执行**（``_execute_route`` 不读它），判定逻辑应写进 ``cases[].when``。
+    SHALL NOT 说「route 没有 `task` 字段」——``task`` 在声明面被完整保留并进 ``spec_hash``
+    （C7）。两条入口（``DeclareWorkflow`` 与 ``RunWorkflow(spec=...)``）共用本 helper，
+    否则 ``RunWorkflow(spec=...)`` 这条路径会原样保留静默陷阱（C8）。
+    """
+    return [
+        f"node {node.id!r} (route) declares `task`, which route nodes never execute; "
+        f"route decisions come from `cases[].when` — move your decision text there."
+        for node in spec.nodes
+        if node.kind == "route" and node.task
+    ]
+
+
 @tool_parameters(
     name="DeclareWorkflow",
     description=(
         "Declare a workflow topology (a DAG of subagent/aggregate/route/foreach "
         "nodes) and get back a workflow_id. Does not start anything — call "
-        "StartWorkflow to run it. Spec shape: {goal, nodes:[{id, kind, task, "
-        "outputs, ...}], edges:[{from, to, channel, required, reducer}], entry, "
-        "terminal, recursion_limit, max_nodes, max_runs}. Parallel branches "
-        "writing the same output slot must declare a reducer "
-        "(concat/merge_dict/first_non_empty/last).\n"
+        "StartWorkflow to run it. The `spec` parameter's schema lists every legal "
+        "value for `kind`, `channel`, `reducer`, `strategy`, `join` and `mode`; "
+        "this description covers how the fields combine into a legal graph.\n"
+        "\n"
+        "FIELDS BY NODE KIND (a value used on the wrong kind is silently dropped):\n"
+        "- subagent: `task` (required). Runs one subagent.\n"
+        "- aggregate: `join` (all_required/best_effort), `strategy` (llm/collect), "
+        "`deadline_s` (required when join is best_effort). Collects upstream "
+        "branches; runs no subagent of its own.\n"
+        "- route: `cases`, `default`, `max_routes`. Routing-only node — it runs no "
+        "subagent and its `task` is never executed.\n"
+        "- foreach: `items` OR `source` (exactly one) plus `source_field`, "
+        "`max_items`. `source` cross-layer resolution has ambiguity-rejection "
+        "rules; the error message spells out the details.\n"
+        "Edges: `from`, `to`, `channel`, `required`, `reducer` (see the schema for "
+        "legal `channel`/`reducer` values). Use a `reducer` when parallel branches "
+        "write the same output slot.\n"
+        "\n"
+        "GATING vs CHANNEL (orthogonal — do not conflate them):\n"
+        "- Whether an edge GATES its target is decided by the SENDER's `kind`: a "
+        "route's outgoing edges never gate; any other node's outgoing edges are "
+        "data edges and gate by default (set \"required\": false, or start the "
+        "edge from a route, to make one non-gating).\n"
+        "- `channel` is a separate concern: it says in what FORM data reaches the "
+        "downstream node. Changing a `channel` value never changes gating.\n"
+        "\n"
+        "ROUTE CASES (`cases`) — how they match:\n"
+        "- Matching is a LINE-PREFIX test (`startswith`) against each upstream "
+        "line, NOT substring containment.\n"
+        "- Cases are tried in DECLARATION ORDER, first-match-wins.\n"
+        "- So put the SPECIFIC / LONGER pattern BEFORE the broad one.\n"
+        "- `when` is either a literal label (case-insensitive) or "
+        "\"$ref:<node_id>:<slot>\" to read an expected label from an upstream "
+        "result slot; if that slot is missing, the case is skipped and `default` "
+        "is used.\n"
+        "- Correct order: [{\"when\":\"GAPS: none\",\"to\":\"report\"}, "
+        "{\"when\":\"GAPS\",\"to\":\"intake\"}] — specific first.\n"
+        "- Wrong order: [{\"when\":\"GAPS\",\"to\":\"intake\"}, "
+        "{\"when\":\"GAPS: none\",\"to\":\"report\"}] — every line starting with "
+        "\"GAPS\" matches the first case, so \"GAPS: none\" also loops back and the "
+        "route runs until max_routes is exceeded.\n"
         "\n"
         "CYCLES (a loop back through a route node):\n"
         "- A cycle must contain a node that starts on its own, and that node must "
         "not wait on anything inside the cycle. Otherwise every node in the cycle "
         "waits for another and none ever runs — the graph finishes with the whole "
         "cycle blocked, and DeclareWorkflow rejects it.\n"
-        "- A route's OUTGOING edges are control edges: they never gate. Put the "
-        "back-edge on the route (route -> loop-start) and it is free. A back-edge "
-        "from any other node is a DATA edge and gates by default — either start it "
-        "from the route, or declare \"required\": false on that edge.\n"
+        "- A route's OUTGOING edges never gate. Put the back-edge on the route "
+        "(route -> loop-start) and it is free. A back-edge from any other node is a "
+        "DATA edge and gates by default — either start it from the route, or "
+        "declare \"required\": false on that edge.\n"
         "- max_routes defaults to 1, is declared per route node (no config-level "
         "default), and counts per node across all rounds: it is NOT reset when a "
         "new lap starts. Set it high enough for the laps you expect.\n"
@@ -527,29 +778,21 @@ def _unknown_workflow(workflow_id: str, manager: SubAgentManager) -> str:
         "on its own):\n"
         "  nodes: producer(subagent), reviewer(subagent), gate(route, max_routes:3), "
         "join(aggregate, strategy:\"collect\"); entry:[\"producer\"];\n"
-        "  edges: producer->reviewer, reviewer->gate, gate->join (control), "
-        "gate->producer (control back-edge).\n"
+        "  edges: producer->reviewer, reviewer->gate, gate->join (channel:\"summary\"), "
+        "gate->producer (a route back-edge).\n"
         "Rejected cycle (nothing in the cycle can start: the body waits on the "
         "route, the route waits on the body):\n"
         "  nodes: gate(route, default:\"body\"), body(aggregate, strategy:\"collect\"); "
         "entry:[\"gate\"];\n"
-        "  edges: gate->body (control), body->gate (DATA edge, required by default).\n"
+        "  edges: gate->body (a route edge), body->gate (DATA edge, required by "
+        "default).\n"
         "  fix: declare \"required\": false on body->gate, or give the cycle a node "
         "whose required inputs come from outside it.\n"
         "\n"
         "Before declaring a topology from scratch, call ListWorkflowAssets to see "
         "whether a reusable asset already covers this job."
     ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "spec": {
-                "type": "object",
-                "description": "The workflow spec (see the tool description).",
-            }
-        },
-        "required": ["spec"],
-    },
+    parameters=_spec_schema_parameters(required=["spec"]),
 )
 class DeclareWorkflowTool(Tool):
     read_only = True
@@ -577,6 +820,7 @@ class DeclareWorkflowTool(Tool):
                 "nodes": [node.id for node in spec.nodes],
                 "entry": list(spec.entry),
                 "terminal": list(spec.terminal),
+                "warnings": _route_task_warnings(spec),
                 "recursion_limit": spec.recursion_limit,
                 "max_nodes": spec.max_nodes,
                 "max_runs": spec.max_runs,
@@ -908,13 +1152,9 @@ _RUN_WORKFLOW_DESCRIPTION = (
     parameters={
         "type": "object",
         "properties": {
-            "spec": {
-                "type": "object",
-                "description": (
-                    "The workflow spec (see DeclareWorkflow). Provide either `spec` "
-                    "or `template`, not both."
-                ),
-            },
+            # D2/C8：与 DeclareWorkflow 共用同一份派生 schema（嵌套结构与 enum 一致），
+            # 但 `required` 不同——spec/template 二选一，故 `spec` 不 required（R-B）。
+            "spec": _workflow_spec_schema(),
             "template": {
                 "type": "string",
                 "enum": ["orchestrator-worker", "peer-review", "hierarchical", "bidding"],
@@ -995,6 +1235,10 @@ class RunWorkflowTool(Tool):
                 return _invalid_spec(exc)
             scheduler = WorkflowScheduler(self.manager, bus=MessageBus())
             scheduler.spec = spec
+        # C8：warning 只对**调用方自己写的 spec** 生成——模板是服务端代码，其 route 上的
+        # `task` 不由模型撰写，给模型一条「把判定逻辑挪进 cases[].when」的提示不可行动，
+        # 只会是噪音。故 template 路径固定为空数组，但键始终存在（返回体键集稳定）。
+        warnings = _route_task_warnings(spec) if has_spec else []
         self.manager.register_workflow(scheduler)
         if not kwargs.get("wait", True):
             asyncio.ensure_future(_drive_scheduler(scheduler))
@@ -1004,10 +1248,13 @@ class RunWorkflowTool(Tool):
                     "workflow_id": scheduler.workflow_id,
                     "spec_hash": spec.spec_hash,
                     "nodes": [],
+                    "warnings": warnings,
                 },
                 ensure_ascii=False,
             )
-        return json.dumps(await _drive_scheduler(scheduler), ensure_ascii=False)
+        envelope = await _drive_scheduler(scheduler)
+        envelope["warnings"] = warnings
+        return json.dumps(envelope, ensure_ascii=False)
 
 
 # --- Workflow 资产工具（change ``workflow-asset-persistence``，D7） ----------
