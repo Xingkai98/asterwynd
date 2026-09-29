@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-builtin-templates",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-builtin-templates-20260929-r2",
+  "base_sha": "ee06df7",
+  "head_sha": "d2c4b90aef5dd1c02f85b363562673a279011564",
+  "tasks_hash": "sha256:3078b94ea1648f2d7145093442e6cf850cded561b44dd7379192065bd875a290",
+  "spec_hash": "sha256:f7580698484b3f8d463208aa72ea9acdbb81d87f0d110e6e3802470ff6d62686",
+  "diff_hash": "sha256:58ff6b05fef1bdb50dc943d01d85f22122ee8525dc604812147092aa99b0f2d8",
+  "report_hash": "sha256:81dfec0a03c5bc7515a11635bf9fc1ef9f855a18c0ae734bef420e8152405b20"
+}
