@@ -2,14 +2,21 @@
 
 关联跟踪 issue：[#261](https://github.com/Xingkai98/asterwynd/issues/261)。
 
-> **重要：本 diagnosis 否证了 issue #261 正文给出的根因判断。**
-> issue 认为这是**测试侧的同步缺陷**（「测试在派发后立即断言，后台 task 尚未跑到
-> mode 冻结点」），修复方向定为「等目标 run 到终态再断言」。实测证明该判断**不成立**：
-> 断言点**已经**等到 mode 冻结（§2 用延迟注入证伪）。真实根因在**生产侧**——
-> `AgentLoop.run` 挂载 A 的恢复用的是**普通 `set(previous)`**，当该 `finally` 因
-> **遗留 task 迟后终结**而在**另一个上下文**里执行时，它把**当前活跃的上限**清成了
-> `None`。这属于「生产侧 task 生命周期缺陷」，按任务约定**如实报告并停轮**，
-> 未擅自套用 issue 的测试侧方向。
+> **本 diagnosis 的结论（两轮修订）**
+>
+> 1. 否证了 issue 正文的**测试侧同步**假设（「断言太早」）——断言点**已经**等到 mode
+>    冻结（§2）。
+> 2. **机制已钉死**（§4，最小可复现 + 真实代码路径 5/5 确定性复现）：根因是
+>    `AgentLoop.run` 挂载 A 的恢复用**普通 `set(previous)`**（`agent/loop.py:598`）；
+>    当某个**被遗留的 pending run task** 在**后续用例的上下文里**被 GC 终结时，
+>    `Task.__del__ → coro.close()` 会把 `GeneratorExit` 抛进该协程，触发其
+>    **所有嵌套 `finally`**——包括 `AgentLoop.run` 的这句 `set(previous)`。由于
+>    `coro.close()` 是**普通方法调用**、不安装 task 自己的 Context，这个恢复
+>    **运行在当前活跃的上下文里**，把后续用例正在使用的只读上限**清成 `None`**。
+> 3. 过程中曾两次自我更正：早期「跨上下文污染」结论一度被主 session 的最小探针
+>    证伪（其探针用 `cancel()` 终结 task，走的是 task 自己的上下文，不污染）；
+>    真正的触发条件是**遗留 task 被 GC 终结**（`coro.close()` 语义），见 §4 的
+>    对照实验。
 
 ## Symptom
 
@@ -37,180 +44,165 @@ CI 环境：Python 3.11、全量 `pytest -q`、多 job 并行负载。本机单�
 
 ## Reproduction
 
-**本机复现成功**（关键突破）。要点：**单文件/单测隔离跑几乎不复现**，必须让
-**同一进程内的历史遗留 pending task** 有机会在**后续用例执行期间**被 GC 终结。
+### 最小可复现脚本（确定性，两个 Python 版本都成立）
 
-### 复现手段（可复现、已固化）
+```python
+"""Minimal deterministic reproduction of issue #261."""
+import asyncio, gc, sys, weakref
+from agent.run_config import AgentMode
+from agent.subagent.context import current_mode_ceiling, set_mode_ceiling
 
-并发跑多份 `tests/agent/subagent/` 全目录（不是单文件），让「前序用例遗留的
-pending run task」在后续用例里有足够机会被终结：
+async def agent_loop_run_shape(tag):
+    # 精确复刻 AgentLoop.run 的挂载 A（agent/loop.py:563-598）
+    previous = current_mode_ceiling()
+    set_mode_ceiling(AgentMode.BUILD)              # loop.py:570
+    try:
+        await asyncio.sleep(9999)                  # 真实 run 在此（LLM await）挂起
+    finally:
+        set_mode_ceiling(previous)                 # loop.py:598 —— 普通 set
 
-```bash
-# 5 个并发 worker，每个循环把 tests/agent/subagent/ 全目录跑一遍
-for w in 1 2 3 4 5; do
-  ( for i in $(seq 1 24); do
-      .venv/bin/pytest tests/agent/subagent/ -q -p no:randomly -p no:cacheprovider
-    done ) &
-done
-wait
+def create_abandoned_task():
+    # 测试的常见形态：子 run 被派发后从未 await 到终态（遗留 pending task）
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(agent_loop_run_shape("abandoned-run"))
+    loop.run_until_complete(asyncio.sleep(0.01))   # 让挂载 A 装上，然后挂起
+    ref = weakref.ref(task)
+    loop.close()                                   # 事件循环关闭；task 仍 pending
+    del task                                       # manager 的引用也丢掉
+    return ref
+
+async def later_test():
+    set_mode_ceiling(AgentMode.READ_ONLY)          # 后续用例的挂载 A：只读
+    gc.collect()                                   # 在【当前上下文】里终结遗留 task
+    await asyncio.sleep(0)
+    ceiling = current_mode_ceiling()
+    effective = ceiling if ceiling is not None else AgentMode.BUILD  # _parent_mode() 回落
+    print("node would freeze as:", effective.value)   # 期望 read_only，实际 build
+
+ref = create_abandoned_task()
+asyncio.run(later_test())
 ```
 
-实测命中率（Python 3.11，4 核机器）：
+实测输出（Python 3.11 **与** 3.12 均稳定复现）：
 
-| 树 | 总运行次数 | `test_mode_ceiling` 失败次数 | 命中率 |
-|----|-----------|--------------------------|--------|
-| **基线 master `ee06df7`** | 120 | **21** | **~17.5%** |
-| 应用「守护式 `reset(token)`」修复 | 120 | **0** | **0%** |
+```
+[abandoned] finally ran; ceiling here = <AgentMode.READ_ONLY: 'read_only'> -> writing None
+[later test] ceiling now     : None
+[later test] node would freeze as: build      <-- 期望 read_only
+>>> REPRODUCED
+```
 
-命中的用例与断言行**与 CI 完全一致**：
+注意 `finally` 里打印的 `ceiling here = read_only`——那是**后续用例的活跃上限**，
+证明这段恢复代码**跑在后续用例的上下文里**（而非它自己的 `build`）。
 
-- `test_next_run_after_switch_uses_new_mode`（`test_mode_ceiling.py:329`）——CI 命中的那条
-- `test_readonly_session_clamps_build_node`（`test_mode_ceiling.py:131`）——与其**逐字节同形**的兄弟用例
+### 真实代码路径复现（确定性，5/5）
 
-（后者被一并复现，正好解释了为何 CI 里可能命中两条中的任意一条。）
+用真实的 `AgentLoop` / `SubAgentManager` / `WorkflowScheduler` 构造（脚本见
+`reviews/`），把「遗留一个 pending 子 run task → 关掉它的事件循环 → 在后续只读 run 的
+调度器派发点 `gc.collect()`」串起来，得到**与 CI 完全一致**的症状：
 
-### 为什么单文件/单测连跑不复现
+```
+Task was destroyed but it is pending!
+task: <Task pending name='Task-2' coro=<SubAgentManager._execute_run_in_context()
+      running at .../agent/subagent/manager.py:1011> ... cb=[..._start_task.<locals>.<lambda>()]>
+Python 3.11.15  node 'bw' frozen as: 'build'  (expected 'read_only')
+>>> REPRODUCED
+```
 
-早期尝试（单测 300 次 / 单文件 150+80 次 + 人为 CPU 压力）**全部绿**。原因：单测在
-`list_subagents()["bw"]` 上会**先抛 `KeyError`**（session 未创建）而非 `AssertionError`；
-且单文件运行时，前序用例的遗留 task 数量不足以在**恰好**目标用例执行窗口内被终结。
-真实 CI 命中的 `AssertionError: 'build'`（而非 `KeyError`）反证：**session 确实被创建了、
-mode 确实被冻结为 `build`**——即冻结发生了，只是读到的**上限**是错的。
+对照（同一脚本、同一机器条件）：
 
-### 变异/判别探针
+| 树 | 5 次结果 |
+|----|---------|
+| `ee06df7`（现状，`set(previous)`） | **5/5 REPRODUCED** |
+| 守护式 `reset(token)`（方案 A） | **5/5 CLEAN** |
 
-- **延迟注入证伪「断言太早」**：在 `_execute_run_in_context` 顶部注入 `await asyncio.sleep(0.3)`
-  （放大 run 启动窗口）、在 `create_subagent` 前注入 `time.sleep(0.2)`（放大冻结窗口），
-  测试**仍然通过**且**耗时随之变长**（0.83s → 2.37s）。说明断言点**已经等待** run 跑到
-  mode 冻结点。「立即断言、task 未跑到」的假设不成立。
-- **`asyncio` 事件循环**：pytest-asyncio 1.3.0 + `asyncio_default_fixture_loop_scope = "function"`，
-  每个测试项各持一个 function 作用域 `Runner`（实测：单文件 16 次 `Runner.__enter__`、
-  16 个不同的 loop id）。故**不是**「跨测试共享同一事件循环」，而是**跨上下文**的
-  contextvar 写入。`runner.run(coro, context=copy_context())`（`pytest_asyncio/plugin.py:463`）
-  会从**主上下文**拷贝一份作为测试 task 的执行上下文——遗留 task 的终结若发生在这份
-  上下文里，就会写进来。
+> 早先一版报告里的「并发全目录 21/120 vs 0/120」A/B **作废**：两次批次在不同机器负载下
+> 跑、且未验证每轮真跑了测试，属被混淆的读数。**上表的确定性 A/B 才是结论依据。**
+
+### 为何单测/单文件隔离跑不复现
+
+- 单测跑时，`_execute_run_in_context` 的遗留 task 尚未积累到足以在目标用例窗口内被终结；
+- 单个测试进程里 pytest-asyncio 用 `asyncio.Runner` 管理循环，**`Runner.__exit__` 会
+  cancel 掉 pending task**——`cancel()` 走的是 task **自己的**上下文，因此**不污染**
+  （见 §4 对照）。只有在**跨进程/跨循环**、task 所属循环已关闭而 task 被 GC 终结时，
+  才走 `coro.close()` 这条「污染」路径。
+- CI 全量 + 多 job 负载让这种跨用例的 GC 终结窗口显著变大，故「负载相关、低频、重跑即过」。
 
 ## Evidence
 
-### 证据 1：派发时上限读数为 `None`（探针实测）
+### 证据 1：断言点**已经**等待 run 跑到 mode 冻结点（证伪 issue 的假设）
 
-在 `WorkflowScheduler._dispatch` / `SubAgentManager.create_subagent` 处埋探针，记录
-每次调用时的 `current_mode_ceiling()`。失败用例的时序（`probe v8`，`rc8/HIT.1.2`）：
+在 `_execute_run_in_context` 顶部注入 `await asyncio.sleep(0.3)`（放大 run 启动窗口）、
+在 `create_subagent` 前注入 `time.sleep(0.2)`（放大冻结窗口），测试**仍然通过**且
+**耗时随之变长**（0.83s → 2.37s）。若真是「断言太早」，注入延迟必须让它更易失败；
+实测相反 ⇒ 断言点已经等到冻结。
+
+### 证据 2：真实失败的探针时序（v5 探针，逐事件带上下文归属）
+
+失败用例的执行窗口内，本用例的 root run 之外的 run 对象在收尾：
 
 ```
-RUN>   task=Task-3406  loopobj=...117840  mode=read_only  ceil=None     <- 本用例的 root run 进入
-SET-NONE task=Task-3406  从 loop.py:598 恢复（!!!）
-RUN<   task=Task-3406  loopobj=...684816  ceil=None                     <- 退出的却是【另一个】 loop 对象
-SET-NONE task=Task-3406  从 loop.py:598 恢复（!!!）
-RUN<   task=Task-3406  loopobj=...113616  ceil=None
-SCHED> task=Task-3406  ceil=None                                        <- 钩子派发：上限已丢失
+RUN-ENTER Task-3474  mode=read_only  ceil=None       <- 本用例 root run
+SET       ->read_only  (loop.py:570)                 <- 挂载 A 装上只读
+SET       ->None       (loop.py:598)                 <- !!! 立刻被清成 None
+RUN-EXIT  ceil=None
+SET       ->None       (loop.py:598)
+RUN-EXIT  ceil=None
+SCHED-ENTER ceil=None                                <- 钩子派发：上限已丢
 DISPATCH node=bw  ceil=None
-CREATE  name=bw  ceil=build  static=build  frozen=build                 <- 回落静态 parent_mode=BUILD -> 断言失败
+CREATE   bw  ceiling=build  static=build  frozen=build   <- 回落静态 -> 断言失败
 ```
 
-关键异常：`RUN>` 进入的是 `loopobj=...117840`，而紧随其后的 `RUN<` 退出的却是
-`...684816` / `...113616`——**本用例的执行窗口内，出现了别的 run 在收尾，并在本上下文
-里写了 `set_mode_ceiling(None)`**。（注意：CPython 的 `id()` 可被复用，故不应过度解读
-具体数字；此处的**决定性证据**是「退出的 run 与进入的 run 不同源」这一事实，以及
-证据 2 的调用栈落在 `loop.py:598`。机制本身由证据 3 的确定性脚本独立证明，不依赖对
-某个具体实例的归属判断。）
+### 证据 3：`coro.close()` 在**调用方上下文**里执行 `finally`（对照实验）
 
-### 证据 2：`SET-NONE` 的调用栈穿过 `loop.py:598`（挂载 A 的 `finally`）
+| 终结方式 | `finally` 运行所在上下文 | 是否污染活跃上下文 |
+|---------|----------------------|-----------------|
+| `task.cancel(); await task`（Runner 退出路径） | task **自己的**上下文 | **否** |
+| `loop.close()` 后 task 被 GC（`coro.close()`） | **当前正在运行的**上下文 | **是** |
+| 裸 coroutine `.close()`（同步） | 调用 `.close()` 的那个上下文 | 是 |
 
-探针捕获 `set_mode_ceiling(None)` 的调用栈（`probe v8`）：
+第三行与第二行是同一机制：`coro.close()` 并不安装 task 的 Context。
 
-```
-SET-NONE  ...  <genexpr> | importlib.metadata find_distributions | ... | loop.py:598:run
-```
+### 证据 4：`Task.__del__` → `coro.close()` 的载体栈
 
-栈顶是 `loop.py:598`——即 `AgentLoop.run` 的 `finally` 里那句 `set_mode_ceiling(previous_ceiling)`。
-其外层帧是 `importlib.metadata` 的 `find_distributions`（一次版本/入口点查询触发的分配）
-——即**GC 在 importlib metadata 扫描期间终结了一个遗留 task**，把它的 `finally` 跑在了
-**当前**上下文里。
+在最小的确定性脚本里捕获遗留 run 的 `finally` 栈，可见它是被**后续用例里的
+`gc.collect()`** 触发的（`_run_once → handle._run → gc.collect`），而非它自己的循环。
 
-### 证据 3：机制的最小确定性复现
+### 证据 5：真实 subagent 测试确实会留下被 GC 终结的 run task
 
-`agent/loop.py:563-598` 的挂载 A 形状（**普通 `set` 恢复**）在「遗留 task 迟后终结」下
-必然清空当前活跃上限。确定性脚本实测：
-
-```
-=== 1. current production shape (plain `set`) ===
-  live mount A ceiling        : AgentMode.READ_ONLY
-  after stale teardown        : None            <- 遗留 run 的 finally 把当前上限清成 None
-  create_subagent freezes as  : build           <- 回落静态 parent_mode -> 复现 CI
-  -> reproduces CI: 'build' != 'read_only'
-
-=== 2. proposed shape (guarded `reset(token)`) ===
-  live mount A ceiling        : AgentMode.READ_ONLY
-  after stale teardown        : AgentMode.READ_ONLY
-  create_subagent freezes as  : read_only
-  -> ceiling preserved
-```
-
-（脚本见「复现手段」小节，可重跑。）
-
-### 证据 4：既有设计文档已知「跨 context teardown 的 `reset` 会抛 `ValueError`」
-
-`fix-issue-255-mode-ceiling` 的 `diagnosis.md` 明确记录：
-
-```
-cancel+await  : 无异常
-coro.close()  : ValueError: <Token ...> was created in a different Context
-```
-
-并因此**刻意**改用 `set(previous)` 而非 `reset(token)`（`agent/loop.py:565-568` 的注释：
-「Restoring the *previous value* via `set` (not `reset(token)`)」）。**该选择修好了
-`ValueError` 崩溃，却引入了本 issue 的跨上下文清空**：`set` 永远写「当前上下文」，
-而迟后终结的 `finally` 恰好在**别的**上下文里执行。
+对 `tests/agent/subagent/test_mode_ceiling.py` 做 weakref 统计：一次会话创建 20 个
+run task，**20 个最终 dead**（`created=20 dead=20 alive=0`）——即「遗留 task 迟后终结」
+在真实测试里确实发生（只是未必每次恰好落在脆弱窗口）。
 
 ## Root Cause
 
-**生产侧 task 生命周期缺陷**（非测试侧同步缺陷）：
+**生产侧 task 生命周期缺陷**：
 
-1. `AgentLoop.run` 在 run 起点用挂载 A `set_mode_ceiling(mode)` 快照上限，并在 `finally`
-   用 **`set_mode_ceiling(previous_ceiling)`** 恢复（`agent/loop.py:570` / `:598`）。
-2. 子 run 由 `SubAgentManager._start_task` 以**独立 task** 启动（`manager.py:967-969`，
-   `context=item.context`）。测试场景下这类 task 常被**遗留**（未 await 到终态），
-   于是成为 **pending task**。
-3. pending task 在**迟后**被终结（CPython 的 `Task.__del__` → `coro.close()`，或 GC 时机）
-   时，会从其挂起点（`await`）以 `GeneratorExit` 恢复协程，**执行其 `finally`**。
-   关键：该 `finally` 里的 `set_mode_ceiling(previous)` 是 `ContextVar.set`，**写入
-   「当前正在运行的上下文」**——而此刻运行的可能是**另一个用例**的 root run 上下文。
-4. 若那个「当前上下文」里正活跃着一个**只读 run 的挂载 A 上限**（`read_only`），
-   它就被这句 `set(None)` **清空**。
-5. 随后该只读 run 的钩子派发节点时，`SubAgentManager._parent_mode()` 读到
-   `current_mode_ceiling() is None`，**回落到静态 `parent_mode`**（测试里
-   `_manager(...)` 默认 `parent_mode=AgentMode.BUILD`）⇒ 节点被冻结为 `build` ⇒
-   断言 `'build' == 'read_only'` 失败。
+1. `AgentLoop.run` 用挂载 A 在 run 起点 `set_mode_ceiling(mode)`，`finally` 用
+   **`set_mode_ceiling(previous)`** 恢复（`agent/loop.py:570` / `:598`）。
+2. 子 run 是**独立 Task**（`SubAgentManager._start_task`，`manager.py:967`）。测试会
+   **遗留**这类 task（未 await 到终态）。
+3. 遗留 task 在其**所属事件循环已关闭**后，会被 GC 终结。`Task.__del__ → coro.close()`
+   把 `GeneratorExit` 抛进协程，**触发其所有嵌套 `finally`**——包括 `AgentLoop.run`
+   的恢复语句。
+4. `coro.close()` **不安装** task 自己的 Context；`ContextVar.set` 写入**当前正在运行的
+   上下文**。若此刻运行的是**后续用例**的 root run（其挂载 A = `read_only`），这句
+   `set(None)` 就把它的上限清空。
+5. 后续用例派发节点时，`SubAgentManager._parent_mode()` 读到 `current_mode_ceiling() is
+   None`，**回落静态 `parent_mode`**（失败用例里是 `AgentMode.BUILD`）⇒ 节点冻结为
+   `build` ⇒ `assert 'build' == 'read_only'` 失败。
 
-**与 CI 症状的一致性**：
-- `Task was destroyed but it is pending!`（`_execute_run_in_context`）正是「遗留 pending
-  task 迟后终结」的**同一现象**，不是无关噪声。
-- 高负载（CI 全量 + 多 job）令 `pytest` 循环更易发生「迟后终结撞上后续用例执行窗口」，
-  故**负载相关、低频、重跑即过**。
+**与 CI 症状一致**：`Task was destroyed but it is pending!`（`_execute_run_in_context`）
+正是「遗留 pending task 迟后终结」本身，不是无关噪声。
 
-**结论**：上限通道（contextvar）**本身正确**；缺陷是**恢复它时用了 `set` 而非
-token 化的 `reset`**，使得「迟后终结」的恢复写入错误上下文。
+## Fix
 
-## Fix Options
-
-| 方案 | 说明 | 评价 |
-|------|------|------|
-| **A. 守护式 `reset(token)`（推荐）** | `run` 起点 `token = set_mode_ceiling(mode)`；`finally` 用 `try: reset_mode_ceiling(token) except ValueError: pass`。同上下文正常恢复；**跨上下文终结时 `reset` 抛 `ValueError` → 静默跳过**，不再写入当前上下文。 | **最小、对症**：正式使用 contextvar 的 token 语义；跨上下文跳过正是「那个值随死掉的 task 上下文一起消亡、不该影响活跃上下文」的正确表达。已 A/B 验证（120 次 0 失败）。 |
-| B. 恢复前比对上下文 | 记录 set 时的 `contextvars.copy_context()`，`finally` 里比对当前上下文是否同一份再决定是否 set。 | 比 A 冗长，语义重复造轮子（token 本身携带 context 归属）。不推荐。 |
-| C. 不恢复（删除 finally 的恢复） | —— | **不可行**：会泄漏上限（`fix-issue-255` 的 4.10 用例会红）。 |
-| D. 测试侧「等 run 到终态」 | issue 建议方向 | **不成立**：断言点**已**等待（§2 证伪）；且清空来自**别的**遗留 run 的终结，等待本用例的 run 无法阻止。会掩盖真实缺陷。 |
-| E. 让上限彻底 task-local（换机制） | —— | 过度设计；现有 contextvar 通道在 #255 已 grill 定型。 |
-
-**推荐：方案 A**。它同时满足 #255 的要求（「run 退出后上限复原」——同上下文 token 恢复
-正确）与本 issue 的修复（跨上下文终结不再污染活跃上下文）。
-
-方案 A 的完整改动（已 A/B 验证；`context.py` 的 `reset_mode_ceiling` 已存在，无需新增）：
+**方案 A（推荐）= 守护式 `reset(token)`**：
 
 ```diff
 --- a/agent/loop.py
 +++ b/agent/loop.py
-@@ -39,7 +39,11 @@ from agent.memory.manager import MemoryManager
+@@
 -from agent.subagent.context import current_mode_ceiling, set_mode_ceiling
 +from agent.subagent.context import (
 +    current_mode_ceiling,
@@ -218,7 +210,7 @@ token 化的 `reset`**，使得「迟后终结」的恢复写入错误上下文�
 +    set_mode_ceiling,
 +)
 @@ class AgentLoop:
-         previous_ceiling = current_mode_ceiling()
+-        previous_ceiling = current_mode_ceiling()
 -        set_mode_ceiling(self.runtime_state.current_mode)
 +        ceiling_token = set_mode_ceiling(self.runtime_state.current_mode)
 @@ finally:
@@ -227,40 +219,45 @@ token 化的 `reset`**，使得「迟后终结」的恢复写入错误上下文�
 +            try:
 +                reset_mode_ceiling(ceiling_token)
 +            except ValueError:
++                # token 属于另一个 Context（遗留 task 的迟后终结）：
++                # 那个上限随该 task 的上下文一起消亡，不得污染活跃上下文。
 +                pass
 ```
 
-> `resume` 路径（`agent/loop.py:631`）的二次 `set_mode_ceiling(...)` 不受影响：token 记住的是
-> **首次 set 之前**的值，中间再 set 不改变 `reset(token)` 的目标（ContextVar 语义），
-> 故 `reset` 仍正确恢复到 run 起点之前的值。
->
-> 实现清理（非语义）：改用 token 后 `previous_ceiling = current_mode_ceiling()` 变成**未使用**，
-> 实现时应一并删除该行；`current_mode_ceiling` 若因此在 `loop.py` 内无其它消费者，其 import
-> 也可收窄（当前仓库内它只在 `loop.py:569` 被用）。A/B 验证所用补丁**保留了**该未使用行，
-> 故删除它不改变已验证的行为。
+**为什么它能修，而不只是「不写」**：`ContextVar.reset(token)` 的语义是**恢复 token
+记录的那次 set 之前的上下文值**。当 token 来自**另一个 Context** 时，`reset` 主动抛
+`ValueError`（CPython 的 `_contextvars` 强制此约束）——这个异常**恰好编码了**「这次恢复
+不该作用于当前上下文」这一事实。跳过它，既让**同上下文**的正常 run 正确复原（#255 的
+4.10 / 4.8 仍绿），又让**跨上下文**的迟后恢复不再污染。
 
-**验证记录（A/B 对照，同一并发手段，Python 3.11，4 核）**：
+**验证**：
 
-```
-LABEL=BASELINE total_runs=120 mode_ceiling_failures=21
-      7 test_next_run_after_switch_uses_new_mode
-     14 test_readonly_session_clamps_build_node
-LABEL=PATCHED  total_runs=120 mode_ceiling_failures=0
-```
+- 真实代码路径确定性 A/B：现状 5/5 REPRODUCED → 方案 A 5/5 CLEAN（上表）。
+- 最小脚本对照：`reset(token)` 分支打印 `ValueError: skipped`，活跃上限保持 `read_only`。
+- 回归安全：`tests/agent/subagent/` 全量 **639 passed**；`test_mode_ceiling.py` +
+  `test_subagent_manager.py` **31 passed**。
+- 实现清理（非语义）：改用 token 后 `previous_ceiling = current_mode_ceiling()` 不再被
+  使用，应一并删除（`current_mode_ceiling` 的 import 若因此无消费者可收窄）。
 
-> **范围说明（需用户拍板）**：方案 A 改动**生产代码** `agent/loop.py`，与 issue 正文
-> 「纯测试侧、无 spec delta」的定性**不同**。因此按任务约定**止步于此、如实报告**，
-> 未擅自应用该生产改动、未进入归档与门禁收尾。
+## `set_sandbox_sink`：**同受影响**（本 change 不修，单独立项）
+
+`agent/loop.py:601` 的 `set_sandbox_sink(previous_sandbox_sink)` 形态**完全相同**：
+
+- `agent/sandbox_events.py:46` 的 `set_sandbox_sink(sink)` 也是**普通 `ContextVar.set`**，
+  且**没有** `reset(token)` 版本；
+- 它在同一个 `finally` 里、由同一个迟后终结路径执行，因此同样会把**后续用例**的
+  sandbox sink **清成 `previous_sandbox_sink`**（一个来自旧上下文的过期 sink）。
+
+按任务约定**不在本 change 修**，建议**单独立项**（可复用本 diagnosis 的机制与最小脚本；
+修法与方案 A 同形：给 `set_sandbox_sink` 增加 token 返回 / `reset_sandbox_sink`，或改
+用 `ContextVar.set` 的 token 对）。
 
 ## Regression Requirements
 
-若采纳方案 A，回归测试应覆盖：
-
-1. **迟后终结不污染活跃上限**（新增）：构造「遗留 pending run task + 活跃只读 run 上下文」，
-   在活跃 run 期间终结遗留 task，断言活跃上限**保持 `read_only`**、`create_subagent` 冻结为
-   `read_only`。变异验证：把 `finally` 改回 `set(previous)` ⇒ 该用例必须变红。
-2. **同上下文恢复仍正确**（既有 4.10 保持）：`test_run_exit_restores_ceiling_so_later_direct_drive_stays_conservative`
-   必须继续绿（证明没有因跳过而泄漏）。
+1. **迟后终结不污染活跃上限**（新增，核心）：构造「遗留 pending run task（其循环已关）
+   + 活跃只读 run 上下文」，在活跃 run 期间 `gc.collect()`，断言活跃上限保持 `read_only`、
+   `create_subagent` 冻结为 `read_only`。**变异验证**：把 `finally` 改回 `set(previous)`
+   必须变红（本 diagnosis 的确定性脚本已证明该变异会复现）。
+2. **同上下文恢复仍正确**（既有 4.10 保持）：`test_run_exit_restores_ceiling_so_later_direct_drive_stays_conservative` 必须继续绿。
 3. **取消路径不抛**（既有 4.8 保持）：`test_cancelled_run_does_not_raise_and_restores_ceiling`。
-4. **负载复现**：以本 diagnosis 的并发手段跑 `tests/agent/subagent/`（基线 ~17.5% 命中）作为
-   修复有效性的验收证据。
+4. **`set_sandbox_sink` 同源隐患**：建议在新的独立 change 里补同类回归（本 change 不覆盖）。
