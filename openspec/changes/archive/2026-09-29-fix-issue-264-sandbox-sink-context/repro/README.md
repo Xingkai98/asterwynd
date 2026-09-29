@@ -6,10 +6,10 @@
 运行（在 worktree 根目录；脚本自带 `_find_repo_root`，无需 `PYTHONPATH`）：
 
 ```bash
-.venv/bin/python -u openspec/changes/fix-issue-264-sandbox-sink-context/repro/sandbox_sink_repro.py
-.venv/bin/python -u openspec/changes/fix-issue-264-sandbox-sink-context/repro/sandbox_sink_misroute.py
-.venv/bin/python -u openspec/changes/fix-issue-264-sandbox-sink-context/repro/sandbox_sink_misroute_gcwindow.py
-.venv/bin/python -u openspec/changes/fix-issue-264-sandbox-sink-context/repro/design_points_probe.py
+.venv/bin/python -u openspec/changes/archive/2026-09-29-fix-issue-264-sandbox-sink-context/repro/sandbox_sink_repro.py
+.venv/bin/python -u openspec/changes/archive/2026-09-29-fix-issue-264-sandbox-sink-context/repro/sandbox_sink_misroute.py
+.venv/bin/python -u openspec/changes/archive/2026-09-29-fix-issue-264-sandbox-sink-context/repro/sandbox_sink_misroute_gcwindow.py
+.venv/bin/python -u openspec/changes/archive/2026-09-29-fix-issue-264-sandbox-sink-context/repro/design_points_probe.py
 ```
 
 | 文件 | 作用 | 本机实测（Python 3.12.13） |
