@@ -101,27 +101,9 @@
 
 ### 第十六批：subagent 编排入口归一（#245/#246 follow-up）
 
-- `workflow-builtin-templates`（issue #246）：**未实现**。把 `RunPattern` 融合进统一 Workflow 入口——`RunWorkflow` 接受 exactly one of `{spec, template}`（`template` = 四个内置模板名 + `task`/`params`），父 agent 从编排入口收到的形状不随入参变化（统一 `parent_envelope()` bounded 投影，`bus` 不进父上下文），删除 `run_pattern()` 兼容 adapter 与四个 pattern 专属扁平字段。模板参数化继续留在 Python（`compile_pattern`），不做静态模板文件、不引入 spec 内占位符方言。与 #245 归一：内置模板 = 随代码走的配方，用户资产 = 随 workspace 走的配方，共用同一条编译路径与 `recipe` 概念；`asset_source` 溯源写入点从 `run_pattern` 迁到统一入口的 template 分支（保 #245 的 recipe 资产能力不静默退化）。前置 #245（已合入 PR #260）与 #255（已合入）。spec 契约 MODIFY：`multi-agent-collaboration`（Orchestration Pattern Library + 内置模式降级为 DSL 模板 + 新增统一入口与单一投影两条）、`subagents`（深度到限撤 spawn 工具去 `RunPattern`）、`agent-runtime`（bus 快照出口改挂）、`web-ui`（Workflow 视图触发列表去 `RunPattern`）。research_tier = full。
+- `workflow-builtin-templates`（issue #246）：**已归档 2026-09-29**（含 backfill 记录：三轮独立 grill、Q1–Q7 全部拍板、`/review-loop` R1 CHANGES_REQUESTED→修）。把 `RunPattern` 融合进统一 Workflow 入口——`RunWorkflow` 接受 exactly one of `{spec, template}`（`template` = 四个内置模板名 + `task`/`params`），父 agent 从编排入口收到的形状不随入参变化（统一 `parent_envelope()` bounded 投影，`bus` 不进父上下文），删除 `run_pattern()` 兼容 adapter 与四个 pattern 专属扁平字段。模板参数化继续留在 Python（`compile_pattern`）；`params` 键/值/上界校验落 `compile_pattern`（唯一 choke point，fan-out 键对 `max_items` 拒绝，`max_rounds` 不做静态上界、由截断诊断报告 `declared_max_rounds`/`rounds_actually_run`/`limit_source`）。`GetWorkflow(detail='nodes')` 补 foreach `item_refs`（仅成功项有 ref）。与 #245 归一：内置模板 = 随代码走的配方，用户资产 = 随 workspace 走的配方，共用同一条编译路径与 `recipe` 概念；`asset_source` 溯源写入点从 `run_pattern` 迁到统一入口的 template 分支（保 #245 的 recipe 资产能力不静默退化）。spec delta 已同步进 `openspec/specs/`（`multi-agent-collaboration` ADDED 2 / MODIFIED 5，`subagents`/`agent-runtime`/`web-ui` 各 MODIFIED 1）并归档到 `openspec/changes/archive/2026-09-29-workflow-builtin-templates/`。research_tier = full。
 
 ## 未实现队列
-
-### 1. `workflow-builtin-templates`
-
-状态：未实现（立项完成：proposal / design / spec delta / tasks 已就绪；**三轮独立 grill 完成，Q1–Q7 全部拍板**——Q7 最终按**方案 A**（`max_rounds` 不做静态上界，改由 `graph_recursion_exceeded` 诊断报告 `declared_max_rounds`/`rounds_actually_run`/`limit_source`），grill-confirmation-gate 全部通过，可进入实现）。
-
-批次：第十六批，依赖前置 #245（workflow-asset-persistence，已合入）与 #255（mode 钳制，已合入）。
-
-建议顺序原因：
-
-- 前置 #245 提供 `recipe` 载体与加载协议，#255 修正 `mode` 上限基准；两者均已合入，本 change 无阻塞项。
-- 与 #261（flaky 修复）并行推进；两者只有本文件（`docs/openspec-change-backlog.md`）可能冲突，冲突在合入时解。
-
-主要交付：
-
-- `RunWorkflow` 新增 `template`/`task`/`params` 入参 + exactly-one-of 判别 + 结构化拒绝。
-- 删除 `RunPattern` 工具、`run_pattern()` adapter、四个 pattern 专属扁平字段与 `_legacy_result` 链路。
-- 编排入口返回单一 bounded 投影（`parent_envelope()`），`bus` 不进父上下文。
-- `asset_source` 溯源写入点迁移，保 #245 recipe 资产能力。
 
 ### 3. `add-minimal-tui-runtime-view`
 

@@ -593,11 +593,13 @@ class DeclareWorkflowTool(Tool):
         "bounded run envelope; with wait=false returns immediately with a "
         "'running' envelope that GetWorkflow can poll (a START RECEIPT, not a "
         "result). The `completed`/`failed` counters count RUNS, not subagents. A "
-        "run that exceeds the graph recursion limit returns status "
+        "run that exceeds the graph recursion_limit returns status "
         "'graph_recursion_exceeded' with diagnostics (steps / current nodes / "
-        "reason), not an exception; for a template graph whose `max_rounds` was cut "
-        "short, the diagnostics also carry declared_max_rounds / "
-        "rounds_actually_run / limit_source so you can adjust."
+        "reason), not an exception. For a template graph, `max_rounds` is a "
+        "DESIRED round count — actual rounds are capped by the graph-level "
+        "recursion_limit and may be far fewer; if truncated, the diagnostics also "
+        "carry declared_max_rounds / rounds_actually_run / limit_source so you can "
+        "adjust."
     ),
     parameters={
         "type": "object",
@@ -707,7 +709,9 @@ class ReadWorkflowResultTool(Tool):
     description=(
         "Get the bounded status of a declared workflow: per-node "
         "{id, kind, status, runs, summary, reason}, run totals, steps, "
-        "peak_active, critical_path_s, total_cost and diagnostics. Summaries are "
+        "peak_active, critical_path_s, total_cost and diagnostics. `completed`/"
+        "`failed` count RUNS, not subagents (a node that runs twice contributes "
+        "two). Summaries are "
         "truncated so a large graph cannot blow up the caller's context. Use "
         "detail to pick what the response focuses on: 'summary' (default, node "
         "summaries only), 'nodes' (node summaries plus each node's result_ref — "

@@ -532,7 +532,7 @@ Web UI hub SHALL 通过 `DELETE /api/sessions/{session_id}?workspace=<path>` 提
 
 ### Requirement: workflow 运行态流程图视图
 
-Web UI SHALL 在模型触发多 Agent 流程（`StartWorkflow`/`RunWorkflow`/`RunPattern` 驱动的 workflow execution）时自动显示一个 Workflow 视图，SHALL 显示 workflow 的所有节点与边。该视图 SHALL 是用户态能力，SHALL NOT 受 debug 模式门禁约束。
+Web UI SHALL 在模型触发多 Agent 流程（`StartWorkflow`/`RunWorkflow` 驱动的 workflow execution）时自动显示一个 Workflow 视图，SHALL 显示 workflow 的所有节点与边。该视图 SHALL 是用户态能力，SHALL NOT 受 debug 模式门禁约束。
 
 #### Scenario: workflow 启动自动显示图
 
@@ -540,6 +540,13 @@ Web UI SHALL 在模型触发多 Agent 流程（`StartWorkflow`/`RunWorkflow`/`Ru
 - **WHEN** `workflow_started` 事件到达前端
 - **THEN** Web UI SHALL 自动打开 Workflow 视图
 - **AND** SHALL 显示该 workflow 的节点与边
+
+#### Scenario: 模板入口驱动的图同样显示
+
+- **GIVEN** 模型调用 `RunWorkflow(template=…)` 驱动一张内置模板图
+- **WHEN** `workflow_started` 事件到达前端
+- **THEN** Web UI SHALL 自动打开 Workflow 视图并显示该图
+- **AND** `RunPattern` SHALL NOT 再作为触发来源出现（该工具已退役）
 
 ### Requirement: workflow 图快照
 
@@ -1194,7 +1201,6 @@ Web session 的 run 事件出口 SHALL 是 session 级、与单条 WebSocket 连
 - **AND** `cycle_gate` 的 `targets` SHALL 保持其选中的出口，SHALL NOT 为空
 - **AND** 该 `route` 选中的控制边 SHALL 判为 `passed`，SHALL NOT 为 `inactive`
 
-
 ### Requirement: 多标签页瞬态交互状态按标签页隔离
 
 Web UI 的**瞬态交互状态**（以 slash 建议列表为代表：随输入实时出现/收起、不进入消息历史的 UI 状态）SHALL 按标签页归属。任一标签页的输入框失焦、定时器回调或其他异步事件 SHALL NOT 改变**其他**标签页的瞬态 UI 状态。
@@ -1317,3 +1323,4 @@ Web UI SHALL 通过 WebSocket 消费思维链的流式增量事件，并在**已
 - **WHEN** 前端渲染两者
 - **THEN** 思维链文本 SHALL 只出现在折叠区内
 - **AND** assistant Markdown 正文 SHALL 只包含可见回复内容
+

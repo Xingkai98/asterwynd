@@ -80,5 +80,5 @@
 - [x] 6.6a **补 MODIFY 两条被 grill 查出的存量 Requirement**：`openspec/specs/multi-agent-collaboration/spec.md` 的「资产保存是显式的，且 spec 不穿过模型输出」（`:534-543`，Scenario GIVEN 写 `RunPattern`）与「资产的两类载体与参数化复用」（`:558-567`，正文与 Scenario 写 `RunPattern(pattern=…)`）——delta 已含此两条（本 change `specs/multi-agent-collaboration/spec.md`），确认同步后存量文件零 `RunPattern`
 - [x] 6.7 跑 `/review-loop`（独立审阅闭环）至 PASS 或 3 轮封顶，产出 `reviews/building-review.md` + manifest
 - [x] 6.8 全量 `uv run pytest -q` + benchmark smoke（`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`，确认 `template` 臂不受影响）+ `openspec validate --all --strict` + `check_openspec_artifacts.py`
-- [x] 6.9 发起 PR 并合入
+- [ ] 6.9 (post-merge) 发起 PR 并合入（由主 session 确认后执行；worktree 不 push）
 - [x] 6.10 (post-merge) 给 issue #246 加完成说明 comment 并关闭
