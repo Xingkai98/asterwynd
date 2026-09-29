@@ -108,9 +108,12 @@ DISPATCH node=bw  ceil=None
 CREATE  name=bw  ceil=build  static=build  frozen=build                 <- 回落静态 parent_mode=BUILD -> 断言失败
 ```
 
-关键异常：`RUN>` 进入的是 `loopobj=...117840`，而 `RUN<` 退出的却是 `...684816` /
-`...113616`——**本用例的执行窗口内，有别的（遗留）run 对象在收尾并在本上下文里写了
-`set_mode_ceiling(None)`**。这正是「迟后终结的 `finally` 写进当前上下文」。
+关键异常：`RUN>` 进入的是 `loopobj=...117840`，而紧随其后的 `RUN<` 退出的却是
+`...684816` / `...113616`——**本用例的执行窗口内，出现了别的 run 在收尾，并在本上下文
+里写了 `set_mode_ceiling(None)`**。（注意：CPython 的 `id()` 可被复用，故不应过度解读
+具体数字；此处的**决定性证据**是「退出的 run 与进入的 run 不同源」这一事实，以及
+证据 2 的调用栈落在 `loop.py:598`。机制本身由证据 3 的确定性脚本独立证明，不依赖对
+某个具体实例的归属判断。）
 
 ### 证据 2：`SET-NONE` 的调用栈穿过 `loop.py:598`（挂载 A 的 `finally`）
 
@@ -201,6 +204,49 @@ token 化的 `reset`**，使得「迟后终结」的恢复写入错误上下文�
 
 **推荐：方案 A**。它同时满足 #255 的要求（「run 退出后上限复原」——同上下文 token 恢复
 正确）与本 issue 的修复（跨上下文终结不再污染活跃上下文）。
+
+方案 A 的完整改动（已 A/B 验证；`context.py` 的 `reset_mode_ceiling` 已存在，无需新增）：
+
+```diff
+--- a/agent/loop.py
++++ b/agent/loop.py
+@@ -39,7 +39,11 @@ from agent.memory.manager import MemoryManager
+-from agent.subagent.context import current_mode_ceiling, set_mode_ceiling
++from agent.subagent.context import (
++    current_mode_ceiling,
++    reset_mode_ceiling,
++    set_mode_ceiling,
++)
+@@ class AgentLoop:
+         previous_ceiling = current_mode_ceiling()
+-        set_mode_ceiling(self.runtime_state.current_mode)
++        ceiling_token = set_mode_ceiling(self.runtime_state.current_mode)
+@@ finally:
+             set_sandbox_sink(previous_sandbox_sink)
+-            set_mode_ceiling(previous_ceiling)
++            try:
++                reset_mode_ceiling(ceiling_token)
++            except ValueError:
++                pass
+```
+
+> `resume` 路径（`agent/loop.py:631`）的二次 `set_mode_ceiling(...)` 不受影响：token 记住的是
+> **首次 set 之前**的值，中间再 set 不改变 `reset(token)` 的目标（ContextVar 语义），
+> 故 `reset` 仍正确恢复到 run 起点之前的值。
+>
+> 实现清理（非语义）：改用 token 后 `previous_ceiling = current_mode_ceiling()` 变成**未使用**，
+> 实现时应一并删除该行；`current_mode_ceiling` 若因此在 `loop.py` 内无其它消费者，其 import
+> 也可收窄（当前仓库内它只在 `loop.py:569` 被用）。A/B 验证所用补丁**保留了**该未使用行，
+> 故删除它不改变已验证的行为。
+
+**验证记录（A/B 对照，同一并发手段，Python 3.11，4 核）**：
+
+```
+LABEL=BASELINE total_runs=120 mode_ceiling_failures=21
+      7 test_next_run_after_switch_uses_new_mode
+     14 test_readonly_session_clamps_build_node
+LABEL=PATCHED  total_runs=120 mode_ceiling_failures=0
+```
 
 > **范围说明（需用户拍板）**：方案 A 改动**生产代码** `agent/loop.py`，与 issue 正文
 > 「纯测试侧、无 spec delta」的定性**不同**。因此按任务约定**止步于此、如实报告**，
