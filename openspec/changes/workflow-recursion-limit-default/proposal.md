@@ -38,6 +38,7 @@ C2 `workflow-dsl-scheduler`（issue #181，已合入归档 2026-09-14）把图�
 - `_spec_bounds` 的 `getattr(limits, "recursion_limit", 25)` 兜底同步改为 `100`（`agent/tools/builtin/subagents.py`）。
 - `DEFAULT_RECURSION_LIMIT` 常量：`25` → `100`，同步模块 docstring 里的默认值表述（`agent/subagent/workflow.py`）。
 - spec delta：MODIFIED 既有 Requirement「reducer 声明与图级递归上限」，把「（默认 25）」改为「（默认 100）」。
+- **附带效果（自动跟随，非额外改动）**：`compile_pattern` 对模板 `max_rounds` 的**编译期接受域**绑定同一常量（`patterns.py` 的 rounds 荒谬界 `> DEFAULT_RECURSION_LIMIT`），故由 `≤ 25` 放宽到 `≤ 100`（`max_rounds∈[26,100]` 从编译期拒绝变为接受，`101` 仍拒）。方向与目标一致（属收益），且 spec delta 的「SHALL NOT 因 `max_rounds` 大于图级上限而在编译期拒绝」句语义未被破坏（本就更宽松）。
 
 **不变**：`max_nodes=200` / `max_runs=300` 两个结构闸默认值与语义；`max_routes`（route 节点自身预算，先于图级闸触发）；`GraphRecursionError` 的构造、`graph_recursion_exceeded` 状态的终态语义、envelope schema；`_eff_limit` 的 min 钳制方向（声明值低于配置时不被抬高）；`to_dict()` 的「等于默认值则省略」序列化规则（其副作用见 Impact Analysis）。
 
