@@ -232,9 +232,34 @@ subagents:
 
 def test_workflow_limits_default_to_documented_values():
     config = AsterwyndConfig()
-    assert config.subagents.workflow.recursion_limit == 25
+    assert config.subagents.workflow.recursion_limit == 100
     assert config.subagents.workflow.max_nodes == 200
     assert config.subagents.workflow.max_runs == 300
+
+
+def test_workflow_limits_default_is_consistent_across_three_paths(tmp_path, monkeypatch):
+    """三路径（直构 / yaml 未写该键 / getattr 兜底）必须给出一致默认值（#196 教训）。
+
+    四处默认值字面量分散在 ``agent/config.py`` ×2、``agent/tools/builtin/subagents.py``
+    ×1、``agent/subagent/workflow.py`` ×1；漏改任一处会让同一份「未配置」在两条路径
+    上给出不同结论。
+    """
+    from agent.subagent.workflow import DEFAULT_RECURSION_LIMIT
+    from agent.tools.builtin.subagents import _spec_bounds
+
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    # 路径 1：dataclass 直构。
+    assert AsterwyndConfig().subagents.workflow.recursion_limit == 100
+    # 路径 2：yaml 加载但未写该键（逐字段 mapping.get 的默认值）。
+    config = load_config(start_dir=tmp_path)
+    assert config.subagents.workflow.recursion_limit == 100
+    # 路径 3：manager.config 链路缺失时的 getattr 兜底。
+    class _Broken:
+        config = None
+
+    assert _spec_bounds(_Broken())["default_recursion_limit"] == 100
+    # 模块级常量与三闸默认值同源。
+    assert DEFAULT_RECURSION_LIMIT == 100
 
 
 def test_workflow_limits_reject_non_positive(tmp_path, monkeypatch):

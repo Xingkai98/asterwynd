@@ -432,7 +432,7 @@ def _spec_bounds(manager: SubAgentManager) -> dict[str, int]:
     """三闸默认值来自配置（Q5/Q9）：spec 未声明时用 ``subagents.workflow.*``。"""
     limits = getattr(getattr(manager.config, "subagents", None), "workflow", None)
     return {
-        "default_recursion_limit": getattr(limits, "recursion_limit", 25),
+        "default_recursion_limit": getattr(limits, "recursion_limit", 100),
         "default_max_nodes": getattr(limits, "max_nodes", 200),
         "default_max_runs": getattr(limits, "max_runs", 300),
     }
