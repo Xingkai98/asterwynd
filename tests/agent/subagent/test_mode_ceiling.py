@@ -5,8 +5,10 @@
 - 有效 mode = ``min(节点声明 mode, 当前执行上下文的上限)``；
 - 上限走 contextvar（与 ``workflow_id`` / ``node_id`` / ``graph_distance`` / ``bus`` 同路）；
 - 上限在 **run 起点** 快照（一次 run 的能力边界自始至终一致）；
-- 挂载 A（run 起点）：``set(本 run 有效 mode)``，退出时用 ``set(prior)`` **恢复**
-  （不是 ``reset(token)``——那会在跨 context teardown 时抛 ``ValueError``）；
+- 挂载 A（run 起点）：``token = set(本 run 有效 mode)``，退出时用**守护式**
+  ``reset(token)`` **恢复**（issue #261 起改为此形态：遗留 task 的跨 context teardown
+  会让 ``reset`` 抛 ``ValueError``，恰好编码了「本次恢复不该作用于当前上下文」，
+  捕获后跳过即不再污染活跃 run 的上限；同上下文则正常复原）；
 - 挂载 B（调度器派发点 ``_launch_run``）：``set(min(node.mode, cur))`` + ``finally reset``；
 - 执行点 ``_execute_run_in_context`` **不** reset；
 - 上限缺失时回落**静态 ``parent_mode``**（保守），绝不回落 ``None``。
@@ -492,18 +494,18 @@ async def test_resubmitting_an_existing_session_does_not_reclamp(tmp_path):
 # --- 10. 挂载 A 的跨上下文恢复（issue #261） ---------------------------------
 
 
-_CHILD_TASK = "__CHILD_HANG__"
+_HANG_CHILD_TASK = "__CHILD_HANG__"
 
 
 class _HangingChildLLM(_StaticLLM):
-    """子 run（task 文本含 ``_CHILD_TASK``）挂住，其余轮次立即返回。
+    """子 run（task 文本含 ``_HANG_CHILD_TASK``）挂住，其余轮次立即返回。
 
     让子 run 停在 ``AgentLoop.run`` 内部的 await 上——这正是它日后被 GC 终结时
     会展开挂载 A ``finally`` 的挂起点。
     """
 
     async def chat(self, messages, tools=None, model="gpt-4"):
-        if _CHILD_TASK in _last_user(messages):
+        if _HANG_CHILD_TASK in _last_user(messages):
             await asyncio.sleep(9999)
         return LLMResponse(content="ok", stop_reason="end_turn", usage=Usage(1, 1))
 
@@ -527,7 +529,7 @@ def _plant_abandoned_pending_run(tmp_path) -> None:
     async def plant():
         child = manager.create_subagent(name="abandoned", mode="build")
         await manager.run_subagent(
-            subagent_id=child["subagent_id"], task=_CHILD_TASK, wait=False
+            subagent_id=child["subagent_id"], task=_HANG_CHILD_TASK, wait=False
         )
         await asyncio.sleep(0.05)  # 让子 run 进入 AgentLoop.run 并挂起
 
