@@ -153,15 +153,19 @@ DISPATCH node=bw  ceil=None
 CREATE   bw  ceiling=build  static=build  frozen=build   <- 回落静态 -> 断言失败
 ```
 
-### 证据 3：`coro.close()` 在**调用方上下文**里执行 `finally`（对照实验）
+### 证据 3：GC 终结在**调用方上下文**里执行 `finally`（对照实验）
 
 | 终结方式 | `finally` 运行所在上下文 | 是否污染活跃上下文 |
 |---------|----------------------|-----------------|
-| `task.cancel(); await task`（Runner 退出路径） | task **自己的**上下文 | **否** |
-| `loop.close()` 后 task 被 GC（`coro.close()`） | **当前正在运行的**上下文 | **是** |
-| 裸 coroutine `.close()`（同步） | 调用 `.close()` 的那个上下文 | 是 |
+| `task.cancel(); await task`（pytest-asyncio `Runner.__exit__` 走这条） | task **自己的**上下文 | **否** |
+| task 所属循环关闭后、task 被 GC 终结 | **当前正在运行的**上下文 | **是** |
+| 裸 coroutine `.close()`（同步调用） | 调用 `.close()` 的那个上下文 | 是 |
 
-第三行与第二行是同一机制：`coro.close()` 并不安装 task 的 Context。
+后两行是同一机制：协程 finalize 并不安装 task 的 Context，而 `ContextVar.set` 写当前上下文。
+
+> **这解释了主 session 探针为何没能复现**：其探针用 `cancel()`（或让 task 在自身循环
+> 关闭时被该循环正常 cancel）终结 task——那走 task 自己的上下文，天然不污染。只有在
+> **task 所属循环已关闭、随后被 GC 终结**时，才落到「写当前上下文」这条路径。
 
 ### 证据 4：`Task.__del__` → `coro.close()` 的载体栈
 
@@ -182,10 +186,12 @@ run task，**20 个最终 dead**（`created=20 dead=20 alive=0`）——即「�
    **`set_mode_ceiling(previous)`** 恢复（`agent/loop.py:570` / `:598`）。
 2. 子 run 是**独立 Task**（`SubAgentManager._start_task`，`manager.py:967`）。测试会
    **遗留**这类 task（未 await 到终态）。
-3. 遗留 task 在其**所属事件循环已关闭**后，会被 GC 终结。`Task.__del__ → coro.close()`
-   把 `GeneratorExit` 抛进协程，**触发其所有嵌套 `finally`**——包括 `AgentLoop.run`
-   的恢复语句。
-4. `coro.close()` **不安装** task 自己的 Context；`ContextVar.set` 写入**当前正在运行的
+3. 遗留 task 在其**所属事件循环已关闭**后，会被 GC 终结。终结时 task 释放它持有的
+   挂起协程（`Task` 的 dealloc），协程被 finalize（对挂起点抛 `GeneratorExit`），
+   于是**它的所有嵌套 `finally` 都被展开**——包括 `AgentLoop.run` 的恢复语句。
+   （对照：正常路径 `task.cancel(); await task` 是把取消**投递进 task 自己的上下文**；
+   GC 终结没有这一步。）
+4. 协程的 finalize **不安装** task 自己的 Context；`ContextVar.set` 写入**当前正在运行的
    上下文**。若此刻运行的是**后续用例**的 root run（其挂载 A = `read_only`），这句
    `set(None)` 就把它的上限清空。
 5. 后续用例派发节点时，`SubAgentManager._parent_mode()` 读到 `current_mode_ceiling() is
