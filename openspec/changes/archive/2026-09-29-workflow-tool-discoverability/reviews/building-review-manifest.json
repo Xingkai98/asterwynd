@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-tool-discoverability",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-tool-discoverability-20260929-r2",
+  "base_sha": "db79b051e479fd0e261144e683bac91ffba061ef",
+  "head_sha": "4e5c98486dd24a4ffa918428bb8e68642710e0fa",
+  "tasks_hash": "sha256:5002a5b469c0b0186cc7b48ffbeef5c9c5081b880bc42958bc5e2281c7b06286",
+  "spec_hash": "sha256:f09903ccc0383b777368e246b802a8bc1e204c16e5727669286dd98071d8d90b",
+  "diff_hash": "sha256:39692ebfd6bdb2dbdbd7e167721ab9e749f129e8216573edb8f7a862bb02f8b3",
+  "report_hash": "sha256:49fcdb15ef5a64c6db0471eabdf380a221688d3b3beb9359884574b7c459428d"
+}
