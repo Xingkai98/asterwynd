@@ -1,6 +1,7 @@
 # Tasks: workflow 图级 recursion_limit 默认值调大（25 → 100）
 
-> 状态：设计阶段（proposal + design + spec delta + tasks + grill）。**尚未进入实现**。
+> 状态：**实现完成，审阅闭环 PASS（Round 2）**，进入归档收尾（3.5 / 3.6(post-merge) 未勾）。
+> 设计阶段产出：proposal + design + spec delta + tasks + grill（Q1–Q6 已用户拍板 2026-09-29）。
 
 ## 0. 设计追问（实现前门禁）
 

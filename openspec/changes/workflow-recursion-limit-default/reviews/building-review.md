@@ -1,153 +1,148 @@
 # Building Review: workflow 图级 recursion_limit 默认值调大（25 → 100）
 
 - **Change**: `workflow-recursion-limit-default`（issue #262）
-- **审阅范围**: `git diff ef60ed8009bce0602231461c103317571ac4b483...HEAD`（base=origin/master 合并基点，head=`3d3c996`）
-- **审阅方式**: 独立零记忆审阅者（Round 1）；逐条读代码核实、独立跑探针实测标定、独立重算 base 版 `spec_hash`
+- **审阅范围**: `git diff ef60ed8009bce0602231461c103317571ac4b483...HEAD`（base=origin/master 合并基点，head=`f51a8ec`）
+- **审阅方式**: 独立零记忆审阅者（**Round 2**，Round 1 判 CHANGES_REQUESTED 后复审）；逐条读代码核实、独立跑探针实测标定、独立重算 `spec_hash`、独立跑门禁
 - **审阅时间**: 2026-09-29
 
 ---
 
 ## Verdict
 
-**CHANGES_REQUESTED**
+**PASS**
 
-实现代码本身**完整、正确、已实测验证**：四处默认值全部为 100、无第五处、三路径一致、核心回归**非恒真**（探针独立复现），spec 同步未丢 #246 诊断句，测试与门禁全绿。但存在一个会**硬阻塞归档门禁**的中等问题（`tasks.md` 实现类任务 1.1–2.6 全未勾，且工作区有未提交修复），外加两条 low 级文档/注释口径问题。修完即可转 PASS——改动量很小。
-
-> **注意审阅目标状态漂移**：本审阅针对 `HEAD=3d3c996`。审阅过程中发现工作区出现**未提交**修改（`tests/agent/subagent/test_recursion_limit_default.py`，mtime 15:10 > HEAD 提交时间）。该修改修复了本报告 Issue 3 指出的问题，但**尚未提交**，故 `HEAD` 版本仍带该问题。详见 Issues 与「审阅目标状态」。
+Round 1 的 5 项问题（Issue 1–5）**逐条确认已修好**，且修复质量经独立探针复验（非仅凭自述）。实现层与 Round 1 结论一致：四处默认值全部为 100、无第五处、三路径一致、核心回归**非恒真**（探针独立复现 `superstep = 3N + 2`，N=12 → 38 严格落在 (25,100)）、spec 同步未丢 #246 诊断句；测试与门禁全绿（`check_openspec_artifacts.py` 的唯一报错是**预期在途**的 review manifest 缺失，非缺陷）。工作区 `git status --porcelain` 为空，审阅目标无漂移。残留仅 1 条 low/nit 级文档陈旧（`tasks.md:3` 状态行仍写「尚未进入实现」），不影响归档门禁、不阻塞 PASS。
 
 ---
 
 ## Tasks Verification
 
-### 实现类任务（第 1、2 节）—— 全部真实落实 ✅
+### 实现类任务（第 1、2 节）—— 全部真实落实且已回填 ✅
 
-| 任务 | 状态 | 证据（`文件:行号`） |
-|---|---|---|
-| 1.1 `WorkflowLimitsConfig.recursion_limit` 默认值 100 + docstring | ✅ 真实实现 | `agent/config.py:341`（`recursion_limit: int = 100`）；docstring `agent/config.py:337-339` 写明「25 调到 100 + 结构后盾定位」 |
-| 1.2 `_parse_workflow_limits` 的 `mapping.get` 默认 100 | ✅ 真实实现 | `agent/config.py:1663`（`mapping.get("recursion_limit", 100)`）；`_validate_positive_int` 调用未变（`agent/config.py:1662-1666`） |
-| 1.3 `_spec_bounds` 的 `getattr` 兜底 100 | ✅ 真实实现 | `agent/tools/builtin/subagents.py:435`（`getattr(limits, "recursion_limit", 100)`） |
-| 1.4 `DEFAULT_RECURSION_LIMIT = 100` + 模块 docstring | ✅ 真实实现 | `agent/subagent/workflow.py:39`（常量）；`agent/subagent/workflow.py:13-16`（docstring 同步，并注明 `to_dict()` 哨兵语义） |
-| 1.5 核实「无第五处」 | ✅ 已核实 | 全仓 grep（排除 tests/archive）无第五处默认值字面量；`agent/subagent/scheduler.py:2005,2937` 的「25」确为 `_dispatch_capacity() = max_active + max_queued_runs` 并发容量；`web/static/workflow_graph.js` 只读运行时 `diagnostics` |
-| 2.1 更新默认值断言 25 → 100 | ✅ 真实实现 | `tests/agent/subagent/test_workflow_tools.py:235`（`== 100`） |
-| 2.2 三路径一致性断言 | ✅ 真实实现 | `tests/agent/subagent/test_workflow_tools.py:240-262`（直构 `:252` / yaml `:255` / getattr 兜底 `:260` / 常量同源 `:262`） |
-| 2.3 核心回归 + 对照组（**非恒真**） | ✅ 真实实现且经独立探针验证 | 主组 `tests/agent/subagent/test_recursion_limit_default.py:94-107`；对照组 `:111-127`。见下方「探针实测」 |
-| 2.4 spec 级回归（两条 Scenario） | ✅ 真实实现 | `tests/agent/subagent/test_recursion_limit_default.py:132-139`（默认不掐断）、`:142-165`（显式 7 精确生效，走真实 `load_config` + `parse_spec_for_manager`） |
-| 2.5 序列化面（锁 D3） | ✅ 真实实现 | `tests/agent/subagent/test_workflow_spec.py:340-368`（未声明键省略 + 指纹钉 `9cee33da95470fbc`；显式 25 开始序列化；显式 100 反向） |
-| 2.6 兼容回归保持绿 | ✅ 已验证 | `tests/agent/subagent/` 710 passed（含 `test_scheduler.py` / `test_terminal_honesty.py` / `test_workflow_asset_limits.py` 等） |
+| 任务 | 勾选 | 状态 | 证据（`文件:行号`） |
+|---|---|---|---|
+| 1.1 `WorkflowLimitsConfig.recursion_limit` 默认 100 + docstring | `[x]` | ✅ 真实实现 | `agent/config.py:341`（`recursion_limit: int = 100`）；docstring `agent/config.py:333-340` 写明「25 调到 100 + 结构后盾定位」 |
+| 1.2 `_parse_workflow_limits` 的 `mapping.get` 默认 100 | `[x]` | ✅ 真实实现 | `agent/config.py:1663`（`mapping.get("recursion_limit", 100)`）；`_validate_positive_int` 调用未变（`agent/config.py:1662-1666`） |
+| 1.3 `_spec_bounds` 的 `getattr` 兜底 100 | `[x]` | ✅ 真实实现 | `agent/tools/builtin/subagents.py:435`（`getattr(limits, "recursion_limit", 100)`） |
+| 1.4 `DEFAULT_RECURSION_LIMIT = 100` + 模块 docstring | `[x]` | ✅ 真实实现 | `agent/subagent/workflow.py:39`（常量，含哨兵语义注释 `:38`）；docstring `agent/subagent/workflow.py:13-16` |
+| 1.5 核实「无第五处」 | `[x]` | ✅ 已核实（本轮独立复查） | 全仓 grep 无第五处默认值字面量；`agent/subagent/scheduler.py:2005,2937` 的「25」确为 `_dispatch_capacity() = max_active + max_queued_runs`；`_FANOUT_CAP` 与 `max_nodes`/`max_runs` 均未受影响 |
+| 2.1 更新默认值断言 25 → 100 | `[x]` | ✅ 真实实现 | `tests/agent/subagent/test_workflow_tools.py:235`（`== 100`） |
+| 2.2 三路径一致性断言 | `[x]` | ✅ 真实实现 | `tests/agent/subagent/test_workflow_tools.py:240-262`（直构 `:252` / yaml `:255` / getattr 兜底 `:260` / 常量同源 `:262`） |
+| 2.3 核心回归 + 对照组（**非恒真**） | `[x]` | ✅ 真实实现且经独立探针复验 | 主组 `tests/agent/subagent/test_recursion_limit_default.py:94-107`；对照组 `:111-127`。见下方「探针实测」 |
+| 2.4 spec 级回归（两条 Scenario） | `[x]` | ✅ 真实实现 | `:132-139`（默认不掐断）、`:142-165`（显式 7 精确生效，走真实 `load_config` + `parse_spec_for_manager`） |
+| 2.5 序列化面（锁 D3） | `[x]` | ✅ 真实实现且冻结值经独立重算 | `tests/agent/subagent/test_workflow_spec.py:340-368`（未声明键省略 + 指纹钉 `9cee33da95470fbc`；显式 25 开始序列化；显式 100 反向）。指纹见「探针实测」 |
+| 2.6 兼容回归保持绿 | `[x]` | ✅ 已验证 | `tests/agent/subagent/` 710 passed（含 `test_scheduler.py` / `test_terminal_honesty.py` / `test_workflow_asset_limits.py` 等） |
+
+### 第 4 节（Round 1 修复）
+
+| 任务 | 勾选 | 状态 | 证据 |
+|---|---|---|---|
+| 4.1 勾上实现类 + 收尾任务 | `[x]` | ✅ 已完成 | `tasks.md` 24 个 `[x]`；仅剩 3.5（归档，`[ ]`）与 3.6（`[ ]`，已带 `(post-merge)`，`tasks.md:39`） |
+| 4.2 提交并修正 Issue 3 测试 | `[x]` | ✅ 已完成 | 见「Round 1 修复验证」第 3 条 |
+| 4.3 订正 `patterns.py` 量纲注释 | `[x]` | ✅ 已完成 | `agent/subagent/patterns.py:237-240` |
+| 4.4 `proposal.md` 记录编译期接受域 | `[x]` | ✅ 已完成 | `proposal.md:41` |
+| 4.5 重跑验证并再审 | `[x]` | ✅ 已完成（本轮即为 Round 2） | 见 Test Results |
 
 ### 收尾类任务（第 3 节）—— 在途，非缺陷（如实记录）
 
-- 3.0（benchmark smoke）、3.1（spec 同步）、3.2（文档影响）、3.3（本审阅闭环）、3.4（全量验证）、3.5（归档）——`tasks.md` 均 `[ ]` 未勾。
-- **3.1 实际已完成**（current spec 已同步，见 `openspec/specs/multi-agent-collaboration/spec.md:125` + `workflow-events.jsonl` 的 `current_spec_synced` 事件），但复选框未勾。
-- 3.6 已正确标注 `(post-merge)`（`tasks.md:39`）。
-- 依据审阅口径，第 3 节未完成属正常在途状态，**不计为缺陷**。
+- 3.0–3.4 已 `[x]`（3.1 spec 同步实测已生效：`openspec/specs/multi-agent-collaboration/spec.md:125` + `workflow-events.jsonl` 的 `current_spec_synced` 事件）。
+- 3.5（归档）保持 `[ ]`——**归档在本审阅 PASS 后的收尾步骤执行**，符合预期在途状态。
+- 3.6 已正确标注 `(post-merge)`（`tasks.md:39`），归档点豁免。
 
-### ⚠️ 实现类任务复选框状态（见 Issue 1）
+---
 
-`tasks.md:13-29` 的 1.1–2.6 **全部为 `[ ]` 未勾**，但对应代码/测试**均已真实存在**。这是 tasks.md 未回填实现进度，非实现缺失；但会让归档点的完成度门禁判红。
+## Round 1 修复验证
+
+### Issue 1（medium，`tasks.md` 实现类任务全未勾，会阻塞归档门禁）— ✅ **已修好**
+
+**验证**：`grep -c "^- \[x\]"` = 24，`grep -c "^- \[ \]"` = 2，未勾的仅 `tasks.md:38`（3.5 归档）与 `:39`（3.6，带 `(post-merge)`）。实现类 1.1–2.6 与已完成收尾 3.0–3.4 全部 `[x]`。
+
+**归档点门禁复核**：未勾行 3.6 带括号标记 `(post-merge)`（`tasks.md:39`，全角括号，容忍编号在前），按仓库规则被豁免；3.5 归档自身在归档动作时结构上无法「已勾」——归档点评估的是**归档目录**，其时 3.5 必然处于未勾（正是该动作本身），规则约定归档点不因 tasks 未全勾而降级，故 3.5 未勾不构成门禁失败。**无标记的未勾任务为 0** ⇒ Issue 1 已解除。
+
+### Issue 2（medium，工作区未提交修改，审阅基线漂移）— ✅ **已修好**
+
+**验证**：`git status --porcelain` 输出为空；`git log` 显示修复已作为 `f51a8ec`（"提交 review R1-Issue3 的测试修复"）落在 HEAD 上。审阅目标 = committed HEAD（`f51a8ec`），无漂移。
+
+### Issue 3（low，`test_declared_above_config_is_not_raised` 名实不符）— ✅ **已修好，且新版本真的在测它声称的东西**
+
+**验证**（不只看改名，独立跑探针 `/tmp/probe_eff.py` 复现两段断言）：
+
+新测试 `tests/agent/subagent/test_recursion_limit_default.py:168-191`，显式声明 `recursion_limit=500`（`:178` 的 `{**_raw_loop_spec(), "recursion_limit": 500}`），两段断言：
+
+- **解析保留声明值**（`:184`，`assert spec.recursion_limit == 500`）——探针独立复现：`parse_spec_for_manager(manager, raw)` 对声明 500 返回 **500** ✅
+- **读取处钳到配置值**（`:191`，`assert scheduler._eff_limit("recursion_limit") == 7`）——探针独立复现：`_eff_limit("recursion_limit")` 返回 **7** ✅
+
+**关键点核实**：`_eff_limit`（`agent/subagent/scheduler.py:601-615`）读 `self._spec` 并经 `@spec.setter`（`:625`）写入，测试的 `scheduler.spec = spec` 走真实 setter，非绕过。该测试现在**确实**覆盖「声明高于配置 → 解析不改写 + 生效值取 min」路径，与名称/docstring 一致；对照组路径（未声明 → 取配置值）另有 `test_explicit_smaller_recursion_limit_still_applies`（`:142-165`）独立覆盖，无重复、无虚化。
+
+### Issue 4（low，`patterns.py` 量纲注释）— ✅ **已修好**
+
+**验证**：`agent/subagent/patterns.py:237-240` 现为「peer-review 一轮约 **3 superstep**（producer + reviewer + gate），实测 `superstep = 3N + 2`；「≈1.9」是 **run/轮**口径，量纲不同勿混用」。量纲已正确区分（superstep/轮 3.00 与 run/轮 1.9 两个口径），与 design / `workflow.py:13-16` 口径统一。探针实测 `3*12+2 = 38` 与注释公式逐字吻合。
+
+### Issue 5（low，编译期接受域放宽未记录）— ✅ **已修好**
+
+**验证**：`proposal.md:41` 的 `## What Changes` 新增「**附带效果（自动跟随，非额外改动）**：`compile_pattern` 对模板 `max_rounds` 的编译期接受域绑定同一常量（`patterns.py` 的 rounds 荒谬界 `> DEFAULT_RECURSION_LIMIT`），故由 `≤ 25` 放宽到 `≤ 100`（`max_rounds∈[26,100]` 从编译期拒绝变为接受，`101` 仍拒）」。探针独立实测边界：`max_rounds` 25/26/100 编译通过、**101 被拒**（`agent/subagent/patterns.py:334-338`），与文档陈述一致。
 
 ---
 
 ## Issues
 
-### Issue 1 — `tasks.md` 实现类任务 1.1–2.6 全未勾，将阻塞归档门禁 — **medium**
+### Issue 6 — `tasks.md` 顶部状态行陈旧（仍写「尚未进入实现」）— **low（nit，不阻塞）**
 
-**证据**：`openspec/changes/workflow-recursion-limit-default/tasks.md:13-29`（1.1–2.6 均为 `- [ ]`），而上述 Tasks Verification 表已逐条证明对应实现存在（如 `agent/config.py:341`、`agent/subagent/workflow.py:39`）。
-
-**影响**：按仓库规则，归档点 `check_openspec_artifacts.py` 对未勾任务（无 `(post-merge)` 标记）报错。1.1–2.6 是**纯实现类**任务（无 `(post-merge)` 豁免），归档时若仍未勾会**硬失败**。
-
-**建议**：把 1.1–2.6 逐个勾上（3.6 保持 `(post-merge)` 未勾）。
-
----
-
-### Issue 2 — 工作区有未提交修改；审阅对象 `HEAD` 与工作区不一致 — **medium（流程）**
-
-**证据**：`git status --porcelain` → ` M tests/agent/subagent/test_recursion_limit_default.py`；该文件 mtime `15:10` 晚于 `HEAD`（`3d3c996`，14:49）。
-
-**影响**：本次审阅的 diff（到 `HEAD`）**不含**该修复；PR 前必须提交，否则 PR 内容与审阅基线不符，且 Issue 3 在 `HEAD` 上仍然成立。
-
-**建议**：提交该修改后再发 PR；若后续还有改动，需重新确认 diff 基线。
-
----
-
-### Issue 3 — `HEAD` 版测试 `test_declared_above_config_is_not_raised` 名实不符（工作区已修，未提交）— **low**
-
-**证据（`HEAD` 版）**：`tests/agent/subagent/test_recursion_limit_default.py`（HEAD）中 `test_declared_above_config_is_not_raised` 用 `_raw_loop_spec()` 构造 spec——而该 spec **未声明** `recursion_limit`（已核实：`_raw_loop_spec()` 不含该键），故断言 `spec.recursion_limit == 7` 实际测的是「**未声明 → 取配置值**」路径，而非其名称/docstring 声称的「声明高于配置 → 不抬高」。
-
-**影响**：`low`。断言本身**恒真于错误路径**，未覆盖其声称的方向；不构成安全/正确性问题，但属测试覆盖虚化。
-
-**现状**：工作区**已修复**——重命名为 `test_declared_above_config_is_kept_at_parse_but_clamped_at_read`，显式声明 `recursion_limit=500`，断言「解析保留 500」+「`_eff_limit` 钳到 7」两段（`tests/agent/subagent/test_recursion_limit_default.py:168-191`）。修复正确且两段断言缺一不可，切中要害。**待提交**（见 Issue 2）。
-
----
-
-### Issue 4 — 生产注释仍写「peer-review 一轮约 1.9 superstep」（量纲错误，design 已订正）— **low**
-
-**证据**：`agent/subagent/patterns.py:238`：
+**证据**：`openspec/changes/workflow-recursion-limit-default/tasks.md:3`：
 
 ```
-#: - ``rounds``：计数键，落到 route 的 ``max_routes``。**不做静态上界**（与图级
-#:   ``recursion_limit`` 的换算比依赖模板拓扑——peer-review 一轮约 1.9 superstep）；
+> 状态：设计阶段（proposal + design + spec delta + tasks + grill）。**尚未进入实现**。
 ```
 
-**影响**：`low`。这正是 grill 标为 **high** 的量纲错误（design `## Testing Strategy` 与 `design.md:149` 已订正为「**3 superstep/轮**」；「1.9」实为 **run/轮**）。本 change 恰以该换算比为核心，且已同步 `agent/subagent/workflow.py:13` 的 docstring，却漏了同主题的 `patterns.py:238`，形成「同一仓内两个换算比对不上」。
+**影响**：`low`。实现已完成且 tasks 已勾 24 项，状态行却仍声明「尚未进入实现」，与文件其余部分自相矛盾。不触发任何门禁（artifact checker 不读状态行），不影响归档，故不阻塞 PASS。
 
-**备注**：该行**不在本 change diff 内**（`git diff ... -- agent/subagent/patterns.py` 无输出），属 pre-existing，不归本 change 引入，故记 low 而非 medium。
-
-**建议**：顺手订正为「约 3 superstep/轮」，或记为债务单独立项。
-
----
-
-### Issue 5 — 编译期 `max_rounds` 接受域随常量隐含放宽（25→100），change 文档未记录 — **low**
-
-**证据（探针实测）**：
-
-```
-max_rounds=  26 -> COMPILES, gate.max_routes=26     (改前被拒)
-max_rounds=  50 -> COMPILES, gate.max_routes=50     (改前被拒)
-max_rounds= 100 -> COMPILES, gate.max_routes=100    (改前被拒)
-max_rounds= 101 -> REJECTED: ... exceeds recursion_limit
-```
-
-`agent/subagent/patterns.py:332` 的 guards 绑定 `DEFAULT_RECURSION_LIMIT`，故该常量改 100 后，`compile_pattern` 对 `max_rounds` 的接受域由 `≤25` 变为 `≤100`。
-
-**影响**：`low`。这是「只改默认值」之外的一处**可观察行为变化**（`max_rounds∈[26,100]` 从编译期拒绝变为接受），方向与 change 目标一致（属收益），且新测试 docstring（`tests/agent/subagent/test_recursion_limit_default.py:26`）提及该编译期约束，但 change 的 `Impact Analysis` / `Non-Goals` **未列此项**。已核实 spec delta 中「SHALL NOT 因 `max_rounds` 大于图级上限而在编译期拒绝」的语义未被破坏（该句本就要求不静态拒绝，今更宽松）。
-
-**建议**：在 `proposal.md` 的 Impact Analysis 补一句「编译期 `max_rounds` 接受域随之由 25 放宽到 100（绑定同一常量，自动跟随）」。
-
----
+**建议**：顺手改为「状态：实现完成待归档」或直接删除该行。
 
 ### 其余维度——无问题
 
-- **正确性**：四处默认值均为 100，无遗漏第五处，无语义分叉（三路径测试锁定）。见「探针实测」。
-- **Spec 对齐**：delta 四条 Scenario 全部落在 current spec（`openspec/specs/multi-agent-collaboration/spec.md:127,134,142,149`）；`gre` 核实 `declared_max_rounds` 计数 = 3（诊断句完整保留），`默认 25` 零命中，`默认 100` 命中 `:125,:136`；delta 与 current spec 的 Requirement 段落 `diff` 逐字一致。**#246 诊断句未被 sync 覆盖删除 ✅**（`workflow-events.jsonl` 的 `current_spec_synced` 事件已说明手工合并原因）。
-- **冗余度**：四处字面量重复为**已知且用户已拍板（Q1）接受**的取舍，本 change 不引入新重复。测试无重复实现。
+- **正确性**：四处默认值均为 100、无第五处、无语义分叉（三路径测试 + 本轮独立 grep 复查）。见「探针实测」。
+- **Spec 对齐**：`grep -c declared_max_rounds openspec/specs/multi-agent-collaboration/spec.md` = **3**（#246 诊断句完整保留）；`grep -n "默认 25"` = **零命中**（exit 1）；`默认 100` 命中 `:125`；delta 与 current spec 的 Requirement 段落逐字一致。**#246 诊断句未被 sync 覆盖删除 ✅**（`workflow-events.jsonl` 的 `current_spec_synced` 事件已说明「手工合并（delta 写于 #246 合入前，原样 sync 会删掉诊断句）」）。
+- **冗余度**：四处字面量重复为**已知且用户已拍板（grill Q1）接受**的取舍，本 change 不引入新重复；新增测试无重复实现。
+- **测试覆盖**：核心回归**含对照组，非恒真**；序列化面三支（未声明 / 显式 25 / 显式 100）齐全；三路径一致性有独立断言。
 - **安全性**：无注入/越权/信息泄露面（纯数值默认值调整）。
-- **可维护性**：`agent/config.py:337-339` 与 `agent/subagent/workflow.py:13-16` docstring 均已同步口径、明确「结构后盾而非成本软闸」定位，并注明 `to_dict()` 哨兵副作用。除 Issue 4 外无其他漂移。
-- **CI 完整性**：本 change diff **不含任何 CI 配置文件**（`.github/` 等），未弱化 CI。
+- **可维护性**：`agent/config.py:333-340`、`agent/subagent/workflow.py:13-16`、`agent/subagent/patterns.py:237-240` 口径已统一；除 Issue 6 外无漂移。
+- **CI 完整性**：本 change diff 不含任何 CI 配置文件（`.github/` 等），未弱化 CI。
 
 ---
 
 ## 探针实测（独立复现，非照抄 design/tasks 估算）
 
-审阅者用 `/tmp/probe_recursion.py` 独立跑 `peer-review` 拓扑（`compile_pattern` + `AlwaysCritiqueLLM`，route 常回 producer），核实换算关系：
+审阅者独立跑 `peer-review` 拓扑（`compile_pattern` + `AlwaysCritiqueLLM`，route 常回 producer），复现换算关系：
 
 | N（`max_rounds`） | 默认 limit=100 下 reason | steps | 显式 limit=25 下 reason | steps |
 |---|---|---|---|---|
 | 7 | `max_routes` | 23 | `max_routes` | 23 |
 | 8 | `max_routes` | 26 | **`recursion_limit`** | 25 |
 | 12 | **`max_routes`** | **38** | **`recursion_limit`** | 25 |
-| 32 | `max_routes` | 98 | — | — |
-| 33 | **`recursion_limit`** | 100 | — | — |
 
 **结论**：
-1. **`superstep = 3N + 2` 成立**（N=12 → 38；N=32 → 98；N=33 → 100）。docstring 公式与 design「3 superstep/轮」**实测吻合**。
-2. **`N=12` 严格落在 (25,100) 内**（38），两侧余量充足；且 12 ≤ 25 满足改前改后的编译期界。
-3. **对照组真能触发**：N=8 起显式 limit=25 即 `reason == "recursion_limit"`；N=12 对照组稳定触发，`steps=25 < 38`。**核心回归非恒真 ✅**。
-4. `N=33` 在默认 100 下撞 `recursion_limit`（`steps=100`），印证上界 ~32 的推导。
+1. **`superstep = 3N + 2` 成立**（N=12 → 38，与 `CALIBRATED_SUPERSTEPS = 3*12+2 = 38` 逐字吻合）。
+2. **N=12 严格落在 (25,100) 内**（38），两侧余量充足；且 12 ≤ 25 满足改前改后的编译期界。
+3. **对照组真能触发**：N=8 起显式 limit=25 即 `reason == "recursion_limit"`；N=12 对照组稳定触发，`steps=25 < 38`。**核心回归非恒真 ✅**。N=7 两栏均 `max_routes`（docstring 自称的下界 N≥8 亦属实）。
 
-**base 版 `spec_hash` 独立重算**：用 base commit 的 `agent/subagent/workflow.py` 逐字执行 `parse_workflow_spec(_spec())` → `spec_hash = 9cee33da95470fbc`，与 `tests/agent/subagent/test_workflow_spec.py:349` 钉的冻结字面量**逐字相同**，证实「未声明键的 spec 指纹改前改后不变」这一 D3 主张成立。
+**冻结 `spec_hash` 独立重算**：`/tmp/probe_hash.py` 独立执行 `parse_workflow_spec(_spec())`：
 
-**钳制方向核验**：`parse_spec_for_manager` 对声明值 `recursion_limit=500` 解析结果为 500（**解析不改写**），钳制发生在 `_eff_limit` 读取处取 `min(declared, ceiling)`——与 spec delta「显式值精确生效 + min 钳制」一致；工作区新测试 `:168-191` 两段断言正确覆盖该路径。
+```
+undeclared to_dict has key: False
+undeclared hash: 9cee33da95470fbc == literal? True
+declared25  to_dict key: 25  hash: e440ec25fd907f3a
+declared100 has key: False  hash: 9cee33da95470fbc
+```
+
+- 未声明 → 键省略、指纹 = **`9cee33da95470fbc`**，与 `test_workflow_spec.py` 钉的冻结字面量**逐字相同** ✅
+- 显式 25 → 键**开始序列化**（25）、指纹变化 ✅
+- 显式 100 → 键被省略、指纹 = 未声明值（两者语义确实相同）✅
+
+已核对 base→HEAD 的 `to_dict()`/`spec_hash` 实现**逐字未变**（`git show <base>:agent/subagent/workflow.py` 的该段与 HEAD 一致），故冻结字面量对改前改后同值，测试主张成立。
+
+**钳制方向核验**：`parse_spec_for_manager` 对声明值 500 解析结果为 500（**解析不改写**），`_eff_limit` 返回 7（**读取处取 min**）——与 spec delta「显式值精确生效 + min 钳制」一致。
+
+**编译域核验**：`max_rounds` 25/26/100 编译通过、101 被拒（`WorkflowValidationError`），与 `proposal.md:41` 陈述一致。
 
 ---
 
@@ -156,47 +151,41 @@ max_rounds= 101 -> REJECTED: ... exceeds recursion_limit
 ### `uv run pytest tests/agent/subagent/ -q -p no:randomly`
 
 ```
-710 passed in 43.15s
+710 passed in 27.70s
 ```
 
-### `uv run pytest -q -p no:randomly`（全量）
+### `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
 
 ```
-FAILED tests/agent/browser/test_service.py::TestBrowserServiceTabIdGeneration::test_generate_tab_id_is_4_chars
-FAILED tests/agent/memory/test_persistent.py::TestFindScopeRoot::test_returns_none_for_non_git_dir
-FAILED tests/agent/memory/test_persistent.py::TestFindScopeRoot::test_malformed_git_file_falls_back_to_scan
-3 failed, 3474 passed, 9 skipped, 80 warnings in 401.91s (0:06:41)
+Totals: 29 passed, 0 failed (29 items)
 ```
 
-**3 条失败均与本 change 无关，已逐条定位**：
-- 两条 `test_persistent.py`：**环境性**——`/tmp/.git` 存在导致 `_find_scope_root` 上溯到 `/tmp`，`assert PosixPath('/tmp') is None` 失败（`/tmp/.git` 实测存在，mtime Sep 21）。已知问题。
-- 一条 `test_service.py`：**偶发**——单独重跑 2 次均 `1 passed`（`2.38s` / `0.80s`），与既有 flake 口径一致（本 change 未触及 browser 面）。
-
-### 门禁
+### `uv run python scripts/check_openspec_artifacts.py`
 
 ```
-npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
-  → Totals: 29 passed, 0 failed (29 items)
-
-uv run python scripts/check_openspec_artifacts.py
-  → OpenSpec artifact checks passed
+ERROR: workflow-recursion-limit-default: review manifest missing:
+       openspec/changes/workflow-recursion-limit-default/reviews/building-review-manifest.json
+REAL_EXIT=1
 ```
+
+**如实说明**：该 exit 1 的**唯一**原因是 review manifest 缺失——属**预期在途状态**。按仓库审阅闭环流程，manifest 在本审阅判 **PASS 之后**才由 `/review-loop` 生成（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）。本报告即 PASS 依据，manifest 为后续产物。**不据此判 CHANGES_REQUESTED**。其余所有 artifact 检查（tasks 勾选、grill 证据、Open Question 确认、RIR 内容门槛、受保护路径事件）**均无报错**（输出中无其它行）。
 
 ---
 
 ## Open Questions / Blockers
 
-无阻塞性疑问。以下为供主 session 决策的非阻塞项：
+无阻塞性疑问。以下为供主 session 决策的**非阻塞**项（不影响 PASS）：
 
-1. **Issue 4（`patterns.py:238` 换算比注释）**：本 change 顺手订正，或记债务单立项？（审阅者倾向顺手订正——改动一行，且本 change 主题正是该换算比。）
-2. **Issue 5（编译期接受域放宽）**：补进 Impact Analysis，或视为「收益方向」不记？（审阅者倾向补一句，保持 Impact Analysis 完整。）
+1. **Issue 6（`tasks.md:3` 陈旧状态行）**：归档前顺手改/删，或保持现状直接归档？（审阅者倾向顺手改一行——成本极低，且归档后该行会留在 archive 里误导读者。）
 
 ---
 
 ## 结论
 
-**实现层：PASS 级**——四处默认值调 100 完整正确、无第五处、三路径一致，核心回归**非恒真**（探针独立实测 `superstep=3N+2`，N=12 → 38 落在 (25,100)，对照组稳定撞 `recursion_limit`），spec 同步**未丢 #246 诊断句**（`declared_max_rounds` 计数 3、`默认 25` 零命中、delta 与 current 段落逐字一致），既有机制（superstep 口径 / `GraphRecursionError` / `_eff_limit` min 方向 / `max_nodes`/`max_runs` 默认值）零改动，测试与门禁全绿，无安全面、无 CI 弱化。
+**PASS。**
 
-**流程/文档层：需修复后再归档**——`tasks.md` 1.1–2.6 未勾（Issue 1，归档门禁会硬失败）、工作区未提交修改（Issue 2）、`patterns.py:238` 量纲注释（Issue 4）、编译期接受域未记录（Issue 5）。
+Round 1 的 5 项问题**全部修好**，且经独立探针复验而非仅凭自述：Issue 1（tasks 勾选）未勾行仅剩归档/post-merge 两项，归档门禁解除；Issue 3（测试名实不符）新版本显式声明 500 → 解析保留 500、`_eff_limit` 钳到 7，两段断言独立复现为真；Issue 4（量纲注释）已订正为「3 superstep/轮（`superstep = 3N + 2`）」并区分 run/轮口径；Issue 5（编译域）已记录且边界实测为 ≤100；Issue 2（工作区漂移）已提交、`git status` 干净。
 
-综合判 **CHANGES_REQUESTED**：四项均为小改动，完成并提交后即可转 PASS。
+核心行为与 Round 1 结论一致并再次独立验证：四处默认值均为 100、无第五处、三路径一致；**核心回归非恒真**（N=12 → 38 superstep，对照组稳定撞 `recursion_limit`）；`spec_hash` 冻结字面量 `9cee33da95470fbc` 独立重算逐字相同；spec 同步**未丢 #246 诊断句**（`declared_max_rounds` 计数 3、`默认 25` 零命中、delta 与 current 段落一致）；既有机制零改动。测试全绿（710 passed / 29 passed），artifact checker 唯一报错为预期在途的 manifest 缺失。
+
+**残留仅 1 条 low/nit 级文档陈旧（Issue 6，`tasks.md:3` 状态行），不触发任何门禁、不阻塞 PASS。** 可进入归档收尾。
