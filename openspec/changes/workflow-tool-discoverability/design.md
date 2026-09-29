@@ -141,7 +141,7 @@ JOIN_SEMANTICS        → nodes[].join
 
 **为什么用正例+反例而不是只讲规则**：spec 既有 Requirement「DeclareWorkflow 描述暴露循环契约」已经钉了「描述 SHALL 附最小正确示例与反例，SHALL NOT 仅罗列规则」（`openspec/specs/multi-agent-collaboration/spec.md:415-420`）。本 change 沿用同一范式。
 
-**并补 `when` 的两种形态**（当前描述 0 次提及）：字面标签（大小写无关）与 `$ref:<node_id>:<slot>`（`workflow.py:88-107`，取槽值首个非空行作期望标签，槽缺失静默走 default）。
+**并补 `when` 的两种形态**（当前描述里 `when` 作为**字段名** 0 次提及；唯一一次 `when` 出现在 "reset when a new lap starts" 这句无关散文里；`$ref` 字符串 0 次）：字面标签（大小写无关）与 `$ref:<node_id>:<slot>`（`workflow.py:88-107`，取槽值首个非空行作期望标签，槽缺失静默走 default）。
 
 ### D5 — per-kind 字段适用性**进描述**（一个表），不进 schema
 
