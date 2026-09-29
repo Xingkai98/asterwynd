@@ -235,7 +235,9 @@ def _template_peer_review(task: str, params: dict[str, Any]) -> dict:
 #:   执行期静默截断（``items[:max_items]`` 只跑 20 个），也**阻止编译期内存放大**
 #:   （实测 ``workers=100000`` 会在编译期真的造出 10 万个 item 对象）。
 #: - ``rounds``：计数键，落到 route 的 ``max_routes``。**不做静态上界**（与图级
-#:   ``recursion_limit`` 的换算比依赖模板拓扑——peer-review 一轮约 1.9 superstep）；
+#:   ``recursion_limit`` 的换算比依赖模板拓扑——peer-review 一轮约 **3 superstep**
+#:   （producer + reviewer + gate），实测 ``superstep = 3N + 2``；「≈1.9」是
+#:   **run/轮**口径，量纲不同勿混用）；
 #:   仅当明显荒谬（> ``recursion_limit``，任何拓扑下都不可能跑满）时拒绝，其余交给
 #:   运行期截断诊断如实报告。
 #: - ``budget``：数值键，透传给节点 run 预算（``_worker_budget``）。

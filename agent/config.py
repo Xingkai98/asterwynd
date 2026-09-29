@@ -333,8 +333,12 @@ class WorkflowLimitsConfig:
 
     ``aggregation`` 是分层汇聚配置（change ``workflow-result-aggregation``，D6/Q8）；
     ``budget`` 是运行期四维度总预算（change ``workflow-budget-attribution``，D6）。
+
+    ``recursion_limit`` 默认值由 change ``workflow-recursion-limit-default`` 从 25 调
+    到 100：它是图级 superstep 的结构后盾（不是成本软闸），#196 把四维预算默认改为
+    不限后它与 ``max_runs`` 成为仅剩的结构闸，25 只够 peer-review 拓扑约 9 轮。
     """
-    recursion_limit: int = 25
+    recursion_limit: int = 100
     max_nodes: int = 200
     max_runs: int = 300
     aggregation: AggregationConfig = field(default_factory=AggregationConfig)
@@ -1656,7 +1660,7 @@ def _parse_workflow_limits(raw: Any, path: Path) -> WorkflowLimitsConfig:
     mapping = _expect_mapping(raw, path, "subagents.workflow")
     return WorkflowLimitsConfig(
         recursion_limit=_validate_positive_int(
-            mapping.get("recursion_limit", 25),
+            mapping.get("recursion_limit", 100),
             "subagents.workflow.recursion_limit",
             path=path,
         ),

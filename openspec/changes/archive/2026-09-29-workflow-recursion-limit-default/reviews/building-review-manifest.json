@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-recursion-limit-default",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-workflow-recursion-limit-default-r2-590f0d2c",
+  "base_sha": "ef60ed8009bce0602231461c103317571ac4b483",
+  "head_sha": "724d4f3f1a9f9d6653d65acf7a0f9b4bea206aa3",
+  "tasks_hash": "sha256:b815306d817c64b2694ec08ebe80bf203ab0ab35747ce002437c3365d55feadc",
+  "spec_hash": "sha256:ab3feda4dba2a26748a1840c12e5d0c5224c56e73a9c6e5828f546e61cecd2ca",
+  "diff_hash": "sha256:46c325265be9db724bf883987ca3fba977e6c4d006cc41b9bd4859361714400c",
+  "report_hash": "sha256:a68d9cf2d1295e837c40499fb8d7a2e9ed418dc7ff53d5b820212e105b34aee4"
+}

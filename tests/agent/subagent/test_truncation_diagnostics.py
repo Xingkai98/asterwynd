@@ -8,6 +8,7 @@
 纯 DSL 图（无 ``max_rounds`` 概念）三字段为 ``null``。
 """
 import pytest
+from dataclasses import replace
 
 from agent.config import AsterwyndConfig
 from agent.llm import LLMResponse, Usage
@@ -39,9 +40,18 @@ def _manager(tmp_path) -> SubAgentManager:
 
 @pytest.mark.asyncio
 async def test_pattern_graph_truncation_reports_declared_vs_actual(tmp_path):
-    """模板图带 max_rounds 声明被截断：诊断给声明值 / 实际轮数 / 界来源。"""
+    """模板图带 max_rounds 声明被截断：诊断给声明值 / 实际轮数 / 界来源。
+
+    截断场景需要图级闸先于 route 的 ``max_routes`` 触发，故显式钉住
+    ``recursion_limit=25``（旧默认）——本用例测的是**截断诊断的诚实**，不是默认值
+    本身（默认值回归见 ``test_recursion_limit_default.py``）。默认值调到 100 后，
+    ``max_rounds=25`` 的图（77 superstep）会在默认配置下跑满，不再被图级闸截断。
+    """
     manager = _manager(tmp_path)
-    spec = compile_pattern("peer-review", task="write", params={"max_rounds": 25})
+    spec = replace(
+        compile_pattern("peer-review", task="write", params={"max_rounds": 25}),
+        recursion_limit=25,
+    )
     scheduler = WorkflowScheduler(manager, bus=MessageBus())
     # D4：pattern 溯源（本 change 由 RunWorkflow 的 template 分支写入；此处直接置位）
     scheduler.asset_source = {

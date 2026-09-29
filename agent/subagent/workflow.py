@@ -10,7 +10,10 @@ grill 决策记录（``reviews/grill-design.md``）：
   不执行模型生成代码，Q4）；
 - 环上必须有 ``route`` 节点——它是唯一能提供条件出口 + ``max_routes`` 上限的
   节点，没有 route 的环是不可终止的死循环；
-- 三闸默认值（Q5）：``recursion_limit=25`` / ``max_nodes=200`` / ``max_runs=300``。
+- 三闸默认值（Q5）：``recursion_limit=100`` / ``max_nodes=200`` / ``max_runs=300``。
+  ``recursion_limit`` 数图级 superstep；其默认值由 change
+  ``workflow-recursion-limit-default`` 从 25 调到 100——#196 把四维成本预算默认改为
+  不限后，它与 ``max_runs`` 成为默认配置下仅剩的结构后盾，25 未按新语境校准。
 
 本模块只做「受限可校验」的声明面：不执行任何模型生成代码，不 import 运行时
 （manager/scheduler），只做结构与语义校验。
@@ -32,7 +35,8 @@ REDUCERS = ("concat", "merge_dict", "first_non_empty", "last")
 CHANNELS = ("result_ref", "summary", "artifact", "bus")
 
 # 三闸默认值（grill Q5）：图级步数 / 节点数（含 foreach 展开）/ run 总数。
-DEFAULT_RECURSION_LIMIT = 25
+# ``DEFAULT_RECURSION_LIMIT`` 同时是 ``to_dict()`` 的「等于默认值则省略」哨兵。
+DEFAULT_RECURSION_LIMIT = 100
 DEFAULT_MAX_NODES = 200
 DEFAULT_MAX_RUNS = 300
 

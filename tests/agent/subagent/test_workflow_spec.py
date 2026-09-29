@@ -332,3 +332,37 @@ def test_spec_level_limits_override_defaults():
     assert spec.recursion_limit == 7
     assert spec.max_runs == 11
     assert spec.max_nodes == 200  # 默认沿用三闸默认值
+
+
+# --- 序列化哨兵副作用（change ``workflow-recursion-limit-default``，D3） ----
+
+
+def test_undeclared_recursion_limit_is_omitted_and_hash_is_frozen():
+    """未声明 ``recursion_limit`` 的 spec：键仍被省略，``spec_hash`` 逐字不变。
+
+    哨兵规则是「等于 ``DEFAULT_RECURSION_LIMIT`` 则省略该键」。未声明时解析结果
+    恰等于默认值，故键在改前改后**都**被省略 ⇒ 指纹不变。冻结字面量，防止有人
+    顺手把 ``to_dict()`` 改成「总是序列化三闸」（那会让**每个**存量资产指纹变化）。
+    """
+    spec = parse_workflow_spec(_spec())
+    assert "recursion_limit" not in spec.to_dict()
+    assert spec.spec_hash == "9cee33da95470fbc"
+
+
+def test_explicit_old_default_now_serialises_and_changes_hash():
+    """显式声明 25 的 spec：改后 25 ≠ 新默认 100 ⇒ 键**开始**被序列化，指纹变化。
+
+    这是一次性、方向正确的变化（25 从此是区别于默认值的有意义取值）；同名资产再
+    保存时首次判 ``updated``。见 design D3。
+    """
+    spec = parse_workflow_spec(_spec(recursion_limit=25))
+    assert spec.to_dict()["recursion_limit"] == 25
+    assert spec.spec_hash != "9cee33da95470fbc"
+
+
+def test_explicit_new_default_is_now_omitted():
+    """显式声明 100（= 新默认）的 spec：改后等于默认 ⇒ 键被省略（方向相反，结论同）。"""
+    spec = parse_workflow_spec(_spec(recursion_limit=100))
+    assert "recursion_limit" not in spec.to_dict()
+    # 省略后其指纹与「未声明」的 spec 一致——两者语义确实相同。
+    assert spec.spec_hash == parse_workflow_spec(_spec()).spec_hash
