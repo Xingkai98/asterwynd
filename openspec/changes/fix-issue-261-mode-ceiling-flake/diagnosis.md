@@ -245,18 +245,36 @@ run task，**20 个最终 dead**（`created=20 dead=20 alive=0`）——即「�
 - 实现清理（非语义）：改用 token 后 `previous_ceiling = current_mode_ceiling()` 不再被
   使用，应一并删除（`current_mode_ceiling` 的 import 若因此无消费者可收窄）。
 
-## `set_sandbox_sink`：**同受影响**（本 change 不修，单独立项）
+## `set_sandbox_sink`：**能复现且可观测**（实证缺陷；本 change 不修，建议单独立项）
 
-`agent/loop.py:601` 的 `set_sandbox_sink(previous_sandbox_sink)` 形态**完全相同**：
+`agent/loop.py:601` 的 `set_sandbox_sink(previous_sandbox_sink)` 与挂载 A 形态**完全相同**：
+`agent/sandbox_events.py:46` 的 `set_sandbox_sink(sink)` 是**普通 `ContextVar.set`**、**没有**
+`reset(token)` 版本，且它在同一个 `finally` 里、由同一个迟后终结路径执行。
 
-- `agent/sandbox_events.py:46` 的 `set_sandbox_sink(sink)` 也是**普通 `ContextVar.set`**，
-  且**没有** `reset(token)` 版本；
-- 它在同一个 `finally` 里、由同一个迟后终结路径执行，因此同样会把**后续用例**的
-  sandbox sink **清成 `previous_sandbox_sink`**（一个来自旧上下文的过期 sink）。
+**已写复现脚本并实测（两种故障形态都确定性复现）**：
 
-按任务约定**不在本 change 修**，建议**单独立项**（可复用本 diagnosis 的机制与最小脚本；
-修法与方案 A 同形：给 `set_sandbox_sink` 增加 token 返回 / `reset_sandbox_sink`，或改
-用 `ContextVar.set` 的 token 对）。
+| 脚本 | 形态 | 结果 |
+|------|------|------|
+| `repro/sandbox_sink_repro.py` | 遗留子 run 的 sink 上下文 = 默认 `_NOOP`（无 recorder 的父子链） | 后续 run 的 sink 被清成 `_NOOP` → 其 sandbox 事件**静默丢失**（LIVE trace 收 0 条） |
+| `repro/sandbox_sink_misroute.py` | 遗留子 run 的上下文携带**旧 run 的真实 recorder sink** | 后续 run 的 sink 被换成**过期真 sink** → 事件**串写进旧 run 的 trace**（LIVE 0 条 / OLD 1 条） |
+
+**可观测性判定 = 是（既有真实故障）**：不是「理论隐患」。
+
+- 形态 A 让后续 run 的 sandbox 事件（`denied`/`kill`/`oom`/`degraded`）**静默丢失**，任何
+  trace 里都查不到；
+- 形态 B 更严重：事件被**记进另一个 run 的 trace**，可观测性数据**张冠李戴**。
+
+**对照（证明归因）**：`sandbox_sink_misroute.py` 置 `PLANT_ABANDONED = False`（不派生遗留
+子 run）后，LIVE 事件正确落入 LIVE trace —— 串写确由遗留子 run 的跨上下文收尾引起。
+
+**与本 change 的关系**：两者是**独立载体**——本 change 只改了 `reset_mode_ceiling` 那一路；
+实测在**已应用本 change 修复**的树上，两个 sandbox 脚本**仍然复现**（`set_sandbox_sink`
+未被本 change 触碰）。
+
+**修复建议（独立 change）**：给 `set_sandbox_sink` 增加 token 返回 / `reset_sandbox_sink`，
+在 `AgentLoop.run` 的 `finally` 用守护式 `try: reset_sandbox_sink(token) except ValueError: pass`
+（与挂载 A 同形）；注意 `AgentLoop.run` 里 `set_sandbox_sink` 在 `if trace_recorder:` 门控内、
+而恢复是**无条件**的，改造时需一并处理「未 set 过却要 reset」的分支。
 
 ## Regression Requirements
 
