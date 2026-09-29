@@ -51,7 +51,7 @@ SubAgentManager.create_subagent (manager.py:175) → run_subagent (209) → _lau
   `summary_truncated` 标志。
 - `publish`（131 行）/`read`（153 行）：发布/读取；`read()` 的 `max_tokens`/`limit` 被钳到固定上界
   （调用方不能放大返回体）。
-- `snapshot_payload`（207 行）：`RunPattern` 的 `result["bus"]`，二维有界并报告 `messages_omitted`。
+- `snapshot_payload`（207 行）：`ReadBus` 出口与调度器权威 `_envelope()` 的 bus 快照来源，二维有界并报告 `messages_omitted`。
 - `compact_summary`（199 行）：总线内容压缩成摘要——防上下文爆炸；走队列全文，不受出口截断影响。
 
 **`agent/subagent/patterns.py`**

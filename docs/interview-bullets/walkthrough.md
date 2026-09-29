@@ -554,7 +554,7 @@ if self._is_quality_degraded(name) and not self._selector.is_stable(name):
 
 ```
 agent/subagent/
-├── patterns.py       ← 4 种编排模式 + PATTERNS 注册表 + run_pattern 入口
+├── patterns.py       ← 4 种编排模板 + PATTERNS 注册表 + compile_pattern/compile_recipe
 ├── bus.py            ← MessageBus：语义摘要交换 + 三层 token 预算
 ├── budget.py         ← BudgetTracker/Hook：token/时间双维度硬 kill
 ├── snapshot.py       ← SubagentSnapshotStore：快照持久化 + 恢复
@@ -564,10 +564,10 @@ agent/subagent/
 └── parent_channel_hook.py ← ParentChannelHook：结果注入父 agent 消息
 
 agent/tools/builtin/
-└── subagents.py      ← 10 个 LLM 可见子 agent 工具
+└── subagents.py      ← 9 个 LLM 可见子 agent 工具（+ Workflow 入口/资产工具）
 ```
 
-控制平面完全复用 `SubAgentManager`，不引入单独的 orchestration control plane（见 spec `scenario: orchestration-state-persists-without-dev-workflow-coupling`）。编排由 LLM 通过 `RunPattern` 工具（`subagents.py:320-354`）触发，模式内部执行确定性骨架（spawn N → wait → collect）。
+控制平面完全复用 `SubAgentManager`，不引入单独的 orchestration control plane（见 spec `scenario: orchestration-state-persists-without-dev-workflow-coupling`）。编排由 LLM 通过统一 Workflow 入口 `RunWorkflow`（`template=…` 或手写 `spec`）触发，模式内部执行确定性骨架（spawn N → wait → collect）。
 
 ---
 
@@ -587,16 +587,15 @@ PATTERNS: dict[str, type[OrcPattern]] = {
 }
 ```
 
-`RunPattern` 工具（`subagents.py:328-329`）的 `pattern` 参数 `enum` 恰含此 4 个值，与 `PATTERNS` 一一对应。调用路径：
+`RunWorkflow` 工具的 `template` 参数 `enum` 恰含此 4 个值，与 `PATTERNS` 一一对应。调用路径（变化 ``workflow-builtin-templates``：`RunPattern`/`run_pattern` 退役，模板经统一入口）：
 
 ```
-LLM 调 RunPattern 工具
-  → RunPatternTool.execute()                  (:347-354)
-    → run_pattern(manager, pattern, task, params) (:211-235)
-      → 创建 MessageBus + set_bus contextvar    (:227-228)
-      → PATTERNS[pattern](...).run()            (:230-231)
-      → 结果附 bus.snapshot_payload()           (:232)
-      → reset_bus                               (:235)
+LLM 调 RunWorkflow(template=…, task=…, params=…)
+  → RunWorkflowTool.execute()
+    → compile_recipe(template, task, params)   # 键/值/上界校验 + PATTERNS[...].compile()
+      → WorkflowScheduler(manager, bus=MessageBus()).run(spec)
+        → _launch_run 派发点 set_bus contextvar（每个 worker 可见）
+        → 返回 parent_envelope() bounded 投影（与 spec 路径同形状）
 ```
 
 #### 1.1 Orchestrator-Worker（`:100-111`）
@@ -740,7 +739,7 @@ bidding 模式额外附 `"selected"` + `"selector"` 字段（`:194-199`）。
 
 #### 2.1 设计定位
 
-每个编排 run 创建一个 `MessageBus` 实例（`run_pattern()` 中 `:227`），通过 contextvar `_bus`（`context.py:25`）对所有 worker 可见。bus 只存活于 run 期间，不跨 run 持久化。交换的是**语义摘要**，从来不是原始 transcript。
+每个编排 run 创建一个 `MessageBus` 实例（由 Workflow 入口构造并传给 `WorkflowScheduler`），在调度器派发点经 contextvar `_bus`（`context.py`）对所有 worker 可见。bus 只存活于 run 期间，不跨 run 持久化。交换的是**语义摘要**，从来不是原始 transcript。
 
 #### 2.2 三层 Token 预算（`:12-16` 注释 + 代码实现）
 
@@ -809,23 +808,18 @@ def read(self, *, max_tokens: int | None = None, limit: int | None = None, ...):
 #### 2.3 Bus 生命周期与上下文传递
 
 ```python
-# patterns.py:227-235
-async def run_pattern(...):
-    bus = MessageBus()
-    token = set_bus(bus)          # 注入 contextvar
-    try:
-        instance = PATTERNS[pattern](...)
-        result = await instance.run()
-        result["bus"] = bus.snapshot_payload()  # 快照 payload 附在结果
-        return result
-    finally:
-        reset_bus(token)           # 清理 contextvar
+# scheduler.py:_launch_run（派发点）——每个 worker 可见 bus
+token_bus = set_bus(self.bus)
+try:
+    ...  # create_subagent + run_subagent（copy_context 捕获入队上下文）
+finally:
+    reset_bus(token_bus)   # 清理 contextvar（与 4 个身份 contextvar 同形态）
 ```
 
 **snapshot_payload**（`bus.py`）：包含 messages 列表 + `max_read_tokens` + `messages_total` /
-`messages_omitted`。它是 `RunPattern` 的 `result["bus"]`，也是**模型面出口之一**，故 enforce
-issue #224 的二维界——条数 ≤ `BUS_SNAPSHOT_LIMIT`（20，取最近）、单条 ≤ `BUS_MESSAGE_LIMIT`（4000），
-界施加在**方法本身**（`RunPattern` 与 `scheduler._envelope()` 共用同一处，只加固调用点等于留漏口）。
+`messages_omitted`。它是 `ReadBus` 工具出口与调度器权威 `_envelope()` 的共同来源，也是
+**模型面出口之一**，故 enforce issue #224 的二维界——条数 ≤ `BUS_SNAPSHOT_LIMIT`（20，取最近）、单条 ≤ `BUS_MESSAGE_LIMIT`（4000），
+界施加在**方法本身**（`ReadBus` 与 `scheduler._envelope()` 共用同一处，只加固调用点等于留漏口）。
 超出条数上限时用 `messages_omitted` 显式报告，不静默丢弃。这个 payload 也可以被 recovery 路径注入到
 续传上下文（`snapshot.py` 中 `bus_summary` 字段，走的是 `compact_summary()`，仍是队列全文）。
 
@@ -1107,7 +1101,7 @@ def _check_guardrails(self):     # Pure pre-spawn guard
 
 **文件**：`agent/tools/builtin/subagents.py`
 
-共 10 个 LLM 可见工具，全部权限 `SUBAGENT_CONTROL_PERMISSION`：
+共 9 个核心 LLM 可见工具，全部权限 `SUBAGENT_CONTROL_PERMISSION`（Workflow 入口工具 `RunWorkflow` 等另见 Workflow 章节）：
 
 | # | 工具 | 行号 | 功能 |
 |---|------|------|------|
@@ -1120,7 +1114,9 @@ def _check_guardrails(self):     # Pure pre-spawn guard
 | 7 | `PublishBusMessage` | `:181-237` | 发布摘要到消息总线 |
 | 8 | `ReadBus` | `:240-280` | 消费消息总线摘要 |
 | 9 | `ResumeSubagent` | `:283-317` | 从 checkpoint 恢复中断的 run |
-| 10 | `RunPattern` | `:320-354` | 运行编排模式（4 种枚举 pattern） |
+
+> 变化 ``workflow-builtin-templates``：原第 10 项 `RunPattern` 已退役 —— 编排模板改由
+> 统一 Workflow 入口 `RunWorkflow`（`template=…` 或手写 `spec`）触达。
 
 ---
 
@@ -1146,7 +1142,7 @@ def _check_guardrails(self):     # Pure pre-spawn guard
 |------|----------|------|
 | Token 预算限制 | **关闭** | `config.py:257` — `default_max_tokens: int \| None = None` |
 | 时间预算限制 | **关闭** | `config.py:258` — `default_max_time_s: float \| None = None` |
-| 消息总线 | **按 run 创建** | 仅 `run_pattern()` 内部创建（`patterns.py:227`），直接调子 agent 工具的 run 不创建 bus |
+| 消息总线 | **按 run 创建** | 由 Workflow 入口构造并传入 `WorkflowScheduler`（派发点 `set_bus`）；直接调子 agent 工具的 run 不创建 bus |
 | Checkpoint 快照 | **中断时自动** | 异常/取消/预算杀路径自动写，正常完成不写 |
 
 ---
@@ -1155,7 +1151,7 @@ def _check_guardrails(self):     # Pure pre-spawn guard
 
 | 文件 | 内容 |
 |------|------|
-| `agent/subagent/patterns.py` | 4 种编排模式（OrcPattern 基类 + 4 子类 + PATTERNS + run_pattern 入口） |
+| `agent/subagent/patterns.py` | 4 种编排模板（OrcPattern 基类 + 4 子类 + PATTERNS + compile_pattern/compile_recipe） |
 | `agent/subagent/bus.py` | MessageBus：三层 token 预算（bounded queue / publish summarization / consume window） |
 | `agent/subagent/budget.py` | BudgetTracker + BudgetHook + BudgetExceededError：双维度预算硬 kill |
 | `agent/subagent/snapshot.py` | SubagentSnapshotStore：快照持久化 + SessionStore 复用 |
@@ -1163,7 +1159,7 @@ def _check_guardrails(self):     # Pure pre-spawn guard
 | `agent/subagent/context.py` | ContextVar：spawn_depth + bus 上下文传递 |
 | `agent/subagent/protocol.py` | ParentChannel：父子 agent 结果回传 |
 | `agent/subagent/parent_channel_hook.py` | ParentChannelHook：结果注入父 agent 消息 |
-| `agent/tools/builtin/subagents.py` | 10 个 LLM 可见子 agent 工具（含 RunPattern / ResumeSubagent / PublishBusMessage / ReadBus） |
+| `agent/tools/builtin/subagents.py` | 9 个核心子 agent 工具（ResumeSubagent / PublishBusMessage / ReadBus 等）+ Workflow 入口与资产工具 |
 | `agent/config.py:246-258` | SubagentsConfig：max_concurrent_runs=4 / max_depth=3 / budget defaults=None |
 | `openspec/specs/multi-agent-collaboration/spec.md` | 多 Agent 协作能力域规格（6 requirements） |
 
