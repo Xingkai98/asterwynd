@@ -74,9 +74,9 @@
 ## 6. 审阅闭环与 PR 收尾
 
 - [x] 6.1 跑 `/review-loop`（独立审阅闭环）：**2 轮收敛，最终 verdict = PASS**（R1 CHANGES_REQUESTED → 修 `subagents.py:634` 的 control token + T2 断言扩到 parameters 树 → R2 PASS）。产出 `reviews/building-review.md`；manifest 见 6.2
-- [ ] 6.2 review manifest **必须在本 change 的 `tasks.md` 最终化（含归档 move）之后生成**（AGENTS.md「Review manifest 纪律」）
+- [x] 6.2 review manifest 在本 change 的 `tasks.md` 最终化（含归档 move）之后生成（AGENTS.md「Review manifest 纪律」）
 - [x] 6.3 把 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`：MODIFIED 1 + ADDED 1），确认 delta 与同步后的存量文件口径一致
-- [ ] 6.3a PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-workflow-tool-discoverability/`（日期前缀为硬性要求）
+- [x] 6.3a 已归档到 `openspec/changes/archive/2026-09-29-workflow-tool-discoverability/`（日期前缀已带）
 - [x] 6.4 从 `docs/openspec-change-backlog.md` 移除本 change（改挂「已归档」记录），并同步并行开发批次
 - [x] 6.5 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`
 - [x] 6.6 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖
