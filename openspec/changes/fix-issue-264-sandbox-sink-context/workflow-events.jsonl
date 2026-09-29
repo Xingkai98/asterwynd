@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "fix-issue-264-sandbox-sink-context", "artifact_path": "docs/openspec-change-backlog.md", "reason": "把 issue #264 的 bugfix change 登记进「未实现队列」第十七批（跨上下文收尾污染系列）：立项文档已就位，等实现期补齐守护式 reset_sandbox_sink 后归档时移除本条目。", "approved_by": "user (立项阶段，指示把 change 加进 backlog)"}

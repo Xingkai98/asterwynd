@@ -105,6 +105,10 @@
 
 ## 未实现队列
 
+### 第十七批：跨上下文收尾污染系列（bugfix，源自 #255/#261 同源缺陷）
+
+- `fix-issue-264-sandbox-sink-context`（issue #264）：**设计中（proposal / design / diagnosis / spec delta / tasks 已就位）**。**问题**：`agent/loop.py` 的 `finally` 里有**两句**「恢复前值」——`set_mode_ceiling(previous)`（`:600` 附近）与 `set_sandbox_sink(previous_sandbox_sink)`（`:600` 的相邻行）。#261 只把前者改成了守护式 `reset_mode_ceiling(token)` + `except ValueError: pass`；**后者仍是裸 `set`**，因为 `agent/sandbox_events.py` **只有 `set_sandbox_sink`、没有 reset 版本**。根因与 #261 **同源同机制**：子 run 是独立 `Task`，其**所属事件循环已关闭后被 GC 终结**时，`Task.__del__ → coro.close()` 展开协程所有嵌套 `finally`，而**协程 finalize 不安装该 task 自己的 Context**——`ContextVar.set` 写入**当前正在运行的**上下文，于是这句恢复落进**后续 run** 的上下文。**两个形态**（本 change 的 `diagnosis.md` 在当前树上独立实测）：A 被覆盖为 `_NOOP`（默认值）→ 后续 run 的 sandbox 事件**静默丢失**（5/5 确定性复现）；B 被覆盖为**过期真 sink** → 事件**串写进旧 run 的 trace**（一条 `denied rm -rf /` 安全拒绝事件记进错误的 trace = **审计证据污染**）。**方案**：`set_sandbox_sink` 改为返回 token + 新增 `reset_sandbox_sink(token)`（与 `context.py` 的 `set_mode_ceiling`/`reset_mode_ceiling` 同形），`loop.py` 的恢复改守护式 `reset`；因 `set` 门控于 `if trace_recorder:` 而恢复**无条件**，token 以 `None` 起步并用 `if sink_token is not None` 门控（顺带消除「无 recorder 的 run 收尾写一次同值」这一污染载体）。**三个设计点已用一手实测钉死**（`repro/design_points_probe.py`）：`_NOOP` 哨兵**保持不动**（`ContextVar.reset` 的跨上下文判据是 Context 身份、与 default 取值无关，两种哨兵行为一致）；`set_sandbox_sink` 改「返回 token」是**运行期兼容**的增量变更（全部调用点忽略返回值，见 proposal 的调用点表），与 `set_mode_ceiling -> Any` 的既有约定对齐；token 在「从未 set」/「set 过」两种情况均可 reset，二次 reset 抛的是 `RuntimeError` 而非 `ValueError`（本 token 至多消费一次，不受影响）。**实证修正记录**：issue 引用的形态 B 归档脚本在本机 **0/10** 不复现，定位为**脚本 GC 时机脆弱**（plant 阶段 `llm.mgr` 仍持有旧 manager，引用环未成垃圾）、**非缺陷消失**——加一行 plant 阶段 `gc.collect()` 的确定性变体 **10/10 复现**，对照 `PLANT_ABANDONED=False` 3/3 无串写；结论：回归测试**不得依赖「碰巧 GC 到」**，必须显式 `gc.collect()`。**spec delta**：`workspace-safety` MODIFIED 1 条 Requirement（「沙箱事件入 trace」追加「sink 只对其所属执行上下文生效」+ 新增 Scenario「被遗留 run 的迟后收尾不改变活跃 run 的事件归属」）。**不走 grill 的论证见 `tasks.md` 顶部**（bugfix + 机制已由 #261 钉死 + 设计空间被 #255/#261 锁定 + 三个设计点各有实测结论、无真实分叉点；与 #261 先例一致）。research_tier = exempt。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
