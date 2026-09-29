@@ -123,6 +123,27 @@
 - 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
 - 非交互环境 graceful failure 或降级。
 
+### 4. `workflow-tool-discoverability`
+
+状态：未实现（已立项，**停在 4 条 Open Questions**，等 grill 停轮确认）。
+
+批次：第十六批（subagent 编排入口归一的 follow-up）。与 `workflow-builtin-templates`（issue #246，已归档 2026-09-29）、`workflow-recursion-limit-default`（issue #262，已归档 2026-09-29）改的是**同一个工具面**，故排在其后，基于二者合入后的 master（`db79b05`）立项。
+
+建议顺序原因：
+
+- 前置已就位：#246 把模型侧入口收敛为 `RunWorkflow(spec|template)`，本 change 只改 `spec` 的**内容契约**，不改入口形状；#262 已把 `recursion_limit` 默认值校准，本 change 明确**不依赖**它（实测本 issue 的超限 `reason` 是 `max_routes`，另一条代码路径）。
+- 无并行冲突：本 change 只触 `agent/tools/builtin/subagents.py` 的工具描述与 schema、`agent/subagent/workflow.py` 的常量出口与错误文案；不触调度语义、不动 Web/benchmark runner。
+- `primary: feature` → 实现前必须先 `batch-grill-me` + 停轮确认（grill-confirmation-gate 未通过，实现不得开工）。
+
+主要交付（详见 `openspec/changes/workflow-tool-discoverability/`）：
+
+- **P0 纠错**：改写描述里 4 处 `control` 字样（`agent/tools/builtin/subagents.py:518,530,531,536`，其中 3 处是非法示例），讲清「route 出边不 gate，与 `channel` 取值正交」。**新发现的来源**：`control` 是**可观测层** `edge.kind ∈ {control, data}`（`agent/subagent/scheduler.py:2855`）的真实取值，被抄进了 **DSL 层**的 `channel` 位置——两层正交概念共用了一个位置。
+- **P0 补语义**：`cases` 的**行首匹配 + 声明顺序 first-match-wins + 具体模式排在宽泛模式之前**写进描述，配 `"GAPS: none"` 在 `"GAPS"` 之前的正例。
+- **P1 结构化 schema**：`spec` 从裸 `{"type":"object"}` 升级为带嵌套 `properties`/`items`/`enum` 的 schema，枚举**从源码常量派生**（`NODE_KINDS`/`CHANNELS`/`REDUCERS`/`AGGREGATE_STRATEGIES`/`JOIN_SEMANTICS` + 新提的 `NODE_MODES`），配 schema↔常量 parity 测试。
+- **P1 消除静默**：route 的 `task` 被接受但运行期丢弃（`_execute_route` 不读 `node.task`）；per-kind 字段错配时「值合法则静默丢弃、值非法则错误信息指错 kind」（实测 `{"kind":"route","strategy":"concat"}` → 报 `aggregate node 'g' ...`）。前者三方案（拒绝 / warning / 仅描述）**留给 grill**，后者修文案。
+- **验收**：不是客观硬指标——「跑真实 LLM 看它能否低成本理解并直接用对」（由主 session 主观判断 + 监督）。硬前件 = 固定提示词跑 3 次，主指标 **探针 workflow 数**，门槛 = **无探针且原任务完成**；基线 = 19 次声明 / 20 个探针 / 4 次 `invalid_spec` / 54 迭代 / 398,590 token（498% 预算）。对照物 = 基线跑出的资产 `fanout-review-loop.json`（10 节点）。**验收节只进 proposal、不进 spec**（spec 写 DSL 语义规则，不写「模型应该表现成什么样」）。
+- **注意**：实测前须清空全局资产库 `~/.asterwynd/projects/<hash>/workflow-assets/`，否则残留资产污染 `ListWorkflowAssets`。
+
 ### 第十五批：workflow 四维预算默认无上限（C4 follow-up）
 
 - `workflow-budget-unbounded-default`（issue #196）：**已合入归档 2026-09-17**。C4 的四维预算默认值（200k / 5.0 / 300 / 1800）对 token 消耗大的任务偏紧（12 文件 foreach 体检实测约 18 万 token 即被 `budget_exceeded` 腰斩），参照 #192（AgentLoop 迭代默认无上限）先例改为**默认不设上限、只有显式配置才设限**。实现要点：**零新增机制**——沿用 C4 Q11 既有 `0 = 不限` 哨兵（四维全部真值判定），`WorkflowBudgetConfig` 四字段默认值改 0、`_parse_workflow_budget` 逐字段 `mapping.get` 默认同步、`WorkflowBudget.__init__` 的 `getattr` 兜底同步（三处默认值必须一致，否则「直构 config」与「yaml 加载」分叉）。**段落级 null 收紧（grill Q2 用户拍板）**——新增 `_require_section`，`subagents` / `subagents.workflow` / `subagents.workflow.budget` 三级「键存在但值为 null」一律 `ConfigError`（键缺失仍=不限）：默认改 0 后段落级 null 会静默把四道闸全关掉，与字段级 null 的明确拒绝口径不一致；范围边界明确不含 `subagents.budget.*`（单 run 预算，另一个概念）。**CLI 不改**（grill Q1 用户拍板）——只走配置文件设上限。**回归测试配对照组（grill 标注的假保护风险）**：`_chain_spec(8)` + 每 run 50k token（累计 400k，真越过旧 200k）默认下 `completed`，同图显式 `max_total_tokens=200000` 时 `budget_exceeded`；另锁住 `max_items=0` 在预算不限时按 C2 `max_runs` 展开（grill 标的「静默空展开」暗雷）。**设计追问**：独立零记忆 subagent 产出 10 Confirmed Decisions + 2 Open Questions（用户答复记录在 `reviews/grill-design.md` 的 `## User Confirmation`）。**审阅闭环**：1 轮 PASS（reviewer run `review-workflow-budget-unbounded-default-20260917-r1`，4 组变异验证全部「改坏→变红→还原」，含 2.3 的假保护检测）。spec delta MODIFIED 1 条 Requirement（默认值口径 + 3 个新 Scenario）已同步进 `openspec/specs/multi-agent-collaboration/spec.md`。行为变更（默认不限、段落级 null 报错）已写进 design/proposal 与 spec。
