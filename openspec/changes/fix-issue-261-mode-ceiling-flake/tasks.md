@@ -52,8 +52,13 @@
 - [x] 5.2 `uv run pytest tests/agent/subagent/ -q` 全目录
 - [x] 5.3 全量 `uv run pytest -q`（记录既有环境坑失败，如与本 change 无关的
       `TestFindScopeRoot`，根因 `/tmp/.git` 为空目录）
-- [ ] 5.4 OpenSpec strict validate：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 5.5 Artifact checker：`uv run python scripts/check_openspec_artifacts.py --base-ref ee06df7`
+- [x] 5.4 benchmark smoke：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`
+      （本 change 触及 `AgentLoop` 路径，按 AGENTS.md 需跑）
+- [x] 5.5 OpenSpec strict validate：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
+- [x] 5.6 Artifact checker：`uv run python scripts/check_openspec_artifacts.py --base-ref ee06df7`
+- [ ] 5.7 **同步 current spec**：把本 change 的 delta 合并进 `openspec/specs/subagents/spec.md`
+      （MODIFIED 既有 Requirement「子 agent mode 上限按执行上下文继承」+ 新增 Scenario
+      「被遗留 run 的迟后收尾不改变活跃 run 的上限」）
 
 ## 6. 审阅闭环
 

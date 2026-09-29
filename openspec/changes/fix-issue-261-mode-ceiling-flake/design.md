@@ -64,7 +64,17 @@ loop（task 保持 pending）→ 活跃只读 run 的轮次里 `gc.collect()` �
 选择它而非「并发加压碰运气」的原因：后者不可复现（早期并发 A/B 读数被机器负载混淆，
 已作废）；确定性构造让回归在**任何**机器上都有效。
 
-### D4：`set_sandbox_sink` 不在本 change 修
+### D4：补一条 MODIFIED spec delta（订正「无需 delta」的初始判断）
+
+初始判断认为本 change 是实现缺陷、可复用既有 Scenario 而无 delta。但：(1) `openspec
+validate --strict` **要求 change 至少含一个 delta**；(2) 既有 Scenario「执行上下文上限的
+set 不破坏运行收尾」只约束「**该** run 自身被取消/teardown 时终态一致、reset 不抛
+`ValueError`」，**未**表达本 issue 的核心不变量——**已死 run 的收尾不得改写另一个活跃
+run 的上限**。故以 MODIFIED 补齐该 Requirement（正文追加「上限只对其所属执行上下文生效」）
+并新增 Scenario「被遗留 run 的迟后收尾不改变活跃 run 的上限」。这不改变实现，只是把新确立
+的行为约束写进规格。
+
+### D5：`set_sandbox_sink` 不在本 change 修
 
 经实测它是**能复现且可观测**的缺陷（`diagnosis.md` 有结论、`repro/` 有脚本），但它是
 **独立载体**——本 change 的修复不覆盖它（实测在已修树上仍复现）。按范围聚焦原则单独

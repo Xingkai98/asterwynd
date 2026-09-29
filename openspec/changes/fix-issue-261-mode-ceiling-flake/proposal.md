@@ -68,15 +68,23 @@
 
 ### Modified Capabilities
 
-（无 spec delta。）本 change 修的是**实现缺陷**，不改规格语义：`openspec/specs/subagents/spec.md`
-既有的 Requirement「子 agent mode 上限按执行上下文继承」及其 Scenario「执行上下文上限的
-set 不破坏运行收尾」（「系统 SHALL NOT 因上限的 token reset 抛出 `ValueError`」）**已经**
-约束了本 change 的行为——本 change 是让实现**回到**该 Scenario 的要求（`reset` 抛
-`ValueError` 时必须被吸收、不得破坏收尾）。故无 delta。
+`subagents`（MODIFIED 1 条 Requirement）：
+
+- **Requirement「子 agent mode 上限按执行上下文继承」**：在既有正文后追加一句
+  「该上限 SHALL 只对其所属执行上下文生效：一次 run 退出时对上界的恢复 SHALL NOT 写入
+  任何**其它**执行上下文」，并**新增一个 Scenario**「被遗留 run 的迟后收尾不改变活跃 run
+  的上限」（见 `specs/subagents/spec.md`）。
+
+> **为何需要 delta（与初始判断的订正）**：最初判断本 change 纯属实现缺陷、可复用既有
+> Scenario「执行上下文上限的 set 不破坏运行收尾」而不出 delta。但 `openspec validate
+> --strict` **要求 change 至少含一个 delta**；更重要的是，既有 Scenario 只约束「**该**
+> run 被取消/跨上下文 teardown 时其**自身**终态一致、reset 不抛 `ValueError`」——它
+> **没有**表达本 issue 的核心不变量：**一个已死 run 的收尾不得改写另一个活跃 run 的上限**。
+> 这是本次新确立的行为约束，值得进规格，故按 MODIFIED 补齐。
 
 ## Reference Implementation Research
 
-- research_tier: **exempt**
+- research_tier: exempt
 - status: enabled
 - reason: 本 change 属**纯 bugfix，无新增能力面**（不引入新通道 / 新依赖 / 新协议），且
   设计已被上游决策锁定——命中的是分流表 `exempt` 的「bugfix（无新增能力面 + 回归测试）」
@@ -98,8 +106,9 @@ set 不破坏运行收尾」（「系统 SHALL NOT 因上限的 token reset 抛�
 
 ## Impact Analysis
 
-- **能力域**：无 spec delta；`openspec/specs/subagents/spec.md` 既有 Scenario
-  「执行上下文上限的 set 不破坏运行收尾」被本 change **重新满足**（不是新约束）。
+- **能力域**：`subagents`（MODIFIED 1 条 Requirement，新增 1 个 Scenario）；
+  `openspec/specs/subagents/spec.md` 的既有 Scenario「执行上下文上限的 set 不破坏运行收尾」
+  被本 change **重新满足**（不是新约束），另补「迟后收尾不污染活跃 run 上限」的新 Scenario。
 - **代码**：`agent/loop.py` 一处（挂载 A 的 set 行 + `finally` 的恢复行 + import）；
   无新增模块、无新增依赖、不改 `context.py`（`reset_mode_ceiling` 已存在）。
 - **数据 / 配置**：无 schema 变化，无迁移；不写盘。

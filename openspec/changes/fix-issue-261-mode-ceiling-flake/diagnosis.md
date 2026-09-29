@@ -201,7 +201,7 @@ run task，**20 个最终 dead**（`created=20 dead=20 alive=0`）——即「�
 **与 CI 症状一致**：`Task was destroyed but it is pending!`（`_execute_run_in_context`）
 正是「遗留 pending task 迟后终结」本身，不是无关噪声。
 
-## Fix
+## Recommended Direction
 
 **方案 A（推荐）= 守护式 `reset(token)`**：
 
@@ -276,7 +276,7 @@ run task，**20 个最终 dead**（`created=20 dead=20 alive=0`）——即「�
 （与挂载 A 同形）；注意 `AgentLoop.run` 里 `set_sandbox_sink` 在 `if trace_recorder:` 门控内、
 而恢复是**无条件**的，改造时需一并处理「未 set 过却要 reset」的分支。
 
-## Regression Requirements
+## Regression Tests
 
 1. **迟后终结不污染活跃上限**（新增，核心）：构造「遗留 pending run task（其循环已关）
    + 活跃只读 run 上下文」，在活跃 run 期间 `gc.collect()`，断言活跃上限保持 `read_only`、
