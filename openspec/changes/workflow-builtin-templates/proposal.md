@@ -112,12 +112,16 @@
   - 删除/改写：`tests/agent/subagent/test_patterns.py`（断言 `RunPattern` 扁平返回，`:188`）、`tests/agent/subagent/test_pattern_templates.py` 的 5.2 段（`:171-300` `run_pattern` 兼容字段）、`tests/agent/subagent/test_bus_bounded_exports.py`（出口 2 = `run_pattern` 的 `result["bus"]`，`:173-216`）、`tests/agent/subagent/test_bounded_envelope.py`（`:208-213`）、`tests/web_tests/test_workflow_node_transcript.py`（出口 4 经 `run_pattern`，`:895-932`）、`tests/agent/subagent/test_guardrails.py`（`:62, 191`）、`tests/agent/subagent/test_concurrency_queue.py`（`:34, 39, 522, 653`）。
   - 新增：`RunWorkflow` 的 `spec`/`template` 互斥校验（四种非法组合各一条）；`template` 路径编译出的图与 `compile_pattern` 逐字一致（round-trip）；`template` 路径返回体 == `spec` 路径返回体形状（键集相等）；父投影不含 `bus`；`template` 路径的 `asset_source` 溯源（回归 #245 的 recipe 资产）；深度到限时 `RunWorkflow` 仍被撤。
   - 回归：全量 `uv run pytest -q` 绿 + `openspec validate --all --strict` + artifact checker。
-- **文档**:
+- **文档**（已 grep 核实逐个文件；`RunPattern`/`run_pattern` 在 `docs/` 下命中 7 个文件）:
   - `docs/openspec-change-backlog.md`：本 change 条目 + 并行批次（与 #261 并行，仅本文件可能冲突）。
-  - `docs/architecture.md`：如列举 subagent/workflow 工具清单，需去 `RunPattern`、补 `RunWorkflow` 的 `template` 入参。
+  - `docs/agent-internals.md`（1 处，`:1029` 工具清单树）：去 `RunPatternTool`、补 `RunWorkflow` 的 `template` 入参。属文档地图入口文档。
+  - `docs/interview-script/run-pattern-web-demo.md`（**整份文件以 `RunPattern` 命名**，8 处）：这是实测多 Agent 编排的 web demo 指南，工具名与 `subagents.py` 行号引用均会失效——需整体改写为 `RunWorkflow(template=…)` 口径（或判为历史债务另记，但**必须显式决定**，不能静默留错）。
+  - `docs/interview-script/walkthrough/W03-multi-agent.md`（2 处）、`docs/interview-script/questions/Q08-multi-agent.md`（1 处，bus 出口叙述）：多 agent 讲稿，按建议性维护约束检查更新。
+  - `docs/interview-bullets/walkthrough.md`（14 处，工具清单 + 调用路径走读）、`docs/interview-bullets/interview-prep.md`（1 处，bus 两条出口叙述）：讲稿/要点，同上。
+  - `docs/architecture.md`：如列举 subagent/workflow 工具清单，需去 `RunPattern`。
   - `README.md` + `README_EN.md`：如工具清单被列出，需同步。
-  - `docs/interview-script/`：涉及「多 agent 编排 / 工具面设计」的讲稿若有 `RunPattern` 叙述，需按建议性约束检查更新。
-  - **关键文档影响检查项**：`openspec/specs/multi-agent-collaboration/spec.md` 与 `openspec/specs/subagents/spec.md` 的改动属受保护 artifact，须在 `workflow-events.jsonl` 落结构化解释事件（实现阶段）。
+  - **关键文档影响检查项**：`openspec/specs/multi-agent-collaboration/spec.md`、`openspec/specs/subagents/spec.md`、`openspec/specs/agent-runtime/spec.md`、`openspec/specs/web-ui/spec.md` 的改动属受保护 artifact，须在 `workflow-events.jsonl` 落结构化解释事件（实现阶段）。
+  - **工具数量事实会变**：`docs/interview-bullets/interview-prep.md` 与 `walkthrough.md` 里的「10 个 spawn 工具 / 工具清单」叙述随 `RunPattern` 退役变为 9，需一并订正（这是本 change 收益之一的对外口径）。
 - **不影响**:
   - benchmark 三模式（`template`/`dynamic-record`/`dynamic-replay`）与 `workflow_record.json` 语义不变——C5 template 臂直调 `compile_pattern`。
   - `StartWorkflow` / `DeclareWorkflow` / `GetWorkflow` / `CancelWorkflow` 行为逐字不变。

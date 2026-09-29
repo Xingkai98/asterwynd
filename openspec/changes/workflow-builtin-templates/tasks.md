@@ -49,9 +49,9 @@
 ## 6. 文档与收尾
 
 - [ ] 6.1 `docs/openspec-change-backlog.md`：新增本 change 条目 + 并行批次（与 #261 flaky 修复并行，仅此文件可能冲突）
-- [ ] 6.2 检查并更新 `docs/architecture.md` 的工具清单段落（去 `RunPattern`、补 `RunWorkflow` 的 `template` 入参）
+- [ ] 6.2 更新 `docs/agent-internals.md:1029` 的工具清单树（去 `RunPatternTool`、补 `RunWorkflow` 的 `template` 入参）；`docs/architecture.md` 工具清单段落同样处理
 - [ ] 6.3 检查 `README.md` 与同步 `README_EN.md`（如工具清单被列出）
-- [ ] 6.4 检查 `docs/interview-script/` 中涉及多 agent 编排/工具面设计的讲稿是否需更新（建议性约束）
+- [ ] 6.4 处理 `docs/` 下 `RunPattern` 命中文件（逐个显式决定：更新 or 记债务，不静默留错）：`docs/interview-script/run-pattern-web-demo.md`（整份文件，8 处）、`docs/interview-bullets/walkthrough.md`（14 处，含「10 个 spawn 工具」口径）、`docs/interview-script/walkthrough/W03-multi-agent.md`（2 处）、`docs/interview-script/questions/Q08-multi-agent.md`（1 处）、`docs/interview-bullets/interview-prep.md`（1 处）；工具数 10→9 的叙述一并订正
 - [ ] 6.5 受保护 artifact（`openspec/specs/**`）修改落 `workflow-events.jsonl` 结构化解释事件
 - [ ] 6.6 把 spec delta 同步到 current spec（`openspec/specs/<capability>/spec.md`：multi-agent-collaboration / subagents / agent-runtime / web-ui）并归档到 `openspec/changes/archive/YYYY-MM-DD-workflow-builtin-templates/`，从 backlog 移除
 - [ ] 6.7 跑 `/review-loop`（独立审阅闭环）至 PASS 或 3 轮封顶，产出 `reviews/building-review.md` + manifest
