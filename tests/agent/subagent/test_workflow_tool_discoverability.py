@@ -123,6 +123,20 @@ def test_spec_schema_is_nested_not_bare_object():
     assert {"nodes", "edges"} <= set(schema["properties"])
 
 
+@pytest.mark.parametrize("tool", _TOOLS, ids=lambda t: t.__name__)
+def test_tool_schema_matches_freshly_derived_schema(tool):
+    """**闭死「手写 schema 但值与常量恰好相同」这一缺口。**
+
+    T1 比的是工具**已烘焙**的 ``parameters`` 与常量——若实现者手写一份与常量当前值
+    完全相同的字面量，T1 会过；T1a 测的是 helper 是活的，也测不到烘焙值。本条把
+    烘焙值与**测试期现算**的派生结果对比：任何与 helper 分叉的手写副本都会现形。
+    三条合起来才是「派生」而非「手写字面量」的完整机械保障。
+    """
+    from agent.tools.builtin.subagents import _workflow_spec_schema
+
+    assert _spec_schema(tool) == _workflow_spec_schema()
+
+
 # --- T2：描述内容断言 --------------------------------------------------------
 
 
@@ -135,6 +149,23 @@ def test_description_has_no_control_token():
     desc = DeclareWorkflowTool.description
     assert "control" not in desc
     assert "control" not in desc.lower()
+
+
+@pytest.mark.parametrize("tool", _TOOLS, ids=lambda t: t.__name__)
+def test_model_visible_surface_has_no_control_token(tool):
+    """T2（审阅闭环 R1 补强）：``control`` 在整个**模型可见面**零命中。
+
+    模型每次 API 调用拿到的不只是 ``description``，还有 ``parameters``（= 逐字透传的
+    ``input_schema``）。D3 承诺「模型可见面不再出现诱导性 token」，故零命中断言必须覆盖
+    **描述 + schema 的每一层 description**——只在 ``description`` 上断言会漏掉 schema 里的
+    措辞（审阅实测漏掉了 edge ``required`` 的字段描述）。
+    """
+    import json
+
+    surfaces = [tool.description, json.dumps(tool.parameters, ensure_ascii=False)]
+    for surface in surfaces:
+        assert "control" not in surface
+        assert "control" not in surface.lower()
 
 
 def test_description_covers_cases_semantics():

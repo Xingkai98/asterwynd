@@ -51,7 +51,7 @@ agent/subagent/workflow.py:80  _EDGE_FIELDS = {"from","to","channel","required",
 **Non-Goals**
 
 - **不改任何调度语义**：门控、reducer 合并、`max_routes`/`recursion_limit`/`max_nodes`/`max_runs` 计数、环可启动性校验、`_reset_subtree`、`parent_envelope` 投影——逐字不动。
-- **不新增工具**（含 issue 方向 5 的 `ValidateWorkflow`）。理由见 D10 + RIR RQ5。
+- **不新增工具**（含 issue 方向 5 的 `ValidateWorkflow`）。理由见 D10 + RIR RQ5；用户 Q4 拍板**另开 issue #268** 承载它（含「模型是否会用它探路」的实测验证）。
 - **不重做 `cases` 为表达式求值**。`matches_route` 的「结构化标签匹配、不做表达式求值」是明确的安全姿态（`scheduler.py:325-337` docstring）；本 change 只**暴露它的语义**，不改它。
 - **不用 `oneOf`/`anyOf`/`if-then` 表达 per-kind 域**。Anthropic API 拒绝顶层 `oneOf`/`anyOf`（#246 RIR 实测），且本仓 `parameters` 是逐字透传（事实 1）——判别子形态在这里是高风险低收益。per-kind 归属**退回描述**（D5）。
 - **不改四个内置模板的编译产出**（唯一的例外：若 D6 选 (a)，peer-review 的 route 节点去掉 `task`）。
@@ -277,7 +277,8 @@ issue #248 方向 5 提出：「当前唯一校验入口 `DeclareWorkflow` 会**
 沿既有范式（`tests/agent/subagent/test_workflow_cycle_contract.py:545-575` 的 `assert "..." in text`）：
 - `"control"` 在 `DeclareWorkflow` 描述中**零命中**（D3 的机械保障）；
   > **R-A（grill 提醒）**：**两条断言都要写**——`"control" not in desc`（**原样、不 `.lower()`**）**且** `"control" not in desc.lower()`。理由：若只断言 `.lower()` 之后的文本，实现者用中文「控制边」表述就能**绕过断言**，测试形式化；反之只断言原样，则英文大写变体（如 `Control`）会漏网。两条叠加才封住两处自伤面。
-  > 复核：`control` 字符串全文**恰好 4 处**，全在 `DeclareWorkflowTool.description` 内（`:518/530/531/536`）；其他工具描述（`RunWorkflow`/`CreateSubagent`/`RunSubagent`/`SaveWorkflowAsset`/`ListWorkflowAssets`）**零命中**，故断言可精确限定在 `DeclareWorkflowTool.description`，不误伤。
+  > 复核：`control` 字符串在 `agent/tools/builtin/subagents.py` 的**描述面**恰好 4 处，全在 `DeclareWorkflowTool.description` 内（`:518/530/531/536`）；其他工具描述（`RunWorkflow`/`CreateSubagent`/`RunSubagent`/`SaveWorkflowAsset`/`ListWorkflowAssets`）**零命中**。
+  > **零命中断言的范围 SHALL 覆盖整个模型可见面**（描述 + `parameters` 的每一层 `description`），**SHALL NOT** 只看 `DeclareWorkflowTool.description`——`parameters` 每次 API 调用原样发给模型（事实 1）。**审阅闭环 R1 实证了这个缺口**：本 design 与 tasks 只写了「描述」，实现据此漏掉了 edge `required` 字段的 schema 描述里残留的 `"...which are control edges."`；补强后的断言对 `json.dumps(tool.parameters)` 全树取值，并配变异验证（把该 token 注回 schema → 断言变红）。
 - `cases` 语义句存在（含 `startswith`/行首/first-match 的措辞，D4）；
 - per-kind 字段表存在（`join`/`items`/`source` 作为**字段名**出现，D5）；
 - `$ref:` 出现（D4）；

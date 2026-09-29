@@ -64,14 +64,19 @@ transcript：`reviews/baseline-transcript-2026-09-29.log`（session `1045cbb69fa
 
 transcript：`reviews/after-transcript-2026-09-29.log`（三次串行，同一脚本 `/tmp/wf-disc-harness/run-after.sh`）
 
+> **口径**：声明的**尝试数** = `DeclareWorkflow` 调用数 + **带 `spec` 的** `RunWorkflow` 调用数
+> （template 路径的 `RunWorkflow` 不算——它不携带 `spec`）。`invalid_spec` 按工具返回体的
+> `"status": "invalid_spec"` 计数（status 是返回体首键，日志截断不影响它）。**申报成功数（S2）
+> 不用**——超长返回体会被日志截断，`declared` 计数是下界，不可靠。
+
 | # | 指标 | 基线（N=1） | 改后 run 1 | 改后 run 2 | 改后 run 3 | 改后均值 |
 |---|---|---|---|---|---|---|
-| **S0** | **探针声明数** | **9** | **5** | **7** | **0** | **4.0** |
-| S1 | `invalid_spec` | 5 | 2 | 2 | 0 | 1.3 |
-| S2 | 声明成功率 | 13/18 | — | — | — | — |
+| **S0** | **探针声明数 / 声明尝试数** | **9 / 18** | **6 / 10** | **7 / 14** | **0 / 2** | **4.33 / 8.7** |
+| S1 | `invalid_spec` | **5** | **1** | **1** | **0** | **0.67** |
+| S2 | 声明成功率 | 13/18（日志完整，可算） | —（日志截断，不可靠） | — | — | — |
 | S3 | route 带 `task` 的声明 | 多处 | 仍有（run 2 见 `（路由节点不执行任务）`） | 仍有 | 仍有 | — |
 | S4 | `graph_recursion_exceeded` | 10 | 23 | 13 | 6 | 14 |
-| S5 | 迭代数 | 43 | 37 | 32 | 20 | 29.7 |
+| S5 | 迭代数 | 43（`Iteration 0..42`） | 37（`0..36`） | 32（`0..31`） | 20（`0..19`） | 29.7 |
 | S5 | token（in+out） | 553,116 | 686,649 | 846,717 | 175,183 | 569,516 |
 | S6 | 达成目标拓扑 | ✅ | ✅ | ✅ | ✅ | 3/3 ✅ |
 
@@ -83,8 +88,8 @@ run 3 DSL 资产——三次都保存了包含「4 路 fan-out → 汇总 → �
 
 proposal 的门槛是「**无探针 workflow（S0 = 0）且原任务完成（S6 成立）**」。
 
-- **严格口径**：**仅 run 3（1/3）达标**（S0=0 且 S6 成立）。run 1（S0=5）、run 2（S0=7）**未达标**。
-- **趋势口径**：S0 从基线的 9 降到改后均值 4.0（≥50% 降幅），迭代数 43→30，且**探针的性质发生了
+- **严格口径**：**仅 run 3（1/3）达标**（S0=0 且 S6 成立）。run 1（S0=6）、run 2（S0=7）**未达标**。
+- **趋势口径**：S0 从基线的 9 降到改后均值 4.33（≈52% 降幅），迭代数 43→30，且**探针的性质发生了
   质变**——见下。
 
 ### 关键质性发现：本 change 针对的**错误类**被消除，但探针未归零
@@ -93,8 +98,11 @@ proposal 的门槛是「**无探针 workflow（S0 = 0）且原任务完成（S6 
 
 | 成因类 | 基线 | 改后 |
 |---|---|---|
-| **域不可见**（自造 enum 值 / 自造字段名） | **4/5 次 `invalid_spec`**：`channel must be one of [...]`、`unknown edge field ['label']`、`unknown node field ['routes']`、`unknown node field ['task_note_unused']`；另有 `probe route cases schema (dict form)` 这类**专门探 schema** 的探针 | **0 次**。改后 2 次 `invalid_spec` **全部**是 `reducer` 未声明（一条**已在描述与 schema 里写明**的图构造规则，属「模型没照做」而非「模型看不到域」） |
-| **运行期语义不可见**（foreach item 如何注入、route 读的是谁的文本、回边是否传数据） | 有（如 `probe whether a route back-edge delivers input to the loop start`） | **仍是探针的主体**（run 1：foreach item delivery ×3；run 2：route 读到谁的文本 ×4）。**这一类不在本 change 的范围内**——本 change 补的是**声明期的域**（枚举/字段），不是**运行期的数据投递语义**（后者更接近 issue #208 的「运行后可观测性」与更深层的 DSL 文档） |
+| **域不可见**（自造 enum 值 / 自造字段名） | **4/5 次 `invalid_spec`**（逐条可复核）：`edge 'dispatch' -> 'w1' channel must be one of [...]`（自造 `channel` 值）、`unknown edge field(s): ['label']`、`unknown node field(s): ['routes']`、`unknown node field(s): ['task_note_unused']`；另有 `probe route cases schema (dict form)` 这类**专门探 schema** 的探针 | **0 次**。改后 2 次 `invalid_spec` **全部**是 `node 'a'/'agg' slot 'result' is written by multiple upstreams ... declare no reducer`（一条**已在描述与 schema 里写明**的图构造规则，属「模型没照做」而非「模型看不到域」） |
+| **运行期语义不可见**（foreach item 如何注入、route 读的是谁的文本、回边是否传数据） | 有（如 `probe whether a route back-edge delivers input to the loop start`） | **仍是探针的主体**（run 1：`probe: validate/does/is …foreach…` + `route re-evaluation` 共 6 条；run 2：`探针：…` 共 7 条，多为「route 读谁的文本」）。**这一类不在本 change 的范围内**——本 change 补的是**声明期的域**（枚举/字段），不是**运行期的数据投递语义**（后者更接近 issue #208 的「运行后可观测性」与更深层的 DSL 文档） |
+
+> 基线的第 5 次 `invalid_spec` 是 **shape 类**（`route node 'gate' cases must be a list`——把 `cases`
+> 写成了对象而非数组），不属「域不可见」；改后 schema 已把 `cases` 标为 `"type":"array"`，该类也归零。
 
 **读法**：改后模型**不再探「这个字段有哪些合法值」**（schema 已可见），转而探**「这条边在运行时
 到底把谁的文本交给了谁」**——后者是另一个问题域。S0 未归零，主要来自这第二类。
@@ -145,12 +153,29 @@ asyncio.run(main())"
 
 ## S0 分类器（可复核）
 
+**必须中英双语**——本次 rollout 的模型会在两次 run 之间切换语言：run 1 用英文 `probe:`，
+run 2 用中文 `探针：`。只匹配英文的分类器会漏掉 run 2 的全部探针。
+
 ```python
-PROBE_RE = re.compile(r"^\s*(probe|test|verify|check|validation|minimal loop|loop validation|deterministic)", re.I)
-def is_probe(goal):
-    gl = goal.lower()
-    return bool(PROBE_RE.match(goal)) or "probe" in gl or ("validation" in gl and len(goal) < 80)
+PROBE = re.compile(r"(^|[\s：:])(probe|探针|test|verify|check|validation|validat)", re.I)
+
+def is_probe(goal: str) -> bool:
+    if not goal:
+        return False
+    return bool(PROBE.search(goal)) or "probe" in goal.lower() or "探针" in goal
 ```
 
-判据：`goal` 以 probe/test/verify/check/validation 等**验证性**动词开头，或含 `probe`，或短句
-且含 `validation`——即「不含业务目标、只为验证语义」。
+判据：`goal` 含 probe/探针/test/verify/check/validation 等**验证性**词——即「不含业务目标、
+只为验证语义」。**逐条列出的分类结果**（可复核）：
+
+| run | 探针声明（逐条） | 业务声明 |
+|---|---|---|
+| 基线 | 9 条（`probe route schema` / `probe route dup cases` / `probe substring match` / `probe: ...` 等，见基线 transcript 的 `'goal'` 行） | 9 条（「为『本地优先的笔记应用』设计…」等） |
+| 改后 run 1 | 6 条（全为 `probe: ...` 前缀的 RunWorkflow(spec)） | 4 条（中文「N 维度并行评审…」） |
+| 改后 run 2 | 7 条（`路由前缀匹配语义探针` 与 6 条 `探针：…`） | 7 条（`演示复杂拓扑…` + `v2..v6`） |
+| 改后 run 3 | 0 条 | 2 条（中文业务目标） |
+
+> **口径备注**：S0 按**声明尝试**计数（`DeclareWorkflow` + 带 `spec` 的 `RunWorkflow`）。
+> proposal 原文的 S0 定义含「或『只为验证语义、不含业务目标』的声明」这一**语义**分支，
+> 故本文件的探针数由上面的分类器判定，不是纯字面 `probe:` 前缀匹配（字面前缀在本次 rollout
+> 里两个语言不一致，且基线为 0——见「S0 口径发现」）。

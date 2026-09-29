@@ -631,7 +631,7 @@ def _workflow_spec_schema() -> dict[str, Any]:
                 "type": "boolean",
                 "description": (
                     "Data-edge gating (default true). Meaningless on a route's "
-                    "outgoing edges, which are control edges."
+                    "outgoing edges, which never gate."
                 ),
             },
             "reducer": {
