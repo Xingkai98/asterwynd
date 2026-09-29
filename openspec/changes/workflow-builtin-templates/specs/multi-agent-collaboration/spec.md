@@ -25,6 +25,24 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 - **THEN** 系统 SHALL 经既有模板编译器编译为 WorkflowSpec 并走统一调度器
 - **AND** 编译出的 spec SHALL 与 `compile_pattern("orchestrator-worker", task="research", params={"workers": 3})` 逐字一致（`spec_hash` 相等）
 
+### Requirement: reducer 声明与图级递归上限
+
+系统 SHALL 要求并行分支写同一结果槽时声明 reducer（无损合并），校验阶段对「多入边写同字段」无 reducer 时报 schema 错。系统 SHALL 施加图级 recursion_limit（默认 25），超限 SHALL 报错。当超限的触发图由模板产出且其构造携带 `max_rounds` 声明时，系统 SHALL 在 `graph_recursion_exceeded` 的诊断中如实报告 `declared_max_rounds`（声明值）、`rounds_actually_run`（实际轮数）与 `limit_source`（界来自 `recursion_limit`，及其数值），使模型能判断截断由自身 `max_rounds` 声明过大导致并据此调整；纯 DSL 图（无 `max_rounds` 概念）时这些字段 SHALL 为 `null`。系统 SHALL NOT 因「`max_rounds` 大于图级上限」而在编译期拒绝（其换算比依赖拓扑，静态界会误判）。
+
+#### Scenario: 图级递归上限
+
+- **GIVEN** 一个 workflow 的执行步数达到 recursion_limit
+- **WHEN** 调度器尝试再前进一步
+- **THEN** 系统 SHALL 报 GraphRecursionError
+- **AND** SHALL NOT 无限循环
+
+#### Scenario: max_rounds 声明被图级上限截断时诊断可行动
+
+- **GIVEN** `template="peer-review"` 声明 `max_rounds=25`，其图在 `recursion_limit=25` 下实际约 9 轮即撞顶
+- **WHEN** 该图以 `graph_recursion_exceeded` 终止
+- **THEN** 诊断 SHALL 含 `declared_max_rounds=25`、`rounds_actually_run`（实际轮数）与 `limit_source`（`recursion_limit`=25）
+- **AND** 模型 SHALL 能据此判断是自身声明过大，而非只看到「超了递归上限」这一无法行动的提示
+
 ### Requirement: 资产保存是显式的，且 spec 不穿过模型输出
 
 系统 SHALL 提供显式保存动作：把**已声明或已运行过**的图按 `workflow_id` 沉淀为命名资产，`name`/`description` 由调用方给出，而 spec 正文 SHALL 由服务端从该 `workflow_id` 取出，SHALL NOT 要求模型重新输出 spec 正文。保存 SHALL 复用既有写盘纪律：原子写（tmp + `os.replace`）、路径段级白名单校验（拒绝 `.`/`..` 与越界字符）、写入目标路径上任一环节为 symlink 时 SHALL 拒绝穿透写入。slug SHALL 同时满足 `^[a-z0-9-]+$` 与既有路径段白名单的交集约束。系统 SHALL NOT 因「跑过一张图」而自动入库。
@@ -85,7 +103,7 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 
 ### Requirement: 统一 Workflow 入口的模板输入
 
-统一 Workflow 入口 `RunWorkflow` SHALL 接受 **exactly one of** `{spec, template}`：`spec` 为模型手写的 DAG spec，`template` 为内置模板名（封闭枚举：orchestrator-worker / peer-review / hierarchical / bidding）。`template` 路径 SHALL 要求 `task`（必填），SHALL 接受可选 `params`（封闭键集：`workers` / `teams` / `proposers` / `max_rounds` / `worker_max_tokens` / `worker_max_time_s`）。系统 SHALL 对非法组合**结构化拒绝**（返回自足的 `reason`，指明期望的入参形态）而 SHALL NOT 静默取其一或忽略多余入参。模板参数化 SHALL 只发生在 Python（`compile_pattern`），系统 SHALL NOT 引入 spec 内的模板字段、占位符插值、表达式求值或静态模板文件。`params` 的校验 SHALL 落在 `compile_pattern` 这一唯一编译入口（统一入口与资产路径共用），SHALL 同时覆盖**键名**（按模板各自的封闭子集）与**值**（类型/可转换性/上界）；任何非法 `params` SHALL 在**编译前**被结构化拒绝，SHALL NOT 让裸 `ValueError`/`TypeError` 逃逸到模型上下文。计数的上界 SHALL 复用**既有**闸（fan-out 键对 `max_items`、`max_rounds` 对 `recursion_limit`），系统 SHALL NOT 引入第二套与既有闸互不知情的上界；超界被拒时 `reason` SHALL 写明该界的来源。
+统一 Workflow 入口 `RunWorkflow` SHALL 接受 **exactly one of** `{spec, template}`：`spec` 为模型手写的 DAG spec，`template` 为内置模板名（封闭枚举：orchestrator-worker / peer-review / hierarchical / bidding）。`template` 路径 SHALL 要求 `task`（必填），SHALL 接受可选 `params`（封闭键集：`workers` / `teams` / `proposers` / `max_rounds` / `worker_max_tokens` / `worker_max_time_s`）。系统 SHALL 对非法组合**结构化拒绝**（返回自足的 `reason`，指明期望的入参形态）而 SHALL NOT 静默取其一或忽略多余入参。模板参数化 SHALL 只发生在 Python（`compile_pattern`），系统 SHALL NOT 引入 spec 内的模板字段、占位符插值、表达式求值或静态模板文件。`params` 的校验 SHALL 落在 `compile_pattern` 这一唯一编译入口（统一入口与资产路径共用），SHALL 同时覆盖**键名**（按模板各自的封闭子集）、**值类型/可转换性**、以及 **fan-out 计数键的上界**；任何非法 `params` SHALL 在**编译前**被结构化拒绝，SHALL NOT 让裸 `ValueError`/`TypeError` 逃逸到模型上下文。fan-out 计数键（`workers`/`teams`/`proposers`）的上界 SHALL 复用**既有** `max_items`（编译期内存放大 + 静默截断，超界拒绝并写明界来源）；系统 SHALL NOT 为 `max_rounds` 设静态上界（其与图级 superstep 的换算比依赖拓扑，静态界会误判），`max_rounds` 的越界 SHALL 由运行期截断诊断如实报告（见「reducer 声明与图级递归上限」Requirement）。系统 SHALL NOT 引入第二套与既有闸互不知情的上界。
 
 #### Scenario: template 与 spec 互斥
 
@@ -117,11 +135,19 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 
 #### Scenario: 非法 params 在编译前被结构化拒绝
 
-- **GIVEN** `params` 含该模板无效的键（如 `peer-review` + `workers`）、非整数值（如 `workers: "abc"`）、`null`、或超界值（`workers` 超 `max_items`、`max_rounds` 超 `recursion_limit`）
+- **GIVEN** `params` 含该模板无效的键（如 `peer-review` + `workers`）、非整数值（如 `workers: "abc"`）、`null`、或 fan-out 计数键超界（`workers` 超 `max_items`）
 - **WHEN** 调用统一入口或按名运行模板资产
-- **THEN** 系统 SHALL 在**编译前**返回结构化拒绝（`invalid_input` 或 `invalid_asset`），`reason` 列出该模板的可用键与取值约束、并写明被违反的界来自 `max_items` 还是 `recursion_limit`
+- **THEN** 系统 SHALL 在**编译前**返回结构化拒绝（`invalid_input` 或 `invalid_asset`），`reason` 列出该模板的可用键与取值约束、并写明被违反的界来自 `max_items`
 - **AND** SHALL NOT 让 `int()`/`TypeError` 之类的裸异常进入模型上下文
 - **AND** `workers: 0` / `-5` SHALL 仍按既有语义 clamp 到有效下界（不报错）
+
+#### Scenario: max_rounds 越界不静态拒绝而由诊断报告
+
+- **GIVEN** `template="peer-review"` 且 `params={"max_rounds": 25}`（在 `recursion_limit=25` 下实际约 9 轮即撞顶）
+- **WHEN** 该图因图级 superstep 上限而终止
+- **THEN** 系统 SHALL 返回值 `status=graph_recursion_exceeded`，其诊断 SHALL 含 `declared_max_rounds=25`、`rounds_actually_run`（实测轮数）与 `limit_source`（界来自 `recursion_limit`、值为 25）
+- **AND** 该诊断 SHALL 使模型能判断是自身 `max_rounds` 声明过大，并据此调整
+- **AND** 系统 SHALL NOT 因 `max_rounds=25` 在编译前拒绝该调用（静态上界依赖拓扑、会误判）
 
 ### Requirement: 编排入口返回单一的 bounded 投影
 

@@ -107,7 +107,7 @@
 
 ### 1. `workflow-builtin-templates`
 
-状态：未实现（立项完成：proposal / design / spec delta / tasks 已就绪；**三轮独立 grill 完成，Q1–Q7 全部拍板**，grill-confirmation-gate 全部通过，可进入实现）。
+状态：未实现（立项完成：proposal / design / spec delta / tasks 已就绪；**三轮独立 grill 完成，Q1–Q7 全部拍板**——Q7 最终按**方案 A**（`max_rounds` 不做静态上界，改由 `graph_recursion_exceeded` 诊断报告 `declared_max_rounds`/`rounds_actually_run`/`limit_source`），grill-confirmation-gate 全部通过，可进入实现）。
 
 批次：第十六批，依赖前置 #245（workflow-asset-persistence，已合入）与 #255（mode 钳制，已合入）。
 

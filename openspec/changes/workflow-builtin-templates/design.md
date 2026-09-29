@@ -138,20 +138,20 @@
 
 **必须同时做值级校验（R2 新增，Q5）**：设计初稿只写了「未知键」一维，漏了「值非法」维。实测：`params={"workers": "abc"}` 在 `_template_*` 抛**未捕获** `ValueError`（`int("abc")`）、`{"workers": None}`/`{"teams": [1,2]}` 抛 `TypeError`，经 `execute_with_retry` 折成模型可见的**裸 `[Error: invalid literal for int()…]`**（非结构化、不可重试、无自足 reason），与 D1 规则 #5 的口径冲突。故校验须含值类型：计数键要求「可安全 `int()` 且为正整数」、`worker_max_*` 要求数值；非法值 → `invalid_input`。**clamp 保留**（`0/-5 → 下界`是既有语义，实测 `workers:0 → 1`，不宜改）——只把「无法转成数」这类从裸异常改成结构化拒绝。是否接受见 Open Questions Q5。
 
-**上界校验（Q6 + Q7 拍板，按模板分别取界、不造第二套上界）**：
+**上界处理（Q6 + Q7 方案 A）——两类键、两种手段**：
 
-| 键 | 界 | 界的来源（`reason` 须写明） | 超界后果 |
+| 键 | 手段 | 理由 | 超界后果 |
 |---|---|---|---|
-| `workers` / `teams` / `proposers` | `max_items`（默认 20） | 既有展开项截断闸 `max_items` | `invalid_input` |
-| `max_rounds` | `recursion_limit`（默认 25，图级 superstep） | 既有图级递归闸 `recursion_limit` | `invalid_input` |
+| `workers` / `teams` / `proposers` | **静态拒绝**：> `max_items`（默认 20） | 编译期内存放大 + 静默截断 | `invalid_input`（`reason` 写明界来自 `max_items`） |
+| `max_rounds` | **不做静态上界**；仅当 `> recursion_limit`（明显荒谬）时拒绝，其余由**截断诊断**如实报告 | 换算比依赖拓扑，静态上界会误判（见下） | 诊断带 `declared_max_rounds`/`rounds_actually_run`/`limit_source` |
 
-**为什么拒绝超界（两层理由，须如实写全）**：
+**`workers`/`teams`/`proposers` 为什么可以静态拒绝（两层理由，须如实写全）**：
 1. **编译期内存放大（不只执行期截断）**：实测 `compile_pattern("orchestrator-worker", params={"workers": 100000})` 在**编译期**就造出 **100000 个 item 对象**（`spec.node("workers").items` 长度 = 100000）——执行期虽被 `max_items=20` 截断（只跑 20 个），但**内存放大已经发生**。拒绝超界同时消除这两层问题。
-2. **消除「静默截断」假象**：`workers=50` 实测只跑 20 个、`max_rounds=100000` 实测只跑约 9 轮（`steps=25`）——模型以为参数生效了，实际没有。
+2. **消除「静默截断」假象**：`workers=50` 实测只跑 20 个——模型以为参数生效了，实际没有。
 
-**量纲不匹配警告（修正 2，必须写进工具描述）**：`max_rounds` 数的是**循环轮数**，`recursion_limit` 数的是**图级 superstep**；peer-review 一轮约消耗 **3 个 superstep**（producer + reviewer + gate）。实测 `max_rounds=25` 与 `100000` 读数**逐字相同**（`steps=25`、producer 约 9 轮）——**界取到 25 也跑不满 25 轮**。故工具描述**必须**写明「实际轮数受图级 `recursion_limit` 约束，可能显著少于 `max_rounds`」，否则只是把假象从参数层推到图结构层。
+**`max_rounds` 为什么**不能**静态拒绝（Q7 方案 A，实测证伪静态上界）**：`max_rounds` 数循环轮数、`recursion_limit` 数图级 superstep，换算比**依赖模板拓扑**（peer-review 一轮约 ~1.9 superstep）。实测（`/tmp/probe_q7c.py`）：`recursion_limit=25` 下 `max_rounds=9/10/25/100000` 输出**逐字相同**（`steps=25`、`run_count=17`）——**`max_rounds=9` 就已撞顶**；`recursion_limit=50` → `run_count=34`。**不存在静态上界**（硬编某档拓扑的换算比会在另一档误判）。故 `max_rounds` 的诚实放在**运行期诊断**里（见 D6 的 `graph_recursion_exceeded` 诊断扩展），不在校验里。
 
-**两个界都是既有闸（`max_items` / `recursion_limit`）**，本校验不新增任何上界；`max_items` 与 `recursion_limit` 本身均不改。
+**`max_items` / `recursion_limit` 本身均不改**；`recursion_limit` 默认值调整单独立 change（见 §Risks）。
 
 **依据**：RIR 显示所有参考实现都把参数化放在代码/配置层，占位符集封闭且启动前校验；Asterwynd 的 `compile_pattern` 已经是这个容器，#245 的 `ALLOWED_OVERRIDE_FIELDS` 封闭子集已示范同一门槛（零新方言、直接赋值、覆盖后重校验）。
 
@@ -198,9 +198,29 @@
 - **不视为「入参相关形状」违例**：它有显式判别子（`status == "running"` vs 终态 `status ∈ {completed, completed_with_failures, stalled, failed, cancelled, budget_exceeded, graph_recursion_exceeded}`），且 `wait` 是**显式声明的入参**而非隐式推断。符合 RIR 的「显式、诚实判别子」门槛。
 - **本 change 不动它**，但须在 `RunWorkflow` 描述里写明「`wait=false` 返回回执而非结果」，避免模型把回执当结果解析。
 
+### D7 — 截断诊断承载 `max_rounds` 的诚实（Q7 方案 A，替代静态上界）
+
+**背景**：Q7 曾定「`max_rounds` 超 `recursion_limit` → 拒绝」，但实测证伪——换算比依赖拓扑，`max_rounds=9` 在 `recursion_limit=25` 下就撞顶，「界取 25」只是把假象从 100000 挪到 25（见 D3 的「为什么不能静态拒绝」）。方案 A 把诚实放进**运行期诊断**：模型看到 `graph_recursion_exceeded` 时能知道「是我的 `max_rounds` 声明过大」，并据此调整。
+
+**扩展点**：`GraphRecursionError.to_dict()`（`scheduler.py:185-195`）与它经 `_mark_graph_recursion_exceeded`（`:880-887` → `self._diagnostics = exc.to_dict()`）进 `_envelope` 的 `diagnostics` 字段。今天该 dict 有 `reason`/`message`/`steps`/`limit`/`recursion_limit`/`current_nodes`，**缺**「声明了多少轮 vs 实际跑了多少轮」的对照。
+
+**要新增的字段**（仅当触发源与模板轮次有关时填充；纯 DSL 图无 `max_rounds` 概念时可为 `null`）：
+
+| 字段 | 含义 | 来源 |
+|---|---|---|
+| `declared_max_rounds` | 模型/recipe 声明的期望轮数 | `scheduler.asset_source` 的 `params.max_rounds`（pattern 溯源，D4 已落）——**这正是 D4 的 `asset_source` 的第二个用途** |
+| `rounds_actually_run` | 实际跑了几轮（`route` 节点的实际穿越次数 / producer 的 run 数） | 调度器运行期计数（`NodeState.run_ids` 或 route 的穿越记账） |
+| `limit_source` | 界来自 `recursion_limit` 还是 `max_items`，及其数值 | `_diagnostics` 的 `reason` + `limit`（既有），补一个显式的 `source` 标签 |
+
+**为什么放在 `asset_source` 而非另设通道**：`max_rounds` 只有 pattern 路径有（`_template_peer_review` 把它填进 route 的 `max_routes`），而 `asset_source` 恰是 pattern 溯源（`{"kind":"pattern","pattern","params","task"}`，D4 迁移点）。用它取 `declared_max_rounds` 是零新增通道；纯 DSL 图 `asset_source` 为 `{"kind":"dsl"}`，字段填 `null`。
+
+**工具描述义务**：`RunWorkflow` / `StartWorkflow` / `RunWorkflowAsset` 描述写明「`max_rounds` 是**期望轮数**，实际轮数受图级 `recursion_limit` 约束、可能显著少于声明值；截断时诊断给出 `declared_max_rounds` / `rounds_actually_run` / `limit_source`」。
+
+**不动 `recursion_limit` 默认值**（25）——单独立 change，见 §Risks 的交叉引用。
+
 ## Pre-Implementation Review
 
-> 本 change 为非平凡 change（改工具面 + 改 spec 契约 + 改父 agent 结果投影），实现前须按 AGENTS.md 走 `batch-grill-me`（或等价独立 subagent 设计追问）审视本 design.md 的 D1–D6，逐项确认实现细节、依赖、风险、测试策略与文档影响，产出结构化决策记录到 `reviews/grill-design.md`，并经停轮确认（grill-confirmation-gate）。本节为占位声明，实际 review 记录以 `reviews/grill-design.md` 为准。
+> 本 change 为非平凡 change（改工具面 + 改 spec 契约 + 改父 agent 结果投影 + 改截断诊断），实现前须按 AGENTS.md 走 `batch-grill-me`（或等价独立 subagent 设计追问）审视本 design.md 的 D1–D7，逐项确认实现细节、依赖、风险、测试策略与文档影响，产出结构化决策记录到 `reviews/grill-design.md`，并经停轮确认（grill-confirmation-gate）。**已完成三轮独立 grill**（R1 11 决策 + R2 12 决策 + R3 7 决策，Q1–Q7 全部拍板）；实际 review 记录以 `reviews/grill-design.md` 为准。
 
 ## Risks / Trade-offs
 
@@ -210,6 +230,8 @@
 - **风险：合并后单工具 schema 变大，模型误用（例如 spec 路径带 params）。** **缓解**：D1 的五条互斥规则 + 结构化拒绝 + enum；`pi` 的单工具多模式已证明该形态可用。
 - **Trade-off**：删除 `RunPattern` 是对模型面工具的**破坏性变更**（工具名消失）。这是 issue #246 的既定诉求（「spawn 工具集减一」），且 `RunWorkflow` 的 template 路径完全覆盖其能力面。
 - **Trade-off**：`bus` 从 `RunPattern` 返回体消失，是可见行为变更（现有测试依赖）。接受——它对齐 D4 与外部一致实践，且 `bus` 在 run 内仍可达。
+- **风险：`recursion_limit` 默认值 25 偏紧，与 D7 的反馈机制有耦合。** D7 让模型「看到截断后自行调整」，但若 `max_rounds` 撞顶后模型把声明值调小（如 9→5），它其实**仍受同一个 25 superstep 上限**约束、只是不再报错——反馈能治「不知道」，治不了「上限本身偏紧」。**本 change 不改值**（用户已确认单独立 change：影响所有 workflow 而非仅模板，与 #196 预算默认值调整先例一致）。**交叉引用**：`recursion_limit` 默认值调整另立 change（拟定 `workflow-recursion-limit-default`，未立项）；本 change 只如实反映其行为。
+- **风险：`rounds_actually_run` 的口径需在实现期钉死。** 「轮数」按 route 穿越次数还是 producer 的 run 数，两者在 peer-review 上一致、在更复杂拓扑上可能分叉。**缓解**：实现期取与 `max_rounds` 语义最近的量（route 穿越次数），并在诊断里用字段名如实（`rounds_actually_run`），测试用一个往返拓扑钉住。
 
 ## Testing Strategy
 
@@ -236,9 +258,10 @@
    **实测结论（本 session 探针 `/tmp/probe_maxitems.py`）**：**该上界已经存在**——`WorkflowNode.max_items` 默认 **20**，`_resolve_items` 在执行期做 `items[:max_items]` 静态截断（`scheduler.py:2611-2614`），模板不设 `max_items`（`patterns.py` 零命中）故一律吃默认 20。实测：`workers=100000`→`state.items=20`、`workers=50`→`20`、`workers=20`→`20`、`workers=5`→`5`（均 `status=completed`）。**即 `workers=100000` 的真实效果是「静默只跑 20 个」**——与 Q3/Q5 要消灭的「以为 params 生效了」是**同一类假象，只是发生在值层**。
    **归位决定**：**不新增上界**（三闸已是唯一权威：`max_items` 截断展开项数、`max_nodes` 计展开节点、`max_runs` 计 run）。校验层**拒绝**「计数键 > 既有 `max_items`」的输入并报 `invalid_input`（`reason` 写明该模板的位次上限来自 `max_items`），使「只跑 20 个」不再静默；**`max_items` 本身不改**（既有语义，且它是三闸之一，改它会波及非模板路径）。`workers=100000` 因此在**校验期**被拒，不会走到执行期截断——避免「校验过了但展开被三闸截断」的双重语义。**唯一权威边界仍是三闸**，校验只是把「超出既有边界」从静默变显式。
 
-7. ✅ **已确认（2026-09-29）：`max_rounds` 同样归位，界取 `recursion_limit`；但三条修正一并落定。** 用户答复：**采纳 R3 方向**（超界显式拒绝、不造第二套上界），并作三点修正/补充：
-   - **修正 1（理由要写全——编译期放大）**：`workers`/`teams`/`proposers` 的问题**不只是执行期截断**。主 session 实测（本 session 复核 `/tmp/probe_verify.py` 确认）：`compile_pattern("orchestrator-worker", params={"workers": 100000})` 在**编译期**就造出 **100000 个 item 对象**（`spec.node("workers").items` 长度 = 100000）。执行期确被 `max_items=20` 截断（只跑 20 个），但**内存放大发生在编译期**。故拒绝超界的理由**两层都要如实写明**：既是消除「静默截断」假象，**也是阻止编译期的内存放大**——不要只说「执行期被截断」。
-   - **修正 2（量纲不匹配——光设界不够，须在工具描述写明）**：本 session 复核实测（`/tmp/probe_verify.py`，`producer` 计 `run_ids`）：`max_rounds=3` → `steps=11`（producer 4 轮）、`max_rounds=25` → `steps=25`（9 轮）、`max_rounds=100000` → `steps=25`（9 轮，**与 25 逐字相同**）。`max_rounds` 数的是**循环轮数**，而 `recursion_limit`（25）数的是**图级 superstep**——peer-review 一轮约消耗 **3 个 superstep**（producer + reviewer + gate）。**所以即使界取到 25，`max_rounds=25` 本身也跑不满 25 轮**（实测约 9 轮即撞限）。**要求**：界取 `recursion_limit` 是对的，但**必须额外在工具描述里写明**「实际轮数受图级 `recursion_limit` 约束，可能显著少于 `max_rounds`」——否则只是把「静默截断」从参数校验层推到图结构层，**换个地方留同一个假象**。
-   - **修正 3（界与来源可追溯）**：超界一律 `invalid_input`，且 `reason` 里**写明界的来源**（`max_items` 还是 `recursion_limit`）。两个界都是既有闸，不造第二套上界。
-
-   **最终口径**：`workers`/`teams`/`proposers` 超 `max_items`(20) → `invalid_input`（`reason` 写明界来自 `max_items`，并说明编译期放大的风险）；`max_rounds` 超 `recursion_limit`(25) → `invalid_input`（`reason` 写明界来自 `recursion_limit`）；工具描述须写明「实际轮数受 `recursion_limit` 约束、可能显著少于 `max_rounds`」。
+7. ✅ **已确认（2026-09-29，方案 A 收口）：`max_rounds` **不做静态上界校验**，改为把诚实放进「截断诊断」里。** 前一轮（R3 建议 + 用户首肯）曾定「`max_rounds` 超 `recursion_limit` → `invalid_input`」；**主 session 随后实测证伪了这个界**，用户改判为**方案 A**。
+   - **为何静态上界不存在（实测证伪，本 session 复核 `/tmp/probe_q7c.py` 确认）**：`recursion_limit` 数的是**图级 superstep**，`max_rounds` 数的是**循环轮数**，换算比**依赖模板拓扑**（peer-review 一轮约消耗 ~1.9 superstep）。实测：`recursion_limit=25` 下 `max_rounds=9/10/25/100000` **输出逐字相同**（`status=graph_recursion_exceeded`、`steps=25`、`run_count=17`）——即 **`max_rounds=9` 就已撞顶**；`recursion_limit=50` → `run_count=34`（换算比随 limit 变化）。故「界取 25」只让 `max_rounds=25` 通过校验、然后照样只跑 9 轮——**同一个假象从 100000 挪到 25**。**不存在一个静态的校验上界**（除非把某档拓扑的换算比硬编进校验，而那会在另一档拓扑上误判）。
+   - **方案 A 的落定（三条反馈机制，Q7 的收口）**：
+     1. **截断诊断须带可行动字段**：`graph_recursion_exceeded` 的诊断（`GraphRecursionError.to_dict()`，`scheduler.py:185-195`）SHALL 增 `declared_max_rounds`（模型声明的值）、`rounds_actually_run`（实际跑了几轮）、`limit_source`（界来自 `recursion_limit` 还是 `max_items`、值是多少）。目的：模型看到 `status=graph_recursion_exceeded` 时**能知道是自己的参数问题并据此调整**，而不是只看到「超了递归上限」这个无法行动的提示。今天该 dict 已有 `reason`/`message`/`steps`/`limit`/`recursion_limit`/`current_nodes`，但**没有**「声明了多少轮 vs 实际跑了多少轮」的对照。
+     2. **工具描述写明量纲**：`RunWorkflow` / `StartWorkflow` / `RunWorkflowAsset` 描述写明「`max_rounds` 是**期望轮数**，实际轮数受图级 `recursion_limit` 约束、**可能显著少于声明值**；若被截断，诊断会给出实际轮数与界来源」。
+     3. **校验只拦明显荒谬的**：仅当 `max_rounds > recursion_limit`（声明值连 superstep 数都超过，任何拓扑下都不可能跑满）才 `invalid_input`；其余交给诊断如实报告。**`workers`/`teams`/`proposers` 维持对 `max_items` 的静态拒绝**——它们的理由是**编译期内存放大 + 静默截断**（实测 `workers=100000` 编译期即造 100000 个 item 对象），不受本修正影响。
+   - **范围说明**：`recursion_limit` 的**默认值（25）不在本 change 调整**——用户已确认单独立 change（理由：影响所有 workflow 而非仅模板；与 #196 预算默认值调整先例一致；本 change 已有 4 份 spec delta）。本 change 只让 diagnostics 与工具描述**如实反映**它的行为，**不改值**。交叉引用见 §Risks。

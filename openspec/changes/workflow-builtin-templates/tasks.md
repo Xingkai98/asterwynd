@@ -18,11 +18,13 @@
 - [ ] 1.2 在 `agent/subagent/patterns.py` 落 **per-template** `params` 校验（R2 订正：不是全局并集）——按模型各自的封闭键子集（orchestrator-worker: `workers`/`worker_max_*`；hierarchical: `teams`/`worker_max_*`；bidding: `proposers`/`worker_max_*`；peer-review: `max_rounds`/`worker_max_*`），不属该模板的键结构化拒绝并在 `reason` 列出该模板可用键
 - [ ] 1.2a 落 **值级校验**（Q5）：计数键要求可安全 `int()` 且为正整数、`worker_max_*` 要求数值；非整数/null/不可转数 → `invalid_input` 结构化拒绝（今天抛未捕获 `ValueError`/`TypeError` → 模型见裸 `[Error: …]`）。**clamp 保留**（`0/-5 → 下界`是既有语义）
 - [ ] 1.2b 落 **fan-out 键上界**（Q6）：`workers`/`teams`/`proposers` **> 既有 `max_items`（默认 20）→ `invalid_input`**，`reason` 写明「界的来源 = `max_items`」。拒绝理由须覆盖**两层**（写进代码注释与 `reason` 文案）：①消除静默截断（实测 `workers=50` 只跑 20）；②**阻止编译期内存放大**（实测 `workers=100000` 编译期即造 100000 个 item 对象）。**不新增任何上界**，`max_items` 本身不改
-- [ ] 1.2c **`max_rounds` 上界**（Q7，已拍板可实现）：`max_rounds` **> `recursion_limit`（默认 25）→ `invalid_input`**，`reason` 写明「界的来源 = `recursion_limit`（图级 superstep）」。**界取既有 `recursion_limit`，不造第二套上界**。注意量纲差异（见 2.2c 的工具描述义务）——校验只能挡住「参数远超图级上限」，挡不住「`max_rounds` 在界内但实际跑不满」，后者靠 2.2c 的描述澄清
+- [ ] 1.2c **`max_rounds`：不做静态上界校验**（Q7 方案 A）。**不要**写「`max_rounds` 超 `recursion_limit` → 拒绝」（实测证伪：换算比依赖拓扑，`max_rounds=9` 在 `rl=25` 下就撞顶）。仅当 `max_rounds > recursion_limit`（声明值连 superstep 数都超过、任何拓扑下都不可能跑满）才 `invalid_input`；其余交给**运行期诊断**（见 1.7）
 - [ ] 1.3 单测：helper 对 `{"workers": 3}` 的产出与 `compile_pattern("orchestrator-worker", task=…, params={"workers": 3})` 的 `spec_hash` 相等；未知键 / 跨模板键（`peer-review + workers:7`）/ 非整数值（`workers:"abc"`）/ `null` / 超上界（`workers:50`）各一条结构化拒绝；`workers:0` 仍 clamp 为 1（不报错）
 - [ ] 1.4 回归：确认 `workers`≤20 的既有调用方（测试实测最大用 3）与 benchmark `template` 臂（不传 params）不受新校验影响；`uv run pytest tests/benchmark/ -q` 须保持绿（R3 基线：475 passed, 1 skipped）
 - [ ] 1.5 **异常类型契约（R3 建议的最省落法）**：新校验统一抛 `WorkflowValidationError`（它是 `ValueError` 子类，实测 mro）——`RunWorkflowAsset` 的既有 `except (KeyError, WorkflowValidationError)` **自动兜住**（零改动）；`RunWorkflow` 侧新增 `except WorkflowValidationError -> invalid_input`。避免另造异常类型导致资产路径漏兜
 - [ ] 1.6 **历史 recipe 资产兼容说明**：Q3 收紧后，既有 `WorkflowAsset(source="pattern", recipe=…)` 若 recipe 含该模板无效的键（如 `peer-review` + `workers`），会在**加载期**被拒——这是**预期行为**（该键本就无效果），须在 spec delta 或 design 显式记一句，避免被当成回归
+- [ ] 1.7 **截断诊断承载 `max_rounds` 诚实（Q7 方案 A，D7）**：扩展 `GraphRecursionError.to_dict()`（`scheduler.py:185-195`）——当触发图由模板产出且带 `max_rounds` 声明时，诊断增 `declared_max_rounds`（取自 `scheduler.asset_source` 的 `params.max_rounds`，D4 已落）/ `rounds_actually_run`（实际轮数）/ `limit_source`（界来自 `recursion_limit` 或 `max_items`，及其值）；纯 DSL 图三字段为 `null`。**口径钉死**：`rounds_actually_run` 取与 `max_rounds` 语义最近的量（route 穿越次数），测试用一个往返拓扑钉住
+- [ ] 1.8 单测：`peer-review` 声明 `max_rounds=25`（`rl=25`）截断时，`graph_recursion_exceeded` 诊断含 `declared_max_rounds=25` 与 `rounds_actually_run`（实测约 9）与 `limit_source=recursion_limit:25`；纯 DSL 图三字段为 `null`
 
 ## 2. 统一 Workflow 入口的 template 输入（D1）
 
@@ -30,7 +32,7 @@
 - [ ] 2.2 扩展 `RunWorkflowTool`（`agent/tools/builtin/subagents.py`）的 `tool_parameters`：新增 `template`/`task`/`params`，并**摘掉 `"required": ["spec"]`**（R2 实测：否则 `RunWorkflow(template=…)` 在模型侧被判缺参）
 - [ ] 2.2a **工具描述文案（Q2/Q4 拍板要求）**：`RunWorkflow` 描述里写明 ①「exactly one of `spec`/`template`」；②「`completed`/`failed` 数的是 **run**，不是 subagent」；③「`wait=false` 返回**启动回执**（`status:"running"`）而非结果，结果经 `GetWorkflow` 轮询取」
 - [ ] 2.2b **Q2 口径覆盖全部模型可见出口（R3 实测精度订正）**：返回含 run 口径 `completed`/`failed` 的工具共 **4 个**，逐一确认描述已带「数的是 run」说明——`RunWorkflow(wait=true)`、`StartWorkflow(wait=true)`（两者返回 `parent_envelope()`）、`GetWorkflow`（任意 detail 返回 `parent_envelope()`）、**`RunWorkflowAsset(wait=true)`（返回**权威 `_envelope()`，46 键、含 `bus`，非 bounded——R3 实测）**。其中 `StartWorkflow`/`RunWorkflowAsset` 不属本 change 新增但同源同字段，须一并加口径说明
-- [ ] 2.2c **`max_rounds` 量纲警告写进工具描述（Q7 修正 2，必须做）**：`RunWorkflow`（及 `RunWorkflowAsset`，若其 params 面暴露 `max_rounds`）描述里写明「`max_rounds` 是**循环轮数**，实际轮数受图级 `recursion_limit`（superstep 上限）约束，**可能显著少于 `max_rounds`**」。依据：peer-review 一轮约消耗 3 个 superstep，实测 `max_rounds=25` 与 `100000` 同样只跑约 9 轮——光设界不写清量纲，等于把静默截断从参数层推到图结构层
+- [ ] 2.2c **`max_rounds` 量纲警告写进工具描述（Q7 方案 A，必须做）**：`RunWorkflow` / `StartWorkflow` / `RunWorkflowAsset` 描述写明「`max_rounds` 是**期望轮数**，实际轮数受图级 `recursion_limit` 约束、**可能显著少于声明值**；若被截断，诊断会给出 `declared_max_rounds` / `rounds_actually_run` / `limit_source`」。依据：peer-review 一轮约消耗约 2 个 superstep，实测 `max_rounds=9` 在 `rl=25` 下就已撞顶——诚实必须落在错误里，不能只靠静态校验
 - [ ] 2.3 实现入参判别：exactly-one-of 校验 + 五条结构化拒绝（沿用 `_invalid_spec` 风格的 `invalid_input`）
 - [ ] 2.4 template 分支调 1.1 的 helper 编译出 spec，与 spec 分支汇合到同一条 `parse_spec_for_manager` → scheduler 路径
 - [ ] 2.5 单测：`RunWorkflow(template=…)` 编译出的 spec 与 `compile_pattern(…)` 逐字一致；`template` 与 `spec` 两路径返回体键集相等
