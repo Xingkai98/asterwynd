@@ -73,7 +73,7 @@ from agent.planning import PlanItem
 from agent.skills.runtime import SkillRuntime
 from agent.tool_result_display import ToolResultDisplayConfig, summarize_tool_result
 from agent.background import BackgroundTaskManager, current_tool_call_id
-from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
+from agent.sandbox_events import reset_sandbox_sink, set_sandbox_sink
 from agent.trace_recorder import TraceRecorderSandboxSink
 from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 
@@ -557,7 +557,6 @@ class AgentLoop:
             )
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
-        previous_sandbox_sink = current_sandbox_sink()
         # Mount A (change fix-issue-255-mode-ceiling): snapshot this run's mode
         # ceiling so the whole run has one consistent capability bound, and every
         # nested spawn inherits it. Restore via ``reset(token)`` — NOT a plain
@@ -573,11 +572,21 @@ class AgentLoop:
         ceiling_token = set_mode_ceiling(self.runtime_state.current_mode)
         self._active_on_event = on_event
         self._active_trace_recorder = trace_recorder
+        # Mount A's sibling (issue #264): the sandbox sink is installed under
+        # the same token discipline as the mode ceiling above, and for the same
+        # reason — it lives in the same ``finally`` and is unwound by the same
+        # abandoned-Task teardown. The ``set`` is gated on ``trace_recorder``
+        # while the restore is not, so the token starts as ``None`` and only a
+        # run that actually installed a sink will reset one. That gating also
+        # drops the old unconditional ``set(previous)`` on recorder-less runs:
+        # a self-write in-context was harmless, but cross-context it re-planted
+        # a stale sink into a live run.
+        sink_token = None
         if trace_recorder:
             # Sandbox backends/tools emit into the run's trace via the
-            # contextvar sink; save/restore mirrors _active_trace_recorder so
-            # nested subagent runs and recorder-less runs do not cross-talk.
-            set_sandbox_sink(TraceRecorderSandboxSink(trace_recorder))
+            # contextvar sink; restore via ``reset(token)`` so nested subagent
+            # runs and recorder-less runs do not cross-talk.
+            sink_token = set_sandbox_sink(TraceRecorderSandboxSink(trace_recorder))
         try:
             return await self._run(
                 messages,
@@ -597,7 +606,17 @@ class AgentLoop:
                     logger.warning("Failed to save session", exc_info=True)
             self._active_on_event = previous_on_event
             self._active_trace_recorder = previous_trace_recorder
-            set_sandbox_sink(previous_sandbox_sink)
+            if sink_token is not None:
+                try:
+                    reset_sandbox_sink(sink_token)
+                except ValueError:
+                    # Same cross-context teardown as the ceiling below: the
+                    # token belongs to the abandoned Task's dead Context, so
+                    # resetting it here would rewrite the *live* run's sandbox
+                    # event ownership (issue #264). A token is consumed at most
+                    # once per run, so the only reachable ``ValueError`` is this
+                    # one; a reused token raises ``RuntimeError`` and stays loud.
+                    pass
             try:
                 reset_mode_ceiling(ceiling_token)
             except ValueError:

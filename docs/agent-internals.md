@@ -27,7 +27,7 @@ async def run(self, messages, on_event=None, trace_recorder=None,
 1. 清理后台任务（`background_manager.cleanup()`）
 2. 保存会话快照（`_save_session()`）——即使崩溃也会尽量存
 3. 恢复之前的事件回调（防止嵌套 run 互相污染）
-4. 恢复 sandbox sink（`set_sandbox_sink`）
+4. 恢复 sandbox sink（`reset_sandbox_sink`，按 run 起点捕获的 token 守护式恢复）
 5. flush cost ledger（把累积的 token 用量写入成本台账）
 
 `_run()` 是真正的主循环。先判断是否恢复会话：
