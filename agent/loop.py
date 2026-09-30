@@ -49,6 +49,7 @@ from agent.tools.builtin.subagents import (
     CancelWorkflowTool,
     CreateSubagentTool,
     DeclareWorkflowTool,
+    DryRunWorkflowTool,
     GetSubagentRunTool,
     GetWorkflowAssetTool,
     GetWorkflowTool,
@@ -406,6 +407,10 @@ class AgentLoop:
             # ``StartWorkflow``/``RunWorkflow`` are also in ``SPAWN_TOOL_NAMES``
             # so a depth-capped child cannot raise a whole graph past the gate.
             DeclareWorkflowTool(self.subagent_manager),
+            # ``DryRunWorkflow`` simulates a spec without spawning anything, so it
+            # sits in the same tier as DeclareWorkflow: available at max depth, and
+            # deliberately NOT in ``SPAWN_TOOL_NAMES`` (change ``workflow-dry-run``).
+            DryRunWorkflowTool(self.subagent_manager),
             StartWorkflowTool(self.subagent_manager),
             GetWorkflowTool(self.subagent_manager),
             CancelWorkflowTool(self.subagent_manager),

@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
+import time
+from pathlib import Path
 from typing import Any
 
+from agent.context.summarizer import TruncationSummarizer
+from agent.llm import LLMResponse, Usage
 from agent.message import Message
+from agent.run_config import AgentMode
+from agent.subagent.aggregation import WorkflowAggregator
 from agent.subagent.bus import (
     BUS_MESSAGE_LIMIT,
     BUS_PUBLISH_MAX_TOKENS,
@@ -13,7 +20,7 @@ from agent.subagent.bus import (
     _bounded_message,
     estimate_tokens,
 )
-from agent.subagent.context import current_bus
+from agent.subagent.context import current_bus, current_node_id, current_run_id
 from agent.subagent.manager import TRANSCRIPT_SCOPES, SubAgentManager
 from agent.subagent.patterns import PATTERNS, compile_recipe
 from agent.subagent.scheduler import (
@@ -39,6 +46,7 @@ from agent.subagent.workflow_assets import (
 from agent.subagent.workflow_store import DEFAULT_READ_LIMIT, WorkflowStore
 from agent.tools.base import Tool, tool_parameters
 from agent.tool_permissions import AGENT_STATE_PERMISSION, SUBAGENT_CONTROL_PERMISSION
+from agent.workspace_policy import WorkspacePolicy
 
 
 @tool_parameters(
@@ -790,6 +798,9 @@ def _route_task_warnings(spec: WorkflowSpec) -> list[str]:
         "  fix: declare \"required\": false on body->gate, or give the cycle a node "
         "whose required inputs come from outside it.\n"
         "\n"
+        "Unsure how your graph will route or how text will flow? DryRunWorkflow "
+        "simulates it for free, with no model calls.\n"
+        "\n"
         "Before declaring a topology from scratch, call ListWorkflowAssets to see "
         "whether a reusable asset already covers this job."
     ),
@@ -1265,6 +1276,602 @@ class RunWorkflowTool(Tool):
         envelope = await _drive_scheduler(scheduler)
         envelope["warnings"] = warnings
         return json.dumps(envelope, ensure_ascii=False)
+
+
+# --- DryRunWorkflow（change ``workflow-dry-run``，D1–D10） -------------------
+#
+# 零 token 模拟执行一张 workflow，把「模型声明期看不见的运行期语义」（foreach 的
+# item 注入、route 读谁的文本、回边带不带数据、自动插入的汇合层）直接摊开。
+#
+# **核心不变量（D4）：不改 ``scheduler.py`` 的任何执行路径。** 模拟复用既有
+# ``WorkflowScheduler.run()``，隔离完全靠**喂给它的依赖**：
+#   - 一次性 ``SubAgentManager``（自己的 llm / workspace_policy，从不注册给调用方）；
+#   - 假 LLM（``_DryRunLLM``）：回显 + 按节点注入，只返回文本、不发起 tool call；
+#   - 一次性 ``workspace_root``：**隔离的独立充分条件**——两个写入口（manager 的
+#     ``_write_result_artifacts`` 与 scheduler 的 ``_store``）都以
+#     ``workspace_policy.workspace_root`` 为路径根（F9）；
+#   - ``_store`` 替换为 no-op（Q2=B）：让「模拟不产生任何 workflow 级 artifact」
+#     成为**可断言的显式性质**（降级模式是安全的——退回只有 W1 的产物，调用方
+#     workspace 照样零落盘）；
+#   - collect 聚合的 summarizer 置为 ``TruncationSummarizer``（Q6/D4b）：否则假 LLM
+#     的回应会顶掉聚合节点的产出，把 route 走向与 ``summary`` 一起污染（F4/F4a）。
+
+#: 报告里每个文本字段的缺省字符上界（Q3 拍板：默认 800，可被调用方覆盖）。
+DRY_RUN_DEFAULT_MAX_REPORT_CHARS = 800
+#: 软提醒阈值（Q5=A+C）：超过后每次调用在 ``notes`` 里追加一条提示，**不阻断**。
+DRY_RUN_SOFT_CALL_HINT = 10
+#: 硬上限（Q5）：超过后拒绝调用，返回可读原因与提高路径（仿 deepseek 的
+#: runaway-loop backstop）。软提醒保护「反复调试图」这个要鼓励的行为，硬上限兜底线。
+DRY_RUN_HARD_CALL_LIMIT = 40
+
+#: 截断标记（D5）。**故意与 ``aggregation._BOUNDED_MARKER`` 写法不同**：那个标记
+#: 承诺「有 ``result_ref`` 能读全文」，而 dry run 根本没有可读的 ref——混用会让模型
+#: 去找一个不存在的 ref。
+_DRY_RUN_CLIP_SUFFIX = "…[+{n} chars]"
+
+#: 替身产出的自述前缀：让任何一处 ``produced`` 都能被认出是模拟占位（D3/D8）。
+_DRY_RUN_STAND_IN = "{node} produced: auto (simulated stand-in)"
+
+
+def _clip_text(value: Any, limit: int) -> str:
+    """按 ``limit`` 字符截断，超出部分带**可区分的**标记（D5）。"""
+    text = "" if value is None else str(value)
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return text[:limit] + _DRY_RUN_CLIP_SUFFIX.format(n=len(text) - limit)
+
+
+def _last_user_text(messages: Any) -> str:
+    """假 LLM 眼中「这个节点实际收到了什么」= 最后一条 ``user`` 文本消息。
+
+    调度器投递的任务文本就是那条消息（``_launch_run`` 的 ``task`` 走
+    ``run_subagent`` → 子 loop 的 user message）。取**最后一条**而不是第一条：
+    子 loop 的系统提示也在 messages 里，且它不含投递文本。
+    """
+    fallback = ""
+    for message in messages or ():
+        content = getattr(message, "content", None)
+        if not isinstance(content, str) or not content:
+            continue
+        fallback = content
+        if getattr(message, "role", None) == "user":
+            fallback = content
+    for message in reversed(list(messages or ())):
+        content = getattr(message, "content", None)
+        if (
+            isinstance(content, str)
+            and content
+            and getattr(message, "role", None) == "user"
+        ):
+            return content
+    return fallback
+
+
+class _DryRunLLM:
+    """零 token 替身：回显收到的任务文本，并按节点 id 支持 ``script`` 注入。
+
+    - **节点身份来自 contextvar**（``current_node_id()``），所以归属不需要改调度器（F5）；
+    - ``script`` 的值是 ``str`` 或 ``[str]``，数组按**该节点被调用的次序**消费、用尽后
+      沿用末元素（Q1）——计数在本类内，与调度器无关；
+    - **只返回文本、不发起 tool call**：发起工具调用就不叫 dry run 了。
+    """
+
+    def __init__(self, script: dict[str, list[str]] | None = None) -> None:
+        self._script = script or {}
+        self._seen: dict[str, int] = {}
+        #: ``(node_id, run_id, prompt, output)`` 逐次调用；``node_id`` 为 ``None`` 表示
+        #: 归不到任何节点（F4a 的「不可归因调用」，本 change 的实现里应恒为 0 条）。
+        self.calls: list[tuple[str | None, str | None, str, str]] = []
+
+    async def chat(self, messages, tools=None, model="gpt-4"):
+        node = current_node_id()
+        prompt = _last_user_text(messages)
+        index = self._seen.get(node, 0)
+        self._seen[node] = index + 1
+        output = self._output_for(node, prompt, index)
+        self.calls.append((node, current_run_id(), prompt, output))
+        return LLMResponse(content=output, stop_reason="end_turn", usage=Usage(0, 0))
+
+    def _output_for(self, node: str | None, prompt: str, index: int) -> str:
+        sequence = self._script.get(node) if node is not None else None
+        if sequence:
+            return sequence[index] if index < len(sequence) else sequence[-1]
+        head = (prompt.strip().splitlines() or [""])[0][:80] if prompt.strip() else ""
+        marker = _DRY_RUN_STAND_IN.format(node=node)
+        return f"[{marker}] {head}".rstrip()
+
+
+_NULL_ROOT = Path("/dev/null")
+
+
+class _DryRunWorkflowStore:
+    """no-op ``WorkflowStore``（Q2=B）：让「模拟不产生 workflow 级 artifact」可断言。
+
+    只在构造后替换 ``scheduler._store``。依赖一个私有属性名，故构造点有
+    ``assert hasattr(scheduler, "_store")`` 兜底；即便该属性被重构掉，降级模式也是
+    **安全**的（退回只有 W1 的产物，调用方 workspace 照样零落盘——F9）。
+    """
+
+    def __init__(self, workflow_id: str) -> None:
+        self.workflow_id = workflow_id
+        self.root = _NULL_ROOT
+
+    def ref(self, key: str) -> str:
+        return f"artifact://dry-run/{self.workflow_id}/{key}"
+
+    def save_result(self, key: str, text: str) -> str:
+        return self.ref(key)
+
+    def save_summary(self, key: str, text: str) -> str:
+        return self.ref(f"{key}.summary")
+
+    def save_transcript(self, key: str, messages: list[dict]) -> str:
+        return self.ref(f"{key}.transcript")
+
+    def save_attribution(self, key: str, payload: dict) -> str:
+        return self.ref(f"{key}.attribution")
+
+    def append_event(self, event: dict) -> None:
+        return None
+
+
+def _normalize_script(raw: Any) -> dict[str, list[str]] | str:
+    """把调用方的 ``script`` 规范化成 ``{node_id: [str, ...]}``。
+
+    形态非法时返回**原因字符串**（调用方转 ``invalid_input``）——schema 只能表达
+    「值类型并列」，判别必须在运行期做（#246 RIR：顶层 ``oneOf`` 在 Anthropic 上被拒）。
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        return "script must be an object mapping node_id -> string or list of strings"
+    normalized: dict[str, list[str]] = {}
+    for node_id, value in raw.items():
+        if isinstance(value, str):
+            normalized[node_id] = [value]
+        elif isinstance(value, (list, tuple)) and value and all(
+            isinstance(item, str) for item in value
+        ):
+            normalized[node_id] = list(value)
+        else:
+            return (
+                f"script[{node_id!r}] must be a string or a non-empty list of "
+                f"strings (got {type(value).__name__})"
+            )
+    return normalized
+
+
+def _resolve_source(
+    scheduler: WorkflowScheduler, upstream: Any, slot: str = "result"
+) -> tuple[str | None, str | None]:
+    """``upstream`` 的槽值**实际**来自哪个节点（Q6 的 ``input_source``）。
+
+    做法是**调真方法 + 按值验证**，不复制 ``_node_output`` 的取值逻辑：先问调度器
+    要真值，再按它的**分支顺序**用相等性确认走的是哪一支——顺序错了会验证失败、
+    如实返回 ``None``，而不是静默给一个错答案。返回 ``(resolved_to, slot_owner)``，
+    后者非空表示这个值是从**某个节点的槽**读出来的（报告据此展开该槽）。
+    """
+    text = scheduler._node_output(upstream, slot)
+    if not text:
+        return None, None
+    # 分支 1：上游自己的槽——注意 ``!= "subagent"`` 守卫（subagent 的槽永不被这条读）。
+    if (
+        slot in upstream.slots
+        and upstream.node.kind != "subagent"
+        and upstream.slots[slot] == text
+    ):
+        return upstream.node.id, upstream.node.id
+    # 分支 2：沿该节点自己的数据入边向上找第一个有该槽、且值相等的上游。
+    for edge in scheduler._plan.data_incoming(upstream.node.id):
+        parent = scheduler._states.get(edge.source)
+        if parent is not None and slot in parent.slots and parent.slots[slot] == text:
+            return parent.node.id, parent.node.id
+    # 分支 3：回退到该节点自己的 ``summary``——这是「它自己说的」，不是槽。
+    if (upstream.summary or None) == text:
+        return upstream.node.id, None
+    return None, None
+
+
+def _build_dry_run_report(
+    scheduler: WorkflowScheduler,
+    result: dict,
+    spec: WorkflowSpec,
+    llm: _DryRunLLM,
+    elapsed_s: float,
+    limit: int,
+    scripted_nodes: set[str],
+) -> dict:
+    """把一次模拟投影成「那 17 条探针在问的东西」（D2）。
+
+    逐条回答：foreach 的 item 注入了吗 → ``nodes[].received``；route 读的是谁的文本 →
+    ``input_seen`` + ``input_sources``；回边带数据吗 → ``received`` 的逐轮值 + ``edges[].control``；
+    某分支会跑到吗 → ``nodes[].status``；回边能重跑吗 → ``nodes[].runs``；
+    系统替我插了节点吗 → ``nodes[].auto_inserted``。
+    """
+    plan = scheduler._plan
+    assert plan is not None
+    inserted = set(plan.inserted_nodes)
+
+    # run_id -> (node_id, item_index)：把每次替身调用归位到展开项（G1）。
+    # ``current_node_id()`` 对 foreach 的每个展开项返回同一个 id，只有 run 身份能区分。
+    item_index_by_run: dict[str, tuple[str, int]] = {}
+    for node_id, state in scheduler._states.items():
+        for index, slot in enumerate(getattr(state, "item_runs", None) or []):
+            if slot.run_id:
+                item_index_by_run[slot.run_id] = (node_id, index)
+
+    received_by_node: dict[str, list[dict[str, Any]]] = {}
+    run_counter: dict[str, int] = {}
+    unattributed = 0
+    for node_id, run_id, prompt, output in llm.calls:
+        if node_id is None:
+            unattributed += 1
+            continue
+        item_index: int | None = None
+        located = item_index_by_run.get(run_id) if run_id else None
+        if located is not None and located[0] == node_id:
+            item_index = located[1]
+        elif _node_is_foreach(scheduler, node_id):
+            # 早先的轮次：``item_runs`` 已被新一轮重置，run 身份查不回来——退回
+            # 「本节点第几次出现」的次序（调度器按项并发派发，故仅作兜底）。
+            item_index = run_counter.get(node_id, 0)
+        run_counter[node_id] = run_counter.get(node_id, 0) + 1
+        received_by_node.setdefault(node_id, []).append(
+            {
+                "item_index": item_index,
+                "prompt": _clip_text(prompt, limit),
+                "output": _clip_text(output, limit),
+            }
+        )
+
+    slot_reads: dict[str, set[str]] = {}
+    warnings: list[str] = []
+    nodes: list[dict[str, Any]] = []
+    for node in plan.nodes:
+        state = scheduler._states.get(node.id)
+        if state is None:
+            continue
+        entry: dict[str, Any] = {
+            "id": node.id,
+            "kind": node.kind,
+            "status": state.status,
+            "runs": state.runs,
+            "auto_inserted": node.id in inserted,
+            "produced": _clip_text(state.summary, limit),
+            "produced_kind": _produced_kind(node, node.id in scripted_nodes),
+            "received": received_by_node.pop(node.id, []),
+        }
+        reason = _terminal_reason(state, result)
+        if reason:
+            entry["reason"] = _clip_text(reason, limit)
+        if node.id in scripted_nodes:
+            entry["script_applied"] = True
+        if node.kind == "foreach":
+            entry["items_expanded"] = state.items
+        if node.kind == "route":
+            # ``evaluated`` 把「route 真的判定过」与「它压根没跑到」分开：没有它，
+            # 一个被图级闸门挡住的 route 会带着 ``used_default: true``，读起来就像
+            # 「这张图的 route 本来就该走 default」——正是要消灭的那类假话。
+            evaluated = state.status == "completed"
+            sources, slot_owners = _route_input_sources(scheduler, state)
+            entry["evaluated"] = evaluated
+            entry["input_seen"] = _clip_text(state.raw, limit) if evaluated else None
+            entry["matched"] = state.verdict if evaluated else None
+            entry["walked_to"] = list(state.targets) if evaluated else []
+            entry["used_default"] = (state.verdict is None) if evaluated else None
+            entry["input_sources"] = sources if evaluated else []
+            for owner in slot_owners:
+                slot_reads.setdefault(owner, set()).add("result")
+        if state.status != "completed":
+            warnings.append(
+                f"node {node.id!r} ended as {state.status}"
+                + (f": {reason}" if reason else "")
+            )
+        nodes.append(entry)
+
+    # 归不到任何已知节点的调用（F4a）：它们必须为 0——不为 0 说明有第二条 LLM 通道
+    # 没被切断，报告的一部分会不可归因。
+    for node_id, entries in received_by_node.items():
+        unattributed += len(entries)
+
+    edges = [
+        {
+            "from": edge.source,
+            "to": edge.target,
+            "channel": edge.channel,
+            "control": plan.is_control_edge(edge),
+        }
+        for edge in plan.edges
+    ]
+
+    if result.get("status") != "completed":
+        warnings.insert(
+            0,
+            f"the graph did not run to completion (status={result.get('status')!r}); "
+            "nodes that never ran are NOT a statement about the topology",
+        )
+
+    slots: dict[str, dict[str, str]] = {}
+    for node_id, slot_names in slot_reads.items():
+        state = scheduler._states.get(node_id)
+        if state is None:
+            continue
+        # 只展开**被 route 实际读到**的槽（Q4）：未被消费的聚合槽不进报告。
+        slots[node_id] = {
+            name: _clip_text(state.slots.get(name, ""), limit) for name in sorted(slot_names)
+        }
+
+    report: dict[str, Any] = {
+        "status": "simulated",
+        "simulated": True,
+        "run_status": result.get("status"),
+        "spec_hash": spec.spec_hash,
+        "goal": spec.goal,
+        "max_report_chars": limit,
+        "elapsed_s": round(elapsed_s, 4),
+        "llm_calls": len(llm.calls),
+        "unattributed_llm_calls": unattributed,
+        # ``run()`` 真的会跑调度器，但替身 usage 恒为 0、且 cost ledger 不在模拟
+        # manager 上——所以这两个量在模拟里**结构性地**为 0（D6 的「答不了」清单）。
+        "tokens_spent": 0,
+        "tokens_note": (
+            "always 0 here: the stand-in never reports usage, so token / cost budget "
+            "gates can never trip in a simulation"
+        ),
+        "nodes": nodes,
+        "edges": edges,
+        "slots": slots,
+        "warnings": warnings,
+        "notes": _dry_run_notes(),
+    }
+    return report
+
+
+def _node_is_foreach(scheduler: WorkflowScheduler, node_id: str) -> bool:
+    state = scheduler._states.get(node_id)
+    return state is not None and state.node.kind == "foreach"
+
+
+def _produced_kind(node: Any, scripted: bool) -> str:
+    if node.kind == "aggregate" and node.strategy == "collect":
+        return "bounded_projection"
+    return "script" if scripted else "stand_in"
+
+
+def _route_input_sources(
+    scheduler: WorkflowScheduler, state: Any
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """每条**数据入边**的判定文本来源（与 ``_route_verdict`` 的拼接顺序一致）。
+
+    ``_route_verdict`` 只把**非空**的 ``_node_output`` 结果拼进判定文本，所以这里也只
+    为非空值产出条目——列表顺序因此与 ``input_seen`` 的拼接顺序逐位对应。
+    """
+    sources: list[dict[str, Any]] = []
+    slot_owners: set[str] = set()
+    plan = scheduler._plan
+    if plan is None:
+        return sources, slot_owners
+    for edge in plan.data_incoming(state.node.id):
+        upstream = scheduler._states.get(edge.source)
+        if upstream is None:
+            continue
+        if not scheduler._node_output(upstream, "result"):
+            continue
+        resolved, slot_owner = _resolve_source(scheduler, upstream)
+        if slot_owner is not None:
+            slot_owners.add(slot_owner)
+        sources.append({"from": edge.source, "resolved_to": resolved})
+    return sources, slot_owners
+
+
+#: 「非正常结束」的状态集合——它们必须带一条可解释的 reason，否则调用方无从判断
+#: 「是图的问题、还是模拟本身的问题」（spec delta 的对应条款）。
+_NON_NORMAL_STATUSES = frozenset({"failed", "cancelled", "blocked", "budget_exceeded", "skipped"})
+
+
+def _terminal_reason(state: Any, result: dict) -> str | None:
+    """节点异常结束的因由；调度器没给时**合成**一条，绝不留空（spec 要求）。"""
+    if state.status == "completed" or state.status not in _NON_NORMAL_STATUSES:
+        return state.reason or state.error or None
+    reason = state.reason or state.error
+    if reason:
+        return reason
+    if result.get("status") not in (None, "completed"):
+        return (
+            f"the graph stopped early (status={result.get('status')!r}) before this node "
+            "reached a terminal state of its own"
+        )
+    return "the node ended without a reported reason"
+
+
+def _dry_run_notes() -> list[str]:
+    """边界声明（D6/R10）：**断言式**措辞，且显式区分「答得了」与「答不了」。"""
+    return [
+        "This is a SIMULATION: it makes no model calls and writes nothing to your "
+        "workspace.",
+        "It shows topology and data flow, NOT what a real model would say. Unless you "
+        "supplied a `script` override, every node output is a stand-in placeholder that "
+        "merely echoes the task text.",
+        "ANSWERABLE: structural gates (max_nodes / max_runs / recursion_limit / "
+        "max_routes) — those counters live in the scheduler itself, so whether this "
+        "graph trips them is real.",
+        "NOT ANSWERABLE: whether a real model would actually emit the label a route "
+        "expects; and whether a real run would hit its token / cost budget. A "
+        "simulation spends no tokens and no cost, so those budget gates can never trip "
+        "here.",
+        "Aggregate nodes with strategy `collect` show a bounded projection (truncated "
+        "concatenation), not the semantic compression a real LLM would produce.",
+        "`script` only affects nodes whose LLM call is the source of their output; it "
+        "has no effect on route nodes or on `collect` aggregates (they run no model).",
+    ]
+
+
+async def dry_run_workflow(
+    manager: SubAgentManager,
+    raw_spec: Any,
+    *,
+    script: dict[str, list[str]] | None = None,
+    max_report_chars: int = DRY_RUN_DEFAULT_MAX_REPORT_CHARS,
+) -> dict:
+    """模拟执行一张 workflow：零真实 LLM 调用、零落盘、零注册表污染。
+
+    **不改调度器的任何执行路径**——隔离由喂给 ``run()`` 的依赖完成（见模块注释）。
+    ``script`` 已经过 ``_normalize_script`` 规范化。
+    """
+    try:
+        spec = parse_spec_for_manager(manager, raw_spec)
+    except WorkflowValidationError as exc:
+        return {"status": "invalid_spec", "reason": str(exc)}
+
+    limit = max(int(max_report_chars), 1)
+    scripted_nodes = set(script or {})
+    llm = _DryRunLLM(script)
+
+    with tempfile.TemporaryDirectory(prefix="dryrun-") as sandbox:
+        sim_manager = SubAgentManager(
+            llm=llm,
+            config=manager.config,
+            parent_mode=getattr(manager, "parent_mode", None) or AgentMode.BUILD,
+            workspace_policy=WorkspacePolicy(workspace_root=sandbox),
+        )
+        scheduler = WorkflowScheduler(sim_manager)
+        # 私有属性依赖的构造点兜底：名字被重构掉时在这里就红，而不是静默降级。
+        assert hasattr(scheduler, "_store")
+        scheduler._store = _DryRunWorkflowStore(scheduler.workflow_id)
+        # D4b/Q6：切断 collect 聚合的 summarizer 路径。不切断时假 LLM 的回应会**顶掉**
+        # 聚合节点的产出（并翻转 route 走向）——报告会在最需要它如实的地方说谎。
+        scheduler._aggregator = WorkflowAggregator(summarizer=TruncationSummarizer())
+
+        started = time.time()
+        result = await scheduler.run(spec)
+        elapsed = time.time() - started
+
+        return _build_dry_run_report(
+            scheduler, result, spec, llm, elapsed, limit, scripted_nodes
+        )
+
+
+_DRY_RUN_DESCRIPTION = (
+    "Dry-run a workflow spec: simulate the graph to see its TOPOLOGY and DATA FLOW "
+    "without spending a token. This makes **no model calls** and writes **nothing**; "
+    "it returns what each node received, what a route actually read, and where control "
+    "flowed.\n"
+    "\n"
+    "Use it when you are unsure how a graph you are about to declare will behave: does "
+    "a foreach inject its item, does a route read the middle node's own output or an "
+    "upstream aggregate's, does a back-edge carry new text, and does the system insert "
+    "extra merge layers you did not declare. Say exactly which node's output you want "
+    "to try out with `script` (e.g. {\"critic\": \"GAPS: missing tests\"}) and the "
+    "report shows where the graph goes.\n"
+    "\n"
+    "READ THE BOUNDARY: this is a simulation, not a run.\n"
+    "- Node outputs are stand-in placeholders (they echo the task) unless you pass "
+    "`script`; they are NOT what a real model would say.\n"
+    "- It does NOT tell you whether a real run would hit its token / cost budget "
+    "(a simulation spends neither). It DOES tell you whether the structural gates "
+    "(max_nodes / max_runs / recursion_limit / max_routes) would trigger, since the "
+    "scheduler counts those itself.\n"
+    "- It returns no workflow_id: nothing here can be started or fetched later. Call "
+    "DeclareWorkflow / RunWorkflow to actually run a graph.\n"
+    "\n"
+    "`script` maps node id -> the output that node should pretend to produce: a string, "
+    "or a list of strings consumed in that node's call order (so a loop can converge "
+    "over successive laps, and a foreach can vary per item). It only affects nodes "
+    "that run a model — it does nothing for route nodes or `collect` aggregates."
+)
+
+
+@tool_parameters(
+    name="DryRunWorkflow",
+    description=_DRY_RUN_DESCRIPTION,
+    parameters={
+        "type": "object",
+        "properties": {
+            # 与 DeclareWorkflow 共用同一份派生 schema（D1：不新建第二份定义）。
+            "spec": _workflow_spec_schema(),
+            "script": {
+                "type": "object",
+                "description": (
+                    "Per-node stand-in output: node_id -> a string, or a list of "
+                    "strings consumed in that node's call order (last element repeats "
+                    "once the list is exhausted)."
+                ),
+                # 两种类型**并列**表达（值可以是标量或数组）。刻意不用顶层
+                # ``oneOf``——Anthropic 的 ``input_schema`` 拒绝它，而本仓
+                # ``parameters`` 是逐字透传；判别放在运行期（``_normalize_script``）。
+                "additionalProperties": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ]
+                },
+            },
+            "max_report_chars": {
+                "type": "integer",
+                "description": (
+                    f"Per-field character cap for the report. Defaults to "
+                    f"{DRY_RUN_DEFAULT_MAX_REPORT_CHARS}."
+                ),
+            },
+        },
+        "required": ["spec"],
+    },
+)
+class DryRunWorkflowTool(Tool):
+    """零 token 模拟执行：只读、不 spawn，因此**不进** ``SPAWN_TOOL_NAMES``（D1）。"""
+
+    read_only = True
+    permission = SUBAGENT_CONTROL_PERMISSION
+
+    def __init__(self, manager: SubAgentManager):
+        self.manager = manager
+        #: 调用计数**挂在工具实例上**（Q5）：``DryRunWorkflow`` 不持有 session，而工具
+        #: 由 ``AgentLoop`` 注册一次、跨调用存活——这是「能跨调用记数」的最小落点。
+        self._calls = 0
+
+    async def execute(self, **kwargs) -> str:
+        self._calls += 1
+        if self._calls > DRY_RUN_HARD_CALL_LIMIT:
+            return json.dumps(
+                {
+                    "status": "dry_run_limit_reached",
+                    "reason": (
+                        f"this session reached its dry-run cap of {DRY_RUN_HARD_CALL_LIMIT} "
+                        "calls — a runaway-loop backstop, not an error in your spec"
+                    ),
+                    "hint": (
+                        "stop iterating on the graph and run it for real "
+                        "(DeclareWorkflow + StartWorkflow, or RunWorkflow) to see actual "
+                        "model output"
+                    ),
+                    "calls": self._calls,
+                },
+                ensure_ascii=False,
+            )
+
+        script = _normalize_script(kwargs.get("script"))
+        if isinstance(script, str):
+            return _invalid_input(f"invalid `script`: {script}")
+
+        report = await dry_run_workflow(
+            self.manager,
+            kwargs["spec"],
+            script=script,
+            max_report_chars=kwargs.get(
+                "max_report_chars", DRY_RUN_DEFAULT_MAX_REPORT_CHARS
+            ),
+        )
+        if report.get("status") == "invalid_spec":
+            return json.dumps(report, ensure_ascii=False)
+        report["dry_run_calls_this_session"] = self._calls
+        if self._calls > DRY_RUN_SOFT_CALL_HINT:
+            report["notes"].append(
+                f"You have now dry run {self._calls} graphs in this session (soft "
+                f"limit {DRY_RUN_SOFT_CALL_HINT}). Dry runs are free, but each one is "
+                "still a tool round-trip — once the topology looks right, run the graph "
+                "for real to see what a model actually says."
+            )
+        return json.dumps(report, ensure_ascii=False)
 
 
 # --- Workflow 资产工具（change ``workflow-asset-persistence``，D7） ----------
