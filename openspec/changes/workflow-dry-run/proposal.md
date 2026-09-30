@@ -64,7 +64,7 @@
 
 - `multi-agent-collaboration`：
   - **ADDED** 新 Requirement「工作流可零成本模拟执行以暴露数据投递语义」——系统 SHALL 提供只读的 `DryRunWorkflow`，对给定 spec 做**不调用真实 LLM、不产生持久副作用**的模拟执行，SHALL 返回每个节点的 `received`/`produced`、route 的判定输入与命中、每条边的 `channel`/`control` 与节点终态，SHALL 允许调用方 `script` 指定节点输出以推演分支，SHALL 对有界性（截断）与模拟边界（不代表真实模型输出）作出显式声明。
-  - **（条件性）MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」——**仅当 Open Question Q4 选「在 `DeclareWorkflow` 描述里加指针」时**，描述 SHALL 增加一句指向 `DryRunWorkflow` 的可发现性引导；若 Q4 选「引导只放 `DryRunWorkflow` 自身描述」，则**本 change 的 spec delta 保持纯 ADDED**（无 MODIFIED 节）。**本 proposal 不预设 Q4 结论**，故当前 spec delta 无 MODIFIED 节；Q4 拍板后若需要，在实现阶段一并补入。**注**：`DeclareWorkflow` 的描述实测 **3993 字符**（守卫上界 6000，`test_workflow_tool_discoverability.py:315`），**尚有约 2000 字符余量**——加一句引导语（~60 字符）成本很低。
+  - **MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」（**用户 Q4 拍板：两处都加引导**）——描述 SHALL 增加**一句**指向 `DryRunWorkflow` 的可发现性引导（把「不确定语义时先 dry run」写进声明入口，而不是等模型自己想起来有这个工具）；完整的用法与边界说明仍由 `DryRunWorkflow` 自己的描述承担。**注**：`DeclareWorkflow` 的描述实测 **3993 字符**（守卫上界 6000，`test_workflow_tool_discoverability.py:315`），**尚有约 2000 字符余量**——加一句引导语（~60 字符）成本很低，无需压缩既有分节。
 
 ## 验收（本 change 的验收口径，**只进 proposal、不进 spec**）
 

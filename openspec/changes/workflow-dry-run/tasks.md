@@ -2,17 +2,17 @@
 
 > 实现前须完成 grill（`reviews/grill-design.md`）与**停轮确认**。测试先行（TDD）：每条实现任务先落回归/新测试再落代码。
 
-## 0. 实现前设计追问（batch-grill-me）——**未解除阻塞**
+## 0. 实现前设计追问（batch-grill-me）——**已解除阻塞**
 
-> **状态（立项时点）**：design 的 D1–D10 已成型，但 **Q1–Q6 刻意未拍板**（design 的 `## Open Questions`）。**grill-confirmation-gate 未通过，实现不得开工。**
+> **状态：grill 与停轮确认均已完成**（2026-09-30）。grill verdict = CHANGES_REQUESTED，10 条 issue 已全部回写关闭；Q1–Q6 已全部拍板并回写 design/spec/tasks。**实现可开工。**
 
-- [ ] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`（或等价设计追问），逐项审视 `design.md` 的 D1–D10，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥3 条 + `## Open Questions`）
-- [ ] 0.2 **停轮**把 Q1–Q6 逐条**配具体例子**（design 的 Open Questions 节已给出循环收敛/按项、`_store` 替换、截断上界、slots 与引导位置、防滥用设界、聚合产出语义与 input_source 六个场景）交用户确认；答复记录进 `grill-design.md` 的 `## User Confirmation`（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）
-- [ ] 0.3 按 Q1–Q6 答复回写 design（D3/D4/D4b/D5/D7/D10 + Non-Goals）与 spec delta、本任务清单
+- [x] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`（或等价设计追问），逐项审视 `design.md` 的 D1–D10，产出结构化决策记录到 `reviews/grill-design.md`（7 条 Confirmed Decisions + 4 条 Design-Level Open Questions；verdict CHANGES_REQUESTED → 10 条 issue 全部回写关闭）
+- [x] 0.2 **停轮**把 Q1–Q6 逐条**配具体例子**（design 的 Open Questions 节已给出循环收敛/按项、`_store` 替换、截断上界、slots 与引导位置、防滥用设界、聚合产出语义与 input_source 六个场景）交用户确认；答复记录进 `grill-design.md` 的 `## User Confirmation`（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）
+- [x] 0.3 按 Q1–Q6 答复回写 design（D3/D4/D4b/D5/D7/D10 + Non-Goals）与 spec delta、本任务清单（Q1 数组按调用次序、Q2 替换 `_store`、Q3 默认 800、Q4 两处都加引导+返回槽值、Q5 软提醒+硬上限、Q6 切断 summarizer+标 `input_source`）
 
 ## 1. 规格
 
-- [x] 1.1 更新 `multi-agent-collaboration` 的 spec delta（ADDED 3 条 Requirement）
+- [x] 1.1 更新 `multi-agent-collaboration` 的 spec delta（ADDED 3 条 Requirement + MODIFIED 1 条——Q4 拍板加引导指针）
 - [x] 1.2 明确本 change 的范围（proposal「What Changes」）、非目标（design「Goals / Non-Goals」）和**验收标准**（proposal「验收」节）
 - [x] 1.3 开发前使用 `batch-grill-me` 或等价设计追问审视 `design.md`（见第 0 节；不得把 agent 自己的推荐答案当作用户确认）
 - [x] 1.4 维护 `## Impact Analysis`（proposal）：列出影响、不影响和待确认影响面
@@ -23,7 +23,7 @@
 
 - [ ] 2.1 **T-1 隔离·落盘**：模拟后真实 `workspace_root` 零新增文件（F1/F6）。**变异验证**：把一次性 manager 换成真实 manager，测试必须变红（F9：W1 会往真实 workspace 写）
 - [ ] 2.2 **T-2 隔离·注册表**：真实 manager 的 `_workflows`/`_workflow_stores` 为空（F3/F6）
-- [ ] 2.2a **T-2a（仅当 Q2 选 B）**：一次性临时目录里无 `events.jsonl`/`root.txt`（G2：不选 B 时应为 8 个文件、选 B 后 6 个且不含这两个）
+- [ ] 2.2a **T-2a（Q2 已拍板选 B）**：一次性临时目录里无 `events.jsonl`/`root.txt`（G2：不选 B 时应为 8 个文件、选 B 后 6 个且不含这两个）；并加 `assert hasattr(scheduler, "_store")` 让私有属性被重构时在构造点就红
 - [ ] 2.3 **T-3 隔离·零 token**：真实 `manager.llm.chat` 调用数 = 0。**变异验证（grill I9 订正）**：不能只「换回真 LLM」——真实 manager 从不被交给 scheduler，该断言**结构性恒真**。正确的变异是「**让模拟 manager 复用真实 manager 的 `llm` 对象**」，此时测试必须变红
 - [ ] 2.4 **T-4 隔离·sink**：真实 manager 的 `graph_sink` 未被调用（F2）
 - [ ] 2.5 **T-5 数据流·received**：foreach 展开项 prompt 含 item（占位符是 `{item}` **不是 `$item`**，`scheduler.py:369-380`）；下游节点 prompt 含上游 bounded 产出
@@ -42,22 +42,22 @@
 - [ ] 2.11a **T-11a 答不了清单（R10）**：返回体/描述 SHALL 声明「token/成本预算闸不可预测」与「结构闸可预测」的区分
 - [ ] 2.12 **T-12 schema parity**：`DryRunWorkflow.spec` 的 schema 与 `DeclareWorkflow.spec` **逐字相等**
 - [ ] 2.13 **T-13 工具面**：`DryRunWorkflow` **不在** `SPAWN_TOOL_NAMES`；depth 撤工具时不撤它
-- [ ] 2.14 若 Q1 选「支持按轮次」：新增「同一节点多轮不同产出 → 循环收敛可见」测试；若选「单值」：新增「单值下环一圈不转」的负向断言（把选定行为钉死）
+- [ ] 2.14 **Q1 已拍板「数组按调用次序」**：新增「同一节点多轮不同产出 → 循环收敛可见」测试 + 「数组用尽后沿用末元素」断言 + 「数组同时覆盖 foreach 各展开项」断言
 
 ## 3. 实现
 
 - [ ] 3.1 `agent/tools/builtin/subagents.py`：新增 `_DryRunLLM`（假 LLM：回显 + 按 `current_node_id()` 支持 `script` 注入；只返回文本、不发起 tool call）
-- [ ] 3.2 **仅当 Q2 选 B**：新增 `_NullWorkflowStore`（所有写方法 no-op，`ref()` 返回假 ref）——用于替换 `scheduler._store`。**注意 W1（`manager._write_result_artifacts`）不经它**，由一次性 `workspace_root` 兜住（G2/F9）
-- [ ] 3.3 `agent/tools/builtin/subagents.py`：新增模拟驱动函数（**核心隔离手段 = 一次性 manager + 一次性 `workspace_root` + 假 LLM**；Q2 选 B 时额外替换 `scheduler._store`）
+- [ ] 3.2 **Q2 已拍板选 B**：新增 `_NullWorkflowStore`（所有写方法 no-op，`ref()` 返回假 ref）——用于替换 `scheduler._store`。**注意 W1（`manager._write_result_artifacts`）不经它**，由一次性 `workspace_root` 兜住（G2/F9）
+- [ ] 3.3 `agent/tools/builtin/subagents.py`：新增模拟驱动函数（**核心隔离手段 = 一次性 manager + 一次性 `workspace_root` + 假 LLM**；**Q2 已拍板额外替换 `scheduler._store`**）
 - [ ] 3.4 `agent/tools/builtin/subagents.py`：新增报告构造（`received`/`produced`/`input_seen`/`matched`/`walked_to`/`used_default`/`edges[].control`/`nodes[].status`/`nodes[].auto_inserted`/`simulated: true`），文本按 `max_report_chars` 截断——**不复用也不改 `NodeState.to_dict()`**。**节点枚举基于 `scheduler._plan.nodes`**（含 auto 层）并标 `auto_inserted`（见 G3）；**`received` 按 `(node_id, item_index)` 寻址**（非 foreach 节点 `item_index=null`；foreach 的 received 是按项列表）——见 G1
-- [ ] 3.4a 若 Q1 选 (b)/(c)：实现「数组按调用次序消费」的 script 语义（**须先验证「假 LLM 内如何拿到第几次调用」**——用调用序而非依赖调度器）
-- [ ] 3.4b **切断 collect 聚合的 summarizer 路径（D4b）**：把 simulated aggregator 的 summarizer 置为 `TruncationSummarizer`（既有生产兜底）——见 Q6 拍板；不碰 `scheduler.py` 执行逻辑
-- [ ] 3.4c 报告为 route 附 `input_source`（判定输入的来源节点 id）——见 S2 订正 / Q6
+- [ ] 3.4a **Q1 已拍板「数组按调用次序消费」**：实现 script 的 `str | [str]` 两形态（**假 LLM 内按节点自计数**即可拿到「第几次调用」，不依赖调度器）；schema 用「两种类型并列」写法，**不得用 `oneOf`**（`#246` RIR 实测 Anthropic 顶层 `oneOf` 受限）
+- [ ] 3.4b **Q6 已拍板：切断 collect 聚合的 summarizer 路径（D4b）**：把 simulated aggregator 的 summarizer 置为 `TruncationSummarizer`（既有生产兜底）；不碰 `scheduler.py` 执行逻辑
+- [ ] 3.4c **Q6 已拍板**：报告为 route 附 `input_source`（判定输入的来源节点 id）；聚合产出标为有界投影
 - [ ] 3.5 `agent/tools/builtin/subagents.py`：新增 `DryRunWorkflowTool`（`@tool_parameters`，`spec` 复用 `_workflow_spec_schema()`；`description` ≤2000 字符 + 断言式无副作用声明；`read_only=True`、`permission=SUBAGENT_CONTROL_PERMISSION`）
 - [ ] 3.6 `agent/loop.py`：在既有注册块加 `DryRunWorkflowTool(self.subagent_manager)`（**不加入 `SPAWN_TOOL_NAMES`**）
-- [ ] 3.7 Q5 拍板后实现调用计数（倾向 A+C 混合：软提醒 ~10 + 硬上限 ~40 + `hint`；**计数点需选在能跨调用存活的位置**——`DryRunWorkflow` 不持有 session，需确认挂在 manager 还是工具构造处）
-- [ ] 3.8 **仅当 Q4 选「返回 slots」**：报告中加截断后的 `slots` 字段（单独字段、单独截断）
-- [ ] 3.9 **仅当 Q4 选「DeclareWorkflow 加指针」**：压缩既有分节腾出余量后加一句指针（**保住既有契约文字**，不得压掉 #248 建立的 `cases`/per-kind/门控语义）
+- [ ] 3.7 实现调用计数（**Q5 拍板：A+C 混合**——软提醒 ~10 + 硬上限 ~40 + `hint`；**计数点需选在能跨调用存活的位置**——`DryRunWorkflow` 不持有 session，需确认挂在 manager 还是工具构造处）
+- [ ] 3.8 **Q4 已拍板「返回槽值」**：报告中加截断后的 `slots` 字段（独立顶层字段、单独截断、只在被 route 实际读到时展开）
+- [ ] 3.9 **Q4 已拍板「两处都加引导」**：`DeclareWorkflow` 描述加一句极短指针（余量充足，无需压缩既有分节——保住 #248 建立的 `cases`/per-kind/门控语义）
 - [ ] 3.10 如果实现中发现必须改 `scheduler.py`（破坏 D4 承诺），**先停轮**回写 Impact Analysis 与 design D4，再继续
 - [ ] 3.11 如果实现中发现 RIR 结论需要修正，先回写 Reference Implementation Research 和本任务清单
 - [ ] 3.12 更新必要文档（`docs/openspec-change-backlog.md` 入队 + 关键词扫描 `README.md`/`README_EN.md`/`docs/architecture.md` 的工具清单段落；如无事实变化则在 review 记录中说明）

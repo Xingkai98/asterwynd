@@ -25,7 +25,9 @@
 - 每条边的 `from` / `to` / `channel`，以及该边是否为控制边（route 出边）；
 - 一个显式标记该结果为模拟的字段。
 
-报告中的文本字段 SHALL 有界（按可配置上界截断），SHALL NOT 把不带截断的聚合槽全文返回。
+报告中的文本字段 SHALL 有界（按可配置上界截断，缺省上界 SHALL 为一个明确的正整数常量），SHALL NOT 把不带截断的聚合槽全文返回。被截断处 SHALL 带一个**可与调度器既有 bounded 标记区分**的标记——既有标记承诺「有 `result_ref` 可读全文」，而模拟结果没有任何可读的 ref。
+
+对聚合节点的槽值，报告 SHALL 以独立字段提供（单独截断），SHALL NOT 与节点的 `received` / `produced` 混为一层；未被任何 route 实际读取的聚合槽 SHALL NOT 展开。
 
 #### Scenario: 模拟不产生任何副作用
 
@@ -126,7 +128,17 @@
 
 未在 `script` 中指定的节点 SHALL 使用默认行为——回显其收到的任务文本并标注该产出为模拟占位，SHALL NOT 编造一个看似真实的业务产出。
 
-`script` 的键 SHALL 是节点 id；工具 SHALL 说明该参数对不产生 run 的节点（route / collect 聚合）不生效。
+`script` 的键 SHALL 是节点 id；工具 SHALL 说明该参数对**不产生节点 run**的节点（route / `collect` 聚合）不生效（注意：`collect` 聚合在模拟中 SHALL 不触发语义压缩型模型调用——见「工作流可零成本模拟执行」）。
+
+`script` 的值 SHALL 支持两种形态：单一字符串，或**字符串数组**。数组形态 SHALL 按「该节点被调用的次序」依次消费（第一个元素给第一次调用、第二个给第二次，依此类推）；轮次（循环多轮）与项（foreach 多展开项）**统一由「调用次序」表达**，SHALL NOT 引入两套相互独立的语法。当某节点被调用的次数超过其脚本数组长度时，SHALL 沿用最后一个元素。
+
+#### Scenario: 数组脚本按调用次序消费
+
+- **GIVEN** 一张含循环的图，其中某节点每轮被调用一次，调用方为该节点提供了字符串数组脚本
+- **WHEN** 调用 `DryRunWorkflow`
+- **THEN** 报告 SHALL 显示第 n 轮该节点使用了数组第 n 个元素
+- **AND** 当数组元素用尽后，后续轮次 SHALL 沿用最后一个元素
+- **AND** 统一用「调用次序」表达轮次与 foreach 项，SHALL NOT 需要调用方学习第二套语法
 
 #### Scenario: 脚本注入改变 route 走向
 
@@ -142,3 +154,18 @@
 - **WHEN** 检查该节点的 `produced`
 - **THEN** 该值 SHALL 可被识别为模拟占位
 - **AND** SHALL NOT 被呈现为真实模型产出
+
+## MODIFIED Requirements
+
+### Requirement: DeclareWorkflow 描述暴露循环契约
+
+`DeclareWorkflow` 的工具描述 SHALL 说明有限循环的契约（原有条款不变，见当前 spec），并 SHALL 在描述中指向**可零成本预演拓扑与数据流**的手段——即当模型不确定一张图会如何路由、文本如何流动时，描述 SHALL 让它知道存在 `DryRunWorkflow` 可以在不调用模型、不产生副作用的前提下先行验证。
+
+该指针 SHALL 简短（一句话量级），SHALL NOT 挤压既有的循环契约条款；`DryRunWorkflow` 自身的用法与边界说明 SHALL 由 `DryRunWorkflow` 自己的描述承担，SHALL NOT 重复写进 `DeclareWorkflow` 的描述。
+
+#### Scenario: 声明入口引导到零成本预演
+
+- **GIVEN** 模型读取 `DeclareWorkflow` 的工具描述
+- **WHEN** 它不确定自己将要声明的图会如何路由
+- **THEN** 描述 SHALL 让它知道有 `DryRunWorkflow` 可用来先行验证
+- **AND** 描述 SHALL NOT 因此丢失既有的循环契约条款（环可启动性 / 回边方向 / `max_routes` 语义）

@@ -101,7 +101,7 @@
 
 **`input_seen` 直接取 `NodeState.raw`**——它是 `_execute_route` 已经算好的**判定文本原文**（`scheduler.py:1890`：`state.raw = raw[:_SUMMARY_LIMIT]`）。这是「不新增第二份真相」的关键：报告**不重算** route 的判定输入，而是**读调度器自己用的那个值**。
 
-**不返回 `slots` 全文**（除 route 需要时）：`aggregate` 的槽是 N 份 concat 的巨型字符串，整段回给父上下文就是打爆上下文——与既有 `parent_envelope` 的 bounded 纪律冲突（见 D5）。
+**`slots` 以独立字段返回，但单独截断**（**用户 Q4 拍板**）：`aggregate` 的槽是 N 份 concat 的巨型字符串，而 route 读的正是它（实测 S2）——**不返回会让模型看到 `input_seen` 后无从追问来源**。折中是：`slots` 放在**独立顶层字段**、**单独按 `max_report_chars` 截断**、且**只在被 route 实际读到时才展开**（未被任何 route 消费的 aggregate 槽不展开），与 `received`/`produced` 分层，不与既有 `parent_envelope` 的 bounded 纪律冲突（见 D5）。
 
 **S2 的机制订正（grill 复核，须如实写）**：初稿说「上游是 aggregate 时会回退到槽值」——**表述过窄**。真实机制是 `_node_output`（`scheduler.py:2478-2486`）的三段：
 
@@ -139,7 +139,7 @@
 - **必须回显而非固定返回 `"ok"`**：固定值看不到「节点 X 收到的是 `[w1 的输出]` 还是 `[累积的所有轮次]`」——而后者正是 S3 要暴露的东西。
 - **只返回文本、不发起 tool call**——否则就不叫 dry run（会真的执行工具）。
 
-**`script` 参数（what-if 注入）**：`{"critic": "GAPS: missing tests"}`。
+**`script` 参数（what-if 注入）**：`{"critic": "GAPS: missing tests"}`；**也可以是数组**，按该节点**被调用的次序**依次消费（**用户 Q1 拍板：数组按调用次序消费**）。
 
 **为什么必须有（S4 逼出来的）**：**盲回显时 route 必走 default**（`research/prototype.py` CASE 1）——占位输出永远不匹配任何 case。于是「如果 critic 说 `GAPS`，图往哪走？」这个**最容易问出口的 what-if** 反而答不了。没有 `script`，工具只能画 happy path，价值折半。
 
@@ -152,7 +152,7 @@
 - **$\text{foreach}$ 节点：`script[node_id]` 会命中该节点的每一个展开项**（实测缺口 G1：项间不区分 node id）。**按项注入（项 A 输出 X、项 B 输出 Y）是一个未解决的设计点** → 见 Open Question Q1。
 - **是否支持「按轮次的不同输出」**（如 lap 1 说 `GAPS`、lap 3 说 `APPROVED`）→ 见 Open Question Q1。
 
-**实现位置**：`script` 映射在假 LLM 内部按 `current_node_id()` 查表（F5），**不改调度器**。要支持按轮次/按项，需在假 LLM 内额外计数（项下标可从任务的 `{index}` 渲染或调用序推断）——**仍在假 LLM 内**，仍不改调度器。**这个「怎么在不改调度器的前提下拿到项下标」是 Q1 拍板后的实现细节，须在实现时验证。**
+**实现位置**：`script` 映射在假 LLM 内部按 `current_node_id()` 查表（F5），**不改调度器**。数组的「第几次调用」在**假 LLM 内按节点计数**即可（该计数与调度器无关）——所以 Q1 选的数组语义**仍在假 LLM 内闭环**，仍不改调度器。
 
 > **占位符语法（实测订正）**：foreach 的模板占位符是 `{item}` / `{index}`（`render_item_task`，`scheduler.py:369-380`），**不是 `$item`**。本 design 早期的探针脚本误用了 `$item`，导致替换不生效——实现与测试中一律用 `{item}`。
 
@@ -199,7 +199,7 @@ design 初稿写「`_store` 是唯一的写入口」——**这是错的**。实
 - **(i) 不换 `_store`**：一次性目录里有 8 个文件（含 `events.jsonl`），真实 workspace 照样零落盘。**零私有属性依赖、零生产代码改动。**
 - **(ii) 换 `_store`（`scheduler._store = NullStore()`）**：一次性目录里只剩 6 个（W1 的），**且能显式断言「没有 workflow 事件/根结果被写出」**；代价是依赖一个私有属性名。
 
-**倾向 (ii)**——虽然真实 workspace 两种都安全，但 (ii) 让「模拟不产生任何 workflow 级 artifact」成为**可断言的显式性质**（T-1/T-2 因此更强），而私有属性依赖有机械测试兜底（R2）。**因为这个取舍变了（不再是「安全 vs 不安全」而是「更强的断言 vs 零私有依赖」），重新列为 Open Question Q2。**
+**用户 Q2 拍板：选 (ii)**——额外替换 `scheduler._store`，让「模拟不产生任何 workflow 级 artifact」成为**可断言的显式性质**。私有属性依赖由**机械测试 + `assert hasattr(scheduler, "_store")` 构造点断言**兜底（R2）；即便该属性被重构掉，降级模式也是**安全**的（退回 8 文件，真实 workspace 照样零落盘）。
 
 **隔离的完整性检查（实现时必做，见 tasks）**：模拟跑完后断言
 1. 真实 `workspace_root` **零新增文件**（F1/F6）；
@@ -225,13 +225,13 @@ design 初稿写「`_store` 是唯一的写入口」——**这是错的**。实
 - **(b) 在 dry run 里把聚合节点的预算调到极大**（如 `budget = +inf`），使 `len(merged) <= budget * CHARS_PER_TOKEN` 恒真、**永不进 summarizer**——单点、不碰生产代码，但改变了「预算」这一模拟条件（报告里的截断行为会与真实运行不同）。
 - **(c) 用一个「结构感知的假 summarizer」替换 aggregator 的 summarizer**（如 `TruncationSummarizer`，它**就是**无 LLM 时的既有兜底，`aggregation.py:88`）——`WorkflowAggregator(summarizer=TruncationSummarizer())`。**这是既有代码里现成的降级路径**，语义上正好是「没有 LLM 时怎么办」。
 
-**倾向 (c)**。理由：`TruncationSummarizer` 是**既有生产路径**（无 LLM 时的兜底），不是为模拟造的新东西；它产出的是**有界的拼接/截断**——正是 dry run 想展示的「文本怎么流」。而且 (c) 只需在构造 scheduler 后改一个属性（或 Q2 若选构造参数则一并注入），**不碰 `scheduler.py` 的执行逻辑**。**(b) 的问题**是它让报告对「预算截断」撒谎——而预算是模型需要看到的真实约束。**(a) 最差**，它让假 LLM 承担它无法可靠承担的语义。
+**用户 Q6 拍板：选 (c)**。理由：`TruncationSummarizer` 是**既有生产路径**（无 LLM 时的兜底），不是为模拟造的新东西；它产出的是**有界的拼接/截断**——正是 dry run 想展示的「文本怎么流」。而且 (c) 只需在构造 scheduler 后改一个属性，**不碰 `scheduler.py` 的执行逻辑**。**(b) 的问题**是它让报告对「预算截断」撒谎——而预算是模型需要看到的真实约束。**(a) 最差**，它让假 LLM 承担它无法可靠承担的语义。
 
-> **注意**：**(c) 使「collect 聚合的产出」在 dry run 里是截断拼接而非语义压缩**——这是**正确的模拟**（真实无 LLM 时就长这样），但报告 SHALL 说明「聚合节点的产出在此为截断投影」。**这是 Q6**（新增，见 Open Questions）。
+> **(c) 使「collect 聚合的产出」在 dry run 里是截断拼接而非语义压缩**——这是**正确的模拟**（真实无 LLM 时就长这样），报告 SHALL 说明「聚合节点的产出在此为有界投影」。**同时（Q6 后半）报告为 route 附 `input_source`**（判定输入的来源节点 id，由同一次 `_node_output` 记录），解决 S2 机制导致的「只给文本不给归属」。
 
 ### D5 — 有界性：所有文本截断，复用既有 bounded 纪律
 
-- 报告里每个文本字段按 `max_report_chars`（默认值见 Open Question Q3）截断，附 `…[+N chars]` 标记（与 `WorkflowAggregator.bounded` 的标记风格一致，`scheduler.py:2570`）。
+- 报告里每个文本字段按 `max_report_chars` 截断（**用户 Q3 拍板：默认 800 字符**，可被调用方传参覆盖），附 `…[+N chars]` 标记（**故意与既有的 `_BOUNDED_MARKER = "\n…[bounded; read the full result via result_ref]"`（`aggregation.py:67`/`101`）写法不同**——那个标记承诺「有个 `result_ref` 能读全文」，而 **dry run 没有可读的 ref**，两种标记混用会让模型去找一个不存在的 ref。初稿把标记位置误记为 `scheduler.py:2570`）。
 - **`slots` 不在默认报告里**（D2）；若 Open Question Q4 决定暴露，须**单独截断**且不与 `received` 混在一层。
 - 理由：与既有 `parent_envelope` 的 bounded 投影纪律同源（`scheduler.py:3119`）——父 agent 永远只拿 bounded 面。
 
@@ -340,15 +340,15 @@ RIR findings 1 / 4 / 7 共同指出：**本地 6 个参考仓库没有一个「�
 ### D10 — 描述预算与可发现性引导
 
 - `DryRunWorkflow` 的 `description` SHALL ≤ **2000 字符**（`DeclareWorkflow` 实测 3993；本工具是辅助工具，应更短）。新增守卫测试。
-- **主引导放在 `DryRunWorkflow` 自己的描述里**，`DeclareWorkflow` 描述只加**一句**指针。
+- **用户 Q4 拍板：两处都加**——主引导放 `DryRunWorkflow` 自己的描述，`DeclareWorkflow` 描述加**一句**极短指针（实测描述 3993/6000，余量充足，几乎零成本）。
 - 理由：`DeclareWorkflow` 描述已 3993/6000（**有余量但不多**，且每轮都发），把 dry run 的**完整**说明放过去不划算；且「不确定语义时先 dry run」这句话放在**被调用方**（`DryRunWorkflow`）比放在**声明入口**更合适——模型决定「我要不要 dry run」时，看的就是这个工具。**但既然有余量，加一句极短指针是低风险的**（见 Q4）。
-- **但「模型会不会想起来有这个工具」是不可保证的** → 见 Open Question Q4。
+- **定位**：这句话进 `DeclareWorkflow` 的 **description**，因此本 change 的 spec delta **需要一条 MODIFIED Requirement**（不是新的能力域）。
 
 ---
 
-## Open Questions（**停轮交用户确认，每条配具体例子**）
+## Open Questions（**已全部关闭**：用户 2026-09-30 逐条答复，记录见 `reviews/grill-design.md` 的 `## User Confirmation`）
 
-> 以下 **6 条**（Q1–Q6）**刻意未拍板**。grill-confirmation-gate 未通过前，实现不得开工。
+> **状态：Q1–Q6 已全部拍板**（grill-confirmation-gate 通过）。答复已回写进对应决策节（D3/D4/D4b/D5/D7/D10）与 spec delta / tasks。以下保留问题原文与选项，供追溯「为什么这么定」。
 
 ### Q1 — `script` 怎么表达「随轮次 / 随项变化」？
 
@@ -421,7 +421,7 @@ RIR findings 1 / 4 / 7 共同指出：**本地 6 个参考仓库没有一个「�
 - **方案 B（不设界）**：不限制，靠验收观察。**可能失控**（但 dry run 零 token，失控的代价只是迭代次数）。
 - **方案 C（软提醒）**：到 N 次后在报告里加一句「你已经 dry run 了 N 次，考虑直接 RunWorkflow？」。**不阻断**，只提示。
 
-**我的倾向**：**（grill I9/对 Q5 的独立意见推翻了初稿的「只软提醒」）改为 A+C 混合**——**软提醒在 ~10 次**（保护「反复调试图」这个我们要鼓励的行为），**硬上限在 ~40 次**并返回 `{"status": "dry_run_limit_reached", "reason": ..., "hint": "raise ... if intentional"}`（照抄 RIR finding 6 的 deepseek runaway-loop backstop 形态）。
+**用户 Q5 拍板：A+C 混合**（grill 对 Q5 的独立意见推翻了初稿的「只软提醒」）——**软提醒在 ~10 次**（保护「反复调试图」这个我们要鼓励的行为），**硬上限在 ~40 次**并返回 `{"status": "dry_run_limit_reached", "reason": ..., "hint": "raise ... if intentional"}`（照抄 RIR finding 6 的 deepseek runaway-loop backstop 形态）。
 
 **为什么改**：初稿倾向 C 与 **issue #273 的验收要求直接冲突**——issue 原文两处都写「**调用次数上界**」，而软提醒**没有上界**。且 D7 自己引用的 RIR finding 6 结论就是「**设界 + 可读原因 + 提高路径**」，C 恰恰省掉了第一项。**这属于「design 与自己引用的证据不自洽」，必须修正。**
 
