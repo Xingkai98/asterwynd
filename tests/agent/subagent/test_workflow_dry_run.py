@@ -27,6 +27,7 @@ import agent.tools.builtin.subagents as subagents_module
 from agent.config import AsterwyndConfig
 from agent.llm import LLMResponse, Usage
 from agent.run_config import AgentMode
+from agent.subagent.context import current_node_id
 from agent.subagent.manager import SPAWN_TOOL_NAMES, SubAgentManager
 from agent.workspace_policy import WorkspacePolicy
 from agent.tools.builtin.subagents import (
@@ -616,21 +617,43 @@ def test_collect_aggregate_output_is_a_bounded_projection(manager):
 
 
 def test_pollution_guard_is_discriminating(manager, monkeypatch):
-    """T-9a 的**变异验证**：把聚合 summarizer 换回「会回话的」替身。
+    """T-9a 的**变异验证**：把真正的 LLM summarizer 装回聚合器，产出必须被污染。
 
-    这证明主用例的断言不是恒真的——不切断 summarizer 路径时，聚合节点的产出**确实**
-    会被替身模型的回应顶掉（实测：``root.summary`` 从「两份 L 的拼接」变成
-    ``[SUMMARY-PLACEHOLDER]``）。
+    这是**最忠实**的变异形态（building-review 的 M3 教训）：审阅者指出「替换
+    ``TruncationSummarizer``」只是代理变异——若哪天 ``WorkflowAggregator`` 不再走
+    summarizer 路径，那版变异未必变红。真正要模拟的坏世界是**实现没有切断聚合路径**：
+    此时 ``WorkflowScheduler._build_summarizer()`` 会给出 ``LLMSummarizer(manager.llm)``
+    ——也就是**假 LLM**。所以这里直接让假 LLM 在「无节点身份」（= 压缩调用）时回一句
+    显眼的占位文本，并把真正的 ``LLMSummarizer`` 装回去。
     """
+    from agent.context.summarizer import LLMSummarizer
 
-    class _PollutingSummarizer:
-        async def compress(self, texts, budget):
-            return "[SUMMARY-PLACEHOLDER]"
+    # 「忘记切断」的世界里，``_build_summarizer()`` 会返回
+    # ``LLMSummarizer(manager.llm)``——而模拟 manager 的 llm 正是假 LLM。所以变异
+    # 必须把**那一个**假 LLM 装回 summarizer（不是调用方的真 LLM，那会让断言测错对象）。
+    holder: dict = {}
+    original_llm_cls = subagents_module._DryRunLLM
 
-        async def summarize(self, messages, budget):  # pragma: no cover - 未走这条
-            return "[SUMMARY-PLACEHOLDER]"
+    class _PollutingDryRunLLM(original_llm_cls):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            holder["llm"] = self
 
-    monkeypatch.setattr(subagents_module, "TruncationSummarizer", _PollutingSummarizer)
+        async def chat(self, messages, tools=None, model="gpt-4"):
+            response = await super().chat(messages, tools=tools, model=model)
+            if current_node_id() is None:  # 压缩调用：归不到节点
+                response.content = "[SUMMARY-PLACEHOLDER]"
+            return response
+
+    monkeypatch.setattr(subagents_module, "_DryRunLLM", _PollutingDryRunLLM)
+
+    original_aggregator_cls = subagents_module.WorkflowAggregator
+
+    def _unpatched_aggregator(*args, **kwargs):
+        return original_aggregator_cls(summarizer=LLMSummarizer(holder["llm"]))
+
+    monkeypatch.setattr(subagents_module, "WorkflowAggregator", _unpatched_aggregator)
+
     report = _dry_run(
         manager,
         {
@@ -651,8 +674,10 @@ def test_pollution_guard_is_discriminating(manager, monkeypatch):
     )
 
     assert "[SUMMARY-PLACEHOLDER]" in json.dumps(report), (
-        "变异体没有污染聚合产出——主用例的「有界投影」断言无法区分「切断生效」与「没走到」"
+        "不切断聚合路径时也没被污染——主用例的「有界投影」断言无法区分「切断生效」与「没走到」"
     )
+    # 污染同时留下不可归因调用——这正是 F4a 的第二个症状。
+    assert report["unattributed_llm_calls"] >= 1
 
 
 def test_report_has_no_unattributable_calls(manager):
@@ -732,18 +757,45 @@ def test_dry_run_schema_matches_declare_workflow_exactly():
 
 
 def test_script_schema_avoids_top_level_one_of():
-    """``script`` 的两种形态用「并列类型」表达，且不引入顶层 ``oneOf``。
+    """``script`` 的两种形态用「并列类型」表达，且**顶层**不出现 ``oneOf``/``anyOf``/``allOf``。
 
-    Anthropic API 拒绝顶层 ``oneOf``/``anyOf``/``allOf`` 的 ``input_schema``（#246 RIR
-    实测），而本仓 ``parameters`` 是逐字透传——所以两个形态必须并列在同一层。
+    Anthropic API 拒绝顶层判别联合的 ``input_schema``（#246 RIR 实测），而本仓
+    ``parameters`` 是逐字透传 ``input_schema``——所以 ``oneOf`` 绝不能出现在顶层。
     """
     schema = DryRunWorkflowTool.parameters
-    assert "oneOf" not in json.dumps(schema)
-    assert "anyOf" not in schema and "allOf" not in schema
+    # 顶层三条禁令：任何一条都足以让 Anthropic 直接拒绝整份 input_schema。
+    assert not ({"oneOf", "anyOf", "allOf"} & set(schema))
 
     value_schema = schema["properties"]["script"]["additionalProperties"]
     assert {"type": "string"} in value_schema["anyOf"]
     assert {"type": "array", "items": {"type": "string"}} in value_schema["anyOf"]
+
+
+def test_script_schema_uses_no_anyof_outside_the_one_union():
+    """I-2（building-review）：``anyOf`` 的**唯一**允许位置是 ``script`` 的值那儿。
+
+    审阅指出「顶层禁令」这条纪律容易被读成「任何地方都不许 anyOf」，而实现里
+    ``script.additionalProperties`` 确实用了嵌套 ``anyOf``（标量 or 数组——这是
+    schema 层表达「两种类型并列」的自然写法，且 Anthropic 的限制只针对**顶层**）。
+    本用例把这个**有意为之的例外**钉成单点：多出第二个 ``anyOf`` 就会红，
+    逼迫后来者显式决定「是不是又要引入一个判别联合」。
+    """
+    def _anyof_paths(node, path=()):
+        found = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "anyOf":
+                    found.append(".".join((*path, key)))
+                found.extend(_anyof_paths(value, (*path, str(key))))
+        elif isinstance(node, list):
+            for index, item in enumerate(node):
+                found.extend(_anyof_paths(item, (*path, str(index))))
+        return found
+
+    paths = _anyof_paths(DryRunWorkflowTool.parameters)
+    assert paths == ["properties.script.additionalProperties.anyOf"], (
+        f"`anyOf` 只允许出现在 script 的值类型处，实际出现在：{paths}"
+    )
 
 
 def test_tool_surface_keeps_dry_run_out_of_the_spawn_gate(manager):
@@ -807,6 +859,79 @@ def test_script_array_covers_each_foreach_item(manager):
         "out-c",
     ]
     assert len(fan["received"]) == 3
+
+
+def test_script_for_a_node_that_runs_no_model_is_reported_as_ineffective(manager):
+    """改进项 I-1（building-review）：``script`` 对不产生 run 的节点**不得**被标成生效。
+
+    报告自己的 ``notes`` 明说 ``script`` 对 route / ``collect`` 聚合无效——若 ``script_applied``
+    仍标 ``true``，两处自相矛盾，模型会以为注入生效了（D3/R5 要防的正是这个）。
+    **变异验证**：把判定改回 ``node.id in scripted_nodes``（不看是否真被调用）→ 本条必红。
+    """
+    report = _dry_run(
+        manager,
+        S1_SPEC,
+        script={
+            "mid": "GAPS",  # 真的跑了 → 生效
+            "gate": "whatever",  # route：不产生 run → 无效
+            "nonexistent": "nope",  # 图里根本没有这个节点 → 无效
+        },
+    )
+
+    # 生效的照常标记。
+    assert _node(report, "mid")["script_applied"] is True
+    assert _node(report, "mid")["produced_kind"] == "script"
+    # 没生效的**不**标 script_applied，且产出不被标成 script。
+    gate = _node(report, "gate")
+    assert "script_applied" not in gate
+    assert gate["produced_kind"] == "stand_in"
+    # 两条无效注入都要在 warnings 里说清原因（不是静默）。
+    joined = " ".join(report["warnings"])
+    assert "'gate'" in joined and "runs no model" in joined
+    assert "'nonexistent'" in joined and "no node with that id" in joined
+
+    # collect 聚合同理：它只搬文本，注入无效。
+    collect = _dry_run(
+        manager,
+        {
+            "goal": "g",
+            "nodes": [
+                {"id": "a", "kind": "subagent", "task": "TASK-A"},
+                {"id": "root", "kind": "aggregate", "strategy": "collect"},
+            ],
+            "edges": [{"from": "a", "to": "root", "reducer": "concat"}],
+            "terminal": ["root"],
+        },
+        script={"root": "IGNORED"},
+    )
+    root = _node(collect, "root")
+    assert "script_applied" not in root
+    assert root["produced_kind"] == "bounded_projection"
+    assert any("'root'" in w and "runs no model" in w for w in collect["warnings"])
+
+
+def test_script_for_an_llm_aggregate_does_apply(manager):
+    """``llm`` 策略的聚合会真的跑模型——``script`` 对它**是**生效的（并入 I-1 的判据）。"""
+    report = _dry_run(
+        manager,
+        {
+            "goal": "g",
+            "nodes": [
+                {"id": "a", "kind": "subagent", "task": "TASK-A"},
+                {"id": "b", "kind": "subagent", "task": "TASK-B"},
+                {"id": "sum", "kind": "aggregate", "strategy": "llm"},
+            ],
+            "edges": [
+                {"from": "a", "to": "sum", "reducer": "concat"},
+                {"from": "b", "to": "sum", "reducer": "concat"},
+            ],
+            "terminal": ["sum"],
+        },
+        script={"sum": "SYNTHESISED"},
+    )
+    node = _node(report, "sum")
+    assert node["script_applied"] is True
+    assert node["produced"] == "SYNTHESISED"
 
 
 def test_script_forms_are_validated_at_runtime():

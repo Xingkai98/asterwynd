@@ -1524,6 +1524,12 @@ def _build_dry_run_report(
             }
         )
 
+    # 真正**消费过 script** 的节点 = 既在 script 里、又真的发过 LLM 调用的节点。
+    # 只判断 ``node.id in scripted_nodes`` 会给 route / collect 聚合误标
+    # ``script_applied: true``——而报告自己的 notes 明说 `script` 对它们无效，
+    # 两处自相矛盾，模型会以为注入生效了（D3/R5 要防的正是这个）。
+    called_nodes = {node_id for node_id, _, _, _ in llm.calls if node_id is not None}
+
     slot_reads: dict[str, set[str]] = {}
     warnings: list[str] = []
     nodes: list[dict[str, Any]] = []
@@ -1531,6 +1537,7 @@ def _build_dry_run_report(
         state = scheduler._states.get(node.id)
         if state is None:
             continue
+        script_applied = node.id in scripted_nodes and node.id in called_nodes
         entry: dict[str, Any] = {
             "id": node.id,
             "kind": node.kind,
@@ -1538,13 +1545,13 @@ def _build_dry_run_report(
             "runs": state.runs,
             "auto_inserted": node.id in inserted,
             "produced": _clip_text(state.summary, limit),
-            "produced_kind": _produced_kind(node, node.id in scripted_nodes),
+            "produced_kind": _produced_kind(node, script_applied),
             "received": received_by_node.pop(node.id, []),
         }
         reason = _terminal_reason(state, result)
         if reason:
             entry["reason"] = _clip_text(reason, limit)
-        if node.id in scripted_nodes:
+        if script_applied:
             entry["script_applied"] = True
         if node.kind == "foreach":
             entry["items_expanded"] = state.items
@@ -1573,6 +1580,23 @@ def _build_dry_run_report(
     # 没被切断，报告的一部分会不可归因。
     for node_id, entries in received_by_node.items():
         unattributed += len(entries)
+
+    # 没生效的 script 必须**说出来**（D3/R5）：静默无效果正是「注入了却以为生效」的
+    # 成因。这里逐条给可行动的原因，而不是留一个 ``script_applied: false`` 让调用方猜。
+    plan_by_id = {node.id: node for node in plan.nodes}
+    for node_id in sorted(scripted_nodes - called_nodes):
+        node = plan_by_id.get(node_id)
+        state = scheduler._states.get(node_id)
+        if node is None:
+            why = "there is no node with that id in the execution plan"
+        elif not _node_runs_a_model(node):
+            why = (
+                "that node kind runs no model, so it produces no output of its own "
+                "(route nodes just pick a branch; a `collect` aggregate just merges text)"
+            )
+        else:
+            why = f"it never ran (status={state.status if state else 'absent'})"
+        warnings.append(f"`script` for node {node_id!r} had no effect: {why}")
 
     edges = [
         {
@@ -1630,6 +1654,16 @@ def _build_dry_run_report(
 def _node_is_foreach(scheduler: WorkflowScheduler, node_id: str) -> bool:
     state = scheduler._states.get(node_id)
     return state is not None and state.node.kind == "foreach"
+
+
+def _node_runs_a_model(node: Any) -> bool:
+    """该节点会不会真的产生一次 LLM 调用（决定 ``script`` 对它有没有效果）。"""
+    if node.kind == "route":
+        return False
+    if node.kind == "aggregate":
+        # ``collect`` 是纯逻辑聚合；``llm``（含自动插入的汇合层）会真的跑。
+        return node.strategy == "llm"
+    return True  # subagent / foreach（后者展开项各跑一次）
 
 
 def _produced_kind(node: Any, scripted: bool) -> str:

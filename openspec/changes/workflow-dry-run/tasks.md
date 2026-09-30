@@ -62,6 +62,13 @@
 - [x] 3.11 如果实现中发现 RIR 结论需要修正，先回写 Reference Implementation Research 和本任务清单
 - [x] 3.12 更新必要文档（`docs/openspec-change-backlog.md` 入队 + 关键词扫描 `README.md`/`README_EN.md`/`docs/architecture.md` 的工具清单段落；如无事实变化则在 review 记录中说明）
 
+## 3b. 审阅闭环修复（`/review-loop` Round 1 → Round 2）
+
+- [x] 3b.1 **I-1（中）`script_applied` 对不产生 run 的节点误标**：判定从 `node.id in scripted_nodes` 改为「在 script 里 **且** 真的发过 LLM 调用」；对未生效的注入（route / `collect` 聚合 / 图中不存在的 id / 从未跑的节点）逐条推 `warnings` 给可行动原因，不再静默。回归测试 `test_script_for_a_node_that_runs_no_model_is_reported_as_ineffective` + `test_script_for_an_llm_aggregate_does_apply`（变异验证：改回旧判定必红）
+- [x] 3b.2 **I-2（低）`anyOf` 纪律未钉死**：把「顶层禁令」与「唯一允许的嵌套位置」分开断言——`test_script_schema_uses_no_anyof_outside_the_one_union` 钉死 `anyOf` 只允许出现在 `script.additionalProperties`，多出第二个就红
+- [x] 3b.3 **M3 变异形态升级（审阅者指出代理变异不够忠实）**：`test_pollution_guard_is_discriminating` 改为把**假 LLM** 装回 `LLMSummarizer`（即「忘记切断」的真实世界），并断言同时出现不可归因调用（F4a 的第二个症状）
+- [x] 3b.4 **I-3（低）**：审阅尝试构造却未复现的假设性风险，不改实现；已在 building-review.md 记为已知局限
+
 ## 4. 端到端验收（本 change 的唯一有效性证据）
 
 - [ ] 4.1 **清空全局资产库** `~/.asterwynd/projects/<hash>/workflow-assets/`；**每次 rollout 之间 quarantine 记忆**（`MemoryIndexSource` 污染会让 S0 假达标，#248 踩过）
