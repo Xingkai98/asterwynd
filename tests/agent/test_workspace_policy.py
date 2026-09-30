@@ -353,3 +353,98 @@ def test_is_sensitive_root_allows_ordinary_dirs(tmp_path):
     ordinary.mkdir()
     assert is_sensitive_root(ordinary) is False
     assert is_sensitive_root(tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
+# 敏感 dot 名的单一谓词（design D12，tasks 2.9–2.12）
+#
+# 这些测试锁的是「读 / 写两侧共用同一份判定」——谓词住在
+# `is_sensitive_dot_name`，`is_denied` 消费它，文件工具与护栏都必须一致。
+# 对照组（.env.local deny ↔ .env.example allow）两边都断言，防恒真。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env",
+        ".env.local",
+        ".env.production",
+        ".env.development",
+        ".env.test",
+        ".env.staging",
+        ".env.secret",
+        ".env.keys",
+        ".env.bak",
+        ".env.old",
+        "sub/.env",
+        "config/.env.local",
+        # 复合后缀：含非模板词 ⇒ 凭据
+        ".env.example.local",
+        ".env.local.example",
+        ".env.production.sample",
+        ".env.j2",
+        ".env.example.bak",
+    ],
+)
+def test_env_credential_variants_denied(tmp_path, path):
+    """凭据变体的读写两侧都被拒（tasks 2.11 的回归基线：改前这些**全部 allow**）。"""
+    policy = WorkspacePolicy(tmp_path)
+    with pytest.raises(PermissionError):
+        policy.assert_write_allowed(path)
+    with pytest.raises(PermissionError):
+        policy.assert_read_allowed(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env.example",
+        ".env.sample",
+        ".env.template",
+        ".env.dist",
+        ".env.defaults",
+        ".env.tpl",
+        "config/.env.example",
+    ],
+)
+def test_env_templates_allowed_both_sides(tmp_path, path):
+    """模板读写两侧都放行（tasks 2.12；对照组，防「一律拒」的恒真实现）。"""
+    policy = WorkspacePolicy(tmp_path)
+    assert policy.assert_write_allowed(path) == (tmp_path / path).resolve()
+    assert policy.assert_read_allowed(path) == (tmp_path / path).resolve()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [".envrc", ".environment", "app.env", "config.env", "my.env", ".env2", ".env-file", "environment"],
+)
+def test_env_lookalikes_unaffected(tmp_path, path):
+    """非 `.env.` 前缀的名字不落入该判定，收窄不得引入误报。"""
+    policy = WorkspacePolicy(tmp_path)
+    assert policy.assert_write_allowed(path) == (tmp_path / path).resolve()
+    assert policy.assert_read_allowed(path) == (tmp_path / path).resolve()
+
+
+def test_env_template_predicate_is_the_single_definition(tmp_path):
+    """谓词只有一份：`is_sensitive_dot_name` 与 policy 的读写判定同源（D9/D12）。
+
+    变异验证对应：若把 `ENV_TEMPLATE_WORDS` 的某个词改坏，本测试与上面两组
+    参数化用例必须变红（人肉执行的变异记录见 commit message / 报告）。
+    """
+    from agent.workspace_policy import (
+        ENV_TEMPLATE_WORDS,
+        is_env_sensitive_name,
+        is_env_template_name,
+        is_sensitive_dot_name,
+    )
+
+    # 判据是「每一段都是模板词」，不是「后缀出现在清单里」
+    assert is_env_template_name(".env.example") is True
+    assert is_env_template_name(".env.example.local") is False
+    assert is_env_sensitive_name(".env") is True
+    assert is_env_sensitive_name(".env.example") is False
+    assert is_sensitive_dot_name(".env.local") is True
+    assert is_sensitive_dot_name(".env.example") is False
+    # 模板词表本身有内容（防止「清空词表让一切成凭据」的伪实现）
+    assert {"example", "sample", "template"} <= ENV_TEMPLATE_WORDS
