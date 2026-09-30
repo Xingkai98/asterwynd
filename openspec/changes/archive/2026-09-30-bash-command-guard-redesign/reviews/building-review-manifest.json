@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "bash-command-guard-redesign",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a9347ed7190dfde82",
+  "base_sha": "e0e3c870eb46ee02e6f682ef2abd3d1822e2ae29",
+  "head_sha": "04a6da7cd2957c6b0fd127179092d4fae1aa7477",
+  "tasks_hash": "sha256:660c8e9763509a3deee16947380ef24fe5ec2cc87def614897eeb984c7cd5275",
+  "spec_hash": "sha256:e7ea12b7ac759d79c8cb8afe8c2445db2bc7471e3f6a8eba681a4511e9f49973",
+  "diff_hash": "sha256:2b8ce175a92bc8426d73cc07f0400466acb6a69105bb4545309a904197b09b8d",
+  "report_hash": "sha256:877ee128b31d07354dca6e13f0e99ca58153d079016130fc98c5dce33cdbdedc"
+}

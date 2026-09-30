@@ -28,22 +28,75 @@ import re
 from enum import Enum
 from pathlib import Path
 
-from agent.workspace_policy import DEFAULT_DENYLIST
+from agent.tools.bash_ir import (
+    INTERPRETERS,
+    BashAnalysis,
+    Segment,
+    analyze,
+    is_interpreter,
+)
+from agent.workspace_policy import (
+    DEFAULT_DENYLIST,
+    is_sensitive_dot_name,
+)
+
+#: Commands whose target an evaluator judges. A launcher "conceals" a real
+#: command when one of these follows the unknown prefix (Q4 = (c')).
+_WRITE_COMMANDS = frozenset({"rm", "mv", "cp", "install", "chmod", "curl", "wget", "dd", "tee"})
+#: The subset that actually writes to a target position.
+_TARGET_COMMANDS = frozenset({"rm", "mv", "cp", "install", "chmod", "dd", "tee"})
+#: Commands whose argument is a command line to be evaluated (`eval '…'`).
+_PAYLOAD_COMMANDS = frozenset({"eval"})
+#: Launchers: they run their remaining argv, so they are stripped before judging.
+_LAUNCHERS = frozenset(
+    {
+        "sudo", "doas", "nice", "flock", "chroot", "setsid", "timeout", "stdbuf",
+        "taskset", "xargs", "busybox", "watch", "strace", "ltrace", "ionice",
+        "chrt", "systemd-run", "runuser", "setarch", "setpriv", "nsenter",
+        "unshare", "script", "perf", "env", "command", "nohup",
+    }
+)
+#: Launcher options that consume the following token as their value. Kept small
+#: and explicit: under-stripping leaves a token that reaches the strategy layer
+#: (safe -> ask), while over-stripping can swallow the real command (unsafe).
+_LAUNCHER_OPTS_WITH_VALUE = {
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "-n", "-p"},
+    "chrt": {"-p"},
+    "flock": {"-w", "-E"},
+    "timeout": {"-k", "-s", "--signal", "--kill-after"},
+    "stdbuf": {"-i", "-o", "-e"},
+    # `-d`/`--differences` highlights updates and takes NO value; listing it
+    # here made the stripper swallow the real command (`watch -d cp x y`).
+    "watch": {"-n"},
+    "strace": {"-o", "-e", "-p", "-s"},
+    "ltrace": {"-o", "-e", "-p", "-s"},
+    "script": {"-c", "-t"},
+    "runuser": {"-u", "-g", "-s"},
+    "setpriv": {"--reuid", "--regid", "--ruid", "--rgid", "--groups"},
+    "systemd-run": {"-u", "--unit", "-p", "--property", "--slice"},
+    "perf": {"-e", "-o"},
+    "nsenter": {"-t", "--target", "-S", "-G", "--wd"},
+    "unshare": {"--propagation", "--setgroups"},
+    "xargs": {"-n", "-I", "-P", "-s", "-d", "-E", "-a"},
+}
+#: Launchers whose `-c` / `--command` option takes the command to run as its
+#: value (`script -c '<cmd>'`). Scoped **per launcher**: the same flag means
+#: something else elsewhere (`ionice -c 2` is a scheduling class, `grep -c` a
+#: count, `cut -c` a column list), so a global `-c` rule would both swallow
+#: real commands and deny ordinary searches.
+_LAUNCHER_COMMAND_OPTION = {
+    "script": frozenset({"-c", "--command"}),
+}
+#: Launchers that take one positional value before the command they run
+#: (`timeout <duration> <cmd>`, `chrt <priority> <cmd>`).
+_LAUNCHER_POSITIONAL_VALUE = frozenset({"timeout", "chrt"})
 
 # Protected paths: writing to these is always denied.
 _DENY_PATHS = ("/etc", "/proc", "/sys", "/dev", "/root", "/boot", "/var")
 # Device files that are black-hole / std-stream aliases rather than protected
 # assets. Only exempt for redirection and mv/cp targets (fix-issue-247 Q2/Q3).
 _DEVICE_EXEMPT = ("/dev/null", "/dev/stdout", "/dev/stderr")
-# Dot-directories carrying credentials or repo metadata. Compared per path
-# **segment** (never by prefix), so `.gitignore` / `.github/` / `.env.example`
-# pass while `.git/config` and `src/.git/hooks/x` are caught.
-_SENSITIVE_DOTDIRS = frozenset(
-    {".git", ".ssh", ".env", ".aws", ".gnupg", ".kube", ".docker", ".netrc", ".npmrc", ".pypirc"}
-)
-_SENSITIVE_DOTFILES = frozenset(
-    {".env", ".netrc", ".npmrc", ".pypirc", ".gitconfig", ".git-credentials"}
-)
 
 
 def _normalize_path(path: str) -> str:
@@ -159,14 +212,30 @@ def _shell_dash_c_payloads(tokens: list[str]) -> list[str]:
     # so its value is itself a command line. `_strip_wrappers` deliberately
     # leaves the option in the stream for this case (review Round 4 I-3).
     for i, token in enumerate(tokens):
-        if token in _SPLIT_STRING_OPTS and i + 1 < len(tokens):
+        matched, attached = _match_option_value(token, _SPLIT_STRING_OPTS)
+        if not matched:
+            continue
+        if attached is not None:
+            payloads.append(_dequote(attached))
+        elif i + 1 < len(tokens):
             payloads.append(tokens[i + 1])
     stripped = _strip_wrappers(tokens)
-    if len(stripped) < 3 or stripped[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
+    # `len < 2` rather than `< 3`: `bash -c'…'` is only two tokens (the option
+    # and its attached value are one), and the old bound silently skipped it.
+    if len(stripped) < 2 or stripped[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
         return payloads
     index = 1
     while index < len(stripped):
-        if _DASH_C_FLAG.fullmatch(stripped[index]):
+        token = stripped[index]
+        # Attached spelling `-c'<cmd>'`: the option and the payload are one
+        # token, so match the `-c` prefix rather than the whole token.
+        attached = _dash_c_attached_value(token)
+        if attached is not None:
+            if attached.strip():
+                payloads.append(_normalize_option_value(attached))
+            index += 1
+            continue
+        if _DASH_C_FLAG.fullmatch(token):
             end = next(
                 (
                     i
@@ -215,20 +284,297 @@ def _strip_wrappers(tokens: list[str]) -> list[str]:
     return tokens[index:]
 
 
+def _strip_to_fixpoint(argv: list[str]) -> tuple[list[str], str | None]:
+    """Strip wrappers and launchers **alternating to a fixpoint** (design D8).
+
+    Returns ``(rest, unknown)``. ``unknown`` is the leading token when it is not
+    a wrapper, a launcher, or a judged command -- i.e. a token that *might* be a
+    launcher concealing a real command further along.
+    """
+    rest = list(argv)
+    changed = True
+    while changed and rest:
+        changed = False
+        name = rest[0].rsplit("/", 1)[-1]
+        if name in ("env", "command", "nohup"):
+            index = 1
+            while index < len(rest) and rest[index].startswith("-"):
+                if rest[index] in ("-u", "--unset", "-C", "--chdir", "-S", "--split-string"):
+                    index += 1
+                index += 1
+            while index < len(rest) and (
+                (("=" in rest[index]) and not rest[index].startswith("-")) or rest[index] == "--"
+            ):
+                index += 1
+            rest = rest[index:]
+            changed = True
+            continue
+        if name in _LAUNCHERS and name not in _WRITE_COMMANDS:
+            stripped, _ = _strip_one_launcher(rest)
+            if stripped is None or stripped == rest:
+                break
+            rest = stripped
+            changed = True
+            continue
+
+    if not rest:
+        return rest, None
+    head = rest[0].rsplit("/", 1)[-1]
+    if head in _WRITE_COMMANDS or head in _LAUNCHERS or head in INTERPRETERS or head in _PAYLOAD_COMMANDS:
+        return rest, None
+    return rest, head
+
+
+def _strip_one_launcher(rest: list[str]) -> tuple[list[str] | None, str | None]:
+    """Strip a single leading launcher from ``rest``. Returns ``(rest', None)``.
+
+    The single step shared by `_strip_to_fixpoint` (which applies it until it
+    stops changing) and `_concealed_command_texts` (which walks the chain
+    looking for command-taking options at each level).
+
+    When the launcher takes the command as an option value (`script -c '<cmd>'`),
+    the value becomes the new head so the ordinary argument walks judge it.
+    """
+    if not rest:
+        return rest, None
+    name = rest[0].rsplit("/", 1)[-1]
+    command_options = _LAUNCHER_COMMAND_OPTION.get(name, frozenset())
+    takes_value = _LAUNCHER_OPTS_WITH_VALUE.get(name, set())
+    index = 1
+    while index < len(rest) and rest[index].startswith("-"):
+        if rest[index] in command_options:
+            return rest[index + 1:], None
+        if rest[index] in takes_value:
+            index += 1
+        index += 1
+    # Some launchers take a positional value before the command
+    # (`timeout <duration> <cmd>`, `chrt <prio> <cmd>`).
+    if name in _LAUNCHER_POSITIONAL_VALUE:
+        index += 1
+    return rest[index:], None
+
+
+def _concealed_command_texts(argv: list[str]) -> list[str]:
+    """Every command a launcher passes via a command-taking option.
+
+    `script -c '<cmd>'` runs its `-c` value, and repeated `-c` means the *last*
+    one wins -- so `script -c 'ls' -c 'cp x .env'` must be judged on `'cp x .env'`
+    (all occurrences are returned; judging only the first would fail open).
+
+    Scans **every** launcher stripped along the way, not just `argv[0]`: a
+    leading wrapper (`nice script -c '…'`) must not hide the payload. Scoped per
+    launcher, because `-c` is a command only for `script`, not for `grep`
+    (count), `cut` (columns) or `ionice` (class).
+    """
+    payloads: list[str] = []
+    # Look for the launcher's option **anywhere**, as an adjacent pair. Walking
+    # the strip chain instead would require knowing every launcher's arity
+    # (`flock <file> cmd`, `chroot <dir> cmd`, `taskset -c <mask> cmd`, `perf
+    # <subcommand> cmd`, `chrt -p <prio> cmd`), and any arity the table gets
+    # wrong silently blinds the check -- `nice script -c '…'` regressed exactly
+    # that way. The adjacent `(launcher, option)` pair is what the shell sees.
+    for index, token in enumerate(argv):
+        name = token.rsplit("/", 1)[-1]
+        command_options = _LAUNCHER_COMMAND_OPTION.get(name)
+        if not command_options:
+            continue
+        # Consume this launcher's options, collecting every command-taking one
+        # (repeated `-c` means the last wins, so all are judged).
+        cursor = index + 1
+        while cursor < len(argv) and argv[cursor].startswith("-"):
+            matched, attached = _match_option_value(argv[cursor], command_options)
+            if matched:
+                if attached is not None:
+                    payloads.append(_normalize_option_value(attached))
+                elif cursor + 1 < len(argv):
+                    payloads.append(_dequote(argv[cursor + 1]))
+                cursor += 1 if attached is not None else 2
+                continue
+            if argv[cursor] in _LAUNCHER_OPTS_WITH_VALUE.get(name, set()):
+                cursor += 1
+            cursor += 1
+    return payloads
+
+
+def _conceals_judged_command(rest: list[str]) -> bool:
+    """True when a judged command sits behind the (unknown) leading token.
+
+    Q4 = (c'): `nsenter -t 1 cp x y` asks because `cp` follows the unknown
+    prefix; `terraform plan` does not, because nothing the guard judges follows.
+
+    The scan covers the **whole** remainder, not a fixed-size window: a padding
+    of filler tokens (`weird a b c d cp x .env`) must not push the real command
+    out of view. Only *unquoted* tokens count -- a quoted token is data unless
+    an option explicitly says its value is a command (`_concealed_command_text`).
+    """
+    for index, token in enumerate(rest):
+        if token and token[0] in ("'", '"'):
+            continue
+        name = token.rsplit("/", 1)[-1]
+        if name in _WRITE_COMMANDS or name in _PAYLOAD_COMMANDS:
+            return True
+        # An interpreter only runs a command here when given one as a string
+        # (`sh -c '<cmd>'`). A bare `python` argument does not: `uv run python
+        # -m pytest` is an ordinary command, not a concealed one.
+        if name in INTERPRETERS and any(
+            _DASH_C_FLAG.fullmatch(rest[i]) for i in range(index + 1, min(index + 3, len(rest)))
+        ):
+            return True
+    return False
+
+
+def _mask_data_heredocs(command: str, analysis: BashAnalysis) -> str:
+    """Blank the bodies of heredocs that are stdin DATA, for the literal scan.
+
+    A body bound to a non-interpreter (`cat <<EOF … EOF`) is a document; text
+    inside it that happens to look like a denylisted command must not be read
+    as one. Interpreter-bound bodies are left untouched -- they are code, and
+    are judged by the evaluator channel anyway.
+    """
+    masked = command
+    for heredoc in analysis.heredocs:
+        if heredoc.bound_to_interpreter or not heredoc.body:
+            continue
+        masked = masked.replace(heredoc.body, "\n" * heredoc.body.count("\n"))
+    return masked
+
+
+#: `-c<value>` / `-lc<value>`: a dash-c flag cluster with the payload attached.
+#: The tokenizer has already removed the quotes, so `-c'cp x .env'` arrives as
+#: `-ccp x .env` and the value is everything after the final option letter.
+_DASH_C_ATTACHED = re.compile(r"-[A-Za-z]*c(?P<value>\S.*)\Z", re.S)
+
+
+def _dash_c_attached_value(token: str) -> str | None:
+    """The attached payload of a shell `-c` flag spelled without a space.
+
+    `bash -c'cp x .env'` reaches the guard as the single token `-ccp x .env`, so
+    the separated-form check (`_DASH_C_FLAG.fullmatch`) misses it and the payload
+    would never be judged. Only non-whitespace values match, so a bare `-c`
+    flag still goes down the separated path.
+    """
+    match = _DASH_C_ATTACHED.match(token)
+    return _normalize_option_value(match.group("value")) if match else None
+
+
+def _match_option_value(token: str, options: frozenset[str] | set[str]) -> tuple[bool, str | None]:
+    """Match a launcher option that takes a value, in either spelling.
+
+    Returns ``(matched, value)``. Handles the attached form
+    (``-c'<cmd>'`` / ``--command=…``) as well as the separated one
+    (``-c '<cmd>'``), because tree-sitter keeps ``-c'x'`` as a single token and
+    an exact comparison would miss it entirely.
+    """
+    for option in options:
+        if token == option:
+            return True, None                       # value is the next token
+        if token.startswith(option + "="):
+            return True, token[len(option) + 1:]
+        # Attached short option: `-c'…'`, `-c"…"` (the value follows directly).
+        if token.startswith(option) and len(token) > len(option):
+            return True, token[len(option):]
+    return False, None
+
+
+def _normalize_option_value(value: str) -> str:
+    """Normalize a just-extracted option value.
+
+    Strips one leading `=` (the `-c=<cmd>` spelling; the shell rejects it, but a
+    payload that *looks* like a sensitive command must not be waved through on
+    the strength of a spelling detail) and then one layer of quotes.
+    """
+    value = value.strip()
+    if value.startswith("="):
+        value = value[1:].lstrip()
+    return _dequote(value)
+
+
+def _dequote(token: str) -> str:
+    """Drop one layer of surrounding single/double quotes from an IR token.
+
+    The IR keeps the source spelling, so a `-c 'cp x .env'` payload arrives
+    including its quotes; parsing it as a command line then sees a single
+    quoted word instead of the command inside.
+    """
+    token = token.strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
+
+
+def _source_of(args: list[str]) -> str | None:
+    """The SOURCE argument of `mv`/`cp`/`install` (design D2's read side).
+
+    Option flags are skipped, and options that consume a value (`-t <dir>`,
+    `-m <mode>`, `--target-directory=<dir>`) do not leak their value as the
+    source. Returns the first real positional argument.
+    """
+    value_options = {
+        "-t", "--target-directory", "-m", "--mode", "-S", "--suffix",
+        "-o", "--owner", "-g", "--group",
+    }
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token == "--":
+            index += 1
+            break
+        if token.startswith("-"):
+            if token in value_options:
+                index += 2
+                continue
+            index += 1
+            continue
+        return token
+    return args[index] if index < len(args) else None
+
+
+def _write_target_of(name: str, args: list[str]) -> str | None:
+    """The write target of a judged command, honouring option-carried targets."""
+    if name in ("mv", "cp", "install"):
+        for index, token in enumerate(args):
+            if token in ("-t", "--target-directory") and index + 1 < len(args):
+                return args[index + 1]
+            if token.startswith("--target-directory="):
+                return token.split("=", 1)[1]
+    if name == "dd":
+        for token in args:
+            if token.startswith("of="):
+                return token[3:]
+        return None
+    positional = [token for token in args if not token.startswith("-")]
+    return positional[-1] if positional else None
+
+
+def _expand_obfuscation(token: str) -> str:
+    """Best-effort de-obfuscation of a target token (design D8, 乙类).
+
+    Removes backslash escapes and brace/character-class syntax so that
+    ``~/.{ssh}/f`` and ``~/.ss\\h/id_rsa`` normalize to a sensitive name. This is
+    deliberately *widening* towards detection: an unexpanded token would slip
+    past the sensitive-name check entirely.
+    """
+    out = token.replace("\\", "")
+    # ``~/.{ssh}/f`` -> ``~/.ssh/f`` (brace alternation of a single word)
+    out = re.sub(r"\{([^{}]*)\}", lambda m: m.group(1).split(",")[0], out)
+    # ``~/.s[h]h/f`` -> ``~/.shh/f`` (character class -> first member)
+    out = re.sub(r"\[([^\[\]]*)\]", lambda m: (m.group(1) or "")[:1], out)
+    return out
+
+
 def _dest_is_sensitive(dest: str) -> bool:
     """True when ``dest`` carries credentials / repo metadata (fix-issue-247 R1).
 
-    Segment-wise: any path segment equal to a sensitive dot-directory, or a
-    basename equal to a sensitive dot-file.
+    Segment-wise: any path segment that the shared sensitive-dot-name predicate
+    flags. That predicate is defined once in ``workspace_policy`` (design D12)
+    so this guard and the read/write tools cannot drift: ``.env.local`` is
+    sensitive (a credential variant), ``.env.example`` is not (a template).
     """
     parts = [part for part in dest.split("/") if part not in ("", ".")]
-    if any(part in _SENSITIVE_DOTDIRS for part in parts):
-        return True
-    return bool(parts) and parts[-1] in _SENSITIVE_DOTFILES
+    return any(is_sensitive_dot_name(part) for part in parts)
 # Shell interpreters that, when piped to, imply arbitrary code execution.
+# (`bash_ir.INTERPRETERS` is the wider set used for heredoc binding.)
 _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "ksh", "dash", "fish"}
-# Arbitrary code execution interpreters.
-_CODE_EXEC_INTERPRETERS = {"python", "python3", "node", "deno", "perl", "ruby", "php", "awk"}
 
 # Extended denylist covering known bypass variants the original regex missed.
 _EXTRA_DENYLIST = (
@@ -284,6 +630,18 @@ _EXTRA_DENYLIST = (
 class CommandVerdict(str, Enum):
     ALLOW = "allow"
     DENY = "deny"
+    #: The guard cannot decide statically. Routed to the approval layer (design
+    #: D3); in a runtime without a UI handler (`FailClosedApprovalHandler`,
+    #: non-TTY CLI) the approval layer refuses, so `ASK` behaves as deny there.
+    ASK = "ask"
+
+
+#: Severity order used when several rules fire: deny beats ask beats allow.
+_SEVERITY = {CommandVerdict.ALLOW: 0, CommandVerdict.ASK: 1, CommandVerdict.DENY: 2}
+
+
+def _worse(a: CommandVerdict, b: CommandVerdict) -> CommandVerdict:
+    return a if _SEVERITY[a] >= _SEVERITY[b] else b
 
 
 def tokenize_command(command: str) -> list[str]:
@@ -347,6 +705,11 @@ class CommandGuard:
         self.last_reason: str | None = None
         # Current nesting depth of `<shell> -c "…"` re-checks (review Round 2).
         self._nested_depth = 0
+        # Migration fallback (design D10): set ASTERWYND_GUARD_LEGACY=1 to drop
+        # the IR-driven rules and fall back to the pre-refactor channels. Kept
+        # until the old-vs-new verdict comparison is fully green; it never
+        # weakens the attack set (see the guard tests).
+        self.legacy = os.environ.get("ASTERWYND_GUARD_LEGACY", "").strip() not in ("", "0", "false")
 
     def check(self, command: str) -> CommandVerdict:
         self.last_reason = None
@@ -354,14 +717,26 @@ class CommandGuard:
         if not cmd:
             return CommandVerdict.ALLOW
 
+        # Parse once; every IR-driven rule below reads this analysis.
+        analysis = analyze(cmd)
+
         # 1. Extended denylist (conventional bypass variants).
         # ``rm`` is excluded: the base denylist's ``rm -rf /`` pattern matches
         # any path starting with ``/`` (false positive on workspace-internal
-        # paths). argv semantics (step 3) judge rm precisely.
+        # paths). argv semantics (step 4) judge rm precisely.
+        #
+        # The scan runs over the source with non-interpreter heredoc bodies
+        # masked out: `cat <<'EOF' … cp x .env … EOF` is a document that
+        # *mentions* a command, so its body must not be read as literal command
+        # text (design D4). Interpreter-bound bodies stay, since they ARE code.
         cmd_name = cmd.split()[0] if cmd.split() else ""
         if cmd_name != "rm":
+            # In legacy mode the source is scanned verbatim, exactly as before
+            # the refactor -- the switch is meant to restore the old verdicts
+            # (false positives included) so they can be compared.
+            scanned = cmd if self.legacy else _mask_data_heredocs(cmd, analysis)
             for pattern in self._denylist:
-                if re.search(pattern, cmd):
+                if re.search(pattern, scanned):
                     self.last_reason = "denylist"
                     return CommandVerdict.DENY
 
@@ -369,20 +744,220 @@ class CommandGuard:
         if self._has_pipe_to_shell(cmd):
             self.last_reason = "pipe_to_shell"
             return CommandVerdict.DENY
-        if self._has_protected_redirect(cmd):
+        if self._has_protected_redirect(analysis):
             self.last_reason = "protected_redirect"
             return CommandVerdict.DENY
 
-        # 3. argv semantic checks for dangerous commands.
-        tokens = tokenize_command(cmd)
-        if not tokens:
-            return CommandVerdict.ALLOW
-        argv_verdict = self._check_argv(tokens, raw=cmd)
-        if argv_verdict is CommandVerdict.DENY:
-            return CommandVerdict.DENY
+        # 3. IR-driven rules (single parse pipeline, design D1/D2/D4/D8).
+        ir_verdict = (
+            CommandVerdict.ALLOW
+            if self.legacy
+            else self._check_analysis(cmd, analysis=analysis)
+        )
 
-        # Default-allow.
+        # 4. argv semantic checks for dangerous commands (legacy channel).
+        #    Kept alongside the IR channel while the migration is in progress:
+        #    `旧 DENY ⊆ 新 DENY ∪ 新 ASK` (design D10). The same data-heredoc
+        #    masking applies, otherwise the old tokenizer mines the body for
+        #    phantom commands (`<<` splits into two `<`, making the body a
+        #    "segment").
+        legacy_source = cmd if self.legacy else _mask_data_heredocs(cmd, analysis)
+        tokens = tokenize_command(legacy_source)
+        argv_verdict = CommandVerdict.ALLOW
+        if tokens:
+            argv_verdict = self._check_argv(tokens, raw=legacy_source)
+
+        verdict = _worse(ir_verdict, argv_verdict)
+        if verdict is not CommandVerdict.ALLOW and self.last_reason is None:
+            self.last_reason = "ir_rule"
+        return verdict
+
+    # --- IR-driven rules (design D1/D2/D4/D8) ------------------------------
+
+    def _check_analysis(
+        self, command: str, *, analysis: BashAnalysis | None = None
+    ) -> CommandVerdict:
+        """Judge the parsed analysis. Fail-closed on unanalyzable input.
+
+        Every branch here reads the IR; none of them re-splits the source.
+        """
+        analysis = analysis if analysis is not None else analyze(command)
+
+        # Unanalyzable input: we do not trust the capture, so we neither deny
+        # nor allow outright -- hand it to the approval layer.
+        if analysis.has_errors or analysis.budget_exhausted:
+            self.last_reason = "unanalyzable"
+            return CommandVerdict.ASK
+
+        verdict = CommandVerdict.ALLOW
+
+        # heredoc bodies bound to an interpreter ARE code (design D4, Q2=(a)).
+        for hd in analysis.heredocs:
+            if not hd.bound_to_interpreter:
+                continue
+            body_verdict = self._check_body(hd.body)
+            verdict = _worse(verdict, body_verdict)
+            if verdict is CommandVerdict.DENY:
+                return verdict
+
+        for segment in analysis.segments:
+            seg_verdict = self._check_ir_segment(segment)
+            verdict = _worse(verdict, seg_verdict)
+            if verdict is CommandVerdict.DENY:
+                return verdict
+
+        return verdict
+
+    def _check_body(self, body: str) -> CommandVerdict:
+        """Judge an interpreter-bound heredoc body as a command line."""
+        if not body.strip():
+            return CommandVerdict.ALLOW
+        if self._nested_depth >= _MAX_NESTED_COMMAND_DEPTH:
+            return CommandVerdict.ASK
+        self._nested_depth += 1
+        try:
+            verdict = self._check_analysis(body)
+        finally:
+            self._nested_depth -= 1
+        if verdict is CommandVerdict.ASK:
+            self.last_reason = self.last_reason or "heredoc_body"
+        return verdict
+
+    def _check_ir_segment(self, segment: Segment) -> CommandVerdict:
+        """Strip wrappers/launchers to a fixpoint, then judge the real command."""
+        argv = list(segment.argv)
+        if not argv:
+            return CommandVerdict.ALLOW
+
+        # A launcher option whose value IS the command (`script -c '<cmd>'`):
+        # read from the ORIGINAL argv, because stripping consumes the option.
+        # Every occurrence is judged -- repeated `-c` means the last one runs.
+        for concealed in _concealed_command_texts(argv):
+            if not concealed.strip():
+                continue
+            concealed_verdict = self._check_analysis(concealed)
+            if concealed_verdict is not CommandVerdict.ALLOW:
+                self.last_reason = "launcher_payload"
+                return concealed_verdict
+
+        rest, unknown = _strip_to_fixpoint(argv)
+        if unknown is not None:
+            # Unknown leading token. Ask only when a judged command sits behind
+            # it (Q4 = (c')); otherwise the program is simply unknown -> allow.
+            if _conceals_judged_command(rest):
+                self.last_reason = "launcher_prefix"
+                return CommandVerdict.ASK
+            return CommandVerdict.ALLOW
+
+        if not rest:
+            return CommandVerdict.ALLOW
+
+        name = rest[0].rsplit("/", 1)[-1]
+
+        # Dynamic word in a write-target position (Q1 = (c) layered): normalise
+        # first; a sensitive name denies, anything else goes to approval. Checked
+        # before the concrete evaluators so `cp $SRC $DST` asks rather than
+        # being judged against a literal `$DST` token.
+        if segment.dynamic and name in _TARGET_COMMANDS:
+            dynamic_verdict = self._check_dynamic_target(rest)
+            if dynamic_verdict is not CommandVerdict.ALLOW:
+                return dynamic_verdict
+
+        # `mv`/`cp` also READ their source, so a sensitive source is judged
+        # too (`cp .env /tmp/x` exfiltrates credentials). Flags are skipped:
+        # `cp -r .env /tmp/x` and `install -m 600 .env /tmp/x` hide the source
+        # behind an option otherwise. This replaces the old source-position
+        # denylist regexes, which could not tell a template from a credential
+        # (design D9: the IR owns "which argument is what").
+        if name in ("mv", "cp", "install"):
+            source = _source_of(rest[1:])
+            if source is not None:
+                source_verdict = self._check_target(name, source)
+                if source_verdict is not CommandVerdict.ALLOW:
+                    self.last_reason = f"{name}_source"
+                    return source_verdict
+
+        # The write target may be carried on an option (`cp -t <dir> x`), so
+        # resolve it explicitly rather than assuming the last argument (design
+        # D2 `write_targets[]`).
+        if name in _TARGET_COMMANDS:
+            target = _write_target_of(name, rest[1:])
+            if target is not None:
+                option_verdict = self._check_target(name, target)
+                if option_verdict is not CommandVerdict.ALLOW:
+                    return option_verdict
+
+        # Concrete target checks on the stripped argv: the launcher no longer
+        # hides the real command (design D8).
+        concrete = self._check_argv_segment(rest)
+        if concrete is not CommandVerdict.ALLOW:
+            return concrete
+
+        # `sh -c '<payload>'`: the payload is a nested command line.
+        if name in _SHELL_INTERPRETERS:
+            payload_verdict = self._check_shell_payload(rest)
+            if payload_verdict is not CommandVerdict.ALLOW:
+                return payload_verdict
+
+        # `eval '<payload>'` runs its argument as a command line (design D8).
+        # Shell joins the remaining words before evaluating, so both the dequoted
+        # single argument (`eval 'cp x .env'`) and the joined remainder
+        # (`eval cp x .env`) are candidate payloads -- check both.
+        if name in _PAYLOAD_COMMANDS and len(rest) > 1:
+            for candidate in (_dequote(rest[1]), " ".join(rest[1:])):
+                if not candidate.strip():
+                    continue
+                eval_verdict = self._check_analysis(candidate)
+                if eval_verdict is not CommandVerdict.ALLOW:
+                    return eval_verdict
+
         return CommandVerdict.ALLOW
+
+    def _check_shell_payload(self, rest: list[str]) -> CommandVerdict:
+        """Re-check each `<shell> -c <string>` payload as its own command line."""
+        for payload in _shell_dash_c_payloads(rest):
+            if self._nested_depth >= _MAX_NESTED_COMMAND_DEPTH:
+                return CommandVerdict.ASK
+            self._nested_depth += 1
+            try:
+                verdict = self._check_analysis(_dequote(payload))
+            finally:
+                self._nested_depth -= 1
+            if verdict is not CommandVerdict.ALLOW:
+                return verdict
+        return CommandVerdict.ALLOW
+
+    def _check_target(self, name: str, target: str) -> CommandVerdict:
+        """Judge one resolved write target against protected paths / dot names."""
+        normalized = _normalize_path(_expand_obfuscation(target))
+        if _is_device_exempt(normalized):
+            return CommandVerdict.ALLOW
+        if any(_within(normalized, p) for p in _DENY_PATHS) or _dest_is_sensitive(normalized):
+            self.last_reason = f"{name}_target"
+            return CommandVerdict.DENY
+        return CommandVerdict.ALLOW
+
+    def _check_dynamic_target(self, rest: list[str]) -> CommandVerdict:
+        """A dynamic word in the write-target position of a jud/写 command.
+
+        Q1 = (c): normalise (expand brace/glob/backslash-escapes) first; a hit
+        on a sensitive name or protected path denies, anything else asks.
+        """
+        name = rest[0].rsplit("/", 1)[-1]
+        if name not in _WRITE_COMMANDS:
+            return CommandVerdict.ALLOW
+
+        target = _write_target_of(name, rest[1:])
+        if target is None:
+            return CommandVerdict.ALLOW
+
+        expanded = _expand_obfuscation(target)
+        normalized = _normalize_path(expanded)
+        if any(_within(normalized, p) for p in _DENY_PATHS) or _dest_is_sensitive(normalized):
+            self.last_reason = f"{name}_dynamic_sensitive"
+            return CommandVerdict.DENY
+        self.last_reason = f"{name}_dynamic_target"
+        return CommandVerdict.ASK
 
     # --- High-risk sentence patterns --------------------------------------
 
@@ -398,20 +973,23 @@ class CommandGuard:
         m = re.match(r"^(?:/usr/bin/env\s+)?(?:ba|z|k|d)?sh\s+-c\b", last)
         return bool(m)
 
-    def _has_protected_redirect(self, command: str) -> bool:
-        """Detect redirects (``>``/``>>``) into protected paths.
+    def _has_protected_redirect(self, analysis: BashAnalysis) -> bool:
+        """Detect redirects (``>``/``>>``) into protected paths or sensitive names.
 
-        Segment-wise and device-exempt: ``2>/dev/null`` is a black-hole write,
-        not a protected asset, and ``/various.txt`` is not under ``/var``.
+        Reads the IR's `redirects[]` (design D2/D9) rather than re-tokenizing the
+        source: the IR already knows which token is a redirect target. Device
+        files are exempt (``2>/dev/null`` is a black-hole write, not a protected
+        asset), and sensitive dot names use the same shared predicate as mv/cp
+        targets, so ``echo X >> .env.local`` lands here.
         """
-        tokens = tokenize_command(command)
-        for i, tok in enumerate(tokens):
-            if tok in (">", ">>") and i + 1 < len(tokens):
-                target = _normalize_path(tokens[i + 1])
-                if _is_device_exempt(target):
-                    continue
-                if any(_within(target, p) for p in _DENY_PATHS):
-                    return True
+        for redirect in analysis.redirects:
+            if redirect.op not in (">", ">>"):
+                continue
+            target = _normalize_path(redirect.target)
+            if _is_device_exempt(target):
+                continue
+            if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                return True
         return False
 
     # --- argv semantic checks ---------------------------------------------
@@ -473,6 +1051,16 @@ class CommandGuard:
         if cmd_name == "rm":
             return self._check_rm(tokens)
         if cmd_name in ("mv", "cp"):
+            # A sensitive SOURCE is judged here too, so the legacy channel (the
+            # rollback path) keeps the same coverage as the IR path -- the old
+            # source-position denylist regexes lived in `DEFAULT_DENYLIST` and
+            # are now expressed per-argument instead.
+            source = _source_of(tokens[1:])
+            if source is not None:
+                verdict = self._check_target(cmd_name, source)
+                if verdict is not CommandVerdict.ALLOW:
+                    self.last_reason = f"{cmd_name}_source"
+                    return verdict
             return self._check_mv_cp(tokens)
         if cmd_name == "chmod":
             return self._check_chmod(tokens)
@@ -480,6 +1068,10 @@ class CommandGuard:
             return self._check_timeout(tokens)
         if cmd_name in ("curl", "wget"):
             return self._check_curl_wget(tokens)
+        if cmd_name == "dd":
+            return self._check_dd(tokens)
+        if cmd_name == "tee":
+            return self._check_tee(tokens)
         return CommandVerdict.ALLOW
 
     def _check_rm(self, tokens: list[str]) -> CommandVerdict:
@@ -542,6 +1134,36 @@ class CommandGuard:
         if mode in ("0777", "777", "a+rwx", "a=rwx") and target in ("/", "/tmp"):
             self.last_reason = "chmod_bits"
             return CommandVerdict.DENY
+        return CommandVerdict.ALLOW
+
+    def _check_dd(self, tokens: list[str]) -> CommandVerdict:
+        """``dd of=<target>`` writes to ``<target>`` (design D2 `write_targets[]`).
+
+        The target is carried on the option, not as a positional argument, so
+        ``dd of=.env`` used to slip past every target check.
+        """
+        for token in tokens[1:]:
+            if not token.startswith("of="):
+                continue
+            target = _normalize_path(token[3:])
+            if _is_device_exempt(target):
+                continue
+            if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                self.last_reason = "dd_target"
+                return CommandVerdict.DENY
+        return CommandVerdict.ALLOW
+
+    def _check_tee(self, tokens: list[str]) -> CommandVerdict:
+        """``tee <target>`` writes to each non-option argument."""
+        for token in tokens[1:]:
+            if token.startswith("-"):
+                continue
+            target = _normalize_path(token)
+            if _is_device_exempt(target):
+                continue
+            if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                self.last_reason = "tee_target"
+                return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
     def _check_curl_wget(self, tokens: list[str]) -> CommandVerdict:

@@ -9,10 +9,6 @@ from pathlib import Path
 DEFAULT_DENIED_PATTERNS = (
     ".git",
     ".git/**",
-    ".env",
-    ".env.*",
-    "**/.env",
-    "**/.env.*",
     "*.pem",
     "*.key",
     "*.p12",
@@ -45,6 +41,91 @@ DEFAULT_DENIED_PATTERNS = (
     # 工具创建的隔离 worktree（add-worktree-tool）：主模式工具不可直接读写
     ".asterwynd/worktrees/**",
 )
+
+# --- Sensitive dot names: the single shared predicate (design D12) ------------
+#
+# "What counts as a sensitive dot name" used to be defined in three unrelated
+# places -- this module's globs, this module's `\b(mv|cp)\s+<src>` regexes, and
+# `command_guard`'s frozensets -- and they had drifted (`.env.local` was denied
+# by the read/write tools but allowed by the Bash guard). It is defined here
+# once, and every consumer imports it.
+#
+# The predicate is deliberately **code, not a glob**: Python's `fnmatch` has no
+# extglob support, so `.env.!(example|...)` silently matches nothing (verified:
+# it returns False for both `.env.local` and `.env.example`), which would open
+# the denial in both directions.
+
+#: Suffix words marking a `.env.<...>` file as a committed TEMPLATE rather than
+#: a credential file. `.env.example` is the de-facto standard; the rest are
+#: recognized synonyms.
+ENV_TEMPLATE_WORDS = frozenset({"example", "sample", "template", "dist", "defaults", "tpl"})
+
+#: Dot-directories carrying credentials or repo metadata. Compared per path
+#: **segment**, so `.gitignore` / `.github/` pass while `.git/config` and
+#: `src/.git/hooks/x` are caught.
+SENSITIVE_DOTDIRS = frozenset(
+    {".git", ".ssh", ".aws", ".gnupg", ".kube", ".docker", ".netrc", ".npmrc", ".pypirc"}
+)
+#: Dot-files carrying credentials. The `.env` family is judged by
+#: `is_env_sensitive_name` instead (it has the template exemption).
+SENSITIVE_DOTFILES = frozenset({".netrc", ".npmrc", ".pypirc", ".gitconfig", ".git-credentials"})
+
+
+def is_env_template_name(name: str) -> bool:
+    """True when ``name`` is a ``.env``-family TEMPLATE (committed, no real values).
+
+    ``.env.example`` / ``.env.sample`` / ``.env.template`` / ``.env.dist`` /
+    ``.env.defaults`` / ``.env.tpl`` are templates. ``.env`` itself is not, and
+    neither is any variant whose suffix carries a credential word --
+    ``.env.example.local`` resolves to a credential because a suffix segment is
+    not a template word.
+    """
+    if not name.startswith(".env."):
+        return False
+    rest = name[len(".env."):]
+    if not rest:
+        return False
+    return all(part in ENV_TEMPLATE_WORDS for part in rest.split("."))
+
+
+def is_env_sensitive_name(name: str) -> bool:
+    """True when ``name`` is a ``.env``-family file that may carry real credentials.
+
+    ``.env`` is the credential; ``.env.<suffix...>`` is a credential unless every
+    suffix segment is a template word. Non-``.env`` names (``.envrc``,
+    ``.environment``, ``app.env``, ``.env2``) are not this predicate's business.
+    """
+    if name == ".env":
+        return True
+    if not name.startswith(".env."):
+        return False
+    return not is_env_template_name(name)
+
+
+def is_sensitive_dot_name(part: str) -> bool:
+    """True when a single path **segment** names a sensitive dot file/dir."""
+    if is_env_sensitive_name(part):
+        return True
+    return part in SENSITIVE_DOTDIRS or part in SENSITIVE_DOTFILES
+
+
+#: `mv`/`cp` whose SOURCE is a credential path. The source is a positional
+#: argument here rather than an IR field, and the `.env` family needs the
+#: template exemption, so it goes through the shared predicate instead of a
+#: regex alternation that would re-spell the template words.
+_ENV_SOURCE = re.compile(r"\b(?:mv|cp)\s+(\S+)")
+
+
+def _env_source_is_credential(command: str) -> bool:
+    match = _ENV_SOURCE.search(command)
+    if match is None:
+        return False
+    source = match.group(1).strip("'\"")
+    # Every segment matters, not just the basename: `.git/config` is sensitive
+    # because of the `.git` segment, not because `config` is.
+    segments = [part for part in source.split("/") if part not in ("", ".")]
+    return any(is_sensitive_dot_name(part) for part in segments)
+
 
 def _match_allowlist(command: str) -> bool:
     """检查命令是否匹配允许列表前缀。支持子命令匹配。"""
@@ -118,8 +199,18 @@ DEFAULT_DENYLIST = (
     r"tee\s+/etc/",
     r"tee\s+/proc/",
     r"sed\s+-i.*/(etc|proc|sys)/",
-    r"\bcp\s+(/etc/|/proc/|/sys/|\.env\b|\.env\.|\S*/\.env\b|\.git/|\S*/\.git/)",
-    r"\bmv\s+(/etc/|/proc/|/sys/|\.env\b|\.env\.|\S*/\.env\b|\.git/|\S*/\.git/)",
+    # The two `(mv|cp)\s+<source>` patterns used to live here. They matched on
+    # the SOURCE token and could not tell a template from a credential, so
+    # `cp .env.example /tmp/backup.txt` was denied. "Which argument is the
+    # source" is expressible in the IR, so the guard's evaluator owns this now
+    # (design D9); this module still covers the path-shaped sources that do not
+    # depend on `.env` naming.
+    # Source-position guard for sensitive sources. `.env.example` and friends
+    # are templates (allowed); the credential forms are not. The `.env` family
+    # is checked by `_env_source_is_credential` (below) so the template words
+    # stay in one place rather than being re-spelled as a regex alternation.
+    r"\b(mv|cp)\s+(/etc/|/proc/|/sys/)\S*",
+    r"\b(mv|cp)\s+\S*/\.(?:git|ssh|aws|gnupg|kube|docker|netrc|npmrc|pypirc)(?![\w.-])",
     r"sudo\s",
     r"su\s+-",
     r"mount\s",
@@ -224,20 +315,35 @@ class WorkspacePolicy:
 
     def is_denied(self, path: str | Path) -> bool:
         resolved = self.assert_within_workspace(path)
+        # Sensitive dot names are judged by the shared predicate (design D12),
+        # segment-wise, so both the bare (`cp x .env`) and nested
+        # (`src/.git/hooks/x`) forms are covered. Template `.env` files are
+        # deliberately NOT sensitive -- `.env.example` is committed so people
+        # (and the agent) can see which variables a project needs.
         if not self._is_within(self.workspace_root, resolved):
-            basename = resolved.name
-            for pattern in self.denied_patterns:
-                if fnmatch.fnmatchcase(basename, pattern.strip("/")):
-                    return True
-            return False
+            return self._deny_by_name(resolved.name)
         rel = resolved.relative_to(self.workspace_root).as_posix()
-        parts = rel.split("/")
+        parts = [part for part in rel.split("/") if part not in ("", ".")]
+        if any(is_sensitive_dot_name(part) for part in parts):
+            return True
+        if is_sensitive_dot_name(resolved.name):
+            return True
         candidates = {rel, resolved.name, *parts}
         for pattern in self.denied_patterns:
             normalized = pattern.strip("/")
             if any(fnmatch.fnmatchcase(candidate, normalized) for candidate in candidates):
                 return True
             if fnmatch.fnmatchcase(rel, normalized):
+                return True
+        return False
+
+    def _deny_by_name(self, name: str) -> bool:
+        """Deny check for a path outside the workspace, where only the basename
+        is meaningful (relative paths in the deny list do not apply)."""
+        if is_sensitive_dot_name(name):
+            return True
+        for pattern in self.denied_patterns:
+            if fnmatch.fnmatchcase(name, pattern.strip("/")):
                 return True
         return False
 
@@ -258,6 +364,8 @@ class WorkspacePolicy:
         for pattern in self._denylist:
             if re.search(pattern, cmd_stripped):
                 raise PermissionError("Command denied by workspace policy")
+        if _env_source_is_credential(cmd_stripped):
+            raise PermissionError("Command denied by workspace policy")
         if _match_allowlist(cmd_stripped):
             return
 
