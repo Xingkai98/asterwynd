@@ -386,9 +386,8 @@ def _dest_is_sensitive(dest: str) -> bool:
     parts = [part for part in dest.split("/") if part not in ("", ".")]
     return any(is_sensitive_dot_name(part) for part in parts)
 # Shell interpreters that, when piped to, imply arbitrary code execution.
+# (`bash_ir.INTERPRETERS` is the wider set used for heredoc binding.)
 _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "ksh", "dash", "fish"}
-# Arbitrary code execution interpreters.
-_CODE_EXEC_INTERPRETERS = {"python", "python3", "node", "deno", "perl", "ruby", "php", "awk"}
 
 # Extended denylist covering known bypass variants the original regex missed.
 _EXTRA_DENYLIST = (

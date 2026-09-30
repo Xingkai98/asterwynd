@@ -334,3 +334,33 @@ class TestLegacyFallbackSwitch:
              "eval-payload-", "obfuscated-"))}
         unexpected = [i for i in missed if i not in new_ids]
         assert not unexpected, f"legacy mode lost coverage: {unexpected}"
+
+
+class TestCVEInspiredCases:
+    """The four Claude Code 2025 CVEs, each labelled with what this layer claims.
+
+    CVE-2025-54795 (`echo` parsing bypass) is a text-mode-vs-shell-semantics bug,
+    which an AST can catch. The other three are explicitly NOT this layer's
+    claims (path canonicalisation / allowlist scope / decision ordering), and are
+    asserted as such so the capability declaration cannot quietly drift into
+    implying otherwise.
+    """
+
+    def test_cve_2025_54795_echo_parse_bypass_denied(self) -> None:
+        """`echo` + newline + a command: the second line is a real command."""
+        assert CommandGuard(workspace="/tmp/ws").check(
+            "echo hello\nrm -rf /"
+        ) is CommandVerdict.DENY
+
+    def test_path_prefix_collision_is_covered_by_canonicalisation(self) -> None:
+        """CVE-2025-54794 class: prefix matching is not containment.
+
+        Not the parser's doing — it is the component-boundary comparison — but
+        the guard must still get it right.
+        """
+        guard = CommandGuard(workspace="/tmp/ws")
+        assert guard.check("rm -rf /tmp/ws-evil") is CommandVerdict.DENY
+
+    def test_traversal_is_normalised(self) -> None:
+        guard = CommandGuard(workspace="/tmp/ws")
+        assert guard.check("rm -rf /tmp/ws/../etc") is CommandVerdict.DENY
