@@ -196,6 +196,11 @@ async def test_run_workflow_result_keyset_is_locked(tmp_path):
 
     变化 ``workflow-builtin-templates``：``run_pattern`` 退役后，这条键集锁的语义
     （「出口加字段必须是有意识的」）改挂到统一入口 ``RunWorkflow`` 的返回体上。
+
+    变化 ``workflow-tool-discoverability``（C8）：**有意识地**新增 ``warnings`` 键——
+    route 节点带 ``task`` 时给可行动提示，且 ``RunWorkflow(spec=...)`` 不经过
+    ``DeclareWorkflowTool.execute``，warning 必须挂在 run envelope 上。键**恒存在**
+    （无 warning 时为空数组），保持返回体形状稳定；template 路径为 ``[]``。
     """
     manager = _manager(tmp_path)
     result = json.loads(
@@ -247,6 +252,7 @@ async def test_run_workflow_result_keyset_is_locked(tmp_path):
         "inserted_nodes",
         "nodes_total",
         "nodes_omitted",
+        "warnings",  # change workflow-tool-discoverability：route `task` 的可行动提示（C8）
     }
 
 

@@ -34,6 +34,11 @@ AGGREGATE_STRATEGIES = ("llm", "collect")
 REDUCERS = ("concat", "merge_dict", "first_non_empty", "last")
 CHANNELS = ("result_ref", "summary", "artifact", "bus")
 
+#: 节点 ``mode`` 的合法值（change ``workflow-tool-discoverability``，D2/Q6）：原先内联在
+#: ``_parse_node`` 里，现提为模块常量供校验与工具 schema **共用**——工具层不得再写第二
+#: 份字面量（``CreateSubagentTool`` 的 ``mode`` enum 同样引用它）。改这里即改全部出口。
+NODE_MODES = ("build", "read_only", "plan")
+
 # 三闸默认值（grill Q5）：图级步数 / 节点数（含 foreach 展开）/ run 总数。
 # ``DEFAULT_RECURSION_LIMIT`` 同时是 ``to_dict()`` 的「等于默认值则省略」哨兵。
 DEFAULT_RECURSION_LIMIT = 100
@@ -494,9 +499,9 @@ def _parse_node(raw: Any) -> WorkflowNode:
         raise WorkflowValidationError(f"node {node_id!r} outputs must be slot names")
 
     mode = data.get("mode")
-    if mode is not None and mode not in ("build", "read_only", "plan"):
+    if mode is not None and mode not in NODE_MODES:
         raise WorkflowValidationError(
-            f"node {node_id!r} mode must be build/read_only/plan"
+            f"node {node_id!r} mode must be one of {list(NODE_MODES)}"
         )
 
     node = WorkflowNode(
@@ -510,18 +515,18 @@ def _parse_node(raw: Any) -> WorkflowNode:
         or "",
         mode=mode,
         outputs=tuple(outputs),
-        join=_parse_join(data.get("join", "all_required"), node_id),
-        strategy=_parse_strategy(data.get("strategy", "llm"), node_id),
-        deadline_s=_parse_deadline(data.get("deadline_s"), node_id),
-        cases=_parse_cases(data.get("cases"), node_id),
+        join=_parse_join(data.get("join", "all_required"), node_id, kind),
+        strategy=_parse_strategy(data.get("strategy", "llm"), node_id, kind),
+        deadline_s=_parse_deadline(data.get("deadline_s"), node_id, kind),
+        cases=_parse_cases(data.get("cases"), node_id, kind),
         default=_optional_str(data.get("default"), f"node {node_id!r} default"),
-        max_routes=_parse_max_routes(data.get("max_routes", 1), node_id),
-        items=_parse_items(data.get("items"), node_id),
+        max_routes=_parse_max_routes(data.get("max_routes", 1), node_id, kind),
+        items=_parse_items(data.get("items"), node_id, kind),
         source=_optional_str(data.get("source"), f"node {node_id!r} source"),
         source_field=_optional_str(
             data.get("source_field"), f"node {node_id!r} source_field"
         ),
-        max_items=_parse_max_items(data.get("max_items", 20), node_id),
+        max_items=_parse_max_items(data.get("max_items", 20), node_id, kind),
         max_tokens=_parse_node_max_tokens(data.get("max_tokens"), node_id),
         max_time_s=_parse_node_max_time_s(data.get("max_time_s"), node_id),
     )
@@ -556,38 +561,66 @@ def _optional_str(value: Any, field_name: str) -> str | None:
     return value
 
 
-def _parse_join(value: Any, node_id: str) -> str:
+#: 字段 → **该字段合法归属的** kind（change ``workflow-tool-discoverability``，D7）。
+#: ``_parse_node`` 对所有 kind 无条件调用各字段解析器（不看 ``node.kind``），所以当
+#: 字段被写到**不归属**的 kind 上且值非法时，报错必须按**节点实际 kind** 命名，并指出
+#: 该字段真正属于哪个 kind——否则模型会被告知「错的是另一个 kind」（实测：route 写
+#: ``strategy:"concat"`` 报 ``aggregate node ...``）。
+_FIELD_OWNER_KIND = {
+    "join": "aggregate",
+    "strategy": "aggregate",
+    "deadline_s": "aggregate",
+    "cases": "route",
+    "max_routes": "route",
+    "items": "foreach",
+    "source": "foreach",
+    "source_field": "foreach",
+    "max_items": "foreach",
+}
+
+
+def _kind_field_prefix(kind: str, node_id: str, field: str) -> str:
+    """按节点**实际** kind 命名前缀；字段不属于该 kind 时附一句归属说明。"""
+    prefix = f"{kind} node {node_id!r} {field}"
+    owner = _FIELD_OWNER_KIND.get(field)
+    if owner is not None and owner != kind:
+        prefix += f" (`{field}` only applies to {owner} nodes)"
+    return prefix
+
+
+def _parse_join(value: Any, node_id: str, kind: str) -> str:
     if value not in JOIN_SEMANTICS:
         raise WorkflowValidationError(
-            f"aggregate node {node_id!r} join must be one of {list(JOIN_SEMANTICS)}"
+            f"{_kind_field_prefix(kind, node_id, 'join')} must be one of "
+            f"{list(JOIN_SEMANTICS)}"
         )
     return value
 
 
-def _parse_strategy(value: Any, node_id: str) -> str:
+def _parse_strategy(value: Any, node_id: str, kind: str) -> str:
     if value not in AGGREGATE_STRATEGIES:
         raise WorkflowValidationError(
-            f"aggregate node {node_id!r} strategy must be one of "
+            f"{_kind_field_prefix(kind, node_id, 'strategy')} must be one of "
             f"{list(AGGREGATE_STRATEGIES)}"
         )
     return value
 
 
-def _parse_deadline(value: Any, node_id: str) -> float | None:
+def _parse_deadline(value: Any, node_id: str, kind: str) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise WorkflowValidationError(
-            f"aggregate node {node_id!r} deadline_s must be a positive number"
+            f"{_kind_field_prefix(kind, node_id, 'deadline_s')} must be a positive number"
         )
     return float(value)
 
 
-def _parse_max_routes(value: Any, node_id: str) -> int:
-    return _positive_int(value, f"route node {node_id!r} max_routes")
+def _parse_max_routes(value: Any, node_id: str, kind: str) -> int:
+    return _positive_int(value, _kind_field_prefix(kind, node_id, "max_routes"))
 
 
-def _parse_max_items(value: Any, node_id: str) -> int:
+def _parse_max_items(value: Any, node_id: str, kind: str) -> int:
     """``max_items`` 专用的**非负**解析（Q9）：``0`` = 不做静态截断。
 
     不能复用 :func:`_positive_int`——它对 ``value < 1`` 直接拒绝，而该函数还服务
@@ -596,8 +629,8 @@ def _parse_max_items(value: Any, node_id: str) -> int:
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise WorkflowValidationError(
-            f"foreach node {node_id!r} max_items must be a non-negative integer "
-            f"(0 = expand until the run budget is exhausted)"
+            f"{_kind_field_prefix(kind, node_id, 'max_items')} must be a non-negative "
+            f"integer (0 = expand until the run budget is exhausted)"
         )
     return value
 
@@ -618,30 +651,33 @@ def _parse_node_max_time_s(value: Any, node_id: str) -> float | None:
     return float(value)
 
 
-def _parse_items(value: Any, node_id: str) -> tuple[Any, ...] | None:
+def _parse_items(value: Any, node_id: str, kind: str) -> tuple[Any, ...] | None:
     if value is None:
         return None
     if not isinstance(value, list):
-        raise WorkflowValidationError(f"foreach node {node_id!r} items must be a list")
+        raise WorkflowValidationError(
+            f"{_kind_field_prefix(kind, node_id, 'items')} must be a list"
+        )
     return tuple(value)
 
 
-def _parse_cases(value: Any, node_id: str) -> tuple[RouteCase, ...]:
+def _parse_cases(value: Any, node_id: str, kind: str) -> tuple[RouteCase, ...]:
     if value is None:
         return ()
+    prefix = _kind_field_prefix(kind, node_id, "cases")
     if not isinstance(value, list):
-        raise WorkflowValidationError(f"route node {node_id!r} cases must be a list")
+        raise WorkflowValidationError(f"{prefix} must be a list")
     cases: list[RouteCase] = []
     for item in value:
         if not isinstance(item, Mapping) or set(item) != {"when", "to"}:
             raise WorkflowValidationError(
-                f"route node {node_id!r} case must be {{'when': ..., 'to': ...}}"
+                f"{prefix} entries must be {{'when': ..., 'to': ...}}"
             )
         when, to = item["when"], item["to"]
         if not isinstance(when, str) or not when:
-            raise WorkflowValidationError(f"route node {node_id!r} case 'when' must be a string")
+            raise WorkflowValidationError(f"{prefix} 'when' must be a string")
         if not isinstance(to, str) or not to:
-            raise WorkflowValidationError(f"route node {node_id!r} case 'to' must be a string")
+            raise WorkflowValidationError(f"{prefix} 'to' must be a string")
         cases.append(RouteCase(when=when, to=to))
     return tuple(cases)
 
