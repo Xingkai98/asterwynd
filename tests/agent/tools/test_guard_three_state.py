@@ -657,3 +657,66 @@ class TestAttachedShellDashC:
         assert CommandGuard(workspace="/tmp/ws").check(
             'bash -c "cp x .env"'
         ) is CommandVerdict.DENY
+
+
+class TestOptionSpellingSpaceClosed:
+    """Systematic closure of the payload-carrier spelling space (review R5).
+
+    Five review rounds each found a *different* spelling of the same idea: a
+    command handed to an interpreter/launcher through an option value, from the
+    attached form to clusters to equals-form. This enumerates the space
+    (carrier × spelling × payload × leading launcher) so a new gap shows up here
+    rather than in the next review.
+    """
+
+    SENSITIVE = ["cp x .env", "cp -r .env /tmp/leak", "rm -rf /"]
+    CARRIERS = {"script": ["-c", "--command"], "env": ["-S", "--split-string"]}
+    SHELLS = ["sh", "bash", "zsh", "ksh", "dash"]
+    SHELL_FLAGS = ["-c", "-lc", "-ic", "-ec"]
+    LEADS = ["", "nice ", "env -i ", "timeout 5 ", "nohup ", "doas "]
+
+    @staticmethod
+    def _spellings(option: str, payload: str) -> list[str]:
+        quoted = f"'{payload}'"
+        return [f"{option} {quoted}", f"{option}{quoted}", f"{option}={quoted}"]
+
+    def test_launcher_carriers_never_allow_a_sensitive_payload(self) -> None:
+        gaps = []
+        for launcher, options in self.CARRIERS.items():
+            for option in options:
+                for payload in self.SENSITIVE:
+                    for spelling in self._spellings(option, payload):
+                        for lead in self.LEADS:
+                            command = f"{lead}{launcher} {spelling}"
+                            verdict = CommandGuard(workspace="/tmp/ws").check(command)
+                            if verdict is CommandVerdict.ALLOW:
+                                gaps.append(command)
+        assert not gaps, f"sensitive payloads allowed: {gaps}"
+
+    def test_shell_carriers_never_allow_a_sensitive_payload(self) -> None:
+        gaps = []
+        for shell in self.SHELLS:
+            for flag in self.SHELL_FLAGS:
+                for payload in self.SENSITIVE:
+                    for spelling in self._spellings(flag, payload):
+                        for lead in self.LEADS:
+                            command = f"{lead}{shell} {spelling}"
+                            verdict = CommandGuard(workspace="/tmp/ws").check(command)
+                            if verdict is CommandVerdict.ALLOW:
+                                gaps.append(command)
+        assert not gaps, f"sensitive payloads allowed: {gaps}"
+
+    def test_benign_payloads_still_allowed(self) -> None:
+        """Control group: the closure must not turn every carrier into a denial."""
+        for launcher, options in self.CARRIERS.items():
+            for option in options:
+                for spelling in self._spellings(option, "echo hi"):
+                    assert CommandGuard(workspace="/tmp/ws").check(
+                        f"{launcher} {spelling}"
+                    ) is CommandVerdict.ALLOW
+        for shell in self.SHELLS:
+            for flag in self.SHELL_FLAGS:
+                for spelling in self._spellings(flag, "echo hi"):
+                    assert CommandGuard(workspace="/tmp/ws").check(
+                        f"{shell} {spelling}"
+                    ) is CommandVerdict.ALLOW

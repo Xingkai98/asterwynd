@@ -232,7 +232,7 @@ def _shell_dash_c_payloads(tokens: list[str]) -> list[str]:
         attached = _dash_c_attached_value(token)
         if attached is not None:
             if attached.strip():
-                payloads.append(_dequote(attached))
+                payloads.append(_normalize_option_value(attached))
             index += 1
             continue
         if _DASH_C_FLAG.fullmatch(token):
@@ -385,7 +385,7 @@ def _concealed_command_texts(argv: list[str]) -> list[str]:
             matched, attached = _match_option_value(argv[cursor], command_options)
             if matched:
                 if attached is not None:
-                    payloads.append(_dequote(attached))
+                    payloads.append(_normalize_option_value(attached))
                 elif cursor + 1 < len(argv):
                     payloads.append(_dequote(argv[cursor + 1]))
                 cursor += 1 if attached is not None else 2
@@ -454,7 +454,7 @@ def _dash_c_attached_value(token: str) -> str | None:
     flag still goes down the separated path.
     """
     match = _DASH_C_ATTACHED.match(token)
-    return match.group("value") if match else None
+    return _normalize_option_value(match.group("value")) if match else None
 
 
 def _match_option_value(token: str, options: frozenset[str] | set[str]) -> tuple[bool, str | None]:
@@ -474,6 +474,19 @@ def _match_option_value(token: str, options: frozenset[str] | set[str]) -> tuple
         if token.startswith(option) and len(token) > len(option):
             return True, token[len(option):]
     return False, None
+
+
+def _normalize_option_value(value: str) -> str:
+    """Normalize a just-extracted option value.
+
+    Strips one leading `=` (the `-c=<cmd>` spelling; the shell rejects it, but a
+    payload that *looks* like a sensitive command must not be waved through on
+    the strength of a spelling detail) and then one layer of quotes.
+    """
+    value = value.strip()
+    if value.startswith("="):
+        value = value[1:].lstrip()
+    return _dequote(value)
 
 
 def _dequote(token: str) -> str:
