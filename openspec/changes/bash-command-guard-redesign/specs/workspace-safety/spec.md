@@ -16,13 +16,26 @@
 
 mv/cp 目标命中敏感点目录（`.git`/`.ssh`/`.env`/`.aws`/`.gnupg`/`.kube`/`.docker`/`.netrc`/`.npmrc`/`.pypirc`）SHALL 被拒绝。目标参数 SHALL 从 IR 的写目标读取，SHALL NOT 因解析器对 brace 展开、反斜杠转义、glob 或字符类的处理而丢失或被切碎——`cp x ~/.{ssh}/f` SHALL NOT 因目标被切成多段而放行。判定 SHALL 覆盖**互补**通道并如实描述各自覆盖面：**argv 通道**在 `mv`/`cp` 居命令段首时按路径段比较，覆盖裸形态（`.env`）与嵌套形态（`src/.git/hooks/x`），并 SHALL NOT 误判 `.gitignore`、`.env.example`、`.github/` 这类普通文件/目录；**混淆归一化通道**对目标做归一化（去反斜杠转义、展开字符类与 brace、以 `fnmatch` 反向匹配判定敏感名能否被该模式匹配）后判定，SHALL NOT 因此误报字面名（`.env.example` SHALL 保持放行）。
 
+**敏感 dot 名 SHALL 由一份共享谓词定义，SHALL NOT 存在多份互不相关的定义**（对齐 D9「同一语义 SHALL NOT 存在两个实现」）。当前「什么算敏感 dot 名」由三处各写各的——`workspace_policy` 的 `DEFAULT_DENIED_PATTERNS`（glob，读/写共用 `is_denied`）、同文件的两条**源位置锚定**正则、`command_guard` 的 `_SENSITIVE_DOTDIRS`/`_SENSITIVE_DOTFILES`（精确相等集合）——三者对同一文件的判定互相矛盾。该谓词 SHALL 为**代码谓词**，SHALL NOT 用 glob 表达（实测：Python `fnmatch` 不支持 bash extglob，`fnmatch('.env.local', ".env.!(example|…)")` 返回 False，写成 glob 会**静默放开两边**）。
+
+**`.env` 系列 SHALL 按「凭据变体」与「模板」分流**：
+
+- **凭据变体**（`.env` 本体及任何**非模板**的 `.env.<后缀...>`，含 `.env.local` / `.env.production` / `.env.development` / `.env.test` / `.env.staging` / `.env.secret` / `.env.keys`）SHALL 被拒绝——读、写、以及 `mv`/`cp`/`dd of=`/`tee`/重定向的目标位。当前实现**过窄**：`command_guard` 的敏感点集合是精确相等，`.env.local` 判定失效；且 `BashTool` 只经文本通道与护栏、不经 `assert_write_allowed`——故 `cp src.txt .env.local` 今天真的执行并写入。
+- **模板**（`.env.example` / `.env.sample` / `.env.template` / `.env.dist` / `.env.defaults` / `.env.tpl`）SHALL 被豁免——读与写均放行。
+- **判据 SHALL 为「`.env` 之后的每一个 `.` 分段都是模板词 ⇒ 模板；有任何一段不是 ⇒ 凭据」**。故 `.env.example.local` / `.env.local.example` / `.env.production.sample` / `.env.j2` / `.env.example.bak` SHALL 仍被判为凭据。
+- 非 `.env` 前缀的名字（`.envrc` / `.environment` / `app.env` / `config.env` / `my.env` / `.env2` / `.env-file`）SHALL NOT 落入该判定，SHALL 保持放行。
+
 rm 递归+强制的目标 SHALL NOT 等于工作区根（`rm -rf <workspace_root>` SHALL 拒绝），且 SHALL NOT 位于工作区之外。
 
 argv 语义检查 SHALL 覆盖**命令行的每一段**，SHALL NOT 只检查首段——命令分隔符（`&&`/`||`/`;`/`|`/`&`/换行）与分组符号（`(`/`)`/`{`/`}`）之后、以及 shell 关键字（`then`/`do`/`else`/`fi`/`done`/`time`/`exec`/`eval` 等）之后的命令 SHALL 同样受检。`<shell> -c <string>` 形态（含 `-lc`/`-ic` 等短选项簇、`env`/`command`/`nohup` 前缀及其选项、重复 `-c`）SHALL 对每个 payload 递归执行同样的校验；递归 SHALL 有深度上界，超出上界时 SHALL 停止解包而 SHALL NOT 无界递归。shell 关键字与 wrapper 前缀的剥离 SHALL 发生在 IR 构造阶段，SHALL NOT 在多个判定器上分别实现。`<shell> -c SCRIPT $0 $1` 的位置参数 SHALL NOT 掩盖 SCRIPT 本身；`env -S <string>` / `env --split-string <string>` 的值 SHALL 被当作待执行的命令检查。
 
 **字符串型命令载荷** SHALL 统一处理：`<shell> -c <string>` 的 payload、`eval <string>` 的参数、`env -S <string>` 的值 SHALL 走同一套「作为命令行递归判定」的机制。`eval 'cp x .env'`（引号载荷）SHALL NOT 因载荷被合成单个 token 而放行——当前实现中它放行而 `eval cp x .env` 被拒，二者语义相同、判定 SHALL 一致。
 
-**launcher 前缀** SHALL 按「剥离到不动点」处理：wrapper（`env`/`command`/`nohup`）与 launcher（`nice`/`flock`/`chroot`/`setsid`/`timeout`/`stdbuf`/`taskset`/`xargs`/`busybox` 等）的剥离 SHALL 交替进行直到不动点，SHALL NOT 在遇到第一个未识别前缀时停止——`nohup setsid cp x .env`、`env -i nice cp x .env`、`xargs -0 busybox cp x .env` SHALL 被判定。剥离后 SHALL 对真实命令执行同样的 checks。**未识别的命令前缀 SHALL 按未知形态处置（`ask`），SHALL NOT 静默放行**——launcher 是一个开集，穷举表必然被单个反例证伪。
+**launcher 前缀** SHALL 按「剥离到不动点」处理：wrapper（`env`/`command`/`nohup`）与 launcher（`nice`/`flock`/`chroot`/`setsid`/`timeout`/`stdbuf`/`taskset`/`xargs`/`busybox` 等）的剥离 SHALL 交替进行直到不动点，SHALL NOT 在遇到第一个未识别前缀时停止——`nohup setsid cp x .env`、`env -i nice cp x .env`、`xargs -0 busybox cp x .env` SHALL 被判定。剥离后 SHALL 对真实命令执行同样的 checks。
+
+**未识别前缀的处置 SHALL 按「限定 ask」而非「一律 ask」**（[Q4] 用户拍板）：仅当该未识别前导 token **之后（滑窗内）跟着护栏真正会判的命令**（`rm`/`mv`/`cp`/`chmod`/`curl`/`wget`/`dd`/`tee`）时 SHALL 返回 `ask`；**纯粹的未识别程序 SHALL 保持 default-allow**（`my-custom-tool --flag` / `terraform plan` / `./scripts/run.sh` 仍放行）。依据：实测「未知即 ask」会把 **63%（37/59）** 今天 allow 的正常命令拉去审批，而 `ask` 在无 UI 环境等于 deny，等于把所有未识别程序硬拒；「限定 ask」在同一语料上噪音 **0/59**，30 条 launcher 攻击族抓取 29/30。白名单只用于**减噪**，安全属性由「未识别 ⇒ ask」承担——白名单被投毒（程序名叫 `git`）的后果只是从 ask 降为 allow，与今天 default-allow 持平，不构成回归。
+
+**剥离到不动点 SHALL 同时作用于 `<shell> -c <string>` 的 payload 通道**，SHALL NOT 只在 argv 通道剥离：当前 `_shell_dash_c_payloads` 的 wrapper 剥离只认 `env`/`command`/`nohup`/shell 关键字，故 `doas sh -c 'cp x .env'`、`nice bash -c 'cp x .env'`、`nohup setsid sh -c 'cp x .env'`、`unshare -m bash -c 'cp x .env'` 今天全被放行。
 
 heredoc 的正文 SHALL 按**绑定关系**分流，SHALL NOT 一刀切：当 heredoc / herestring 绑定到**解释器**（`sh`/`bash`/`zsh`/`ksh`/`dash`/`python`/`python3`/`node`/`perl`/`ruby`/`php`/`awk` 及其 `-s` / `-` 变体）的 stdin 时，其正文**就是待执行的代码**，SHALL 按命令行递归判定——`bash <<EOF` + 正文 + `EOF` SHALL 被拒绝。当 heredoc 绑定到**非解释器**命令时，正文是 stdin 数据，SHALL NOT 被当作命令判定——`cat <<'EOF'` + 正文含危险字样 + `EOF` SHALL 被放行。重定向到受保护路径的目标 SHALL 仍被判定（`cat <<EOF > /etc/passwd` SHALL 拒绝）。
 
@@ -85,6 +98,33 @@ heredoc 的正文 SHALL 按**绑定关系**分流，SHALL NOT 一刀切：当 he
 - **WHEN** 命令护栏校验
 - **THEN** 前者 SHALL 放行、后者 SHALL 拒绝
 
+#### Scenario: `.env` 凭据变体不得被放行（本 change 新增范围）
+
+- **GIVEN** `cp x .env.local`、`tee .env.production`、`dd of=.env.development`、`echo X >> .env.test`、`mv .env.staging /tmp/x`（凭据变体）
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 拒绝
+- **AND** 这些命令**当前**均被放行（`_dest_is_sensitive` 按 basename 精确相等、字面通道否定前瞻显式排除 `.env.` 后续字符），且 `cp src.txt .env.local` 经 `BashTool` **真的执行并写入**——SHALL NOT 因「文件工具已拒绝」而假设护栏覆盖了它（实测 `BashTool.execute` 只经文本通道与护栏，不经 `assert_write_allowed`）
+
+#### Scenario: `.env` 模板读写豁免
+
+- **GIVEN** `cat .env.example`（读）、`cp x .env.example`（写）、`cp .env.example /tmp/backup.txt`（源为模板）
+- **WHEN** 命令护栏与文件工具校验
+- **THEN** SHALL 放行（模板按规范进 git、正文对任何有仓库读权限者可见；护栏拦不住「已提交的真值」，那是 secret scanning 的职责）
+- **AND** 现状是 agent **读不到模板、只能猜该项目该配哪些环境变量**，属可发现性反模式
+
+#### Scenario: 模板判据的边界不得被绕过
+
+- **GIVEN** `.env.example`（模板）与 `.env.example.local` / `.env.local.example` / `.env.production.sample` / `.env.j2` / `.env.example.bak`（复合后缀，含非模板词）
+- **WHEN** 敏感 dot 名谓词判定
+- **THEN** 前者 SHALL 豁免（读写放行），后者 SHALL 全部判为凭据（deny）
+- **AND** 判据是「`.env` 之后的每一个 `.` 分段都是模板词」，SHALL NOT 用「后缀出现在某个模板清单里」这类可被 `.env.example.local` 绕过的写法
+
+#### Scenario: 非 `.env` 前缀的名字不受影响
+
+- **GIVEN** `.envrc` / `.environment` / `app.env` / `config.env` / `my.env` / `.env2` / `.env-file` / `environment`
+- **WHEN** 敏感 dot 名谓词判定
+- **THEN** SHALL NOT 落入 `.env.<后缀>` 判定，SHALL 保持放行（收窄不得引入误报）
+
 #### Scenario: 目标参数不得被解析层销毁
 
 - **GIVEN** `cp x ~/.{ssh}/f`（brace 展开）、`cp x ~/.ss\h/id_rsa`（反斜杠转义）、`cp x ~/.s[h]h/f`（字符类）、`cp x ~/.ss*/f`（glob）
@@ -102,7 +142,14 @@ heredoc 的正文 SHALL 按**绑定关系**分流，SHALL NOT 一刀切：当 he
 
 - **GIVEN** `nice cp x .env`、`flock /tmp/l cp x .env`、`doas cp x .env`、`unshare -m cp x .env`、`script -q /dev/null cp x .env`、`nice tee ~/.ssh/authorized_keys`
 - **WHEN** 命令护栏校验
-- **THEN** SHALL 拒绝或要求审批（launcher 剥离到不动点后，真实命令 SHALL 受检；未识别的命令前缀 SHALL 按未知形态处置）
+- **THEN** SHALL 拒绝或要求审批（launcher 剥离到不动点后，真实命令 SHALL 受检；未识别前缀后跟着受判命令时 SHALL 按未知形态处置）
+
+#### Scenario: 未识别前缀的「限定 ask」不误伤普通程序
+
+- **GIVEN** `my-custom-tool --flag`、`terraform plan`、`./scripts/run.sh`、`bun run dev`、`pytest -q`（未识别或未列入受判集合的程序）
+- **WHEN** 命令护栏校验
+- **THEN** SHALL 放行（default-allow；「限定 ask」只在未识别前缀**后跟受判命令**时触发）
+- **AND** `nsenter -t 1 cp x .env` / `watch -n 1 cp x .env` / `setarch x86_64 cp x .env` / `flock /tmp/l cp x .env` SHALL 返回 `ask`（未识别前缀 + 后跟受判命令）
 
 #### Scenario: wrapper 与 launcher 交叠剥离到不动点
 
@@ -197,7 +244,14 @@ heredoc 的正文 SHALL 按**绑定关系**分流，SHALL NOT 一刀切：当 he
 
 沙箱 SHALL 维护数据驱动攻击集（`benchmarks/attacks/attacks.json`），包含 50+ 恶意命令（file-destroy/priv-esc/code-exec/exfil/resource/bypass/sensitive-read 分类），SHALL 断言所有 guard-deny case 被拦截。攻击集 SHALL 只增不减：护栏重构 SHALL NOT 降低被拦截的攻击用例数，SHALL 新增 heredoc 绑定解释器、launcher 族、混淆形态（反斜杠/glob/字符类/brace 展开）、重定向到敏感点目录、`dd`/`tee` 目标与 CVE-inspired 用例。
 
-护栏 SHALL 保留一条**字面模式通道**作为深度防御层，并 SHALL 在文档中如实标注其身份：实测若移除该通道，54 条攻击用例的拦截数将从 54 降至 20（34 条仅由字面模式拦下）。该通道 SHALL NOT 重复实现已由 IR evaluator 覆盖的语义——「同一语义两个实现」正是本次重构要消除的负担。攻击用例的「被拦截」计数口径（`deny` 是否单独计数、`ask` 是否计入）SHALL 被明确定义并一致应用。
+护栏 SHALL 保留一条**字面模式通道**作为深度防御层，并 SHALL 在文档中如实标注其身份：实测若移除该通道，54 条攻击用例的拦截数将从 54 降至 20（34 条仅由字面模式拦下）。该通道 SHALL NOT 重复实现已由 IR evaluator 覆盖的语义——「同一语义两个实现」正是本次重构要消除的负担。
+
+**攻击集的「被拦截」口径 SHALL 被明确定义并一致应用**（[Q5] 用户拍板）：
+
+- **攻击集（`benchmarks/attacks/attacks.json`）SHALL 只允许 `deny`**——SHALL NOT 把 `ask` 混入攻击用例。把攻击用例放宽到允许 `ask`，会让一个在 CI（`FailClosed`）下失败的用例，在交互式开发里变成「人类可能点 y」，降低基线的语义强度。
+- **会出 `ask` 的新增形态**（launcher「限定 ask」等）SHALL 进**独立的「应 ask」用例集**，断言结果为 `ask`。
+- **无回归线的计数谓词 SHALL 为 `verdict is not ALLOW`**（`旧 DENY ⊆ 新 DENY ∪ 新 ASK` 使用的谓词）；该谓词比「`deny` 单独计数」更诚实（无 UI 环境下 `ask` 就是拦截），且与「攻击集只允 deny」的严格用例集不冲突。
+- 实测：既有 **50 条 guard-deny 攻击用例过新管线 50/50 保持 `DENY`**（0 条翻 `ask`、0 条翻 `allow`），故既有断言无需修改。
 
 #### Scenario: 攻击集拦截
 
@@ -212,8 +266,23 @@ heredoc 的正文 SHALL 按**绑定关系**分流，SHALL NOT 一刀切：当 he
 - **THEN** **旧 `DENY` SHALL 是 新 `DENY ∪ 新 `ASK` 的子集**（对拍断言）
 - **AND** 存在可切换回旧实现的回退开关，直到对拍全绿
 
+#### Scenario: 攻击集只允 deny，「应 ask」另建用例集
+
+- **GIVEN** 攻击集用例与新增的 launcher 形态（`nsenter -t 1 cp x .env` 等返回 `ask` 的形态）
+- **WHEN** 测试套件校验
+- **THEN** 攻击集用例 SHALL 全部为 `deny`（SHALL NOT 出现 `ask`）
+- **AND** 返回 `ask` 的形态 SHALL 出现在独立的「应 ask」用例集并被断言为 `ask`
+- **AND** 「被拦截」的计数谓词 SHALL 为 `verdict is not ALLOW`
+
 #### Scenario: 字面通道的身份被如实标注
 
 - **GIVEN** 能力范围声明与代码注释
 - **WHEN** 检查字面模式通道
 - **THEN** SHALL 标注其为深度防御的字面层而非解析层，且 SHALL NOT 与 evaluator 重复实现同一语义
+
+#### Scenario: 同一语义不得有第二个实现
+
+- **GIVEN** 「敏感 dot 名」这一语义（`workspace_policy` 的 glob、同文件的源位置正则、`command_guard` 的 frozenset）
+- **WHEN** 检查代码
+- **THEN** SHALL 只有一份定义，其余处 SHALL 引用它；SHALL NOT 存在「同一文件、两条通道、两种答案」（实测现成实例：`cp x .env.local` 在 Read/Write 下 DENY、在 Bash 护栏下 ALLOW）
+- **AND** 该定义 SHALL 为代码谓词，SHALL NOT 为 glob 字符串（`fnmatch` 不支持 extglob，写成 glob 会静默放开两边）
