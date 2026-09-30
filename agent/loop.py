@@ -172,6 +172,14 @@ class AgentLoop:
         else:
             self.context_builder = self._make_default_context_builder()
         self.approval_handler = approval_handler or FailClosedApprovalHandler()
+        # The command guard can answer `ask` *during* Bash execution, after the
+        # loop's own pre-execution approval has already passed (design D3). Wire
+        # the same handler into the tool so those requests reach the user; when
+        # no handler is configured the tool fails closed, not open.
+        try:
+            self.tool_registry.get_tool("Bash").set_approval_cb(self.approval_handler)
+        except (KeyError, AttributeError):
+            pass
         self._question_handler = question_handler
         self.mcp_manager = mcp_manager
         self.background_manager = background_manager
