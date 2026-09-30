@@ -50,7 +50,7 @@
    - `nodes`：节点终态（`completed` / `skipped` / `blocked`）——回答「这条分支会不会跑到」。
 3. **可选 `script`（what-if 注入）**：调用方可以给某个节点指定「假装它输出这个」，于是能问「**如果 critic 说 `GAPS`，图往哪走？**」——把工具从「happy-path 草图」升级成「任意 what-if 推演」。
 4. **报告是有界的**：所有文本按 `max_report_chars` 截断，避免大图把父上下文打爆（与既有 `parent_envelope` bounded 纪律同口径）。
-5. **如实声明边界**：返回体与工具描述都写明这是**模拟**——它回答**拓扑与数据流**，**不回答**「真实模型会不会真的输出 `APPROVED`」。
+5. **如实声明边界**：返回体与工具描述都写明这是**模拟**——它回答**拓扑与数据流**，**不回答**「真实模型会不会真的输出 `APPROVED`」，**也不回答**「真实运行的 token / 成本预算会不会超」（模拟不累积 token/成本；但**结构闸** `max_nodes`/`max_runs`/`recursion_limit` **可答**，因为那些计数在调度器自己手里）。
 
 **不变**：调度器全部运行语义、`WorkflowSpec` 的数据结构、既有工具（`DeclareWorkflow`/`StartWorkflow`/`RunWorkflow`/资产四件套）的行为与返回体、`parent_envelope` 投影、资产 schema。**不修改 `scheduler.py` 的执行路径**（模拟复用既有 `run()`，隔离靠**喂给它的 manager/LLM/store**——见 design D4）。
 
@@ -64,7 +64,7 @@
 
 - `multi-agent-collaboration`：
   - **ADDED** 新 Requirement「工作流可零成本模拟执行以暴露数据投递语义」——系统 SHALL 提供只读的 `DryRunWorkflow`，对给定 spec 做**不调用真实 LLM、不产生持久副作用**的模拟执行，SHALL 返回每个节点的 `received`/`produced`、route 的判定输入与命中、每条边的 `channel`/`control` 与节点终态，SHALL 允许调用方 `script` 指定节点输出以推演分支，SHALL 对有界性（截断）与模拟边界（不代表真实模型输出）作出显式声明。
-  - **MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」——描述中 SHALL 增加指向 `DryRunWorkflow` 的**可发现性引导**（把「不确定语义时先 dry run」写进声明入口，而不是等模型自己想起来有这个工具）。**注**：`DeclareWorkflow` 的描述实测 **3993 字符**（守卫上界 6000，`research/` 的实测输出），**尚有约 2000 字符余量**——所以加一句引导语是可行的；但主引导仍建议放 `DryRunWorkflow` 自身的 description（见 design D10 / Open Question Q4）。
+  - **（条件性）MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」——**仅当 Open Question Q4 选「在 `DeclareWorkflow` 描述里加指针」时**，描述 SHALL 增加一句指向 `DryRunWorkflow` 的可发现性引导；若 Q4 选「引导只放 `DryRunWorkflow` 自身描述」，则**本 change 的 spec delta 保持纯 ADDED**（无 MODIFIED 节）。**本 proposal 不预设 Q4 结论**，故当前 spec delta 无 MODIFIED 节；Q4 拍板后若需要，在实现阶段一并补入。**注**：`DeclareWorkflow` 的描述实测 **3993 字符**（守卫上界 6000，`test_workflow_tool_discoverability.py:315`），**尚有约 2000 字符余量**——加一句引导语（~60 字符）成本很低。
 
 ## 验收（本 change 的验收口径，**只进 proposal、不进 spec**）
 
@@ -127,7 +127,7 @@
     - 边界声明：返回体含「这是模拟」的显式措辞；
     - 零 token：断言模拟期间**真实 `manager.llm` 的 `chat` 调用数为 0**（变异验证：把假 LLM 换回真 LLM，测试必须变红）。
   - **必须新增**：工具面 parity/描述断言（沿用 `test_workflow_tool_discoverability.py` 范式）——`DryRunWorkflow` 的 `spec` 参数用**同一份** `_workflow_spec_schema()` 派生（与 `DeclareWorkflow`/`RunWorkflow` 一致，纳入既有 schema↔常量 parity 与清单守卫）。
-  - **必须回归**：`_SPAWN_TOOL_NAMES` 不含 `DryRunWorkflow`（它不 spawn），既有工具数量/名字断言（`test_workflow_tools.py`）需同步新增而非修改。
+  - **必须回归**：`_SPAWN_TOOL_NAMES` 不含 `DryRunWorkflow`（它不 spawn），既有工具数量/名字断言需同步新增而非修改。**（grill I8b 订正路径）**：`test_workflow_tools.py` 与 `test_workflow_tool_discoverability.py` 都在 **`tests/agent/subagent/`** 下，不在 `tests/agent/tools/`。
 - **文档**:
   - `openspec/specs/multi-agent-collaboration/spec.md`（current spec 同步，受保护路径）——ADDED 1 + MODIFIED 1。
   - `docs/openspec-change-backlog.md`（本 change 入队；受保护路径）。

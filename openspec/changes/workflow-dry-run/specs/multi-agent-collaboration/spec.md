@@ -6,7 +6,9 @@
 
 系统 SHALL 提供一个只读工具 `DryRunWorkflow`，接受与 `DeclareWorkflow` 相同的 `spec` 参数，对给定 spec 执行**模拟**，并返回数据投递报告。
 
-模拟 SHALL NOT 调用真实 LLM（真实 provider 的调用次数 SHALL 为 0），SHALL NOT 向 workspace 写入任何文件，SHALL NOT 把模拟的 workflow 注册进 `SubAgentManager` 的 workflow 注册表，SHALL NOT 触达任何图事件 sink。这些隔离性质 SHALL 由测试机械锁定，SHALL NOT 仅靠实现约定。
+模拟 SHALL NOT 调用真实 LLM（真实 provider 的调用次数 SHALL 为 0），SHALL NOT 向**调用方的 workspace** 写入任何文件，SHALL NOT 把模拟的 workflow 注册进调用方 `SubAgentManager` 的 workflow 注册表，SHALL NOT 触达调用方的图事件 sink。这些隔离性质 SHALL 由测试机械锁定，SHALL NOT 仅靠实现约定。
+
+**口径说明（避免误读）**：隔离要求是「不污染调用方的 workspace 与状态」。模拟**允许**在一次性临时目录里写中间 artifact，但这些 SHALL 随模拟结束清理，且 SHALL NOT 指向调用方的 workspace 根。（依据：写入口有两个——manager 的 `_write_result_artifacts` 与 scheduler 的 `_store`——两者都以 `workspace_policy.workspace_root` 为路径根，所以「一次性 workspace_root」是隔离的**独立充分条件**。）
 
 模拟 SHALL 复用既有的调度执行路径（门控、reducer、route 匹配、foreach 展开、循环计数），SHALL NOT 另起一套与真实执行可能漂移的模拟逻辑。
 
@@ -17,6 +19,7 @@
 报告 SHALL 至少包含：
 
 - 每个节点的 `id` / `kind` / 终态 `status` / 被执行的 `runs` 次数 / 产出 `produced`。节点集合 SHALL 基于实际执行计划（含系统自动插入的汇合层），SHALL NOT 只列出模型声明的节点；执行计划中由系统自动插入的节点 SHALL 可被识别（与声明节点区分）；
+- 对**非正常结束**的节点（失败 / 被取消 / 被跳过），报告 SHALL 给出可解释的原因，SHALL NOT 只给一个 `status` 值让调用方无从判断「是图的问题还是模拟本身的问题」；
 - route 节点：判定输入 `input_seen`（SHALL 与调度器实际用于匹配的文本同源）、命中的标签 `matched`、实际走到的后继 `walked_to`、是否走了 `default`；判定输入的**来源节点** SHALL 可识别（SHALL NOT 只给文本而不给归属）；
 - 每个节点的 `received`——该节点实际收到的任务文本（SHALL 反映上游投递与 foreach 项注入的净效果）。对被 foreach 展开的节点，`received` SHALL 按**展开项**分别可见，SHALL NOT 让多个项的输入坍缩为单一值；
 - 每条边的 `from` / `to` / `channel`，以及该边是否为控制边（route 出边）；
@@ -31,6 +34,13 @@
 - **THEN** 该 workspace SHALL NOT 新增任何文件
 - **AND** 该 manager 的 workflow 注册表 SHALL 保持为空
 - **AND** 该 manager 的真实 LLM SHALL 一次都没有被调用
+
+#### Scenario: 失败节点带可解释原因
+
+- **GIVEN** 一张模拟中某节点未正常结束的图
+- **WHEN** 调用 `DryRunWorkflow`
+- **THEN** 报告 SHALL 给出该节点异常结束的原因
+- **AND** SHALL NOT 让调用方把「一个失败节点让 route 走了 default」误读为「这张图的 route 本来就该走 default」
 
 #### Scenario: 聚合节点的产出不被模拟替身污染
 
@@ -88,12 +98,21 @@
 
 工具的 `description` SHALL 以**可判定的断言**说明该工具不调用模型、不写入任何内容；结果体 SHALL 包含一个固定字段显式标记结果为模拟。结果体 SHALL NOT 包含任何可被后续工具（`StartWorkflow` / `GetWorkflow` / `RunWorkflow`）消费的 workflow 标识符。
 
+模拟 SHALL 让调用方能够区分「它答得了的问题」与「它答不了的问题」，SHALL NOT 暗示模拟的结论覆盖真实运行的全部条件。至少，模拟 SHALL NOT 被呈现为能够预测：真实模型的实际输出、以及依赖真实 token / 成本消耗的预算闸是否会触发。
+
 #### Scenario: 结果体携带模拟标记且无可消费标识符
 
 - **GIVEN** 一次 `DryRunWorkflow` 调用
 - **WHEN** 检查其返回体
 - **THEN** 返回体 SHALL 含一个显式的模拟标记字段
 - **AND** 返回体 SHALL NOT 含 `workflow_id`
+
+#### Scenario: 声明模拟无法预测的维度
+
+- **GIVEN** 一次 `DryRunWorkflow` 调用
+- **WHEN** 调用方想知道「这张图真实运行会不会因 token 预算被截断」
+- **THEN** 报告/描述 SHALL 明确该问题不在模拟的覆盖范围内
+- **AND** SHALL NOT 用一个完整跑通的报告暗示「真实运行一定会跑完」
 
 #### Scenario: 描述含断言式的无副作用声明
 
