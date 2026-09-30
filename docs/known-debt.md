@@ -348,44 +348,56 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 - 本条目引用的归档路径 `openspec/changes/archive/2026-09-24-fix-issue-226-browser-test-flake/`
   在本条目写入时**尚未归档**，随本 change 的归档 commit 落地（归档目录缺失时以 change 的 active 路径为准）。
 
-## 命令护栏的残余覆盖缺口（fix-issue-247，数据为实测）
+## 命令护栏的残余覆盖缺口（fix-issue-247 起，bash-command-guard-redesign 收口）
 
 `CommandGuard` 在 `fix-issue-247`（2026-09-26）后覆盖：命令分段、分组、shell 关键字、`-c` payload、常见 wrapper（`env`/`command`/`nohup`），以及**全文扫描**通道（兜底 launcher / herestring / pipe 形态下带路径分隔符的敏感目标）。
 
-下表**由实测脚本生成**（`_CommandGuard().check()` 直读，非手写）：
+`bash-command-guard-redesign`（2026-09-30）把三套各自解析的机制合并为「单一解析管线（`agent/tools/bash_ir.py`）+ 多 evaluator」，并把当时记录的残余逐项收口。下表**由实测脚本生成**（`_CommandGuard().check()` 直读，非手写）：「重构前」在 `9373e9c` 的独立 worktree 上跑出，「本 change 后」在当前 HEAD 跑出。
 
-| 命令 | master | fix-issue-247 后 | 性质 |
+| 命令 | 重构前 | 本 change 后 | 性质 |
 |---|---|---|---|
-| `nice cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
-| `setsid cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
-| `xargs cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
-| `busybox cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
-| `stdbuf -o0 cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
-| `taskset -c 0 cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
-| `flock /tmp/l cp x .env` | ALLOW | ALLOW | 两版同为漏洞 |
-| `nice bash -c 'cp x src/.env'` | DENY | DENY | 两版均拦 |
-| `bash <<< 'cp x src/.env'` | DENY | DENY | 两版均拦 |
-| `nice tee ~/.ssh/authorized_keys` | ALLOW | ALLOW | 两版同为漏洞 |
-| `setsid dd of=/dev/sda` | DENY | DENY | 两版均拦 |
-| `cp x $HOME/.env` | DENY | DENY | 两版均拦 |
-| `cp x ~/.ss\h/id_rsa` | DENY | ALLOW | **本 change 引入** |
-| `cp x ~/.ssh?/f` | DENY | DENY | 两版均拦 |
-| `cp x ~/.ss*/f` | DENY | ALLOW | **本 change 引入** |
-| `cp x ~/.s[h]h/f` | DENY | ALLOW | **本 change 引入** |
-| `bash -c "$(cat payload.txt)"` | DENY | DENY | 两版均拦 |
+| `nice cp x .env` | ALLOW | DENY | **本 change 收口** |
+| `setsid cp x .env` | ALLOW | DENY | **本 change 收口** |
+| `xargs cp x .env` | ALLOW | DENY | **本 change 收口** |
+| `busybox cp x .env` | ALLOW | DENY | **本 change 收口** |
+| `stdbuf -o0 cp x .env` | ALLOW | DENY | **本 change 收口** |
+| `taskset -c 0 cp x .env` | ALLOW | ASK | **本 change 收口** |
+| `flock /tmp/l cp x .env` | ALLOW | ASK | **本 change 收口** |
+| `nice tee ~/.ssh/authorized_keys` | ALLOW | DENY | **本 change 收口** |
+| `cp x ~/.ss\h/id_rsa` | ALLOW | DENY | **本 change 收口**（原乙类：反斜杠转义） |
+| `cp x ~/.ss*/f` | ALLOW | ASK | **本 change 收口**（原乙类：glob） |
+| `cp x ~/.s[h]h/f` | ALLOW | ASK | **本 change 收口**（原乙类：字符类） |
+| `cp x ~/.{ssh}/f` | ALLOW | DENY | **本 change 收口**（原乙类：brace 展开） |
+| `cp src.txt .env.local` | ALLOW | DENY | **本 change 收口**（凭据变体，新增范围） |
+| `cp src.txt .env.production` | ALLOW | DENY | **本 change 收口**（凭据变体） |
+| `tee .env.development` | ALLOW | DENY | **本 change 收口**（凭据变体） |
+| `dd of=.env.staging` | ALLOW | DENY | **本 change 收口**（凭据变体，`of=` 目标） |
+| `doas cp x .env` | ALLOW | DENY | **本 change 收口**（launcher 族） |
+| `unshare -m cp x .env` | ALLOW | DENY | **本 change 收口**（launcher 族） |
+| `cp -t .env x` | ALLOW | DENY | **本 change 收口**（目标经选项传递） |
+| `eval 'cp x .env'` | ALLOW | DENY | **本 change 收口**（引号载荷） |
+| `cat <<'EOF' … cp x .env … EOF` | DENY | ALLOW | **本 change 修复误报**（heredoc 正文是数据） |
+| `nice bash -c 'cp x src/.env'` | DENY | DENY | 两版同判 |
+| `bash <<< 'cp x src/.env'` | DENY | DENY | 两版同判 |
+| `setsid dd of=/dev/sda` | DENY | DENY | 两版同判 |
+| `cp x $HOME/.env` | DENY | DENY | 两版同判 |
+| `cp x ~/.ssh?/f` | DENY | DENY | 两版同判 |
+| `bash -c "$(cat payload.txt)"` | DENY | DENY | 两版同判 |
+| `cp x .env.example` | ALLOW | ALLOW | 两版同判（模板不是凭据） |
+| `cat .env.example` | ALLOW | ALLOW | 两版同判 |
 
-**甲类：非本 change 引入**（master 与 head 同判，均为漏洞但不是本 change 造成）：
-`nice cp x .env`、`setsid`/`xargs`/`busybox`/`stdbuf`/`taskset`/`flock` + `cp x .env`（launcher + 纯命令 + **裸点名**）、`nice tee ~/.ssh/authorized_keys`。
-对应收口方向：per-wrapper 参数模式表（`flock <file> cmd`、`chroot <dir> cmd` 的位置参数与选项混排）。
-
-**乙类：本 change 引入的收缩（应视为待收口缺陷）**：
-`cp x ~/.ss\h/id_rsa`（反斜杠转义）、`cp x ~/.ss*/f`（glob）、`cp x ~/.s[h]h/f`（字符类）等**混淆形态** —— master 的全文正则能拦，本 change 改成「段级判定 + 精确全文扫描」后漏掉。同族变体（反斜杠 / `?` / `*` / 字符类 / brace 展开 5 种 × 10 个敏感名）实测 **50/50** 属此类（review R9 指出初版的「40/60」取自另一组 6 变体样本）。
+**读侧（`workspace_policy`）**：`.env.example` / `.env.sample` / `.env.template` / `.env.dist` / `.env.defaults` / `.env.tpl` 的**读写**由 deny 改为 allow（模型此前连「该项目该配哪些环境变量」都读不到）；`.env.local` 等凭据变体的读写在两版下均 deny。判据是「`.env` 之后的每一段都是模板词」，故 `.env.example.local` / `.env.j2` 仍判凭据——它由 `agent/workspace_policy.py` 的 `is_sensitive_dot_name` 单点定义，护栏与文件工具共同消费。
 
 **已确认**：`setsid dd of=/dev/sda`、`cp x $HOME/.env`、`bash -c "$(cat payload.txt)"` 在 master 与 head 上**均被拦截**，**不是**残余（本条初版曾误列，review R8-3 指出）。
 
-**乙类收口方向**：在全文扫描前对目标做**近似归一化**——去反斜杠转义、展开字符类、用 `fnmatch` 反向匹配（敏感名是否能被该 glob 模式匹配）、brace 展开；难点是既不能漏（混淆形态）也不能误报（`.env.example` 这类字面名）。参考 `_dest_is_sensitive` 的段级清单与 `_EXTRA_DENYLIST` 的否定前瞻写法。
+### 仍未收口
 
-> **记录纪律**：本条目在两轮 review 中被指出**表格数据写错方向**（R8-2）与**把 master 能拦的例子列为「master 也不覆盖」**（R8-3）。此后本表的每一行 SHALL 由实测脚本生成，不手写判定结果。
+- **`taskset` / `flock` 等已知 launcher 的无害目标仍会 ASK**：`taskset -c 0 cp x .env` 与 `flock /tmp/l cp x .env` 落在 ASK 而非 DENY——它们的选项语法（`-c 0` / `<file> cmd` 的位置参数）没有被 `_LAUNCHER_OPTS_WITH_VALUE` 完整建模，剥离后残留的 token 触发了「未知前缀 + 后跟受判命令」。ASK 在无 UI 环境等于拒绝，方向安全；但记为可迭代项（补齐这两个 launcher 的选项/位置参数表即可降为 DENY）。
+- **未知前导 token + `shell -c`**：`doas sh -c 'cp x .env'` / `nice bash -c 'cp x .env'` 已由 payload 通道的 fixpoint 剥离覆盖为 DENY。但**未识别的**前导 token 后接 `shell -c` 仍会 ALLOW（实测 `unknownlauncher sh -c 'cp x .env'` → ALLOW）——`_conceals_judged_command` 的滑窗只认 `rm`/`mv`/`cp` 等受判命令，`sh` 不在其中，故不触发 ask。收口方向：把「未知前缀 + `shell -c`」并入 `_conceals_judged_command` 的判定集合。
+- **能力范围声明之外**：不分析编码/加密后的 payload（base64 等），不追踪文件系统状态——这是本层的**声明边界**，不是债务。
+
+> **记录纪律**：本条目在两轮 review 中被指出**表格数据写错方向**（R8-2）与**把 master 能拦的例子列为「master 也不覆盖」**（R8-3）。此后本表的每一行 SHALL 由实测脚本生成，不手写判定结果；「重构前」一列 SHALL 来自独立 worktree 的真实旧代码，不靠回退开关近似。
+
 ## SSE 解析失败时未重置 event_type（fix-issue-249 显式不做）
 
 `agent/llm.py` 的 `BaseLLM._stream_events` 在单条 `data:` 行解析失败时 `continue`。本 change（issue #249）只给它**补了 warning 日志**，**未**改变控制流 —— 具体地，失败后 `event_type` 仍保留上一条 `event:` 的值，下一条成功的 `data:` 行会与这个**过期的** event_type 配对。
