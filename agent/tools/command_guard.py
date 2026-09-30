@@ -28,22 +28,18 @@ import re
 from enum import Enum
 from pathlib import Path
 
-from agent.workspace_policy import DEFAULT_DENYLIST
+from agent.workspace_policy import (
+    DEFAULT_DENYLIST,
+    SENSITIVE_DOTDIRS as _SENSITIVE_DOTDIRS,
+    SENSITIVE_DOTFILES as _SENSITIVE_DOTFILES,
+    is_sensitive_dot_name,
+)
 
 # Protected paths: writing to these is always denied.
 _DENY_PATHS = ("/etc", "/proc", "/sys", "/dev", "/root", "/boot", "/var")
 # Device files that are black-hole / std-stream aliases rather than protected
 # assets. Only exempt for redirection and mv/cp targets (fix-issue-247 Q2/Q3).
 _DEVICE_EXEMPT = ("/dev/null", "/dev/stdout", "/dev/stderr")
-# Dot-directories carrying credentials or repo metadata. Compared per path
-# **segment** (never by prefix), so `.gitignore` / `.github/` / `.env.example`
-# pass while `.git/config` and `src/.git/hooks/x` are caught.
-_SENSITIVE_DOTDIRS = frozenset(
-    {".git", ".ssh", ".env", ".aws", ".gnupg", ".kube", ".docker", ".netrc", ".npmrc", ".pypirc"}
-)
-_SENSITIVE_DOTFILES = frozenset(
-    {".env", ".netrc", ".npmrc", ".pypirc", ".gitconfig", ".git-credentials"}
-)
 
 
 def _normalize_path(path: str) -> str:
@@ -218,13 +214,13 @@ def _strip_wrappers(tokens: list[str]) -> list[str]:
 def _dest_is_sensitive(dest: str) -> bool:
     """True when ``dest`` carries credentials / repo metadata (fix-issue-247 R1).
 
-    Segment-wise: any path segment equal to a sensitive dot-directory, or a
-    basename equal to a sensitive dot-file.
+    Segment-wise: any path segment that the shared sensitive-dot-name predicate
+    flags. That predicate is defined once in ``workspace_policy`` (design D12)
+    so this guard and the read/write tools cannot drift: ``.env.local`` is
+    sensitive (a credential variant), ``.env.example`` is not (a template).
     """
     parts = [part for part in dest.split("/") if part not in ("", ".")]
-    if any(part in _SENSITIVE_DOTDIRS for part in parts):
-        return True
-    return bool(parts) and parts[-1] in _SENSITIVE_DOTFILES
+    return any(is_sensitive_dot_name(part) for part in parts)
 # Shell interpreters that, when piped to, imply arbitrary code execution.
 _SHELL_INTERPRETERS = {"sh", "bash", "zsh", "ksh", "dash", "fish"}
 # Arbitrary code execution interpreters.
@@ -399,10 +395,13 @@ class CommandGuard:
         return bool(m)
 
     def _has_protected_redirect(self, command: str) -> bool:
-        """Detect redirects (``>``/``>>``) into protected paths.
+        """Detect redirects (``>``/``>>``) into protected paths or sensitive names.
 
         Segment-wise and device-exempt: ``2>/dev/null`` is a black-hole write,
         not a protected asset, and ``/various.txt`` is not under ``/var``.
+        Sensitive dot names are judged with the same predicate as mv/cp targets
+        (design D8/D12), so ``echo X >> .env.local`` lands here rather than
+        being silently allowed.
         """
         tokens = tokenize_command(command)
         for i, tok in enumerate(tokens):
@@ -411,6 +410,8 @@ class CommandGuard:
                 if _is_device_exempt(target):
                     continue
                 if any(_within(target, p) for p in _DENY_PATHS):
+                    return True
+                if _dest_is_sensitive(target):
                     return True
         return False
 
@@ -480,6 +481,10 @@ class CommandGuard:
             return self._check_timeout(tokens)
         if cmd_name in ("curl", "wget"):
             return self._check_curl_wget(tokens)
+        if cmd_name == "dd":
+            return self._check_dd(tokens)
+        if cmd_name == "tee":
+            return self._check_tee(tokens)
         return CommandVerdict.ALLOW
 
     def _check_rm(self, tokens: list[str]) -> CommandVerdict:
@@ -542,6 +547,36 @@ class CommandGuard:
         if mode in ("0777", "777", "a+rwx", "a=rwx") and target in ("/", "/tmp"):
             self.last_reason = "chmod_bits"
             return CommandVerdict.DENY
+        return CommandVerdict.ALLOW
+
+    def _check_dd(self, tokens: list[str]) -> CommandVerdict:
+        """``dd of=<target>`` writes to ``<target>`` (design D2 `write_targets[]`).
+
+        The target is carried on the option, not as a positional argument, so
+        ``dd of=.env`` used to slip past every target check.
+        """
+        for token in tokens[1:]:
+            if not token.startswith("of="):
+                continue
+            target = _normalize_path(token[3:])
+            if _is_device_exempt(target):
+                continue
+            if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                self.last_reason = "dd_target"
+                return CommandVerdict.DENY
+        return CommandVerdict.ALLOW
+
+    def _check_tee(self, tokens: list[str]) -> CommandVerdict:
+        """``tee <target>`` writes to each non-option argument."""
+        for token in tokens[1:]:
+            if token.startswith("-"):
+                continue
+            target = _normalize_path(token)
+            if _is_device_exempt(target):
+                continue
+            if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                self.last_reason = "tee_target"
+                return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
     def _check_curl_wget(self, tokens: list[str]) -> CommandVerdict:

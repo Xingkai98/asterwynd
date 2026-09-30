@@ -872,3 +872,56 @@ class TestFullTextChannelScope:
     def test_bare_name_at_segment_head_still_denied(self) -> None:
         """裸 `.env` 由**段级**通道负责 —— 这条锁住两通道的分工。"""
         assert CommandGuard().check("cp x .env") is CommandVerdict.DENY
+
+
+class TestEnvCredentialVariants:
+    """`.env` 凭据变体必须被拦（design D12 / tasks 2.11）。
+
+    改前这些**全部 allow**：`_dest_is_sensitive` 按 basename 精确相等、
+    字面通道的否定前瞻 `(?![\\w.-])` 显式排除了 `.env` 后紧跟 `.` 的情形，
+    两条通道同时漏掉所有 `.env.<后缀>`。而 `BashTool` 只经文本通道与护栏、
+    不经 `assert_write_allowed`，故 `cp src.txt .env.local` 真的会写入。
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp src.txt .env.local",
+            "cp src.txt .env.production",
+            "cp src.txt .env.development",
+            "cp src.txt .env.test",
+            "cp src.txt .env.staging",
+            "cp src.txt .env.secret",
+            "mv src.txt .env.local",
+            "tee .env.production",
+            "dd of=.env.development",
+            "echo X >> .env.local",
+            "cp src.txt config/.env.local",
+        ],
+    )
+    def test_env_credential_variant_target_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat .env.example",
+            "cp x .env.example",
+            "cp x .env.sample",
+            "cp x .env.template",
+            "cp x .env.dist",
+            "cp x .env.defaults",
+            "cp x .env.tpl",
+            "head -5 .env.example",
+        ],
+    )
+    def test_env_template_allowed(self, command: str) -> None:
+        """对照组：模板不得被误拦（防「一律拒」的恒真实现）。"""
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        ["cp x .envrc", "cp x .environment", "cp x app.env", "cp x .env2"],
+    )
+    def test_env_lookalikes_still_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
