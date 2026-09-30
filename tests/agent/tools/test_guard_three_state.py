@@ -224,3 +224,61 @@ class TestEvalPayload:
     @pytest.mark.parametrize("command", ["eval 'echo hi'", "eval 'ls -la'"])
     def test_benign_eval_allowed(self, command: str) -> None:
         assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestCommandSubstitutionEvaluatorIndependence:
+    """Command substitution must be caught by the EVALUATOR, not just the
+    literal channel (design D4/D9, tasks 4.2).
+
+    These assertions run with the literal denylist muted, so a regression that
+    only the regex was covering shows up here.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo $(rm -rf /tmp/x)",
+            "echo `rm -rf /tmp/x`",
+            "x=$(cp x .env)",
+            "echo $(cp x .env)",
+        ],
+    )
+    def test_denied_without_literal_channel(self, command: str) -> None:
+        guard = CommandGuard(workspace="/tmp/ws")
+        guard._denylist = ()
+        assert guard.check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["$(echo rm -rf /)", "echo $(echo hi)"],
+    )
+    def test_echo_text_is_not_denied_without_literal_channel(self, command: str) -> None:
+        """`$(echo rm -rf /)` only *prints* the text; the evaluator may allow or
+        ask, but must not be the thing that denies it (the literal channel is).
+        """
+        guard = CommandGuard(workspace="/tmp/ws")
+        guard._denylist = ()
+        assert guard.check(command) is not CommandVerdict.DENY
+
+
+class TestFailurePolicy:
+    """Unanalyzable input asks rather than silently allowing (design D4)."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo 'unclosed",
+            "rm -rf !(keep)",
+            "echo foo |",
+            "if true; then",
+        ],
+    )
+    def test_unanalyzable_asks(self, command: str) -> None:
+        assert CommandGuard().check(command) is ASK
+
+    def test_clean_input_does_not_ask(self) -> None:
+        """Control group: a well-formed command must not become an ask."""
+        assert CommandGuard().check("ls -la") is CommandVerdict.ALLOW
+
+    def test_overlong_input_asks(self) -> None:
+        assert CommandGuard().check("echo x\n" * 40000) is ASK
