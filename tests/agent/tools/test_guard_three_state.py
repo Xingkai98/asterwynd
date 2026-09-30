@@ -591,3 +591,69 @@ class TestLegacySourceCoverage:
         assert CommandGuard(workspace="/tmp/ws").check(
             "cp src/a.txt dst/b.txt"
         ) is CommandVerdict.ALLOW
+
+
+class TestAttachedOptionValues:
+    """`-c'<cmd>'` (no space) is the same option as `-c '<cmd>'` (review R5-1).
+
+    tree-sitter keeps the attached form as one token (`"-c'cp .env /tmp/x'"`),
+    so an exact token comparison misses it entirely and the payload ran.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "script -c'cp -r .env /tmp/leak'",
+            "script -c'cp .env /tmp/x'",
+            'script -c"cp .env /tmp/x"',
+            "script --command='cp .env /tmp/x'",
+            "script --command='mv .git/config /tmp/x'",
+            # sensitive command not first, so the source-position channel misses it
+            "script -c'cp a b; cp .env /tmp/x'",
+        ],
+    )
+    def test_attached_script_command_option_denied(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["env -S'cp x .env'", "env -S'cp -r .env /tmp/x'"],
+    )
+    def test_attached_env_split_string_denied(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["script -c'echo hi' /dev/null", "env -S'echo hi'"],
+    )
+    def test_attached_benign_allowed(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
+
+
+class TestAttachedShellDashC:
+    """`bash -c'<cmd>'` (attached) is the same as `bash -c '<cmd>'`.
+
+    The tokenizer drops the quotes, so the token arrives as `-ccp x .env`; both
+    the exact-token check and the `len < 3` bound missed it.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "bash -c'cp x .env'",
+            'bash -lc"cp x .env"',
+            "sh -c'cp -r .env /tmp/x'",
+            "bash -c'rm -rf /'",
+        ],
+    )
+    def test_attached_shell_dash_c_denied(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize("command", ["bash -c'echo hi'", 'bash -lc"ls"'])
+    def test_attached_benign_allowed(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
+
+    def test_separated_form_still_denied(self) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(
+            'bash -c "cp x .env"'
+        ) is CommandVerdict.DENY

@@ -212,14 +212,30 @@ def _shell_dash_c_payloads(tokens: list[str]) -> list[str]:
     # so its value is itself a command line. `_strip_wrappers` deliberately
     # leaves the option in the stream for this case (review Round 4 I-3).
     for i, token in enumerate(tokens):
-        if token in _SPLIT_STRING_OPTS and i + 1 < len(tokens):
+        matched, attached = _match_option_value(token, _SPLIT_STRING_OPTS)
+        if not matched:
+            continue
+        if attached is not None:
+            payloads.append(_dequote(attached))
+        elif i + 1 < len(tokens):
             payloads.append(tokens[i + 1])
     stripped = _strip_wrappers(tokens)
-    if len(stripped) < 3 or stripped[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
+    # `len < 2` rather than `< 3`: `bash -c'…'` is only two tokens (the option
+    # and its attached value are one), and the old bound silently skipped it.
+    if len(stripped) < 2 or stripped[0].rsplit("/", 1)[-1] not in _SHELL_INTERPRETERS:
         return payloads
     index = 1
     while index < len(stripped):
-        if _DASH_C_FLAG.fullmatch(stripped[index]):
+        token = stripped[index]
+        # Attached spelling `-c'<cmd>'`: the option and the payload are one
+        # token, so match the `-c` prefix rather than the whole token.
+        attached = _dash_c_attached_value(token)
+        if attached is not None:
+            if attached.strip():
+                payloads.append(_dequote(attached))
+            index += 1
+            continue
+        if _DASH_C_FLAG.fullmatch(token):
             end = next(
                 (
                     i
@@ -366,10 +382,13 @@ def _concealed_command_texts(argv: list[str]) -> list[str]:
         # (repeated `-c` means the last wins, so all are judged).
         cursor = index + 1
         while cursor < len(argv) and argv[cursor].startswith("-"):
-            if argv[cursor] in command_options:
-                if cursor + 1 < len(argv):
+            matched, attached = _match_option_value(argv[cursor], command_options)
+            if matched:
+                if attached is not None:
+                    payloads.append(_dequote(attached))
+                elif cursor + 1 < len(argv):
                     payloads.append(_dequote(argv[cursor + 1]))
-                cursor += 2
+                cursor += 1 if attached is not None else 2
                 continue
             if argv[cursor] in _LAUNCHER_OPTS_WITH_VALUE.get(name, set()):
                 cursor += 1
@@ -418,6 +437,43 @@ def _mask_data_heredocs(command: str, analysis: BashAnalysis) -> str:
             continue
         masked = masked.replace(heredoc.body, "\n" * heredoc.body.count("\n"))
     return masked
+
+
+#: `-c<value>` / `-lc<value>`: a dash-c flag cluster with the payload attached.
+#: The tokenizer has already removed the quotes, so `-c'cp x .env'` arrives as
+#: `-ccp x .env` and the value is everything after the final option letter.
+_DASH_C_ATTACHED = re.compile(r"-[A-Za-z]*c(?P<value>\S.*)\Z", re.S)
+
+
+def _dash_c_attached_value(token: str) -> str | None:
+    """The attached payload of a shell `-c` flag spelled without a space.
+
+    `bash -c'cp x .env'` reaches the guard as the single token `-ccp x .env`, so
+    the separated-form check (`_DASH_C_FLAG.fullmatch`) misses it and the payload
+    would never be judged. Only non-whitespace values match, so a bare `-c`
+    flag still goes down the separated path.
+    """
+    match = _DASH_C_ATTACHED.match(token)
+    return match.group("value") if match else None
+
+
+def _match_option_value(token: str, options: frozenset[str] | set[str]) -> tuple[bool, str | None]:
+    """Match a launcher option that takes a value, in either spelling.
+
+    Returns ``(matched, value)``. Handles the attached form
+    (``-c'<cmd>'`` / ``--command=…``) as well as the separated one
+    (``-c '<cmd>'``), because tree-sitter keeps ``-c'x'`` as a single token and
+    an exact comparison would miss it entirely.
+    """
+    for option in options:
+        if token == option:
+            return True, None                       # value is the next token
+        if token.startswith(option + "="):
+            return True, token[len(option) + 1:]
+        # Attached short option: `-c'…'`, `-c"…"` (the value follows directly).
+        if token.startswith(option) and len(token) > len(option):
+            return True, token[len(option):]
+    return False, None
 
 
 def _dequote(token: str) -> str:
