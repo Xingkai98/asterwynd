@@ -47,6 +47,8 @@ from agent.workspace_policy import (
 _WRITE_COMMANDS = frozenset({"rm", "mv", "cp", "install", "chmod", "curl", "wget", "dd", "tee"})
 #: The subset that actually writes to a target position.
 _TARGET_COMMANDS = frozenset({"rm", "mv", "cp", "install", "chmod", "dd", "tee"})
+#: Commands whose argument is a command line to be evaluated (`eval '…'`).
+_PAYLOAD_COMMANDS = frozenset({"eval"})
 #: Launchers: they run their remaining argv, so they are stripped before judging.
 _LAUNCHERS = frozenset(
     {
@@ -294,7 +296,7 @@ def _strip_to_fixpoint(argv: list[str]) -> tuple[list[str], str | None]:
     if not rest:
         return rest, None
     head = rest[0].rsplit("/", 1)[-1]
-    if head in _WRITE_COMMANDS or head in _LAUNCHERS or head in INTERPRETERS:
+    if head in _WRITE_COMMANDS or head in _LAUNCHERS or head in INTERPRETERS or head in _PAYLOAD_COMMANDS:
         return rest, None
     return rest, head
 
@@ -652,6 +654,16 @@ class CommandGuard:
             if dynamic_verdict is not CommandVerdict.ALLOW:
                 return dynamic_verdict
 
+        # The write target may be carried on an option (`cp -t <dir> x`), so
+        # resolve it explicitly rather than assuming the last argument (design
+        # D2 `write_targets[]`).
+        if name in _TARGET_COMMANDS:
+            target = _write_target_of(name, rest[1:])
+            if target is not None:
+                option_verdict = self._check_target(name, target)
+                if option_verdict is not CommandVerdict.ALLOW:
+                    return option_verdict
+
         # Concrete target checks on the stripped argv: the launcher no longer
         # hides the real command (design D8).
         concrete = self._check_argv_segment(rest)
@@ -663,6 +675,18 @@ class CommandGuard:
             payload_verdict = self._check_shell_payload(rest)
             if payload_verdict is not CommandVerdict.ALLOW:
                 return payload_verdict
+
+        # `eval '<payload>'` runs its argument as a command line (design D8).
+        # Shell joins the remaining words before evaluating, so both the dequoted
+        # single argument (`eval 'cp x .env'`) and the joined remainder
+        # (`eval cp x .env`) are candidate payloads -- check both.
+        if name in _PAYLOAD_COMMANDS and len(rest) > 1:
+            for candidate in (_dequote(rest[1]), " ".join(rest[1:])):
+                if not candidate.strip():
+                    continue
+                eval_verdict = self._check_analysis(candidate)
+                if eval_verdict is not CommandVerdict.ALLOW:
+                    return eval_verdict
 
         return CommandVerdict.ALLOW
 
@@ -678,6 +702,16 @@ class CommandGuard:
                 self._nested_depth -= 1
             if verdict is not CommandVerdict.ALLOW:
                 return verdict
+        return CommandVerdict.ALLOW
+
+    def _check_target(self, name: str, target: str) -> CommandVerdict:
+        """Judge one resolved write target against protected paths / dot names."""
+        normalized = _normalize_path(_expand_obfuscation(target))
+        if _is_device_exempt(normalized):
+            return CommandVerdict.ALLOW
+        if any(_within(normalized, p) for p in _DENY_PATHS) or _dest_is_sensitive(normalized):
+            self.last_reason = f"{name}_target"
+            return CommandVerdict.DENY
         return CommandVerdict.ALLOW
 
     def _check_dynamic_target(self, rest: list[str]) -> CommandVerdict:

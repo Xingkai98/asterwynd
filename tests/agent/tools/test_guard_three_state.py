@@ -177,3 +177,50 @@ class TestDynamicWriteTarget:
     def test_non_target_dynamic_word_allowed(self) -> None:
         for cmd in ['echo "$PATH"', "echo $HOME"]:
             assert CommandGuard().check(cmd) is CommandVerdict.ALLOW
+
+
+class TestOptionCarriedWriteTarget:
+    """The write target is not always `argv[-1]` (design D2 `write_targets[]`).
+
+    `cp -t <dir> x` / `mv --target-directory=<dir> x` / `install -t <dir> x`
+    carry it on an option, so a target check that reads the last argument sees
+    `x` and misses the real destination.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp -t .env x",
+            "mv --target-directory=.env x",
+            "install -t .env x",
+            "cp --target-directory .env x",
+        ],
+    )
+    def test_option_carried_sensitive_target_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["cp -t build x", "mv --target-directory=dist x", "cp -t .env.example x"],
+    )
+    def test_option_carried_benign_target_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
+
+
+class TestEvalPayload:
+    """`eval <string>` runs its argument as a command line (design D8).
+
+    `eval 'cp x .env'` used to pass while `eval cp x .env` was denied -- the
+    quotes collapsed the payload into a single token that matched no command.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        ["eval 'cp x .env'", "eval cp x .env", 'eval "cp x .env"'],
+    )
+    def test_eval_payload_denied(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize("command", ["eval 'echo hi'", "eval 'ls -la'"])
+    def test_benign_eval_allowed(self, command: str) -> None:
+        assert CommandGuard().check(command) is CommandVerdict.ALLOW
