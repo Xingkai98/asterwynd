@@ -351,19 +351,29 @@ def _concealed_command_texts(argv: list[str]) -> list[str]:
     (count), `cut` (columns) or `ionice` (class).
     """
     payloads: list[str] = []
-    rest = list(argv)
-    while rest:
-        name = rest[0].rsplit("/", 1)[-1]
-        command_options = _LAUNCHER_COMMAND_OPTION.get(name, frozenset())
-        for index, token in enumerate(rest):
-            if token in command_options and index + 1 < len(rest):
-                payloads.append(_dequote(rest[index + 1]))
-        if name not in _LAUNCHERS or name in _WRITE_COMMANDS:
-            break
-        stripped, _unknown = _strip_one_launcher(rest)
-        if stripped == rest:                              # nothing removed
-            break
-        rest = stripped
+    # Look for the launcher's option **anywhere**, as an adjacent pair. Walking
+    # the strip chain instead would require knowing every launcher's arity
+    # (`flock <file> cmd`, `chroot <dir> cmd`, `taskset -c <mask> cmd`, `perf
+    # <subcommand> cmd`, `chrt -p <prio> cmd`), and any arity the table gets
+    # wrong silently blinds the check -- `nice script -c '…'` regressed exactly
+    # that way. The adjacent `(launcher, option)` pair is what the shell sees.
+    for index, token in enumerate(argv):
+        name = token.rsplit("/", 1)[-1]
+        command_options = _LAUNCHER_COMMAND_OPTION.get(name)
+        if not command_options:
+            continue
+        # Consume this launcher's options, collecting every command-taking one
+        # (repeated `-c` means the last wins, so all are judged).
+        cursor = index + 1
+        while cursor < len(argv) and argv[cursor].startswith("-"):
+            if argv[cursor] in command_options:
+                if cursor + 1 < len(argv):
+                    payloads.append(_dequote(argv[cursor + 1]))
+                cursor += 2
+                continue
+            if argv[cursor] in _LAUNCHER_OPTS_WITH_VALUE.get(name, set()):
+                cursor += 1
+            cursor += 1
     return payloads
 
 
@@ -972,6 +982,16 @@ class CommandGuard:
         if cmd_name == "rm":
             return self._check_rm(tokens)
         if cmd_name in ("mv", "cp"):
+            # A sensitive SOURCE is judged here too, so the legacy channel (the
+            # rollback path) keeps the same coverage as the IR path -- the old
+            # source-position denylist regexes lived in `DEFAULT_DENYLIST` and
+            # are now expressed per-argument instead.
+            source = _source_of(tokens[1:])
+            if source is not None:
+                verdict = self._check_target(cmd_name, source)
+                if verdict is not CommandVerdict.ALLOW:
+                    self.last_reason = f"{cmd_name}_source"
+                    return verdict
             return self._check_mv_cp(tokens)
         if cmd_name == "chmod":
             return self._check_chmod(tokens)

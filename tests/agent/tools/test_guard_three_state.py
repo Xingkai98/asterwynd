@@ -566,3 +566,28 @@ class TestLauncherRound3:
     )
     def test_benign_still_allowed(self, command: str) -> None:
         assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
+
+
+class TestLegacySourceCoverage:
+    """The rollback path must keep the source-position denials (review R4).
+
+    The old `DEFAULT_DENYLIST` carried two `(mv|cp)\\s+<source>` regexes. They
+    moved to per-argument judgement, which the legacy channel must also run --
+    otherwise rolling back silently drops `cp .env backup.env`.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        ["cp .env backup.env", "mv .env backup.env", "mv .git/config config.backup"],
+    )
+    def test_legacy_mode_still_denies_sensitive_source(
+        self, command: str, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("ASTERWYND_GUARD_LEGACY", "1")
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    def test_legacy_mode_still_allows_benign_source(self, monkeypatch) -> None:
+        monkeypatch.setenv("ASTERWYND_GUARD_LEGACY", "1")
+        assert CommandGuard(workspace="/tmp/ws").check(
+            "cp src/a.txt dst/b.txt"
+        ) is CommandVerdict.ALLOW
