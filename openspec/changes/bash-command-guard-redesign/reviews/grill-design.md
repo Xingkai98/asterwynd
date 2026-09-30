@@ -83,11 +83,6 @@
   - 选项：(a) **`ask` 计入拦截**，断言改为 `verdict in (DENY, ASK)`，同时对攻击集**不允许** `ask`——即攻击用例必须 `deny`（最严格，`ask` 只用于非攻击集形态）；(b) `ask` 计入拦截且允许攻击用例为 `ask`（最宽松）；(c) 维持攻击集只能 `deny`，另建一组「应 ask」的独立用例集。
   - 倾向：**(a)**（数据驱动的攻击集是安全回归基线，不该因为引入三态而降低强度）。
 
-## User Confirmation
-
-> 待主 session 转达用户答复后填写。格式：`- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`。
-> **此节为空即表示 Open Questions 尚未确认，workflow_guard 会拦截实现代码写操作。**
-
 ## Codex / 审阅员建议（非阻塞）
 
 - **grill-cost**：建议把度量改成「从原文重推 argv 的入口数 == 1」+「手工维护的等价性对数 == 0」+ 代码量三栏对照——首版的常量计数是可无成本刷低的弱代理。已采纳（tasks 6.6）。
@@ -95,3 +90,23 @@
 - **grill-feasibility**：`tests/agent/tools/test_command_guard.py` 的 `assert verdict in (ALLOW, DENY)` 形态断言在引入 `ASK` 后**必然变红**，须同步。已采纳（tasks 3.6 / 6.5）。
 - **grill-feasibility**：herestring（`bash <<< '…'`）是 4 条既有 DENY 测试依赖的形态，却不在首版形态清单里——已补进 v2 矩阵与 spec。
 - **grill-evidence**：proposal 里 Cline / OpenHands / SWE-agent / Aider / 产品观察这几组结论在仓库内**无存档**（只有结论、没有可核验的引用记录），其中「OpenHands `SecurityRisk` + `ConfirmationPolicy`」被标 UNVERIFIED。建议在后续实现期把公开材料的取证记录落盘，或把这几组降级为「产品观察、非实现证据」。**（未阻塞——它们只用于「业界模式分类」，不承载本 change 的任何设计决策；D1–D11 的每条依据都来自本地实读或本机实测。）**
+
+## User Confirmation
+
+> 主 session 于 2026-09-30 停轮把 Q1–Q5 逐条（配具体场景例子）交用户拍板；Q3 因用户追问「调试配 API key 怎么写 `.env`」经三轮补测后收敛。以下为用户答复实质内容，由主 session 亲笔记录（非 agent 代笔）。证据见 `reviews/grill-settled.md`。
+
+- **Q1**: 用户答复：**(c) 分层**——归一化后命中敏感名/受保护路径 ⇒ `deny`，否则 ⇒ `ask`；确认 `cp x ~/.{ssh}/f` 展开后命中 `.ssh` ⇒ `deny`。确认时间: 2026-09-30
+- **Q2**: 用户答复：**(a) 正文全量按命令判定**（接受误报）。实测依据：(a)/(b) 在 16 个真实脚本上结果逐条相同、误报全来自既有字面通道，而 (b) 在 18 个危险正文里漏 7 条。确认时间: 2026-09-30
+- **Q3**: 用户答复：**维持 (a) deny，且范围扩到凭据变体；新增模板豁免；收敛为一份共享谓词**。三条子决定：
+  - **(1) 凭据变体一并 deny**：`cp x .env.local` / `dd of=.env.production` 等今天 **ALLOW**（实测 `cp src.txt .env.local` 真的执行并写入——凭据投毒路径），本 change 一并修。
+  - **(2) 模板读写都放行**：`.env.example` / `.sample` / `.template` / `.dist` / `.defaults` / `.tpl`；判据为「`.env` 之后每一段都是模板词 ⇒ 豁免」，故 `.env.example.local` / `.env.j2` 仍判凭据。
+  - **(3) 消除三方漂移**：`workspace_policy` 的 glob、同文件的源位置正则、`command_guard` 的 frozenset 三份定义收敛为**一份共享谓词**（实测约束：不能用 glob——`fnmatch` 不支持 extglob，会静默失效）。依据 D9「同一语义 SHALL NOT 存在两个实现」。
+  - 附加确认：**白名单机制（B1）不塞进本 change**，留作后续独立 change。
+  - 另：**`cp .env.example .env` 是 DENY 且拒得对**（目标就是 `.env`）；主 session 一度误判为误报，由既有测试 `test_command_guard.py:313/:760` 纠正。**agent 无需写 workspace 的 `.env`**（`main.py:24` 的 `load_dotenv()` 解析到安装目录，key 走 `os.environ`）。确认时间: 2026-09-30
+- **Q4**: 用户答复：**(c') 已知白名单 + 限定 ask**——仅当未识别前缀**后面跟着护栏真正会判的命令**时才 `ask`；剥离循环交替到不动点。实测噪音：未知即 ask 为 63%，(c') 为 0%。确认「噪音 0」依赖白名单内容（124 项），安全属性（未知 ⇒ ask）与白名单无关。确认时间: 2026-09-30
+- **Q5**: 用户答复：**(c) 攻击集只允 `deny` + 另建「应 ask」用例集**；计数谓词取 `verdict is not ALLOW`。实测既有 54 条过新管线 **50/50 保持 DENY，0 条翻 ASK**，无需改既有断言。确认时间: 2026-09-30
+
+> **附：三条新增范围（Q3 补测产出，用户已并入本 change）**
+> 1. 护栏 deny 范围扩到凭据变体（`.env.local` / `.env.production` / `.env.development` / `.env.test` / `.env.staging` / `.env.secret` / `.env.keys`）。
+> 2. 模板类 `.env.*` 读写豁免。
+> 3. 敏感 dot 名三处定义收敛为共享谓词。
