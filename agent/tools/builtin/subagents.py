@@ -1312,6 +1312,11 @@ _DRY_RUN_CLIP_SUFFIX = "…[+{n} chars]"
 #: 替身产出的自述前缀：让任何一处 ``produced`` 都能被认出是模拟占位（D3/D8）。
 _DRY_RUN_STAND_IN = "{node} produced: auto (simulated stand-in)"
 
+#: ``warnings`` 的条数硬上界与「每条约多少字符」的换算系数（N-2）：报告承诺「每个
+#: 文本字段有界」，条数也是文本规模的一部分——一条 warning 约 200 字符量级。
+_WARNINGS_MAX = 40
+_WARNINGS_CHARS_PER_ITEM = 200
+
 
 def _clip_text(value: Any, limit: int) -> str:
     """按 ``limit`` 字符截断，超出部分带**可区分的**标记（D5）。"""
@@ -1615,6 +1620,18 @@ def _build_dry_run_report(
             "nodes that never ran are NOT a statement about the topology",
         )
 
+    # 每条 warning 单个截断（与其余文本字段同口径）：原因来自调度器、长度可控，
+    # 但库代码不得自造无界字段。
+    warnings = [_clip_text(warning, limit) for warning in warnings]
+
+    # 条数**有硬上界**（N-2，Round 2 审阅发现）：warnings 此前不受任何界约束，
+    # 大图能把它撑到 20 万字符——与「报告的每个文本字段都有界」的承诺直接冲突。
+    # 上界按 `max_report_chars` 里的字符预算换算，且**显式报告被省略的条数**
+    # （不静默截断）。
+    warnings_limit = max(1, min(_WARNINGS_MAX, limit * _WARNINGS_CHARS_PER_ITEM // 200))
+    warnings_omitted = max(len(warnings) - warnings_limit, 0)
+    warnings = warnings[:warnings_limit]
+
     slots: dict[str, dict[str, str]] = {}
     for node_id, slot_names in slot_reads.items():
         state = scheduler._states.get(node_id)
@@ -1646,6 +1663,7 @@ def _build_dry_run_report(
         "edges": edges,
         "slots": slots,
         "warnings": warnings,
+        "warnings_omitted": warnings_omitted,
         "notes": _dry_run_notes(),
     }
     return report

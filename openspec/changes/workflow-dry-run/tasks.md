@@ -68,6 +68,8 @@
 - [x] 3b.2 **I-2（低）`anyOf` 纪律未钉死**：把「顶层禁令」与「唯一允许的嵌套位置」分开断言——`test_script_schema_uses_no_anyof_outside_the_one_union` 钉死 `anyOf` 只允许出现在 `script.additionalProperties`，多出第二个就红
 - [x] 3b.3 **M3 变异形态升级（审阅者指出代理变异不够忠实）**：`test_pollution_guard_is_discriminating` 改为把**假 LLM** 装回 `LLMSummarizer`（即「忘记切断」的真实世界），并断言同时出现不可归因调用（F4a 的第二个症状）
 - [x] 3b.4 **I-3（低）**：审阅尝试构造却未复现的假设性风险，不改实现；已在 building-review.md 记为已知局限
+- [x] 3b.5 **N-1（低，Round 2 发现「变异存活」）**：`_node_runs_a_model` 的 `aggregate/llm` 分支无测试守护——改成 `return False` 时 41 条全绿。后果是把「没跑到」错报成「这类节点永远不跑」（一句关于拓扑的假陈述）。新增回归测试 `test_a_scripted_llm_aggregate_that_never_ran_is_not_called_model_less`（变异验证：短路该分支必红）
+- [x] 3b.6 **N-2（低，Round 2 发现）**：`warnings` 不受 `max_report_chars` 约束——60 节点图能把它撑到 2 万字符（审阅用改前实现实测 12 万–20 万）。现在每条 warning 单个截断 + 条数按 cap 换算硬上界 + 显式报告 `warnings_omitted`（不静默截断）。回归测试 `test_the_warning_list_is_bounded_too`（变异验证：去掉条数裁剪必红）
 
 ## 4. 端到端验收（本 change 的唯一有效性证据）
 

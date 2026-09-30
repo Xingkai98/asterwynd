@@ -719,6 +719,48 @@ def test_text_fields_are_bounded_with_a_visible_marker(manager):
     assert report["max_report_chars"] == limit
 
 
+def _many_failed_nodes_spec(count: int) -> dict:
+    """一张 ``max_runs=1`` 的长链：只有 ``n0`` 能跑，其余全部以非 completed 收尾——
+
+    每一条都会推一条 warning（这正是 N-2 里把报告撑到 20 万字符的那类图）。
+    """
+    return {
+        "goal": "many failed nodes",
+        "max_runs": 1,
+        "nodes": [
+            {"id": f"n{i}", "kind": "subagent", "task": f"T{i}"} for i in range(count)
+        ],
+        "edges": [{"from": f"n{i}", "to": f"n{i + 1}"} for i in range(count - 1)],
+        "entry": ["n0"],
+        "terminal": [f"n{count - 1}"],
+    }
+
+
+def test_the_warning_list_is_bounded_too(manager):
+    """N-2（Round 2 审阅）：``warnings`` 也必须受 ``max_report_chars`` 的界约束。
+
+    此前 warnings 不受任何界管辖——一张 60 节点的图能把它撑到 20 万字符，与「报告的
+    每个文本字段都有界」的承诺直接冲突。**变异验证**：去掉条数裁剪 → 本条必红。
+    """
+    from agent.tools.builtin.subagents import _WARNINGS_CHARS_PER_ITEM, _WARNINGS_MAX
+
+    limit = 200
+    report = _dry_run(manager, _many_failed_nodes_spec(60), max_report_chars=limit)
+
+    bound = max(1, min(_WARNINGS_MAX, limit * _WARNINGS_CHARS_PER_ITEM // 200))
+    # 底层确实产出了远超上界的条数——这条断言保证上界不是"因为没东西可截"而恒真。
+    assert len(report["warnings"]) == bound, report["warnings"]
+    assert report["warnings_omitted"] > 0, "被省略的条数必须显式报告，不能静默截断"
+    assert report["warnings_omitted"] == 60 - bound
+    assert all(len(w) <= limit + 32 for w in report["warnings"]), (
+        "单条 warning 也被单个截断（标记留一点余量）"
+    )
+    # warnings 块**本身**有界——这才是 N-2 的病灶。节点条目随图规模线性增长是
+    # 预期的（受 `max_nodes` 结构闸管辖），不可与 warnings 混为一谈。
+    warnings_size = len(json.dumps(report["warnings"], ensure_ascii=False))
+    assert warnings_size < bound * (limit + 40), f"warnings 块膨胀到 {warnings_size} 字符"
+
+
 def test_report_declares_the_simulation_and_returns_no_runnable_handle(manager):
     """T-11（D6/D8）：返回体含模拟标记与边界文案；**不含** ``workflow_id``。"""
     report = _dry_run(manager, S1_SPEC)
@@ -932,6 +974,52 @@ def test_script_for_an_llm_aggregate_does_apply(manager):
     node = _node(report, "sum")
     assert node["script_applied"] is True
     assert node["produced"] == "SYNTHESISED"
+
+
+def test_a_scripted_llm_aggregate_that_never_ran_is_not_called_model_less(manager):
+    """N-1（Round 2 审阅：变异存活）：未跑到的 ``llm`` 聚合，原因必须是「没跑到」。
+
+    ``_node_runs_a_model`` 的 ``aggregate/llm`` 分支此前无测试守护——把它改成
+    ``return False`` 时 39 条全绿。后果不是小事：对**会跑模型**的节点，报告会改口
+    说「这类节点永远不产生输出」，那是一句关于拓扑的假陈述。
+    **变异验证**：把 ``_node_runs_a_model`` 的 aggregate 分支改成 ``return False``
+    （或直接短路成 False）→ 本条必红。
+    """
+    report = _dry_run(
+        manager,
+        {
+            "goal": "g",
+            "nodes": [
+                {"id": "a", "kind": "subagent", "task": "TASK-A"},
+                {
+                    "id": "gate",
+                    "kind": "route",
+                    "cases": [{"when": "GO", "to": "sum"}],
+                    "default": "end",
+                },
+                # 会跑模型的聚合（strategy=llm）——但本图走 default，它永远到不了。
+                {"id": "sum", "kind": "aggregate", "strategy": "llm"},
+                {"id": "end", "kind": "aggregate", "strategy": "collect"},
+            ],
+            "edges": [
+                {"from": "a", "to": "gate"},
+                {"from": "gate", "to": "sum"},
+                {"from": "gate", "to": "end"},
+            ],
+            "entry": ["a"],
+            "terminal": ["end"],
+        },
+        script={"sum": "SYNTHESISED"},
+    )
+
+    sum_node = _node(report, "sum")
+    assert sum_node["status"] != "completed"  # 它确实没跑到
+    assert "script_applied" not in sum_node
+    warning = next(w for w in report["warnings"] if "`script` for node 'sum'" in w)
+    assert "never ran" in warning, warning
+    assert "runs no model" not in warning, (
+        f"把「没跑到」错报成「这类节点永远不跑」——一句关于拓扑的假陈述：{warning}"
+    )
 
 
 def test_script_forms_are_validated_at_runtime():
