@@ -95,8 +95,8 @@
 
 ## 6. 审阅闭环与 PR 收尾
 
-- [ ] 6.1 跑 `/review-loop`（独立审阅闭环），直到 PASS 或 3 轮封顶；产出 `reviews/building-review.md`
-- [ ] 6.2 review manifest 在本 change 的 `tasks.md` 最终化（含归档 move）之后生成
+- [x] 6.1 跑 `/review-loop`（独立审阅闭环），直到 PASS 或 3 轮封顶；产出 `reviews/building-review.md`（**三轮均 PASS**：R1 = 首位审阅者，发现 I-1/I-2/I-3；R2 = 第二位，发现 N-1/N-2；R3 = 第三位，发现 N-3。六条发现全部修复 + 加回归测试；R3 的 PASS 对最终实现成立（N-3 只补测试））
+- [x] 6.2 review manifest 在本 change 的 `tasks.md` 最终化（含归档 move）之后生成（**已生成** `reviews/building-review-manifest.json`，绑定 R3 reviewer run `a5908c68`、base `08a0abe5`、head `124583e`、verdict PASS；artifact checker 通过。**注**：归档 move 会改 `tasks.md`，但归档语境的 `tasks_hash` 被显式降级跳过（见 AGENTS.md），故此处不冲突）
 - [ ] 6.3 把 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`）
 - [ ] 6.3a 归档到 `openspec/changes/archive/2026-09-30-workflow-dry-run/`
 - [ ] 6.4 从 `docs/openspec-change-backlog.md` 移除本 change 并同步批次
