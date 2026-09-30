@@ -719,6 +719,36 @@ def test_text_fields_are_bounded_with_a_visible_marker(manager):
     assert report["max_report_chars"] == limit
 
 
+def test_a_single_warning_is_clipped_too(manager):
+    """N-3（Round 3）：warnings 的**每条截断**这一半此前无测试守护。
+
+    审阅实测：删掉 ``warnings = [_clip_text(w, limit) ...]`` 后 41 条**全绿**，而
+    warnings 块会涨到 1.17 MB。节点 id 由调用方给、长度不受 ``max_nodes`` 约束
+    （那管的是条数），所以「一条超长 id → 一条超长 warning」是可达的。
+    **变异验证**：去掉逐条 `_clip_text` → 本条必红。
+    """
+    limit = 120
+    long_id = "x" * 3000
+    spec = {
+        "goal": "long node id",
+        "max_runs": 1,
+        "nodes": [
+            {"id": long_id, "kind": "subagent", "task": "T0"},
+            {"id": "later", "kind": "subagent", "task": "T1"},
+        ],
+        "edges": [{"from": long_id, "to": "later"}],
+        "entry": [long_id],
+        "terminal": ["later"],
+    }
+    report = _dry_run(manager, spec, max_report_chars=limit)
+
+    assert report["warnings"], "该图应当产出至少一条 warning"
+    assert all(len(w) <= limit + 32 for w in report["warnings"]), (
+        "单条 warning 未被截断——节点 id 长度不受 max_nodes 约束，warnings 块会无界"
+    )
+    assert any("[+" in w for w in report["warnings"]), "截断必须带可见标记，不静默丢弃"
+
+
 def _many_failed_nodes_spec(count: int) -> dict:
     """一张 ``max_runs=1`` 的长链：只有 ``n0`` 能跑，其余全部以非 completed 收尾——
 
