@@ -50,6 +50,15 @@ class TestSegments:
         a = analyze("(cp x .env)")
         assert [s.name for s in a.segments] == ["cp"]
 
+    def test_numeric_arguments_are_kept(self) -> None:
+        """`number` is its own node type; dropping it loses a real argument.
+
+        `nsenter -t 1 cp x y` once parsed to `('nsenter','-t','cp','x','y')` --
+        the missing `1` made `-t` swallow `cp`, hiding the real command.
+        """
+        a = analyze("nsenter -t 1 cp x y")
+        assert a.segments[0].argv == ("nsenter", "-t", "1", "cp", "x", "y")
+
 
 class TestRedirects:
     def test_file_redirect_captured(self) -> None:

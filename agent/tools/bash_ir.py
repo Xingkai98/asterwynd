@@ -18,10 +18,14 @@ from tree_sitter import Language, Parser, Query, QueryCursor
 
 from agent.workspace_policy import is_sensitive_dot_name  # noqa: F401  (re-export for consumers)
 
-#: Node types that make up a command's argv, in source order.
+#: Node types that make up a command's argv, in source order. Enumerated by
+#: sweeping the attack suite + realistic commands and collecting the child node
+#: types of `(command)` nodes -- a missing type silently drops an argument
+#: (`number` was, so `nsenter -t 1 cp x y` lost the `1` and the option ate `cp`).
 _ARG_NODE_TYPES = (
     "command_name",
     "word",
+    "number",
     "string",
     "raw_string",
     "ansi_c_string",
