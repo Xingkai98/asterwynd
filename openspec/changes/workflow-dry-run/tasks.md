@@ -21,8 +21,9 @@
 
 ## 2. 测试（TDD：先落测试再落代码）
 
-- [ ] 2.1 **T-1 隔离·落盘**：模拟后真实 `workspace_root` 零新增文件（F1/F6）
+- [ ] 2.1 **T-1 隔离·落盘**：模拟后真实 `workspace_root` 零新增文件（F1/F6）。**变异验证**：把一次性 manager 换成真实 manager，测试必须变红（F9：W1 会往真实 workspace 写）
 - [ ] 2.2 **T-2 隔离·注册表**：真实 manager 的 `_workflows`/`_workflow_stores` 为空（F3/F6）
+- [ ] 2.2a **T-2a（仅当 Q2 选 B）**：一次性临时目录里无 `events.jsonl`/`root.txt`（G2：不选 B 时应为 8 个文件、选 B 后 6 个且不含这两个）
 - [ ] 2.3 **T-3 隔离·零 token**：真实 `manager.llm.chat` 调用数 = 0。**变异验证**：把假 LLM 换回真 LLM，测试必须变红→还原变绿
 - [ ] 2.4 **T-4 隔离·sink**：真实 manager 的 `graph_sink` 未被调用（F2）
 - [ ] 2.5 **T-5 数据流·received**：foreach 展开项 prompt 含 item（占位符是 `{item}` **不是 `$item`**，`scheduler.py:369-380`）；下游节点 prompt 含上游 bounded 产出
@@ -40,8 +41,8 @@
 ## 3. 实现
 
 - [ ] 3.1 `agent/tools/builtin/subagents.py`：新增 `_DryRunLLM`（假 LLM：回显 + 按 `current_node_id()` 支持 `script` 注入；只返回文本、不发起 tool call）
-- [ ] 3.2 `agent/tools/builtin/subagents.py`：新增 `_NullWorkflowStore`（所有写方法 no-op，`ref()` 返回假 ref）
-- [ ] 3.3 `agent/tools/builtin/subagents.py`：新增模拟驱动函数（一次性 manager + 假 LLM + 构造后替换 `_store`；构造参数见 Q2 拍板）
+- [ ] 3.2 **仅当 Q2 选 B**：新增 `_NullWorkflowStore`（所有写方法 no-op，`ref()` 返回假 ref）——用于替换 `scheduler._store`。**注意 W1（`manager._write_result_artifacts`）不经它**，由一次性 `workspace_root` 兜住（G2/F9）
+- [ ] 3.3 `agent/tools/builtin/subagents.py`：新增模拟驱动函数（**核心隔离手段 = 一次性 manager + 一次性 `workspace_root` + 假 LLM**；Q2 选 B 时额外替换 `scheduler._store`）
 - [ ] 3.4 `agent/tools/builtin/subagents.py`：新增报告构造（`received`/`produced`/`input_seen`/`matched`/`walked_to`/`used_default`/`edges[].control`/`nodes[].status`/`simulated: true`），文本按 `max_report_chars` 截断——**不复用也不改 `NodeState.to_dict()`**。**`received` 按 `(node_id, item_index)` 寻址**（非 foreach 节点 `item_index=null`；foreach 的 received 是按项列表）——见 G1
 - [ ] 3.4a 若 Q1 选 (b)/(c)：实现「数组按调用次序消费」的 script 语义（**须先验证「假 LLM 内如何拿到第几次调用」**——用调用序而非依赖调度器）
 - [ ] 3.5 `agent/tools/builtin/subagents.py`：新增 `DryRunWorkflowTool`（`@tool_parameters`，`spec` 复用 `_workflow_spec_schema()`；`description` ≤2000 字符 + 断言式无副作用声明；`read_only=True`、`permission=SUBAGENT_CONTROL_PERMISSION`）

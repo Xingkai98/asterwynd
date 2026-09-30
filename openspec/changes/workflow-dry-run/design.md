@@ -22,6 +22,7 @@
 | F4 | **`_launch_run`（`scheduler.py:2194`）是真实 LLM 的唯一切入点**——四个 `_execute_*` 里只有它会调到 `manager.run_subagent` | `research/isolation.py`：把假 LLM 注入 manager 后，**零真实调用**而图正常跑完 |
 | F5 | **假 LLM 能通过 contextvar 知道自己是哪个节点**（`current_node_id()`，`agent/subagent/context.py`），**无需改调度器** | `research/nodeid.py`：每个节点看到自己的 id |
 | F6 | **隔离可行**：一次性 manager + 假 LLM + 空 store ⇒ **真实 workspace 零落盘、真实 manager 注册表零污染** | `research/isolation.py` / `research/prototype.py`：`disk delta = (none)`、`_workflows = []` |
+| **F9** | **写入口有**两个**（W1 manager 的 `_write_result_artifacts` / W2 scheduler 的 `_store`），但都以 `workspace_root` 为路径根**——所以一次性 `workspace_root` 单独即可保证真实 workspace 零落盘；`_store` 替换只影响一次性目录里少写 2 个文件（8→6） | `research/sandbox_files.py` + `sandbox_noNull.py` 对照 |
 | F7 | **调度器只碰 manager 的 9 个属性**：`config` / `find_run` / `workflow_store` / `register_workflow` / `register_workflow_bucket` / `release_workflow_bucket` / `max_active` / `max_queued_runs` / `cancel_subagent_run` | `rg 'self\.manager\.' scheduler.py` 词频统计 |
 | F8 | **成本极低**：小图 0.06–0.97s；chain-50 = 0.685s；foreach 受展开预算封顶（`foreach-50` 与 `foreach-20` 同为 22 次调用） | `research/perf.py` |
 
@@ -53,7 +54,7 @@
 ### Non-Goals
 
 - 不改调度/门控/reducer/route 匹配/计数语义。
-- 不产生可用的 workflow 结果（不落盘、不可被 `GetWorkflow` 查、不进注册表）。
+- 不产生可用的 workflow 结果（**不向真实 workspace 落盘**、不可被 `GetWorkflow` 查、不进注册表）。**注**：模拟**确实会**在一次性临时目录里写一些中间 artifact（W1/W2，见 D4）——那是隔离机制的实现细节，随 `TemporaryDirectory` 清理，**不构成「零写盘」**（措辞上须准确，别写成「不写任何文件」）。
 - 不引入 `ValidateWorkflow`（#268 范畴）。
 - 不做表达式求值（沿用 `matches_route` 的安全姿态）。
 - 不修复 S2（那是调度语义，另议）。
@@ -149,24 +150,42 @@
 1. **(a) 要改 `scheduler.py`**——在 `run()`/`_record_event`/`_write_*`/`_emit_*` 四处加条件分支。这是「可观测性通道反向影响执行」的温床（该文件自己的 docstring 就在警告这个，`scheduler.py:722`）。而且**每次改调度器都是一次语义回归风险**。
 2. **(c) 必然与真调度器漂移**——模拟的意义是「跑的语义和真跑一样」，复制一份就失去了这个保证。
 3. **(b) 的危险面已被实测封住（F1–F7）**：
-   - **落盘**：唯一的写入口是 `scheduler._store`（`scheduler.py:511`，经 `_workflow_store()` `:681` 惰性构造）。**在构造 scheduler 后直接把 `_store` 换成 NullStore**，三处写入（`:714`/`:1327`/`:3169`）全部 no-op。
+   - **落盘**：写入口有**两个**（W1 manager / W2 scheduler，见下文订正），但**两者的路径根都是 `workspace_policy.workspace_root`**——所以**一次性 workspace_root 单独就能保证真实 workspace 零落盘**（实测确认）。`_store` 替换是额外的显式化手段（可选，见 Q2）。
    - **注册表污染**：`run()` 里会 `manager.register_workflow(self)`（`:829`）——但那是**一次性 manager 自己的注册表**，随局部变量一起丢弃，**真实 manager 不被触碰**（F6 实测：`real_mgr._workflows == []`）。
    - **事件 sink**：`_emit_graph_event` 读 `self.manager.graph_sink`（`:730`）——一次性 manager 的该属性**默认就是 `None`**（F2），天然静默。
    - **LLM**：`_launch_run` 是唯一切入点（F4），喂假 LLM 即可。
    - **真实 LLM 的调用数 = 0**：这必须是**测试断言**，不能是「应该不会」（见 tasks T-3 的变异验证）。
 
-**`_store` 替换 vs 构造注入**：`WorkflowStore` 在 `_workflow_store()` 里惰性建（`scheduler.py:681-684`）。两条路：
-- **(i) 构造后赋值 `scheduler._store = NullStore(...)`**——依赖一个私有属性，但**零生产代码改动**；
-- **(ii) 给 `WorkflowScheduler.__init__` 加 `store=` 参数**——更干净，但**改生产代码**。
+**⚠️ 实测订正（G2，`research/sandbox_files.py`）：写入口有**两个**，不是 design 初稿说的一个。**
 
-**倾向 (i)**，但这是一个**真实的取舍**（私有属性 vs 生产代码改动）→ 见 Open Question Q2。
+design 初稿写「`_store` 是唯一的写入口」——**这是错的**。实测枚举发现第二条写路径：
+
+| # | 写入口 | 覆盖它的是 | 落盘内容 |
+|---|---|---|---|
+| W1 | `manager._write_result_artifacts`（`manager.py:1353`，由 `_complete_run` `:1218` 调）→ `manager._workflow_store(workflow_id)`（`:1400`）→ `WorkflowStore.for_workspace(self.workspace_policy.workspace_root, ...)` | **一次性 manager 的 `workspace_root`** | 每个 run 的 `.txt`/`.summary.txt`/`.transcript.txt` |
+| W2 | `scheduler._store`（经 `scheduler._workflow_store()`，`scheduler.py:681`） | **`_store` 替换** | `events.jsonl` / `root.txt` / `*.attribution` |
+
+实测（`research/sandbox_files.py`）：只换 `scheduler._store` **不能**阻止 W1——一次性目录里仍有 **6 个文件**（全是 W1 写的）。不换 `_store` 时是 **8 个**（多出 W2 的 `events.jsonl` + `root.txt`）。
+
+**关键结论（这反而让隔离更简单）**：
+
+- **W1 与 W2 都锚定在 `self.workspace_policy.workspace_root`**——而模拟用的是**一次性 manager + 一次性 workspace_root**。所以**「真实 workspace 零落盘」由「一次性 workspace_root」单独保证**，根本不需要碰 `scheduler._store`。
+- 实测确认：真实 workspace 的 `disk delta = (none)`、sentinel 完好（F6），且所有写都落在一次性目录里（随 `TemporaryDirectory` 清理）。
+
+**因此 `_store` 替换是「锦上添花」而非必需**：
+
+- **(i) 不换 `_store`**：一次性目录里有 8 个文件（含 `events.jsonl`），真实 workspace 照样零落盘。**零私有属性依赖、零生产代码改动。**
+- **(ii) 换 `_store`（`scheduler._store = NullStore()`）**：一次性目录里只剩 6 个（W1 的），**且能显式断言「没有 workflow 事件/根结果被写出」**；代价是依赖一个私有属性名。
+
+**倾向 (ii)**——虽然真实 workspace 两种都安全，但 (ii) 让「模拟不产生任何 workflow 级 artifact」成为**可断言的显式性质**（T-1/T-2 因此更强），而私有属性依赖有机械测试兜底（R2）。**因为这个取舍变了（不再是「安全 vs 不安全」而是「更强的断言 vs 零私有依赖」），重新列为 Open Question Q2。**
 
 **隔离的完整性检查（实现时必做，见 tasks）**：模拟跑完后断言
-1. 真实 `workspace_root` **零新增文件**；
-2. 真实 manager 的 `_workflows` / `_workflow_stores` **为空**；
-3. 真实 manager 的 `llm.chat` 调用数 **= 0**；
-4. 真实 manager 的 `graph_sink` **未被调用**。
-（4 条全部已有 spike 支撑，见 F6。）
+1. 真实 `workspace_root` **零新增文件**（F1/F6）；
+2. 真实 manager 的 `_workflows` / `_workflow_stores` **为空**（F3/F6）；
+3. 真实 manager 的 `llm.chat` 调用数 **= 0**（F4）；
+4. 真实 manager 的 `graph_sink` **未被调用**（F2）；
+5. **（仅当 Q2 选 B）一次性临时目录里**的 workflow artifact 数 = 0，即 `events.jsonl`/`root.txt` 都不存在（G2）。
+（1–4 已有 spike 支撑；5 由 G2 的对照实测给出预期值。）
 
 ---
 
@@ -234,7 +253,7 @@ RIR findings 1 / 4 / 7 共同指出：**本地 6 个参考仓库没有一个「�
 | # | 风险 / 取舍 | 严重度 | 缓解 |
 |---|---|---|---|
 | R1 | **模型把模拟当真实执行**（`produced` 占位被当成真产出、或用 dry run 替代真实运行） | **高** | D6 断言式边界 + D8「不返回 `workflow_id`」+ 报告 `simulated: true`；RIR finding 7 证明**业界无先例可抄**，故必须自证 |
-| R2 | **隔离静默失效**：若 `_store` 私有属性被重构掉，模拟会开始真落盘（且**不会报错**——落盘用 `try/except` 吞异常） | **高** | T-1/T-2/T-3/T-4 四条机械断言兜底；T-3 做变异验证 |
+| R2 | **隔离静默失效**（G2 实测后**降级**）：真实 workspace 的安全性由「一次性 `workspace_root`」保证，**不依赖 `_store` 替换**；`_store` 只影响一次性目录里少写不写 W2 的 2 个文件 | **低** | T-1/T-2 断言真实 workspace 零落盘；T-3 做变异验证（把假 LLM 换回真 LLM 必须变红） |
 | R3 | **报告本身打爆父上下文**：大图的 `received` 全量拼接会很大 | 中 | D5 有界 + 全部字段截断；F8 实测大图 `received` 受 bounded 投影约束 |
 | R4 | **新增工具的常驻 token 成本**（描述 + schema 每轮都发） | 中 | 描述 ≤2000 字符（D10）；schema 复用同一份 `_workflow_spec_schema()`，不新增派生成本 |
 | R5 | **`script` 是无先例设计**，可能被误用（对不产生 run 的节点注入却以为生效） | 中 | D3 明确「只对会调 LLM 的节点生效」并写进描述与报告；T-8 覆盖 |
@@ -303,19 +322,20 @@ RIR findings 1 / 4 / 7 共同指出：**本地 6 个参考仓库没有一个「�
 
 > **不论选哪个，G1 的修法（`received` 按 `(node_id, item_index)` 寻址、foreach 的 received 是列表）都要做**——它与 script 无关，是 D2 的正确性要求。
 
-### Q2 — 隔离靠「替换私有属性」还是「加构造参数」？
+### Q2 — 要不要额外替换 `scheduler._store`？（G2 实测后**问题变了**）
 
-**背景**：D4 需要把 `WorkflowStore` 换成空实现。
+**背景**：D4 发现写入口有两个（W1 manager / W2 scheduler），真实 workspace 的安全性**由一次性 workspace_root 单独保证**。所以这条**不再是「安全 vs 不安全」**，而是「要不要多写一点代码换更强的断言」。
 
-**具体例子**：
-- **方案 A（替换私有属性）**：`scheduler = WorkflowScheduler(mgr); scheduler._store = NullStore()`。
-  - 好处：**零生产代码改动**（`WorkflowScheduler.__init__` 一字不改）。
-  - 代价：依赖 `_store` 这个**私有**属性名。若未来有人重构掉它，隔离会**静默失效**（模拟开始真的落盘）——所以必须配 T-1 断言兜底。
-- **方案 B（加构造参数）**：`WorkflowScheduler.__init__(..., store=None)`。
-  - 好处：显式、不依赖私有名。
-  - 代价：**改生产代码**——虽然只是加一个带默认值的可选参数，但 `WorkflowScheduler` 是核心类，每次动它都要评估回归面。
+**具体例子**（都在一次性临时目录里，真实 workspace 两种都零落盘）：
+- **方案 A（不换 `_store`）**：临时目录里有 **8** 个文件（含 `events.jsonl` 与 `root.txt`）。
+  - 好处：**零私有属性依赖、零生产代码改动**——隔离完全靠「给了一次性 workspace_root」这个不涉及任何私有名的机制。
+  - 代价：无法断言「没有 workflow 事件被写出」（因为确实写了，只是在一次性目录里）。
+- **方案 B（构造后 `scheduler._store = NullStore()`）**：临时目录里 **6** 个文件（W1 的）。
+  - 好处：能**显式断言**「模拟不产生任何 workflow 级 artifact（事件/根结果/归因）」——断言更强，语义更清楚。
+  - 代价：依赖 `_store` 私有属性名；若被重构掉会**静默降级**成 8 个文件（不影响安全，只影响断言的强度）。
+- **方案 C（给 `WorkflowScheduler.__init__` 加 `store=` 参数）**：显式、不依赖私有名，但**改生产代码**。
 
-**我的倾向**：**A + T-1 兜底**。理由是「不改生产代码」在本 change 里价值更高（D4 的核心承诺），而私有属性依赖有**机械测试**兜底（一旦失效 T-1 立刻红）。但这确实是个取舍。
+**我的倾向**：**B**。理由是它让 T-1/T-2 的断言从「真实 workspace 零落盘」（A 也能过）升级到「**模拟不产生任何 workflow artifact**」——后者才是 `DryRunWorkflow` 想承诺的语义。且它的降级模式是**安全**的（私有名没了 → 变回 A 的行为，真实 workspace 照样安全）。**请你拍板。**
 
 ### Q3 — `max_report_chars` 的默认值取多少？
 
