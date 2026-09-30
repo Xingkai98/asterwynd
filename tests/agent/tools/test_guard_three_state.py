@@ -429,3 +429,71 @@ class TestSourcePositionTemplate:
     def test_credential_source_still_denied(self, command: str) -> None:
         """Control group: a real credential as the source must stay denied."""
         assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+
+class TestLauncherRound2:
+    """Review round 2: the round-1 `-c` fix was over-broad and under-complete."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # repeated `-c`: the LAST one is what runs
+            "script -c 'ls' -c 'cp x .env'",
+            "script -c 'echo ok' -c 'cp x .env'",
+        ],
+    )
+    def test_repeated_command_option_judged(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "grep -c 'cp x .env' f",
+            "cut -c1 f",
+            "head -c 10 f",
+            "ls -c",
+            "sort -c f",
+            "ionice -c 2 cp x y",
+        ],
+    )
+    def test_other_launchers_dash_c_is_not_a_command(self, command: str) -> None:
+        """`-c` means a command only for launchers where it does (design: scoped).
+
+        `grep -c` counts, `cut -c` selects columns, `ionice -c 2` is a class —
+        treating those as "value is a command" both denies ordinary searches
+        and swallows the real command.
+        """
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
+
+    def test_ionice_dash_c_class_then_sensitive_target_denies(self) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(
+            "ionice -c 2 cp x .env"
+        ) is CommandVerdict.DENY
+
+
+class TestSourceBehindFlags:
+    """A sensitive SOURCE hidden behind option flags must still be judged."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp -r .env /tmp/x",
+            "cp -a .env /tmp/x",
+            "cp -p .env /tmp/x",
+            "cp -rf .env /tmp/x",
+            "mv -f .env /tmp/x",
+            "mv -f .env.local /tmp/x",
+            "install -m 600 .env /tmp/x",
+            "cp -r .git/config /tmp/x",
+        ],
+    )
+    def test_flagged_sensitive_source_denied(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["cp -r src/ /tmp/x", "mv -f old.txt new.txt", "install -m 600 app.py /tmp/x"],
+    )
+    def test_flagged_benign_source_allowed(self, command: str) -> None:
+        """Control group: flags must not turn every copy into a denial."""
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
