@@ -109,6 +109,24 @@ def is_sensitive_dot_name(part: str) -> bool:
     return part in SENSITIVE_DOTDIRS or part in SENSITIVE_DOTFILES
 
 
+#: `mv`/`cp` whose SOURCE is a credential path. The source is a positional
+#: argument here rather than an IR field, and the `.env` family needs the
+#: template exemption, so it goes through the shared predicate instead of a
+#: regex alternation that would re-spell the template words.
+_ENV_SOURCE = re.compile(r"\b(?:mv|cp)\s+(\S+)")
+
+
+def _env_source_is_credential(command: str) -> bool:
+    match = _ENV_SOURCE.search(command)
+    if match is None:
+        return False
+    source = match.group(1).strip("'\"")
+    # Every segment matters, not just the basename: `.git/config` is sensitive
+    # because of the `.git` segment, not because `config` is.
+    segments = [part for part in source.split("/") if part not in ("", ".")]
+    return any(is_sensitive_dot_name(part) for part in segments)
+
+
 def _match_allowlist(command: str) -> bool:
     """检查命令是否匹配允许列表前缀。支持子命令匹配。"""
     safe_prefixes = [
@@ -181,8 +199,18 @@ DEFAULT_DENYLIST = (
     r"tee\s+/etc/",
     r"tee\s+/proc/",
     r"sed\s+-i.*/(etc|proc|sys)/",
-    r"\bcp\s+(/etc/|/proc/|/sys/|\.env\b|\.env\.|\S*/\.env\b|\.git/|\S*/\.git/)",
-    r"\bmv\s+(/etc/|/proc/|/sys/|\.env\b|\.env\.|\S*/\.env\b|\.git/|\S*/\.git/)",
+    # The two `(mv|cp)\s+<source>` patterns used to live here. They matched on
+    # the SOURCE token and could not tell a template from a credential, so
+    # `cp .env.example /tmp/backup.txt` was denied. "Which argument is the
+    # source" is expressible in the IR, so the guard's evaluator owns this now
+    # (design D9); this module still covers the path-shaped sources that do not
+    # depend on `.env` naming.
+    # Source-position guard for sensitive sources. `.env.example` and friends
+    # are templates (allowed); the credential forms are not. The `.env` family
+    # is checked by `_env_source_is_credential` (below) so the template words
+    # stay in one place rather than being re-spelled as a regex alternation.
+    r"\b(mv|cp)\s+(/etc/|/proc/|/sys/)\S*",
+    r"\b(mv|cp)\s+\S*/\.(?:git|ssh|aws|gnupg|kube|docker|netrc|npmrc|pypirc)(?![\w.-])",
     r"sudo\s",
     r"su\s+-",
     r"mount\s",
@@ -336,6 +364,8 @@ class WorkspacePolicy:
         for pattern in self._denylist:
             if re.search(pattern, cmd_stripped):
                 raise PermissionError("Command denied by workspace policy")
+        if _env_source_is_credential(cmd_stripped):
+            raise PermissionError("Command denied by workspace policy")
         if _match_allowlist(cmd_stripped):
             return
 

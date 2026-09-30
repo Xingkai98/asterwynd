@@ -80,6 +80,10 @@ _LAUNCHER_OPTS_WITH_VALUE = {
     "unshare": {"--propagation", "--setgroups"},
     "xargs": {"-n", "-I", "-P", "-s", "-d", "-E", "-a"},
 }
+#: Launcher options whose value *is* the command to run. Their value must not be
+#: consumed as an option argument (unlike the rest of `_LAUNCHER_OPTS_WITH_VALUE`),
+#: otherwise the command is swallowed and the guard sees a benign remainder.
+_LAUNCHER_OPTIONS_WHOSE_VALUE_IS_THE_COMMAND = frozenset({"-c", "--command"})
 
 # Protected paths: writing to these is always denied.
 _DENY_PATHS = ("/etc", "/proc", "/sys", "/dev", "/root", "/boot", "/var")
@@ -286,11 +290,23 @@ def _strip_to_fixpoint(argv: list[str]) -> tuple[list[str], str | None]:
             takes_value = _LAUNCHER_OPTS_WITH_VALUE.get(name, set())
             index = 1
             while index < len(rest) and rest[index].startswith("-"):
+                # `script -c '<cmd>'` carries the command *as* the option value
+                # (like `env -S`), so that option's value must stay in the
+                # stream -- stripping it would swallow the real command.
+                if rest[index] in _LAUNCHER_OPTIONS_WHOSE_VALUE_IS_THE_COMMAND:
+                    # The value IS the command to run: it becomes the new head
+                    # so the ordinary argument walks judge it, and whatever
+                    # follows is treated as its arguments.
+                    rest = rest[index + 1:]
+                    changed = True
+                    break
                 if rest[index] in takes_value:
                     index += 1
                 index += 1
-            rest = rest[index:]
-            changed = True
+            else:
+                rest = rest[index:]
+                changed = True
+                continue
             continue
 
     if not rest:
@@ -301,14 +317,39 @@ def _strip_to_fixpoint(argv: list[str]) -> tuple[list[str], str | None]:
     return rest, head
 
 
+def _concealed_command_text(rest: list[str]) -> str | None:
+    """The command run by a launcher that takes it as an option value.
+
+    `script -c '<cmd>'` leaves `-c` and `'<cmd>'` in the stripped remainder; the
+    value is what actually runs, so it is returned dequoted and judged as a
+    command line. This is an **option-value** shape, not "any quoted token":
+    quoting a command as data (`grep -rn "cp x .env" docs/`) must not match.
+    """
+    for index, token in enumerate(rest):
+        if token not in _LAUNCHER_OPTIONS_WHOSE_VALUE_IS_THE_COMMAND:
+            continue
+        if index + 1 >= len(rest):
+            continue
+        return _dequote(rest[index + 1])
+    return None
+
+
 def _conceals_judged_command(rest: list[str]) -> bool:
     """True when a judged command sits behind the (unknown) leading token.
 
     Q4 = (c'): `nsenter -t 1 cp x y` asks because `cp` follows the unknown
     prefix; `terraform plan` does not, because nothing the guard judges follows.
+
+    The scan covers the **whole** remainder, not a fixed-size window: a padding
+    of filler tokens (`weird a b c d cp x .env`) must not push the real command
+    out of view. Only *unquoted* tokens count -- a quoted token is data unless
+    an option explicitly says its value is a command (`_concealed_command_text`).
     """
-    for token in rest[1:5]:
-        if token.rsplit("/", 1)[-1] in _WRITE_COMMANDS:
+    for token in rest:
+        if token and token[0] in ("'", '"'):
+            continue
+        name = token.rsplit("/", 1)[-1]
+        if name in _WRITE_COMMANDS or name in _PAYLOAD_COMMANDS or name in INTERPRETERS:
             return True
     return False
 
@@ -642,6 +683,16 @@ class CommandGuard:
         if not argv:
             return CommandVerdict.ALLOW
 
+        # A launcher option whose value IS the command (`script -c '<cmd>'`):
+        # the value is read from the ORIGINAL argv, because stripping consumes
+        # the option. The value is judged as a command line.
+        concealed = _concealed_command_text(argv)
+        if concealed is not None:
+            concealed_verdict = self._check_analysis(concealed)
+            if concealed_verdict is not CommandVerdict.ALLOW:
+                self.last_reason = "launcher_payload"
+                return concealed_verdict
+
         rest, unknown = _strip_to_fixpoint(argv)
         if unknown is not None:
             # Unknown leading token. Ask only when a judged command sits behind
@@ -654,6 +705,15 @@ class CommandGuard:
         if not rest:
             return CommandVerdict.ALLOW
 
+        # A launcher that runs a command given as an option value
+        # (`script -c '<cmd>'`) leaves that option at the head after stripping.
+        # Judge the value as a command; the option is data, not a command name.
+        if rest[0] in _LAUNCHER_OPTIONS_WHOSE_VALUE_IS_THE_COMMAND:
+            payload_verdict = self._check_launcher_payload(rest)
+            if payload_verdict is not CommandVerdict.ALLOW:
+                return payload_verdict
+            return CommandVerdict.ALLOW
+
         name = rest[0].rsplit("/", 1)[-1]
 
         # Dynamic word in a write-target position (Q1 = (c) layered): normalise
@@ -664,6 +724,19 @@ class CommandGuard:
             dynamic_verdict = self._check_dynamic_target(rest)
             if dynamic_verdict is not CommandVerdict.ALLOW:
                 return dynamic_verdict
+
+        # `mv`/`cp` also READ their source, so a sensitive source is judged
+        # too (`cp .env /tmp/x` exfiltrates credentials). The IR gives the
+        # source as argv[1]; this replaces the old source-position denylist
+        # regexes, which could not tell a template from a credential (design
+        # D9: the IR owns "which argument is what").
+        if name in ("mv", "cp", "install") and len(rest) > 1:
+            source = rest[1]
+            if not source.startswith("-"):
+                source_verdict = self._check_target(name, source)
+                if source_verdict is not CommandVerdict.ALLOW:
+                    self.last_reason = f"{name}_source"
+                    return source_verdict
 
         # The write target may be carried on an option (`cp -t <dir> x`), so
         # resolve it explicitly rather than assuming the last argument (design
@@ -687,6 +760,12 @@ class CommandGuard:
             if payload_verdict is not CommandVerdict.ALLOW:
                 return payload_verdict
 
+        # `script -c '<payload>'` runs the payload too (its `-c` value is the
+        # command, like `env -S`). The option was left in the stream above.
+        payload_verdict = self._check_launcher_payload(rest)
+        if payload_verdict is not CommandVerdict.ALLOW:
+            return payload_verdict
+
         # `eval '<payload>'` runs its argument as a command line (design D8).
         # Shell joins the remaining words before evaluating, so both the dequoted
         # single argument (`eval 'cp x .env'`) and the joined remainder
@@ -699,6 +778,22 @@ class CommandGuard:
                 if eval_verdict is not CommandVerdict.ALLOW:
                     return eval_verdict
 
+        return CommandVerdict.ALLOW
+
+    def _check_launcher_payload(self, rest: list[str]) -> CommandVerdict:
+        """Judge a launcher option whose value is itself the command.
+
+        `script -c '<cmd>'` (and `--command`) behave like `env -S`: the option
+        value is executed. Any such option left in the stream is judged.
+        """
+        for index, token in enumerate(rest):
+            if token not in _LAUNCHER_OPTIONS_WHOSE_VALUE_IS_THE_COMMAND:
+                continue
+            if index + 1 >= len(rest):
+                continue
+            verdict = self._check_analysis(_dequote(rest[index + 1]))
+            if verdict is not CommandVerdict.ALLOW:
+                return verdict
         return CommandVerdict.ALLOW
 
     def _check_shell_payload(self, rest: list[str]) -> CommandVerdict:

@@ -168,7 +168,11 @@ def _is_dynamic(node) -> bool:
             "arithmetic_expansion",
         ):
             return True
-        if n.child_count == 0 and any(ch in n.text.decode(errors="replace") for ch in "$*?[{~`"):
+        # `~` is deliberately NOT a dynamic marker: it is a fixed home
+        # reference, and treating `~/.ssh/id_rsa` as "dynamic" would route a
+        # perfectly statically-known sensitive path to the ask branch instead of
+        # denying it. Glob / brace / variable expansions are real unknowns.
+        if n.child_count == 0 and any(ch in n.text.decode(errors="replace") for ch in "$*?[{`"):
             return True
         stack.extend(n.children)
     return False

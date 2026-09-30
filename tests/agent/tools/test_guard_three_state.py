@@ -364,3 +364,68 @@ class TestCVEInspiredCases:
     def test_traversal_is_normalised(self) -> None:
         guard = CommandGuard(workspace="/tmp/ws")
         assert guard.check("rm -rf /tmp/ws/../etc") is CommandVerdict.DENY
+
+
+class TestLauncherNoFailOpen:
+    """Regression: gaps found in review round 1 (fail-open paths).
+
+    1. `script -c '<cmd>'` — like `env -S`, the `-c` VALUE is the command, so
+       stripping it as an option value swallowed the command entirely.
+    2. The "conceals a judged command" window was `rest[1:5]`, so four filler
+       tokens pushed the real command out of view.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            'script -c "cp x .env"',
+            "script -c 'cp x .env'",
+            "script -q -c 'cp x .env' /dev/null",
+        ],
+    )
+    def test_script_dash_c_payload_is_judged(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "weird a b c d cp x .env",
+            "weird a b c d e f g mv x .env",
+        ],
+    )
+    def test_filler_tokens_do_not_hide_the_command(self, command: str) -> None:
+        """Any number of unknown tokens must not push the real command out of view."""
+        verdict = CommandGuard(workspace="/tmp/ws").check(command)
+        assert verdict is not CommandVerdict.ALLOW
+
+    def test_benign_script_dash_c_allowed(self) -> None:
+        """Control group: a benign script payload stays allowed."""
+        assert CommandGuard().check("script -c 'echo hi' /dev/null") is CommandVerdict.ALLOW
+
+
+class TestSourcePositionTemplate:
+    """`cp .env.example <dest>` must be allowed (spec: template source, task 2.7).
+
+    The two source-position denylist regexes matched `cp <src>` for any `.env*`
+    source, so copying a committed template denied. They are now covered by the
+    IR evaluator, which is template-aware.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp .env.example /tmp/backup.txt",
+            "cp .env.sample docs/",
+            "mv .env.template /tmp/x",
+        ],
+    )
+    def test_template_source_allowed(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        ["cp .env /tmp/x", "mv .env.local /tmp/x", "cp ~/.ssh/id_rsa /tmp/x"],
+    )
+    def test_credential_source_still_denied(self, command: str) -> None:
+        """Control group: a real credential as the source must stay denied."""
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
