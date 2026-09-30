@@ -19,12 +19,13 @@
 | F1 | **`run()` 会落盘**。`_record_event`→`_workflow_store().append_event()`（`scheduler.py:714`）、`_write_root_result`→`save_result("root",text)`（`:3169`）、`_write_attribution`（`:1327`），落点是 `<workspace_root>/.asterwynd/workflows/<wf_id>/`（`workflow_store.py:56-60`） | `research/side_effects.py` 输出：一次普通 run 在真实 workspace 落 **11 个文件** |
 | F2 | **默认 `graph_sink` 就是 `None`**（`manager.py:526`）。「去掉 sink」不是隔离手段——普通 run 本来就没 sink | `research/side_effects.py`：`graph_sink default = None` |
 | F3 | **`run()` 会污染 manager 注册表**：`manager.register_workflow(self)`（`scheduler.py:829`）写 `_workflows`，`_workflow_store()` 写 `_workflow_stores` | `research/side_effects.py`：run 后 `_workflows = ['wf_836c837d']` |
-| F4 | **`_launch_run`（`scheduler.py:2194`）是真实 LLM 的唯一切入点**——四个 `_execute_*` 里只有它会调到 `manager.run_subagent` | `research/isolation.py`：把假 LLM 注入 manager 后，**零真实调用**而图正常跑完 |
+| F4 | ⚠️ **`_launch_run` 不是 LLM 的唯一切入点**（**初稿写错，实测订正**）。它只是 `manager.run_subagent` 的唯一切入点；**第二条路径是 collect 聚合的压缩**：`_merge_contributions_bounded`（`:2399`）→ `_aggregator.merge()` → `LLMSummarizer(manager.llm)`（经 `_build_summarizer()` `:666-672`）。**该路径在 concat 超出聚合节点预算时触发，实测确实发生** | `research/summarizer_pollution.py`：leaf_chars=9000 时多出一次 `node_id=None` 的调用 |
+| **F4a** | ⚠️ **该 summarizer 调用不可归因**：`current_node_id()` 在它执行时是 `None`（不在 `_launch_run` 的 contextvar 包裹内），且它**会覆盖聚合节点的产出**——实测 `root.summary` 从「两份 L 的拼接」变成假 LLM 的回复 `[SUMMARY-PLACEHOLDER]` | `research/summarizer_pollution.py` |
 | F5 | **假 LLM 能通过 contextvar 知道自己是哪个节点**（`current_node_id()`，`agent/subagent/context.py`），**无需改调度器** | `research/nodeid.py`：每个节点看到自己的 id |
 | F6 | **隔离可行**：一次性 manager + 假 LLM + 空 store ⇒ **真实 workspace 零落盘、真实 manager 注册表零污染** | `research/isolation.py` / `research/prototype.py`：`disk delta = (none)`、`_workflows = []` |
-| **F9** | **写入口有**两个**（W1 manager 的 `_write_result_artifacts` / W2 scheduler 的 `_store`），但都以 `workspace_root` 为路径根**——所以一次性 `workspace_root` 单独即可保证真实 workspace 零落盘；`_store` 替换只影响一次性目录里少写 2 个文件（8→6） | `research/sandbox_files.py` + `sandbox_noNull.py` 对照 |
-| F7 | **调度器只碰 manager 的 9 个属性**：`config` / `find_run` / `workflow_store` / `register_workflow` / `register_workflow_bucket` / `release_workflow_bucket` / `max_active` / `max_queued_runs` / `cancel_subagent_run` | `rg 'self\.manager\.' scheduler.py` 词频统计 |
-| F8 | **成本极低**：小图 0.06–0.97s；chain-50 = 0.685s；foreach 受展开预算封顶（`foreach-50` 与 `foreach-20` 同为 22 次调用） | `research/perf.py` |
+| F9 | **写入口有两个**（W1 = manager 的 `_write_result_artifacts` / W2 = scheduler 的 `_store`），但**都以 `workspace_root` 为路径根**——所以一次性 `workspace_root` 单独即可保证真实 workspace 零落盘；`_store` 替换只影响一次性目录里少写 2 个文件（8→6） | `research/sandbox_files.py` + `sandbox_noNull.py` 对照 |
+| F7 | ⚠️ **调度器碰的 manager 属性是 14 个，不是 9 个**（**初稿漏了 `getattr` 形式**）。`self.manager.X` 形式 9 个：`config` / `find_run` / `workflow_store` / `register_workflow` / `register_workflow_bucket` / `release_workflow_bucket` / `max_active` / `max_queued_runs` / `cancel_subagent_run`；**`getattr(self.manager, ...)` 形式另 3 个**：`llm` / `graph_sink` / `cost_ledger`；**局部变量 `manager.X` 另 2 个**：`spawn_count_for` / `rejection_counts_for`。**漏掉 `llm` 是致命的**——它正是 F4 的第二条路径 | `rg 'self\.manager\.' + 'getattr\(self\.manager,' scheduler.py` |
+| F8 | **成本极低**：小图 0.06–0.97s；chain-50 = 0.615s；foreach 受展开预算封顶（`foreach-50` 与 `foreach-20` 同为 22 次调用 = 20 项 + 2 个 auto 层，见 S5） | `research/perf.py` / `research/extra_calls.py` |
 
 ### 已实测的**语义**发现（本 change 要暴露给模型的东西本身）
 
@@ -36,6 +37,7 @@
 | S2 | **但上游是 `aggregate` 时会回退到槽值**——`_node_output`（`scheduler.py:2478-2486`）先查 `state.slots`，`aggregate` 恰好填了槽，于是 route 读到的是**聚合结果**而非该节点 summary | `research/confirm_read.py`：三种形态对照，形态 2/3 的 `gate.raw` 都是 `FROM-LEAF`（聚合槽） |
 | S3 | **route 回边会重跑循环体，但不投递文本**——`producer` 在 lap 1/2/3 收到的 prompt **逐字相同** | `research/rounds.py`：三次 lap 的 producer prompt 完全一致 |
 | S4 | **盲回显（不传 script）时 route 必走 default**——因为占位输出永远不匹配任何 case | `research/prototype.py` CASE 1：`matched=null, used_default=true` |
+| S5 | **执行计划里存在「自动插入层」，它们不在 `spec.nodes` 里，但会真的调 LLM**。实测：20 项 foreach 产生了 `__auto_agg__agg_0_0` / `__auto_agg__agg_0_1` 两个节点、各 1 次 LLM 调用（`research/extra_calls.py`：23 次调用 = 20 项 + 2 个 auto 层 + 1 个用户 agg） | `research/extra_calls.py` + `aggregation.py:40` `AUTO_NODE_PREFIX` / `:177` `inserted_nodes` |
 
 > **S2 是一条尚未被任何测试钉住的语义**：`rg '_node_output' tests/` 只命中 `test_workflow_semantics_m1.py:305` 的注释（讲的是**另一个** bug：route 数据入边不做消费记账），没有任何断言覆盖「aggregate 上游 → route 读槽值」这条路径。四个内置模板无一命中该形态（`peer-review` 的 route 上游是 `reviewer` subagent，不是 aggregate）。**本 change 不修它**（不属本 change 范围，且改它 = 改调度语义），但 `DryRunWorkflow` 会把它**如实暴露**——这正是这个工具的价值：**让语义可见，而不是替模型决定语义对不对。**
 
@@ -72,7 +74,7 @@
 
 **选 (a)**。理由：
 
-1. **`DeclareWorkflow` 的描述已经 5892 字符**（守卫上界 6000，`test_workflow_tool_discoverability.py:315`）。往里塞 dry run 的语义说明会**直接撞守卫**，而压缩既有分节会牺牲 #248 刚建立的契约文字。
+1. **`DeclareWorkflow` 的描述已经很长**——实测 **3993 字符**（守卫上界 6000，`test_workflow_tool_discoverability.py:315`；**初稿误记为 5892，实测订正**）。往里塞**完整的** dry run 语义说明（schema + 用法 + 边界）会占掉相当一部分余量，而这个描述每轮都随工具面发给模型——**把 dry run 的说明放在 dry run 自己的工具上，比塞进声明入口更省、也更对位**。
 2. **(b) 有语义陷阱**：`DeclareWorkflow` 是 `read_only` 注册动作，加 `dry_run` 会让一个本该幂等只读的调用产生两种形态。
 3. **(c) 更糟**：`RunWorkflow` 在 `SPAWN_TOOL_NAMES`（`manager.py:437`）里，受 `max_depth` 撤工具管辖；dry run **不 spawn**，不该被深度限制牵连（同 `DeclareWorkflow` 的档位）。
 4. **可发现性**：模型读工具列表就能看到 `DryRunWorkflow` 这个名字（带 `description`），比藏在 boolean 参数里更容易被想起来。
@@ -101,7 +103,27 @@
 
 **不返回 `slots` 全文**（除 route 需要时）：`aggregate` 的槽是 N 份 concat 的巨型字符串，整段回给父上下文就是打爆上下文——与既有 `parent_envelope` 的 bounded 纪律冲突（见 D5）。
 
-**`received` 的寻址必须是 `(node_id, item_index)`，不是 `node_id`（实测缺口，research/foreach_gap.py）**：
+**S2 的机制订正（grill 复核，须如实写）**：初稿说「上游是 aggregate 时会回退到槽值」——**表述过窄**。真实机制是 `_node_output`（`scheduler.py:2478-2486`）的三段：
+
+1. **`slot in state.slots and state.node.kind != "subagent"`** —— 注意这个 **`!= "subagent"` 守卫**：**subagent 自己的槽永远不被这条读**；
+2. 否则**沿该节点自己的数据入边向上找**，返回**第一个**有该槽的上游的槽值（**可能跳到两跳以上**）；
+3. 都不中才回退 `state.summary`。
+
+所以准确表述是：**一个 subagent 节点在 route 眼里「自身产出」是会被它的聚合上游顶掉的**——因为守卫 (1) 不读它自己的槽，而 (2) 会向上走。**这解释了 S1 与 S2 为何同时成立**：`a→mid→gate` 里 `mid` 的上游 `a` 没有槽 → 走到 (3) 返回 `mid.summary`（S1）；`agg→critic→gate` 里 `critic` 的上游 `agg` 有槽 → 走 (2) 返回 `agg` 的槽（S2）。
+
+**这个机制导致一个报告缺口（grill 发现）**：报告只给 `input_seen` 的**文本**，不给**它来自哪个节点**。模型要自己拿文本去比对 `produced` 才能推断——而文本被截断到 240 字符时**比对可能失败**。**修法**：报告 SHALL 为 route 额外给出**判定输入的来源节点 id**（`input_source`），它可由同一次 `_node_output` 调用顺带记录。→ 这是 **Q6** 的一部分。
+
+**必须报告「自动插入层」（实测缺口 G3，research/extra_calls.py）**：
+
+执行计划（`ExecutionPlan`）会**自动插入 aggregate 层**来降低扇入宽度（`aggregation.py:40` `AUTO_NODE_PREFIX = "__auto_agg__"`，`plan.inserted_nodes` 记录它们，`scheduler.py:3114` 已把它们暴露给快照）。实测：**20 项 foreach 插入了 2 个 auto 层节点，各真的调了 1 次 LLM**——即「模型声明 2 个节点」的图，实际跑了 4 个节点的活。
+
+**若报告只遍历 `spec.nodes`，这些节点会被整个吞掉**——而它们恰好是「模型猜不到会发生什么」的典型：**模型写 20 项 foreach 时不会知道有个 auto 层会被插进来、更不知道它会改拓扑、还会产生额外 LLM 调用。**
+
+修法：报告的节点列表 SHALL 基于**执行计划**（`plan.nodes`）而非 `spec.nodes`，并给每个节点标 `auto_inserted: true/false`（取自 `plan.inserted_nodes`）。这样：
+- 拓扑是**真实的**（模型看到的就是会跑的图）；
+- 同时能区分「这是你声明的」与「这是系统替你插的」——后者正是最需要被看见的信息。
+
+**`received` 的寻址必须是 `(node_id, item_index)`，不是 `node_id`（实测缺口 G1，research/foreach_gap.py）**：
 
 `current_node_id()` 对 foreach 的**每一个展开项返回同一个 id**（项间不区分）——实测 `fan` 展开 3 项，3 次 LLM 调用看到的 `node_id` 全是 `'fan'`，但 task 分别是 `propose alpha` / `propose beta` / `propose gamma`。若 `received` 直接按 node id 建 dict，**3 项会坍缩成 1 项**（实测：`fan.received` 只剩最后一项 `'propose gamma'`）。
 
@@ -188,6 +210,24 @@ design 初稿写「`_store` 是唯一的写入口」——**这是错的**。实
 （1–4 已有 spike 支撑；5 由 G2 的对照实测给出预期值。）
 
 ---
+
+### D4b — **必须切断 collect 聚合的 summarizer 路径**（F4/F4a 逼出来的硬要求）
+
+**问题**：`_merge_contributions_bounded`（`scheduler.py:2399`）在 concat 超出聚合节点预算时，会调 `_aggregator.merge()` → `LLMSummarizer(manager.llm)`。在 dry run 里那是**假 LLM**，后果有两个（均已实测，`research/summarizer_pollution.py`）：
+
+1. **报告会说谎**：聚合节点的 `summary`/`slots` 变成假 LLM 的占位回复，**而不是上游文本的拼接**。而 `summary`/`slots` 正是「回边带不带数据」「route 读到什么」的答案来源——**报告的核心价值被这条路径污染**。
+2. **调用不可归因**：该调用发生时 `current_node_id()` 是 `None`（不在 `_launch_run` 的包裹内），会在 `received` 里多出一个 `None`/`?` 键。
+
+**为什么不能靠「假 LLM 好好回答」绕过**：假 LLM 无法在**不知道自己在做压缩**的情况下给出「拼接」这个正确的语义——它看到的是「多份文本」，而正确产出是「把它们拼起来」。**让假 LLM 猜这个语义就是模拟与真实漂移。**
+
+**三个候选**：
+- **(a) 让假 LLM 对该调用返回「上游文本的拼接」**——需要假 LLM 能识别「这是压缩调用」，脆弱且它并不总能正确重建拼接语义（reducer 可能是 `merge_dict`/`last`）。
+- **(b) 在 dry run 里把聚合节点的预算调到极大**（如 `budget = +inf`），使 `len(merged) <= budget * CHARS_PER_TOKEN` 恒真、**永不进 summarizer**——单点、不碰生产代码，但改变了「预算」这一模拟条件（报告里的截断行为会与真实运行不同）。
+- **(c) 用一个「结构感知的假 summarizer」替换 aggregator 的 summarizer**（如 `TruncationSummarizer`，它**就是**无 LLM 时的既有兜底，`aggregation.py:88`）——`WorkflowAggregator(summarizer=TruncationSummarizer())`。**这是既有代码里现成的降级路径**，语义上正好是「没有 LLM 时怎么办」。
+
+**倾向 (c)**。理由：`TruncationSummarizer` 是**既有生产路径**（无 LLM 时的兜底），不是为模拟造的新东西；它产出的是**有界的拼接/截断**——正是 dry run 想展示的「文本怎么流」。而且 (c) 只需在构造 scheduler 后改一个属性（或 Q2 若选构造参数则一并注入），**不碰 `scheduler.py` 的执行逻辑**。**(b) 的问题**是它让报告对「预算截断」撒谎——而预算是模型需要看到的真实约束。**(a) 最差**，它让假 LLM 承担它无法可靠承担的语义。
+
+> **注意**：**(c) 使「collect 聚合的产出」在 dry run 里是截断拼接而非语义压缩**——这是**正确的模拟**（真实无 LLM 时就长这样），但报告 SHALL 说明「聚合节点的产出在此为截断投影」。**这是 Q6**（新增，见 Open Questions）。
 
 ### D5 — 有界性：所有文本截断，复用既有 bounded 纪律
 
@@ -288,16 +328,16 @@ RIR findings 1 / 4 / 7 共同指出：**本地 6 个参考仓库没有一个「�
 
 ### D10 — 描述预算与可发现性引导
 
-- `DryRunWorkflow` 的 `description` SHALL ≤ **2000 字符**（`DeclareWorkflow` 是 5892，本工具是辅助工具，应更短）。新增守卫测试。
+- `DryRunWorkflow` 的 `description` SHALL ≤ **2000 字符**（`DeclareWorkflow` 实测 3993；本工具是辅助工具，应更短）。新增守卫测试。
 - **主引导放在 `DryRunWorkflow` 自己的描述里**，`DeclareWorkflow` 描述只加**一句**指针。
-- 理由：`DeclareWorkflow` 描述已 5892/6000，**塞不下**；且「不确定语义时先 dry run」这句话放在**被调用方**（`DryRunWorkflow`）比放在**声明入口**更合适——模型决定「我要不要 dry run」时，看的就是这个工具。
+- 理由：`DeclareWorkflow` 描述已 3993/6000（**有余量但不多**，且每轮都发），把 dry run 的**完整**说明放过去不划算；且「不确定语义时先 dry run」这句话放在**被调用方**（`DryRunWorkflow`）比放在**声明入口**更合适——模型决定「我要不要 dry run」时，看的就是这个工具。**但既然有余量，加一句极短指针是低风险的**（见 Q4）。
 - **但「模型会不会想起来有这个工具」是不可保证的** → 见 Open Question Q4。
 
 ---
 
 ## Open Questions（**停轮交用户确认，每条配具体例子**）
 
-> 以下 5 条**刻意未拍板**。grill-confirmation-gate 未通过前，实现不得开工。
+> 以下 **6 条**（Q1–Q6）**刻意未拍板**。grill-confirmation-gate 未通过前，实现不得开工。
 
 ### Q1 — `script` 怎么表达「随轮次 / 随项变化」？
 
@@ -357,7 +397,7 @@ RIR findings 1 / 4 / 7 共同指出：**本地 6 个参考仓库没有一个「�
 
 **具体例子（引导位置）**：
 - **只放 `DryRunWorkflow` 自己的描述**：模型**读到了**这个工具的描述才会想起来用。若它压根没读（#248 实测模型会跳过工具描述直接用），就白搭。
-- **在 `DeclareWorkflow` 描述里也加一句**（如「Unsure how the graph will route? Dry-run it first.」）：更可能被看到，但 `DeclareWorkflow` 已 5892/6000，**要压缩既有分节**（有丢现有契约文字的风险）。
+- **在 `DeclareWorkflow` 描述里也加一句**（如「Unsure how the graph will route? Dry-run it first.」）：更可能被看到；`DeclareWorkflow` 实测 3993/6000 **有余量**，加一句（~60 字符）**不需要压缩既有分节**（初稿以为要塞不下，实测订正）。
 
 **我的倾向**：**slots 返回（截断，单独字段）；引导放 `DryRunWorkflow` 描述为主，`DeclareWorkflow` 加一句极短指针（若压不下 6000 就放弃）**。交你拍板。
 
@@ -374,9 +414,26 @@ RIR findings 1 / 4 / 7 共同指出：**本地 6 个参考仓库没有一个「�
 
 ---
 
+### Q6 — 聚合产出在 dry run 里是「截断拼接」而非「语义压缩」，且 route 判定输入需要来源（D4b + S2 订正逼出来）
+
+**这是两个相关的报告正确性问题，合并一条。**
+
+**具体例子（聚合产出的语义）**：一张 `a → root(aggregate, collect)` 图，两份上游产出各 9000 字符。
+- **真实运行**（有 LLM）：`root.summary` 是 LLM **语义压缩**后的摘要（~3000 token）。
+- **dry run（选 (c) 后）**：`root.summary` 是**截断拼接**（`TruncationSummarizer`）——**内容形状不同**。
+- 问题：这**是不是**会误导？一方面它如实反映「无 LLM 时的行为」，另一方面模型可能以为「真实跑出来也是这个」。
+- **方案 A**：报告里明说「聚合节点产出为截断投影（无 LLM 语义压缩）」。
+- **方案 B**：干脆不报 `produced` 的聚合内容，只报「它收到了什么」。**但那样模型就看不到「聚合后文本长什么样」，而这正是 S2（route 读到聚合槽值）的关键。**
+
+**具体例子（`input_source`）**：`agg → critic → gate`，`gate.input_seen = "FROM-LEAF"`（S2）。模型看到这串文本会问「这是 critic 说的还是 agg 说的？」
+- **不加 `input_source`**：模型得把文本和 `produced` 逐一比对；截断到 240 字符后可能比对不出。
+- **加 `input_source: "agg"`**：一眼看到「route 读的是 agg 的槽」。
+
+**我的倾向**：**A（明说）+ 加 `input_source`**。两者都是「把真相说清楚」而非「改变行为」，与本 change 的宗旨一致。**请你拍板。**
+
 ## Pre-Implementation Review
 
-- **本 change 是 `feature` 类型**（新增工具 = 新增能力面）→ **实现前必须走 `batch-grill-me` + 停轮确认 Q1–Q5**。
+- **本 change 是 `feature` 类型**（新增工具 = 新增能力面）→ **实现前必须走 `batch-grill-me` + 停轮确认 Q1–Q6**。
 - **机械门禁**：
   - 触及受保护路径 → 需 `current_spec_synced` / `backlog_updated` 结构化事件；
   - 需 grill 证据（`reviews/grill-design.md`，≥3 条 Confirmed Decisions + Open Questions 全部有 User Confirmation）；

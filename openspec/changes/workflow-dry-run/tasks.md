@@ -4,11 +4,11 @@
 
 ## 0. 实现前设计追问（batch-grill-me）——**未解除阻塞**
 
-> **状态（立项时点）**：design 的 D1–D10 已成型，但 **Q1–Q5 刻意未拍板**（design 的 `## Open Questions`）。**grill-confirmation-gate 未通过，实现不得开工。**
+> **状态（立项时点）**：design 的 D1–D10 已成型，但 **Q1–Q6 刻意未拍板**（design 的 `## Open Questions`）。**grill-confirmation-gate 未通过，实现不得开工。**
 
 - [ ] 0.1 用独立零记忆 subagent 执行 `batch-grill-me`（或等价设计追问），逐项审视 `design.md` 的 D1–D10，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥3 条 + `## Open Questions`）
-- [ ] 0.2 **停轮**把 Q1–Q5 逐条**配具体例子**（design 的 Open Questions 节已给出循环收敛、`_store` 替换、截断上界、slots 与引导位置、防滥用设界五个场景）交用户确认；答复记录进 `grill-design.md` 的 `## User Confirmation`（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）
-- [ ] 0.3 按 Q1–Q5 答复回写 design（D3/D4/D5/D7/D10 + Non-Goals）与 spec delta、本任务清单
+- [ ] 0.2 **停轮**把 Q1–Q6 逐条**配具体例子**（design 的 Open Questions 节已给出循环收敛/按项、`_store` 替换、截断上界、slots 与引导位置、防滥用设界、聚合产出语义与 input_source 六个场景）交用户确认；答复记录进 `grill-design.md` 的 `## User Confirmation`（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）
+- [ ] 0.3 按 Q1–Q6 答复回写 design（D3/D4/D4b/D5/D7/D10 + Non-Goals）与 spec delta、本任务清单
 
 ## 1. 规格
 
@@ -28,10 +28,14 @@
 - [ ] 2.4 **T-4 隔离·sink**：真实 manager 的 `graph_sink` 未被调用（F2）
 - [ ] 2.5 **T-5 数据流·received**：foreach 展开项 prompt 含 item（占位符是 `{item}` **不是 `$item`**，`scheduler.py:369-380`）；下游节点 prompt 含上游 bounded 产出
 - [ ] 2.5a **T-5a foreach 各项不坍缩（实测缺口 G1）**：foreach 展开 3 项时，报告的 `received` 里 3 项各自的输入**分别可见**。**变异验证**：改回 `received[node_id]` 单键写法，测试必须变红（`research/foreach_gap.py` 实证：单键会只剩最后一项）
+- [ ] 2.5b **T-5b 自动插入层可见（实测缺口 G3）**：一张会触发自动汇合层插入的图（如 20 项 foreach），报告里 SHALL 含 `__auto_agg__*` 节点且标 `auto_inserted: true`。**变异验证**：把节点枚举从 `plan.nodes` 改回 `spec.nodes`，测试必须变红（`research/extra_calls.py` 实证：该图实际跑 4 个节点，`spec.nodes` 只有 2 个）
 - [ ] 2.6 **T-6 数据流·input_seen（S1）**：`a→mid→gate` 时 `gate.input_seen == mid` 产出
 - [ ] 2.7 **T-7 数据流·input_seen（S2）**：`aggregate→critic→gate` 时 `gate.input_seen` 是**聚合槽值**——把未钉住的语义固化为断言（断言的是「报告如实反映现状」，**不是**「现状是对的」）
+- [ ] 2.7a **T-7a input_source（Q6）**：route 的判定输入来源节点 id 可见（S2 形态下应为那个聚合节点，不是直接上游的 subagent）
 - [ ] 2.8 **T-8 `script` 注入（S4）**：不传 script → route 走 default；传 `{"critic":"GAPS"}` → route 走回边
 - [ ] 2.9 **T-9 回边不带文本（S3）**：回边重跑时被重派发节点的 `received` 与首轮相同
+- [ ] 2.9a **T-9a 聚合产出不被替身污染（F4/F4a）**：`collect` 聚合且上游超出预算时，报告的聚合产出是**有界投影**而非替身回复。**变异验证**：不切断 summarizer 路径，测试必须变红（`research/summarizer_pollution.py` 实证：`root.summary` 会变成 `[SUMMARY-PLACEHOLDER]`）
+- [ ] 2.9b **T-9b 无不可归因调用（F4a）**：报告/`received` 里不出现 `None`/`?` 节点的条目
 - [ ] 2.10 **T-10 有界性（D5）**：超长产出被截断到 `max_report_chars`
 - [ ] 2.11 **T-11 边界声明（D6/D8）**：返回体含 `simulated: true` 与边界文案；**不含 `workflow_id`**
 - [ ] 2.12 **T-12 schema parity**：`DryRunWorkflow.spec` 的 schema 与 `DeclareWorkflow.spec` **逐字相等**
@@ -43,8 +47,10 @@
 - [ ] 3.1 `agent/tools/builtin/subagents.py`：新增 `_DryRunLLM`（假 LLM：回显 + 按 `current_node_id()` 支持 `script` 注入；只返回文本、不发起 tool call）
 - [ ] 3.2 **仅当 Q2 选 B**：新增 `_NullWorkflowStore`（所有写方法 no-op，`ref()` 返回假 ref）——用于替换 `scheduler._store`。**注意 W1（`manager._write_result_artifacts`）不经它**，由一次性 `workspace_root` 兜住（G2/F9）
 - [ ] 3.3 `agent/tools/builtin/subagents.py`：新增模拟驱动函数（**核心隔离手段 = 一次性 manager + 一次性 `workspace_root` + 假 LLM**；Q2 选 B 时额外替换 `scheduler._store`）
-- [ ] 3.4 `agent/tools/builtin/subagents.py`：新增报告构造（`received`/`produced`/`input_seen`/`matched`/`walked_to`/`used_default`/`edges[].control`/`nodes[].status`/`simulated: true`），文本按 `max_report_chars` 截断——**不复用也不改 `NodeState.to_dict()`**。**`received` 按 `(node_id, item_index)` 寻址**（非 foreach 节点 `item_index=null`；foreach 的 received 是按项列表）——见 G1
+- [ ] 3.4 `agent/tools/builtin/subagents.py`：新增报告构造（`received`/`produced`/`input_seen`/`matched`/`walked_to`/`used_default`/`edges[].control`/`nodes[].status`/`nodes[].auto_inserted`/`simulated: true`），文本按 `max_report_chars` 截断——**不复用也不改 `NodeState.to_dict()`**。**节点枚举基于 `scheduler._plan.nodes`**（含 auto 层）并标 `auto_inserted`（见 G3）；**`received` 按 `(node_id, item_index)` 寻址**（非 foreach 节点 `item_index=null`；foreach 的 received 是按项列表）——见 G1
 - [ ] 3.4a 若 Q1 选 (b)/(c)：实现「数组按调用次序消费」的 script 语义（**须先验证「假 LLM 内如何拿到第几次调用」**——用调用序而非依赖调度器）
+- [ ] 3.4b **切断 collect 聚合的 summarizer 路径（D4b）**：把 simulated aggregator 的 summarizer 置为 `TruncationSummarizer`（既有生产兜底）——见 Q6 拍板；不碰 `scheduler.py` 执行逻辑
+- [ ] 3.4c 报告为 route 附 `input_source`（判定输入的来源节点 id）——见 S2 订正 / Q6
 - [ ] 3.5 `agent/tools/builtin/subagents.py`：新增 `DryRunWorkflowTool`（`@tool_parameters`，`spec` 复用 `_workflow_spec_schema()`；`description` ≤2000 字符 + 断言式无副作用声明；`read_only=True`、`permission=SUBAGENT_CONTROL_PERMISSION`）
 - [ ] 3.6 `agent/loop.py`：在既有注册块加 `DryRunWorkflowTool(self.subagent_manager)`（**不加入 `SPAWN_TOOL_NAMES`**）
 - [ ] 3.7 **仅当 Q5 选 A/C**：实现调用计数（session 级计数点与 `hint` 文案；A 阻断、C 软提醒）

@@ -64,7 +64,7 @@
 
 - `multi-agent-collaboration`：
   - **ADDED** 新 Requirement「工作流可零成本模拟执行以暴露数据投递语义」——系统 SHALL 提供只读的 `DryRunWorkflow`，对给定 spec 做**不调用真实 LLM、不产生持久副作用**的模拟执行，SHALL 返回每个节点的 `received`/`produced`、route 的判定输入与命中、每条边的 `channel`/`control` 与节点终态，SHALL 允许调用方 `script` 指定节点输出以推演分支，SHALL 对有界性（截断）与模拟边界（不代表真实模型输出）作出显式声明。
-  - **MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」——描述中 SHALL 增加指向 `DryRunWorkflow` 的**可发现性引导**（把「不确定语义时先 dry run」写进声明入口，而不是等模型自己想起来有这个工具）。**注**：`DeclareWorkflow` 的描述已有 5892 字符接近 6000 守卫，本 change 的引导语 SHALL 走**压缩既有分节**腾出的余量，或改由 `DryRunWorkflow` 自身的 description 承担主引导（见 design D10 / Open Question Q4）。
+  - **MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」——描述中 SHALL 增加指向 `DryRunWorkflow` 的**可发现性引导**（把「不确定语义时先 dry run」写进声明入口，而不是等模型自己想起来有这个工具）。**注**：`DeclareWorkflow` 的描述实测 **3993 字符**（守卫上界 6000，`research/` 的实测输出），**尚有约 2000 字符余量**——所以加一句引导语是可行的；但主引导仍建议放 `DryRunWorkflow` 自身的 description（见 design D10 / Open Question Q4）。
 
 ## 验收（本 change 的验收口径，**只进 proposal、不进 spec**）
 

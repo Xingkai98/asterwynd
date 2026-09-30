@@ -10,10 +10,14 @@
 
 模拟 SHALL 复用既有的调度执行路径（门控、reducer、route 匹配、foreach 展开、循环计数），SHALL NOT 另起一套与真实执行可能漂移的模拟逻辑。
 
+模拟 SHALL NOT 让「语义压缩型」的聚合行为污染报告：聚合节点在报告中呈现的产出 SHALL 是**上游文本的有界投影**，SHALL NOT 是模拟替身（fake LLM）对压缩请求的回应。报告 SHALL 说明该产出是投影而非真实运行时的语义压缩结果。
+
+模拟 SHALL 让每一次替身模型调用都可归因到某个节点；SHALL NOT 出现无法归属到任何节点的调用记录。
+
 报告 SHALL 至少包含：
 
-- 每个节点的 `id` / `kind` / 终态 `status` / 被执行的 `runs` 次数 / 产出 `produced`；
-- route 节点：判定输入 `input_seen`（SHALL 与调度器实际用于匹配的文本同源）、命中的标签 `matched`、实际走到的后继 `walked_to`、是否走了 `default`；
+- 每个节点的 `id` / `kind` / 终态 `status` / 被执行的 `runs` 次数 / 产出 `produced`。节点集合 SHALL 基于实际执行计划（含系统自动插入的汇合层），SHALL NOT 只列出模型声明的节点；执行计划中由系统自动插入的节点 SHALL 可被识别（与声明节点区分）；
+- route 节点：判定输入 `input_seen`（SHALL 与调度器实际用于匹配的文本同源）、命中的标签 `matched`、实际走到的后继 `walked_to`、是否走了 `default`；判定输入的**来源节点** SHALL 可识别（SHALL NOT 只给文本而不给归属）；
 - 每个节点的 `received`——该节点实际收到的任务文本（SHALL 反映上游投递与 foreach 项注入的净效果）。对被 foreach 展开的节点，`received` SHALL 按**展开项**分别可见，SHALL NOT 让多个项的输入坍缩为单一值；
 - 每条边的 `from` / `to` / `channel`，以及该边是否为控制边（route 出边）；
 - 一个显式标记该结果为模拟的字段。
@@ -28,12 +32,34 @@
 - **AND** 该 manager 的 workflow 注册表 SHALL 保持为空
 - **AND** 该 manager 的真实 LLM SHALL 一次都没有被调用
 
+#### Scenario: 聚合节点的产出不被模拟替身污染
+
+- **GIVEN** 一张含 `collect` 聚合节点、且上游文本拼接后超出该节点预算的图
+- **WHEN** 调用 `DryRunWorkflow`
+- **THEN** 报告中该聚合节点的产出 SHALL 是上游文本的有界投影
+- **AND** SHALL NOT 是模拟替身模型的回应文本
+
+#### Scenario: 判定输入可归属到来源节点
+
+- **GIVEN** 一张 `A → B → gate(route)` 的图
+- **WHEN** 调用 `DryRunWorkflow`
+- **THEN** 报告 SHALL 能指出 gate 的判定输入来自哪个节点
+- **AND** SHALL NOT 只给出文本片段而需调用方自行比对推断
+
 #### Scenario: 报告如实暴露 route 的判定输入
 
 - **GIVEN** 一张形如 `A → B → gate(route)` 的图，其中 `A` 与 `B` 都是 subagent 节点
 - **WHEN** 调用 `DryRunWorkflow`
 - **THEN** 报告中 gate 的 `input_seen` SHALL 等于 `B` 自身产出的文本
 - **AND** SHALL NOT 等于 `A` 的产出
+
+#### Scenario: 报告暴露系统自动插入的汇合层
+
+- **GIVEN** 一张扇入宽度足够大、会触发系统自动插入汇合层的图
+- **WHEN** 调用 `DryRunWorkflow`
+- **THEN** 报告中 SHALL 出现这些自动插入的节点
+- **AND** SHALL 能把它们与模型声明的节点区分开
+- **AND** SHALL NOT 让调用方以为「只有我声明的节点会跑」
 
 #### Scenario: 报告区分 foreach 各展开项
 
