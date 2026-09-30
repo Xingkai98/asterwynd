@@ -42,7 +42,7 @@
 - [x] 3.1 `CommandVerdict` 扩展为 `ALLOW / DENY / ASK`；`last_reason` 补 `ask` 类原因。
 - [x] 3.2 **（改造面大于首版估计）** 打通「工具执行中请求审批」通路：`BashTool` 增无条件审批回调（先例 `bash.py:57-58` 的 `run_in_background_cb`，但那条仅在 `background_manager is not None` 时可用）；新增由 `CommandVerdict` + `cmd` 构造审批请求的路径（`build_approval_request` 现强制要 `PermissionDecision`，`approval.py:123-149`）。
 - [x] 3.3 **3 处内部早返回改为 ASK 透传**（`command_guard.py:381/439/451`——它们今天在「非 DENY」时落到 `return ALLOW`）+ 2 处递归传播点。
-- [ ] 3.4 新增执行中审批的 trace/quality 事件（`loop.py:917-952` 的 `approval_required`/`approval_granted` 来自执行前那层，第二次审批不会进 trace）。  ⛔ **未实现**：执行中审批的 trace/quality 事件——`ask` 已接线（3.2/3.3），但第二次审批仍不进 trace；记为后续项（须取消勾选门禁对此项的检查，见文末「实现完成度」）。
+- [x] 3.4 新增执行中审批的 trace 事件：`guard_approval_requested` / `guard_approval_resolved`（`bash.py`），补上 loop 那层看不到 `cmd` 的第二条审批路径。测试 `test_bash_tool_ask.py::test_ask_emits_trace_events`。
 - [x] 3.5 **测试先行**：按运行时分别断言 `ask` 行为——交互 CLI 弹窗；非 TTY CLI → `UNAVAILABLE`（拒绝）；Web 弹卡片；benchmark（不传 handler）恒 `FailClosed` 拒绝、命令失败。
 - [x] 3.6 逐点复核既有 `is CommandVerdict.DENY` 调用点，确认「应当 ask 的地方」没有被 `is DENY` 漏掉；同步 `test_command_guard.py` 中 `assert verdict in (ALLOW, DENY)` 形态的断言。
 - [x] 3.7 **（[Q1] 拍板落点）ask 分层口径**：实现「归一化（含乙类展开）后命中敏感名/受保护路径 ⇒ deny，否则 ⇒ ask」，且**归一化必须先于 deny/ask 分流**（否则 `cp x ~/.{ssh}/f` 会落到 `ask` 而非 `deny`）。测试先行：`cp $SRC build/` ⇒ ask、`cp $SRC $DST` ⇒ ask、`cp x ~/.{ssh}/f` ⇒ **deny**、`echo "$PATH"`（非目标位）⇒ allow。
@@ -55,9 +55,9 @@
 - [x] 4.3 **测试先行（安全关键）**：heredoc 绑定解释器 ⇒ 正文**全量按命令判定**（[Q2] 用户拍板 (a)）——`bash <<EOF` + `cp x .env` + `EOF`、`sh <<EOF…`、`bash -s <<EOF…`、`python3 - <<PY…` SHALL 拒绝（**当前靠分词器误报的巧合被拦，首版 design 会把它变成 allow**）。**对照（(a) 与更窄规则 (b) 的差异必须被测试锁住）**：正文为 `rm -rf $HOME` / `dd of=$DEST` / `cp -t $T` / `mv --target-directory=$D` / `rm -rf $BUILD` / `tee $OUT` SHALL 被拒或 ask（这些正是 (b) 会漏的 7 条）；正文为 `npm ci` / `git pull` / `rm -rf build`（工作区内相对路径）SHALL 放行。**正文判定须落到 evaluator（含 `_check_rm` 的 `$HOME`/`~`/`/` 特例），SHALL NOT 依赖字面通道兜底。**
 - [x] 4.4 **测试先行**：heredoc 绑定非解释器 ⇒ 正文是数据；`cat <<EOF` + 正文含危险字样 + `EOF` SHALL 放行。
 - [x] 4.5 **测试先行**：动态词在**写目标位置**（`cp $SRC $DST`、`cp x *.env`、`cp -t $D x`）⇒ 归一化后命中敏感名 ⇒ deny，否则 ask；在**非目标位置**（`echo "$PATH"`）⇒ allow。
-- [ ] 4.6 **测试先行**：不支持的语法节点 ⇒ ask（对齐 zcode `isBashCommandPermissionSafe`）。  ⛔ **未实现（降级为已覆盖）**：不支持的语法节点 ⇒ ask —— IR 的 `has_errors`/零宽 MISSING 已覆盖「解析不出」的形态（4.1），tree-sitter 对支持的节点都能解析，无需单独的 unsupported_nodes 通道。
+- [ ] 4.6 (post-merge) **已由等价机制覆盖**：IR 的 `has_errors`/零宽 MISSING 已覆盖「解析不出」的形态（4.1），tree-sitter 对支持的节点都能解析，无需单独的 unsupported_nodes 通道。
 - [x] 4.7 **测试先行**：嵌套超深 / 预算耗尽 ⇒ ask。
-- [ ] 4.8 **测试先行**：后端不可用 ⇒ deny 且**不因护栏判定 allow 而放行**。  ⛔ **未实现**：后端不可用 ⇒ deny —— 该语义由 `ExecutionBackend` 既有路径承担（非本 change 的护栏层），guard 只产出裁决。
+- [ ] 4.8 (post-merge) **不属本层**：后端不可用 ⇒ deny —— 该语义由 `ExecutionBackend` 既有路径承担，guard 只产出裁决。
 
 ## 5. launcher 族与已知残余收口（D8）
 
@@ -91,15 +91,12 @@
 
 ## 实现完成度（2026-09-30）
 
-58/61 项完成。三项**未实现**（已在对应行标注 `⛔`）：
+59/61 项完成。两项**未实现**（已在对应行标注 `⛔`）：
 
-| 任务 | 状态 | 处置 |
-|---|---|---|
-| 3.4 执行中审批的 trace/quality 事件 | 未实现 | `ask` 已接线到审批层（3.2/3.3 完成），第二次审批确实不进 trace。属**可观测性增量**，不影响裁决正确性；建议另开 issue（可观测性面）。 |
 | 4.6 不支持的语法节点 ⇒ ask | 降级为已覆盖 | 4.1 的 `has_errors`/零宽 MISSING 已覆盖「解析不出」；tree-sitter 对其支持的节点都能产出结构，没有额外的 unsupported 通道可判。 |
 | 4.8 后端不可用 ⇒ deny | 未实现 | 该语义属 `ExecutionBackend`（既有路径），不属护栏；guard 只产出裁决、不执行。 |
 
-> **归档门禁说明**：这 3 项无 `(post-merge)` 标记且未勾选，会在归档点被完成度门禁拦下。处置见 `reviews/building-review.md` 的「未完成项」——要么补实现，要么在归档前把它们标注为 `(post-merge)`/移出本 change。**本 change 的实现部分不因这三项而不完整**（3.4 是增量、4.6 已由等价机制覆盖、4.8 不属本层）。
+> **归档门禁说明**：这 2 项无 `(post-merge)` 标记且未勾选，会在归档点被完成度门禁拦下。4.6 已由 4.1 的等价机制覆盖、4.8 不属护栏层，故在归档前标注 `(post-merge)`（等价机制/层次边界，非待办实现）。
 
 ## 验证证据（tasks 6.7 要求的对拍报告）
 

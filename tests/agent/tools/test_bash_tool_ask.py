@@ -130,3 +130,33 @@ async def test_allow_does_not_ask(tmp_path):
 
     assert handler.requests == []
     assert sandbox.commands == ["ls -la"]
+
+
+@pytest.mark.asyncio
+async def test_ask_emits_trace_events(tmp_path):
+    """The in-execution approval is visible in the trace (design D3 point 4).
+
+    The loop's `approval_required`/`approval_granted` events come from its own
+    pre-execution gate, which never sees `cmd`; a guard-triggered ask needs its
+    own events.
+    """
+    from agent.sandbox_events import current_sandbox_sink, set_sandbox_sink
+    from agent.trace_recorder import TraceRecorder, TraceRecorderSandboxSink
+
+    rec = TraceRecorder()
+    prev = current_sandbox_sink()
+    set_sandbox_sink(TraceRecorderSandboxSink(rec))
+    try:
+        handler = _RecordingHandler(ApprovalDecisionStatus.DENIED)
+        tool, sandbox = _tool(tmp_path, handler)
+        await tool.execute("cp $SRC $DST")
+    finally:
+        set_sandbox_sink(prev)
+
+    events = [s.data for s in rec.steps if s.type == "sandbox"]
+    names = [e.get("event") for e in events]
+    assert "guard_approval_requested" in names
+    assert "guard_approval_resolved" in names
+    resolved = next(e for e in events if e.get("event") == "guard_approval_resolved")
+    assert resolved.get("approved") is False
+    assert sandbox.commands == []

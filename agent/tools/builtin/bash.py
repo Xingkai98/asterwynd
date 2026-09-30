@@ -119,10 +119,26 @@ class BashTool(Tool):
         # The guard could not decide statically: route to the approval layer
         # (design D3). `ask` is NEVER interpreted here as "allow" -- without a
         # handler, or when the handler refuses, the command does not run.
+        #
+        # This is a *second* approval, taken during execution, so the loop's
+        # pre-execution `approval_required`/`approval_granted` events do not
+        # cover it (design D3 point 4). Emit guard-specific events so the
+        # decision is visible in the trace.
         if verdict is CommandVerdict.ASK:
+            guard_reason = self._guard.last_reason or "ask"
+            emit_sandbox_event(
+                "guard_approval_requested", reason=guard_reason, command=cmd, tool="Bash"
+            )
             allowed = await self._request_guard_approval(cmd)
+            emit_sandbox_event(
+                "guard_approval_resolved",
+                reason=guard_reason,
+                approved=allowed,
+                command=cmd,
+                tool="Bash",
+            )
             if not allowed:
-                reason = f"command_guard:{self._guard.last_reason or 'ask'}"
+                reason = f"command_guard:{guard_reason}"
                 emit_sandbox_event("denied", reason=f"approval:{reason}", command=cmd, tool="Bash")
                 return ToolResult(
                     text="Error: Command requires approval and was not approved",
