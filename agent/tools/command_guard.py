@@ -352,11 +352,18 @@ def _conceals_judged_command(rest: list[str]) -> bool:
     out of view. Only *unquoted* tokens count -- a quoted token is data unless
     an option explicitly says its value is a command (`_concealed_command_text`).
     """
-    for token in rest:
+    for index, token in enumerate(rest):
         if token and token[0] in ("'", '"'):
             continue
         name = token.rsplit("/", 1)[-1]
-        if name in _WRITE_COMMANDS or name in _PAYLOAD_COMMANDS or name in INTERPRETERS:
+        if name in _WRITE_COMMANDS or name in _PAYLOAD_COMMANDS:
+            return True
+        # An interpreter only runs a command here when given one as a string
+        # (`sh -c '<cmd>'`). A bare `python` argument does not: `uv run python
+        # -m pytest` is an ordinary command, not a concealed one.
+        if name in INTERPRETERS and any(
+            _DASH_C_FLAG.fullmatch(rest[i]) for i in range(index + 1, min(index + 3, len(rest)))
+        ):
             return True
     return False
 

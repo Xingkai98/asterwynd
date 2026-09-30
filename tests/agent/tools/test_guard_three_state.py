@@ -497,3 +497,29 @@ class TestSourceBehindFlags:
     def test_flagged_benign_source_allowed(self, command: str) -> None:
         """Control group: flags must not turn every copy into a denial."""
         assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
+
+
+class TestInterpreterArgsAreNotConcealedCommands:
+    """An interpreter argument is not a concealed command unless it takes one.
+
+    `uv run python -m pytest tests/` is an ordinary way to run the test suite;
+    treating the bare `python` as "a command is hidden behind this prefix" turned
+    it into an ask. Only `sh -c '<cmd>'` actually conceals one.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "uv run python -m pytest tests/ -q",
+            "uv run python -m pytest tests/agent -q",
+            "python3 -m pytest tests/",
+            "uv run python scripts/check_openspec_artifacts.py",
+        ],
+    )
+    def test_python_dash_m_is_not_concealment(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW
+
+    def test_shell_dash_c_behind_unknown_prefix_still_asks(self) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(
+            "weird sh -c 'cp x .env'"
+        ) is ASK
