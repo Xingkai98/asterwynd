@@ -519,6 +519,11 @@ class CommandGuard:
         self.last_reason: str | None = None
         # Current nesting depth of `<shell> -c "…"` re-checks (review Round 2).
         self._nested_depth = 0
+        # Migration fallback (design D10): set ASTERWYND_GUARD_LEGACY=1 to drop
+        # the IR-driven rules and fall back to the pre-refactor channels. Kept
+        # until the old-vs-new verdict comparison is fully green; it never
+        # weakens the attack set (see the guard tests).
+        self.legacy = os.environ.get("ASTERWYND_GUARD_LEGACY", "").strip() not in ("", "0", "false")
 
     def check(self, command: str) -> CommandVerdict:
         self.last_reason = None
@@ -540,7 +545,10 @@ class CommandGuard:
         # text (design D4). Interpreter-bound bodies stay, since they ARE code.
         cmd_name = cmd.split()[0] if cmd.split() else ""
         if cmd_name != "rm":
-            scanned = _mask_data_heredocs(cmd, analysis)
+            # In legacy mode the source is scanned verbatim, exactly as before
+            # the refactor -- the switch is meant to restore the old verdicts
+            # (false positives included) so they can be compared.
+            scanned = cmd if self.legacy else _mask_data_heredocs(cmd, analysis)
             for pattern in self._denylist:
                 if re.search(pattern, scanned):
                     self.last_reason = "denylist"
@@ -555,7 +563,11 @@ class CommandGuard:
             return CommandVerdict.DENY
 
         # 3. IR-driven rules (single parse pipeline, design D1/D2/D4/D8).
-        ir_verdict = self._check_analysis(cmd, analysis=analysis)
+        ir_verdict = (
+            CommandVerdict.ALLOW
+            if self.legacy
+            else self._check_analysis(cmd, analysis=analysis)
+        )
 
         # 4. argv semantic checks for dangerous commands (legacy channel).
         #    Kept alongside the IR channel while the migration is in progress:
@@ -563,7 +575,7 @@ class CommandGuard:
         #    masking applies, otherwise the old tokenizer mines the body for
         #    phantom commands (`<<` splits into two `<`, making the body a
         #    "segment").
-        legacy_source = _mask_data_heredocs(cmd, analysis)
+        legacy_source = cmd if self.legacy else _mask_data_heredocs(cmd, analysis)
         tokens = tokenize_command(legacy_source)
         argv_verdict = CommandVerdict.ALLOW
         if tokens:

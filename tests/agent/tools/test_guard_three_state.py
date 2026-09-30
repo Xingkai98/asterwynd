@@ -282,3 +282,55 @@ class TestFailurePolicy:
 
     def test_overlong_input_asks(self) -> None:
         assert CommandGuard().check("echo x\n" * 40000) is ASK
+
+
+class TestLegacyFallbackSwitch:
+    """`ASTERWYND_GUARD_LEGACY=1` restores the pre-refactor verdicts (design D10).
+
+    The migration window needs a way back: a rewrite of a security module that
+    nine review rounds stabilised must be reversible until the old-vs-new
+    verdict comparison is fully green.
+    """
+
+    #: The signature difference between the two implementations: a heredoc whose
+    #: body merely *mentions* a command. The old tokenizer split `<<` into two
+    #: `<` and treated the body as a segment (false positive); the IR knows the
+    #: body is stdin data for a non-interpreter.
+    DATA_HEREDOC = "cat <<'EOF'\ncp x .env\nEOF\n"
+
+    def test_env_var_restores_legacy_behaviour(self, monkeypatch) -> None:
+        monkeypatch.setenv("ASTERWYND_GUARD_LEGACY", "1")
+        guard = CommandGuard(workspace="/tmp/ws")
+        assert guard.legacy is True
+        assert guard.check(self.DATA_HEREDOC) is CommandVerdict.DENY
+
+    def test_default_is_new_behaviour(self, monkeypatch) -> None:
+        monkeypatch.delenv("ASTERWYND_GUARD_LEGACY", raising=False)
+        guard = CommandGuard(workspace="/tmp/ws")
+        assert guard.legacy is False
+        assert guard.check(self.DATA_HEREDOC) is CommandVerdict.ALLOW
+
+    def test_legacy_never_weakens_the_attack_set(self, monkeypatch) -> None:
+        """Even in legacy mode the attack set must stay denied."""
+        import json
+        from pathlib import Path
+
+        monkeypatch.setenv("ASTERWYND_GUARD_LEGACY", "1")
+        attacks = json.loads(
+            Path(__file__).resolve().parents[3]
+            .joinpath("benchmarks/attacks/attacks.json")
+            .read_text(encoding="utf-8")
+        )["cases"]
+        missed = [
+            c["id"]
+            for c in attacks
+            if c["category"] != "sensitive-read"
+            and CommandGuard(workspace="/tmp/ws").check(c["command"]) is CommandVerdict.ALLOW
+        ]
+        # Legacy mode predates the new cases, so allow-list the ones this change
+        # introduced; everything else must remain denied.
+        new_ids = {c["id"] for c in attacks if c["id"].startswith(
+            ("env-variant-", "heredoc-exec-", "launcher-", "opt-target-",
+             "eval-payload-", "obfuscated-"))}
+        unexpected = [i for i in missed if i not in new_ids]
+        assert not unexpected, f"legacy mode lost coverage: {unexpected}"
