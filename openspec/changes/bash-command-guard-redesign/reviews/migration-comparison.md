@@ -48,3 +48,18 @@ legacy 模式 vs 旧实现: 377/377 裁决一致
 ```
 
 即回退开关可完整还原旧行为（含旧实现的数据 heredoc 误报），迁移窗口内可随时回退。注意：legacy 模式**不**还原本 change 新增的 19 条攻击用例的覆盖（那些形态旧实现本来就不拦），守卫测试 `test_legacy_never_weakens_the_attack_set` 锁住这一点。
+
+## 已知豁免（审阅轮 3 指出：报告需列明）
+
+`旧 DENY ⊆ 新 DENY ∪ 新 ASK` 这条断言是**回归线**，不是「新旧必须完全一致」。本 change 有意放宽的形态会在该断言下表现为 `deny -> allow`，必须显式列出，而不是让读者以为「新放宽 0 条」是全局事实：
+
+| 命令 | 旧 | 新 | 为什么放宽 |
+|---|---|---|---|
+| `cp .env.example /tmp/backup.txt` | DENY | ALLOW | 源是**模板**（`.env.example`），不是凭据；旧的两条源位置正则不区分（D9 迁移，tasks 2.7） |
+| `cp .env.sample docs/` | DENY | ALLOW | 同上（`.env.sample`） |
+| `mv .env.template /tmp/x` | DENY | ALLOW | 同上（`.env.template`） |
+| `cat <<'EOF' … cp x .env … EOF` | DENY | ALLOW | heredoc 正文是 **stdin 数据**，不是命令（旧分词器把 `<<` 拆成两个 `<` 造成的误报，D4） |
+
+**这些豁免不在本文档第二节的 355 条语料里**（该语料取自 attacks.json + guard 单测的命令串，不含上述四条）——所以那里显示「新放宽 0 条」。**换用完整 guard 测试语料时，上述 4 条会作为 `deny -> allow` 出现**，这是预期行为，不是回归。
+
+判定「是否引入回归」的正确读法：**新出现的 `ALLOW` 必须能对应到上表的豁免之一；任何不在表内的 `deny -> allow` 都是回归**。

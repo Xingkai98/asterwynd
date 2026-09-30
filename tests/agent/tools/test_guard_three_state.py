@@ -523,3 +523,46 @@ class TestInterpreterArgsAreNotConcealedCommands:
         assert CommandGuard(workspace="/tmp/ws").check(
             "weird sh -c 'cp x .env'"
         ) is ASK
+
+
+class TestLauncherRound3:
+    """Review round 3: two fail-open regressions introduced by the round-2 fix."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "nice script -c 'cp .env /tmp/leak'",
+            "env -i script -c 'cp .env /tmp/leak'",
+            "timeout 5 script -c 'cp .env /tmp/leak'",
+            "nohup script -c 'cp .env /tmp/leak'",
+            "nice script -c 'cp x .env'",
+        ],
+    )
+    def test_script_dash_c_behind_a_launcher_is_judged(self, command: str) -> None:
+        """`script -c '<cmd>'` must be judged even when another launcher leads.
+
+        Round 2 deleted the post-strip payload path, so only `argv[0]` was
+        inspected -- `nice script -c '…'` fell through and the payload ran.
+        """
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "watch -d cp .env /tmp/leak",
+            "watch -d -n 1 cp .env /tmp/leak",
+        ],
+    )
+    def test_watch_dash_d_is_a_boolean_flag(self, command: str) -> None:
+        """`watch -d` highlights differences; it takes no value.
+
+        Treating `-d` as value-taking swallowed the real command.
+        """
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.DENY
+
+    @pytest.mark.parametrize(
+        "command",
+        ["script -c 'echo hi' /dev/null", "watch -d ls", "watch -n 1 ls"],
+    )
+    def test_benign_still_allowed(self, command: str) -> None:
+        assert CommandGuard(workspace="/tmp/ws").check(command) is CommandVerdict.ALLOW

@@ -66,7 +66,9 @@ _LAUNCHER_OPTS_WITH_VALUE = {
     "flock": {"-w", "-E"},
     "timeout": {"-k", "-s", "--signal", "--kill-after"},
     "stdbuf": {"-i", "-o", "-e"},
-    "watch": {"-n", "-d"},
+    # `-d`/`--differences` highlights updates and takes NO value; listing it
+    # here made the stripper swallow the real command (`watch -d cp x y`).
+    "watch": {"-n"},
     "strace": {"-o", "-e", "-p", "-s"},
     "ltrace": {"-o", "-e", "-p", "-s"},
     "script": {"-c", "-t"},
@@ -86,6 +88,9 @@ _LAUNCHER_OPTS_WITH_VALUE = {
 _LAUNCHER_COMMAND_OPTION = {
     "script": frozenset({"-c", "--command"}),
 }
+#: Launchers that take one positional value before the command they run
+#: (`timeout <duration> <cmd>`, `chrt <priority> <cmd>`).
+_LAUNCHER_POSITIONAL_VALUE = frozenset({"timeout", "chrt"})
 
 # Protected paths: writing to these is always denied.
 _DENY_PATHS = ("/etc", "/proc", "/sys", "/dev", "/root", "/boot", "/var")
@@ -289,25 +294,11 @@ def _strip_to_fixpoint(argv: list[str]) -> tuple[list[str], str | None]:
             changed = True
             continue
         if name in _LAUNCHERS and name not in _WRITE_COMMANDS:
-            command_options = _LAUNCHER_COMMAND_OPTION.get(name, frozenset())
-            takes_value = _LAUNCHER_OPTS_WITH_VALUE.get(name, set())
-            index = 1
-            command_payloads: list[str] = []
-            while index < len(rest) and rest[index].startswith("-"):
-                if rest[index] in command_options:
-                    # The value IS the command to run: it becomes the new head
-                    # so the ordinary argument walks judge it, and whatever
-                    # follows is treated as its arguments.
-                    rest = rest[index + 1:]
-                    changed = True
-                    break
-                if rest[index] in takes_value:
-                    index += 1
-                index += 1
-            else:
-                rest = rest[index:]
-                changed = True
-                continue
+            stripped, _ = _strip_one_launcher(rest)
+            if stripped is None or stripped == rest:
+                break
+            rest = stripped
+            changed = True
             continue
 
     if not rest:
@@ -318,6 +309,35 @@ def _strip_to_fixpoint(argv: list[str]) -> tuple[list[str], str | None]:
     return rest, head
 
 
+def _strip_one_launcher(rest: list[str]) -> tuple[list[str] | None, str | None]:
+    """Strip a single leading launcher from ``rest``. Returns ``(rest', None)``.
+
+    The single step shared by `_strip_to_fixpoint` (which applies it until it
+    stops changing) and `_concealed_command_texts` (which walks the chain
+    looking for command-taking options at each level).
+
+    When the launcher takes the command as an option value (`script -c '<cmd>'`),
+    the value becomes the new head so the ordinary argument walks judge it.
+    """
+    if not rest:
+        return rest, None
+    name = rest[0].rsplit("/", 1)[-1]
+    command_options = _LAUNCHER_COMMAND_OPTION.get(name, frozenset())
+    takes_value = _LAUNCHER_OPTS_WITH_VALUE.get(name, set())
+    index = 1
+    while index < len(rest) and rest[index].startswith("-"):
+        if rest[index] in command_options:
+            return rest[index + 1:], None
+        if rest[index] in takes_value:
+            index += 1
+        index += 1
+    # Some launchers take a positional value before the command
+    # (`timeout <duration> <cmd>`, `chrt <prio> <cmd>`).
+    if name in _LAUNCHER_POSITIONAL_VALUE:
+        index += 1
+    return rest[index:], None
+
+
 def _concealed_command_texts(argv: list[str]) -> list[str]:
     """Every command a launcher passes via a command-taking option.
 
@@ -325,19 +345,25 @@ def _concealed_command_texts(argv: list[str]) -> list[str]:
     one wins -- so `script -c 'ls' -c 'cp x .env'` must be judged on `'cp x .env'`
     (all occurrences are returned; judging only the first would fail open).
 
-    Scoped per launcher: `-c` is a command only for `script`, not for `grep`
+    Scans **every** launcher stripped along the way, not just `argv[0]`: a
+    leading wrapper (`nice script -c '…'`) must not hide the payload. Scoped per
+    launcher, because `-c` is a command only for `script`, not for `grep`
     (count), `cut` (columns) or `ionice` (class).
     """
-    if not argv:
-        return []
-    name = argv[0].rsplit("/", 1)[-1]
-    command_options = _LAUNCHER_COMMAND_OPTION.get(name, frozenset())
-    if not command_options:
-        return []
     payloads: list[str] = []
-    for index, token in enumerate(argv):
-        if token in command_options and index + 1 < len(argv):
-            payloads.append(_dequote(argv[index + 1]))
+    rest = list(argv)
+    while rest:
+        name = rest[0].rsplit("/", 1)[-1]
+        command_options = _LAUNCHER_COMMAND_OPTION.get(name, frozenset())
+        for index, token in enumerate(rest):
+            if token in command_options and index + 1 < len(rest):
+                payloads.append(_dequote(rest[index + 1]))
+        if name not in _LAUNCHERS or name in _WRITE_COMMANDS:
+            break
+        stripped, _unknown = _strip_one_launcher(rest)
+        if stripped == rest:                              # nothing removed
+            break
+        rest = stripped
     return payloads
 
 
