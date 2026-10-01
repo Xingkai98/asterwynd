@@ -1,0 +1,442 @@
+### side_effects.py
+[init] graph_sink default = None
+[init] manager._workflows = {}
+[init] manager._workflow_stores = {}
+
+=== RESULT ===
+status=completed completed=3
+
+=== DISK DELTA under workspace_root ===
+  + .asterwynd/workflows/wf_4ec1a7b2/events.jsonl  (914B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/0e7fc300fed4.summary.txt  (32B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/0e7fc300fed4.transcript.txt  (298B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/0e7fc300fed4.txt  (32B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/2911f9353955.summary.txt  (32B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/2911f9353955.transcript.txt  (298B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/2911f9353955.txt  (32B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/e38f43df503a.summary.txt  (30B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/e38f43df503a.transcript.txt  (294B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/e38f43df503a.txt  (30B)
+  + .asterwynd/workflows/wf_4ec1a7b2/results/root.txt  (30B)
+
+=== SENTINEL INTACT? ===
+  sentinel.txt = keep me
+
+=== MANAGER REGISTRY AFTER RUN ===
+  _workflows = ['wf_4ec1a7b2']
+  _workflow_stores = ['wf_4ec1a7b2']
+  spawn buckets = []
+
+=== NODE STATE (what a dry-run report could show) ===
+  [w1] kind=subagent status=completed runs=1
+        summary='PRODUCED-BY<TASK-W1 write draft>'
+  [w2] kind=subagent status=completed runs=1
+        summary='PRODUCED-BY<TASK-W2 write draft>'
+  [merge] kind=aggregate status=completed runs=0
+        summary='PRODUCED-BY<TASK-W1 write draft>\nPRODUCED-BY<TASK-W2 write draft>'
+        slots={'result': 'PRODUCED-BY<TASK-W1 write draft>\nPRODUCED-BY<TASK-', 'merged': 'PRODUCED-BY<TASK-W1 write draft>\nPRODUCED-BY<TASK-'}
+  [gate] kind=route status=completed runs=0
+        summary="default -> ['report']"
+        verdict=None raw='PRODUCED-BY<TASK-W1 write draft>\nPRODUCED-BY<TASK-W2 write d' targets=['report']
+  [rework] kind=subagent status=skipped runs=0
+        summary=''
+  [report] kind=subagent status=completed runs=1
+        summary='PRODUCED-BY<TASK-REPORT final>'
+
+=== LLM CALLS (the thing dry-run must eliminate) ===
+  total = 3
+  --- call 0 ---
+      TASK-W1 write draft
+      
+      Overall goal: g
+  --- call 1 ---
+      TASK-W2 write draft
+      
+      Overall goal: g
+  --- call 2 ---
+      TASK-REPORT final
+      
+      Overall goal: g
+
+=== EVENTS WRITTEN ===
+  /tmp/spike273/ws/.asterwynd/workflows/wf_4ec1a7b2/events.jsonl (914B, 7 lines)
+
+### isolation.py
+status=completed completed=6
+
+=== REAL WORKSPACE DISK DELTA ===
+  new files: (none)
+  sentinel intact: 'keep me'
+  sandbox dir files: 22
+
+=== WHAT EACH NODE ACTUALLY RECEIVED (from LLM prompts) ===
+  --- LLM call 0 ---
+      | TASK-W1
+      | 
+      | Overall goal: g
+  --- LLM call 1 ---
+      | TASK-W2
+      | 
+      | Overall goal: g
+  --- LLM call 2 ---
+      | TASK-REWORK
+      | 
+      | Overall goal: g
+  --- LLM call 3 ---
+      | TASK-RECHECK
+      | 
+      | Overall goal: g
+      | 
+      | Input from rework (full result: artifact://workflow/wf_1a7fec02/01b7b9aa0f5f):
+      | [echo of TASK-REWORK]
+  --- LLM call 4 ---
+      | TASK-CRITIC
+      | 
+      | Overall goal: g
+      | 
+      | Input from merge:
+      | [echo of TASK-W1]
+      | [echo of TASK-W2]
+      | 
+      | Input from recheck (full result: artifact://workflow/wf_1a7fec02/b525ce559d61):
+      | [echo of TASK-RECHECK]
+  --- LLM call 5 ---
+      | TASK-REPORT
+      | 
+      | Overall goal: g
+
+=== ROUTE STATE ===
+  [gate] verdict=None targets=['report']
+        raw (input_seen) = '[echo of TASK-W1]\n[echo of TASK-W2]'
+
+=== REPORT NODE (reached via route control edge) ===
+  status=completed summary='[echo of TASK-REPORT]' slots={}
+  => report received NO data from gate? check its LLM call above
+
+### nodeid.py
+status=completed completed=4
+
+=== Q-A: does the fake LLM see the node id? ===
+  node='w1'  first_task_line='TASK-W1'
+  node='rework'  first_task_line='TASK-REWORK'
+  node='critic'  first_task_line='TASK-CRITIC'
+  node='report'  first_task_line='TASK-REPORT'
+
+=== Q-B: route decision with a blind-but-node-aware echo ===
+  [gate] matched=None targets=['report']
+        input_seen(raw)='[OUTPUT-OF-NODE:w1 workflow=wf_7ced8a61]'
+
+=== resulting statuses ===
+  [w1      ] kind=subagent  status=completed  runs=1
+  [merge   ] kind=aggregate status=completed  runs=0
+  [critic  ] kind=subagent  status=completed  runs=1
+  [gate    ] kind=route     status=completed  runs=0
+  [rework  ] kind=subagent  status=completed  runs=1
+  [report  ] kind=subagent  status=completed  runs=1
+
+### scripted.py
+########## SCENARIO A: critic says APPROVED (GAPS: none) ##########
+status=completed completed=6 elapsed=0.300s
+  node statuses:
+    [fan     ] foreach   completed  runs=3
+    [merge   ] aggregate completed  runs=0
+    [critic  ] subagent  completed  runs=1
+    [gate    ] route     completed  runs=0
+    [rework  ] subagent  completed  runs=1
+    [report  ] subagent  completed  runs=1
+  gate: matched=None targets=['report']
+  report LLM prompt had input? False
+
+########## SCENARIO B: critic says GAPS (needs rework) ##########
+status=completed completed=6 elapsed=0.043s
+    [fan     ] foreach   completed  runs=3
+    [merge   ] aggregate completed  runs=0
+    [critic  ] subagent  completed  runs=1
+    [gate    ] route     completed  runs=0
+    [rework  ] subagent  completed  runs=1
+    [report  ] subagent  completed  runs=1
+  gate: matched=None targets=['report']
+  critic called 1 times
+  rework LLM prompt: 'TASK-REWORK\n\nOverall goal: review the design'
+
+### rounds.py
+run_status=completed
+
+=== call counts per node (does the loop actually iterate?) ===
+  producer: 3 calls
+  reviewer: 3 calls
+  done: 1 calls
+
+=== producer on lap 1 vs lap 2 (back-edge data flow) ===
+  --- producer lap 1 received ---
+      | write a proposal
+      | 
+      | Overall goal: review
+  --- producer lap 2 received ---
+      | write a proposal
+      | 
+      | Overall goal: review
+  --- producer lap 3 received ---
+      | write a proposal
+      | 
+      | Overall goal: review
+
+=== reviewer on lap 3 (upstream text on last lap) ===
+      | review it
+      | 
+      | Input from producer (full result: artifact://workflow/wf_3272c704/6b2b4e15e901):
+      | [producer lap3 auto]
+
+=== node states ===
+  [producer ] subagent  completed  runs=3
+  [reviewer ] subagent  completed  runs=3
+  [gate     ] route     completed  runs=0
+  [done     ] subagent  completed  runs=1
+  gate: matched='APPROVED' targets=['done'] raw='APPROVED'
+
+### route_reads.py
+=== candidate values ===
+  a.summary       = 'UPSTREAM-SAYS-A'
+  a.slots         = {}
+  mid.summary     = 'MID-SAYS-A'
+  mid.slots       = {}
+  gate.raw        = 'MID-SAYS-A'   <-- what the route actually matched against
+  gate.verdict    = 'MID-SAYS-A'
+  gate.targets    = ['yes']
+
+=== verdict ===
+  route reads the DIRECT UPSTREAM NODE's own output (mid)
+
+=== node kinds & outputs default ===
+  [a        ] kind=subagent  outputs=('result',) status=completed
+  [mid      ] kind=subagent  outputs=('result',) status=completed
+  [gate     ] kind=route     outputs=('result',) status=completed
+  [yes      ] kind=subagent  outputs=('result',) status=completed
+  [also_yes ] kind=subagent  outputs=('result',) status=skipped
+  [no       ] kind=subagent  outputs=('result',) status=skipped
+
+### confirm_read.py
+
+### 1. subagent -> subagent -> route   (no slots anywhere)
+  gate.input_seen = 'FROM-MID'
+  gate.matched    = 'FROM-MID' -> ['x']
+
+### 2. aggregate -> subagent -> route  (aggregate carries slots)
+  gate.input_seen = 'FROM-LEAF'
+  gate.matched    = 'FROM-LEAF' -> ['y']
+
+### 3. aggregate -> subagent(outputs=...) -> route
+  gate.input_seen = 'FROM-LEAF'
+  gate.matched    = 'FROM-LEAF' -> ['y']
+
+### perf.py
+=== foreach width (fan-out expansion) ===
+  foreach-5                status=completed              llm_calls=   5 elapsed=0.259s
+  foreach-20               status=completed              llm_calls=  22 elapsed=0.103s
+  foreach-50               status=completed              llm_calls=  22 elapsed=0.106s
+
+=== chain depth ===
+  chain-10                 status=completed              llm_calls=  10 elapsed=0.115s
+  chain-50                 status=completed              llm_calls=  50 elapsed=0.615s
+
+=== many independent subagents via foreach of subagents ===
+  foreach-llm-agg-20       status=completed              llm_calls=  23 elapsed=0.134s
+
+### prototype.py
+real manager registry before: []
+
+########## CASE 1: blind dry run (no script) ##########
+{
+  "status": "simulated",
+  "run_status": "completed",
+  "elapsed_s": 0.2877,
+  "llm_calls": 5,
+  "tokens_spent": 0,
+  "nodes": [
+    {
+      "id": "w1",
+      "kind": "subagent",
+      "status": "completed",
+      "runs": 1,
+      "produced": "[w1 produced: auto]"
+    },
+    {
+      "id": "w2",
+      "kind": "subagent",
+      "status": "completed",
+      "runs": 1,
+      "produced": "[w2 produced: auto]"
+    },
+    {
+      "id": "merge",
+      "kind": "aggregate",
+      "status": "completed",
+      "runs": 0,
+      "produced": "[w1 produced: auto]\n[w2 produced: auto]",
+      "slots": {
+        "result": "[w1 produced: auto]\n[w2 produced: auto]",
+        "merged": "[w1 produced: auto]\n[w2 produced: auto]"
+      }
+    },
+    {
+      "id": "critic",
+      "kind": "subagent",
+      "status": "completed",
+      "runs": 1,
+      "produced": "[critic produced: auto]"
+    },
+    {
+      "id": "gate",
+      "kind": "route",
+      "status": "completed",
+      "runs": 0,
+      "produced": "default -> ['report']",
+      "input_seen": "[w1 produced: auto]\n[w2 produced: auto]",
+      "matched": null,
+      "walked_to": [
+        "report"
+      ],
+      "used_default": true
+    },
+    {
+      "id": "rework",
+      "kind": "subagent",
+      "status": "completed",
+      "runs": 1,
+      "produced": "[rework produced: auto]"
+    },
+    {
+      "id": "report",
+      "kind": "subagent",
+      "status": "completed",
+      "runs": 1,
+      "produced": "[report produced: auto]"
+    }
+  ],
+  "edges": [
+    {
+      "from": "w1",
+      "to": "merge",
+      "channel": "summary",
+      "control": false,
+      "upstream_status": "completed"
+    },
+    {
+      "from": "w2",
+      "to": "merge",
+      "channel": "summary",
+      "control": false,
+      "upstream_status": "completed"
+    },
+    {
+      "from": "merge",
+      "to": "critic",
+      "channel": "summary",
+      "control": false,
+      "upstream_status": "completed"
+    },
+    {
+      "from": "critic",
+      "to": "gate",
+      "channel": "summary",
+      "control": false,
+      "upstream_status": "completed"
+    },
+    {
+      "from": "gate",
+      "to": "rework",
+      "channel": "summary",
+      "control": true,
+      "upstream_status": "completed"
+    },
+    {
+      "from": "gate",
+      "to": "report",
+      "channel": "summary",
+      "control": true,
+      "upstream_status": "completed"
+    }
+  ],
+  "received": {
+    "w1": "TASK-W1\n\nOverall goal: review the design",
+    "w2": "TASK-W2\n\nOverall goal: review the design",
+    "rework": "TASK-REWORK\n\nOverall goal: review the design",
+    "critic": "TASK-CRITI
+
+########## CASE 2: what-if the critic says GAPS ##########
+  gate.input_seen = '[w1 produced: auto]\n[w2 produced: auto]'
+  gate.matched    = None  walked_to=['report']
+
+########## ISOLATION CHECKS ##########
+  real workspace disk delta : (none)
+  sentinel intact           : 'keep me'
+  real manager registry     : []  (must stay empty)
+  real manager stores       : []
+
+########## PERF ##########
+  case1 elapsed = 0.2877s   case2 elapsed = 0.0373s
+
+### foreach_gap.py
+=== Q-A: what node id does each item's LLM call see? ===
+  call 0: node_id='fan'  task_first_line='propose alpha'
+  call 1: node_id='fan'  task_first_line='propose beta'
+  call 2: node_id='fan'  task_first_line='propose gamma'
+
+=== Q-B: naive 'received keyed by node id' dict ===
+  keys = ['fan']
+  fan.received = 'propose gamma'
+  => 3 items collapsed into 3 slot(s)
+
+=== the 'fan' node state ===
+  items=3 runs=3 status=completed
+  summary='SCRIPTED-FOR-FAN\nSCRIPTED-FOR-FAN\nSCRIPTED-FOR-FAN'
+
+=== does script['fan'] hit ALL items identically? ===
+  (all three items would get 'SCRIPTED-FOR-FAN' — no per-item control)
+
+### sandbox_files.py
+total files in throwaway ws: 6
+
+  .asterwynd/  (6 files)
+      .asterwynd/workflows/wf_f7f40caf/results/25af925f5b5e.summary.txt  (3B)
+      .asterwynd/workflows/wf_f7f40caf/results/25af925f5b5e.transcript.txt  (252B)
+      .asterwynd/workflows/wf_f7f40caf/results/25af925f5b5e.txt  (3B)
+      .asterwynd/workflows/wf_f7f40caf/results/f5033b296a6e.summary.txt  (3B)
+      .asterwynd/workflows/wf_f7f40caf/results/f5033b296a6e.transcript.txt  (252B)
+      .asterwynd/workflows/wf_f7f40caf/results/f5033b296a6e.txt  (3B)
+
+### sandbox_noNull.py
+total files in throwaway ws: 8
+
+  .asterwynd/  (8 files)
+      .asterwynd/workflows/wf_a0b5f04f/events.jsonl  (529B)
+      .asterwynd/workflows/wf_a0b5f04f/results/5fd9b337c633.summary.txt  (3B)
+      .asterwynd/workflows/wf_a0b5f04f/results/5fd9b337c633.transcript.txt  (252B)
+      .asterwynd/workflows/wf_a0b5f04f/results/5fd9b337c633.txt  (3B)
+      .asterwynd/workflows/wf_a0b5f04f/results/d3b46e1e8b3f.summary.txt  (3B)
+      .asterwynd/workflows/wf_a0b5f04f/results/d3b46e1e8b3f.transcript.txt  (252B)
+      ... +2 more
+
+### extra_calls.py
+
+### foreach-llm-agg-20: 23 calls
+  by node_id: {'fan': 20, '__auto_agg__agg_0_0': 1, '__auto_agg__agg_0_1': 1, 'agg': 1}
+
+### foreach-collect-20: 22 calls
+  by node_id: {'fan': 20, '__auto_agg__agg_0_0': 1, '__auto_agg__agg_0_1': 1}
+
+### summarizer_pollution.py
+
+### small: leaf_chars=50
+  LLM calls: [('a', 19), ('b', 19)]
+  unattributed (node_id None/'?'): 0
+  root.summary[:60] = 'LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL\nLLLLLLLLL'
+  root.slots = {k: v[:40] for k,v in root.slots.items()}
+
+### big: leaf_chars=9000
+  LLM calls: [('a', 19), ('b', 19), (None, 2592)]
+  unattributed (node_id None/'?'): 1
+  root.summary[:60] = '[SUMMARY-PLACEHOLDER]'
+  root.slots = {k: v[:40] for k,v in root.slots.items()}
+  >>> POLLUTED: aggregate output is the summarizer placeholder, not the concat
+

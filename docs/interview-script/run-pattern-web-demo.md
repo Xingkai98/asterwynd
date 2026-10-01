@@ -68,7 +68,7 @@ params:   workers/teams/proposers 数量、max_rounds、worker_max_tokens、work
 ## 4. 如果 agent 不主动用模板
 
 - 直接点名："调用 RunWorkflow，template=peer-review，task=...，params={max_rounds: 3}"
-- 确认工具可见：问它"你有哪些子 agent 工具？"——正常情况下 `RunWorkflow` / `StartWorkflow` / `DeclareWorkflow` / `GetWorkflow` / `CancelWorkflow` 与资产工具（`ListWorkflowAssets` / `GetWorkflowAsset` / `SaveWorkflowAsset` / `RunWorkflowAsset`）都在（`RunPattern` 已退役）。
+- 确认工具可见：问它"你有哪些子 agent 工具？"——正常情况下 `RunWorkflow` / `StartWorkflow` / `DeclareWorkflow` / `GetWorkflow` / `CancelWorkflow` / `DryRunWorkflow` 与资产工具（`ListWorkflowAssets` / `GetWorkflowAsset` / `SaveWorkflowAsset` / `RunWorkflowAsset`）都在（`RunPattern` 已退役）。其中 `DryRunWorkflow` 是零 token 模拟执行（不调模型、不写盘），用来在声明前预演拓扑与数据流。
 
 ## 5. 常见坑
 

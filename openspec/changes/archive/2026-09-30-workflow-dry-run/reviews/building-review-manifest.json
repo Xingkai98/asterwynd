@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-dry-run",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a5908c68-b5ff-4875-a086-fa3d36f4785b",
+  "base_sha": "08a0abe5ac11ab7dd0136c1cc69023c31e56db42",
+  "head_sha": "124583edc4d86342c10aa592cbec2dcf3e1fb3d4",
+  "tasks_hash": "sha256:4108699ac82102376b390ae861b5cee202fa74b694e54592d2bc6809a5feb6b4",
+  "spec_hash": "sha256:537fff7a6b106b787d5f5c03e8b38d9bdd3e73ebc431e681e6a76c809036ae8a",
+  "diff_hash": "sha256:139be8d241673b29365bd0d4a8576a7d1c5b1d961df1cc43ca04d0a429fa818d",
+  "report_hash": "sha256:e13646dbb373330dc58ca8bcf681968201ca65f09bf822a14b40f6fc3804af46"
+}
