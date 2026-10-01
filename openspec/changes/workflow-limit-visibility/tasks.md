@@ -5,7 +5,7 @@
 - [ ] 1.1 关联 GitHub issue #275，写 `proposal.md`（含 Change Type / Why / What Changes / Capabilities / 验收 / RIR / Impact Analysis / Non-Goals）
 - [ ] 1.2 写 `design.md`（Context / Goals-Non-Goals / Decisions / Risks / Testing Strategy / Pre-Implementation Review / Impact Analysis）
 - [ ] 1.3 写 spec delta（MODIFIED 2 条 Requirement + 新增 Scenario）
-- [ ] 1.4 技术侦察脚本与实测证据落 `research/`（`gap_probe.py` 确认 G1–G4 缺口；`gate_trip_probe.py` 确认 G5 撞闸非结构化）
+- [ ] 1.4 技术侦察脚本与实测证据落 `research/`（`gap_probe.py` 确认 G1–G4 缺口；`gate_trip_probe.py` 确认 G5 撞闸非结构化；`node_budget_probe.py` 钉死 max_nodes 计费口径与撞闸图假余量）
 - [ ] 1.5 补齐 `## Reference Implementation Research` 的 findings 与 design impact（`research_tier: full`）
 - [ ] 1.6 同步 `docs/openspec-change-backlog.md` 入队（受保护路径，需结构化事件）
 
@@ -14,19 +14,22 @@
 - [ ] 2.1 用独立零记忆 subagent 按 `batch-grill-me` 逐轮追问 `design.md`，产出 `reviews/grill-design.md`
 - [ ] 2.2 停轮把 `## Open Questions` 逐项（每条配具体例子）抛给用户，等待答复
 - [ ] 2.3 用户答复写回 `grill-design.md` 的 `## User Confirmation` 节
+- [ ] 2.4 按 grill 实测订正回写 design/proposal/spec delta（D2 计费口径、D3 route runs 恒 0、D4 无条件挂载、D6 调用级同源锁、L0 可判定性）
 
 ## 3. 实现（测试先行）
 
-- [ ] 3.1 先写失败测试 `tests/agent/subagent/test_workflow_limit_visibility.py`：`limits` 三段式、`node_budget` 宽/窄扇入、route `max_routes`+`used`、撞闸 `diagnostics`（含未撞闸不挂诊断）
+- [ ] 3.1 先写失败测试 `tests/agent/subagent/test_workflow_limit_visibility.py`：`limits` 三段式、`node_budget`（含撞闸图 `headroom < 0`）、route `max_routes`+`gate_count`、`diagnostics` 无条件挂载（未撞闸为 `{}`）
 - [ ] 3.2 `_build_dry_run_report` 增 `limits`（复用 `limits_report(spec, {})`）
-- [ ] 3.3 `_build_dry_run_report` 增 `node_budget`（源 `ExecutionPlan.declared_nodes`/`.inserted_nodes`/`.nodes` + `_eff_limit("max_nodes")`）
-- [ ] 3.4 route 条目增生效 `max_routes` 与 `_route_counts` 计数（同源）
-- [ ] 3.5 报告增 `diagnostics`（镜像 `_envelope()` 的 `if self._diagnostics` 条件）
-- [ ] 3.6 报告 `notes` 补口径说明句（clamped 恒 false 的原因；动态闸余量不适用）
-- [ ] 3.7 `DeclareWorkflow` 描述补图级三闸默认值句（值，非示例）
-- [ ] 3.8 扩展 `tests/agent/subagent/test_workflow_tool_discoverability.py`：描述含三闸默认值 + 长度守卫
-- [ ] 3.9 不变量测试：`report["limits"] == limits_report(spec, {})` 逐字段相等（变异验证）
-- [ ] 3.10 回归：`tests/agent/subagent/test_workflow_dry_run.py` 既有断言不失效
+- [ ] 3.3 scheduler 增「投影展开值」记录（`_check_foreach_budget` 内、超限判定**前**记入新只读字段；不改判定逻辑）
+- [ ] 3.4 `_build_dry_run_report` 增 `node_budget`（`graph_nodes = len(plan.nodes)`；`expanded_nodes` 取 3.3 的投影记录；`auto_inserted = len(plan.inserted_nodes)`；`headroom = limit - expanded_nodes`）
+- [ ] 3.5 route 条目增生效 `max_routes` 与 `gate_count`（取 `scheduler._route_counts`，同源）
+- [ ] 3.6 报告增 `diagnostics`（**无条件**挂载，镜像 `parent_envelope`；未撞闸为 `{}`）
+- [ ] 3.7 报告 `notes` 补口径说明句（`clamped` 恒 false 的原因；`expanded_nodes` vs `graph_nodes` 的差别；route `runs` 恒 0 与 `gate_count`；`diagnostics` 非空 ≠ 撞闸）
+- [ ] 3.8 `DeclareWorkflow` 描述补图级三闸**模块默认值**句（值，非示例；含「以报告生效值为准」）
+- [ ] 3.9 扩展 `tests/agent/subagent/test_workflow_tool_discoverability.py`：描述含三闸名 + 数值（宽松匹配，不绑定运行时配置）+ 长度守卫
+- [ ] 3.10 **调用级同源锁**（非值相等）：monkeypatch `limits_report`/`_eff_limit` 返回哨兵，断言报告字段反映哨兵；`expanded_nodes` 断言取自闸门投影记录
+- [ ] 3.11 scheduler 侧测试：撞闸图 `投影展开值 == len(plan.nodes) + Σ items`，且既有 `max_nodes` 拒绝行为逐字不变
+- [ ] 3.12 回归：`tests/agent/subagent/test_workflow_dry_run.py` 既有断言不失效
 
 ## 4. 审阅与验收
 

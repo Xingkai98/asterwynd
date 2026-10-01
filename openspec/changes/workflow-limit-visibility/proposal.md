@@ -46,10 +46,10 @@
 ## What Changes
 
 1. **`DryRunWorkflow` 报告新增 `limits` 字段**：复用 `limits_report()` 的 `{declared, applied, clamped}`，覆盖 `recursion_limit` / `max_nodes` / `max_runs`。与另外三个出口同源同形，消除「dry run 是唯一不报生效值的出口」这个不一致。
-2. **`DryRunWorkflow` 报告新增「声明 vs 展开」节点预算汇总**：例如 `node_budget: {declared: N, expanded: M, auto_inserted: K, limit: L, headroom: L-M}`。数据源是 `ExecutionPlan.declared_nodes` / `.inserted_nodes` / `.nodes` 与 `_eff_limit("max_nodes")`，**零新增计算通道**。
-3. **`DryRunWorkflow` 报告的 route 条目新增 `max_routes`（生效值）与已用闸门计数**：让模型看见「这个 route 允许转几次 / 已经转了几次」。
-4. **`DryRunWorkflow` 撞闸时报告带 `diagnostics`**：复用 `GraphRecursionError.to_dict()`（或 scheduler 已有的同一结构），让撞闸原因**结构化可见**，而非只在 `warnings[]` 散文里。
-5. **工具描述披露图级三闸的默认值**：`DeclareWorkflow` 描述补一句「图级三闸默认 `recursion_limit=100 / max_nodes=200 / max_runs=300`，可在 spec 里声明、可被配置钳制」——**只补事实（值），不补示例**（#248 教训：示例是模型学错的地方；值是事实，不会误导）。
+2. **`DryRunWorkflow` 报告新增「声明 vs 展开」节点预算汇总**：`node_budget: {declared, graph_nodes, expanded_nodes, auto_inserted, limit, headroom}`。**关键口径（grill 实测订正）**：`expanded_nodes` 取**闸门等价投影**（图节点数 + foreach 展开项数），而非 `len(plan.nodes)`——后者漏掉 foreach 项，会在**已撞闸**的图上报出**正**余量（实测 `max_nodes=5` + 20 项 → 报 `headroom: 1`）。为与闸门同源，需 scheduler 在 `_check_foreach_budget` 里**记录**投影展开值（只增字段、不改判定）。
+3. **`DryRunWorkflow` 报告的 route 条目新增 `max_routes`（生效值）与 `gate_count`（闸门计数）**：让模型看见「这个 route 允许转几次 / 闸门记了几次」。（命名不取 `used`——route 的既有 `runs` 字段结构性恒 0，`used` 会与之形成表观矛盾；`gate_count` + `notes` 消解。）
+4. **`DryRunWorkflow` 报告带 `diagnostics`**：取 `dict(scheduler._diagnostics)`，**无条件挂载**（未撞闸时为 `{}`，镜像模型可见的 `parent_envelope`），让撞闸原因**结构化可见**，而非只在 `warnings[]` 散文里。
+5. **工具描述披露图级三闸的默认值**：`DeclareWorkflow` 描述补一句「**模块默认值** `recursion_limit=100 / max_nodes=200 / max_runs=300`，部署可用配置覆盖、以工具报告的生效值为准」——**只补事实（值），不补示例**（#248 教训：示例是模型学错的地方；值是事实，不会误导）；限定为「模块默认值」是因为描述是静态文本、生效值随配置变化（grill Q6）。
 
 **不变**：闸门的**判定逻辑**（`scheduler.py` 的 `_check_declared_limits` / `_drive` / `_route_verdict` 等）；闸门的**默认值**（本 change 只报值、不改值——改值属 #276）；`WorkflowSpec` 数据结构；既有三个出口的返回体；资产 schema 与 `spec_hash`。
 
@@ -62,8 +62,8 @@
 ### Modified Capabilities
 
 - `multi-agent-collaboration`：
-  - **MODIFIED** 既有 Requirement「工作流可零成本模拟执行以暴露数据投递语义」——报告的必含字段 SHALL 增加：结构闸的**生效值**（`declared`/`applied`/`clamped` 三段式，与既有出口同源）、「声明 vs 展开」的节点预算汇总、route 节点的生效 `max_routes` 与已用闸门计数；撞闸时 SHALL 附结构化诊断，SHALL NOT 只把原因留在散文 warning 里。
-  - **MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」——描述 SHALL 披露图级三闸的默认值（值，SHALL NOT 是示例）。
+  - **MODIFIED** 既有 Requirement「工作流可零成本模拟执行以暴露数据投递语义」——报告的必含字段 SHALL 增加：结构闸的**生效值**（`declared`/`applied`/`clamped` 三段式，与既有出口同源）、「声明 vs 展开」的节点预算汇总（含 `graph_nodes` 与闸门等价投影 `expanded_nodes`）、route 节点的生效 `max_routes` 与闸门计数（`gate_count`）；撞闸时报告 SHALL 附结构化诊断且 SHALL NOT 只把原因留在散文 warning 里，未撞闸时诊断字段 SHALL 仍与真实出口同形（空对象）。
+  - **MODIFIED** 既有 Requirement「DeclareWorkflow 描述暴露循环契约」——描述 SHALL 披露图级三闸的**模块默认值**（值，SHALL NOT 是示例；SHALL 说明可被配置覆盖、以报告生效值为准）。
 
 ## 验收（本 change 的验收口径，**只进 proposal、不进 spec**）
 
@@ -71,12 +71,14 @@
 
 | # | 指标 | 主/辅 |
 |---|---|---|
-| **L0** | 模型能否在**声明大图之前**报出当前生效的图级三闸值（读 transcript：它是否在描述/报告中读到了 100/200/300） | **主指标** |
-| **L1** | 模型能否报出「某张图声明 N 节点、展开后 M 节点、离上限还有多少」 | **主指标** |
+| **L0** | 模型能否报出**只在 dry run 报告里存在**的量化值（如「这张图展开后离 `max_nodes` 还有多少 / `limits.max_nodes.applied` 是多少」）——**不**问「三闸默认值是几」（那是描述里就有的事实，照抄即通过，测不出本 change 的价值，grill Q5） | **主指标** |
+| **L1** | 模型能否报出「某张图声明 N 节点、图节点数 / 展开计费数 / 离上限还有多少」的**口径区别** | **主指标** |
 | L2 | 模型撞闸后，能否从诊断**直接读出**是哪个闸、上限多少、超了多少 | 辅 |
-| L3 | 是否因新增字段而**引入新的误读**（如把 `declared` 当 `applied`） | 负面检查 |
+| L3 | 是否因新增字段而**引入新的误读**（把 `declared` 当 `applied`、把 `headroom` 当动态闸余量、把 `gate_count` 与 `runs:0` 当矛盾、把非空 diagnostics 当撞闸） | 负面检查 |
 
-**通过门槛**：L0 与 L1 成立（模型能报出生效值与余量），且 L3 无新误读。
+**通过门槛**：L0 与 L1 成立（模型能报出**只读报告可得**的生效值与余量），且 L3 无新误读。
+
+> **L0 的判定口径（grill Q5）**：描述里会写入三闸默认值（D5），所以「说出 100/200/300」不能证明模型读了报告。L0 必须问一个**描述里没有、只在报告里存在**的量（`node_budget.headroom` 或 `limits.max_nodes.applied`），答对方证明模型确实读了 dry run 报告。
 
 **跑之前必须清空全局资产库，且每次 rollout 之间 quarantine 记忆**（`MemoryIndexSource` always-loaded，#248/#273 实测踩过）。
 
@@ -106,12 +108,12 @@
 - **能力域**: `multi-agent-collaboration`（Workflow DSL 的工具面与可观测性）。
 - **代码**:
   - `agent/tools/builtin/subagents.py` — `_build_dry_run_report` 增 `limits` / `node_budget` / route 的 `max_routes`+计数 / 撞闸时的 `diagnostics`；`DeclareWorkflow` 描述补三闸默认值句。**不改任何既有字段的语义**，只增字段。
-  - `agent/subagent/scheduler.py` — **预期不改**。`limits_report()` / `_eff_limit()` / `ExecutionPlan` 字段 / `GraphRecursionError.to_dict()` 都已存在且可复用。**若实现中发现必须改 scheduler，SHALL 先停轮回写本 Impact Analysis**（与 #273 的「不改调度器」不变量同精神：本 change 是「接出口」，不是「改闸门」）。
+  - `agent/subagent/scheduler.py` — **一处「只增不改」**（grill 后订正；原稿为「预期不改」）。`limits_report()` / `_eff_limit()` / `ExecutionPlan` 字段 / `GraphRecursionError.to_dict()` 可原样复用；但 **D2 的 `expanded_nodes` 口径**要求闸门在 `_check_foreach_budget` 里**记录投影展开值**（在超限判定前记入一个新只读字段），因为既有 `_expanded_nodes` 在撞闸时不含被拒展开。**该改动只新增一个字段，不改任何判定逻辑/异常路径/既有字段语义**。**若实现中发现它波及判定路径，SHALL 先停轮回写本 Impact Analysis**（与 #273 的「不改调度器执行路径」不变量同精神）。
   - `agent/loop.py` — **预期不改**（不新增工具、不改注册）。
 - **测试**:
   - **必须新增**：`tests/agent/subagent/test_workflow_limit_visibility.py`（dry run）
     - `limits` 三段式存在且与 `limits_report()` 逐字段相等（用**钳制**场景断言 `applied != declared` 且 `clamped=True`）；
-    - `node_budget` 在**宽扇入**图（`items > MAX_FAN_IN=10`，触发自动插层）上给出 `expanded > declared` 且 `auto_inserted == expanded - declared`；在**窄扇入**图上 `expanded == declared`；
+    - `node_budget`：`expanded_nodes == graph_nodes + Σ foreach items`、`auto_inserted == len(plan.inserted_nodes)`、`headroom == limit - expanded_nodes`；**撞闸图（配小 `max_nodes`）断言 `headroom < 0`**（回归 `research/node_budget_probe.py` 的两个撞闸例）；
     - route 条目含生效 `max_routes` 与已用计数；
     - 撞闸图（把 `max_nodes` 配小）报告含结构化 `diagnostics`，且 `diagnostics.reason` 为闸名；
     - **不变式回归**：`limits.applied` 与 `_eff_limit` 同源（同一 spec + ceiling 下逐字段相等）——防止「对内钳、对外报声明值」的假面。
