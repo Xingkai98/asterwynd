@@ -170,6 +170,8 @@ route 条目的 `max_routes` 取 `state.node.max_routes`；闸门计数取 `sche
 见 `proposal.md` 的 `## Impact Analysis`。design 视角的补充（**含 grill 后订正**）：
 
 1. **`scheduler.py`：原计划零改动，grill 后订正为「一处只增不改」**。本 change 其余部分只读既有私有状态（`_plan`/`_states`/`_route_counts`/`_diagnostics`/`_eff_limit`）。但 **D2 的 `expanded_nodes` 口径**（撞闸图上既有 `_expanded_nodes` 不含被拒展开）要求闸门在 `_check_foreach_budget` 里**记录投影展开值**（在超限判定前记入一个新字段）——这是**新增一个只读字段**，**不改任何判定逻辑、不改异常路径、不改既有字段语义**。若实现中发现该记录会波及判定路径（如影响 `_charged_expansions`），SHALL 先停轮回写（与 #273 的「不改调度器」不变量同精神）。
+
+   > **实现期订正（第二记录位点）**：`max_nodes` 有**两**个 raise 位点——`_check_foreach_budget`（foreach 展开项计费）与 `_expand_plan`（自动插层计费）。当图在**自动插层**这一步就超限（如 `max_nodes=3`、20 项 foreach）时，`_expand_plan` 先 raise，`_check_foreach_budget` 永不执行，投影字段停在声明值 → 报告仍会报**正**余量（`max_nodes=3` → 报 1），违反 spec delta 新 Scenario「`limit - expanded_nodes` SHALL NOT 为正」。故投影字段在**两个位点**都记（`_expand_plan` 的 raise 分支记 `_expanded_nodes + added_nodes + count`，同样只读、取历史最大，**不参与任何判定**）。性质与第 1 条一致（只增只读字段、不改判定/异常语义），非新增能力面；回归测试 `test_headroom_negative_when_auto_insert_layer_trips_the_gate` 覆盖该路径。
 2. **`limits_report()` 的 `ceiling` 参数**：dry run 传 `{}`（无钳制）。若将来要让 dry run 反映某个 ceiling，须先回写本 design（属新增能力面）。
 
 ## Pre-Implementation Review（grill 结果）
