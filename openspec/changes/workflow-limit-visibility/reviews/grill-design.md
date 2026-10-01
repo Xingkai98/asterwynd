@@ -32,6 +32,15 @@
 - **Q5（验收 L0 可判定性）：L0「模型能否报出生效值 100/200/300」会不会被描述本身污染、变成测「照抄描述」而非测「读到报告」？** 实证：D5 会在 `DeclareWorkflow` 描述里写入 `recursion_limit=100 / max_nodes=200 / max_runs=300`。那么模型只要复述它刚读过的描述，就能「通过」L0，**无需读 dry run 报告**——L0 因此测不出本 change 的核心价值。推荐答案：**L0 改问一个只在报告里存在、描述里没有的量**，例如「这张图展开后离 `max_nodes` 上限还有多少」（即 `node_budget.headroom`）或「报告里 `limits.max_nodes.applied` 是多少」；这样答对即证明模型确实读了报告。请在改验收口径时一并修订 `proposal.md` 的 L0 定义。
 - **Q6（D5 措辞）：描述里的三闸默认值该表述为「模块默认值」还是「你当前会话的默认值」？** 实证：`DeclareWorkflowTool.description` 是**静态类属性**（实测任意实例返回同一字符串），而运行期默认来自配置——`_spec_bounds()`（`subagents.py:442`）随 config 变化，实测配置 `max_nodes=777` 时 `bounds={"max_nodes":777, ...}`，但静态描述里**没有**任何三闸值（当前），补进去后就会成为 `200` 的硬编码。即：**一个把 `subagents.workflow.max_nodes` 覆盖成 777 的部署，描述会说「默认 200」，而 dry run 报告会说生效值 777**——两处对同一事实表述不同，恰是 D6 精神（唯一数据源）要防的分叉。推荐答案：**措辞写成「模块默认值 `recursion_limit=100 / max_nodes=200 / max_runs=300`（部署可用配置覆盖；以 dry run 报告里的生效值为准）」**，明确「以报告为准」，并把「部署可覆盖」写进 delta 的披露条款；同时 `test_workflow_tool_discoverability.py` 的断言应宽松到「描述含三闸名 + 三个数值」而非绑定「运行时等于描述」。请在 grill 后确认此措辞。
 
+## User Confirmation
+
+- **Q1**: 用户答复：采用「闸门投影值 + 单列 graph_nodes」——`node_budget.expanded_nodes` 取闸门等价投影（`len(plan.nodes) + Σ foreach items`，即 `max_nodes` 闸门真正会数到的数），撞闸图上该值超过上限、`headroom` 为负（如实报「超了」）；另单列 `graph_nodes = len(plan.nodes)` 表示图本身多大。接受为此在 scheduler 的 `_check_foreach_budget` 内**只增一个只读字段**（记投影值于超限判定前，不改判定逻辑/异常路径）；`auto_inserted` 改直接取 `len(plan.inserted_nodes)`，原稿 `auto_inserted == expanded - declared` 断言作废。；确认时间: 2026-10-01
+- **Q2**: 用户答复：不做——dry run 只报「当前 spec 直接运行会生效的值」，**不**额外报「这张图若存成资产后会被当前配置钳到多少」（那属资产语义、会造第二真相源）。保持 D1 现口径 + notes 说明；确认时间: 2026-10-01
+- **Q3**: 用户答复：字段名用 `gate_count`（不用 `used`）——因 route 条目既有 `runs` 字段结构性恒 0，`used` 会与之并列成表观矛盾；`gate_count` 取 `scheduler._route_counts`，并在 notes 写明「route 的 `runs` 恒 0 是既有事实（它不跑模型），`gate_count` 才是 `max_routes` 判定的计数」；`runs` 字段本身不改；确认时间: 2026-10-01
+- **Q4**: 用户答复：无条件挂载 `diagnostics`，未撞闸时为空对象 `{}`——与模型最常打交道的 `parent_envelope`（RunWorkflow 返回体）同形，`notes` 说明「诊断非空 ≠ 一定撞闸，看 `reason` 键」；同步改 spec delta，删「未撞闸时 SHALL NOT 挂空诊断」的措辞，改为「与真实运行模型可见出口同形（未撞闸时为空对象）」；确认时间: 2026-10-01
+- **Q5**: 用户答复：L0 验收改问**只在 dry run 报告里存在**的量（如 `node_budget.headroom` 或 `limits.max_nodes.applied`），**不**问「三闸默认值是多少」（描述里就有，照抄即通过、测不出本 change 价值）；确认时间: 2026-10-01
+- **Q6**: 用户答复：描述措辞写成「**图级**（graph-level）**模块默认值** `recursion_limit=100 / max_nodes=200 / max_runs=300`——部署可用配置覆盖，资产在更小配置下会被钳制，**以工具报告出的生效值为准**」；明确限定「图级」以区别于路由级 `max_routes` 默认 1；描述长度守卫（< 6000）不变；确认时间: 2026-10-01
+
 ## 风险
 
 - **R1（阻塞，必须改）：D2 的 `headroom` 口径用错计数器，会制造**新的**「假余量」。** 见 Q1 实证：`len(plan.nodes)` 对 foreach 展开项**完全不计**，而 `max_nodes` 闸门把每个 foreach 项各计一个节点。极端例子：`max_nodes=5` + 20 项 foreach 的图**已经撞闸**，但按 D2 的定义 `headroom = 5 - 4 = 1`（正数）。本 change 的整个命题是「让模型在撞闸前看见余量」，若余量数字本身会把撞闸图报成有余量，则**方向性反噬**。必须改为闸门同源计数（`_expanded_nodes`），并按 Q1 重述字段身份与测试断言。
