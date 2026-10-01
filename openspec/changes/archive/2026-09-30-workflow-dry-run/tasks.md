@@ -74,12 +74,12 @@
 
 ## 4. 端到端验收（本 change 的唯一有效性证据）
 
-- [ ] 4.1 **清空全局资产库** `~/.asterwynd/projects/<hash>/workflow-assets/`；**每次 rollout 之间 quarantine 记忆**（`MemoryIndexSource` 污染会让 S0 假达标，#248 踩过）
-- [ ] 4.2 跑**基线**吗？——**不重跑**。基线沿用 #248 归档的 `reviews/` 记录（`baseline-transcript-2026-09-29.log`，S0=9），并**如实标注口径**：本 change 的基线是**改后 #248 的状态**（S0 = 6/7/4），不是 #248 基线（9）——因为本次是在 #248 之上继续。**两个对照都要写清**。
-- [ ] 4.3 跑**改后** N=3：同提示词、同模型（`deepseek-v4-flash`）、同 `--mode bypass`，记录 S0–S8
-- [ ] 4.4 落盘证据到 `reviews/acceptance-evidence.md`（改后表 + 与 #248 改后的对照 + 原始 transcript 路径）
-- [ ] 4.5 主 session 软判断：读 transcript 回答「它在**理解工具** vs **理解任务**上花了多少」（两者必须分开）；重点看 **S8**——dry run 是否真的替代了探针
-- [ ] 4.6 通过门槛判定：S0 是否降到 0 且 S6 成立；**负面检查 S7**（dry run 调用次数是否形成新循环）。不达标则如实记录归因，**交主 session 决定是否迭代**
+- [x] 4.1 **清空全局资产库** `~/.asterwynd/projects/<hash>/workflow-assets/`；**每次 rollout 之间 quarantine 记忆**（`MemoryIndexSource` 污染会让 S0 假达标，#248 踩过）
+- [x] 4.2 跑**基线**吗？——**不重跑**。基线沿用 #248 归档的 `reviews/` 记录（`baseline-transcript-2026-09-29.log`，S0=9），并**如实标注口径**：本 change 的基线是**改后 #248 的状态**（S0 = 6/7/4），不是 #248 基线（9）——因为本次是在 #248 之上继续。**两个对照都要写清**。
+- [x] 4.3 跑**改后** N=3：同提示词、同模型（`deepseek-v4-flash`）、同 `--mode bypass`，记录 S0–S8
+- [x] 4.4 落盘证据到 `reviews/acceptance-evidence.md`（改后表 + 与 #248 改后的对照 + 原始 transcript 路径）
+- [x] 4.5 主 session 软判断：读 transcript 回答「它在**理解工具** vs **理解任务**上花了多少」（两者必须分开）；重点看 **S8**——dry run 是否真的替代了探针
+- [x] 4.6 通过门槛判定（**主 session 执行，结果见 `reviews/acceptance-evidence.md`**）：**S0 = 0，3/3 达标**（对照 #248 改后 6/7/4）；**S6 = 1/3**（run 2/3 被 2400s 墙钟截断，归因是任务本身重（起了 104/27 次真实子 agent 分析），**不是卡在工具语义**）；**S7 负面检查通过**（dry run 8/18/9，远低于硬上限 40，未形成试探循环）；**S8 = 是**（探针从「烧真 token 的一次性真图」迁移到「零 token 模拟」，模型自发用 `script` 数组表达循环收敛）。**主指标达标；端到端完成率未达标，归因已如实记录。**
 
 ## 5. 验证
 
@@ -91,16 +91,16 @@
 - [x] 5.6 **benchmark smoke**（本 change 触及 `agent/tools/`）：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke`
 - [x] 5.7 确认工具**数量变化只增 `DryRunWorkflow`**，既有工具名字/行为不变（回归 `test_workflow_tools.py`）
 - [x] 5.8 确认 `patterns.py` 四个模板的 `spec_hash` **无变化**（本 change 不碰模板）
-- [ ] 5.9 **受保护 artifact 结构化事件**：改 `openspec/specs/**` 落 `current_spec_synced`、改 `docs/openspec-change-backlog.md` 落 `backlog_updated`（**backlog 那一半已落**：`backlog_updated` 事件已写；`current_spec_synced` 属 6.3 的 spec 同步，**由主 session 在归档阶段落**——本 change 的 spec delta 此刻还在 `openspec/changes/workflow-dry-run/specs/` 下，未进 `openspec/specs/`）
+- [x] 5.9 **受保护 artifact 结构化事件**：`current_spec_synced`（`openspec/specs/multi-agent-collaboration/spec.md`）、`backlog_updated`、`change_archived` 三条均已落（主 session 归档阶段）
 
 ## 6. 审阅闭环与 PR 收尾
 
-- [x] 6.1 跑 `/review-loop`（独立审阅闭环），直到 PASS 或 3 轮封顶；产出 `reviews/building-review.md`（**三轮均 PASS**：R1 = 首位审阅者，发现 I-1/I-2/I-3；R2 = 第二位，发现 N-1/N-2；R3 = 第三位，发现 N-3。六条发现全部修复 + 加回归测试；R3 的 PASS 对最终实现成立（N-3 只补测试））
+- [x] 6.1 跑 `/review-loop`（独立审阅闭环），直到 PASS 或 3 轮封顶；产出 `reviews/building-review.md`（**三轮均 PASS**：R1 = 首位审阅者 `da109a70`，发现 I-1/I-2/I-3；R2 = 第二位 `58a9aee9`，发现 N-1/N-2；R3 = 第三位 `a5908c68`，发现 N-3。六条发现全部修复 + 加回归测试；R3 的 PASS 对最终实现成立（N-3 只补测试））
 - [x] 6.2 review manifest 在本 change 的 `tasks.md` 最终化（含归档 move）之后生成（**已生成** `reviews/building-review-manifest.json`，绑定 R3 reviewer run `a5908c68`、base `08a0abe5`、head `124583e`、verdict PASS；artifact checker 通过。**注**：归档 move 会改 `tasks.md`，但归档语境的 `tasks_hash` 被显式降级跳过（见 AGENTS.md），故此处不冲突）
-- [ ] 6.3 把 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`）
-- [ ] 6.3a 归档到 `openspec/changes/archive/2026-09-30-workflow-dry-run/`
-- [ ] 6.4 从 `docs/openspec-change-backlog.md` 移除本 change 并同步批次
-- [ ] 6.5 确认 Impact Analysis 不再残留未解释的 `unknown`/`TBD`/`待确认`
-- [ ] 6.6 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响
+- [x] 6.3 把 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`：MODIFIED 1 + ADDED 3）
+- [x] 6.3a 归档到 `openspec/changes/archive/2026-09-30-workflow-dry-run/`（含 reviews/ 与 research/）
+- [x] 6.4 从 `docs/openspec-change-backlog.md` 移除本 change
+- [x] 6.5 确认 Impact Analysis 不再残留未解释的 `unknown`/`TBD`/`待确认`（已扫描 proposal/design，零命中）
+- [x] 6.6 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响
 - [ ] 6.7 (post-merge) 发起 PR 并合入（由主 session 确认后执行；worktree 不 push）
 - [ ] 6.8 (post-merge) 给 issue #273 加完成说明 comment 并关闭；**按用户拍板重新评估 #268 / #269 是否还需要**（#273 可能覆盖它们的动机）
