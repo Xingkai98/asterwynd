@@ -521,6 +521,12 @@ class WorkflowScheduler:
         self._steps = 0
         self._runs = 0
         self._expanded_nodes = 0
+        #: **闸门等价投影**（change ``workflow-limit-visibility``，D2）：`max_nodes`
+        #: 闸门若把这张图展开完会数到多少（= 图节点数 + 各 foreach 展开项数）。
+        #: 与 ``_expanded_nodes`` 的区别：后者在**撞闸时不含被拒的那次展开**（闸门在
+        #: 计费前 raise），故撞闸图上它会报出假的**正**余量。本字段在超限判定**之前**
+        #: 记录投影值（取历史最大），只读、不参与任何判定——只增字段，判定逻辑不变。
+        self._projected_expanded_nodes = 0
         #: foreach node_id -> 已计费的展开项数（review Issue 3：再展开只扣增量）。
         self._charged_expansions: dict[str, int] = {}
         self._in_flight_runs = 0
@@ -629,6 +635,7 @@ class WorkflowScheduler:
         self._plan = self._build_plan(value)
         self._states = {node.id: NodeState(node=node) for node in self._plan.nodes}
         self._expanded_nodes = len(self._plan.nodes)
+        self._projected_expanded_nodes = len(self._plan.nodes)
         self._charged_expansions = {}
 
     def _build_plan(self, spec: WorkflowSpec) -> ExecutionPlan:
@@ -800,6 +807,7 @@ class WorkflowScheduler:
         self._plan = self._build_plan(spec)
         self._states = {node.id: NodeState(node=node) for node in self._plan.nodes}
         self._expanded_nodes = len(self._plan.nodes)
+        self._projected_expanded_nodes = len(self._plan.nodes)
         self._charged_expansions = {}
         self._status = "running"
         self._started_at = time.time()
@@ -2109,6 +2117,14 @@ class WorkflowScheduler:
         # foreach 展开项本身也要吃 max_nodes：展开前预检保留给 `_check_foreach_budget`，
         # 这里只把**新增的 auto aggregate 节点**记进已声明节点数并复检。
         if self._expanded_nodes + added_nodes > self._eff_limit("max_nodes"):
+            # 闸门等价投影（D2 的第二个记录位点）：当**自动插层**这一步就撞上
+            # ``max_nodes`` 时，``_check_foreach_budget`` 尚未执行，故此处补记一次
+            # 投影（图节点 + 该 foreach 展开项数 ``count``），使这条撞闸路径的报告也
+            # 如实（``headroom`` 为负）。同样只读、取历史最大，**不参与任何判定**。
+            self._projected_expanded_nodes = max(
+                self._projected_expanded_nodes,
+                self._expanded_nodes + added_nodes + count,
+            )
             raise GraphRecursionError(
                 steps=self._steps,
                 limit=self._eff_limit("max_nodes"),
@@ -2161,6 +2177,13 @@ class WorkflowScheduler:
         delta = count - charged
         if delta <= 0:
             return  # 已计费过这份（或更大量）展开，不重复扣
+        # 闸门等价投影（D2）：在**超限判定之前**记下「展开完成后闸门会数到多少」
+        # （``_expanded_nodes + delta``）。只读、取历史最大，绝不参与判定——它的唯一
+        # 用途是让 dry run 报告在**撞闸图**上也如实报出计费规模（既有
+        # ``_expanded_nodes`` 因闸门先于计费 raise 而漏掉被拒的那次展开）。
+        self._projected_expanded_nodes = max(
+            self._projected_expanded_nodes, self._expanded_nodes + delta
+        )
         if self._runs + delta > self._eff_limit("max_runs"):
             raise GraphRecursionError(
                 steps=self._steps,

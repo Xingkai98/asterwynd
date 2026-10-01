@@ -783,6 +783,11 @@ def _route_task_warnings(spec: WorkflowSpec) -> list[str]:
         "default), and counts per node across all rounds: it is NOT reset when a "
         "new lap starts. Set it high enough for the laps you expect.\n"
         "\n"
+        "GRAPH-LEVEL GATES (separate from the per-route max_routes above; these are "
+        "module defaults, a deployment may override them, and an asset loaded under "
+        "a smaller config is clamped — trust the effective values DryRunWorkflow "
+        "reports): recursion_limit=100 / max_nodes=200 / max_runs=300.\n"
+        "\n"
         "Correct cycle (route back-edge; the loop body is an entry so it starts "
         "on its own):\n"
         "  nodes: producer(subagent), reviewer(subagent), gate(route, max_routes:3), "
@@ -1572,6 +1577,13 @@ def _build_dry_run_report(
             entry["walked_to"] = list(state.targets) if evaluated else []
             entry["used_default"] = (state.verdict is None) if evaluated else None
             entry["input_sources"] = sources if evaluated else []
+            # 闸门可见性（change ``workflow-limit-visibility``，D3）：生效 ``max_routes``
+            # 与**闸门实际使用的**累计计数 ``gate_count``（同源 ``_route_counts``，禁止
+            # 报告层重算）。字段名不用 ``used``——本条目既有 ``runs`` 对 route 结构性
+            # 恒 0（route 不跑模型），``used`` 会与 ``runs: 0`` 形成表观矛盾；``notes``
+            # 说明二者关系。即使 route 没跑到（``gate_count == 0``）也报，口径一致。
+            entry["max_routes"] = node.max_routes
+            entry["gate_count"] = scheduler._route_counts.get(node.id, 0)
             for owner in slot_owners:
                 slot_reads.setdefault(owner, set()).add("result")
         if state.status != "completed":
@@ -1642,12 +1654,38 @@ def _build_dry_run_report(
             name: _clip_text(state.slots.get(name, ""), limit) for name in sorted(slot_names)
         }
 
+    # 闸门可见性（change ``workflow-limit-visibility``）：报告把**结构闸**摊开。
+    # 每个值都经既有函数/同源字段取得（D6：唯一数据源，SHALL NOT 在报告层重算）——
+    # ``_limits_report``（与 ``status()``/``_envelope`` 同一方法）、``_eff_limit``、
+    # ``ExecutionPlan`` 字段、``_route_counts``、``_diagnostics``、闸门记录的投影值。
+    limits = scheduler._limits_report()
+    graph_nodes = len(plan.nodes)
+    # D2：``expanded_nodes`` = **闸门等价投影**（图节点数 + 各 foreach 展开项数），
+    # 由闸门在超限判定前记录（``_check_foreach_budget``）。刻意不用
+    # ``_expanded_nodes``——它在撞闸图上不含被拒的那次展开，会报**正**余量。
+    expanded_nodes = scheduler._projected_expanded_nodes
+    max_nodes_limit = scheduler._eff_limit("max_nodes")
+    node_budget = {
+        "declared": len(plan.declared_nodes) or len(spec.nodes),
+        "graph_nodes": graph_nodes,
+        "expanded_nodes": expanded_nodes,
+        "auto_inserted": len(plan.inserted_nodes),
+        "limit": max_nodes_limit,
+        "headroom": max_nodes_limit - expanded_nodes,
+    }
+
     report: dict[str, Any] = {
         "status": "simulated",
         "simulated": True,
         "run_status": result.get("status"),
         "spec_hash": spec.spec_hash,
         "goal": spec.goal,
+        "limits": limits,
+        "node_budget": node_budget,
+        # D4：**无条件**挂载，镜像模型可见出口 ``parent_envelope``（未撞闸时为 ``{}``）。
+        # 刻意不取 ``status()`` 的 ``if self._diagnostics`` 条件口径——模型在
+        # ``RunWorkflow`` 学到的是「diagnostics 恒在」，干跑保持同形才「一处学会处处可用」。
+        "diagnostics": dict(scheduler._diagnostics),
         "max_report_chars": limit,
         "elapsed_s": round(elapsed_s, 4),
         "llm_calls": len(llm.calls),
@@ -1755,6 +1793,38 @@ def _dry_run_notes() -> list[str]:
         "concatenation), not the semantic compression a real LLM would produce.",
         "`script` only affects nodes whose LLM call is the source of their output; it "
         "has no effect on route nodes or on `collect` aggregates (they run no model).",
+        "`limits` holds the three graph-level gates (recursion_limit / max_nodes / "
+        "max_runs) as {declared, applied, clamped}: the value each gate would use if you "
+        "ran this spec right now. `applied` can differ from `declared` only when a "
+        "deployment clamps the spec; a dry run applies no clamp, so here `clamped` is "
+        "always false. If this graph is later saved as an asset and loaded under a "
+        "smaller config, it can be clamped — RunWorkflow's `limits_clamped` would then "
+        "report it.",
+        "`node_budget` describes the max_nodes gate in the same terms: `declared` = "
+        "nodes you declared, `graph_nodes` = the execution graph's size (declared nodes "
+        "plus system-inserted merge layers, counting a foreach as ONE), `expanded_nodes` "
+        "= the billing size the gate actually counts (graph nodes PLUS each foreach item), "
+        "`auto_inserted` = system-inserted layers, `limit` = the effective max_nodes, and "
+        "`headroom` = `limit - expanded_nodes`. So `expanded_nodes` and `graph_nodes` "
+        "answer different questions — on a graph that already tripped the gate, `headroom` "
+        "goes NEGATIVE (the graph is over the line).",
+        "Reading `node_budget` on a TRIPPED graph: `graph_nodes` and `auto_inserted` "
+        "describe the plan that actually LANDED, while `expanded_nodes` is the projection "
+        "of a fully-expanded graph. When the gate rejects the graph at the auto-merge step "
+        "those merge layers never land, so `expanded_nodes` can exceed "
+        "`graph_nodes + sum(foreach items)` by exactly those rejected layers (e.g. 2 "
+        "declared + 20 items that wanted 2 merge layers reports graph_nodes=2, "
+        "auto_inserted=0, expanded_nodes=24). Trust `headroom` (the margin) over "
+        "reconstructing it from `graph_nodes`; `expanded_nodes` is the authoritative "
+        "billing size.",
+        "A route node's entry carries its effective `max_routes` and `gate_count` — the "
+        "count the max_routes gate actually uses. Note the existing `runs` field is "
+        "structurally 0 for a route (a route runs no model); `gate_count` is the number to "
+        "read for how many times the gate has counted this route.",
+        "`diagnostics` mirrors what RunWorkflow returns: it is always present (an empty "
+        "object `{}` when nothing was recorded). A NON-empty `diagnostics` does not by "
+        "itself mean a gate tripped — it can also hold non-gate records; check its "
+        "`reason` key to tell which gate (if any) tripped.",
     ]
 
 

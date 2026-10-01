@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "workflow-limit-visibility",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "2274c32d-2a92-4a47-aa67-3855718a5989",
+  "base_sha": "82ac56d1fa45f0a15da4d653532ed22da824ec32",
+  "head_sha": "c0e0ac3051e249bf0671ce3a8a2fddf9dfdcbcfe",
+  "tasks_hash": "sha256:b47a9f3f15ec7af616789f20146d88c8268d5a6bbc6487ca43be11e22ece1528",
+  "spec_hash": "sha256:986d9329d1dadbf8816f1148d50cafa805cc49e623eb03adbb90d24800d08bf8",
+  "diff_hash": "sha256:3553294cd3e85594fb9d18bf31058aec1af8e805cb2045bcc77e826f8fc93362",
+  "report_hash": "sha256:6dc6fd63ed3e5e24c8a5014b2a65d8c80f635beb695c039e610953f4d562fb96"
+}

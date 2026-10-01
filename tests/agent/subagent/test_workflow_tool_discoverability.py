@@ -315,6 +315,26 @@ def test_description_length_within_budget():
     assert len(DeclareWorkflowTool.description) <= 6000
 
 
+def test_description_discloses_graph_level_gate_defaults():
+    """T6（change ``workflow-limit-visibility``，D5）：描述披露图级三闸**模块默认值**。
+
+    **宽松匹配**：只断言「三闸名 + 三个数值」出现，不绑定运行时配置（描述是静态
+    文本，而生效值随配置变化——R4/Q6 要防的正是「描述说 200、报告说 777」的分叉）。
+    断言限定词「graph-level」与「以报告为准」也在，把静态默认值与运行期生效值分开。
+    """
+    desc = DeclareWorkflowTool.description
+    lowered = desc.lower()
+    for field in ("recursion_limit", "max_nodes", "max_runs"):
+        assert field in lowered, field
+    for value in ("100", "200", "300"):
+        assert value in desc, value
+    assert "graph-level" in lowered, "须限定为「图级」以区别于路由级 max_routes"
+    assert "default" in lowered
+    assert "effective" in lowered, "须指向报告的生效值（避免与运行期配置分叉）"
+    # 既有的路由级披露不被挤掉（回归）
+    assert "defaults to 1" in lowered
+
+
 # --- T3：route 节点的 ``task`` → 可行动 warnings（Q1 选 (b)） -----------------
 
 

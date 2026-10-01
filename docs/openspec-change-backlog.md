@@ -108,6 +108,12 @@
 
 ## 未实现队列
 
+### 第十七批：workflow 闸门可见性与上限重估（#273 follow-up）
+
+**串行依赖**：#275 是 #276 的**硬前置**——已由 #275 兑现（见下），#276 的定值依据现已就绪。
+
+- `workflow-limit-raise`（issue #276）：**前置已就绪，待立项**。**#275 已落地并给出实测输入**：本 change 的 N=3 验收（`openspec/changes/archive/2026-10-01-workflow-limit-visibility/reviews/acceptance-evidence.md`）显示模型实际画的图**余量极大**——三次 `max_nodes` headroom 分别为 **192 / 191 / 191**（`limit=200`），`expanded_nodes` 5–9；即默认 200 远未逼近（用掉 2.5%–4.5%）。**这直接支持「暂不需要为常规图提升 max_nodes」**，与 #276 立项时的假设（「模型会画更大的图所以该提上限」）相反——**实测不支持「都该提」**。**唯一仍有前瞻风险的是 `max_nodes` 的展开系数**（声明 ≠ 运行时；Run 3 实测 `declared=5 → expanded_nodes=9`，foreach 展开 1.8×），若未来出现超大 foreach 图才可能逼近。**约束**：`recursion_limit` 默认 100 与 `max_routes` 默认 1 被 spec 明文钉死（`multi-agent-collaboration` spec 第 125 / 411 行），改它们必须先走本 change。**建议**:按实测将 #276 降级为「仅在实测出现逼近闸门的图时再立项」，或直接以本证据评估后关闭。research_tier 待立项时判。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。
