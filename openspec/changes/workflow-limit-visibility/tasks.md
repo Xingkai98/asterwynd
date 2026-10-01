@@ -48,3 +48,9 @@
 - [ ] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描
 - [ ] 5.7 发起 PR（标题关联 #275），写明验证结果
 - [ ] 5.8 (post-merge) PR 合入后关 issue #275，并在 #276 留言解锁（blocked-by 解除）
+
+## 6. 审阅修复（review-loop Round 1）
+
+- [x] 6.1 Issue 1（MEDIUM）：`notes` + spec delta 限定「`expanded_nodes == graph_nodes + Σitems`」的成立条件（自动插层撞闸路径上不成立），新增 Scenario 与回归测试 `test_node_budget_baseline_differs_when_auto_layer_is_rejected`
+- [x] 6.2 Issue 2（LOW）：route `gate_count` 补调用级哨兵锁 `test_gate_count_reads_the_scheduler_route_counter`（变异验证变红）
+- [ ] 6.3 Issue 3（LOW）：收尾阶段在 PR 描述附 benchmark smoke 原始命令与对比摘要

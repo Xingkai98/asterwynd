@@ -247,6 +247,31 @@ def test_headroom_negative_when_auto_insert_layer_trips_the_gate(tmp_path, max_n
     assert budget["headroom"] < 0
 
 
+def test_node_budget_baseline_differs_when_auto_layer_is_rejected(tmp_path):
+    """自动插层撞闸图（review Issue 1）：``graph_nodes``/``auto_inserted`` 反映**已落地**
+    计划，``expanded_nodes`` 反映**投影**，二者基线不同——``expanded`` 可大于
+    ``graph_nodes + Σitems``（差额 = 被拒的自动层）。
+
+    回归 ``max_nodes=3`` + 20 项：落地计划停在 ``graph_nodes=2 / auto_inserted=0``，
+    但投影为 ``2 + 2 + 20 = 24``。``notes`` 与 spec delta 必须承认这一差额，不得声称
+    无条件等式 ``expanded == graph_nodes + Σitems``（那会构成新的模型误读面）。
+    """
+    manager = _manager(tmp_path, max_nodes=3)
+    report = _dry_run(manager, WIDE_FOREACH_SPEC)
+    assert report["run_status"] == "graph_recursion_exceeded"
+    budget = report["node_budget"]
+    assert budget["graph_nodes"] == 2, "被拒的自动层从未落地"
+    assert budget["auto_inserted"] == 0
+    assert budget["expanded_nodes"] == 24
+    # 无条件等式在此路径上不成立（2 + 20 = 22 ≠ 24）——差额正是被拒的 2 个自动层
+    assert budget["expanded_nodes"] != budget["graph_nodes"] + 20
+    assert budget["headroom"] == 3 - 24
+    assert budget["headroom"] < 0
+    # 已落地计划下（max_nodes=200）等式成立，作为对照
+    ok = _dry_run(_manager(tmp_path), WIDE_FOREACH_SPEC)["node_budget"]
+    assert ok["expanded_nodes"] == ok["graph_nodes"] + 20
+
+
 # --- 3. route 条目（D3）+ diagnostics（D4） ---------------------------------
 
 
@@ -298,6 +323,8 @@ def test_notes_explain_the_new_fields(manager):
     assert "expanded_nodes" in text or "expanded" in text  # expanded vs graph_nodes
     assert "gate_count" in text  # route runs 恒 0 与 gate_count
     assert "diagnostic" in text  # 诊断非空 != 撞闸
+    # review Issue 1：撞闸图上 graph_nodes/auto_inserted 与 expanded_nodes 基线不同
+    assert "landed" in text or "reject" in text
 
 
 # --- 4. 调用级同源锁（D6，非值相等） ----------------------------------------
@@ -354,6 +381,25 @@ def test_node_budget_limit_reads_the_effective_limit(manager, monkeypatch):
     report = _dry_run(manager, NARROW_FOREACH_SPEC)
     assert report["node_budget"]["limit"] == sentinel
     assert report["node_budget"]["headroom"] == sentinel - report["node_budget"]["expanded_nodes"]
+
+
+def test_gate_count_reads_the_scheduler_route_counter(manager, monkeypatch):
+    """哨兵锁（review Issue 2）：route ``gate_count`` 取自 ``scheduler._route_counts``。
+
+    与同文件另三处同源锁口径一致——证明报告**读取了**闸门计数，而非在报告层重算。
+    """
+    sentinel = 424242
+    original = WorkflowScheduler._execute_route
+
+    async def _patched(self, state):
+        await original(self, state)
+        # route 只执行一次（本语料不循环）；执行后把闸门计数替换成哨兵，
+        # 报告若重算会得到真实值（1），若读取该字段则得到哨兵。
+        self._route_counts = {state.node.id: sentinel}
+
+    monkeypatch.setattr(WorkflowScheduler, "_execute_route", _patched)
+    report = _dry_run(manager, ROUTE_SPEC)
+    assert _node(report, "gate")["gate_count"] == sentinel
 
 
 # --- 5. scheduler 侧：投影字段与判定行为 ------------------------------------

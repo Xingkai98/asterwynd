@@ -186,3 +186,11 @@ route 条目的 `max_routes` 取 `state.node.max_routes`；闸门计数取 `sche
 **已确认可保留**：D1 三段式 + `clamped`（+notes）、D2-a 只讲 `max_nodes`、D3-a 读 `_route_counts`、D6-a 复用既有函数方向、D5-a 长度预算。
 
 **Open Questions**：Q1–Q6 见 `reviews/grill-design.md`，**待用户逐条确认后**方可进入实现（grill-confirmation-gate）。
+
+## Building Review 修复（Round 1，`reviews/building-review.md`）
+
+独立审阅 verdict = **CHANGES_REQUESTED**，核心正确性成立（4 次变异全部被测试捕获）。修复：
+
+- **Issue 1（MEDIUM）**：`node_budget` 在**自动插层即撞闸**路径上，`graph_nodes`/`auto_inserted` 反映**已落地**计划（不含被拒层）而 `expanded_nodes` 反映投影，故 `expanded_nodes ≠ graph_nodes + Σ items`（实测 `max_nodes=3` + 20 项：`graph_nodes=2`、`auto_inserted=0`、`expanded_nodes=24`，差额 2 = 被拒自动层）。原 `notes` 与 spec delta 的「计费放大」Scenario 用了**无条件等式**，在这条已实现且已测的路径上不成立 → 构成新的模型误读面。**修复**：`notes` 补一段点明「`graph_nodes`/`auto_inserted` = 已落地、`expanded_nodes` = 投影，以 `headroom` 为准」；spec delta 该条加基线限定 + 新增 Scenario「自动插层即撞闸时基线不同仍如实」；报告层**未改**（核心信号 `headroom<0` 本已正确）。回归测试 `test_node_budget_baseline_differs_when_auto_layer_is_rejected`。
+- **Issue 2（LOW）**：route `gate_count` 只有值断言、缺调用级同源锁（D6 纪律未全覆盖）。**修复**：补哨兵锁 `test_gate_count_reads_the_scheduler_route_counter`（变异验证：改成报告层伪造值 → 变红）。
+- **Issue 3（LOW）**：benchmark smoke 结论缺可复核原始输出。**修复**：收尾阶段补命令与对比摘要（本 change 未触及 benchmark 路径，风险低）。

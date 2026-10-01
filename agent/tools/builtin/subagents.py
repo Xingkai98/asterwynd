@@ -1808,6 +1808,15 @@ def _dry_run_notes() -> list[str]:
         "`headroom` = `limit - expanded_nodes`. So `expanded_nodes` and `graph_nodes` "
         "answer different questions — on a graph that already tripped the gate, `headroom` "
         "goes NEGATIVE (the graph is over the line).",
+        "Reading `node_budget` on a TRIPPED graph: `graph_nodes` and `auto_inserted` "
+        "describe the plan that actually LANDED, while `expanded_nodes` is the projection "
+        "of a fully-expanded graph. When the gate rejects the graph at the auto-merge step "
+        "those merge layers never land, so `expanded_nodes` can exceed "
+        "`graph_nodes + sum(foreach items)` by exactly those rejected layers (e.g. 2 "
+        "declared + 20 items that wanted 2 merge layers reports graph_nodes=2, "
+        "auto_inserted=0, expanded_nodes=24). Trust `headroom` (the margin) over "
+        "reconstructing it from `graph_nodes`; `expanded_nodes` is the authoritative "
+        "billing size.",
         "A route node's entry carries its effective `max_routes` and `gate_count` — the "
         "count the max_routes gate actually uses. Note the existing `runs` field is "
         "structurally 0 for a route (a route runs no model); `gate_count` is the number to "

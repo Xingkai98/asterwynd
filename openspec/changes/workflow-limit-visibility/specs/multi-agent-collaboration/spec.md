@@ -32,7 +32,8 @@
 报告 SHALL 额外暴露**结构闸（structural gates）**的可见性，使调用方在预演拓扑的同时能判断离闸距离，SHALL NOT 只给一个跑通/跑不通的结论：
 
 - 报告 SHALL 含一个**结构闸生效值**字段，覆盖 `recursion_limit` / `max_nodes` / `max_runs`，每项 SHALL 以 `declared` / `applied` / `clamped` 三段式给出，且 SHALL 与系统其余对外报限制值的出口**同源同形**（SHALL NOT 在报告层基于 spec 重算）；
-- 报告 SHALL 含一个**节点预算**字段，以 `declared`（声明节点数）/ `graph_nodes`（执行计划的图节点数，含系统自动插入层、**不含** foreach 展开项）/ `expanded_nodes`（**闸门等价投影**：图节点数 + 各 foreach 展开项数，即闸门 `max_nodes` 实际计数的口径）/ `auto_inserted`（系统自动插入的节点数）/ `limit`（`max_nodes` 的生效值）给出，SHALL 让调用方不必自行清点即可看出自动插层与 foreach 展开把计费规模放大了多少。`expanded_nodes` SHALL 与闸门据以判定 `max_nodes` 超限的计费口径同源，SHALL NOT 只数图节点（后者会漏掉 foreach 展开项、在撞闸图上给出**正**余量）；
+- 报告 SHALL 含一个**节点预算**字段，以 `declared`（声明节点数）/ `graph_nodes`（**已落地**执行计划的图节点数，含系统自动插入层、**不含** foreach 展开项）/ `expanded_nodes`（**闸门等价投影**：闸门 `max_nodes` 若把这张图展开完会数到的计费规模）/ `auto_inserted`（**已落地**的系统自动插入节点数）/ `limit`（`max_nodes` 的生效值）/ `headroom`（`limit - expanded_nodes`，可为负）给出，SHALL 让调用方不必自行清点即可看出自动插层与 foreach 展开把计费规模放大了多少。`expanded_nodes` SHALL 与闸门据以判定 `max_nodes` 超限的计费口径同源，SHALL NOT 只数图节点（后者会漏掉 foreach 展开项、在撞闸图上给出**正**余量）。`graph_nodes` 与 `auto_inserted` 反映**已落地**的计划，`expanded_nodes` 反映**展开完成后**的投影，两者基线不同——当闸门在自动插层处拒绝（该层从未落地）时 `expanded_nodes` 可大于 `graph_nodes + Σ foreach 展开项`，差额即被拒的自动层；报告 SHALL 让调用方以 `headroom` 为准判断余量，SHALL NOT 要求其用 `graph_nodes` 反推 `expanded_nodes`；
+- 报告 SHALL NOT 出现「`expanded_nodes` 恒等于 `graph_nodes + Σ foreach 展开项`」这类无条件等式陈述，因为它在「自动插层即撞闸」路径上不成立；若给出该关系，SHALL 附带成立条件（无被拒自动层时）；
 - route 节点的条目 SHALL 含该节点的生效 `max_routes`，以及**闸门实际使用的**累计计数（SHALL 与调度器据以判定 `max_routes` 超限的计数同源，SHALL NOT 用另一个口径的计数）；
 - 当模拟因**结构闸**中止时，报告 SHALL 附**结构化诊断**（至少含闸名与生效上限），其字段形状与挂载方式 SHALL 与真实运行中**模型可见的**诊断出口一致，SHALL NOT 把闸门原因只留在散文式的告警文本里。
 
@@ -118,9 +119,18 @@
 - **GIVEN** 一张声明节点数为 N、含 foreach 节点（展开出若干项）、且扇入宽度可能触发系统自动插入汇合层的图
 - **WHEN** 调用 `DryRunWorkflow`
 - **THEN** 报告的节点预算字段 SHALL 给出 `declared` / `graph_nodes` / `expanded_nodes` / `auto_inserted` / `limit` 各值
-- **AND** `expanded_nodes` SHALL 等于 `graph_nodes` 加该图所有 foreach 节点的展开项数之和
+- **AND** `expanded_nodes` SHALL 等于 `graph_nodes` 加该图所有 foreach 节点的展开项数之和（此时自动层已落地）
 - **AND** 当展开项数大于 0 时 `expanded_nodes` SHALL 严格大于 `graph_nodes`
 - **AND** 调用方 SHALL NOT 需要自行清点节点才能得出「闸门实际会计费多少」
+
+#### Scenario: 自动插层即撞闸时基线不同仍如实
+
+- **GIVEN** 一张在**自动插入汇合层**这一步就超出 `max_nodes` 的图（该自动层从未落地）
+- **WHEN** 调用 `DryRunWorkflow`
+- **THEN** `graph_nodes` 与 `auto_inserted` SHALL 反映**已落地**的计划（不含被拒层）
+- **AND** `expanded_nodes` SHALL 反映展开完成后的计费投影（含被拒层）
+- **AND** `expanded_nodes` SHALL NOT 被要求等于 `graph_nodes + Σ foreach 展开项`
+- **AND** `headroom` SHALL 为负，调用方据此判定已超限
 
 #### Scenario: 撞闸图上节点预算不报正余量
 
