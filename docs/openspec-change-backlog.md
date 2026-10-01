@@ -108,6 +108,14 @@
 
 ## 未实现队列
 
+### 第十七批：workflow 闸门可见性与上限重估（#273 follow-up）
+
+**串行依赖**：#275 是 #276 的**硬前置**——先让结构闸的生效值/余量在 dry run 报告与工具描述里可见，再据一轮真实 LLM 验收的实测（哪些闸真 binds、余量多少、展开系数多少）重定默认值。**#276 不得在 #275 完成前进入实现**，否则会重蹈 #196 凭感觉调值的覆辙。
+
+- `workflow-limit-visibility`（issue #275）：**立项完成，待 grill 与实现**。动机：#273 `DryRunWorkflow` 让模型能零成本预演**拓扑与数据流**，但报告**不暴露结构闸**——模型看不见生效上限、看不见声明图展开后的规模、看不见 route 的 `max_routes`，撞闸原因也只在散文式 `warnings[]` 里。实测缺口（`research/gap_probe.py` / `research/gate_trip_probe.py`）：**G1** dry run 报告顶层无任何 `limits` 字段；**G2** 声明 3 节点 → 展开 5 节点（2 个 `__auto_agg__`）却无顶层汇总；**G3** route 条目不含 `max_routes`；**G4** `DeclareWorkflow` 描述（4109 字符）不提图级三闸默认值；**G5** dry run 撞 `max_nodes` 时无 `limits` 无 `diagnostics`，而**真实运行的** `status()`/`_envelope()` 两者都有——**dry run 是唯一漏掉这两个字段的出口**。核心设计论证：**机制早已存在**（`scheduler.py:456` 的 `limits_report(spec, ceiling)` 已接进 `status()` / `_envelope()` / 资产加载**三个**出口），本 change 主要是**把一个既有机制接到漏掉的第四个出口**，遵守「唯一数据源」纪律（不在报告层重算任何闸值）。实现预期**零改 `scheduler.py`**（只读既有 `_plan`/`_states`/`_route_counts`/`_diagnostics`/`_eff_limit`）。spec delta：MODIFIED 2 条（模拟执行 Requirement 增结构闸可见性条款 + `DeclareWorkflow` 描述条款增三闸默认值披露）。research_tier = full。分支 `workflow-limit-visibility/2026-10-01`。
+
+- `workflow-limit-raise`（issue #276）：**blocked-by #275，不进入实现**。动机：#273 之后模型能画更大的图（实测 17 节点 / 27 边），用户判断「上限值应该再提升一些」。**但原始验收显示默认值一次都没卡住人**——`max_nodes` 200（实测最大 17，8.5%）、`max_runs` 300（实测 5–7）；真正撞闸的两次（run 2 的节点级 `max_tokens: 300`、run 3 的 `recursion_limit: 80`）**都是模型自己设低的**。**唯一有前瞻风险的是 `max_nodes`**（声明节点数 ≠ 运行时节点数，foreach 展开 + 自动插层实测放大 2 倍）。**约束**：`recursion_limit` 默认 100 与 `max_routes` 默认 1 被 spec 明文钉死（`multi-agent-collaboration` spec 第 125 / 411 行），改它们必须先走本 change。定值依据必须来自 #275 落地后的实测，**不得凭感觉调**。预计 change id `workflow-limit-raise`。
+
 ### 3. `add-minimal-tui-runtime-view`
 
 状态：未实现。

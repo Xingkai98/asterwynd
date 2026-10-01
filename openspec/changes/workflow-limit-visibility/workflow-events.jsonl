@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "workflow-limit-visibility", "artifact_path": "docs/openspec-change-backlog.md", "reason": "新增第十七批条目：workflow-limit-visibility（#275，立项完成待 grill/实现）与 workflow-limit-raise（#276，blocked-by #275，不进入实现）。记录 #275 的五处实测缺口（G1-G5）、核心设计论证（机制早已存在、只差第四个出口）与串行依赖关系。", "approved_by": "main-session"}
