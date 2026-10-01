@@ -110,11 +110,9 @@
 
 ### 第十七批：workflow 闸门可见性与上限重估（#273 follow-up）
 
-**串行依赖**：#275 是 #276 的**硬前置**——先让结构闸的生效值/余量在 dry run 报告与工具描述里可见，再据一轮真实 LLM 验收的实测（哪些闸真 binds、余量多少、展开系数多少）重定默认值。**#276 不得在 #275 完成前进入实现**，否则会重蹈 #196 凭感觉调值的覆辙。
+**串行依赖**：#275 是 #276 的**硬前置**——已由 #275 兑现（见下），#276 的定值依据现已就绪。
 
-- `workflow-limit-visibility`（issue #275）：**立项完成，待 grill 与实现**。动机：#273 `DryRunWorkflow` 让模型能零成本预演**拓扑与数据流**，但报告**不暴露结构闸**——模型看不见生效上限、看不见声明图展开后的规模、看不见 route 的 `max_routes`，撞闸原因也只在散文式 `warnings[]` 里。实测缺口（`research/gap_probe.py` / `research/gate_trip_probe.py`）：**G1** dry run 报告顶层无任何 `limits` 字段；**G2** 声明 3 节点 → 展开 5 节点（2 个 `__auto_agg__`）却无顶层汇总；**G3** route 条目不含 `max_routes`；**G4** `DeclareWorkflow` 描述（4109 字符）不提图级三闸默认值；**G5** dry run 撞 `max_nodes` 时无 `limits` 无 `diagnostics`，而**真实运行的** `status()`/`_envelope()` 两者都有——**dry run 是唯一漏掉这两个字段的出口**。核心设计论证：**机制早已存在**（`scheduler.py:456` 的 `limits_report(spec, ceiling)` 已接进 `status()` / `_envelope()` / 资产加载**三个**出口），本 change 主要是**把一个既有机制接到漏掉的第四个出口**，遵守「唯一数据源」纪律（不在报告层重算任何闸值）。实现预期**零改 `scheduler.py`**（只读既有 `_plan`/`_states`/`_route_counts`/`_diagnostics`/`_eff_limit`）。spec delta：MODIFIED 2 条（模拟执行 Requirement 增结构闸可见性条款 + `DeclareWorkflow` 描述条款增三闸默认值披露）。research_tier = full。分支 `workflow-limit-visibility/2026-10-01`。
-
-- `workflow-limit-raise`（issue #276）：**blocked-by #275，不进入实现**。动机：#273 之后模型能画更大的图（实测 17 节点 / 27 边），用户判断「上限值应该再提升一些」。**但原始验收显示默认值一次都没卡住人**——`max_nodes` 200（实测最大 17，8.5%）、`max_runs` 300（实测 5–7）；真正撞闸的两次（run 2 的节点级 `max_tokens: 300`、run 3 的 `recursion_limit: 80`）**都是模型自己设低的**。**唯一有前瞻风险的是 `max_nodes`**（声明节点数 ≠ 运行时节点数，foreach 展开 + 自动插层实测放大 2 倍）。**约束**：`recursion_limit` 默认 100 与 `max_routes` 默认 1 被 spec 明文钉死（`multi-agent-collaboration` spec 第 125 / 411 行），改它们必须先走本 change。定值依据必须来自 #275 落地后的实测，**不得凭感觉调**。预计 change id `workflow-limit-raise`。
+- `workflow-limit-raise`（issue #276）：**前置已就绪，待立项**。**#275 已落地并给出实测输入**：本 change 的 N=3 验收（`openspec/changes/archive/2026-10-01-workflow-limit-visibility/reviews/acceptance-evidence.md`）显示模型实际画的图**余量极大**——三次 `max_nodes` headroom 分别为 **192 / 191 / 191**（`limit=200`），`expanded_nodes` 5–9；即默认 200 远未逼近（用掉 2.5%–4.5%）。**这直接支持「暂不需要为常规图提升 max_nodes」**，与 #276 立项时的假设（「模型会画更大的图所以该提上限」）相反——**实测不支持「都该提」**。**唯一仍有前瞻风险的是 `max_nodes` 的展开系数**（声明 ≠ 运行时；Run 3 实测 `declared=5 → expanded_nodes=9`，foreach 展开 1.8×），若未来出现超大 foreach 图才可能逼近。**约束**：`recursion_limit` 默认 100 与 `max_routes` 默认 1 被 spec 明文钉死（`multi-agent-collaboration` spec 第 125 / 411 行），改它们必须先走本 change。**建议**:按实测将 #276 降级为「仅在实测出现逼近闸门的图时再立项」，或直接以本证据评估后关闭。research_tier 待立项时判。
 
 ### 3. `add-minimal-tui-runtime-view`
 

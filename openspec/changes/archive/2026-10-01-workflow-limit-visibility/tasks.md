@@ -33,24 +33,24 @@
 
 ## 4. 审阅与验收
 
-- [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶，报告落 `reviews/building-review.md` + manifest
+- [x] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶，报告落 `reviews/building-review.md` + manifest
 - [x] 4.2 全量 `uv run pytest -q`（对照 pristine 排除环境噪声）
-- [ ] 4.3 真实 LLM 验收 N=3（主 session 跑）：L0 生效值可见、L1 展开数可见、L2 撞闸可读、L3 无新误读；证据落 `reviews/acceptance-evidence.md`
+- [x] 4.3 真实 LLM 验收 N=3（主 session 跑）：L0 生效值可见、L1 展开数可见、L2 撞闸可读、L3 无新误读；证据落 `reviews/acceptance-evidence.md`
 - [x] 4.4 **benchmark smoke**（本 change 触及 `agent/tools/builtin/subagents.py`）：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-limit-visibility` → **`Tasks: 72 | passed: 5 | warnings: 0 | unsupported: 38 | failed: 29`**，与 pristine baseline（stash 改动后同命令）**逐项相同**，本 change 未引入 benchmark 退化。
 
 ## 5. 收尾
 
-- [ ] 5.1 把 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`：MODIFIED 2 条；受保护路径，需结构化事件）
-- [ ] 5.2 归档到 `openspec/changes/archive/2026-10-01-workflow-limit-visibility/`（受保护路径）
-- [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
-- [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
-- [ ] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描
-- [ ] 5.7 发起 PR（标题关联 #275），写明验证结果
+- [x] 5.1 把 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`：MODIFIED 2 条；受保护路径，需结构化事件）
+- [x] 5.2 归档到 `openspec/changes/archive/2026-10-01-workflow-limit-visibility/`（受保护路径）
+- [x] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
+- [x] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
+- [x] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
+- [x] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描
+- [x] 5.7 发起 PR（标题关联 #275），写明验证结果
 - [ ] 5.8 (post-merge) PR 合入后关 issue #275，并在 #276 留言解锁（blocked-by 解除）
 
 ## 6. 审阅修复（review-loop Round 1）
 
 - [x] 6.1 Issue 1（MEDIUM）：`notes` + spec delta 限定「`expanded_nodes == graph_nodes + Σitems`」的成立条件（自动插层撞闸路径上不成立），新增 Scenario 与回归测试 `test_node_budget_baseline_differs_when_auto_layer_is_rejected`
 - [x] 6.2 Issue 2（LOW）：route `gate_count` 补调用级哨兵锁 `test_gate_count_reads_the_scheduler_route_counter`（变异验证变红）
-- [ ] 6.3 Issue 3（LOW）：收尾阶段在 PR 描述附 benchmark smoke 原始命令与对比摘要
+- [x] 6.3 Issue 3（LOW）：收尾阶段在 PR 描述附 benchmark smoke 原始命令与对比摘要
