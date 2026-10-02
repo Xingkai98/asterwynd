@@ -1,41 +1,54 @@
 # context-engineering spec delta: Read 工具默认输出上界
 
-## MODIFIED Requirements
+## ADDED Requirements
 
-### Requirement: Pagination Progress Preservation
+### Requirement: Read 默认输出有界
 
-The Read tool SHALL support pagination with `(file, offset, total)` progress, and the context system SHALL persist this progress in the summary before compaction.
+The Read tool SHALL, when invoked **without an explicit `limit`**, apply a **default output bound** so a single read cannot return an unbounded file into the context. This SHALL cover every path that omits an explicit `limit`: a plain read (no `limit`/`offset`), a read with `offset` but no `limit`, and a read with `limit` explicitly set to `0` — none of these SHALL return the whole file unbounded.
 
-The Read tool SHALL, **when invoked without explicit `limit`/`offset`**, apply a **default output bound**: it SHALL return at most a bounded number of leading lines and, when the file exceeds that bound, SHALL append a progress note stating the offset read and the file's total line count so the caller can continue reading. SHALL NOT return an unbounded full file by default.
+The bound SHALL constrain **both** dimensions: a default maximum number of lines **and** a default maximum byte size, whichever is reached first. A file exceeding the bound SHALL be returned as an at-most-bound prefix accompanied by a **progress note that explicitly states the content was truncated and gives the offset at which to continue**. A file within the bound SHALL be returned in full.
 
-When the file does **not** exceed the default bound, the Read tool SHALL return the file content in full, byte-for-byte identical to reading without a bound.
+When `limit` is explicitly a positive integer, the Read tool SHALL behave as before (the default bound SHALL NOT apply, the caller controls the size).
 
-When the caller passes explicit `limit`/`offset`, the Read tool SHALL behave as before (the default bound SHALL NOT apply). The default bound SHALL be a defined, non-magic constant.
-
-#### Scenario: large file pagination preserved
-
-- Given a large file being read in pages
-- When the context is compacted
-- Then the summary persists `(file, offset, total)` progress
-- And the read can resume from the saved offset
+The progress note's `total` SHALL always be the file's total line count, independent of `offset`. The progress note SHALL remain parseable by the component that extracts read progress for compaction; any change to the note's format SHALL be mirrored in that component.
 
 #### Scenario: oversized file is bounded by default
 
-- **GIVEN** a file whose line count exceeds the default output bound
-- **WHEN** the Read tool is invoked with only `path` (no `limit`/`offset`)
-- **THEN** the returned content SHALL be at most the default bound's leading lines
-- **AND** the result SHALL carry a progress note with the file's total line count
-- **AND** SHALL NOT return the unbounded full content
-
-#### Scenario: small file is returned in full
-
-- **GIVEN** a file whose line count is within the default output bound
+- **GIVEN** a file whose line count exceeds the default line bound
 - **WHEN** the Read tool is invoked with only `path`
-- **THEN** the returned content SHALL be byte-for-byte identical to the file's full content
-- **AND** SHALL NOT be truncated
+- **THEN** the returned content SHALL be at most the default bound's leading lines
+- **AND** the result SHALL carry a progress note that explicitly states truncation and the offset at which to continue
 
-#### Scenario: explicit pagination unchanged
+#### Scenario: few-but-huge-line file is bounded by bytes
+
+- **GIVEN** a file whose line count is within the default line bound but whose byte size exceeds the default byte bound (e.g. a minified or single-line-huge file)
+- **WHEN** the Read tool is invoked with only `path`
+- **THEN** the returned content SHALL be bounded by the byte bound
+- **AND** SHALL NOT return the whole file
+
+#### Scenario: `limit=0` does not bypass the bound
+
+- **GIVEN** a file larger than the default bound
+- **WHEN** the Read tool is invoked with `limit` explicitly `0` (and no positive limit)
+- **THEN** the result SHALL NOT be the unbounded full content
+- **AND** the default bound SHALL apply
+
+#### Scenario: offset without an explicit limit stays bounded
 
 - **GIVEN** a large file
-- **WHEN** the Read tool is invoked with explicit `limit` or `offset`
+- **WHEN** the Read tool is invoked with an `offset` but no explicit `limit`
+- **THEN** the returned content SHALL be bounded (SHALL NOT read to end-of-file unbounded)
+- **AND** the progress note SHALL give the offset at which to continue
+
+#### Scenario: file within the bound is returned in full
+
+- **GIVEN** a file whose line count and byte size are both within the default bound
+- **WHEN** the Read tool is invoked with only `path`
+- **THEN** the returned content SHALL be byte-for-byte identical to the current unbounded output
+- **AND** SHALL NOT be truncated
+
+#### Scenario: explicit positive limit is unchanged
+
+- **GIVEN** a large file
+- **WHEN** the Read tool is invoked with explicit positive `limit` (with or without `offset`)
 - **THEN** the behavior SHALL be unchanged from before this bound was introduced

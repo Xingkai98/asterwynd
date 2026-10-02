@@ -28,54 +28,77 @@
 
 ## Decisions
 
-### D1 — 默认上界：**行数**为主，`≤ 上界则全文返回**
+### D1 — 默认上界：**行数为主 + 字节兼底**，`≤ 界则全文返回`
 
-无 `limit`/`offset` 时，`Read` 默认返回**首个 N 行**（N = 默认上界常量，缺省 **2000 行**）：
-- `total ≤ N` → **逐字节返回全文**（现状不变，覆盖实测中位 107 / 90 分位 540 的绝大多数文件）；
-- `total > N` → 返回首 N 行 + `[ReadProgress file=...; offset=0; total=M]`。
+**无显式 `limit` 时**（含无参数、`limit=None`、以及 `offset` 无 `limit` 续读三条路径），`Read` 默认返回**首个 N 行**（N = 默认上界常量，缺省 **2000 行**）：
+- **行数 ≤ N 且 字节 ≤ B** → **返回全文**（与当前无界输出逐字节相同；覆盖实测中位 107 / 90 分位 540 的绝大多数文件）；
+- **行数 > N** → 返回首 N 行 + 显式进度注记（见 D2）；
+- **行数 ≤ N 但字节 > B**（少行超长行，如 minified/大 JSON）→ 也截断 + 注记。
 
-**取值依据**：`opencode` 用「行数或字节取先到者」；本 change 先用**行数**（与既有 `limit` 语义一致，最小改动）。2000 行 ≈ 覆盖 `agent/` 90 分位文件（540 行）的 3.7 倍——**只有真正的大文件（如 3196 行的 scheduler.py）会被截**。字节维度是否同时加，见 Open Questions。
+**取值依据（经 grill + 对抗验证）**：
+- **N = 2000 行**：两个独立参考实现（`pi` `truncate.ts:11`、`opencode` tool-output-store）的**共同默认**，保留；
+- **B = 128KB**：**不用 50KB**——实测会误截 5 个核心文件（`config.py` 71K / `manager.py` 72K / `loop.py` 71K / `main.py` 58K / `command_guard.py` 53K，行数都 ≤2000、本该全文读）。128KB 远高于任何核心文件（最大 72KB），**只兜「少行超长行」**（如 1 行 4MB）。
 
-> **待 grill 确认**：默认上界取值（2000？）；是否同时约束字节（opencode 是「行数 **或** 字节」）；上界是否可配置。
+### D2 — 超界时的注记与续读：**显式**（不静默）
 
-### D2 — 超界时的注记与续读：**复用既有 `[ReadProgress]` 格式**
+注记 SHALL **显式**说明「已截断」并**给出 next offset**（符合 #248/#275「截断必须显式可见」纪律），形如 `[ReadProgress file=...; offset=0; total=M; truncated=true]` + 可行动提示（`continue with offset=N`）。
 
-**不加新标记**——直接复用 `offset` 路径已用的 `[ReadProgress file=...; offset=0; total=M]`。模型读到 `total > 返回行数` 即知可续读（传 `offset=N`）。**与既有分页语义、与 `context-engineering` 的 Pagination Progress Preservation 完全一致**。
+**`truncated=true` 的坐实依据**：`_READ_PROGRESS_RE`（`memory/manager.py:21`）右端锚定 `total=(\d+)\]`——**在其后加字段会静默失配**（返回 `None`、不报错），导致 summary 续读提示无声消失。因此**改注记格式 SHALL 同步改该正则**（双模块契约），并补**跨模块测试**。
 
-> **待 grill 确认**：`offset=0` 语义（表示「读了开头」）是否清晰？是否要额外一句可行动提示（如「传 offset=2000 续读」）？
+### D3 — 小文件与「逐字节」口径修正（回归红线）
 
-### D3 — 小文件逐字节不变（回归红线）
-
-`total ≤ N` 时 `return content`（**逐字节等于现状**）。这是**防回归红线**：绝大多数文件（实测中位 107 行）走这条路径，行为必须与改动前**完全一致**——否则会波及大量依赖 `Read` 的测试与真实使用。
+`行数 ≤ N 且 字节 ≤ B` 时返回全文。**口径修正（经对抗验证）**：spec/design 早先写「逐字节等于**文件**」**字面为假**——`Read` 走 `p.read_text(errors="replace")`（`read.py:88`）+ 换行归一化，**今天就已把 CRLF→LF、非 UTF-8→替换字符**（对所有文件、包括全文路径）。故红线改述为「**与当前无界输出逐字节相同**」（回归-vs-现状），而非「与文件相同」。
 
 ### D4 — 图片路径不变
 
 `.png`/`.jpg`/... → `_read_image`（返回 `ContentBlock`）分支**不动**。图片的驻留问题（base64 单张可达 MB 级、绕过 token 计量）是 #280 对抗验证列出的**独立问题**，不在本 change（见 Non-Goals）。
 
-### D5 — 显式 `limit`/`offset` 行为不变
+### D5 — 逃逸面封堵（`limit=0`、`offset` 无 limit）
 
-模型显式传参时，完全走既有逻辑。本 change **只改「无参数」这一支**的默认。
+**经对抗验证发现的两个绕过口子，本 change 一并堵**：
+- **`limit=0`**：`if limit:` 对 0 为假 → `Read(path, limit=0)` **返回全文**（实测 43889 字节），`Read(offset=0, limit=0)` 读到 EOF。修法：用 **`limit is not None`** 语义（0 也当显式值处理，按 0 行 + 注记，绝不落全文）；
+- **`offset` 无 `limit`**：`read.py:98` `end = (start+limit) if limit else None` → `Read(path, offset=2000)` 无 limit **读到 EOF**（实测 146 万字节）。修法：`offset` 路径在无显式 `limit` 时**也施加默认界**（+ 注记给 next offset）。
+
+### D6 — 续读进度不被默认读覆盖（修既有 bug）
+
+`memory/manager.py` 的 `_extract_read_progress` 是**每文件 last-wins**：默认读发出的 `offset=0` 注记会**覆盖**模型先前显式分页到的真实 offset（实测：先 `offset=2000` 后 `offset=0` → hint 回退为 `0`，summary 建议「从头续读」）。
+
+修法：让 hint **区分「默认截断的 offset=0」与「显式分页的 offset」**——仅「真正的分页读」才算续读进度，或给注记一个标记字段区分来源。**不得**让默认截断的 `offset=0` 覆盖真实的续读进度（否则直接违反 `context-engineering` 的 Pagination Progress Preservation 意图）。
+
+> **待 grill 确认**：标记来源的具体形态（新字段 vs 在 manager 侧按行数推断）。
+
+### D7 — `total` 语义钉死
+
+注记中的 `total` **恒为文件总行数**，与 `offset` 无关（不是剩余行数）——spec/design 显式钉死，避免改造中被误解。
 
 ## Risks / Trade-offs
 
 | 风险 | 缓解 |
 |---|---|
-| **大文件被截，模型第一次读不到全部** | 进度注记让它知道并可续读；上界 2000 行对实测 90 分位（540 行）无影响。 |
-| **有些文件本就需要一次全文**（如小配置） | ≤ 2000 行不截——绝大多数文件走全文路径。 |
-| **模型可能忽略进度注记** | 注记沿用既有格式（`offset` 路径已在用，模型已见过）；R2 验收「返回体含 `[ReadProgress]` 且 `total > 上界`」。 |
-| **本 change 治不了累积 → E0 峰值可能降得不够** | **这是预期的**——E0 只作对照、不设门槛；降得不够正是「A 必须做」的数据。 |
-| **默认上界太小伤大文件任务** | 取值 2000 行（覆盖 90 分位 3.7×）；可配置；grill 可调。 |
+| **大文件被截，模型第一次读不到全部** | 注记**显式**说明截断 + 给 next offset（D2）；上界 2000 行对实测 90 分位（540 行）无影响。 |
+| **尾部内容丢失**（head-only 截断固有代价——文件尾常是关键如 `if __name__`/导出注册表） | next offset 指引让模型能续读到尾；若实测证明不够，考虑 head+tail 采样（本轮不做，记 debt）。 |
+| **字节界误截核心文件** | 已避开：B=128KB 远高于最大核心文件 72KB（50KB 方案已否决）。 |
+| **注记格式改动打断 summary 续读** | 双模块契约：改 `read.py` 必须同步 `_READ_PROGRESS_RE` + 跨模块测试（D2）。 |
+| **默认读覆盖真实续读进度**（既有 bug） | D6 修：`offset=0` 默认截断不覆盖显式分页进度。 |
+| **模型可能忽略进度注记** | 注记**显式**（不再是隐式「返回行数 < total」）；R2 验收断言注记含 `truncated` 与 next offset。 |
+| **本 change 治不了累积 → E0 峰值可能降得不够** | **这是预期的**——E0 只作对照、不设门槛；降得不够正是「A 必须做」的数据。补确定性字节界单测做 CI 回归。 |
+| **`limit` 是正 `None`/`0` 的语义混淆** | D5 用 `limit is not None` 显式区分；`limit=0` 单测锁定。 |
 
 ## Testing Strategy
 
 - **新增** `tests/agent/tools/test_read_output_bound.py`（或并入既有 read 测试）：
-  - **超上界文件** → 返回首个 N 行 + `[ReadProgress]`（`total` 正确 = 文件总行数）；
-  - **≤ 上界文件** → **逐字节等于全文**（回归红线 D3）；
-  - **显式 `limit`/`offset`** → 行为与改动前一致；
+  - **超行上界文件** → 返回首个 N 行 + 显式截断注记（`total` = 文件总行数，`truncated=true`）；
+  - **少行超长行**（1 行 4MB）→ 被字节界截（D1 的 B）；
+  - **`limit=0`** → **不返回全文**（D5 逃逸面）；
+  - **`offset` 无 `limit`** → 有界（不到 EOF）（D5 逃逸面）；
+  - **≤ 界的文件** → **与当前无界输出逐字节相同**（回归红线 D3，口径修正）；
+  - **显式正 `limit`** → 与改动前一致；
   - **图片路径** → 不变（返回 `ContentBlock`）；
-  - **边界**：恰好 N 行、N+1 行。
-- **回归**：`tests/agent/tools/` 全部；既有分页测试。
-- **端到端（对照）**：#278 复现器缩比版，如实记录 RSS 峰值对比基线（**不设门槛**）。
+  - **边界**：恰 N 行、N+1 行、恰 B 字节、B+1 字节。
+- **新增（跨模块契约）**：注记格式改动后 `_READ_PROGRESS_RE` 仍能解析（`truncated=true` 不被右锚定吃掉）——`read.py` 与 `memory/manager.py` 双模块测试。
+- **新增**：D6——默认读的 `offset=0` 注记**不覆盖**真实的显式分页进度（last-wins 不回退）。
+- **回归**：`tests/agent/tools/` 全部；`tests/agent/tools/test_read_doc_and_pagination.py`（注意 `test_offset_without_limit_reads_to_eof` 与新界语义的关系——经核实该测试用 50 行小文件，仍通过）。
+- **端到端（对照）**：#278 复现器缩比版，如实记录 RSS 峰值对比基线（**不设门槛**）；补一条**确定性字节界单测**做 CI 回归（E0 本身无法进 CI）。
 
 ## Pre-Implementation Review
 
