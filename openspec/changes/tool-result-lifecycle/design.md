@@ -38,44 +38,69 @@
 
 ## Decisions
 
-### D0 — 验收主指标是 **GC 不变量**，不是 RSS
+### D0 — 验收主指标是 **GC 不变量**，不是 RSS（测试形态已由对抗验证定）
 
-本 change 的**机械可验**判据是：spill/bounded 后，原工具结果全文**不再被任何池子强引用**——用 `weakref.ref(big)`（断言回 `None`）或 `gc.get_referrers`（断言无三持有容器）锁。
+本 change 的**机械可验**判据是：spill/bounded 后，原工具结果全文**不再被任何池子强引用**。
 
 **为什么不是 RSS**：RSS 受解释器内存池、并发邻居、采样时机影响（#278 实测本机是共享 cgroup）；把 RSS 当唯一判据会让「机制做对了但 RSS 降幅不显著」误判为失败。**GC 不变量是机制正确性的直接证明**，RSS（E0）作对照观测。
 
-> **待 grill 确认**：GC 不变量的测试如何避免 flaky（`gc.get_referrers` 会看到测试自身的引用；`weakref` 对 str **不可用**——str 不支持弱引用，须换用容器对象或 `gc` 可达性）。这是**实现难点**，见 Risks。
+**测试形态（经对抗验证实测敲定）**：
+- **主手段 = `str` 子类弱引用**：`weakref.ref(str)` 抛 `TypeError`，但 **`class _WeakStr(str)` 的子类可弱引用**（实测；且 `bytes` 子类仍不可，选型正确）。因它是 `str`，生产代码的所有 `isinstance(x, str)`/`startswith`/`extract_text` 路径**行为等价**，无需 mock 管线。测试让 fake 工具返回唯一的大 `_WeakStr`，持 `weakref.ref`。
+- **硬约束（对抗验证实测，务必遵守）**：`dataclasses.asdict` 与 `copy.deepcopy` 对 **`str` 子类实例会复制**（返回新对象），对**普通 `str` 返回同一对象**。而 `run.trace = trace.to_dict()`（`subagent/manager.py:1349` 等）走 `asdict` ⇒ 测试用 `_WeakStr` 时，**`run.trace` 持的是副本、不是原对象**。⇒ **只断言「弱引用回 None」的测试会「假通过」**（原对象被 messages+tcm 释放后弱引用回 None，但 trace 副本可能仍是全文）。**测试 MUST 显式断言内存态 `trace.steps[*].data["observation"]`（`record_tool_result` 直接存对象、`is` 同对象）与 `tool_calls_made[*].result` 均已 bounded**，不能只靠弱引用。
+- **兜底**：`gc.get_referrers` 断言无三持有容器——仅对**大且唯一（非 interned）**串可靠，须与 `_WeakStr` 合用。
 
-### D1 — 统一工具结果入库通道（`loop.py`）
+**生产事实校正**：生产用普通 `str`，`asdict` 返回同对象 ⇒ 生产 trace 与 messages/tcm 确实共享同一对象（事实 1 成立）；`_WeakStr` 造成的引用拓扑分歧**只存在于测试**，故测试须按上条断言内存字段。
 
-三处写入（`messages` / `tool_calls_made` / `trace`）**经同一判定点**：算一次「是否需要 bounded/落地」的决策，应用到三处，保证一致（`_tokens` 重置、标记、度量维度统一）。
+### D1 — 工具结果有界化**两段式**（判定纯函数 + loop 侧注入 store/scope）
+
+**不塞一处**（对抗验证修正：`MemoryManager` 是构造期建的，拿不到 workspace_root，scope id（子 agent 的 `run_id`）只在 `run()` 期才知道）：
+
+1. **bounded 逻辑** = 纯函数（新模块 `agent/memory/tool_result_policy.py`，如 `bound_result(result, *, token_budget, byte_budget) -> (preview, released_bytes)`）：无状态、可单测，由 `loop.py` 在三处写入点调用。
+2. **`messages` 剪枝** = `MemoryManager.prune_tool_results(...)`：只负责「判哪些消息该剪（D3 判据）+ `_tokens=None` 重置」，**不碰 I/O**。
+3. **ref 落盘与 scope** = 由 `loop.py` 在 `run()` 期构造并注入（loop 持 `self._artifact_store`，scope = 根 `session_id` / 子 `run_id`）；`prune_tool_results` 通过注入的回调入 `save(ref, text)`。
 
 **不改变写入顺序/结构**：仍 `messages.append(tool_result_message(id, content))`、`tool_calls_made.append(ToolCallMade(...))`、`record_tool_result(...)`，只是 `content` 由通道决定（全文 / 预览）。
 
-> **待 grill 确认**：通道放在 `loop.py` 内部helper，还是 `MemoryManager` 的方法？trace/tool_calls_made 的 bounded 逻辑与 `messages` 剪枝是否同一处？
-
-### D2 — 三持有者**分离**处理：`messages` 需 ref，`trace`/`tool_calls_made` 只需 bounded
+### D2 — 持有者**分离**处理：`messages` 需 ref，`trace`/`tool_calls_made` 只需 bounded
 
 **决定性区别**：
 - `messages` 的全文**有消费者**（模型当轮/按需推理）→ 需 **spill + ref**（可无损回读）。
-- `trace`/`tool_calls_made` 的全文**无模型面消费者**（D11）→ 只需 **bounded**（预览 + 诚实标记），**不落 ref**。
+- `trace`/`tool_calls_made` 的全文**无模型面消费者** → 只需 **bounded**（预览 + 诚实标记），**不落 ref**。
 
 **为什么不给 trace 也落 ref**：没有消费者按 ref 回读（web/CLI/benchmark 全读截断/前缀），落 ref 只是徒增磁盘与复杂度；benchmark 若要事后全文，那属**另一需求**（可让 benchmark 显式开启 full trace，见 D8）。
 
-> **待 grill 确认**：`ToolCallMade` 的 bounded 会不会影响 benchmark 对工具结果的判定（实测 `agent_runner.py:459` 只 `startswith("[Error")`——bounded 预览仍保留前缀，安全；但需核实 benchmark 是否有别的全文消费）。**这是与 A 方案最大的形态差异，须重点攻。**
+**全文消费者核对表（对抗验证补齐——原 design 只列了 trace/tcm，不完整）**：
+
+| 消费者 | 读什么 | 结论 |
+|---|---|---|
+| `web/session.py:898` | `text[:text_limit]`（截断） | 非全文 |
+| `benchmarks/agent_runner.py:459` | `.startswith("[Error")` | 非全文 |
+| `main.py:656` `_print_tool_call_summaries` | collapsed → preview | 非全文 |
+| `subagent/snapshot.py:79` / `scheduler.py:2315` | 计数 / `status` | 非全文 |
+| `benchmarks/runner.py:661` | 全文落 `trace.json` | **全文**（事后账本）→ D8 开关 |
+| **`web/session.py:1779` ← `loop.py:1029-1037` `on_event("tool_result")`** | **`"result": <全文>` → WebSocket → `web/static/chat.js:932/963` Expand 按钮** | **全文（前端 Expand 数据源）** → **D12（行为回归风险点）** |
+
+**持有者拓扑校正（对抗验证）**：**根 CLI / Web run 根本不创建/传 `trace_recorder`**（`main.py`、`web/session.py` 都不传；`trace_recorder` 只由 `benchmarks/agent_runner.py:424` 与子 agent `subagent/manager.py:1178` 传入）。⇒ **「三持有者」只存在于 benchmark 与子 agent run**；根 CLI/Web run 只有**两持有者**（`messages` + `tool_calls_made`）。这不推翻本 change（两处也要治），但「单做任一处=白做」的论证在根 CLI/Web 场景是「单做 messages 白做（tcm 还持）」。design/spec 措辞**不得**断言所有 run 都有三持有者。
+
+> **待 grill 确认**：`ToolCallMade` 的 bounded 会不会影响 benchmark 对工具结果的判定（实测 `agent_runner.py:459` 只 `startswith("[Error")`——bounded 预览仍保留前缀，安全）。
 
 ### D3 — `messages` spill 时机与判据：**「已消费一轮」∩（滑出窗口 ∪ 单条超阈）**
 
 一个工具结果被剪的条件（**同时**满足）：
 
-1. **已被模型消费过至少一轮**（对抗验证关键修正）：剪枝点在结果产生轮的**末尾**（`loop.py:1047` → `:1056`），模型要到**下一轮 `_call_llm`** 才消费。故**产生当轮不剪**（否则「巨型新鲜结果立即剪」会伤害任务完成、撞 A5）——**记录本轮新增结果，下一轮起才允许剪**。
+1. **已被模型消费过至少一轮**（对抗验证关键修正）：剪枝点在结果产生轮的**末尾**（`loop.py:1047` → `:1056`），模型要到**下一轮 `_call_llm`** 才消费。故**产生当轮不剪**（否则「巨型新鲜结果立即剪」会伤害任务完成、撞 A5）——**记录每个结果入库的 iteration，下一轮起才允许剪**。
 2. **且**满足其一：
    - **滑出近期窗口**（`recent_window`，默认 10 条——**注意是消息条数非轮数**，一条 assistant+tool 对占 2 条，故 window=10 实际覆盖约 5 轮；措辞在 spec/代码须钉死「条」）；
    - **单条超阈**（token 或**字节**，见 D6）。
 
+**「已消费一轮」的实现（对抗验证给出两种，择一，见 Open Q）**：
+- **`added_iteration <= current_iteration - 1`**：匹配「至少一次 `_call_llm` 已发出」——结果在 iteration k 入库、同轮末尾 `_call_llm` 已发一次、k+1 轮再发一次，故 k+1 末尾即可剪。
+- **`added_iteration <= current_iteration - 2`**：更保守（等被消费**两遍**才剪），大结果多常驻一轮，与 D3 降峰目标冲突。
+- **两 append 点（`:854` 错误路径 + `:1047` 正常路径）都必须记 `added_iteration`**——只在正常路径记会让错误路径结果无标记（被立即剪或永不剪）。并行 tool call 同轮同 `added_iteration`，天然覆盖。
+
 **为什么窗口 ∪ 单条，且单条要能独立触发**：只靠窗口 → 单条 200KB 在窗口内每轮全量重发，峰值不降；只靠单条 → 正常结果也剪、伤任务。取或，且**单条判据不受窗口保护**（大结果即使新鲜也要剪）——**但受「已消费一轮」保护**（修正后不会在模型用之前抽走）。
 
-> **待 grill 确认**：单条阈取值（A 推荐 `max_tokens×0.25`）+ 窗口「已消费一轮」的具体实现（`loop.py` 记录本轮新增 set；或给 `Message` 打「产生轮次」标记）。**这是本 change 最核心的待定项。**
+> **待 grill 确认（用户决策）**：单条阈取值（推荐 `max_tokens×0.25` 与 128KB 双判据取先到）＋「已消费一轮」取 `-1` 还是 `-2`。**这是本 change 最核心的待定项。**
 
 ### D4 — agent 通用 ref 存储：复用 `WorkflowStore` 实现，**泛化作用域**；身份**按 agent 类型分**
 
@@ -101,13 +126,29 @@
 
 ### D6 — 度量维度：**token 与字节双维度**，图片纳入字节
 
-**对抗验证核心修正**：图片 `ImageBlock` 在 token 账本上是**固定 1000/张**（`message.py:89-99`），但正文 base64 可达 **MB 级**（`MAX_IMAGE_SIZE=20MB`）——**token 硬顶对图片失效**。故：
+**对抗验证核心修正**：图片 `ImageBlock` 在 token 账本上是**固定 1000/张**（`message.py:89-99`），但正文 base64 可达 **MB 级**（`MAX_IMAGE_SIZE=20MB`）——**token 硬顶对图片失效**。
 
 - 单条阈（D3）与硬顶（D7）SHALL 同时约束 **token 估算** 与 **常驻字节**；
-- 图片结果（`list[ContentBlock]`）SHALL 至少按**字节**纳入判定——**SHALL NOT 因 token 计 1000 就放行 MB 级 base64 常驻**；
-- 图片 spill 策略：图片无法「预览 + 文本 ref 无损回读」（base64 落盘再回读 = 放大）——**待 grill 定**（选项：图片不参与文本 spill 但计入字节预算触发压缩；或图片超阈时转「路径引用」——但图片已有 `file_path`，见 `trace_recorder._sanitize_observation` 已用 `[image: ref]`）。
+- 图片结果（`list[ContentBlock]`）SHALL 至少按**字节**（`len(url)`）纳入判定——**SHALL NOT 因 token 计 1000 就放行 MB 级 base64 常驻**；
 
-> **待 grill 确认**：图片结果的具体策略（A 的「图片不参与 spill」已被对抗验证否决——那会让硬顶对图片密集 run 失效）。**这是 grill 必攻项。**
+**图片持有者校正（对抗验证）**：`trace` 经 `_sanitize_observation`（`trace_recorder.py:131-143`）把图片转成 `[image: path]` 文本 ⇒ **trace 不是图片持有者**；图片的持有者是 `messages` + `tool_calls_made`（二者同对象，实测 `is` 为 True）。
+
+**图片 spill 策略（对抗验证推荐，四管）**：
+1. 字节维度对 `ImageBlock` 计 `len(url)`，纳入单条阈与硬顶；
+2. 图片「预览」复用 trace 既有形态 `[image: <file_path>]`——消费一轮后把 `ImageBlock` 换成该 TextBlock，**字节立即释放，模型必要时可 `Read` 该路径取回像素**（`file_path` 在）；
+3. `file_path is None`（粘贴图）时，把 base64 落 ref store、标 `[image: <ref>]`（字节有界、诚实标注）；
+4. **`MAX_IMAGE_SIZE`（`read.py:18`，20MB/张）与「常驻有界」自相矛盾，须收敛到与常驻预算相容的值**（本 change 至少记此矛盾为待办/或直接收紧）。
+
+### D6b — 覆盖缺口：`arguments` 与 trace 的「非 result」大内容（对抗验证新增）
+
+「工具结果」不止 `result`。以下三处**未被原 design 覆盖**，均持全文：
+- **`tool_calls_made[*].arguments`**（`result.py:17-20`）与 **`messages` 里 assistant 的 `tool_calls[].arguments`**（`message.py:172-176` + `_recent_with_tool_chains` 原样保留 assistant）——一次 `Write` 带 300KB 正文时，`result` 只有状态串，**300KB 在 `arguments` 里**；
+- **trace 的 `tool_call` step**（`loop.py:993` → `trace_recorder.py:100-101` 原样存完整 parsed arguments；`redact_value` 只脱敏密钥、不截断长度）；
+- **trace 的 `record_edit(summary=result)`**（`loop.py:1008`）与 **`record_iteration(assistant_preview=response.content)`**（`loop.py:756`，`assistant_preview` 名义是 preview、实为 `response.content` 全文）。
+
+⇒ **bounded 判据 SHALL 覆盖 `result` 与 `arguments` 两者**；`messages` 侧 assistant `arguments` 至少**计入字节预算**（否则 `Write` 型大参数绕过白名单）。
+
+> **待 grill 确认（用户决策）**：图片结果的具体策略（A 的「图片不参与 spill」已被否决——那会让硬顶对图片密集 run 失效）；`MAX_IMAGE_SIZE` 是否本 change 收紧。**这是 grill 必攻项。**
 
 ### D7 — 压缩硬顶：超硬限**无视 gap 强制压**
 
@@ -115,17 +156,22 @@
 
 **次序**：**先剪枝（D3）→ 再判硬顶 → 超了才强压**（剪完可能已达标，无需压）。
 
-**与 D3 的交互（对抗验证的死结）**：`compact` 的 `_recent_with_tool_chains` **原样保留 recent window 内的大 tool 结果**（事实 6）——若大结果卡在 recent 内，硬顶会**每轮空转**。**解法 = D3 的单条阈**：超阈的大结果被剪，硬顶才有东西可压。
+**与 D3 的交互（对抗验证的死结，定级=高）**：`compact` 的 `_recent_with_tool_chains` **原样保留 recent window 内的大内容**（事实 6）——若大内容卡在 recent 内，硬顶会**每轮空转**（`compact` 只压 `middle`，`middle` 空则 `msgs[:] = system + recent`，尺寸不变、返回 `True`，下轮再压）。**D3 的单条阈解的是 `result`（工具结果）**；但**非工具大内容**（大 user 粘贴 / 大 assistant `arguments` 在 recent 内）**D3 剪不到**（对抗验证 Q-new5）——这是**残余边界**：
+
+- **最小要求**：design 明写此残余边界，**不得**宣称「硬顶 = 常驻有界」在**非工具**主导的 run 上成立；
+- **可选加强**：超硬顶**且剪无可剪**时允许 compact **收缩/驱逐 recent window 本身**（或对 recent 内超大非工具消息做有损截断）——**待 grill/用户定是否本 change 做**。
+
+**同类残余边界（对抗验证）**：后台任务完成输出以 `role=user` 注入（`loop.py:737`，`MAX_OUTPUT_BYTES=64KB`，`background.py:13`）——无 `tool_call_id`，D3 不剪，多后台任务会累积多条 ~64KB user 消息至下次 compact。须在 design 明写为残余边界。
 
 ### D8 — 诚实标记：ref 不存在就不谎称可回读
 
-沿用 `_bounded_summary` 的 `has_ref` 纪律：只有**确实落盘成功**才写「full result in result_ref」；否则写「已截断、全文不可回读」（`[truncated]`）。`trace`/`tool_calls_made` 的 bounded 无 ref，标记 SHALL 如实为「已截断」（不指向 ref）。
+沿用 `_bounded_summary`（`agent/subagent/manager.py:53-80`）的 `has_ref` 纪律：只有**确实落盘成功**才写「full result in result_ref」；否则写「已截断、全文不可回读」（`[truncated]`）。`trace`/`tool_calls_made` 的 bounded 无 ref，标记 SHALL 如实为「已截断」（不指向 ref）。
+
+**与 spill 成对启用（对抗验证 Q-new2，定级=中）**：**溢出前门控「回读工具是否已注册」**（`tool_registry.get_tool("ReadWorkflowResult")`）——不可回读时**不 spill**（或 spill 但如实标 `[truncated]`、不指向 ref），否则违反 spec「SHALL NOT 声称存在可读的 ref」。**注意**：生产 4 个入口（CLI/Web/子 agent/benchmark）**都**传 `expose_subagent_tools=True`，默认 `False` 只在单测 ⇒ 生产可达性低，防御性设计即可。
 
 ### D9 — spill 可观测（不静默），沿用 #275/#279 纪律
 
-spill/bounded 的**发生次数与字节数** SHALL 可观测（计数 + 量级，如「N 条结果被 spill、共释放 M 字节」），经既有 trace/event 通道暴露。业界对照：Anthropic context editing 响应带 `cleared_tool_uses`/`cleared_input_tokens`。
-
-> **待 grill 确认**：可观测落点（trace step 类型？run result 字段？）；是否复用 `memory_compaction` step 的形态。
+spill/bounded 的**发生次数与字节数** SHALL 可观测，经既有 trace/event 通道暴露。业界对照：Anthropic context editing 响应带 `cleared_tool_uses`/`cleared_input_tokens`。**落地形态（对抗验证推荐）**：新增 trace step 类型 `record("tool_result_spill", spilled_messages=N, bounded_ledger=M, released_bytes=B)`（对齐既有 `record_compaction`，`trace_recorder.py:164-180`），并在 `loop.py` 同步发 `on_event("tool_result_spill", ...)`（对齐 `memory_compaction` 的 `:1058-1066`）；**不改 `RunResult` 协议**；计数区分「messages 无损 spill（有 ref）」与「账本有损 bounded（无 ref）」。
 
 ### D10 — `_tokens` 缓存失效（实现红线）
 
@@ -133,7 +179,40 @@ spill/bounded 的**发生次数与字节数** SHALL 可观测（计数 + 量级�
 
 ### D11 — `trace`/`tool_calls_made` bounded 的消费者核实（前置）
 
-**实现前 MUST 逐点核实**无消费者依赖 `trace` observation / `ToolCallMade.result` 的**全文**（预期结论：仅 `benchmarks/runner.py:661` 落盘，属「事后账本」）。若 benchmark 需要全文，方案 = **benchmark 显式开启 full trace**（`TraceRecorder.full_trace` 字段现保留但 inert，可复活为开关），而**非**默认常驻全文。
+**实现前 MUST 逐点核实**无消费者依赖 `trace` observation / `ToolCallMade.result` 的**全文**（结论见 D2 核对表：仅 `benchmarks/runner.py:661` 落盘与 **Web on_event（D12）**）。若 benchmark 需要全文，方案 = **benchmark 显式开启 full trace**（`TraceRecorder.full_trace` 字段现保留但 inert，可复活为开关），而**非**默认常驻全文。
+
+### D12 — Web `on_event("tool_result")` 全文外发（对抗验证新增；本 change 唯一的**行为回归风险点**）
+
+`loop.py:1029-1037` 的 `on_event("tool_result", {"result": <全文>})` 经 `web/session.py:1779` 入队 → WebSocket → 前端 **`web/static/chat.js:932` `const fullResult = data.result`**，`:963-970` 的 **Expand 按钮展开展示全文**。
+
+- 这是 `result` 的**一个全文消费者**，推翻「工具结果全文没有消费者」的**总框定**（D2 对 trace/tcm 的具体结论仍对）。
+- **若 D1 把 `result` 换成 bounded 后再发 on_event，Web UI 的 Expand-to-full 会静默退化为只显示预览**——**必须在 design 显式决定**：(a) on_event 仍发**原文**（保 Expand；全文非常驻、只过网一次，但须在 spec/design 如实声明「Web 事件含全文」），或 (b) on_event 发 **bounded**（保一致性、牺牲 Expand 的全文）。
+- 附带：`web/session.py:1771` 的 `queue` 是**无界** `asyncio.Queue()`，大结果消费前瞬态驻留（低危）。
+
+> **待 grill 确认（用户决策）**：D12 取 (a) 原文还是 (b) bounded。**这是停轮要拍板的三件事之一。**
+
+## Risks / Trade-offs
+
+| 风险 | 严重度 | 缓解 |
+|---|---|---|
+| **大 `tool arguments` 无界**（`Write`/`Edit` 正文住在 `tool_calls[].arguments` + `ToolCallMade.arguments` + trace `tool_call` step，剪 `result` 不触及） | **高** | D6b：bounded 覆盖 `arguments`；messages 侧至少计入字节预算 |
+| **Web `on_event` 全文外发 → Expand 回归** | **中-高** | D12：显式决定 on_event 用原文还是 bounded + 加回归测试 |
+| **硬顶对非工具大内容空转**（大 user 粘贴 / 大 assistant 参数 / 后台注入在 recent 内） | **高** | D7：明写残余边界，或允许收缩 recent |
+| **改 `loop.py` 入库通道破坏 tool-call 链合法性** | 高 | 剪枝只替换 content 文本，不删消息、不改 `tool_call_id`；专门链合法性回归测试 |
+| **GC 不变量测试假通过**（`asdict` 对 str 子类复制） | **高** | D0：断言**内存字段**，不只靠弱引用 |
+| **图片绕过 token 硬顶** | 高 | D6 双维度（token + 字节）+ 四管策略 |
+| **`_tokens` 缓存使剪枝白剪 / 反复误触发压缩** | 高 | D10 显式重置 + 回归测试 |
+| **无回读工具时溢出 → 悬空 ref** | 中 | D8：spill 与回读工具注册成对启用 |
+| **预览剪掉 `[ReadProgress]` 尾注 → 破坏分页进度保留** | **中-高** | 预览 = 头 + **保留尾部注记**（`_READ_PROGRESS_RE`，`manager.py:23-25`） |
+| **spec/design 口径漂移**（单条穿透窗口：delta 只写窗口） | 中 | 向 delta 增补「窗口内超大单条消费一轮后仍被替换」scenario |
+| **ref 存法自破「Message 结构不变」** | 中 | 内容内嵌可解析标记，不加 `Message` 字段 |
+| **ref 文件泄漏 / 跨会话污染** | 中 | 复用 `WorkflowStore` 路径校验；artifacts/ 与 sessions/ 隔离；**清理须显式实现**（`_sessions` 永不清理） |
+| **子 agent ref 身份洞** | 中 | D4 按 agent 类型分（根 session_id / 子 run_id） |
+| **`MemoryManager` 三处共用** | 中 | 根/子一致回归（`main.py:297`、`subagent/manager.py:1318`、`loop.py:156` 默认） |
+| **trace bounded 影响 benchmark 全文分析** | 中 | benchmark 显式 `full_trace=True`（已验证 inert 可复活） |
+| **字节维度每轮重算 `len(encode)` 的 O(n) 开销** | 低-中 | 字节数在入库时与 `_tokens` 一同缓存 |
+| **spill 开销**（落盘 + 回读） | 低-中 | 仅超阈值触发，小结果零开销；A5「不退化」 |
+| **`benchmarks/agent_runner.py:459` 对 `list` 结果调 `.startswith` 会崩**（既存缺陷，非本 change 引入） | 低 | D11 前置核实记录；bounded 后可顺带修（先 `extract_text`） |
 
 ## Risks / Trade-offs
 
@@ -160,19 +239,24 @@ spill/bounded 的**发生次数与字节数** SHALL 可观测（计数 + 量级�
   - **tool-call 链在剪枝后合法**；
   - **`_tokens` 缓存失效**（改 content 后重算）；
   - **硬顶**：超硬限 + 未到 gap → 仍压缩；**单条阈穿透 recent window**（大结果即使新鲜也剪，但受「已消费一轮」保护）。
-- **新增（图片 D6）**：`list[ContentBlock]` 结果的字节维度纳入。
+  - **新增（图片 D6）**：`list[ContentBlock]` 结果的字节维度纳入；图片消费一轮后转 `[image: path]`。
+  - **新增（D6b）**：`arguments` bounded（含 trace `tool_call` step）；`messages` assistant `arguments` 计入字节预算。
+  - **新增（D8）**：**预览保尾**——spill 后预览仍能匹配 `_READ_PROGRESS_RE`（跨模块契约）。
+  - **新增（D12）**：Web `on_event("tool_result")` 的 payload 决策（原文/bounded）有对应断言（防 Expand 静默回归）。
+  - **新增（Q-new5/后台）**：残余边界测试——大 user 粘贴 / 后台注入不被 D3 剪（锁定「已知不覆盖」，避免误以为已覆盖）。
 - **新增（端到端）**：#278 复现器缩比版（单 agent 直读，RSS 峰值对照 E0）。
 - **回归**：`agent-runtime` tool-call 链；`memory-context` 压缩；`context-engineering` Read/分页；全量 `uv run pytest -q`。
 
 ## Pre-Implementation Review
 
-grill 阶段填写（`reviews/grill-design.md`）。**按流程纪律：grill 结论须先走独立对抗验证（`reviews/grill-adversarial.md`）再拍板。**
+grill 阶段填写（`reviews/grill-design.md`）。**grill 结论已走独立对抗验证（`reviews/grill-adversarial.md`），其修正已折进本 design（D0/D1/D2/D3/D6/D6b/D7/D8/D9/D12）。**
 
 ## Impact Analysis（design 视角的补充）
 
 见 `proposal.md` 的 `## Impact Analysis`。补充：
 
 1. **`loop.py` 是最敏感改动面**——它构造 `messages`，直接关系 `agent-runtime` 的「tool-call 消息链合法」；实现须先加链合法性回归。
-2. **`MemoryManager` 三处共用**——根/子 agent 行为须一致，测试须覆盖两处。
+2. **`MemoryManager` 三处共用**——根/子 agent 行为须一致，测试须覆盖两处。**`MemoryManager` 构造期无 workspace_root** ⇒ D1 的 store/scope 由 loop 在 run 期注入。
 3. **ref 存储泛化**——须确认 `.asterwynd/artifacts/` 的 workspace_policy 允许写（`workspace_policy.py` 的 allowlist；`WorkflowStore` 走自身原子写、不经 policy）。
-4. **三持有者的 bounded 是三个独立改动点**（`messages` / `trace_recorder` / `result.py`），须分别测试，但共享 D1 的判定通道。
+4. **各持有者的 bounded 是独立改动点**（`messages` / `trace_recorder` / `result.py` / `on_event`），须分别测试，但共享 D1 的判定通道。**持有者拓扑因 run 类型而异**（根 CLI/Web = 2 持有者，benchmark/子 agent = 3）。
+
