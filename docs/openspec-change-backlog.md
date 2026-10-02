@@ -110,11 +110,11 @@
 
 ### 第十八批：agent 常驻上下文上界（#278 诊断 follow-up / #280）
 
-**拆两步：B 已合入、A 待立项**（#280 对抗验证的结论：先打源头，用实测决定 A 是否/如何做）：
+**拆两步：B 已合入、第二步（A 的归宿）立项中**（#280 对抗验证的结论：先打源头，用实测决定后续；B 的 E0 已证明「只治单条不够、累积是主因」）：
 
-- `read-output-bound`（issue #280，**第一步 B**）：**已归档 2026-10-02**。Read 默认输出上界（2000 行 / 128KB，先到者截）+ 三处逃逸面封堵（`limit=0`/`offset` 无 limit/少行超长行）+ 修 offset 回退 bug + config 可覆盖。**E0 实测结论**：B 后 RSS 峰值 **1172MB** vs #278 基线 **1228MB**（同量级）——**证明「只治单条不够、累积是主因」**，为 A 提供立项判据。
+- `read-output-bound`（issue #280，**第一步 B**）：**已归档 2026-10-02**。Read 默认输出上界（2000 行 / 128KB，先到者截）+ 三处逃逸面封堵（`limit=0`/`offset` 无 limit/少行超长行）+ 修 offset 回退 bug + config 可覆盖。**E0 实测结论**：B 后 RSS 峰值 **1172MB** vs #278 基线 **1228MB**（同量级）——**证明「只治单条不够、累积是主因」**，为后续 change 提供立项判据。
 
-- `agent-context-bound`（issue #280，**第二步 A，待立项**）：**B 的 E0 实测支持 A 必须做**（单条上界不足以压住峰值）。A = 工具结果 spill/ref + agent 通用 ref 存储 + 压缩硬顶（治**累积**与跨轮驻留）。**#280 对抗验证已证伪其 grill 的多个推荐修法**（Q6「巨型新鲜结果立即剪」会伤任务完成；Q3 子 agent ref 键有洞；Q4 token 硬顶对图片失真），并**发现 3 条 parallel 驻留通道**（`tool_calls_made` / trace steps / Read 默认无界）。⇒ **A 若做，须先按对抗验证的修正重写 design**。文档在 `agent-context-bound/2026-10-02` 分支。research_tier 待立项时判（原 full）。
+- `tool-result-lifecycle`（issue [#282](https://github.com/Xingkai98/asterwynd/issues/282)，**第二步 A 的归宿，立项中**）：原 `agent-context-bound`（A）**不再单独立项**，其核心（`messages` 工具结果 spill/ref）**折叠进本 change**。**决定性实测（2026-10-03）**：同一工具结果字符串被 `messages` / `run.trace` / `tool_calls_made` **三处持有、同一对象**（`is` 判定全真）——替换任一后全文仍被其他池引用、不回 GC，**故单做任一处皆白做，必须一起治**；量级实测（N=30 × ~192KB，三处持有）tracemalloc cur **5569KB → 有界 83KB（-98.5%）**。**关键事实**：`trace`/`tool_calls_made` 的全文**无模型面消费者**（web/CLI/benchmark 全读截断或前缀；唯一全文消费者是 benchmark 落盘 `trace.json` 的事后账本），故它们只需 bounded、**只有 `messages` 需 ref**——比 A 原方案更简洁。**范围**：统一工具结果入库通道 + `messages` spill/ref + `trace`/`tool_calls_made` bounded + agent 通用 ref 存储 + 泛化 `ReadWorkflowResult` + 压缩硬顶（token/字节双维度）+ spill 可观测。**已内化 #280 对抗验证的全部修正**（「已消费一轮」才剪、子 agent ref 用 `run_id` 而非 `subagent_id`、图片按字节而非 token 纳入、`_tokens` 缓存须重置）。**Non-Goal**：`_workflows` scheduler slots / 跨图壳清理（里程碑 A 的另一半，另立 change）。research_tier = full（`deepseek-harness` + Anthropic context editing `clear_tool_uses` + 本地 6 仓库）。**流程**：实现前须 `batch-grill-me` + 独立对抗验证 + 停轮确认（Open Questions 未全部确认前不得写实现代码）。
 
 ### 第十七批：workflow 闸门可见性与上限重估（#273 follow-up）
 
