@@ -1,0 +1,43 @@
+# Tasks: Read 工具默认输出上界
+
+## 1. 立项与调研
+
+- [ ] 1.1 关联 GitHub issue #280（其第一步 B），写 `proposal.md`
+- [ ] 1.2 写 `design.md`（D1–D5 / Risks / Testing Strategy / Impact Analysis）
+- [ ] 1.3 写 spec delta（context-engineering MODIFIED 1）
+- [ ] 1.4 补 `## Reference Implementation Research`（`research_tier: light`；参考仓库读文件默认行为）
+- [ ] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径）
+
+## 2. grill 与确认
+
+- [ ] 2.1 独立零记忆 subagent 按 `batch-grill-me` 追问 `design.md`，产出 `reviews/grill-design.md`
+- [ ] 2.2 **按新流程纪律：派独立对抗 agent 证伪 grill 结论，产出 `reviews/grill-adversarial.md`；主 session 逐条复核其发现**
+- [ ] 2.3 停轮把（经对抗验证的）`## Open Questions` 逐项（每条配例子）抛给用户，等待答复
+- [ ] 2.4 用户答复写回 `grill-design.md` 的 `## User Confirmation` 节
+- [ ] 2.5 按 grill + 对抗结论回写 design/proposal/spec delta
+
+## 3. 实现（测试先行）
+
+- [ ] 3.1 先写失败测试：超上界截断 + `[ReadProgress]` / ≤上界逐字节全文 / 显式 limit|offset 不变 / 图片不变 / 边界（恰 N 行、N+1 行）
+- [ ] 3.2 `Read.execute` 无参数分支加默认上界（`total ≤ N` → 全文；`> N` → 首 N 行 + 进度注记）
+- [ ] 3.3 默认上界常量化（+ 可配置，若 grill 确认）
+- [ ] 3.4 回归 `tests/agent/tools/`（Read 相关）
+- [ ] 3.5 端到端对照：#278 复现器缩比版，如实记录 RSS 峰值对比基线（不设门槛）
+
+## 4. 审阅与验收
+
+- [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
+- [ ] 4.2 全量 `uv run pytest -q`
+- [ ] 4.3 验收：R0（单次超大文件读数受界）、R1（小文件逐字节不变）、R2（进度注记可测）；E0 如实记录
+- [ ] 4.4 benchmark smoke（触及 `agent/tools/`）
+
+## 5. 收尾
+
+- [ ] 5.1 同步 spec delta 到 current spec（`openspec/specs/context-engineering/spec.md`；受保护路径，需结构化事件）
+- [ ] 5.2 归档到 `openspec/changes/archive/2026-10-02-read-output-bound/`
+- [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除
+- [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
+- [ ] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
+- [ ] 5.6 文档影响检查
+- [ ] 5.7 发起 PR（关联 #280），写明验证结果 + E0 实测（作为 A 的判据）
+- [ ] 5.8 (post-merge) 合入后按 E0 实测决定 A（`agent-context-bound`）是否/如何做，并在 #280 记录

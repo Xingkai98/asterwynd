@@ -108,6 +108,14 @@
 
 ## 未实现队列
 
+### 第十八批：agent 常驻上下文上界（#278 诊断 follow-up / #280）
+
+**拆两步，B 先行、A 挂起**（#280 对抗验证的结论：先打源头，用实测决定 A 是否/如何做）：
+
+- `read-output-bound`（issue #280，其**第一步 B**）：**立项完成，待 grill 与实现**。动机：#278 实测「单条工具结果 20.7 万字节」的**源头**是 `Read` 工具**默认返回全文**（`read.py:105`，尽管它**已内置** `limit`/`offset`/`[ReadProgress]` 分页）。本 change 给默认输出加**行数上界**（缺省 2000 行；≤ 上界逐字节全文、超界附进度注记），使巨型单条**从源头不产生**。**作用边界如实记录**：只削单条峰值、**不治累积**（读很多小文件跨轮堆叠）——E0 端到端实测**不设门槛**，其结果是「A 是否必须」的判据。业界依据：`opencode` 工具输出按「行数或字节取先到者」截断 + marker，并明说「token 压力属上下文组装与压缩」。spec delta：`context-engineering` MODIFIED 1。research_tier = light。分支 `read-output-bound/2026-10-02`。
+
+- `agent-context-bound`（issue #280，**第二步 A，挂起**）：**文档已就位（proposal/design/grill/对抗验证），待 B 的实测决定是否实现**。A = 工具结果 spill/ref + agent 通用 ref 存储 + 压缩硬顶（治**累积**与跨轮驻留）。**#280 对抗验证已证伪其 grill 的 2 个推荐修法**（Q6「巨型新鲜结果立即剪」会伤任务完成；Q3 子 agent ref 键有洞；Q4 token 硬顶对图片失真），并**发现 3 条 parallel 驻留通道**（`tool_calls_made` / trace steps / Read 默认无界）。⇒ **A 若做，须先按对抗验证的修正重写 design**。文档在 `agent-context-bound/2026-10-02` 分支。
+
 ### 第十七批：workflow 闸门可见性与上限重估（#273 follow-up）
 
 **串行依赖**：#275 是 #276 的**硬前置**——已由 #275 兑现（见下），#276 的定值依据现已就绪。
