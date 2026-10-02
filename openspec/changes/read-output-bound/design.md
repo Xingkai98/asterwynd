@@ -35,6 +35,8 @@
 - **行数 > N** → 返回首 N 行 + 显式进度注记（见 D2）；
 - **行数 ≤ N 但字节 > B**（少行超长行，如 minified/大 JSON）→ 也截断 + 注记。
 
+**可配置（Q4 拍板）**：N / B **有内建默认**（模块常量 `DEFAULT_MAX_READ_LINES` / `DEFAULT_MAX_READ_BYTES`），且 **SHALL 可经 config 覆盖**（`tools.read.max_lines` / `tools.read.max_bytes`，仿 `tools.display`）；`ReadTool` 收 `max_lines`/`max_bytes` 构造参数，默认取常量；factory 从 config 取值接线（`main.py` / `subagent/manager.py` / `web/session.py` / `benchmarks/agent_runner.py`）。
+
 **取值依据（经 grill + 对抗验证）**：
 - **N = 2000 行**：两个独立参考实现（`pi` `truncate.ts:11`、`opencode` tool-output-store）的**共同默认**，保留；
 - **B = 128KB**：**不用 50KB**——实测会误截 5 个核心文件（`config.py` 71K / `manager.py` 72K / `loop.py` 71K / `main.py` 58K / `command_guard.py` 53K，行数都 ≤2000、本该全文读）。128KB 远高于任何核心文件（最大 72KB），**只兜「少行超长行」**（如 1 行 4MB）。
@@ -63,9 +65,9 @@
 
 `memory/manager.py` 的 `_extract_read_progress` 是**每文件 last-wins**：默认读发出的 `offset=0` 注记会**覆盖**模型先前显式分页到的真实 offset（实测：先 `offset=2000` 后 `offset=0` → hint 回退为 `0`，summary 建议「从头续读」）。
 
-修法：让 hint **区分「默认截断的 offset=0」与「显式分页的 offset」**——仅「真正的分页读」才算续读进度，或给注记一个标记字段区分来源。**不得**让默认截断的 `offset=0` 覆盖真实的续读进度（否则直接违反 `context-engineering` 的 Pagination Progress Preservation 意图）。
+修法（**已定稿，经 grill Q5 + 对抗 M3 拍板**）：给注记一个**显式标记字段** `truncated=true`（默认截断的注记带、真实分页注记不带），manager 侧按 **`truncated && offset==0`** 跳过——即「默认截断的 `offset=0`」不算续读位点，而 `offset≠0` 的 truncated 注记来自显式 `offset` 分页、是真续读位点，仍计入。**不得**让默认截断的 `offset=0` 覆盖真实的续读进度（否则直接违反 `context-engineering` 的 Pagination Progress Preservation 意图）。
 
-> **待 grill 确认**：标记来源的具体形态（新字段 vs 在 manager 侧按行数推断）。
+> **实现落点**：`read.py` 的 `_truncated_note`（发 `truncated=true`）↔ `manager.py` 的 `_extract_read_progress`（`if match.group("truncated") and int(match.group(2)) == 0: continue`）。
 
 ### D7 — `total` 语义钉死
 
@@ -108,6 +110,6 @@ grill 阶段填写（`reviews/grill-design.md` + `reviews/grill-adversarial.md`�
 
 见 `proposal.md` 的 `## Impact Analysis`。补充：
 
-1. **改动面极小**——`read.py` 一个函数的一支分支 + 一个常量（可配置）。
+1. **改动面**——`read.py`（默认界 + 显式注记 + `ReadTool` 上界构造参数）、`memory/manager.py`（正则容忍 + D6 跳过，双模块契约）、`config.py`（`tools.read.{max_lines,max_bytes}` + 全调用链接线）；回滚 = revert。
 2. **回归红线是 D3**——小文件逐字节不变，是「不波及绝大多数使用」的关键；测试必须显式断言。
 3. **与 A 的关系**——E0 的观测结果是「A 是否必须」的判据；A 的文档（含 grill + 对抗验证）保留在 `agent-context-bound` 分支作为输入。

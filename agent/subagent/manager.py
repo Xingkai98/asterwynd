@@ -1291,6 +1291,7 @@ class SubAgentManager:
             code_intelligence_config=config.tools.code_intelligence if config else None,
             browser_config=config.tools.browser if config else None,
             web_search_config=config.tools.web_search if config else None,
+            read_output_config=config.tools.read if config else None,
             sandbox=self._resolve_sandbox(),
         )
         hooks = HookManager([TracingHook()])

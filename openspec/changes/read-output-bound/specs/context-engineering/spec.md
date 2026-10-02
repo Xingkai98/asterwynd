@@ -6,7 +6,7 @@
 
 The Read tool SHALL, when invoked **without an explicit `limit`**, apply a **default output bound** so a single read cannot return an unbounded file into the context. This SHALL cover every path that omits an explicit `limit`: a plain read (no `limit`/`offset`), a read with `offset` but no `limit`, and a read with `limit` explicitly set to `0` — none of these SHALL return the whole file unbounded.
 
-The bound SHALL constrain **both** dimensions: a default maximum number of lines **and** a default maximum byte size, whichever is reached first. A file exceeding the bound SHALL be returned as an at-most-bound prefix accompanied by a **progress note that explicitly states the content was truncated and gives the offset at which to continue**. A file within the bound SHALL be returned in full.
+The bound SHALL constrain **both** dimensions: a default maximum number of lines **and** a default maximum byte size, whichever is reached first. The bound SHALL have a built-in default value and SHALL be overridable via configuration. A file exceeding the bound SHALL be returned as an at-most-bound prefix accompanied by a **progress note that explicitly states the content was truncated and gives the offset at which to continue**. A file within the bound SHALL be returned in full.
 
 When `limit` is explicitly a positive integer, the Read tool SHALL behave as before (the default bound SHALL NOT apply, the caller controls the size).
 

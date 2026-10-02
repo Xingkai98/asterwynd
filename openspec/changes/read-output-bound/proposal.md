@@ -29,10 +29,10 @@
 
 **`Read` 工具默认输出加界**：
 
-- **无 `limit`/`offset` 时**：默认只返回**首个 N 行**（N = 默认上界，如 2000），并在末尾附 `[ReadProgress file=...; offset=0; total=M]` 进度注记（**复用已有格式**），让模型知道「还有多少未读、如何续读」；
-- **文件 ≤ N 行时**：**逐字节返回全文**（现状不变，绝大多数小文件零影响）；
-- **显式传 `limit`/`offset` 时**：行为不变（模型可主动分页续读）；
-- 默认上界 SHALL 可配置（`config`），并 SHALL 是一个明确的常量。
+- **无显式正 `limit` 时**（含无参数、`offset` 无 `limit`、`limit=0` 三条路径）：默认只返回**首个上界**（行 N=2000 **或** 字节 B=128KB，**先到者截**），并在末尾附**显式**进度注记 `[ReadProgress file=...; offset=<n>; total=M; truncated=true]` + 续读指引（`continue with offset=<next>`），让模型知道「已截断、还有多少未读、如何续读」；
+- **文件 ≤ 界（行 ≤ N 且 字节 ≤ B）时**：**与当前无界输出逐字节相同**（现状不变，绝大多数小文件零影响）；
+- **显式传正 `limit` 时**：行为不变（模型可主动分页续读，调用方自控大小）；
+- 默认上界 SHALL 有内置默认（常量 2000 行 / 128KB），且 **SHALL 可经 `config` 覆盖**（`tools.read.max_lines` / `tools.read.max_bytes`）。
 
 **不变**：图片路径（`.png`/`.jpg`... → `_read_image`，返回 `ContentBlock`）行为不变；`WorkspacePolicy` 校验、分页语义、`[ReadProgress]` 格式不变。
 
@@ -45,7 +45,7 @@
 ### Modified Capabilities
 
 - `context-engineering`：
-  - **MODIFIED** 既有 Requirement「Pagination Progress Preservation」——`Read` SHALL 对**超过默认上界**的文件**默认**返回「首个上界行数 + 进度注记」，SHALL NOT 无参数时返回全文；文件未超上界时 SHALL 全文返回；显式 `limit`/`offset` 时行为不变。
+  - **ADDED** 独立 Requirement「Read 默认输出有界」（**不并入**既有 `Pagination Progress Preservation`）——`Read` 对**无显式正 `limit`** 的读取 SHALL 施加默认输出界（行 / 字节先到者截），覆盖无参 / `offset` 无 `limit` / `limit=0` 三条路径；超界时返回「首个上界 + 显式截断注记」，界内时 SHALL 全文返回；显式正 `limit` 时行为不变。
 
 ## 验收（本 change 的验收口径，**只进 proposal、不进 spec**）
 
@@ -69,20 +69,21 @@
   - **RQ1**：业界 coding agent 的「读文件」工具如何处理超大文件——默认分页？截断？还是全给？
 - findings:
   1. **成熟模式：默认分页 + 进度注记是业界通行做法。** 本项目 `Read` 已具备该形态（`limit`/`offset` + `[ReadProgress]`），本 change 只是把「默认」从"全文"改为"首屏 + 提示续读"。**项目内先例**：`context-engineering` 的「Pagination Progress Preservation」Requirement 已要求「大文件分页 + 进度在压缩前持久化」——本 change 是让**默认行为**符合该既有意图。
-  2. **待 grill 用参考仓库补强**：核对 `codex`/`kimi-code`/`zcode` 等仓库的读文件工具默认行为（`read_file`/`view` 的默认行数上限），作为默认上界取值的依据。
+  2. **参考仓库取值依据（grill 已补，见 `reviews/grill-design.md`）**：`pi`（`truncate.ts:11` `DEFAULT_MAX_LINES = 2000`）与 `opencode`（`tool-output-store.ts` `MAX_LINES = 2_000`）两个独立实现的读文件默认行上界**均为 2000**，本 change 取 2000 有业界收敛证据；二者默认字节界为 50KB，本仓经实测（会误截 5 个核心文件）改取 **128KB 只兜少行超长行**（见 `reviews/grill-adversarial.md` 与 design D1）。`codex`/`kimi-code`/`zcode`/`deepseek-harness` 未命中等价默认常量（`kimi-code` 默认不限），故以 `pi` + `opencode` 两个正例为准。
 - design impact: 见 design **D1**（默认上界取值）、**D2**（超界时的注记与续读）、**D3**（≤上界逐字节不变）。
 
 ## Impact Analysis
 
 - **能力域**: `context-engineering`（Read 的上下文行为）。
 - **代码**:
-  - `agent/tools/builtin/read.py` — `execute` 无 `limit`/`offset` 分支加默认上界 + 进度注记。**这是本 change 唯一的核心改动点。**
-  - `agent/config.py` — 默认上界常量可配置（可选，若 grill 认为需要）。
+  - `agent/tools/builtin/read.py` — `execute` 对「无显式正 `limit`」的读取加默认上界 + 显式进度注记；`ReadTool` 接受 `max_lines`/`max_bytes` 构造参数（默认=模块常量）。**核心改动点。**
+  - `agent/memory/manager.py` — `_READ_PROGRESS_RE` 容忍可选 `truncated` 字段；默认截断的 `offset=0` 注记不覆盖真实分页进度（双模块契约）。
+  - `agent/config.py` — 新增 `tools.read.{max_lines, max_bytes}`（`ReadOutputConfig`，内建默认 2000/128KB）；`factory` / `main.py` / `subagent/manager.py` / `web/session.py` / `benchmarks/agent_runner.py` 接线。
 - **测试**:
   - **必须新增**：超上界文件 → 返回首个上界行 + `[ReadProgress]`（`total` 正确）；**≤ 上界文件 → 逐字节等于全文**（回归防护，确保绝大多数小文件零变化）；显式 `limit`/`offset` 行为不变；图片路径不变。
   - **必须回归**：所有依赖 `Read` 的测试（`tests/agent/tools/`）；既有分页测试。
 - **文档**:
-  - `openspec/specs/context-engineering/spec.md`（MODIFIED 1；受保护路径）。
+  - `openspec/specs/context-engineering/spec.md`（ADDED 1 独立 Requirement；受保护路径）。
   - `docs/openspec-change-backlog.md`（受保护路径）。
   - `README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描。
 - **流程（process）**: 触及受保护路径，需结构化事件 + grill + building review；实现须独立 worktree、`read-output-bound/2026-10-02` 分支。**change type = feature → 实现前必须走 `batch-grill-me` + 停轮确认**。

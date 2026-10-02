@@ -361,6 +361,7 @@ class AsterwyndRunner(AgentRunner):
             ),
             ignore_patterns=self.config.tools.ignore_patterns,
             code_intelligence_config=self.config.tools.code_intelligence,
+            read_output_config=self.config.tools.read,
             mcp_manager=mcp_manager,
             sandbox=sandbox,
         )

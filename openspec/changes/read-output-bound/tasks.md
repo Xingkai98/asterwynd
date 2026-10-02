@@ -4,7 +4,7 @@
 
 - [ ] 1.1 关联 GitHub issue #280（其第一步 B），写 `proposal.md`
 - [ ] 1.2 写 `design.md`（D1–D5 / Risks / Testing Strategy / Impact Analysis）
-- [ ] 1.3 写 spec delta（context-engineering MODIFIED 1）
+- [ ] 1.3 写 spec delta（context-engineering ADDED 1 独立 Requirement）
 - [ ] 1.4 补 `## Reference Implementation Research`（`research_tier: light`；参考仓库读文件默认行为）
 - [ ] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径）
 
@@ -29,6 +29,7 @@
 
 ## 4. 审阅与验收
 
+- [x] 4.0 review-loop Round 1（CHANGES_REQUESTED）修复：① 上界可配置（Q4：`tools.read.{max_lines,max_bytes}` + `ReadTool` 构造参数 + factory/调用链接线 + 测试）；② 文档口径统一（proposal/design/tasks 的 MODIFIED→ADDED、「SHALL 可配置」落地）；③ 清 `design.md` 的「待 grill 确认」占位；④ `proposal.md` 的「待 grill 补强」改为已完成
 - [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
 - [x] 4.2 全量 `uv run pytest -q`
 - [ ] 4.3 验收：R0（单次超大文件读数受界）、R1（小文件逐字节不变）、R2（进度注记可测）；E0 如实记录

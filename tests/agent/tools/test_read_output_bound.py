@@ -417,3 +417,63 @@ class TestImagePathUnchanged:
 
         assert isinstance(result, list)
         assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# Q4 — the bound is configurable (built-in defaults + config override)
+# ---------------------------------------------------------------------------
+
+
+class TestBoundIsConfigurable:
+    def test_config_default_matches_read_constants(self):
+        """The config dataclass defaults must match the read.py module constants."""
+        from agent.config import ReadOutputConfig
+
+        defaults = ReadOutputConfig()
+        assert defaults.max_lines == DEFAULT_MAX_READ_LINES
+        assert defaults.max_bytes == DEFAULT_MAX_READ_BYTES
+
+    @pytest.mark.asyncio
+    async def test_tool_bound_override_truncates_small_file(self, tmp_path):
+        """A smaller configured bound truncates a file the default would keep."""
+        path = _many_lines(tmp_path, 50)
+        tool = ReadTool(policy=WorkspacePolicy(tmp_path), max_lines=10, max_bytes=1024)
+
+        result = await tool.execute(path=path)
+
+        body, note = _split(result)
+        assert body.count("\n") + 1 == 10
+        assert "truncated=true" in note
+        assert f"continue with offset=10" in note
+
+    @pytest.mark.asyncio
+    async def test_tool_byte_override_truncates(self, tmp_path):
+        f = tmp_path / "wide.txt"
+        f.write_text("z" * 5000)
+        tool = ReadTool(policy=WorkspacePolicy(tmp_path), max_lines=2000, max_bytes=100)
+
+        result = await tool.execute(path=str(f))
+
+        body, note = _split(result)
+        assert len(body.encode("utf-8")) <= 100
+        assert "truncated=true" in note
+
+    def test_registry_wires_read_output_config(self, tmp_path):
+        from agent.config import ReadOutputConfig
+        from agent.tools.factory import build_default_tool_registry
+
+        registry = build_default_tool_registry(
+            policy=WorkspacePolicy(tmp_path),
+            read_output_config=ReadOutputConfig(max_lines=77, max_bytes=8888),
+        )
+        read_tool = registry.get_tool("Read")
+        assert read_tool.max_lines == 77
+        assert read_tool.max_bytes == 8888
+
+    def test_registry_read_defaults_when_no_config(self, tmp_path):
+        from agent.tools.factory import build_default_tool_registry
+
+        registry = build_default_tool_registry(policy=WorkspacePolicy(tmp_path))
+        read_tool = registry.get_tool("Read")
+        assert read_tool.max_lines == DEFAULT_MAX_READ_LINES
+        assert read_tool.max_bytes == DEFAULT_MAX_READ_BYTES

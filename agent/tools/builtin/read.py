@@ -55,13 +55,18 @@ def _truncated_note(path: str, offset: int, total: int, next_offset: int) -> str
     )
 
 
-def _bounded_prefix(lines: list[str], start: int) -> tuple[str, int, bool]:
+def _bounded_prefix(
+    lines: list[str],
+    start: int,
+    max_lines: int = DEFAULT_MAX_READ_LINES,
+    max_bytes: int = DEFAULT_MAX_READ_BYTES,
+) -> tuple[str, int, bool]:
     """Bound ``lines[start:]`` by the default line/byte limits.
 
     Returns ``(body, next_offset, truncated)``: the text to return, the offset a
     caller should pass to continue, and whether anything was left out.
     """
-    window = lines[start:start + DEFAULT_MAX_READ_LINES]
+    window = lines[start:start + max_lines]
     truncated_by_lines = (start + len(window)) < len(lines)
 
     included: list[str] = []
@@ -70,7 +75,7 @@ def _bounded_prefix(lines: list[str], start: int) -> tuple[str, int, bool]:
     for line in window:
         # +1 for the newline the join will insert before this line.
         cost = len(line.encode("utf-8")) + (1 if included else 0)
-        if size + cost > DEFAULT_MAX_READ_BYTES:
+        if size + cost > max_bytes:
             byte_capped = True
             break
         included.append(line)
@@ -79,7 +84,7 @@ def _bounded_prefix(lines: list[str], start: int) -> tuple[str, int, bool]:
     if byte_capped and not included:
         # A single line already exceeds the byte bound (e.g. a minified bundle):
         # keep a byte-limited prefix of it and resume at the next line.
-        return _cap_bytes(window[0], DEFAULT_MAX_READ_BYTES), start + 1, True
+        return _cap_bytes(window[0], max_bytes), start + 1, True
 
     return "\n".join(included), start + len(included), byte_capped or truncated_by_lines
 
@@ -139,8 +144,16 @@ class ReadTool(Tool):
     parallelizable = True
     permission = WORKSPACE_READ_PERMISSION
 
-    def __init__(self, policy: WorkspacePolicy | None = None):
+    def __init__(
+        self,
+        policy: WorkspacePolicy | None = None,
+        *,
+        max_lines: int = DEFAULT_MAX_READ_LINES,
+        max_bytes: int = DEFAULT_MAX_READ_BYTES,
+    ):
         self.policy = policy or WorkspacePolicy()
+        self.max_lines = max_lines
+        self.max_bytes = max_bytes
 
     async def execute(self, path: str, limit: int = None, offset: int = None, **kwargs) -> str | list["ContentBlock"]:
         try:
@@ -169,8 +182,8 @@ class ReadTool(Tool):
             # bound so none of these paths can return an unbounded file.
             if (
                 offset is None
-                and total <= DEFAULT_MAX_READ_LINES
-                and len(content.encode("utf-8")) <= DEFAULT_MAX_READ_BYTES
+                and total <= self.max_lines
+                and len(content.encode("utf-8")) <= self.max_bytes
             ):
                 # Within the bound: return the decoded content verbatim (not
                 # re-joined from splitlines) so this path is byte-identical to
@@ -178,7 +191,9 @@ class ReadTool(Tool):
                 return content
 
             start = max(0, offset) if offset is not None else 0
-            body, next_offset, truncated = _bounded_prefix(lines, start)
+            body, next_offset, truncated = _bounded_prefix(
+                lines, start, self.max_lines, self.max_bytes
+            )
             if truncated:
                 return body + _truncated_note(path, start, total, next_offset)
             if offset is not None:

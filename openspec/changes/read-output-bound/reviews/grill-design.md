@@ -33,31 +33,31 @@
 
 > 每条给出**推荐答案 + 该 change 真实场景的具体例子**，供用户快速拍板。按影响面排序。
 
-- **Q1（关键 · 逃逸面）**：offset 续读路径**本身无上界**——`read.py:98` `end = (start + limit) if limit else None`，即 `offset` 不带 `limit` 时读到 EOF。D2 又恰恰把模型引导到「传 `offset=N` 续读」。于是：默认读给出 `offset=0` 提示 → 模型照做 `Read(path, offset=2000)` → **若文件很大，巨型单条重现**，本 change 的源头治理被自己的续读提示打穿。
+- **Q1**（关键 · 逃逸面）：offset 续读路径**本身无上界**——`read.py:98` `end = (start + limit) if limit else None`，即 `offset` 不带 `limit` 时读到 EOF。D2 又恰恰把模型引导到「传 `offset=N` 续读」。于是：默认读给出 `offset=0` 提示 → 模型照做 `Read(path, offset=2000)` → **若文件很大，巨型单条重现**，本 change 的源头治理被自己的续读提示打穿。
   - **例子**：100k 行日志文件。现状无参数读回全文（巨型，本 change 要治）；**本 change 后**默认返回 2000 行 + `[ReadProgress ...; offset=0; total=100000]`，模型按提示 `Read(offset=2000)` **不传 limit** → 实测返回 **98,000 行 / 1,070,074 字节**——巨型单条原样回来。
   - **推荐**：把默认上界**也施加到 offset 路径**，与 pi/opencode 一致——「模型显式传 `limit` 时优先，否则无论有无 offset 都按 2000 行/50KB 截断，并把**下一个 offset** 写进注记」。pi 的 read 就是这样：`if (limit !== undefined) 用用户 limit；否则 truncateHead(...)`（`pi/.../read.ts:147-171`），注记 `Use offset=${nextOffset} to continue.`。**代价**：会改到 `test_offset_without_limit_reads_to_eof`（`test_read_doc_and_pagination.py:48-54`）——该测试当前断言 offset 读到 EOF，需随语义更新（这本就是设计要触碰的测试面）。若坚持 D5「offset 行为完全不变」，则**至少**在注记里给出 next offset 并显式说明续读须带 limit。
 
-- **Q2（关键 · 字节 vs 行数）**：D1 只限**行数**，对「少行超长行」文件（minified JS、大 JSON、单行长数据）**完全无效**；opencode 与 pi **都**同时限字节（`MAX_BYTES = 50*1024`），且本仓库 `ReadDoc` 已有字节截断先例。
+- **Q2**（关键 · 字节 vs 行数）：D1 只限**行数**，对「少行超长行」文件（minified JS、大 JSON、单行长数据）**完全无效**；opencode 与 pi **都**同时限字节（`MAX_BYTES = 50*1024`），且本仓库 `ReadDoc` 已有字节截断先例。
   - **例子**：`bundle.min.js` 1 行 4MB。`total=1 ≤ 2000` → 现设计走「全文」路径，**实测返回 4,194,304 字节**——R0（单次超大 Read 受上界约束）对这类文件**不成立**。同理一个 2000 行、每行 10KB 的 20MB 文件也被放行。
   - **推荐**：加 **50KB 字节上界**（与 opencode/pi 同为 50KB），语义取「行数**或**字节，先到者截」；并相应把 **D3 / R1** 从「≤ N 行逐字节全文」改为「**≤ N 行且 ≤ maxBytes** 才逐字节全文」（否则被字节截的是小行数文件，与 D3 表述冲突）。代价：R1 的「逐字节不变」覆盖面从「所有 ≤2000 行文件」收窄为「≤2000 行且 ≤50KB」，需在 spec/验收同步措辞。
 
-- **Q3（关键 · 不静默纪律）**：D2 复用 `[ReadProgress file=...; offset=0; total=M]`，注记**不显式说「已截断」、也不给 next offset**——模型须自行从「返回行数 < total」推断被截，弱于 pi（`[Showing lines 1-2000 of 3196 ... Use offset=2001 to continue.]`）。本仓库 #248/#275 的纪律是「截断/上限必须显式可见」。
+- **Q3**（关键 · 不静默纪律）：D2 复用 `[ReadProgress file=...; offset=0; total=M]`，注记**不显式说「已截断」、也不给 next offset**——模型须自行从「返回行数 < total」推断被截，弱于 pi（`[Showing lines 1-2000 of 3196 ... Use offset=2001 to continue.]`）。本仓库 #248/#275 的纪律是「截断/上限必须显式可见」。
   - **例子**：3196 行文件默认读 → 模型只看到 `offset=0; total=3196` 与 2000 行正文；若模型不细算 2000<3196，可能误以为已读全而**漏掉尾部**（如文件末尾的 `__main__` 块 / 注册表 / 导出列表）。
   - **推荐**：注记加显式截断语义 + next offset（如追加 `; truncated=true` 或改写为 human-readable 提示）。**注意**：这会触到 Q 的**双模块契约**（需同步 `manager.py:21` 正则 + 跑 `test_progress_note_format_matches_regex`），是 Q1 的一部分工作，别拆成两次改。
 
-- **Q4（口径一致性 · 可配置）**：「上界是否可配置」在 change 文档内**三处不一致**——proposal 说「默认上界 **SHALL 可配置**（config）」（proposal.md:35）并列为 IMPACT 的可选改动；design D1 说「可配置（**可选**）」；spec delta 只写「a defined, **non-magic constant**」**不含可配置**。
+- **Q4**（口径一致性 · 可配置）：「上界是否可配置」在 change 文档内**三处不一致**——proposal 说「默认上界 **SHALL 可配置**（config）」（proposal.md:35）并列为 IMPACT 的可选改动；design D1 说「可配置（**可选**）」；spec delta 只写「a defined, **non-magic constant**」**不含可配置**。
   - **例子**：若实现按 spec delta 只放一个模块常量 `DEFAULT_MAX_READ_LINES = 2000`，则 proposal 的「SHALL 可配置」未兑现，CI 的 spec↔proposal 一致性无从校验；若实现加 config，则 spec delta 缺对应条款。
   - **推荐**：定调**常量 + 可选 config**，与既有风格一致（`tools.display.max_result_chars/max_result_lines`，`agent/config.py:1425-1432`），并**三处同步**：proposal 的 SHALL 措辞、design D1 去掉「可选」歧义、spec delta 增加「SHALL 有内置默认，SHALL 可经 config 覆盖」。同时删掉 spec delta 的「non-magic constant」表述——那是实现细节，进 spec 层是噪音（spec 应写可观察契约，不写命名约定）。
 
-- **Q5（依赖 · manager 语义偏移）**：默认读大文件现在会**发射** `[ReadProgress ...; offset=0 ...]`，而 `manager._extract_read_progress` 会把**每个文件最后一次**匹配当作「续读候选」写进 summary hint（`manager.py:449-473,489-505`）。改动前，一次「读全」不产生注记、不进 hint；改动后，每次默认读大文件都会给 hint 加一条 `- /path: offset=0, total=M`。
+- **Q5**（依赖 · manager 语义偏移）：默认读大文件现在会**发射** `[ReadProgress ...; offset=0 ...]`，而 `manager._extract_read_progress` 会把**每个文件最后一次**匹配当作「续读候选」写进 summary hint（`manager.py:449-473,489-505`）。改动前，一次「读全」不产生注记、不进 hint；改动后，每次默认读大文件都会给 hint 加一条 `- /path: offset=0, total=M`。
   - **例子**：agent 读了 3196 行的 `scheduler.py`（默认截到 2000 行），summary hint 出现 `- scheduler.py: offset=0, total=3196`。这条语义上**不是**「未读完的分页」，却会被当成 resume 候选，可能诱导模型在每次 compaction 后**从 0 重读**（虽被上界约束、不致命，但无谓涨字节）。
   - **推荐**：确认可接受（offset=0 重读是有界且幂等的，代价可控）；若要求更干净，则让 hint 只纳入「真正未读完」的读——但这需要区分「默认截断」与「显式分页」，会加复杂度。**建议采前者**并在 design 的 Risks 显式记一条。
 
-- **Q6（验收可测性 · E0）**：E0 需真实 LLM 多 agent 并发跑 #278 复现器「缩比版」，**无法进 CI**、也无确定阈值。若无人跑，R0/R1/R2 过了但「B 是否值得、A 是否必须」的判据落空。
+- **Q6**（验收可测性 · E0）：E0 需真实 LLM 多 agent 并发跑 #278 复现器「缩比版」，**无法进 CI**、也无确定阈值。若无人跑，R0/R1/R2 过了但「B 是否值得、A 是否必须」的判据落空。
   - **例子**：tasks 3.5「端到端对照」若只写在 checklist 而无落地脚本，PR 很可能只跑单测就提交，E0 实测缺失 → proposal 里「B 的价值之一是产生 A 的判据」无法兑现。
   - **推荐**：(a) 明确 E0 为**人工观测**产物，在 PR 描述记录（tasks 3.5/4.3 保持手动）；(b) **补一条确定性单测**替代 E0 做 CI 回归——断言「读 3196 行文件返回的**字节数** ≤ 上界对应的字节阈值」（这也正好把 Q2 的字节上界锁进回归网）。E0 只作「A 是否必须」的对照，不进 CI。
 
-- **Q7（spec 归属与措辞）**：spec delta 把「默认输出上界」**并入**既有 Requirement `Pagination Progress Preservation`，导致该 requirement 名（讲「进度持久化」）已不能覆盖新增的「默认上界」内容。
+- **Q7**（spec 归属与措辞）：spec delta 把「默认输出上界」**并入**既有 Requirement `Pagination Progress Preservation`，导致该 requirement 名（讲「进度持久化」）已不能覆盖新增的「默认上界」内容。
   - **例子**：base spec 该 requirement 是「Read 支持 `(file, offset, total)` 进度，且上下文系统在压缩前持久化该进度」（`openspec/specs/context-engineering/spec.md:49-58`）；delta 塞进「默认上界 + 超界注记 + ≤界全文」三段后，同一 requirement 下混了「默认值收紧」与「进度持久化」两个关注点。
   - **推荐**：二选一并统一——(a) 维持 MODIFIED（承认二者同属「大文件读取的上下文行为」，但**建议微调 requirement 正文**使其自洽）；或 (b) 改为 **ADDED 一条独立 Requirement**（如 `Read Default Output Bound`），更清晰、也不动既有条款。**倾向 (b)**：默认上界是独立可观察契约，与「压缩前持久化进度」不是一回事。注意 strict validate 只校验 requirement **名**在新旧间的一致性——若改名/新增，需确认 delta 头写 `## ADDED Requirements` 而非 `## MODIFIED Requirements`。
 
@@ -67,10 +67,13 @@
 
 > 2026-10-02 用户逐条拍板（经独立对抗验证 `grill-adversarial.md` 后的结论）。
 
-- **Q1（逃逸面：offset 无 limit / limit=0）**: 用户答复：**三处都堵**——① 用 `limit is not None` 语义（`limit=0` 也当显式值，不再落全文）；② `offset` 路径在无显式 `limit` 时也施加默认行数界；③ 加字节兼底。三个口子一起堵才算「源头有界」；确认时间: 2026-10-02
-- **Q2（字节兼底阈值）**: 用户答复：**不用 50KB**（会误截 5 个核心文件 config.py/loop.py/main.py/manager.py/command_guard.py，52–72KB），改为**只兜「少行超长行」**——行数 ≤ 默认界但字节 > **128KB** 时才截（避开核心文件，只治 1 行 4MB 那类 minified/大 JSON）；确认时间: 2026-10-02
-- **Q3（注记显式）+ Q5（offset 回退）**: 用户答复：**两项都做**——① 注记显式写「已截断，续读传 offset=<next>」（符合 #248/#275 不静默纪律），并同步 `_READ_PROGRESS_RE` 双模块契约；② **修 offset 回退**——默认截断的 `offset=0` 不得覆盖真实的显式分页进度（实测 last-wins 会让 summary 建议「从头续读」）；确认时间: 2026-10-02
-- **Q7（spec 归属 + R0 口径）**: 用户答复：**新增独立 ADDED Requirement**（不并入 `Pagination Progress Preservation`），且 **R0 验收同时绑行维与字节维**（避免「看着小了其实还很大」——2000 行 scheduler.py 仍 ~7.9 万字节 / ~2.7 万 token）；确认时间: 2026-10-02
+- **Q1**（逃逸面：offset 无 limit / limit=0）: 用户答复：**三处都堵**——① `limit=0` 不落全文；② `offset` 无 limit 读到 EOF 的有界化；③ 加字节兼底。三个口子一起堵才算「源头有界」；确认时间: 2026-10-02
+- **Q2**（字节兼底阈值）: 用户答复：**不用 50KB**（会误截 5 个核心文件 config.py/loop.py/main.py/manager.py/command_guard.py，52–72KB），改为**只兜「少行超长行」**——行数 ≤ 默认界但字节 > **128KB** 时才截（只治 1 行 4MB 那类 minified/大 JSON）；确认时间: 2026-10-02
+- **Q3**（注记显式，不静默）: 用户答复：注记**显式**写「已截断，续读传 offset=<next>」（符合 #248/#275 不静默纪律），并**同步 `_READ_PROGRESS_RE`** 双模块契约 + 跨模块测试；确认时间: 2026-10-02
+- **Q4**（上界可配置口径）: 用户答复：**常量 + 可选 config 覆盖**（与既有 `tools.display.max_result_lines/max_result_chars` 同风格，`agent/config.py`）；内建默认 2000 行 / 128KB，SHALL 可经 config 覆盖；三处文档（proposal/design/spec）同步为「有内建默认，可经 config 覆盖」；确认时间: 2026-10-02
+- **Q5**（offset 回退）: 用户答复：**修**——默认截断的 `offset=0` 不得覆盖真实的显式分页进度（实测 last-wins 会让 summary 建议「从头续读」）；确认时间: 2026-10-02
+- **Q6**（E0 验收口径）: 用户答复：**E0 作人工观测**记录在 PR（是「A 是否必须」的判据，**不进 CI**）；CI 回归靠 **R0 的确定性字节界单测**（已实现）；不过把带方差的真实 LLM 跑进 CI；确认时间: 2026-10-02
+- **Q7**（spec 归属 + R0 口径）: 用户答复：**新增独立 ADDED Requirement**（不并入 `Pagination Progress Preservation`），且 **R0 验收同时绑行维与字节维**（避免「看着小了其实还很大」）；确认时间: 2026-10-02
 
 **依对抗验证修正（一并落实）**：CD「改动面极小」需修订（Q1+Q2+Q3 使改动扩到 `read.py` + `memory/manager.py` 两模块 + 跨模块测试）；D3/spec 的「逐字节等于文件」改为「**与当前无界输出逐字节相同**」（`read_text(errors="replace")` 今天已做换行/编码归一化，"与文件相同"字面为假）；R0 缺字节维、`total` 语义需在 spec 钉死（恒为文件总行数，与 offset 无关）。
 
