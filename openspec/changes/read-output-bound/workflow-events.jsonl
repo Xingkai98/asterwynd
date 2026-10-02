@@ -1,1 +1,0 @@
-{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "read-output-bound", "artifact_path": "docs/openspec-change-backlog.md", "reason": "新增第十八批：read-output-bound（#280 第一步 B，Read 默认输出上界）与 agent-context-bound（#280 第二步 A，挂起）。记录 A/B 拆分依据（#280 对抗验证：先打源头、用实测决定 A）与 A 的 grill 结论被证伪的事实。", "approved_by": "main-session"}

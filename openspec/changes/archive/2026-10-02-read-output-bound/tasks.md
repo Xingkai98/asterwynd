@@ -37,11 +37,11 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 同步 spec delta 到 current spec（`openspec/specs/context-engineering/spec.md`；受保护路径，需结构化事件）
-- [ ] 5.2 归档到 `openspec/changes/archive/2026-10-02-read-output-bound/`
-- [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除
-- [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
-- [ ] 5.6 文档影响检查
-- [ ] 5.7 发起 PR（关联 #280），写明验证结果 + E0 实测（作为 A 的判据）
+- [x] 5.1 同步 spec delta 到 current spec（`openspec/specs/context-engineering/spec.md`；受保护路径，需结构化事件）
+- [x] 5.2 归档到 `openspec/changes/archive/2026-10-02-read-output-bound/`
+- [x] 5.3 从 `docs/openspec-change-backlog.md` 移除
+- [x] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
+- [x] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
+- [x] 5.6 文档影响检查
+- [ ] 5.7 (post-merge) 发起 PR 并合入（关联 #280），写明验证结果 + E0 实测（作为 A 的判据）；由主 session 执行，worktree 不 push
 - [ ] 5.8 (post-merge) 合入后按 E0 实测决定 A（`agent-context-bound`）是否/如何做，并在 #280 记录
