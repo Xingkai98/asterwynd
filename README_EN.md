@@ -91,7 +91,7 @@ uv run python run_infer.py \
 
 | Tool | Permission Level | Description |
 |------|---------|------|
-| `Read` | read_only | Read files with line limits. |
+| `Read` | read_only | Read files with line limits; without an explicit limit the output is bounded by default (2000 lines or 128KB) with a resume-progress note. |
 | `Write` | read_write | Create new files and refuse to overwrite existing files. |
 | `Edit` | read_write | Exact text replacement. Requires a unique `old_string` match and supports `replace_all`. |
 | `Bash` | command_execute / high | Execute shell commands in the sandbox and return structured JSON: exit_code, stdout, stderr, duration, timed_out. |

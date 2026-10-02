@@ -18,21 +18,21 @@
 
 ## 3. 实现（测试先行）
 
-- [ ] 3.1 先写失败测试：超行界截断 + 显式注记 / 少行超长行按字节截 / `limit=0` 不落全文 / `offset` 无 limit 不到 EOF / ≤界逐字节=现状 / 显式正 limit 不变 / 图片不变 / 边界
-- [ ] 3.2 `Read.execute`：**无显式正 `limit`** 的三条路径（无参 / offset / limit=0）统一施加默认界（行 N=2000 **且** 字节 B=128KB，取先到者）
-- [ ] 3.3 上界常量化（N/B）；用 `limit is not None` 语义区分 0（D5）
-- [ ] 3.4 注记**显式**化（`truncated=true` + next offset）+ **同步 `_READ_PROGRESS_RE`**（双模块契约）+ 跨模块测试
-- [ ] 3.5 修 D6：默认截断 `offset=0` 不覆盖显式分页进度
-- [ ] 3.6 `total` 恒为文件总行数（D7）
-- [ ] 3.7 回归 `tests/agent/tools/`（含 `test_read_doc_and_pagination.py`）
-- [ ] 3.8 端到端对照：#278 复现器缩比版，如实记录 RSS 峰值对比基线（不设门槛）+ 确定性字节界单测（进 CI）
+- [x] 3.1 先写失败测试：超行界截断 + 显式注记 / 少行超长行按字节截 / `limit=0` 不落全文 / `offset` 无 limit 不到 EOF / ≤界逐字节=现状 / 显式正 limit 不变 / 图片不变 / 边界
+- [x] 3.2 `Read.execute`：**无显式正 `limit`** 的三条路径（无参 / offset / limit=0）统一施加默认界（行 N=2000 **且** 字节 B=128KB，取先到者）
+- [x] 3.3 上界常量化（N/B）；用 `limit is not None` 语义区分 0（D5）
+- [x] 3.4 注记**显式**化（`truncated=true` + next offset）+ **同步 `_READ_PROGRESS_RE`**（双模块契约）+ 跨模块测试
+- [x] 3.5 修 D6：默认截断 `offset=0` 不覆盖显式分页进度
+- [x] 3.6 `total` 恒为文件总行数（D7）
+- [x] 3.7 回归 `tests/agent/tools/`（含 `test_read_doc_and_pagination.py`）
+- [x] 3.8 端到端对照：#278 复现器缩比版，如实记录 RSS 峰值对比基线（不设门槛）+ 确定性字节界单测（进 CI）
 
 ## 4. 审阅与验收
 
 - [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
-- [ ] 4.2 全量 `uv run pytest -q`
+- [x] 4.2 全量 `uv run pytest -q`
 - [ ] 4.3 验收：R0（单次超大文件读数受界）、R1（小文件逐字节不变）、R2（进度注记可测）；E0 如实记录
-- [ ] 4.4 benchmark smoke（触及 `agent/tools/`）
+- [x] 4.4 benchmark smoke（触及 `agent/tools/`）
 
 ## 5. 收尾
 
