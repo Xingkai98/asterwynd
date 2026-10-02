@@ -2,19 +2,19 @@
 
 ## 1. 立项与调研
 
-- [ ] 1.1 关联 GitHub issue #280（其第一步 B），写 `proposal.md`
-- [ ] 1.2 写 `design.md`（D1–D5 / Risks / Testing Strategy / Impact Analysis）
-- [ ] 1.3 写 spec delta（context-engineering ADDED 1 独立 Requirement）
-- [ ] 1.4 补 `## Reference Implementation Research`（`research_tier: light`；参考仓库读文件默认行为）
-- [ ] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径）
+- [x] 1.1 关联 GitHub issue #280（其第一步 B），写 `proposal.md`
+- [x] 1.2 写 `design.md`（D1–D5 / Risks / Testing Strategy / Impact Analysis）
+- [x] 1.3 写 spec delta（context-engineering ADDED 1 独立 Requirement）
+- [x] 1.4 补 `## Reference Implementation Research`（`research_tier: light`；参考仓库读文件默认行为）
+- [x] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径）
 
 ## 2. grill 与确认
 
-- [ ] 2.1 独立零记忆 subagent 按 `batch-grill-me` 追问 `design.md`，产出 `reviews/grill-design.md`
-- [ ] 2.2 **按新流程纪律：派独立对抗 agent 证伪 grill 结论，产出 `reviews/grill-adversarial.md`；主 session 逐条复核其发现**
-- [ ] 2.3 停轮把（经对抗验证的）`## Open Questions` 逐项（每条配例子）抛给用户，等待答复
-- [ ] 2.4 用户答复写回 `grill-design.md` 的 `## User Confirmation` 节
-- [ ] 2.5 按 grill + 对抗结论回写 design/proposal/spec delta
+- [x] 2.1 独立零记忆 subagent 按 `batch-grill-me` 追问 `design.md`，产出 `reviews/grill-design.md`
+- [x] 2.2 **按新流程纪律：派独立对抗 agent 证伪 grill 结论，产出 `reviews/grill-adversarial.md`；主 session 逐条复核其发现**
+- [x] 2.3 停轮把（经对抗验证的）`## Open Questions` 逐项（每条配例子）抛给用户，等待答复
+- [x] 2.4 用户答复写回 `grill-design.md` 的 `## User Confirmation` 节
+- [x] 2.5 按 grill + 对抗结论回写 design/proposal/spec delta
 
 ## 3. 实现（测试先行）
 
@@ -30,9 +30,9 @@
 ## 4. 审阅与验收
 
 - [x] 4.0 review-loop Round 1（CHANGES_REQUESTED）修复：① 上界可配置（Q4：`tools.read.{max_lines,max_bytes}` + `ReadTool` 构造参数 + factory/调用链接线 + 测试）；② 文档口径统一（proposal/design/tasks 的 MODIFIED→ADDED、「SHALL 可配置」落地）；③ 清 `design.md` 的「待 grill 确认」占位；④ `proposal.md` 的「待 grill 补强」改为已完成
-- [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
+- [x] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
 - [x] 4.2 全量 `uv run pytest -q`
-- [ ] 4.3 验收：R0（单次超大文件读数受界）、R1（小文件逐字节不变）、R2（进度注记可测）；E0 如实记录
+- [x] 4.3 验收：R0（单次超大文件读数受界）、R1（小文件逐字节不变）、R2（进度注记可测）；E0 如实记录
 - [x] 4.4 benchmark smoke（触及 `agent/tools/`）
 
 ## 5. 收尾
