@@ -18,7 +18,11 @@ _enc = None
 
 # ReadTool 分页进度注记（见 agent/tools/builtin/read.py）：
 #   [ReadProgress file="<path>"; offset=<n>; total=<m>]
-_READ_PROGRESS_RE = re.compile(r'\[ReadProgress file="([^"]*)"; offset=(\d+); total=(\d+)\]')
+# 默认上界截断的注记额外带 `; truncated=true` 后缀（变更 read-output-bound）——
+# 该注记不是续读位点，_extract_read_progress 会跳过它。
+_READ_PROGRESS_RE = re.compile(
+    r'\[ReadProgress file="([^"]*)"; offset=(\d+); total=(\d+)(?:; truncated=(?P<truncated>true))?\]'
+)
 
 
 def _count_tokens(text: str) -> int:
@@ -456,11 +460,18 @@ class MemoryManager:
     def _extract_read_progress(
         self, messages: list["Message"]
     ) -> list[tuple[str, int, int]]:
-        """Last ``[ReadProgress file=...; offset=...; total=...]`` per file.
+        """Last non-truncated ``[ReadProgress ...]`` per file.
 
         Only tool results carry ``total``, so the scan reads tool-result
         content and keeps the last match per file (last-window semantics —
         the resume candidate for a paged large-file read).
+
+        A note flagged ``truncated=true`` at ``offset=0`` is the default output
+        bound cutting a plain read short — it is NOT a resume position, so it is
+        skipped: otherwise it would overwrite the resume position of a genuine
+        paged read of the same file (last-wins would regress to offset 0). A
+        truncated note at a non-zero offset comes from an explicit ``offset``
+        read, which is a real paging position and is kept.
         """
         per_file: dict[str, tuple[int, int]] = {}
         for m in messages:
@@ -468,6 +479,8 @@ class MemoryManager:
                 continue
             text = m.content if isinstance(m.content, str) else extract_text(m.content)
             for match in _READ_PROGRESS_RE.finditer(text):
+                if match.group("truncated") and int(match.group(2)) == 0:
+                    continue
                 per_file[match.group(1)] = (int(match.group(2)), int(match.group(3)))
         return [(path, offset, total) for path, (offset, total) in per_file.items()]
 

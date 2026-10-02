@@ -42,7 +42,7 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 | 工具 | Capability / Risk | 作用 |
 | --- | --- | --- |
-| Read | workspace_read / low | 读取文件；支持 `offset`/`limit` 分页，返回 `[ReadProgress file=...; offset=n; total=m]` 进度注记 |
+| Read | workspace_read / low | 读取文件；无显式正 `limit` 时默认输出有界（2000 行或 128KB，先到者截），超出时返回带 `truncated=true` 与续读 offset 的 `[ReadProgress ...]` 注记；支持 `offset`/`limit` 分页 |
 | ReadDoc | workspace_read / low | 按需读取深层 Markdown 文档（.md、32KB 上限） |
 | Write | workspace_write / medium | 创建新文件，禁止覆盖已有文件 |
 | Edit | workspace_write / medium | 精确文本替换 |

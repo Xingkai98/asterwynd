@@ -136,6 +136,18 @@ class QualityConfig:
 
 
 @dataclass(frozen=True)
+class ReadOutputConfig:
+    """Read 工具默认输出上界（change: read-output-bound，Q4）。
+
+    无显式正 ``limit`` 时，Read 返回至多 ``max_lines`` 行或 ``max_bytes`` 字节
+    （先到者截）。默认值须与 ``agent.tools.builtin.read`` 的模块常量一致
+    （由测试 ``test_read_output_bound`` 绑定）。
+    """
+    max_lines: int = 2000
+    max_bytes: int = 128 * 1024
+
+
+@dataclass(frozen=True)
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
@@ -145,6 +157,7 @@ class ToolsConfig:
     browser: BrowserConfig | None = None
     selection: ToolSelectionConfig = field(default_factory=ToolSelectionConfig)
     quality: QualityConfig = field(default_factory=QualityConfig)
+    read: ReadOutputConfig = field(default_factory=ReadOutputConfig)
 
 
 @dataclass(frozen=True)
@@ -851,6 +864,25 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
         browser=_parse_browser_config(mapping.get("browser"), path),
         selection=_parse_selection_config(mapping.get("selection", {}), path),
         quality=_parse_quality_config(mapping.get("quality", {}), path),
+        read=_parse_read_output_config(mapping.get("read", {}), path),
+    )
+
+
+def _parse_read_output_config(raw: Any, path: Path) -> ReadOutputConfig:
+    """解析 tools.read 配置段（Read 默认输出上界）。"""
+    mapping = _expect_mapping(raw, path, "tools.read")
+    defaults = ReadOutputConfig()
+    return ReadOutputConfig(
+        max_lines=_validate_positive_int(
+            mapping.get("max_lines", defaults.max_lines),
+            "tools.read.max_lines",
+            path=path,
+        ),
+        max_bytes=_validate_positive_int(
+            mapping.get("max_bytes", defaults.max_bytes),
+            "tools.read.max_bytes",
+            path=path,
+        ),
     )
 
 

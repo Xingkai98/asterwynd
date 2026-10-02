@@ -283,6 +283,7 @@ def _build_agent_core(
         selection_config=config.tools.selection,
         quality_config=config.tools.quality,
         memory_config=config.memory,
+        read_output_config=config.tools.read,
         llm=llm,
         sandbox=sandbox,
     )

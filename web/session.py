@@ -1582,6 +1582,7 @@ class SessionManager:
             mcp_manager=mcp_manager,
             tools=tools,
             selection_config=self.config.tools.selection,
+            read_output_config=self.config.tools.read,
             sandbox=sandbox,
         )
         subagent_manager = SubAgentManager(
