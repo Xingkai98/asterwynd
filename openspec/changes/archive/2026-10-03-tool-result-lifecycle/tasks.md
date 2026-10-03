@@ -2,12 +2,12 @@
 
 ## 1. 立项与调研
 
-- [ ] 1.1 关联 GitHub issue #282（主）/ #280（父），写 `proposal.md`（Change Type / Why / 实测证据 / What Changes / Capabilities / 验收 / RIR / Impact Analysis / Non-Goals）
-- [ ] 1.2 写 `design.md`（Context / Goals-Non-Goals / Decisions D0–D11 / Risks / Testing Strategy / Impact Analysis）
-- [ ] 1.3 写 spec delta（context-engineering ADDED 1「单受管持有与释放」+ memory-context MODIFIED 1「压缩硬顶」）
-- [ ] 1.4 补齐 `## Reference Implementation Research`（`research_tier: full`；deepseek-harness + Anthropic context editing + 本地 6 仓库）
-- [ ] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径，需结构化事件）
-- [ ] 1.6 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 通过
+- [x] 1.1 关联 GitHub issue #282（主）/ #280（父），写 `proposal.md`（Change Type / Why / 实测证据 / What Changes / Capabilities / 验收 / RIR / Impact Analysis / Non-Goals）
+- [x] 1.2 写 `design.md`（Context / Goals-Non-Goals / Decisions D0–D12 / Risks / Testing Strategy / Impact Analysis）
+- [x] 1.3 写 spec delta（context-engineering ADDED 1「单受管持有与释放」+ memory-context MODIFIED 1「压缩硬顶」+ web-ui MODIFIED 1「Expand 按需回读」）
+- [x] 1.4 补齐 `## Reference Implementation Research`（`research_tier: full`；deepseek-harness + Anthropic context editing + 本地 6 仓库）
+- [x] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径，需结构化事件）
+- [x] 1.6 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 通过
 
 ## 2. grill 与对抗（实现前强制）
 
