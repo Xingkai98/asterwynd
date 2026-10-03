@@ -35,15 +35,15 @@
 
 ## 4. 审阅与验收
 
-- [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（review report + manifest）
-- [ ] 4.2 全量 `uv run pytest -q`（对照 pristine 排除环境噪声）
-- [ ] 4.3 真实验收：A0 GC 不变量（机械）/ A1 剪枝 / A2 账本有界 / A3 无损回读 / A4 不谎称 / A5 不退化 / A6 硬顶
-- [ ] 4.4 E0 对照：复现器对拍 RSS 峰值（如实记录，不设门槛）
-- [ ] 4.5 **benchmark smoke**（触及 `agent/loop.py`/`agent/tools/`）：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-tool-result-lifecycle`
+- [x] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（review report + manifest）——**2 轮**：R1 `CHANGES_REQUESTED`（M1 `_result_ref_present` 裸子串误判、M2 resume 历史结果永不剪 + L1–L4）→ 修（`0e17694`）→ R2 **PASS**（M1/M2 真解决、无新引入问题）。报告 `reviews/building-review.md`
+- [x] 4.2 全量 `uv run pytest -q`——`2 failed, 3954 passed, 9 skipped`（2 失败 = `test_persistent.py::TestFindScopeRoot::*` 的 `/tmp` 是 git 仓库环境坑，`persistent.py` 与 master 逐字节同、不在本 change diff）
+- [x] 4.3 真实验收：A0 GC 不变量（机械）/ A1 剪枝 / A2 账本有界 / A3 无损回读 / A4 不谎称 / A5 不退化 / A6 硬顶——均由 `tests/agent/test_tool_result_lifecycle_loop.py` + `tests/agent/memory/test_tool_result_lifecycle.py` 覆盖
+- [x] 4.4 E0 对照：复现器对拍 RSS 峰值（如实记录，不设门槛）——`reviews/e0-record.md`（常驻工具结果文本 bounded 302KB vs unbounded 5906KB = −95%，vs change 前 11075KB = −97%；RSS 缩比不具区分度，与 design D0 一致）
+- [x] 4.5 **benchmark smoke**（触及 `agent/loop.py`/`agent/tools/`）：`uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-tool-result-lifecycle`——与改动前 baseline 逐数一致
 
 ## 5. 收尾
 
-- [ ] 5.1 spec delta 同步到 current spec（`openspec/specs/context-engineering/spec.md` + `openspec/specs/memory-context/spec.md`；受保护路径，需结构化事件）
+- [ ] 5.1 spec delta 同步到 current spec（`openspec/specs/context-engineering/spec.md` + `openspec/specs/memory-context/spec.md` + `openspec/specs/web-ui/spec.md`；受保护路径，需结构化事件）
 - [ ] 5.2 归档到 `openspec/changes/archive/2026-10-03-tool-result-lifecycle/`（受保护路径）
 - [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
 - [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
