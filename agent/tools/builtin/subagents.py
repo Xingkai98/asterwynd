@@ -1124,7 +1124,7 @@ def _foreach_visibility_fields(
     declared: int | None,
     expanded: int | None,
     max_items: int,
-    source_driven: bool,
+    declared_is_simulated: bool,
 ) -> dict[str, Any]:
     """foreach 截断可见性的扁平字段（D2/D4/Q4/Q5），供运行期投影与 dry-run 条目复用。
 
@@ -1133,20 +1133,22 @@ def _foreach_visibility_fields(
       不报（D3/T6，另见 change 的 Non-Goal）。
     - 空集合 ``empty_collection``（Q4）：``declared == 0`` 时显式标「集合为空 / source
       无产出」，区别于「正常展开 0 项」。
-    - ``source_driven``（仅 dry-run 传 True）：source 驱动的集合数是**模拟产物**（假 LLM
-      回显通常取不到 ``source_field``）⇒ 报 ``items_declared`` 时随附
+    - ``declared_is_simulated``（含义 = ``declared`` 是**模拟值、不可信**，**仅 dry-run
+      对 source 驱动节点传 True**）：dry-run 假 LLM 回显通常取不到 ``source_field``，
+      故其 ``declared`` 是模拟产物 ⇒ 报 ``items_declared`` 时随附
       ``items_declared_simulated``；其 ``items_omitted``（若模拟集合显示会截断）同样继承
       该模拟口径，由调用方按标记理解。**不**用模拟的 0 标 ``empty_collection``——它是
-      「未知」不是「确认空集」（M2）。
+      「未知」不是「确认空集」（M2）。运行期对 source 驱动节点**故意传 False**：那一侧
+      解析出的 declared 是真实值，不是模拟。
     """
     if declared is None or expanded is None:
         return {}
     fields: dict[str, Any] = {}
-    if source_driven:
+    if declared_is_simulated:
         fields["items_declared"] = declared
         fields["items_declared_simulated"] = True
     if declared == 0:
-        if not source_driven:
+        if not declared_is_simulated:
             fields["empty_collection"] = True
     elif max_items > 0 and declared > expanded:
         fields["items_declared"] = declared
@@ -1172,7 +1174,8 @@ def _attach_foreach_visibility(nodes: list[dict], scheduler: WorkflowScheduler) 
                 declared=getattr(state, "items_declared", None),
                 expanded=state.items,
                 max_items=state.node.max_items,
-                source_driven=False,
+                # 运行期解析出的 declared 是真实值，不是模拟（与 dry-run 相反）。
+                declared_is_simulated=False,
             )
         )
 
@@ -1685,14 +1688,14 @@ def _build_dry_run_report(
             entry["items_expanded"] = state.items
             # 截断 / 空集合可见（change foreach-truncation-visibility）：source 驱动的
             # 集合数是**模拟产物**（假 LLM 回显常取不到 source_field，见 Q5），故传
-            # `source_driven=node.items is None`——其 declared 随附 simulated 标记，且不把
-            # 模拟的 0 误标成「确认空集」（与 Q4 区分，M2）。
+            # `declared_is_simulated=node.items is None`——其 declared 随附 simulated 标记，
+            # 且不把模拟的 0 误标成「确认空集」（与 Q4 区分，M2）。
             entry.update(
                 _foreach_visibility_fields(
                     declared=getattr(state, "items_declared", None),
                     expanded=state.items,
                     max_items=node.max_items,
-                    source_driven=node.items is None,
+                    declared_is_simulated=node.items is None,
                 )
             )
         if node.kind == "route":
