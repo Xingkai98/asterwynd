@@ -14,6 +14,13 @@
   --warning: #facc15;
   --error: #f87171;
   --info: #60a5fa;
+  /* 此前被 .approval-card / .approval-meta 引用但从未定义（未定义的变量会让整条
+     declaration 变成 unset，审批卡的底色一直静默失效）。这里补上定义。 */
+  --panel: #16213e;
+  --muted: #a0a0a0;
+  /* 对话区单列正文宽度：与参考实现的 clamp(680px, …, 920px) 同量级，取固定值以免
+     再引入一条容器宽度轴。 */
+  --transcript-max-width: 880px;
 }
 
 body {
@@ -131,96 +138,124 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .view { display: none; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
 .view.active { display: flex; }
 
-/* Chat View */
+/* Chat View —— harness 式 transcript（change harness-style-web-transcript）。
+
+   信息层级与旧「聊天气泡」相反：assistant 正文是**主角**（无底色、无边框、单列
+   定宽文档流），工具执行退成可展开的**一行**。行间距按下发给各条目自己（连续工具行
+   要贴紧成一组），所以容器 gap 为 0。 */
 .tab-messages {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px 20px 32px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 0;
+}
+.tab-messages > * {
+  width: 100%;
+  max-width: var(--transcript-max-width);
 }
 
 .message {
-  max-width: 85%;
-  padding: 10px 14px;
-  border-radius: 12px;
-  line-height: 1.5;
+  margin-top: 14px;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  line-height: 1.62;
   white-space: pre-wrap;
   word-break: break-word;
 }
+.tab-messages > .message:first-child {
+  margin-top: 0;
+}
+/* 用户轮：整列宽的输入块（左强调条 + 角色微标签），**不是**右对齐圆角气泡。 */
 .message.user {
-  align-self: flex-end;
-  background: var(--surface2);
-  border-bottom-right-radius: 4px;
+  padding: 10px 14px 10px 16px;
+  border-left: 3px solid var(--accent2);
+  border-radius: 6px;
+  background: var(--surface);
 }
+.message-role-label {
+  margin-bottom: 5px;
+  color: var(--text2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+/* assistant 正文：纯文档流。 */
 .message.assistant {
-  align-self: flex-start;
-  background: var(--surface);
-  border-bottom-left-radius: 4px;
+  background: none;
   white-space: normal;
+  font-size: 0.95rem;
 }
-.message.tool {
-  align-self: flex-start;
-  background: var(--surface);
-  border: 1px dashed var(--border);
-  font-size: 0.85rem;
-  color: var(--text2);
-  max-width: 95%;
-}
+/* system 提示：居中的细线文案，不抢正文注意力。 */
 .message.system {
-  align-self: center;
-  max-width: min(760px, 92%);
-  background: var(--surface2);
+  padding: 4px 0;
+  background: none;
+  border: 0;
   color: var(--text2);
-  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  text-align: center;
 }
-.message-header {
-  font-size: 0.75rem;
-  color: var(--accent);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  font-weight: 600;
+.message.error {
+  padding: 8px 12px;
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  background: rgba(248, 113, 113, 0.06);
+  color: var(--error);
 }
+/* 历史兼容：`.message.tool` / `.message-header` 是旧实现「工具结果块」的类名，改造后
+   已无产出方（工具结果一律走 `.tool-row`），样式随之删除。 */
 .message-body {
   min-width: 0;
 }
-/* 思维链折叠区（issue #256）：通用样式、默认关闭、单击展开。
-   与正文分离，折叠时不占正文空间。 */
+/* 思维链折叠区（issue #256）：与工具行同款的**单行**折叠，默认关闭、单击展开。
+   与正文分离，折叠时不占正文空间。caret 仍由 [aria-expanded] 驱动（既有约定），
+   类名不变——浏览器测试直接点击 .message-reasoning-toggle 并断言内容显隐。 */
 .message-reasoning {
-  margin-bottom: 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface2);
-  font-size: 0.85rem;
+  margin: 0 0 6px;
+  border: 0;
+  border-radius: 0;
+  background: none;
   max-width: 100%;
 }
 .message-reasoning-toggle {
-  display: block;
+  /* `flex` 而不是 `inline-flex`：行内级元素会在块容器里撑出一个行盒（基线与降部留白），
+     折叠态整块高度会比标题行高出 ~2px，看起来像两行。块级 flex 让整块高度恒等于标题行。 */
+  display: flex;
+  align-items: center;
   width: 100%;
-  padding: 6px 10px;
+  height: 24px;
+  padding: 0;
   background: none;
   border: none;
   color: var(--text2);
   font: inherit;
+  font-size: 0.82rem;
   text-align: left;
   cursor: pointer;
 }
 .message-reasoning-toggle::before {
-  content: '▸ ';
+  content: '▸';
+  margin-right: 6px;
+  font-size: 0.7rem;
 }
 .message-reasoning-toggle[aria-expanded="true"]::before {
-  content: '▾ ';
+  content: '▾';
 }
 .message-reasoning-toggle:hover {
   color: var(--text);
 }
 .message-reasoning-content {
-  padding: 0 10px 8px;
+  margin: 2px 0 4px 22px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--border);
   color: var(--text2);
   white-space: pre-wrap;
   word-break: break-word;
+  font-size: 0.84rem;
   max-height: 320px;
   overflow-y: auto;
 }
@@ -290,39 +325,9 @@ main { flex: 1; min-height: 0; overflow: hidden; }
 .image-lightbox-close:hover {
   border-color: var(--info);
 }
-.tool-result-header {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-}
-.tool-result-meta {
-  color: var(--text2);
-  font-size: 0.72rem;
-  font-weight: 500;
-  text-transform: none;
-  white-space: nowrap;
-}
-.tool-result-body {
-  max-height: 260px;
-  overflow: auto;
-}
-.tool-result-controls {
-  display: flex;
-  margin-top: 8px;
-}
-.tool-result-toggle {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface2);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 0.78rem;
-}
-.tool-result-toggle:hover {
-  border-color: var(--info);
-}
+/* 旧的「工具结果块」样式族（.tool-result-header/-meta/-body/-controls/-toggle）已随
+   change harness-style-web-transcript 删除：工具结果不再单独成块，而是补进 .tool-row
+   的折叠 body（见「工具执行行」一节）。 */
 .message.error {
   border-color: var(--error);
   color: var(--error);
@@ -389,24 +394,156 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   color: var(--accent);
 }
 
-.tool-call-block {
-  background: var(--surface2);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin: 4px 0;
-  font-size: 0.85rem;
+/* --- 工具执行行（harness 式单行折叠）------------------------------------
+   一行 = [caret 14px][title][2×2 圆点][summary 可截断][meta 不换行]，固定 24px 高；
+   body 是头部按钮的**兄弟节点**（不是子节点），所以在展开体里点选文本不会触发折叠。
+   尺寸链与参考实现 ToolRow 一致：16px leading / gap 6 / 13px 行高 24。 */
+.tool-row {
+  display: flex;
+  flex-direction: column;
+  margin-top: 3px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
 }
-.tool-call-block .tool-name {
+.tool-row[data-state="error"] {
+  border-left-color: var(--error);
+}
+.tool-row-head {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--text2);
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 100ms ease;
+}
+.tool-row-head:hover,
+.tool-row-head:focus-visible {
+  color: var(--text);
+}
+.tool-row-caret {
+  flex: none;
+  width: 14px;
+  font-size: 0.65rem;
+}
+.tool-row-caret::before {
+  content: '▸';
+}
+.tool-row-head[aria-expanded="true"] .tool-row-caret::before {
+  content: '▾';
+}
+.tool-row-title {
+  flex: none;
   color: var(--info);
   font-weight: 600;
 }
-.tool-call-block pre {
+.tool-row-sep {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 1px;
+  background: var(--text2);
+  opacity: 0.45;
+}
+.tool-row-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-row[data-state="error"] .tool-row-summary {
+  color: var(--error);
+}
+/* 失败行的行尾因由（`exit 1 · 135 字符`）同样上错误色：折叠态下这是用户唯一能看到的
+   失败信号，不能只剩一个灰数字。 */
+.tool-row[data-state="error"] .tool-row-meta {
+  color: var(--error);
+  opacity: 1;
+}
+.tool-row-meta {
+  flex: none;
+  margin-left: 8px;
+  color: var(--text2);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+.tool-row-meta:empty {
+  display: none;
+}
+.tool-row[data-state="running"] .tool-row-meta {
+  color: var(--warning);
+  opacity: 1;
+}
+.tool-row-body {
+  margin: 2px 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
   background: var(--bg);
-  padding: 6px 8px;
+}
+.tool-row-body[hidden] {
+  display: none;
+}
+.tool-row-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tool-row-section + .tool-row-section {
+  margin-top: 10px;
+}
+.tool-row-label {
+  color: var(--text2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.tool-row-args,
+.tool-row-result {
+  max-height: 320px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
   border-radius: 4px;
-  margin-top: 4px;
-  font-size: 0.8rem;
-  overflow-x: auto;
+  background: var(--surface);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tool-row-result[data-error="true"] {
+  color: var(--error);
+}
+/* 行内提示（工作流抽屉的「参数已截断」）：渲染在**头部行**里，不是折叠 body 内——
+   提示藏进 hidden 子树等于没有提示。`flex: none` + `nowrap` 保证它不被摘要挤掉或
+   折成第二行（头部只有 24px 高且 overflow:hidden，折行就会被裁掉）。 */
+.tool-row-note {
+  flex: none;
+  margin-left: 8px;
+  color: var(--warning);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.tool-row-note[hidden] {
+  display: none;
+}
+/* 兼容：``.tool-call-block`` 是工具行的外壳类名（工作流抽屉与历史断言都依赖它），
+   视觉口径统一由上面的 .tool-row 规则承担，这里不再重复定义底色与内边距。 */
+.tool-call-block {
+  margin: 3px 0 0;
 }
 
 .plan-document-panel,
@@ -1056,14 +1193,17 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   }
 
   .tab-messages {
-    padding: 12px;
-    gap: 8px;
+    padding: 14px 12px 24px;
   }
 
   .message {
-    max-width: 92%;
-    padding: 8px 10px;
-    font-size: 0.9rem;
+    margin-top: 12px;
+    padding: 0;
+    font-size: 0.92rem;
+  }
+
+  .message.user {
+    padding: 8px 10px 8px 12px;
   }
 
   .input-area {
@@ -1229,14 +1369,21 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   overflow: hidden;
 }
 .tab-pane.active { display: flex; }
+/* 与文件开头的 .tab-messages 同源定义（两处必须同步改：同优先级下**后者生效**，
+   只改一处会静默不生效）。 */
 .tab-messages {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px 20px 32px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 0;
+}
+.tab-messages > * {
+  width: 100%;
+  max-width: var(--transcript-max-width);
 }
 .tab-pane .input-area {
   display: flex;
@@ -1491,7 +1638,7 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   .hub-layout { flex-direction: column; gap: 12px; padding: 12px; }
   .hub-sidebar { width: 100%; flex-direction: row; flex-wrap: wrap; }
   .hub-section { flex: 1; min-width: 200px; }
-  .tab-messages { padding: 12px; gap: 8px; }
+  .tab-messages { padding: 14px 12px 24px; }
   .tab-pane .input-area { padding: 8px 10px; }
 }
 

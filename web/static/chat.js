@@ -20,6 +20,9 @@ function createTab(tabId, sessionId, workspace, mode) {
     approvalCards: new Map(),
     questionCards: new Map(),
     pendingImages: [],
+    // 已建行但还没等到结果的工具行（按到达顺序排队）。`tool_call`/`tool_result`
+    // 事件不带调用 id，配对只能靠顺序；归属到 tab 才不会跨会话串行。
+    pendingToolRows: [],
     shouldReconnect: true,
     slashMatches: [],
     activeSlashIndex: 0,
@@ -60,6 +63,7 @@ let shouldReconnect = true;
 let approvalCards = new Map();
 let questionCards = new Map();
 let pendingImages = [];
+let pendingToolRows = [];
 let sendInFlight = false;
 let wsUploadWaiters = new Map();
 let iterBlocks = {};  // debug 迭代块索引（per-tab，见 debug.js）
@@ -215,6 +219,7 @@ function bindActiveTab(tab) {
   approvalCards = tab.approvalCards;
   questionCards = tab.questionCards;
   pendingImages = tab.pendingImages;
+  pendingToolRows = tab.pendingToolRows;
   shouldReconnect = tab.shouldReconnect;
   slashMatches = tab.slashMatches;
   activeSlashIndex = tab.activeSlashIndex;
@@ -249,6 +254,7 @@ function syncActiveTab() {
   tab.approvalCards = approvalCards;
   tab.questionCards = questionCards;
   tab.pendingImages = pendingImages;
+  tab.pendingToolRows = pendingToolRows;
   tab.shouldReconnect = shouldReconnect;
   tab.slashMatches = slashMatches;
   tab.activeSlashIndex = activeSlashIndex;
@@ -351,6 +357,11 @@ function closeTab(tabId) {
     if (next) switchTab(next);
     else {
       activeTabId = null;
+      // 显式重绘会话 chip。旧实现靠 `ws.close()` → `onclose` → `bindActiveTab` 的
+      // **副作用**刷新标签栏；那条路径本身就是缺陷（把全局状态指向已关闭 tab），
+      // 加上 `tabs.has` 守卫后必须在这里显式补上，否则关掉最后一个 tab 后
+      // 会话 chip 会残留在标签栏里。
+      renderSessionTabs();
       showHub();
     }
   } else {
@@ -437,6 +448,13 @@ async function connectTab(tab, targetSessionId, workspace) {
       handleTabEvent(tab, event);
     };
     socket.onclose = (event) => {
+      // 已关闭的 tab 不能再被绑成 active，也**不能再往全局 chrome 写**：那会把状态灯
+      // 改成这条死连接的状态、把错误消息写进活跃 tab 的消息区、动活跃 tab 的上传
+      // waiter（既有缺陷，本 change 起把整段连接结果处理都纳入守卫）。
+      if (!tabs.has(tab.id)) {
+        rejectWsUploadWaiters(new Error('connection closed during image upload'));
+        return;
+      }
       bindActiveTab(tab);
       if (event.code === 1009) {
         addMessage('error', 'Image message too large. Try a smaller image.');
@@ -454,6 +472,7 @@ async function connectTab(tab, targetSessionId, workspace) {
       }
     };
     socket.onerror = () => {
+      if (!tabs.has(tab.id)) return;
       bindActiveTab(tab);
       statusEl.textContent = 'error';
       reject(new Error('WebSocket error'));
@@ -539,6 +558,8 @@ function handleEvent(event) {
         // DOM 的僵尸条目，后续同 id 事件会以为自己「已有卡片」而跳过渲染（D5/M6）。
         approvalCards.clear();
         questionCards.clear();
+        // 待配对的工具行同理：DOM 已清空，留着只会把后续 tool_result 写进僵尸行。
+        pendingToolRows = [];
         currentAssistantMsg = null;
       }
       if (metadata.transition && metadata.transition.new_mode) {
@@ -635,6 +656,9 @@ function handleEvent(event) {
 
     case 'done':
       currentAssistantMsg = null;
+      // run 结束 → 未配对的工具行不可能再等到结果了。留着会让它们永远停在
+      // 「运行中」，并可能被下一轮的 tool_result 错误认领（grill Q4/R-E）。
+      settleOrphanToolRows();
       if (event.data && event.data.stop_reason === 'max_iterations' && !event.data.content) {
         addMessage('error', 'Run stopped before producing a final response.');
       }
@@ -642,6 +666,7 @@ function handleEvent(event) {
 
     case 'error':
       currentAssistantMsg = null;
+      settleOrphanToolRows();
       addMessage('error', readableErrorMessage(event.data));
       break;
 
@@ -735,13 +760,122 @@ function renderHistory(messages) {
   // 僵尸条目、静默跳过渲染，用户再也看不到那张卡。
   approvalCards.clear();
   questionCards.clear();
+  // 消息区整体重绘 → 未配对的工具行也随之失效。不清会让随后的 tool_result 写进
+  // 已脱离文档的僵尸行（与 currentAssistantMsg 僵尸游标同源的问题）。
+  pendingToolRows = [];
+  // assistant 消息带的 tool_calls 是历史里**唯一**的工具名来源：`role:"tool"` 的消息
+  // 只有 `tool_call_id`（`Message` 没有工具名字段）。按 id 建索引，让重连后的工具行
+  // 显示真名与真参数，而不是一长串无法分辨的「工具结果」。
+  const toolCallsById = new Map();
   for (const message of messages) {
+    if (!message || !Array.isArray(message.tool_calls)) continue;
+    message.tool_calls.forEach((call) => {
+      if (call && call.id) toolCallsById.set(call.id, call);
+    });
+  }
+  for (const message of messages) {
+    if (!message) continue;
+    if (message.role === 'tool') {
+      // 旧实现把非 assistant 一律折成 user 泡泡，重连后整段工具输出会铺满对话流
+      // ——本 change 的 G3。
+      if (!message.content) continue;
+      appendHistoryToolResult(message.content, toolCallsById.get(message.tool_call_id));
+      continue;
+    }
     // 只含 reasoning、无 content 的 assistant 消息也要渲染（否则重连后折叠区消失）。
-    if (!message || (!message.content && !message.reasoning)) continue;
+    if (!message.content && !message.reasoning) continue;
     const role = message.role === 'assistant' ? 'assistant' : 'user';
     addMessage(role, message.content, message.reasoning);
   }
   messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// --- Transcript tool rows (change harness-style-web-transcript) ---
+// 工具执行在对话流里**只占一行**：`▸ Bash · uv run pytest -q · 1.2k 字符`。参数与
+// 结果全文只在展开时才可见。渲染口径集中在 ``AsterwyndToolRows``，工作流抽屉的
+// 「对话」tab 复用同一套，避免两处口径漂移。
+function transcriptApi() {
+  return window.AsterwyndToolRows;
+}
+
+/** 历史回放里的工具结果行。
+ *
+ * @param {string} content 结果全文。
+ * @param {?object} call 由 `tool_call_id` 反查到的调用，形状为 `{id, name}`——历史投影
+ *   刻意**不外发 `arguments`**（量级不可控，而历史补发在重连首屏关键路径上），所以参数
+ *   摘要通常拿不到；拿不到时摘要降级为结果首行，标题降级为「工具结果」。
+ */
+function appendHistoryToolResult(content, call) {
+  const api = transcriptApi();
+  const text = content === null || content === undefined ? '' : String(content);
+  const lineCount = text === '' ? 0 : text.split('\n').length;
+  const name = call && call.name ? call.name : '';
+  const argsSummary = call ? api.summarizeToolCall(name, call.arguments) : '';
+  const row = api.createToolRow(document, {
+    name: name,
+    args: call ? call.arguments : null,
+    title: name ? api.toolTitle(name) : '工具结果',
+    // 标题已经给出工具名；有参数摘要就用它，没有就用结果首行（比留空有用）。
+    summary: argsSummary || api.truncate(api.firstLine(text), api.SUMMARY_LIMIT),
+  });
+  api.updateToolRow(document, row, {
+    name: name,
+    result: text,
+    display: { char_count: text.length, line_count: lineCount },
+  });
+  messagesEl.appendChild(row);
+  return row;
+}
+
+/**
+ * 取一条待配对的工具行。**按到达顺序 FIFO**：同一轮里多个调用的 `tool_call` 与
+ * `tool_result` 成对相邻、按原顺序发射（``agent/loop.py`` 的 phase 3「original
+ * order」），所以「最早未配对」才是正确的一侧——取最近会把第 1 个调用的结果贴到
+ * 最后一个同名行上（同名多次调用的正常场景）。同名优先只是让「参数解析失败的调用
+ * 提前发射」这一例外下的张冠李戴概率下降，取不到就返回 ``null``，由调用方新建一行
+ * 兜底（保证事件永不丢失）。
+ */
+function takePendingToolRow(name) {
+  if (pendingToolRows.length === 0) return null;
+  let index = -1;
+  if (name) {
+    index = pendingToolRows.findIndex((entry) => entry.name === name);
+  }
+  if (index === -1) index = 0;
+  return pendingToolRows.splice(index, 1)[0].row;
+}
+
+/**
+ * run 结束时收尾：未等到结果的工具行标成失败并把队列清空。保持「运行中」是谎报
+ * （run 已经结束了），而清空是对下一轮的保护——否则下一轮同名调用的结果会被这条
+ * 僵尸行认领。
+ *
+ * 清空用 ``length = 0`` 而不是重新赋值：``pendingToolRows`` 是 per-tab 数组，
+ * ``bindActiveTab``/``syncActiveTab`` 靠**同一个数组引用**在 tab 与全局代理之间同步；
+ * 换一个新数组会让两者在下次同步前指向不同对象。
+ */
+function settleOrphanToolRows() {
+  if (!pendingToolRows || pendingToolRows.length === 0) return;
+  pendingToolRows.forEach((entry) => {
+    entry.row.dataset.state = 'error';
+    const meta = entry.row.__metaEl;
+    if (meta) meta.textContent = '未返回结果';
+  });
+  pendingToolRows.length = 0;
+}
+
+/** 只有结果、没有配对调用时的兜底行（重连补发、参数解析失败路径）。 */
+function newToolRowFromResult(payload) {
+  const api = transcriptApi();
+  const name = payload.name || '';
+  const result = payload.result || '';
+  const display = payload.display || {};
+  return api.createToolRow(document, {
+    name: name,
+    title: api.toolTitle(name),
+    summary: api.truncate(api.firstLine(result), api.SUMMARY_LIMIT),
+    meta: api.formatCharMeta(display.char_count, display.line_count),
+  });
 }
 
 // --- Reasoning (thinking) folding area, issue #256 ---
@@ -792,15 +926,25 @@ function renderReasoning(messageEl, text) {
 }
 
 // --- Message rendering ---
+// 保留 ``.message.{role}`` 语义类名与 DOM 骨架（正文 + 可选 reasoning 折叠区），只改
+// 视觉：对话区不再是气泡流，而是**单列文档流**——assistant 正文是主角（无底色无边框），
+// user 轮是整列宽的输入块（左强调条 + 角色微标签），system 是居中的细线提示。
+// 不改骨架的理由：``currentAssistantMsg.closest('.message')``（reasoning 增量）与
+// ``ensureReasoningArea`` 的 insertBefore 位置都挂在这个结构上，四个浏览器测试文件
+// 也按这些类名选择器断言。
 function addMessage(role, content, reasoning) {
   const el = document.createElement('div');
   el.className = `message ${role}`;
-  if (role === 'tool') {
-    const header = document.createElement('div');
-    header.className = 'message-header';
-    header.textContent = 'tool result';
-    el.appendChild(header);
+  el.dataset.role = role;
+  if (role === 'user') {
+    const label = document.createElement('div');
+    label.className = 'message-role-label';
+    label.textContent = '你';
+    el.appendChild(label);
   }
+  // 工具结果不走这里：它们由 addToolCallBlock / addToolResultMessage /
+  // appendHistoryToolResult 渲染成折叠的 `.tool-row`。旧实现在这里给 `role === 'tool'`
+  // 加一个 `tool result` 表头，已随本 change 删除（该分支在改造后不可达）。
   // 有 reasoning 时才渲染折叠区（无则不渲染，对无 reasoning 的 provider 零副作用）。
   if (role === 'assistant' && reasoning) {
     renderReasoning(el, reasoning);
@@ -906,75 +1050,46 @@ function appendAssistantContent(body, content) {
   }
 }
 
+/**
+ * 一次工具调用 = 对话流里的**一行**：`▸ Bash · uv run pytest -q · 运行中`。
+ *
+ * 参数全文写进 body（``hidden``），所以折叠态可见文本恒为一行高度；旧实现无条件把
+ * ``JSON.stringify(args, null, 2)`` 作为 ``<pre>`` append 进对话流，长参数直接刷屏。
+ */
 function addToolCallBlock(name, args) {
-  const block = document.createElement('div');
-  block.className = 'tool-call-block';
-  block.innerHTML = `<span class="tool-name">🔧 ${name}</span>`;
-  if (args && Object.keys(args).length > 0) {
-    const pre = document.createElement('pre');
-    pre.textContent = JSON.stringify(args, null, 2);
-    block.appendChild(pre);
-  }
-  messagesEl.appendChild(block);
+  const api = transcriptApi();
+  const row = api.createToolRow(document, {
+    name: name,
+    args: args,
+    title: api.toolTitle(name),
+    summary: api.summarizeToolCall(name, args),
+    state: 'running',
+    meta: '运行中',
+  });
+  messagesEl.appendChild(row);
+  pendingToolRows.push({ name: name || '', row: row });
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  return row;
 }
 
+/**
+ * 把 ``tool_result`` 补进 ``tool_call`` 建出的那一行：原地补全而不是新增第二块。
+ * 失败时折叠行显示结果首行 + 错误色，且**不自动展开**（失败是最吵的场景）。
+ */
 function addToolResultMessage(data) {
-  const el = document.createElement('div');
-  el.className = 'message tool';
-
-  const display = data.display || {
-    collapsed: false,
-    preview: data.result || '',
-    char_count: (data.result || '').length,
-    line_count: (data.result || '').split('\n').length,
-  };
-  const fullResult = data.result || '';
-
-  const header = document.createElement('div');
-  header.className = 'message-header tool-result-header';
-
-  const title = document.createElement('span');
-  title.textContent = `tool result: ${data.name}`;
-  header.appendChild(title);
-
-  const meta = document.createElement('span');
-  meta.className = 'tool-result-meta';
-  meta.textContent = `${display.char_count} chars / ${display.line_count} lines`;
-  header.appendChild(meta);
-
-  el.appendChild(header);
-
-  const body = document.createElement('div');
-  body.className = 'tool-result-body';
-  body.textContent = display.collapsed ? display.preview : fullResult;
-  el.appendChild(body);
-
-  if (display.collapsed) {
-    const controls = document.createElement('div');
-    controls.className = 'tool-result-controls';
-
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'tool-result-toggle';
-    toggle.textContent = 'Expand';
-    toggle.setAttribute('aria-expanded', 'false');
-
-    let expanded = false;
-    toggle.addEventListener('click', () => {
-      expanded = !expanded;
-      body.textContent = expanded ? fullResult : display.preview;
-      toggle.textContent = expanded ? 'Collapse' : 'Expand';
-      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    });
-
-    controls.appendChild(toggle);
-    el.appendChild(controls);
+  const api = transcriptApi();
+  const payload = data || {};
+  const name = payload.name || '';
+  const row = takePendingToolRow(name) || newToolRowFromResult(payload);
+  api.updateToolRow(document, row, {
+    name: name,
+    result: payload.result === null || payload.result === undefined ? '' : payload.result,
+    display: payload.display,
+  });
+  if (row.parentNode !== messagesEl) {
+    messagesEl.appendChild(row);
   }
-
-  messagesEl.appendChild(el);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return body;
+  return row.querySelector('.tool-row-body');
 }
 
 function renderApprovalRequest(data) {
@@ -2199,6 +2314,12 @@ window.AsterwyndChatTest = {
   // 置位只发生在 init() resolve 之后；init 失败/挂住时保持 false（屏障失守要
   // fail-loud：测试超时失败，而不是误判就绪）。
   initDone: false,
+  // 当前 active tab 的未配对工具行数量（只读探针，测试专用）。
+  //
+  // 为什么需要它：只断言「僵尸行被标成 error」抓不到「run 结束时队列没清空」——那会让
+  // 下一轮同名调用的结果落到上一轮的僵尸行上（老行显示新结果、新行永远运行中，且没有
+  // 任何错误信号）。队列深度是这条不变量唯一的直接观测量。
+  pendingToolRowCount: () => pendingToolRows.length,
 };
 
 init().then(() => { window.AsterwyndChatTest.initDone = true; });

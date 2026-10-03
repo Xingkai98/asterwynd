@@ -5,6 +5,10 @@ Files are compared against stripped source lines during gate checks.
 
 - "收尾过程中发现任何未收敛的 open question 或 TODO，先回写到 change 文档。"
 
+## 实现先于 grill 的流程债（harness-style-web-transcript 自述）
+
+`harness-style-web-transcript`（2026-10-03）的实现代码**早于**独立 subagent 的设计追问（`/grill`）产出：同一会话内先落实现与测试，再补 `reviews/grill-design.md`。这违反 AGENTS.md 的「grill 在写实现代码之前完成」关，也使得 `grill-design.md` 的 `## Open Questions` 只能记「用户整体预授权 + 主 agent 逐条按推荐拍板」，而不是逐题的用户答复（该文件已在 `## User Confirmation` 与 `## 结论` 如实披露）。当次补救是把 grill 的 4 条 MUST-FIX 全部回改进实现与测试并用 5 条变异验证证明新测试有牙齿，但**时序本身不可回溯**。后续 change 必须保持「proposal/design → grill → 停轮确认 → 写码」的顺序；本条记录以免同一形态再次发生。
+
 ## 节点因由的两条小瑕疵（workflow-terminal-honesty Round 3 观察项）
 
 `workflow-terminal-honesty`（2026-09-19 合入）的审阅闭环 Round 3 在 `_waiting_reason` / `_blocked_reason`（`agent/subagent/scheduler.py`）上留了两条**低危、非阻塞**观察项，均不影响正确性，记录以免遗忘：

@@ -1005,6 +1005,42 @@ def test_build_history_payload_without_reasoning_is_none():
     assert payload["data"]["messages"][0]["reasoning"] is None
 
 
+def test_build_history_payload_projects_tool_calls_for_tool_rows():
+    """历史补发必须带 ``tool_call_id`` 与 assistant 的 ``tool_calls``（id/name）。
+
+    change ``harness-style-web-transcript``（grill Q6）：``role: "tool"`` 的消息只有
+    ``tool_call_id``，工具名只存在于前一条 assistant 消息的 ``tool_calls`` 里。少了这份
+    投影，重连后每个工具结果都渲染成无法分辨的「工具结果」行。
+
+    只发 id/name 是刻意的：``arguments`` 量级不可控（``Write`` 的内容可达数 MB），而
+    历史补发在重连首屏的关键路径上。
+    """
+    from agent.llm import ToolCallDelta
+    from agent.message import Message, tool_result_message
+    from web.session import build_history_payload
+
+    session = AgentSession("s-tools", None)
+    session.messages = [
+        Message(role="user", content="跑测试"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCallDelta(id="t1", name="Bash", arguments='{"cmd": "pytest -q"}')],
+        ),
+        tool_result_message("t1", '{"exit_code": 0, "stdout": "ok"}'),
+    ]
+
+    messages = build_history_payload(session)["data"]["messages"]
+
+    assert messages[1]["tool_calls"] == [{"id": "t1", "name": "Bash"}]
+    assert messages[2]["tool_call_id"] == "t1"
+    # 参数不外发（量级不可控），只发「哪个调用」。
+    assert "arguments" not in str(messages[1]["tool_calls"])
+    # 无工具调用的消息不产出空列表/空串噪声（前端按 falsy 判断）。
+    assert messages[0]["tool_calls"] is None
+    assert messages[0]["tool_call_id"] is None
+
+
 # ── reasoning 降级标志的 session 级语义（issue #256 D7 / 审阅 S-1）─────
 
 @pytest.mark.asyncio

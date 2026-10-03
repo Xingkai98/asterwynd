@@ -40,6 +40,25 @@ from web.debug_hook import DebugHook
 logger = logging.getLogger("asterwynd.web.session")
 
 
+def _history_tool_calls(message) -> list[dict] | None:
+    """历史补发用的 ``tool_calls`` 投影：只发 ``id`` 与 ``name``。
+
+    ``role: "tool"`` 的历史消息只带 ``tool_call_id``（``Message`` 没有工具名字段），
+    所以工具名必须从**前一条 assistant 消息**的 ``tool_calls`` 里按 id 反查。没有这份
+    投影，重连后前端只能把每个工具结果渲染成无法分辨的「工具结果」行。
+
+    只发 id/name 是刻意的：``arguments`` 在 line 上的量级不可控（``Write`` 的内容可达
+    数 MB），而历史补发是重连首屏的关键路径，不该为参数再传一份。
+    """
+    calls = getattr(message, "tool_calls", None) or []
+    projected = [
+        {"id": call.id, "name": call.name}
+        for call in calls
+        if getattr(call, "id", None)
+    ]
+    return projected or None
+
+
 def build_history_payload(session: "AgentSession") -> dict:
     """把 session 的消息历史序列化为前端可渲染的文本事件。
 
@@ -65,6 +84,9 @@ def build_history_payload(session: "AgentSession") -> dict:
                     # 思维链必须随历史一起补发，否则重连后前端重绘时折叠区消失
                     # （issue #256 D9）。opaque 不外发，前端只需要可展示文本。
                     "reasoning": message.reasoning_text or None,
+                    # 工具行要显示真名：见 ``_history_tool_calls``。
+                    "tool_call_id": message.tool_call_id,
+                    "tool_calls": _history_tool_calls(message),
                 }
                 for message in messages
             ],
