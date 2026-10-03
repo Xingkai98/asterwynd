@@ -28,14 +28,14 @@
 
 ## 4. 审阅与验收
 
-- [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
-- [ ] 4.2 全量 `uv run pytest -q`
-- [ ] 4.3 验收 T1–T5（新测试全绿）
-- [ ] 4.4 benchmark smoke（若触及 `agent/tools/`）
+- [x] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
+- [x] 4.2 全量 `uv run pytest -q`
+- [x] 4.3 验收 T1–T5（新测试全绿）
+- [x] 4.4 benchmark smoke（`benchmark-gate` PASS，success_rate=1.0000）
 
 ## 5. 收尾
 
-- [ ] 5.1 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`；受保护路径，结构化事件已记）
+- [x] 5.1 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`；受保护路径，结构化事件已记）
 - [ ] 5.2 归档到 `openspec/changes/archive/2026-10-03-foreach-budget-truncation-visibility/`（受保护路径）
 - [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径；标记已归档）
 - [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`

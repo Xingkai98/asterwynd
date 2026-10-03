@@ -332,17 +332,18 @@ foreach 节点的 `source` SHALL 支持跨层递归解析（沿数据边向上�
 
 当一个 `foreach` 节点的 `items` 集合超过生效的 `max_items`（且 `max_items > 0`）而被**静态截断**时，系统 SHALL 在**模型可见的出口**如实报告「声明（集合）总数、实际展开数、被省略数」，SHALL NOT 静默丢弃而不报告。
 
-报告 SHALL 覆盖以下出口，三者语义一致：
+报告 SHALL 覆盖以下出口，语义一致：
 
 - **声明期**（`DeclareWorkflow` 的返回体、`RunWorkflow(spec=...)` 的 `warnings`）：当 `items` 为声明期即可知的**字面列表**时，SHALL 报告截断；措辞 SHALL **可行动**（指明「哪里发生截断」与「如何展开全部」，如减小 items / 调大 `max_items` / 声明 `max_items: 0`）。
 - **dry run**（`DryRunWorkflow` 的 foreach 条目）：SHALL 报告集合总数与被省略数（与既有「展开数」一并构成「总/展开/省略」三元）。
-- **运行期**（`GetWorkflow` 的 foreach 节点投影）：SHALL 暴露静态截断信号（被 `max_items` 丢弃的项数）。
+- **运行期 `RunWorkflow` 结果信封**（返回体 `nodes` 里的 foreach 节点）：SHALL 暴露静态截断信号（被 `max_items` 丢弃的项数）。
+- **运行期 `GetWorkflow(detail='nodes')` 投影**（foreach 节点）：SHALL 暴露静态截断信号。
 
 当 `items` 由 `source` 驱动（声明期无法得知集合大小）时，声明期 SHALL NOT 猜测或报告其展开数；截断情况 SHALL 由 dry run 与运行期出口报告。
 
 当 `max_items == 0`（不静态截断）时，系统 SHALL NOT 报告静态截断。当集合未超过 `max_items`（无截断）时，系统 SHALL NOT 产生任何截断报告（零噪声）。
 
-本 Requirement 的「省略数」（`max_items` 丢弃的项数）SHALL 与既有的「结果投影里 ref 列表被界截断的条数」是不同的量，SHALL NOT 混用同一语义。
+本 Requirement 的「省略数」（`max_items` 丢弃的项数）SHALL 与既有的「结果投影里 ref 列表被界截断的条数」是不同的量，SHALL NOT 混用同一语义。该「省略数」SHALL 与一个**成因判别字段**配对出现，其取值 SHALL 标明截断源于 `max_items`（静态）——以便与「`max_items=0` 的预算截断」的同类省略数区分（见「foreach 预算截断可见」Requirement）。
 
 `foreach` 的展开集合为空（`source` 未产出、产出解析为空、或上游成功但内容为空）时，系统 SHALL 显式表明该节点展开 0 项**是因为集合为空**，SHALL NOT 只报一个无从归因的零展开数；该信号 SHALL 与「正常解析出非空集合」可区分。
 
@@ -359,6 +360,7 @@ foreach 节点的 `source` SHALL 支持跨层递归解析（沿数据边向上�
 - **WHEN** 运行 `DryRunWorkflow`
 - **THEN** 该节点条目 SHALL 报告集合总数与被省略数
 - **AND** SHALL 与既有的展开数一致（展开数 + 省略数 == 集合总数）
+- **AND** 成因判别字段 SHALL 标为 `max_items`
 
 #### Scenario: source 驱动在声明期不猜
 
@@ -399,6 +401,51 @@ foreach 节点的 `source` SHALL 支持跨层递归解析（沿数据边向上�
 - **WHEN** dry run 报告该节点，或运行后读取其投影
 - **THEN** 系统 SHALL 显式表明该节点展开 0 项**是因为集合为空**，SHALL NOT 只报一个无从归因的 `items_expanded: 0`
 - **AND** 该信号 SHALL 与「正常解析出非空集合」可区分
+
+### Requirement: foreach 预算截断可见
+
+当一个 `foreach` 节点的 `max_items == 0`（不静态截断、展开到图级预算耗尽）且其集合被**图级预算**截断（剩余 `max_total_runs` / `max_runs` / `max_nodes` 不足以展开全部项）时，系统 SHALL 在**模型可见的出口**如实报告「声明（集合）总数、实际展开数、被省略数」，并 SHALL 以**成因判别字段**标明该省略源于**预算**（区别于 `max_items` 静态截断），SHALL NOT 静默丢弃而不报告。
+
+报告 SHALL 覆盖以下出口，语义一致：
+
+- **dry run**（`DryRunWorkflow` 的 foreach 条目）：SHALL 报告集合总数、被省略数与成因（与既有「展开数」一并构成「总/展开/省略」三元）。
+- **运行期 `RunWorkflow` 结果信封**（返回体 `nodes` 里的 foreach 节点）：SHALL 暴露预算截断信号（被预算丢弃的项数）与成因。
+- **运行期 `GetWorkflow(detail='nodes')` 投影**（foreach 节点）：SHALL 暴露预算截断信号与成因。
+
+> 注：`GetWorkflow` 的默认 `detail='summary'` 出口只含 bounded 节点摘要、不承载本 Requirement 的可见性字段；本 Requirement 的「运行期投影」指**显式** `detail='nodes'`。
+
+声明期（`DeclareWorkflow` / `RunWorkflow(spec=...)` 的 `warnings`）SHALL NOT 报告预算截断——预算截断取决于运行期已用预算与集合大小，声明期无从可知。
+
+当 `max_items == 0` 且集合未被预算截断（展开数 == 声明数）时，系统 SHALL NOT 产生任何截断报告（零噪声）。
+
+本 Requirement 的「省略数」SHALL 与「`max_items` 静态截断的省略数」可区分（成因判别字段取值不同），且 SHALL 与既有的「结果投影里 ref 列表被界截断的条数」是不同的量，SHALL NOT 混用同一语义。
+
+#### Scenario: dry run 报告预算截断的三元与成因
+
+- **GIVEN** 一个 `max_items=0` 的 `foreach` 节点，其集合声明 60 项、但图级 `max_runs` 只允许展开 24 项
+- **WHEN** 运行 `DryRunWorkflow`
+- **THEN** 该节点条目 SHALL 报告集合总数 60、展开数 24、被省略数 36
+- **AND** 成因判别字段 SHALL 标为**预算**（区别于 `max_items` 静态截断）
+- **AND** 展开数 + 省略数 SHALL == 集合总数
+
+#### Scenario: 运行期报告预算截断（两个运行期出口一致）
+
+- **GIVEN** 一个 `max_items=0` 的 `foreach` 节点被图级预算截断
+- **WHEN** 运行后读取该节点的 `RunWorkflow` 结果信封投影，或该节点的 `GetWorkflow(detail='nodes')` 投影
+- **THEN** 两个出口的节点投影 SHALL 都暴露被预算丢弃的项数
+- **AND** 成因判别字段 SHALL 都标为**预算**
+
+#### Scenario: 预算充足时零噪声
+
+- **GIVEN** 一个 `max_items=0` 的 `foreach` 节点，其集合被完整展开（未被预算截断）
+- **WHEN** dry run 或运行后读取投影
+- **THEN** SHALL NOT 产生任何截断省略数或成因字段
+
+#### Scenario: 成因与静态截断可区分
+
+- **GIVEN** 一个 `max_items>0` 被**静态截断**的 `foreach` 节点，与一个 `max_items=0` 被**预算截断**的 `foreach` 节点
+- **WHEN** 分别读取两者投影的成因判别字段
+- **THEN** 两者取值 SHALL 不同（前者 `max_items`、后者 `budget`），使模型能区分截断成因
 
 ### Requirement: 循环图形的声明期校验
 
