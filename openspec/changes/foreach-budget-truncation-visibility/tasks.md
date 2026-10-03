@@ -19,12 +19,12 @@
 
 ## 3. 实现（测试先行）
 
-- [ ] 3.1 先写失败测试：T1（dry-run 三元+成因）、T2（运行期后写可见）、T3（成因判别）、T4（零噪声）、T5（静态路径不退化）
-- [ ] 3.2 扩展 `_foreach_visibility_fields`（`subagents.py:1122`）：去 `max_items > 0` 前置，`declared > expanded` 时按 `max_items` 值发 `items_omitted_cause`
-- [ ] 3.3 dry-run foreach 条目（`subagents.py:1687`）与运行期后写（`_attach_foreach_visibility`，`:1159`）共用扩展后的 helper
-- [ ] 3.4 确认 `_resolve_items`（`scheduler.py:2675`）已记 `items_declared`（预算路径切片前）——无需改；如需回传成因/生效上限再加只读字段
-- [ ] 3.5 成因字段名避开既有 `reason` 键（D2）；运行期字段**后写**绕过 `_bounded_node`（D3）
-- [ ] 3.6 回归：`test_foreach_truncation_visibility.py`（18 条）+ `test_dynamic_foreach.py` + 全量
+- [x] 3.1 先写失败测试：T1（dry-run 三元+成因）、T2（运行期后写可见）、T3（成因判别）、T4（零噪声）、T5（静态路径不退化）
+- [x] 3.2 扩展 `_foreach_visibility_fields`（`subagents.py:1122`）：去 `max_items > 0` 前置，`declared > expanded` 时按 `max_items` 值发 `items_omitted_cause`
+- [x] 3.3 dry-run foreach 条目（`subagents.py:1687`）与运行期后写（`_attach_foreach_visibility`，`:1159`）共用扩展后的 helper
+- [x] 3.4 确认 `_resolve_items`（`scheduler.py:2675`）已记 `items_declared`（预算路径切片前）——无需改；成因粒度粗 `"budget"` 无需回传绑定维度
+- [x] 3.5 成因字段名避开既有 `reason` 键（D2）；运行期字段**后写**绕过 `_bounded_node`（D3）；**新增** `RunWorkflow` 信封出口（OQ2=(b)，`_drive_scheduler` 后写）
+- [x] 3.6 回归：`test_foreach_truncation_visibility.py`（25 条，含 7 新）+ `test_dynamic_foreach.py` + 全量（唯一 2 处失败为预存在环境问题，与本 change 无关）
 
 ## 4. 审阅与验收
 

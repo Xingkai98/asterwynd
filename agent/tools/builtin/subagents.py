@@ -946,7 +946,14 @@ async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
             "reason": "workflow has no spec attached (declare it with DeclareWorkflow)",
         }
     await scheduler.run(spec)
-    return scheduler.parent_envelope()
+    payload = scheduler.parent_envelope()
+    # 截断可见性（change foreach-budget-truncation-visibility，OQ2=(b)）：**结果信封**的
+    # ``nodes`` 与 ``GetWorkflow(detail='nodes')`` 同源，都经 ``_bounded_node`` 白名单——
+    # 新字段不在此（``parent_envelope()`` **之后**）补写会被静默丢弃。这使模型「跑完图
+    # 直接读返回信封」这个最自然的出口也能看到「声明 N / 展开 M / 省略 K」+ 成因，并
+    # 顺带补上 #279 此前遗漏在信封外的静态字段。
+    _attach_foreach_visibility(payload["nodes"], scheduler)
+    return payload
 
 
 @tool_parameters(
@@ -1128,9 +1135,11 @@ def _foreach_visibility_fields(
 ) -> dict[str, Any]:
     """foreach 截断可见性的扁平字段（D2/D4/Q4/Q5），供运行期投影与 dry-run 条目复用。
 
-    - 被 ``max_items`` 丢弃数 ``items_omitted``：仅在 **``max_items > 0`` 且 ``declared >
-      expanded``**（真截断）时出现——不截断时零噪声（T5），``max_items=0`` 的预算截断
-      不报（D3/T6，另见 change 的 Non-Goal）。
+    - 被丢弃数 ``items_omitted``：``declared > expanded``（真截断）时出现——不截断时零噪声
+      （T4）。**两条截断路径都报**（change ``foreach-budget-truncation-visibility``）：
+      ``max_items > 0`` 的**静态**截断与 ``max_items == 0`` 的**预算**截断。二者由
+      ``items_omitted_cause`` 区分（``"max_items"`` / ``"budget"``）——**不能**用裸
+      ``reason``（节点/条目 dict 已有 ``reason``=终态原因，同键会静默覆盖）。
     - 空集合 ``empty_collection``（Q4）：``declared == 0`` 时显式标「集合为空 / source
       无产出」，区别于「正常展开 0 项」。
     - ``declared_is_simulated``（含义 = ``declared`` 是**模拟值、不可信**，**仅 dry-run
@@ -1150,18 +1159,24 @@ def _foreach_visibility_fields(
     if declared == 0:
         if not declared_is_simulated:
             fields["empty_collection"] = True
-    elif max_items > 0 and declared > expanded:
+    elif declared > expanded:
+        # 真截断：静态（max_items>0 切到 max_items）或预算（max_items=0 切到剩余容量）。
+        # 成因判别字段独立于 ``reason``（后者是终态原因，同键会覆盖）。
         fields["items_declared"] = declared
         fields["items_omitted"] = declared - expanded
+        fields["items_omitted_cause"] = "max_items" if max_items > 0 else "budget"
     return fields
 
 
 def _attach_foreach_visibility(nodes: list[dict], scheduler: WorkflowScheduler) -> None:
-    """给 foreach 节点补静态截断 / 空集合字段（后写，越过 ``_bounded_node`` 白名单）。
+    """给 foreach 节点补截断 / 空集合字段（后写，越过 ``_bounded_node`` 白名单）。
 
     与 ``_attach_item_refs`` 同处（``parent_envelope()`` **之后**）——字段扁平、O(1)，
     不走白名单也可安全补写（D3）。``items``（既有）已是**展开数**，这里只加声明总数与
-    省略数；``max_items=0`` 与不截断时不加任何字段（零噪声）。
+    省略数 + 成因（``items_omitted_cause``）；不截断时不加任何字段（零噪声）。
+
+    ``max_items=0`` 的**预算**截断也报（change ``foreach-budget-truncation-visibility``）：
+    在 ``GetWorkflow(detail='nodes')`` 与 ``RunWorkflow`` 结果信封两条运行期出口同源后写。
     """
     for node in nodes:
         if node.get("kind") != "foreach":
