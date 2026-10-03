@@ -31,10 +31,10 @@
 
 ## 4. 审阅与验收
 
-- [ ] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）
-- [ ] 4.2 全量 `uv run pytest -q`（对照排除环境噪声）
-- [ ] 4.3 验收 T1–T8
-- [ ] 4.4 benchmark smoke（触及 `agent/tools/`）
+- [x] 4.1 `/review-loop` 独立审阅至 PASS 或 3 轮封顶（report + manifest）——**1 轮 PASS**（3 条低严重度观察，其中 low-1 已改 `2b17f6e`）；`reviews/building-review.md`
+- [x] 4.2 全量 `uv run pytest -q`——`3972 passed, 2 failed, 9 skipped`（2 失败 = `test_persistent.py::TestFindScopeRoot::*` 的 `/tmp/.git` 残留目录环境噪声，与 change 无关）
+- [x] 4.3 验收 T1–T9（新测试 `tests/agent/subagent/test_foreach_truncation_visibility.py` 18/18）
+- [x] 4.4 benchmark smoke（触及 `agent/tools/`）——`72 tasks`（5 passed / 38 unsupported / 29 failed，`--agent fake` 预期分布），无 crash
 
 ## 5. 收尾
 
@@ -43,6 +43,6 @@
 - [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
 - [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
 - [ ] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
-- [ ] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描
+- [x] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描（`max_items`/`foreach`/`items_expanded` **0 命中**——内部 DSL 报告面，无面向用户文档描述它，**无需改**）
 - [ ] 5.7 (post-merge) 发起 PR（关联 #279）、写明验证结果并合入
 - [ ] 5.8 (post-merge) PR 合入后给 #279 加完成说明并关闭
