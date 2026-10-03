@@ -14,8 +14,8 @@
 - [x] 2.1 独立零记忆 subagent 按 `batch-grill-me` 追问 `design.md`，产出 `reviews/grill-design.md`（8 条 Confirmed + 13 Open Q/新发现）
 - [x] 2.2 独立零记忆对抗 subagent 证伪 grill 结论，产出 `reviews/grill-adversarial.md`；主 session 逐条复核新发现（`file:line`，含 Web `on_event` 全文外发、`asdict` 对 str 子类复制、Q4 off-by-one、根 run 无 trace_recorder）
 - [x] 2.3 按 grill + 对抗结论回写 design（D0/D1/D2/D3/D6/D6b/D7/D8/D9/D12）与 spec delta（穿透 scenario + 预览保尾 + arguments + 残余边界声明）
-- [ ] 2.4 停轮把经对抗幸存的 Open Questions 逐项（每条配具体例子）抛给用户，等待答复（**三条必须用户拍板**：Q4 `-1`/`-2`；D12 Web on_event 原文/bounded；`_workflows`+Q-new5 残余边界是否本轮写死）
-- [ ] 2.5 用户答复写回 `grill-design.md` 的 `## User Confirmation` 节（`- **Q<N>**: 用户答复：<实质内容>；确认时间: <date>`）
+- [x] 2.4 停轮把经对抗幸存的 Open Questions 逐项（每条配具体例子）抛给用户，等待答复（用户 2026-10-03 拍板：**A1=`-1`**；**A2=D12 形态 (c)** Web Expand 按需回读；**A3=非工具大内容残余边界只记录、另立 issue #283**）
+- [x] 2.5 用户答复写回 `grill-design.md` 的 `## User Confirmation` 节
 
 ## 3. 实现（测试先行）
 
@@ -24,7 +24,7 @@
 - [ ] 3.3 agent 通用 ref 存储（复用 `WorkflowStore` 实现；`.asterwynd/artifacts/`；根 `session_id` / 子 `run_id` 寻址；`ArtifactRef.parse` 前缀路由；清理路径**显式实现**——`SessionStore.remove` 里追加 rm artifacts/<id>）
 - [ ] 3.4 泛化 `ReadWorkflowResult` 按 ref 前缀分派（工具名/schema 不变；**改写 description**；确认根/深度到限子 agent 注册路径）
 - [ ] 3.5 工具结果有界化**两段式**（D1）：判定纯函数 `agent/memory/tool_result_policy.py` + loop 侧注入 store/scope；`loop.py` 三处写入点经同一判定
-- [ ] 3.6 `MemoryManager.prune_tool_results` 剪 `messages` 工具结果（在 `compact_if_needed` 之前；`added_iteration <= current_iteration - N`（N 待拍板）∩（滑出窗口 ∪ 单条超阈）；**`:854`+`:1047` 两 append 点都记 `added_iteration`**；含 `_tokens` 重置；含预览保尾）
+- [ ] 3.6 `MemoryManager.prune_tool_results` 剪 `messages` 工具结果（在 `compact_if_needed` 之前；**`added_iteration <= current_iteration - 1`**（A1 已拍板）∩（滑出窗口 ∪ 单条超阈）；**`:854`+`:1047` 两 append 点都记 `added_iteration`**；含 `_tokens` 重置；含预览保尾）
 - [ ] 3.7 `trace_recorder.record_tool_result` 对超阈 observation 存 bounded 预览 + 诚实标记；**`record_tool_call` 的 arguments 亦 bounded**；评估 `record_edit`/`record_iteration` 的全文面
 - [ ] 3.8 `ToolCallMade.result` 与 `arguments` 超阈 bounded（保 `name`）
 - [ ] 3.9 `compact_if_needed` 加硬上限（token + 字节双维度；超硬限无视 gap 强制压；次序=剪枝→判硬顶→强压）

@@ -184,3 +184,11 @@
 - `_bounded_summary`：语境指向 `memory/manager.py`，实为 `agent/subagent/manager.py:53-80`。
 - `parse_ref`：A 文档 `:72-102` → 实 `:64-81`（`path_for` 在 `:91-102`）。
 - `snapshot.py` llm_iteration 计数：design `:77` → 实计数表达式在 `:79`（函数 `:76`）。
+
+---
+
+## User Confirmation
+
+- **Q-D12（对应 Open Q 的 D12/Web 全文外发）**: 用户答复：直接上形态 (c)——Web 工具结果展开改为「按需回读」：tool_result 事件默认只发预览 + tool_call_id，Expand 时按标识向服务端取回全文，收起释放缓存。（用户认可「这个修改感觉不大」，与主 change 一起做。）；确认时间: 2026-10-03
+- **Q4（剪枝时机 -1/-2）**: 用户答复：取 **`-1`**（结果被消费过一轮后即可剪，`added_iteration <= current_iteration - 1`）；理由：大结果少驻留一轮、贴合降峰目标。；确认时间: 2026-10-03
+- **Q-new5（非工具大内容残余边界是否本轮治）**: 用户答复：本轮**只记录为残余边界**（不在 #282 治），**另立 issue #283** 跟进（超硬顶且剪无可剪时收缩/驱逐 recent window 的机制）；理由：改动触及 compaction 的 recent-keep 不变量、风险面独立。；确认时间: 2026-10-03

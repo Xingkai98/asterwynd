@@ -117,7 +117,7 @@
   2. **RQ2 结论：Anthropic 的参数直接映射本 change 的判据形态。** `trigger`（默认 100K input tokens 或 tool_uses 数）、`keep`（默认保留最近 **3** tool use/result 对）、`exclude_tools`（memory/skill 等工具不清）、`clear_at_least`（最小清除量——**清得不够就不清**，避免不值得地打断 prompt cache）。⇒ 支撑本 change「触发阈 + 保留最近 + 值得才清 + 白名单」的判据（D3）。
   3. **RQ1 的**本 change 相对业界是**更强（更保守）的形态**。Anthropic 的 `clear_tool_uses` 是**不可回读的移除**（"cleared content is removed, not replaced"）；本 change 的 `messages` spill 是**替换为预览 + ref，可无损回读**——即「prune 的无损版」。这正是本 change 需要**自建 ref 基建**（复用 `WorkflowStore` 实现，D4）的原因，也是它的**创新点**（本地 6 仓库与 Anthropic 均无「可回读剪除」同款，见 finding 5）。
   4. **RQ4 结论：Anthropic 提供剪除的可观测统计。** 响应带 `cleared_tool_uses` / `cleared_input_tokens`，token-count 端点同时返回 `original_input_tokens` 与后编辑的 `input_tokens`。⇒ 本 change 的 **A5（spill 可观测）** 有业界对照：剪除必须**可计数、可观察**，不静默。项目内先例：`_bounded_summary`（`manager.py:53-78`）的 `has_ref` 诚实纪律 + `[truncated; full result in result_ref]`。
-  5. **本地 6 仓库**（`/home/shared/agent-study/reference-repos/`，本次以 `deepseek-harness` 为主证）：「无损落盘 + 按需回读」**无同款**——最接近的是分页/截断（`pi`/`kimi-code`/`opencode` 的各类 limit）与 codex 的压缩并发限（`MAX_CONCURRENT_COMPRESSION_JOBS=2`），均**不解决常驻**。⇒ 本 change 的 spill/ref 形态是创新点，须自证边界（见 D3/D4 的待 grill 点）。**WebSearch 已用于取 Anthropic context editing 一手文档**（`platform.claude.com/docs/en/build-with-claude/context-editing`）。
+  5. **本地 6 仓库**（`/home/shared/agent-study/reference-repos/`，本次以 `deepseek-harness` 为主证）：「无损落盘 + 按需回读」**无同款**——最接近的是分页/截断（`pi`/`kimi-code`/`opencode` 的各类 limit）与 codex 的压缩并发限（`MAX_CONCURRENT_COMPRESSION_JOBS=2`），均**不解决常驻**。⇒ 本 change 的 spill/ref 形态是创新点，须自证边界（见 design D3/D4）。**WebSearch 已用于取 Anthropic context editing 一手文档**（`platform.claude.com/docs/en/build-with-claude/context-editing`）。
 - design impact: 见 design **D0**（GC 不变量作验收——比 RSS 硬）、**D1/D2**（三持有者分离处理：messages 需 ref、trace/tcm 不需）、**D3**（剪除先于压缩，两先例）、**D4**（ref 基建复用 + 身份寻址修正）、**D7**（spill 可观测，Anthropic 对照）。**调研对设计的主要影响**：finding 1 把「剪除先于压缩」从单先例升为双先例；finding 3 明确本 change 比业界更强（可回读）故须自建 ref；finding 4 新增「spill 可观测」为验收项。
 
 ## Impact Analysis
@@ -159,4 +159,5 @@
 - **不做**「有损压缩工具结果」（那是 compaction 的活；`messages` spill 是无损的）。
 - **不引入**第二套与 `WorkflowStore` 漂移的 ref 格式（复用其实现）。
 - **不处理 `_workflows` scheduler slots + 跨图壳清理**（`_sessions`/`_workflows` 字典「已结束图壳」的释放）——**这是 #278 里程碑 A 的另一半，另立 change**。理由：不同机制（图节点产出 vs 单 run 工具结果）、增长慢（+2MB/图，非 OOM 紧急项）、改动面独立（需改 `GetWorkflow` 活读路径为终态快照读）。
+- **不治「非工具大内容」**（超大 user 粘贴 / 超大 `tool_calls[].arguments` 在 recent 内 / 后台注入输出）——**另立 [#283](https://github.com/Xingkai98/asterwynd/issues/283)**（决策见 design D7 残余边界）。理由：改动触及 compaction 的 recent-keep 不变量、风险面独立。**本 change 不得宣称「一切内容有界」，只保证「工具结果主导」的上下文有界。**
 - **图片结果（`list[ContentBlock]` 含 base64）的 spill 策略由 design D6 定义**：至少 SHALL 使其**不绕过字节维度**（对抗验证实测：图片 token 估 1000/张、实际 base64 可达数十 MB）。

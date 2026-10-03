@@ -35,6 +35,7 @@
 - 不做有损工具结果压缩（属 compaction）。
 - 不引入第二套 ref 格式。
 - 不处理 `_workflows` scheduler slots / 跨图壳清理（里程碑 A 的另一半，另立 change）。
+- **不治「非工具大内容」**（超大 user 粘贴 / 超大 `tool_calls[].arguments` 在 recent 内 / 后台注入输出）——**另立 [#283](https://github.com/Xingkai98/asterwynd/issues/283)**，见 D7 残余边界。
 
 ## Decisions
 
@@ -82,7 +83,7 @@
 
 **持有者拓扑校正（对抗验证）**：**根 CLI / Web run 根本不创建/传 `trace_recorder`**（`main.py`、`web/session.py` 都不传；`trace_recorder` 只由 `benchmarks/agent_runner.py:424` 与子 agent `subagent/manager.py:1178` 传入）。⇒ **「三持有者」只存在于 benchmark 与子 agent run**；根 CLI/Web run 只有**两持有者**（`messages` + `tool_calls_made`）。这不推翻本 change（两处也要治），但「单做任一处=白做」的论证在根 CLI/Web 场景是「单做 messages 白做（tcm 还持）」。design/spec 措辞**不得**断言所有 run 都有三持有者。
 
-> **待 grill 确认**：`ToolCallMade` 的 bounded 会不会影响 benchmark 对工具结果的判定（实测 `agent_runner.py:459` 只 `startswith("[Error")`——bounded 预览仍保留前缀，安全）。
+**已核实**：`ToolCallMade` 的 bounded 不影响 benchmark 判定——`agent_runner.py:459` 只 `startswith("[Error"/"[Permission denied")`，bounded 预览仍保留前缀（安全）。
 
 ### D3 — `messages` spill 时机与判据：**「已消费一轮」∩（滑出窗口 ∪ 单条超阈）**
 
@@ -93,14 +94,14 @@
    - **滑出近期窗口**（`recent_window`，默认 10 条——**注意是消息条数非轮数**，一条 assistant+tool 对占 2 条，故 window=10 实际覆盖约 5 轮；措辞在 spec/代码须钉死「条」）；
    - **单条超阈**（token 或**字节**，见 D6）。
 
-**「已消费一轮」的实现（对抗验证给出两种，择一，见 Open Q）**：
-- **`added_iteration <= current_iteration - 1`**：匹配「至少一次 `_call_llm` 已发出」——结果在 iteration k 入库、同轮末尾 `_call_llm` 已发一次、k+1 轮再发一次，故 k+1 末尾即可剪。
-- **`added_iteration <= current_iteration - 2`**：更保守（等被消费**两遍**才剪），大结果多常驻一轮，与 D3 降峰目标冲突。
+**「已消费一轮」的实现（用户 2026-10-03 拍板 = `-1`）**：
+- **`added_iteration <= current_iteration - 1`**：匹配「至少一次 `_call_llm` 已发出」——结果在 iteration k 入库、同轮末尾 `_call_llm` 已发一次、k+1 轮再发一次，故 k+1 末尾即可剪。**这是本 change 采用的常量**（大结果少驻留一轮、贴合降峰目标）。
+- ~~`-2`（被消费两遍才剪）~~：更保守但与降峰目标冲突，**不采用**。
 - **两 append 点（`:854` 错误路径 + `:1047` 正常路径）都必须记 `added_iteration`**——只在正常路径记会让错误路径结果无标记（被立即剪或永不剪）。并行 tool call 同轮同 `added_iteration`，天然覆盖。
 
 **为什么窗口 ∪ 单条，且单条要能独立触发**：只靠窗口 → 单条 200KB 在窗口内每轮全量重发，峰值不降；只靠单条 → 正常结果也剪、伤任务。取或，且**单条判据不受窗口保护**（大结果即使新鲜也要剪）——**但受「已消费一轮」保护**（修正后不会在模型用之前抽走）。
 
-> **待 grill 确认（用户决策）**：单条阈取值（推荐 `max_tokens×0.25` 与 128KB 双判据取先到）＋「已消费一轮」取 `-1` 还是 `-2`。**这是本 change 最核心的待定项。**
+**单条阈取值（已定）**：`token > max(TOOL_RESULT_SPILL_MIN_TOKENS, max_tokens × 0.25)` **或** `bytes > 128KB`（与 B 的 Read 默认字节界同值），双判据**取先到**；写成常量（可配置）。
 
 ### D4 — agent 通用 ref 存储：复用 `WorkflowStore` 实现，**泛化作用域**；身份**按 agent 类型分**
 
@@ -112,7 +113,7 @@
 
 **生命周期**：会话/子 agent 归档或删除时随其目录清理；**run 结束不删**（保 resume 可回读）。**当前 `_sessions` 不清理**（里程碑 A），故本 change 的清理路径须**显式实现**（不依赖里程碑 A）。
 
-> **待 grill 确认**：ref 前缀命名（`artifact://agent/...` 还是统一）；`parse_ref` 泛化方式（工具层前缀路由 vs store 层参数化）；清理触发点。
+**已定**：ref 前缀 `artifact://agent/<scope_id>/<key>`（与既有 `artifact://workflow/<workflow_id>/<key>` 并列）；**新增共享 `ArtifactRef.parse(ref) -> (kind, scope_id, key)`**，`WorkflowStore.parse_ref` 委托之；**在工具层按前缀路由**（`artifact://workflow/`→`manager.workflow_store(wid)`，`artifact://agent/`→agent store），不改 workflow 语义。清理触发点 = `SessionStore.remove(session_id)` 内**显式追加** rm `.asterwynd/artifacts/<session_id>`；子 agent 同理由**显式实现**（当前无此路径，否则退化为永不清理）。
 
 ### D5 — 回读工具：**泛化 `ReadWorkflowResult`**，不新增
 
@@ -122,7 +123,7 @@
 - **注册路径**：该工具现由 `loop.py:_ensure_subagent_tools_registered` 构造、**依赖 `subagent_manager`**；须确认**根 agent 与深度到限的子 agent**都注册可用（`expose_subagent_tools=False` 的入口会整套不注册）。
 - **改工具 description**：现为 workflow 专用文案，泛化后须改写，否则模型仍以为只读 workflow。
 
-> **待 grill 确认**：泛化 vs 并列的边界；根 agent 无 `subagent_manager` 时回读工具的构造来源。
+**已定**：**泛化（不新增工具）**——工具按 ref 前缀分派；构造依赖改为**一个解析器**（由 `workspace_root` + ref 路由组成），不再只依赖 `manager.workflow_store`。**注册路径已核实**：根 agent（`main.py:327` `expose_subagent_tools=True`）与深度到限子 agent（`manager.py:1321`，`SPAWN_TOOL_NAMES` 不含 `ReadWorkflowResult`）**都可用**；`expose_subagent_tools=False` 的入口（仅单测）整套不注册 ⇒ 由 D8 的「spill 与回读成对启用」兜底。
 
 ### D6 — 度量维度：**token 与字节双维度**，图片纳入字节
 
@@ -148,7 +149,7 @@
 
 ⇒ **bounded 判据 SHALL 覆盖 `result` 与 `arguments` 两者**；`messages` 侧 assistant `arguments` 至少**计入字节预算**（否则 `Write` 型大参数绕过白名单）。
 
-> **待 grill 确认（用户决策）**：图片结果的具体策略（A 的「图片不参与 spill」已被否决——那会让硬顶对图片密集 run 失效）；`MAX_IMAGE_SIZE` 是否本 change 收紧。**这是 grill 必攻项。**
+**已定**：采用上述**四管策略**（A 的「图片不参与 spill」已被对抗验证否决——那会让硬顶对图片密集 run 失效）。**`MAX_IMAGE_SIZE`（20MB/张）与「常驻有界」的矛盾**：本 change**先记为单位债务**（`docs/known-debt.md` 或 #283 一并评估），不在本 change 收紧默认值（避免扩大改动面）。
 
 ### D7 — 压缩硬顶：超硬限**无视 gap 强制压**
 
@@ -159,9 +160,11 @@
 **与 D3 的交互（对抗验证的死结，定级=高）**：`compact` 的 `_recent_with_tool_chains` **原样保留 recent window 内的大内容**（事实 6）——若大内容卡在 recent 内，硬顶会**每轮空转**（`compact` 只压 `middle`，`middle` 空则 `msgs[:] = system + recent`，尺寸不变、返回 `True`，下轮再压）。**D3 的单条阈解的是 `result`（工具结果）**；但**非工具大内容**（大 user 粘贴 / 大 assistant `arguments` 在 recent 内）**D3 剪不到**（对抗验证 Q-new5）——这是**残余边界**：
 
 - **最小要求**：design 明写此残余边界，**不得**宣称「硬顶 = 常驻有界」在**非工具**主导的 run 上成立；
-- **可选加强**：超硬顶**且剪无可剪**时允许 compact **收缩/驱逐 recent window 本身**（或对 recent 内超大非工具消息做有损截断）——**待 grill/用户定是否本 change 做**。
+- **可选加强（用户 2026-10-03 拍板：不在本 change，另立 [#283](https://github.com/Xingkai98/asterwynd/issues/283)）**：超硬顶**且剪无可剪**时允许 compact **收缩/驱逐 recent window 本身**（或对 recent 内超大非工具消息做有损截断）。理由：触及 compaction 的 recent-keep 不变量、风险面独立。
 
-**同类残余边界（对抗验证）**：后台任务完成输出以 `role=user` 注入（`loop.py:737`，`MAX_OUTPUT_BYTES=64KB`，`background.py:13`）——无 `tool_call_id`，D3 不剪，多后台任务会累积多条 ~64KB user 消息至下次 compact。须在 design 明写为残余边界。
+**同类残余边界（对抗验证）**：后台任务完成输出以 `role=user` 注入（`loop.py:737`，`MAX_OUTPUT_BYTES=64KB`，`background.py:13`）——无 `tool_call_id`，D3 不剪，多后台任务会累积多条 ~64KB user 消息至下次 compact。
+
+**决策（用户 2026-10-03）**：以上**非工具大内容**的残余边界**本 change 只如实记录、不治**，**另立 [#283](https://github.com/Xingkai98/asterwynd/issues/283) 跟进**（候选方向：超硬顶且剪无可剪时收缩/驱逐 recent window，或对 recent 内超大非工具消息做有损截断）。理由：改动触及 compaction 的「recent window 原样保留」不变量（`memory-context` spec 的「compact 必须保留系统消息和近期上下文」），可能丢模型仍需要的数据，风险面独立于 #282。**本 change 不得宣称「一切内容有界」，只保证「工具结果主导」的上下文有界。**
 
 ### D8 — 诚实标记：ref 不存在就不谎称可回读
 
