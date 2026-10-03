@@ -25,9 +25,13 @@ _enc = None
 #: ``compaction_gap`` SHALL NOT 成为无界增长的许可证——超硬限即无视 gap 强压。
 HARD_CEILING_MULTIPLIER = 2
 
-#: 硬上限（D7）字节维度 = ``max_tokens × HARD_CEILING_BYTES_PER_TOKEN``。图片等
-#: 内容块的 token 估算（1000/张）远低于实际字节，纯 token 判据会放行已失控的字节。
+#: 硬上限（D7）字节维度 = ``max(HARD_CEILING_MIN_BYTES, max_tokens × HARD_CEILING_BYTES_PER_TOKEN)``。
+#: 图片等内容块的 token 估算（1000/张）远低于实际字节，纯 token 判据会放行已失控的字节，
+#: 故字节维度独立生效。下限（``HARD_CEILING_MIN_BYTES``）与 token 侧的 ``TOKEN_MIN``
+#: 同款作用：小预算 loop（单测 / 小 ``max_tokens``）不被普通文本误触发——那种规模的
+#: 常驻由 token 维度约束即可，字节维度只在真正「字节远超 token 估算」时兜底。
 HARD_CEILING_BYTES_PER_TOKEN = 8
+HARD_CEILING_MIN_BYTES = 512 * 1024
 
 
 def _result_ref_present(content) -> bool:
@@ -317,7 +321,10 @@ class MemoryManager:
         """D7 的双维度硬上限：token **或** 常驻字节任一超限即真。"""
         if total_tokens >= self.max_tokens * HARD_CEILING_MULTIPLIER:
             return True
-        byte_budget = self.max_tokens * HARD_CEILING_BYTES_PER_TOKEN
+        byte_budget = max(
+            HARD_CEILING_MIN_BYTES,
+            self.max_tokens * HARD_CEILING_BYTES_PER_TOKEN,
+        )
         return sum(_content_bytes(m.content) for m in messages) >= byte_budget
 
     async def compact(self, messages: Optional[list["Message"]] = None) -> bool:

@@ -106,3 +106,22 @@ def test_extract_result_ref_reads_embedded_marker():
     assert extract_result_ref(text) == ref
     assert extract_result_ref("no marker here") is None
     assert extract_result_ref("…[truncated]") is None
+
+
+def test_session_store_remove_also_clears_artifacts(tmp_path):
+    """D4：SessionStore.remove 显式清理 artifacts/<session_id>（_sessions 永不清理）。"""
+    from agent.session import SessionStore
+
+    sessions_root = tmp_path / ".asterwynd" / "sessions"
+    sessions_root.mkdir(parents=True)
+    (sessions_root / "s-del").mkdir()
+    (sessions_root / "s-del" / "messages.json").write_text("[]")
+    store = AgentArtifactStore.for_workspace(tmp_path, "s-del")
+    ref = store.save_result("k", "body")
+    other = AgentArtifactStore.for_workspace(tmp_path, "s-keep")
+    other.save_result("k", "other")
+
+    SessionStore(sessions_root=str(sessions_root)).remove("s-del")
+
+    assert store.load(ref) is None                       # artifact removed
+    assert other.load(other.ref("k")) == "other"         # unrelated scope survives
