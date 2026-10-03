@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "foreach-budget-truncation-visibility",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "a1da20e2dd4effb84",
+  "base_sha": "ced78aaf0c729d0b33d79fc064fcd42e1e49e499",
+  "head_sha": "e55c4d75e4c975f795b3fa9660a9c4145512c76b",
+  "tasks_hash": "sha256:5126abf29ac7c196bff9b7d0c3f5190a5cb7b962ad13729d141c07693c929897",
+  "spec_hash": "sha256:be01b590d34a430e2487259aa7c19edaa2aee829861451a9d5bc80380d87e12c",
+  "diff_hash": "sha256:62d61153a60e4ea0d6c430c09d8e18bbe367e983afadf774750e1fbfb8e74b26",
+  "report_hash": "sha256:1d0e24d9e1702d757e0c28a5615660f56cd0080ec8b5b1478831574bc2164490"
+}

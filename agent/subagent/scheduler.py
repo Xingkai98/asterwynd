@@ -247,10 +247,13 @@ class NodeState:
     raw: str | None = None
     targets: list[str] = field(default_factory=list)
     items: int | None = None
-    #: foreach 集合**静态截断前**的大小（``_resolve_items`` 在切片「之前」记录），供
-    #: 父投影报「声明 N / 展开 M / 省略 K」（change ``foreach-truncation-visibility``）。
-    #: ``items``（既有）= 截断**后**的展开数；两者之差即 ``max_items`` 丢弃数。
-    #: ``max_items=0`` 的预算截断不在本字段的表意范围（见 change 的 Non-Goal）。
+    #: foreach 集合**截断前**的大小（``_resolve_items`` 在切片「之前」记录），供
+    #: 父投影报「声明 N / 展开 M / 省略 K」（change ``foreach-truncation-visibility``，
+    #: 后由 ``foreach-budget-truncation-visibility`` 扩展到预算截断路径）。
+    #: ``items``（既有）= 截断**后**的展开数；两者之差即被丢弃数（``items_omitted``）。
+    #: **两条截断路径都记本字段**：``max_items > 0`` 的静态截断与 ``max_items == 0`` 的
+    #: 预算截断（切片到 ``_remaining_expansion_capacity()``）；成因由 ``items_omitted_cause``
+    #: 区分（``"max_items"`` / ``"budget"``）。
     items_declared: int | None = None
     error: str | None = None
     #: foreach 的 per-item 状态（index → 状态），长度 = ``items``。G7：这是
