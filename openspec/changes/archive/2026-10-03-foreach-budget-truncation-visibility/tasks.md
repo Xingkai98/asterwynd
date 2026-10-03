@@ -3,7 +3,7 @@
 ## 1. 立项与调研
 
 - [x] 1.1 关联 GitHub issue #286，写 `proposal.md`
-- [x] 1.2 写 `design.md`（D1 两出口 / D2 复用+成因字段 / D3 扩展共享 helper / D4 零噪声 / D5 与 #279 不冲突 / D6 成因粒度）
+- [x] 1.2 写 `design.md`（D1 出口 / D2 复用+成因字段 / D3 扩展共享 helper / D4 零噪声 / D5 与 #279 不冲突 / D6 成因粒度）；后按 grill+对抗+用户确认回写为**三出口**（+`RunWorkflow` 结果信封，OQ2=(b)）
 - [x] 1.3 写 spec delta（multi-agent-collaboration ADDED 1「foreach 预算截断可见」+ MODIFIED 1「foreach 静态截断可见」）
 - [x] 1.4 补齐 `## Reference Implementation Research`（`research_tier: light`）
 - [x] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径，结构化事件已记）
@@ -36,10 +36,10 @@
 ## 5. 收尾
 
 - [x] 5.1 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`；受保护路径，结构化事件已记）
-- [ ] 5.2 归档到 `openspec/changes/archive/2026-10-03-foreach-budget-truncation-visibility/`（受保护路径）
-- [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径；标记已归档）
-- [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`（+ `--check-archived`）
-- [ ] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描
+- [x] 5.2 归档到 `openspec/changes/archive/2026-10-03-foreach-budget-truncation-visibility/`（受保护路径）
+- [x] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径；标记已归档）
+- [x] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
+- [x] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`（+ `--check-archived`）
+- [x] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描（无命中——内部 DSL 报告面，与 #279 同判）
 - [ ] 5.7 (post-merge) 发起 PR（关联 #286）、写明验证结果并合入；由主 session 执行，worktree 不 push
 - [ ] 5.8 (post-merge) PR 合入后给 #286 加完成说明并关闭
