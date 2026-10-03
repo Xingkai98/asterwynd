@@ -28,6 +28,10 @@
   const cache = new Map();
   //: 上次取数时刻（节点 key → epoch 秒），刷新节律的判据。
   const fetchedAt = new Map();
+  //: **取数那一刻**节点处于什么状态（节点 key → status）。终态补取的判据：节点现在
+  //: 已终态、而这一帧取自非终态 ⇒ 它是半途快照，必须重取一次（见
+  //: ``G.transcriptRefreshDue`` 的 ``fetchedStatus``）。
+  const statusAtFetch = new Map();
   //: 「暂停实时更新」的节点集合（D4：transcript 不跟着快照重排会打断阅读）。
   const paused = new Set();
   //: 当前在跑的刷新定时器（切节点/关抽屉要停掉，否则会对已关闭的面板发请求）。
@@ -49,8 +53,8 @@
 
   /** 拉取一个节点的 transcript（**懒加载**：切到「对话」tab 才调）。
    *
-   * ``force`` 为真时绕过缓存（刷新节律到点后的重取）；否则命中缓存直接返回，
-   * 所以同一个节点反复切 tab 不会重复请求。
+   * ``force`` 为真时绕过缓存（刷新节律到点后的重取 / 终态补取 / 手动刷新）；否则命中
+   * 缓存直接返回，所以同一个节点反复切 tab 不会重复请求。
    */
   async function fetchTranscript(ctx) {
     const key = nodeKey(ctx);
@@ -79,7 +83,21 @@
     const payload = await response.json();
     cache.set(key, payload);
     fetchedAt.set(key, Date.now() / 1000);
+    // 记录**取数这一刻**的状态：终态补取的判据全靠它（见 statusAtFetch 的注释）。
+    statusAtFetch.set(key, (ctx.itemNode || ctx.node || {}).status);
     return payload;
+  }
+
+  /** 手动态刷新：清掉该节点这一格缓存再重取（对话区工具条的「刷新」动作）。
+   *
+   * 只清**当前这一格**（key 含 subagentId），不动其它节点、不动暂停状态——用户点它是
+   * 为了拿最新一帧，不是为了改变别的节点的行为。
+   */
+  function refreshNow(host, ctx) {
+    cache.delete(nodeKey(ctx));
+    fetchedAt.delete(nodeKey(ctx));
+    statusAtFetch.delete(nodeKey(ctx));
+    return paint(host, Object.assign({}, ctx, {force: true}));
   }
 
   /** 进入某个节点的「对话」tab 时调用（``renderDrawerConvo`` 的唯一入口）。
@@ -96,13 +114,30 @@
 
   async function paint(host, ctx, options) {
     const opts = options || {};
+    // 终态补取（change fix-node-transcript-stale-refresh，D2）：本轮起取数要记录
+    // **取数那一刻**的节点状态；若节点已经到终态而手上这一帧取自运行期，就必须重取，
+    // 否则运行期抓到的半途快照会被永久缓存（用户看到「跑完了但对话只有两条」）。
+    // 放在这里（而非只靠 10s 轮询）是因为终态是**事件**：抽屉重绘时就该立刻补上。
+    //
+    // **暂停优先于补取**（审阅 M1）：`renderDrawerConvo` 在每张 workflow 快照上都会重绘
+    // （workflow.js:96→176→1218），所以这里若不看 ``paused``，用户点过「暂停实时更新」
+    // 之后仍会被终态快照推动着换页——那正是暂停按钮要挡的事。纯函数路径本来就把 paused
+    // 判在第一位，这里与它对齐。手动「刷新」是显式动作，不受暂停影响（走 fetchTranscript
+    // 的 force 分支）。
+    const key = nodeKey(ctx);
+    const node = ctx.itemNode || ctx.node;
+    const effective = (!ctx.force
+      && !paused.has(key)
+      && G.transcriptNeedsTerminalCatchUp(node, statusAtFetch.get(key)))
+      ? Object.assign({}, ctx, {force: true})
+      : ctx;
     if (opts.loading) {
       host.textContent = '';
       host.appendChild(el('div', 'drawer-empty', '加载中…'));
     }
     let payload;
     try {
-      payload = await fetchTranscript(ctx);
+      payload = await fetchTranscript(effective);
     } catch (error) {
       host.textContent = '';
       host.appendChild(el('div', 'drawer-empty', `对话加载失败：${error}`));
@@ -123,21 +158,50 @@
     else renderNone(host, payload);
   }
 
-  /** 对话区工具条：暂停按钮（D4）+ 取数溯源。**三种形态都有**——暂停按钮不是
-   *  single 专属：候选列表同样会随刷新重排。 */
+  /** 对话区工具条：暂停按钮（D4）+ 手动刷新 + 取数溯源。**三种形态都有**——暂停按钮
+   *  不是 single 专属：候选列表同样会随刷新重排。 */
   function toolbar(ctx, payload) {
     const key = nodeKey(ctx);
     const bar = el('div', 'transcript-bar');
+    // 动作收进一个容器：工具条是 space-between（动作在左、取数溯源在右），两个按钮
+    // 各自直接进 bar 会被两端布局拆开。
+    const actions = el('div', 'transcript-actions');
     const button = el('button', 'transcript-pause',
       paused.has(key) ? '继续实时更新' : '暂停实时更新');
     button.type = 'button';
     button.dataset.action = 'pause-transcript';
     button.addEventListener('click', () => {
-      if (paused.has(key)) paused.delete(key);
-      else paused.add(key);
-      button.textContent = paused.has(key) ? '继续实时更新' : '暂停实时更新';
+      if (!paused.has(key)) {
+        paused.add(key);
+        button.textContent = '继续实时更新';
+        return;
+      }
+      paused.delete(key);
+      button.textContent = '暂停实时更新';
+      // 「继续实时更新」的语义是**现在就跟上**，不是「下一个节律 tick 再说」：
+      // 暂停期间节点可能已经到终态，而手上这一帧还是运行期抓的（补取条件成立），
+      // 此时立刻补一次；否则等节律（≤10s）即可——避免把「继续」变成手动刷新。
+      const host = bar.parentNode;
+      if (host && G.transcriptNeedsTerminalCatchUp(
+        ctx.itemNode || ctx.node, statusAtFetch.get(key))) {
+        paint(host, Object.assign({}, ctx, {force: true}));
+      }
     });
-    bar.appendChild(button);
+    actions.appendChild(button);
+    // 手动刷新（change fix-node-transcript-stale-refresh，D3）：缓存本身没有失效路径，
+    // 用户读到一帧旧内容时需要一条**不依赖节律**的逃生通道（终态补取已覆盖主路径，
+    // 但「我想现在就再看一眼」不该等 10s，也不该只能刷新整页）。
+    const refresh = el('button', 'transcript-refresh', '刷新');
+    refresh.type = 'button';
+    refresh.dataset.action = 'refresh-transcript';
+    refresh.title = '重新获取该节点的对话（忽略缓存）';
+    refresh.setAttribute('aria-label', '刷新对话');
+    refresh.addEventListener('click', () => {
+      const host = bar.parentNode;
+      if (host) refreshNow(host, ctx);
+    });
+    actions.appendChild(refresh);
+    bar.appendChild(actions);
     const stamp = fetchedAt.get(key);
     if (typeof stamp === 'number') {
       bar.appendChild(el('span', 'drawer-note',
@@ -170,6 +234,8 @@
       const due = G.transcriptRefreshDue(current.itemNode || current.node, {
         paused: paused.has(nodeKey(current)),
         lastFetchedAt: fetchedAt.get(nodeKey(current)),
+        // 终态补取的判据：这一帧是节点还在跑的时候取的吗（见 statusAtFetch）。
+        fetchedStatus: statusAtFetch.get(nodeKey(current)),
         now: Date.now() / 1000,
       });
       if (!due) return;

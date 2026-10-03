@@ -26,9 +26,12 @@ process.stdout.write(JSON.stringify(out));
 
 
 def call(name: str, *args):
+    # 显式 utf-8：node 输出含中文（状态文案、年龄文案），`text=True` 的缺省编码是 locale
+    # （Windows 中文机器上是 GBK），会把 UTF-8 输出解成乱码——本文件 26 条用例在本机
+    # 因它而恒红（pristine master 同样），属环境缺陷而非断言失败。
     result = subprocess.run(
         ["node", "-e", _HARNESS, str(GRAPH_JS), json.dumps([[name, list(args)]])],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     return json.loads(result.stdout)[0]
 
@@ -36,7 +39,7 @@ def call(name: str, *args):
 def call_many(*calls):
     result = subprocess.run(
         ["node", "-e", _HARNESS, str(GRAPH_JS), json.dumps([list(c) for c in calls])],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     return json.loads(result.stdout)
 
@@ -445,7 +448,8 @@ def test_graph_recursion_exceeded_is_terminal_for_pruning():
     """D9(d)：两个终态列表漏一个，那张图就被当成 running——永不淘汰、永久排最前。"""
     import re
 
-    source = (Path(__file__).parents[2] / "web" / "static" / "workflow.js").read_text()
+    source = (Path(__file__).parents[2] / "web" / "static" / "workflow.js").read_text(
+        encoding="utf-8")
     match = re.search(r"const TERMINAL_STATUSES = \[(.*?)\];", source, re.S)
     assert match, "TERMINAL_STATUSES 不在 workflow.js 里了"
     assert "completed_with_failures" in match.group(1)
@@ -484,11 +488,70 @@ def test_transcript_refreshes_on_a_pinned_cadence():
 
 
 def test_transcript_refresh_stops_for_terminal_nodes():
-    """节点已终态 → 不会再有新消息，轮询是纯浪费。"""
+    """节点已终态**且手上这一帧也是终态后取的** → 不会再有新消息，轮询是纯浪费。"""
     for status in ("completed", "failed", "cancelled", "blocked",
                    "budget_exceeded", "skipped"):
         assert call("transcriptRefreshDue", {"id": "a", "status": status},
-                    {"paused": False, "lastFetchedAt": 0.0, "now": 99999.0}) is False
+                    {"paused": False, "lastFetchedAt": 0.0, "now": 99999.0,
+                     "fetchedStatus": status}) is False
+
+
+def test_transcript_catches_up_once_when_the_held_frame_is_from_the_run():
+    """终态补取（change ``fix-node-transcript-stale-refresh`` 的核心判据）。
+
+    用户实测的缺陷形态：在节点**还在跑**的时候打开「对话」tab，那一帧会被永久缓存——
+    跑完后对话停在半途（只有两条工具行），该 run 的失败证据也一并看不到。规则：
+    「节点已终态 **且** 手上这一帧取自运行期」⇒ 补取一次。
+    """
+    node = {"id": "a", "status": "completed"}
+    # 手上这一帧取自运行期 → 补取（这正是用户看到的「跑完只有两条」）。
+    for stale in ("started", "pending", "running", None, ""):
+        assert call("transcriptRefreshDue", node,
+                    {"paused": False, "lastFetchedAt": 0.0, "now": 99999.0,
+                     "fetchedStatus": stale}) is True, stale
+    # 手上这一帧就是终态后取的 → 不补（不会退化成终态后继续轮询）。
+    assert call("transcriptRefreshDue", node,
+                {"paused": False, "lastFetchedAt": 0.0, "now": 99999.0,
+                 "fetchedStatus": "completed"}) is False
+
+
+def test_transcript_catch_up_is_self_limiting():
+    """补取必须**自收敛**：补过之后（缓存记录的是终态）就不再放行。
+
+    否则「补取」会变成终态后无限轮询——那是本 change 明确排除的方案。
+    """
+    node = {"id": "a", "status": "failed"}
+    opts = {"paused": False, "lastFetchedAt": 0.0, "now": 99999.0}
+    first = call("transcriptRefreshDue", node, dict(opts, fetchedStatus="started"))
+    second = call("transcriptRefreshDue", node, dict(opts, fetchedStatus="failed"))
+    assert (first, second) == (True, False)
+
+
+def test_transcript_catch_up_only_applies_to_terminal_nodes():
+    """非终态节点走原来的 10s 节律，不被补取规则改写。"""
+    node = {"id": "a", "status": "started"}
+    # 刚取过 + 手上也是运行态 → 不重取（节律照旧）。
+    assert call("transcriptRefreshDue", node,
+                {"paused": False, "lastFetchedAt": 1000.0, "now": 1000.5,
+                 "fetchedStatus": "started"}) is False
+    # 到点 → 重取。
+    assert call("transcriptRefreshDue", node,
+                {"paused": False, "lastFetchedAt": 1000.0, "now": 1060.0,
+                 "fetchedStatus": "started"}) is True
+
+
+def test_transcript_catch_up_yields_to_pause():
+    """暂停优先于补取：用户正在读，任何自动重取都不许发生。"""
+    assert call("transcriptRefreshDue", {"id": "a", "status": "completed"},
+                {"paused": True, "lastFetchedAt": 0.0, "now": 99999.0,
+                 "fetchedStatus": "started"}) is False
+
+
+def test_transcript_catch_up_ignores_missing_node():
+    """拿不到节点（快照里没有）时不补取——理由留给上层的「加载中/无对话」分支。"""
+    assert call("transcriptRefreshDue", None,
+                {"paused": False, "fetchedStatus": "started"}) is False
+    assert call("transcriptNeedsTerminalCatchUp", None, "started") is False
 
 
 def test_transcript_refresh_stops_while_paused():
