@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "harness-style-web-transcript",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "building-review-harness-style-web-transcript-20261003-r2",
+  "base_sha": "3b484076f10fa295ce05bb53a01ef53c56c2cc17",
+  "head_sha": "a6b9a51ce29221bea4007a5fe04ee32e4e8a9cf0",
+  "tasks_hash": "sha256:e861a32eea519ca7160aaf4f3251a4bbe47ab04221f5f63509709e0d8f13af65",
+  "spec_hash": "sha256:69ca4a2aae16540b8adfbba04661ea03436f80f9e46a6cedc7aaf1bb4d70de3b",
+  "diff_hash": "sha256:7e0ad5498c58cd809eee99e02e18c5ed839930e1b4621bcaaf05ab8f5c7ef1ab",
+  "report_hash": "sha256:8ffcc8cec388e26d7fdaa619851e975803ec55fabaf9a20e67796d8a4b0148d6"
+}
