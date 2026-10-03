@@ -278,7 +278,11 @@ async def test_run_session_accepts_web_approval_response_for_high_risk_tool():
         for event in events
     )
     tool_result = next(event for event in events if event["type"] == "tool_result")
-    assert tool_result["data"]["result"] == "approved high risk"
+    # D12: full text no longer rides the event; the display metadata (incl. preview)
+    # and the stable tool_call_id do.
+    assert "result" not in tool_result["data"]
+    assert tool_result["data"]["tool_call_id"] == "c1"
+    assert "approved high risk" in tool_result["data"]["display"]["preview"]
 
 
 @pytest.mark.asyncio
@@ -364,10 +368,20 @@ async def test_tool_result_event_includes_display_metadata_for_long_result():
 
     tool_result = next(e for e in events if e["type"] == "tool_result")
     display = tool_result["data"]["display"]
-    assert tool_result["data"]["result"] == "x" * 5000
+    # D12: no full text on the event; the frontend fetches it on Expand by
+    # tool_call_id. The display metadata (preview/counts) still travels.
+    assert "result" not in tool_result["data"]
+    assert tool_result["data"]["tool_call_id"] == "c1"
     assert display["collapsed"] is True
     assert display["char_count"] == 5000
     assert display["preview"] == "x" * 1200
+
+    # The on-demand endpoint returns the verbatim full text for that id.
+    from web.session import resolve_tool_result
+
+    payload = resolve_tool_result(session, "c1")
+    assert payload["missing"] is False
+    assert payload["content"] == "x" * 5000
 
 
 @pytest.mark.asyncio

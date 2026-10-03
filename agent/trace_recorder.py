@@ -6,8 +6,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from agent.message import extract_text
-
 if TYPE_CHECKING:
     from agent.message import ContentBlock
 
@@ -20,6 +18,36 @@ class TraceStep:
     timestamp: float = 0.0
 
 
+#: trace/tool_calls_made 的 bounded 预览字符数（D2：无消费者按 ref 回读，只需预览）。
+#: 值取子 agent transcript 的单条内容上限，三者同义——都是「模型/人类读取侧的界」。
+TRACE_PREVIEW_CHARS = 4000
+
+#: 有界 observation 的诚实标记（无 ref——trace/tcm 不落 ref，D2/D8）。
+TRACE_BOUNDED_MARKER = "…[truncated]"
+
+
+def bound_text(text: str, limit: int = TRACE_PREVIEW_CHARS) -> str:
+    """把一段文本裁成有界预览 + 诚实标记；短文本 no-op（纯收益，D2）。"""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + TRACE_BOUNDED_MARKER
+
+
+def bound_value(value: Any, limit: int = TRACE_PREVIEW_CHARS) -> Any:
+    """对 ``arguments`` 这类嵌套结构做有界化：递归截断其中的超长字符串。
+
+    保结构形状（dict/list 键不变），只把超长叶字符串换成有界预览——上层消费者
+    （``.get("path")`` 等）仍能取值，大正文（一次 ``Write`` 的 300KB）不再常驻。
+    """
+    if isinstance(value, str):
+        return bound_text(value, limit)
+    if isinstance(value, dict):
+        return {key: bound_value(item, limit) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [bound_value(item, limit) for item in value]
+    return value
+
+
 class TraceRecorder:
     def __init__(
         self,
@@ -30,7 +58,9 @@ class TraceRecorder:
         run_id: str | None = None,
     ):
         self.task_id = task_id
-        self.full_trace = full_trace  # retained for serialization compat only
+        #: ``full_trace=True`` 时保留完整 observation / arguments（benchmark 事后分析，
+        #: D11）。默认 False ⇒ 有界预览——全文无模型面消费者，见 D2 核对表。
+        self.full_trace = full_trace
         self.mode = mode
         self.session_id = session_id
         self.run_id = run_id
@@ -86,6 +116,12 @@ class TraceRecorder:
         model: str | None = None,
         finish_reason: str | None = None,
     ) -> None:
+        # ``assistant_preview`` 名义是 preview、实为 ``response.content`` 全文
+        # （D6b）：不有界它就是一条无界通道。``tool_calls`` 的 arguments 同理。
+        if not self.full_trace:
+            assistant_preview = bound_text(assistant_preview) if assistant_preview else ""
+            if tool_calls:
+                tool_calls = bound_value(tool_calls)
         self.record(
             "llm_iteration",
             iteration=iteration,
@@ -98,6 +134,8 @@ class TraceRecorder:
         )
 
     def record_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> None:
+        if not self.full_trace:
+            arguments = bound_value(arguments)
         self.record("tool_call", tool_name=tool_name, arguments=arguments)
 
     def record_tool_result(
@@ -113,6 +151,10 @@ class TraceRecorder:
     ) -> None:
         if isinstance(observation, list):
             observation = self._sanitize_observation(observation)
+        # D2/D8：trace 的 observation 无消费者按 ref 回读 ⇒ 只需 bounded 预览 +
+        # 诚实标记（不落 ref）。分析字段（状态/错误类型/工具名/时长）不变。
+        if not self.full_trace:
+            observation = bound_text(observation)
         data: dict[str, Any] = {
             "tool_name": tool_name,
             "status": status,
@@ -159,6 +201,9 @@ class TraceRecorder:
         self.record("approval_response", **response)
 
     def record_edit(self, path: str, status: str, summary: str) -> None:
+        # ``summary`` 实为 Edit 工具结果全文（loop.py:1008）——同上，需 bounded。
+        if not self.full_trace:
+            summary = bound_text(summary)
         self.record("edit", tool_name="Edit", path=path, status=status, summary=summary)
 
     def record_compaction(
@@ -181,6 +226,30 @@ class TraceRecorder:
 
     def record_parallel_execution(self, group: list[str]) -> None:
         self.record("parallel_execution_start", tools=group)
+
+    def record_tool_result_spill(
+        self,
+        *,
+        spilled_messages: int,
+        bounded_ledger: int,
+        released_bytes: int,
+    ) -> None:
+        """Record a tool-result spill/bounded pass (D9, aligns ``record_compaction``).
+
+        ``spilled_messages`` counts lossless ``messages`` spills (which carry a ref).
+        ``bounded_ledger`` counts **`tool_calls_made` entries** bounded (lossy, no
+        ref), across both the error and normal result paths (L3). The trace's own
+        observation/arguments bounding happens inside ``record_tool_result`` /
+        ``record_tool_call`` and is **not** part of this count — this field's
+        semantics are deliberately "ledger (tcm) only"; the trace side is
+        independently bounded and visible in the trace itself. Never silent.
+        """
+        self.record(
+            "tool_result_spill",
+            spilled_messages=spilled_messages,
+            bounded_ledger=bounded_ledger,
+            released_bytes=released_bytes,
+        )
 
     def record_diff(self, diff_path: str, summary: str) -> None:
         self.record("diff", diff_path=diff_path, summary=summary)

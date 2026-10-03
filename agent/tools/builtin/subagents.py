@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from agent.artifact_store import ArtifactResolver
 from agent.context.summarizer import TruncationSummarizer
 from agent.llm import LLMResponse, Usage
 from agent.message import Message
@@ -43,7 +44,7 @@ from agent.subagent.workflow_assets import (
     WorkflowAssetError,
     asset_store_for_manager,
 )
-from agent.subagent.workflow_store import DEFAULT_READ_LIMIT, WorkflowStore
+from agent.subagent.workflow_store import DEFAULT_READ_LIMIT
 from agent.tools.base import Tool, tool_parameters
 from agent.tool_permissions import AGENT_STATE_PERMISSION, SUBAGENT_CONTROL_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
@@ -916,18 +917,25 @@ async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
 @tool_parameters(
     name="ReadWorkflowResult",
     description=(
-        "Read a workflow result artifact by its result_ref (page through the "
-        "full text). Refs come from a workflow envelope's root_result_ref, from "
-        "GetWorkflow(detail='nodes') node refs, or from a run envelope's "
-        "result_ref. Pass offset/limit to page; the response reports total_chars "
-        "and truncated so you can decide whether to keep reading."
+        "Read an artifact by its ref, paging through the full text. Refs come "
+        "from THREE sources: (1) a workflow envelope's root_result_ref, "
+        "GetWorkflow(detail='nodes') node refs, or a run envelope's result_ref "
+        "(artifact://workflow/...); (2) a tool result that was spilled to keep "
+        "context bounded — its placeholder carries a "
+        "'[truncated; full result in result_ref: artifact://agent/...]' marker, "
+        "and reading that ref returns the verbatim original result "
+        "(artifact://agent/...). Pass offset/limit to page; the response reports "
+        "total_chars and truncated so you can decide whether to keep reading."
     ),
     parameters={
         "type": "object",
         "properties": {
             "ref": {
                 "type": "string",
-                "description": "Artifact ref, e.g. artifact://workflow/wf_123/root.",
+                "description": (
+                    "Artifact ref, e.g. artifact://workflow/wf_123/root or "
+                    "artifact://agent/<scope>/<key>."
+                ),
             },
             "offset": {"type": "integer", "minimum": 0, "description": "Char offset."},
             "limit": {
@@ -940,7 +948,11 @@ async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
     },
 )
 class ReadWorkflowResultTool(Tool):
-    """Q1：把 ``result_ref`` 换成内容的唯一通道（只读、分页）。
+    """把 ``ref`` 换成内容的唯一通道（只读、分页）。
+
+    按 ref 前缀分派（D5）：``artifact://workflow/...`` 走 workflow store，
+    ``artifact://agent/...`` 走 agent artifact store——故它同时是 workflow 结果与
+    被 spill 工具结果的回读入口，名字/schema 保持兼容（不新增工具，#248）。
 
     不是 spawn 类工具（不拉起新工作），因此**不进** ``SPAWN_TOOL_NAMES``：深度到限
     的子 agent 仍能读回自己的结果。
@@ -951,17 +963,22 @@ class ReadWorkflowResultTool(Tool):
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
 
+    def _resolver(self) -> ArtifactResolver:
+        from agent.workspace_policy import WorkspacePolicy
+
+        policy = getattr(self.manager, "workspace_policy", None) or WorkspacePolicy()
+        return ArtifactResolver(
+            policy.workspace_root,
+            workflow_store=lambda wid: self.manager.workflow_store(wid),
+        )
+
     async def execute(self, **kwargs) -> str:
         ref = kwargs["ref"]
-        try:
-            workflow_id, _key = WorkflowStore.parse_ref(ref)
-        except ValueError as exc:
-            return json.dumps(
-                {"ref": ref, "missing": True, "content": "", "reason": str(exc)},
-                ensure_ascii=False,
-            )
-        store = self.manager.workflow_store(workflow_id)
-        page = store.read(ref, offset=kwargs.get("offset", 0), limit=kwargs.get("limit", DEFAULT_READ_LIMIT))
+        page = self._resolver().read(
+            ref,
+            offset=kwargs.get("offset", 0),
+            limit=kwargs.get("limit", DEFAULT_READ_LIMIT),
+        )
         return json.dumps(page, ensure_ascii=False)
 
 

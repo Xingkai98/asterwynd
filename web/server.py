@@ -242,6 +242,25 @@ def create_app(
         payload["session_id"] = session_id
         return JSONResponse(payload)
 
+    @app.get("/api/sessions/{session_id}/tool-result/{tool_call_id}")
+    async def session_tool_result(session_id: str, tool_call_id: str):
+        """按 ``tool_call_id`` 取回一条工具结果的**最新全文**（change tool-result-lifecycle，D12）。
+
+        Chat 的 Expand 按钮按需回读：``tool_result`` 事件默认只发预览 + ``tool_call_id``，
+        用户展开时才来这里取全文（消息已被替换为预览 + ref 时按 ref 从落盘件读回）。
+
+        只读接口：session 内存口径校验（与 ``/api/sessions/{id}/timeline`` 同），
+        找不到 / ref 不可解析 ⇒ 明确 ``missing`` + ``reason``，前端如实展示「全文不可用」。
+        """
+        from web.session import resolve_tool_result
+
+        session = session_manager.get_session(session_id)
+        if not session:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        payload = resolve_tool_result(session, tool_call_id, session.workspace_root)
+        payload["session_id"] = session_id
+        return JSONResponse(payload)
+
     @app.get("/api/slash-commands")
     async def slash_commands():
         command_registry = build_default_slash_command_registry(

@@ -1327,6 +1327,10 @@ class SubAgentManager:
             # only. Making it a construction-time fact beats inferring "am I
             # root?" from spawn depth at render time.
             include_workflow_asset_index=False,
+            # D4: a subagent keys its tool-result artifacts by run_id (its
+            # session_id is the process-local subagent_id, which does not
+            # survive resume).
+            artifact_scope_is_run=True,
         )
 
     def _complete_run(
