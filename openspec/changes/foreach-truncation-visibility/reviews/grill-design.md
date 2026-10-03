@@ -153,3 +153,14 @@ design D3 明说「不报静态截断（预算截断是另一层，本 change �
 | issue #279 需求原文（「应补 `items_omitted`/`items_total`」） | GitHub `Xingkai98/asterwynd#279`（`gh api repo/issues/279`） |
 
 行号基于本 worktree 当前 HEAD（分支 `foreach-truncation-visibility/2026-10-03`）；若实现期改动上游文件，以上行号可能漂移，以符号名为准。
+
+---
+
+## User Confirmation
+
+- **Q1**: 用户答复：按对抗结论——字段名用扁平 `items_declared`/`items_omitted`，绝不复用既有 `items_total`（同 dict 同键会覆盖）；弃 grill 首选的嵌套对象。；确认时间: 2026-10-03
+- **Q2**: 用户答复：按对抗结论——否决 grill 的 source 声明期弱提示，维持「声明期完全静默」；source 截断只在 dry-run/运行期报。；确认时间: 2026-10-03
+- **Q3**: 用户答复：本轮 Non-Goal（不改 max_items=0 语义与预算截断报告），另立 follow-up issue #286 跟进。；确认时间: 2026-10-03
+- **Q4**: 用户答复：纳入本轮——空集合/source 无产出致 foreach 静默跑 0 项，与本 change 同型，一并报告（区分「集合为空/无产出」与「正常展开」）。；确认时间: 2026-10-03
+- **Q5**: 用户答复：采纳——dry-run 对 source 驱动的集合数标「模拟、不可信」（假 LLM 下常为 0）。；确认时间: 2026-10-03
+- **M1（声明期 warning 界）**: 用户答复：采纳对抗修正——design 风险表原「受既有 warnings_omitted 约束」是假的；实现期补界或如实写「上界=节点数」。；确认时间: 2026-10-03

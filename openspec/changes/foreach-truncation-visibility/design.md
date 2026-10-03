@@ -81,10 +81,10 @@
 | **声明期 warnings 条数无界**（M1，实测假缓解） | D6：补界 或 如实写「上界=节点数」；SHALL NOT 引用不存在的 `warnings_omitted` |
 | **dry-run 对 source 的 `items_declared` 无预测性**（Q5） | source 驱动 dry-run 的 declared 是**模拟值**（常为 0，与空集合同形），须标**不可信/模拟**；与 Q4 的「空集合」合并处理（见下） |
 
-## 边界（Q3/Q4，对抗定级）
+## 边界（Q3/Q4，对抗定级 + 用户拍板）
 
-- **Q3 `max_items=0` 预算截断静默**：机制是 **`_resolve_items` 切到 `_remaining_expansion_capacity()` 刚好合身**（`scheduler.py:2668`）⇒ 后续 `_check_foreach_budget`（`:2162`）`runs+delta>limit` **刚好不触发**（非「delta≤0 跳过」——实测 delta>0）。静默窗口**窄**（仅 **terminal foreach 且切片后预算仍够下游**；非 terminal 会**响亮报** `graph_recursion_exceeded`）。**本轮 Non-Goal**（#279 原文只点 `max_items` 静态截断），**须显式写 Non-Goal + 开 follow-up issue**。
-- **Q4 空集合 / source 无产出 ⇒ foreach 跑 0 项**：`extract_collection(None)→[]`（`scheduler.py:353`）⇒ `fan` 以 0 项运行、`status=completed`、**无信号**（对抗上调至中-高：含 **failed-source** 子情形；successful-but-empty 是全静默）。**范围决策 —— 见停轮确认项。**
+- **Q3 `max_items=0` 预算截断静默**：机制是 **`_resolve_items` 切到 `_remaining_expansion_capacity()` 刚好合身**（`scheduler.py:2668`）⇒ 后续 `_check_foreach_budget`（`:2162`）`runs+delta>limit` **刚好不触发**（非「delta≤0 跳过」——实测 delta>0）。静默窗口**窄**（仅 **terminal foreach 且切片后预算仍够下游**；非 terminal 会**响亮报** `graph_recursion_exceeded`）。**本轮 Non-Goal（用户 2026-10-03 拍板）——另立 [#286](https://github.com/Xingkai98/asterwynd/issues/286) 跟进。**
+- **Q4 空集合 / source 无产出 ⇒ foreach 跑 0 项 → 纳入本轮（用户 2026-10-03 拍板）**：`extract_collection(None)→[]`（`scheduler.py:353`）⇒ `fan` 以 0 项运行、`status=completed`、**无信号**（对抗上调至中-高：含 **failed-source** 子情形；successful-but-empty 是全静默）。**与本 change 同型（「以为跑了 N 个、实际 0 个」），一并报告**：dry-run 条目与运行期投影 SHALL 能区分「集合为空 / source 无产出」与「正常展开 0 项」——即当 `items_declared == 0` 且该节点预期展开（foreach 收到空/解析失败的集合）时，给出**显式信号**（如 `items_declared: 0` + 一个可读的 `empty_collection` 标记或类似），而非静默 `items_expanded: 0`。注意：**上游 failed** 时其 `status`/`reason` 已在投影可见（信号在上游节点）；本轮要补的是 **successful-but-empty** 那个真正全静默的子情形。
 
 ## Testing Strategy
 
@@ -95,7 +95,8 @@
   - T5：`items ≤ max_items` ⇒ 无截断字段/warning；
   - T6：`max_items=0` ⇒ 不报静态截断；
   - T7：`item_refs_omitted` 与 `items_omitted` 独立（构造两者不同的图）；
-  - source 驱动 foreach：声明期不报、dry-run 报（D3）。
+  - source 驱动 foreach：声明期不报、dry-run 报（D3）；
+  - T9（Q4）：空集合 / source 无产出 ⇒ dry-run 与运行期**显式**表明「集合为空」而非裸 `items_expanded:0`。
 - **回归**：workflow declare/dry-run/run 既有测试；全量 `uv run pytest -q`。
 
 ## Pre-Implementation Review

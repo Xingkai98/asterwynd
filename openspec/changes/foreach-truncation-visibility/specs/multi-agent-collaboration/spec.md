@@ -64,3 +64,10 @@
 - **WHEN** 读取该节点的投影
 - **THEN** 其「静态截断省略数」SHALL 为 0
 - **AND** 既有的「ref 列表被截条数」SHALL 独立报告，两者 SHALL NOT 使用同一语义
+
+#### Scenario: 空集合 / source 无产出不静默
+
+- **GIVEN** 一个 `foreach` 节点解析出的集合为空（`source` 未产出、产出解析为空、或上游成功但内容为空）
+- **WHEN** dry run 报告该节点，或运行后读取其投影
+- **THEN** 系统 SHALL 显式表明该节点展开 0 项**是因为集合为空**，SHALL NOT 只报一个无从归因的 `items_expanded: 0`
+- **AND** 该信号 SHALL 与「正常解析出非空集合」可区分
