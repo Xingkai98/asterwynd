@@ -19,19 +19,19 @@
 
 ## 3. 实现（测试先行）
 
-- [ ] 3.1 前置核实（D11）：逐点确认无消费者依赖 `trace` observation / `ToolCallMade.result` 的**全文**（结论：仅 `benchmarks/runner.py:661` 落盘 + Web `on_event`，后者由 D12 决策）
-- [ ] 3.2 先写失败测试：GC 不变量（**断言内存字段，不只靠弱引用**——`asdict` 对 str 子类复制）/ `messages` 陈旧被替换 / 当轮保留 / 穿透窗口 / **预览保尾（`_READ_PROGRESS_RE`）** / `trace`+`tool_calls_made` bounded / `arguments` bounded / 按 ref 无损回读 / 无 ref 不谎称 / tool-call 链合法 / `_tokens` 重置 / 硬顶无视 gap / 图片字节维度 / 残余边界（后台注入不被剪）
-- [ ] 3.3 agent 通用 ref 存储（复用 `WorkflowStore` 实现；`.asterwynd/artifacts/`；根 `session_id` / 子 `run_id` 寻址；`ArtifactRef.parse` 前缀路由；清理路径**显式实现**——`SessionStore.remove` 里追加 rm artifacts/<id>）
-- [ ] 3.4 泛化 `ReadWorkflowResult` 按 ref 前缀分派（工具名/schema 不变；**改写 description**；确认根/深度到限子 agent 注册路径）
-- [ ] 3.5 工具结果有界化**两段式**（D1）：判定纯函数 `agent/memory/tool_result_policy.py` + loop 侧注入 store/scope；`loop.py` 三处写入点经同一判定
-- [ ] 3.6 `MemoryManager.prune_tool_results` 剪 `messages` 工具结果（在 `compact_if_needed` 之前；**`added_iteration <= current_iteration - 1`**（A1 已拍板）∩（滑出窗口 ∪ 单条超阈）；**`:854`+`:1047` 两 append 点都记 `added_iteration`**；含 `_tokens` 重置；含预览保尾）
-- [ ] 3.7 `trace_recorder.record_tool_result` 对超阈 observation 存 bounded 预览 + 诚实标记；**`record_tool_call` 的 arguments 亦 bounded**；评估 `record_edit`/`record_iteration` 的全文面
-- [ ] 3.8 `ToolCallMade.result` 与 `arguments` 超阈 bounded（保 `name`）
-- [ ] 3.9 `compact_if_needed` 加硬上限（token + 字节双维度；超硬限无视 gap 强制压；次序=剪枝→判硬顶→强压）
-- [ ] 3.10 spill 可观测（新增 trace step `tool_result_spill` + `on_event`；计数区分无损 spill / 有损 bounded）
-- [ ] 3.11 **D12（形态 c）落地**：`tool_result` 事件 payload 去全文、增 `tool_call_id`；新增只读端点 `GET /api/sessions/{id}/tool-result/{tool_call_id}`（找 session.messages → 全文直返 / 已 spill 则解析 ref 读回 / 找不到返 missing）；`chat.js` Expand 改 fetch 懒加载 + Collapse 释放缓存；回归测试（含 missing 降级）
-- [ ] 3.12 回归：`agent-runtime` tool-call 链 + `memory-context` 既有压缩 + `context-engineering` Read/分页 + `web-ui`（tool_result 事件/展开）
-- [ ] 3.13 端到端：#278 复现器缩比版（单 agent 直读，RSS 峰值对照 E0）
+- [x] 3.1 前置核实（D11）：逐点确认无消费者依赖 `trace` observation / `ToolCallMade.result` 的**全文**（结论：仅 `benchmarks/runner.py:661` 落盘 + Web `on_event`，后者由 D12 决策；benchmark 经 `full_trace=True` 承接全文）
+- [x] 3.2 先写失败测试：GC 不变量（**断言内存字段，不只靠弱引用**——`asdict` 对 str 子类复制）/ `messages` 陈旧被替换 / 当轮保留 / 穿透窗口 / **预览保尾（`_READ_PROGRESS_RE`）** / `trace`+`tool_calls_made` bounded / `arguments` bounded / 按 ref 无损回读 / 无 ref 不谎称 / tool-call 链合法 / `_tokens` 重置 / 硬顶无视 gap / 图片字节维度 / 残余边界（后台注入不被剪）
+- [x] 3.3 agent 通用 ref 存储（复用 `WorkflowStore` 实现；`.asterwynd/artifacts/`；根 `session_id` / 子 `run_id` 寻址；`ArtifactRef.parse` 前缀路由；清理路径**显式实现**——`SessionStore.remove` 里追加 rm artifacts/<id>）
+- [x] 3.4 泛化 `ReadWorkflowResult` 按 ref 前缀分派（工具名/schema 不变；**改写 description**；确认根/深度到限子 agent 注册路径）
+- [x] 3.5 工具结果有界化**两段式**（D1）：判定纯函数 `agent/memory/tool_result_policy.py` + loop 侧注入 store/scope；`loop.py` 三处写入点经同一判定
+- [x] 3.6 `MemoryManager.prune_tool_results` 剪 `messages` 工具结果（在 `compact_if_needed` 之前；**`added_iteration <= current_iteration - 1`**（A1 已拍板）∩（滑出窗口 ∪ 单条超阈）；**`:854`+`:1047` 两 append 点都记 `added_iteration`**；含 `_tokens` 重置；含预览保尾）
+- [x] 3.7 `trace_recorder.record_tool_result` 对超阈 observation 存 bounded 预览 + 诚实标记；**`record_tool_call` 的 arguments 亦 bounded**；评估 `record_edit`/`record_iteration` 的全文面（两者均 bounded）
+- [x] 3.8 `ToolCallMade.result` 与 `arguments` 超阈 bounded（保 `name`）
+- [x] 3.9 `compact_if_needed` 加硬上限（token + 字节双维度；超硬限无视 gap 强制压；次序=剪枝→判硬顶→强压）
+- [x] 3.10 spill 可观测（新增 trace step `tool_result_spill` + `on_event`；计数区分无损 spill / 有损 bounded）
+- [x] 3.11 **D12（形态 c）落地**：`tool_result` 事件 payload 去全文、增 `tool_call_id`；新增只读端点 `GET /api/sessions/{id}/tool-result/{tool_call_id}`（找 session.messages → 全文直返 / 已 spill 则解析 ref 读回 / 找不到返 missing）；`chat.js` Expand 改 fetch 懒加载 + Collapse 释放缓存；回归测试（含 missing 降级）
+- [x] 3.12 回归：`agent-runtime` tool-call 链 + `memory-context` 既有压缩 + `context-engineering` Read/分页 + `web-ui`（tool_result 事件/展开）
+- [x] 3.13 端到端：#278 复现器缩比版（单 agent 直读，RSS 峰值对照 E0）——记录见 `reviews/e0-record.md`
 
 ## 4. 审阅与验收
 
