@@ -103,6 +103,18 @@ def test_preview_marker_honest_about_ref():
     assert no_ref.endswith(TRUNCATED_MARKER)
 
 
+def test_is_spilled_preview_anchors_not_bare_substring():
+    """M1：幂等判据锚定完整标记，不误伤含 ``[truncated`` 字面量的真实结果。"""
+    from agent.memory.tool_result_policy import is_spilled_preview
+
+    assert is_spilled_preview(make_preview(_big(9000), ref="artifact://agent/s-1/k"))
+    assert is_spilled_preview(make_preview(_big(9000)))
+    # Real results that merely CONTAIN the literal must not be judged a preview.
+    assert not is_spilled_preview(_big(400_000) + "\n[truncated] more text")
+    assert not is_spilled_preview("prefix [truncated; full result in result_ref: not-a-ref] trailing")
+    assert not is_spilled_preview("…[truncated] but more content follows")
+
+
 # ── messages 剪枝 ─────────────────────────────────────────────────────────
 
 
@@ -211,6 +223,20 @@ def test_prune_without_ref_marks_truncated_not_fake_ref():
     assert extract_result_ref(messages[-1].content) is None
     assert messages[-1].content.endswith(TRUNCATED_MARKER)
     assert stats.bytes_released > 0
+
+
+def test_prune_still_spills_result_containing_truncated_literal():
+    """M1 回归：一个 400KB 结果正文含 ``[truncated]`` 字面量（但非 preview 形态）→ 仍被剪。"""
+    manager = MemoryManager(max_tokens=80_000, recent_window=10)
+    body = _big(400_000) + "\n[truncated] more"   # real result containing the literal
+    messages = _tool_then_assistant("c1", body)
+    stats = manager.prune_tool_results(
+        messages, current_iteration=4, added_iterations={"c1": 3},
+        save=lambda text: "artifact://agent/s-1/k",
+    )
+    assert stats.messages_spilled == 1
+    assert extract_result_ref(messages[-1].content) is not None
+    assert len(messages[-1].content) < 400_000
 
 
 def test_prune_is_idempotent():

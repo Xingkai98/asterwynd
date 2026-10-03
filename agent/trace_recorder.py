@@ -236,9 +236,13 @@ class TraceRecorder:
     ) -> None:
         """Record a tool-result spill/bounded pass (D9, aligns ``record_compaction``).
 
-        Counts distinguish lossless ``messages`` spills (which carry a ref) from
-        lossy ledger bounded-ing (``trace``/``tool_calls_made``, no ref) — never
-        silent.
+        ``spilled_messages`` counts lossless ``messages`` spills (which carry a ref).
+        ``bounded_ledger`` counts **`tool_calls_made` entries** bounded (lossy, no
+        ref), across both the error and normal result paths (L3). The trace's own
+        observation/arguments bounding happens inside ``record_tool_result`` /
+        ``record_tool_call`` and is **not** part of this count — this field's
+        semantics are deliberately "ledger (tcm) only"; the trace side is
+        independently bounded and visible in the trace itself. Never silent.
         """
         self.record(
             "tool_result_spill",

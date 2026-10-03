@@ -137,7 +137,7 @@
 **图片 spill 策略（对抗验证推荐，四管）**：
 1. 字节维度对 `ImageBlock` 计 `len(url)`，纳入单条阈与硬顶；
 2. 图片「预览」复用 trace 既有形态 `[image: <file_path>]`——消费一轮后把 `ImageBlock` 换成该 TextBlock，**字节立即释放，模型必要时可 `Read` 该路径取回像素**（`file_path` 在）；
-3. `file_path is None`（粘贴图）时，把 base64 落 ref store、标 `[image: <ref>]`（字节有界、诚实标注）；
+3. ~~`file_path is None`（粘贴图）时，把 base64 落 ref store、标 `[image: <ref>]]`~~ **（实现核实后不采用，L1）**：本仓库**所有**图片工具都设 `file_path`——`read._read_image`（`file_path=str(target_path)`）、`browser_screenshot`（`file_path` 形参）、`uploads.create_image_message` 与 `_from_upload`（都落盘后带 `file_path`）；`file_path is None` 只可能来自**反序列化已持久化的旧块**（`message.py` 的 `from_dict`，`data.get("file_path")` 为 None），无 base64 落盘语义。故 `flatten_content` **一律经 `file_path` 引用回读、不做 base64→ref 落盘**（删去原设想的 `image_refs` 死参），极端 `None` 退化为 `[image: pasted image]`。底座不变：字节维度仍对 `ImageBlock` 计 `len(url)`（第 1 点），故无 `file_path` 的块仍受字节预算约束；
 4. **`MAX_IMAGE_SIZE`（`read.py:18`，20MB/张）与「常驻有界」自相矛盾，须收敛到与常驻预算相容的值**（本 change 至少记此矛盾为待办/或直接收紧）。
 
 ### D6b — 覆盖缺口：`arguments` 与 trace 的「非 result」大内容（对抗验证新增）

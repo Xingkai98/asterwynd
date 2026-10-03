@@ -16,8 +16,9 @@ from agent.message import Message, tool_result_message
 
 
 class _FakeSession:
-    def __init__(self, messages):
+    def __init__(self, messages, session_id="s-1"):
         self.messages = messages
+        self.session_id = session_id
         self.workspace_root = None
 
 
@@ -72,3 +73,16 @@ def test_resolve_missing_without_workspace_root_for_spilled():
     session = _FakeSession([tool_result_message("c1", preview)])
     payload = resolve_tool_result(session, "c1", workspace_root=None)
     assert payload["missing"] is True
+
+
+def test_resolve_refuses_cross_scope_ref(tmp_path):
+    """L2 纵深防御：消息内嵌了别的 scope 的 ref ⇒ 拒绝（不读他人 scope）。"""
+    from web.session import resolve_tool_result
+
+    other = AgentArtifactStore.for_workspace(tmp_path, "s-OTHER")
+    other_ref = other.save_result("result-1", "someone else's body")
+    preview = make_preview("x" * 50_000, ref=other_ref)
+    session = _FakeSession([tool_result_message("c1", preview)], session_id="s-1")
+    payload = resolve_tool_result(session, "c1", tmp_path)
+    assert payload["missing"] is True          # not served across scopes
+    assert payload["content"] == ""

@@ -58,6 +58,24 @@ TRUNCATED_WITH_REF = "\n…[truncated; full result in result_ref: {ref}]"
 #: 无 ref 的诚实标记——**MUST NOT** 指向任何 ref（D8：落盘没成功就不谎称可回读）。
 TRUNCATED_MARKER = "\n…[truncated]"
 
+#: 幂等判据：``make_preview`` 产生的**完整尾部标记**（含 ``…`` 前导，锚定行尾）。
+#: **不得**用裸子串 ``"[truncated"``：真实工具结果正文完全可能含该字面量（例如
+#: ``Read`` 一个含 ``…[truncated]`` 的日志/文档——本仓库自身多处如此），裸子串命中
+#: 会把真实结果误判为「已 spill」⇒ **永不剪、全文永久常驻**（审阅 M1）。
+_PREVIEW_SUFFIX_RE = re.compile(
+    r"…\[truncated(?:; full result in result_ref: artifact://[^\s\]]+)?\]\s*$"
+)
+
+
+def is_spilled_preview(content: "str | list[ContentBlock]") -> bool:
+    """内容是否已是本管线产生的「预览 + 标记」形态（幂等判据）。
+
+    锚定 ``make_preview`` 输出的**尾部标记**（``\\n…[truncated]`` 或
+    ``\\n…[truncated; full result in result_ref: …]``），而非裸子串——见
+    ``_PREVIEW_SUFFIX_RE`` 的说明（M1：裸子串会误伤含该字面量的真实结果）。
+    """
+    return isinstance(content, str) and _PREVIEW_SUFFIX_RE.search(content) is not None
+
 
 def content_tokens(content: "str | list[ContentBlock]", counter: Callable[[str], int]) -> int:
     """content 的 token 估算（图片按 ``count_tokens_for_content`` 的固定 1000/张）。"""
@@ -119,30 +137,27 @@ def exceeds_single_threshold(
     )
 
 
-def flatten_content(
-    content: "str | list[ContentBlock]",
-    *,
-    image_refs: dict[int, str] | None = None,
-) -> str:
-    """把 ``str | list[ContentBlock]`` 摊平成文本（图片 → ``[image: <...>]``）。
+def flatten_content(content: "str | list[ContentBlock]") -> str:
+    """把 ``str | list[ContentBlock]`` 摊平成文本（图片 → ``[image: <file_path>]``）。
 
     图片占位复用 trace 既有形态（``trace_recorder._sanitize_observation``）：
-    ``file_path`` 优先（模型可 ``Read`` 该路径取回像素），否则用调用方预先落盘的
-    ``image_refs[i]``（粘贴图），再否则 ``pasted image``。**本函数不碰 I/O**——
-    ``image_refs`` 由调用方在落盘后传入。
+    ``file_path`` 优先（模型可 ``Read`` 该路径取回像素）。**本仓库所有图片工具**
+    （``read._read_image`` / ``browser_screenshot`` / ``uploads.create_image_message``
+    及其 ``_from_upload`` 变体）都设 ``file_path``（L1 核实），故不做 base64→ref
+    落盘（design D6 注：图片一律经 ``file_path`` 引用回读）。极端情况下
+    ``file_path is None``（仅反序列化已持久化且从未带路径的旧块）退化为
+    ``[image: pasted image]``。
     """
     if isinstance(content, str):
         return content
     from agent.message import ImageBlock, TextBlock
 
-    refs = image_refs or {}
     parts: list[str] = []
-    for index, block in enumerate(content):
+    for block in content:
         if isinstance(block, TextBlock):
             parts.append(block.text)
         elif isinstance(block, ImageBlock):
-            ref = block.file_path or refs.get(index) or "pasted image"
-            parts.append(f"[image: {ref}]")
+            parts.append(f"[image: {block.file_path or 'pasted image'}]")
     return "\n".join(parts)
 
 
@@ -162,13 +177,12 @@ def make_preview(
     content: "str | list[ContentBlock]",
     *,
     ref: str | None = None,
-    image_refs: dict[int, str] | None = None,
 ) -> str:
     """生成有界预览：头 ``PREVIEW_CHARS`` + 保尾 ``[ReadProgress]`` + 诚实标记。
 
     ``ref`` 存在 ⇒ 标记如实指向它（可无损回读）；否则用 ``[truncated]``（D8）。
     """
-    text = flatten_content(content, image_refs=image_refs)
+    text = flatten_content(content)
     head = text[:PREVIEW_CHARS]
     tail = preserved_tail(text)
     marker = TRUNCATED_WITH_REF.format(ref=ref) if ref else TRUNCATED_MARKER

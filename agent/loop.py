@@ -207,6 +207,10 @@ class AgentLoop:
         #: agent 通用 ref store（D4）——``run()`` 期按 session_id/run_id 构造注入，
         #: 构造期拿不到 workspace_root 与 scope id。
         self._artifact_store: "AgentArtifactStore | None" = None
+        #: 本 iteration 内经有损有界化的账本（``tool_calls_made``）条目数——错误路径
+        #: 与正常路径都经 ``_bound_ledger_result``/``_bound_arguments`` 累加（L3：两路
+        #: 都计，事件不欠计）。每个 iteration 顶部归零。
+        self._bounded_ledger_count = 0
         self._plan_document_final = False
         self._plan_tools_registered = False
         self._subagent_tools_registered = False
@@ -594,6 +598,10 @@ class AgentLoop:
         # store ⇒ spill degrades to an honest [truncated] marker (D8), never a
         # dangling ref.
         self._artifact_store = self._make_artifact_store(session_id, resolved_run_id)
+        # Historical tool results already in `messages` (preloaded by the caller,
+        # or a resume rebuild inside `_run`) are pre-marked consumed. The reset
+        # here covers the preloaded case; `_run` re-runs it after the resume
+        # rebuild — see `_reset_tool_result_iterations` (M2).
         self._reset_tool_result_iterations(messages)
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
@@ -712,6 +720,10 @@ class AgentLoop:
             messages.extend(conversation)
             messages.append(Message(role="user", content="[Session resumed. Continuing from where we left off.]"))
             messages.extend(new_user_input)
+            # M2: the resume rebuild populated `messages` with the reloaded
+            # history, whose tool results carry no in-run marker. Re-mark them
+            # consumed (the earlier reset ran before this rebuild).
+            self._reset_tool_result_iterations(messages)
             start_iteration = 0
 
             mode = self.runtime_state.current_mode.value
@@ -748,6 +760,7 @@ class AgentLoop:
         )
         for iteration in iterations:
             self._iteration = iteration
+            self._bounded_ledger_count = 0
 
             if self.background_manager is not None:
                 completed = self.background_manager.check_completed()
@@ -993,7 +1006,6 @@ class AgentLoop:
             executed = await self._execute_tool_calls(pending)
 
             # Phase 3: Post-process results in original order
-            bounded_ledger = 0
             for entry in executed:
                 tool_call = entry["tool_call"]
                 observed_tool_call = entry["observed_tool_call"]
@@ -1078,13 +1090,10 @@ class AgentLoop:
 
                 messages.append(tool_result_message(tool_call.id, result))
                 self._tool_result_iterations[tool_call.id] = self._iteration
-                bounded_result = self._bound_ledger_result(result)
-                if bounded_result is not result:
-                    bounded_ledger += 1
                 tool_calls_made.append(ToolCallMade(
                     name=tool_call.name,
                     arguments=self._bound_arguments(tool_call.arguments),
-                    result=bounded_result,
+                    result=self._bound_ledger_result(result),
                 ))
 
             # D3/D7 order: spill messages → judge hard ceiling → force compact.
@@ -1092,7 +1101,7 @@ class AgentLoop:
                 messages,
                 on_event=on_event,
                 trace_recorder=trace_recorder,
-                bounded_ledger=bounded_ledger,
+                bounded_ledger=self._bounded_ledger_count,
             )
             before_msgs = len(messages)
             before_tokens = self.memory.count_tokens(messages)
@@ -1548,12 +1557,24 @@ class AgentLoop:
             return None
 
     def _reset_tool_result_iterations(self, messages: list[Message]) -> None:
-        """重载/恢复的 messages 里已有工具结果没有 iteration 标记 ⇒ 保持未标记。
+        """给**已进入本 run 的**历史工具结果预置「已消费」标记（M2），并清空本 run 标记。
 
-        未标记的结果**不剪**（保守）：它们在当前 run 里没被重新 append，无法证明
-        「已被模型消费过一轮」。新结果在 append 时打标（见两处 ``:854``/``:1047``）。
+        ``messages`` 里 role=tool 的消息要么是 resume 重载的历史、要么是调用方预置的
+        （本 run 新产生的在 append 时另记，见 ``:889``/``:1084``）。它们**在本 run 开始
+        前就已产生**、必然已被模型读过 ⇒ 预置 ``-1``（远早于任何 ``current_iteration``，
+        故 ``added <= current - 1`` 恒真），使大结果可被剪——否则 resume 后它们无标记、
+        ``prune_tool_results`` 因 ``added is None`` 跳过 ⇒ **永不剪、全文常驻**（审阅 M2）。
+
+        「本 run 新 append 的结果一定带真实 iteration 标记」这条不变量不受影响：新结果
+        在产生轮的 Phase-3 才 append，那时对 ``messages`` 的预置扫描早已过去；即便扫描
+        撞上（同 run 先 append 后重入 ``_run`` 的路径），也只会在其产生当轮给 ``-1`` ——
+        而剪枝点在同轮末尾，产生轮本就不剪（当轮保留），语义不变。
         """
-        self._tool_result_iterations = {}
+        self._tool_result_iterations = {
+            m.tool_call_id: -1
+            for m in messages
+            if m.role == "tool" and m.tool_call_id
+        }
 
     def _spill_enabled(self) -> bool:
         """D8：spill 与「回读工具已注册」成对启用。
@@ -1574,10 +1595,11 @@ class AgentLoop:
 
         预览保前缀（``benchmarks/agent_runner.py`` 只 ``startswith("[Error")``——安全），
         无 ref（trace/tcm 无消费者按 ref 回读）。判定走 ``MemoryManager``，与 messages
-        剪枝共享同一计数器/阈值来源。
+        剪枝共享同一计数器/阈值来源。每次实际有界化计入 ``_bounded_ledger_count``（L3）。
         """
         if not self.memory.is_oversized_result(result):
             return result
+        self._bounded_ledger_count += 1
         return make_preview(result)
 
     def _bound_arguments(self, arguments: dict) -> dict:
@@ -1587,6 +1609,7 @@ class AgentLoop:
         if not isinstance(arguments, dict):
             return arguments
         if value_bytes(arguments) > MAX_RESULT_BYTES:
+            self._bounded_ledger_count += 1
             return bound_value(arguments)
         return arguments
 

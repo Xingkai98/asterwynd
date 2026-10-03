@@ -9,6 +9,7 @@ from agent.memory.tool_result_policy import (
     READ_PROGRESS_RE as _READ_PROGRESS_RE,
     content_bytes as _content_bytes,
     exceeds_single_threshold as _exceeds_single_threshold,
+    is_spilled_preview as _is_spilled_preview,
     make_preview as _make_preview,
 )
 
@@ -32,11 +33,6 @@ HARD_CEILING_MULTIPLIER = 2
 #: 常驻由 token 维度约束即可，字节维度只在真正「字节远超 token 估算」时兜底。
 HARD_CEILING_BYTES_PER_TOKEN = 8
 HARD_CEILING_MIN_BYTES = 512 * 1024
-
-
-def _result_ref_present(content) -> bool:
-    """工具结果正文是否已是「预览 + ref」形态（幂等判据）。"""
-    return isinstance(content, str) and "[truncated" in content
 
 
 def _message_bytes(message: "Message") -> int:
@@ -244,7 +240,7 @@ class MemoryManager:
         for index, message in enumerate(msgs):
             if message.role != "tool" or not message.tool_call_id:
                 continue
-            if _result_ref_present(message.content):
+            if _is_spilled_preview(message.content):
                 continue  # already a preview — idempotent
             added = added_iterations.get(message.tool_call_id)
             if added is None or added > current_iteration - 1:

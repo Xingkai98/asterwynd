@@ -250,6 +250,36 @@ async def test_second_run_same_scope_does_not_overwrite_earlier_ref(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_resumed_history_tool_result_is_spilled(tmp_path):
+    """M2 回归：resume 重载的历史工具结果（快照时仍是全文）在后续轮被剪（有界）。"""
+    legacy = "Z" * 400_000
+    loop = _loop(tmp_path, ScriptedLLM("SmallTool", n_tool_calls=2), SmallTool())
+
+    # Build a resume snapshot carrying a full (unspilled) historical tool result.
+    from agent.session import SessionSnapshot
+    from agent.run_config import AgentMode
+    from agent.message import Message as M
+
+    snapshot_messages = [
+        M(role="user", content="earlier task"),
+        M(role="assistant", content="",
+          tool_calls=[ToolCallDelta(id="h1", name="Read", arguments="{}")]),
+        M(role="tool", content=legacy, tool_call_id="h1"),
+    ]
+    snapshot = SessionSnapshot(
+        schema_version="1.0", session_id="s-resume", created_at="", updated_at="",
+        messages=snapshot_messages, mode=AgentMode.BUILD, todos=[], active_skills=[],
+        run_id="r-old", iteration=1,
+    )
+    messages = [M(role="user", content="go")]
+    await loop.run(messages, session_id="s-resume", run_id="r-new", resume_snapshot=snapshot)
+
+    historic = next(m for m in _tool_messages(messages) if m.tool_call_id == "h1")
+    assert len(extract_text(historic.content)) < 400_000     # spilled, not resident
+    assert extract_result_ref(extract_text(historic.content)) is not None
+
+
+@pytest.mark.asyncio
 async def test_arguments_bounded_in_ledger(tmp_path):
     """D6b：一次工具带 300KB 参数时，``tool_calls_made[*].arguments`` 有界（保结构）。"""
     import json

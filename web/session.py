@@ -939,7 +939,13 @@ def resolve_tool_result(session, tool_call_id: str, workspace_root=None) -> dict
     except ValueError:
         return {"tool_call_id": tool_call_id, "missing": True,
                 "content": "", "reason": _MISSING_MSG}
-    if parsed.kind != "agent" or workspace_root is None:
+    # Defense in depth (L2): a tool message in this session must only ever
+    # reference THIS session's artifact scope. Root sessions key by session_id,
+    # so a ref pointing at any other scope is not ours to serve — refuse rather
+    # than read another scope's file.
+    session_scope = getattr(session, "session_id", None)
+    if (parsed.kind != "agent" or workspace_root is None
+            or session_scope is None or parsed.scope_id != session_scope):
         return {"tool_call_id": tool_call_id, "missing": True,
                 "content": "", "reason": _MISSING_MSG}
     store = AgentArtifactStore.for_workspace(workspace_root, parsed.scope_id)
