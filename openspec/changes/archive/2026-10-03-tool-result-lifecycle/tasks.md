@@ -43,11 +43,11 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 spec delta 同步到 current spec（`openspec/specs/context-engineering/spec.md` + `openspec/specs/memory-context/spec.md` + `openspec/specs/web-ui/spec.md`；受保护路径，需结构化事件）
-- [ ] 5.2 归档到 `openspec/changes/archive/2026-10-03-tool-result-lifecycle/`（受保护路径）
-- [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
-- [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
-- [ ] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描
-- [ ] 5.7 发起 PR（标题关联 #282），写明验证结果
-- [ ] 5.8 (post-merge) PR 合入后给 #282 / #280 加完成说明 comment 并关闭 #282
+- [x] 5.1 spec delta 同步到 current spec（`openspec/specs/context-engineering/spec.md` + `openspec/specs/memory-context/spec.md` + `openspec/specs/web-ui/spec.md`；受保护路径，需结构化事件）
+- [x] 5.2 归档到 `openspec/changes/archive/2026-10-03-tool-result-lifecycle/`（受保护路径）
+- [x] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
+- [x] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`（28 passed）
+- [x] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`（+ `--check-archived`）
+- [x] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描——`docs/architecture.md:91` 有事实变化已更新（工具结果**事件去全文 + 带 `tool_call_id` + 展开按需取回**，替代旧文「事件带全文、展开看本地副本」）；`README.md:336`「长工具结果按展示策略折叠」仍准确（仍折叠）**无需改**；README 未描述事件 payload 细节，**无需改 README_EN**
+- [ ] 5.7 (post-merge) 发起 PR（标题关联 #282）、写明验证结果并合入；由主 session 执行，worktree 不 push
+- [ ] 5.8 (post-merge) PR 合入后给 #282 加完成说明 comment 并关闭；#280 记录「A 的归宿已交付」
