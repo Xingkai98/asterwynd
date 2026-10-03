@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "tool-result-lifecycle",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "d605d2dc-187d-4fc5-8051-9c1bb0efa0dd",
+  "base_sha": "fdd53e067b8780af4a478a2920b4724ed8454ea7",
+  "head_sha": "beef751c08ded95e4583c400a030665a63838880",
+  "tasks_hash": "sha256:20b77b5772f62fb4513708accda0a42ad98bf9bd5407ac3fec3dea76f9f83f52",
+  "spec_hash": "sha256:68adef2c30e0e1613717d3917e782f1ed14c5723084d86bf2e720ba23d931a91",
+  "diff_hash": "sha256:ed66fee43124b9bca347f71ce84f2234607b49a2039897b4a687310e0c858020",
+  "report_hash": "sha256:2c922dc784c943a8b07dfbe71ec54c3de87ad533ff6423e83e406998a2a1bac0"
+}

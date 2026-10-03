@@ -110,11 +110,11 @@
 
 ### 第十八批：agent 常驻上下文上界（#278 诊断 follow-up / #280）
 
-**拆两步：B 已合入、第二步（A 的归宿）立项中**（#280 对抗验证的结论：先打源头，用实测决定后续；B 的 E0 已证明「只治单条不够、累积是主因」）：
+**拆两步：均已完成**（#280 对抗验证的结论：先打源头，用实测决定后续；B 的 E0 证明「只治单条不够、累积是主因」）：
 
 - `read-output-bound`（issue #280，**第一步 B**）：**已归档 2026-10-02**。Read 默认输出上界（2000 行 / 128KB，先到者截）+ 三处逃逸面封堵（`limit=0`/`offset` 无 limit/少行超长行）+ 修 offset 回退 bug + config 可覆盖。**E0 实测结论**：B 后 RSS 峰值 **1172MB** vs #278 基线 **1228MB**（同量级）——**证明「只治单条不够、累积是主因」**，为后续 change 提供立项判据。
 
-- `tool-result-lifecycle`（issue [#282](https://github.com/Xingkai98/asterwynd/issues/282)，**第二步 A 的归宿，立项中**）：原 `agent-context-bound`（A）**不再单独立项**，其核心（`messages` 工具结果 spill/ref）**折叠进本 change**。**决定性实测（2026-10-03）**：同一工具结果字符串被 `messages` / `run.trace` / `tool_calls_made` **三处持有、同一对象**（`is` 判定全真）——替换任一后全文仍被其他池引用、不回 GC，**故单做任一处皆白做，必须一起治**；量级实测（N=30 × ~192KB，三处持有）tracemalloc cur **5569KB → 有界 83KB（-98.5%）**。**关键事实**：`trace`/`tool_calls_made` 的全文**无模型面消费者**（web/CLI/benchmark 全读截断或前缀；唯一全文消费者是 benchmark 落盘 `trace.json` 的事后账本），故它们只需 bounded、**只有 `messages` 需 ref**——比 A 原方案更简洁。**范围**：统一工具结果入库通道 + `messages` spill/ref + `trace`/`tool_calls_made` bounded + agent 通用 ref 存储 + 泛化 `ReadWorkflowResult` + 压缩硬顶（token/字节双维度）+ spill 可观测。**已内化 #280 对抗验证的全部修正**（「已消费一轮」才剪、子 agent ref 用 `run_id` 而非 `subagent_id`、图片按字节而非 token 纳入、`_tokens` 缓存须重置）。**Non-Goal**：`_workflows` scheduler slots / 跨图壳清理（里程碑 A 的另一半，另立 change）；**非工具大内容**（超大 user 粘贴 / 超大 `tool_calls[].arguments` / 后台注入）的残余边界**另立 issue #283**。research_tier = full（`deepseek-harness` + Anthropic context editing `clear_tool_uses` + 本地 6 仓库）。**流程**：grill + 独立对抗验证 + 停轮确认**已完成**（用户 2026-10-03 拍板：剪枝时机 `-1`；Web Expand 改按需回读形态 (c)；残余边界另立 #283），进入实现。
+- `tool-result-lifecycle`（issue [#282](https://github.com/Xingkai98/asterwynd/issues/282)，**第二步 A 的归宿**）：**已归档 2026-10-03**。原 `agent-context-bound`（A）不再单独立项，其核心（`messages` 工具结果 spill/ref）折叠进本 change。**决定性实测**：同一工具结果字符串被 `messages` / `run.trace` / `tool_calls_made` **三处持有、同一对象**（`is` 判定全真）——单做任一处皆白做。**交付**：统一工具结果入库通道 + `messages` spill/ref（无损回读）+ `trace`/`tool_calls_made` bounded（含 `arguments`）+ agent 通用 ref 存储（`artifact://agent/...`）+ 泛化 `ReadWorkflowResult` 回读 + 压缩硬顶（token/字节双维度）+ spill 可观测 + Web Expand 按需回读（取消全文随事件外发）。**已内化 #280 对抗验证全部修正**（「已消费一轮」才剪、子 agent ref 用 `run_id`、图片按字节、`_tokens` 重置）。**验收**：review-loop 2 轮（R1 CHANGES_REQUESTED：M1 幂等裸子串误判 / M2 resume 历史永不剪 → 修 → R2 PASS）；全量 pytest 除 2 个 pre-existing `/tmp` 环境失败外全绿；E0 常驻工具结果文本 **-95%/-97%**。**Non-Goal / 后续**：`_workflows` slots / 跨图壳清理 + **非工具大内容残余边界**均另立 [issue #283](https://github.com/Xingkai98/asterwynd/issues/283)；图片 `MAX_IMAGE_SIZE` 矛盾记入 `docs/known-debt.md`。research_tier = full。
 
 ### 第十七批：workflow 闸门可见性与上限重估（#273 follow-up）
 
