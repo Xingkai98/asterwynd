@@ -108,6 +108,10 @@
 
 ## 未实现队列
 
+### 第二十批：workflow foreach 预算截断可见性（#286）
+
+- `foreach-budget-truncation-visibility`（issue [#286](https://github.com/Xingkai98/asterwynd/issues/286)）：**待实现**。#279（静态截断可见）的独立对抗验证拆出的**同缺陷类、范围外**项——治 `max_items=0` 路径下的**预算**截断静默。`_resolve_items`（`scheduler.py:2676-2677`）在 `max_items==0` 时返回 `items[:remaining_expansion_capacity()]`，切片使 `_check_foreach_budget`（`:2167`）的 `run+delta>limit` **刚好不触发** ⇒ 超预算项**静默丢弃**（实测：60 声明 / 24 展开 / 36 静默丢，`status=completed`、`diagnostics={}`）。**交付**：扩展 #279 共享 helper `_foreach_visibility_fields`（去 `max_items>0` 前置、加成因判别字段），dry-run 与运行期两出口报告「声明 N / 展开 M / 省略 K」+ 成因（`max_items` vs `budget`）；字段须**后写**绕过 `_bounded_node` 白名单；成因字段 SHALL NOT 复用既有 `reason` 键。**Non-Goal**：不改 `max_items` 默认值（#276）、不改 `max_items=0` 语义、不改 #279 静态面。research_tier = light。
+
 ### 第十九批：workflow foreach 截断可见性（#279）
 
 - `foreach-truncation-visibility`（issue [#279](https://github.com/Xingkai98/asterwynd/issues/279)）：**已归档 2026-10-03**。`foreach` 的 `max_items`（默认 20）静默截断 `items`（`scheduler.py:2669`）是全仓**唯一**不报告的截断点。**交付**：三出口一致报告「声明 N / 展开 M / 省略 K」——声明期 warnings（`DeclareWorkflow` + `RunWorkflow(spec=)`，仅字面 `items`）、dry-run foreach 条目（`items_declared`/`items_omitted`）、运行期 `GetWorkflow` 投影（**后写**绕过 `_bounded_node` 白名单）；**Q4 空集合不静默**（`empty_collection`）。**对抗验证修正**（grill 三处被证伪）：字段名用扁平 `items_declared`/`items_omitted`（绝不复用既有 `items_total`——会同键覆盖）；source 驱动声明期完全静默；M1 声明期 warnings 无界如实记。**Non-Goal / 后续**：`max_items=0` 预算截断静默 → 另立 [issue #286](https://github.com/Xingkai98/asterwynd/issues/286)；不改默认值（#276）。research_tier = light。**验收**：review-loop 1 轮 PASS；新测试 18/18；全量 3972 passed（2 环境噪声）。
