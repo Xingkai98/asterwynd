@@ -68,8 +68,9 @@
 6. **通用回读工具**：**泛化 `ReadWorkflowResult`**（按 ref 前缀分派 `artifact://workflow/...` 与 agent ref），**不新增工具**（#248：工具越多越选错）；工具名/schema 保持兼容。
 7. **压缩硬顶（兜底）**：`MemoryManager.compact_if_needed` 在上下文超过**硬上限**时**无视 `compaction_gap` 强制执行**——`gap` 是防抖，SHALL NOT 成为无界增长的许可证。
 8. **spill 可观测（不静默）**：spill/bounded 的发生与量 SHALL 可观测（计数 + 字节），沿用 #275/#279「截断必须显式可见」纪律。
+9. **Web 工具结果展开改为按需回读**：`tool_result` 事件默认只发预览 + `tool_call_id`（**不发全文**）；Web Expand 时按标识向服务端**按需取回全文**（收起释放浏览器缓存）。这把「全文外发」从「无条件推给浏览器」变为「用户想看才取」。
 
-**不变**：`compaction_gap`/`max_tokens` 等**默认数值**（调参另议）；workflow DSL 语义；`WorkflowStore` 既有 ref 格式与 `ReadWorkflowResult` 行为（只增不改）；**图片路径**（见 Non-Goals）。
+**不变**：`compaction_gap`/`max_tokens` 等**默认数值**（调参另议）；workflow DSL 语义；`WorkflowStore` 既有 ref 格式与 `ReadWorkflowResult` 行为（只增不改）；**图片路径**（见 Non-Goals）；**CLI 工具结果打印**（走 `tool_calls_made`，不受 Web 事件影响）。
 
 ## Capabilities
 
@@ -83,6 +84,8 @@
   - **ADDED** 新 Requirement「工具结果全文的单受管持有与释放」——任何持有工具结果全文的池子（`messages`/`trace`/`tool_calls_made`）SHALL 有界；替换/释放 SHALL 使全文**可被 GC**（SHALL NOT「换引用、原文仍被另一池子持有」）；`messages` 的替换 SHALL 可**按 ref 无损回读**且对模型可见；SHALL NOT 破坏 tool-call 链合法性。
 - `memory-context`：
   - **MODIFIED** 既有 Requirement「超过 90% token 阈值时触发压缩」——压缩 SHALL 在上下文超过硬上限时**无视 `compaction_gap` 强制执行**，使常驻上下文有界。
+- `web-ui`：
+  - **MODIFIED** 既有 Requirement「Chat 视图按 display metadata 展示工具结果」——全文 SHALL NOT 随 `tool_result` 事件无条件下发；展开改为按 `tool_call_id` **按需向服务端取回全文**（收起释放缓存；取不回时如实标「全文不可用」）。
 
 ## 验收（本 change 的验收口径，**只进 proposal、不进 spec**）
 
@@ -128,12 +131,14 @@
   - **新增** agent 通用 ref 存储（复用 `WorkflowStore` 的 ref 格式/原子写/分页读，置于 `.asterwynd/artifacts/`）。
   - `agent/tools/builtin/subagents.py` — 泛化 `ReadWorkflowResult` 按 ref 前缀分派（工具名/schema 不变），并**改写工具 description**（现为 workflow 专用文案）。
   - `agent/subagent/manager.py` — `_write_result_artifacts`/`_bounded_summary` 既有模式复用；确认 ref 身份（根 `session_id` / 子 `run_id`）与注册路径（根 / 深度到限子 agent 均可用）。
+  - **Web（D12，形态 c）**：`agent/loop.py` 的 `tool_result` 事件 payload 去全文、增 `tool_call_id`；`web/session.py` / `web/server.py` 新增只读端点 `GET /api/sessions/{id}/tool-result/{tool_call_id}`（`session.messages` 定位 → 全文直返 / 已 spill 解析 ref 读回 / 找不到返 missing）；`web/static/chat.js` 的 Expand 改 fetch 懒加载 + Collapse 释放缓存。
 - **测试**:
-  - **必须新增**：**GC 不变量**（A0，`weakref`/`gc` 断言三处不再持全文）；`messages` 陈旧被替换 / 新鲜保留；`trace`/`tool_calls_made` 超阈 bounded；按 ref 逐字节无损回读；无 ref 不谎称（`has_ref`）；tool-call 链在剪枝后合法；硬顶无视 gap 生效；`_tokens` 缓存失效（改 content 后重算）。
+  - **必须新增**：**GC 不变量**（A0，`weakref`/`gc` 断言三处不再持全文；**断言内存字段**）；`messages` 陈旧被替换 / 新鲜保留 / **穿透窗口** / **预览保尾**；`trace`/`tool_calls_made`/`arguments` 超阈 bounded；按 ref 逐字节无损回读；无 ref 不谎称（`has_ref`）；tool-call 链在剪枝后合法；硬顶无视 gap 生效；`_tokens` 缓存失效；图片字节维度；残余边界（后台注入不被剪）。
+  - **必须新增（Web）**：`tool_result` 事件不含全文；展开端点按 `tool_call_id` 返回全文（含已 spill 走 ref 的路径）；消息被驱逐时返回 missing。
   - **必须新增（端到端）**：#278 复现器缩比版（单 agent 直读，RSS 峰值对照基线）。
-  - **必须回归**：`agent-runtime` tool-call 链测试；`memory-context` 既有压缩测试；`context-engineering` Read/分页测试；全量 `uv run pytest -q`。
+  - **必须回归**：`agent-runtime` tool-call 链测试；`memory-context` 既有压缩测试；`context-engineering` Read/分页测试；`web-ui` 工具结果事件/展开测试；全量 `uv run pytest -q`。
 - **文档**:
-  - `openspec/specs/context-engineering/spec.md` + `openspec/specs/memory-context/spec.md`（current spec 同步，受保护路径）。
+  - `openspec/specs/context-engineering/spec.md` + `openspec/specs/memory-context/spec.md` + `openspec/specs/web-ui/spec.md`（current spec 同步，受保护路径）。
   - `docs/openspec-change-backlog.md`（受保护路径）。
   - `README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描。
 - **流程（process）**: 触及受保护路径，需结构化事件 + grill + building review；实现须独立 worktree、`tool-result-lifecycle/2026-10-03` 分支。**change type = feature → 实现前必须走 `batch-grill-me` + 停轮确认 Open Questions**；**grill 结论须先走独立对抗验证**（`reviews/grill-adversarial.md`）。

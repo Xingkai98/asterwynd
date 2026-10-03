@@ -29,8 +29,8 @@
 - [ ] 3.8 `ToolCallMade.result` 与 `arguments` 超阈 bounded（保 `name`）
 - [ ] 3.9 `compact_if_needed` 加硬上限（token + 字节双维度；超硬限无视 gap 强制压；次序=剪枝→判硬顶→强压）
 - [ ] 3.10 spill 可观测（新增 trace step `tool_result_spill` + `on_event`；计数区分无损 spill / 有损 bounded）
-- [ ] 3.11 **D12 决策落地**：Web `on_event("tool_result")` payload（原文/bounded）+ 对应回归测试
-- [ ] 3.12 回归：`agent-runtime` tool-call 链 + `memory-context` 既有压缩 + `context-engineering` Read/分页
+- [ ] 3.11 **D12（形态 c）落地**：`tool_result` 事件 payload 去全文、增 `tool_call_id`；新增只读端点 `GET /api/sessions/{id}/tool-result/{tool_call_id}`（找 session.messages → 全文直返 / 已 spill 则解析 ref 读回 / 找不到返 missing）；`chat.js` Expand 改 fetch 懒加载 + Collapse 释放缓存；回归测试（含 missing 降级）
+- [ ] 3.12 回归：`agent-runtime` tool-call 链 + `memory-context` 既有压缩 + `context-engineering` Read/分页 + `web-ui`（tool_result 事件/展开）
 - [ ] 3.13 端到端：#278 复现器缩比版（单 agent 直读，RSS 峰值对照 E0）
 
 ## 4. 审阅与验收

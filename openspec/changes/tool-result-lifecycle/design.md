@@ -181,22 +181,33 @@ spill/bounded 的**发生次数与字节数** SHALL 可观测，经既有 trace/
 
 **实现前 MUST 逐点核实**无消费者依赖 `trace` observation / `ToolCallMade.result` 的**全文**（结论见 D2 核对表：仅 `benchmarks/runner.py:661` 落盘与 **Web on_event（D12）**）。若 benchmark 需要全文，方案 = **benchmark 显式开启 full trace**（`TraceRecorder.full_trace` 字段现保留但 inert，可复活为开关），而**非**默认常驻全文。
 
-### D12 — Web `on_event("tool_result")` 全文外发（对抗验证新增；本 change 唯一的**行为回归风险点**）
+### D12 — Web Expand 改为**按需回读**（形态 (c)，用户 2026-10-03 拍板）
 
-`loop.py:1029-1037` 的 `on_event("tool_result", {"result": <全文>})` 经 `web/session.py:1779` 入队 → WebSocket → 前端 **`web/static/chat.js:932` `const fullResult = data.result`**，`:963-970` 的 **Expand 按钮展开展示全文**。
+`loop.py:1029-1037` 的 `on_event("tool_result", {"result": <全文>})` 经 `web/session.py:1779` 入队 → WebSocket → 前端 **`web/static/chat.js:932` `const fullResult = data.result`**，`:963-970` 的 **Expand 按钮**就靠这份全文。
 
-- 这是 `result` 的**一个全文消费者**，推翻「工具结果全文没有消费者」的**总框定**（D2 对 trace/tcm 的具体结论仍对）。
-- **若 D1 把 `result` 换成 bounded 后再发 on_event，Web UI 的 Expand-to-full 会静默退化为只显示预览**——**必须在 design 显式决定**：(a) on_event 仍发**原文**（保 Expand；全文非常驻、只过网一次，但须在 spec/design 如实声明「Web 事件含全文」），或 (b) on_event 发 **bounded**（保一致性、牺牲 Expand 的全文）。
-- 附带：`web/session.py:1771` 的 `queue` 是**无界** `asyncio.Queue()`，大结果消费前瞬态驻留（低危）。
+**决策：默认只发预览，Expand 时按需向服务器取全文**（(c) 懒加载）。
 
-> **待 grill 确认（用户决策）**：D12 取 (a) 原文还是 (b) bounded。**这是停轮要拍板的三件事之一。**
+**寻址键 = `(session_id, tool_call_id)`，不按 ref**（关键实现约束）：
+- 事件发在**结果产生的那一刻**（`loop.py:1029`），而 ref 要到**轮末剪枝**才写盘 ⇒ **事件里拿不到 ref**；且 `tool_result` 事件 payload **现在不带 `tool_call_id`**。
+- 故：事件 payload **增加 `tool_call_id`**（小、稳定，非大内容）；新增只读端点 `GET /api/sessions/{session_id}/tool-result/{tool_call_id}`：在 `session.messages`（`web/session.py:1272`）找 `role=tool` 且 `tool_call_id` 匹配的消息 → **若 content 是全文直接返回；若已 spill（预览 + 内嵌 ref 标记，Q-new4）则解析 ref、从 artifacts store 读全文返回**；消息已被 compaction 驱逐/找不到 → 返回 missing（前端显示「全文不可用」）。
+- **这解耦了 ref 时机**：端点用 `tool_call_id` 定位消息，再决定读 content 还是读 ref。
+
+**前端（`web/static/chat.js`）**：Expand 时若未加载则 `fetch` 一次并缓存到该条；**Collapse 时清除缓存**——释放浏览器内存（修既有闭包 `const` 永不释放的问题，`:932`）。
+
+**服务端瞬时读**：端点读盘 → 发回 → 丢引用，**不进 `messages`**，不重新引入常驻。
+
+**spec 影响**：`web-ui` 的 Requirement「Chat 视图按 display metadata 展示工具结果」（`openspec/specs/web-ui/spec.md:117`，"长结果 SHALL 默认展示 preview 并允许展开全文"）需 **MODIFY**——展开改为「按需从服务端取回全文」。
+
+**不受影响**：CLI 的 `on_event`（`main.py:613-624`）不处理 `tool_result`，打印走 `result.tool_calls_made`（另一条路）；子 agent 无 `on_event`（Web 里的工具结果都是根级）。
+
+**新攻击面**：多一个 Web 端点——SHALL 只读、SHALL 复用 workspace/session 校验、只在 session 存在时返回。附带（非本 change）：`web/session.py:1771` 的 `queue` 是**无界** `asyncio.Queue()`，大结果消费前瞬态驻留（低危）。
 
 ## Risks / Trade-offs
 
 | 风险 | 严重度 | 缓解 |
 |---|---|---|
 | **大 `tool arguments` 无界**（`Write`/`Edit` 正文住在 `tool_calls[].arguments` + `ToolCallMade.arguments` + trace `tool_call` step，剪 `result` 不触及） | **高** | D6b：bounded 覆盖 `arguments`；messages 侧至少计入字节预算 |
-| **Web `on_event` 全文外发 → Expand 回归** | **中-高** | D12：显式决定 on_event 用原文还是 bounded + 加回归测试 |
+| **Web Expand 按需回读的新端点**（新攻击面 / 找不到全文时的降级） | **中** | D12：只读端点 + session/workspace 校验 + 找不到返回 missing + 回归测试 |
 | **硬顶对非工具大内容空转**（大 user 粘贴 / 大 assistant 参数 / 后台注入在 recent 内） | **高** | D7：明写残余边界，或允许收缩 recent |
 | **改 `loop.py` 入库通道破坏 tool-call 链合法性** | 高 | 剪枝只替换 content 文本，不删消息、不改 `tool_call_id`；专门链合法性回归测试 |
 | **GC 不变量测试假通过**（`asdict` 对 str 子类复制） | **高** | D0：断言**内存字段**，不只靠弱引用 |
@@ -213,21 +224,6 @@ spill/bounded 的**发生次数与字节数** SHALL 可观测，经既有 trace/
 | **字节维度每轮重算 `len(encode)` 的 O(n) 开销** | 低-中 | 字节数在入库时与 `_tokens` 一同缓存 |
 | **spill 开销**（落盘 + 回读） | 低-中 | 仅超阈值触发，小结果零开销；A5「不退化」 |
 | **`benchmarks/agent_runner.py:459` 对 `list` 结果调 `.startswith` 会崩**（既存缺陷，非本 change 引入） | 低 | D11 前置核实记录；bounded 后可顺带修（先 `extract_text`） |
-
-## Risks / Trade-offs
-
-| 风险 | 缓解 |
-|---|---|
-| **改 `loop.py` 入库通道破坏 tool-call 链合法性** | 剪枝只替换 content 文本，不删消息、不改 `tool_call_id`；专门链合法性回归测试。 |
-| **GC 不变量测试难写/易 flaky**（str 不支持 weakref） | 用容器对象包裹 + `gc` 可达性断言；测试隔离（关闭其它引用）。**grill 定测试形态。** |
-| **模型当轮拿不到刚读的内容** | D3「已消费一轮」+ 新鲜保留；测试锁定「当轮结果未剪」。 |
-| **图片绕过 token 硬顶** | D6 双维度（token + 字节）；图片按字节纳入。 |
-| **`_tokens` 缓存使剪枝白剪** | D10 显式重置 + 回归测试。 |
-| **trace/tool_calls_made bounded 影响 benchmark** | D11 前置核实；必要时 benchmark 显式开 full trace。 |
-| **ref 文件泄漏 / 跨会话污染** | 复用 `WorkflowStore` 路径校验（段级拒绝 `..`）；artifacts/ 与 sessions/ 隔离避免 rmtree 误删；生命周期随会话。 |
-| **子 agent ref 身份洞** | D4 按 agent 类型分（根 session_id / 子 run_id）。 |
-| **`MemoryManager` 影响所有 agent** | 三处共用；改动须全量回归。 |
-| **spill 开销**（落盘 + 回读） | 仅超阈值触发，小结果零开销；A5「不退化」。 |
 
 ## Testing Strategy
 
