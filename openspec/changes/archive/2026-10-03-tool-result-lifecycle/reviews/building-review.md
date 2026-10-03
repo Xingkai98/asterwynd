@@ -195,7 +195,7 @@ M1、M2 各配一条回归测试并修法后重跑 `/review-loop`；L1–L4 可�
 
 - 4 条命名回归全 **PASS**（`test_prune_still_spills_result_containing_truncated_literal` / `test_is_spilled_preview_anchors_not_bare_substring` / `test_resumed_history_tool_result_is_spilled` / `test_resolve_refuses_cross_scope_ref`）。
 - 相关子集 `uv run pytest -q tests/agent/subagent/ test_trace_recorder*.py test_artifact_store.py test_read_artifact_resolver.py test_tool_result_lifecycle_loop.py tests/agent/memory/ tests/web_tests/test_tool_result_expand.py tests/web_tests/test_server.py tests/web_tests/test_session.py` → **1114 passed, 2 failed**，2 失败 = `test_persistent.py::TestFindScopeRoot::*`（pre-existing `/tmp` git 环境坑，与本 change 无关）。
-- 全量 `uv run pytest -q` → 见下（与 Round 1 同口径，扣除 2 个 pre-existing）。
+- 全量 `uv run pytest -q` → **2 failed, 3954 passed, 9 skipped**（346s）。2 失败与 Round 1 同：`test_persistent.py::TestFindScopeRoot::*`（pre-existing `/tmp` git 环境坑，与本 change 无关）；新增 4 条回归使通过数 3950→3954。
 - OpenSpec strict validate 未受本轮影响（本轮无 spec delta 改动）。
 
 **判定**：第 1 轮两个中等问题 M1/M2 **真解决并复现核实**，无新引入问题 ⇒ **PASS**。L4 建议在收尾（归档/PR）前补记 `docs/known-debt.md` 或写进 #283。

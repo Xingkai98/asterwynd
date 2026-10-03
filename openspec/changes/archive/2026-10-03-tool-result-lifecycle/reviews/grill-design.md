@@ -189,6 +189,13 @@
 
 ## User Confirmation
 
-- **Q-D12（对应 Open Q 的 D12/Web 全文外发）**: 用户答复：直接上形态 (c)——Web 工具结果展开改为「按需回读」：tool_result 事件默认只发预览 + tool_call_id，Expand 时按标识向服务端取回全文，收起释放缓存。（用户认可「这个修改感觉不大」，与主 change 一起做。）；确认时间: 2026-10-03
-- **Q4（剪枝时机 -1/-2）**: 用户答复：取 **`-1`**（结果被消费过一轮后即可剪，`added_iteration <= current_iteration - 1`）；理由：大结果少驻留一轮、贴合降峰目标。；确认时间: 2026-10-03
-- **Q-new5（非工具大内容残余边界是否本轮治）**: 用户答复：本轮**只记录为残余边界**（不在 #282 治），**另立 issue #283** 跟进（超硬顶且剪无可剪时收缩/驱逐 recent window 的机制）；理由：改动触及 compaction 的 recent-keep 不变量、风险面独立。；确认时间: 2026-10-03
+- **Q1**（D0 GC 不变量测试形态）: 用户答复：按推荐——用 `str` 子类弱引用为主，且必须额外断言内存字段（`trace.steps[*].observation` / `tool_calls_made[*].result`），不单靠弱引用（防 `asdict` 对子类复制导致的假通过）。；确认时间: 2026-10-03
+- **Q2**（D1 有界化落点）: 用户答复：按推荐——两段式：判定纯函数 `tool_result_policy.py` + `MemoryManager.prune_tool_results`（只判不碰 I/O）+ store/scope 由 loop 在 `run()` 期注入。；确认时间: 2026-10-03
+- **Q3**（D2 持有者形态）: 用户答复：按推荐——`messages` 需 spill+ref（无损回读）；`trace`/`tool_calls_made` 只 bounded 不落 ref；benchmark 全文用 `full_trace=True` 承接；`arguments` 一并 bounded。；确认时间: 2026-10-03
+- **Q4**（D3 剪枝时机与单条阈）: 用户答复：取 `-1`（`added_iteration <= current_iteration - 1`）；单条阈 = `max(TOKEN_MIN, max_tokens×0.25)` 或字节 128KB 取先到。；确认时间: 2026-10-03
+- **Q5**（D4 ref 存储）: 用户答复：按推荐——前缀 `artifact://agent/<scope_id>/<key>`；根用 `session_id`、子用 `run_id`；新增共享 `ArtifactRef.parse` 前缀路由；清理显式实现。；确认时间: 2026-10-03
+- **Q6**（D5 回读工具）: 用户答复：按推荐——泛化 `ReadWorkflowResult`（按前缀分派），不新增工具，改写 description。；确认时间: 2026-10-03
+- **Q7**（D6 图片策略）: 用户答复：按推荐——图片按字节（`len(url)`）纳入判据；消费一轮后转 `[image: <file_path>]`；`MAX_IMAGE_SIZE` 矛盾记债。；确认时间: 2026-10-03
+- **Q8**（D9 可观测落点）: 用户答复：按推荐——新增 `tool_result_spill` trace step + `on_event`，计数区分无损 spill / 有损 bounded，不改 `RunResult` 协议。；确认时间: 2026-10-03
+- **Q9**（D12 Web 全文外发）: 用户答复：取形态 (c)——`tool_result` 事件去全文 + 带 `tool_call_id`；Expand 按 id 向服务端按需取回全文、收起释放缓存（用户：「直接上 c，一块搞，这个修改感觉不大」）。；确认时间: 2026-10-03
+- **Q10**（D7 非工具大内容残余边界）: 用户答复：本轮只记录为残余边界、不治，另立 issue #283 跟进（超硬顶且剪无可剪时收缩/驱逐 recent window）——用户：「按推荐，A3 新立一个 issue」。；确认时间: 2026-10-03
