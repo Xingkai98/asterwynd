@@ -1,11 +1,16 @@
 # agent/memory/manager.py
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Optional, TYPE_CHECKING
+from typing import Callable, Literal, Optional, TYPE_CHECKING
 
 from agent.message import Message, TextBlock, count_tokens_for_content, extract_text
+from agent.memory.tool_result_policy import (
+    READ_PROGRESS_RE as _READ_PROGRESS_RE,
+    content_bytes as _content_bytes,
+    exceeds_single_threshold as _exceeds_single_threshold,
+    make_preview as _make_preview,
+)
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -16,13 +21,26 @@ logger = logging.getLogger("asterwynd.memory")
 
 _enc = None
 
-# ReadTool 分页进度注记（见 agent/tools/builtin/read.py）：
-#   [ReadProgress file="<path>"; offset=<n>; total=<m>]
-# 默认上界截断的注记额外带 `; truncated=true` 后缀（变更 read-output-bound）——
-# 该注记不是续读位点，_extract_read_progress 会跳过它。
-_READ_PROGRESS_RE = re.compile(
-    r'\[ReadProgress file="([^"]*)"; offset=(\d+); total=(\d+)(?:; truncated=(?P<truncated>true))?\]'
-)
+#: 硬上限（D7）：token 维度 = ``max_tokens × HARD_CEILING_MULTIPLIER``。仅防抖的
+#: ``compaction_gap`` SHALL NOT 成为无界增长的许可证——超硬限即无视 gap 强压。
+HARD_CEILING_MULTIPLIER = 2
+
+#: 硬上限（D7）字节维度 = ``max_tokens × HARD_CEILING_BYTES_PER_TOKEN``。图片等
+#: 内容块的 token 估算（1000/张）远低于实际字节，纯 token 判据会放行已失控的字节。
+HARD_CEILING_BYTES_PER_TOKEN = 8
+
+
+def _result_ref_present(content) -> bool:
+    """工具结果正文是否已是「预览 + ref」形态（幂等判据）。"""
+    return isinstance(content, str) and "[truncated" in content
+
+
+def _flatten(content) -> str:
+    """``str | list[ContentBlock]`` → 文本（图片 → ``[image: <file_path|ref>]``）。"""
+    from agent.memory.tool_result_policy import flatten_content
+
+    return flatten_content(content)
+
 
 
 def _count_tokens(text: str) -> int:
@@ -52,6 +70,20 @@ class SummaryTier:
             "tier": self.tier,
             "source_range": self.source_range,
             "generated_at": self.generated_at,
+        }
+
+
+@dataclass(frozen=True)
+class PruneStats:
+    """``prune_tool_results`` 的可观测产出（D9：剪枝不静默）。"""
+
+    messages_spilled: int = 0
+    bytes_released: int = 0
+
+    def to_metadata(self) -> dict:
+        return {
+            "messages_spilled": self.messages_spilled,
+            "bytes_released": self.bytes_released,
         }
 
 
@@ -142,6 +174,76 @@ class MemoryManager:
             message._tokens = count_tokens_for_content(message.content, _count_tokens)
         return message._tokens
 
+    # ------------------------------------------------------------------
+    # Tool-result spill (change tool-result-lifecycle, D3/D10)
+    # ------------------------------------------------------------------
+
+    def prune_tool_results(
+        self,
+        messages: Optional[list["Message"]] = None,
+        *,
+        current_iteration: int,
+        added_iterations: dict[str, int],
+        save: Optional[Callable[[str], str]] = None,
+    ) -> PruneStats:
+        """把陈旧的工具结果 ``messages`` 正文换成「有界预览 + ref」（D3/D10）。
+
+        剪枝判据 = **已消费一轮** ∩（**滑出近期窗口** ∪ **单条超阈**）：
+
+        - **已消费一轮**：``added_iterations[tool_call_id] <= current_iteration - 1``
+          （A1 已拍板 ``-1``）。结果在 iteration k 入库、同轮末尾 ``_call_llm`` 已发一次、
+          k+1 轮再发一次 ⇒ k+1 末尾即可剪。两个 append 点（错误 / 正常路径）都记
+          ``added_iteration``，未标记的结果**不剪**（保守）。
+        - **滑出窗口**：消息索引 < ``len(messages) - recent_window``（窗口按**消息条数**，
+          非轮数）。
+        - **单条超阈**：token 或字节任一超阈（``tool_result_policy``），**不受窗口保护**
+          ——超阈结果即使新鲜、仍在窗内也替换（穿透窗口），但受「已消费一轮」保护。
+
+        ``save(text) -> ref`` 由调用方注入（``loop.py`` 在 ``run()`` 期构造 store 与
+        scope）；返回 ``None`` 或抛异常时**不谎称可回读**（D8）——仍替换正文使内存有界，
+        但标记 ``[truncated]``。本方法**不碰 I/O**，只调注入的回调与判据纯函数。
+
+        任何替换后 MUST 置 ``message._tokens = None``（D10），否则 ``count_tokens``
+        返旧值、反复误触发压缩。
+        """
+        msgs = messages if messages is not None else self.messages
+        stats_spilled = 0
+        stats_bytes = 0
+        window_start = len(msgs) - self.recent_window
+        for index, message in enumerate(msgs):
+            if message.role != "tool" or not message.tool_call_id:
+                continue
+            if _result_ref_present(message.content):
+                continue  # already a preview — idempotent
+            added = added_iterations.get(message.tool_call_id)
+            if added is None or added > current_iteration - 1:
+                continue  # fresh / never-marked ⇒ keep full text
+            slid_out = index < window_start
+            oversized = _exceeds_single_threshold(
+                message.content, max_tokens=self.max_tokens, counter=_count_tokens,
+            )
+            if not (slid_out or oversized):
+                continue
+            before = _content_bytes(message.content)
+            ref: str | None = None
+            if save is not None:
+                try:
+                    ref = save(_flatten(message.content))
+                except Exception:
+                    logger.warning("[Memory] tool result spill failed", exc_info=True)
+                    ref = None
+            preview = _make_preview(message.content, ref=ref)
+            message.content = preview
+            message._tokens = None
+            stats_spilled += 1
+            stats_bytes += max(0, before - _content_bytes(preview))
+        if stats_spilled:
+            logger.info(
+                "[Memory] spilled %d tool result(s), released %d bytes",
+                stats_spilled, stats_bytes,
+            )
+        return PruneStats(messages_spilled=stats_spilled, bytes_released=stats_bytes)
+
     async def compact_if_needed(
         self,
         messages: Optional[list["Message"]] = None,
@@ -153,16 +255,29 @@ class MemoryManager:
         defaults to ``max_tokens - 15_000`` (reserving 15K tokens for the LLM
         response).  Minimum *compaction_gap* iterations must pass between
         compactions to avoid thrashing.
+
+        ``compaction_gap`` is anti-thrash only, NOT a license for unbounded
+        growth (D7): when usage reaches a **hard ceiling** (``max_tokens × 2``
+        tokens, or ``max_tokens × 8`` resident bytes), compaction is forced
+        regardless of the gap.
         """
         msgs = messages if messages is not None else self.messages
         total = self.count_tokens(msgs)
+        hard = self._hard_ceiling_reached(msgs, total)
         threshold = self.compact_trigger_tokens if self.compact_trigger_tokens is not None else max(1, self.max_tokens - 15_000)
         if total >= threshold:
-            if iteration - self._last_compaction_iteration >= self._compaction_gap:
-                logger.info(
-                    "[Memory] %d tokens >= %d (threshold, %d max budget), compacting",
-                    total, threshold, self.max_tokens,
-                )
+            if hard or iteration - self._last_compaction_iteration >= self._compaction_gap:
+                if hard and iteration - self._last_compaction_iteration < self._compaction_gap:
+                    logger.info(
+                        "[Memory] %d tokens at hard ceiling (%d max budget), compacting "
+                        "despite gap",
+                        total, self.max_tokens,
+                    )
+                else:
+                    logger.info(
+                        "[Memory] %d tokens >= %d (threshold, %d max budget), compacting",
+                        total, threshold, self.max_tokens,
+                    )
                 await self.compact(msgs)
                 self._last_compaction_iteration = iteration
                 return True
@@ -174,7 +289,25 @@ class MemoryManager:
                     self._last_compaction_iteration, self._compaction_gap,
                     self.max_tokens,
                 )
+        elif hard:
+            # Token estimate is low (e.g. content blocks) but resident bytes are
+            # out of control — the byte dimension alone forces compaction.
+            logger.info(
+                "[Memory] resident bytes at hard ceiling (%d max budget), compacting "
+                "despite token estimate %d",
+                self.max_tokens, total,
+            )
+            await self.compact(msgs)
+            self._last_compaction_iteration = iteration
+            return True
         return False
+
+    def _hard_ceiling_reached(self, messages: list["Message"], total_tokens: int) -> bool:
+        """D7 的双维度硬上限：token **或** 常驻字节任一超限即真。"""
+        if total_tokens >= self.max_tokens * HARD_CEILING_MULTIPLIER:
+            return True
+        byte_budget = self.max_tokens * HARD_CEILING_BYTES_PER_TOKEN
+        return sum(_content_bytes(m.content) for m in messages) >= byte_budget
 
     async def compact(self, messages: Optional[list["Message"]] = None) -> bool:
         """Compress conversation history using the configured summarizer.

@@ -18,34 +18,29 @@
 from __future__ import annotations
 
 import json
-import os
-import uuid
 from pathlib import Path
 
-RESULT_REF_PREFIX = "artifact://workflow/"
-
-#: 一次 ``read`` 默认/最大返回的字符数（分页读，避免把 artifact 正文整段灌进上下文）。
-DEFAULT_READ_LIMIT = 4000
-MAX_READ_LIMIT = 20000
-
-_ALLOWED_REF_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+from agent.artifact_store import (
+    DEFAULT_READ_LIMIT,
+    MAX_READ_LIMIT,
+    RESULT_REF_PREFIX,
+    WORKFLOW_KIND,
+    ArtifactReader,
+    ArtifactRef,
+    atomic_write,
 )
+from agent.artifact_store import validate_segment as _validate_segment
 
-#: 被禁止的路径段：``.`` / ``..`` 会让 ``<ws>/.asterwynd/workflows/<id>`` 跳出 subtree。
-#: 必须在**段级**拒绝——字符白名单允许 ``.``（``run_a.summary`` 这类键依赖它），
-#: 只靠「两段」校验会漏掉 ``artifact://workflow/../leak``（恰好两段）。
-_FORBIDDEN_SEGMENTS = frozenset({".", ".."})
-
-
-def _validate_segment(value: str, label: str) -> str:
-    """校验一个 ref 路径段：非空、字符集受限、且不是 ``.`` / ``..``。"""
-    if not value or set(value) - _ALLOWED_REF_CHARS or value in _FORBIDDEN_SEGMENTS:
-        raise ValueError(f"invalid {label}: {value!r}")
-    return value
+# 兼容别名：既有读者（``workflow_assets``、测试）按这些旧名导入。
+__all__ = [
+    "RESULT_REF_PREFIX",
+    "DEFAULT_READ_LIMIT",
+    "MAX_READ_LIMIT",
+    "WorkflowStore",
+]
 
 
-class WorkflowStore:
+class WorkflowStore(ArtifactReader):
     """一个 workflow run 的结果 artifact + 事件日志（独立于 checkpoint 命名空间）。"""
 
     def __init__(self, root: str | Path) -> None:
@@ -65,20 +60,15 @@ class WorkflowStore:
     def parse_ref(ref: str) -> tuple[str, str]:
         """把 ``artifact://workflow/<workflow_id>/<key>`` 拆成两段，非法即拒绝。
 
+        委托共享的 ``ArtifactRef.parse``（单一前缀解析源，D4），因此**同时**拒绝
+        ``artifact://agent/...``——workflow store 的 ``path_for`` 只认自己的作用域。
         严格白名单 + **段级**校验：只接受单段 ``workflow_id`` + 单段 ``key``，字符集
-        受限，且 ``.`` / ``..`` 这类路径段被显式拒绝。绝对路径、多余层级同样在解析层
-        被拒（不会拼出逃逸路径）。
+        受限，且 ``.`` / ``..`` 这类路径段被显式拒绝。
         """
-        if not isinstance(ref, str) or not ref.startswith(RESULT_REF_PREFIX):
+        parsed = ArtifactRef.parse(ref)
+        if parsed.kind != WORKFLOW_KIND:
             raise ValueError(f"not a workflow result ref: {ref!r}")
-        rest = ref[len(RESULT_REF_PREFIX) :]
-        parts = rest.split("/")
-        if len(parts) != 2:
-            raise ValueError(f"malformed workflow result ref: {ref!r}")
-        workflow_id, key = parts
-        _validate_segment(workflow_id, "workflow_id")
-        _validate_segment(key, "key")
-        return workflow_id, key
+        return parsed.scope_id, parsed.key
 
     def ref(self, key: str) -> str:
         _validate_segment(key, "result key")
@@ -90,13 +80,14 @@ class WorkflowStore:
 
     def path_for(self, ref: str) -> Path:
         """ref -> 磁盘路径；拒绝任何逃出本地 subtree 的解析结果。"""
-        workflow_id, key = self.parse_ref(ref)
-        if workflow_id != self.workflow_id:
+        parsed = ArtifactRef.parse(ref)
+        if parsed.kind != WORKFLOW_KIND or parsed.scope_id != self.workflow_id:
             raise ValueError(
-                f"ref {ref!r} belongs to workflow {workflow_id!r}, not {self.workflow_id!r}"
+                f"ref {ref!r} belongs to {parsed.kind} {parsed.scope_id!r}, "
+                f"not workflow {self.workflow_id!r}"
             )
         base = (self._root / "results").resolve()
-        candidate = (base / f"{key}.txt").resolve()
+        candidate = (base / f"{parsed.key}.txt").resolve()
         if base not in candidate.parents:
             raise ValueError(f"ref {ref!r} escapes the workflow store")
         return candidate
@@ -144,46 +135,7 @@ class WorkflowStore:
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(line)
 
-    # -- 读取 ---------------------------------------------------------------
-
-    def load(self, ref: str) -> str | None:
-        """按 ref 读回全文；文件不存在或不可读时返回 ``None``。"""
-        try:
-            return self.path_for(ref).read_text(encoding="utf-8")
-        except (OSError, ValueError):
-            return None
-
-    def read(
-        self,
-        ref: str,
-        *,
-        offset: int = 0,
-        limit: int = DEFAULT_READ_LIMIT,
-    ) -> dict:
-        """分页读正文（字符偏移），返回自描述的页对象。"""
-        start = max(int(offset), 0)
-        size = max(1, min(int(limit), MAX_READ_LIMIT))
-        text = self.load(ref)
-        if text is None:
-            return {
-                "ref": ref,
-                "missing": True,
-                "offset": start,
-                "limit": size,
-                "total_chars": 0,
-                "truncated": False,
-                "content": "",
-            }
-        content = text[start : start + size]
-        return {
-            "ref": ref,
-            "missing": False,
-            "offset": start,
-            "limit": size,
-            "total_chars": len(text),
-            "truncated": start + len(content) < len(text),
-            "content": content,
-        }
+    # -- 读取（``load`` / ``read`` 由 ``ArtifactReader`` 提供）------------------
 
     def read_events(self) -> list[dict]:
         """读回全部事件；半行/损坏行跳过（日志不应因一行损坏整体不可用）。"""
@@ -209,12 +161,5 @@ class WorkflowStore:
 
     @staticmethod
     def _atomic_write(path: Path, text: str) -> None:
-        """tmp + os.replace：读者永远看不到半截文件，重复写也一定是真实写。"""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp-{uuid.uuid4().hex[:8]}")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+        """兼容别名（``workflow_assets`` 等既有读者）——实现见 ``artifact_store``。"""
+        atomic_write(path, text)
