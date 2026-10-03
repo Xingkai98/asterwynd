@@ -34,7 +34,7 @@
 - [x] 4.4 归档到 `openspec/changes/archive/2026-10-03-fix-node-transcript-stale-refresh/`（受保护路径，需结构化事件）
 - [x] 4.5 `/review-loop` 独立审阅至 PASS 或 3 轮封顶，报告落 `reviews/building-review.md` + manifest（manifest 在归档 move 之后生成）——3 轮：R1 `CHANGES_REQUESTED`（2 HIGH + 1 MEDIUM）→ R2 `CHANGES_REQUESTED`（新 1 MEDIUM，R1 三条全关）→ R3 **PASS**（MUST-FIX 0）
 - [x] 4.6 提交分支并写好 PR 描述（PR 描述见交付说明；本机不可推送）
-- [ ] (post-merge) 推送分支并创建 PR、创建关联 GitHub issue 并回填编号（本机 `github.com:443` 不可达）
+- [x] 推送分支并创建 PR、创建关联 GitHub issue（#290）并回填编号——网络恢复后已执行（原标注 `(post-merge)` 是因实现期 `github.com:443` 不可达；实际在 PR 之前就完成了，故改为已勾）
 
 ## 5. 审阅修复（review-loop Round 1 → Round 2）
 

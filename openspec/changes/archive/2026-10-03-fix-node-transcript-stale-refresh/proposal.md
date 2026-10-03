@@ -1,6 +1,6 @@
 # Proposal: 节点 transcript 的终态补取（修「跑完后对话 tab 停在运行中那一帧」）
 
-- 关联 issue：待创建（本机 `github.com:443` 不可达，已列为 `(post-merge)` 任务）。
+- 关联 issue：[#290](https://github.com/Xingkai98/asterwynd/issues/290)（实现期本机 `github.com:443` 不可达，先落为 `(post-merge)` 任务；网络恢复后已建号并回填）。
 - 相关既有 change：`enhance-workflow-graph-ux`（抽屉「对话」tab + 刷新节律 + 簇虚拟化，issue #197）、`fix-issue-215`（失败证据主体落在「对话」tab）。
 - 用户报告：workflow 跑完后，节点抽屉的「对话」tab 仍停在运行中抓到的早期内容（只剩两条工具行），而「任务」tab 提示的「本 run 内 4 次工具/LLM 失败 → 对话 tab 查看」在里面也看不到。
 
