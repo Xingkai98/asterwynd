@@ -1,16 +1,28 @@
-"""foreach 截断可见性（change ``foreach-truncation-visibility``，issue #279）。
+"""foreach 截断可见性（issue #279 静态截断 + issue #286 预算截断）。
 
-`foreach` 的 ``max_items``（默认 20）静默截断 ``items``（``_resolve_items``），是全仓
-唯一不报告的截断点。本模块把 delta spec 的每条 Scenario 固化成断言，覆盖**三条模型
+覆盖**两条截断路径**、**三/四条模型可见出口**：
+
+- **#279 静态截断**（change ``foreach-truncation-visibility``）：`max_items`（默认 20）
+  静默截断 ``items``（``_resolve_items`` 的 ``items[:max_items]``）。
+- **#286 预算截断**（change ``foreach-budget-truncation-visibility``）：``max_items=0``
+  时 ``_resolve_items`` 把集合切到 ``_remaining_expansion_capacity()`` **恰好合身**，
+  使后续 ``_check_foreach_budget`` 的 ``runs+delta>limit`` 刚好不触发 ⇒ 超预算项静默丢弃。
+  两条路径共用 ``_foreach_visibility_fields``，成因由 ``items_omitted_cause`` 区分
+  （``"max_items"`` / ``"budget"``）。
+
+这两条路径此前都静默。本模块把 delta spec 的每条 Scenario 固化成断言，覆盖**模型
 可见出口**：
 
 - **声明期**（``DeclareWorkflow`` / ``RunWorkflow(spec=...)`` 的 ``warnings``）：只报
-  **字面** ``items`` 的截断；``source`` 驱动声明期**完全静默**（D3）。
+  **字面** ``items`` 的**静态**截断；``source`` 驱动声明期**完全静默**（D3）；预算截断
+  声明期不适用（运行期现象）。
 - **dry run**（``DryRunWorkflow`` 的 foreach 条目）：补 ``items_declared`` /
-  ``items_omitted``（与既有 ``items_expanded`` 三元）；``source`` 驱动的集合数标
-  **模拟/不可信**（Q5）。
-- **运行期**（``GetWorkflow(detail='nodes')`` 的 foreach 节点）：暴露静态截断信号，
+  ``items_omitted`` / ``items_omitted_cause``（与既有 ``items_expanded`` 三元）；
+  ``source`` 驱动的集合数标**模拟/不可信**（Q5）。
+- **运行期 `GetWorkflow(detail='nodes')`**（foreach 节点）：暴露截断信号 + 成因，
   且按 ``_attach_item_refs`` 式**后写**绕过 ``_bounded_node`` 白名单（D3）。
+- **运行期 `RunWorkflow` 结果信封**（``nodes`` 里的 foreach 节点，#286 OQ2=(b) 新增
+  出口）：同源后写，使「跑完图直接读返回信封」也可见（并补 #279 静态字段缺口）。
 
 字段名（D2）：扁平 ``items_declared``（声明集合大小）/ ``items_omitted``
 （= ``max(items_declared - items_expanded, 0)``）。**绝不复用**既有 ``items_total``
@@ -228,13 +240,18 @@ def test_run_workflow_spec_warns_like_declare(manager):
 
 
 def test_dry_run_reports_declared_expanded_omitted(manager):
-    """T3：dry run foreach 条目 = items_declared=60 / items_expanded=20 / items_omitted=40。"""
+    """T3：dry run foreach 条目 = items_declared=60 / items_expanded=20 / items_omitted=40。
+
+    附带断言静态路径的成因判别字段（delta MODIFIED Scenario「dry run 报告集合总数与省略数」
+    新增的「成因判别字段 SHALL 标为 `max_items`」）——dry-run 出口也直接锁静态成因。
+    """
     report = _dry_run(manager, _literal_spec(60))
     fan = _node(report, "fan")
     assert fan["items_declared"] == 60
     assert fan["items_expanded"] == 20
     assert fan["items_omitted"] == 40
     assert fan["items_expanded"] + fan["items_omitted"] == fan["items_declared"]
+    assert fan["items_omitted_cause"] == "max_items"
 
 
 def test_dry_run_omits_fields_without_truncation(manager):
