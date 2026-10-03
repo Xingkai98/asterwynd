@@ -36,7 +36,7 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 spec delta 同步到 `openspec/specs/multi-agent-collaboration/spec.md`（受保护路径，需结构化事件）
+- [ ] 5.1 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`；受保护路径，需结构化事件）
 - [ ] 5.2 归档到 `openspec/changes/archive/2026-10-0X-foreach-truncation-visibility/`（受保护路径）
 - [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
 - [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
