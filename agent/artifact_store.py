@@ -28,6 +28,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 ARTIFACT_SCHEME = "artifact://"
 WORKFLOW_KIND = "workflow"
@@ -228,3 +229,49 @@ class AgentArtifactStore(ArtifactReader):
 def artifacts_root(workspace_root: str | Path) -> Path:
     """``.asterwynd/artifacts/``——与 ``sessions/<id>/`` 隔离（D4）。"""
     return Path(workspace_root) / ".asterwynd" / "artifacts"
+
+
+class ArtifactResolver:
+    """按 ref 前缀把「读回」路由到对应 store（D5：泛化 ``ReadWorkflowResult``，不新增工具）。
+
+    - ``artifact://workflow/<workflow_id>/<key>`` → workflone store（``workflow_store`` 回调）；
+    - ``artifact://agent/<scope_id>/<key>`` → ``AgentArtifactStore``（由 ``workspace_root``
+      构造）。
+
+    ``workflow_store`` 是回调（``SubAgentManager.workflow_store``）——resolver 不依赖
+    manager 具体类型，故根 / 深度到限子 agent / benchmark 都能用同一解析器。
+    """
+
+    def __init__(
+        self,
+        workspace_root: str | Path,
+        workflow_store: "Callable[[str], object] | None" = None,
+    ) -> None:
+        self._workspace_root = workspace_root
+        self._workflow_store = workflow_store
+
+    def read(self, ref: str, *, offset: int = 0, limit: int = DEFAULT_READ_LIMIT) -> dict:
+        """按 ref 前缀分派分页读；前缀非法 / store 不可用时返回自描述 missing 页。"""
+        try:
+            parsed = ArtifactRef.parse(ref)
+        except ValueError as exc:
+            return {
+                "ref": ref, "missing": True, "offset": max(int(offset), 0),
+                "limit": min(int(limit), MAX_READ_LIMIT), "total_chars": 0,
+                "truncated": False, "content": "", "reason": str(exc),
+            }
+        if parsed.kind == WORKFLOW_KIND:
+            if self._workflow_store is None:
+                return _missing(ref, offset, limit, "workflow store unavailable")
+            store = self._workflow_store(parsed.scope_id)
+            return store.read(ref, offset=offset, limit=limit)
+        store = AgentArtifactStore.for_workspace(self._workspace_root, parsed.scope_id)
+        return store.read(ref, offset=offset, limit=limit)
+
+
+def _missing(ref: str, offset: int, limit: int, reason: str) -> dict:
+    return {
+        "ref": ref, "missing": True, "offset": max(int(offset), 0),
+        "limit": min(int(limit), MAX_READ_LIMIT), "total_chars": 0,
+        "truncated": False, "content": "", "reason": reason,
+    }

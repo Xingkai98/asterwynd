@@ -19,6 +19,7 @@ from agent.approval import (
 from agent.question import QuestionHandler
 from agent.message import Message, system_message, tool_result_message, extract_text
 from agent.result import RunResult, StopReason, ToolCallMade
+from agent.artifact_store import AgentArtifactStore
 from agent.tools.base import ToolCall, ToolResult
 from agent.llm import LLMResponse, ToolCallDelta, CachePlan
 from agent.hooks.manager import HookManager
@@ -37,6 +38,11 @@ from agent.context.sources import (
 )
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
+from agent.memory.tool_result_policy import (
+    MAX_BYTES as MAX_RESULT_BYTES,
+    make_preview,
+    value_bytes,
+)
 from agent.observability import ErrorCategory, ErrorClassifier, exception_error_type, resolve_phase
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.context import reset_mode_ceiling, set_mode_ceiling
@@ -188,6 +194,13 @@ class AgentLoop:
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
+        #: 工具结果入库的 iteration 标记（tool_call_id → iteration）。**不新增
+        #: ``Message`` 字段**（守住不改协议 Goal，D3/Q-new4）：剪枝只在结果被模型
+        #: 消费过一轮后发生（``added <= current - 1``），两个 append 点都记。
+        self._tool_result_iterations: dict[str, int] = {}
+        #: agent 通用 ref store（D4）——``run()`` 期按 session_id/run_id 构造注入，
+        #: 构造期拿不到 workspace_root 与 scope id。
+        self._artifact_store: "AgentArtifactStore | None" = None
         self._plan_document_final = False
         self._plan_tools_registered = False
         self._subagent_tools_registered = False
@@ -568,6 +581,14 @@ class AgentLoop:
                 session_id=session_id,
                 run_id=resolved_run_id,
             )
+        # D4 scope identity: root agent keys by session_id (stable across resume),
+        # subagent by run_id (subagent_id is a non-durable process-local id). The
+        # store is built here because neither workspace_root nor the scope id is
+        # known at construction time (D1). A root run without session_id keeps no
+        # store ⇒ spill degrades to an honest [truncated] marker (D8), never a
+        # dangling ref.
+        self._artifact_store = self._make_artifact_store(session_id, resolved_run_id)
+        self._reset_tool_result_iterations(messages)
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
         # Mount A (change fix-issue-255-mode-ceiling): snapshot this run's mode
@@ -842,9 +863,12 @@ class AgentLoop:
                             "name": tool_call.name,
                             "arguments": tool_call.arguments,
                         })
+                        # D12: no full text on the event — carry the stable
+                        # ``tool_call_id`` so the Web Expand button can fetch the
+                        # full result on demand (GET .../tool-result/<id>).
                         await on_event("tool_result", {
                             "name": tool_call.name,
-                            "result": extract_text(result) if not isinstance(result, str) else result,
+                            "tool_call_id": tool_call.id,
                             "display": summarize_tool_result(
                                 tool_call.name,
                                 result,
@@ -852,10 +876,11 @@ class AgentLoop:
                             ).to_dict(),
                         })
                     messages.append(tool_result_message(tool_call.id, result))
+                    self._tool_result_iterations[tool_call.id] = self._iteration
                     tool_calls_made.append(ToolCallMade(
                         name=tool_call.name,
-                        arguments=tool_call.arguments,
-                        result=result,
+                        arguments=self._bound_arguments(tool_call.arguments),
+                        result=self._bound_ledger_result(result),
                     ))
                     continue
 
@@ -962,6 +987,7 @@ class AgentLoop:
             executed = await self._execute_tool_calls(pending)
 
             # Phase 3: Post-process results in original order
+            bounded_ledger = 0
             for entry in executed:
                 tool_call = entry["tool_call"]
                 observed_tool_call = entry["observed_tool_call"]
@@ -1028,7 +1054,7 @@ class AgentLoop:
                     })
                     await on_event("tool_result", {
                         "name": tool_call.name,
-                        "result": extract_text(result) if not isinstance(result, str) else result,
+                        "tool_call_id": tool_call.id,
                         "display": summarize_tool_result(
                             tool_call.name,
                             result,
@@ -1045,12 +1071,23 @@ class AgentLoop:
                         await on_event("todo_updated", self._todo_snapshot())
 
                 messages.append(tool_result_message(tool_call.id, result))
+                self._tool_result_iterations[tool_call.id] = self._iteration
+                bounded_result = self._bound_ledger_result(result)
+                if bounded_result is not result:
+                    bounded_ledger += 1
                 tool_calls_made.append(ToolCallMade(
                     name=tool_call.name,
-                    arguments=tool_call.arguments,
-                    result=result,
+                    arguments=self._bound_arguments(tool_call.arguments),
+                    result=bounded_result,
                 ))
 
+            # D3/D7 order: spill messages → judge hard ceiling → force compact.
+            await self._spill_and_prune(
+                messages,
+                on_event=on_event,
+                trace_recorder=trace_recorder,
+                bounded_ledger=bounded_ledger,
+            )
             before_msgs = len(messages)
             before_tokens = self.memory.count_tokens(messages)
             compacted = await self.memory.compact_if_needed(messages, iteration=self._iteration)
@@ -1474,6 +1511,110 @@ class AgentLoop:
             redacted = redact_value(parsed)
             arguments = redacted if isinstance(redacted, dict) else {}
         return {"id": delta.id, "name": delta.name, "arguments": arguments}
+
+    # ------------------------------------------------------------------
+    # Tool-result lifecycle (change tool-result-lifecycle, D1/D3/D4/D8/D9/D10)
+    # ------------------------------------------------------------------
+
+    def _make_artifact_store(
+        self, session_id: str | None, run_id: str | None
+    ) -> "AgentArtifactStore | None":
+        """按 D4 身份构造本 run 的 agent ref store（子 run 优先用 run_id）。"""
+        scope = run_id or session_id
+        if not scope:
+            return None
+        policy = getattr(self.tool_registry, "workspace_policy", None)
+        workspace_root = getattr(policy, "workspace_root", None)
+        if workspace_root is None:
+            return None
+        try:
+            return AgentArtifactStore.for_workspace(workspace_root, scope)
+        except ValueError:
+            return None
+
+    def _reset_tool_result_iterations(self, messages: list[Message]) -> None:
+        """重载/恢复的 messages 里已有工具结果没有 iteration 标记 ⇒ 保持未标记。
+
+        未标记的结果**不剪**（保守）：它们在当前 run 里没被重新 append，无法证明
+        「已被模型消费过一轮」。新结果在 append 时打标（见两处 ``:854``/``:1047``）。
+        """
+        self._tool_result_iterations = {}
+
+    def _spill_enabled(self) -> bool:
+        """D8：spill 与「回读工具已注册」成对启用。
+
+        回读工具不可用时**不 spill**（退回 ``[truncated]``），否则会写出一个模型
+        去用却不存在的 ref，违反 spec「SHALL NOT 声称存在可读的 ref」。
+        """
+        if self._artifact_store is None:
+            return False
+        try:
+            self.tool_registry.get_tool("ReadWorkflowResult")
+        except KeyError:
+            return False
+        return True
+
+    def _bound_ledger_result(self, result):
+        """账本池（trace/tool_calls_made）的有界化：超阈 ⇒ 有界预览（D2/D6b）。
+
+        预览保前缀（``benchmarks/agent_runner.py`` 只 ``startswith("[Error")``——安全），
+        无 ref（trace/tcm 无消费者按 ref 回读）。判定走 ``MemoryManager``，与 messages
+        剪枝共享同一计数器/阈值来源。
+        """
+        if not self.memory.is_oversized_result(result):
+            return result
+        return make_preview(result)
+
+    def _bound_arguments(self, arguments: dict) -> dict:
+        """``ToolCallMade.arguments`` 的有界化（D6b）：超阈时截断其中的大字符串。"""
+        from agent.trace_recorder import bound_value
+
+        if not isinstance(arguments, dict):
+            return arguments
+        if value_bytes(arguments) > MAX_RESULT_BYTES:
+            return bound_value(arguments)
+        return arguments
+
+    async def _spill_and_prune(
+        self,
+        messages: list[Message],
+        *,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+        bounded_ledger: int = 0,
+    ) -> None:
+        """剪枝（D3）→ 发可观测（D9）。**在 ``compact_if_needed`` 之前**调用。
+
+        判定纯函数在 ``MemoryManager.prune_tool_results``；落盘回读由本 run 的
+        ``_artifact_store`` 承担（D1 两段式）。
+        """
+        store = self._artifact_store
+        save = store.save_result if (store is not None and self._spill_enabled()) else None
+        counter = {"n": 0}
+
+        def _save(text: str) -> str:
+            counter["n"] += 1
+            return save(f"result-{counter['n']}", text)
+
+        stats = self.memory.prune_tool_results(
+            messages,
+            current_iteration=self._iteration,
+            added_iterations=self._tool_result_iterations,
+            save=_save if save is not None else None,
+        )
+        if stats.messages_spilled or bounded_ledger:
+            if trace_recorder:
+                trace_recorder.record_tool_result_spill(
+                    spilled_messages=stats.messages_spilled,
+                    bounded_ledger=bounded_ledger,
+                    released_bytes=stats.bytes_released,
+                )
+            if on_event:
+                await on_event("tool_result_spill", {
+                    "spilled_messages": stats.messages_spilled,
+                    "bounded_ledger": bounded_ledger,
+                    "released_bytes": stats.bytes_released,
+                })
 
     async def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
         workspace_policy = getattr(self.tool_registry, "workspace_policy", None)

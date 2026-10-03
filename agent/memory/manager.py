@@ -174,6 +174,17 @@ class MemoryManager:
             message._tokens = count_tokens_for_content(message.content, _count_tokens)
         return message._tokens
 
+    def is_oversized_result(self, content) -> bool:
+        """D3 单条阈判定（traffic through the manager so there is one counter）。
+
+        The loop uses this instead of importing the private ``_count_tokens`` —
+        a single counter source keeps threshold semantics consistent and lets
+        tests substitute the counter in one place.
+        """
+        return _exceeds_single_threshold(
+            content, max_tokens=self.max_tokens, counter=_count_tokens,
+        )
+
     # ------------------------------------------------------------------
     # Tool-result spill (change tool-result-lifecycle, D3/D10)
     # ------------------------------------------------------------------

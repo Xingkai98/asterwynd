@@ -85,6 +85,23 @@ def content_bytes(content: "str | list[ContentBlock]") -> int:
     return total
 
 
+def value_bytes(value) -> int:
+    """任意 JSON-ish 值（``arguments`` dict/list/str）的常驻字节估算（D6b）。
+
+    ``content_bytes`` 只认 ``str | list[ContentBlock]``；工具 ``arguments`` 是
+    ``dict``，直接传进去会迭代出键（字符串无 ``.text``）而恒为 0——大 ``Write``
+    参数就绕过了字节预算。这里用 JSON 序列化长度兜底嵌套结构。
+    """
+    import json
+
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    try:
+        return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        return len(str(value).encode("utf-8"))
+
+
 def token_budget_for(max_tokens: int) -> int:
     return max(TOKEN_MIN, int(max_tokens * TOKEN_RATIO))
 
