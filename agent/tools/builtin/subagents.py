@@ -44,7 +44,7 @@ from agent.subagent.workflow_assets import (
     WorkflowAssetError,
     asset_store_for_manager,
 )
-from agent.subagent.workflow_store import DEFAULT_READ_LIMIT, WorkflowStore
+from agent.subagent.workflow_store import DEFAULT_READ_LIMIT
 from agent.tools.base import Tool, tool_parameters
 from agent.tool_permissions import AGENT_STATE_PERMISSION, SUBAGENT_CONTROL_PERMISSION
 from agent.workspace_policy import WorkspacePolicy

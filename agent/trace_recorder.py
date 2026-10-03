@@ -6,8 +6,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from agent.message import extract_text
-
 if TYPE_CHECKING:
     from agent.message import ContentBlock
 

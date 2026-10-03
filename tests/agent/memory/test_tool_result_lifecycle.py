@@ -318,6 +318,25 @@ async def test_hard_ceiling_byte_dimension_forces_compact():
 
 
 @pytest.mark.asyncio
+async def test_hard_ceiling_counts_assistant_tool_call_arguments():
+    """D6b：assistant ``tool_calls[].arguments``（一次 Write 的大正文）计入字节预算。
+
+    内容住在 arguments 而非 content；只算 content 会漏掉整条大参数通道。
+    """
+    manager = MemoryManager(max_tokens=80_000, recent_window=10, compaction_gap=100)
+    manager._last_compaction_iteration = 0  # 让 gap 生效，只有字节硬顶能触发
+    assistant = Message(
+        role="assistant", content="",
+        tool_calls=[_tc("c1", "Write")],
+    )
+    assistant.tool_calls[0].arguments = {"content": "W" * (1 * 1024 * 1024)}  # 1MB
+    msgs = [Message(role="system", content="sys"), Message(role="user", content="go"), assistant]
+    assert manager.count_tokens(msgs) < 80_000 * 2        # token 维度未达硬顶
+    compacted = await manager.compact_if_needed(msgs, iteration=1)
+    assert compacted is True
+
+
+@pytest.mark.asyncio
 async def test_threshold_with_gap_and_no_hard_ceiling_still_skips():
     """既有行为回归：达到阈值但 gap 未到且未到硬顶 → 仍跳过。"""
     manager = MemoryManager(

@@ -39,6 +39,22 @@ def _result_ref_present(content) -> bool:
     return isinstance(content, str) and "[truncated" in content
 
 
+def _message_bytes(message: "Message") -> int:
+    """一条消息的常驻字节：正文 **+** assistant ``tool_calls[].arguments``（D6b）。
+
+    一次 ``Write`` 带 300KB 正文时，300KB 住在 assistant 消息的 ``tool_calls[].arguments``
+    里（不在 ``content``），只算 ``content`` 会漏掉整条大参数通道。消息侧 assistant
+    ``arguments`` 至少**计入字节预算**（D6b：剪 result 不触及它，靠字节维度让硬顶/
+    压缩把它带走）。
+    """
+    total = _content_bytes(message.content)
+    for tool_call in getattr(message, "tool_calls", None) or []:
+        args = getattr(tool_call, "arguments", None)
+        if args:
+            total += len(str(args).encode("utf-8"))
+    return total
+
+
 def _flatten(content) -> str:
     """``str | list[ContentBlock]`` → 文本（图片 → ``[image: <file_path|ref>]``）。"""
     from agent.memory.tool_result_policy import flatten_content
@@ -325,7 +341,7 @@ class MemoryManager:
             HARD_CEILING_MIN_BYTES,
             self.max_tokens * HARD_CEILING_BYTES_PER_TOKEN,
         )
-        return sum(_content_bytes(m.content) for m in messages) >= byte_budget
+        return sum(_message_bytes(m) for m in messages) >= byte_budget
 
     async def compact(self, messages: Optional[list["Message"]] = None) -> bool:
         """Compress conversation history using the configured summarizer.
