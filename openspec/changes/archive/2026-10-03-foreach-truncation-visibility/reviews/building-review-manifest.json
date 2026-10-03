@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "foreach-truncation-visibility",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "96476517-7c99-4000-a598-7db7478239c0",
+  "base_sha": "c797bfae7dbe9a8b986210f4267adfc05678d65f",
+  "head_sha": "a7fbabb1f84a74569fc0564baf952d15e48df255",
+  "tasks_hash": "sha256:092d8f88a1c04ad2ea6c330868549f11de671667668e5cb0e4a4428fecbebea5",
+  "spec_hash": "sha256:977d42446803b40573035a64eb35922f137c01946132ec67e89f420b98ad1e12",
+  "diff_hash": "sha256:e54a5c376ee3d6fa6b4ffe9b00fac032d49069f5be32ce9734775715a243fdf0",
+  "report_hash": "sha256:dca67c2534bfa2f798ff3670a4593de9c8911dc0c8bf1c2c5029849e5bf3a385"
+}

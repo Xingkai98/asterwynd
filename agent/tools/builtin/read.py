@@ -17,6 +17,78 @@ logger = logging.getLogger("asterwynd.tools.read")
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20 MB
 
+# Default output bound for the text path: a read without an explicit positive
+# `limit` returns at most this many leading lines, or this many bytes,
+# whichever is reached first, so a single read cannot pull an unbounded file
+# into the context. A file within the bound is still returned in full.
+# See openspec/changes/read-output-bound/design.md (D1/D5).
+DEFAULT_MAX_READ_LINES = 2000
+DEFAULT_MAX_READ_BYTES = 128 * 1024
+
+
+def _cap_bytes(text: str, limit_bytes: int) -> str:
+    """Return at most ``limit_bytes`` UTF-8 bytes of ``text`` (never splitting a char)."""
+    raw = text.encode("utf-8")
+    if len(raw) <= limit_bytes:
+        return text
+    return raw[:limit_bytes].decode("utf-8", errors="ignore")
+
+
+def _progress_note(path: str, offset: int, total: int) -> str:
+    """Machine-parseable paging progress note.
+
+    Parsed by ``agent/memory/manager.py:_READ_PROGRESS_RE``; any change to this
+    format MUST be mirrored in that regex.
+    """
+    return f'\n\n[ReadProgress file="{path}"; offset={offset}; total={total}]'
+
+
+def _truncated_note(path: str, offset: int, total: int, next_offset: int) -> str:
+    """Progress note for a read cut by the default bound.
+
+    ``truncated=true`` makes the cut explicit (never silent) and tells the
+    memory manager this note is not a resume position.
+    """
+    return (
+        f'\n\n[ReadProgress file="{path}"; offset={offset}; total={total}; truncated=true]'
+        f"\n[Read output truncated at the default bound; continue with offset={next_offset}]"
+    )
+
+
+def _bounded_prefix(
+    lines: list[str],
+    start: int,
+    max_lines: int = DEFAULT_MAX_READ_LINES,
+    max_bytes: int = DEFAULT_MAX_READ_BYTES,
+) -> tuple[str, int, bool]:
+    """Bound ``lines[start:]`` by the default line/byte limits.
+
+    Returns ``(body, next_offset, truncated)``: the text to return, the offset a
+    caller should pass to continue, and whether anything was left out.
+    """
+    window = lines[start:start + max_lines]
+    truncated_by_lines = (start + len(window)) < len(lines)
+
+    included: list[str] = []
+    size = 0
+    byte_capped = False
+    for line in window:
+        # +1 for the newline the join will insert before this line.
+        cost = len(line.encode("utf-8")) + (1 if included else 0)
+        if size + cost > max_bytes:
+            byte_capped = True
+            break
+        included.append(line)
+        size += cost
+
+    if byte_capped and not included:
+        # A single line already exceeds the byte bound (e.g. a minified bundle):
+        # keep a byte-limited prefix of it and resume at the next line.
+        return _cap_bytes(window[0], max_bytes), start + 1, True
+
+    return "\n".join(included), start + len(included), byte_capped or truncated_by_lines
+
+
 _MAGIC_BYTES: dict[str, bytes] = {
     ".png": b'\x89PNG\r\n\x1a\n',
     ".jpg": b'\xff\xd8\xff',
@@ -72,8 +144,16 @@ class ReadTool(Tool):
     parallelizable = True
     permission = WORKSPACE_READ_PERMISSION
 
-    def __init__(self, policy: WorkspacePolicy | None = None):
+    def __init__(
+        self,
+        policy: WorkspacePolicy | None = None,
+        *,
+        max_lines: int = DEFAULT_MAX_READ_LINES,
+        max_bytes: int = DEFAULT_MAX_READ_BYTES,
+    ):
         self.policy = policy or WorkspacePolicy()
+        self.max_lines = max_lines
+        self.max_bytes = max_bytes
 
     async def execute(self, path: str, limit: int = None, offset: int = None, **kwargs) -> str | list["ContentBlock"]:
         try:
@@ -89,20 +169,36 @@ class ReadTool(Tool):
             lines = content.splitlines()
             total = len(lines)
 
-            if offset is not None:
-                # Pagination mode: 0-based slice + machine-parseable progress note.
-                # Emitted ONLY when offset is explicitly provided so the default
-                # path+limit behavior stays byte-identical.
-                offset = max(0, offset)
-                start = offset
-                end = (start + limit) if limit else None
-                body = "\n".join(lines[start:end])
-                note = f'\n\n[ReadProgress file="{path}"; offset={offset}; total={total}]'
-                return body + note
+            # A positive `limit` is the caller taking explicit control: slice
+            # exactly and emit the legacy note (offset present) or bare body.
+            if limit is not None and limit > 0:
+                if offset is not None:
+                    start = max(0, offset)
+                    body = "\n".join(lines[start:start + limit])
+                    return body + _progress_note(path, start, total)
+                return "\n".join(lines[:limit])
 
-            if limit:
-                content = "\n".join(lines[:limit])
-            return content
+            # Otherwise (no limit, limit<=0, or offset-only) apply the default
+            # bound so none of these paths can return an unbounded file.
+            if (
+                offset is None
+                and total <= self.max_lines
+                and len(content.encode("utf-8")) <= self.max_bytes
+            ):
+                # Within the bound: return the decoded content verbatim (not
+                # re-joined from splitlines) so this path is byte-identical to
+                # the pre-bound output, trailing newline included.
+                return content
+
+            start = max(0, offset) if offset is not None else 0
+            body, next_offset, truncated = _bounded_prefix(
+                lines, start, self.max_lines, self.max_bytes
+            )
+            if truncated:
+                return body + _truncated_note(path, start, total, next_offset)
+            if offset is not None:
+                return body + _progress_note(path, start, total)
+            return body
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:

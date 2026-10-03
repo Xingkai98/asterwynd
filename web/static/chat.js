@@ -822,6 +822,10 @@ function appendHistoryToolResult(content, call) {
     name: name,
     result: text,
     display: { char_count: text.length, line_count: lineCount },
+    // 历史里的工具结果同样可能已被替换成 preview + ref（`tool-result-lifecycle`），
+    // 于是展开时也要能按 id 回取全文——与实时路径共用同一个 loader。
+    toolCallId: call && call.id ? call.id : null,
+    loadFullText: toolResultLoader(call && call.id ? call.id : null),
   });
   messagesEl.appendChild(row);
   return row;
@@ -868,8 +872,10 @@ function settleOrphanToolRows() {
 function newToolRowFromResult(payload) {
   const api = transcriptApi();
   const name = payload.name || '';
-  const result = payload.result || '';
   const display = payload.display || {};
+  // 结果先到（没有前置 `tool_call`）时的兜底行：正文可能没随事件下发（D12），
+  // 此时摘要取 preview —— 它是最接近「结果首行」的可用文本。
+  const result = payload.result || display.preview || '';
   return api.createToolRow(document, {
     name: name,
     title: api.toolTitle(name),
@@ -1083,13 +1089,45 @@ function addToolResultMessage(data) {
   const row = takePendingToolRow(name) || newToolRowFromResult(payload);
   api.updateToolRow(document, row, {
     name: name,
+    // D12（`tool-result-lifecycle`）：事件默认**不带**完整正文，只有 display metadata
+    // （`collapsed` 为真时 `preview` 是前 1200 字符）与 `tool_call_id`。这里的语义是
+    // 「有正文就用正文，没有就给空串让 updateToolRow 落到 preview 上」。
     result: payload.result === null || payload.result === undefined ? '' : payload.result,
     display: payload.display,
+    toolCallId: payload.tool_call_id || null,
+    loadFullText: toolResultLoader(payload.tool_call_id),
   });
   if (row.parentNode !== messagesEl) {
     messagesEl.appendChild(row);
   }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
   return row.querySelector('.tool-row-body');
+}
+
+/**
+ * 展开某行时按 id 回取工具结果全文（`tool-result-lifecycle` D12 的服务端接口）。
+ *
+ * 返回 `null` 表示**取不到**（消息已被压缩驱逐 / ref 不可解析 / 网络失败）——调用方
+ * 会在展开体里如实写「全文不可用」，绝不拿预览或空串冒充全文。
+ *
+ * sessionId 取当前 tab 的：历史补发的行也走同一入口，所以不缓存 sessionId。
+ */
+function toolResultLoader(toolCallId) {
+  if (!toolCallId) return null;
+  return async () => {
+    const tab = activeTabId ? tabs.get(activeTabId) : null;
+    const sessionId = tab ? tab.sessionId : null;
+    if (!sessionId) return null;
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`
+        + `/tool-result/${encodeURIComponent(toolCallId)}`);
+      if (!resp.ok) return null;
+      const payload = await resp.json();
+      return payload && payload.missing === false ? (payload.content || '') : null;
+    } catch (err) {
+      return null;
+    }
+  };
 }
 
 function renderApprovalRequest(data) {

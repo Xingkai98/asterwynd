@@ -247,6 +247,14 @@ class NodeState:
     raw: str | None = None
     targets: list[str] = field(default_factory=list)
     items: int | None = None
+    #: foreach 集合**截断前**的大小（``_resolve_items`` 在切片「之前」记录），供
+    #: 父投影报「声明 N / 展开 M / 省略 K」（change ``foreach-truncation-visibility``，
+    #: 后由 ``foreach-budget-truncation-visibility`` 扩展到预算截断路径）。
+    #: ``items``（既有）= 截断**后**的展开数；两者之差即被丢弃数（``items_omitted``）。
+    #: **两条截断路径都记本字段**：``max_items > 0`` 的静态截断与 ``max_items == 0`` 的
+    #: 预算截断（切片到 ``_remaining_expansion_capacity()``）；成因由 ``items_omitted_cause``
+    #: 区分（``"max_items"`` / ``"budget"``）。
+    items_declared: int | None = None
     error: str | None = None
     #: foreach 的 per-item 状态（index → 状态），长度 = ``items``。G7：这是
     #: 「N 项里几个在跑/几个排队」的权威来源，也是 D5.2 堆叠条的数据源。
@@ -2664,6 +2672,10 @@ class WorkflowScheduler:
             # ``source_field`` **只应用一次**（Q10）：取到基础值后直接交给
             # ``extract_collection``，不再额外传 field（二次取字段会退化）。
             items = extract_collection(value, node.source_field)
+        # 截断可见性（change ``foreach-truncation-visibility``）：在**切片之前**记录集合
+        # 大小，供父投影算「声明 N / 展开 M / 省略 K」以及 Q4 的空集合标记。``items``
+        # 继续表示切片后的展开数（既有语义），本字段只记录声明总数。
+        state.items_declared = len(items)
         if node.max_items == 0:
             return items[: self._remaining_expansion_capacity()]
         return items[: node.max_items]

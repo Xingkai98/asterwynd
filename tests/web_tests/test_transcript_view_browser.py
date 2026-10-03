@@ -136,16 +136,38 @@ def _tool_call(name: str, arguments: dict, call_id: str = "c1") -> dict:
 
 
 def _tool_result(name: str, result: str, collapsed: bool = True, preview_chars: int = 1200,
-                 line_count: int = 1) -> dict:
+                 line_count: int = 1, call_id: str | None = None) -> dict:
+    data = {
+        "name": name,
+        "result": result,
+        "display": {
+            "collapsed": collapsed,
+            "preview": result[:preview_chars],
+            "char_count": len(result),
+            "line_count": line_count,
+        },
+    }
+    if call_id:
+        data["tool_call_id"] = call_id
+    return {"type": "tool_result", "data": data}
+
+
+def _preview_only_result(name: str, preview: str, char_count: int, line_count: int,
+                         call_id: str) -> dict:
+    """`tool-result-lifecycle` D12 之后的真实形态：**事件不带正文**，只有 preview + id。
+
+    合并 origin/master 后这是 `tool_result` 的默认形态——折叠行必须只靠 preview 就能
+    给出正确的判定与摘要，展开时再按 id 回取全文。
+    """
     return {
         "type": "tool_result",
         "data": {
             "name": name,
-            "result": result,
+            "tool_call_id": call_id,
             "display": {
-                "collapsed": collapsed,
-                "preview": result[:preview_chars],
-                "char_count": len(result),
+                "collapsed": True,
+                "preview": preview,
+                "char_count": char_count,
                 "line_count": line_count,
             },
         },
@@ -685,3 +707,97 @@ async def test_history_tool_messages_render_as_collapsed_rows(browser_page, tran
         f"{MESSAGES} .tool-row-title", "els => els.map(e => e.textContent)")
     assert titles[0] == "Read", f"有 id 的历史行应显示真工具名，实际：{titles}"
     assert titles[1] == "工具结果", f"无 id 的历史行退化为通用标题，实际：{titles}"
+
+
+# --- 合并 origin/master 之后：事件只带 preview，展开时按 id 回取全文 ---------------
+# `tool-result-lifecycle`（D12）把 `tool_result` 事件改成「preview + tool_call_id」，
+# 正文改为展开时按需回取。折叠行必须只靠 preview 就给出正确判定（失败首行、结构化
+# exit_code），否则长结果（正是最该显示失败的场景）会静默退化成「成功 + 空摘要」。
+
+
+@pytest.mark.asyncio
+async def test_preview_only_result_still_flags_the_failure(browser_page, transcript_web_server):
+    """事件不带正文时，折叠行仍要报出失败（预览被截断的 Bash JSON 也要认出来）。"""
+    page = browser_page
+    await _open_ready_session(page, transcript_web_server["url"])
+
+    # 真实形态：`SandboxResult.to_json()` 的单行 JSON 被 1200 字符预览切在半截，
+    # 整段 JSON.parse 必然失败——必须靠信封头部的 exit_code 字段兜住。
+    long_stdout = "x" * 4000
+    preview = '{"exit_code": 1, "stdout": "' + long_stdout[:900]
+    await _dispatch(page, _tool_call("Bash", {"cmd": "uv run pytest -q"}, call_id="c9"))
+    await _dispatch(page, _preview_only_result(
+        "Bash", preview, char_count=len(preview) + 4000, line_count=1, call_id="c9"))
+
+    rows = page.locator(f"{MESSAGES} .tool-row")
+    assert await rows.count() == 1
+    assert await rows.nth(0).get_attribute("data-state") == "error", (
+        "预览被截断的 JSON 信封仍须判为失败（否则失败静默消失）"
+    )
+    head = await rows.nth(0).locator(".tool-row-head").inner_text()
+    assert "exit 1" in head, f"行尾应给出退出码，实际：{head!r}"
+    assert "uv run pytest -q" in head, f"结构化失败要保留命令摘要，实际：{head!r}"
+
+
+@pytest.mark.asyncio
+async def test_expanding_a_preview_only_row_fetches_the_full_text(
+    browser_page, transcript_web_server
+):
+    """展开时按 `tool_call_id` 回取全文；取不到则如实写「全文不可用」。"""
+    page = browser_page
+    full = "@@FULL-TEXT@@ " + "y" * 300
+    calls: list[str] = []
+
+    async def _result_route(route):
+        calls.append(route.request.url)
+        await route.fulfill(json={"tool_call_id": "c7", "missing": False, "content": full})
+
+    await page.route("**/tool-result/*", _result_route)
+    await _open_ready_session(page, transcript_web_server["url"])
+    await _dispatch(page, _tool_call("Read", {"path": "README.md"}, call_id="c7"))
+    await _dispatch(page, _preview_only_result(
+        "Read", "hello\nworld", char_count=99_000, line_count=1200, call_id="c7"))
+
+    rows = page.locator(f"{MESSAGES} .tool-row")
+    head = await rows.nth(0).locator(".tool-row-head").inner_text()
+    assert "99.0k" in head or "99k" in head, f"meta 取 display.char_count，实际：{head!r}"
+    body = rows.nth(0).locator(".tool-row-body")
+    assert await body.is_hidden(), "默认必须折叠"
+
+    await rows.nth(0).locator(".tool-row-head").click()
+    await page.wait_for_function(
+        "() => document.querySelector('.tool-row-body .tool-row-result')"
+        ".textContent.includes('@@FULL-TEXT@@')",
+        timeout=5000,
+    )
+    assert calls and "/tool-result/c7" in calls[0], f"应按 id 回取全文，实际请求：{calls}"
+
+
+@pytest.mark.asyncio
+async def test_expanding_when_the_full_text_is_gone_says_so(
+    browser_page, transcript_web_server
+):
+    """服务端答 `missing` 时如实写「全文不可用」，**不拿预览冒充全文**。"""
+    page = browser_page
+
+    async def _result_route(route):
+        await route.fulfill(json={"tool_call_id": "c8", "missing": True,
+                                  "reason": "message_evicted"})
+
+    await page.route("**/tool-result/*", _result_route)
+    await _open_ready_session(page, transcript_web_server["url"])
+    await _dispatch(page, _tool_call("Read", {"path": "big.txt"}, call_id="c8"))
+    await _dispatch(page, _preview_only_result(
+        "Read", "preview-only", char_count=50_000, line_count=900, call_id="c8"))
+
+    rows = page.locator(f"{MESSAGES} .tool-row")
+    await rows.nth(0).locator(".tool-row-head").click()
+    await page.wait_for_function(
+        "() => document.querySelector('.tool-row-body .tool-row-result')"
+        ".textContent.includes('全文不可用')",
+        timeout=5000,
+    )
+    result_text = await rows.nth(0).locator(".tool-row-result").inner_text()
+    assert "preview-only" not in result_text, (
+        f"取不到全文时不得用预览冒充全文，实际：{result_text!r}"
+    )

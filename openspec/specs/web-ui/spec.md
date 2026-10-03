@@ -116,23 +116,30 @@ Web Chat SHALL 将 assistant 文本按安全 Markdown 渲染，支持常见段�
 
 ### Requirement: Chat 视图按 display metadata 展示工具结果
 
-Web Chat SHALL 把每次工具执行渲染为**对话流中的一行**（`harness-style` 折叠行），并消费服务端 `tool_result` 事件中的 display metadata 生成行尾元数据。折叠态 SHALL NOT 展示结果正文的任何字符；用户 SHALL 能按需展开查看完整参数与完整结果。工具结果 SHALL 作为纯文本展示，不按 Markdown 或 HTML 渲染。
+Web Chat SHALL 把每次工具执行渲染为**对话流中的一行**（`harness-style` 折叠行），并消费服务端 `tool_result` 事件中的 display metadata 生成行尾元数据。折叠态 SHALL NOT 展示结果正文；用户 SHALL 能按需展开查看完整参数与完整结果。工具结果 SHALL 作为纯文本展示，不按 Markdown 或 HTML 渲染。
+
+**全文 SHALL NOT 随初始 tool_result 事件无条件下发**：服务端 SHALL 在事件中携带该工具结果的稳定标识（`tool_call_id`）与 preview，SHALL NOT 默认下发完整正文。用户展开某条结果时，前端 SHALL 按该标识**按需向服务端取回全文**；服务端 SHALL 返回该工具结果的最新全文（若其消息已被替换为 preview + ref，则按 ref 从落盘件读回全文）。用户收起时，前端 SHALL 释放已取回的全文缓存。
+
+当按标识无法取回全文（消息已被压缩驱逐、ref 不可解析、或结果不再可用）时，服务端 SHALL 明确表示「全文不可用」，前端 SHALL 如实展示该状态，SHALL NOT 展示错误或空内容冒充全文。
+
+**折叠行的判据 SHALL NOT 依赖「事件里有没有正文」**：`collapsed` 为真时事件只带 preview，此时前端 SHALL 以 preview 作为**判定与摘要的文本依据**（失败首行、结构化结果的 `exit_code` 等信号都取自它），但 SHALL NOT 把 preview 当作正文铺进对话流；展开时再按 `tool_call_id` 取回全文并据此复核行状态（取不到全文时行 SHALL 保持结论并如实标注「全文不可用」）。
 
 具体地：
 
 - **一行**：一次工具执行在对话流里 SHALL 恰好占一个可点击行（`[caret][标题][分隔点][摘要][元数据]`），行高 SHALL 不随参数或结果的长度变化。
-- **折叠态零正文**：折叠态可见文本 SHALL NOT 含结果正文片段，SHALL NOT 含 `display.preview`（旧实现把 1200 字符预览直接铺在时间线上）。
-- **展开**：展开后 SHALL 展示缩进 JSON 形式的原始参数与完整结果文本；展开体 SHALL 是头部按钮的**兄弟节点**（在其内部点选文本 SHALL NOT 触发折叠切换）。
+- **折叠态零正文**：折叠态可见文本 SHALL NOT 含结果正文片段，SHALL NOT 含 `display.preview`（旧实现把 1200 字符预览直接铺在时间线上）；例外只有**单行摘要**（工具名 / 参数摘要 / 失败首行），它不是正文。
+- **展开**：展开后 SHALL 展示缩进 JSON 形式的原始参数与完整结果文本（正文未随事件下发时按 `tool_call_id` 取回）；展开体 SHALL 是头部按钮的**兄弟节点**（在其内部点选文本 SHALL NOT 触发折叠切换）。
 - **元数据**：行尾 SHALL 展示结果规模（字符数；多行时附行数），值取自 `display.char_count` / `display.line_count`。
 - **纯文本**：结果与参数 SHALL NOT 被解析或执行为 HTML。
 - **参数上限**：展开态的参数与结果正文 SHALL 共享同一条展示上限；触顶时 SHALL 给出可读的截断提示。
 
 #### Scenario: 长结果默认折叠为一行
 
-- **GIVEN** `tool_result` 事件包含 collapsed display metadata
+- **GIVEN** `tool_result` 事件包含 collapsed display metadata 与 `tool_call_id`
 - **WHEN** Chat 页面展示该工具结果
 - **THEN** 对话流 SHALL 只增加一个行高固定的工具行
 - **AND** 该行的可见文本 SHALL NOT 包含结果正文预览
+- **AND** SHALL NOT 在该事件中携带完整正文
 - **AND** 行尾 SHALL 展示字符数与行数
 - **AND** 用户 SHALL 能展开查看完整参数与完整结果
 
@@ -143,10 +150,25 @@ Web Chat SHALL 把每次工具执行渲染为**对话流中的一行**（`harnes
 - **THEN** 该行 SHALL 同样处于折叠态
 - **AND** 折叠判据 SHALL NOT 依赖服务端 `display.collapsed`
 
+#### Scenario: 用户展开长结果
+
+- **GIVEN** Chat 页面已展示一条工具结果的行（正文未随事件下发，只有 preview）
+- **WHEN** 用户展开该行
+- **THEN** 前端 SHALL 按该结果的标识向服务端取回全文
+- **AND** 页面 SHALL 在展开体里展示取回的完整结果
+- **AND** 用户收起后前端 SHALL 释放该全文缓存
+
+#### Scenario: 展开时全文不可用
+
+- **GIVEN** 一条长工具结果的消息已被压缩驱逐或其 ref 不可解析
+- **WHEN** 用户展开该行
+- **THEN** 服务端 SHALL 明确返回「全文不可用」
+- **AND** 前端 SHALL 在展开体里如实展示该状态（SHALL NOT 展示空内容冒充全文）
+
 #### Scenario: 工具结果包含 HTML
 
 - **GIVEN** 工具结果包含 HTML 字符串
-- **WHEN** Chat 页面展示工具结果
+- **WHEN** Chat 页面展示工具结果（preview 或取回的全文）
 - **THEN** 页面 SHALL 以纯文本展示该字符串
 - **AND** SHALL NOT 执行或解析为 HTML
 

@@ -33,6 +33,10 @@
   /** 展开正文（参数与结果）的硬上限，防止单次超大载荷把 DOM 撑爆。 */
   var BODY_LIMIT = 200000;
   var BODY_TRUNCATED_NOTE = '（正文超出展示上限，已截断）';
+  //: 正文未随事件下发时（`display.collapsed`）展开体先显示 preview：必须标注它不是全文，
+  //: 否则用户会把 1200 字符预览读成完整结果（`tool-result-lifecycle` D12 的诚实要求）。
+  var PREVIEW_ONLY_NOTE = '（尚未取回全文，展开时按需回取）';
+  var FULL_TEXT_UNAVAILABLE = '全文不可用（消息已被压缩驱逐，或其落盘件不可解析）。';
   /** 行内唯一 id 的递增序号，用于 `aria-controls` 关联头按钮与兄弟展开体。 */
   var rowSeq = 0;
 
@@ -323,6 +327,19 @@
     try {
       parsed = JSON.parse(line);
     } catch (error) {
+      // **预览截断的 JSON 信封**：`tool-result-lifecycle` D12 之后事件只带前 1200 字符，
+      // 带长 stdout/stderr 的 Bash 结果（正是最该显示失败的场景）会被切在半截，整段
+      // `JSON.parse` 必然失败。此时用字段正则兜住 `exit_code` / `timed_out` —— 只看
+      // **信封头部**（前 200 字符内），避免把 stdout 正文里出现的 `"exit_code": 1` 当真。
+      var head = line.slice(0, 200);
+      var exitMatch = /"exit_code"\s*:\s*(-?\d+)/.exec(head);
+      if (exitMatch) {
+        var code = Number(exitMatch[1]);
+        if (code !== 0) return { code: 'exit ' + code };
+        return null;
+      }
+      if (/"timed_out"\s*:\s*true/.test(head)) return { code: 'timeout' };
+      if (/"oom_killed"\s*:\s*true/.test(head)) return { code: 'oom' };
       return null;
     }
     if (!parsed || typeof parsed !== 'object') return null;
@@ -387,8 +404,14 @@
    *   分叉判定）；**当前实现不按工具分叉**，失败判定对全部工具一致。
    * @param {*} result 结果全文（``tool_result.result``）。
    */
-  function summarizeToolResult(name, result) {
+  function summarizeToolResult(name, result, hints) {
     var text = result === null || result === undefined ? '' : String(result);
+    // 正文未随事件下发时，`text` 只是 preview（前 1200 字符）。行数用它原始值的
+    // `display.line_count` 判，否则「单行结果」这类判据会被预览的换行分布骗到。
+    var info = hints || {};
+    var isSingleLine = typeof info.lineCount === 'number'
+      ? info.lineCount <= 1
+      : text.trim().indexOf('\n') === -1;
     if (text.trim() === '') return { state: 'ok', summary: '', code: '', structured: false };
     var line = firstContentLine(text);
     if (line === '') return { state: 'ok', summary: '', code: '', structured: false };
@@ -424,7 +447,8 @@
       return { state: 'error', summary: truncate(line, ERROR_LIMIT), code: code, structured: false };
     }
     // 裸 `Error: …` 前缀：只在结果整体就是一行时判失败（见 BARE_FAILURE_PATTERN 的说明）。
-    if (BARE_FAILURE_PATTERN.test(line) && text.trim().indexOf('\n') === -1) {
+    // 「整体一行」优先用事件给的 `display.line_count`（预览可能只有一行的片段）。
+    if (BARE_FAILURE_PATTERN.test(line) && isSingleLine) {
       return { state: 'error', summary: truncate(line, ERROR_LIMIT), code: '', structured: false };
     }
     return { state: 'ok', summary: '', code: '', structured: false };
@@ -582,9 +606,52 @@
       var expanded = head.getAttribute('aria-expanded') === 'true';
       head.setAttribute('aria-expanded', expanded ? 'false' : 'true');
       body.hidden = expanded;
+      // 正文没随事件下发时（`tool-result-lifecycle` D12：`tool_result` 只带 preview +
+      // `tool_call_id`），展开才按 id 回取全文——这正是「展开见全文」的实现点，
+      // 不能因为折叠行自带摘要就跳过，否则用户点开看到的只是预览。
+      if (!expanded) loadFullText(doc, row);
     });
 
     return row;
+  }
+
+  /** 展开时按需回取全文（只在「正文未随事件下发」时触发，且只取一次）。
+   *
+   * 取不到时**如实**在展开体里写「全文不可用」——不拿预览或空串冒充全文
+   * （`tool-result-lifecycle` 的 spec 条款，也是本次合并必须保住的既有行为）。
+   */
+  function loadFullText(doc, row) {
+    if (!row.__previewOnly || row.__fullTextLoading || row.__fullTextLoaded) return;
+    var loader = row.__loadFullText;
+    if (typeof loader !== 'function') return;
+    row.__fullTextLoading = true;
+    Promise.resolve(loader(row.__toolCallId))
+      .then(function (text) {
+        row.__fullTextLoading = false;
+        var pre = row.__resultPre;
+        if (text === null || text === undefined) {
+          if (pre) {
+            pre.textContent = FULL_TEXT_UNAVAILABLE;
+            pre.dataset.unavailable = 'true';
+          }
+          row.__fullTextLoaded = true;
+          return;
+        }
+        // 拿到全文后**重算**判定：preview 只有前 1200 字符，结构化结果（Bash 的单行
+        // JSON）可能被截断成无法解析的片段，全文到了才能给准结论。
+        updateToolRow(doc, row, {
+          name: row.dataset.tool,
+          result: String(text),
+          display: row.__display,
+        });
+        row.__previewOnly = false;
+        row.__fullTextLoaded = true;
+      })
+      .catch(function () {
+        row.__fullTextLoading = false;
+        var pre = row.__resultPre;
+        if (pre) pre.textContent = FULL_TEXT_UNAVAILABLE;
+      });
   }
 
   /**
@@ -599,11 +666,23 @@
   function updateToolRow(doc, row, spec) {
     var options = spec || {};
     var display = options.display || null;
-    var result = options.result === null || options.result === undefined ? '' : String(options.result);
-    var verdict = summarizeToolResult(options.name, result);
+    var given = options.result === null || options.result === undefined ? '' : String(options.result);
+    // 正文没随事件下发时（`display.collapsed` 为真 ⇒ 事件只带 preview）用 preview 做
+    // **判定与摘要的文本依据**：失败首行、结构化 `exit_code` 都在前 1200 字符里。
+    // 它不会成为折叠态的可见正文——只有单行摘要会。
+    var previewOnly = given === '' && !!(display && display.collapsed === true);
+    var result = previewOnly ? String(display.preview || '') : given;
+    var verdict = summarizeToolResult(options.name, result, {
+      lineCount: display && typeof display.line_count === 'number' ? display.line_count : undefined,
+      previewOnly: previewOnly,
+    });
 
     row.dataset.state = options.state || verdict.state;
     row.__code = verdict.code || '';
+    row.__display = display;
+    row.__previewOnly = previewOnly;
+    if (options.toolCallId) row.__toolCallId = options.toolCallId;
+    if (typeof options.loadFullText === 'function') row.__loadFullText = options.loadFullText;
 
     var body = row.querySelector('.tool-row-body');
     if (body) {
@@ -612,10 +691,17 @@
         resultPre = appendSection(doc, body, '结果', 'tool-row-result');
         row.__resultPre = resultPre;
       }
-      var formatted = formatBodyText(result, BODY_LIMIT);
-      resultPre.textContent = formatted.truncated
-        ? formatted.text + '\n\n… ' + BODY_TRUNCATED_NOTE
-        : formatted.text;
+      if (previewOnly) {
+        // 展开体先放预览（取全文是异步的），并标注它不是全文——避免用户把预览读成全文。
+        resultPre.textContent = result + '\n\n… ' + PREVIEW_ONLY_NOTE;
+        resultPre.dataset.previewOnly = 'true';
+      } else {
+        var formatted = formatBodyText(result, BODY_LIMIT);
+        resultPre.textContent = formatted.truncated
+          ? formatted.text + '\n\n… ' + BODY_TRUNCATED_NOTE
+          : formatted.text;
+        delete resultPre.dataset.previewOnly;
+      }
       if (verdict.state === 'error') resultPre.dataset.error = 'true';
     }
 

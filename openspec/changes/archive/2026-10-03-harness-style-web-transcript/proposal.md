@@ -1,6 +1,6 @@
 # Proposal: Web 对话区改为 harness 式 transcript（正文成文 + 工具执行单行折叠）
 
-- 关联 issue：待创建（本机到 `github.com:443` 不可达，见 `## Impact Analysis` 的 process 小节；建 issue 已列为 `(post-merge)` 任务）。
+- 关联 issue：[#289](https://github.com/Xingkai98/asterwynd/issues/289)（实现期本机到 `github.com:443` 不可达，见 `## Impact Analysis` 的 process 小节；建 issue 曾列为 `(post-merge)` 任务，网络恢复后已建号并回填）。
 - 前置能力：`render-markdown-in-chat-surfaces`（assistant 正文 markdown 渲染）、`add-tool-result-display-controls`（工具结果 display policy）、`add-streaming-agent-output`（增量渲染），三者均已合入归档。
 
 ## Change Type

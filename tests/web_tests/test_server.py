@@ -1285,7 +1285,10 @@ def test_websocket_tool_events():
     assert "tool_call" in event_types
     assert "tool_result" in event_types
     tool_result = next(e for e in events if e["type"] == "tool_result")
-    assert "websocket" in tool_result["data"]["result"]
+    # D12: no full text on the event; the stable id + display metadata travel
+    # instead (Web Expand fetches the full result on demand).
+    assert "result" not in tool_result["data"]
+    assert tool_result["data"]["tool_call_id"] == "c1"
     assert tool_result["data"]["display"]["collapsed"] is False
     assert tool_result["data"]["display"]["preview"]
 

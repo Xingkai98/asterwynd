@@ -406,6 +406,11 @@ class BenchmarkRunner:
             task_id=loaded.task.id,
             mode=self.run_config.mode.value,
             run_id=agent_run_id,
+            # D11 (change tool-result-lifecycle): benchmark traces are the sole
+            # full-text consumer (`trace.write_to_file` → trace.json for offline
+            # analysis). Opt in explicitly — the default is bounded so the runtime
+            # never carries verbatim observations.
+            full_trace=True,
         )
         start = time.time()
         workspace: Path | None = None

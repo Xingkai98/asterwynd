@@ -923,6 +923,61 @@ def _failure_item(step: dict, text_limit: int) -> dict:
     }
 
 
+_MISSING_MSG = "全文不可用"
+
+
+def resolve_tool_result(session, tool_call_id: str, workspace_root=None) -> dict:
+    """按 ``tool_call_id`` 取回一条工具结果的**最新全文**（change ``tool-result-lifecycle`` D12）。
+
+    Expand 按需回读的服务端实现。寻址按 ``(session, tool_call_id)`` 而非 ref：事件
+    发在结果产生那一刻，ref 要到轮末剪枝才写盘，事件里拿不到 ref。
+
+    三态：
+    - 消息是全文 ⇒ 直接返回；
+    - 消息已被替换为预览 + 内嵌 ref ⇒ 解析 ref 从 artifact store 读回全文；
+    - 消息找不到（被压缩驱逐）/ ref 不可解析 ⇒ ``missing`` + 明确原因，前端如实展示。
+
+    **只读、瞬时**：读到即发回、不写回 ``messages``，不重新引入常驻。
+    """
+    from agent.message import extract_text
+    from agent.artifact_store import ArtifactRef, AgentArtifactStore, extract_result_ref
+
+    message = None
+    for candidate in getattr(session, "messages", []) or []:
+        if candidate.role == "tool" and candidate.tool_call_id == tool_call_id:
+            message = candidate  # last-wins: 同一 id 只 append 一次，取最后一条最稳
+    if message is None:
+        return {"tool_call_id": tool_call_id, "missing": True,
+                "content": "", "reason": _MISSING_MSG}
+
+    ref = extract_result_ref(extract_text(message.content))
+    if ref is None:
+        # 仍是全文（未见 ref 标记），直接返回。
+        return {"tool_call_id": tool_call_id, "missing": False,
+                "content": extract_text(message.content)}
+
+    try:
+        parsed = ArtifactRef.parse(ref)
+    except ValueError:
+        return {"tool_call_id": tool_call_id, "missing": True,
+                "content": "", "reason": _MISSING_MSG}
+    # Defense in depth (L2): a tool message in this session must only ever
+    # reference THIS session's artifact scope. Root sessions key by session_id,
+    # so a ref pointing at any other scope is not ours to serve — refuse rather
+    # than read another scope's file.
+    session_scope = getattr(session, "session_id", None)
+    if (parsed.kind != "agent" or workspace_root is None
+            or session_scope is None or parsed.scope_id != session_scope):
+        return {"tool_call_id": tool_call_id, "missing": True,
+                "content": "", "reason": _MISSING_MSG}
+    store = AgentArtifactStore.for_workspace(workspace_root, parsed.scope_id)
+    text = store.load(ref)
+    if text is None:
+        return {"tool_call_id": tool_call_id, "missing": True,
+                "content": "", "reason": _MISSING_MSG}
+    return {"tool_call_id": tool_call_id, "missing": False, "content": text}
+
+
 def _resolve_run(manager, subagent_id, run_id):
     """解析一个 run 记录，**取不到就返回 None**（不抛）。
 
@@ -1604,6 +1659,7 @@ class SessionManager:
             mcp_manager=mcp_manager,
             tools=tools,
             selection_config=self.config.tools.selection,
+            read_output_config=self.config.tools.read,
             sandbox=sandbox,
         )
         subagent_manager = SubAgentManager(

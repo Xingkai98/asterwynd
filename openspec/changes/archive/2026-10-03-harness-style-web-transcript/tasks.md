@@ -47,9 +47,19 @@
 - [x] 5.6 (closeout) `uv run python scripts/check_openspec_artifacts.py` 与 `--check-archived --skip-protected-paths --skip-backlog`
 - [x] 5.7 (closeout) `/review-loop` 独立审阅至 PASS 或 3 轮封顶，报告落 `reviews/building-review.md` + review manifest（manifest 在 5.3 归档 move 之后生成）
 - [x] 5.8 在分支上提交全部改动并写好 PR 描述（含验证结果与本机环境限制）
-- [ ] (post-merge) 推送分支并创建 PR、创建关联 GitHub issue 并把编号回填（两者都依赖网络，本机 `github.com:443` 连续多次超时不可达），随后关闭
+- [x] 推送分支并创建 PR、创建关联 GitHub issue（#289）并把编号回填——网络恢复后已执行（原标注 `(post-merge)` 是因实现期 `github.com:443` 连续超时不可达；实际在 PR 之前就完成了，故改为已勾）
 
-> **归档时的两处如实说明**：① 归档目录里保留了 `workflow-state.json`——事件通道在归档语境下只做校验、不重算投影（工具打印一行「归档投影与事件日志不一致，只做校验，未重算」），而归档态校验（`_check_archived_projectable`）按设计**不要求**该文件，故保留而不手工改写（受保护路径只允许 CLI 通道写）。② 5.8 与 issue 创建都被网络阻断，合并成一条 `(post-merge)` 项——`(post-merge)` 是仓库门禁**唯一**认可的「归档时刻无法完成」标记，此处语义略有偏移（PR 创建发生在合入之前），如实记明以免误导。
+## 11. 合入前的 master 合并（origin/master `8f575c8`）
+
+- [x] 11.1 合并 `origin/master`（`3b48407` → `8f575c8`，含 `tool-result-lifecycle` / `foreach-budget-truncation-visibility` / `read-output-bound` 等已归档 change），解决 3 处冲突：`web/static/chat.js`、`openspec/specs/web-ui/spec.md`、`docs/architecture.md`
+- [x] 11.2 **保住 master 的新语义**（`tool-result-lifecycle` D12）：`tool_result` 事件不再下发正文，只带 preview + `tool_call_id`，展开时按 `GET /api/sessions/{id}/tool-result/{id}` 回取全文；折叠行改为「有正文用正文、没有就用 preview 做判定与摘要的文本依据」，并在展开时按 id 回取全文、取不到则如实写「全文不可用」。**不这么做会让本次改版静默吃掉 master 的能力**（空正文 + 失败不可见）
+- [x] 11.3 截断的 JSON 信封兜底：preview 只有前 1200 字符，长 stdout 的 Bash 结果会被切在半截、`JSON.parse` 必失败 → 用信封头部字段正则认 `exit_code` / `timed_out`（只看前 200 字符，避免 stdout 正文里的同名字段误报）
+- [x] 11.4 单行判据改用事件给的 `display.line_count`（预览的换行分布不等于真实行数）
+- [x] 11.5 历史路径同样接上 loader（`session_history` 里的工具结果也可能已被替换成 preview + ref）
+- [x] 11.6 新增回归：preview-only 失败仍可见（含截断 JSON）、展开按 id 取全文、取不到时如实标注；**变异验证**：去掉截断 JSON 兜底 → 失败用例红；展开不取全文 → 两条用例红
+- [x] 11.7 受影响套件 `220 passed`；全量 `tests/web_tests` = `45 failed / 469 passed`，45 条全部是本分支尚未带的既有环境性编码缺陷（同批修复在 `fix-node-transcript-stale-refresh` 分支上，两者合入后自然消失）
+
+> **归档时的两处如实说明**：① 归档目录里保留了 `workflow-state.json`——事件通道在归档语境下只做校验、不重算投影（工具打印一行「归档投影与事件日志不一致，只做校验，未重算」），而归档态校验（`_check_archived_projectable`）按设计**不要求**该文件，故保留而不手工改写（受保护路径只允许 CLI 通道写）。② issue 创建与 PR 推送都被网络阻断过，合并成一条 `(post-merge)` 项；网络恢复后已实际完成（见上）。
 
 ## 6. 审阅修复（review-loop Round 1）
 
