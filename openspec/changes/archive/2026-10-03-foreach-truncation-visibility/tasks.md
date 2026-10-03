@@ -2,20 +2,20 @@
 
 ## 1. 立项与调研
 
-- [ ] 1.1 关联 GitHub issue #279，写 `proposal.md`
-- [ ] 1.2 写 `design.md`（D1 三出口 / D2 字段名 / D3 声明期边界 / D4 与 ref 界划清 / D5 措辞）
-- [ ] 1.3 写 spec delta（multi-agent-collaboration ADDED 1「foreach 静态截断可见」）
-- [ ] 1.4 补齐 `## Reference Implementation Research`（`research_tier: light`）
-- [ ] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径，需结构化事件）
-- [ ] 1.6 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 通过
+- [x] 1.1 关联 GitHub issue #279，写 `proposal.md`
+- [x] 1.2 写 `design.md`（D1 三出口 / D2 字段名 / D3 声明期边界 / D4 与 ref 界划清 / D5 措辞 / D6 声明期 warning 界）
+- [x] 1.3 写 spec delta（multi-agent-collaboration ADDED 1「foreach 静态截断可见」）
+- [x] 1.4 补齐 `## Reference Implementation Research`（`research_tier: light`）
+- [x] 1.5 同步 `docs/openspec-change-backlog.md` 入队（受保护路径，结构化事件已记）
+- [x] 1.6 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 通过
 
 ## 2. grill 与对抗（实现前强制）
 
-- [ ] 2.1 独立零记忆 subagent 按 `batch-grill-me` 追问 `design.md`，产出 `reviews/grill-design.md`
-- [ ] 2.2 独立零记忆对抗 subagent 证伪 grill 结论，产出 `reviews/grill-adversarial.md`；主 session 逐条复核
-- [ ] 2.3 停轮把 Open Questions（每条配具体例子）抛给用户
-- [ ] 2.4 用户答复写回 `## User Confirmation`
-- [ ] 2.5 按结论回写 design/proposal/spec delta
+- [x] 2.1 独立零记忆 subagent 按 `batch-grill-me` 追问 `design.md`，产出 `reviews/grill-design.md`（6 Confirmed + Q1–Q5 + 风险表）
+- [x] 2.2 独立零记忆对抗 subagent 证伪 grill 结论，产出 `reviews/grill-adversarial.md`；主 session 逐条复核（证伪 grill 三处 + 挖出 M1 假缓解）
+- [x] 2.3 停轮把 Open Questions（每条配具体例子）抛给用户
+- [x] 2.4 用户答复写回 `## User Confirmation`（Q1–Q5）
+- [x] 2.5 按结论回写 design/proposal/spec delta（Q1 扁平字段名 / Q2 静默 / Q4 纳入 / Q5 模拟 / M1 假缓解修正）
 
 ## 3. 实现（测试先行）
 
