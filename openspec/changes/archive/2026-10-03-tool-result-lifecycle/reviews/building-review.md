@@ -189,7 +189,7 @@ M1、M2 各配一条回归测试并修法后重跑 `/review-loop`；L1–L4 可�
 
 ### Round 2 新增问题
 
-**无高/中/低新增问题。** 未发现 M1/M2 修法引入的任何回归；L1–L3 收口正确；L4（`MAX_IMAGE_SIZE` 债未记）本轮**未改**，维持第 1 轮的「低、非阻塞、收尾补记」判定（不阻塞 PASS——属文档收尾项，非代码正确性）。
+**无高/中/低新增问题。** 未发现 M1/M2 修法引入的任何回归；L1–L3 收口正确；L4（`MAX_IMAGE_SIZE` 债未记）在 `0e17694` 未含，但由随后的收尾提交 `beef751` 补记（`docs/known-debt.md:441-447`「图片 MAX_IMAGE_SIZE 与「常驻有界」的矛盾」）——**已关闭**。故 Round 1 全部 4 个 L 级项（L1–L4）本轮均已处置。
 
 ### Round 2 测试证据
 
@@ -198,4 +198,4 @@ M1、M2 各配一条回归测试并修法后重跑 `/review-loop`；L1–L4 可�
 - 全量 `uv run pytest -q` → **2 failed, 3954 passed, 9 skipped**（346s）。2 失败与 Round 1 同：`test_persistent.py::TestFindScopeRoot::*`（pre-existing `/tmp` git 环境坑，与本 change 无关）；新增 4 条回归使通过数 3950→3954。
 - OpenSpec strict validate 未受本轮影响（本轮无 spec delta 改动）。
 
-**判定**：第 1 轮两个中等问题 M1/M2 **真解决并复现核实**，无新引入问题 ⇒ **PASS**。L4 建议在收尾（归档/PR）前补记 `docs/known-debt.md` 或写进 #283。
+**判定**：第 1 轮两个中等问题 M1/M2 **真解决并复现核实**，无新引入问题 ⇒ **PASS**。L1–L4 全部关闭（L4 由收尾提交 `beef751` 补记 `docs/known-debt.md:441-447`）。
