@@ -19,15 +19,15 @@
 
 ## 3. 实现（测试先行）
 
-- [ ] 3.1 先写失败测试：T1/T2（声明期 warnings）、T3（dry-run 三字段）、T4（运行期）、T5（不截断不报）、T6（max_items=0 不报）、T7（与 ref 界不混）、source 驱动声明期不报
-- [ ] 3.2 声明期 `_foreach_truncation_warnings(spec)` helper（字面 items 截断 → 可行动警告），在 `DeclareWorkflow` 与 `RunWorkflow(spec=)` 调用
-- [ ] 3.3 dry-run foreach 条目补 `items_declared`/`items_omitted`（与 `items_expanded` 三元；source 驱动标模拟）
-- [ ] 3.4 运行期 `GetWorkflow` foreach 节点暴露静态截断信号（**后写**绕过 `_bounded_node`）
-- [ ] 3.4b **Q4（已纳入）**：空集合 / source 无产出 ⇒ dry-run 与运行期**显式**标「集合为空/无产出」，区别于正常展开 0 项
-- [ ] 3.4c **Q5**：dry-run 对 source 驱动的 `items_declared` 标「模拟、不可信」；**M1**：声明期新 warning 补界（或如实写「上界=节点数」，不引用 `warnings_omitted`）
-- [ ] 3.5 `_resolve_items` 记录声明/展开数供运行期读
-- [ ] 3.6 字段名用扁平 `items_declared`/`items_omitted`、**绝不复用** `items_total`（D2）；运行期字段**后写**绕过 `_bounded_node`（D3）
-- [ ] 3.7 回归：workflow declare/dry-run/run 既有测试 + 全量
+- [x] 3.1 先写失败测试：T1/T2（声明期 warnings）、T3（dry-run 三字段）、T4（运行期）、T5（不截断不报）、T6（max_items=0 不报）、T7（与 ref 界不混）、source 驱动声明期不报
+- [x] 3.2 声明期 `_foreach_truncation_warnings(spec)` helper（字面 items 截断 → 可行动警告），在 `DeclareWorkflow` 与 `RunWorkflow(spec=)` 调用
+- [x] 3.3 dry-run foreach 条目补 `items_declared`/`items_omitted`（与 `items_expanded` 三元；source 驱动标模拟）
+- [x] 3.4 运行期 `GetWorkflow` foreach 节点暴露静态截断信号（**后写**绕过 `_bounded_node`）
+- [x] 3.4b **Q4（已纳入）**：空集合 / source 无产出 ⇒ dry-run 与运行期**显式**标「集合为空/无产出」，区别于正常展开 0 项
+- [x] 3.4c **Q5**：dry-run 对 source 驱动的 `items_declared` 标「模拟、不可信」；**M1** 选 **(b)**——声明期新 warning **不切片**，docstring 如实写「上界 = foreach 节点数（受 `max_nodes` 间接约束），不漏项」，不引用 dry-run 才有的 `warnings_omitted`（理由：声明期警告是对声明的忠实反映，切片反而可能漏掉某个节点）；测试 `test_declare_emits_one_warning_per_truncated_node` 锁 3 节点 ⇒ 3 条
+- [x] 3.5 `_resolve_items` 记录声明/展开数供运行期读
+- [x] 3.6 字段名用扁平 `items_declared`/`items_omitted`、**绝不复用** `items_total`（D2）；运行期字段**后写**绕过 `_bounded_node`（D3）
+- [x] 3.7 回归：workflow declare/dry-run/run 既有测试 + 全量
 
 ## 4. 审阅与验收
 
