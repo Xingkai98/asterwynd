@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from agent.artifact_store import ArtifactResolver
 from agent.context.summarizer import TruncationSummarizer
 from agent.llm import LLMResponse, Usage
 from agent.message import Message
@@ -43,7 +44,7 @@ from agent.subagent.workflow_assets import (
     WorkflowAssetError,
     asset_store_for_manager,
 )
-from agent.subagent.workflow_store import DEFAULT_READ_LIMIT, WorkflowStore
+from agent.subagent.workflow_store import DEFAULT_READ_LIMIT
 from agent.tools.base import Tool, tool_parameters
 from agent.tool_permissions import AGENT_STATE_PERMISSION, SUBAGENT_CONTROL_PERMISSION
 from agent.workspace_policy import WorkspacePolicy
@@ -723,6 +724,40 @@ def _route_task_warnings(spec: WorkflowSpec) -> list[str]:
     ]
 
 
+def _foreach_truncation_warnings(spec: WorkflowSpec) -> list[str]:
+    """foreach 静态截断的**声明期**可行动提示（change ``foreach-truncation-visibility``）。
+
+    只在集合**声明期可知**时报告（D3）：``items`` 是字面列表、且 ``len(items) >
+    max_items > 0``。``source`` 驱动的集合数声明期无从得知，**完全静默**——截断由
+    dry run 与运行期出口报告，声明期 SHALL NOT 猜（delta spec 的「source 驱动在声明期
+    不猜」Scenario）。``max_items=0`` 不做静态截断，也不报。
+
+    措辞 SHALL 可行动（哪里截断 + 如何展开全部），且 **SHALL NOT 声称 ``max_items`` 是
+    「默认值」**——``_parse_max_items`` 不保留「模型是否显式声明」，显式写 ``max_items:
+    20`` 与省略同值不可分，误称会给错归因。
+
+    **条数的界（D6/M1 选 (b)）**：本 helper 每个截断的 foreach 节点产出一条，条数上界 =
+    节点数（受 ``max_nodes`` 间接约束），**不切片、不漏项**——声明期警告是对声明的忠实
+    反映，截断它反而可能漏掉某个节点。因此 SHALL NOT 引用 dry-run 报告构造器才有的
+    ``warnings_omitted`` 界（那不存在于声明期出口）。与 ``_route_task_warnings`` 并列，
+    由 ``DeclareWorkflow`` 与 ``RunWorkflow(spec=...)`` 两条入口共用。
+    """
+    warnings: list[str] = []
+    for node in spec.nodes:
+        if node.kind != "foreach" or node.items is None:
+            continue
+        if node.max_items <= 0:
+            continue
+        declared = len(node.items)
+        if declared > node.max_items:
+            warnings.append(
+                f"node {node.id!r}: declares {declared} foreach items but "
+                f"max_items={node.max_items} — only the first {node.max_items} will run. "
+                f"Reduce items, raise max_items, or set max_items: 0 to run all."
+            )
+    return warnings
+
+
 @tool_parameters(
     name="DeclareWorkflow",
     description=(
@@ -837,7 +872,8 @@ class DeclareWorkflowTool(Tool):
                 "nodes": [node.id for node in spec.nodes],
                 "entry": list(spec.entry),
                 "terminal": list(spec.terminal),
-                "warnings": _route_task_warnings(spec),
+                "warnings": _route_task_warnings(spec)
+                + _foreach_truncation_warnings(spec),
                 "recursion_limit": spec.recursion_limit,
                 "max_nodes": spec.max_nodes,
                 "max_runs": spec.max_runs,
@@ -910,24 +946,38 @@ async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
             "reason": "workflow has no spec attached (declare it with DeclareWorkflow)",
         }
     await scheduler.run(spec)
-    return scheduler.parent_envelope()
+    payload = scheduler.parent_envelope()
+    # 截断可见性（change foreach-budget-truncation-visibility，OQ2=(b)）：**结果信封**的
+    # ``nodes`` 与 ``GetWorkflow(detail='nodes')`` 同源，都经 ``_bounded_node`` 白名单——
+    # 新字段不在此（``parent_envelope()`` **之后**）补写会被静默丢弃。这使模型「跑完图
+    # 直接读返回信封」这个最自然的出口也能看到「声明 N / 展开 M / 省略 K」+ 成因，并
+    # 顺带补上 #279 此前遗漏在信封外的静态字段。
+    _attach_foreach_visibility(payload["nodes"], scheduler)
+    return payload
 
 
 @tool_parameters(
     name="ReadWorkflowResult",
     description=(
-        "Read a workflow result artifact by its result_ref (page through the "
-        "full text). Refs come from a workflow envelope's root_result_ref, from "
-        "GetWorkflow(detail='nodes') node refs, or from a run envelope's "
-        "result_ref. Pass offset/limit to page; the response reports total_chars "
-        "and truncated so you can decide whether to keep reading."
+        "Read an artifact by its ref, paging through the full text. Refs come "
+        "from THREE sources: (1) a workflow envelope's root_result_ref, "
+        "GetWorkflow(detail='nodes') node refs, or a run envelope's result_ref "
+        "(artifact://workflow/...); (2) a tool result that was spilled to keep "
+        "context bounded — its placeholder carries a "
+        "'[truncated; full result in result_ref: artifact://agent/...]' marker, "
+        "and reading that ref returns the verbatim original result "
+        "(artifact://agent/...). Pass offset/limit to page; the response reports "
+        "total_chars and truncated so you can decide whether to keep reading."
     ),
     parameters={
         "type": "object",
         "properties": {
             "ref": {
                 "type": "string",
-                "description": "Artifact ref, e.g. artifact://workflow/wf_123/root.",
+                "description": (
+                    "Artifact ref, e.g. artifact://workflow/wf_123/root or "
+                    "artifact://agent/<scope>/<key>."
+                ),
             },
             "offset": {"type": "integer", "minimum": 0, "description": "Char offset."},
             "limit": {
@@ -940,7 +990,11 @@ async def _drive_scheduler(scheduler: WorkflowScheduler) -> dict:
     },
 )
 class ReadWorkflowResultTool(Tool):
-    """Q1：把 ``result_ref`` 换成内容的唯一通道（只读、分页）。
+    """把 ``ref`` 换成内容的唯一通道（只读、分页）。
+
+    按 ref 前缀分派（D5）：``artifact://workflow/...`` 走 workflow store，
+    ``artifact://agent/...`` 走 agent artifact store——故它同时是 workflow 结果与
+    被 spill 工具结果的回读入口，名字/schema 保持兼容（不新增工具，#248）。
 
     不是 spawn 类工具（不拉起新工作），因此**不进** ``SPAWN_TOOL_NAMES``：深度到限
     的子 agent 仍能读回自己的结果。
@@ -951,17 +1005,22 @@ class ReadWorkflowResultTool(Tool):
     def __init__(self, manager: SubAgentManager):
         self.manager = manager
 
+    def _resolver(self) -> ArtifactResolver:
+        from agent.workspace_policy import WorkspacePolicy
+
+        policy = getattr(self.manager, "workspace_policy", None) or WorkspacePolicy()
+        return ArtifactResolver(
+            policy.workspace_root,
+            workflow_store=lambda wid: self.manager.workflow_store(wid),
+        )
+
     async def execute(self, **kwargs) -> str:
         ref = kwargs["ref"]
-        try:
-            workflow_id, _key = WorkflowStore.parse_ref(ref)
-        except ValueError as exc:
-            return json.dumps(
-                {"ref": ref, "missing": True, "content": "", "reason": str(exc)},
-                ensure_ascii=False,
-            )
-        store = self.manager.workflow_store(workflow_id)
-        page = store.read(ref, offset=kwargs.get("offset", 0), limit=kwargs.get("limit", DEFAULT_READ_LIMIT))
+        page = self._resolver().read(
+            ref,
+            offset=kwargs.get("offset", 0),
+            limit=kwargs.get("limit", DEFAULT_READ_LIMIT),
+        )
         return json.dumps(page, ensure_ascii=False)
 
 
@@ -1039,6 +1098,10 @@ class GetWorkflowTool(Tool):
             # 容器节点没有单一 subagent_id（身份在 item_runs），故 _node_refs 给不出
             # ref —— 这里按 item 投影出 item_refs，让 per-worker 全文可寻。
             _attach_item_refs(payload["nodes"], scheduler)
+            # 静态截断可见（change foreach-truncation-visibility，D3）：与 _attach_item_refs
+            # 一样在 parent_envelope() **之后**补写——新字段不在 `_PARENT_NODE_FIELDS`
+            # 白名单里，若在 bounded 之前写会被静默丢弃。
+            _attach_foreach_visibility(payload["nodes"], scheduler)
         elif detail == "events":
             payload["nodes"] = []
         elif detail == "attribution":
@@ -1061,6 +1124,75 @@ def _node_refs(scheduler: WorkflowScheduler) -> dict[str, str]:
         if ref:
             refs[node_id] = ref
     return refs
+
+
+def _foreach_visibility_fields(
+    *,
+    declared: int | None,
+    expanded: int | None,
+    max_items: int,
+    declared_is_simulated: bool,
+) -> dict[str, Any]:
+    """foreach 截断可见性的扁平字段（D2/D4/Q4/Q5），供运行期投影与 dry-run 条目复用。
+
+    - 被丢弃数 ``items_omitted``：``declared > expanded``（真截断）时出现——不截断时零噪声
+      （T4）。**两条截断路径都报**（change ``foreach-budget-truncation-visibility``）：
+      ``max_items > 0`` 的**静态**截断与 ``max_items == 0`` 的**预算**截断。二者由
+      ``items_omitted_cause`` 区分（``"max_items"`` / ``"budget"``）——**不能**用裸
+      ``reason``（节点/条目 dict 已有 ``reason``=终态原因，同键会静默覆盖）。
+    - 空集合 ``empty_collection``（Q4）：``declared == 0`` 时显式标「集合为空 / source
+      无产出」，区别于「正常展开 0 项」。
+    - ``declared_is_simulated``（含义 = ``declared`` 是**模拟值、不可信**，**仅 dry-run
+      对 source 驱动节点传 True**）：dry-run 假 LLM 回显通常取不到 ``source_field``，
+      故其 ``declared`` 是模拟产物 ⇒ 报 ``items_declared`` 时随附
+      ``items_declared_simulated``；其 ``items_omitted``（若模拟集合显示会截断）同样继承
+      该模拟口径，由调用方按标记理解。**不**用模拟的 0 标 ``empty_collection``——它是
+      「未知」不是「确认空集」（M2）。运行期对 source 驱动节点**故意传 False**：那一侧
+      解析出的 declared 是真实值，不是模拟。
+    """
+    if declared is None or expanded is None:
+        return {}
+    fields: dict[str, Any] = {}
+    if declared_is_simulated:
+        fields["items_declared"] = declared
+        fields["items_declared_simulated"] = True
+    if declared == 0:
+        if not declared_is_simulated:
+            fields["empty_collection"] = True
+    elif declared > expanded:
+        # 真截断：静态（max_items>0 切到 max_items）或预算（max_items=0 切到剩余容量）。
+        # 成因判别字段独立于 ``reason``（后者是终态原因，同键会覆盖）。
+        fields["items_declared"] = declared
+        fields["items_omitted"] = declared - expanded
+        fields["items_omitted_cause"] = "max_items" if max_items > 0 else "budget"
+    return fields
+
+
+def _attach_foreach_visibility(nodes: list[dict], scheduler: WorkflowScheduler) -> None:
+    """给 foreach 节点补截断 / 空集合字段（后写，越过 ``_bounded_node`` 白名单）。
+
+    与 ``_attach_item_refs`` 同处（``parent_envelope()`` **之后**）——字段扁平、O(1)，
+    不走白名单也可安全补写（D3）。``items``（既有）已是**展开数**，这里只加声明总数与
+    省略数 + 成因（``items_omitted_cause``）；不截断时不加任何字段（零噪声）。
+
+    ``max_items=0`` 的**预算**截断也报（change ``foreach-budget-truncation-visibility``）：
+    在 ``GetWorkflow(detail='nodes')`` 与 ``RunWorkflow`` 结果信封两条运行期出口同源后写。
+    """
+    for node in nodes:
+        if node.get("kind") != "foreach":
+            continue
+        state = scheduler._states.get(node["id"])
+        if state is None:
+            continue
+        node.update(
+            _foreach_visibility_fields(
+                declared=getattr(state, "items_declared", None),
+                expanded=state.items,
+                max_items=state.node.max_items,
+                # 运行期解析出的 declared 是真实值，不是模拟（与 dry-run 相反）。
+                declared_is_simulated=False,
+            )
+        )
 
 
 def _attach_item_refs(nodes: list[dict], scheduler: WorkflowScheduler) -> None:
@@ -1264,7 +1396,11 @@ class RunWorkflowTool(Tool):
         # C8：warning 只对**调用方自己写的 spec** 生成——模板是服务端代码，其 route 上的
         # `task` 不由模型撰写，给模型一条「把判定逻辑挪进 cases[].when」的提示不可行动，
         # 只会是噪音。故 template 路径固定为空数组，但键始终存在（返回体键集稳定）。
-        warnings = _route_task_warnings(spec) if has_spec else []
+        warnings = (
+            _route_task_warnings(spec) + _foreach_truncation_warnings(spec)
+            if has_spec
+            else []
+        )
         self.manager.register_workflow(scheduler)
         if not kwargs.get("wait", True):
             asyncio.ensure_future(_drive_scheduler(scheduler))
@@ -1565,6 +1701,18 @@ def _build_dry_run_report(
             entry["script_applied"] = True
         if node.kind == "foreach":
             entry["items_expanded"] = state.items
+            # 截断 / 空集合可见（change foreach-truncation-visibility）：source 驱动的
+            # 集合数是**模拟产物**（假 LLM 回显常取不到 source_field，见 Q5），故传
+            # `declared_is_simulated=node.items is None`——其 declared 随附 simulated 标记，
+            # 且不把模拟的 0 误标成「确认空集」（与 Q4 区分，M2）。
+            entry.update(
+                _foreach_visibility_fields(
+                    declared=getattr(state, "items_declared", None),
+                    expanded=state.items,
+                    max_items=node.max_items,
+                    declared_is_simulated=node.items is None,
+                )
+            )
         if node.kind == "route":
             # ``evaluated`` 把「route 真的判定过」与「它压根没跑到」分开：没有它，
             # 一个被图级闸门挡住的 route 会带着 ``used_default: true``，读起来就像

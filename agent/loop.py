@@ -19,6 +19,7 @@ from agent.approval import (
 from agent.question import QuestionHandler
 from agent.message import Message, system_message, tool_result_message, extract_text
 from agent.result import RunResult, StopReason, ToolCallMade
+from agent.artifact_store import AgentArtifactStore, new_key
 from agent.tools.base import ToolCall, ToolResult
 from agent.llm import LLMResponse, ToolCallDelta, CachePlan
 from agent.hooks.manager import HookManager
@@ -37,6 +38,11 @@ from agent.context.sources import (
 )
 from agent.memory.manager import MemoryManager
 from agent.memory.persistent import PersistentMemory
+from agent.memory.tool_result_policy import (
+    MAX_BYTES as MAX_RESULT_BYTES,
+    make_preview,
+    value_bytes,
+)
 from agent.observability import ErrorCategory, ErrorClassifier, exception_error_type, resolve_phase
 from agent.planning import PlanStatus, PlanningManager
 from agent.subagent.context import reset_mode_ceiling, set_mode_ceiling
@@ -147,6 +153,7 @@ class AgentLoop:
         cost_ledger: "CostLedger | None" = None,
         ledger_tool_name: str | None = None,
         include_workflow_asset_index: bool = True,
+        artifact_scope_is_run: bool = False,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -168,6 +175,11 @@ class AgentLoop:
         # Whether this loop injects the workflow-asset index (Q9: root only).
         # A construction-time fact, deliberately not inferred from spawn depth.
         self.include_workflow_asset_index = include_workflow_asset_index
+        # D4 artifact scope identity: a subagent keys by run_id (its session_id is
+        # the non-durable subagent_id); a root loop keys by session_id (stable
+        # across resume). A construction-time fact — the loop cannot tell root
+        # from child by inspecting the run() arguments.
+        self.artifact_scope_is_run = artifact_scope_is_run
         if context_builder is not None:
             self.context_builder = context_builder
         else:
@@ -188,6 +200,17 @@ class AgentLoop:
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
+        #: 工具结果入库的 iteration 标记（tool_call_id → iteration）。**不新增
+        #: ``Message`` 字段**（守住不改协议 Goal，D3/Q-new4）：剪枝只在结果被模型
+        #: 消费过一轮后发生（``added <= current - 1``），两个 append 点都记。
+        self._tool_result_iterations: dict[str, int] = {}
+        #: agent 通用 ref store（D4）——``run()`` 期按 session_id/run_id 构造注入，
+        #: 构造期拿不到 workspace_root 与 scope id。
+        self._artifact_store: "AgentArtifactStore | None" = None
+        #: 本 iteration 内经有损有界化的账本（``tool_calls_made``）条目数——错误路径
+        #: 与正常路径都经 ``_bound_ledger_result``/``_bound_arguments`` 累加（L3：两路
+        #: 都计，事件不欠计）。每个 iteration 顶部归零。
+        self._bounded_ledger_count = 0
         self._plan_document_final = False
         self._plan_tools_registered = False
         self._subagent_tools_registered = False
@@ -568,6 +591,18 @@ class AgentLoop:
                 session_id=session_id,
                 run_id=resolved_run_id,
             )
+        # D4 scope identity: root agent keys by session_id (stable across resume),
+        # subagent by run_id (subagent_id is a non-durable process-local id). The
+        # store is built here because neither workspace_root nor the scope id is
+        # known at construction time (D1). A root run without session_id keeps no
+        # store ⇒ spill degrades to an honest [truncated] marker (D8), never a
+        # dangling ref.
+        self._artifact_store = self._make_artifact_store(session_id, resolved_run_id)
+        # Historical tool results already in `messages` (preloaded by the caller,
+        # or a resume rebuild inside `_run`) are pre-marked consumed. The reset
+        # here covers the preloaded case; `_run` re-runs it after the resume
+        # rebuild — see `_reset_tool_result_iterations` (M2).
+        self._reset_tool_result_iterations(messages)
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
         # Mount A (change fix-issue-255-mode-ceiling): snapshot this run's mode
@@ -685,6 +720,10 @@ class AgentLoop:
             messages.extend(conversation)
             messages.append(Message(role="user", content="[Session resumed. Continuing from where we left off.]"))
             messages.extend(new_user_input)
+            # M2: the resume rebuild populated `messages` with the reloaded
+            # history, whose tool results carry no in-run marker. Re-mark them
+            # consumed (the earlier reset ran before this rebuild).
+            self._reset_tool_result_iterations(messages)
             start_iteration = 0
 
             mode = self.runtime_state.current_mode.value
@@ -721,6 +760,7 @@ class AgentLoop:
         )
         for iteration in iterations:
             self._iteration = iteration
+            self._bounded_ledger_count = 0
 
             if self.background_manager is not None:
                 completed = self.background_manager.check_completed()
@@ -842,9 +882,12 @@ class AgentLoop:
                             "name": tool_call.name,
                             "arguments": tool_call.arguments,
                         })
+                        # D12: no full text on the event — carry the stable
+                        # ``tool_call_id`` so the Web Expand button can fetch the
+                        # full result on demand (GET .../tool-result/<id>).
                         await on_event("tool_result", {
                             "name": tool_call.name,
-                            "result": extract_text(result) if not isinstance(result, str) else result,
+                            "tool_call_id": tool_call.id,
                             "display": summarize_tool_result(
                                 tool_call.name,
                                 result,
@@ -852,10 +895,11 @@ class AgentLoop:
                             ).to_dict(),
                         })
                     messages.append(tool_result_message(tool_call.id, result))
+                    self._tool_result_iterations[tool_call.id] = self._iteration
                     tool_calls_made.append(ToolCallMade(
                         name=tool_call.name,
-                        arguments=tool_call.arguments,
-                        result=result,
+                        arguments=self._bound_arguments(tool_call.arguments),
+                        result=self._bound_ledger_result(result),
                     ))
                     continue
 
@@ -1028,7 +1072,7 @@ class AgentLoop:
                     })
                     await on_event("tool_result", {
                         "name": tool_call.name,
-                        "result": extract_text(result) if not isinstance(result, str) else result,
+                        "tool_call_id": tool_call.id,
                         "display": summarize_tool_result(
                             tool_call.name,
                             result,
@@ -1045,12 +1089,20 @@ class AgentLoop:
                         await on_event("todo_updated", self._todo_snapshot())
 
                 messages.append(tool_result_message(tool_call.id, result))
+                self._tool_result_iterations[tool_call.id] = self._iteration
                 tool_calls_made.append(ToolCallMade(
                     name=tool_call.name,
-                    arguments=tool_call.arguments,
-                    result=result,
+                    arguments=self._bound_arguments(tool_call.arguments),
+                    result=self._bound_ledger_result(result),
                 ))
 
+            # D3/D7 order: spill messages → judge hard ceiling → force compact.
+            await self._spill_and_prune(
+                messages,
+                on_event=on_event,
+                trace_recorder=trace_recorder,
+                bounded_ledger=self._bounded_ledger_count,
+            )
             before_msgs = len(messages)
             before_tokens = self.memory.count_tokens(messages)
             compacted = await self.memory.compact_if_needed(messages, iteration=self._iteration)
@@ -1474,6 +1526,136 @@ class AgentLoop:
             redacted = redact_value(parsed)
             arguments = redacted if isinstance(redacted, dict) else {}
         return {"id": delta.id, "name": delta.name, "arguments": arguments}
+
+    # ------------------------------------------------------------------
+    # Tool-result lifecycle (change tool-result-lifecycle, D1/D3/D4/D8/D9/D10)
+    # ------------------------------------------------------------------
+
+    def _make_artifact_store(
+        self, session_id: str | None, run_id: str | None
+    ) -> "AgentArtifactStore | None":
+        """按 D4 身份构造本 run 的 agent ref store。
+
+        子 agent 用 ``run_id``（``session_id`` 那里是进程内 ``subagent_id``），
+        根 agent 用 ``session_id``（resume 时不变，``run_id`` 会新起）；根没有
+        ``session_id``（benchmark 直跑，无 resume 场景）时回落到 ``run_id``，
+        使 spill 仍可用而非退化为有损 ``[truncated]``。
+        """
+        if self.artifact_scope_is_run:
+            scope = run_id
+        else:
+            scope = session_id or run_id
+        if not scope:
+            return None
+        policy = getattr(self.tool_registry, "workspace_policy", None)
+        workspace_root = getattr(policy, "workspace_root", None)
+        if workspace_root is None:
+            return None
+        try:
+            return AgentArtifactStore.for_workspace(workspace_root, scope)
+        except ValueError:
+            return None
+
+    def _reset_tool_result_iterations(self, messages: list[Message]) -> None:
+        """给**已进入本 run 的**历史工具结果预置「已消费」标记（M2），并清空本 run 标记。
+
+        ``messages`` 里 role=tool 的消息要么是 resume 重载的历史、要么是调用方预置的
+        （本 run 新产生的在 append 时另记，见 ``:889``/``:1084``）。它们**在本 run 开始
+        前就已产生**、必然已被模型读过 ⇒ 预置 ``-1``（远早于任何 ``current_iteration``，
+        故 ``added <= current - 1`` 恒真），使大结果可被剪——否则 resume 后它们无标记、
+        ``prune_tool_results`` 因 ``added is None`` 跳过 ⇒ **永不剪、全文常驻**（审阅 M2）。
+
+        「本 run 新 append 的结果一定带真实 iteration 标记」这条不变量不受影响：新结果
+        在产生轮的 Phase-3 才 append，那时对 ``messages`` 的预置扫描早已过去；即便扫描
+        撞上（同 run 先 append 后重入 ``_run`` 的路径），也只会在其产生当轮给 ``-1`` ——
+        而剪枝点在同轮末尾，产生轮本就不剪（当轮保留），语义不变。
+        """
+        self._tool_result_iterations = {
+            m.tool_call_id: -1
+            for m in messages
+            if m.role == "tool" and m.tool_call_id
+        }
+
+    def _spill_enabled(self) -> bool:
+        """D8：spill 与「回读工具已注册」成对启用。
+
+        回读工具不可用时**不 spill**（退回 ``[truncated]``），否则会写出一个模型
+        去用却不存在的 ref，违反 spec「SHALL NOT 声称存在可读的 ref」。
+        """
+        if self._artifact_store is None:
+            return False
+        try:
+            self.tool_registry.get_tool("ReadWorkflowResult")
+        except KeyError:
+            return False
+        return True
+
+    def _bound_ledger_result(self, result):
+        """账本池（trace/tool_calls_made）的有界化：超阈 ⇒ 有界预览（D2/D6b）。
+
+        预览保前缀（``benchmarks/agent_runner.py`` 只 ``startswith("[Error")``——安全），
+        无 ref（trace/tcm 无消费者按 ref 回读）。判定走 ``MemoryManager``，与 messages
+        剪枝共享同一计数器/阈值来源。每次实际有界化计入 ``_bounded_ledger_count``（L3）。
+        """
+        if not self.memory.is_oversized_result(result):
+            return result
+        self._bounded_ledger_count += 1
+        return make_preview(result)
+
+    def _bound_arguments(self, arguments: dict) -> dict:
+        """``ToolCallMade.arguments`` 的有界化（D6b）：超阈时截断其中的大字符串。"""
+        from agent.trace_recorder import bound_value
+
+        if not isinstance(arguments, dict):
+            return arguments
+        if value_bytes(arguments) > MAX_RESULT_BYTES:
+            self._bounded_ledger_count += 1
+            return bound_value(arguments)
+        return arguments
+
+    async def _spill_and_prune(
+        self,
+        messages: list[Message],
+        *,
+        on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None,
+        trace_recorder: Optional["TraceRecorder"] = None,
+        bounded_ledger: int = 0,
+    ) -> None:
+        """剪枝（D3）→ 发可观测（D9）。**在 ``compact_if_needed`` 之前**调用。
+
+        判定纯函数在 ``MemoryManager.prune_tool_results``；落盘回读由本 run 的
+        ``_artifact_store`` 承担（D1 两段式）。
+        """
+        store = self._artifact_store
+        save = store.save_result if (store is not None and self._spill_enabled()) else None
+
+        def _save(text: str) -> str:
+            # Globally unique key: the same scope (session_id / run_id) is reused
+            # across runs (resume keeps session_id), so a per-run counter would
+            # let a later run overwrite an earlier run's ref file — the old
+            # preview, still carried in the reloaded messages, would then read
+            # back the wrong body. A uuid key is durable-unique per spill.
+            return save(new_key("result"), text)
+
+        stats = self.memory.prune_tool_results(
+            messages,
+            current_iteration=self._iteration,
+            added_iterations=self._tool_result_iterations,
+            save=_save if save is not None else None,
+        )
+        if stats.messages_spilled or bounded_ledger:
+            if trace_recorder:
+                trace_recorder.record_tool_result_spill(
+                    spilled_messages=stats.messages_spilled,
+                    bounded_ledger=bounded_ledger,
+                    released_bytes=stats.bytes_released,
+                )
+            if on_event:
+                await on_event("tool_result_spill", {
+                    "spilled_messages": stats.messages_spilled,
+                    "bounded_ledger": bounded_ledger,
+                    "released_bytes": stats.bytes_released,
+                })
 
     async def _messages_with_run_context(self, messages: list[Message]) -> list[Message]:
         workspace_policy = getattr(self.tool_registry, "workspace_policy", None)

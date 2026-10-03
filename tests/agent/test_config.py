@@ -21,6 +21,8 @@ def test_load_config_uses_defaults_when_yaml_missing(tmp_path, monkeypatch):
     assert config.tools.display.max_result_chars == 4000
     assert config.tools.display.max_result_lines == 80
     assert config.tools.display.preview_chars == 1200
+    assert config.tools.read.max_lines == 2000
+    assert config.tools.read.max_bytes == 128 * 1024
     assert config.skills.roots == (tmp_path / "skills",)
     assert config.benchmark.parallel == 1
     assert config.benchmark.timeout_seconds == 600
@@ -64,6 +66,9 @@ tools:
     max_result_chars: 2000
     max_result_lines: 40
     preview_chars: 600
+  read:
+    max_lines: 123
+    max_bytes: 4567
 skills:
   roots:
     - ./team-skills
@@ -102,6 +107,8 @@ benchmark:
     assert config.tools.display.max_result_chars == 2000
     assert config.tools.display.max_result_lines == 40
     assert config.tools.display.preview_chars == 600
+    assert config.tools.read.max_lines == 123
+    assert config.tools.read.max_bytes == 4567
     assert config.skills.roots == (
         tmp_path / "skills",
         tmp_path / "team-skills",
@@ -192,6 +199,15 @@ skills:
     )
 
     with pytest.raises(ConfigError, match="skills.roots"):
+        load_config(start_dir=tmp_path)
+
+
+def test_invalid_read_output_config_fails_fast(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "tools:\n  read:\n    max_lines: 0\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="tools.read.max_lines"):
         load_config(start_dir=tmp_path)
 
 

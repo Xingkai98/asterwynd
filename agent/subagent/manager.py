@@ -1291,6 +1291,7 @@ class SubAgentManager:
             code_intelligence_config=config.tools.code_intelligence if config else None,
             browser_config=config.tools.browser if config else None,
             web_search_config=config.tools.web_search if config else None,
+            read_output_config=config.tools.read if config else None,
             sandbox=self._resolve_sandbox(),
         )
         hooks = HookManager([TracingHook()])
@@ -1326,6 +1327,10 @@ class SubAgentManager:
             # only. Making it a construction-time fact beats inferring "am I
             # root?" from spawn depth at render time.
             include_workflow_asset_index=False,
+            # D4: a subagent keys its tool-result artifacts by run_id (its
+            # session_id is the process-local subagent_id, which does not
+            # survive resume).
+            artifact_scope_is_run=True,
         )
 
     def _complete_run(

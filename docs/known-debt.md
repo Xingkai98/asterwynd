@@ -437,3 +437,11 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 **当前不可达**：生产路径每个 loop 各自 `build_default_tool_registry`（`agent/main.py`、`web/session.py`、`agent/subagent/manager.py:_build_subagent_loop`），无实测影响（grill 探针 `probe_F_scan.py` 实测 `loop2.runtime_state IS loop1.runtime_state` 仅在人为复用同一 registry 时成立）。
 
 **若后续收口**：让 `AgentLoop` 只在 registry 尚无 `runtime_state` 时创建，或把 mode 也改为执行上下文量；并加注释说明「registry 与 loop 不得跨 mode 复用」。
+
+## 图片 MAX_IMAGE_SIZE 与「常驻有界」的矛盾（tool-result-lifecycle 观察项）
+
+`tool-result-lifecycle`（#282）的 design D6 已记录：`Read` 等图片工具单张图上限 `MAX_IMAGE_SIZE = 20MB`（`agent/tools/builtin/read.py:18`），而图片在 token 账本上按固定 1000/张估算——**单张 base64 可达数十 MB，与「工具结果常驻有界」的目标自相矛盾**（几张图就能把常驻顶到 GB 级，而 token 维度几乎不动）。
+
+本 change 已做的：字节维度对 `ImageBlock` 计 `len(url)` 纳入单条阈与硬顶（D6），并让图片在消费一轮后转 `[image: <file_path>]`（D6 四管策略）。**未做**：把 `MAX_IMAGE_SIZE` 收敛到与常驻预算相容的值（避免扩大改动面）。
+
+**若后续收口**：与 issue #283（非工具大内容残余边界）一并评估——要么下调 `MAX_IMAGE_SIZE`，要么对超预算图片走「落盘 + 路径引用」并明确「模型不能直接再看到像素、须按路径 `Read` 取回」。

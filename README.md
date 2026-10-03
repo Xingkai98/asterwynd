@@ -91,7 +91,7 @@ uv run python run_infer.py \
 
 | 工具 | 权限级别 | 说明 |
 |------|---------|------|
-| `Read` | read_only | 读取文件，支持行数限制 |
+| `Read` | read_only | 读取文件，支持行数限制；无显式限制时默认输出有界（2000 行或 128KB），带续读进度注记 |
 | `Write` | read_write | 创建新文件，禁止覆盖已有文件 |
 | `Edit` | read_write | 精确文本替换，要求 old_string 唯一匹配，支持 replace_all |
 | `Bash` | command_execute / high | 沙箱执行 shell 命令，返回结构化 JSON（exit_code/stdout/stderr/duration/timed_out） |

@@ -188,7 +188,23 @@ class SessionStore:
         import shutil
         shutil.rmtree(session_dir)
         self._last_hash.pop(session_id, None)
+        # change tool-result-lifecycle D4: agent artifacts live OUTSIDE the
+        # session dir (`.asterwynd/artifacts/<scope>`, deliberately not under
+        # `sessions/<id>/` so this rmtree never destroys a live ref). The
+        # `_sessions` dict is never cleaned up, so this deletion must be
+        # explicit — otherwise spilled tool-result refs leak forever.
+        self._remove_artifacts(session_id)
         return True
+
+    def _remove_artifacts(self, scope_id: str) -> None:
+        """显式清理该会话的 agent artifacts（D4）；失败不阻塞会话删除。"""
+        try:
+            from agent.artifact_store import AgentArtifactStore
+
+            workspace_root = os.path.dirname(os.path.dirname(os.path.abspath(self._root)))
+            AgentArtifactStore.remove_results(workspace_root, scope_id)
+        except Exception:  # noqa: BLE001 - 清理是尽力而为，不能把删除会话变成失败
+            pass
 
     # ---- internal ----
 

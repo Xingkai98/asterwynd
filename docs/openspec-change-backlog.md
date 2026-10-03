@@ -108,6 +108,22 @@
 
 ## 未实现队列
 
+### 第二十批：workflow foreach 预算截断可见性（#286）
+
+- `foreach-budget-truncation-visibility`（issue [#286](https://github.com/Xingkai98/asterwynd/issues/286)）：**已归档 2026-10-03**。#279（静态截断可见）的独立对抗验证拆出的**同缺陷类、范围外**项——治 `max_items=0` 路径下的**预算**截断静默。`_resolve_items`（`scheduler.py:2675-2678`）在 `max_items==0` 时返回 `items[:remaining_expansion_capacity()]`，切片使 `_check_foreach_budget`（`:2167`）的 `run+delta>limit` **刚好不触发** ⇒ 超预算项**静默丢弃**（实测：60 声明 / 24 展开 / 36 静默丢，`status=completed`、`diagnostics={}`）。**交付**：扩展 #279 共享 helper `_foreach_visibility_fields`（去 `max_items>0` 前置、加成因判别字段 `items_omitted_cause`），**三出口**一致报告「声明 N / 展开 M / 省略 K」+ 成因（`max_items` vs `budget`）——dry-run 条目、`GetWorkflow(detail='nodes')` 投影、**`RunWorkflow` 结果信封**（用户拍板 OQ2=(b) 新增出口，一并补 #279 静态字段缺口）；字段**后写**绕过 `_bounded_node` 白名单；成因字段不复用既有 `reason` 键。**对抗验证修正**：proposal 的「非 terminal 一律响亮」被实测证伪（切片 ≤ `max_fan_in` 时非 terminal 同样静默），边界文字改「切片后预算仍够图跑完即静默」；design「静态路径逐字节不变」改为「既有字段值不变 + 新增成因键」。**Non-Goal**：不改 `max_items` 默认值（#276）、不改 `max_items=0` 语义、不改 #279 静态面、成因不细化到绑定维度、不改 `GetWorkflow` 默认 `detail='summary'` 出口。research_tier = light。**验收**：review-loop 2 轮 PASS（R1 PASS + 3 Low → 修 → R2 确认 PASS）；新测试 7 条（`test_foreach_truncation_visibility.py` 25 passed）；`agent/{subagent,tools}` 1710 passed；benchmark-gate PASS（1.0000）；全量除 2 处预存在 `/tmp` 环境失败外全绿。
+
+### 第十九批：workflow foreach 截断可见性（#279）
+
+- `foreach-truncation-visibility`（issue [#279](https://github.com/Xingkai98/asterwynd/issues/279)）：**已归档 2026-10-03**。`foreach` 的 `max_items`（默认 20）静默截断 `items`（`scheduler.py:2669`）是全仓**唯一**不报告的截断点。**交付**：三出口一致报告「声明 N / 展开 M / 省略 K」——声明期 warnings（`DeclareWorkflow` + `RunWorkflow(spec=)`，仅字面 `items`）、dry-run foreach 条目（`items_declared`/`items_omitted`）、运行期 `GetWorkflow` 投影（**后写**绕过 `_bounded_node` 白名单）；**Q4 空集合不静默**（`empty_collection`）。**对抗验证修正**（grill 三处被证伪）：字段名用扁平 `items_declared`/`items_omitted`（绝不复用既有 `items_total`——会同键覆盖）；source 驱动声明期完全静默；M1 声明期 warnings 无界如实记。**Non-Goal / 后续**：`max_items=0` 预算截断静默 → 另立 [issue #286](https://github.com/Xingkai98/asterwynd/issues/286)；不改默认值（#276）。research_tier = light。**验收**：review-loop 1 轮 PASS；新测试 18/18；全量 3972 passed（2 环境噪声）。
+
+### 第十八批：agent 常驻上下文上界（#278 诊断 follow-up / #280）
+
+**拆两步：均已完成**（#280 对抗验证的结论：先打源头，用实测决定后续；B 的 E0 证明「只治单条不够、累积是主因」）：
+
+- `read-output-bound`（issue #280，**第一步 B**）：**已归档 2026-10-02**。Read 默认输出上界（2000 行 / 128KB，先到者截）+ 三处逃逸面封堵（`limit=0`/`offset` 无 limit/少行超长行）+ 修 offset 回退 bug + config 可覆盖。**E0 实测结论**：B 后 RSS 峰值 **1172MB** vs #278 基线 **1228MB**（同量级）——**证明「只治单条不够、累积是主因」**，为后续 change 提供立项判据。
+
+- `tool-result-lifecycle`（issue [#282](https://github.com/Xingkai98/asterwynd/issues/282)，**第二步 A 的归宿**）：**已归档 2026-10-03**。原 `agent-context-bound`（A）不再单独立项，其核心（`messages` 工具结果 spill/ref）折叠进本 change。**决定性实测**：同一工具结果字符串被 `messages` / `run.trace` / `tool_calls_made` **三处持有、同一对象**（`is` 判定全真）——单做任一处皆白做。**交付**：统一工具结果入库通道 + `messages` spill/ref（无损回读）+ `trace`/`tool_calls_made` bounded（含 `arguments`）+ agent 通用 ref 存储（`artifact://agent/...`）+ 泛化 `ReadWorkflowResult` 回读 + 压缩硬顶（token/字节双维度）+ spill 可观测 + Web Expand 按需回读（取消全文随事件外发）。**已内化 #280 对抗验证全部修正**（「已消费一轮」才剪、子 agent ref 用 `run_id`、图片按字节、`_tokens` 重置）。**验收**：review-loop 2 轮（R1 CHANGES_REQUESTED：M1 幂等裸子串误判 / M2 resume 历史永不剪 → 修 → R2 PASS）；全量 pytest 除 2 个 pre-existing `/tmp` 环境失败外全绿；E0 常驻工具结果文本 **-95%/-97%**。**Non-Goal / 后续**：`_workflows` slots / 跨图壳清理 + **非工具大内容残余边界**均另立 [issue #283](https://github.com/Xingkai98/asterwynd/issues/283)；图片 `MAX_IMAGE_SIZE` 矛盾记入 `docs/known-debt.md`。research_tier = full。
+
 ### 第十七批：workflow 闸门可见性与上限重估（#273 follow-up）
 
 **串行依赖**：#275 是 #276 的**硬前置**——已由 #275 兑现（见下），#276 的定值依据现已就绪。

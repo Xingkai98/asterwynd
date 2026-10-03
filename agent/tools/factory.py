@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from agent.code_intelligence.config import CodeIntelligenceConfig
-from agent.config import BrowserConfig, MemoryConfig, QualityConfig, ToolSelectionConfig, WebSearchConfig
+from agent.config import BrowserConfig, MemoryConfig, QualityConfig, ReadOutputConfig, ToolSelectionConfig, WebSearchConfig
 from agent.lsp.client import LspClientManager
 from agent.run_config import ModePolicy
 from agent.mcp.manager import McpManager
@@ -203,6 +203,7 @@ def build_default_tool_registry(
     selection_config: ToolSelectionConfig | None = None,
     quality_config: QualityConfig | None = None,
     memory_config: MemoryConfig | None = None,
+    read_output_config: ReadOutputConfig | None = None,
     llm=None,
     sandbox: "ExecutionBackend | None" = None,
 ) -> ToolRegistry:
@@ -215,6 +216,7 @@ def build_default_tool_registry(
         browser_config=browser_config,
         persistent_memory=persistent_memory,
         memory_config=memory_config,
+        read_output_config=read_output_config,
         llm=llm,
         sandbox=sandbox,
     )
@@ -247,6 +249,7 @@ def build_coding_tool_registry(
     mcp_manager: McpManager | None = None,
     persistent_memory: PersistentMemory | None = None,
     memory_config: MemoryConfig | None = None,
+    read_output_config: ReadOutputConfig | None = None,
     llm=None,
     sandbox: "ExecutionBackend | None" = None,
 ) -> ToolRegistry:
@@ -259,6 +262,7 @@ def build_coding_tool_registry(
         browser_config=browser_config,
         persistent_memory=persistent_memory,
         memory_config=memory_config,
+        read_output_config=read_output_config,
         llm=llm,
         sandbox=sandbox,
         ),
@@ -305,11 +309,13 @@ def get_default_tools(
     browser_config: BrowserConfig | None = None,
     persistent_memory: PersistentMemory | None = None,
     memory_config: MemoryConfig | None = None,
+    read_output_config: ReadOutputConfig | None = None,
     llm=None,
     sandbox: ExecutionBackend | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     config = memory_config or MemoryConfig()
+    read_output = read_output_config or ReadOutputConfig()
     pmem = persistent_memory or PersistentMemory(
         policy.workspace_root,
         archive_after_days=config.archive_after_days,
@@ -322,7 +328,7 @@ def get_default_tools(
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [
-        ReadTool(policy=policy),
+        ReadTool(policy=policy, max_lines=read_output.max_lines, max_bytes=read_output.max_bytes),
         ReadDocTool(policy=policy),
         WriteTool(policy=policy, lsp_manager=lsp_manager),
         EditTool(policy=policy, lsp_manager=lsp_manager),
@@ -409,11 +415,13 @@ def get_coding_tools(
     browser_config: BrowserConfig | None = None,
     persistent_memory: PersistentMemory | None = None,
     memory_config: MemoryConfig | None = None,
+    read_output_config: ReadOutputConfig | None = None,
     llm=None,
     sandbox: ExecutionBackend | None = None,
 ) -> list[Tool]:
     policy = policy or WorkspacePolicy()
     config = memory_config or MemoryConfig()
+    read_output = read_output_config or ReadOutputConfig()
     pmem = persistent_memory or PersistentMemory(
         policy.workspace_root,
         archive_after_days=config.archive_after_days,
@@ -426,7 +434,7 @@ def get_coding_tools(
     lsp_manager = _build_lsp_manager(policy, code_intelligence_config)
     judge = _build_memory_dedup_judge(llm, memory_config)
     tools: list[Tool] = [
-        ReadTool(policy=policy),
+        ReadTool(policy=policy, max_lines=read_output.max_lines, max_bytes=read_output.max_bytes),
         ReadDocTool(policy=policy),
         WriteTool(policy=policy, lsp_manager=lsp_manager),
         EditTool(policy=policy, lsp_manager=lsp_manager),

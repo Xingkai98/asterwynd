@@ -63,6 +63,10 @@ tools:
     max_result_chars: 4000
     max_result_lines: 80
     preview_chars: 1200
+  # Read 工具默认输出上界：无显式正 limit 时按行/字节先到者截断。
+  read:
+    max_lines: 2000
+    max_bytes: 131072
 
 mcp:
   default_timeout_seconds: 30

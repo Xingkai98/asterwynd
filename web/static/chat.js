@@ -923,13 +923,15 @@ function addToolResultMessage(data) {
   const el = document.createElement('div');
   el.className = 'message tool';
 
+  // D12: the server no longer pushes the full text (only preview + tool_call_id).
+  // Fall back to display metadata; full text is fetched lazily on Expand.
   const display = data.display || {
     collapsed: false,
     preview: data.result || '',
     char_count: (data.result || '').length,
     line_count: (data.result || '').split('\n').length,
   };
-  const fullResult = data.result || '';
+  const toolCallId = data.tool_call_id || null;
 
   const header = document.createElement('div');
   header.className = 'message-header tool-result-header';
@@ -947,7 +949,7 @@ function addToolResultMessage(data) {
 
   const body = document.createElement('div');
   body.className = 'tool-result-body';
-  body.textContent = display.collapsed ? display.preview : fullResult;
+  body.textContent = display.collapsed ? display.preview : (data.result || display.preview);
   el.appendChild(body);
 
   if (display.collapsed) {
@@ -961,11 +963,50 @@ function addToolResultMessage(data) {
     toggle.setAttribute('aria-expanded', 'false');
 
     let expanded = false;
-    toggle.addEventListener('click', () => {
-      expanded = !expanded;
-      body.textContent = expanded ? fullResult : display.preview;
-      toggle.textContent = expanded ? 'Collapse' : 'Expand';
-      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    let cachedFull = null;   // fetched on demand; cleared on collapse to free memory
+    let loading = false;
+
+    toggle.addEventListener('click', async () => {
+      if (expanded) {
+        // Collapse: release the fetched full text.
+        expanded = false;
+        cachedFull = null;
+        body.textContent = display.preview;
+        toggle.textContent = 'Expand';
+        toggle.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      if (cachedFull !== null) {
+        expanded = true;
+        body.textContent = cachedFull;
+        toggle.textContent = 'Collapse';
+        toggle.setAttribute('aria-expanded', 'true');
+        return;
+      }
+      if (loading || !toolCallId) return;
+      loading = true;
+      const sessionId = (activeTabId && tabs.get(activeTabId)) ? tabs.get(activeTabId).sessionId : null;
+      if (!sessionId) { loading = false; return; }
+      try {
+        const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/tool-result/${encodeURIComponent(toolCallId)}`);
+        const payload = await resp.json();
+        if (payload && payload.missing === false) {
+          cachedFull = payload.content || '';
+          expanded = true;
+          body.textContent = cachedFull;
+          toggle.textContent = 'Collapse';
+          toggle.setAttribute('aria-expanded', 'true');
+        } else {
+          // Honest failure: never show empty/placeholder as if it were the full text.
+          body.textContent = '全文不可用';
+          toggle.textContent = 'Collapse';
+          toggle.setAttribute('aria-expanded', 'false');
+        }
+      } catch (err) {
+        body.textContent = '全文不可用';
+      } finally {
+        loading = false;
+      }
     });
 
     controls.appendChild(toggle);
