@@ -223,6 +223,33 @@ async def test_small_result_kept_within_window(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_second_run_same_scope_does_not_overwrite_earlier_ref(tmp_path):
+    """resume 语义：同 scope（session_id）跑两次，第二次的 spill 不覆盖第一次的 ref。"""
+    first_payload = "P" * 400_000
+    second_payload = "Q" * 400_000
+
+    # Run 1
+    loop1 = _loop(tmp_path, ScriptedLLM("BigTool", n_tool_calls=2), BigTool(first_payload))
+    msgs1 = [Message(role="user", content="go")]
+    await loop1.run(msgs1, session_id="s-shared", run_id="r-a")
+    ref1 = extract_result_ref(_tool_messages(msgs1)[0].content)
+    assert ref1 is not None
+    parsed = ArtifactRef.parse(ref1)
+    store = AgentArtifactStore.for_workspace(tmp_path, parsed.scope_id)
+    assert store.load(ref1) == first_payload
+
+    # Run 2 (same session scope, fresh loop) — must not clobber ref1's file.
+    loop2 = _loop(tmp_path, ScriptedLLM("BigTool", n_tool_calls=2), BigTool(second_payload))
+    msgs2 = [Message(role="user", content="go")]
+    await loop2.run(msgs2, session_id="s-shared", run_id="r-b")
+    ref2 = extract_result_ref(_tool_messages(msgs2)[0].content)
+    assert ref2 is not None and ref2 != ref1
+
+    assert store.load(ref1) == first_payload     # run 1's ref still reads its own body
+    assert store.load(ref2) == second_payload
+
+
+@pytest.mark.asyncio
 async def test_arguments_bounded_in_ledger(tmp_path):
     """D6b：一次工具带 300KB 参数时，``tool_calls_made[*].arguments`` 有界（保结构）。"""
     import json

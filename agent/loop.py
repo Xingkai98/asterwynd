@@ -19,7 +19,7 @@ from agent.approval import (
 from agent.question import QuestionHandler
 from agent.message import Message, system_message, tool_result_message, extract_text
 from agent.result import RunResult, StopReason, ToolCallMade
-from agent.artifact_store import AgentArtifactStore
+from agent.artifact_store import AgentArtifactStore, new_key
 from agent.tools.base import ToolCall, ToolResult
 from agent.llm import LLMResponse, ToolCallDelta, CachePlan
 from agent.hooks.manager import HookManager
@@ -153,6 +153,7 @@ class AgentLoop:
         cost_ledger: "CostLedger | None" = None,
         ledger_tool_name: str | None = None,
         include_workflow_asset_index: bool = True,
+        artifact_scope_is_run: bool = False,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -174,6 +175,11 @@ class AgentLoop:
         # Whether this loop injects the workflow-asset index (Q9: root only).
         # A construction-time fact, deliberately not inferred from spawn depth.
         self.include_workflow_asset_index = include_workflow_asset_index
+        # D4 artifact scope identity: a subagent keys by run_id (its session_id is
+        # the non-durable subagent_id); a root loop keys by session_id (stable
+        # across resume). A construction-time fact — the loop cannot tell root
+        # from child by inspecting the run() arguments.
+        self.artifact_scope_is_run = artifact_scope_is_run
         if context_builder is not None:
             self.context_builder = context_builder
         else:
@@ -1519,8 +1525,17 @@ class AgentLoop:
     def _make_artifact_store(
         self, session_id: str | None, run_id: str | None
     ) -> "AgentArtifactStore | None":
-        """按 D4 身份构造本 run 的 agent ref store（子 run 优先用 run_id）。"""
-        scope = run_id or session_id
+        """按 D4 身份构造本 run 的 agent ref store。
+
+        子 agent 用 ``run_id``（``session_id`` 那里是进程内 ``subagent_id``），
+        根 agent 用 ``session_id``（resume 时不变，``run_id`` 会新起）；根没有
+        ``session_id``（benchmark 直跑，无 resume 场景）时回落到 ``run_id``，
+        使 spill 仍可用而非退化为有损 ``[truncated]``。
+        """
+        if self.artifact_scope_is_run:
+            scope = run_id
+        else:
+            scope = session_id or run_id
         if not scope:
             return None
         policy = getattr(self.tool_registry, "workspace_policy", None)
@@ -1590,11 +1605,14 @@ class AgentLoop:
         """
         store = self._artifact_store
         save = store.save_result if (store is not None and self._spill_enabled()) else None
-        counter = {"n": 0}
 
         def _save(text: str) -> str:
-            counter["n"] += 1
-            return save(f"result-{counter['n']}", text)
+            # Globally unique key: the same scope (session_id / run_id) is reused
+            # across runs (resume keeps session_id), so a per-run counter would
+            # let a later run overwrite an earlier run's ref file — the old
+            # preview, still carried in the reloaded messages, would then read
+            # back the wrong body. A uuid key is durable-unique per spill.
+            return save(new_key("result"), text)
 
         stats = self.memory.prune_tool_results(
             messages,
