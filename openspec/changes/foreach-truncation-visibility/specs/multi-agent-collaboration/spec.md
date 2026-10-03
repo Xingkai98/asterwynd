@@ -39,6 +39,13 @@
 - **THEN** SHALL NOT 报告该节点的展开数或截断数
 - **AND** 其截断情况 SHALL 由 dry run 与运行期出口报告
 
+#### Scenario: dry run 对 source 驱动的集合数不具预测性
+
+- **GIVEN** 一个 `source` 驱动的 `foreach` 节点
+- **WHEN** `DryRunWorkflow` 报告其集合数
+- **THEN** 该数 SHALL 标注为**模拟产物**（dry run 用假 LLM，source 的真实产出未知）
+- **AND** 模型 SHALL NOT 能把它读成「真实运行会展开这么多」
+
 #### Scenario: 无截断时不产生报告
 
 - **GIVEN** 一个 `foreach` 节点的集合大小不超过 `max_items`

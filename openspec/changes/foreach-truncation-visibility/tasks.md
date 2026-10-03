@@ -21,10 +21,10 @@
 
 - [ ] 3.1 先写失败测试：T1/T2（声明期 warnings）、T3（dry-run 三字段）、T4（运行期）、T5（不截断不报）、T6（max_items=0 不报）、T7（与 ref 界不混）、source 驱动声明期不报
 - [ ] 3.2 声明期 `_foreach_truncation_warnings(spec)` helper（字面 items 截断 → 可行动警告），在 `DeclareWorkflow` 与 `RunWorkflow(spec=)` 调用
-- [ ] 3.3 dry-run foreach 条目补 `items_total`/`items_omitted`（与 `items_expanded` 三元）
+- [ ] 3.3 dry-run foreach 条目补 `items_declared`/`items_omitted`（与 `items_expanded` 三元；source 驱动标模拟）
 - [ ] 3.4 运行期 `GetWorkflow` foreach 节点暴露静态截断信号
 - [ ] 3.5 `_resolve_items` 记录声明/展开数供运行期读
-- [ ] 3.6 字段名与 `item_refs_omitted` 的 `items_total` 划清（D2）
+- [ ] 3.6 字段名用扁平 `items_declared`/`items_omitted`、**绝不复用** `items_total`（D2）；运行期字段**后写**绕过 `_bounded_node`（D3）
 - [ ] 3.7 回归：workflow declare/dry-run/run 既有测试 + 全量
 
 ## 4. 审阅与验收

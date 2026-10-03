@@ -39,7 +39,7 @@
 ## What Changes
 
 1. **声明期报告**：`DeclareWorkflow` / `RunWorkflow(spec=...)` 的 `warnings` 增一条**可行动**警告——当 foreach 节点的 `items` 是**字面列表**且长度 > `max_items`（>0）时，报「声明 N 项、仅前 M 项会运行」并给行动指引（减小 items / 声明 `max_items: 0` / 调大 `max_items`）。**声明期无法知的（`source` 驱动）不在此面报告**（见 D3）。
-2. **dry run 报告**：`DryRunWorkflow` 的 foreach 条目在既有 `items_expanded` 旁补 `items_total`（本轮应展开的集合大小）与 `items_omitted`（被 `max_items`/预算丢弃的项数）——使 dry run 能显示「展开 20 / 共 60 / 省略 40」。
+2. **dry run 报告**：`DryRunWorkflow` 的 foreach 条目在既有 `items_expanded` 旁补 `items_declared`（声明集合大小）与 `items_omitted`（被 `max_items` 丢弃的项数）——使 dry run 能显示「展开 20 / 共 60 / 省略 40」。
 3. **运行期报告**：运行期 `GetWorkflow`（或其 diagnostics）暴露 foreach 节点的**静态截断**信号（`max_items` 丢弃的项数），使运行后的读回也可见（dry run 是**预计**，运行期是**实际**）。
 
 **不变**：`max_items` 的默认值（20）与 `max_items=0` 语义（不静态截断）；`item_refs_omitted`（那是 **ref 列表**的界，与本 change 的 **items 截断**是两件事，SHALL NOT 混用同一字段）。
@@ -61,7 +61,7 @@
 |---|---|---|
 | **T1** | 声明含 60 项、`max_items` 默认（20）的 foreach ⇒ `DeclareWorkflow` warnings 报「60 声明 / 20 运行」+ 行动指引 | **主指标** |
 | **T2** | 同上图 `RunWorkflow(spec=...)` 的 warnings 同样报（两条声明入口一致） | **主指标** |
-| **T3** | dry run 的 foreach 条目含 `items_total`=60 / `items_expanded`=20 / `items_omitted`=40 | **主指标** |
+| **T3** | dry run 的 foreach 条目含 `items_declared`=60 / `items_expanded`=20 / `items_omitted`=40 | **主指标** |
 | T4 | 运行期 `GetWorkflow` 暴露静态截断信号（实际丢弃数） | 辅 |
 | T5 | `items` ≤ `max_items`（不截断）时**不产生**截断警告/字段（零噪声） | 辅 |
 | T6 | `max_items: 0`（不静态截断）时不报静态截断（预算截断是另一层，不误报） | 辅 |
@@ -78,7 +78,7 @@
 - research questions:
   - **RQ1**：截断报告的**字段命名与出口形态**，项目内既有先例怎么做的？（对齐即可，不必新造。）
 - findings:
-  1. **项目内三处同型先例已钉死形态**：`nodes_omitted`（`scheduler.py:3163`，`max(total - limit, 0)`）、`warnings_omitted`（`subagents.py:1661`）、`item_refs_omitted`（`subagents.py:1132`）——**统一是「`X_omitted = max(total - shown, 0)`」+ 一个 `X_total`**。本 change 的 `items_total` / `items_omitted` 直接沿用该形态，**不新造词表**。
+  1. **项目内三处同型先例已钉死形态**：`nodes_omitted`（`scheduler.py:3163`，`max(total - limit, 0)`）、`warnings_omitted`（`subagents.py:1661`）、`item_refs_omitted`（`subagents.py:1132`）——**统一是「`X_omitted = max(total - shown, 0)`」+ 一个 `X_total`**。本 change 的 `items_declared` / `items_omitted` 直接沿用该形态（**不用 `items_total`**——该名已被既有 `item_refs_omitted` 语境占用，见 design D2），**不新造词表**。
   2. **声明期 warnings 的既有投递面**：`_route_task_warnings(spec)`（`subagents.py:710`）是「声明期、声明期可知」警告的现成 helper，由 `DeclareWorkflow`（`:841`）与 `RunWorkflow(spec=)`（`:1284`）**共用**——本 change 的新 warnhelper 与它并列调用，天然覆盖两条入口。
   3. **无本地参考仓库同款**（`/home/shared/agent-study/reference-repos/`）：这是本项目自有的 workflow DSL 概念（foreach/`max_items`），业界框架无直接对应；形态依据来自**项目内先例**（finding 1）而非外部。本地仓库可用性：`.dev/reference-repos.txt` 在本 worktree 不存在（不提交，属正常）；不构成 exempt 理由，此处如实记录。
 - design impact: 见 design D1（三出口一致）、D2（字段名沿用先例）、D3（声明期 vs 运行期可知性边界）、D4（与 `item_refs_omitted` 不混）。
@@ -87,7 +87,7 @@
 
 - **能力域**: `multi-agent-collaboration`（workflow DSL 的 foreach 行为 + 报告面）。
 - **代码**:
-  - `agent/tools/builtin/subagents.py` — 新增 `_foreach_truncation_warnings(spec)` helper（与 `_route_task_warnings` 并列），在 `DeclareWorkflow`（`:841`）与 `RunWorkflow(spec=)`（`:1284`）的 warnings 处调用；dry-run 的 foreach 条目（`:1584`）补 `items_total`/`items_omitted`。
+  - `agent/tools/builtin/subagents.py` — 新增 `_foreach_truncation_warnings(spec)` helper（与 `_route_task_warnings` 并列），在 `DeclareWorkflow`（`:841`）与 `RunWorkflow(spec=)`（`:1284`）的 warnings 处调用；dry-run 的 foreach 条目（`:1584`）补 `items_declared`/`items_omitted`。
   - `agent/subagent/scheduler.py` — `_resolve_items`（`:2669`）记录「声明总数 / 实际展开数」，供运行期投影读取；运行期 `GetWorkflow` 出口暴露静态截断信号。
   - `agent/subagent/workflow.py` — 若需在 `WorkflowNode` 上暴露「声明 items 数」（字面列表长度），在此取（`items` 字段既有）。
 - **测试**:
@@ -109,5 +109,7 @@
 
 - **不改** `max_items` 默认值（20）——参数另议（#276）。
 - **不改** `max_items=0` 语义（不静态截断）。
+- **不报告 `max_items=0` 路径下的预算截断静默**（`_resolve_items` 切到 `_remaining_expansion_capacity()` 刚好合身 → `_check_foreach_budget` 不触发，超预算项静默丢弃）——**与本 change 同缺陷类但范围外**（#279 原文只点 `max_items` 静态截断），**显式 Non-Goal + 开 follow-up issue**（见 design 边界节）。
 - **不合并** `item_refs_omitted`（ref 列表界）与本 change 的 items 截断（两件事）。
-- **不做**「声明期预测 `source` 驱动 foreach 的展开数」——声明期本就不知（见 D3）。
+- **不做**「声明期预测/提示 `source` 驱动 foreach 的展开或截断」——声明期本就不知，且会给**最常见**配置加噪声、行动性弱（对抗否决了 grill 的弱提示，见 D3）。
+- **字段名** SHALL NOT 复用既有 `items_total`（同 dict 同键会覆盖，见 D2）。
