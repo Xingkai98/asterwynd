@@ -630,7 +630,6 @@
     return row;
   }
 
-  /** 收起时把展开体放回预览并释放全文（`__fullTextLoaded` 归零 ⇒ 再展开重新取）。 */
   /** 该行的展开体当前是不是收起的（N1 的判据：回取在途时用户可能已经收起）。 */
   function rowCollapsed(row) {
     var head = row.querySelector ? row.querySelector('.tool-row-head') : null;
