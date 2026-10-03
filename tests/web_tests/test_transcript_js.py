@@ -356,6 +356,52 @@ def test_result_detects_browser_failure_prefixes():
         assert one("summarizeToolResult", "BrowserNavigate", text)["state"] == "error", text
 
 
+def test_result_uses_the_line_count_hint_for_the_bare_error_rule():
+    """「裸 `Error:` 只在结果整体是一行时判失败」要看**事件给的真实行数**。
+
+    预览只有前 1200 字符，它的换行分布不等于结果的行数：一个 300 行的日志被预览成一行
+    片段时，用预览判「单行」会把正文里的 `Error:` 误判成工具失败（审阅 R6-L2：这条 hint
+    原先零覆盖——变异去掉它全套用例仍绿）。
+    """
+    assert one("summarizeToolResult", "Read", "Error: x", {"lineCount": 2})["state"] == "ok"
+    assert one("summarizeToolResult", "Read", "Error: x", {"lineCount": 1})["state"] == "error"
+    # 没有 hint 时退回文本自身的换行判断（历史路径没有 display）。
+    assert one("summarizeToolResult", "Read", "Error: x")["state"] == "error"
+    assert one("summarizeToolResult", "Read", "Error: x\ny")["state"] == "ok"
+
+
+def test_truncated_json_envelope_still_reports_the_exit_code():
+    """预览被截断的 Bash JSON 信封仍要认出来（`tool-result-lifecycle` D12）。
+
+    事件只带前 1200 字符，带长 stdout 的失败结果会被切在半截、`JSON.parse` 必失败——
+    兜底只看信封头部（前 200 字符）的 `exit_code` / `timed_out`，且不得被 stdout 正文里
+    的同名字段误报。
+    """
+    truncated = '{"exit_code": 1, "stdout": "' + "x" * 4000
+    out = one("summarizeToolResult", "Bash", truncated)
+    assert out["state"] == "error"
+    assert out["code"] == "exit 1"
+    assert out["structured"] is True
+    assert one("summarizeToolResult", "Bash",
+               '{"exit_code": 0, "stdout": "' + "x" * 4000)["state"] == "ok"
+    late = '{"exit_code": 0, "stdout": "' + "x" * 300 + '", "note": "exit_code": 1'
+    assert one("summarizeToolResult", "Bash", late)["state"] == "ok"
+
+
+def test_spilled_preview_is_recognised_by_the_trailing_marker():
+    """「预览 + 落盘 ref」形态由**尾部标记**判定，且不得退化成裸子串匹配。
+
+    与后端 `agent/memory/tool_result_policy.py::is_spilled_preview` 同口径：真实结果
+    正文里出现的 `[truncated` 字面量（本仓库自己的文档就有）不是 spill。
+    """
+    assert one("isSpilledPreview", "a\n…[truncated]") is True
+    assert one("isSpilledPreview",
+               "a\n…[truncated; full result in result_ref: artifact://sha256/ab]") is True
+    assert one("isSpilledPreview", "docs 里写着 …[truncated] 这三个字") is False
+    assert one("isSpilledPreview", "[truncated] 出现在行首") is False
+    assert one("isSpilledPreview", "") is False
+
+
 def test_result_ignores_leading_blank_lines_when_detecting_failure():
     """结果可能以空行开头；失败判定必须看**首个非空行**。
 

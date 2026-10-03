@@ -37,6 +37,15 @@
   //: 否则用户会把 1200 字符预览读成完整结果（`tool-result-lifecycle` D12 的诚实要求）。
   var PREVIEW_ONLY_NOTE = '（尚未取回全文，展开时按需回取）';
   var FULL_TEXT_UNAVAILABLE = '全文不可用（消息已被压缩驱逐，或其落盘件不可解析）。';
+  //: 「预览 + 落盘 ref」形态的**尾部标记**判据，与后端
+  //: `agent/memory/tool_result_policy.py::is_spilled_preview` 同口径（锚定行尾）。
+  //: **不得**退化成裸子串 `[truncated`：真实结果正文完全可能含该字面量（本仓库自己的
+  //: 文档里就有），裸子串会把真结果误判成预览 ⇒ 展开时白跑一次回取。
+  var SPILLED_SUFFIX_RE = /…\[truncated(?:; full result in result_ref: artifact:\/\/[^\s\]]+)?\]\s*$/;
+
+  function isSpilledPreview(text) {
+    return typeof text === 'string' && SPILLED_SUFFIX_RE.test(text);
+  }
   /** 行内唯一 id 的递增序号，用于 `aria-controls` 关联头按钮与兄弟展开体。 */
   var rowSeq = 0;
 
@@ -606,13 +615,31 @@
       var expanded = head.getAttribute('aria-expanded') === 'true';
       head.setAttribute('aria-expanded', expanded ? 'false' : 'true');
       body.hidden = expanded;
+      if (expanded) {
+        // 收起：**释放**已取回的全文（合并规格 `web-ui` 的 SHALL：避免长结果全文常驻）。
+        // 放回「预览 + 提示」，并清掉 loaded 标记，于是再展开会重新回取一次。
+        releaseFullText(doc, row);
+        return;
+      }
       // 正文没随事件下发时（`tool-result-lifecycle` D12：`tool_result` 只带 preview +
       // `tool_call_id`），展开才按 id 回取全文——这正是「展开见全文」的实现点，
       // 不能因为折叠行自带摘要就跳过，否则用户点开看到的只是预览。
-      if (!expanded) loadFullText(doc, row);
+      loadFullText(doc, row);
     });
 
     return row;
+  }
+
+  /** 收起时把展开体放回预览并释放全文（`__fullTextLoaded` 归零 ⇒ 再展开重新取）。 */
+  function releaseFullText(doc, row) {
+    if (!row.__fullTextLoaded || row.__previewText === null) return;
+    row.__fullTextLoaded = false;
+    row.__previewOnly = true;
+    var pre = row.__resultPre;
+    if (pre) {
+      pre.textContent = row.__previewText + '\n\n… ' + PREVIEW_ONLY_NOTE;
+      pre.dataset.previewOnly = 'true';
+    }
   }
 
   /** 展开时按需回取全文（只在「正文未随事件下发」时触发，且只取一次）。
@@ -639,11 +666,14 @@
         }
         // 拿到全文后**重算**判定：preview 只有前 1200 字符，结构化结果（Bash 的单行
         // JSON）可能被截断成无法解析的片段，全文到了才能给准结论。
+        // 重算会按「有正文」把 `__previewText` 清掉——但收起时还要放回预览，所以先留一份。
+        var previewText = row.__previewText;
         updateToolRow(doc, row, {
           name: row.dataset.tool,
           result: String(text),
           display: row.__display,
         });
+        row.__previewText = previewText;
         row.__previewOnly = false;
         row.__fullTextLoaded = true;
       })
@@ -667,11 +697,17 @@
     var options = spec || {};
     var display = options.display || null;
     var given = options.result === null || options.result === undefined ? '' : String(options.result);
-    // 正文没随事件下发时（`display.collapsed` 为真 ⇒ 事件只带 preview）用 preview 做
-    // **判定与摘要的文本依据**：失败首行、结构化 `exit_code` 都在前 1200 字符里。
-    // 它不会成为折叠态的可见正文——只有单行摘要会。
-    var previewOnly = given === '' && !!(display && display.collapsed === true);
-    var result = previewOnly ? String(display.preview || '') : given;
+    // 文本依据一律回落 preview（审阅 R6-M1）：`tool-result-lifecycle` D12 之后事件
+    // **永远不带** `result`，而短结果发的是 `collapsed:false` + `preview`＝全文——
+    // 只在 `collapsed` 为真时回落，会让所有短结果的判定与展示落在空串上
+    // （展开体空白、`[Approval denied…]` 被显示成成功）。
+    var preview = display ? String(display.preview || '') : '';
+    var result = given !== '' ? given : preview;
+    // 历史投影里的工具结果可能已是「预览 + `…[truncated; full result in result_ref: …]`」
+    // 形态（`agent/memory/tool_result_policy.py::make_preview`）：它**不是**全文，
+    // 所以 `result` 非空也不能当作全文——展开仍须按 id 回取。
+    var spilled = isSpilledPreview(result);
+    var previewOnly = spilled || (given === '' && !!(display && display.collapsed === true));
     var verdict = summarizeToolResult(options.name, result, {
       lineCount: display && typeof display.line_count === 'number' ? display.line_count : undefined,
       previewOnly: previewOnly,
@@ -681,6 +717,9 @@
     row.__code = verdict.code || '';
     row.__display = display;
     row.__previewOnly = previewOnly;
+    //: 收起时要用它把展开体放回「预览 + 提示」并**释放**已取回的全文（合并规格
+    //: `web-ui`「用户收起时释放已取回的全文缓存」）。
+    row.__previewText = previewOnly ? result : null;
     if (options.toolCallId) row.__toolCallId = options.toolCallId;
     if (typeof options.loadFullText === 'function') row.__loadFullText = options.loadFullText;
 
@@ -717,6 +756,8 @@
       ? display.line_count
       : (result === '' ? 0 : result.split('\n').length);
     var meta = formatCharMeta(charCount, lineCount);
+    // 手上只有预览时不能把**预览的**规模说成结果的规模（历史投影不给真实总数）。
+    if (spilled) meta = '预览 ' + meta;
     if (verdict.state === 'error') meta = (verdict.code ? verdict.code + ' · ' : '失败 · ') + meta;
     setText(row.__metaEl, meta);
     return row;
@@ -738,6 +779,7 @@
     formatCharMeta: formatCharMeta,
     formatBodyText: formatBodyText,
     prettyArgs: prettyArgs,
+    isSpilledPreview: isSpilledPreview,
     createToolRow: createToolRow,
     updateToolRow: updateToolRow,
   };

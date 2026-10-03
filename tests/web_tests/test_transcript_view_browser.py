@@ -740,6 +740,141 @@ async def test_preview_only_result_still_flags_the_failure(browser_page, transcr
 
 
 @pytest.mark.asyncio
+async def test_short_result_without_a_result_field_is_rendered_and_judged(
+    browser_page, transcript_web_server
+):
+    """**真实事件不带 `result`**（审阅 R6-M1）：短结果发 `collapsed:false` + preview=全文。
+
+    只在 `collapsed` 为真时回落 preview 的话，所有短结果都会拿空串当文本依据 ⇒ 展开体
+    空白、`[Approval denied…]` 这类失败被显示成**成功**。测试里显式构造「没有 result
+    字段」的事件形态（而不是像其它用例那样自己塞一份 result）。
+    """
+    page = browser_page
+    await _open_ready_session(page, transcript_web_server["url"])
+    await _dispatch(page, _tool_call("Bash", {"cmd": "rm -rf /tmp/x"}, call_id="c1"))
+    await _dispatch(page, {
+        "type": "tool_result",
+        "data": {
+            "name": "Bash",
+            "tool_call_id": "c1",
+            "display": {
+                "collapsed": False,
+                "preview": "[Approval denied: user rejected the request]",
+                "char_count": 42,
+                "line_count": 1,
+            },
+        },
+    })
+
+    rows = page.locator(f"{MESSAGES} .tool-row")
+    assert await rows.nth(0).get_attribute("data-state") == "error", (
+        "没有 result 字段的失败结果必须仍判为失败（否则失败静默消失）"
+    )
+    head = await rows.nth(0).locator(".tool-row-head").inner_text()
+    assert "Approval denied" in head, f"失败首行应顶到摘要，实际：{head!r}"
+
+    # 短结果的 preview 就是全文：展开应直接看到它，且**不需要**任何回取请求。
+    await rows.nth(0).locator(".tool-row-head").click()
+    body_text = await rows.nth(0).locator(".tool-row-result").inner_text()
+    assert "Approval denied" in body_text, f"展开体不得为空，实际：{body_text!r}"
+    assert "尚未取回全文" not in body_text, "preview 即全文时不该标成「未取回」"
+
+
+@pytest.mark.asyncio
+async def test_spilled_history_row_fetches_the_full_text_on_expand(
+    browser_page, transcript_web_server
+):
+    """历史里的 spill 预览（`…[truncated; full result in result_ref: …]`）不是全文。
+
+    历史投影给的是「预览 + 落盘 ref」形态，`result` 非空但**不是**全文（审阅 R6-M3）：
+    必须判成 preview-only，展开按 id 回取，且 meta 不得把预览的长度说成结果的规模。
+    """
+    page = browser_page
+    full = "@@SPILLED-FULL@@ " + "z" * 200
+    calls: list[str] = []
+
+    async def _result_route(route):
+        calls.append(route.request.url)
+        await route.fulfill(json={"tool_call_id": "c3", "missing": False, "content": full})
+
+    await page.route("**/tool-result/*", _result_route)
+    await _open_ready_session(page, transcript_web_server["url"])
+    spilled = ("line one\nline two\n…[truncated; full result in result_ref: "
+               "artifact://sha256/abc]")
+    await _dispatch(page, {
+        "type": "session_history",
+        "data": {
+            "session_id": "s1",
+            "messages": [
+                {"role": "assistant", "content": "", "tool_call_id": None,
+                 "tool_calls": [{"id": "c3", "name": "Read"}]},
+                {"role": "tool", "content": spilled, "tool_call_id": "c3",
+                 "tool_calls": None},
+            ],
+        },
+    })
+
+    rows = page.locator(f"{MESSAGES} .tool-row")
+    assert await rows.count() == 1
+    head = await rows.nth(0).locator(".tool-row-head").inner_text()
+    assert "预览" in head, f"只有预览时 meta 必须如实标注，实际：{head!r}"
+
+    await rows.nth(0).locator(".tool-row-head").click()
+    await page.wait_for_function(
+        "() => document.querySelector('.tool-row-body .tool-row-result')"
+        ".textContent.includes('@@SPILLED-FULL@@')",
+        timeout=5000,
+    )
+    assert calls and "/tool-result/c3" in calls[0], f"spill 预览应按 id 回取全文：{calls}"
+
+
+@pytest.mark.asyncio
+async def test_collapsing_releases_the_fetched_full_text(browser_page, transcript_web_server):
+    """收起时释放已取回的全文（合并规格 `web-ui` 的 SHALL），再展开重新回取。"""
+    page = browser_page
+    full = "@@RELEASE-ME@@ " + "q" * 100
+    calls: list[str] = []
+
+    async def _result_route(route):
+        calls.append(route.request.url)
+        await route.fulfill(json={"tool_call_id": "c4", "missing": False, "content": full})
+
+    await page.route("**/tool-result/*", _result_route)
+    await _open_ready_session(page, transcript_web_server["url"])
+    await _dispatch(page, _tool_call("Read", {"path": "big.txt"}, call_id="c4"))
+    await _dispatch(page, _preview_only_result(
+        "Read", "preview\nlines", char_count=20_000, line_count=500, call_id="c4"))
+
+    rows = page.locator(f"{MESSAGES} .tool-row")
+    head = rows.nth(0).locator(".tool-row-head")
+    await head.click()
+    await page.wait_for_function(
+        "() => document.querySelector('.tool-row-body .tool-row-result')"
+        ".textContent.includes('@@RELEASE-ME@@')",
+        timeout=5000,
+    )
+    assert len(calls) == 1
+
+    # 收起 → 全文必须从 DOM 里消失（内存里也不留 cachedFull）。
+    await head.click()
+    await page.wait_for_function(
+        "() => !document.querySelector('.tool-row-body .tool-row-result')"
+        ".textContent.includes('@@RELEASE-ME@@')",
+        timeout=5000,
+    )
+    assert await rows.nth(0).locator(".tool-row-body").is_hidden()
+
+    # 再展开 → 重新回取（第二次请求）。
+    await head.click()
+    await page.wait_for_function(
+        "() => document.querySelector('.tool-row-body .tool-row-result')"
+        ".textContent.includes('@@RELEASE-ME@@')",
+        timeout=5000,
+    )
+    assert len(calls) == 2, f"收起后应释放、再展开应重新取：{calls}"
+
+
+@pytest.mark.asyncio
 async def test_expanding_a_preview_only_row_fetches_the_full_text(
     browser_page, transcript_web_server
 ):

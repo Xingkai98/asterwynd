@@ -800,7 +800,8 @@ function transcriptApi() {
 
 /** 历史回放里的工具结果行。
  *
- * @param {string} content 结果全文。
+ * @param {string} content 结果文本。**可能是预览**——已被 spill 的历史结果在这里是
+ *   `…[truncated; full result in result_ref: …]` 形态（判定与回取见 `updateToolRow`）。
  * @param {?object} call 由 `tool_call_id` 反查到的调用，形状为 `{id, name}`——历史投影
  *   刻意**不外发 `arguments`**（量级不可控，而历史补发在重连首屏关键路径上），所以参数
  *   摘要通常拿不到；拿不到时摘要降级为结果首行，标题降级为「工具结果」。
@@ -822,8 +823,11 @@ function appendHistoryToolResult(content, call) {
     name: name,
     result: text,
     display: { char_count: text.length, line_count: lineCount },
-    // 历史里的工具结果同样可能已被替换成 preview + ref（`tool-result-lifecycle`），
-    // 于是展开时也要能按 id 回取全文——与实时路径共用同一个 loader。
+    // 历史投影里的工具结果**同样可能只是预览**：`extract_text(content)` 拿到的是
+    // `…[truncated; full result in result_ref: …]` 形态的 spill 预览（`tool-result-lifecycle`
+    // 落盘 + `tool_result_policy.make_preview`），此时这一行的 `result` 非空但**不是全文**，
+    // 展开仍须按 id 回取——`tool_rows.js::updateToolRow` 用尾部标记判出 spill 并置
+    // `previewOnly`，所以这里必须把 id 与 loader 一起传下去（否则 loader 是死接线）。
     toolCallId: call && call.id ? call.id : null,
     loadFullText: toolResultLoader(call && call.id ? call.id : null),
   });
