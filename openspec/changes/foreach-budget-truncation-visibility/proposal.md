@@ -47,16 +47,19 @@ items_omitted in envelope: False  # 无任何信号
 ### 边界（如实）
 
 - **不是 spec 违规**：spec 规定 `max_items=0` = 展开到预算耗尽（隐含有截断），**未规定预算截断须报告**。本 change 是**透明性缺陷**修复 + 报告面扩展。
-- **静默窗口比直觉窄**：仅 **terminal foreach 且切片后预算仍够下游** 时静默。**非 terminal**（如 `fan → collect` root）切片后剩余预算不够下游 auto-agg 节点 ⇒ **响亮报** `graph_recursion_exceeded` + `diagnostics` + 多条 `blocked` 警告——**不静默**（#279 对抗验证实测）。本 change 治的是那个**真静默**的窄窗。
+- **静默窗口 = 切片后预算仍够整张图跑完**（**已由对抗实测修正**，原稿「非 terminal 一律响亮」**是错的**）。实测（`reviews/grill-adversarial.md` Q4，`fan → root(strategy='collect')` 非 terminal，60 项，`max_items=0`）：`max_runs ≤ max_fan_in(=10)` ⇒ **静默**（`status=completed`、`diagnostics={}`、`fan.items=10`，与 terminal 完全相同——切片 ≤ `max_fan_in` 不插 auto-agg 层、下游 collect 不跑模型）；`max_runs ≥ 11` 才响亮 `graph_recursion_exceeded`（插入的 auto-agg 层要吃一个 run）。改动 config 把 `max_fan_in` 改 4，阈值精确移到 4/5。故「terminal vs 非 terminal」不是判据，**「切片后预算是否仍够图跑完」才是**。
 - **与 #278（OOM）无关**：那次真实运行模型恰用了 `max_items: 0`，但那是内存问题，与截断报告无关。
 
 ## What Changes
 
 1. **dry run 报告**：`DryRunWorkflow` 的 foreach 条目在既有 `items_expanded` 旁补 `items_declared`（声明集合大小）与 `items_omitted`（被截断丢弃的项数）——**当 `max_items=0` 且 `declared > expanded`（真预算截断）时也发**（#279 只在 `max_items > 0` 时发）。使 dry run 能显示「展开 24 / 共 60 / 省略 36」。
-2. **运行期报告**：运行期 `GetWorkflow(detail='nodes')` 的 foreach 节点投影同样暴露预算截断信号（`items_omitted`），同 #279 的**后写**机制（绕过 `_bounded_node` 白名单）。
-3. **判别字段**：`items_omitted` 需与一个**判别字段**配对，区分截断**成因**（`max_items` 静态截断 vs `budget` 预算截断）——因运行期/dry-run 两处条目 dict **均已有 `reason` 键**（节点/条目终态原因），判别字段 SHALL NOT 用裸 `reason`（同 dict 同键覆盖，与 #279 D2 的 `items_total` 同类教训，见 D2）。
+2. **运行期报告（三出口）**：运行期**两个**模型可见出口的 foreach 节点都暴露预算截断信号（`items_omitted`），同 #279 的**后写**机制（绕过 `_bounded_node` 白名单）：
+   - `GetWorkflow(detail='nodes')` 的 foreach 节点投影（#279 既有出口）；
+   - **`RunWorkflow` 的结果信封** `nodes`（**用户 2026-10-03 拍板 OQ2=(b) 新增出口**——实测该信封**连 #279 的静态字段都没有**，模型跑完图**最自然的读法**会全静默；补此出口一并把 #279 静态字段补上，属**有意扩范围**）。
+   - 边界（如实记录）：`GetWorkflow` 的**默认** `detail='summary'` 只有 bounded 节点、不带这些可见性字段；字段只在**显式** `detail='nodes'` 出现。本 change 不改 `summary` 出口。
+3. **判别字段**：`items_omitted` 需与一个**判别字段**配对，区分截断**成因**——**用户 2026-10-03 拍板 OQ1 = `items_omitted_cause`**，取值 `"max_items"`（静态截断）/ `"budget"`（预算截断）。因运行期/dry-run 两处条目 dict **均已有 `reason` 键**（节点/条目终态原因），判别字段 SHALL NOT 用裸 `reason`（同 dict 同键覆盖，与 #279 D2 的 `items_total` 同类教训，见 D2）。**用户拍板 OQ3 = 粗粒度 `"budget"`**（不细化到绑定维度）。
 
-**不变**：`max_items` 默认值（20）、`max_items=0` 语义（不静态截断、展开到预算耗尽）、#279 已建立的**静态**截断报告面（`items_declared`/`items_omitted` 在 `max_items > 0` 时的语义不变）。
+**不变**：`max_items` 默认值（20）、`max_items=0` 语义（不静态截断、展开到预算耗尽）、#279 已建立的**静态**截断报告面的**字段值**（`items_declared`/`items_omitted` 在 `max_items > 0` 时数值不变；新增 `items_omitted_cause` 一个键）。
 
 ## Capabilities
 
@@ -67,21 +70,22 @@ items_omitted in envelope: False  # 无任何信号
 ### Modified Capabilities
 
 - `multi-agent-collaboration`：
-  - **ADDED** 新 Requirement「foreach 预算截断可见」——`max_items == 0` 且 `items` 被图级预算截断时，系统 SHALL 在模型可见出口（dry run / 运行期投影）如实报告「声明 N / 展开 M / 省略 K」+ 成因判别，SHALL NOT 静默丢弃。
+  - **ADDED** 新 Requirement「foreach 预算截断可见」——`max_items == 0` 且 `items` 被图级预算截断时，系统 SHALL 在模型可见出口（dry run / `RunWorkflow` 结果信封 / `GetWorkflow(detail='nodes')` 投影）如实报告「声明 N / 展开 M / 省略 K」+ 成因判别，SHALL NOT 静默丢弃。
   - **MODIFIED** 既有 Requirement「foreach 静态截断可见」——明确 `items_omitted` 与**成因判别字段**配对（使静态/预算两种成因的 `items_omitted` 不歧义），并保持「`max_items=0` 不报**静态**截断」口径不变（#286 报的是**预算**截断，非静态）。
 
 ## 验收（本 change 的验收口径，**只进 proposal、不进 spec**）
 
 | # | 指标 | 主/辅 |
 |---|---|---|
-| **T1** | `max_items=0` + source 60 项 + `max_runs` 不足 ⇒ dry run 条目含 `items_declared=60` / `items_expanded=24` / `items_omitted=36` + 成因判别 | **主指标** |
-| **T2** | 同上图运行期 `GetWorkflow(detail='nodes')` 的 fan 节点含同样三元 + 成因判别（**后写**可见） | **主指标** |
-| **T3** | 成因判别：`max_items>0` 静态截断与 `max_items=0` 预算截断的判别字段取值不同 | **主指标** |
-| T4 | 零噪声：`max_items=0` 且预算充足（declared == expanded）时不产生任何 `items_omitted` 字段 | 辅 |
-| T5 | #279 不退化：`max_items>0` 静态截断的既有报告面语义不变（`items_declared`/`items_omitted` 值不变） | 辅 |
+| **T1** | `max_items=0` + **字面 60 项 + 上游 planner（占 1 run）** + `max_runs=25` ⇒ dry run 条目含 `items_declared=60` / `items_expanded=24` / `items_omitted=36` + `items_omitted_cause="budget"` | **主指标** |
+| **T2** | 同上图**运行期** `GetWorkflow(detail='nodes')` 的 fan 节点含同样三元 + 成因判别（**后写**可见） | **主指标** |
+| **T2b** | 同上图 `RunWorkflow(spec=...)` 的**结果信封** fan 节点含同样三元 + 成因（OQ2=(b) 新增出口） | **主指标** |
+| **T3** | 成因判别：`max_items>0` 静态截断（`items_omitted_cause="max_items"`）与 `max_items=0` 预算截断（`"budget"`）取值不同 | **主指标** |
+| T4 | 零噪声：`max_items=0` 且预算充足（declared == expanded）时不产生任何 `items_omitted`/`items_omitted_cause` 字段 | 辅 |
+| T5 | #279 不退化：`max_items>0` 静态截断的既有报告面**值**不变（`items_declared`/`items_omitted` 值不变；`items_omitted_cause` 为新增键） | 辅 |
 | T6 | 不退化：既有 workflow 测试全绿（含 `test_foreach_truncation_visibility.py` 18/18、`test_dynamic_foreach.py`） | 辅 |
 
-**通过门槛**：T1 + T2 + T3 成立（两出口一致可见 + 成因可判别），T4 无假报，T5/T6 不退化。
+**通过门槛**：T1 + T2 + T2b + T3 成立（三出口一致可见 + 成因可判别），T4 无假报，T5/T6 不退化。
 
 ## Reference Implementation Research
 
@@ -93,19 +97,20 @@ items_omitted in envelope: False  # 无任何信号
   - **RQ2**：成因判别用**扁平字段**还是**嵌套对象**？（#279 对抗已否决嵌套——违背项目扁平先例。）
 - findings:
   1. **项目内四处同型先例已钉死形态**：`nodes_omitted`（`scheduler.py`，`max(total - limit, 0)`）、`warnings_omitted`（`subagents.py:1661`）、`item_refs_omitted`（`subagents.py:1187`）、`items_declared`/`items_omitted`（#279，`subagents.py:1122`）——**统一是「`X_omitted = max(total - shown, 0)`」+ 一个 `X_total`/`X_declared`**，且**全扁平**（`_graph_node_projection`/`_attach_item_refs`/`_attach_foreach_visibility` 皆扁平）。本 change 复用既有 `items_declared`/`items_omitted`、只**新增一个扁平成因判别字段**，不新造词表。
-  2. **#279 已建立两出口 + 后写机制**：`_foreach_visibility_fields`（`subagents.py:1122`）是 dry-run 与运行期**共用**的纯函数；运行期出口经 `_attach_foreach_visibility`（`subagents.py:1159`）在 `parent_envelope()` **之后**后写（绕过 `_bounded_node` 白名单 `_PARENT_NODE_FIELDS`，`scheduler.py:389`）。本 change **扩展同一 helper**（加成因参数）而非新写，天然覆盖两出口。
-  3. **成因判别字段必须避开既有 `reason` 键**：#279 D2 的教训——运行期节点 dict（`NodeState.to_dict`，`scheduler.py:187`）与 dry-run 条目（`subagents.py:1684`）**均已有 `reason` 键**（终态原因）。判别字段若也叫 `reason` 会**同 dict 同键覆盖、无报错**（实测 `items_total` 覆辙）。故用**独立扁平名**（拟 `items_omitted_cause`，见 D2/OQ1）。
-  4. **无本地参考仓库同款**（`/home/shared/agent-study/reference-repos/`）：这是本项目自有的 workflow DSL 概念（foreach/`max_items`/图级预算），业界框架无直接对应；形态依据来自**项目内先例**（finding 1–3）而非外部。本地参考仓库对本 change 非必需（`.dev/reference-repos.txt` 为工作区本地配置、不提交）；不构成 exempt 理由，此处如实记录。
-- design impact: 见 design D1（两出口一致）、D2（复用 + 成因判别字段，避开 `reason`）、D3（复用既有 `items_declared`）、D4（零噪声）、D5（与 #279「不报静态截断」不冲突）、D6（扩展共享 helper）。
+  2. **#279 已建立后写机制**：`_foreach_visibility_fields`（`subagents.py:1122`）是 dry-run 与运行期**共用**的纯函数；运行期出口经 `_attach_foreach_visibility`（`subagents.py:1159`）在 `parent_envelope()` **之后**后写（绕过 `_bounded_node` 白名单 `_PARENT_NODE_FIELDS`，`scheduler.py:389`）。本 change **扩展同一 helper**（加成因参数）而非新写，天然覆盖 dry-run 出口；运行期**两**出口（`GetWorkflow(detail='nodes')` + `RunWorkflow` 信封）共用 `_attach_foreach_visibility` 后写。
+  3. **成因判别字段必须避开既有 `reason` 键**：#279 D2 的教训——运行期节点 dict（`NodeState.to_dict`，`scheduler.py:187`）与 dry-run 条目（`subagents.py:1684`）**均已有 `reason` 键**（终态原因）。判别字段若也叫 `reason` 会**同 dict 同键覆盖、无报错**（实测 `items_total` 覆辙）。故用**独立扁平名** `items_omitted_cause`（用户拍板 OQ1）。
+  4. **`RunWorkflow` 结果信封是既有缺口**（对抗实测 M1/M2）：`RunWorkflow` 返回的 `parent_envelope()` 的 `nodes` 经 `_bounded_node` 过滤，**连 #279 的静态字段都没有**；模型跑完图直接读信封**最自然的读法**会全静默。用户拍板 OQ2=(b) 补此出口。
+  5. **无本地参考仓库同款**（`/home/shared/agent-study/reference-repos/`）：这是本项目自有的 workflow DSL 概念（foreach/`max_items`/图级预算），业界框架无直接对应；形态依据来自**项目内先例**（finding 1–4）而非外部。本地参考仓库对本 change 非必需（`.dev/reference-repos.txt` 为工作区本地配置、不提交）；不构成 exempt 理由，此处如实记录。
+- design impact: 见 design D1（三出口一致）、D2（复用 + 成因判别字段 `items_omitted_cause`，避开 `reason`）、D3（扩展共享 helper）、D4（零噪声）、D5（与 #279「不报静态截断」不冲突）、D6（成因粗粒度 `"budget"`）。
 
 ## Impact Analysis
 
 - **能力域**: `multi-agent-collaboration`（workflow DSL 的 foreach 行为 + 报告面）。
 - **代码**:
-  - `agent/tools/builtin/subagents.py` — 扩展 `_foreach_visibility_fields`（`:1122`）与 `_attach_foreach_visibility`（`:1159`）：`max_items == 0` 且 `declared > expanded` 时也发 `items_omitted` + 成因判别；dry-run foreach 条目（`:1687-1700`）与运行期投影（`:1159`）共用。
-  - `agent/subagent/scheduler.py` — `_resolve_items`（`:2675`）已在切片前记 `state.items_declared`，本 change 大概率**不改**（复核预算截断路径亦经此点）；如需暴露「成因/生效上限」再加只读字段。
+  - `agent/tools/builtin/subagents.py` — 扩展 `_foreach_visibility_fields`（`:1122`）与 `_attach_foreach_visibility`（`:1159`）：`max_items == 0` 且 `declared > expanded` 时也发 `items_omitted` + `items_omitted_cause`；dry-run foreach 条目（`:1687-1700`）与运行期后写共用。**新增**：`RunWorkflowTool.execute` 拿到 `envelope = await _drive_scheduler(scheduler)`（`:1402`）后，对 `envelope["nodes"]` 补跑 `_attach_foreach_visibility`（OQ2=(b) 新增出口，与 `GetWorkflow(detail='nodes')` 同源后写）。
+  - `agent/subagent/scheduler.py` — `_resolve_items`（`:2675`）已在切片前记 `state.items_declared`，本 change **不改**（复核预算截断路径亦经此点）；成因粒度粗粒度 `"budget"` 无需回传绑定维度。
 - **测试**:
-  - **必须新增**：T1/T2（两出口）、T3（成因判别）、T4（零噪声）。
+  - **必须新增**：T1（dry-run）、T2（`GetWorkflow(detail='nodes')`）、**T2b（`RunWorkflow` 信封）**、T3（成因判别）、T4（零噪声）。
   - **必须回归**：`tests/agent/subagent/test_foreach_truncation_visibility.py`（#279，18 条）、`tests/agent/subagent/test_dynamic_foreach.py`（Q9 预算截断口径）；全量 `uv run pytest -q`。
 - **文档**:
   - `openspec/specs/multi-agent-collaboration/spec.md`（ADDED 1 + MODIFIED 1；受保护路径）。
@@ -124,7 +129,9 @@ items_omitted in envelope: False  # 无任何信号
 
 - **不改** `max_items` 默认值（20）——参数另议（#276）。
 - **不改** `max_items=0` 语义（不静态截断、展开到预算耗尽）。
-- **不改** #279 已建立的**静态**截断报告面（`max_items > 0` 时的 `items_declared`/`items_omitted` 值不变）。
 - **不把**「静态截断」与「预算截断」合并成同一个无判别字段——两者成因不同，SHALL 由判别字段区分（D2）。
 - **不做**「声明期预测预算截断」——预算截断是**运行期**现象（声明期不知 source 集合大小、不知运行期已用预算），声明期本就不适用。
 - **成因判别字段** SHALL NOT 复用既有 `reason` 键（同 dict 同键会覆盖，D2）。
+- **不细化**成因到预算维度（`"budget"` 粗粒度，用户拍板 OQ3）——绑定维度已见 envelope 的 `limits`/`budget`。
+- **不改** `GetWorkflow` 的默认 `detail='summary'` 出口（不带可见性字段；M1 如实记录，本 change 只覆盖显式 `detail='nodes'`）。
+- **不改** 静态报告面的**字段值**（`max_items > 0` 时 `items_declared`/`items_omitted` 数值不变；`items_omitted_cause` 是新增键，非改动既有值）。

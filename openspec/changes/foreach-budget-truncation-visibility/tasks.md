@@ -13,9 +13,9 @@
 
 - [x] 2.1 独立零记忆 subagent 按 `batch-grill-me` 追问 `design.md`，产出 `reviews/grill-design.md`（Confirmed Decisions + Open Questions + 风险表）
 - [x] 2.2 独立零记忆对抗 subagent 证伪 grill 结论，产出 `reviews/grill-adversarial.md`；主 session 逐条复核
-- [ ] 2.3 停轮把 Open Questions（每条配具体例子）抛给用户
-- [ ] 2.4 用户答复写回 `## User Confirmation`（Q1–Qn）
-- [ ] 2.5 按结论回写 design/proposal/spec delta（成因字段名 / 出口范围 / 成因粒度等）
+- [x] 2.3 停轮把 Open Questions（每条配具体例子）抛给用户
+- [x] 2.4 用户答复写回 `## User Confirmation`（Q1–Qn）
+- [x] 2.5 按结论回写 design/proposal/spec delta（成因字段名 / 出口范围 / 成因粒度等）
 
 ## 3. 实现（测试先行）
 

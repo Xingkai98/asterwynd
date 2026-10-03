@@ -144,3 +144,16 @@
 探针脚本（`/tmp/fbtv/`，实现期可复跑）：`probe_core.py`（两出口基线）、`probe_d3b.py`（拟议 D3 全 T1–T5）、`probe_dry_script.py`（source+script dry-run）、`probe_window2.py`/`probe_window3.py`（静默窗口矩阵）、`probe_oq3.py`/`probe_oq3b.py`（绑定维度）、`probe_static_diff.py`（静态路径前后对比）、`patch_plugin.py`（拟议 helper 的 pytest 补丁，跑出 842 passed）。
 
 行号基于本 worktree 当前 HEAD；实现期若改动上游文件，行号可能漂移，以符号名为准。
+
+---
+
+## User Confirmation
+
+> 主 session 停轮把 Q1–Q6 逐条（含真实参数例子）抛给用户；用户 2026-10-03 逐条拍板，答复如下。Q7 为无需拍板的事实核对项（`items_omitted = declared - expanded` 语义已确认正确），不列。
+
+- **Q1**: 用户答复：采纳 `items_omitted_cause`（取值 `"max_items"` / `"budget"`），绝不复用既有 `reason` 键。；确认时间: 2026-10-03
+- **Q2**: 用户答复：选 (b) —— 扩到 `RunWorkflow` 结果信封：把 `_attach_foreach_visibility`（后写）也挂到 `RunWorkflow` 的信封路径（`RunWorkflow` 与 `GetWorkflow` 都调 `parent_envelope()`，同一后写位置），一并补上 #279 的静态字段（有意扩范围）；出口清单从「两出口」改为「三出口：dry run + RunWorkflow 信封 + GetWorkflow(detail='nodes')」；如实记录 `GetWorkflow` 默认 `detail='summary'` 也不带字段（只有显式 `detail='nodes'` 才有）。；确认时间: 2026-10-03
+- **Q3**: 用户答复：粗粒度 `"budget"`，不细化到 `budget:max_runs`。；确认时间: 2026-10-03
+- **Q4**: 用户答复：无条件发字段（不抑制）；边界文字改为「切片后预算仍够图跑完即静默（含切片 ≤ max_fan_in 的非 terminal）」，不再声称非 terminal 一律响亮。；确认时间: 2026-10-03
+- **Q5**: 用户答复：T1 用「字面 60 项 + 上游 planner（占 1 run）」构造（确定性 60/24/36，零 script）。；确认时间: 2026-10-03
+- **Q6**: 用户答复：接受现状——`items_omitted` 自身不加 simulated 标记，模型据 `items_declared_simulated` 打折理解。；确认时间: 2026-10-03
