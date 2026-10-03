@@ -38,11 +38,11 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`；受保护路径，需结构化事件）
-- [ ] 5.2 归档到 `openspec/changes/archive/2026-10-0X-foreach-truncation-visibility/`（受保护路径）
-- [ ] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径）
-- [ ] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`
+- [x] 5.1 spec delta 同步到 current spec（`openspec/specs/multi-agent-collaboration/spec.md`；受保护路径，结构化事件已记）
+- [x] 5.2 归档到 `openspec/changes/archive/2026-10-03-foreach-truncation-visibility/`（受保护路径）
+- [x] 5.3 从 `docs/openspec-change-backlog.md` 移除（受保护路径；标记已归档）
+- [x] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`（28 passed）
+- [x] 5.5 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`（+ `--check-archived`）
 - [x] 5.6 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描（`max_items`/`foreach`/`items_expanded` **0 命中**——内部 DSL 报告面，无面向用户文档描述它，**无需改**）
-- [ ] 5.7 (post-merge) 发起 PR（关联 #279）、写明验证结果并合入
+- [ ] 5.7 (post-merge) 发起 PR（关联 #279）、写明验证结果并合入；由主 session 执行，worktree 不 push
 - [ ] 5.8 (post-merge) PR 合入后给 #279 加完成说明并关闭
