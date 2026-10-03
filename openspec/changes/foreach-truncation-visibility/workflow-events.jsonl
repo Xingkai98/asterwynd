@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "foreach-truncation-visibility", "artifact_path": "docs/openspec-change-backlog.md", "reason": "新增第十九批 foreach-truncation-visibility（issue #279）：foreach max_items 静默截断的报告面（三出口：声明期 warnings/dry-run/运行期）。", "approved_by": "main-session"}
