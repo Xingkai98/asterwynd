@@ -12,6 +12,7 @@
 
 CI 无浏览器时自动 skip（与 ``test_multi_session_browser.py`` 同口径）。
 """
+import asyncio
 import socket
 import threading
 import time
@@ -872,6 +873,39 @@ async def test_collapsing_releases_the_fetched_full_text(browser_page, transcrip
         timeout=5000,
     )
     assert len(calls) == 2, f"收起后应释放、再展开应重新取：{calls}"
+
+
+@pytest.mark.asyncio
+async def test_collapsing_while_the_fetch_is_in_flight_still_releases(
+    browser_page, transcript_web_server
+):
+    """回取在途时收起，全文也不得留在隐藏的展开体里（审阅 R7-N1）。
+
+    那一刻 `releaseFullText` 会因 `__fullTextLoaded` 尚未置位而早退，于是 `.then` 到货后
+    把长正文写进**已收起**的 body——释放整条契约被跳过（探针实测 DOM 里留下 213 字符）。
+    """
+    page = browser_page
+    full = "@@LATE-FULL@@ " + "L" * 300
+
+    async def _slow_result_route(route):
+        await asyncio.sleep(0.6)          # 让「展开 → 立刻收起」发生在回取在途时
+        await route.fulfill(json={"tool_call_id": "c5", "missing": False, "content": full})
+
+    await page.route("**/tool-result/*", _slow_result_route)
+    await _open_ready_session(page, transcript_web_server["url"])
+    await _dispatch(page, _tool_call("Read", {"path": "big.txt"}, call_id="c5"))
+    await _dispatch(page, _preview_only_result(
+        "Read", "preview only", char_count=30_000, line_count=800, call_id="c5"))
+
+    head = page.locator(f"{MESSAGES} .tool-row").nth(0).locator(".tool-row-head")
+    await head.click()                     # 展开（回取开始）
+    await head.click()                     # 立刻收起
+    await page.wait_for_timeout(1500)      # 等回取到货
+
+    body_text = await page.locator(f"{MESSAGES} .tool-row-result").nth(0).inner_text()
+    assert "@@LATE-FULL@@" not in body_text, (
+        f"回取在途时收起，全文仍被写进隐藏的展开体：{body_text[:80]!r}"
+    )
 
 
 @pytest.mark.asyncio

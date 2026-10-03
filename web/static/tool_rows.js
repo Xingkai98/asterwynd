@@ -631,6 +631,13 @@
   }
 
   /** 收起时把展开体放回预览并释放全文（`__fullTextLoaded` 归零 ⇒ 再展开重新取）。 */
+  /** 该行的展开体当前是不是收起的（N1 的判据：回取在途时用户可能已经收起）。 */
+  function rowCollapsed(row) {
+    var head = row.querySelector ? row.querySelector('.tool-row-head') : null;
+    return !head || head.getAttribute('aria-expanded') !== 'true';
+  }
+
+  /** 收起时把展开体放回预览并释放全文（`__fullTextLoaded` 归零 ⇒ 再展开重新取）。 */
   function releaseFullText(doc, row) {
     if (!row.__fullTextLoaded || row.__previewText === null) return;
     row.__fullTextLoaded = false;
@@ -676,6 +683,10 @@
         row.__previewText = previewText;
         row.__previewOnly = false;
         row.__fullTextLoaded = true;
+        // 回取在途时用户已经收起（审阅 R7-N1）：这里写完立刻释放，否则长正文会留在
+        // **隐藏**的展开体里——收起那一刻 `releaseFullText` 因 `__fullTextLoaded` 还没
+        // 置位而早退，等于那次释放被跳过了。
+        if (rowCollapsed(row)) releaseFullText(doc, row);
       })
       .catch(function () {
         row.__fullTextLoading = false;
