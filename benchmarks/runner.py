@@ -179,7 +179,7 @@ class BenchmarkRunner:
                 ["docker", "info"],
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=15, errors="replace",
             )
         except Exception as exc:
             return DockerPreflightResult(
@@ -676,7 +676,7 @@ class BenchmarkRunner:
             capture_output=True,
             text=True,
             timeout=30,
-            check=True,
+            check=True, errors="replace",
         )
         return worktree
 
@@ -696,7 +696,7 @@ class BenchmarkRunner:
                 )
             subprocess.run(
                 ["git", "clone", "--shared", str(cache_dir), str(repo_dir)],
-                capture_output=True, text=True, timeout=60, check=True,
+                capture_output=True, text=True, timeout=60, check=True, errors="replace",
             )
         else:
             self._git_clone_with_retry(
@@ -705,7 +705,7 @@ class BenchmarkRunner:
 
         subprocess.run(
             ["git", "checkout", commit],
-            cwd=repo_dir, capture_output=True, text=True, timeout=30, check=True,
+            cwd=repo_dir, capture_output=True, text=True, timeout=30, check=True, errors="replace",
         )
         return repo_dir
 
@@ -725,7 +725,7 @@ class BenchmarkRunner:
             try:
                 subprocess.run(
                     args,
-                    capture_output=True, text=True, timeout=300, check=True,
+                    capture_output=True, text=True, timeout=300, check=True, errors="replace",
                 )
                 return
             except subprocess.CalledProcessError as exc:
@@ -763,7 +763,7 @@ class BenchmarkRunner:
                 for pre_cmd in spec["pre_install"]:
                     subprocess.run(
                         pre_cmd, shell=True, cwd=workspace,
-                        capture_output=True, text=True, timeout=60,
+                        capture_output=True, text=True, timeout=60, errors="replace",
                     )
         else:
             pip_packages = ["pytest", "setuptools<70"]
@@ -784,14 +784,14 @@ class BenchmarkRunner:
         log(f"Creating Python {python_ver} venv and installing deps (repo={repo}, version={loaded.task.version})...")
         subprocess.run(
             ["uv", "venv", "--python", python_ver],
-            cwd=workspace, capture_output=True, text=True, timeout=120,
+            cwd=workspace, capture_output=True, text=True, timeout=120, errors="replace",
         )
         venv_python = str(workspace / ".venv" / "bin" / "python")
 
         install_args = ["uv", "pip", "install", "--python", venv_python] + pip_packages + ["-e", "."]
         proc = subprocess.run(
             install_args,
-            cwd=workspace, capture_output=True, text=True, timeout=300,
+            cwd=workspace, capture_output=True, text=True, timeout=300, errors="replace",
         )
         if proc.returncode == 0:
             log(f"Dependencies installed successfully ({len(pip_packages)} packages)")
@@ -800,11 +800,11 @@ class BenchmarkRunner:
             install_args2 = ["uv", "pip", "install", "--python", venv_python] + pip_packages
             subprocess.run(
                 install_args2,
-                cwd=workspace, capture_output=True, text=True, timeout=300,
+                cwd=workspace, capture_output=True, text=True, timeout=300, errors="replace",
             )
             subprocess.run(
                 ["uv", "pip", "install", "--python", venv_python, "-e", "."],
-                cwd=workspace, capture_output=True, text=True, timeout=300,
+                cwd=workspace, capture_output=True, text=True, timeout=300, errors="replace",
             )
 
     def _cleanup_external_repo(self, workspace: Path) -> None:
@@ -874,7 +874,7 @@ class BenchmarkRunner:
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=10, errors="replace",
             )
             if result.returncode == 0 and result.stdout.strip() == candidate:
                 roots.append(candidate)
@@ -894,7 +894,7 @@ class BenchmarkRunner:
             cwd=workspace,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10, errors="replace",
         )
         if source_result.stdout.strip():
             source_patch.write_text(source_result.stdout, encoding="utf-8")
@@ -911,7 +911,7 @@ class BenchmarkRunner:
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=10, errors="replace",
             )
             if apply_result.returncode != 0:
                 raise RuntimeError(
@@ -939,7 +939,7 @@ class BenchmarkRunner:
             cwd=workspace,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10, errors="replace",
         )
         if patch.returncode != 0:
             raise RuntimeError(
@@ -1010,7 +1010,7 @@ run_simple('127.0.0.1', {port}, application, use_reloader=False)
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
-                env=env,
+                env=env, errors="replace",
             )
             output = f"$ {command}\n\n{proc.stdout}{proc.stderr}\n[Exit code: {proc.returncode}]"
             return proc.returncode, output, (time.time() - start) * 1000
@@ -1036,7 +1036,7 @@ def _run_git(args: list[str], cwd: Path) -> str:
         capture_output=True,
         text=True,
         timeout=10,
-        check=True,
+        check=True, errors="replace",
     )
     return proc.stdout.strip()
 

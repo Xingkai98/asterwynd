@@ -268,7 +268,7 @@ class ProcessBackend:
                 cwd=str(cwd) if cwd else None,
                 capture_output=True,
                 text=True,
-                timeout=timeout or self.timeout,
+                timeout=timeout or self.timeout, errors="replace",
             )
             duration_ms = (time.perf_counter() - start) * 1000
             return SandboxResult(

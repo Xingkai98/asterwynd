@@ -29,7 +29,7 @@ def _run_git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
         ["git", "-c", f"user.name={_GIT_USER_NAME}", "-c", f"user.email={_GIT_USER_EMAIL}", *args],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
 MAX_INDEX_LINES = 200
 MAX_INDEX_BYTES = 25_000
@@ -420,7 +420,7 @@ class PersistentMemory:
                 ["git", "init", "-q"],
                 cwd=self.memory_dir,
                 capture_output=True,
-                text=True,
+                text=True, errors="replace",
             )
             if proc.returncode != 0:
                 logger.warning("Failed to git init memory dir: %s", proc.stderr)

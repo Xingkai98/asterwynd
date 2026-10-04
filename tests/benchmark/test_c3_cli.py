@@ -24,7 +24,7 @@ def _git(repo, *args):
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
-        check=True,
+        check=True, errors="replace",
     )
 
 
@@ -33,7 +33,7 @@ def _git_out(repo, *args):
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
-        check=True,
+        check=True, errors="replace",
     ).stdout.strip()
 
 

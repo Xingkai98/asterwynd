@@ -493,7 +493,7 @@ def test_benchmark_cli_repeat_aggregates_real_results(tmp_path, monkeypatch):
 
 
 def _git(repo, *args):
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, errors="replace")
 
 
 def _git_out(repo, *args):
@@ -502,7 +502,7 @@ def _git_out(repo, *args):
         cwd=repo,
         check=True,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     ).stdout.strip()
 
 

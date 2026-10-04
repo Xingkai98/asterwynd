@@ -22,7 +22,7 @@ WT_DIR = ".asterwynd/worktrees"
 
 def _run_git(repo, *args, check=True):
     return subprocess.run(
-        ["git", *args], cwd=repo, check=check, capture_output=True, text=True
+        ["git", *args], cwd=repo, check=check, capture_output=True, text=True, errors="replace"
     )
 
 

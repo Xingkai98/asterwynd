@@ -108,6 +108,22 @@
 
 ## 未实现队列
 
+### 1. `fix-windows-encoding-and-guard`
+
+状态：实现中（分支 `fix-windows-encoding-and-guard/2026-10-04`）。
+
+收口「本地文件 I/O 依赖进程 locale 默认编码」这一类缺陷，并把它变成**机械可拦 + CI 可复现**：
+
+- **生产修复**：`agent/session.py` 六处 `open()` 补显式 UTF-8，读侧显式捕获 `UnicodeDecodeError`（不再冒泡）；`list_sessions()` 单条损坏降级为 `damaged: True` + 可读 `reason`（此前一个坏文件就让 Hub 列表整个 500）。`agent/main.py` 四处 `read_text()`。
+- **批量站点**：`agent/`、`benchmarks/`、`scripts/`、`tests/` 共 **379 处**补 `encoding="utf-8"`（文件 I/O 378 + node harness 子进程 1）。**范围修正**：子进程输出编码是**子进程的契约**（我们的 python CLI 在 Windows 上写 GBK），初版给全部 71 处 `subprocess(text=True)` 都补严格 UTF-8 反而新增 11 条红，已改为只钉确定输出 UTF-8 的 node harness。
+- **L1 机械守卫**：`tests/web_tests/test_encoding_hygiene.py`（AST 全仓扫描 + 可评审白名单 + 自检用例）。
+- **L2 行为回归**：`tests/agent/test_session_encoding.py`（emoji/CJK 往返、`LC_ALL=C`+`PYTHONCOERCECLOCALE=0` 子进程往返、PEP 597 `EncodingWarning` 断言、两条列表降级分支）。
+- **L3 CI 覆盖**：`validate` job 增加 C-locale 步骤；新增 `windows-platform` job（`windows-latest`）。
+- **纪律**：`docs/testing-guide.md` 新增「平台与编码纪律」（含「造脏数据时载荷必须真的非 UTF-8」这条踩坑经验）。
+- **顺带**：8 条 POSIX 假设的用例改为平台相关（`/etc` 在 Windows 非绝对路径、`~` 展开读 `USERPROFILE`、大小写变体前提不成立）；本机 web 套件 9 红 → **0 红**。
+
+**待办（post-merge）**：创建关联 GitHub issue 并回填编号。
+
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 
 - `foreach-budget-truncation-visibility`（issue [#286](https://github.com/Xingkai98/asterwynd/issues/286)）：**已归档 2026-10-03**。#279（静态截断可见）的独立对抗验证拆出的**同缺陷类、范围外**项——治 `max_items=0` 路径下的**预算**截断静默。`_resolve_items`（`scheduler.py:2675-2678`）在 `max_items==0` 时返回 `items[:remaining_expansion_capacity()]`，切片使 `_check_foreach_budget`（`:2167`）的 `run+delta>limit` **刚好不触发** ⇒ 超预算项**静默丢弃**（实测：60 声明 / 24 展开 / 36 静默丢，`status=completed`、`diagnostics={}`）。**交付**：扩展 #279 共享 helper `_foreach_visibility_fields`（去 `max_items>0` 前置、加成因判别字段 `items_omitted_cause`），**三出口**一致报告「声明 N / 展开 M / 省略 K」+ 成因（`max_items` vs `budget`）——dry-run 条目、`GetWorkflow(detail='nodes')` 投影、**`RunWorkflow` 结果信封**（用户拍板 OQ2=(b) 新增出口，一并补 #279 静态字段缺口）；字段**后写**绕过 `_bounded_node` 白名单；成因字段不复用既有 `reason` 键。**对抗验证修正**：proposal 的「非 terminal 一律响亮」被实测证伪（切片 ≤ `max_fan_in` 时非 terminal 同样静默），边界文字改「切片后预算仍够图跑完即静默」；design「静态路径逐字节不变」改为「既有字段值不变 + 新增成因键」。**Non-Goal**：不改 `max_items` 默认值（#276）、不改 `max_items=0` 语义、不改 #279 静态面、成因不细化到绑定维度、不改 `GetWorkflow` 默认 `detail='summary'` 出口。research_tier = light。**验收**：review-loop 2 轮 PASS（R1 PASS + 3 Low → 修 → R2 确认 PASS）；新测试 7 条（`test_foreach_truncation_visibility.py` 25 passed）；`agent/{subagent,tools}` 1710 passed；benchmark-gate PASS（1.0000）；全量除 2 处预存在 `/tmp` 环境失败外全绿。

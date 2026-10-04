@@ -783,7 +783,7 @@ def _git(repo: Path, *args: str) -> str:
     import subprocess
 
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True, errors="replace"
     )
     return proc.stdout.strip()
 

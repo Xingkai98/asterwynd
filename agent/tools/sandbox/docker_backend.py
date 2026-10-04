@@ -41,7 +41,7 @@ def _needs_sg() -> bool:
             ["docker", "info"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=5, errors="replace",
         )
         return probe.returncode != 0
     except Exception:
@@ -88,7 +88,7 @@ class DockerBackend:
                 _docker_argv(["info"]),
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=5, errors="replace",
             )
             return proc.returncode == 0
         except Exception:
@@ -196,7 +196,7 @@ class DockerBackend:
                 _docker_argv(["rm", "-f", cid]),
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=10, errors="replace",
             )
         except Exception:
             pass

@@ -240,7 +240,7 @@ def test_result_ref_resolves_across_processes(tmp_path):
         cwd=str(Path(__file__).resolve().parents[3]),
         capture_output=True,
         text=True,
-        check=True,
+        check=True, errors="replace",
     )
     payload = json.loads(completed.stdout)
     assert payload["content"] == "cross-process payload"

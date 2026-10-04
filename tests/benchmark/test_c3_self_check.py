@@ -179,7 +179,7 @@ def _run_self_check(run_dir: Path, *extra: str):
     return subprocess.run(
         [sys.executable, str(_REPO_ROOT / "scripts" / "self_check.py"), str(run_dir), *extra],
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
 
 

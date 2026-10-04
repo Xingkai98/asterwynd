@@ -47,7 +47,7 @@ def _interpreter_for(version: str) -> str | None:
     try:
         found = subprocess.run(
             ["uv", "python", "find", version],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, timeout=30, check=False, errors="replace",
         )
         if found.returncode == 0 and found.stdout.strip():
             return found.stdout.strip()
@@ -99,7 +99,7 @@ def test_source_compiles_on_lowest_supported_python():
     )
     proc = subprocess.run(
         [interpreter, "-c", script, json.dumps([str(p) for p in targets])],
-        capture_output=True, text=True, timeout=300, check=False,
+        capture_output=True, text=True, timeout=300, check=False, errors="replace",
     )
     if proc.returncode != 0:
         pytest.fail(

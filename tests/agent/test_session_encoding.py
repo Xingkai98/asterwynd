@@ -99,11 +99,13 @@ def test_list_sessions_survives_a_non_utf8_locale_file(tmp_path):
         json.dumps([{"role": "user", "content": "中文乱码"}], ensure_ascii=False)
         .encode("gbk"))
 
-    # 再造一条 snapshot.json 本身不可解码的（走另一条降级分支）
+    # 再造一条 snapshot.json 本身不可解码的（走另一条降级分支）。
+    # **载荷必须含非 ASCII**：纯 ASCII 的 JSON 用 GBK 编码后仍是合法 UTF-8，
+    # 那样根本触发不到解码失败——本用例第一版就踩了这个坑（断言恒失败）。
     worse_dir = root / "sess_worse"
     worse_dir.mkdir(parents=True, exist_ok=True)
     (worse_dir / "snapshot.json").write_bytes(
-        json.dumps({"session_id": "sess_worse", "mode": "build"},
+        json.dumps({"session_id": "sess_worse", "mode": "build", "note": "中文"},
                    ensure_ascii=False).encode("gbk"))
     (worse_dir / "messages.json").write_text("[]", encoding="utf-8")
 

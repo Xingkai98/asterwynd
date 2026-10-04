@@ -19,7 +19,7 @@ def _git(repo, *args):
 
 def _git_out(repo, *args):
     return subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, errors="replace"
     ).stdout.strip()
 
 

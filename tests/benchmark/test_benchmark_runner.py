@@ -632,7 +632,7 @@ def _load_task(task_dir: Path):
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, errors="replace")
 
 
 def _git_out(repo: Path, *args: str) -> str:
@@ -641,7 +641,7 @@ def _git_out(repo: Path, *args: str) -> str:
         cwd=repo,
         check=True,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     ).stdout.strip()
 
 

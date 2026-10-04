@@ -65,12 +65,12 @@ def _task_dir(tmp_path: Path, task_id: str, repo_path: Path) -> Path:
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, errors="replace")
 
 
 def _git_out(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, errors="replace",
     ).stdout.strip()
 
 

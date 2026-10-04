@@ -59,10 +59,10 @@ UnicodeDecodeError: 'gbk' codec can't decode byte 0xa8 in position 47
 
 ## Recommended Direction
 
-1. **边界显式**（D1）：`agent/session.py` 6 处 + `agent/main.py` 4 处补 `encoding="utf-8"`；读侧加 `errors="replace"` 使历史脏文件降级而非抛异常。
+1. **边界显式**（D1）：`agent/session.py` 6 处 + `agent/main.py` 4 处补 `encoding="utf-8"`；并把 `UnicodeDecodeError` 纳入捕获（它**不是** `OSError`，此前直接冒泡）。读侧**不**用 `errors="replace"`：那会把半损内容当完整会话交付。
 2. **单条降级**（D4）：`list_sessions()` 遇到不可解码/损坏的会话文件 SHALL 跳过该条并**如实标注**（不静默、不 500），返回其余可用会话。
-3. **L1 机械守卫**：新增全仓静态扫描测试（沿用 `tests/web_tests/test_python_version_compat.py` 的形态），命中「`open`/`read_text`/`write_text`/`subprocess(text=True)` 缺 encoding」即失败并列出 `file:line`，配显式白名单 + 理由。
-4. **L2 行为回归**：新增 `tests/agent/test_session_encoding.py` —— emoji/CJK 往返；**在 `LC_ALL=C` + `PYTHONCOERCECLOCALE=0` 子进程里**复现非 UTF-8 locale 条件（Linux 上等价于 Windows 的 GBK，且更严格）；`PYTHONWARNDEFAULTENCODING=1` 下断言无 `EncodingWarning`（PEP 597）；列表降级；web 层 `GET /api/sessions` 返回 200。
+3. **L1 机械守卫**：新增全仓静态扫描测试（沿用 `tests/web_tests/test_python_version_compat.py` 的形态），命中「`open`/`read_text`/`write_text` 缺 encoding」与「`subprocess(text=True)` 既无 `encoding=` 也无 `errors=`」即失败并列出 `file:line`，配显式白名单 + 理由。
+4. **L2 行为回归**：新增 `tests/agent/test_session_encoding.py` —— emoji/CJK 往返；**在 `LC_ALL=C` + `PYTHONCOERCECLOCALE=0` 子进程里**复现非 UTF-8 locale 条件（Linux 上等价于 Windows 的 GBK，且更严格）；`PYTHONWARNDEFAULTENCODING=1` 下断言无 `EncodingWarning`（PEP 597）；**两条**列表降级分支（快照坏 / 消息坏，且脏数据载荷必须真的非 UTF-8）；Hub 层在 `tests/web_tests/test_multi_session.py` 补 2 条（含 emoji 的会话 → 接口 200 且出现在列表里；单条损坏 → 200 + `damaged`/`reason`）。
 5. **L3 CI 覆盖**：`validate` job 增加 C-locale 步骤（便宜、直接守编码类）+ 新增 `windows-latest` job 跑子集（覆盖 Windows 路径语义类，现有 9 条红灯正属此类）。
 6. **纪律**：`docs/testing-guide.md` 写明「本地 I/O 一律显式 UTF-8；本机 Windows 红灯 MUST 修或进白名单，SHALL NOT 长期当环境噪声」。
 
@@ -75,5 +75,7 @@ UnicodeDecodeError: 'gbk' codec can't decode byte 0xa8 in position 47
 | L2 非 UTF-8 locale | `test_roundtrip_survives_non_utf8_locale`（子进程 `LC_ALL=C` + `PYTHONCOERCECLOCALE=0`） | 往返成功；**在 Linux CI 上也能抓到**「去掉 encoding」的回归 |
 | L2 默认编码告警 | 同文件，`PYTHONWARNDEFAULTENCODING=1` 子进程断言无 `EncodingWarning` | 任何新引入的「依赖 locale 默认编码」在运行时可见 |
 | L2 列表降级 | `test_list_sessions_skips_undecodable_file` | 损坏条目被跳过并标注，其余会话仍返回，**不抛异常** |
-| L2 接口 | `test_api_sessions_returns_200_with_emoji_session` | 某会话含 emoji 时 `GET /api/sessions` = 200 且含该会话元数据 |
+| L2 接口 | `test_api_sessions_returns_200_with_emoji_session`（在 `tests/web_tests/test_multi_session.py`） | 某会话含 emoji 时 `GET /api/sessions` = 200 且含该会话元数据 |
+| L2 接口 | `test_api_sessions_marks_damaged_entry_without_failing` | 单条损坏 → 仍 200，该条带 `damaged` + `reason` |
+| L2 子进程 | `test_benchmark_smoke_has_no_decode_crash`（人工复核：`asterwynd benchmark … --agent fake` 的 `UnicodeDecodeError` 计数 = 0） | 捕获文本的子进程不再因解码崩掉（此前一次跑 16 处） |
 | 变异 | 去掉任一 `encoding=` → L1 红；去掉列表降级 → L2 红；接口容错去掉 → web 用例红 | 三条变异各杀对应用例 |

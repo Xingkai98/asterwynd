@@ -24,12 +24,13 @@
 
 ## What Changes
 
-1. **会话存储显式 UTF-8**：`agent/session.py` 的 6 处 `open()`（读 3 处 + 写 2 处 + 读 1 处）补 `encoding="utf-8"`；读侧另加 `errors="replace"`，让历史脏文件降级而不是抛异常。
+1. **会话存储显式 UTF-8**：`agent/session.py` 的 6 处 `open()`（读 4 处 + 写 2 处）补 `encoding="utf-8"`，并把 `UnicodeDecodeError` 显式纳入捕获（它是 `ValueError` 的子类、**不是** `OSError`，此前会直接冒泡）。读侧**不**用 `errors="replace"`：替换字符会把「半损内容」当完整会话交付，属静默降级；改为判为「损坏」并如实暴露（见第 2 条）。
 2. **列表接口容忍单条损坏**：`list_sessions()` 遇到不可解码/损坏的会话文件 SHALL 跳过该条并在结果里如实标注，SHALL NOT 让整个 `GET /api/sessions` 500（现在一个坏文件就能打掉整个 Hub）。
 3. **其余生产站点**：`agent/main.py` 的 4 处 `read_text()` 补编码。
 4. **测试站点**：`tests/**` 其余 `subprocess(..., text=True)` 补 `encoding="utf-8"`（33 处里已被 #291 修掉 4 处）。
-5. **L1 机械守卫**（新增 `tests/web_tests/test_encoding_hygiene.py`）：全仓静态扫描 `agent/ web/ benchmarks/ scripts/ tests/`，命中三类站点即失败并列出 `file:line`——`open(...)` 缺 `encoding=`（排除 `rb/wb/ab`、`os.open`、fd 形态）、`Path.read_text()/write_text()` 缺 `encoding=`、`subprocess.run/Popen/check_output(..., text=True)` 缺 `encoding=`；配一份**显式白名单 + 理由**（例外可见、可评审）。
-6. **L2 行为回归**（新增 `tests/agent/test_session_encoding.py`）：
+5. **L1 机械守卫**（新增 `tests/web_tests/test_encoding_hygiene.py`）：全仓静态扫描 `agent/ web/ benchmarks/ scripts/ tests/`，命中三类站点即失败并列出 `file:line`——`open(...)` 缺 `encoding=`（排除 `rb/wb/ab`、非文件 open 如 PIL `Image.open`、fd 形态）、`Path.read_text()/write_text()` 缺 `encoding=`、`subprocess(..., text=True)` **既无 `encoding=` 也无 `errors=`**；配一份**显式白名单 + 理由**（例外可见、可评审）。
+6. **子进程口径（与文件 I/O 相反，实测驱动）**：子进程的输出编码是**子进程自己的契约**——我们自己的 python CLI 在 Windows 上往管道写 locale 编码（GBK），父进程若强行按严格 UTF-8 解码反而会崩（实测 `tests/test_flow_policy.py` 的 `show.stdout` 变 `None`，一次改动新增 11 条红）；反过来，子进程写 UTF-8 而父进程按 locale 解码时 `_readerthread` 会抛 `UnicodeDecodeError` 让整段输出丢失（实测 benchmark 一次跑出 16 处）。故规则是：**要么声明 `encoding=`（确定 UTF-8，如本仓 node harness），要么至少 `errors="replace"`（不确定时也不许崩）**——本 change 给 70 处捕获文本的 subprocess 加了 `errors="replace"`。
+7. **L2 行为回归**（新增 `tests/agent/test_session_encoding.py`）：
    - emoji（👋）+ CJK + 生僻字往返：`save()` → `load()` 内容一致；
    - 同一段往返放进**子进程**、用 `LC_ALL=C` + `PYTHONCOERCECLOCALE=0`（必要时 `-X utf8=0`）运行，必须同样成功——这是在 Linux 上等价复现 Windows/GBK 条件的办法（ASCII locale 比 GBK 更严格）；
    - 同进程再跑一遍并断言**没有 `EncodingWarning`**（PEP 597：`PYTHONWARNDEFAULTENCODING=1` 下默认编码使用会告警），把「依赖默认编码」变成运行时可观测信号；
@@ -75,7 +76,7 @@
 
 | 文件 | 改动 |
 |------|------|
-| `agent/session.py` | 6 处 `open()` 补 `encoding="utf-8"`（读侧加 `errors="replace"`）；`list_sessions()` 单条降级 + 结构化标注 |
+| `agent/session.py` | 6 处 `open()` 补 `encoding="utf-8"` + 捕获 `UnicodeDecodeError`；`list_sessions()` 单条降级（`damaged`/`reason`，不冒泡） |
 | `agent/main.py` | 4 处 `read_text()` 补 `encoding="utf-8"` |
 | `tests/**` | 其余 `subprocess(..., text=True)` 补 `encoding="utf-8"`（33 处，已修 4 处） |
 | `tests/web_tests/test_encoding_hygiene.py` | **新增**：L1 全仓静态守卫 + 白名单 |
@@ -100,5 +101,5 @@
 
 - **不做**全仓「所有 I/O 强制显式编码」的大重构：只修生产站点 + 加守卫；测试里的历史站点一次性补齐。
 - **不引入**新 lint 工具（Ruff/flake8 插件）：仓库既有的「全仓扫描测试」形态已足够，且不增加依赖。
-- **不改**存储格式（仍是 UTF-8 JSON）：本 change 只让读写**确定**用 UTF-8，不动 schema。
+- **不改**存储格式（仍是 UTF-8 JSON）：本 change 只让读写**确定**用 UTF-8，不动 schema；也**不改**子进程的编码选择（只保证解码不崩）。
 - **不改** CLI/Web 的行为契约（除了列表接口从 500 变 200 + 标注）。

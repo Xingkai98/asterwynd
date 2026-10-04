@@ -116,7 +116,7 @@ class SwebenchAdapter:
             cwd=task_output,
             capture_output=True,
             text=True,
-            timeout=max(task.timeout_seconds + 300, 600),
+            timeout=max(task.timeout_seconds + 300, 600), errors="replace",
         )
         detail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         if proc.returncode != 0:

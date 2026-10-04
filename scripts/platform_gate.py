@@ -195,7 +195,7 @@ def load_target(config_path: str) -> dict[str, Any]:
 
 def _run(args: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(args, input=input_text, capture_output=True, text=True)
+        return subprocess.run(args, input=input_text, capture_output=True, text=True, errors="replace")
     except OSError as exc:
         raise PlatformGateError(f"执行命令失败: {' '.join(args)}: {exc}")
 

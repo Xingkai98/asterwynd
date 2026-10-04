@@ -149,7 +149,7 @@ class ShellCommandRunner(AgentRunner):
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_seconds,
-                env=os.environ.copy(),
+                env=os.environ.copy(), errors="replace",
             )
 
         try:
@@ -233,7 +233,7 @@ class ClaudeCodeRunner(AgentRunner):
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_seconds,
-                env=env,
+                env=env, errors="replace",
             )
 
         try:

@@ -21,7 +21,7 @@ def _run_guard(tmp_path: Path, payload: dict) -> subprocess.CompletedProcess[str
         capture_output=True,
         text=True,
         env=env,
-        cwd=tmp_path,
+        cwd=tmp_path, errors="replace",
     )
 
 

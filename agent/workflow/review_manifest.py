@@ -257,7 +257,7 @@ def _git_text(repo_root: Path, *args: str) -> str | None:
         ["git", *args],
         cwd=repo_root,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
     if result.returncode != 0:
         return None

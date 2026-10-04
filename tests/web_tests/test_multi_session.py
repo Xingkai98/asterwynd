@@ -283,6 +283,57 @@ def test_add_workspace_rejects_nul_byte_path(tmp_path):
         assert resp.json()["error"] == "workspace_path_invalid"
 
 
+def test_api_sessions_returns_200_with_emoji_session(tmp_path):
+    """含 emoji/CJK 的会话必须能落盘并出现在 Hub 列表里（change fix-windows-encoding-and-guard）。
+
+    未修前在非 UTF-8 locale 上：`SessionStore.save()` 抛 `UnicodeEncodeError`（会话根本没落盘），
+    或 `list_sessions()` 读回时抛 `UnicodeDecodeError` → 整个 `GET /api/sessions` 500。
+    这条把**用户可见结果**钉死：接口 200 且列表里有这条会话。
+    """
+    store = SessionStore(sessions_root=str(tmp_path / ".asterwynd" / "sessions"))
+    snapshot = _make_snapshot("emojisession", "你好 👋 恭喜发财")
+    assert store.save(snapshot) is True, "含 emoji 的会话必须能保存"
+
+    config = AsterwyndConfig(web=WebConfig(workspaces=(tmp_path,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path,
+                     config=config)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": str(tmp_path)})
+
+    assert resp.status_code == 200, f"含 emoji 的会话不该让列表接口失败：{resp.text[:200]}"
+    ids = [s["session_id"] for s in resp.json()["sessions"]]
+    assert "emojisession" in ids, f"会话应出现在列表里，实际：{ids}"
+
+
+def test_api_sessions_marks_damaged_entry_without_failing(tmp_path):
+    """单条会话损坏 → 列表仍 200 且该条带 `damaged` + `reason`（不许静默消失）。"""
+    sessions_root = tmp_path / ".asterwynd" / "sessions"
+    store = SessionStore(sessions_root=str(sessions_root))
+    store.save(_make_snapshot("goodsession", "ok"))
+
+    broken = sessions_root / "brokensession"
+    broken.mkdir(parents=True, exist_ok=True)
+    (broken / "snapshot.json").write_text(
+        '{"session_id": "brokensession", "mode": "build"}', encoding="utf-8")
+    (broken / "messages.json").write_bytes(
+        '[{"role": "user", "content": "中文"}]'.encode("gbk"))   # 非 UTF-8 字节
+
+    config = AsterwyndConfig(web=WebConfig(workspaces=(tmp_path,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path,
+                     config=config)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": str(tmp_path)})
+
+    assert resp.status_code == 200
+    by_id = {s["session_id"]: s for s in resp.json()["sessions"]}
+    assert "goodsession" in by_id
+    assert "brokensession" in by_id, "损坏条目必须可见"
+    assert by_id["brokensession"].get("damaged") is True
+    assert by_id["brokensession"].get("reason")
+
+
 def test_add_workspace_reports_create_failure(tmp_path):
     """mkdir 失败（父级是普通文件）→ 500 + 结构化错误，不注册。"""
     blocker = tmp_path / "blocker-file"

@@ -10,13 +10,15 @@
 1. ``open(...)`` 未传 ``encoding=``，且 mode 不是二进制（``rb/wb/ab`` 等）；
 2. ``Path.read_text()`` / ``Path.write_text()`` 未传 ``encoding=``；
 3. ``subprocess.run/Popen/call/check_output/check_call(...)`` 传了
-   ``text=True``/``universal_newlines=True``、argv 里出现 ``node``（我们的 node harness，
-   输出确定是 UTF-8）却未传 ``encoding=``。
+   ``text=True``/``universal_newlines=True``，却既没有 ``encoding=``（已知子进程输出
+   UTF-8，如我们的 node harness）也**没有** ``errors=``（保持 locale 解码但绝不解码崩溃）。
 
-**为什么第 3 条只管 node**：子进程的输出编码是**子进程自己的契约**——我们自己那个
-python CLI 在 Windows 上往管道写的是 locale 编码（GBK），父进程若强行按严格 UTF-8 解码
-反而会崩（实测把 ``tests/test_flow_policy.py`` 的 ``show.stdout`` 变成 None）。
-所以「子进程解码」不设统一规则，只钉住**确定跨平台输出 UTF-8 的 node harness**。
+**为什么第 3 条允许「locale + errors=replace」**：子进程的输出编码是**子进程自己的契约**——
+我们自己的 python CLI 在 Windows 上往管道写 locale 编码（GBK），父进程若强行按严格 UTF-8
+解码反而会崩（实测把 ``tests/test_flow_policy.py`` 的 ``show.stdout`` 变成 None，一次改动
+新增 11 条红）；反过来，子进程写 UTF-8 而父进程按 locale 解码时，``_readerthread`` 会抛
+``UnicodeDecodeError`` 让**整段输出丢失**（实测 benchmark 一次跑出 16 处）。所以规则是：
+要么声明 ``encoding=``（确定 UTF-8），要么至少 ``errors="replace"``（不确定时也不许崩）。
 
 命中即失败并列出 ``文件:行号``。例外必须写进 :data:`ALLOWLIST` 并给出理由——白名单是
 **可评审**的显式列表，不是「扫不到就算了」。
@@ -156,13 +158,11 @@ def _check_file(path: Path) -> list[str]:
                 and kw.value.value is True
                 for kw in node.keywords
             )
-            if not wants_text or "encoding" in names:
-                continue
-            source_segment = ast.get_source_segment(source, node) or ""
-            if "node" not in source_segment:
-                continue          # 子进程编码由子进程决定，见模块 docstring
-            problems.append(
-                f"{key}: subprocess.{node.func.attr}() 跑 node harness 却未指定 encoding=")
+            # 文本子进程：要么声明 encoding=（确定 UTF-8），要么至少 errors=（不确定也不许崩）
+            if wants_text and not ({"encoding", "errors"} & names):
+                problems.append(
+                    f"{key}: subprocess.{node.func.attr}() 用 text=True 却既未指定 "
+                    f'encoding= 也未指定 errors="replace"')
 
     return problems
 
@@ -195,6 +195,7 @@ def test_guard_itself_would_catch_a_regression(tmp_path):
         "Path('d.txt').read_text()\n"
         "Path('e.txt').open('r')\n"
         "subprocess.run(['python', '-c', 'x'], text=True)\n"
+        "subprocess.run(['python', '-c', 'x'], text=True, errors='replace')\n"
         "subprocess.run(['node', '-e', 'x'], text=True)\n"
         "subprocess.run(['node', '-e', 'x'], text=True, encoding='utf-8')\n"
         "from PIL import Image\n"
@@ -205,6 +206,7 @@ def test_guard_itself_would_catch_a_regression(tmp_path):
     joined = "\n".join(problems)
     assert "open() 未指定 encoding=" in joined, joined
     assert "read_text() 未指定 encoding=" in joined, joined
-    assert "跑 node harness 却未指定 encoding=" in joined, joined
-    # 二进制模式 / 已显式声明 / 非文件 open（PIL）/ 非 node 子进程 **不得**被误报
-    assert len(problems) == 4, f"误报/漏报了：{joined}"
+    assert "既未指定 encoding= 也未指定" in joined, joined
+    # 二进制模式 / 已显式声明（encoding 或 errors）/ 非文件 open（PIL）**不得**被误报。
+    # 命中应为 5 条：`open('a.txt')`、`read_text()`、`Path.open('r')`、两个 `text=True` 子进程。
+    assert len(problems) == 5, f"误报/漏报了：{joined}"

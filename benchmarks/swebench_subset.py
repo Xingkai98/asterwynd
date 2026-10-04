@@ -197,7 +197,7 @@ def gold_check(
         cwd=base_worktree,
         capture_output=True,
         text=True,
-        timeout=timeout,
+        timeout=timeout, errors="replace",
     )
     return proc.returncode
 
@@ -233,7 +233,7 @@ def _gold_check_external(
         capture_output=True,
         text=True,
         timeout=timeout,
-        env=env,
+        env=env, errors="replace",
     )
     return proc.returncode
 
@@ -265,7 +265,7 @@ def _install_repo_deps(root: Path, worktree: Path, timeout: int) -> dict | None:
         [str(python), "-m", "pip", "install", "-q", "setuptools", "wheel"],
         capture_output=True,
         text=True,
-        timeout=timeout,
+        timeout=timeout, errors="replace",
     )
     for spec in (".", ".[test]"):
         proc = subprocess.run(
@@ -273,7 +273,7 @@ def _install_repo_deps(root: Path, worktree: Path, timeout: int) -> dict | None:
             cwd=worktree,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=timeout, errors="replace",
         )
         if proc.returncode == 0:
             break
