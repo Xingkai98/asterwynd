@@ -27,10 +27,10 @@
 ## 4. CI 与纪律
 
 - [x] 4.1 `.github/workflows/ci.yml`：`validate` job 增加 C-locale 步骤（`LC_ALL=C` + `PYTHONCOERCECLOCALE=0` + `PYTHONUTF8=0`，跑 session/encoding/server 子集）；本机模拟该步骤通过
-- [x] 4.2 `.github/workflows/ci.yml`：新增 `windows-platform` job（`windows-latest` + `playwright install chromium`，跑平台敏感子集）；**本机按同一文件清单实跑 `207 passed / 1 skipped`** 作为代理验证
+- [x] 4.2 `.github/workflows/ci.yml`：新增 `windows-platform` job（`windows-latest` + `playwright install chromium`，跑平台敏感子集）；**本机按该 job 的 7 文件清单实跑 `209 passed / 1 skipped`** 作为代理验证（首跑仍须在 PR 观察）
 - [x] 4.3 `docs/testing-guide.md`：新增「平台与编码纪律」（三条规则 + 两条写平台相关测试的经验）
 - [x] 4.4 平台假设修正（8 条恒红用例）：`/etc` 在 Windows 非绝对路径 → 参数化改用**平台解析后**的敏感根；`~` 展开补 `USERPROFILE`/`HOMEDRIVE`/`HOMEPATH`；NUL 字节用例改用 `tmp_path` 绝对路径；大小写变体用例 `skipif(os.name == "nt")` 并写明前提不成立
-- [x] 4.5 本机复验：`tests/web_tests` = **533 passed / 0 failed**（本 change 之前 9 failed；+2 为 Hub 层新用例）；13 文件对比块 = pristine master **34 failed → 本分支 23 failed**，**新增回归 0 条**，另有 **11 条既有红**被本次修复（memory / persistent / reversibility / read_doc）
+- [x] 4.5 本机复验：`tests/web_tests` = **533 passed / 0 failed**（本 change 之前 9 failed；+2 为 Hub 层新用例）；13 文件对比块 = pristine master **34 failed → 本分支 19 failed**，**新增回归 0 条**，另有 **15 条既有红**被本次修复（memory / persistent / reversibility / read_doc；其中 4 条由 subprocess 的 `errors="replace"` 一并救回）
 - [x] 4.6（原始记录）**benchmark smoke**：本 change 触及 `agent/` 核心路径，触发核心路径 smoke 要求。实测 `uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir <tmp>`：**本 change 之前**该命令在本机（Windows + GBK locale）因 `Path.read_text()` 解码 UTF-8 直接 `UnicodeDecodeError` 失败；**本 change 之后**可正常跑完（`Tasks: 72 | passed: 5 | warnings: 0 | unsupported: 38 | failed: 29`——失败项是 fake runner 对未实现任务类型的预期结果，关键结论是**命令本身不再因编码崩溃**）
 
 ## 5. 收尾

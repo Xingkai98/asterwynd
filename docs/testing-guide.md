@@ -25,13 +25,18 @@ path.read_text(encoding="utf-8")                    # 我们自己的数据
 path.read_text(encoding="utf-8", errors="replace")  # 用户/第三方内容（不许把「能读」变成崩溃）
 ```
 
-**子进程是例外，且方向相反**：`subprocess.run(..., text=True)` 的输出编码是**子进程自己的契约**——我们自己的 python CLI 在 Windows 上往管道写的是 locale 编码，父进程若强行按严格 UTF-8 解码反而会崩（实测把 `tests/test_flow_policy.py` 的 `show.stdout` 变成 `None`，一次改动新增 11 条红）。所以只在**确定跨平台输出 UTF-8** 的子进程上写 `encoding="utf-8"`（本仓即 node harness），其余保持交给 locale。
+**子进程的规则不同（输出编码是子进程的契约）**：`subprocess.run(..., text=True)` 不强行指定编码——我们自己的 python CLI 在 Windows 上往管道写的是 locale 编码，父进程若一律按严格 UTF-8 解码反而会崩（实测把 `tests/test_flow_policy.py` 的 `show.stdout` 变成 `None`，一次改动新增 11 条红）。但**也绝不允许因为解码崩掉**：子进程写 UTF-8 而父进程按 locale 解码时，`subprocess._readerthread` 会抛 `UnicodeDecodeError` 让整段输出丢失（实测 benchmark 一次跑出 16 处）。因此对**每一个** `text=True` 的子进程，二者至少要有一个：
+
+```python
+subprocess.run(["node", "-e", harness], text=True, encoding="utf-8")               # 确定输出 UTF-8
+subprocess.run(["git", "status"], text=True, errors="replace")                     # 不确定 → 至少不崩
+```
 
 **规则二：这类缺陷不许再靠人眼评审拦。** 仓库有一条机械守卫
 `tests/web_tests/test_encoding_hygiene.py`（AST 扫描 `agent/ web/ benchmarks/ scripts/ tests/`），
-命中「缺 `encoding=` 的 `open`/`read_text`/`write_text`」与「跑 node harness 的 `text=True`
-子进程缺 `encoding=`」即失败。例外必须写进该文件的 `ALLOWLIST` 并给出理由——**白名单可评审，
-静默放行不行**。
+命中「缺 `encoding=` 的 `open`/`read_text`/`write_text`」与「`text=True` 的子进程**既无
+`encoding=` 也无 `errors=`**」即失败。例外必须写进该文件的 `ALLOWLIST` 并给出理由——**白名单
+可评审，静默放行不行**。
 
 **规则三：平台信号必须进 CI，不许当环境噪声容忍。**
 
@@ -41,7 +46,7 @@ path.read_text(encoding="utf-8", errors="replace")  # 用户/第三方内容（�
 | 信号面 | 手段 | 覆盖 |
 |---|---|---|
 | 非 UTF-8 locale | `validate` job 的 C-locale 步骤（`LC_ALL=C` + `PYTHONCOERCECLOCALE=0` + `PYTHONUTF8=0`） | 编解码类：会话持久化、列表容错 |
-| 平台语义 | `windows-platform` job（`windows-latest`，跑平台敏感子集） | Windows 路径语义（敏感根、`~` 展开）、GBK 解码、前端工具行 |
+| 平台语义 | `windows-platform` job（`windows-latest`，跑平台敏感子集） | Windows 路径语义（敏感根、`~` 展开、大小写前提）、编码往返（该 runner 是 en-US/cp1252，**不是** GBK；GBK 只在中文 Windows 本机成立）、前端工具行 |
 
 **本机 Windows 出现红灯时**：MUST 修掉，或写进守卫的 `ALLOWLIST`/用 `skipif` 并说明「平台前提不成立」
 （例如「路径大小写不敏感」在 Windows 上无法成立）；SHALL NOT 以「pristine 同样失败」为由长期挂账。

@@ -65,17 +65,22 @@ def _kwarg_names(call: ast.Call) -> set[str]:
 def _literal_mode(call: ast.Call) -> str | None:
     """``open`` 的 mode 字面量；拿不到返回 None。
 
-    **位置不同**：内置 ``open(path, mode)`` 的 mode 是第 2 个位置参数，而绑定方法
-    ``Path.open(mode)`` 的是第 1 个——写错会把 ``Path('x.bin').open('rb')`` 误报成
-    缺 encoding（保守方向，但会给合法代码添噪声）。
+    **位置取决于调用形态，两种都会踩**：
+
+    - 绑定方法 ``Path('x').open(mode)``：只有 1 个位置参数，mode 是 ``args[0]``；
+    - 模块函数 ``open(path, mode)`` / ``io.open(path, mode)`` / ``builtins.open(path, mode)``：
+      两个位置参数，mode 是 ``args[1]``。
+
+    两处都写错都会出事：把绑定方法的 ``args[0]`` 误当路径 → ``Path('x.bin').open('rb')``
+    误报；统一按 ``args[0]`` 取 → ``io.open('b.txt', 'w')`` 里的**路径**含 ``b`` 被当成二进制
+    模式而**静默漏检**（假阴性比误报更危险）。
     """
     is_bound_open = isinstance(call.func, ast.Attribute) and call.func.attr == "open"
     mode_node: ast.expr | None = None
-    if is_bound_open:
-        if call.args:
-            mode_node = call.args[0]
+    if is_bound_open and len(call.args) == 1:
+        mode_node = call.args[0]          # Path('x').open('rb')
     elif len(call.args) >= 2:
-        mode_node = call.args[1]
+        mode_node = call.args[1]          # open('x', 'rb') / io.open('x', 'rb')
     for kw in call.keywords:
         if kw.arg == "mode":
             mode_node = kw.value
@@ -209,6 +214,9 @@ def test_guard_itself_would_catch_a_regression(tmp_path):
         "subprocess.run(['node', '-e', 'x'], text=True)\n"
         "subprocess.run(['node', '-e', 'x'], text=True, encoding='utf-8')\n"
         "Path('g.bin').open('rb')\n"
+        "import io\n"
+        "io.open('b.txt', 'w')\n"
+        "io.open('i.txt', 'rb')\n"
         "import os\n"
         "os.open('h.txt', os.O_RDONLY)\n"
         "from PIL import Image\n"
@@ -221,5 +229,6 @@ def test_guard_itself_would_catch_a_regression(tmp_path):
     assert "read_text() 未指定 encoding=" in joined, joined
     assert "既未指定 encoding= 也未指定" in joined, joined
     # 二进制模式 / 已显式声明（encoding 或 errors）/ 非文件 open（PIL）**不得**被误报。
-    # 命中应为 5 条：`open('a.txt')`、`read_text()`、`Path.open('r')`、两个 `text=True` 子进程。
-    assert len(problems) == 5, f"误报/漏报了：{joined}"
+    # 命中应为 6 条：`open('a.txt')`、`read_text()`、`Path.open('r')`、`io.open('b.txt','w')`、
+    # 两个 `text=True` 子进程；`Path.open('rb')` / `io.open(...,'rb')` / `os.open` / PIL 不得误报。
+    assert len(problems) == 6, f"误报/漏报了：{joined}"
