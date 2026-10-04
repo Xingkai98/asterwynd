@@ -46,7 +46,7 @@
 - [x] 5.6 (closeout) `uv run python scripts/check_openspec_artifacts.py` 与 `--check-archived --skip-protected-paths --skip-backlog`
 - [x] 5.7 (closeout) `/review-loop` 独立审阅至 PASS 或 3 轮封顶，报告落 `reviews/building-review.md` + manifest（manifest 在 5.4 归档 move 之后生成）——**4 轮**：R1 `CHANGES_REQUESTED`（8 条 MUST-FIX）→ R3 `CHANGES_REQUESTED`（3 条）→ **R4 `PASS`（0 条 MUST-FIX）**，run id `building-review-fix-windows-encoding-and-guard-20261004-r4`
 - [x] 5.8 提交分支并写好 PR 描述
-- [ ] (post-merge) 推送分支并创建 PR、创建关联 GitHub issue 并把编号回填
+- [x] 推送分支并创建 PR、创建关联 GitHub issue（#294）并把编号回填
 
 ## 6. 审阅修复（review-loop Round 1 → Round 2）
 

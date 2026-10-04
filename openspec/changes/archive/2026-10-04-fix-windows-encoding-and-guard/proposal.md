@@ -1,6 +1,6 @@
 # Proposal: 修 Windows/locale 编码缺陷类并加机械防护（会话持久化 + 本地文件 I/O）
 
-- 关联 issue：待创建（网络可用时建号并回填）。
+- 关联 issue：[#294](https://github.com/Xingkai98/asterwynd/issues/294)（实现期网络可用，已建号并回填）。
 - 用户报告：在 Windows 上起 web 实测时发现两处可见故障——Hub 会话列表接口 500、新会话根本没落盘；进一步排查确认是同一类缺陷（本地文件 I/O 未显式指定编码，依赖进程 locale）。
 - 相关先例：`tests/web_tests/test_python_version_compat.py`（全仓 `rglob` 静态守卫，本次沿用其形态）；#291 里已修掉 4 处同类测试编码缺陷（`subprocess(..., text=True)`）。
 
