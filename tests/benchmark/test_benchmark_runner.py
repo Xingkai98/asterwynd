@@ -369,7 +369,7 @@ def test_run_swebench_harness_reads_report_and_maps_pass(repo, tmp_path, monkeyp
 
     calls: list[list[str]] = []
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         calls.append(command)
         run_id = "asterwynd-swebench-psf__requests-1142"
         report_path = (

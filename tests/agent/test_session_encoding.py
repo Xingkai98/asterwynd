@@ -122,6 +122,10 @@ def test_list_sessions_survives_a_non_utf8_locale_file(tmp_path):
 
 # --- 子进程：在 Linux CI 上等价复现非 UTF-8 locale --------------------------
 
+#: **脚本本体必须是纯 ASCII**：它以 `python -c <script>` 的形式经 argv 传给子进程，而在
+#: `LC_ALL=C` 下 argv 的编码是 ASCII——脚本里直接写中文/emoji 会在**父进程**编码 argv 时就
+#: `UnicodeEncodeError: surrogates not allowed`（Linux CI 实测红，Windows 本机不复现）。
+#: 非 ASCII 内容一律用 `\uXXXX` / `\U0001XXXX` 转义，语义不变。
 _ROUND_TRIP_SCRIPT = textwrap.dedent(
     """
     import json, sys
@@ -130,7 +134,7 @@ _ROUND_TRIP_SCRIPT = textwrap.dedent(
     from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 
     root = sys.argv[1]
-    text = "你好，世界 👋 恭喜发财 𝕏"
+    text = "\u4f60\u597d\uff0c\u4e16\u754c \U0001f44b \U0001f44c \u2014\u2014"
     store = SessionStore(sessions_root=root)
     snap = SessionSnapshot(
         schema_version=CURRENT_SCHEMA_VERSION, session_id="sess_sub",

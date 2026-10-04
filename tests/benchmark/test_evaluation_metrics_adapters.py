@@ -44,7 +44,7 @@ def test_swebench_adapter_passes_resolved_and_partial(tmp_path, monkeypatch) -> 
 
     partial = {"f2p_rate": 0.8, "p2p_rate": 0.5, "reward": 0.3}
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         _write_report_with_partial(
             task_output, loaded, "asterwynd", resolved=True, partial=partial
         )
@@ -66,7 +66,7 @@ def test_swebench_adapter_partial_on_failure(tmp_path, monkeypatch) -> None:
 
     partial = {"f2p_rate": 0.4, "p2p_rate": 0.2, "reward": 0.1}
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         _write_report_with_partial(
             task_output, loaded, "asterwynd", resolved=False, partial=partial
         )
@@ -86,7 +86,7 @@ def test_swebench_adapter_resolved_none_when_report_missing_fields(tmp_path, mon
     task_output = tmp_path / "task-output"
     task_output.mkdir(parents=True)
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         _write_report_with_partial(
             task_output, loaded, "asterwynd", resolved=True, partial=None
         )
