@@ -1996,7 +1996,15 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   border-bottom: 1px solid var(--border);
   margin-bottom: 8px;
 }
-.transcript-pause {
+/* 工具条左半边是动作按钮（暂停/继续实时更新 + 刷新），右半边是取数溯源。
+   动作收进 `.transcript-actions` 交给 space-between 的两端布局。 */
+.transcript-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.transcript-pause,
+.transcript-refresh {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text2);
@@ -2006,7 +2014,8 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   font-family: inherit;
   cursor: pointer;
 }
-.transcript-pause:hover { color: var(--text); border-color: var(--info); }
+.transcript-pause:hover,
+.transcript-refresh:hover { color: var(--text); border-color: var(--info); }
 .transcript-cluster { contain: content; }
 .transcript-back {
   display: block;

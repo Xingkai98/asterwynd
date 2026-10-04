@@ -6,6 +6,7 @@ Q7 的验收路径「CI 装 chromium 跑关键 smoke」：这里覆盖 node 单�
 CI 里没有浏览器时自动 skip（``p.chromium.launch`` 失败），与既有 ``test_browser.py``
 同口径；CI 的 validate job 现在会 ``playwright install chromium``，所以这条会真跑。
 """
+import json
 import threading
 import time
 
@@ -554,6 +555,269 @@ async def test_convo_tab_lazily_fetches_transcript(page, fake_web_server):
     await page.wait_for_function(
         "() => document.querySelector('.drawer-body').textContent.length > 0")
     assert [u for u in requests if "/transcript" in u], "切到「对话」没有触发请求"
+
+
+#: 终态补取回归用的一对载荷（change ``fix-node-transcript-stale-refresh``）。
+#: 第一帧代表「节点还在跑的时候抓到的那一帧」——真实缺陷里它只有首个 assistant 轮次的
+#: 两个工具调用，失败证据还是 ``running``；第二帧代表终态后的完整对话。
+_STALE_FRAME = {
+    "kind": "single", "node_id": "b", "node_kind": "subagent",
+    "subagent_id": "sa-b", "run_id": "r-b",
+    "messages": [
+        {"role": "system", "content": "你是一个受限的子 agent。"},
+        {"role": "user", "content": "实现 parse_duration"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"name": "RepoMap", "arguments": "{}", "arguments_truncated": False},
+            {"name": "Bash", "arguments": "{\"cmd\": \"ls -la && git status\"}",
+             "arguments_truncated": False},
+        ]},
+    ],
+    "truncated": False, "included_tool_results": False,
+    "limit": 50, "content_limit": 4000,
+    "reason_full": "", "reason_length": 0, "reason_truncated": False,
+    "failure_evidence": {
+        "state": "running", "total": 0, "truncated": False,
+        "message": "该 run 尚未结束，执行 trace 按设计只在终态写入——现在还没有失败证据，不代表没有失败。",
+        "items": [],
+    },
+}
+
+_FINAL_FRAME = {
+    "kind": "single", "node_id": "b", "node_kind": "subagent",
+    "subagent_id": "sa-b", "run_id": "r-b",
+    "messages": [
+        {"role": "system", "content": "你是一个受限的子 agent。"},
+        {"role": "user", "content": "实现 parse_duration"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"name": "RepoMap", "arguments": "{}", "arguments_truncated": False},
+            {"name": "Bash", "arguments": "{\"cmd\": \"ls -la && git status\"}",
+             "arguments_truncated": False},
+        ]},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"name": "Write", "arguments": "{\"path\": \"duration.py\"}",
+             "arguments_truncated": False},
+            {"name": "InspectGitDiff", "arguments": "{}", "arguments_truncated": False},
+        ]},
+        {"role": "assistant", "content": "已完成：实现位于 duration.py。"},
+    ],
+    "truncated": False, "included_tool_results": False,
+    "limit": 50, "content_limit": 4000,
+    "reason_full": "", "reason_length": 0, "reason_truncated": False,
+    "failure_evidence": {
+        "state": "present", "total": 4, "truncated": False,
+        "message": "该 run 已结束；其执行记录里有失败步骤（下面是最近的几条）。",
+        "items": [{"type": "tool_result", "step": 27, "status": "error",
+                   "error_type": "permission_denied", "tool_name": "Bash",
+                   "observation": "Error: Command denied by workspace policy",
+                   "message": None, "text_truncated": False}],
+    },
+}
+
+
+async def _open_convo_tab(page, node_id: str) -> None:
+    await page.click(f".workflow-node[data-node-id='{node_id}']")
+    await page.wait_for_selector("#workflow-drawer.open")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".drawer-body .transcript-bar")
+
+
+async def _push_completed_snapshot(page) -> None:
+    """推一张「节点 b 已终态」的快照（抽屉会因此重绘）。"""
+    completed = json.loads(json.dumps(SNAPSHOT))
+    completed["status"] = "completed"
+    for node in completed["nodes"]:
+        if node["id"] == "b":
+            node["status"] = "completed"
+            node["finished_at"] = 2.0
+    await _push_workflow_event(page, "workflow_snapshot", completed)
+
+
+async def _convo_ready(page, fake_web_server) -> None:
+    await page.set_viewport_size({"width": 1280, "height": 800})
+    await page.goto(fake_web_server["url"])
+    await page.wait_for_function("() => window.AsterwyndWorkflow !== undefined")
+    await _wait_app_ready(page)
+    # 节点 b 在 SNAPSHOT 里是 ``started``（运行中）——正是缺陷的触发条件。
+    await _start_workflow(page, SNAPSHOT)
+    await _ensure_workflow_view(page)
+    await page.evaluate("() => { window.__testTab.sessionId = 'test-session'; }")
+
+
+@pytest.mark.asyncio
+async def test_convo_tab_catches_up_after_the_node_reaches_a_terminal_state(
+    page, fake_web_server
+):
+    """终态补取（change ``fix-node-transcript-stale-refresh``，用户实测缺陷的回归）。
+
+    缺陷形态：在节点**还在跑**时打开「对话」tab → 抓到半途帧 → 节点随后终态，而
+    「终态不再重取」把补取也一并关掉、缓存又无失效路径 ⇒ 永久停在半途（用户看到
+    「跑完了对话只有两条」，且失败证据一直显示「该 run 尚未结束」）。
+
+    断言收紧到 ``== 2`` 且「再来一张终态快照仍为 2」是刻意的（审阅 M3）：只写
+    ``>= 2`` 时，**每次抽屉重绘都反复补取**（``statusAtFetch`` 不落盘的那种坏实现）
+    也能过——它会让请求数变成 3、4…，与「只补一次」的契约正好相反。
+    """
+    calls = {"n": 0}
+
+    async def _transcript_route(route):
+        calls["n"] += 1
+        await route.fulfill(json=_STALE_FRAME if calls["n"] == 1 else _FINAL_FRAME)
+
+    await page.route("**/transcript*", _transcript_route)
+    await _convo_ready(page, fake_web_server)
+    await _open_convo_tab(page, "b")
+    assert calls["n"] == 1
+    assert "该 run 尚未结束" in await page.inner_text(".drawer-body")
+
+    await _push_completed_snapshot(page)
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body')"
+        ".textContent.includes('该 run 已结束')",
+        timeout=20000,
+    )
+    assert calls["n"] == 2, f"终态后应恰好补取一次（请求数 {calls['n']}）"
+    body = await page.inner_text(".drawer-body")
+    assert "duration.py" in body, "补取后应看到终态帧的内容"
+    assert "Command denied by workspace policy" in body, (
+        "补取后应看到该 run 的失败证据条目（用户报告的第二个症状）"
+    )
+
+    # 再推一张终态快照：抽屉会重绘，但这一帧已经是终态后取的 → 不得再补。
+    await _push_completed_snapshot(page)
+    await page.wait_for_timeout(1000)
+    assert calls["n"] == 2, f"终态帧被反复补取（请求数 {calls['n']}）"
+
+
+@pytest.mark.asyncio
+async def test_terminal_node_stops_polling_after_the_catch_up(page, fake_web_server):
+    """补取完成后必须回到「终态不再轮询」（审阅 M4：轮询路径漏传 ``fetchedStatus``
+    的坏实现会让终态后每 10s 继续重取，正是本 change 要消掉的旧缺陷面）。
+
+    跨过一个完整刷新节律（``TRANSCRIPT_REFRESH_S`` = 10s）观察请求数不变。
+    """
+    calls = {"n": 0}
+
+    async def _transcript_route(route):
+        calls["n"] += 1
+        await route.fulfill(json=_STALE_FRAME if calls["n"] == 1 else _FINAL_FRAME)
+
+    await page.route("**/transcript*", _transcript_route)
+    await _convo_ready(page, fake_web_server)
+    await _open_convo_tab(page, "b")
+    await _push_completed_snapshot(page)
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body')"
+        ".textContent.includes('该 run 已结束')",
+        timeout=20000,
+    )
+    settled = calls["n"]
+    assert settled == 2, f"终态后应恰好补取一次（请求数 {settled}）"
+
+    # 节律是 10s；等 13s 确保至少跨过一个 tick。
+    await page.wait_for_timeout(13000)
+    assert calls["n"] == settled, (
+        f"终态后仍在轮询（请求数 {settled} → {calls['n']}）——补取退化成了继续重取"
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_catch_up_yields_to_pause(page, fake_web_server):
+    """暂停优先于终态补取（审阅 M1）。
+
+    ``renderDrawerConvo`` 在**每张** workflow 快照上都会重绘抽屉，所以补取若不看
+    ``paused``，用户点过「暂停实时更新」之后仍会被终态快照推动着换页——那正是暂停
+    按钮要挡的事。显式的「刷新」是用户动作，不受暂停影响。
+    """
+    calls = {"n": 0}
+
+    async def _transcript_route(route):
+        calls["n"] += 1
+        await route.fulfill(json=_STALE_FRAME if calls["n"] == 1 else _FINAL_FRAME)
+
+    await page.route("**/transcript*", _transcript_route)
+    await _convo_ready(page, fake_web_server)
+    await _open_convo_tab(page, "b")
+    assert calls["n"] == 1
+
+    await page.click(".drawer-body [data-action='pause-transcript']")
+    await _push_completed_snapshot(page)
+    await page.wait_for_timeout(1500)
+    assert calls["n"] == 1, "暂停期间发生了自动取数（终态补取绕过了暂停）"
+    assert "该 run 尚未结束" in await page.inner_text(".drawer-body"), (
+        "暂停期间面板不该被换页"
+    )
+
+    # 「继续实时更新」= 现在就跟上（审阅 R2-1）：SHALL 立即补取，而不是等下一个节律 tick。
+    await page.click(".drawer-body [data-action='pause-transcript']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body')"
+        ".textContent.includes('该 run 已结束')",
+        timeout=3000,
+    )
+    assert calls["n"] == 2, f"解除暂停后应立即补取（请求数 {calls['n']}）"
+
+    # 显式刷新：用户明确要求时照常取数（暂停只挡**自动**重取）。
+    await page.click(".drawer-body [data-action='pause-transcript']")
+    await page.click(".drawer-body [data-action='refresh-transcript']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body')"
+        ".textContent.includes('该 run 已结束')",
+        timeout=10000,
+    )
+    assert calls["n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_convo_refresh_button_bypasses_the_cache(page, fake_web_server):
+    """「刷新」动作清缓存重取（change ``fix-node-transcript-stale-refresh``）。
+
+    缓存本身没有失效路径，用户读到旧内容时需要一条不依赖节律的逃生通道。
+    同时锁住 delta 的两条边界：刷新**不改暂停状态**、**不影响其它节点缓存**。
+    """
+    calls = {"n": 0}
+
+    async def _transcript_route(route):
+        calls["n"] += 1
+        await route.fulfill(json=_STALE_FRAME if calls["n"] == 1 else _FINAL_FRAME)
+
+    await page.route("**/transcript*", _transcript_route)
+    await _convo_ready(page, fake_web_server)
+
+    # 先看节点 a（终态），让它的缓存也建立起来 → 用来验证「刷新只清自己那一格」。
+    await _open_convo_tab(page, "a")
+    assert calls["n"] == 1
+    # 切到 b 要先关抽屉：抽屉/scrim 盖住画布，直接点节点会被 scrim 拦下。
+    await page.keyboard.press("Escape")
+    await page.wait_for_selector("#workflow-drawer.open", state="detached")
+    await _open_convo_tab(page, "b")
+    assert calls["n"] == 2
+
+    # 再切一次 tab：命中缓存，不发请求（缓存契约本身不变）。
+    await page.click(".drawer-tab[data-tab='task']")
+    await page.click(".drawer-tab[data-tab='convo']")
+    await page.wait_for_selector(".drawer-body .transcript-bar")
+    assert calls["n"] == 2, "同一节点反复切 tab 不应重复请求（缓存契约被破坏）"
+
+    # 暂停状态不该被刷新改动。
+    await page.click(".drawer-body [data-action='pause-transcript']")
+    await page.click(".drawer-body [data-action='refresh-transcript']")
+    await page.wait_for_function(
+        "() => document.querySelector('.drawer-body')"
+        ".textContent.includes('该 run 已结束')",
+        timeout=10000,
+    )
+    assert calls["n"] == 3, f"「刷新」应绕过缓存重取（请求数 {calls['n']}）"
+    assert "继续实时更新" in await page.inner_text(".drawer-body"), (
+        "刷新不该改变暂停状态"
+    )
+
+    # 另一个节点（a）的缓存不该被清掉：点回去仍然命中缓存。
+    await page.keyboard.press("Escape")
+    await page.wait_for_selector("#workflow-drawer.open", state="detached")
+    await _open_convo_tab(page, "a")
+    assert calls["n"] == 3, (
+        f"刷新某节点时清掉了别的节点的缓存（请求数 {calls['n']}）"
+    )
 
 
 _ITEM_CONTAINER = {

@@ -935,14 +935,36 @@ Web 服务 SHALL 提供只读接口 `GET /api/sessions/{session_id}/workflows/{w
 - **THEN** SHALL 返回 `kind: "none"` 与结构化说明（route 附命中标签与选中出口、collect 附合并产出、未派发节点说明未执行）
 - **AND** SHALL NOT 编造 transcript
 
-前端 SHALL 在切到「对话」tab 时才请求（懒加载），SHALL 按**定死的刷新节律**按需重取（节点已到终态或用户暂停后 SHALL NOT 再重取），且对话区 SHALL 提供暂停/继续实时更新的动作。transcript 的渲染 SHALL 按行聚簇做 UI 虚拟化（SHALL NOT 按行建 DOM）。
+前端 SHALL 在切到「对话」tab 时才请求（懒加载），SHALL 按**定死的刷新节律**按需重取：节点在运行中时按节律周期重取，用户暂停后 SHALL NOT 自动重取（**暂停优先于补取**：暂停期间连终态补取也 SHALL NOT 发生）。**节点到达终态后 SHALL NOT 再周期性重取**，但**若最后一次取数发生在该节点到达终态之前，SHALL 补取一次**（终态补取）——否则运行期抓到的那一帧会被永久缓存，「跑完后对话停在半途」且该 run 的失败证据一并不可见。补取判据 SHALL 基于「取数时记录的节点状态」而不是「是否曾经取过数」，且补取后 SHALL NOT 再次触发（终态帧只补一次）；取数时状态**未记录**时按「非终态」处理（允许一次补取，且同样自收敛）。对话区 SHALL 提供**暂停/继续实时更新**与**手动刷新**两个动作；手动刷新 SHALL 绕过缓存重新取数、SHALL NOT 改变暂停状态、也 SHALL NOT 影响其它节点的缓存。transcript 的渲染 SHALL 按行聚簇做 UI 虚拟化（SHALL NOT 按行建 DOM）。
 
 #### Scenario: 对话内容的刷新与暂停
 
 - **GIVEN** 一个仍在运行的节点，用户已切到该节点的「对话」tab
 - **WHEN** 达到刷新节律
 - **THEN** SHALL 重取该节点的 transcript
-- **AND** 用户点「暂停实时更新」后 SHALL NOT 再重取（节点到终态后同样不再重取）
+- **AND** 用户点「暂停实时更新」后 SHALL NOT 再自动重取
+
+#### Scenario: 运行中取过数、随后节点到终态
+
+- **GIVEN** 用户在节点仍在运行时切到「对话」tab（此时已取数一次，载荷是运行中的快照）
+- **WHEN** 该节点到达终态（快照状态变为终态）
+- **THEN** 前端 SHALL **补取一次** transcript，使用户看到完整对话与终态失败证据
+- **AND** 补取后 SHALL NOT 再周期性重取（终态帧只补一次：再来一张终态快照也 SHALL NOT 再发请求）
+- **AND** 若最后一次取数本身已发生在终态之后，则 SHALL NOT 补取
+
+#### Scenario: 暂停期间到达终态
+
+- **GIVEN** 用户已点「暂停实时更新」，且手上这一帧取自运行期
+- **WHEN** 该节点到达终态（抽屉可能因快照重绘）
+- **THEN** 前端 SHALL NOT 自动取数（暂停优先于终态补取），面板保持用户正在读的那一帧
+- **AND** 用户随后点「继续实时更新」或「刷新」时，SHALL 立即取到终态帧（「继续」= 现在就跟上，SHALL NOT 让用户再等一个刷新节律）
+
+#### Scenario: 手动刷新绕过缓存
+
+- **GIVEN** 某节点的「对话」tab 已渲染（缓存中存在一帧载荷）
+- **WHEN** 用户点该区的「刷新」动作
+- **THEN** 前端 SHALL 忽略缓存重新取数并按新载荷重绘
+- **AND** 该动作 SHALL NOT 改变暂停状态，也 SHALL NOT 影响其它节点的缓存
 
 ### Requirement: workflow 节点失败证据只读投影
 

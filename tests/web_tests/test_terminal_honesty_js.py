@@ -33,6 +33,10 @@ def call(name: str, *args):
     result = subprocess.run(
         ["node", "-e", _HARNESS, str(GRAPH_JS), json.dumps([[name, list(args)]])],
         check=True, capture_output=True, text=True,
+        # 显式 utf-8：node 输出含中文，`text=True` 的缺省编码是 locale（Windows 中文机器
+        # 上是 GBK），会把 UTF-8 输出解成乱码/抛 UnicodeDecodeError → result.stdout 变
+        # None → 报错落在 json.loads 上，真因却是解码。
+        encoding="utf-8",
     )
     return json.loads(result.stdout)[0]
 
@@ -204,12 +208,13 @@ def test_stalled_is_terminal_for_pruning_in_both_frontend_copies():
     """D5：前端两份副本（``workflow.js`` 数组 + ``workflow_graph.js`` 函数）都要含 stalled。"""
     import re
 
-    workflow_js = (Path(__file__).parents[2] / "web" / "static" / "workflow.js").read_text()
+    workflow_js = (Path(__file__).parents[2] / "web" / "static" / "workflow.js").read_text(
+        encoding="utf-8")
     match = re.search(r"const TERMINAL_STATUSES = \[(.*?)\];", workflow_js, re.S)
     assert match, "TERMINAL_STATUSES 不在 workflow.js 里了"
     assert "stalled" in match.group(1)
 
-    graph_js = GRAPH_JS.read_text()
+    graph_js = GRAPH_JS.read_text(encoding="utf-8")
     fn = re.search(r"function isGraphTerminal\(status\)\s*\{(.*?)\n  \}", graph_js, re.S)
     assert fn, "isGraphTerminal 不在 workflow_graph.js 里了"
     assert "stalled" in fn.group(1)
