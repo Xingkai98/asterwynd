@@ -97,7 +97,7 @@ def load_run(run_dir: Path) -> dict[str, dict]:
     for task_dir in sorted(tasks_dir.iterdir()):
         result_path = task_dir / "result.json"
         if result_path.exists():
-            data = json.loads(result_path.read_text())
+            data = json.loads(result_path.read_text(encoding="utf-8"))
             tasks[task_dir.name] = data
     return tasks
 
@@ -605,7 +605,7 @@ def main():
         # Try reading run.json for metadata, fall back to directory name
         run_json = run_dir / "run.json"
         if run_json.exists():
-            meta = json.loads(run_json.read_text())
+            meta = json.loads(run_json.read_text(encoding="utf-8"))
             if meta.get("truncated"):
                 # Budget-truncated rounds are excluded from pairing (Q4).
                 print(
@@ -628,11 +628,11 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     md_path = out_dir / "comparison.md"
-    md_path.write_text(build_summary(runs, metas=metas) + build_paired_report(runs))
+    md_path.write_text(build_summary(runs, metas=metas) + build_paired_report(runs), encoding="utf-8")
     print(f"Markdown: {md_path}")
 
     html_path = out_dir / "comparison.html"
-    html_path.write_text(build_html(runs, metas=metas))
+    html_path.write_text(build_html(runs, metas=metas), encoding="utf-8")
     print(f"HTML:     {html_path}")
 
 

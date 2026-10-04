@@ -116,7 +116,7 @@ async def test_save_memory_persists_across_agent_runs(
     # Verify file was written
     mem_file = persistent_memory.memory_dir / "user-role.md"
     assert mem_file.exists()
-    content = mem_file.read_text()
+    content = mem_file.read_text(encoding="utf-8")
     assert "Backend engineer, prefers Go." in content
     assert "type: user" in content
 

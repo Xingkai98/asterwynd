@@ -8,7 +8,7 @@ from agent.workspace_policy import WorkspacePolicy
 
 @pytest.mark.asyncio
 async def test_bash_tool_runs_in_workspace(tmp_path):
-    (tmp_path / "marker.txt").write_text("workspace-marker\n")
+    (tmp_path / "marker.txt").write_text("workspace-marker\n", encoding="utf-8")
     tool = BashTool(policy=WorkspacePolicy(tmp_path))
 
     result = await tool.execute("cat marker.txt")

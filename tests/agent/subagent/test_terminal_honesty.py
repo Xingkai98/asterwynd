@@ -622,13 +622,13 @@ def test_stalled_is_treated_as_non_success_by_every_consumer():
 
 
 def _graph_status_copies() -> dict[str, set[str]]:
-    scheduler_src = (_REPO / "agent" / "subagent" / "scheduler.py").read_text()
+    scheduler_src = (_REPO / "agent" / "subagent" / "scheduler.py").read_text(encoding="utf-8")
     match = re.search(
         r"_SNAPSHOT_TERMINAL_STATUSES\s*=\s*frozenset\(\s*\{(.*?)\}\s*\)", scheduler_src, re.S
     )
     assert match, "未找到 _SNAPSHOT_TERMINAL_STATUSES"
-    workflow_js = (_REPO / "web" / "static" / "workflow.js").read_text()
-    graph_js = (_REPO / "web" / "static" / "workflow_graph.js").read_text()
+    workflow_js = (_REPO / "web" / "static" / "workflow.js").read_text(encoding="utf-8")
+    graph_js = (_REPO / "web" / "static" / "workflow_graph.js").read_text(encoding="utf-8")
     return {
         "scheduler": set(re.findall(r'"([a-z_]+)"', match.group(1))),
         "workflow.js": _extract_bracket_list(workflow_js, "TERMINAL_STATUSES"),
@@ -637,7 +637,7 @@ def _graph_status_copies() -> dict[str, set[str]]:
 
 
 def _frontend_reason_markers() -> set[str]:
-    source = (_REPO / "web" / "static" / "workflow_graph.js").read_text()
+    source = (_REPO / "web" / "static" / "workflow_graph.js").read_text(encoding="utf-8")
     match = re.search(r"SPECIFIC_REASON_MARKERS\s*=\s*\[(.*?)\]", source, re.S)
     assert match, "未找到 SPECIFIC_REASON_MARKERS"
     return set(re.findall(r"'([^']+)'", match.group(1)))

@@ -180,7 +180,7 @@ def write_workflow_record(task_output: str | Path, record: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(record, indent=2, ensure_ascii=False) + "\n",
-        errors="replace",
+        errors="replace", encoding="utf-8",
     )
     return path
 
@@ -191,7 +191,7 @@ def read_workflow_record(task_output: str | Path) -> dict | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
 

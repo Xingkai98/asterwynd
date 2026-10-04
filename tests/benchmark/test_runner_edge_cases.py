@@ -53,7 +53,7 @@ class TestApplyTestPatch:
         subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
         (repo / "tests").mkdir()
-        (repo / "tests" / "test_x.py").write_text("def test_ok():\n    pass\n")
+        (repo / "tests" / "test_x.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
 
@@ -73,18 +73,18 @@ class TestApplyTestPatch:
             ["git", "config", "user.name", "Test"], cwd=repo, check=True
         )
         source_file = repo / "src.py"
-        source_file.write_text("original\n")
+        source_file.write_text("original\n", encoding="utf-8")
         subprocess.run(["git", "add", "src.py"], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True)
 
         test_file = repo / "tests" / "test_x.py"
         test_file.parent.mkdir()
-        test_file.write_text("# original test\n")
+        test_file.write_text("# original test\n", encoding="utf-8")
         subprocess.run(["git", "add", "tests/test_x.py"], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-m", "add test"], cwd=repo, check=True)
 
         # Simulate agent edit
-        source_file.write_text("modified by agent\n")
+        source_file.write_text("modified by agent\n", encoding="utf-8")
         # Create test.patch
         test_patch = repo / "test.patch"
         test_patch.write_text(
@@ -93,7 +93,7 @@ class TestApplyTestPatch:
             "+++ b/tests/test_x.py\n"
             "@@ -1 +1,2 @@\n"
             " # original test\n"
-            "+# new assertion\n"
+            "+# new assertion\n", encoding="utf-8"
         )
 
         task_output = tmp_path / "output"
@@ -103,6 +103,6 @@ class TestApplyTestPatch:
         runner._apply_test_patch(repo, test_patch, task_output)
 
         # After the flow, the agent edit should still be present
-        assert source_file.read_text() == "modified by agent\n"
+        assert source_file.read_text(encoding="utf-8") == "modified by agent\n"
         # And the test.patch should be applied
-        assert "# new assertion" in test_file.read_text()
+        assert "# new assertion" in test_file.read_text(encoding="utf-8")

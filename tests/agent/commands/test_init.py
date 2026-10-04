@@ -23,33 +23,33 @@ class TestDetectProject:
     """2.12: project type detection via marker files."""
 
     def test_detects_python_project(self, tmp_path: Path):
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='test'")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='test'", encoding="utf-8")
         result = _detect_project(tmp_path)
         assert result["type"] == "Python"
         assert result["file"] == "pyproject.toml"
         assert "uv sync" in result["commands"]
 
     def test_detects_node_project(self, tmp_path: Path):
-        (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "package.json").write_text("{}", encoding="utf-8")
         result = _detect_project(tmp_path)
         assert result["type"] == "Node.js"
         assert result["file"] == "package.json"
         assert "npm install" in result["commands"]
 
     def test_detects_go_project(self, tmp_path: Path):
-        (tmp_path / "go.mod").write_text("module x")
+        (tmp_path / "go.mod").write_text("module x", encoding="utf-8")
         result = _detect_project(tmp_path)
         assert result["type"] == "Go"
         assert result["file"] == "go.mod"
 
     def test_detects_rust_project(self, tmp_path: Path):
-        (tmp_path / "Cargo.toml").write_text("[package]\nname='x'")
+        (tmp_path / "Cargo.toml").write_text("[package]\nname='x'", encoding="utf-8")
         result = _detect_project(tmp_path)
         assert result["type"] == "Rust"
         assert result["file"] == "Cargo.toml"
 
     def test_detects_makefile_project(self, tmp_path: Path):
-        (tmp_path / "Makefile").write_text("all:")
+        (tmp_path / "Makefile").write_text("all:", encoding="utf-8")
         result = _detect_project(tmp_path)
         assert result["type"] == "C/C++"
         assert result["file"] == "Makefile"
@@ -62,8 +62,8 @@ class TestDetectProject:
 
     def test_python_before_other_detectors(self, tmp_path: Path):
         """pyproject.toml takes priority over later detectors."""
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
-        (tmp_path / "Makefile").write_text("all:")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'", encoding="utf-8")
+        (tmp_path / "Makefile").write_text("all:", encoding="utf-8")
         result = _detect_project(tmp_path)
         assert result["type"] == "Python"
 
@@ -72,28 +72,28 @@ class TestDetectProject:
 
 class TestFindEntryFile:
     def test_finds_main_py(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text("")
+        (tmp_path / "main.py").write_text("", encoding="utf-8")
         assert _find_entry_file(tmp_path) == "main.py"
 
     def test_finds_src_main_py(self, tmp_path: Path):
         (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "main.py").write_text("")
+        (tmp_path / "src" / "main.py").write_text("", encoding="utf-8")
         assert _find_entry_file(tmp_path) == "src/main.py"
 
     def test_finds_index_js(self, tmp_path: Path):
-        (tmp_path / "index.js").write_text("")
+        (tmp_path / "index.js").write_text("", encoding="utf-8")
         assert _find_entry_file(tmp_path) == "index.js"
 
     def test_finds_main_go(self, tmp_path: Path):
-        (tmp_path / "main.go").write_text("")
+        (tmp_path / "main.go").write_text("", encoding="utf-8")
         assert _find_entry_file(tmp_path) == "main.go"
 
     def test_returns_none_when_no_entry(self, tmp_path: Path):
         assert _find_entry_file(tmp_path) is None
 
     def test_first_match_returned(self, tmp_path: Path):
-        (tmp_path / "main.py").write_text("")
-        (tmp_path / "index.js").write_text("")
+        (tmp_path / "main.py").write_text("", encoding="utf-8")
+        (tmp_path / "index.js").write_text("", encoding="utf-8")
         # main.py is checked first, so it should win
         assert _find_entry_file(tmp_path) == "main.py"
 
@@ -105,19 +105,19 @@ class TestEnsureGitignore:
         assert not (tmp_path / ".gitignore").exists()
         result = _ensure_gitignore(tmp_path)
         assert result is True
-        content = (tmp_path / ".gitignore").read_text()
+        content = (tmp_path / ".gitignore").read_text(encoding="utf-8")
         assert "ASTER.local.md" in content
 
     def test_appends_when_not_present(self, tmp_path: Path):
-        (tmp_path / ".gitignore").write_text("*.pyc\n")
+        (tmp_path / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
         result = _ensure_gitignore(tmp_path)
         assert result is True
-        content = (tmp_path / ".gitignore").read_text()
+        content = (tmp_path / ".gitignore").read_text(encoding="utf-8")
         assert "ASTER.local.md" in content
         assert "*.pyc" in content
 
     def test_noop_when_already_present(self, tmp_path: Path):
-        (tmp_path / ".gitignore").write_text("ASTER.local.md\n*.pyc\n")
+        (tmp_path / ".gitignore").write_text("ASTER.local.md\n*.pyc\n", encoding="utf-8")
         result = _ensure_gitignore(tmp_path)
         assert result is False
 
@@ -133,22 +133,22 @@ class TestGenerateAsterMd:
         assert "Asterwynd" in content
 
     def test_imports_agents_md(self, tmp_path: Path):
-        (tmp_path / "AGENTS.md").write_text("# Project rules\n\n- Use pytest")
+        (tmp_path / "AGENTS.md").write_text("# Project rules\n\n- Use pytest", encoding="utf-8")
         content = generate_aster_md(tmp_path)
         assert "AGENTS.md" in content
         assert "- Use pytest" in content
         assert "从 AGENTS.md 导入" in content
 
     def test_imports_claude_md(self, tmp_path: Path):
-        (tmp_path / "CLAUDE.md").write_text("@AGENTS.md")
+        (tmp_path / "CLAUDE.md").write_text("@AGENTS.md", encoding="utf-8")
         content = generate_aster_md(tmp_path)
         assert "CLAUDE.md" in content
         assert "@AGENTS.md" in content
         assert "从 CLAUDE.md 导入" in content
 
     def test_imports_both_agents_and_claude(self, tmp_path: Path):
-        (tmp_path / "AGENTS.md").write_text("# AGENTS")
-        (tmp_path / "CLAUDE.md").write_text("@AGENTS.md")
+        (tmp_path / "AGENTS.md").write_text("# AGENTS", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text("@AGENTS.md", encoding="utf-8")
         content = generate_aster_md(tmp_path)
         assert "AGENTS.md" in content
         assert "CLAUDE.md" in content
@@ -158,15 +158,15 @@ class TestGenerateAsterMd:
         assert "导入" not in content
 
     def test_includes_commands_with_entry_file(self, tmp_path: Path):
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
-        (tmp_path / "main.py").write_text("")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'", encoding="utf-8")
+        (tmp_path / "main.py").write_text("", encoding="utf-8")
         content = generate_aster_md(tmp_path)
         assert "## 常用命令" in content
         assert "uv sync" in content
         assert "main.py" in content
 
     def test_includes_commands_without_entry_file(self, tmp_path: Path):
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'", encoding="utf-8")
         content = generate_aster_md(tmp_path)
         assert "## 常用命令" in content
         assert "uv sync" in content
@@ -180,11 +180,11 @@ class TestGenerateAsterMd:
 
 class TestWriteAsterMd:
     def test_creates_aster_md_file(self, tmp_path: Path):
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'", encoding="utf-8")
         msg = write_aster_md(tmp_path)
         aster = tmp_path / "ASTER.md"
         assert aster.is_file()
-        content = aster.read_text()
+        content = aster.read_text(encoding="utf-8")
         assert "# ASTER.md" in content
         assert "已创建" in msg
 
@@ -192,7 +192,7 @@ class TestWriteAsterMd:
         write_aster_md(tmp_path)
         gi = tmp_path / ".gitignore"
         assert gi.is_file()
-        assert "ASTER.local.md" in gi.read_text()
+        assert "ASTER.local.md" in gi.read_text(encoding="utf-8")
 
     def test_returns_confirm_message(self, tmp_path: Path):
         msg = write_aster_md(tmp_path)
@@ -209,7 +209,7 @@ class TestInitSlashCommand:
 
     async def test_slash_init_creates_aster_md(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'")
+        (tmp_path / "pyproject.toml").write_text("[project]\nname='x'", encoding="utf-8")
         registry = build_default_slash_command_registry()
         cmd = registry._commands["init"]
 
@@ -231,9 +231,9 @@ class TestInitSlashCommand:
         ctx = CommandContext(agent=None, messages=[], session_id="x", provider="t", model="t")
 
         await cmd.handler(ctx, "")
-        first_content = (tmp_path / "ASTER.md").read_text()
+        first_content = (tmp_path / "ASTER.md").read_text(encoding="utf-8")
 
         await cmd.handler(ctx, "")
-        second_content = (tmp_path / "ASTER.md").read_text()
+        second_content = (tmp_path / "ASTER.md").read_text(encoding="utf-8")
 
         assert first_content == second_content

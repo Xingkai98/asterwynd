@@ -165,7 +165,7 @@ class ReadTool(Tool):
             if ext in IMAGE_EXTENSIONS:
                 return self._read_image(p, path)
 
-            content = p.read_text(errors="replace")
+            content = p.read_text(errors="replace", encoding="utf-8")
             lines = content.splitlines()
             total = len(lines)
 

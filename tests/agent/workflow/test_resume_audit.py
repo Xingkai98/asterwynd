@@ -17,7 +17,7 @@ def _git(repo: Path, *args: str) -> str:
         cwd=repo,
         capture_output=True,
         text=True,
-        check=True,
+        check=True, errors="replace",
     )
     return result.stdout.strip()
 

@@ -376,7 +376,7 @@ class WorkspacePolicy:
             cwd=self.workspace_root,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=timeout, errors="replace",
         )
         output = (result.stdout or result.stderr).strip()
         return output or "(no changes)"

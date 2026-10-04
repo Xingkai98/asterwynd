@@ -405,7 +405,7 @@ class TestApplyJudgment:
         assert entry.body == "New content."
         # no new file for the incoming name
         assert _reload(mem, "incoming") is None
-        changelog = (mem.memory_dir / "changelog.md").read_text()
+        changelog = (mem.memory_dir / "changelog.md").read_text(encoding="utf-8")
         assert "update role" in changelog
 
     def test_supplement_appends_to_target(self, make_mem):
@@ -434,7 +434,7 @@ class TestApplyJudgment:
         assert b is not None  # incoming kept
         assert "deadline-b" in a.conflict_with
         assert "deadline-a" in b.conflict_with
-        changelog = (mem.memory_dir / "changelog.md").read_text()
+        changelog = (mem.memory_dir / "changelog.md").read_text(encoding="utf-8")
         assert "conflict" in changelog
 
     def test_supplement_falls_back_when_target_missing(self, make_mem):

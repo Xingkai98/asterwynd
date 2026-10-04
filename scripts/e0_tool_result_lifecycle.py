@@ -48,7 +48,7 @@ BODY = "line of content here\n" * 9_000  # ~192KB
 def _rss_kb() -> int:
     """当前进程 RSS（KB）。Linux ``/proc/self/statm``。"""
     try:
-        with open("/proc/self/statm") as fh:
+        with open("/proc/self/statm", encoding="utf-8") as fh:
             pages = int(fh.read().split()[1])
         return pages * (os.sysconf("SC_PAGE_SIZE") // 1024)
     except (OSError, ValueError, IndexError):

@@ -338,7 +338,7 @@ def _current_change_id() -> str | None:
     try:
         result = subprocess.run(
             ["git", "branch", "--show-current"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, errors="replace",
         )
         branch = result.stdout.strip()
         if branch:

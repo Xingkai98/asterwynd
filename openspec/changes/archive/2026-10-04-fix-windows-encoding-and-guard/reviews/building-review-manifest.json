@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "fix-windows-encoding-and-guard",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "building-review-fix-windows-encoding-and-guard-20261004-r4",
+  "base_sha": "da8621f08d2bd51be949304148a1e57b997a34b4",
+  "head_sha": "8f8d6d7d56c9e32b7207112dc02479ea9dce9a34",
+  "tasks_hash": "sha256:c4ff90d58386efc63892fb8dd71a2804cfc9b30baa35cbabdd6ec3e5fa957420",
+  "spec_hash": "sha256:ebd40a28cdc33809daa4463d929c3fa0385f9ed17d0ea0702f651779f921439e",
+  "diff_hash": "sha256:811b2f9c7ba5abffc9633330830d1c7042a8a53894ca2f16b1da73c6ef19b8af",
+  "report_hash": "sha256:962e0399b07e53eb404092a23a45afd148331a274a95172149f68c3fafaa0598"
+}

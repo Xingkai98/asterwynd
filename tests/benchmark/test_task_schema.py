@@ -27,9 +27,9 @@ def test_task_spec_rejects_invalid_timeout():
 def test_load_task_resolves_optional_patch_files(tmp_path):
     task_dir = tmp_path / "task"
     task_dir.mkdir()
-    (task_dir / "issue.md").write_text("Fix it\n")
-    (task_dir / "gold.patch").write_text("gold\n")
-    (task_dir / "test.patch").write_text("test\n")
+    (task_dir / "issue.md").write_text("Fix it\n", encoding="utf-8")
+    (task_dir / "gold.patch").write_text("gold\n", encoding="utf-8")
+    (task_dir / "test.patch").write_text("test\n", encoding="utf-8")
     (task_dir / "task.json").write_text(
         json.dumps(
             {
@@ -41,7 +41,7 @@ def test_load_task_resolves_optional_patch_files(tmp_path):
                 "gold_patch_file": "gold.patch",
                 "test_patch_file": "test.patch",
             }
-        )
+        ), encoding="utf-8"
     )
 
     loaded = load_task(task_dir)
@@ -63,7 +63,7 @@ def test_load_task_rejects_escaping_task_file(tmp_path):
                 "problem_statement_file": "../issue.md",
                 "test_command": "pytest",
             }
-        )
+        ), encoding="utf-8"
     )
 
     with pytest.raises(ValueError, match="escapes"):

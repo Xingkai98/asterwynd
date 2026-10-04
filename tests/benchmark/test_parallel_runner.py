@@ -51,7 +51,7 @@ def _task_dir(tmp_path: Path, task_id: str, repo_path: Path) -> Path:
     base_commit = _git_out(repo_path, "rev-parse", "HEAD")
     root = tmp_path / "tasks" / task_id
     root.mkdir(parents=True)
-    (root / "issue.md").write_text(f"Issue for {task_id}\n")
+    (root / "issue.md").write_text(f"Issue for {task_id}\n", encoding="utf-8")
     task_data = {
         "id": task_id,
         "repo": "local",
@@ -60,17 +60,17 @@ def _task_dir(tmp_path: Path, task_id: str, repo_path: Path) -> Path:
         "test_command": "true",
         "timeout_seconds": 30,
     }
-    (root / "task.json").write_text(json.dumps(task_data))
+    (root / "task.json").write_text(json.dumps(task_data), encoding="utf-8")
     return root
 
 
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, errors="replace")
 
 
 def _git_out(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, errors="replace",
     ).stdout.strip()
 
 
@@ -81,7 +81,7 @@ def repo(tmp_path):
     _git(r, "init")
     _git(r, "config", "user.email", "bench@example.com")
     _git(r, "config", "user.name", "Bench")
-    (r / "app.py").write_text("# Version 1\n")
+    (r / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(r, "add", ".")
     _git(r, "commit", "-m", "init")
     return r
@@ -234,7 +234,7 @@ def test_prefill_clone_cache_skips_existing(tmp_path):
     cache_dir = tmp_path / "cache"
     repo_bare = cache_dir / "repo_bare"
     repo_bare.mkdir(parents=True)
-    (repo_bare / "HEAD").write_text("ref: refs/heads/main\n")
+    (repo_bare / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
     # Initialize as a valid bare repo so git clone --bare would fail if called
     subprocess.run(["git", "init", "--bare", str(repo_bare)], check=True, capture_output=True)
 

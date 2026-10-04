@@ -115,7 +115,7 @@ def test_session_store_remove_also_clears_artifacts(tmp_path):
     sessions_root = tmp_path / ".asterwynd" / "sessions"
     sessions_root.mkdir(parents=True)
     (sessions_root / "s-del").mkdir()
-    (sessions_root / "s-del" / "messages.json").write_text("[]")
+    (sessions_root / "s-del" / "messages.json").write_text("[]", encoding="utf-8")
     store = AgentArtifactStore.for_workspace(tmp_path, "s-del")
     ref = store.save_result("k", "body")
     other = AgentArtifactStore.for_workspace(tmp_path, "s-keep")

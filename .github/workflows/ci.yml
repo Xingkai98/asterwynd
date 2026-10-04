@@ -47,6 +47,32 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
+      # change fix-windows-encoding-and-guard：Linux 的 locale 就是 UTF-8，于是
+      # 「本地文件 I/O 没写 encoding=」在这里与显式 UTF-8 **行为一致**——这类缺陷在
+      # 默认环境下不可能变红（实测 Windows/GBK 上会让会话保存失败、Hub 列表 500）。
+      #
+      # 这里用 PEP 597（PYTHONWARNDEFAULTENCODING）而不是 step 级 LC_ALL=C：
+      #   * step 级 C locale 会撞 runner 的环境耦合——`subprocess` 用 os.fsencode
+      #     （filesystem encoding = ASCII）编码**继承的环境**，只要 runner 有任一环境变量
+      #     值含非 ASCII（实测 '→'），我们无罪的 git 调用就会在 subprocess.py:1885 抛错；
+      #   * PEP 597 与 locale 无关：漏写 encoding= 必然发 EncodingWarning，把它升级为
+      #     error 即可，且不会误伤第三方。
+      # 非 UTF-8 locale 下的**行为**复现放在 L2 的子进程用例里（自带 LC_ALL=C +
+      # PYTHONCOERCECLOCALE=0 + PYTHONUTF8=0，hermetic、可在任何平台跑）。
+      - name: Run tests (default-encoding warnings as errors)
+        env:
+          PYTHONWARNDEFAULTENCODING: "1"
+        run: |
+          uv run pytest -q \
+            -W "error::EncodingWarning:agent" \
+            -W "error::EncodingWarning:web" \
+            -W "error::EncodingWarning:benchmarks" \
+            tests/agent/test_session_encoding.py \
+            tests/web_tests/test_encoding_hygiene.py \
+            tests/agent/test_session.py \
+            tests/agent/memory/test_persistent.py \
+            tests/web_tests/test_server.py
+
       - name: Validate OpenSpec
         run: npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
 
@@ -109,3 +135,56 @@ jobs:
 
       - name: Run benchmark regression gate
         run: uv run asterwynd benchmark-gate benchmarks/tasks/gate-smoke --source-repo . --runs-dir /tmp/benchmark-gate-runs --baseline benchmarks/baseline.json --require-baseline --skip-p95
+
+  # change fix-windows-encoding-and-guard（L3）：上面两个 job 都是 ubuntu-latest，locale
+  # 天然是 UTF-8，因此**平台相关**的缺陷（非 UTF-8 locale 的编解码、Windows 路径语义）
+  # 在 CI 上结构性地看不见。这个 job 把 Windows 纳入信号面，只跑「平台敏感 + 本次改动
+  # 直接覆盖」的子集以控制成本（Windows runner 计费约为 Linux 的 2 倍）：
+  #   - 编码类：test_session_encoding / test_encoding_hygiene（含 LC_ALL=C 子进程用例）
+  #   - 会话与列表：test_session / test_server（Hub 接口）
+  #   - 路径语义：test_multi_session（敏感根、~ 展开、大小写变体）
+  #   - 前端工具行：test_transcript_*（Windows 上的 GBK 解码曾是主要假红来源）
+  windows-platform:
+    name: windows-platform
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync --extra dev --locked
+
+      # 与 ubuntu job 同理：不装 chromium，transcript/浏览器用例会静默 skip，等于白跑。
+      # Windows runner 不需要 --with-deps（那是 Linux 的 apt 依赖安装）。
+      - name: Install Playwright Chromium
+        run: uv run playwright install chromium
+
+      - name: Run platform-sensitive tests
+        run: |
+          uv run pytest -q `
+            tests/agent/test_session_encoding.py `
+            tests/agent/test_session.py `
+            tests/web_tests/test_encoding_hygiene.py `
+            tests/web_tests/test_server.py `
+            tests/web_tests/test_multi_session.py `
+            tests/web_tests/test_transcript_js.py `
+            tests/web_tests/test_transcript_view_browser.py

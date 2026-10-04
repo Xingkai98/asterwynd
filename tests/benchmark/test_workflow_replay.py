@@ -103,7 +103,7 @@ def test_record_written_per_task_with_workflows_list(tmp_path):
 
     assert path.name == WORKFLOW_RECORD_FILENAME
     assert path.parent == task_output
-    assert json.loads(path.read_text())["workflows"] == []
+    assert json.loads(path.read_text(encoding="utf-8"))["workflows"] == []
     assert read_workflow_record(task_output) == record
 
 

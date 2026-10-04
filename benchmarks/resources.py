@@ -71,7 +71,7 @@ def is_docker_available() -> bool:
             ["docker", "info"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=15, errors="replace",
         )
     except Exception:
         return False

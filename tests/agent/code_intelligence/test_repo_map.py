@@ -5,11 +5,11 @@ from agent.workspace_policy import WorkspacePolicy
 def test_build_repo_map_scans_python_files_and_skips_denied_paths(tmp_path):
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "service.py").write_text(
-        "import os\n\nclass Service:\n    def run(self):\n        pass\n"
+        "import os\n\nclass Service:\n    def run(self):\n        pass\n", encoding="utf-8"
     )
-    (tmp_path / ".env").write_text("SECRET=value")
+    (tmp_path / ".env").write_text("SECRET=value", encoding="utf-8")
     (tmp_path / ".git").mkdir()
-    (tmp_path / ".git" / "config").write_text("[core]\n")
+    (tmp_path / ".git" / "config").write_text("[core]\n", encoding="utf-8")
 
     repo_map = build_repo_map(policy=WorkspacePolicy(tmp_path))
 
@@ -22,8 +22,8 @@ def test_build_repo_map_scans_python_files_and_skips_denied_paths(tmp_path):
 
 def test_build_repo_map_extracts_typescript_and_keeps_docs_without_fake_symbols(tmp_path):
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "app.ts").write_text("export function run() {}\n")
-    (tmp_path / "README.md").write_text("# Project\n")
+    (tmp_path / "src" / "app.ts").write_text("export function run() {}\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
 
     repo_map = build_repo_map(policy=WorkspacePolicy(tmp_path))
 
@@ -40,9 +40,9 @@ def test_build_repo_map_extracts_typescript_and_keeps_docs_without_fake_symbols(
 
 def test_build_repo_map_respects_custom_ignore_patterns(tmp_path):
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "app.py").write_text("def app():\n    pass\n")
+    (tmp_path / "src" / "app.py").write_text("def app():\n    pass\n", encoding="utf-8")
     (tmp_path / "generated").mkdir()
-    (tmp_path / "generated" / "client.py").write_text("def client():\n    pass\n")
+    (tmp_path / "generated" / "client.py").write_text("def client():\n    pass\n", encoding="utf-8")
 
     repo_map = build_repo_map(
         policy=WorkspacePolicy(tmp_path),
@@ -54,7 +54,7 @@ def test_build_repo_map_respects_custom_ignore_patterns(tmp_path):
 
 def test_format_repo_map_marks_file_truncation(tmp_path):
     for index in range(3):
-        (tmp_path / f"file_{index}.py").write_text(f"def func_{index}():\n    pass\n")
+        (tmp_path / f"file_{index}.py").write_text(f"def func_{index}():\n    pass\n", encoding="utf-8")
 
     repo_map = build_repo_map(policy=WorkspacePolicy(tmp_path), max_files=2)
     output = format_repo_map(repo_map)

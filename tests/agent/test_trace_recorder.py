@@ -36,7 +36,7 @@ def test_trace_recorder_writes_json(tmp_path):
 
     recorder.write_to_file(path)
 
-    assert json.loads(path.read_text())["task_id"] == "task-1"
+    assert json.loads(path.read_text(encoding="utf-8"))["task_id"] == "task-1"
 
 
 def test_trace_recorder_records_mode_metadata_and_run_started():

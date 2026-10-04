@@ -43,7 +43,7 @@ def _git_short_sha() -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
-            check=False,
+            check=False, errors="replace",
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -9,7 +9,7 @@ from agent.workspace_policy import WorkspacePolicy
 
 def _make_file(tmp_path, lines: int, prefix: str = "line") -> str:
     f = tmp_path / "big.txt"
-    f.write_text("\n".join(f"{prefix}-{i}" for i in range(lines)))
+    f.write_text("\n".join(f"{prefix}-{i}" for i in range(lines)), encoding="utf-8")
     return str(f)
 
 
@@ -22,7 +22,7 @@ class TestReadOffset:
     @pytest.mark.asyncio
     async def test_limit_only_unchanged_no_note(self, tmp_path):
         f = tmp_path / "t.txt"
-        f.write_text("hello world")
+        f.write_text("hello world", encoding="utf-8")
         tool = ReadTool(policy=WorkspacePolicy(tmp_path))
         assert await tool.execute(path=str(f)) == "hello world"
 
@@ -94,7 +94,7 @@ class TestReadDoc:
         docs = tmp_path / "docs"
         docs.mkdir()
         deep = docs / "nested.md"
-        deep.write_text("# Deep doc\n\ncontent here")
+        deep.write_text("# Deep doc\n\ncontent here", encoding="utf-8")
         tool = ReadDocTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute(path="docs/nested.md")
         assert "# Deep doc" in result
@@ -103,7 +103,7 @@ class TestReadDoc:
     @pytest.mark.asyncio
     async def test_rejects_non_md(self, tmp_path):
         f = tmp_path / "notes.txt"
-        f.write_text("not a doc")
+        f.write_text("not a doc", encoding="utf-8")
         tool = ReadDocTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute(path="notes.txt")
         assert "Error" in result
@@ -120,7 +120,7 @@ class TestReadDoc:
         docs = tmp_path / "docs"
         docs.mkdir()
         big = docs / "big.md"
-        big.write_text("# H" + "x" * (MAX_DOC_SIZE_BYTES + 1000))
+        big.write_text("# H" + "x" * (MAX_DOC_SIZE_BYTES + 1000), encoding="utf-8")
         tool = ReadDocTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute(path="docs/big.md")
         assert "已截断" in result
@@ -133,7 +133,7 @@ class TestReadDoc:
         docs.mkdir()
         big = docs / "cjk.md"
         # 中文每字 3 字节：内容超过 32KB 但字符数远小于该值。
-        big.write_text("中" * (MAX_DOC_SIZE_BYTES // 3 + 500))
+        big.write_text("中" * (MAX_DOC_SIZE_BYTES // 3 + 500), encoding="utf-8")
         tool = ReadDocTool(policy=WorkspacePolicy(tmp_path))
         result = await tool.execute(path="docs/cjk.md")
         assert "已截断" in result
@@ -142,7 +142,7 @@ class TestReadDoc:
     @pytest.mark.asyncio
     async def test_path_traversal_blocked(self, tmp_path):
         outside = tmp_path.parent / f"{tmp_path.name}-secret.md"
-        outside.write_text("secret")
+        outside.write_text("secret", encoding="utf-8")
         tool = ReadDocTool(policy=WorkspacePolicy(tmp_path))
         try:
             result = await tool.execute(path="../secret.md")

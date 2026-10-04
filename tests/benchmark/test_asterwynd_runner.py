@@ -71,7 +71,7 @@ def test_coding_prompt_builder_includes_task_and_not_patch_names():
 
 @pytest.mark.asyncio
 async def test_asterwynd_runner_uses_agent_loop_and_coding_tools(tmp_path):
-    (tmp_path / "app.py").write_text("# Version 1\n")
+    (tmp_path / "app.py").write_text("# Version 1\n", encoding="utf-8")
     task = TaskSpec(
         id="task",
         repo="local",
@@ -95,7 +95,7 @@ async def test_asterwynd_runner_uses_agent_loop_and_coding_tools(tmp_path):
     assert result.iterations == 3
     assert result.tool_calls == 2
     assert result.edit_count == 1
-    assert (tmp_path / "app.py").read_text() == "# Version 2\n"
+    assert (tmp_path / "app.py").read_text(encoding="utf-8") == "# Version 2\n"
     assert llm.closed is False  # close() is no longer called inside run()
 
     await runner.close()

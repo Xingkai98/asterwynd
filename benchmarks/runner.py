@@ -179,7 +179,7 @@ class BenchmarkRunner:
                 ["docker", "info"],
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=15, errors="replace",
             )
         except Exception as exc:
             return DockerPreflightResult(
@@ -287,7 +287,7 @@ class BenchmarkRunner:
             truncated=False,
         )
         metadata.write_json(run_dir / "run.json")
-        (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
+        (run_dir / "summary.md").write_text(render_summary(results), errors="replace", encoding="utf-8")
         return metadata
 
     def _annotate_e2e_verification(self, result: TaskResult) -> TaskResult:
@@ -548,7 +548,7 @@ class BenchmarkRunner:
                     partial = verdict.partial
                 artifacts.test_output.write_text(
                     detail or "(no framework harness output)\n",
-                    errors="replace",
+                    errors="replace", encoding="utf-8",
                 )
                 log(f"Framework verification status={verifier_status}")
                 if detail:
@@ -606,7 +606,7 @@ class BenchmarkRunner:
             if httpbin_proc:
                 await asyncio.to_thread(self._stop_local_httpbin, httpbin_proc)
                 log("Stopped local httpbin")
-            artifacts.test_output.write_text(test_output, errors="replace")
+            artifacts.test_output.write_text(test_output, errors="replace", encoding="utf-8")
             trace.record_test(
                 loaded.task.test_command,
                 test_exit_code,
@@ -664,7 +664,7 @@ class BenchmarkRunner:
             result.planning_summary = result.planning_summary or trace.latest_planning_summary()
             result.write_json(artifacts.result_json)
             trace.write_to_file(artifacts.trace_json)
-            artifacts.runner_log.write_text("\n".join(log_lines) + "\n", errors="replace")
+            artifacts.runner_log.write_text("\n".join(log_lines) + "\n", errors="replace", encoding="utf-8")
 
         return result
 
@@ -676,7 +676,7 @@ class BenchmarkRunner:
             capture_output=True,
             text=True,
             timeout=30,
-            check=True,
+            check=True, errors="replace",
         )
         return worktree
 
@@ -696,7 +696,7 @@ class BenchmarkRunner:
                 )
             subprocess.run(
                 ["git", "clone", "--shared", str(cache_dir), str(repo_dir)],
-                capture_output=True, text=True, timeout=60, check=True,
+                capture_output=True, text=True, timeout=60, check=True, errors="replace",
             )
         else:
             self._git_clone_with_retry(
@@ -705,7 +705,7 @@ class BenchmarkRunner:
 
         subprocess.run(
             ["git", "checkout", commit],
-            cwd=repo_dir, capture_output=True, text=True, timeout=30, check=True,
+            cwd=repo_dir, capture_output=True, text=True, timeout=30, check=True, errors="replace",
         )
         return repo_dir
 
@@ -725,7 +725,7 @@ class BenchmarkRunner:
             try:
                 subprocess.run(
                     args,
-                    capture_output=True, text=True, timeout=300, check=True,
+                    capture_output=True, text=True, timeout=300, check=True, errors="replace",
                 )
                 return
             except subprocess.CalledProcessError as exc:
@@ -763,7 +763,7 @@ class BenchmarkRunner:
                 for pre_cmd in spec["pre_install"]:
                     subprocess.run(
                         pre_cmd, shell=True, cwd=workspace,
-                        capture_output=True, text=True, timeout=60,
+                        capture_output=True, text=True, timeout=60, errors="replace",
                     )
         else:
             pip_packages = ["pytest", "setuptools<70"]
@@ -784,14 +784,14 @@ class BenchmarkRunner:
         log(f"Creating Python {python_ver} venv and installing deps (repo={repo}, version={loaded.task.version})...")
         subprocess.run(
             ["uv", "venv", "--python", python_ver],
-            cwd=workspace, capture_output=True, text=True, timeout=120,
+            cwd=workspace, capture_output=True, text=True, timeout=120, errors="replace",
         )
         venv_python = str(workspace / ".venv" / "bin" / "python")
 
         install_args = ["uv", "pip", "install", "--python", venv_python] + pip_packages + ["-e", "."]
         proc = subprocess.run(
             install_args,
-            cwd=workspace, capture_output=True, text=True, timeout=300,
+            cwd=workspace, capture_output=True, text=True, timeout=300, errors="replace",
         )
         if proc.returncode == 0:
             log(f"Dependencies installed successfully ({len(pip_packages)} packages)")
@@ -800,11 +800,11 @@ class BenchmarkRunner:
             install_args2 = ["uv", "pip", "install", "--python", venv_python] + pip_packages
             subprocess.run(
                 install_args2,
-                cwd=workspace, capture_output=True, text=True, timeout=300,
+                cwd=workspace, capture_output=True, text=True, timeout=300, errors="replace",
             )
             subprocess.run(
                 ["uv", "pip", "install", "--python", venv_python, "-e", "."],
-                cwd=workspace, capture_output=True, text=True, timeout=300,
+                cwd=workspace, capture_output=True, text=True, timeout=300, errors="replace",
             )
 
     def _cleanup_external_repo(self, workspace: Path) -> None:
@@ -855,7 +855,7 @@ class BenchmarkRunner:
 
     def _write_final_diff(self, workspace: Path, output_path: Path) -> None:
         diff = self._git_patch(workspace)
-        output_path.write_text((diff or "(no changes)") + "\n", errors="replace")
+        output_path.write_text((diff or "(no changes)") + "\n", errors="replace", encoding="utf-8")
 
     def _git_diff_stat(self, workspace: Path) -> str:
         return _run_git(["diff", "--stat"], workspace) or "(no changes)"
@@ -874,7 +874,7 @@ class BenchmarkRunner:
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=10, errors="replace",
             )
             if result.returncode == 0 and result.stdout.strip() == candidate:
                 roots.append(candidate)
@@ -894,10 +894,10 @@ class BenchmarkRunner:
             cwd=workspace,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10, errors="replace",
         )
         if source_result.stdout.strip():
-            source_patch.write_text(source_result.stdout)
+            source_patch.write_text(source_result.stdout, encoding="utf-8")
             subprocess.run(
                 ["git", "reset", "--hard", "HEAD"],
                 cwd=workspace, timeout=10,
@@ -911,7 +911,7 @@ class BenchmarkRunner:
                 cwd=workspace,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=10, errors="replace",
             )
             if apply_result.returncode != 0:
                 raise RuntimeError(
@@ -939,7 +939,7 @@ class BenchmarkRunner:
             cwd=workspace,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10, errors="replace",
         )
         if patch.returncode != 0:
             raise RuntimeError(
@@ -1010,7 +1010,7 @@ run_simple('127.0.0.1', {port}, application, use_reloader=False)
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
-                env=env,
+                env=env, errors="replace",
             )
             output = f"$ {command}\n\n{proc.stdout}{proc.stderr}\n[Exit code: {proc.returncode}]"
             return proc.returncode, output, (time.time() - start) * 1000
@@ -1036,7 +1036,7 @@ def _run_git(args: list[str], cwd: Path) -> str:
         capture_output=True,
         text=True,
         timeout=10,
-        check=True,
+        check=True, errors="replace",
     )
     return proc.stdout.strip()
 

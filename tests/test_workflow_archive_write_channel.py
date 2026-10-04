@@ -77,7 +77,7 @@ def _run_cli(cwd, *args):
         [sys.executable, str(WORKFLOW_STATE), *args],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
 
 

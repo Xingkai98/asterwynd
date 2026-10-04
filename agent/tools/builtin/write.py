@@ -54,7 +54,7 @@ class WriteTool(Tool):
                     "Use Edit for modifications instead of overwriting existing files."
                 )
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content, errors="replace")
+            p.write_text(content, errors="replace", encoding="utf-8")
             base = f"已写入 {len(content)} 字符到 {path}"
             diagnostics = await collect_diagnostics_feedback(self.lsp_manager, p)
             if diagnostics:

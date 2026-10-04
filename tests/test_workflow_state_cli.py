@@ -91,7 +91,7 @@ def _run_cli(tmp_path, *args):
         [sys.executable, str(WORKFLOW_STATE), *args],
         cwd=tmp_path,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
 
 

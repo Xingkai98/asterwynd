@@ -397,9 +397,9 @@ async def test_run_task_seed_reaches_the_record(tmp_path):
                 "problem_statement_file": "issue.md",
                 "test_command": "true",
             }
-        )
+        ), encoding="utf-8"
     )
-    (task_dir / "issue.md").write_text("do it")
+    (task_dir / "issue.md").write_text("do it", encoding="utf-8")
 
     agent_runner = AsterwyndRunner(
         llm=CountingLLM(), workflow_mode="dynamic-record", config=AsterwyndConfig()
@@ -478,9 +478,9 @@ async def test_replay_task_result_status_is_replayed(tmp_path):
                 "problem_statement_file": "issue.md",
                 "test_command": "true",
             }
-        )
+        ), encoding="utf-8"
     )
-    (task_dir / "issue.md").write_text("do it")
+    (task_dir / "issue.md").write_text("do it", encoding="utf-8")
 
     runner = BenchmarkRunner(
         agent_runner=AsterwyndRunner(
@@ -783,7 +783,7 @@ def _git(repo: Path, *args: str) -> str:
     import subprocess
 
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True, errors="replace"
     )
     return proc.stdout.strip()
 
@@ -796,7 +796,7 @@ def _git_repo(path: Path) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
-    (path / "README.md").write_text("hi\n")
+    (path / "README.md").write_text("hi\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=path, check=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", "init"], cwd=path, check=True

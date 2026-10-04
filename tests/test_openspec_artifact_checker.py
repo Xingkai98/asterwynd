@@ -2045,7 +2045,7 @@ def test_ci_validate_job_runs_check_archived():
 
 def _git_out(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True, errors="replace"
     ).stdout
 
 

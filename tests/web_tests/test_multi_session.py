@@ -6,6 +6,8 @@ per-session run mutual exclusion, cross-workspace storage/resume, session
 delete (incl. cold sessions), reset workspace preservation.
 """
 import asyncio
+import os
+from pathlib import Path
 
 import pytest
 import yaml
@@ -20,6 +22,18 @@ from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 from tests.support.llm_harness import ScriptedLLM
 from typer.testing import CliRunner
 from web.server import create_app
+
+
+def _sensitive_paths() -> list[str]:
+    """平台相关的「敏感根」样本（change ``fix-windows-encoding-and-guard``）。
+
+    原用例写死 POSIX 的 ``/etc`` 等字面量：Windows 上 ``/etc`` **不是绝对路径**
+    （缺盘符），于是走到 ``workspace_must_be_absolute`` 而不是 ``workspace_sensitive_path``，
+    用例恒红。这里按实现同一套语义取**解析后**的形态：POSIX 是 ``/etc``，Windows 是
+    ``C:\\etc``（``agent/workspace_policy._DENY_ROOTS`` 也是 `Path(p).resolve()`）。
+    """
+    anchor_path = str(Path(Path.cwd().anchor))
+    return [anchor_path] + [str(Path(p).resolve()) for p in ("/etc", "/etc/hosts", "/dev", "/root")]
 
 
 def _make_snapshot(session_id: str = "deadbeef0000", content: str = "hello"):
@@ -117,7 +131,7 @@ def test_add_workspace_creates_directory_and_persists(tmp_path):
         assert entry["is_primary"] is False
         assert entry["exists"] is True
 
-    assert yaml.safe_load(_sidecar_path(tmp_path).read_text())["workspaces"] == [str(new_ws.resolve())]
+    assert yaml.safe_load(_sidecar_path(tmp_path).read_text(encoding="utf-8"))["workspaces"] == [str(new_ws.resolve())]
 
 
 def test_add_workspace_usable_without_restart(tmp_path):
@@ -159,7 +173,13 @@ def test_add_workspace_accepts_existing_directory(tmp_path):
 
 
 def test_add_workspace_expands_tilde(tmp_path, monkeypatch):
+    # ``Path.expanduser()`` 在 POSIX 读 HOME、在 Windows 读 USERPROFILE（缺省还有
+    # HOMEDRIVE+HOMEPATH）。只设 HOME 会让本用例在 Windows 上恒红
+    # （change ``fix-windows-encoding-and-guard``）。
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOMEDRIVE", tmp_path.drive or "C:")
+    monkeypatch.setenv("HOMEPATH", str(tmp_path)[len(tmp_path.drive):] or "\\")
     app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path / "primary")
 
     with TestClient(app) as client:
@@ -182,7 +202,7 @@ def test_add_workspace_idempotent(tmp_path):
         paths = [w["path"] for w in second["workspaces"]]
         assert paths.count(str(new_ws.resolve())) == 1
 
-    assert yaml.safe_load(_sidecar_path(tmp_path).read_text())["workspaces"] == [str(new_ws.resolve())]
+    assert yaml.safe_load(_sidecar_path(tmp_path).read_text(encoding="utf-8"))["workspaces"] == [str(new_ws.resolve())]
 
 
 def test_add_workspace_primary_workspace_is_noop(tmp_path):
@@ -225,7 +245,7 @@ def test_add_workspace_rejects_relative_path(tmp_path):
 
 def test_add_workspace_rejects_file_path(tmp_path):
     target = tmp_path / "a-file.txt"
-    target.write_text("x")
+    target.write_text("x", encoding="utf-8")
     app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
 
     with TestClient(app) as client:
@@ -236,7 +256,7 @@ def test_add_workspace_rejects_file_path(tmp_path):
     assert not _sidecar_path(tmp_path).exists()
 
 
-@pytest.mark.parametrize("sensitive", ["/", "/etc", "/etc/hosts", "/dev", "/root"])
+@pytest.mark.parametrize("sensitive", _sensitive_paths())
 def test_add_workspace_rejects_sensitive_path(tmp_path, sensitive):
     """文件系统根与系统敏感目录拒绝（与 CLI /workspace add 同判定）。"""
     app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
@@ -254,15 +274,70 @@ def test_add_workspace_rejects_nul_byte_path(tmp_path):
     app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
 
     with TestClient(app) as client:
-        resp = client.post("/api/workspaces", json={"path": "/tmp/x\x00y"})
+        # 用**绝对**路径：Windows 上 ``/tmp/x`` 不是绝对路径，会先撞 absoluteness
+        # 校验而拿不到 ``workspace_path_invalid``
+        # （change ``fix-windows-encoding-and-guard``）。
+        resp = client.post("/api/workspaces",
+                           json={"path": str(tmp_path / "x") + "\x00y"})
         assert resp.status_code == 400
         assert resp.json()["error"] == "workspace_path_invalid"
+
+
+def test_api_sessions_returns_200_with_emoji_session(tmp_path):
+    """含 emoji/CJK 的会话必须能落盘并出现在 Hub 列表里（change fix-windows-encoding-and-guard）。
+
+    未修前在非 UTF-8 locale 上：`SessionStore.save()` 抛 `UnicodeEncodeError`（会话根本没落盘），
+    或 `list_sessions()` 读回时抛 `UnicodeDecodeError` → 整个 `GET /api/sessions` 500。
+    这条把**用户可见结果**钉死：接口 200 且列表里有这条会话。
+    """
+    store = SessionStore(sessions_root=str(tmp_path / ".asterwynd" / "sessions"))
+    snapshot = _make_snapshot("emojisession", "你好 👋 恭喜发财")
+    assert store.save(snapshot) is True, "含 emoji 的会话必须能保存"
+
+    config = AsterwyndConfig(web=WebConfig(workspaces=(tmp_path,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path,
+                     config=config)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": str(tmp_path)})
+
+    assert resp.status_code == 200, f"含 emoji 的会话不该让列表接口失败：{resp.text[:200]}"
+    ids = [s["session_id"] for s in resp.json()["sessions"]]
+    assert "emojisession" in ids, f"会话应出现在列表里，实际：{ids}"
+
+
+def test_api_sessions_marks_damaged_entry_without_failing(tmp_path):
+    """单条会话损坏 → 列表仍 200 且该条带 `damaged` + `reason`（不许静默消失）。"""
+    sessions_root = tmp_path / ".asterwynd" / "sessions"
+    store = SessionStore(sessions_root=str(sessions_root))
+    store.save(_make_snapshot("goodsession", "ok"))
+
+    broken = sessions_root / "brokensession"
+    broken.mkdir(parents=True, exist_ok=True)
+    (broken / "snapshot.json").write_text(
+        '{"session_id": "brokensession", "mode": "build"}', encoding="utf-8")
+    (broken / "messages.json").write_bytes(
+        '[{"role": "user", "content": "中文"}]'.encode("gbk"))   # 非 UTF-8 字节
+
+    config = AsterwyndConfig(web=WebConfig(workspaces=(tmp_path,)))
+    app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path,
+                     config=config)
+
+    with TestClient(app) as client:
+        resp = client.get("/api/sessions", params={"workspace": str(tmp_path)})
+
+    assert resp.status_code == 200
+    by_id = {s["session_id"]: s for s in resp.json()["sessions"]}
+    assert "goodsession" in by_id
+    assert "brokensession" in by_id, "损坏条目必须可见"
+    assert by_id["brokensession"].get("damaged") is True
+    assert by_id["brokensession"].get("reason")
 
 
 def test_add_workspace_reports_create_failure(tmp_path):
     """mkdir 失败（父级是普通文件）→ 500 + 结构化错误，不注册。"""
     blocker = tmp_path / "blocker-file"
-    blocker.write_text("not a directory")
+    blocker.write_text("not a directory", encoding="utf-8")
     target = blocker / "sub"
     app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path)
 
@@ -276,7 +351,7 @@ def test_add_workspace_reports_create_failure(tmp_path):
 def test_add_workspace_reports_persist_failure(tmp_path):
     """侧车写入失败 → 500 + workspace_persist_failed，且不注册到运行期集合。"""
     blocker = tmp_path / "blocker"
-    blocker.write_text("not a directory")  # base_dir 指向文件 → 侧车父目录无法创建
+    blocker.write_text("not a directory", encoding="utf-8")  # base_dir 指向文件 → 侧车父目录无法创建
     config = AsterwyndConfig(path=blocker / "asterwynd.yaml")
     app = create_app(ScriptedLLM([LLMResponse(content="hi")]), workspace_root=tmp_path, config=config)
 
@@ -305,7 +380,7 @@ def test_add_workspace_does_not_touch_user_config(tmp_path):
         assert client.post("/api/workspaces", json={"path": str(new_ws)}).status_code == 200
 
     assert config_file.read_text(encoding="utf-8") == original
-    sidecar = yaml.safe_load((project / ".asterwynd" / "workspaces.yaml").read_text())
+    sidecar = yaml.safe_load((project / ".asterwynd" / "workspaces.yaml").read_text(encoding="utf-8"))
     assert sidecar["workspaces"] == [str(new_ws.resolve())]
 
 
@@ -408,6 +483,12 @@ def test_api_sessions_accepts_trailing_slash(tmp_path):
         assert resp.json()["workspace"] == str(ws_a.resolve())
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows 路径大小写不敏感（同一路径的大小写变体 resolve 后仍匹配 allowlist）"
+           "——该用例的前提在 Windows 上不成立，不是缺陷"
+           "（change fix-windows-encoding-and-guard）",
+)
 def test_api_sessions_rejects_case_variant(tmp_path):
     """大小写变体（Linux 敏感）resolve 后不匹配 allowlist → 拒绝。"""
     ws_a = tmp_path / "ws-a"

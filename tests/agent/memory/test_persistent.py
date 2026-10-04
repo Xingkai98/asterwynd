@@ -144,13 +144,13 @@ class TestPersistentMemory:
 
     def test_load_index_returns_none_when_empty(self, mem):
         mem.memory_dir.mkdir(parents=True)
-        mem._index_path.write_text("")
+        mem._index_path.write_text("", encoding="utf-8")
         assert mem.load_index() is None
 
     def test_load_index_returns_content(self, mem):
         mem.memory_dir.mkdir(parents=True)
         mem._index_path.write_text(
-            "- [user](user-role.md) — description\n"
+            "- [user](user-role.md) — description\n", encoding="utf-8"
         )
         result = mem.load_index()
         assert "user-role.md" in result
@@ -159,7 +159,7 @@ class TestPersistentMemory:
         monkeypatch.setattr("agent.memory.persistent.MAX_INDEX_LINES", 3)
         mem.memory_dir.mkdir(parents=True)
         lines = [f"- [entry{i}](entry{i}.md) — desc{i}" for i in range(10)]
-        mem._index_path.write_text("\n".join(lines))
+        mem._index_path.write_text("\n".join(lines), encoding="utf-8")
         result = mem.load_index()
         assert result is not None  # type narrowing
         assert "WARNING" in result
@@ -169,7 +169,7 @@ class TestPersistentMemory:
         monkeypatch.setattr("agent.memory.persistent.MAX_INDEX_BYTES", 50)
         mem.memory_dir.mkdir(parents=True)
         mem._index_path.write_text(
-            "- [a-very-long-entry-name](a-very-long-entry-name.md) — a very long description\n" * 20
+            "- [a-very-long-entry-name](a-very-long-entry-name.md) — a very long description\n" * 20, encoding="utf-8"
         )
         result = mem.load_index()
         assert result is not None
@@ -183,7 +183,7 @@ class TestPersistentMemory:
 
         filepath = mem.memory_dir / "my-role.md"
         assert filepath.exists()
-        content = filepath.read_text()
+        content = filepath.read_text(encoding="utf-8")
         assert "name: my-role" in content
         assert "type: user" in content
         assert "I am a backend engineer." in content
@@ -193,7 +193,7 @@ class TestPersistentMemory:
         result = mem.save("user", "my-role", "updated", "New content.")
         assert "updated" in result
 
-        content = (mem.memory_dir / "my-role.md").read_text()
+        content = (mem.memory_dir / "my-role.md").read_text(encoding="utf-8")
         assert "New content." in content
         assert "Old content." not in content
 
@@ -201,7 +201,7 @@ class TestPersistentMemory:
         mem.save("user", "entry-a", "desc a", "body a")
         mem.save("project", "entry-b", "desc b", "body b")
 
-        index = mem._index_path.read_text()
+        index = mem._index_path.read_text(encoding="utf-8")
         assert "entry-a.md" in index
         assert "desc a" in index
         assert "entry-b.md" in index
@@ -222,7 +222,7 @@ class TestPersistentMemory:
 
     def test_save_creates_valid_yaml_frontmatter(self, mem):
         mem.save("feedback", "testing-rules", "test rules", "Always use real DB.")
-        content = (mem.memory_dir / "testing-rules.md").read_text()
+        content = (mem.memory_dir / "testing-rules.md").read_text(encoding="utf-8")
         # Verify frontmatter starts and ends with ---
         assert content.startswith("---")
         lines = content.splitlines()
@@ -291,7 +291,7 @@ class TestPersistentMemory:
         mem.memory_dir.mkdir(parents=True)
         mem._index_path.write_text(
             "- [escape](../outside.md) — tries to escape\n"
-            "- [valid](valid.md) — valid entry\n"
+            "- [valid](valid.md) — valid entry\n", encoding="utf-8"
         )
         entries = mem._parse_index()
         assert "valid.md" in entries

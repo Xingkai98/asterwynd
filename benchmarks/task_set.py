@@ -71,7 +71,7 @@ class Manifest:
     @classmethod
     def load(cls, path: str | Path) -> "Manifest":
         manifest_path = Path(path)
-        data = json.loads(manifest_path.read_text())
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
         return cls(
             path=manifest_path,
             version=data.get("version", 1),

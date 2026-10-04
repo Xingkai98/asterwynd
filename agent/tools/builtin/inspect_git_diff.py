@@ -56,7 +56,7 @@ class InspectGitDiffTool(Tool):
                 cwd=self.policy.workspace_root,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=10, errors="replace",
             )
         except Exception as exc:
             return f"Error running git diff: {exc}"
@@ -76,7 +76,7 @@ class InspectGitDiffTool(Tool):
                     cwd=self.policy.workspace_root,
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=10, errors="replace",
                 )
                 untracked_output = untracked.stdout.strip()
             except Exception as exc:

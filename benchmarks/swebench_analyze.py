@@ -27,7 +27,7 @@ def analyze(run_dir: str | Path) -> dict:
         result_path = task_dir / "result.json"
         if not result_path.exists():
             continue
-        result = json.loads(result_path.read_text())
+        result = json.loads(result_path.read_text(encoding="utf-8"))
 
         # Extract short task name
         short_name = result["task_id"].replace("swebench-", "").replace("__", "/")
@@ -36,13 +36,13 @@ def analyze(run_dir: str | Path) -> dict:
         diff_path = task_dir / "final.diff"
         diff_lines = 0
         if diff_path.exists():
-            diff_lines = len(diff_path.read_text().splitlines())
+            diff_lines = len(diff_path.read_text(encoding="utf-8").splitlines())
 
         # Read runner log
         log_path = task_dir / "runner.log"
         error_msg = ""
         if log_path.exists():
-            for line in log_path.read_text().splitlines():
+            for line in log_path.read_text(encoding="utf-8").splitlines():
                 if "Error:" in line or "error" in line.lower():
                     error_msg = line.split("Error:", 1)[-1].strip()[:120]
                     break

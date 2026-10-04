@@ -66,11 +66,11 @@ class TestCollectAsterFiles:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# Root rules")
+        (root / "ASTER.md").write_text("# Root rules", encoding="utf-8")
 
         sub = root / "src"
         sub.mkdir()
-        (sub / "ASTER.md").write_text("# Src rules")
+        (sub / "ASTER.md").write_text("# Src rules", encoding="utf-8")
 
         cwd = sub
 
@@ -83,8 +83,8 @@ class TestCollectAsterFiles:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# Team rules")
-        (root / "ASTER.local.md").write_text("# Personal rules")
+        (root / "ASTER.md").write_text("# Team rules", encoding="utf-8")
+        (root / "ASTER.local.md").write_text("# Personal rules", encoding="utf-8")
 
         files = _collect_aster_files(root, upper_bound=root)
         assert len(files) == 2
@@ -97,11 +97,11 @@ class TestCollectAsterFiles:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# ignored")
+        (root / "ASTER.md").write_text("# ignored", encoding="utf-8")
 
         cwd = tmp_path / "other"
         cwd.mkdir(parents=True)
-        (cwd / "ASTER.md").write_text("# only this")
+        (cwd / "ASTER.md").write_text("# only this", encoding="utf-8")
 
         # When there's no Git root in the CWD chain, upper bound = CWD
         files = _collect_aster_files(cwd, upper_bound=cwd)
@@ -120,11 +120,11 @@ class TestCollectAsterFiles:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# root")
+        (root / "ASTER.md").write_text("# root", encoding="utf-8")
 
         # Create parent dir above root with ASTER.md — should be ignored
         parent = tmp_path
-        (parent / "ASTER.md").write_text("# should be ignored")
+        (parent / "ASTER.md").write_text("# should be ignored", encoding="utf-8")
 
         files = _collect_aster_files(root, upper_bound=root)
         assert len(files) == 1
@@ -138,7 +138,7 @@ class TestRenderAsterMd:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# Root")
+        (root / "ASTER.md").write_text("# Root", encoding="utf-8")
 
         result = _render_aster_md([(root / "ASTER.md", root)], upper_bound=root)
         assert "## ASTER.md (项目根)" in result
@@ -148,10 +148,10 @@ class TestRenderAsterMd:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# Root")
+        (root / "ASTER.md").write_text("# Root", encoding="utf-8")
         sub = root / "src"
         sub.mkdir()
-        (sub / "ASTER.md").write_text("# Src")
+        (sub / "ASTER.md").write_text("# Src", encoding="utf-8")
 
         result = _render_aster_md(
             [(root / "ASTER.md", root), (sub / "ASTER.md", sub)],
@@ -164,7 +164,7 @@ class TestRenderAsterMd:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.local.md").write_text("# Local")
+        (root / "ASTER.local.md").write_text("# Local", encoding="utf-8")
 
         result = _render_aster_md(
             [(root / "ASTER.local.md", root)],
@@ -176,7 +176,7 @@ class TestRenderAsterMd:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# Root")
+        (root / "ASTER.md").write_text("# Root", encoding="utf-8")
 
         result = _render_aster_md([(root / "ASTER.md", root)], upper_bound=root)
         assert "优先级" in result or "precedence" in result.lower()
@@ -189,13 +189,13 @@ class TestRenderAsterMd:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("ROOT")
+        (root / "ASTER.md").write_text("ROOT", encoding="utf-8")
         mid = root / "src"
         mid.mkdir()
-        (mid / "ASTER.md").write_text("MID")
+        (mid / "ASTER.md").write_text("MID", encoding="utf-8")
         cwd = root / "src" / "backend"
         cwd.mkdir()
-        (cwd / "ASTER.md").write_text("CWD")
+        (cwd / "ASTER.md").write_text("CWD", encoding="utf-8")
 
         result = _render_aster_md(
             [(root / "ASTER.md", root), (mid / "ASTER.md", mid), (cwd / "ASTER.md", cwd)],
@@ -214,10 +214,10 @@ class TestSizeLimit:
         """When an ancestor file is oversized, closer-to-CWD files still load."""
         root = tmp_path / "project"
         root.mkdir(parents=True)
-        (root / "ASTER.md").write_text("x" * (MAX_ASTER_SIZE_BYTES + 1))
+        (root / "ASTER.md").write_text("x" * (MAX_ASTER_SIZE_BYTES + 1), encoding="utf-8")
         sub = root / "src"
         sub.mkdir()
-        (sub / "ASTER.md").write_text("# Subdir rules")
+        (sub / "ASTER.md").write_text("# Subdir rules", encoding="utf-8")
 
         result = _render_aster_md(
             [(root / "ASTER.md", root), (sub / "ASTER.md", sub)],
@@ -235,10 +235,10 @@ class TestSizeLimit:
         # Header "## ASTER.md (项目根)\n" adds ~25 bytes, subdir ~39 bytes.
         # Root payload sized so root alone fits but combined exceeds 32 KiB.
         root_payload = "y" * (MAX_ASTER_SIZE_BYTES - 30)
-        (root / "ASTER.md").write_text(root_payload)
+        (root / "ASTER.md").write_text(root_payload, encoding="utf-8")
         sub = root / "src"
         sub.mkdir()
-        (sub / "ASTER.md").write_text("# Subdir rules")
+        (sub / "ASTER.md").write_text("# Subdir rules", encoding="utf-8")
 
         result = _render_aster_md(
             [(root / "ASTER.md", root), (sub / "ASTER.md", sub)],
@@ -266,7 +266,7 @@ class TestAsterMdSource:
         root = tmp_path / "project"
         root.mkdir(parents=True)
         (root / ".git").mkdir()
-        (root / "ASTER.md").write_text("# Project rules\nUse pytest")
+        (root / "ASTER.md").write_text("# Project rules\nUse pytest", encoding="utf-8")
 
         src = AsterMdSource()
         ctx = make_context(cwd=str(root))
@@ -285,7 +285,7 @@ class TestAsterMdSource:
     async def test_cwd_without_git_uses_cwd_as_upper_bound(self, tmp_path: Path):
         cwd = tmp_path / "no-git-dir"
         cwd.mkdir(parents=True)
-        (cwd / "ASTER.md").write_text("# Local only")
+        (cwd / "ASTER.md").write_text("# Local only", encoding="utf-8")
 
         src = AsterMdSource()
         ctx = make_context(cwd=str(cwd))

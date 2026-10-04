@@ -12,7 +12,7 @@ def _git(repo, *args):
         cwd=repo,
         check=True,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     ).stdout.strip()
 
 

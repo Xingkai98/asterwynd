@@ -9,6 +9,58 @@
 - 涉及共享协议的变更必须覆盖协议不变量。
 - real API 测试保持可选，不作为默认 CI 前置条件。
 - CLI、Web 和未来 TUI 的入口 smoke 优先使用共享 `ScriptedLLM` fake harness，只替换 LLM provider，不替换真实 AgentLoop。
+- **本地文件 I/O 一律显式声明编码**，平台相关行为必须有平台无关的复现手段（见下节）。
+
+## 平台与编码纪律
+
+**规则一：本地文件 I/O 一律显式声明编码。**
+
+`open()` / `Path.read_text()` / `Path.write_text()` 不写 `encoding=` 时会按**进程 locale** 编解码。本仓的数据一律是 UTF-8，因此在非 UTF-8 locale（Windows 中文机器 = GBK/cp936）上：
+
+- 写含 emoji/生僻字的会话 → `UnicodeEncodeError` → **保存静默失败**（实测：磁盘上只剩 `.tmp`）；
+- 读 UTF-8 文件 → `UnicodeDecodeError` → 单个坏文件曾让 `GET /api/sessions` **整个 500**。
+
+```python
+path.read_text(encoding="utf-8")                    # 我们自己的数据
+path.read_text(encoding="utf-8", errors="replace")  # 用户/第三方内容（不许把「能读」变成崩溃）
+```
+
+**子进程的规则不同（输出编码是子进程的契约）**：`subprocess.run(..., text=True)` 不强行指定编码——我们自己的 python CLI 在 Windows 上往管道写的是 locale 编码，父进程若一律按严格 UTF-8 解码反而会崩（实测把 `tests/test_flow_policy.py` 的 `show.stdout` 变成 `None`，一次改动新增 11 条红）。但**也绝不允许因为解码崩掉**：子进程写 UTF-8 而父进程按 locale 解码时，`subprocess._readerthread` 会抛 `UnicodeDecodeError` 让整段输出丢失（实测 benchmark 一次跑出 16 处）。因此对**每一个** `text=True` 的子进程，二者至少要有一个：
+
+```python
+subprocess.run(["node", "-e", harness], text=True, encoding="utf-8")               # 确定输出 UTF-8
+subprocess.run(["git", "status"], text=True, errors="replace")                     # 不确定 → 至少不崩
+```
+
+**规则二：这类缺陷不许再靠人眼评审拦。** 仓库有一条机械守卫
+`tests/web_tests/test_encoding_hygiene.py`（AST 扫描 `agent/ web/ benchmarks/ scripts/ tests/`），
+命中「缺 `encoding=` 的 `open`/`read_text`/`write_text`」与「`text=True` 的子进程**既无
+`encoding=` 也无 `errors=`**」即失败。例外必须写进该文件的 `ALLOWLIST` 并给出理由——**白名单
+可评审，静默放行不行**。
+
+**规则三：平台信号必须进 CI，不许当环境噪声容忍。**
+
+历史教训：这套缺陷在 CI 上**结构性不可见**（原本两个 job 都是 `ubuntu-latest`，locale 即 UTF-8），
+而本机 Windows 的红灯被长期归类为「环境性失败」，两者叠加 = 零防护（积压到 47 条）。
+
+| 信号面 | 手段 | 覆盖 |
+|---|---|---|
+| 非 UTF-8 locale | `validate` job 的 C-locale 步骤（`LC_ALL=C` + `PYTHONCOERCECLOCALE=0` + `PYTHONUTF8=0`） | 编解码类：会话持久化、列表容错 |
+| 平台语义 | `windows-platform` job（`windows-latest`，跑平台敏感子集） | Windows 路径语义（敏感根、`~` 展开、大小写前提）、编码往返（该 runner 是 en-US/cp1252，**不是** GBK；GBK 只在中文 Windows 本机成立）、前端工具行 |
+
+**本机 Windows 出现红灯时**：MUST 修掉，或写进守卫的 `ALLOWLIST`/用 `skipif` 并说明「平台前提不成立」
+（例如「路径大小写不敏感」在 Windows 上无法成立）；SHALL NOT 以「pristine 同样失败」为由长期挂账。
+
+写平台相关行为测试时的三条经验：
+
+- **用平台上真实存在的绝对路径**：`/etc` 在 Windows 上**不是绝对路径**（缺盘符），断言会落到
+  `workspace_must_be_absolute` 而不是预期的错误码；`~` 展开在 POSIX 读 `HOME`、在 Windows 读
+  `USERPROFILE`/`HOMEDRIVE`+`HOMEPATH`；NUL 字节用例要用 `tmp_path` 拼绝对路径。
+- **造「脏数据」时载荷必须真的非 UTF-8**：`json.dumps({...}).encode("gbk")` 在载荷全为 ASCII 时
+  产出的仍是合法 UTF-8，用例会**恒真/恒假**（本仓踩过一次：断言恒失败，等于没覆盖）。
+- **在 Linux 上复现非 UTF-8 locale**：把断言放进子进程，用 `LC_ALL=C PYTHONCOERCECLOCALE=0
+  PYTHONUTF8=0` 跑（ASCII locale 比 GBK 更严格）；再用 `PYTHONWARNDEFAULTENCODING=1`
+  （PEP 597）断言**没有** `EncodingWarning`——「用了默认编码」从此是运行时可观测信号。
 
 ## 回归测试规则
 

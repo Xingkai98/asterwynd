@@ -89,7 +89,7 @@ class SwebenchAdapter:
             "model_name_or_path": model_name,
             "model_patch": patch_text,
         }
-        predictions_path.write_text(json.dumps(prediction) + "\n", errors="replace")
+        predictions_path.write_text(json.dumps(prediction) + "\n", errors="replace", encoding="utf-8")
 
         run_id = f"asterwynd-{task.id}"
         command = [
@@ -116,7 +116,7 @@ class SwebenchAdapter:
             cwd=task_output,
             capture_output=True,
             text=True,
-            timeout=max(task.timeout_seconds + 300, 600),
+            timeout=max(task.timeout_seconds + 300, 600), errors="replace",
         )
         detail = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         if proc.returncode != 0:
@@ -142,7 +142,7 @@ class SwebenchAdapter:
                 detail=f"Missing SWE-bench report: {report_path}",
             )
 
-        report = json.loads(report_path.read_text())
+        report = json.loads(report_path.read_text(encoding="utf-8"))
         instance_report = report.get(task.instance_id or "", {})
         resolved = bool(instance_report.get("resolved"))
         partial = {

@@ -47,7 +47,7 @@ def _run_git(cwd: Path, *args: str, timeout: float = 30.0) -> subprocess.Complet
             cwd=cwd,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=timeout, errors="replace",
         )
     except subprocess.TimeoutExpired as exc:
         return subprocess.CompletedProcess(

@@ -30,7 +30,7 @@ def _run_guard(tmp_path, payload, policy_path=None):
         capture_output=True,
         text=True,
         env=env,
-        cwd=tmp_path,
+        cwd=tmp_path, errors="replace",
     )
 
 
@@ -350,7 +350,7 @@ def _run_policy_cli(*args):
         [sys.executable, "scripts/workflow_state.py", *args],
         capture_output=True,
         text=True,
-        cwd=REPO_ROOT,
+        cwd=REPO_ROOT, errors="replace",
     )
 
 

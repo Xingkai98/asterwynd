@@ -1465,7 +1465,7 @@ def _changed_paths_since_base(
         ["git", "diff", "--name-only", base_ref, "--"],
         cwd=repo_root,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
     if result.returncode != 0:
         warning = (
@@ -1509,7 +1509,7 @@ def _new_archive_dirs_since_base(
         ["git", "diff", "--name-only", "--diff-filter=AR", base_ref, "--"],
         cwd=repo_root,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
     if result.returncode != 0:
         warning = (
@@ -1553,7 +1553,7 @@ def _archive_dir_names_in_base(repo_root: Path, base_ref: str) -> set[str]:
         ["git", "ls-tree", "-d", "--name-only", f"{base_ref}:openspec/changes/archive"],
         cwd=repo_root,
         capture_output=True,
-        text=True,
+        text=True, errors="replace",
     )
     if result.returncode != 0:
         return set()

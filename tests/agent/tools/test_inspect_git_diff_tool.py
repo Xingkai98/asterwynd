@@ -11,7 +11,7 @@ def git_repo(tmp_path):
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
-    (tmp_path / "app.py").write_text("old\n")
+    (tmp_path / "app.py").write_text("old\n", encoding="utf-8")
     subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
     return tmp_path
@@ -19,7 +19,7 @@ def git_repo(tmp_path):
 
 @pytest.mark.asyncio
 async def test_inspect_git_diff_shows_file_diff(git_repo):
-    (git_repo / "app.py").write_text("new\n")
+    (git_repo / "app.py").write_text("new\n", encoding="utf-8")
     tool = InspectGitDiffTool(policy=WorkspacePolicy(git_repo))
 
     result = await tool.execute(path="app.py")
@@ -40,7 +40,7 @@ async def test_inspect_git_diff_rejects_outside_path(git_repo, tmp_path):
 
 @pytest.mark.asyncio
 async def test_inspect_git_diff_lists_untracked(git_repo):
-    (git_repo / "new.py").write_text("print('new')\n")
+    (git_repo / "new.py").write_text("print('new')\n", encoding="utf-8")
     tool = InspectGitDiffTool(policy=WorkspacePolicy(git_repo))
 
     result = await tool.execute(include_untracked=True)

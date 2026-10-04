@@ -348,7 +348,7 @@ def _git_stdout(repo_root: Path, args: list[str]) -> str | None:
             cwd=repo_root,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10, errors="replace",
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None

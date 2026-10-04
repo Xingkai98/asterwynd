@@ -19,8 +19,8 @@ def test_code_intelligence_tool_schemas_are_read_only():
 
 @pytest.mark.asyncio
 async def test_repo_map_tool_returns_limited_summary(tmp_path):
-    (tmp_path / "a.py").write_text("def alpha():\n    pass\n")
-    (tmp_path / "b.py").write_text("def beta():\n    pass\n")
+    (tmp_path / "a.py").write_text("def alpha():\n    pass\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("def beta():\n    pass\n", encoding="utf-8")
 
     tool = RepoMapTool(policy=WorkspacePolicy(tmp_path))
     result = await tool.execute(max_files=1)
@@ -33,7 +33,7 @@ async def test_repo_map_tool_returns_limited_summary(tmp_path):
 @pytest.mark.asyncio
 async def test_symbol_search_tool_finds_matching_symbols(tmp_path):
     (tmp_path / "service.py").write_text(
-        "class Service:\n    def run(self):\n        pass\n"
+        "class Service:\n    def run(self):\n        pass\n", encoding="utf-8"
     )
 
     tool = SymbolSearchTool(policy=WorkspacePolicy(tmp_path))
@@ -54,8 +54,8 @@ async def test_symbol_search_tool_marks_tree_sitter_symbol_source(tmp_path):
 
 @pytest.mark.asyncio
 async def test_symbol_search_tool_skips_denied_paths(tmp_path):
-    (tmp_path / ".env").write_text("def secret():\n    pass\n")
-    (tmp_path / "public.py").write_text("def public():\n    pass\n")
+    (tmp_path / ".env").write_text("def secret():\n    pass\n", encoding="utf-8")
+    (tmp_path / "public.py").write_text("def public():\n    pass\n", encoding="utf-8")
 
     tool = SymbolSearchTool(policy=WorkspacePolicy(tmp_path))
     result = await tool.execute(query="")
@@ -78,7 +78,7 @@ def test_coding_registry_exposes_code_intelligence_tools_in_plan_mode():
 
 @pytest.mark.asyncio
 async def test_registry_executes_code_intelligence_tool_call(tmp_path):
-    (tmp_path / "app.py").write_text("def main():\n    pass\n")
+    (tmp_path / "app.py").write_text("def main():\n    pass\n", encoding="utf-8")
     registry = build_coding_tool_registry(policy=WorkspacePolicy(tmp_path))
 
     result = await registry.execute(

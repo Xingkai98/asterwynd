@@ -146,7 +146,7 @@ def _resolve_review_base_sha(repo_root: Path) -> str | None:
             args,
             cwd=repo_root,
             capture_output=True,
-            text=True,
+            text=True, errors="replace",
         )
         if result.returncode == 0:
             value = result.stdout.strip()

@@ -244,7 +244,7 @@ def test_process_efficiency_rows_deduplicated_per_task(tmp_path: Path) -> None:
 def _write_trace(run_dir: Path, task_id: str, steps: list[dict]) -> Path:
     path = run_dir / "tasks" / task_id / "trace.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"task_id": task_id, "steps": steps}))
+    path.write_text(json.dumps({"task_id": task_id, "steps": steps}), encoding="utf-8")
     return path
 
 

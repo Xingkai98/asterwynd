@@ -166,7 +166,7 @@ class TestGenerateTasksVerifiedFields:
             dataset=self._dataset(), repo_urls=GITEE_PREFERRED_URLS,
         )
         assert len(created) == 1
-        task = json.loads((created[0] / "task.json").read_text())
+        task = json.loads((created[0] / "task.json").read_text(encoding="utf-8"))
         assert task["track"] == "verified"
         assert task["scenario"] == "bug-fix"
         assert task["difficulty"] == "easy"
@@ -197,7 +197,7 @@ class TestGenerateTasksVerifiedFields:
             ["psf__requests-1", "sympy__sympy-1"], tmp_path,
             dataset=ds, repo_urls=GITEE_PREFERRED_URLS,
         )
-        req = json.loads((created[0] / "task.json").read_text())
-        sym = json.loads((created[1] / "task.json").read_text())
+        req = json.loads((created[0] / "task.json").read_text(encoding="utf-8"))
+        sym = json.loads((created[1] / "task.json").read_text(encoding="utf-8"))
         assert req["external_repo"] == "https://gitee.com/mirrors/requests.git"
         assert sym["external_repo"] == "https://github.com/sympy/sympy.git"

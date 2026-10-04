@@ -20,7 +20,7 @@ def test_extract_python_summary_returns_imports_classes_functions_and_methods(tm
                 "    async def stop(self):",
                 "        pass",
             ]
-        )
+        ), encoding="utf-8"
     )
 
     summary = extract_python_summary(source, "service.py")
@@ -40,7 +40,7 @@ def test_extract_python_summary_returns_imports_classes_functions_and_methods(tm
 
 def test_extract_python_summary_reports_syntax_error_without_raising(tmp_path):
     source = tmp_path / "broken.py"
-    source.write_text("def broken(:\n")
+    source.write_text("def broken(:\n", encoding="utf-8")
 
     summary = extract_python_summary(source, "broken.py")
 

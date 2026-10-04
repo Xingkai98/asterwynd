@@ -56,7 +56,7 @@ def _write_report(task_output: Path, loaded: LoadedTask, model_name: str, resolv
     report_path = _report_path(task_output, loaded, model_name)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        json.dumps({loaded.task.instance_id: {"resolved": resolved}})
+        json.dumps({loaded.task.instance_id: {"resolved": resolved}}), encoding="utf-8"
     )
     return report_path
 
@@ -90,7 +90,7 @@ def test_swebench_verify_maps_passed(tmp_path, monkeypatch) -> None:
     task_output = tmp_path / "task-output"
     task_output.mkdir(parents=True)
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         _write_report(task_output, loaded, "asterwynd:test-model", resolved=True)
         return SimpleNamespace(returncode=0, stdout="harness stdout", stderr="")
 
@@ -103,7 +103,7 @@ def test_swebench_verify_maps_passed(tmp_path, monkeypatch) -> None:
     assert verdict.reason is None
     assert "harness stdout" in verdict.detail
 
-    predictions = json.loads((task_output / "predictions.jsonl").read_text())
+    predictions = json.loads((task_output / "predictions.jsonl").read_text(encoding="utf-8"))
     assert predictions["instance_id"] == loaded.task.instance_id
     assert predictions["model_name_or_path"] == "asterwynd:test-model"
     assert predictions["model_patch"] == "diff --git a/app.py b/app.py\n"
@@ -114,7 +114,7 @@ def test_swebench_verify_maps_failed(tmp_path, monkeypatch) -> None:
     task_output = tmp_path / "task-output"
     task_output.mkdir(parents=True)
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         _write_report(task_output, loaded, "asterwynd", resolved=False)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
@@ -131,7 +131,7 @@ def test_swebench_verify_error_on_nonzero_exit(tmp_path, monkeypatch) -> None:
     task_output = tmp_path / "task-output"
     task_output.mkdir(parents=True)
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         return SimpleNamespace(returncode=1, stdout="", stderr="image pull failed")
 
     monkeypatch.setattr("benchmarks.adapters.subprocess.run", fake_run)
@@ -148,7 +148,7 @@ def test_swebench_verify_error_on_missing_report(tmp_path, monkeypatch) -> None:
     task_output = tmp_path / "task-output"
     task_output.mkdir(parents=True)
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     monkeypatch.setattr("benchmarks.adapters.subprocess.run", fake_run)
@@ -169,7 +169,7 @@ def test_swebench_harness_command_shape(tmp_path, monkeypatch) -> None:
     task_output.mkdir(parents=True)
     calls: list[tuple] = []
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         calls.append((command, cwd))
         _write_report(task_output, loaded, "asterwynd", resolved=True)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
@@ -222,7 +222,7 @@ def test_any_adapter_verdict_carries_contract_fields(tmp_path, monkeypatch) -> N
     task_output = tmp_path / "task-output"
     task_output.mkdir(parents=True)
 
-    def fake_run(command, cwd, capture_output, text, timeout):
+    def fake_run(command, cwd, capture_output, text, timeout, **kwargs):
         _write_report(task_output, loaded, "asterwynd", resolved=True)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
