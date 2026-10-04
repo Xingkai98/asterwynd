@@ -270,7 +270,7 @@ class TestMultiWorkspace:
         extra.mkdir()
         policy.add_root(str(extra))
         f = extra / "code.py"
-        f.write_text("x")
+        f.write_text("x", encoding="utf-8")
         resolved = policy.assert_within_workspace(f)
         assert resolved == f.resolve()
 
@@ -289,7 +289,7 @@ class TestMultiWorkspace:
         extra.mkdir()
         policy.add_root(str(extra))
         f = extra / "readme.md"
-        f.write_text("hello")
+        f.write_text("hello", encoding="utf-8")
         resolved = policy.assert_read_allowed(f)
         assert resolved == f.resolve()
 
@@ -310,7 +310,7 @@ class TestMultiWorkspace:
         policy.add_root(str(extra))
         f = extra / "sub" / "data.json"
         f.parent.mkdir()
-        f.write_text("{}")
+        f.write_text("{}", encoding="utf-8")
 
         rel = policy.relative_path(f)
         assert rel == "sub/data.json"
@@ -332,7 +332,7 @@ class TestMultiWorkspace:
         policy.add_root(str(extra))
         f = extra / "deep" / "nested" / "file.py"
         f.parent.mkdir(parents=True)
-        f.write_text("pass")
+        f.write_text("pass", encoding="utf-8")
 
         rel = policy.relative_path(f)
         assert rel == "deep/nested/file.py"

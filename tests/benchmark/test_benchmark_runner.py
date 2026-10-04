@@ -16,7 +16,7 @@ class AssertHiddenAndEditRunner(AgentRunner):
         assert "Version 2" in problem_statement
         assert not (workspace / "benchmarks" / "tasks").exists()
         target = workspace / "app.py"
-        target.write_text(target.read_text().replace("Version 1", "Version 2"))
+        target.write_text(target.read_text(encoding="utf-8").replace("Version 1", "Version 2"), encoding="utf-8")
         trace.record_tool_call("AssertHiddenAndEdit", {"path": "app.py"})
         trace.record_edit("app.py", "ok", "Version 1 -> Version 2")
         return AgentRunResult(
@@ -30,7 +30,7 @@ class AssertHiddenAndEditRunner(AgentRunner):
 class WarningEditRunner(AgentRunner):
     async def run(self, task, problem_statement, workspace, output_dir, trace):
         target = workspace / "app.py"
-        target.write_text(target.read_text().replace("Version 1", "Version 2"))
+        target.write_text(target.read_text(encoding="utf-8").replace("Version 1", "Version 2"), encoding="utf-8")
         trace.record_edit("app.py", "ok", "Version 1 -> Version 2")
         return AgentRunResult(
             status="error",
@@ -63,7 +63,7 @@ class PlanningTraceRunner(AgentRunner):
             },
         })
         target = workspace / "app.py"
-        target.write_text(target.read_text().replace("Version 1", "Version 2"))
+        target.write_text(target.read_text(encoding="utf-8").replace("Version 1", "Version 2"), encoding="utf-8")
         return AgentRunResult(
             status="completed",
             iterations=1,
@@ -75,7 +75,7 @@ class PlanningTraceRunner(AgentRunner):
 class CompleteEditRunner(AgentRunner):
     async def run(self, task, problem_statement, workspace, output_dir, trace):
         target = workspace / "app.py"
-        target.write_text(target.read_text().replace("Version 1", "Version 2"))
+        target.write_text(target.read_text(encoding="utf-8").replace("Version 1", "Version 2"), encoding="utf-8")
         trace.record_edit("app.py", "ok", "Version 1 -> Version 2")
         return AgentRunResult(
             status="completed",
@@ -92,10 +92,10 @@ def repo(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "bench@example.com")
     _git(repo, "config", "user.name", "Bench")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     tracked_task_dir = repo / "benchmarks" / "tasks" / "tracked"
     tracked_task_dir.mkdir(parents=True)
-    (tracked_task_dir / "test.patch").write_text("hidden")
+    (tracked_task_dir / "test.patch").write_text("hidden", encoding="utf-8")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -129,14 +129,14 @@ async def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
     assert (task_output / "test_output.txt").exists()
     assert (task_output / "runner.log").exists()
 
-    result = json.loads((task_output / "result.json").read_text())
+    result = json.loads((task_output / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "passed"
     assert result["edit_count"] == 1
     assert result["mode"] == "build"
     assert result["agent_run_id"]
     assert "planning_summary" not in result
 
-    trace = json.loads((task_output / "trace.json").read_text())
+    trace = json.loads((task_output / "trace.json").read_text(encoding="utf-8"))
     assert trace["mode"] == "build"
     assert trace["run_id"] == result["agent_run_id"]
     step_types = [step["type"] for step in trace["steps"]]
@@ -145,11 +145,11 @@ async def test_benchmark_runner_writes_closed_loop_artifacts(repo, tmp_path):
     assert "diff" in step_types
     assert "test" in step_types
 
-    final_diff = (task_output / "final.diff").read_text()
+    final_diff = (task_output / "final.diff").read_text(encoding="utf-8")
     assert "Version 2" in final_diff
     assert "benchmarks/tasks" not in final_diff
 
-    run = json.loads((run_dir / "run.json").read_text())
+    run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert run["mode"] == "build"
     assert run["run_id"] == "run-1"
 
@@ -175,11 +175,11 @@ async def test_benchmark_runner_reports_passed_with_warnings(repo, tmp_path):
     assert metadata.failed == 0
     assert metadata.unsupported == 0
     task_output = tmp_path / "runs" / "run-warning" / "tasks" / "task-1"
-    result = json.loads((task_output / "result.json").read_text())
+    result = json.loads((task_output / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "passed_with_warnings"
     assert result["reason"] == "max_iterations"
 
-    summary = (tmp_path / "runs" / "run-warning" / "summary.md").read_text()
+    summary = (tmp_path / "runs" / "run-warning" / "summary.md").read_text(encoding="utf-8")
     assert "| task-1 | passed_with_warnings |" in summary
 
 
@@ -200,8 +200,8 @@ async def test_benchmark_runner_writes_planning_summary_when_present(repo, tmp_p
     await runner.run_task(task_dir, run_dir=tmp_path / "runs" / "run-planning")
 
     task_output = tmp_path / "runs" / "run-planning" / "tasks" / "task-1"
-    result = json.loads((task_output / "result.json").read_text())
-    trace = json.loads((task_output / "trace.json").read_text())
+    result = json.loads((task_output / "result.json").read_text(encoding="utf-8"))
+    trace = json.loads((task_output / "trace.json").read_text(encoding="utf-8"))
 
     assert result["planning_summary"]["completed"] == 1
     assert "planning_state_updated" in [
@@ -279,7 +279,7 @@ async def test_benchmark_runner_marks_docker_tasks_unsupported_when_preflight_fa
     assert not (task_output / "final.diff").exists()
     assert not (task_output / "test_output.txt").exists()
 
-    trace = json.loads((task_output / "trace.json").read_text())
+    trace = json.loads((task_output / "trace.json").read_text(encoding="utf-8"))
     assert "benchmark_preflight" in [step["type"] for step in trace["steps"]]
     completion = [step for step in trace["steps"] if step["type"] == "completion"]
     assert completion[-1]["data"]["status"] == "unsupported"
@@ -333,9 +333,9 @@ async def test_benchmark_runner_mixed_local_and_docker_tasks_keep_local_results(
     assert metadata.failed == 0
 
     run_dir = tmp_path / "runs" / "run-mixed" / "tasks"
-    local_result = json.loads((run_dir / "asterwynd-001-local" / "result.json").read_text())
+    local_result = json.loads((run_dir / "asterwynd-001-local" / "result.json").read_text(encoding="utf-8"))
     docker_result = json.loads(
-        (run_dir / "swebench-psf__requests-1142" / "result.json").read_text()
+        (run_dir / "swebench-psf__requests-1142" / "result.json").read_text(encoding="utf-8")
     )
     assert local_result["status"] == "passed"
     assert docker_result["status"] == "unsupported"
@@ -382,7 +382,7 @@ def test_run_swebench_harness_reads_report_and_maps_pass(repo, tmp_path, monkeyp
             / "report.json"
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps({"psf__requests-1142": {"resolved": True}}))
+        report_path.write_text(json.dumps({"psf__requests-1142": {"resolved": True}}), encoding="utf-8")
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
     monkeypatch.setattr("benchmarks.adapters.subprocess.run", fake_run)
@@ -446,8 +446,8 @@ async def test_docker_task_persists_harness_output(repo, tmp_path, monkeypatch):
     task_output = tmp_path / "runs" / "run-docker-error" / "tasks" / "swebench-psf__requests-1142"
     assert result.status == "error"
     assert result.reason == "docker_runtime_error"
-    assert (task_output / "test_output.txt").read_text() == "docker stderr: image pull failed"
-    runner_log = (task_output / "runner.log").read_text()
+    assert (task_output / "test_output.txt").read_text(encoding="utf-8") == "docker stderr: image pull failed"
+    runner_log = (task_output / "runner.log").read_text(encoding="utf-8")
     assert "Framework verification detail saved to test_output.txt" in runner_log
 
 
@@ -480,14 +480,14 @@ async def test_docker_task_unknown_family_returns_unsupported(repo, tmp_path, mo
     task_output = tmp_path / "runs" / "run-unsupported-family" / "tasks" / "harbor-unknown-001"
     assert result.status == "unsupported"
     assert result.reason == "task_family_unsupported"
-    result_json = json.loads((task_output / "result.json").read_text())
+    result_json = json.loads((task_output / "result.json").read_text(encoding="utf-8"))
     assert result_json["status"] == "unsupported"
     assert result_json["reason"] == "task_family_unsupported"
     assert result_json["task_family"] == "harbor"
     # category is None for tasks without an explicit layer; it stays omitted
     # (or null) in the artifact rather than breaking old result.json readers.
     assert result_json.get("category") is None
-    detail = (task_output / "test_output.txt").read_text()
+    detail = (task_output / "test_output.txt").read_text(encoding="utf-8")
     assert "harbor" in detail
 
 
@@ -536,7 +536,7 @@ async def test_docker_task_passed_verdict_maps_to_passed(repo, tmp_path, monkeyp
     assert result.test_runs == 1
     assert result.task_family == "swebench"
     assert result.category is None
-    assert (task_output / "test_output.txt").read_text() == "all tests passed"
+    assert (task_output / "test_output.txt").read_text(encoding="utf-8") == "all tests passed"
 
 
 def test_probe_docker_reports_available(repo, tmp_path, monkeypatch):
@@ -595,7 +595,7 @@ def _task_dir(
 ) -> Path:
     root = tmp_path / "tasks" / task_id
     root.mkdir(parents=True)
-    (root / "issue.md").write_text("Update app.py to Version 2.\n")
+    (root / "issue.md").write_text("Update app.py to Version 2.\n", encoding="utf-8")
     task = {
         "id": task_id,
         "repo": repo_name,
@@ -618,10 +618,10 @@ def _task_dir(
         task["dataset_name"] = dataset_name
     if dataset_split is not None:
         task["dataset_split"] = dataset_split
-    (root / "task.json").write_text(json.dumps(task))
-    (root / "gold.patch").write_text("gold reference\n")
+    (root / "task.json").write_text(json.dumps(task), encoding="utf-8")
+    (root / "gold.patch").write_text("gold reference\n", encoding="utf-8")
     if test_patch is not None:
-        (root / "test.patch").write_text(test_patch)
+        (root / "test.patch").write_text(test_patch, encoding="utf-8")
     return root
 
 
@@ -719,7 +719,7 @@ async def test_run_all_records_swebench_versions(repo, tmp_path, monkeypatch):
     assert metadata.swebench_package_version == "1.0.10"
 
     run = json.loads(
-        (tmp_path / "runs" / "run-swebench" / "run.json").read_text()
+        (tmp_path / "runs" / "run-swebench" / "run.json").read_text(encoding="utf-8")
     )
     assert run["swebench_dataset_version"] == "v1.0"
     assert run["swebench_package_version"] == "1.0.10"

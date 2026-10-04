@@ -210,7 +210,7 @@ def collect_trace_events(run_dirs: list[Path], task_id: str) -> list[dict]:
         if not trace_path.exists():
             continue
         try:
-            data = json.loads(trace_path.read_text())
+            data = json.loads(trace_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         steps = data.get("steps") if isinstance(data, dict) else None

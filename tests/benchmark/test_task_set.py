@@ -9,7 +9,7 @@ from benchmarks.task_schema import load_task
 def _write_task(root, task_id, scenario, track, difficulty="easy", family="local"):
     task_dir = root / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "issue.md").write_text("Do the thing\n")
+    (task_dir / "issue.md").write_text("Do the thing\n", encoding="utf-8")
     data = {
         "id": task_id,
         "repo": "local",
@@ -30,7 +30,7 @@ def _write_task(root, task_id, scenario, track, difficulty="easy", family="local
                 "dataset_split": "test",
             }
         )
-    (task_dir / "task.json").write_text(json.dumps(data))
+    (task_dir / "task.json").write_text(json.dumps(data), encoding="utf-8")
     return task_id
 
 
@@ -47,7 +47,7 @@ def _write_manifest(root, coverage, capabilities=None):
                 "capabilities": capabilities or list(CAPABILITIES),
                 "coverage": coverage,
             }
-        )
+        ), encoding="utf-8"
     )
     return Manifest.load(manifest_path)
 

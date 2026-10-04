@@ -116,11 +116,14 @@ class SessionStore:
             return None
 
         try:
-            with open(snapshot_path) as f:
+            with open(snapshot_path, encoding="utf-8") as f:
                 snapshot_data = json.load(f)
-            with open(messages_path) as f:
+            with open(messages_path, encoding="utf-8") as f:
                 messages_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            # ``UnicodeDecodeError`` 是 ``ValueError`` 的子类、**不是** ``OSError``：
+            # 不显式列出它，locale 非 UTF-8 平台上读到历史脏文件会直接把异常抛给调用方
+            # （实测：Windows/GBK 下 `GET /api/sessions` 整个 500）。
             return None
 
         # schema_version 兼容检查
@@ -141,6 +144,14 @@ class SessionStore:
         return SessionSnapshot.from_dict(snapshot_data, messages)
 
     def list_sessions(self) -> list[dict]:
+        """列出会话元数据。
+
+        **单条损坏 SHALL NOT 打掉整个列表**（change ``fix-windows-encoding-and-guard``）：
+        某条会话的落盘文件不可解码/损坏时，该条 SHALL 以 ``damaged: True`` + 可读
+        ``reason`` 出现在结果里（``session_id`` 取**目录名**，因为它一定可信），
+        其余会话 SHALL 正常返回。坏条目**不许静默消失**——用户看到「少了几个会话」
+        却没有任何解释，与「不显示 = 没事」是同一种误读。
+        """
         if not os.path.isdir(self._root):
             return []
 
@@ -156,9 +167,18 @@ class SessionStore:
             if not os.path.isfile(snapshot_path):
                 continue
             try:
-                with open(snapshot_path) as f:
+                with open(snapshot_path, encoding="utf-8") as f:
                     data = json.load(f)
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+                sessions.append({
+                    "session_id": name,
+                    "created_at": "",
+                    "updated_at": "",
+                    "mode": "",
+                    "messages": 0,
+                    "damaged": True,
+                    "reason": f"snapshot.json 无法读取（{type(exc).__name__}）",
+                })
                 continue
             sessions.append({
                 "session_id": data.get("session_id", name),
@@ -169,15 +189,19 @@ class SessionStore:
             })
         # 补充消息数（从 messages.json 统计）
         for s in sessions:
+            if s.get("damaged"):
+                continue
             sid = s["session_id"]
             msg_path = os.path.join(self._root, sid, "messages.json")
             if os.path.isfile(msg_path):
                 try:
-                    with open(msg_path) as f:
+                    with open(msg_path, encoding="utf-8") as f:
                         msg_data = json.load(f)
                     s["messages"] = len(msg_data)
-                except (json.JSONDecodeError, OSError):
-                    pass
+                except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+                    # 快照可读、消息不可读：条目保留（会话确实存在），但如实标注。
+                    s["damaged"] = True
+                    s["reason"] = f"messages.json 无法读取（{type(exc).__name__}）"
 
         return sorted(sessions, key=lambda s: s.get("updated_at", ""), reverse=True)
 
@@ -227,9 +251,11 @@ class SessionStore:
         tmp_snapshot = os.path.join(session_dir, "snapshot.json.tmp")
         tmp_messages = os.path.join(session_dir, "messages.json.tmp")
 
-        with open(tmp_snapshot, "w") as f:
+        # 显式 UTF-8：存储格式就是 UTF-8，依赖 locale 默认编码在非 UTF-8 平台上会把
+        # 含 emoji/CJK 的会话写成 GBK 或直接抛 UnicodeEncodeError（实测 Windows/GBK）。
+        with open(tmp_snapshot, "w", encoding="utf-8") as f:
             json.dump(snapshot_dict, f, ensure_ascii=False, indent=2)
-        with open(tmp_messages, "w") as f:
+        with open(tmp_messages, "w", encoding="utf-8") as f:
             json.dump([m.to_dict() for m in messages], f, ensure_ascii=False, indent=2)
 
         os.replace(tmp_snapshot, os.path.join(session_dir, "snapshot.json"))

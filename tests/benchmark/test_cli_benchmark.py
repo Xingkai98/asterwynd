@@ -14,14 +14,14 @@ def test_benchmark_cli_runs_fake_agent(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "bench@example.com")
     _git(repo, "config", "user.name", "Bench")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
     base_commit = _git_out(repo, "rev-parse", "HEAD")
 
     task_dir = tmp_path / "tasks" / "task-1"
     task_dir.mkdir(parents=True)
-    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n")
+    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n", encoding="utf-8")
     (task_dir / "task.json").write_text(
         json.dumps(
             {
@@ -32,7 +32,7 @@ def test_benchmark_cli_runs_fake_agent(tmp_path):
                 "test_command": "grep -q 'Version 2' app.py",
                 "timeout_seconds": 30,
             }
-        )
+        ), encoding="utf-8"
     )
     runs_dir = tmp_path / "runs"
 
@@ -70,14 +70,14 @@ def test_benchmark_cli_uses_yaml_default_mode(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "bench@example.com")
     _git(repo, "config", "user.name", "Bench")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
     base_commit = _git_out(repo, "rev-parse", "HEAD")
 
     task_dir = tmp_path / "tasks" / "task-1"
     task_dir.mkdir(parents=True)
-    (task_dir / "issue.md").write_text("Read app.py.\n")
+    (task_dir / "issue.md").write_text("Read app.py.\n", encoding="utf-8")
     (task_dir / "task.json").write_text(
         json.dumps(
             {
@@ -88,7 +88,7 @@ def test_benchmark_cli_uses_yaml_default_mode(tmp_path):
                 "test_command": "true",
                 "timeout_seconds": 30,
             }
-        )
+        ), encoding="utf-8"
     )
     config_path = tmp_path / "asterwynd.yaml"
     config_path.write_text("agent:\n  default_mode: plan\n", encoding="utf-8")
@@ -112,8 +112,8 @@ def test_benchmark_cli_uses_yaml_default_mode(tmp_path):
 
     assert result.exit_code == 0, result.output
     run_dirs = list(runs_dir.iterdir())
-    run = json.loads((run_dirs[0] / "run.json").read_text())
-    trace = json.loads((run_dirs[0] / "tasks" / "task-1" / "trace.json").read_text())
+    run = json.loads((run_dirs[0] / "run.json").read_text(encoding="utf-8"))
+    trace = json.loads((run_dirs[0] / "tasks" / "task-1" / "trace.json").read_text(encoding="utf-8"))
     assert run["mode"] == "plan"
     assert trace["mode"] == "plan"
 
@@ -124,14 +124,14 @@ def test_benchmark_cli_reports_unsupported_docker_tasks(tmp_path, monkeypatch):
     _git(repo, "init")
     _git(repo, "config", "user.email", "bench@example.com")
     _git(repo, "config", "user.name", "Bench")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
     base_commit = _git_out(repo, "rev-parse", "HEAD")
 
     task_dir = tmp_path / "tasks" / "swebench-psf__requests-1142"
     task_dir.mkdir(parents=True)
-    (task_dir / "issue.md").write_text("Fix requests issue.\n")
+    (task_dir / "issue.md").write_text("Fix requests issue.\n", encoding="utf-8")
     (task_dir / "task.json").write_text(
         json.dumps(
             {
@@ -148,7 +148,7 @@ def test_benchmark_cli_reports_unsupported_docker_tasks(tmp_path, monkeypatch):
                 "dataset_name": "princeton-nlp/SWE-bench_Verified",
                 "dataset_split": "test",
             }
-        )
+        ), encoding="utf-8"
     )
     runs_dir = tmp_path / "runs"
 
@@ -182,7 +182,7 @@ def test_benchmark_cli_reports_unsupported_docker_tasks(tmp_path, monkeypatch):
     assert "unsupported: 1" in result.output
     run_dirs = list(runs_dir.iterdir())
     task_result = json.loads(
-        (run_dirs[0] / "tasks" / "swebench-psf__requests-1142" / "result.json").read_text()
+        (run_dirs[0] / "tasks" / "swebench-psf__requests-1142" / "result.json").read_text(encoding="utf-8")
     )
     assert task_result["status"] == "unsupported"
     assert task_result["reason"] == "docker_unavailable"
@@ -224,7 +224,7 @@ def _minimal_repo(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "bench@example.com")
     _git(repo, "config", "user.name", "Bench")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
     return repo
@@ -234,7 +234,7 @@ def _minimal_task(tmp_path, repo):
     base_commit = _git_out(repo, "rev-parse", "HEAD")
     task_dir = tmp_path / "tasks" / "task-1"
     task_dir.mkdir(parents=True)
-    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n")
+    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n", encoding="utf-8")
     (task_dir / "task.json").write_text(
         json.dumps(
             {
@@ -245,7 +245,7 @@ def _minimal_task(tmp_path, repo):
                 "test_command": "true",
                 "timeout_seconds": 30,
             }
-        )
+        ), encoding="utf-8"
     )
     return task_dir
 
@@ -403,7 +403,7 @@ def test_benchmark_cli_config_parallel_explicit_wins_over_dynamic(tmp_path, monk
         lambda: 7,
     )
     config_path = tmp_path / "asterwynd.yaml"
-    config_path.write_text("benchmark:\n  parallel: 1\n")
+    config_path.write_text("benchmark:\n  parallel: 1\n", encoding="utf-8")
     runs_dir = tmp_path / "runs"
 
     result = CliRunner().invoke(
@@ -455,7 +455,7 @@ def test_benchmark_cli_repeat_aggregates_real_results(tmp_path, monkeypatch):
                         "input_tokens": 100,
                         "output_tokens": 50,
                     }
-                )
+                ), encoding="utf-8"
             )
             return _FakeRunMetadata(run_id=rid)
 
@@ -483,7 +483,7 @@ def test_benchmark_cli_repeat_aggregates_real_results(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     report_path = runs_dir / "evaluation-report.md"
     assert report_path.exists()
-    report_text = report_path.read_text()
+    report_text = report_path.read_text(encoding="utf-8")
     # Real per-round data flows into the report: layer table, task row, tokens.
     assert "## By Capability Layer" in report_text
     assert "| tool-usage" in report_text

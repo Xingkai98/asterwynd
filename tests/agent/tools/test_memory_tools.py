@@ -67,7 +67,7 @@ class TestSaveMemoryTool:
             type="user", name="my-role", description="v2", body="New."
         )
         assert "updated" in result
-        content = (mem.memory_dir / "my-role.md").read_text()
+        content = (mem.memory_dir / "my-role.md").read_text(encoding="utf-8")
         assert "New." in content
 
     @pytest.mark.asyncio

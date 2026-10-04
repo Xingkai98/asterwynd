@@ -137,7 +137,7 @@ def test_collect_run_results_reads_result_jsons(tmp_path) -> None:
                 "task_family": "local",
                 "duration_seconds": 1.5,
             }
-        )
+        ), encoding="utf-8"
     )
     results = collect_run_results(tmp_path)
     assert len(results) == 1

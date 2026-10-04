@@ -287,7 +287,7 @@ class BenchmarkRunner:
             truncated=False,
         )
         metadata.write_json(run_dir / "run.json")
-        (run_dir / "summary.md").write_text(render_summary(results), errors="replace")
+        (run_dir / "summary.md").write_text(render_summary(results), errors="replace", encoding="utf-8")
         return metadata
 
     def _annotate_e2e_verification(self, result: TaskResult) -> TaskResult:
@@ -548,7 +548,7 @@ class BenchmarkRunner:
                     partial = verdict.partial
                 artifacts.test_output.write_text(
                     detail or "(no framework harness output)\n",
-                    errors="replace",
+                    errors="replace", encoding="utf-8",
                 )
                 log(f"Framework verification status={verifier_status}")
                 if detail:
@@ -606,7 +606,7 @@ class BenchmarkRunner:
             if httpbin_proc:
                 await asyncio.to_thread(self._stop_local_httpbin, httpbin_proc)
                 log("Stopped local httpbin")
-            artifacts.test_output.write_text(test_output, errors="replace")
+            artifacts.test_output.write_text(test_output, errors="replace", encoding="utf-8")
             trace.record_test(
                 loaded.task.test_command,
                 test_exit_code,
@@ -664,7 +664,7 @@ class BenchmarkRunner:
             result.planning_summary = result.planning_summary or trace.latest_planning_summary()
             result.write_json(artifacts.result_json)
             trace.write_to_file(artifacts.trace_json)
-            artifacts.runner_log.write_text("\n".join(log_lines) + "\n", errors="replace")
+            artifacts.runner_log.write_text("\n".join(log_lines) + "\n", errors="replace", encoding="utf-8")
 
         return result
 
@@ -855,7 +855,7 @@ class BenchmarkRunner:
 
     def _write_final_diff(self, workspace: Path, output_path: Path) -> None:
         diff = self._git_patch(workspace)
-        output_path.write_text((diff or "(no changes)") + "\n", errors="replace")
+        output_path.write_text((diff or "(no changes)") + "\n", errors="replace", encoding="utf-8")
 
     def _git_diff_stat(self, workspace: Path) -> str:
         return _run_git(["diff", "--stat"], workspace) or "(no changes)"
@@ -897,7 +897,7 @@ class BenchmarkRunner:
             timeout=10,
         )
         if source_result.stdout.strip():
-            source_patch.write_text(source_result.stdout)
+            source_patch.write_text(source_result.stdout, encoding="utf-8")
             subprocess.run(
                 ["git", "reset", "--hard", "HEAD"],
                 cwd=workspace, timeout=10,

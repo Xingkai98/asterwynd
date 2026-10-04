@@ -56,7 +56,7 @@ def _write_report(task_output: Path, loaded: LoadedTask, model_name: str, resolv
     report_path = _report_path(task_output, loaded, model_name)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
-        json.dumps({loaded.task.instance_id: {"resolved": resolved}})
+        json.dumps({loaded.task.instance_id: {"resolved": resolved}}), encoding="utf-8"
     )
     return report_path
 
@@ -103,7 +103,7 @@ def test_swebench_verify_maps_passed(tmp_path, monkeypatch) -> None:
     assert verdict.reason is None
     assert "harness stdout" in verdict.detail
 
-    predictions = json.loads((task_output / "predictions.jsonl").read_text())
+    predictions = json.loads((task_output / "predictions.jsonl").read_text(encoding="utf-8"))
     assert predictions["instance_id"] == loaded.task.instance_id
     assert predictions["model_name_or_path"] == "asterwynd:test-model"
     assert predictions["model_patch"] == "diff --git a/app.py b/app.py\n"

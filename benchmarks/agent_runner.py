@@ -103,7 +103,7 @@ class FakeAgentRunner(AgentRunner):
                     reason=BenchmarkReason.EDIT_VALIDATION.value,
                     output="file not found",
                 )
-            content = target.read_text(errors="replace")
+            content = target.read_text(errors="replace", encoding="utf-8")
             if self.old_string not in content:
                 trace.record_tool_result("FakeEdit", "error", 0, "old_string not found")
                 return AgentRunResult(
@@ -111,7 +111,7 @@ class FakeAgentRunner(AgentRunner):
                     reason=BenchmarkReason.EDIT_VALIDATION.value,
                     output="old_string not found",
                 )
-            target.write_text(content.replace(self.old_string, self.new_string, 1), errors="replace")
+            target.write_text(content.replace(self.old_string, self.new_string, 1), errors="replace", encoding="utf-8")
             edit_count = 1
             trace.record_tool_result("FakeEdit", "ok", 0, "edit applied")
             trace.record_edit(self.edit_file, "ok", "1 replacement")

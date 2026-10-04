@@ -150,11 +150,11 @@ def test_parse_targets_rejects_bad_input():
 def test_collect_existing_instance_ids(tmp_path):
     (tmp_path / "swebench-psf__requests-1").mkdir()
     (tmp_path / "swebench-psf__requests-1" / "task.json").write_text(
-        json.dumps({"instance_id": "psf__requests-1"})
+        json.dumps({"instance_id": "psf__requests-1"}), encoding="utf-8"
     )
     (tmp_path / "swebench-psf__requests-2").mkdir()
     (tmp_path / "swebench-psf__requests-2" / "task.json").write_text(
-        json.dumps({"instance_id": "psf__requests-2"})
+        json.dumps({"instance_id": "psf__requests-2"}), encoding="utf-8"
     )
     assert collect_existing_instance_ids(tmp_path) == {
         "psf__requests-1",
@@ -164,7 +164,7 @@ def test_collect_existing_instance_ids(tmp_path):
 
 def test_update_manifest_verified_summary(tmp_path):
     """OQ-V6①：verified 摘要计数（count/by_repo/by_difficulty），不破坏既有键。"""
-    (tmp_path / "manifest.json").write_text(json.dumps({"version": 1, "coverage": {}}))
+    (tmp_path / "manifest.json").write_text(json.dumps({"version": 1, "coverage": {}}), encoding="utf-8")
     fixtures = [
         ("psf__requests-1", "psf/requests", "easy"),
         ("psf__requests-2", "psf/requests", "easy"),
@@ -176,13 +176,13 @@ def test_update_manifest_verified_summary(tmp_path):
         (d / "task.json").write_text(
             json.dumps(
                 {"instance_id": iid, "repo": repo, "difficulty": diff, "track": "verified"}
-            )
+            ), encoding="utf-8"
         )
     summary = update_manifest_verified(tmp_path)
     assert summary["count"] == 3
     assert summary["by_repo"] == {"psf/requests": 2, "pallets/flask": 1}
     assert summary["by_difficulty"] == {"easy": 2, "medium": 1}
-    data = json.loads((tmp_path / "manifest.json").read_text())
+    data = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert data["coverage"] == {}
 
 
@@ -190,7 +190,7 @@ def test_build_subset_cli_end_to_end(tmp_path, monkeypatch):
     """build-subset 端到端（mock 数据集）：选配比→落盘→validate 全过→manifest 登记。"""
     from benchmarks import swebench_convert
 
-    (tmp_path / "manifest.json").write_text(json.dumps({"version": 1}))
+    (tmp_path / "manifest.json").write_text(json.dumps({"version": 1}), encoding="utf-8")
     ds = [
         {
             "instance_id": f"psf__requests-{i}",
@@ -220,13 +220,13 @@ def test_build_subset_cli_end_to_end(tmp_path, monkeypatch):
     assert validate_fixtures_dir(tmp_path) == []
     for i in range(4):
         task = json.loads(
-            (tmp_path / f"swebench-psf__requests-{i}" / "task.json").read_text()
+            (tmp_path / f"swebench-psf__requests-{i}" / "task.json").read_text(encoding="utf-8")
         )
         assert task["track"] == "verified"
         assert task["scenario"] == "bug-fix"
         assert task["difficulty"] == "easy"
         assert task["external_repo"] == "https://gitee.com/mirrors/requests.git"
-    data = json.loads((tmp_path / "manifest.json").read_text())
+    data = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert data["verified"]["count"] == 4
     assert data["verified"]["by_repo"] == {"psf/requests": 4}
 
@@ -235,7 +235,7 @@ def test_build_subset_cli_resume_skips_existing(tmp_path, monkeypatch):
     """--resume：续跑跳过输出目录已存在的 instance_id。"""
     from benchmarks import swebench_convert
 
-    (tmp_path / "manifest.json").write_text(json.dumps({"version": 1}))
+    (tmp_path / "manifest.json").write_text(json.dumps({"version": 1}), encoding="utf-8")
     existing = tmp_path / "swebench-psf__requests-0"
     existing.mkdir()
     (existing / "task.json").write_text(
@@ -251,7 +251,7 @@ def test_build_subset_cli_resume_skips_existing(tmp_path, monkeypatch):
                 "task_family": "swebench",
                 "execution_environment": "docker",
             }
-        )
+        ), encoding="utf-8"
     )
     ds = [
         {
@@ -282,7 +282,7 @@ def test_build_subset_cli_resume_skips_existing(tmp_path, monkeypatch):
     assert rc == 0
     # 选择池含既有（续跑收敛）→ requests-0 被选中但落盘跳过（未被覆盖），其余 3 条生成
     assert "test_command" not in json.loads(
-        (tmp_path / "swebench-psf__requests-0" / "task.json").read_text()
+        (tmp_path / "swebench-psf__requests-0" / "task.json").read_text(encoding="utf-8")
     ), "requests-0 被 resume 覆盖写"
     assert (tmp_path / "swebench-psf__requests-1" / "task.json").exists()
     assert (tmp_path / "swebench-psf__requests-3" / "task.json").exists()
@@ -293,9 +293,9 @@ def test_gold_check_external_repo_clones_applies_runs(monkeypatch, tmp_path):
     """gold_check external_repo 路径：clone→checkout→apply gold/test→run test_command。"""
     d = tmp_path / "swebench-psf__requests-1"
     d.mkdir()
-    (d / "issue.md").write_text("bug")
-    (d / "gold.patch").write_text("--- a/x\n+++ b/x\n")
-    (d / "test.patch").write_text("--- a/x\n+++ b/x\n")
+    (d / "issue.md").write_text("bug", encoding="utf-8")
+    (d / "gold.patch").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")
+    (d / "test.patch").write_text("--- a/x\n+++ b/x\n", encoding="utf-8")
     (d / "task.json").write_text(
         json.dumps(
             {
@@ -310,7 +310,7 @@ def test_gold_check_external_repo_clones_applies_runs(monkeypatch, tmp_path):
                 "execution_environment": "local",
                 "external_repo": "https://github.com/psf/requests.git",
             }
-        )
+        ), encoding="utf-8"
     )
     calls: list[tuple[object, bool]] = []
 
@@ -358,7 +358,7 @@ def test_generated_fixture_test_commands_have_no_bare_identifiers():
     """Round 1 Issue 1 回归守卫：全部 38 条 fixture 的 test_command 不得含裸函数名。"""
     bad = []
     for task_json in sorted(Path("benchmarks/tasks").glob("swebench-*/task.json")):
-        task = json.loads(task_json.read_text())
+        task = json.loads(task_json.read_text(encoding="utf-8"))
         for arg in _pytest_node_args(task["test_command"]):
             if "." not in arg and "::" not in arg and "/" not in arg:
                 bad.append((task["instance_id"], arg))

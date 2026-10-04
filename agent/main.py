@@ -919,7 +919,7 @@ def benchmark(
     )
     report_path = runs_dir / "evaluation-report.md"
     runs_dir.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(render_report(aggregated), errors="replace")
+    report_path.write_text(render_report(aggregated), errors="replace", encoding="utf-8")
     typer.echo(f"Repeated {repeat} runs aggregated -> {report_path}")
     for metadata in rounds_meta:
         typer.echo(
@@ -949,10 +949,10 @@ def benchmark_annotate(
         raise typer.BadParameter(f"task_id 越出 tasks 目录: {task_id}")
     if not result_path.exists():
         raise typer.BadParameter(f"未找到 result.json: {result_path}")
-    data = json.loads(result_path.read_text())
+    data = json.loads(result_path.read_text(encoding="utf-8"))
     data["fault_owner"] = owner
     result_path.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False) + "\n", errors="replace"
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n", errors="replace", encoding="utf-8"
     )
     typer.echo(f"annotated {task_id}: fault_owner={owner}")
 
@@ -965,7 +965,7 @@ def _load_manifest(tasks_dir: Path) -> dict | None:
     if not manifest_path.exists():
         return None
     try:
-        return _json.loads(manifest_path.read_text())
+        return _json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
 
@@ -1093,8 +1093,8 @@ def _check_e2e_assertions(record_path: Path, replay_path: Path) -> list[str]:
         replay_file = replay_path / "tasks" / task_dir.name / "result.json"
         if not record_file.exists() or not replay_file.exists():
             continue
-        record = _json.loads(record_file.read_text())
-        replay = _json.loads(replay_file.read_text())
+        record = _json.loads(record_file.read_text(encoding="utf-8"))
+        replay = _json.loads(replay_file.read_text(encoding="utf-8"))
         entries = record.get("workflows") or []
         if not entries:
             continue

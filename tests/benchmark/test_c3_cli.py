@@ -43,14 +43,14 @@ def _setup_repo_and_task(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "bench@example.com")
     _git(repo, "config", "user.name", "Bench")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
     base_commit = _git_out(repo, "rev-parse", "HEAD")
 
     task_dir = tmp_path / "tasks" / "task-1"
     task_dir.mkdir(parents=True)
-    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n")
+    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n", encoding="utf-8")
     (task_dir / "task.json").write_text(
         json.dumps(
             {
@@ -61,7 +61,7 @@ def _setup_repo_and_task(tmp_path):
                 "test_command": "grep -q 'Version 2' app.py",
                 "timeout_seconds": 30,
             }
-        )
+        ), encoding="utf-8"
     )
     runs_dir = tmp_path / "runs"
     return tmp_path / "tasks", repo, runs_dir
@@ -140,10 +140,10 @@ def test_budget_cap_overrun_stops_and_marks_truncated(tmp_path, monkeypatch):
     # Only the first round ran; remaining rounds stopped.
     round_dirs = [p for p in runs.iterdir() if p.is_dir()]
     assert len(round_dirs) == 1
-    meta = json.loads((round_dirs[0] / "run.json").read_text())
+    meta = json.loads((round_dirs[0] / "run.json").read_text(encoding="utf-8"))
     assert meta["truncated"] is True
     # The aggregate report still renders and discloses truncation.
-    report = (runs / "evaluation-report.md").read_text()
+    report = (runs / "evaluation-report.md").read_text(encoding="utf-8")
     assert "truncated" in report
 
 
@@ -156,7 +156,7 @@ def test_budget_cap_overrun_single_run_marks_truncated(tmp_path, monkeypatch):
     assert "预算超限" in result.output
     round_dirs = [p for p in runs.iterdir() if p.is_dir()]
     assert len(round_dirs) == 1
-    meta = json.loads((round_dirs[0] / "run.json").read_text())
+    meta = json.loads((round_dirs[0] / "run.json").read_text(encoding="utf-8"))
     assert meta["truncated"] is True
 
 

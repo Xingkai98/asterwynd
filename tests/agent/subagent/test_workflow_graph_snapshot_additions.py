@@ -223,7 +223,7 @@ async def test_node_state_status_is_never_written_queued(manager):
     from pathlib import Path
 
     source = Path(__file__).parents[3] / "agent" / "subagent" / "scheduler.py"
-    text = source.read_text()
+    text = source.read_text(encoding="utf-8")
     assert 'state.status = "queued"' not in text
     assert "state.status = 'queued'" not in text
 

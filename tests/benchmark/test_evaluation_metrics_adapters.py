@@ -32,7 +32,7 @@ def _write_report_with_partial(
     entry = {"resolved": resolved}
     if partial is not None:
         entry.update(partial)
-    report_path.write_text(json.dumps({loaded.task.instance_id: entry}))
+    report_path.write_text(json.dumps({loaded.task.instance_id: entry}), encoding="utf-8")
     return report_path
 
 

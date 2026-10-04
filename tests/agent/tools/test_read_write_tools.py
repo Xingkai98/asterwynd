@@ -11,7 +11,7 @@ from agent.workspace_policy import WorkspacePolicy
 @pytest.mark.asyncio
 async def test_read_file(tmp_path):
     f = tmp_path / "test.txt"
-    f.write_text("hello world")
+    f.write_text("hello world", encoding="utf-8")
 
     tool = ReadTool(policy=WorkspacePolicy(tmp_path))
     result = await tool.execute(path=str(f))
@@ -28,9 +28,9 @@ async def test_read_file_not_found():
 @pytest.mark.asyncio
 async def test_read_default_policy_uses_current_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "test.txt").write_text("hello cwd")
+    (tmp_path / "test.txt").write_text("hello cwd", encoding="utf-8")
     outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
-    outside.write_text("outside")
+    outside.write_text("outside", encoding="utf-8")
     tool = ReadTool()
 
     try:
@@ -53,7 +53,7 @@ async def test_read_directory_returns_error(tmp_path):
 @pytest.mark.asyncio
 async def test_read_rejects_path_outside_workspace(tmp_path):
     outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
-    outside.write_text("secret")
+    outside.write_text("secret", encoding="utf-8")
     tool = ReadTool(policy=WorkspacePolicy(tmp_path))
 
     try:
@@ -68,7 +68,7 @@ async def test_read_rejects_path_outside_workspace(tmp_path):
 @pytest.mark.asyncio
 async def test_read_rejects_denied_file(tmp_path):
     env_file = tmp_path / ".env"
-    env_file.write_text("TOKEN=secret\n")
+    env_file.write_text("TOKEN=secret\n", encoding="utf-8")
     tool = ReadTool(policy=WorkspacePolicy(tmp_path))
 
     result = await tool.execute(path=".env")
@@ -83,31 +83,31 @@ async def test_write_file(tmp_path):
     file_path = tmp_path / "output.txt"
     result = await tool.execute(path=str(file_path), content="hello")
     assert "已写入" in result
-    assert file_path.read_text() == "hello"
+    assert file_path.read_text(encoding="utf-8") == "hello"
 
 
 @pytest.mark.asyncio
 async def test_write_existing_file_is_rejected(tmp_path):
     tool = WriteTool()
     file_path = tmp_path / "output.txt"
-    file_path.write_text("old")
+    file_path.write_text("old", encoding="utf-8")
 
     result = await tool.execute(path=str(file_path), content="new")
 
     assert "file already exists" in result
-    assert file_path.read_text() == "old"
+    assert file_path.read_text(encoding="utf-8") == "old"
 
 
 @pytest.mark.asyncio
 async def test_write_existing_file_still_rejected_with_unrecognized_overwrite_kwarg(tmp_path):
     tool = WriteTool()
     file_path = tmp_path / "output.txt"
-    file_path.write_text("old")
+    file_path.write_text("old", encoding="utf-8")
 
     result = await tool.execute(path=str(file_path), content="new", overwrite=True)
 
     assert "file already exists" in result
-    assert file_path.read_text() == "old"
+    assert file_path.read_text(encoding="utf-8") == "old"
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_bash_non_zero_exit():
 @pytest.mark.asyncio
 async def test_grep_invalid_regex_returns_error(tmp_path):
     f = tmp_path / "test.txt"
-    f.write_text("hello")
+    f.write_text("hello", encoding="utf-8")
     tool = GrepTool()
     result = await tool.execute(pattern="[", path=str(f))
     assert "Error" in result
@@ -147,9 +147,9 @@ async def test_grep_invalid_regex_returns_error(tmp_path):
 @pytest.mark.asyncio
 async def test_grep_default_policy_uses_current_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "test.txt").write_text("needle cwd\n")
+    (tmp_path / "test.txt").write_text("needle cwd\n", encoding="utf-8")
     outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
-    outside.write_text("needle outside\n")
+    outside.write_text("needle outside\n", encoding="utf-8")
     tool = GrepTool()
 
     try:
@@ -165,7 +165,7 @@ async def test_grep_default_policy_uses_current_working_directory(tmp_path, monk
 @pytest.mark.asyncio
 async def test_grep_rejects_path_outside_workspace(tmp_path):
     outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
-    outside.write_text("secret")
+    outside.write_text("secret", encoding="utf-8")
     tool = GrepTool(policy=WorkspacePolicy(tmp_path))
 
     try:
@@ -179,8 +179,8 @@ async def test_grep_rejects_path_outside_workspace(tmp_path):
 
 @pytest.mark.asyncio
 async def test_grep_recursive_skips_denied_files(tmp_path):
-    (tmp_path / "visible.txt").write_text("needle visible\n")
-    (tmp_path / ".env").write_text("needle secret\n")
+    (tmp_path / "visible.txt").write_text("needle visible\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("needle secret\n", encoding="utf-8")
     tool = GrepTool(policy=WorkspacePolicy(tmp_path))
 
     result = await tool.execute(pattern="needle", path=".", recursive=True)
@@ -268,7 +268,7 @@ async def test_read_image_jpeg_also_returns_blocks(tmp_path):
 async def test_read_py_file_still_returns_str(tmp_path):
     """读取 .py 文件仍返回 str"""
     f = tmp_path / "test.py"
-    f.write_text("print('hello')")
+    f.write_text("print('hello')", encoding="utf-8")
 
     from agent.tools.builtin.read import ReadTool
     from agent.workspace_policy import WorkspacePolicy

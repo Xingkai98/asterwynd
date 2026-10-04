@@ -228,25 +228,25 @@ def generate_tasks(
             "scenario": "bug-fix",
         }
         (task_dir / "task.json").write_text(
-            json.dumps(task_json, indent=2, ensure_ascii=False) + "\n"
+            json.dumps(task_json, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 
         # Write hints.md (separate file, not embedded in JSON)
         if ex.get("hints_text"):
-            (task_dir / "hints.md").write_text(ex["hints_text"], errors="replace")
+            (task_dir / "hints.md").write_text(ex["hints_text"], errors="replace", encoding="utf-8")
 
         # Write issue.md
         (task_dir / "issue.md").write_text(
-            ex["problem_statement"], errors="replace"
+            ex["problem_statement"], errors="replace", encoding="utf-8"
         )
 
         # Write test.patch
         test_patch = ex.get("test_patch", "")
-        (task_dir / "test.patch").write_text(test_patch, errors="replace")
+        (task_dir / "test.patch").write_text(test_patch, errors="replace", encoding="utf-8")
 
         # Write gold.patch (reference only, not shown to agent)
         gold_patch = ex.get("patch", "")
-        (task_dir / "gold.patch").write_text(gold_patch, errors="replace")
+        (task_dir / "gold.patch").write_text(gold_patch, errors="replace", encoding="utf-8")
 
         print(f"  Created: {task_dir.name}")
         print(f"    Repo: {repo}  Commit: {ex['base_commit'][:8]}")

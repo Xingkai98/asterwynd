@@ -151,7 +151,7 @@ def validate_fixtures_dir(tasks_dir: str | Path) -> list[tuple[str, list[str]]]:
     root = Path(tasks_dir)
     problems: list[tuple[str, list[str]]] = []
     for task_json in sorted(root.glob("swebench-*/task.json")):
-        task = json.loads(task_json.read_text())
+        task = json.loads(task_json.read_text(encoding="utf-8"))
         errors = validate_fixture(task)
         if errors:
             problems.append((task.get("id", task_json.parent.name), errors))
@@ -328,7 +328,7 @@ def load_known_bad(path: str | None) -> set[str]:
     p = Path(path)
     if not p.exists():
         raise SystemExit(f"KNOWN_BAD 文件不存在: {p}")
-    return {line.strip() for line in p.read_text().splitlines() if line.strip()}
+    return {line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()}
 
 
 def collect_existing_instance_ids(tasks_dir: str | Path) -> set[str]:
@@ -336,7 +336,7 @@ def collect_existing_instance_ids(tasks_dir: str | Path) -> set[str]:
     root = Path(tasks_dir)
     ids: set[str] = set()
     for task_json in root.glob("swebench-*/task.json"):
-        task = json.loads(task_json.read_text())
+        task = json.loads(task_json.read_text(encoding="utf-8"))
         iid = task.get("instance_id")
         if iid:
             ids.add(iid)
@@ -369,7 +369,7 @@ def _sample_task_dirs(created: list[Path], per_repo: int = 1) -> list[Path]:
     """抽样自检目录：每 repo 取前 ``per_repo`` 条（OQ-V2①）。"""
     by_repo: dict[str, list[Path]] = {}
     for d in created:
-        task = json.loads((Path(d) / "task.json").read_text())
+        task = json.loads((Path(d) / "task.json").read_text(encoding="utf-8"))
         by_repo.setdefault(task.get("repo", "?"), []).append(Path(d))
     sample: list[Path] = []
     for repo in sorted(by_repo):
@@ -388,12 +388,12 @@ def update_manifest_verified(tasks_dir: str | Path) -> dict:
     if not manifest_path.exists():
         print(f"[manifest] 未找到 {manifest_path}，跳过 verified 登记")
         return {}
-    data = json.loads(manifest_path.read_text())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_repo: Counter = Counter()
     by_difficulty: Counter = Counter()
     count = 0
     for task_json in sorted(root.glob("swebench-*/task.json")):
-        task = json.loads(task_json.read_text())
+        task = json.loads(task_json.read_text(encoding="utf-8"))
         if task.get("track") != "verified":
             continue
         count += 1
@@ -407,7 +407,7 @@ def update_manifest_verified(tasks_dir: str | Path) -> dict:
         "note": "Verified 精选子集摘要（track=verified 计数，不占能力覆盖矩阵）",
     }
     data["verified"] = verified
-    manifest_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    manifest_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"[manifest] verified 段已更新: count={count}")
     return verified
 

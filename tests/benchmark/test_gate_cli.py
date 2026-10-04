@@ -42,7 +42,7 @@ def gate_env(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "gate@example.com")
     _git(repo, "config", "user.name", "Gate")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
     base_commit = _git_out(repo, "rev-parse", "HEAD")
@@ -51,7 +51,7 @@ def gate_env(tmp_path):
     for i in range(2):
         task_dir = tasks_dir / f"gate-{i}"
         task_dir.mkdir(parents=True)
-        (task_dir / "issue.md").write_text(f"Task {i}: verify exit 0.\n")
+        (task_dir / "issue.md").write_text(f"Task {i}: verify exit 0.\n", encoding="utf-8")
         (task_dir / "task.json").write_text(
             json.dumps({
                 "id": f"gate-{i}",
@@ -60,7 +60,7 @@ def gate_env(tmp_path):
                 "problem_statement_file": "issue.md",
                 "test_command": "python3 -c \"import sys; sys.exit(0)\"",
                 "timeout_seconds": 30,
-            })
+            }), encoding="utf-8"
         )
     runs_dir = tmp_path / "runs"
     return repo, tasks_dir, runs_dir, base_commit
@@ -112,7 +112,7 @@ def test_gate_blocks_on_success_rate_regression(gate_env, tmp_path):
     )
     # Make the second task fail by pointing its test_command at a failing check.
     failing = tasks_dir / "gate-1" / "task.json"
-    data = json.loads(failing.read_text())
+    data = json.loads(failing.read_text(encoding="utf-8"))
     data["test_command"] = "python3 -c \"import sys; sys.exit(1)\""
     failing.write_text(json.dumps(data), encoding="utf-8")
     result = _invoke([
@@ -168,7 +168,7 @@ def test_gate_update_baseline_writes_file(gate_env, tmp_path):
     ])
     assert result.exit_code == 0, result.output
     assert "Baseline updated" in result.output
-    data = json.loads(baseline.read_text())
+    data = json.loads(baseline.read_text(encoding="utf-8"))
     assert data["task_set"] == "gate-smoke"
     assert data["metrics"]["success_rate"] == 1.0
     assert data["metrics"]["p95_latency_s"] >= 0.0

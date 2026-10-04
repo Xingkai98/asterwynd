@@ -129,13 +129,13 @@ class ToolQualityStore:
             name: list(window) for name, window in self._windows.items()
         }
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def load(self, path: str | Path | None = None) -> None:
         target = Path(path) if path is not None else self.store_path
         if target is None or not target.exists():
             return
-        data = json.loads(target.read_text())
+        data = json.loads(target.read_text(encoding="utf-8"))
         for name, records in data.items():
             window = deque(maxlen=self.window_size)
             window.extend(records)

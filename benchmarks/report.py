@@ -186,7 +186,7 @@ def collect_run_results(run_dir: Path) -> list[TaskResult]:
     for task_dir in sorted(tasks_dir.iterdir()):
         result_path = task_dir / "result.json"
         if result_path.exists():
-            results.append(TaskResult.from_dict(json.loads(result_path.read_text())))
+            results.append(TaskResult.from_dict(json.loads(result_path.read_text(encoding="utf-8"))))
     return results
 
 

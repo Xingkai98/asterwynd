@@ -695,7 +695,7 @@ process.stdout.write(JSON.stringify(context.window.AsterwyndMarkdown.render(mark
         ["node", "-e", node_script, str(renderer), json.dumps(markdown)],
         check=True,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     return json.loads(result.stdout)
 

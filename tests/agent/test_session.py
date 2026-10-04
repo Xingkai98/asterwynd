@@ -115,8 +115,8 @@ class TestSessionStore:
     def test_corrupted_snapshot(self, tmp_path):
         session_dir = tmp_path / ".asterwynd" / "sessions" / "sess_corrupt"
         session_dir.mkdir(parents=True)
-        (session_dir / "snapshot.json").write_text("not valid json")
-        (session_dir / "messages.json").write_text("[]")
+        (session_dir / "snapshot.json").write_text("not valid json", encoding="utf-8")
+        (session_dir / "messages.json").write_text("[]", encoding="utf-8")
 
         store = SessionStore(sessions_root=str(tmp_path / ".asterwynd" / "sessions"))
         assert store.load("sess_corrupt") is None
@@ -124,7 +124,7 @@ class TestSessionStore:
     def test_missing_pair_file(self, tmp_path):
         session_dir = tmp_path / ".asterwynd" / "sessions" / "sess_missing"
         session_dir.mkdir(parents=True)
-        (session_dir / "snapshot.json").write_text('{"schema_version": "1.0"}')
+        (session_dir / "snapshot.json").write_text('{"schema_version": "1.0"}', encoding="utf-8")
         # no messages.json
 
         store = SessionStore(sessions_root=str(tmp_path / ".asterwynd" / "sessions"))

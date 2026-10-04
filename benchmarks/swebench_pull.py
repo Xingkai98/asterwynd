@@ -145,7 +145,7 @@ def analyze():
 
     # Save full analysis
     out_path = Path(__file__).parent / "swebench_candidates.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     print(f"\nFull results saved to {out_path}")
 

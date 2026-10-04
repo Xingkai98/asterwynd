@@ -28,7 +28,7 @@ from agent.workspace_policy import WorkspacePolicy
 def _many_lines(tmp_path, count: int, name: str = "big.txt") -> str:
     """Write ``count`` lines joined without a trailing newline."""
     f = tmp_path / name
-    f.write_text("\n".join(f"line-{i}" for i in range(count)))
+    f.write_text("\n".join(f"line-{i}" for i in range(count)), encoding="utf-8")
     return str(f)
 
 
@@ -86,7 +86,7 @@ class TestDefaultBound:
     async def test_few_but_huge_line_bounded_by_bytes(self, tmp_path):
         """A minified single-line file is caught by the byte dimension."""
         f = tmp_path / "bundle.min.js"
-        f.write_text("a;" * ((DEFAULT_MAX_READ_BYTES + 10_000) // 2))
+        f.write_text("a;" * ((DEFAULT_MAX_READ_BYTES + 10_000) // 2), encoding="utf-8")
 
         result = await _tool(tmp_path).execute(path=str(f))
 
@@ -99,7 +99,7 @@ class TestDefaultBound:
     async def test_many_lines_bounded_by_bytes_before_line_bound(self, tmp_path):
         """Byte bound can win even when the line count is below the line bound."""
         f = tmp_path / "wide.txt"
-        f.write_text("\n".join("y" * 10_000 for _ in range(DEFAULT_MAX_READ_LINES)))
+        f.write_text("\n".join("y" * 10_000 for _ in range(DEFAULT_MAX_READ_LINES)), encoding="utf-8")
 
         result = await _tool(tmp_path).execute(path=str(f))
 
@@ -122,7 +122,7 @@ class TestBoundsAreExact:
         result = await _tool(tmp_path).execute(path=path)
 
         assert "[ReadProgress" not in result
-        assert result == (tmp_path / "big.txt").read_text(errors="replace")
+        assert result == (tmp_path / "big.txt").read_text(errors="replace", encoding="utf-8")
 
     @pytest.mark.asyncio
     async def test_n_plus_one_lines_truncated(self, tmp_path):
@@ -137,7 +137,7 @@ class TestBoundsAreExact:
     @pytest.mark.asyncio
     async def test_exactly_b_bytes_returned_in_full(self, tmp_path):
         f = tmp_path / "exact.txt"
-        f.write_text("x" * DEFAULT_MAX_READ_BYTES)
+        f.write_text("x" * DEFAULT_MAX_READ_BYTES, encoding="utf-8")
 
         result = await _tool(tmp_path).execute(path=str(f))
 
@@ -147,7 +147,7 @@ class TestBoundsAreExact:
     @pytest.mark.asyncio
     async def test_b_plus_one_bytes_truncated(self, tmp_path):
         f = tmp_path / "over.txt"
-        f.write_text("x" * (DEFAULT_MAX_READ_BYTES + 1))
+        f.write_text("x" * (DEFAULT_MAX_READ_BYTES + 1), encoding="utf-8")
 
         result = await _tool(tmp_path).execute(path=str(f))
 
@@ -235,7 +235,7 @@ class TestWithinBoundIsUnchanged:
 
         result = await _tool(tmp_path).execute(path=str(f))
 
-        assert result == f.read_text(errors="replace")
+        assert result == f.read_text(errors="replace", encoding="utf-8")
         assert "[ReadProgress" not in result
 
     @pytest.mark.asyncio
@@ -245,13 +245,13 @@ class TestWithinBoundIsUnchanged:
 
         result = await _tool(tmp_path).execute(path=str(f))
 
-        assert result == f.read_text(errors="replace")
+        assert result == f.read_text(errors="replace", encoding="utf-8")
         assert "[ReadProgress" not in result
 
     @pytest.mark.asyncio
     async def test_empty_file_unchanged(self, tmp_path):
         f = tmp_path / "empty.txt"
-        f.write_text("")
+        f.write_text("", encoding="utf-8")
 
         result = await _tool(tmp_path).execute(path=str(f))
 
@@ -278,7 +278,7 @@ class TestExplicitLimitUnchanged:
     async def test_huge_explicit_limit_still_returns_whole_file(self, tmp_path):
         """The bound is a *default*; an explicit positive limit still wins."""
         f = tmp_path / "big.txt"
-        f.write_text("z" * (DEFAULT_MAX_READ_BYTES + 10_000))
+        f.write_text("z" * (DEFAULT_MAX_READ_BYTES + 10_000), encoding="utf-8")
 
         result = await _tool(tmp_path).execute(path=str(f), limit=5)
 
@@ -449,7 +449,7 @@ class TestBoundIsConfigurable:
     @pytest.mark.asyncio
     async def test_tool_byte_override_truncates(self, tmp_path):
         f = tmp_path / "wide.txt"
-        f.write_text("z" * 5000)
+        f.write_text("z" * 5000, encoding="utf-8")
         tool = ReadTool(policy=WorkspacePolicy(tmp_path), max_lines=2000, max_bytes=100)
 
         result = await tool.execute(path=str(f))

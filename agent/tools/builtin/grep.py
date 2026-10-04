@@ -55,7 +55,7 @@ class GrepTool(Tool):
             results = []
             for f in files:
                 try:
-                    with f.open("r", errors="replace") as fh:
+                    with f.open("r", errors="replace", encoding="utf-8") as fh:
                         for i, line in enumerate(fh, 1):
                             if regex.search(line):
                                 results.append(f"{f}:{i}: {line.rstrip()}")

@@ -45,7 +45,7 @@ def _full_run_json(**overrides) -> dict:
 def _write_run_json(run_dir: Path, meta: dict) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / "run.json"
-    path.write_text(json.dumps(meta))
+    path.write_text(json.dumps(meta), encoding="utf-8")
     return path
 
 
@@ -55,13 +55,13 @@ def _write_result(run_dir: Path, task_id: str, status: str, fault_owner: str | N
     data = {"task_id": task_id, "status": status}
     if fault_owner is not None:
         data["fault_owner"] = fault_owner
-    path.write_text(json.dumps(data))
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def _write_report(run_dir: Path, headings: list[str]) -> Path:
     report = run_dir / "evaluation-report.md"
     report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text("\n\n".join(headings) + "\n")
+    report.write_text("\n\n".join(headings) + "\n", encoding="utf-8")
     return report
 
 

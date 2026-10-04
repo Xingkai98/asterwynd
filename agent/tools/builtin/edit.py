@@ -62,7 +62,7 @@ class EditTool(Tool):
             return f"Error: Not a file: {path}"
 
         try:
-            content = resolved.read_text(errors="replace")
+            content = resolved.read_text(errors="replace", encoding="utf-8")
         except Exception as exc:
             return f"Error reading file: {exc}"
 
@@ -77,7 +77,7 @@ class EditTool(Tool):
 
         new_content = content.replace(old_string, new_string)
         try:
-            resolved.write_text(new_content, errors="replace")
+            resolved.write_text(new_content, errors="replace", encoding="utf-8")
         except Exception as exc:
             return f"Error writing file: {exc}"
 

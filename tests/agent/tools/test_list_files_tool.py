@@ -6,8 +6,8 @@ from agent.workspace_policy import WorkspacePolicy
 
 @pytest.mark.asyncio
 async def test_lists_directory_contents(tmp_path):
-    (tmp_path / "a.py").write_text("")
-    (tmp_path / "b.txt").write_text("")
+    (tmp_path / "a.py").write_text("", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("", encoding="utf-8")
     (tmp_path / "subdir").mkdir()
     tool = ListFilesTool(policy=WorkspacePolicy(tmp_path))
 
@@ -32,7 +32,7 @@ async def test_lists_empty_directory(tmp_path):
 async def test_ignores_sensitive_directories(tmp_path):
     (tmp_path / ".git").mkdir()
     (tmp_path / "node_modules").mkdir()
-    (tmp_path / "README.md").write_text("")
+    (tmp_path / "README.md").write_text("", encoding="utf-8")
     tool = ListFilesTool(policy=WorkspacePolicy(tmp_path))
 
     result = await tool.execute(".")
@@ -53,7 +53,7 @@ async def test_rejects_path_outside_workspace(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rejects_non_directory(tmp_path):
-    (tmp_path / "file.txt").write_text("")
+    (tmp_path / "file.txt").write_text("", encoding="utf-8")
     tool = ListFilesTool(policy=WorkspacePolicy(tmp_path))
 
     result = await tool.execute("file.txt")
@@ -78,7 +78,7 @@ async def test_custom_ignore_patterns(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sorts_dirs_first(tmp_path):
-    (tmp_path / "zebra.py").write_text("")
+    (tmp_path / "zebra.py").write_text("", encoding="utf-8")
     (tmp_path / "alpha").mkdir()
     tool = ListFilesTool(policy=WorkspacePolicy(tmp_path))
 

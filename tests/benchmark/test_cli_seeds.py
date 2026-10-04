@@ -29,14 +29,14 @@ def _make_repo_and_task(tmp_path):
     _git(repo, "init")
     _git(repo, "config", "user.email", "bench@example.com")
     _git(repo, "config", "user.name", "Bench")
-    (repo / "app.py").write_text("# Version 1\n")
+    (repo / "app.py").write_text("# Version 1\n", encoding="utf-8")
     _git(repo, "add", "app.py")
     _git(repo, "commit", "-m", "init")
     base_commit = _git_out(repo, "rev-parse", "HEAD")
 
     task_dir = tmp_path / "tasks" / "task-1"
     task_dir.mkdir(parents=True)
-    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n")
+    (task_dir / "issue.md").write_text("Update app.py to Version 2.\n", encoding="utf-8")
     (task_dir / "task.json").write_text(
         json.dumps(
             {
@@ -47,7 +47,7 @@ def _make_repo_and_task(tmp_path):
                 "test_command": "grep -q 'Version 2' app.py",
                 "timeout_seconds": 30,
             }
-        )
+        ), encoding="utf-8"
     )
     return repo
 
@@ -98,7 +98,7 @@ def test_seeds_repeat_records_sampling_params(tmp_path) -> None:
     )
     assert len(run_dirs) == 3
     for i, seed in enumerate([0, 1, 2]):
-        run = json.loads((run_dirs[i] / "run.json").read_text())
+        run = json.loads((run_dirs[i] / "run.json").read_text(encoding="utf-8"))
         assert run["seed"] == seed
         assert run["temperature"] == 0.2
         assert run["model_version"] == "v-20260817"
@@ -125,7 +125,7 @@ def test_result_json_records_temperature_and_seed(tmp_path) -> None:
         d for d in runs_dir.iterdir() if d.is_dir() and "-r" in d.name
     )
     task_result = json.loads(
-        (run_dirs[1] / "tasks" / "task-1" / "result.json").read_text()
+        (run_dirs[1] / "tasks" / "task-1" / "result.json").read_text(encoding="utf-8")
     )
     assert task_result["seed"] == 1
     assert task_result["temperature"] == 0.2
@@ -164,5 +164,5 @@ def test_seeds_default_derives_from_repeat(tmp_path) -> None:
     )
     assert len(run_dirs) == 3
     for i, run_dir in enumerate(run_dirs):
-        run = json.loads((run_dir / "run.json").read_text())
+        run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         assert run["seed"] == i

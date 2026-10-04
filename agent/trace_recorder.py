@@ -321,7 +321,7 @@ class TraceRecorder:
         return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
 
     def write_to_file(self, path: str | Path) -> None:
-        Path(path).write_text(self.to_json() + "\n", errors="replace")
+        Path(path).write_text(self.to_json() + "\n", errors="replace", encoding="utf-8")
 
 
 def iter_failure_steps(steps: Any):

@@ -119,7 +119,7 @@ def load_task(task_dir: str | Path) -> LoadedTask:
     if not task_json.exists():
         raise FileNotFoundError(f"task.json not found in {root}")
 
-    task = TaskSpec.from_dict(json.loads(task_json.read_text()))
+    task = TaskSpec.from_dict(json.loads(task_json.read_text(encoding="utf-8")))
     problem_path = _resolve_task_file(root, task.problem_statement_file)
     if not problem_path.exists():
         raise FileNotFoundError(f"Problem statement file not found: {problem_path}")
@@ -129,7 +129,7 @@ def load_task(task_dir: str | Path) -> LoadedTask:
     return LoadedTask(
         task=task,
         task_dir=root,
-        problem_statement=problem_path.read_text(errors="replace"),
+        problem_statement=problem_path.read_text(errors="replace", encoding="utf-8"),
         gold_patch_path=gold_patch_path,
         test_patch_path=test_patch_path,
     )

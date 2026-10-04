@@ -206,7 +206,7 @@ class TaskResult:
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(
             json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",
-            errors="replace",
+            errors="replace", encoding="utf-8",
         )
 
 
@@ -256,7 +256,7 @@ class RunMetadata:
     def write_json(self, path: str | Path) -> None:
         Path(path).write_text(
             json.dumps(self.to_dict(), indent=2, ensure_ascii=False) + "\n",
-            errors="replace",
+            errors="replace", encoding="utf-8",
         )
 
 

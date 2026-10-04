@@ -36,7 +36,7 @@ def git_repo(tmp_path):
     subprocess.run(
         ["git", "config", "user.name", "Test"], cwd=tmp_path, check=True
     )
-    (tmp_path / "app.py").write_text("old\n")
+    (tmp_path / "app.py").write_text("old\n", encoding="utf-8")
     _run_git(tmp_path, "add", "app.py")
     _run_git(tmp_path, "commit", "-m", "init")
     return tmp_path
@@ -81,7 +81,7 @@ def test_deny_pattern_blocks_worktree_subdir(git_repo):
     policy = WorkspacePolicy(git_repo)
     wt_file = git_repo / ".asterwynd" / "worktrees" / "x" / "file.txt"
     wt_file.parent.mkdir(parents=True)
-    wt_file.write_text("secret\n")
+    wt_file.write_text("secret\n", encoding="utf-8")
     with pytest.raises(PermissionError):
         policy.assert_read_allowed(wt_file)
     with pytest.raises(PermissionError):
@@ -204,7 +204,7 @@ async def test_enter_worktree_existing_worktree_not_deleted(git_repo, policy):
     await enter.execute(name="keepme")
     wt_path = git_repo / WT_DIR / "keepme"
     precious = wt_path / "precious.txt"
-    precious.write_text("valuable\n")
+    precious.write_text("valuable\n", encoding="utf-8")
 
     # keep=true 明确保留 worktree 与分支
     await exit_tool.execute(keep=True)
@@ -214,7 +214,7 @@ async def test_enter_worktree_existing_worktree_not_deleted(git_repo, policy):
     result = await enter.execute(name="keepme")
 
     assert result.error_type == "worktree_create_failed"
-    assert precious.exists() and precious.read_text() == "valuable\n"
+    assert precious.exists() and precious.read_text(encoding="utf-8") == "valuable\n"
     assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
     assert policy.workspace_root == git_repo.resolve()
     # 文案说明「被占用、未改动它」，不得让 agent 误以为现场被清理过
@@ -230,13 +230,13 @@ async def test_enter_worktree_dirty_existing_worktree_not_deleted(git_repo, poli
     await enter.execute(name="keepme")
     wt_path = git_repo / WT_DIR / "keepme"
     dirty = wt_path / "dirty.txt"
-    dirty.write_text("uncommitted\n")  # 未提交改动：git 会拒绝 remove
+    dirty.write_text("uncommitted\n", encoding="utf-8")  # 未提交改动：git 会拒绝 remove
     await exit_tool.execute(keep=True)
 
     result = await enter.execute(name="keepme")
 
     assert result.error_type == "worktree_create_failed"
-    assert dirty.exists() and dirty.read_text() == "uncommitted\n"
+    assert dirty.exists() and dirty.read_text(encoding="utf-8") == "uncommitted\n"
     assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
     # 文案不得声称「清理未完成/可能残留」——现场其实是完好的
     assert "清理未完成" not in result.text
@@ -295,7 +295,7 @@ async def test_enter_worktree_cleanup_fail_closed_when_list_unreadable(
     precious = wt_path / "precious.txt"
     # 已提交内容：未跟踪文件即使走到 remove 也会被 git 拒绝删除，
     # 会削弱「是否真的发生数据丢失」的判别力
-    precious.write_text("valuable\n")
+    precious.write_text("valuable\n", encoding="utf-8")
     _run_git(wt_path, "add", "-A")
     _run_git(wt_path, "commit", "-m", "precious")
     await exit_tool.execute(keep=True)
@@ -320,7 +320,7 @@ async def test_enter_worktree_cleanup_fail_closed_when_list_unreadable(
 
     assert result.error_type == "worktree_create_failed"
     assert removed == [], "枚举失败时不得执行任何 worktree remove"
-    assert precious.exists() and precious.read_text() == "valuable\n"
+    assert precious.exists() and precious.read_text(encoding="utf-8") == "valuable\n"
     assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
     assert policy.workspace_root == git_repo.resolve()
 
@@ -345,7 +345,7 @@ async def test_enter_worktree_cleanup_fail_closed_on_asymmetric_list_failure(
     await enter.execute(name="keepme")
     wt_path = git_repo / WT_DIR / "keepme"
     precious = wt_path / "precious.txt"
-    precious.write_text("valuable\n")
+    precious.write_text("valuable\n", encoding="utf-8")
     _run_git(wt_path, "add", "-A")
     _run_git(wt_path, "commit", "-m", "precious")
     await exit_tool.execute(keep=True)
@@ -373,7 +373,7 @@ async def test_enter_worktree_cleanup_fail_closed_on_asymmetric_list_failure(
 
     assert result.error_type == "worktree_create_failed"
     assert removed == [], "before 快照不可读时不得执行任何 worktree remove"
-    assert precious.exists() and precious.read_text() == "valuable\n"
+    assert precious.exists() and precious.read_text(encoding="utf-8") == "valuable\n"
     assert str(wt_path.resolve()) in _linked_worktrees(git_repo)
     assert policy.workspace_root == git_repo.resolve()
 
@@ -531,7 +531,7 @@ async def test_exit_worktree_dirty_rejected_state_unchanged(git_repo, policy):
     enter = EnterWorktreeTool(policy=policy)
     await enter.execute(name="test-wt")
     wt_path = policy.workspace_root
-    (wt_path / "dirty.txt").write_text("uncommitted\n")
+    (wt_path / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
     exit_tool = ExitWorktreeTool(policy=policy)
 
     result = await exit_tool.execute(keep=False)
@@ -549,7 +549,7 @@ async def test_exit_worktree_dirty_tracked_modification_rejected(git_repo, polic
     enter = EnterWorktreeTool(policy=policy)
     await enter.execute(name="test-wt")
     wt_path = policy.workspace_root
-    (wt_path / "app.py").write_text("modified\n")
+    (wt_path / "app.py").write_text("modified\n", encoding="utf-8")
     exit_tool = ExitWorktreeTool(policy=policy)
 
     result = await exit_tool.execute(keep=False)
@@ -578,9 +578,9 @@ async def test_file_tool_boundary_rebound_into_worktree(git_repo, policy):
     enter = EnterWorktreeTool(policy=policy)
     await enter.execute(name="test-wt")
     wt_path = policy.workspace_root
-    (wt_path / "app.py").write_text("inside worktree\n")
+    (wt_path / "app.py").write_text("inside worktree\n", encoding="utf-8")
     # 主工作区专属文件（只在主 checkout 存在）
-    (git_repo / "main_only.txt").write_text("main only\n")
+    (git_repo / "main_only.txt").write_text("main only\n", encoding="utf-8")
 
     read = ReadTool(policy=policy)
     # worktree 内文件可读

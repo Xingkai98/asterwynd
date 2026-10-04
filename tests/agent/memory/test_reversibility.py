@@ -90,10 +90,10 @@ class TestReversibleWrites:
         backend = MemoryGitBackend(mem)
         result = backend.revert("role", old_commit)
 
-        content = (mem.memory_dir / "role.md").read_text()
+        content = (mem.memory_dir / "role.md").read_text(encoding="utf-8")
         assert "Old body." in content
         assert "New body." not in content
-        changelog = (mem.memory_dir / "changelog.md").read_text()
+        changelog = (mem.memory_dir / "changelog.md").read_text(encoding="utf-8")
         assert "revert" in changelog
 
     @pytest.mark.skipif(not _git_ok(), reason="git not available")
@@ -125,10 +125,10 @@ class TestReversibleWrites:
         backend.revert("role", old_commit)
 
         # 回退后 frontmatter 的 description 应是旧值
-        content = (mem.memory_dir / "role.md").read_text()
+        content = (mem.memory_dir / "role.md").read_text(encoding="utf-8")
         assert "description: role" in content
         # 索引行 description 跟随正文（与回退后 frontmatter 一致）
-        index = (mem.memory_dir / "MEMORY.md").read_text()
+        index = (mem.memory_dir / "MEMORY.md").read_text(encoding="utf-8")
         assert "role" in index
         entry = mem._load_entry_by_name("role")
         assert entry is not None and entry.description == "role"
@@ -159,7 +159,7 @@ class TestGitAbort:
         with pytest.raises(RuntimeError):
             mem.save("user", "role", "role", "New body.")
         # 旧内容保留
-        content = (mem.memory_dir / "role.md").read_text()
+        content = (mem.memory_dir / "role.md").read_text(encoding="utf-8")
         assert "Old body." in content
 
     @pytest.mark.skipif(not _git_ok(), reason="git not available")
@@ -167,7 +167,7 @@ class TestGitAbort:
         """fresh repo 首次写：nothing to commit 不是失败，安全继续。"""
         result = mem.save("user", "role", "role", "First body.")
         assert "saved" in result
-        content = (mem.memory_dir / "role.md").read_text()
+        content = (mem.memory_dir / "role.md").read_text(encoding="utf-8")
         assert "First body." in content
 
     @pytest.mark.skipif(not _git_ok(), reason="git not available")
@@ -206,7 +206,7 @@ class TestResolveConflict:
         b2 = mem._load_entry_by_name("b")
         assert a2 is not None and a2.conflict_with == []
         assert b2 is not None and b2.conflict_with == []
-        changelog = (mem.memory_dir / "changelog.md").read_text()
+        changelog = (mem.memory_dir / "changelog.md").read_text(encoding="utf-8")
         assert "resolve" in changelog
 
     @pytest.mark.skipif(not _git_ok(), reason="git not available")
@@ -332,7 +332,7 @@ class TestTools:
         tool = MemoryGitBackendTool(memory=mem)
         result = asyncio.run(tool.execute(action="revert", name="role", commit_a=old_commit))
         assert "reverted" in result
-        content = (mem.memory_dir / "role.md").read_text()
+        content = (mem.memory_dir / "role.md").read_text(encoding="utf-8")
         assert "Old body." in content
 
     @pytest.mark.skipif(not _git_ok(), reason="git not available")

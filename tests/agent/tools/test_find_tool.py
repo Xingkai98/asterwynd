@@ -7,11 +7,11 @@ from agent.workspace_policy import WorkspacePolicy
 @pytest.fixture
 def nested_repo(tmp_path):
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "main.py").write_text("")
-    (tmp_path / "src" / "utils.py").write_text("")
+    (tmp_path / "src" / "main.py").write_text("", encoding="utf-8")
+    (tmp_path / "src" / "utils.py").write_text("", encoding="utf-8")
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "test_main.py").write_text("")
-    (tmp_path / "README.md").write_text("")
+    (tmp_path / "tests" / "test_main.py").write_text("", encoding="utf-8")
+    (tmp_path / "README.md").write_text("", encoding="utf-8")
     (tmp_path / ".git").mkdir()
     return tmp_path
 
@@ -53,7 +53,7 @@ async def test_no_matches(nested_repo):
 @pytest.mark.asyncio
 async def test_ignores_sensitive_directories(nested_repo):
     (nested_repo / "node_modules").mkdir()
-    (nested_repo / "node_modules" / "package.json").write_text("")
+    (nested_repo / "node_modules" / "package.json").write_text("", encoding="utf-8")
     tool = FindTool(policy=WorkspacePolicy(nested_repo))
 
     result = await tool.execute("*")
