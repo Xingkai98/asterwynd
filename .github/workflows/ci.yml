@@ -50,16 +50,23 @@ jobs:
       # change fix-windows-encoding-and-guard：Linux 的 locale 就是 UTF-8，于是
       # 「本地文件 I/O 没写 encoding=」在这里与显式 UTF-8 **行为一致**——这类缺陷在
       # 默认环境下不可能变红（实测 Windows/GBK 上会让会话保存失败、Hub 列表 500）。
-      # 用一个 C locale 步骤把「非 UTF-8 locale」搬进 CI：比加 Windows runner 便宜得多，
-      # 且能覆盖绝大部分编码类缺陷（路径语义类由 windows-platform job 覆盖）。
-      - name: Run tests (non-UTF-8 locale)
+      #
+      # 这里用 PEP 597（PYTHONWARNDEFAULTENCODING）而不是 step 级 LC_ALL=C：
+      #   * step 级 C locale 会撞 runner 的环境耦合——`subprocess` 用 os.fsencode
+      #     （filesystem encoding = ASCII）编码**继承的环境**，只要 runner 有任一环境变量
+      #     值含非 ASCII（实测 '→'），我们无罪的 git 调用就会在 subprocess.py:1885 抛错；
+      #   * PEP 597 与 locale 无关：漏写 encoding= 必然发 EncodingWarning，把它升级为
+      #     error 即可，且不会误伤第三方。
+      # 非 UTF-8 locale 下的**行为**复现放在 L2 的子进程用例里（自带 LC_ALL=C +
+      # PYTHONCOERCECLOCALE=0 + PYTHONUTF8=0，hermetic、可在任何平台跑）。
+      - name: Run tests (default-encoding warnings as errors)
         env:
-          LC_ALL: C
-          LANG: C
-          PYTHONCOERCECLOCALE: "0"
-          PYTHONUTF8: "0"
+          PYTHONWARNDEFAULTENCODING: "1"
         run: |
           uv run pytest -q \
+            -W "error::EncodingWarning:agent" \
+            -W "error::EncodingWarning:web" \
+            -W "error::EncodingWarning:benchmarks" \
             tests/agent/test_session_encoding.py \
             tests/web_tests/test_encoding_hygiene.py \
             tests/agent/test_session.py \
@@ -133,7 +140,7 @@ jobs:
   # 天然是 UTF-8，因此**平台相关**的缺陷（非 UTF-8 locale 的编解码、Windows 路径语义）
   # 在 CI 上结构性地看不见。这个 job 把 Windows 纳入信号面，只跑「平台敏感 + 本次改动
   # 直接覆盖」的子集以控制成本（Windows runner 计费约为 Linux 的 2 倍）：
-  #   - 编码类：test_session_encoding / test_encoding_hygiene（含 C-locale 子进程用例）
+  #   - 编码类：test_session_encoding / test_encoding_hygiene（含 LC_ALL=C 子进程用例）
   #   - 会话与列表：test_session / test_server（Hub 接口）
   #   - 路径语义：test_multi_session（敏感根、~ 展开、大小写变体）
   #   - 前端工具行：test_transcript_*（Windows 上的 GBK 解码曾是主要假红来源）
