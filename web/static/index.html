@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Asterwynd · Asterwynd Web UI</title>
-<link rel="stylesheet" href="/static/style.css?v=20">
+<link rel="stylesheet" href="/static/style.css?v=21">
 </head>
 <body>
 <div id="app">
@@ -171,10 +171,14 @@
 </div>
 
 <script src="/static/markdown.js?v=6"></script>
+<!-- tool_rows.js 是工具执行行的唯一渲染口径，被 chat.js 与 workflow_transcript.js
+     共用（文件名刻意不含 transcript 字样：既有浏览器测试用通配 glob 拦截后端
+     transcript 接口，带该片段的静态资源会被一起命中并喂成 JSON）。 -->
+<script src="/static/tool_rows.js?v=2"></script>
 <script src="/static/workflow_graph.js?v=4"></script>
-<script src="/static/workflow_transcript.js?v=4"></script>
+<script src="/static/workflow_transcript.js?v=5"></script>
 <script src="/static/workflow.js?v=3"></script>
-<script src="/static/chat.js?v=24"></script>
+<script src="/static/chat.js?v=26"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

@@ -1213,6 +1213,11 @@ async def test_convo_tab_survives_malformed_tool_arguments(page, fake_web_server
     body = await page.text_content(".drawer-body")
     assert "not-json{{{" in body, body
     assert "参数已截断" in body, body
+    # 提示必须**可见**：`text_content` 连 hidden 子树一起取，看不出可见性；`inner_text`
+    # 只取渲染文本。截断提示曾写在折叠 body 里，用户永远看不到而上面那行照样绿
+    # （grill Q3 / review MEDIUM-3）。
+    visible = await page.inner_text(".drawer-body")
+    assert "参数已截断" in visible, f"截断提示不可见：{visible!r}"
     assert not errors, f"渲染抛异常：{errors}"
 
 

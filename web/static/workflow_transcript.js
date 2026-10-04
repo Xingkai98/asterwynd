@@ -481,32 +481,27 @@
     observeClusters(body, clusters);
   }
 
-  /** 一条工具调用：``🔧 名字`` + 参数（与主 chat 的 ``addToolCallBlock`` 同口径）。
+  /** 一条工具调用：与主对话区**同一行组件**（``AsterwyndToolRows``）。
 
   一个 assistant 轮次可以并发发起多个调用，逐个列出才看得出那一轮到底干了什么
   ——那是「这个节点为什么慢/为什么错」最直接的证据。
+
+  折叠口径与主 chat 一致（change ``harness-style-web-transcript`` D2/D10）：这里也
+  是**一行**，点开才见完整参数。抽屉是窄面板，把长参数默认铺开比对话区更伤可读性。
   */
   function toolCallBlock(call) {
-    const block = el('div', 'tool-call-block');
-    block.appendChild(el('span', 'tool-name', `🔧 ${call.name || ''}`));
+    const api = window.AsterwyndToolRows;
+    const name = call.name || '';
     const args = String(call.arguments || '');
-    if (args) {
-      block.appendChild(el('pre', null, prettyArgs(args)));
-    }
-    if (call.arguments_truncated) {
-      block.appendChild(el('span', 'drawer-note', '（参数已截断）'));
-    }
-    return block;
-  }
-
-  /** ``arguments`` 是 JSON 字符串；解析失败就原样显示（工具调用可能被流式截断）。 */
-  function prettyArgs(args) {
-    try {
-      const parsed = JSON.parse(args);
-      return JSON.stringify(parsed, null, 2);
-    } catch (error) {
-      return args;
-    }
+    return api.createToolRow(window.document, {
+      name: name,
+      args: args,
+      title: api.toolTitle(name),
+      summary: api.summarizeToolCall(name, args),
+      // 参数被后端投影截断（TRANSCRIPT_ITEM_LIMIT）时必须**可见地**说明，否则用户
+      // 会把截断后的参数当成完整参数。提示渲染在头部行，不是折叠 body 内。
+      note: call.arguments_truncated ? '（参数已截断）' : '',
+    });
   }
 
   function paintCluster(host, cluster) {

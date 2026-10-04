@@ -408,9 +408,17 @@ def test_websocket_image_upload_start_rejects_invalid_total_chars(tmp_path, monk
 
 
 def test_web_static_assets_include_session_and_run_display():
-    index = (Path(__file__).parents[2] / "web" / "static" / "index.html").read_text()
-    script = (Path(__file__).parents[2] / "web" / "static" / "chat.js").read_text()
-    styles = (Path(__file__).parents[2] / "web" / "static" / "style.css").read_text()
+    # 显式 utf-8：静态资源含中文注释，`read_text()` 的缺省编码是 locale（Windows 中文
+    # 机器上是 GBK），会把 UTF-8 字节串解成乱码甚至直接抛 UnicodeDecodeError。
+    static = Path(__file__).parents[2] / "web" / "static"
+    index = (static / "index.html").read_text(encoding="utf-8")
+    script = (static / "chat.js").read_text(encoding="utf-8")
+    styles = (static / "style.css").read_text(encoding="utf-8")
+    # 工具执行行的唯一渲染口径（change harness-style-web-transcript D2）：对话区与
+    # 工作流抽屉共用，纯函数层另有 node 单测（test_transcript_js.py），这里只锁接线。
+    # 文件名刻意不含 "transcript"：既有浏览器测试用 `**/transcript*` 拦截后端
+    # transcript 接口，静态资源撞上那个 glob 会被喂成 JSON（实测把抽屉渲染打断）。
+    tool_rows = (static / "tool_rows.js").read_text(encoding="utf-8")
 
     assert 'id="session-id"' in index
     assert 'id="run-id"' in index
@@ -440,6 +448,7 @@ def test_web_static_assets_include_session_and_run_display():
     assert re.search(r'/static/markdown\.js\?v=\d+', index)
     assert re.search(r'/static/style\.css\?v=\d+', index)
     assert re.search(r'/static/chat\.js\?v=\d+', index)
+    assert re.search(r'/static/tool_rows\.js\?v=\d+', index)
     # Workflow 流程图（change workflow-graph-visualization）：纯函数模块 + 渲染层
     # + 节点详情抽屉的对话面板（change enhance-workflow-graph-ux，D4/M3）。
     assert re.search(r'/static/workflow_graph\.js\?v=\d+', index)
@@ -537,7 +546,11 @@ def test_web_static_assets_include_session_and_run_display():
     assert "data.streamed" in script
     assert "appendAssistantContent(currentAssistantMsg, data.content)" in script
     assert "body.classList.add('markdown-body')" in script
-    assert "tool-result-toggle" in script
+    # 工具行折叠控件的接线。原锚点是旧实现的 `tool-result-toggle`，随 change
+    # harness-style-web-transcript 迁移到共享渲染层 tool_rows.js（意图不变：
+    # 「折叠控件被真正接上且有 aria 状态」）。
+    assert "tool-row-head" in tool_rows
+    assert "aria-expanded" in tool_rows
     assert "aria-expanded" in script
     assert "case 'error'" in script
     assert "case 'plan_document_updated'" in script
@@ -549,7 +562,9 @@ def test_web_static_assets_include_session_and_run_display():
     assert ".message-images" in styles
     assert ".image-lightbox" in styles
     assert ".plan-document-panel" in styles
-    assert ".tool-result-toggle" in styles
+    assert ".tool-row-head" in styles
+    assert ".tool-row-body" in styles
+    assert ".tool-row-summary" in styles
     assert ".message.system" in styles
     assert ".slash-suggestions" in styles
     assert ".slash-suggestion.active" in styles
@@ -569,22 +584,30 @@ def test_web_static_assets_include_session_and_run_display():
     assert "未连接，请等待重连后重试" in script
     assert ".question-hint" in styles
 
-    toggle_start = script.index("toggle.addEventListener")
-    toggle_end = script.index("controls.appendChild(toggle)", toggle_start)
-    toggle_handler = script[toggle_start:toggle_end]
-    assert "scrollHeight" not in toggle_handler
+    # 安全护栏一（意图不变，锚点随结构迁移）：展开切换 SHALL NOT 触发滚动——滚动会把
+    # 用户正在读的位置顶走。折叠行的渲染层整体不得出现任何滚动调用。
+    assert "scrollHeight" not in tool_rows
+    assert "scrollIntoView" not in tool_rows
 
+    # 安全护栏二（意图不变）：工具结果的渲染路径 SHALL NOT 使用 innerHTML（结果文本
+    # 可能来自任意工具输出，一律按文本处理）。
     tool_result_start = script.index("function addToolResultMessage")
     tool_result_end = script.index("function renderQuestionCard", tool_result_start)
     tool_result_renderer = script[tool_result_start:tool_result_end]
     assert "innerHTML" not in tool_result_renderer
-    assert "body.textContent" in tool_result_renderer
+    assert "innerHTML" not in tool_rows
+    # 点名真正写结果正文的那一行，避免退化成「文件里出现过 textContent」这种恒真断言。
+    assert "resultPre.textContent" in tool_rows
+
+    # 工具行渲染层必须被加载（两个消费者都是运行时读 window.AsterwyndToolRows，
+    # 脚本标签的先后对正确性没有因果作用，所以这里只断言「被引用」）。
+    assert index.index("/static/tool_rows.js") < index.index("/static/chat.js")
 
     # Timeline panel assets (observability batch-2).
     assert 'id="timeline-panel"' in index
     assert 'id="timeline-content"' in index
     assert 'id="timeline-refresh"' in index
-    debug_script = (Path(__file__).parents[2] / "web" / "static" / "debug.js").read_text()
+    debug_script = (static / "debug.js").read_text(encoding="utf-8")
     assert "renderTimeline" in debug_script
     assert ".timeline-bar" in styles
     assert ".timeline-bar.fail" in styles

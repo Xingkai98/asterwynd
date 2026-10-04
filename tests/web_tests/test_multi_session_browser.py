@@ -337,6 +337,34 @@ async def test_delete_session_closes_tab(page, seeded_web_server):
 
 
 @pytest.mark.asyncio
+async def test_closing_one_tab_keeps_the_other_tab_status(page, seeded_web_server):
+    """关掉一个 tab 不得改动**另一个仍连接** tab 的状态灯。
+
+    change ``harness-style-web-transcript`` §8.1：``closeTab`` 先删 tab 再 ``ws.close()``，
+    关闭握手会在之后触发 ``onclose``；旧实现无条件把 ``statusEl`` 写成这条**死连接**的
+    状态（``ended``），于是另一个仍然 connected 的 tab 状态灯被改错。
+    """
+    tab2 = await _open_two_tabs(page, seeded_web_server)
+    # 切回 tab1，让被关的 tab2 处于非活跃态（这样关闭路径不会走 switchTab 重刷状态灯）。
+    await page.click('.session-tab[data-tab-id="aaaa11111111"]')
+    await page.wait_for_function(
+        "document.querySelector('#status').textContent === 'connected'",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+
+    await page.click(f'.session-tab[data-tab-id="{tab2}"] .session-tab-close')
+    await page.wait_for_function(
+        "document.querySelectorAll('.session-tab').length === 1",
+        timeout=BROWSER_TIMEOUT_MS,
+    )
+    # 等关闭握手的 onclose 走完（本地回环，量级是毫秒）再断言状态灯没被改写。
+    await page.wait_for_timeout(1000)
+    assert await page.inner_text("#status") == "connected", (
+        "关闭一个 tab 后，另一个仍连接的 tab 状态灯被改成了死连接的状态"
+    )
+
+
+@pytest.mark.asyncio
 async def test_new_session_respects_mode(page, seeded_web_server):
     """新建会话表单可选 mode/workspace，打开后进入对应模式。"""
     await page.goto(seeded_web_server)

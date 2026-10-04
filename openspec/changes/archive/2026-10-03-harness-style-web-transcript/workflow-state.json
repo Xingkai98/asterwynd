@@ -1,0 +1,10 @@
+{
+  "schema": "workflow-state/v1",
+  "change_id": "harness-style-web-transcript",
+  "state": {
+    "phase": "planning",
+    "sub_state": "exploring"
+  },
+  "milestones": [],
+  "source_event_seq": 3
+}
