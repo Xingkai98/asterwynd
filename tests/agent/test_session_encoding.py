@@ -77,7 +77,12 @@ def test_written_files_are_valid_utf8(tmp_path):
 
 
 def test_list_sessions_survives_a_non_utf8_locale_file(tmp_path):
-    """列表读取遇到非 UTF-8 字节的文件必须降级，不得让整个列表失败。"""
+    """列表读取遇到非 UTF-8 字节的文件必须降级，不得让整个列表失败。
+
+    两条降级路径都要覆盖（否则变异会在另一条上存活）：
+    - ``messages.json`` 坏、快照可读 → 条目保留 + 标注；
+    - ``snapshot.json`` 本身就是坏的 → 条目**仍要出现**（session_id 取目录名）+ 标注。
+    """
     root = tmp_path / "sessions"
     store = SessionStore(sessions_root=str(root))
     store.save(_snapshot("sess_ok", "正常会话"))
@@ -94,12 +99,23 @@ def test_list_sessions_survives_a_non_utf8_locale_file(tmp_path):
         json.dumps([{"role": "user", "content": "中文乱码"}], ensure_ascii=False)
         .encode("gbk"))
 
+    # 再造一条 snapshot.json 本身不可解码的（走另一条降级分支）
+    worse_dir = root / "sess_worse"
+    worse_dir.mkdir(parents=True, exist_ok=True)
+    (worse_dir / "snapshot.json").write_bytes(
+        json.dumps({"session_id": "sess_worse", "mode": "build"},
+                   ensure_ascii=False).encode("gbk"))
+    (worse_dir / "messages.json").write_text("[]", encoding="utf-8")
+
     sessions = store.list_sessions()                # 未修前：抛 UnicodeDecodeError → 接口 500
     by_id = {s["session_id"]: s for s in sessions}
     assert "sess_ok" in by_id, "损坏条目不得拖垮其余会话"
-    assert "sess_bad" in by_id, "损坏条目必须**可见**（如实标注），不许静默消失"
+    assert "sess_bad" in by_id, "消息不可读的条目必须**可见**（如实标注），不许静默消失"
     assert by_id["sess_bad"].get("damaged") is True
     assert by_id["sess_bad"].get("reason"), "必须给出可读原因"
+    assert "sess_worse" in by_id, "快照不可读的条目也要可见（session_id 取目录名）"
+    assert by_id["sess_worse"].get("damaged") is True
+    assert by_id["sess_worse"].get("reason")
 
 
 # --- 子进程：在 Linux CI 上等价复现非 UTF-8 locale --------------------------
