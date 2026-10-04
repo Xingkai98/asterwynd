@@ -32,6 +32,9 @@ def call(name: str, *args):
         check=True,
         capture_output=True,
         text=True,
+        # 显式 utf-8：node 输出含中文，`text=True` 的缺省编码是 locale（Windows 中文机器
+        # 上是 GBK），会把 UTF-8 输出解成乱码/抛 UnicodeDecodeError。
+        encoding="utf-8",
     )
     return json.loads(result.stdout)[0]
 
@@ -42,6 +45,8 @@ def call_many(*calls):
         check=True,
         capture_output=True,
         text=True,
+        # 同 ``call``：node 输出可能含中文，缺省编码是 locale（Windows 上是 GBK）。
+        encoding="utf-8",
     )
     return json.loads(result.stdout)
 

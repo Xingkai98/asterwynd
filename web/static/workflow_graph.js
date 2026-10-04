@@ -1051,17 +1051,43 @@
    * 「此刻要不要重取这条 transcript」（M3.8 的刷新节律，纯函数便于测试）。
    *
    * - 暂停 → 永不重取（用户正在读）；
-   * - 节点已终态 → 不再重取（不会再有新消息）；
+   * - 节点已终态 **且手上这一帧也是终态之后取的** → 不再重取（不会再有新消息）；
+   * - 节点已终态 **但手上这一帧取自运行期**（``fetchedStatus`` 非终态）→ 补取一次
+   *   （``fix-node-transcript-stale-refresh``：否则运行期抓到的半途快照会被永久缓存）；
    * - 否则距上次取数达到 ``TRANSCRIPT_REFRESH_S`` 才重取。
+   *
+   * ``options.fetchedStatus``：**取数那一刻**节点处于什么状态（调用方从缓存旁记录），
+   * 缺省/非字符串时按「非终态」处理——即允许一次补取，且补取后自然收敛（同一帧只会
+   * 补一次），不会退化成终态后的周期轮询。
    */
   function transcriptRefreshDue(node, options) {
     const opts = options || {};
     if (opts.paused) return false;
-    if (!node || isTerminalNodeStatus(node.status)) return false;
+    if (!node) return false;
+    // 终态补取优先于「终态不再重取」：见 ``transcriptNeedsTerminalCatchUp``。
+    if (isTerminalNodeStatus(node.status)) {
+      return transcriptNeedsTerminalCatchUp(node, opts.fetchedStatus);
+    }
     const last = typeof opts.lastFetchedAt === 'number' ? opts.lastFetchedAt : null;
     if (last === null) return true;
     const now = typeof opts.now === 'number' ? opts.now : 0;
     return now - last >= TRANSCRIPT_REFRESH_S;
+  }
+
+  /**
+   * 「手上这一帧是不是该补取」（``fix-node-transcript-stale-refresh`` 的核心判据）。
+   *
+   * 真值条件**只有一条**：节点已到终态，而手上这一帧（``fetchedStatus``）取自**非终态**
+   * ——那说明它是运行期抓到的半途快照；终态是事件，它之后不会再有新内容，所以这一帧
+   * 永远不会被自然覆盖，必须显式补取一次。
+   *
+   * 反面（都是 false）：节点还在跑（走 10s 节律）、节点已终态且这一帧也是终态后取的
+   * （已经是最新）、``fetchedStatus`` 就是终态（补过了）。因为补取后调用方记录的是终态，
+   * 所以「补一次」是自收敛的，不会退化成终态后继续轮询。
+   */
+  function transcriptNeedsTerminalCatchUp(node, fetchedStatus) {
+    if (!node || !isTerminalNodeStatus(node.status)) return false;
+    return !isTerminalNodeStatus(fetchedStatus);
   }
 
   /** 该节点状态是否已终态（不再有新内容）。 */
@@ -1223,6 +1249,7 @@
     graphTabMeta,
     edgeCountLabel,
     transcriptRefreshDue,
+    transcriptNeedsTerminalCatchUp,
     isTerminalNodeStatus,
     TRANSCRIPT_REFRESH_S,
     formatElapsed,
