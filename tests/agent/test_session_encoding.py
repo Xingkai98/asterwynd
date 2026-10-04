@@ -134,7 +134,7 @@ _ROUND_TRIP_SCRIPT = textwrap.dedent(
     from agent.session import CURRENT_SCHEMA_VERSION, SessionSnapshot, SessionStore
 
     root = sys.argv[1]
-    text = "\u4f60\u597d\uff0c\u4e16\u754c \U0001f44b \U0001f44c \u2014\u2014"
+    text = "\\u4f60\\u597d\\uff0c\\u4e16\\u754c \\U0001f44b \\U0001f44c \\u2014\\u2014"
     store = SessionStore(sessions_root=root)
     snap = SessionSnapshot(
         schema_version=CURRENT_SCHEMA_VERSION, session_id="sess_sub",
