@@ -449,3 +449,23 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 本 change 已做的：字节维度对 `ImageBlock` 计 `len(url)` 纳入单条阈与硬顶（D6），并让图片在消费一轮后转 `[image: <file_path>]`（D6 四管策略）。**未做**：把 `MAX_IMAGE_SIZE` 收敛到与常驻预算相容的值（避免扩大改动面）。
 
 **若后续收口**：与 issue #283（非工具大内容残余边界）一并评估——要么下调 `MAX_IMAGE_SIZE`，要么对超预算图片走「落盘 + 路径引用」并明确「模型不能直接再看到像素、须按路径 `Read` 取回」。
+
+## 编码守卫与子进程取值的三条已知残留（fix-windows-encoding-and-guard 审阅记录）
+
+`fix-windows-encoding-and-guard` 的 Round 4 审阅判定 PASS，同时**如实记录**三条不阻塞的残留，
+后续按需单独立项处理：
+
+1. **守卫有一个零暴露面的窄假阴性**：`tests/web_tests/test_encoding_hygiene.py::_literal_mode`
+   在「属性式 `open` **只带 1 个位置参数且该参数是含字母 `b` 的字符串字面量**」时会把**路径**
+   当成 mode，于是 `io.open('b.txt')` / `builtins.open('baseline.json')` 被静默跳过。
+   实测**当前暴露面为零**（全仓「模块式属性 open」调用数 = 0）；变量路径形态、`mode=` 形态、
+   内置 `open(...)` 都不漏。**若后续收敛**：把「1 个位置参数」判据限定到确知是绑定方法的形态
+   （如接收者是 `Path(...)` 字面量）而不是所有属性调用。
+2. **守卫自检只钉「命中总数」**：两条新样例（`io.open('b.txt','w')` 漏报 −1 与
+   `io.open('i.txt','rb')` 误报 +1）在 `_literal_mode` 回退成 buggy 版时会**相互抵消**，
+   `len(problems) == 6` 仍然通过（变异存活）。**若后续收敛**：自检改成断言**行号集合**而不是计数。
+3. **子进程取值的取舍未记债即已写明**：本 change 给 70 处捕获文本的 `subprocess(text=True)`
+   补的是 `errors="replace"`（保持 locale 解码、绝不解码崩），代价是「子进程写 UTF-8 而父进程
+   按 locale 解码」时会得到**替换字符（乱码）而不是异常**。取舍理由写在 `proposal.md` 第 6 条、
+   守卫模块 docstring 与 `docs/testing-guide.md` 的「平台与编码纪律」；此处登记为**明示边界**
+   （非缺陷），若某条链路需要精确文本，应改为在该子进程上显式 `encoding="utf-8"`。

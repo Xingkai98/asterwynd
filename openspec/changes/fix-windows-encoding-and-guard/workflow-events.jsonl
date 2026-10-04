@@ -1,1 +1,0 @@
-{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "fix-windows-encoding-and-guard", "artifact_path": "docs/openspec-change-backlog.md", "reason": "立项入队：fix-windows-encoding-and-guard 写入「未实现队列」，记录该类缺陷的三层收口（生产修复 / L1 机械守卫 / L2 行为回归 / L3 CI 平台覆盖）与纪律文档。", "approved_by": "main-session"}

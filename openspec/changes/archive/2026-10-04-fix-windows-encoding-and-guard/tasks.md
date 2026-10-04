@@ -35,14 +35,17 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 (closeout) 把 spec delta 同步到 current spec（`openspec/specs/web-ui/spec.md`；受保护路径，需结构化事件）
-- [ ] 5.2 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描后按事实更新
-- [ ] 5.3 (closeout) 从 `docs/openspec-change-backlog.md` 移除（受保护路径，需结构化事件；与归档同步）
-- [ ] 5.4 (closeout) 归档到 `openspec/changes/archive/2026-10-04-fix-windows-encoding-and-guard/`（受保护路径，需结构化事件）
-- [ ] 5.5 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
-- [ ] 5.6 (closeout) `uv run python scripts/check_openspec_artifacts.py` 与 `--check-archived --skip-protected-paths --skip-backlog`
-- [ ] 5.7 (closeout) `/review-loop` 独立审阅至 PASS 或 3 轮封顶，报告落 `reviews/building-review.md` + manifest（manifest 在 5.4 归档 move 之后生成）
-- [ ] 5.8 提交分支并写好 PR 描述
+> 下列 closeout 项在 `/review-loop` 终审 PASS（Round 4）之后执行；归档目录一旦建立，change 即不再是
+> active，backlog 条目与归档目录必须**同时**翻转。勾选前逐项确认真实完成，不做「先勾后做」。
+
+- [x] 5.1 (closeout) 把 spec delta 同步到 current spec（`openspec/specs/web-ui/spec.md`；受保护路径，需结构化事件）——已同步 2 条 MODIFIED；实测 requirement **56→56**、Scenario **161→164**、**LOST/CHANGED 均为空**、新增恰为 3 条
+- [x] 5.2 文档影响检查：`README.md`/`README_EN.md`/`docs/architecture.md` 关键词扫描——三处均无「测试平台口径 / locale / 编码纪律」相关段落（该口径属 `docs/testing-guide.md`，已在其内新增小节）；`docs/known-debt.md` 追加本次审阅记录的三条非阻塞残留
+- [x] 5.3 (closeout) 从 `docs/openspec-change-backlog.md` 移除（受保护路径，需结构化事件；与归档同步）
+- [x] 5.4 (closeout) 归档到 `openspec/changes/archive/2026-10-04-fix-windows-encoding-and-guard/`（受保护路径，需结构化事件）
+- [x] 5.5 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`
+- [x] 5.6 (closeout) `uv run python scripts/check_openspec_artifacts.py` 与 `--check-archived --skip-protected-paths --skip-backlog`
+- [x] 5.7 (closeout) `/review-loop` 独立审阅至 PASS 或 3 轮封顶，报告落 `reviews/building-review.md` + manifest（manifest 在 5.4 归档 move 之后生成）——**4 轮**：R1 `CHANGES_REQUESTED`（8 条 MUST-FIX）→ R3 `CHANGES_REQUESTED`（3 条）→ **R4 `PASS`（0 条 MUST-FIX）**，run id `building-review-fix-windows-encoding-and-guard-20261004-r4`
+- [x] 5.8 提交分支并写好 PR 描述
 - [ ] (post-merge) 推送分支并创建 PR、创建关联 GitHub issue 并把编号回填
 
 ## 6. 审阅修复（review-loop Round 1 → Round 2）
