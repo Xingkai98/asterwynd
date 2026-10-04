@@ -63,9 +63,18 @@ def _kwarg_names(call: ast.Call) -> set[str]:
 
 
 def _literal_mode(call: ast.Call) -> str | None:
-    """``open()`` 的 mode 字面量（第 2 位置参数或 ``mode=``）；拿不到返回 None。"""
+    """``open`` 的 mode 字面量；拿不到返回 None。
+
+    **位置不同**：内置 ``open(path, mode)`` 的 mode 是第 2 个位置参数，而绑定方法
+    ``Path.open(mode)`` 的是第 1 个——写错会把 ``Path('x.bin').open('rb')`` 误报成
+    缺 encoding（保守方向，但会给合法代码添噪声）。
+    """
+    is_bound_open = isinstance(call.func, ast.Attribute) and call.func.attr == "open"
     mode_node: ast.expr | None = None
-    if len(call.args) >= 2:
+    if is_bound_open:
+        if call.args:
+            mode_node = call.args[0]
+    elif len(call.args) >= 2:
         mode_node = call.args[1]
     for kw in call.keywords:
         if kw.arg == "mode":
@@ -90,8 +99,9 @@ def _is_open_call(node: ast.AST) -> bool:
     if isinstance(func, ast.Name):
         return func.id == "open"
     if isinstance(func, ast.Attribute):
-        # ``io.open`` / ``builtins.open`` 是文件 I/O；``Image.open`` 之类不是（见上表）
-        if _receiver_tail(func.value) in NON_FILE_OPENERS:
+        # ``io.open`` / ``builtins.open`` 是文件 I/O；``Image.open`` 之类不是（见上表）；
+        # ``os.open`` 走的是 fd 语义，没有 encoding 参数，同样排除。
+        if _receiver_tail(func.value) in NON_FILE_OPENERS | {"os"}:
             return False
         return func.attr == "open"
     return False
@@ -198,6 +208,9 @@ def test_guard_itself_would_catch_a_regression(tmp_path):
         "subprocess.run(['python', '-c', 'x'], text=True, errors='replace')\n"
         "subprocess.run(['node', '-e', 'x'], text=True)\n"
         "subprocess.run(['node', '-e', 'x'], text=True, encoding='utf-8')\n"
+        "Path('g.bin').open('rb')\n"
+        "import os\n"
+        "os.open('h.txt', os.O_RDONLY)\n"
         "from PIL import Image\n"
         "Image.open('f.png')\n",
         encoding="utf-8",
