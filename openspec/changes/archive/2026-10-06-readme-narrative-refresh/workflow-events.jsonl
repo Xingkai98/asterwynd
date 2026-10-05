@@ -1,0 +1,1 @@
+{"schema": "workflow-event/v1", "seq": 1, "event_type": "backlog_updated", "change_id": "readme-narrative-refresh", "artifact_path": "docs/openspec-change-backlog.md", "reason": "readme-narrative-refresh（issue #296）立项 + 归档：第二十一批条目新增，记录 README 叙事重做（docs-only）的动机、7 张 Excalidraw 图交付、数字按 master 8a255b0 重锚、docs/architecture.md 补编排段落、对抗式事实校对。", "approved_by": "main-session"}
