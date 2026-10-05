@@ -23,7 +23,10 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | 模块 | 文件 | 职责 |
 | --- | --- | --- |
 | ToolRegistry | `agent/tools/registry.py` | 工具注册、schema 暴露、工具执行 |
+| ToolGovernance | `agent/tools/governance/` | 动态 Top-K 工具选择（BM25 + embedding）+ 稳定核心层 + 质量软降级 |
 | WorkspacePolicy | `agent/workspace_policy.py` | 工作区路径、文件和命令安全边界 |
+| CommandGuard | `agent/tools/command_guard.py` | 命令语义护栏（绕过变体归一化 + 递归检查被包命令） |
+| Sandbox | `agent/tools/sandbox/` | ProcessBackend + cgroup v2 / Docker 双后端，降级绝不静默 |
 | HookManager | `agent/hooks/manager.py` | 生命周期扩展点 |
 | MemoryManager | `agent/memory/manager.py` | 消息历史、token 阈值 AutoCompact、可插拔 Summarizer；四字段摘要（已完成事项/待办事项/疑难点与决策/当前进行中）、tool_call pending 标记、L1/L2 层级压缩、增量 token 计数 |
 | ContextBuilder | `agent/context/` | 上下文注入管线：ASTER.md、记忆索引、技能、计划、待办等 ContextSource 统一编排；静态源缓存 + cache 感知分层注入（`build_blocks`，P0/P1/P2 稳定前缀） |
@@ -31,10 +34,41 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | AgentRuntimeState | `agent/run_config.py` | 交互式 session 的当前 mode 和运行时 mode transition |
 | McpManager | `agent/mcp/` | MCP server 连接、discovery、tools/prompts/resources 调用和本地权限包装 |
 | SkillLoader / SkillRuntime | `agent/skills/` | 目录式 Markdown skill 加载、诊断、匹配、reload 和当前 run prompt 注入 |
-| SubAgentManager | `agent/subagent/manager.py` | 子 session runtime 管理：子 session、多次 run、状态与 transcript inspect |
+| SubAgentManager | `agent/subagent/manager.py` | 子 session runtime 管理：子 session、多次 run、状态与 transcript inspect；并发队列 / 深度护栏 / 快照恢复 |
+| WorkflowScheduler | `agent/subagent/scheduler.py` | 执行 Workflow DSL 编译出的 DAG：节点状态机、数据槽、四维预算闸门、树状分层汇聚、运行态图快照 |
+| WorkflowStore | `agent/subagent/workflow_store.py` | 节点完整结果落盘（`result_ref`），内存只持 bounded summary |
+| OrchestrationPatterns | `agent/subagent/patterns.py` | 4 个内置编排模式（orchestrator-worker / peer-review / hierarchical / bidding），编译为 DSL 模板 |
 | TraceRecorder | `agent/trace_recorder.py` | 运行轨迹记录 |
+| CostLedger | `agent/cost_tracker.py` | 成本账本：`by_session`/`by_phase`/`by_tool` + workflow 四维归因 `by_workflow`/`by_node`/`by_depth`/`by_edge` |
+| ErrorClassifier | `agent/observability.py` | 结构化错误分类（4 类业务 + `unknown` 兜底） |
 | SlashCommandRegistry | `agent/commands/` | 斜杠命令注册、分发和 `/init` 生成 ASTER.md |
 | BrowserService | `agent/browser/` | 受控只读浏览器：导航、截图、内容提取、标签页管理，含安全策略约束 |
+
+## 多 Agent 编排
+
+`agent/subagent/` 提供声明式动态编排能力。模型通过 **Workflow DSL** 一次性声明协作拓扑，由统一调度器执行；`agent/subagent/patterns.py` 的 4 个内置模式只是编译到 DSL 模板的兼容层。
+
+### Workflow DSL
+
+- **分离式入口工具**：`DeclareWorkflow` 声明拓扑并返回 `workflow_id`，`StartWorkflow` 启动，`GetWorkflow` 查询 bounded 状态，`CancelWorkflow` 取消，`ReadWorkflowResult` 读取落盘结果；`RunWorkflow` 为便捷语法（内部走 Declare + Start）。`DryRunWorkflow` 不真跑即可预演图的路由与文本流向。`SaveWorkflowAsset`/`GetWorkflowAsset`/`ListWorkflowAssets`/`RunWorkflowAsset` 提供可复用的 workflow 资产。
+- **4 种节点**：`subagent`（一个子 agent run）、`aggregate`（多上游汇聚）、`route`（按结构化结果选下一条边）、`foreach`（对有限集合动态展开并行）。
+- **2 种汇合语义**：`all_required`（全部 required 上游完成才汇合）与 `best_effort`（等截止时间，消费已完成结果并保留失败记录）。「失败不 fail-fast」只在 aggregate 层实现。
+- **schema 期校验**（`agent/subagent/workflow.py`）：节点类型 / 汇合语义 / 受限 reducer 枚举（`concat`/`merge_dict`/`first_non_empty`/`last`，不执行模型生成代码）；环上必须有 `route`（唯一能提供条件出口 + 上限的节点，否则是不可终止死循环）；多入边写同一结果槽必须声明 reducer，否则报 schema 错。
+- **三闸结构上限**：图级步数 `recursion_limit`（默认 100）、节点数 `max_nodes`（默认 200）、run 总数 `max_runs`（默认 300）。
+
+### 调度与预算
+
+调度器（`agent/subagent/scheduler.py`）按数据依赖推进节点状态机，并施加 **workflow 级四维总预算**：`max_total_tokens` / `max_total_cost_usd` / `max_total_runs` / `max_wall_time_s`；任一维度超限即停止派发新节点、取消排队未执行的 run、drain 已启动的 run，并把根节点标记 `budget_exceeded`（返回 envelope，不向父 agent 抛未捕获异常）。四维默认值为不限（`0` = 该维度不限），但 `max_total_runs=0` **不**解除 `max_runs` 结构闸。
+
+**树状分层汇聚**：模型可显式声明 aggregate 树（leaf→shard→domain→root）；单 aggregate 直接上游 >10 时，调度器自动插入分层 aggregate（逐层分组 `ceil(n / 10)` 直到顶层输入 ≤ 10），每层输出遵守 token 预算（leaf 300 / shard 800 / domain 1500 / root 3000，可配置）。
+
+**父 agent 永远 bounded**：父只接收 bounded envelope（`workflow_id`/`status`/`completed`/`failed`/`pending`/`root_result_ref`），不默认展开子级详细结果；子级完整结果/transcript 落盘 workflow store，通过 `GetWorkflow` 的 detail 参数或 `InspectSubagentTranscript` 按需读取。
+
+**成本归因**：`CostLedger` 在既有 `by_session`/`by_phase`/`by_tool` 三维之外，增 workflow 四维归因 `by_workflow`/`by_node`/`by_depth`/`by_edge`——每个 LLM 调用携带其 workflow_id / node_id / depth / edge 归因键，可回答「哪个节点最贵、哪层重复 token 最多、动态 vs 固定 pattern 差多少」。
+
+### 运行态可视化
+
+Web 端提供 workflow 运行态 DAG 实时图（`web/static/workflow_graph.js`）：scheduler 通过独立 `workflow_graph_snapshot()` 输出完整 nodes + edges + 每节点/每边 status（**不动**父 Agent 数据契约），经 session 级事件通道推送到 WebSocket；节点八档状态、边六档状态高亮，route 控制边单列，>720 桌面横向 DAG / <720 手机纵向 DAG，复用既有断点做 pinch 缩放 + pan 平移。
 
 ## 工具系统
 
@@ -118,10 +152,7 @@ CLI 和 Web 复用 central slash command registry。`/skills` 展示当前加载
 
 ## Benchmark
 
-Benchmark 目标是用可复现任务评测 coding-agent 能力。当前有两条路径：
-
-- `benchmarks/`：项目内置 runner，覆盖本地 worktree 任务和少量 `swebench-*` 外部任务。
-- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness 副本，用 SWE-bench Verified 实例对比 Asterwynd、Aider、OpenCode 等 agent。
+Benchmark 目标是用可复现任务评测 coding-agent 能力。`benchmarks/` 是项目内置 runner，覆盖本地 worktree 任务和 `swebench-*` 外部任务。
 
 核心流程：
 
@@ -132,7 +163,7 @@ Benchmark 目标是用可复现任务评测 coding-agent 能力。当前有两�
 5. 运行验证命令。
 6. 在验证命令实际运行后保存 test output，并汇总 run-level 报告。
 
-内置 runner 的本地任务和外部 SWE-bench 风格任务都通过统一 runner 执行。Claw-SWE-Bench 路径使用独立 harness，通过 `claw-swe-bench/` 目录下 adapter 在目标容器内运行 headless solver。
+内置 runner 的本地任务和外部 SWE-bench 风格任务都通过统一 runner 执行。`--workflow-mode` 三模式（`template` / `dynamic-record` / `dynamic-replay`）让 benchmark 直接测「编排本身」的质量，报告新增独立的 workflow 编排 section。
 
 ## LLM Provider
 

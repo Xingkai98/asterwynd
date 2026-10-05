@@ -81,8 +81,8 @@ uv run asterwynd benchmark benchmarks/tasks \
   --source-repo . \
   --runs-dir /tmp/smoke \
   --fake-edit-file README.md \
-  --fake-old-string '# Asterwynd' \
-  --fake-new-string '# Asterwynd Coding Agent'
+  --fake-old-string 'Asterwynd' \
+  --fake-new-string 'Asterwynd Coding Agent'
 ```
 
 运行 Asterwynd benchmark：

@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "readme-narrative-refresh",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "building-review-readme-narrative-refresh-20261006-r2",
+  "base_sha": "8a255b0",
+  "head_sha": "f72aef96c51fe86978fbd5a2ac5b85c1e9e4b3d9",
+  "tasks_hash": "sha256:225274c51457b3625b54b6835488538abb0c49e83e7dd0578857ba9ff3e9579d",
+  "spec_hash": "sha256:missing",
+  "diff_hash": "sha256:2bdf29ab0d58ef00a277c07f012f7a15ac3d73c17f5943def94dbad735bac248",
+  "report_hash": "sha256:2040dfcabb0c1342bfb6c81ed5842c10a427c904b54f92b5eb80f1a034b336cd"
+}

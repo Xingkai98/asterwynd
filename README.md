@@ -12,202 +12,318 @@
   <strong>以星为引，变更有证。</strong>
 </p>
 
-**Asterwynd** 是一个本地 Coding Agent 系统。它理解代码仓库、找到从问题到修复的路径、调用工具执行变更和验证，并留下完整的 diff、日志、工具 trace 与 benchmark 证据——让每次代码修改都是可证明的，而不只是“看起来对的”。
+<p align="center">
+  <a href="https://github.com/Xingkai98/asterwynd/actions/workflows/ci.yml"><img src="https://github.com/Xingkai98/asterwynd/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT" />
+  <img src="https://img.shields.io/badge/tests-3500%2B-brightgreen.svg" alt="tests" />
+  <img src="https://img.shields.io/badge/benchmark-72%20tasks-orange.svg" alt="benchmark tasks" />
+</p>
+
+**Asterwynd** 是一个会**自己组队干活**的本地 Coding Agent。它不只逐条调用工具改文件——面对一个任务，它能把任务**声明成一张协作图**（并行调研 / 汇合 / 条件分支 / 动态展开），调度一群受预算约束的子 agent 执行，并留下每一步的 **diff、成本账本、工具 trace 与可回放的编排记录**——让每次代码修改都是**可证明的**，而不只是「看起来对的」。
 
 星辰定向，风推动前行，trace 证明来过。
 
-## 功能特性
+<p align="center">
+  <img src="./docs/assets/readme/architecture.svg" alt="Asterwynd 系统架构" width="1000" />
+</p>
 
-| 模块 | 说明 |
-|------|------|
-| **AgentLoop** | 核心循环约 100 行，消息是唯一状态，所有能力委托给插件 |
-| **ToolRegistry** | 动态工具注册，`@tool_parameters` 装饰器声明工具，包含文件、命令、代码理解和联网研究工具 |
-| **Code Intelligence** | Tree-sitter 多语言符号提取、Repo Map、Python AST 符号提取、LSP 语义工具（定义跳转、引用、hover、诊断） |
-| **WorkspacePolicy** | 工作区安全边界，拒绝路径穿越、敏感文件写入、危险命令 |
-| **SandboxExecutor** | subprocess 沙箱，结构化输出（exit_code/stdout/stderr/duration/timed_out） |
-| **HookManager** | 6 个生命周期扩展点，内置日志/重试/追踪/预算监控 Hook |
-| **MemoryManager** | token 阈值 AutoCompact、可插拔 Summarizer（四字段结构化摘要 / 截断降级）；tool_call pending 标记、L1/L2 层级压缩、增量 token 计数 |
-| **ContextBuilder** | 上下文注入管线，统一编排 ASTER.md、记忆索引、技能、计划、待办等 ContextSource；静态源缓存 + 稳定前缀分层（Prefix Cache 断点） |
-| **Browser** | 受控只读浏览器：导航、截图、内容提取、标签页管理，安全策略约束 |
-| **SkillRuntime** | 目录式 Markdown skill 加载、index 注入、按需/always 激活、`/skill args` 显式调用 |
-| **MCP Adapter** | 连接 stdio / Streamable HTTP MCP server，注册 MCP tools，并通过 `/mcp-prompt`、`/mcp-resource` 注入上下文 |
-| **SubAgentManager** | 子 session runtime：独立 transcript、多个子 session、单 session 多次 run、显式 inspect |
-| **TraceRecorder** | 全量轨迹记录，迭代/工具调用/编辑/测试完整可回溯 |
-| **Benchmark** | 33 个本地 coding-agent 任务（22 A 轨回归基线 + 11 B 轨当前演进）、SWE-bench Verified 精选子集（10 fixture，目标 50），以及 Claw-SWE-Bench 多 agent 对比入口 |
+---
+
+## 特色
+
+### 1 · 动态 Workflow 编排 —— 把任务声明成一张协作图
+
+大多数 coding agent 的工作方式是「模型逐条调工具」，遇到需要并行调研、多方案评审、动态扇出的大任务时只能串行硬推。Asterwynd 让模型**一次性声明协作拓扑**，由系统调度执行：
+
+- **声明式 DSL**：`DeclareWorkflow` 声明拓扑并返回 `workflow_id`，`StartWorkflow` 启动，`GetWorkflow` 查 bounded 状态，`CancelWorkflow` 取消；`RunWorkflow` 是便捷语法（内部走 Declare + Start）。
+- **4 种节点**：`subagent`（一个子 agent run）、`aggregate`（多上游汇聚）、`route`（按结构化结果选下一条边）、`foreach`（对有限集合动态展开并行）。
+- **2 种汇合语义**：`all_required`（等齐）与 `best_effort`（等截止时间，消费已完成结果并保留失败记录）——「失败不 fail-fast」只在 aggregate 层实现。
+- **树状分层汇聚**：模型显式声明 aggregate 树（leaf→shard→domain→root），单汇聚直接上游 >10 时调度器自动插入分层 aggregate，每层受 token 预算约束（leaf 300 / shard 800 / domain 1500 / root 3000）——**上百个叶子也不会撑爆父 agent 上下文**。
+- **父 agent 永远 bounded**：父只收 bounded envelope（`workflow_id`/`status`/`completed`/`failed`/`pending`/`root_result_ref`），子级结果落盘 `result_ref`，按需显式 inspect，不默认展开。
+- **零成本试错**：`DryRunWorkflow` 不真跑，就能看到图会怎么走、文本会怎么流——模型不必写一次性真 workflow 探路。
+
+<p align="center">
+  <img src="./docs/assets/readme/workflow-orchestration.svg" alt="Workflow 编排：声明 → 调度 → 预算/账本/可见" width="1000" />
+</p>
+
+**为什么难**：编排系统要同时解决「拓扑合法」（4 种节点 + 汇合语义 + 环上必须有 route + 多入边写同槽必须声明 reducer，全部 schema 期校验）、「不烧穿预算」（四维总预算 + 图级递归上限 + 三闸）、「父 agent 不被淹」（bounded envelope + 分层汇聚）、和「运行时看得见」（运行态图快照 + 三出口报告截断）。Asterwynd 四点都落到了实现与 spec。
+
+---
+
+### 2 · 上下文工程 —— 9 源分层注入 + 前缀缓存 + L1/L2 分层压缩
+
+注入不是「一股脑塞进去」。`ContextBuilder` 把系统提示、ASTER.md、记忆索引、技能、计划、待办等 **9 个上下文源**按优先级（P0 最高）编排：
+
+- **critical 层（P0/P1）永不裁剪**；**可缓存层**（系统提示 / ASTER.md / 记忆索引）**字节级不变**，让 Anthropic 的 `cache_control` 断点命稳 **Prompt Cache**；P4/P5（技能 / 计划）与动态尾部（对话历史、工具结果）才是每轮可变的部分。
+- **AutoCompact** 在 token 阈值触发，按 L1/L2 分层压缩：L1 把中间部分压成四字段结构化摘要（已完成 / 待办 / 疑难与决策 / 进行中），多个 L1 累积超阈值时 L2 压成顶层结论。
+- **工具链不断裂**：压缩会把中间 tool result 压掉，未完成的 `tool_call` 被标记 `[call#…: … pending]`，保证消息链合法。
+
+<p align="center">
+  <img src="./docs/assets/readme/feature-context.svg" alt="上下文工程：9 源分层注入" width="1000" />
+</p>
+
+**为什么难**：前缀缓存要求「稳定前缀逐字节不变」，但上下文又要按轮次更新——这两者天然冲突。Asterwynd 的解法是分层 + 缓存标记：把不变的和可变的切开，让缓存命中率和上下文新鲜度同时成立。
+
+---
+
+### 3 · 长期记忆 —— 写时去重 + git 可逆 + 衰减归档
+
+记忆最大的风险不是「记不住」，而是「记错了还改不回来」。Asterwynd 把可逆性做在**写路径**上：
+
+- **写时 LLM 三路去重**：`supplement` / `update` / `conflict`（`new` 兜底），相似度低于阈值直接短路（零 LLM 成本）。
+- **git commit-before-write**：写入前先快照，误判了可用 `MemoryGitBackend.revert` 两段式回滚——**绝不静默污染记忆库**（对比 mem0 的 ADD-only，取舍记录在 [ADR-0002](./docs/adr/ADR-0002-long-term-memory-reversibility.md)）。
+- **importance × recency 衰减**：`score = importance × 0.5^(days/30)`，30 天半衰期；超期未访问且分数低于阈值自动归档（可恢复）；recall/search 会 touch 更新 `last_accessed_at`。
+
+<p align="center">
+  <img src="./docs/assets/readme/feature-memory.svg" alt="长期记忆：写入 / 可逆 / 衰减" width="1000" />
+</p>
+
+**为什么难**：把「可逆」当成第一公民。大多数记忆系统假设写入是对的，Asterwynd 假设写入可能错，于是把回滚通道和写入通道一起设计。
+
+---
+
+### 4 · 三层纵深防御 —— 护栏不是边界，隔离才是
+
+安全上最大的认知陷阱是把「正则校验」当成边界。Asterwynd 明确区分：
+
+- **第一层 WorkspacePolicy**：路径边界 + 目录穿越拒绝 + 敏感文件写入拒绝（`.env` 等）。
+- **第二层 CommandGuard**：语义级命令校验，覆盖 flag 重排 / `timeout` 包裹 / `$IFS` / 反斜杠转义等绕过变体，**递归检查被包命令**（`timeout 5 rm -rf /` 也拦得住）。
+- **第三层 Sandbox**：`ProcessBackend` + cgroup v2 资源限制（`memory.max`/`memory.swap.max` 硬禁 swap）或 Docker 容器隔离（`--network none`）——**这才是唯一的边界**。
+- **细粒度权限**：`ToolPermission` 用 8 种 capability × 3 个风险等级 × origin 判权，`plan`/`read_only`/`build`/`bypass` 各绑定一套 profile；高风险工具需人工审批，无人值守入口 fail-closed。
+- **降级绝不静默**：cgroup 不可用时降级为纯 timeout，结果带 `degraded=True` + 一次性事件，绝不谎称「已限制」。
+
+<p align="center">
+  <img src="./docs/assets/readme/feature-safety.svg" alt="三层纵深防御" width="1000" />
+</p>
+
+**为什么难**：分清「护栏（guardrail）」和「边界（boundary）」——护栏降低风险，边界才真正隔离。诚实标注降级状态，比假装安全更重要。
+
+---
+
+### 5 · 工具治理 —— 40 个工具不必全塞给模型
+
+工具一多，全量注入既浪费 token 又稀释注意力。Asterwynd 做**动态 Top-K 选择**：
+
+- **两段式召回**：BM25 粗筛 50 → embedding 精排取 **Top-K = 5** 注入本次 LLM 调用。
+- **稳定核心层**：`CORE_STABLE_TOOL_NAMES` 里实际注册的核心工具（`Read`/`Edit`/`Write`/`Bash`/`Grep`/`InspectGitDiff`）恒在前且字节不变，**不占 Top-K 预算**——稳定前缀保住 Prompt Cache，变化只发生在尾部。
+- **质量软降级**：运行时按「成功率 / 耗时 / 审批率 = 0.5 / 0.3 / 0.2」评分（窗口 50、阈值 0.4），低分工具退出「变化层」候选——**是软降级不是禁用**，schema 仍可见、仍可调用，权限模型不动。
+- **零依赖默认**：内置 NGramEmbedding，可换真 embedding provider。
+
+<p align="center">
+  <img src="./docs/assets/readme/feature-tools.svg" alt="工具治理：动态 Top-K + 稳定核心层" width="1000" />
+</p>
+
+**为什么难**：「省 token」和「命中缓存」是两个会互相打架的目标——动态选择让注入内容每轮都变，缓存就废了。解法是切出恒定的稳定层，只让尾巴变。
+
+---
+
+### 6 · 可观测 + 评测闭环 —— 每次变更都可证明
+
+不是「看起来对」，而是留下一条证据链：
+
+- **TraceRecorder**：全链路 step 流（`run_started` → `llm_iteration` → `tool_call` → `approval` → `sandbox` → `compaction` → `completion`）。
+- **CostLedger 成本归因**：在既有 `by_session` / `by_phase` / `by_tool` 三维之外，增 workflow 四维归因 `by_workflow` / `by_node` / `by_depth` / `by_edge`——能回答「哪个节点最贵、哪层重复 token 最多、动态 vs 固定 pattern 差多少」。
+- **ErrorClassifier**：结构化错误分类（4 类业务错误 + `unknown` 兜底，审批拒绝归到 `permission_denied`）。
+- **运行态图可视化**：Web 端实时 DAG（节点八档状态、边六档状态，route 控制边单列，桌面/手机双布局）。
+- **Benchmark 闭环**：**72 个任务**（34 本地 + 38 SWE-bench Verified）在 git worktree / Docker 隔离执行，隐藏评测文件防作弊，产出 pass@k / pass^k / cost@pass / bootstrap 95% CI / `fault_owner` 归因；CI 回归门禁对比 baseline（成功率 drop > 5pp 或 p95 超基线 → FAIL）。
+
+<p align="center">
+  <img src="./docs/assets/readme/feature-observability.svg" alt="可观测 + 评测闭环" width="1000" />
+</p>
+
+**为什么难**：把「过程记录」和「财务记录」解耦（trace vs cost ledger），把「可复现」做实（固定 seed bootstrap），把「防作弊」做进隔离（评测前隐藏 task 文件），并且诚实标注边界（幻觉类错误不自动分类，需 LLM judge）。
+
+---
+
+## 用 Agent 开发 Agent
+
+Asterwynd 用**自己定义的一套工程闭环**开发自己——不是一次性 demo，是持续运行的开发纪律：
+
+```
+需求讨论 → OpenSpec 立项（proposal / design / tasks / spec-delta）
+        → 独立 subagent 设计追问（grill，逐条决策 + 停轮等用户确认）
+        → 独立零记忆 subagent 对抗验证（试图推翻设计结论）
+        → 实现（独立 git worktree，测试先行）
+        → 独立 subagent 审阅闭环（审 → 改 → 再审，直到 PASS 或 3 轮封顶）
+        → CI 门禁（全量 pytest + OpenSpec strict validate + artifact checker + benchmark-gate）
+        → 归档收尾（spec 同步 + change 归档 + backlog 清理）
+```
+
+这套流程本身也被机器强制：受保护路径需结构化事件、审阅需 review manifest 绑定 hash、grill 需结构化决策记录、分支名要能推导 change-id。**项目的每次变更都走这条路，包括这份 README。**
+
+---
 
 ## 快速开始
 
 ```bash
-# 安装（使用 uv，更快）
-uv sync --extra dev              # 运行时 + 开发/测试依赖
+# 安装（uv，推荐）
+uv sync --extra dev
 
-# 配置 API Key 和模型
+# 配置 API Key（OpenAI 或 Anthropic 兼容端点均可）
 cp .env.example .env
-# 编辑 .env，填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
-# 可选：改 OPENAI_BASE_URL 指向任意 OpenAI 兼容 API（如 DeepSeek、OrcaRouter 等）
-# 可选：设置 ASTERWYND_PROVIDER（openai / anthropic）和 ASTERWYND_MODEL 作为默认值
+# 编辑 .env：填 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
+# 可选：OPENAI_BASE_URL 指向任意 OpenAI 兼容 API（DeepSeek / OrcaRouter 等）
+# 可选：ASTERWYND_PROVIDER（openai / anthropic）、ASTERWYND_MODEL 设默认
 
-# 运行 CLI（OpenAI，默认；用 .env 配置的 ASTERWYND_MODEL）
-uv run asterwynd run "Hello"
+uv run asterwynd run "Hello"          # CLI 单轮
+uv run asterwynd                       # CLI 交互模式
+uv run asterwynd web --port 8000       # Web UI
+uv run pytest -q                       # 跑测试
 
-# 或覆盖模型/提供商
-uv run asterwynd run --model gpt-4o-mini "Hello"
-uv run asterwynd run --provider anthropic --model claude-sonnet-4-20250514 "Hello"
-
-# 交互模式
-uv run asterwynd
-
-# 启动 Web UI（使用 .env 配置）
-uv run asterwynd web --port 8000
-
-# Web UI + 详细日志
-ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000 --model deepseek-v4-pro
-
-# 运行测试
-uv run pytest -q
-
-# 运行本地 coding-agent benchmark（fake runner smoke）
+# 本地 benchmark（fake runner smoke，确定性）
 uv run asterwynd benchmark benchmarks/tasks \
-  --agent fake \
-  --source-repo . \
-  --runs-dir /tmp/asterwynd-benchmark-smoke \
+  --agent fake --source-repo . --runs-dir /tmp/smoke \
   --fake-edit-file README.md \
-  --fake-old-string '# Asterwynd' \
-  --fake-new-string '# Asterwynd Coding Agent'
-
-# 运行 Claw-SWE-Bench 统一 harness（需先准备 Docker 镜像和环境变量）
-cd claw-swe-bench
-uv run python run_infer.py \
-  --claw asterwynd \
-  --dataset verified \
-  --instance_file config/verified_mini_50.txt \
-  --run_id asterwynd-lite \
-  --model deepseek-v4-pro
+  --fake-old-string 'Asterwynd' --fake-new-string 'Asterwynd Coding Agent'
 ```
 
-`uv run` 不是业务运行的必需条件，而是推荐的环境隔离方式：它会使用 `uv` 管理的项目虚拟环境，依赖版本更可复现。如果你当前 shell 的 Python 环境已经安装好依赖，也可以直接运行等价命令，例如 `asterwynd run "Hello"` 或 `pytest -q`。
+`uv run` 是推荐的环境隔离方式（依赖更可复现），不是业务运行必需——环境已就绪时 `asterwynd run "Hello"` / `pytest -q` 等价可用。
 
-## 内置工具集
+<details>
+<summary><b>更多运行方式（provider 覆盖 / Web Debug / 编排 benchmark）</b></summary>
 
-| 工具 | 权限级别 | 说明 |
-|------|---------|------|
-| `Read` | read_only | 读取文件，支持行数限制；无显式限制时默认输出有界（2000 行或 128KB），带续读进度注记 |
-| `Write` | read_write | 创建新文件，禁止覆盖已有文件 |
-| `Edit` | read_write | 精确文本替换，要求 old_string 唯一匹配，支持 replace_all |
-| `Bash` | command_execute / high | 沙箱执行 shell 命令，返回结构化 JSON（exit_code/stdout/stderr/duration/timed_out） |
-| `Grep` | read_only | 正则搜索文件/目录 |
-| `InspectGitDiff` | read_only | 查看当前工作区 git diff |
-| `ListFiles` | read_only | 列出目录内容，自动忽略 .git/node_modules 等 |
-| `Find` | read_only | 按 glob 模式递归搜索文件 |
-| `RepoMap` | read_only | 生成仓库结构和已支持语言的顶层符号摘要 |
-| `SymbolSearch` | read_only | 在仓库内按名称搜索已支持语言的符号 |
-| `WebSearch` | read_only | DuckDuckGo HTML 搜索，返回带 provider 的稳定文本结果 |
-| `WebFetch` | read_only | 获取网页正文，返回状态/类型/截断诊断 |
-| `BrowserNavigate` | read_only | 浏览器导航到指定 URL |
-| `BrowserScreenshot` | read_only | 截取当前页面视口截图 |
-| `BrowserGetContent` | read_only | 提取页面可交互元素和文本内容 |
-| `BrowserScroll` | read_only | 滚动页面指定像素 |
-| `BrowserTabs` | read_only | 管理浏览器标签页（新建/切换/关闭） |
+```bash
+# 覆盖 provider / model
+uv run asterwynd run --provider anthropic --model claude-sonnet-4-20250514 "Hello"
 
-Bash 工具内置命令安全策略：先经过 mode permission profile 判权；默认 `build` mode 下 high risk 命令执行需要审批，CLI 单轮和 benchmark 等无人值守入口 fail closed（显式指定 `bypass` mode 时自动放行）。实际执行前仍会检查正则黑名单（覆盖 rm -rf /、fork 炸弹、curl \| sh 等），再匹配安全命令前缀白名单（git status/pytest/uv/npm...）。项目级命令拒绝规则、permission profile 和 ListFiles / Find 忽略规则通过 `asterwynd.yaml` 配置扩展，见 `asterwynd.example.yaml`。
+# Web UI + 详细日志（记录 LLM 输入/输出）
+ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000 --model deepseek-v4-pro
+
+# Web Debug 界面（Chat + Debug 双视图）
+ASTERWYND_DEBUG=enabled uv run asterwynd web --host 127.0.0.1 --port 8000
+
+# 编排 benchmark：模型自由生成 workflow 并旁路记录（详见「Benchmark」节）
+uv run asterwynd benchmark benchmarks/tasks --agent asterwynd \
+  --provider anthropic --model deepseek-v4-flash \
+  --workflow-mode dynamic-record --runs-dir /tmp/record
+```
+
+交互模式内置 slash command：`/help`、`/status`、`/mode <build|read_only|plan|bypass>`、`/clear`、`/compact`、`/skills`、`/skills reload`、`/mcp`、`/<skill-name> <request>`、`/exit`。
+
+</details>
+
+---
+
+## Web UI
+
+```bash
+uv run asterwynd web --port 8000                          # 基本启动
+ASTERWYND_DEBUG=enabled uv run asterwynd web --port 8000  # 开启 Debug 视图
+```
+
+- **Chat 视图**：Markdown 渲染、工具调用可视化、长结果折叠、session/run/mode 展示、Plan Document + planning state、审批卡片。
+- **Debug 视图**：逐轮展示发给 LLM 的完整消息列表、LLM 响应、工具调用详情、记忆压缩事件。
+- **Workflow 视图**：运行态 DAG 实时图（节点/边状态高亮、route 控制边单列、桌面/手机双布局）。
+
+会话内可切换 `build` / `read_only` / `plan` / `bypass` 模式。每次启动在平台用户日志目录（`platformdirs.user_log_path("asterwynd")`）生成独立日志文件。
+
+<details>
+<summary><b>环境变量与配置优先级</b></summary>
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `ASTERWYND_PROVIDER` | `openai` | LLM 提供商：`openai` 或 `anthropic` |
+| `ASTERWYND_MODEL` | 各 provider 默认 | 使用的模型名称 |
+| `ASTERWYND_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
+| `ASTERWYND_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI |
+
+配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `asterwynd.yaml` > 代码默认值。API key / base URL / provider / model / debug / log level 用 `.env` 或环境变量；agent mode、permission profile、工具策略、工具结果展示阈值和 benchmark 默认参数用 `asterwynd.yaml`。
+
+</details>
+
+---
 
 ## 项目结构
 
-```
+```text
 agent/
-├── loop.py                  # AgentLoop 核心（~100行）
+├── loop.py                  # AgentLoop 核心（消息驱动主循环）
 ├── llm.py                   # LLM Protocol + ToolCallDelta
 ├── openai_llm.py            # OpenAI Chat Completions 实现
 ├── anthropic_llm.py         # Anthropic Messages API 实现
-├── workspace_policy.py      # WorkspacePolicy 工作区安全边界
-├── trace_recorder.py        # TraceRecorder 全量轨迹记录
-├── message.py               # Message dataclass + 快捷构造
-├── result.py                # RunResult + StopReason + ToolCallMade
-├── config.py                # 配置加载（asterwynd.yaml）
-├── session.py               # SessionStore 会话持久化
-├── approval.py              # ApprovalHandler 工具审批
-├── background.py            # BackgroundTaskManager 后台任务
-├── run_config.py            # AgentRuntimeState + mode transition
-├── run_identity.py          # RunId / SessionId 标识
-├── tool_permissions.py      # ToolPermission + ModePolicy
-├── tool_result_display.py   # ToolResultDisplayConfig
-├── branding.py              # Asterwynd 品牌信息
-├── assets/                  # 品牌资源
-├── commands/
-│   ├── registry.py          # SlashCommandRegistry
-│   └── init.py              # /init 命令（ASTER.md 生成）
-├── context/
-│   ├── protocol.py          # BuildContext + ContextSource Protocol
-│   ├── builder.py           # ContextBuilder 管线编排
-│   ├── sources.py           # 8 个内置 ContextSource
-│   └── summarizer.py        # Summarizer Protocol + LLMSummarizer + TruncationSummarizer
+├── workspace_policy.py      # 工作区安全边界
+├── trace_recorder.py        # 全量轨迹记录
+├── cost_tracker.py          # 成本账本（四维归因）
+├── observability.py         # 结构化错误分类
+├── context/                 # ContextBuilder 上下文注入管线 + Summarizer
+├── memory/                  # MemoryManager + AutoCompact + 长期记忆 + git backend
 ├── tools/
-│   ├── base.py              # Tool ABC + @tool_parameters 装饰器
 │   ├── registry.py          # ToolRegistry
-│   ├── sandbox.py           # SandboxExecutor + SandboxResult
-│   └── builtin/             # 内置工具（文件/命令/浏览器/搜索等）
-├── hooks/
-│   ├── manager.py           # HookManager + Hook Protocol
-│   └── builtin/             # 4 个内置 Hook
-├── memory/
-│   └── manager.py           # MemoryManager + AutoCompact
-├── planning/
-│   └── manager.py           # PlanningManager 结构化计划状态
-├── mcp/
-│   ├── manager.py           # MCP server 连接、discovery 和调用
-│   └── tools.py             # MCP-backed Tool wrapper
-├── skills/
-│   ├── loader.py            # SkillLoader + Skill dataclass
-│   └── runtime.py           # SkillRuntime + 当前 run skill 激活
+│   ├── sandbox/             # ProcessBackend / cgroup / Docker 三后端
+│   ├── command_guard.py     # 命令语义护栏
+│   ├── governance/          # 动态 Top-K 工具选择 + 质量软降级
+│   └── builtin/             # 内置工具（文件/命令/浏览器/搜索/子 agent 等）
 ├── subagent/
-│   └── manager.py           # SubAgentManager 子 session runtime
-├── browser/
-│   ├── service.py           # BrowserService 浏览器进程管理
-│   ├── session.py           # BrowserSession 标签页/导航管理
-│   └── policy.py            # BrowserPolicy 安全策略
-├── code_intelligence/
-│   └── ...                  # RepoMap / SymbolSearch 实现
-├── lsp/
-│   └── ...                  # LSP server 管理与语义工具
-├── workflow/
-│   └── ...                  # Handoff 状态机 + 生命周期追踪
-└── tui/
-    └── ...                  # 终端 UI 运行时视图
+│   ├── scheduler.py         # Workflow 调度器（DAG 执行 + 预算 + 分层汇聚）
+│   ├── workflow.py          # Workflow DSL 数据结构与 schema 校验
+│   ├── patterns.py          # 4 个内置编排模式（编译为 DSL 模板）
+│   ├── manager.py           # 子会话 runtime（并发 / 深度 / 预算护栏）
+│   ├── bus.py               # 轻量消息总线（非权威）
+│   └── snapshot.py          # 快照与恢复
+├── workflow/                # 开发流程状态机 + 事件日志 + review manifest
+└── skills/ planning/ mcp/ browser/ code_intelligence/ lsp/  # 支撑能力
 
-benchmarks/                  # 本地 benchmark runner
-├── tasks/                   # 44 个编码任务（asterwynd-* 本地 + swebench-* Verified 子集）
-├── runner.py                # BenchmarkRunner + SWE-bench 风格隔离
-├── agent_runner.py          # AgentRunner（fake/shell/asterwynd 适配器）
-├── models.py                # 失败分类 + 指标模型
-├── prompt.py                # 编码 agent 提示词构建器
-└── task_schema.py           # 任务 schema 加载
-
-claw-swe-bench/              # Claw-SWE-Bench 统一 harness 副本和 adapter
-└── claw_swebench/claws/
-    ├── asterwynd.py           # Asterwynd adapter
-    ├── aider.py             # Aider adapter
-    └── opencode_adapter.py  # OpenCode adapter（受 endpoint 支持限制）
-
-skills/                      # 技能文件目录
-├── code-review/
-│   └── SKILL.md
-└── research/
-    └── SKILL.md
+web/                         # FastAPI + WebSocket（Chat / Debug / Workflow 视图）
+benchmarks/                  # 本地 runner + 72 任务 + 统计 / 门禁 / 对比
+docs/                        # 架构 / 开发指南 / 测试指南 / ADR / 面试材料
+openspec/                    # 需求与规格（specs/ 已确认规格，changes/ 演进中变更）
 ```
 
-## 架构设计
+---
 
-### 核心循环
+## 架构
 
-```
-messages → LLM → tool_calls? → [execute tools] → append results → repeat
-                ↓
-            no tools → return content
-```
+- **核心循环**：`AgentLoop.run()` 是唯一状态管理者，`messages` 是唯一可变状态；工具执行、记忆压缩、子会话 runtime 通过依赖注入持有引用。tool-call 消息链合法性由 API 强制。
+- **编排层**：`agent/subagent/scheduler.py` 执行 Workflow DSL 编译出的 DAG，管理节点状态机、数据槽、预算闸门与分层汇聚。
+- **可观测栈**：TraceRecorder（过程）+ CostLedger（成本）+ ErrorClassifier（错误）+ 运行态图快照构成全链路证据面。
+- **插件面**：7 个 Hook 生命周期切点；`@tool_parameters` 声明式工具注册；skill 目录式加载；MCP 通过 stdio / Streamable HTTP 接入。
 
-`AgentLoop.run()` 是唯一的状态管理者，`messages` 是唯一的可变状态。所有子系统（工具执行、记忆管理、子 session runtime）均通过依赖注入持有引用。
+<details>
+<summary><b>完整模块表与内置工具清单</b></summary>
 
-### 工具注册
+| 模块 | 说明 |
+|------|------|
+| **AgentLoop** | 消息驱动主循环；`messages` 是唯一状态，能力委托给插件 |
+| **ToolRegistry** | `@tool_parameters` 声明式注册；40 个内置工具 + MCP 动态挂载 |
+| **Tool Governance** | BM25 + embedding 动态 Top-K 选择；稳定核心层保前缀缓存；质量软降级 |
+| **Code Intelligence** | Tree-sitter（TS/JS、Go、Rust）+ Python AST 符号提取；RepoMap；Python LSP 语义工具 |
+| **WorkspacePolicy** | 路径穿越拒绝、敏感文件写入拒绝、命令拒绝列表 |
+| **CommandGuard** | 命令语义护栏（flag 重排 / timeout 包裹 / `$IFS` / 反斜杠转义） |
+| **Sandbox** | ProcessBackend + cgroup v2 / Docker（`--network none`）双后端，降级不静默 |
+| **HookManager** | 7 个生命周期切点；内置日志/重试/追踪/预算 Hook |
+| **MemoryManager** | AutoCompact（L1/L2 分层压缩、tool_call pending 标记）；长期记忆（写时去重 + git 可逆 + 衰减） |
+| **ContextBuilder** | 9 个 ContextSource 分层注入；静态源缓存 + 稳定前缀（Prompt Cache 断点） |
+| **SubAgentManager** | 子会话 runtime：独立 transcript、多次 run、并发队列、深度护栏、快照恢复 |
+| **Workflow Scheduler** | 声明式 DSL 执行：4 节点 / 2 汇合语义 / 树状汇聚 / 四维预算 / bounded envelope |
+| **Orchestration Patterns** | 4 个内置模式（orchestrator-worker / peer-review / hierarchical / bidding），编译为 DSL 模板 |
+| **Browser** | 受控只读浏览器（导航、截图、内容提取、标签页），安全策略约束 |
+| **MCP Adapter** | stdio / Streamable HTTP server 接入，注册 `mcp__<server>__<tool>` |
+| **Observability** | TraceRecorder + CostLedger（四维）+ ErrorClassifier + 运行态图可视化 |
+| **Benchmark** | 72 任务（34 本地 + 38 SWE-bench Verified）；workflow 三模式；CI 回归门禁 |
+
+**内置工具（40 个，含默认关闭的浏览器工具）**：
+
+| 类别 | 工具 |
+|------|------|
+| 文件读写 | `Read` · `ReadDoc` · `Write` · `Edit` · `ListFiles` · `Find` · `Grep` · `InspectGitDiff` |
+| 命令执行 | `Bash`（结构化输出：exit_code / stdout / stderr / duration / timed_out） |
+| 代码理解 | `RepoMap` · `SymbolSearch` · `LspDefinition` · `LspReferences` · `LspHover` · `LspDocumentSymbols` · `LspWorkspaceSymbols` · `LspDiagnostics` |
+| 联网研究 | `WebSearch` · `WebFetch` |
+| 记忆 | `SaveMemory` · `RecallMemory` · `SearchMemory` · `ResolveMemoryConflict` · `MemoryGitBackend` |
+| 规划与交互 | `UpdatePlan` · `ExitPlanMode` · `TodoWrite` · `AskUserQuestion` |
+| 技能与任务 | `ActivateSkill` · `TaskOutput` · `TaskStop` |
+| 工作树 | `EnterWorktree` · `ExitWorktree` |
+| 浏览器（默认关闭） | `BrowserNavigate` · `BrowserGetContent` · `BrowserScreenshot` · `BrowserScroll` · `BrowserListTabs` · `BrowserSwitchTab` · `BrowserCloseTab` |
+
+命令安全：先经 mode permission profile 判权；默认 `build` mode 下 high risk 命令需审批，CLI 单轮与 benchmark 等无人值守入口 fail-closed（显式 `bypass` 才放行）。执行前仍检查正则黑名单（`rm -rf /`、fork 炸弹、`curl | sh` 等）再匹配安全前缀白名单。项目级规则经 `asterwynd.yaml` 扩展，见 `asterwynd.example.yaml`。
+
+</details>
+
+<details>
+<summary><b>扩展指南（添加工具 / Hook / 技能）</b></summary>
+
+**添加新工具**：创建 `agent/tools/builtin/my_tool.py`，继承 `Tool` ABC 并用 `@tool_parameters` 声明 schema；在 `agent/tools/__init__.py` 中 import 并加入 `get_default_tools()`；注册到 `ToolRegistry`。
 
 ```python
 from agent.tools import Tool, tool_parameters, ToolRegistry
@@ -215,7 +331,7 @@ from agent.tools import Tool, tool_parameters, ToolRegistry
 @tool_parameters(
     name="MyTool",
     description="做什么",
-    parameters={"type": "object", "properties": {"arg": {"type": "string"}}}
+    parameters={"type": "object", "properties": {"arg": {"type": "string"}}},
 )
 class MyTool(Tool):
     read_only = True
@@ -227,71 +343,22 @@ registry = ToolRegistry()
 registry.register(MyTool())
 ```
 
-### Hook 扩展
+**添加新 Hook**：实现 `Hook` Protocol（7 个生命周期方法，均可空实现），传入 `HookManager([MyHook()])`。
 
 ```python
 from agent.hooks import HookManager, Hook
 
 class MyHook(Hook):
+    async def on_run_started(self, run_config): ...
     async def before_iteration(self, iteration, messages): ...
     async def after_llm_call(self, response): ...
     async def before_tool_execute(self, tool_call): ...
     async def after_tool_execute(self, tool_call, result): ...
     async def on_error(self, error): ...
     async def on_completion(self, result): ...
-
-agent = AgentLoop(hooks=HookManager([MyHook()]), ...)
 ```
 
-### AutoCompact
-
-`MemoryManager.compact_if_needed()` 在每次工具调用轮次后检查 token 预算，达到阈值时触发压缩：
-
-- 保留所有 `role=system` 消息
-- 保留最近 N 条对话（含 tool-call 链完整性保护）
-- 中间部分通过可插拔 `Summarizer` 生成四字段结构化摘要（已完成事项/待办事项/疑难点与决策/当前进行中），无 LLM 时截断降级
-- 未完成的 tool_call 标记为 `[call#<i>: <tool_call_id> pending]`，避免压缩后工具链断裂
-- L1 摘要累积超阈值触发 L2 二次压缩（只保留最高层结论，带层级元数据）
-- 摘要以 `role=user` 消息注入（语义上为"前序会话上下文"）
-
-```python
-memory = MemoryManager(max_tokens=80_000, recent_window=10, llm=openai_llm)
-```
-
-### 子 Session Runtime
-
-```python
-subagent = subagent_manager.create_subagent(
-    name="research",
-    description="只读调查代码和文档",
-    mode="read_only",
-)
-
-run = await subagent_manager.run_subagent(
-    subagent_id=subagent["subagent_id"],
-    task="搜索相关信息",
-    wait=True,
-)
-
-print(run["status"], run["summary"])
-```
-
-## 扩展指南
-
-### 添加新工具
-
-1. 创建 `agent/tools/builtin/my_tool.py`，继承 `Tool` ABC，使用 `@tool_parameters`
-2. 在 `agent/tools/__init__.py` 中 import 并加入 `get_default_tools()`
-3. 注册到 `ToolRegistry`
-
-### 添加新 Hook
-
-1. 实现 `Hook` Protocol（6 个方法，可以空实现）
-2. 传入 `HookManager([MyHook()])`
-
-### 添加新技能
-
-在 `skills/<name>/SKILL.md` 创建目录式 skill：
+**添加新技能**：在 `skills/<name>/SKILL.md` 创建目录式 skill（YAML frontmatter + prompt 正文）。
 
 ```markdown
 ---
@@ -310,190 +377,79 @@ triggers:
 这里是指示 prompt...
 ```
 
-每次 run 都会向模型注入简短 skill index。完整 skill prompt 只在 `always: true`、本地匹配、显式 `/my-skill ...` 或 `ActivateSkill` 工具激活时进入当前 run context。交互模式可用 `/skills` 查看加载结果、`/skills reload` 重新加载 configured skill roots。
+每次 run 都会向模型注入简短 skill index；完整 skill prompt 只在 `always: true`、本地匹配、显式 `/my-skill ...` 或 `ActivateSkill` 工具激活时进入当前 run context。交互模式可用 `/skills` 查看加载结果、`/skills reload` 重新加载 configured skill roots。
 
-## Web UI
+</details>
 
-启动 Web 界面：
-
-```bash
-# 基本启动（使用 .env 中的 ASTERWYND_PROVIDER 和 ASTERWYND_MODEL）
-uv run asterwynd web --port 8000
-
-# 覆盖模型
-uv run asterwynd web --port 8000 --model deepseek-v4-pro
-
-# 覆盖 provider
-uv run asterwynd web --port 8000 --provider anthropic --model claude-sonnet-4-20250514
-
-# 调试模式（Chat + Debug 双界面）
-ASTERWYND_DEBUG=enabled uv run asterwynd web --host 127.0.0.1 --port 8000
-
-# 详细日志（记录 LLM 输入/输出到文件）
-ASTERWYND_LOG_LEVEL=DEBUG uv run asterwynd web --port 8000
-```
-
-- **Chat 界面**：harness 式 transcript——assistant Markdown 正文成文（单列文档流，不用聊天气泡），**每次工具执行默认只占一行**（`▸ Bash · pytest -q · 1.2k 字符`，点开才见参数与结果全文），失败在折叠行上就可见（可读失败首行顶摘要；Bash 这类单行 JSON 结果保留命令、行尾给出 `exit 1`）且不自动展开；重连后的历史工具行同样折叠并带真工具名。展示当前 session id / run id / session mode，支持切换 `build` / `read_only` / `plan` / `bypass`，展示 Plan Document 和 planning state，并在工具需要审批时显示审批卡片
-- **断线重连**：浏览器断开（移动端切后台/锁屏）不会终止正在执行的 run，也不会让等待中的审批/提问失败；重连同一会话后服务端在 `session_history` 之后补发仍 pending 的审批/提问卡片，用户可直接作答，多 tab/多设备同时打开时所有连接共享同一份卡片状态（先答者胜）。pending 超时可配置——提问 `web.question_timeout_seconds` 缺省 300 秒、审批 `web.approval_timeout_seconds` 缺省 600 秒，均为**总等待时长**（从 pending 建立时起算，与连接断开与否无关）；**审批超时是相对旧版本的行为变更**：此前审批无超时，挂起的卡片多久后回来点批准都生效，现在超过窗口即判 `unavailable`（fail-closed，绝不放行不可逆操作）
-- **Debug 界面**：环境变量 `ASTERWYND_DEBUG=enabled` 开启，逐轮展示：
-  - 发送给 LLM 的完整消息列表（system prompt、历史对话、工具结果）
-  - LLM 响应（content、stop_reason、tool_calls；工具参数按审批脱敏规则展示）
-  - 工具调用详情（名称、脱敏参数、结果）
-  - AgentLoop 通过 Web session 事件流发送的 Memory 压缩事件
-
-CLI 交互模式支持在同一 session 内通过 `/mode build`、`/mode read_only`、`/mode plan` 和 `/mode bypass` 切换当前 session mode；CLI 单轮模式仍通过 `--mode` 指定初始 mode。
-
-### 日志
-
-每次启动在 `logs/` 目录生成独立日志文件（如 `asterwynd-20260526-123456.log`）：
-
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `ASTERWYND_PROVIDER` | `openai` | LLM 提供商: `openai` 或 `anthropic` |
-| `ASTERWYND_MODEL` | (各 provider 默认值) | 使用的模型名称 |
-| `ASTERWYND_LOG_LEVEL` | `INFO` | `DEBUG` 时记录 LLM 请求 payload 和原始响应 JSON |
-| `ASTERWYND_DEBUG` | `disabled` | `enabled` 时开启 Debug Web UI 界面 |
-
-配置优先级：CLI 显式参数 > 进程环境变量 > `.env` 加载值 > `asterwynd.yaml` > 代码默认值。API key、base URL、provider、model、debug 和 log level 继续使用 `.env` 或环境变量；agent mode、permission profile、mode deny override、工具策略、工具结果展示阈值和 benchmark 默认参数使用 `asterwynd.yaml`。
-
-- 日志同时输出到终端和文件
-- HTTP 4xx/5xx 错误始终记录请求 payload 和响应 body
-- 单文件最大 5MB，保留最近 5 个滚动文件
-
-浏览器测试：
-
-```bash
-playwright install chromium
-ASTERWYND_DEBUG=enabled uv run pytest tests/web_tests/test_browser.py --run-real-api -v
-```
+---
 
 ## Benchmark
 
-Asterwynd 当前有两条 benchmark 路径：
-
-- `benchmarks/`：项目内置 runner，用 33 个本地任务（22 A 轨 + 11 B 轨）和 `swebench-*` Verified 子集（目标 50）验证 Asterwynd 的 coding-agent 闭环。
-- `claw-swe-bench/`：Claw-SWE-Bench 统一 harness，用同一批 SWE-bench Verified 实例对比 Asterwynd、Aider、OpenCode 等外部 coding agent。
-
-### 快速验证（fake agent，确定性地）
+内置 runner 覆盖 **72 个任务**（34 本地 A/B 轨 + 38 `swebench-*` Verified 子集），在 git worktree / Docker 隔离执行。
 
 ```bash
+# 真实 agent 评测
+uv run asterwynd benchmark benchmarks/tasks --agent asterwynd --source-repo . --runs-dir /tmp/bench
+
+# 重复运行 + 量化报告（pass@k / pass^k / cost@pass / bootstrap CI / fault_owner）
 uv run asterwynd benchmark benchmarks/tasks \
-  --agent fake \
-  --source-repo . \
-  --runs-dir /tmp/asterwynd-benchmark-smoke \
-  --fake-edit-file README.md \
-  --fake-old-string '# Asterwynd' \
-  --fake-new-string '# Asterwynd Coding Agent'
+  --agent fake --source-repo . --runs-dir /tmp/eval --repeat 3 --parallel 1
+
+# CI 回归门禁（对比已提交基线，劣化 >5% 非零退出）
+uv run asterwynd benchmark-gate benchmarks/tasks/gate-smoke \
+  --source-repo . --baseline benchmarks/baseline.json --require-baseline
 ```
 
-### 真实 agent 评测
+<details>
+<summary><b>编排 benchmark（workflow 三模式）与评测流程</b></summary>
 
-```bash
-uv run asterwynd benchmark benchmarks/tasks \
-  --agent asterwynd \
-  --source-repo . \
-  --runs-dir /tmp/asterwynd-benchmark \
-  --max-iterations 80
-```
-
-### 评测深度（重复运行与量化报告）
-
-`--repeat N` 对同一配置重复运行 N 轮（缺省 1 保持单次行为），聚合为可直接引用的量化报告（`evaluation-report.md`）：
-
-```bash
-uv run asterwynd benchmark benchmarks/tasks \
-  --agent fake --source-repo . \
-  --runs-dir /tmp/asterwynd-eval --repeat 3 --parallel 1
-```
-
-报告按能力分层（`execution`/`tool-usage`/`context-planning`/`multi-step-solving`）组织，含 Pass@k、均值/标准差、bootstrap 95% 置信区间、延迟 p50/p95/p99、token 成本与失败归因占比，并标注任务所属评测框架（task_family）。评测框架验证经 `VerifierAdapter` 抽象（当前内置 SWE-bench Verified adapter），并发上限按当前环境动态判定（低资源环境自动取 1）。
-
-### 编排 benchmark（workflow 三模式）
-
-`--workflow-mode` 让 benchmark 直接测「编排本身」的质量，而不只是单 agent 解单任务：
+`--workflow-mode` 让 benchmark 直接测「编排本身」的质量：
 
 | 模式 | 含义 |
 |---|---|
 | `template` | 固定 Pattern/DSL 模板当被测编排，走既有 verifier 判分（固定 baseline） |
-| `dynamic-record` | 模型自由生成 workflow，执行的同时旁路记录规范化 spec 与编排指标 |
+| `dynamic-record` | 模型自由生成 workflow，执行时旁路记录规范化 spec 与编排指标 |
 | `dynamic-replay` | 读已保存记录、不重跑规划模型、离线重放；只比编排指标、不判分 |
 
 ```bash
-# 记录一次（每任务落一份 workflow_record.json）
 uv run asterwynd benchmark benchmarks/tasks \
   --agent asterwynd --provider anthropic --model deepseek-v4-flash \
   --workflow-mode dynamic-record --runs-dir /tmp/record
 
-# 重放（按 task_id 从同一 run 目录取记录）
 uv run asterwynd benchmark benchmarks/tasks \
   --agent asterwynd --provider anthropic --model deepseek-v4-flash \
   --workflow-mode dynamic-replay --workflow-record /tmp/record --runs-dir /tmp/replay
 ```
 
-报告新增**独立**的 workflow 编排 section（冗余度 / 图级步数 / 拒绝降级计数 / 节点数 / 峰值并发 / 关键路径 / 编排成本），主表只加一列 `workflow_mode`；`dynamic-replay` 记录不进 pass@k 分母。「小 k 高质量 vs 大 N 暴力」对照臂用 `configs/workflow-arm-small-k.yaml` 与 `configs/workflow-arm-large-n.yaml` 两份配置表达。
+报告新增独立的 workflow 编排 section（冗余度 / 图级步数 / 拒绝降级计数 / 节点数 / 峰值并发 / 关键路径 / 编排成本），主表只加一列 `workflow_mode`；`dynamic-replay` 记录不进 pass@k 分母。
 
-### Claw-SWE-Bench 对比评测
+**评测流程（本地任务）**：在 base_commit 创建独立 worktree → 隐藏 `benchmarks/tasks/`（防作弊）→ agent 运行 → 捕获改动 diff（`:!tests/` 排除测试）→ 重置 worktree 重放源码改动 → 应用 `test.patch`（隐藏评测测试）→ 运行验证命令 → 写 `result.json` / `trace.json` / `runner.log`。结果状态：`passed` / `passed_with_warnings` / `unsupported` / `failed` / `error`，细节归因写入 `reason`。
 
-详细环境准备见 [CLAW-SWE-BENCH.md](./CLAW-SWE-BENCH.md)。最小命令形态：
+</details>
 
-```bash
-cd claw-swe-bench
-uv run python run_infer.py \
-  --claw asterwynd \
-  --dataset verified \
-  --instance_file config/verified_mini_50.txt \
-  --run_id asterwynd-lite \
-  --model deepseek-v4-pro
+---
 
-uv run python run_eval.py --run_id asterwynd-lite --dataset verified
-```
+## 文档地图
 
-### 任务集
-
-27 个任务从项目 git 历史中提取，覆盖多个类别：
-
-| 类别 | 示例 |
+| 文档 | 内容 |
 |------|------|
-| 工具实现 | ToolRegistry, SandboxExecutor, Read/Write 工具, Bash workspace, Browser 工具 |
-| 安全策略 | .env 写入拒绝, 路径穿越防护, Bash 命令策略, Browser 安全策略 |
-| Agent 核心 | AgentLoop, MemoryManager, SkillRuntime, SubAgent 系统, 上下文注入管线 |
-| 可观测性 | HookManager, 日志/追踪 Hook, 重试/预算 Hook |
-| 基准设施 | 失败分类, Runner timeout, 资源泄漏修复, Docker preflight |
-| 提示词与输入 | 编码系统提示词, 验证命令注入, 多模态输入 |
-
-### 评测流程
-
-本地 `asterwynd-*` 任务：
-
-1. 在任务 base_commit 创建独立 git worktree
-2. 隐藏 `benchmarks/tasks/`（agent 看不到评测文件）
-3. Agent 在 worktree 中运行
-4. 捕获 agent 改动 diff（`:!tests/` 排除测试文件）
-5. 重置 worktree，重放源码改动
-6. 应用 `test.patch`（隐藏评测测试）
-7. 运行验证命令
-8. 写入 `result.json`、`trace.json`、`runner.log`；`final.diff` 在 diff capture 完成后写入，`test_output.txt` 在验证命令实际运行后写入
-
-外部 `swebench-*` 任务：
-
-1. clone 任务指定的外部仓库并切到 `base_commit`
-2. Agent 在 benchmark workspace 中修改代码并产出最终 git patch
-3. runner 做一次 run 级 Docker preflight
-4. Docker 可用时，将 patch 交给 SWE-bench Docker harness 验证
-5. Docker 不可用时，写出 `result.json`、`trace.json`、`runner.log`，并将结果标记为 `unsupported`
-
-结果状态：`passed`、`passed_with_warnings`、`unsupported`、`failed`、`error`；细节归因统一写入 `reason` 字段。
+| [项目定位](./docs/project-positioning.md) | 目标岗位、主线/支撑能力、能力证明链 |
+| [上下文词汇](./CONTEXT.md) | 需求、路线图、面试材料的核心项目语言 |
+| [架构说明](./docs/architecture.md) | AgentLoop、工具系统、编排、上下文、记忆、Web UI、Benchmark |
+| [开发指南](./docs/development-guide.md) | 安装、运行、常用命令、环境变量、开发流程 |
+| [测试指南](./docs/testing-guide.md) | 测试分层、回归测试规则、覆盖要求 |
+| [Agent 内部机制](./docs/agent-internals.md) | 逐章代码走读（主循环 / 工具 / 上下文） |
+| [经验教训](./docs/lessons-learned.md) | 历史问题、根因、后续必须吸取的教训 |
+| [ADR](./docs/adr/) | 架构决策记录（长期记忆存储与可逆性等） |
+| [OpenSpec](./openspec/project.md) | 能力域地图；`specs/` 已确认规格，`changes/` 演进中变更 |
+| [面试讲稿](./docs/interview-script/README.md) | 分层讲稿 + 代码走读 |
+| [开发队列](./docs/openspec-change-backlog.md) | 未实现 OpenSpec change 与建议顺序 |
+| [Benchmark 方案](./docs/benchmark-plan.md) | 任务集、runner、评测指标与结果设计 |
 
 ## 技术栈
 
-Python 3.11+ / asyncio / FastAPI / httpx / typer / tiktoken（可选）
-
-## 设计文档
-
-- `docs/coding-agent-roadmap.md` — 编码 Agent 路线图
-- `docs/benchmark-plan.md` — benchmark 设计（本地 runner、SWE-bench Docker harness、Claw-SWE-Bench 对比入口）
-- `CLAW-SWE-BENCH.md` — Claw-SWE-Bench 集成和运行指南
+Python 3.11+ / asyncio / FastAPI + WebSocket / httpx / typer / tree-sitter / tiktoken（可选）
 
 ## 致谢
 
-- [OrcaRouter](https://www.orcarouter.ai/ref/ref_4c1cf5a5bb71174f474d) — 多模型网关（含 DeepSeek、千问 等免费模型）。把 `OPENAI_BASE_URL` 设为 `https://api.orcarouter.ai/v1` 即可通过 asterwynd 使用。
+- [OrcaRouter](https://www.orcarouter.ai/ref/ref_4c1cf5a5bb71174f474d) — 多模型网关（含 DeepSeek、千问等免费模型）。把 `OPENAI_BASE_URL` 设为 `https://api.orcarouter.ai/v1` 即可通过 Asterwynd 使用。
