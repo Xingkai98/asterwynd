@@ -47,5 +47,6 @@
 ## 6. 收尾
 
 - [x] 6.1 归档 change 到 `openspec/changes/archive/2026-10-06-readme-narrative-refresh/`。
-- [ ] 6.2 清理 backlog 中本 change 的 active 条目（受保护路径，走事件）。
-- [ ] 6.3 发起 PR，关联 issue #296，写明验证结果。
+- [x] 6.2 清理 backlog 中本 change 的 active 条目（受保护路径，走事件）。
+- [x] 6.3 发起 PR，关联 issue #296，写明验证结果。
+- [ ] 6.4 (post-merge) PR 合入后给 issue #296 添加完成说明 comment 并关闭。
