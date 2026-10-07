@@ -20,9 +20,9 @@
 - [x] 3.1 新增 `agent/memory/tool_result_spiller.py`：`ToolResultSpiller`（`mark` / `reset` / `spill`，构造期注入 `max_tokens` / `recent_window` / `counter`）+ `PruneStats`。
 - [x] 3.2 把 `MemoryManager.prune_tool_results` 循环主体迁入 `spiller.spill`；**删除 `prune_tool_results`**（Q1 定案，不留薄委托）；`MemoryManager` 构造并持有 spiller；`PruneStats` 自 `manager.py` 迁出（无需重导出，e0 import 一并改 spiller）；`is_oversized_result` 保留。
 - [x] 3.3 接入 `agent/loop.py`：两处迭代标记写入改经 `self.memory.tool_result_spiller.mark`、`_reset_tool_result_iterations` 改经 `self.memory.tool_result_spiller.reset`、`_spill_and_prune` 改调 `self.memory.tool_result_spiller.spill`；同步改 e0 monkeypatch 目标 `loop.memory.tool_result_spiller.spill`；**事件/trace 发射点不动**。
-- [ ] 3.4 更新文档：`CONTEXT.md`（新词条）、`docs/architecture.md`（`MemoryManager` 职责收敛 + 新增 `ToolResultSpiller` 行）；关键词扫描 `README.md` / `README_EN.md`（预计无影响）。
-- [ ] 3.5 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单，再继续无关实现。
-- [ ] 3.6 如果实现中发现参考实现调研结论需要修正，先回写 Reference Implementation Research 和本任务清单。
+- [x] 3.4 更新文档：`CONTEXT.md`（新词条）、`docs/architecture.md`（`MemoryManager` 职责收敛 + 新增 `ToolResultSpiller` 行）；关键词扫描 `README.md` / `README_EN.md`（预计无影响）。
+- [x] 3.5 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单，再继续无关实现。
+- [x] 3.6 如果实现中发现参考实现调研结论需要修正，先回写 Reference Implementation Research 和本任务清单。
 
 ## 4. 验证
 
@@ -30,19 +30,19 @@
 - [x] 4.2 运行全量测试：`uv run pytest -q`。
 - [x] 4.3 运行 OpenSpec strict validate：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`。
 - [x] 4.4 运行项目 OpenSpec artifact checker：`PYTHONPATH=. uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 4.5 确认 baseline CI 命令可本地通过：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、`uv run python scripts/check_openspec_artifacts.py`。
+- [x] 4.5 确认 baseline CI 命令可本地通过：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、`uv run python scripts/check_openspec_artifacts.py`。
 - [x] 4.6 跑通至少一个 benchmark smoke（本 change 触及 `agent/loop.py` 核心路径）。
 - [x] 4.7 确认纯重构等价：既有 `tests/agent/memory/test_tool_result_lifecycle.py` 与 `tests/agent/test_tool_result_lifecycle_loop.py` **未作语义修改**即全绿（R0）。
 
 ## 5. 同步 spec
 
-- [ ] 5.1 归档前把 delta spec 合入 current spec `openspec/specs/context-engineering/spec.md`（受保护路径，需结构化解释事件）。
+- [x] 5.1 归档前把 delta spec 合入 current spec `openspec/specs/context-engineering/spec.md`（受保护路径，需结构化解释事件）。
 
 ## 6. PR 收尾
 
-- [ ] 6.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-tool-result-spill-module/`。
-- [ ] 6.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
-- [ ] 6.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
-- [ ] 6.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
-- [ ] 6.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `PYTHONPATH=. uv run python scripts/check_openspec_artifacts.py`。
+- [x] 6.1 PR 发起前，将本 change 归档到 `openspec/changes/archive/YYYY-MM-DD-tool-result-spill-module/`。
+- [x] 6.2 从 `docs/openspec-change-backlog.md` 移除或更新本 change，并同步并行开发批次。
+- [x] 6.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
+- [x] 6.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
+- [x] 6.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `PYTHONPATH=. uv run python scripts/check_openspec_artifacts.py`。
 - [ ] 6.6 PR 合入后给关联 issue #300 添加完成说明 comment 并关闭 (post-merge)。

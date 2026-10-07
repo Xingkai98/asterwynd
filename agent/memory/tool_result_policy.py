@@ -7,7 +7,7 @@ scope id（``run_id``）也只在 ``run()`` 期才知道）。
 三个执行点共享同一套判据：
 
 - ``loop.py`` 写 ``messages`` / ``trace`` / ``tool_calls_made`` 时调用 ``make_preview``；
-- ``MemoryManager.prune_tool_results`` 判「哪些 messages 该剪」时调用
+- ``ToolResultSpiller.spill`` 判「哪些 messages 该剪」时调用
   ``exceeds_single_threshold``；
 - 剪枝替换正文时调用 ``make_preview``（保头 + **保尾** ``[ReadProgress]`` 注记）。
 
