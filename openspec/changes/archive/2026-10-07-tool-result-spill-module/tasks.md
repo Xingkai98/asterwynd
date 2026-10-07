@@ -45,4 +45,4 @@
 - [x] 6.3 确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`。
 - [x] 6.4 确认 Reference Implementation Research 已记录最终调研状态、发现和设计影响，且没有把本地参考仓库路径写成项目依赖。
 - [x] 6.5 运行 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 和 `PYTHONPATH=. uv run python scripts/check_openspec_artifacts.py`。
-- [ ] 6.6 PR 合入后给关联 issue #300 添加完成说明 comment 并关闭 (post-merge)。
+- [ ] 6.6 (post-merge) PR 合入后给关联 issue #300 添加完成说明 comment 并关闭。
