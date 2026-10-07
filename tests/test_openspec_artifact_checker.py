@@ -785,7 +785,8 @@ def test_design_change_requires_preimplementation_design_review_task(tmp_path):
     write_tasks(change, "## 4. Verification\n\n- [ ] Run tests.\n")
 
     assert check_change(change) == [
-        "change-ui: tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
+        "change-ui: tasks.md missing pre-implementation grilling (or legacy batch-grill-me / "
+        "grill-with-docs) or equivalent design review task"
     ]
 
 
@@ -932,6 +933,97 @@ def test_grill_completed_change_all_open_questions_confirmed_passes(tmp_path):
     )
     errors = check_change(tmp_path / "openspec" / "changes" / "change-ui")
     assert not any("未确认" in e for e in errors), errors
+
+
+# ── grill-flow-hardening（issue #298）：设计阶段审阅闭环 ────────────────────
+
+def test_design_review_task_accepts_new_name_grilling(tmp_path):
+    """新名 `grilling` 出现在 tasks → 设计追问任务判据通过。"""
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(change, proposal_for("feature"), design=VALID_DESIGN)
+    write_tasks(change, "## 1. 规格\n\n- [ ] 开发前使用 `grilling` 审视 design.md。\n")
+    from scripts.check_openspec_artifacts import _has_design_review_task
+    assert _has_design_review_task((change / "tasks.md").read_text(encoding="utf-8"))
+
+
+def test_design_review_task_accepts_legacy_names(tmp_path):
+    """旧名（batch-grill-me / grill-with-docs）仍匹配 → 历史与在途不被误伤。"""
+    from scripts.check_openspec_artifacts import _has_design_review_task
+    assert _has_design_review_task("开发前使用 batch-grill-me。")
+    assert _has_design_review_task("Run grill-with-docs.")
+    assert _has_design_review_task("开发前使用等价设计追问。")
+
+
+def test_design_review_task_rejects_when_no_marker(tmp_path):
+    """三者皆无 → 不放松，仍报错。"""
+    from scripts.check_openspec_artifacts import _has_design_review_task
+    assert not _has_design_review_task("## 1. 规格\n\n- [ ] 随便写点别的。\n")
+
+
+def test_code_resolved_questions_not_required_confirmation(tmp_path):
+    """D4：`## Code-Resolved Questions` 不计入未确认 Open Question。
+
+    Open Questions 空 + 有 Code-Resolved 节 → tasks 全勾也不报未确认。
+    """
+    change = tmp_path / "openspec" / "changes" / "change-ui"
+    write_change(change, proposal_for("feature"), design=VALID_DESIGN)
+    write_tasks(change, "## 1. 规格\n\n- [x] 完成项。\n- [x] 开发前使用 `grilling`。\n")
+    write_spec_delta(change, "web-ui")
+    reviews = change / "reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "grill-design.md").write_text(
+        _UC_DECISIONS
+        + "## Open Questions\n- 无\n\n"
+        + "## Code-Resolved Questions\n"
+        + "- **Q1**（code-resolved）: 结论：纳入改名。证据：foo/bar.py:12\n",
+        encoding="utf-8",
+    )
+    errors = check_change(change)
+    assert not any("未确认" in e for e in errors), errors
+
+
+def test_archived_gate_flags_missing_grill_adversarial(tmp_path):
+    """#298 D3：本 PR 新归档的非 docs change 缺 grill-adversarial.md → 门触发。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-10-07-demo", grill=GRILL_EVIDENCE_OK,
+        building_review=True, grill_adversarial=False,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("grill-adversarial.md missing" in e for e in errors), errors
+
+
+def test_archived_gate_grill_adversarial_present_passes(tmp_path):
+    """#298 D3：grill-adversarial.md 存在 + building-review 存在 → 门通过。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-10-07-demo", grill=GRILL_EVIDENCE_OK,
+        building_review=True, grill_adversarial=True,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("grill-adversarial" in e for e in errors), errors
+
+
+def test_archived_gate_grill_adversarial_exempt_for_bugfix(tmp_path):
+    """#298：bugfix 不走 grill → 归档点 SHALL NOT 要求 grill-adversarial.md（避免
+    「要求一个输入不存在的产物」）。"""
+    import scripts.check_openspec_artifacts as mod
+
+    change = _archived_change(
+        tmp_path, "2026-10-07-bugfix-x", change_type="bugfix", grill=None,
+        building_review=True, grill_adversarial=False,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert not any("grill-adversarial" in e for e in errors), errors
+
+
+def test_grill_adversarial_name_does_not_trigger_manifest_glob(tmp_path):
+    """#298 F1：`grill-adversarial.md` 不以 `-review.md` 结尾 → 不触发 manifest glob。"""
+    import fnmatch
+    assert not fnmatch.fnmatch("grill-adversarial.md", "*-review.md")
+    assert fnmatch.fnmatch("building-review.md", "*-review.md")  # 对照
 
 
 def test_grill_placeholder_confirmation_does_not_count(tmp_path):
@@ -2164,6 +2256,7 @@ def _archived_change(
     design: str | None = VALID_DESIGN,
     grill: str | None = None,
     building_review: bool = False,
+    grill_adversarial: bool = False,
 ) -> Path:
     """构造一个归档目录下的 change（无 git，供门评估单测用）。"""
     change = tmp_path / "openspec" / "changes" / "archive" / dir_name
@@ -2179,6 +2272,12 @@ def _archived_change(
         review_dir = change / "reviews"
         review_dir.mkdir(parents=True, exist_ok=True)
         (review_dir / "building-review.md").write_text("## Verdict\n\n**PASS**\n", encoding="utf-8")
+    if grill_adversarial:
+        review_dir = change / "reviews"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        (review_dir / "grill-adversarial.md").write_text(
+            "## Verdict\n\n**PASS**\n", encoding="utf-8"
+        )
     return change
 
 
@@ -2217,6 +2316,7 @@ def test_archived_gate_flags_untagged_unchecked_task(tmp_path):
         tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] 忘了勾的一项。\n",
         grill=GRILL_EVIDENCE_OK,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert any("忘了勾的一项" in e for e in errors), errors
@@ -2232,6 +2332,7 @@ def test_archived_gate_post_merge_tag_exempts_unchecked_task(tmp_path):
         tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] (post-merge) PR 合入后关 issue。\n",
         grill=GRILL_EVIDENCE_OK,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert not any("post-merge" in e for e in errors), errors
@@ -2261,6 +2362,7 @@ def test_archived_gate_tag_syntax_variants_all_exempt(tmp_path, line):
         tasks=f"## 1. 实现\n\n- [x] 做完。\n{line}\n",
         grill=GRILL_EVIDENCE_OK,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert not any("未勾" in e for e in errors), (line, errors)
@@ -2284,6 +2386,7 @@ def test_archived_gate_tag_negative_cases_still_reported(tmp_path, line):
         tasks=f"## 1. 实现\n\n- [x] 做完。\n{line}\n",
         grill=GRILL_EVIDENCE_OK,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert any("未勾" in e for e in errors), (line, errors)
@@ -2304,6 +2407,7 @@ def test_archived_gate_requires_grill_evidence_even_when_tasks_incomplete(tmp_pa
         tasks="## 1. 实现\n\n- [x] 跑 batch-grill-me。\n- [ ] 一条无 tag 未勾任务。\n",
         grill=None,
         building_review=True,
+        grill_adversarial=True,
     )
 
     # active 语义（假定未实现）：字面标记兜底 → 静默通过，这就是被绕开的路径
@@ -2331,6 +2435,7 @@ def test_archived_gate_flags_unconfirmed_open_question_when_tasks_incomplete(tmp
         tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] 一条未勾任务。\n",
         grill=grill,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert any("未确认的 Open Question" in e for e in errors), errors
@@ -2346,6 +2451,7 @@ def test_archived_gate_rir_content_threshold_applies_when_tasks_incomplete(tmp_p
         tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] 一条未勾任务。\n",
         grill=GRILL_EVIDENCE_OK,
         building_review=True,
+        grill_adversarial=True,
     )
     # exempt + enabled 不闭环（tasks 未全勾时 active 侧不报）
     proposal = (change / "proposal.md").read_text(encoding="utf-8")
@@ -2388,6 +2494,7 @@ def test_archived_gate_bugfix_archive_is_exempt_from_grill(tmp_path):
         tasks="## 1. 修复\n\n- [x] 修完。\n",
         grill=None,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert not any("grill-design.md missing" in e for e in errors), errors
@@ -2582,6 +2689,7 @@ def test_archived_gate_flags_all_post_merge_zero_checked(tmp_path):
         tasks="## 1. 实现\n\n- [ ] (post-merge) 关 issue。\n",
         grill=GRILL_EVIDENCE_OK,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert any("全部未勾选" in e for e in errors), errors
@@ -2597,6 +2705,7 @@ def test_archived_gate_passes_when_at_least_one_task_checked(tmp_path):
         tasks="## 1. 实现\n\n- [x] 做完。\n- [ ] (post-merge) 关 issue。\n",
         grill=GRILL_EVIDENCE_OK,
         building_review=True,
+        grill_adversarial=True,
     )
     errors = mod._check_archived_completion_gate(change)
     assert not any("归档点无法评估完成度" in e for e in errors), errors

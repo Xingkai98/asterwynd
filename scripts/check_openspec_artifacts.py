@@ -672,8 +672,9 @@ def _has_benchmark_smoke_task(tasks_text: str) -> bool:
 def _has_design_review_task(tasks_text: str) -> bool:
     lowered = tasks_text.lower()
     return (
-        "grill-with-docs" in lowered
-        or "batch-grill" in lowered
+        "grilling" in lowered  # 新名（grill-flow-hardening / issue #298）
+        or "grill-with-docs" in lowered  # 旧名，兼容历史/在途
+        or "batch-grill" in lowered  # 旧名（batch-grill-me），兼容历史/在途
         or "等价设计追问" in tasks_text
     )
 
@@ -789,7 +790,8 @@ def _check_design_review_task(
     # literal task marker.
     if not _has_design_review_task(tasks.read_text(encoding="utf-8")):
         return [
-            "tasks.md missing pre-implementation batch-grill-me (grill-with-docs) or equivalent design review task"
+            "tasks.md missing pre-implementation grilling (or legacy batch-grill-me / "
+            "grill-with-docs) or equivalent design review task"
         ]
     return []
 
@@ -1619,6 +1621,23 @@ def _check_archived_completion_gate(change_dir: Path) -> list[str]:
         errors.append(
             prefix + "building-review.md missing — 归档点要求独立 subagent 审阅证据。"
             "请用 /review-loop 跑审阅闭环（审→改→再审直到 PASS 或 3 轮封顶）。"
+        )
+
+    # grill-flow-hardening / issue #298：设计阶段审阅闭环证据。触发条件比 building-review
+    # 多一道 `DESIGN_TYPES` 前置——因为「设计阶段审阅闭环」是 **grill 环节的收口**，而
+    # grill 只对 DESIGN_TYPES（feature/refactor/process）challenge；bugfix/research 不走
+    # grill（`_check_design_review_task` 对它们直接返回 []），要求其产 `grill-adversarial.md`
+    # 会是「要求一个输入不存在的产物」。存在性即可；`grill-adversarial.md` 不以
+    # `-review.md` 结尾，故不触发上面的 manifest glob。
+    if (
+        change_type.primary != "docs"
+        and (change_type.all_types & DESIGN_TYPES)
+        and _changed_capabilities(change_dir)
+        and not (change_dir / "reviews" / "grill-adversarial.md").exists()
+    ):
+        errors.append(
+            prefix + "grill-adversarial.md missing — 归档点要求设计阶段审阅闭环证据"
+            "（grill 后、停轮前：独立零记忆审阅者对抗分析 → verdict → 修 → 再审直到收敛）。"
         )
 
     # tasks.md 是「完成度」唯一的证据载体：缺了它（或没有可证明完成的行），未勾任务
