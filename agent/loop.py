@@ -200,10 +200,9 @@ class AgentLoop:
         self._active_on_event: Optional[Callable[[str, dict], Awaitable[None]]] = None
         self._active_trace_recorder: Optional["TraceRecorder"] = None
         self._plan_document: dict | None = None
-        #: 工具结果入库的 iteration 标记（tool_call_id → iteration）。**不新增
-        #: ``Message`` 字段**（守住不改协议 Goal，D3/Q-new4）：剪枝只在结果被模型
-        #: 消费过一轮后发生（``added <= current - 1``），两个 append 点都记。
-        self._tool_result_iterations: dict[str, int] = {}
+        #: 工具结果入库的 iteration 标记现由 ``self.memory.tool_result_spiller`` 持有
+        #: （change tool-result-spill-module：迭代状态随剪枝算法内聚，loop 经
+        #: ``mark`` / ``reset`` 触达，不再内联维护 dict）。
         #: agent 通用 ref store（D4）——``run()`` 期按 session_id/run_id 构造注入，
         #: 构造期拿不到 workspace_root 与 scope id。
         self._artifact_store: "AgentArtifactStore | None" = None
@@ -601,8 +600,8 @@ class AgentLoop:
         # Historical tool results already in `messages` (preloaded by the caller,
         # or a resume rebuild inside `_run`) are pre-marked consumed. The reset
         # here covers the preloaded case; `_run` re-runs it after the resume
-        # rebuild — see `_reset_tool_result_iterations` (M2).
-        self._reset_tool_result_iterations(messages)
+        # rebuild — see `ToolResultSpiller.reset` (M2).
+        self.memory.tool_result_spiller.reset(messages)
         previous_on_event = self._active_on_event
         previous_trace_recorder = self._active_trace_recorder
         # Mount A (change fix-issue-255-mode-ceiling): snapshot this run's mode
@@ -723,7 +722,7 @@ class AgentLoop:
             # M2: the resume rebuild populated `messages` with the reloaded
             # history, whose tool results carry no in-run marker. Re-mark them
             # consumed (the earlier reset ran before this rebuild).
-            self._reset_tool_result_iterations(messages)
+            self.memory.tool_result_spiller.reset(messages)
             start_iteration = 0
 
             mode = self.runtime_state.current_mode.value
@@ -895,7 +894,7 @@ class AgentLoop:
                             ).to_dict(),
                         })
                     messages.append(tool_result_message(tool_call.id, result))
-                    self._tool_result_iterations[tool_call.id] = self._iteration
+                    self.memory.tool_result_spiller.mark(tool_call.id, self._iteration)
                     tool_calls_made.append(ToolCallMade(
                         name=tool_call.name,
                         arguments=self._bound_arguments(tool_call.arguments),
@@ -1089,7 +1088,7 @@ class AgentLoop:
                         await on_event("todo_updated", self._todo_snapshot())
 
                 messages.append(tool_result_message(tool_call.id, result))
-                self._tool_result_iterations[tool_call.id] = self._iteration
+                self.memory.tool_result_spiller.mark(tool_call.id, self._iteration)
                 tool_calls_made.append(ToolCallMade(
                     name=tool_call.name,
                     arguments=self._bound_arguments(tool_call.arguments),
@@ -1556,26 +1555,6 @@ class AgentLoop:
         except ValueError:
             return None
 
-    def _reset_tool_result_iterations(self, messages: list[Message]) -> None:
-        """给**已进入本 run 的**历史工具结果预置「已消费」标记（M2），并清空本 run 标记。
-
-        ``messages`` 里 role=tool 的消息要么是 resume 重载的历史、要么是调用方预置的
-        （本 run 新产生的在 append 时另记，见 ``:889``/``:1084``）。它们**在本 run 开始
-        前就已产生**、必然已被模型读过 ⇒ 预置 ``-1``（远早于任何 ``current_iteration``，
-        故 ``added <= current - 1`` 恒真），使大结果可被剪——否则 resume 后它们无标记、
-        ``prune_tool_results`` 因 ``added is None`` 跳过 ⇒ **永不剪、全文常驻**（审阅 M2）。
-
-        「本 run 新 append 的结果一定带真实 iteration 标记」这条不变量不受影响：新结果
-        在产生轮的 Phase-3 才 append，那时对 ``messages`` 的预置扫描早已过去；即便扫描
-        撞上（同 run 先 append 后重入 ``_run`` 的路径），也只会在其产生当轮给 ``-1`` ——
-        而剪枝点在同轮末尾，产生轮本就不剪（当轮保留），语义不变。
-        """
-        self._tool_result_iterations = {
-            m.tool_call_id: -1
-            for m in messages
-            if m.role == "tool" and m.tool_call_id
-        }
-
     def _spill_enabled(self) -> bool:
         """D8：spill 与「回读工具已注册」成对启用。
 
@@ -1623,8 +1602,8 @@ class AgentLoop:
     ) -> None:
         """剪枝（D3）→ 发可观测（D9）。**在 ``compact_if_needed`` 之前**调用。
 
-        判定纯函数在 ``MemoryManager.prune_tool_results``；落盘回读由本 run 的
-        ``_artifact_store`` 承担（D1 两段式）。
+        剪枝算法与迭代状态在 ``self.memory.tool_result_spiller``（change
+        tool-result-spill-module）；落盘回读由本 run 的 ``_artifact_store`` 承担（D1 两段式）。
         """
         store = self._artifact_store
         save = store.save_result if (store is not None and self._spill_enabled()) else None
@@ -1637,10 +1616,9 @@ class AgentLoop:
             # back the wrong body. A uuid key is durable-unique per spill.
             return save(new_key("result"), text)
 
-        stats = self.memory.prune_tool_results(
+        stats = self.memory.tool_result_spiller.spill(
             messages,
             current_iteration=self._iteration,
-            added_iterations=self._tool_result_iterations,
             save=_save if save is not None else None,
         )
         if stats.messages_spilled or bounded_ledger:

@@ -105,9 +105,9 @@ async def run_loop(n: int, tmp: Path, *, bound: bool) -> dict:
     )
     if not bound:
         # 关掉本 change 的三处有界化，保留其余一切（真·基线的入径）。
-        from agent.memory.manager import PruneStats
+        from agent.memory.tool_result_spiller import PruneStats
 
-        loop.memory.prune_tool_results = lambda *a, **k: PruneStats()  # type: ignore[assignment]
+        loop.memory.tool_result_spiller.spill = lambda *a, **k: PruneStats()  # type: ignore[assignment]
         loop._bound_ledger_result = lambda result: result  # type: ignore[assignment]
 
     messages = [Message(role="user", content="review the tree")]
