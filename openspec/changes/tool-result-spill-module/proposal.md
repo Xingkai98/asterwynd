@@ -38,7 +38,7 @@
    - `spill(messages, *, current_iteration: int, save: Callable[[str], str] | None = None) -> PruneStats` —— 执行剪枝循环（今日 `prune_tool_results` 主体）。
 3. **剪枝循环主体**自 `MemoryManager` 迁入 spiller；`MemoryManager` 组合并持有 spiller（`self.tool_result_spiller`），构造期注入 `max_tokens` / `recent_window` / **counter**。
 4. **`MemoryManager.is_oversized_result` 保留**（唯一调用方是 loop 的 `_bound_ledger_result`，不属剪枝循环）。
-5. **`agent/loop.py`**：迭代标记写入改经 `self._spiller.mark(...)`；`_reset_tool_result_iterations` 改经 `self._spiller.reset(...)`；`_spill_and_prune` 改调 `self._spiller.spill(...)`。**事件与 trace 发射仍留 loop**——spiller 只返回 `PruneStats`，不持有 `on_event` / `trace_recorder`。
+5. **`agent/loop.py`**：迭代标记写入改经 `self.memory.tool_result_spiller.mark(...)`；`_reset_tool_result_iterations` 改经 `self.memory.tool_result_spiller.reset(...)`；`_spill_and_prune` 改调 `self.memory.prune_tool_results(...)`（剪枝调用落在 manager 的委托上，保 e0 patch 目标）。**事件与 trace 发射仍留 loop**——spiller 只返回 `PruneStats`，不持有 `on_event` / `trace_recorder`。
 6. **账本有界路径**（`_bound_ledger_result` / `_bound_arguments`）**本轮不动**（留在 loop）；design 记录该 seam 边界与后续演进方向。
 7. **新词条记入 `CONTEXT.md`**（本仓库词汇权威；无 GLOSSARY.md）。
 
@@ -86,7 +86,7 @@
   - `agent/loop.py` —— 两处 `self._tool_result_iterations[...] = self._iteration`（约 `:898` / `:1092`）改经 `spiller.mark`；`_reset_tool_result_iterations`（约 `:1559`）改经 `spiller.reset`；`_spill_and_prune`（约 `:1616`）改调 `spiller.spill`。**事件/trace 发射（`:1646-1658`）不动**。
   - `agent/memory/tool_result_policy.py` —— **不改**（判据纯函数原地不动）。
 - **测试**:
-  - **必须保留**（作为纯重构回归判据，**不作语义修改**）：`tests/agent/memory/test_tool_result_lifecycle.py`（判定纯函数 + `prune_tool_results` 14 处直调）、`tests/agent/test_tool_result_lifecycle_loop.py`（`tool_result_spill` 事件 + trace step）。
+  - **必须保留**（作为纯重构回归判据，**不作语义修改**）：`tests/agent/memory/test_tool_result_lifecycle.py`（判定纯函数 + `prune_tool_results` 13 处直调）、`tests/agent/test_tool_result_lifecycle_loop.py`（`tool_result_spill` 事件 + trace step）。
   - **必须新增**：`ToolResultSpiller` 的直接单测（三方法各自语义、迭代状态隔离、counter 注入）；`mark` / `reset` 的边界（未标记不剪、reset 预置 `-1`、resume 重扫后仍可剪）。
   - **必须回归**：`agent/memory` 既有压缩/摘要测试；`tests/agent/test_trace_recorder_bounded.py`；全量 `uv run pytest -q`。
 - **脚本**: `scripts/e0_tool_result_lifecycle.py` 第 110 行 `loop.memory.prune_tool_results = lambda *a, **k: PruneStats()` 的 monkeypatch 依赖 `MemoryManager.prune_tool_results` 的**存在**（OQ1 的约束条件）与 `from agent.memory.manager import PruneStats` 的**兼容重导出**。
