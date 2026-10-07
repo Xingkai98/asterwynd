@@ -31,14 +31,14 @@
 
 ## What Changes
 
-1. **新增深模块** `agent/memory/tool_result_spiller.py`：`ToolResultSpiller` 类 + `PruneStats` 数据类（自 `manager.py` 迁入，`manager.py` 重导出以保持既有 import 面兼容）。
+1. **新增深模块** `agent/memory/tool_result_spiller.py`：`ToolResultSpiller` 类 + `PruneStats` 数据类（自 `manager.py` 迁入；删除委托后唯一外部引用者 e0 脚本的 import 一并改到 spiller，`manager.py` 无需重导出）。
 2. **对外接口**：
    - `mark(tool_call_id: str, iteration: int) -> None` —— 记一个工具结果入库时的 iteration（取代 loop 内联写 `self._tool_result_iterations[id] = self._iteration`）。
    - `reset(messages: list[Message]) -> None` —— 清空本 spiller 的标记，并把给定 `messages` 中**已存在**的 `role == "tool"` 消息预置为「已消费」（`-1`）；语义等价于今日 `_reset_tool_result_iterations`。
    - `spill(messages, *, current_iteration: int, added_iterations: dict[str, int] | None = None, save: Callable[[str], str] | None = None) -> PruneStats` —— 执行剪枝循环（今日 `prune_tool_results` 主体）。`added_iterations=None` 时走 spiller 自身的 `mark` 状态，非 `None` 时以传入的外部映射为准（覆盖注入），供既有测试面的显式 `added_iterations=` 调用兼容。
 3. **剪枝循环主体**自 `MemoryManager` 迁入 spiller；`MemoryManager` 组合并持有 spiller（`self.tool_result_spiller`），构造期注入 `max_tokens` / `recent_window` / **counter**。
 4. **`MemoryManager.is_oversized_result` 保留**（唯一调用方是 loop 的 `_bound_ledger_result`，不属剪枝循环）。
-5. **`agent/loop.py`**：迭代标记写入改经 `self.memory.tool_result_spiller.mark(...)`；`_reset_tool_result_iterations` 改经 `self.memory.tool_result_spiller.reset(...)`；`_spill_and_prune` 改调 `self.memory.prune_tool_results(...)`（剪枝调用落在 manager 的委托上，保 e0 patch 目标）。**事件与 trace 发射仍留 loop**——spiller 只返回 `PruneStats`，不持有 `on_event` / `trace_recorder`。
+5. **`agent/loop.py`**：迭代标记写入改经 `self.memory.tool_result_spiller.mark(...)`；`_reset_tool_result_iterations` 改经 `self.memory.tool_result_spiller.reset(...)`；`_spill_and_prune` 改调 `self.memory.tool_result_spiller.spill(...)`（**删除** manager 委托，e0 monkeypatch 目标同步改 `loop.memory.tool_result_spiller.spill`）。**事件与 trace 发射仍留 loop**——spiller 只返回 `PruneStats`，不持有 `on_event` / `trace_recorder`。
 6. **账本有界路径**（`_bound_ledger_result` / `_bound_arguments`）**本轮不动**（留在 loop）；design 记录该 seam 边界与后续演进方向。
 7. **新词条记入 `CONTEXT.md`**（本仓库词汇权威；无 GLOSSARY.md）。
 
@@ -82,8 +82,8 @@
 - **能力域**: `context-engineering`（工具结果生命周期——只新增结构内聚要求，不改行为契约）。
 - **代码**:
   - **新增** `agent/memory/tool_result_spiller.py` —— `ToolResultSpiller`（`mark` / `reset` / `spill`）+ `PruneStats`；持有 `max_tokens` / `recent_window` / counter 与迭代标记 dict。
-  - `agent/memory/manager.py` —— `prune_tool_results` 主体迁出（是否保留薄委托见 design Open Question OQ1）；`PruneStats` 迁出并**重导出**；`MemoryManager` 构造 spiller；`is_oversized_result` 保留。
-  - `agent/loop.py` —— 两处 `self._tool_result_iterations[...] = self._iteration`（约 `:898` / `:1092`）改经 `spiller.mark`；`_reset_tool_result_iterations`（约 `:1559`）改经 `spiller.reset`；`_spill_and_prune`（约 `:1616`）改调 `spiller.spill`。**事件/trace 发射（`:1646-1658`）不动**。
+  - `agent/memory/manager.py` —— `prune_tool_results` **删除**（Q1 定案，主体迁入 spiller）；`PruneStats` 迁出（无需重导出，e0 import 一并改 spiller）；`MemoryManager` 构造 spiller；`is_oversized_result` 保留。
+  - `agent/loop.py` —— 两处 `self._tool_result_iterations[...] = self._iteration`（约 `:898` / `:1092`）改经 `self.memory.tool_result_spiller.mark(...)`；`_reset_tool_result_iterations`（约 `:1559`）改经 `self.memory.tool_result_spiller.reset(...)`；`_spill_and_prune`（约 `:1616`）改调 `self.memory.tool_result_spiller.spill(...)`。**事件/trace 发射（`:1646-1658`）不动**。
   - `agent/memory/tool_result_policy.py` —— **不改**（判据纯函数原地不动）。
 - **测试**:
   - **必须保留**（作为纯重构回归判据，**不作语义修改**）：`tests/agent/memory/test_tool_result_lifecycle.py`（判定纯函数 + `prune_tool_results` 13 处直调）、`tests/agent/test_tool_result_lifecycle_loop.py`（`tool_result_spill` 事件 + trace step）。

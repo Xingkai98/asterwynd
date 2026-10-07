@@ -18,8 +18,8 @@
 ## 3. 实现
 
 - [ ] 3.1 新增 `agent/memory/tool_result_spiller.py`：`ToolResultSpiller`（`mark` / `reset` / `spill`，构造期注入 `max_tokens` / `recent_window` / `counter`）+ `PruneStats`。
-- [ ] 3.2 把 `MemoryManager.prune_tool_results` 循环主体迁入 `spiller.spill`；`MemoryManager` 构造并持有 spiller；`PruneStats` 自 `manager.py` 重导出；`is_oversized_result` 保留；按 OQ1 决定是否留薄委托。
-- [ ] 3.3 接入 `agent/loop.py`：两处迭代标记写入改经 `spiller.mark`、`_reset_tool_result_iterations` 改经 `spiller.reset`、`_spill_and_prune` 改调 `spiller.spill`；**事件/trace 发射点不动**。
+- [ ] 3.2 把 `MemoryManager.prune_tool_results` 循环主体迁入 `spiller.spill`；**删除 `prune_tool_results`**（Q1 定案，不留薄委托）；`MemoryManager` 构造并持有 spiller；`PruneStats` 自 `manager.py` 迁出（无需重导出，e0 import 一并改 spiller）；`is_oversized_result` 保留。
+- [ ] 3.3 接入 `agent/loop.py`：两处迭代标记写入改经 `self.memory.tool_result_spiller.mark`、`_reset_tool_result_iterations` 改经 `self.memory.tool_result_spiller.reset`、`_spill_and_prune` 改调 `self.memory.tool_result_spiller.spill`；同步改 e0 monkeypatch 目标 `loop.memory.tool_result_spiller.spill`；**事件/trace 发射点不动**。
 - [ ] 3.4 更新文档：`CONTEXT.md`（新词条）、`docs/architecture.md`（`MemoryManager` 职责收敛 + 新增 `ToolResultSpiller` 行）；关键词扫描 `README.md` / `README_EN.md`（预计无影响）。
 - [ ] 3.5 如果实现中发现新影响面，先回写 Impact Analysis 和本任务清单，再继续无关实现。
 - [ ] 3.6 如果实现中发现参考实现调研结论需要修正，先回写 Reference Implementation Research 和本任务清单。

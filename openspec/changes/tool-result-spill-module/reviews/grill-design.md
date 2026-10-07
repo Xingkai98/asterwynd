@@ -83,5 +83,5 @@
 > 停轮确认后由主 session 逐条回填。格式：`- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`。
 > 原 Q2（所有权）经对抗审阅改判为代码可定，已移出待决队列，故此处不再列 Q2 占位。
 
-- **Q1**: 用户答复：待确认；确认时间: —
-- **Q4**: 用户答复：待确认；确认时间: —
+- **Q1**: 用户答复：删除委托——`MemoryManager.prune_tool_results` 删除，13 处测试调用迁到 `spiller.spill`，loop 改调 `self.memory.tool_result_spiller.spill(...)`，e0 monkeypatch 目标同步改 `loop.memory.tool_result_spiller.spill`（功能影响零，消除转发浅方法，符合深模块立意）；确认时间: 2026-10-07
+- **Q4**: 用户答复：认可 D6——账本有界路径（`_bound_ledger_result` / `_bound_arguments`）本轮不收进 spiller，原地留在 loop；确认时间: 2026-10-07

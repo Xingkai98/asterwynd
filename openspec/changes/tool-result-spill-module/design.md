@@ -83,9 +83,9 @@ self.tool_result_spiller = ToolResultSpiller(
 
 **`reset` 语义必须逐字保留**今日 `_reset_tool_result_iterations` 的「预置 `-1`」行为（resume 重扫依赖它，审阅 M2 的修复点），否则 resume 后历史大结果会因 `added is None` 永不剪。
 
-### D4 — `PruneStats` 迁入 spiller 并自 `manager` 重导出
+### D4 — `PruneStats` 迁入 spiller（删除委托后无需 manager 重导出）
 
-`PruneStats` 定义迁至 `tool_result_spiller.py`（它是 spiller 的产出类型，应与产出者同居）。`manager.py` **重导出**（`from agent.memory.tool_result_spiller import PruneStats`），使既有 `from agent.memory.manager import PruneStats`（`scripts/e0_tool_result_lifecycle.py:108`）不破。
+`PruneStats` 定义迁至 `tool_result_spiller.py`（它是 spiller 的产出类型，应与产出者同居）。Q1 定案**删除委托**后，唯一外部引用者 `scripts/e0_tool_result_lifecycle.py:108` 的 import 一并改到 `agent.memory.tool_result_spiller`，故 `manager.py` **无需重导出**——`PruneStats` 只在 spiller 定义一处。
 
 ### D5 — `MemoryManager.is_oversized_result` 保留
 
@@ -110,14 +110,11 @@ self.tool_result_spiller = ToolResultSpiller(
 > 本节记录**决策相关摘要**，不粘贴聊天流水。本 change 的实现前 `grilling` 已完成（`reviews/grill-design.md`），设计阶段对抗审阅也已完成（`reviews/grill-adversarial.md`，verdict = CHANGES_REQUESTED，已按回改清单收敛）；下述为收敛后的决策与争议点状态，`## Open Questions` 待停轮确认。
 
 - **已识别的关键技术争议（grill 必答）**：
-  - **OQ1（接口归属）**：`MemoryManager.prune_tool_results` 是否保留为**薄委托**（`return self.tool_result_spiller.spill(...)`），还是**删除**并把 13 处测试调用迁到 `spiller.spill`？
-    - 保留委托：`scripts/e0_tool_result_lifecycle.py:110` 的 monkeypatch（`loop.memory.prune_tool_results = lambda ...`）不破；13 处测试调用不动；但 `MemoryManager` 上留一个「只是转发」的浅方法（与 D1 的深模块主张有张力）。
-    - 删除：接口更干净（spill 只有 spiller 一个宿主），但需改 e0 脚本的 monkeypatch 目标 + 13 处测试调用，churn 更大、且削弱「不改既有测试面」的纯重构姿态。
-    - 草案倾向：**保留委托**（最小 churn + 保住 e0 缝），把「委托是否算浅方法」留 grill 判。
+  - **OQ1（接口归属）——已确认（2026-10-07）：删除委托**。`MemoryManager.prune_tool_results` **删除**，13 处测试调用迁到 `spiller.spill`；loop 改调 `self.memory.tool_result_spiller.spill(...)`；e0 的 monkeypatch 目标同步改 `loop.memory.tool_result_spiller.spill`。理由：功能影响零（纯重构），删除委托消除转发浅方法、符合 D1 深模块立意；churn 为机械改动（测试断言/语义不变，只改调用目标）。与 Q2 联立自洽：Q2 已判 `MemoryManager` 组合持有，删除委托后 loop 仍经 `self.memory.tool_result_spiller.*` 触达。
   - **Q2（所有权，已改判代码可定）**：**经对抗审阅改判代码可定——`MemoryManager` 组合持有（`self.memory.tool_result_spiller`），非用户决策**。三条证据：(a) `proposal.md:39` 已把它写成既成事实（`MemoryManager` 组合并持有 spiller）；(b) D2 的构造点写在本文件（`manager.py`），延迟闭包须定义在 manager 模块内才 call-time 解析 `manager._count_tokens`；(c) `scripts/e0_tool_result_lifecycle.py:110` patch 的是 `loop.memory.prune_tool_results`，需 loop 运行时经 `self.memory.*` 发起剪枝（`agent/loop.py:1640`）才生效。详见 `reviews/grill-adversarial.md` 的 `## Code-Resolved` 与 `## Refuted / Corrected`。
-  - **OQ3（reset 转发）**：`loop._reset_tool_result_iterations(messages)` 是保留为 loop 内薄转发（调用 `spiller.reset`），还是让两处调用点（`:605` / `:726`）直接调 `self.memory.tool_result_spiller.reset(messages)`？草案倾向**直接调用**（少一层转发），但需确认 resume 注释（M2 语义）迁移后仍可读。
-  - **OQ4（seam 边界）**：账本有界路径本轮不收进 spiller 的边界（D6）是否被认可？
-  - **OQ5（命名）**：模块名 `tool_result_spiller.py` / 类名 `ToolResultSpiller` / 方法名 `mark`/`reset`/`spill` 是否符合 `CONTEXT.md` 词汇与既有命名风格（`tool_result_policy.py` 同族）？
+  - **OQ3（reset 转发）——已代码可定**：两处调用点（`:605` / `:726`）**直接调用** `self.memory.tool_result_spiller.reset(messages)`，无外部 seam 约束（全仓无 patch/引用 `_reset_tool_result_iterations`），见 `reviews/grill-design.md` Code-Resolved。
+  - **OQ4（seam 边界）——已确认（2026-10-07）：认可 D6**。账本有界路径（`_bound_ledger_result` / `_bound_arguments`）本轮**不收进** spiller，原地留在 loop。
+  - **OQ5（命名）——已代码可定**：命名已被 `CONTEXT.md`（词汇权威）在立项 commit 锁定（`Tool Result Spill` / `ToolResultSpiller`），与 `tool_result_policy.py` 同族，无需用户裁决，见 `reviews/grill-design.md` Code-Resolved。
 - **已解决的问题**：counter 缝（D2）——已定位为「必须 call-time 解析，否则测试静默失真」，是本 change 的头号正确性风险。
 - **备选方案与否决**：曾考虑把 spiller 做成**无状态纯函数集**（把迭代 dict 留在 loop，只迁循环体）——否决：那样迭代状态与算法仍分居两文件，正是本 change 要消除的「浅实现摊开」形态。
 
@@ -173,9 +170,7 @@ self.tool_result_spiller = ToolResultSpiller(
 
 ## Open Questions
 
-> 以下为**经 grill（`reviews/grill-design.md`）与设计阶段对抗审阅（`reviews/grill-adversarial.md`）收敛后仍待用户停轮确认**的决策点（停轮确认前不得进入实现）。
-> 原 OQ2（所有权）、OQ3（reset 转发）、OQ5（命名）经 grill 与对抗审阅判为**代码可定**、已移出待决队列，见 `reviews/grill-design.md` 的 `## Code-Resolved Questions` 与 `reviews/grill-adversarial.md` 的 `## Code-Resolved（对抗新增/修正）`。
+> 停轮确认已全部完成（2026-10-07），两条 Open Question 均有用户答复，记录见 `reviews/grill-design.md` 的 `## User Confirmation`。原 OQ2（所有权）、OQ3（reset 转发）、OQ5（命名）经 grill 与对抗审阅判为**代码可定**、已移出待决队列。
 
-- **OQ1（接口归属）**：`MemoryManager.prune_tool_results` 保留为薄委托还是删除并把 13 处测试调用迁到 `spiller.spill`？（草案倾向保留委托，保 e0 monkeypatch 缝 + 最小 churn）
-  - **与 Q2 联立、不可独立拍**：保留委托 ⟺ spiller 由 `MemoryManager` 组合持有（`self.memory.tool_result_spiller`，见 Pre-Implementation Review 的 Q2 段）；只有选「删除」才使「loop 自持 spiller」在逻辑上可行，且此时须同步改 e0 的 patch 目标。二者是同一决策的两个面，不能分别拍板。
-- **OQ4（seam 边界）**：账本有界路径本轮不收进 spiller（D6）是否被认可？
+- **OQ1（接口归属）——已确认：删除委托**。`MemoryManager.prune_tool_results` 删除，13 处测试调用迁到 `spiller.spill`；loop 改调 `self.memory.tool_result_spiller.spill(...)`；e0 monkeypatch 目标同步改 `loop.memory.tool_result_spiller.spill`。
+- **OQ4（seam 边界）——已确认：认可 D6**。账本有界路径本轮不收进 spiller。
