@@ -173,7 +173,7 @@ self.tool_result_spiller = ToolResultSpiller(
 
 ## Open Questions
 
-> 以下为**尚未经 grill 确认**的决策点（grill 由主 session 另行安排；停轮确认前不得进入实现）。
+> 以下为**经 grill（`reviews/grill-design.md`）与设计阶段对抗审阅（`reviews/grill-adversarial.md`）收敛后仍待用户停轮确认**的决策点（停轮确认前不得进入实现）。
 > 原 OQ2（所有权）、OQ3（reset 转发）、OQ5（命名）经 grill 与对抗审阅判为**代码可定**、已移出待决队列，见 `reviews/grill-design.md` 的 `## Code-Resolved Questions` 与 `reviews/grill-adversarial.md` 的 `## Code-Resolved（对抗新增/修正）`。
 
 - **OQ1（接口归属）**：`MemoryManager.prune_tool_results` 保留为薄委托还是删除并把 13 处测试调用迁到 `spiller.spill`？（草案倾向保留委托，保 e0 monkeypatch 缝 + 最小 churn）
