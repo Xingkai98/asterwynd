@@ -5,9 +5,9 @@
   "verdict": "PASS",
   "reviewer_run_id": "review-grill-flow-hardening-20261007-r2",
   "base_sha": "8bc430c",
-  "head_sha": "143903ba28654dfd2c273021f91839ba4130785b",
-  "tasks_hash": "sha256:f92e223ab1ffb1c0fc60cc0cdcc8ce9e3e92b8d7de05ca958286be5ff9763be9",
+  "head_sha": "ccb03d03d9c12f0d16c1b2b7903e4824b6a277a6",
+  "tasks_hash": "sha256:f44c2353c103653012dfc780a06a2fc6246a9dfd31c79dfe12972295335da191",
   "spec_hash": "sha256:a37579619e84fc8c5cd1d259f8ed4ecb9dbe8584f6499b29252c94557833e4bc",
-  "diff_hash": "sha256:773b2467143f9ea732364d61a90f4f846931bceb590640a15374c016a70e1bb7",
+  "diff_hash": "sha256:6d9ca16d6613f8ea93deb519531bca910c0811029b0a91b13d78623cad220c4d",
   "report_hash": "sha256:432969b36b568694e1020b9d8522044c7f0e74beb2f86e597700b35824727fa8"
 }
