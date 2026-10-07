@@ -137,3 +137,50 @@
    OQ 列表按收敛后重排（Q2 不再是待决 OQ）；D1 的 `spill` 签名补 `added_iterations` 通道说明（F3）；
    迁移步骤补 NF2 的死代码/死 import 清理；补 NF1 的 loop 调用点 × e0 patch 目标一致性说明。
 3. `proposal.md`：修正 `:41` 的 `self._spiller.*` 与 `:89`/`:20`/`:111`/`:113`/`:175` 的「14 处」→「13 处」（F1）。
+
+## Re-Review（再审）
+
+> 独立零记忆设计阶段**再审**者产出（issue #298 设计阶段审阅闭环，第二轮）。姿态：默认上一轮回改已到位，逐条核对「需回改清单」+ 补遗 + 新矛盾扫描，复跑机械门。基线同前（master @ 97b0370，分支 `tool-result-spill-module/2026-10-07`）。本文行号经**亲自**读源码/文档核验。只审设计不写实现。
+
+- **Verdict**: **CHANGES_REQUESTED**（回改清单与补遗**全部落地**、机械门**通过**、Open Questions 收敛正确；但本轮回改把 loop 剪枝调用点改判为「经 `self.memory.prune_tool_results`」（`design.md:161` NF1 / `proposal.md:41`）后，**`proposal.md:86`（Impact Analysis）与 `tasks.md:3.3`（实现清单）仍写 loop「改调 `spiller.spill`」**，与前者直接矛盾——`tasks.md:3.3` 是实现指令，照它做 = loop 直调 spiller ⇒ `scripts/e0_tool_result_lifecycle.py:110` 的 `loop.memory.prune_tool_results = lambda ...` patch 静默 no-op ⇒ `--mode unbounded` 不再关闭剪枝、A/B 失真，正是 NF1/F3/F4 反复钉死的同一失效。属回改**新引入**的矛盾，须对齐后再停轮。）
+
+- **回改到位情况**（对照本文件 `## 需回改清单`）:
+  - **design.md**：
+    - `self._spiller` → `self.memory.tool_result_spiller`（D3 示例）: **yes**（`design.md:81-82`）
+    - `spill` 签名补 `added_iterations` 通道: **yes**（`design.md:50` 签名表 + `:54` 通道说明段）
+    - Open Questions 删 OQ2: **yes**（`design.md:174-181` 只剩 OQ1 / OQ4）
+    - 补 NF1（loop 调用点 × e0 patch 目标一致）: **yes**（`design.md:161`）
+    - 补 NF2（死代码 / 死 import 清理）: **yes**（`design.md:159`）
+    - Pre-Implementation Review 的 OQ2 段改判: **yes**（`design.md:117` 改判「已改判代码可定」+ 三条证据）
+  - **proposal.md**：
+    - 「14 处」→「13 处」: **yes**（`proposal.md:89`；`design.md:20`/`:141` 同步；全 change 目录无残留「14 处」）
+    - `self._spiller.*` → `self.memory.tool_result_spiller.*`: **yes**（`proposal.md:41`）
+  - **grill-design.md**：
+    - Q2 移入 Code-Resolved: **yes**（`grill-design.md:27-29`）
+    - Q1 补联立约束: **yes**（`grill-design.md:56`）
+    - F6 补 proposal 侧: **yes**（`grill-design.md:69`）
+    - 新增 NF1–NF3: **yes**（`grill-design.md:73-79`）
+    - User Confirmation 删 Q2: **yes**（`grill-design.md:81-87`，只余 Q1 / Q4 占位）
+  - **补遗三处**：
+    - `design.md` 事实 6（PruneStats 唯一外部引用者=e0、loop 不引用）: **yes**（`design.md:18`；与源码 `grep -n "PruneStats" agent/loop.py` 零命中一致，实核无误）
+    - `proposal.md` spill 签名补 `added_iterations`: **yes**（`proposal.md:38`）
+    - `design.md` Pre-Implementation Review 节首 + Open Questions 节首审阅状态: **yes**（`design.md:110`、`:176-177`）
+
+- **新矛盾扫描**:
+  - **design vs proposal 的 `spill` 签名一致性**: **一致**（两处均含 `added_iterations`，与今日 `prune_tool_results` 签名里 kw-only 必填的 `added_iterations`（`manager.py:213`）对齐）。
+  - **Q2 结论在 design / grill-design / grill-adversarial 三处一致性**: **一致**（三处同述「manager 组合持有 `self.memory.tool_result_spiller`」，`design.md:117` ≈ `grill-design.md:27-29` ≈ 本文件 `:120-125`）。
+  - **OQ1 的联立约束自洽性**: **自洽**（`design.md:180`、`grill-design.md:56`、本文件 `:107-112` 三处同述「保留委托 ⟺ manager 组合持有、不可独立拍」）。
+  - **loop 剪枝调用点一致性（NF1 的目标）: ✗ 不一致（本轮回改引入）** —— `design.md:161`（NF1）与 `proposal.md:41` 写 loop 的剪枝调用落在 `self.memory.prune_tool_results`；但 `proposal.md:86` 与 `tasks.md:3.3` 仍写 `_spill_and_prune`「改调 `spiller.spill`」。核验：回改前 `proposal.md:41` = `self._spiller.spill(...)`、`:86` = `spiller.spill`（二者一致，均指 spiller）；回改把 `:41` 改为 manager 委托却漏改 `:86`，`tasks.md:3.3` 自始未动 ⇒ **同一调用点在一份 proposal 内自相矛盾，且实现清单与设计对撞**。
+
+- **遗留/备注（非阻断）**:
+  - NF3（`spill(messages, *, ...)` 把 messages 变必填、丢失今日 `prune_tool_results(messages=None) → self.messages` 回退；Q1=保留委托时委托体须自行把 `None` 解析为 manager 的 `self.messages`）仅见于 `grill-design.md:79`，未进 `design.md`。按上一轮回改清单（design.md 只要求补 NF1/NF2），不算漏项；但 Q1=保留委托时它是委托体的实现约束，建议在 `design.md` 的 OQ1 段补一句备注，供停轮决断参考。非阻断。
+
+- **终审 Open Questions**（与 `design.md:174-181`、`grill-design.md:49-60`、本文件 `:105-116` 三处一致，确认**仅此两条**）:
+  - **OQ1（接口归属）**：`MemoryManager.prune_tool_results` 保留为薄委托（保 e0 patch 目标 + 13 处测试不动）还是删除并把 13 处测试调用迁到 `spiller.spill`？（草案倾向保留委托）**与 Q2 联立、不可独立拍**：保留委托 ⟺ spiller 由 `MemoryManager` 组合持有（`self.memory.tool_result_spiller`）；只有选「删除」才使「loop 自持」在逻辑上可行，且此时须同步改 e0 的 patch 目标。
+  - **OQ4（seam 边界）**：账本有界路径（`_bound_ledger_result` / `_bound_arguments`）本轮不收进 spiller（D6）是否被认可？
+
+- **机械门**:
+  - `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`: **29 passed, 0 failed**（含 `change/tool-result-spill-module`）。
+  - `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py`: **OpenSpec artifact checks passed**（active change 未达实现完成态，未被 building-review 门拦截——符合预期）。
+
+- **停轮前须对齐（唯一阻断项）**: 把 `proposal.md:86` 与 `tasks.md:3.3` 的 loop 剪枝调用点由「改调 `spiller.spill`」对齐为「改调 `self.memory.prune_tool_results(...)`（经 manager 委托到 spiller）」，与 `design.md:161` NF1 / `proposal.md:41` 一致；否则实现清单会诱导 loop 直调 spiller、静默破 e0 缝。修此两行后本轮设计即全部收敛，可停轮交用户拍 Q1 / Q4。
