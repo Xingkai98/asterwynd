@@ -49,8 +49,8 @@
 
 ## 7. 收尾
 
-- [ ] 7.1 归档 change 到 `openspec/changes/archive/2026-10-07-grill-flow-hardening/`。
-- [ ] 7.2 清理 backlog（受保护路径，走 `workflow-events.jsonl` 事件）。
+- [x] 7.1 归档 change 到 `openspec/changes/archive/2026-10-07-grill-flow-hardening/`。
+- [x] 7.2 清理 backlog（本 change 立项时未登记 backlog；无需移除）。
 - [x] 7.3 同步 current spec：把 3 个 delta 合入 `openspec/specs/{change-documentation,dev-workflow-state-machine,subagents}/spec.md`（受保护路径，走 `current_spec_synced` 事件）。
 - [x] 7.4 独立 subagent 审阅闭环（`/review-loop`，R1 CHANGES_REQUESTED → 修 → R2 PASS）+ review manifest。
 - [ ] 7.5 发起 PR，关联 issue #298，写明验证结果。
