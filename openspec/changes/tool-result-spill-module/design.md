@@ -15,7 +15,7 @@
 3. **迭代标记**：`_tool_result_iterations: dict[str, int]` 在 loop 构造期初始化（`loop.py:206`），两处写入（`:898` / `:1092`），`_reset_tool_result_iterations`（`:1559-1577`）重置（把给定 `messages` 中 `role=="tool"` 的预置为 `-1`），resume 重扫在 `:726`（首次预置在 `:605`）。**除剪枝外无人读该 dict**——唯一读者是传给 `prune_tool_results` 的 `added_iterations` 参数（`loop.py:1643`）。
 4. **账本有界计数**：`_bounded_ledger_count` 由 `_bound_ledger_result`（`:1602`）/ `_bound_arguments`（`:1612`）累加，每轮顶部 `:763` 归零，经 `_spill_and_prune` 的 `bounded_ledger` 参数（`:1104`）传给事件发射。
 5. **counter 缝**：`MemoryManager.is_oversized_result`（`manager.py:200`）与 `prune_tool_results`（`:249`）都以 `counter=_count_tokens` 调用 policy 纯函数，`_count_tokens` 是 `manager.py` 的**模块级**函数（`:62`）。测试 `tests/agent/memory/test_tool_result_lifecycle.py:42` 用 `monkeypatch.setattr(_manager_mod, "_count_tokens", _counter)` 替换它——即 counter 是**模块全局、call-time 解析**的可替换缝。
-6. **`PruneStats`**：定义在 `manager.py:92-103`；loop（`from agent.memory.manager import ...`）与 `scripts/e0_tool_result_lifecycle.py:108` 都从 `manager` 引用。
+6. **`PruneStats`**：定义在 `manager.py:92-103`；唯一外部引用者是 `scripts/e0_tool_result_lifecycle.py:108`（`from agent.memory.manager import PruneStats`）。**`agent/loop.py` 从不引用 `PruneStats`**（全文零命中），重导出的兼容面只为 e0 保留。
 7. **事件/trace 发射**：`_spill_and_prune`（`loop.py:1646-1658`）在 `stats.messages_spilled or bounded_ledger` 时发 `record_tool_result_spill` + `on_event("tool_result_spill", ...)`。这是可观测契约，本 change **不动**。
 8. **被钉住的测试面**：`tests/agent/memory/test_tool_result_lifecycle.py`（13 处直调 `manager.prune_tool_results`）+ `tests/agent/test_tool_result_lifecycle_loop.py`（断言 `tool_result_spill` 事件 + `trace.steps[].type == "tool_result_spill"`）。
 
@@ -107,7 +107,7 @@ self.tool_result_spiller = ToolResultSpiller(
 
 ## Pre-Implementation Review
 
-> 本节记录**决策相关摘要**，不粘贴聊天流水。本 change 的实现前 `grilling` 尚未进行（由主 session 另行安排）；下述为待 grill 确认的决策草案与已识别争议点。
+> 本节记录**决策相关摘要**，不粘贴聊天流水。本 change 的实现前 `grilling` 已完成（`reviews/grill-design.md`），设计阶段对抗审阅也已完成（`reviews/grill-adversarial.md`，verdict = CHANGES_REQUESTED，已按回改清单收敛）；下述为收敛后的决策与争议点状态，`## Open Questions` 待停轮确认。
 
 - **已识别的关键技术争议（grill 必答）**：
   - **OQ1（接口归属）**：`MemoryManager.prune_tool_results` 是否保留为**薄委托**（`return self.tool_result_spiller.spill(...)`），还是**删除**并把 13 处测试调用迁到 `spiller.spill`？

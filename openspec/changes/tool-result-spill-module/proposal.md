@@ -35,7 +35,7 @@
 2. **对外接口**：
    - `mark(tool_call_id: str, iteration: int) -> None` —— 记一个工具结果入库时的 iteration（取代 loop 内联写 `self._tool_result_iterations[id] = self._iteration`）。
    - `reset(messages: list[Message]) -> None` —— 清空本 spiller 的标记，并把给定 `messages` 中**已存在**的 `role == "tool"` 消息预置为「已消费」（`-1`）；语义等价于今日 `_reset_tool_result_iterations`。
-   - `spill(messages, *, current_iteration: int, save: Callable[[str], str] | None = None) -> PruneStats` —— 执行剪枝循环（今日 `prune_tool_results` 主体）。
+   - `spill(messages, *, current_iteration: int, added_iterations: dict[str, int] | None = None, save: Callable[[str], str] | None = None) -> PruneStats` —— 执行剪枝循环（今日 `prune_tool_results` 主体）。`added_iterations=None` 时走 spiller 自身的 `mark` 状态，非 `None` 时以传入的外部映射为准（覆盖注入），供既有测试面的显式 `added_iterations=` 调用兼容。
 3. **剪枝循环主体**自 `MemoryManager` 迁入 spiller；`MemoryManager` 组合并持有 spiller（`self.tool_result_spiller`），构造期注入 `max_tokens` / `recent_window` / **counter**。
 4. **`MemoryManager.is_oversized_result` 保留**（唯一调用方是 loop 的 `_bound_ledger_result`，不属剪枝循环）。
 5. **`agent/loop.py`**：迭代标记写入改经 `self.memory.tool_result_spiller.mark(...)`；`_reset_tool_result_iterations` 改经 `self.memory.tool_result_spiller.reset(...)`；`_spill_and_prune` 改调 `self.memory.prune_tool_results(...)`（剪枝调用落在 manager 的委托上，保 e0 patch 目标）。**事件与 trace 发射仍留 loop**——spiller 只返回 `PruneStats`，不持有 `on_event` / `trace_recorder`。
