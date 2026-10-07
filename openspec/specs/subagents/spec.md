@@ -275,7 +275,7 @@ bus 消息**不落盘**，因此截断 SHALL NOT 声称「全文可从某个引�
 - **WHEN** 系统初始化角色 agent 注册表
 - **THEN** `reviewer` 类型 SHALL 映射到 `reviewing` phase
 - **AND** Reviewer agent SHALL 负责从 `reading_docs` 到 `ready_for_review` 的所有 `reviewing` sub_state
-- **AND** Reviewer agent SHALL 对已完成 grill 自审的设计文档做独立评审，而非执行 batch-grill-me
+- **AND** Reviewer agent SHALL 对已完成 grill 自审的设计文档做独立评审，而非执行 `grilling`
 
 #### Scenario: 注册 Builder agent
 

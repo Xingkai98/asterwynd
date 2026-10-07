@@ -15,7 +15,7 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - **文档语言**: 除 `README_EN.md` 作为 `README.md` 的英文同步翻译外，所有项目文档使用中文；代码、代码注释和公开 API 命名使用英文；提交信息使用中文。
 - **需求先行**: 新功能必须先完成需求讨论和需求文档，再进入开发。没有把目标、边界、验收标准、测试策略聊清楚之前，不写实现代码。
 - **Issue 关联**: 每个 OpenSpec 立项必须关联一个 GitHub issue 作为跟踪入口，issue 标题以【feature】开头标明类型（例如【feature】xxxx）；issue 正文写明背景、需求、OpenSpec change 路径和跟踪约定，change 文档与 backlog 记录 issue 号。change 实现 PR 合入时，必须给对应 issue 添加完成说明 comment 并关闭。
-- **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `batch-grill-me` skill（设计树逐轮追问，一轮问整个 frontier，效率更高）审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `batch-grill-me`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。**机械强制（issue #95）**：grill 由独立零记忆 subagent 执行（`/grill` 命令），产出结构化决策记录到 `openspec/changes/<id>/reviews/grill-design.md`；workflow_guard 在写代码前检查该证据，缺失则阻止写操作；artifact checker 对完成 change 验证证据存在且 ≥3 条决策。**停轮确认（grill-confirmation-gate）**：grill 产出后，agent 必须**停轮**把 `## Open Questions` 逐项抛给用户并等待明确答复；**每条 Open Question 必须配一个具体例子/场景讲解**（用该 change 的真实场景构造，具体到参数/输入输出/前后对比，帮助用户快速判断，不写空泛描述）；收到答复前不得写实现代码。用户答复记录进 `grill-design.md` 的 `## User Confirmation` 节（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。workflow_guard 在 Open Questions 未全部确认时仍拦截代码写；artifact checker 对 tasks 全勾选的完成 change 校验每个 Open Question 都有确认记录。占位文本（`待确认`/`待主 agent 提交` 等）不计入确认。**分支纪律**：每次开发必须切 `<change-id>/<YYYY-MM-DD>` 分支（门禁依赖分支名推导 change-id）。
+- **设计追问**: 非平凡 OpenSpec change 进入实现前，必须使用 `grilling` skill（设计树逐轮追问，一轮问整个 frontier，效率更高）审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。用户要求“开始开发 / 实现 / 做某个 change”时，第一阶段必须先加载并声明使用 `grilling`，在逐项确认完成前不得写实现代码或测试代码；agent 可以给推荐答案，但不能把自己的推断当作用户确认。**机械强制（issue #95）**：grill 由独立零记忆 subagent 执行（`/grill` 命令），产出结构化决策记录到 `openspec/changes/<id>/reviews/grill-design.md`；workflow_guard 在写代码前检查该证据，缺失则阻止写操作；artifact checker 对完成 change 验证证据存在且 ≥3 条决策。**设计阶段审阅闭环（grill-flow-hardening / issue #298）**：grill 产出后、停轮前，必须再跑一个与实现后 `/review-loop` **同构**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审直到 PASS 或轮数封顶）但**审设计而非代码**的闭环，产出 `openspec/changes/<id>/reviews/grill-adversarial.md`；checker 对完成 change 在归档点强制该文件存在（`grill-adversarial.md` 不以 `-review.md` 结尾，避开 `*-review.md` 的 manifest glob）。该闭环内**能由代码判定的 Open Question 用代码给出带证据（`文件:行号`）的答案**、移出 `## Open Questions`（记入 `## Code-Resolved Questions`）、**不停轮**；只有真正需用户取舍的才停轮。实现后的 `/review-loop` 不动、继续存在。**停轮确认（grill-confirmation-gate）**：grill 产出后，agent 必须**停轮**把 `## Open Questions` 逐项抛给用户并等待明确答复；**每条 Open Question 必须配一个具体例子/场景讲解**（用该 change 的真实场景构造，具体到参数/输入输出/前后对比，帮助用户快速判断，不写空泛描述）；收到答复前不得写实现代码。用户答复记录进 `grill-design.md` 的 `## User Confirmation` 节（每条 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。workflow_guard 在 Open Questions 未全部确认时仍拦截代码写；artifact checker 对 tasks 全勾选的完成 change 校验每个 Open Question 都有确认记录。占位文本（`待确认`/`待主 agent 提交` 等）不计入确认。**分支纪律**：每次开发必须切 `<change-id>/<YYYY-MM-DD>` 分支（门禁依赖分支名推导 change-id）。
 - **业界调研门禁**: 方案设计（proposal/design）前必须按改动性质分流调研业界最新实践或框架，并在 `proposal.md` 或 `design.md` 维护 `## Reference Implementation Research`（必填 `research_tier: full|light|exempt`）。三档判据与豁免质量门槛见下节「业界调研门禁」：`full` 必调研、`light` 浅调研、`exempt` 须 reason 引用客观依据（结构关键词或已关闭决策 issue/评审路径），占位文本不计入。该门禁由 artifact checker 与 CI 机械校验（proposal 阶段查结构，tasks 全勾时按 tier 查完成闭环）；checker 不读取本地 `.dev/reference-repos.txt`，「本地参考仓库不可用」不构成豁免理由，但须在 findings 记录不可用事实和替代依据。
 - **问题定位**: 定位问题时，先查清根因并给出解决方案，待确认后再实际修改代码。
 - **测试要求**: 每个 bug fix 必须新增回归测试；涉及 CLI、Web、benchmark、工具协议或 AgentLoop 的变更必须覆盖对应层级测试。
@@ -69,12 +69,12 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 | --- | --- |
 | “讨论一下 / 想想方案 / 看看怎么做 / 有哪些方向” | 进入 `/opsx:explore` 等价流程：读取相关代码和文档，只探索和记录，不写实现代码。 |
 | “新起一个 change / 我要做一个功能 / 改一个东西” | 进入 `/opsx:propose` 等价流程：创建或补齐 OpenSpec change、proposal、design、tasks、spec delta，并同步 backlog。 |
-| “开始开发 / 实现这个 change / 按 change 推进” | 先执行 `batch-grill-me` 开发前设计追问；确认完成后进入 `/opsx:apply` 等价流程，按 tasks 测试先行并实现。 |
+| “开始开发 / 实现这个 change / 按 change 推进” | 先执行 `grilling` 开发前设计追问；确认完成后进入 `/opsx:apply` 等价流程，按 tasks 测试先行并实现。 |
 | “同步 spec / 看正式规格有没有更新” | 进入 `/opsx:sync` 等价流程：把 change delta spec 合理合并到 `openspec/specs/`。 |
 | “收尾 / 提 PR / 准备合入” | 进入 `/opsx:archive` 等价流程：在同一个实现 PR 内归档 change、清理 backlog、跑 OpenSpec 校验和 artifact checker，并写明验证结果。 |
 | “合入 / merge” | 合入已准备好的 PR；合入后只确认本地 `master` 已同步、active change 目录不存在、backlog 不再引用已归档 change。 |
 
-这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `batch-grill-me`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
+这些命令只负责 OpenSpec 子流程；仓库规则仍然更高优先级。尤其是：非平凡 change 开发前必须 `grilling`，bug fix 必须有回归测试，README 改动必须同步 `README_EN.md`，PR 发起前必须完成归档收尾。
 
 ### paseo 会话长任务提示
 
@@ -93,7 +93,7 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 | 阶段 | 产出 | 工作区 |
 |------|------|--------|
 | 需求讨论 | 讨论方案、明确边界 | 主仓库 |
-| proposal / design | `openspec/changes/<id>/proposal.md` + `design.md`，非平凡 change 先 `batch-grill-me` 设计追问 | 主仓库 |
+| proposal / design | `openspec/changes/<id>/proposal.md` + `design.md`，非平凡 change 先 `grilling` 设计追问 | 主仓库 |
 | tasks / spec delta | `tasks.md` + `specs/` delta，同步 backlog | 主仓库 |
 | **building** | 按 tasks 测试先行实现（TDD） | **独立 worktree 必须** |
 | **审阅闭环** | 见下节，PR 前必须完成 | building worktree |
