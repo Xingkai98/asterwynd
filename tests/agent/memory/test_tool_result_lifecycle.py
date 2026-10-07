@@ -3,7 +3,7 @@
 
 对应 design Testing Strategy 的 messages 侧用例：
 - 判定纯函数（单条阈 token/字节双维度、图片字节、预览保尾）；
-- ``prune_tool_results``：陈旧被替换 / 当轮保留 / 穿透窗口 / 预览保尾 / ``_tokens`` 重置 /
+- ``tool_result_spiller.spill``（原 ``prune_tool_results`` 迁入）：陈旧被替换 / 当轮保留 / 穿透窗口 / 预览保尾 / ``_tokens`` 重置 /
   无 ref 不谎称 / 残余边界（后台注入不被剪）；
 - ``compact_if_needed`` 硬顶：token + 字节双维度、无视 gap、次序=剪枝→硬顶。
 """
