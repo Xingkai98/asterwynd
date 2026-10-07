@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "grill-flow-hardening",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "review-grill-flow-hardening-20261007-r2",
+  "base_sha": "8bc430c",
+  "head_sha": "143903ba28654dfd2c273021f91839ba4130785b",
+  "tasks_hash": "sha256:f92e223ab1ffb1c0fc60cc0cdcc8ce9e3e92b8d7de05ca958286be5ff9763be9",
+  "spec_hash": "sha256:a37579619e84fc8c5cd1d259f8ed4ecb9dbe8584f6499b29252c94557833e4bc",
+  "diff_hash": "sha256:773b2467143f9ea732364d61a90f4f846931bceb590640a15374c016a70e1bb7",
+  "report_hash": "sha256:432969b36b568694e1020b9d8522044c7f0e74beb2f86e597700b35824727fa8"
+}
