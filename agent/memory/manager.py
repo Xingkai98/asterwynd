@@ -2,16 +2,15 @@
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Literal, Optional, TYPE_CHECKING
+from typing import Literal, Optional, TYPE_CHECKING
 
 from agent.message import Message, TextBlock, count_tokens_for_content, extract_text
 from agent.memory.tool_result_policy import (
     READ_PROGRESS_RE as _READ_PROGRESS_RE,
     content_bytes as _content_bytes,
     exceeds_single_threshold as _exceeds_single_threshold,
-    is_spilled_preview as _is_spilled_preview,
-    make_preview as _make_preview,
 )
+from agent.memory.tool_result_spiller import ToolResultSpiller
 
 if TYPE_CHECKING:
     from agent.llm import LLM
@@ -51,14 +50,6 @@ def _message_bytes(message: "Message") -> int:
     return total
 
 
-def _flatten(content) -> str:
-    """``str | list[ContentBlock]`` → 文本（图片 → ``[image: <file_path|ref>]``）。"""
-    from agent.memory.tool_result_policy import flatten_content
-
-    return flatten_content(content)
-
-
-
 def _count_tokens(text: str) -> int:
     global _enc
     if _enc is None:
@@ -86,20 +77,6 @@ class SummaryTier:
             "tier": self.tier,
             "source_range": self.source_range,
             "generated_at": self.generated_at,
-        }
-
-
-@dataclass(frozen=True)
-class PruneStats:
-    """``prune_tool_results`` 的可观测产出（D9：剪枝不静默）。"""
-
-    messages_spilled: int = 0
-    bytes_released: int = 0
-
-    def to_metadata(self) -> dict:
-        return {
-            "messages_spilled": self.messages_spilled,
-            "bytes_released": self.bytes_released,
         }
 
 
@@ -151,6 +128,16 @@ class MemoryManager:
         self._l1_accumulated_tokens: int = 0     # incremental L1 token accumulator
         self._l2_summary: str | None = None
         self._tiers: list[SummaryTier] = []      # full tier trail
+        # 工具结果 spill 的单一内聚宿主（change tool-result-spill-module）。counter 传
+        # **延迟解析闭包**：闭包体在调用时解析本模块全局 ``_count_tokens``，与今日
+        # ``prune_tool_results`` / ``is_oversized_result`` 体内裸引用同源——保住测试的
+        # ``monkeypatch.setattr(manager_module, "_count_tokens", ...)`` 缝（D2）。**禁止**
+        # 在 spiller 里静态 import ``_count_tokens``（import 期固化绑定 ⇒ monkeypatch 静默失效）。
+        self.tool_result_spiller = ToolResultSpiller(
+            max_tokens=max_tokens,
+            recent_window=recent_window,
+            counter=lambda text: _count_tokens(text),
+        )
 
     # ------------------------------------------------------------------
     # Summarizer (lazy init for backwards compatibility)
@@ -202,74 +189,10 @@ class MemoryManager:
         )
 
     # ------------------------------------------------------------------
-    # Tool-result spill (change tool-result-lifecycle, D3/D10)
+    # Tool-result spill: 见 ``agent/memory/tool_result_spiller.ToolResultSpiller``
+    # （change tool-result-spill-module 把剪枝循环与迭代状态内聚到该深模块；
+    # 本类经 ``self.tool_result_spiller`` 组合持有它）。
     # ------------------------------------------------------------------
-
-    def prune_tool_results(
-        self,
-        messages: Optional[list["Message"]] = None,
-        *,
-        current_iteration: int,
-        added_iterations: dict[str, int],
-        save: Optional[Callable[[str], str]] = None,
-    ) -> PruneStats:
-        """把陈旧的工具结果 ``messages`` 正文换成「有界预览 + ref」（D3/D10）。
-
-        剪枝判据 = **已消费一轮** ∩（**滑出近期窗口** ∪ **单条超阈**）：
-
-        - **已消费一轮**：``added_iterations[tool_call_id] <= current_iteration - 1``
-          （A1 已拍板 ``-1``）。结果在 iteration k 入库、同轮末尾 ``_call_llm`` 已发一次、
-          k+1 轮再发一次 ⇒ k+1 末尾即可剪。两个 append 点（错误 / 正常路径）都记
-          ``added_iteration``，未标记的结果**不剪**（保守）。
-        - **滑出窗口**：消息索引 < ``len(messages) - recent_window``（窗口按**消息条数**，
-          非轮数）。
-        - **单条超阈**：token 或字节任一超阈（``tool_result_policy``），**不受窗口保护**
-          ——超阈结果即使新鲜、仍在窗内也替换（穿透窗口），但受「已消费一轮」保护。
-
-        ``save(text) -> ref`` 由调用方注入（``loop.py`` 在 ``run()`` 期构造 store 与
-        scope）；返回 ``None`` 或抛异常时**不谎称可回读**（D8）——仍替换正文使内存有界，
-        但标记 ``[truncated]``。本方法**不碰 I/O**，只调注入的回调与判据纯函数。
-
-        任何替换后 MUST 置 ``message._tokens = None``（D10），否则 ``count_tokens``
-        返旧值、反复误触发压缩。
-        """
-        msgs = messages if messages is not None else self.messages
-        stats_spilled = 0
-        stats_bytes = 0
-        window_start = len(msgs) - self.recent_window
-        for index, message in enumerate(msgs):
-            if message.role != "tool" or not message.tool_call_id:
-                continue
-            if _is_spilled_preview(message.content):
-                continue  # already a preview — idempotent
-            added = added_iterations.get(message.tool_call_id)
-            if added is None or added > current_iteration - 1:
-                continue  # fresh / never-marked ⇒ keep full text
-            slid_out = index < window_start
-            oversized = _exceeds_single_threshold(
-                message.content, max_tokens=self.max_tokens, counter=_count_tokens,
-            )
-            if not (slid_out or oversized):
-                continue
-            before = _content_bytes(message.content)
-            ref: str | None = None
-            if save is not None:
-                try:
-                    ref = save(_flatten(message.content))
-                except Exception:
-                    logger.warning("[Memory] tool result spill failed", exc_info=True)
-                    ref = None
-            preview = _make_preview(message.content, ref=ref)
-            message.content = preview
-            message._tokens = None
-            stats_spilled += 1
-            stats_bytes += max(0, before - _content_bytes(preview))
-        if stats_spilled:
-            logger.info(
-                "[Memory] spilled %d tool result(s), released %d bytes",
-                stats_spilled, stats_bytes,
-            )
-        return PruneStats(messages_spilled=stats_spilled, bytes_released=stats_bytes)
 
     async def compact_if_needed(
         self,

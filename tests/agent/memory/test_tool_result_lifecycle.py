@@ -3,7 +3,7 @@
 
 对应 design Testing Strategy 的 messages 侧用例：
 - 判定纯函数（单条阈 token/字节双维度、图片字节、预览保尾）；
-- ``prune_tool_results``：陈旧被替换 / 当轮保留 / 穿透窗口 / 预览保尾 / ``_tokens`` 重置 /
+- ``tool_result_spiller.spill``（原 ``prune_tool_results`` 迁入）：陈旧被替换 / 当轮保留 / 穿透窗口 / 预览保尾 / ``_tokens`` 重置 /
   无 ref 不谎称 / 残余边界（后台注入不被剪）；
 - ``compact_if_needed`` 硬顶：token + 字节双维度、无视 gap、次序=剪枝→硬顶。
 """
@@ -141,7 +141,7 @@ def test_prune_skips_fresh_unconsumed_result():
     """当轮（未消费一轮）结果保留全文（A1）。"""
     manager = MemoryManager(max_tokens=80_000, recent_window=10)
     messages = _tool_then_assistant("c1", _big(400_000))
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=3, added_iterations={"c1": 3},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -159,7 +159,7 @@ def test_prune_replaces_stale_result_with_preview_and_ref():
         saved["len"] = len(text)
         return "artifact://agent/s-1/k1"
 
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=4, added_iterations={"c1": 3}, save=save,
     )
     assert stats.messages_spilled == 1
@@ -177,7 +177,7 @@ def test_prune_pierces_recent_window_for_oversized_single_result():
         Message(role="user", content="task"),
         *_tool_then_assistant("c1", _big(400_000)),
     ]
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=3, added_iterations={"c1": 2},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -189,7 +189,7 @@ def test_prune_spills_small_result_once_it_slides_out_of_window():
     manager = MemoryManager(max_tokens=80_000, recent_window=4)
     messages = _tool_then_assistant("c1", "small result")  # 2 msgs
     messages += [Message(role="user", content=f"m{i}") for i in range(6)]  # push out
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=9, added_iterations={"c1": 1},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -204,7 +204,7 @@ def test_prune_resets_token_cache():
     manager.count_tokens(messages)               # prime cache
     old = messages[-1]._tokens
     assert old and old > 20_000
-    manager.prune_tool_results(
+    manager.tool_result_spiller.spill(
         messages, current_iteration=4, added_iterations={"c1": 3},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -216,7 +216,7 @@ def test_prune_without_ref_marks_truncated_not_fake_ref():
     """D8：落盘不可用时剪枝也让内存有界，但标记如实为 ``[truncated]``，不指向 ref。"""
     manager = MemoryManager(max_tokens=80_000, recent_window=10)
     messages = _tool_then_assistant("c1", _big(400_000))
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=4, added_iterations={"c1": 3}, save=None,
     )
     assert stats.messages_spilled == 1
@@ -230,7 +230,7 @@ def test_prune_still_spills_result_containing_truncated_literal():
     manager = MemoryManager(max_tokens=80_000, recent_window=10)
     body = _big(400_000) + "\n[truncated] more"   # real result containing the literal
     messages = _tool_then_assistant("c1", body)
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=4, added_iterations={"c1": 3},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -242,11 +242,11 @@ def test_prune_still_spills_result_containing_truncated_literal():
 def test_prune_is_idempotent():
     manager = MemoryManager(max_tokens=80_000, recent_window=10)
     messages = _tool_then_assistant("c1", _big(400_000))
-    first = manager.prune_tool_results(
+    first = manager.tool_result_spiller.spill(
         messages, current_iteration=4, added_iterations={"c1": 3},
         save=lambda text: "artifact://agent/s-1/k",
     )
-    second = manager.prune_tool_results(
+    second = manager.tool_result_spiller.spill(
         messages, current_iteration=5, added_iterations={"c1": 3},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -258,7 +258,7 @@ def test_prune_preserves_read_progress_tail_end_to_end():
     manager = MemoryManager(max_tokens=80_000, recent_window=10)
     note = '[ReadProgress file="/big.py"; offset=2000; total=8000]'
     messages = _tool_then_assistant("c1", _big(400_000) + "\n\n" + note)
-    manager.prune_tool_results(
+    manager.tool_result_spiller.spill(
         messages, current_iteration=4, added_iterations={"c1": 3},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -272,7 +272,7 @@ def test_prune_leaves_non_tool_large_content_untouched():
     manager = MemoryManager(max_tokens=80_000, recent_window=10)
     huge_user = Message(role="user", content=_big(400_000))
     messages = [huge_user, Message(role="assistant", content="ok")]
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=9, added_iterations={},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -285,7 +285,7 @@ def test_prune_leaves_background_injection_untouched():
     manager = MemoryManager(max_tokens=80_000, recent_window=10)
     injected = Message(role="user", content="[Background task bg1 completed]\n" + _big(50_000))
     messages = [injected, Message(role="assistant", content="ok")]
-    stats = manager.prune_tool_results(
+    stats = manager.tool_result_spiller.spill(
         messages, current_iteration=9, added_iterations={},
         save=lambda text: "artifact://agent/s-1/k",
     )
@@ -301,7 +301,7 @@ def test_prune_image_result_flattened_to_path_reference():
     ]
     messages = _tool_then_assistant("c1", content)
     manager.count_tokens(messages)
-    manager.prune_tool_results(
+    manager.tool_result_spiller.spill(
         messages, current_iteration=4, added_iterations={"c1": 3},
         save=lambda text: "artifact://agent/s-1/k",
     )

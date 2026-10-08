@@ -28,7 +28,8 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 | CommandGuard | `agent/tools/command_guard.py` | 命令语义护栏（绕过变体归一化 + 递归检查被包命令） |
 | Sandbox | `agent/tools/sandbox/` | ProcessBackend + cgroup v2 / Docker 双后端，降级绝不静默 |
 | HookManager | `agent/hooks/manager.py` | 生命周期扩展点 |
-| MemoryManager | `agent/memory/manager.py` | 消息历史、token 阈值 AutoCompact、可插拔 Summarizer；四字段摘要（已完成事项/待办事项/疑难点与决策/当前进行中）、tool_call pending 标记、L1/L2 层级压缩、增量 token 计数 |
+| MemoryManager | `agent/memory/manager.py` | 消息历史、token 阈值 AutoCompact、可插拔 Summarizer；四字段摘要（已完成事项/待办事项/疑难点与决策/当前进行中）、tool_call pending 标记、L1/L2 层级压缩、增量 token 计数；组合持有 `ToolResultSpiller`，并保留单条阈判定 `is_oversized_result`（供可观测账本有界化复用） |
+| ToolResultSpiller | `agent/memory/tool_result_spiller.py` | 有界工具结果生命周期（spill）的单一深模块：`mark` / `reset` / `spill` 三方法，隐藏剪枝判据调用、迭代消费状态与 `_tokens` 失效；只产 `PruneStats`，事件/trace 发射由 AgentLoop 编排。判据纯函数在 `agent/memory/tool_result_policy.py` |
 | ContextBuilder | `agent/context/` | 上下文注入管线：ASTER.md、记忆索引、技能、计划、待办等 ContextSource 统一编排；静态源缓存 + cache 感知分层注入（`build_blocks`，P0/P1/P2 稳定前缀） |
 | PlanningManager | `agent/planning/` | 当前运行的结构化计划状态 |
 | AgentRuntimeState | `agent/run_config.py` | 交互式 session 的当前 mode 和运行时 mode transition |
