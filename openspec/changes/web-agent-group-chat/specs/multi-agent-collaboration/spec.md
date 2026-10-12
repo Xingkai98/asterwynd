@@ -55,7 +55,7 @@ Subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline 
 
 ### Requirement: 房间日志
 
-系统 SHALL 为每个群聊维护一条权威、有序的房间日志。每个条目 SHALL 含顺序号、发言者（用户或人设 id）、类型（用户消息 / 成员发言）、文本与时间戳；群聊视图重连后 SHALL 能从房间日志还原有序群消息流。
+系统 SHALL 为每个群聊维护一条权威、有序的房间日志。每个条目 SHALL 含顺序号、发言者、类型、文本与时间戳；类型枚举 SHALL 为 `user`（用户消息）/ `post`（成员发言）/ `notice`（系统条目，如轮次因达上限结束、成员运行失败），其中 `notice` 条目的发言者 SHALL 为 `null`；群聊视图重连后 SHALL 能从房间日志还原有序群消息流。
 
 #### Scenario: 重连还原有序时间线
 
@@ -108,27 +108,28 @@ Subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline 
 
 ### Requirement: 房间级互斥与轮次终止
 
-同一房间同一时刻 SHALL 至多存在一个进行中的轮次；用户在同一轮进行中发送的消息 SHALL 排队进入该轮，SHALL NOT 并行开启第二轮。一轮 SHALL 在四个出口之一结束：所有发言位走完 / 达到本轮上限 / 成员运行失败或超时（记入房间日志后继续）/ 被取消；达到上限而结束的轮次 SHALL 在房间日志记录原因；系统 SHALL NOT 在用户再次发言前自行开启新一轮。
+同一房间同一时刻 SHALL 至多存在一个进行中的轮次；用户在同一轮进行中发送的消息 SHALL 排队进入该轮（只追加进房间日志，其行首 `@` 追加为当前位次之后的发言位，且 SHALL NOT 改变本轮上限基数），SHALL NOT 并行开启第二轮。一轮 SHALL 在**三个出口**之一结束：所有发言位走完 / 达到本轮上限 / 所有剩余成员运行失败或超时；达到上限而结束的轮次 SHALL 在房间日志记录一条 `notice` 条目（原因「因达上限结束」）；系统 SHALL NOT 在用户再次发言前自行开启新一轮。（首版不提供轮次取消出口。）
 
 #### Scenario: 达到上限而结束
 
 - **GIVEN** 一轮群聊达到本轮上限
 - **WHEN** 编排器停止该轮
-- **THEN** 房间日志 SHALL 记录一条「因达上限结束」
+- **THEN** 房间日志 SHALL 记录一条 `notice` 条目（原因「因达上限结束」）
 - **AND** 系统 SHALL NOT 在用户再次发言前自行开启新一轮
 
 #### Scenario: 成员运行失败不挂死整轮
 
 - **GIVEN** 本轮某成员的运行失败或超时
 - **WHEN** 编排器处理该成员的出口
-- **THEN** 该失败 SHALL 记入房间日志
+- **THEN** 该失败 SHALL 以 `notice` 条目记入房间日志
 - **AND** 轮次 SHALL 继续推进，SHALL NOT 永久阻塞
 
 #### Scenario: 并发消息进入同一轮
 
 - **GIVEN** 一个房间已有一轮在进行中
 - **WHEN** 用户再发一条消息
-- **THEN** 该消息 SHALL 排队进入当前轮
+- **THEN** 该消息 SHALL 排队进入当前轮（追加进房间日志）
+- **AND** 其行首 `@` SHALL 追加为当前位次之后的发言位
 - **AND** 系统 SHALL NOT 并行开启第二个轮次
 
 ### Requirement: 跨人设共享面声明

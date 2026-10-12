@@ -72,7 +72,7 @@
 
 ### Decision 6: 房间日志是群时间线的权威数据（含 schema 与有界切片）
 
-**schema**（SHALL 写进 spec delta）：有序条目数组，每条 `{seq, speaker (user | persona_id), kind ("user" | "post"), text, ts}`。首版**不**引入 `lookup` 类条目。
+**schema**（SHALL 写进 spec delta）：有序条目数组，每条 `{seq, speaker, kind, text, ts}`；`kind ∈ {"user","post","notice"}`——`user` 为用户消息（`speaker = "user"`）、`post` 为成员发言（`speaker = persona_id`）、`notice` 为系统条目（如「因达上限结束」「成员运行失败」，`speaker = null`）。首版**不**引入 `lookup` 类条目。
 
 - **权威关系**：房间日志是群时间线的唯一权威；重连后由它还原有序群消息流（`Message` 无 timestamp/speaker，`agent/message.py:144-155`；`build_history_payload` 只发 role）。
 - **写入**：编排器每成员发言后 append；用户消息也 append。
@@ -94,17 +94,19 @@
 ### Decision 8: 会话标识与 hub 可见性（含破坏性路径全保护）
 
 - 稳定映射：`persona → 单聊会话 id`、`(persona, room) → 群内会话 id`，分别存 roster 与房间记录。
-- **id 前缀约定**：内部会话 id 用可判定的前缀（`_validate_session_id` 只挡空/绝对/逃逸，`agent/session.py:236-243`），使 hub 过滤退化为**纯字符串/roster 判定**，不依赖读快照（避开损坏快照读不出 `kind` 的问题，`agent/session.py:169-182`）。
+- **id 前缀约定（钉死取值）**：人设单聊会话 id 前缀 `persona-`、群内会话 id 前缀 `room-`（`_validate_session_id` 只挡空/绝对/逃逸，`agent/session.py:236-243`）。使 hub 过滤与保护判定退化为**纯字符串 + roster 映射**，不依赖读快照（避开损坏快照读不出 `kind` 的问题，`agent/session.py:169-182`）。
 - 标记：`SessionSnapshot` 增 `kind`。
 - **破坏性路径全保护**：不止 `DELETE /api/sessions/{id}`（`web/server.py:334`），还包括 **WS `reset`**（`web/server.py:724-760` → `remove_session` → `shutil.rmtree` → 换随机新 id，`agent/session.py:208-221`、`web/session.py:1627`）。内部会话 SHALL 拒绝 `reset`（或 reset 后复用原 id 并回写 roster），否则 Decision 8 的稳定映射被击穿。
 - hub：`GET /api/sessions`（`web/server.py:320`）SHALL NOT 列出内部会话。
 
-### Decision 9: 群聊会话内的 pending 交互显式降级（须 MODIFIED 既有规格）
+### Decision 9: 群内会话（`kind: room_member`）内的 pending 交互显式降级（须 MODIFIED 既有规格）
 
-群内会话**不暴露** ask 类工具（从工具面撤除）；审批类调用在群聊会话按 **fail-closed 立即判定为 unavailable**（复用 `openspec/specs/agent-runtime/spec.md:356-362` 既有「审批不可用时 fail closed」Scenario），不阻塞整轮。若走既有 `WebApprovalHandler`（600s）/`WebQuestionHandler`（300s，`web/session.py:1630-1637`、`agent/config.py:398-399`），无人值守轮次会阻塞到超时。
+**范围严格限定为群内会话**（`kind: room_member`）：它**不暴露** ask 类工具（从工具面撤除）；审批类调用按 **fail-closed 立即判定为 unavailable**（复用 `openspec/specs/agent-runtime/spec.md:356-362` 既有「审批不可用时 fail closed」Scenario），不阻塞整轮。理由：群聊轮次可能无人值守，走既有 `WebApprovalHandler`（600s）/`WebQuestionHandler`（300s，`web/session.py:1630-1637`、`agent/config.py:398-399`）会阻塞到超时。
 
-**这收窄了既有 `web-ui` 两条无条件 Requirement**：「Web UI SHALL support tool approval requests」（`openspec/specs/web-ui/spec.md:360-364`）与「pending 提问与审批跨 WebSocket 连接存活」（`:1120+`）⇒ spec delta SHALL 用 **MODIFIED** 给两条加「内部会话除外」scope 限定 + 降级 Scenario。
-已知限制：群聊成员不能执行需审批的高风险操作。
+**人设单聊会话（`kind: persona_chat`）不降级**：它是用户在场的会话，照常暴露交互式 pending。理由：降级理由是「无人值守」，对用户就在页面上的单聊不成立；撤掉提问工具、审批一律 fail-closed 是对用户的可见能力损失，无正当理由。
+
+**这收窄了既有 `web-ui` 两条无条件 Requirement**：「Web UI SHALL support tool approval requests」（`openspec/specs/web-ui/spec.md:360-394`）与「pending 提问与审批跨 WebSocket 连接存活」（`:1120+`）⇒ spec delta SHALL 用 **MODIFIED** 给两条加「群内会话除外」scope 限定 + 降级 Scenario。
+已知限制：**群聊成员**不能执行需审批的高风险操作（单聊不受此限）。
 
 ### Decision 10: 静默 = 哨兵文本 + 解析最终 content
 
@@ -115,7 +117,8 @@
 - **slot 序列算法（钉死）**：一轮的初始 slot = `openingSpeakers(用户消息)`——用户消息行首 `@Name`（多个则按出现顺序、去重）→ 否则房间 admin（无 admin 则 roster 第一个 `mainBot`）→ 否则按成员顺序。成员发言中 `@Name` **追加**到当前位次之后、去重、且每人每轮发言数 ≤ 上限。**同一人被 @ 两次只追加一次**。
 - **`@` 解析口径**：用户消息**行首**的 `@` 触发点名（`web-ui` delta）；成员发言**句中**的 `@` 也触发接力（`multi-agent-collaboration` delta）——此差异 SHALL 在两处 spec 写明。点名不在列表的人 / 自己 / 多人：只取「属于本群成员且非自己」者，不报错。
 - **每轮上限** = `初始 slot 数 + 固定额外轮次`（群有 admin 时再加固定额度），并按成员分别计数封顶（参照 `ds-bot/src/host/groups.js:24-27,262`）。
-- **轮次终止**（四出口）：① 所有 slot 走完；② 达上限（房间日志记「因达上限结束」）；③ 成员 run 失败/超时按 `failed`/`timeout` 记 room log 并继续（不挂死）；④ 房间级互斥下用户新消息排队进本轮。用户再次发言才开新一轮。
+- **轮次终止（三出口）**：① 所有 slot 走完；② 达上限（房间日志记 `notice`「因达上限结束」）；③ 全部剩余成员 run 失败或超时（各记 `notice` 后结束）。单个成员失败/超时只记 `notice` 并继续（不挂死整轮）。**首版不提供轮次取消出口。** 用户再次发言才开新一轮。
+- **轮次进行中到达的用户消息**：只追加进房间日志；其行首 `@` 追加为**当前位次之后**的 slot（去重、受每人每轮上限约束）；SHALL NOT 改变本轮上限基数（上限按**开局** slot 数计算）。
 - **与参照的故意分歧（声明）**：本 change **不**允许成员自行开轮次（参照允许、上限 3，`ds-bot/src/host/constants.js:53-54` `ROOM_BOT_ROUNDS`）。理由：无人值守的 Web 面板下，成员互开轮次会放大成本且无用户在场收敛；收紧为仅用户开轮。
 
 ### Decision 12: 跨人设共享面声明
@@ -138,7 +141,11 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 ### Decision 15: roster / 房间的 Web 管理、单聊入口与删除级联
 
 - Web UI SHALL 提供 roster 与房间的 CRUD 管理入口（创建/改名/改指令/改模型/加删成员/删除），以及**进入某人设单聊**的入口。
-- **删除级联（SHALL 定义）**：删除人设 ⇒ 删除其单聊会话底座 + 该人设的 persona 记忆目录 + 从所有房间移除该成员（并将其群内会话底座删除）；删除房间 ⇒ 删除房间记录 + 房间日志 + 所有 (persona, room) 群内会话底座。删除 SHALL 经人设/房间接口进行（不得走 `DELETE /api/sessions` 或 WS `reset`）。
+- **删除级联（SHALL 定义）**：
+  - 删除人设 ⇒ 删除其单聊会话底座 + 该人设的 persona 记忆目录 + 从所有房间移除该成员（并删除其群内会话底座）。
+  - 删除房间 ⇒ 删除房间记录 + 房间日志 + 所有 (persona, room) 群内会话底座。
+  - **顺序与幂等（钉死）**：级联 SHALL **先删会话底座与 persona 记忆，最后删 roster/房间条目**；且 SHALL 幂等——中断后重试从当前状态继续。理由：若先删 roster 条目再删底座，中途失败会留下「hub 不列（id 前缀过滤）、接口又拒删」的**孤儿内部会话**；先删底座则中断时 roster 仍在，可重试且可被发现。
+  - 删除 SHALL 经人设/房间接口进行（不得走 `DELETE /api/sessions` 或 WS `reset`）。
   理由：否则「不可直接删除」的反面（正当删除）无规格可依，且删除人设后 persona 记忆长期残留（未声明的隐私面）。
 
 ## Pre-Implementation Review
@@ -181,4 +188,5 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 ## Open Questions
 
 - **Q4**: 首版默认**会话数上限**取多少？（口径按会话数 = 人设×(1+群数)。）是否暴露为配置项？超限行为是拒绝创建还是排队？
-- **Q5**: 首版是否排除「引用另一段对话作为上下文」与「群共享 notice」？（两者本仓无可复用 primitive；参照实现的 relay 架构不可移植。**答复后 SHALL 同步清理本文件 Non-Goals 与该条 Open Question 的口径冲突**。）
+- **Q5a**: 首版是否排除「群共享 notice」（每条群消息前注入的群级共享指令）？（本仓无可复用 primitive；不做则从房间模型与 tasks 3.2 移除 `notice`。）
+- **Q5b**: 首版是否排除「引用另一段对话作为上下文」（DS Bot 的 + → Reference）？（参照实现的 relay 架构不可移植，做则需新开一个跨会话只读工具面；不做则记入 Non-Goals。）

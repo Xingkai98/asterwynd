@@ -64,11 +64,11 @@
   - 可复用：多会话并发 + `SessionStore`（`agent/session.py:81`）、会话级事件通道（`web/session.py:355`）、per-loop `persistent_memory` 注入面（`agent/loop.py:138`，需本 change 在 Web 侧接上）、前端 per-tab 模型（`web/static/chat.js:144,211-229`）。
   - **同类实现对照**（本地 `/home/shared/agent-study/dsh-bot-research/`，四个轴）：
     - **轮次终止**：DS Bot 靠「slot 走完 / 上限（成员数 + 固定额外轮次）」；`dsh-agent-group` 用显式 `maxRounds` 撞限返回 `{kind:'round-limit'}`（`packages/group-chat/src/scheduler.ts:217`）；`dsh-adrian-agents-group-work` **无内建终止策略**——「the brief carries the job and the stop condition」（`SPEC.md`）。⇒ 本 change 取**显式上限**（无人值守 Web 面板需要确定终止）。
-    - **静默机制**：仅 DS Bot 有显式 `[PASS]` 哨兵（`groups.js:99`）；`dsh-agent-group` 用「连续失败预算暂停房间」而非静默；adrian 用「失败必重入队」。⇒ 本 change 取 `[PASS]` 哨兵。
+    - **静默机制**：仅 DS Bot 有显式 `[PASS]` 哨兵（`groups.js:99`）；`dsh-agent-group` 用「连续失败预算暂停房间」（`packages/group-chat/src/conductor.ts:121,345`）而非静默；adrian 无静默，失败产生通知并在 10 分钟内三次失败时唤醒 chair（`SPEC.md:256,312`）。⇒ 本 change 取 `[PASS]` 哨兵。
     - **成本上限**：DS Bot = 每轮每成员额度 + 成员数上限 12 + 240s 单轮超时；`dsh-agent-group` = `maxRounds` + 连续失败预算；adrian = 无。⇒ 本 change 取显式上限 + 单轮超时。
     - **成员能否自开轮次**：DS Bot **可以**（`ROOM_BOT_ROUNDS = 3`，`constants.js:53-54`）；adrian 由 chair 驱动、成员不自开。⇒ 本 change **收紧为仅用户开轮**（与参照的**故意分歧**，理由：无人值守面板下成员互开轮次放大成本且无用户在场收敛）。
 - design impact:
-  - 采用「每个 agent 人设 = 一个 AgentSession（各自 AgentLoop + 事件通道）」承载，而非扩展 `SubAgentManager`。
+  - 采用「一个人设的**每个会话面** = 一个 AgentSession」（各自 AgentLoop + 事件通道），而非扩展 `SubAgentManager`；会话数 = 人设数 ×（1 + 群数）。
   - 记忆作用域需从 project/repo 细分出 persona 维，且**先补 Web 记忆接线**（仅人设会话）。
   - 群聊编排器新建，与既有 DAG 调度器并列；依赖 `SessionRunner` 抽象由 web 层注入（避免 `agent/ → web/` 反向依赖）。
   - Web 前端**已 per-tab**，无需重构渲染；真正工作是新增**群聊 pane 类型 + 房间级 WS**（现 WS 路由写死 `/ws/${sessionId}`）。
