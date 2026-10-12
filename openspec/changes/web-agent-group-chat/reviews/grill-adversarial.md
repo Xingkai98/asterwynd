@@ -125,3 +125,58 @@ R1 未覆盖、本轮新增核对的断言，逐条为真：
 - `long-term-memory` delta 的 MODIFIED「Scope 隔离」是**完整**替换（原文 + `:7-12` 原 Scenario 保留 + 两条新 Scenario），不存在 Issue 16 那类丢内容；且正文首行含 `SHALL`。
 - 记忆接线缺口的前提为真：`web/session.py:1650-1698` 的 `_create_session` 未传 `persistent_memory` / `memory_config` / `llm`；persona 同级布局的前提（`persistent.py:183,341,451`、`sources.py:302`）全部复核为真。
 - 机械门禁复跑通过（29/29），同时确认本轮两条 high 级问题**不在**门禁覆盖范围内（validate 不比对既有 Scenario 集合；artifact checker 不校验 MODIFIED 完整性）。
+
+## Round 3
+
+### Reviewer
+
+- run id: paseo-grill-adversarial-web-agent-group-chat-r3
+- 时间: 2026-10-13
+- 对象: commit `cae3401`（R2 修正后的当前版本，封顶轮）
+- 方式: 零记忆独立审阅（第三轮）。除逐条复核 R2 的 Issue 16–27 外，本轮把 R2 的两条 high 从「人工比对」升级为**机械比对**：写脚本解析既有 spec 与 delta 的 `### Requirement` / `#### Scenario` 结构，逐 Requirement 比对 Scenario **集合**与**正文**（R2 Issue 16/17 的失败模式正是「集合少几条」，人眼易漏、脚本不会）。另复核 R2 新引入的规范性断言（三出口、`notice` schema、降级范围、级联顺序/幂等、mid-round 语义）在 design / proposal / tasks / spec **四处是否一致**。
+
+### 结论
+
+PASS
+
+（R2 的 2 项 high 已彻底修好，5 项 medium 全部落地；剩余全部为 low 级措辞/覆盖度瑕疵，**不阻塞实现**。R2 未留下任何「实现者会各自发明语义」的空档。）
+
+### R2 各项核验
+
+- **R2 Issue 16（high）: 已修好** —— 机械比对确认 `Web UI SHALL support tool approval requests` 的 MODIFIED 复述了既有**全部 4 条** Scenario（批准 / 拒绝 / 并发隔离 / 断连重连）并新增第 5 条「群内会话不暴露交互式审批」：delta `specs/web-ui/spec.md:7,15,23,30,38` vs 既有 `openspec/specs/web-ui/spec.md:364,372,380,387`，**dropped = []**；4 条既有 Scenario 的正文与既有文件**逐字相同**（脚本对规范化文本做 diff，无任何 BODY DIFFERS）；Requirement 正文亦为「原文前缀 + 句末追加 scope 限定」。同轮我把同一比对跑在所有 6 个 MODIFIED 块上，结论一致（见「本轮已核验通过的维度」）。
+- **R2 Issue 17（high）: 已修好** —— hub 与 DELETE 两条既有无条件 Requirement 都补上了完整 MODIFIED：hub 在 `specs/web-ui/spec.md:64-105`（既有 `openspec/specs/web-ui/spec.md:456,464,471,478` 四条 Scenario 全在 + 新增「内部会话不出现且损坏也不泄漏」`:100-105`；且保留原 `damaged` 断言并显式划出内部会话不属于其覆盖范围 `:68`）；DELETE 在 `specs/web-ui/spec.md:107-145`（既有 `openspec/specs/web-ui/spec.md:576,584,591,598` 四条全在 + 新增「内部会话不可经会话删除接口删除」`:140-145`）。两条既有「damaged 条不得静默消失」与「内部会话不得出现」的潜在对撞已被 delta `:68` 的显式除外句消解。
+- **R2 Issue 18（medium）: 部分修好** —— 核心缺陷（spec 里那条**无定义的第四出口「被取消」**）已消除：spec 现写「一轮 SHALL 在**三个出口**之一结束：所有发言位走完 / 达到本轮上限 / 所有剩余成员运行失败或超时」并明标「（首版不提供轮次取消出口。）」（`specs/multi-agent-collaboration/spec.md:111`），与 design Decision 11 的三出口清单（`design.md:120`）逐条同形；tasks 1.1/2.2/3.6 三处也统一为「三出口」（`tasks.md:3,13,28`）。**残留**：`design.md:180`（Testing Strategy）与 `proposal.md:47`（Impact Analysis 影响测试）仍写「轮次终止**四出口**（走完 / 达上限 / 失败 / 超时）」——把「失败」「超时」拆成两项计数，与 Decision/spec 的「③ 全部剩余成员 run 失败或超时」不是同一口径。不影响实现（实现与测试按 tasks 2.2 的三出口写），记入剩余 low。
+- **R2 Issue 19（medium）: 已修好** —— 房间日志 `kind` 枚举扩为 `user | post | notice`，并定义了 notice 条目的 speaker 取值：design `design.md:75`（「`notice` 为系统条目（如「因达上限结束」「成员运行失败」，`speaker = null`）」）与 spec `specs/multi-agent-collaboration/spec.md:58`（「类型枚举 SHALL 为 `user`/`post`/`notice`…其中 `notice` 条目的发言者 SHALL 为 `null`」）同形；spec 自己要求写入的两条系统条目现在都有可用 kind 与可断言字段（`:117` 达上限、`:124` 成员失败）。**新引入的措辞风险见新 Issue 28**（Q5a 的「群共享 notice」与该 `notice` 同名不同物）。
+- **R2 Issue 20（medium）: 已修好** —— 降级范围四处收窄为 `kind: room_member`、并显式写明人设单聊不降级：design Decision 9 标题 `design.md:102`「**群内会话**（`kind: room_member`）内的 pending 交互显式降级」+ `:104`「范围严格限定为群内会话」+ `:106`「**人设单聊会话（`kind: persona_chat`）不降级**…」+ `:109` 已知限制改「**群聊成员**」；proposal `proposal.md:20`「**群聊会话内**的交互式 pending SHALL 显式降级」；delta `specs/web-ui/spec.md:5,47` 的 scope 限定与 `:231-253` 的 ADDED Requirement（含新增「人设单聊照常暴露交互式 pending」Scenario `:248-253`，使「不降级」也可测）；tasks 3.9 `tasks.md:31`。**残留**：`proposal.md:29` 与 `tasks.md:5` 在能力/规格清单里仍简写为「内部会话 pending 降级」（未点明只到 room_member），且都称 MODIFIED 只收窄「两条 Requirement」（实为四条）——记入剩余 low，不改变规格语义。
+- **R2 Issue 21（medium）: 已修好** —— mid-round 用户消息的语义在 design 与 spec 双侧钉死且一致：`design.md:121`「只追加进房间日志；其行首 `@` 追加为**当前位次之后**的 slot（去重、受每人每轮上限约束）；SHALL NOT 改变本轮上限基数（上限按**开局** slot 数计算）」，spec 正文 `specs/multi-agent-collaboration/spec.md:111` 与 Scenario「并发消息进入同一轮」`:127-133`（三条 THEN 分别断言排队入日志 / `@` 追加为当前位次之后的发言位 / 不开第二轮）。tasks 2.2 同步（`tasks.md:13` 含「追加进日志 + `@` 追加为当前位次之后的 slot、不改上限基数」）⇒ 期望值可写。
+- **R2 Issue 22（medium）: 已修好** —— 级联清单已移入可测 Requirement 正文：`specs/web-ui/spec.md:178`（「删除 SHALL 执行级联，级联顺序 SHALL 为「先删会话底座与 persona 记忆，最后删 roster/房间条目」，且 SHALL 幂等」），并补齐「删除房间触发级联」Scenario `:193-198`（断言房间记录 / 房间日志 / 群内会话底座均删除、人设本身不删）。原错指指针已消失：我复扫全 delta 的交叉引用，`:66`（→「内部会话的生命周期保护」）、`:109`（→「内部会话的生命周期保护」与「人设与房间的管理入口」）均指向真实存在的 Requirement，无悬空/错指。
+- **R2 Issue 23（low）: 已修好** —— 级联顺序与幂等钉死（`design.md:147` + `specs/web-ui/spec.md:178`），孤儿风险有专门 Scenario：「级联中断可重试且不留孤儿」`specs/web-ui/spec.md:200-205`（断言中断后重试可完成、且 SHALL NOT 留下「既不出现在 hub、又拒绝被删除」的孤儿）；id 前缀取值也钉死为 `persona-` / `room-`（`design.md:97`、`specs/web-ui/spec.md:209`），使 hub 过滤与清理判定有确定基准。**残留**：该新 Scenario 没有对应测试任务，见新 Issue 30。
+- **R2 Issue 24（low）: 已修好** —— Q5 已拆为 Q5a（群共享 notice）/ Q5b（引用另一段对话）两条独立问题（`design.md:191-192`）；tasks 3.2 把 `notice` 标成「（群共享 `notice` 视 Q5 答复决定是否纳入首版。）」（`tasks.md:24`）；R2 指出的过时括注（旧 `design.md:184`「答复后 SHALL 同步清理本文件 Non-Goals 与该条 Open Question 的口径冲突」）已删除，Non-Goals 里也不再含 Q5 两项（`design.md:27-30`）。**新引入的命名歧义见新 Issue 28。**
+- **R2 Issue 25（low）: 已修好** —— `proposal.md:71` 现写「采用「一个人设的**每个会话面** = 一个 AgentSession」（各自 AgentLoop + 事件通道），而非扩展 `SubAgentManager`；会话数 = 人设数 ×（1 + 群数）」，与已修正的 Decision 1（`design.md:34,36,40`）和 Risks（`design.md:169`）口径一致，成本量级不再差一档。
+- **R2 Issue 26（low）: 已修好** —— `proposal.md:67` 改写为「adrian 无静默，失败产生通知并在 10 分钟内三次失败时唤醒 chair（`SPEC.md:256,312`）」。我打开本地材料复核：`dsh-adrian-agents-group-work-main/SPEC.md:256`「Failure notice | A member's model request failed… wakes the chair on the third failure inside ten minutes (0.1.4)」、`:312`「Three failures inside ten minutes wake the chair」⇒ 表述与行号均**有依据**，不再是无支撑的「失败必重入队」。
+- **R2 Issue 27（low）: 已修好** —— 两处 delta 统一为「首先发言」：`specs/web-ui/spec.md:164`「SHALL 让被点名的成员成为本轮**首先**发言者」、`specs/multi-agent-collaboration/spec.md:80`「B SHALL 成为本轮**首先**发言的成员」，与 `design.md:117` 的「初始 slot 的第一个」对齐；「当前位次之后」的接力语义只在成员句中 `@` 处出现（`specs/multi-agent-collaboration/spec.md:74`、`design.md:117`），不再有「下一个 = 追加队尾」的读法。
+
+### 新发现
+
+- **Issue 28（severity: low）**: Q5a 的「群共享 notice」与房间日志的 `kind: "notice"` **同名不同物**，用户若答「排除」会读成连房间日志的系统条目一起删。；证据: `design.md:75`（房间日志 `kind ∈ {"user","post","notice"}`，`notice` = 系统条目）vs `design.md:191`（Q5a「首版是否排除「**群共享 notice**」（每条群消息前注入的群级共享指令）？…不做则从房间模型与 tasks 3.2 移除 `notice`。」）与 `tasks.md:24`；而 spec 明确要求写 `notice` 条目（`specs/multi-agent-collaboration/spec.md:58,117,124`）。；影响: 低——spec 是权威、实现按 spec 走不会真的删错，但停轮答复后（tasks 1.6 要求回写）若照 Q5a 字面执行，容易把房间日志的第三类条目一并抹掉。；建议: 把 Q5a 的措辞改为「群级共享指令（room notice / 群共享提示）」或在该条括注「此 notice 与房间日志条目的 `kind: notice` 不是同一对象」。
+- **Issue 29（severity: low）**: 内部会话过滤只钉在 `GET /api/sessions` 一处，**同一 store 的另外两个消费者**未定口径。；证据: (a) `web/server.py:280` 的 `_workspace_entries()` 用 `list_sessions()` 算 `session_count` 并经 `GET /api/workspaces` 返回 ⇒ hub 的 workspace 卡片会显示含内部会话的「会话数」而列表更短，同一页面自相矛盾；(b) `agent/main.py:1389-1395` 的 `session list`（CLI 恢复入口）会对同一 `<workspace>/.asterwynd/sessions/` 目录直出全部会话 ⇒ 内部会话会以普通会话身份出现在 CLI 恢复列表里（`web/session.py:1709-1727` 证明二者同 store）。；影响: 低——没有内容泄漏，也不与任何 spec 断言冲突（既有 hub Requirement 的两条 Scenario 都没钉 `session_count`），但「内部会话不作为普通会话出现」的验收面在用户可见处不完整。；建议: 在 Decision 8/14 补一句口径（`session_count` 同源过滤；CLI 面若不做则显式记为 Non-Goal），或声明该计数为非权威数。**不阻塞实现**（改的是 spec 口径句，实现侧只是同一个过滤器多调一处）。
+- **Issue 30（severity: low）**: 本轮新增的规范性断言「级联顺序 + 幂等 + 不留孤儿」进了 design 与 spec，但**没有任何测试任务承载**。；证据: `design.md:147`（顺序与幂等钉死）与 `specs/web-ui/spec.md:200-205`（Scenario「级联中断可重试且不留孤儿」）vs `tasks.md:12`（2.1 只写「删除级联（单聊会话 + 群内会话 + 房间日志 + persona 记忆）」，无中断/幂等/孤儿用例）、`tasks.md:32`（3.10 的删除级联同样无顺序与幂等）。；影响: 低但真实——按 tasks 完成全部工作后归档，tasks 全勾仍可能漏测这条 spec 断言（正是 issue #235 类「完成度门禁测不到的断言」）。；建议: 实现开工时把「级联顺序 + 中断重试 + 不留孤儿」并入 tasks 2.1（一行即可）。**不阻塞实现**，但请在第一次改 tasks 时落上。
+
+### 剩余 low（不阻塞实现）
+
+- **「四出口」残留（R2 Issue 18 的部分修法）**: `design.md:180` 与 `proposal.md:47` 仍写「轮次终止四出口（走完 / 达上限 / 失败 / 超时）」，与 `design.md:120`、`specs/multi-agent-collaboration/spec.md:111`、`tasks.md:3,13,28` 的「三出口」不同口径；建议统一为「三出口（走完 / 达上限 / 全部剩余成员失败或超时）」。
+- **能力清单措辞（R2 Issue 20/17 的残留）**: `proposal.md:29` 与 `tasks.md:5` 写「内部会话 pending 降级」（应为「群内会话」）、且称 MODIFIED「收窄两条 Requirement」（实为四条，含 hub 列表与会话删除）；`proposal.md:29` 还夹了一个英文词「respective」。均不影响规格语义。
+- **行号 off-by-one**: `design.md:89` 引 `agent/memory/persistent.py:452` 的 `git add -A`，实际在 `:451`（`:452` 是 `if add.returncode != 0:`）。R1/R2 各自引过一次不同行号，建议随下次编辑顺手更正。
+- **「或复用原 id 并回写 roster」的二选一措辞**: `design.md:99` 与 `specs/web-ui/spec.md:228` 都写成「SHALL 拒绝销毁其底座（**或**复用原 session id 并回写 roster）」；两种实现各自合规、Scenario 断言的是不变量（roster 映射保持有效），测试仍可写，故仅为措辞，建议实现时定死一种以免测试分叉。
+- **每轮上限的「固定额外轮次 / 固定额度」数值未钉**: `design.md:119` 只给参照数值来源（`ds-bot/src/host/groups.js:24-27` 的 4/4），未给本 change 的缺省值；spec 只断言「达到本轮上限」这一行为。实现选定缺省值即可，测试用配置注入——不阻塞。
+- **`design.md` 未为 Decision 8 标注「需 MODIFIED」**: Decision 9 有对应句（`design.md:108`），Decision 8 的 hub 过滤与 `DELETE` 拒删同样收窄了既有规格（delta 已正确落地于 `specs/web-ui/spec.md:64-145`），但 design 侧读者看不出来；建议补一句同形声明。
+
+### 本轮已核验通过的维度（补充）
+
+- **MODIFIED 完整性（机械比对，R2 两条 high 的直接复核手段）**: 对全部 6 个 MODIFIED 块（web-ui ×4、multi-agent-collaboration ×1、long-term-memory ×1）做结构化比对 —— **场景丢弃 0 条、既有 Scenario 正文 0 处改动、Requirement 正文 0 处删除**（差异全部是句末/段末追加）；新增 Scenario 分别是：群内会话不暴露交互式审批、内部会话不出现且损坏也不泄漏、内部会话不可经会话删除接口删除、非 subagent 编排不受本 Requirement 约束、跨人设查询被阻止、同一人设单聊与群聊共享记忆。
+- **机械门禁**: 在 `cae3401` 上复跑 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **29 passed, 0 failed**（含 `change/web-agent-group-chat`）。本轮 PASS 与门禁一致，且 R2 的两条 high 仍确认在门禁覆盖之外（validate 不比对既有 Scenario 集合）。
+- **破坏性会话路径穷尽性（复核 R2 结论）**: `remove_session` 全仓仍只有两个调用点 —— `web/server.py:349`（`DELETE /api/sessions/{id}`）与 `web/server.py:746`（WS `reset`）；`web/session.py:1709-1727` 是唯一实现，落盘删除经 `SessionStore.remove` → `shutil.rmtree`（`agent/session.py:208-221`）⇒ Decision 8 的保护清单没有漏第三条通道。
+- **id 前缀约定的可行性**: `_validate_session_id` 只拒空/绝对路径/越界（`agent/session.py:236-243`），`persona-` / `room-` 前缀合法；`list_sessions()` 的 damaged 分支以**目录名**作 `session_id`（`agent/session.py:171-182`）⇒ 损坏快照下前缀判定仍成立，delta 的「不依赖读快照」断言可实现。
+- **参照侧引用（本轮新增/改动的部分逐条打开核对）**: `dsh-adrian-agents-group-work-main/SPEC.md:256,312`（失败通知唤醒 chair）、`dsh-agent-group-main/packages/group-chat/src/scheduler.ts:217`（`{ kind: 'round-limit' }`）、`conductor.ts:121,345`（`DEFAULT_FAILURE_BUDGET = 3` + 连续失败预算暂停）、`ds-bot/src/host/constants.js:25`（240s）、`:53-54`（`ROOM_BOT_ROUNDS = 3`）、`groups.js:21-27`（12/24/8 + 4/4 + 2/4）、`:44-45,183`（游标读/回合开始推进）、`:99`（`[PASS]`）、`:261-262`（`limit = slots + EXTRA + (admin ? ADMIN_EXTRA : 0)`）、`prompt.js:25-36`（Main Bot / 可多个）——全部为真。
+- **规格面没有第二处被本 change 收窄而漏改**: 我对既有 web-ui / long-term-memory / multi-agent-collaboration / agent-runtime 全量扫了一遍与本 change 相交的无条件断言 —— pending 暴露、pending 跨连接存活、hub 列表、会话删除四条已 MODIFIED；`每个 session 维护独立状态`、`Web session 本地持久化与恢复`、`同一 session 并发发送被拒绝`、`Web UI 支持多标签会话`、`重连补发 pending 交互卡片`、`pending 交互的放弃语义`、`FastAPI app 提供静态资源和 WebSocket`（未枚举路由）等均不被本 change 收窄；记忆侧只有 `Scope 隔离` 钉了 scope（`openspec/specs/long-term-memory/spec.md:74-83`），已 MODIFIED；`## Project Memory` 标题未被任何 spec 钉定 ⇒ 改 `## Persona Memory` 无需 MODIFIED。
+- **`agent/config.py:398-399` / `web/session.py:1630-1637` 的 handler 与超时引用为真**（`DEFAULT_QUESTION_TIMEOUT_SECONDS = 300` / `DEFAULT_APPROVAL_TIMEOUT_SECONDS = 600`，两个 handler 在 `_create_session` 内按 session_id 构造）。

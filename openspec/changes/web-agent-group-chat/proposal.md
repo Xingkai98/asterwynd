@@ -44,7 +44,7 @@
   - `web/server.py`：群聊 HTTP/WS 端点 + 房间级 WS；hub 过滤内部会话；`DELETE` 与 WS `reset` 拒作用于内部会话。
   - `web/static/`：新增群聊 pane JS/CSS；扩展 WS 路由（房间级）。
 - 影响测试：
-  - 人设/房间 CRUD 与持久化（跨重启、跨 workspace）；删除级联（会话/房间日志/persona 记忆）；群聊编排（slot 序列、**轮次终止四出口**、**房间级互斥**、`@` 解析口径、静默含游标推进、上限、成员中途变更）；`SessionRunner` 四态契约（并发被拒不复用陈旧文本）；会话分离负向断言；记忆（人设间隔离 + 同人设共享 + 并发写 + 接线完整性 + 注入块标题）；共享面（workflow 资产库）；Web（群聊 pane + 房间 WS + hub 过滤含损坏快照 + `DELETE`/`reset` 拒作用于内部会话）。
+  - 人设/房间 CRUD 与持久化（跨重启、跨 workspace）；删除级联（会话/房间日志/persona 记忆）；群聊编排（slot 序列、**轮次终止三出口**、**房间级互斥**、`@` 解析口径、静默含游标推进、上限、成员中途变更）；`SessionRunner` 四态契约（并发被拒不复用陈旧文本）；会话分离负向断言；记忆（人设间隔离 + 同人设共享 + 并发写 + 接线完整性 + 注入块标题）；共享面（workflow 资产库）；Web（群聊 pane + 房间 WS + hub 过滤含损坏快照 + `DELETE`/`reset` 拒作用于内部会话）。
 - 影响文档：`openspec/specs/{multi-agent-collaboration,long-term-memory,web-ui}/spec.md` 同步；`docs/architecture.md` 增补群聊编排小节。
 - 不改变：AgentLoop 主循环、工具协议、workflow DSL 与 DAG 调度器语义、普通 Web 会话的既有行为（记忆接线仅限人设会话）。
 

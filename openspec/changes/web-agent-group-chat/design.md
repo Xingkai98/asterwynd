@@ -72,7 +72,7 @@
 
 ### Decision 6: 房间日志是群时间线的权威数据（含 schema 与有界切片）
 
-**schema**（SHALL 写进 spec delta）：有序条目数组，每条 `{seq, speaker, kind, text, ts}`；`kind ∈ {"user","post","notice"}`——`user` 为用户消息（`speaker = "user"`）、`post` 为成员发言（`speaker = persona_id`）、`notice` 为系统条目（如「因达上限结束」「成员运行失败」，`speaker = null`）。首版**不**引入 `lookup` 类条目。
+**schema**（SHALL 写进 spec delta）：有序条目数组，每条 `{seq, speaker, kind, text, ts}`；`kind ∈ {"user","post","system"}`——`user` 为用户消息（`speaker = "user"`）、`post` 为成员发言（`speaker = persona_id`）、`system` 为系统条目（如「因达上限结束」「成员运行失败」，`speaker = null`）。取值用 `system` 而非 `notice`，以避开与 Q5a「群共享 notice」的同名歧义。首版**不**引入 `lookup` 类条目。
 
 - **权威关系**：房间日志是群时间线的唯一权威；重连后由它还原有序群消息流（`Message` 无 timestamp/speaker，`agent/message.py:144-155`；`build_history_payload` 只发 role）。
 - **写入**：编排器每成员发言后 append；用户消息也 append。
@@ -97,7 +97,7 @@
 - **id 前缀约定（钉死取值）**：人设单聊会话 id 前缀 `persona-`、群内会话 id 前缀 `room-`（`_validate_session_id` 只挡空/绝对/逃逸，`agent/session.py:236-243`）。使 hub 过滤与保护判定退化为**纯字符串 + roster 映射**，不依赖读快照（避开损坏快照读不出 `kind` 的问题，`agent/session.py:169-182`）。
 - 标记：`SessionSnapshot` 增 `kind`。
 - **破坏性路径全保护**：不止 `DELETE /api/sessions/{id}`（`web/server.py:334`），还包括 **WS `reset`**（`web/server.py:724-760` → `remove_session` → `shutil.rmtree` → 换随机新 id，`agent/session.py:208-221`、`web/session.py:1627`）。内部会话 SHALL 拒绝 `reset`（或 reset 后复用原 id 并回写 roster），否则 Decision 8 的稳定映射被击穿。
-- hub：`GET /api/sessions`（`web/server.py:320`）SHALL NOT 列出内部会话。
+- hub：`GET /api/sessions`（`web/server.py:320`）SHALL NOT 列出内部会话；同一 store 口径的其它出口 SHALL 一致过滤——`GET /api/workspaces` 的 `session_count`（`web/server.py:280`）与 CLI `session list`（`agent/main.py:1389-1395`）SHALL NOT 计入内部会话。
 
 ### Decision 9: 群内会话（`kind: room_member`）内的 pending 交互显式降级（须 MODIFIED 既有规格）
 
@@ -117,7 +117,7 @@
 - **slot 序列算法（钉死）**：一轮的初始 slot = `openingSpeakers(用户消息)`——用户消息行首 `@Name`（多个则按出现顺序、去重）→ 否则房间 admin（无 admin 则 roster 第一个 `mainBot`）→ 否则按成员顺序。成员发言中 `@Name` **追加**到当前位次之后、去重、且每人每轮发言数 ≤ 上限。**同一人被 @ 两次只追加一次**。
 - **`@` 解析口径**：用户消息**行首**的 `@` 触发点名（`web-ui` delta）；成员发言**句中**的 `@` 也触发接力（`multi-agent-collaboration` delta）——此差异 SHALL 在两处 spec 写明。点名不在列表的人 / 自己 / 多人：只取「属于本群成员且非自己」者，不报错。
 - **每轮上限** = `初始 slot 数 + 固定额外轮次`（群有 admin 时再加固定额度），并按成员分别计数封顶（参照 `ds-bot/src/host/groups.js:24-27,262`）。
-- **轮次终止（三出口）**：① 所有 slot 走完；② 达上限（房间日志记 `notice`「因达上限结束」）；③ 全部剩余成员 run 失败或超时（各记 `notice` 后结束）。单个成员失败/超时只记 `notice` 并继续（不挂死整轮）。**首版不提供轮次取消出口。** 用户再次发言才开新一轮。
+- **轮次终止（三出口）**：① 所有 slot 走完；② 达上限（房间日志记 `system`「因达上限结束」）；③ 全部剩余成员 run 失败或超时（各记 `system` 后结束）。单个成员失败/超时只记 `system` 并继续（不挂死整轮）。**首版不提供轮次取消出口。** 用户再次发言才开新一轮。
 - **轮次进行中到达的用户消息**：只追加进房间日志；其行首 `@` 追加为**当前位次之后**的 slot（去重、受每人每轮上限约束）；SHALL NOT 改变本轮上限基数（上限按**开局** slot 数计算）。
 - **与参照的故意分歧（声明）**：本 change **不**允许成员自行开轮次（参照允许、上限 3，`ds-bot/src/host/constants.js:53-54` `ROOM_BOT_ROUNDS`）。理由：无人值守的 Web 面板下，成员互开轮次会放大成本且无用户在场收敛；收紧为仅用户开轮。
 
@@ -177,7 +177,7 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 ## Testing Strategy
 
 - roster/房间 CRUD + 持久化（跨重启、跨 workspace；人设指令恢复）；删除级联（会话/房间日志/persona 记忆）。
-- 群聊编排：slot 序列、`@` 解析（行首 vs 句中 / 不在列表 / 多人 / 自己）、静默、每轮每成员上限、**轮次终止四出口**（走完 / 达上限 / 失败 / 超时）、**房间级互斥**（并发不发两轮、用户消息排队进本轮）。
+- 群聊编排：slot 序列、`@` 解析（行首 vs 句中 / 不在列表 / 多人 / 自己）、静默、每轮每成员上限、**轮次终止三出口**（走完 / 达上限 / 失败或超时）、轮次中用户消息处理、**房间级互斥**（并发不发两轮、用户消息排队进本轮）。
 - `SessionRunner` 契约：`text` 只来自本次 run（**并发被拒时不复用陈旧文本**）；四态映射。
 - 会话分离：单聊/群聊内容互不泄漏的负向断言。
 - 记忆：人设间隔离 + 同人设单聊/群聊共享 + 并发写；接线完整性（LLM 去重判官存在、memory_config 生效）；注入块标题为 `## Persona Memory`。
