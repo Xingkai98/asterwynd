@@ -36,3 +36,20 @@ Web UI SHALL 同时支持人设单聊视图与群聊视图，用户在两者之�
 - **GIVEN** 用户先打开某个人设的单聊，再打开某个群聊
 - **WHEN** 用户切回该人设的单聊
 - **THEN** 该单聊 SHALL 保持其原有会话内容
+
+### Requirement: 内部会话不出现在会话列表
+
+Web UI SHALL NOT 把人设单聊会话与群内会话作为普通会话展示在会话列表（hub / `GET /api/sessions`）；且 SHALL NOT 允许经会话删除接口直接删除这些内部会话。
+
+#### Scenario: hub 不列出内部会话
+
+- **GIVEN** 已存在一个人设与一个群聊
+- **WHEN** 用户打开 hub
+- **THEN** 该人设的单聊会话与 (人设, 群) 群内会话 SHALL NOT 作为普通会话出现
+
+#### Scenario: 内部会话不可直接删除
+
+- **GIVEN** 某个人设单聊会话的底座 id
+- **WHEN** 调用会话删除接口删除该 id
+- **THEN** 该删除 SHALL 被拒绝
+- **AND** 人设 SHALL 只能经人设/房间的删除接口清理

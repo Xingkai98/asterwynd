@@ -14,32 +14,38 @@
 - 新增**长期 agent 人设**（roster）：稳定标识、名称、角色标签、指令、模型绑定，跨进程持久化。
 - 新增**会话式群聊编排器**：有序轮次、`@<名称>` 点名、成员静默（无新增内容不发言）、Chief/admin 默认应答并派活；与既有 DAG 调度器**并列**，不修改其语义。
 - 每个 agent 人设 SHALL 拥有与用户的**单聊会话**，以及在其加入的每个群里的**独立群内会话**；单聊与群聊内容 SHALL NOT 互相泄漏。
-- 记忆 SHALL 细分出**人设维**作用域：每个人设一份跨会话长期记忆，同一人设在单聊与群聊共享同一份记忆。
-- Web UI SHALL 新增**群聊（Team）视图**，展示消息流、成员与当前发言者，并按发言人区分不同 agent。
+- 记忆 SHALL 细分出**人设维**作用域：每个人设一份跨会话长期记忆，同一人设在单聊与群聊共享同一份记忆；为此 SHALL 先补上 Web 路径的长期记忆接线（现状 Web 未接）。
+- 新增**房间日志**作为群时间线的权威有序数据（成员看到本轮此前内容、重连后还原有序群消息流）。
+- 会话标识与 hub 可见性 SHALL 明确：人设单聊会话与 (人设, 群) 群内会话 SHALL NOT 以普通会话身份出现在 hub，且 SHALL NOT 可被会话删除接口直接删除。
+- 群聊会话内的**交互式 pending（审批/提问）SHALL 显式降级**，不得让无人值守的轮次阻塞到超时。
+- Web UI SHALL 新增**群聊 pane**（新 pane 类型 + 房间级 WS），展示消息流、成员与当前发言者，并按发言人区分不同 agent。
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `multi-agent-collaboration`: 从空基线升级为「长期人设 + 会话式群聊编排」能力（新增 roster、群聊轮次、人设级记忆作用域）。
-- `web-ui`: 新增群聊视图与多 agent 消息按来源区分。
+- `multi-agent-collaboration`: 从空基线升级为「长期人设 + 会话式群聊编排」能力（新增 roster、房间日志、群聊轮次与终止条件）。
+- `long-term-memory`: 记忆作用域从 project/repo 扩展出 persona 维（既有规格 `openspec/specs/long-term-memory/spec.md:76` 钉定 project/repo scope，故需 MODIFIED delta）。
+- `web-ui`: 新增群聊 pane 与房间级 WS；hub 过滤内部会话；多 agent 消息按来源区分。
 
 ## Dependencies
 
-- 复用既有（已实现）：多会话 `SessionManager` / `SessionStore`、会话级 `SessionEventChannel`、per-loop `persistent_memory`、前端多 tab=多 WS 模型。
-- 依赖既有 `long-term-memory` 的内存去重/衰减/检索能力。
+- 复用既有（已实现）：多会话 `SessionManager` / `SessionStore`、会话级 `SessionEventChannel`、前端 per-tab（多 tab=多 WS）模型。
+- 依赖既有 `long-term-memory` 的去重/衰减/检索能力；**并需先补一个现存缺口**：Web 路径今天**未接** `persistent_memory`（`web/session.py:1648-1688` 未传，CLI 路径 `agent/main.py:255,282,325` 已接），本 change 在人设会话上补齐并加 persona 维（普通 Web 会话的接线属另一 change）。
 
 ## Impact Analysis
 
 - 影响代码：
-  - `agent/`：新增人设/房间模型与持久化、群聊编排器（新建模块，如 `agent/team/` 或 `agent/groupchat/`）。
-  - `agent/memory/persistent.py`：记忆作用域从项目级扩展出人设维。
-  - `web/server.py`、`web/session.py`：新增群聊 HTTP/WS 端点与房间级事件通道。
-  - `web/static/`：新增群聊视图 JS/CSS，聊天渲染 per-pane 化。
+  - `agent/`：新增人设/房间模型与持久化、房间日志、群聊轮次编排器（新模块，如 `agent/team/`）；编排器依赖 `SessionRunner` 抽象（由 web 层注入），本模块不 import `web`。
+  - `agent/session.py`：`SessionSnapshot` 增 `kind`（区分普通会话 / 人设单聊 / 群内会话）。
+  - `agent/memory/persistent.py`：记忆作用域从 project/repo 扩展出 persona 维。
+  - `web/session.py`：人设会话注入 `persistent_memory`；实现并注入 `SessionRunner`；房间级事件汇聚。
+  - `web/server.py`：群聊 HTTP/WS 端点；hub 过滤内部会话；`DELETE` 拒删内部会话。
+  - `web/static/`：新增群聊 pane JS/CSS；扩展 WS 路由（房间级）。
 - 影响测试：
-  - 人设/房间 CRUD 与持久化单测；群聊轮次编排单测（轮次、@接力、静默、上限）；记忆作用域隔离单测；Web 视图与 WS 端点测试；多 agent 并发 run 测试。
-- 影响文档：`openspec/specs/multi-agent-collaboration/spec.md`、`openspec/specs/web-ui/spec.md` 同步；`docs/architecture.md` 增补群聊编排小节。
-- 不改变：AgentLoop 主循环、工具协议、workflow DSL 与 DAG 调度器语义。
+  - 人设/房间 CRUD 与持久化（含跨重启恢复）；群聊编排（轮次顺序、**轮次终止条件**、`@` 接力边界、静默、上限、成员中途变更）；会话分离负向断言；记忆（人设间隔离 + 同人设单聊/群聊共享 + **并发写**）；共享面（workflow 资产库）；Web（群聊 pane + 房间 WS + hub 过滤 + `DELETE` 拒删）；多人设并发 run。
+- 影响文档：`openspec/specs/{multi-agent-collaboration,long-term-memory,web-ui}/spec.md` 同步；`docs/architecture.md` 增补群聊编排小节。
+- 不改变：AgentLoop 主循环、工具协议、workflow DSL 与 DAG 调度器语义、普通 Web 会话的既有行为（记忆接线仅限人设会话）。
 
 ## Reference Implementation Research
 
@@ -53,10 +59,10 @@
   - 在「一 session 一 AgentLoop」的既有 Web 架构上如何承载多个 agent？
 - findings:
   - 参考实现 **Fei2411/DeepSeek-Bot**（本地克隆 `/home/shared/agent-study/dsh-bot-research/DeepSeek-Bot-main/`，Apache-2.0）：每个 bot = 一个长驻会话；群聊 = 一个不调模型的 relay 会话（`ds-bot/src/host/groups.js:493-518` 钩 `llm/stream` 合成 `group_relay` 工具调用）+ 每成员每群的隐藏会话（`groups.js:128-145`）；轮次/`@接力`/`[PASS]静默`在 `groups.js:261-321`；Chief = `mainBotIds`（`src/host/prompt.js:25-36`）；记忆两层且按人设分（bot 自有 + team 共享）；成本控制靠 admin 模式 + `[PASS]` + 每轮每成员发言上限（`src/host/constants.js:23,54`、`groups.js:26-27`）。
-  - 本项目现状（只读调研，2026-10-12）：无 persona/roster 抽象；子 agent session 仅内存（`agent/subagent/manager.py:470`、`agent/subagent/snapshot.py:3`）；workflow 是 DAG 批处理（`agent/subagent/scheduler.py`）；Web 假设一 session 一 AgentLoop（`web/session.py:1335-1346`）；记忆为项目级作用域（`agent/memory/persistent.py:183`）。
-  - 可复用：多会话并发 + `SessionStore`（`agent/session.py:81`）、会话级事件通道（`web/session.py:355`）、per-loop `persistent_memory`（`agent/loop.py:132`）、前端多 tab=多 WS（`web/static/chat.js:5-8`）。
+  - 本项目现状（只读调研 + grill 核实，2026-10-12）：无 persona/roster 抽象；**不复用 `SubAgentManager`**（child session 被父 `AgentLoop` 拥有（`agent/loop.py:167`）、system prompt 硬编码「受限子 agent」（`agent/subagent/manager.py:580,817`）、无会话快照——`_sessions` 是进程内存字典（`agent/subagent/manager.py:470`），仅 run 级 checkpoint 落盘）；workflow 是节点种类封闭四值的 DAG 批处理（`agent/subagent/scheduler.py:1722-1732`）；Web 假设一 session 一 AgentLoop（`web/session.py:1335-1346`）；记忆为项目级作用域（`agent/memory/persistent.py:180-185`）且 **Web 路径未接 `persistent_memory`**（`web/session.py:1648-1688` 未传）；前端已 per-tab（`web/static/chat.js:144,211-229`）但 WS URL 写死 `/ws/${sessionId}`（`chat.js:436`）；`Message` 无 timestamp/speaker（`agent/message.py:147-155`）。
+  - 可复用：多会话并发 + `SessionStore`（`agent/session.py:81`）、会话级事件通道（`web/session.py:355`）、per-loop `persistent_memory` 注入面（`agent/loop.py:132`，需本 change 在 Web 侧接上）、前端 per-tab 模型（`web/static/chat.js:144,211-229`）。
 - design impact:
-  - 采用「每个 agent 人设 = 一个 AgentSession（各自 AgentLoop + 事件通道）」承载，而非扩展 `SubAgentManager`（后者不落盘、不面向用户）。
-  - 记忆作用域需从项目级细分为「项目 × persona」。
-  - 群聊编排器新建，与既有 DAG 调度器并列。
-  - Web 聊天渲染需 per-pane 化（现为全局单会话假设，`web/static/chat.js:71-77`）。
+  - 采用「每个 agent 人设 = 一个 AgentSession（各自 AgentLoop + 事件通道）」承载，而非扩展 `SubAgentManager`。
+  - 记忆作用域需从 project/repo 细分出 persona 维，且**先补 Web 记忆接线**（仅人设会话）。
+  - 群聊编排器新建，与既有 DAG 调度器并列；依赖 `SessionRunner` 抽象由 web 层注入（避免 `agent/ → web/` 反向依赖）。
+  - Web 前端**已 per-tab**，无需重构渲染；真正工作是新增**群聊 pane 类型 + 房间级 WS**（现 WS 路由写死 `/ws/${sessionId}`）。
