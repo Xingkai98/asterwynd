@@ -142,3 +142,36 @@ Subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline 
 - **WHEN** 人设 B 的上下文注入资产索引
 - **THEN** 该行为 SHALL 符合「资产库是跨人设共享面」的声明
 - **AND** 该行为 SHALL NOT 被判定为人设隔离缺陷
+
+### Requirement: 会话数上限与排队
+
+系统 SHALL 对（人设 + 群）会话的数量施加可配置上限（默认 **50**）；达到上限时新建会话 SHALL **排队**等待执行槽释放，SHALL NOT 拒绝创建；会话 SHALL 懒构造（被首次使用时才建立其 AgentLoop）。
+
+#### Scenario: 达到上限排队而非拒绝
+
+- **GIVEN** 会话数已达配置上限
+- **WHEN** 用户创建一个会新增人设/群会话的操作
+- **THEN** 该新建 SHALL 排队等待，SHALL NOT 被拒绝
+- **AND** 当有执行槽释放时 SHALL 按顺序建立
+
+#### Scenario: 会话懒构造
+
+- **GIVEN** 一个已定义但尚未被使用的会话面
+- **WHEN** 尚未有人在其中运行
+- **THEN** 其 AgentLoop SHALL NOT 被构造
+
+### Requirement: 群共享 notice
+
+房间 SHALL 支持一条群级共享指令（notice）；该指令 SHALL 在该房间每个成员发言前注入其群内会话，且 SHALL NOT 注入该成员的单聊会话。
+
+#### Scenario: notice 注入群内会话
+
+- **GIVEN** 某房间设置了 notice
+- **WHEN** 该房间某成员发言
+- **THEN** 其群内会话上下文 SHALL 包含该 notice
+
+#### Scenario: notice 不影响单聊
+
+- **GIVEN** 某房间设置了 notice
+- **WHEN** 该房间某成员与其单聊会话交互
+- **THEN** 该单聊会话上下文 SHALL NOT 包含该 notice

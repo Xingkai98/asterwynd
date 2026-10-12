@@ -28,6 +28,7 @@
 - 不复刻 DS Bot 的外围功能（浏览器面板、secrets、用量页、语音、定时任务、头像角色系统）。
 - 不做多租户 / 鉴权；沿用现有单机本地 Web 的信任模型。
 - 不把 workflow 资产库按人设分桶（显式声明为**共享面**，Decision 12）。
+- 首版不做「引用另一段对话作为上下文」（Q5b 已拍板不做；不新开跨会话只读工具面）。
 
 ## Decisions
 
@@ -37,7 +38,7 @@
 
 **不**扩展 `SubAgentManager`。理由（三条代码级否证）：其 child session 被**父 `AgentLoop` 拥有**（`agent/loop.py:167`）、system prompt 硬编码为「受限子 agent」（`agent/subagent/manager.py:580,817`）、无会话快照（`_sessions` 是进程内存字典，`agent/subagent/manager.py:470`）。
 承载可行性（已确认）：人设指令走现成注入面 `AgentSession.init_messages(<指令>)` → `agent._user_system_prompt` → `SessionSnapshot.user_system_prompt` 落盘 + resume 回灌（`web/session.py:1378-1380`、`agent/session.py:27`、`agent/loop.py:138,713-714`）。
-**成本模型按会话数计**：人设数 N、平均群数 G ⇒ N×(1+G) 份 `AgentLoop`。⇒ 必须**懒构造 + 有上限**（Decision 6 与 Open Question Q4）。
+**成本模型按会话数计**：人设数 N、平均群数 G ⇒ N×(1+G) 份 `AgentLoop`。⇒ 必须**懒构造 + 有上限**。**上限取值（Q4 已拍板）**：默认会话数上限 **50**，超出**排队**（不拒绝创建），上限做成可配置项。
 
 ### Decision 2: 单聊与群聊会话分离是结构性保证
 
@@ -148,6 +149,14 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
   - 删除 SHALL 经人设/房间接口进行（不得走 `DELETE /api/sessions` 或 WS `reset`）。
   理由：否则「不可直接删除」的反面（正当删除）无规格可依，且删除人设后 persona 记忆长期残留（未声明的隐私面）。
 
+### Decision 16: 群共享 notice（群公告，首版做）
+
+房间 SHALL 支持一条**群级共享指令**（`notice`），在该房间每个成员发言前注入其群内会话的 prompt，使约束只需写一次。
+- 注入位置：群内会话本轮 user 消息的群上下文前缀（与房间日志切片并列），不写入单聊。
+- 与参照同形（`ds-bot/src/host/groups.js:161` 的 `room.notice`「Group notice (shared instructions for every member)」）。
+- 与房间日志 `kind: "system"` 命名区分（那里是系统条目，此处是用户配置的群指令）。
+（Q5a 已拍板首版做。）
+
 ## Pre-Implementation Review
 
 - Questions resolved:
@@ -187,6 +196,10 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 
 ## Open Questions
 
-- **Q4**: 首版默认**会话数上限**取多少？（口径按会话数 = 人设×(1+群数)。）是否暴露为配置项？超限行为是拒绝创建还是排队？
-- **Q5a**: 首版是否排除「群共享 notice」（每条群消息前注入的群级共享指令）？（本仓无可复用 primitive；不做则从房间模型与 tasks 3.2 移除 `notice`。）
-- **Q5b**: 首版是否排除「引用另一段对话作为上下文」（DS Bot 的 + → Reference）？（参照实现的 relay 架构不可移植，做则需新开一个跨会话只读工具面；不做则记入 Non-Goals。）
+（无。Q4 / Q5a / Q5b 已由用户于 2026-10-12 拍板，答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`。）
+
+## Confirmed Answers（用户拍板，2026-10-12）
+
+- **Q4**: 首版会话数上限 = **50**，超出**排队**；做成可配置项。
+- **Q5a**: 首版**做**群共享 notice（Decision 16）。
+- **Q5b**: 首版**不做**「引用另一段对话作为上下文」（Non-Goals）。

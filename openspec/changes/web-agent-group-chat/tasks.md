@@ -17,11 +17,12 @@
 - [ ] 2.6 共享面：workflow 资产库跨人设可见性（按「共享面」声明断言，防未声明泄漏）。
 - [ ] 2.7 Web：群聊 pane + 房间级 WS + hub 过滤内部会话（含**损坏快照**经 id 前缀/roster 判定）+ `DELETE` 拒删 + **WS `reset` 拒改内部会话**。
 - [ ] 2.8 多人设并发 run 与既有 `run_lock` / 并发语义不冲突。
+- [ ] 2.9 会话数上限：达上限排队而非拒绝、懒构造未使用的会话面；群共享 notice：注入群内会话且不影响单聊。
 
 ## 3. 实现
 
 - [ ] 3.1 人设（roster）模型与持久化（workspace 级）：稳定 id、名称、角色、指令、模型绑定；`mainBotIds`（可多个）。
-- [ ] 3.2 房间模型与持久化（workspace 级）：成员、`admin`（单个、可空）、模式；room 记录含 `(persona, room) → 群内会话 id` 映射。（群共享 `notice` 视 Q5 答复决定是否纳入首版。）
+- [ ] 3.2 房间模型与持久化（workspace 级）：成员、`admin`（单个、可空）、模式、**群共享 `notice`**（Q5a 首版做）；room 记录含 `(persona, room) → 群内会话 id` 映射。
 - [ ] 3.3 会话标识与生命周期保护：`SessionSnapshot` 增 `kind`；内部会话 id 前缀约定；hub 过滤（`GET /api/sessions`）+ `DELETE` 拒删 + WS `reset` 拒绝（或复用原 id 并回写 roster）。
 - [ ] 3.4 会话分离：为每个人设建立单聊会话与 (persona, room) 群内会话。
 - [ ] 3.5 房间日志：schema（seq / speaker / kind / text / ts）+ 持久化 + 游标（回合推进）+ 有界分层切片（首见 / 增量 / 往轮）。
@@ -30,6 +31,8 @@
 - [ ] 3.8 记忆：人设会话注入 `persistent_memory` + `memory_config` + `llm`（+ 视需要 `quality_config`）；`PersistentMemory` 加 persona 维（同级布局）；同一人设共享同一实例；注入块标题 `## Persona Memory`。
 - [ ] 3.9 群内会话（`kind: room_member`）pending 降级：撤 ask 类工具；审批类 fail-closed 立即判定。人设单聊（`kind: persona_chat`）**不**降级，照常暴露 pending。
 - [ ] 3.10 Web：群聊 pane + 房间级 WS（扩展写死的 `/ws/${sessionId}`）；人设/房间管理入口 + 单聊入口 + 删除级联。
+- [ ] 3.11 会话数上限（默认 50，可配置）+ 超出排队 + 懒构造。
+- [ ] 3.12 群共享 notice：房间模型字段 + 注入群内会话 prompt（不影响单聊）。
 
 ## 4. 文档
 
