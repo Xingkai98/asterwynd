@@ -1,8 +1,27 @@
+## MODIFIED Requirements
+
+### Requirement: Orchestration Reuses Workflow Persistence Discipline
+
+Subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline (JSON serialization + schema_version + transition log style), SHALL NOT couple to the dev-workflow phase vocabulary, and SHALL NOT introduce a separate control plane. 本 Requirement 的主语是 **Subagent orchestration**：它 SHALL NOT 覆盖非 subagent 的交互式编排（例如本 change 新增的群聊轮次编排器——后者不复用 `SubAgentManager`，不属本 Requirement 的约束范畴）。
+
+#### Scenario: orchestration state persists without dev-workflow coupling
+
+- Given an orchestration pattern run
+- When pattern state is persisted
+- Then it follows the workflow JSON/transition-log discipline
+- And it does not depend on dev-workflow phases
+
+#### Scenario: 非 subagent 编排不受本 Requirement 约束
+
+- **GIVEN** 一个不基于 `SubAgentManager` 的交互式编排（群聊轮次编排器）
+- **WHEN** 它维护自己的房间日志与轮次状态
+- **THEN** 该行为 SHALL NOT 被判定为「引入独立控制面」的违规
+
 ## ADDED Requirements
 
-### Requirement: 长期 agent 人设
+### Requirement: 长期 agent 人设与两级主持角色
 
-系统 SHALL 支持用户维护长期存在的 agent 人设；每个人设 SHALL 拥有稳定标识、显示名、角色标签、指令与模型绑定，并 SHALL 跨进程持久化。
+系统 SHALL 支持用户维护长期存在的 agent 人设；每个人设 SHALL 拥有稳定标识、显示名、角色标签、指令与模型绑定，并 SHALL 跨进程持久化。主持角色 SHALL 分两级：**roster 级 `mainBotIds`（可多个，即 Chief）** 负责管理全部人设与房间，**房间级 `admin`（单个、可为空）** 决定该房间「用户消息默认由谁应答」。
 
 #### Scenario: 创建人设
 
@@ -11,11 +30,12 @@
 - **THEN** 系统 SHALL 返回稳定的人设标识
 - **AND** 该人设 SHALL 在进程重启后仍然存在
 
-#### Scenario: 人设模型绑定持久化
+#### Scenario: 默认应答者取房间 admin，回落 Chief
 
-- **GIVEN** 某个人设绑定了模型
-- **WHEN** 该人设在后续会话中被再次使用时
-- **THEN** 系统 SHALL 使用该人设绑定的模型
+- **GIVEN** 一个房间设定了 admin 人设
+- **WHEN** 用户发送一条不含 `@` 的群消息
+- **THEN** 该房间 admin SHALL 成为首先应答者
+- **AND** 若该房间无 admin，则 roster 中第一个 `mainBot` SHALL 成为首先应答者
 
 ### Requirement: 单聊与群聊会话分离
 
@@ -35,7 +55,7 @@
 
 ### Requirement: 房间日志
 
-系统 SHALL 为每个群聊维护一条权威、有序的房间日志，记录用户消息与成员发言（含发言者与顺序）；群聊视图重连后 SHALL 能从房间日志还原有序群消息流。
+系统 SHALL 为每个群聊维护一条权威、有序的房间日志。每个条目 SHALL 含顺序号、发言者（用户或人设 id）、类型（用户消息 / 成员发言）、文本与时间戳；群聊视图重连后 SHALL 能从房间日志还原有序群消息流。
 
 #### Scenario: 重连还原有序时间线
 
@@ -43,9 +63,15 @@
 - **WHEN** 用户重连该群聊
 - **THEN** 群消息 SHALL 按发言顺序还原
 
+#### Scenario: 房间日志条目含发言者与顺序
+
+- **GIVEN** 房间日志中先后有用户消息与两个成员的发言
+- **WHEN** 读取房间日志
+- **THEN** 每个条目 SHALL 带可区分的发言者与递增顺序号
+
 ### Requirement: 会话式群聊轮次编排
 
-群聊 SHALL 由轮次编排器推进；同一时刻 SHALL 至多一个成员在发言，后发言的成员 SHALL 能看到本轮此前已发布的内容；用户消息 SHALL 默认由群管理员（Chief）应答，管理员 SHALL 能点名其他成员；用户 SHALL 能以 `@<名称>` 直接点名成员；成员没有新增内容时 SHALL 可以选择不发言（静默）。
+群聊 SHALL 由轮次编排器按明确的发言位（slot）序列推进；同一时刻 SHALL 至多一个成员在发言；每个成员 SHALL 只看到其**持久化游标之后**的新增内容（含本轮与往轮分层），且切片 SHALL 有界。用户消息 SHALL 默认由房间 admin（无则 roster 首个 mainBot）应答；用户消息**行首**的 `@<名称>` SHALL 指定首先发言者；成员发言**句中**的 `@<名称>` SHALL 把该成员追加到当前位次之后（去重、非本群成员或自己忽略且不报错）；成员没有新增内容时 SHALL 可以静默。
 
 #### Scenario: 用户以 @ 点名指定成员
 
@@ -60,11 +86,12 @@
 - **THEN** 该成员 SHALL NOT 向群聊发布消息
 - **AND** 轮次 SHALL 继续推进到下一个成员
 
-#### Scenario: 发言次数上限
+#### Scenario: 静默成员的切片游标仍推进
 
-- **GIVEN** 一个群聊轮次正在进行
-- **WHEN** 某成员的发言次数达到本轮上限
-- **THEN** 系统 SHALL NOT 再为该成员追加发言
+- **GIVEN** 某成员连续多轮静默
+- **WHEN** 该成员再次被轮到
+- **THEN** 它看到的 SHALL 仅为其上次回合之后的新增内容
+- **AND** SHALL NOT 重复注入此前已注入过的内容
 
 #### Scenario: @ 点名边界
 
@@ -73,9 +100,15 @@
 - **THEN** 系统 SHALL 只把「属于本群成员且非自己」的被点名者排入后续发言
 - **AND** 系统 SHALL NOT 因无效点名报错
 
-### Requirement: 群聊轮次终止
+#### Scenario: 发言次数上限
 
-一轮群聊 SHALL 在所有发言位走完或达到本轮上限时结束；用户再次发言 SHALL 开启新一轮；达到上限而结束的轮次 SHALL 在房间日志中记录其原因。
+- **GIVEN** 一个群聊轮次正在进行
+- **WHEN** 某成员的发言次数达到本轮上限
+- **THEN** 系统 SHALL NOT 再为该成员追加发言
+
+### Requirement: 房间级互斥与轮次终止
+
+同一房间同一时刻 SHALL 至多存在一个进行中的轮次；用户在同一轮进行中发送的消息 SHALL 排队进入该轮，SHALL NOT 并行开启第二轮。一轮 SHALL 在四个出口之一结束：所有发言位走完 / 达到本轮上限 / 成员运行失败或超时（记入房间日志后继续）/ 被取消；达到上限而结束的轮次 SHALL 在房间日志记录原因；系统 SHALL NOT 在用户再次发言前自行开启新一轮。
 
 #### Scenario: 达到上限而结束
 
@@ -83,6 +116,20 @@
 - **WHEN** 编排器停止该轮
 - **THEN** 房间日志 SHALL 记录一条「因达上限结束」
 - **AND** 系统 SHALL NOT 在用户再次发言前自行开启新一轮
+
+#### Scenario: 成员运行失败不挂死整轮
+
+- **GIVEN** 本轮某成员的运行失败或超时
+- **WHEN** 编排器处理该成员的出口
+- **THEN** 该失败 SHALL 记入房间日志
+- **AND** 轮次 SHALL 继续推进，SHALL NOT 永久阻塞
+
+#### Scenario: 并发消息进入同一轮
+
+- **GIVEN** 一个房间已有一轮在进行中
+- **WHEN** 用户再发一条消息
+- **THEN** 该消息 SHALL 排队进入当前轮
+- **AND** 系统 SHALL NOT 并行开启第二个轮次
 
 ### Requirement: 跨人设共享面声明
 
