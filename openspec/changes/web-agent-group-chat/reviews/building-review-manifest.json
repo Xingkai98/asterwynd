@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "web-agent-group-chat",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "building-review-web-agent-group-chat-20261013-r2",
+  "base_sha": "3c7196b",
+  "head_sha": "3d3ea5d",
+  "tasks_hash": "sha256:3369938a509a9900e2f91c1e12535d4bd079ed16e194c6883af16d006ee41aad",
+  "spec_hash": "sha256:5ee03af780a1d7e973d7925455b8b131ef7a53e5f543c8e6951cad59029e1834",
+  "diff_hash": "sha256:3f488d30fc0989fc1b2b4ad93153674c0fd777670c984af31bc2ce2d4a2a5ba1",
+  "report_hash": "sha256:6fb3a8b604991d3edc007483f6dbd14a04649d53a69ff7932f91eb8ea61ddce8"
+}
