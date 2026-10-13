@@ -351,6 +351,29 @@ class TestMemoryWiring:
         assert memory.index_title == "## Persona Memory"
 
 
+class TestNoticeInjection:
+    @pytest.mark.asyncio
+    async def test_notice_reaches_the_room_session_only(self, tmp_path):
+        service = _service(tmp_path, ScriptedLLM(default_response=LLMResponse(content="知道了")))
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(ws, name="r", members=[a.id], admin=a.id,
+                                   notice="先说结论，再说理由")
+        chat_id = await service.ensure_persona_chat_session(ws, a.id)
+        room_sid = await service.team_for(ws).orchestrator._resolver.ensure_room_session(
+            room.id, a.id
+        )
+
+        await service.submit_room_message(ws, room.id, "开始")
+        room_session = service.manager.get_session(room_sid)
+        assert any("先说结论，再说理由" in str(m.content) for m in room_session.messages)
+
+        # 单聊不经过群提示词构造，notice 不进单聊
+        await service.manager.run_session(service.manager.get_session(chat_id), "聊聊")
+        chat_session = service.manager.get_session(chat_id)
+        assert all("先说结论，再说理由" not in str(m.content) for m in chat_session.messages)
+
+
 class TestPendingDowngrade:
     @pytest.mark.asyncio
     async def test_room_member_has_no_ask_tool_and_fails_closed(self, tmp_path):

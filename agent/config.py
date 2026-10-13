@@ -681,6 +681,7 @@ def _load_yaml_config(
             _require_section(raw, "subagents", path, "subagents"), path
         ),
         web=_parse_web_config(raw.get("web", {}), path),
+        team=_parse_team_config(raw.get("team", {}), path),
     )
 
 
@@ -1647,6 +1648,57 @@ def _parse_memory_config(raw: Any, path: Path) -> MemoryConfig:
             mapping.get("git_backend_enabled", True),
             path,
             "memory.git_backend_enabled",
+        ),
+        review_enabled=_parse_bool(
+            mapping.get("review_enabled", True), path, "memory.review_enabled"
+        ),
+        review_group_lag=_parse_timeout_seconds(
+            mapping.get("review_group_lag", 30), "memory.review_group_lag", path=path
+        ),
+        review_read_limit=_parse_timeout_seconds(
+            mapping.get("review_read_limit", 24), "memory.review_read_limit", path=path
+        ),
+        review_model=_parse_optional_string(
+            mapping.get("review_model"), path, "memory.review_model"
+        ),
+    )
+
+
+def _parse_team_config(raw: Any, path: Path) -> TeamConfig:
+    """群聊板块的运行参数（change ``web-agent-group-chat``）。
+
+    ``team.max_sessions`` 是内部会话数上限（Q4 拍板缺省 50，可配置）；达到上限时
+    新建**排队**，不拒绝。其余四项与参照 ``groups.js:24-27`` 同值，改动它们只影响
+    轮次预算，不影响终止语义（三出口）。
+    """
+    mapping = _expect_mapping(raw, path, "team")
+    timeout_raw = mapping.get("turn_timeout_seconds", 240.0)
+    if isinstance(timeout_raw, bool):
+        raise ConfigError(f"{path}: team.turn_timeout_seconds must be a number")
+    try:
+        turn_timeout = float(timeout_raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            f"{path}: team.turn_timeout_seconds must be a number"
+        ) from exc
+    if turn_timeout <= 0:
+        raise ConfigError(f"{path}: team.turn_timeout_seconds must be positive")
+    return TeamConfig(
+        max_sessions=_parse_timeout_seconds(
+            mapping.get("max_sessions", 50), "team.max_sessions", path=path
+        ),
+        turn_timeout_seconds=turn_timeout,
+        extra_turns=_parse_non_negative_int(
+            mapping.get("extra_turns", 4), "team.extra_turns", path=path
+        ),
+        admin_extra_turns=_parse_non_negative_int(
+            mapping.get("admin_extra_turns", 4), "team.admin_extra_turns", path=path
+        ),
+        turns_each=_parse_timeout_seconds(
+            mapping.get("turns_each", 2), "team.turns_each", path=path
+        ),
+        admin_turns_each=_parse_timeout_seconds(
+            mapping.get("admin_turns_each", 4), "team.admin_turns_each", path=path
         ),
     )
 

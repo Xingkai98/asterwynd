@@ -14,7 +14,6 @@ from pathlib import Path
 
 from agent.config import AsterwyndConfig
 from agent.session import (
-    KIND_CHAT,
     KIND_PERSONA_CHAT,
     KIND_ROOM_MEMBER,
     new_internal_session_id,
@@ -25,7 +24,7 @@ from agent.team.models import Persona, Room
 from agent.team.orchestrator import RoomOrchestrator, RoundResult
 from agent.team.runner import TurnOutcome
 from agent.team.store import TeamStore
-from web.session import SessionManager, TurnOutcome as _TurnOutcome, WebSessionRunner
+from web.session import SessionManager, WebSessionRunner
 
 logger = logging.getLogger("asterwynd.web.team")
 

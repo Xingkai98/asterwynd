@@ -854,3 +854,64 @@ web:
         load_config(start_dir=tmp_path)
 
     assert "web.approval_timeout_seconds" in str(excinfo.value)
+
+
+def test_team_section_defaults_when_absent(tmp_path, monkeypatch):
+    """群聊板块的运行参数缺省值（change web-agent-group-chat，Q4 拍板上限 50）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    config = load_config(start_dir=tmp_path)
+    assert config.team.max_sessions == 50
+    assert config.team.turn_timeout_seconds == 240.0
+    assert config.team.extra_turns == 4 and config.team.admin_extra_turns == 4
+    assert config.team.turns_each == 2 and config.team.admin_turns_each == 4
+
+
+def test_team_section_parses_overrides(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+team:
+  max_sessions: 3
+  turn_timeout_seconds: 30
+  extra_turns: 0
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.team.max_sessions == 3
+    assert config.team.turn_timeout_seconds == 30.0
+    assert config.team.extra_turns == 0
+
+
+def test_team_max_sessions_rejects_bool_and_zero(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "team:\n  max_sessions: true\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(start_dir=tmp_path)
+    assert "team.max_sessions" in str(excinfo.value)
+
+
+def test_memory_review_defaults_and_overrides(tmp_path, monkeypatch):
+    """记忆 review 的开关与阈值（Decision 17）；阈值缺省 30（与参照同值）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    defaults = load_config(start_dir=tmp_path)
+    assert defaults.memory.review_enabled is True
+    assert defaults.memory.review_group_lag == 30
+    assert defaults.memory.review_read_limit == 24
+    assert defaults.memory.review_model is None
+
+    (tmp_path / "asterwynd.yaml").write_text(
+        """
+memory:
+  review_enabled: false
+  review_group_lag: 5
+  review_model: small-model
+""",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.memory.review_enabled is False
+    assert config.memory.review_group_lag == 5
+    assert config.memory.review_model == "small-model"
