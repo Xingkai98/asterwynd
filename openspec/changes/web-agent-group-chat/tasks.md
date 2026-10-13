@@ -1,7 +1,7 @@
 ## 1. 规格
 
-- [ ] 1.1 修改 `multi-agent-collaboration` 规格：长期人设与两级主持角色（roster `mainBotIds` + 房间 `admin`）、单聊/群聊会话分离、房间日志 schema（`kind: user|post|notice`）、轮次编排与 slot 序列、`@` 解析口径、房间级互斥与**轮次终止三出口**（走完 / 达上限 / 失败或超时）、跨人设共享面声明；并以 MODIFIED 澄清既有「SHALL NOT introduce a separate control plane」只约束 subagent orchestration。
-- [ ] 1.2 修改 `long-term-memory` 规格：`Scope 隔离` 增 persona 维（MODIFIED，匹配既有 Requirement 名，保留原 Scenario）。
+- [ ] 1.1 修改 `multi-agent-collaboration` 规格：长期人设与两级主持角色（roster `mainBotIds` + 房间 `admin`）、单聊/群聊会话分离、房间日志 schema（`kind: user|post|system`）、轮次编排与 slot 序列、`@` 解析口径、房间级互斥与**轮次终止三出口**（走完 / 达上限 / 失败或超时）、跨人设共享面声明；并以 MODIFIED 澄清既有「SHALL NOT introduce a separate control plane」只约束 subagent orchestration。
+- [ ] 1.2 修改 `long-term-memory` 规格：`Scope 隔离` 增「人设 × 会话面」scope（MODIFIED，匹配既有 Requirement 名，保留原 Scenario）；并新增「人设记忆的 review 触发与游标」。
 - [ ] 1.3 修改 `web-ui` 规格：群聊视图 + 房间级 WS、多 agent 按来源区分、人设/房间管理入口与单聊入口、内部会话列表过滤与生命周期保护（含 WS `reset`）、内部会话 pending 降级；后两项以 MODIFIED 收窄既有「审批必须暴露」与「pending 跨连接存活」两条 Requirement。
 - [ ] 1.4 同步对应 current spec 到 `openspec/specs/<capability>/spec.md`（含 `long-term-memory`）。
 - [ ] 1.5 开发前使用 `grilling` 审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响，并跑设计阶段对抗闭环（`reviews/grill-design.md` + `reviews/grill-adversarial.md`）。
@@ -9,7 +9,7 @@
 
 ## 2. 测试
 
-- [ ] 2.1 人设/房间 CRUD 与持久化单测（跨重启、跨 workspace；人设指令恢复）；删除级联（单聊会话 + 群内会话 + 房间日志 + persona 记忆）+ **级联中断后重试不留孤儿**。
+- [ ] 2.1 人设/房间 CRUD 与持久化单测（跨重启、跨 workspace；人设指令恢复）；删除级联（单聊会话 + 群内会话 + 房间日志 + 该人设/房间的**全部记忆 scope**）+ **级联中断后重试不留孤儿**（含「删群后 room-id 复用不继承旧记忆」）。
 - [ ] 2.2 群聊编排单测：slot 序列、`@` 解析（用户行首 / 成员句中 / 不在列表 / 多人 / 自己）、静默（含**游标随静默回合推进、不重复注入**）、每轮每成员上限、**轮次终止三出口**（走完 / 达上限 / 失败或超时）、轮次中到达的用户消息（追加进日志 + `@` 追加为当前位次之后的 slot、不改上限基数）、**房间级互斥**（并发不并行开两轮、用户消息排队进本轮）、成员中途变更。
 - [ ] 2.3 会话分离：单聊/群聊内容互不泄漏的负向断言。
 - [ ] 2.4 `SessionRunner` 契约：四态映射；`text` 只来自本次 run（**同 session 并发被拒时不复用陈旧文本**）。
@@ -33,7 +33,7 @@
 - [ ] 3.10 Web：群聊 pane + 房间级 WS（扩展写死的 `/ws/${sessionId}`）；人设/房间管理入口 + 单聊入口 + 删除级联。
 - [ ] 3.11 会话数上限（默认 50，可配置）+ 超出排队 + 懒构造。
 - [ ] 3.12 群共享 notice：房间模型字段 + 注入群内会话 prompt（不影响单聊）。
-- [ ] 3.13 记忆 review：turn 结束触发 + 静默成员落后补齐 + 独立小模型调用 + 经既有 save 路径写回 + 游标推进 + 可配置开关。
+- [ ] 3.13 记忆 review：**仅实际发言回合**触发（单聊/群各触发）+ 静默成员按 **review 游标**落后补齐（阈值 30）+ 独立小模型调用 + 写回映射（add/update 走 save、remove→`archive`，并补 `archive` 的 git 前像）+ `reviewed` 游标推进（群=room seq；单聊=消息索引）+ review 队列按 scope 合并/串行化 + 成本按 1+k 计入账本 + `MemoryConfig` 新增开关。
 
 ## 4. 文档
 

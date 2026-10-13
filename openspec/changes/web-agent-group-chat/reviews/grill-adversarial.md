@@ -180,3 +180,61 @@ PASS
 - **参照侧引用（本轮新增/改动的部分逐条打开核对）**: `dsh-adrian-agents-group-work-main/SPEC.md:256,312`（失败通知唤醒 chair）、`dsh-agent-group-main/packages/group-chat/src/scheduler.ts:217`（`{ kind: 'round-limit' }`）、`conductor.ts:121,345`（`DEFAULT_FAILURE_BUDGET = 3` + 连续失败预算暂停）、`ds-bot/src/host/constants.js:25`（240s）、`:53-54`（`ROOM_BOT_ROUNDS = 3`）、`groups.js:21-27`（12/24/8 + 4/4 + 2/4）、`:44-45,183`（游标读/回合开始推进）、`:99`（`[PASS]`）、`:261-262`（`limit = slots + EXTRA + (admin ? ADMIN_EXTRA : 0)`）、`prompt.js:25-36`（Main Bot / 可多个）——全部为真。
 - **规格面没有第二处被本 change 收窄而漏改**: 我对既有 web-ui / long-term-memory / multi-agent-collaboration / agent-runtime 全量扫了一遍与本 change 相交的无条件断言 —— pending 暴露、pending 跨连接存活、hub 列表、会话删除四条已 MODIFIED；`每个 session 维护独立状态`、`Web session 本地持久化与恢复`、`同一 session 并发发送被拒绝`、`Web UI 支持多标签会话`、`重连补发 pending 交互卡片`、`pending 交互的放弃语义`、`FastAPI app 提供静态资源和 WebSocket`（未枚举路由）等均不被本 change 收窄；记忆侧只有 `Scope 隔离` 钉了 scope（`openspec/specs/long-term-memory/spec.md:74-83`），已 MODIFIED；`## Project Memory` 标题未被任何 spec 钉定 ⇒ 改 `## Persona Memory` 无需 MODIFIED。
 - **`agent/config.py:398-399` / `web/session.py:1630-1637` 的 handler 与超时引用为真**（`DEFAULT_QUESTION_TIMEOUT_SECONDS = 300` / `DEFAULT_APPROVAL_TIMEOUT_SECONDS = 600`，两个 handler 在 `_create_session` 内按 session_id 构造）。
+
+## Round 4
+
+### Reviewer
+
+- run id: paseo-grill-adversarial-web-agent-group-chat-r4
+- 时间: 2026-10-13
+- 对象: commit `2c12089`（R3 PASS **之后**的追加改动：记忆粒度改「每个群独立」+ 新增 Decision 17 记忆 review）。R3 的 PASS 覆盖的是 `cae3401`，不覆盖本版。
+- 方式: 零记忆独立审阅（增量轮）。只审增量面（Decision 7 重写 / Decision 17 新增 / `long-term-memory` delta 改版）及其波及面；逐条打开真实代码、既有规格与参照实现核实，不采信 design 自述。机械门禁复跑：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **29 passed, 0 failed**；`scripts/check_openspec_artifacts.py` → **passed**；另用脚本对 `long-term-memory` delta 的 MODIFIED 做结构化比对（R2/R3 的方法）。
+
+### 结论
+
+CHANGES_REQUESTED
+
+（4 项 medium 属「实现前必修」：Issue 31–34。无 high、无 BLOCKED —— 四项都能在不改需求的前提下修掉。R3 的 PASS 结论对**未改动的面**仍然有效，本轮打回的全部是记忆改版自身引入或未收口的部分。）
+
+### 记忆改版核验
+
+- **四处一致性（design / proposal / tasks / spec delta）：权威面一致，但有 7 处旧口径残留 ⇒ 不成立（见 L1/L2）**。一致的部分：Decision 7 的 scope 定义与落点（`design.md:89-92`）、spec delta（`specs/long-term-memory/spec.md:5`、`:21-31` 的两条「互不可见」Scenario）、tasks 2.5/3.8（`tasks.md:16,31`）、proposal 的 What Changes（`proposal.md:17`）四处同口径，且「与 DS Bot 每 bot 一份的**故意分歧**」也已声明（`design.md:94`）。残留的旧「共享同一份记忆」表述（L1/L2）：`proposal.md:3`（Why 仍写「只有人设的**长期记忆**共享」）、`proposal.md:47`（影响测试仍写「同人设共享」）、`proposal.md:59`（研究问题「群聊与单聊如何共享同一人设的记忆？」）、`proposal.md:72`（「细分出 persona 维」）、`design.md:12`（用户诉求段）、`design.md:178`（Pre-Implementation Review 的 Q2 结论仍写「**同一** `PersistentMemory` 加 persona 维」）。其中 `proposal.md:3/47` 与 `design.md:178` 是**语义级**残留（不是措辞润色），会让人按「记忆共享」理解验收。
+- **MODIFIED 完整性：通过（机械比对）**。既有 `openspec/specs/long-term-memory/spec.md:74-83` 的 `Scope 隔离` 只有 1 条 Scenario（跨项目查询被阻止），delta 的 MODIFIED 复述后为 **4 条、dropped = []**，既有 Scenario 正文逐字未变（脚本对规范化文本比对无差异，无 BODY DIFFERS）。唯一正文差异是「用 **project/repo** scope 标记记忆」→「用 scope 标记记忆」（属 MODIFIED 的正当改写，但丢了原文限定词，记 L7）。
+- **Decision 17 自洽性：不闭合（Issue 32 / 33 / 34）**。三处：(a) **触发条件**在 design（`:165` 的「一个 turn 结束（变 idle）后」）、Testing Strategy（`:208` 的「静默成员不主动触发」）、tasks 2.5、spec Scenario 之间给两个不同答案；(b) **落后阈值的度量基准**未钉，而同一房间记录里恰有两个语义不同的游标（Decision 6 的 `seen[member]` 与 Decision 17 的 `reviewed`），选错一个会让「落后补齐」永久失效；(c) **「经既有 save 路径写回」**对 `remove` 分支不成立，且去重判官是第二次 LLM 调用（成本账低估）。
+- **游标与阈值：基准与落点未钉（Issue 33 / L5）**。`reviewed` 游标的**存储落点**（记忆目录内 / 房间记录内）、**单位**（房间日志条目数 vs 单聊的消息索引）都没写；单聊 scope 尤其悬空 —— `Message` 无 id/timestamp/seq（`agent/message.py:144-155`），「会话新增消息」的游标只能自造。
+- **与 Decision 6 的关系：重叠但未钉住（Issue 33）；另有一处前提无对应设计（L4）**。两个游标（注入用 `seen` / review 用 `reviewed`）并存本身与参照同构（参照同样两份：`groups.js` 的 `room.seen` + `memory.js:12` 的 `reviewed.json`），不构成冲突；但 design 没写「落后」以哪个为准。另外 Decision 17 的「在**日志滚动**丢掉它未读内容之前补齐」（`design.md:166`）预设房间日志会滚动/裁剪，而 Decision 6 只定义了**注入切片**的三层上限（12/24/8），从未定义日志本身的保留策略，且同一节又称房间日志是「群时间线的**唯一权威**、重连后由它还原有序群消息流」（`design.md:78`、`specs/multi-agent-collaboration/spec.md:58`）——两者有张力（参照的群日志确实滚动，`memory.js:70`「the group log (which keeps 60)」）。
+- **未波及面的复核：未见被带偏**。`multi-agent-collaboration` 与 `web-ui` 两条 delta 未被 `2c12089` 触及，R3 已有的结构性结论（6 个 MODIFIED 块场景丢弃 0、三出口、`system` 枚举、降级范围收窄到 `room_member`、级联顺序/幂等）仍然成立；本轮唯一发现的「波及外」不一致是 R3 收尾漏改的一处（`tasks.md:3`，L3）。
+
+### 新发现
+
+- **Issue 31（severity: medium）**: 记忆落点改版后，「删除房间」的级联清单没有跟着加 per-room 记忆目录 —— 四处（design / proposal / tasks / spec）**一致地漏**，按现状实现会留下永久孤儿记忆。；证据: 新落点 `.../personas/<persona-id>/rooms/<room-id>/memory`（`design.md:91`）vs 删除级联定义「删除房间 ⇒ 删除房间记录 + 房间日志 + 所有 (persona, room) 群内会话底座」（`design.md:150`）；spec 同一条级联 Scenario 的 THEN 也只列这三项（`specs/web-ui/spec.md:197`），级联顺序句只提「先删会话底座与 **persona 记忆**」（`specs/web-ui/spec.md:178`）；tasks 的级联测试清单同样只有「单聊会话 + 群内会话 + 房间日志 + persona 记忆」（`tasks.md:12`）。人设侧也含糊：`design.md:149` 只说「该人设的 persona 记忆目录」，未点明它现在是 `personas/<id>/` 整棵子树（含各群 scope）。；影响: 删群后 `personas/<id>/rooms/<rid>/memory` 无人清理；若房间被重建为同 id，新房间会继承旧房间的记忆 —— 一条既无 UI 可查、又无规格可依的残留面，与 Decision 15 自己给出的理由（「删除人设后 persona 记忆长期残留」被列为未声明的隐私面）是同一性质。这也正是 issue #235 类「门禁测不到的断言」：spec 的四条级联断言会全部通过。；建议: 在 `design.md:150` 与 `specs/web-ui/spec.md:197` 的级联清单里补「所有该房间的 (persona, room) 记忆目录」，在 `specs/web-ui/spec.md:178` 的顺序句里把它并入「先删」段，`tasks.md:12` 的测试清单加一句。
+
+- **Issue 32（severity: medium）**: 「静默回合是否触发 review」在四个 artifact 里给的是两个答案，直接决定 tests 2.5 的期望值与成本量级。；证据: `design.md:165` 主触发写「一个人设会话的**一个 turn 结束（变 idle）后**…排一次 review」—— 而静默是 run 的正常出口（`design.md:60` 的 `{status: "silent"}`），run 结束即 idle ⇒ 按字面**会**触发；反侧是 `design.md:208`（Testing Strategy「成员发言回合结束后触发（**静默成员不主动触发**）」）、`tasks.md:16`（「发言回合结束后触发」）与 spec Scenario（`specs/long-term-memory/spec.md:41` 的 GIVEN 写「刚结束一个**发言**回合」，但同一 Scenario 的 WHEN 又写「该会话变为空闲」——spec 自身把两种口径混在一起）。参照实现站在「任何 idle 都触发」一侧：`ds-bot/src/host/memory.js:1326-1339` 的 `ctx.on('agent/status', … status === 'idle')` → `queueReview(id, seen)`，对 `[PASS]` 静默回合同样成立。；影响: 按 design 字面/参照实现，每个静默成员每一轮都多一次 review 调用（一轮 N 个成员 = N 次），与 `design.md:169` 的成本口径、以及「落后补齐」的存在理由（静默成员记忆会停滞）互相抵消；按 Testing Strategy 实现则 tests 2.5 的「静默成员不主动触发」才成立。两种实现都能自证合规，但测试会分叉。；建议: 在 Decision 17 明写「仅**实际产生发言**的回合（`{status:"text"}`）触发；`silent` / `timeout` / `failed` 出口不触发，这类成员的停滞由落后补齐兜底」，并把 `specs/long-term-memory/spec.md:41` 的 WHEN 改为与 GIVEN 同口径（例如「该发言回合结束时」）。
+
+- **Issue 33（severity: medium）**: 落后阈值 `REVIEW_GROUP_LAG` 的**度量基准**没钉，而同一房间记录里恰有两个语义不同的游标 —— 选错一个会让「静默成员落后补齐」永久失效。；证据: `design.md:80`（Decision 6 的 `seen[member]` 在**回合开始**推进，**含静默/超时回合也推进** ⇒ 静默成员被轮到一次 `seen` 就追平 `room.seq`）vs `design.md:166`（Decision 17 只说「在房间日志上落后达到阈值 `REVIEW_GROUP_LAG`」，未说以谁为基准）。参照实现是以 **review 游标**为基准：`ds-bot/src/host/memory.js:1281-1284`（`behind = cursorsNow()[`group:${room.id}:${member}`] ?? …`，判据 `(room.seq ?? 0) - behind >= REVIEW_GROUP_LAG`），`REVIEW_GROUP_LAG = 30`（`memory.js:71`），该游标持久化在 `reviewed.json`（`memory.js:12,1049`）。；影响: 若实现者以最直观的 `seen` 为基准（Decision 6 刚定义过它、又在同一个房间记录里），落后恒为 0 ⇒ 补齐分支永不触发；而 tests 2.5 若手工构造落后状态仍会通过 —— 又一条「门禁测不到的断言」。；建议: 在 Decision 17 钉死「落后 = `room.seq − reviewed[(persona, room)]`（**review 游标**，非 Decision 6 的 `seen`）」，给出缺省阈值 **30**（与参照一致）与单位（房间日志条目数），并明确 `seen` 与 `reviewed` 是两份互不替代的游标。
+
+- **Issue 34（severity: medium）**: 「经**既有 save 路径**写回（沿用去重/冲突/git 可逆/尺寸上限）」对 review 的三个变更分支并不成立，且成本账与代码不符。；证据: (a) **`remove` 没有既有路径** —— `PersistentMemory` 只有 `save`（`agent/memory/persistent.py:502`，覆盖/新建，无删除语义）、`archive`（`:776`）、`restore`（`:797`），工具面只有 `SaveMemory`/`RecallMemory`/`SearchMemory`（`agent/tools/builtin/memory.py:15,123,174`），全仓无 forget/delete 类记忆工具（grep 零命中）；(b) **写入去重在工具层、不在 save 层** —— `SaveMemoryTool.execute` 先 embedding 召回再 `await self._judge.judge(...)`（`agent/tools/builtin/memory.py:79-93`、`agent/memory/dedup.py:84-90`），是一次**额外 LLM 调用**，且用的是会话注入的 `llm`（即人设自己的模型），并非 Decision 17 所称的「独立小模型」；(c) **`archive()` 不满足「git 可逆」** —— 它只做 move + changelog，**没有** `_git_commit`（`agent/memory/persistent.py:776-796`）。；影响: `design.md:169` 的「每「成员发言回合」一次额外 LLM 调用」在这条路径下至少是 1（review）+ k（去重判官，召回命中时；用会话模型），成本账低估、且「独立小模型」只覆盖了前半段；`remove` 落到 archive、真删、还是新原语无规格，实现会各自发明；若房间/人设删除后在归档区留下副本，还与 Issue 31 的残留言问题叠加。；建议: 在 Decision 17 写清三件事 —— ①`remove` 映射到既有 `archive(name, reason)`（并说明它是否纳入 git 快照，或把「git 可逆」的适用范围改成「save 分支」）；②review 路径是否复用去重判官（复用 ⇒ 成本口径改成「1 + k 次」并说明判官用哪个模型；不复用 ⇒ 删掉「沿用去重」）；③补一条「review 的成本记账口径」。
+
+### 剩余 low（不阻塞实现）
+
+- **L1 残留旧「共享」口径（7 处）**: `proposal.md:3`（Why：「只有人设的**长期记忆**共享」）、`proposal.md:47`（影响测试：「记忆（人设间隔离 + **同人设共享** + 并发写 + …）」，且未含 review 测试）、`proposal.md:59`（研究问题）、`proposal.md:72`（design impact「细分出 persona 维」）、`design.md:12`（Context 的用户诉求段）、`design.md:178`（Q2 结论「**同一** `PersistentMemory` 加 persona 维」）、`design.md:45`（「真正的跨会话泄漏面在共享存储（记忆、workflow 资产库）」—— 记忆已不再跨会话面共享）。建议随下次编辑统一为「人设 × 会话面」。按 R1/R2/R3 对同类「proposal 残留」的先例（Issue 25），记 low。
+- **L2 `proposal.md:41` 的落点路径未随改版更新**: 仍写「记忆作用域扩展出 persona 维（同级布局 `<project-hash>/personas/<id>/memory`）」，与 `design.md:90-91` / `tasks.md:31` 的 `personas/<id>/chat/memory` + `personas/<id>/rooms/<rid>/memory` 不符。
+- **L3 `tasks.md:3` 的房间日志 kind 仍是 `user|post|notice`**: 与 `design.md:76`、`specs/multi-agent-collaboration/spec.md:58` 的 `user|post|system` 不一致 —— 这是 `2aec383`（R3 收尾）改名时漏改的一处，未被任何一轮验证覆盖。
+- **L4 「日志滚动」前提无对应设计**: `design.md:166` 的补齐理由依赖房间日志会裁剪，而 Decision 6 只定义了注入切片上限（`design.md:76-81`），未定义日志保留策略，与「唯一权威 / 重连还原有序群消息流」（`design.md:78`）有张力。建议要么定义日志保留上限（参照 `ds-bot/src/host/memory.js:70` 的「keeps 60」），要么删掉「日志滚动」这半句理由。
+- **L5 `reviewed` 游标的落点与单聊侧的单位未定义**: 存储位置（记忆目录内 vs 房间记录内）未写，随之 Decision 15 级联时它的归属也模糊；单聊 scope 的「会话新增消息」游标在 `Message` 无 id/timestamp/seq（`agent/message.py:144-155`）的前提下只能自造（消息索引？），且需说明与 session 重建/上下文裁剪的关系。
+- **L6 成本账本归属无承载**: Decision 17 写「计入成本账本」（`design.md:169`），但 `CostLedger` 由 `AgentLoop` 在回合内记账（`agent/loop.py:1216-1218`，CLI 侧在 `agent/main.py:298-336` 注入），review 是 loop 之外的一次独立调用 ⇒ 需要额外接线；`tasks.md:36`（3.13）与测试任务均未列这一项。
+- **L7 「Scope 隔离」正文丢了原文限定词**: delta 把「用 **project/repo** scope 标记记忆」改为「用 scope 标记记忆」（`specs/long-term-memory/spec.md:5` vs `openspec/specs/long-term-memory/spec.md:76`）。语义未变（后句仍写「在项目间强制 scope 隔离」），但属 MODIFIED 里的非必要删改。
+- **L8 单聊 scope 的 review 触发无 Scenario 承载**: `design.md:165` 的主触发明确含「其单聊」，但 spec 的 ADDED Scenario 只写「某群的会话」（`specs/long-term-memory/spec.md:41`），Testing Strategy 也只写「成员」（`design.md:208`）⇒ 单聊侧触发与游标推进无测试断言。
+- **L9 review 队列的合并/串行化只写在 Risks**: `design.md:193` 说「由 review 队列按 session 合并/串行化（参照 `queueReview` 的合并语义）」，但 `tasks.md:36`（3.13）无对应任务、无并发测试。建议并入 3.13 一行。
+- **L10 Decision 15「先删会话底座与 persona 记忆，最后删 roster/房间条目」的「persona 记忆」措辞**: 在新落点下应写成「该人设的全部记忆 scope（`personas/<id>/`）」；与 Issue 31 同一处一并改。
+
+### 本轮已核验通过的维度（增量）
+
+以下为本轮打开真实代码 / 既有规格 / 参照实现逐条核对后**成立**的断言（不是复述 design 自述）：
+
+- **Decision 17 的三条参照引用全部准确**: `ds-bot/src/host/memory.js:1323-1343`（`ctx.on('agent/status', …)` → `status === 'idle'` → `queueReview(id, seen)`，含 `memoryReviewDelayMs ?? REVIEW_DELAY_MS` 的延迟语义）、`:1283-1288`（`queueLaggingMembers`：`(room.seq - behind) >= REVIEW_GROUP_LAG`，且 `member !== botId` 排除刚发言者）、`:71`（`REVIEW_GROUP_LAG = 30`）、`:12,1049`（`reviewed.json` = 「how far the memory review has read each conversation」的游标文件）、`:415`（`config.memoryReview !== false` 开关）。
+- **「review = 独立小模型调用」在参照侧确为单次调用**: `memory.js:893` 注释「one model call whose changes go through the same path as the tools」；**分歧点**在于参照的 review 直接复用工具路径（无第二次判官调用），而本仓「既有 save 路径」自带去重判官（见 Issue 34b）—— 即该设计的成本口径是本地化的、不是照抄。
+- **「每个群独立」与既有规格的接口正确**: 既有 `Scope 隔离` 钉的是 project/repo（`openspec/specs/long-term-memory/spec.md:74-83`），确需 MODIFIED；delta 的 4 条 Scenario 覆盖「跨项目 / 跨人设 / 单聊↔群 / 群↔群」四个隔离面，与 Decision 7 的四条「互不可见」一一对应。
+- **Decision 7 的落点前提复核仍为真**: `agent/memory/persistent.py:183`（`memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"`）、`:341`（非递归 `glob("*.md")`，同级目录不会被项目级检索误收）、`:451`（`_run_git(..., "add", "-A")` 递归）、`agent/context/sources.py:302`（硬编码 `"## Project Memory"`）。
+- **接线清单的前提仍为真**: `web/session.py` 的 `_create_session` 仍未传 `persistent_memory` / `memory_config` / `llm`；`agent/tools/factory.py:163-173`（`llm is None` ⇒ 判官返回 `None`）与 `:317-327`（不传 `memory_config` ⇒ 回落默认 `MemoryConfig()`）。另核 `MemoryConfig` 现有字段（`agent/config.py:248-256`）**不含**任何 review 开关 ⇒ 「可配置关闭」需要在 `MemoryConfig` 之外新增配置位（Low，随 L6 一并）。
+- **机械门禁在本版通过**: `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **29 passed, 0 failed**（含 `change/web-agent-group-chat`）；`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` → **OpenSpec artifact checks passed**。本轮 4 项 medium **全部在门禁覆盖之外**（validate 不比对既有 Scenario 集合、不查 design↔spec 口径一致性、不查「经既有 X 路径」这类代码级断言）。

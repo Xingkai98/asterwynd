@@ -9,7 +9,7 @@
 1. **Web 路径今天没有长期记忆**：`_create_session` 构造工具注册表与 `AgentLoop` 时未传 `persistent_memory` / `memory_config` / `llm`（`web/session.py:1648-1688`），`MemoryIndexSource` 拿到 `None` 返回空串，记忆工具退化到工厂默认的**项目级**实例（`agent/tools/factory.py:319-327`），且**无 LLM 去重判官**（`agent/tools/factory.py:163-173`，`llm is None` ⇒ 返回 `None`）。CLI 路径已完整接线（`agent/main.py:255-289,325`）。⇒ 「人设级记忆」实为「**先补 Web 接线（多参数忠实移植），再加维度**」。
 2. **分层是单向 `web/ → agent/`**：`agent/` 只在 CLI 入口函数内延迟 import web（`agent/main.py:684`，全仓唯一反向点）。⇒ 群聊编排器**不能**放在 `agent/` 里反向驱动 `web.AgentSession`。
 
-用户诉求（issue #302）：单聊 + 群聊；群聊由 Chief 推进、可 `@` 成员；单聊与群聊内容不耦合；人设长期记忆共享。
+用户诉求（issue #302）：单聊 + 群聊；群聊由 Chief 推进、可 `@` 成员；单聊与群聊内容不耦合；**记忆按「人设 × 会话面」独立**（每个群独立）。
 
 ## Goals / Non-Goals
 
@@ -42,7 +42,7 @@
 
 ### Decision 2: 单聊与群聊会话分离是结构性保证
 
-每个 (persona, room) 持有独立会话；单聊另有会话。`run_lock` 与 `event_channel` 都是 per-`AgentSession`（`web/session.py:1359,1367`），不存在跨 pane 事件串流。真正的跨会话泄漏面在**共享存储**（记忆、workflow 资产库）。
+每个 (persona, room) 持有独立会话；单聊另有会话。`run_lock` 与 `event_channel` 都是 per-`AgentSession`（`web/session.py:1359,1367`），不存在跨 pane 事件串流。记忆已按「人设 × 会话面」隔离（Decision 7），不再是跨会话泄漏面；**剩余**的跨人设共享面是 workflow 资产库（Decision 12）。
 
 ### Decision 3: 群聊编排器与 DAG 调度器并列、新建；并声明其不属既有控制面
 
@@ -146,9 +146,9 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 
 - Web UI SHALL 提供 roster 与房间的 CRUD 管理入口（创建/改名/改指令/改模型/加删成员/删除），以及**进入某人设单聊**的入口。
 - **删除级联（SHALL 定义）**：
-  - 删除人设 ⇒ 删除其单聊会话底座 + 该人设的 persona 记忆目录 + 从所有房间移除该成员（并删除其群内会话底座）。
-  - 删除房间 ⇒ 删除房间记录 + 房间日志 + 所有 (persona, room) 群内会话底座。
-  - **顺序与幂等（钉死）**：级联 SHALL **先删会话底座与 persona 记忆，最后删 roster/房间条目**；且 SHALL 幂等——中断后重试从当前状态继续。理由：若先删 roster 条目再删底座，中途失败会留下「hub 不列（id 前缀过滤）、接口又拒删」的**孤儿内部会话**；先删底座则中断时 roster 仍在，可重试且可被发现。
+  - 删除人设 ⇒ 删除其单聊会话底座 + **该人设的全部记忆 scope**（`personas/<persona-id>/` 整棵子树，含 `chat/` 与 `rooms/<rid>/`）+ 从所有房间移除该成员（并删除其群内会话底座）。
+  - 删除房间 ⇒ 删除房间记录 + 房间日志 + 所有 (persona, room) 群内会话底座 + **所有该房间的 (persona, room) 记忆目录**（`personas/<pid>/rooms/<rid>/`）。
+  - **顺序与幂等（钉死）**：级联 SHALL **先删会话底座与该人设/房间的全部记忆 scope，最后删 roster/房间条目**；且 SHALL 幂等——中断后重试从当前状态继续。理由：若先删 roster 条目再删底座，中途失败会留下「hub 不列（id 前缀过滤）、接口又拒删」的**孤儿内部会话**；先删底座则中断时 roster 仍在，可重试且可被发现。
   - 删除 SHALL 经人设/房间接口进行（不得走 `DELETE /api/sessions` 或 WS `reset`）。
   理由：否则「不可直接删除」的反面（正当删除）无规格可依，且删除人设后 persona 记忆长期残留（未声明的隐私面）。
 
@@ -160,14 +160,20 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - 与房间日志 `kind: "system"` 命名区分（那里是系统条目，此处是用户配置的群指令）。
 （Q5a 已拍板首版做。）
 
-### Decision 17: 记忆 review（每人自己发言后 review 自己 + 静默成员落后补齐）
+### Decision 17: 记忆 review（仅「实际发言」的回合触发 + 静默成员落后补齐）
 
-- **主触发**：一个人设会话（其单聊，或它在某群的群内会话）的一个 turn 结束（变 idle）后，为该会话对应的**记忆 scope** 排一次 review（延迟后执行）——即「谁发言了，就 review 谁的那份记忆」。与参照同形（`ds-bot/src/host/memory.js:1323-1343`：`agent/status` → idle → `queueReview`）。
-- **落后补齐**：某房间某成员在房间日志上落后达到阈值 `REVIEW_GROUP_LAG` 时，顺带为它的 (persona, room) scope 排一次 review——避免静默成员记忆长期停滞，且在日志滚动丢掉它未读内容之前补齐（参照 `ds-bot/src/host/memory.js:1283-1288`）。
-- **机制**：review 是一次**独立小模型调用**，读「该 scope 上次 review 游标之后的新增内容」（群 = 房间日志切片；单聊 = 会话新增消息）+ 当前记忆，产出 keep/update/remove 变更，经**既有 save 路径**写回（沿用去重/冲突/git 可逆/尺寸上限），并推进该 scope 的 review 游标。
-- **游标持久化**：每个 scope 一个 `reviewed` 游标（参照 `reviewed.json`）。
-- **成本**：每「成员发言回合」一次额外 LLM 调用（+ 落后补齐），计入成本账本。
-- **可关闭**：默认开启，可配置关闭（参照 `config.memoryReview`）。
+- **主触发（钉死）**：一个人设会话（其单聊，或它在某群的群内会话）的一个回合结束、且该回合**实际产生了发言**（`TurnOutcome.status == "text"`）时，为该会话对应的**记忆 scope** 排一次 review（延迟后执行）。`silent` / `timeout` / `failed` 出口**不**触发——这类成员的记忆停滞由「落后补齐」兜底。
+  （与参照的差异：参照对**任何** idle 都触发，`ds-bot/src/host/memory.js:1326-1339`；本 change 收紧为仅实际发言，以与「①+兜底」语义自洽并控制成本。）
+- **落后补齐**：某房间某成员在该房间的 **review 游标**上落后达到阈值时，为它的 (persona, room) scope 排一次 review。**度量基准钉死为 review 游标 `reviewed`**（**非** Decision 6 的 `seen`——后者每回合推进、含静默，用它作基准则落后恒为 0、补齐永不触发）；**落后 = `room.seq − reviewed[(persona, room)]`**，单位 = 房间日志条目数，缺省阈值 **30**（参照 `REVIEW_GROUP_LAG`，`ds-bot/src/host/memory.js:71,1281-1284`）。`seen`（注入用）与 `reviewed`（review 用）是两份互不替代的游标。
+- **机制**：review 是一次**独立小模型调用**（可配置模型；缺省用该人设会话模型亦可），读「该 scope 自上次 review 游标之后的新增内容」（群 = 房间日志切片；单聊 = 会话消息索引之后的新增），产出 add/update/remove 变更。
+- **写回（钉死映射）**：
+  - add/update/supplement/conflict → 走既有 `save` / `apply_judgment` 路径（沿用去重判官、尺寸上限、git 可逆写保护，`agent/memory/persistent.py:502,548`）。
+  - **remove → `archive(name, reason)`**（软删、可 `restore`，`:776,797`）。注意 `archive` 目前**不含** git 前像提交（`:776-796`），本 change SHALL 连带补上，或显式把「git 可逆」限定在 save 分支。
+  - 不得引入新的记忆删除原语（工具面无 forget/delete，全仓零命中）。
+- **成本口径**：review 本身 1 次 LLM 调用；写回若命中**去重判官**（embedding 召回命中）则 **+1 次** LLM 调用（判官用会话注入的 `llm`，即人设自己的模型，`agent/tools/builtin/memory.py:79-93`、`agent/memory/dedup.py:84-90`）⇒ 单回合成本 = **1 + k** 次；需**额外接线**计入 `CostLedger`（其在 loop 内记账，`agent/loop.py:1216-1218`）。
+- **游标持久化**：每个 scope 一个 `reviewed`（落在该 scope 记忆目录内，如 `<scope>/reviewed.json`）；群 scope 以**房间日志 seq** 为单位；**单聊 scope 以会话消息索引**为单位（`Message` 无 id/timestamp/seq，`agent/message.py:144-155`）。
+- **房间日志保留**：房间日志 SHALL 保留全部条目（是「群时间线唯一权威、重连还原」的前提）；即「落后补齐」的理由是**避免静默成员记忆长期停滞**，**不**依赖日志滚动。
+- **可关闭**：默认开启，可配置关闭（`MemoryConfig` 现无此字段，`agent/config.py:248-256`，需新增配置位）。
 
 （用户 2026-10-12 拍板选「①+兜底」。）
 
@@ -175,7 +181,7 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 
 - Questions resolved:
   - Q1 编排器形态：**新建独立模块**（否证 `SubAgentManager`）。
-  - Q2 记忆作用域：**同一 `PersistentMemory` 加 persona 维**；先补全 Web 接线（多参数）。
+  - Q2 记忆作用域：**按「人设 × 会话面」分 scope**（同一 `PersistentMemory` 类，按 scope 目录实例化；单聊/各群互不可见）；先补全 Web 接线（多参数）。
   - Q3 Chief 角色：roster 级 `mainBotIds`（可多个）+ 房间级 `admin`（单个，可空），**非**内置不可删角色。
   - 静默机制、每轮预算、slot 序列、轮次终止、房间级互斥、控制面澄清—均经代码核实。
 - Options considered / Rejected:
@@ -205,7 +211,7 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - `SessionRunner` 契约：`text` 只来自本次 run（**并发被拒时不复用陈旧文本**）；四态映射。
 - 会话分离：单聊/群聊内容互不泄漏的负向断言。
 - 记忆 scope：**人设间隔离 + 同一人设的单聊/各群之间也互相不可见**（每个群独立）；接线完整性（LLM 去重判官存在、`memory_config` 生效）；注入块标题为 `## Persona Memory`。
-- 记忆 review：成员发言回合结束后触发（静默成员不主动触发）；静默成员落后达阈值时被补齐；review 经既有 save 路径写入并推进游标；review 失败不中断轮次。
+- 记忆 review：**仅实际发言的回合**触发（`text` 出口；`silent`/`timeout`/`failed` 不触发）；单聊 scope 与群 scope 各自触发；静默成员落后达阈值（以 **review 游标**为基准，阈值 30）被补齐；`remove` 映射到 `archive`；review 经既有 save 路径写入并推进游标；review **失败不中断轮次**；同一 scope 的并发 review 由队列合并/串行化；成本按 **1 + k** 口径记账。
 - 共享面：workflow 资产库跨人设可见性（按声明断言）。
 - Web：群聊 pane + 房间 WS + hub 过滤（含**损坏快照**）+ `DELETE` 拒删 + **WS `reset` 拒改内部会话**。
 - 收尾：全量 pytest + `openspec validate --strict` + artifact checker + benchmark smoke。

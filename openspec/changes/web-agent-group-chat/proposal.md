@@ -1,6 +1,6 @@
 ## Why
 
-用户希望本项目 Web 上有一个「群聊」板块：维护若干**长期存在的 agent 人设**，可以和人设**单聊**，也可以开**群聊**（由 Chief 主持、可 `@` 指定成员、成员轮流发言）；单聊与群聊的**对话内容互不耦合**，只有人设的**长期记忆**共享。参照实现是 DSH 的社区插件 **DS Bot**（Fei2411/DeepSeek-Bot）。
+用户希望本项目 Web 上有一个「群聊」板块：维护若干**长期存在的 agent 人设**，可以和人设**单聊**，也可以开**群聊**（由 Chief 主持、可 `@` 指定成员、成员轮流发言）；单聊与群聊的**对话内容互不耦合**，**长期记忆按「人设 × 会话面」独立**（每个群独立）。参照实现是 DSH 的社区插件 **DS Bot**（Fei2411/DeepSeek-Bot）。
 
 本 change 新增一个能力域级别的能力，不改变既有 AgentLoop / workflow DAG / subagent 语义。关联 issue #302。
 
@@ -31,20 +31,20 @@
 ## Dependencies
 
 - 复用既有（已实现）：多会话 `SessionManager` / `SessionStore`、会话级 `SessionEventChannel`、前端 per-tab（多 tab=多 WS）模型。
-- 依赖既有 `long-term-memory` 的去重/衰减/检索能力；**并需先补一个现存缺口**：Web 路径今天**未接** `persistent_memory`（`web/session.py:1648-1688` 未传，CLI 路径 `agent/main.py:255,282,325` 已接），本 change 在人设会话上补齐并加 persona 维（普通 Web 会话的接线属另一 change）。
+- 依赖既有 `long-term-memory` 的去重/衰减/检索能力；**并需先补一个现存缺口**：Web 路径今天**未接** `persistent_memory`（`web/session.py:1648-1688` 未传，CLI 路径 `agent/main.py:255,282,325` 已接），本 change 在人设会话上补齐并加「人设 × 会话面」scope（普通 Web 会话的接线属另一 change）。
 
 ## Impact Analysis
 
 - 影响代码：
   - `agent/`：新增人设/房间模型与持久化（**workspace 级**落点）、房间日志、群聊轮次编排器（新模块，如 `agent/team/`）；编排器依赖 `SessionRunner` 抽象（由 web 层注入），本模块不 import `web`。
   - `agent/session.py`：`SessionSnapshot` 增 `kind`；内部会话 id 前缀约定 + `remove`/`reset` 路径的内部会话保护。
-  - `agent/memory/persistent.py`：记忆作用域扩展出 persona 维（同级布局 `<project-hash>/personas/<id>/memory`）。
+  - `agent/memory/persistent.py`：记忆作用域扩展出「人设 × 会话面」scope（同级布局 `personas/<id>/chat/memory` + `personas/<id>/rooms/<rid>/memory`）。
   - `agent/context/sources.py`：记忆注入块标题区分（`## Persona Memory`）。
   - `web/session.py`：人设会话注入 `persistent_memory` + `memory_config` + `llm`；实现并注入 `SessionRunner`；房间级事件汇聚与房间级互斥。
   - `web/server.py`：群聊 HTTP/WS 端点 + 房间级 WS；hub 过滤内部会话；`DELETE` 与 WS `reset` 拒作用于内部会话。
   - `web/static/`：新增群聊 pane JS/CSS；扩展 WS 路由（房间级）。
 - 影响测试：
-  - 人设/房间 CRUD 与持久化（跨重启、跨 workspace）；删除级联（会话/房间日志/persona 记忆）；群聊编排（slot 序列、**轮次终止三出口**、**房间级互斥**、`@` 解析口径、静默含游标推进、上限、成员中途变更）；`SessionRunner` 四态契约（并发被拒不复用陈旧文本）；会话分离负向断言；记忆（人设间隔离 + 同人设共享 + 并发写 + 接线完整性 + 注入块标题）；共享面（workflow 资产库）；Web（群聊 pane + 房间 WS + hub 过滤含损坏快照 + `DELETE`/`reset` 拒作用于内部会话）。
+  - 人设/房间 CRUD 与持久化（跨重启、跨 workspace）；删除级联（会话/房间日志/persona 记忆）；群聊编排（slot 序列、**轮次终止三出口**、**房间级互斥**、`@` 解析口径、静默含游标推进、上限、成员中途变更）；`SessionRunner` 四态契约（并发被拒不复用陈旧文本）；会话分离负向断言；记忆（人设间隔离 + 同一人设单聊/各群互相不可见 + 接线完整性 + 注入块标题 + review 触发/游标/落后补齐/失败不中断轮次 + 成本记账）；共享面（workflow 资产库）；Web（群聊 pane + 房间 WS + hub 过滤含损坏快照 + `DELETE`/`reset` 拒作用于内部会话）。
 - 影响文档：`openspec/specs/{multi-agent-collaboration,long-term-memory,web-ui}/spec.md` 同步；`docs/architecture.md` 增补群聊编排小节。
 - 不改变：AgentLoop 主循环、工具协议、workflow DSL 与 DAG 调度器语义、普通 Web 会话的既有行为（记忆接线仅限人设会话）。
 
@@ -56,7 +56,7 @@
 - research questions:
   - 长期 agent 人设如何建模与持久化？单聊与群聊的会话如何分离？
   - 群聊如何编排轮次、@点名与静默，并控制成本（防无限互相应答）？
-  - 群聊与单聊如何共享同一人设的记忆？
+  - 群聊与单聊的记忆如何组织（本 change 拍板：按「人设 × 会话面」独立，每群一份）？
   - 在「一 session 一 AgentLoop」的既有 Web 架构上如何承载多个 agent？
 - findings:
   - 参考实现 **Fei2411/DeepSeek-Bot**（本地克隆 `/home/shared/agent-study/dsh-bot-research/DeepSeek-Bot-main/`，Apache-2.0）：每个 bot = 一个长驻会话；群聊 = 一个不调模型的 relay 会话（`ds-bot/src/host/groups.js:493-518` 钩 `llm/stream` 合成 `group_relay` 工具调用）+ 每成员每群的隐藏会话（`groups.js:128-145`）；轮次/`@接力`/`[PASS]静默`在 `groups.js:261-321`；Chief = `mainBotIds`（`src/host/prompt.js:25-36`）；记忆两层且按人设分（bot 自有 + team 共享）；成本控制靠 admin 模式 + `[PASS]` + 每轮每成员发言上限（`src/host/constants.js:23,54`、`groups.js:26-27`）。
@@ -69,6 +69,6 @@
     - **成员能否自开轮次**：DS Bot **可以**（`ROOM_BOT_ROUNDS = 3`，`constants.js:53-54`）；adrian 由 chair 驱动、成员不自开。⇒ 本 change **收紧为仅用户开轮**（与参照的**故意分歧**，理由：无人值守面板下成员互开轮次放大成本且无用户在场收敛）。
 - design impact:
   - 采用「一个人设的**每个会话面** = 一个 AgentSession」（各自 AgentLoop + 事件通道），而非扩展 `SubAgentManager`；会话数 = 人设数 ×（1 + 群数）。
-  - 记忆作用域需从 project/repo 细分出 persona 维，且**先补 Web 记忆接线**（仅人设会话）。
+  - 记忆作用域需从 project/repo 细分出「人设 × 会话面」维（落点 `personas/<id>/chat/memory` + `personas/<id>/rooms/<rid>/memory`），且**先补 Web 记忆接线**（仅人设会话）。
   - 群聊编排器新建，与既有 DAG 调度器并列；依赖 `SessionRunner` 抽象由 web 层注入（避免 `agent/ → web/` 反向依赖）。
   - Web 前端**已 per-tab**，无需重构渲染；真正工作是新增**群聊 pane 类型 + 房间级 WS**（现 WS 路由写死 `/ws/${sessionId}`）。
