@@ -1806,9 +1806,16 @@ class SessionManager:
     def unload_session(self, session_id: str) -> bool:
         """把会话从**内存**里卸下但**保留落盘快照**（内部会话的 LRU 淘汰）。
 
-        与 ``remove_session`` 的区别是 destructive 与否：这里只释放 AgentLoop
-        的资源占位（MCP 子进程 / subagent 并发额度 / 工具注册表），快照仍在
-        ``<workspace>/.asterwynd/sessions/<id>/``，下次使用按同一 id 恢复。
+        与 ``remove_session`` 的区别是 destructive 与否：这里**只丢内存引用**
+        （``AgentSession`` 连同它的 ``AgentLoop`` / 工具注册表 / subagent 管理器
+        一起变成垃圾），快照仍在 ``<workspace>/.asterwynd/sessions/<id>/``，下次
+        使用按同一 id 恢复。
+
+        **口径澄清（review I7）**：本方法**不**调用 ``mcp_manager.aclose()``——
+        MCP 子进程要等对象被 GC 才随 ``_exit_stack`` 回收。因此会话数上限是
+        「内存里活着的 ``AgentSession`` 数」上限，**不是**「MCP 子进程数」上限；
+        ``remove_session`` 同样只丢引用（本 change 之前就是这样）。这一点已记入
+        ``docs/known-debt.md``。
         """
         session = self._sessions.pop(session_id, None)
         if session is None:

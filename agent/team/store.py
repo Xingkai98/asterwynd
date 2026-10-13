@@ -90,10 +90,6 @@ class TeamStore:
         data["mainBotIds"] = [str(i) for i in ids]
         self._save_roster(data)
 
-    def first_main_bot(self) -> str | None:
-        ids = self.main_bot_ids()
-        return ids[0] if ids else None
-
     # ------------------------------------------------------------------
     # rooms
     # ------------------------------------------------------------------

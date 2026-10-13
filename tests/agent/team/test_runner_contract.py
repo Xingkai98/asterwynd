@@ -2,7 +2,7 @@
 """SessionRunner 的四态契约与静默哨兵（tasks 2.4 / 3.7）。
 
 四态映射的**完整**验证（含「同 session 并发被拒时不复用陈旧文本」）在
-``tests/web_tests/test_group_chat_runner.py``——那里才有真实的 ``AgentSession``。
+``tests/web_tests/test_group_chat_team.py``——那里才有真实的 ``AgentSession``。
 """
 import pytest
 
@@ -35,6 +35,34 @@ class TestTurnOutcome:
 
     def test_default_timeout_matches_reference_order_of_magnitude(self):
         assert DEFAULT_TURN_TIMEOUT_SECONDS == 240.0
+
+
+class TestConstantsStayInSync:
+    """review I11：常量必须与真实来源一致（否则就是没人用的死值）。"""
+
+    def test_persona_modes_match_agent_mode(self):
+        from agent.run_config import AgentMode
+        from agent.team.models import PERSONA_MODES
+
+        assert PERSONA_MODES == tuple(mode.value for mode in AgentMode)
+
+    def test_default_persona_mode_is_a_member(self):
+        from agent.team.models import DEFAULT_PERSONA_MODE, PERSONA_MODES
+
+        assert DEFAULT_PERSONA_MODE in PERSONA_MODES
+
+    def test_default_reply_mode_is_a_member(self):
+        from agent.team.models import DEFAULT_REPLY_MODE, REPLY_MODES
+
+        assert DEFAULT_REPLY_MODE in REPLY_MODES
+
+    def test_runner_status_constants_are_the_four_states(self):
+        from agent.team import runner
+
+        assert runner.STATUSES == (
+            runner.STATUS_TEXT, runner.STATUS_SILENT,
+            runner.STATUS_FAILED, runner.STATUS_TIMEOUT,
+        )
 
 
 class TestSilentMarker:

@@ -262,6 +262,22 @@ class TestRoomWebSocket:
             texts = [e["text"] for e in state["data"]["timeline"]]
             assert "先说话" in texts
 
+    def test_malformed_frame_does_not_kill_the_connection(self, client):
+        """review I10：畸形帧 ≠ 断连——连接必须活着（否则实时输出整条丢失）。"""
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        with client.websocket_connect(f"/ws/room/{room['id']}") as ws:
+            ws.receive_json()                       # room_state
+            ws.send_text("this is not json")
+            ws.send_text("{}")                      # 合法 JSON 但不是已知类型
+            ws.send_text("[]")                      # 非对象帧
+            ws.send_json({"type": "ping"})
+            assert _next_event(ws, {"pong"})["type"] == "pong"
+            ws.send_json({"type": "chat", "content": "还在吗"})
+            assert "user_message" in _collect_types(ws, until="round_ended")
+
     def test_unknown_room_closes_the_socket(self, client):
         with client.websocket_connect("/ws/room/r-nope") as ws:
             assert ws.receive_json() == {"error": "unknown_room"}
@@ -305,6 +321,16 @@ class TestGoldenPath:
         # 单聊内容不出现在房间时间线里
         timeline = client.get(f"/api/team/rooms/{room['id']}/timeline").json()["timeline"]
         assert all("单独聊聊" not in e["text"] for e in timeline)
+
+
+def _collect_types(ws, *, until, limit=20):
+    seen = []
+    for _ in range(limit):
+        event = ws.receive_json()
+        seen.append(event.get("type"))
+        if event.get("type") == until:
+            return seen
+    raise AssertionError(f"no {until} within {limit} events: {seen}")
 
 
 def _mode():

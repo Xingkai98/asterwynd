@@ -484,14 +484,6 @@ class MemoryReviewService:
         )
 
 
-@dataclass(frozen=True)
-class _ZeroUsage:
-    """占位用量：注入替身 reviewer 时用于记账调用次数（token 记 0）。"""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-
 def _render_entry(entry: RoomEntry, names: dict[str, str]) -> str:
     if entry.kind == "system":
         return f"[system] {entry.text}"

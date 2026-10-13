@@ -645,6 +645,50 @@ class TestPendingDowngrade:
         assert session.approval_handler.pending_approval_id is None
 
 
+class TestConstructionDedupAndSlotAccounting:
+    """review I8/I9 回归：同 id 并发构造只建一次；构造失败要释放占位。"""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_ensure_builds_the_session_once(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+
+        builds = {"n": 0}
+        original = service.manager.create_team_session_async
+
+        async def counting(*args, **kwargs):
+            builds["n"] += 1
+            await asyncio.sleep(0)          # 放大并发窗口
+            return await original(*args, **kwargs)
+
+        service.manager.create_team_session_async = counting
+        first, second = await asyncio.gather(
+            service.ensure_persona_chat_session(ws, persona.id),
+            service.ensure_persona_chat_session(ws, persona.id),
+        )
+        assert first == second
+        assert builds["n"] == 1, "同一 session_id 只能构造一次"
+
+    @pytest.mark.asyncio
+    async def test_failed_construction_releases_the_slot(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+
+        async def boom(*args, **kwargs):
+            raise RuntimeError("build failed")
+
+        service.manager.create_team_session_async = boom
+        try:
+            await service.ensure_persona_chat_session(ws, persona.id)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("构造失败必须向上抛")
+        assert service.team_for(ws).pool.live() == [], "失败后不得残留占位"
+
+
 class TestAdminCanBeCleared:
     """I4 回归：显式 `admin: null` 必须真的清空（此前被 `is not None` 静默丢弃）。"""
 

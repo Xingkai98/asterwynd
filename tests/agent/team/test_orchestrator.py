@@ -3,7 +3,7 @@
 轮次终止三出口、轮次中用户消息、房间级互斥、成员中途变更、notice 注入。
 
 编排器只依赖 ``SessionRunner`` 与 ``SessionResolver`` 抽象，本文件用假实现驱动
-（真实 web 层实现在 ``tests/web_tests/test_group_chat_runner.py``）。
+（真实 web 层实现在 ``tests/web_tests/test_group_chat_team.py``）。
 """
 import asyncio
 from pathlib import Path

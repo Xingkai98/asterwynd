@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Callable
 
-from agent.team.models import RoomEntry
+from agent.team.models import ENTRY_KINDS, RoomEntry
 from agent.team.store import TeamStore
 
 #: 首见（该成员在该群还没有游标）时注入的日志条数上限。
@@ -64,7 +64,7 @@ class RoomLog:
         ts: str | None = None,
     ) -> RoomEntry:
         """追加一条条目。``system`` 条目 SHALL 由调用方给 ``speaker=None``。"""
-        if kind not in ("user", "post", "system"):
+        if kind not in ENTRY_KINDS:
             raise ValueError(f"unknown room log kind: {kind!r}")
         return self._store.append_room_log(
             self.room_id,

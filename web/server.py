@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import binascii
+import json
 import logging
 import os
 from pathlib import Path
@@ -666,6 +667,12 @@ def create_app(
                 except RuntimeError:
                     logger.info("room websocket already disconnected: %s", room_id)
                     break
+                except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as exc:
+                    # 畸形帧 ≠ 断连（与会话级 WS 同口径）：``receive_json`` 对非 JSON
+                    # 文本帧抛 ``JSONDecodeError``，那不是「连接没了」。混为一谈会把
+                    # 仍然活着的连接整条摘掉，此后该房间的实时输出全丢。
+                    logger.info("ignoring malformed frame from client: %s", exc)
+                    continue
                 if not isinstance(raw, dict):
                     continue
                 msg_type = raw.get("type")

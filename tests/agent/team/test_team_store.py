@@ -49,12 +49,12 @@ class TestPersonaPersistence:
 
         reopened = _store(tmp_path)
         assert reopened.main_bot_ids() == [a.id, b.id]
-        assert reopened.first_main_bot() == a.id
+        assert reopened.main_bot_ids()[0] == a.id
 
-    def test_first_main_bot_is_none_without_chief(self, tmp_path):
+    def test_main_bot_ids_empty_without_chief(self, tmp_path):
         store = _store(tmp_path)
         store.upsert_persona(Persona(name="solo"))
-        assert store.first_main_bot() is None
+        assert store.main_bot_ids() == []
 
     def test_remove_persona(self, tmp_path):
         store = _store(tmp_path)

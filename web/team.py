@@ -24,7 +24,6 @@ from agent.run_config import parse_agent_mode
 from agent.team.models import (
     DEFAULT_PERSONA_MODE,
     DEFAULT_REPLY_MODE,
-    PERSONA_MODES,
     REPLY_MODES,
     Persona,
     Room,
@@ -291,6 +290,8 @@ class TeamService:
         self.event_sink = event_sink
         self._reviewer = reviewer
         self._teams: dict[str, _WorkspaceTeam] = {}
+        #: 同一 session_id 的构造去重锁（review I9）。
+        self._session_locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # 装配
@@ -345,8 +346,47 @@ class TeamService:
         if existing is not None:
             team.pool.touch(session_id)
             return session_id
+        # 同 id 并发构造去重（review I9）：下面有多个 await（``acquire`` /
+        # ``load`` / ``build_mcp_manager`` / 建 loop），两个并发调用会各建一个同 id
+        # 的 ``AgentSession``，后者覆盖 ``_sessions[session_id]``、前者连同它的
+        # MCP manager 一起被静默泄漏。
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            existing = manager.get_session(session_id)
+            if existing is not None:      # 双检：等锁期间可能已被另一次调用建好
+                team.pool.touch(session_id)
+                return session_id
+            return await self._construct_session(
+                team=team, kind=kind, session_id=session_id,
+                persona=persona, room=room,
+            )
+
+    async def _construct_session(
+        self, *, team: _WorkspaceTeam, kind: str, session_id: str,
+        persona: Persona | None, room: Room | None,
+    ) -> str:
+        manager = self.manager
         # 懒构造：**首次使用时**才建底座（未使用的会话面不构造 AgentLoop）。
         await team.pool.acquire(manager)
+        # 立刻占位（review I8）：``acquire`` 与这一行之间没有 await，占位因此是原子的；
+        # 而下面的 ``load`` / ``create_team_session_async``（内含 ``build_mcp_manager``）
+        # 都有 await —— 不先占位，并发的另一次构造会同时通过 ``len(live) < max``
+        # 检查，把上限瞬时突破（而构建成本正是这个上限要封的东西）。
+        team.pool.track(session_id)
+        try:
+            return await self._build_session(
+                team=team, kind=kind, session_id=session_id,
+                persona=persona, room=room,
+            )
+        except Exception:
+            team.pool.forget(session_id)   # 构造失败即释放占位，否则槽位永久泄漏
+            raise
+
+    async def _build_session(
+        self, *, team: _WorkspaceTeam, kind: str, session_id: str,
+        persona: Persona | None, room: Room | None,
+    ) -> str:
+        manager = self.manager
         snapshot = manager._store_for(team.workspace).load(session_id)
         room_id = room.id if room is not None else None
         # 人设运行模式（Decision 18）：单聊与所有群内会话都以它构造。
@@ -379,7 +419,6 @@ class TeamService:
             resume_snapshot=snapshot,
             initial_mode=persona_mode,
         )
-        team.pool.track(session_id)
         if persona is not None:
             self._attach_turn_listener(team, session_id, persona.id, room_id)
         return session_id
