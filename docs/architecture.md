@@ -71,6 +71,40 @@ messages -> LLM -> tool_calls -> execute tools -> append results -> repeat
 
 Web 端提供 workflow 运行态 DAG 实时图（`web/static/workflow_graph.js`）：scheduler 通过独立 `workflow_graph_snapshot()` 输出完整 nodes + edges + 每节点/每边 status（**不动**父 Agent 数据契约），经 session 级事件通道推送到 WebSocket；节点八档状态、边六档状态高亮，route 控制边单列，>720 桌面横向 DAG / <720 手机纵向 DAG，复用既有断点做 pinch 缩放 + pan 平移。
 
+### 长期人设与群聊编排
+
+`agent/team/` 提供「长期存在、面向用户、可交互轮次」的多 agent 形态，与上面那套 **DAG 批处理**（`agent/subagent/`）**并列**、不改动其语义。它不复用 `SubAgentManager`（其 child session 被父 `AgentLoop` 拥有、system prompt 硬编码为「受限子 agent」、无会话快照），而是把每个「人设 × 会话面」建模为一个**普通 `AgentSession`**。
+
+**分层（单向 `web/ → agent/`）**：编排器在 `agent/team/`，它只依赖两个抽象——`SessionRunner.run(session_id, message) -> TurnOutcome` 与 `SessionResolver.ensure_*_session(...)`；由 `web/team.py` 实现并注入（`WebSessionRunner` / `_WorkspaceResolver`），因此 `agent/` 不需要反向 import `web/`。`TurnOutcome` 是**四态返回值**（`text` / `silent` / `failed` / `timeout`），其中 `text` **只来自本次 run**（读 `AgentSession.last_turn`，它只在 `_run_session_locked` 的锁内刷新）；并发被拒时在读取之前就返回 `failed(run_in_progress)`，绝不把上一次的产出当本轮发言。
+
+**模型**（`agent/team/models.py` + `store.py`，落点见下）：
+
+| 实体 | 要点 |
+| --- | --- |
+| `Persona`（roster） | 稳定 id、显示名、角色标签、指令、模型绑定；roster 级 `mainBotIds`（可多个，即 Chief） |
+| `Room` | 成员、房间级 `admin`（单个、可为空，决定「用户消息默认由谁应答」）、群共享 `notice`、`(persona, room) → 群内会话 id` 映射、注入游标 `seen` |
+| 房间日志 | 权威有序条目 `{seq, speaker, kind, text, ts}`，`kind ∈ {user, post, system}` |
+
+**轮次编排**（`agent/team/orchestrator.py`）：一轮的初始发言位 = 用户消息**行首** `@Name`（按出现顺序、去重）→ 否则房间 `admin` → 否则 roster 首个 `mainBot` → 否则成员顺序。成员发言**句中**的 `@Name` 追加到**当前位次之后**（去重、非本群成员或自己忽略且不报错）。每轮上限 = 开局 slot 数 + 固定额外轮次（有 admin 再加固定额度），并按成员分别计数封顶；上限按**开局** slot 数计算，轮次中到达的用户消息只追加进房间日志、SHALL NOT 改变上限基数。**轮次终止三出口**：走完 / 达上限（记 `system`）/ 全部剩余成员失败或超时。**房间级互斥**：同一房间同一时刻至多一轮，轮次中到达的用户消息排队进入本轮而不是撞成员会话的 `run_lock`。静默用**哨兵文本** `[PASS]`（解析最终文本，不新增控制工具）。
+
+**切片注入**（`agent/team/roomlog.py`）：成员持有**持久化游标** `seen[member]`，在**回合开始**推进（含静默/超时回合）——若按「上次发言之后」推进，连续静默的成员切片边界永不前进，同一段内容会被反复注入、上下文随静默次数无界增长。注入切片施加三层上限（首见 12 / 单次增量 24 / 往轮上下文 8），并把「本轮」与「往轮（仅 context）」分开标注。房间日志**保留全部条目**（这是「群时间线唯一权威、重连还原」的前提）。
+
+**内部会话与 hub 可见性**：人设单聊会话 id 前缀 `persona-`、群内会话前缀 `room-`，`SessionSnapshot.kind` 记 `chat` / `persona_chat` / `room_member`。hub 列表（`GET /api/sessions`）、workspace 的 `session_count` 与 CLI `session list` 都以**纯字符串前缀**判定过滤（不读快照，故快照损坏也不泄漏）；`DELETE /api/sessions/{id}` 与 WS `reset` 对内部会话**拒绝**——删除只能经人设/房间接口的级联进行（级联顺序：先删会话底座与该人设/房间的全部记忆 scope，最后删 roster/房间条目；幂等，可中断重试）。
+
+**内部会话的会话数上限**：每个内部会话的构造成本含 MCP 子进程 + 独立 subagent 并发额度 + 完整工具注册表，故**懒构造 + 有上限**（`TeamConfig.max_sessions`，缺省 50）。达上限时新建**排队**等待执行槽释放（不拒绝创建）；槽的释放来自淘汰一个空闲的最久未用会话——其快照仍在盘上，下次按同一 id 恢复。
+
+**人设记忆**（Decision 7 / 17）：
+
+- 落点是**同级布局** `~/.asterwynd/projects/<project-hash>/personas/<pid>/chat/memory` 与 `.../personas/<pid>/rooms/<rid>/memory`——不嵌在项目记忆目录内（那里 `_git_commit` 的 `git add -A` 递归，会形成嵌套仓库）。scope 粒度 = **人设 × 会话面**：人设之间、同一人设的单聊与各群之间、群与群之间互不可见。
+- `PersistentMemory` 新增显式 `memory_dir=` / `scope=` 入参（给定即原样使用、跳过 project-hash 推导，未给时零回归）；注入块标题按 scope 变 `## Persona Memory`。
+- Web 路径此前**未接**长期记忆（`_create_session` 未传 `persistent_memory` / `memory_config` / `llm`），本 change 在人设会话上补齐；普通 Web 会话仍不接线（属另一 change）。
+- **记忆 review**：仅**实际产生发言**的回合触发（`TurnOutcome.status == "text"`）；`silent` / `timeout` / `failed` 不触发，这类成员的停滞由「落后补齐」兜底——落后 = `room.seq − reviewed`（**review 游标**，不是注入游标 `seen`），缺省阈值 30。review 是一次独立小模型调用，写回走既有 `save` / `apply_judgment` 路径，`remove` 映射到既有 `archive`（并能回退：本 change 给 `archive` 补上了 move 前的 git 前像）。单聊 scope 的输入是**持久化待 review 缓冲**（`<scope>/pending_review.jsonl`），与消息表下标解耦——上下文压缩会就地缩短消息表、resume 会重建消息表，下标语义必漂移（压缩后游标越过表尾会让 review 永久停摆）。成本口径 `1 + k`（review 本身 1 次 + 去重判官命中 k 次），经 `CostLedger` 的 `memory_review` 相位记账。
+- **跨人设共享面**：workflow 资产库是仓库级共享（显式声明，不是隔离缺陷）。
+
+**群内会话的 pending 降级**：`kind: room_member` 的会话撤销 `AskUserQuestion` 工具，审批类调用按 fail-closed **立即**判定为 unavailable——群聊轮次可能无人值守，走 `WebApprovalHandler`（缺省 600s）/ `WebQuestionHandler`（300s）会把整轮阻塞到超时。人设单聊（`kind: persona_chat`）是用户在场的会话，**不降级**。
+
+**Web 面**：`web/team.py` 的 `TeamService` 持有人设/房间 CRUD、级联删除、内部会话工厂与房间级事件总线（`RoomEventBus`）。HTTP 面在 `/api/team*`（总览 / 人设 / 房间 / 时间线 / 发消息 / 进入单聊）；房间级 WebSocket 是 `/ws/room/{room_id}`——现有 `/ws/{session_id}` 按 session 绑定，不适用于「多成员会话的聚合」。前端群聊 pane 在 `web/static/group.js`（Group 视图）：左侧人设/房间管理，右侧房间时间线（按**发言人**区分不同 agent，用户 / 成员 / 系统三类消息各有独立形态），输入框行首 `@名字` 点名。
+
 ## 工具系统
 
 内置工具位于 `agent/tools/builtin/`。
@@ -123,7 +157,7 @@ Web UI 位于 `web/`，使用 FastAPI、WebSocket 和原生前端实现。
 - `web/debug_hook.py`: DebugHook，捕获每轮 LLM 输入输出、工具调用和错误/完成事件；Memory compact 事件由 AgentLoop 通过 Web session 的 `on_event("memory_compaction", ...)` 发送，payload 含 before/after messages·tokens 与压缩层级元数据。
 - `web/static/`: Chat、Debug 与 Workflow 页面前端资源。
 
-Web UI 当前包含 Hub、Chat、Workflow 和 Debug 四个视图。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Hub 视图按 workspace 组织已保存会话，workspace 选择器列出主 workspace（启动目录或 `--workspace`）与配置 `web.workspaces` allowlist；`Workspace → +` 可新增任意绝对路径（不存在则创建目录），新路径写入 `<配置目录>/.asterwynd/workspaces.yaml` 并在同进程内立即生效，不修改用户手写的 `asterwynd.yaml`。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 正文和工具执行行；用户可以在同一 session 内切换 `build` / `read_only` / `plan` / `bypass`。对话区是 **harness 式 transcript**：正文是单列定宽文档流（user 轮为整列宽输入块 + 角色标签，assistant 无气泡），**每次工具执行只占一行**（默认折叠，点开才见缩进参数与完整结果；失败在折叠行上就可见且不自动展开）。工具执行行的渲染口径集中在 `web/static/tool_rows.js`（`window.AsterwyndToolRows`），由对话区与工作流节点详情抽屉的「对话」tab 共用；摘要生成是 DOM 无关的纯函数，由 `tests/web_tests/test_transcript_js.py` 用 node 直接单测。`tool_call` / `tool_result` 事件不带调用 id，配对按到达顺序 FIFO（同名优先），run 结束时收尾未配对行。当工具调用需要审批时，服务端发送 `approval_request` 事件，前端展示脱敏参数摘要并回传批准或拒绝；每个 Web session 同一时刻只允许一个 pending approval。工具结果事件带 display metadata 与 `tool_call_id`（**不含完整正文**）：折叠行只用它的字符数/行数做行尾元数据、用 `preview` 做**判定与摘要的文本依据**（失败首行、结构化 `exit_code`），不把 preview 当正文铺进对话流；用户展开时按该 id 向服务端按需取回全文（服务端从会话消息或已落盘的 artifact 读回）并在展开体里展示，收起时释放缓存——避免长结果全文无条件经过 WebSocket 进入浏览器。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 正文，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。`session_history` 载荷额外携带 `tool_call_id` 与 assistant 消息的 `tool_calls`（仅 id/name），供前端把重连后的历史工具行还原成带工具名的折叠行。
+Web UI 当前包含 Hub、Chat、Group、Workflow 和 Debug 五个视图（Group 视图即群聊板块，见「多 Agent 编排 → 长期人设与群聊编排」）。Debug 视图通过 `ASTERWYND_DEBUG=enabled` 开启。Hub 视图按 workspace 组织已保存会话，workspace 选择器列出主 workspace（启动目录或 `--workspace`）与配置 `web.workspaces` allowlist；`Workspace → +` 可新增任意绝对路径（不存在则创建目录），新路径写入 `<配置目录>/.asterwynd/workspaces.yaml` 并在同进程内立即生效，不修改用户手写的 `asterwynd.yaml`。Chat 视图展示当前 session id、最近一次 run id、当前 session mode、Plan Document、planning state、assistant Markdown 正文和工具执行行；用户可以在同一 session 内切换 `build` / `read_only` / `plan` / `bypass`。对话区是 **harness 式 transcript**：正文是单列定宽文档流（user 轮为整列宽输入块 + 角色标签，assistant 无气泡），**每次工具执行只占一行**（默认折叠，点开才见缩进参数与完整结果；失败在折叠行上就可见且不自动展开）。工具执行行的渲染口径集中在 `web/static/tool_rows.js`（`window.AsterwyndToolRows`），由对话区与工作流节点详情抽屉的「对话」tab 共用；摘要生成是 DOM 无关的纯函数，由 `tests/web_tests/test_transcript_js.py` 用 node 直接单测。`tool_call` / `tool_result` 事件不带调用 id，配对按到达顺序 FIFO（同名优先），run 结束时收尾未配对行。当工具调用需要审批时，服务端发送 `approval_request` 事件，前端展示脱敏参数摘要并回传批准或拒绝；每个 Web session 同一时刻只允许一个 pending approval。工具结果事件带 display metadata 与 `tool_call_id`（**不含完整正文**）：折叠行只用它的字符数/行数做行尾元数据、用 `preview` 做**判定与摘要的文本依据**（失败首行、结构化 `exit_code`），不把 preview 当正文铺进对话流；用户展开时按该 id 向服务端按需取回全文（服务端从会话消息或已落盘的 artifact 读回）并在展开体里展示，收起时释放缓存——避免长结果全文无条件经过 WebSocket 进入浏览器。支持 streaming 的 provider 会通过 `assistant_delta` 事件实时更新 assistant 正文，最终 `llm_response(streamed=true)` 只作为完整响应事件，不重复展示文本；非 streaming provider 仍展示整段 `llm_response.content`。`session_history` 载荷额外携带 `tool_call_id` 与 assistant 消息的 `tool_calls`（仅 id/name），供前端把重连后的历史工具行还原成带工具名的折叠行。
 
 Web session 的 run 事件出口是 **session 级、与单条 WebSocket 连接解耦**的（`AgentSession.event_channel`）：浏览器断开（移动端切后台/锁屏）只解绑该连接，不会终止正在执行的 run，也不会把 pending 审批/提问判定为失败。重连命中同一内存 session 时，服务端按 `session_resumed → session_history → pending 卡片补发 → workflow 快照` 的顺序推送，把仍处于 pending 的 `approval_request` / `user_question` 卡片补发回前端（已作答/已超时/已取消的请求不补发）。同一 session 存在多条连接（多 tab / 多设备）时 run 事件广播给全部连接，作答采用「先答者胜」，终态广播回所有连接。
 

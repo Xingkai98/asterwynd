@@ -195,6 +195,46 @@ class TestRoomWebSocket:
             assert ws.receive_json() == {"error": "unknown_room"}
 
 
+class TestGoldenPath:
+    """tasks 5.3 的脚本化 golden path：建人设 → 建群 → @ 点名 → 单聊。"""
+
+    def test_persona_room_mention_and_single_chat(self, client, app):
+        chief = _create_persona(client, "Chief", instructions="你是主持人", main_bot=True)["persona"]["id"]
+        member = _create_persona(client, "小王", instructions="你负责补充")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "讨论组", "members": [chief, member], "admin": chief,
+            "notice": "先说结论",
+        }).json()["room"]
+
+        # @ 点名让非 admin 先发言
+        resp = client.post(f"/api/team/rooms/{room['id']}/messages",
+                           json={"content": "@小王 你的看法？"})
+        assert resp.status_code == 200, resp.text
+        posts = [e for e in resp.json()["timeline"] if e["kind"] == "post"]
+        assert posts and posts[0]["speaker"] == member
+
+        # 人设单聊：独立会话、可被 hub 之外的入口打开
+        chat = client.get(f"/api/team/personas/{member}/chat").json()
+        assert chat["session_id"].startswith("persona-")
+        with client.websocket_connect(
+            f"/ws/{chat['session_id']}?workspace={chat['workspace']}"
+        ) as ws:
+            first = ws.receive_json()
+            assert first["type"] in {"session_resumed", "session_created"}
+            ws.send_json({"type": "chat", "content": "单独聊聊"})
+            seen = []
+            for _ in range(40):
+                event = ws.receive_json()
+                seen.append(event["type"])
+                if event["type"] == "done":
+                    break
+            assert "done" in seen
+
+        # 单聊内容不出现在房间时间线里
+        timeline = client.get(f"/api/team/rooms/{room['id']}/timeline").json()["timeline"]
+        assert all("单独聊聊" not in e["text"] for e in timeline)
+
+
 def _mode():
     from agent.run_config import AgentMode
 

@@ -69,3 +69,14 @@ SubAgentManager.create_subagent (manager.py:175) → run_subagent (209) → _lau
 - **预算硬 kill 是护栏**：子 agent 失控是最贵的失败模式，`BudgetExceededError` 硬 kill + 失败摘要比软提示可靠。
 - **消息总线防上下文爆炸**：子 agent 间不直接传完整 transcript，而是传摘要（`compact_summary`），严格 token 预算。
 - **编排模式库是面试杀伤力**：能讲出"orchestrator-worker 比较经济、去中心化会上下文炸、竞标模式的实际 case"——这是踩过坑的深度（issue #79 面试表现观察）。
+
+### 另一条线：长期人设 + 会话式群聊（`agent/team/`）
+
+上面那套是**DAG 批处理**（一次性委托、图跑完即止）。`web-agent-group-chat` 加的是**并列**的第二形态：长期存在、面向用户、可交互轮次的多 agent——每个「人设 × 会话面」是一个普通 `AgentSession`，由 `RoomOrchestrator` 按发言位（slot）序列推进。
+
+- **不复用 `SubAgentManager` 的三条代码级否证**：child session 被父 `AgentLoop` 拥有（构造时就绑到父 loop 的 llm）、system prompt 硬编码为「受限的子 agent」、无会话快照（`_sessions` 是进程内存字典）。面试里这比「架构上更干净」有力得多。
+- **分层靠依赖倒置**：编排器在 `agent/team/`，只依赖 `SessionRunner`（`run(session_id, message) -> TurnOutcome` 四态返回值）与 `SessionResolver` 两个抽象，由 `web/team.py` 实现并注入——`agent/` 不需要反向 import `web/`（全仓唯一反向点是 CLI 入口的延迟 import）。
+- **一条我特意设计成「返回值而非异常」的契约**：`TurnOutcome.status` 四态（`text`/`silent`/`failed`/`timeout`），且 `text` **只来自本次 run**。反例是「读 session 最后一条 assistant」——同 session 并发 run 被 `run_lock` 拒时那次 run 不产生任何新文本，取「最后一条」会把**陈旧内容**当本轮发言写进房间日志。这类「看起来等价、实际会静默错答」的坑适合当面试的深挖点。
+- **成本控制三件套**：静默哨兵（`[PASS]` 文本，不新增控制工具污染工具面）、每轮每成员发言上限 + 轮次上限（**三出口**：走完 / 达上限 / 全部剩余成员失败或超时）、单轮超时 240s。
+- **游标是两份、不互相替代**：注入游标 `seen` 在**回合开始**推进（含静默回合，否则连续静默成员的切片边界永不前进、同一段内容被反复注入、上下文无界增长——与 issue #278 同类）；review 游标 `reviewed` 只被记忆 review 推进。用 `seen` 当「落后补齐」的基准会让落后恒为 0、补齐永不触发。
+- **单聊 scope 的记忆游标不能用消息表下标**：上下文压缩会就地缩短消息表、session resume 会重建消息表，下标语义必漂移（压缩后游标越过表尾 ⇒ review 永久停摆）。改用 scope 目录内的**持久化待 review 缓冲**，与消息表下标解耦。
