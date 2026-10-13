@@ -175,3 +175,35 @@ Subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline 
 - **GIVEN** 某房间设置了 notice
 - **WHEN** 该房间某成员与其单聊会话交互
 - **THEN** 该单聊会话上下文 SHALL NOT 包含该 notice
+
+### Requirement: 人设运行模式
+
+每个 agent 人设 SHALL 拥有可配置的运行模式（`build` / `read_only` / `plan` / `bypass`），缺省 SHALL 为 `bypass`；该人设的单聊会话与它在所有群里的群内会话 SHALL 以该模式运行。
+
+#### Scenario: 人设按其模式构造会话
+
+- **GIVEN** 一个人设的运行模式设为 `bypass`
+- **WHEN** 为该人设构造单聊或群内会话
+- **THEN** 该会话 SHALL 以 `bypass` 模式运行
+- **AND** 其高风险工具调用 SHALL NOT 因需审批而被阻塞
+
+#### Scenario: 模式变更持久化
+
+- **GIVEN** 用户把某个人设的模式从 `build` 改为 `read_only`
+- **WHEN** 保存成功
+- **THEN** 该人设此后构造的会话 SHALL 使用 `read_only`
+
+### Requirement: 房间应答模式
+
+每个房间 SHALL 拥有应答模式 `reply_mode`，取值 `admin`（缺省）/ `everyone`。`admin` 模式下，无 `@` 的普通消息 SHALL 由房间 admin 应答（无 admin 则 roster 首个 `mainBot`）；`everyone` 模式下，无 `@` 的普通消息 SHALL 让全体成员按序各得一次发言机会（admin 先），每名成员自行决定发言或静默。两种模式均 SHALL 受每轮每成员发言上限约束。
+
+#### Scenario: admin 模式仅管理员应答
+
+- **GIVEN** 一个 `reply_mode = admin` 的房间，用户发送不含 `@` 的普通消息
+- **THEN** 只有房间 admin SHALL 成为本轮初始发言者
+
+#### Scenario: everyone 模式全员各得一次机会
+
+- **GIVEN** 一个 `reply_mode = everyone` 的房间有 3 名成员，用户发送不含 `@` 的普通消息
+- **THEN** 三名成员 SHALL 按序各得一次发言机会（admin 先）
+- **AND** 没有新增内容的成员 SHALL 可以静默

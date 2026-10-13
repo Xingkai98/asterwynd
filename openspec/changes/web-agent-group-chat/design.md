@@ -123,7 +123,7 @@
 
 ### Decision 11: 每轮预算、slot 序列、`@` 解析与轮次终止
 
-- **slot 序列算法（钉死）**：一轮的初始 slot = `openingSpeakers(用户消息)`——用户消息行首 `@Name`（多个则按出现顺序、去重）→ 否则房间 admin（无 admin 则 roster 第一个 `mainBot`）→ 否则按成员顺序。成员发言中 `@Name` **追加**到当前位次之后、去重、且每人每轮发言数 ≤ 上限。**同一人被 @ 两次只追加一次**。
+- **slot 序列算法（钉死）**：一轮的初始 slot = `openingSpeakers(用户消息)`——用户消息行首 `@Name`（多个则按出现顺序、去重）→ 否则**按房间应答模式**（Decision 19）：`admin` 模式 → 房间 admin（无 admin 则 roster 第一个 `mainBot`）；`everyone` 模式 → 全体成员按序（admin 先）。成员发言中 `@Name` **追加**到当前位次之后、去重、且每人每轮发言数 ≤ 上限。**同一人被 @ 两次只追加一次**。
 - **`@` 解析口径**：用户消息**行首**的 `@` 触发点名（`web-ui` delta）；成员发言**句中**的 `@` 也触发接力（`multi-agent-collaboration` delta）——此差异 SHALL 在两处 spec 写明。点名不在列表的人 / 自己 / 多人：只取「属于本群成员且非自己」者，不报错。
 - **每轮上限** = `初始 slot 数 + 固定额外轮次`（群有 admin 时再加固定额度），并按成员分别计数封顶（参照 `ds-bot/src/host/groups.js:24-27,262`）。
 - **轮次终止（三出口）**：① 所有 slot 走完；② 达上限（房间日志记 `system`「因达上限结束」）；③ 全部剩余成员 run 失败或超时（各记 `system` 后结束）。单个成员失败/超时只记 `system` 并继续（不挂死整轮）。**首版不提供轮次取消出口。** 用户再次发言才开新一轮。
@@ -187,6 +187,21 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - **可关闭**：默认开启，可配置关闭（`MemoryConfig` 现无此字段，`agent/config.py:248-256`，需新增配置位）。
 
 （用户 2026-10-12 拍板选「①+兜底」。）
+
+### Decision 18: 人设运行模式（mode）
+
+每个 Persona SHALL 拥有 `mode` 字段（取值 `build` / `read_only` / `plan` / `bypass`，即 `AgentMode`，`agent/run_config.py:18-22`），在该人设的单聊与所有群内会话被构造时 SHALL 用它（`AgentRunConfig(mode=...)`）。**默认 `bypass`**（用户 2026-10-13 拍板）。
+理由：人设会话此前一律用默认 `build`；`build` 下高风险工具（如 Bash）需审批，而群内会话按 Decision 9 审批 fail-closed 立即拒 ⇒ 成员在群里跑不了高风险工具（「被权限卡死」）。`bypass` 让人设不受审批阻塞。
+- 人设的设置对话框 SHALL 提供该字段；roster CRUD 的新增/修改 SHALL 持久化它。
+- 与 Decision 9 的关系：`bypass` 下审批根本不触发，故群内降级不再构成阻塞。
+
+### Decision 19: 房间应答模式（admin / everyone）
+
+每个 Room SHALL 拥有 `reply_mode` 字段，取值 `admin`（默认）/ `everyone`。
+- `admin`：无 `@` 的普通消息由**房间 admin** 应答（无 admin 则 roster 首个 `mainBot`）——即 Decision 11/13 现状。
+- `everyone`：无 `@` 的普通消息让**全体成员按序各得一次发言机会**（admin 先）；每名成员自己决定发言或静默（`[PASS]`）。成本 = 每条消息 N 次模型调用（每成员各读一遍上下文切片），故**默认关闭**（新建房间默认 `admin`），可逐房间切换。
+- 每轮每成员上限（Decision 11）在两种模式下均生效。
+- 房间设置对话框 SHALL 提供该字段（`admin` / `everyone`）。
 
 ## Pre-Implementation Review
 
