@@ -1,0 +1,14 @@
+# 由 `witnessloop init` 生成，请勿手改——`witnessloop uninit` 依
+# .witnessloop/init-manifest.json 的 hash 台账回滚它。
+# 门禁本体住在 reusable workflow 里，本文件只是 caller。
+name: witnessloop
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    uses: Xingkai98/witnessloop/.github/workflows/gate.yml@v1
