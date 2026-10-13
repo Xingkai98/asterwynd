@@ -202,7 +202,57 @@ $ uv run --extra dev pytest tests/agent/memory/test_persistent.py::TestFindScope
 
 ## 7. 本分支 PR 的 CI（A.5.1–A.5.3）
 
-（PR 开出后回填：`gate / check` 是否出现并跑出结果、是否未进 required、`validate` / `benchmark-gate` 与 §2 基线逐项比对。）
+**PR**：[#308](https://github.com/Xingkai98/asterwynd/pull/308)（draft），head `691064c`。
+
+### 7.1 判据 ②：`gate / check` 出现并跑出结果
+
+PR 上的 check runs（`gh api …/commits/<sha>/check-runs`）：
+
+```
+gate / check | completed | failure | app=github-actions
+benchmark-gate | completed | success
+validate | completed | success
+windows-platform | completed | success
+```
+
+**`gate / check` 确实出现并跑出了 findings**（不是空跑）：
+
+```
+$ uvx --from "git+https://github.com/Xingkai98/witnessloop@v1" witnessloop check --root . --base "$BASE" --head HEAD
+check：未通过 ✗（2 项）
+check：基线 origin/master...HEAD，17 个变更文件，1 个 change 目录
+  1. openspec/changes/witnessloop-adoption：缺少 review manifest（审阅证据必须「报告 + manifest」成对，glob=reviews/*.manifest.json）
+  2. openspec/changes/witnessloop-adoption：无 stage=grill 的 manifest（现有 stage：（无））——grill 决策记录必须有对应的审阅证据
+  change：witnessloop-adoption
+##[error]Process completed with exit code 1.
+```
+
+⇒ **与本地 `check`（§4.2）逐条一致**，同为那 2 条「缺 manifest」。**判据 ② 通过**（`gate / check` 结论为 `failure` 正是预期——本 change 自己就是 K2）。
+
+**两条附带实测**（值得记进阶段 B）：
+- **`@v1` 解析到了具体 commit**：CI 日志显示 `Building witnessloop @ git+…@ae992565ee2162e5b272af471e9adf895e7f83fb`——即上游 `v1` 移动 tag 当时指向 `ae99256`（= witnessloop 本地 HEAD）。**R6 的「移动 tag」风险是可观测的**（钉死走 `--gate-ref`，本阶段不引入）。
+- **`check` 红不会掩蔽测试步骤**：`check` 失败后 `adopter tests` **照跑**（该步 `if: ${{ !cancelled() }}`），job 结论仍为 `failure`。⇒ 一次 CI 里同时看得到「缺必需件」与 pytest 明细；真正的掩蔽开关是 `continue-on-error`（上游 `gate.yml:65-69` 有同口径自述，本次实测与之相符）。
+
+### 7.2 判据 ⑤：`validate` / `benchmark-gate` 与 branch protection 四项实况
+
+| 项 | 基线（§2） | 本 PR 现状 | 结论 |
+|---|---|---|---|
+| `gate / check` 是否出现 | ——（接入前不存在） | `completed / failure` | **新增**（判据 ②） |
+| `validate` | `success` | `success` | 未变 |
+| `benchmark-gate` | `success` | `success` | 未变 |
+| `windows-platform` | `success` | `success` | 未变 |
+| `required_status_checks.contexts` | `["validate","benchmark-gate"]` | `["validate","benchmark-gate"]` | **未变** |
+| `required_status_checks.strict` | `true` | `true` | 未变 |
+| `required_approving_review_count` | `0` | `0` | 未变 |
+| `required_conversation_resolution.enabled` | `true` | `true` | 未变 |
+
+⇒ **`gate / check` 未进 required**（required 仍是那两项，逐字未变），`validate` / `benchmark-gate` 的行为与 branch protection 四项实况**逐项一致**。**判据 ⑤ 通过。**
+
+### 7.3 CI 侧的 pytest 结果（对本机 2 条失败的独立佐证）
+
+`adopter tests` 步（执行点 = `uv run --extra dev pytest -q`）在干净 runner 上：**`4241 passed, 101 skipped, 30 warnings in 203.42s`——零失败**。
+
+⇒ **独立佐证 §6.1 的结论**：本机那 2 条失败是本机 `/tmp/.git` 的环境坑，**不是**本 change 引入的问题。同时这也验证了 **U4 的执行点命令在干净 runner 上可跑**（裸 `uv run pytest` 会因缺 `dev` extra 报 `Failed to spawn: pytest`）。
 
 ## 8. 双守卫并存实测（A.4.5，判据 ⑥）
 
