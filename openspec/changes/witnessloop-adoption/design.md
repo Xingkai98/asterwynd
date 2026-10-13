@@ -20,6 +20,10 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 5. **接入会多一个 PreToolUse 守卫**：本仓已有 `scripts/workflow_guard.py`（matcher `Write|Edit|Bash`），plugin 再加一个 `witnessloop guard`（matcher `Write|Edit`）⇒ 同一 `Write` 上两个 block 源，合并语义未实测（Decision 8）。
 
+第六条来自**独立对抗轮**（`reviews/grill-adversarial-v1.md`，CHANGES_REQUESTED），它证伪了整合稿的三处核心判断：
+
+6. **grill 报告正文判据不兼容**：witnessloop 的 `_SOURCE_RE` **不认加粗的 `- **来源**: x`**，而本仓记录通篇如此 ⇒ **grill stage 结构性不可能判绿**（Decision 2 末段、**Open Question Q7**、R11）。连带地，「样板 manifest = 验收里第一次绿的一侧」（B1）与「manifest 一建就 stale」（B3）两条也已按实测改写（Decision 7 / R13）。
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -78,7 +82,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 ### Decision 2: manifest 两套并存；schema 统一留到阶段 C 之后（**原定性错，已按 grill 实测重写**）
 
-**原设计错在哪**：原 Decision 2 把差异定性为「文件名 glob 不匹配 ⇒ 纯机械修正」，并把 glob 改成 `reviews/*-manifest.json`。grill 用**asterwynd 形态**的 manifest 在隔离副本里实跑 `check`，得 **6 条红**：
+**原设计错在哪**：原 Decision 2 把差异定性为「文件名 glob 不匹配 ⇒ 纯机械修正」，并把 glob 改成 `reviews/*-manifest.json`。grill 用**asterwynd 形态**的 manifest 在隔离副本里实跑 `check`，得 **6 条红**（该轮把它放在 glob **能匹配**的位置；对抗轮进一步钉准了红数的分档：glob 匹配 0 份时 `check` 早退、现状只有 **2 条**，见下方「孤儿」段）：
 `manifest 缺字段：stage, author_run_id, report_path` · `reviews/building-review.md 孤儿报告` · `reviews/grill-design.md 孤儿报告` · `无 stage=grill 的 manifest（现有 stage：?）` · `无 stage=grill-adversarial 的 manifest` · `无 stage=building 的 manifest（现有 stage：?）`。
 换成 witnessloop 形态后「缺字段」与「无 stage=building」两条消失。⇒ **glob 不是问题所在**，改它**一条红都消不掉**。
 
@@ -89,7 +93,13 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 | 字段 | `schema` / `change_id` / **`phase`** / `verdict` / `reviewer_run_id` / `base_sha` / `head_sha` / `tasks_hash` / `spec_hash` / `diff_hash` / `report_hash` | `stage` / `reviewer_run_id` / **`author_run_id`** / `base_sha` / `head_sha` / `tasks_hash` / `spec_hash` / `report_hash` / **`report_path`** |
 | 出处 | `agent/workflow/review_manifest.py:93-104`（`"phase": phase`）；路径 `reviews/<phase>-review-manifest.json`（同文件 `:65-69`） | `src/witnessloop/constants.py:95-105` 的 `REVIEW_MANIFEST_REQUIRED_FIELDS` |
 
-三处差异：① `phase` ≠ `stage`（字段名不同；witnessloop 按 `doc["stage"]` 匹配，`evidence.py:197-208`）；② 缺 `author_run_id`；③ 缺 `report_path`——其中 `report_path` 缺失的**连带后果最重**：witnessloop 的绑定集为空 ⇒ `reviews/*.md` **每一份**都成「孤儿报告」（`contract.py:173-182` + `:185-219`）。
+三处差异：① `phase` ≠ `stage`（字段名不同；witnessloop 按 `doc["stage"]` 匹配，`evidence.py:197-208`）；② 缺 `author_run_id`；③ 缺 `report_path`。
+
+**"孤儿"的真实触发条件（对抗轮实测修正，原design的表述不准）**：`_check_orphan_reports` 挂在 `contract.py:127-148` 的 manifest 循环之后，而该循环在 **glob 匹配到 0 份时于 `:129-135` 早退**。⇒ ① 「本仓 manifest 不匹配默认 glob」本身 **不会**让 `reviews/*.md` 变孤儿（现状实测只有 2 条红：`缺少 review manifest` + `无 stage=grill 的 manifest`）；② **真正的引信是「落了任意一份 witnessloop 形态 manifest」**——从此 `reviews/**/*.md` 里**每一份**未被 `report_path` 绑定的报告都判孤儿（`contract.py:185-219`）。实测：建一份 `grill.manifest.json` 后，红数 **2 → 14**；再放入 `grill-adversarial.md`（issue #298 要求停轮前必须存在）后 **→ 16**。
+
+⇒ 由此得到**阶段 A 的操作约束**：**要么给 `reviews/` 下每一份报告都建 manifest，要么一份都别落**——中间态（只落一部分）比不落更红。
+
+**"并存"在 grill 线上其实是"纯新增"（对抗轮实测）**：本仓 75 份 `*-review-manifest.json` 的 `phase` 取值只有 `building`(74) / `design`(1)——**`grill` / `grill-adversarial` 从来没有过 manifest**，只有 `.md` 报告（63 份 `grill-design.md`、8 份 `grill-adversarial*.md`）。⇒ Decision 2 的「并存」在本仓侧只覆盖 `building` 一条线；grill / grill-adversarial 两条线是**从零新增** witnessloop 形态证据。
 
 **选择（定案）**：
 
@@ -100,9 +110,9 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 **为什么不能放宽 glob**（grill 实测，原判断「无害」被证伪）：`stage_manifest_findings_in_change` 取 **`matching[0]`**（按路径字典序的第一份），而 `validate_review_manifests` 会**逐份**校验所有匹配文件（`evidence.py:197-210`；`contract.py:127-149`）。⇒ 一是「多份同 stage 时只有字典序第一份被当证据、其余静默忽略」，可**错绑**到悬空报告——实测把坏的 `aaa-manifest.json` 排在合法文件之前，坏的那份顶替了合法的；二是「任何一份坏 manifest 都独立报红」（**宁多勿漏**，不是无害）。放宽 glob 会把 asterwynd schema 的那批文件一并卷进候选集，两种症状都会踩。
 
-**代价（写进阶段 B 报告）**：阶段 B 的流程会与 asterwynd 现有的 `/review-loop` **分叉**——`/review-loop` 只产 asterwynd 形态的 manifest，阶段 B 必须显式多跑一步 `witnessloop manifest build` 才能拿到 witnessloop 形态的三份证据。这正是「影子期两套并存」的具体成本。
+**文件名无碍、但正文判据不同构（对抗轮实测证伪了原「同构」判断）**：`report_path` 是自由字段，所以本仓的 `reviews/grill-design.md` **文件名无碍** ✓。但 witnessloop 对 grill 报告**正文**的判据与本仓写法**系统性不兼容**——`src/witnessloop/evidence.py:33` 的 `_SOURCE_RE = re.compile(r"来源\s*[:：]")` 要求「来源」后**直接**接冒号，**不接受 `- **来源**: x` 这种加粗写法**（实测：裸写法命中、加粗不命中）；而本仓记录**通篇是加粗**（本 change 自己的 `grill-design.md` 有 12 处这种行 ⇒ 7/7 条 Confirmed Decision 全判「缺 `来源:`」）。⇒ **grill stage 按现有报告格式结构性不可能判绿**，这是本 change 的**已知阻塞/前置依赖**，见 **Open Question Q7**（已去 witnessloop 立 issue [#20](https://github.com/Xingkai98/witnessloop/issues/20)）。
 
-**顺带确认**：`report_path` 是自由字段，所以本仓的 `reviews/grill-design.md` **文件名无碍**；witnessloop 对 grill 报告正文的判据（`## Confirmed Decisions` / `## User Confirmation`）与本仓现有形状**同构**。
+**代价（写进阶段 B 报告）**：阶段 B 的流程会与 asterwynd 现有的 `/review-loop` **分叉**——`/review-loop` 只产 asterwynd 形态的 manifest（且本仓侧**根本没有** grill / grill-adversarial 两份 manifest 的产出路径），阶段 B 必须显式多跑 `witnessloop manifest build` 才能拿到 witnessloop 形态的证据。这正是「影子期两套并存」的具体成本。
 
 ### Decision 3: `protected_paths` **不含** `openspec/changes/archive/**`
 
@@ -170,8 +180,13 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 1. **统一记为「预期红」**，如实列进阶段 A 验收报告与阶段 B 报告，**不修**（K1 是 in-flight 历史事实；K2 是影子期的结构性产物）。
 2. **不放宽任何判据**：不给 change 开豁免、**不**把 `required_artifacts` 里的 `reviews` 去掉、**不**为 K1 补一份「凑数」manifest。理由：放宽判据会让**新 change 也一起被放行**——正是 witnessloop 要堵的形态。阶段 A 不勾 required ⇒ 两条预期红**在阶段 A 不造成任何实际拦截**。
-3. **推荐**：**本 change 自己也走一遍 `witnessloop manifest build` 当样板**（K2 的推荐处置）。理由：本 change 的 `reviews/` 下**已经有** `grill-design.md`（grill 产出），补一份 witnessloop 形态的 grill manifest 成本极低，收益是：① 阶段 A 的验收里**第一次有「绿」的一侧**（否则整条验收只有红，判不出「配置是否生效」与「本来就缺证据」的区别——这正是 grill 风险 R1 的形态）；② 它天然就是阶段 B 的**流程样板**（`manifest build` 的正确调用姿势）；③ 它证明「两套 manifest 并存」在真实 change 上可行。**注意**：这只覆盖 `grill` 一个 stage，本 change 的 diff 不触 `code_hits` ⇒ `building` / `grill-adversarial` 两条**本就不要求**，无需伪造。
-4. K1 **不按同样方式处理**：给它补证据 = 替一个 in-flight change 补历史证据，会让「它到底实现了没有」的语义漂移。**K1 就让它红**，作为「真打开」时必须一并决策的收尾项（阶段 C 的输入）。
+3. **样板方案已按对抗轮实测改写——它不再提供「绿的一侧」**。原推荐（本 change 自己跑一次 `manifest build` 当样板，声称「阶段 A 验收里第一次出现绿的一侧」）**被实测证伪**：
+   - 现状（`reviews/` 只有本仓形态报告）⇒ **2 条红**；
+   - 落一份 `grill.manifest.json` 后 ⇒ **14 条红**（孤儿规则被激活，见 Decision 2 的操作约束；外加下面第 4 条的 `缺 来源:`）；
+   - 再放入 `grill-adversarial.md` 后 ⇒ **16 条红**。
+   ⇒ **K2 的红数不是「2 条」，而是随「落了几份 manifest」变化的 2 → 14 → 16**。样板**不会**带来绿：grill stage 因 `来源:` 谓词（Q7）**结构性无法判绿**。
+4. ⇒ **阶段 A 的默认处置改为「一份 manifest 都不落」**，K2 保持 **2 条红**（这是最干净的中间态）。若确实要落样板（例如为了验证 `manifest build` 通路），必须**同时**满足三条：① 给 `reviews/` 下**每一份** `.md` 都建 manifest（否则每份未绑定报告成孤儿）；② 在**所有内容提交之后**重建（stale 约束，见 R13）；③ 明确写下「它**不是**绿的一侧」（避免后续读者按原文档误判）。这三条已写进 `tasks.md` 的 A.5.6。
+5. K1 **不按同样方式处理**：给它补证据 = 替一个 in-flight change 补历史证据，会让「它到底实现了没有」的语义漂移。**K1 就让它红**，作为「真打开」时必须一并决策的收尾项（阶段 C 的输入）。
 
 ### Decision 8: 两个 PreToolUse 守卫并存（**原设计完全没覆盖的缺口**）
 
@@ -187,13 +202,20 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 **选择**：**阶段 A 保留两个守卫并存**（不下掉任何一个），并把未知面作为**实测项**写进阶段 A/B，而不是靠推理填坑。
 
-**已知未知（阶段 A/B 必须实测，不得臆断）**：
+**「新增拦截面」的定性是错的（对抗轮实测证伪）**：原设计说 witnessloop 的 guard 会在「本仓现有守卫**不管**的维度」上新增拦截。**实测证伪**——本仓守卫**本来就拦这一维度**：`scripts/workflow_guard.py:640-654` + `_grill_evidence_missing`（`:364-404`）在写 `agent/**` 且该 change 缺 grill 证据时同样 `exit 2`（实测输出 `⛔ change '…' 尚未完成独立 subagent design grilling.`）。⇒ 两侧是**同一维度、不同判据**（本仓=文件 + 正文；witnessloop=manifest + 正文），**不是新增的面**。行为变化只有一条：**退步**（丢 Bash 面）。
 
-1. **CC 的 hook 合并语义**：settings 的 hook 与 plugin 的 hook 同时匹配时，CC 是串行还是并行执行？任一 exit 2 即拦、还是首个非零即终止？**未实测**。
-2. **报错归属**：被拦时用户看到的是哪个守卫的提示？两个都出还是只出一个？**未实测**。
-3. **命令命名空间冲突**：plugin 的 `grill` / `review-loop` 命令与仓内 `.claude/commands/{grill.md,review-loop.md}`（两个都是本地文件）是否同命名空间冲突（CC 通常把 plugin 命令命名空间化为 `/witnessloop:grill`，但**未实测**）。
-4. **新增拦截面**：witnessloop 的 guard 判「写目标是否命中 `require_change_for` 且该 change 的 grill 证据是否完备」（`guardcmd.py:71-79` + `:105-106`）⇒ 它会在**本仓现有守卫不管的维度**上新增拦截（缺 grill 证据），这是**新增的面**而不是退步，需在报告里分开记。
-5. **版本耦合**：`guard.sh:32` 调的是 **PATH 上的 `witnessloop`**。若本机装的是另一份 `uv-tool` 装的 witnessloop（与本 worktree 无关），其 policy schema 可能漂移——属**版本耦合**，与「本地层独立于 CI 层」的说法不矛盾但需记明。**验证一律用 `uv run witnessloop`**，不用裸 `witnessloop`。
+**真正未实测的只有两项**（阶段 A/B 必须实测，不得臆断）：
+
+1. **CC 的 hook 合并语义**：settings 的 hook 与 plugin 的 hook 同时匹配时，CC 是串行还是并行？任一 exit 2 即拦、还是首个非零即终止？
+2. **报错归属**：被拦时用户看到哪个守卫的提示？两个都出还是只出一个？
+
+两条都**只在真装 plugin 的宿主上可测**，且**必须在两棵树各做一次**——对抗轮实测 building worktree 下**没有 `.claude/` 目录**（`.gitignore:9` 忽略 + worktree 无副本），本仓守卫的 hook 只挂在主 checkout `/home/happy/my-agent/.claude/settings.json`（matcher `Write|Edit|Bash`）⇒ 在 worktree 上只能观察到 plugin 那一个。这一点已写进 `tasks.md` 的 A.4.5。
+
+**其余三项不必列为「未实测」**（对抗轮给出可机械判定路径）：
+
+3. **命令命名空间**——**可静态判定**：`plugin/.claude-plugin/plugin.json` 的 `"name": "witnessloop"` ⇒ 命令命名空间化，与仓内 `.claude/commands/{grill.md,review-loop.md}` 不同名。A.4.5 顺手确认即可。
+4. **`guard.sh` 的前置条件（已知风险，不是"版本可能漂移"这么轻）**：`plugin/hooks/guard.sh:32` 调的是 **PATH 上的裸 `witnessloop`**，且 `:38-41` 的退出码映射是「**1 → exit 2（拦）**，**其余（含 2 = 用法错误 / 旧版 CLI 的 invalid choice）→ exit 0（放行）**」（注释自陈这是为了避免旧版 CLI 把每个 Write 都拦下）。⇒ 实测本机 PATH 上那份是 **0.1.0、没有 `guard` 子命令** ⇒ **整个 guard 静默空转**（shim 退出码 0）。**后果**：A.4.5 / B.5 若不做「PATH 上那份 CLI 是哪一个」的前置核验，会把「放行」误读成「证据完备」。⇒ 阶段 A 的前置条件是 `command -v witnessloop` + `witnessloop --help` 含 `guard`；**design 原有的「验证一律用 `uv run witnessloop`」覆盖不到 `guard.sh`**（它在 plugin 里、硬编码裸命令）。
+5. **policy schema 漂移**：与上条同源（两份 CLI 的 schema 可能不同步），随第 4 条一并核验。
 
 **为什么不在本阶段消除重复**：下掉 `scripts/workflow_guard.py` 属于「下掉旧件」，本 change 明确不做（非目标）；而改 witnessloop 的插件面是改上游。并存是影子期的**必然形态**，把它实测清楚正是本阶段的价值。
 
@@ -201,13 +223,14 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 - Questions resolved:
   - 接入形态（`init --policy` 一次写成 vs 出厂 policy + 后续手改）——**已定**：一次写成，理由见 Decision 1。
-  - manifest 差异的归因——**已定：不是 glob，是 schema**；处置=**两套并存、schema 统一延后到阶段 C 之后**（Decision 2，grill 实测 6 条红证伪了原「机械修正」定性，对应 grill 的 Q5/OQ2）。
+  - manifest 差异的归因——**已定：不是 glob，是 schema**；处置=**两套并存、schema 统一延后到阶段 C 之后**（Decision 2；grill 实测证伪了原「机械修正」定性，对抗轮进一步钉准红数——glob 匹配 0 份时 `check` 早退、现状 **2 条红**，落任意一份 witnessloop 形态 manifest 后 **14 → 16 条**。对应 grill 的 Q5/OQ2，其推荐值保留在 **Open Question Q5**）。
   - 归档目录是否列 `protected_paths`——**已定：不列**（Decision 3，实测 12 条假红；grill 进一步实测出**归档 move 必须是独立纯改名提交**，见 tasks 的运维约束）。
   - 阶段划分与「只跑不拦」的实现方式——**已定**（Decision 4）。
   - 哪些留本地——**已定**（Decision 5）。
   - `handoff.json` 是否混入——**已定：不混入**（Decision 6）。
   - 已知红的范围与处置——**已定：含本 change 自己，如实记录 + 不放宽；本 change 自己补一份 witnessloop 形态 grill manifest 当样板**（Decision 7）。
   - 两个 PreToolUse 守卫并存——**姿态已定：两条都保留、未知面实测**（Decision 8）。
+  - **对抗轮（`reviews/grill-adversarial-v1.md`）提出的 7 条阻塞全部已处置**：B1/B3（样板不是绿的一侧 + stale 顺序）→ Decision 7 / R11 / R13；B2（`来源:` 谓词不兼容）→ **Open Question Q7** + witnessloop issue [#20](https://github.com/Xingkai98/witnessloop/issues/20)；B4（Q4 推荐值不可执行）→ Q4 改为 `uv run --extra dev pytest -q`；B5（B/C/N 节未勾未标）→ 加 `(post-merge)`；B6（Decision 8 定性错 + 实测点）→ Decision 8 / R9 / R9b 重写；B7（Q5 停轮口径）→ Q5 **撤回「已定案」，改为停轮项**。
 - Options considered:
   - **A. 直接替换**：接入的同时下掉旧 checker 并把 `gate / check` 勾成 required。**否决**：会打开「一段没有任何强制（或换成没验证过的强制）的窗口」，且不可逆动作发生在验证之前。
   - **B. 影子接入（本方案）**：只跑不拦 → 真需求验证 → 再真打开。
@@ -221,13 +244,16 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
   - 按 `grill-flow-hardening`（issue #298）在停轮前跑设计阶段审阅闭环，产出 `reviews/grill-adversarial.md`。
 - Remaining risks:
   - `--policy` 的语义合法性由 `check` 兜底 ⇒ seed 写错只会在**跑 `check` 时**暴露，不会在 `init` 时报错（见 Risks R2）。
-  - 双守卫的合并语义、报错归属、命令命名空间三项**全部未实测**（Decision 8）——这是本设计**已知最大的一块未知**，必须在阶段 A 的验收里补实测项。
+  - 双守卫的**合并语义与报错归属**两项未实测（Decision 8，命名空间可静态判定）——必须在阶段 A 的验收里补实测项，且**两棵树各测一次**。
+  - **grill stage 结构性判红**（Q7 / R11）：本仓 grill 记录在 witnessloop 的 `来源:` 谓词下**不可通过**，阶段 B 拿不到 grill 的绿。这条**阻塞在用户对 Q7 的拍板**上。
 
 ## Open Questions
 
-> **停轮项共 5 条**：Q1 / Q2 / Q3（立项时提出）+ **Q4 / Q6**（独立 grill `reviews/grill-design.md` 补充）。**Q5 不停轮**——它已由 Decision 2 定案（下方仍按 grill 编号列出，供溯源）。
+> **停轮项共 7 条**：Q1 / Q2 / Q3（立项时提出）+ Q4 / Q5 / Q6（独立 grill `reviews/grill-design.md` 补充）+ **Q7**（对抗轮补充，`reviews/grill-adversarial-v1.md` 的 B2）。
 >
-> 这些**都是项目配置/取舍**决策（不是 witnessloop 缺能力）：更正后的 issue #305 明确「三条决策全部是『项目配置』，没有一条需要改 witnessloop 的代码或逻辑」；grill 追加的两条同理。每条附推荐值与**具体例子**，请逐条拍板。推荐值**不是**已确认结论。
+> ⚠️ **Q5 必须停轮**：整合 grill 时曾把 Q5 记为「已定案、不停轮」，**已按对抗轮实测撤回**——本仓 checker 要求 `reviews/grill-design.md` 的 **每一个** Open Question 都有 `## User Confirmation` 记录（`_unconfirmed_open_questions`，归档点门以 `assume_implemented=True` 求值），而 Q5 在 `grill-design.md` 的 `## Open Questions` 里是列表项 ⇒ **Q5 不确认，归档必红**，与 witnessloop 无关。
+>
+> 这些**多数是项目配置/取舍**决策（Q7 是工具侧不兼容的处置面）：更正后的 issue #305 明确「三条决策全部是『项目配置』，没有一条需要改 witnessloop 的代码或逻辑」；grill 追加的两条同理。每条附推荐值与**具体例子**，请逐条拍板。推荐值**不是**已确认结论。
 
 ### Q1: 解释事件类型名的映射怎么定？
 
@@ -283,22 +309,34 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 **背景**：本仓 CI 的测试口径是**四件事**，不是一条命令——`uv run pytest -q`（`.github/workflows/ci.yml:48`）+ 编码 warn-as-error 变体（`:62-74`，`-W error::EncodingWarning:agent/web/benchmarks`，只跑 5 个文件）+ `openspec validate --strict`（`:77`）+ `check_openspec_artifacts.py`（`:88`）。而 witnessloop 的执行点是**一行**、在**另一个 job** 里跑（`sh -c "$CMD"`，witnessloop `.github/workflows/gate.yml:100`），那个 job 只做 checkout + `setup-uv`（`gate.yml:40-45`）——**没有** `uv sync --extra dev`、**没有** `playwright install chromium`。`tasks.md` A.3.1 原只写「取本仓现有 CI 的测试口径」，不够具体。
 
-**选项**：
-- (a) 只填 `uv run pytest -q`。
-- (b) 把编码门也串进去（`uv run pytest -q && PYTHONWARNDEFAULTENCODING=1 uv run pytest -q -W "error::EncodingWarning:agent" …`）。
-- (c) 不启用执行点（`tests.disabled: true`）。
+**⚠️ 原推荐值 (a) 不可执行（对抗轮实测证伪）**：`pytest` 在 `[project.optional-dependencies].dev`（`pyproject.toml:48-55`），而 `uv run` 只装**默认**依赖。在模拟 runner 的干净环境（仅 uv 在 PATH、无全局 pytest）实测：
 
-**推荐：(a) 只填 `uv run pytest -q`**。理由：与 `gate.yml` 的 job 环境匹配、失败归因最清晰；编码门 / 浏览器用例 / openspec validate / artifact checker 本来就在本仓 `validate` job 里继续跑，**阶段 A 不丢信号**。(c) **否决**——等于放弃 witnessloop 的测试门，与接入目的背离。
+```
+$ uv run --project /tmp/wl-sim pytest -q --collect-only
+Installed 77 packages in 1.74s
+error: Failed to spawn: `pytest`   ← exit=2
+```
 
-**具体例子**：阶段 A 的 PR 里，`gate / check` job 跑 `uv run pytest -q`。**选 (a)** 时：`tests/web_tests/test_workflow_graph_browser.py` 这类用例因缺 chromium 而**静默 skip**——但同一个 PR 的 `validate` job 里（`:45` 有 `playwright install --with-deps chromium`）**照样真跑**，所以信号没丢，只是「witnessloop 那条不覆盖浏览器面」——这写成**已知边界**记入阶段 B 报告。**选 (b)** 时：一行里串两条命令，失败时要从输出里分辨是哪一段挂的，归因变差，且浏览器面**仍然**缺依赖——多花的复杂度换不到完整覆盖。
+本机之所以「看起来能跑」，是因为 PATH 上有 `/home/happy/.local/bin/pytest`（pytest 9.1.1）⇒ `uv run pytest` 回落到了它，而在项目环境里 `import pytest` 反而 `ModuleNotFoundError`。`gate.yml:40-45` 的 job 只有 checkout + `setup-uv`，**没有** `uv sync --extra dev`。
 
-### Q5（grill 编号）：manifest schema 迁移归谁？—— **已定案，不停轮**
+**选项（修正后）**：
+- **(a′) `uv run --extra dev pytest -q`**（实测可用：116 包）。
+- (b′) (a′) + 把编码变体串进去（`PYTHONWARNDEFAULTENCODING=1 uv run --extra dev pytest -q -W "error::EncodingWarning:agent" …`）。
+- (c) 不启用执行点（`tests.disabled: true`）——**否决**：等于放弃 witnessloop 的测试门，与接入目的背离。
 
-**答案**：**归阶段 C 之后的独立 change**。阶段 A/B **不迁 schema**，采用「两套 manifest 并存」（asterwynd 形态喂本地 checker，`witnessloop manifest build` 产 `reviews/<stage>.manifest.json` 给 witnessloop），`review_manifest_glob` 保持 witnessloop 默认。完整理由、字段差异对照表、以及「为什么放宽 glob 反而有害」的实测证据，见 **Decision 2**。
+**推荐：(a′)**，一条命令、`--extra dev` 保证 pytest 装得上。**编码变体不并入**，理由三条：① 失败归因——一行里串两条命令，红的时候要人肉分辨是哪一段挂的；② 收益有限——`dev` extra 里含 `playwright` / `swebench`，装了之后浏览器用例仍因缺 `playwright install chromium` 而 skip，说明执行点**本来就不覆盖全部信号面**，多串一条并不能改变这个性质；③ 编码门在本仓 `validate` job 里**继续跑**，阶段 A 不丢信号。若用户希望执行点信号更全，可选 (b′)，代价如上。
 
-**为什么它当初看起来像停轮项**：grill 把它列为 OQ2 是因为它与「`agent/**` 一行不改」表面冲突。整合后确认**不冲突**——正因为**不迁 schema**，才**不需要**动 `agent/workflow/review_manifest.py`；把 schema 统一显式排到阶段 C 之后，两条陈述就自洽了。
+**具体例子**：阶段 A 的 PR 里 `gate / check` job 跑 `uv run --extra dev pytest -q`。`tests/web_tests/test_workflow_graph_browser.py` 这类用例因缺 chromium 而**静默 skip**——但同一 PR 的 `validate` job 里（`.github/workflows/ci.yml:45` 有 `playwright install --with-deps chromium`）**照样真跑**。⇒ 已知边界是「witnessloop 那条不覆盖浏览器面与编码门」，写进阶段 B 报告（tasks B.7）。
 
-**具体例子（定案后的阶段 B 长什么样）**：阶段 B 的真实小需求 change 里，`/review-loop` 仍然只产 `reviews/building-review-manifest.json`（`phase: "building"`）给本地 checker；**额外**跑 `uv run witnessloop manifest build --change <id> --stage building --report reviews/building-review.md` 产出 `reviews/building.manifest.json` 给 witnessloop。两条证据、两个消费者，互不干扰。
+### Q5（grill 编号）：manifest schema 迁移归谁？—— **必须停轮确认**
+
+**背景**：`check` 认 `stage` / `author_run_id` / `report_path`，而本仓生成器写 `phase` 且缺后两个字段（Decision 2）⇒ 不改生成器，用本仓工具链产的 manifest **永远过不了** `check`。
+
+**⚠️ 为什么它必须停轮（撤回整合时的「已定案、不停轮」）**：本仓 checker 要求 `grill-design.md` 的 `## Open Questions` 里**每一个**编号都有 `## User Confirmation` 记录（`_unconfirmed_open_questions`）；归档点门以 `assume_implemented=True` 求值 ⇒ **Q5 不写确认记录，归档必红**。这与 witnessloop 无关，是本仓自己的门。实测：把确认记录只写 Q1–Q4+Q6，本仓侧抽出 `['Q5']` 未确认；witnessloop 侧也多一条 `Open Question Q5 未经用户确认`。
+
+**推荐（保留原推荐值）：阶段 C 之后的独立 change**。理由：改生成器要连带改它 2874 行的测试体量，且与「阶段 A 一行不改旧件」冲突；把 schema 统一显式排到阶段 C 之后，两条陈述就自洽了（**不迁 schema，所以不必动 `agent/workflow/review_manifest.py`**）。完整理由与字段对照表见 **Decision 2**。
+
+**具体例子**：阶段 B 的真实小需求 change 里，`/review-loop` 仍然只产 `reviews/building-review-manifest.json`（`phase: "building"`）给本地 checker；**额外**跑 `uv run witnessloop manifest build --change <id> --stage building --report reviews/building-review.md` 产出 `reviews/building.manifest.json` 给 witnessloop。两条证据、两个消费者，互不干扰。⇒ 请确认：接受「影子期长期并存两份 manifest、schema 统一推迟」这个代价，还是宁可现在就改生成器。
 
 ### Q6: `protected_paths` 要不要补齐 asterwynd 现有的受保护集？
 
@@ -312,6 +350,32 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 **具体例子**：某 PR 改 `docs/known-debt.md`（本仓现为 `event_explained` 档，需 `protected_artifact_explained` 事件）。**选 (a)**：本地 checker 绿（认这条事件，`scripts/flow-policy.json`）+ witnessloop 也绿（policy 的 `protected_paths` 含该路径、事件类型表含该类型）——两侧一致，零额外动作。**选 (b)**：阶段 A 也没事（旧 checker 仍管），但两侧**分叉**会进阶段 B 的分叉清单，且「本地 checker 下掉后无人管」的缺口被提前埋下；若选 (b) 请**同时**把 Q1 的类型表砍到 `["current_spec_synced"]`，否则那份表里有两项永远不生效。
 
+### Q7: grill 报告正文的 `来源:` 判据不兼容——等上游修，还是本仓改写法？
+
+**背景（对抗轮实测，B2）**：witnessloop `src/witnessloop/evidence.py:33` 的 `_SOURCE_RE = re.compile(r"来源\s*[:：]")` 要求「来源」后**直接**接冒号，**不接受 `- **来源**: x` 的加粗写法**，也不认近期的 `- **证据**: …`。本仓记录**通篇是加粗**：
+- 本 change 自己的 `reviews/grill-design.md`：**7/7 条** Confirmed Decision 判「缺 `来源:`」（同一份文件在本仓侧 `_extract_grill_decisions` 抽出 7 条、判定完全正常）；
+- 逐份扫描归档里的 `grill-design.md`：**完全无 finding 仅 39 份**，13 份至少一块缺 `来源:`（其中 **11 份是「全部块都缺」**）；
+- **趋势在变坏**：`2026-10-03-harness-style-web-transcript`（12/12 缺）、`2026-10-07-grill-flow-hardening`（5/5）、`2026-10-07-tool-result-spill-module`（6/6）、`2026-10-03-foreach-*`（6/6）——**当前正在用的写法基本都判红**。
+- 即使把 `## User Confirmation` 补齐、Q1–Q6 全部确认，**仍报 7 条 `缺 来源:`**。
+
+⇒ **grill stage 在现有报告格式下结构性不可能判绿**，阶段 B 拿不到「绿的一侧」（R11 的缓解失效）。
+
+**选项**：
+- ① **等 witnessloop 修谓词**（**已立 [#20](https://github.com/Xingkai98/witnessloop/issues/20)**，标题「grill 正文判据的『来源:』谓词不接受加粗写法 ⇒ 用加粗 markdown 的接入方整份记录判红」，当前 OPEN）。
+- ② **本仓改记录格式 + 模板**：把 `来源:` 写成不被 `**` 包裹的形式。
+
+**推荐：①**。理由：**零本仓改动**。②要动 `.claude/commands/grill.md`（本地、不进 PR，无评审记录）+ 文档规范 + 模板，且**历史回填代价大**——62 份归档 `grill-design.md` 若都要为了迎合外部谓词重写，收益（让一个外部工具判绿）远不抵代价；何况**上游修谓词是更对的修法**（加粗 markdown 是常见写法，谓词本该容忍）。
+
+**具体例子**：某次 grill 产出 `reviews/grill-design.md`，里面一条决策写成
+```
+- **决策**: 用 `init --policy` 一次写成
+  - **来源**: `src/witnessloop/checkcmd.py:77`
+```
+- **选 ①**：上游修好谓词后，这条**原样通过**；期间阶段 A/B 明确知道「grill stage 会红 7 条，属已知阻塞」，不误判为配置错误。
+- **选 ②**：必须把全仓写法改成 `- 来源: …`（去掉加粗）**并**回填 62 份归档（否则真打开后历史 change 一被触及就红），同时 grill 的产出模板也要改——且**在上游修好之前**，①的用户已经可以正常使用，②的用户白改一轮。
+
+**无论选哪条**，阶段 A 都必须把这条写成 **已知阻塞/前置依赖**（现状：本仓 grill 记录在 witnessloop 判据下**不可通过**），并**不得**据此放宽本仓或 witnessloop 的任何判据。
+
 ## Risks / Trade-offs
 
 - **[R1] 影子期的「假安全感」**：`gate / check` 在 CI 里是绿的（或红的）但**不拦合入** ⇒ 有人可能误以为它已经在管。**Mitigation**：阶段 A 的 PR 描述与 `docs/development-guide.md` 新节都显式写明「本 job 阶段 A 不 required，只跑不拦」；阶段 B 报告里也重申。
@@ -322,9 +386,13 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 - **[R6] 上游 reusable workflow 的版本面**：caller 钉 `@v1`（witnessloop `constants.py:11 DEFAULT_GATE_REF`），`@v1` 是**移动 tag** ⇒ 上游 `v1` 分支前进会改变本仓门禁行为。**Mitigation**：登记为后续观察项；若需要钉死，走 `--gate-ref` 指向 commit sha（**本阶段不引入**，避免过早固化）。**建议主 session 复核这条口径。**
 - **[R7] 两组门禁的判定漂移**：并存期本地 checker 与 witnessloop **各判各的**，可能出现「一边绿一边红」。**Mitigation**：这是并存的**预期形态**（不是缺陷）——阶段 B 的报告要把所有分叉逐条列出，它们正是「迁移清单」的输入。
 - **[R8] 阶段 B 的「真实小需求」选得不好**：若选的需求太琐碎，跑不出 intake 的真实摩擦。**Mitigation**：阶段 B 的任务里给出选择标准（必须触达 `require_change_for`、必须能产生 spec delta 或受保护写入、规模在一到两个文件）。
-- **[R9] 两个 PreToolUse 守卫并存的未知面**（Decision 8）：CC 对「settings hook + plugin hook 同时匹配」的合并/串行语义、被拦时的报错归属、以及 plugin 命令名与 `.claude/commands/{grill,review-loop}.md` 的命名空间是否冲突，**三项均未实测**。**Mitigation**：写成阶段 A 的强制实测项（A.1.1 判据 + A.4.5），结果落阶段 A/B 报告；**不靠推理填坑**。
+- **[R9] 两个 PreToolUse 守卫并存的未知面**（Decision 8）：真未实测的只有**两项**——CC 对「settings hook + plugin hook 同时匹配」的**合并/串行语义**与**报错归属**；且必须**在主 checkout 与 building worktree 各测一次**（worktree 下没有 `.claude/`）。**Mitigation**：写成阶段 A 的强制实测项（A.1.1 判据 + A.4.5），结果落阶段 A/B 报告；**不靠推理填坑**。命名空间冲突**可静态判定**（`plugin.json` 的 `name: witnessloop`），不留作未知面。
+- **[R9b] `guard.sh` 的前置条件（比原判「版本可能漂移」更硬）**：`guard.sh:32` 调 PATH 上的裸 `witnessloop`，退出码映射是「1 → 拦，其余 → 放行」（`:38-41`）⇒ PATH 上若是**没有 `guard` 子命令**的旧版 CLI，**整个 guard 静默空转**（实测本机 0.1.0 即是）。**Mitigation**：阶段 A 的前置核验 `command -v witnessloop` + `witnessloop --help` 含 `guard`；A.4.5 / B.5 不做这条前置就会把「放行」误读成「证据完备」。注意 design 原有的「验证一律用 `uv run witnessloop`」**覆盖不到 `guard.sh`**。
 - **[R10] 本 change 会证伪新建的当前规格**：`openspec/specs/dev-workflow-gate/spec.md` 现有两条负向 Requirement（明禁 `.witnessloop/policy.json` 与「`.github/workflows/` 下只有 ci.yml」）会被阶段 A 的实现**直接证伪**，而 delta 原本只有 `## ADDED`、Z.2 原本只写「合并 ADDED」⇒ 占位 Requirement 会**存活**并自相矛盾。**Mitigation**：照 `platform-gate` 先例（实现 commit `f7e912b` 明确「同步 current spec（**覆盖占位**）」）——delta 增加 `## REMOVED Requirements`，tasks 的 Z.2 改为「**覆盖重写**当前规格」。
-- **[R11] 阶段 B 结构性跑不绿**（grill 判定的最高风险）：若不在阶段 B 显式补 `witnessloop manifest build`，用 asterwynd 工具链产的 manifest 必被判 6 条红，阶段 B 就**没有「绿」的一侧**作对照，「值不值得真打开」失去基线。**Mitigation**：Decision 2 定案「两套并存」+ tasks 的 B.2 把 `manifest build` 写成显式步骤 + Decision 7 让本 change 自己也补一份当样板。
+- **[R11] 阶段 B 结构性跑不绿**（**grill 给的缓解已失效，须换路**）：grill 的缓解是「阶段 B 用 `manifest build` 补产 witnessloop 形态 manifest ⇒ 拿到绿的一侧作对照」。**对抗轮实测证伪**：manifest 只是必要条件，不是充分条件——**`来源:` 谓词让 grill stage 结构性判红**（本 change 自己的报告 7/7 条缺 `来源:`；且补齐 `## User Confirmation` 后仍报 7 条）。⇒ **补了 manifest 也拿不到绿**。
+  **Mitigation（修正后）**：① 阶段 B 的「绿的一侧」**不再建立在 grill stage 上**——改以「`check` 的 findings 从『缺证据』类收敛为『正文格式』类」作为可测的进步指标；② grill stage 的绿**阻塞在 Open Question Q7**（等上游 [#20](https://github.com/Xingkai98/witnessloop/issues/20) 或本仓改写法）；③ 阶段 B 报告必须明确写「哪些红是配置问题、哪些红是已知的工具不兼容」，否则「值不值得真打开」会被误读。
+- **[R12] 只落部分 manifest 会激活孤儿规则**（对抗轮实测）：glob 匹配 0 份时 `check` 早退（现状 2 条红）；落**任意一份** witnessloop 形态 manifest 后，`reviews/**/*.md` 里每份未绑定报告都判孤儿（2 → 14 → 16）。**Mitigation**：**要么给每份报告都建 manifest，要么一份都别落**（Decision 2 的操作约束 / Decision 7 的默认处置 / tasks A.5.6）。
+- **[R13] 证据的 stale 顺序约束**（对抗轮实测）：`_check_git_span` 只允许 `head_sha` 之后出现在 `stale_exempt_paths`（`.witnessloop/**`、`<changes_root>/*/reviews/**`、`<changes_root>/*/workflow-events.jsonl`、`archive/**`）内的改动。⇒ 本 change 的 Z.1（改 `docs/development-guide.md`）与 **Z.2（覆盖重写 `openspec/specs/**`）都是非证据路径** ⇒ **任何在其之前产出的 manifest 到 PR 时必然 stale**（实测：manifest 后再提交一处 `agent/probe.py` 即报 `审阅的是旧 revision`）。**Mitigation**：证据一律**在所有内容提交之后**重建（tasks A.5.6 与收尾顺序已写死）。
 
 ## Testing Strategy
 
@@ -335,10 +403,10 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
   2. 落盘后本地跑 `witnessloop check`（或 `uv run witnessloop check --root .`）并**逐条读 findings**：确认 `building` / `grill-adversarial` 两条判定**确实被触发**（这正是 R2 的第一次暴露点；若 policy 的 `require_change_for` 没生效，这两条会**静默消失**——用本分支自身的 diff 当样本即可验证）。
   3. 本分支 PR 的 CI 上确认出现 `gate / check` job 并**跑出结果**。
   4. **回归确认**：本分支 PR 的 CI 上 `validate` / `benchmark-gate` 行为**逐字节不变**；`gh api …/protection` 的 `contexts` 仍是 `["validate", "benchmark-gate"]`。
-  5. **双守卫实测**（Decision 8 / R9）：在装好 plugin 后，对一条 `agent/**` 路径触发一次 `Write`（该 change 无 `stage=grill` manifest），记录：两个 hook 是否**都**执行、被拦时的提示归属哪个守卫、plugin 命令名与仓内 `.claude/commands/` 是否冲突。
-  6. **样板 manifest**（Decision 7）：用 `witnessloop manifest build --change witnessloop-adoption --stage grill --report reviews/grill-design.md` 产出一份 witnessloop 形态的 grill manifest，确认阶段 A 验收里**第一次出现「绿」的一侧**。
+  5. **双守卫实测**（Decision 8 / R9）：先做前置核验（`command -v witnessloop` + `--help` 含 `guard`，否则 guard 静默空转），再对一条 `agent/**` 路径触发一次 `Write`，记录**两个 hook 是否都执行、提示归属哪个守卫**——**必须在主 checkout 与 building worktree 各做一次**（worktree 下没有 `.claude/`，只能观察到 plugin 那一个）。命令命名空间冲突可由 `plugin.json` 静态判定，顺手确认即可。
+  6. **`reviews/` 的一致状态**（替代原判据⑦「第一次出现绿的一侧」——**该断言已被对抗轮证伪**）：本 change 的 `reviews/` 下**要么每份报告都有 manifest，要么一份都没有**；默认选后者（K2 保持 2 条红）。若落样板，必须同时满足「每份都建 + 在所有内容提交之后重建 + 明确写下它不是绿的一侧」三条（tasks A.5.6）。
 - **阶段 A 的负向验收（必做）**：临时把 policy 换成出厂默认（`require_change_for` 不覆盖 `agent/**`）跑一次 `check`，**确认 `building` / `grill-adversarial` 判定消失**——这条用**证伪**证明「定制 policy 是必要的」，而不是靠推理。
-- **阶段 B 的真实需求验收**：按「选择标准」挑一个真实小需求，走完整流程（`guard` 拦 → 写码 → grill/adversarial/审阅证据 → **额外跑 `witnessloop manifest build` 产三份 witnessloop 形态 manifest** → `check` 核 → 测试执行点在 CI 里跑），产出验收报告：findings 清单、与本地 checker 的分叉清单、已知红清单（含 K1/K2）、体验摩擦清单、以及 Q4 决定的「执行点覆盖到/覆盖不到什么」的已知边界。
+- **阶段 B 的真实需求验收**：按「选择标准」挑一个真实小需求，走完整流程（`guard` 拦 → 写码 → 本仓 `/review-loop` 产审阅证据 → **额外跑 `witnessloop manifest build` 产 witnessloop 形态 manifest** → `check` 核 → 测试执行点在 CI 里跑），产出验收报告：findings 清单、与本地 checker 的分叉清单、已知红清单（含 K1/K2）、体验摩擦清单、Q4 决定的「执行点覆盖到/覆盖不到什么」的已知边界，以及**按成因分类的红清单**（配置问题 vs 工具不兼容，如 Q7 的 `来源:` 谓词）。**注意**：`manifest build` 的调用必须发生在**所有内容提交之后**（R13 的 stale 约束），且**由人在本地跑**——`gate.yml` 只做 `check`、**不产证据**。
 - **收尾的机械验收**：归档 move **单独成 commit**（纯 rename），确认 `check` 对归档 move 判 `通过 ✓`（Decision 3 的配套约束 / R3）。
 - **不做的事**：不为本 change 写 witnessloop 侧的测试（上游自己的测试覆盖它）；不新增 pytest 用例；不改现有测试。
 

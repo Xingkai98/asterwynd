@@ -138,19 +138,51 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 - **THEN** 该值 SHALL 为 `reviews/*.manifest.json`
 - **AND** 放宽为 `*-manifest.json` SHALL 被拒绝——它会把本仓 schema 的 manifest 卷入候选集：witnessloop 按路径字典序取第一份同 stage manifest 作证据（可错绑悬空报告），同时逐份校验所有匹配文件（任一坏文件独立报红）
 
+#### Scenario: `reviews/` 必须处于一致状态（孤儿规则的激活条件）
+
+- **WHEN** 决定是否在 change 的 `reviews/` 下落 witnessloop 形态 manifest
+- **THEN** SHALL 遵守「**要么给每份报告都建 manifest，要么一份都别落**」
+- **AND** 依据 SHALL 是实测的激活条件：glob 匹配 0 份时 witnessloop 的 manifest 循环**早退**、孤儿规则**不执行**（现状 2 条红）；一旦落了任意一份 witnessloop 形态 manifest，`reviews/**/*.md` 里**每一份未绑定 `report_path` 的报告**都判孤儿（实测红数 2 → 14 → 16）
+- **AND** 只落一部分 manifest 的中间态 SHALL 被拒绝——它比不落更红
+
+#### Scenario: 证据的 stale 顺序约束
+
+- **WHEN** 产出 review manifest 或其它 `reviews/` 证据
+- **THEN** SHALL 在**所有内容提交之后**产出（witnessloop 的 stale 判定只豁免 `.witnessloop/**`、`<changes_root>/*/reviews/**`、`<changes_root>/*/workflow-events.jsonl`、`archive/**`）
+- **AND** 触碰 `docs/**` 与 `openspec/specs/**` 的收尾步骤 SHALL 排在证据产出之前
+- **AND** 证据 SHALL 由人在本地产出——CI 的 caller workflow **只做 `check`、不产证据**
+
+### Requirement: grill 报告正文判据的已知不兼容
+
+影子接入阶段 SHALL 把「witnessloop 的 grill 正文判据与本仓记录格式不兼容」记为**已知阻塞/前置依赖**：witnessloop 的 `_SOURCE_RE` **要求「来源」后直接接冒号、不接受 `- **来源**: x` 的加粗写法**，而本仓 grill 记录通篇使用加粗 ⇒ **grill stage 在现有报告格式下结构性不可能判绿**。该阻塞 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；其处置 SHALL 作为停轮项交用户拍板。
+
+#### Scenario: 不兼容的事实可复核
+
+- **WHEN** 核对本仓 grill 记录与 witnessloop 的正文判据
+- **THEN** 本 change 自己的 `reviews/grill-design.md` SHALL 被判 7/7 条「缺 `来源:`」（同一份文件在本仓 checker 侧抽出 7 条决策、判定正常）
+- **AND** 归档中的 `grill-design.md` SHALL 呈现同一趋势（完全无 finding 仅 39 份，近期写法基本全判红）
+- **AND** 即使补齐全 `## User Confirmation` 记录，该 7 条 SHALL 仍然存在
+
+#### Scenario: 处置面是停轮项而非自行拍板
+
+- **WHEN** 决定怎么消除该不兼容
+- **THEN** 两条出路 SHALL 作为 Open Question 交用户拍板：① 等上游修谓词（已立 witnessloop issue #20）；② 本仓改记录格式与模板（含历史回填代价）
+- **AND** 阶段 B 的验收报告 SHALL 把「grill stage 全红」与「配置错误」分开归因
+
 ### Requirement: 双 PreToolUse 守卫并存且未知面必须实测
 
-接入 plugin 后，本仓现有守卫（`scripts/workflow_guard.py`，matcher `Write|Edit|Bash`）与 witnessloop plugin 的守卫（matcher `Write|Edit`）SHALL 并存，阶段 A SHALL NOT 下掉任何一个。两者在同一 `Write|Edit` 上的合并语义、拦截提示归属、plugin 命令命名空间是否冲突 SHALL 作为阶段 A 的强制实测项，SHALL NOT 由推理代替实测。
+接入 plugin 后，本仓现有守卫（`scripts/workflow_guard.py`，matcher `Write|Edit|Bash`）与 witnessloop plugin 的守卫（matcher `Write|Edit`）SHALL 并存，阶段 A SHALL NOT 下掉任何一个。**真正未实测的只有两项**——两者在同一 `Write|Edit` 上的**合并/串行语义**与**拦截提示归属**——它们 SHALL 作为阶段 A 的强制实测项，SHALL NOT 由推理代替实测；且 SHALL 在**主 checkout 与 building worktree 两棵树各做一次**。命令命名空间 SHALL 由 `plugin/.claude-plugin/plugin.json` 的 `name` 字段静态判定，SHALL NOT 列为未实测项。
 
 #### Scenario: 实测取代推断
 
 - **WHEN** plugin 安装完成
-- **THEN** SHALL 实测一次命中两个 matcher 的 `Write`，记录两个 hook 是否都执行、提示归属哪个守卫
-- **AND** SHALL 实测 plugin 命令名与本仓 `.claude/commands/` 下同名命令是否冲突
+- **THEN** SHALL 先做前置核验——PATH 上的 `witnessloop` 是否含 `guard` 子命令（`guard.sh` 的退出码映射为「1 → 拦、其余 → 放行」，旧版 CLI 或用法错误会**静默空转**，不做该核验就会把「放行」误读成「证据完备」）
+- **AND** SHALL 实测一次命中两个 matcher 的 `Write`，记录两个 hook 是否都执行、串行还是并行、提示归属哪个守卫
+- **AND** 该实测 SHALL 在**主 checkout 与 building worktree 各做一次**（worktree 下无 `.claude/`，只能观察到 plugin 那一个）
 - **AND** 结果 SHALL 写入阶段 A/B 验收报告
 
-#### Scenario: 新增拦截面与退步分开记录
+#### Scenario: 不夸大不缩小行为变化
 
 - **WHEN** 汇总本地守卫的行为变化
-- **THEN** 「丢失 Bash 拦截面」（退步）与「新增『缺 grill 证据』拦截面」（新增能力）SHALL 分开记录
-- **AND** 两者 SHALL NOT 互相抵消成一句「影响不大」
+- **THEN** 只有「**丢失 Bash 拦截面**」这一条退步 SHALL 被记录
+- **AND** SHALL NOT 声称 witnessloop 守卫在「本仓守卫不管的维度」上新增拦截——本仓守卫 `_grill_evidence_missing` 本来就拦「缺 grill 证据」这一维度，两侧是**同维度、不同判据**（本仓=文件 + 正文；witnessloop=manifest + 正文）
