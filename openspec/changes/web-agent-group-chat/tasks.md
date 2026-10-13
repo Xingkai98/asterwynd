@@ -28,12 +28,12 @@
 - [ ] 3.5 房间日志：schema（seq / speaker / kind / text / ts）+ 持久化 + 游标（回合推进）+ 有界分层切片（首见 / 增量 / 往轮）。
 - [ ] 3.6 会话式群聊编排器（新模块）：slot 序列算法、`@` 解析、静默（`[PASS]`）、每轮每成员上限、轮次终止三出口、轮次中用户消息处理、**房间级互斥**。
 - [ ] 3.7 编排器分层：定义并注入 `SessionRunner`（`run(session_id, message) -> TurnOutcome` 四态；web 层从本次 run 事件流取最终文本），编排器不 import `web`。
-- [ ] 3.8 记忆：人设会话注入 `persistent_memory` + `memory_config` + `llm`（+ 视需要 `quality_config`）；`PersistentMemory` 新增显式 scope 目录入参（给定即原样用作 `memory_dir`；未给保持现状）；scope 按「人设 × 会话面」（`personas/<id>/chat/memory` + `personas/<id>/rooms/<rid>/memory`，同级布局，每 scope 一个实例 + 进度记录，`scope` 取值 `<project-scope>:persona:<pid>[:room:<rid>]`）；注入块标题 `## Persona Memory`。
+- [ ] 3.8 记忆：人设会话注入 `persistent_memory` + `memory_config` + `llm`（+ 视需要 `quality_config`）；`PersistentMemory` 新增显式 scope 目录入参（给定即原样用作 `memory_dir`；未给保持现状）；scope 按「人设 × 会话面」（`personas/<id>/chat/memory` + `personas/<id>/rooms/<rid>/memory`，同级布局，每 scope 一个实例 + 进度记录，`scope` 取值 `<project-scope>:persona:<pid>[:room:<rid>]`，并新增 `scope` 入参；**记忆工具（`RecallMemory`/`SearchMemory`）的 scope 匹配须用该取值**，否则人设会话检索静默返空）；注入块标题 `## Persona Memory`。
 - [ ] 3.9 群内会话（`kind: room_member`）pending 降级：撤 ask 类工具；审批类 fail-closed 立即判定。人设单聊（`kind: persona_chat`）**不**降级，照常暴露 pending。
 - [ ] 3.10 Web：群聊 pane + 房间级 WS（扩展写死的 `/ws/${sessionId}`）；人设/房间管理入口 + 单聊入口 + 删除级联。
 - [ ] 3.11 会话数上限（默认 50，可配置）+ 超出排队 + 懒构造。
 - [ ] 3.12 群共享 notice：房间模型字段 + 注入群内会话 prompt（不影响单聊）。
-- [ ] 3.13 记忆 review：**仅实际发言回合**触发（单聊/群各触发）+ 静默成员按 **review 游标**落后补齐（阈值 30）+ 独立小模型调用 + 写回映射（add/update 走 save、remove→`archive` 并补其 git 前像）+ 进度推进（群=room seq；**单聊=持久化待 review 缓冲，不用消息表下标**）+ 初值=scope 起点 + 单次读入上限 + review 队列按 scope 合并/串行化（**scope 已被删除则丢弃该次 review**）+ 成本按 1+k 计入账本 + `MemoryConfig` 新增开关。
+- [ ] 3.13 记忆 review：**仅实际发言回合**触发（单聊/群各触发）+ 静默成员按 **review 游标**落后补齐（阈值 30）+ 独立小模型调用 + 写回映射（add/update 走 save、remove→`archive` 并补其 git 前像）+ 进度推进（群=room seq；**单聊=持久化待 review 缓冲，落点 scope 目录内、消费后删已消费部分、部分消费，不用消息表下标**）+ 初值=scope 起点 + 单次读入上限 + review 队列按 scope 合并/串行化（**scope 已被删除则丢弃该次 review**）+ 成本按 1+k 计入账本 + `MemoryConfig` 新增开关。
 
 ## 4. 文档
 

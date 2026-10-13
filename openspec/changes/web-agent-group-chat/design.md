@@ -170,7 +170,7 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - **主触发（钉死）**：一个人设会话（其单聊，或它在某群的群内会话）的一个回合结束、且该回合**实际产生了发言**（`TurnOutcome.status == "text"`）时，为该会话对应的**记忆 scope** 排一次 review（延迟后执行）。`silent` / `timeout` / `failed` 出口**不**触发——这类成员的记忆停滞由「落后补齐」兜底。
   （与参照的差异：参照对**任何** idle 都触发，`ds-bot/src/host/memory.js:1326-1339`；本 change 收紧为仅实际发言，以与「①+兜底」语义自洽并控制成本。）
 - **落后补齐**：某房间某成员在该房间的 **review 游标**上落后达到阈值时，为它的 (persona, room) scope 排一次 review。**度量基准钉死为 review 游标 `reviewed`**（**非** Decision 6 的 `seen`——后者每回合推进、含静默，用它作基准则落后恒为 0、补齐永不触发）；**落后 = `room.seq − reviewed[(persona, room)]`**，单位 = 房间日志条目数，缺省阈值 **30**（参照 `REVIEW_GROUP_LAG`，`ds-bot/src/host/memory.js:71,1281-1284`）。`seen`（注入用）与 `reviewed`（review 用）是两份互不替代的游标。
-- **机制**：review 是一次**独立小模型调用**（可配置模型；缺省用该人设会话模型亦可），读「该 scope 自上次 review 游标之后的新增内容」（群 = 房间日志切片；单聊 = 会话消息索引之后的新增），产出 add/update/remove 变更。
+- **机制**：review 是一次**独立小模型调用**（可配置模型；缺省用该人设会话模型亦可），读「该 scope 自上次 review 进度之后的新增内容」（群 = 房间日志切片；单聊 = 该 scope 的**待 review 缓冲**），产出 add/update/remove 变更。
 - **写回（钉死映射）**：
   - add/update/supplement/conflict → 走既有 `save` / `apply_judgment` 路径（沿用去重判官、尺寸上限、git 可逆写保护，`agent/memory/persistent.py:502,548`）。
   - **remove → `archive(name, reason)`**（软删、可 `restore`，`:776,797`）。`archive` 目前**不含** git 前像提交（`:776-796`），本 change SHALL 连带补上（使 remove 也可回退）；注意 `archive` 是 `_write_entry_to` + `unlink` 的 move，加 commit 的位置与 `save` 的 commit-before-write 语义不同，SHALL 在 move 前快照。
@@ -179,8 +179,10 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - **游标 / review 输入（钉死，Issue 35）**：每个 scope 一个进度记录（落在该 scope 记忆目录内，如 `<scope>/reviewed.json`）。
   - **群 scope** 以**房间日志 seq** 为单位（稳定）。
   - **单聊 scope SHALL NOT 用消息表下标**——`Message` 无 id/timestamp/seq（`agent/message.py:144-155`），而本仓上下文压缩会**就地缩短**消息表（`agent/memory/manager.py:307-313` 等分支 `msgs[:] = system + [summary] + recent`）、session resume 会**重建**消息表（`agent/loop.py:717-720`），下标语义必漂移（压缩后游标越过表尾、列表再长不回去 ⇒ review **永久停摆**）。故**单聊 scope 的 review 输入 = 该 scope 的持久化「待 review 缓冲」**（运行期在向该 scope 追加消息时写入、review 消费后清空），**与消息表下标解耦**；压缩 / resume 不影响该缓冲。
+- **待 review 缓冲（单聊）**：落点 = 该 scope 记忆目录内（如 `<scope>/pending_review.jsonl`）；运行期向该 scope 追加消息时写入；review **消费后删除已消费部分**（部分消费：本次读入上限内消费、其余留待下次）。
 - **初值**：scope 建立时进度初值 = 该 scope 的当前起点（**不**回溯建库前的历史），以控成本。
 - **读入上限**：review 单次读入的「新增内容」SHALL 有上限（可配置，缺省与注入侧同量级）；超出部分留待下一次 review。
+- **scope 取值与记忆工具一致性**：记忆工具（`RecallMemory` / `SearchMemory`）的 `scope` 参数匹配 SHALL 使用本 change 的 scope 取值（`<project-scope>:persona:<pid>[:room:<rid>]`），否则新 scope 下人设会话的记忆检索会**静默返空**；同时 `PersistentMemory` SHALL 新增 `scope: str | None` 入参以注入该取值。
 - **房间日志保留**：房间日志 SHALL 保留全部条目（是「群时间线唯一权威、重连还原」的前提）；即「落后补齐」的理由是**避免静默成员记忆长期停滞**，**不**依赖日志滚动。
 - **可关闭**：默认开启，可配置关闭（`MemoryConfig` 现无此字段，`agent/config.py:248-256`，需新增配置位）。
 

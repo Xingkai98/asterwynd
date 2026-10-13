@@ -26,7 +26,7 @@
 
 - `multi-agent-collaboration`: 从空基线升级为「长期人设 + 会话式群聊编排」能力（新增 roster、房间日志、群聊轮次与终止条件、房间级互斥、两级主持角色、跨人设共享面声明）；并以 MODIFIED 澄清既有「Orchestration Reuses Workflow Persistence Discipline / SHALL NOT introduce a separate control plane」只约束 **subagent orchestration**，不覆盖本 change 的交互式编排器。
 - `long-term-memory`: 记忆作用域从 project/repo 扩展出「**人设 × 会话面**」维（既有规格 `openspec/specs/long-term-memory/spec.md:74-83` 的 `Scope 隔离` 钉定 project/repo scope，故需 MODIFIED delta），并新增「人设记忆的 review 触发与游标」（ADDED）。
-- `web-ui`: 新增群聊视图 + 房间级 WS、人设/房间管理入口与单聊入口、内部会话列表过滤与生命周期保护、群内会话 pending 降级；并以 MODIFIED 收窄既有四条 Requirement（「审批必须暴露」「pending 跨连接存活」「hub 列出已保存会话」「会话删除」）到面向用户的会话（`kind: chat` / `persona_chat`）。
+- `web-ui`: 新增群聊视图 + 房间级 WS、人设/房间管理入口与单聊入口、内部会话列表过滤与生命周期保护、群内会话 pending 降级；并以 MODIFIED 收窄既有四条 Requirement——「审批必须暴露」「pending 跨连接存活」收窄到「群内会话除外」，「hub 列出已保存会话」「会话删除」收窄到「内部会话除外」（内部会话 = 人设单聊 `persona_chat` + 群内会话 `room_member`）。
 
 ## Dependencies
 

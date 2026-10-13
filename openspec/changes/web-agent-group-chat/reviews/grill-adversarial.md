@@ -297,3 +297,65 @@ CHANGES_REQUESTED
 - **去重判官的存在条件与模型来源**: `agent/tools/factory.py:163-173`（`llm is None` ⇒ 返回 `None`，即每会话必须显式注入 `llm` 才有判官）、`agent/memory/dedup.py:84-90`（`self._llm is None or not candidates` ⇒ 直接返回 `new`，不调用模型）、`agent/tools/builtin/memory.py:84-93`（判官命中与否决定是否走 `apply_judgment`）⇒ 「1 + k 次、k 由 embedding 召回命中决定」的成本口径成立。
 - **落点前提复核为真**: `persistent.py:183`（`memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"`）、`:341`（非递归 `glob("*.md")`，同级 `personas/` 目录不会被项目级检索误收）、`:451`（`_run_git(..., "add", "-A")` 递归）、`agent/context/sources.py:302`（硬编码 `"## Project Memory"`）——**但**同一条 `:183` 正是 Issue 36 的封锁点。
 - **机械门禁在本版通过**: `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **29 passed, 0 failed**（含 `change/web-agent-group-chat`）；`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` → **OpenSpec artifact checks passed**。本轮 2 项 medium **全部在门禁覆盖之外**（validate 不比对 design↔spec 口径、不查 spec↔代码行为自洽，也不查「按 X 实例化」这类机制断言）。
+
+## Round 6
+
+### Reviewer
+
+- run id: paseo-grill-adversarial-web-agent-group-chat-r6
+- 时间: 2026-10-13
+- 对象: commit `ca8c8b7`（R5 修正后的当前版本）
+- 方式: 零记忆独立审阅（增量轮）。逐条复核 R5 的 2 项 medium（Issue 35 / 36）与 7 项 low。本轮把 Issue 36 的代码前提从「读代码」升级为**可执行验证**（`inspect.signature` 看构造入参 + 实际构造 `PersistentMemory` 观察落点与 `scope`，结果与 R5 报告逐位一致），并复跑机械门禁。不采信 design 自述。
+
+### 结论
+
+PASS
+
+（R5 的 2 项 medium：Issue 36 **已修好**；Issue 35 的**规范面已修好**（新钉死 + 缓冲机制 + 初值 + 读入上限 + spec Scenario + tasks 同步），但同一 Decision 内残留一句旧口径——`design.md:173` 仍写「（群 = 房间日志切片；单聊 = **会话消息索引**之后的新增）」，与 `design.md:181` 的「单聊 scope SHALL NOT 用消息表下标…review 输入 = 持久化待 review 缓冲」直接相反。该残留是**描述性括注**（决策正文的钉死句在 8 行内、且 tasks 3.13 与 tasks 2.5 的用例都按缓冲口径写），属措辞级口径漂移而非新缺陷 ⇒ 记 low，**不阻塞实现**。本轮无 medium / high 级新洞。）
+
+### R5 各项核验
+
+- **R5 Issue 35（medium）: 部分修好** —— 规范面**已修好**：`design.md:179-181`（钉死块：每个 scope 一个进度记录落在该 scope 记忆目录内；群 scope 以房间日志 `seq` 为单位；**单聊 SHALL NOT 用消息表下标**，理由引 `agent/memory/manager.py:307-313` 的就地缩短与 `agent/loop.py:717-720` 的 resume 重建，**单聊 review 输入 = 该 scope 的持久化「待 review 缓冲」**，压缩 / resume 不影响该缓冲）、`:182`（初值 = 该 scope 当前起点、不回溯建库前历史）、`:183`（单次读入上限、超出留待下一次）、`design.md:224`（Testing Strategy 增「游标稳定性」）、`tasks.md:36`（3.13 写「单聊=持久化待 review 缓冲，不用消息表下标」+ 初值 + 读入上限）、`tasks.md:16`（2.5 增「上下文压缩 / session resume 后 review 仍推进且不漏读不重读」）、`specs/long-term-memory/spec.md:72-78`（新增 Scenario「压缩或恢复后 review 仍推进」，三条 THEN 可断言）。**残留 = 同一 Decision 的机制句未同步**：`design.md:173`「读「该 scope 自上次 review 游标之后的新增内容」（群 = 房间日志切片；**单聊 = 会话消息索引之后的新增**）」——正是 R5 判定「会被压缩/resume 击穿」的那个单位，现与 `:181` 相反（见「剩余 low」第 1 条，另见 Issue 38 关于缓冲生命周期的连带说明）。**不判 medium 的理由**：旧口径若被照实现，会被本 change 自己的测试任务直接打红（`tasks.md:16` 的压缩/resume 用例），属「已在 tasks 覆盖的低风险」；修法是删一处括注。
+- **R5 Issue 36（medium）: 已修好** —— `design.md:98-100` 已钉死三件事：①代码前提（`memory_dir` 恒为 `_MEMORY_DIR_BASE / _compute_project_hash(scope_root 或 project_root) / "memory"`、**全仓唯一赋值点**）；②新增**显式 scope 目录入参**（给定即**原样**用作 `memory_dir`、跳过 project-hash 推导；未给保持现状、零回归）；③`scope` 取值约定 `<project-scope>:persona:<pid>[:room:<rid>]` 写入 frontmatter。我独立复核（不采信自述）：
+  - **唯一赋值点成立**：`grep -rn "self\.memory_dir ="` 全仓仅 `agent/memory/persistent.py:183` 一处；`agent/memory/git_backend.py:36` 只读该属性；`_index_path`、条目路径、archive 目录、changelog 全部由它派生（`:184,323-324,348,850`）⇒ 一旦可注入，落点整体随之改变。
+  - **入参形态确实缺失**（R5 前提为真）：`inspect.signature(PersistentMemory.__init__)` 为 `['self','project_root','time_source','archive_after_days','recency_halflife_days','importance_default','summary_tokens','decay_interval_seconds','decay_threshold']` —— 既无 `memory_dir` 也无 `scope`；**实测** `PersistentMemory(Path('/home/happy/.asterwynd/projects/abc123/personas/p1/chat'))` → `memory_dir = /home/happy/.asterwynd/projects/628c5a50d3f75e71/memory`、`scope = /home/happy/.asterwynd/projects/abc123/personas/p1/chat`（hash 与 R5 报告的 `628c5a50d3f75e71` 逐位相同）⇒ 确认「传 scope 目录只会被再 hash 成另一个顶层目录、落在 `personas/<id>/` 子树之外」。
+  - **零回归成立**：`project_root` 是唯一位置参数、其余全在 `*` 之后（`persistent.py:170-182`），全部构造点都只传 `project_root`（`agent/main.py:255`、`agent/tools/builtin/memory.py:71,132,183,254,318`、`agent/tools/factory.py:319,425`、`tests/agent/**`）⇒ 追加一个 keyword-only 可选入参是源码兼容的，「未给保持现状」可实现。
+  - **`scope` 取值与既有语义对齐成立**：`scope` 在既有实现里是**不透明字符串**（`persistent.py:540` 写入新条目 frontmatter、`:398` 读回、`:700`/`:733` 以**等值比较**实现跨 scope 拒绝），全仓无任何把 `scope` 当路径解析 / 做前缀匹配的代码（`grep scope` 另两处命中是 `artifact_store` 的无关同名词）⇒ 冒号拼接的新取值可直接沿用，不需要改既有校验。**新接触面见 Issue 39。**
+- **R5 low 各条**：
+  - **L10 残留（proposal 级联措辞）: 已修好** —— `proposal.md:47` 现写「删除级联（会话 / 房间日志 / 该人设或房间的**全部记忆 scope**）」，与 `design.md:149-151`、`tasks.md:12` 同口径。
+  - **`archive` git 前像的二选一: 已修好** —— `design.md:176` 现写「本 change SHALL 连带补上（使 remove 也可回退）…**SHALL 在 move 前快照**」，spec 同步（`specs/long-term-memory/spec.md:69`「可 `restore`，且在 move 前有 git 前像」）。可实施性我核过：`archive` 现为 `_write_entry_to(entry, dst)` + `src.unlink()` + `_remove_from_index` + `_append_changelog`（`persistent.py:783-796`，无 `_git_commit`），在 move 前插一次 `_git_commit` 与 `save` 覆盖分支的 commit-before-write 同构（`:530-536`）⇒ 钉死的语义可落地。
+  - **`reviewed` 初值: 已修好** —— `design.md:182`。
+  - **review 读取规模无上限: 已修好** —— `design.md:183`（可配置，缺省与注入侧同量级；超出留待下一次）。
+  - **级联与 review 队列竞态: 已修好（落在 tasks 层）** —— `tasks.md:36` 已加「**scope 已被删除则丢弃该次 review**」；design 侧（`design.md:199` 的 Risks 只写队列合并/串行化）未同步该口径，属设计↔任务的一处不对称，记「剩余 low」。
+  - **Decision 8 未标 MODIFIED: 已修好** —— `design.md:109` 新增「本条收窄既有 `web-ui` 的两条无条件 Requirement（hub 列表 / 会话删除）⇒ spec delta 以 **MODIFIED** 落地」。
+  - **proposal 英文残留 +「两条→四条」订正: 部分修好** —— `proposal.md:29` 已删掉 `respective` 并改为「四条 Requirement」，但替换后的统一 scope 口径对其中两条是错的（见 Issue 37）；`tasks.md:5`（1.3）**未同步**，仍写「后两项以 MODIFIED 收窄既有「审批必须暴露」与「pending 跨连接存活」**两条 Requirement**」——既数错了条数，也把「内部会话列表过滤与生命周期保护」错配给了 pending 两条。
+
+### 新发现
+
+- **Issue 37（severity: low）**: `proposal.md:29` 用一个统一 scope 概括四条 MODIFIED，而四条实际是**两组不同 scope**，按字面读会把「hub 不列内部会话 / 内部会话拒绝删除」读成不覆盖 `persona_chat`。；证据: `proposal.md:29`「以 MODIFIED 收窄既有四条 Requirement（「审批必须暴露」「pending 跨连接存活」「hub 列出已保存会话」「会话删除」）到面向用户的会话（`kind: chat` / `persona_chat`）」vs 规格的**正确**分组 —— pending 两条只除 `kind: room_member` 且明文写 `persona_chat` 不降级（`specs/web-ui/spec.md:5`、`:47`），hub / DELETE 两条则除 `persona_chat` **与** `room_member`（`specs/web-ui/spec.md:66`、`:109`；配套 Scenario `:100-105`、`:140-145` 的 GIVEN 明确含 `kind: persona_chat`）；对照 `design.md:105-108`（内部会话 = 人设单聊 + 群内会话，`persona-` / `room-` 前缀，hub SHALL NOT 列出、`DELETE` SHALL 被拒）。；影响: 低——**规格（规范面）是对的**，跑偏的实现会被 delta 的 Scenario 打红；但 proposal 是归档后仍留在 `archive/` 的文档，按它做 hub 过滤会把人设单聊列进 hub（与 Decision 8 相反）。；建议: 把该句拆成两组写，例如「pending 两条收窄到 `kind: chat` / `persona_chat`（除 `room_member`）；hub 列表与会话删除两条收窄到 `kind: chat`（除全部内部会话）」；`tasks.md:5` 一并改成四条 + 正确分组。
+
+- **Issue 38（severity: low）**: 本轮新引入的「持久化待 review 缓冲」是本 change 新增的**持久化 artifact**，但它除「与消息表下标解耦」外没有钉任何生命周期口径：落点与格式、清空与写回成功的先后、以及「读入上限」下「消费」是部分消费还是整体清空。；证据: `design.md:181`（「运行期在向该 scope 追加消息时写入、**review 消费后清空**」）与 `design.md:183`（「单次读入…SHALL 有上限…**超出部分留待下一次 review**」）并置 ⇒ 若「消费后清空」被实现为整体删除，超出上限的尾部会**永久丢失**，与「留待下一次 review」相反；若「清空」发生在写回成功之前，一次失败的 review 会丢掉整段待 review 内容（而 `design.md:184` 只保证「失败不中断轮次」，不保证不丢内容）；落点也未写（写进 `<scope>/` 记忆目录会被 `_git_commit` 的 `git add -A` 一并提交，`persistent.py:451`，且该目录在 `save` 前可能不存在，`persistent.py:517` 才 mkdir）；`tasks.md:36` 同样只写「单聊=持久化待 review 缓冲」。；影响: 低——实现可以自行选择合理语义（部分消费 + 写回成功后再清空 + 落在 scope 目录内），不会与任何 spec 断言冲突，但三种选择在「失败/超限」下的行为不同，属同类「实现者各自发明」面。；建议: 在 `design.md:181` 的括注里补一句即可（「缓冲落在该 scope 记忆目录内；review 按上限**部分消费**，**写回成功之后**才清除已消费部分」）。
+
+- **Issue 39（severity: low）**: 把 `scope` 取值改成 `<project-scope>:persona:<pid>[:room:<rid>]` 后，`SearchMemory` 工具那个**对模型公开的 `scope` 参数**的契约描述变成错的了——按描述传值必得空结果。；证据: `agent/tools/builtin/memory.py:165-169`（参数描述「Optional project scope (**git root path**). A non-matching scope is rejected so cross-project memories never leak.」）与 `agent/memory/persistent.py:733`（`if scope is not None and scope != self.scope: return []`）、既有回归 `tests/agent/memory/test_long_term.py:310`（`mem.search("secret", scope="/other/project") == []`）⇒ 在人设 scope 下，模型若照描述传项目根路径（或任何不等于 `<project-scope>:persona:<pid>…` 的值），会拿到「No memories found.」而不是记忆——**静默假阴性**（模型可能据此重复保存同一条记忆）。触发需要模型主动传可选参数，故记 low。；影响: 低概率但真实，且这是 `scope` 取值约定在 Decision 7 之外的唯一代码接触面。；建议: 实现 3.8 时一并决定并写进 tasks——要么更新工具描述（说明人设会话下应省略该参数），要么把「传入的 scope 等于本项目 scope 时不拒绝」（仍保持跨项目拒绝语义）。
+
+- **Issue 40（severity: low）**: design 只点名了一个入参（`memory_dir`），但人设 scope 还需要把 `self.scope` 从「project_root 推导值」改成钉死的取值——这个「第二个旋钮」在 design 里只以**取值约定**出现，没有入参形态。；证据: `design.md:99`（只写 `memory_dir: Path | None`）vs `design.md:100`（钉 `scope` 取值）与 `agent/memory/persistent.py:185`（`self.scope = str(root.resolve())` 仍由 `project_root` 推导，给 `memory_dir` 时不随动）、`:540`（新条目的 frontmatter scope 取 `self.scope`）⇒ 若实现者只加入口①，frontmatter 的 scope 会落成项目根路径（与 `design.md:100` 不符）；若改传 `project_root=<scope 目录>` 来「顺手」改 scope，则 `memory_dir` 又被 hash 覆盖（Issue 36 的原始故障）。`tasks.md:31`（3.8）写了取值但同样没写第二个入参。；影响: 低——两处取值都在文档里，实现者能在实现时定；但「一个入参 + 一个约定值」的组合会让 scope 隔离的**标记**与**落点**可能不一致，而 spec 的隔离断言以「用 scope 标记记忆」表述（`specs/long-term-memory/spec.md:5`）。；建议: `design.md:99` 的括号里补成「（如 `memory_dir=` + `scope=` 两个入参）」，或写明「给定 `memory_dir` 时调用方 SHALL 一并给出 `scope` 取值」。
+
+### 剩余 low（不阻塞实现）
+
+- **`design.md:173` 的旧口径残留（= R5 Issue 35 的尾巴）**: 机制句仍写「单聊 = 会话消息索引之后的新增」，与同 Decision 的 `design.md:181` 相反。实现前顺手改成「单聊 = 该 scope 的持久化待 review 缓冲」即可（一句话），**不影响实现**（tasks 3.13 / 2.5 均按缓冲口径）。
+- **`tasks.md:5`（1.3）未随 `proposal.md:29` 同步**: 仍写「后两项…收窄…两条 Requirement」，且把「内部会话列表过滤与生命周期保护」错配给 pending 两条（正确分组见 Issue 37）。
+- **spec 正文未反映「初值 / 读入上限」**: `design.md:182-183` 与 `tasks.md:36` 有，`specs/long-term-memory/spec.md:37` 的 Requirement 正文只说「读取该 scope 自上次 review 游标之后的新增内容」。不冲突（增量语义下逐次读取可自洽），但严格读者可实现「一次读全量」。可选补一句。
+- **tasks 3.13 的「scope 已被删除则丢弃该次 review」没有 design 侧口径**: `design.md:199`（Risks）只写队列合并/串行化，未写删除竞态；建议随下次编辑把该口径挪进 Decision 17 或 Risks。
+- **删除级联与缓冲落点的关系靠推断**: `specs/web-ui/spec.md:197` 的级联 Scenario 只断言「该房间的 (人设, 房间) 记忆目录」被删；缓冲若被落在记忆目录之外（如会话目录），则不在该断言的覆盖范围内。与 Issue 38 同一处，一并钉落点即可消解。
+- **`design.md:109` 与 `proposal.md:29` 对「两条 / 四条」的计数口径不同**: Decision 8 说「两条（hub 列表 / 会话删除）」是对的（它只谈内部会话保护那一条 Decision），proposal 说「四条」也是对的（它谈四条 MODIFIED）；两处各自成立，仅提示读者别把两处数字当同一件事。
+
+### 本轮已核验通过的维度（增量）
+
+以下为本轮打开真实代码 / 既有规格逐条核对后**成立**的断言（不是复述 design 自述）：
+
+- **机械门禁在本版通过**: `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **29 passed, 0 failed**（含 `change/web-agent-group-chat`）；`PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` → **OpenSpec artifact checks passed**。本轮全部发现（含 Issue 37-40）都在门禁之外。
+- **R5 引用的压缩 / resume 行号仍准确**: `agent/memory/manager.py:298-304`（`msgs[:] = system + [summary_msg] + recent`，复用 running summary 分支）、`:309-312`（`msgs[:] = system + recent`，无新增中间段分支）——都是对同一列表对象的整体替换；`agent/loop.py:717-720`（`conversation = [m for m in resume_snapshot.messages if m.role != "system"]` → `messages.clear()` → `extend(...)`）⇒ 下标语义在两种路径下都会漂移，R5 的代码前提成立。
+- **`archive` 的「无 git 前像」仍为真、且「move 前快照」可实施**: `persistent.py:776-796`（`archive` = `_write_entry_to` + `unlink` + `_remove_from_index` + `_append_changelog`，无 `_git_commit`），`save` 的 commit-before-write 只在覆盖分支（`:530-536`）⇒ design 的改法与既有语义同构。
+- **web-ui delta 的四条 MODIFIED 的 scope 限定本身正确**（Issue 37 的错在 proposal 的概述，不在规格）: pending 两条只除 `room_member` 并明文保留 `persona_chat`（`specs/web-ui/spec.md:5,47`）；hub / DELETE 两条除 `persona_chat` + `room_member`（`:66,109`），配套 Scenario 的 GIVEN 覆盖两类内部会话（`:100-105,140-145`）。
+- **未改动面复核**: `multi-agent-collaboration` delta 与 `web-ui` delta 其余部分本次未被 `ca8c8b7` 触及（`git show --stat` 只含 design / proposal / tasks / long-term-memory spec + 本评审批次），R3 的结构性结论（6 个 MODIFIED 块场景丢弃 0、轮次终止三出口、`kind: user|post|system`、降级范围收窄到 `room_member`、级联顺序 + 幂等 + 不留孤儿）仍成立。
+- **新增 spec Scenario 的首行契约无碍**: `specs/long-term-memory/spec.md:72-78` 的 Scenario 标题与三条 THEN 均为行为断言，Requirement 正文首行仍含 `SHALL`（strict validate 已复跑通过）。
