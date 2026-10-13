@@ -14,7 +14,7 @@
 - 新增**长期 agent 人设**（roster）：稳定标识、名称、角色标签、指令、模型绑定，跨进程持久化。
 - 新增**会话式群聊编排器**：有序轮次、`@<名称>` 点名、成员静默（无新增内容不发言）、Chief/admin 默认应答并派活；与既有 DAG 调度器**并列**，不修改其语义。
 - 每个 agent 人设 SHALL 拥有与用户的**单聊会话**，以及在其加入的每个群里的**独立群内会话**；单聊与群聊内容 SHALL NOT 互相泄漏。
-- 记忆 SHALL 细分出**人设维**作用域：每个人设一份跨会话长期记忆，同一人设在单聊与群聊共享同一份记忆；为此 SHALL 先补上 Web 路径的长期记忆接线（现状 Web 未接）。
+- 记忆 SHALL 按「**人设 × 会话面**」分作用域：每个人设在**单聊**与它在的**每个群**各有一份**互相独立**的长期记忆（人设之间、单聊与群之间、群与群之间均互不可见）；并 SHALL 在成员**发言回合结束后自动做一次记忆 review**（静默成员落后时补齐）。为此 SHALL 先补上 Web 路径的长期记忆接线（现状 Web 未接）。
 - 新增**房间日志**作为群时间线的权威有序数据（成员看到本轮此前内容、重连后还原有序群消息流）。
 - 会话标识与 hub 可见性 SHALL 明确：人设单聊会话与 (人设, 群) 群内会话 SHALL NOT 以普通会话身份出现在 hub，且 SHALL NOT 可被会话删除接口直接删除。
 - 群聊会话内的**交互式 pending（审批/提问）SHALL 显式降级**，不得让无人值守的轮次阻塞到超时。
@@ -25,7 +25,7 @@
 ### Modified Capabilities
 
 - `multi-agent-collaboration`: 从空基线升级为「长期人设 + 会话式群聊编排」能力（新增 roster、房间日志、群聊轮次与终止条件、房间级互斥、两级主持角色、跨人设共享面声明）；并以 MODIFIED 澄清既有「Orchestration Reuses Workflow Persistence Discipline / SHALL NOT introduce a separate control plane」只约束 **subagent orchestration**，不覆盖本 change 的交互式编排器。
-- `long-term-memory`: 记忆作用域从 project/repo 扩展出 persona 维（既有规格 `openspec/specs/long-term-memory/spec.md:74-83` 的 `Scope 隔离` 钉定 project/repo scope，故需 MODIFIED delta）。
+- `long-term-memory`: 记忆作用域从 project/repo 扩展出「**人设 × 会话面**」维（既有规格 `openspec/specs/long-term-memory/spec.md:74-83` 的 `Scope 隔离` 钉定 project/repo scope，故需 MODIFIED delta），并新增「人设记忆的 review 触发与游标」（ADDED）。
 - `web-ui`: 新增群聊视图 + 房间级 WS、人设/房间管理入口与单聊入口、内部会话列表过滤与生命周期保护、内部会话 pending 降级（后两项 respective 以 MODIFIED 收窄既有「审批必须暴露」与「pending 跨连接存活」两条 Requirement 到面向用户的会话）。
 
 ## Dependencies

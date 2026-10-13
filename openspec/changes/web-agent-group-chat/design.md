@@ -80,17 +80,20 @@
 - **切片注入（有界 + 游标语义）**：每个成员持**持久化游标** `seen[member]`，在**回合开始**推进（含静默/超时回合也推进）——与参照实现一致（`ds-bot/src/host/groups.js:44-45,183`）。成员本轮看到的 = `seq > seen[member]` 且非本人发言的切片，并施加与参照同形的**三层上限**：首见 `12` / 单次增量 `24` / 往轮上下文 `8`（`ds-bot/src/host/groups.js:21-23`），且把「本轮」与「往轮（仅上下文）」分开标注。
   理由：若按「上次**发言**之后」推进，连续静默的成员切片边界永不前进 ⇒ 同段内容被反复重复注入，上下文随静默次数无界增长（与 issue #278「上下文无界」同类风险）。
 
-### Decision 7: 人设级记忆——先补全 Web 接线，再加 persona 维
+### Decision 7: 人设记忆——先补全 Web 接线，再按「人设 × 会话面」分 scope
 
 **接线清单（SHALL 全部补齐，忠实移植 CLI 语义）**：人设会话构造时传 `persistent_memory` + `memory_config` + `llm`（+ 视需要 `quality_config`），对照 CLI 的 `agent/main.py:270-289`。只传 `persistent_memory` 会缺 LLM 去重判官（`agent/tools/factory.py:163-173`）与用户记忆配置（`agent/tools/factory.py:317-327`），落成与 CLI **不同策略**的人设记忆。
 
 **接线范围**：仅人设会话（`persona_chat` / `room_member`）；**不**顺带给普通 Web 会话接线（会改变既有单会话 Web 行为与其测试面，属另一 change）。
 
-**persona 维落点（同级布局，不嵌在项目记忆目录内）**：`~/.asterwynd/projects/<project-hash>/personas/<persona-id>/memory`。
-理由：项目记忆目录自带 git commit-before-write（`agent/memory/persistent.py:452` 的 `git add -A` 会**递归**），把人设目录嵌在 `.../memory/` 内会形成嵌套仓库（gitlink + 警告），并使项目级可逆快照语义含糊。同级布局 + 注入块标题改为 `## Persona Memory`（现为硬编码 `## Project Memory`，`agent/context/sources.py:302`），语义可区分。
-（无泄漏副作用：`load_entries` 用非递归 `glob("*.md")`（`agent/memory/persistent.py:341`），同级目录不会被项目级检索误收。）
+**scope 粒度 = 人设 × 会话面**（用户 2026-10-12 拍板「每个群独立」）：
+- 单聊一份：`~/.asterwynd/projects/<project-hash>/personas/<persona-id>/chat/memory`；
+- 每个群各一份：`.../personas/<persona-id>/rooms/<room-id>/memory`；
+- 单聊与各群之间、群与群之间**互不可见**。
 
-**同一人设共享同一实例**：单聊与群聊会话 SHALL 共享同一个 `PersistentMemory` 实例（避免并发写同一目录与 `_last_decay_run` 重复衰减；见 Risks）。
+**与参照的故意分歧（声明）**：DS Bot 的记忆是**每个 bot 一份**（跨它所有会话共享）+ 一份 team 共享（`ds-bot/src/host/memory.js`）；本 change 按用户拍板改为**每个群独立**，属故意分歧。
+
+**同级布局**（不嵌在项目记忆目录内）：项目记忆目录自带 git commit-before-write，其 `git add -A` 会**递归**（`agent/memory/persistent.py:451-452`），把人设目录嵌在 `.../memory/` 内会形成嵌套仓库（gitlink + 警告）；同级目录不会被项目级非递归 `glob("*.md")` 误收（`:341`）。注入块标题改为 `## Persona Memory`（现硬编码 `## Project Memory`，`agent/context/sources.py:302`）。
 
 ### Decision 8: 会话标识与 hub 可见性（含破坏性路径全保护）
 
@@ -157,6 +160,17 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - 与房间日志 `kind: "system"` 命名区分（那里是系统条目，此处是用户配置的群指令）。
 （Q5a 已拍板首版做。）
 
+### Decision 17: 记忆 review（每人自己发言后 review 自己 + 静默成员落后补齐）
+
+- **主触发**：一个人设会话（其单聊，或它在某群的群内会话）的一个 turn 结束（变 idle）后，为该会话对应的**记忆 scope** 排一次 review（延迟后执行）——即「谁发言了，就 review 谁的那份记忆」。与参照同形（`ds-bot/src/host/memory.js:1323-1343`：`agent/status` → idle → `queueReview`）。
+- **落后补齐**：某房间某成员在房间日志上落后达到阈值 `REVIEW_GROUP_LAG` 时，顺带为它的 (persona, room) scope 排一次 review——避免静默成员记忆长期停滞，且在日志滚动丢掉它未读内容之前补齐（参照 `ds-bot/src/host/memory.js:1283-1288`）。
+- **机制**：review 是一次**独立小模型调用**，读「该 scope 上次 review 游标之后的新增内容」（群 = 房间日志切片；单聊 = 会话新增消息）+ 当前记忆，产出 keep/update/remove 变更，经**既有 save 路径**写回（沿用去重/冲突/git 可逆/尺寸上限），并推进该 scope 的 review 游标。
+- **游标持久化**：每个 scope 一个 `reviewed` 游标（参照 `reviewed.json`）。
+- **成本**：每「成员发言回合」一次额外 LLM 调用（+ 落后补齐），计入成本账本。
+- **可关闭**：默认开启，可配置关闭（参照 `config.memoryReview`）。
+
+（用户 2026-10-12 拍板选「①+兜底」。）
+
 ## Pre-Implementation Review
 
 - Questions resolved:
@@ -176,7 +190,8 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 
 - [Risk] 群聊 token 成本随发言者数放大。Mitigation: Chief/admin 模式 + 静默 + 每轮每成员上限（Decision 11）。
 - [Risk] 会话数 = N×(1+G)，每会话一份 AgentLoop（MCP 子进程 + 独立并发额度 + 工具注册表）。Mitigation: 懒构造 + 上限（Q4）。
-- [Risk] **同一人设单聊/群聊并发写同一份记忆**：`_git_commit` 在提交失败时抛 `RuntimeError` 中止写入（不是降级，`agent/memory/persistent.py:433-465`）。Mitigation: 同一人设共享同一 `PersistentMemory` 实例（Decision 7）+ 并发写测试。
+- [Risk] **同一记忆 scope 的并发写**：scope 已按「人设 × 会话面」拆分，单聊与各群不再共享目录 ⇒ 跨面争用消除；同一 scope 内的并发（turn review 与落后补齐同时排）由 **review 队列按 session 合并/串行化**（参照 `queueReview` 的合并语义）。底层 `_git_commit` 提交失败仍抛 `RuntimeError` 中止写入（`agent/memory/persistent.py:433-465`），故 review 失败 SHALL 只记日志、不中断轮次。
+- [Risk] **memory review 的成本**：每「成员发言回合」一次额外小模型调用（+ 落后补齐）；一轮 N 个成员发言 = N 次额外调用。Mitigation: 用独立小模型 + 可配置关闭（Decision 17）。
 - [Risk] **跨人设隐式通道不止记忆**：workflow 资产库仓库级共享（Decision 12）。
 - [Risk] 群聊 pending 降级 ⇒ 成员不能做需审批的高风险操作（Decision 9，已记已知限制）。
 - [Risk] **WS `reset` 可击穿内部会话保护**（Decision 8）——须在实现与测试中显式覆盖。
@@ -189,7 +204,8 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - 群聊编排：slot 序列、`@` 解析（行首 vs 句中 / 不在列表 / 多人 / 自己）、静默、每轮每成员上限、**轮次终止三出口**（走完 / 达上限 / 失败或超时）、轮次中用户消息处理、**房间级互斥**（并发不发两轮、用户消息排队进本轮）。
 - `SessionRunner` 契约：`text` 只来自本次 run（**并发被拒时不复用陈旧文本**）；四态映射。
 - 会话分离：单聊/群聊内容互不泄漏的负向断言。
-- 记忆：人设间隔离 + 同人设单聊/群聊共享 + 并发写；接线完整性（LLM 去重判官存在、memory_config 生效）；注入块标题为 `## Persona Memory`。
+- 记忆 scope：**人设间隔离 + 同一人设的单聊/各群之间也互相不可见**（每个群独立）；接线完整性（LLM 去重判官存在、`memory_config` 生效）；注入块标题为 `## Persona Memory`。
+- 记忆 review：成员发言回合结束后触发（静默成员不主动触发）；静默成员落后达阈值时被补齐；review 经既有 save 路径写入并推进游标；review 失败不中断轮次。
 - 共享面：workflow 资产库跨人设可见性（按声明断言）。
 - Web：群聊 pane + 房间 WS + hub 过滤（含**损坏快照**）+ `DELETE` 拒删 + **WS `reset` 拒改内部会话**。
 - 收尾：全量 pytest + `openspec validate --strict` + artifact checker + benchmark smoke。
@@ -203,3 +219,5 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - **Q4**: 首版会话数上限 = **50**，超出**排队**；做成可配置项。
 - **Q5a**: 首版**做**群共享 notice（Decision 16）。
 - **Q5b**: 首版**不做**「引用另一段对话作为上下文」（Non-Goals）。
+- **Q6**（记忆粒度）: 记忆**每个群独立**——同一人设的单聊 / 各群各一份、互不可见（与 DS Bot 故意分歧，Decision 7）。
+- **Q7**（记忆 review 触发）: **每人自己发言后 review 自己 + 静默成员落后补齐**（Decision 17）。
