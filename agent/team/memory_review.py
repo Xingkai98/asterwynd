@@ -95,7 +95,17 @@ class MemoryScope:
         return self.room_id is not None
 
 
-def make_scope(project_root: Path, persona_id: str, room_id: str | None) -> MemoryScope:
+def make_scope(
+    project_root: Path, persona_id: str, room_id: str | None = None
+) -> MemoryScope:
+    """构造 scope。
+
+    ``room_id`` 先做 ``or None`` 归一：**空串不是「某个房间」**。此前调用方把单聊的
+    ``None`` 传成 ``""``，而 ``is_group``（``room_id is not None``）把空串判成群 ⇒
+    伪 scope（落点 ``personas/<pid>/rooms/memory``）、review 直接 dropped，而缓冲写在
+    正确的 chat scope ⇒ 永不消费、无界增长。归一后这类写法最多退化成单聊。
+    """
+    room_id = room_id or None
     return MemoryScope(
         persona_id=persona_id,
         room_id=room_id,
@@ -188,8 +198,8 @@ class MemoryReviewService:
         room = self._store.get_room(scope.room_id or "")
         if room is None:
             return
-        self._write_progress(scope, self._store.read_room_log(room.id)[-1].seq
-                             if self._store.read_room_log(room.id) else 0)
+        entries = self._store.read_room_log(room.id)
+        self._write_progress(scope, entries[-1].seq if entries else 0)
 
     def forget_scope(self, scope: MemoryScope) -> None:
         """scope 已被删除（级联）→ 丢弃排队中的 review，避免重建孤儿目录。"""
@@ -203,9 +213,13 @@ class MemoryReviewService:
     # ------------------------------------------------------------------
 
     async def on_member_turn(
-        self, *, room_id: str, persona_id: str, outcome: TurnOutcome
+        self, *, room_id: str | None, persona_id: str, outcome: TurnOutcome
     ) -> None:
-        """编排器的每回合回调：**仅实际发言**的回合触发（Decision 17 主触发）。"""
+        """每回合回调：**仅实际发言**的回合触发（Decision 17 主触发）。
+
+        ``room_id=None`` 表示该人设的**单聊**会话面（走 persona/chat scope）；
+        非空表示群内会话（走 persona/room scope）。
+        """
         if not self._config.review_enabled:
             return
         if not outcome.spoke:

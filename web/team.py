@@ -387,19 +387,31 @@ class TeamService:
     def _attach_turn_listener(
         self, team: _WorkspaceTeam, session_id: str, persona_id: str, room_id: str | None
     ) -> None:
+        """给**人设单聊**会话挂回合结束监听器（群内会话不走这里）。
+
+        触发路径分工（单一来源，避免同一次发言排两次 review）：
+
+        - **单聊**：本监听器负责——把这一回合的**用户消息与助手回复**都写进该
+          chat scope 的待 review 缓冲（与消息表下标解耦：压缩 / resume 都会让
+          下标语义漂移），并在**实际产生发言**时排一次 review；
+        - **群内会话**：由编排器的 ``review_sink`` 负责（``on_member_turn``），
+          它在发言**落房间日志之后**触发，因此 review 一定能读到本人刚发出的那条。
+        """
+        if room_id is not None:
+            return
         session = self.manager.get_session(session_id)
         if session is None:
             return
-        scope = make_scope(team.workspace, persona_id, room_id)
+        scope = make_scope(team.workspace, persona_id, None)
 
-        async def _listener(outcome: TurnOutcome) -> None:
-            if room_id is None:
-                # 单聊：运行期把消息写进该 scope 的**待 review 缓冲**（与消息表下标
-                # 解耦——压缩 / resume 都会让下标语义漂移）。
-                if outcome.spoke and outcome.text.strip():
-                    team.review.append_chat_message(scope, outcome.text.strip())
+        async def _listener(outcome: TurnOutcome, user_text: str) -> None:
+            # 用户那句通常才是可记事实的来源，必须与群 scope 的 ``User:`` 口径对称。
+            if user_text and user_text.strip():
+                team.review.append_chat_message(scope, f"User: {user_text.strip()}")
+            if outcome.spoke and outcome.text.strip():
+                team.review.append_chat_message(scope, f"Assistant: {outcome.text.strip()}")
             await team.review.on_member_turn(
-                room_id=room_id or "", persona_id=persona_id, outcome=outcome
+                room_id=None, persona_id=persona_id, outcome=outcome
             )
 
         session.turn_listeners.append(_listener)

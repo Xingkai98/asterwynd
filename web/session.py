@@ -1427,8 +1427,10 @@ class AgentSession:
         # 陈旧内容当本轮产出——这一点是硬约束：``run_session`` 被 ``run_lock`` 拒时
         # 只发 ``run_in_progress`` 事件并返回，绝不刷新该字段。
         self.last_turn: TurnOutcome | None = None
-        # 回合结束监听器（``(TurnOutcome) -> Awaitable[None]``）：记忆 review 的
-        # 「实际发言才触发」挂在这里，单聊与群聊走同一个出口。
+        # 回合结束监听器（``(TurnOutcome, str) -> Awaitable[None]``，第二个参数是
+        # 本回合的用户输入文本）：人设**单聊** scope 的记忆 review 挂在这里。
+        # 群内会话的 review 由编排器的 ``review_sink`` 负责（那条路径在发言落日志
+        # **之后**触发），避免同一次发言被排两次 review。
         self.turn_listeners: list = []
         # reasoning 回传降级标志（issue #256 D7）：**session 级、跨 run 存活**。
         # LLM 层用 ContextVar 表达「本 run 是否降级」，但每个用户回合都是新 task、
@@ -2144,7 +2146,7 @@ class SessionManager:
         )
         for listener in list(session.turn_listeners):
             try:
-                await listener(session.last_turn)
+                await listener(session.last_turn, user_message)
             except Exception:  # noqa: BLE001 - 监听失败不得影响会话本身
                 logger.exception("turn listener failed for session %s", session.session_id)
 

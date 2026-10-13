@@ -33,7 +33,26 @@ def _isolated_memory_base(tmp_path, monkeypatch):
     return base
 
 
-def _service(tmp_path: Path, llm=None, *, config=None, max_sessions=50) -> TeamService:
+class _NoopReviewer:
+    """默认 review 替身：不调模型、不改写任何记忆。
+
+    测试里**必须**与真 reviewer 隔开：``LLMMemoryReviewer`` 会消耗同一个
+    ``ScriptedLLM`` 的脚本响应，而脚本是给「对话」准备的——两者混用会让会话读到
+    本该属于 review 的那一条（实测：``test_text_comes_from_this_run_only`` 的第二
+    轮拿到了 ``default response``）。真正关心 review 的用例显式注入自己的替身。
+    """
+
+    def __init__(self):
+        self.calls: list[tuple[str, list[str]]] = []
+
+    async def review(self, *, scope_label, new_content, existing):
+        self.calls.append((scope_label, list(new_content)))
+        return []
+
+
+def _service(
+    tmp_path: Path, llm=None, *, config=None, max_sessions=50, reviewer=None
+) -> TeamService:
     workspace = tmp_path / "ws"
     workspace.mkdir()
     config = config or AsterwyndConfig(team=TeamConfig(max_sessions=max_sessions))
@@ -42,6 +61,7 @@ def _service(tmp_path: Path, llm=None, *, config=None, max_sessions=50) -> TeamS
         manager=manager,
         llm=llm or ScriptedLLM(default_response=LLMResponse(content="好的")),
         config=config,
+        reviewer=reviewer or _NoopReviewer(),
     )
 
 
@@ -489,6 +509,107 @@ class TestReplyModeApi:
         persona = service.create_persona(ws, name="乙")
         with pytest.raises(ValueError):
             service.update_persona(ws, persona.id, mode="nope")
+
+
+class _RecordingReviewer:
+    """记录 review 调用（scope + 输入），不真调模型。"""
+
+    def __init__(self):
+        self.calls: list[tuple[str, list[str]]] = []
+
+    async def review(self, *, scope_label, new_content, existing):
+        self.calls.append((scope_label, list(new_content)))
+        return []
+
+
+class TestSingleChatReview:
+    """I1/I3 回归：单聊回合必须**真的**排队 review（正确 scope）并消费缓冲。
+
+    此前 `_attach_turn_listener` 把单聊的 `room_id=None` 传成 `""`，于是
+    `MemoryScope.is_group`（`room_id is not None`）把空串判成群 ⇒ 伪 scope、`run_once`
+    直接 dropped，而缓冲写的是**正确**的 chat scope ⇒ 那个文件永不被消费、无界增长。
+    """
+
+    @pytest.mark.asyncio
+    async def test_single_chat_turn_triggers_review_on_the_chat_scope(self, tmp_path):
+        reviewer = _RecordingReviewer()
+        service = _service(
+            tmp_path, ScriptedLLM(default_response=LLMResponse(content="好的呀")),
+            reviewer=reviewer,
+        )
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        sid = await service.ensure_persona_chat_session(ws, persona.id)
+
+        await service.manager.run_session(service.manager.get_session(sid), "请记住我爱喝咖啡")
+        await service.team_for(ws).review.drain()
+
+        assert [c[0] for c in reviewer.calls] == [f"persona:{persona.id}"], (
+            "单聊回合必须在 persona/chat scope 上排 review"
+        )
+
+    @pytest.mark.asyncio
+    async def test_single_chat_review_input_covers_both_sides(self, tmp_path):
+        """I3：缓冲必须同时含用户消息与助手回复（与群 scope 的 `User:` 口径对称）。"""
+        reviewer = _RecordingReviewer()
+        service = _service(
+            tmp_path, ScriptedLLM(default_response=LLMResponse(content="好的呀")),
+            reviewer=reviewer,
+        )
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        sid = await service.ensure_persona_chat_session(ws, persona.id)
+
+        await service.manager.run_session(service.manager.get_session(sid), "请记住我爱喝咖啡")
+        await service.team_for(ws).review.drain()
+
+        _, new_content = reviewer.calls[0]
+        joined = "\n".join(new_content)
+        assert "请记住我爱喝咖啡" in joined, "用户消息必须进入 review 输入"
+        assert "好的呀" in joined, "助手回复必须进入 review 输入"
+
+    @pytest.mark.asyncio
+    async def test_single_chat_pending_buffer_is_consumed(self, tmp_path):
+        """I1 的另一半：缓冲**不**再无界增长。"""
+        reviewer = _RecordingReviewer()
+        service = _service(
+            tmp_path, ScriptedLLM(default_response=LLMResponse(content="好的呀")),
+            reviewer=reviewer,
+        )
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        sid = await service.ensure_persona_chat_session(ws, persona.id)
+        scope = make_scope(ws, persona.id)
+
+        await service.manager.run_session(service.manager.get_session(sid), "第一句")
+        await service.team_for(ws).review.drain()
+        assert service.team_for(ws).review.read_pending(scope) == []
+
+        await service.manager.run_session(service.manager.get_session(sid), "第二句")
+        await service.team_for(ws).review.drain()
+        assert service.team_for(ws).review.read_pending(scope) == []
+        assert len(reviewer.calls) == 2
+        assert "第二句" in "\n".join(reviewer.calls[1][1])
+
+    @pytest.mark.asyncio
+    async def test_group_review_is_not_double_triggered(self, tmp_path):
+        """I6：群内会话的 review 只由编排器一条路径触发（不早于发言落日志）。"""
+        reviewer = _RecordingReviewer()
+        service = _service(
+            tmp_path, ScriptedLLM(default_response=LLMResponse(content="群发言")),
+            reviewer=reviewer,
+        )
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        room = service.create_room(ws, name="r", members=[persona.id], admin=persona.id)
+
+        await service.submit_room_message(ws, room.id, "大家好")
+        await service.team_for(ws).review.drain()
+
+        room_calls = [c for c in reviewer.calls if c[0] == f"persona:{persona.id}:room:{room.id}"]
+        assert len(room_calls) == 1
+        # 触发时读到的是**本人刚发出的那条**（发言先落日志、review 后排队）
+        assert "群发言" in "\n".join(room_calls[0][1])
 
 
 class TestPendingDowngrade:
