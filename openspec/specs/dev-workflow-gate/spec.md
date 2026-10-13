@@ -8,6 +8,8 @@
 
 本规格用规范性语言描述**目标**，不把「尚未接入」写成已落地。
 
+> **退休预告**：本规格在 `witnessloop-adoption` 的**阶段 A 结束时会被覆盖重写**——上面「尚未接入」的占位 Requirement 会被删除，Purpose 段改写为接入后的实际承载形态。先例：`platform-gate` 的实现 commit `f7e912b` 同样覆盖了它自己的占位规格。该 change 的 spec delta 已用 `## REMOVED Requirements` 登记这条退休，并在 `tasks.md` 的 Z.2 规定用**覆盖重写**（而不是只合并 `## ADDED`）的方式同步。
+
 ## Requirements
 
 ### Requirement: dev-workflow-gate 当前为预留能力域
