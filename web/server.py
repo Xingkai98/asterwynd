@@ -452,6 +452,7 @@ def create_app(
             "role": persona.role,
             "instructions": persona.instructions,
             "model": persona.model,
+            "mode": persona.mode,
             "chat_session_id": persona.chat_session_id,
         }
 
@@ -462,6 +463,7 @@ def create_app(
             "members": list(room.members),
             "admin": room.admin,
             "notice": room.notice,
+            "reply_mode": room.reply_mode,
         }
 
     def _team_state(ws_path) -> dict:
@@ -495,6 +497,7 @@ def create_app(
                 instructions=str(payload.get("instructions") or ""),
                 model=str(payload.get("model") or ""),
                 main_bot=bool(payload.get("main_bot")),
+                mode=payload.get("mode"),
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -507,11 +510,14 @@ def create_app(
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
         fields = {k: payload[k] for k in
-                  ("name", "role", "instructions", "model", "main_bot") if k in payload}
+                  ("name", "role", "instructions", "model", "mode", "main_bot")
+                  if k in payload}
         try:
             persona = team_service.update_persona(ws_path, persona_id, **fields)
         except KeyError:
             return JSONResponse({"error": "unknown_persona"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
         return {"persona": _persona_payload(persona), **_team_state(ws_path)}
 
     @app.delete("/api/team/personas/{persona_id}")
@@ -553,6 +559,7 @@ def create_app(
                 admin=payload.get("admin") or None,
                 notice=str(payload.get("notice") or ""),
                 created_by=payload.get("created_by") or None,
+                reply_mode=payload.get("reply_mode"),
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
@@ -564,8 +571,8 @@ def create_app(
             ws_path = _team_workspace(payload.get("workspace"))
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
-        fields = {k: payload[k] for k in ("name", "notice", "admin", "members")
-                  if k in payload}
+        fields = {k: payload[k] for k in
+                  ("name", "notice", "admin", "members", "reply_mode") if k in payload}
         try:
             room = team_service.update_room(ws_path, room_id, **fields)
         except KeyError:

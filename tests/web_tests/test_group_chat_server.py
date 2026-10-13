@@ -93,6 +93,53 @@ class TestTeamRest:
         assert "post" in kinds
 
 
+class TestModeRest:
+    """Decision 18/19 的 REST 面：mode / reply_mode 的读写与拒绝。"""
+
+    def test_persona_mode_defaults_to_bypass_and_roundtrips(self, client):
+        body = _create_persona(client, "甲")
+        pid = body["persona"]["id"]
+        assert body["persona"]["mode"] == "bypass"
+
+        updated = client.patch(f"/api/team/personas/{pid}", json={"mode": "read_only"})
+        assert updated.status_code == 200
+        assert updated.json()["persona"]["mode"] == "read_only"
+        state = client.get("/api/team").json()
+        assert state["personas"][0]["mode"] == "read_only"
+
+    def test_room_reply_mode_defaults_to_admin_and_roundtrips(self, client):
+        pid = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "admin": pid,
+        }).json()["room"]
+        assert room["reply_mode"] == "admin"
+
+        patched = client.patch(f"/api/team/rooms/{room['id']}", json={"reply_mode": "everyone"})
+        assert patched.status_code == 200
+        assert patched.json()["room"]["reply_mode"] == "everyone"
+
+    def test_invalid_modes_rejected_with_400(self, client):
+        assert client.post("/api/team/personas",
+                           json={"name": "甲", "mode": "nope"}).status_code == 400
+        pid = _create_persona(client, "乙")["persona"]["id"]
+        assert client.patch(f"/api/team/personas/{pid}",
+                            json={"mode": "nope"}).status_code == 400
+        assert client.post("/api/team/rooms", json={
+            "name": "r", "members": [pid], "reply_mode": "nope",
+        }).status_code == 400
+
+    def test_everyone_room_gives_every_member_a_turn(self, client):
+        a = _create_persona(client, "甲")["persona"]["id"]
+        b = _create_persona(client, "乙")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [a, b], "admin": a, "reply_mode": "everyone",
+        }).json()["room"]
+        body = client.post(f"/api/team/rooms/{room['id']}/messages",
+                           json={"content": "大家好"}).json()
+        speakers = [e["speaker"] for e in body["timeline"] if e["kind"] == "post"]
+        assert speakers == [a, b]
+
+
 class TestInternalSessionProtection:
     def test_hub_hides_internal_sessions(self, client, tmp_path):
         pid = _create_persona(client, "甲")["persona"]["id"]

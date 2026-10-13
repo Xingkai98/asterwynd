@@ -20,7 +20,15 @@ from agent.session import (
 )
 from agent.team import paths
 from agent.team.memory_review import MemoryReviewService, MemoryReviewer, make_scope
-from agent.team.models import Persona, Room
+from agent.run_config import parse_agent_mode
+from agent.team.models import (
+    DEFAULT_PERSONA_MODE,
+    DEFAULT_REPLY_MODE,
+    PERSONA_MODES,
+    REPLY_MODES,
+    Persona,
+    Room,
+)
 from agent.team.orchestrator import RoomOrchestrator, RoundResult
 from agent.team.runner import TurnOutcome
 from agent.team.store import TeamStore
@@ -47,6 +55,33 @@ def clone_llm_with_model(base_llm, model: str):
     except Exception:  # noqa: BLE001 - 绑定失败不阻断会话创建
         logger.warning("人设模型绑定 %r 失败，回落会话默认模型", model, exc_info=True)
         return base_llm
+
+
+def _normalize_persona_mode(raw) -> str:
+    """人设运行模式：非法值结构化拒绝（``ValueError``）。"""
+    text = str(raw or "").strip()
+    if not text:
+        return DEFAULT_PERSONA_MODE
+    try:
+        return parse_agent_mode(text).value
+    except ValueError:
+        raise ValueError("invalid_persona_mode") from None
+
+
+def _persona_mode_or_default(raw) -> str:
+    """读盘路径的宽容版：手改坏的 roster 不该让整个会话面建不出来。"""
+    try:
+        return parse_agent_mode(str(raw or DEFAULT_PERSONA_MODE)).value
+    except ValueError:
+        logger.warning("人设 mode 取值非法（%r），回落缺省 %s", raw, DEFAULT_PERSONA_MODE)
+        return DEFAULT_PERSONA_MODE
+
+
+def _normalize_reply_mode(raw) -> str:
+    text = str(raw or "").strip() or DEFAULT_REPLY_MODE
+    if text not in REPLY_MODES:
+        raise ValueError("invalid_reply_mode")
+    return text
 
 
 class RoomEventBus:
@@ -314,6 +349,18 @@ class TeamService:
         await team.pool.acquire(manager)
         snapshot = manager._store_for(team.workspace).load(session_id)
         room_id = room.id if room is not None else None
+        # 人设运行模式（Decision 18）：单聊与所有群内会话都以它构造。
+        persona_mode = (
+            parse_agent_mode(_persona_mode_or_default(persona.mode))
+            if persona is not None
+            else None
+        )
+        if snapshot is not None and persona_mode is not None:
+            # roster 是模式的事实来源：``AgentLoop`` 的 resume 分支会用**快照** 的
+            # mode 覆盖构造期模式（``agent/loop.py`` 的 `set_mode(snapshot.mode)`），
+            # 若用户改过人设模式，快照里的旧值会把新值顶回去。故在传给 loop 之前
+            # 用 roster 值规整快照；下一次 run 落盘后快照即与新值一致。
+            snapshot.mode = persona_mode
         memory = None
         if persona is not None:
             scope = make_scope(team.workspace, persona.id, room_id)
@@ -330,6 +377,7 @@ class TeamService:
             quality_config=self.config.tools.quality,
             system_prompt=persona.instructions if persona else None,
             resume_snapshot=snapshot,
+            initial_mode=persona_mode,
         )
         team.pool.track(session_id)
         if persona is not None:
@@ -421,14 +469,14 @@ class TeamService:
 
     def create_persona(
         self, workspace, *, name: str, role: str = "", instructions: str = "",
-        model: str = "", main_bot: bool = False,
+        model: str = "", main_bot: bool = False, mode: str | None = None,
     ) -> Persona:
         team = self.team_for(workspace)
         if not (name or "").strip():
             raise ValueError("missing_name")
         persona = Persona(
             name=name.strip(), role=role or "", instructions=instructions or "",
-            model=model or "",
+            model=model or "", mode=_normalize_persona_mode(mode),
         )
         team.store.upsert_persona(persona)
         if main_bot:
@@ -445,6 +493,8 @@ class TeamService:
         for field in ("name", "role", "instructions", "model"):
             if field in fields and fields[field] is not None:
                 setattr(persona, field, str(fields[field]))
+        if fields.get("mode") is not None:
+            persona.mode = _normalize_persona_mode(fields["mode"])
         team.store.upsert_persona(persona)
         if "main_bot" in fields and fields["main_bot"] is not None:
             ids = [i for i in team.store.main_bot_ids() if i != persona_id]
@@ -521,7 +571,7 @@ class TeamService:
 
     def create_room(
         self, workspace, *, name: str, members: list[str], admin: str | None = None,
-        notice: str = "", created_by: str | None = None,
+        notice: str = "", created_by: str | None = None, reply_mode: str | None = None,
     ) -> Room:
         team = self.team_for(workspace)
         if not (name or "").strip():
@@ -540,6 +590,7 @@ class TeamService:
         room = Room(
             name=name.strip(), members=list(dict.fromkeys(members)),
             admin=resolved_admin, notice=notice or "", created_by=created_by,
+            reply_mode=_normalize_reply_mode(reply_mode),
         )
         team.store.save_room(room)
         return room
@@ -553,6 +604,8 @@ class TeamService:
             room.name = str(fields["name"])
         if fields.get("notice") is not None:
             room.notice = str(fields.get("notice") or "")
+        if fields.get("reply_mode") is not None:
+            room.reply_mode = _normalize_reply_mode(fields["reply_mode"])
         if fields.get("admin") is not None:
             room.admin = fields["admin"] or None
         if fields.get("members") is not None:

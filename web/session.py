@@ -1716,7 +1716,9 @@ class SessionManager:
                 session_id,
                 timeout_seconds=self.config.web.question_timeout_seconds,
             )
-        resolved_mode = initial_mode or self.initial_mode
+        # ``is not None`` 而非真值判断：``AgentMode`` 是枚举，显式传入的模式
+        # 必须压过 manager 初始 mode（Decision 18 的人设模式走这条路径）。
+        resolved_mode = initial_mode if initial_mode is not None else self.initial_mode
         run_config = AgentRunConfig(mode=resolved_mode)
         session_workspace = (
             (workspace_root or self.primary_workspace).resolve()

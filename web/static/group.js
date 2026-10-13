@@ -94,7 +94,8 @@
       name.textContent = persona.name || persona.id;
       const badges = [];
       if (state.mainBotIds.includes(persona.id)) badges.push('Chief');
-      name.title = [persona.role, persona.model, ...badges].filter(Boolean).join(' · ');
+      name.title = [persona.role, persona.model, persona.mode, ...badges]
+        .filter(Boolean).join(' · ');
       if (state.mainBotIds.includes(persona.id)) {
         const badge = document.createElement('span');
         badge.className = 'group-badge';
@@ -143,7 +144,7 @@
       btn.type = 'button';
       btn.className = 'group-item-name';
       btn.textContent = room.name || room.id;
-      btn.title = `${room.members.length} 名成员`;
+      btn.title = `${room.members.length} 名成员 · 应答模式 ${room.reply_mode}`;
       if (state.activeRoom && state.activeRoom.id === room.id) btn.classList.add('active');
       btn.addEventListener('click', () => openRoom(room.id));
       li.appendChild(btn);
@@ -494,6 +495,16 @@
       { name: 'instructions', label: '指令', type: 'textarea', value: persona ? persona.instructions : '' },
       { name: 'model', label: '模型绑定（留空用默认）', value: persona ? persona.model : '' },
       {
+        name: 'mode', label: '运行模式', type: 'select',
+        value: persona ? persona.mode : 'bypass',
+        options: [
+          { value: 'bypass', label: 'bypass（不受审批阻塞，默认）' },
+          { value: 'build', label: 'build' },
+          { value: 'read_only', label: 'read_only' },
+          { value: 'plan', label: 'plan' },
+        ],
+      },
+      {
         name: 'main_bot', label: 'Chief（管理全部人设与房间）', type: 'select',
         value: persona && state.mainBotIds.includes(persona.id) ? '1' : '',
         options: [{ value: '', label: '否' }, { value: '1', label: '是' }],
@@ -505,6 +516,7 @@
         role: values.role,
         instructions: values.instructions,
         model: values.model,
+        mode: values.mode,
         main_bot: values.main_bot === '1',
       };
       const body = persona
@@ -521,6 +533,14 @@
     openDialog(isNew ? '新建群聊' : `设置群聊：${room.name}`, [
       { name: 'name', label: '名称', value: room ? room.name : '' },
       { name: 'notice', label: '群公告（每名成员发言前注入）', type: 'textarea', value: room ? room.notice : '' },
+      {
+        name: 'reply_mode', label: '应答模式', type: 'select',
+        value: room ? room.reply_mode : 'admin',
+        options: [
+          { value: 'admin', label: 'admin（无 @ 时只由房间 admin 应答，默认）' },
+          { value: 'everyone', label: 'everyone（无 @ 时全体成员按序各得一次机会）' },
+        ],
+      },
       { name: 'members', label: '成员', type: 'members', options: memberOptions, value: room ? room.members : [] },
       { name: 'admin', label: '房间 admin（默认应答者）', type: 'select', value: room ? (room.admin || '') : '', options: adminOptions },
     ], async (values) => {
@@ -528,6 +548,7 @@
         workspace: workspaceParam(),
         name: values.name,
         notice: values.notice,
+        reply_mode: values.reply_mode,
         members: values.members,
         admin: values.admin || null,
       };

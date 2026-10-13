@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from agent.config import AsterwyndConfig, TeamConfig
+from agent.run_config import AgentMode
 from agent.llm import LLMResponse
 from agent.session import (
     KIND_PERSONA_CHAT,
@@ -372,6 +373,122 @@ class TestNoticeInjection:
         await service.manager.run_session(service.manager.get_session(chat_id), "聊聊")
         chat_session = service.manager.get_session(chat_id)
         assert all("先说结论，再说理由" not in str(m.content) for m in chat_session.messages)
+
+
+class TestPersonaMode:
+    """Decision 18：人设运行模式（默认 bypass，单聊与所有群内会话都用它）。"""
+
+    def test_default_mode_is_bypass(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        assert persona.mode == "bypass"
+
+    @pytest.mark.asyncio
+    async def test_persona_chat_uses_the_persona_mode(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        sid = await service.ensure_persona_chat_session(ws, persona.id)
+        loop = service.manager.get_session(sid).agent
+        assert loop.run_config.mode is AgentMode.BYPASS
+
+    @pytest.mark.asyncio
+    async def test_room_member_uses_the_persona_mode(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲", mode="read_only")
+        room = service.create_room(ws, name="r", members=[persona.id], admin=persona.id)
+        sid = await service.team_for(ws).orchestrator._resolver.ensure_room_session(
+            room.id, persona.id
+        )
+        loop = service.manager.get_session(sid).agent
+        assert loop.run_config.mode is AgentMode.READ_ONLY
+
+    @pytest.mark.asyncio
+    async def test_mode_change_applies_to_newly_constructed_sessions(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        sid = await service.ensure_persona_chat_session(ws, persona.id)
+        assert service.manager.get_session(sid).agent.run_config.mode is AgentMode.BYPASS
+
+        service.update_persona(ws, persona.id, mode="read_only")
+        service.manager.unload_session(sid)                 # 模拟进程重启
+        again = await service.ensure_persona_chat_session(ws, persona.id)
+        assert again == sid
+        assert service.manager.get_session(sid).agent.run_config.mode is AgentMode.READ_ONLY
+
+    @pytest.mark.asyncio
+    async def test_mode_change_beats_the_stale_snapshot_mode(self, tmp_path):
+        """roster 是模式的事实来源：已跑过的会话（快照里存着旧模式）也要跟着改。"""
+        service = _service(tmp_path, ScriptedLLM(default_response=LLMResponse(content="ok")))
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")     # 默认 bypass
+        sid = await service.ensure_persona_chat_session(ws, persona.id)
+        await service.manager.run_session(service.manager.get_session(sid), "你好")
+        store = service.manager._store_for(ws)
+        assert store.load(sid).mode is AgentMode.BYPASS      # 快照已落盘
+
+        service.update_persona(ws, persona.id, mode="plan")
+        service.manager.unload_session(sid)
+        await service.ensure_persona_chat_session(ws, persona.id)
+        session = service.manager.get_session(sid)
+        assert session.agent.run_config.mode is AgentMode.PLAN
+        # resume 时 AgentLoop 会用快照 mode 覆盖 → 快照必须已被 roster 值规整
+        assert session.resume_snapshot.mode is AgentMode.PLAN
+
+    @pytest.mark.asyncio
+    async def test_bypass_persona_is_not_blocked_by_approval(self, tmp_path):
+        """Decision 18 的理由：bypass 下高风险工具不再被审批卡死。"""
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        persona = service.create_persona(ws, name="甲")
+        room = service.create_room(ws, name="r", members=[persona.id], admin=persona.id)
+        sid = await service.team_for(ws).orchestrator._resolver.ensure_room_session(
+            room.id, persona.id
+        )
+        assert service.manager.get_session(sid).agent.run_config.mode is AgentMode.BYPASS
+
+
+class TestReplyModeApi:
+    @pytest.mark.asyncio
+    async def test_create_room_reply_mode_persists(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(ws, name="r", members=[a.id], reply_mode="everyone")
+        assert service.get_room(ws, room.id).reply_mode == "everyone"
+        assert service.create_room(ws, name="r2", members=[a.id]).reply_mode == "admin"
+
+    @pytest.mark.asyncio
+    async def test_update_room_reply_mode(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(ws, name="r", members=[a.id])
+        updated = service.update_room(ws, room.id, reply_mode="everyone")
+        assert updated.reply_mode == "everyone"
+        assert service.get_room(ws, room.id).reply_mode == "everyone"
+
+    def test_invalid_reply_mode_rejected(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        with pytest.raises(ValueError):
+            service.create_room(ws, name="r", members=[a.id], reply_mode="nope")
+        room = service.create_room(ws, name="ok", members=[a.id])
+        with pytest.raises(ValueError):
+            service.update_room(ws, room.id, reply_mode="nope")
+
+    def test_invalid_persona_mode_rejected(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        with pytest.raises(ValueError):
+            service.create_persona(ws, name="甲", mode="nope")
+        persona = service.create_persona(ws, name="乙")
+        with pytest.raises(ValueError):
+            service.update_persona(ws, persona.id, mode="nope")
 
 
 class TestPendingDowngrade:
