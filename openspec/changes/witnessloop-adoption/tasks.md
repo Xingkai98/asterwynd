@@ -1,6 +1,6 @@
 # Tasks: witnessloop 影子接入（阶段 A）
 
-> **状态：立项文档；前置门（第 0 节）已完成**——`## Open Questions` 七条（Q1–Q7）已由用户于 **2026-10-13 停轮拍板、全部按推荐值裁定**（生效口径见 `design.md` 的 `## User Rulings`（U1–U7），答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）。阶段 A 的写操作（`witnessloop init` / caller workflow / plugin）**待 0.4 复跑确认后开始**。
+> **状态：立项文档；前置门（第 0 节）已完成**——`## Open Questions` 七条（Q1–Q7）已由用户于 **2026-10-13 停轮拍板、全部按推荐值裁定**（生效口径见 `design.md` 的 `## User Rulings`（U1–U7），答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）。阶段 A 的写操作（`witnessloop init` / caller workflow / plugin）**待用户明确批准后开始**（前置门 0.4 已于 2026-10-13 判 PASS，见下）。
 >
 > **测试先行**含义：本 change 不写 Python 测试，它的「测试」是**在新流程上跑一个真实需求**。因此每个阶段的顺序都是「**先定义验收判据与负向对照 → 再落产物**」——不能先落产物再补判据，那会把「判据」退化成「事后自证」。
 
@@ -9,7 +9,7 @@
 - [x] 0.1 用 `grilling` skill 对本 `design.md` 做独立设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条）。
 - [x] 0.2 把 `design.md` 的 `## Open Questions` **七条**（Q1 事件类型名映射 / Q2 `require_change_for` 最终面与 benchmark 目录取舍 / Q3 `openspec/specs/**` 是否列 protected / Q4 测试执行点填什么命令 / **Q5 manifest schema 迁移归谁** / Q6 `protected_paths` 是否补齐 / **Q7 `来源:` 谓词不兼容怎么处置**）**逐条停下抛给用户**，每条附 design 里的推荐值 + 具体例子，等待明确答复。**已完成**：用户 2026-10-13 停轮拍板，七条全部按推荐值裁定。
 - [x] 0.3 把七条答复逐条记进 `reviews/grill-design.md` 的 `## User Confirmation`（格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。**Q5 不能漏**——对抗轮实测：它不是「已定案」，本仓 checker 要求 `grill-design.md` 里每个 Open Question 都有确认记录，漏了归档必红。**已完成**：七条（Q1–Q7）逐条记录，自查 `_unconfirmed_open_questions` 返回空。
-- [ ] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`（**已是第 2 轮**：首轮 `grill-adversarial-v1.md` 判 CHANGES_REQUESTED，7 条阻塞已整合，需复跑确认收敛；最终版落到规范名）。**这是阶段 A 开工前的最后一道前置门。**
+- [x] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`。**已完成**：R1（`grill-adversarial-v1.md`，7 条阻塞 B1–B7）→ R2（5 条陈述性残留 N1–N5，收口于 `85bd816`）→ **R3 判 PASS、无阻塞项**（被审 revision `85bd816`；独立复现 B4 与 N5 的事实口径，并独立复跑三处机械自查全绿）。R3 另留 3 条非阻塞观察（O1 时态陈旧 / O2 历史 id 交叉引用 / O3 良性死配置），按它的建议 O1/O2 留到阶段 A 的文档提交顺手清。**这是阶段 A 开工前的最后一道前置门。**
 - [x] 0.5 把七条答复落到 `design.md`（重写为 `## User Rulings` 一节，与 `## Decisions` 并列），并据此定稿 policy seed 的四个字段值与测试执行点命令。**已完成**：policy 定稿值见 Decision 1 的 JSON（U1/U2/U3/U6），执行点命令见 U4（`uv run --extra dev pytest -q`）。
 
 ## 阶段 A：影子接入（只跑不拦）
