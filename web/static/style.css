@@ -2092,3 +2092,94 @@ main { flex: 1; min-height: 0; overflow: hidden; }
   .legend-expl { display: none; }
   .legend-row { gap: 4px 10px; }
 }
+
+/* ---- 群聊 pane（change web-agent-group-chat） ---- */
+.group-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+  padding: 12px;
+}
+.group-sidebar {
+  width: 260px;
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.group-block { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.group-block-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; background: var(--surface2); font-weight: 600; font-size: 13px;
+}
+.group-block-head button { font-size: 12px; padding: 2px 8px; }
+.group-list { list-style: none; margin: 0; padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+.group-item { display: flex; align-items: center; gap: 4px; }
+.group-item-name {
+  flex: 1; text-align: left; background: none; border: none; color: var(--text);
+  padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; gap: 6px;
+}
+.group-item-name:hover, .group-item-name.active { background: var(--surface2); }
+.group-badge {
+  font-size: 10px; padding: 1px 6px; border-radius: 999px;
+  background: var(--accent); color: #fff;
+}
+.group-item-action {
+  background: none; border: none; color: var(--muted, #888);
+  font-size: 12px; cursor: pointer; padding: 2px 6px;
+}
+.group-item-action.danger:hover { color: #d9534f; }
+.group-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.group-empty { color: var(--muted, #888); padding: 24px; }
+.group-room { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 8px; }
+.group-room-head { display: flex; align-items: center; gap: 10px; }
+.group-room-head strong { font-size: 16px; }
+#group-room-status { color: var(--muted, #888); font-size: 12px; flex: 1; }
+.group-members { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.group-member {
+  font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface2);
+}
+.group-member.admin { border-color: var(--accent); }
+.group-member.speaking { background: var(--accent); color: #fff; }
+.group-notice { font-size: 12px; color: var(--muted, #888); width: 100%; }
+.group-timeline {
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
+  gap: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px;
+}
+.group-msg { display: flex; flex-direction: column; gap: 2px; max-width: 78%; }
+.group-msg-head { font-size: 12px; font-weight: 600; }
+.group-msg-body {
+  padding: 6px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word;
+}
+.group-msg.user { align-self: flex-end; align-items: flex-end; }
+.group-msg.user .group-msg-body { background: var(--accent); color: #fff; }
+.group-msg.post { align-self: flex-start; }
+.group-msg.post .group-msg-body { background: var(--surface2); border-left: 3px solid hsl(var(--group-hue, 210), 60%, 55%); }
+.group-msg.system { align-self: center; max-width: 100%; }
+.group-msg.system .group-msg-body {
+  background: none; color: var(--muted, #888); font-size: 12px; font-style: italic;
+}
+.group-input-row { display: flex; gap: 8px; }
+.group-input-row textarea { flex: 1; resize: vertical; }
+.group-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 40; }
+.group-dialog {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: var(--surface, #1b1b1b); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; z-index: 41; min-width: 360px; max-width: 90vw;
+  max-height: 85vh; overflow-y: auto;
+}
+.group-dialog form { display: flex; flex-direction: column; gap: 10px; }
+.group-dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.group-dialog input[type="text"], .group-dialog textarea, .group-dialog select {
+  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface2); color: var(--text);
+}
+.group-member-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.group-member-option { display: flex; flex-direction: row; align-items: center; gap: 4px; font-size: 13px; }
+.group-dialog-error { color: #d9534f; font-size: 12px; min-height: 16px; }
+.group-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }

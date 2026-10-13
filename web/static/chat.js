@@ -294,6 +294,11 @@ function showView(viewName) {
     t => t.classList.toggle('active', t.dataset.tab === viewName));
   hubViewEl.classList.toggle('active', viewName === 'hub');
   chatViewEl.classList.toggle('active', viewName === 'chat');
+  const groupViewEl = document.getElementById('group-view');
+  if (groupViewEl) groupViewEl.classList.toggle('active', viewName === 'group');
+  if (viewName === 'group' && window.AsterwyndGroup) {
+    window.AsterwyndGroup.render();
+  }
   const workflowViewEl = document.getElementById('workflow-view');
   if (workflowViewEl) workflowViewEl.classList.toggle('active', viewName === 'workflow');
   document.getElementById('debug-view').classList.toggle('active', viewName === 'debug');
@@ -1998,6 +2003,15 @@ function sendModeChange() {
  * 与 ``{"type": "cancel"}`` 的边界：那个只让待审批失败、run 照跑；``cancel_workflow``
  * 才真的停图（后端 ``scheduler.cancel()``）。
  */
+// 群聊 pane（web-agent-group-chat）需要按会话 id 打开一个普通 Chat tab
+// （人设单聊就是普通会话），以及切换顶层视图。这两个内部函数因此显式导出。
+window.AsterwyndOpenSession = function (sessionId, workspace) {
+  openSessionTab(sessionId, workspace);
+};
+window.AsterwyndShowView = function (viewName) {
+  showView(viewName);
+};
+
 window.AsterwyndWorkflowStop = function stopWorkflow(workflowId) {
   if (!ws || ws.readyState !== WebSocket.OPEN || !workflowId) {
     return false;

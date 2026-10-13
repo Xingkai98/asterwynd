@@ -306,8 +306,11 @@ class RoomOrchestrator:
         active = self._rounds.get(room_id)
         if active is not None:
             # 轮次进行中：只追加进房间日志 + 行首 @ 追加为当前位次之后的 slot。
-            self.log_for(room_id).append_user(text)
+            entry = self.log_for(room_id).append_user(text)
             self._append_called_slots(active, room, text)
+            await self._emit("user_message", {
+                "room_id": room_id, "text": text, "seq": entry.seq, "queued": True,
+            })
             return RoundResult(
                 room_id=room_id,
                 queued=True,
@@ -324,6 +327,10 @@ class RoomOrchestrator:
     async def _run_round(self, room: Room, opening_text: str) -> RoundResult:
         log = self.log_for(room.id)
         entry = log.append_user(opening_text)
+        await self._emit("user_message", {
+            "room_id": room.id, "text": opening_text, "seq": entry.seq,
+            "queued": False,
+        })
         roster = {p.id: p for p in self._store.list_personas()}
         slots = opening_slots(room, opening_text, roster, self._store.main_bot_ids())
         limit = len(slots) + self._extra_turns + (
@@ -414,6 +421,9 @@ class RoomOrchestrator:
         state.turns += 1
         state.per_member_turns[persona_id] = state.per_member_turns.get(persona_id, 0) + 1
 
+        await self._emit("member_speaking", {
+            "room_id": state.room_id, "persona_id": persona_id, "name": name,
+        })
         outcome = await self._runner.run(
             session_id, prompt,
             timeout=self._turn_timeout,

@@ -50,6 +50,44 @@ def clone_llm_with_model(base_llm, model: str):
         return base_llm
 
 
+class RoomEventBus:
+    """房间级事件订阅（Decision 9：现有 WS 路由按 session 绑定，不适用于房间聚合）。
+
+    多个 tab 同房间时每条连接各自订阅；断开只摘该连接。广播尽力而为——单条连接
+    发送失败只摘它，不影响轮次本身。
+    """
+
+    def __init__(self) -> None:
+        self._subs: dict[str, list] = {}
+
+    def subscribe(self, room_id: str, send) -> object:
+        token = object()
+        self._subs.setdefault(room_id, []).append((token, send))
+        return token
+
+    def unsubscribe(self, room_id: str, token) -> None:
+        subs = self._subs.get(room_id)
+        if not subs:
+            return
+        self._subs[room_id] = [(t, s) for t, s in subs if t is not token]
+        if not self._subs[room_id]:
+            self._subs.pop(room_id, None)
+
+    def subscriber_count(self, room_id: str) -> int:
+        return len(self._subs.get(room_id, []))
+
+    async def broadcast(self, room_id: str, payload: dict) -> int:
+        subs = list(self._subs.get(room_id, []))
+        sent = 0
+        for token, send in subs:
+            try:
+                await send(payload)
+                sent += 1
+            except Exception:  # noqa: BLE001 - 单条连接失败不拖垮广播
+                self.unsubscribe(room_id, token)
+        return sent
+
+
 class TeamSessionPool:
     """内部会话的**懒构造 + 上限 + 排队 + LRU 淘汰**（Decision 1 / Q4）。
 
@@ -598,6 +636,7 @@ def _rmtree(path: Path) -> None:
 
 # ``TurnOutcome`` 在 web 层只是转发（避免上层再从 agent.team 导入）。
 __all__ = [
+    "RoomEventBus",
     "TeamService",
     "TeamSessionPool",
     "TurnOutcome",
