@@ -1,16 +1,16 @@
 # Tasks: witnessloop 影子接入（阶段 A）
 
-> **状态：立项文档**。以下任务全部**未开始**。设计追问（`grilling`）与 `## Open Questions` **七条**（Q1–Q7）确认完成前，不得执行阶段 A 的任何写操作（不跑 `witnessloop init`、不建 caller workflow、不装 plugin）。
+> **状态：立项文档；前置门（第 0 节）已完成**——`## Open Questions` 七条（Q1–Q7）已由用户于 **2026-10-13 停轮拍板、全部按推荐值裁定**（生效口径见 `design.md` 的 `## User Rulings`（U1–U7），答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）。阶段 A 的写操作（`witnessloop init` / caller workflow / plugin）**待 0.4 复跑确认后开始**。
 >
 > **测试先行**含义：本 change 不写 Python 测试，它的「测试」是**在新流程上跑一个真实需求**。因此每个阶段的顺序都是「**先定义验收判据与负向对照 → 再落产物**」——不能先落产物再补判据，那会把「判据」退化成「事后自证」。
 
 ## 0. 设计追问与用户确认（前置门，不完成不开工）
 
-- [ ] 0.1 用 `grilling` skill 对本 `design.md` 做独立设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条）。
-- [ ] 0.2 把 `design.md` 的 `## Open Questions` **七条**（Q1 事件类型名映射 / Q2 `require_change_for` 最终面与 benchmark 目录取舍 / Q3 `openspec/specs/**` 是否列 protected / Q4 测试执行点填什么命令 / **Q5 manifest schema 迁移归谁** / Q6 `protected_paths` 是否补齐 / **Q7 `来源:` 谓词不兼容怎么处置**）**逐条停下抛给用户**，每条附 design 里的推荐值 + 具体例子，等待明确答复。
-- [ ] 0.3 把七条答复逐条记进 `reviews/grill-design.md` 的 `## User Confirmation`（格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。**Q5 不能漏**——对抗轮实测：它不是「已定案」，本仓 checker 要求 `grill-design.md` 里每个 Open Question 都有确认记录，漏了归档必红。
-- [ ] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`（已是第 2 轮：首轮 `grill-adversarial-v1.md` 判 CHANGES_REQUESTED，7 条阻塞已整合，需复跑确认）；**能由代码判定的 Open Question 用带证据（`文件:行号`）的答案移出停轮队列**。
-- [ ] 0.5 把七条答复落到 `design.md` 的 `## Decisions`（从 Open Questions 升级为已定决策），并据此定稿 policy seed 的四个字段值与测试执行点命令（**Q4 推荐 `uv run --extra dev pytest -q`**）。
+- [x] 0.1 用 `grilling` skill 对本 `design.md` 做独立设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条）。
+- [x] 0.2 把 `design.md` 的 `## Open Questions` **七条**（Q1 事件类型名映射 / Q2 `require_change_for` 最终面与 benchmark 目录取舍 / Q3 `openspec/specs/**` 是否列 protected / Q4 测试执行点填什么命令 / **Q5 manifest schema 迁移归谁** / Q6 `protected_paths` 是否补齐 / **Q7 `来源:` 谓词不兼容怎么处置**）**逐条停下抛给用户**，每条附 design 里的推荐值 + 具体例子，等待明确答复。**已完成**：用户 2026-10-13 停轮拍板，七条全部按推荐值裁定。
+- [x] 0.3 把七条答复逐条记进 `reviews/grill-design.md` 的 `## User Confirmation`（格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。**Q5 不能漏**——对抗轮实测：它不是「已定案」，本仓 checker 要求 `grill-design.md` 里每个 Open Question 都有确认记录，漏了归档必红。**已完成**：七条（Q1–Q7）逐条记录，自查 `_unconfirmed_open_questions` 返回空。
+- [ ] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`（**已是第 2 轮**：首轮 `grill-adversarial-v1.md` 判 CHANGES_REQUESTED，7 条阻塞已整合，需复跑确认收敛；最终版落到规范名）。**这是阶段 A 开工前的最后一道前置门。**
+- [x] 0.5 把七条答复落到 `design.md`（重写为 `## User Rulings` 一节，与 `## Decisions` 并列），并据此定稿 policy seed 的四个字段值与测试执行点命令。**已完成**：policy 定稿值见 Decision 1 的 JSON（R1/R2/R3/R6），执行点命令见 R4（`uv run --extra dev pytest -q`）。
 
 ## 阶段 A：影子接入（只跑不拦）
 
@@ -23,13 +23,13 @@
 
 ### A.2 定制 policy seed（仓外临时文件，不入库）
 
-- [ ] A.2.1 按 0.5 定稿的字段值，在仓外临时路径（如 `/tmp/witnessloop-asterwynd-policy.json`）写**完整** policy：`changes_root` / `protected_paths` / `require_change_for` / `required_artifacts` / `evidence.review_manifest_glob` / `evidence.events_file` / `evidence.protected_write_event_types`（基线形态见 `design.md` Decision 1；三个待定值按 0.3 的答复填）。
-- [ ] A.2.2 自查 seed：`protected_paths` **不含** `openspec/changes/archive/**`（Decision 3）；`review_manifest_glob` **保持 witnessloop 默认 `reviews/*.manifest.json`**（Decision 2——**不放宽**成 `*-manifest.json`）；`protected_paths` 与 `protected_write_event_types` **配套**（否则出现死配置，见 Q6）；`required_artifacts` 与 asterwynd 现有 change 目录必需件同形。
+- [ ] A.2.1 按 0.5 定稿的字段值，在仓外临时路径（如 `/tmp/witnessloop-asterwynd-policy.json`）写**完整** policy：`changes_root` / `protected_paths` / `require_change_for` / `required_artifacts` / `evidence.review_manifest_glob` / `evidence.events_file` / `evidence.protected_write_event_types`（**定稿值见 `design.md` Decision 1 的 JSON**：U1 的事件类型表、U2 的 `require_change_for`、U3+U6 的 `protected_paths`、U4 的执行点命令）。
+- [ ] A.2.2 自查 seed：`protected_paths` **不含** `openspec/changes/archive/**`（Decision 3）；`review_manifest_glob` **保持 witnessloop 默认 `reviews/*.manifest.json`**（Decision 2——**不放宽**成 `*-manifest.json`）；`protected_paths` 与 `protected_write_event_types` **配套**（否则出现死配置，见 U6）；`required_artifacts` 与 asterwynd 现有 change 目录必需件同形（U6 已裁定补三条文档路径）。
 - [ ] A.2.3 确认 seed **不进 PR**（`git status` 干净、仓外路径），产物 `.witnessloop/policy.json` 才入库。
 
 ### A.3 落接入产物
 
-- [ ] A.3.1 在 building worktree 跑 `witnessloop init --root . --policy <seed> --test-command "<asterwynd 测试命令>"`；`--test-command` 的值按 **Q4** 的答复填——推荐 `uv run --extra dev pytest -q`（**必须带 `--extra dev`**：`pytest` 在 `[project.optional-dependencies].dev`（`pyproject.toml:48-55`），裸 `uv run pytest` 在干净 runner 里报 `Failed to spawn: pytest`，实测）。**必须是真实可跑的命令**、不得留哨兵 `<<REPLACE-ME>>`。
+- [ ] A.3.1 在 building worktree 跑 `witnessloop init --root . --policy <seed> --test-command "<asterwynd 测试命令>"`；`--test-command` 的值按 **U4** 的裁定填——`uv run --extra dev pytest -q`（**必须带 `--extra dev`**：`pytest` 在 `[project.optional-dependencies].dev`（`pyproject.toml:48-55`），裸 `uv run pytest` 在干净 runner 里报 `Failed to spawn: pytest`，实测）。**必须是真实可跑的命令**、不得留哨兵 `<<REPLACE-ME>>`。
 - [ ] A.3.2 核对产物 = 4 个文件（`.witnessloop/policy.json` / `.witnessloop/init-manifest.json` / `.github/workflows/witnessloop.yml` / `.github/witnessloop-tests.txt`），且 `.github/workflows/ci.yml` **未被触碰**。
 - [ ] A.3.3 本地跑一次 `witnessloop check`（`uv run witnessloop check --root .`，用 worktree 里的补丁版本、**不用**全局安装的那份——**验证一律用 `uv run witnessloop`**，裸 `witnessloop` 可能是另一份 uv-tool 装的、测不到本 worktree 的补丁），逐条读 findings 并把原始输出粘进阶段 A 验收报告。
 - [ ] A.3.4 **触发面验证与负向对照**（判据 ③/④，需**探针 diff**）：本 change 自己的 diff **不触** `agent/**` / `scripts/**` / `web/**` ⇒ `code_hits` 为空 ⇒ `building` / `grill-adversarial` 判定**本来就不触发**，无法用本 change 自身验证触发面。做法：在**隔离副本**（`rm -f .git && git init -q` 复制一份，别在被审 worktree 上操作）造一个改 `agent/**` 的探针 diff，分别用**定制 policy** 与**出厂 policy** 跑 `check`，确认前者两条 stage 判定出现、后者消失；把两次输出并列记入报告（这是「定制 policy 必要」的**证伪证据**，不是推理）。
@@ -71,7 +71,7 @@
 - [ ] (post-merge) **B.5** 评估本地守卫的行为变化（Decision 8 已按对抗轮实测改写）：**只有一条退步**——本地守卫不再覆盖 Bash 写文件，实测一次「用 Bash 写受管路径」是否确实绕过 witnessloop `guard`。**注意**：原写的「witnessloop 会在本仓不管的维度上新增拦截」**已被证伪**——本仓 `scripts/workflow_guard.py:640-654` + `_grill_evidence_missing` 本来就在同一维度（缺 grill 证据）上拦（实测 `exit 2`），两侧是**同维度不同判据**，不是新增的面。**先做 A.4.5.1 的前置核验**，否则「放行」可能只是旧版 CLI 空转。
 - [ ] (post-merge) **B.6** 写「值不值得真打开」的判断依据：findings 的可读性与可行动性、误报率、与本地 checker 的重复劳动量、对 in-flight change 的影响面、**两套 manifest 并存的额外劳动量**。
 - [ ] (post-merge) **B.7** 记录 Q4 决定带来的**已知边界**：witnessloop 测试执行点覆盖到什么、覆盖不到什么（浏览器用例、编码 warn-as-error 门、`openspec validate`、artifact checker 四条是否在执行点内），以及它们在本仓 `validate` job 里**仍然照跑**的事实。
-- [ ] (post-merge) **B.8** 记录 grill stage 的**已知阻塞**（Q7）：`来源:` 谓词不兼容导致 grill stage 结构性判红（本 change 自己的报告 7/7 条缺 `来源:`），把「grill stage 全红」与「配置错误」在报告里分开归因——否则「值不值得真打开」会被误读（R11）。
+- [ ] (post-merge) **B.8** 记录 grill stage 的**已知阻塞**（U7）：`来源:` 谓词不兼容导致 grill stage 结构性判红（本 change 自己的报告 7/7 条缺 `来源:`），把「grill stage 全红」与「配置错误」在报告里分开归因——否则「值不值得真打开」会被误读（R11）。
 
 ## 阶段 C：真打开（**不在本 change 内执行**）
 

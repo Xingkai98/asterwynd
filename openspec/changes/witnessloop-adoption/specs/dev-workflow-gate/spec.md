@@ -24,9 +24,11 @@
 
 - **WHEN** 定稿 policy seed
 - **THEN** `evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`（**不放宽**成 `*-manifest.json`——字段 schema 差异才是真问题，放宽会把本仓 schema 的 manifest 卷进候选集，见 ADDED 的「review manifest 两套并存」Requirement）
-- **AND** `evidence.protected_write_event_types` SHALL 覆盖本仓 `scripts/flow-policy.json` 实际使用的事件类型名
-- **AND** `require_change_for` SHALL 至少覆盖 `agent/**`、`scripts/**`、`web/**`
+- **AND** `evidence.protected_write_event_types` SHALL 为本仓现有类型名 `["current_spec_synced", "backlog_updated", "change_archived", "protected_artifact_explained"]`（本仓 `scripts/flow-policy.json` 与 78 份历史事件日志 SHALL 零改动）
+- **AND** `require_change_for` SHALL 为 `["agent/**", "scripts/**", "web/**"]`，SHALL NOT 包含 benchmark 目录、`tests/**`、`docs/**`
+- **AND** `protected_paths` SHALL 为 `["openspec/specs/**", ".witnessloop/**", "docs/known-issues.md", "docs/known-debt.md", "docs/openspec-change-backlog.md"]`（补齐三条文档路径，使 `backlog_updated` / `protected_artifact_explained` 不成为死配置）
 - **AND** `protected_paths` SHALL NOT 包含 `openspec/changes/archive/**`
+- **AND** 测试执行点 SHALL 为 `uv run --extra dev pytest -q` 一条命令（`ci.yml` 的编码 warn-as-error 变体、`openspec validate`、artifact checker SHALL NOT 并入执行点）
 
 ### Requirement: 影子接入阶段不改变任何既有强制
 
@@ -163,10 +165,12 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 - **AND** 归档中的 `grill-design.md` SHALL 呈现同一趋势（完全无 finding 仅 39 份，近期写法基本全判红）
 - **AND** 即使补齐全 `## User Confirmation` 记录，该 7 条 SHALL 仍然存在
 
-#### Scenario: 处置面是停轮项而非自行拍板
+#### Scenario: 处置已拍板为「等上游修谓词」
 
 - **WHEN** 决定怎么消除该不兼容
-- **THEN** 两条出路 SHALL 作为 Open Question 交用户拍板：① 等上游修谓词（已立 witnessloop issue #20）；② 本仓改记录格式与模板（含历史回填代价）
+- **THEN** 处置 SHALL 为「**等 witnessloop issue #20 修 `_SOURCE_RE`**，本仓零改动」——不改本仓 grill 记录格式、**不回填 62 份归档**
+- **AND** 该组红 SHALL 被列为**阶段 A 的已知红**，并写明「哪一条会红、为什么不挡」：红落在「每一份 witnessloop 形态 grill manifest 所绑定报告里每一块缺 `来源:` 的 Confirmed Decision」上；阶段 A 的 `gate / check` 不进 required、且默认一份 manifest 都不落 ⇒ **不挡合入、也不挡归档**
+- **AND** 该组红 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由
 - **AND** 阶段 B 的验收报告 SHALL 把「grill stage 全红」与「配置错误」分开归因
 
 ### Requirement: 双 PreToolUse 守卫并存且未知面必须实测
