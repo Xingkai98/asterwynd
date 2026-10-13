@@ -110,7 +110,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 **为什么不能放宽 glob**（grill 实测，原判断「无害」被证伪）：`stage_manifest_findings_in_change` 取 **`matching[0]`**（按路径字典序的第一份），而 `validate_review_manifests` 会**逐份**校验所有匹配文件（`evidence.py:197-210`；`contract.py:127-149`）。⇒ 一是「多份同 stage 时只有字典序第一份被当证据、其余静默忽略」，可**错绑**到悬空报告——实测把坏的 `aaa-manifest.json` 排在合法文件之前，坏的那份顶替了合法的；二是「任何一份坏 manifest 都独立报红」（**宁多勿漏**，不是无害）。放宽 glob 会把 asterwynd schema 的那批文件一并卷进候选集，两种症状都会踩。
 
-**文件名无碍、但正文判据不同构（对抗轮实测证伪了原「同构」判断）**：`report_path` 是自由字段，所以本仓的 `reviews/grill-design.md` **文件名无碍** ✓。但 witnessloop 对 grill 报告**正文**的判据与本仓写法**系统性不兼容**——`src/witnessloop/evidence.py:33` 的 `_SOURCE_RE = re.compile(r"来源\s*[:：]")` 要求「来源」后**直接**接冒号，**不接受 `- **来源**: x` 这种加粗写法**（实测：裸写法命中、加粗不命中）；而本仓记录**通篇是加粗**（本 change 自己的 `grill-design.md` 有 12 处这种行 ⇒ 7/7 条 Confirmed Decision 全判「缺 `来源:`」）。⇒ **grill stage 按现有报告格式结构性不可能判绿**，这是本 change 的**已知阻塞/前置依赖**，见 **Open Question Q7**（已去 witnessloop 立 issue [#20](https://github.com/Xingkai98/witnessloop/issues/20)）。
+**文件名无碍、但正文判据不同构（对抗轮实测证伪了原「同构」判断）**：`report_path` 是自由字段，所以本仓的 `reviews/grill-design.md` **文件名无碍** ✓。但 witnessloop 对 grill 报告**正文**的判据与本仓写法**系统性不兼容**——`src/witnessloop/evidence.py:33` 的 `_SOURCE_RE = re.compile(r"来源\s*[:：]")` 要求「来源」后**直接**接冒号，**不接受 `- **来源**: x` 这种加粗写法**（实测：裸写法命中、加粗不命中）；而本仓记录**通篇是加粗**（本 change 自己的 `grill-design.md` 有 12 处这种行 ⇒ 7/7 条 Confirmed Decision 全判「缺 `来源:`」）。⇒ **grill stage 按现有报告格式结构性不可能判绿**，这是本 change 的**已知阻塞/前置依赖**，见 **U7**（已去 witnessloop 立 issue [#20](https://github.com/Xingkai98/witnessloop/issues/20)）。
 
 **代价（写进阶段 B 报告）**：阶段 B 的流程会与 asterwynd 现有的 `/review-loop` **分叉**——`/review-loop` 只产 asterwynd 形态的 manifest（且本仓侧**根本没有** grill / grill-adversarial 两份 manifest 的产出路径），阶段 B 必须显式多跑 `witnessloop manifest build` 才能拿到 witnessloop 形态的证据。这正是「影子期两套并存」的具体成本。
 
@@ -223,14 +223,14 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 - Questions resolved:
   - 接入形态（`init --policy` 一次写成 vs 出厂 policy + 后续手改）——**已定**：一次写成，理由见 Decision 1。
-  - manifest 差异的归因——**已定：不是 glob，是 schema**；处置=**两套并存、schema 统一延后到阶段 C 之后**（Decision 2；grill 实测证伪了原「机械修正」定性，对抗轮进一步钉准红数——glob 匹配 0 份时 `check` 早退、现状 **2 条红**，落任意一份 witnessloop 形态 manifest 后 **14 → 16 条**。对应 grill 的 Q5/OQ2，其推荐值保留在 **Open Question Q5**）。
+  - manifest 差异的归因——**已定：不是 glob，是 schema**；处置=**两套并存、schema 统一延后到阶段 C 之后**（Decision 2；grill 实测证伪了原「机械修正」定性，对抗轮进一步钉准红数——glob 匹配 0 份时 `check` 早退、现状 **2 条红**，落任意一份 witnessloop 形态 manifest 后 **14 → 16 条**。对应 grill 的 Q5/OQ2，其生效口径见 **U5**）。
   - 归档目录是否列 `protected_paths`——**已定：不列**（Decision 3，实测 12 条假红；grill 进一步实测出**归档 move 必须是独立纯改名提交**，见 tasks 的运维约束）。
   - 阶段划分与「只跑不拦」的实现方式——**已定**（Decision 4）。
   - 哪些留本地——**已定**（Decision 5）。
   - `handoff.json` 是否混入——**已定：不混入**（Decision 6）。
   - 已知红的范围与处置——**已定：含本 change 自己，如实记录 + 不放宽；阶段 A 默认一份 witnessloop 形态 manifest 都不落**（Decision 7；**原「补一份 grill manifest 当样板」的处置已被对抗轮实测证伪并撤销**——它会激活孤儿规则把红从 2 条拉到 14/16 条）。
   - 两个 PreToolUse 守卫并存——**姿态已定：两条都保留、未知面实测**（Decision 8）。
-  - **对抗轮（`reviews/grill-adversarial-v1.md`）提出的 7 条阻塞全部已处置**：B1/B3（样板不是绿的一侧 + stale 顺序）→ Decision 7 / R11 / R13；B2（`来源:` 谓词不兼容）→ **Open Question Q7** + witnessloop issue [#20](https://github.com/Xingkai98/witnessloop/issues/20)；B4（Q4 推荐值不可执行）→ Q4 改为 `uv run --extra dev pytest -q`；B5（B/C/N 节未勾未标）→ 加 `(post-merge)`；B6（Decision 8 定性错 + 实测点）→ Decision 8 / R9 / R9b 重写；B7（Q5 停轮口径）→ Q5 **撤回「已定案」，改为停轮项**。
+  - **对抗轮（`reviews/grill-adversarial-v1.md`）提出的 7 条阻塞全部已处置**：B1/B3（样板不是绿的一侧 + stale 顺序）→ Decision 7 / R11 / R13；B2（`来源:` 谓词不兼容）→ **U7** + witnessloop issue [#20](https://github.com/Xingkai98/witnessloop/issues/20)；B4（Q4 推荐值不可执行）→ Q4 改为 `uv run --extra dev pytest -q`；B5（B/C/N 节未勾未标）→ 加 `(post-merge)`；B6（Decision 8 定性错 + 实测点）→ Decision 8 / R9 / R9b 重写；B7（Q5 停轮口径）→ Q5 **撤回「已定案」，改为停轮项**。
 - Options considered:
   - **A. 直接替换**：接入的同时下掉旧 checker 并把 `gate / check` 勾成 required。**否决**：会打开「一段没有任何强制（或换成没验证过的强制）的窗口」，且不可逆动作发生在验证之前。
   - **B. 影子接入（本方案）**：只跑不拦 → 真需求验证 → 再真打开。
@@ -331,7 +331,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 - **[R9b] `guard.sh` 的前置条件（比原判「版本可能漂移」更硬）**：`guard.sh:32` 调 PATH 上的裸 `witnessloop`，退出码映射是「1 → 拦，其余 → 放行」（`:38-41`）⇒ PATH 上若是**没有 `guard` 子命令**的旧版 CLI，**整个 guard 静默空转**（实测本机 0.1.0 即是）。**Mitigation**：阶段 A 的前置核验 `command -v witnessloop` + `witnessloop --help` 含 `guard`；A.4.5 / B.5 不做这条前置就会把「放行」误读成「证据完备」。注意 design 原有的「验证一律用 `uv run witnessloop`」**覆盖不到 `guard.sh`**。
 - **[R10] 本 change 会证伪新建的当前规格**：`openspec/specs/dev-workflow-gate/spec.md` 现有两条负向 Requirement（明禁 `.witnessloop/policy.json` 与「`.github/workflows/` 下只有 ci.yml」）会被阶段 A 的实现**直接证伪**，而 delta 原本只有 `## ADDED`、Z.2 原本只写「合并 ADDED」⇒ 占位 Requirement 会**存活**并自相矛盾。**Mitigation**：照 `platform-gate` 先例（实现 commit `f7e912b` 明确「同步 current spec（**覆盖占位**）」）——delta 增加 `## REMOVED Requirements`，tasks 的 Z.2 改为「**覆盖重写**当前规格」。
 - **[R11] 阶段 B 结构性跑不绿**（**grill 给的缓解已失效，须换路**）：grill 的缓解是「阶段 B 用 `manifest build` 补产 witnessloop 形态 manifest ⇒ 拿到绿的一侧作对照」。**对抗轮实测证伪**：manifest 只是必要条件，不是充分条件——**`来源:` 谓词让 grill stage 结构性判红**（本 change 自己的报告 7/7 条缺 `来源:`；且补齐 `## User Confirmation` 后仍报 7 条）。⇒ **补了 manifest 也拿不到绿**。
-  **Mitigation（修正后）**：① 阶段 B 的「绿的一侧」**不再建立在 grill stage 上**——改以「`check` 的 findings 从『缺证据』类收敛为『正文格式』类」作为可测的进步指标；② grill stage 的绿**阻塞在 Open Question Q7**（等上游 [#20](https://github.com/Xingkai98/witnessloop/issues/20) 或本仓改写法）；③ 阶段 B 报告必须明确写「哪些红是配置问题、哪些红是已知的工具不兼容」，否则「值不值得真打开」会被误读。
+  **Mitigation（修正后）**：① 阶段 B 的「绿的一侧」**不再建立在 grill stage 上**——改以「`check` 的 findings 从『缺证据』类收敛为『正文格式』类」作为可测的进步指标；② grill stage 的绿**阻塞在 U7**（等上游 [#20](https://github.com/Xingkai98/witnessloop/issues/20) 或本仓改写法）；③ 阶段 B 报告必须明确写「哪些红是配置问题、哪些红是已知的工具不兼容」，否则「值不值得真打开」会被误读。
 - **[R12] 只落部分 manifest 会激活孤儿规则**（对抗轮实测）：glob 匹配 0 份时 `check` 早退（现状 2 条红）；落**任意一份** witnessloop 形态 manifest 后，`reviews/**/*.md` 里每份未绑定报告都判孤儿（2 → 14 → 16）。**Mitigation**：**要么给每份报告都建 manifest，要么一份都别落**（Decision 2 的操作约束 / Decision 7 的默认处置 / tasks A.5.6）。
 - **[R13] 证据的 stale 顺序约束**（对抗轮实测）：`_check_git_span` 只允许 `head_sha` 之后出现在 `stale_exempt_paths`（`.witnessloop/**`、`<changes_root>/*/reviews/**`、`<changes_root>/*/workflow-events.jsonl`、`archive/**`）内的改动。⇒ 本 change 的 Z.1（改 `docs/development-guide.md`）与 **Z.2（覆盖重写 `openspec/specs/**`）都是非证据路径** ⇒ **任何在其之前产出的 manifest 到 PR 时必然 stale**（实测：manifest 后再提交一处 `agent/probe.py` 即报 `审阅的是旧 revision`）。**Mitigation**：证据一律**在所有内容提交之后**重建（tasks A.5.6 与收尾顺序已写死）。
 
