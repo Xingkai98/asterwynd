@@ -816,12 +816,20 @@ class PersistentMemory:
     # ------------------------------------------------------------------
 
     def archive(self, name: str, reason: str | None = None) -> str:
-        """Move an active memory into the archive directory."""
+        """Move an active memory into the archive directory.
+
+        归档是破坏性写（active → archive 是一次 move），故与 ``save`` 的覆盖分支
+        同构：**在 move 之前**做一次 git 前像快照（change ``web-agent-group-chat``
+        Decision 17）——使 ``remove`` 也可回退（``restore`` + git revert）。
+        此前 ``archive`` 只做 move + changelog、没有快照，是记忆 review 的
+        ``remove`` 分支不可逆的直接原因。
+        """
         entry = self._load_entry_by_name(name)
         if entry is None:
             return f"Error: memory '{name}' not found."
         if entry.archived:
             return f"Memory '{name}' already archived."
+        self._git_commit("archive", name, reason or "archived")
         archive_dir = self.memory_dir / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
         src = self._entry_path(name)

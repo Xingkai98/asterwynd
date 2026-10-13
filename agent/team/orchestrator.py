@@ -420,21 +420,11 @@ class RoomOrchestrator:
             silent_marker=SILENT_MARKER,
         )
 
-        if self._review_sink is not None:
-            try:
-                await self._review_sink.on_member_turn(
-                    room_id=state.room_id, persona_id=persona_id, outcome=outcome
-                )
-            except Exception:  # noqa: BLE001 - review 排期失败 SHALL NOT 中断轮次
-                logger.exception("记忆 review 排期失败（已忽略）")
-
         if outcome.status == "silent":
             await self._emit("member_silent", {
                 "room_id": state.room_id, "persona_id": persona_id,
             })
-            return
-
-        if outcome.status in ("failed", "timeout"):
+        elif outcome.status in ("failed", "timeout"):
             state.failures += 1
             reason = "超时" if outcome.status == "timeout" else (
                 outcome.message or outcome.code or "运行失败"
@@ -446,19 +436,29 @@ class RoomOrchestrator:
                 "room_id": state.room_id, "persona_id": persona_id,
                 "status": outcome.status, "reason": reason,
             })
-            return
+        else:
+            text = outcome.text.strip()
+            if text:
+                entry = log.append_post(persona_id, text)
+                state.posts.append(entry)
+                await self._emit("member_post", {
+                    "room_id": state.room_id, "persona_id": persona_id,
+                    "speaker": persona_id, "text": text, "seq": entry.seq,
+                })
+                self._append_called_slots(state, room, text, speaker_id=persona_id)
+            else:
+                # 空产出等价于静默（不与 failed 混同：模型确实跑完了）。
+                outcome = TurnOutcome(status="silent")
 
-        text = outcome.text.strip()
-        if not text:
-            # 空产出等价于静默（不与 failed 混同：模型确实跑完了）。
-            return
-        entry = log.append_post(persona_id, text)
-        state.posts.append(entry)
-        await self._emit("member_post", {
-            "room_id": state.room_id, "persona_id": persona_id,
-            "speaker": persona_id, "text": text, "seq": entry.seq,
-        })
-        self._append_called_slots(state, room, text, speaker_id=persona_id)
+        # review 排期**排在发言落日志之后**：review 读的是房间日志切片，先入日志
+        # 才不会漏掉刚发出的这条（Decision 17：仅实际发言的回合触发）。
+        if self._review_sink is not None:
+            try:
+                await self._review_sink.on_member_turn(
+                    room_id=state.room_id, persona_id=persona_id, outcome=outcome
+                )
+            except Exception:  # noqa: BLE001 - review 排期失败 SHALL NOT 中断轮次
+                logger.exception("记忆 review 排期失败（已忽略）")
 
     # ------------------------------------------------------------------
     # slot 追加（@ 接力）

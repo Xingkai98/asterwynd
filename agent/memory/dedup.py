@@ -76,10 +76,16 @@ class MemoryDedupJudge:
         llm: "LLM | None" = None,
         model: str | None = None,
         recall_threshold: float = 0.5,
+        on_usage=None,
     ) -> None:
         self._llm = llm
         self._model = model
         self._recall_threshold = recall_threshold
+        #: 每次真正发起的模型调用的用量回调（(model, usage)）。loop 内的调用由
+        #: ``AgentLoop`` 记账，但记忆 review 在 loop 之外调用判官——那条路径要靠
+        #: 这个回调计入 ``CostLedger``（change ``web-agent-group-chat`` Decision 17
+        #: 的「1 + k 成本口径需额外接线」）。
+        self._on_usage = on_usage
 
     async def judge(
         self,
@@ -116,6 +122,10 @@ class MemoryDedupJudge:
             logger.warning("MemoryDedupJudge: LLM call failed, falling back to new", exc_info=True)
             return Judgment("new", None, "llm_call_failed")
 
+        if self._on_usage is not None:
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                self._on_usage(self._model, usage)
         return _parse_judgment(response.content or "")
 
 

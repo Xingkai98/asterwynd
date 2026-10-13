@@ -254,6 +254,36 @@ class MemoryConfig:
     decay_threshold: float | None = 1.5
     decay_interval_seconds: int = 3600
     git_backend_enabled: bool = True
+    # 记忆 review（change ``web-agent-group-chat`` Decision 17）：总开关缺省开；
+    # ``review_group_lag`` 是「静默成员落后补齐」的阈值，**以 review 游标**为基准
+    # （单位 = 房间日志条目数，与参照 ``REVIEW_GROUP_LAG`` 同值 30）；
+    # ``review_read_limit`` 是单次 review 读入的新增内容上限（超出留待下一次）；
+    # ``review_model`` 可指定 review 用的小模型（None → 用该人设会话的模型）。
+    review_enabled: bool = True
+    review_group_lag: int = 30
+    review_read_limit: int = 24
+    review_model: str | None = None
+
+
+@dataclass(frozen=True)
+class TeamConfig:
+    """长期 agent 人设与群聊编排的运行参数（change ``web-agent-group-chat``）。
+
+    ``max_sessions`` 是**内部会话**（人设单聊 + (人设, 群) 群内会话）的并发上限，
+    缺省 50（用户 Q4 拍板）；达到上限时新建**排队**等待执行槽释放，SHALL NOT
+    拒绝创建。每个内部会话的构造成本含 MCP 子进程 + 独立 subagent 并发额度 + 完整
+    工具注册表，故必须懒构造 + 有上限（grill Q4 的代码级依据）。
+
+    ``turn_timeout_seconds`` 是群聊单轮成员 run 的超时（与参照
+    ``ROOM_REPLY_TIMEOUT_MS = 240_000`` 同量级）；轮次上限的额度参数与参照
+    ``groups.js:24-27`` 同值。
+    """
+    max_sessions: int = 50
+    turn_timeout_seconds: float = 240.0
+    extra_turns: int = 4
+    admin_extra_turns: int = 4
+    turns_each: int = 2
+    admin_turns_each: int = 4
 
 
 @dataclass(frozen=True)
@@ -514,6 +544,7 @@ class AsterwyndConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     subagents: SubagentsConfig = field(default_factory=SubagentsConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    team: TeamConfig = field(default_factory=TeamConfig)
 
     def __post_init__(self) -> None:
         if not self.modes:
