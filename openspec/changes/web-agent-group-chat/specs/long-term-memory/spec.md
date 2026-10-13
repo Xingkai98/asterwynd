@@ -66,8 +66,16 @@
 
 - **GIVEN** 一次 review 决定移除一条记忆
 - **WHEN** 写回该变更
-- **THEN** 系统 SHALL 用既有 `archive` 软删该记忆（可 `restore`）
+- **THEN** 系统 SHALL 用既有 `archive` 软删该记忆（可 `restore`，且在 move 前有 git 前像）
 - **AND** SHALL NOT 引入新的记忆删除原语
+
+#### Scenario: 压缩或恢复后 review 仍推进
+
+- **GIVEN** 单聊 scope 发生过上下文压缩或 session resume（消息表被缩短/重建）
+- **WHEN** 该 scope 再次触发 review
+- **THEN** review SHALL 仍能读到未 review 的新增内容并推进进度
+- **AND** SHALL NOT 重读已被压缩换出的内容
+- **AND** SHALL NOT 因消息表变短而永久停止推进
 
 #### Scenario: review 失败不中断轮次
 

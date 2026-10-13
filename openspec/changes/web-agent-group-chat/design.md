@@ -95,6 +95,10 @@
 
 **同级布局**（不嵌在项目记忆目录内）：项目记忆目录自带 git commit-before-write，其 `git add -A` 会**递归**（`agent/memory/persistent.py:451-452`），把人设目录嵌在 `.../memory/` 内会形成嵌套仓库（gitlink + 警告）；同级目录不会被项目级非递归 `glob("*.md")` 误收（`:341`）。注入块标题改为 `## Persona Memory`（现硬编码 `## Project Memory`，`agent/context/sources.py:302`）。
 
+**实例化形态（钉死，Issue 36）**：`PersistentMemory` 现无 scope 目录注入口——`memory_dir` 恒为 `_MEMORY_DIR_BASE / _compute_project_hash(scope_root 或 project_root) / "memory"`（`agent/memory/persistent.py:180-183`，全仓唯一赋值点），**传一个 scope 目录进去只会被再 hash 成另一个顶层目录**（实测：以 `.../personas/p1/chat` 构造得到 `<BASE>/<另一个 hash>/memory`，落在 `personas/<id>/` 子树之外 ⇒ 级联永远删不到）。本 change SHALL：
+- 为 `PersistentMemory` 新增**显式 scope 目录入参**（如 `memory_dir: Path | None`）：给定即**原样**用作 `memory_dir`（跳过 project-hash 推导）；未给时保持现状（项目 scope，零回归）。
+- 人设 scope 的 `scope` 取值 SHALL 形如 `<project-scope>:persona:<pid>`（单聊）/ `<project-scope>:persona:<pid>:room:<rid>`（群），写入记忆 frontmatter，与既有 `scope` 语义对齐。
+
 ### Decision 8: 会话标识与 hub 可见性（含破坏性路径全保护）
 
 - 稳定映射：`persona → 单聊会话 id`、`(persona, room) → 群内会话 id`，分别存 roster 与房间记录。
@@ -102,6 +106,7 @@
 - 标记：`SessionSnapshot` 增 `kind`。
 - **破坏性路径全保护**：不止 `DELETE /api/sessions/{id}`（`web/server.py:334`），还包括 **WS `reset`**（`web/server.py:724-760` → `remove_session` → `shutil.rmtree` → 换随机新 id，`agent/session.py:208-221`、`web/session.py:1627`）。内部会话 SHALL 拒绝 `reset`（或 reset 后复用原 id 并回写 roster），否则 Decision 8 的稳定映射被击穿。
 - hub：`GET /api/sessions`（`web/server.py:320`）SHALL NOT 列出内部会话；同一 store 口径的其它出口 SHALL 一致过滤——`GET /api/workspaces` 的 `session_count`（`web/server.py:280`）与 CLI `session list`（`agent/main.py:1389-1395`）SHALL NOT 计入内部会话。
+- **本条收窄既有 `web-ui` 的两条无条件 Requirement**（hub 列表 / 会话删除）⇒ spec delta 以 **MODIFIED** 落地（见 `specs/web-ui/spec.md`）。
 
 ### Decision 9: 群内会话（`kind: room_member`）内的 pending 交互显式降级（须 MODIFIED 既有规格）
 
@@ -168,10 +173,14 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - **机制**：review 是一次**独立小模型调用**（可配置模型；缺省用该人设会话模型亦可），读「该 scope 自上次 review 游标之后的新增内容」（群 = 房间日志切片；单聊 = 会话消息索引之后的新增），产出 add/update/remove 变更。
 - **写回（钉死映射）**：
   - add/update/supplement/conflict → 走既有 `save` / `apply_judgment` 路径（沿用去重判官、尺寸上限、git 可逆写保护，`agent/memory/persistent.py:502,548`）。
-  - **remove → `archive(name, reason)`**（软删、可 `restore`，`:776,797`）。注意 `archive` 目前**不含** git 前像提交（`:776-796`），本 change SHALL 连带补上，或显式把「git 可逆」限定在 save 分支。
+  - **remove → `archive(name, reason)`**（软删、可 `restore`，`:776,797`）。`archive` 目前**不含** git 前像提交（`:776-796`），本 change SHALL 连带补上（使 remove 也可回退）；注意 `archive` 是 `_write_entry_to` + `unlink` 的 move，加 commit 的位置与 `save` 的 commit-before-write 语义不同，SHALL 在 move 前快照。
   - 不得引入新的记忆删除原语（工具面无 forget/delete，全仓零命中）。
 - **成本口径**：review 本身 1 次 LLM 调用；写回若命中**去重判官**（embedding 召回命中）则 **+1 次** LLM 调用（判官用会话注入的 `llm`，即人设自己的模型，`agent/tools/builtin/memory.py:79-93`、`agent/memory/dedup.py:84-90`）⇒ 单回合成本 = **1 + k** 次；需**额外接线**计入 `CostLedger`（其在 loop 内记账，`agent/loop.py:1216-1218`）。
-- **游标持久化**：每个 scope 一个 `reviewed`（落在该 scope 记忆目录内，如 `<scope>/reviewed.json`）；群 scope 以**房间日志 seq** 为单位；**单聊 scope 以会话消息索引**为单位（`Message` 无 id/timestamp/seq，`agent/message.py:144-155`）。
+- **游标 / review 输入（钉死，Issue 35）**：每个 scope 一个进度记录（落在该 scope 记忆目录内，如 `<scope>/reviewed.json`）。
+  - **群 scope** 以**房间日志 seq** 为单位（稳定）。
+  - **单聊 scope SHALL NOT 用消息表下标**——`Message` 无 id/timestamp/seq（`agent/message.py:144-155`），而本仓上下文压缩会**就地缩短**消息表（`agent/memory/manager.py:307-313` 等分支 `msgs[:] = system + [summary] + recent`）、session resume 会**重建**消息表（`agent/loop.py:717-720`），下标语义必漂移（压缩后游标越过表尾、列表再长不回去 ⇒ review **永久停摆**）。故**单聊 scope 的 review 输入 = 该 scope 的持久化「待 review 缓冲」**（运行期在向该 scope 追加消息时写入、review 消费后清空），**与消息表下标解耦**；压缩 / resume 不影响该缓冲。
+- **初值**：scope 建立时进度初值 = 该 scope 的当前起点（**不**回溯建库前的历史），以控成本。
+- **读入上限**：review 单次读入的「新增内容」SHALL 有上限（可配置，缺省与注入侧同量级）；超出部分留待下一次 review。
 - **房间日志保留**：房间日志 SHALL 保留全部条目（是「群时间线唯一权威、重连还原」的前提）；即「落后补齐」的理由是**避免静默成员记忆长期停滞**，**不**依赖日志滚动。
 - **可关闭**：默认开启，可配置关闭（`MemoryConfig` 现无此字段，`agent/config.py:248-256`，需新增配置位）。
 
@@ -211,7 +220,8 @@ roster 与房间日志/房间记录 SHALL 落在 **workspace 级**目录（与�
 - `SessionRunner` 契约：`text` 只来自本次 run（**并发被拒时不复用陈旧文本**）；四态映射。
 - 会话分离：单聊/群聊内容互不泄漏的负向断言。
 - 记忆 scope：**人设间隔离 + 同一人设的单聊/各群之间也互相不可见**（每个群独立）；接线完整性（LLM 去重判官存在、`memory_config` 生效）；注入块标题为 `## Persona Memory`。
-- 记忆 review：**仅实际发言的回合**触发（`text` 出口；`silent`/`timeout`/`failed` 不触发）；单聊 scope 与群 scope 各自触发；静默成员落后达阈值（以 **review 游标**为基准，阈值 30）被补齐；`remove` 映射到 `archive`；review 经既有 save 路径写入并推进游标；review **失败不中断轮次**；同一 scope 的并发 review 由队列合并/串行化；成本按 **1 + k** 口径记账。
+- 记忆 review：**仅实际发言的回合**触发（`text` 出口；`silent`/`timeout`/`failed` 不触发）；单聊 scope 与群 scope 各自触发；静默成员落后达阈值（以 **review 游标**为基准，阈值 30）被补齐；`remove` 映射到 `archive`（含 git 前像）；review 经既有 save 路径写入并推进游标；review **失败不中断轮次**；同一 scope 的并发 review 由队列合并/串行化；成本按 **1 + k** 口径记账。
+- **游标稳定性**：上下文压缩 / session resume 之后，单聊 scope 的 review SHALL 仍能推进且**不重读已换出上下文、不漏读未 review 的消息**（单聊输入走持久化待 review 缓冲，与消息表下标解耦）。
 - 共享面：workflow 资产库跨人设可见性（按声明断言）。
 - Web：群聊 pane + 房间 WS + hub 过滤（含**损坏快照**）+ `DELETE` 拒删 + **WS `reset` 拒改内部会话**。
 - 收尾：全量 pytest + `openspec validate --strict` + artifact checker + benchmark smoke。

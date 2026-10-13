@@ -13,7 +13,7 @@
 - [ ] 2.2 群聊编排单测：slot 序列、`@` 解析（用户行首 / 成员句中 / 不在列表 / 多人 / 自己）、静默（含**游标随静默回合推进、不重复注入**）、每轮每成员上限、**轮次终止三出口**（走完 / 达上限 / 失败或超时）、轮次中到达的用户消息（追加进日志 + `@` 追加为当前位次之后的 slot、不改上限基数）、**房间级互斥**（并发不并行开两轮、用户消息排队进本轮）、成员中途变更。
 - [ ] 2.3 会话分离：单聊/群聊内容互不泄漏的负向断言。
 - [ ] 2.4 `SessionRunner` 契约：四态映射；`text` 只来自本次 run（**同 session 并发被拒时不复用陈旧文本**）。
-- [ ] 2.5 记忆 scope：人设间隔离 + **同一人设的单聊/各群之间互相不可见**（每个群独立）；接线完整性（LLM 去重判官存在、`memory_config` 生效）；注入块标题为 `## Persona Memory`；`reviewed` 游标推进。记忆 review：发言回合结束后触发、静默成员落后补齐、失败不中断轮次。
+- [ ] 2.5 记忆 scope：人设间隔离 + **同一人设的单聊/各群之间互相不可见**（每个群独立）；接线完整性（LLM 去重判官存在、`memory_config` 生效）；注入块标题为 `## Persona Memory`；进度推进。记忆 review：**仅实际发言回合**触发、静默成员落后补齐、失败不中断轮次；**上下文压缩 / session resume 后 review 仍推进且不漏读不重读**。
 - [ ] 2.6 共享面：workflow 资产库跨人设可见性（按「共享面」声明断言，防未声明泄漏）。
 - [ ] 2.7 Web：群聊 pane + 房间级 WS + hub 过滤内部会话（含**损坏快照**经 id 前缀/roster 判定）+ `DELETE` 拒删 + **WS `reset` 拒改内部会话**。
 - [ ] 2.8 多人设并发 run 与既有 `run_lock` / 并发语义不冲突。
@@ -28,12 +28,12 @@
 - [ ] 3.5 房间日志：schema（seq / speaker / kind / text / ts）+ 持久化 + 游标（回合推进）+ 有界分层切片（首见 / 增量 / 往轮）。
 - [ ] 3.6 会话式群聊编排器（新模块）：slot 序列算法、`@` 解析、静默（`[PASS]`）、每轮每成员上限、轮次终止三出口、轮次中用户消息处理、**房间级互斥**。
 - [ ] 3.7 编排器分层：定义并注入 `SessionRunner`（`run(session_id, message) -> TurnOutcome` 四态；web 层从本次 run 事件流取最终文本），编排器不 import `web`。
-- [ ] 3.8 记忆：人设会话注入 `persistent_memory` + `memory_config` + `llm`（+ 视需要 `quality_config`）；scope 按「人设 × 会话面」（`personas/<id>/chat/memory` + `personas/<id>/rooms/<rid>/memory`，同级布局，每 scope 一个 `PersistentMemory` 实例 + `reviewed` 游标）；注入块标题 `## Persona Memory`。
+- [ ] 3.8 记忆：人设会话注入 `persistent_memory` + `memory_config` + `llm`（+ 视需要 `quality_config`）；`PersistentMemory` 新增显式 scope 目录入参（给定即原样用作 `memory_dir`；未给保持现状）；scope 按「人设 × 会话面」（`personas/<id>/chat/memory` + `personas/<id>/rooms/<rid>/memory`，同级布局，每 scope 一个实例 + 进度记录，`scope` 取值 `<project-scope>:persona:<pid>[:room:<rid>]`）；注入块标题 `## Persona Memory`。
 - [ ] 3.9 群内会话（`kind: room_member`）pending 降级：撤 ask 类工具；审批类 fail-closed 立即判定。人设单聊（`kind: persona_chat`）**不**降级，照常暴露 pending。
 - [ ] 3.10 Web：群聊 pane + 房间级 WS（扩展写死的 `/ws/${sessionId}`）；人设/房间管理入口 + 单聊入口 + 删除级联。
 - [ ] 3.11 会话数上限（默认 50，可配置）+ 超出排队 + 懒构造。
 - [ ] 3.12 群共享 notice：房间模型字段 + 注入群内会话 prompt（不影响单聊）。
-- [ ] 3.13 记忆 review：**仅实际发言回合**触发（单聊/群各触发）+ 静默成员按 **review 游标**落后补齐（阈值 30）+ 独立小模型调用 + 写回映射（add/update 走 save、remove→`archive`，并补 `archive` 的 git 前像）+ `reviewed` 游标推进（群=room seq；单聊=消息索引）+ review 队列按 scope 合并/串行化 + 成本按 1+k 计入账本 + `MemoryConfig` 新增开关。
+- [ ] 3.13 记忆 review：**仅实际发言回合**触发（单聊/群各触发）+ 静默成员按 **review 游标**落后补齐（阈值 30）+ 独立小模型调用 + 写回映射（add/update 走 save、remove→`archive` 并补其 git 前像）+ 进度推进（群=room seq；**单聊=持久化待 review 缓冲，不用消息表下标**）+ 初值=scope 起点 + 单次读入上限 + review 队列按 scope 合并/串行化（**scope 已被删除则丢弃该次 review**）+ 成本按 1+k 计入账本 + `MemoryConfig` 新增开关。
 
 ## 4. 文档
 

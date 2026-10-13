@@ -26,7 +26,7 @@
 
 - `multi-agent-collaboration`: 从空基线升级为「长期人设 + 会话式群聊编排」能力（新增 roster、房间日志、群聊轮次与终止条件、房间级互斥、两级主持角色、跨人设共享面声明）；并以 MODIFIED 澄清既有「Orchestration Reuses Workflow Persistence Discipline / SHALL NOT introduce a separate control plane」只约束 **subagent orchestration**，不覆盖本 change 的交互式编排器。
 - `long-term-memory`: 记忆作用域从 project/repo 扩展出「**人设 × 会话面**」维（既有规格 `openspec/specs/long-term-memory/spec.md:74-83` 的 `Scope 隔离` 钉定 project/repo scope，故需 MODIFIED delta），并新增「人设记忆的 review 触发与游标」（ADDED）。
-- `web-ui`: 新增群聊视图 + 房间级 WS、人设/房间管理入口与单聊入口、内部会话列表过滤与生命周期保护、内部会话 pending 降级（后两项 respective 以 MODIFIED 收窄既有「审批必须暴露」与「pending 跨连接存活」两条 Requirement 到面向用户的会话）。
+- `web-ui`: 新增群聊视图 + 房间级 WS、人设/房间管理入口与单聊入口、内部会话列表过滤与生命周期保护、群内会话 pending 降级；并以 MODIFIED 收窄既有四条 Requirement（「审批必须暴露」「pending 跨连接存活」「hub 列出已保存会话」「会话删除」）到面向用户的会话（`kind: chat` / `persona_chat`）。
 
 ## Dependencies
 
@@ -44,7 +44,7 @@
   - `web/server.py`：群聊 HTTP/WS 端点 + 房间级 WS；hub 过滤内部会话；`DELETE` 与 WS `reset` 拒作用于内部会话。
   - `web/static/`：新增群聊 pane JS/CSS；扩展 WS 路由（房间级）。
 - 影响测试：
-  - 人设/房间 CRUD 与持久化（跨重启、跨 workspace）；删除级联（会话/房间日志/persona 记忆）；群聊编排（slot 序列、**轮次终止三出口**、**房间级互斥**、`@` 解析口径、静默含游标推进、上限、成员中途变更）；`SessionRunner` 四态契约（并发被拒不复用陈旧文本）；会话分离负向断言；记忆（人设间隔离 + 同一人设单聊/各群互相不可见 + 接线完整性 + 注入块标题 + review 触发/游标/落后补齐/失败不中断轮次 + 成本记账）；共享面（workflow 资产库）；Web（群聊 pane + 房间 WS + hub 过滤含损坏快照 + `DELETE`/`reset` 拒作用于内部会话）。
+  - 人设/房间 CRUD 与持久化（跨重启、跨 workspace）；删除级联（会话 / 房间日志 / 该人设或房间的**全部记忆 scope**）；群聊编排（slot 序列、**轮次终止三出口**、**房间级互斥**、`@` 解析口径、静默含游标推进、上限、成员中途变更）；`SessionRunner` 四态契约（并发被拒不复用陈旧文本）；会话分离负向断言；记忆（人设间隔离 + 同一人设单聊/各群互相不可见 + 接线完整性 + 注入块标题 + review 触发/游标/落后补齐/失败不中断轮次 + 成本记账）；共享面（workflow 资产库）；Web（群聊 pane + 房间 WS + hub 过滤含损坏快照 + `DELETE`/`reset` 拒作用于内部会话）。
 - 影响文档：`openspec/specs/{multi-agent-collaboration,long-term-memory,web-ui}/spec.md` 同步；`docs/architecture.md` 增补群聊编排小节。
 - 不改变：AgentLoop 主循环、工具协议、workflow DSL 与 DAG 调度器语义、普通 Web 会话的既有行为（记忆接线仅限人设会话）。
 
