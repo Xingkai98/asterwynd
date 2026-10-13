@@ -164,8 +164,10 @@ class RecallMemoryTool(Tool):
             },
             "scope": {
                 "type": "string",
-                "description": "Optional project scope (git root path). A non-matching "
-                "scope is rejected so cross-project memories never leak.",
+                "description": "Optional scope filter. Memories are already isolated to "
+                "this session's scope, so you normally omit this. A value that does not "
+                "match the session's scope (a project root or a scope string) returns "
+                "no results, so cross-scope memories never leak.",
             },
         },
         "required": ["query"],

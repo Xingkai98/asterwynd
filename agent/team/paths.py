@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.memory.persistent import _MEMORY_DIR_BASE, _compute_project_hash, _find_scope_root
+from agent.memory import persistent as _persistent
+from agent.memory.persistent import _compute_project_hash, _find_scope_root
 
 #: workspace 级群聊数据的目录名（``<workspace>/.asterwynd/team``）。
 TEAM_DIRNAME = "team"
@@ -54,10 +55,14 @@ def project_scope_base(project_root: Path) -> Path:
 
     与 ``PersistentMemory`` 的 ``memory_dir`` 同源（同一个 scope-root 解析与
     同一个 hash），因此 ``personas/`` 与 ``memory/`` 是同级目录。
+
+    ``_MEMORY_DIR_BASE`` 通过**模块属性**读取（不在导入期快照）——测试用
+    ``monkeypatch.setattr("agent.memory.persistent._MEMORY_DIR_BASE", ...)`` 隔离
+    家目录时，导入期快照会让这里继续写真实家目录。
     """
     scope_root = _find_scope_root(Path(project_root))
     root = scope_root or Path(project_root).resolve()
-    return _MEMORY_DIR_BASE / _compute_project_hash(root)
+    return _persistent._MEMORY_DIR_BASE / _compute_project_hash(root)
 
 
 def project_scope_string(project_root: Path) -> str:
