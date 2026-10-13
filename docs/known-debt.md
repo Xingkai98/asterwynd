@@ -469,3 +469,11 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
    按 locale 解码」时会得到**替换字符（乱码）而不是异常**。取舍理由写在 `proposal.md` 第 6 条、
    守卫模块 docstring 与 `docs/testing-guide.md` 的「平台与编码纪律」；此处登记为**明示边界**
    （非缺陷），若某条链路需要精确文本，应改为在该子进程上显式 `encoding="utf-8"`。
+
+## 群聊记忆 review 的两条落地缺口（web-agent-group-chat 审阅记录）
+
+`web-agent-group-chat`（issue #302）的 `/review-loop` 第 1 轮留下两条**非阻塞但必须如实登记**的落地缺口。两条都已在实现侧写成「预留接口 + 明确边界」，缺的是 Web 侧的最后一跳：
+
+1. **记忆 review 的成本未进任何账本（I5）**。`design.md` / tasks 3.13 要求 review 的 `1 + k` 次调用「计入 `CostLedger`」，管线也接好了（`agent/team/memory_review.py` 的 `record_usage` → `MemoryReviewService._cost_ledger.record(phase="memory_review")`），但 `web/` 下**根本不存在** `CostLedger`（全仓只有 `agent/main.py` 的 CLI 路径建账本），`web/team.py` 构造 `MemoryReviewService` 时也没传，于是生产路径永远走 `if self._cost_ledger is None: return`——**排期次数与 token 都不进账本、也没有任何出口**（`cost_counter` 只在测试里被读）。收敛方向：给 Web 路径提供账本并在 `TeamService` 注入（属独立的成本可观测性 change）。**当前口径**：tasks 3.13 已把该子项改写成「按 1+k 口径计数，Web 生产路径尚未注入 `CostLedger`」，不再声称「已计入账本」。
+
+2. **会话数上限是「内存会话数」上限，不是「MCP 子进程数」上限（I7）**。`design.md` Decision 1 的成本模型（人设数 × 每会话一份 `AgentLoop` + MCP 子进程 + 独立 subagent 并发额度 + 工具注册表）是「懒构造 + 有上限」的依据；但 `SessionManager.unload_session` / `remove_session` 都**只丢内存引用**，没有 `mcp_manager.aclose()`（`agent/mcp/manager.py` 有该方法，Web 路径无人调用）。因此 MCP 子进程要等对象被 GC 才随 `_exit_stack` 回收，上限约束的严格对象是「活着的 `AgentSession` 数」。`remove_session` 的这一性质在本 change **之前**就存在，`unload_session` 是本 change 新增且沿用了同一形态（未单独把它做成显式 close，以免两条生命周期路径口径分叉）。收敛方向：在 `remove_session` / `unload_session` 里统一显式 close（或改用 GC 无关的托管生命周期）。

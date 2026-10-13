@@ -34,7 +34,7 @@
 - [x] 3.10 Web：群聊 pane + 房间级 WS（扩展写死的 `/ws/${sessionId}`）；人设/房间管理入口 + 单聊入口 + 删除级联。
 - [x] 3.11 会话数上限（默认 50，可配置）+ 超出排队 + 懒构造。
 - [x] 3.12 群共享 notice：房间模型字段 + 注入群内会话 prompt（不影响单聊）。
-- [x] 3.13 记忆 review：**仅实际发言回合**触发（单聊/群各触发）+ 静默成员按 **review 游标**落后补齐（阈值 30）+ 独立小模型调用 + 写回映射（add/update 走 save、remove→`archive` 并补其 git 前像）+ 进度推进（群=room seq；**单聊=持久化待 review 缓冲，落点 scope 目录内、消费后删已消费部分、部分消费，不用消息表下标**）+ 初值=scope 起点 + 单次读入上限 + review 队列按 scope 合并/串行化（**scope 已被删除则丢弃该次 review**）+ 成本按 1+k 计入账本 + `MemoryConfig` 新增开关。
+- [x] 3.13 记忆 review：**仅实际发言回合**触发（单聊/群各触发）+ 静默成员按 **review 游标**落后补齐（阈值 30）+ 独立小模型调用 + 写回映射（add/update 走 save、remove→`archive` 并补其 git 前像）+ 进度推进（群=room seq；**单聊=持久化待 review 缓冲，落点 scope 目录内、消费后删已消费部分、部分消费，不用消息表下标**）+ 初值=scope 起点 + 单次读入上限 + review 队列按 scope 合并/串行化（**scope 已被删除则丢弃该次 review**）+ 成本按 1+k 口径计数（`MemoryReviewService.record_usage` / `cost_counter`；**Web 生产路径尚未注入 `CostLedger`**，故该计数当前只在测试可观测——见 `docs/known-debt.md`）+ `MemoryConfig` 新增开关。
 
 - [x] 3.14 人设运行模式：`Persona.mode` 字段（默认 `bypass`）+ 建会话时用 `AgentRunConfig(mode=persona.mode)` + roster CRUD 持久化 + 设置对话框字段。
 - [x] 3.15 房间应答模式：`Room.reply_mode` 字段（默认 `admin`）+ 编排器 `openingSpeakers` 的 `everyone` 分支 + 房间设置对话框字段。
