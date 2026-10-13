@@ -452,6 +452,53 @@ class TestRoomMutex:
         await first
 
 
+class TestRoomMutexUnderSuspendingSink:
+    """I2 回归：``on_event`` 会挂起时，「查—建」仍必须是**无 await 介入**的原子段。
+
+    生产路径的 ``on_event`` 必然挂起（房间 WS 的 ``await ws.send_json``），所以旧实现
+    「先 emit 再注册」会让同 tick 的两次提交都通过「查—建」检查、都开轮。
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_submits_with_suspending_sink_open_one_round(self, team):
+        store, room, runner, resolver, _ = team
+        gate = asyncio.Event()
+        events: list[str] = []
+
+        async def sink(event_type, data):
+            events.append(event_type)
+            await gate.wait()          # 必然挂起：模拟房间 WS 的 send_json
+
+        orch = RoomOrchestrator(
+            store=store, resolver=resolver, runner=runner, on_event=sink
+        )
+        runner.default = TurnOutcome(status="silent")
+
+        first = asyncio.create_task(orch.submit_user_message(room.id, "第一条"))
+        second = asyncio.create_task(orch.submit_user_message(room.id, "第二条"))
+        await asyncio.sleep(0)         # 让两个任务都跑到各自的第一个挂起点
+        await asyncio.sleep(0)
+
+        assert orch.is_round_active(room.id) is True, "轮次已在跑，轮中必须报 active"
+        assert runner.calls == [], "第二个提交不得并行驱动成员"
+
+        gate.set()
+        r1, r2 = await asyncio.gather(first, second)
+        assert sorted([r1.queued, r2.queued]) == [False, True], "只应开一轮，另一条排队"
+        assert len([e for e in store.read_room_log(room.id) if e.kind == "user"]) == 2
+        assert orch.is_round_active(room.id) is False, "轮末必须清掉认领"
+
+    @pytest.mark.asyncio
+    async def test_round_can_start_again_after_the_previous_one_ends(self, team):
+        store, room, runner, resolver, _ = team
+        orch = RoomOrchestrator(store=store, resolver=resolver, runner=runner)
+        runner.default = TurnOutcome(status="silent")
+        await orch.submit_user_message(room.id, "第一轮")
+        result = await orch.submit_user_message(room.id, "第二轮")
+        assert result.queued is False
+        assert len([e for e in store.read_room_log(room.id) if e.kind == "user"]) == 2
+
+
 class TestMembershipChanges:
     @pytest.mark.asyncio
     async def test_member_removed_mid_round_is_skipped(self, team):

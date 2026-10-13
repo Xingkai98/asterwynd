@@ -338,21 +338,25 @@ class RoomOrchestrator:
 
     async def _run_round(self, room: Room, opening_text: str) -> RoundResult:
         log = self.log_for(room.id)
-        entry = log.append_user(opening_text)
-        await self._emit("user_message", {
-            "room_id": room.id, "text": opening_text, "seq": entry.seq,
-            "queued": False,
-        })
         roster = {p.id: p for p in self._store.list_personas()}
         slots = opening_slots(room, opening_text, roster, self._store.main_bot_ids())
         limit = len(slots) + self._extra_turns + (
             self._admin_extra_turns if room.admin else 0
         )
-        state = _RoundState(
-            room_id=room.id, start_seq=entry.seq, slots=slots, limit=limit
-        )
+        state = _RoundState(room_id=room.id, start_seq=0, slots=slots, limit=limit)
+        # **认领必须发生在任何 await 之前**（I2）：房间级互斥靠的是「查—建之间没有
+        # await 点」这条论证，而下面的 `_emit` 在生产路径必然挂起（房间 WS 的
+        # `await ws.send_json`）——若把注册放在它之后，同 tick 的第二次提交会看到
+        # `_rounds` 仍是空的，于是两轮并存（正是 Decision 5 要禁止的），且第二轮会
+        # 覆盖第一轮的 state、让 `is_round_active` 在轮中报 false。
         self._rounds[room.id] = state
         try:
+            entry = log.append_user(opening_text)      # 同步：不引入 await
+            state.start_seq = entry.seq
+            await self._emit("user_message", {
+                "room_id": room.id, "text": opening_text, "seq": entry.seq,
+                "queued": False,
+            })
             await self._drive(state)
         finally:
             self._rounds.pop(room.id, None)
