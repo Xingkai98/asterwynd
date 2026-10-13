@@ -136,6 +136,8 @@
 - **Q2**: 用户答复：按推荐 (a)——require_change_for 最终面为 agent/** + scripts/** + web/**，不含 benchmark 目录；若日后发现该目录下有需门禁保护的运行时代码，走 N.3 窄模式另立处理，不改本裁定；确认时间: 2026-10-13
 - **Q3**: 用户答复：按推荐 (a)——openspec/specs/** 列入 protected_paths（与本地 checker 判定语义等价，冗余但一致，避免旧 checker 下掉后留下无人管的静默缺口）；确认时间: 2026-10-13
 - **Q4**: 用户答复：按推荐 (a′) 且只填这一条——测试执行点写 `uv run --extra dev pytest -q`；ci.yml:62-74 的「默认编码警告当错误」变体不进执行点，openspec validate 与 artifact checker 也不进；确认时间: 2026-10-13
+  - **注（R2 / N6）**：本节 Q4 正文里的原推荐是 `uv run pytest -q`、理由写「能跑（`uv run` 会自建环境）」——该推荐已被对抗轮 B4 实测推翻（干净 runner 里报 `Failed to spawn: pytest`），**生效口径是上面 `## User Confirmation` 的 (a′)**（见 `design.md` U4）。正文保留原样以存真。
 - **Q5**: 用户答复：按推荐——阶段 A/B 不迁 manifest schema，两套 manifest 并存（本仓形态喂本地 checker，witnessloop 侧用 manifest build 产 reviews/<stage>.manifest.json），review_manifest_glob 保持默认；schema 统一留到阶段 C 之后的独立 change（tasks N.4）；确认时间: 2026-10-13
 - **Q6**: 用户答复：按推荐 (a)——protected_paths 补齐三条文档路径（docs/known-issues.md、docs/known-debt.md、docs/openspec-change-backlog.md），使 Q1 的 backlog_updated / protected_artifact_explained 不再是死配置；确认时间: 2026-10-13
-- **Q7**: 用户答复：按推荐 ①——不改本仓 grill 记录格式、不回填 62 份归档，等 witnessloop issue #20 修 _SOURCE_RE 谓词；阶段 A 的 gate / check 会在 grill 正文该条上持续红，属已知红（不进 required、且默认不落 manifest ⇒ 不挡合入也不挡归档）；确认时间: 2026-10-13
+- **Q7**: 用户答复：按推荐 ①——不改本仓 grill 记录格式、不回填 62 份归档，等 witnessloop issue #20 修 _SOURCE_RE 谓词，本仓零改动；确认时间: 2026-10-13
+  - **事实描述订正（R2 / N5，裁定不变）**：阶段 A 的 `gate / check` **不会**触发 grill 正文判据——默认不产 witnessloop 形态 manifest ⇒ 先报的是「无 stage=grill 的 manifest」，正文那组判据到不了（隔离副本实测：本 change 自身只有「缺少 review manifest」+「无 stage=grill 的 manifest」两类）。⇒ 阶段 A 的已知红是「**缺 manifest**」这一类，**不是**「`来源:` 谓词判红」；witnessloop issue #20 是**将来**（阶段 B/C 真去建 witnessloop 形态 grill 证据时）的前置条件，而非阶段 A 的阻塞。

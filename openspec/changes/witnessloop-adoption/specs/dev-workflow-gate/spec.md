@@ -156,7 +156,7 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 ### Requirement: grill 报告正文判据的已知不兼容
 
-影子接入阶段 SHALL 把「witnessloop 的 grill 正文判据与本仓记录格式不兼容」记为**已知阻塞/前置依赖**：witnessloop 的 `_SOURCE_RE` **要求「来源」后直接接冒号、不接受 `- **来源**: x` 的加粗写法**，而本仓 grill 记录通篇使用加粗 ⇒ **grill stage 在现有报告格式下结构性不可能判绿**。该阻塞 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；其处置 SHALL 作为停轮项交用户拍板。
+影子接入阶段 SHALL 把「witnessloop 的 grill 正文判据与本仓记录格式不兼容」记为**已知阻塞/前置依赖**：witnessloop 的 `_SOURCE_RE` **要求「来源」后直接接冒号、不接受 `- **来源**: x` 的加粗写法**，而本仓 grill 记录通篇使用加粗 ⇒ **grill stage 在现有报告格式下结构性不可能判绿**。该阻塞 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；其处置 SHALL 为**已拍板的 U7：等上游修谓词、本仓零改动**。
 
 #### Scenario: 不兼容的事实可复核
 
@@ -169,9 +169,11 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 - **WHEN** 决定怎么消除该不兼容
 - **THEN** 处置 SHALL 为「**等 witnessloop issue #20 修 `_SOURCE_RE`**，本仓零改动」——不改本仓 grill 记录格式、**不回填 62 份归档**
-- **AND** 该组红 SHALL 被列为**阶段 A 的已知红**，并写明「哪一条会红、为什么不挡」：红落在「每一份 witnessloop 形态 grill manifest 所绑定报告里每一块缺 `来源:` 的 Confirmed Decision」上；阶段 A 的 `gate / check` 不进 required、且默认一份 manifest 都不落 ⇒ **不挡合入、也不挡归档**
+- **AND** 该组红 SHALL **NOT** 被列为**阶段 A 的已知红**——阶段 A 默认一份 witnessloop 形态 manifest 都不落 ⇒ 正文判据**不会被触发**，先报的是「无 stage=grill 的 manifest」
+- **AND** 阶段 A 的已知红 SHALL 被准确描述为「**缺 manifest**」这一类（实测本 change 自身：`缺少 review manifest` + `无 stage=grill 的 manifest`）
+- **AND** witnessloop issue #20 SHALL 被登记为**「建 witnessloop 形态 grill 证据之前」的前置条件**（阶段 B/C 会先碰到），SHALL NOT 被描述为阶段 A 的阻塞
 - **AND** 该组红 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由
-- **AND** 阶段 B 的验收报告 SHALL 把「grill stage 全红」与「配置错误」分开归因
+- **AND** 阶段 B 的验收报告 SHALL 把该组红与「配置错误」分开归因
 
 ### Requirement: 双 PreToolUse 守卫并存且未知面必须实测
 

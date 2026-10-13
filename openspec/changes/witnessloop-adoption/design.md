@@ -22,7 +22,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 第六条来自**独立对抗轮**（`reviews/grill-adversarial-v1.md`，CHANGES_REQUESTED），它证伪了整合稿的三处核心判断：
 
-6. **grill 报告正文判据不兼容**：witnessloop 的 `_SOURCE_RE` **不认加粗的 `- **来源**: x`**，而本仓记录通篇如此 ⇒ **grill stage 结构性不可能判绿**（Decision 2 末段、**U7**、R11）。连带地，「样板 manifest = 验收里第一次绿的一侧」（B1）与「manifest 一建就 stale」（B3）两条也已按实测改写（Decision 7 / R13）。
+6. **grill 报告正文判据不兼容**：witnessloop 的 `_SOURCE_RE` **不认加粗的 `- **来源**: x`**，而本仓记录通篇如此 ⇒ **一旦建了 witnessloop 形态的 grill 证据，grill stage 就结构性不可能判绿**（Decision 2 末段、**U7**、R11）。⚠️ **阶段 A 不会遇到这条**：默认不落 manifest ⇒ 正文判据不被触发（U7）；它是**将来**（阶段 B/C 建 witnessloop 形态证据时）的前置。连带地，「样板 manifest = 验收里第一次绿的一侧」（B1）与「manifest 一建就 stale」（B3）两条也已按实测改写（Decision 7 / R13）。
 
 ## Goals / Non-Goals
 
@@ -228,7 +228,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
   - 阶段划分与「只跑不拦」的实现方式——**已定**（Decision 4）。
   - 哪些留本地——**已定**（Decision 5）。
   - `handoff.json` 是否混入——**已定：不混入**（Decision 6）。
-  - 已知红的范围与处置——**已定：含本 change 自己，如实记录 + 不放宽；本 change 自己补一份 witnessloop 形态 grill manifest 当样板**（Decision 7）。
+  - 已知红的范围与处置——**已定：含本 change 自己，如实记录 + 不放宽；阶段 A 默认一份 witnessloop 形态 manifest 都不落**（Decision 7；**原「补一份 grill manifest 当样板」的处置已被对抗轮实测证伪并撤销**——它会激活孤儿规则把红从 2 条拉到 14/16 条）。
   - 两个 PreToolUse 守卫并存——**姿态已定：两条都保留、未知面实测**（Decision 8）。
   - **对抗轮（`reviews/grill-adversarial-v1.md`）提出的 7 条阻塞全部已处置**：B1/B3（样板不是绿的一侧 + stale 顺序）→ Decision 7 / R11 / R13；B2（`来源:` 谓词不兼容）→ **Open Question Q7** + witnessloop issue [#20](https://github.com/Xingkai98/witnessloop/issues/20)；B4（Q4 推荐值不可执行）→ Q4 改为 `uv run --extra dev pytest -q`；B5（B/C/N 节未勾未标）→ 加 `(post-merge)`；B6（Decision 8 定性错 + 实测点）→ Decision 8 / R9 / R9b 重写；B7（Q5 停轮口径）→ Q5 **撤回「已定案」，改为停轮项**。
 - Options considered:
@@ -245,7 +245,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 - Remaining risks:
   - `--policy` 的语义合法性由 `check` 兜底 ⇒ seed 写错只会在**跑 `check` 时**暴露，不会在 `init` 时报错（见 Risks R2）。
   - 双守卫的**合并语义与报错归属**两项未实测（Decision 8，命名空间可静态判定）——必须在阶段 A 的验收里补实测项，且**两棵树各测一次**。
-  - **grill stage 结构性判红**（U7 / R11）：本仓 grill 记录在 witnessloop 的 `来源:` 谓词下**不可通过**，阶段 B 拿不到 grill 的绿。**已拍板（R7）：等上游 witnessloop #20 修、本仓零改动**；该组红是阶段 A 的**已知红**，因 `gate / check` 不进 required 且默认不落 manifest 而**不挡合入、也不挡归档**。
+  - **`来源:` 谓词不兼容**（U7 / R11）：本仓 grill 记录在 witnessloop 的正文判据下**不可通过**，阶段 B 建了 witnessloop 形态 grill manifest 后会拿不到 grill 的绿。**已拍板（U7）：等上游 witnessloop #20 修、本仓零改动。**注意它**不是**阶段 A 的已知红——阶段 A 不落 manifest ⇒ 正文判据根本不会被触发（阶段 A 的已知红是「缺 manifest」类）。
 
 ## User Rulings（原 Open Questions，2026-10-13 用户逐条裁定，无遗留）
 
@@ -305,11 +305,15 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 **否决的备选**：本仓改记录格式 + 模板（把 `来源:` 写成不被 `**` 包裹）——要动 `.claude/commands/grill.md`（本地、不进 PR、无评审记录）+ 文档规范 + 模板，且要回填 62 份归档 `grill-design.md`，代价远大于收益。
 
-**阶段 A 的已知红（写准「哪一条红、为什么不挡」）**：witnessloop 的 `check` 会对**每一份 witnessloop 形态 grill manifest 所绑定报告**里**每一块缺 `来源:` 的 Confirmed Decision** 各报一条 finding——本 change 自己的报告 **7 块全缺 ⇒ 7 条**。这条红：
-- **性质**：工具侧谓词与写作格式的不兼容，**不是**配置错误、**不是**证据缺失；
+**阶段 A 的已知红（按 U7 订正口径——写准「哪一条红、为什么不挡」）**：阶段 A 里 witnessloop 的 **grill 正文校验根本不会被触发**——默认一份 witnessloop 形态 manifest 都不落（Decision 7）⇒ `stage_manifest_findings_in_change` 找不到 `stage=grill` 的 manifest，先报的是「无 stage=grill 的 manifest」，**正文那组判据到不了**。⇒ 阶段 A 的已知红是「**缺 manifest**」这一类，**不是**「`来源:` 谓词判红」。实测本 change 自身（隔离副本、按 Decision 1 的 policy 跑 `check`）：`缺少 review manifest` + `无 stage=grill 的 manifest` 两条（`code_hits` 为空 ⇒ `grill-adversarial` / `building` 两条不触发）；阶段 A 落地前还会多一条「测试执行点缺失」，执行点文件写入后即消。
+
+这组红：
+- **性质**：证据尚未产出（阶段 A 是影子期，本就不该产 witnessloop 形态证据），**不是**配置错误；
 - **不挡合入**：阶段 A 的 `gate / check` **不进 required**（Decision 4）⇒ 红只出现在 job 日志里；
-- **不挡归档**：本 change 的 `reviews/` 默认**一份 witnessloop 形态 manifest 都不落**（Decision 7）⇒ 这组红**根本不会被触发**；
+- **不挡归档**：本文档与 tasks 都不要求产出 witnessloop 形态 manifest；
 - **不据此放宽任何判据**（本仓 checker 与 witnessloop 都不动）。
+
+**`来源:` 谓词不兼容是「将来」的前置，不是阶段 A 的阻塞**：它只在**真的去建 witnessloop 形态 grill manifest 之后**才会遇到（那时才会去跑正文判据：本 change 自己的报告 **7 块全缺 ⇒ 7 条**）。因此 [#20](https://github.com/Xingkai98/witnessloop/issues/20) 列为**建 witnessloop 形态 grill 证据之前**的前置条件（阶段 B/C 会先碰到），而不是阶段 A 的门。这是「等上游修」这一裁定的**准确事实描述**，裁定本身不变。
 
 **后续**：上游 [#20](https://github.com/Xingkai98/witnessloop/issues/20) 关闭后，阶段 B/C 复跑确认该组红消失；若上游长期不修，再由那时的停轮项决定是否走「本仓改格式」那条路（tasks **N.7**）。
 
@@ -318,7 +322,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 - **[R1] 影子期的「假安全感」**：`gate / check` 在 CI 里是绿的（或红的）但**不拦合入** ⇒ 有人可能误以为它已经在管。**Mitigation**：阶段 A 的 PR 描述与 `docs/development-guide.md` 新节都显式写明「本 job 阶段 A 不 required，只跑不拦」；阶段 B 报告里也重申。
 - **[R2] policy seed 写错的暴露延迟**：`--policy` 只做「可解析为 JSON 对象」的轻校验，**语义合法性由 `check` 兜底**（witnessloop `cli.py:49-54`）⇒ seed 写错不会在 `init` 时报错，只会在第一次跑 `check` 时暴露。**Mitigation**：阶段 A 的第一个验收项就是**在本分支 PR 上跑一次 `check` 并读取 findings**，而不是等「真需求」时才第一次跑。
 - **[R3] 本地守卫能力退步**：asterwynd 解析 Bash 命令（`workflow_guard.py`，677 行），witnessloop `guard` 只看 `Write|Edit`（上游 `guardcmd.py:16-17` 自陈）。⇒ 本地拦截面变窄。**Mitigation**：(i) 阶段 A **不下掉**旧守卫，两条并存；(ii) 把退步写进本 proposal 的 Impact Analysis 与阶段 B 报告，作为「真打开」决策的输入；(iii) 真锚始终是 CI required check。
-- **[R4] 已知红（两条）**：`add-minimal-tui-runtime-view`（无 `reviews/`）+ **本 change 自己**（缺 witnessloop 形态 manifest，且 `code_hits` 为空）。**Mitigation**：阶段 A 不勾 required ⇒ 不造成实际拦截；两条都如实列进阶段 A/B 报告；**不为它们放宽判据**；本 change 自己补一份 witnessloop 形态的 grill manifest 当样板（Decision 7）。阶段 C 决策时必须把 K1 的收尾一并考虑。
+- **[R4] 已知红（两条）**：`add-minimal-tui-runtime-view`（无 `reviews/`）+ **本 change 自己**（缺 witnessloop 形态 manifest，且 `code_hits` 为空）。**Mitigation**：阶段 A 不勾 required ⇒ 不造成实际拦截；两条都如实列进阶段 A/B 报告；**不为它们放宽判据**；**默认一份 witnessloop 形态 manifest 都不落**（Decision 7；样板方案已撤销，若确要落见 Z.7 的条件式）。阶段 C 决策时必须把 K1 的收尾一并考虑。
 - **[R5] `.claude/` 被 gitignore ⇒ plugin 装/卸没有评审与回滚记录**（`.gitignore:9`）。**Mitigation**：把 plugin 安装步骤写进 tasks 与 `docs/development-guide.md`（**文档在版本控制里**），使「本地动作」至少有可复现的书面记录；plugin 来自 witnessloop 仓的 `plugin/` 目录（`commands/` + `hooks/`），升级靠重装。
 - **[R6] 上游 reusable workflow 的版本面**：caller 钉 `@v1`（witnessloop `constants.py:11 DEFAULT_GATE_REF`），`@v1` 是**移动 tag** ⇒ 上游 `v1` 分支前进会改变本仓门禁行为。**Mitigation**：登记为后续观察项；若需要钉死，走 `--gate-ref` 指向 commit sha（**本阶段不引入**，避免过早固化）。**建议主 session 复核这条口径。**
 - **[R7] 两组门禁的判定漂移**：并存期本地 checker 与 witnessloop **各判各的**，可能出现「一边绿一边红」。**Mitigation**：这是并存的**预期形态**（不是缺陷）——阶段 B 的报告要把所有分叉逐条列出，它们正是「迁移清单」的输入。
@@ -349,7 +353,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
 
 ## Impact Analysis
 
-- **新增（阶段 A 产物）**：`.witnessloop/policy.json`、`.witnessloop/init-manifest.json`、`.github/workflows/witnessloop.yml`、`.github/witnessloop-tests.txt`；以及 `reviews/` 下 witnessloop 形态的 manifest（`manifest build` 产出，样板见 Decision 7）。
+- **新增（阶段 A 产物）**：`.witnessloop/policy.json`、`.witnessloop/init-manifest.json`、`.github/workflows/witnessloop.yml`、`.github/witnessloop-tests.txt`。**注意：阶段 A 默认 `reviews/` 下一份 witnessloop 形态 manifest 都不落**（Decision 7 / tasks A.5.6）——落它会让孤儿规则被激活、红数从 2 条涨到 14/16 条。仅在满足 Decision 7 第 4 条的三条件（每份报告都建 + 所有内容提交之后重建 + 写明它不是绿的一侧）时才落，见 tasks **Z.7** 的顺序约束。
 - **修改**：`docs/development-guide.md`（新增「witnessloop 影子接入」一节）；`docs/openspec-change-backlog.md`（登记本 change）；`openspec/specs/dev-workflow-gate/spec.md`（阶段 A 结束时**覆盖重写**，退休两条占位 Requirement，见 R10）。
 - **明确不改**：`AGENTS.md`（流程段留阶段 C）、`.github/workflows/ci.yml`、`scripts/**`、`agent/**`（含 `agent/workflow/review_manifest.py`——schema 统一不是本阶段的事，见 Decision 2）、branch protection。
 - **回退**：`witnessloop uninit`（依 `init-manifest.json` 的 hash 台账精确回滚）或手工删 `.witnessloop/` + `.github/workflows/witnessloop.yml` + `.github/witnessloop-tests.txt`。本地 plugin 单独卸。

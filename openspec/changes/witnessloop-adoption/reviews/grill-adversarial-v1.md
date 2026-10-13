@@ -199,3 +199,57 @@ guard：拦住 ✗ … ; shim exit=2
 3. 加上 B4（Q4 推荐值不可执行）、B5（tasks 归档必红）、B6（Decision 8 定性与实测点）、B7（Q5 停轮口径），**建议打回作者修订后再进入停轮**。
 
 修订后需复跑的判据：在隔离副本上重跑 `witnessloop check`（本 change 自身 + 探针 diff）、在干净环境重跑 Q4 候选命令、直接调用 `_untagged_unchecked_tasks` 与 `_unconfirmed_open_questions` 各一次。
+
+---
+
+# R2（复审）：`f424922`（含 `488c9c8`）
+
+- **run id**: `grill-adversarial-witnessloop-adoption-r2-2026-10-13`（同一对抗口径；只核 R1 的 7 条是否真关掉 + 定案是否落齐）
+- **范围**: `488c9c8`（整合）+ `f424922`（落裁定）两个 commit；被审文件为 change 目录全部文档 + `openspec/specs/dev-workflow-gate/spec.md` + `docs/openspec-change-backlog.md`
+- **方法**: 逐条点名核对（含 `文件:行号`）；机械门禁实跑；对两份判定函数直接调用做「裁定是否落齐」的证伪
+
+## R2 Verdict
+
+**CHANGES_REQUESTED（窄口径）** —— R1 的 **7 条设计层阻塞全部功能性关闭**（B2–B7 完全关闭，B1 在设计层关闭）；未关掉的是 **1 处会让实现出错 + 3 处文档残留矛盾**，全部是「几行文案」级别的收口，**不需要重新设计、不需要重新拍板**（详见 N1–N4）。
+
+## 一、7 条逐条核
+
+| R1 条目 | 判定 | 证据（本次核对） |
+|---|---|---|
+| **B1** 样板 ≠ 绿 + **B3** stale 顺序 | **设计层关掉，但落地处未关严** | Decision 7 第 3/4 条（`design.md:183-188`）已改「默认**一份 manifest 都不落**」、K2 保持 2 条红、若落则三条件；`tasks.md:56-59` A.5.6/A.5.6.1–3 写死（含执行者＝人在本地跑、收敛后清理 `grill-adversarial-v1.md`）；**Z.7 顺序写死**（`tasks.md:90`：内容提交 → 证据 → 归档 move 单独提交）；R12/R13 新增（`:331-332`）；spec delta 两个 Scenario（`:143-155`）。⇒ **未关严处见 N1**（三处与 Decision 7 冲突的残留陈述） |
+| **B2** `来源:` 谓词不兼容 | **关掉** | `design.md:25`（Context 第六条）、`design.md:113`（Decision 2 末段，含 `evidence.py:33` 逐字引用与 7/7 实测）、R11 改写（`:329-330`，明确「补了 manifest 也拿不到绿」并给出替代进步指标）、U7（`:302-314`）、`proposal.md:80`、spec delta 新 Requirement `:157-174`；witnessloop #20 已立 |
+| **B4** Q4 推荐值 | **关掉** | `design.md:280-286`（U4）＝ `uv run --extra dev pytest -q`，含 `pyproject.toml:48-55` 依据与「`Failed to spawn: pytest`（实测）」；「编码变体 / openspec validate / artifact checker **不进**执行点」明写（`:284`）；`tasks.md:32`（A.3.1）、spec delta `:31`、backlog 逐字同值 |
+| **B5** `(post-merge)` | **关掉（实测）** | `_untagged_unchecked_tasks` 现返回 **34 条**，全部落在 `0.4` / `A.*` / `Z.1,Z.2,Z.3,Z.4,Z.5,Z.7`（本 PR 内要做的）；`B.1–B.8`、`C.1–C.2`、`N.1–N.7`、`Z.6` **全部**带 `(post-merge)` 且被 `POST_MERGE_TAG_RE` 认出；`_tasks_missing_evidence` = `None` |
+| **B6** Decision 8 定性 + 实测点 | **关掉** | `design.md:205` 已改「**同一维度、不同判据**…不是新增的面」并附实测输出；R9（`:326`）与新增 R9b（`:327`，`guard.sh` **静默空转**＝前置条件）；`tasks.md:43-47` A.4.5.1–A.4.5.4（前置核验 + 两项未实测 + **两棵树各一次** + 命名空间静态判定）；spec delta `:176-193`（含「不夸大不缩小行为变化」Scenario） |
+| **B7** Q5 停轮 | **关掉（实测）** | `tasks.md:10`（0.2）七条清单含 Q5、`:11`（0.3）明写「Q5 不能漏」；grill 侧实测 `_extract_open_question_indexes` = `['Q4','Q5','Q6']`、`_extract_user_confirmation_indexes` = `['Q1'…'Q7']`、`_unconfirmed_open_questions` = `[]`；`design.md:288-292`（U5） |
+| **结论 1** 孤儿规则精确化 | **关掉** | `design.md:98`（「glob 匹配 0 份时早退…真正的引信是落了任意一份 witnessloop 形态 manifest」+ 2→14→16）、R12（`:331`）、spec delta `:143-148`（含「只落一部分的中间态 SHALL 被拒绝」） |
+
+**裁定落齐（其余 4 问）**：Q1→U1（`design.md:254-260`，与 Decision 1 JSON 的 4 个类型名逐字对）、Q2→U2（`:262-270`）、Q3→U3 + Q6→U6（`:272-278` / `:294-300`，与 JSON 的 5 条 `protected_paths` 逐字对）、Q5→U5（`:288-292`）。`## User Confirmation` 七条答复均为实质文本（`_is_unconfirmed` 全过，无占位）。`design.md` 的 `## Open Questions` 节已不复存在（改为 `## User Rulings`），U1–U7 无「若选 X」残留（未选分支压成一句「否决的备选」——未字面删除，但已明确标为否决，可接受且更利于溯源）。
+
+**机械门禁（本次实跑）**：`openspec validate --all --strict` ⇒ **30 passed / 0 failed**；`uv run python scripts/check_openspec_artifacts.py` ⇒ **passed**；`_check_design_review_task(witnessloop-adoption, process)` ⇒ **0 error**。
+
+## 二、未关掉 / 新发现（N1–N4）
+
+**N1（会让实现出错）— Decision 7 的「默认一份都不落」没有贯彻到三处「已定」性质的陈述，其中 Impact Analysis 直接把它列成阶段 A 产物。**
+- `design.md:352`（Impact Analysis → **新增（阶段 A 产物）**）：「…以及 `reviews/` 下 witnessloop 形态的 manifest（`manifest build` 产出，样板见 Decision 7）。」⇒ 实现者照 Impact Analysis 建产物清单就会落样板，**恰好复现 B1 的 2→14 条红**。
+- `design.md:321`（R4 Mitigation）：「…**本 change 自己补一份 witnessloop 形态的 grill manifest 当样板**（Decision 7）。」——与 `design.md:188` 的默认处置正相反。
+- `design.md:231`（Pre-Implementation Review「Questions resolved — 已定」清单）：「…**本 change 自己补一份 witnessloop 形态 grill manifest 当样板**（Decision 7）。」——同一句残留。
+
+**N2（残留矛盾）— `proposal.md` 完全未随裁定更新。**
+- `proposal.md:15`（## 需求 第 4 条）仍写「**三条项目配置决策**…**必须用户拍板**，本 change 只给推荐值与具体例子，不替用户决定——见 `design.md` 的 **`## Open Questions`**」：既是「三条」（已裁定为七条），又指向**已不存在**的小节。
+- `proposal.md:108` 仍写「policy 的可配字段直接对应**待拍板**决策」。
+- 实证：`grep -c 'uv run --extra dev pytest -q' proposal.md` = **0**；`["agent/**", "scripts/**", "web/**"]` 字面 **0**。⇒ 复审项 8①（四处逐字一致）**不通过**：design / tasks / spec delta / backlog 一致，proposal 缺席。
+
+**N3（残留矛盾）— `docs/openspec-change-backlog.md:124` 同一条目内部自相矛盾。** 前半句已改成「七条 Open Question 已全部拍板…可开工」，**后半句仍是旧文案**：「**三条待拍板决策**（都写进 `design.md` 的 `## Open Questions`，每条附推荐值 + 具体例子）：①…②…③」。⇒ `f424922` 只替换了条目前半段、未删旧尾段。该文件是**受保护 artifact**，且同一 bullet 里同时存在「已裁定」与「待拍板」两种口径。
+
+**N4（残留矛盾，一行）— `openspec/changes/witnessloop-adoption/README.md:8`** 仍写「状态：立项文档，未开始实现；`## Open Questions` 三条待用户拍板」。
+
+**N5（口径不一致）— Q7 的答复文本与 U7 的分析矛盾。** `reviews/grill-design.md:141`（Q7 答复）写「阶段 A 的 gate / check 会在 grill 正文该条上**持续红**」；而 `design.md:311`（U7）写这组红「**根本不会被触发**」。技术上 **U7 对**：默认不落 manifest ⇒ `stage_manifest_findings_in_change` 无 `stage=grill` 匹配 ⇒ 根本不会去跑正文判据（本轮实测复现：无 manifest 时只有 `缺少 review manifest` + `无 stage=grill 的 manifest` 两条）。⇒ Q7 答复文本需按 U7 口径改写，否则「阶段 A 的已知红清单」会有两个互相矛盾的版本。
+
+**N6（记录完整性，非阻塞）** — `reviews/grill-design.md` 的 Q4 正文推荐仍是 `uv run pytest -q`，理由仍是「能跑（`uv run` 会自建环境）」（已被 R1-B4 实测证伪），而 `## User Confirmation` 写「按推荐 **(a′)**」——正文里没有 (a′)。历史记录可保留，但建议加一行「B4 已推翻本条推荐，生效口径见 `design.md` U4」。
+
+## 三、R2 结论
+
+7 条设计层阻塞**全部功能性关闭**（B2–B7 完全关闭；B1 的定案、任务、spec delta、风险登记均已落齐，仅**陈述性残留**未同步）。剩下的 N1–N5 是「同一事实在不同文档里两个口径」型的收口问题，**其中 N1 有实际后果**（照 Impact Analysis 建产物会落样板 → 复现 14 条红），其余为文案残留；N6 是记录注记。全部可在**同一次改动**内清掉，不涉及重新设计或重新拍板。
+
+**给下一轮的收口清单（建议顺序）**：① `design.md:352 / :321 / :231` 三处改为「默认不落；若落则见 Decision 7 三条件」；② `proposal.md:15 / :108` 改为七条已裁定并指向 `## User Rulings`，补上四项定案值的字面；③ `docs/openspec-change-backlog.md:124` 删除「三条待拍板决策…」那段旧尾；④ `README.md:8` 改为「七条 Open Questions 已裁定，待 0.4 复跑后开工」；⑤ `grill-design.md:141` 的 Q7 答复按 U7 口径改写；⑥ 顺手补 N6 注记。清完即可收尾 0.4。

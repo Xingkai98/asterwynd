@@ -10,7 +10,7 @@
 - [x] 0.2 把 `design.md` 的 `## Open Questions` **七条**（Q1 事件类型名映射 / Q2 `require_change_for` 最终面与 benchmark 目录取舍 / Q3 `openspec/specs/**` 是否列 protected / Q4 测试执行点填什么命令 / **Q5 manifest schema 迁移归谁** / Q6 `protected_paths` 是否补齐 / **Q7 `来源:` 谓词不兼容怎么处置**）**逐条停下抛给用户**，每条附 design 里的推荐值 + 具体例子，等待明确答复。**已完成**：用户 2026-10-13 停轮拍板，七条全部按推荐值裁定。
 - [x] 0.3 把七条答复逐条记进 `reviews/grill-design.md` 的 `## User Confirmation`（格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`）。**Q5 不能漏**——对抗轮实测：它不是「已定案」，本仓 checker 要求 `grill-design.md` 里每个 Open Question 都有确认记录，漏了归档必红。**已完成**：七条（Q1–Q7）逐条记录，自查 `_unconfirmed_open_questions` 返回空。
 - [ ] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`（**已是第 2 轮**：首轮 `grill-adversarial-v1.md` 判 CHANGES_REQUESTED，7 条阻塞已整合，需复跑确认收敛；最终版落到规范名）。**这是阶段 A 开工前的最后一道前置门。**
-- [x] 0.5 把七条答复落到 `design.md`（重写为 `## User Rulings` 一节，与 `## Decisions` 并列），并据此定稿 policy seed 的四个字段值与测试执行点命令。**已完成**：policy 定稿值见 Decision 1 的 JSON（R1/R2/R3/R6），执行点命令见 R4（`uv run --extra dev pytest -q`）。
+- [x] 0.5 把七条答复落到 `design.md`（重写为 `## User Rulings` 一节，与 `## Decisions` 并列），并据此定稿 policy seed 的四个字段值与测试执行点命令。**已完成**：policy 定稿值见 Decision 1 的 JSON（U1/U2/U3/U6），执行点命令见 U4（`uv run --extra dev pytest -q`）。
 
 ## 阶段 A：影子接入（只跑不拦）
 
@@ -54,7 +54,7 @@
 - [ ] A.5.4 在 `docs/development-guide.md` 新增「witnessloop 影子接入」一节：明确写「阶段 A 不 required、只跑不拦」，给出本地跑 `check` / `guard` 的命令，以及卸载路径（R1 的缓解）。
 - [ ] A.5.5 把 A 阶段验收报告落盘：findings 原始输出、触发面验证与负向对照的两次输出、基线比对表、双守卫实测三项结论、**已知红清单（K1 `add-minimal-tui-runtime-view` + K2 本 change 自己）**。
 - [ ] A.5.6 **`reviews/` 的一致状态（默认：一份 manifest 都不落）**——原「补一份 grill manifest 当样板、拿到绿的一侧」的方案**已被对抗轮实测证伪**，见 Decision 7。实测路径：现状（只有本仓形态报告）= **2 条红** → 落一份 `grill.manifest.json` = **14 条红**（孤儿规则被激活，`reviews/` 下每份未绑定 `.md` 都成孤儿）→ 再放 `grill-adversarial.md` = **16 条红**。⇒ **默认走「一份都不落」，K2 保持 2 条红**（最干净的中间态）。
-  - [ ] A.5.6.1 若**确实**要落样板（例如为验证 `manifest build` 通路），必须**同时**满足三条：① 给 `reviews/` 下**每一份** `.md` 都建 manifest（`manifest build --change witnessloop-adoption --stage <stage> --report reviews/<报告>.md`）；② **在最后一个内容 commit 之后重建**（stale 约束，见 Z.7：`_check_git_span` 只豁免 `.witnessloop/**`、`*/reviews/**`、`*/workflow-events.jsonl`、`archive/**`，而 Z.1/Z.2 改的是 `docs/**` 与 `openspec/specs/**` ⇒ 先建的 manifest 到 PR 时必然 stale）；③ 在验收报告里**明确写下「它不是绿的一侧」**（grill stage 因 `来源:` 谓词结构性判红，见 Q7）。
+  - [ ] A.5.6.1 若**确实**要落样板（例如为验证 `manifest build` 通路），必须**同时**满足三条：① 给 `reviews/` 下**每一份** `.md` 都建 manifest（`manifest build --change witnessloop-adoption --stage <stage> --report reviews/<报告>.md`）；② **在最后一个内容 commit 之后重建**（stale 约束，见 Z.7：`_check_git_span` 只豁免 `.witnessloop/**`、`*/reviews/**`、`*/workflow-events.jsonl`、`archive/**`，而 Z.1/Z.2 改的是 `docs/**` 与 `openspec/specs/**` ⇒ 先建的 manifest 到 PR 时必然 stale）；③ 在验收报告里**明确写下「它不是绿的一侧」**（一旦落了 witnessloop 形态 manifest，grill 正文判据就会跑起来并全红——见 U7；阶段 A 默认不落 ⇒ 本来不会被触发）。
   - [ ] A.5.6.2 **执行者写死为「人在本地跑」**：`gate.yml` 只做 `check`、**不产证据**，CI 不会替你建 manifest。
   - [ ] A.5.6.3 收敛后清理中间轮产物（如 `reviews/grill-adversarial-v1.md`），或把最终版落到规范名 `grill-adversarial.md`——它们**不在任何 manifest 的 `report_path` 上**，一旦落了 manifest 就成孤儿。
 
@@ -71,7 +71,7 @@
 - [ ] (post-merge) **B.5** 评估本地守卫的行为变化（Decision 8 已按对抗轮实测改写）：**只有一条退步**——本地守卫不再覆盖 Bash 写文件，实测一次「用 Bash 写受管路径」是否确实绕过 witnessloop `guard`。**注意**：原写的「witnessloop 会在本仓不管的维度上新增拦截」**已被证伪**——本仓 `scripts/workflow_guard.py:640-654` + `_grill_evidence_missing` 本来就在同一维度（缺 grill 证据）上拦（实测 `exit 2`），两侧是**同维度不同判据**，不是新增的面。**先做 A.4.5.1 的前置核验**，否则「放行」可能只是旧版 CLI 空转。
 - [ ] (post-merge) **B.6** 写「值不值得真打开」的判断依据：findings 的可读性与可行动性、误报率、与本地 checker 的重复劳动量、对 in-flight change 的影响面、**两套 manifest 并存的额外劳动量**。
 - [ ] (post-merge) **B.7** 记录 Q4 决定带来的**已知边界**：witnessloop 测试执行点覆盖到什么、覆盖不到什么（浏览器用例、编码 warn-as-error 门、`openspec validate`、artifact checker 四条是否在执行点内），以及它们在本仓 `validate` job 里**仍然照跑**的事实。
-- [ ] (post-merge) **B.8** 记录 grill stage 的**已知阻塞**（U7）：`来源:` 谓词不兼容导致 grill stage 结构性判红（本 change 自己的报告 7/7 条缺 `来源:`），把「grill stage 全红」与「配置错误」在报告里分开归因——否则「值不值得真打开」会被误读（R11）。
+- [ ] (post-merge) **B.8** 记录 `来源:` 谓词不兼容（U7）：**阶段 B 一旦按 B.2 建了 witnessloop 形态的 grill manifest，正文判据就会跑起来并全红**（本 change 自己的报告 7/7 块缺 `来源:`）；把「该组红」与「配置错误」在报告里分开归因，否则「值不值得真打开」会被误读（R11）。**注意**：这组红**不属于阶段 A 的已知红**——阶段 A 不落 manifest ⇒ 正文判据不被触发（U7）。
 
 ## 阶段 C：真打开（**不在本 change 内执行**）
 
