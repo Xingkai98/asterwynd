@@ -1,7 +1,9 @@
 # web/server.py
 """FastAPI web server for asterwynd: chat UI + debug UI via WebSocket."""
+import asyncio
 import base64
 import binascii
+import json
 import logging
 import os
 from pathlib import Path
@@ -17,7 +19,9 @@ from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from agent.session import is_internal_session_id, visible_sessions
 from web.debug_hook import debug_enabled
+from web.team import RoomEventBus, TeamService
 from web.session import (
     ConnectionHandle,
     SessionManager,
@@ -134,6 +138,24 @@ def create_app(
         sidecar_path=sidecar_path,
     )
     app.state.session_manager = session_manager
+    # 群聊板块（change web-agent-group-chat）：房间级事件总线 + 内部会话工厂 +
+    # 人设/房间 CRUD 与级联。``agent/team`` 的编排器通过注入的 runner/resolver
+    # 驱动 web 会话，agent 层不反向 import web（Decision 4）。
+    room_bus = RoomEventBus()
+
+    async def _team_event_sink(event_type: str, data: dict) -> None:
+        room_id = str(data.get("room_id") or "")
+        if room_id:
+            await room_bus.broadcast(room_id, {"type": event_type, "data": data})
+
+    team_service = TeamService(
+        manager=session_manager,
+        llm=llm,
+        config=config,
+        event_sink=_team_event_sink,
+    )
+    app.state.team_service = team_service
+    app.state.room_bus = room_bus
 
     # Mount static files at /static
     if STATIC_DIR.exists():
@@ -272,12 +294,16 @@ def create_app(
         """Hub workspace 列表投影（GET /api/workspaces 与 POST 复用）。
 
         ``exists`` 反映运行期目录状态（集合在 create_app 解析，注册路径即时加入）；
-        ``session_count`` 为该 workspace store 下的已保存会话数。
+        ``session_count`` 为该 workspace store 下的已保存会话数，SHALL NOT 计入
+        内部会话（人设单聊 / 群内会话）——否则 hub 的 workspace 卡片显示「会话数」
+        与同一页面的列表长度自相矛盾。
         """
         entries = []
         for ws, is_primary in session_manager.list_workspaces():
             try:
-                session_count = len(session_manager._store_for(ws).list_sessions())
+                session_count = len(
+                    visible_sessions(session_manager._store_for(ws).list_sessions())
+                )
             except Exception:
                 session_count = 0
             entries.append({
@@ -323,12 +349,16 @@ def create_app(
 
         缺省 workspace 用主 workspace；workspace 不在有效集合或路径不存在 →
         HTTP 403 + 结构化错误。
+
+        内部会话（人设单聊 ``persona-*`` / 群内会话 ``room-*``）SHALL NOT 出现在
+        该列表里；过滤按 **id 前缀**判定、不读会话快照，故内部会话快照损坏时也
+        不会泄漏进列表。
         """
         try:
             ws = session_manager.resolve_workspace(workspace)
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
-        sessions = session_manager._store_for(ws).list_sessions()
+        sessions = visible_sessions(session_manager._store_for(ws).list_sessions())
         return {"workspace": str(ws), "sessions": sessions}
 
     @app.delete("/api/sessions/{session_id}")
@@ -338,6 +368,10 @@ def create_app(
         workspace 必须显式传入（冷会话无内存 workspace_root 可查）；缺省 →
         400；未授权 → 403。畸形 session_id 由 SessionStore._validate_session_id
         拒绝 → 400（design review I4）。
+
+        内部会话（人设单聊 / 群内会话）SHALL NOT 可经本接口删除——它们的底座由
+        人设/房间接口的级联清理（Decision 15）。否则「不可直接删除」的反面（正当
+        删除路径）会失去唯一入口，且删除后 roster 的稳定映射变悬空。
         """
         if not workspace:
             return JSONResponse({"error": "missing_workspace"}, status_code=400)
@@ -345,6 +379,11 @@ def create_app(
             ws = session_manager.resolve_workspace(workspace)
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        if is_internal_session_id(session_id):
+            return JSONResponse(
+                {"error": "internal_session_protected", "session_id": session_id},
+                status_code=403,
+            )
         try:
             session_manager.remove_session(session_id, workspace=ws)
         except ValueError:
@@ -399,6 +438,266 @@ def create_app(
             logger.exception("Upload failed")
             return JSONResponse({"error": "internal error"}, status_code=500)
 
+    # ------------------------------------------------------------------
+    # 群聊板块（change web-agent-group-chat）
+    # ------------------------------------------------------------------
+
+    def _team_workspace(workspace: str | None):
+        """统一 workspace 校验：非法 → 抛 ValueError('workspace_not_allowed')。"""
+        return session_manager.resolve_workspace(workspace)
+
+    def _persona_payload(persona) -> dict:
+        return {
+            "id": persona.id,
+            "name": persona.name,
+            "role": persona.role,
+            "instructions": persona.instructions,
+            "model": persona.model,
+            "mode": persona.mode,
+            "chat_session_id": persona.chat_session_id,
+        }
+
+    def _room_payload(room) -> dict:
+        return {
+            "id": room.id,
+            "name": room.name,
+            "members": list(room.members),
+            "admin": room.admin,
+            "notice": room.notice,
+            "reply_mode": room.reply_mode,
+        }
+
+    def _team_state(ws_path) -> dict:
+        return {
+            "workspace": str(ws_path),
+            "personas": [_persona_payload(p) for p in team_service.list_personas(ws_path)],
+            "main_bot_ids": team_service.main_bot_ids(ws_path),
+            "rooms": [_room_payload(r) for r in team_service.list_rooms(ws_path)],
+        }
+
+    @app.get("/api/team")
+    async def api_team_state(workspace: str | None = None):
+        """群聊板块总览：人设（roster）+ Chief + 房间。"""
+        try:
+            ws_path = _team_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        return _team_state(ws_path)
+
+    @app.post("/api/team/personas")
+    async def api_create_persona(payload: dict):
+        try:
+            ws_path = _team_workspace(payload.get("workspace"))
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        try:
+            persona = team_service.create_persona(
+                ws_path,
+                name=str(payload.get("name") or ""),
+                role=str(payload.get("role") or ""),
+                instructions=str(payload.get("instructions") or ""),
+                model=str(payload.get("model") or ""),
+                main_bot=bool(payload.get("main_bot")),
+                mode=payload.get("mode"),
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"persona": _persona_payload(persona), **_team_state(ws_path)}
+
+    @app.patch("/api/team/personas/{persona_id}")
+    async def api_update_persona(persona_id: str, payload: dict):
+        try:
+            ws_path = _team_workspace(payload.get("workspace"))
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        fields = {k: payload[k] for k in
+                  ("name", "role", "instructions", "model", "mode", "main_bot")
+                  if k in payload}
+        try:
+            persona = team_service.update_persona(ws_path, persona_id, **fields)
+        except KeyError:
+            return JSONResponse({"error": "unknown_persona"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"persona": _persona_payload(persona), **_team_state(ws_path)}
+
+    @app.delete("/api/team/personas/{persona_id}")
+    async def api_delete_persona(persona_id: str, workspace: str | None = None):
+        """删除人设（级联：单聊底座 + 全部记忆 scope + 各群成员身份与群内底座）。"""
+        if not workspace:
+            return JSONResponse({"error": "missing_workspace"}, status_code=400)
+        try:
+            ws_path = _team_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        result = await team_service.delete_persona(ws_path, persona_id)
+        return {**result, **_team_state(ws_path)}
+
+    @app.get("/api/team/personas/{persona_id}/chat")
+    async def api_persona_chat(persona_id: str, workspace: str | None = None):
+        """进入某人设单聊：确保底座存在并返回其会话 id（前端按普通 Chat 打开）。"""
+        try:
+            ws_path = _team_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        try:
+            session_id = await team_service.ensure_persona_chat_session(ws_path, persona_id)
+        except KeyError:
+            return JSONResponse({"error": "unknown_persona"}, status_code=404)
+        return {"session_id": session_id, "workspace": str(ws_path)}
+
+    @app.post("/api/team/rooms")
+    async def api_create_room(payload: dict):
+        try:
+            ws_path = _team_workspace(payload.get("workspace"))
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        try:
+            room = team_service.create_room(
+                ws_path,
+                name=str(payload.get("name") or ""),
+                members=[str(m) for m in (payload.get("members") or [])],
+                admin=payload.get("admin") or None,
+                notice=str(payload.get("notice") or ""),
+                created_by=payload.get("created_by") or None,
+                reply_mode=payload.get("reply_mode"),
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"room": _room_payload(room), **_team_state(ws_path)}
+
+    @app.patch("/api/team/rooms/{room_id}")
+    async def api_update_room(room_id: str, payload: dict):
+        try:
+            ws_path = _team_workspace(payload.get("workspace"))
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        fields = {k: payload[k] for k in
+                  ("name", "notice", "admin", "members", "reply_mode") if k in payload}
+        try:
+            room = team_service.update_room(ws_path, room_id, **fields)
+        except KeyError:
+            return JSONResponse({"error": "unknown_room"}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"room": _room_payload(room), **_team_state(ws_path)}
+
+    @app.delete("/api/team/rooms/{room_id}")
+    async def api_delete_room(room_id: str, workspace: str | None = None):
+        if not workspace:
+            return JSONResponse({"error": "missing_workspace"}, status_code=400)
+        try:
+            ws_path = _team_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        result = await team_service.delete_room(ws_path, room_id)
+        return {**result, **_team_state(ws_path)}
+
+    @app.get("/api/team/rooms/{room_id}/timeline")
+    async def api_room_timeline(room_id: str, workspace: str | None = None):
+        """房间日志（群时间线的**权威**有序数据）：重连后据此还原。"""
+        try:
+            ws_path = _team_workspace(workspace)
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        room = team_service.get_room(ws_path, room_id)
+        if room is None:
+            return JSONResponse({"error": "unknown_room"}, status_code=404)
+        return {
+            "room": _room_payload(room),
+            "members": team_service.room_members(ws_path, room_id),
+            "timeline": team_service.room_timeline(ws_path, room_id),
+        }
+
+    @app.post("/api/team/rooms/{room_id}/messages")
+    async def api_room_message(room_id: str, payload: dict):
+        """发一条群消息并**等待本轮结束**（HTTP 语义；实时流走房间级 WS）。"""
+        try:
+            ws_path = _team_workspace(payload.get("workspace"))
+        except ValueError:
+            return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        text = str(payload.get("content") or "").strip()
+        if not text:
+            return JSONResponse({"error": "empty_message"}, status_code=400)
+        try:
+            result = await team_service.submit_room_message(ws_path, room_id, text)
+        except KeyError:
+            return JSONResponse({"error": "unknown_room"}, status_code=404)
+        return {
+            "room_id": result.room_id,
+            "queued": result.queued,
+            "termination": result.termination,
+            "limit": result.limit,
+            "timeline": team_service.room_timeline(ws_path, room_id),
+        }
+
+    @app.websocket("/ws/room/{room_id}")
+    async def room_websocket(ws: WebSocket, room_id: str):
+        """房间级 WS：订阅该房间的成员输出（现有 WS 路由按 session 绑定，不适用）。"""
+        await ws.accept()
+        requested_workspace = str(ws.query_params.get("workspace", "")).strip()
+        try:
+            ws_path = session_manager.resolve_workspace(requested_workspace or None)
+        except ValueError:
+            await ws.send_json({"error": "workspace_not_allowed"})
+            await ws.close()
+            return
+        room = team_service.get_room(ws_path, room_id)
+        if room is None:
+            await ws.send_json({"error": "unknown_room"})
+            await ws.close()
+            return
+
+        token = room_bus.subscribe(room_id, ws.send_json)
+        await ws.send_json({
+            "type": "room_state",
+            "data": {
+                "workspace": str(ws_path),
+                "room": _room_payload(room),
+                "members": team_service.room_members(ws_path, room_id),
+                "timeline": team_service.room_timeline(ws_path, room_id),
+                "round_active": team_service.team_for(ws_path).orchestrator.is_round_active(room_id),
+            },
+        })
+        rounds: set[asyncio.Task] = set()
+        try:
+            while True:
+                try:
+                    raw = await ws.receive_json()
+                except RuntimeError:
+                    logger.info("room websocket already disconnected: %s", room_id)
+                    break
+                except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as exc:
+                    # 畸形帧 ≠ 断连（与会话级 WS 同口径）：``receive_json`` 对非 JSON
+                    # 文本帧抛 ``JSONDecodeError``，那不是「连接没了」。混为一谈会把
+                    # 仍然活着的连接整条摘掉，此后该房间的实时输出全丢。
+                    logger.info("ignoring malformed frame from client: %s", exc)
+                    continue
+                if not isinstance(raw, dict):
+                    continue
+                msg_type = raw.get("type")
+                if msg_type == "chat":
+                    text = str(raw.get("content") or "").strip()
+                    if not text:
+                        continue
+                    # 轮次在后台跑：本连接继续收消息（轮次中到达的消息会排队进本轮）。
+                    task = asyncio.create_task(
+                        team_service.submit_room_message(ws_path, room_id, text)
+                    )
+                    rounds.add(task)
+                    task.add_done_callback(rounds.discard)
+                elif msg_type == "ping":
+                    await ws.send_json({"type": "pong"})
+        except WebSocketDisconnect:
+            logger.info("room websocket disconnected: %s", room_id)
+        except Exception:  # noqa: BLE001 - 连接层异常不冒泡成 500
+            logger.debug("room websocket error for %s", room_id, exc_info=True)
+        finally:
+            room_bus.unsubscribe(room_id, token)
+            for task in list(rounds):
+                if not task.done():
+                    task.cancel()
+
     @app.websocket("/ws/{session_id}")
     async def websocket_endpoint(ws: WebSocket, session_id: str):
         await ws.accept()
@@ -420,6 +719,16 @@ def create_app(
                 return
 
         session = session_manager.get_session(session_id)
+        if session is None and is_internal_session_id(session_id):
+            # 内部会话必须经群聊服务构造（人设记忆接线 + pending 降级 + 会话上限），
+            # 通用 resume 路径会把它落成**半接线**形态（无记忆、无降级）。
+            try:
+                await team_service.adopt_internal_session(
+                    session_id, resume_workspace or requested_workspace,
+                )
+            except Exception:  # noqa: BLE001 - 恢复失败退化为「按普通会话新建」
+                logger.exception("恢复内部会话失败: %s", session_id)
+            session = session_manager.get_session(session_id)
         if session is None:
             # /ws/new 是默认入口：若 CLI 传了 --resume 且无显式新建参数，则用
             # resume 目标；其他 session id 直接用该 id 尝试恢复。
@@ -722,6 +1031,19 @@ def create_app(
                     })
 
                 elif msg_type == "reset":
+                    if is_internal_session_id(session.session_id):
+                        # 内部会话（人设单聊 / 群内会话）拒绝 reset：reset 会
+                        # ``remove_session`` 掉底座快照并把 id 换成随机新值，
+                        # roster 里「人设 → 单聊会话 id」的稳定映射随之悬空
+                        # （Decision 8 的破坏性路径全保护）。
+                        await ws.send_json({
+                            "type": "error",
+                            "data": {
+                                "message": "internal session cannot be reset",
+                                "code": "internal_session_protected",
+                            },
+                        })
+                        continue
                     session.approval_handler.fail_pending("session reset")
                     session.question_handler.fail_pending("session reset")
                     # G18/D11：``reset`` 在 ``remove_session`` 之前必须**逐个 cancel**

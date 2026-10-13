@@ -39,7 +39,7 @@ from benchmarks.agent_runner import DEFAULT_TEMPLATE_PATTERN, WORKFLOW_MODES
 from agent.tools.factory import build_default_tool_registry, build_sandbox_from_config
 from agent.workspace_policy import WorkspacePolicy
 from agent.background import BackgroundTaskManager
-from agent.session import SessionSnapshot, SessionStore
+from agent.session import SessionSnapshot, SessionStore, visible_sessions
 from agent.hooks.manager import HookManager
 from agent.hooks.builtin import LoggingHook, TracingHook
 from agent.hooks.builtin.token_budget import TokenBudgetHook
@@ -1392,7 +1392,9 @@ def session_list(
     _load_cli_config(config_path)
     wr = _resolve_workspace(workspace) if workspace else None
     store = _get_session_store(workspace_root=wr)
-    sessions = store.list_sessions()
+    # 内部会话（人设单聊 / 群内会话）SHALL NOT 以普通会话身份出现在 CLI 恢复
+    # 列表里——它们与普通会话共用同一个 store（同一 workspace 的 sessions 目录）。
+    sessions = visible_sessions(store.list_sessions())
 
     if not sessions:
         typer.echo("(no saved sessions)")

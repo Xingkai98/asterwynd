@@ -176,13 +176,36 @@ class PersistentMemory:
         summary_tokens: int = MAX_SUMMARY_TOKENS,
         decay_interval_seconds: int = DECAY_INTERVAL_SECONDS,
         decay_threshold: float | None = DECAY_THRESHOLD,
+        memory_dir: Path | None = None,
+        scope: str | None = None,
+        label: str = "project",
     ) -> None:
-        scope_root = _find_scope_root(project_root)
-        root = scope_root or project_root.resolve()
-        project_hash = _compute_project_hash(root)
-        self.memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"
+        """``memory_dir`` / ``scope`` 是**显式 scope 注入口**（change
+        ``web-agent-group-chat`` Decision 7）。
+
+        现状里 ``memory_dir`` 恒由 ``project_root`` 的 scope-root 哈希推导（下面
+        唯一赋值点），所以给一个「人设 scope 目录」当 ``project_root`` 只会被**再
+        hash 成另一个顶层目录**——落点跑到 ``personas/<id>/`` 子树之外，级联删除
+        永远删不到。给定 ``memory_dir`` 即**原样**使用、跳过哈希推导；给定
+        ``scope`` 即原样用作 scope 标记（写进条目 frontmatter）。两个入参都是
+        keyword-only 且可选，不传时行为与改动前**逐字节相同**（零回归）。
+        """
+        if memory_dir is not None:
+            self.memory_dir = Path(memory_dir)
+        else:
+            scope_root = _find_scope_root(project_root)
+            root = scope_root or project_root.resolve()
+            project_hash = _compute_project_hash(root)
+            self.memory_dir = _MEMORY_DIR_BASE / project_hash / "memory"
         self._index_path = self.memory_dir / "MEMORY.md"
-        self.scope = str(root.resolve())
+        if scope is not None:
+            self.scope = scope
+        else:
+            scope_root = _find_scope_root(project_root)
+            self.scope = str((scope_root or project_root.resolve()).resolve())
+        # 注入块标题（Decision 7）：人设 scope 的记忆块不能自称「Project Memory」，
+        # 否则模型会把它当项目级信息。取值只影响渲染，不影响落点或检索。
+        self.label = label
         self._time_source = time_source or datetime.now
         self._archive_after_days = archive_after_days
         self._recency_halflife_days = recency_halflife_days
@@ -195,6 +218,25 @@ class PersistentMemory:
     # ------------------------------------------------------------------
     # Time and decay
     # ------------------------------------------------------------------
+
+    @property
+    def index_title(self) -> str:
+        """注入块标题：项目 scope 是 ``## Project Memory``，人设 scope 是
+        ``## Persona Memory``（Decision 7）。"""
+        return f"## {self.label.title()} Memory"
+
+    def _scope_matches(self, scope: str) -> bool:
+        """``scope`` 过滤是否放行（既有基线是等值比较）。
+
+        人设 scope 取值形如 ``<project-scope>:persona:<pid>[:room:<rid>]``（Decision 7）。
+        模型照 ``SearchMemory`` 的参数描述传**项目根路径**时，等值比较会静默返回空
+        ——假阴性会让模型误以为没记过而重复保存。故额外放行「本项目 scope 是该
+        会话 scope 的前缀」的情况；跨项目拒绝语义不变（``/other/project`` 既不相等
+        也不是前缀）。检索本身就只在本 scope 目录内进行，放宽过滤器不引入越界。
+        """
+        if scope == self.scope:
+            return True
+        return self.scope.startswith(scope + ":")
 
     def _now(self) -> datetime:
         return self._time_source()
@@ -697,7 +739,7 @@ class PersistentMemory:
         Returns formatted markdown. When type is None, returns all memories.
         Scope is validated: a non-matching scope returns an empty result.
         """
-        if scope is not None and scope != self.scope:
+        if scope is not None and not self._scope_matches(scope):
             return "No memories found."
         self._run_decay_if_due()
         entries = self.load_entries(include_archived=include_archived)
@@ -730,7 +772,7 @@ class PersistentMemory:
         #77). Scope is validated; a non-matching scope returns no hits. Returned
         entries are touched (last_accessed_at) so decay reflects retrieval.
         """
-        if scope is not None and scope != self.scope:
+        if scope is not None and not self._scope_matches(scope):
             return []
         from agent.embedding import InMemoryVectorStore, NGramEmbedding
         from agent.embedding.provider import DEFAULT_EMBEDDING_DIM
@@ -774,12 +816,20 @@ class PersistentMemory:
     # ------------------------------------------------------------------
 
     def archive(self, name: str, reason: str | None = None) -> str:
-        """Move an active memory into the archive directory."""
+        """Move an active memory into the archive directory.
+
+        归档是破坏性写（active → archive 是一次 move），故与 ``save`` 的覆盖分支
+        同构：**在 move 之前**做一次 git 前像快照（change ``web-agent-group-chat``
+        Decision 17）——使 ``remove`` 也可回退（``restore`` + git revert）。
+        此前 ``archive`` 只做 move + changelog、没有快照，是记忆 review 的
+        ``remove`` 分支不可逆的直接原因。
+        """
         entry = self._load_entry_by_name(name)
         if entry is None:
             return f"Error: memory '{name}' not found."
         if entry.archived:
             return f"Memory '{name}' already archived."
+        self._git_commit("archive", name, reason or "archived")
         archive_dir = self.memory_dir / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
         src = self._entry_path(name)

@@ -298,8 +298,12 @@ class MemoryIndexSource:
         summary = self._persistent_memory.load_summary()
         if not summary:
             return ""
+        # 标题随 store 的 scope 走（change ``web-agent-group-chat`` Decision 7）：
+        # 人设 scope 的 store 标题是 ``## Persona Memory``，项目 scope 仍是
+        # ``## Project Memory``——否则人设会话会把自己的记忆读成项目级信息。
+        title = getattr(self._persistent_memory, "index_title", "## Project Memory")
         return (
-            "## Project Memory\n"
+            f"{title}\n"
             "Summary of persistent memories from prior sessions. "
             "Use SearchMemory to semantically retrieve specific entries.\n"
             "---\n"

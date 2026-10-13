@@ -17,6 +17,7 @@
       <button class="tab active" data-tab="hub" id="hub-tab">Sessions</button>
       <button class="tab" data-tab="chat" id="chat-tab">Chat</button>
       <!-- 用户态能力：不放 debug 门禁（D2） -->
+      <button class="tab" data-tab="group" id="group-tab">Group</button>
       <button class="tab" data-tab="workflow" id="workflow-tab" hidden>Workflow</button>
       <button class="tab" data-tab="debug" id="debug-tab" style="display:none">Debug</button>
     </nav>
@@ -157,6 +158,46 @@
     </aside>
 
     <!-- Debug View -->
+    <section id="group-view" class="view">
+      <div class="group-layout">
+        <aside class="group-sidebar">
+          <div class="group-block">
+            <div class="group-block-head">
+              <span>人设（roster）</span>
+              <button type="button" id="group-persona-add">+ 新建</button>
+            </div>
+            <ul id="group-persona-list" class="group-list"></ul>
+          </div>
+          <div class="group-block">
+            <div class="group-block-head">
+              <span>群聊</span>
+              <button type="button" id="group-room-add">+ 新建</button>
+            </div>
+            <ul id="group-room-list" class="group-list"></ul>
+          </div>
+        </aside>
+        <main class="group-main">
+          <div id="group-empty" class="group-empty">从左侧选择或新建一个群聊</div>
+          <div id="group-room" class="group-room" hidden>
+            <header class="group-room-head">
+              <strong id="group-room-name"></strong>
+              <span id="group-room-status"></span>
+              <button type="button" id="group-room-edit">设置</button>
+              <button type="button" id="group-room-delete">删除</button>
+            </header>
+            <div id="group-room-members" class="group-members"></div>
+            <div id="group-room-timeline" class="group-timeline"></div>
+            <div class="group-input-row">
+              <textarea id="group-room-input" rows="2" placeholder="输入群消息，行首 @名字 可点名..."></textarea>
+              <button type="button" id="group-room-send">发送</button>
+            </div>
+          </div>
+        </main>
+      </div>
+      <div id="group-dialog-scrim" class="group-scrim" hidden></div>
+      <div id="group-dialog" class="group-dialog" hidden role="dialog" aria-modal="true"></div>
+    </section>
+
     <section id="debug-view" class="view">
       <div id="timeline-panel" class="timeline-panel">
         <div class="timeline-panel-header">
@@ -178,7 +219,8 @@
 <script src="/static/workflow_graph.js?v=4"></script>
 <script src="/static/workflow_transcript.js?v=5"></script>
 <script src="/static/workflow.js?v=3"></script>
-<script src="/static/chat.js?v=26"></script>
+<script src="/static/chat.js?v=27"></script>
+<script src="/static/group.js?v=2"></script>
 <script src="/static/debug.js?v=6"></script>
 </body>
 </html>

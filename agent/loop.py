@@ -154,6 +154,8 @@ class AgentLoop:
         ledger_tool_name: str | None = None,
         include_workflow_asset_index: bool = True,
         artifact_scope_is_run: bool = False,
+        expose_question_tool: bool = True,
+        session_kind: str = "chat",
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -175,6 +177,12 @@ class AgentLoop:
         # Whether this loop injects the workflow-asset index (Q9: root only).
         # A construction-time fact, deliberately not inferred from spawn depth.
         self.include_workflow_asset_index = include_workflow_asset_index
+        # 交互式提问工具的开关（change ``web-agent-group-chat`` Decision 9）：
+        # 群内会话（``kind: room_member``）不暴露 ask 类工具——群聊轮次可能无人
+        # 值守，弹出提问卡片会阻塞到超时。人设单聊与普通会话保持暴露。
+        self.expose_question_tool = expose_question_tool
+        # 会话种类，写进 ``SessionSnapshot.kind``（Decision 8）。
+        self.session_kind = session_kind
         # D4 artifact scope identity: a subagent keys by run_id (its session_id is
         # the non-durable subagent_id); a root loop keys by session_id (stable
         # across resume). A construction-time fact — the loop cannot tell root
@@ -227,7 +235,8 @@ class AgentLoop:
             self._ensure_subagent_tools_registered(unregistered=unregistered_subagent_tools)
         self._ensure_todo_tool_registered()
         self._ensure_background_task_tools_registered()
-        self._ensure_question_tool_registered()
+        if self.expose_question_tool:
+            self._ensure_question_tool_registered()
         if self.skill_runtime is not None:
             self.tool_registry.register(ActivateSkillTool(self.skill_runtime))
 
@@ -1756,6 +1765,7 @@ class AgentLoop:
             iteration=self._iteration,
             user_system_prompt=self._user_system_prompt,
             runtime_fingerprint=self._build_runtime_fingerprint(),
+            kind=self.session_kind,
         )
         self.session_store.save(snapshot)
 

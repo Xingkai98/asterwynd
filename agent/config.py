@@ -254,6 +254,36 @@ class MemoryConfig:
     decay_threshold: float | None = 1.5
     decay_interval_seconds: int = 3600
     git_backend_enabled: bool = True
+    # 记忆 review（change ``web-agent-group-chat`` Decision 17）：总开关缺省开；
+    # ``review_group_lag`` 是「静默成员落后补齐」的阈值，**以 review 游标**为基准
+    # （单位 = 房间日志条目数，与参照 ``REVIEW_GROUP_LAG`` 同值 30）；
+    # ``review_read_limit`` 是单次 review 读入的新增内容上限（超出留待下一次）；
+    # ``review_model`` 可指定 review 用的小模型（None → 用该人设会话的模型）。
+    review_enabled: bool = True
+    review_group_lag: int = 30
+    review_read_limit: int = 24
+    review_model: str | None = None
+
+
+@dataclass(frozen=True)
+class TeamConfig:
+    """长期 agent 人设与群聊编排的运行参数（change ``web-agent-group-chat``）。
+
+    ``max_sessions`` 是**内部会话**（人设单聊 + (人设, 群) 群内会话）的并发上限，
+    缺省 50（用户 Q4 拍板）；达到上限时新建**排队**等待执行槽释放，SHALL NOT
+    拒绝创建。每个内部会话的构造成本含 MCP 子进程 + 独立 subagent 并发额度 + 完整
+    工具注册表，故必须懒构造 + 有上限（grill Q4 的代码级依据）。
+
+    ``turn_timeout_seconds`` 是群聊单轮成员 run 的超时（与参照
+    ``ROOM_REPLY_TIMEOUT_MS = 240_000`` 同量级）；轮次上限的额度参数与参照
+    ``groups.js:24-27`` 同值。
+    """
+    max_sessions: int = 50
+    turn_timeout_seconds: float = 240.0
+    extra_turns: int = 4
+    admin_extra_turns: int = 4
+    turns_each: int = 2
+    admin_turns_each: int = 4
 
 
 @dataclass(frozen=True)
@@ -514,6 +544,7 @@ class AsterwyndConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     subagents: SubagentsConfig = field(default_factory=SubagentsConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    team: TeamConfig = field(default_factory=TeamConfig)
 
     def __post_init__(self) -> None:
         if not self.modes:
@@ -650,6 +681,7 @@ def _load_yaml_config(
             _require_section(raw, "subagents", path, "subagents"), path
         ),
         web=_parse_web_config(raw.get("web", {}), path),
+        team=_parse_team_config(raw.get("team", {}), path),
     )
 
 
@@ -1616,6 +1648,57 @@ def _parse_memory_config(raw: Any, path: Path) -> MemoryConfig:
             mapping.get("git_backend_enabled", True),
             path,
             "memory.git_backend_enabled",
+        ),
+        review_enabled=_parse_bool(
+            mapping.get("review_enabled", True), path, "memory.review_enabled"
+        ),
+        review_group_lag=_parse_timeout_seconds(
+            mapping.get("review_group_lag", 30), "memory.review_group_lag", path=path
+        ),
+        review_read_limit=_parse_timeout_seconds(
+            mapping.get("review_read_limit", 24), "memory.review_read_limit", path=path
+        ),
+        review_model=_parse_optional_string(
+            mapping.get("review_model"), path, "memory.review_model"
+        ),
+    )
+
+
+def _parse_team_config(raw: Any, path: Path) -> TeamConfig:
+    """群聊板块的运行参数（change ``web-agent-group-chat``）。
+
+    ``team.max_sessions`` 是内部会话数上限（Q4 拍板缺省 50，可配置）；达到上限时
+    新建**排队**，不拒绝。其余四项与参照 ``groups.js:24-27`` 同值，改动它们只影响
+    轮次预算，不影响终止语义（三出口）。
+    """
+    mapping = _expect_mapping(raw, path, "team")
+    timeout_raw = mapping.get("turn_timeout_seconds", 240.0)
+    if isinstance(timeout_raw, bool):
+        raise ConfigError(f"{path}: team.turn_timeout_seconds must be a number")
+    try:
+        turn_timeout = float(timeout_raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            f"{path}: team.turn_timeout_seconds must be a number"
+        ) from exc
+    if turn_timeout <= 0:
+        raise ConfigError(f"{path}: team.turn_timeout_seconds must be positive")
+    return TeamConfig(
+        max_sessions=_parse_timeout_seconds(
+            mapping.get("max_sessions", 50), "team.max_sessions", path=path
+        ),
+        turn_timeout_seconds=turn_timeout,
+        extra_turns=_parse_non_negative_int(
+            mapping.get("extra_turns", 4), "team.extra_turns", path=path
+        ),
+        admin_extra_turns=_parse_non_negative_int(
+            mapping.get("admin_extra_turns", 4), "team.admin_extra_turns", path=path
+        ),
+        turns_each=_parse_timeout_seconds(
+            mapping.get("turns_each", 2), "team.turns_each", path=path
+        ),
+        admin_turns_each=_parse_timeout_seconds(
+            mapping.get("admin_turns_each", 4), "team.admin_turns_each", path=path
         ),
     )
 

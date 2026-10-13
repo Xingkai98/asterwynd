@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import uuid
 import warnings
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -10,6 +11,53 @@ from agent.planning.manager import PlanItem
 from agent.run_config import AgentMode
 
 CURRENT_SCHEMA_VERSION = "1.0"
+
+# ---------------------------------------------------------------------------
+# 会话 kind 与内部会话 id 前缀（change ``web-agent-group-chat``，Decision 8）
+# ---------------------------------------------------------------------------
+
+#: 面向用户的普通会话。
+KIND_CHAT = "chat"
+#: 人设单聊会话（内部会话）。
+KIND_PERSONA_CHAT = "persona_chat"
+#: (人设, 群) 群内会话（内部会话）。
+KIND_ROOM_MEMBER = "room_member"
+
+#: 内部会话的 id 前缀——**钉死的取值**。hub 过滤与生命周期保护判定退化为纯字符串
+#: 比较，不依赖读会话快照（``list_sessions()`` 的 damaged 分支只回目录名）。
+PERSONA_SESSION_PREFIX = "persona-"
+ROOM_SESSION_PREFIX = "room-"
+INTERNAL_SESSION_PREFIXES = (PERSONA_SESSION_PREFIX, ROOM_SESSION_PREFIX)
+
+_PREFIX_BY_KIND = {
+    KIND_PERSONA_CHAT: PERSONA_SESSION_PREFIX,
+    KIND_ROOM_MEMBER: ROOM_SESSION_PREFIX,
+}
+
+
+def new_internal_session_id(kind: str) -> str:
+    """生成内部会话 id（带可判定的前缀）。非内部 kind 一律拒绝。"""
+    prefix = _PREFIX_BY_KIND.get(kind)
+    if prefix is None:
+        raise ValueError(f"not an internal session kind: {kind!r}")
+    return prefix + uuid.uuid4().hex[:12]
+
+
+def is_internal_session_id(session_id: str) -> bool:
+    """该 id 是否属于内部会话（人设单聊 / 群内会话）。"""
+    return any(str(session_id).startswith(p) for p in INTERNAL_SESSION_PREFIXES)
+
+
+def visible_sessions(sessions: list[dict]) -> list[dict]:
+    """过滤掉内部会话——hub 列表、workspace 的 ``session_count`` 与 CLI 列表共用。
+
+    损坏条目（``damaged``）的 ``session_id`` 取目录名，前缀判定照常成立，故内部
+    会话即使快照损坏也不会泄漏进列表。
+    """
+    return [
+        s for s in sessions
+        if not is_internal_session_id(str(s.get("session_id", "")))
+    ]
 
 
 @dataclass
@@ -36,6 +84,9 @@ class SessionSnapshot:
     # Compact orchestration-bus summary (issue 79 D5): a resume that lost the
     # in-memory bus still has a readable view of what was exchanged.
     bus_summary: str = ""
+    # 会话种类（change ``web-agent-group-chat``，Decision 8）：``chat`` /
+    # ``persona_chat`` / ``room_member``。旧快照没有该字段 → 默认 ``chat``。
+    kind: str = KIND_CHAT
 
     def to_dict(self) -> dict:
         return {
@@ -54,6 +105,7 @@ class SessionSnapshot:
             "blockers": list(self.blockers),
             "next_steps": list(self.next_steps),
             "bus_summary": self.bus_summary,
+            "kind": self.kind,
         }
 
     @classmethod
@@ -75,6 +127,7 @@ class SessionSnapshot:
             blockers=list(data.get("blockers", [])),
             next_steps=list(data.get("next_steps", [])),
             bus_summary=data.get("bus_summary", ""),
+            kind=data.get("kind", KIND_CHAT),
         )
 
 
