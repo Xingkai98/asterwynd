@@ -241,7 +241,7 @@ asterwynd 自建了一整套「开发流程门禁」：change 契约、review ma
   - 选 A / C / D / E 的理由如上。另否决「在本 change 内顺手清理 `handoff.json`」（见 Decision 6，会污染影子接入的 diff 可评估性）。
 - Final confirmations:
   - 设计追问已完成：独立 grill 产出 `reviews/grill-design.md`；`## Open Questions` 七条已**逐条抛给用户并全部确认**（答复记录进该文件的 `## User Confirmation`，另见本文件的 `## User Rulings`）。**确认门槛已满足**，可进入阶段 A 实现。
-  - 设计阶段审阅闭环已跑出**首轮** `reviews/grill-adversarial-v1.md`（CHANGES_REQUESTED，7 条阻塞已全部整合）；**待复跑**一轮确认收敛，最终版落到规范名 `reviews/grill-adversarial.md`（`grill-flow-hardening` / issue #298）。
+  - 设计阶段审阅闭环已收敛：**最终版** `reviews/grill-adversarial.md` **判 PASS、无阻塞项**（首轮 `grill-adversarial-v1.md` 判 CHANGES_REQUESTED、7 条阻塞已全部整合；R3 独立复核后落到规范名，见 `grill-flow-hardening` / issue #298）。
 - Remaining risks:
   - `--policy` 的语义合法性由 `check` 兜底 ⇒ seed 写错只会在**跑 `check` 时**暴露，不会在 `init` 时报错（见 Risks R2）。
   - 双守卫的**合并语义与报错归属**两项未实测（Decision 8，命名空间可静态判定）——必须在阶段 A 的验收里补实测项，且**两棵树各测一次**。
