@@ -645,6 +645,30 @@ class TestPendingDowngrade:
         assert session.approval_handler.pending_approval_id is None
 
 
+class TestAdminCanBeCleared:
+    """I4 回归：显式 `admin: null` 必须真的清空（此前被 `is not None` 静默丢弃）。"""
+
+    @pytest.mark.asyncio
+    async def test_update_room_with_explicit_none_admin_clears_it(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a, b) = _make_personas(service, ws)
+        room = service.create_room(ws, name="r", members=[a.id, b.id], admin=a.id)
+        assert service.get_room(ws, room.id).admin == a.id
+
+        service.update_room(ws, room.id, admin=None)
+        assert service.get_room(ws, room.id).admin is None
+
+    @pytest.mark.asyncio
+    async def test_absent_admin_field_keeps_the_current_value(self, tmp_path):
+        service = _service(tmp_path)
+        ws = service.team_for(None).workspace
+        (a,) = _make_personas(service, ws, names=("甲",))
+        room = service.create_room(ws, name="r", members=[a.id], admin=a.id)
+        service.update_room(ws, room.id, name="改名")     # 不含 admin 字段
+        assert service.get_room(ws, room.id).admin == a.id
+
+
 class TestSessionCapAndLaziness:
     @pytest.mark.asyncio
     async def test_sessions_are_created_lazily(self, tmp_path):

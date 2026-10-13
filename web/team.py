@@ -618,7 +618,10 @@ class TeamService:
             room.notice = str(fields.get("notice") or "")
         if fields.get("reply_mode") is not None:
             room.reply_mode = _normalize_reply_mode(fields["reply_mode"])
-        if fields.get("admin") is not None:
+        # ``"admin" in fields``（而非 ``is not None``）：前端「（无）」发的是显式
+        # ``null``，用 ``is not None`` 会把它静默丢弃 ⇒ 用户以为改成了「无」，
+        # 房间实际仍由原 admin 应答（I4）。
+        if "admin" in fields:
             room.admin = fields["admin"] or None
         if fields.get("members") is not None:
             known = {p.id for p in team.store.list_personas()}

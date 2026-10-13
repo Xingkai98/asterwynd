@@ -140,6 +140,31 @@ class TestModeRest:
         assert speakers == [a, b]
 
 
+class TestAdminClearingRest:
+    """I4 回归（REST 层）：PATCH `admin: null` 必须清空房间 admin。"""
+
+    def test_patch_admin_null_clears_it(self, client):
+        a = _create_persona(client, "甲")["persona"]["id"]
+        b = _create_persona(client, "乙")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [a, b], "admin": a,
+        }).json()["room"]
+        assert room["admin"] == a
+
+        patched = client.patch(f"/api/team/rooms/{room['id']}", json={"admin": None})
+        assert patched.status_code == 200
+        assert patched.json()["room"]["admin"] is None
+        assert client.get(f"/api/team/rooms/{room['id']}/timeline").json()["room"]["admin"] is None
+
+    def test_patch_without_admin_keeps_it(self, client):
+        a = _create_persona(client, "甲")["persona"]["id"]
+        room = client.post("/api/team/rooms", json={
+            "name": "r", "members": [a], "admin": a,
+        }).json()["room"]
+        patched = client.patch(f"/api/team/rooms/{room['id']}", json={"name": "r2"})
+        assert patched.json()["room"]["admin"] == a
+
+
 class TestInternalSessionProtection:
     def test_hub_hides_internal_sessions(self, client, tmp_path):
         pid = _create_persona(client, "甲")["persona"]["id"]
