@@ -139,6 +139,47 @@ class TestRoomPersistence:
         names = sorted(r.name for r in _store(tmp_path).list_rooms())
         assert names == ["a", "b"]
 
+    def test_reply_mode_roundtrips_and_defaults_to_admin(self, tmp_path):
+        store = _store(tmp_path)
+        room = Room(name="r", members=[], reply_mode="everyone")
+        store.save_room(room)
+        assert _store(tmp_path).get_room(room.id).reply_mode == "everyone"
+        # 缺省
+        plain = Room(name="plain", members=[])
+        store.save_room(plain)
+        assert _store(tmp_path).get_room(plain.id).reply_mode == "admin"
+
+    def test_legacy_room_record_without_reply_mode_reads_as_admin(self, tmp_path):
+        import json
+
+        store = _store(tmp_path)
+        room = Room(name="legacy", members=[])
+        store.save_room(room)
+        path = tmp_path / ".asterwynd" / "team" / "rooms" / f"{room.id}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.pop("reply_mode", None)          # 模拟本 change 之前写入的记录
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        assert _store(tmp_path).get_room(room.id).reply_mode == "admin"
+
+    def test_legacy_persona_record_without_mode_reads_as_bypass(self, tmp_path):
+        import json
+
+        store = _store(tmp_path)
+        persona = Persona(name="legacy")
+        store.upsert_persona(persona)
+        path = tmp_path / ".asterwynd" / "team" / "roster.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for item in data["personas"]:
+            item.pop("mode", None)            # 模拟本 change 之前写入的记录
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        assert _store(tmp_path).get_persona(persona.id).mode == "bypass"
+
+    def test_persona_mode_roundtrips(self, tmp_path):
+        store = _store(tmp_path)
+        persona = Persona(name="a", mode="read_only")
+        store.upsert_persona(persona)
+        assert _store(tmp_path).get_persona(persona.id).mode == "read_only"
+
     def test_persona_session_map_roundtrip(self, tmp_path):
         store = _store(tmp_path)
         p = Persona(name="a")

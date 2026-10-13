@@ -134,6 +134,75 @@ class TestSlotSequence:
         assert [sid for sid, _ in runner.calls] == ["room-pB"]
 
 
+class TestReplyMode:
+    """Decision 19：房间应答模式（admin 默认 / everyone 全员各得一次机会）。"""
+
+    @pytest.mark.asyncio
+    async def test_admin_mode_only_admin_speaks_first(self, team):
+        store, room, runner, _, orch = team
+        assert room.reply_mode == "admin"
+        await orch.submit_user_message(room.id, "大家好")
+        assert [sid for sid, _ in runner.calls] == ["room-pA"]
+
+    @pytest.mark.asyncio
+    async def test_everyone_mode_gives_every_member_one_chance(self, team):
+        store, room, runner, _, orch = team
+        room.reply_mode = "everyone"
+        store.save_room(room)
+        await orch.submit_user_message(room.id, "大家好")
+        # admin 先，其余按成员顺序；每名成员各一次
+        assert [sid for sid, _ in runner.calls] == ["room-pA", "room-pB", "room-pC"]
+        assert [e.speaker for e in _posts(store, room)] == ["pA", "pB", "pC"]
+
+    @pytest.mark.asyncio
+    async def test_everyone_mode_lets_members_stay_silent(self, team):
+        store, room, runner, _, orch = team
+        room.reply_mode = "everyone"
+        store.save_room(room)
+        runner.push("room-pA", TurnOutcome(status="silent"))
+        runner.push("room-pB", TurnOutcome(status="text", text=SILENT_MARKER))
+        result = await orch.submit_user_message(room.id, "大家好")
+        assert [sid for sid, _ in runner.calls] == ["room-pA", "room-pB", "room-pC"]
+        assert [e.speaker for e in _posts(store, room)] == ["pC"]
+        assert result.termination == "completed"
+
+    @pytest.mark.asyncio
+    async def test_everyone_mode_without_admin_uses_member_order(self, team):
+        store, room, runner, _, orch = team
+        room.reply_mode = "everyone"
+        room.admin = None
+        store.save_room(room)
+        await orch.submit_user_message(room.id, "大家好")
+        assert [sid for sid, _ in runner.calls] == ["room-pA", "room-pB", "room-pC"]
+
+    @pytest.mark.asyncio
+    async def test_mention_overrides_both_modes(self, team):
+        store, room, runner, _, orch = team
+        room.reply_mode = "everyone"
+        store.save_room(room)
+        await orch.submit_user_message(room.id, "@PB 你说")
+        assert [sid for sid, _ in runner.calls] == ["room-pB"]
+
+    @pytest.mark.asyncio
+    async def test_per_member_cap_still_applies_in_everyone_mode(self, team):
+        store, room, runner, resolver, _ = team
+        room.reply_mode = "everyone"
+        room.admin = None
+        store.save_room(room)
+        orch = RoomOrchestrator(
+            store=store, resolver=resolver, runner=runner,
+            extra_turns=1, admin_extra_turns=0,
+        )
+        for pid in ("pA", "pB", "pC"):
+            runner.push(f"room-{pid}", *[TurnOutcome(status="text", text="@PA @PB @PC 接力")] * 12)
+        result = await orch.submit_user_message(room.id, "开始")
+        counts: dict[str, int] = {}
+        for sid, _ in runner.calls:
+            counts[sid] = counts.get(sid, 0) + 1
+        assert all(n <= 2 for n in counts.values())
+        assert result.termination == "limit"
+
+
 class TestMentionBoundaries:
     @pytest.mark.asyncio
     async def test_unknown_name_ignored_without_error(self, team):

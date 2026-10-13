@@ -16,6 +16,18 @@ from agent import session as _session
 #: ``system``= 系统条目（如「因达上限结束」「成员运行失败」，``speaker is None``）
 ENTRY_KINDS = ("user", "post", "system")
 
+#: 人设的运行模式取值（与 ``AgentMode`` 同名，design Decision 18）。
+PERSONA_MODES = ("build", "read_only", "plan", "bypass")
+#: 人设模式的缺省值：``bypass``（用户 2026-10-13 拍板）。理由：``build`` 下高风险
+#: 工具需审批，而群内会话按 Decision 9 审批 fail-closed 立即拒 ⇒ 成员在群里根本
+#: 跑不了高风险工具（「被权限卡死」）。
+DEFAULT_PERSONA_MODE = "bypass"
+
+#: 房间应答模式取值（design Decision 19）。
+REPLY_MODES = ("admin", "everyone")
+#: 缺省 ``admin``——``everyone`` 的成本是每条消息 N 次模型调用，故默认关闭。
+DEFAULT_REPLY_MODE = "admin"
+
 #: 内部会话的 kind 取值（design Decision 8）。真正定义在 ``agent.session``
 #: （``SessionSnapshot.kind`` 的宿主），这里复出以免两处各写一份字符串。
 KIND_CHAT = _session.KIND_CHAT
@@ -46,6 +58,8 @@ class Persona:
     instructions: str = ""
     model: str = ""
     id: str = ""
+    #: 运行模式（design Decision 18）：该人设的**单聊与所有群内会话**都以它构造。
+    mode: str = DEFAULT_PERSONA_MODE
     #: 该人设单聊会话的底座 id（稳定映射，design Decision 8）。
     chat_session_id: str | None = None
 
@@ -60,6 +74,7 @@ class Persona:
             "role": self.role,
             "instructions": self.instructions,
             "model": self.model,
+            "mode": self.mode,
             "chat_session_id": self.chat_session_id,
         }
 
@@ -71,6 +86,8 @@ class Persona:
             instructions=str(data.get("instructions", "")),
             model=str(data.get("model", "")),
             id=str(data.get("id", "")),
+            # 本 change 之前写入的 roster 记录没有该字段 → 按缺省 ``bypass`` 读。
+            mode=str(data.get("mode") or DEFAULT_PERSONA_MODE),
             chat_session_id=data.get("chat_session_id") or None,
         )
 
@@ -87,6 +104,9 @@ class Room:
     members: list[str] = field(default_factory=list)
     admin: str | None = None
     notice: str = ""
+    #: 应答模式（design Decision 19）：``admin`` 只让 admin 应答；``everyone`` 让
+    #: 全体成员按序各得一次发言机会（admin 先）。
+    reply_mode: str = DEFAULT_REPLY_MODE
     id: str = ""
     #: ``persona_id -> 群内会话 id``（稳定映射，Decision 8）。
     sessions: dict[str, str] = field(default_factory=dict)
@@ -106,6 +126,7 @@ class Room:
             "members": list(self.members),
             "admin": self.admin,
             "notice": self.notice,
+            "reply_mode": self.reply_mode,
             "sessions": dict(self.sessions),
             "seen": dict(self.seen),
             "created_by": self.created_by,
@@ -118,6 +139,8 @@ class Room:
             members=[str(m) for m in data.get("members", [])],
             admin=data.get("admin") or None,
             notice=str(data.get("notice", "")),
+            # 本 change 之前写入的房间记录没有该字段 → 按缺省 ``admin`` 读。
+            reply_mode=str(data.get("reply_mode") or DEFAULT_REPLY_MODE),
             id=str(data.get("id", "")),
             sessions={str(k): str(v) for k, v in (data.get("sessions") or {}).items()},
             seen={str(k): int(v) for k, v in (data.get("seen") or {}).items()},

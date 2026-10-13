@@ -152,7 +152,15 @@ def _leading_block(text: str) -> str:
 def opening_slots(
     room: Room, text: str, roster: dict[str, Persona], main_bot_ids: list[str]
 ) -> list[str]:
-    """本轮的初始 slot 序列（design Decision 11，钉死顺序）。"""
+    """本轮的初始 slot 序列（design Decision 11，钉死顺序）。
+
+    行首 ``@Name`` 在**两种应答模式下都优先**（Decision 19 只改「无 `@` 时的默认
+    应答者」）。无 `@` 时按 ``room.reply_mode`` 分支：
+
+    - ``admin``（缺省）：房间 admin → 无 admin 则 roster 首个 ``mainBot`` → 无
+      ``mainBot`` 则成员顺序；
+    - ``everyone``：全体成员按序各得一次机会（**admin 先**），各自可静默。
+    """
     name_index = _name_index(room, roster)
     mentioned = [
         pid
@@ -161,6 +169,10 @@ def opening_slots(
     ]
     if mentioned:
         return mentioned
+    if room.reply_mode == "everyone":
+        if room.admin and room.admin in room.members:
+            return [room.admin] + [m for m in room.members if m != room.admin]
+        return list(room.members)
     if room.admin and room.admin in room.members:
         return [room.admin]
     for pid in main_bot_ids:
