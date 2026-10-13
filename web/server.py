@@ -17,6 +17,7 @@ from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from agent.session import is_internal_session_id, visible_sessions
 from web.debug_hook import debug_enabled
 from web.session import (
     ConnectionHandle,
@@ -272,12 +273,16 @@ def create_app(
         """Hub workspace 列表投影（GET /api/workspaces 与 POST 复用）。
 
         ``exists`` 反映运行期目录状态（集合在 create_app 解析，注册路径即时加入）；
-        ``session_count`` 为该 workspace store 下的已保存会话数。
+        ``session_count`` 为该 workspace store 下的已保存会话数，SHALL NOT 计入
+        内部会话（人设单聊 / 群内会话）——否则 hub 的 workspace 卡片显示「会话数」
+        与同一页面的列表长度自相矛盾。
         """
         entries = []
         for ws, is_primary in session_manager.list_workspaces():
             try:
-                session_count = len(session_manager._store_for(ws).list_sessions())
+                session_count = len(
+                    visible_sessions(session_manager._store_for(ws).list_sessions())
+                )
             except Exception:
                 session_count = 0
             entries.append({
@@ -323,12 +328,16 @@ def create_app(
 
         缺省 workspace 用主 workspace；workspace 不在有效集合或路径不存在 →
         HTTP 403 + 结构化错误。
+
+        内部会话（人设单聊 ``persona-*`` / 群内会话 ``room-*``）SHALL NOT 出现在
+        该列表里；过滤按 **id 前缀**判定、不读会话快照，故内部会话快照损坏时也
+        不会泄漏进列表。
         """
         try:
             ws = session_manager.resolve_workspace(workspace)
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
-        sessions = session_manager._store_for(ws).list_sessions()
+        sessions = visible_sessions(session_manager._store_for(ws).list_sessions())
         return {"workspace": str(ws), "sessions": sessions}
 
     @app.delete("/api/sessions/{session_id}")
@@ -338,6 +347,10 @@ def create_app(
         workspace 必须显式传入（冷会话无内存 workspace_root 可查）；缺省 →
         400；未授权 → 403。畸形 session_id 由 SessionStore._validate_session_id
         拒绝 → 400（design review I4）。
+
+        内部会话（人设单聊 / 群内会话）SHALL NOT 可经本接口删除——它们的底座由
+        人设/房间接口的级联清理（Decision 15）。否则「不可直接删除」的反面（正当
+        删除路径）会失去唯一入口，且删除后 roster 的稳定映射变悬空。
         """
         if not workspace:
             return JSONResponse({"error": "missing_workspace"}, status_code=400)
@@ -345,6 +358,11 @@ def create_app(
             ws = session_manager.resolve_workspace(workspace)
         except ValueError:
             return JSONResponse({"error": "workspace_not_allowed"}, status_code=403)
+        if is_internal_session_id(session_id):
+            return JSONResponse(
+                {"error": "internal_session_protected", "session_id": session_id},
+                status_code=403,
+            )
         try:
             session_manager.remove_session(session_id, workspace=ws)
         except ValueError:

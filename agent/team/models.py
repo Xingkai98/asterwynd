@@ -8,16 +8,19 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
+from agent import session as _session
+
 #: 房间日志条目的类型枚举（design Decision 6 / spec delta「房间日志」）。
 #: ``user``  = 用户消息（``speaker == "user"``）
 #: ``post``  = 成员发言（``speaker == persona_id``）
 #: ``system``= 系统条目（如「因达上限结束」「成员运行失败」，``speaker is None``）
 ENTRY_KINDS = ("user", "post", "system")
 
-#: 内部会话的 kind 取值（design Decision 8）。
-KIND_CHAT = "chat"
-KIND_PERSONA_CHAT = "persona_chat"
-KIND_ROOM_MEMBER = "room_member"
+#: 内部会话的 kind 取值（design Decision 8）。真正定义在 ``agent.session``
+#: （``SessionSnapshot.kind`` 的宿主），这里复出以免两处各写一份字符串。
+KIND_CHAT = _session.KIND_CHAT
+KIND_PERSONA_CHAT = _session.KIND_PERSONA_CHAT
+KIND_ROOM_MEMBER = _session.KIND_ROOM_MEMBER
 INTERNAL_KINDS = (KIND_PERSONA_CHAT, KIND_ROOM_MEMBER)
 
 
