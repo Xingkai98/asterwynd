@@ -197,7 +197,7 @@ class TestGroupProgress:
 
         log = subprocess.run(
             ["git", "log", "--oneline"], cwd=scope.memory_dir,
-            capture_output=True, text=True,
+            capture_output=True, text=True, errors="replace",
         )
         assert log.returncode == 0
         assert "archive" in log.stdout or log.stdout.strip() != ""

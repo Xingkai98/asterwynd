@@ -13,8 +13,9 @@ from agent.approval import (
     ApprovalDecisionStatus,
     ApprovalRequest,
     ApprovalResponse,
+    FailClosedApprovalHandler,
 )
-from agent.question import Question, QuestionAnswer
+from agent.question import FailClosedQuestionHandler, Question, QuestionAnswer
 from agent.config import (
     DEFAULT_APPROVAL_TIMEOUT_SECONDS,
     DEFAULT_QUESTION_TIMEOUT_SECONDS,
@@ -26,7 +27,13 @@ from agent.message import Message, extract_text
 from agent.mcp import build_mcp_manager
 from agent.run_identity import new_session_id
 from agent.run_config import AgentMode, AgentRunConfig, ModePolicy, parse_agent_mode
-from agent.session import SessionSnapshot, SessionStore
+from agent.session import (
+    KIND_CHAT,
+    KIND_ROOM_MEMBER,
+    SessionSnapshot,
+    SessionStore,
+    new_internal_session_id,
+)
 from agent.trace_recorder import iter_failure_steps
 from agent.skills import SkillRuntime
 from agent.subagent.manager import SubAgentManager
@@ -35,6 +42,12 @@ from agent.workspace_policy import WorkspacePolicy, is_sensitive_root
 from agent.hooks.manager import HookManager
 from agent.memory.manager import MemoryManager
 from agent.hooks.builtin import TracingHook
+from agent.team.runner import (
+    DEFAULT_TURN_TIMEOUT_SECONDS,
+    SessionRunner,
+    TurnOutcome,
+    is_silent,
+)
 from web.debug_hook import DebugHook
 
 logger = logging.getLogger("asterwynd.web.session")
@@ -439,6 +452,49 @@ class SessionEventChannel:
             )
             self.detach(handle)
             return False
+
+
+class UnavailableApprovalHandler(FailClosedApprovalHandler):
+    """群内会话（``kind: room_member``）的审批出口（Decision 9）。
+
+    按 fail-closed **立即**判定不可用，不建立交互式 pending——群聊轮次可能无人
+    值守，走 ``WebApprovalHandler``（缺省 600s）会把整轮阻塞到超时。
+    保留 web 侧 handler 的空实现面（``fail_pending`` 等），使 ``reset`` / run 结束
+    的既有清理路径不需要为内部会话分叉。
+    """
+
+    def fail_pending(self, reason: str) -> None:  # pragma: no cover - 无 pending 可失败
+        return None
+
+    def submit_response(self, approval_id: str, decision: str) -> bool:
+        return False
+
+    @property
+    def pending_approval_id(self) -> str | None:
+        return None
+
+    def pending_approval_payload(self) -> tuple[str, dict] | None:
+        return None
+
+
+class UnavailableQuestionHandler(FailClosedQuestionHandler):
+    """群内会话的提问出口：立即返回不可用（且该会话本就不注册 ask 类工具）。"""
+
+    def set_event_sender(self, sender) -> None:
+        return None
+
+    def fail_pending(self, reason: str) -> None:  # pragma: no cover
+        return None
+
+    def submit_answer(self, question_id: str, answer: str) -> bool:
+        return False
+
+    @property
+    def pending_question_id(self) -> str | None:
+        return None
+
+    def pending_question_payload(self) -> tuple[str, dict] | None:
+        return None
 
 
 def fail_pending_interactions(session: "AgentSession", reason: str) -> None:
@@ -1365,6 +1421,15 @@ class AgentSession:
         # session 级、跨 run 存活，支持多连接广播与定点发送。ws 连上时 attach，
         # 断开只 detach 该连接、不终止 run。
         self.event_channel = SessionEventChannel(session_id)
+        # 本会话**最近一次 run** 的出口（change ``web-agent-group-chat`` D4/D17）：
+        # 由 ``_run_session_locked`` 在 run 结束时写入。读取方只在**自己发起并跑完**
+        # 的 run 之后读它（同 session 的 run 由 ``run_lock`` 串行化），因此不会把
+        # 陈旧内容当本轮产出——这一点是硬约束：``run_session`` 被 ``run_lock`` 拒时
+        # 只发 ``run_in_progress`` 事件并返回，绝不刷新该字段。
+        self.last_turn: TurnOutcome | None = None
+        # 回合结束监听器（``(TurnOutcome) -> Awaitable[None]``）：记忆 review 的
+        # 「实际发言才触发」挂在这里，单聊与群聊走同一个出口。
+        self.turn_listeners: list = []
         # reasoning 回传降级标志（issue #256 D7）：**session 级、跨 run 存活**。
         # LLM 层用 ContextVar 表达「本 run 是否降级」，但每个用户回合都是新 task、
         # ContextVar 会重置，所以真值必须由 session 持有：run 开始时注入、结束时
@@ -1623,18 +1688,34 @@ class SessionManager:
         initial_mode: Optional[AgentMode] = None,
         resume_snapshot: Optional[SessionSnapshot] = None,
         workspace_root: Path | None = None,
+        session_id: Optional[str] = None,
+        kind: str = KIND_CHAT,
+        persona_memory=None,
+        memory_config=None,
+        quality_config=None,
+        expose_question_tool: bool = True,
+        fail_closed_pending: bool = False,
+        system_prompt: Optional[str] = None,
     ) -> AgentSession:
-        session_id = resume_snapshot.session_id if resume_snapshot else new_session_id()
+        session_id = (
+            resume_snapshot.session_id if resume_snapshot
+            else (session_id or new_session_id())
+        )
         # pending 交互超时（change web-reconnect-pending-interaction, Q1/D6）：
         # 走 ``WebConfig``，两项都必须可配置（正整数校验在 ``_parse_web_config``）。
-        approval_handler = WebApprovalHandler(
-            session_id,
-            timeout_seconds=self.config.web.approval_timeout_seconds,
-        )
-        question_handler = WebQuestionHandler(
-            session_id,
-            timeout_seconds=self.config.web.question_timeout_seconds,
-        )
+        # 群内会话（Decision 9）走 fail-closed 出口：不建立交互式 pending。
+        if fail_closed_pending:
+            approval_handler = UnavailableApprovalHandler()
+            question_handler = UnavailableQuestionHandler()
+        else:
+            approval_handler = WebApprovalHandler(
+                session_id,
+                timeout_seconds=self.config.web.approval_timeout_seconds,
+            )
+            question_handler = WebQuestionHandler(
+                session_id,
+                timeout_seconds=self.config.web.question_timeout_seconds,
+            )
         resolved_mode = initial_mode or self.initial_mode
         run_config = AgentRunConfig(mode=resolved_mode)
         session_workspace = (
@@ -1661,6 +1742,14 @@ class SessionManager:
             selection_config=self.config.tools.selection,
             read_output_config=self.config.tools.read,
             sandbox=sandbox,
+            # 人设会话的记忆接线（Decision 7）：与 CLI 同款四参数忠实移植。
+            # 只传 ``persistent_memory`` 会缺 LLM 去重判官（``llm is None`` 时
+            # 工厂直接返回 None）与用户记忆配置（不传则回落 ``MemoryConfig()``），
+            # 落成与 CLI **不同策略**的人设记忆。
+            persistent_memory=persona_memory,
+            memory_config=memory_config,
+            quality_config=quality_config,
+            llm=llm,
         )
         subagent_manager = SubAgentManager(
             llm=llm,
@@ -1685,6 +1774,9 @@ class SessionManager:
             question_handler=question_handler,
             mcp_manager=mcp_manager,
             session_store=self._store_for(session_workspace),
+            persistent_memory=persona_memory,
+            expose_question_tool=expose_question_tool,
+            session_kind=kind,
         )
         session = AgentSession(session_id, agent, approval_handler, question_handler)
         session.workspace_root = session_workspace
@@ -1696,15 +1788,70 @@ class SessionManager:
         subagent_manager.graph_sink = forwarder
         if resume_snapshot is not None:
             session.resume_snapshot = resume_snapshot
-            session.init_messages(resume_snapshot.user_system_prompt)
+            # 人设指令优先于快照里的旧值（改了指令后下次进入应立即生效）。
+            session.init_messages(system_prompt or resume_snapshot.user_system_prompt)
         else:
-            session.init_messages()
+            session.init_messages(system_prompt)
         self._sessions[session_id] = session
         logger.info(f"Created session {session_id} workspace={session_workspace}")
         return session
 
     def get_session(self, session_id: str) -> Optional[AgentSession]:
         return self._sessions.get(session_id)
+
+    def unload_session(self, session_id: str) -> bool:
+        """把会话从**内存**里卸下但**保留落盘快照**（内部会话的 LRU 淘汰）。
+
+        与 ``remove_session`` 的区别是 destructive 与否：这里只释放 AgentLoop
+        的资源占位（MCP 子进程 / subagent 并发额度 / 工具注册表），快照仍在
+        ``<workspace>/.asterwynd/sessions/<id>/``，下次使用按同一 id 恢复。
+        """
+        session = self._sessions.pop(session_id, None)
+        if session is None:
+            return False
+        if session.graph_forwarder is not None:
+            session.graph_forwarder.detach()
+            session.graph_forwarder = None
+        session.event_channel.detach_all()
+        return True
+
+    async def create_team_session_async(
+        self,
+        *,
+        session_id: str,
+        kind: str,
+        llm,
+        workspace_root: Path | None = None,
+        persona_memory=None,
+        memory_config=None,
+        quality_config=None,
+        system_prompt: Optional[str] = None,
+        resume_snapshot: Optional[SessionSnapshot] = None,
+        initial_mode: Optional[AgentMode] = None,
+        tools: Optional[list] = None,
+    ) -> AgentSession:
+        """创建（或恢复）一个**内部会话**（人设单聊 / 群内会话）。
+
+        id 由调用方给定（roster / 房间记录里的稳定映射），因此同 id 的快照会被
+        恢复而不是新建。记忆接线与 pending 降级都按 ``kind`` 决定（Decision 7/9）。
+        """
+        mcp_manager = await build_mcp_manager(self.config)
+        return self._create_session(
+            llm,
+            tools=tools,
+            mcp_manager=mcp_manager,
+            initial_mode=initial_mode,
+            resume_snapshot=resume_snapshot,
+            workspace_root=workspace_root,
+            session_id=session_id,
+            kind=kind,
+            persona_memory=persona_memory,
+            memory_config=memory_config,
+            quality_config=quality_config,
+            expose_question_tool=(kind != KIND_ROOM_MEMBER),
+            fail_closed_pending=(kind == KIND_ROOM_MEMBER),
+            system_prompt=system_prompt,
+        )
 
     def remove_session(self, session_id: str, workspace: str | Path | None = None):
         session = self._sessions.pop(session_id, None)
@@ -1942,6 +2089,11 @@ class SessionManager:
                 self._receive_interactions(session, ws_receive, channel, handle)
             )
 
+        # 本回合的出口（Decision 4 的四态 + Decision 17 的「仅实际发言才触发」）：
+        # 文本**只**取自本次 run 的 ``done`` 事件，绝不回退到「读 session 最后一条
+        # assistant」——那条路径在并发被拒时会把陈旧内容当本轮产出。
+        turn_text = ""
+        turn_error = False
         try:
             # drain 永不退出、永远消费 queue（M2）：无绑定连接时事件被丢弃而不是
             # 无界堆积；单条连接 send 失败只摘该连接（channel.broadcast 内部处理），
@@ -1950,6 +2102,14 @@ class SessionManager:
                 event = await queue.get()
                 if event is None:
                     break
+                event_type = event.get("type")
+                if event_type == "done":
+                    data = event.get("data") or {}
+                    turn_text = str(data.get("content") or "")
+                    if data.get("stop_reason") == "error":
+                        turn_error = True
+                elif event_type == "error":
+                    turn_error = True
                 await channel.broadcast(event)
         finally:
             # run 真正结束：pending 立即失败（既有语义，tasks 2.4）。断连走不到这里——
@@ -1974,3 +2134,83 @@ class SessionManager:
                 h for h in session.agent.hooks.hooks
                 if not isinstance(h, DebugHook)
             ]
+
+        # 回合出口落盘 + 通知监听者：**在 run 锁内**（`_run_session_locked` 由
+        # `run_session` 在持锁状态下调用），所以读到的一定是本次 run 的产出。
+        session.last_turn = TurnOutcome(
+            status="failed" if turn_error else "text", text=turn_text
+        )
+        for listener in list(session.turn_listeners):
+            try:
+                await listener(session.last_turn)
+            except Exception:  # noqa: BLE001 - 监听失败不得影响会话本身
+                logger.exception("turn listener failed for session %s", session.session_id)
+
+
+class WebSessionRunner:
+    """``SessionRunner`` 的 web 实现（change ``web-agent-group-chat`` Decision 4）。
+
+    契约的四条硬约束：
+
+    - **返回值而非异常**：调用方（群聊编排器）不会因单个成员失败而中断整轮。
+    - ``text`` **只来自本次 run**：读的是 ``session.last_turn``，而它只在
+      ``_run_session_locked`` 的**锁内**被刷新。并发被拒时本方法在**读取之前**就
+      返回 ``failed(run_in_progress)``，因此永远不会把上一次的产出当本轮发言。
+    - 单轮超时按 ``timeout`` 出口返回；被拒 / 无产出映射为 ``failed``。
+    - 静默由调用方给哨兵（``silent_marker``）时判定，判定依据仍是本次的文本。
+    """
+
+    def __init__(self, manager: SessionManager) -> None:
+        self._manager = manager
+
+    async def run(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        timeout: float | None = None,
+        silent_marker: str | None = None,
+    ) -> TurnOutcome:
+        session = self._manager.get_session(session_id)
+        if session is None:
+            return TurnOutcome(
+                status="failed", code="session_not_found",
+                message=f"session {session_id} is not loaded",
+            )
+        if session.run_lock.locked():
+            # 不要退化成「读 session 最后一条 assistant」：那条路径会把**陈旧内容**
+            # 当本轮发言写进房间日志（design Decision 4 的关键约束）。
+            return TurnOutcome(
+                status="failed", code="run_in_progress",
+                message="another run is already in progress",
+            )
+        effective_timeout = (
+            DEFAULT_TURN_TIMEOUT_SECONDS if timeout is None else timeout
+        )
+        try:
+            await asyncio.wait_for(
+                self._manager.run_session(session, message),
+                timeout=effective_timeout,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            return TurnOutcome(
+                status="timeout",
+                message=f"turn exceeded {effective_timeout:g}s",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 成员失败不中断整轮
+            logger.exception("member run failed for %s", session_id)
+            return TurnOutcome(
+                status="failed", code=type(exc).__name__, message=str(exc)
+            )
+
+        outcome = session.last_turn
+        if outcome is None:
+            return TurnOutcome(
+                status="failed", code="no_output",
+                message="run produced no terminal event",
+            )
+        if outcome.status == "text" and silent_marker and is_silent(outcome.text, silent_marker):
+            return TurnOutcome(status="silent")
+        return outcome
