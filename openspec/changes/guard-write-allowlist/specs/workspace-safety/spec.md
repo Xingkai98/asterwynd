@@ -6,7 +6,7 @@
 
 WorkspacePolicy SHALL 支持一份**显式可写豁免**（`allowed_write_paths`），语义是「deny 默认 + allow 精确覆盖」：默认值为空，未配置时路径拒绝行为 SHALL 与本能力引入前逐条一致。allow SHALL 只能把**已经在 workspace 内、且已被 deny 判定命中的路径**重新放行为可写；它 SHALL NOT 越过 workspace 边界，SHALL NOT 影响读判定。
 
-同一份 `allowed_write_paths` SHALL 同时作用于**文件工具层**（`WorkspacePolicy.assert_write_allowed`）与 **Bash 命令护栏层**（`CommandGuard` 的写目标判定）。两层 SHALL 消费同一份数据与**同一个判定谓词**，SHALL NOT 各自实现一份路径匹配——否则同一路径会因使用哪个工具而得到相反结论，这正是本能力引入前 `.env.local` 两层判定漂移（`bash-command-guard-redesign` 设计 D12）要避免的形态。
+allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判定器共同调用：`WorkspacePolicy.assert_write_allowed` 与命令护栏（`CommandGuard`）的写目标判定 SHALL 都调用它。共享的是**谓词函数**，SHALL NOT 是**调用点**——即 `is_denied` 与其读侧调用方 SHALL NOT 感知 allowlist。
 
 #### Scenario: 列入豁免的路径在文件工具层变为可写
 
@@ -14,10 +14,10 @@ WorkspacePolicy SHALL 支持一份**显式可写豁免**（`allowed_write_paths`
 - **WHEN** 工具请求 `Write .env` 或 `Edit .env`
 - **THEN** `assert_write_allowed` SHALL 放行该路径
 
-#### Scenario: 列入豁免的路径在 Bash 层同样可写
+#### Scenario: 列入豁免的裸名路径在 Bash 层同样可写
 
-- **GIVEN** 同一份 `tools.allowed_write_paths: ['.env']` 已传入命令护栏
-- **WHEN** Bash 请求执行 `cp x .env`、`echo API_KEY=x >> .env`、`tee .env` 或 `dd of=.env`
+- **GIVEN** 同一份 `tools.allowed_write_paths` 已传入命令护栏
+- **WHEN** Bash 请求执行把**裸名**（非嵌套）敏感路径当写目标的命令（`cp x .env`、`echo API_KEY=x >> .env`、`tee .env`、`dd of=.env`）
 - **THEN** 命令护栏 SHALL 判 `allow`（SHALL NOT 以 `mv_cp_dest` / `protected_redirect` / `tee_target` / `dd_target` 拒）
 
 #### Scenario: 未列入豁免的路径仍然拒绝（否定用例）
@@ -39,11 +39,12 @@ WorkspacePolicy SHALL 支持一份**显式可写豁免**（`allowed_write_paths`
 - **WHEN** 工具请求 `Read .env`
 - **THEN** `assert_read_allowed` SHALL 仍拒绝该操作
 
-#### Scenario: 两层结论同向
+#### Scenario: 豁免不影响 tree-sitter / RepoMap 的跳过判定
 
-- **GIVEN** 同一份 allowlist 与同一组 workspace 内路径
-- **WHEN** 分别对文件工具层的 `assert_write_allowed` 与 Bash 层的写目标判定求值
-- **THEN** 两者对每一个路径 SHALL 给出同向结论（同时放行或同时拒绝）
+- **GIVEN** 配置含 `tools.allowed_write_paths: ['.env']`
+- **WHEN** RepoMap 或 SymbolSearch 扫描 workspace
+- **THEN** 被豁免的路径 SHALL 仍被跳过（`repo_map` 的跳过判定走 `is_denied`，SHALL NOT 感知 allowlist）
+- **AND** SHALL NOT 通过 tree-sitter 读取或返回该文件中的符号
 
 ### Requirement: 可写豁免的粒度与配置合法性
 
@@ -68,21 +69,69 @@ WorkspacePolicy SHALL 支持一份**显式可写豁免**（`allowed_write_paths`
 - **WHEN** 系统解析配置
 - **THEN** 系统 SHALL 逐条 fail fast 并返回可读错误
 
-### Requirement: 可写豁免不放宽结构性 deny 与命令 denylist
+### Requirement: 可写豁免不放宽结构性目录 deny 与命令 denylist
 
-`allowed_write_paths` SHALL 只重开**文件级** deny（`.env` 族等敏感点文件名、`*.pem` / `*.key` 等文件模式）。它 SHALL NOT 重开仓库与工具管理的**结构性目录** deny（`.git/**`、`.venv/**`、`node_modules/**`、`__pycache__/**`、`benchmarks/runs/**`、`.asterwynd/worktrees/**`）。命令 denylist（`DEFAULT_DENYLIST` / `_EXTRA_DENYLIST`）的语义 SHALL 不受本能力影响。
+`allowed_write_paths` SHALL 只重开**文件级** deny。**结构性 deny** SHALL 由两条**可机械复算**的来源推导，SHALL NOT 依赖封闭清单：① `DEFAULT_DENIED_PATTERNS` 中含 `/` 的条目；② 路径中任一**路径段**命中目录类敏感名集合（`SENSITIVE_DOTDIRS`：`.git` / `.ssh` / `.aws` / `.gnupg` / `.kube` / `.docker` / `.netrc` / `.npmrc` / `.pypirc`）。其余 deny 条目 SHALL 视为文件级、可被豁免。命令 denylist（`DEFAULT_DENYLIST` / `_EXTRA_DENYLIST`）的语义 SHALL 不受本能力影响。
 
-#### Scenario: 结构性目录 deny 不可被豁免
+#### Scenario: 含 `/` 的 deny 条目是结构性 deny
+
+- **GIVEN** 配置含 `tools.allowed_write_paths: ['.ruff_cache/CACHEDIR.TAG']`
+- **WHEN** 工具请求写该路径
+- **THEN** 系统 SHALL 仍拒绝该操作（`.ruff_cache/**` 含 `/`，属结构性 deny）
+- **AND** 判定 SHALL 由推导得出，SHALL NOT 依赖一份会随 deny 表增删而静默失配的封闭清单
+
+#### Scenario: 目录类敏感名段是结构性 deny
 
 - **GIVEN** 配置含 `tools.allowed_write_paths: ['.git/config']`
 - **WHEN** 工具请求写 `.git/config`
-- **THEN** 系统 SHALL 仍拒绝该操作（`.git/**` 是结构性目录 deny，不被文件级豁免覆盖）
+- **THEN** 系统 SHALL 仍拒绝该操作（`config` 不是敏感名，但路径段 `.git` 命中 `SENSITIVE_DOTDIRS`）
+- **AND** 该结论 SHALL NOT 依赖 deny 表里那条裸 `.git` 条目（它在同一通道里与 `*.pem` 等文件模式混在一起）
+
+#### Scenario: 不含 `/` 的 deny 条目可被豁免
+
+- **GIVEN** 配置含 `tools.allowed_write_paths: ['deploy.pem']`
+- **WHEN** 工具请求写 `deploy.pem`
+- **THEN** 该路径 SHALL 被放行（`*.pem` 是文件级 deny）
+- **AND** 同配置下 `Write other.pem` SHALL 仍被拒绝
 
 #### Scenario: 命令 denylist 不受影响
 
 - **GIVEN** 任意 `tools.allowed_write_paths` 配置
 - **WHEN** Bash 请求执行命中命令 denylist 的命令
 - **THEN** 系统 SHALL 仍拒绝该命令
+
+### Requirement: 可写豁免不使任何一层比引入前更宽
+
+本能力 SHALL 是**增量**的：对未被 allow 命中的路径，文件工具层与命令护栏层的判定 SHALL 与引入本能力前逐条一致；对被 allow 命中的路径，两层的判定 SHALL 同向变化（都从拒变放行）。系统 SHALL NOT 承诺「两层对任意路径恒同向」——两层判定面在引入本能力前就存在差异（命令护栏的写目标判定不消费 `DEFAULT_DENIED_PATTERNS`），该差异不在本能力的职责范围内。
+
+#### Scenario: 未列入的路径逐条不变
+
+- **GIVEN** 一份 allowlist
+- **WHEN** 对任一**未**被其命中的路径求值
+- **THEN** 文件工具层与命令护栏层的判定 SHALL 与引入本能力前的对应结论一致（SHALL NOT 出现「被 allow 顺带放宽」的路径）
+
+#### Scenario: 被命中的路径两层同向变化
+
+- **GIVEN** 一份 allowlist 与一个被它命中的路径
+- **WHEN** 分别对该路径求值文件工具层的写判定与命令护栏的写目标判定
+- **THEN** 两处 SHALL 都从拒变为放行（SHALL NOT 出现只放宽一层的形态）
+
+### Requirement: Bash 层豁免覆盖面差异必须被记录
+
+命令护栏的**整句 denylist 正则扫描**（在命令 IR 判定之前执行）SHALL 保持其现有语义，本能力 SHALL NOT 使其可被配置覆盖。其后果——**嵌套路径**（如 `config/.env`）的 Bash `cp` / `mv` 写目标 SHALL NOT 因 allow 命中而放行（`last_reason` 为 `denylist`），而同一路径的 `Write` / `Edit` / 重定向（`>>`）/ `tee` / `dd of=` / `install` SHALL 放行——SHALL 在规格、change 文档与用户可见的配置示例中**如实记录**，SHALL NOT 被表述为「该路径的写已全部放开」。
+
+#### Scenario: 嵌套路径的 cp/mv 不被豁免放行
+
+- **GIVEN** 配置含 `tools.allowed_write_paths: ['config/.env']`
+- **WHEN** Bash 请求执行 `cp x config/.env` 或 `mv x config/.env`
+- **THEN** 命令护栏 SHALL 仍判 `deny`，`last_reason` SHALL 为 `denylist`
+- **AND** 该结论 SHALL 作为**规格行为**被回归测试锁定（不是缺陷，不得被「顺手修好」）
+
+#### Scenario: 嵌套路径的非 cp/mv 写可被豁免放行
+
+- **GIVEN** 同一份配置 `tools.allowed_write_paths: ['config/.env']`
+- **WHEN** 工具请求 `Write config/.env`，或 Bash 执行 `echo K >> config/.env` / `tee config/.env` / `dd of=config/.env`
+- **THEN** 这些写 SHALL 被放行
 
 ## MODIFIED Requirements
 
@@ -107,7 +156,7 @@ WorkspacePolicy SHALL 保留内置 denied patterns 和 command denylist，并允
 - **GIVEN** 统一配置包含 `tools.allowed_write_paths`
 - **WHEN** 任一入口层（CLI / Web / benchmark）构造工具策略
 - **THEN** 系统 SHALL 把该列表传给同一个 WorkspacePolicy 实例
-- **AND** 文件工具层与 Bash 命令护栏层 SHALL 都据此放行被列入的路径
+- **AND** 文件工具层与 Bash 命令护栏层 SHALL 都据此放行被列入的路径（Bash 侧的覆盖面差异见「Bash 层豁免覆盖面差异必须被记录」）
 
 #### Scenario: tree-sitter 不绕过 read policy
 
