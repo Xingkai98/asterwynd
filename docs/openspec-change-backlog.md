@@ -123,7 +123,7 @@
 
 - `guard-write-allowlist`（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)）：**立项文档已完成 + 前置门已过，待实现**。**十二条 Open Question 已于 2026-10-14 由用户停轮拍板、全部按推荐值裁定**（生效口径见该 change 的 `design.md` 的 `## User Rulings`（U1–U12），逐条答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）：文件级 deny 可覆盖、结构性目录 deny 不可覆盖（两源推导）、精确路径 + glob 解析期 fail fast、`.env` 变体不跟随、只做项目级配置、只放行写、Bash 读侧不堵（记债务另立）、不动 `_EXTRA_DENYLIST`（嵌套路径的 Bash `cp`/`mv` 不在范围内）、allow 只在写路径求值、作用域为任一 workspace 根的相对路径、规格随裁定改、grill 报告保持同行裸 `来源:` 写法。来源是 `bash-command-guard-redesign`（issue #254）Q3 的补测——用户追问「有项目我就是想让 agent 配 env 该怎么办」，当时的答案是「做不到，除非手改源码」；用户拍板白名单机制不塞进 #254、留作独立 change 承接，本 change 即该承接。
 
-  **需求**：新增 `tools.allowed_write_paths`（默认空列表），语义是「**deny 默认 + allow 精确覆盖**」——`tools.allowed_write_paths: ['.env', 'config/.env']` 让被 deny 命中的路径重新可写；不配置时行为零变化。
+  **需求**：新增 `tools.allowed_write_paths`（默认空列表），语义是「**deny 默认 + allow 精确覆盖**」——`tools.allowed_write_paths: ['.env']` 让被 deny 命中的路径重新可写；不配置时行为零变化。示例用**裸名**是因为 U7 裁定不动 `_EXTRA_DENYLIST`：嵌套路径（如 `config/.env`）的 Bash `cp`/`mv` 写不在豁免范围内，只有文件工具写与 `echo >>`/`tee`/`dd of=`/`install` 生效。
 
   **本分支复核出的三条实现要点（与 issue 原文有出入处已订正）**：① 生产构造点确实是三处，但 `web/session.py` 的行号已从 issue 写的 `:1566` 漂移到 **`:1728`**；② issue 说「`WorkspacePolicy.__init__` 已接受 `denied_patterns`、照抄接线即可」——**接线对象错了**：`denied_patterns` 只管 glob 表那一路，`.env` 命中的是 `is_sensitive_dot_name` 的段级判定，实测 `denied_patterns=()` 下 `.env` 仍 `is_denied=True`，所以 allow 必须是**独立判定面**；③ issue 说「护栏用另一张表、必须同源喂两层」——对，且比原文更封闭：`CommandGuard` 在生产路径上**只有一个构造点** `agent/tools/builtin/bash.py:87`，且只拿得到 `workspace_root`，所以「同源」需要**新增传参面**，不是补一个配置字段就自动同源。
 

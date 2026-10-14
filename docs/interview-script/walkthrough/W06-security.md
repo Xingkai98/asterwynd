@@ -32,6 +32,7 @@
 - **路径边界**（is_within_workspace，workspace_policy.py:166）：resolve 后 relative_to 校验，所有文件工具过 assert_within_workspace。
 - **add_root 祖先守卫**（workspace_policy.py:172-192）：禁止添加 workspace 祖先目录（"会开放主 workspace 外的所有文件访问"），禁止添加 /etc、/proc、/sys 等系统敏感目录；敏感目录判定抽成 `is_sensitive_root()`（workspace_policy.py:275），Web hub 新增 workspace 路径复用同一函数，`_DENY_ROOTS` 按 `.resolve()` 后的真实路径比较（防 macOS 符号链接绕过）。
 - **敏感文件 deny**（DEFAULT_DENIED_PATTERNS）：.git/**、.env*、*.pem、id_rsa、__pycache__ 等，读写都拒。
+  例外：`tools.allowed_write_paths` 可按**精确路径**显式放行其中**文件级**的条目（如 `.env`）——只影响写、不影响读，结构性目录 deny（`.git/**` 等）不可覆盖。
 - **命令拒绝列表**（DEFAULT_DENYLIST）：rm -rf /、chmod 777 /、curl|sh、$(cmd)、sudo、git reset --hard、git push --force 等 58 个模式。
 
 **面试澄清**：简历"mode 权限 fail-closed"——`fail_closed` profile 是 `allowed_capabilities=∅`（tool_permissions.py:179-184），无任何能力 → 全部工具 DENY。它不直接是默认行为，而是兜底：某 mode 无匹配 profile 时落到 fail_closed（run_config.py:177）。
