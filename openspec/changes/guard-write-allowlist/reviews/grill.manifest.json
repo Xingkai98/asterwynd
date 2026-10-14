@@ -5,10 +5,10 @@
   "reviewer_run_id": "grill-guard-write-allowlist-20261014",
   "author_run_id": "5e145688-d679-4d7f-b284-7fd205a32f82",
   "base_sha": "fd6d5814b027bc86c50236f3c69853619602192d",
-  "head_sha": "59b48f2dc8e23bde7ac902ba5f75f46e1e8660ed",
-  "tasks_hash": "feca8e4fa28f2c8cb4a99acc226c8f56a97bc709a1c3f8f0e6b3df9a1a00595d",
+  "head_sha": "aadf915987f3aafdf7b9ed3175c8de1c67404a08",
+  "tasks_hash": "e10d5a574e716f02266f42bde3561f44f047991fb0387db27e844e2605adc8f5",
   "spec_hash": "11efd21eea28e71527c81dc62ac927207741407f1a819a8f3b630b91bc2b57ad",
-  "diff_hash": "e05a05595632f6dd6c2f9663ba3f4ead6ec7f2d693a9d55616ba3be6e5d20181",
+  "diff_hash": "39af967b1080fe465525588543febfef2df21ce35431f895378a832ee82d0670",
   "report_hash": "caee404b641c55af486af095e8f8ac5c248b93db5ad4e99b632ed00fb2098152",
   "report_path": "reviews/grill-design.md"
 }
