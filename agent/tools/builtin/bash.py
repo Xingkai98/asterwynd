@@ -89,6 +89,7 @@ class BashTool(Tool):
         self._guard = CommandGuard(
             workspace=self.policy.workspace_root,
             allowed_write_paths=self.policy.allowed_write_paths,
+            denied_patterns=self.policy.denied_patterns,
         )
         self._run_in_background_cb = run_in_background_cb
         self._approval_handler = approval_handler

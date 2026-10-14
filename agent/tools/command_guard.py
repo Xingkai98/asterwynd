@@ -36,6 +36,7 @@ from agent.tools.bash_ir import (
     is_interpreter,
 )
 from agent.workspace_policy import (
+    DEFAULT_DENIED_PATTERNS,
     DEFAULT_DENYLIST,
     is_sensitive_dot_name,
     write_allowlist_covers,
@@ -700,6 +701,7 @@ class CommandGuard:
         self,
         workspace: str | Path | None = None,
         allowed_write_paths: tuple[str, ...] | list[str] | None = None,
+        denied_patterns: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         self._workspace = str(Path(workspace).resolve()) if workspace else None
         #: Explicit write exemptions, handed over by `BashTool` from the very
@@ -707,6 +709,12 @@ class CommandGuard:
         #: judge writes against one source (change: guard-write-allowlist,
         #: Decision 2). Snapshotted at construction.
         self._allowed_write_paths = tuple(allowed_write_paths or ())
+        #: The deny table the *policy* uses, needed to classify a path as
+        #: structurally denied (U12). Passing it keeps both layers on one table:
+        #: if `denied_patterns` ever becomes configurable, a custom directory
+        #: entry must not be treated as file-level (hence overridable) by the
+        #: guard while the policy treats it as structural.
+        self._denied_patterns = tuple(denied_patterns or DEFAULT_DENIED_PATTERNS)
         # Combine the project's base denylist (dd/mkfs/sudo/shutdown/python -c/
         # curl|sh/$( )/git reset 等) with the extra bypass-variant patterns.
         self._denylist = (*DEFAULT_DENYLIST, *_EXTRA_DENYLIST)
@@ -746,7 +754,7 @@ class CommandGuard:
         rel = rel.replace(os.sep, "/")
         while rel.startswith("./"):
             rel = rel[2:]
-        return write_allowlist_covers(rel, self._allowed_write_paths)
+        return write_allowlist_covers(rel, self._allowed_write_paths, self._denied_patterns)
 
     def check(self, command: str) -> CommandVerdict:
         self.last_reason = None

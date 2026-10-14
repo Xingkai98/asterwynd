@@ -56,7 +56,7 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 
 ### Requirement: 可写豁免的粒度与配置合法性
 
-`allowed_write_paths` 的每一项 SHALL 是 workspace 相对路径的**字面值**（精确匹配）。配置解析 SHALL 对以下条目 fail fast 并返回可读错误，SHALL NOT 宽容接受：含 glob 元字符（`*`、`?`、`[`、`]`）、绝对路径、含 `..` 路径段、以及以 `/` 结尾的目录形式。
+`allowed_write_paths` 的每一项 SHALL 是 workspace 相对路径的**字面值**（精确匹配）。配置解析 SHALL 对以下条目 fail fast 并返回可读错误，SHALL NOT 宽容接受：含 glob 元字符（`*`、`?`、`[`、`]`）、绝对路径、含 `..` 路径段、以 `/` 结尾的目录形式，以及**无法与 `relative_path()` 的返回值相等的非规范拼写**（前导 `./`、重复斜杠、含 `.` 段、反斜杠分隔、落成空路径）——最后一类的理由是这类条目永远匹配不上，接受它等于给安全白名单制造**静默 no-op**；条目两端空白由配置解析的既有 `strip()` 处理，不属此类。
 
 #### Scenario: 精确路径生效
 
@@ -76,6 +76,14 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 - **GIVEN** 配置含绝对路径、含 `..` 段的路径或以 `/` 结尾的目录形式
 - **WHEN** 系统解析配置
 - **THEN** 系统 SHALL 逐条 fail fast 并返回可读错误
+
+#### Scenario: 非规范拼写 fail fast（防静默 no-op）
+
+- **GIVEN** 配置含 `./.env`、`a//b`、`a/./b` 或 `a\b` 这类非规范拼写
+- **WHEN** 系统解析配置
+- **THEN** 系统 SHALL 逐条 fail fast 并返回可读错误，提示改成规范写法
+- **AND** 该条 SHALL NOT 依赖运行时静默失效（这类条目永远匹配不上 `relative_path()`）
+- **AND** 条目两端空白 SHALL 仍被 `strip()` 接受（`' .env'` 解析为 `'.env'`）
 
 ### Requirement: 可写豁免不放宽结构性目录 deny 与命令 denylist
 
@@ -110,7 +118,7 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 
 ### Requirement: 可写豁免不使任何一层比引入前更宽
 
-本能力 SHALL 是**增量**的：对未被 allow 命中的路径，文件工具层与命令护栏层的判定 SHALL 与引入本能力前逐条一致；对被 allow 命中的路径，**在命令护栏的「写目标判定面」上**判定 SHALL 与文件工具层同向变化（都从拒变放行）。「写目标判定面」SHALL 指 `CommandGuard` 中**消费写目标路径**的判定：写目标位置的目标判定、重定向目标判定、动态目标判定、`mv`/`cp` 目标判定、`tee` 目标判定与 `dd of=` 目标判定。它 SHALL NOT 包含：① 在命令 IR 判定之前执行的**整句 denylist 正则扫描**；② `mv`/`cp` 的**源位置**判定（读侧，SHALL NOT 被 allow 影响）；③ `rm` 的**逃逸**判定。系统 SHALL NOT 承诺「两层对任意路径恒同向」——两层判定面在引入本能力前就存在差异（命令护栏的写目标判定不消费 `DEFAULT_DENIED_PATTERNS`），该差异不在本能力的职责范围内；①的刻意例外见「Bash 层豁免覆盖面差异必须被记录」。
+本能力 SHALL 是**增量**的：对未被 allow 命中的路径，文件工具层与命令护栏层的判定 SHALL 与引入本能力前逐条一致；对被 allow 命中的路径，**在命令护栏的「写目标判定面」上**判定 SHALL 与文件工具层同向变化（都从拒变放行）。「写目标判定面」SHALL 指 `CommandGuard` 中**消费写目标路径**的判定：写目标位置的目标判定、重定向目标判定、动态目标判定、`mv`/`cp` 目标判定、`tee` 目标判定与 `dd of=` 目标判定。它 SHALL NOT 包含：① 在命令 IR 判定之前执行的**整句 denylist 正则扫描**；② `mv`/`cp` 的**源位置**判定（读侧，SHALL NOT 被 allow 影响）；③ `rm` 的**逃逸**判定；④ **命令护栏不感知附加根**——`CommandGuard` 只持有主 workspace（它没有 `additional_roots`），而文件工具层按「任一 workspace 根」的相对路径匹配（见「显式可写豁免」Requirement），因此附加根下的路径会出现「文件工具层放行、命令护栏仍拒」的形态。系统 SHALL NOT 承诺「两层对任意路径恒同向」——两层判定面在引入本能力前就存在差异（命令护栏的写目标判定不消费 `DEFAULT_DENIED_PATTERNS`），该差异不在本能力的职责范围内；①与④的刻意例外见「Bash 层豁免覆盖面差异必须被记录」。
 
 #### Scenario: 未列入的路径逐条不变
 
@@ -133,9 +141,20 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 - **AND** 该形态 SHALL 被视为「Bash 层豁免覆盖面差异必须被记录」的**显式例外**，SHALL NOT 被读作本 Requirement 的违反
 - **NOTE** 例外只适用**命中整句正则**的敏感名：同一 `config/` 下的非敏感目标（如 `config/notes.txt`）今天就是 `allow`，不受本例外约束——本 Scenario SHALL NOT 被读成「嵌套路径一律不与文件层同向」
 
+#### Scenario: 附加根下的路径也不与文件层同向（根盲区）
+
+- **GIVEN** 主 workspace 根 `/repo`，附加根 `/srv/other` 已通过 `/workspace add` 追加，配置含 `tools.allowed_write_paths: ['.env']`
+- **WHEN** 对 `/srv/other/.env` 求值文件工具层的写判定，并分别求值命令护栏的重定向目标 / `tee` / `dd of=` / `install` 写目标判定
+- **THEN** 文件工具层 SHALL 放行（豁免按任一 workspace 根的相对路径匹配）
+- **AND** 命令护栏 SHALL 仍判 `deny`（重定向 ⇒ `protected_redirect`、`tee` ⇒ `tee_target`、`dd of=` ⇒ `dd_target`、`install` ⇒ `install_target`）
+- **AND** 该形态 SHALL 被视为本 Requirement 排除项 ④ 的**显式例外**，SHALL NOT 被读作违反
+- **NOTE** 它与「嵌套敏感路径命中整句正则」**不同源**：那里是 pre-IR 的整句 denylist 正则（`cp` / `mv` 的 `last_reason` 为 `denylist`），这里是护栏**看不到附加根**；两者 SHALL 分开归因
+
 ### Requirement: Bash 层豁免覆盖面差异必须被记录
 
 命令护栏的**整句 denylist 正则扫描**（在命令 IR 判定之前执行）SHALL 保持其现有语义，本能力 SHALL NOT 使其可被配置覆盖。其后果——**嵌套路径**（如 `config/.env`）的 Bash `cp` / `mv` 写目标 SHALL NOT 因 allow 命中而放行（`last_reason` 为 `denylist`），而同一路径的 `Write` / `Edit` / 重定向（`>>`）/ `tee` / `dd of=` / `install` SHALL 放行——SHALL 在规格、change 文档与用户可见的配置示例中**如实记录**，SHALL NOT 被表述为「该路径的写已全部放开」。
+
+另有一条**不同源**的覆盖面差异 SHALL 一并如实记录：**命令护栏不感知附加根**（`CommandGuard` 只持有主 workspace）。附加根下的路径（如 `/srv/other/.env`）在文件工具层可被豁免放行，但命令护栏的重定向 / `tee` / `dd of=` / `install` 写目标判定 SHALL 仍判 `deny`（`protected_redirect` / `tee_target` / `dd_target` / `install_target`，均属可挂钩面但路径比对不中），`cp` / `mv` 则**同时**叠加整句正则那层。两条差异 SHALL NOT 被混为一条归因。
 
 #### Scenario: 嵌套路径的 cp/mv 不被豁免放行
 
@@ -149,6 +168,14 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 - **GIVEN** 同一份配置 `tools.allowed_write_paths: ['config/.env']`
 - **WHEN** 工具请求 `Write config/.env`，或 Bash 执行 `echo K >> config/.env` / `tee config/.env` / `dd of=config/.env`
 - **THEN** 这些写 SHALL 被放行
+
+#### Scenario: 附加根的写形态因根盲区仍拒（与整句正则不同源）
+
+- **GIVEN** 主根 `/repo` + 附加根 `/srv/other`，配置含 `tools.allowed_write_paths: ['.env']`
+- **WHEN** Bash 执行 `echo K >> /srv/other/.env` / `tee /srv/other/.env` / `dd of=/srv/other/.env` / `install x /srv/other/.env`
+- **THEN** 命令护栏 SHALL 仍判 `deny`，`last_reason` 分别为 `protected_redirect` / `tee_target` / `dd_target` / `install_target`
+- **AND** 该组拒绝的来源 SHALL 归因为**根盲区**（护栏只持有主 workspace），SHALL NOT 与「命中整句 denylist 正则」混为一谈
+- **AND** 该结论 SHALL 作为规格行为被回归测试锁定
 
 ## MODIFIED Requirements
 

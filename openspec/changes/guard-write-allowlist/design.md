@@ -94,6 +94,8 @@
 - **直接消灭 issue 的 `**/*` 硬约束**：一个「匹配一切」的模式会把 `.git/config` 一起打开（issue 实测）。把 glob 从授权面整体移走，比给 `**/*` 加黑名单特判更彻底——后者还要处理 `./**/*`、`.//**/*`、`x/../**/*` 等等价拼写。fail fast 让这类拼写**根本进不了运行时**。
 - **防御性收益**：`is_denied` 的现有实现对每个候选做 `fnmatch`（`agent/workspace_policy.py:331-337`），allow 若也走 glob，就等于在这条已经出过越界 bug（本仓 #247、CVE-2025-54794 的同类）的路径上再加一层 `fnmatch` 语义。
 
+**实现期补充：还拒绝「非规范拼写」（与 U2 的四类并列，实现后按 U10 回写）**。除 glob 元字符 / 绝对路径 / `..` 段 / 尾 `/` 四条外，解析器还拒绝**前导 `./`**、**重复斜杠 `//`**、**`a/./b`** 这类含 `.` 段、**反斜杠分隔**以及**落成空路径**的条目。理由三条：① 这类条目**永远匹配不上** `WorkspacePolicy.relative_path()` 的返回值 ⇒ 接受它就是给一份**安全白名单**制造**静默 no-op**——本能力最坏的失败模式（用户以为开了、实际没开，而报错无处可见）；② 不误伤任何**功能性**配置：一切能表达的有效路径都有规范写法，且空白已被 `_parse_string_list` 的 `strip()` 兜住（`' .env'` / `'.env '` 仍解析为 `('.env',)`）；③ 与本能力「非法值 fail fast」的一贯口径一致，报错文案可操作（提示去掉前导 `./`）。**这是实现期的收紧而非放宽**，已同步进规格 delta 与 current spec 的「可写豁免的粒度与配置合法性」Requirement，并有 `tests/agent/test_config.py` 的逐条用例。
+
 **代价（如实写）**：用户想给一个目录下 10 个 env 文件授权时，必须写 10 条。这是**接受**的代价——本 change 的存在理由是「精确豁免」，不是「目录级授信」。若日后确实需要，`dir/**` 语法可以作为独立扩展（届时它需要单独解决「`**` 的段边界」问题，正是 #247 那一类）。
 
 **否决的备选**：(a) 允许任意 glob + 只特判 `**/*`——等价拼写漏不完，且 `fnmatch` 的段边界语义与 `is_denied` 的段级判定不一致；(b) 目录前缀（`config/` 授 `config/` 下一切）——`config/` 会把 `config/.env.production` 一起打开，与 U3 的裁定（变体不跟随）自相矛盾。
@@ -128,6 +130,8 @@
 | **嵌套**（`config/.env`） | ✅ 可兑现 | ✅ 可兑现（`protected_redirect` / `tee_target` / `dd_target` / `install_target`，均可挂钩） | ❌ **不可兑现**（被 `_EXTRA_DENYLIST` 整句正则在 IR 之前拦下，`last_reason=denylist`，`agent/tools/command_guard.py:609` / 扫描循环 `:737-740`） |
 
 **理由**：`check()` 的**第 1 步**是「对整句跑 denylist 正则」并**立即返回 `DENY`**（`:737-741`），它排在所有 IR 判定之前。那条正则要求「第二个参数里含 `/<敏感点名>`」，所以**只**拦嵌套形态：`cp x .env` 不匹配它（走 `mv_cp_dest`），`cp x config/.env` 匹配它。实测五个拼写变体（`./config/.env`、`'config/.env'`、`/tmp/../config/.env`）**全部**命中同一条 regex。
+
+**与上面这张表正交的另一条**（同样如实记录、**不同源**）：**附加根**（`/workspace add` / Web hub「+ 添加」）下的路径只在文件工具层兑现——护栏只持有主 workspace，`echo K >> /srv/other/.env` / `tee` / `dd of=` / `install` 因**根盲区**仍拒（`cp` / `mv` 另叠加整句正则那层）。详见 U9 的表与规格的排除项 ④。
 
 **为什么不让正则扫描给 allow 让路**：把 allow 判定提到第 1 步之前，等于让一条**整句正则**的命中可以被配置覆盖——而那条正则正是 `#254` 重建的单一解析管线的**第一道**、也是承载最多攻击用例的通道（`#254` 的 RIR findings 5 实测：清空 denylist 后攻击集拦截数 54 → 20）。为一个嵌套路径的 `cp` 便利去动它，收益与风险不对称，且违反 proposal 的 Non-Goal。
 
@@ -253,7 +257,14 @@
 
 **落地效果**：主根 `/repo`、附加根 `/srv/other`（`web/session.py:1516` 的 `register_workspace`；CLI 侧 `agent/commands/registry.py:507` 的 `policy.add_root(arg, create=True)`），配 `allowed_write_paths: ['.env']` ⇒ `Write /srv/other/.env` ⇒ ALLOW（`relative_path` 对附加根返回根相对路径，`agent/workspace_policy.py:307-314`）。
 
-**须如实记录的边界**：Bash 层 `cp x /srv/other/.env` 实测 `last_reason=denylist`——附加根必然是绝对路径、含 `/`，先命中 `command_guard.py:609` 的**不可挂钩**整句正则，与 U7 的嵌套路径缺口**同源**。
+**须如实记录的边界（两种成因，SHALL 分开归因）**：附加根下的路径在 Bash 层**不是同一种拒绝**——
+
+| 写形态 | 实测 `last_reason` | 成因 |
+|---|---|---|
+| `cp x /srv/other/.env` / `mv …` | `denylist` | 附加根必然是绝对路径、含 `/` ⇒ 先命中 `command_guard.py:609` 的整句正则（pre-IR、不可挂钩），与 U7 的嵌套缺口**同源** |
+| `echo K >> …` / `tee …` / `dd of=…` / `install x …` | `protected_redirect` / `tee_target` / `dd_target` / `install_target` | **根盲区**（root-blindness）：`CommandGuard` 只持有**主** workspace（它没有 `additional_roots`），路径比对不中 ⇒ 与 U7 **不同源**，也**不在** Decision 2 的排除项 ①②③ 内 |
+
+⇒ 本 change 交付的「如实划定兑现面」在这条上必须写准：其余四形不是「denylist 让路不让路」的问题，而是**护栏根本看不见那个根**。已在规格的「不使任何一层更宽」Requirement 补排除项 ④ + Scenario，并在「Bash 层豁免覆盖面差异必须被记录」补一条不同源说明，配回归断言钉住（`tests/agent/tools/test_command_guard.py` 的 `TestAdditionalRootIsRootBlind`）。**修法只改文字与断言，不改行为**：让护栏感知附加根会扩大本 change 范围（等于把 workspace 边界语义复制进护栏），且 U9 只裁定「条目作用域」，未裁定「护栏要不要感知附加根」。
 
 **否决的备选**：只覆盖主 workspace 根——需要额外解释「为什么同一个相对路径在不同根下结论不同」，而「用户加根」本身已经是一次显式授权。
 

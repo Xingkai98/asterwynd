@@ -1099,3 +1099,114 @@ class TestCrossLayerWriteAllowlist:
             "git status",
         ):
             assert plain_guard.check(command) is guard.check(command), command
+
+
+class TestAdditionalRootIsRootBlind:
+    """附加根（`/workspace add` / Web hub「+ 添加」）下的护栏现状（change: guard-write-allowlist）。
+
+    **这是规格行为的如实记录，不是缺陷** —— 见 current spec 的「可写豁免不使
+    任何一层比引入前更宽」Requirement 的排除项 ④：`CommandGuard` 只持有**主**
+    workspace（它没有 `additional_roots`），而 `WorkspacePolicy.relative_path()`
+    对附加根返回根相对路径 ⇒ 附加根下的路径在文件工具层可被豁免，命令护栏却
+    看不见那个根。
+
+    与 U7 的嵌套缺口**不同源**，两者要分开归因：
+      - `cp` / `mv` ⇒ 命中不可挂钩的**整句 denylist 正则**（U7 那一类）；
+      - `>>` / `tee` / `dd of=` / `install` ⇒ **根盲区**（本类钉住的这条）。
+    """
+
+    def test_additional_root_writes_stay_denied_in_guard(self, tmp_path):
+        from agent.workspace_policy import WorkspacePolicy
+
+        main_root = tmp_path / "repo"
+        extra_root = tmp_path / "other"
+        main_root.mkdir()
+        extra_root.mkdir()
+        policy = WorkspacePolicy(main_root, allowed_write_paths=(".env",))
+        policy.add_root(str(extra_root))
+        guard = CommandGuard(
+            workspace=str(main_root),
+            allowed_write_paths=policy.allowed_write_paths,
+            denied_patterns=policy.denied_patterns,
+        )
+        target = extra_root / ".env"
+
+        # 文件工具层：豁免生效（U9：条目按任一 workspace 根的相对路径匹配）
+        assert policy.assert_write_allowed(target) == target.resolve()
+
+        # 命令护栏层：四种非 cp/mv 形态因**根盲区**仍拒
+        for command, reason in (
+            (f"echo K >> {target}", "protected_redirect"),
+            (f"tee {target}", "tee_target"),
+            (f"dd of={target}", "dd_target"),
+            (f"install x {target}", "install_target"),
+        ):
+            assert guard.check(command) is CommandVerdict.DENY, command
+            assert guard.last_reason == reason, command
+
+        # cp / mv 另有一层原因（整句 denylist 正则，与 U7 同源）
+        for command in (f"cp x {target}", f"mv x {target}"):
+            assert guard.check(command) is CommandVerdict.DENY, command
+            assert guard.last_reason == "denylist", command
+
+    def test_main_root_counterpart_is_allowed(self, tmp_path):
+        """对照：同一 allowlist 在主根下四形**都**放行——差异确实来自「哪个根」。"""
+        from agent.workspace_policy import WorkspacePolicy
+
+        main_root = tmp_path / "repo"
+        main_root.mkdir()
+        policy = WorkspacePolicy(main_root, allowed_write_paths=(".env",))
+        guard = CommandGuard(
+            workspace=str(main_root),
+            allowed_write_paths=policy.allowed_write_paths,
+            denied_patterns=policy.denied_patterns,
+        )
+        for command in ("echo K >> .env", "tee .env", "dd of=.env", "install x .env", "cp x .env"):
+            assert guard.check(command) is CommandVerdict.ALLOW, command
+
+
+class TestGuardUsesPolicyDenyTable:
+    """两层必须读**同一张** deny 表（change: guard-write-allowlist，审阅 I-4）。
+
+    结构性判定（U12）依赖 deny 表；若护栏吃默认表、policy 吃自定义表，
+    「什么算结构性 deny」会有两份答案。当前 `denied_patterns` 不是配置项、
+    生产恒为默认，故这是**潜伏**分歧而非现存缺陷（且反向更严）；仍然把表
+    传进护栏，使 `BashTool` 的构造点真正「同源」。
+    """
+
+    def test_custom_deny_table_is_honoured(self, tmp_path):
+        """自定义 deny 表里的目录级条目，在护栏侧同样算「结构性」而不可豁免。
+
+        实测差异：`denied_patterns=("sub/.env",)` + `allowed_write_paths=("sub/.env",)`
+        时 policy 判 DENY（该条目含 `/` ⇒ 结构性）；若护栏吃**默认**表，
+        `echo K >> sub/.env` 会被判 ALLOW —— 两层对「什么算结构性」给出相反答案。
+        把表传进护栏后两者一致。
+        """
+        from agent.workspace_policy import WorkspacePolicy
+
+        root = tmp_path / "ws"
+        root.mkdir()
+        custom = ("sub/.env",)
+        policy = WorkspacePolicy(root, denied_patterns=custom, allowed_write_paths=custom)
+
+        with pytest.raises(PermissionError):
+            policy.assert_write_allowed("sub/.env")  # 结构性 ⇒ 豁免覆盖不了
+
+        guard = CommandGuard(
+            workspace=str(root),
+            allowed_write_paths=policy.allowed_write_paths,
+            denied_patterns=policy.denied_patterns,
+        )
+        assert guard.check("echo K >> sub/.env") is CommandVerdict.DENY
+        assert guard.last_reason == "protected_redirect"
+
+        # 对照：吃默认表的护栏会给出相反结论（证明传表不是空转）
+        default_table_guard = CommandGuard(
+            workspace=str(root), allowed_write_paths=custom, denied_patterns=None
+        )
+        assert default_table_guard.check("echo K >> sub/.env") is CommandVerdict.ALLOW
+
+    def test_default_table_still_used_when_not_passed(self):
+        guard = CommandGuard(workspace="/tmp/ws", allowed_write_paths=(".git/config",))
+        assert guard.check("echo K >> .git/config") is CommandVerdict.DENY
+        assert guard.last_reason == "protected_redirect"

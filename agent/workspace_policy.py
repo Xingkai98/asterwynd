@@ -430,25 +430,34 @@ class WorkspacePolicy:
             raise PermissionError(f"Read denied by workspace policy: {resolved.as_posix()}")
         return resolved
 
-    def is_write_allowed(self, path: str | Path) -> bool:
-        """True when an explicit write exemption re-opens an otherwise-denied path.
+    def _allowlist_covers_resolved(self, resolved: Path) -> bool:
+        """``write_allowlist_covers`` for an already-resolved, in-workspace path.
 
-        Read-only: it answers "would the allowlist cover this path?", not "is
-        this path safe?". The workspace boundary is checked first and is never
-        overridable.
+        Split out so `assert_write_allowed` (which has already resolved and
+        boundary-checked) does not resolve a second time.
         """
         if not self.allowed_write_paths:
             return False
-        resolved = self.assert_within_workspace(path)
-        rel = self.relative_path(resolved)
-        return write_allowlist_covers(rel, self.allowed_write_paths, self.denied_patterns)
+        return write_allowlist_covers(
+            self.relative_path(resolved), self.allowed_write_paths, self.denied_patterns
+        )
+
+    def is_write_allowed(self, path: str | Path) -> bool:
+        """True when an explicit write exemption re-opens an otherwise-denied path.
+
+        Public counterpart of `is_denied`, kept for symmetry and for callers that
+        want to *ask* rather than assert. Read-only: it answers "would the
+        allowlist cover this path?", not "is this path safe?". The workspace
+        boundary is checked first and is never overridable.
+        """
+        return self._allowlist_covers_resolved(self.assert_within_workspace(path))
 
     def assert_write_allowed(self, path: str | Path) -> Path:
         resolved = self.assert_within_workspace(path)
         # The exemption is consulted only after the deny judgement fires, and
         # only on this write path -- `is_denied` itself is untouched, so reads
         # (`assert_read_allowed`) and `repo_map`'s skip judgement are unaffected.
-        if self.is_denied(resolved) and not self.is_write_allowed(resolved):
+        if self.is_denied(resolved) and not self._allowlist_covers_resolved(resolved):
             raise PermissionError(f"Write denied by workspace policy: {resolved.as_posix()}")
         return resolved
 
