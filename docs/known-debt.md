@@ -477,3 +477,26 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 1. **记忆 review 的成本未进任何账本（I5）**。`design.md` / tasks 3.13 要求 review 的 `1 + k` 次调用「计入 `CostLedger`」，管线也接好了（`agent/team/memory_review.py` 的 `record_usage` → `MemoryReviewService._cost_ledger.record(phase="memory_review")`），但 `web/` 下**根本不存在** `CostLedger`（全仓只有 `agent/main.py` 的 CLI 路径建账本），`web/team.py` 构造 `MemoryReviewService` 时也没传，于是生产路径永远走 `if self._cost_ledger is None: return`——**排期次数与 token 都不进账本、也没有任何出口**（`cost_counter` 只在测试里被读）。收敛方向：给 Web 路径提供账本并在 `TeamService` 注入（属独立的成本可观测性 change）。**当前口径**：tasks 3.13 已把该子项改写成「按 1+k 口径计数，Web 生产路径尚未注入 `CostLedger`」，不再声称「已计入账本」。
 
 2. **会话数上限是「内存会话数」上限，不是「MCP 子进程数」上限（I7）**。`design.md` Decision 1 的成本模型（人设数 × 每会话一份 `AgentLoop` + MCP 子进程 + 独立 subagent 并发额度 + 工具注册表）是「懒构造 + 有上限」的依据；但 `SessionManager.unload_session` / `remove_session` 都**只丢内存引用**，没有 `mcp_manager.aclose()`（`agent/mcp/manager.py` 有该方法，Web 路径无人调用）。因此 MCP 子进程要等对象被 GC 才随 `_exit_stack` 回收，上限约束的严格对象是「活着的 `AgentSession` 数」。`remove_session` 的这一性质在本 change **之前**就存在，`unload_session` 是本 change 新增且沿用了同一形态（未单独把它做成显式 close，以免两条生命周期路径口径分叉）。收敛方向：在 `remove_session` / `unload_session` 里统一显式 close（或改用 GC 无关的托管生命周期）。
+
+## 命令护栏的 Bash 读侧缺口（guard-write-allowlist 显式不做，U6）
+
+`guard-write-allowlist` 引入了 `tools.allowed_write_paths`（显式可写豁免），裁定为**只放行写**（U5）。但「只放行写」的保护面**只在文件工具层**成立，Bash 层读 `.env` 今天本来就是通的：
+
+- 实测（`agent/workspace_policy.py` 的 `assert_command_allowed` 与 `agent/tools/command_guard.py` 的 `CommandGuard.check` **两层都 ALLOW**）：`cat .env`、`grep API_KEY .env`、`head -5 .env`、`source .env`、`. .env`。
+- 护栏只查 `mv` / `cp` 的**源位置**（`_check_target` 的 `mv`/`cp` 分支）；`python -c 'open(".env").read()'` 是被 `DEFAULT_DENYLIST` 的 `python3?\s+-c\b` 拦下的，属另一条理由。
+
+⇒ **任何「配置了写豁免也读不到凭据」的说法都必须限定在文件工具层**（`Read` / `Grep` / `ListFiles` / `Find` / `ReadDoc` / `InspectGitDiff` / LSP），不得写成无限定语。
+
+**为什么不在该 change 内堵**（U6 裁定：记债务另立）：这是**新增一个读侧判定能力**——要给 `cat` / `head` / `tail` / `less` / `grep` / `source` / `.` / `awk` 等一批命令新增「哪个参数是读目标」的语义，而命令护栏刻意只对写命令做目标判定；扩读侧会立刻带来误报面（`git log -- .env`、`grep -rn "cat .env" docs/` 这类**文本里提到路径**的命令），而误报在无 UI 环境下等于硬拒。收敛方向：另立 change 设计读侧目标语义与误报预算。
+
+## 面试讲稿里四处陈旧的技术口径（guard-write-allowlist 7.1 扫描发现，均为变更前既有）
+
+`guard-write-allowlist` 的 7.1「文档影响面扫描」按 AGENTS.md 要求扫了 `docs/` + `README.md` + `AGENTS.md` + `CONTEXT.md`，其中 ① 已就地修正（`W06-security.md` 的「读写都拒」在本能力后变半真，已补例外句）。以下四处**不是**本 change 造成的事实变化，实测在 `fd6d581` 上就已经是陈旧口径，按 AGENTS.md 记债：
+
+1. **`DEFAULT_DENYLIST` 的计数写小了一**：`docs/interview-script/walkthrough/W06-security.md:11`（`└─ 命令拒绝列表：DEFAULT_DENYLIST（58 个危险模式）`）与 `:35`（同款「58 个模式」）**两处**都写 58，实测 `len(DEFAULT_DENYLIST) == **59**`。
+2. **`DEFAULT_DENIED_PATTERNS` 的计数与模式清单已失真**：`docs/interview-bullets/walkthrough.md:2483` 写「**35 条**」并列出 `.env` / `.env.*` / `**/.env` 等模式，`:2497` 写「合计 35 条 glob pattern（9 大类）」。实测该表现为 **32** 条，且 `.env` 族**早已不在表里**——`#254`（`bash-command-guard-redesign`）把「什么算敏感点文件名」收敛成段级谓词 `is_sensitive_dot_name`，`.env` 走的是代码判定而非 glob。⇒ 这段讲稿的「模式清单」需要按 `agent/workspace_policy.py:9-43` 重列。
+3. **同文件 `:2481` 的行号锚点过期**：写 ``**文件**：`agent/workspace_policy.py:9-45` ``，该常量块现为 **`9-43`**。
+4. **同文件 `:2499` 的行号锚点过期**：写 `` `is_denied()`（`:222-239`）``。该方法在 `guard-write-allowlist` 合入**前**为 `:316-338`，合入**后**为 **`:393`**（`agent/workspace_policy.py` 从 398 行增长到 507 行，新增的写白名单谓词插在它上面）；其间 `#247` 的路径段边界修复与 D12 的谓词收敛也改过它。⇒ 修讲稿时请按**合入后**的 `:393` 写，或改用 `grep -n 'def is_denied' agent/workspace_policy.py` 现查（行号会随代码漂移，这是本条目自身的教训）。
+
+**为什么不在本 change 内顺手改**：这四条都在 `docs/interview-*`（面试讲稿面），改它们要连带核对同段落的其它数字与叙述（如「9 大类」的分类表），属一次独立的讲稿事实校对；混进本 change 会让「写白名单」的 diff 无法独立评估（与 Decision 6 对 `handoff.json` 同款判断）。**收敛方向**：另立一次讲稿事实校对，按 `agent/workspace_policy.py` 的当前常量重算全部计数与行号锚点。
+

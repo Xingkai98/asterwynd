@@ -109,6 +109,78 @@ def is_sensitive_dot_name(part: str) -> bool:
     return part in SENSITIVE_DOTDIRS or part in SENSITIVE_DOTFILES
 
 
+# --- Explicit write allowlist: "deny by default + exact allow override" -------
+#
+# `allowed_write_paths` re-opens paths the deny judgement would otherwise reject.
+# Two rulings shape this (openspec/changes/guard-write-allowlist, U1/U2/U5/U8/U12):
+#
+# * **Exact paths only.** Entries are workspace-relative literals; the config
+#   parser rejects glob metacharacters, absolute paths, `..` segments and
+#   trailing `/`. The industry precedent is codex, which allows globs for
+#   *deny-read* only and grants writes through exact paths
+#   (`sandboxing/src/policy_transforms.rs:30-41`).
+# * **File-level deny only.** Structural (directory) deny stays closed — see
+#   `is_structural_deny_pattern` / `is_structural_denied_path`.
+#
+# The predicate is shared, but its *call sites* are not: only the write paths
+# consult it (`assert_write_allowed` and the command guard's write-target
+# judgement). `is_denied` keeps its semantics, so reads and the tree-sitter
+# skip judgement in `repo_map` never see the allowlist.
+
+
+def is_structural_deny_pattern(pattern: str) -> bool:
+    """True when a deny pattern's reach is a **directory subtree**, not one file.
+
+    Derived rather than enumerated (U12) so it cannot silently drift when
+    `DEFAULT_DENIED_PATTERNS` gains or loses entries: a pattern that contains
+    ``/`` denotes a subtree (`.git/**`, `benchmarks/runs`, `**/id_rsa`), while a
+    `/`-free pattern denotes a single file name (`*.pem`, `id_rsa`, `.git`).
+    """
+    return "/" in pattern
+
+
+def is_structural_denied_path(
+    rel: str, denied_patterns: tuple[str, ...] | list[str] = DEFAULT_DENIED_PATTERNS
+) -> bool:
+    """True when ``rel`` is rejected by a **structural** (non-overridable) source.
+
+    Two sources, both derived (U12):
+
+    1. any deny pattern containing ``/`` matches the path, or
+    2. any of the path's **segments** names a sensitive dot *directory*
+       (`SENSITIVE_DOTDIRS`) — the denial of `.git/config` comes from the
+       segment, not from the `-`-free `.git` glob entry.
+    """
+    parts = [part for part in rel.split("/") if part not in ("", ".")]
+    if any(part in SENSITIVE_DOTDIRS for part in parts):
+        return True
+    candidates = {rel, rel.rsplit("/", 1)[-1], *parts}
+    for pattern in denied_patterns:
+        if not is_structural_deny_pattern(pattern):
+            continue
+        normalized = pattern.strip("/")
+        if fnmatch.fnmatchcase(rel, normalized):
+            return True
+        if any(fnmatch.fnmatchcase(candidate, normalized) for candidate in candidates):
+            return True
+    return False
+
+
+def write_allowlist_covers(
+    rel: str,
+    allowlist: tuple[str, ...] | list[str] | None,
+    denied_patterns: tuple[str, ...] | list[str] = DEFAULT_DENIED_PATTERNS,
+) -> bool:
+    """True when ``rel`` (workspace-root-relative, posix) is re-opened for writing.
+
+    Remaining false whenever the path is rejected by a structural source, so
+    an explicit entry can never open `.git/**` or a whole managed directory.
+    """
+    if not allowlist or rel not in allowlist:
+        return False
+    return not is_structural_denied_path(rel, denied_patterns)
+
+
 #: `mv`/`cp` whose SOURCE is a credential path. The source is a positional
 #: argument here rather than an IR field, and the `.env` family needs the
 #: template exemption, so it goes through the shared predicate instead of a
@@ -238,10 +310,15 @@ class WorkspacePolicy:
         workspace_root: str | Path | None = None,
         denied_patterns: tuple[str, ...] | list[str] | None = None,
         command_denylist: tuple[str, ...] | list[str] | None = None,
+        allowed_write_paths: tuple[str, ...] | list[str] | None = None,
     ):
         self.workspace_root = Path(workspace_root or Path.cwd()).resolve()
         self.additional_roots: set[Path] = set()
         self.denied_patterns = tuple(denied_patterns or DEFAULT_DENIED_PATTERNS)
+        #: Explicit write-only exemptions (change: guard-write-allowlist).
+        #: Empty by default, so the deny judgement is unchanged unless a project
+        #: opts in via `tools.allowed_write_paths`.
+        self.allowed_write_paths = tuple(allowed_write_paths or ())
 
         denylist = list(DEFAULT_DENYLIST)
         if command_denylist:
@@ -353,9 +430,41 @@ class WorkspacePolicy:
             raise PermissionError(f"Read denied by workspace policy: {resolved.as_posix()}")
         return resolved
 
+    def _allowlist_covers_resolved(self, resolved: Path) -> bool:
+        """``write_allowlist_covers`` for an already-resolved, in-workspace path.
+
+        Split out so `assert_write_allowed` (which has already resolved and
+        boundary-checked) does not resolve a second time.
+        """
+        if not self.allowed_write_paths:
+            return False
+        return write_allowlist_covers(
+            self.relative_path(resolved), self.allowed_write_paths, self.denied_patterns
+        )
+
+    def is_write_allowed(self, path: str | Path) -> bool:
+        """True when an explicit write exemption re-opens an otherwise-denied path.
+
+        Public counterpart of `is_denied`, kept for symmetry and for callers that
+        want to *ask* rather than assert. Read-only: it answers "would the
+        allowlist cover this path?", not "is this path safe?".
+
+        Shaped like `is_denied`: the workspace boundary is checked first and is
+        never overridable, so an out-of-workspace path raises `PermissionError`
+        rather than returning `False` — including when the allowlist is empty.
+        (That differs from the pre-extraction implementation, which short-circuited
+        on an empty allowlist *before* the boundary check and therefore answered
+        `False`; the current shape is the fail-closed, self-consistent one, and it
+        is documented in the change's design.md.)
+        """
+        return self._allowlist_covers_resolved(self.assert_within_workspace(path))
+
     def assert_write_allowed(self, path: str | Path) -> Path:
         resolved = self.assert_within_workspace(path)
-        if self.is_denied(resolved):
+        # The exemption is consulted only after the deny judgement fires, and
+        # only on this write path -- `is_denied` itself is untouched, so reads
+        # (`assert_read_allowed`) and `repo_map`'s skip judgement are unaffected.
+        if self.is_denied(resolved) and not self._allowlist_covers_resolved(resolved):
             raise PermissionError(f"Write denied by workspace policy: {resolved.as_posix()}")
         return resolved
 

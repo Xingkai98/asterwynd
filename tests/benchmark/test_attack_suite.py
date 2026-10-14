@@ -68,3 +68,75 @@ class TestAttackCoverage:
             "exfil", "resource", "bypass", "sensitive-read",
         }
         assert expected.issubset(categories), f"missing categories: {expected - categories}"
+
+
+class TestAttackSuiteWithWriteAllowlist:
+    """配置了显式可写豁免后，攻击集仍须被拦（change: guard-write-allowlist）。
+
+    豁免是**按路径**生效的，不是「开了开关就放行一切」：只有写下**被明确列入的
+    精确路径**的那些 case 才应翻转，其余一律仍拒。下面用两组互补的断言把这条
+    钉住 —— 第一组用「任何攻击命令里都不出现的路径」当豁免，证明豁免不泄漏；
+    第二组显式枚举**应当**翻转的 case，避免日后被读成回归。
+    """
+
+    #: 不出现在任何攻击命令里的豁免条目（测试内自证，防止日后攻击集新增case 时
+    #: 这条断言悄悄失效）。
+    UNRELATED_ALLOWLIST = ("notes/local.env", "config/app.env", "secrets/app.env")
+
+    @pytest.mark.parametrize(
+        "case",
+        GUARD_DENY_CASES,
+        ids=[c["id"] for c in GUARD_DENY_CASES],
+    )
+    def test_guard_denies_attack_with_unrelated_allowlist(self, case: dict) -> None:
+        guard = CommandGuard(workspace="/tmp/ws", allowed_write_paths=self.UNRELATED_ALLOWLIST)
+        assert guard.check(case["command"]) is CommandVerdict.DENY, (
+            f"{case['id']} ({case['category']}) not denied with allowlist: {case['command']!r}"
+        )
+
+    def test_unrelated_allowlist_entries_really_are_unrelated(self) -> None:
+        for entry in self.UNRELATED_ALLOWLIST:
+            assert all(entry not in c["command"] for c in ATTACKS["cases"]), entry
+
+    def test_exempt_targets_flip_exactly_the_path_scoped_cases(self) -> None:
+        """豁免 `.env` / `.env.local` 后**应当**翻转的 case 是哪些 —— 显式枚举。
+
+        这些 case 全都在「往 `.env` / `.env.local` 写」——它们当初被收进攻击集
+        是因为**目标**是凭据位，而不是因为写法（launcher / eval / 重定向）本身。
+        用户显式豁免该路径后，同一些写法放行是 U1/U2 的**预期语义**。若日后这个
+        集合变了（多了别的路径），说明豁免泄漏到了未列入的路径上 ⇒ 应当报警。
+        """
+        allow = (".env", ".env.local")
+        guard = CommandGuard(workspace="/tmp/ws", allowed_write_paths=allow)
+        flipped = {
+            c["id"] for c in GUARD_DENY_CASES if guard.check(c["command"]) is not CommandVerdict.DENY
+        }
+        assert flipped == {
+            "env-variant-001",
+            "env-variant-006",
+            "heredoc-exec-001",
+            "launcher-001",
+            "launcher-002",
+            "launcher-003",
+            "launcher-004",
+            "launcher-005",
+            "opt-target-001",
+            "opt-target-002",
+            "eval-payload-001",
+        }
+        # 翻转的每一个都必须真的写到被豁免的路径上
+        by_id = {c["id"]: c["command"] for c in ATTACKS["cases"]}
+        for case_id in sorted(flipped):
+            assert ".env" in by_id[case_id], case_id
+
+    def test_structural_targets_never_flip(self) -> None:
+        """结构性 / 系统目标即便被列入也不翻转（U1 + U12）。"""
+        guard = CommandGuard(
+            workspace="/tmp/ws",
+            allowed_write_paths=("/etc/passwd", ".ssh/authorized_keys", "id_rsa", ".git/config"),
+        )
+        by_id = {c["id"]: c for c in GUARD_DENY_CASES}
+        for case_id in ("etc-passwd-001", "priv-esc-001", "sensitive-001"):
+            case = by_id.get(case_id)
+            if case is not None:
+                assert guard.check(case["command"]) is CommandVerdict.DENY, case_id

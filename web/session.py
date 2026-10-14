@@ -1728,6 +1728,7 @@ class SessionManager:
         workspace_policy = WorkspacePolicy(
             workspace_root=session_workspace,
             command_denylist=self.config.tools.command_denylist,
+            allowed_write_paths=self.config.tools.allowed_write_paths,
         )
         sandbox = build_sandbox_from_config(self.config)
         registry = build_default_tool_registry(

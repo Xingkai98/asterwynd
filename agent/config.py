@@ -151,6 +151,11 @@ class ReadOutputConfig:
 class ToolsConfig:
     ignore_patterns: tuple[str, ...] = ()
     command_denylist: tuple[str, ...] = ()
+    #: Explicit write-only exemptions ("deny by default + exact allow
+    #: override"). Empty by default, so the path deny judgement is unchanged
+    #: unless a project opts in. Entries are workspace-relative literals; the
+    #: parser rejects globs / absolute paths / `..` / directory forms.
+    allowed_write_paths: tuple[str, ...] = ()
     code_intelligence: CodeIntelligenceConfig = field(default_factory=CodeIntelligenceConfig)
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     display: ToolResultDisplayConfig = field(default_factory=ToolResultDisplayConfig)
@@ -886,6 +891,11 @@ def _parse_tools_config(raw: Any, path: Path) -> ToolsConfig:
             mapping.get("command_denylist", []),
             path,
             "tools.command_denylist",
+        ),
+        allowed_write_paths=_parse_allowed_write_paths(
+            mapping.get("allowed_write_paths", []),
+            path,
+            "tools.allowed_write_paths",
         ),
         code_intelligence=_parse_code_intelligence_config(
             mapping.get("code_intelligence", {}),
@@ -1930,6 +1940,55 @@ def _parse_string_list(raw: Any, path: Path, field_name: str) -> tuple[str, ...]
         if stripped:
             values.append(stripped)
     return tuple(values)
+
+
+#: Characters that make a `tools.allowed_write_paths` entry a *pattern* rather
+#: than a literal path. Globs are rejected outright: a "match everything" entry
+#: would re-open `.git/config` along with the rest of the workspace, and codex's
+#: precedent is to allow globs for deny-read only, granting writes through exact
+#: paths (change: guard-write-allowlist, U2).
+_ALLOWED_WRITE_PATH_GLOB_CHARS = ("*", "?", "[", "]")
+
+
+def _parse_allowed_write_paths(raw: Any, path: Path, field_name: str) -> tuple[str, ...]:
+    """Parse and validate `tools.allowed_write_paths` (fail fast, U2).
+
+    Every entry must be a **canonical** workspace-relative literal path. Entries
+    that could never match a `WorkspacePolicy.relative_path()` result are
+    rejected loudly rather than accepted as silent no-ops.
+    """
+    values = _parse_string_list(raw, path, field_name)
+    for entry in values:
+        if any(char in entry for char in _ALLOWED_WRITE_PATH_GLOB_CHARS):
+            raise ConfigError(
+                f"{path}: {field_name} entry {entry!r} contains a glob metacharacter; "
+                "write exemptions are exact paths (a 'match everything' entry would "
+                "re-open .git/config as well)"
+            )
+        if entry.startswith("/"):
+            raise ConfigError(
+                f"{path}: {field_name} entry {entry!r} must be workspace-relative, not absolute"
+            )
+        if entry.endswith("/"):
+            raise ConfigError(
+                f"{path}: {field_name} entry {entry!r} is a directory form; "
+                "list the exact files to exempt instead"
+            )
+        parts = [part for part in entry.split("/") if part not in ("", ".")]
+        if ".." in parts:
+            raise ConfigError(
+                f"{path}: {field_name} entry {entry!r} contains a `..` segment"
+            )
+        if entry != "/".join(parts):
+            raise ConfigError(
+                f"{path}: {field_name} entry {entry!r} is not a canonical workspace-relative "
+                "path (drop the leading `./`, `//` or backslashes)"
+            )
+        if "\\" in entry:
+            raise ConfigError(
+                f"{path}: {field_name} entry {entry!r} must use `/` as the separator"
+            )
+    return values
 
 
 def _parse_bool(raw: Any, path: Path, field_name: str) -> bool:

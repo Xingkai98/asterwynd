@@ -251,6 +251,7 @@ def _build_agent_core(
     workspace_policy = WorkspacePolicy(
         workspace_root=workspace_root,
         command_denylist=config.tools.command_denylist,
+        allowed_write_paths=config.tools.allowed_write_paths,
     )
     persistent_memory = PersistentMemory(
         workspace_policy.workspace_root,

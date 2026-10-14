@@ -214,6 +214,11 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 - `permissions.profiles.<name>.denied_tools`
 - `tools.ignore_patterns`
 - `tools.command_denylist`
+- `tools.allowed_write_paths`（显式可写豁免，默认空列表 = deny 默认不变；
+  条目是 workspace 相对路径的**字面值**——不接受 glob / 绝对路径 / `..` /
+  目录形式，非法条目在加载配置时直接报错。只影响写不影响读，只覆盖文件级
+  deny，不覆盖 `.git/**` 等结构性目录 deny。已知边界：嵌套路径的 Bash
+  `cp` / `mv` 写不被覆盖）
 - `tools.code_intelligence.tree_sitter_max_file_bytes`
 - `tools.code_intelligence.lsp.servers`
 - `tools.code_intelligence.lsp.default_request_timeout_ms`
