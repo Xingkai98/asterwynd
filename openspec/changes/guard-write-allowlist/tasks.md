@@ -1,6 +1,6 @@
 # Tasks: 护栏写白名单（guard-write-allowlist）
 
-> **状态：立项文档 + 前置门已过；未开始实现。** 第 0 节的停轮确认门**已满足**——`design.md` 与 `reviews/grill-design.md` 的 `## Open Questions`（**同一套 Q1–Q12，共十二条**）已由用户于 **2026-10-14 停轮拍板、全部按推荐值裁定**，逐条答复记录在 `reviews/grill-design.md` 的 `## User Confirmation`，生效口径写在 `design.md` 的 `## User Rulings`（U1–U12）。⇒ **可以进入实现**（第 1–7 节）；但 **0.4 的设计阶段审阅闭环**（`grill-flow-hardening` / issue #298）仍需收敛到 PASS 或轮数封顶后才动代码。
+> **状态：立项文档 + 前置门已过；未开始实现。** 第 0 节的停轮确认门**已满足**——`design.md` 与 `reviews/grill-design.md` 的 `## Open Questions`（**同一套 Q1–Q12，共十二条**）已由用户于 **2026-10-14 停轮拍板、全部按推荐值裁定**，逐条答复记录在 `reviews/grill-design.md` 的 `## User Confirmation`，生效口径写在 `design.md` 的 `## User Rulings`（U1–U12）。⇒ **可以进入实现**（第 1–7 节）；**0.4 的设计阶段审阅闭环**（`grill-flow-hardening` / issue #298）已于 2026-10-14 **收敛到 PASS**（R1 CHANGES_REQUESTED → R2 CHANGES_REQUESTED（窄）→ **R3 封顶轮 PASS**，逐轮报告见 `reviews/grill-adversarial.md`）⇒ 第 0 节全部完成，可动代码。
 >
 > **测试先行**含义：第 2 节（测试）先于第 3 节（实现）。本 change 的安全属性集中在**否定用例**上（未列入的 `.env` 仍拒），否定用例必须与正例同时先写。
 >
@@ -11,7 +11,7 @@
 - [ ] 0.1 用 `grilling` skill（或等价独立零记忆设计追问）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条）。
 - [x] 0.2 把 `design.md` 的 `## Open Questions` **十二条**（立项原提 Q1–Q6：allow 覆盖面 / 粒度 / `.env` 变体是否跟随 / 配置级别 / 读写是否区分 / Bash 读侧是否一并收口；独立 grill 补充 Q7–Q12：嵌套路径的 Bash `cp`/`mv` 是否扩范围 / allow 判定面接在哪 / 附加根下同名路径是否覆盖 / 裁定与规格 delta 的先后顺序 / grill 报告的 `来源:` 写法 / 结构性 deny 的判定规则）**逐条停下抛给用户**，每条附本 change 真实场景的具体例子（参数、输入输出、前后对比）与推荐值，等待明确答复。**已由用户于 2026-10-14 停轮拍板，十二条全部按推荐值裁定**（用户会读的生效口径见 `design.md` 的 `## User Rulings`（U1–U12））。其中 Q7 与 Q8 是 grill 判定的阻塞项，已一并裁定。
 - [x] 0.3 把十二条答复逐条记进 `reviews/grill-design.md` 的 `## User Confirmation`（格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: 2026-10-14`，**实质内容不得写「按推荐」这类占位**），自查 `_unconfirmed_open_questions` 返回空。**已完成**：十二条逐条记录，实测返回空。**编号纪律**：`n` 必须用 **`reviews/grill-design.md` 的编号**——机械门（`scripts/check_openspec_artifacts.py` 的 `_unconfirmed_open_questions` 与 `scripts/workflow_guard.py` 的 grill 证据判定）**只读该文件**，两份文件的 Q 集合与编号必须一致（两份现均列 Q1–Q12）。若这里写成别的编号，门会「张冠李戴判绿」（确认的是一条、门以为确认了另一条）。**注意**：该文件当前的 **13 条** witnessloop finding 全部是「缺 `## User Confirmation` 小节」+「Q1–Q12 未经确认」，本步完成后即消（见 `design.md` Decision 8 的订正前提）。
-- [ ] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`。**能由代码判定的问题用代码给出带证据（`文件:行号`）的答案并移出停轮队列**（本 change 已移出六条：生产构造点四处 / `denied_patterns` 不能当 allow 载体 / Bash 读侧今天通着 / 嵌套 `.env` 的 Bash `cp`/`mv` 被 denylist 前置拦下 / 两层今天就有 8/13 条不同向 / grill 正文判据不是结构性地全红——见 `design.md` 的 Context 与 Pre-Implementation Review）。
+- [x] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`。**能由代码判定的问题用代码给出带证据（`文件:行号`）的答案并移出停轮队列**（本 change 已移出六条：生产构造点四处 / `denied_patterns` 不能当 allow 载体 / Bash 读侧今天通着 / 嵌套 `.env` 的 Bash `cp`/`mv` 被 denylist 前置拦下 / 两层今天就有 8/13 条不同向 / grill 正文判据不是结构性地全红——见 `design.md` 的 Context 与 Pre-Implementation Review）。
 - [x] 0.5 把十二条答复落到 `design.md`（已重写为 `## User Rulings` 一节，与 `## Decisions` 并列），并据此定稿：allow 覆盖面与结构性 deny 的推导规则、粒度校验规则、附加根作用域口径、配置解析的 fail-fast 条件。
 
 ## 1. 规格
