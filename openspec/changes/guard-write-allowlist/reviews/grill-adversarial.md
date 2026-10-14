@@ -215,3 +215,95 @@
 3. **（非阻塞，可读性）`reviews/grill-design.md:32`（Q7 要点）的句子把 5 条命令与 4 个 Bash reason 并列**（「`Write config/.env` / `echo K >> …` / `tee …` / `dd …` / `install …` 实测均 DENY 且 reason 分别是 `mv_cp_dest` 之外的写目标类（`protected_redirect`/`tee_target`/`dd_target`/`install_target`）」）——`Write` 是文件工具层拒（无这几个 reason），读起来像 5 条各有 reason。建议拆成「四条 Bash 形态各有 …；`Write` 由文件工具层拒」。
 4. **（非阻塞，观察）`CommandGuard` 的「可挂钩写目标判定面」口径有两种读法**：`design.md:73` 与 `spec.md:105` 用「敏感目标判定 / 重定向目标判定 / 动态目标判定」对应 `_check_target:930-938` / `_has_protected_redirect:976-993` / `_check_dynamic_target:940-960`，而 `tasks.md:39`（3.2）的收敛清单是 **6 个方法**（多 `_check_mv_cp:1106` / `_check_tee:1156` / `_check_dd:1139`），`cp x .env` 的 `mv_cp_dest` 正来自 `_check_mv_cp:1120`——即 `tasks.md:29`（2.4）断言会被 allow 挂钩的那条 reason 不在三面枚举里。`spec.md:105` 的否定从句（「不含整句 denylist 正则扫描」）使该面实际等于「除 pre-IR 扫描外的全部」，故不构成假承诺；但若日后有人按三面字面收敛，2.4 的断言会失去规格依据。建议把 `spec.md:105` 改成正列举（含 `mv`/`cp` 目标、`tee`、`dd of=` 等），或让 `tasks.md:39` 与规格同口径。
 
+
+---
+
+# R3 复审（revision 39d72c1）
+
+## Reviewer
+
+- **run id**: `grill-adversarial-r3-guard-write-allowlist-20261014`（独立零记忆对抗验证 subagent，**第 3 轮 / 封顶复审**；上游两组主张默认有错，逐条证伪；能实测的必须实测；全称/计数断言一律**计数**口径）
+- **被审 revision**: `39d72c1`（作者修 R2 的三条；`git show --stat 39d72c1` = 5 份 `.md`，**零代码改动**）
+- **上游**: 本文件上半部的 R1 报告（被审 `11f744e`）与 R2 复审（被审 `33c512a`）
+- **约束遵守**: 被审 worktree **只读**（收尾 `git status --porcelain` 为空）；全部探针在 `/tmp/gwa-r3`（`git archive HEAD | tar -x` 重建、无 `.git`；后为跑 checker 才在 `/tmp` 内 `git init`）用项目 venv 解释器 `/home/happy/ax-wt/guard-write-allowlist/.venv/bin/python`；witnessloop 侧用其源码树 `/home/happy/witnessloop`（`uv run`，`PYTHONDONTWRITEBYTECODE=1`）
+- **方法**: ① 实读 `git show 39d72c1` 全 diff 与 5 份改动文档；② 用 witnessloop 自己的 `grill_evidence_findings`（`/home/happy/witnessloop/src/witnessloop/evidence.py:109`）复算全部 63 份归档 `grill-design.md` + 本 change 自己那份（**计数口径**）；③ 隔离副本里直跑 `CommandGuard.check` / `WorkspacePolicy` 探针复测 R2 的每条命令级断言；④ 计数口径复核作者的「同类扫描」结论；⑤ 隔离副本跑 `openspec validate --all --strict` 与 `check_openspec_artifacts.py --base-ref origin/master --require-base`；⑥ 复核 R1/R2 已成立项是否被本轮改坏。
+
+## Verdict
+
+**PASS**
+
+- **本轮要核的五条全部成立**。其中 R2 的第一条阻塞（陈旧计数）**已真收敛**：全库再无「7 条 … Q1–Q6」形态，剩余命中经**逐行计数**复核**全部是正确用法**。
+- **本轮最重要的一项——作者新增的「前提订正」强断言——我独立复算，五个数逐一对上**：63 / 39 / 9 / 15，加粗 `来源` **3 份**（独占行 2 + 同行内联 1），且那 3 份**全部落在 src-only 桶**。
+- **新增的安全缺口（`mv`/`cp` 的源位置与目标位置共用 `_check_target`）属实**，落点（Decision 2 的不受影响清单 + 新任务 2.5b）正确，我用探针复现了它的两个出口（`cp_source` / `mv_source`）。
+- **无新的阻塞项**；两条**非阻塞**残留（N1/N2）建议顺手扫掉，但都不改变任何待拍板取舍。
+
+## 一、R2 三条阻塞的复核（逐条）
+
+| # | R2 的阻塞判定 | R3 结论 | 证据（当前树实测 / 计数口径） |
+|---|---|---|---|
+| ① | `design.md:238`/`:289`、`tasks.md:69` 仍写「7 条 … Q1–Q6」，与 `design.md:169`（13 条 / Q1–Q12）矛盾 | **成立（真收敛）** | 三处已全部改到位：`design.md:240`（原 `:238`）＝「source 判据 7/7 命中 … 共 **13 条**」+「**Q1–Q12** 未经确认」；`design.md:291`（原 `:289`）＝「63 份归档里 **39 份判绿**，含加粗 `来源` 的 **3 份** … 当前 **13 条** finding 全是『未确认』类」（叠的「1 份」也已改）；`tasks.md:70`（原 `:69`）＝「当前 **13 条** = 1 条『缺 `## User Confirmation` 小节』+ **Q1–Q12** 各 1 条」；`tasks.md:3` 的遗留「六条」改「**同一套 Q1–Q12，共十二条**」。**计数复核**：`grep -rn "六条\|7 条\|Q1–Q6\|Q1-Q6"` 全 change 目录 = **23 行命中**，其中 2 行是 `workflow-events.jsonl` 的追加式历史日志（`change_created`/`backlog_updated`，cli_written 通道）⇒ 余 **21 行**；逐行分类后**无一行是陈旧计数**（见第二节）。 |
+| ② | `specs/workspace-safety/spec.md:122` 的 GIVEN 过宽（「一个被它命中的嵌套路径」照字面不成立），照字面不可机械判定 | **成立（已收窄到真实成立）** | `spec.md:122` 现为「**GIVEN** 一份 allowlist 与一个被它命中的**嵌套敏感路径**（如 `config/.env`），且该路径的 `cp` / `mv` 写目标**命中整句 denylist 正则扫描**」，并在 `:126` 加 NOTE「例外只适用**命中整句正则**的敏感名：同一 `config/` 下的非敏感目标（如 `config/notes.txt`）今天就是 `allow`」。**实测反例（隔离副本 `CommandGuard`）**：`cp x config/notes.txt` ⇒ **ALLOW** / `last_reason=None`、`cp x config/deploy.pem` ⇒ **ALLOW** / `None` —— 原 GIVEN 确实不成立，收窄后成立：`cp x config/.env` ⇒ **DENY / `denylist`**，我另测 `mv x config/.env` ⇒ **DENY / `denylist`**。 |
+| ③ | `reviews/grill-design.md:32` 的 Q7 要点把 5 条命令与 4 个 Bash reason 并列；「可挂钩面」design/spec 三面 vs tasks 六方法口径不一 | **成立** | `reviews/grill-design.md:32` 已拆两组：**第一组（可挂钩，四条 Bash 形态各配各的 reason）** `echo K >> config/.env`⇒`protected_redirect`、`tee config/.env`⇒`tee_target`、`dd of=config/.env`⇒`dd_target`、`install x config/.env`⇒`install_target`，并写明「同组的 `Write config/.env` 由**文件工具层**拒（无上述 reason，属另一个判定层）」；第二组为 `cp`/`mv` 的 `denylist`。**四个 reason 我逐条实测命中**（见下）。口径已统一为**六方法正列举 + 三条排除项**：`design.md:75`（唯一定义）、`specs/workspace-safety/spec.md:105`（正则化改写）、`tasks.md:40`（3.2）。**六方法的 def/body 行号逐个核对全部命中**：`_check_target` `:930-938`、`_check_dynamic_target` `:940-960`、`_has_protected_redirect` `:976-993`、`_check_mv_cp` `:1106-1123` 体内、`_check_dd` `:1139-1155`、`_check_tee` `:1156-1168`。 |
+
+## 二、「同类扫描」结论的计数复核
+
+作者的「还剩 21 处命中、全部是正确用法」＝ 我实测的 **23 行** 减 `workflow-events.jsonl` 的 **2 行**历史日志。逐行分类（非抽样）：
+
+- `reviews/grill-adversarial.md` **11 行** —— R1/R2 的历史正文（`git show` 确认本轮只在其尾部追加，未改已有内容），描述的是当轮被审 revision 的状态，**不得改**；
+- `design.md` **7 行**（`:24`「六条结论」= Context 探针表 6 行、`:171`/`:240`「7 条 source 判据」= 7 条 Confirmed Decisions、`:179`/`:272`「立项原提 Q1–Q6」= 子集描述、`:270`「7 条 Confirmed Decisions」、`:274`「6 条新 Open Questions」= grill 补充的那六条）；
+- `tasks.md` **2 行**（`:12`「立项原提 Q1–Q6」、`:14`「已移出六条」= 代码判定的六条）；
+- `reviews/grill-design.md` **1 行**（`:22` 的编号provenance说明）。
+
+⇒ **21 处全部是正确用法，无误判**，作者结论**属实**。**唯一口径缺口**：这条扫描的模式集是「六条 / 7 条 / Q1–Q6」，**不覆盖「加粗份数」家族**，故漏掉了 N1。
+
+## 三、63 / 39 / 9 / 15 / 3 的独立复算（本轮最重要一项）
+
+用 witnessloop 自己的 `grill_evidence_findings` 跑 `openspec/changes/archive/*/reviews/grill-design.md`：
+
+| 量 | `design.md:171` 的断言 | **我的实测** | 判定 |
+|---|---|---|---|
+| 总份数 | 63 | **63** | ✓ |
+| 零 finding（判绿） | 39 | **39** | ✓ |
+| 只报「缺 `来源:`」 | 9 | **9** | ✓ |
+| 报其它项 | 15 | **15** | ✓（39+9+15=63） |
+| 用加粗 `来源` 写法 | 3（独占行 2 + 同行内联 1） | **3** —— 独占行 **2** = `2026-08-03-grill-confirmation-gate`、`2026-10-13-witnessloop-adoption`；同行内联 **1** = `2026-09-29-workflow-recursion-limit-default` | ✓（文件名也逐一对上） |
+| 那 3 份是否 src-only | 全部 | **是**（三份都落在「只报缺 `来源:`」桶内） | ✓ |
+
+**五个数逐一命中，这段「前提订正」属实**。另复算本 change 自己的报告：`grill_evidence_findings(reviews/grill-design.md)` = **13 条**（1 条缺 `## User Confirmation` + Q1–Q12 各 1 条），`## Confirmed Decisions` 恰 **7** 个 block、**零** `来源:` 类红 —— 与 `design.md:171`/`:240`、`tasks.md:70` 的陈述逐字相符。
+
+## 四、新增安全缺口（`mv`/`cp` 源位置）的复核
+
+作者断言：`mv`/`cp` 的**源位置**判定与目标位置共用 `_check_target`，若不区分则被豁免的 `.env` 会变成可外泄读源。**成立**，四项证据：
+
+1. `agent/tools/command_guard.py:875`（`_check_ir_segment` 内）`source_verdict = self._check_target(name, source)`，`:878` 写 `last_reason = f"{name}_source"`；`:886` **同一个** `_check_target` 又判 **target**。
+2. `:1060`（`_check_argv_segment` 内）对 `mv`/`cp` 的 source 同样调 `_check_target`，`:1062` 写 `f"{cmd_name}_source"`。
+3. **隔离副本实测**：`cp .env /tmp/out` ⇒ **DENY / `cp_source`**、`mv .env /tmp/out` ⇒ **DENY / `mv_source`**；`assert_read_allowed('.env')` ⇒ DENY（`PermissionError`）。⇒ 这是「只放行写」在 Bash 层的第二条腿，漏了它 allow 会顺手在 `_check_target` 上打开读侧出口。
+4. **落点已在且正确**：`design.md:84` 的「明确不受 allow 影响的面」逐条写明该机制与后果；`tasks.md:31`（新任务 2.5b）把它写成断言（护栏侧 `cp_source`/`mv_source` + 策略侧 `_env_source_is_credential`，后者在 `agent/workspace_policy.py:119`，实测对 `cp .env /tmp/out` 使策略侧 DENY）；`specs/workspace-safety/spec.md:105` 的排除项 ② 同口径。**无遗漏。**
+
+## 五、R1/R2 已成立项未被本轮改坏
+
+- **零代码改动**：`git diff --name-only 33c512a..39d72c1` = 5 份文档（design / tasks / 两份 review / spec delta），`agent/**`、`scripts/**` 未动 ⇒ A1/A2/A3 的实现面与「不受影响清单」逐字未变。
+- **门禁全绿（隔离副本）**：`openspec validate --all --strict` ⇒ **30 passed, 0 failed**；`check_openspec_artifacts.py --base-ref origin/master --require-base` ⇒ **OpenSpec artifact checks passed**。
+- **规格完整性**：7 条 Requirement（workspace-safety 5 ADDED + 1 MODIFIED，configuration 1）正文**首行均含 `SHALL`**（`specs/workspace-safety/spec.md:7,51,74,105,130`、`specs/configuration/spec.md:7`）。注意第 5 条因 `:120-126` 新增 Scenario 已从 R2 记的 `:129` 移到 **`:130`**，内容仍含 SHALL（无硬换行误报）。
+- **R1 B3/B8 的 W06 锚点仍在**：`design.md:326` 与 `tasks.md:80` 均列 `docs/interview-script/walkthrough/W06-security.md` 的 `:11` 与 `:35` **两处**（实测该文件 `:11`/`:35` 都写「58 个模式」）✓。
+- **被审 worktree 收尾干净**：`git status --porcelain` 为空。
+
+## 新发现
+
+### N1（非阻塞，低危）— `design.md:241` 的「加粗写法 2/63」未随同组口径统一
+
+同一条 Q11 内三行之隔自相矛盾：`design.md:239` 写「使用**加粗 `来源` 写法**的共 **3 份**」，`design.md:241` 写「使用加粗写法的本仓归档实测只有 **2/63**（见上）」。作者本轮把 169/239/291/Decision 8/tasks:74 统一到「出现加粗 `来源` = **3 份**」口径，**漏了 `:241`**（`git show 39d72c1` 未触及该行）。
+
+- **不判阻塞的理由**：① `design.md:239` 自身给了消歧句（「只数「`- **来源**:` 独占行」会得 2、按「出现加粗 `来源`」数得 3」），`:241` 的「见上」紧邻 `:240` 所描述的**独占行**形态，两个数都是实测值、读者能对上；② Q11 的待拍板取舍（报告用哪种写法 / 归因表是否给「格式选择导致的红」单列一类）**不因 2 或 3 改变**，不构成 R2 判阻塞时的那类「用户照着错材料做决定」。
+- **修法**：把 `:241` 的 `2/63` 加口径限定（如「「`- **来源**:` 独占行」写法 **2/63**（宽口径 **3/63**）」），或直接写 3/63。
+
+### N2（非阻塞，观察）— 冻结的 grill 报告里仍留 grill 自己的错数
+
+`reviews/grill-design.md:52`（该报告「必须修改项 4」）写「**39 份零 finding 判绿**、14 份缺 `来源:`、10 份其它；只有 2 份用加粗续行写法」。我复算这组数是 **9 / 15 / 2**（见第三节），即 grill 原始报告自带的错数（R1/R2 已判「grill 错、作者对」，`design.md:171` 现载正确值）。
+
+- **不判阻塞的理由**：`reviews/grill-design.md` 是**审阅者自己的决策记录**，其中「必须修改项」是历史审阅陈述；纠正它正是本对抗报告的职责，且纠正已被 R1/R2 落定。改写它等于重写审阅者结论（与本轮「不改已有 review 内容」的纪律同源）。
+- **建议**（若下次触及该文件）：在 `:52` 后追加一句「（本组数已由对抗 R1/R2 订正为 9/15/2，见 `design.md:171`）」，不改原数。
+
+## 必须修改项
+
+**无。** N1 / N2 为非阻塞残留，建议在 `tasks.md` 0.5（把十二条答复落回 design）时顺手扫掉。
