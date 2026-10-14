@@ -349,6 +349,7 @@ class AsterwyndRunner(AgentRunner):
         policy = WorkspacePolicy(
             workspace,
             command_denylist=self.config.tools.command_denylist,
+            allowed_write_paths=self.config.tools.allowed_write_paths,
         )
         mcp_manager = await build_mcp_manager(self.config)
         sandbox = build_sandbox_from_config(self.config)

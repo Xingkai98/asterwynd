@@ -915,3 +915,56 @@ memory:
     assert config.memory.review_enabled is False
     assert config.memory.review_group_lag == 5
     assert config.memory.review_model == "small-model"
+
+
+# --- tools.allowed_write_paths（change: guard-write-allowlist） ---------------
+
+
+def test_allowed_write_paths_defaults_to_empty(tmp_path, monkeypatch):
+    """缺省为空 tuple ⇒ deny 默认不变（U4/U2）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    config = load_config(start_dir=tmp_path)
+    assert config.tools.allowed_write_paths == ()
+
+
+def test_allowed_write_paths_parsed_from_yaml(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "tools:\n  allowed_write_paths:\n    - .env\n    - config/.env\n",
+        encoding="utf-8",
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.tools.allowed_write_paths == (".env", "config/.env")
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "**/*",  # 匹配一切（会连 .git/config 一起打开）
+        "*.env",  # glob 元字符
+        "config/*.env",
+        ".env?",
+        "[.]env",
+        "/etc/.env",  # 绝对路径
+        "../outside.env",  # `..` 段
+        "config/../.env",
+        "config/",  # 目录形式（尾 `/`）
+    ],
+)
+def test_allowed_write_paths_rejects_invalid_entries(tmp_path, monkeypatch, entry):
+    """U2：非法条目在**解析期** fail fast，报可读错误（不是运行时静默失效）。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        f"tools:\n  allowed_write_paths:\n    - '{entry}'\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="tools.allowed_write_paths"):
+        load_config(start_dir=tmp_path)
+
+
+def test_allowed_write_paths_rejects_non_list(tmp_path, monkeypatch):
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        "tools:\n  allowed_write_paths: .env\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="tools.allowed_write_paths"):
+        load_config(start_dir=tmp_path)

@@ -38,6 +38,7 @@ from agent.tools.bash_ir import (
 from agent.workspace_policy import (
     DEFAULT_DENYLIST,
     is_sensitive_dot_name,
+    write_allowlist_covers,
 )
 
 #: Commands whose target an evaluator judges. A launcher "conceals" a real
@@ -695,8 +696,17 @@ def tokenize_command(command: str) -> list[str]:
 class CommandGuard:
     """Semantic command validator: denylist + argv checks, default-allow."""
 
-    def __init__(self, workspace: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        workspace: str | Path | None = None,
+        allowed_write_paths: tuple[str, ...] | list[str] | None = None,
+    ) -> None:
         self._workspace = str(Path(workspace).resolve()) if workspace else None
+        #: Explicit write exemptions, handed over by `BashTool` from the very
+        #: same `WorkspacePolicy` instance it was built with, so both layers
+        #: judge writes against one source (change: guard-write-allowlist,
+        #: Decision 2). Snapshotted at construction.
+        self._allowed_write_paths = tuple(allowed_write_paths or ())
         # Combine the project's base denylist (dd/mkfs/sudo/shutdown/python -c/
         # curl|sh/$( )/git reset 等) with the extra bypass-variant patterns.
         self._denylist = (*DEFAULT_DENYLIST, *_EXTRA_DENYLIST)
@@ -710,6 +720,33 @@ class CommandGuard:
         # until the old-vs-new verdict comparison is fully green; it never
         # weakens the attack set (see the guard tests).
         self.legacy = os.environ.get("ASTERWYND_GUARD_LEGACY", "").strip() not in ("", "0", "false")
+
+    def _allow_covers(self, target: str) -> bool:
+        """True when an explicit write exemption re-opens ``target``.
+
+        Normalizes the raw command token to a **workspace-relative** path and
+        defers to the shared predicate (`workspace_policy.write_allowlist_covers`)
+        — the guard never re-implements the match, so the two layers cannot
+        drift (`#254` design D12).
+
+        Only ever consulted from the **write-target** judgement (see the six
+        call sites). The `mv`/`cp` *source* position and the whole-line denylist
+        scan deliberately never call this.
+        """
+        if not self._allowed_write_paths or not self._workspace:
+            return False
+        normalized = _normalize_path(_dequote(_expand_obfuscation(target)))
+        workspace = _normalize_path(self._workspace)
+        if normalized.startswith("/"):
+            if not _within(normalized, workspace):
+                return False
+            rel = os.path.relpath(normalized, workspace)
+        else:
+            rel = normalized
+        rel = rel.replace(os.sep, "/")
+        while rel.startswith("./"):
+            rel = rel[2:]
+        return write_allowlist_covers(rel, self._allowed_write_paths)
 
     def check(self, command: str) -> CommandVerdict:
         self.last_reason = None
@@ -883,7 +920,7 @@ class CommandGuard:
         if name in _TARGET_COMMANDS:
             target = _write_target_of(name, rest[1:])
             if target is not None:
-                option_verdict = self._check_target(name, target)
+                option_verdict = self._check_target(name, target, allow_write=True)
                 if option_verdict is not CommandVerdict.ALLOW:
                     return option_verdict
 
@@ -927,12 +964,21 @@ class CommandGuard:
                 return verdict
         return CommandVerdict.ALLOW
 
-    def _check_target(self, name: str, target: str) -> CommandVerdict:
-        """Judge one resolved write target against protected paths / dot names."""
+    def _check_target(
+        self, name: str, target: str, *, allow_write: bool = False
+    ) -> CommandVerdict:
+        """Judge one resolved target against protected paths / dot names.
+
+        ``allow_write`` marks a **write-target** position; the `mv`/`cp` *source*
+        position passes ``False`` (default), so an exemption can never turn a
+        readable credential into an exfiltration source.
+        """
         normalized = _normalize_path(_expand_obfuscation(target))
         if _is_device_exempt(normalized):
             return CommandVerdict.ALLOW
         if any(_within(normalized, p) for p in _DENY_PATHS) or _dest_is_sensitive(normalized):
+            if allow_write and self._allow_covers(target):
+                return CommandVerdict.ALLOW
             self.last_reason = f"{name}_target"
             return CommandVerdict.DENY
         return CommandVerdict.ALLOW
@@ -954,6 +1000,8 @@ class CommandGuard:
         expanded = _expand_obfuscation(target)
         normalized = _normalize_path(expanded)
         if any(_within(normalized, p) for p in _DENY_PATHS) or _dest_is_sensitive(normalized):
+            if self._allow_covers(target):
+                return CommandVerdict.ALLOW
             self.last_reason = f"{name}_dynamic_sensitive"
             return CommandVerdict.DENY
         self.last_reason = f"{name}_dynamic_target"
@@ -989,6 +1037,8 @@ class CommandGuard:
             if _is_device_exempt(target):
                 continue
             if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                if self._allow_covers(redirect.target):
+                    continue
                 return True
         return False
 
@@ -1117,6 +1167,8 @@ class CommandGuard:
         if _is_device_exempt(dest):
             return CommandVerdict.ALLOW
         if any(_within(dest, p) for p in _DENY_PATHS) or _dest_is_sensitive(dest):
+            if self._allow_covers(args[-1]):
+                return CommandVerdict.ALLOW
             self.last_reason = "mv_cp_dest"
             return CommandVerdict.DENY
         return CommandVerdict.ALLOW
@@ -1149,6 +1201,8 @@ class CommandGuard:
             if _is_device_exempt(target):
                 continue
             if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                if self._allow_covers(token[3:]):
+                    continue
                 self.last_reason = "dd_target"
                 return CommandVerdict.DENY
         return CommandVerdict.ALLOW
@@ -1162,6 +1216,8 @@ class CommandGuard:
             if _is_device_exempt(target):
                 continue
             if any(_within(target, p) for p in _DENY_PATHS) or _dest_is_sensitive(target):
+                if self._allow_covers(token):
+                    continue
                 self.last_reason = "tee_target"
                 return CommandVerdict.DENY
         return CommandVerdict.ALLOW

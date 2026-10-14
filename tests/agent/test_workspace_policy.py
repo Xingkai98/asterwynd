@@ -448,3 +448,175 @@ def test_env_template_predicate_is_the_single_definition(tmp_path):
     assert is_sensitive_dot_name(".env.example") is False
     # 模板词表本身有内容（防止「清空词表让一切成凭据」的伪实现）
     assert {"example", "sample", "template"} <= ENV_TEMPLATE_WORDS
+
+
+# --- 显式可写豁免（change: guard-write-allowlist） ---------------------------
+#
+# 语义是「deny 默认 + allow 精确覆盖」：默认空列表 ⇒ 行为与本能力引入前逐条
+# 一致；条目是 workspace 相对路径的**字面值**；只影响写，不影响读；不越
+# workspace 边界；不覆盖结构性目录 deny。
+# 规格见 openspec/changes/guard-write-allowlist/specs/workspace-safety/spec.md。
+
+
+def test_write_allowlist_default_empty_keeps_every_deny(tmp_path):
+    """默认空 ⇒ deny 默认不变（配置为空时行为零变化）。"""
+    policy = WorkspacePolicy(tmp_path)
+    assert policy.allowed_write_paths == ()
+    for path in (".env", ".env.local", "deploy.pem", ".git/config", "__pycache__/x.pyc"):
+        with pytest.raises(PermissionError):
+            policy.assert_write_allowed(path)
+
+
+def test_write_allowlist_grants_exact_path(tmp_path):
+    """列入豁免的精确路径变为可写（裸名与非裸名各一）。"""
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env", "config/.env"))
+    assert policy.assert_write_allowed(".env") == (tmp_path / ".env").resolve()
+    assert policy.assert_write_allowed("config/.env") == (tmp_path / "config" / ".env").resolve()
+
+
+def test_write_allowlist_does_not_follow_env_variants(tmp_path):
+    """U3：不跟随——开 `.env` 不等于开 `.env.local` / `.env.production`。"""
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env",))
+    policy.assert_write_allowed(".env")
+    for path in (".env.local", ".env.production", ".env.development"):
+        with pytest.raises(PermissionError):
+            policy.assert_write_allowed(path)
+
+
+def test_write_allowlist_is_exact_not_prefix(tmp_path):
+    """U2：字面值匹配——`.env` 不覆盖 `src/.env`，`config/.env` 不覆盖 `x/config/.env`。"""
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env", "config/.env"))
+    for path in ("src/.env", "x/config/.env", "a/.env"):
+        with pytest.raises(PermissionError):
+            policy.assert_write_allowed(path)
+
+
+def test_write_allowlist_does_not_open_reads(tmp_path):
+    """U5：只放行写——读仍拒。"""
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env",))
+    policy.assert_write_allowed(".env")
+    with pytest.raises(PermissionError):
+        policy.assert_read_allowed(".env")
+    # 模板（本来就放行）不受影响
+    assert policy.assert_read_allowed(".env.example") == (tmp_path / ".env.example").resolve()
+
+
+def test_write_allowlist_does_not_change_is_denied(tmp_path):
+    """U8：`is_denied` 保持原语义，SHALL NOT 感知 allowlist。
+
+    `is_denied` 是 `assert_read_allowed` 与 `assert_write_allowed` 的同一实现，
+    `repo_map` 还直接调它做 tree-sitter 跳过判定 —— 它一旦感知 allowlist，
+    读侧与符号索引面会被一并打开。此处按「同一路径 + 两份 policy 的
+    `is_denied` 结论必须相同」断言。
+    """
+    plain = WorkspacePolicy(tmp_path)
+    with_allow = WorkspacePolicy(tmp_path, allowed_write_paths=(".env", "deploy.pem", ".env.local"))
+    # 被豁免的路径在 `is_denied` 上必须**仍然为 True**（豁免不是把路径从 deny 表里删掉）
+    for path in (".env", ".env.local", "deploy.pem", ".git/config"):
+        assert plain.is_denied(path) is True
+        assert with_allow.is_denied(path) is True
+    # 普通路径两边都放行
+    assert plain.is_denied("src/app.py") is False
+    assert with_allow.is_denied("src/app.py") is False
+
+
+def test_write_allowlist_does_not_leak_into_repo_map_ignore(tmp_path):
+    """U8 的第二个面：`repo_map` 的跳过判定直接调 `is_denied`，不得被豁免影响。"""
+    from agent.code_intelligence.repo_map import _should_ignore
+
+    with_allow = WorkspacePolicy(tmp_path, allowed_write_paths=(".env",))
+    assert _should_ignore(tmp_path / ".env", with_allow, ()) is True
+
+
+def test_write_allowlist_does_not_override_workspace_boundary(tmp_path):
+    """U1：边界先于任何 allow 判定——不越 workspace。"""
+    outside = tmp_path.parent / "outside.env"
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env", "../outside.env", str(outside)))
+    with pytest.raises(PermissionError):
+        policy.assert_write_allowed(outside)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/.env",
+        ".env.local",
+        ".env.production",
+        "other.pem",
+        "nested/other.pem",
+        "id_rsa",
+        "fresh.pyc",
+    ],
+)
+def test_write_allowlist_unlisted_paths_still_denied(tmp_path, path):
+    """否定用例（核心验收面）：未列入的路径仍拒，行为与未配置豁免时一致。"""
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env", "deploy.pem"))
+    with pytest.raises(PermissionError):
+        policy.assert_write_allowed(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".git/config",  # 段级敏感目录名（SENSITIVE_DOTDIRS）
+        ".git/hooks/pre-commit",
+        ".ruff_cache/CACHEDIR.TAG",  # 含 `/` 的 deny 条目（.ruff_cache/**）
+        ".venv/pyvenv.cfg",  # 含 `/` 的 deny 条目（.venv/**）
+        "node_modules/pkg/index.js",
+        "__pycache__/x.pyc",
+        "benchmarks/runs/run/result.json",
+        ".asterwynd/worktrees/wt/file.txt",
+        "deploy/id_rsa",  # `**/id_rsa` 含 `/` ⇒ 结构性
+    ],
+)
+def test_write_allowlist_never_overrides_structural_deny(tmp_path, path):
+    """U1 + U12：结构性目录 deny 即便被显式列入仍拒（两源推导）。"""
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=(path,))
+    with pytest.raises(PermissionError):
+        policy.assert_write_allowed(path)
+
+
+def test_write_allowlist_covers_file_level_deny_sources(tmp_path):
+    """U1 正例的另一半：文件级 deny（敏感点文件名 + 无 `/` 的 glob）可被覆盖。"""
+    policy = WorkspacePolicy(tmp_path, allowed_write_paths=("deploy.pem", "srv.key", ".env"))
+    assert policy.assert_write_allowed("deploy.pem").name == "deploy.pem"
+    assert policy.assert_write_allowed("srv.key").name == "srv.key"
+    assert policy.assert_write_allowed(".env").name == ".env"
+
+
+def test_write_allowlist_matches_additional_root_relative_path(tmp_path):
+    """U9：作用域是「任一 workspace 根」的相对路径（附加根同名路径同样覆盖）。"""
+    main_root = tmp_path / "repo"
+    extra_root = tmp_path / "other"
+    main_root.mkdir()
+    extra_root.mkdir()
+    policy = WorkspacePolicy(main_root, allowed_write_paths=(".env",))
+    policy.add_root(str(extra_root))
+
+    assert policy.assert_write_allowed(".env") == (main_root / ".env").resolve()
+    assert policy.assert_write_allowed(extra_root / ".env") == (extra_root / ".env").resolve()
+
+
+def test_is_structural_deny_pattern_is_derived_not_enumerated(tmp_path):
+    """U12：结构性 deny 的判定必须可机械复算（两源推导，不是封闭清单）。"""
+    from agent.workspace_policy import (
+        DEFAULT_DENIED_PATTERNS,
+        SENSITIVE_DOTDIRS,
+        is_structural_deny_pattern,
+        is_structural_denied_path,
+    )
+
+    # 第一源：含 `/` 的 deny 条目是结构性
+    for pattern in DEFAULT_DENIED_PATTERNS:
+        assert is_structural_deny_pattern(pattern) is ("/" in pattern)
+    # 两源都必须有内容，防止「清空某源让一切可豁免」的伪实现
+    assert any("/" in p for p in DEFAULT_DENIED_PATTERNS)
+    assert SENSITIVE_DOTDIRS
+
+    # 第二源：任一路径段命中 SENSITIVE_DOTDIRS
+    for dirname in SENSITIVE_DOTDIRS:
+        assert is_structural_denied_path(f"{dirname}/config") is True
+        assert is_structural_denied_path(f"a/{dirname}/b") is True
+    assert is_structural_denied_path(".env") is False
+    assert is_structural_denied_path("config/.env") is False
+    assert is_structural_denied_path(".gitignore") is False  # 不是 `.git` 段

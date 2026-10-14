@@ -84,7 +84,12 @@ class BashTool(Tool):
     ):
         self.policy = policy or WorkspacePolicy()
         self.sandbox = sandbox or build_execution_backend(backend_name)
-        self._guard = CommandGuard(workspace=self.policy.workspace_root)
+        # The guard consumes the *same* exemption data as the policy it was built
+        # with -- one source, two judgement layers (change: guard-write-allowlist).
+        self._guard = CommandGuard(
+            workspace=self.policy.workspace_root,
+            allowed_write_paths=self.policy.allowed_write_paths,
+        )
         self._run_in_background_cb = run_in_background_cb
         self._approval_handler = approval_handler
 

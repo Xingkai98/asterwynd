@@ -33,6 +33,19 @@ permissions:
 tools:
   ignore_patterns: []
   command_denylist: []
+  # 显式可写豁免：「deny 默认 + 精确覆盖」——只把**已列出的精确路径**重新
+  # 放行为可写，未列入的照旧拒绝。用法见 agent/workspace_policy.py 的判定谓词。
+  # 约束（非法条目会在加载配置时直接报错）：
+  #   - 只接受 workspace 相对路径的**字面值**，不接受 glob（`**/*` 会把
+  #     .git/config 一起打开）；
+  #   - 不支持目录前缀（不写 `config/`，要逐文件列）；
+  #   - 只影响写，不影响读；只覆盖文件级 deny，不覆盖 .git/** 等结构性目录 deny；
+  #   - 已知边界：嵌套路径（如 config/.env）的 Bash `cp` / `mv` 写不被覆盖
+  #     （命令护栏的整句 denylist 扫描在其之前生效），其余写形态可用。
+  allowed_write_paths: []
+  # 示例（按需打开）：让 agent 能生成项目自己的 env 文件
+  # allowed_write_paths:
+  #   - .env
   code_intelligence:
     tree_sitter_max_file_bytes: 262144
     lsp:
