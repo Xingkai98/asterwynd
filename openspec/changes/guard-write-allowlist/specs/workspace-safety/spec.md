@@ -6,7 +6,7 @@
 
 WorkspacePolicy SHALL 支持一份**显式可写豁免**（`allowed_write_paths`），语义是「deny 默认 + allow 精确覆盖」：默认值为空，未配置时路径拒绝行为 SHALL 与本能力引入前逐条一致。allow SHALL 只能把**已经在 workspace 内、且已被 deny 判定命中的路径**重新放行为可写；它 SHALL NOT 越过 workspace 边界，SHALL NOT 影响读判定。
 
-allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判定器共同调用：`WorkspacePolicy.assert_write_allowed` 与命令护栏（`CommandGuard`）的写目标判定 SHALL 都调用它。共享的是**谓词函数**，SHALL NOT 是**调用点**——即 `is_denied` 与其读侧调用方 SHALL NOT 感知 allowlist。
+allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判定器共同调用：`WorkspacePolicy.assert_write_allowed` 与命令护栏（`CommandGuard`）的写目标判定 SHALL 都调用它。共享的是**谓词函数**，SHALL NOT 是**调用点**——即 `is_denied` 与其读侧调用方 SHALL NOT 感知 allowlist。条目 SHALL 按「**任一 workspace 根**的相对路径」匹配（主 workspace 与附加根一视同仁，与 `relative_path()` 的现有语义一致）。
 
 #### Scenario: 列入豁免的路径在文件工具层变为可写
 
@@ -32,6 +32,14 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 - **WHEN** 系统解析 `tools.allowed_write_paths`
 - **THEN** 配置解析 SHALL fail fast 并返回可读错误
 - **AND** 即便豁免条目以其他形式指向 workspace 之外，`assert_within_workspace` 的边界检查 SHALL 先于任何 allow 判定生效
+
+#### Scenario: 豁免按「任一 workspace 根」的相对路径匹配
+
+- **GIVEN** 主 workspace 根为 `/repo`，且已通过 `/workspace add`（或 Web hub 的「+ 添加」）追加附加根 `/srv/other`
+- **AND** 配置含 `tools.allowed_write_paths: ['.env']`
+- **WHEN** 工具请求 `Write /srv/other/.env`
+- **THEN** 该路径 SHALL 被放行（allow 条目按 `relative_path()` 的现有语义与**任一 workspace 根**的相对路径比较）
+- **AND** 该结论 SHALL NOT 依赖「条目只对主 workspace 根生效」的读法
 
 #### Scenario: 豁免不影响读判定
 

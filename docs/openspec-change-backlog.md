@@ -121,7 +121,7 @@
 
 ### 第二十一批：护栏写白名单（#272）
 
-- `guard-write-allowlist`（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)）：**待立项后实现**。来源是 `bash-command-guard-redesign`（issue #254）Q3 的补测——用户追问「有项目我就是想让 agent 配 env 该怎么办」，当时的答案是「做不到，除非手改源码」；用户拍板白名单机制不塞进 #254、留作独立 change 承接，本 change 即该承接。
+- `guard-write-allowlist`（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)）：**立项文档已完成 + 前置门已过，待实现**。**十二条 Open Question 已于 2026-10-14 由用户停轮拍板、全部按推荐值裁定**（生效口径见该 change 的 `design.md` 的 `## User Rulings`（U1–U12），逐条答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）：文件级 deny 可覆盖、结构性目录 deny 不可覆盖（两源推导）、精确路径 + glob 解析期 fail fast、`.env` 变体不跟随、只做项目级配置、只放行写、Bash 读侧不堵（记债务另立）、不动 `_EXTRA_DENYLIST`（嵌套路径的 Bash `cp`/`mv` 不在范围内）、allow 只在写路径求值、作用域为任一 workspace 根的相对路径、规格随裁定改、grill 报告保持同行裸 `来源:` 写法。来源是 `bash-command-guard-redesign`（issue #254）Q3 的补测——用户追问「有项目我就是想让 agent 配 env 该怎么办」，当时的答案是「做不到，除非手改源码」；用户拍板白名单机制不塞进 #254、留作独立 change 承接，本 change 即该承接。
 
   **需求**：新增 `tools.allowed_write_paths`（默认空列表），语义是「**deny 默认 + allow 精确覆盖**」——`tools.allowed_write_paths: ['.env', 'config/.env']` 让被 deny 命中的路径重新可写；不配置时行为零变化。
 

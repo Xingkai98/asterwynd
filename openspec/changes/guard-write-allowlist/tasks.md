@@ -1,6 +1,6 @@
 # Tasks: 护栏写白名单（guard-write-allowlist）
 
-> **状态：立项文档；未开始实现。** 第 0 节是前置门——`design.md` 与 `reviews/grill-design.md` 的 `## Open Questions`（**同一套 Q1–Q12，共十二条**）**必须停轮抛给用户并逐条收到答复**，答复记入 `reviews/grill-design.md` 的 `## User Confirmation` 之前，不得写实现代码或测试代码（AGENTS.md 的 grill-confirmation-gate）。
+> **状态：立项文档 + 前置门已过；未开始实现。** 第 0 节的停轮确认门**已满足**——`design.md` 与 `reviews/grill-design.md` 的 `## Open Questions`（**同一套 Q1–Q12，共十二条**）已由用户于 **2026-10-14 停轮拍板、全部按推荐值裁定**，逐条答复记录在 `reviews/grill-design.md` 的 `## User Confirmation`，生效口径写在 `design.md` 的 `## User Rulings`（U1–U12）。⇒ **可以进入实现**（第 1–7 节）；但 **0.4 的设计阶段审阅闭环**（`grill-flow-hardening` / issue #298）仍需收敛到 PASS 或轮数封顶后才动代码。
 >
 > **测试先行**含义：第 2 节（测试）先于第 3 节（实现）。本 change 的安全属性集中在**否定用例**上（未列入的 `.env` 仍拒），否定用例必须与正例同时先写。
 >
@@ -9,22 +9,22 @@
 ## 0. 设计追问与用户确认（前置门，不完成不开工）
 
 - [ ] 0.1 用 `grilling` skill（或等价独立零记忆设计追问）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条）。
-- [ ] 0.2 把 `design.md` 的 `## Open Questions` **十二条**（立项原提 Q1–Q6：allow 覆盖面 / 粒度 / `.env` 变体是否跟随 / 配置级别 / 读写是否区分 / Bash 读侧是否一并收口；独立 grill 补充 Q7–Q12：嵌套路径的 Bash `cp`/`mv` 是否扩范围 / allow 判定面接在哪 / 附加根下同名路径是否覆盖 / 裁定与规格 delta 的先后顺序 / grill 报告的 `来源:` 写法 / 结构性 deny 的判定规则）**逐条停下抛给用户**，每条附本 change 真实场景的具体例子（参数、输入输出、前后对比）与推荐值，等待明确答复。**得到答复前不写实现代码。** 其中 **Q7 与 Q8 是 grill 判定的阻塞项**。
-- [ ] 0.3 把十二条答复逐条记进 `reviews/grill-design.md` 的 `## User Confirmation`（格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: <date>`），自查 `_unconfirmed_open_questions` 返回空。**编号纪律**：`n` 必须用 **`reviews/grill-design.md` 的编号**——机械门（`scripts/check_openspec_artifacts.py` 的 `_unconfirmed_open_questions` 与 `scripts/workflow_guard.py` 的 grill 证据判定）**只读该文件**，两份文件的 Q 集合与编号必须一致（两份现均列 Q1–Q12）。若这里写成别的编号，门会「张冠李戴判绿」（确认的是一条、门以为确认了另一条）。**注意**：该文件当前的 **13 条** witnessloop finding 全部是「缺 `## User Confirmation` 小节」+「Q1–Q12 未经确认」，本步完成后即消（见 `design.md` Decision 8 的订正前提）。
+- [x] 0.2 把 `design.md` 的 `## Open Questions` **十二条**（立项原提 Q1–Q6：allow 覆盖面 / 粒度 / `.env` 变体是否跟随 / 配置级别 / 读写是否区分 / Bash 读侧是否一并收口；独立 grill 补充 Q7–Q12：嵌套路径的 Bash `cp`/`mv` 是否扩范围 / allow 判定面接在哪 / 附加根下同名路径是否覆盖 / 裁定与规格 delta 的先后顺序 / grill 报告的 `来源:` 写法 / 结构性 deny 的判定规则）**逐条停下抛给用户**，每条附本 change 真实场景的具体例子（参数、输入输出、前后对比）与推荐值，等待明确答复。**已由用户于 2026-10-14 停轮拍板，十二条全部按推荐值裁定**（用户会读的生效口径见 `design.md` 的 `## User Rulings`（U1–U12））。其中 Q7 与 Q8 是 grill 判定的阻塞项，已一并裁定。
+- [x] 0.3 把十二条答复逐条记进 `reviews/grill-design.md` 的 `## User Confirmation`（格式 `- **Q<n>**: 用户答复：<实质内容>；确认时间: 2026-10-14`，**实质内容不得写「按推荐」这类占位**），自查 `_unconfirmed_open_questions` 返回空。**已完成**：十二条逐条记录，实测返回空。**编号纪律**：`n` 必须用 **`reviews/grill-design.md` 的编号**——机械门（`scripts/check_openspec_artifacts.py` 的 `_unconfirmed_open_questions` 与 `scripts/workflow_guard.py` 的 grill 证据判定）**只读该文件**，两份文件的 Q 集合与编号必须一致（两份现均列 Q1–Q12）。若这里写成别的编号，门会「张冠李戴判绿」（确认的是一条、门以为确认了另一条）。**注意**：该文件当前的 **13 条** witnessloop finding 全部是「缺 `## User Confirmation` 小节」+「Q1–Q12 未经确认」，本步完成后即消（见 `design.md` Decision 8 的订正前提）。
 - [ ] 0.4 按 `grill-flow-hardening`（issue #298）跑**设计阶段审阅闭环**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审，直到 PASS 或轮数封顶），产出 `reviews/grill-adversarial.md`。**能由代码判定的问题用代码给出带证据（`文件:行号`）的答案并移出停轮队列**（本 change 已移出六条：生产构造点四处 / `denied_patterns` 不能当 allow 载体 / Bash 读侧今天通着 / 嵌套 `.env` 的 Bash `cp`/`mv` 被 denylist 前置拦下 / 两层今天就有 8/13 条不同向 / grill 正文判据不是结构性地全红——见 `design.md` 的 Context 与 Pre-Implementation Review）。
-- [ ] 0.5 把十二条答复落到 `design.md`（重写为 `## User Rulings` 一节，与 `## Decisions` 并列），并据此定稿：allow 覆盖面与结构性 deny 的推导规则、粒度校验规则、附加根作用域口径、配置解析的 fail-fast 条件。
+- [x] 0.5 把十二条答复落到 `design.md`（已重写为 `## User Rulings` 一节，与 `## Decisions` 并列），并据此定稿：allow 覆盖面与结构性 deny 的推导规则、粒度校验规则、附加根作用域口径、配置解析的 fail-fast 条件。
 
 ## 1. 规格
 
 - [ ] 1.1 修改 `workspace-safety` 规格：新增五条 Requirement（显式可写豁免 / 可写豁免的粒度与配置合法性 / 可写豁免不放宽结构性 deny 与命令 denylist / **可写豁免不使任何一层比引入前更宽** / **Bash 层豁免覆盖面差异必须被记录**），并把「工作区策略支持配置扩展」改为覆盖三个配置项（delta 已在 `specs/workspace-safety/spec.md`）。
 - [ ] 1.2 修改 `configuration` 规格：新增「工具策略支持 allowed_write_paths 配置」（delta 已在 `specs/configuration/spec.md`）。
 - [ ] 1.3 同步对应 current spec 到 `openspec/specs/workspace-safety/spec.md` 与 `openspec/specs/configuration/spec.md`，并按 `scripts/flow-policy.json` 追加 `current_spec_synced` 解释事件（受保护路径）。
-- [ ] 1.4 **裁定后改的先后顺序（Q10 的口径，已写死）**：**规格随裁定改** —— 先按 0.5 重写本 change 的 spec delta（1.1/1.2 是它们的落地），再让 `design.md` 的 `## Decisions` 与规格**同向**（不得只改设计不改规格，也不得让规格停留在推荐值而设计与裁定对齐）。规格 delta 现文中带「推荐值」性质的条款（结构性 deny 的判定、附加根作用域、读写区分）在裁定与之不同时**必须逐条重写**，并同步反向修订实现任务与测试任务的断言。
+- [ ] 1.4 **裁定后改的先后顺序（U10 的裁定，已写死）**：**规格随裁定改** —— 先按 0.5 重写本 change 的 spec delta（1.1/1.2 是它们的落地），再让 `design.md` 的 `## Decisions` 与规格**同向**（不得只改设计不改规格，也不得让规格停留在推荐值而设计与裁定对齐）。规格 delta 现文中带「推荐值」性质的条款（结构性 deny 的判定、附加根作用域、读写区分）在裁定与之不同时**必须逐条重写**，并同步反向修订实现任务与测试任务的断言。
 
 ## 2. 测试（先行，先写后实现）
 
 - [ ] 2.1 `tests/agent/test_workspace_policy.py`：**正例**——`allowed_write_paths=('.env',)` 下 `.env` 与 `config/.env` 的 `assert_write_allowed` 放行。
-- [ ] 2.2 `tests/agent/test_workspace_policy.py`：**否定用例**（本 change 的核心验收面）——① 同 policy 下 `src/.env` / `.env.local` / `.env.production` 仍拒；② `../outside/.env` 因 workspace **边界**被拒（allow 不得先于边界生效）；③ `.env.example` 等模板行为不变；④ 按 Q1 裁定，结构性 deny 即便被显式列入仍拒（`.git/config` 走目录类敏感名段；`.ruff_cache/CACHEDIR.TAG` 走含 `/` 的条目）。
+- [ ] 2.2 `tests/agent/test_workspace_policy.py`：**否定用例**（本 change 的核心验收面）——① 同 policy 下 `src/.env` / `.env.local` / `.env.production` 仍拒；② `../outside/.env` 因 workspace **边界**被拒（allow 不得先于边界生效）；③ `.env.example` 等模板行为不变；④ 按 U1 + U12 的裁定，结构性 deny 即便被显式列入仍拒（`.git/config` 走目录类敏感名段；`.ruff_cache/CACHEDIR.TAG` 走含 `/` 的条目）。
 - [ ] 2.3 `tests/agent/test_workspace_policy.py`：**默认值回归**——`allowed_write_paths=()` 时逐条断言与引入本能力前一致（配置为空 ⇒ 行为零变化）。
 - [ ] 2.4 `tests/agent/tools/test_command_guard.py`：**Bash 层同源生效**——带 allowlist 时**裸名** `.env` 的 `cp x .env` / `echo API_KEY=x >> .env` / `tee .env` / `dd of=.env` 由 DENY 变 ALLOW；不带 allowlist 时这些断言逐条保持今天的结论。
 - [ ] 2.5 `tests/agent/tools/test_command_guard.py`：**Bash 层否定用例**——带 allowlist 时 `cp x .env.local`、`cp x /etc/passwd`、`cp x .git/config` 仍 DENY。
@@ -40,9 +40,9 @@
 - [ ] 3.2 `agent/tools/command_guard.py`：`CommandGuard.__init__` 接收同一份 allowlist，把**写目标判定面**（口径见 `design.md` Decision 2 的唯一定义）的六个方法——`_check_target`（**仅写目标位置的调用**）/ `_has_protected_redirect` / `_check_dynamic_target` / `_check_mv_cp` / `_check_tee` / `_check_dd`——的路径判定收敛到 3.1 的共享谓词（Decision 2：禁止两层各写一份匹配）。**必须核对三条排除项**：① 不碰 `check()` 第 1 步的整句 denylist 正则扫描；② `mv`/`cp` 的**源位置**判定（读侧）SHALL NOT 被 allow 影响——否则 `cp .env /tmp/x` 会在 `.env` 被豁免后变成可读出口；③ 不碰 `_check_rm`。
 - [ ] 3.3 `agent/tools/builtin/bash.py:87`：`BashTool.__init__` 构造 `CommandGuard` 时传入 `self.policy.allowed_write_paths`（现状只传 `workspace_root`）。
 - [ ] 3.4 `agent/config.py`：`ToolsConfig` 新增 `allowed_write_paths: tuple[str, ...] = ()`（`:151-161` 旁），`_parse_tools_config`（`:875-897`）走 `_parse_string_list` 并追加 Decision 3 的语义校验（fail fast）。
-- [ ] 3.5 三个生产构造点接线：`agent/main.py:251`、`web/session.py:1728`、`benchmarks/agent_runner.py:349` 把 `config.tools.allowed_write_paths` 传给 `WorkspacePolicy`。
-- [ ] 3.6 `asterwynd.example.yaml:35`：在 `command_denylist` 旁补 `allowed_write_paths` 示例与一行注释（说明「deny 默认 + 精确覆盖」与不接受 glob）。
-- [ ] 3.7 按 Q5 与 Q8 的裁定实现读写区分：共享谓词**只**在写路径被调用——`assert_write_allowed`（`:356-360`）与命令护栏的写目标判定；`assert_read_allowed`（`:350-354`）、`is_denied`（`:316-338`）与 `agent/code_intelligence/repo_map.py:81,96,173` **不受影响**（Decision 2 的对照清单，逐条核对）。
+- [ ] 3.5 三个入口可配置的生产构造点接线：`agent/main.py:251`、`web/session.py:1728`、`benchmarks/agent_runner.py:349` 把 `config.tools.allowed_write_paths` 传给 `WorkspacePolicy`。
+- [ ] 3.6 `asterwynd.example.yaml:35`：在 `command_denylist` 旁补 `allowed_write_paths` 示例与一行注释。**示例必须用可兑现形态（U7）**：给**裸名**（如 `['.env']`），并在注释里写明「deny 默认 + 精确覆盖」、不接受 glob，以及嵌套路径的 `cp`/`mv` 不被覆盖这条边界。
+- [ ] 3.7 按 U5 与 U8 的裁定实现读写区分：共享谓词**只**在写路径被调用——`assert_write_allowed`（`:356-360`）与命令护栏的写目标判定；`assert_read_allowed`（`:350-354`）、`is_denied`（`:316-338`）与 `agent/code_intelligence/repo_map.py:81,96,173` **不受影响**（Decision 2 的对照清单，逐条核对）。
 - [ ] 3.8 核对 `agent/browser/policy.py:121` 的 `assert_write_allowed` 调用点：浏览器产物落盘会继承豁免，确认这是预期行为并写进 PR 描述（不是遗漏）。
 - [ ] 3.9 `agent/tools/builtin/subagents.py:2005`（`dry_run_workflow` 的临时沙箱）**不接线**：它无配置可传，且 `WorkspacePolicy(workspace_root=sandbox)` 不接受 allowlist 是正确的（沙箱里不该有用户的豁免）。核对它未被误当作「兜底」而漏出清单。
 
@@ -77,7 +77,7 @@
 
 ## 7. 收尾（本 change 的归档前必须完成）
 
-- [ ] 7.1 **检查文档影响面（按 AGENTS.md 的关键词扫描要求，范围是 `docs/` + `README.md` + `AGENTS.md` + `CONTEXT.md`）**：`docs/development-guide.md`（配置项说明 + 阶段 B 的跑法）、`docs/openspec-change-backlog.md`（本 change 的登记与清理）、`docs/known-debt.md`（若 Q6 裁定记为债务，则补一条并配 `protected_artifact_explained` 事件）、`AGENTS.md`（本 change **不改流程段**，但要确认没有因本 change 产生的事实性出入）。**已知五处命中，逐条给「改 / 不改 / 记债」结论**：① `docs/interview-script/walkthrough/W06-security.md:34`「敏感文件 deny …**读写都拒**」在本 change 落地后**变半真**（写侧多了一条显式豁免通道）⇒ 应改；② 同文件 **`:11`**（`└─ 命令拒绝列表：DEFAULT_DENYLIST（58 个危险模式）`）与 **`:35`**（正文同款「58 个模式」）**两处**，实测 `DEFAULT_DENYLIST` 为 **59**；③ `docs/interview-bullets/walkthrough.md:2483` 的「**35 条**」及所列 `.env` / `.env.*` / `**/.env` 模式实测已不存在（`DEFAULT_DENIED_PATTERNS` 现为 **32** 条，`.env` 族改由段级谓词判；同文件 `:2497` 同源）；④ 同文件 **`:2481`** 引 `agent/workspace_policy.py:9-45`（现为 **`9-43`**）；⑤ 同文件 **`:2499`** 引 `is_denied()` 为 `:222-239`（现为 **`:316-338`**）——②③④⑤ 是**变更前就存在**的历史口径问题，按 AGENTS.md **记债务**即可，但必须在本任务里被显式列出并给出结论。
+- [ ] 7.1 **检查文档影响面（按 AGENTS.md 的关键词扫描要求，范围是 `docs/` + `README.md` + `AGENTS.md` + `CONTEXT.md`）**：`docs/development-guide.md`（配置项说明 + 阶段 B 的跑法）、`docs/openspec-change-backlog.md`（本 change 的登记与清理）、`docs/known-debt.md`（按 U6 的裁定补一条「Bash 层读侧缺口」债务并配 `protected_artifact_explained` 事件）、`AGENTS.md`（本 change **不改流程段**，但要确认没有因本 change 产生的事实性出入）。**已知五处命中，逐条给「改 / 不改 / 记债」结论**：① `docs/interview-script/walkthrough/W06-security.md:34`「敏感文件 deny …**读写都拒**」在本 change 落地后**变半真**（写侧多了一条显式豁免通道）⇒ 应改；② 同文件 **`:11`**（`└─ 命令拒绝列表：DEFAULT_DENYLIST（58 个危险模式）`）与 **`:35`**（正文同款「58 个模式」）**两处**，实测 `DEFAULT_DENYLIST` 为 **59**；③ `docs/interview-bullets/walkthrough.md:2483` 的「**35 条**」及所列 `.env` / `.env.*` / `**/.env` 模式实测已不存在（`DEFAULT_DENIED_PATTERNS` 现为 **32** 条，`.env` 族改由段级谓词判；同文件 `:2497` 同源）；④ 同文件 **`:2481`** 引 `agent/workspace_policy.py:9-45`（现为 **`9-43`**）；⑤ 同文件 **`:2499`** 引 `is_denied()` 为 `:222-239`（现为 **`:316-338`**）——②③④⑤ 是**变更前就存在**的历史口径问题，按 AGENTS.md **记债务**即可，但必须在本任务里被显式列出并给出结论。
 - [ ] 7.2 确认 witnessloop 形态 manifest 在**所有内容提交之后**重建（stale 约束），且 `reviews/` 处于「每份 `.md` 都被绑定」的一致状态。
 - [ ] 7.3 **归档 move 必须是独立的纯 rename 提交**（`git mv` 单独成一个 commit，不与任何内容改动并用——`witnessloop-adoption` 实测：并用会被 git 记作 `A`/`D` 而非 `R100`，`is_archive_move` 为假 ⇒ 3 条红）；归档到 `openspec/changes/archive/2026-10-14-guard-write-allowlist/`（日期前缀以实际归档日为准）。
 - [ ] 7.4 从 `docs/openspec-change-backlog.md` 移除本 change，并追加 `backlog_updated` 与 `change_archived` 解释事件（受保护路径）。

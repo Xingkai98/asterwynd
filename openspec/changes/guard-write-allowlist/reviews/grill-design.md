@@ -36,6 +36,23 @@
 - **Q11**: 阶段 B 的「grill 正文判据全红」到底是**结构性不兼容**还是**取决于我们怎么写报告**？；**例子**: 见 `design.md` 的 Q11。用 witnessloop 自己的 `grill_evidence_findings` 跑全部 **63** 份归档 `grill-design.md`：**39 份零 finding（判绿）**、**9 份**只报「缺 `来源:`」、**15 份**报其它项；含 `- **来源**:`（加粗行）写法的只有 **2 份**，而这 2 份**都被判 src-only（红）**。所以「全红」只对采用加粗写法的那两份成立，不是本仓通例。具体到本 change：`_SOURCE_RE = re.compile(r"来源\s*[:：]")`（`src/witnessloop/evidence.py:33`）配 `re.search(block)`——若本 change 的 `grill-design.md` 按 `- **决策**: <内容>；理由: <理由>；来源: <run id>`（裸 `来源:` 与决策同 bullet）写，**会命中 ⇒ 判绿**；若按加粗独占行写，则判红。请裁定：(a) 报告格式按哪一种写；(b) 归因表里是否给「**格式选择导致的红**」单列一类——不留的话，这类红会被误分到「配置问题」或「已知工具不兼容」，正是 Decision 8 要防的误读。
 - **Q12**: Q1(b) 的「结构性目录 deny」**判定口径**是什么——封闭列举那几条，还是**从 deny 表 + 敏感名集合推导**？；**例子**: 见 `design.md` 的 Q12。`DEFAULT_DENIED_PATTERNS`（`agent/workspace_policy.py:9-43`，**32 条**）里文件级（`*.pem`/`*.key`）与目录级（`.` + 目录名）混在**同一张表**里，`is_denied` 又**只有一条 glob 通道**（`:331-337`），靠「哪条通道命中」分不开；规格原文里手写的 6 条列举还漏了 `.ruff_cache/**`、`.pytest_cache/**`、`.mypy_cache/**`、`venv/**`、裸 `node_modules`、裸 `.git`。请裁定判定规则，并写进规格使其**可机械复算**。
 
+## User Confirmation
+
+> 用户于 **2026-10-14 停轮拍板**，十二条 Open Question **全部按 design 的推荐值裁定**。Q1–Q6 由立项期提出、Q7–Q12 由本轮独立 grill 补充；逐条答复如下（生效口径已落进 `design.md` 的 `## User Rulings`）。
+
+- **Q1**: 用户答复：按推荐 (b)——`allowed_write_paths` 覆盖**文件级** deny（`.env` 族等敏感点文件名、`*.pem` / `*.key` 等文件模式），不覆盖**结构性目录** deny，也不覆盖 workspace 边界（边界检查先于任何 allow 判定）；结构性 deny 的判定口径见 Q12 的裁定；确认时间: 2026-10-14
+- **Q2**: 用户答复：按推荐——粒度用 **workspace 相对路径的精确字面值**，不做目录前缀、不做 glob；含 glob 元字符（`*` `?` `[` `]`）、绝对路径、含 `..` 段、以 `/` 结尾的条目一律在**配置解析期 fail fast** 并返回可读错误；确认时间: 2026-10-14
+- **Q3**: 用户答复：按推荐——**不跟随**，`allowed_write_paths: ['.env']` 只放行 `.env` 本身，`.env.local` / `.env.production` 仍拒绝（与 #254 刚收紧的凭据变体口径对齐，要开哪个就再写一条）；确认时间: 2026-10-14
+- **Q4**: 用户答复：按推荐——**只做项目级**：配置住在 `asterwynd.yaml` 的 `tools.allowed_write_paths`，与既有 `tools.command_denylist` / `tools.ignore_patterns` 同构，**不加用户级 scope、不加环境变量通道**，使白名单随仓库进 git、每次改动都过 review；确认时间: 2026-10-14
+- **Q5**: 用户答复：按推荐——**只放行写**，读保持拒绝。allow 只接进 `assert_write_allowed` 与命令护栏的写目标判定，`assert_read_allowed` / `is_denied` / RepoMap 的 tree-sitter 跳过判定都不受影响，并接受由此产生的「`Edit` 能改但 agent 读不回内容、`old_string` 只能凭记忆」这条可用性边界；确认时间: 2026-10-14
+- **Q6**: 用户答复：按推荐——**不堵** Bash 读侧，记为债务另立。理由是它是**新增一个读侧判定能力**（要给 `cat` / `head` / `tail` / `grep` / `source` 等一批命令新增读目标语义），会带来误报面且让「写白名单」的 diff 无法独立评估；本 change 如实写明「只放行写」的保护面只在文件工具层（Bash 层 `cat .env` 今天本来就是通的）；确认时间: 2026-10-14
+- **Q7**: 用户答复：按推荐 (a)——**不动** `_EXTRA_DENYLIST`（整句 denylist 正则扫描保持现有语义、不可被配置覆盖），**接受**「嵌套路径（如 `config/.env`）的 Bash `cp` / `mv` 不在豁免范围内」这条边界，并把 change 文档与配置示例改成**可兑现**形态（裸名两层通吃；嵌套路径只有文件工具写与 `echo >>` / `tee` / `dd of=` / `install` 生效）；确认时间: 2026-10-14
+- **Q8**: 用户答复：按推荐 (b)——allow **只在** `assert_write_allowed` 与命令护栏的**写目标判定面**求值；共享的是**谓词函数**、**不是调用点**，`is_denied` 保持原语义，读侧与 tree-sitter 索引面都不感知 allowlist；确认时间: 2026-10-14
+- **Q9**: 用户答复：按推荐 (a)——作用域是「**任一 workspace 根**的相对路径」，与 `relative_path()` 的现有语义一致（附加根下同名路径同样被覆盖），并如实记录 Bash 层对附加根绝对路径另有一层 pre-IR 不可挂钩的差异；确认时间: 2026-10-14
+- **Q10**: 用户答复：确认口径为「**规格随裁定改，design 与规格同向**」——用户裁定后先重写 change 的 spec delta（tasks 1.1/1.2），再让 design 的 Decisions 与规格对齐（tasks 1.4 已按此改写），不允许出现「实现按 design、测试对照旧规格」的中间态；确认时间: 2026-10-14
+- **Q11**: 用户答复：按推荐——本 change 的 `reviews/grill-design.md` **保持 grill 已产出的同行裸 `来源:` 写法**（`- **决策**: …；理由: …；来源: <run id>`），不用加粗写法；归因表保留「格式选择导致的红」这一类，把它与上游 issue #20 那类结构性不兼容分开；确认时间: 2026-10-14
+- **Q12**: 用户答复：按推荐 (ii)——结构性 deny 用**两源推导**：`含 '/' 的 deny 条目` **∪** `路径中任一**段**命中 SENSITIVE_DOTDIRS`，其余为文件级、可豁免；规则须可机械复算并写进规格，不依赖会随 deny 表增删而静默失配的封闭清单；确认时间: 2026-10-14
+
 ## 风险
 
 - **R1（低危，锚点不准）**: `design.md:26` 声称三处生产构造点是「当前全部」，排除项写成「`agent/tools/builtin/*.py` 里 `policy or WorkspacePolicy()` 的兜底」。但 `agent/tools/builtin/subagents.py:2005` 是 `workspace_policy=WorkspacePolicy(workspace_root=sandbox)`——**不是** `policy or` 兜底，是 `dry_run_workflow`（`:1979`）里一个真实的构造点。影响低（临时 dry-run 沙箱，无配置可传），但「全仓 grep 复核」的结论口径不成立，建议要么补进排除清单并写明真实理由，要么改成四处。
