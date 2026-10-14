@@ -15,7 +15,7 @@
 |---|---|---|
 | `Write .env` / `Edit .env` | ❌ DENY | — |
 | `Read .env` / `Grep .env` | ❌ DENY | — |
-| `cp .env.example .env` | ❌ DENY（`mv_cp_dest`） | ❌ DENY |
+| `cp .env.example .env` | ✅ ALLOW | ❌ DENY（`mv_cp_dest`） |
 | `echo API_KEY=x >> .env` | ✅ ALLOW | ❌ DENY（`protected_redirect`） |
 | `touch .env` | ❌ DENY | ✅ ALLOW（空动作，非洞） |
 | `cat .env` / `grep API_KEY .env` | ✅ ALLOW | ✅ ALLOW（**读侧今天本来就通**） |
@@ -81,7 +81,7 @@
 
 - research_tier: full
 - status: enabled
-- reason: 本 change 命中判据表两条 —— ①「**走 grill 的非平凡 change**」（它有 6 条待用户裁定的政策取舍：allow 覆盖面 / 粒度 / `.env` 变体是否跟随 / 配置级别 / 读写是否区分 / Bash 读侧是否一并收口，全部要停轮）；②「**对标业界产品**」（「deny 默认 + allow 显式覆盖」是主流 coding agent 权限模型的共同形态，每条取舍都有可对照的既有实现）。判据表的反例「给已有工具加一个可选参数（→ light）」**不成立**：本 change 不是给**一个**判定器加参数，而是把**同一份 allow 数据喂给两个互不相同的判定器**，而且它的效果是**放宽**一条既有安全约束——放宽型改动与收紧型改动的风险不对称，必须按 full 做。调研对象是本地参考仓库 `/home/shared/agent-study/reference-repos/` 下的 codex / kimi-code / opencode 三个有内置权限模型的仓（`pi` 无内置权限系统、`zcode` 为静态白名单，本 change 只在对口处引用）。**注意**：本 worktree 没有 `.dev/reference-repos.txt`（该文件 gitignore、属本地配置），实际路径由上列绝对路径给出——这不构成豁免，仅记录依据来源。
+- reason: 本 change 命中判据表两条 —— ①「**走 grill 的非平凡 change**」（它有 **12 条待用户裁定的政策取舍**：立项期 6 条——allow 覆盖面 / 粒度 / `.env` 变体是否跟随 / 配置级别 / 读写是否区分 / Bash 读侧是否一并收口；独立 grill 补充 6 条——嵌套路径的 Bash `cp`/`mv` 是否扩范围 / allow 判定面接在哪 / 附加根下同名路径是否覆盖 / 裁定与规格 delta 的先后顺序 / grill 报告的 `来源:` 写法 / 结构性 deny 的判定规则。全部要停轮）；②「**对标业界产品**」（「deny 默认 + allow 显式覆盖」是主流 coding agent 权限模型的共同形态，每条取舍都有可对照的既有实现）。判据表的反例「给已有工具加一个可选参数（→ light）」**不成立**：本 change 不是给**一个**判定器加参数，而是把**同一份 allow 数据喂给两个互不相同的判定器**，而且它的效果是**放宽**一条既有安全约束——放宽型改动与收紧型改动的风险不对称，必须按 full 做。调研对象是本地参考仓库 `/home/shared/agent-study/reference-repos/` 下的 codex / kimi-code / opencode 三个有内置权限模型的仓（`pi` 无内置权限系统、`zcode` 为静态白名单，本 change 只在对口处引用）。**注意**：本 worktree 没有 `.dev/reference-repos.txt`（该文件 gitignore、属本地配置），实际路径由上列绝对路径给出——这不构成豁免，仅记录依据来源。
 - research questions:
   1. 主流 coding agent 的路径权限模型里，**allow 与 deny 谁优先**？多条规则同时命中时怎么解？
   2. 用户可配的路径白名单**粒度**是什么？**glob 能不能用于授权（写）**，还是只用于拒绝？
