@@ -447,8 +447,15 @@ class WorkspacePolicy:
 
         Public counterpart of `is_denied`, kept for symmetry and for callers that
         want to *ask* rather than assert. Read-only: it answers "would the
-        allowlist cover this path?", not "is this path safe?". The workspace
-        boundary is checked first and is never overridable.
+        allowlist cover this path?", not "is this path safe?".
+
+        Shaped like `is_denied`: the workspace boundary is checked first and is
+        never overridable, so an out-of-workspace path raises `PermissionError`
+        rather than returning `False` — including when the allowlist is empty.
+        (That differs from the pre-extraction implementation, which short-circuited
+        on an empty allowlist *before* the boundary check and therefore answered
+        `False`; the current shape is the fail-closed, self-consistent one, and it
+        is documented in the change's design.md.)
         """
         return self._allowlist_covers_resolved(self.assert_within_workspace(path))
 

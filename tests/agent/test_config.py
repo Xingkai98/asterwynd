@@ -968,3 +968,39 @@ def test_allowed_write_paths_rejects_non_list(tmp_path, monkeypatch):
     )
     with pytest.raises(ConfigError, match="tools.allowed_write_paths"):
         load_config(start_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "./.env",  # 前导 `./`
+        "a//b",  # 重复斜杠
+        "a/./b",  # 含 `.` 段
+        "a\\b",  # 反斜杠分隔
+        ".",  # 落成空路径
+    ],
+)
+def test_allowed_write_paths_rejects_non_canonical_spelling(tmp_path, monkeypatch, entry):
+    """非规范拼写 fail fast（U2 + Decision 3 的实现期收紧，building-review N-1）。
+
+    这类条目**永远匹配不上** `WorkspacePolicy.relative_path()` 的返回值 ⇒ 接受
+    它就等于给一份安全白名单制造**静默 no-op**（用户以为开了、实际没开）。故与
+    U2 的四类并列，在解析期 fail fast。
+    """
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        f"tools:\n  allowed_write_paths:\n    - '{entry}'\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="tools.allowed_write_paths"):
+        load_config(start_dir=tmp_path)
+
+
+@pytest.mark.parametrize("entry", [" .env", ".env ", "  config/.env  "])
+def test_allowed_write_paths_strips_surrounding_whitespace(tmp_path, monkeypatch, entry):
+    """条目两端空白由既有 `_parse_string_list` 的 `strip()` 兜住，不算非规范拼写。"""
+    monkeypatch.delenv("ASTERWYND_MODE", raising=False)
+    (tmp_path / "asterwynd.yaml").write_text(
+        f"tools:\n  allowed_write_paths:\n    - '{entry}'\n", encoding="utf-8"
+    )
+    config = load_config(start_dir=tmp_path)
+    assert config.tools.allowed_write_paths == (entry.strip(),)

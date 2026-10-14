@@ -1,5 +1,294 @@
 # Building Review — guard-write-allowlist
 
+## Verdict
+
+**`CHANGES_REQUESTED`**（第 2 轮 / 3 轮封顶；审阅者独立零记忆，不继承开发上下文）
+
+**一句话**：I-1 / I-3 / I-4 **完全成立**，I-2 的回写已落地但**新增了一句可证伪的测试覆盖声明**，I-5 的抽取等价性成立但**带出一处边角行为差异**、与提交信息「除 I-4 传参外无行为变更」不符。**安全面本轮整轮重跑全部干净**（默认态 217 行判定 0 差异、读侧翻转 0、读源命令翻转 0、结构性 deny 0 泄漏、四个变异探针全被测试杀死）。判 `CHANGES_REQUESTED` 只因上述两处「声称与事实不符」，**均无安全影响、无功能缺陷，修法各为一行**。
+
+| 轮次 | revision | verdict |
+|---|---|---|
+| R1 | `340c90e` | `CHANGES_REQUESTED`（I-1 Must fix + I-2/I-3 + 两条 nit） |
+| **R2（本轮）** | **`6a43aee`** | **`CHANGES_REQUESTED`**（I-1/I-3/I-4 关闭；I-2 尾部、I-5 边角各一处待修） |
+
+---
+
+## R2 复审（revision 6a43aee）
+
+- **Diff span**：`fd6d581`（`git merge-base HEAD origin/master`）.. `6a43aee`（HEAD）
+- **本轮修的面**：`git show 6a43aee` = 11 文件 / +485 −17，其中**行为面只动了三处**（`command_guard.py` 加 `denied_patterns` 形参并透传、`builtin/bash.py:92` 构造点传表、`workspace_policy.py` 抽 `_allowlist_covers_resolved`）
+- **方法**：隔离副本（`git archive <rev> | tar -x` → `rm -f .git && git init -q`，位于 `/tmp/wl-r2/{base,head}`）+ `PYTHONPATH` 指向副本的差分探针；同名 workspace 路径喂给两棵树，输出逐行 `diff`。变异探针在 `mut`/`mut2`/`mut3` 三份**额外副本**上做，被审 worktree **零改动**（`git status --porcelain` 全程为空）。
+
+### R2-1. I-1（R1 的 Must fix）附加根「两层同向」—— ✅ **成立**
+
+R1 要求三件事：分开归因、spec carve out、补断言。三件都做了，且**归因分类经我实测确认正确**。
+
+**实测（HEAD，附加根 `/tmp/.../other`、`allowed_write_paths=('.env',)`）**：
+
+```
+file-tool Write /tmp/wl-r2-i1-*/other/.env -> ALLOW
+  guard DENY  [protected_redirect]  echo K >> <extra>/.env
+  guard DENY  [tee_target]          tee <extra>/.env
+  guard DENY  [dd_target]           dd of=<extra>/.env
+  guard DENY  [install_target]      install x <extra>/.env
+  guard DENY  [denylist]            cp x <extra>/.env      <- 另叠加整句正则那层
+  guard DENY  [denylist]            mv x <extra>/.env
+== 主根对照 ==
+  guard ALLOW [None]  echo K >> .env      tee .env      dd of=.env      install x .env      cp x .env      mv x .env
+  guard DENY  [protected_redirect]  echo K >> config/.env
+  guard DENY  [denylist]            cp x config/.env      mv x config/.env
+```
+
+即 `>>` / `tee` / `dd of=` / `install` 四形的拒绝**确实**来自「护栏只持有主 workspace」（`command_guard.py:732-757` 的 `_allow_covers` 在 `:744` 要求 `self._workspace`、`:749` 用 `_within` 判主根；`CommandGuard` 接口上根本没有 `additional_roots`），**不是** R1 原先引的整句 denylist 正则；`cp`/`mv` 才叠加后者。**作者的分类正确，R1 的混合归因确实是错的。**
+
+**规格 carve out**：delta 与 current spec 两处都补上了排除项 ④ + Scenario——`openspec/changes/.../specs/workspace-safety/spec.md:121`（④ 全文）/`:144`（Scenario 附加根不同向）、`:157`/`:172`（不同源说明 + Scenario），`openspec/specs/workspace-safety/spec.md:660`/`:683`/`:696`/`:711` 同向。`design.md:134` 与 `:254-267` 的 U9/Decision 9 也改成了两行对照表。
+
+**断言钉住且非空转**：`tests/agent/tools/test_command_guard.py:1104-1166`（`TestAdditionalRootIsRootBlind`，含四形各配 reason + `cp`/`mv` 的 `denylist` 层 + `:1152` 主根对照）。我做了**变异探针**验证它不是空转——把 `_allow_covers` 的 `_within` 分支改成 basename 回退（模拟「护栏变得感知附加根」）：
+
+```
+1 failed, 3 passed, 268 deselected
+FAILED ...::TestAdditionalRootIsRootBlind::test_additional_root_writes_stay_denied_in_guard
+  assert <CommandVerdict.ALLOW: 'allow'> is <CommandVerdict.DENY: 'deny'>
+```
+
+⇒ 该测试**真的**钉住了根盲区现状。**I-1 关闭。**
+
+### R2-2. I-2 非规范拼写回写 Decision 3 —— ⚠️ **主体成立，尾句不成立（本轮唯一实质阻塞项）**
+
+回写本身做到了，且口径与我实测一致：
+
+- `design.md:97` 新增一段「实现期补充：还拒绝『非规范拼写』」，归因（防静默 no-op）、代价、报错文案三理由齐；
+- 规格 delta `specs/workspace-safety/spec.md:59` + Scenario `:80`，current spec `openspec/specs/workspace-safety/spec.md:598` + Scenario `:619`；
+- 行为保留且实测正确：`./.env` / `a//b` / `a/./b` / `a\b` / `.` / `a/` / `a[b]` / `/abs/.env` / `../x` / `a/../b` 全部 `ConfigError`；`.env` / `config/.env` / `' .env'`→`('.env',)` / `'.env '`→`('.env',)` 接受；`['']` → `()`（空串被 `_parse_string_list` 的 `strip()` 提前丢弃，不报错——与「落成空路径」那条措辞略有出入，但 `.` 确实被拒，属措辞而非事实问题）。
+
+**但尾句可证伪**：`design.md:97` 写「并有 `tests/agent/test_config.py` 的逐条用例」，`6a43aee` 的提交信息同样写「…（Requirement + 新 Scenario）**+ 逐条测试**」。实测**计数为 0**：
+
+```
+$ git show --name-only --format="" 6a43aee | grep tests/          # 只列出
+tests/agent/tools/test_command_guard.py                            # test_config.py 未被本轮触碰
+$ git diff 340c90e..6a43aee --stat -- tests/
+ tests/agent/tools/test_command_guard.py | 111 +++                  # 只有一个文件
+$ grep -rn -- '\./\.env' tests/ | wc -l      -> 1   # 唯一命中是 test_config.py:950 的 "config/../.env"（U2 既有的 `..` 段用例）
+$ grep -rn -- 'a//b' tests/ | wc -l          -> 0
+$ grep -rn -- 'a/\./b' tests/ | wc -l        -> 0
+$ grep -rn -- 'a\\b' tests/ | wc -l          -> 0
+$ grep -c "def test_allowed_write_paths" tests/agent/test_config.py   -> 4（defaults / parsed / rejects_invalid_entries / rejects_non_list，全是 U2 四类，不含非规范拼写）
+```
+
+`:946-957` 那组 `parametrize` 覆盖的是 **U2 的既有四类**（glob / 绝对路径 / `..` 段 / 尾 `/`），**不含**本轮补充的非规范拼写。⇒ 这是**本轮 fix 新引入的一处事实错误**，且落在本 change 自己最在意的「如实划定兑现面」这一类上（与 R1 的 I-3 同型：结论写了、artifact 没落）。
+
+**修法（二选一，均不涉及行为改动）**：① 在 `tests/agent/test_config.py` 的 `parametrize` 列表里补 `'./.env'` / `'a//b'` / `'a/./b'` / `'a\\b'`（并断言文案指向对应规则）；或 ② 删掉 `design.md:97` 的尾句、把「逐条测试」从提交口径里去掉。**推荐 ①**——它同时把这条规则钉进回归网。
+
+### R2-3. I-3 任务 7.1 的 ②③④⑤ 落盘 —— ✅ **成立**
+
+- `docs/known-debt.md:492` 新增「面试讲稿里四处陈旧的技术口径（guard-write-allowlist 7.1 扫描发现，均为变更前既有）」，四条逐条给出 `文件:行号` + 目标值，并写明「不就地改讲稿」的理由与收敛方向；
+- 受保护写入事件齐：`workflow-events.jsonl` seq 8 = `protected_artifact_explained` / `artifact_path=docs/known-debt.md`（我 dump 了全部 9 条事件的 `seq|event_type|artifact_path`）；
+- `tasks.md` 7.1 的措辞已从「记债务」改成「**已落盘**」并写清落点，不再是「读起来像已执行」。
+
+**债务条目里的数字我逐条复算，全部为真**：
+
+```
+len(DEFAULT_DENYLIST)        = 59      （条目写 58→59）  ✔
+len(DEFAULT_DENIED_PATTERNS) = 32      （条目写 35→32）  ✔
+.env 族已不在 deny 表: [p for p in DEFAULT_DENIED_PATTERNS if 'env' in p] -> ['.venv', '.venv/**', 'venv', 'venv/**']  ✔
+```
+
+**I-3 关闭。**
+
+### R2-4. I-4 `CommandGuard` 吃默认 deny 表 —— ✅ **成立（本轮唯一的行为改动，重点验毕）**
+
+`command_guard.py:701-717` 新增 `denied_patterns` 形参，`:717` 落成 `self._denied_patterns = tuple(denied_patterns or DEFAULT_DENIED_PATTERNS)`，`:757` 把它交给 `write_allowlist_covers`；`agent/tools/builtin/bash.py:92` 的生产构造点传 `self.policy.denied_patterns`。
+
+**实测三分支**（workspace 有 `sub/`，`denied_patterns=('sub/.env',)`，`allowed_write_paths=('sub/.env',)`）：
+
+```
+policy.assert_write_allowed('sub/.env')            -> DENY           （含 `/` ⇒ 结构性，豁免覆盖不了）
+guard(passed custom table)  echo K >> sub/.env     -> DENY [protected_redirect]
+guard(passed custom table)  tee sub/.env           -> DENY [tee_target]
+guard(passed custom table)  dd of=sub/.env         -> DENY [dd_target]
+guard(no table -> default)  echo K >> sub/.env     -> ALLOW [None]   <- 对照组：证明「传表」不是空转
+```
+
+**默认态未被改变**（这是 R1 最担心的反向风险）：不传表 vs 显式传 `DEFAULT_DENIED_PATTERNS`，12 条命令 **0 处不同**：
+
+```
+omitted-table vs explicit-default-table: 12 commands, 0 differing
+```
+
+**非空转验证（变异探针 MUT-C）**：把 `:717` 改回 `tuple(DEFAULT_DENIED_PATTERNS)`（即回退 I-4 的修法）⇒
+
+```
+FAILED ...::TestGuardUsesPolicyDenyTable::test_custom_deny_table_is_honoured
+  assert <CommandVerdict.ALLOW> is <CommandVerdict.DENY>   (test_command_guard.py:1200)
+1 failed, 1 passed
+```
+
+⇒ 两组新测试（`:1168-1213`）确实守住了同源。**I-4 关闭。**
+
+### R2-5. I-5 `is_write_allowed` 抽取 —— ⚠️ **等价性成立，但带出一处边角差异**
+
+`workspace_policy.py:433` 抽出的 `_allowlist_covers_resolved` 与 R1 时的 `is_write_allowed` 旧实现**逐句等价**，我按旧实现原文（`340c90e` 版：空表早返 → `assert_within_workspace` → `relative_path` → `write_allowlist_covers`）重写后对拍：
+
+```
+allow=()                                       : 13 paths, 2 mismatches
+allow=('.env','deploy.pem','sub/.env','.git/config','id_rsa') : 13 paths, 0 mismatches
+  MISMATCH: /etc/passwd                       new=ERR:PermissionError  old=False
+  MISMATCH: /tmp/.../../outside.env           new=ERR:PermissionError  old=False
+```
+
+**这 2 处是真差异，不是探针假象**：旧实现先判空表、空表直接 `return False`（**不碰** workspace 边界）；新实现 `:450` 无条件先 `assert_within_workspace(path)`。于是**空 allowlist + 越界路径**从「返回 `False`」变成「抛 `PermissionError`」。方向是 **fail-closed（更严）**，且 `:445` 的 docstring 本来就写着「The workspace boundary is checked first and is never overridable」——新行为反而与自己的 docstring 一致。
+
+**但提交信息的「**除 I-4 传参外无行为变更**」在这一点上不成立。** 影响面：`is_write_allowed` 全仓**只有定义、零调用方**（`grep -rn is_write_allowed --include=*.py` 计数 = 1，即 `workspace_policy.py:445` 自身），故无功能后果。
+
+**修法（二选一，推荐 ①）**：① 恢复旧顺序（空表早返放回 `assert_within_workspace` 之前），使公开方法逐字节等价；或 ② 接受并把它写进 `design.md` 一句（「`is_write_allowed` 对空清单 + 越界路径由返回 `False` 改为抛 `PermissionError`，方向 fail-closed」）。**不接受**「提交信息改一改」——历史已入库。
+
+---
+
+### R2-6. 安全面：**整轮重跑**的原始结果（本轮改过 `workspace_policy.py` / `command_guard.py` / `bash.py`，R1 结论不沿用）
+
+语料：40 个相对路径 + 7 个绝对路径 × {`assert_write_allowed` / `assert_read_allowed` / `is_denied`}，加 90 条命令。base 与 head 喂**同一个 workspace 路径**，逐行 diff。
+
+**① `DEFAULT-STATE IDENTICAL`（默认空清单）→ ✅ 独立复现**
+
+```
+$ diff <(grep -v '^#' out-base-default.txt) <(grep -v '^#' out-head-default.txt)
+*** DEFAULT-STATE IDENTICAL: 0 differing rows across 217 enumerated verdicts ***
+# base header: has_allowed_write_paths=False / allowed_write_paths=ABSENT
+# head header: has_allowed_write_paths=True  / allowed_write_paths=()
+```
+
+另在 read-source 语料上复算：`base default vs head default → IDENTICAL`。
+
+**② allow 只放行清单内精确路径 → ✅（翻转全枚举）**
+
+```
+flips by channel (head: default -> allow):  W 8 / R 0 / D 0 / C 11
+W flips  : .env, sub/.env, ./.env(→.env), x/../.env(→.env), deploy.pem, id_rsa, <WS>/.env, <WS>/deploy.pem
+C flips  : 11 条，全部 DENY->ALLOW，且全部命令文本含被列入路径
+allow->deny flips: 0
+```
+
+未列入的仍拒（逐条实测，未出现在翻转集里）：`.env.local` `.env.production` `config/.env` `config/.env.bak` `configX/.env` `src/.env` `a/b/c/.env` `bench/deploy.pem` `xdeploy.pem` `.git/config` `.git/HEAD` `/etc/passwd` `<OUTSIDE>/.env` `<WS>/../outside.env` `node_modules/x.js` `benchmarks/runs/x.json`。
+
+**③ 读侧未被放宽 → ✅**
+
+```
+READ-layer flips (R|)  : 0
+is_denied flips (D|)   : 0
+$ grep -rn "allowed_write_paths\|write_allowlist_covers" agent/code_intelligence/   -> 0 命中（repo_map 索引跳过判定不感知 allowlist）
+R|.env -> DENY      R|config/.env -> DENY      R|.env.local -> DENY
+```
+
+**④ `mv`/`cp` 的源位置未放行 → ✅（50 条读源命令）**
+
+```
+read-source commands: 50
+flips caused by write allowlist among READ-SOURCE commands: 0
+ALLOW->DENY flips: 0
+  'cp .env /tmp/out'            default=DENY[cp_source]   allow=DENY[cp_source]
+  'mv .env /tmp/out'            default=DENY[mv_source]   allow=DENY[mv_source]
+  'cp .git/config /tmp/out'     default=DENY[cp_source]   allow=DENY[cp_source]
+  'install -m 600 .env /tmp/out' default=DENY[install_source] allow=DENY[install_source]
+  'dd if=.env of=/tmp/out'      default=DENY[denylist]    allow=DENY[denylist]
+  'cp .env /tmp/.env'           default=DENY[denylist]    allow=DENY[denylist]
+  'mv config/.env .env'         default=DENY[mv_source]   allow=DENY[mv_source]
+```
+
+即**被豁免的 `.env` 没有变成可外泄读源**。两条被我单独拎出来验的反向命令也干净：`cp /etc/passwd .env` → `DENY[denylist]`、`cp x /etc/passwd` → `DENY[denylist]`。
+
+**⑤ 结构性 deny 永不翻转 → ✅（两源枚举，0 泄漏）**
+
+```
+A. 逐 pattern 派生后代路径 + 把该**精确路径**放进 allowlist（8 条）:
+   .git/config .git/HEAD node_modules/x.js .venv/lib/x.py __pycache__/a.pyc
+   benchmarks/runs/x.json .asterwynd/worktrees/w/x sub/id_rsa
+   -> 8/8 DENY, leaks=0
+B. SENSITIVE_DOTDIRS × {<d>/x, <d>, a/<d>/b} = 27 条（.aws .kube .netrc .ssh .npmrc .pypirc .gnupg .docker .git）
+   -> 27/27 DENY
+（另：裸目录名条目只开它自己那一条路径，开不出子树——allow=('node_modules',) 时
+  write node_modules -> ALLOW 而 write node_modules/x.js -> DENY；allow=('.git',) 连 .git 本身都 DENY）
+```
+
+**⑥ 对抗/反转探针（base↔head 差分，normalize 掉随机临时目录名）→ 只出现预期翻转**
+
+```
+$ diff adv-base.n adv-head.n          # 除 5 组「allowlist 生效」翻转外无其它差异
+  仅这些行不同（全部是 base 无 allowlist 能力 ⇒ DENY，head 命中豁免 ⇒ ALLOW）:
+    allow=('node_modules',)  write node_modules        DENY -> ALLOW
+    allow=('.venv',)         write .venv               DENY -> ALLOW
+    allow=('deploy.pem',)    write pem_link            DENY -> ALLOW   （symlink 解析到被豁免目标）
+    allow=('.env',)          write .env_link           DENY -> ALLOW   （同上）
+    allow=('.env','sub/.env') write sub/../.env, ./sub/.env, sub/./.env, sub//.env   DENY -> ALLOW（规范化到被豁免路径）
+```
+
+**未翻转（两态一致的既有事实，逐条实测）**：`etcpasswd_link -> /etc/passwd` DENY；`escaper -> <OUTSIDE>/.env` DENY；`allow=('pem_link',)` 写 `pem_link` DENY；大小写 `.ENV`/`.Env`/`.eNv` 两态皆 ALLOW；前后缀近似 `.envx`/`x.env`/`my.env`/`deploy.pem.bak`/`deploy.pemx` 两态皆 ALLOW，`xdeploy.pem` 两态皆 DENY；多级相对 `../outside/.env`、`sub/../../outside/.env`、`/etc/passwd`、`<OUTSIDE>/.env` 全部 DENY。**这些「ALLOW」都是变更前既有**（`is_denied` 本就不覆盖 `.envx`/`*.pem.bak` 这类名字），差分证明与 allowlist 无关。
+
+> **勘误 R1**：R1 §4「附加对抗探针」里那句「`allow=('deploy.pem',)` 时经链接写 `pem_link` ⇒ deny（解析后 rel 不匹配）」**是错的**——实测为 **ALLOW**（`assert_within_workspace` 先解析 symlink ⇒ rel 落在被豁免的 `deploy.pem` 上）。安全属性不因此受损：resolve-then-judge 意味着链接只能打开「它解析到的那个目标」，而该目标本身必须在清单里；`allow=('pem_link',)`（写链接名而非目标名）反而 DENY。R1 的方向结论对，举证句错，此处更正以免后续读者照抄。
+
+**⑦ 变异探针（证明测试网不是空转）**
+
+```
+MUT-B  _allow_covers 把越界绝对路径按 basename 回退（模拟「护栏感知附加根」）
+       -> TestAdditionalRootIsRootBlind::test_additional_root_writes_stay_denied_in_guard FAILED   ✔ 被杀
+MUT-C  忽略注入的 denied_patterns（回退 I-4）
+       -> TestGuardUsesPolicyDenyTable::test_custom_deny_table_is_honoured FAILED                  ✔ 被杀
+MUT-D  write_allowlist_covers 无视结构性 deny（恒 return True）
+       -> 12 failed（含 test_write_allowlist_never_overrides_structural_deny ×10）                 ✔ 被杀
+```
+
+---
+
+### R2-7. 本轮测试与门禁的原始行
+
+```
+$ uv run --extra dev pytest -q --basetemp=/home/happy/wl-basetemp-rev2 -p no:randomly
+FAILED tests/agent/commands/test_session_workspace.py::test_session_workspace_add_nonexistent_path
+FAILED tests/agent/tools/test_sandbox_backends.py::test_contract[docker]
+2 failed, 4459 passed, 8 skipped, 110 warnings in 1025.86s (0:17:05)
+
+$ uv run --extra dev pytest -q <4 个受影响测试文件>
+623 passed in 12.00s
+
+$ npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
+Totals: 30 passed, 0 failed (30 items)          # EXIT=0
+
+$ PYTHONPATH=. uv run python scripts/check_openspec_artifacts.py
+ERROR: guard-write-allowlist: review manifest missing:
+  openspec/changes/guard-write-allowlist/reviews/building-review-manifest.json   # EXIT=1
+
+$ git diff --name-only fd6d581..HEAD | grep -c '^\.github/'   -> 0
+```
+
+**两条失败的独立归因（我自己复现，不照抄简报）**：
+
+- `test_session_workspace_add_nonexistent_path`：**`--basetemp` 落点决定**。`--basetemp=/home/happy/wl-basetemp-rev2`（`/tmp` 之外）⇒ `1 failed`；`--basetemp=/tmp/pytest-rev2-bt`（`/tmp` 之内）⇒ `1 passed`。另在**基线副本** `/tmp/wl-r2/base` 上逐字同样失败。⇒ 非本 change 引起。`/tmp/.git`（空目录）确实存在，与本仓 `TestFindScopeRoot` 的既知污染一致（本轮该组未失败，因为我把 basetemp 移出了 `/tmp`）。
+- `test_contract[docker]`：**负载诱发**。单独跑 ⇒ `1 passed in 11.43s`；全量并发跑 ⇒ 失败。该用例属 sandbox backend 契约面，与本 change 的 diff 面（只多传一个 kwarg，且默认态等价已独立证明）无关。
+
+**artifact checker 本轮 EXIT=1 的说明**：不是回归。`_check_review_manifests`（`scripts/check_openspec_artifacts.py:1150-1153`）会遍历 `reviews/*-review.md` 并**对每一份**要求 manifest——R1 的 `building-review.md` 已在 `6a43aee` 入库，于是活跃 change 现在必须有 `building-review-manifest.json`。按流程该 manifest 只在 **PASS** 时写；本轮 verdict 非 PASS，**故仍然没有**，checker 保持红——这与归档点门禁的设计一致（`--check-archived` 与活跃门是两套）。
+
+---
+
+### R2-8. 本轮新增问题清单
+
+| # | 级别 | 位置 | 问题 | 修法 |
+|---|---|---|---|---|
+| **N-1** | **阻塞**（文档事实错误） | `openspec/changes/guard-write-allowlist/design.md:97` | 尾句断言「并有 `tests/agent/test_config.py` 的逐条用例」，实测**计数 0**（`6a43aee` 未触碰该文件；`a//b`/`a/./b`/`a\b` 全仓测试零命中）。提交信息同款断言。 | 补 4 条 `parametrize` 用例（推荐），或删掉该尾句与提交口径里的「逐条测试」。 |
+| **N-2** | Nit（行为/口径不符） | `agent/workspace_policy.py:445-452` | 空 allowlist + 越界路径：旧实现返回 `False`，新实现抛 `PermissionError`（`:450` 无条件先 `assert_within_workspace`）。方向 fail-closed、无调用方，但与「无行为变更」不符。 | 恢复旧顺序，或在 design 记一句。 |
+
+**其余维度（相对 R1 无新变化，此处不复述）**：冗余度、可维护性、CI 完整性三项我本轮复查仍成立——`.github/` 零改动；新谓词仍由两层共享单一实现（`command_guard.py:41` 导入 `write_allowlist_covers`），I-4 的修法正是把「共享」从谓词推进到了 deny 表，方向一致。
+
+---
+
+### R2-9. 结论
+
+**离 PASS 只差 N-1 一句事实错误**（N-2 可选）。本轮的实现质量与安全面与 R1 结论同级甚至更严：`DEFAULT-STATE IDENTICAL` 217 行 0 差异、读侧 0 翻转、读源 0 翻转、结构性 deny 0 泄漏，且四个变异探针全部被测试网杀死——**新增的那两个测试类是真守门的，不是装饰**。I-1 的归因订正尤其到位：作者先自己实测证伪了 design 原先的混合归因（这一点**比 R1 的举证更准**），再把规格、设计、断言三处同步改齐。
+
+> **不写 manifest**：按流程只在 verdict = `PASS` 时写 `building-review-manifest.json`；本轮 verdict 仍为 `CHANGES_REQUESTED`，**未写**。
+
+---
+
+## R1（revision 340c90e，已被 R2 取代）
+
 - **Verdict**: `CHANGES_REQUESTED`
 - **Reviewer**: 独立零记忆审阅者（不继承开发上下文），2026-10-14
 - **Diff span**: `fd6d581`（`git merge-base HEAD origin/master`）..`340c90e`（HEAD）
