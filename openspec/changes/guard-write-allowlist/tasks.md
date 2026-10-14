@@ -61,7 +61,7 @@
 
 ## 6. 阶段 B：用真实小需求跑一遍（`witnessloop-adoption` 的 B.1–B.8）
 
-> **本节是已归档 change `2026-10-13-witnessloop-adoption` 阶段 B 的落地**。那个 change 的 B.1–B.8 全部标了 `(post-merge)`、住在归档目录里；本 change **就是**它们等的那个「真实小需求」。观测报告落 `openspec/changes/guard-write-allowlist/stage-b-observation.md`（change 根目录，**不在 `reviews/` 下**——理由见 `design.md` Decision 6）。
+> **本节是已归档 change `2026-10-13-witnessloop-adoption` 阶段 B 的落地**。那个 change 的 B.1–B.8 全部标了 `(post-merge)`、住在归档目录里；本 change **就是**它们等的那个「真实小需求」。观测报告落 `openspec/changes/guard-write-allowlist/stage-b-observations.md`（change 根目录，**不在 `reviews/` 下**——理由见 `design.md` Decision 6）。
 >
 > **B 的出口判据**（沿用归档 change）：产出验收报告，含 findings 清单、与本地 checker 的**分叉清单**、已知红清单、体验摩擦清单、**按成因分类的红清单**（配置问题 vs 工具不兼容），以及「值不值得真打开」的判断依据。
 
@@ -73,7 +73,7 @@
 - [ ] 6.6 **（对应 B.6）写「值不值得真打开」的判断依据**：findings 的可读性与可行动性、误报率、与本地 checker 的重复劳动量、对 in-flight change 的影响面、**两套 manifest 并存的额外劳动量**（如实记：本 change 为此多跑了 3 次 `manifest build` + 清理中间轮 + 守 stale 顺序）。
 - [ ] 6.7 **（对应 B.7）记录测试执行点的已知边界**：`uv run --extra dev pytest -q` 覆盖到什么、覆盖不到什么（浏览器用例、编码 warn-as-error 门、`openspec validate`、artifact checker 四条**不在**执行点内），以及它们在本仓 `validate` job 里**仍然照跑**的事实。
 - [ ] 6.8 **（对应 B.8）把 grill 正文那组红与「配置错误」分开归因**：按 `design.md` Decision 8 的**三分类**表格分类（**格式选择导致的红** / 已知工具不兼容 / 配置问题）。**前提已按实测订正**：原稿写的「建了 witnessloop 形态 grill manifest 后 grill 正文判据**会全红**」**不成立**——把 witnessloop 自己的 `grill_evidence_findings` 跑在全部 **63** 份归档 `grill-design.md` 上实测得 **39 份判绿**、**9 份**只缺 `来源:`、**15 份**其它；使用**加粗 `来源` 写法**的共 **3 份**（独占行 2 + 同行内联 1），且**这 3 份都被判 src-only**。本 change 自己的报告用同行裸 `来源:` ⇒ **source 判据全命中**，它当前的红是「未确认」类（0.3 后即消）。⇒ 这条红是**可选择的**（取决于报告怎么写，Q11 裁定），**不是**结构性不兼容；报告里 SHALL 把它与上游 issue #20 那类真正的工具不兼容分开。**另注意**：本 change 的 diff 触达 `agent/**` ⇒ 与 `witnessloop-adoption` 不同，`building` / `grill-adversarial` 两条判定**也会真的触发**（不因 `code_hits` 为空而跳过）。
-- [ ] 6.9 把 `stage-b-observation.md` 的路径**回链到跟踪入口**：在 issue #305 追加 comment 指向本 change 的报告路径。**不得**往已归档的 `witnessloop-adoption` 目录里加文件（归档是 `event_explained` 受保护路径，且给历史 change 补新证据会造成语义漂移——`design.md` Decision 6）。
+- [ ] 6.9 把 `stage-b-observations.md` 的路径**回链到跟踪入口**：在 issue #305 追加 comment 指向本 change 的报告路径。**不得**往已归档的 `witnessloop-adoption` 目录里加文件（归档是 `event_explained` 受保护路径，且给历史 change 补新证据会造成语义漂移——`design.md` Decision 6）。
 
 ## 7. 收尾（本 change 的归档前必须完成）
 
