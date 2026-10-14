@@ -70,7 +70,9 @@
 - `allowed_write_paths` 的**唯一数据源**是 `WorkspacePolicy` 的实例属性（**快照于构造期**，运行中改它不会影响已构造的 `CommandGuard`——见 R13）。
 - `CommandGuard.__init__` 新增参数接收**同一个元组**（不是重新解析一份配置）。
 - `BashTool.__init__`（`agent/tools/builtin/bash.py:87`）构造 `CommandGuard` 时把 `self.policy.allowed_write_paths` 传进去。
-- 判定逻辑抽成**一个共享的纯函数**（如 `workspace_policy.write_allowlist_covers(resolved_rel_path, allowlist)`）。**共享的是这个函数，不是它的调用点**：该函数只在**写路径**被调用——`WorkspacePolicy.assert_write_allowed`（`agent/workspace_policy.py:356-360`）与 `CommandGuard` 的写目标判定（`_check_target` `:930-938`、`_has_protected_redirect` `:976-993`、`_check_dynamic_target` `:940-960`）。
+- 判定逻辑抽成**一个共享的纯函数**（如 `workspace_policy.write_allowlist_covers(resolved_rel_path, allowlist)`）。**共享的是这个函数，不是它的调用点**：该函数只在**写路径**被调用——`WorkspacePolicy.assert_write_allowed`（`agent/workspace_policy.py:356-360`）与 `CommandGuard` 的**写目标判定面**。
+
+**「写目标判定面」的唯一定义（本 change 全文与规格同此口径，禁止再用「三面」之类的缩写）**：`CommandGuard` 中**消费写目标路径**的六个判定方法——`_check_target`（`:930-938`，**仅其在写目标位置上的调用**）、`_has_protected_redirect`（`:976-993`）、`_check_dynamic_target`（`:940-960`）、`_check_mv_cp`（`:1106-1122`）、`_check_tee`（`:1156-1167`）、`_check_dd`（`:1139-1154`）。**明确排除三项**：① `check()` 第 1 步的**整句 denylist 正则扫描**（`:737-741`，pre-IR，见 Decision 9 与「Bash 层豁免覆盖面差异」）；② `mv`/`cp` 的**源位置**判定（`_check_ir_segment` `:875` 与 `_check_argv_segment` `:1060` 都用 `_check_target` 判 `source`——那是**读侧**，与 Q8 / Q5 的「只放行写」冲突，allow SHALL NOT 影响它）；③ `_check_rm`（`:1077-1103`）——它只判 `-r`+`-f` 的**逃逸**面，与 allow 无关。`tasks.md` 3.2 的收敛清单与本节同口径。
 - **`WorkspacePolicy.is_denied`（`:316-338`）保持原语义，SHALL NOT 感知 allowlist。**
 
 **这条是本 change 最容易写错、且写错后果最重的地方**：`is_denied` 是 `assert_read_allowed`（`:350-354`）与 `assert_write_allowed`（`:356-360`）的**同一个实现**（两处都在 `:352` / `:358` 直接调它），`agent/code_intelligence/repo_map.py:173` 还**直接**调它做 tree-sitter 跳过判定。⇒ 把 allow 写进 `is_denied` 会**同时**打开三处：① `Read` / `Grep` / `ListFiles` / `Find` / `ReadDoc` / `InspectGitDiff` / LSP 的读（全部走 `assert_read_allowed`）；② **RepoMap / SymbolSearch 会把被豁免的 `.env` 收进符号索引**（`repo_map.py:173` → `_should_ignore`）；③ `assert_write_allowed` 本身。其中 ② 尤其隐蔽——它不报错，只是默默把凭据文件的内容送进索引与上下文。Grill 的首轮审阅正是靠这条把本设计的原稿判为自相矛盾（原稿 Decision 2 要求 `is_denied` 调共享谓词，而 Decision 5 与规格又要求读不放行）。
@@ -79,7 +81,7 @@
 
 **落点被数据钉死**：`CommandGuard` 生产路径上只有 `agent/tools/builtin/bash.py:87` 一个构造点（实测），传参面就是 `BashTool.__init__` 一行 + `CommandGuard.__init__` 一个参数；`agent/tools/factory.py:335,457` 的两处 `BashTool(policy=policy, ...)` 不需要改（它们已经传了 policy）。
 
-**明确不受 allow 影响的面（逐条列出，供评审对照）**：`is_denied` 本身、`assert_read_allowed`、`repo_map.py:81,96,173`、`agent/tools/builtin/{read,grep,list_files,find,read_doc,inspect_git_diff,lsp}.py` 的读路径。
+**明确不受 allow 影响的面（逐条列出，供评审对照）**：`is_denied` 本身、`assert_read_allowed`、`repo_map.py:81,96,173`、`agent/tools/builtin/{read,grep,list_files,find,read_doc,inspect_git_diff,lsp}.py` 的读路径，以及 **Bash 层的读侧**——`mv`/`cp` 的**源位置**判定（`_check_ir_segment` `:875`、`_check_argv_segment` `:1060` 都借 `_check_target` 判 `source`）与 `WorkspacePolicy._env_source_is_credential`（`agent/workspace_policy.py:119-127`，Bash 命令层的 `cp .env /tmp/x` 就靠它拒）。**这条是「只放行写」在 Bash 层的第二条腿**：若把 allow 挂进 `_check_target` 而不区分源/目标位置，被豁免的 `.env` 会立刻变成可外泄的读源。
 
 **否决的备选**：(a) allow 写进 `is_denied`——读写一起开 + tree-sitter 索引面泄漏（见上），且直接违反规格的「豁免不影响读判定」Requirement；(b) 新增 `is_write_denied` 而在其中复用 `is_denied` 的结果——等价于 (a)，因为判定结果仍然共享；(c) 两层各写一份匹配——D12 的漂移重演。
 
@@ -162,11 +164,11 @@
 
 | 成因 | 典型项 | 处置 |
 |---|---|---|
-| **格式选择导致的红** | 本 change 的 `grill-design.md` 里 `## Confirmed Decisions` 各块若用本仓主流的加粗续行 `- **来源**:` 写，`_SOURCE_RE`（`src/witnessloop/evidence.py:33`）不命中 ⇒ 每条决策各报一条「缺 `来源:`」；若按 grill 实际采用的 `- **决策**: …；来源: <run id>` 同行裸写法，则命中、不报。**本 change 自己的报告已实测为后者** | 记为**可选择的红**；由 Q11 裁定报告格式后再定归属 |
+| **格式选择导致的红** | 本 change 的 `grill-design.md` 里 `## Confirmed Decisions` 各块若用加粗 `来源` 写（不论独占行 `- **来源**:` 还是同行内联），`_SOURCE_RE`（`src/witnessloop/evidence.py:33`）不命中 ⇒ 每条决策各报一条「缺 `来源:`」；若按 grill 实际采用的 `- **决策**: …；来源: <run id>` 同行裸写法，则命中、不报。**本 change 自己的报告已实测为后者** | 记为**可选择的红**；由 Q11 裁定报告格式后再定归属 |
 | **已知工具不兼容** | 上游 witnessloop issue #20 记录的谓词形态不兼容类问题（尚未关闭） | 记为**结构性红**，附「不属于阶段 B 的配置错误」的显式说明 |
 | **配置问题** | policy 字段写错、glob 放宽错、执行点命令错 | 记为**可修红**，当次修掉 |
 
-**前提订正（grill 实测证伪了本设计的原断言）**：原稿写「建了 witnessloop 形态 grill manifest 后 grill 正文判据**全红**」，并声称本仓 62 份归档记录通篇加粗。**实测不成立**：用 witnessloop 自己的 `grill_evidence_findings` 跑全部 **63** 份归档 `grill-design.md`（`openspec/changes/archive/*/reviews/grill-design.md`）得到 **39 份零 finding（判绿）**、**9 份**只报「缺 `来源:`」、**15 份**报其它项；含加粗 `- **来源**:` 行的只有 **2 份**，且这 2 份**都被判 src-only（红）**。⇒ 「全红」是采用加粗写法的那两份的**局部事实**，不是本仓通例。落到本 change：这份 `reviews/grill-design.md` 的 `## Confirmed Decisions` 用的是同行裸 `来源:`，**7 条 source 判据全部命中**；它当前实测的 **13 条** finding 全部是「缺 `## User Confirmation` 小节」+「Q1–Q12 未经用户确认」这一类（Q 编号已与 `design.md` 对齐为同一套 12 条，见下节编号口径）——那是 tasks 0.3 收到答复后就消的状态，**不是** `来源:` 类红。
+**前提订正（grill 实测证伪了本设计的原断言）**：原稿写「建了 witnessloop 形态 grill manifest 后 grill 正文判据**全红**」，并声称本仓 62 份归档记录通篇加粗。**实测不成立**：用 witnessloop 自己的 `grill_evidence_findings` 跑全部 **63** 份归档 `grill-design.md`（`openspec/changes/archive/*/reviews/grill-design.md`）得到 **39 份零 finding（判绿）**、**9 份**只报「缺 `来源:`」、**15 份**报其它项；其中**使用加粗 `来源` 写法的共 3 份**（独占行形式 `- **来源**:` **2 份** = `2026-08-03-grill-confirmation-gate` 与 `2026-10-13-witnessloop-adoption`；同行内联形式 **1 份** = `2026-09-29-workflow-recursion-limit-default`），**这 3 份全部被判 src-only（红）**。⇒ 「全红」是采用加粗写法的那三份的**局部事实**，不是本仓通例。落到本 change：这份 `reviews/grill-design.md` 的 `## Confirmed Decisions` 用的是同行裸 `来源:`，**7 条 source 判据全部命中**；它当前实测的 **13 条** finding 全部是「缺 `## User Confirmation` 小节」+「Q1–Q12 未经用户确认」这一类（Q 编号已与 `design.md` 对齐为同一套 12 条，见下节编号口径）——那是 tasks 0.3 收到答复后就消的状态，**不是** `来源:` 类红。
 
 **理由**：若报告不分类，读者会把任一种红读成「接入没配好」，从而误判「值不值得真打开」——这正是 Decision 8 存在的目的。而把「我们可以通过写法避免的红」误归到「上游工具不兼容」，会让阶段 C 的「值不值得真打开」判断建立在假前提上。
 
@@ -234,8 +236,8 @@
   - 具体例子：若 Q1 裁定 **(c) 全放开**（`.git/config` 也可授）：规格里「可写豁免不放宽结构性 deny」整条 Requirement 与它的两个 Scenario 作废；`tasks.md` 的 2.2④ 与 2.5（`cp x .git/config`）断言反转；`tasks.md` 1.1 的「**五条** Requirement」变四条。
   - 推荐口径的理由：规格是**实现与验收的对照物**，若先改 design 再改规格，中间态会出现「实现按 design、测试对照旧规格」的错配。⇒ 裁定后**先重写规格 delta**（tasks 1.1/1.2），再让 design 的 Decisions 对齐（tasks 1.4 的措辞已按此改写为「规格随裁定改，Decisions 与规格同向」）。
 - **Q11**（grill 新增）: 本 change 的 `reviews/grill-design.md` 的 `来源:` 按哪种写法定稿？（推荐：**保持 grill 已产出的同行裸 `来源:` 写法**，把它当作本仓可选的合规形态记录在案。）
-  - 背景（grill 实测，推翻本设计原稿的「全红」前提）：witnessloop 的 `_SOURCE_RE = re.compile(r"来源\s*[:：]")`（`src/witnessloop/evidence.py:33`）配 `re.search(block)`，**只要求块内出现裸 `来源` + 冒号**——加粗行 `- **来源**: x` 里的 `来源` 后面接的是 `**` 而不是冒号，所以**不命中**。把它跑在全部 **63** 份归档 `grill-design.md` 上实测：**39 份零 finding（判绿）**、**9 份**只缺 `来源:`、**15 份**其它；其中含加粗 `- **来源**:` 行的只有 **2 份**（`2026-08-03-grill-confirmation-gate` 与 `2026-10-13-witnessloop-adoption`），**这 2 份都被判 src-only（红）**——正是「格式选择导致的红」的实例。
-  - 具体例子：本 change 的 `reviews/grill-design.md` 现在写的是 `- **决策**: …；理由: …；来源: grill-guard-write-allowlist-20261014`（同行裸写法）⇒ **source 判据 7/7 命中**，实测 findings 只有「缺 `## User Confirmation` 小节」+「Q1–Q6 未经确认」共 7 条（tasks 0.3 收到答复后即消）。若改成加粗续行 `- **来源**: …`，则**新增 7 条**「缺 `来源:`」的红。
+  - 背景（grill 实测，推翻本设计原稿的「全红」前提）：witnessloop 的 `_SOURCE_RE = re.compile(r"来源\s*[:：]")`（`src/witnessloop/evidence.py:33`）配 `re.search(block)`，**只要求块内出现裸 `来源` + 冒号**——加粗写法里的 `来源` 后面接的是 `**` 而不是冒号，所以**不命中**。把它跑在全部 **63** 份归档 `grill-design.md` 上实测：**39 份零 finding（判绿）**、**9 份**只缺 `来源:`、**15 份**其它；使用**加粗 `来源` 写法**的共 **3 份**（口径同 Decision 8 的前提订正：独占行 2 份 + 同行内联 1 份），**这 3 份都被判 src-only（红）**——正是「格式选择导致的红」的实例。**口径提醒**：`_SOURCE_RE` 用的是 `re.search`，所以加粗**不论独占行还是同行内联**都不命中；只数「`- **来源**:` 独占行」会得 2、按「出现加粗 `来源`」数得 3。
+  - 具体例子：本 change 的 `reviews/grill-design.md` 现在写的是 `- **决策**: …；理由: …；来源: grill-guard-write-allowlist-20261014`（同行裸写法）⇒ **source 判据 7/7 命中**，实测 findings 只有「缺 `## User Confirmation` 小节」+「**Q1–Q12** 未经确认」共 **13 条**（tasks 0.3 收到答复后即消）。若改成加粗续行 `- **来源**: …`，则**新增 7 条**「缺 `来源:`」的红（该文件有 7 条 Confirmed Decisions）。
   - 推荐保持的理由：现写法既合规又不制造额外红；且它是**上游谓词**决定的（`_SOURCE_RE` 要求 `来源` 后**直接**接冒号），不是本仓格式规范决定的。使用加粗写法的本仓归档实测只有 **2/63**（见上），它们的红是「格式」而非「证据缺失」。**须一并裁定**：Decision 8 的三分类表已给「格式选择导致的红」单列一类，避免它被误分到「配置问题」或「已知工具不兼容」。
 - **Q12**（grill 新增）: Q1(b) 的「结构性目录 deny」怎么**判定**——封闭列举那几条，还是**从 deny 表 + 敏感名集合推导**？（推荐：**(ii) 两源推导**。）
   - 背景（本分支实测）：`DEFAULT_DENIED_PATTERNS`（`agent/workspace_policy.py:9-43`）共 **32 条**，含 `/` 的 **16 条**、不含 `/` 的 **16 条**；`is_denied` 只有**一条 glob 通道**（`:331-337`，对 `{rel, name, parts}` 三个候选各做一次 `fnmatch`），文件级与目录级混在同一张表里，**靠「哪条通道命中」分不开**。另有一条**独立于该表**的拒绝来源：段级敏感名 `is_sensitive_dot_name`（`:326-330`），它的**目录**子集是 `SENSITIVE_DOTDIRS = {.git, .ssh, .aws, .gnupg, .kube, .docker, .netrc, .npmrc, .pypirc}`（`:66-68`）。
@@ -286,7 +288,7 @@
 - **[R4] 「只放行写」的可用性被低估**：agent 写不了 `.env` 又想改，只能整文件 `Write`（被「已存在」挡）或 `Edit`（要 `old_string`，但它读不到内容）。**Mitigation**：Q5 的例子把这个链路完整走一遍给用户看，由用户拍板；不接受「用户以为能改其实改不动」的默认。
 - **[R5] 权限面扩大的既有语义问题**：`.env` 写入本身可能是**代码执行向量**（`source .env` 在 shell 里执行内容；某些工具链会读 env）。本 change 只是把「用户显式授权的文件」从不可写变为可写，判定者仍是人；但**必须写明这不是安全边界**（护栏不是边界，`ProcessBackend` 才是）。**Mitigation**：写进规格与 Impact Analysis 的「行为变更」段，不让它被读成「安全能力」。
 - **[R6] 阶段 B 激活 witnessloop 孤儿规则 ⇒ `reviews/` 从 2 条红变 14/16 条**（`witnessloop-adoption` 实测）。**Mitigation**：Decision 7 的「全绑 + 清中间轮」，并在报告里如实记这条成本（它正是 N.6 的迁移成本样本）。
-- **[R7] 阶段 B 的 grill 正文判据是否判红取决于报告格式**（**原「结构性判红」已按 grill 实测证伪**）：`_SOURCE_RE` 只要求块内有裸 `来源` + 冒号；63 份归档里 **39 份判绿**、用加粗独占行的只有 1 份。本 change 自己的报告用同行裸写法 ⇒ source 判据全命中，当前 7 条 finding 全是「未确认」类（tasks 0.3 后即消）。**Mitigation**：Decision 8 的三分类归因表（新增「格式选择导致的红」一类）；Q11 裁定报告格式；本 change **不放宽判据、不改既有归档格式**（U7 已拍板）。
+- **[R7] 阶段 B 的 grill 正文判据是否判红取决于报告格式**（**原「结构性判红」已按 grill 实测证伪**）：`_SOURCE_RE` 只要求块内有裸 `来源` + 冒号，加粗写法（`来源` 后接 `**`）**不命中**；63 份归档里 **39 份判绿**，含加粗 `来源` 的 **3 份**（口径见 Decision 8：其中独占行形式 `- **来源**:` 2 份、同行内联形式 1 份；三种写法**都**判 src-only 红）。本 change 自己的报告用同行裸写法 ⇒ source 判据全命中，当前 **13 条** finding 全是「未确认」类（tasks 0.3 后即消）。**Mitigation**：Decision 8 的三分类归因表（新增「格式选择导致的红」一类）；Q11 裁定报告格式；本 change **不放宽判据、不改既有归档格式**（U7 已拍板）。
 - **[R8] 本 change 自己会成为 witnessloop 的「已知红」**：本 change 的 diff 触达 `agent/**` / `web/**` ⇒ `code_hits` 非空 ⇒ `building` 与 `grill-adversarial` 两条 stage 判定**会真的触发**（这既是阶段 B 想要的，也意味着本 change 的红数比 `witnessloop-adoption` 多）。**Mitigation**：阶段 B 报告如实列出并分类；不放宽判据。
 - **[R9] 阶段 B 的报告纪律**：观测报告若在**最后一刻**才写，会与 manifest 的 stale 顺序约束打架。**Mitigation**：报告作为**内容提交**（非证据路径之外的内容），manifest 在其后重建（Decision 7）。
 

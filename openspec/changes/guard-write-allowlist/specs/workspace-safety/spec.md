@@ -102,7 +102,7 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 
 ### Requirement: 可写豁免不使任何一层比引入前更宽
 
-本能力 SHALL 是**增量**的：对未被 allow 命中的路径，文件工具层与命令护栏层的判定 SHALL 与引入本能力前逐条一致；对被 allow 命中的路径，**在命令护栏的「可挂钩写目标判定面」上**（即 `CommandGuard` 的写目标判定：敏感目标判定、重定向目标判定、动态目标判定——**不含**在命令 IR 判定之前执行的**整句 denylist 正则扫描**）判定 SHALL 与文件工具层同向变化（都从拒变放行）。系统 SHALL NOT 承诺「两层对任意路径恒同向」——两层判定面在引入本能力前就存在差异（命令护栏的写目标判定不消费 `DEFAULT_DENIED_PATTERNS`），该差异不在本能力的职责范围内；整句 denylist 正则扫描的刻意例外见「Bash 层豁免覆盖面差异必须被记录」。
+本能力 SHALL 是**增量**的：对未被 allow 命中的路径，文件工具层与命令护栏层的判定 SHALL 与引入本能力前逐条一致；对被 allow 命中的路径，**在命令护栏的「写目标判定面」上**判定 SHALL 与文件工具层同向变化（都从拒变放行）。「写目标判定面」SHALL 指 `CommandGuard` 中**消费写目标路径**的判定：写目标位置的目标判定、重定向目标判定、动态目标判定、`mv`/`cp` 目标判定、`tee` 目标判定与 `dd of=` 目标判定。它 SHALL NOT 包含：① 在命令 IR 判定之前执行的**整句 denylist 正则扫描**；② `mv`/`cp` 的**源位置**判定（读侧，SHALL NOT 被 allow 影响）；③ `rm` 的**逃逸**判定。系统 SHALL NOT 承诺「两层对任意路径恒同向」——两层判定面在引入本能力前就存在差异（命令护栏的写目标判定不消费 `DEFAULT_DENIED_PATTERNS`），该差异不在本能力的职责范围内；①的刻意例外见「Bash 层豁免覆盖面差异必须被记录」。
 
 #### Scenario: 未列入的路径逐条不变
 
@@ -119,10 +119,11 @@ allow 的判定 SHALL 是一个**共享谓词函数**，由**写路径**的判�
 
 #### Scenario: 被命中但落在刻意例外上的路径不与文件层同向
 
-- **GIVEN** 一份 allowlist 与一个被它命中的**嵌套**路径（如 `config/.env`）
+- **GIVEN** 一份 allowlist 与一个被它命中的**嵌套敏感路径**（如 `config/.env`），且该路径的 `cp` / `mv` 写目标**命中整句 denylist 正则扫描**
 - **WHEN** 对同一路径求值文件工具层的写判定与命令护栏的 `cp` / `mv` 写目标判定
 - **THEN** 文件工具层 SHALL 放行，而命令护栏 SHALL 仍判 `deny`（`last_reason` 为 `denylist`）
 - **AND** 该形态 SHALL 被视为「Bash 层豁免覆盖面差异必须被记录」的**显式例外**，SHALL NOT 被读作本 Requirement 的违反
+- **NOTE** 例外只适用**命中整句正则**的敏感名：同一 `config/` 下的非敏感目标（如 `config/notes.txt`）今天就是 `allow`，不受本例外约束——本 Scenario SHALL NOT 被读成「嵌套路径一律不与文件层同向」
 
 ### Requirement: Bash 层豁免覆盖面差异必须被记录
 
