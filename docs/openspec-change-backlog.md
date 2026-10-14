@@ -106,8 +106,18 @@
 
 - `workflow-tool-discoverability`（issue #248）：**已归档 2026-09-29**。把 `DeclareWorkflow`/`RunWorkflow` 的 `spec` 从裸 `{"type":"object"}` 升级为**嵌套 schema**（`properties`/`items`/`enum`），`kind`/`channel`/`reducer`/`strategy`/`join`/`mode` 六个封闭域**从 `agent/subagent/workflow.py` 的源码常量程序化派生**（`NODE_MODES` 从 `_parse_node` 内联元组提为模块常量，`CreateSubagentTool` 的 `mode` enum 一并引用它）；描述分节化并纠错——删掉 4 处 `control`（其中 3 处是非法 `channel` 示例，来源是**可观测层** `edge.kind ∈ {control,data}` 与 **DSL 层** `edge.channel` 混词）、新增 `cases` 匹配语义（行首 `startswith` + first-match-wins + 具体在前正反例）、门控与 `channel` 正交、per-kind 字段适用表；route 节点带 `task` 的处置按用户拍板选 **(b) 声明期 warnings**——`DeclareWorkflow` 的 `declared` 返回体与 `RunWorkflow(spec=...)` 的 run envelope **两条入口**都给**可行动**提示（「route 从不执行 `task`，判定逻辑写进 `cases[].when`」）；per-kind 字段错配的误导性报错改按节点**实际** kind 命名（`{"kind":"route","strategy":"concat"}` 不再误报 `aggregate node`）。grill 8 条设计修正（C1–C8，含 `workflow.py` 行号系统性漂移的订正）已逐条落实。spec delta 已同步进 `openspec/specs/multi-agent-collaboration/spec.md`（MODIFIED 1 + ADDED 1）并归档到 `openspec/changes/archive/2026-09-29-workflow-tool-discoverability/`。research_tier = full。Q4 的只读 `ValidateWorkflow` 决策**不引入、另开** issue #268 承载（含「模型是否会用它探路」的实测验证）。**验收如实记录**：改后 3 次 rollout 的探针数 S0 = 6/7/4（基线 9），严格门槛（S0=0 且任务完成）**0/3 达标**（初次跑出的「run 3 S0=0」经查是 run 2 末尾 `SaveMemory` 写入的记忆被 `MemoryIndexSource` 注入 run 3 起始上下文所致，已 quarantine 后干净重跑修正为 4），**基线里 4/5 次 `invalid_spec` 属「域不可见」类**（自造 `channel` 值 / 自造字段名）改后降为 **1/4**（未归零；残留 1 条是 run 3b 的 `unknown node field 'desc_placeholder'`）；改后探针全部转向**运行期语义**（foreach item 注入、route 读谁的文本），**不在本 change 范围**，故严格门槛 0/3 不达标——归因已如实记录，交主 session 决定是否迭代。证据落 `reviews/acceptance-evidence.md` + 三个 transcript。
 
-## 未实现队列
+### 第十七批：开发流程工具化（witnessloop 接入）
 
+本仓自建的流程门禁（checker / guard / 事件投影 / 平台闸门）已与本仓抽出的独立工具 **witnessloop** 高度重合，最终形态是「接入 witnessloop（`init` + CC plugin）+ 只保留 asterwynd 项目特有的检查」。这是一条**多阶段**迁移线，不整体并行、严格串行：
+
+- **阶段 A（已归档 2026-10-13）**：`witnessloop-adoption`（issue [#305](https://github.com/Xingkai98/asterwynd/issues/305)）——影子接入，只跑不拦。**七条 Open Question 已由用户于 2026-10-13 停轮拍板、全部按推荐值裁定**（生效口径见该 change 的 `design.md` 的 `## User Rulings`（U1–U7），答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）⇒ 前置门**全部已过**：0.4「设计阶段审阅闭环」已由独立对抗轮判 **PASS**（最终版 `reviews/grill-adversarial.md`；R1 的 `grill-adversarial-v1.md` 保留为证伪过程记录）。**阶段 A 的实现已落地**——4 个接入产物（`.witnessloop/policy.json` / `.witnessloop/init-manifest.json` / `.github/workflows/witnessloop.yml` / `.github/witnessloop-tests.txt`）+ `gate / check` 只跑不拦，`.github/workflows/ci.yml` 逐字节未变（sha256 前后一致），**已实现并归档到 `openspec/changes/archive/2026-10-13-witnessloop-adoption/`**；该 change 的 tasks 里阶段 B/C 标 `(post-merge)`，由 issue #305 继续跟踪。
+- **阶段 B**：用真实小需求在新流程上跑一遍验证（本 change 的 tasks 内，不再单独立项）。
+- **阶段 C**：合入 + 勾 required + `AGENTS.md` 流程段改写——**另立 change/PR**，是单向不可逆动作，必须在 A/B 验收之后。
+- **后续批次（未立项）**：逐项下掉与 witnessloop 重合的旧件、清理退役状态机残留（`handoff.json`）、归档与 backlog 口径定案。
+
+依赖关系：阶段 A 与任何改动 `scripts/`、`agent/workflow/`、`.github/workflows/ci.yml` 的 change **互斥**（阶段 A 明确一行不改这些文件），因此本批应与它们错开合入。
+
+## 未实现队列
 
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 

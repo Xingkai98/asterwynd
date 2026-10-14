@@ -1,0 +1,33 @@
+{
+  "schema": "witnessloop/policy@v1",
+  "changes_root": "openspec/changes",
+  "protected_paths": [
+    "openspec/specs/**",
+    ".witnessloop/**",
+    "docs/known-issues.md",
+    "docs/known-debt.md",
+    "docs/openspec-change-backlog.md"
+  ],
+  "require_change_for": [
+    "agent/**",
+    "scripts/**",
+    "web/**"
+  ],
+  "required_artifacts": [
+    "proposal.md",
+    "design.md",
+    "tasks.md",
+    "specs",
+    "reviews"
+  ],
+  "evidence": {
+    "review_manifest_glob": "reviews/*.manifest.json",
+    "events_file": "workflow-events.jsonl",
+    "protected_write_event_types": [
+      "current_spec_synced",
+      "backlog_updated",
+      "change_archived",
+      "protected_artifact_explained"
+    ]
+  }
+}

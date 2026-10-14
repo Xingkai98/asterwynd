@@ -334,3 +334,78 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
 - **无证据空话**：一句「方案明确」「无需调研」不命中关键词也无引用 → exempt 证据校验失败。
 - **tier 与 status 不一致**：`exempt` + `status: enabled`（声言豁免却完成了调研）→ 完成时被「exempt 必须 disabled」拦下；正确做法是**如实改 tier 为 light/full + status: enabled**。
 - **full/light 完成时仍 disabled**：proposal 阶段允许 full/light + disabled 在途（只查结构），但 tasks 全勾时必调研档必须已完成调研 → 完成时改 `status: enabled`。
+
+## witnessloop 影子接入（阶段 A：只跑不拦）
+
+本仓已接入上游工具 **witnessloop**（流程门禁工具化抽取的独立仓）做**影子接入**：门禁产物已落进仓库，但**只跑不拦**。change 与设计见 `openspec/changes/witnessloop-adoption/`，阶段 A 验收报告见该 change 的 `reviews/acceptance-stage-a.md`。
+
+### 现状（阶段 A）
+
+- **产物 4 个**：`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller）、`.github/witnessloop-tests.txt`（测试执行点 = `uv run --extra dev pytest -q`）。`.github/workflows/ci.yml` **未被触碰**。
+- **`gate / check` 不在 required 里**：`master` 的 required 仍是 `["validate", "benchmark-gate"]`。⇒ 它红不挡合入；**不要**把它的绿当成「证据已齐」。
+- **旧门禁一行未动**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部照旧。
+- **已知红（预期，不放宽判据）**：① active change `add-minimal-tui-runtime-view`（无 `reviews/`）；② 本 change 自己（缺 witnessloop 形态 manifest）。两条都属「**缺 manifest**」这一类，不是配置错误。
+- **`reviews/` 的一致状态**：要么每份报告都有 witnessloop 形态 manifest，要么**一份都没有**。**默认选后者**——落任意一份会激活孤儿规则，把本 change 自己的红从 2 条拉到 14/16 条。
+
+### 本地跑 `check`
+
+**验证一律用 witnessloop 仓里那份源码**，别用 PATH 上那份：
+
+```bash
+# 在 witnessloop 仓的本地克隆目录里跑（<witnessloop> 指该目录），--root 指本仓根
+cd <witnessloop> && uv run witnessloop check --root <本仓根>
+```
+
+原因：本机 PATH 上还装着一份 uv-tool 版本（实测 **0.1.0**，`--help` 里**没有** `guard` 子命令），裸 `witnessloop` 测不到 witnessloop 仓工作树里的补丁。**升级 PATH 上那份也别指望它等同于源码版**——验证一律显式走 `uv run`。
+
+### 本地 `guard` 的前置核验（必做）
+
+plugin 的守卫 shim `plugin/hooks/guard.sh` 调的是 **PATH 上的裸 `witnessloop`**，且退出码映射为「`1` → 拦（映射成 CC 的 `exit 2`），**其余一律放行**（含旧版 CLI 的 `invalid choice` → 2）」。⇒ PATH 上若是没有 `guard` 子命令的旧版 CLI，**整个守卫静默空转**，「放行」会被误读成「证据完备」。先核验：
+
+```bash
+command -v witnessloop && witnessloop --help | grep -q guard || echo "⚠️ PATH 上这份没有 guard：plugin 守卫空转，改用 uv run 那份或先升级"
+```
+
+### 两个 PreToolUse 守卫并存（阶段 A 实测结论）
+
+本仓已有 `scripts/workflow_guard.py`（matcher `Write|Edit|Bash`），plugin 再加一个 `witnessloop guard`（matcher `Write|Edit`）。用 Claude Code 2.1.231 实跑（两个 hook 分别可观测）得到的结论：
+
+| 问题 | 实测结论 |
+|---|---|
+| 两个 hook 是否都执行 | **都执行**（一侧阻断时另一侧仍被调用） |
+| 串行还是并行 | **并行**（一侧睡 4s，两侧启动时刻仅差 0.112s） |
+| 任一 `exit 2` 即拦，还是首个非零即终止 | **并集：任一 `exit 2` 即拦**，**不是**首个非零终止 |
+| 被拦时的报错归属 | 只出**一个**——CC 报的是其中一个阻断 hook 的命令 + 其 stderr；未阻断那一侧的 stderr 不出现 |
+| 两棵树差异 | **building worktree 下没有 `.claude/`**（`.gitignore:9` 忽略 + worktree 无副本）⇒ 那里只有 plugin 一个 hook；本仓守卫的 hook 只挂在主 checkout |
+
+**注意**：`--permission-mode bypassPermissions` **不能**绕过 PreToolUse hook（实测仍被拦）。
+
+**命名空间**：plugin 的 `plugin.json` 里 `"name": "witnessloop"` ⇒ 命令是 `witnessloop:grill` / `witnessloop:review-loop`，与仓内 `.claude/commands/{grill,review-loop}.md` 不撞名。
+
+### Claude Code plugin：安装 / 升级 / 卸载
+
+plugin 在 witnessloop 仓的 `plugin/` 下（`commands/` 的 `grill` / `review-loop` + `hooks/` 的 guard hook）。上游**没有** marketplace 清单（实测 `plugin/.claude-plugin/plugin.json` 存在、仓根无 `.claude-plugin/marketplace.json`），所以**没有 `claude plugin install` 这条路**，按上游 README 用启动参数加载：
+
+```bash
+# 安装（= 本次会话加载；不改仓库、不落任何文件）。<witnessloop> 指 witnessloop 仓的本地克隆目录
+claude --plugin-dir <witnessloop>/plugin
+
+# 升级：更新 witnessloop 仓（git pull / 切 tag），下次以同一路径启动即生效
+
+# 卸载：不带 --plugin-dir 启动即可（没有任何落盘残留）
+```
+
+因为它是**启动参数**而非文件安装，`claude plugin list` 里看不到它（实测输出 `No plugins installed`）——这是正常的，不是装失败；判定是否加载成功看会话 init 事件里的 `plugins` 字段（实测 `[{"name":"witnessloop","path":…,"source":"witnessloop@inline","version":"0.1.0"}]`）与 slash command 里是否出现 `witnessloop:grill`。
+
+**本地层与 CI 层是两个独立开关**：不装 plugin，CI 里的 `gate / check` 照跑；装了 plugin 也不会自动把 `gate / check` 勾成 required。
+
+### 回退
+
+```bash
+# 依 init 台账精确回滚（删掉 .witnessloop/ + caller）
+cd <witnessloop> && uv run witnessloop uninit --root <本仓根>
+
+# 或手工删：.witnessloop/ + .github/workflows/witnessloop.yml + .github/witnessloop-tests.txt
+```
+
+旧门禁原封不动——回退不需要动 `ci.yml`、`scripts/**` 或 branch protection。

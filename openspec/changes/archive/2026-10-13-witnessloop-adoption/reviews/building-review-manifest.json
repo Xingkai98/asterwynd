@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "witnessloop-adoption",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "building-review-witnessloop-adoption-20261013-r1",
+  "base_sha": "da3fd4faca29fe053686c343914439621d7b25ab",
+  "head_sha": "75166deadb9f0e512f9dfb61ee28a0d94b1dc00c",
+  "tasks_hash": "sha256:c5eafee14279fb4a339e45027b8b99e7bc6ddcf45fe955fa74008519cd526dfd",
+  "spec_hash": "sha256:a73c78f2b1dd1ad14299599bf75cfc31e52ea6f7da8f2d2c726e67859b896f20",
+  "diff_hash": "sha256:1ea24e67b16f09b9cc378931d460e758b70fe5787d1cc2fb7d6fca5a8a47cb8a",
+  "report_hash": "sha256:55374876b09e185c962312cc208ed65039027462beac3008a3c08e86762b6396"
+}

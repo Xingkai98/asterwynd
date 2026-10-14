@@ -1,0 +1,23 @@
+{
+  "schema": "witnessloop/init-manifest@v1",
+  "witnessloop_version": "0.1.0",
+  "created_at": "2026-10-13T13:16:59+00:00",
+  "base_ref": "witnessloop-adoption/2026-10-13",
+  "base_sha": "4e32bd9904b6121c33df75d2450e97d72d35a007",
+  "gate_ref": "Xingkai98/witnessloop/.github/workflows/gate.yml@v1",
+  "created_files": [
+    {
+      "path": ".witnessloop/policy.json",
+      "sha256": "33ee08e29cf090fbc3954e482a983b7652129fc3ee4f4a158b61cf42ae61e4bd"
+    },
+    {
+      "path": ".github/workflows/witnessloop.yml",
+      "sha256": "4861a80caf3ec05005821eebfa86e572dfc8953a219e1790780dba60923feee5"
+    },
+    {
+      "path": ".witnessloop/init-manifest.json",
+      "sha256": null,
+      "self": true
+    }
+  ]
+}
