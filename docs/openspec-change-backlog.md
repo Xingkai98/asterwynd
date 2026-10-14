@@ -111,13 +111,27 @@
 本仓自建的流程门禁（checker / guard / 事件投影 / 平台闸门）已与本仓抽出的独立工具 **witnessloop** 高度重合，最终形态是「接入 witnessloop（`init` + CC plugin）+ 只保留 asterwynd 项目特有的检查」。这是一条**多阶段**迁移线，不整体并行、严格串行：
 
 - **阶段 A（已归档 2026-10-13）**：`witnessloop-adoption`（issue [#305](https://github.com/Xingkai98/asterwynd/issues/305)）——影子接入，只跑不拦。**七条 Open Question 已由用户于 2026-10-13 停轮拍板、全部按推荐值裁定**（生效口径见该 change 的 `design.md` 的 `## User Rulings`（U1–U7），答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）⇒ 前置门**全部已过**：0.4「设计阶段审阅闭环」已由独立对抗轮判 **PASS**（最终版 `reviews/grill-adversarial.md`；R1 的 `grill-adversarial-v1.md` 保留为证伪过程记录）。**阶段 A 的实现已落地**——4 个接入产物（`.witnessloop/policy.json` / `.witnessloop/init-manifest.json` / `.github/workflows/witnessloop.yml` / `.github/witnessloop-tests.txt`）+ `gate / check` 只跑不拦，`.github/workflows/ci.yml` 逐字节未变（sha256 前后一致），**已实现并归档到 `openspec/changes/archive/2026-10-13-witnessloop-adoption/`**；该 change 的 tasks 里阶段 B/C 标 `(post-merge)`，由 issue #305 继续跟踪。
-- **阶段 B**：用真实小需求在新流程上跑一遍验证（本 change 的 tasks 内，不再单独立项）。
+- **阶段 B**：用真实小需求在新流程上跑一遍验证——**载体是 `guard-write-allowlist`**（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)），它的 tasks 第 6 节逐条承接了归档 change 的 B.1–B.8。选它当「真实小需求」的理由：它**触达 `require_change_for`**（改 `agent/**` / `web/**` ⇒ `code_hits` 非空 ⇒ `building` 与 `grill-adversarial` 两条 stage 判定真的会触发，与阶段 A 自己 `code_hits` 为空形成对照），且**产生 spec delta 与受保护写入**。
 - **阶段 C**：合入 + 勾 required + `AGENTS.md` 流程段改写——**另立 change/PR**，是单向不可逆动作，必须在 A/B 验收之后。
 - **后续批次（未立项）**：逐项下掉与 witnessloop 重合的旧件、清理退役状态机残留（`handoff.json`）、归档与 backlog 口径定案。
 
 依赖关系：阶段 A 与任何改动 `scripts/`、`agent/workflow/`、`.github/workflows/ci.yml` 的 change **互斥**（阶段 A 明确一行不改这些文件），因此本批应与它们错开合入。
 
 ## 未实现队列
+
+### 第二十一批：护栏写白名单（#272）
+
+- `guard-write-allowlist`（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)）：**待立项后实现**。来源是 `bash-command-guard-redesign`（issue #254）Q3 的补测——用户追问「有项目我就是想让 agent 配 env 该怎么办」，当时的答案是「做不到，除非手改源码」；用户拍板白名单机制不塞进 #254、留作独立 change 承接，本 change 即该承接。
+
+  **需求**：新增 `tools.allowed_write_paths`（默认空列表），语义是「**deny 默认 + allow 精确覆盖**」——`tools.allowed_write_paths: ['.env', 'config/.env']` 让被 deny 命中的路径重新可写；不配置时行为零变化。
+
+  **本分支复核出的三条实现要点（与 issue 原文有出入处已订正）**：① 生产构造点确实是三处，但 `web/session.py` 的行号已从 issue 写的 `:1566` 漂移到 **`:1728`**；② issue 说「`WorkspacePolicy.__init__` 已接受 `denied_patterns`、照抄接线即可」——**接线对象错了**：`denied_patterns` 只管 glob 表那一路，`.env` 命中的是 `is_sensitive_dot_name` 的段级判定，实测 `denied_patterns=()` 下 `.env` 仍 `is_denied=True`，所以 allow 必须是**独立判定面**；③ issue 说「护栏用另一张表、必须同源喂两层」——对，且比原文更封闭：`CommandGuard` 在生产路径上**只有一个构造点** `agent/tools/builtin/bash.py:87`，且只拿得到 `workspace_root`，所以「同源」需要**新增传参面**，不是补一个配置字段就自动同源。
+
+  **安全面要素**（写进 spec delta）：allow 只能重开被 deny 命中的 workspace 内路径、不得越过边界；粒度是**精确 workspace 相对路径**，glob 元字符在解析期 fail fast（业界同名解法：codex 的 `policy_transforms.rs:30-35` 明确「glob 只能用于 deny-read」）；只放行写、读保持拒绝；**否定用例**（未列入的 `.env` 仍拒）是验收的核心面。**业界调研**：`research_tier: full`，3 个有内置权限模型的参考仓实读（codex / kimi-code / opencode）——优先级、粒度、read/write 不对称、`.env` 变体四问都有对照结论。
+
+  **两条腿**：除功能实现外，本 change **同时是 `witnessloop-adoption` 阶段 B 的载体**（见上一批），它的 tasks 第 6 节承接 B.1–B.8；观测报告落 **change 根目录**的 `stage-b-observation.md`（**不放 `reviews/`**——阶段 B 一定要建 witnessloop 形态 manifest，一旦建了，`reviews/**/*.md` 里未被绑定的报告都成孤儿；而观测报告没有合法的 witnessloop stage 可绑）。
+
+  **六条停轮 Open Question**（每条配本 change 真实场景的具体例子）：Q1 allow 能覆盖哪些 deny 来源（推荐覆盖文件级 deny、不覆盖 `.git/**` 等结构性目录 deny 与 workspace 边界）/ Q2 粒度（推荐精确路径 + glob fail fast）/ Q3 `.env` 变体是否跟随（推荐不跟随，与 #254 刚收紧的凭据变体口径对齐）/ Q4 配置级别（推荐只做项目级 `tools.*`，与 `command_denylist` 同构）/ Q5 读写是否区分（推荐只放行写；须如实写明由此产生的「`Edit` 能改但 agent 读不回内容、`old_string` 只能凭记忆」这条可用性边界）/ Q6 是否顺手堵 Bash 层的 `.env` 读侧（推荐不堵、记债务另立——**实测今天 `cat .env` / `grep API_KEY .env` 两层全放行**，所以「只放行写」的保护面只在文件工具层，不得写成无限定语）。
 
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 
