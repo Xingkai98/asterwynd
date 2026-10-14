@@ -1,5 +1,13 @@
 # Design: 护栏写白名单（guard-write-allowlist）
 
+## 行号口径（本文件全文统一，读锚点前先读这一节）
+
+本文件里的 `文件:行号` 锚点**一律是「本 change 之前」的树（`fd6d581`，`agent/workspace_policy.py` 当时 398 行）上的行号**——设计是在那棵树上做的，所以指向既有代码的锚点都按它写。
+
+**本 change 新增的符号在原树上不存在**，因此它们**只以符号名引用，不给行号**：`write_allowlist_covers`、`is_structural_deny_pattern`、`is_structural_denied_path`、`WorkspacePolicy.allowed_write_paths` / `_allowlist_covers_resolved` / `is_write_allowed`、`CommandGuard._allow_covers`、`CommandGuard.allowed_write_paths` / `denied_patterns` 形参、`ToolsConfig.allowed_write_paths`、`_parse_allowed_write_paths`。要它们在当前树上的位置，请 `grep -n '<符号名>' <文件>`——**不要**把本文件里的行号直接套到改动后的文件上（该文件已从 398 行增长到 507 行，`workspace_policy.py` 与 `command_guard.py` 的多数锚点都向后移了）。
+
+> **勘误（building-review R3 的 N-3）**：本节的这两条规则是**事后补写**的。在此之前，Decision 2 里曾有一处把 `is_write_allowed` / `_allowlist_covers_resolved` 写成「变更后」行号（`:445` / `:433`），而同段其余锚点（如 `:317`）用的是变更前口径 ⇒ 同一段两种口径，按本节声明的读法会落空。现已删掉那两个数字、按上面的规则只留符号名。**没有**把全文改成当前树口径：本文件有 102 处行号引用，其中相当一部分是省略文件名、靠上下文解析的裸 `:NNN`，逐处改号需要与「符号是否在本 change 新增」逐条对照，属一次独立的核对工作；在审阅 PASS 之后的 delta 里仓促重编号，风险恰好落在本次审阅一直在查的那一类（锚点写错）。故本轮只消除不一致本身，口径统一为「变更前树 + 新增符号不给行号」。
+
 ## Context
 
 `bash-command-guard-redesign`（issue #254）把「什么算敏感点文件名」从三处独立定义收敛成共享谓词 `is_sensitive_dot_name`（`agent/workspace_policy.py:45-109`，设计 D12），并给命令护栏建了单一解析管线。收敛之后暴露出来的第一个政策缺口就是 issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)：**没有任何配置通道能授权 agent 写一个被 deny 的 `.env`**。用户当时拍板「白名单机制不塞进 #254、留作后续独立 change」，本 change 就是那个承接。
@@ -74,7 +82,7 @@
 
 **「写目标判定面」的唯一定义（本 change 全文与规格同此口径，禁止再用「三面」之类的缩写）**：`CommandGuard` 中**消费写目标路径**的六个判定方法——`_check_target`（`:930-938`，**仅其在写目标位置上的调用**）、`_has_protected_redirect`（`:976-993`）、`_check_dynamic_target`（`:940-960`）、`_check_mv_cp`（`:1106-1122`）、`_check_tee`（`:1156-1167`）、`_check_dd`（`:1139-1154`）。**明确排除三项**：① `check()` 第 1 步的**整句 denylist 正则扫描**（`:737-741`，pre-IR，见 Decision 9 与「Bash 层豁免覆盖面差异」）；② `mv`/`cp` 的**源位置**判定（`_check_ir_segment` `:875` 与 `_check_argv_segment` `:1060` 都用 `_check_target` 判 `source`——那是**读侧**，与 U8 / U5 的「只放行写」冲突，allow SHALL NOT 影响它）；③ `_check_rm`（`:1077-1103`）——它只判 `-r`+`-f` 的**逃逸**面，与 allow 无关。`tasks.md` 3.2 的收敛清单与本节同口径。
 - **`WorkspacePolicy.is_denied`（`:316-338`）保持原语义，SHALL NOT 感知 allowlist。**
-- 公开查询入口 `WorkspacePolicy.is_write_allowed(path)`（`:445`）与 `is_denied` **同形**：先 `assert_within_workspace`，越界路径抛 `PermissionError` 而非返回 `False`；判定本体抽在 `_allowlist_covers_resolved(resolved)`（`:433`），供 `assert_write_allowed` 复用，避免热路径上重复解析一次路径。
+- 公开查询入口 `WorkspacePolicy.is_write_allowed(path)` 与 `is_denied` **同形**：先 `assert_within_workspace`，越界路径抛 `PermissionError` 而非返回 `False`；判定本体抽在私有 helper `_allowlist_covers_resolved(resolved)`，供 `assert_write_allowed` 复用，避免热路径上重复解析一次路径。（这两个符号都是**本 change 新增**的，`fd6d581` 的 `agent/workspace_policy.py` 里不存在，故按下面的行号口径**只给符号名、不给行号**。）
 
 **一处**有意**的行为变化（building-review R2 的 I-5 边角，如实记录）**：`is_write_allowed` 对「**空 allowlist + 越界路径**」由原先的**返回 `False`** 改为**抛 `PermissionError`**。原因：旧顺序是先判空表早返、再查边界 ⇒ 同一个「这条路径是否被覆盖？」的问题，会随配置内容在**布尔**与**异常**之间切换（allowlist 为空返回 `False`、非空则抛异常），自相矛盾；新顺序让它与 `is_denied`（同样先 `assert_within_workspace`，`agent/workspace_policy.py:317`）**对称**，也与本方法的 docstring「The workspace boundary is checked first and is never overridable」一致。方向是 **fail-closed（更严）**，且 `is_write_allowed` 全仓**零调用方**（只有定义与 `assert_write_allowed` 内部对私有 helper 的使用），无功能后果。**注意**：这条变化**不在** I-4 的传参改动里，`6a43aee` 的提交信息把它一并写进「除 I-4 传参外无行为变更」是**不准确的**，已在后续提交如实更正（不改写历史）。
 

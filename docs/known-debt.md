@@ -496,7 +496,7 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 1. **`DEFAULT_DENYLIST` 的计数写小了一**：`docs/interview-script/walkthrough/W06-security.md:11`（`└─ 命令拒绝列表：DEFAULT_DENYLIST（58 个危险模式）`）与 `:35`（同款「58 个模式」）**两处**都写 58，实测 `len(DEFAULT_DENYLIST) == **59**`。
 2. **`DEFAULT_DENIED_PATTERNS` 的计数与模式清单已失真**：`docs/interview-bullets/walkthrough.md:2483` 写「**35 条**」并列出 `.env` / `.env.*` / `**/.env` 等模式，`:2497` 写「合计 35 条 glob pattern（9 大类）」。实测该表现为 **32** 条，且 `.env` 族**早已不在表里**——`#254`（`bash-command-guard-redesign`）把「什么算敏感点文件名」收敛成段级谓词 `is_sensitive_dot_name`，`.env` 走的是代码判定而非 glob。⇒ 这段讲稿的「模式清单」需要按 `agent/workspace_policy.py:9-43` 重列。
 3. **同文件 `:2481` 的行号锚点过期**：写 ``**文件**：`agent/workspace_policy.py:9-45` ``，该常量块现为 **`9-43`**。
-4. **同文件 `:2499` 的行号锚点过期**：写 `` `is_denied()`（`:222-239`）``，该方法现为 **`:316-338`**（其间 `#247` 的路径段边界修复与 D12 的谓词收敛都改过它）。
+4. **同文件 `:2499` 的行号锚点过期**：写 `` `is_denied()`（`:222-239`）``。该方法在 `guard-write-allowlist` 合入**前**为 `:316-338`，合入**后**为 **`:393`**（`agent/workspace_policy.py` 从 398 行增长到 507 行，新增的写白名单谓词插在它上面）；其间 `#247` 的路径段边界修复与 D12 的谓词收敛也改过它。⇒ 修讲稿时请按**合入后**的 `:393` 写，或改用 `grep -n 'def is_denied' agent/workspace_policy.py` 现查（行号会随代码漂移，这是本条目自身的教训）。
 
 **为什么不在本 change 内顺手改**：这四条都在 `docs/interview-*`（面试讲稿面），改它们要连带核对同段落的其它数字与叙述（如「9 大类」的分类表），属一次独立的讲稿事实校对；混进本 change 会让「写白名单」的 diff 无法独立评估（与 Decision 6 对 `handoff.json` 同款判断）。**收敛方向**：另立一次讲稿事实校对，按 `agent/workspace_policy.py` 的当前常量重算全部计数与行号锚点。
 

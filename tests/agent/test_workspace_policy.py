@@ -620,3 +620,74 @@ def test_is_structural_deny_pattern_is_derived_not_enumerated(tmp_path):
     assert is_structural_denied_path(".env") is False
     assert is_structural_denied_path("config/.env") is False
     assert is_structural_denied_path(".gitignore") is False  # 不是 `.git` 段
+
+
+class TestIsWriteAllowedPublicPredicate:
+    """`is_write_allowed` 的公开谓词面（building-review R3 的 N-4）。
+
+    审阅用两个变异体验证过它当时**零测试覆盖**：MUT-D（恢复旧求值顺序）与
+    MUT-E（恒 `return False`）在三个受影响测试文件上都是 `484 passed`，**无一
+    被杀**。本类补上，把它的三条语义各自钉住。
+
+    它当前全仓**零调用方**，但 `design.md` 把它写成了一个公开查询入口，且
+    「空清单 + 越界 ⇒ 抛 `PermissionError`」是一条**有意**的行为（与 `is_denied`
+    同形、fail-closed，见 design.md 的 Decision 2）——按规格行为钉住，别让
+    它日后被误当回归。
+    """
+
+    def test_default_state_returns_false(self, tmp_path):
+        """默认（空清单）：任何路径都不被覆盖 ⇒ False。"""
+        policy = WorkspacePolicy(tmp_path)
+        assert policy.allowed_write_paths == ()
+        assert policy.is_write_allowed(".env") is False
+        assert policy.is_write_allowed("src/app.py") is False
+
+    def test_hit_true_miss_false_and_structural_stays_false(self, tmp_path):
+        """allow 态：命中 True、未命中 False、结构性 deny 即便列入也 False。"""
+        policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env", "config/.env"))
+        assert policy.is_write_allowed(".env") is True
+        assert policy.is_write_allowed("config/.env") is True
+        assert policy.is_write_allowed(".env.local") is False
+        assert policy.is_write_allowed("src/.env") is False
+
+        structural = WorkspacePolicy(tmp_path, allowed_write_paths=(".git/config",))
+        assert structural.is_write_allowed(".git/config") is False
+
+    def test_out_of_workspace_raises_like_is_denied(self, tmp_path):
+        """**有意**行为：越界路径抛 `PermissionError`，与 `is_denied` 同形。
+
+        空清单与非空清单**都**抛（旧实现是空清单先早返 `False`、非空才抛 ⇒ 自相
+        矛盾）。此断言即 MUT-D 的杀手：把求值顺序改回旧版，这条会红。
+        """
+        outside = tmp_path.parent / "outside.env"
+        for policy in (
+            WorkspacePolicy(tmp_path),
+            WorkspacePolicy(tmp_path, allowed_write_paths=(".env",)),
+        ):
+            with pytest.raises(PermissionError):
+                policy.is_write_allowed(outside)
+            # 对照组：is_denied 对同一路径同样抛（两者同形是这条行为变化的理由）
+            with pytest.raises(PermissionError):
+                policy.is_denied(outside)
+
+    def test_agrees_with_assert_write_allowed_on_denied_paths(self, tmp_path):
+        """一致性（**只在「该路径确实被 deny 命中」时**成立）。
+
+        `is_write_allowed` 答的是「豁免是否覆盖」，不是「是否允许写」——对本来就
+        没被 deny 的路径它返回 `False`，而 `assert_write_allowed` 照样放行。故
+        等价关系限定在 denied 路径上。
+        """
+        policy = WorkspacePolicy(tmp_path, allowed_write_paths=(".env", "deploy.pem"))
+        for path, covered in ((".env", True), ("deploy.pem", True), (".env.local", False), (".git/config", False)):
+            assert policy.is_denied(path) is True, path  # 前提：确实被 deny 命中
+            assert policy.is_write_allowed(path) is covered, path
+            if covered:
+                assert policy.assert_write_allowed(path).name == path.rsplit("/", 1)[-1]
+            else:
+                with pytest.raises(PermissionError):
+                    policy.assert_write_allowed(path)
+
+        # 反面对照：未被 deny 的普通路径 ⇒ 谓词 False，但写是允许的
+        assert policy.is_denied("src/app.py") is False
+        assert policy.is_write_allowed("src/app.py") is False
+        assert policy.assert_write_allowed("src/app.py") == (tmp_path / "src" / "app.py").resolve()
