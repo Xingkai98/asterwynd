@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "guard-write-allowlist",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "building-review-guard-write-allowlist-20261014-r3",
+  "base_sha": "fd6d5814b027bc86c50236f3c69853619602192d",
+  "head_sha": "4d8e048f7da461bfd28d59747bb52499ea1e1725",
+  "tasks_hash": "sha256:feca8e4fa28f2c8cb4a99acc226c8f56a97bc709a1c3f8f0e6b3df9a1a00595d",
+  "spec_hash": "sha256:25fa52aab3ace811230ca26a1261abd09dc59c31827dea9828bf568fd9d84da9",
+  "diff_hash": "sha256:195c9986f4ed2355eee8aac3a942d4252532568ad34f5c222a65e753146d9a7d",
+  "report_hash": "sha256:119e0a2074f1553b3ad8a6f32ef277e6c2960226ee9d92f6c2a2df4b943e8f0a"
+}

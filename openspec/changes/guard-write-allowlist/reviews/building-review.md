@@ -2,6 +2,291 @@
 
 ## Verdict
 
+**`PASS`**（第 3 轮 / 3 轮封顶；审阅者独立零记忆，不继承开发上下文）
+
+**一句话**：R2 的两条待修**都真修了，且修法各自可复算**。N-1 选「补测试」并把声明改成可复算形态——新增的 8 条用例逐条**命中各自那条规则**（不是被 YAML 解析错顺带通过），变异探针精确杀死对应 case；N-2 选「显式记录」——我把改动的实际影响面**枚举穷尽**后确认它只有一格：`is_write_allowed` 对「空清单 + 越界路径」从返回 `False` 变抛 `PermissionError`，**默认态下的常规写判定与改动前逐行等价**（W/R/D 三通道 48 行 0 差异，guard 侧 64 条命令 0 差异）。上轮的 I-1/I-3/I-4 **未被改坏**——本提交对 `agent/**` 是**零可执行代码改动**（AST 逐模块证明）。安全面整轮重跑干净（读侧 0 翻转、读源命令 0 翻转、结构性 deny 0 泄漏、反转探针只开出清单内的路径）。**判 `PASS`**；另记三条 nit（`design.md` 两处行号用了与文内声明不同的版本口径、`is_write_allowed` 零测试覆盖、`tasks.md` 状态头未更新），**均不影响结论、不阻塞**。
+
+| 轮次 | revision | verdict |
+|---|---|---|
+| R1 | `340c90e` | `CHANGES_REQUESTED`（I-1 Must fix + I-2/I-3 + 两条 nit） |
+| R2 | `6a43aee` | `CHANGES_REQUESTED`（I-1/I-3/I-4 关闭；I-2 尾部、I-5 边角各一处待修） |
+| **R3（本轮，封顶）** | **`4d8e048`** | **`PASS`**（N-1 / N-2 均关闭；三条 nit 见 R3-8） |
+
+---
+
+## R3 复审（revision 4d8e048）
+
+- **Diff span**：`fd6d581`（`git merge-base HEAD origin/master`）.. `4d8e048`（HEAD）；本轮 delta = `git show 4d8e048` = 4 文件 / +340 −3（`agent/workspace_policy.py`、`design.md`、`building-review.md`、`tests/agent/test_config.py`）
+- **方法**：隔离副本 `git archive <rev> | tar -x -C`（`base=fd6d581` / `r1=340c90e` / `r2=6a43aee` / `head=4d8e048`，位于 `/tmp/wl3/copies/`），探针脚本单独放在 `/tmp/wl3/probes/`（**不放进副本树**——第一版把探针写在副本同级目录，`sys.path[0]` 指到脚本目录，import 到了错误的 `agent` 包，读数全错；已改正，见 R3-9 的自我更正）；同名 workspace 路径 + 同一份语料喂给两棵树后逐行 `diff`。变异探针在 7 份额外副本上做（`mut-A`…`mut-G`）。**被审 worktree 零改动**：`git status --porcelain` 全程为空。
+
+### R3-1. N-1（上轮唯一阻塞）—— ✅ **关闭：用例真存在、真命中各自规则、声明可复算**
+
+上轮判的是「`design.md:97` 尾句断言 `tests/agent/test_config.py` 有逐条用例，实测计数 0」。作者选「补测试」，我按三层验：
+
+**① 用例真存在且逐条命中自己的规则。** `tests/agent/test_config.py:973-995` = `test_allowed_write_paths_rejects_non_canonical_spelling`（`parametrize` 五条：`./.env` / `a//b` / `a/./b` / `a\b` / `.`），`:998-1006` = `test_allowed_write_paths_strips_surrounding_whitespace`（三条空白形态）。实读文件与声明**逐条对得上**。跑起来 8 passed。但「pass」本身不构成证据——`pytest.raises(ConfigError, match="tools.allowed_write_paths")` 的 `match` 对**任何一条**规则都成立（六条报错文案都以该字段名开头），所以我把每条 entry 的报错**分类打印**出来：
+
+```
+  './.env' -> ConfigError[canonical]   './.env' is not a canonical workspace-relative path (drop the leading `./`, `//` or backslashes)
+  'a//b'   -> ConfigError[canonical]   'a//b' is not a canonical workspace-relative path ...
+  'a/./b'  -> ConfigError[canonical]   'a/./b' is not a canonical workspace-relative path ...
+  'a\\b'   -> ConfigError[separator]   'a\\b' must use `/` as the separator
+  '.'      -> ConfigError[canonical]   '.' is not a canonical workspace-relative path ...
+  ' .env'            -> ACCEPT ('.env',)
+  '.env '            -> ACCEPT ('.env',)
+  '  config/.env  '  -> ACCEPT ('config/.env',)
+```
+
+五条报错分别是 canonical / canonical / canonical / **separator** / canonical——**与提交信息的自述逐字一致**。报错文案里带着 entry 原文，证明进到校验器的是**预期的那个值**（不是 YAML 把 `a\b` 吃成别的东西）：YAML 单引号不做转义，`- 'a\b'` 解析出的就是 `a\b`。
+
+**② 不是空转（变异探针）。** 两个变异体各自只删一条规则分支：
+
+```
+MUT-A 删掉 canonical 分支（agent/config.py 的 `if entry != "/".join(parts)` 块）
+  -> 4 failed, 480 passed
+     FAILED ...::test_allowed_write_paths_rejects_non_canonical_spelling[./.env]
+     FAILED ...[a//b]     FAILED ...[a/./b]     FAILED ...[.]
+MUT-B 删掉 separator 分支（`if "\\" in entry` 块）
+  -> 1 failed, 483 passed
+     FAILED ...[a\\b]   E  Failed: DID NOT RAISE <class 'agent.config.ConfigError'>
+```
+
+杀伤面**精确到条**：删 canonical 只死那 4 条，删 separator 只死 `a\b` 那 1 条。⇒ 这 5 条各自钉住的是**自己那条规则**，不是「随便抛个 ConfigError 就算过」。同一探针还跑了 U2 既有四类的回归对照（`**/*`→glob、`/etc/.env`→absolute、`config/`→tail_slash、`../outside.env` 与 `config/../.env`→dotdot），四类**未被本轮改动波及**。
+
+**③ 声明现在可复算、与我实读一致。** `design.md:100` 的尾句已从「并有 `tests/agent/test_config.py` 的逐条用例」改为**指名两个函数 + 各自的 `parametrize` 条目**（`test_allowed_write_paths_rejects_non_canonical_spelling` 五条 `./.env` / `a//b` / `a/./b` / `a\b` / `.`；正向对照 `test_allowed_write_paths_strips_surrounding_whitespace` 三条空白形态）。我按这句去文件里数，**一一对上**。⇒ 这条声明从「不可复算的泛指」变成了「按名字与条目可直接点开核对」，正是上轮修法推荐 ① 想要的效果。
+
+### R3-2. 如实披露（没有改写历史）—— ✅ **成立**
+
+三件事分别验：
+
+```
+$ git rev-parse HEAD^ == 6a43aee                                    -> YES   （未改写历史）
+$ git log -1 --format=%B 6a43aee | grep 逐条测试
+    current spec（Requirement + 新 Scenario）+ 逐条测试。            -> 原提交信息仍含该断言
+$ git show 6a43aee:openspec/changes/guard-write-allowlist/design.md \
+    | grep -c "并有 \`tests/agent/test_config.py\` 的逐条用例"       -> 1     （旧文档字节原样保留）
+$ git show --name-only --format="" 6a43aee | grep '^tests/'
+    tests/agent/tools/test_command_guard.py                         -> 只此一个（与披露一致）
+```
+
+**历史计数我按 6a43aee 的树复算，与披露数字逐条相符**（这是关键——披露若把当时的事实说错，就等于用第二个错误掩盖第一个）：
+
+```
+git grep -e 'a//b'   6a43aee -- tests/   -> 0 hits
+git grep -e 'a/\./b' 6a43aee -- tests/   -> 0 hits
+git grep -e 'a\\b'   6a43aee -- tests/   -> 0 hits
+git grep -e '\./\.env' 6a43aee -- tests/ -> 1 hit（tests/agent/test_config.py:950 "config/../.env"，
+                                                  U2 既有的 `..` 段用例，非本轮补充）
+```
+
+即**当时确实为 0**，披露如实。披露落在三处且互相印证：新提交信息（「如实更正（针对 6a43aee）」段）、`design.md:102`（「本段上一版（`6a43aee`）写…计数为 0…即声明先于落地」）、以及 `design.md:79` 对 N-2 的同类更正（「`6a43aee` 的提交信息把它一并写进『除 I-4 传参外无行为变更』是不准确的」）。措辞是「**新开提交如实更正、不改写历史**」，实际做法也是新开提交（未 amend / 未 force-push，`6a43aee` 是 HEAD 的父提交）。⇒ **没有抹掉痕迹，也没有用新措辞覆盖旧事实。**
+
+### R3-3. N-2 求值顺序改动 —— ✅ **确实只影响那一类边角；默认态逐判定等价**
+
+上轮的争点是「空 allowlist + 越界路径」由返回 `False` 变抛 `PermissionError`，方向 fail-closed 但没写进文档。作者选**显式记录**（R2 修法的 ②），并把理由写成「与 `is_denied` 对称、旧顺序自相矛盾」。我不接受只靠理由，**把影响面枚举穷尽**：
+
+**① 与改动前（`340c90e` 的旧实现）逐通道对拍，48 路径 × 4 通道：**
+
+```
+mode=default（allowlist 为空）  r1(340c90e) vs head(4d8e048)
+  差异行 = 22（= 11 条路径 × 2 侧），全部落在第 5 列（is_write_allowed），W/R/D 三列 0 差异
+  逐条形态：  r1 = A|OK:False     head = A|ERR:PermissionError
+  11 条路径： etcpasswd_link / escaper / outside_link / <WS>/etcpasswd_link / <WS>/escaper /
+              /etc/passwd / /etc/ssh/sshd_config / <OUT>/.env / <WS>/../outside.env /
+              <WS>/../outside/.env / /proc/self/environ      —— 全部是**越界路径**
+mode=allow（allowlist 非空）    r1 vs head
+  48 行 × 4 通道 **0 差异**（含 is_write_allowed 本人）
+```
+
+⇒ 差异**恰是**上轮描述的那一格，不多一分：只要 allowlist 非空，新旧在任何路径上（含越界）都同结论；只有「空清单 + 越界」这一格变了。**在-workspace 路径在两种配置下都与旧实现一致**（空清单时旧/新都返回 `False`）。
+
+**② 默认态（本 change 真正的生产态）的等价性是逐判定测的，不是推的。**
+
+```
+① policy 默认态 base(fd6d581) vs head：W/R/D 三通道 48 行，0 行不同
+   （唯一差异是 head 多了 is_write_allowed 这一列——base 树里该方法**不存在**）
+① guard 默认态 base vs head：64 条命令判定，0 行不同（verdict + last_reason 全等）
+```
+
+**③ 相对 origin/master 根本没有回归面**：`git grep -c is_write_allowed fd6d581 -- '*.py'` = **0 命中**——该方法整体是本 change 新引入的，`fd6d581` 上不存在，所以这不可能是「相对基线的行为变更」，只是本 change **内部两个 revision 之间**的差异。
+
+**④ 零调用方（计数口径，不是截断搜索结果）**：`grep -rn 'is_write_allowed' --include=*.py . | wc -l` = **1**，那 1 条就是定义本身（`agent/workspace_policy.py:445`）；全文件类型计数 10，其余 9 条全在 `design.md` / `building-review.md` 的文字里。⇒ `design.md:79` 的「全仓零调用方」为真。
+
+**⑤ `design.md:79` 的声明与实际一致。** 逐条核：现象（空清单 + 越界 → 由 `False` 改抛 `PermissionError`）✔；方向 fail-closed ✔（异常比 `False` 更严，且无调用方承接）；与 `is_denied` 同形 ✔（`is_denied:393-394` 同样先 `assert_within_workspace`）；与本方法 docstring 一致 ✔（docstring 写 boundary checked first and never overridable，新行为正是如此）；「不在 I-4 传参改动里」✔（I-4 动的是 `denied_patterns` 形参）。**我判它是可接受的有意变更，不是缺陷**：新的求值顺序消除了一种自相矛盾（同一问题随配置在布尔与异常间切换），方向更严，且零调用方 ⇒ 无功能后果。
+
+### R3-4. 安全面：**整轮重跑**（本轮改过 `agent/workspace_policy.py`，上轮结论不沿用）
+
+方法同 R2，但**语料更宽**：48 条相对/绝对路径 × {`assert_write_allowed` / `assert_read_allowed` / `is_denied` / `is_write_allowed`} + 64 条命令 + 50 条从 deny 表**逐条派生**的结构性候选 + 216 行反转语料（6 种 allowlist 配置 × 36 种路径写法，含大小写、前后缀、多斜杠、`.` 段、`..` 段、symlink）。
+
+**① 默认态等价** — 见 R3-3②：policy 48 行 0 差异、guard 64 条 0 差异。
+
+**② 精确路径（只放行清单内）** — 翻转全枚举，读侧/deny 侧零翻转：
+
+```
+policy flips (default -> allow):  W 13 / R 0 / D 0 / A 13
+W flips: .env, sub/.env, config/.env, a/b/c/.env, deploy.pem, id_rsa, .env_link(→.env),
+         pem_link(→deploy.pem), <WS>/.env, <WS>/config/.env, <WS>/deploy.pem,
+         <WS>/.env_link, <WS>/pem_link
+ALLOW->DENY flips: 0
+```
+
+13 条全部是**清单内的精确路径**或其**规范化等价拼写**或**解析到清单内目标的 symlink**。未列入的逐条实测仍拒（未出现在翻转集）：`.env.local` `.env.production` `config/.env.bak` `src/.env` `a/b/c/d.env` `xdeploy.pem` `.venv/lib/x.py` `.ssh/id_rsa` `.aws/credentials`。
+
+**③ 读侧未被放宽 → ✅（三重证据）**
+
+```
+读通道翻转 R| : 0          is_denied 通道翻转 D| : 0
+grep -rn 'allowed_write_paths\|write_allowlist_covers' agent/code_intelligence/  -> 0 命中
+AST（含 docstring 全量）base vs head：
+  assert_read_allowed / is_denied / assert_within_workspace / relative_path 全部 identical: True
+  assert_write_allowed                                                      identical: False（正是本 change）
+```
+
+即**读侧四个方法逐字节未改**，且 `repo_map` 所在的 `code_intelligence/` 对 allowlist **零引用**——被豁免的 `.env` 不会被收进符号索引。
+
+**④ `mv`/`cp` 源位置未放行 → ✅**
+
+```
+源位置命令（default vs allow）：
+  cp .env /tmp/out            deny[cp_source]      -> deny[cp_source]       same
+  mv .env /tmp/out            deny[mv_source]      -> deny[mv_source]       same
+  install -m 600 .env /tmp/out deny[install_source]-> deny[install_source]  same
+  cp .git/config /tmp/out     deny[cp_source]      -> deny[cp_source]       same
+  mv config/.env .env         deny[mv_source]      -> deny[mv_source]       same
+  cp sub/.env /tmp/out        deny[cp_source]      -> deny[cp_source]       same
+  cp .env /tmp/.env           deny[denylist]       -> deny[denylist]        same
+源位置命令被 allowlist 造成的翻转：0
+```
+
+即被豁免的 `.env` 没有变成可外泄的读源。
+
+**⑤ 结构性 deny 永不翻转 → ✅（0 泄漏，两源枚举）**
+
+从 deny 表与敏感目录表**逐条派生** 50 个候选（精确条目、`<条目>/x.js`、`a/<敏感目录>/b`），把**该候选自身**放进 allowlist，再看它是否被打开：
+
+```
+candidates=50  structural=37  nonstructural=13
+STRUCTURAL LEAKS: 0 []
+  例：.git/config DENY->DENY、.git/HEAD DENY->DENY、node_modules/x.js DENY->DENY、
+      .venv/x.js、benchmarks/runs/x.js、.ssh/x、a/.git/b、.aws/x、.npmrc、.pypirc 全 DENY->DENY
+  13 条 non-structural（id_rsa / .venv / node_modules / benchmarks/runs 这类**文件级**条目）
+      可被自身条目打开 —— 这是本能力的**设计意图**，非泄漏
+```
+
+**⑥ 反转/对抗探针 → 只开出清单内的东西**
+
+216 行语料（配置 `bare` / `nested` / `pem` / `linknm` / `dotgit` + 空清单对照）逐配置求「空清单 DENY → 配置后 ALLOW」的开集：
+
+```
+bare   ('.env',)                 -> .env, sub/../.env, ./.env, .//.env, .env/., .env_link, <WS>/.env
+nested ('.env','sub/.env')       -> 上式 + sub/.env, ./sub/.env, sub/./.env, sub//.env
+pem    ('.env','deploy.pem','sub') -> 上式 + deploy.pem, pem_link
+linknm ('pem_link',)             -> ∅          （写链接名**不**开，只有解析目标在清单里才开）
+dotgit ('.git/config','.git/HEAD') -> ∅        （结构性）
+```
+
+开集**完全等于**「清单内路径的规范化等价拼写 + 解析到清单内目标的 symlink」，没有多出任何一格。三位「反向」形态**未开**：`linknm` 写 `pem_link` 仍 DENY、`dotgit` 写 `.git/config` 仍 DENY、`.env.bak` / `xdeploy.pem` / `.ENV` 类的开关状态与空清单态**一致**（两态皆 DENY 或两态皆 ALLOW——后者是变更前既有事实，如 `.ENV` 大小写不敏感判定之外的名字，差分证明与 allowlist 无关）。guard 侧同语料翻转 13 条，**全部**为清单内路径的写目标，无一条读源、无一条结构性路径。
+
+**⑦ 变异探针（证明测试网仍在守门）**
+
+```
+MUT-C  write_allowlist_covers 无视结构性 deny（恒 return True）
+       -> 12 failed（含 test_write_allowlist_never_overrides_structural_deny ×10、
+          TestGuardUsesPolicyDenyTable ×2）                                    ✔ 被杀
+```
+
+### R3-5. 上轮已成立的 I-1 / I-3 / I-4 —— ✅ **未被本轮改坏**
+
+**最强的证据是「本轮没有可执行代码改动」**：把 `agent/**` 各模块的 AST 剥掉 docstring 后逐模块比 `6a43aee`（R2 revision）与 `4d8e048`（HEAD）：
+
+```
+agent/workspace_policy.py   identical: True
+agent/tools/command_guard.py identical: True
+agent/config.py             identical: True
+agent/tools/builtin/bash.py identical: True
+agent/main.py               identical: True
+```
+
+`agent/workspace_policy.py` 的 hunk **整段落在三引号 docstring 内**（改的是 `is_write_allowed` 的说明文字）。⇒ I-1/I-3/I-4 的代码面在结构上不可能被动到。仍按要求复跑三者的**回归守门**：
+
+```
+I-1: MUT-G（_allow_covers 对越界绝对路径按 basename 回退，模拟「护栏感知附加根」）
+     -> FAILED TestAdditionalRootIsRootBlind::test_additional_root_writes_stay_denied_in_guard   ✔ 仍被杀
+I-4: MUT-F（忽略注入的 denied_patterns，回退到默认表）
+     -> FAILED TestGuardUsesPolicyDenyTable::test_custom_deny_table_is_honoured                  ✔ 仍被杀
+I-3: docs/known-debt.md 条目在位；数字逐条复算：
+       len(DEFAULT_DENYLIST)=59 ✔（条目写 58→59）
+       len(DEFAULT_DENIED_PATTERNS)=32 ✔（条目写 35→32）
+       .env 族已不在表：[p for p in DEFAULT_DENIED_PATTERNS if 'env' in p] -> ['.venv','.venv/**','venv','venv/**'] ✔
+     受保护写入事件齐：workflow-events.jsonl 全 9 条 dump 后，
+       seq=6 与 seq=8 均为 protected_artifact_explained / artifact_path=docs/known-debt.md  ✔
+```
+
+### R3-6. 本轮测试与门禁的原始行
+
+```
+$ uv run --extra dev pytest -q --basetemp=/home/happy/wl-basetemp-rev3 -p no:randomly
+FAILED tests/agent/commands/test_session_workspace.py::test_session_workspace_add_nonexistent_path
+1 failed, 4468 passed, 8 skipped, 110 warnings in 505.38s (0:08:25)
+   # 与提交信息自述的 4468 / 1 / 8 逐字一致；上轮全量跑到的 test_contract[docker] 本轮未复现
+
+$ <4 个受影响测试文件>   -> 631 passed in 3.37s      （6a43aee 上同 4 文件 = 623 passed，差 +8 = 5+3 条新用例，与自述一致）
+
+$ npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
+Totals: 30 passed, 0 failed (30 items)          # EXIT=0
+
+$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
+ERROR: guard-write-allowlist: review manifest missing:
+  openspec/changes/guard-write-allowlist/reviews/building-review-manifest.json   # EXIT=1（写 manifest 前）
+  -> 写完 manifest 后复跑，输出见本节末
+
+$ git diff --name-only fd6d581..HEAD | grep -c '^\.github/'   -> 0
+$ git status --porcelain                                       -> 空（被审 worktree 全程零改动）
+```
+
+**唯一失败项的独立归因（我自己复现，不照抄简报）**：
+
+```
+同一用例，basetemp 在 /tmp 之外 -> 1 failed in 1.97s
+同一用例，basetemp 在 /tmp 之内 -> 1 passed in 0.86s
+**基线副本 /tmp/wl3/copies/base（fd6d581）**，basetemp 在 /tmp 之外 -> 1 failed in 1.61s
+ls -d /tmp/.git -> /tmp/.git EXISTS
+```
+
+⇒ 决定性于 `--basetemp` 落点、且在**未改动的基线副本上同样失败**，非本 change 引起（本机 `/tmp` 是 git 仓库，与本仓既知的 tmp 污染一致）。
+
+### R3-7. manifest 与 checker 复跑
+
+```
+$ PYTHONPATH=. python3 -c "... write_review_manifest(..., verdict='PASS') ..."
+manifest written
+$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
+OpenSpec artifact checks passed                                                   # EXIT=0
+```
+
+manifest 绑定：`base_sha=fd6d581…`、`head_sha=4d8e048…`、`report_hash`（本报告终稿字节）、`spec_hash`、`tasks_hash`、`diff_hash`。**次序纪律**：本报告先定稿、manifest 后生成（manifest 要哈希报告字节）。
+
+### R3-8. 本轮新记的 nit（均不阻塞，也不构成「声称与事实不符」）
+
+| # | 位置 | 事实 | 建议 |
+|---|---|---|---|
+| **N-3** | `design.md:77` | 同一段里 `is_write_allowed`（`:445`）与 `_allowlist_covers_resolved`（`:433`）用的是**变更后**行号；而 `design.md:323` 自述「本文件与 proposal 的引用均在…**前树**上现测」，且同段 `:79` 的 `:317` 用的**正是变更前行号**。实测 `fd6d581` 的 `agent/workspace_policy.py` 只有 **398 行**，`:433`/`:445` 在前树**根本不存在** ⇒ 按文内声明的口径读会落空。**不构成假声明**：两处都点了符号名，且按当前树读是准的（head `:433`/`:445` 正是这两个符号）。 | 去掉这两个数字，或标注「（变更后行号）」。 |
+| **N-4** | `agent/workspace_policy.py:445` | `is_write_allowed` **零测试覆盖**：MUT-D（恢复旧顺序）与 MUT-E（恒 `return False`）在 3 个受影响测试文件上都是 **484 passed**，无一被杀。它是本 change 新引入、且在 `design.md` 里作为公开查询入口写进设计的方法。 | 补一条钉住新行为的用例（空清单 + 越界 ⇒ `PermissionError`）。零调用方 ⇒ 不阻塞。 |
+| **N-5** | `tasks.md:3` | 状态头仍写「第 1 轮判 CHANGES_REQUESTED，已按 I-1～I-5 修复并复跑」，未反映 R2/R3。措辞不算假（第 1 轮确如此），但归档前应更新为 R3 `PASS`。 | 归档提交里一并更新。 |
+
+### R3-9. 自我更正（本轮我自己的一个读数错误，记录以免后续读者照抄）
+
+第一版探针把脚本放在 `/tmp/wl-r3/probe_rules.py`（与副本目录同级），Python 以**脚本所在目录**为 `sys.path[0]`，脚本 import 到了那个目录下的**另一份陈旧 `agent` 包**（`/tmp/wl-r3/agent`，早于本 change），于是全部条目都读成 `AttributeError: 'ToolsConfig' object has no attribute 'allowed_write_paths'`——**看起来像「测试全是空转」，实为我探针的环境错误**。改用 `assert agent.config.__file__.startswith(副本路径)` 硬断言模块来源、并把探针移出副本树后复跑，才是 R3-1 里那组数据。此处更正以免后续读者照抄那组假读数。
+
+### R3-10. 结论
+
+R2 的两条**都已实质关闭**：N-1 不是「删声明」而是把用例补齐并让声明可复算（五个 entry 各自命中自己的规则，变异探针 4+1 全杀）；N-2 不是「恢复旧顺序」而是把改动如实落进 `design.md`，且该改动的影响面经**穷尽枚举**确认只有「空清单 + 越界」一格，**默认态下与改动前逐判定等价**。上轮 I-1/I-3/I-4 因本轮**零可执行代码改动**而在结构上不可能回归，回归守门探针复跑仍全杀。安全面整轮重跑：默认态 0 差异、读侧 0 翻转、读源 0 翻转、结构性 deny 0 泄漏、反转探针只开出清单内路径。三条新记 nit 均为文档/覆盖面的小项，不影响本判定。⇒ **`PASS`**。
+
+> **写 manifest**：verdict = `PASS`，已按流程生成 `reviews/building-review-manifest.json`（asterwynd 形态；**未**建 witnessloop 形态 manifest，按本轮指示）。
+
+---
+
+## R2 Verdict（revision 6a43aee，已被 R3 取代）
+
 **`CHANGES_REQUESTED`**（第 2 轮 / 3 轮封顶；审阅者独立零记忆，不继承开发上下文）
 
 **一句话**：I-1 / I-3 / I-4 **完全成立**，I-2 的回写已落地但**新增了一句可证伪的测试覆盖声明**，I-5 的抽取等价性成立但**带出一处边角行为差异**、与提交信息「除 I-4 传参外无行为变更」不符。**安全面本轮整轮重跑全部干净**（默认态 217 行判定 0 差异、读侧翻转 0、读源命令翻转 0、结构性 deny 0 泄漏、四个变异探针全被测试杀死）。判 `CHANGES_REQUESTED` 只因上述两处「声称与事实不符」，**均无安全影响、无功能缺陷，修法各为一行**。
