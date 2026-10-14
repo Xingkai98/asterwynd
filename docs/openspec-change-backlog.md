@@ -173,18 +173,3 @@
 
 ## 已完成待归档
 
-### 第二十一批：护栏写白名单（#272）
-
-- `guard-write-allowlist`（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)）：**已归档到 `openspec/changes/archive/2026-10-14-guard-write-allowlist/`**——归档 move 由紧随本条目提交**之后**的独立纯 rename 提交承载（可复算：`git log --oneline --diff-filter=R -- openspec/changes/archive/2026-10-14-guard-write-allowlist`；该提交落地后本条目按本文档维护规则删除）。`tasks.md` 的结算（勾选已完成项、给 closeout 类标 `(post-merge)`）在**同一 PR 内**收官，且**必须先于归档 move**：归档点完成度门（`scripts/check_openspec_artifacts.py` 的 `_check_archived_completion_gate`）会对**新归档目录**里 **16 条**未勾且未标 `(post-merge)` 的任务（0.1 / 5.1 / 5.2 / 6.1–6.9 / 7.2–7.5）逐条报错，否则归档 PR 判红。审阅闭环已 PASS（`reviews/building-review.md`，绑 `4d8e048`）；witnessloop `check` 在 CI 里 **通过 ✓**（三份 stage manifest 见 `reviews/*.manifest.json`，绑 `59b48f2`）；阶段 B 观测报告见该 change 根目录的 `stage-b-observations.md`。
-
-  **裁定（2026-10-14，用户停轮拍板，十二条全部按推荐值）**：**十二条 Open Question 已于 2026-10-14 由用户停轮拍板、全部按推荐值裁定**（生效口径见该 change 的 `design.md` 的 `## User Rulings`（U1–U12），逐条答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）：文件级 deny 可覆盖、结构性目录 deny 不可覆盖（两源推导）、精确路径 + glob 解析期 fail fast、`.env` 变体不跟随、只做项目级配置、只放行写、Bash 读侧不堵（记债务另立）、不动 `_EXTRA_DENYLIST`（嵌套路径的 Bash `cp`/`mv` 不在范围内）、allow 只在写路径求值、作用域为任一 workspace 根的相对路径、规格随裁定改、grill 报告保持同行裸 `来源:` 写法。来源是 `bash-command-guard-redesign`（issue #254）Q3 的补测——用户追问「有项目我就是想让 agent 配 env 该怎么办」，当时的答案是「做不到，除非手改源码」；用户拍板白名单机制不塞进 #254、留作独立 change 承接，本 change 即该承接。
-
-  **需求**：新增 `tools.allowed_write_paths`（默认空列表），语义是「**deny 默认 + allow 精确覆盖**」——`tools.allowed_write_paths: ['.env']` 让被 deny 命中的路径重新可写；不配置时行为零变化。示例用**裸名**是因为 U7 裁定不动 `_EXTRA_DENYLIST`：嵌套路径（如 `config/.env`）的 Bash `cp`/`mv` 写不在豁免范围内，只有文件工具写与 `echo >>`/`tee`/`dd of=`/`install` 生效。
-
-  **本分支复核出的三条实现要点（与 issue 原文有出入处已订正）**：① 生产构造点确实是三处，但 `web/session.py` 的行号已从 issue 写的 `:1566` 漂移到 **`:1728`**；② issue 说「`WorkspacePolicy.__init__` 已接受 `denied_patterns`、照抄接线即可」——**接线对象错了**：`denied_patterns` 只管 glob 表那一路，`.env` 命中的是 `is_sensitive_dot_name` 的段级判定，实测 `denied_patterns=()` 下 `.env` 仍 `is_denied=True`，所以 allow 必须是**独立判定面**；③ issue 说「护栏用另一张表、必须同源喂两层」——对，且比原文更封闭：`CommandGuard` 在生产路径上**只有一个构造点** `agent/tools/builtin/bash.py:87`，且只拿得到 `workspace_root`，所以「同源」需要**新增传参面**，不是补一个配置字段就自动同源。
-
-  **安全面要素**（写进 spec delta）：allow 只能重开被 deny 命中的 workspace 内路径、不得越过边界；粒度是**精确 workspace 相对路径**，glob 元字符在解析期 fail fast（业界同名解法：codex 的 `policy_transforms.rs:30-35` 明确「glob 只能用于 deny-read」）；只放行写、读保持拒绝；**否定用例**（未列入的 `.env` 仍拒）是验收的核心面。**业界调研**：`research_tier: full`，3 个有内置权限模型的参考仓实读（codex / kimi-code / opencode）——优先级、粒度、read/write 不对称、`.env` 变体四问都有对照结论。
-
-  **两条腿**：除功能实现外，本 change **同时是 `witnessloop-adoption` 阶段 B 的载体**（见上一批），它的 tasks 第 6 节承接 B.1–B.8；观测报告落 **change 根目录**的 `stage-b-observations.md`（**不放 `reviews/`**——阶段 B 一定要建 witnessloop 形态 manifest，一旦建了，`reviews/**/*.md` 里未被绑定的报告都成孤儿；而观测报告没有合法的 witnessloop stage 可绑）。
-
-  **六条停轮 Open Question**（每条配本 change 真实场景的具体例子）：Q1 allow 能覆盖哪些 deny 来源（推荐覆盖文件级 deny、不覆盖 `.git/**` 等结构性目录 deny 与 workspace 边界）/ Q2 粒度（推荐精确路径 + glob fail fast）/ Q3 `.env` 变体是否跟随（推荐不跟随，与 #254 刚收紧的凭据变体口径对齐）/ Q4 配置级别（推荐只做项目级 `tools.*`，与 `command_denylist` 同构）/ Q5 读写是否区分（推荐只放行写；须如实写明由此产生的「`Edit` 能改但 agent 读不回内容、`old_string` 只能凭记忆」这条可用性边界）/ Q6 是否顺手堵 Bash 层的 `.env` 读侧（推荐不堵、记债务另立——**实测今天 `cat .env` / `grep API_KEY .env` 两层全放行**，所以「只放行写」的保护面只在文件工具层，不得写成无限定语）。
