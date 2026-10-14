@@ -154,7 +154,7 @@
 
 ### Decision 6: 阶段 B 的观测报告落在**本 change 根目录**，不放 `reviews/`
 
-**选择**：阶段 B 的观测报告落 `openspec/changes/guard-write-allowlist/stage-b-observation.md`——即 change 目录**根部**，**不在 `reviews/` 下**。
+**选择**：阶段 B 的观测报告落 `openspec/changes/guard-write-allowlist/stage-b-observations.md`——即 change 目录**根部**，**不在 `reviews/` 下**。
 
 **理由（三条，按硬到软）**：
 1. **witnessloop 的孤儿规则**：一旦 `reviews/` 下存在**任意一份** witnessloop 形态 manifest，`reviews/**/*.md` 里**每一份**未被某份 manifest 的 `report_path` 绑定的报告都判「孤儿报告」（witnessloop `src/witnessloop/contract.py:185-206`）。阶段 B **必须**建 witnessloop 形态 manifest（B.2 的硬要求）⇒ 孤儿规则**一定会被激活**。
@@ -163,7 +163,7 @@
 
 **与「报告不放已归档 change」的关系**：B.1–B.8 的 tasks **住在已归档的 `witnessloop-adoption` 里**，本 change **不能**只把报告写在那儿（归档目录是 `event_explained` 受保护路径，每次写入都要解释事件；且那份 change 的实现 PR 已经合入，报告写在归档里等于给历史 change 补新证据，语义漂移）。⇒ 落点是**执行阶段 B 的这个 change 自己**，并在 `tasks.md` 里写一条「回链」任务：把报告路径写进 `witnessloop-adoption` 归档目录**之外**的跟踪入口（issue #305 的 comment），而不是往归档里加文件。
 
-**否决的备选**：(a) `reviews/stage-b-observation.md` —— 触发孤儿；(b) 强制给观测报告建 stage=building manifest —— 同 stage 双份、`matching[0]` 错绑风险；(c) 只写进 `witnessloop-adoption` 归档 —— 受保护写入 + 语义漂移；(d) 写进 `docs/` —— 会把一次**阶段验证**的过程材料沉淀成项目文档，与「阶段 A 报告随 change 走」的先例不一致。
+**否决的备选**：(a) `reviews/stage-b-observations.md` —— 触发孤儿；(b) 强制给观测报告建 stage=building manifest —— 同 stage 双份、`matching[0]` 错绑风险；(c) 只写进 `witnessloop-adoption` 归档 —— 受保护写入 + 语义漂移；(d) 写进 `docs/` —— 会把一次**阶段验证**的过程材料沉淀成项目文档，与「阶段 A 报告随 change 走」的先例不一致。
 
 ### Decision 7: 阶段 B 的证据形态与 `reviews/` 的一致状态
 
@@ -377,7 +377,7 @@
 
 ## Impact Analysis
 
-- **新增**：`openspec/changes/guard-write-allowlist/stage-b-observation.md`（阶段 B 观测报告，change 根目录，见 Decision 6）；witnessloop 形态 manifest `reviews/grill.manifest.json` / `reviews/grill-adversarial.manifest.json` / `reviews/building.manifest.json`（阶段 B 产出，见 Decision 7）。
+- **新增**：`openspec/changes/guard-write-allowlist/stage-b-observations.md`（阶段 B 观测报告，change 根目录，见 Decision 6）；witnessloop 形态 manifest `reviews/grill.manifest.json` / `reviews/grill-adversarial.manifest.json` / `reviews/building.manifest.json`（阶段 B 产出，见 Decision 7）。
 - **修改（生产）**：`agent/workspace_policy.py`（新增 `allowed_write_paths` 参数 + 共享**纯函数**；`is_denied` 保持原语义）、`agent/tools/command_guard.py`（消费同一份 allowlist + 共享谓词）、`agent/tools/builtin/bash.py`（传参面，`:87`）、`agent/config.py`（`ToolsConfig` 字段 `:151-161` + `_parse_tools_config` `:875-897` + fail fast）、`agent/main.py:251`、`web/session.py:1728`、`benchmarks/agent_runner.py:349`、`asterwynd.example.yaml:35`。
 - **受影响但属正确的同源行为（grill 指出的漏列）**：`agent/browser/policy.py:121` 也调 `assert_write_allowed` ⇒ **浏览器产物落盘会一并继承 `allowed_write_paths` 豁免**。这是正确的同源效果，但必须列出来，否则读者会以为改动面止于上面那 8 个文件。
 - **明确不受影响（Decision 2 的对照清单）**：`WorkspacePolicy.is_denied`（`:316-338`）的语义、`assert_read_allowed`（`:350-354`）、`agent/code_intelligence/repo_map.py:81,96,173`（tree-sitter / RepoMap 的跳过判定）、`agent/tools/builtin/{read,grep,list_files,find,read_doc,inspect_git_diff,lsp}.py` 的读路径。
