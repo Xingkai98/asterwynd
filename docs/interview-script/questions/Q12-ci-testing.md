@@ -2,7 +2,7 @@
 
 ## 讲稿
 
-CI 解决"改动怎么验证、怎么防止回归"。Asterwynd 的 CI 有两个 job：**validate** 和 **benchmark-gate**。
+CI 解决"改动怎么验证、怎么防止回归"。Asterwynd 的自建 CI 有三个 job：**validate**、**benchmark-gate** 和 **windows-platform**；另有接入的 witnessloop caller 提供的 **`gate / check`**。**阶段 C 之后 `master` 的 required check 只有 `gate / check`**——上面三个照跑、只是不再拦合并（降级不是关闭）。
 
 **validate job** 跑三件事：
 1. **全量 pytest**——1700+ 测试，分层覆盖（单测 / 工具协议 / AgentLoop / CLI / Web / benchmark）。
@@ -22,7 +22,11 @@ CI 解决"改动怎么验证、怎么防止回归"。Asterwynd 的 CI 有两个 
 ```
 GitHub Actions (.github/workflows/ci.yml)
   ├─ validate job: pytest → openspec validate → check_openspec_artifacts --base-ref
-  └─ benchmark-gate job: gate-smoke benchmark
+  ├─ benchmark-gate job: gate-smoke benchmark
+  └─ windows-platform job: Windows 平台语义回归
+GitHub Actions (.github/workflows/witnessloop.yml)   ← required（阶段 C 之后）
+  └─ gate job → reusable gate.yml@v1.7.0 的 check job
+     （合入结论只由它决定；上面三个 job 照跑但不拦）
 ```
 
 ### 关键文件逐段

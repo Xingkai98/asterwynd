@@ -12,7 +12,7 @@ Benchmark 解决"agent 到底行不行，用什么数字说话"。Asterwynd 的�
 
 **对比层**。`compare.py` 对比多次 run 的 baseline；`gate.py` 是 CI 回归门禁——benchmark 对比基线，劣化超阈值拦截。`swebench_*` 工具对接 SWE-bench：pull 数据集、convert 格式、analyze 结果，本地 Docker harness 跑真实 SWE-bench 实例。对比不止点估计——per-task delta + 差异 CI + win-rate（paired bootstrap / McNemar）（已实现）。
 
-面试重点：被问"怎么证明 agent 变强了"——答案是有可复现 benchmark：同一任务、同一 harness、量化指标（pass 率、耗时、trace），还能和 Aider/OpenCode 对比（对标 Claw-SWE-Bench 的统一 harness 口径，SwebenchAdapter + 多 runner）。而且 **benchmark-gate 接 CI**，P95 延迟/成功率劣化超阈值自动拦截。引用 SWE-bench 数字要带**污染披露**（OpenAI 2026-02 已弃用 Verified：审计 138 题中 59.4% 有实质缺陷 + 训练污染，当对照参考不当金标准）；pass@1 是用户实际拿到的质量，pass^k 是能不能 shipped——两个口径分开讲。
+面试重点：被问"怎么证明 agent 变强了"——答案是有可复现 benchmark：同一任务、同一 harness、量化指标（pass 率、耗时、trace），还能和 Aider/OpenCode 对比（对标 Claw-SWE-Bench 的统一 harness 口径，SwebenchAdapter + 多 runner）。而且 **benchmark-gate 接 CI**，P95 延迟/成功率劣化超阈值会报警（**阶段 C 之后它不再是 required check**，不再自动拦合并——required 只有 witnessloop 的 `gate / check`，`benchmark-gate` 照跑但不拦）。引用 SWE-bench 数字要带**污染披露**（OpenAI 2026-02 已弃用 Verified：审计 138 题中 59.4% 有实质缺陷 + 训练污染，当对照参考不当金标准）；pass@1 是用户实际拿到的质量，pass^k 是能不能 shipped——两个口径分开讲。
 
 ## 代码走读
 
