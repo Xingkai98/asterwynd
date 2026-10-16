@@ -1,5 +1,7 @@
 # dev-workflow-gate 规格 delta
 
+> ⚠️ **本文件是「待施加的输入」，不是已同步的结果。** `openspec/specs/dev-workflow-gate/spec.md` 的改写（含 `## Purpose` / 「阶段划分」段的**人手就地改写**，那段无 delta 载体）由本 change 的收尾步骤执行（见 `tasks.md` 的 1.3 / 1.5）。在那一刻之前，当前规格里仍是阶段 A 的口径——**不要**据本文件的存在推断同步已完成。
+
 ## REMOVED Requirements
 
 ### Requirement: 影子接入阶段不改变任何既有强制
@@ -10,9 +12,27 @@
 
 ## MODIFIED Requirements
 
+### Requirement: 已知红如实记录且不放宽判据
+
+接入前已存在的 in-flight change（当前为 `add-minimal-tui-runtime-view`，无 `reviews/` 目录）在 witnessloop 契约下的报错 SHALL 被如实记录为**已知红**，SHALL NOT 通过放宽判据、开豁免或删减 `required_artifacts` 的方式使其变绿。阶段 C 之后该红 SHALL 被理解为**拦合入的红**而不再是日志红：任何触达该 change 目录的改动都会被它挡住，收尾它是解除阻塞的前提。
+
+#### Scenario: in-flight change 的证据缺失不被豁免
+
+- **WHEN** 阶段 A 之后对既有 active change 求值
+- **THEN** 缺少 review manifest、缺少 `stage=grill` 证据的 change SHALL 照常判红
+- **AND** 该红 SHALL 记入阶段 B 的验收报告，作为「真打开」决策的输入
+- **AND** policy 的 `required_artifacts` SHALL 保持与 asterwynd 现有 change 目录必需件同形
+
+#### Scenario: 阶段 C 之后已知红的性质发生迁移
+
+- **WHEN** 阶段 C 把 `gate / check` 勾成 required 之后，评估同一条已知红
+- **THEN** 该红 SHALL 从「不挡合入的日志红」变为「**会挡合入的红**」
+- **AND** 该迁移 SHALL 被显式记录，SHALL NOT 让「已知红」被读成「可以放着不管」
+- **AND** 处置 SHALL 仍是「收尾它」而不是「为它放宽判据或开豁免」
+
 ### Requirement: grill 报告正文判据的已知不兼容
 
-接入 witnessloop SHALL 把「grill 决策记录的**格式**决定它能不能判绿」记为已知前置依赖，并 SHALL NOT 把它写成结构性阻塞。判据的**逐条契约**（witnessloop v1.7.0 实测）SHALL 为：① `## Confirmed Decisions` 每条决策块内 SHALL 含 `来源:`（`_SOURCE_RE = 来源\s*[:：]`）——**同行裸写法 `来源: x` 命中，加粗的 `- **来源**: x` 不命中**，故这是**写法选择**而非结构性不兼容（阶段 B 实测：63 份归档 `grill-design.md` 中 39 份零 finding）；② `## User Confirmation` 小节 SHALL **无条件存在**，与「有没有 Open Question」无关（`user_confirmation is None` 即判「缺少 `## User Confirmation` 小节」）；③ 候选 Open Questions 小节 SHALL 存在，且其中出现的每个 `Q<n>` SHALL 在 `## User Confirmation` 里有非占位确认。该组判据 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；改记录格式 SHALL 优先于改判据。
+接入 witnessloop SHALL 把「grill 决策记录的**格式**决定它能不能判绿」记为已知前置依赖，并 SHALL NOT 把它写成结构性阻塞。判据的**逐条契约**（witnessloop v1.7.0 实测）SHALL 为：① `## Confirmed Decisions` SHALL **至少 3 条**决策块；② 每条决策块内 SHALL 含 `来源:`（`_SOURCE_RE = 来源\s*[:：]`）——**同行裸写法 `来源: x` 命中，加粗的 `- **来源**: x` 不命中**，故这是**写法选择**而非结构性不兼容（阶段 B 实测：63 份归档 `grill-design.md` 中 39 份零 finding）；③ `## User Confirmation` 小节 SHALL **无条件存在**，与「有没有 Open Question」无关（`user_confirmation is None` 即判「缺少 `## User Confirmation` 小节」）；④ 候选 Open Questions 小节 SHALL 存在，且其中出现的每个 `Q<n>` SHALL 在 `## User Confirmation` 里有非占位确认。该组判据 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；改记录格式 SHALL 优先于改判据。这四条契约的可审计载体 SHALL 是版本控制内的文档（本规格与 `docs/development-guide.md`），SHALL NOT 指向 `.claude/` 下被 gitignore 的命令文件。
 
 #### Scenario: 三条判据逐条可复核
 
@@ -24,7 +44,7 @@
 #### Scenario: 处置为「改记录格式」，不是改判据
 
 - **WHEN** 决定怎么消除该组红
-- **THEN** 处置 SHALL 为「按上述三条契约**写** grill 决策记录」——本仓模板与 `/grill` 的产出格式随之对齐
+- **THEN** 处置 SHALL 为「按上述四条契约**写** grill 决策记录」——本仓版本控制内的文档（本规格与 `docs/development-guide.md`）随之承载这组格式要求
 - **AND** SHALL NOT 通过放宽 witnessloop 的判据、或回填历史归档来消除它
 - **AND** 该组红 SHALL NOT 被列为**阶段 A 的已知红**——阶段 A 默认一份 witnessloop 形态 manifest 都不落 ⇒ 正文判据**不会被触发**，先报的是「无 stage=grill 的 manifest」
 

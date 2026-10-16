@@ -1,5 +1,7 @@
 # platform-gate 规格 delta
 
+> ⚠️ **本文件是「待施加的输入」，不是已同步的结果。** `openspec/specs/platform-gate/spec.md` 的改写由本 change 的收尾步骤执行（见 `tasks.md` 的 1.3 / 1.5）。在那一刻之前，当前规格里仍是阶段 A 的口径——**不要**据本文件的存在推断同步已完成。
+
 ## MODIFIED Requirements
 
 ### Requirement: 合入平台闸门

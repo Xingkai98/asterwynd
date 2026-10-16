@@ -37,14 +37,15 @@
 
 ## Decisions
 
-### Decision 1: `primary: process` + `research_tier: exempt`
+### Decision 1: `primary: process` + `research_tier: light`
 
-**选择**：`## Change Type` 取 `primary: process`（`secondary: []`）；`research_tier: exempt` + `status: disabled`。
+**选择**：`## Change Type` 取 `primary: process`（`secondary: []`）；`research_tier: light` + `status: enabled`（findings 与 design impact 写在 `proposal.md` 的 `## Reference Implementation Research`）。
 
 **理由**：
 - `process` 与唯一的同类先例一致——`openspec/changes/archive/2026-10-13-witnessloop-adoption/`（同一条迁移线的阶段 A）就是 `primary: process`。本 change 改的是**流程/治理形态与规格**，不是某个功能域的能力，`feature` / `refactor` / `docs` 都不贴。
-- `exempt` 的判据是「**上游决策锁定**（引用已关闭决策 issue/架构评审结论，无待定设计项）」：required 的最终形态由用户在多阶段跟踪 issue #305 拍板，分阶段顺序与「阶段 A 不勾 required」的依据已记录在 `openspec/changes/archive/2026-10-13-witnessloop-adoption/` 的 Decision 4 / Decision 5 / tasks C.1，实现已随 PR #311 合入。**本 change 没有可供业界对比的设计空间**——它不是「有设计空间的新功能」（那类按判据表至少要 light）。
-- ⚠️ 诚实标注：`process` 与 `exempt` 的组合按 AGENTS.md 的判据表**不是唯一解**（也可以论成 `light`）。选 `exempt` 的理由是「本 change 没有引入任何能力面、也没有任何待定取舍」这一实质，而不是「调研太贵」。**该选择在 `reviews/grill-adversarial.md` 里被独立审阅者专门挑战过一次**（见该报告）。
+- **档位从初稿的 `exempt` 改成 `light`——这是设计阶段对抗闭环 I-6 的直接结论，改由本设计自行拍定、不停轮**。理由：初稿用 `exempt`（reason 命中「上游决策锁定」+ `#305` + 归档路径），机械上能过（审阅者实测 `_check_reference_implementation_research(..., assume_implemented=True)` 返回 `[]`），但**实质不成立**——AGENTS.md 的判据表把「**走 grill 的非平凡 change**」列在 `full` 行，而本 change 走了 grill、有 11 条 Decision，并在 delta 里新增了一条上游没有的规范（Decision 9）⇒ 「无待定设计项」这句站不住。**两处都改的话，`light` 是同时满足判据表两种读法的最小档位**（`exempt` 的反例是「有设计空间的新功能」，本 change 有设计动作但不属于新功能；`full` 要求「架构级改造 / 新框架 / 新协议 / 对标业界产品」，本 change 一条都不命中）。
+- ⇒ 代价是一段如实的 findings + design impact（本就不是零调研：下面的调研问题是真实的问题，答案也来自可核对的既有实践）。**这不是为了过闸而抬档，是因为有人能合理地论证「走 grill 的非平凡 change」应当调研**——把它写实比争档位便宜。
+- ⚠️ **该判断在 `reviews/grill-adversarial.md` 的 I-6 里被独立审阅者标为「唯一需要人拍的一条」，并同时给出了「改 `light` + `enabled`」的推荐；本设计采纳该推荐 ⇒ 该争点消解，不再构成停轮项。**
 
 ### Decision 2: `platform-gate` 规格用 **MODIFIED 覆盖重写**既有 Requirement，不平行新开一条
 
@@ -62,7 +63,24 @@
 
 **理由**：那条 Requirement 的正文与三个 Scenario **全部是阶段 A 的过渡态约束**，其中第三条（「合入之后新 PR 会跑但不拦」）在阶段 C 之后**已被证伪**——`gate / check` 现在是 required，会拦。留着它就是让规格描述一个不存在的世界；就地改名会让 MODIFIED 的语义对不上（改的是 Requirement 的**主体**而不只是内容）。REMOVED 的先例见 `openspec/changes/archive/2026-09-22-retire-4phase-state-machine/specs/dev-workflow-state-machine/spec.md`。
 
-**不是 REMOVED 的部分**：`dev-workflow-gate` 里其余 10 条 Requirement（承载分工、定制 policy 前置、验收判据、已知红、守卫退步、两个开关、保留清单、manifest 并存、grill 正文不兼容、双 PreToolUse 守卫）描述的是**仍然成立**的接入形态，逐条保留，只改 Purpose 段。
+**REMOVED 的判据（设计阶段对抗闭环 I-5 要求写死）**：删一条的**唯一**依据是「它含**被本次变更直接证伪的断言**」，**不是**「它属于阶段 A」。用这条判据逐条复核其余 10 条：
+
+| Requirement | 是否含被证伪的断言 | 处置 |
+|---|---|---|
+| 流程骨架与项目规则的承载分工 | 否——分工表在阶段 C 后逐条仍成立 | 保留 |
+| 接入 witnessloop 前的定制 policy 前置 | 否——policy 四字段与触发面未变 | 保留 |
+| 影子接入阶段的验收判据 | 否——它断言的是「阶段 A 用可机械复核的判据收口」，而阶段 A **确实**那样收口了；该 Requirement 记录的是**已履行的验收义务**，不是关于现状的断言 | 保留（见下） |
+| 已知红如实记录且不放宽判据 | 否——`add-minimal-tui-runtime-view` **仍**无 `reviews/`，该红仍在；其「不放宽判据」的姿态在阶段 C 反而更重要 | 保留 + **MODIFIED**（补状态迁移，见下） |
+| 本地守卫的能力退步必须随接入写明 | 否——退步是**事实**（Bash 拦截面收窄），且其「保留至阶段 C 决策」已被阶段 C 履行 | 保留 |
+| 交互层与 CI 层是两个独立开关 | 否——两层仍独立；阶段 C 只改了 CI 层的 required | 保留 |
+| 保留为本地规则的项目特有检查 | 否——八项仍在（这正是「降级不关闭」的依据） | 保留 |
+| review manifest 两套并存，schema 统一延后 | 否——两套仍并存 | 保留 |
+| grill 报告正文判据的已知不兼容 | **是**——原断言「本仓 grill 记录通篇加粗 ⇒ grill stage 结构性不可能判绿」已被阶段 B 实测证伪（63 份归档中 39 份零 finding） | **MODIFIED**（见 Decision 11） |
+| 双 PreToolUse 守卫并存且未知面必须实测 | 否——实测结论（并行、并集拦）仍然成立 | 保留 |
+
+**保留「影子接入阶段的验收判据」的理由要说清**（I-5 点名质疑过它）：它读起来像历史，但它的正文是**判据方法**（负向对照：换出厂 policy 后两条 stage 判定消失），而且它的断言从未被证伪——阶段 A 的收口确实按它做了。删掉它会连带丢掉「怎么证明定制 policy 必要」这条可复用的验收方法。**本 change 承认这条保留是「历史义务 vs 规范」的边界情形**，若后续有人要求规格只留「当前有效的规范」，处置方式是把这一组阶段 A 条目集中迁进一个「阶段 A 验收记录」小节，而不是逐条删——那是独立 change 的事。
+
+**另补一条状态迁移（I-5 的第二个发现，本次新增）**：「已知红如实记录且不放宽判据」那条 Requirement 记的是 `add-minimal-tui-runtime-view` 的已知红。**阶段 C 之后这条红的性质变了**——它此前只是日志里的红（`gate / check` 不 required），现在**会拦合入**。这个迁移此前没有任何文档记录，必须写进规格（见 delta 对那条的 MODIFIED）：否则「已知红」会被读成「可以放着不管」，而它现在的正确读法是「**任何触达该 change 的改动都会被它挡住，必须先收尾**」。
 
 ### Decision 4: 「**降级不是关闭**」写成独立 Requirement，住在 `platform-gate`
 
@@ -78,12 +96,17 @@
 
 **理由**：
 - 本 change 的 diff 只有 `openspec/**` 与 `docs/**`，**没有任何可执行代码路径**。「测试先行」在这里没有可测对象；硬造一个测试反而是在测别的 change 留下的行为（`tests/test_platform_gate.py` 的钉子已由 PR #311 一并更新）。
-- checker 的 benchmark smoke 触发面是「capability 命中 `BENCHMARK_SMOKE_CAPABILITIES`」或「proposal 提到 `agent/loop.py` / `agent/tools/` / `agent/workspace_policy.py` / `benchmarks/`」——本 change 两条都不命中（能力域是 `platform-gate` / `dev-workflow-gate`）。⇒ **不排 benchmark smoke 是判据的结果，不是漏排**。
+- **⚠️ 订正（本次实测）**：设计初稿写「本 change 不命中 benchmark smoke 触发面 ⇒ 不排它」。**实测是错的**——`_requires_benchmark_smoke` 除了 capability 名，还有一条**对 proposal 正文的四个正则**（`agent/loop.py` / `agent/tools/` / `agent/workspace_policy.py` / `benchmarks/`），而本 change 在「不影响」清单里**逐项列出了** `benchmarks/**` 这类路径 ⇒ 命中。**这是一次真实的假阳性**（本 change 的 diff 里没有任何 benchmark 代码，触发它的是排除清单的措辞），**但它照跑**：判据命中就跑，跑出来的是真结论；**不靠改一句话让正则不命中来绕开**（那是「为了让门变绿而放宽判据」的邻域）。
+  ⇒ 处置：tasks 排 **2.4b** 跑一条 gate-smoke（与 `ci.yml` 的 `benchmark-gate` job 同形）；同时把这条假阳性如实登记，供将来决定是否收窄该启发式（例如让它只在 proposal 的「需求 / Impact Analysis」段内匹配，而不是全文匹配）。**这是本 change 顺带产出的第三条工程发现**（前两条是 Decision 10 的死链与 Decision 11 的 `## User Confirmation` 无条件判据）。
 - 规格文本的验收靠 `openspec validate --all --strict`（结构）与人工/审阅者逐条对照实况（内容）。**内容真实性无法机械校验**——这正是本 change 要用「实测命令的输出」而不是「引用文档」来支撑每一条断言的原因（见 Testing Strategy）。
 
 ### Decision 6: 归档次序按下游修复后的新口径——纯 rename 独立提交 + **归档后**用归档目录名重绑 witnessloop manifest
 
 **选择**：收尾次序固定为 ① 内容提交（含规格同步与 backlog 清理）→ ② 在最终 head 产 witnessloop 三份 manifest → ③ 独立**纯 rename** 提交做归档 move → ④ **在归档目录上、用归档目录名（`2026-10-17-stage-c-required-switch`）重建** witnessloop 三份 manifest。
+
+**归档 move 的**机制**也必须写死（设计阶段对抗闭环 I-1）：用 `git mv` **手工**做，SHALL NOT 跑 `openspec archive`。**两条实测理由**：
+- `openspec` 1.4.1 的 `getArchiveDate()` 用 `new Date().toISOString()`——**UTC**。本机本地日期是 2026-10-17（CST），实测该版本跑 `archive` 输出的是 `archived as '2026-10-16-stage-c-required-switch'`（**前一天的目录名**），与 Decision 6 与 tasks 写死的 `2026-10-17` 不符。
+- 该命令把「规格同步 + move」**原子合成一次提交**，直接违反本条 ③ 的「独立纯 rename 提交」，也就破坏了 R4 的 stale 次序理由。
 
 **理由**（三步都是实测教训，不是推理）：
 - **纯 rename**：`witnessloop-adoption` 的 Decision 3 实测「`git mv` 与内容改动同提交 ⇒ git 记作 `A`/`D` ⇒ 归档识别失效」。
@@ -114,6 +137,11 @@
 **理由**（设计追问 D3 的实测结论）：这条内容此前**只存在于 delta 文件里**，而 `proposal.md` 的「需求」、`design.md` 的 Decisions、`tasks.md` 的 1.2 三处**都没提它**——一条没有任何上游来源的规范内容，是审查上的黑洞。它的实质价值是真的：本 change 自己就是「先落地（PR #311）、后补记录」这个形态，而翻开关之后**任何**触达 `require_change_for` 的改动都必须挂 change——若翻开关自己的动作不挂 change，它就是在用自己的豁免把新规则挡在门外，并让「哪些检查被降级、每个还在不在跑」失去可追溯记录。
 **边界**：这条只约束「关闭阶段」这类动作的形式（必须有 change），SHALL NOT 被读成「行为落地必须先有 change」——它承认了「先落地后补记录」这个形态**存在且合法**，要求的是记录**必须补上**并如实注明次序。
 
+**判据与执行者（设计阶段对抗闭环 I-7 要求补）**：
+- **机械判据是 witnessloop 的 `building` 门禁**——它要求触达 `require_change_for`（`agent/**` / `scripts/**` / `web/**`）的 diff 必须挂 change 目录。关阶段动作通常会改 `scripts/**`（本 change 记录的那次就改了 `scripts/platform-gate.json`）⇒ 该门禁**结构上**覆盖了这条规范的主场景。**本仓 `check_openspec_artifacts.py` 没有对应判据**——如实标注：这条约束在此没有本仓侧的机械门，它靠「review 时人来核」。
+- **它与 AGENTS.md 最高优先级规则「需求先行」的关系必须写清**（否则这条规范看起来是在给「先写代码后补文档」开后门）：「需求先行」要求的是「**需求讨论与需求文档**先于实现」；本 change 的记录对象——阶段 C——其**需求讨论确实先发生了**（issue #305 的多轮讨论、分叉清单、以及用户的拍板），滞后的是**记录落到 OpenSpec change 目录这个形态**，不是需求讨论本身。⇒ 本规范 SHALL NOT 被读成对「需求先行」的豁免：它要求「记录必须存在且如实注明次序」，**不**授权「需求没聊清楚就先写实现」。若某次关阶段动作**连需求讨论都没有**，它违反的是「需求先行」，与本条无关。
+- **非先例限定**：这是一条**只针对「关闭阶段 / 切换门禁」这类治理动作**的规范，SHALL NOT 被类推到普通功能 change 的工作流上。
+
 ### Decision 10: Purpose / 「阶段划分」段由**人手就地改写**，不经 delta；并顺手修掉段内死链
 
 **选择**：两份规格的 `## Purpose` 段与 `dev-workflow-gate` 的「阶段划分」段，由同步步骤**直接改写当前规格文本**（不经 delta），改写前后的文本差异记入 `workflow-events.jsonl` 的 `current_spec_synced` 事件；同时把 `dev-workflow-gate` Purpose 段里那条**死链**改为归档路径。
@@ -124,10 +152,11 @@
 
 ### Decision 11: grill 决策记录的**格式契约**按 v1.7.0 实测写死
 
-**选择**：grill 决策记录 SHALL 满足三条契约（`## Confirmed Decisions` 每条含**同行裸** `来源:`、`## User Confirmation` 小节**无条件存在**、候选 Open Questions 小节存在且其 `Q<n>` 均有非占位确认），并把这三条写进 `dev-workflow-gate` 的「grill 报告正文判据的已知不兼容」条目（该条走 MODIFIED）。
+**选择**：grill 决策记录 SHALL 满足**四条**契约（① `## Confirmed Decisions` **至少 3 条**决策块——`MIN_CONFIRMED_DECISIONS = 3` 是同一函数里的硬门槛，设计阶段对抗闭环 I-8 指出初稿的「逐条契约」漏了它；② 每条决策块内含**同行裸** `来源:`；③ `## User Confirmation` 小节**无条件存在**；④ 候选 Open Questions 小节存在且其 `Q<n>` 均有非占位确认），并把它们写进 `dev-workflow-gate` 的「grill 报告正文判据的已知不兼容」条目（该条走 MODIFIED）。
 
 **理由**（设计追问 D6 的实测结论，**本次新发现**）：v1.7.0 的 `grill_evidence_findings`（`src/witnessloop/evidence.py:295-297`）对 `## User Confirmation` 的判据是**无条件存在性**——`user_confirmation is None` 就报「缺少 `## User Confirmation` 小节」，**与有没有 Open Question 无关**。本仓此前只记录了 `_SOURCE_RE` 不认加粗 `来源:` 那一条 ⇒ 一份「一条 Open Question 都没有」的报告**仍然**会因为缺该小节判红。这条不补记，后续每个 change 都会重复踩。
 **同条目内的一处订正**：原条目写「本仓 grill 记录通篇使用加粗 ⇒ **grill stage 结构性不可能判绿**」，该断语已被阶段 B 的实测**证伪**（63 份归档 `grill-design.md` 中 **39 份**零 finding；用加粗写法的只有 3 份）。实测把它定性为**写法选择**（同行裸 `来源:` 命中，加粗不命中），因此 MODIFIED 条目把「结构性不可能」改为「格式决定」，并保留「改格式优先于改判据」的姿态。本 change 自己的 `grill-design.md` 就用同行裸写法，并用 v1.7.0 的 `grill_evidence_findings` 实测得 **0 findings**。
+**契约的落点要说准（I-9）**：这四条契约的**可审计载体是版本控制内的文档**——`docs/development-guide.md` 的 witnessloop 节（已补记）与本条规格。`/grill` 命令文件本身住在 `.claude/`（**被 `.gitignore` 忽略、不进版本控制**，本 worktree 下连 `.claude/` 都没有）⇒ 规格里**SHALL NOT** 把「与 `/grill` 的产出格式对齐」写成可审计义务，只能写成「本仓文档里记录的格式契约」。
 
 ## Pre-Implementation Review
 
@@ -149,6 +178,26 @@
 | D8 | 文档影响面漏 4 处（README / README_EN / interview-script Q12·Q13 / backlog） | 全部纳入本 change；interview-script 的两处按「本变更直接造成的事实变化」就地订正 |
 
 **一处订正**（grill 复核 D6 时指出）：设计初稿在 Decision 11 里写「已补记进规格」时，规格尚未改到——该措辞已按如实口径改正（规格侧的补记由任务 1.3 落地，**当前尚未发生**）。
+
+### 设计阶段对抗闭环（Round 1）
+
+由另一个独立零记忆审阅者（paseo agent）以「**试图推翻**」为默认立场复核，产出 `reviews/grill-adversarial.md`（被审 revision `798973e`）。**verdict：CHANGES_REQUESTED**——11 条 issues（6 条 medium / 5 条 low）。逐条处置：
+
+| # | 对抗发现 | 处置 |
+|---|---|---|
+| I-1（medium） | 归档 move 机制未写死；`openspec archive`（1.4.1）用 UTC 日期 ⇒ 本机实测产出**前一天**的目录名，且把「规格同步 + move」合成一次提交 | Decision 6 增补：**手工 `git mv`，SHALL NOT 跑 `openspec archive`**；tasks 5.4 复述 |
+| I-2（medium） | 文档影响面漏 3 处同类「自动拦截」，且**已改的文件内部自相矛盾**（`Q13:15` 改了、`:63` 没改） | 扫全 `docs/`：共 **6 处**一次性订正（Q12 / Q13×3 / Q09×2 / walkthrough:3895）；proposal 与 tasks 的口径由「两处」改为实测清单 |
+| I-3（medium） | D5 的修正只落在 design.md，**没回落到 tasks.md**（2.2 仍是 `<base>`、2.4 仍是裸 `python`、4.2 无版本锚定） | tasks 2.2 / 2.4 / 4.2 逐条改齐；收尾补 5.6（合入方式） |
+| I-4（medium） | D3 的修法没同步 tasks 1.2（只列 1 条 ADDED，漏 Decision 9 那条与 MODIFIED 的 grill 条目）⇒ 按 tasks 重写 delta 会删掉它 | tasks 1.2 改为完整列出 REMOVED 1 / MODIFIED 2 / ADDED 2 |
+| I-5（medium） | Decision 3 的 REMOVED 判据未对称适用；且 `add-minimal-tui-runtime-view` 的已知红**性质迁移**无人记录 | Decision 3 增补**逐条复核表**（判据写死为「含被证伪的断言」而非「属于阶段 A」）+ 新 delta MODIFIED 记录状态迁移 |
+| I-6（medium） | `exempt` 与判据表「走 grill 的非平凡 change ⇒ full」冲突 | **采纳其推荐**：改 `light` + `enabled`，补 findings / design impact（Decision 1） |
+| I-7（low-med） | Decision 9 无判据/执行者，且边界句与「需求先行」相抵未说明 | Decision 9 增补判据（witnessloop `building` 门禁，本仓无对应门——如实标注）、与「需求先行」的关系、非先例限定 |
+| I-8（low） | Decision 11 的「逐条契约」漏了 `MIN_CONFIRMED_DECISIONS = 3` | 契约由三条改**四条**，同步进 delta |
+| I-9（low） | 「与 `/grill` 产出格式对齐」指向 `.claude/`（gitignore、无可审计载体） | 改为指向版本控制内文档；delta 同改 |
+| I-10（low） | 实现内容（`798973e` 的 docs 改动）先于 0.3/0.4/0.5 落盘，与 tasks 0.4 的次序声明矛盾 | **如实承认**：确有次序倒置（文档订正在设计闭环收敛前就提交了）。**无害但不合规**，处置 = 不回滚（回滚会制造更多噪声），而是在此处记录事实，并把 0.3/0.4/0.5 的勾选时点保持在其真实完成之后 |
+| I-11（low） | D2 的「待施加」只写在 design 的评审表格里，delta 文件本身没有标记 | 两份 delta **顶部各加一条 `>` 显式声明「这是待施加的输入、不是已同步的结果」** |
+
+**对抗闭环的收敛**：11 条全部处置完毕（I-6 采纳推荐、I-10 如实记录）。**没有剩下需要用户拍板的问题**——I-6 被审阅者标为「唯一需要人拍的一条」，但它同时给出了明确推荐（改 `light`），本设计采纳该推荐即消解该争点。第 2 轮复审见 `reviews/grill-adversarial.md` 的 Round 2 记录（若第 1 轮已全部处置且结论不变，可在同一文件追加 Round 2 的确认节）。
 
 **设计阶段对抗闭环**：grill 产出后、停轮前，按 issue #298 的口径再跑一个与 `/review-loop` **同构**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审直到收敛或轮数封顶）但**审设计而非代码**的闭环，产出 `reviews/grill-adversarial.md`。**能由代码/仓库事实判定的问题用证据（`文件:行号`）给出答案、移出停轮队列**。
 

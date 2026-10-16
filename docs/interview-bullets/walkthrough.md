@@ -3892,6 +3892,6 @@ uv run asterwynd benchmark benchmarks/tasks \
 | `benchmarks/task_set.py` | Manifest 覆盖矩阵加载 + validate_coverage |
 | `benchmarks/tasks/manifest.json` | 任务集 manifest — coverage 登记 + anti_cheat_disclosure + verified 摘要 |
 | `benchmarks/baseline.json` | 当前 baseline（fake agent, gate-smoke, success_rate=1.0） |
-| `.github/workflows/ci.yml` | CI pipeline — validate + benchmark-gate 两个 job |
+| `.github/workflows/ci.yml` | CI pipeline — validate + benchmark-gate + windows-platform 三个 job（阶段 C 后都不再拦合并） |
 | `benchmarks/tasks/` | 73 个 task.json — 33 本地 + 38 Verified + 2 gate-smoke |
 | `docs/benchmark-run-protocol.md` | 评测运行协议（C3 转正）— 采样/预算/对照口径/披露段/self_check 五门禁 |
