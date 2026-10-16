@@ -44,7 +44,9 @@
   **改法**：README / README_EN 与 backlog 属于「本变更直接造成的事实变化」，应在本 change 内同步；interview-script 按 `AGENTS.md` 的「建议性维护约束」可另记债务，但要在 `proposal.md` 的 Impact Analysis 里显式登记为已知未同步面，不要让「无影响」的措辞掩盖它。
 
 ## Open Questions
-本 change 记录的是已经拍过板且已经落地的决定（issue #305 阶段 C），设计追问逐项核对后没有发现需要人类拍板的开放问题：7 个维度里所有能被仓库事实判定的争点都已用只读命令当场判掉（见 `## Confirmed Decisions`），需要改的都是本 change 自身文档与验证券的写法，改法有唯一解或明确推荐项，不涉及价值取舍。
+**本 change 的 Open Question 数为 0。** 本 change 记录的是已经拍过板且已经落地的决定（issue #305 阶段 C），设计追问逐项核对后没有发现需要人类拍板的开放问题：7 个维度里所有能被仓库事实判定的争点都已用只读命令当场判掉（见 `## Confirmed Decisions`），需要改的都是本 change 自身文档与验证券的写法，改法有唯一解或明确推荐项，不涉及价值取舍。
+
+> 说明（供读者，不改变上句）：本节以上**没有**编号条目。报告里 `## 需要修改的设计点` 一节的 D1–D8 是**设计改动项**（不是开放问题），已全部就地处置，处置结果见 `design.md` 的 `## Pre-Implementation Review`。三轮设计阶段对抗复核（`grill-adversarial.md`）也确认停轮队列为空。
 
 ## User Confirmation
 

@@ -28,8 +28,9 @@
 ## 2. 验证（判据见 `design.md` 的 Testing Strategy）
 
 - [x] 2.1 **T1**：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → 记原始输出。
-- [x] 2.2 **T2**：`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → exit 0。**base 必须显式绑 `origin/master`**：checker 默认 base 是 `master`，而本 worktree 的本地 `master` ≠ 上游 ⇒ 用默认值会去校验**另一个变更集**（实测 `git diff --name-only master --` 列出的是 PR #311 的整份 diff）。
+- [x] 2.2 **T2**：`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → exit 0（**见下方「时序」**）。**base 必须显式绑 `origin/master`**：checker 默认 base 是 `master`，而本 worktree 的本地 `master` ≠ 上游 ⇒ 用默认值会去校验**另一个变更集**（实测 `git diff --name-only master --` 列出的是 PR #311 的整份 diff）。
 - [x] 2.3 **T3**：`uv run python scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` → exit 0。
+  > **时序（实施后审阅 R2 的 I-2）**：2.2 与 2.3 都有**两次**有效读数——**产证据之前**（此时记录的是「内容同步正确」，exit 0）与**产证据之后**（`reviews/building-review.md` 一落盘，checker 的 manifest 门就会要求配套的 `building-review-manifest.json`，两条转 exit 1，直到 3.1 产出该 manifest 才回到 exit 0）。⇒ **以 3.1 之后的读数为最终记录**，避免把中间态的红或提交前的假绿写进验收记录。
 - [x] 2.4 **T4**：`uv run python scripts/platform_gate.py --verify` → `全部一致`（exit 0）。**必须带 `uv run`**——本环境没有裸 `python`（`command not found`、exit 127）。**本 change 不改平台配置，合入后 SHALL NOT 再跑 `--apply`**（Decision R7）。
 - [x] 2.4b **benchmark smoke**（**已跑，PASS**）：实际执行的命令与原始输出——
   ```
@@ -53,7 +54,7 @@
 
 ## 4. witnessloop 证据与出口判据
 
-- [ ] 4.1 在**所有内容提交之后**（含 1.4 与 backlog 清理），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），**绑定的 `report_path` 覆盖 `reviews/` 下每一份 `.md`**（`grill-design.md` / `grill-adversarial.md` / `building-review.md`），否则孤儿规则被激活。
+- [ ] 4.1 在**所有内容提交之后**（**含 1.4 与 5.1 / 5.2 / 5.3 的 backlog 清理与 tasks 结算**——5.3 也排在 4.1 之后、且 `changes_root/*/tasks.md` **不在** v1.7.0 的 `stale_exempt_paths` 内，先产 manifest 再结算 tasks 会让 T5 立刻判 stale），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），**绑定的 `report_path` 覆盖 `reviews/` 下每一份 `.md`**（`grill-design.md` / `grill-adversarial.md` / `building-review.md`），否则孤儿规则被激活。
 - [ ] 4.2 **T5**：`/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`（0 项）。**必须锚定 v1.7.0**：PATH 上那份是 0.1.0、`/home/happy/witnessloop` 克隆检出在 tag `v1`，两者都不是 CI 实际用的 `v1.7.0`（`00192ab`）。**必须在内容提交之后跑**——内容提交前它会报「0 个变更文件」并「通过 ✓」，那是**假绿**（untracked 文件不进 `git diff`）。这是本 change 的出口判据。
 - [ ] 4.3 CI 侧复核：PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` **照跑**（记录它们的结论，用于佐证 Decision 4 的不变量）。
 
