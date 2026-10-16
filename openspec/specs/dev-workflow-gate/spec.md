@@ -2,17 +2,19 @@
 
 ## Purpose
 
-定义开发流程门禁的**承载边界**：哪些门禁由本仓自建脚本承载、哪些由外部工具 witnessloop 承载、以及从自建切换到接入 witnessloop 的约束。
 
-本仓已完成 witnessloop 的**阶段 A（影子接入）**：接入产物已落进仓库——`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller）、`.github/witnessloop-tests.txt`（测试执行点）。**影子期的形态是「并存、只跑不拦」**：witnessloop 的 `gate / check` 在 CI 里跑并输出 findings，但**不进 required**；本仓自建门禁**一行未动**——`scripts/check_openspec_artifacts.py`（change 契约、review manifest 绑定、grill / grill-adversarial / building 证据、受保护写入解释事件、tasks 与归档点完成度）、`scripts/workflow_guard.py`（本地写码前守卫，含 Bash 命令解析）、`scripts/workflow_state.py` 与 `agent/workflow/*`（流程事件投影）、`scripts/platform_gate.py`（合入平台闸门，见 `platform-gate` 能力域）**继续照跑**。`master` 的 required status checks 仍为 `["validate", "benchmark-gate"]`，分支保护语义由 `platform-gate` 能力域描述，本规格不重复。
+定义开发流程门禁的**承载边界**：哪些门禁由本仓自建脚本承载、哪些由外部工具 witnessloop 承载、以及从自建切换到接入 witnessloop 的三阶段（A 影子接入 / B 真实小需求验证 / C 真打开）各自的约束。
 
-**阶段划分**：A 影子接入（只跑不拦，本规格已落地）→ B 用一个真实小需求在新流程上跑一遍（拿到「值不值得真打开」的判断依据）→ C 真打开（勾 required、改写 `AGENTS.md` 流程段，由独立 change 承载）。**下掉旧件不在阶段 A 内**。
+**本仓已走到阶段 C（真打开，2026-10-17）**：接入产物已落进仓库——`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller，钉 `@v1.7.0`）、`.github/witnessloop-tests.txt`（测试执行点）。**当前形态是「required 只有 witnessloop 的 `gate / check`，本仓自建门禁照跑但不拦」**：`scripts/check_openspec_artifacts.py`（change 契约、review manifest 绑定、grill / grill-adversarial / building 证据、受保护写入解释事件、tasks 与归档点完成度）、`scripts/workflow_guard.py`（本地写码前守卫，含 Bash 命令解析）、`scripts/workflow_state.py` 与 `agent/workflow/*`（流程事件投影）、`scripts/platform_gate.py`（合入平台闸门，见 `platform-gate` 能力域）**全部继续照跑**，只是不再决定能否合入。`master` 的 required 集合与其「降级不关闭」不变量由 `platform-gate` 能力域规定，本规格不重复。
 
-本规格用规范性语言描述**目标与边界**；阶段 A 的实测证据见 `openspec/changes/witnessloop-adoption/reviews/acceptance-stage-a.md`。
+**阶段划分**：A 影子接入（只跑不拦）→ B 用一个真实小需求在新流程上跑一遍（取得「值不值得真打开」的判断依据）→ C 真打开（勾 required，由独立 change 承载）。**下掉旧件不在 A/B/C 任何一阶段内**。阶段 A 的实测证据见已归档 change `openspec/changes/archive/2026-10-13-witnessloop-adoption/reviews/acceptance-stage-a.md`。
+
+本规格用规范性语言描述**目标与边界**。
 
 ## Requirements
 
 ### Requirement: 流程骨架与项目规则的承载分工
+
 
 接入 witnessloop 后，**流程骨架**（change 契约、review manifest 的证据绑定、grill / grill-adversarial / building 三类审阅证据、受保护路径的写入解释、本地写码前 guard、CI required check 形态、测试执行点）SHALL 由 witnessloop 承载；**项目规则**（Reference Implementation Research、Impact Analysis、benchmark 门禁、设计审阅任务、tasks 完成度、归档点完成度门、合入平台闸门、流程事件投影）SHALL 保留在本仓，SHALL NOT 迁入 witnessloop。
 
@@ -30,6 +32,7 @@
 - **AND** SHALL NOT 引入与 witnessloop 不兼容的第二套门禁协议
 
 ### Requirement: 接入 witnessloop 前的定制 policy 前置
+
 
 向本仓接入 witnessloop 时，接入命令 SHALL 通过 `witnessloop init --policy <seed>` 提供一份**完整**的定制 policy，SHALL NOT 使用 witnessloop 出厂 policy 直接接入。理由：出厂 `require_change_for` 对 `agent/`、`scripts/`、`web/` 零命中，而 witnessloop 的 `building` 门禁与 `grill-adversarial` 门禁**共用同一条 `code_hits` 触发**，用出厂 policy 接入会使这两个核心门禁静默不触发。policy seed SHALL 是仓外临时文件、SHALL NOT 进入版本控制；入库的产物 SHALL 是 init 写出的 `.witnessloop/policy.json`。
 
@@ -49,30 +52,8 @@
 - **AND** `protected_paths` SHALL NOT 包含 `openspec/changes/archive/**`
 - **AND** 测试执行点 SHALL 为 `uv run --extra dev pytest -q` 一条命令（`ci.yml` 的编码 warn-as-error 变体、`openspec validate`、artifact checker SHALL NOT 并入执行点）
 
-### Requirement: 影子接入阶段不改变任何既有强制
-
-第一阶段（阶段 A）SHALL 只新增 witnessloop 的接入产物，SHALL NOT 改变本仓现有的任何强制：`master` 的 required status checks SHALL 保持 `["validate", "benchmark-gate"]`，`.github/workflows/ci.yml` 的 `validate` 与 `benchmark-gate` 两个 job SHALL 逐字节不变，`scripts/` 下的现有 checker 与守卫 SHALL 一行不改。
-
-#### Scenario: 新增 job 不进 required
-
-- **WHEN** 阶段 A 的 caller workflow 随分支合入前检查
-- **THEN** `gh api repos/Xingkai98/asterwynd/branches/master/protection` 的 `required_status_checks.contexts` SHALL 仍为 `["validate", "benchmark-gate"]`
-- **AND** witnessloop 的 `gate / check` job SHALL **不**出现在 required 列表中
-
-#### Scenario: 既有 in-flight PR 不受影响
-
-- **WHEN** caller workflow 只存在于 feature 分支而尚未合入 `master`
-- **THEN** 该分支之外**既有 in-flight PR** SHALL 不运行 witnessloop 的 `gate / check` job（GitHub 只对 head 含该 workflow 的 PR 运行它）
-- **AND** 它们的门禁行为 SHALL 与本 change 前一致
-
-#### Scenario: 合入之后新 PR 会跑但不拦
-
-- **WHEN** 本 change 合入 `master` 之后新开一个 PR
-- **THEN** 该 PR SHALL 运行 `gate / check` job
-- **AND** 该 job 的结果 SHALL NOT 阻止合入（阶段 A 未把它勾进 required）
-- **AND** 本规格 SHALL NOT 把「新 PR 不跑该 job」写成目标——那是合入前才成立的过渡态
-
 ### Requirement: 影子接入阶段的验收判据
+
 
 阶段 A SHALL 用可机械复核的判据收口，SHALL NOT 以「产物已落盘」代替验收。判据 SHALL 至少包含：`init --dry-run` 待建文件为零冲突的四个新文件；本分支 PR 的 CI 出现 `gate / check` 并跑出结果；本分支 diff 下 `check` 确实触发 `building` 与 `grill-adversarial` 两条 stage 判定；**负向对照**（换成出厂 policy 后这两条判定消失）；`validate` 与 `benchmark-gate` 的行为及 branch protection 实况未变。
 
@@ -85,7 +66,8 @@
 
 ### Requirement: 已知红如实记录且不放宽判据
 
-接入前已存在的 in-flight change（当前为 `add-minimal-tui-runtime-view`，无 `reviews/` 目录）在 witnessloop 契约下的报错 SHALL 被如实记录为**已知红**，SHALL NOT 通过放宽判据、开豁免或删减 `required_artifacts` 的方式使其变绿。
+
+接入前已存在的 in-flight change（当前为 `add-minimal-tui-runtime-view`，无 `reviews/` 目录）在 witnessloop 契约下的报错 SHALL 被如实记录为**已知红**，SHALL NOT 通过放宽判据、开豁免或删减 `required_artifacts` 的方式使其变绿。阶段 C 之后该红 SHALL 被理解为**拦合入的红**而不再是日志红：任何触达该 change 目录的改动都会被它挡住，收尾它是解除阻塞的前提。
 
 #### Scenario: in-flight change 的证据缺失不被豁免
 
@@ -94,7 +76,15 @@
 - **AND** 该红 SHALL 记入阶段 B 的验收报告，作为「真打开」决策的输入
 - **AND** policy 的 `required_artifacts` SHALL 保持与 asterwynd 现有 change 目录必需件同形
 
+#### Scenario: 阶段 C 之后已知红的性质发生迁移
+
+- **WHEN** 阶段 C 把 `gate / check` 勾成 required 之后，评估同一条已知红
+- **THEN** 该红 SHALL 从「不挡合入的日志红」变为「**会挡合入的红**」
+- **AND** 该迁移 SHALL 被显式记录，SHALL NOT 让「已知红」被读成「可以放着不管」
+- **AND** 处置 SHALL 仍是「收尾它」而不是「为它放宽判据或开豁免」
+
 ### Requirement: 本地守卫的能力退步必须随接入写明
+
 
 接入 witnessloop SHALL 被记录为一次本地拦截面的**收窄**：本仓现有守卫解析 Bash 命令，witnessloop 的 `guard` 只匹配 `Write|Edit`。阶段 A SHALL NOT 下掉现有守卫；该退步 SHALL 写进 `design.md` 与阶段 B 验收报告，SHALL NOT 因「两者都可绕过」而略去。
 
@@ -112,6 +102,7 @@
 
 ### Requirement: 交互层与 CI 层是两个独立开关
 
+
 Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.gitignore` 忽略 ⇒ 不进 diff、不产生 PR），CI 层（caller workflow + policy）SHALL 是被评审的那一半。两层 SHALL 互不依赖：未安装 plugin 时 CI 门禁照常运行，安装 plugin SHALL NOT 自动改变 required 状态。plugin 的安装、卸载与升级步骤 SHALL 记入版本控制内的文档。
 
 #### Scenario: 不装 plugin 的贡献者仍受门禁约束
@@ -128,6 +119,7 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 ### Requirement: 保留为本地规则的项目特有检查
 
+
 以下检查 SHALL 保留在本仓、SHALL NOT 迁入 witnessloop：RIR、Impact Analysis、benchmark 门禁、`_check_design_review_task`、tasks 完成度、归档点完成度门（`_check_archived_completion_gate`）、`platform_gate.py` 平台闸门、以及流程事件投影（`workflow_state.py` 与 `agent/workflow/*`）。witnessloop 承载的是**流程骨架**（change 契约 / 证据绑定 / grill / grill-adversarial / building / 受保护写入 / 本地 guard / 测试执行点），本仓保留的是**项目规则**。
 
 #### Scenario: 现有 checker 不被本 change 下掉
@@ -143,6 +135,7 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 - **THEN** 该清理 SHALL 作为独立后续 change 登记，SHALL NOT 混入影子接入的变更集
 
 ### Requirement: review manifest 两套并存，schema 统一延后
+
 
 影子接入阶段 SHALL NOT 修改本仓的 review manifest 生成器；两侧 manifest SHALL 并存：本仓形态（`reviews/<phase>-review-manifest.json`，字段 `phase`）继续由现有工具链产出并喂本仓 checker，witnessloop 形态（`reviews/<stage>.manifest.json`）由 `witnessloop manifest build` 产出。`evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`，SHALL NOT 放宽为 `*-manifest.json`。schema 统一 SHALL 作为阶段 C 之后的独立 change，SHALL NOT 混入影子接入。
 
@@ -175,26 +168,25 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 ### Requirement: grill 报告正文判据的已知不兼容
 
-影子接入阶段 SHALL 把「witnessloop 的 grill 正文判据与本仓记录格式不兼容」记为**已知阻塞/前置依赖**：witnessloop 的 `_SOURCE_RE` **要求「来源」后直接接冒号、不接受 `- **来源**: x` 的加粗写法**，而本仓 grill 记录通篇使用加粗 ⇒ **grill stage 在现有报告格式下结构性不可能判绿**。该阻塞 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；其处置 SHALL 为**已拍板的 U7：等上游修谓词、本仓零改动**。
 
-#### Scenario: 不兼容的事实可复核
+接入 witnessloop SHALL 把「grill 决策记录的**格式**决定它能不能判绿」记为已知前置依赖，并 SHALL NOT 把它写成结构性阻塞。判据的**逐条契约**（witnessloop v1.7.0 实测）SHALL 为：① `## Confirmed Decisions` SHALL **至少 3 条**决策块；② 每条决策块内 SHALL 含 `来源:`（`_SOURCE_RE = 来源\s*[:：]`）——**同行裸写法 `来源: x` 命中，加粗的 `- **来源**: x` 不命中**，故这是**写法选择**而非结构性不兼容（阶段 B 实测：63 份归档 `grill-design.md` 中 39 份零 finding）；③ `## User Confirmation` 小节 SHALL **无条件存在**，与「有没有 Open Question」无关（`user_confirmation is None` 即判「缺少 `## User Confirmation` 小节」）；④ 候选 Open Questions 小节 SHALL 存在，且其中出现的每个 `Q<n>` SHALL 在 `## User Confirmation` 里有非占位确认。该组判据 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；改记录格式 SHALL 优先于改判据。这四条契约的可审计载体 SHALL 是版本控制内的文档（本规格与 `docs/development-guide.md`），SHALL NOT 指向 `.claude/` 下被 gitignore 的命令文件。
 
-- **WHEN** 核对本仓 grill 记录与 witnessloop 的正文判据
-- **THEN** 本 change 自己的 `reviews/grill-design.md` SHALL 被判 7/7 条「缺 `来源:`」（同一份文件在本仓 checker 侧抽出 7 条决策、判定正常）
-- **AND** 归档中的 `grill-design.md` SHALL 呈现同一趋势（完全无 finding 仅 39 份，近期写法基本全判红）
-- **AND** 即使补齐全 `## User Confirmation` 记录，该 7 条 SHALL 仍然存在
+#### Scenario: 四条判据逐条可复核
 
-#### Scenario: 处置已拍板为「等上游修谓词」
+- **WHEN** 核对一份本仓 grill 决策记录与 witnessloop v1.7.0 的正文判据
+- **THEN** 决策块的 `来源:` 写法 SHALL 决定该条是否命中（加粗写法判红、同行裸写法判绿）
+- **AND** 即使**一条 Open Question 都没有**，缺 `## User Confirmation` 小节 SHALL 照样判红
+- **AND** 候选 Open Questions 小节缺失 SHALL 判红（含近义标题的诊断）
 
-- **WHEN** 决定怎么消除该不兼容
-- **THEN** 处置 SHALL 为「**等 witnessloop issue #20 修 `_SOURCE_RE`**，本仓零改动」——不改本仓 grill 记录格式、**不回填 62 份归档**
-- **AND** 该组红 SHALL **NOT** 被列为**阶段 A 的已知红**——阶段 A 默认一份 witnessloop 形态 manifest 都不落 ⇒ 正文判据**不会被触发**，先报的是「无 stage=grill 的 manifest」
-- **AND** 阶段 A 的已知红 SHALL 被准确描述为「**缺 manifest**」这一类（实测本 change 自身：`缺少 review manifest` + `无 stage=grill 的 manifest`）
-- **AND** witnessloop issue #20 SHALL 被登记为**「建 witnessloop 形态 grill 证据之前」的前置条件**（阶段 B/C 会先碰到），SHALL NOT 被描述为阶段 A 的阻塞
-- **AND** 该组红 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由
-- **AND** 阶段 B 的验收报告 SHALL 把该组红与「配置错误」分开归因
+#### Scenario: 处置为「改记录格式」，不是改判据
+
+- **WHEN** 决定怎么消除该组红
+- **THEN** 处置 SHALL 为「按上述四条契约**写** grill 决策记录」——本仓版本控制内的文档（本规格与 `docs/development-guide.md`）随之承载这组格式要求
+- **AND** SHALL NOT 通过放宽 witnessloop 的判据、或回填历史归档来消除它
+- **AND** 该组红 SHALL NOT 被列为**阶段 A 的已知红**——阶段 A 默认一份 witnessloop 形态 manifest 都不落 ⇒ 正文判据**不会被触发**，先报的是「无 stage=grill 的 manifest」
 
 ### Requirement: 双 PreToolUse 守卫并存且未知面必须实测
+
 
 接入 plugin 后，本仓现有守卫（`scripts/workflow_guard.py`，matcher `Write|Edit|Bash`）与 witnessloop plugin 的守卫（matcher `Write|Edit`）SHALL 并存，阶段 A SHALL NOT 下掉任何一个。**真正未实测的只有两项**——两者在同一 `Write|Edit` 上的**合并/串行语义**与**拦截提示归属**——它们 SHALL 作为阶段 A 的强制实测项，SHALL NOT 由推理代替实测；且 SHALL 在**主 checkout 与 building worktree 两棵树各做一次**。命令命名空间 SHALL 由 `plugin/.claude-plugin/plugin.json` 的 `name` 字段静态判定，SHALL NOT 列为未实测项。
 
@@ -211,3 +203,48 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 - **WHEN** 汇总本地守卫的行为变化
 - **THEN** 只有「**丢失 Bash 拦截面**」这一条退步 SHALL 被记录
 - **AND** SHALL NOT 声称 witnessloop 守卫在「本仓守卫不管的维度」上新增拦截——本仓守卫 `_grill_evidence_missing` 本来就拦「缺 grill 证据」这一维度，两侧是**同维度、不同判据**（本仓=文件 + 正文；witnessloop=manifest + 正文）
+
+### Requirement: 阶段 C 翻开关后的 required 形态
+
+
+接入 witnessloop 的三个阶段（A 影子接入 / B 真实小需求验证 / C 真打开）SHALL 以阶段 C 的形态为**当前**形态。caller workflow SHALL 钉住 witnessloop 的**具体发版 ref**（当前 `v1.7.0`），且 SHALL NOT 依赖 `with: witnessloop-ref:` 另行钉包版本——包 ref 由被复用的 `gate.yml` 自身的 commit 决定。
+
+> **required 集合与其「降级不关闭」不变量不在本规格重复**：`master` 的 required 是哪些、以及「降级为非必过的检查仍须运行」这条约束，SHALL 由 `platform-gate` 能力域规定（该能力域是本仓平台面的唯一规格源）。本规格只规定**接入形态**本身（caller 怎么钉、受管路径的后果、证据如何并存）。**理由**：同一条规范写两处是未来的漂移点——改一处漏一处不会被任何门禁发现。
+
+#### Scenario: required 只剩 witnessloop 的 gate / check
+
+- **WHEN** 查看阶段 C 之后 `master` 的分支保护配置
+- **THEN** `required_status_checks.contexts` SHALL 为 `["gate / check"]`（该取值与其不变量由 `platform-gate` 能力域规定，本规格只断言阶段 C 之后的形态）
+- **AND** 本仓自建门禁 SHALL 全部退出 required（降级，不是关闭）
+
+#### Scenario: caller 钉住的 ref 同时决定包版本
+
+- **WHEN** 检查 `.github/workflows/witnessloop.yml`
+- **THEN** 该文件的 `uses:` SHALL 钉住具体发版 ref（形如 `Xingkai98/witnessloop/.github/workflows/gate.yml@v1.7.0`），SHALL NOT 用滚动 tag（`@v1`）或分支名
+- **AND** caller SHALL NOT 出现 `with: witnessloop-ref:`——包 ref 的缺省由 `job.workflow_sha` 推导（上游 issue #30 的修复），升级动作 SHALL 是 `witnessloop init --gate-ref <新 ref>` 一处改动
+- **AND** 升级 SHALL 同时重写 caller 与同步 `.witnessloop/init-manifest.json` 台账（该动作幂等）
+
+#### Scenario: 阶段 C 之后的改动受 require_change_for 约束
+
+- **WHEN** 一个 PR 触达 `agent/**` / `scripts/**` / `web/**`
+- **THEN** 该 PR SHALL 挂一个 change 目录（`openspec/changes/<id>/`），或包含一条把该 change 归档进来的 `git mv`
+- **AND** 缺少 change 目录时 `gate / check` SHALL 判红并阻止合入
+- **AND** 该约束 SHALL 被如实记录为翻开关的**代价**，SHALL NOT 通过把受管路径移出 `require_change_for` 来规避
+
+#### Scenario: 归档产物的证据形态在本仓并存两套
+
+- **WHEN** 一个 change 归档
+- **THEN** `reviews/` 下 SHALL 同时存在本仓形态（`reviews/<phase>-review-manifest.json`，字段 `phase`）与 witnessloop 形态（`reviews/<stage>.manifest.json`，字段 `stage`）两套证据
+- **AND** witnessloop 形态的证据 SHALL 在归档 move **之后**、用**归档目录名**（`<YYYY-MM-DD>-<change-id>`）重建——否则 manifest 里的 `change_id` 与目录名不符
+- **AND** `reviews/` 下每一份 `.md` SHALL 被某份 witnessloop 形态 manifest 的 `report_path` 绑定（否则触发孤儿规则）
+
+### Requirement: 翻开关这一动作自身必须具备 change 记录
+
+
+关闭某个接入阶段的动作 SHALL 由一条 OpenSpec change 承载并归档，SHALL NOT 以「改一个平台配置文件」的形式裸奔。该 change 的 `proposal.md` SHALL 如实写明「行为已先落地」这一事实与其实现凭据（PR / merge sha）。理由：翻开关之后任何触达受管路径的改动都必须挂 change；若翻开关自身的动作不挂 change，则它是在**用自己的豁免**把新规则挡在门外，且会让「哪些检查被降级、每个还在不在跑」失去可追溯的记录。本条 SHALL 有三条边界：① **时效**——记录 SHALL 在行为落地后的**同一收尾批**内归档，未归档前该阶段 SHALL 视为未闭合；② **非先例**——它只约束「关闭接入阶段 / 切换门禁」这类治理动作，SHALL NOT 被类推为常规功能 change 的工作流；③ **不豁免需求先行**——本仓「需求先行」规则要求的是**需求讨论与需求文档**先于实现，本条只承认「记录形态的落地可以滞后」，SHALL NOT 被读成「需求没聊清楚就可以先写实现」。
+
+#### Scenario: 翻开关的记录与落地是两件事
+
+- **WHEN** 阶段 C 的行为先落地、记录后补
+- **THEN** 行为落地 SHALL NOT 被读成「记录不必要」——记录 SHALL 仍以独立 change 补齐并归档
+- **AND** 该 change 的 `proposal.md` SHALL 如实写明「行为已先落地（含 PR 与 merge sha）、本 change 只做记录与规格对账」，SHALL NOT 把已落地的事实伪装成待实现的需求
