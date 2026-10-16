@@ -12,7 +12,7 @@
 
 **Session 看板**。Debug 视图展示 session 的 timeline，一眼看到哪些 tool call 耗时最长、哪里失败了。Web 层通过 DebugHook 捕获每轮 LLM 输入输出、工具调用、错误/完成事件，`memory_compaction` 事件带 before/after tokens + 压缩层级。
 
-面试重点：被问"怎么保证改进不导致衰退"时，答案是可观测性 + CI 回归门禁——benchmark 对比基线，P95 延迟/成功率劣化超阈值自动拦截（#78 第二批）。
+面试重点：被问"怎么保证改进不导致衰退"时，答案是可观测性 + CI 回归门禁——benchmark 对比基线，P95 延迟/成功率劣化超阈值自动判失败（#78 第二批；**阶段 C 之后该 job 不再拦合并**，只产出结论）。
 
 ## 代码走读
 
@@ -58,5 +58,5 @@ AgentLoop._run (loop.py) → trace_recorder.record_iteration/record_tool_call/re
 
 - **trace 与成本分离**：trace 是过程记录（每步耗时/成败/error_type），ledger 是财务记录（session/phase/tool 账单）。分离让两套消费（时序分析 vs 成本账单）互不污染（#78）。
 - **error_type 双路径**：产生点打标（数据源接入，可靠）+ 文本兜底（兼容未打标旧路径）。打标优先，兜底补漏（#89）。
-- **CI 回归门禁**：可观测性不只是看板，还接 CI——benchmark 对比基线自动拦截劣化，把"怎么保证不衰退"从口头变成门禁（#78 第二批）。
+- **CI 回归门禁**：可观测性不只是看板，还接 CI——benchmark 对比基线自动判失败，把"怎么保证不衰退"从口头变成门禁（#78 第二批）。**阶段 C 之后它不再拦合并**：required 只有 witnessloop 的 `gate / check`，该 job 照跑但不拦。
 - **Session 看板**：Debug 视图可重放 session 时序，面试能现场展示"这条 tool call 为什么慢、哪里失败"。

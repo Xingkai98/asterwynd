@@ -146,7 +146,7 @@ Requirement discussion -> OpenSpec proposal (proposal / design / tasks / spec-de
         -> independent zero-memory subagent adversarial verification (tries to refute the design conclusions)
         -> implementation (isolated git worktree, tests first)
         -> independent subagent review loop (review -> fix -> re-review, until PASS or a 3-round cap)
-        -> CI gates (full pytest + OpenSpec strict validate + artifact checker + benchmark-gate)
+        -> CI gates (only witnessloop's gate / check is required; full pytest + OpenSpec strict validate + artifact checker + benchmark-gate still run but do not block)
         -> archival close-out (spec sync + change archival + backlog cleanup)
 ```
 
