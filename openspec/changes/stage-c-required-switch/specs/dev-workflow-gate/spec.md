@@ -34,7 +34,7 @@
 
 接入 witnessloop SHALL 把「grill 决策记录的**格式**决定它能不能判绿」记为已知前置依赖，并 SHALL NOT 把它写成结构性阻塞。判据的**逐条契约**（witnessloop v1.7.0 实测）SHALL 为：① `## Confirmed Decisions` SHALL **至少 3 条**决策块；② 每条决策块内 SHALL 含 `来源:`（`_SOURCE_RE = 来源\s*[:：]`）——**同行裸写法 `来源: x` 命中，加粗的 `- **来源**: x` 不命中**，故这是**写法选择**而非结构性不兼容（阶段 B 实测：63 份归档 `grill-design.md` 中 39 份零 finding）；③ `## User Confirmation` 小节 SHALL **无条件存在**，与「有没有 Open Question」无关（`user_confirmation is None` 即判「缺少 `## User Confirmation` 小节」）；④ 候选 Open Questions 小节 SHALL 存在，且其中出现的每个 `Q<n>` SHALL 在 `## User Confirmation` 里有非占位确认。该组判据 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；改记录格式 SHALL 优先于改判据。这四条契约的可审计载体 SHALL 是版本控制内的文档（本规格与 `docs/development-guide.md`），SHALL NOT 指向 `.claude/` 下被 gitignore 的命令文件。
 
-#### Scenario: 三条判据逐条可复核
+#### Scenario: 四条判据逐条可复核
 
 - **WHEN** 核对一份本仓 grill 决策记录与 witnessloop v1.7.0 的正文判据
 - **THEN** 决策块的 `来源:` 写法 SHALL 决定该条是否命中（加粗写法判红、同行裸写法判绿）
@@ -83,7 +83,7 @@
 
 ### Requirement: 翻开关这一动作自身必须具备 change 记录
 
-关闭阶段 C 的动作 SHALL 由一条 OpenSpec change 承载并归档，SHALL NOT 以「改一个平台配置文件」的形式裸奔。理由：翻开关之后任何触达受管路径的改动都必须挂 change；若翻开关自身的动作不挂 change，则它是在**用自己的豁免**把新规则挡在门外，且会让「哪些检查被降级、每个还在不在跑」失去可追溯的记录。
+关闭某个接入阶段的动作 SHALL 由一条 OpenSpec change 承载并归档，SHALL NOT 以「改一个平台配置文件」的形式裸奔。该 change 的 `proposal.md` SHALL 如实写明「行为已先落地」这一事实与其实现凭据（PR / merge sha）。理由：翻开关之后任何触达受管路径的改动都必须挂 change；若翻开关自身的动作不挂 change，则它是在**用自己的豁免**把新规则挡在门外，且会让「哪些检查被降级、每个还在不在跑」失去可追溯的记录。本条 SHALL 有三条边界：① **时效**——记录 SHALL 在行为落地后的**同一收尾批**内归档，未归档前该阶段 SHALL 视为未闭合；② **非先例**——它只约束「关闭接入阶段 / 切换门禁」这类治理动作，SHALL NOT 被类推为常规功能 change 的工作流；③ **不豁免需求先行**——本仓「需求先行」规则要求的是**需求讨论与需求文档**先于实现，本条只承认「记录形态的落地可以滞后」，SHALL NOT 被读成「需求没聊清楚就可以先写实现」。
 
 #### Scenario: 翻开关的记录与落地是两件事
 

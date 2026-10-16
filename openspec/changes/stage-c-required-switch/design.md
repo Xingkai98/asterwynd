@@ -90,9 +90,11 @@
 - 这是阶段 C **最容易被后人读反**的一条——看到 required 只剩一个，很自然会想「另外两个是不是可以删了」。issue #305 的排期 comment 已把这条区分写死（「『只开 witnessloop 必过』≠『把其他 CI 关掉』…直接关掉 = 门禁**净损失**，不是切换」），但**它此前只活在 issue 与 PR 描述里，不在规格里**。
 - 放 `platform-gate` 而不是 `dev-workflow-gate`：这条约束的判据是**平台面**（branch protection 的 required 集合与 `ci.yml` job 的关系），与 `platform-gate` 能力域「定义合入平台闸门的能力边界」的定位一致；`dev-workflow-gate` 描述的是「哪些门禁由谁承载」。
 
-### Decision 5: 无代码面 ⇒ 不写 TDD 测试、不跑 benchmark smoke，判据换成「规格文本可机械复核」
+### Decision 5: 无代码面 ⇒ 不写 TDD 测试；benchmark smoke 因**触发面假阳性**而照跑；判据换成「规格文本可机械复核」
 
-**选择**：tasks 里**不排**「先写失败测试」一节，也**不排** benchmark smoke；验收判据换成四条机械可复核的命令（`openspec validate --all --strict`、`check_openspec_artifacts.py` 两步、`platform_gate.py --verify`、`witnessloop check`）。
+**选择**：tasks 里**不排**「先写失败测试」一节；**benchmark smoke 照排并照跑**（tasks 2.4b，实测 PASS）；验收判据换成五条机械可复核的命令（`openspec validate --all --strict`、`check_openspec_artifacts.py` 两步、`platform_gate.py --verify`、`witnessloop check`）。
+
+> ⚠️ **本节标题与选择句在第二轮对抗复核（N-1）时被指出自相矛盾**：初稿写的是「不跑 benchmark smoke」，而下面的订正段又说「触发面命中就跑」。已按订正后的口径统一为「**照跑**」。
 
 **理由**：
 - 本 change 的 diff 只有 `openspec/**` 与 `docs/**`，**没有任何可执行代码路径**。「测试先行」在这里没有可测对象；硬造一个测试反而是在测别的 change 留下的行为（`tests/test_platform_gate.py` 的钉子已由 PR #311 一并更新）。
@@ -212,14 +214,15 @@
 | R3 | **REMOVED 一条 Requirement 会把仍然成立的内容一起删掉** | Decision 3 明确：只 REMOVE 那条**阶段 A 专属**的 Requirement；其余 10 条逐条保留。同步后用 `openspec validate --all --strict` + 逐条核对 Requirement 数量（前/后计数须如实记入事件） |
 | R4 | **归档次序踩 stale** | Decision 6：内容（含 `docs/**` 与 `openspec/specs/**`）先于证据；归档 move 是独立纯 rename 提交；归档后用归档目录名重建 witnessloop manifest |
 | R5 | **本 change 自己的 `gate / check` 判红**（重演 PR #311） | 本 change 建立 change 目录 + 三份 witnessloop manifest，且不触达 `require_change_for`。实测口径：本地 `witnessloop check` 与 CI 的 `gate / check` 都要绿，**不放宽任何判据** |
-| R6 | **`exempt` 档位被质疑为「省事」** | Decision 1 已如实标注它不是唯一解；交由设计阶段对抗闭环专门挑战，结论记入 `reviews/grill-adversarial.md` |
+| R6 | **档位被质疑为「省事」** | **已实发生并被处置**：初稿的 `exempt` 被设计阶段对抗闭环 I-6 判为「机械过闸」，**已改 `light` + `enabled`** 并补 findings / design impact（Decision 1）。结论记入 `reviews/grill-adversarial.md` |
 | R7 | **本 change 合入后若再 `--apply`** | **不需要**：`scripts/platform-gate.json` 与实况本 change 前后逐字段一致（`--verify` 已实测 exit 0）。tasks 里显式写「不做 apply」，避免执行者条件反射地跑一遍 |
 | R8 | **证据带的 PR 被 squash 合入** ⇒ manifest 的 `head_sha` 不再是 `master` 的祖先，日后触及该 change 目录的 PR 全判红（阶段 A 实测先例） | Decision 6 的补充约束：**必须 `--merge`，SHALL NOT squash**；tasks 收尾节复述 |
 | R9 | **change 目录在验证前一直是 untracked**，误删/`git clean` 即全损 | 立项文档一落盘即提交（本 change 已做：`893e74b`）；所有验证性操作在提交之后跑 |
 | R10 | **T2/T3/T5 在「内容未提交」时假绿**，污染验收记录 | Testing Strategy 的「前置」列 + 留证据时同时留 `git status --porcelain` 与 `HEAD` |
 | R11 | **本地 witnessloop 与 CI 的版本不一致**（PATH 0.1.0 / 克隆 `v1` / CI `v1.7.0`），本地绿推不出 CI 绿 | T5 锚定 `/home/happy/wl170`（实测装的 `v1.7.0`）；证据里写明该版本 |
 | R12 | **本 change 自己的 `gate / check` 在提交前「通过 ✓」是假绿** | 见 R10；出口判据只在提交后取，且 CI 侧再核一次（tasks 4.3） |
-| R13 | **设计追问新发现的不兼容被遗漏**：v1.7.0 对 `## User Confirmation` 是**无条件存在性**判据，零 Open Question 也照判 | Decision 11：把三条格式契约写进规格，本 change 的 `grill-design.md` 已带该小节并用 v1.7.0 的 `grill_evidence_findings` 实测 **0 findings** |
+| R13 | **设计追问新发现的不兼容被遗漏**：v1.7.0 对 `## User Confirmation` 是**无条件存在性**判据，零 Open Question 也照判 | Decision 11：把**四条**格式契约（含 `MIN_CONFIRMED_DECISIONS = 3`）写进规格与 `docs/development-guide.md`，本 change 的 `grill-design.md` 已带该小节并用 v1.7.0 的 `grill_evidence_findings` 实测 **0 findings** |
+| R14 | **`exempt` 档位被质疑**（Round 1 I-6） | 已改 `light` + `enabled`（Decision 1）；该争点由本设计自行拍定、不停轮 |
 
 ## Testing Strategy
 

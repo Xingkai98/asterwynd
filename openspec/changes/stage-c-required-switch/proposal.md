@@ -61,8 +61,9 @@
   - `docs/openspec-change-backlog.md`（登记 + 结算，受保护路径，配 `backlog_updated` 解释事件；第十七批的阶段 C 条目由未来式改为已完成口径）。
   - `docs/development-guide.md`（witnessloop 节里阶段 A 遗留的两条 bullet 的订正）。
   - `README.md` + `README_EN.md`（「用 Agent 开发 Agent」的流水线图里「CI 门禁（… + benchmark-gate）」一行的口径；**两条必须同改**，见 AGENTS.md 的 README 同步规则）。
-  - 讲稿面**共 6 处**（均为本次变更**直接造成/直接证伪**的事实变化，就地订正）：`docs/interview-script/questions/Q12-ci-testing.md`（「CI 有两个 job」与实际三个 job 不符，且阶段 C 后三个都不拦合并；树图同）、`Q13-benchmark.md:13/:51/:63`、`Q09-observability.md:15/:61`（「劣化超阈值自动**拦截**」在阶段 C 之后不再成立——它仍判失败，但不再拦合并）、`docs/interview-bullets/walkthrough.md:3895`（「validate + benchmark-gate 两个 job」）。**范围以实测扫描为准**，不写「两处」这种会被自己文件证伪的口径（设计阶段对抗闭环 I-2）。
-- **明确不影响的文档**：`docs/known-issues.md` / `docs/known-debt.md`（本次不新增债务条目——grill 发现的 D1–D8 全部在本 change 内就地处置，不转债务）。
+  - 讲稿面（均为本次变更**直接造成/直接证伪**的事实变化，就地订正）：`docs/interview-script/questions/Q12-ci-testing.md`（「CI 有两个 job」与实际三个 job 不符，且阶段 C 后三个都不拦合并；树图同）、`Q13-benchmark.md:13/:51/:63`、`Q09-observability.md:15/:61`（「劣化超阈值自动**拦截**」在阶段 C 之后不再成立——它仍判失败，但不再拦合并）、`docs/interview-bullets/walkthrough.md:3895`（「validate + benchmark-gate 两个 job」）。**范围以实测扫描为准，按位置列举、不写「共 N 处」这种会被自己文件证伪的总数口径**（设计阶段对抗闭环 I-2 与第二轮 N-4：初稿写「两处」→ 改「6 处」→ 实测清单 7 项；总数写法本身是缺陷）。
+- **明确不影响的文档**：`docs/known-issues.md` / `docs/known-debt.md`（本次不新增债务条目——grill 与对抗闭环发现的 D1–D8 / I-1–I-11 / N-1–N-9 全部在本 change 内就地处置，不转债务）。
+- **受影响但本 change 不处置的既有状态（如实登记）**：active change `add-minimal-tui-runtime-view` 无 `reviews/`。**阶段 C 使这条已知红的性质发生迁移**——它此前只是 `gate / check` 的日志红（该 job 不 required），现在**会拦合入**。⇒ 任何触达该 change 目录的改动都会被它挡住；解除阻塞的前提是**收尾它**（补 `reviews/` 证据），**不是**为它放宽判据。本条已写进 `dev-workflow-gate` 的对应 Requirement（delta 的 MODIFIED）。
 - **不影响**：`.github/workflows/ci.yml`、`.github/workflows/witnessloop.yml`、`.witnessloop/**`、`scripts/**`、`agent/**`、`web/**`、`benchmarks/**`、branch protection 实况（本 change 合入后**不需要**再 `--apply`——目标状态与实况都已一致）。
 - **行为变更（用户可见）**：**无**。本 change 只改规格文本与文档；`master` 的合入门禁形态在本 change 前后**逐字段一致**（`--verify` 已实测「全部一致」）。
 - **不新增外部依赖**。
@@ -77,7 +78,8 @@
   2. 复用型 workflow（reusable workflow）在被调用时，**调用方钉住的 ref 能不能同时钉住被加载的包版本**？
   3. 本仓自己历史上是怎么演进 required 集合的？那次演进的成本落在哪里？
 - findings:
-  1. **「单一聚合 required check」是成熟模式，驱动力是「改 required 集合的成本落在平台面」**。GitHub 的 required status checks 是**仓库级** branch protection 配置——改它要 admin 权限，且是对**所有在途 PR** 立即生效的单向动作（本仓 `scripts/platform-gate.json` 的 `_description` 与 `scripts/platform_gate.py` 的自述都写明：`--apply` 若在同一 PR 合入前执行，会把该 PR 自身的 conversation resolution 闸门锁住）。把「哪些检查算数」收敛到一个由 caller 触发的聚合 job（本仓即 `gate / check`），可以让**被强制的检查集合**随版本控制里的 workflow 文件演进，而不必每次改 branch protection。这条正是本 change 记录的那次切换的形态。
+  1. **「单一聚合 required check」是成熟模式，驱动力是「改 required 集合的成本落在平台面」**。GitHub 的 required status checks 是**仓库级** branch protection 配置——改它要 admin 权限，且是对**所有在途 PR** 立即生效的单向动作。**本仓自己的记载**（出处 = `AGENTS.md:226`：「由主 session 在 PR 合入后执行——合入前 apply 会把对话 resolution 闸门锁住 PR 自身」；同向记载另见 `docs/development-guide.md` 的 witnessloop 节与 `openspec/specs/platform-gate/spec.md` 的「平台配置走 PR review」Scenario）：`--apply` 若在同一 PR 合入前执行，会把该 PR 自身的 conversation resolution 闸门锁住。
+     > ⚠️ **出处订正（第二轮对抗复核 N-2）**：初稿把这句话归给 `scripts/platform-gate.json` 的 `_description` 与 `scripts/platform_gate.py` 的自述——**实测两处都没有这句**（该 JSON 的三条 `_description` 与 `platform_gate.py:1-34` 的 docstring 全文均无）。事实成立、出处错；升档到 `light` 的全部意义就是 findings 可核对，故按实际位置改正。把「哪些检查算数」收敛到一个由 caller 触发的聚合 job（本仓即 `gate / check`），可以让**被强制的检查集合**随版本控制里的 workflow 文件演进，而不必每次改 branch protection。这条正是本 change 记录的那次切换的形态。
   2. **reusable workflow 里 `job.*` 指向被复用的那个文件，不是 caller**——这是平台语义，也是「钉一处即钉住包版本」得以成立的原因。witnessloop v1.7.0 用它把包 ref 的缺省改为 `job.workflow_sha`（上游 issue #30 的修复）。本仓已在 CI 日志里实测该语义生效：`##[notice]witnessloop 包 ref = 00192abe45d2d72a4389eccb202faad48c34fa26（来源：job.workflow_sha（被复用的那个 workflow 文件自己的 commit））`，且 `00192abe…` 就是 `v1.7.0` tag 的 commit。
   3. **本仓自己已经有两次同类演进，成本都落在平台动作而非代码**：归档 change `openspec/changes/archive/2026-08-16-platform-gate/` 是第一次把 required 定成 `validate` + `benchmark-gate`（其 `design.md:13` 记着当时「只有 `validate` 被 protection 要求」的演进前提）；本次是第二次调整（收敛为单一聚合 job）。⇒ 「required 集合」在本仓是**可演进的目标状态**，不是常量。
 - design impact:

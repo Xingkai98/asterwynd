@@ -353,7 +353,7 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
 - **旧门禁一行未动**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部照旧。
 - **已知红（阶段 A 遗留，未清）**：① active change `add-minimal-tui-runtime-view`（无 `reviews/`）；② 阶段 A 的 change `witnessloop-adoption` 当时缺 witnessloop 形态 manifest（该 change **已归档**，此条只作历史记录）。两条都属「**缺 manifest**」这一类，不是配置错误。
 - **`reviews/` 的一致状态（阶段 A 实测，仍然适用）**：一个 change 的 `reviews/` 下，**每份 `.md` 都必须被某份 witnessloop 形态 manifest 的 `report_path` 绑定**，否则触发孤儿规则——阶段 A 实测「只落一部分」比「一份都不落」更红（2 条 → 14 条 → 16 条）。阶段 C 之后 `gate / check` 是 required ⇒ 一个 change 要判绿就必须把 `reviews/` 落齐并全部绑定（`grill` / `grill-adversarial` / `building` 三份 manifest）。
-- **grill 决策记录的格式契约（v1.7.0 实测，2026-10-17 补记）**：`reviews/grill-design.md` 必须含 `## Confirmed Decisions`（每条决策块内有**同行裸** `来源:`——加粗的 `- **来源**:` 匹配不上）、`## User Confirmation`（**无条件存在**：一条 Open Question 都没有时也要有该小节）、以及与逐字标题一致的 Open Questions 小节。详见 `openspec/specs/dev-workflow-gate/spec.md` 的「grill 报告正文判据的已知不兼容」。
+- **grill 决策记录的格式契约（v1.7.0 实测，2026-10-17 补记）四条**：`reviews/grill-design.md` 必须含 `## Confirmed Decisions`（**至少 3 条**决策块——`MIN_CONFIRMED_DECISIONS = 3` 是硬门槛；且每条决策块内有**同行裸** `来源:`——加粗的 `- **来源**:` 匹配不上）、`## User Confirmation`（**无条件存在**：一条 Open Question 都没有时也要有该小节）、以及与逐字标题一致的 Open Questions 小节。详见 `openspec/specs/dev-workflow-gate/spec.md` 的「grill 报告正文判据的已知不兼容」。
 
 ### 本地跑 `check`
 

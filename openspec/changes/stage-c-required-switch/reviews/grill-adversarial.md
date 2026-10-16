@@ -98,3 +98,73 @@
 8. **`exempt` 的 reason 会不会被占位词表误杀**——查过，不会：`SELF_ADMITTED_INCOMPLETE_PHRASES`（`scripts/check_openspec_artifacts.py:92-99`）只有 `尚未完成/待补充/待调研/tbd/todo/待确认`，reason 里的"没有任何**待定**设计项"不在表内；直接调用 `_check_reference_implementation_research(..., assume_implemented=True)` 返回 `[]`。
 9. **`add-minimal-tui-runtime-view` 的 K1 会不会让本 change 自身判红**——查过，不会：witnessloop 的 stage 判定按**本次 diff** 求值，该 change 不在本 change 的 diff 里；`gh pr list --state open` 为空 ⇒ 也没有在途 PR 会被新 required 拦下。
 10. **报告文件名会不会撞 manifest glob**——查过，不会：`evidence.review_manifest_glob = reviews/*.manifest.json`，本文件名为 `grill-adversarial.md`（不以 `-review.md` 结尾，也非 `*.manifest.json`）；checker 侧对它在归档点只做**存在性**校验（`scripts/check_openspec_artifacts.py:1629-1639`）。
+
+## Round 2（复核 Round 1 的 11 条 + 找新洞）
+
+- run id: paseo-grill-adversarial-stage-c-required-switch-r2
+- 被审 revision: `647e349a492121ad72a80ad9a9f3d97e4eb50dd7`（工作区干净；本文件除本轮追加外无改动）
+- 时间: 2026-10-17
+- 零记忆: 是（不继承 Round 1 与任何开发上下文；Round 1 原文现读现核）
+
+### Verdict
+
+**CHANGES_REQUESTED**
+
+理由：**设计主体无异议，11 条里 8 条已处置、3 条部分处置，新发现 9 条全部是「本轮自己的修改没落齐」这一类 artifact 一致性问题——没有一条推翻设计结论、没有一条需要用户拍板**。但其中 N-1 是 Decision 5 内部（标题 + 选择句）与它自己的订正段、以及 `tasks.md` 的已勾任务**正面矛盾**，N-3 让 Decision 11 点名的可审计载体（`docs/development-guide.md`）少记一条契约——按本仓「修正要落齐所有 artifact」的口径，这两类必须回写后再收敛。N-1/N-3/N-2/N-4 都是纯文本订正，成本约 6 行。
+
+### I-1…I-11 逐条复核
+
+- **I-1**: **已处置**。`design.md:107-109` 写死「用 `git mv` **手工**做，SHALL NOT 跑 `openspec archive`」并给出两条理由（UTC 日期产出前一天目录名、把规格同步与 move 原子合成一次提交）；`tasks.md:54`（5.4）复述同口径。全仓 `grep -n "git mv\|openspec archive"` 在这两份文档里无相反表述。
+- **I-2**: **已处置**。全仓重扫：`grep -rn "自动拦截" docs/` → **0 命中**；`Q13:13/:51/:63`、`Q09:15/:61`、`walkthrough:3895`、`Q12:5/:24-29` 已逐处改为「判失败／不再拦合并」（`647e349` 改 6 处、`798973e` 改 3 处）。唯一残留的「两个 job」在 `docs/testing-guide.md:43`，讲的是 locale/UTF-8 的历史教训（对象是「原本」两个 job），不是本次被证伪的 CI 口径，见「排除掉的疑点」8。（处数口径另有问题，见 N-4。）
+- **I-3**: **已处置**。`tasks.md:31`（2.2）= `--base-ref origin/master`；`:33`（2.4）= `uv run python`；`:46`（4.2）= `/home/happy/wl170/bin/witnessloop check`；`:56`（5.6）= `--merge`／SHALL NOT squash。**实测**：`uv run python scripts/platform_gate.py --verify` → 逐字段 `match: true`、`全部一致`、**exit 0**。
+- **I-4**: **已处置**。`tasks.md:21` 与 delta 实际结构逐条对得上：dev-workflow-gate = REMOVED 1（`specs/dev-workflow-gate/spec.md:7`）+ MODIFIED 2（`:15`、`:33`）+ ADDED 2（`:53`、`:84`）；platform-gate = MODIFIED 2（`specs/platform-gate/spec.md:7`、`:32`）+ ADDED 1（`:46`）。
+- **I-5**: **部分处置**。做齐的：判据写死为「含**被本次变更直接证伪的断言**」（`design.md:66`）、10 行逐条复核表（`:68-79`）、对边界情形的如实标注（`:81`）、状态迁移入 delta（`specs/dev-workflow-gate/spec.md:17`、新 Scenario `:26-31`）与 `design.md:83`。**我独立复核了这张表**：现状 11 条 Requirement（`openspec/specs/dev-workflow-gate/spec.md:15/:32/:52/:75/:86/:97/:113/:129/:145/:176/:197`）逐条读过，表中 10 个「否」我**同意**——最接近的两条（`:75-84` 阶段 A 验收判据、`:97-111` 守卫退步「保留至阶段 C 决策」）是**已履行／已到期**的义务，不是被证伪的断言，按写死的判据不该删。**未落的**：Round 1 明确要求在 `proposal.md` 的 Impact Analysis 补的那一行没写（见 N-6）。
+- **I-6**: **已处置**。`proposal.md:72-73` 逐字为 `research_tier: light` / `status: enabled`。**实测硬门槛**：`C._check_reference_implementation_research(d, p, ct, assume_implemented=True)` → `[]`；`_requires_benchmark_smoke` → `True`、`_check_benchmark_smoke_task` → `[]`；findings/design impact 无占位词（`尚未完成/待补充/待调研/tbd/todo/待确认` 零命中）。findings 三条中 2、3 经我独立核验属实（见「排除掉的疑点」2、3），**finding 1 的出处引错**（见 N-2）。
+- **I-7**: **部分处置**。`design.md:140-143` 三段齐备（判据＋执行者、与「需求先行」的关系、非先例限定），内容达标。但**边界只落在 `design.md`，没有随 delta 进规格**——冲突的另一方是规范文本本身（`specs/dev-workflow-gate/spec.md:84-92`），见 N-7。
+- **I-8**: **部分处置**。`design.md:155`（Decision 11）与 delta 正文（`specs/dev-workflow-gate/spec.md:35`）都已是**四条**且含 `MIN_CONFIRMED_DECISIONS = 3`（该常量实测存在于 `/home/happy/wl170/lib/python3.12/site-packages/witnessloop/evidence.py:29`，判红分支在其 `grill_evidence_findings` 内）。但「三条」的口径残留在**三处**（delta 的 Scenario 标题、`design.md` 的 R13、以及 Decision 11 点名的可审计载体 `docs/development-guide.md`），见 N-3。
+- **I-9**: **已处置**。`grep -n "claude/"` 在 design/proposal/两份 delta 里只剩**解释性**句子（`design.md:159` 说明 `.claude/` 被 gitignore ⇒ 规格 SHALL NOT 指向它；`specs/dev-workflow-gate/spec.md:35` 末句同义）。原「与 `/grill` 的产出格式对齐」半句已删。
+- **I-10**: **已处置（如实承认，未粉饰）**。`design.md:197`：「**如实承认**：确有次序倒置（文档订正在设计闭环收敛前就提交了）。**无害但不合规**，处置 = 不回滚……」。没有把它写成「没有问题」。
+- **I-11**: **已处置**。两份 delta 顶部各有显式 `>` 声明（`specs/platform-gate/spec.md:3`、`specs/dev-workflow-gate/spec.md:3`）：「本文件是**待施加的输入**，不是已同步的结果……**不要**据本文件的存在推断同步已完成」。
+
+### 新发现
+
+- **N-1（medium）Decision 5 的标题与「选择」句，和它自己的订正段 + `tasks.md` 正面矛盾**。
+  证据：标题 `design.md:93`「### Decision 5: 无代码面 ⇒ 不写 TDD 测试、**不跑 benchmark smoke**」；选择句 `design.md:95`「tasks 里**不排**「先写失败测试」一节，也**不排** benchmark smoke」；而同一 Decision 的订正段 `:99-100` 写「设计初稿写……⇒ 不排它。**实测是错的**……⇒ 处置：tasks 排 **2.4b**」，`tasks.md:3` 亦写「**benchmark smoke 仍然排了（2.4b）**」，且 `tasks.md:34` 已勾 `[x]`、证据实测存在（见「排除掉的疑点」1）。⇒ 一份读者会照做的 Decision，标题与「选择」说的一套、订正段与任务线做的是另一套。这是本轮引入的（订正段是新增的，标题/选择句没同步改）。
+  建议修法：把 `design.md:93` 标题与 `:95` 选择句改成「**跑** benchmark smoke（触发启发式命中，见订正）」／「tasks 排一条 gate-smoke（2.4b）」。**这是本轮唯一必须改的实质矛盾**。
+- **N-2（low-medium）`light` findings 的第 1 条把出处引错了**。
+  证据：`proposal.md:80` 断言「本仓 `scripts/platform-gate.json` 的 `_description` 与 `scripts/platform_gate.py` 的自述**都写明**：`--apply` 若在同一 PR 合入前执行，会把该 PR 自身的 conversation resolution 闸门锁住」。**实测两处都没有**：`scripts/platform-gate.json` 三条 `_description`（`:9` / `:13` / `:17`）无此句；`scripts/platform_gate.py` 的模块 docstring（`:1-34`，`--apply` 段落全文）只说 GET-modify-PUT 与「apply 前打印目标 vs 实况 diff」，`grep -n "合入前"` 在该文件零命中。该事实的真身是 `AGENTS.md:226`（「合入前 apply 会把对话 resolution 闸门锁住 PR 自身」）与本 change 自己的 delta `specs/platform-gate/spec.md:42`。⇒ 事实成立、**出处假**；I-6 之所以要求升到 `light` 就是要 findings 可核对，出处错会让后人按引用去查却查不到。
+  建议修法：把引用从 json/py 改为 `AGENTS.md:226`（或直接引本 delta 的那条 SHALL）。
+- **N-3（low）I-8 的「三条 → 四条」没落齐三处，其中一处正是 Decision 11 点名的可审计载体**。
+  证据：① `docs/development-guide.md:356`（该 bullet 由 `798973e` 新增）只记了**三条**：`## Confirmed Decisions`（同行裸 `来源:`）、`## User Confirmation`（无条件存在）、Open Questions 小节——**漏 `MIN_CONFIRMED_DECISIONS = 3`**；而 `design.md:159` 明写「这四条契约的**可审计载体是版本控制内的文档**——`docs/development-guide.md` 的 witnessloop 节（已补记）与本条规格」。⇒ 已落地的那份载体「已补记」的其实是三条。② `specs/dev-workflow-gate/spec.md:37` 的 Scenario 标题仍是「三条判据逐条可复核」（正文 `:35` 已是四条，`:47` 也已改口「上述四条契约」）。③ `design.md:222`（R13）仍写「Decision 11：把**三条**格式契约写进规格」。
+  建议修法：三处「三条」补成四条并补 `MIN_CONFIRMED_DECISIONS = 3`（`docs/development-guide.md` 那处是一个括号短语）。
+- **N-4（low）讲稿面的处数口径仍然自相矛盾——正是 I-2 要求根除的那类写法**。
+  证据：`proposal.md:64` 与 `tasks.md:26` 都写「讲稿面**共 6 处**」，但其**自列清单**为 `Q12`（1）+ `Q13:13/:51/:63`（3）+ `Q09:15/:61`（2）+ `walkthrough:3895`（1）= **7 项**；而实测 diff 其实是 **9 处**——`git show 798973e` 另改了 `Q13:15` 与 Q12 两处，其中 **`Q13:15` 未出现在任何清单里**（`prop`/`tasks` 只列 `:13/:51/:63`）。⇒ 「共 6 处」既与自己的清单（7）不符，也与仓库事实（9）不符。
+  建议修法：改成「共 9 处（本轮 6 处 + `798973e` 的 Q12×2 与 Q13:15）」，或改成「讲稿面逐处清单如下」不带总数。
+- **N-5（low）`tasks.md` 2.4b 记录的命令不是真正跑过的那条，且结果没记**。
+  证据：任务行 `tasks.md:34` 写 `--runs-dir /tmp/benchmark-gate-runs`，但该目录里最新一次是 `2026-10-05T19-11-16`（**没有 10-17 的产出**）；真实证据在 **`/tmp/benchmark-gate-runs-sc/2026-10-16T19-05-06/`**（`run.json`：`task_count: 2 / passed: 2 / failed: 0`，`started_at 2026-10-16T19:05:06+00:00` = 本机 10-17 03:05:06，与 `647e349` 的提交时刻 03:05:20 相隔 14 秒 ⇒ 是本次提交前跑的）。`design.md` Decision 5 与 `tasks.md` 2.4b **都没有记录结果**（2/2 passed）。⇒ 不是假勾（确实跑了并通过），但「任务行写的命令」与「产出证据的目录」对不上，且无结果记录；后人照任务行去 `/tmp/benchmark-gate-runs` 核验会看到一次陈旧运行。（另：产物里看不出是否带了 `--baseline` / `--require-baseline`——`run.json` 两个字段都不落，故无法核实是否与 `ci.yml` 的 `benchmark-gate` job「同形」，这条我不断言。）
+  建议修法：任务行改成实际用的 `--runs-dir`（或补一句「本次实际产出目录」），并记一行「结论：2/2 passed（`run.json`）」。
+- **N-6（low）I-5 要求的 proposal 侧那一行没补**。
+  证据：Round 1 的 I-5 建议修法含「同时在 `proposal.md` 的 Impact Analysis 里补一行『阶段 C 使 `add-minimal-tui-runtime-view` 的已知红升级为拦合入——本 change 不处理，后果如实记录』」。现状：`proposal.md:40` 只有「**不处理** `add-minimal-tui-runtime-view` 的已知红（K1）」，`## Impact Analysis`（`:54-68`）无对应行；该迁移只进了 delta（`specs/dev-workflow-gate/spec.md:17`、`:26-31`）与 `design.md:83`。按 AGENTS.md 的「CI 与影响分析」条（发现新影响面先回写 change 文档），这里应有一行。
+- **N-7（low）I-7 的边界只进了 design，没进规格——而冲突的一方正是规格义务**。
+  证据：`design.md:140-143` 的「判据与执行者／与「需求先行」的关系／非先例限定」都在；但 delta 的 Requirement 正文与 Scenario（`specs/dev-workflow-gate/spec.md:84-92`）**没有任何**「SHALL NOT 被援引为先例」「需求先行仍适用」的限定。归档后规格是耐久规范，读者单看规格仍会读到一条**无护栏**的「先落地后补记录合法」义务——这正是 I-7 指出的与 AGENTS.md 最高优先级规则的相抵点。
+  建议修法：在 delta 那条 Requirement 正文末尾补一句「本条 SHALL NOT 被读成对『需求先行』的豁免，也 SHALL NOT 被类推到常规功能 change」（与 `design.md:143` 同义即可）。
+- **N-8（low）`tasks.md` 的勾选状态此刻与仓库事实不符（方向是「少勾」，非「提前勾」）**。
+  证据：1.4（`docs/development-guide.md`）已在 `798973e` 落地、1.6（`README.md` + `README_EN.md`）同在 `798973e` 落地、1.7（讲稿 6 处）在 `647e349` 落地——三项都仍是 `- [ ]`（`tasks.md:23/:25/:26`）；0.3（对抗闭环）的产物 `reviews/grill-adversarial.md` 已存在（本文件，含 Round 1），但闭环尚未收敛到 PASS，`- [ ]` **可辩护**。⇒ 与 Round 1 D1 的「提前勾」相反，这是**保守方向**，不构成归档点完成度门的风险（门要求全勾，少勾只会拦自己），但「勾选状态=仓库事实」这条不成立。
+  建议修法：5.3 结算时按实际落地情况勾齐 1.4/1.6/1.7，无需回滚任何提交。
+- **N-9（low）风险表 R6 仍以 `exempt` 为已选档位**。`design.md:215`：「R6 | **`exempt` 档位被质疑为「省事」** | Decision 1 已如实标注它不是唯一解……」。档位已改 `light`，此行的风险描述与缓解指向的是**不再存在**的选择（同一改动的 `design.md:48` 已加 ⚠️ 说明、Decision 1 `:46` 已改口径）。建议把 R6 改写为「档位从 `exempt` 上调为 `light`（I-6）」的闭环记录。
+
+### 排除掉的疑点
+
+1. **`tasks.md` 2.4b 是不是假勾**——不是。实测证据在 `/tmp/benchmark-gate-runs-sc/2026-10-16T19-05-06/`：`run.json` `task_count 2 / passed 2 / failed 0`，`summary.md` 两条 task 全 `passed`，时间戳与本 change 最后一次提交（`647e349`，本机 03:05:20）相隔 14 秒。⇒ smoke 确实跑过并通过（问题只在记录口径，见 N-5）。
+2. **RIR finding 2 的 CI 日志断言是不是编的**——不是。`gh api repos/Xingkai98/asterwynd/actions/jobs/117127446958/logs` 精确命中：`notice]witnessloop 包 ref = 00192abe45d2d72a4389eccb202faad48c34fa26（来源：job.workflow_sha（被复用的那个 workflow 文件自己的 commit））`，与 `proposal.md:81` 的引用**逐字一致**；且 `gh api repos/Xingkai98/witnessloop/git/refs/tags/v1.7.0` → `00192abe45d2d72a4389eccb202faad48c34fa26`（type `tag`）⇒「`00192abe…` 就是 `v1.7.0` tag 的 commit」属实。
+3. **RIR finding 3 的引用是否属实**——属实。`openspec/changes/archive/2026-08-16-platform-gate/design.md:13` 确有「`benchmark-gate` 未进 required，可绕过」与「但只有 `validate` 被 protection 要求」，与 `proposal.md:82` 的转述一致。
+4. **delta 的 REMOVED/MODIFIED 目标标题会不会静默 no-op**——不会。四个目标在现状里逐字存在：`openspec/specs/dev-workflow-gate/spec.md:52`（REMOVED）、`:86`、`:176`（MODIFIED），`openspec/specs/platform-gate/spec.md:9`、`:56`（MODIFIED）。
+5. **MODIFIED 会不会静默丢掉原有 Scenario**——不会。逐条比对了现状与 delta：`platform-gate/spec.md:56` 那条 Requirement 现状**只有一个** Scenario，delta 的 MODIFIED 也是那一个（改掉「（validate / benchmark-gate）」并补 `--apply` 次序 SHALL）；`dev-workflow-gate/spec.md:86` 现状 1 个 Scenario → delta 2 个（保留 + 新增迁移条）；`:176` 现状 2 个 → delta 2 个（内容按 Decision 11 重写，属预期替换）。无「delta 里少写从而静默删条」的情况。
+6. **`add-minimal-tui-runtime-view` 的前提断言是否还成立**——成立。`openspec/changes/add-minimal-tui-runtime-view/` 仍在 active（未归档），目录内无 `reviews/`；delta 与 `design.md:73` 描述一致。
+7. **讲稿面还有没有同类旧口径**——除 `docs/testing-guide.md:43` 外没有。`grep -rn "自动拦截" docs/` = 0；剩余「拦截」命中全部属沙箱/命令守卫语境（`Q02:53`、`Q10:72`、`Q14:38`、`walkthrough:1084`、`interview-prep.md` 等），与 CI 门禁无关。`docs/testing-guide.md:43` 的「原本两个 job 都是 `ubuntu-latest`」是 locale 历史教训（描述的是**当时**的 job 集合），不因阶段 C 过期。
+8. **机械门是否被绕过/是否有隐藏红**——没有，四条命令我都实跑：
+   - `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **Totals: 30 passed, 0 failed (30 items)**，exit 0（本 change 本身也列出：`✓ change/stage-c-required-switch`）。
+   - `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → **`OpenSpec artifact checks passed`**，exit 0。
+   - `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` → `OpenSpec artifact checks passed`，exit 0（stderr 一行汇总：`tasks_hash 已按归档语境跳过（76 个 change；其余 hash 与字段仍校验）`）。
+   - `uv run python scripts/platform_gate.py --verify` → 五字段 `match: true`、`全部一致`，exit 0。
+9. **`open_question_sections` 的四条契约④是否写准**——准。源码 `.../witnessloop/evidence.py` 的 `_open_question_sections(sections)` 分支：存在候选小节时逐个 `Q<n>` 校验确认（缺则报「Open Question Q<n> 未经用户确认」、占位则报「确认是占位文本」），不存在时走 else 报「缺失」——与 delta `specs/dev-workflow-gate/spec.md:35` 的 ④ 同义。
