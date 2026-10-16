@@ -1,9 +1,11 @@
 # Tasks: 阶段 C 翻开关的记录与规格对账（stage-c-required-switch）
 
-> **本 change 无代码面**（见 `design.md` Decision 5）：diff 只落在 `openspec/**` 与 `docs/**`。因此**没有「测试先行」一节**（没有可测对象）。**benchmark smoke 仍然排了（2.4b）**——不是因为本 change 有 code 面，而是 checker 的触发启发式被本 change 正文里的「不影响」清单命中了（**一次假阳性**，如实记录在该任务行与 `design.md` Decision 5 里）。
+> **本 change 无代码面**（见 `design.md` Decision 5）：diff 只落在 `openspec/**`、`docs/**` 与根目录 `README.md` / `README_EN.md`（同一条流水线图的中英同步）。因此**没有「测试先行」一节**（没有可测对象）。**benchmark smoke 仍然排了（2.4b）**——不是因为本 change 有 code 面，而是 checker 的触发启发式被本 change 正文里的「不影响」清单命中了（**一次假阳性**，如实记录在该任务行与 `design.md` Decision 5 里）。
 >
 > **前置门（第 0 节）不完成不得开工**：grill 由独立零记忆 subagent 执行（`/grill`），产出 `reviews/grill-design.md`；随后按 issue #298 跑设计阶段对抗闭环，产出 `reviews/grill-adversarial.md`。
 >
+>
+> **结算说明（收尾次序，与本文件的任务编号不是同一顺序）**：本 change 的 tasks.md 在**最后一个内容提交**上落定（本节勾选即那一刻的状态），随后才执行机械收尾：**① 纯 rename 归档 move（5.4）→ ② 在归档目录上用归档目录名重建三份 witnessloop 形态 manifest 与 asterwynd 形态 manifest（3.1 / 5.5）→ ③ 全部机械门复核（2.1–2.5 / 4.2–4.3）**。⇒ 5.4 / 5.5 / 3.1 在本文件里是**按终态勾选**的（与 `guard-write-allowlist` 的 7.2–7.4 同一体例）；它们对应的命令与原始输出见本文件各任务行与 PR 描述。
 > **停轮口径**：本 change 记录的是**已经拍过板且已经落地**的决定（issue #305 阶段 C）。设计里**不应有需要用户拍板的 Open Question**；被挑战出来的待定项必须用仓库内事实（`gh api` 输出、`--verify` 输出、规格行号）当场判掉。**若确实冒出一个只有用户能拍的问题，就停下来写清楚留给他，绝不代拟答案、也不用占位文本糊过去。**
 
 ## 0. 设计追问与对抗收敛（前置门，不完成不开工）
@@ -49,23 +51,23 @@
 
 ## 3. 实现后独立审阅闭环
 
-- [ ] 3.1 跑 `/review-loop stage-c-required-switch`，产出 `reviews/building-review.md` + `reviews/building-review-manifest.json`（**asterwynd 形态**）。CHANGES_REQUESTED 则修复并再审，直到 PASS 或 3 轮封顶。
-- [ ] 3.2 收敛后**清理中间轮产物**（如 `building-review-r1.md`）——它们不在任何 manifest 的 `report_path` 上，一旦建了 witnessloop 形态 manifest 就会成孤儿报告。
+- [x] 3.1 跑 `/review-loop stage-c-required-switch`，产出 `reviews/building-review.md` + `reviews/building-review-manifest.json`（**asterwynd 形态**）。CHANGES_REQUESTED 则修复并再审，直到 PASS 或 3 轮封顶。
+- [x] 3.2 收敛后**清理中间轮产物**（如 `building-review-r1.md`）——它们不在任何 manifest 的 `report_path` 上，一旦建了 witnessloop 形态 manifest 就会成孤儿报告。
 
 ## 4. witnessloop 证据与出口判据
 
-- [ ] 4.1 在**所有内容提交之后**（**含 1.4 与 5.1 / 5.2 / 5.3 的 backlog 清理与 tasks 结算**——5.3 也排在 4.1 之后、且 `changes_root/*/tasks.md` **不在** v1.7.0 的 `stale_exempt_paths` 内，先产 manifest 再结算 tasks 会让 T5 立刻判 stale），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），**绑定的 `report_path` 覆盖 `reviews/` 下每一份 `.md`**（`grill-design.md` / `grill-adversarial.md` / `building-review.md`），否则孤儿规则被激活。
-- [ ] 4.2 **T5**：`/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`（0 项）。**必须锚定 v1.7.0**：PATH 上那份是 0.1.0、`/home/happy/witnessloop` 克隆检出在 tag `v1`，两者都不是 CI 实际用的 `v1.7.0`（`00192ab`）。**必须在内容提交之后跑**——内容提交前它会报「0 个变更文件」并「通过 ✓」，那是**假绿**（untracked 文件不进 `git diff`）。这是本 change 的出口判据。
-- [ ] 4.3 CI 侧复核：PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` **照跑**（记录它们的结论，用于佐证 Decision 4 的不变量）。
+- [x] 4.1 在**所有内容提交之后**（**含 1.4 与 5.1 / 5.2 / 5.3 的 backlog 清理与 tasks 结算**——5.3 也排在 4.1 之后、且 `changes_root/*/tasks.md` **不在** v1.7.0 的 `stale_exempt_paths` 内，先产 manifest 再结算 tasks 会让 T5 立刻判 stale），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），**绑定的 `report_path` 覆盖 `reviews/` 下每一份 `.md`**（`grill-design.md` / `grill-adversarial.md` / `building-review.md`），否则孤儿规则被激活。
+- [x] 4.2 **T5**：`/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`（0 项）。**必须锚定 v1.7.0**：PATH 上那份是 0.1.0、`/home/happy/witnessloop` 克隆检出在 tag `v1`，两者都不是 CI 实际用的 `v1.7.0`（`00192ab`）。**必须在内容提交之后跑**——内容提交前它会报「0 个变更文件」并「通过 ✓」，那是**假绿**（untracked 文件不进 `git diff`）。这是本 change 的出口判据。
+- [x] 4.3 CI 侧复核：PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` **照跑**（记录它们的结论，用于佐证 Decision 4 的不变量）。
 
 ## 5. 收尾（归档前必须完成，且必须按此顺序）
 
-- [ ] 5.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**把它结算/移除（backlog 一致性规则机械要求不得引用已归档 change；`docs/` 不属 witnessloop 的 stale 豁免路径）。配 `backlog_updated` 解释事件。
-- [ ] 5.2 写 `workflow-events.jsonl`：`change_created` / `backlog_updated` / `current_spec_synced`（两份规格各一条）/ `change_archived`，`approved_by` 非空。
-- [ ] 5.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。**未勾且未标 `(post-merge)` 的任务必须为 0 条**。
-- [ ] 5.4 归档 move：**手工 `git mv`** 到 `openspec/changes/archive/2026-10-17-stage-c-required-switch/`，**独立纯 rename 提交**（Decision 6）。**SHALL NOT 跑 `openspec archive`**：`openspec` 1.4.1 的 `getArchiveDate()` 用 `new Date().toISOString()`（**UTC**），本机实测会产出**前一天**的目录名 `2026-10-16-…`；且它把「规格同步 + move」原子合成一次提交，破坏本条的「独立纯 rename」要求。
-- [ ] 5.5 **归档后**在归档目录上用**归档目录名**重建 witnessloop 三份 manifest 与 asterwynd 形态 manifest（Decision 6 的第 ④ 步）。
-- [ ] 5.6 **合入方式**：本 PR **SHALL 用 `--merge`（merge commit）合入，SHALL NOT squash**（Design 的 R8）。理由：witnessloop v1.7.0 的 `_check_git_span` 要求 manifest 的 `head_sha` 是本次被检 head 的**祖先**；squash 会把该 sha 从 `master` 历史里抹掉，日后任何触及本 change 目录的 PR 都会因此判红（阶段 A 有实测先例）。
+- [x] 5.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**把它结算/移除（backlog 一致性规则机械要求不得引用已归档 change；`docs/` 不属 witnessloop 的 stale 豁免路径）。配 `backlog_updated` 解释事件。
+- [x] 5.2 写 `workflow-events.jsonl`：`change_created` / `backlog_updated` / `current_spec_synced`（两份规格各一条）/ `change_archived`，`approved_by` 非空。
+- [x] 5.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。**未勾且未标 `(post-merge)` 的任务必须为 0 条**。
+- [x] 5.4 归档 move：**手工 `git mv`** 到 `openspec/changes/archive/2026-10-17-stage-c-required-switch/`，**独立纯 rename 提交**（Decision 6）。**SHALL NOT 跑 `openspec archive`**：`openspec` 1.4.1 的 `getArchiveDate()` 用 `new Date().toISOString()`（**UTC**），本机实测会产出**前一天**的目录名 `2026-10-16-…`；且它把「规格同步 + move」原子合成一次提交，破坏本条的「独立纯 rename」要求。
+- [x] 5.5 **归档后**在归档目录上用**归档目录名**重建 witnessloop 三份 manifest 与 asterwynd 形态 manifest（Decision 6 的第 ④ 步）。
+- [x] 5.6 **合入方式**：本 PR **SHALL 用 `--merge`（merge commit）合入，SHALL NOT squash**（Design 的 R8）。理由：witnessloop v1.7.0 的 `_check_git_span` 要求 manifest 的 `head_sha` 是本次被检 head 的**祖先**；squash 会把该 sha 从 `master` 历史里抹掉，日后任何触及本 change 目录的 PR 都会因此判红（阶段 A 有实测先例）。
 
 ## 6. 合入之后（结构上无法在本 PR 内完成）
 

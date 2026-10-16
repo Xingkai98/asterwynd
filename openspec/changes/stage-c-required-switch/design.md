@@ -179,7 +179,7 @@
 | D7 | 同一条不变量在 MODIFIED 与 ADDED 两处各写一遍（漂移点） | MODIFIED 只留 required 集合断言，「仍须运行」全收进 ADDED（Decision 4 已注明） |
 | D8 | 文档影响面漏 4 处（README / README_EN / interview-script Q12·Q13 / backlog） | 全部纳入本 change；interview-script 的两处按「本变更直接造成的事实变化」就地订正 |
 
-**一处订正**（grill 复核 D6 时指出）：设计初稿在 Decision 11 里写「已补记进规格」时，规格尚未改到——该措辞已按如实口径改正（规格侧的补记由任务 1.3 落地，**当前尚未发生**）。
+**一处订正**（grill 复核 D6 时指出）：设计初稿在 Decision 11 里写「已补记进规格」时，规格尚未改到——该措辞已按如实口径改正（规格侧的补记由任务 1.3 落地——**该任务已完成**，见 `workflow-events.jsonl` 的 `current_spec_synced` 事件；本句在写作时点是对的，保留原文以记录订正发生的时刻）。
 
 ### 设计阶段对抗闭环（Round 1）
 

@@ -2,7 +2,6 @@
 
 ## Purpose
 
-
 定义合入平台闸门的能力边界：CI required checks（**唯一** required 为 witnessloop 的 `gate / check`，strict 模式）、PR conversations resolution、review 时机（approve=1 暂缓与触发条件）与平台配置即代码（`scripts/platform-gate.json` 目标状态声明 + `scripts/platform_gate.py` 幂等脚本）。本仓自建的 `validate` / `benchmark-gate` / `windows-platform` 三个 job **照跑但不再拦合并**（阶段 C 翻开关，issue #305，2026-10-17）——**降级，不是关闭**。平台配置的落地（`--apply`）需 admin 权限，在实现 PR 合入后由主 session 执行；本规格用 SHALL（规范性目标）语言描述能力目标，不把「已合入但未 apply」的中间态写成已落地。
 
 ## Requirements

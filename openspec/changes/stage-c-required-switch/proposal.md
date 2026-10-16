@@ -36,7 +36,7 @@
 - **不下掉任何本仓检查**。`validate` / `benchmark-gate` / `windows-platform` 三个 job 继续在每个 PR 上照跑；「逐项下掉旧件」（原阶段 C 的 C.2）由**后续独立 change** 承载。
 - **不改 `.github/workflows/ci.yml`**（一行都不改）、**不关任何 workflow**、**不删任何检查**。
 - **不改 `scripts/platform-gate.json`**：它的目标状态已由 PR #311 落地并 `--apply`，本 change 只同步**规格**。
-- **不改 `agent/**` / `scripts/**` / `web/**`**：本 change 的 diff 只落在 `openspec/**` 与 `docs/**`，不引入任何运行时行为变化，因此**没有代码测试面**。
+- **不改 `agent/**` / `scripts/**` / `web/**`**：本 change 的 diff 只落在 `openspec/**`、`docs/**` 与根目录的 `README.md` / `README_EN.md`（后者是同一处流水线图的中英同步），不引入任何运行时行为变化，因此**没有代码测试面**。
 - **不统一 manifest schema**（N.4）；**不处理** `add-minimal-tui-runtime-view` 的已知红（K1）；**不碰 witnessloop 仓与 `v1` / `v1.7.0` tag**。
 - **不重新讨论**「required 该不该只留 `gate / check`」：该决策已由用户在 issue #305 的阶段 C 讨论中拍板，本 change 只做记录与对账。
 

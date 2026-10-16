@@ -1,6 +1,6 @@
 # dev-workflow-gate 规格 delta
 
-> ⚠️ **本文件是「待施加的输入」，不是已同步的结果。** `openspec/specs/dev-workflow-gate/spec.md` 的改写（含 `## Purpose` / 「阶段划分」段的**人手就地改写**，那段无 delta 载体）由本 change 的收尾步骤执行（见 `tasks.md` 的 1.3 / 1.5）。在那一刻之前，当前规格里仍是阶段 A 的口径——**不要**据本文件的存在推断同步已完成。
+> ℹ️ **本 delta 已于 2026-10-17 施加**：`openspec/specs/dev-workflow-gate/spec.md` 的改写由本 change 执行完毕，原始输出与计数见 `workflow-events.jsonl` 的 `current_spec_synced` 事件。本文件保留为**本次同步的历史输入**（不要再据它推断当前规格的形态）。
 
 ## REMOVED Requirements
 
