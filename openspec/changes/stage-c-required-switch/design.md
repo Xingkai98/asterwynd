@@ -188,7 +188,7 @@
 | # | 对抗发现 | 处置 |
 |---|---|---|
 | I-1（medium） | 归档 move 机制未写死；`openspec archive`（1.4.1）用 UTC 日期 ⇒ 本机实测产出**前一天**的目录名，且把「规格同步 + move」合成一次提交 | Decision 6 增补：**手工 `git mv`，SHALL NOT 跑 `openspec archive`**；tasks 5.4 复述 |
-| I-2（medium） | 文档影响面漏 3 处同类「自动拦截」，且**已改的文件内部自相矛盾**（`Q13:15` 改了、`:63` 没改） | 扫全 `docs/`：共 **6 处**一次性订正（Q12 / Q13×3 / Q09×2 / walkthrough:3895）；proposal 与 tasks 的口径由「两处」改为实测清单 |
+| I-2（medium） | 文档影响面漏 3 处同类「自动拦截」，且**已改的文件内部自相矛盾**（`Q13:15` 改了、`:63` 没改） | 扫全 `docs/`，**按位置列举**一次性订正（`Q12` / `Q13:13/:15/:51/:63` / `Q09:15/:61` / `walkthrough:3895`）；proposal 与 tasks 的口径由「两处」改为实测清单。**不写「共 N 处」总数**——那是会被自己文件证伪的写法（见 N-4） |
 | I-3（medium） | D5 的修正只落在 design.md，**没回落到 tasks.md**（2.2 仍是 `<base>`、2.4 仍是裸 `python`、4.2 无版本锚定） | tasks 2.2 / 2.4 / 4.2 逐条改齐；收尾补 5.6（合入方式） |
 | I-4（medium） | D3 的修法没同步 tasks 1.2（只列 1 条 ADDED，漏 Decision 9 那条与 MODIFIED 的 grill 条目）⇒ 按 tasks 重写 delta 会删掉它 | tasks 1.2 改为完整列出 REMOVED 1 / MODIFIED 2 / ADDED 2 |
 | I-5（medium） | Decision 3 的 REMOVED 判据未对称适用；且 `add-minimal-tui-runtime-view` 的已知红**性质迁移**无人记录 | Decision 3 增补**逐条复核表**（判据写死为「含被证伪的断言」而非「属于阶段 A」）+ 新 delta MODIFIED 记录状态迁移 |
@@ -205,9 +205,18 @@
 |---|---|---|---|---|
 | R1 | `798973e` | CHANGES_REQUESTED | I-1…I-11（6 medium / 5 low） | 全部处置（见上表）；I-6 采纳其推荐改 `light` |
 | R2 | `647e349` | CHANGES_REQUESTED | 复核 I：8 条已处置 / 3 条部分处置；新发现 N-1…N-9（全部是**本轮自己的修改没落齐**的 artifact 一致性问题） | 全部处置 |
-| R3 | `5a074c7` | CHANGES_REQUESTED | 复核 N：**9 条全部已处置**；新发现 **B-1（唯一阻塞项）**：修 N-2 出处时**又引入一个假出处**（`docs/development-guide.md` 的 witnessloop 节实测无该记载）+ 2 条非阻塞观察 | B-1 已修（只保留实测过的 `AGENTS.md:226`，并把「两次引假出处」的共同形态写进 finding）；2 条非阻塞项一并修（Decision 4 的「只写一处」规则**对称**适用到 `dev-workflow-gate` 的 ADDED 条目；tasks 0.3 的 `exempt` 字样改为 `light`） |
+| R3 | `5a074c7` | CHANGES_REQUESTED | 复核 N：**9 条全部已处置**；新发现 **B-1（唯一阻塞项）**：修 N-2 出处时**又引入一个假出处**（`docs/development-guide.md` 的 witnessloop 节实测无该记载）+ **6 条非阻塞观察** | B-1 已修（只保留实测过的 `AGENTS.md:226`，并把「两次引假出处」的共同形态写进 finding）。6 条非阻塞观察：**2 条处置**（Decision 4 的「只写一处」规则**对称**适用到 `dev-workflow-gate` 的 ADDED 条目；tasks 0.3 的 `exempt` 字样改为 `light`），**4 条如实登记为「接受、不处置」**（见下） |
 
 **闭环到 3 轮封顶时 R3 的唯一阻塞项已修复**；按本仓口径（「直到 PASS 或 3 轮封顶」）该闭环到此结束，**没有剩下需要用户拍板的问题**——R1 的 I-6 被审阅者标为「唯一需要人拍的一条」，但它同时给出了明确推荐（改 `light`），本设计采纳该推荐即消解该争点；R2/R3 的发现全部是文档一致性问题，均有唯一解。
+
+**R3 的 6 条非阻塞观察里，4 条如实登记为「接受、不处置」**（不为它们改文档——它们是可读性/口径偏好，不是错误）：
+
+1. **`design.md` 的历史行仍写「6 处」**（本轮修正记录的历史叙述，不是活断言）——改写它会让「当时发现了什么」的叙述失真；真正的活口径（proposal / tasks）已改为按位置列举。
+2. **`tasks.md` 的收尾节未逐条点名 5.1/5.2/5.3**——它们就在同一节里，编号自明。
+3. **Decision 5 的「假阳性」没有耐久落点**（除 `tasks.md` 的 2.4b 与本节）——收窄该启发式是**上游/后续 change** 的事，本 change 只负责如实记录这次触发。
+4. **`proposal.md` 的影响面清单未逐个列全所有位置**——已在 tasks 1.7 里按位置列全，proposal 保留分类描述即可。
+
+**实施后审阅（building-review R1）追加的一条非阻塞观察**：required 集合的**取值**仍同时断言在 `platform-gate`（它的所有者）与 `dev-workflow-gate` 的 ADDED Scenario 里。**接受、不处置**：两处断言的**粒度不同**——`platform-gate` 规定取值与不变量，`dev-workflow-gate` 只断言「阶段 C 之后的接入形态长这样」且已显式标注「该取值由 `platform-gate` 规定」。把后者也删掉会让「阶段 C 完成了什么」在接入规格里失去可读的落点。
 
 **三次对抗产出的最值得记的一条元教训**：**R1 的 N-2 与 R3 的 B-1 是同一种错误、发生在同一句话上**——为了把 findings 的出处写得丰满，补了一个**没有实测过**的来源（第一次指向 `platform-gate.json` / `platform_gate.py`，第二次指向 `docs/development-guide.md`）。这正是本 change 把档位从 `exempt` 升到 `light` 的理由本身（findings 必须可核对）被自己的修法违反。⇒ 结论写进 findings 的订正段：**出处只能引实测过的位置；「同向记载另见…」这种边角引用是最容易造假的地方，不要为了显得完整而补。**
 

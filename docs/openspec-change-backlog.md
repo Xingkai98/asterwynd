@@ -120,16 +120,6 @@
 
 ## 未实现队列
 
-### 4. `stage-c-required-switch`
-
-状态：实现中（记录 + 规格对账）。
-
-批次：第十七批（开发流程工具化 / witnessloop 接入）的**阶段 C**。
-
-关联 issue：[#305](https://github.com/Xingkai98/asterwynd/issues/305)。
-
-范围：为阶段 C 翻开关补一条正式 change 记录，并把 `openspec/specs/platform-gate/spec.md` 与 `openspec/specs/dev-workflow-gate/spec.md` 同步到实况（required 只剩 `gate / check`；三个本仓 job 照跑不拦；新增「降级为非必过的检查仍须运行」与「翻开关这一动作自身必须具备 change 记录」两条规范）。**不写代码**：diff 只落 `openspec/**` 与 `docs/**`。**行为本体已由 PR #311 先行落地**（本 change 只做记录与对账，proposal 里如实注明该次序）。research_tier = light。
-
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 
 - `foreach-budget-truncation-visibility`（issue [#286](https://github.com/Xingkai98/asterwynd/issues/286)）：**已归档 2026-10-03**。#279（静态截断可见）的独立对抗验证拆出的**同缺陷类、范围外**项——治 `max_items=0` 路径下的**预算**截断静默。`_resolve_items`（`scheduler.py:2675-2678`）在 `max_items==0` 时返回 `items[:remaining_expansion_capacity()]`，切片使 `_check_foreach_budget`（`:2167`）的 `run+delta>limit` **刚好不触发** ⇒ 超预算项**静默丢弃**（实测：60 声明 / 24 展开 / 36 静默丢，`status=completed`、`diagnostics={}`）。**交付**：扩展 #279 共享 helper `_foreach_visibility_fields`（去 `max_items>0` 前置、加成因判别字段 `items_omitted_cause`），**三出口**一致报告「声明 N / 展开 M / 省略 K」+ 成因（`max_items` vs `budget`）——dry-run 条目、`GetWorkflow(detail='nodes')` 投影、**`RunWorkflow` 结果信封**（用户拍板 OQ2=(b) 新增出口，一并补 #279 静态字段缺口）；字段**后写**绕过 `_bounded_node` 白名单；成因字段不复用既有 `reason` 键。**对抗验证修正**：proposal 的「非 terminal 一律响亮」被实测证伪（切片 ≤ `max_fan_in` 时非 terminal 同样静默），边界文字改「切片后预算仍够图跑完即静默」；design「静态路径逐字节不变」改为「既有字段值不变 + 新增成因键」。**Non-Goal**：不改 `max_items` 默认值（#276）、不改 `max_items=0` 语义、不改 #279 静态面、成因不细化到绑定维度、不改 `GetWorkflow` 默认 `detail='summary'` 出口。research_tier = light。**验收**：review-loop 2 轮 PASS（R1 PASS + 3 Low → 修 → R2 确认 PASS）；新测试 7 条（`test_foreach_truncation_visibility.py` 25 passed）；`agent/{subagent,tools}` 1710 passed；benchmark-gate PASS（1.0000）；全量除 2 处预存在 `/tmp` 环境失败外全绿。

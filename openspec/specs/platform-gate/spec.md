@@ -9,7 +9,6 @@
 
 ### Requirement: 合入平台闸门
 
-
 `master` 分支的合入 SHALL 受平台闸门约束：CI required status checks 全绿（**唯一** required 为 witnessloop 的 `gate / check`，strict 模式）、PR conversations 全部 resolve 后才能合入。required approving reviews 当前 SHALL 为 0（单人仓暂缓 approve=1，GitHub 硬限制 PR 作者不能 approve 自己的 PR）；当仓库出现第二个有权限 reviewer（人或独立 bot 身份）时 SHALL 开启并文档化触发条件。
 
 > 「不再 required 的检查仍须运行」这条不变量**不写在本条**——它住在本文档的 `### Requirement: 降级为非必过的检查仍须运行`，避免同一条规范在两处各写一遍（那是未来的漂移点）。
@@ -34,7 +33,6 @@
 - **AND** 配置声明 SHALL 记录触发条件（出现第二个有权限 reviewer 时开启，改配置 + 重新 apply）
 
 ### Requirement: 平台配置即代码
-
 
 平台闸门的目标状态 SHALL 由 `scripts/platform-gate.json` 声明，并由 `scripts/platform_gate.py` 提供 `--apply`（幂等设置）与 `--verify`（漂移检测）两个命令。配置变更 SHALL 走 git PR 流程 review，不直接手工在 GitHub UI 修改。
 
@@ -61,7 +59,6 @@
 
 ### Requirement: 平台闸门复用 GitHub branch protection 语义
 
-
 平台闸门 SHALL 复用 GitHub branch protection REST API 语义（required_status_checks / required_conversation_resolution / required_pull_request_reviews / enforce_admins），并遵守「PR 作者不能 approve 自己的 PR」的平台限制，不得另起一套不兼容的合入门禁协议。
 
 #### Scenario: 平台配置走 PR review
@@ -73,7 +70,6 @@
 - **AND** `--apply` SHALL NOT 在同一 PR 合入**之前**执行——它是仓库级操作，会把该 PR 自身的 conversation resolution 闸门一并锁住
 
 ### Requirement: 降级为非必过的检查仍须运行
-
 
 当某个检查从 required 降级为非必过时，该检查 SHALL 继续运行，SHALL NOT 被停用、删除或削弱为不产出结论的形态。降级改变的是「它的结论会不会阻止合入」，SHALL NOT 改变「它会不会跑」。具体到本仓：`validate`（pytest + OpenSpec strict validate + artifact checker）、`benchmark-gate`（gate-smoke 基准回归）与 `windows-platform` 三个 job SHALL 继续由 `.github/workflows/ci.yml` 在每个 PR 上运行。理由：这些检查承载的项目规则（Reference Implementation Research、Impact Analysis、benchmark 回归、归档点完成度门、backlog 一致性、本仓形态的 review manifest 等）没有 witnessloop 侧的替代物——把它们关掉是门禁的**净损失**，而不是「切换门禁」。
 
