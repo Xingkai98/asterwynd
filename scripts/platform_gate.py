@@ -469,3 +469,8 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# 探针用注释（阶段 C 验收，PR 关闭即弃）：无行为影响，仅用于让 witnessloop 的
+# `require_change_for` 命中 `scripts/**`，从而观察「只有 gate / check 红、其余全绿」时
+# mergeStateStatus 是否确实被 gate / check 决定。
