@@ -16,6 +16,7 @@
    - `openspec/specs/platform-gate/spec.md:11` 与 `:13-17` 仍写 required = `validate` + `benchmark-gate`（含名为「benchmark-gate 为 required check」的 Scenario）；
    - `openspec/specs/dev-workflow-gate/spec.md:7` 的 Purpose 段把「阶段 A、只跑不拦、required 仍为两项」写成**现状**。
 3. **翻开关的代价已由 PR #311 自己证明**：该 PR 的 `gate / check` 判红 **2 项**（`scripts/platform-gate.json` 属于 `require_change_for` 但 diff 里没有 change 目录；`.witnessloop/init-manifest.json` 是受保护写入但没有解释事件）。**两条都属实**，当时**没有**为了让门变绿去放宽 `require_change_for` 或删 protected path——代价是「翻开关这件事本身没有 change 记录」。
+   > **出示该证据时要引 PR 的 head sha `18d5bfbf2aa16f1994b1fa2bb7de1f7b8bd42d20`，不是 merge sha。** 实测：在 head 上 `gate / check` 为 `failure` 且 `validate` / `benchmark-gate` / `windows-platform` 三项同时 `success`（这正是「照跑但不拦」的形态）；而在 merge commit `4b5cc7d1` 上 `gate / check` 这个 check-run **根本不存在**（只剩三个 success）。引错 sha 会把结论说反。
 
 ⇒ 结论：阶段 C 这件事**本身就该有一条 change 记录**。而这条 change 恰好是 `openspec/specs/**`（受保护路径，需 `current_spec_synced` 解释事件）同步的**合法载体**——把规格从「阶段 A 的过渡态」改写为「阶段 C 的实况」。
 
@@ -27,6 +28,8 @@
 4. **钉住「降级不是关闭」**：新增一条 Requirement，把 `.github/workflows/ci.yml` 的三个 job 继续运行、不得因不再 required 而被停用/删除写成规范约束。
 5. **簿记**：backlog 登记与结算、受保护写入的解释事件（`backlog_updated` / `current_spec_synced` / `change_archived`）。
 6. **顺手修掉上一轮留下的陈旧段落**：`docs/development-guide.md` 的 witnessloop 节里仍有一段「已知红（预期）…本 change 自己」的阶段 A 文案，且 `specs/dev-workflow-gate` 的同步要与之同向。
+7. **把「翻开关这一动作自身必须具备 change 记录」写成规范义务**（`design.md` Decision 9）：关闭某个阶段的动作本身 SHALL 由一条 OpenSpec change 承载并归档，且其 `proposal.md` SHALL 如实写明「行为已先落地、本 change 只做记录与规格对账」。这条约束**正是本 change 自己的形态**——翻开关之后任何触达受管路径的改动都必须挂 change，若翻开关自己的动作不挂，它就在用自己的豁免把新规则挡在门外。
+8. **补齐设计追问（grill）指出的文档影响面**：`README.md` / `README_EN.md` 的 CI 流水线图、`docs/interview-script/` 里被本次变更证伪的两处 CI 口径（Q12 的 job 数量与树图、Q13 的「自动拦截」）、`docs/openspec-change-backlog.md` 里阶段 C 仍是未来式的条目。
 
 ## 非目标
 
@@ -51,10 +54,15 @@
 ## Impact Analysis
 
 - **影响规格（生产面：本 change 的全部实质改动）**：
-  - `openspec/specs/platform-gate/spec.md`：Purpose 段的 required 列举；Requirement「合入平台闸门」的正文与首个 Scenario（`benchmark-gate 为 required check` → witnessloop `gate / check` 为唯一 required）；Requirement「平台闸门复用 GitHub branch protection 语义」的 Scenario「平台配置走 PR review」里对 CI 的列举；新增「降级为非必过的检查仍须运行」Requirement。
-  - `openspec/specs/dev-workflow-gate/spec.md`：Purpose 段（现状改写）与「阶段划分」段；Requirement「影子接入阶段不改变任何既有强制」**REMOVED**；新增阶段 C 的对应 Requirement。
+  - `openspec/specs/platform-gate/spec.md`：Purpose 段的 required 列举（**人手就地改写，无 delta 载体**——见 `design.md` Decision 10）；Requirement「合入平台闸门」的正文与首个 Scenario（`benchmark-gate 为 required check` → witnessloop `gate / check` 为唯一 required）；Requirement「平台闸门复用 GitHub branch protection 语义」的 Scenario「平台配置走 PR review」里对 CI 的列举；**新增**「降级为非必过的检查仍须运行」Requirement。
+  - `openspec/specs/dev-workflow-gate/spec.md`：Purpose 段（现状改写，**含一条死链修正**——它引用的 `openspec/changes/witnessloop-adoption/reviews/acceptance-stage-a.md` 已随归档移到 `archive/2026-10-13-witnessloop-adoption/` 之下）与「阶段划分」段，两者**均为人手就地改写**；Requirement「影子接入阶段不改变任何既有强制」**REMOVED**；Requirement「grill 报告正文判据的已知不兼容」**MODIFIED**（补记 v1.7.0 对 `## User Confirmation` 的**无条件存在性**判据，并订正原「结构性不可能判绿」的断语——阶段 B 实测 63 份归档中 39 份零 finding）；**新增**两条 Requirement（阶段 C 的 required 形态；翻开关这一动作自身必须具备 change 记录）。
 - **影响本 change 自身文档**：`openspec/changes/stage-c-required-switch/**`（proposal / design / tasks / specs deltas / reviews / workflow-events.jsonl）。
-- **影响文档**：`docs/openspec-change-backlog.md`（登记 + 结算，受保护路径，配 `backlog_updated` 解释事件）；`docs/development-guide.md`（witnessloop 节里阶段 A 遗留文案的订正）。
+- **影响文档**：
+  - `docs/openspec-change-backlog.md`（登记 + 结算，受保护路径，配 `backlog_updated` 解释事件；第十七批的阶段 C 条目由未来式改为已完成口径）。
+  - `docs/development-guide.md`（witnessloop 节里阶段 A 遗留的两条 bullet 的订正）。
+  - `README.md` + `README_EN.md`（「用 Agent 开发 Agent」的流水线图里「CI 门禁（… + benchmark-gate）」一行的口径；**两条必须同改**，见 AGENTS.md 的 README 同步规则）。
+  - `docs/interview-script/questions/Q12-ci-testing.md`（「CI 有两个 job」与实际三个 job 不符，且阶段 C 后三个都不拦合并；树图同）与 `docs/interview-script/questions/Q13-benchmark.md`（「benchmark-gate 接 CI…**自动拦截**」在阶段 C 之后不再成立）——两处均为本次变更**直接造成/直接证伪**的事实变化，就地订正。
+- **明确不影响的文档**：`docs/known-issues.md` / `docs/known-debt.md`（本次不新增债务条目——grill 发现的 D1–D8 全部在本 change 内就地处置，不转债务）。
 - **不影响**：`.github/workflows/ci.yml`、`.github/workflows/witnessloop.yml`、`.witnessloop/**`、`scripts/**`、`agent/**`、`web/**`、`benchmarks/**`、branch protection 实况（本 change 合入后**不需要**再 `--apply`——目标状态与实况都已一致）。
 - **行为变更（用户可见）**：**无**。本 change 只改规格文本与文档；`master` 的合入门禁形态在本 change 前后**逐字段一致**（`--verify` 已实测「全部一致」）。
 - **不新增外部依赖**。

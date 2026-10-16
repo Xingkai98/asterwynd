@@ -58,7 +58,7 @@
 
 ### Decision 3: `dev-workflow-gate` 的阶段 A 专属 Requirement 按 **REMOVED** 处置，另加阶段 C 条目
 
-**选择**：`### Requirement: 影子接入阶段不改变任何既有强制` 走 `## REMOVED Requirements`（带 Reason / Migration 两段）；新增 `### Requirement: 阶段 C 翻开关后的 required 形态`。
+**选择**：`### Requirement: 影子接入阶段不改变任何既有强制` 走 `## REMOVED Requirements`（带 Reason / Migration 两段）；新增**两条** `## ADDED Requirements`——`### Requirement: 阶段 C 翻开关后的 required 形态`（形态与证据次序）与 `### Requirement: 翻开关这一动作自身必须具备 change 记录`（见 Decision 9）。
 
 **理由**：那条 Requirement 的正文与三个 Scenario **全部是阶段 A 的过渡态约束**，其中第三条（「合入之后新 PR 会跑但不拦」）在阶段 C 之后**已被证伪**——`gate / check` 现在是 required，会拦。留着它就是让规格描述一个不存在的世界；就地改名会让 MODIFIED 的语义对不上（改的是 Requirement 的**主体**而不只是内容）。REMOVED 的先例见 `openspec/changes/archive/2026-09-22-retire-4phase-state-machine/specs/dev-workflow-state-machine/spec.md`。
 
@@ -66,7 +66,7 @@
 
 ### Decision 4: 「**降级不是关闭**」写成独立 Requirement，住在 `platform-gate`
 
-**选择**：新增 `### Requirement: 降级为非必过的检查仍须运行`（含「三个 job 照跑」「不得删除或停用」「不得以 `continue-on-error` 之类的开关制造假绿」三条约束与对应 Scenario），放进 `platform-gate` 规格。
+**选择**：新增 `### Requirement: 降级为非必过的检查仍须运行`（含「三个 job 照跑」「不得删除或停用」「不得以 `continue-on-error` 之类的开关制造假绿」三条约束与对应 Scenario），放进 `platform-gate` 规格。**同一条不变量 SHALL NOT 在 MODIFIED 的「合入平台闸门」条目里再写一遍**：MODIFIED 条目只保留 required 集合的断言（唯一 `gate / check`），「仍须运行」的规范性内容**全部**收进本条。理由（设计追问 D7 的实测结论）：两处并存时，未来改一处漏一处不会被任何门禁发现——那是白送的漂移点。
 
 **理由**：
 - 这是阶段 C **最容易被后人读反**的一条——看到 required 只剩一个，很自然会想「另外两个是不是可以删了」。issue #305 的排期 comment 已把这条区分写死（「『只开 witnessloop 必过』≠『把其他 CI 关掉』…直接关掉 = 门禁**净损失**，不是切换」），但**它此前只活在 issue 与 PR 描述里，不在规格里**。
@@ -90,6 +90,8 @@
 - **先内容、后证据**：witnessloop 的 stale 判定只豁免 `<changes_root>/*/reviews/**`、`<changes_root>/*/workflow-events.jsonl`、`.witnessloop/**`、`archive/**`；`docs/**` 与 `openspec/specs/**` **不在豁免内** ⇒ 删 backlog 条目与同步规格必须**排在证据产出之前**。
 - **归档后用归档目录名重绑**：阶段 B/C 实测，witnessloop 形态 manifest 里的 `change_id` 必须与 change 目录名一致；归档后目录名带 `YYYY-MM-DD-` 前缀 ⇒ 用 active 名字产的 manifest 会被判「`change_id` 与目录不符」。**在归档目录上用归档目录名重建**是已验证的解法。
 
+**补充约束（设计追问 RN1）：本 change 的 PR SHALL 用 `--merge` 合入，SHALL NOT squash。** witnessloop v1.7.0 的 `_check_git_span` 要求 manifest 的 `head_sha` 是「本次被检 head」的**祖先**；squash 会把 PR 的 head sha 从 `master` 历史里抹掉 ⇒ 日后任何触及该 change 目录的 PR 都会因此判红（阶段 A 已有一次实测先例）。前三个 PR（#308 / #309 / #311）都是 merge commit，但那是**惯例不是约束**——本 change 把它写成显式约束。
+
 ### Decision 7: **不为** PR #311 的第 2 条红补证据；本 change 只消掉第 1 条
 
 **选择**：本 change 建立自己的 change 目录（消掉「改了 `require_change_for` 却没挂 change」这条**同类**风险），但**不**为 `.witnessloop/init-manifest.json` 那次已合入的受保护写入补解释事件。
@@ -105,11 +107,48 @@
 
 **理由**：这两条是 PR #311 之前的阶段 A 文案，其中的「本 change 自己」指的是**已经归档的** `witnessloop-adoption`。它们描述的对象不存在了，属于**本 change 直接造成的事实变化**（AGENTS.md 的「文档影响检查」要求只更新当前变更造成的事实变化，历史口径问题另记债务）——阶段 C 翻开关正是让它们过期的原因。
 
+### Decision 9: 「翻开关这一动作自身必须具备 change 记录」写成一条规范义务
+
+**选择**：在 `dev-workflow-gate` 新增 `### Requirement: 翻开关这一动作自身必须具备 change 记录`（见 delta），要求关闭某个阶段的动作本身由一条 OpenSpec change 承载并归档，且该 change 的 `proposal.md` 必须**如实写明「行为已先落地、本 change 只做记录与规格对账」**。
+
+**理由**（设计追问 D3 的实测结论）：这条内容此前**只存在于 delta 文件里**，而 `proposal.md` 的「需求」、`design.md` 的 Decisions、`tasks.md` 的 1.2 三处**都没提它**——一条没有任何上游来源的规范内容，是审查上的黑洞。它的实质价值是真的：本 change 自己就是「先落地（PR #311）、后补记录」这个形态，而翻开关之后**任何**触达 `require_change_for` 的改动都必须挂 change——若翻开关自己的动作不挂 change，它就是在用自己的豁免把新规则挡在门外，并让「哪些检查被降级、每个还在不在跑」失去可追溯记录。
+**边界**：这条只约束「关闭阶段」这类动作的形式（必须有 change），SHALL NOT 被读成「行为落地必须先有 change」——它承认了「先落地后补记录」这个形态**存在且合法**，要求的是记录**必须补上**并如实注明次序。
+
+### Decision 10: Purpose / 「阶段划分」段由**人手就地改写**，不经 delta；并顺手修掉段内死链
+
+**选择**：两份规格的 `## Purpose` 段与 `dev-workflow-gate` 的「阶段划分」段，由同步步骤**直接改写当前规格文本**（不经 delta），改写前后的文本差异记入 `workflow-events.jsonl` 的 `current_spec_synced` 事件；同时把 `dev-workflow-gate` Purpose 段里那条**死链**改为归档路径。
+
+**理由**（设计追问 D4 的实测结论）：
+- OpenSpec 的 delta 只能表达 **Requirement** 的增删改；`## Purpose` 不是 Requirement，**没有 delta 载体**（实测：仓内 76 份归档 delta 中仅 1 份含 `## Purpose`）。而 `proposal.md` 与 `tasks.md` 都写了要改 Purpose 段 ⇒ 若不显式声明这条路径，执行者会以为 delta 已经覆盖它而漏掉。
+- 那条死链是实测事实：当前规格引用 `openspec/changes/witnessloop-adoption/reviews/acceptance-stage-a.md`，而该目录**已归档**到 `openspec/changes/archive/2026-10-13-witnessloop-adoption/`。它正好位于要改写的 Purpose 段内 ⇒ 顺手修正，不让"改写过的段落仍指向不存在的路径"。
+
+### Decision 11: grill 决策记录的**格式契约**按 v1.7.0 实测写死
+
+**选择**：grill 决策记录 SHALL 满足三条契约（`## Confirmed Decisions` 每条含**同行裸** `来源:`、`## User Confirmation` 小节**无条件存在**、候选 Open Questions 小节存在且其 `Q<n>` 均有非占位确认），并把这三条写进 `dev-workflow-gate` 的「grill 报告正文判据的已知不兼容」条目（该条走 MODIFIED）。
+
+**理由**（设计追问 D6 的实测结论，**本次新发现**）：v1.7.0 的 `grill_evidence_findings`（`src/witnessloop/evidence.py:295-297`）对 `## User Confirmation` 的判据是**无条件存在性**——`user_confirmation is None` 就报「缺少 `## User Confirmation` 小节」，**与有没有 Open Question 无关**。本仓此前只记录了 `_SOURCE_RE` 不认加粗 `来源:` 那一条 ⇒ 一份「一条 Open Question 都没有」的报告**仍然**会因为缺该小节判红。这条不补记，后续每个 change 都会重复踩。
+**同条目内的一处订正**：原条目写「本仓 grill 记录通篇使用加粗 ⇒ **grill stage 结构性不可能判绿**」，该断语已被阶段 B 的实测**证伪**（63 份归档 `grill-design.md` 中 **39 份**零 finding；用加粗写法的只有 3 份）。实测把它定性为**写法选择**（同行裸 `来源:` 命中，加粗不命中），因此 MODIFIED 条目把「结构性不可能」改为「格式决定」，并保留「改格式优先于改判据」的姿态。本 change 自己的 `grill-design.md` 就用同行裸写法，并用 v1.7.0 的 `grill_evidence_findings` 实测得 **0 findings**。
+
 ## Pre-Implementation Review
 
 > 本节由 grill 与设计阶段对抗闭环的结论回填。两份报告的原文见 `reviews/grill-design.md` 与 `reviews/grill-adversarial.md`。
 
-**独立设计追问（grill）**：由独立零记忆 subagent 对本文档逐项挑战，产出 `reviews/grill-design.md`。挑战面覆盖 `grill.md` 的 7 个维度，其中**第 7 条（触发与门禁：本 change 自身会不会死锁或误伤）**是本 change 的关键维度——它正好要回答「一条只改规格的 change，在 `gate / check` 已是 required 的前提下能不能判绿」。
+**独立设计追问（grill）**：由独立零记忆 subagent（paseo agent，未继承任何开发上下文）对本文档逐项挑战，产出 `reviews/grill-design.md`。挑战面覆盖 `grill.md` 的 7 个维度，其中**第 7 条（触发与门禁：本 change 自身会不会死锁或误伤）**是本 change 的关键维度——它正好要回答「一条只改规格的 change，在 `gate / check` 已是 required 的前提下能不能判绿」。
+
+**结论：8 个设计点必须改（D1–D8，全部已落实）、10 条已确认（带 `文件:行号` / 命令原始输出）、0 个需要用户拍板的问题。** 逐条处置：
+
+| # | grill 发现 | 处置 |
+|---|---|---|
+| D1 | `tasks.md` 把未做的任务标成 `[x]`（1.3/2.x/3.x/4.x/5.1/5.2/5.4/5.5）——提前勾 = 伪造归档点完成度门的唯一输入 | **已改回 `- [ ]`**，随落地逐条勾 |
+| D2 | proposal/design 把「规格同步」写成已完成的实质，但同步尚未发生 | 1.3 恢复未完成；delta 明确定位为**待施加的输入**，当前规格是**待改写的目标** |
+| D3 | delta 里第二条 ADDED Requirement 在三份上游文档里都没有来源 | 新增 **Decision 9** + proposal 需求 #7 |
+| D4 | Purpose / 阶段划分段**没有 delta 载体**，且段内有死链 | 新增 **Decision 10**（人手就地改写、差异记入事件）+ 修死链 |
+| D5 | Testing Strategy 五条命令里三条不可照抄执行（T2 base 未绑定、T4 裸 `python`、T5 未锚定 witnessloop revision） | 整表重写，补「前置」列与四处口径 |
+| D6 | **新发现**：v1.7.0 对 `## User Confirmation` 是**无条件存在性**判据，零 Open Question 也判红 | 新增 **Decision 11** + 写进规格的「grill 报告正文判据」条目；本 change 报告已补该节并实测 0 findings |
+| D7 | 同一条不变量在 MODIFIED 与 ADDED 两处各写一遍（漂移点） | MODIFIED 只留 required 集合断言，「仍须运行」全收进 ADDED（Decision 4 已注明） |
+| D8 | 文档影响面漏 4 处（README / README_EN / interview-script Q12·Q13 / backlog） | 全部纳入本 change；interview-script 的两处按「本变更直接造成的事实变化」就地订正 |
+
+**一处订正**（grill 复核 D6 时指出）：设计初稿在 Decision 11 里写「已补记进规格」时，规格尚未改到——该措辞已按如实口径改正（规格侧的补记由任务 1.3 落地，**当前尚未发生**）。
 
 **设计阶段对抗闭环**：grill 产出后、停轮前，按 issue #298 的口径再跑一个与 `/review-loop` **同构**（独立零记忆审阅者 → 对抗分析 → verdict → 修 → 再审直到收敛或轮数封顶）但**审设计而非代码**的闭环，产出 `reviews/grill-adversarial.md`。**能由代码/仓库事实判定的问题用证据（`文件:行号`）给出答案、移出停轮队列**。
 
@@ -126,18 +165,31 @@
 | R5 | **本 change 自己的 `gate / check` 判红**（重演 PR #311） | 本 change 建立 change 目录 + 三份 witnessloop manifest，且不触达 `require_change_for`。实测口径：本地 `witnessloop check` 与 CI 的 `gate / check` 都要绿，**不放宽任何判据** |
 | R6 | **`exempt` 档位被质疑为「省事」** | Decision 1 已如实标注它不是唯一解；交由设计阶段对抗闭环专门挑战，结论记入 `reviews/grill-adversarial.md` |
 | R7 | **本 change 合入后若再 `--apply`** | **不需要**：`scripts/platform-gate.json` 与实况本 change 前后逐字段一致（`--verify` 已实测 exit 0）。tasks 里显式写「不做 apply」，避免执行者条件反射地跑一遍 |
+| R8 | **证据带的 PR 被 squash 合入** ⇒ manifest 的 `head_sha` 不再是 `master` 的祖先，日后触及该 change 目录的 PR 全判红（阶段 A 实测先例） | Decision 6 的补充约束：**必须 `--merge`，SHALL NOT squash**；tasks 收尾节复述 |
+| R9 | **change 目录在验证前一直是 untracked**，误删/`git clean` 即全损 | 立项文档一落盘即提交（本 change 已做：`893e74b`）；所有验证性操作在提交之后跑 |
+| R10 | **T2/T3/T5 在「内容未提交」时假绿**，污染验收记录 | Testing Strategy 的「前置」列 + 留证据时同时留 `git status --porcelain` 与 `HEAD` |
+| R11 | **本地 witnessloop 与 CI 的版本不一致**（PATH 0.1.0 / 克隆 `v1` / CI `v1.7.0`），本地绿推不出 CI 绿 | T5 锚定 `/home/happy/wl170`（实测装的 `v1.7.0`）；证据里写明该版本 |
+| R12 | **本 change 自己的 `gate / check` 在提交前「通过 ✓」是假绿** | 见 R10；出口判据只在提交后取，且 CI 侧再核一次（tasks 4.3） |
+| R13 | **设计追问新发现的不兼容被遗漏**：v1.7.0 对 `## User Confirmation` 是**无条件存在性**判据，零 Open Question 也照判 | Decision 11：把三条格式契约写进规格，本 change 的 `grill-design.md` 已带该小节并用 v1.7.0 的 `grill_evidence_findings` 实测 **0 findings** |
 
 ## Testing Strategy
 
-本 change **无代码面**（Decision 5），验收由四条机械可复核的命令承担，全部要留原始输出：
+本 change **无代码面**（Decision 5），验收由五条机械可复核的命令承担，全部要留原始输出。**每条命令都是逐字可执行的**（设计追问 D5 修正了三条：T2 绑定了 base、T4 换掉本环境不存在的裸 `python`、T5 锚定了 witnessloop 的 revision）。
 
-| # | 命令 | 期望 |
-|---|---|---|
-| T1 | `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` | `N passed, 0 failed` |
-| T2 | `uv run python scripts/check_openspec_artifacts.py --base-ref <base> --require-base` | `OpenSpec artifact checks passed`（exit 0） |
-| T3 | `uv run python scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` | `OpenSpec artifact checks passed`（exit 0） |
-| T4 | `python scripts/platform_gate.py --verify` | `全部一致`（exit 0）——**证明本 change 没动平台实况** |
-| T5 | `witnessloop check --root . --base origin/master --head HEAD`（v1.7.0） | `check：通过 ✓`（0 项）——**本 change 的出口判据** |
+| # | 命令 | 期望 | 前置 |
+|---|---|---|---|
+| T1 | `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` | `N passed, 0 failed` | 无 |
+| T2 | `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` | `OpenSpec artifact checks passed`（exit 0） | **内容已提交** |
+| T3 | `uv run python scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` | `OpenSpec artifact checks passed`（exit 0） | **内容已提交** |
+| T4 | `uv run python scripts/platform_gate.py --verify` | `全部一致`（exit 0）——**证明本 change 没动平台实况** | 无 |
+| T5 | `/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD` | `check：通过 ✓`（0 项）——**本 change 的出口判据** | **内容已提交** |
+
+**四处口径必须写死，否则判据会被误读成「可验」**：
+
+- **T2 的 base 必须绑定 `origin/master`**。checker 的默认 base 是 `master`，而本 worktree 里本地 `master`（`3c7196b2`）≠ 上游（`4b5cc7d1`）⇒ 用默认值会去校验**另一个变更集**（实测 `git diff --name-only master --` 列出的是 PR #311 的整份 diff）。
+- **T4 用 `uv run python`，不用裸 `python`**。本环境没有 `python` 这个名字（`command not found`、exit 127）。`AGENTS.md` 与 `platform-gate.json` 的 `_description` 里的裸 `python` 属仓内既有风格，但**验收判据必须可跑**。
+- **T2 / T3 / T5 只对「已提交」的内容有效**：三者都基于 `git diff`，而 **untracked 文件不进 `git diff`**。实测反例：内容提交**前**跑 T5 报「0 个变更文件，0 个 change 目录 / 通过 ✓」——**假绿**；提交后同一命令报「6 个变更文件，1 个 change 目录 / 未通过 ✗（1 项）：缺少 review manifest」。⇒ 留证据时必须同时留 `git status --porcelain` 与 `HEAD` sha，**SHALL NOT** 把提交前的绿写进验收记录。
+- **T5 必须锚定 witnessloop 的 revision**：PATH 上那份是 0.1.0、`/home/happy/witnessloop` 克隆检出在 tag `v1`（`ae99256`），**两者都不是 CI 实际用的 `v1.7.0`**（`00192ab`）。本 change 用装在 `/home/happy/wl170` 的 v1.7.0 环境跑 T5（`uv pip install "git+…@v1.7.0"` 建的一次性 venv），证据里写明该路径与版本。`.dev/reference-repos.txt` 在本 worktree 不存在（该文件 gitignore、属本地配置），故 T5 的入口**不依赖它**。
 
 **内容真实性**（T1–T3 管不到的那一半）：规格里每一条涉及 required 集合、job 是否运行、`--apply` 是否已执行的断言，都要能与 T4 的输出、以及 `gh api repos/Xingkai98/asterwynd/branches/master/protection` 的原始 JSON 逐字对上。审阅者按 `文件:行号` 抽查。
 

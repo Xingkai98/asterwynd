@@ -8,6 +8,26 @@
 
 **Migration**: ③ 「新增 job 不进 required」→ 由 `platform-gate` 规格的 `### Requirement: 合入平台闸门`（唯一 required = `gate / check`）与本 delta 的新增条目共同承载；② 「既有 in-flight PR 不受影响」→ 无迁移（该过渡态一次性，已随阶段 A 合入结束）；① 关于 `ci.yml` 逐字节不变的约束 → 由本 delta 新增条目的「三个 job 照跑、不得删除」承接（语义更强：不只是「阶段 A 期间不变」，而是「降级之后仍须运行」）。
 
+## MODIFIED Requirements
+
+### Requirement: grill 报告正文判据的已知不兼容
+
+接入 witnessloop SHALL 把「grill 决策记录的**格式**决定它能不能判绿」记为已知前置依赖，并 SHALL NOT 把它写成结构性阻塞。判据的**逐条契约**（witnessloop v1.7.0 实测）SHALL 为：① `## Confirmed Decisions` 每条决策块内 SHALL 含 `来源:`（`_SOURCE_RE = 来源\s*[:：]`）——**同行裸写法 `来源: x` 命中，加粗的 `- **来源**: x` 不命中**，故这是**写法选择**而非结构性不兼容（阶段 B 实测：63 份归档 `grill-design.md` 中 39 份零 finding）；② `## User Confirmation` 小节 SHALL **无条件存在**，与「有没有 Open Question」无关（`user_confirmation is None` 即判「缺少 `## User Confirmation` 小节」）；③ 候选 Open Questions 小节 SHALL 存在，且其中出现的每个 `Q<n>` SHALL 在 `## User Confirmation` 里有非占位确认。该组判据 SHALL NOT 成为放宽本仓或 witnessloop 任何判据的理由；改记录格式 SHALL 优先于改判据。
+
+#### Scenario: 三条判据逐条可复核
+
+- **WHEN** 核对一份本仓 grill 决策记录与 witnessloop v1.7.0 的正文判据
+- **THEN** 决策块的 `来源:` 写法 SHALL 决定该条是否命中（加粗写法判红、同行裸写法判绿）
+- **AND** 即使**一条 Open Question 都没有**，缺 `## User Confirmation` 小节 SHALL 照样判红
+- **AND** 候选 Open Questions 小节缺失 SHALL 判红（含近义标题的诊断）
+
+#### Scenario: 处置为「改记录格式」，不是改判据
+
+- **WHEN** 决定怎么消除该组红
+- **THEN** 处置 SHALL 为「按上述三条契约**写** grill 决策记录」——本仓模板与 `/grill` 的产出格式随之对齐
+- **AND** SHALL NOT 通过放宽 witnessloop 的判据、或回填历史归档来消除它
+- **AND** 该组红 SHALL NOT 被列为**阶段 A 的已知红**——阶段 A 默认一份 witnessloop 形态 manifest 都不落 ⇒ 正文判据**不会被触发**，先报的是「无 stage=grill 的 manifest」
+
 ## ADDED Requirements
 
 ### Requirement: 阶段 C 翻开关后的 required 形态

@@ -8,11 +8,12 @@
 
 ## 0. 设计追问与对抗收敛（前置门，不完成不开工）
 
-- [ ] 0.1 用 `grilling` skill（独立零记忆 subagent）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条，每条含**决策 / 理由 / 来源**三字段）。
-- [ ] 0.2 逐项核对 grill 的 7 个维度，**重点是第 7 条（触发与门禁）**：本 change 自身的写操作会不会被 witnessloop 的 `building` / 受保护写入门禁拦下（它只改 `openspec/**` 与 `docs/**`，不触达 `require_change_for`）；以及它建立 change 目录后能否让 `gate / check` 判绿。
+- [x] 0.1 用 `grilling` skill（独立零记忆 subagent）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条，每条含**决策 / 理由 / 来源**三字段）。
+- [x] 0.2 逐项核对 grill 的 7 个维度，**重点是第 7 条（触发与门禁）**：本 change 自身的写操作会不会被 witnessloop 的 `building` / 受保护写入门禁拦下（它只改 `openspec/**` 与 `docs/**`，不触达 `require_change_for`）；以及它建立 change 目录后能否让 `gate / check` 判绿。
 - [ ] 0.3 跑**设计阶段对抗闭环**（与 `/review-loop` 同构但审设计而非代码）→ `reviews/grill-adversarial.md`；对 Decision 1（`process` + `exempt` 的档位选择）与 Decision 3（REMOVED 的爆炸半径）做专门挑战，能由仓库事实判定的当场判掉、移出停轮队列。
 - [ ] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question。若无 ⇒ 直接进入实现；若有 ⇒ **停下来报告**，不开 PR。
 - [ ] 0.5 把 grill 与对抗闭环的结论回填 `design.md` 的 `## Pre-Implementation Review`。
+- [x] 0.6 **grill 记录的格式契约**（`design.md` Decision 11，v1.7.0 实测）：`reviews/grill-design.md` SHALL 含 `## Confirmed Decisions`（每条决策块内有**同行裸** `来源:`）、`## User Confirmation`（**无条件存在**，零 Open Question 也要有）、以及与逐字标题一致的 Open Questions 小节。用 v1.7.0 的 `grill_evidence_findings` 实测应为 **0 findings**。
 
 ## 1. 规格同步（本 change 的实质改动）
 
@@ -20,6 +21,9 @@
 - [ ] 1.2 `openspec/changes/stage-c-required-switch/specs/dev-workflow-gate/spec.md`：写 delta——`## REMOVED Requirements` 登记 `### Requirement: 影子接入阶段不改变任何既有强制`（带 Reason / Migration）；`## ADDED Requirements` 增 `### Requirement: 阶段 C 翻开关后的 required 形态`。
 - [ ] 1.3 **把 change 的 spec delta 同步进当前规格**：`openspec/specs/platform-gate/spec.md` 与 `openspec/specs/dev-workflow-gate/spec.md` 就地覆盖（Purpose 段一并按阶段 C 实况改写）。同步后核对：Requirement 条数前后计数如实记入 `workflow-events.jsonl` 的 `current_spec_synced` 事件；**`dev-workflow-gate` 的其余 10 条 Requirement 逐条保留**（Decision 3 的爆炸半径约束）。
 - [ ] 1.4 `docs/development-guide.md`：订正 witnessloop 节里阶段 A 遗留的两条 bullet（「已知红…② 本 change 自己」与「`reviews/` 的一致状态…2 条拉到 14/16 条」），使它们指向已归档的 `witnessloop-adoption` 而不是一个不存在的「本 change」。
+- [ ] 1.5 **Purpose / 「阶段划分」段的人手就地改写**（`design.md` Decision 10）：两份规格的 `## Purpose` 段与 `dev-workflow-gate` 的「阶段划分」段按阶段 C 实况改写；**顺带修掉 `openspec/specs/dev-workflow-gate/spec.md` Purpose 段内的死链**（`openspec/changes/witnessloop-adoption/reviews/acceptance-stage-a.md` → 归档路径）。改写前后的差异记入 `current_spec_synced` 事件（该段**无 delta 载体**，只能就地改）。
+- [ ] 1.6 `README.md` + `README_EN.md`：「用 Agent 开发 Agent」流水线图里「CI 门禁（… + benchmark-gate）」一行改为反映阶段 C 的实况（required 只有 `gate / check`，其余照跑不拦）。**两条必须同改**（AGENTS.md 的 README 同步规则）。
+- [ ] 1.7 `docs/interview-script/questions/Q12-ci-testing.md`（job 数量与树图）与 `Q13-benchmark.md`（「自动拦截」）按阶段 C 实况订正——这两处是本次变更**直接造成/直接证伪**的事实变化。
 
 ## 2. 验证（判据见 `design.md` 的 Testing Strategy）
 
