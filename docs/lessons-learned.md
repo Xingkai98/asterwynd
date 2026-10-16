@@ -67,3 +67,9 @@ DeepSeek 思考模式可能返回 `reasoning_content`，后续请求需要原样
 曾经的问题：`MemoryManager.compact_if_needed()` 统计自己的 `self.messages`，但 AgentLoop 使用独立的 messages 列表，导致 token compaction 从不触发。
 
 教训：插件如果管理内部状态，必须确认 AgentLoop 实际使用的数据源与插件操作的数据源一致。
+
+## 钉住 workflow 文件 ≠ 钉住 workflow 跑的包
+
+曾经的问题：接入方把 caller 的 `uses:` 钉到 `gate.yml@v1`，以为「版本钉住了」。实际上 reusable workflow 的**包版本**另有一个入口（`inputs.witnessloop-ref`，默认值 `"v1"`），`--gate-ref` 只影响 workflow 文件那一行 ⇒ 上游发了新 tag、修了 bug，接入方 `init` 一遍**也不会**改变包版本，而工具**不报任何版本不匹配**。后果是「上游已经修好的缺口，在接入方眼里还是红的」。
+
+教训：一个「钉版本」的入口如果只覆盖了一半的版本面，它就是**静默错版**的温床。要么让一个入口同时决定两处（witnessloop v1.7.0 改为取 `job.workflow_sha`），要么让组件自报它**实际运行的** revision（`check` 现在会打 `本包来源（自报）：requested_revision=… commit_id=…`）——「我以为跑的是哪版」必须能被日志证伪。
