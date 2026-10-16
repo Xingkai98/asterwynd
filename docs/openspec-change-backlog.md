@@ -112,12 +112,23 @@
 
 - **阶段 A（已归档 2026-10-13）**：`witnessloop-adoption`（issue [#305](https://github.com/Xingkai98/asterwynd/issues/305)）——影子接入，只跑不拦。**七条 Open Question 已由用户于 2026-10-13 停轮拍板、全部按推荐值裁定**（生效口径见该 change 的 `design.md` 的 `## User Rulings`（U1–U7），答复记录见 `reviews/grill-design.md` 的 `## User Confirmation`）⇒ 前置门**全部已过**：0.4「设计阶段审阅闭环」已由独立对抗轮判 **PASS**（最终版 `reviews/grill-adversarial.md`；R1 的 `grill-adversarial-v1.md` 保留为证伪过程记录）。**阶段 A 的实现已落地**——4 个接入产物（`.witnessloop/policy.json` / `.witnessloop/init-manifest.json` / `.github/workflows/witnessloop.yml` / `.github/witnessloop-tests.txt`）+ `gate / check` 只跑不拦，`.github/workflows/ci.yml` 逐字节未变（sha256 前后一致），**已实现并归档到 `openspec/changes/archive/2026-10-13-witnessloop-adoption/`**；该 change 的 tasks 里阶段 B/C 标 `(post-merge)`，由 issue #305 继续跟踪。
 - **阶段 B**：用真实小需求在新流程上跑一遍验证——**载体是 `guard-write-allowlist`**（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)），它的 tasks 第 6 节逐条承接了归档 change 的 B.1–B.8。选它当「真实小需求」的理由：它**触达 `require_change_for`**（改 `agent/**` / `web/**` ⇒ `code_hits` 非空 ⇒ `building` 与 `grill-adversarial` 两条 stage 判定真的会触发，与阶段 A 自己 `code_hits` 为空形成对照），且**产生 spec delta 与受保护写入**。**阶段 B 已完成**：观测报告见该 change 根目录的 `stage-b-observations.md`（三态探针 2→4→`通过 ✓`；已知红按「工具不兼容 / 配置问题」分类；`值不值得真打开` 的结论是倾向打开但须先修 `events_file` 只扫一级这条工具缺口）。
-- **阶段 C**：合入 + 勾 required + `AGENTS.md` 流程段改写——**另立 change/PR**，是单向不可逆动作，必须在 A/B 验收之后。
-- **后续批次（未立项）**：逐项下掉与 witnessloop 重合的旧件、清理退役状态机残留（`handoff.json`）、归档与 backlog 口径定案。
+- **阶段 C（已翻开关 2026-10-17）**：`stage-c-required-switch`（issue [#305](https://github.com/Xingkai98/asterwynd/issues/305)）——**翻开关**：`master` 的 required 由 `["validate","benchmark-gate"]` 改为**唯一**的 `gate / check`；本仓自建的 `validate` / `benchmark-gate` / `windows-platform` **继续照跑、只是不再拦合并**（降级不是关闭）。**行为本体已由 PR [#311](https://github.com/Xingkai98/asterwynd/pull/311)（merge `4b5cc7d1`）先行落地并 `--apply`**（`platform_gate.py --verify` 全一致），本 change 承载**记录与规格对账**（把 `openspec/specs/platform-gate` 与 `dev-workflow-gate` 同步到实况）。翻开关的**代价**已实测并记录：改动 `agent/**`/`scripts/**`/`web/**` 的 PR 现在必须挂 change 目录才可能绿（PR #311 自己因此判红 2 项，两条都属实、未放宽判据）。
+- **后续批次（未立项）**：逐项下掉与 witnessloop 重合的旧件（原 C.2，**必须等 witnessloop 侧证据齐**，不是勾完 required 就下）、清理退役状态机残留（`handoff.json`）、manifest schema 统一（N.4）、归档与 backlog 口径定案。
+- **已知未收尾**：active change `add-minimal-tui-runtime-view` 无 `reviews/` ⇒ `gate / check` 对它的报错**现在会拦合入**（阶段 C 之前只是日志红）。解除阻塞的前提是收尾它，**不是**为它放宽判据。
 
 依赖关系：阶段 A 与任何改动 `scripts/`、`agent/workflow/`、`.github/workflows/ci.yml` 的 change **互斥**（阶段 A 明确一行不改这些文件），因此本批应与它们错开合入。
 
 ## 未实现队列
+
+### 4. `stage-c-required-switch`
+
+状态：实现中（记录 + 规格对账）。
+
+批次：第十七批（开发流程工具化 / witnessloop 接入）的**阶段 C**。
+
+关联 issue：[#305](https://github.com/Xingkai98/asterwynd/issues/305)。
+
+范围：为阶段 C 翻开关补一条正式 change 记录，并把 `openspec/specs/platform-gate/spec.md` 与 `openspec/specs/dev-workflow-gate/spec.md` 同步到实况（required 只剩 `gate / check`；三个本仓 job 照跑不拦；新增「降级为非必过的检查仍须运行」与「翻开关这一动作自身必须具备 change 记录」两条规范）。**不写代码**：diff 只落 `openspec/**` 与 `docs/**`。**行为本体已由 PR #311 先行落地**（本 change 只做记录与对账，proposal 里如实注明该次序）。research_tier = light。
 
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 
