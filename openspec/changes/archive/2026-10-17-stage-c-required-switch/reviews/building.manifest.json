@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "2026-10-17-stage-c-required-switch",
+  "stage": "building",
+  "reviewer_run_id": "paseo-building-review-stage-c-required-switch-r3",
+  "author_run_id": "building-author-2026-10-17-stage-c-required-switch-34662130c48f",
+  "base_sha": "4b5cc7d1a49d06caa94fe2c35aae2ccfce778e23",
+  "head_sha": "34662130c48f567499a0dd3554b7adb79d5fb088",
+  "tasks_hash": "e53f497bbc54d09623da223242f89e528cf1c57647e5eea813aeeb025e2445ea",
+  "spec_hash": "1d6842b8422db665f6b4a2e1e9480a9eaea799409153434f7a97b895dd0fe9ad",
+  "diff_hash": "50dcdfd248978608ebfbaba1e3b8a2dbf5b8e4facf7d6279209548af9b2a34e1",
+  "report_hash": "0bcc84def0d382ac21129b370f91dd364eb14892189fad2e6f3f318f8f64be5f",
+  "report_path": "reviews/building-review.md"
+}
