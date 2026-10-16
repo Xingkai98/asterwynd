@@ -10,9 +10,9 @@
 
 - [x] 0.1 用 `grilling` skill（独立零记忆 subagent）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条，每条含**决策 / 理由 / 来源**三字段）。
 - [x] 0.2 逐项核对 grill 的 7 个维度，**重点是第 7 条（触发与门禁）**：本 change 自身的写操作会不会被 witnessloop 的 `building` / 受保护写入门禁拦下（它只改 `openspec/**` 与 `docs/**`，不触达 `require_change_for`）；以及它建立 change 目录后能否让 `gate / check` 判绿。
-- [ ] 0.3 跑**设计阶段对抗闭环**（与 `/review-loop` 同构但审设计而非代码）→ `reviews/grill-adversarial.md`；对 Decision 1（`process` + `exempt` 的档位选择）与 Decision 3（REMOVED 的爆炸半径）做专门挑战，能由仓库事实判定的当场判掉、移出停轮队列。
-- [ ] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question。若无 ⇒ 直接进入实现；若有 ⇒ **停下来报告**，不开 PR。
-- [ ] 0.5 把 grill 与对抗闭环的结论回填 `design.md` 的 `## Pre-Implementation Review`。
+- [x] 0.3 跑**设计阶段对抗闭环**（与 `/review-loop` 同构但审设计而非代码）→ `reviews/grill-adversarial.md`；对 Decision 1（`process` 的档位选择——**初稿是 `exempt`，对抗轮 I-6 后已改 `light`**）与 Decision 3（REMOVED 的爆炸半径）做专门挑战，能由仓库事实判定的当场判掉、移出停轮队列。
+- [x] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question。若无 ⇒ 直接进入实现；若有 ⇒ **停下来报告**，不开 PR。
+- [x] 0.5 把 grill 与对抗闭环的结论回填 `design.md` 的 `## Pre-Implementation Review`。
 - [x] 0.6 **grill 记录的格式契约**（`design.md` Decision 11，v1.7.0 实测）：`reviews/grill-design.md` SHALL 含 `## Confirmed Decisions`（每条决策块内有**同行裸** `来源:`）、`## User Confirmation`（**无条件存在**，零 Open Question 也要有）、以及与逐字标题一致的 Open Questions 小节。用 v1.7.0 的 `grill_evidence_findings` 实测应为 **0 findings**。
 
 ## 1. 规格同步（本 change 的实质改动）

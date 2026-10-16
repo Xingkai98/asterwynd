@@ -52,12 +52,14 @@
 
 ### Requirement: 阶段 C 翻开关后的 required 形态
 
-接入 witnessloop 的三个阶段（A 影子接入 / B 真实小需求验证 / C 真打开）SHALL 以阶段 C 的形态为**当前**形态：`master` 的 required status checks SHALL 为**唯一**的 `gate / check`，本仓自建的 `validate` / `benchmark-gate` / `windows-platform` SHALL 继续照跑但不拦合并。caller workflow SHALL 钉住 witnessloop 的**具体发版 ref**（当前 `v1.7.0`），且 SHALL NOT 依赖 `with: witnessloop-ref:` 另行钉包版本——包 ref 由被复用的 `gate.yml` 自身的 commit 决定。
+接入 witnessloop 的三个阶段（A 影子接入 / B 真实小需求验证 / C 真打开）SHALL 以阶段 C 的形态为**当前**形态。caller workflow SHALL 钉住 witnessloop 的**具体发版 ref**（当前 `v1.7.0`），且 SHALL NOT 依赖 `with: witnessloop-ref:` 另行钉包版本——包 ref 由被复用的 `gate.yml` 自身的 commit 决定。
+
+> **required 集合与其「降级不关闭」不变量不在本规格重复**：`master` 的 required 是哪些、以及「降级为非必过的检查仍须运行」这条约束，SHALL 由 `platform-gate` 能力域规定（该能力域是本仓平台面的唯一规格源）。本规格只规定**接入形态**本身（caller 怎么钉、受管路径的后果、证据如何并存）。**理由**：同一条规范写两处是未来的漂移点——改一处漏一处不会被任何门禁发现。
 
 #### Scenario: required 只剩 witnessloop 的 gate / check
 
 - **WHEN** 查看阶段 C 之后 `master` 的分支保护配置
-- **THEN** `required_status_checks.contexts` SHALL 为 `["gate / check"]`
+- **THEN** `required_status_checks.contexts` SHALL 为 `["gate / check"]`（该取值与其不变量由 `platform-gate` 能力域规定，本规格只断言阶段 C 之后的形态）
 - **AND** 本仓自建门禁 SHALL 全部退出 required（降级，不是关闭）
 
 #### Scenario: caller 钉住的 ref 同时决定包版本
