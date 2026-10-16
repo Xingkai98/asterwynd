@@ -4,10 +4,9 @@
   "required_status_checks": {
     "strict": true,
     "contexts": [
-      "validate",
-      "benchmark-gate"
+      "gate / check"
     ],
-    "_description": "合入门禁：CI required status checks 必须全绿（strict 模式，分支合入前与上游同步）才能合入。validate = pytest + openspec validate + artifact checker；benchmark-gate = gate-smoke 基准回归。两个 check 由 .github/workflows/ci.yml 在每个 PR 上运行。"
+    "_description": "合入门禁：CI required status checks 必须全绿（strict 模式，分支合入前与上游同步）才能合入。唯一 required 是 witnessloop 的 `gate / check`（阶段 C 翻开关，issue #305）。本仓自建的 `validate` = pytest + openspec validate + artifact checker、`benchmark-gate` = gate-smoke 基准回归、`windows-platform` 三个 job 仍由 .github/workflows/ci.yml 在每个 PR 上照跑，只是不再拦合并——降级而非关闭。"
   },
   "required_conversation_resolution": {
     "enabled": true,
