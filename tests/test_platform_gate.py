@@ -35,7 +35,8 @@ def _cp(code: int, out: str, err: str) -> SimpleNamespace:
 
 
 def _old_get() -> dict:
-    """当前实况（apply 前）：benchmark-gate 未进 required、conversation 未开启。"""
+    """**构造的漂移态**（mock，不代表任何时点的真实 GitHub 实况）：
+    required 只有 `validate`、conversation 未开启 ⇒ 与目标声明逐字段不同。"""
     return {
         "url": "https://api.github.com/repos/Xingkai98/asterwynd/branches/master/protection",
         "required_status_checks": {
@@ -64,10 +65,9 @@ def _new_get() -> dict:
         "url": "https://api.github.com/repos/Xingkai98/asterwynd/branches/master/protection",
         "required_status_checks": {
             "strict": True,
-            "contexts": ["validate", "benchmark-gate"],
+            "contexts": ["gate / check"],
             "checks": [
-                {"context": "validate", "app_id": 15368},
-                {"context": "benchmark-gate", "app_id": 15368},
+                {"context": "gate / check", "app_id": 15368},
             ],
             "contexts_url": "https://api.github.com/repos/Xingkai98/asterwynd/branches/master/required_status_checks/contexts",
         },
@@ -148,7 +148,7 @@ def test_apply_constructs_put_payload_with_all_required_fields(capsys):
     # required_status_checks：strict + contexts，无派生 checks/contexts_url
     assert payload["required_status_checks"] == {
         "strict": True,
-        "contexts": ["validate", "benchmark-gate"],
+        "contexts": ["gate / check"],
     }
     # reviews：保留 GET 可写子字段，仅覆盖 count
     reviews = payload["required_pull_request_reviews"]
@@ -184,7 +184,7 @@ def test_apply_idempotent_same_payload_twice(capsys):
     out = json.loads(capsys.readouterr().out)
     assert all(entry["match"] for entry in out["diff"].values())
     # 构造出的 payload == 目标状态（transform 后）
-    assert payload["required_status_checks"]["contexts"] == ["validate", "benchmark-gate"]
+    assert payload["required_status_checks"]["contexts"] == ["gate / check"]
     assert payload["required_conversation_resolution"] is True
 
 
@@ -268,8 +268,9 @@ def test_verify_drift_exit_1(capsys):
 def test_verify_ignores_readonly_derived_fields(capsys):
     """GET 含 checks/url/contexts_url 等只读派生字段 → 白名单比对忽略，不误报漂移。"""
     get_obj = _new_get()
+    # 派生字段里刻意混进一条**陈旧**的 context：它不在声明里，但只读派生字段本就被忽略。
     get_obj["required_status_checks"]["checks"] = [
-        {"context": "validate", "app_id": 15368},
+        {"context": "gate / check", "app_id": 15368},
         {"context": "benchmark-gate", "app_id": 15368},
     ]
     fake = _fake_run(get_obj)
@@ -277,12 +278,32 @@ def test_verify_ignores_readonly_derived_fields(capsys):
     assert code == 0
 
 
-def test_verify_contexts_order_insensitive(capsys):
-    """contexts 按排序集合比对（顺序无关）。"""
+def test_verify_contexts_order_insensitive(tmp_path, capsys):
+    """contexts 按排序集合比对（顺序无关）。
+
+    用**临时 config**（两个 context）而非仓内目标：仓内目标现在只有 `gate / check`
+    一项，单元素列表测不出「顺序无关」。
+    """
+    config = tmp_path / "two-contexts.json"
+    config.write_text(
+        json.dumps(
+            {
+                "required_status_checks": {"strict": True, "contexts": ["alpha", "beta"]},
+                "required_conversation_resolution": {"enabled": True},
+                "required_pull_request_reviews": {"required_approving_review_count": 0},
+                "enforce_admins": {"enabled": True},
+            }
+        ),
+        encoding="utf-8",
+    )
     get_obj = _new_get()
-    get_obj["required_status_checks"]["contexts"] = ["benchmark-gate", "validate"]
+    get_obj["required_status_checks"]["contexts"] = ["beta", "alpha"]
+    get_obj["required_status_checks"]["checks"] = [
+        {"context": "beta", "app_id": 15368},
+        {"context": "alpha", "app_id": 15368},
+    ]
     fake = _fake_run(get_obj)
-    code = _run_cli(["--verify", "--repo", REPO], fake, capsys)
+    code = _run_cli(["--verify", "--repo", REPO, "--config", str(config)], fake, capsys)
     assert code == 0
 
 
@@ -375,7 +396,7 @@ def test_real_config_schema_valid():
     """checked-in scripts/platform-gate.json 满足脚本期望结构。"""
     target = _load_real_target()
     assert target["required_status_checks"]["strict"] is True
-    assert target["required_status_checks"]["contexts"] == ["validate", "benchmark-gate"]
+    assert target["required_status_checks"]["contexts"] == ["gate / check"]
     assert target["required_conversation_resolution"]["enabled"] is True
     assert target["required_pull_request_reviews"]["required_approving_review_count"] == 0
     assert target["enforce_admins"]["enabled"] is True

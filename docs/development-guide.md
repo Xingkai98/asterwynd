@@ -340,14 +340,16 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
 - **tier 与 status 不一致**：`exempt` + `status: enabled`（声言豁免却完成了调研）→ 完成时被「exempt 必须 disabled」拦下；正确做法是**如实改 tier 为 light/full + status: enabled**。
 - **full/light 完成时仍 disabled**：proposal 阶段允许 full/light + disabled 在途（只查结构），但 tasks 全勾时必调研档必须已完成调研 → 完成时改 `status: enabled`。
 
-## witnessloop 影子接入（阶段 A：只跑不拦）
+## witnessloop 接入（阶段 A 影子 → 阶段 C 已翻开关）
 
-本仓已接入上游工具 **witnessloop**（流程门禁工具化抽取的独立仓）做**影子接入**：门禁产物已落进仓库，但**只跑不拦**。change 与设计见 `openspec/changes/witnessloop-adoption/`，阶段 A 验收报告见该 change 的 `reviews/acceptance-stage-a.md`。
+本仓已接入上游工具 **witnessloop**（流程门禁工具化抽取的独立仓）。change 与设计见 `openspec/changes/archive/2026-10-13-witnessloop-adoption/`，阶段 A 验收报告见该 change 的 `reviews/acceptance-stage-a.md`。
 
-### 现状（阶段 A）
+### 现状（阶段 C：`gate / check` 是唯一 required）
 
 - **产物 4 个**：`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller）、`.github/witnessloop-tests.txt`（测试执行点 = `uv run --extra dev pytest -q`）。`.github/workflows/ci.yml` **未被触碰**。
-- **`gate / check` 不在 required 里**：`master` 的 required 仍是 `["validate", "benchmark-gate"]`。⇒ 它红不挡合入；**不要**把它的绿当成「证据已齐」。
+- **required 只有 `gate / check`**（阶段 C 翻开关，issue #305，2026-10-17）：`master` 的 `required_status_checks.contexts` = `["gate / check"]`。本仓自建的 `validate` / `benchmark-gate` / `windows-platform` **照跑、只是不再拦合并**。
+- **降级代价（须知）**：只由本仓 checker 承载的 RIR / Impact Analysis / benchmark smoke / 归档点完成度 / backlog 一致性 / 项目自己的 review manifest **不再拦合并**。逐条分叉清单见 issue #305 的阶段 C 前置 comment。⇒ **不要把「CI 绿」读成「项目规则已满足」**。
+- **caller 钉 `@v1.7.0`**：包版本由 reusable workflow 自己的 `job.workflow_sha` 推导（witnessloop issue #30 的修复），**不需要** `with: witnessloop-ref:`；升级 = `witnessloop init --gate-ref <新 ref>`（幂等，重写 caller + 同步台账）。
 - **旧门禁一行未动**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部照旧。
 - **已知红（预期，不放宽判据）**：① active change `add-minimal-tui-runtime-view`（无 `reviews/`）；② 本 change 自己（缺 witnessloop 形态 manifest）。两条都属「**缺 manifest**」这一类，不是配置错误。
 - **`reviews/` 的一致状态**：要么每份报告都有 witnessloop 形态 manifest，要么**一份都没有**。**默认选后者**——落任意一份会激活孤儿规则，把本 change 自己的红从 2 条拉到 14/16 条。
