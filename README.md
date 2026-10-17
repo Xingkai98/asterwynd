@@ -261,7 +261,7 @@ agent/
 │   ├── manager.py           # 子会话 runtime（并发 / 深度 / 预算护栏）
 │   ├── bus.py               # 轻量消息总线（非权威）
 │   └── snapshot.py          # 快照与恢复
-├── workflow/                # 开发流程状态机 + 事件日志 + review manifest
+├── workflow/                # 开发流程状态机 + 事件日志 + 受保护写通道
 └── skills/ planning/ mcp/ browser/ code_intelligence/ lsp/  # 支撑能力
 
 web/                         # FastAPI + WebSocket（Chat / Debug / Workflow 视图）

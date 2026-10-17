@@ -261,7 +261,7 @@ agent/
 │   ├── manager.py           # Sub-session runtime (concurrency / depth / budget guardrails)
 │   ├── bus.py               # Lightweight message bus (non-authoritative)
 │   └── snapshot.py          # Snapshot and recovery
-├── workflow/                # Dev-workflow state machine + event log + review manifest
+├── workflow/                # Dev-workflow state machine + event log + protected write channel
 └── skills/ planning/ mcp/ browser/ code_intelligence/ lsp/  # Supporting capabilities
 
 web/                         # FastAPI + WebSocket (Chat / Debug / Workflow views)

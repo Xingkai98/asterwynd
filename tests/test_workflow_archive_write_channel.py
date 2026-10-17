@@ -1,7 +1,10 @@
 """fix-issue-232（盲区 A）：受保护写通道支持已归档 change 的回归测试。
 
 #199 收口了写通道的**前置条件**，但没管**目标解析**：归档 change 跑
-`artifact-event` / `review-manifest` 报「不存在」exit 1，收尾时只能绕底层函数。
+`artifact-event` 报「不存在」exit 1，收尾时只能绕底层函数。
+
+`review-manifest` 写通道已随 `retire-manifest-module` 删除；本文件只覆盖
+`artifact-event` 的归档写通道与解析契约。
 
 **冷状态构造约束（同 `test_workflow_protected_write_channel.py`）**：
 
@@ -22,7 +25,6 @@ import sys
 from pathlib import Path
 
 from agent.workflow.event_log import event_log_path, verify_projection
-from agent.workflow.review_manifest import verify_review_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_STATE = REPO_ROOT / "scripts" / "workflow_state.py"
@@ -63,15 +65,6 @@ def _seed_archived_change(tmp_path, change_id="archived-change", *, date=ARCHIVE
     return _seed_change(tmp_path, Path("openspec") / "changes" / "archive" / name, change_id)
 
 
-def _seed_review_artifacts(change_dir):
-    review_dir = change_dir / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
-    (change_dir / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
-    (change_dir / "specs").mkdir(parents=True, exist_ok=True)
-    return review_dir
-
-
 def _run_cli(cwd, *args):
     return subprocess.run(
         [sys.executable, str(WORKFLOW_STATE), *args],
@@ -97,22 +90,6 @@ def _artifact_event_args(change_id, event_type="protected_artifact_explained"):
     )
 
 
-def _review_manifest_args(change_id):
-    return (
-        "review-manifest",
-        "--change",
-        change_id,
-        "--phase",
-        "building",
-        "--reviewer-run-id",
-        "reviewer-232",
-        "--base-sha",
-        "base-sha",
-        "--head-sha",
-        "head-sha",
-    )
-
-
 def _active_dir(tmp_path, change_id):
     return tmp_path / "openspec" / "changes" / change_id
 
@@ -134,41 +111,25 @@ def test_artifact_event_works_for_archived_change(tmp_path):
     assert not (tmp_path / "openspec" / "changes" / "archived-change" / "workflow-events.jsonl").exists()
 
 
-def test_review_manifest_works_for_archived_change(tmp_path):
-    change_dir = _seed_archived_change(tmp_path)
-    review_dir = _seed_review_artifacts(change_dir)
-    assert not (change_dir / "handoff.json").exists()
-
-    result = _run_cli(tmp_path, *_review_manifest_args("archived-change"))
-
-    assert result.returncode == 0, result.stderr
-    manifest_path = review_dir / "building-review-manifest.json"
-    assert manifest_path.exists()
-    assert verify_review_manifest(tmp_path, "archived-change", "building", archived=True) == []
-
-
 # --- 污染判别：归档目录不得出现投影文件、active 路径不得被新建 -----------------
 
 
 def test_archived_write_does_not_pollute_archive_dir(tmp_path):
     """判别性：移除「归档跳过刷新」→ 归档目录凭空多出 handoff.json + workflow-state.json。"""
     change_dir = _seed_archived_change(tmp_path)
-    _seed_review_artifacts(change_dir)
 
-    for args in (_artifact_event_args("archived-change"), _review_manifest_args("archived-change")):
-        result = _run_cli(tmp_path, *args)
-        assert result.returncode == 0, result.stderr
+    result = _run_cli(tmp_path, *_artifact_event_args("archived-change"))
 
+    assert result.returncode == 0, result.stderr
     for name in HOLLOW_PROJECTIONS:
         assert not (change_dir / name).exists(), f"归档目录不应出现 {name}"
 
 
 def test_archived_write_does_not_create_active_ghost_dir(tmp_path):
-    """判别性：不传 `archived=` 透传时 manifest 会落到 active 路径（报错误导）。"""
-    change_dir = _seed_archived_change(tmp_path)
-    _seed_review_artifacts(change_dir)
+    """判别性：归档目标的写入只落归档目录，不在 active 路径新建目录。"""
+    _seed_archived_change(tmp_path)
 
-    result = _run_cli(tmp_path, *_review_manifest_args("archived-change"))
+    result = _run_cli(tmp_path, *_artifact_event_args("archived-change"))
 
     assert result.returncode == 0, result.stderr
     assert not _active_dir(tmp_path, "archived-change").exists()
@@ -178,8 +139,7 @@ def test_archived_write_does_not_create_active_ghost_dir(tmp_path):
 def test_archived_write_supports_bare_id_archive_dir(tmp_path):
     """归档目录名为**裸 `<id>`**（无日期前缀）时同样可写。
 
-    覆盖 `_archive_dir_matches_change_id` 与 `change_dir_for` 的 `name == change_id`
-    分支——否则该分支无测试执行（审阅 O2-①）。
+    覆盖内联归档解析的 `name == change_id` 分支——否则该分支无测试执行（审阅 O2-①）。
     """
     change_dir = _seed_archived_change(tmp_path, change_id="bare-dir", dir_name="bare-dir")
     assert change_dir.name == "bare-dir"
@@ -222,14 +182,10 @@ def test_archived_write_rejects_unknown_change(tmp_path):
     """审阅 O2-③：归档语境下不存在的 id 仍 exit 1（不退化为「任意 id 都能写」）。"""
     _seed_archived_change(tmp_path)
 
-    for args in (
-        _artifact_event_args("no-such-archived-change"),
-        _review_manifest_args("no-such-archived-change"),
-    ):
-        result = _run_cli(tmp_path, *args)
-        assert result.returncode == 1
-        assert "不存在" in result.stderr
-        assert "Traceback" not in result.stderr
+    result = _run_cli(tmp_path, *_artifact_event_args("no-such-archived-change"))
+    assert result.returncode == 1
+    assert "不存在" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 # --- 归档目标契约：日期前缀 id / 解析一致性 -----------------------------------
@@ -248,37 +204,42 @@ def test_artifact_event_rejects_date_prefixed_change_id(tmp_path):
     assert len(log) == 1
 
 
-def test_review_manifest_rejects_date_prefixed_change_id(tmp_path):
-    change_dir = _seed_archived_change(tmp_path)
-    _seed_review_artifacts(change_dir)
-
-    result = _run_cli(tmp_path, *_review_manifest_args(f"{ARCHIVE_DATE}-archived-change"))
-
-    assert result.returncode == 1
-    assert "Traceback" not in result.stderr
-    assert not (change_dir / "reviews" / "building-review-manifest.json").exists()
-
-
 def test_archived_resolution_rejects_longer_prefixed_sibling(tmp_path):
-    """Q2：`change_dir_for` 的 `re.match` 无 `$`，查询 `alpha` 会命中 `alpha-beta`。
+    """Q2：归档解析必须精确匹配，查询 `alpha` 不得命中 `alpha-beta`。
 
-    判别性：移除解析一致性断言后，`artifact-event --change alpha` 会把事件**写进
-    `alpha-beta`**（另一个 change）并 exit 0——静默污染。
+    判别性：内联解析用 `fullmatch` 后，`alpha` 不再匹配 `2026-09-22-alpha-beta`，
+    错误是「不存在」；旧的无 `$` 锚点 `re.match` 会先命中兄弟目录，再被调用侧断言
+    以「目录名与 change id 不匹配」拒绝。两句可区分，断言钉住新路径。
 
     构造刻意只留**唯一候选**目录 `2026-09-22-alpha-beta`（不存在叫 `alpha` 的 change），
-    使 `change_dir_for` 的命中不依赖 `iterdir()` 顺序（顺序依赖会让用例在别的环境假绿）。
+    使命中不依赖 `iterdir()` 顺序（顺序依赖会让用例在别的环境假绿）。
     """
     sibling = _seed_archived_change(tmp_path, change_id="alpha-beta", date="2026-09-22")
-    _seed_review_artifacts(sibling)
 
-    for args in (_artifact_event_args("alpha"), _review_manifest_args("alpha")):
-        result = _run_cli(tmp_path, *args)
-        assert result.returncode == 1, f"{args[0]}: 不应把写入落到另一个 change 的目录"
-        assert not (sibling / "reviews" / "building-review-manifest.json").exists()
+    result = _run_cli(tmp_path, *_artifact_event_args("alpha"))
+
+    assert result.returncode == 1, "不应把写入落到另一个 change 的目录"
+    assert "不存在" in result.stderr
+    assert "不匹配" not in result.stderr
 
     # 兄弟目录的事件日志必须保持原样（只有种子首事件）
     lines = event_log_path(sibling).read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
+
+
+def test_archived_resolution_rejects_ambiguous_duplicate_dates(tmp_path):
+    """同一 id 命中多个 `<date>-<id>` 目录时 fail-closed，不依赖 iterdir() 顺序。"""
+    first = _seed_archived_change(tmp_path, change_id="dup-change", date="2026-01-01")
+    second = _seed_archived_change(tmp_path, change_id="dup-change", date="2026-02-02")
+
+    result = _run_cli(tmp_path, *_artifact_event_args("dup-change"))
+
+    assert result.returncode == 1
+    assert "匹配多个目录" in result.stderr
+    assert "Traceback" not in result.stderr
+    for change_dir in (first, second):
+        lines = event_log_path(change_dir).read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
 
 
 # --- 只读投影校验（Q3）：一致不告警、不一致告警但 exit 0 ----------------------

@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 
 from agent.workflow.event_log import event_log_path, verify_projection
-from agent.workflow.review_manifest import verify_review_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_STATE = REPO_ROOT / "scripts" / "workflow_state.py"
@@ -105,15 +104,6 @@ def _seed_gen1_change(tmp_path, change_id="legacy-change", *, proposal=True, han
     return change_dir
 
 
-def _seed_review_artifacts(change_dir):
-    review_dir = change_dir / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
-    (change_dir / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
-    (change_dir / "specs").mkdir(parents=True, exist_ok=True)
-    return review_dir
-
-
 def _run_cli(cwd, *args):
     return subprocess.run(
         [sys.executable, str(WORKFLOW_STATE), *args],
@@ -139,22 +129,6 @@ def _artifact_event_args(change_id, event_type="protected_artifact_explained"):
     )
 
 
-def _review_manifest_args(change_id):
-    return (
-        "review-manifest",
-        "--change",
-        change_id,
-        "--phase",
-        "building",
-        "--reviewer-run-id",
-        "reviewer-199",
-        "--base-sha",
-        "base-sha",
-        "--head-sha",
-        "head-sha",
-    )
-
-
 # --- 当代 change（无 handoff.json）：本 bug 的核心症状 -------------------------
 
 
@@ -172,22 +146,6 @@ def test_artifact_event_works_without_handoff_json(tmp_path):
     # 层 1 判别性（post-call）：写通道只落 workflow-state.json，绝不落 handoff.json
     assert (change_dir / "workflow-state.json").exists()
     assert not (change_dir / "handoff.json").exists()
-
-
-def test_review_manifest_works_without_handoff_json(tmp_path):
-    change_dir = _seed_gen2_change(tmp_path)
-    review_dir = _seed_review_artifacts(change_dir)
-    assert not (change_dir / "handoff.json").exists()
-
-    result = _run_cli(tmp_path, *_review_manifest_args("test-change"))
-
-    assert result.returncode == 0, result.stderr
-    manifest_path = review_dir / "building-review-manifest.json"
-    assert manifest_path.exists()
-    assert verify_review_manifest(tmp_path, "test-change", "building") == []
-    # D7 同样覆盖 review-manifest 这条命令：写入后投影即新鲜（删除该刷新会让本断言变红）
-    assert (change_dir / "workflow-state.json").exists()
-    assert verify_projection(change_dir) == []
 
 
 def test_artifact_event_refreshes_projection_without_flow_status(tmp_path):
@@ -219,16 +177,6 @@ def test_artifact_event_still_works_for_gen1_change(tmp_path):
     )
 
 
-def test_review_manifest_still_works_for_gen1_change(tmp_path):
-    change_dir = _seed_gen1_change(tmp_path)
-    review_dir = _seed_review_artifacts(change_dir)
-
-    result = _run_cli(tmp_path, *_review_manifest_args("legacy-change"))
-
-    assert result.returncode == 0, result.stderr
-    assert (review_dir / "building-review-manifest.json").exists()
-
-
 def test_spawn_style_child_without_proposal_still_writable(tmp_path):
     """Q1 兼容分支：历史 spawn 子 change 只有 handoff.json，没有 proposal.md。
 
@@ -252,14 +200,6 @@ def test_artifact_event_rejects_unknown_change(tmp_path):
 
     assert result.returncode == 1
     # 断言失败来自目标检查本身（而非其它副作用），保证用例对「前置被删」有判别力
-    assert "不存在" in result.stderr
-
-
-def test_review_manifest_rejects_unknown_change(tmp_path):
-    result = _run_cli(tmp_path, *_review_manifest_args("no-such-change"))
-
-    assert result.returncode == 1
-    # 同上：若前置被删，失败会退化为 `review report missing`，本断言即变红
     assert "不存在" in result.stderr
 
 
@@ -287,19 +227,7 @@ def test_artifact_event_rejects_path_bearing_change_id(tmp_path):
     (nested / "handoff.json").write_text("{}", encoding="utf-8")
 
     for bad_id in ("group/leg", str(nested)):
-        for args in (_artifact_event_args(bad_id), _review_manifest_args(bad_id)):
-            result = _run_cli(tmp_path, *args)
-            assert result.returncode == 1, f"{args[0]} {bad_id!r} 应被拒绝"
-            assert "非法" in result.stderr, f"{args[0]} {bad_id!r} 应有明确错误文案，实际: {result.stderr!r}"
-            assert "Traceback" not in result.stderr, f"{args[0]} {bad_id!r} 不应抛裸 traceback"
-
-
-def test_review_manifest_rejects_dir_without_proposal_or_handoff(tmp_path):
-    change_dir = tmp_path / "openspec" / "changes" / "empty-dir"
-    change_dir.mkdir(parents=True)
-
-    result = _run_cli(tmp_path, *_review_manifest_args("empty-dir"))
-
-    assert result.returncode == 1
-    assert "不是合法 change" in result.stderr
-    assert not (change_dir / "reviews").exists()
+        result = _run_cli(tmp_path, *_artifact_event_args(bad_id))
+        assert result.returncode == 1, f"artifact-event {bad_id!r} 应被拒绝"
+        assert "非法" in result.stderr, f"artifact-event {bad_id!r} 应有明确错误文案，实际: {result.stderr!r}"
+        assert "Traceback" not in result.stderr, f"artifact-event {bad_id!r} 不应抛裸 traceback"

@@ -4,6 +4,7 @@
 
 定义 OpenSpec change 的设计、诊断、类型元数据和机械检查规则，确保需求、设计、根因分析、任务拆分和实现验收职责清晰分离。
 ## Requirements
+
 ### Requirement: Detailed design artifact
 Every non-trivial OpenSpec change SHALL include a `design.md` artifact that
 records the implementation approach and major technical decisions before
@@ -403,7 +404,7 @@ description.
 - **WHEN** a 当代 change（首事件 `change_created`，无 `handoff.json`）is created or 推进到归档
 - **THEN** 系统 SHALL NOT 要求该 change 存在 `handoff.json`
 - **AND** 其状态 SHALL 由 `workflow-state.json` 投影承载
-- **AND** 受保护 artifact 写入（`artifact-event` / `review-manifest`）SHALL 对该 change 可用，SHALL NOT 因缺少 `handoff.json` 而被拒绝
+- **AND** 受保护 artifact 写入（`artifact-event`）SHALL 对该 change 可用，SHALL NOT 因缺少 `handoff.json` 而被拒绝
 - **AND** 对其运行 `flow status` SHALL NOT 产出 `handoff.json`
 
 #### Scenario: 老世代 handoff.json 作为只读历史保留

@@ -17,6 +17,7 @@ The tests are split by surface:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -344,6 +345,69 @@ OLD_AST_MANIFEST_MARKERS = (
     "building-review-manifest.json",
     "write_review_manifest",
 )
+MANIFEST_USAGE_PATTERNS = (
+    re.compile(r"workflow_state\.py\s+review-manifest"),
+    re.compile(r"agent\.workflow\.review_manifest"),
+)
+RETIREMENT_WORDS = ("已删除", "已退役", "已移除", "不存在", "删除", "已随")
+IMPORT_RE = re.compile(
+    r"^\s*(?:from|import)\s+agent\.workflow\.review_manifest\b", re.MULTILINE
+)
+
+
+def _manifest_usage_errors(text: str) -> list[str]:
+    """Flag live call/import instructions.
+
+    A retirement word only excuses the match when it follows the match in the same
+    clause (within a short window). A line that merely mentions "已退役" somewhere
+    earlier does not make a later "作为 legacy 通道保留" instruction legitimate.
+    """
+    errors: list[str] = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        for pattern in MANIFEST_USAGE_PATTERNS:
+            match = pattern.search(line)
+            if match is None:
+                continue
+            tail = line[match.end(): match.end() + 80]
+            if any(word in tail for word in RETIREMENT_WORDS):
+                continue
+            errors.append(f"line {lineno}: {line.strip()}")
+            break
+    return errors
+
+
+def test_doc_guard_has_positive_and_negative_controls():
+    """Guard must flag a live call and allow an explicit retirement sentence."""
+    assert _manifest_usage_errors(
+        "run `workflow_state.py review-manifest --change x --phase building`"
+    )
+    assert _manifest_usage_errors(
+        "`workflow_state.py review-manifest` 已删除；调用会报未知子命令"
+    ) == []
+    # 退役词出现在匹配之前、且匹配之后仍是「保留」指令 ⇒ 必须报错（AGENTS.md:115 形态）。
+    assert _manifest_usage_errors(
+        "**漂移检测已退役**：`agent/workflow/review_manifest.py` 与 "
+        "`workflow_state.py review-manifest` 作为 legacy 通道保留，由第二刀处置"
+    )
+
+
+def test_legacy_module_removed_and_not_imported():
+    """Module file is gone and no Python source imports it (issue #316 第二刀)."""
+    assert not (REPO_ROOT / "agent" / "workflow" / "review_manifest.py").exists()
+
+    offenders: list[str] = []
+    this_file = Path(__file__).resolve()
+    for path in REPO_ROOT.rglob("*.py"):
+        rel = path.relative_to(REPO_ROOT)
+        if any(part in {".venv", ".dev", ".git"} for part in rel.parts):
+            continue
+        if rel.parts[:3] == ("openspec", "changes", "archive"):
+            continue
+        if path.resolve() == this_file:
+            continue
+        if IMPORT_RE.search(path.read_text(encoding="utf-8", errors="replace")):
+            offenders.append(str(rel))
+    assert not offenders, offenders
 
 
 def test_normative_docs_no_longer_require_ast_manifest():
@@ -353,6 +417,8 @@ def test_normative_docs_no_longer_require_ast_manifest():
         for marker in OLD_AST_MANIFEST_MARKERS:
             if marker in text:
                 failures.append(f"{rel}: {marker}")
+        for error in _manifest_usage_errors(text):
+            failures.append(f"{rel}: {error}")
     assert not failures, failures
 
 

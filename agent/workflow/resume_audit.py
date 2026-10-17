@@ -322,7 +322,12 @@ def _event_change_id(change_dir: Path) -> str:
 def _status_path(line: str) -> str | None:
     if len(line) < 4:
         return None
-    path = line[3:].strip()
+    # `git status --porcelain=v1` is ``XY<space>path``. `_git_stdout` strips the
+    # whole stdout, which removes the leading space of a worktree-modified first
+    # line (``" M path"`` -> ``"M path"``); recover that form instead of slicing
+    # one character off the path.
+    path = line[3:] if line[2] == " " else line[2:]
+    path = path.strip()
     if " -> " in path:
         path = path.rsplit(" -> ", 1)[1]
     return path.strip('"') or None
@@ -337,7 +342,6 @@ def _is_resume_audit_ignored(path: str) -> bool:
         or normalized == "scripts/workflow_methods.json"
         or normalized == "scripts/workflow_hook.example.json"
         or normalized.endswith("/workflow-events.jsonl")
-        or normalized.endswith("-review-manifest.json")
     )
 
 

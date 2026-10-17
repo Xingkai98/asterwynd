@@ -118,7 +118,7 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 - **WHEN** 阶段 A 的变更集被评审
 - **THEN** `scripts/check_openspec_artifacts.py`、`scripts/workflow_guard.py`、`scripts/workflow_state.py`、`scripts/flow-policy.json`、`scripts/platform_gate.py` SHALL 全部未被修改
-- **AND** `agent/workflow/**`（含 manifest 生成器 `agent/workflow/review_manifest.py`）SHALL 未被修改
+- **AND** 在阶段 A 的变更集内，`agent/workflow/**`（当时的模块集合）SHALL 未被修改；其中的 manifest 生成器在本 change 后被删除
 - **AND** 任何下掉动作 SHALL 由阶段 C 之后的独立 change 承载
 
 #### Scenario: 退役状态机残留另行处理
@@ -128,20 +128,22 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 ### Requirement: review manifest 单套承载：本仓形态退役
 
-接入 witnessloop 后，review manifest SHALL 只有一套要求：witnessloop 形态（`reviews/<stage>.manifest.json`，schema `witnessloop/review-manifest@v1`），由 `witnessloop manifest build` 产出并供 required 的 `gate / check` 消费。asterwynd 形态（`reviews/<phase>-review-manifest.json`，schema `review-manifest/v1`）SHALL NOT 再被流程要求产出，也 SHALL NOT 由本仓 checker 校验；历史文件 SHALL 保持原样，不迁移、不重算、不删除。`workflow_state.py review-manifest` SHALL 仅作为 legacy 写通道保留，由第二刀处置，SHALL NOT 被描述为当前流程要求。`evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`，SHALL NOT 放宽为 `*-manifest.json`。本仓 checker 对 building review 的终结 `## 闭环出口` PASS 判据 SHALL 保留（见 `dev-workflow-state-machine` 的 `Review evidence 与终结 verdict`），该判据不是 manifest 字段校验。`agent/workflow/review_manifest.py` 与其写通道 SHALL 在第二刀之前保留，SHALL NOT 被新 change 的流程要求使用。
+接入 witnessloop 后，review manifest SHALL 只有一套要求：witnessloop 形态（`reviews/<stage>.manifest.json`，schema `witnessloop/review-manifest@v1`），由 `witnessloop manifest build` 产出并供 required 的 `gate / check` 消费。asterwynd 形态（`reviews/<phase>-review-manifest.json`，schema `review-manifest/v1`）SHALL NOT 再被流程要求产出，也 SHALL NOT 由本仓 checker 校验；历史文件 SHALL 保持原样，不迁移、不重算、不删除。asterwynd 形态的**生产与写通道 SHALL 已删除**：`agent/workflow/review_manifest.py` SHALL NOT 存在，`workflow_state.py review-manifest` 子命令 SHALL NOT 存在（调用 SHALL 以未知子命令失败），`scripts/flow-policy.json` SHALL NOT 把 `-review-manifest.json` 列为受保护路径。`evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`，SHALL NOT 放宽为 `*-manifest.json`。本仓 checker 对 building review 的终结 `## 闭环出口` PASS 判据 SHALL 保留（见 `dev-workflow-state-machine` 的 `Review evidence 与终结 verdict`），该判据不是 manifest 字段校验。
 
 #### Scenario: 本仓形态退役的边界
 
 - **WHEN** 一个实现完成的 change 准备审阅与收尾
 - **THEN** `/review-loop` SHALL 只产 witnessloop 形态 manifest（`reviews/<stage>.manifest.json`）
 - **AND** 本仓 checker SHALL NOT 因缺少 `reviews/<phase>-review-manifest.json` 报错
-- **AND** `agent/workflow/review_manifest.py` SHALL 由第二刀处置，本 change SHALL NOT 修改它
+- **AND** `agent/workflow/review_manifest.py` SHALL NOT 存在，`workflow_state.py review-manifest` SHALL 被视为未知子命令（非零退出、无副作用）
+- **AND** 本仓 SHALL NOT 提供任何生成或校验 asterwynd 形态 manifest 的活通道
 
 #### Scenario: 历史 manifest 保持冻结
 
 - **WHEN** 本 change 之后的 checker 扫描 `openspec/changes/archive/**`
 - **THEN** 它 SHALL NOT 校验历史 asterwynd 形态 manifest 的字段、hash 或 git span
 - **AND** 历史文件 SHALL 保持原样，SHALL NOT 被迁移、重算或删除
+- **AND** 若这些历史文件被修改，`resume_audit` SHALL 按普通文件改动处理（不再把它们当 workflow 管理文件忽略）
 
 #### Scenario: glob 不放宽的理由可复核
 

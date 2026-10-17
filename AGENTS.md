@@ -105,14 +105,14 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 
 - 审阅维度（沿用 `scripts/workflow_methods.json` `building.reviewing_impl`）：任务逐项验证、正确性、Spec 对齐、冗余度、测试覆盖、安全性、可维护性、CI 完整性
 - 报告产出到 `openspec/changes/<change-id>/reviews/building-review.md`（随 change 进 PR，CI 可机械校验），含 `PASS`/`CHANGES_REQUESTED`/`BLOCKED` verdict + 逐条任务验证 + 带 `文件:行号` 证据的 issues
-- 审阅通过后生成 **witnessloop 形态** manifest（`grill` / `grill-adversarial` / `building` 三份 `reviews/<stage>.manifest.json`，绑定 reviewer/author run、base/head sha、tasks/spec/report hash），归档 move 之后用归档目录名重建；本仓不再产 `reviews/<phase>-review-manifest.json`
+- 审阅通过后生成 **witnessloop 形态** manifest（`grill` / `grill-adversarial` / `building` 三份 `reviews/<stage>.manifest.json`，绑定 reviewer/author run、base/head sha、tasks/spec/report hash），归档 move 之后用归档目录名重建；本仓不再产 `reviews/<phase>-review-manifest.json`（其生成模块与 CLI 已随 `retire-manifest-module` / issue #316 第二刀删除）
 - building review 报告末尾 SHALL 有 `## 闭环出口`，首个非空行以 `PASS` 开头（`BLOCKED` / `CHANGES_REQUESTED` 是 terminal 非 PASS；`未定` 只允许在完成面之外）
 - **机械强制的触发点是「归档点」**（issue #235）：`scripts/check_openspec_artifacts.py` 对本 PR `--diff-filter=AR` diff 中**新建**的 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` 目录（须在 base 树不存在，以免「往既有归档补文件」被误判），在**归档目录**上评估四道门（building-review 存在性 / grill 证据 / Open Question 确认 / RIR 内容门槛）+ 未勾任务，**不因 tasks 未全勾而降级**。依据：留一条 `- [ ]` 会让旧实现的四道门全部关闭（绕开路径），而 AGENTS.md 强制「实现 PR 必含归档」⇒ 归档 commit 是 PR 最后一个 commit，归档点是唯一必要且充分的评估点
 - **`(post-merge)` 任务标记**：closeout 类任务（PR 合入后才执行，如「关闭关联 issue」）在归档时刻结构上无法完成，MUST 在行内标注 `(post-merge)`（带括号，全/半角皆可，大小写不敏感，容忍编号/粗体在前）；未标注的未勾任务在归档点 SHALL 报错。**只有带标记的未勾行被豁免**，无标记一律算实现未完成。归档目录 MUST 带 `YYYY-MM-DD-` 日期前缀，否则门禁直接报错。详见 [开发指南](./docs/development-guide.md) 的「完成度门禁与 (post-merge) 任务标记」
 - **active 阶段不受影响**：active change 的审阅门仍由「tasks 全勾」触发，部分实现的在途 change SHALL NOT 被拦截；解耦靠判定函数的 `assume_implemented` 参数（`check_change` 行为不变）
 - **归档点的 building-review 检查 = 存在性 + `## 闭环出口` PASS**：非 docs + spec delta 的新归档必须存在报告且出口为 PASS；任何**已存在**的 building-review 若 terminal 非 PASS（`BLOCKED` / `CHANGES_REQUESTED`），宽触发一律报错（不看类型 / spec delta / 勾选状态）。witnessloop manifest 的完整性与 revision 绑定由 required 的 `gate / check` 承担
 - 受保护 artifact（`docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`openspec/changes/archive/**`、`docs/openspec-change-backlog.md`）的修改仍需 `workflow-events.jsonl` 结构化解释事件；阶段 review report 需对应 witnessloop 形态 manifest
-- **归档 change 的 manifest 漂移检测已退役**（`retire-manifest-check` / issue #316）：`check_openspec_artifacts.py --check-archived` 只做归档事件日志可投影校验，不再校验 `*-review-manifest.json`；80 份历史 ast manifest 保持原样。`agent/workflow/review_manifest.py` 与 `workflow_state.py review-manifest` 作为 legacy 通道保留，由第二刀处置。witnessloop 形态 manifest 仍须在该 change 的 `tasks.md` 最终化（含归档 move）之后、用归档目录名重建，详见 [开发指南](./docs/development-guide.md) 的「Review evidence 纪律」
+- **归档 change 的 manifest 漂移检测已退役**（`retire-manifest-check` / issue #316）：`check_openspec_artifacts.py --check-archived` 只做归档事件日志可投影校验，不再校验 `*-review-manifest.json`；80 份历史 ast manifest 保持原样。`agent/workflow/review_manifest.py` 与 `workflow_state.py review-manifest` 已随 `retire-manifest-module`（issue #316 第二刀）删除：调用是未知子命令，历史 80 份 manifest 冻结。witnessloop 形态 manifest 仍须在该 change 的 `tasks.md` 最终化（含归档 move）之后、用归档目录名重建，详见 [开发指南](./docs/development-guide.md) 的「Review evidence 纪律」
 
 ### Worktree 隔离规则
 
@@ -200,7 +200,7 @@ uv run python scripts/workflow_state.py flow status --change <id>    # 投影 JS
 uv run python scripts/workflow_state.py flow status --all
 ```
 
-**四阶段状态机的 gate 家族已随子系统退役删除**（`flow approve` / `flow advance` / `flow block` / `flow confirm`，以及 legacy 子命令 `discover` / `current` / `validate` / `spawn`）——它们无生产调用方，`flow approve` 对当代 change 必报错。开发流程推进由 OpenSpec 主干承担，不再有 CLI 的 phase/sub_state 推进通道。`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow status`/`policy-*`/`artifact-event`/`review-manifest` CLI 写（`review-manifest` 为 legacy 通道，第二刀处置）。
+**四阶段状态机的 gate 家族已随子系统退役删除**（`flow approve` / `flow advance` / `flow block` / `flow confirm`，以及 legacy 子命令 `discover` / `current` / `validate` / `spawn`）——它们无生产调用方，`flow approve` 对当代 change 必报错。开发流程推进由 OpenSpec 主干承担，不再有 CLI 的 phase/sub_state 推进通道。`workflow-state.json` + `workflow-events.jsonl` 为受保护路径（governance=cli_written），只准 `flow status`/`policy-*`/`artifact-event` CLI 写。
 
 > **残留面**：awaiting 态的**进入/解除通道**（`flow block`/`flow confirm`）已删除，但 guard 的 awaiting 硬拦截保留（`workflow_guard.py:_awaiting_block_reason`）——即处于 `blocked.*` 的 change 仍会被门禁拦截写操作，而解除只能手写事件日志（受保护路径，需解释事件）。合入时全仓 awaiting change 数为 0。
 

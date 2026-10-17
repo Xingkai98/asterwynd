@@ -40,6 +40,9 @@ issue #316 的探索 comment（2026-10-17）逐字段对照后给出四个候选
 4. `agent/workflow/review_manifest.py`、其测试、`workflow_state.py review-manifest` 写通道
    与 `flow-policy.json` 的受保护规则保留为 legacy，由第二刀处置。
 
+**第二刀已完成**（`retire-manifest-module`，PR 见该 change）：上述 legacy 资产已全部删除，
+80 份历史 manifest 冻结；决策与备选见 [ADR-0005](./ADR-0005-retire-legacy-review-manifest-module.md)。
+
 ## Alternatives Considered
 
 | 备选方案 | 描述 | 拒绝原因 |
@@ -63,6 +66,6 @@ issue #316 的探索 comment（2026-10-17）逐字段对照后给出四个候选
 
 ## Revisit Conditions
 
-- [ ] 第二刀启动（处置 `review_manifest.py` / CLI / 80 份历史 manifest / 受保护路径规则）。
+- [x] 第二刀已完成（`retire-manifest-module`）：`review_manifest.py` / CLI / 受保护路径规则 / resume audit 忽略项已删除；80 份历史 manifest 冻结。见 ADR-0005。
 - [ ] witnessloop 开始读取或校验 `verdict`，且本仓不再需要本地 `## 闭环出口` 检查。
 - [ ] 需要恢复历史归档的 manifest drift 检测或 `diff_hash` 强校验。

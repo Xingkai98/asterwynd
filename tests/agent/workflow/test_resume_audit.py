@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from agent.workflow.resume_audit import (
+    _status_path,
     record_resume_reconciliation,
     run_resume_audit,
     write_resume_baseline,
@@ -83,6 +84,43 @@ def test_resume_audit_ignores_workflow_management_files(tmp_path):
 
     assert result.needs_reconciliation is False
     assert result.changed_paths == ()
+
+
+def test_status_path_tolerates_stripped_leading_space():
+    """`_git_stdout` strips the first line's leading status space; do not eat a path char."""
+    assert _status_path(" M openspec/changes/x") == "openspec/changes/x"
+    assert _status_path("M openspec/changes/x") == "openspec/changes/x"
+    assert _status_path("?? openspec/changes/x") == "openspec/changes/x"
+    assert _status_path("R  old.md -> new.md") == "new.md"
+
+
+def test_resume_audit_detects_legacy_review_manifest_changes(tmp_path):
+    """legacy 写通道删除后，历史 manifest 改动按普通文件进入 resume audit。"""
+    _init_repo(tmp_path)
+    manifest = (
+        tmp_path
+        / "openspec"
+        / "changes"
+        / "archive"
+        / "2026-01-01-old-change"
+        / "reviews"
+        / "building-review-manifest.json"
+    )
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "seed legacy manifest")
+
+    write_resume_baseline(tmp_path, created_by="human", reason="pause workflow")
+    manifest.write_text('{"changed": true}\n', encoding="utf-8")
+
+    result = run_resume_audit(tmp_path)
+
+    assert result.needs_reconciliation is True
+    assert (
+        "openspec/changes/archive/2026-01-01-old-change/reviews/building-review-manifest.json"
+        in result.changed_paths
+    )
 
 
 def test_resume_reconciliation_event_satisfies_audit_and_clears_baseline(tmp_path):

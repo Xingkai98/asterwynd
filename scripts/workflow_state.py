@@ -7,7 +7,6 @@ Usage:
     uv run python scripts/workflow_state.py enable --reconcile-change <id>
     uv run python scripts/workflow_state.py resume-audit
     uv run python scripts/workflow_state.py artifact-event --change <id> --event-type <type> ...
-    uv run python scripts/workflow_state.py review-manifest --change <id> --phase <phase> ...
     uv run python scripts/workflow_state.py policy-show | policy-validate | policy-set
 
 四阶段状态机的 legacy 子命令（`discover` / `current` / `validate` / `spawn`）与 gate 家族
@@ -20,7 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -38,7 +36,6 @@ from agent.workflow.event_log import (  # noqa: E402
     verify_projection,
     workflow_state_path,
 )
-from agent.workflow.review_manifest import change_dir_for, write_review_manifest  # noqa: E402
 from agent.workflow.routing import is_workflow_enabled  # noqa: E402
 from agent.workflow.resume_audit import (  # noqa: E402
     record_resume_reconciliation,
@@ -134,25 +131,6 @@ def _save_handoff(change_id: str, data: dict, root: Path = CHANGES_ROOT) -> None
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     Path(tmp).replace(path)
-
-
-def _resolve_review_base_sha(repo_root: Path) -> str | None:
-    for args in (
-        ["git", "merge-base", "HEAD", "origin/master"],
-        ["git", "merge-base", "HEAD", "master"],
-        ["git", "rev-parse", "HEAD~1"],
-    ):
-        result = subprocess.run(
-            args,
-            cwd=repo_root,
-            capture_output=True,
-            text=True, errors="replace",
-        )
-        if result.returncode == 0:
-            value = result.stdout.strip()
-            if value:
-                return value
-    return None
 
 
 # ── Commands ──
@@ -320,25 +298,29 @@ def _flow_status_projection(change_id: str) -> tuple[dict | None, str | None]:
 def _is_archived_change_dir(change_dir: Path) -> bool:
     """change 目录是否位于 `CHANGES_ROOT/archive/` 之下（用路径前缀判定，不猜目录名）。
 
-    active 优先解析下，本判据与「active 目录不存在」等价（`change_dir_for(archived=True)`
-    的返回值恒在 archive 下）；取路径前缀更直接，且不依赖调用方记得在哪一步置位。
+    active 优先解析下，本判据与「active 目录不存在」等价（`_archived_change_dirs` 只在
+    active 目录不存在时被调用）；取路径前缀更直接，且不依赖调用方记得在哪一步置位。
     """
     return CHANGES_ROOT / "archive" in change_dir.parents
 
 
-def _archive_dir_matches_change_id(change_dir: Path, change_id: str) -> bool:
-    """归档目录名是否**就是**该 change（裸 `<id>` 或 `<date>-<id>`，不允许更长前缀）。
+def _archived_change_dirs(change_id: str) -> list[Path]:
+    """归档根下与该 change id 精确匹配（裸 id 或 `<date>-<id>`）的目录。
 
-    `review_manifest.change_dir_for` 的前缀正则用 `re.match` 且无 `$` 锚点
-    （`review_manifest.py:47`），`alpha` 会命中 `2026-09-22-alpha-beta`——**另一个
-    change** 的目录，且结果依赖 `iterdir()` 顺序。本处做调用侧事后断言，不一致时
-    fail-closed（宁可不写也不写错 change）。修复该正则属独立决策，记在
-    `docs/known-debt.md`。
+    用 `fullmatch` 而非无 `$` 锚点的 `re.match`：`alpha` 不得命中
+    `2026-09-22-alpha-beta`。按目录名排序返回，调用方在多个命中时 fail-closed。
     """
-    name = change_dir.name
-    if name == change_id:
-        return True
-    return re.fullmatch(rf"\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(change_id)}", name) is not None
+    archive_root = CHANGES_ROOT / "archive"
+    if not archive_root.exists():
+        return []
+    pattern = re.compile(rf"\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(change_id)}")
+    matches: list[Path] = []
+    for path in sorted(archive_root.iterdir(), key=lambda p: p.name):
+        if not path.is_dir():
+            continue
+        if path.name == change_id or pattern.fullmatch(path.name):
+            matches.append(path)
+    return matches
 
 
 def _require_change_target(change_id: str) -> tuple[Path, bool] | None:
@@ -355,11 +337,9 @@ def _require_change_target(change_id: str) -> tuple[Path, bool] | None:
       `cmd_spawn` 产生）只有 `handoff.json` 而**没有** `proposal.md`，只认
       `proposal.md` 会把它们从「可写」打回 exit 1。
 
-    目标解析为 **active 优先 → 归档回退**。归档回退委托
-    `review_manifest.change_dir_for(archived=True)`：回退拼裸 id 的实现
-    （`archive/<id>`）对仓库全部带 `YYYY-MM-DD-` 前缀的归档目录是死代码（实测返回
-    `None`）。委托它还保证「事件落点」与「manifest 落点」由同一算法决定，避免
-    两个解析入口再次漂移（issue #232）。
+    目标解析为 **active 优先 → 归档回退**：归档根下按目录名精确匹配裸 `<id>` 或
+    `<date>-<id>`（`fullmatch`，不允许更长前缀）；同一 id 命中多个日期目录时
+    fail-closed，不依赖 `iterdir()` 顺序。
     """
     # change_id 必须是单段目录名：`CHANGES_ROOT / change_id` 对绝对路径会整体替换
     # 根（可指向仓库外），对含 `/` 的相对路径会解析到子目录，而下游按
@@ -379,20 +359,19 @@ def _require_change_target(change_id: str) -> tuple[Path, bool] | None:
         return None
     change_dir = CHANGES_ROOT / change_id
     if not change_dir.exists():
-        # 归档回退：委托 change_dir_for。repo_root 由 CHANGES_ROOT.parent.parent 推导，
-        # **不能**用 _PROJECT_ROOT——后者是仓库绝对路径，会让测试/子进程在别处解析。
-        archived_dir = change_dir_for(CHANGES_ROOT.parent.parent, change_id, archived=True)
-        if not archived_dir.exists():
-            print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
-            return None
-        if not _archive_dir_matches_change_id(archived_dir, change_id):
+        matches = _archived_change_dirs(change_id)
+        if len(matches) > 1:
+            names = ", ".join(path.name for path in matches)
             print(
-                f"错误：change '{change_id}' 解析到归档目录 '{archived_dir.name}'，"
-                "目录名与 change id 不匹配（拒绝写入以避免污染其它 change）",
+                f"错误：change '{change_id}' 在归档中匹配多个目录（{names}），"
+                "拒绝写入以避免歧义",
                 file=sys.stderr,
             )
             return None
-        change_dir = archived_dir
+        if not matches:
+            print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
+            return None
+        change_dir = matches[0]
     if not (change_dir / "proposal.md").exists() and not (change_dir / "handoff.json").exists():
         print(
             f"错误：change '{change_id}' 不是合法 change（缺 proposal.md 且无 handoff.json）",
@@ -478,44 +457,6 @@ def cmd_artifact_event(args: argparse.Namespace) -> int:
 
     _after_protected_write(change_dir, is_archived)
     print(f"已记录 artifact 事件: {args.event_type} ({args.artifact_path})")
-    return 0
-
-
-def cmd_review_manifest(args: argparse.Namespace) -> int:
-    if not is_workflow_enabled(_PROJECT_ROOT):
-        print(
-            "错误：workflow 已在 workflow_methods.json 中禁用，review-manifest 不可用",
-            file=sys.stderr,
-        )
-        return 1
-    target = _require_change_target(args.change)
-    if target is None:
-        return 1
-    change_dir, is_archived = target
-
-    repo_root = Path.cwd()
-    base_sha = args.base_sha or _resolve_review_base_sha(repo_root)
-    if not base_sha:
-        print("错误：无法推导 review manifest 的 base sha", file=sys.stderr)
-        return 1
-
-    try:
-        path = write_review_manifest(
-            repo_root,
-            args.change,
-            args.phase,
-            reviewer_run_id=args.reviewer_run_id,
-            base_sha=base_sha,
-            head_sha=args.head_sha,
-            verdict=args.verdict,
-            archived=is_archived,
-        )
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"错误：{exc}", file=sys.stderr)
-        return 1
-
-    _after_protected_write(change_dir, is_archived)
-    print(f"已写入 review manifest: {path}")
     return 0
 
 
@@ -695,15 +636,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", required=True)
     p.add_argument("--approved-by", required=True)
     p.set_defaults(func=cmd_artifact_event)
-
-    p = sub.add_parser("review-manifest", help="写入阶段 review manifest")
-    p.add_argument("--change", required=True)
-    p.add_argument("--phase", required=True)
-    p.add_argument("--reviewer-run-id", required=True)
-    p.add_argument("--base-sha")
-    p.add_argument("--head-sha")
-    p.add_argument("--verdict", default="PASS", choices=["PASS"])
-    p.set_defaults(func=cmd_review_manifest)
 
     p = sub.add_parser("policy-show", help="展示 flow-policy.json 当前受保护路径规则")
     p.set_defaults(func=cmd_policy_show)

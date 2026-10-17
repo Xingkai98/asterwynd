@@ -22,7 +22,7 @@ Files are compared against stripped source lines during gate checks.
 
 ## Workflow guard 未启用（Q7）
 
-`scripts/workflow_guard.py`（PreToolUse 受保护文件门禁）已实现但未安装启用（settings.json 未挂钩子）。启用前必须先为 `/opsx:archive`（写 `openspec/changes/archive/`、`workflow-events.jsonl`）与 `/review-loop`（写 `reviews/*.manifest.json`；legacy `*-review-manifest.json` 写通道保留到第二刀）增加 sanctioned 流程白名单，否则这两个合法流程会被自身写保护拦截形成死锁。是否启用是项目治理选择，当前决定不启用、保持 checker 机械门禁兜底。
+`scripts/workflow_guard.py`（PreToolUse 受保护文件门禁）已实现但未安装启用（settings.json 未挂钩子）。启用前必须先为 `/opsx:archive`（写 `openspec/changes/archive/`、`workflow-events.jsonl`）与 `/review-loop`（写 `reviews/*.manifest.json`；legacy `*-review-manifest.json` 写通道已随第二刀删除）增加 sanctioned 流程白名单，否则这两个合法流程会被自身写保护拦截形成死锁。是否启用是项目治理选择，当前决定不启用、保持 checker 机械门禁兜底。
 
 ## NGram embedding 词面近似局限（Q9）
 
@@ -163,7 +163,12 @@ checker 走 `--base-ref`（CI 传 `${{ github.event.pull_request.base.sha }}`，
 
 > **机制已退役（`retire-manifest-check`，2026-10-17）**：本节描述的 `--check-archived`
 > manifest 校验 / `tasks_hash` 降级 / A-B 双盲区修复不再由本仓 checker 执行；历史 80 份
-> ast manifest 保持冻结。保留本节作为历史记录与第二刀输入。
+> ast manifest 保持冻结。保留本节作为历史记录。
+>
+> **第二刀已完成（`retire-manifest-module`，2026-10-17）**：本节引用的
+> `agent/workflow/review_manifest.py`、`workflow_state.py review-manifest`、
+> `write_review_manifest` / `cmd_review_manifest` 均已删除；归档目标解析已内联到
+> `scripts/workflow_state.py`（`fullmatch` + 多匹配 fail-closed）。
 
 **A. 写入盲区**（**已由 fix-issue-232-archive-write 收口**，2026-09-21）：`scripts/workflow_state.py`
 的 `_require_change_target` 原用 `CHANGES_ROOT / change_id` 定位目标、**只看 active 目录**，不回退
@@ -183,13 +188,11 @@ checker 走 `--base-ref`（CI 传 `${{ github.event.pull_request.base.sha }}`，
 （`flow status --change <归档 id>` 实测 exit 1「不存在」）。它与写通道无关、属既存缺陷，本 change
 按非目标未修，仍留在 issue [#232](https://github.com/Xingkai98/asterwynd/issues/232) 跟踪。
 
-**A-遗留 2（`change_dir_for` 前缀正则缺 `$`，仍开放）**：`agent/workflow/review_manifest.py:47` 的
-`re.match(rf"\d{{4}}-\d{{2}}-\d{{2}}-{escaped}", name)` 无 `$` 锚点，归档下并存 `alpha` 与
-`alpha-beta` 时查询 `alpha` 会命中 **`alpha-beta`**（另一个 change）的目录，且结果依赖 `iterdir()`
-顺序。当前仓库 89 个归档 id 实测无前缀碰撞（潜在而非现实故障）。本 change 已在调用侧加事后断言
-fail-closed（解析目录名必须为裸 `<id>` 或 `<date>-<id>`），**未改 `change_dir_for` 本身**（它被 checker
-`--check-archived` 共用，改动面超出该 bugfix）。收紧正则属独立决策，跟踪见
-issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
+**A-遗留 2（已关闭，`retire-manifest-module`，2026-10-17）**：原 `change_dir_for` 的前缀正则用
+无 `$` 锚点的 `re.match`，归档下并存 `alpha` 与 `alpha-beta` 时查询 `alpha` 会命中
+**`alpha-beta`**。第二刀删除模块时把归档解析内联到 `scripts/workflow_state.py`，改用
+`fullmatch` 精确匹配；同一 id 命中多个日期目录时 fail-closed。回归见
+`tests/test_workflow_archive_write_channel.py` 的兄弟前缀与多日期目录用例。
 
 **B. 校验盲区**（**已由 fix-issue-232-archived-manifest-gate 收口**，2026-09-22）：`.github/workflows/ci.yml`
 原来跑的是 `check_openspec_artifacts.py --base-ref ... --require-base`，**不带 `--check-archived`**；
@@ -226,7 +229,7 @@ checkbox 行内的描述级编辑**（如把 `1813 passed` 改成 `1814`、或�
 ### head_sha 校验口径债（A′ 收尾时对齐措辞，issue #232）
 
 spec `dev-workflow-state-machine/spec.md` 的「manifest 字段和 hash 校验」Scenario 原写「checker SHALL 验证
-`head_sha` 匹配当前 `HEAD`」，但实现 `_verify_git_span`（`agent/workflow/review_manifest.py:209-232`）**从不做此校验**
+`head_sha` 匹配当前 `HEAD`」，但实现 `_verify_git_span`（`agent/workflow/review_manifest.py:209-232`；该模块已随第二刀删除，以下仅作历史记录）**从不做此校验**
 ——它只查 `base_sha`/`head_sha` 是否为存在的 commit + `diff_hash` 匹配。该断言语义上**不可满足**：实测 44 份归档
 manifest 中 **0 份** `head_sha == HEAD`（37 份是 HEAD 祖先、7 份不可达），且「生成 manifest」这个动作本身就移动
 HEAD（例：`2026-09-14-subagent-concurrency-queue` 的 manifest 记 `head_sha=ea22b65c`，而写入它的 commit 是
@@ -531,8 +534,10 @@ terminal `BLOCKED` / `CHANGES_REQUESTED` 一律报错；完成面：必须 PASS�
    不要求 `design-review.md`，影响面窄，但若未来恢复设计评审报告需另立检查。
 4. **完成面之外的 building review 若缺出口 / 为 `未定` 不报错**：这是为避免误伤在途
    partial review；terminal 非 PASS 仍由宽触发覆盖。
-5. **legacy 资产保留**：`agent/workflow/review_manifest.py`、其测试、
-   `workflow_state.py review-manifest` 写通道、80 份历史 ast manifest 与
-   `scripts/flow-policy.json` 的 `-review-manifest.json` 受保护规则均原样保留。第二刀决定
-   模块 / CLI / 历史归档 / 受保护路径规则的最终处置。
+5. **legacy 资产已处置（第二刀，`retire-manifest-module`，2026-10-17）**：
+   `agent/workflow/review_manifest.py` 与其测试、`workflow_state.py review-manifest` 写通道、
+   `flow-policy` / guard 的 `-review-manifest.json` 保护规则与 CLI 豁免、`resume_audit` 的
+   忽略项均已删除；80 份历史 ast manifest 保持冻结（不迁移、不重算、不删除），仍由
+   `openspec/changes/archive/**` 前缀规则保护。`manifest_verified` governance 枚举保留为
+   策略词汇，但当前无规则使用。历史 manifest 的改动现在会作为普通文件进入 `resume_audit`。
 
