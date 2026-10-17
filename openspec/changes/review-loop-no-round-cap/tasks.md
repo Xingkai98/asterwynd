@@ -34,7 +34,7 @@
 - [ ] 3.1 **T1**：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → 记原始输出。
 - [ ] 3.2 **T2/T3**：两条 checker 命令 → exit 0（**时序**：产证据前是「内容同步正确」的读数；`building-review.md` 落盘后、manifest 产出前会转 exit 1；以 3.1 产 manifest 之后的读数为最终记录）。
 - [ ] 3.3 **T4**：`uv run python scripts/platform_gate.py --verify` → `全部一致`（exit 0）。本 change 不改平台配置，合入后**不需要**再 `--apply`。
-- [ ] 3.4 **T6**：`git grep -n -e "3 轮封顶" -e "轮数封顶" -e "round cap" -e "3-round cap" -- ':!openspec/changes/archive' ':!openspec/changes/review-loop-no-round-cap' ':!docs/openspec-change-backlog.md'` → **无命中**（exit 1）。这是「改齐了」的机械证明。**注意三条排除都是必需的**（设计追问 D3）：本 change 自己的文档要**引用**旧口径、backlog 的 `:169`/`:173` 是历史记录、英文变体在 `README_EN.md` 与 `change-documentation` 规格里。
+- [ ] 3.4 **T6**：`git grep -n -e "3 轮封顶" -e "轮数封顶" -e "round cap" -e "3-round cap" -- ':!openspec/changes/archive' ':!openspec/changes/review-loop-no-round-cap' ':!docs/openspec-change-backlog.md' ':!tests/'` → **无命中**（exit 1）。这是「改齐了」的机械证明。**四条排除都是必需的**（设计追问 D3 + 对抗轮 I-1）：本 change 自己的文档要**引用**旧口径；backlog 的 `:169`/`:173` 是历史记录；`tests/benchmark/test_c3_cli.py:3` 的 `per-round cap` 是 benchmark 预算语义、与审阅闭环无关；英文变体在 `README_EN.md` 与 `change-documentation` 规格里。
 - [ ] 3.5 **T7a（归档前）**：`git diff --stat origin/master...HEAD -- openspec/changes/archive/` → **空输出**。**T7b（纯 rename 归档提交之后）**：同命令 → 只出现本 change 自己的归档目录。两者对应**不同时点**，不要混为一个判据。
 - [ ] 3.6 **内容真实性抽查**：规格与文档里每条关于「终止条件」的断言，逐条与 Decision 2 的四要素对上（无上限 / 收敛定义 / 无法收敛出口 / 不以轮数为理由）。
 
@@ -62,4 +62,4 @@
 
 - [ ] (post-merge) 7.1 在 issue #305 追加 comment：审阅闭环的轮数上限已从规则与门禁文案中移除，规格已补上终止条件。**issue 保持 OPEN**。
 - [ ] (post-merge) 7.2 合入后确认：active change 目录不再存在、backlog 干净、本地 `master` 已快进；并复核 `master` 的 required 仍为 `["gate / check"]`（本 change 不该改变平台实况）。
-- [ ] (post-merge) 7.3 **本地同步 `.claude/commands/review-loop.md`**（设计追问 D6 要求的落点；该文件**被 gitignore、不进版本控制**，所以不混进本 PR）：把 `/home/happy/my-agent/.claude/commands/review-loop.md` 的 `:78` / `:87` / `:153` 三处「3 轮封顶」口径改成收敛口径，验收 = `grep -n "3 轮\|封顶" 该文件` **无命中**，并在本任务行登记「已改 / 未改」。**这是 agent 实际加载的入口**——不同步就会出现「版本控制内已改、实际操作仍按 3 轮封顶跑」。
+- [ ] (post-merge) 7.3 **本地同步 `.claude/commands/review-loop.md`**（设计追问 D6 + 对抗轮 I-5 要求的落点；该文件**被 gitignore、不进版本控制**，所以不混进本 PR）：把 `/home/happy/my-agent/.claude/commands/review-loop.md` 的 `:78` / `:87` / `:153` 三处「3 轮封顶」口径改成收敛口径，**并且**把 `:64` 的 `BLOCKED` 窄定义（现为「阻塞性缺陷」）扩成本 change 的口径（「闭环无法自行推进到 `PASS`」，成因分「阻塞性缺陷 / 无法收敛」）。验收 = `grep -n "3 轮\|封顶\|BLOCKED" 该文件` 逐条确认已改，并在本任务行登记「已改 / 未改」。**这是 agent 实际加载的入口**——不同步就会出现「版本控制内已改、实际操作仍按 3 轮封顶跑」。
