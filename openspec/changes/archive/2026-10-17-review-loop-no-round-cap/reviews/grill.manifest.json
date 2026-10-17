@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "2026-10-17-review-loop-no-round-cap",
+  "stage": "grill",
+  "reviewer_run_id": "paseo-grill-review-loop-no-round-cap",
+  "author_run_id": "grill-author-2026-10-17-review-loop-no-round-cap-ddcd7cd333b6",
+  "base_sha": "79460e391f399c743e1a8e14155924ac6a7b3773",
+  "head_sha": "ddcd7cd333b6a840f2515da6feeaefea075daefd",
+  "tasks_hash": "faf5adefe4b3b34ca4d4221d54e89cb1bdcfa68221505b1526e33a47c467cbdd",
+  "spec_hash": "e88b0471160a2c097db821096e8667a8f8e27f2b00f22b225af0a0c8555869c4",
+  "diff_hash": "e638c3e3141acfe5997ad59739ec37ae058084da3b4025777cf958c7863076bf",
+  "report_hash": "75a4ebe8ddd3c8ea147124e81cdca0802de1a6d05013436682d8703b1176b24b",
+  "report_path": "reviews/grill-design.md"
+}
