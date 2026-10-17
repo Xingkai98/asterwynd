@@ -22,13 +22,17 @@ Files are compared against stripped source lines during gate checks.
 
 ## Workflow guard 未启用（Q7）
 
-`scripts/workflow_guard.py`（PreToolUse 受保护文件门禁）已实现但未安装启用（settings.json 未挂钩子）。启用前必须先为 `/opsx:archive`（写 `openspec/changes/archive/`、`workflow-events.jsonl`、`-review-manifest.json`）与 `/review-loop`（写 `reviews/*-review-manifest.json`）增加 sanctioned 流程白名单，否则这两个合法流程会被自身写保护拦截形成死锁。是否启用是项目治理选择，当前决定不启用、保持 checker 机械门禁兜底。
+`scripts/workflow_guard.py`（PreToolUse 受保护文件门禁）已实现但未安装启用（settings.json 未挂钩子）。启用前必须先为 `/opsx:archive`（写 `openspec/changes/archive/`、`workflow-events.jsonl`）与 `/review-loop`（写 `reviews/*.manifest.json`；legacy `*-review-manifest.json` 写通道保留到第二刀）增加 sanctioned 流程白名单，否则这两个合法流程会被自身写保护拦截形成死锁。是否启用是项目治理选择，当前决定不启用、保持 checker 机械门禁兜底。
 
 ## NGram embedding 词面近似局限（Q9）
 
 `NGramEmbedding`（`agent/embedding/provider.py`）是 char-trigram 词面近似，无语义/同义泛化——释义改写、同义词召回会漏检（"语义检索/语义去重"措辞实际是"相似度召回"）。0.5 去重召回阈值在记忆路径现已对齐 dim=2048 标定操作点，但换更强 embedding（sentence-transformers / ollama）后必须重标定 `dedup_recall_threshold`。SearchMemory 工具描述已改为"按文本相似度召回"以如实反映能力。
 
 ## 已归档 change 的 review manifest 漂移（Q6）
+
+> **已退役（`retire-manifest-check` / issue #316，2026-10-17）**：本节的
+> `--check-archived` 漂移检测能力已被移除；该命令现在只做归档事件日志可投影校验，
+> 历史 manifest / report / spec 不再被本仓 checker 校验。下面保留为历史记录。
 
 PASS 后 closeout 提交若修改 tasks.md/spec（如补充审阅修复节、实测数据），已生成的 review manifest 的 `tasks_hash`/`spec_hash` 会与归档后 artifact 失配（潜伏态，active-only checker 不报）。`--check-archived` 模式可捕获并修复：重建 manifest 绑定当前 artifact。历史已归档 change（2026-08-02 的 context-engineering-deepening / grill-enforcement / long-term-memory-deepening / sandbox-hardening / workflow-slim）已重建 manifest 消除漂移；`/opsx:archive` 应归档前对 manifest 做最终校验。
 
@@ -157,6 +161,10 @@ checker 走 `--base-ref`（CI 传 `${{ github.event.pull_request.base.sha }}`，
 
 ## 归档 change 的 review manifest 写入/校验双盲区（fix-issue-199 收尾实测，issue #232）
 
+> **机制已退役（`retire-manifest-check`，2026-10-17）**：本节描述的 `--check-archived`
+> manifest 校验 / `tasks_hash` 降级 / A-B 双盲区修复不再由本仓 checker 执行；历史 80 份
+> ast manifest 保持冻结。保留本节作为历史记录与第二刀输入。
+
 **A. 写入盲区**（**已由 fix-issue-232-archive-write 收口**，2026-09-21）：`scripts/workflow_state.py`
 的 `_require_change_target` 原用 `CHANGES_ROOT / change_id` 定位目标、**只看 active 目录**，不回退
 `archive/`。故 `fix-issue-199` 修好的 CLI 只覆盖「归档前」写 manifest；归档后再需要生成只能绕底层
@@ -228,6 +236,9 @@ HEAD（例：`2026-09-14-subagent-concurrency-queue` 的 manifest 记 `head_sha=
 **处置**：已在 fix-issue-232-archived-manifest-gate 中把该 Scenario **改措辞与实现对齐**（删去「匹配当前 `HEAD`」，
 保留「`base_sha`/`head_sha` 均为 commit + `diff_hash` 匹配」），原始意图记录于此，不再声称未做的检查。
 跟踪见 issue [#232](https://github.com/Xingkai98/asterwynd/issues/232)。
+
+> **已退役（`retire-manifest-check`，2026-10-17）**：`--check-archived` 不再读 manifest；
+> 下面的覆盖面上界只作为历史口径。
 
 **B-覆盖面隐含上界（记录，不处理）**：`--check-archived` 是**漂移检测**而非「归档必须有审阅」的补票门，两处上界
 （审阅 R1 指出，均非本 change 引入、修复方向超出本 change 边界）：
@@ -499,4 +510,29 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 4. **同文件 `:2499` 的行号锚点过期**：写 `` `is_denied()`（`:222-239`）``。该方法在 `guard-write-allowlist` 合入**前**为 `:316-338`，合入**后**为 **`:393`**（`agent/workspace_policy.py` 从 398 行增长到 507 行，新增的写白名单谓词插在它上面）；其间 `#247` 的路径段边界修复与 D12 的谓词收敛也改过它。⇒ 修讲稿时请按**合入后**的 `:393` 写，或改用 `grep -n 'def is_denied' agent/workspace_policy.py` 现查（行号会随代码漂移，这是本条目自身的教训）。
 
 **为什么不在本 change 内顺手改**：这四条都在 `docs/interview-*`（面试讲稿面），改它们要连带核对同段落的其它数字与叙述（如「9 大类」的分类表），属一次独立的讲稿事实校对；混进本 change 会让「写白名单」的 diff 无法独立评估（与 Decision 6 对 `handoff.json` 同款判断）。**收敛方向**：另立一次讲稿事实校对，按 `agent/workspace_policy.py` 的当前常量重算全部计数与行号锚点。
+
+## 本仓 review manifest 校验退役后的残余边界（retire-manifest-check / issue #316，2026-10-17）
+
+第一刀删除了 `scripts/check_openspec_artifacts.py` 的 `_check_review_manifests` 及 active /
+`--check-archived` 两个调用点；witnessloop 形态 `reviews/<stage>.manifest.json` 成为唯一被
+要求的 review manifest。旧门里唯一不被 witnessloop 覆盖的 **building review verdict** 由
+`reviews/building-review.md` 的 `## 闭环出口` 极小本地检查保留（宽触发：任何已存在报告的
+terminal `BLOCKED` / `CHANGES_REQUESTED` 一律报错；完成面：必须 PASS）。以下 4 项是
+**有意接受的残余损失**，第 5 项是 legacy 资产保留；均登记为第二刀输入：
+
+1. **`diff_hash` 强校验消失**：witnessloop 把 `diff_hash` 当 informational，不校验；其严格
+   git span（`head_sha` 祖先 + 审后非证据文件）在「审阅后是否又改代码」上更严格，但不再校验
+   「manifest 记录的 diff 字节与当前 git diff 一致」。
+2. **`--check-archived` 历史 drift 检测能力消失**：历史 80 份 ast manifest 不再被本仓
+   checker 校验（字段 / hash / git span / report_hash / spec_hash / tasks_hash）；命令现在只做
+   归档事件日志可投影校验。历史文件保持冻结，不迁移、不重算、不删除。
+3. **非 building 的 `*-review.md` PASS 门消失**：旧门对 `reviews/` 下每份 `*-review.md` 都
+   要求同名 manifest 且 `verdict == PASS`；新检查只读 `reviews/building-review.md`。当前流程
+   不要求 `design-review.md`，影响面窄，但若未来恢复设计评审报告需另立检查。
+4. **完成面之外的 building review 若缺出口 / 为 `未定` 不报错**：这是为避免误伤在途
+   partial review；terminal 非 PASS 仍由宽触发覆盖。
+5. **legacy 资产保留**：`agent/workflow/review_manifest.py`、其测试、
+   `workflow_state.py review-manifest` 写通道、80 份历史 ast manifest 与
+   `scripts/flow-policy.json` 的 `-review-manifest.json` 受保护规则均原样保留。第二刀决定
+   模块 / CLI / 历史归档 / 受保护路径规则的最终处置。
 

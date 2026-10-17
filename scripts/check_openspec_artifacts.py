@@ -997,22 +997,6 @@ def _check_handoff_json(change_dir: Path) -> list[str]:
     return errors
 
 
-def _repo_root_for_change_dir(change_dir: Path) -> Path:
-    if (
-        change_dir.parent.name == "changes"
-        and change_dir.parent.parent.name == "openspec"
-    ):
-        return change_dir.parent.parent.parent
-    # Archived: openspec/changes/archive/<date>-<id>
-    if (
-        change_dir.parent.name == "archive"
-        and change_dir.parent.parent.name == "changes"
-        and change_dir.parent.parent.parent.name == "openspec"
-    ):
-        return change_dir.parent.parent.parent.parent
-    return change_dir.parent
-
-
 def _tasks_all_complete(change_dir: Path) -> bool:
     """Return True when every checkbox line in tasks.md is checked.
 
@@ -1102,55 +1086,141 @@ def _tasks_missing_evidence(change_dir: Path) -> str | None:
     return None
 
 
-def _change_id_from_dir_name(dir_name: str) -> str:
-    """Strip the leading ``YYYY-MM-DD-`` date prefix from an archive dir name."""
-    match = re.match(r"\d{4}-\d{2}-\d{2}-(.+)", dir_name)
-    return match.group(1) if match else dir_name
+_REVIEW_EXIT_HEADING_PREFIX = "闭环出口"
+# A leading token must be followed by a boundary, not a letter: rejects PASSED.
+_REVIEW_EXIT_LEADING_TOKEN_RE = re.compile(
+    r"(PASS|BLOCKED|CHANGES_REQUESTED)(?=$|[\s（(：:—\-/.*`~])",
+    re.IGNORECASE,
+)
+_REVIEW_EXIT_ANY_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z])(PASS|BLOCKED|CHANGES_REQUESTED)(?![A-Za-z])",
+    re.IGNORECASE,
+)
 
 
-def _check_review_manifests(
-    change_dir: Path, change_type: ChangeType, *, archived: bool = False
+def _strip_fenced_blocks(text: str) -> str:
+    """Drop fenced code blocks (``` / ~~~) so quoted templates are ignored."""
+    kept: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        marker = stripped[:3]
+        if fence is None:
+            if marker in ("```", "~~~"):
+                fence = marker
+                continue
+            kept.append(line)
+        elif marker == fence:
+            fence = None
+    return "\n".join(kept)
+
+
+def _review_exit_verdict(text: str) -> tuple[str, str | None]:
+    """Parse the terminal verdict from the ``## 闭环出口`` section.
+
+    Returns ``(status, verdict)`` with status one of ``missing`` /
+    ``duplicate`` / ``empty`` / ``ambiguous`` / ``ok``. Only the first
+    non-empty line counts; the four rules are documented in the change's
+    design (retire-manifest-check Decision 2).
+    """
+    text = _strip_fenced_blocks(text)
+    headings = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
+    exits = [
+        (index, match)
+        for index, match in enumerate(headings)
+        if match.group(1).strip().startswith(_REVIEW_EXIT_HEADING_PREFIX)
+    ]
+    if not exits:
+        return "missing", None
+    if len(exits) > 1:
+        return "duplicate", None
+    index, match = exits[0]
+    end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+    body = text[match.end():end]
+    first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+    cleaned = first.lstrip("-*+ >`").strip()
+    # Tolerate an ordered-list prefix (e.g. ``1. PASS``) the same way as the
+    # other list markers.
+    cleaned = re.sub(r"^\d+[.)]\s+", "", cleaned)
+    lead = _REVIEW_EXIT_LEADING_TOKEN_RE.match(cleaned)
+    if lead is None:
+        return "empty", None
+    verdict = lead.group(1).upper()
+    rest = cleaned[lead.end():]
+    if ("|" in rest or "｜" in rest) and _REVIEW_EXIT_ANY_TOKEN_RE.search(rest):
+        return "ambiguous", None
+    return "ok", verdict
+
+
+def _review_exit_errors(report: Path, *, completion: bool) -> list[str]:
+    """Errors for a building review's terminal exit.
+
+    ``completion=False`` is the wide trigger: only a terminal non-PASS verdict
+    is an error (docs / no-spec-delta / partial changes still get this check).
+    ``completion=True`` additionally requires the section to exist and be PASS.
+    """
+    status, verdict = _review_exit_verdict(report.read_text(encoding="utf-8"))
+    if status == "duplicate":
+        return [
+            "reviews/building-review.md 出现多个 `## 闭环出口` 小节，出口不唯一。"
+        ]
+    if status == "ok":
+        if verdict == "PASS":
+            return []
+        return [
+            f"reviews/building-review.md 的 `## 闭环出口` 为 {verdict}，"
+            "审阅闭环未通过（要求 PASS）。"
+        ]
+    if not completion:
+        return []
+    if status == "missing":
+        return [
+            "reviews/building-review.md 缺少 `## 闭环出口` —— 终结 verdict 无法机械校验。"
+            "请在报告末尾补 `## 闭环出口`，首个非空行写 PASS / BLOCKED / 超上限 BLOCKED。"
+        ]
+    if status == "ambiguous":
+        return [
+            "reviews/building-review.md 的 `## 闭环出口` 不唯一：首个非空行不得用 `|` "
+            "列出多个终结出口。"
+        ]
+    return [
+        "reviews/building-review.md 的 `## 闭环出口` 未填，或首个非空行不以终结 token "
+        "（PASS / BLOCKED / CHANGES_REQUESTED）开头。"
+    ]
+
+
+def _check_building_review(
+    change_dir: Path, change_type: ChangeType
 ) -> list[str]:
-    # Review evidence lives inside the change directory (reviews/), so it is
-    # committed with the change and CI can verify it mechanically. See
-    # agent/workflow/review_manifest.py.
-    review_dir = change_dir / "reviews"
-    review_report = review_dir / "building-review.md"
+    """Review gate: wide terminal-non-PASS + completion-face PASS.
 
-    # Mandatory building review for non-docs changes that ship code: the
-    # independent subagent review closed loop (issue #90) must have run and
-    # produced a PASS manifest before the change is merged. docs-only changes
-    # skip this gate. The gate only fires once the change's tasks are ALL
-    # checked — proposal-stage / partially-implemented changes (whose spec
-    # delta already exists) must not be flagged, or CI would block every
-    # in-flight change. Archived changes predate or satisfy this gate; the
-    # --check-archived mode only verifies that EXISTING manifests still bind
-    # their artifacts (drift detection), it does not demand a historical review.
+    The completion face fires once a non-docs change with a spec delta has all
+    its tasks checked; it requires ``reviews/building-review.md`` with a PASS
+    exit. The wide trigger runs whenever a building review exists: a terminal
+    BLOCKED / CHANGES_REQUESTED verdict is always an error, preserving the
+    retired manifest verdict check for docs / no-spec-delta / partial changes.
+    A mid-round ``未定`` report is not flagged outside the completion face, so
+    in-flight changes are not blocked.
+
+    The retired asterwynd manifest (``reviews/<phase>-review-manifest.json``) is
+    no longer required, produced or verified here (issue #316, first cut).
+    """
+    review_report = change_dir / "reviews" / "building-review.md"
     requires_building_review = (
-        not archived
-        and change_type.primary != "docs"
+        change_type.primary != "docs"
         and _changed_capabilities(change_dir)
         and _tasks_all_complete(change_dir)
     )
-
-    if requires_building_review and not review_report.exists():
-        return [
-            "building-review.md missing — 独立 subagent 审阅未运行。"
-            "请用 /review-loop 跑审阅闭环（一轮 = 非空 medium+ 批次：开批→全修→只验证→收口；最多 20 个已收口轮，超限则超上限 BLOCKED + 建议推倒重开）。"
-        ]
-
-    if not review_dir.exists():
-        return []
-
-    from agent.workflow.review_manifest import verify_review_manifest
-
-    repo_root = _repo_root_for_change_dir(change_dir)
-    change_id = _change_id_from_dir_name(change_dir.name)
-    errors: list[str] = []
-    for report_path in sorted(review_dir.glob("*-review.md")):
-        phase = report_path.name.removesuffix("-review.md")
-        errors.extend(verify_review_manifest(repo_root, change_id, phase, archived=archived))
-    return errors
+    if requires_building_review:
+        if not review_report.exists():
+            return [
+                "building-review.md missing — 独立 subagent 审阅未运行。"
+                "请用 /review-loop 跑审阅闭环（一轮 = 非空 medium+ 批次：开批→全修→只验证→收口；最多 20 个已收口轮，超限则超上限 BLOCKED + 建议推倒重开）。"
+            ]
+        return _review_exit_errors(review_report, completion=True)
+    if review_report.exists():
+        return _review_exit_errors(review_report, completion=False)
+    return []
 
 
 def _check_archived_projectable(change_dir: Path) -> list[str]:
@@ -1350,7 +1420,7 @@ def check_change(change_dir: Path, current_specs_root: Path | None = None) -> li
 
     errors.extend(
         f"{change_dir.name}: {error}"
-        for error in _check_review_manifests(change_dir, change_type)
+        for error in _check_building_review(change_dir, change_type)
     )
 
     errors.extend(
@@ -1570,12 +1640,12 @@ def _check_archived_completion_gate(change_dir: Path) -> list[str]:
     that leaves one box unticked must not thereby switch its own gates off
     (issue #235 D2/D3).
 
-    building-review is checked for **existence only**. Reusing
-    ``_check_review_manifests`` here would resolve paths against the *active*
-    directory (``change_dir_for(..., archived=False)``) and report
-    ``review manifest missing`` for a change that is correctly archived;
-    manifest completeness is the job of the ``--check-archived`` pass, which
-    knows the archived semantics.
+    building-review is checked for **existence + terminal verdict** here. The
+    existence face matches the active gate (non-docs + spec delta); the verdict
+    face also runs as a wide trigger whenever a building review exists (terminal
+    BLOCKED / CHANGES_REQUESTED is always an error). This replaces the retired
+    asterwynd manifest verdict gate; historical archives are not re-checked
+    (``--check-archived`` no longer verifies manifests at all).
 
     Exemptions are inherited from the reused predicates rather than restated:
     docs-only (``primary == "docs"``), no spec delta (``_changed_capabilities``),
@@ -1613,22 +1683,30 @@ def _check_archived_completion_gate(change_dir: Path) -> list[str]:
         )
     )
 
-    if (
-        change_type.primary != "docs"
-        and _changed_capabilities(change_dir)
-        and not (change_dir / "reviews" / "building-review.md").exists()
-    ):
+    review_report = change_dir / "reviews" / "building-review.md"
+    requires_building_review = (
+        change_type.primary != "docs" and _changed_capabilities(change_dir)
+    )
+    if requires_building_review and not review_report.exists():
         errors.append(
             prefix + "building-review.md missing — 归档点要求独立 subagent 审阅证据。"
             "请用 /review-loop 跑审阅闭环（一轮 = 非空 medium+ 批次：开批→全修→只验证→收口；最多 20 个已收口轮，超限则超上限 BLOCKED + 建议推倒重开）。"
+        )
+    elif review_report.exists():
+        # Wide trigger for docs / no-spec-delta archives; the completion face
+        # additionally demands a PASS exit for non-docs + spec delta.
+        errors.extend(
+            prefix + error
+            for error in _review_exit_errors(
+                review_report, completion=requires_building_review
+            )
         )
 
     # grill-flow-hardening / issue #298：设计阶段审阅闭环证据。触发条件比 building-review
     # 多一道 `DESIGN_TYPES` 前置——因为「设计阶段审阅闭环」是 **grill 环节的收口**，而
     # grill 只对 DESIGN_TYPES（feature/refactor/process）challenge；bugfix/research 不走
     # grill（`_check_design_review_task` 对它们直接返回 []），要求其产 `grill-adversarial.md`
-    # 会是「要求一个输入不存在的产物」。存在性即可；`grill-adversarial.md` 不以
-    # `-review.md` 结尾，故不触发上面的 manifest glob。
+    # 会是「要求一个输入不存在的产物」。存在性即可（review manifest 校验已退役）。
     if (
         change_type.primary != "docs"
         and (change_type.all_types & DESIGN_TYPES)
@@ -1692,7 +1770,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--current-specs-root", default="openspec/specs")
     parser.add_argument("--change", help="Check a single active change")
     parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
-    parser.add_argument("--base-ref", default="master")
+    parser.add_argument(
+        "--base-ref",
+        default="master",
+        help="Git ref to diff against (default: master). Locally use "
+        "origin/master when the local master is stale, otherwise historical "
+        "archives are misread as newly archived in this PR",
+    )
     parser.add_argument(
         "--skip-backlog",
         action="store_true",
@@ -1712,8 +1796,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check-archived",
         action="store_true",
-        help="Also verify review manifests of archived changes, catching drift "
-        "(e.g. post-PASS tasks edits) that active-only checks miss",
+        help="Also validate archived changes' event-log projectability. Review "
+        "manifest drift checks were retired (retire-manifest-check, issue #316)",
     )
     args = parser.parse_args(argv)
 
@@ -1732,26 +1816,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_archived and not args.change:
         archive_root = changes_root / "archive"
         if archive_root.exists():
-            tasks_hash_skipped = 0
             for change_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
+                # Keep the historical guard: archives without a parseable
+                # Change Type stay out of scope (4 old-generation dirs have no
+                # proposal / no reviews; widening coverage here would be a new
+                # check, not part of this retirement).
                 change_type = parse_change_type((change_dir / "proposal.md").read_text(encoding="utf-8"))[0] \
                     if (change_dir / "proposal.md").exists() else None
                 if change_type is None:
                     continue
-                errors.extend(_check_review_manifests(change_dir, change_type, archived=True))
-                # #232 B 盲区：归档语境的 tasks_hash 降级（见 review_manifest.py）
-                # 不得静默。这里按 change 计数，循环后汇总一行到 stderr——不逐
-                # change 刷屏、不进 errors（进 errors 会被当成 error 而误红）。
-                if any((change_dir / "reviews").glob("*-review-manifest.json")):
-                    tasks_hash_skipped += 1
-                # Q5/代码层修正 2：归档 change 只验可投影（结构合法 + 类型可识别）
+                # Q5/代码层修正 2：归档 change 只验可投影（结构合法 + 类型可识别）。
+                # Review manifests are no longer verified (retire-manifest-check).
                 errors.extend(_check_archived_projectable(change_dir))
-            if tasks_hash_skipped:
-                print(
-                    f"[archived manifest check] tasks_hash 已按归档语境跳过"
-                    f"（{tasks_hash_skipped} 个 change；其余 hash 与字段仍校验）",
-                    file=sys.stderr,
-                )
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
@@ -1761,7 +1837,8 @@ def main(argv: list[str] | None = None) -> int:
     # 若本门在块内，那个 flag 就成了事实上的区分开关，与「不能被它关掉」冲突；
     # 而 AGENTS.md 速查表推荐本地跑不加该 flag 的 `--check-archived`，那样本门会
     # 在全部历史归档上求值。区分一律靠显式守卫：
-    #   - --check-archived：只做既有 manifest 漂移检测，不进本门（守爆炸半径）
+    #   - --check-archived：只做归档事件日志可投影校验，不进本门（守爆炸半径；
+    #     review manifest 漂移检测已随 retire-manifest-check 退役）
     #   - --change <id>：单 change 查询，不应额外评估本分支上的归档 id
     if not args.check_archived and not args.change:
         errors.extend(

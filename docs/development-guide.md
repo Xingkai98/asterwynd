@@ -289,16 +289,39 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
 
 归档目录 MUST 为 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。缺日期前缀（如 `archive/<id>/`）会被完成度门禁**直接报错**——这类目录既不匹配归档正则、又被 `iter_change_dirs` 排除在 active 之外，否则会落进「谁都不管」的静默面。
 
-## Review manifest 纪律（收尾）
+## Review evidence 纪律（收尾）
 
-`building-review-manifest.json` 的 `tasks_hash` 绑定的是**审阅时刻**的 `tasks.md`。收尾阶段（spec sync / 归档 move / backlog 移除 / 补勾任务项）**会继续改 `tasks.md`**，所以必须遵守：
+本仓只要求 **witnessloop 形态** manifest：`reviews/<stage>.manifest.json`（`grill` /
+`grill-adversarial` / `building` 三份）。asterwynd 形态
+`reviews/<phase>-review-manifest.json` 已随 `retire-manifest-check`（issue #316 第一刀）退役：
+不再要求产出、不再由本仓 checker 校验，历史 80 份保持原样。
 
-- **manifest SHALL 在该 change 的 `tasks.md` 最终化之后生成**——即收尾的所有 `tasks.md` 编辑（含归档 move 之后的最终 head）都完成后，再跑 `/review-loop` 收尾写 manifest。`#199` / `#232` 都是在归档 move 之后绑定 manifest 的正确范例。
-- order 反了会怎样：manifest 早绑 → 后续勾选/补行使 `tasks_hash` 漂移。**active** 语境校验仍强判 `tasks hash mismatch`（本 change 收窄了「降级」只作用于归档语境），CI 会红——不会静默放过。
-- **archived** 语境不再以 `tasks_hash` 判失败（`tasks.md` 是贯穿到归档的活文档，其字节哈希在归档后不构成漂移证据）；归档 change 仍强校验 manifest 存在性、字段完整性与 `report_hash` / `spec_hash` / git span。该降级**不静默**：`--check-archived` 会输出一行汇总说明。
-- **归档后不要再编辑该 change 的 `reviews/building-review.md` 或 `tasks.md`**：前者被 `report_hash` 强校验（会红），后者被归档降级跳过（不会红，但也意味着归档后改 tasks 不再有校验兜底）。
+- **三份 manifest SHALL 在所有内容提交之后、归档 move 之后生成**，用**归档目录名**作为
+  `--change`（`<YYYY-MM-DD>-<change-id>`）；`report_path` SHALL 覆盖 `reviews/` 下每一份
+  `.md`（孤儿规则）。
+- 产出命令（`--report` 按 stage 取实际报告名）：
 
-归档校验命令（`validate` job 已接入 CI）：
+  ```bash
+  witnessloop manifest build --root . --change <归档目录名> --stage grill \
+    --report reviews/grill-design.md --reviewer-run-id <run> --author-run-id <run>
+  witnessloop manifest build --root . --change <归档目录名> --stage grill-adversarial \
+    --report reviews/grill-adversarial.md --reviewer-run-id <run> --author-run-id <run>
+  witnessloop manifest build --root . --change <归档目录名> --stage building \
+    --report reviews/building-review.md --reviewer-run-id <run> --author-run-id <run>
+  ```
+
+  先内容、后证据；审阅之后再落非证据文件会让 manifest 变 stale。
+- **building review 的终结 verdict**：`reviews/building-review.md` SHALL 以二级标题
+  `## 闭环出口` 记录终结出口，首个非空行以 `PASS` 开头；`BLOCKED` /
+  `CHANGES_REQUESTED` 是 terminal 非 PASS，宽触发一律报错；`未定` / 缺小节只在完成面
+  报错。解析细节见 `openspec/specs/dev-workflow-state-machine/spec.md` 的
+  `Review evidence 与终结 verdict`。
+- **本地冒烟必须用正确的 base**：`--base-ref` 缺省是 `master`；本地 `master` 落后
+  `origin/master` 时，归档点门会把历史归档误判为「本 PR 新归档」，从而用新的
+  `## 闭环出口` 判据追溯打红。跑全量 checker 时显式用
+  `--base-ref origin/master --require-base`（CI 用 PR base sha，不受影响）。
+- **`--check-archived` 只做归档事件日志可投影校验**（`validate` job 已接入 CI）；它不再
+  检测历史 manifest / report / spec 漂移。历史 manifest 的处置留给第二刀：
 
 ```bash
 PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
@@ -348,9 +371,9 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
 
 - **产物 4 个**：`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller）、`.github/witnessloop-tests.txt`（测试执行点 = `uv run --extra dev pytest -q`）。`.github/workflows/ci.yml` **未被触碰**。
 - **required 只有 `gate / check`**（阶段 C 翻开关，issue #305，2026-10-17）：`master` 的 `required_status_checks.contexts` = `["gate / check"]`。本仓自建的 `validate` / `benchmark-gate` / `windows-platform` **照跑、只是不再拦合并**。
-- **降级代价（须知）**：只由本仓 checker 承载的 RIR / Impact Analysis / benchmark smoke / 归档点完成度 / backlog 一致性 / 项目自己的 review manifest **不再拦合并**。逐条分叉清单见 issue #305 的阶段 C 前置 comment。⇒ **不要把「CI 绿」读成「项目规则已满足」**。
+- **降级代价（须知）**：只由本仓 checker 承载的 RIR / Impact Analysis / benchmark smoke / 归档点完成度 / backlog 一致性 / building review 的 `## 闭环出口` PASS 判据 **不再拦合并**。逐条分叉清单见 issue #305 的阶段 C 前置 comment。⇒ **不要把「CI 绿」读成「项目规则已满足」**。
 - **caller 钉 `@v1.7.0`**：包版本由 reusable workflow 自己的 `job.workflow_sha` 推导（witnessloop issue #30 的修复），**不需要** `with: witnessloop-ref:`；升级 = `witnessloop init --gate-ref <新 ref>`（幂等，重写 caller + 同步台账）。
-- **旧门禁一行未动**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部照旧。
+- **旧门禁仍照跑**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部保留；其中 checker 的 review 门已由 `retire-manifest-check`（issue #316）下掉重复 manifest 校验并改为 `## 闭环出口` PASS 判据，其余检查不变。
 - **已知红（阶段 A 遗留，未清）**：① active change `add-minimal-tui-runtime-view`（无 `reviews/`）；② 阶段 A 的 change `witnessloop-adoption` 当时缺 witnessloop 形态 manifest（该 change **已归档**，此条只作历史记录）。两条都属「**缺 manifest**」这一类，不是配置错误。
 - **`reviews/` 的一致状态（阶段 A 实测，仍然适用）**：一个 change 的 `reviews/` 下，**每份 `.md` 都必须被某份 witnessloop 形态 manifest 的 `report_path` 绑定**，否则触发孤儿规则——阶段 A 实测「只落一部分」比「一份都不落」更红（2 条 → 14 条 → 16 条）。阶段 C 之后 `gate / check` 是 required ⇒ 一个 change 要判绿就必须把 `reviews/` 落齐并全部绑定（`grill` / `grill-adversarial` / `building` 三份 manifest）。
 - **grill 决策记录的格式契约（v1.7.0 实测，2026-10-17 补记）四条**：`reviews/grill-design.md` 必须含 `## Confirmed Decisions`（**至少 3 条**决策块——`MIN_CONFIRMED_DECISIONS = 3` 是硬门槛；且每条决策块内有**同行裸** `来源:`——加粗的 `- **来源**:` 匹配不上）、`## User Confirmation`（**无条件存在**：一条 Open Question 都没有时也要有该小节）、以及与逐字标题一致的 Open Questions 小节。详见 `openspec/specs/dev-workflow-gate/spec.md` 的「grill 报告正文判据的已知不兼容」。

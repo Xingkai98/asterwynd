@@ -150,7 +150,7 @@ Requirement discussion -> OpenSpec proposal (proposal / design / tasks / spec-de
         -> archival close-out (spec sync + change archival + backlog cleanup)
 ```
 
-This process is itself machine-enforced: protected paths require structured events, reviews require a review manifest bound to hashes, grills require a structured decision record, and branch names must derive the change-id. **Every change in this project walks this path -- including this README.**
+This process is itself machine-enforced: protected paths require structured events, reviews require a witnessloop manifest bound to hashes (the building review's `## 闭环出口` must be PASS), grills require a structured decision record, and branch names must derive the change-id. **Every change in this project walks this path -- including this README.**
 
 ---
 

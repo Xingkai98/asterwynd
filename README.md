@@ -150,7 +150,7 @@ Asterwynd 用**自己定义的一套工程闭环**开发自己——不是一次
         → 归档收尾（spec 同步 + change 归档 + backlog 清理）
 ```
 
-这套流程本身也被机器强制：受保护路径需结构化事件、审阅需 review manifest 绑定 hash、grill 需结构化决策记录、分支名要能推导 change-id。**项目的每次变更都走这条路，包括这份 README。**
+这套流程本身也被机器强制：受保护路径需结构化事件、审阅需 witnessloop 形态 manifest 绑定 hash（building review 的 `## 闭环出口` 须为 PASS）、grill 需结构化决策记录、分支名要能推导 change-id。**项目的每次变更都走这条路，包括这份 README。**
 
 ---
 

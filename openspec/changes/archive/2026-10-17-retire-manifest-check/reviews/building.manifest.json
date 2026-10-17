@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "2026-10-17-retire-manifest-check",
+  "stage": "building",
+  "reviewer_run_id": "0c6ac31e-5157-4d7a-98eb-150e3a7bcbb3",
+  "author_run_id": "main-session-retire-manifest-check",
+  "base_sha": "1d6cfee2f34478732607fa542bb7ba0c07137b17",
+  "head_sha": "d17ec2fa1deec407c85516017a052396618f3c9b",
+  "tasks_hash": "eba0f283ab9d89b163f19e0a1e377f2f8ca5e3233a70f8a37f37becc8d4a1a09",
+  "spec_hash": "7c03987c18dc2d76210e6f5acc8a5263e66642e164387ae7bcab47cbca7f3dd6",
+  "diff_hash": "638f02b094368650becccfbf69d670cb3dc7fc9a69a2263d7954aa4e62623293",
+  "report_hash": "c2a4320bca3c843a5298dfae34ddbcf7ebf8f6f2d356853d29a50f7f4ce51707",
+  "report_path": "reviews/building-review.md"
+}

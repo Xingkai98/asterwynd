@@ -42,7 +42,7 @@
 6. 维护 `## Reference Implementation Research`，按改动性质分流调研档位；如果关闭，记录明确原因。
 7. 使用 `grilling` 对 `design.md` 做开发前设计追问（独立零记忆 subagent），逐项确认实现细节、依赖、风险、测试策略和文档影响；产出 `reviews/grill-design.md` 并停轮等用户确认 `## Open Questions`。
 8. 按 tasks 测试先行实现（TDD），在独立 worktree 中进行。
-9. 运行 `/review-loop` 独立零记忆审阅闭环（一轮 = 一个**非空 medium+ 批次**的闭环：开批 → 全修 → 只做修复验证 → 收口；批次冻结，验证期新问题只进 deferred；最多 **20 个已收口轮**，超限 ⇒ 超上限 `BLOCKED` + 建议推倒重开），产出 `reviews/building-review.md` + review manifest。
+9. 运行 `/review-loop` 独立零记忆审阅闭环（一轮 = 一个**非空 medium+ 批次**的闭环：开批 → 全修 → 只做修复验证 → 收口；批次冻结，验证期新问题只进 deferred；最多 **20 个已收口轮**，超限 ⇒ 超上限 `BLOCKED` + 建议推倒重开），产出 `reviews/building-review.md`（含 `## 闭环出口`，终结为 `PASS`）；收尾时为 `grill` / `grill-adversarial` / `building` 各产一份 witnessloop 形态 `reviews/<stage>.manifest.json`（命令：`witnessloop manifest build --root . --change <归档目录名> --stage <stage> --report <报告> ...`，归档 move 之后用归档目录名重建）。本仓不再要求 `*-review-manifest.json`。
 10. 运行验证。
 11. 更新文档和能力证明链。
 12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
@@ -51,7 +51,7 @@
 
 decision tickets 和 tracer-bullet tickets 的后端通过 `scripts/workflow_methods.json` 的 `ticket_tracker` 配置控制；默认 backend 为 GitHub Issues。
 
-工作流受保护 artifact 不能只靠自然语言说明来证明合法。修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须在相关 change 的 `workflow-events.jsonl` 中追加结构化 artifact 解释事件。阶段 review report 必须同时提供 `openspec/changes/<change-id>/reviews/<phase>-review-manifest.json`，绑定 reviewer run、base/head sha、tasks/spec/diff/report hash；CI 不只看 review 文本里的 `PASS`。
+工作流受保护 artifact 不能只靠自然语言说明来证明合法。修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须在相关 change 的 `workflow-events.jsonl` 中追加结构化 artifact 解释事件。阶段 review report SHALL 由 witnessloop 形态 manifest（`openspec/changes/<change-id>/reviews/<stage>.manifest.json`）绑定 reviewer/author run、base/head sha、tasks/spec/report hash；本仓 checker 另校验 building review 的 `## 闭环出口` 为 `PASS`（terminal 非 PASS 宽触发报错）。asterwynd 形态 `*-review-manifest.json` 已退役，不再要求产出或校验。
 
 ## 参考实现调研
 
@@ -258,7 +258,7 @@ Impact Analysis 不是一次性段落，而是贯穿 change lifecycle 的维护�
 4. 同步更新 `docs/openspec-change-backlog.md` 的“并行开发批次”，避免批次章节保留过期状态。
 5. 如果该 change 位于“已完成待归档”，也应从该列表移除。
 6. 全量浏览 `docs/` 下的稳定文档标题和相关关键词，判断 README、架构、开发指南、测试指南、路线图、benchmark 或讨论纪要是否需要同步；只更新与本 change 直接相关的稳定口径。
-7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`（本地 `master` 落后时默认 base 会把历史归档误判为「本 PR 新归档」）。
 8. 在 PR 说明中记录归档路径、backlog 更新和验证结果。
 
 `docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。只有遇到冲突、校验失败或其他明确阻塞，导致实现 PR 暂时不能完成归档时，才把 change 放入“已完成待归档”，并在阻塞解除后优先清空。
@@ -286,11 +286,11 @@ PR 合入后固定确认：
 ```bash
 openspec status --change <change-id>
 openspec validate <change-id> --strict
-# 项目本地文档规则脚本，加入后也必须运行
-uv run python scripts/check_openspec_artifacts.py
+# 项目本地文档规则脚本，加入后也必须运行（本地 master 落后时显式用 origin/master）
+uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
 ```
 
-`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change、受保护 artifact 变更有 workflow event 解释、review report 有 manifest 且 hash 自洽。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
+`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change、受保护 artifact 变更有 workflow event 解释、building review 的 `## 闭环出口` 为 `PASS`（完成面必须 PASS；任何已存在报告的 terminal 非 PASS 宽触发报错）。review manifest 的存在性与 revision 绑定由 witnessloop `gate / check` 承担（本仓 checker 不再校验 `*-review-manifest.json`）。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 开发前设计追问和设计评审都通过前，不进入实现阶段。
 
