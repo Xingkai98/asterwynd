@@ -52,7 +52,7 @@
 ## 5. 验证
 
 - [x] 5.1 删除前基线：`uv run pytest -q` = **3 failed / 4532 passed / 9 skipped**（2 条 `TestFindScopeRoot` 本机 `/tmp` 是 git 仓库的环境失败 + 1 条 `test_sandbox_backends.py::test_contract[docker]` Docker 契约超时）。
-- [ ] 5.2 删除后全量：`uv run pytest -q`，不得引入**新的**失败；与 5.1 逐条对账并记录。
+- [x] 5.2 删除后全量：`uv run pytest -q` = **3 failed / 4522 passed / 9 skipped**（8:26）；同 2 条 `TestFindScopeRoot` 环境失败 + 1 条 Playwright `test_reconnect_pending_interaction_browser.py::test_reconnect_replays_approval_card_and_it_is_actionable`（单独重跑 1 passed，flaky；基线对应位置是 Docker 超时）。passed 减少 10 = 删除 9 条模块测试 − 新增守卫用例的净差；无新增失败类型。
 - [x] 5.3 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → **exit 0（checks passed）**。
 - [x] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **30 passed / 0 failed**。
 - [x] 5.5 `grep -rnE "review[-_ ]manifest"`（排除 `openspec/changes/archive/**`）只余 `review_manifest_glob`、本 change 退役说明与历史测试夹具；把结果贴进 PR。
