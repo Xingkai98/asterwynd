@@ -55,7 +55,7 @@
 - [ ] 5.2 删除后全量：`uv run pytest -q`，不得引入**新的**失败；与 5.1 逐条对账并记录。
 - [x] 5.3 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → **exit 0（checks passed）**。
 - [x] 5.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → **30 passed / 0 failed**。
-- [ ] 5.5 `grep -rnE "review[-_ ]manifest"`（排除 `openspec/changes/archive/**`）只余 `review_manifest_glob`、本 change 退役说明与历史测试夹具；把结果贴进 PR。
+- [x] 5.5 `grep -rnE "review[-_ ]manifest"`（排除 `openspec/changes/archive/**`）只余 `review_manifest_glob`、本 change 退役说明与历史测试夹具；把结果贴进 PR。
 - [x] 5.6 `workflow_state.py review-manifest` 实测未知子命令、非零退出、无副作用；`artifact-event` 对归档 change 实测仍可写入。
 
 ## 6. 实现后独立审阅闭环
@@ -77,7 +77,7 @@
 
 ## 8. 收尾（归档前完成）
 
-- [ ] 8.1 `docs/openspec-change-backlog.md` 先登记本 change，再在证据产出之前移除；同时把第十七批 `:116` 的「第二刀已立项」改为「第二刀已完成并归档」；配 `backlog_updated` 事件。
+- [x] 8.1 `docs/openspec-change-backlog.md` 先登记本 change，再在证据产出之前移除；同时把第十七批 `:116` 的「第二刀已立项」改为「第二刀已完成并归档」；配 `backlog_updated` 事件。
 - [ ] 8.2 `workflow-events.jsonl` 事件齐全：`change_created` / `backlog_updated`（登记）/ `current_spec_synced` × 3 / `protected_artifact_explained`（known-debt）/ `backlog_updated`（移除）/ `change_archived`，`approved_by` 均为 `human`。
 - [ ] 8.3 结算 `tasks.md`：已完成项全部勾选；closeout 未完成项标 `(post-merge)`。
 - [ ] 8.4 归档 move 前 `git add` 并确认 `reviews/` 报告已跟踪；手工 `git mv` 到 `openspec/changes/archive/2026-10-17-retire-manifest-module/`（独立提交，纯 rename）。
