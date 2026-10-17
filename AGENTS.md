@@ -128,7 +128,7 @@ agent 应把用户的自然语言意图自动路由到对应流程，而不是�
 | 操作 | 命令 |
 |------|------|
 | 跑独立审阅闭环 | `/review-loop <change-id>` |
-| 验证 building 审阅完成 | `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` |
+| 验证 building 审阅完成 | `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`（本地 `master` 落后时默认 base 会把历史归档误判为新归档） |
 | 全量 pytest | `uv run pytest -q` |
 | OpenSpec strict validate | `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` |
 

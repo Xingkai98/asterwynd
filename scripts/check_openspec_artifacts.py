@@ -1767,7 +1767,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--current-specs-root", default="openspec/specs")
     parser.add_argument("--change", help="Check a single active change")
     parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
-    parser.add_argument("--base-ref", default="master")
+    parser.add_argument(
+        "--base-ref",
+        default="master",
+        help="Git ref to diff against (default: master). Locally use "
+        "origin/master when the local master is stale, otherwise historical "
+        "archives are misread as newly archived in this PR",
+    )
     parser.add_argument(
         "--skip-backlog",
         action="store_true",

@@ -353,3 +353,14 @@ def test_normative_docs_mention_witnessloop_single_manifest():
     ):
         assert "witnessloop" in text and "manifest" in text, name
         assert "## 闭环出口" in text, name
+
+
+def test_full_check_commands_pin_origin_master():
+    """A stale local master makes historical archives look newly archived.
+
+    The archive-point verdict gate then false-reds them; the documented full
+    check must therefore pin ``origin/master`` explicitly.
+    """
+    for rel in ("AGENTS.md", "docs/requirements-process.md"):
+        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        assert "--base-ref origin/master --require-base" in text, rel

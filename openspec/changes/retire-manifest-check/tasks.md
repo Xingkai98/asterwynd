@@ -54,7 +54,7 @@
 ## 5. 验证
 
 - [ ] 5.1 `uv run pytest -q`（记录通过数与既有环境失败）。
-- [x] 5.2 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` → 0 errors。
+- [x] 5.2 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → 0 errors。本地 `master` 落后 `origin/master` 79 个提交；默认 base 会把 5 个历史归档误判为「本 PR 新归档」，已在 AGENTS / requirements-process / development-guide 标注正确命令。
 - [x] 5.3 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` → 仍 exit 0，且 stderr 不再出现 tasks_hash 汇总。
 - [x] 5.4 变异验证：临时让 `_review_exit_verdict` 接受 BLOCKED，指定测试变红；恢复后转绿。
 

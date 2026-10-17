@@ -258,7 +258,7 @@ Impact Analysis 不是一次性段落，而是贯穿 change lifecycle 的维护�
 4. 同步更新 `docs/openspec-change-backlog.md` 的“并行开发批次”，避免批次章节保留过期状态。
 5. 如果该 change 位于“已完成待归档”，也应从该列表移除。
 6. 全量浏览 `docs/` 下的稳定文档标题和相关关键词，判断 README、架构、开发指南、测试指南、路线图、benchmark 或讨论纪要是否需要同步；只更新与本 change 直接相关的稳定口径。
-7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py`。
+7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`（本地 `master` 落后时默认 base 会把历史归档误判为「本 PR 新归档」）。
 8. 在 PR 说明中记录归档路径、backlog 更新和验证结果。
 
 `docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。只有遇到冲突、校验失败或其他明确阻塞，导致实现 PR 暂时不能完成归档时，才把 change 放入“已完成待归档”，并在阻塞解除后优先清空。
@@ -286,8 +286,8 @@ PR 合入后固定确认：
 ```bash
 openspec status --change <change-id>
 openspec validate <change-id> --strict
-# 项目本地文档规则脚本，加入后也必须运行
-uv run python scripts/check_openspec_artifacts.py
+# 项目本地文档规则脚本，加入后也必须运行（本地 master 落后时显式用 origin/master）
+uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
 ```
 
 `scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change、受保护 artifact 变更有 workflow event 解释、building review 的 `## 闭环出口` 为 `PASS`（完成面必须 PASS；任何已存在报告的 terminal 非 PASS 宽触发报错）。review manifest 的存在性与 revision 绑定由 witnessloop `gate / check` 承担（本仓 checker 不再校验 `*-review-manifest.json`）。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。

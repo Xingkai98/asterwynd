@@ -307,6 +307,10 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
   `CHANGES_REQUESTED` 是 terminal 非 PASS，宽触发一律报错；`未定` / 缺小节只在完成面
   报错。解析细节见 `openspec/specs/dev-workflow-state-machine/spec.md` 的
   `Review evidence 与终结 verdict`。
+- **本地冒烟必须用正确的 base**：`--base-ref` 缺省是 `master`；本地 `master` 落后
+  `origin/master` 时，归档点门会把历史归档误判为「本 PR 新归档」，从而用新的
+  `## 闭环出口` 判据追溯打红。跑全量 checker 时显式用
+  `--base-ref origin/master --require-base`（CI 用 PR base sha，不受影响）。
 - **`--check-archived` 只做归档事件日志可投影校验**（`validate` job 已接入 CI）；它不再
   检测历史 manifest / report / spec 漂移。历史 manifest 的处置留给第二刀：
 
