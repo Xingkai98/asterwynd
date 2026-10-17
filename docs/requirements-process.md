@@ -42,7 +42,7 @@
 6. 维护 `## Reference Implementation Research`，按改动性质分流调研档位；如果关闭，记录明确原因。
 7. 使用 `grilling` 对 `design.md` 做开发前设计追问（独立零记忆 subagent），逐项确认实现细节、依赖、风险、测试策略和文档影响；产出 `reviews/grill-design.md` 并停轮等用户确认 `## Open Questions`。
 8. 按 tasks 测试先行实现（TDD），在独立 worktree 中进行。
-9. 运行 `/review-loop` 独立零记忆审阅闭环（审 → 改 → 再审直到 PASS 或 3 轮封顶），产出 `reviews/building-review.md` + review manifest。
+9. 运行 `/review-loop` 独立零记忆审阅闭环（审 → 改 → 再审直到收敛——无轮数上限；无法收敛时报告阻塞），产出 `reviews/building-review.md` + review manifest。
 10. 运行验证。
 11. 更新文档和能力证明链。
 12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
@@ -186,7 +186,7 @@ proposal 阶段可以保留 `unknown`、`TBD` 或 `待确认`，但开发前设�
 - 如果发现术语、边界或设计决策不清楚，应先更新当前 change 的 `design.md`、`proposal.md`、spec delta、`tasks.md` 或稳定项目文档，再进入开发。
 - 如果当前 agent 环境没有 `grilling` skill，也必须按同等标准执行设计追问：逐个设计分支确认方案、记录取舍和未选方案，并明确测试与验收方式。
 - 设计追问完成后，`design.md` 必须包含 `## Pre-Implementation Review`，简要记录已解决问题、备选方案、否决方案、最终确认和剩余风险；不要把完整聊天流水粘贴进设计文档。
-- **设计阶段审阅闭环**（grill-flow-hardening / issue #298）：grill 产出 `reviews/grill-design.md` 后、**停轮前**，必须再跑一个与实现后 `/review-loop` **同构**的闭环——独立零记忆审阅者**对抗分析**（默认设计有错、逐条证伪 Confirmed Decisions 与假设）→ 出 verdict（`PASS` / `CHANGES_REQUESTED`）→ 修 `grill-design.md` → **再审直到 `PASS` 或轮数封顶**——产出 `reviews/grill-adversarial.md`。该闭环审的是**设计不是代码**；实现完成后的 `/review-loop` 不动、继续存在。
+- **设计阶段审阅闭环**（grill-flow-hardening / issue #298）：grill 产出 `reviews/grill-design.md` 后、**停轮前**，必须再跑一个与实现后 `/review-loop` **同构**的闭环——独立零记忆审阅者**对抗分析**（默认设计有错、逐条证伪 Confirmed Decisions 与假设）→ 出 verdict（`PASS` / `CHANGES_REQUESTED`）→ 修 `grill-design.md` → **再审直到收敛**（无轮数上限；无法收敛时报告阻塞）——产出 `reviews/grill-adversarial.md`。该闭环审的是**设计不是代码**；实现完成后的 `/review-loop` 不动、继续存在。
 - **能代码定的答案用代码定**：该闭环内对每条 Open Question——**能由代码/规格判定的**，由审阅者**带证据（`文件:行号`）直接给出答案**，移出 `## Open Questions`、记入 `grill-design.md` 的 `## Code-Resolved Questions`，**不停轮**；只有真正的用户取舍才留在 `## Open Questions` 交停轮确认（配具体例子）。
 - 设计追问完成前，不进入测试实现或功能实现。
 

@@ -110,3 +110,40 @@ CHANGES_REQUESTED
 - `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → `OpenSpec artifact checks passed`，exit 0（backlog 已登记本 change，一致性规则仍过）。
 - T6 实跑 → **12 行命中、exit 0**：`AGENTS.md:18`、`AGENTS.md:104`、`README.md:148`、`README_EN.md:148`、`docs/interview-script/questions/Q14-dev-process.md:13`、`:56`、`docs/requirements-process.md:45`、`:189`、`openspec/specs/change-documentation/spec.md:47`、`:94`、`scripts/check_openspec_artifacts.py:1139`、`:1623`。前 12 行均在本 change 修改面内；但施加 delta 后会新增 `openspec/specs/change-documentation/spec.md` 的 `round cap` 命中（见 N-1），故「归零」不可达。
 - 补充：`check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` → `OpenSpec artifact checks passed`，exit 0；`platform_gate.py --verify` → `全部一致`，exit 0；`git rev-list --left-right --count origin/master...HEAD` = `0 3`。
+
+## Round 3（复核 N-1 / N-2 + 阻塞性新洞扫查）
+
+- run id: paseo-grill-adversarial-review-loop-no-round-cap-r3
+- 被审 revision: d91b3d1a5c8abfacaec2a795cd25c8196d12e78c
+- 时间: 2026-10-17
+- 零记忆: 是（未继承 Round 1 / Round 2 记忆；只读工作区文档、git 与先例 worktree）
+
+### Verdict
+
+PASS
+
+### N-1 / N-2 复核
+
+- **N-1**: **已处置**。证据：① `grep -in "round cap" specs/change-documentation/spec.md` → exit 1（无命中）；全文唯一 `cap` 子串命中是 `:24` 的 `` `dev-workflow-state-machine` capability ``（`capability`，不构成 `round cap`）。② 新英文文案为 `:23`「no fixed round limit SHALL apply (see the termination-condition requirement in the `dev-workflow-state-machine` capability)」与 `:72`「no fixed round limit SHALL apply」，与 `design.md:147` 的登记（「现文案为 `no fixed round limit SHALL apply`」）一致。③ 用脚本把 delta 的整条 `Pre-implementation design grilling` 覆盖进现行 `openspec/specs/change-documentation/spec.md`（临时文件模拟，未改仓库）后，对 T6 的四条模式逐行扫描 = **0 命中**；现行 `:47` / `:94` 的两处 `round cap` 会随覆盖消失。④ 两份 delta 对四条 T6 模式逐一检查均为 False。⇒ 施加 delta **不再新增任何命中**；T6 的 exit 1 在其余 10 行落点按 tasks 1.1–1.6 改完后可达。
+- **N-2**: **已处置**。`design.md:12` 现写「**可复核实录只有一条**（一个环在 3 轮 cap 下照旧跑到 R5）；另一处「封顶后仍跑 R4–R6」在先例里被标为**时点旁证、不可在 `ef8b3ab` 上复核**」；`design.md:71` 同口径并点名「（对抗轮 I-4 / N-2）」；`proposal.md:80` 亦同。与先例 `convergence-based-stop/design.md:73`（「时点旁证，在审 revision 之外」）、`:95`（「时点旁证、不可在 `ef8b3ab` 上复核」）、`:105`（「引用它只为说明当时看到的形态」）逐条一致。
+
+### 阻塞性新发现
+
+无。
+
+### 非阻塞观察
+
+- **T6 的大小写/拼写变体覆盖不全**：`git grep` 默认区分大小写，T6 未覆盖 `Round Cap`（首字母大写）与 `round-cap`（连字符单数）变体。当前 12 行命中全为小写；落点统一改成收敛口径后实际风险低。若要让断言更严，可给 T6 加 `-i`，或补 `-e "[Rr]ound [Cc]ap"` / `-e "round-cap"`。
+- **R2 在 N-1 修法中附带的「钉死 `README_EN.md:148` 英文替换措辞」未落库**：`tasks.md:22`（1.3）仍只写「流水线图里的同一句，**必须同改**」；`design.md:147` 只钉死了 delta 的英文措辞。T6 会机械阻止 `round cap` 残留在 `README_EN.md`，因此不阻塞，但 canonical 英文短语仍留给执行者。
+- **`design.md:147` 的「32 行」旧算术仍在**（R1/R2 已记）：`reviews/grill-design.md` 落盘后同口径扫描数已不同，不影响 T6 判据。
+- **`docs/openspec-change-backlog.md:125` 仍写「状态：实现中」**，而 1.x/2.x 尚未开始；可改为「设计已完成、待实现」。
+
+### 机械门（实跑原始结论，Round 3）
+
+- `timeout 300 npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → `Totals: 30 passed, 0 failed (30 items)`，exit 0。
+- `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → `OpenSpec artifact checks passed`，exit 0。
+- T6 实跑 → **12 行命中、exit 0**，逐行判断**全部**属于本 change 计划修改的现行规则：`AGENTS.md:18`（1.1）、`AGENTS.md:104`（1.2）、`README.md:148` / `README_EN.md:148`（1.3）、`docs/interview-script/questions/Q14-dev-process.md:13` / `:56`（1.5）、`docs/requirements-process.md:45` / `:189`（1.4）、`openspec/specs/change-documentation/spec.md:47` / `:94`（2.2 的 MODIFIED delta）、`scripts/check_openspec_artifacts.py:1139` / `:1623`（1.6）。无计划外命中。施加 delta 的模拟结果见 N-1（0 命中）。
+- 两份 delta 结构：`validate --strict` 通过；`change-documentation` 的 MODIFIED 标题与现行规格同名；`dev-workflow-state-machine` 的 ADDED 标题不在现行规格中（不构成重复）；`difflib.unified_diff` 对比现行 Requirement 与 delta 仅两个内容 hunk（两处 round cap → 收敛口径）加一个文件末尾空行的表示差异，无漏 Scenario、无标题改动。
+- `tasks.md` 勾选：`[x]` = 0.1 / 0.4 / 0.6；`[ ]` = 0.2 / 0.3 / 0.5。0.2/0.3 未完成正确；0.5 依赖对抗闭环收敛，当前未勾正确；未发现「已完成却未勾」的项。
+- 更宽的 `git grep "封顶"` 扫描（同样四条排除）只多出 `agent/team/orchestrator.py:13`、`docs/architecture.md:95`（群聊轮次语义）、`openspec/reviews-transcript-fix.md:187` / `:280`（字符上限的历史记录），均与审阅闭环无关，也无本 change 该改而未改的旧口径。
+- T7a（归档前）→ 空输出，exit 0；`git rev-list --left-right --count origin/master...HEAD` = `0 4`。

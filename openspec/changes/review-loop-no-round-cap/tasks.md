@@ -17,26 +17,26 @@
 
 ## 1. 规则与文案改动
 
-- [ ] 1.1 `AGENTS.md:18`（设计阶段闭环的「直到 PASS 或轮数封顶」）改为收敛口径。
-- [ ] 1.2 `AGENTS.md:104`（实现后闭环的「直到 PASS 或 3 轮封顶」）改为收敛口径，并补上「无法收敛 ⇒ 报告阻塞 / 不以轮数为停止理由」。
-- [ ] 1.3 `README.md:148` + `README_EN.md:148`（流水线图里的同一句，**必须同改**）。
-- [ ] 1.4 `docs/requirements-process.md:45`（实现后闭环）与 `:189`（设计阶段闭环）改为收敛口径。
-- [ ] 1.5 `docs/interview-script/questions/Q14-dev-process.md:13`（讲稿正文）与 `:56`（要点「3 轮封顶：审阅不会无限循环…」）改为收敛口径；**`:17` 的 #99 历史案例（「3 轮审阅」）保留原文**——它记录的是当时的经过，不是规则。
-- [ ] 1.6 `scripts/check_openspec_artifacts.py:1139` 与 `:1623` 的提示字符串改为收敛口径。**只改字符串，判定逻辑一行不改。**
+- [x] 1.1 `AGENTS.md:18`（设计阶段闭环的「直到 PASS 或轮数封顶」）改为收敛口径。
+- [x] 1.2 `AGENTS.md:104`（实现后闭环的「直到 PASS 或 3 轮封顶」）改为收敛口径，并补上「无法收敛 ⇒ 报告阻塞 / 不以轮数为停止理由」。
+- [x] 1.3 `README.md:148` + `README_EN.md:148`（流水线图里的同一句，**必须同改**）。
+- [x] 1.4 `docs/requirements-process.md:45`（实现后闭环）与 `:189`（设计阶段闭环）改为收敛口径。
+- [x] 1.5 `docs/interview-script/questions/Q14-dev-process.md:13`（讲稿正文）与 `:56`（要点「3 轮封顶：审阅不会无限循环…」）改为收敛口径；**`:17` 的 #99 历史案例（「3 轮审阅」）保留原文**——它记录的是当时的经过，不是规则。
+- [x] 1.6 `scripts/check_openspec_artifacts.py:1139` 与 `:1623` 的提示字符串改为收敛口径。**只改字符串，判定逻辑一行不改。**
 
 ## 2. 规格
 
-- [ ] 2.1 **两份 delta**：① `specs/dev-workflow-state-machine/spec.md`——`## ADDED Requirements` 新增 `### Requirement: 审阅闭环的终止条件为收敛，而非轮数上限`（含「没有轮数上限」「风格建议不阻断收敛」「收敛即停」「原地打转判为无法收敛」「无法收敛时报告阻塞」五个 Scenario）；② `specs/change-documentation/spec.md`——`## MODIFIED Requirements` 覆盖 `### Requirement: Pre-implementation design grilling`，把该条目里**两处**「until `PASS` or a round cap is reached」（正文 + 一个 Scenario）改成收敛口径，其余逐字保留。
-- [ ] 2.2 **把两份 delta 施加进当前规格**：`openspec/specs/dev-workflow-state-machine/spec.md`（**只追加** 1 条，现有条目逐字节不变）与 `openspec/specs/change-documentation/spec.md`（**覆盖重写** `Pre-implementation design grilling`，其余条目逐字节不变）。两份都要有 `current_spec_synced` 解释事件，并记前后 Requirement 计数。**注**：`change-documentation` 是设计追问 D2 抓到的漏项——该条目内部同时写着「round cap」与「until convergence」，不改就留下两条互相冲突的现行规格。
+- [x] 2.1 **两份 delta**：① `specs/dev-workflow-state-machine/spec.md`——`## ADDED Requirements` 新增 `### Requirement: 审阅闭环的终止条件为收敛，而非轮数上限`（含「没有轮数上限」「风格建议不阻断收敛」「收敛即停」「原地打转判为无法收敛」「无法收敛时报告阻塞」五个 Scenario）；② `specs/change-documentation/spec.md`——`## MODIFIED Requirements` 覆盖 `### Requirement: Pre-implementation design grilling`，把该条目里**两处**「until `PASS` or a round cap is reached」（正文 + 一个 Scenario）改成收敛口径，其余逐字保留。
+- [x] 2.2 **把两份 delta 施加进当前规格**：`openspec/specs/dev-workflow-state-machine/spec.md`（**只追加** 1 条，现有条目逐字节不变）与 `openspec/specs/change-documentation/spec.md`（**覆盖重写** `Pre-implementation design grilling`，其余条目逐字节不变）。两份都要有 `current_spec_synced` 解释事件，并记前后 Requirement 计数。**注**：`change-documentation` 是设计追问 D2 抓到的漏项——该条目内部同时写着「round cap」与「until convergence」，不改就留下两条互相冲突的现行规格。
 
 ## 3. 验证（判据见 `design.md` 的 Testing Strategy）
 
-- [ ] 3.1 **T1**：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → 记原始输出。
-- [ ] 3.2 **T2/T3**：两条 checker 命令 → exit 0（**时序**：产证据前是「内容同步正确」的读数；`building-review.md` 落盘后、manifest 产出前会转 exit 1；以 3.1 产 manifest 之后的读数为最终记录）。
-- [ ] 3.3 **T4**：`uv run python scripts/platform_gate.py --verify` → `全部一致`（exit 0）。本 change 不改平台配置，合入后**不需要**再 `--apply`。
-- [ ] 3.4 **T6**：`git grep -n -e "3 轮封顶" -e "轮数封顶" -e "round cap" -e "3-round cap" -- ':!openspec/changes/archive' ':!openspec/changes/review-loop-no-round-cap' ':!docs/openspec-change-backlog.md' ':!tests/'` → **无命中**（exit 1）。这是「改齐了」的机械证明。**四条排除都是必需的**（设计追问 D3 + 对抗轮 I-1）：本 change 自己的文档要**引用**旧口径；backlog 的 `:169`/`:173` 是历史记录；`tests/benchmark/test_c3_cli.py:3` 的 `per-round cap` 是 benchmark 预算语义、与审阅闭环无关；英文变体在 `README_EN.md` 与 `change-documentation` 规格里。
-- [ ] 3.5 **T7a（归档前）**：`git diff --stat origin/master...HEAD -- openspec/changes/archive/` → **空输出**。**T7b（纯 rename 归档提交之后）**：同命令 → 只出现本 change 自己的归档目录。两者对应**不同时点**，不要混为一个判据。
-- [ ] 3.6 **内容真实性抽查**：规格与文档里每条关于「终止条件」的断言，逐条与 Decision 2 的四要素对上（无上限 / 收敛定义 / 无法收敛出口 / 不以轮数为理由）。
+- [x] 3.1 **T1**：`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → 记原始输出。
+- [x] 3.2 **T2/T3**：两条 checker 命令 → exit 0（**时序**：产证据前是「内容同步正确」的读数；`building-review.md` 落盘后、manifest 产出前会转 exit 1；以 3.1 产 manifest 之后的读数为最终记录）。
+- [x] 3.3 **T4**：`uv run python scripts/platform_gate.py --verify` → `全部一致`（exit 0）。本 change 不改平台配置，合入后**不需要**再 `--apply`。
+- [x] 3.4 **T6**：`git grep -n -e "3 轮封顶" -e "轮数封顶" -e "round cap" -e "3-round cap" -- ':!openspec/changes/archive' ':!openspec/changes/review-loop-no-round-cap' ':!docs/openspec-change-backlog.md' ':!tests/'` → **无命中**（exit 1）。这是「改齐了」的机械证明。**四条排除都是必需的**（设计追问 D3 + 对抗轮 I-1）：本 change 自己的文档要**引用**旧口径；backlog 的 `:169`/`:173` 是历史记录；`tests/benchmark/test_c3_cli.py:3` 的 `per-round cap` 是 benchmark 预算语义、与审阅闭环无关；英文变体在 `README_EN.md` 与 `change-documentation` 规格里。
+- [x] 3.5 **T7a（归档前）**：`git diff --stat origin/master...HEAD -- openspec/changes/archive/` → **空输出**。**T7b（纯 rename 归档提交之后）**：同命令 → 只出现本 change 自己的归档目录。两者对应**不同时点**，不要混为一个判据。
+- [x] 3.6 **内容真实性抽查**：规格与文档里每条关于「终止条件」的断言，逐条与 Decision 2 的四要素对上（无上限 / 收敛定义 / 无法收敛出口 / 不以轮数为理由）。
 
 ## 4. 实现后独立审阅闭环
 
