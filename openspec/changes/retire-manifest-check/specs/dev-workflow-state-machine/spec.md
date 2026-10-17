@@ -220,7 +220,7 @@ building review 报告 SHALL 在 `reviews/building-review.md` 中以二级标题
 - **宽触发（terminal 非 PASS）**：只要 `reviews/building-review.md` 存在且出口首个 token 为 `BLOCKED` / `CHANGES_REQUESTED`，SHALL 报错，SHALL NOT 区分 change 类型、spec delta 或 `tasks.md` 勾选状态；
 - **完成面（必须 PASS）**：**active** 侧为非 docs、有 spec delta、且 `tasks.md` 全部勾选的 change；**归档点**为本 PR `--diff-filter=AR` 新建、在 base 树不存在、且**有 spec delta** 的非 docs 归档 change。完成面 SHALL 要求出口小节存在且为 `PASS`；`未定` 或小节缺失只在完成面报错。
 
-**在完成面上**，小节缺失、首个非空行不以任何终结 token 开头、以非 `PASS` token 开头、或出现多个同名小节 SHALL 报错，SHALL NOT 静默通过；**宽触发只对 terminal 非 `PASS` 报错**，不因 `未定` 或缺小节报错。该判据 SHALL NOT 扩大到历史归档报告，SHALL NOT 解析轮次、severity、deferred 或 low/nit 内容；`design-review.md` 等非 building 报告不在本判据覆盖面。
+**在完成面上**，小节缺失、首个非空行不以任何终结 token 开头、或以非 `PASS` token 开头 SHALL 报错，SHALL NOT 静默通过；**宽触发只对 terminal 非 `PASS` 报错**，不因 `未定` 或缺小节报错。多个同名小节 SHALL 在任何触发面都报错（见解析规则第 4 条）。该判据 SHALL NOT 扩大到历史归档报告，SHALL NOT 解析轮次、severity、deferred 或 low/nit 内容；`design-review.md` 等非 building 报告不在本判据覆盖面。
 
 #### Scenario: PASS 出口通过
 

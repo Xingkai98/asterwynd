@@ -219,8 +219,10 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
   点名标注 `:25`、`:31-33`、`:158-206`、`:232-241`。
 - R0-5（medium）设计承诺的文档守卫测试未落进 tasks。→ 新增任务 1.6 与文档守卫测试。
 
-low/nit 已按报告登记（函数命名统一、known-debt 旧段落、`未定` 完成面外不报错、
-`--check-archived` 保留 `change_type is None ⇒ continue`、CI 测试文案）。
+**第 1 轮复审（`c26dbac` + `a6da997`）**：R0-2 残留（spec delta 把「缺失 / 未定」无条件
+列为失败，与宽触发 / 完成面拆分矛盾）已修好；收口确认 0 条 medium+ ⇒ **PASS**。low/nit
+（函数命名、反引号剥离、任务编号、三项/四项、active docs 用例、Risk 文案、多小节报错归属）
+已逐条修复或登记。
 
 ## Risks / Trade-offs
 

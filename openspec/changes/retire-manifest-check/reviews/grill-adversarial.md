@@ -161,46 +161,44 @@ PASS | BLOCKED（成因：…） | BLOCKED（超上限：20 个轮已收口仍�
 
 ### 第 1 轮 · 修复验证
 
-验证对象：`c26dbac`（仅确认本批 R0-1..R0-5，不扩批）。
+验证对象：`c26dbac`（R0 全修）+ `a6da997`（R0-2 残留与 low/nit 终验）；仅确认本批 R0-1..R0-5，不扩批。
 
 | id | 结果 | 证据 |
 |---|---|---|
 | R0-1 | 已修好 | `design.md:77-88` 规则 3 已加「首个 token 后须有终止符（拒绝 `PASSED`）」与「首 token 后不得出现 `\|` 分隔的其它终结 token（模板占位行必须报错）」，且保留 `PASS（此前 CHANGES_REQUESTED 已收口）` 合法；`specs/dev-workflow-state-machine/spec.md:216` 同步；`tasks.md:17`（1.1）要求 `PASSED` / 模板占位行反例，`tasks.md:28`（2.2）要求实现两条约束。 |
-| R0-2 | **未修好（spec delta 自相矛盾）** | 拆分的三处在位：`design.md:115-131`（宽触发 + 完成面）、`proposal.md:40-58`（需求 2/3）、`specs/dev-workflow-state-machine/spec.md:218-221`（两类触发面）；测试面 `tasks.md:18`（partial active）、`tasks.md:20`（docs / 无 spec delta 归档）、`tasks.md:29-30`（实现要求）也已在位。但同一 spec delta 的 `:223` 仍无条件写「小节缺失、首个非空行不以任何终结 token 开头 … SHALL 报错」，`:239-243` 的 Scenario 也把「没有 `## 闭环出口` / 首行 `未定`」列为直接判失败，二者与 `:221`「`未定` 或小节缺失**只在完成面**报错」及 `:253-258` 的 partial scenario 直接矛盾。按现文本实现，在途 partial report（`未定` / 无出口）会被假红，正是 R0-2 修复要消掉的行为。 |
+| R0-2 | 已修好（a6da997） | 拆分的三处仍在位：`design.md:115-131`（宽触发 + 完成面）、`proposal.md:40-58`（需求 2/3）、`specs/dev-workflow-state-machine/spec.md:218-221`（两类触发面）。上一轮残留的两处矛盾已消除：`:223` 已改为「**在完成面上**，小节缺失 … SHALL 报错 …；**宽触发只对 terminal 非 `PASS` 报错**，不因 `未定` 或缺小节报错」；`:239-242` 的 Scenario 已改名为「完成面上出口缺失、无效或多小节被拒」，GIVEN 为「一个**完成面** change（非 docs、有 spec delta、`tasks.md` 全部勾选）」。与 `:221`（`未定`/缺失只在完成面）、`:254-259`（partial `未定`/无出口不报错）、`:261-266`（宽触发覆盖 docs / 无 spec delta / partial）、`:268-273`（归档点）一致；实跑 `validate --all --strict` 仍 `30 passed, 0 failed`。 |
 | R0-3 | 已修好 | `specs/dev-workflow-gate/spec.md:3-6` 已加 `## RENAMED Requirements`（FROM/TO，格式与 `opsx/sync.md:107-109` 一致）；`tasks.md:51`（4.4）已加「`grep -c '两套并存' openspec/specs/dev-workflow-gate/spec.md` 必须为 0」验收。实跑 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → `30 passed, 0 failed`。 |
 | R0-4 | 已修好 | `tasks.md:42`（3.6）已点名标注 `docs/known-debt.md:25`、`:31-33`、`:158-206`、`:232-241`，并写明各自变假内容；`proposal.md:122-124`（Impact）同步点名同样四处。 |
 | R0-5 | 已修好 | `tasks.md:22`（1.6）新增文档守卫测试任务，覆盖 `AGENTS.md` / `README.md` / `README_EN.md` / `docs/development-guide.md` / `docs/requirements-process.md` / `Q12-ci-testing.md` / `Q14-dev-process.md`，并写明排除 `docs/known-debt.md` 历史记录与 `openspec/changes/archive/**`。 |
 
-R0-2 需要的最小修法（同轮继续修，不另立批次）：把 spec delta `:223` 的句首限定到完成面，
-例如「**完成面上**，小节缺失、首个非空行不以任何终结 token 开头 … SHALL 报错；宽触发只对
-terminal 非 PASS 报错」；并把 `:239-243` 的 Scenario 的 GIVEN 改为「一个**完成面** change」，
-避免与 `:253-258` 的 partial scenario 冲突。其它四处不需要动。
+R0-2 的残留修法已在 `a6da997` 落地（限定完成面 + 宽触发只对 terminal 非 `PASS`）；
+复核未发现新的触发面冲突。low/nit 的修复情况见下表。
 
 ### 第 1 轮后 · 收口确认
 
-- R0-1 / R0-3 / R0-4 / R0-5：已修好（证据见上表）。
-- R0-2：未修好——残留 1 条 medium+（spec delta `:223` 与 `:239-243` 同 `:221`、`:253-258`
-  的触发面语义矛盾）。本轮未收口，不进入第 2 轮开批。
+- R0-1 / R0-2 / R0-3 / R0-4 / R0-5：全部已修好（证据见上表）。
+- 0 条 medium+ ⇒ PASS。
 
 ## 下一批（deferred）
 
-无新增。R0-2 的残留属于本轮同一项的未修好（继续修，不另立 deferred / 新批次）。
+无。本轮 0 条 medium+ ⇒ `PASS`；low/nit 见下表。
 
 ## low/nit 登记
 
 | id | severity | 锚点 | 处置/理由 |
 |---|---|---|---|
-| L1 | low | `design.md:70`、`tasks.md:28` | 函数命名仍不一致：design 写 `_check_building_review` / `_review_exit_verdict`，tasks 写 `_review_exit_verdict` / `_review_exit_errors`。实现前钉死一对名字即可。 |
+| L1 | low（已随 a6da997 修复） | `design.md:70-71`、`tasks.md:27` | 三个名字已统一为 `_check_building_review`（入口）/ `_review_exit_verdict`（解析器）/ `_review_exit_errors`（错误构造）。 |
 | L2 | low（已随 c26dbac 修复） | `proposal.md:27-33` | 已在 Why 中限定为「active 侧旧 manifest 校验里唯一不被 witnessloop 覆盖的是 building review 的 verdict」，并点名 `--check-archived` drift 与 `diff_hash` 两项另行登记。 |
 | L3 | low（已随 c26dbac 修复） | `proposal.md:66-67` | 需求 6 已补「需求 4 明确移除的 `--check-archived` 历史漂移检测是有意收窄，不属于行为不变的例外」。 |
-| L4 | low（部分修好） | `specs/dev-workflow-state-machine/spec.md:216`、`design.md:77-80` | 修复已把「引用符」加入剥离清单（`> PASS` 不再假红）；行首反引号 `` `PASS` `` 仍未在规格中定义。 |
+| L4 | low（已随 a6da997 修复） | `specs/dev-workflow-state-machine/spec.md:216`、`design.md:79` | 剥离清单已同时包含「引用符 / 反引号标记」，`> PASS` 与 `` `PASS` `` 都有规范依据。 |
 | L5 | low（已随 c26dbac 修复） | `tasks.md:30` | 任务 2.4 已点名「保留既有 `change_type is None ⇒ continue` 语义」。 |
 | L6 | low（已随 c26dbac 修复） | `tasks.md:31` | 任务 2.5 已加「同步 … 既有 CI 测试文案」，覆盖 `tests/test_openspec_artifact_checker.py:2116` 的旧文案。 |
-| L7 | low | `tasks.md:21,23` | 修复 1.6 时遗留重复任务号：`1.5 运行指定测试确认红` 在 `:21` 与 `:23` 各出现一次（新 1.6 插在中间）。建议删掉 `:23` 的重复行并把 1.6 放到 1.5 之后。 |
-| L8 | low | `design.md:155,173` vs `:159-172` | Decision 5 写「完整登记**三项**残余损失」「这**三项**都不是…」，但正文实际列了四项（第 4 项是本次修复新增的「完成面之外的未终结报告」）。把两处「三项」改成「四项」。 |
-| L9 | low | `tasks.md:18,20` | 宽触发的 active 路径只有 partial 用例（1.2）；docs / 无 spec delta 的宽触发只在**归档**路径（1.4）覆盖。建议补一条 active docs（`primary: docs` + `BLOCKED` 报告）用例，防止 `check_change` 把宽触发错误地绑回完成面条件。 |
-| L10 | low | `design.md:229` | Risk 表的缓解列仍只写「只认首个非空行且必须以 token 开头；`不是 PASS` 不以 token 开头；多小节直接报错」，未同步新增的 token 终止符与 `\|` 分隔占位行约束；建议与规则 3 对齐。 |
+| L7 | low（已随 a6da997 修复） | `tasks.md:21-22` | 任务已顺延为 1.5 文档守卫、1.6 运行红测试，重复编号消除。 |
+| L8 | low（已随 a6da997 修复） | `design.md:156,174` | Decision 5 已改为「四项残余损失」「这四项」。 |
+| L9 | low（已随 a6da997 修复） | `tasks.md:18` | 任务 1.2 已新增 active docs change 的 `BLOCKED` 报告用例（宽触发不绑回完成面条件）。 |
+| L10 | low（已随 a6da997 修复） | `design.md:230` | Risk 表缓解列已写入 token 终止符、拒绝 `PASSED`、拒绝 `\|` 分隔占位行与多小节报错。 |
+| L11 | low（非阻塞） | `specs/dev-workflow-state-machine/spec.md:216,223` | `:216` 已无条件规定「多个 `## 闭环出口` 小节 SHALL 报错」，而 `:223` 把「出现多个同名小节」列在「在完成面上」的枚举里。建议把该子句移出完成面限定（或补一句「多个同名小节在任何触发面都报错」），避免被读成完成面外可容忍；不影响本轮出口。 |
 
 ## 闭环出口
 
-未定
+PASS

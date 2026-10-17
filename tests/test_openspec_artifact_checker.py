@@ -124,26 +124,14 @@ def write_spec_delta(root: Path, capability: str = "web-ui"):
 
 
 def write_review_evidence(repo_root: Path, change_id: str, phase: str = "building"):
-    """写一个通过 verify_review_manifest 的 review report + manifest。
+    """写一份审阅报告（asterwynd 形态 manifest 已退役，不再生成）。
 
     审阅证据放在 change 目录的 reviews/ 子目录（随 change 进 PR，CI 可校验）。
-    测试目录非 git repo，verify 跳过 sha 校验；哈希基于实际文件计算。
     """
-    from agent.workflow.review_manifest import write_review_manifest
-
     review_dir = repo_root / "openspec" / "changes" / change_id / "reviews"
     review_dir.mkdir(parents=True, exist_ok=True)
     report_path = review_dir / f"{phase}-review.md"
-    report_path.write_text("## Verdict\n\n**PASS**\n", encoding="utf-8")
-    write_review_manifest(
-        repo_root,
-        change_id,
-        phase,
-        reviewer_run_id="test-reviewer",
-        base_sha="0" * 40,
-        head_sha="0" * 40,
-        verdict="PASS",
-    )
+    report_path.write_text("## 闭环出口\n\nPASS\n", encoding="utf-8")
 
 
 def _seed_gen1_change(change: Path, change_id: str) -> None:
@@ -208,7 +196,8 @@ def test_check_change_rejects_handoff_projection_mismatch(tmp_path):
     assert any("handoff.json projection does not match workflow-events.jsonl" in e for e in errors)
 
 
-def test_check_change_rejects_review_report_without_manifest(tmp_path):
+def test_docs_change_review_report_does_not_require_manifest(tmp_path):
+    """asterwynd 形态 manifest 已退役：报告存在不再是缺 manifest 的错误。"""
     change = tmp_path / "openspec" / "changes" / "reviewed-change"
     write_change(change, proposal_for("docs"))
     review_dir = change / "reviews"
@@ -217,7 +206,7 @@ def test_check_change_rejects_review_report_without_manifest(tmp_path):
 
     errors = check_change(change, tmp_path / "openspec" / "specs")
 
-    assert any("review manifest missing" in e for e in errors)
+    assert not any("review manifest" in e for e in errors), errors
 
 
 def test_feature_change_requires_building_review_manifest(tmp_path):
@@ -264,8 +253,8 @@ def test_partial_change_does_not_require_building_review(tmp_path):
     assert not any("building-review.md missing" in e for e in errors), errors
 
 
-def test_feature_change_rejects_review_report_without_manifest(tmp_path):
-    """强制：有 building-review.md 但缺 manifest → verify_review_manifest 报错。"""
+def test_feature_change_accepts_pass_exit_without_manifest(tmp_path):
+    """退役后：完成面只要求 `## 闭环出口` PASS，不再要求 ast manifest。"""
     change = tmp_path / "openspec" / "changes" / "feature-change"
     write_change(
         change,
@@ -280,10 +269,13 @@ def test_feature_change_rejects_review_report_without_manifest(tmp_path):
     write_spec_delta(change, "web-ui")
     review_dir = change / "reviews"
     review_dir.mkdir(parents=True)
-    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
+    (review_dir / "building-review.md").write_text(
+        "## 闭环出口\n\nPASS\n", encoding="utf-8"
+    )
 
     errors = check_change(change, tmp_path / "openspec" / "specs")
-    assert any("review manifest missing" in e for e in errors), errors
+    assert not any("review manifest" in e for e in errors), errors
+    assert not any("闭环出口" in e for e in errors), errors
 
 
 def test_docs_change_does_not_require_building_review(tmp_path):
@@ -1017,13 +1009,6 @@ def test_archived_gate_grill_adversarial_exempt_for_bugfix(tmp_path):
     )
     errors = mod._check_archived_completion_gate(change)
     assert not any("grill-adversarial" in e for e in errors), errors
-
-
-def test_grill_adversarial_name_does_not_trigger_manifest_glob(tmp_path):
-    """#298 F1：`grill-adversarial.md` 不以 `-review.md` 结尾 → 不触发 manifest glob。"""
-    import fnmatch
-    assert not fnmatch.fnmatch("grill-adversarial.md", "*-review.md")
-    assert fnmatch.fnmatch("building-review.md", "*-review.md")  # 对照
 
 
 def test_grill_placeholder_confirmation_does_not_count(tmp_path):
@@ -1790,15 +1775,6 @@ def test_backlog_accepts_active_change_reference(tmp_path):
     assert check_backlog_consistency(changes, backlog) == []
 
 
-def test_change_id_from_dir_name_strips_date_prefix():
-    """Regression (grill Q6): archived dirs are date-prefixed; the bare change
-    id must be derived for manifest verification."""
-    import scripts.check_openspec_artifacts as mod
-
-    assert mod._change_id_from_dir_name("2026-08-02-long-term-memory-deepening") == "long-term-memory-deepening"
-    assert mod._change_id_from_dir_name("long-term-memory-deepening") == "long-term-memory-deepening"
-
-
 def test_verify_review_manifest_archived_path(tmp_path):
     """Regression (grill Q6): verify_review_manifest must resolve archived
     change paths (openspec/changes/archive/<date>-<id>) for drift detection.
@@ -1993,92 +1969,6 @@ def test_check_archived_no_seed_projectable(tmp_path):
     assert _check_archived_projectable(change) == []
 
 
-def _write_archived_change_with_manifest(changes_root, dir_name, change_id):
-    """Build an archived change whose manifest has drifted tasks_hash.
-
-    The manifest deliberately records a stale ``tasks_hash`` (post-PASS 勾选漂移
-    的等价物) so the archive path must tolerate it while still checking the rest.
-    """
-    from agent.workflow.review_manifest import artifact_hash, file_sha256
-
-    change = changes_root / "archive" / dir_name
-    (change / "reviews").mkdir(parents=True)
-    (change / "specs").mkdir()
-    (change / "tasks.md").write_text("- [x] task\n- [x] added during closing\n", encoding="utf-8")
-    (change / "proposal.md").write_text("# Proposal\n\n## Change Type\n\n- primary: process\n", encoding="utf-8")
-    report = change / "reviews" / "building-review.md"
-    report.write_text("# Review\n\nPASS\n", encoding="utf-8")
-    manifest = {
-        "schema": "review-manifest/v1",
-        "change_id": change_id,
-        "phase": "building",
-        "verdict": "PASS",
-        "reviewer_run_id": "r1",
-        "base_sha": "abc123",
-        "head_sha": "def456",
-        "tasks_hash": "sha256:stale-does-not-match",
-        "spec_hash": artifact_hash(change / "specs"),
-        "diff_hash": "sha256:unavailable",
-        "report_hash": file_sha256(report),
-    }
-    (change / "reviews" / "building-review-manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
-    return change
-
-
-def test_check_archived_prints_visible_tasks_hash_skip_summary(tmp_path, capsys):
-    """#232 B（A′ 的可见性）：--check-archived 必须 exit 0（tasks 漂移被降级），
-    且在 stderr 输出**一行**汇总说明，证明降级不静默。
-
-    这条锁住「降级可见」落在调用方而非返回值：若 note 混进 verify_review_manifest
-    的返回列表，它会被 `errors.extend` 收走 → 打成 ERROR → exit 1，本用例转红。
-    """
-    from scripts.check_openspec_artifacts import main
-
-    changes_root = tmp_path / "openspec" / "changes"
-    _write_archived_change_with_manifest(changes_root, "2026-08-02-sample-change", "sample-change")
-
-    exit_code = main(
-        [
-            "--changes-root",
-            str(changes_root),
-            "--check-archived",
-            "--skip-protected-paths",
-            "--skip-backlog",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "tasks_hash 已按归档语境跳过" in captured.err
-    assert captured.err.count("tasks_hash 已按归档语境跳过") == 1
-    assert "ERROR" not in captured.err
-
-
-def test_check_archived_still_fails_on_spec_drift(tmp_path, capsys):
-    """A′ 只放宽 tasks_hash：归档 change 的 spec_hash 漂移仍须 exit 1。"""
-    from scripts.check_openspec_artifacts import main
-
-    changes_root = tmp_path / "openspec" / "changes"
-    change = _write_archived_change_with_manifest(changes_root, "2026-08-02-sample-change", "sample-change")
-    # 归档后改 specs → spec_hash 漂移（manifest 绑定的是改动前的哈希）。
-    (change / "specs" / "extra.md").write_text("changed\n", encoding="utf-8")
-
-    exit_code = main(
-        [
-            "--changes-root",
-            str(changes_root),
-            "--check-archived",
-            "--skip-protected-paths",
-            "--skip-backlog",
-        ]
-    )
-
-    assert exit_code == 1
-    assert "spec hash mismatch" in capsys.readouterr().err
-
-
 def _yaml_step_containing(text: str, needle: str) -> str:
     """Return the YAML step block (``- name:`` … next ``- name:``) holding needle,
     with YAML comment lines removed.
@@ -2113,7 +2003,7 @@ def test_ci_validate_job_runs_check_archived():
     ci = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
 
-    assert "--check-archived" in text, "CI 缺少归档 manifest 校验步骤"
+    assert "--check-archived" in text, "CI 缺少归档校验步骤"
     step = _yaml_step_containing(text, "--check-archived")
 
     # 门禁不得被弱化：不接受 continue-on-error / 条件跳过。
@@ -2256,6 +2146,7 @@ def _archived_change(
     design: str | None = VALID_DESIGN,
     grill: str | None = None,
     building_review: bool = False,
+    building_exit: str = "PASS",
     grill_adversarial: bool = False,
 ) -> Path:
     """构造一个归档目录下的 change（无 git，供门评估单测用）。"""
@@ -2271,7 +2162,9 @@ def _archived_change(
     if building_review:
         review_dir = change / "reviews"
         review_dir.mkdir(parents=True, exist_ok=True)
-        (review_dir / "building-review.md").write_text("## Verdict\n\n**PASS**\n", encoding="utf-8")
+        (review_dir / "building-review.md").write_text(
+            f"## 闭环出口\n\n{building_exit}\n", encoding="utf-8"
+        )
     if grill_adversarial:
         review_dir = change / "reviews"
         review_dir.mkdir(parents=True, exist_ok=True)

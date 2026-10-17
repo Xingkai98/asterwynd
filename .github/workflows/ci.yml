@@ -87,10 +87,11 @@ jobs:
           fi
           uv run python scripts/check_openspec_artifacts.py --base-ref "$BASE_REF" --require-base
 
-      - name: Check archived change manifests
+      - name: Check archived changes
         run: |
-          # #232 B 盲区：归档 change 也要脱离校验——归档后 tasks.md 仍会被勾选，
-          # 故归档语境的 tasks_hash 降级（可见汇总见 stderr），其余 hash/字段仍校验。
+          # retire-manifest-check（issue #316）：review manifest 漂移检测已退役，
+          # --check-archived 现在只校验归档事件日志可投影。命令与 flag 保持不变，
+          # 第一步（带 base-ref）继续负责归档点完成度与 new-archive verdict 检查。
           # --skip-protected-paths / --skip-backlog：第一步已带 base-ref 覆盖，这里
           # 避免默认 --base-ref master 在 CI 上解析失败打出无意义 WARNING 与重复检查。
           uv run python scripts/check_openspec_artifacts.py \

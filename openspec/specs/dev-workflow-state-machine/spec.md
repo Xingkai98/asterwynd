@@ -131,47 +131,6 @@
 - **THEN** checker SHALL 要求存在 `change_archived` 事件
 - **AND** archive 目录名为 `YYYY-MM-DD-<change-id>` 时，事件 `change_id` SHALL 使用原始 `<change-id>`
 
-### Requirement: Review evidence manifest
-
-每个阶段的独立 review report SHALL 绑定机器可验证的 manifest。review report 文件为 `.handoff/<change-id>/<phase>-review.md`，manifest 文件为 `.handoff/<change-id>/<phase>-review-manifest.json`。gate/CI 不得只根据 review report 文本中的 `PASS` 判断审查通过。
-
-存续期（active）change 的 manifest SHALL 在其 `tasks.md` **最终化之后**生成（含归档移动之后的最终 head），使 `tasks_hash` 绑定的是该 change 的最终任务清单而非收尾中途的快照。
-
-`tasks_hash` 的校验 SHALL 按 change 存续期分别处理：**active** change SHALL 校验 `tasks_hash` 与当前 `tasks.md` 一致；**已归档** change SHALL NOT 以 `tasks_hash` 判定失败——`tasks.md` 是贯穿到归档的活文档，其收尾清单项在 manifest 生成后仍会被勾选或补写，故其字节哈希在归档语境下不构成漂移证据。该降级的代价 SHALL 被明示：归档语境**不再检测 `tasks.md` 的任何编辑，含 checkbox 行内的描述级编辑**；承载「审阅了什么」的实质证据是 `report_hash`（审阅报告原文）与 `spec_hash`（当时已冻结的规格 delta）。该降级 SHALL NOT 静默：归档校验的输出 SHALL 可见地说明 `tasks_hash` 已按归档语境跳过（可为汇总行，无需逐 change 逐行）。归档 change 的 manifest 存在性、字段完整性与 `report_hash` / `spec_hash` / git span SHALL 仍被校验。
-
-CI SHALL 对已归档 change 执行 manifest 校验（`check_openspec_artifacts.py --check-archived`），使 change 归档后不脱离校验范围。
-
-#### Scenario: review report 缺少 manifest
-
-- **GIVEN** `.handoff/<change-id>/<phase>-review.md` 存在
-- **AND** 对应 review manifest 不存在
-- **WHEN** 运行 gate 或项目 artifact checker
-- **THEN** 系统 SHALL 拒绝通过
-- **AND** SHALL 报告 review manifest 缺失
-
-#### Scenario: manifest 字段和 hash 校验
-
-- **WHEN** 校验 review manifest
-- **THEN** manifest SHALL 声明 `schema`、`change_id`、`phase`、`verdict`、`reviewer_run_id`、`base_sha`、`head_sha`、`tasks_hash`、`spec_hash`、`diff_hash`、`report_hash`
-- **AND** `verdict` SHALL 为 `PASS`
-- **AND** checker SHALL 验证 `report_hash`、`tasks_hash`（**已归档** change 除外，见下述归档 Scenario）、`spec_hash`
-- **AND** 当 repo root 是 git repo 时，checker SHALL 验证 `base_sha` / `head_sha` 均为 commit，且 `diff_hash` 匹配 `git diff --binary <base_sha> <head_sha>` 的 sha256
-
-#### Scenario: 归档 change 的 manifest 校验不因 tasks_hash 漂移而失败
-
-- **GIVEN** 一个已归档 change，其 manifest 的 `tasks_hash` 与当前 `tasks.md` 不一致（因收尾清单项在 manifest 生成后被勾选）
-- **WHEN** 对归档语境运行 manifest 校验
-- **THEN** 系统 SHALL NOT 以 `tasks_hash` 不一致判定失败
-- **AND** SHALL 在输出中说明归档语境跳过 `tasks_hash` 校验（该降级不得静默）
-- **AND** manifest 存在性、字段完整性、`report_hash`、`spec_hash` 与 git span SHALL 仍被校验，任一不符 SHALL 判定失败
-
-#### Scenario: active change 的 tasks_hash 漂移仍判失败
-
-- **GIVEN** 一个 active（未归档）change，其 manifest 的 `tasks_hash` 与当前 `tasks.md` 不一致
-- **WHEN** 对该 change 运行 manifest 校验
-- **THEN** 系统 SHALL 判定失败并报告 `tasks hash mismatch`
-- **AND** 该判据 SHALL NOT 因归档语境的降级而放宽
-
 ### Requirement: Workflow 总开关
 
 `scripts/workflow_methods.json` SHALL 提供 `workflow.enabled` 布尔开关，默认值为 `true`。当其为 `false` 时，workflow automation SHALL 视为未启用：受保护写通道（`artifact-event` / `review-manifest`）SHALL 拒绝写入，PreToolUse 门禁 SHALL NOT 阻止写操作。系统 SHALL 支持本地 resume audit baseline；通过 workflow CLI 禁用 workflow 时 SHALL 记录当前 git `HEAD`，重新启用时 SHALL 对 baseline 之后的非 workflow 管理文件改动执行恢复审计。
@@ -543,16 +502,18 @@ SHALL 是实现的前置条件**：设计环以 `BLOCKED` 终结时 SHALL NOT �
 的内部轮；它 SHALL NOT 算作审阅轮，SHALL NOT 受 20 上限或「验证禁提新问题」约束。由对抗环
 批次项驱动的设计探索属于该轮修复，SHALL NOT 改标为 frontier。
 
-**机械门禁**：本模型 SHALL NOT 新增任何正文解析。两侧既有判据分别保持不变：
+**机械门禁**：本模型 SHALL NOT 新增轮次 / 批次 / deferred 等正文解析。两侧既有判据分别为：
 
 - **witnessloop `check`**：change 契约件、review manifest / 报告 / revision / hash /
   `reviewer_run_id != author_run_id`、孤儿报告，以及 `stage=grill` 的既有正文完备性判据；
-- **`scripts/check_openspec_artifacts.py`**：review manifest 字段 / hash / verdict、
-  `*-review.md` 绑定与归档点完成度门；本 change 只改其提示字符串，判定逻辑一行不改。
+- **`scripts/check_openspec_artifacts.py`**：building review 的终结 `## 闭环出口` PASS 判据
+  （见 `Review evidence 与终结 verdict`）、受保护写入解释事件与归档点完成度门；
+  `retire-manifest-check` 起不再校验 review manifest 字段 / hash。
 
-两侧 SHALL NOT 解析报告正文里的 verdict、批次、severity、轮数、deferred 或 low/nit 理由
-（`stage=grill` 的既有正文判据另计）。20 上限、批次冻结、deferred 都是**流程规定**，不是
-机械判据；`check` 绿只证明既有证据判据通过，不证明报告按本模型执行。
+两侧 SHALL NOT 解析报告正文里的批次、severity、轮数、deferred 或 low/nit 理由
+（`stage=grill` 的既有正文判据与 `## 闭环出口` 的 PASS 门另计）。20 上限、批次冻结、
+deferred 都是**流程规定**，不是机械判据；`check` 绿只证明既有证据判据通过，不证明报告
+按本模型执行。
 
 #### Scenario: 第 1 轮验证不通过 ⇒ 继续修，不另计轮
 
@@ -636,3 +597,74 @@ SHALL 是实现的前置条件**：设计环以 `BLOCKED` 终结时 SHALL NOT �
 - **GIVEN** low/nit 登记表里有一项，验证期间审阅者确认它实际是 medium+
 - **WHEN** 写本轮报告
 - **THEN** 它 SHALL 从 low/nit 表移到 `deferred`，**不得**当场加入当前批次
+
+### Requirement: Review evidence 与终结 verdict
+
+实现完成与归档点的审阅证据 SHALL 由 witnessloop 形态 manifest 与 building review 报告共同承载，本仓 SHALL NOT 再要求 asterwynd 形态 manifest。witnessloop 形态 manifest（`reviews/<stage>.manifest.json`）SHALL 是唯一被要求的 review manifest；本仓 checker 的 manifest 字段 / hash / git span 校验 SHALL 移除。
+
+building review 报告 SHALL 在 `reviews/building-review.md` 中以二级标题 `## 闭环出口` 记录终结 verdict。解析规则 SHALL 为：标题以 `闭环出口` 为前缀即命中（容忍中文括号后缀，`###` 级不命中）；fenced code（` ``` ` / `~~~`）内的标题与 token SHALL 被忽略；只认该小节**首个非空行**，剥掉行首 list/bold/引用符/反引号标记后该行 SHALL 以 `PASS` / `BLOCKED` / `CHANGES_REQUESTED` 之一开头，且首个 token 后 SHALL 紧跟行尾/空白/`（`/`(`/`：`/`:` 等终止符（`PASSED` 不合规），首个 token 之后 SHALL NOT 出现 `|` 分隔的其它终结 token（官方模板占位行 `PASS | BLOCKED（…） | BLOCKED（…）` 不合规）；`PASS（此前 CHANGES_REQUESTED 已收口）` SHALL 视为合法；报告中出现多个 `## 闭环出口` 小节 SHALL 报错。终结出口 SHALL 为 `PASS` 才视为审阅通过；该判据只覆盖 building review，非 building 的 `*-review.md` PASS 门随旧 manifest 校验退役并由 known-debt 登记。
+
+本仓 checker SHALL 在两类触发面机械校验：
+
+- **宽触发（terminal 非 PASS）**：只要 `reviews/building-review.md` 存在且出口首个 token 为 `BLOCKED` / `CHANGES_REQUESTED`，SHALL 报错，SHALL NOT 区分 change 类型、spec delta 或 `tasks.md` 勾选状态；
+- **完成面（必须 PASS）**：**active** 侧为非 docs、有 spec delta、且 `tasks.md` 全部勾选的 change；**归档点**为本 PR `--diff-filter=AR` 新建、在 base 树不存在、且**有 spec delta** 的非 docs 归档 change。完成面 SHALL 要求出口小节存在且为 `PASS`；`未定` 或小节缺失只在完成面报错。
+
+**在完成面上**，小节缺失、首个非空行不以任何终结 token 开头、或以非 `PASS` token 开头 SHALL 报错，SHALL NOT 静默通过；**宽触发只对 terminal 非 `PASS` 报错**，不因 `未定` 或缺小节报错。多个同名小节 SHALL 在任何触发面都报错（见解析规则第 4 条）。该判据 SHALL NOT 扩大到历史归档报告，SHALL NOT 解析轮次、severity、deferred 或 low/nit 内容；`design-review.md` 等非 building 报告不在本判据覆盖面。
+
+#### Scenario: PASS 出口通过
+
+- **GIVEN** 一个实现完成的非 docs change，`tasks.md` 全部勾选
+- **AND** `reviews/building-review.md` 含 `## 闭环出口`，首个非空行以 `PASS` 开头（允许 `PASS（...）` 说明）
+- **WHEN** 运行项目 artifact checker
+- **THEN** checker SHALL NOT 报告审阅证据错误
+- **AND** SHALL NOT 要求 `reviews/<phase>-review-manifest.json`
+
+#### Scenario: 非 PASS 出口被拒
+
+- **GIVEN** `reviews/building-review.md` 的 `## 闭环出口` 首个非空行以 `BLOCKED` 或 `CHANGES_REQUESTED` 开头
+- **WHEN** 运行项目 artifact checker
+- **THEN** 系统 SHALL 判定失败并报告出口不是 `PASS`
+
+#### Scenario: 完成面上出口缺失、无效或多小节被拒
+
+- **GIVEN** 一个**完成面** change（非 docs、有 spec delta、`tasks.md` 全部勾选）
+- **AND** `reviews/building-review.md` 没有 `## 闭环出口` 小节，或首个非空行为 `未定` / `不是 PASS` / `PASSED` / 模板占位行 `PASS | BLOCKED（…） | BLOCKED（…）`，或出现多个同名小节
+- **WHEN** 运行项目 artifact checker
+- **THEN** 系统 SHALL 判定失败并报告「缺少闭环出口」「出口未填 / 不以终结 token 开头」「出口不唯一」或「闭环出口小节不唯一」
+
+#### Scenario: fenced code 中的示例不参与判定
+
+- **GIVEN** `reviews/building-review.md` 在 fenced code 中引用了 `## 闭环出口` 与 `BLOCKED` 的模板文本
+- **AND** 真正的 `## 闭环出口` 小节首个非空行以 `PASS` 开头
+- **WHEN** 运行项目 artifact checker
+- **THEN** fenced code 内的标题与 token SHALL 被忽略
+- **AND** checker SHALL 判定通过
+
+#### Scenario: partial change 的未终结报告不被误伤
+
+- **GIVEN** 一个非 docs change 有 spec delta，但 `tasks.md` 仍有未勾选项
+- **AND** `reviews/building-review.md` 存在且出口为 `未定` 或没有 `## 闭环出口`
+- **WHEN** 运行项目 artifact checker
+- **THEN** checker SHALL NOT 因该报告报错（完成面才触发）
+
+#### Scenario: 宽触发覆盖 docs / 无 spec delta / partial
+
+- **GIVEN** 一个 docs change、一个无 spec delta 的 process change，或一个 `tasks.md` 未全勾的 change
+- **AND** 其 `reviews/building-review.md` 存在且出口首个 token 为 `BLOCKED` 或 `CHANGES_REQUESTED`
+- **WHEN** 运行项目 artifact checker
+- **THEN** checker SHALL 判定失败（宽触发，不看类型 / spec delta / 勾选状态）
+
+#### Scenario: 归档点完成面要求 spec delta，宽触发不看
+
+- **GIVEN** 一个本 PR 新归档的非 docs change 没有 spec delta
+- **WHEN** 运行归档点完成度门
+- **THEN** SHALL NOT 要求 `## 闭环出口` 存在（完成面不触发）
+- **AND** 若其 `building-review.md` 存在且出口为 terminal 非 PASS，SHALL 仍按宽触发报错
+
+#### Scenario: 历史归档不追溯
+
+- **GIVEN** 一个早于本 change 的归档 change，其 `building-review.md` 没有 `## 闭环出口`
+- **WHEN** 运行 `--check-archived`
+- **THEN** checker SHALL NOT 因该历史报告格式报错
+- **AND** SHALL NOT 校验其历史 asterwynd 形态 manifest
+

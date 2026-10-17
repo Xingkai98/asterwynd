@@ -4,7 +4,7 @@
 
 定义开发流程门禁的**承载边界**：哪些门禁由本仓自建脚本承载、哪些由外部工具 witnessloop 承载、以及从自建切换到接入 witnessloop 的三阶段（A 影子接入 / B 真实小需求验证 / C 真打开）各自的约束。
 
-**本仓已走到阶段 C（真打开，2026-10-17）**：接入产物已落进仓库——`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller，钉 `@v1.7.0`）、`.github/witnessloop-tests.txt`（测试执行点）。**当前形态是「required 只有 witnessloop 的 `gate / check`，本仓自建门禁照跑但不拦」**：`scripts/check_openspec_artifacts.py`（change 契约、review manifest 绑定、grill / grill-adversarial / building 证据、受保护写入解释事件、tasks 与归档点完成度）、`scripts/workflow_guard.py`（本地写码前守卫，含 Bash 命令解析）、`scripts/workflow_state.py` 与 `agent/workflow/*`（流程事件投影）、`scripts/platform_gate.py`（合入平台闸门，见 `platform-gate` 能力域）**全部继续照跑**，只是不再决定能否合入。`master` 的 required 集合与其「降级不关闭」不变量由 `platform-gate` 能力域规定，本规格不重复。
+**本仓已走到阶段 C（真打开，2026-10-17）**：接入产物已落进仓库——`.witnessloop/policy.json`（定制 policy）、`.witnessloop/init-manifest.json`（init 台账）、`.github/workflows/witnessloop.yml`（caller，钉 `@v1.7.0`）、`.github/witnessloop-tests.txt`（测试执行点）。**当前形态是「required 只有 witnessloop 的 `gate / check`，本仓自建门禁照跑但不拦」**：`scripts/check_openspec_artifacts.py`（change 契约、building review 的 `## 闭环出口` PASS 判据、grill / grill-adversarial / building 证据、受保护写入解释事件、tasks 与归档点完成度）、`scripts/workflow_guard.py`（本地写码前守卫，含 Bash 命令解析）、`scripts/workflow_state.py` 与 `agent/workflow/*`（流程事件投影）、`scripts/platform_gate.py`（合入平台闸门，见 `platform-gate` 能力域）**全部继续照跑**，只是不再决定能否合入。`master` 的 required 集合与其「降级不关闭」不变量由 `platform-gate` 能力域规定，本规格不重复。
 
 **阶段划分**：A 影子接入（只跑不拦）→ B 用一个真实小需求在新流程上跑一遍（取得「值不值得真打开」的判断依据）→ C 真打开（勾 required，由独立 change 承载）。**下掉旧件不在 A/B/C 任何一阶段内**。阶段 A 的实测证据见已归档 change `openspec/changes/archive/2026-10-13-witnessloop-adoption/reviews/acceptance-stage-a.md`。
 
@@ -42,7 +42,7 @@
 #### Scenario: 定制 policy 的四个字段落定
 
 - **WHEN** 定稿 policy seed
-- **THEN** `evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`（**不放宽**成 `*-manifest.json`——字段 schema 差异才是真问题，放宽会把本仓 schema 的 manifest 卷进候选集，见「review manifest 两套并存」Requirement）
+- **THEN** `evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`（**不放宽**成 `*-manifest.json`——字段 schema 差异才是真问题，放宽会把本仓 schema 的 manifest 卷进候选集，见「review manifest 单套承载：本仓形态退役」Requirement）
 - **AND** `evidence.protected_write_event_types` SHALL 为本仓现有类型名 `["current_spec_synced", "backlog_updated", "change_archived", "protected_artifact_explained"]`（本仓 `scripts/flow-policy.json` 与 78 份历史事件日志 SHALL 零改动）
 - **AND** `require_change_for` SHALL 为 `["agent/**", "scripts/**", "web/**"]`，SHALL NOT 包含 benchmark 目录、`tests/**`、`docs/**`
 - **AND** `protected_paths` SHALL 为 `["openspec/specs/**", ".witnessloop/**", "docs/known-issues.md", "docs/known-debt.md", "docs/openspec-change-backlog.md"]`（补齐三条文档路径，使 `backlog_updated` / `protected_artifact_explained` 不成为死配置）
@@ -126,16 +126,22 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 - **WHEN** 规划清理 `handoff.json` 及其相关检查（122 个归档中 5 个含 `handoff.json`）
 - **THEN** 该清理 SHALL 作为独立后续 change 登记，SHALL NOT 混入影子接入的变更集
 
-### Requirement: review manifest 两套并存，schema 统一延后
+### Requirement: review manifest 单套承载：本仓形态退役
 
-影子接入阶段 SHALL NOT 修改本仓的 review manifest 生成器；两侧 manifest SHALL 并存：本仓形态（`reviews/<phase>-review-manifest.json`，字段 `phase`）继续由现有工具链产出并喂本仓 checker，witnessloop 形态（`reviews/<stage>.manifest.json`）由 `witnessloop manifest build` 产出。`evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`，SHALL NOT 放宽为 `*-manifest.json`。schema 统一 SHALL 作为阶段 C 之后的独立 change，SHALL NOT 混入影子接入。
+接入 witnessloop 后，review manifest SHALL 只有一套要求：witnessloop 形态（`reviews/<stage>.manifest.json`，schema `witnessloop/review-manifest@v1`），由 `witnessloop manifest build` 产出并供 required 的 `gate / check` 消费。asterwynd 形态（`reviews/<phase>-review-manifest.json`，schema `review-manifest/v1`）SHALL NOT 再被流程要求产出，也 SHALL NOT 由本仓 checker 校验；历史文件 SHALL 保持原样，不迁移、不重算、不删除。`workflow_state.py review-manifest` SHALL 仅作为 legacy 写通道保留，由第二刀处置，SHALL NOT 被描述为当前流程要求。`evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`，SHALL NOT 放宽为 `*-manifest.json`。本仓 checker 对 building review 的终结 `## 闭环出口` PASS 判据 SHALL 保留（见 `dev-workflow-state-machine` 的 `Review evidence 与终结 verdict`），该判据不是 manifest 字段校验。`agent/workflow/review_manifest.py` 与其写通道 SHALL 在第二刀之前保留，SHALL NOT 被新 change 的流程要求使用。
 
-#### Scenario: 不迁 schema 的边界
+#### Scenario: 本仓形态退役的边界
 
-- **WHEN** 阶段 A/B 落地接入产物
-- **THEN** `agent/workflow/review_manifest.py` SHALL 未被修改
-- **AND** 本仓现有 `/review-loop` 产出的 manifest SHALL 继续被本仓 checker 消费
-- **AND** witnessloop 侧的 stage 证据 SHALL 由 `manifest build` 另行产出
+- **WHEN** 一个实现完成的 change 准备审阅与收尾
+- **THEN** `/review-loop` SHALL 只产 witnessloop 形态 manifest（`reviews/<stage>.manifest.json`）
+- **AND** 本仓 checker SHALL NOT 因缺少 `reviews/<phase>-review-manifest.json` 报错
+- **AND** `agent/workflow/review_manifest.py` SHALL 由第二刀处置，本 change SHALL NOT 修改它
+
+#### Scenario: 历史 manifest 保持冻结
+
+- **WHEN** 本 change 之后的 checker 扫描 `openspec/changes/archive/**`
+- **THEN** 它 SHALL NOT 校验历史 asterwynd 形态 manifest 的字段、hash 或 git span
+- **AND** 历史文件 SHALL 保持原样，SHALL NOT 被迁移、重算或删除
 
 #### Scenario: glob 不放宽的理由可复核
 
@@ -152,7 +158,7 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 #### Scenario: 证据的 stale 顺序约束
 
-- **WHEN** 产出 review manifest 或其它 `reviews/` 证据
+- **WHEN** 产出 witnessloop 形态 review manifest 或其它 `reviews/` 证据
 - **THEN** SHALL 在**所有内容提交之后**产出（witnessloop 的 stale 判定只豁免 `.witnessloop/**`、`<changes_root>/*/reviews/**`、`<changes_root>/*/workflow-events.jsonl`、`archive/**`）
 - **AND** 触碰 `docs/**` 与 `openspec/specs/**` 的收尾步骤 SHALL 排在证据产出之前
 - **AND** 证据 SHALL 由人在本地产出——CI 的 caller workflow **只做 `check`、不产证据**
@@ -197,7 +203,7 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 
 接入 witnessloop 的三个阶段（A 影子接入 / B 真实小需求验证 / C 真打开）SHALL 以阶段 C 的形态为**当前**形态。caller workflow SHALL 钉住 witnessloop 的**具体发版 ref**（当前 `v1.7.0`），且 SHALL NOT 依赖 `with: witnessloop-ref:` 另行钉包版本——包 ref 由被复用的 `gate.yml` 自身的 commit 决定。
 
-> **required 集合与其「降级不关闭」不变量不在本规格重复**：`master` 的 required 是哪些、以及「降级为非必过的检查仍须运行」这条约束，SHALL 由 `platform-gate` 能力域规定（该能力域是本仓平台面的唯一规格源）。本规格只规定**接入形态**本身（caller 怎么钉、受管路径的后果、证据如何并存）。**理由**：同一条规范写两处是未来的漂移点——改一处漏一处不会被任何门禁发现。
+> **required 集合与其「降级不关闭」不变量不在本规格重复**：`master` 的 required 是哪些、以及「降级为非必过的检查仍须运行」这条约束，SHALL 由 `platform-gate` 能力域规定（该能力域是本仓平台面的唯一规格源）。本规格只规定**接入形态**本身（caller 怎么钉、受管路径的后果、证据形态）。**理由**：同一条规范写两处是未来的漂移点——改一处漏一处不会被任何门禁发现。
 
 #### Scenario: required 只剩 witnessloop 的 gate / check
 
@@ -219,10 +225,11 @@ Claude Code plugin 的安装 SHALL 被当作**本地动作**（`.claude/` 被 `.
 - **AND** 缺少 change 目录时 `gate / check` SHALL 判红并阻止合入
 - **AND** 该约束 SHALL 被如实记录为翻开关的**代价**，SHALL NOT 通过把受管路径移出 `require_change_for` 来规避
 
-#### Scenario: 归档产物的证据形态在本仓并存两套
+#### Scenario: 归档产物的证据形态为 witnessloop 单套
 
 - **WHEN** 一个 change 归档
-- **THEN** `reviews/` 下 SHALL 同时存在本仓形态（`reviews/<phase>-review-manifest.json`，字段 `phase`）与 witnessloop 形态（`reviews/<stage>.manifest.json`，字段 `stage`）两套证据
+- **THEN** `reviews/` 下 SHALL 存在 witnessloop 形态（`reviews/<stage>.manifest.json`，字段 `stage`）的 `grill` / `grill-adversarial` / `building` 三份 stage 证据
+- **AND** SHALL NOT 要求、产出或校验 asterwynd 形态（`reviews/<phase>-review-manifest.json`，字段 `phase`）
 - **AND** witnessloop 形态的证据 SHALL 在归档 move **之后**、用**归档目录名**（`<YYYY-MM-DD>-<change-id>`）重建——否则 manifest 里的 `change_id` 与目录名不符
 - **AND** `reviews/` 下每一份 `.md` SHALL 被某份 witnessloop 形态 manifest 的 `report_path` 绑定（否则触发孤儿规则）
 
