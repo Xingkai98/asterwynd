@@ -79,8 +79,8 @@
 
 - [x] 8.1 `docs/openspec-change-backlog.md` 先登记本 change，再在证据产出之前移除；同时把第十七批 `:116` 的「第二刀已立项」改为「第二刀已完成并归档」；配 `backlog_updated` 事件。
 - [ ] 8.2 `workflow-events.jsonl` 事件齐全：`change_created` / `backlog_updated`（登记）/ `current_spec_synced` × 3 / `protected_artifact_explained`（known-debt）/ `backlog_updated`（移除）/ `change_archived`，`approved_by` 均为 `human`。
-- [ ] 8.3 结算 `tasks.md`：已完成项全部勾选；closeout 未完成项标 `(post-merge)`。
-- [ ] 8.4 归档 move 前 `git add` 并确认 `reviews/` 报告已跟踪；手工 `git mv` 到 `openspec/changes/archive/2026-10-17-retire-manifest-module/`（独立提交，纯 rename）。
+- [x] 8.3 结算 `tasks.md`：已完成项全部勾选；closeout 未完成项标 `(post-merge)`。
+- [x] 8.4 归档 move 前 `git add` 并确认 `reviews/` 报告已跟踪；手工 `git mv` 到 `openspec/changes/archive/2026-10-17-retire-manifest-module/`（独立提交，纯 rename）。
 - [ ] 8.5 归档后核对：目录含三份报告与三份 witnessloop manifest，不含 ast manifest；80 份历史 manifest 未变。
 
 ## 9. 合入之后（结构上无法在本 PR 内完成）
