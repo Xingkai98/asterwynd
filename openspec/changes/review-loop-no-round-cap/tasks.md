@@ -8,12 +8,12 @@
 
 ## 0. 设计追问与对抗收敛（前置门，不完成不开工）
 
-- [ ] 0.1 用 `grilling` skill（独立零记忆 subagent）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条，每条含**决策 / 理由 / 来源**三字段）。
+- [x] 0.1 用 `grilling` skill（独立零记忆 subagent）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条，每条含**决策 / 理由 / 来源**三字段）。
 - [ ] 0.2 逐项核对 grill 的 7 个维度，**重点是第 7 条（触发与门禁）**：本 change 改 `scripts/**` ⇒ 会触发 witnessloop 的 `building` 与 `grill-adversarial` 两个 stage 判定；确认本 change 建立 change 目录 + 三份 manifest 后能判绿。
 - [ ] 0.3 跑**设计阶段对抗闭环**（与 `/review-loop` 同构但审设计而非代码）→ `reviews/grill-adversarial.md`；对 Decision 3（对齐到哪一层：只对齐「停的条件」不搬机制）与 Decision 2（不写任何数值阈值）做专门挑战。
-- [ ] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question。若无 ⇒ 进入实现；若有 ⇒ **停下来报告**，不开 PR。
+- [x] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question。若无 ⇒ 进入实现；若有 ⇒ **停下来报告**，不开 PR。
 - [ ] 0.5 把 grill 与对抗闭环的结论回填 `design.md` 的 `## Pre-Implementation Review`。
-- [ ] 0.6 **grill 记录的格式契约**：`reviews/grill-design.md` SHALL 含 `## Confirmed Decisions`（≥ 3 条、每条决策块内有**同行裸** `来源:`）、`## User Confirmation`（**无条件存在**，零 Open Question 也要有）、以及与逐字标题一致的 Open Questions 小节。用 v1.7.0 的 `grill_evidence_findings` 实测应为 **0 findings**。
+- [x] 0.6 **grill 记录的格式契约**：`reviews/grill-design.md` SHALL 含 `## Confirmed Decisions`（≥ 3 条、每条决策块内有**同行裸** `来源:`）、`## User Confirmation`（**无条件存在**，零 Open Question 也要有）、以及与逐字标题一致的 Open Questions 小节。用 v1.7.0 的 `grill_evidence_findings` 实测应为 **0 findings**。
 
 ## 1. 规则与文案改动
 

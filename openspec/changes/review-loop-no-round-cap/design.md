@@ -9,7 +9,7 @@
 三条来自实测的硬事实决定本设计的形状：
 
 1. **本仓自己的两半流程用了两套终止条件**：`openspec/specs/dev-workflow-state-machine/spec.md` 已为**设计阶段**闭环写了「再审直到收敛」，而**实现后**的 `/review-loop` 仍写「PASS 或 3 轮封顶」。同一条流程不能一半收敛、一半数轮数。
-2. **「cap 与收敛脱钩」有实录**：witnessloop 的 change `convergence-based-stop`（issue #24，**在该工作树里是未提交的草稿**——引用时必须这么标）逐条复核过——一个环在 3 轮 cap 下**照旧跑到 R5**，另一处把「封顶」写成停轮理由后**又跑了 R4–R6**。⇒ cap 是一个与收敛无关的任意常数，这不是本 change 新造的推理。**但先例本身尚未落地**，不能当作「已在用的规则」（见 Decision 3）。
+2. **「cap 与收敛脱钩」有实录**：witnessloop 的 change `convergence-based-stop`（issue #24，**在该工作树里是未提交的草稿**——引用时必须这么标）逐条复核过——**可复核实录只有一条**（一个环在 3 轮 cap 下照旧跑到 R5）；另一处「封顶后仍跑 R4–R6」在先例里被标为**时点旁证、不可在 `ef8b3ab` 上复核**。⇒ cap 是一个与收敛无关的任意常数，这不是本 change 新造的推理。**但先例本身尚未落地**，不能当作「已在用的规则」（见 Decision 3）。
 3. **没有测试钉住这句文案**：`git grep "3 轮封顶" -- tests/` 为空 ⇒ 门禁提示的字符串可以安全改写，不需要改测试。
 
 ## Goals / Non-Goals
@@ -68,7 +68,7 @@
 
 **理由**：
 - **先例必须先被说准**（设计追问 D5 抓到的转述错误）：witnessloop 的 `convergence-based-stop`（issue #24）是一份**未提交的草稿**——实测其 change 目录在该工作树里 `git ls-files` = 0、`git status` = `??`，`proposal.md` 自述「草稿」，其 `design.md` 的 Open Questions **尚未停轮确认**。⇒ 它能当**设计参照**，但**不能**被引作「已经落地的实现」（初稿那样写了，已订正）。
-- **先例中可复核实录的部分**：仓内记录里一个环在 3 轮 cap 下**照旧跑到 R5**，另一处把「封顶」写成停轮理由后**又跑了 R4–R6** ⇒ 「cap 与收敛脱钩」有实录支撑。而「cap 会在净进展时掐掉闭环」在那边被标为**反事实（风险）**——本 change 沿用同样诚实的定性。
+- **先例中可复核实录的只有一条**：一个环在 3 轮 cap 下**照旧跑到 R5**。另一处「把『封顶』写成停轮理由后又跑了 R4–R6」在那边被标为**时点旁证、在被审 revision 之外、不可在 `ef8b3ab` 上复核**（对抗轮 I-4 / N-2）⇒ 本 change 按同样口径写。而「cap 会在净进展时掐掉闭环」在那边被标为**反事实（风险）**——本 change 沿用同样诚实的定性。
 - **先例明确拒绝「只删掉 3、跑到 PASS 为止」**，理由正是「放弃终止保证」。⇒ 本 change **不能只做减法**：必须同时给出「收敛 / 无法收敛」的判定，否则等于把「无限循环」当成新规则。这就是 Decision 2 里补净进度判据的原因。
 - **但不搬机制**：先例的账本 + 判据 A/B′ + 终止性证明是为**工具自身**服务的（它要处理机器可读的跨轮账本：同一个 id 跨轮沿用、新增 / 遗留 / 已关闭）。本仓的 `/review-loop` 是**人/agent 按文档执行**的流程，没有那样的账本；为它发明一套等于**加码**，正是用户明确不要的。
 - ⇒ 取舍是：**对齐「停的条件」的语义（含净进度），不对齐「判定机制」**。
@@ -144,7 +144,7 @@
 | T7a | `git diff --stat origin/master...HEAD -- openspec/changes/archive/`（**归档提交之前**） | **空输出** | 归档提交尚未落盘 |
 | T7b | 同 T7a（**纯 rename 归档提交之后**） | 只出现**本 change 自己**的归档目录 | 归档提交已落盘 |
 
-**T6 初稿自带假阳性（设计追问 D3 + 对抗轮 I-1 实测）**：原命令跑出来 **exit 0、32 行命中**——9 行是要改的现行规则、1 行是 backlog 里的历史记录、22 行是**本 change 自己的文档在引用旧口径**；改完后又冒出第 13 行 `tests/benchmark/test_c3_cli.py:3` 的 `per-round cap`（**benchmark 的每轮预算语义，与审阅闭环无关**）⇒ **原判据永远达不到 exit 1**。现版本用四条排除解决：① 排除本 change 自己的目录（它的 proposal/design/tasks **引用了**旧口径，这是必要的叙述，不是残留）；② 排除 `docs/openspec-change-backlog.md`（`:169`/`:173` 是**历史记录**，按「不回填历史」不动）；③ 排除 `tests/`（测试里没有本 change 要改的规则文案；`per-round cap` 是 benchmark 预算，命中属假阳性）；④ 把英文与连字符变体（`round cap` / `3-round cap`）一并纳入模式——初稿只搜中文，会漏掉 `README_EN.md:148` 与 `change-documentation` 规格。
+**T6 初稿自带假阳性（设计追问 D3 + 对抗轮 I-1 实测）**：原命令跑出来 **exit 0、32 行命中**——9 行是要改的现行规则、1 行是 backlog 里的历史记录、22 行是**本 change 自己的文档在引用旧口径**；改完后又冒出第 13 行 `tests/benchmark/test_c3_cli.py:3` 的 `per-round cap`（**benchmark 的每轮预算语义，与审阅闭环无关**）⇒ **原判据永远达不到 exit 1**。现版本用四条排除解决：① 排除本 change 自己的目录（它的 proposal/design/tasks **引用了**旧口径，这是必要的叙述，不是残留）；② 排除 `docs/openspec-change-backlog.md`（`:169`/`:173` 是**历史记录**，按「不回填历史」不动）；③ 排除 `tests/`（测试里没有本 change 要改的规则文案；`per-round cap` 是 benchmark 预算，命中属假阳性）；**并且**：`change-documentation` delta 的新英文文案本身 SHALL 避开该子串（对抗轮 N-1 实测：初稿写 `no fixed round cap SHALL apply`，施加进现行规格后会**再次命中** T6，使「无命中」永远不可达）——现文案为 `no fixed round limit SHALL apply`。④ 把英文与连字符变体（`round cap` / `3-round cap`）一并纳入模式——初稿只搜中文，会漏掉 `README_EN.md:148` 与 `change-documentation` 规格。
 **T7 初稿与 R4 矛盾（D4 实测）**：归档前该命令是**空输出**，而初稿的期望写作「只出现自己的归档路径」、R4 又写「必须为空」——两者对应的是**不同时点**。⇒ 拆成 T7a（归档前必须为空）与 T7b（归档后只出现自己的目录），各自写清前置。
 
 **T5 的 revision 必须锚定**：PATH 上那份 witnessloop 是 0.1.0、`/home/happy/witnessloop` 克隆在 tag `v1`，**都不是 CI 用的 v1.7.0**；本 change 用 `/home/happy/wl170`（已装 v1.7.0）。**不要用 `witnessloop --version` 验收**（它报的也是 0.1.0，是包内 pyproject 的版本号）；判据看 `direct_url.json` 的 `requested_revision=v1.7.0` 或 `check` 自报的 `requested_revision`。T2/T3/T5 只对**已提交**内容有效（untracked 不进 `git diff`）。

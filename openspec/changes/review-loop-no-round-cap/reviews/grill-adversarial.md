@@ -69,3 +69,44 @@ CHANGES_REQUESTED
 - **`.claude/commands/review-loop.md` 的本地性判断正确**：该文件被 `.gitignore` 忽略、不在版本控制内，本 PR 不应包含它；但它仍是实际入口，所以需要 7.3 的本地同步（见 I-5）。
 - **README 中英同步已覆盖**：`tasks.md:22`（1.3）同时列了 `README.md:148` 与 `README_EN.md:148`，符合仓库的 README/README_EN 同步规则。
 - **无运行时行为/依赖变化**：本 change 只改文档、规格和两处提示字符串；不需要新增单元测试，测试策略由 T1–T7 的机械验收承担。
+
+## Round 2（复核 Round 1 的 I-1…I-7 + 找新洞）
+
+- run id: paseo-grill-adversarial-review-loop-no-round-cap-r2
+- 被审 revision: a368dea042f3fd8214a3f303d033cdd76aecaace
+- 时间: 2026-10-17
+- 零记忆: 是（未继承 Round 1 记忆；只读工作区文档、仓库事实与兄弟 worktree 的先例文档）
+
+### Verdict
+
+CHANGES_REQUESTED
+
+### I-1…I-7 逐条复核
+
+- **I-1**: **部分处置**。`tests/` 已排除（`design.md:143`、`tasks.md:37` 的 T6 四条排除已含 `':!tests/'`）；当前实跑 T6 返回 **12 行、exit 0**，逐行判断**全部**属于本 change 计划修改的现行规则：`AGENTS.md:18`（tasks 1.1）、`AGENTS.md:104`（1.2）、`README.md:148` / `README_EN.md:148`（1.3）、`docs/interview-script/questions/Q14-dev-process.md:13` / `:56`（1.5）、`docs/requirements-process.md:45` / `:189`（1.4）、`openspec/specs/change-documentation/spec.md:47` / `:94`（2.2 的 MODIFIED delta）、`scripts/check_openspec_artifacts.py:1139` / `:1623`（1.6）。**但改完这些落点后 T6 仍不能归零**：MODIFIED delta 的替换文案本身含 `round cap`——`specs/change-documentation/spec.md:23`「no fixed round cap SHALL apply」与 `:72` 同句；而 `tasks.md:30`（2.2）要求把该 delta 逐个施加进 `openspec/specs/change-documentation/spec.md`，施加后当前规格会出现 **≥2 处** `round cap` 命中（该路径不在 T6 的任一排除里）。另 `README_EN.md:148` 的英文替换措辞未定，若照 delta 写成「no fixed round cap」也会命中。证据：`git grep ... ':!tests/'` 实跑输出；delta `:23`、`:72`；`tasks.md:30`、`:37`。**建议**：把 delta/规格里的英文替换改为不含该子串的措辞（如「no fixed limit on review rounds」），或把 T6 的模式收窄到「非否定语境的 round cap」并给出可机械判定的写法；同时钉死 `README_EN.md` 的英文措辞。
+- **I-2**: **已处置**。收敛第一句已限定「没有新的『中等及以上严重度』的可证伪项」（`design.md:47`；spec delta `:7`）；「必须修改项」已有自包含判据「会导致不正确行为 / 规格偏离 / 安全或数据风险 / 门禁判红」（spec delta `:7`），不再依赖 gitignored 的 `.claude/commands/review-loop.md`；0 → 0 有显式豁免（`design.md:49`；spec delta 的 Scenario「开放数为零时不做净进度判定」`:36-40`，且「原地打转」Scenario 的 GIVEN 限定「开放数为正」`:31`）。非阻塞小瑕疵：定义句本身仍字面写「净变化 ≥ 0」，0→0 的豁免靠并列 Scenario 兜底，建议把定义句加「开放数为正且」以消除字面冲突。
+- **I-3**: **已处置**。度量对象已固定为「**每轮结束时**开放的『必须修改项』数」（`design.md:48`；spec delta `:7`），判定时点已固定为「**从第 3 轮起**」且每轮比较最近两轮（`design.md:49`、`:61`；spec delta `:7`）。给定序列的确定答案：R1 轮末开放 5（首轮，无比较对象，不做判定，继续）；R2 轮末开放 6（`5−3+4=6`，未到第 3 轮 floor，不判无法收敛，继续）；R3 轮末开放 5（`6−5+4=5`；比较 R2=6 → R3=5，**下降**，继续）；R4 轮末开放 4（`5−6+5=4`；比较 R3=5 → R4=4，**下降**，继续）。**四轮均不判「无法收敛」**。规则已唯一可判定；仍比先例 B′（最近两轮累计净额 ≤ 0）严，但这是已论证的设计取舍（`design.md:63` 否决替代方案），不阻塞。
+- **I-4**: **部分处置**。`proposal.md:80` 已改对（「可复核实录的只有一条」＝R5；R4–R6 明确标「时点旁证、在被审 revision 之外、不可在 `ef8b3ab` 上复核」）。**但 `design.md` 未同步**：`:12` 仍写「『cap 与收敛脱钩』**有实录**」并把「另一处……又跑了 R4–R6」与 R5 并列；`:71` 仍以「**先例中可复核实录的部分**：**仓内记录里**……」同时陈述 R5 与 R4–R6。先例自己的定性是：`/home/happy/wl-wt/convergence-based-stop/openspec/changes/convergence-based-stop/design.md:73`「时点旁证，在审 revision 之外」、`:95`「时点旁证、不可在 `ef8b3ab` 上复核」、`:105` 明确「不可按图索骥」。⇒ design 仍把不可复核的样本写成实录，与 proposal 的订正不一致，会误导后续引用。证据：上述 `文件:行号`。
+- **I-5**: **已处置**。`tasks.md:65`（7.3）现已同时覆盖：① `:78`/`:87`/`:153` 三处轮数文案；② `:64` 的 `BLOCKED` 窄定义扩为「闭环无法自行推进到 `PASS`」并要求写成因（阻塞性缺陷 / 无法收敛）。规格侧「中等及以上严重度」已有自包含判据（spec delta `:7`），不再只锚定 gitignored 文件。
+- **I-6**: **已处置**。`grep -n "0\.7"` 在 `design.md` / `tasks.md` 均无命中（exit 1）；`design.md:125`（R3）现写「`tasks.md` 的 `(post-merge)` 7.3」，与 `tasks.md:65` 一致。
+- **I-7**: **已处置**。`proposal.md:62` 的 Impact Analysis 已列 `docs/openspec-change-backlog.md`（含登记→收尾前移除的时序理由）；backlog 已登记本 change（`docs/openspec-change-backlog.md:123`「### 5. `review-loop-no-round-cap`」）；artifact checker 仍通过（见机械门）。
+
+### 阻塞性新发现
+
+- **N-1（high，与 I-1 的「归零」判据直接冲突）**: **T6 在施加 MODIFIED delta 后仍会命中，exit 1 不可达。** `specs/change-documentation/spec.md`（delta）`:23` 与 `:72` 的新文案都含子串 `round cap`（「no fixed round cap SHALL apply」）。`tasks.md:30`（2.2）要求把该 delta 覆盖进 `openspec/specs/change-documentation/spec.md`；施加后该现行规格会出现至少两行匹配 T6 的 `-e "round cap"`，而该路径不在 T6 的四条排除内 ⇒ `tasks.md:37` / `design.md:143` 的「无命中（exit 1）」永远达不到。这不是「改漏落点」，而是**替换文案与验收 grep 自相矛盾**：执行者要么 T6 失败，要么被迫把现行规格排除掉（那会让 T6 名存实亡）。修法：改 delta 的英文措辞（避免 `round cap` 子串）或改 T6 判据；同时钉死 `README_EN.md:148` 的英文替换措辞。
+- **N-2（medium，I-4 的残余）**: `design.md:12` / `:71` 仍把 R4–R6 写成「实录 / 可复核实录 / 仓内记录」，与先例 `design.md:73`、`:95`、`:105` 的「时点旁证、不可在 `ef8b3ab` 上复核」冲突，也与 `proposal.md:80` 已订正的口径不一致。需同步 design。
+
+### 非阻塞观察
+
+- `tasks.md` 中 **0.1、0.4、0.5、0.6 事实上已完成却仍未勾选**：`reviews/grill-design.md` 已存在且含 4 条带 `来源:` 的 Confirmed Decisions（`:10-14`）、`## User Confirmation` 无条件存在（`:31-33`）、`design.md` 的 `## Pre-Implementation Review` 已回填（`:109-117`）、`## Open Questions` 为空（`:27-29`）。0.3 的 Round 2 尚未收敛，未勾正确。若约定是「实现阶段统一勾选」，建议在 tasks 顶部写明，避免完成度门禁/审阅者误读。
+- `tasks.md:37` 的 T6 已排除 `tests/` 并点名 `tests/benchmark/test_c3_cli.py:3`，但 `design.md:144` 的「32 行 / 22 行」旧算术仍留着（`reviews/grill-design.md` 落盘后同一「排除 archive」扫描已是 39 行）；不影响 T6，但复跑时数字会对不上。
+- `docs/openspec-change-backlog.md:123` 的条目状态写「实现中」，而它位于「未实现队列」且 1.x/2.x 尚未开始；措辞可改为「设计已完成、待实现」。
+- spec delta `:7` 的「无法收敛」定义句与 `:36-40` 的 0→0 豁免 Scenario 靠并列关系消解，建议定义句直接写「开放数为正且没有下降」，减少读者自行合并条款的空间。
+- `proposal.md:39` 的 Non-Goal 说「不改 `.claude/commands/review-loop.md`」，而 `tasks.md:65`（7.3）要求合入后本地同步；`proposal.md:63` 与 `design.md:125` 已交叉引用该落点，属表述张力而非事实冲突。
+
+### 机械门（实跑原始结论，Round 2）
+
+- `timeout 300 npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` → `Totals: 30 passed, 0 failed (30 items)`，exit 0。
+- `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → `OpenSpec artifact checks passed`，exit 0（backlog 已登记本 change，一致性规则仍过）。
+- T6 实跑 → **12 行命中、exit 0**：`AGENTS.md:18`、`AGENTS.md:104`、`README.md:148`、`README_EN.md:148`、`docs/interview-script/questions/Q14-dev-process.md:13`、`:56`、`docs/requirements-process.md:45`、`:189`、`openspec/specs/change-documentation/spec.md:47`、`:94`、`scripts/check_openspec_artifacts.py:1139`、`:1623`。前 12 行均在本 change 修改面内；但施加 delta 后会新增 `openspec/specs/change-documentation/spec.md` 的 `round cap` 命中（见 N-1），故「归零」不可达。
+- 补充：`check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` → `OpenSpec artifact checks passed`，exit 0；`platform_gate.py --verify` → `全部一致`，exit 0；`git rev-list --left-right --count origin/master...HEAD` = `0 3`。
