@@ -15,17 +15,16 @@
 ## 1. 先写红测试（TDD）
 
 - [ ] 1.1 新增 parser 单测：标题带中文括号后缀命中；fenced code 内标题 / token 忽略；`**PASS**（...）` 通过；`PASS（此前 CHANGES_REQUESTED 已收口）` 通过；`PASSED` 报错；模板占位行 `PASS | BLOCKED（…） | BLOCKED（…）` 报错；`不是 PASS` / `未定` 报错；多小节报错。
-- [ ] 1.2 改写旧用例：`review manifest missing` 改为「无 manifest 不再报错」；保留 building-review 存在性门用例；新增 partial active change：`未定` 报告不报错、`BLOCKED` 报告仍报错（宽触发）。
+- [ ] 1.2 改写旧用例：`review manifest missing` 改为「无 manifest 不再报错」；保留 building-review 存在性门用例；新增 partial active change：`未定` 报告不报错、`BLOCKED` 报告仍报错（宽触发）；新增 active docs change 的 `BLOCKED` 报告用例（宽触发不绑回完成面条件）。
 - [ ] 1.3 新增 `--check-archived` 退役用例：带漂移 `spec_hash` / `tasks_hash` / 缺失 manifest 的归档 change 不再报错；历史归档（无 `## 闭环出口`）仍 exit 0；归档事件日志不可投影仍报错。
 - [ ] 1.4 新增归档点门用例：新建归档的 building-review 出口非 PASS / 缺失 ⇒ 报错；PASS ⇒ 通过；docs / 无 spec delta 的归档上 `BLOCKED` 仍报错、`未定` 不报错（宽触发 + 完成面）。
-- [ ] 1.5 运行指定测试确认**红**，记录原始输出。
-- [ ] 1.6 新增文档守卫测试：扫描 `AGENTS.md` / `README.md` / `README_EN.md` / `docs/development-guide.md` / `docs/requirements-process.md` / `docs/interview-script/questions/{Q12-ci-testing,Q14-dev-process}.md`，断言不再出现 `building-review-manifest.json`、`write_review_manifest`、「review report 必须有 manifest」等旧要求，且 `witnessloop manifest build` / `## 闭环出口` 在场；排除 `docs/known-debt.md` 的历史记录与 `openspec/changes/archive/**`。
-- [ ] 1.5 运行指定测试确认**红**，记录原始输出。
+- [ ] 1.5 新增文档守卫测试：扫描 `AGENTS.md` / `README.md` / `README_EN.md` / `docs/development-guide.md` / `docs/requirements-process.md` / `docs/interview-script/questions/{Q12-ci-testing,Q14-dev-process}.md`，断言不再出现 `building-review-manifest.json`、`write_review_manifest`、「review report 必须有 manifest」等旧要求，且 `witnessloop manifest build` / `## 闭环出口` 在场；排除 `docs/known-debt.md` 的历史记录与 `openspec/changes/archive/**`。
+- [ ] 1.6 运行指定测试确认**红**，记录原始输出。
 
 ## 2. 实现（checker）
 
 - [ ] 2.1 `scripts/check_openspec_artifacts.py`：删除 `_check_review_manifests` 与其 `verify_review_manifest` 调用；删除 `--check-archived` 的 manifest 校验、`tasks_hash` 汇总，以及只被旧函数使用的死代码 `_change_id_from_dir_name` / `_repo_root_for_change_dir`。
-- [ ] 2.2 新增 `_review_exit_verdict` / `_review_exit_errors`，按四条规则解析：① 标题前缀匹配 `闭环出口`（容忍中文括号）；② 忽略 fenced code；③ 只认首个非空行，首个 token 后须有终止符（拒绝 `PASSED`），其后不得出现 `|` 分隔的其它终结 token（拒绝官方模板占位行），`PASS（...）` 合法；④ 多个同名小节报错。
+- [ ] 2.2 新增 `_check_building_review` / `_review_exit_verdict` / `_review_exit_errors`，按四条规则解析：① 标题前缀匹配 `闭环出口`（容忍中文括号）；② 忽略 fenced code；③ 只认首个非空行，首个 token 后须有终止符（拒绝 `PASSED`），其后不得出现 `|` 分隔的其它终结 token（拒绝官方模板占位行），`PASS（...）` 合法；④ 多个同名小节报错。
 - [ ] 2.3 active `check_change` 用新函数替代旧调用：**宽触发**（报告存在且 terminal 非 PASS ⇒ 红，与类型/勾选无关）+ **完成面**（非 docs + spec delta + tasks 全勾 ⇒ 必须 PASS）。
 - [ ] 2.4 `_check_archived_completion_gate` 复用宽触发 + 完成面检查（完成面条件为非 docs + spec delta）；`--check-archived` 只保留 `_check_archived_projectable`，并保留既有 `change_type is None ⇒ continue` 语义。
 - [ ] 2.5 同步 help 文案、注释、docstring 与既有 CI 测试文案；确认 RIR / Impact / benchmark / backlog / 受保护路径 / grill 证据 / 归档点其它门逐行未动。

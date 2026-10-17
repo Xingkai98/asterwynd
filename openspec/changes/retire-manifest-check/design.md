@@ -67,7 +67,8 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
 
 ### Decision 2: verdict 判据保留（方案 i，本地极小等价检查）
 
-**选择**：新增 `_check_building_review` / `_review_exit_verdict`。解析规则必须先钉死为四条
+**选择**：新增 `_check_building_review`（active / 归档点入口）、`_review_exit_verdict`
+（解析器）与 `_review_exit_errors`（错误构造）。解析规则必须先钉死为四条
 可执行规则（否则实现会在假红 / 假绿之间摇摆）：
 
 1. **标题前缀匹配**：二级标题以 `闭环出口` 为前缀即命中（容忍 witnessloop 模板实际使用的
@@ -75,7 +76,7 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
 2. **忽略 fenced code**：` ``` ` / `~~~` 围栏内的标题与 token 不参与匹配，避免报告里引用
    模板示例时误判。
 3. **只认首个非空行，且必须是唯一裁决**：取该小节第一个非空行，剥掉行首的 list/bold /
-   引用符标记后，该行必须以 `PASS` / `BLOCKED` / `CHANGES_REQUESTED` 之一开头，且：
+   引用符 / 反引号标记后，该行必须以 `PASS` / `BLOCKED` / `CHANGES_REQUESTED` 之一开头，且：
    - 首个 token 后必须紧跟行尾 / 空白 / `（`/`(`/`：`/`:` 等终止符——`PASSED` 这类字母续写
      不合法；
    - 首个 token 之后不得出现 `|` 分隔的其它终结 token——官方模板的占位行
@@ -152,7 +153,7 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
 
 ### Decision 5: 残余损失的登记
 
-**选择**：不在本仓新增 `diff_hash` 等价检查；在 `docs/known-debt.md` 完整登记三项残余损失：
+**选择**：不在本仓新增 `diff_hash` 等价检查；在 `docs/known-debt.md` 完整登记四项残余损失：
 
 1. `diff_hash` 强校验消失。witnessloop 把 `diff_hash` 当 informational 不校验，但其 git span
    判据（`head_sha` 必须是祖先、`head_sha..被检 head` 之间只允许证据文件）在「审阅后是否
@@ -170,7 +171,7 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
    （旧门会因缺 manifest 而红）。这是为避免误伤在途 partial review；terminal 的
    `BLOCKED` / `CHANGES_REQUESTED` 已由宽触发覆盖，只有「未终结 / 缺失」这一窄面被放弃。
 
-**理由**：这三项都不是 witnessloop required 面能自动补齐的，也不是本刀应该顺手扩大范围去
+**理由**：这四项都不是 witnessloop required 面能自动补齐的，也不是本刀应该顺手扩大范围去
 处理的；登记为第二刀的输入，避免「静默接受损失」。
 
 ### Decision 6: 单一证据形态的规格与文档口径
@@ -226,7 +227,7 @@ low/nit 已按报告登记（函数命名统一、known-debt 旧段落、`未定
 | 风险 | 影响 | 缓解 |
 |---|---|---|
 | `## 闭环出口` 解析过严导致误伤 | 新 change 的报告格式不合规会被红 | 四条解析规则 + 报告模板与本地入口明确要求；对加粗 / 中文括号 / 行内说明容忍；新增正反单测 |
-| 解析过松导致 BLOCKED / 未定被读成 PASS | PASS 门失效 | 只认首个非空行且必须以 token 开头；`不是 PASS` 不以 token 开头；多小节直接报错 |
+| 解析过松导致 BLOCKED / 未定被读成 PASS | PASS 门失效 | 只认首个非空行；首个 token 后必须有终止符（拒绝 `PASSED`）；其后不得有 `\|` 分隔的其它终结 token（拒绝模板占位行）；`不是 PASS` 不以 token 开头；多小节直接报错 |
 | 完成面之外的报告若缺失出口 / 为 `未定` 不再被检查 | partial / docs / 无 spec delta 的未终结报告没有本仓 PASS 门 | 有意为之（避免误伤在途 change）；terminal 非 PASS 由宽触发覆盖；由 partial/docs/无 spec delta 回归测试锁定；完成面与归档点仍强校验 |
 | 删除 manifest 校验后历史漂移无人检测 | 历史 manifest / report / spec 的漂移不再被检测 | 接受：历史只读；known-debt 明确登记「检测能力消失」；第二刀决定归档处置 |
 | `diff_hash` 自洽检查消失 | manifest 记录的 diff 不再被本仓校验 | witnessloop 严格 git span 部分补偿；known-debt 登记 |
