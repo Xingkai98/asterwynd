@@ -58,19 +58,19 @@
 
 ## 6. witnessloop 证据与出口判据
 
-- [ ] 6.1 在**所有内容提交之后**（含 backlog 清理），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），`report_path` 覆盖 `reviews/` 下每一份 `.md`。
-- [ ] 6.2 `witnessloop check --root . --base origin/master --head HEAD`（v1.7.0）→ `check：通过 ✓`（0 项）。必须在内容提交之后跑。
-- [ ] 6.3 CI 侧复核：PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` 照跑。
+- [x] 6.1 在**所有内容提交之后**（含 backlog 清理），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），`report_path` 覆盖 `reviews/` 下每一份 `.md`。
+- [x] 6.2 `witnessloop check --root . --base origin/master --head HEAD`（v1.7.0）→ `check：通过 ✓`（0 项）。必须在内容提交之后跑。
+- [ ] (post-merge) 6.3 CI 侧复核：PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` 照跑。
 
 ## 7. 收尾（归档前必须完成）
 
 - [x] 7.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**移除；配 `backlog_updated` 解释事件（seq 2 / seq 5）。
 - [x] 7.2 确保 `workflow-events.jsonl` 事件齐全：seq 1 `change_created` / seq 2 `backlog_updated`（登记）/ seq 3–4 `current_spec_synced` × 2 / seq 5 `backlog_updated`（移除）/ seq 6 `change_archived`，`approved_by` 均为 `human`。
-- [ ] 7.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。未勾且未标 `(post-merge)` 的任务必须为 0 条。
-- [ ] 7.4 归档 move 前：`git add openspec/changes/round-model-align/reviews/` 并确认 `git ls-files` 包含 `grill-design.md`、`grill-adversarial.md`、`building-review.md`（否则 `git mv` 不会搬走未跟踪报告）；随后手工 `git mv` 到 `openspec/changes/archive/2026-10-17-round-model-align/`，归档 move 独立提交（不跑 `openspec archive`；若同一提交含新增报告，则不是纯 rename，如实记录）；归档后核对归档目录包含三份报告与两套 manifest。
-- [ ] 7.5 归档后重建 manifest：**witnessloop 三份**用归档目录名（`--change 2026-10-17-round-model-align`，解析 `archive/<name>`）；**asterwynd 形态**用**裸 id**（`workflow_state.py review-manifest --change round-model-align`，走归档回退；CLI 拒绝日期前缀，见 `scripts/workflow_state.py:375-379`），manifest 写入归档目录。
-- [ ] 7.5b 归档提交后重跑 `witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`，留原始输出。
-- [ ] 7.6 **合入方式**：本 PR SHALL 用 `--merge` 合入，SHALL NOT squash（否则 manifest 的 `head_sha` 不再是祖先，日后触及本 change 目录的 PR 会判红）。
+- [x] 7.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。未勾且未标 `(post-merge)` 的任务必须为 0 条。
+- [x] 7.4 归档 move 前：`git add openspec/changes/round-model-align/reviews/` 并确认 `git ls-files` 包含 `grill-design.md`、`grill-adversarial.md`、`building-review.md`（否则 `git mv` 不会搬走未跟踪报告）；随后手工 `git mv` 到 `openspec/changes/archive/2026-10-17-round-model-align/`，归档 move 独立提交（不跑 `openspec archive`；若同一提交含新增报告，则不是纯 rename，如实记录）；归档后核对归档目录包含三份报告与两套 manifest。
+- [x] 7.5 归档后重建 manifest：**witnessloop 三份**用归档目录名（`--change 2026-10-17-round-model-align`，解析 `archive/<name>`）；**asterwynd 形态**用**裸 id**（`workflow_state.py review-manifest --change round-model-align`，走归档回退；CLI 拒绝日期前缀，见 `scripts/workflow_state.py:375-379`），manifest 写入归档目录。
+- [x] 7.5b 归档提交后重跑 `witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`，留原始输出。
+- [ ] (post-merge) 7.6 **合入方式**：本 PR SHALL 用 `--merge` 合入，SHALL NOT squash（否则 manifest 的 `head_sha` 不再是祖先，日后触及本 change 目录的 PR 会判红）。
 
 ## 8. 合入之后（结构上无法在本 PR 内完成）
 
@@ -97,6 +97,6 @@
 - [x] V2 `dev-workflow-state-machine` 规格的 Requirement 覆盖：轮定义、批次冻结、验证禁提新问题、deferred、medium+ 全修、low/nit 登记须理由、20 上限与超限建议重开、三出口、两环共用 + frontier 豁免、机械门禁不新增正文解析。
 - [x] V3 `change-documentation` 规格不再写 `no fixed round limit` / `until convergence` 作为终止条件，改为引用批次模型。
 - [x] V4 OpenSpec strict validate 通过（30 passed）；artifact checker 0 errors；`uv run pytest -q` 为 4498 passed / 2 failed（两条均为 `/tmp` 环境既有失败，与本 change 无关）。
-- [ ] V5 三份 witnessloop manifest + asterwynd building manifest 齐全且 `gate / check` 绿。
+- [x] V5 三份 witnessloop manifest + asterwynd building manifest 齐全且 `gate / check` 绿。
 - [x] V6 本地入口已同步（`review-loop.md` 与 `grill.md` 均已改为批次模型；grep 无旧口径）。
-- [ ] V7 PR 已 `--merge` 合入；归档为纯 move；issue #305 已留完成 comment 且保持 OPEN。
+- [ ] (post-merge) V7 PR 已 `--merge` 合入；归档为纯 move；issue #305 已留完成 comment 且保持 OPEN。

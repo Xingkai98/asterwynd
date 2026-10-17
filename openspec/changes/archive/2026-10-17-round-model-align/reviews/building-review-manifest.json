@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "round-model-align",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "building-review-round-model-align-2026-10-17",
+  "base_sha": "d0197b1ea9f0178974548b398833721149622878",
+  "head_sha": "b23b358f8b3b50dd791615663136440f0337bff4",
+  "tasks_hash": "sha256:653733deb339918908f6a2148aaa80c97dbc8457629b5e7182c088ad42b20fb3",
+  "spec_hash": "sha256:7ee1ecaab5bf27e29ced177a043b05bc03a5b3717689630299301fde047a4344",
+  "diff_hash": "sha256:6601c002a72be933d39b28d923bc4591a95b870b615184c59612698a518eda1d",
+  "report_hash": "sha256:c3ab121dace061e2168679984c7bbff088279a24de7b4b3508d6c9c0abc54202"
+}
