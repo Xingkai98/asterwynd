@@ -21,10 +21,10 @@
 
 ## 1. 先写红测试（TDD）
 
-- [ ] 1.1 新增 `tests/test_round_model_alignment.py`：显式 allowlist 扫描 `AGENTS.md`、`README.md`、`README_EN.md`、`docs/requirements-process.md`、`docs/interview-script/questions/Q14-dev-process.md`、两份当前规格、`scripts/check_openspec_artifacts.py`、本 change 的两份 delta。
-- [ ] 1.2 断言新模型七要素在场：轮 = 非空 medium+ 批次 / 批次冻结 / 验证禁提新问题 + deferred / 20 上限 / 超限建议重开 / medium+ 全修 + low/nit 登记须理由 / 三出口。
-- [ ] 1.3 断言旧口径词表不在场：`无轮数上限`、`最近两轮`、`3 轮封顶`、`轮数封顶`、`round cap`、`no fixed round limit`、`no round limit`；历史归档不在扫描面。
-- [ ] 1.4 断言 `scripts/check_openspec_artifacts.py` 三处提示文案已同步，且判定逻辑未被改（用 diff/结构断言）。
+- [ ] 1.1 新增 `tests/test_round_model_alignment.py`：显式 allowlist 扫描 `AGENTS.md`、`README.md`、`README_EN.md`、`docs/requirements-process.md`、`docs/interview-script/questions/Q14-dev-process.md`、两份当前规格、`scripts/check_openspec_artifacts.py`。
+- [ ] 1.2 断言 **per-file 映射**：`AGENTS.md` 覆盖轮定义 + 批次冻结 + deferred + 20 + 三出口；两份规格覆盖轮定义 + 批次冻结 + deferred + 20 与收口确认 + 三出口 + 两环共用；README / README_EN 覆盖批次模型 + 20 + 建议重开；requirements-process 覆盖轮定义 + 20 + 两环共用；Q14 覆盖轮定义 + 20 + 三出口。
+- [ ] 1.3 断言旧口径词表不在规范面：`无轮数上限`、`最近两轮`、`3 轮封顶`、`轮数封顶`、`round cap`、`no fixed round limit`、`no round limit`、`再审直到收敛`、`until convergence`、`收敛即停`；历史归档与历史 review 不在扫描面，本 change delta 的 `REMOVED/Reason` 解释段豁免。
+- [ ] 1.4 断言 `scripts/check_openspec_artifacts.py` 三处**新**提示文案在场、**旧**提示文案不在场；判定逻辑未变由 building review 逐行核对 + witnessloop 证据承担（不用对 `origin/master` 的 diff 做长期断言）。
 - [ ] 1.5 跑指定测试确认**红**，把原始输出记入 `reviews/building-review.md` 的测试节。
 - [ ] 1.6 变异验证：临时把 `AGENTS.md:104` 改回旧口径，指定测试至少 1 failed；恢复后复绿（变异不提交）。
 
@@ -39,7 +39,7 @@
 
 ## 3. 规格
 
-- [ ] 3.1 `specs/dev-workflow-state-machine/spec.md` delta：`## REMOVED Requirements` 删除旧「终止条件为收敛，而非轮数上限」；`## ADDED Requirements` 新增「审阅闭环的轮次模型为有界批次，最多 20 个已收口轮」（含轮定义、批次冻结、验证禁提新问题、deferred、severity、20 上限与收口确认、三出口、两环共用 + frontier 豁免、机械门禁不新增正文解析，以及 Scenario）。
+- [ ] 3.1 `specs/dev-workflow-state-machine/spec.md` delta：`## REMOVED Requirements` 删除旧「终止条件为收敛，而非轮数上限」；`## MODIFIED Requirements` 把「开发流程精简为 OpenSpec 主干 + 强制审阅闭环」的两处「再审直到收敛」改为批次模型；`## ADDED Requirements` 新增「审阅闭环的轮次模型为有界批次，最多 20 个已收口轮」（含轮定义、批次冻结、验证禁提新问题、deferred、low 重分类、severity、20 上限与收口确认、三出口、两环共用 + frontier 豁免、两侧机械判据不新增正文解析，以及 Scenario）。
 - [ ] 3.2 `specs/change-documentation/spec.md` delta：`## MODIFIED Requirements` 覆盖 `Pre-implementation design grilling`，把 `no fixed round limit` / `until convergence` 改为批次模型，其余正文与 Scenario 逐字保留。
 - [ ] 3.3 把两份 delta 施加进 `openspec/specs/dev-workflow-state-machine/spec.md` 与 `openspec/specs/change-documentation/spec.md`（**当前规格同步**），记前后 Requirement 计数，并写 `current_spec_synced` 事件。
 - [ ] 3.4 用 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 验证 → 记原始输出。
@@ -49,7 +49,7 @@
 - [ ] 4.1 `uv run pytest -q` 全绿（含新增文档守卫）。
 - [ ] 4.2 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py` → 0 errors（最终读数在 manifest 产出之后）。
 - [ ] 4.3 `git grep` 复核：规范面再无旧口径；历史归档与历史 review 报告不回填。
-- [ ] 4.4 同步本地入口 `/home/happy/my-agent/.claude/commands/review-loop.md`（gitignored、不进 PR）：改为批次模型 + 20 上限 + deferred + 三出口，并登记「已改 / 未改」。
+- [ ] 4.4 同步本地入口（gitignored、不进 PR）：`/home/happy/my-agent/.claude/commands/review-loop.md` 改为批次模型 + 20 上限 + deferred + 三出口；`/home/happy/my-agent/.claude/commands/grill.md` 至少补齐设计阶段对抗环 / frontier 豁免 / 20 上限。逐项登记「已改 / 未改」。
 
 ## 5. 实现后独立审阅闭环
 
@@ -67,8 +67,9 @@
 - [ ] 7.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**移除；配 `backlog_updated` 解释事件。
 - [ ] 7.2 写 `workflow-events.jsonl`：`change_created` / `backlog_updated` / `current_spec_synced` × 2 / `backlog_updated`（移除）/ `change_archived`，`approved_by` 非空。
 - [ ] 7.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。未勾且未标 `(post-merge)` 的任务必须为 0 条。
-- [ ] 7.4 归档 move：手工 `git mv` 到 `openspec/changes/archive/2026-10-17-round-model-align/`，独立纯 rename 提交（不跑 `openspec archive`）。
+- [ ] 7.4 归档 move 前：`git add openspec/changes/round-model-align/reviews/` 并确认 `git ls-files` 包含 `grill-design.md`、`grill-adversarial.md`、`building-review.md`（否则 `git mv` 不会搬走未跟踪报告）；随后手工 `git mv` 到 `openspec/changes/archive/2026-10-17-round-model-align/`，独立纯 rename 提交（不跑 `openspec archive`）；归档后核对归档目录包含三份报告与两套 manifest。
 - [ ] 7.5 归档后，在归档目录上用**归档目录名**重建两套 manifest（asterwynd 形态 + witnessloop 三份）。
+- [ ] 7.5b 归档提交后重跑 `witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`，留原始输出。
 - [ ] 7.6 **合入方式**：本 PR SHALL 用 `--merge` 合入，SHALL NOT squash（否则 manifest 的 `head_sha` 不再是祖先，日后触及本 change 目录的 PR 会判红）。
 
 ## 8. 合入之后（结构上无法在本 PR 内完成）

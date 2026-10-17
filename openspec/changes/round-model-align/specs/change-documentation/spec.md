@@ -18,22 +18,26 @@ Following the grilling pass and **before** the stop-turn user confirmation, the
 change SHALL run a **design-phase review loop**: an independent zero-memory
 reviewer that performs **adversarial analysis** (defaulting to the assumption
 that the design is wrong, attempting to refute each Confirmed Decision and the
-design's assumptions), returns a **verdict** (`PASS` / `CHANGES_REQUESTED`), and
-on `CHANGES_REQUESTED` the design SHALL be revised and re-verified under the
+design's assumptions), returns a **verdict** (`PASS` / `CHANGES_REQUESTED` /
+`BLOCKED`), and on `CHANGES_REQUESTED` the design SHALL be revised and re-verified under the
 **bounded-batch round model** defined in the `dev-workflow-state-machine`
 capability: a round is one non-empty medium+ batch closure (open batch -> fix
 all -> verify only -> close), at most 20 closed rounds apply, new medium+ issues
 found during verification SHALL be deferred to the next batch rather than raised
 as current blockers, and the exits are `PASS` / `BLOCKED` + cause / over-limit
-`BLOCKED` with "revise the design". The loop SHALL produce a structured record
+`BLOCKED` with "revise the design". `CHANGES_REQUESTED` is an in-round state,
+not an exit. If round 20 itself reaches the verification-retry termination
+point, or the closing check after round 20 still finds medium+ issues, the exit
+SHALL be over-limit `BLOCKED` with "revise the design". The loop SHALL produce a
+structured record
 at `openspec/changes/<id>/reviews/grill-adversarial.md`. This loop is
 **isomorphic to the implementation-phase `/review-loop`** — same bounded-batch
 model (independent zero-memory reviewer -> open batch -> fix all -> verify only
--> close; deferred issues enter the next batch), not an open-ended
-"until convergence" loop — but reviews the **design**, not code. The
-implementation-phase `/review-loop` (which reviews code and produces
-`building-review.md`) SHALL remain unchanged and continue to exist; the two are
-separate loops in separate phases.
+-> close; deferred issues enter the next batch), not an open-ended loop — but
+reviews the **design**, not code. The implementation-phase `/review-loop` (which
+reviews code and produces `building-review.md`) SHALL continue to exist as a
+separate implementation-phase loop; **both loops SHALL use the same bounded-batch
+round model**, and neither loop SHALL replace the other.
 
 Within the design-phase review loop, for every Open Question the grilling raised
 the reviewer SHALL either resolve it from the codebase when the answer is
@@ -71,8 +75,8 @@ guard and SHALL fail the artifact checker once its tasks are fully checked.
 - **GIVEN** a change whose `grill-design.md` records Confirmed Decisions
 - **WHEN** the design-phase review loop runs
 - **THEN** the reviewer SHALL attempt to refute each Confirmed Decision
-- **AND** it SHALL record a verdict (`PASS` / `CHANGES_REQUESTED`) with per-issue
-  `file:line` evidence in `reviews/grill-adversarial.md`
+- **AND** it SHALL record a verdict (`PASS` / `CHANGES_REQUESTED` / `BLOCKED`)
+  with per-issue `file:line` evidence in `reviews/grill-adversarial.md`
 - **AND** on `CHANGES_REQUESTED`, the design SHALL be revised and verified within
   the same round; the batch SHALL close only when every medium+ item in it is
   verified fixed

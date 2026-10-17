@@ -30,8 +30,9 @@ asterwynd 当前仍写上一版口径，并且存在一个结构性缺口：**�
 - 在所有规范面与规则面使用同一套 canonical 措辞；用文档守卫测试钉住「新模型在场、旧口径
   不在场」。
 - 把新模型写进两份当前规格，使它成为可引用的规范而不只是散文。
-- 让本 change 自己的 PR 在 `gate / check` 下判绿（改了 `scripts/**` ⇒ 会触发
-  `building` 与 `grill-adversarial` 两个 stage）。
+- 让本 change 自己的 PR 在 `gate / check` 下判绿：witnessloop 对每个 change 恒要求 `grill`；
+  本 change 改了 `scripts/**` ⇒ 另触发 `grill-adversarial` 与 `building`，共三份 witnessloop
+  manifest（另加 asterwynd 形态的 `building-review-manifest.json`）。
 
 **Non-Goals:**
 
@@ -185,7 +186,11 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
 
 - `scripts/check_openspec_artifacts.py` 只改三处提示字符串（`:1139`、`:1623`、`:1640`）；
   判定逻辑、触发条件、返回值一行不改。
-- **不新增任何正文解析**：`check` 仍只判证据存在、manifest 绑定、hash/revision、孤儿报告；
+- **不新增任何正文解析，两侧判据分别保持不变**：
+  - **witnessloop `check`**：change 契约件、manifest / 报告 / revision / hash /
+    `reviewer_run_id != author_run_id`、孤儿报告，以及 `stage=grill` 的既有正文完备性判据；
+  - **`scripts/check_openspec_artifacts.py`**：review manifest 字段 / hash / verdict、
+    `*-review.md` 绑定与归档点完成度门；本 change 只改其提示字符串。
   20 上限、批次冻结、deferred、severity 都是**流程规定**。
 - **诚实边界**：`check` 绿只证明既有证据判据通过，不证明报告按新模型执行；`stage=grill`
   的正文结构仍会被既有判据解析（不是本 change 新增）。
@@ -201,15 +206,24 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
   `AGENTS.md`、`README.md`、`README_EN.md`、`docs/requirements-process.md`、
   `docs/interview-script/questions/Q14-dev-process.md`、
   `openspec/specs/dev-workflow-state-machine/spec.md`、
-  `openspec/specs/change-documentation/spec.md`、`scripts/check_openspec_artifacts.py`、
-  本 change 的两份 spec delta。
-- **词表**：新模型七要素必须出现（轮 = 非空 medium+ 批次 / 批次冻结 / 验证禁提新问题 +
-  deferred / 20 上限 / 超限建议重开 / medium+ 全修 + low/nit 登记须理由 / 三出口）；
-  旧口径词表（`无轮数上限`、`最近两轮`、`3 轮封顶`、`轮数封顶`、`round cap`、
-  `no fixed round limit`、`no round limit`）在规范面**不得出现**。
-- **不回填历史**：`openspec/changes/archive/**`、历史 `reviews/*.md`、`docs/openspec-change-backlog.md`
-  的历史条目不在扫描面。
-- **本地入口**：单独同步 `/home/happy/my-agent/.claude/commands/review-loop.md`，不混进 PR。
+  `openspec/specs/change-documentation/spec.md`、`scripts/check_openspec_artifacts.py`。
+- **per-file 映射**（不是「七要素在合并文本中出现一次即可」）：每个规范面各自必须含有与它
+  角色相符的核心要素——
+  - `AGENTS.md`：轮定义 + 批次冻结 + 验证禁提新问题/deferred + 20 上限 + 三出口；
+  - 两份当前规格：轮定义 + 批次冻结 + deferred + 20 上限与收口确认 + 三出口 + 两环共用；
+  - `README.md` / `README_EN.md`：批次模型 + 20 上限 + 超限建议重开；
+  - `docs/requirements-process.md`：轮定义 + 20 上限 + 两环共用；
+  - `Q14`：轮定义 + 20 上限 + 三出口；
+  - `scripts/check_openspec_artifacts.py`：三处新提示文案在场、旧提示文案不在场。
+- **旧口径词表**：`无轮数上限`、`最近两轮`、`3 轮封顶`、`轮数封顶`、`round cap`、
+  `no fixed round limit`、`no round limit`、`再审直到收敛`、`until convergence`、
+  `收敛即停` 在规范面**不得出现**。
+- **不回填历史**：`openspec/changes/archive/**`、历史 `reviews/*.md`、
+  `docs/openspec-change-backlog.md` 的历史条目不在扫描面；本 change 的两份 delta 的
+  `REMOVED`/`Reason` 段可以引用旧词（它们是解释性文本），测试只对新 Requirement 正文与
+  规范面断言「旧词不在场」。
+- **本地入口**：单独同步 `/home/happy/my-agent/.claude/commands/review-loop.md` 与
+  `grill.md`（后者至少补齐设计阶段对抗环 / frontier 豁免 / 20 上限），不混进 PR。
 
 **理由**：旧口径散落在多个文件；显式 allowlist 让「改齐了」成为可复核的结论，而全仓减排除
 容易误伤历史记录与无关的基准预算语义。
@@ -262,4 +276,29 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
 
 > 本节由 grill 与设计阶段对抗闭环的结论回填。
 
-（待回填）
+**独立 grill（`reviews/grill-design.md`，run `grill-round-model-align-2026-10-17`）**：
+
+- 6 条 Confirmed Decisions；`## Open Questions` 为「（无）」；`## User Confirmation` 记录了
+  用户已拍板的四个参数。verdict = `CHANGES_REQUESTED`，8 条必须修改项，全部已整合：
+  - **G1** 当前规格 `dev-workflow-state-machine:258,347` 的「再审直到收敛」漏在 Impact Analysis
+    外 → 补 MODIFIED delta（整条 Requirement 逐字保留，只改两处措辞）与 proposal/tasks 影响面。
+  - **G2** `change-documentation` delta 仍写实现环「remain unchanged」→ 改为「继续作为独立环
+    存在；两环都使用同一批次模型」。
+  - **G3** 该 delta 的 verdict 列表漏 `BLOCKED`、缺第 20 轮终止点 → 两处 verdict 列表补
+    `BLOCKED`，并写明 `CHANGES_REQUESTED` 是轮内状态、第 20 轮终止 ⇒ 超上限 `BLOCKED`。
+  - **G4** dev-workflow delta 缺上游语义 → 补 low 重分类进 deferred、第 20 轮收口确认发现
+    low/nit 仍可 PASS 且用 `C-*`、重置计数只能由用户裁决、第 20 轮第一次未修好但有新方案
+    同轮继续、多轮小节标题带轮次。
+  - **G5** 文档守卫是「全局在场」而非 per-file 映射 → Decision 8 改为逐文件核心要素映射，
+    旧词表补 `再审直到收敛` / `until convergence` / `收敛即停`。
+  - **G6** tasks 1.4 的 diff/结构断言在合入/变基后失真 → 改为「新提示文案在场、旧文案不在场」；
+    逻辑未变由 building review 与 witnessloop 证据承担。
+  - **G7** 归档 move 可能漏搬未跟踪的 `reviews/` → tasks 7.4 增加 `git add` + `git ls-files`
+    前置检查，归档后核对三份报告与两套 manifest。
+  - **G8** 机械判据混用两侧 checker → delta 与 Decision 7 分别点名 witnessloop `check` 与
+    `scripts/check_openspec_artifacts.py` 的判据。
+- 低风险/补强项也已吸收：Goals 的 stage 数改为「恒有 `grill` + 另触发 `grill-adversarial` /
+  `building`，共三份」；tasks 增加归档后重跑 witnessloop `check`；本地 `grill.md` 入口纳入同步。
+
+**设计阶段对抗闭环**：grill 产出后、停轮前，另起独立零记忆审阅者按批次模型对抗验证；
+结论将在 `reviews/grill-adversarial.md` 回填到本节。

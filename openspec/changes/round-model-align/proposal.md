@@ -77,7 +77,8 @@ asterwynd 的规则面仍写着上一版口径，与 witnessloop 已落地的模
 - `dev-workflow-state-machine`：**删除**旧的「终止条件为收敛，而非轮数上限」Requirement，
   **新增**「审阅闭环的轮次模型为有界批次，最多 20 个已收口轮」Requirement（含轮定义、
   批次冻结、验证禁提新问题、deferred、severity、20 上限、三出口、两环共用 + frontier 豁免、
-  机械门禁不新增正文解析，以及对应 Scenario）。
+  机械门禁不新增正文解析，以及对应 Scenario）；**修改**「开发流程精简为 OpenSpec 主干 +
+  强制审阅闭环」中的两处「再审直到收敛」为批次模型（`:258` 与 `:347`）。
 - `change-documentation`：**修改** `Pre-implementation design grilling` Requirement——把
   「no fixed round limit / until convergence」改成与 witnessloop 一致的有界批次模型，
   其余正文与 Scenario 逐字保留。
@@ -88,7 +89,10 @@ asterwynd 的规则面仍写着上一版口径，与 witnessloop 已落地的模
 
 - **规格（当前树，受保护路径）**：
   - `openspec/specs/dev-workflow-state-machine/spec.md:445-486`：旧 Requirement「审阅闭环的
-    终止条件为收敛，而非轮数上限」整条替换为新模型。
+    终止条件为收敛，而非轮数上限」整条删除（REMOVED），由新模型 Requirement（ADDED）承载。
+  - `openspec/specs/dev-workflow-state-machine/spec.md:254-350`：`开发流程精简为 OpenSpec
+    主干 + 强制审阅闭环` 的正文（`:258`）与一个 Scenario（`:347`）仍写「再审直到收敛」；
+    本 change 以 MODIFIED delta 把它改成「按有界批次模型推进」，其余正文与 Scenario 逐字保留。
   - `openspec/specs/change-documentation/spec.md:29-120`：`Pre-implementation design grilling`
     的正文（`:41-55`）与一个 Scenario（`:88-98`）仍写 `no fixed round limit` / `until
     convergence`，需同步为批次模型；其余段落与 Scenario 逐字保留。
@@ -103,11 +107,14 @@ asterwynd 的规则面仍写着上一版口径，与 witnessloop 已落地的模
     时序与 `:391` 的命令命名，与本模型不冲突。
 - **代码（仅提示文案）**：`scripts/check_openspec_artifacts.py:1139`、`:1623`、`:1640`
   三处提示字符串。**判定逻辑、触发条件、返回值一行不改**。已检索 `tests/`，没有断言这三句
-  文案的测试。
-- **测试**：新增 `tests/test_round_model_alignment.py`，用**显式 allowlist** 钉住规范面：
-  新模型七要素在场、旧口径词表（`无轮数上限` / `最近两轮` / `3 轮封顶` / `round cap` /
-  `no fixed round limit` 等）不在规范面；同时断言 checker 三处提示已同步。历史归档与
-  历史 review 报告**不在扫描面**。
+  文案的测试。机械判据分属两侧：witnessloop `check` 管孤儿报告 / reviewer 身份 /
+  revision/hash / `stage=grill` 正文；`scripts/check_openspec_artifacts.py` 管 manifest
+  字段 / hash / verdict 与归档点完成度门。本 change 不新增任何正文解析。
+- **测试**：新增 `tests/test_round_model_alignment.py`，用**显式 allowlist + per-file 映射**
+  钉住规范面：每个规范文件各自含有与它角色相符的核心要素（轮定义 / 批次冻结 / deferred /
+  20 上限 / 三出口等），旧口径词表（`无轮数上限` / `最近两轮` / `3 轮封顶` / `round cap` /
+  `no fixed round limit` / `再审直到收敛` / `until convergence` / `收敛即停` 等）不在规范面；
+  同时断言 checker 三处提示已同步。历史归档与历史 review 报告**不在扫描面**。
 - **簿记（受保护路径）**：`docs/openspec-change-backlog.md` 先在 `## 未实现队列` 登记本
   change，收尾前移除；配 `backlog_updated` 解释事件。
 - **本地入口（不进版本控制）**：`/home/happy/my-agent/.claude/commands/review-loop.md`
