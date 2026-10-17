@@ -25,8 +25,8 @@
 - [x] 1.2 断言 **per-file 映射**：`AGENTS.md` 覆盖轮定义 + 批次冻结 + deferred + 20 + 三出口；两份规格覆盖轮定义 + 批次冻结 + deferred + 20 与收口确认 + 三出口 + 两环共用；README / README_EN 覆盖批次模型 + 20 + 建议重开；requirements-process 覆盖轮定义 + 20 + 两环共用；Q14 覆盖轮定义 + 20 + 三出口。
 - [x] 1.3 断言旧口径词表不在规范面：`无轮数上限`、`最近两轮`、`3 轮封顶`、`轮数封顶`、`round cap`、`no fixed round limit`、`no round limit`、`再审直到收敛`、`until convergence`、`收敛即停`；历史归档与历史 review 不在扫描面，本 change delta 的 `REMOVED/Reason` 解释段豁免。
 - [x] 1.4 断言 `scripts/check_openspec_artifacts.py` 三处**新**提示文案在场、**旧**提示文案不在场；判定逻辑未变由 building review 逐行核对 + witnessloop 证据承担（不用对 `origin/master` 的 diff 做长期断言）。
-- [x] 1.5 跑指定测试确认**红**，把原始输出记入 `reviews/building-review.md` 的测试节。
-- [x] 1.6 变异验证：临时把 `AGENTS.md:104` 改回旧口径，指定测试至少 1 failed；恢复后复绿（变异不提交）。
+- [x] 1.5 跑指定测试确认**红**（19 failed / 9 passed），把原始输出补记入 `reviews/building-review.md` 的 `### TDD 证据` 节。
+- [x] 1.6 变异验证：临时把 `AGENTS.md` 的「20 个已收口轮」改回旧口径，指定测试 1 failed；恢复后复绿（变异不提交，结果补记入 `### TDD 证据`）。
 
 ## 2. 规则与文案改动
 
@@ -53,8 +53,8 @@
 
 ## 5. 实现后独立审阅闭环
 
-- [ ] 5.1 跑 `/review-loop round-model-align`，产出 `reviews/building-review.md` + reviewer run；asterwynd 形态 manifest 只在 7.5 的最终 revision 上生成。按批次模型执行：开批只列 medium+、全修、只验证、验证期新问题 deferred；`CHANGES_REQUESTED` 是轮内状态，不是出口；最多 20 个已收口轮。
-- [ ] 5.2 收口后清理中间轮产物，避免孤儿报告。
+- [x] 5.1 跑 `/review-loop round-model-align`，产出 `reviews/building-review.md` + reviewer run；**初次开批 0 条 medium+ ⇒ PASS**（6 条 low/nit 登记）；asterwynd 形态 manifest 只在 7.5 的最终 revision 上生成。
+- [x] 5.2 收口后清理中间轮产物，避免孤儿报告（仅一份 `building-review.md`）。
 
 ## 6. witnessloop 证据与出口判据
 
@@ -64,8 +64,8 @@
 
 ## 7. 收尾（归档前必须完成）
 
-- [ ] 7.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**移除；配 `backlog_updated` 解释事件。
-- [ ] 7.2 确保 `workflow-events.jsonl` 事件齐全（`change_created` 已有 seq 1）：`change_created` / `backlog_updated`（登记）/ `current_spec_synced` × 2 / `backlog_updated`（移除）/ `change_archived`，`approved_by` 非空。
+- [x] 7.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**移除；配 `backlog_updated` 解释事件（seq 2 / seq 5）。
+- [x] 7.2 确保 `workflow-events.jsonl` 事件齐全：seq 1 `change_created` / seq 2 `backlog_updated`（登记）/ seq 3–4 `current_spec_synced` × 2 / seq 5 `backlog_updated`（移除）/ seq 6 `change_archived`，`approved_by` 均为 `human`。
 - [ ] 7.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。未勾且未标 `(post-merge)` 的任务必须为 0 条。
 - [ ] 7.4 归档 move 前：`git add openspec/changes/round-model-align/reviews/` 并确认 `git ls-files` 包含 `grill-design.md`、`grill-adversarial.md`、`building-review.md`（否则 `git mv` 不会搬走未跟踪报告）；随后手工 `git mv` 到 `openspec/changes/archive/2026-10-17-round-model-align/`，归档 move 独立提交（不跑 `openspec archive`；若同一提交含新增报告，则不是纯 rename，如实记录）；归档后核对归档目录包含三份报告与两套 manifest。
 - [ ] 7.5 归档后重建 manifest：**witnessloop 三份**用归档目录名（`--change 2026-10-17-round-model-align`，解析 `archive/<name>`）；**asterwynd 形态**用**裸 id**（`workflow_state.py review-manifest --change round-model-align`，走归档回退；CLI 拒绝日期前缀，见 `scripts/workflow_state.py:375-379`），manifest 写入归档目录。
@@ -77,6 +77,19 @@
 - [ ] (post-merge) 8.1 在 issue #305 追加 comment：轮次口径已镜像到 witnessloop 的批次模型（20 上限 + deferred + 三出口），规格已同步。**issue 保持 OPEN**。
 - [ ] (post-merge) 8.2 合入后确认：active change 目录不再存在、backlog 干净、本地 `master` 已快进；并复核 `master` 的 required 仍为 `["gate / check"]`。
 - [ ] (post-merge) 8.3 复核本地入口 `/home/happy/my-agent/.claude/commands/review-loop.md` 已同步（4.4 的最终确认）。
+
+## 审阅修复（building R1）
+
+> building 审阅初次开批 0 条 medium+，无修复批次；以下为 low/nit 登记与处置。
+
+| 问题 | 处置 | 落点 |
+|---|---|---|
+| L1 `AGENTS.md:18` 多余反引号 | 已修 | `AGENTS.md:18`（删除 stray backtick） |
+| L2 tasks 1.5/1.6 先红/变异输出无落盘 | 已补记 | `reviews/building-review.md` 的 `### TDD 证据` |
+| L3 本地入口测试恒真 | 已修 | `tests/test_round_model_alignment.py` 改为断言 `.gitignore` 含 `.claude` |
+| L4 AGENTS/requirements 摘要省略第 20 轮自身终止点 | 登记不修 | 完整口径在规格 `dev-workflow-state-machine` 的 20 轮上限段与两份模板；摘要层有意只钉核心要素 |
+| L5 评审期间 events seq 3/4 未提交 | 已随收尾提交 | 本 tasks 最终提交 |
+| L6 design 映射粒度与测试不一致 | 已修 | `design.md` Decision 8 改为 `deferred` |
 
 ## 验收清单（对应 spec）
 

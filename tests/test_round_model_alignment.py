@@ -165,9 +165,8 @@ def test_checker_prompt_messages_use_batch_model() -> None:
     assert "建议推倒重开" in content
 
 
-def test_local_entry_is_not_required_in_version_control() -> None:
-    """本地入口被 gitignore，不应出现在仓库扫描面里（防止误把本地文件当规范）。"""
+def test_local_entry_is_gitignored() -> None:
+    """本地入口被 gitignore（防止把本地命令文件当成版本控制内的规范面）。"""
 
-    local_entry = Path("/home/happy/my-agent/.claude/commands/review-loop.md")
-    if local_entry.exists():
-        assert not local_entry.is_relative_to(ROOT)
+    gitignore = _read(".gitignore")
+    assert ".claude" in gitignore

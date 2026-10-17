@@ -217,7 +217,7 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
   `openspec/specs/change-documentation/spec.md`、`scripts/check_openspec_artifacts.py`。
 - **per-file 映射**（不是「七要素在合并文本中出现一次即可」）：每个规范面各自必须含有与它
   角色相符的核心要素——
-  - `AGENTS.md`：轮定义 + 批次冻结 + 验证禁提新问题/deferred + 20 上限 + 三出口；
+  - `AGENTS.md`：轮定义 + 批次冻结 + deferred + 20 上限 + 三出口；
   - 两份当前规格：轮定义 + 批次冻结 + deferred + 20 上限与收口确认 + 三出口 + 两环共用；
   - `README.md` / `README_EN.md`：批次模型 + 20 上限 + 超限建议重开；
   - `docs/requirements-process.md`：轮定义 + 20 上限 + 两环共用；
