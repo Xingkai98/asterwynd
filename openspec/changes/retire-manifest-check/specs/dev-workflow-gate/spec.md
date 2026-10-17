@@ -1,5 +1,10 @@
 # dev-workflow-gate 规格 delta
 
+## RENAMED Requirements
+
+- FROM: `### Requirement: review manifest 两套并存，schema 统一延后`
+- TO: `### Requirement: review manifest 单套承载：本仓形态退役`
+
 ## MODIFIED Requirements
 
 ### Requirement: review manifest 单套承载：本仓形态退役

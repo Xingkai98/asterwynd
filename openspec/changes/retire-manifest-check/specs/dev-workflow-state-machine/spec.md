@@ -213,10 +213,12 @@ deferred 都是**流程规定**，不是机械判据；`check` 绿只证明既�
 
 实现完成与归档点的审阅证据 SHALL 由 witnessloop 形态 manifest 与 building review 报告共同承载，本仓 SHALL NOT 再要求 asterwynd 形态 manifest。witnessloop 形态 manifest（`reviews/<stage>.manifest.json`）SHALL 是唯一被要求的 review manifest；本仓 checker 的 manifest 字段 / hash / git span 校验 SHALL 移除。
 
-building review 报告 SHALL 在 `reviews/building-review.md` 中以二级标题 `## 闭环出口` 记录终结 verdict。解析规则 SHALL 为：标题以 `闭环出口` 为前缀即命中（容忍中文括号后缀，`###` 级不命中）；fenced code（` ``` ` / `~~~`）内的标题与 token SHALL 被忽略；只认该小节**首个非空行**，剥掉行首 list/bold 标记后该行 SHALL 以 `PASS` / `BLOCKED` / `CHANGES_REQUESTED` 之一开头；报告中出现多个 `## 闭环出口` 小节 SHALL 报错。终结出口 SHALL 为 `PASS` 才视为审阅通过；该判据只覆盖 building review，非 building 的 `*-review.md` PASS 门随旧 manifest 校验退役并由 known-debt 登记。本仓 checker SHALL 在以下两个落点机械校验：
+building review 报告 SHALL 在 `reviews/building-review.md` 中以二级标题 `## 闭环出口` 记录终结 verdict。解析规则 SHALL 为：标题以 `闭环出口` 为前缀即命中（容忍中文括号后缀，`###` 级不命中）；fenced code（` ``` ` / `~~~`）内的标题与 token SHALL 被忽略；只认该小节**首个非空行**，剥掉行首 list/bold/引用符标记后该行 SHALL 以 `PASS` / `BLOCKED` / `CHANGES_REQUESTED` 之一开头，且首个 token 后 SHALL 紧跟行尾/空白/`（`/`(`/`：`/`:` 等终止符（`PASSED` 不合规），首个 token 之后 SHALL NOT 出现 `|` 分隔的其它终结 token（官方模板占位行 `PASS | BLOCKED（…） | BLOCKED（…）` 不合规）；`PASS（此前 CHANGES_REQUESTED 已收口）` SHALL 视为合法；报告中出现多个 `## 闭环出口` 小节 SHALL 报错。终结出口 SHALL 为 `PASS` 才视为审阅通过；该判据只覆盖 building review，非 building 的 `*-review.md` PASS 门随旧 manifest 校验退役并由 known-debt 登记。
 
-- **active**：非 docs、有 spec delta、且 `tasks.md` 全部勾选的 change；
-- **归档点**：本 PR `--diff-filter=AR` 新建、在 base 树不存在、且**有 spec delta** 的非 docs 归档 change。
+本仓 checker SHALL 在两类触发面机械校验：
+
+- **宽触发（terminal 非 PASS）**：只要 `reviews/building-review.md` 存在且出口首个 token 为 `BLOCKED` / `CHANGES_REQUESTED`，SHALL 报错，SHALL NOT 区分 change 类型、spec delta 或 `tasks.md` 勾选状态；
+- **完成面（必须 PASS）**：**active** 侧为非 docs、有 spec delta、且 `tasks.md` 全部勾选的 change；**归档点**为本 PR `--diff-filter=AR` 新建、在 base 树不存在、且**有 spec delta** 的非 docs 归档 change。完成面 SHALL 要求出口小节存在且为 `PASS`；`未定` 或小节缺失只在完成面报错。
 
 小节缺失、首个非空行不以任何终结 token 开头、以非 `PASS` token 开头、或出现多个同名小节 SHALL 报错，SHALL NOT 静默通过。该判据 SHALL NOT 扩大到历史归档报告，SHALL NOT 解析轮次、severity、deferred 或 low/nit 内容；`design-review.md` 等非 building 报告不在本判据覆盖面。
 
@@ -236,9 +238,9 @@ building review 报告 SHALL 在 `reviews/building-review.md` 中以二级标题
 
 #### Scenario: 出口缺失、无效或多小节被拒
 
-- **GIVEN** `reviews/building-review.md` 没有 `## 闭环出口` 小节，或首个非空行为 `未定` / `不是 PASS`，或出现多个同名小节
+- **GIVEN** `reviews/building-review.md` 没有 `## 闭环出口` 小节，或首个非空行为 `未定` / `不是 PASS` / `PASSED` / 模板占位行 `PASS | BLOCKED（…） | BLOCKED（…）`，或出现多个同名小节
 - **WHEN** 运行项目 artifact checker
-- **THEN** 系统 SHALL 判定失败并报告「缺少闭环出口」「出口未填或不以终结 token 开头」或「闭环出口小节不唯一」
+- **THEN** 系统 SHALL 判定失败并报告「缺少闭环出口」「出口未填 / 不以终结 token 开头」「出口不唯一」或「闭环出口小节不唯一」
 
 #### Scenario: fenced code 中的示例不参与判定
 
@@ -248,18 +250,26 @@ building review 报告 SHALL 在 `reviews/building-review.md` 中以二级标题
 - **THEN** fenced code 内的标题与 token SHALL 被忽略
 - **AND** checker SHALL 判定通过
 
-#### Scenario: partial change 不被新门误伤
+#### Scenario: partial change 的未终结报告不被误伤
 
 - **GIVEN** 一个非 docs change 有 spec delta，但 `tasks.md` 仍有未勾选项
-- **AND** `reviews/building-review.md` 存在但没有 `## 闭环出口`
+- **AND** `reviews/building-review.md` 存在且出口为 `未定` 或没有 `## 闭环出口`
 - **WHEN** 运行项目 artifact checker
 - **THEN** checker SHALL NOT 因该报告报错（完成面才触发）
 
-#### Scenario: 归档点 verdict 只在有 spec delta 时触发
+#### Scenario: 宽触发覆盖 docs / 无 spec delta / partial
+
+- **GIVEN** 一个 docs change、一个无 spec delta 的 process change，或一个 `tasks.md` 未全勾的 change
+- **AND** 其 `reviews/building-review.md` 存在且出口首个 token 为 `BLOCKED` 或 `CHANGES_REQUESTED`
+- **WHEN** 运行项目 artifact checker
+- **THEN** checker SHALL 判定失败（宽触发，不看类型 / spec delta / 勾选状态）
+
+#### Scenario: 归档点完成面要求 spec delta，宽触发不看
 
 - **GIVEN** 一个本 PR 新归档的非 docs change 没有 spec delta
 - **WHEN** 运行归档点完成度门
-- **THEN** SHALL NOT 要求 `## 闭环出口`（与 building-review 存在性门的触发条件一致）
+- **THEN** SHALL NOT 要求 `## 闭环出口` 存在（完成面不触发）
+- **AND** 若其 `building-review.md` 存在且出口为 terminal 非 PASS，SHALL 仍按宽触发报错
 
 #### Scenario: 历史归档不追溯
 

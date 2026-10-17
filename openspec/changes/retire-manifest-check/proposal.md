@@ -24,27 +24,37 @@
 `_check_review_manifests` 的 manifest 校验与它的两个调用点，停止产出 asterwynd 形态
 manifest；`agent/workflow/review_manifest.py`、其测试与 80 份历史 ast manifest 留给第二刀。
 
-**关键风险已定位并由本 change 正面处理**：旧 manifest 校验里唯一不被 witnessloop 覆盖的
-判据是 `verdict == PASS`（witnessloop 源码明确不解析报告 verdict）。若把整块删掉，「只有
-PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：保留一个极小的本地等价检查——从
-`reviews/building-review.md` 的 `## 闭环出口` 读终结 verdict，要求 `PASS`。这是 #316
-「不放宽任何判据」非目标的直接落实。
+**关键风险已定位并由本 change 正面处理**：active 侧旧 manifest 校验里唯一不被 witnessloop
+覆盖的判据是 **building review 的 `verdict == PASS`**（witnessloop 源码明确不解析报告
+verdict）；此外 `--check-archived` 的历史 drift 检测与 `diff_hash` 强校验也随删除消失，
+另行登记。若把整块删掉，「只有 PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：
+保留一个极小的本地等价检查——从 `reviews/building-review.md` 的 `## 闭环出口` 读终结
+verdict，要求 `PASS`；terminal 非 PASS 在任何报告存在时都报错。这是「不放宽任何判据」的
+直接落实。
 
 ## 需求
 
 1. **删除重复的 manifest 校验**：`scripts/check_openspec_artifacts.py` SHALL 删除
    `_check_review_manifests` 及 `check_change` / `--check-archived` 两处调用；SHALL NOT 再
    校验 asterwynd 形态 manifest 的字段、hash、`change_id`、`phase` 或 git span。
-2. **保留 building review 的 verdict 判据（方案 i）**：本仓 checker SHALL 在实现完成的
-   active change 与**本 PR 新归档**的 change 上解析 `reviews/building-review.md` 的
-   `## 闭环出口`，要求小节**首个非空行以 `PASS` 开头**。解析规则 SHALL 为：标题以
-   `闭环出口` 为前缀（容忍中文括号后缀）；忽略 fenced code；只认首个非空行（`不是 PASS`
-   不以 token 开头、`未定` 不合法）；出现多个 `## 闭环出口` 小节 SHALL 报错。该判据只覆盖
-   building review；非 building 的 `*-review.md` PASS 门随旧校验退役，SHALL 登记 known-debt。
-3. **触发条件**：active 侧为「非 docs + 有 spec delta + tasks 全勾选」（这是 building-review
-   存在性门原有的触发条件）；旧 manifest 校验的隐式宽触发（`reviews/` 存在即校验）SHALL 被
-   收窄到完成面。归档点侧为「本 PR `--diff-filter=AR` 新建、且在 base 树不存在、且有 spec
-   delta 的非 docs 归档目录」。在途 change SHALL NOT 被误伤。
+2. **保留 building review 的 verdict 判据（方案 i）**：本仓 checker SHALL 解析
+   `reviews/building-review.md` 的 `## 闭环出口`。解析规则 SHALL 为：标题以 `闭环出口`
+   为前缀（容忍中文括号后缀）；忽略 fenced code；只认首个非空行，剥掉 list/bold/引用符后
+   必须以终结 token 开头且：
+   - 首个 token 后必须紧跟行尾/空白/括号/冒号等终止符（`PASSED` 不合法）；
+   - 首个 token 之后不得出现 `|` 分隔的其它终结 token（官方模板占位行
+     `PASS | BLOCKED（…） | BLOCKED（…）` SHALL 报错）；
+   - `PASS（此前 CHANGES_REQUESTED 已收口）` 合法；`不是 PASS` / `未定` 不合法；
+   - 出现多个 `## 闭环出口` 小节 SHALL 报错。
+   该判据只覆盖 building review；非 building 的 `*-review.md` PASS 门随旧校验退役，SHALL
+   登记 known-debt。
+3. **触发面**：
+   - **宽触发**：只要 `building-review.md` 存在且出口首个 token 是 `BLOCKED` /
+     `CHANGES_REQUESTED`，SHALL 报错，**不看 change 类型、spec delta 或 tasks 勾选**；
+   - **完成面**：active 侧在「非 docs + 有 spec delta + tasks 全勾选」、归档点在本 PR
+     `--diff-filter=AR` 新建且在 base 树不存在的非 docs + spec delta 归档目录上，SHALL 要求
+     出口小节存在且为 `PASS`；
+   - `未定` / 缺小节只在完成面触发；历史归档 SHALL NOT 追溯。
 4. **不做历史追溯**：80 份历史 ast manifest 与历史 `building-review.md` SHALL 保持原样；
    `--check-archived` SHALL 只保留归档事件日志可投影校验，SHALL NOT 对历史 manifest 做
    漂移检测，SHALL NOT 新增历史报告正文门槛。
@@ -53,7 +63,8 @@ PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：保留�
    `building` 三份 `reviews/<stage>.manifest.json`），并写明归档 move 之后用归档目录名重建。
 6. **其它检查行为不变**：RIR、Impact Analysis、benchmark smoke、归档点完成度（除 verdict
    这一项等价替代外）、backlog 一致性、受保护路径事件、grill / grill-adversarial 证据、
-   platform-gate SHALL 一律保留。
+   platform-gate SHALL 一律保留。需求 4 明确移除的 `--check-archived` 历史漂移检测是**有意
+   收窄**，不属于「行为不变」的例外。
 7. **规格同步**：把「review manifest 不再是本仓要求、witnessloop 形态是唯一要求」写进
    `dev-workflow-gate`、`dev-workflow-state-machine`、`platform-gate` 的 delta 与当前规格。
 
@@ -108,8 +119,11 @@ PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：保留�
   `docs/requirements-process.md:45,54,293`、
   `docs/interview-script/questions/Q12-ci-testing.md:10,44`、
   `docs/interview-script/questions/Q14-dev-process.md:13,15,27,38,44,49,55`。
-- **债务登记（受保护路径）**：`docs/known-debt.md` 新增退役记录与剩余第二刀清单；
+- **债务登记（受保护路径）**：`docs/known-debt.md` 新增退役记录与剩余第二刀清单，并标注
+  既有四处随本 change 变假的段落（`:25`、`:31-33`、`:158-206`、`:232-241`）；
   `docs/openspec-change-backlog.md` 先登记、收尾移除。
+- **ADR**：`docs/adr/ADR-0004-retire-duplicate-review-manifest-check.md` 记录「保留两套并
+  派生 (d) / 下掉重复校验 / 统一 schema」三个备选与选择理由（AGENTS ADR 规则）。
 - **规格（受保护路径）**：`openspec/specs/dev-workflow-gate/spec.md`、
   `openspec/specs/dev-workflow-state-machine/spec.md`、`openspec/specs/platform-gate/spec.md`。
 - **CI**：`.github/workflows/ci.yml` 只改归档校验步骤的名称 / 注释；命令与 flag 不变，

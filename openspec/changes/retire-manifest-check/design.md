@@ -74,10 +74,14 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
    `## 闭环出口（仅在终结时填写；轮内写「未定」）`）。`###` 级不匹配。
 2. **忽略 fenced code**：` ``` ` / `~~~` 围栏内的标题与 token 不参与匹配，避免报告里引用
    模板示例时误判。
-3. **只认首个非空行**：取该小节第一个非空行，剥掉行首的 list/bold 标记后，该行必须以
-   `PASS` / `BLOCKED` / `CHANGES_REQUESTED` 之一**开头**；`PASS（此前 CHANGES_REQUESTED
-   已收口）` 合法，`不是 PASS` 不合法（不以 token 开头），`未定` 不合法。行内后续说明不
-   参与判定。
+3. **只认首个非空行，且必须是唯一裁决**：取该小节第一个非空行，剥掉行首的 list/bold /
+   引用符标记后，该行必须以 `PASS` / `BLOCKED` / `CHANGES_REQUESTED` 之一开头，且：
+   - 首个 token 后必须紧跟行尾 / 空白 / `（`/`(`/`：`/`:` 等终止符——`PASSED` 这类字母续写
+     不合法；
+   - 首个 token 之后不得出现 `|` 分隔的其它终结 token——官方模板的占位行
+     `PASS | BLOCKED（成因：…） | BLOCKED（超上限：…）` 必须报错，不得判绿；
+   - `PASS（此前 CHANGES_REQUESTED 已收口）` 合法（括号内说明，非 `|` 分隔）；
+   - `不是 PASS` / `未定` 不合法。行内其它说明不参与判定。
 4. **小节唯一**：报告中出现多个 `## 闭环出口` 后缀标题 ⇒ 直接报错（不做「最后一个赢」）。
 
 判定结果必须是 `PASS`；标题缺失、小节为空 / 未定、出现多个小节或首个非空行不是 `PASS`
@@ -112,22 +116,23 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
 
 **选择**：
 
-- **active**：在 `check_change` 中原 `_check_review_manifests` 的位置调用新函数，触发条件为
-  「非 docs + `_changed_capabilities` + `_tasks_all_complete`」。**这是 building-review
-  存在性门的触发条件，保持不变**；旧 manifest 校验的隐式宽触发（只要 `reviews/` 存在就校验
-  其中的 `*-review.md`，与类型 / tasks 完成度无关）被**有意收窄**到完成面，避免 partial
-  review 被误伤。
-- **归档点**：在 `_check_archived_completion_gate` 的 building-review 存在性判据之后调用
-  同一个 verdict 解析器；触发条件与存在性门相同（非 docs + `_changed_capabilities`），只对
-  本 PR `--diff-filter=AR` 新建的归档目录生效。
+- **宽触发（terminal 非 PASS）**：只要 `reviews/building-review.md` 存在，且出口小节首个
+  token 是 `BLOCKED` / `CHANGES_REQUESTED`，就报错——**不看 change 类型、spec delta 或
+  tasks 勾选状态**。这保留了旧门「任何已存在报告的非 PASS verdict 都红」的行为，覆盖 docs
+  change、无 spec delta 的 process change 与 partial change。
+- **完成面（必须 PASS）**：active 侧在「非 docs + `_changed_capabilities` +
+  `_tasks_all_complete`」时要求出口小节存在且为 `PASS`；归档点在「非 docs + spec delta」的
+  本 PR 新归档目录上要求同样内容。`未定` / 缺小节只在这个完成面触发（避免误伤在途
+  partial review）。
 - **`--check-archived`**：只保留 `_check_archived_projectable`；不扫描历史报告，
   不要求历史 manifest。
 
 **理由**：旧行为在新归档上最终由 `--check-archived`（全量）验证 PASS；把等价检查放到归档点
-后，新归档仍有 PASS 门，而历史归档（其中 78 份没有新出口标题）不会被追溯打红。在途 change
-不受影响（当前唯一 active change `add-minimal-tui-runtime-view` 有 18 条未勾任务且无
-`reviews/`）。收窄后的边界必须由测试锁定：partial change 即使有 `building-review.md` 也不
-报错；历史归档无 `## 闭环出口` 在 `--check-archived` 下仍 exit 0。
+后，新归档仍有 PASS 门，而历史归档（其中 78 份没有新出口标题）不会被追溯打红。宽触发保住了
+旧门对 docs / 无 spec delta / partial 报告的非 PASS 判定；完成面负责「实现完成必须 PASS」。
+在途 change 不受影响（当前唯一 active change `add-minimal-tui-runtime-view` 有 18 条未勾
+任务且无 `reviews/`）。边界必须由测试锁定：partial change 的 `BLOCKED` 报告仍报错、`未定`
+报告不报错；历史归档无 `## 闭环出口` 在 `--check-archived` 下仍 exit 0。
 
 **备选**：在 `--check-archived` 全量解析报告。否——见 Decision 2 的历史假红证据。把 verdict
 检查只放 active。否——最终归档 commit 里 change 已不在 active 面，会被漏掉。
@@ -161,6 +166,9 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
    `*-review.md` 都要求同名 manifest 且 `verdict == PASS`；新检查只读
    `reviews/building-review.md`。当前流程不要求 `design-review.md`，历史上只有 1 份 design
    形态 ast manifest，影响面窄，但必须如实登记。
+4. 完成面之外的 `building-review.md` 若**没有**出口小节或出口为 `未定`，本仓不再报错
+   （旧门会因缺 manifest 而红）。这是为避免误伤在途 partial review；terminal 的
+   `BLOCKED` / `CHANGES_REQUESTED` 已由宽触发覆盖，只有「未终结 / 缺失」这一窄面被放弃。
 
 **理由**：这三项都不是 witnessloop required 面能自动补齐的，也不是本刀应该顺手扩大范围去
 处理的；登记为第二刀的输入，避免「静默接受损失」。
@@ -194,7 +202,24 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
   12 无 `## Verdict` 标题；15 份多 token）；③ 承认 active 触发面由「reviews/ 存在即校验」
   收窄为「完成面」；④ verdict 判据只保留 building review，非 building 的 PASS 门登记
   known-debt。
-- 设计对抗闭环：待跑（本轮实现后回填出口与轮次）。
+**设计对抗（独立零记忆，2026-10-17，第 1 批）**：开批 5 条 medium+（1 high / 4 medium），
+全部修复后待复审：
+
+- R0-1（medium）解析器会把 witnessloop 官方模板的占位行 `PASS | BLOCKED（…） | BLOCKED（…）`
+  判绿；且 `PASSED` 也以 `PASS` 开头。→ 规则 3 增加 token 终止符与「不得有 `|` 分隔其它
+  终结 token」两条约束，并补测试。
+- R0-2（high）verdict 等价不成立：旧门对 docs change、无 spec delta、partial change 上
+  已存在的 `*-review.md` 同样要求 PASS；新门只在完成面触发。→ 拆成**宽触发**（报告存在且
+  terminal 非 PASS 一律红）+ **完成面**（必须 PASS）；`未定` / 缺小节只在完成面报错。
+- R0-3（medium）`dev-workflow-gate` 的改名用 MODIFIED + 新标题，标准 sync 会找不到旧
+  Requirement。→ 增加 `## RENAMED Requirements`（FROM/TO），并在 tasks 4.4 增加
+  「`两套并存` 计数为 0」验收。
+- R0-4（medium）`docs/known-debt.md` 既有四处段落会变假，计划只写「新增」。→ 任务 3.6
+  点名标注 `:25`、`:31-33`、`:158-206`、`:232-241`。
+- R0-5（medium）设计承诺的文档守卫测试未落进 tasks。→ 新增任务 1.6 与文档守卫测试。
+
+low/nit 已按报告登记（函数命名统一、known-debt 旧段落、`未定` 完成面外不报错、
+`--check-archived` 保留 `change_type is None ⇒ continue`、CI 测试文案）。
 
 ## Risks / Trade-offs
 
@@ -202,7 +227,7 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
 |---|---|---|
 | `## 闭环出口` 解析过严导致误伤 | 新 change 的报告格式不合规会被红 | 四条解析规则 + 报告模板与本地入口明确要求；对加粗 / 中文括号 / 行内说明容忍；新增正反单测 |
 | 解析过松导致 BLOCKED / 未定被读成 PASS | PASS 门失效 | 只认首个非空行且必须以 token 开头；`不是 PASS` 不以 token 开头；多小节直接报错 |
-| active 触发面收窄导致 partial review 不再被检查 | 未完成 change 的评审报告没有出口/存在性门 | 有意为之（避免误伤在途 change）；由 partial-change 回归测试锁定；完成面与归档点仍强校验 |
+| 完成面之外的报告若缺失出口 / 为 `未定` 不再被检查 | partial / docs / 无 spec delta 的未终结报告没有本仓 PASS 门 | 有意为之（避免误伤在途 change）；terminal 非 PASS 由宽触发覆盖；由 partial/docs/无 spec delta 回归测试锁定；完成面与归档点仍强校验 |
 | 删除 manifest 校验后历史漂移无人检测 | 历史 manifest / report / spec 的漂移不再被检测 | 接受：历史只读；known-debt 明确登记「检测能力消失」；第二刀决定归档处置 |
 | `diff_hash` 自洽检查消失 | manifest 记录的 diff 不再被本仓校验 | witnessloop 严格 git span 部分补偿；known-debt 登记 |
 | 非 building 的 `*-review.md` PASS 门消失 | `design-review.md` 即使存在也不再被本仓校验 | 当前流程不要求该文件；known-debt 登记；若未来恢复设计评审报告则另立检查 |
@@ -214,10 +239,11 @@ change 必须有 `reviews/building-review.md`」这条存在性判据。
 
 - **先红**：
   - parser 单测：标题带中文括号后缀命中；fenced code 内的标题 / token 忽略；`**PASS**（...）`
-    通过；`PASS（此前 CHANGES_REQUESTED 已收口）` 通过；`不是 PASS` / `未定` 报错；
-    多小节报错。
+    通过；`PASS（此前 CHANGES_REQUESTED 已收口）` 通过；`PASSED` 报错；模板占位行
+    `PASS | BLOCKED（...） | BLOCKED（...）` 报错；`不是 PASS` / `未定` 报错；多小节报错。
   - active gate：PASS 通过、BLOCKED / CHANGES_REQUESTED / 缺失 / 未定报错；partial change
-    即使有 `building-review.md` 也不报错（锁定收窄后的触发面）。
+    的 `未定` 报告不报错、`BLOCKED` 报告仍报错（宽触发）；docs / 无 spec delta 的 `BLOCKED`
+    报告报错、`未定` 报告不报错。
   - `--check-archived`：不再因 `spec_hash` / `tasks_hash` / 缺失 manifest 报错；历史归档
     （无 `## 闭环出口`）仍 exit 0；归档事件日志不可投影仍报错。
   - 归档点门：新建归档的 PASS 出口通过、非 PASS / 缺失报错；docs / 无 spec delta 的归档不
