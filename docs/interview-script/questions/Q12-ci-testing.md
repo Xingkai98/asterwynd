@@ -41,7 +41,7 @@ GitHub Actions (.github/workflows/witnessloop.yml)   ← required（阶段 C 之
 - `_check_impact_analysis`（248 行）：非平凡 change 必须维护结构化 Impact Analysis。
 - `_check_reference_implementation_research`（304 行）：非 docs change 必须记录参考实现调研。
 - `_check_design_review_task`：**grill 门禁**——非 docs + 有 spec delta 的 change，写代码前必须有 `reviews/grill-design.md`（≥3 条决策 + Open Questions 全确认）。归档侧传 `assume_implemented=True`（issue #235），使其不因归档 change 残留未勾项而静默降级。
-- `_check_building_review`：**审阅闭环门禁**——宽触发（任何已存在报告的 terminal 非 PASS 一律红）+ 完成面（active 的 tasks 全勾 / 归档点的 `--diff-filter=AR` 新建目录必须 `## 闭环出口` PASS，issue #235）。**2016 版的本仓 manifest 校验已退役**（`retire-manifest-check`，issue #316）；manifest 的存在性 / revision / hash 绑定改由 witnessloop `gate / check` 承担，`--check-archived` 只做归档事件日志可投影校验。
+- `_check_building_review`：**审阅闭环门禁**——宽触发（任何已存在报告的 terminal 非 PASS 一律红）+ 完成面（active 的 tasks 全勾 / 归档点的 `--diff-filter=AR` 新建目录必须 `## 闭环出口` PASS，issue #235）。**旧版本仓 manifest 校验已退役**（`retire-manifest-check`，issue #316）；manifest 的存在性 / revision / hash 绑定改由 witnessloop `gate / check` 承担，`--check-archived` 只做归档事件日志可投影校验。
 - `_check_benchmark_smoke_task`（594 行）：coding-agent 核心变更必须有 benchmark smoke 验证项。
 - `_check_current_spec_sync_task`（421 行）：有 spec delta 的 change 必须含"当前规格同步"任务。
 

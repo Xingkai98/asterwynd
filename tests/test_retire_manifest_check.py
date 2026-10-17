@@ -114,6 +114,8 @@ UNDECIDED_EXIT = "## 闭环出口\n\n未定\n"
             "## 闭环出口\n\nPASS | BLOCKED（成因） | BLOCKED（超上限）\n",
             ("ambiguous", None),
         ),
+        ("## 闭环出口\n\nPASS ｜ BLOCKED（成因）\n", ("ambiguous", None)),
+        ("## 闭环出口\n\n1. PASS\n", ("ok", "PASS")),
         ("## 闭环出口\n\n不是 PASS\n", ("empty", None)),
         ("## 闭环出口\n\n未定\n", ("empty", None)),
         ("## 闭环出口\n\n## 闭环出口\n\nPASS\n", ("duplicate", None)),
@@ -149,6 +151,20 @@ def test_completed_feature_without_report_is_rejected(tmp_path):
     change = _make_change(tmp_path)
     errors = mod._check_building_review(change, _change_type("feature"))
     assert any("building-review.md missing" in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    "review_text",
+    [
+        "## 闭环出口\n\nPASS | BLOCKED（成因）\n",
+        "## 闭环出口\n\nPASSED\n",
+        "## 闭环出口\n\n## 闭环出口\n\nPASS\n",
+    ],
+)
+def test_completed_feature_rejects_malformed_exit_end_to_end(tmp_path, review_text):
+    change = _make_change(tmp_path, review_text=review_text)
+    errors = mod._check_building_review(change, _change_type("feature"))
+    assert any("闭环出口" in e for e in errors), errors
 
 
 def test_partial_change_undecided_exit_is_not_flagged(tmp_path):
@@ -353,6 +369,8 @@ def test_normative_docs_mention_witnessloop_single_manifest():
     ):
         assert "witnessloop" in text and "manifest" in text, name
         assert "## 闭环出口" in text, name
+    assert "witnessloop manifest build" in guide
+    assert "witnessloop manifest build" in requirements
 
 
 def test_full_check_commands_pin_origin_master():
@@ -361,6 +379,10 @@ def test_full_check_commands_pin_origin_master():
     The archive-point verdict gate then false-reds them; the documented full
     check must therefore pin ``origin/master`` explicitly.
     """
-    for rel in ("AGENTS.md", "docs/requirements-process.md"):
+    for rel in (
+        "AGENTS.md",
+        "docs/requirements-process.md",
+        "docs/development-guide.md",
+    ):
         text = (REPO_ROOT / rel).read_text(encoding="utf-8")
         assert "--base-ref origin/master --require-base" in text, rel

@@ -299,8 +299,17 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
 - **三份 manifest SHALL 在所有内容提交之后、归档 move 之后生成**，用**归档目录名**作为
   `--change`（`<YYYY-MM-DD>-<change-id>`）；`report_path` SHALL 覆盖 `reviews/` 下每一份
   `.md`（孤儿规则）。
-- 产出命令：`witnessloop manifest build --root . --change <归档目录名> --stage <stage>
-  --report reviews/<stage>-review.md --reviewer-run-id <审阅者 run> --author-run-id <作者 run>`。
+- 产出命令（`--report` 按 stage 取实际报告名）：
+
+  ```bash
+  witnessloop manifest build --root . --change <归档目录名> --stage grill \
+    --report reviews/grill-design.md --reviewer-run-id <run> --author-run-id <run>
+  witnessloop manifest build --root . --change <归档目录名> --stage grill-adversarial \
+    --report reviews/grill-adversarial.md --reviewer-run-id <run> --author-run-id <run>
+  witnessloop manifest build --root . --change <归档目录名> --stage building \
+    --report reviews/building-review.md --reviewer-run-id <run> --author-run-id <run>
+  ```
+
   先内容、后证据；审阅之后再落非证据文件会让 manifest 变 stale。
 - **building review 的终结 verdict**：`reviews/building-review.md` SHALL 以二级标题
   `## 闭环出口` 记录终结出口，首个非空行以 `PASS` 开头；`BLOCKED` /
@@ -364,7 +373,7 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
 - **required 只有 `gate / check`**（阶段 C 翻开关，issue #305，2026-10-17）：`master` 的 `required_status_checks.contexts` = `["gate / check"]`。本仓自建的 `validate` / `benchmark-gate` / `windows-platform` **照跑、只是不再拦合并**。
 - **降级代价（须知）**：只由本仓 checker 承载的 RIR / Impact Analysis / benchmark smoke / 归档点完成度 / backlog 一致性 / building review 的 `## 闭环出口` PASS 判据 **不再拦合并**。逐条分叉清单见 issue #305 的阶段 C 前置 comment。⇒ **不要把「CI 绿」读成「项目规则已满足」**。
 - **caller 钉 `@v1.7.0`**：包版本由 reusable workflow 自己的 `job.workflow_sha` 推导（witnessloop issue #30 的修复），**不需要** `with: witnessloop-ref:`；升级 = `witnessloop init --gate-ref <新 ref>`（幂等，重写 caller + 同步台账）。
-- **旧门禁一行未动**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部照旧。
+- **旧门禁仍照跑**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部保留；其中 checker 的 review 门已由 `retire-manifest-check`（issue #316）下掉重复 manifest 校验并改为 `## 闭环出口` PASS 判据，其余检查不变。
 - **已知红（阶段 A 遗留，未清）**：① active change `add-minimal-tui-runtime-view`（无 `reviews/`）；② 阶段 A 的 change `witnessloop-adoption` 当时缺 witnessloop 形态 manifest（该 change **已归档**，此条只作历史记录）。两条都属「**缺 manifest**」这一类，不是配置错误。
 - **`reviews/` 的一致状态（阶段 A 实测，仍然适用）**：一个 change 的 `reviews/` 下，**每份 `.md` 都必须被某份 witnessloop 形态 manifest 的 `report_path` 绑定**，否则触发孤儿规则——阶段 A 实测「只落一部分」比「一份都不落」更红（2 条 → 14 条 → 16 条）。阶段 C 之后 `gate / check` 是 required ⇒ 一个 change 要判绿就必须把 `reviews/` 落齐并全部绑定（`grill` / `grill-adversarial` / `building` 三份 manifest）。
 - **grill 决策记录的格式契约（v1.7.0 实测，2026-10-17 补记）四条**：`reviews/grill-design.md` 必须含 `## Confirmed Decisions`（**至少 3 条**决策块——`MIN_CONFIRMED_DECISIONS = 3` 是硬门槛；且每条决策块内有**同行裸** `来源:`——加粗的 `- **来源**:` 匹配不上）、`## User Confirmation`（**无条件存在**：一条 Open Question 都没有时也要有该小节）、以及与逐字标题一致的 Open Questions 小节。详见 `openspec/specs/dev-workflow-gate/spec.md` 的「grill 报告正文判据的已知不兼容」。

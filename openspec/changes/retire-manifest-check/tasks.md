@@ -53,15 +53,34 @@
 
 ## 5. 验证
 
-- [ ] 5.1 `uv run pytest -q`（记录通过数与既有环境失败）。
+- [x] 5.1 `uv run pytest -q`：**4524 passed / 5 failed / 9 skipped**（831.64s）。5 条失败均为既有环境/浏览器 flake：2 条 `tests/agent/memory/test_persistent.py::TestFindScopeRoot`（本机 `/tmp` 是 git 仓库的已知环境问题）、3 条 Playwright 超时；3 条浏览器测试单独重跑 **3 passed**。本 change 未触达 `web/**` / memory 路径。
 - [x] 5.2 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → 0 errors。本地 `master` 落后 `origin/master` 79 个提交；默认 base 会把 5 个历史归档误判为「本 PR 新归档」，已在 AGENTS / requirements-process / development-guide 标注正确命令。
 - [x] 5.3 `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` → 仍 exit 0，且 stderr 不再出现 tasks_hash 汇总。
 - [x] 5.4 变异验证：临时让 `_review_exit_verdict` 接受 BLOCKED，指定测试变红；恢复后转绿。
 
 ## 6. 实现后独立审阅闭环
 
-- [ ] 6.1 跑 `/review-loop retire-manifest-check`，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS。
-- [ ] 6.2 按批次模型完成全部 medium+ 修复并补回归测试；low/nit 登记。
+- [x] 6.1 跑 `/review-loop retire-manifest-check`，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS。
+- [x] 6.2 按批次模型完成全部 medium+ 修复并补回归测试；low/nit 登记。
+
+## 审阅修复（building R0/R1）
+
+> 实现后独立审阅初次开批 **1 条 medium（R0-1）**；修复后验证 PASS（0 条 medium+）。
+> low/nit 逐条处置如下。
+
+| 问题 | 处置 | 落点 |
+|---|---|---|
+| R0-1 本地 `master` 落后时默认 base 把历史归档误判为新归档，新 verdict 完成面追溯打红 | 已修 | 文档命令统一 `--base-ref origin/master --require-base`（AGENTS / requirements-process / development-guide / tasks 5.2）；`--base-ref` help 说明；新增 `test_full_check_commands_pin_origin_master` |
+| L1 manifest build 命令的 `--report` 未按 stage 区分 | 已修 | `docs/development-guide.md` 改为 grill / grill-adversarial / building 三组命令 |
+| L2 development-guide「旧门禁一行未动」已不成立 | 已修 | 改为「旧门禁仍照跑」+ 本 change 的退役说明 |
+| L3 文档守卫未断言 `witnessloop manifest build` | 已修 | `test_normative_docs_mention_witnessloop_single_manifest` |
+| L4 Q12「2016 版」年份错误 | 已修 | 改为「旧版本仓 manifest 校验」 |
+| L5 known-debt「四项残余损失」与 5 项列表不一致 | 已修 | 改为「4 项残余损失 + 第 5 项 legacy 资产保留」 |
+| L6 只拒绝 ASCII `\|`，全角 `｜` 与无分隔符可判 PASS | 已修（全角） | parser 同时拒绝 `｜`；新增 parser 测试。无分隔符 `PASS BLOCKED` 仍按首 token 规则处理（规格只要求 `\|`） |
+| L7 未处理有序列表前缀 `1. PASS` | 已修 | parser 剥离 `^\d+[.)]\s+`；新增 parser 测试 |
+| L8 ambiguous / duplicate / PASSED 缺端到端断言 | 已修 | 新增 `test_completed_feature_rejects_malformed_exit_end_to_end` |
+| L9 测试名仍带 `manifest` | 已修 | 改名 `test_feature_change_requires_building_review` |
+| L10 守卫未覆盖 development-guide | 已修 | `test_full_check_commands_pin_origin_master` 加入 development-guide |
 
 ## 7. witnessloop 证据与出口判据
 
@@ -86,10 +105,10 @@
 
 ## 验收清单（对应 spec）
 
-- [ ] V1 checker 不再要求 / 校验 asterwynd 形态 manifest；`agent/workflow/review_manifest.py` 未被修改。
-- [ ] V2 building-review 的 `## 闭环出口` 必须为唯一 PASS；BLOCKED / 缺失 / 不唯一被拒。
-- [ ] V3 `--check-archived` 不再做 manifest 漂移检测，仍做事件日志可投影校验。
-- [ ] V4 RIR / Impact / benchmark / backlog / 受保护路径 / 归档点其它门行为不变（测试与 diff 证据）。
-- [ ] V5 规范面与文档只要求 witnessloop 形态；本地 review-loop 入口已同步。
+- [x] V1 checker 不再要求 / 校验 asterwynd 形态 manifest；`agent/workflow/review_manifest.py` 未被修改。
+- [x] V2 building-review 的 `## 闭环出口` 必须为唯一 PASS；BLOCKED / 缺失 / 不唯一被拒。
+- [x] V3 `--check-archived` 不再做 manifest 漂移检测，仍做事件日志可投影校验。
+- [x] V4 RIR / Impact / benchmark / backlog / 受保护路径 / 归档点其它门行为不变（测试与 diff 证据）。
+- [x] V5 规范面与文档只要求 witnessloop 形态；本地 review-loop 入口已同步。
 - [ ] V6 三份 witnessloop manifest + `gate / check` 绿。
 - [ ] (post-merge) V7 PR 已 `--merge` 合入，issue 已留 comment。

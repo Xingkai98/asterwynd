@@ -1139,12 +1139,15 @@ def _review_exit_verdict(text: str) -> tuple[str, str | None]:
     body = text[match.end():end]
     first = next((line.strip() for line in body.splitlines() if line.strip()), "")
     cleaned = first.lstrip("-*+ >`").strip()
+    # Tolerate an ordered-list prefix (e.g. ``1. PASS``) the same way as the
+    # other list markers.
+    cleaned = re.sub(r"^\d+[.)]\s+", "", cleaned)
     lead = _REVIEW_EXIT_LEADING_TOKEN_RE.match(cleaned)
     if lead is None:
         return "empty", None
     verdict = lead.group(1).upper()
     rest = cleaned[lead.end():]
-    if "|" in rest and _REVIEW_EXIT_ANY_TOKEN_RE.search(rest):
+    if ("|" in rest or "｜" in rest) and _REVIEW_EXIT_ANY_TOKEN_RE.search(rest):
         return "ambiguous", None
     return "ok", verdict
 

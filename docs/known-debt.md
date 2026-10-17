@@ -517,8 +517,8 @@ issue #226 记录的 `test_workflow_graph_browser.py`「全量跑成片失败、
 `--check-archived` 两个调用点；witnessloop 形态 `reviews/<stage>.manifest.json` 成为唯一被
 要求的 review manifest。旧门里唯一不被 witnessloop 覆盖的 **building review verdict** 由
 `reviews/building-review.md` 的 `## 闭环出口` 极小本地检查保留（宽触发：任何已存在报告的
-terminal `BLOCKED` / `CHANGES_REQUESTED` 一律报错；完成面：必须 PASS）。以下残余边界是
-**有意接受**的，登记为第二刀输入：
+terminal `BLOCKED` / `CHANGES_REQUESTED` 一律报错；完成面：必须 PASS）。以下 4 项是
+**有意接受的残余损失**，第 5 项是 legacy 资产保留；均登记为第二刀输入：
 
 1. **`diff_hash` 强校验消失**：witnessloop 把 `diff_hash` 当 informational，不校验；其严格
    git span（`head_sha` 祖先 + 审后非证据文件）在「审阅后是否又改代码」上更严格，但不再校验

@@ -209,7 +209,7 @@ def test_docs_change_review_report_does_not_require_manifest(tmp_path):
     assert not any("review manifest" in e for e in errors), errors
 
 
-def test_feature_change_requires_building_review_manifest(tmp_path):
+def test_feature_change_requires_building_review(tmp_path):
     """强制：非 docs + 有 spec delta + tasks 全勾选的 change 必须跑独立审阅。"""
     change = tmp_path / "openspec" / "changes" / "feature-change"
     write_change(

@@ -42,7 +42,7 @@
 6. 维护 `## Reference Implementation Research`，按改动性质分流调研档位；如果关闭，记录明确原因。
 7. 使用 `grilling` 对 `design.md` 做开发前设计追问（独立零记忆 subagent），逐项确认实现细节、依赖、风险、测试策略和文档影响；产出 `reviews/grill-design.md` 并停轮等用户确认 `## Open Questions`。
 8. 按 tasks 测试先行实现（TDD），在独立 worktree 中进行。
-9. 运行 `/review-loop` 独立零记忆审阅闭环（一轮 = 一个**非空 medium+ 批次**的闭环：开批 → 全修 → 只做修复验证 → 收口；批次冻结，验证期新问题只进 deferred；最多 **20 个已收口轮**，超限 ⇒ 超上限 `BLOCKED` + 建议推倒重开），产出 `reviews/building-review.md`（含 `## 闭环出口`，终结为 `PASS`）；收尾时为 `grill` / `grill-adversarial` / `building` 各产一份 witnessloop 形态 `reviews/<stage>.manifest.json`（归档 move 之后用归档目录名重建）。本仓不再要求 `*-review-manifest.json`。
+9. 运行 `/review-loop` 独立零记忆审阅闭环（一轮 = 一个**非空 medium+ 批次**的闭环：开批 → 全修 → 只做修复验证 → 收口；批次冻结，验证期新问题只进 deferred；最多 **20 个已收口轮**，超限 ⇒ 超上限 `BLOCKED` + 建议推倒重开），产出 `reviews/building-review.md`（含 `## 闭环出口`，终结为 `PASS`）；收尾时为 `grill` / `grill-adversarial` / `building` 各产一份 witnessloop 形态 `reviews/<stage>.manifest.json`（命令：`witnessloop manifest build --root . --change <归档目录名> --stage <stage> --report <报告> ...`，归档 move 之后用归档目录名重建）。本仓不再要求 `*-review-manifest.json`。
 10. 运行验证。
 11. 更新文档和能力证明链。
 12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。

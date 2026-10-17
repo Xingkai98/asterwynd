@@ -4,7 +4,8 @@
 
 - run id: `review-retire-manifest-check-2026-10-17-r0`（独立零记忆审阅侧，初次开批）
 - 零记忆: 是
-- 审阅基线: `origin/master` = `1d6cfee`；HEAD = `b9f1b93a68c9dca2f897709366268ab509ab44d3`
+- 审阅基线: `origin/master` = `1d6cfee`；初检 HEAD = `b9f1b93a68c9dca2f897709366268ab509ab44d3`；
+  R0-1 修复验证 HEAD = `2c70a1b40e7203ea44ac54d78a16b48936ba3886`
 - 依据（亲自读取 / 实跑）:
   - change 文档：`proposal.md` / `design.md` / `tasks.md` / `reviews/grill-design.md` /
     `reviews/grill-adversarial.md` / 三份 `specs/*/spec.md` delta；
@@ -63,6 +64,20 @@ $ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/mas
 OpenSpec artifact checks passed          (EXIT=0)
 ```
 
+- R0-1 修复验证实跑（`2c70a1b`）:
+
+```text
+$ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
+    --base-ref origin/master --require-base
+OpenSpec artifact checks passed          (EXIT=0)
+
+$ uv run pytest -q tests/test_retire_manifest_check.py::test_full_check_commands_pin_origin_master
+1 passed in 0.29s
+
+$ uv run pytest -q tests/test_retire_manifest_check.py
+34 passed in 5.71s
+```
+
 ## 本轮判定（verdict）
 
 CHANGES_REQUESTED
@@ -100,7 +115,7 @@ CHANGES_REQUESTED
 | 4.5 strict validate | ✓ | 30 passed, 0 failed |
 | 4.6 current spec 悬空交叉引用 | ✓ | `openspec/specs/dev-workflow-gate/spec.md:45` 已指向新标题 |
 | 5.1 全量 pytest | 未勾（由主 agent 另跑，不属本轮强制项） | — |
-| 5.2 全量 checker → 0 errors | ✗ **见 R0-1**：本工作区默认 base（`master`）落后时 exit 1（5 条历史归档误红）；仅 `--base-ref origin/master` 为 0 errors | 原始输出见上 |
+| 5.2 全量 checker → 0 errors | ✓（R0-1 已修好） | 文档命令已钉 `--base-ref origin/master --require-base`；实跑 exit 0；`AGENTS.md:131`、`docs/requirements-process.md:261,290`、`docs/development-guide.md:310-314`、`tasks.md:57` |
 | 5.3 `--check-archived` 仍 exit 0 且无 tasks_hash 汇总 | ✓ | EXIT=0；stderr 无 `tasks_hash` 行 |
 | 5.4 变异验证 | 无法独立复核（无留痕）；对应回归测试在位 | `test_completed_feature_with_blocked_exit_is_rejected`（`tests/test_retire_manifest_check.py:136-139`）会在接受 BLOCKED 时变红 |
 | 6.1 / 6.2 实现后审阅闭环 | 未勾（本轮即 6.1/6.2 的开批） | 本报告 |
@@ -119,7 +134,7 @@ CHANGES_REQUESTED
 
 | id | severity | 锚点 | 问题 |
 |---|---|---|---|
-| R0-1 | medium | `scripts/check_openspec_artifacts.py:1683-1700,1739-1761,1770,1832-1843`；`AGENTS.md:131`；`docs/requirements-process.md:261,290`；`openspec/changes/retire-manifest-check/tasks.md:57`；`docs/development-guide.md:363`（相关） | **本地默认 base 落后时，新 verdict 完成面会追溯打红历史归档**：`--base-ref` 默认 `master`，而本工作区 `master` 落后 `origin/master` 79 个提交，`_new_archive_dirs_since_base` 把 6 个历史归档目录当成「本 PR 新建」，新增的 `## 闭环出口` 完成面检查对其中 5 个旧格式报告报错 → 仓库文档推荐的本地全量校验命令 exit 1；与「历史归档不追溯」承诺及 task 5.2 的 `[x] → 0 errors` 证据直接矛盾。 |
+| R0-1 | medium（**已修好**，见下「R0-1 · 修复验证」） | `scripts/check_openspec_artifacts.py:1683-1700,1739-1761,1770,1832-1843`；`AGENTS.md:131`；`docs/requirements-process.md:261,290`；`openspec/changes/retire-manifest-check/tasks.md:57`；`docs/development-guide.md:363`（相关） | **本地默认 base 落后时，新 verdict 完成面会追溯打红历史归档**：`--base-ref` 默认 `master`，而本工作区 `master` 落后 `origin/master` 79 个提交，`_new_archive_dirs_since_base` 把 6 个历史归档目录当成「本 PR 新建」，新增的 `## 闭环出口` 完成面检查对其中 5 个旧格式报告报错 → 仓库文档推荐的本地全量校验命令 exit 1；与「历史归档不追溯」承诺及 task 5.2 的 `[x] → 0 errors` 证据直接矛盾。 |
 
 **R0-1 失败场景（输入 / 状态 → 错误行为）**
 
@@ -153,6 +168,23 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/maste
   3. 至少补一条锁定「历史归档不追溯」的回归：在本工作区状态（base 落后）下断言历史目录
      不因缺失 `## 闭环出口` 变红。
 
+### R0-1 · 修复验证（`2c70a1b`）
+
+只确认本项，不扩批。
+
+| 检查 | 结果 | 证据 |
+|---|---|---|
+| 文档命令可复现 0 errors | 已修好 | `PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` → `OpenSpec artifact checks passed`，EXIT=0 |
+| 四处命令面钉住 `--base-ref origin/master --require-base` | 已修好 | `AGENTS.md:131`；`docs/requirements-process.md:261`（收尾第 7 步）、`:290`（实现前命令）；`docs/development-guide.md:310-314`（本地冒烟必须用正确 base）；`tasks.md:57`（5.2 证据更新） |
+| stale-master 误判机理写清 | 已修好 | `docs/development-guide.md:310-314`：`--base-ref` 缺省 `master`；本地落后时归档点门把历史归档误判为「本 PR 新归档」，用新的 `## 闭环出口` 判据追溯打红；全量跑须显式 `origin/master`（CI 用 PR base sha 不受影响）。`AGENTS.md:131` / `docs/requirements-process.md:261` 也各带一句机理说明 |
+| 文档守卫测试 | 已修好 | `tests/test_retire_manifest_check.py:357-366` `test_full_check_commands_pin_origin_master` 锁定 `AGENTS.md` 与 `docs/requirements-process.md` 的命令；`uv run pytest -q tests/test_retire_manifest_check.py::test_full_check_commands_pin_origin_master` → 1 passed；该文件全量 34 passed |
+| CLI 契约未被改动 | 已确认 | `--base-ref` 默认仍是 `master`（仅 help 文案加说明，`scripts/check_openspec_artifacts.py:1770-1777`）；CI 仍传 PR base sha（`.github/workflows/ci.yml:84-89`），不受影响 |
+
+**是否足以消解 R0-1**：是。失败面是「文档化本地命令 + 落后 base」，修复把两处命令入口
+（`AGENTS.md` 速查、`requirements-process` 收尾/实现前）显式钉到 `origin/master` 并用测试锁定，
+`development-guide` 写明机理；CI 路径与 CLI 默认契约均未改变，不存在「文档绿、CI 变」的错位。
+验证期唯一新观察是守卫未覆盖 `development-guide`/`tasks.md` 两处（见 L10），属 low，不影响收口。
+
 ### 下一批（deferred）
 
 无（初次开批）。
@@ -170,12 +202,13 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py --base-ref origin/maste
 | L7 | nit | `scripts/check_openspec_artifacts.py:1141` | 行首剥离只处理 `-*+ >` 与反引号，未处理有序列表前缀（`1. PASS`）。正式模板用裸行，属假红方向的窄边界。 |
 | L8 | low | `tests/test_retire_manifest_check.py:88-124` | `ambiguous` / `duplicate` / `PASSED` 只有 parser 级断言，没有经 `_check_building_review(completion=True)` 的端到端断言；实现分支简单，风险低。 |
 | L9 | nit | `tests/test_openspec_artifact_checker.py:212` | 测试名 `test_feature_change_requires_building_review_manifest` 仍带 `manifest`，实际断言的是报告存在性，易误导读者。 |
+| L10 | low | `tests/test_retire_manifest_check.py:357-366` | R0-1 新增守卫只锁 `AGENTS.md` / `docs/requirements-process.md` 的 `--base-ref origin/master --require-base`，未锁 `docs/development-guide.md:310-314` 与 `tasks.md:57`。两处关键命令入口已锁，dev-guide 只提供机理说明，故登记不修；若后续想更稳，可把 dev-guide 加入同一守卫的文件列表。 |
 
 ### 初次开批 · 收口确认
 
-1 条 medium（R0-1）⇒ 本轮**未收口**；`## 闭环出口` 记 `未定`。修复后本审阅者只做 R0-1 的
-修复验证，验证期新问题只进 `deferred` / low-nit。
+- R0-1：已修好（证据见上「R0-1 · 修复验证」）。
+- 0 条 medium+ ⇒ PASS。
 
 ## 闭环出口
 
-未定
+PASS
