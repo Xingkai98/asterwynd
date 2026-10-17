@@ -1136,7 +1136,7 @@ def _check_review_manifests(
     if requires_building_review and not review_report.exists():
         return [
             "building-review.md missing — 独立 subagent 审阅未运行。"
-            "请用 /review-loop 跑审阅闭环（审→改→再审直到收敛；无法收敛时报告阻塞）。"
+            "请用 /review-loop 跑审阅闭环（一轮 = 非空 medium+ 批次：开批→全修→只验证→收口；最多 20 个已收口轮，超限则超上限 BLOCKED + 建议推倒重开）。"
         ]
 
     if not review_dir.exists():
@@ -1620,7 +1620,7 @@ def _check_archived_completion_gate(change_dir: Path) -> list[str]:
     ):
         errors.append(
             prefix + "building-review.md missing — 归档点要求独立 subagent 审阅证据。"
-            "请用 /review-loop 跑审阅闭环（审→改→再审直到收敛；无法收敛时报告阻塞）。"
+            "请用 /review-loop 跑审阅闭环（一轮 = 非空 medium+ 批次：开批→全修→只验证→收口；最多 20 个已收口轮，超限则超上限 BLOCKED + 建议推倒重开）。"
         )
 
     # grill-flow-hardening / issue #298：设计阶段审阅闭环证据。触发条件比 building-review
@@ -1637,7 +1637,7 @@ def _check_archived_completion_gate(change_dir: Path) -> list[str]:
     ):
         errors.append(
             prefix + "grill-adversarial.md missing — 归档点要求设计阶段审阅闭环证据"
-            "（grill 后、停轮前：独立零记忆审阅者对抗分析 → verdict → 修 → 再审直到收敛）。"
+            "（grill 后、停轮前：独立零记忆审阅者对抗分析 → verdict → 修 → 按有界批次模型验证，最多 20 个已收口轮；收口确认空批 ⇒ PASS，超限 ⇒ 超上限 BLOCKED + 建议推倒重开）。"
         )
 
     # tasks.md 是「完成度」唯一的证据载体：缺了它（或没有可证明完成的行），未勾任务

@@ -92,6 +92,8 @@ asterwynd 当前仍写上一版口径，并且存在一个结构性缺口：**�
   「为什么晚一轮仍安全」。
 - 下一次开批 SHALL 先读上一轮的 deferred 与 low/nit 表；每个 deferred medium+ SHALL 以
   **原 id** 进入下一轮批次，或出现在本轮 `BLOCKED` 的成因里。
+- 第 20 轮收口后的收口确认只发现 low/nit ⇒ 仍可 `PASS`，标识用 `C-<序号>`；只有发现
+  medium+ 才判超上限 `BLOCKED`。
 
 **理由**：「不许边改边提」是「一轮有界」的关键；否则审阅者可以在验证时不断追加，轮次仍不可数。
 **备选**：允许验证期追加问题——已被用户明确否决（会退化为无界）。
@@ -179,8 +181,9 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
   探索属于该轮修复**，SHALL NOT 改标为 frontier。
 - **设计环出口是写码前置条件**：设计环以 `BLOCKED` 终结时 SHALL NOT 作为写码许可；只有
   设计环 `PASS`，或 `BLOCKED` + 成因 + **用户明确裁决继续**，才允许进入实现。用户裁决 SHALL
-  记入 `grill-design.md` 的 `## User Confirmation`（或 `## Blocked Ruling`）。这与实现环的
-  manifest verdict 非 PASS 即拦截同构。
+  记入 `grill-design.md` 的 `## User Confirmation`（或 `## Blocked Ruling`）。这是**流程
+  同构**：实现环靠 manifest verdict 非 PASS 即拦截，设计环靠本规则与 tasks 0.4 的检查；
+  本 change 不新增机械正文解析。
 
 **理由**：两环同构是用户拍板的；frontier 求完备与「批次闭环」是不同阶段，混计会让 20 上限
 错误地约束设计探索；设计环 `BLOCKED` 若不拦截写码，「两环共用」就只共用了一半。
@@ -310,5 +313,14 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
 - 低风险/补强项也已吸收：Goals 的 stage 数改为「恒有 `grill` + 另触发 `grill-adversarial` /
   `building`，共三份」；tasks 增加归档后重跑 witnessloop `check`；本地 `grill.md` 入口纳入同步。
 
-**设计阶段对抗闭环**：grill 产出后、停轮前，另起独立零记忆审阅者按批次模型对抗验证；
-结论将在 `reviews/grill-adversarial.md` 回填到本节。
+**设计阶段对抗闭环（`reviews/grill-adversarial.md`，run
+`grill-adversarial-round-model-align-2026-10-17`）**：
+
+- **R1 开批 4 条 medium+**：R1-1（high，manifest 归档命名两侧混用）、R1-2（medium，
+  文档守卫 equality 断言在归档后失真）、R1-3（medium，设计环 `BLOCKED` 未拦截写码）、
+  R1-4（medium，开批 low/nit 无登记落点）。
+- **修复 `ba746ed` → 逐条验证 4/4 已修好**；验证期无新 medium+、deferred 0 条。
+- **第 1 轮后收口确认：0 条 medium+ ⇒ `PASS`**；闭环出口 `PASS`。R2 新增 low/nit
+  R2-L1–R2-L5 已登记（其中 L2/L4/L5 顺手修正，其余登记不修）；R1-L6–R1-L8 登记不修。
+- **停轮门**：`grill-design.md` 的 `## Open Questions` 为「（无）」，无待用户拍板项；
+  用户 2026-10-17 已拍板的四个参数记录在 `## User Confirmation`。
