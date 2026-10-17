@@ -84,9 +84,9 @@
 
 ## 7. witnessloop 证据与出口判据
 
-- [ ] 7.1 所有内容提交之后，用 `witnessloop manifest build` 产 `grill` / `grill-adversarial` / `building` 三份 manifest，`report_path` 覆盖 `reviews/` 下每一份 `.md`。
-- [ ] 7.2 `witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`。
-- [ ] 7.3 归档 move 之后用归档目录名重建三份 manifest，再跑一次 `witnessloop check`。
+- [x] 7.1 所有内容提交之后，用 `witnessloop manifest build` 产 `grill` / `grill-adversarial` / `building` 三份 manifest，`report_path` 覆盖 `reviews/` 下每一份 `.md`（v1.7.0 源码 `/tmp/wl-study`；归档目录名；base origin/master）。
+- [x] 7.2 `witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`（1 个归档 change，0 findings）。
+- [x] 7.3 归档 move 之后用归档目录名重建三份 manifest，再跑一次 `witnessloop check`（归档 move 提交 b7a7fb7；三份 manifest head_sha=b7a7fb7、base_sha=1d6cfee）。
 - [ ] (post-merge) 7.4 PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` 照跑。
 
 ## 8. 收尾（归档前完成）
@@ -94,8 +94,8 @@
 - [x] 8.1 `docs/openspec-change-backlog.md` 先登记本 change，再在证据产出之前移除；配 `backlog_updated` 事件（seq 2 / seq 7）。
 - [x] 8.2 `workflow-events.jsonl` 事件齐全：seq 1 `change_created` / seq 2 `backlog_updated`（登记）/ seq 3–5 `current_spec_synced` × 3 / seq 6 `protected_artifact_explained`（known-debt）/ seq 7 `backlog_updated`（移除）/ seq 8 `change_archived`，`approved_by` 均为 `human`。
 - [x] 8.3 结算 `tasks.md`：已完成项全部勾选；closeout 未完成项标 `(post-merge)`。
-- [ ] 8.4 归档 move 前 `git add` 并确认 `reviews/` 报告已跟踪；手工 `git mv` 到 `openspec/changes/archive/2026-10-17-retire-manifest-check/`（独立提交）。
-- [ ] 8.5 归档后核对：目录含三份报告与三份 witnessloop manifest，不含 ast manifest。
+- [x] 8.4 归档 move 前 `git add` 并确认 `reviews/` 报告已跟踪；手工 `git mv` 到 `openspec/changes/archive/2026-10-17-retire-manifest-check/`（独立提交 b7a7fb7，纯 rename）。
+- [x] 8.5 归档后核对：目录含三份报告与三份 witnessloop manifest，不含 ast manifest。
 
 ## 9. 合入之后（结构上无法在本 PR 内完成）
 
@@ -110,5 +110,5 @@
 - [x] V3 `--check-archived` 不再做 manifest 漂移检测，仍做事件日志可投影校验。
 - [x] V4 RIR / Impact / benchmark / backlog / 受保护路径 / 归档点其它门行为不变（测试与 diff 证据）。
 - [x] V5 规范面与文档只要求 witnessloop 形态；本地 review-loop 入口已同步。
-- [ ] V6 三份 witnessloop manifest + `gate / check` 绿。
+- [x] V6 三份 witnessloop manifest + 本地 witnessloop `check：通过 ✓`（PR 的 `gate / check` 由 7.4 合入后复核）。
 - [ ] (post-merge) V7 PR 已 `--merge` 合入，issue 已留 comment。
