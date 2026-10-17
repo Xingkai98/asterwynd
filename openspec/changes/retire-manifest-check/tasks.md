@@ -91,9 +91,9 @@
 
 ## 8. 收尾（归档前完成）
 
-- [ ] 8.1 `docs/openspec-change-backlog.md` 先登记本 change，再在证据产出之前移除；配 `backlog_updated` 事件。
-- [ ] 8.2 `workflow-events.jsonl` 事件齐全：`change_created` / `backlog_updated`（登记）/ `current_spec_synced` × 3 / `protected_artifact_explained`（known-debt）/ `backlog_updated`（移除）/ `change_archived`。
-- [ ] 8.3 结算 `tasks.md`：已完成项全部勾选；closeout 未完成项标 `(post-merge)`。
+- [x] 8.1 `docs/openspec-change-backlog.md` 先登记本 change，再在证据产出之前移除；配 `backlog_updated` 事件（seq 2 / seq 7）。
+- [x] 8.2 `workflow-events.jsonl` 事件齐全：seq 1 `change_created` / seq 2 `backlog_updated`（登记）/ seq 3–5 `current_spec_synced` × 3 / seq 6 `protected_artifact_explained`（known-debt）/ seq 7 `backlog_updated`（移除）/ seq 8 `change_archived`，`approved_by` 均为 `human`。
+- [x] 8.3 结算 `tasks.md`：已完成项全部勾选；closeout 未完成项标 `(post-merge)`。
 - [ ] 8.4 归档 move 前 `git add` 并确认 `reviews/` 报告已跟踪；手工 `git mv` 到 `openspec/changes/archive/2026-10-17-retire-manifest-check/`（独立提交）。
 - [ ] 8.5 归档后核对：目录含三份报告与三份 witnessloop manifest，不含 ast manifest。
 
