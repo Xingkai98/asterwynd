@@ -6,7 +6,7 @@ doc-artifact protocol 与 `flow/` 声明式引擎一并删除。本包保留的�
 
 - `event_log`：`workflow-events.jsonl` 事件日志与投影（checker 与 guard 同源消费）；
 - `state_machine`：转移校验与 hints 原语（`event_log` 的活依赖）；
-- `models` / `routing` / `resume_audit` / `review_manifest`：投影模型、开关与写通道。
+- `models` / `routing` / `resume_audit`：投影模型、开关与恢复审计。
 
 本 `__init__` 刻意**不 re-export** 子模块符号：包 `__init__` 先于任何子模块导入执行，
 一旦在此 import 已删除的模块，`from agent.workflow.event_log import ...`

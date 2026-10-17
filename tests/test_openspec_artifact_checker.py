@@ -1775,62 +1775,6 @@ def test_backlog_accepts_active_change_reference(tmp_path):
     assert check_backlog_consistency(changes, backlog) == []
 
 
-def test_verify_review_manifest_archived_path(tmp_path):
-    """Regression (grill Q6): verify_review_manifest must resolve archived
-    change paths (openspec/changes/archive/<date>-<id>) for drift detection.
-
-    #232 (A′): archived 语境**不再以 tasks_hash 判失败**（tasks.md 是贯穿到归档
-    的活文档，收尾勾选/补行必然使其字节哈希漂移），但**其余校验保留**——该测试
-    同时锁住这两侧：tasks 漂移不报错、spec 漂移仍报错。判别性对照（同一漂移在
-    active 语境必须报错）见 tests/agent/workflow/test_review_manifest.py。"""
-    import json
-
-    from agent.workflow.review_manifest import (
-        REVIEW_MANIFEST_SCHEMA,
-        artifact_hash,
-        file_sha256,
-        verify_review_manifest,
-    )
-
-    archive = tmp_path / "openspec" / "changes" / "archive" / "2026-08-02-sample-change"
-    (archive / "reviews").mkdir(parents=True)
-    (archive / "specs").mkdir()
-    (archive / "tasks.md").write_text("- [x] task\n", encoding="utf-8")
-    report = archive / "reviews" / "building-review.md"
-    report.write_text("# Review\n\nPASS\n", encoding="utf-8")
-
-    manifest = {
-        "schema": REVIEW_MANIFEST_SCHEMA,
-        "change_id": "sample-change",
-        "phase": "building",
-        "verdict": "PASS",
-        "reviewer_run_id": "r1",
-        "base_sha": "abc123",
-        "head_sha": "def456",
-        "tasks_hash": artifact_hash(archive / "tasks.md"),
-        "spec_hash": artifact_hash(archive / "specs"),
-        "diff_hash": "sha256:unavailable",
-        "report_hash": file_sha256(report),
-    }
-    (archive / "reviews" / "building-review-manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
-
-    # No git repo here → git-span checks are skipped; content hashes must pass.
-    errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
-    assert errors == []
-
-    # tasks.md 在归档后仍会被勾选/补行 → archived 语境下该漂移不构成失败。
-    (archive / "tasks.md").write_text("- [x] task\n- [x] another\n", encoding="utf-8")
-    errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
-    assert errors == []
-
-    # 但归档语境的其余校验保留：spec 漂移仍须判失败（本 change 不放过这一侧）。
-    (archive / "specs" / "extra.md").write_text("spec changed\n", encoding="utf-8")
-    errors = verify_review_manifest(tmp_path, "sample-change", "building", archived=True)
-    assert any("spec hash mismatch" in e for e in errors)
-
-
 # ── workflow-state.json 投影一致性 + 归档可投影（flow-event-projection P1）──
 
 
@@ -2104,10 +2048,10 @@ def test_archived_gate_ignores_file_added_to_existing_archive(tmp_path):
     (old / "proposal.md").write_text("x\n", encoding="utf-8")
     base = _git_commit(tmp_path, "旧归档已存在")
 
-    # 后续 PR 补一份 manifest —— 这是 A 路径，正则也会命中
+    # 后续 PR 补一份普通文件 —— 这是 A 路径，正则也会命中
     (old / "reviews").mkdir()
-    (old / "reviews" / "building-review-manifest.json").write_text("{}", encoding="utf-8")
-    _git_commit(tmp_path, "补 manifest")
+    (old / "reviews" / "notes.json").write_text("{}", encoding="utf-8")
+    _git_commit(tmp_path, "补文件")
 
     a_only = _git_out(tmp_path, "diff", "--name-only", "--diff-filter=A", base, "--")
     assert "2026-09-01-old-change" in a_only  # 反证：A 路径确实出现

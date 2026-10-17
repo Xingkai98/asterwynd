@@ -31,7 +31,9 @@ manifest（`reviews/<phase>-review-manifest.json`）的**消费面**，但生产
 4. **删除受保护规则** `-review-manifest.json`（策略表与 guard 内嵌默认表）及 privileged CLI
    豁免中的 `review-manifest`。`manifest_verified` governance 枚举保留（无规则使用），只在
    `docs/known-debt.md` 记录。
-5. **删除 resume audit 忽略项**：历史 manifest 的改动按普通文件进入 resume audit。
+5. **删除 resume audit 忽略项**：历史 manifest 的改动按普通文件进入 resume audit；
+   同时修正 `_status_path` 对首行工作区修改路径的既有解析缺陷（`strip()` 去掉前导空格后
+   原实现会吃掉路径首字符），并加单测。
 6. **历史 80 份 manifest 冻结**：不迁移、不重算、不删除；仍在 `openspec/changes/archive/**`
    的归档前缀保护下。
 7. **同步规格与文档**：`dev-workflow-gate` / `dev-workflow-state-machine` /

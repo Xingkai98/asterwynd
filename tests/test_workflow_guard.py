@@ -88,7 +88,7 @@ def test_guard_blocks_direct_writes_to_protected_files(tmp_path):
 
     cases = [
         {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "openspec" / "changes" / "test-change" / "handoff.json")}},
-        {"tool_name": "Edit", "tool_input": {"file_path": str(tmp_path / ".handoff" / "test-change" / "building-review-manifest.json")}},
+        {"tool_name": "Edit", "tool_input": {"file_path": str(tmp_path / ".handoff" / "test-change" / "gate-approvals.json")}},
         {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "docs" / "known-debt.md")}},
     ]
 
@@ -96,6 +96,32 @@ def test_guard_blocks_direct_writes_to_protected_files(tmp_path):
         result = _run_guard(tmp_path, payload)
         assert result.returncode == 2
         assert "⛔" in result.stderr
+
+
+def test_guard_still_blocks_archived_legacy_manifest(tmp_path):
+    """删除 `-review-manifest.json` 规则后，归档内的历史 manifest 仍由归档前缀规则保护。"""
+    _seed_active_change(tmp_path)
+
+    result = _run_guard(
+        tmp_path,
+        {
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": str(
+                    tmp_path
+                    / "openspec"
+                    / "changes"
+                    / "archive"
+                    / "2026-01-01-old-change"
+                    / "reviews"
+                    / "building-review-manifest.json"
+                )
+            },
+        },
+    )
+
+    assert result.returncode == 2
+    assert "⛔" in result.stderr
 
 
 def test_guard_allows_workflow_state_cli_commands(tmp_path):
@@ -124,8 +150,8 @@ def test_guard_allows_workflow_state_cli_commands(tmp_path):
 def test_guard_agent_calls_are_not_tracked_when_workflow_disabled(tmp_path):
     """issue #90：状态机停用后，_agent-calls.json 审阅跟踪不再产生。
 
-    独立审阅闭环由 /review-loop 命令驱动，产物是 building-review.md + manifest，
-    不再依赖 handoff.json 驱动的 _agent-calls.json 跟踪。
+    独立审阅闭环由 /review-loop 命令驱动，产物是 building-review.md + witnessloop 形态
+    manifest，不再依赖 handoff.json 驱动的 _agent-calls.json 跟踪。
     """
     _seed_reviewing_change(tmp_path)
 

@@ -13,7 +13,7 @@
 受保护路径（始终拦截，不随 workflow 状态变化）:
   - docs/known-debt.md, docs/known-issues.md, docs/openspec-change-backlog.md
   - openspec/specs/, openspec/changes/archive/, workflow-events.jsonl
-  - handoff.json, gate-approvals.json, -review-manifest.json
+  - handoff.json, gate-approvals.json
 
 状态机仪式（issue #90）已停用：不再检查 phase/required_files/worktree。
 """
@@ -78,7 +78,6 @@ _DEFAULT_PROTECTED_PATHS = (
     {"path": "openspec/changes/archive/", "match_type": "prefix", "governance": "event_explained", "event_types": ("change_archived",)},
     {"path": "workflow-events.jsonl", "match_type": "contains", "governance": "cli_written"},
     {"path": "gate-approvals.json", "match_type": "contains", "governance": "guard_only"},
-    {"path": "-review-manifest.json", "match_type": "contains", "governance": "manifest_verified"},
     {"path": "handoff.json", "match_type": "contains", "governance": "guard_only"},
     {"path": "scripts/flow-policy.json", "match_type": "exact", "governance": "cli_written"},
     {"path": "workflow-state.json", "match_type": "contains", "governance": "cli_written"},
@@ -263,12 +262,12 @@ def _is_privileged_cli(command: str) -> bool:
     # 复合/重定向/命令替换/换行（多行 Bash 可换行接写命令）→ 非独立调用
     if re.search(r"&&|\|\||[;|`]|\$\(|[\r\n]|>\s*[^=]", stripped):
         return False
-    # flow 子命令白名单：仅 status。gate 家族（approve/advance/block/confirm）已随
-    # 四阶段状态机退役删除，不再豁免——调用它们是未知子命令、退出非零。
+    # flow 子命令白名单：仅 status。gate 家族（approve/advance/block/confirm）与
+    # legacy review-manifest 子命令均已删除，不再豁免——调用它们是未知子命令、退出非零。
     return bool(
         re.match(
             r"^(?:python3?|uv\s+run\s+python3?)\s+scripts/workflow_state\.py\s+"
-            r"(?:artifact-event|review-manifest|policy-[a-z-]+"
+            r"(?:artifact-event|policy-[a-z-]+"
             r"|flow\s+status)\b",
             stripped,
         )

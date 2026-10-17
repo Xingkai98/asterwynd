@@ -123,6 +123,13 @@ change 里主动复制一个已知缺陷。
 写通道删除后，任何对历史 manifest 的修改都不再由 workflow 产生，应当作为普通文件改动被
 resume audit 发现。新增回归测试锁定该行为。
 
+**附带修正**：新回归测试暴露出 `_status_path`（`agent/workflow/resume_audit.py:322`）的
+既有解析缺陷——`_git_stdout` 对整段 stdout 做 `strip()`，会把首行工作区修改
+（`" M path"`）的前导空格去掉，随后 `line[3:]` 会吃掉路径首字符（`openspec` →
+`penspec`）。既然本 change 让历史 manifest 改动进入审计，必须让路径解析正确；改为
+`line[3:] if line[2] == " " else line[2:]`，并新增 `_status_path` 单测锁定两种形态。
+该修正不改变其它路径的既有解析结果。
+
 **备选**：保留忽略。否——它会让历史证据文件的改动继续隐形。
 
 ### Decision 6: 测试按「删除面 / 保留面」成对处置

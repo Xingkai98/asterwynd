@@ -1,10 +1,10 @@
 """`workflow_state.py` CLI 测试（四阶段状态机退役后）。
 
-保留的活路径：`flow status`、`artifact-event`、`review-manifest`、`policy-*`、
+保留的活路径：`flow status`、`artifact-event`、`policy-*`、
 `disable`/`enable`/`resume-audit`。已删除的 legacy 子命令（`discover` / `current` /
-`validate` / `spawn`）与 gate 家族（`flow approve` / `advance` / `block` / `confirm`）
-的负向回归见文件末尾 `TestRemovedSubcommands`——它们必须以「未知子命令、非零退出、
-无副作用」失败，而**不得**静默成功。
+`validate` / `spawn` / `review-manifest`）与 gate 家族（`flow approve` / `advance` /
+`block` / `confirm`）的负向回归见文件末尾 `TestRemovedSubcommands`——它们必须以
+「未知子命令、非零退出、无副作用」失败，而**不得**静默成功。
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from argparse import Namespace
 from pathlib import Path
 
 from agent.workflow.event_log import event_log_path, verify_handoff_projection
-from agent.workflow.review_manifest import verify_review_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_STATE = REPO_ROOT / "scripts" / "workflow_state.py"
@@ -31,6 +30,19 @@ REMOVED_SUBCOMMANDS = (
     ("flow", "advance", "--change", "test-change", "--to", "writing_proposal"),
     ("flow", "block", "--change", "test-change", "--awaiting", "awaiting_proposal_confirmation"),
     ("flow", "confirm", "--change", "test-change"),
+    (
+        "review-manifest",
+        "--change",
+        "test-change",
+        "--phase",
+        "building",
+        "--reviewer-run-id",
+        "reviewer-1",
+        "--base-sha",
+        "base-sha",
+        "--head-sha",
+        "head-sha",
+    ),
 )
 
 
@@ -216,14 +228,20 @@ def test_artifact_event_command_appends_event_without_touching_handoff(tmp_path)
     assert verify_handoff_projection(change_dir) == []
 
 
-def test_review_manifest_command_writes_manifest(tmp_path):
-    change_dir = _seed_gen1_change(tmp_path)
+def test_review_manifest_subcommand_is_removed_and_writes_nothing(tmp_path):
+    """legacy 写通道已删除（retire-manifest-module）。
 
+    判别性：恢复子命令与 parser 接线后，本用例会因 exit 0 且 manifest 落盘而变红；
+    与 `TestRemovedSubcommands` 的通用种子不同，这里构造了合法 target（proposal +
+    review report + tasks + specs），避免子命令仍在时因「不是合法 change」而平凡通过。
+    """
+    change_dir = _seed_gen2_change(tmp_path)
+    (change_dir / "proposal.md").write_text("# Proposal\n", encoding="utf-8")
     review_dir = change_dir / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
+    review_dir.mkdir(parents=True)
     (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
-    (change_dir / "tasks.md").write_text("- [x] cover the path\n", encoding="utf-8")
-    (change_dir / "specs").mkdir(parents=True, exist_ok=True)
+    (change_dir / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
+    (change_dir / "specs").mkdir()
 
     result = _run_cli(
         tmp_path,
@@ -240,14 +258,10 @@ def test_review_manifest_command_writes_manifest(tmp_path):
         "head-sha",
     )
 
-    manifest_path = review_dir / "building-review-manifest.json"
-
-    assert result.returncode == 0
-    assert manifest_path.exists()
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["reviewer_run_id"] == "reviewer-1"
-    assert manifest["phase"] == "building"
-    assert verify_review_manifest(tmp_path, "test-change", "building") == []
+    combined = result.stderr + result.stdout
+    assert result.returncode != 0
+    assert "invalid choice" in combined
+    assert not (review_dir / "building-review-manifest.json").exists()
 
 
 # ── 负向回归：已删除的子命令必须明确报错、非零退出、无副作用 ──────────────

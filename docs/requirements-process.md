@@ -42,7 +42,7 @@
 6. 维护 `## Reference Implementation Research`，按改动性质分流调研档位；如果关闭，记录明确原因。
 7. 使用 `grilling` 对 `design.md` 做开发前设计追问（独立零记忆 subagent），逐项确认实现细节、依赖、风险、测试策略和文档影响；产出 `reviews/grill-design.md` 并停轮等用户确认 `## Open Questions`。
 8. 按 tasks 测试先行实现（TDD），在独立 worktree 中进行。
-9. 运行 `/review-loop` 独立零记忆审阅闭环（一轮 = 一个**非空 medium+ 批次**的闭环：开批 → 全修 → 只做修复验证 → 收口；批次冻结，验证期新问题只进 deferred；最多 **20 个已收口轮**，超限 ⇒ 超上限 `BLOCKED` + 建议推倒重开），产出 `reviews/building-review.md`（含 `## 闭环出口`，终结为 `PASS`）；收尾时为 `grill` / `grill-adversarial` / `building` 各产一份 witnessloop 形态 `reviews/<stage>.manifest.json`（命令：`witnessloop manifest build --root . --change <归档目录名> --stage <stage> --report <报告> ...`，归档 move 之后用归档目录名重建）。本仓不再要求 `*-review-manifest.json`。
+9. 运行 `/review-loop` 独立零记忆审阅闭环（一轮 = 一个**非空 medium+ 批次**的闭环：开批 → 全修 → 只做修复验证 → 收口；批次冻结，验证期新问题只进 deferred；最多 **20 个已收口轮**，超限 ⇒ 超上限 `BLOCKED` + 建议推倒重开），产出 `reviews/building-review.md`（含 `## 闭环出口`，终结为 `PASS`）；收尾时为 `grill` / `grill-adversarial` / `building` 各产一份 witnessloop 形态 `reviews/<stage>.manifest.json`（命令：`witnessloop manifest build --root . --change <归档目录名> --stage <stage> --report <报告> ...`，归档 move 之后用归档目录名重建）。本仓不再要求 `*-review-manifest.json`；其生成模块与 CLI 写通道已随 `retire-manifest-module` 删除。
 10. 运行验证。
 11. 更新文档和能力证明链。
 12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
@@ -290,7 +290,7 @@ openspec validate <change-id> --strict
 uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
 ```
 
-`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change、受保护 artifact 变更有 workflow event 解释、building review 的 `## 闭环出口` 为 `PASS`（完成面必须 PASS；任何已存在报告的 terminal 非 PASS 宽触发报错）。review manifest 的存在性与 revision 绑定由 witnessloop `gate / check` 承担（本仓 checker 不再校验 `*-review-manifest.json`）。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
+`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change、受保护 artifact 变更有 workflow event 解释、building review 的 `## 闭环出口` 为 `PASS`（完成面必须 PASS；任何已存在报告的 terminal 非 PASS 宽触发报错）。review manifest 的存在性与 revision 绑定由 witnessloop `gate / check` 承担（本仓 checker 不再校验 `*-review-manifest.json`；legacy 生成模块与写通道已删除）。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 开发前设计追问和设计评审都通过前，不进入实现阶段。
 

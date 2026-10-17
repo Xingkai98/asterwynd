@@ -35,7 +35,7 @@ AGENTS.md（开发流程规则）→ openspec/changes/<id>/（proposal/design/ta
 - 分支纪律：`<change-id>/<YYYY-MM-DD>` 分支（门禁依赖分支名推导 change-id）。
 
 **`scripts/workflow_guard.py`** — PreToolUse hook。
-- 受保护路径拦截：known-debt/known-issues/specs/archive/backlog/handoff/review-manifest 不可由 agent 直接写（须配 workflow-events 或 manifest）；witnessloop 形态 manifest 由 `witnessloop manifest build` 产出，legacy `-review-manifest.json` 规则保留到第二刀。
+- 受保护路径拦截：known-debt/known-issues/specs/archive/backlog/handoff 不可由 agent 直接写（须配 workflow-events 或 manifest）；witnessloop 形态 manifest 由 `witnessloop manifest build` 产出；legacy `-review-manifest.json` 规则已随第二刀删除，归档内历史文件仍受归档前缀规则保护。
 - **grill gate**（165 行起）：`_grill_evidence_missing(change_id)` 检查非 docs + 有 spec delta 的 change 是否有 `reviews/grill-design.md` 且 Open Questions 全确认；缺失则 `exit 2` 拦代码写。
 - 文档类写操作豁免（`_is_change_doc_write` 340 行）：proposal/design/tasks/specs/reviews 可写（避免死锁）。
 
@@ -46,7 +46,7 @@ AGENTS.md（开发流程规则）→ openspec/changes/<id>/（proposal/design/ta
 
 **`.claude/commands/grill.md` / `.claude/commands/review-loop.md`** — grill 与审阅闭环的本地命令。
 
-**`agent/workflow/review_manifest.py`** — legacy asterwynd 形态 manifest 生成（绑定 reviewer run、base/head sha、tasks/spec/diff/report hash）。当前流程不再使用，由第二刀处置；新 change 只产 witnessloop 形态 `reviews/<stage>.manifest.json`。
+**`agent/workflow/review_manifest.py`（已删除）** — 原负责 asterwynd 形态 manifest 生成；已随 `retire-manifest-module`（issue #316 第二刀）删除。新 change 只产 witnessloop 形态 `reviews/<stage>.manifest.json`。
 
 ### 设计理由
 

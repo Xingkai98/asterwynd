@@ -403,7 +403,7 @@ description.
 - **WHEN** a 当代 change（首事件 `change_created`，无 `handoff.json`）is created or 推进到归档
 - **THEN** 系统 SHALL NOT 要求该 change 存在 `handoff.json`
 - **AND** 其状态 SHALL 由 `workflow-state.json` 投影承载
-- **AND** 受保护 artifact 写入（`artifact-event` / `review-manifest`）SHALL 对该 change 可用，SHALL NOT 因缺少 `handoff.json` 而被拒绝
+- **AND** 受保护 artifact 写入（`artifact-event`）SHALL 对该 change 可用，SHALL NOT 因缺少 `handoff.json` 而被拒绝
 - **AND** 对其运行 `flow status` SHALL NOT 产出 `handoff.json`
 
 #### Scenario: 老世代 handoff.json 作为只读历史保留
@@ -420,7 +420,6 @@ description.
 - **THEN** 其事件日志首事件 SHALL 为 `change_created`（当代）
 - **AND** 系统 SHALL NOT 为其生成 `handoff.json`
 - **AND** 唯一可能产出 `handoff.json` 的旧命令（`spawn`）SHALL 已不存在
-
 ### Requirement: 机械门禁的信任边界
 
 项目 artifact checker 的受保护路径解释门禁 SHALL 定位为**防误改**（防止改动受保护路径时漏配解释事件）而非**防伪造**。它 SHALL 只校验存在匹配的结构化解释事件（`event_type` / `artifact_path` / 必填字段齐全），SHALL NOT 尝试判定该事件是否出自真实的人类授权——`approved_by` 是自由字符串，无法被机械校验。

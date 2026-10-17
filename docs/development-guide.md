@@ -294,7 +294,10 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
 本仓只要求 **witnessloop 形态** manifest：`reviews/<stage>.manifest.json`（`grill` /
 `grill-adversarial` / `building` 三份）。asterwynd 形态
 `reviews/<phase>-review-manifest.json` 已随 `retire-manifest-check`（issue #316 第一刀）退役：
-不再要求产出、不再由本仓 checker 校验，历史 80 份保持原样。
+不再要求产出、不再由本仓 checker 校验，历史 80 份保持原样。其生成模块与
+`workflow_state.py review-manifest` 写通道已随 `retire-manifest-module`（第二刀）删除；
+`scripts/flow-policy.json` 的 `-review-manifest.json` 受保护规则已移除，历史文件仍由
+`openspec/changes/archive/**` 前缀规则保护。
 
 - **三份 manifest SHALL 在所有内容提交之后、归档 move 之后生成**，用**归档目录名**作为
   `--change`（`<YYYY-MM-DD>-<change-id>`）；`report_path` SHALL 覆盖 `reviews/` 下每一份
@@ -321,7 +324,8 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
   `## 闭环出口` 判据追溯打红。跑全量 checker 时显式用
   `--base-ref origin/master --require-base`（CI 用 PR base sha，不受影响）。
 - **`--check-archived` 只做归档事件日志可投影校验**（`validate` job 已接入 CI）；它不再
-  检测历史 manifest / report / spec 漂移。历史 manifest 的处置留给第二刀：
+  检测历史 manifest / report / spec 漂移。历史 manifest 已随第二刀冻结（不迁移、不重算、
+  不删除）：
 
 ```bash
 PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \

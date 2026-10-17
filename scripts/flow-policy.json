@@ -53,11 +53,6 @@
       "governance": "guard_only"
     },
     {
-      "path": "-review-manifest.json",
-      "match_type": "contains",
-      "governance": "manifest_verified"
-    },
-    {
       "path": "handoff.json",
       "match_type": "contains",
       "governance": "guard_only"

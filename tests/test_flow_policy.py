@@ -139,7 +139,7 @@ def test_guard_blocks_dot_slash_write(tmp_path):
     "python3 scripts/workflow_state.py policy-set --path docs/x.md --match-type exact --governance guard_only",
 ])
 def test_guard_exempts_privileged_cli(tmp_path, command):
-    """workflow_state.py artifact-event/review-manifest/policy-* 写通道豁免。"""
+    """workflow_state.py artifact-event/policy-* 写通道豁免。"""
     (tmp_path / "openspec" / "changes").mkdir(parents=True)
     result = _run_guard(
         tmp_path,
@@ -197,6 +197,40 @@ def test_h2_section_skips_fenced_code_block():
     sections = ck(text)
     assert "Decisions" in sections
     assert "Not a real section" not in sections
+
+
+# ── legacy review manifest 退役（issue #316 第二刀）───────────────────
+
+
+def test_policy_and_guard_default_have_no_retired_manifest_rule():
+    """`-review-manifest.json` 受保护规则随写通道一起删除（历史文件由归档规则覆盖）。"""
+    import scripts.workflow_guard as guard
+
+    data = json.loads(POLICY.read_text(encoding="utf-8"))
+    policy_paths = {r["path"] for r in data["protected_paths"]}
+    default_paths = {r["path"] for r in guard._DEFAULT_PROTECTED_PATHS}
+    assert "-review-manifest.json" not in policy_paths
+    assert "-review-manifest.json" not in default_paths
+
+
+def test_guard_does_not_exempt_removed_review_manifest():
+    """已删除的 `review-manifest` 子命令不得再被列为 privileged CLI。"""
+    import scripts.workflow_guard as guard
+
+    assert (
+        guard._is_privileged_cli(
+            "python3 scripts/workflow_state.py review-manifest --change test-change"
+        )
+        is False
+    )
+    assert (
+        guard._is_privileged_cli(
+            "python3 scripts/workflow_state.py artifact-event --change test-change "
+            "--event-type protected_artifact_explained --artifact-path docs/known-debt.md "
+            "--reason ok --approved-by human"
+        )
+        is True
+    )
 
 
 # ── 同源 parity ───────────────────────────────────────────────────────

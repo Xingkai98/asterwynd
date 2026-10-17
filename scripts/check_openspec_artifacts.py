@@ -1203,7 +1203,8 @@ def _check_building_review(
     in-flight changes are not blocked.
 
     The retired asterwynd manifest (``reviews/<phase>-review-manifest.json``) is
-    no longer required, produced or verified here (issue #316, first cut).
+    no longer required, produced or verified here (issue #316, first cut). Its
+    producing module and CLI were deleted by ``retire-manifest-module`` (second cut).
     """
     review_report = change_dir / "reviews" / "building-review.md"
     requires_building_review = (

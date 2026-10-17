@@ -99,7 +99,8 @@
 - **策略与 guard**：`scripts/flow-policy.json:55-59`；`scripts/workflow_guard.py:16,81,271`
   （docstring、内嵌默认表、豁免正则）。`manifest_verified` governance 值本身保留为策略词汇，
   但当前无规则使用（在本 change 的 known-debt 退役记录中写明）。
-- **resume audit**：`agent/workflow/resume_audit.py:340` 的忽略项。
+- **resume audit**：`agent/workflow/resume_audit.py:340` 的忽略项；`:322-328` 的
+  `_status_path` 首行解析缺陷（新回归暴露，随本 change 修正并加单测）。
 - **包说明**：`agent/workflow/__init__.py:9`。
 - **测试**：
   - 删除 `tests/agent/workflow/test_review_manifest.py`；
