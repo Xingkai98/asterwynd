@@ -104,15 +104,6 @@ def _seed_gen1_change(tmp_path, change_id="legacy-change", *, proposal=True, han
     return change_dir
 
 
-def _seed_review_artifacts(change_dir):
-    review_dir = change_dir / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
-    (change_dir / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
-    (change_dir / "specs").mkdir(parents=True, exist_ok=True)
-    return review_dir
-
-
 def _run_cli(cwd, *args):
     return subprocess.run(
         [sys.executable, str(WORKFLOW_STATE), *args],

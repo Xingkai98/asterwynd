@@ -65,15 +65,6 @@ def _seed_archived_change(tmp_path, change_id="archived-change", *, date=ARCHIVE
     return _seed_change(tmp_path, Path("openspec") / "changes" / "archive" / name, change_id)
 
 
-def _seed_review_artifacts(change_dir):
-    review_dir = change_dir / "reviews"
-    review_dir.mkdir(parents=True, exist_ok=True)
-    (review_dir / "building-review.md").write_text("## Review\n\nPASS\n", encoding="utf-8")
-    (change_dir / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
-    (change_dir / "specs").mkdir(parents=True, exist_ok=True)
-    return review_dir
-
-
 def _run_cli(cwd, *args):
     return subprocess.run(
         [sys.executable, str(WORKFLOW_STATE), *args],
@@ -224,7 +215,6 @@ def test_archived_resolution_rejects_longer_prefixed_sibling(tmp_path):
     使命中不依赖 `iterdir()` 顺序（顺序依赖会让用例在别的环境假绿）。
     """
     sibling = _seed_archived_change(tmp_path, change_id="alpha-beta", date="2026-09-22")
-    _seed_review_artifacts(sibling)
 
     result = _run_cli(tmp_path, *_artifact_event_args("alpha"))
 

@@ -60,8 +60,13 @@
 
 ## 6. 实现后独立审阅闭环
 
-- [ ] 6.1 跑 `/review-loop retire-manifest-module`，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS。
-- [ ] 6.2 按批次模型完成全部 medium+ 修复并补回归测试；low/nit 登记。
+- [x] 6.1 跑 `/review-loop retire-manifest-module`，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS。
+- [x] 6.2 按批次模型完成全部 medium+ 修复并补回归测试；low/nit 登记。
+
+### 审阅结论（building R0）
+
+- 独立零记忆审阅者（`building-2026-10-17-r1`）初次开批 **medium+ = 0** ⇒ **PASS（零轮）**；独立复核全量 pytest 为 2 failed / 4523 passed / 9 skipped（仅剩已知 2 条 `/tmp` 环境失败）。
+- low/nit L1–L9 登记；处置：L1/L2/L3/L4/L5/L8/L9 已随本 change 顺手修复；L6（第一刀遗留的 `--check-archived` 口径）已补进本 change 的 MODIFIED Requirement 并同步 current spec；L7 为簿记项（5.5 在 backlog 移除后勾选）。
 
 ## 7. witnessloop 证据与出口判据
 

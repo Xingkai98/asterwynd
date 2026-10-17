@@ -608,7 +608,7 @@ def main():
         if _matches_protected_path(_norm_path(file_path), _CURRENT_RULES):
             print(
                 f"⛔ 受保护文件不可由 Agent 直接写入: {file_path}",
-                "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
+                "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 witnessloop 形态 manifest。",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -621,7 +621,7 @@ def main():
             if _bash_targets_protected_path(command):
                 print(
                     "⛔ 受保护路径不可通过 Bash 直接写入。",
-                    "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 review manifest。",
+                    "受保护 artifact 的修改需 workflow-events.jsonl 结构化解释事件或 witnessloop 形态 manifest。",
                     file=sys.stderr,
                 )
                 sys.exit(2)

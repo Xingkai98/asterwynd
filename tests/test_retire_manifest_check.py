@@ -399,10 +399,9 @@ def test_legacy_module_removed_and_not_imported():
     this_file = Path(__file__).resolve()
     for path in REPO_ROOT.rglob("*.py"):
         rel = path.relative_to(REPO_ROOT)
-        if any(
-            part in {".venv", ".dev", ".git", "openspec"}
-            for part in rel.parts
-        ):
+        if any(part in {".venv", ".dev", ".git"} for part in rel.parts):
+            continue
+        if rel.parts[:3] == ("openspec", "changes", "archive"):
             continue
         if path.resolve() == this_file:
             continue

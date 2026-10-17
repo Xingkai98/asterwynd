@@ -4,6 +4,7 @@
 
 定义开发流程状态机，包括 change 生命周期 phase/sub_state 模型、`handoff.json` 全局状态文件 schema、合法流转规则、human review gate 和回退机制。
 ## Requirements
+
 ### Requirement: 工作流事件日志与 handoff.json projection
 
 每个 change 目录下 SHALL 存在一个 `workflow-events.jsonl` 文件，作为该 change 开发流程的权威事实来源。投影分为两代：老世代（归档 change）SHALL 由事件日志 replay 生成 `handoff.json` projection；当代（新 change）SHALL 由事件日志 replay 生成 `workflow-state.json` projection。Agent 不 SHALL 直接编辑投影文件来声明状态变化；所有状态变化 SHALL 通过 CLI 追加事件并重新生成投影。
@@ -284,7 +285,7 @@
 
 - **GIVEN** 运行 artifact checker 时带有 `--check-archived`
 - **WHEN** 本 PR 的 diff 中含新归档路径
-- **THEN** 归档点完成度门 SHALL NOT 被触发（该模式 SHALL 只做既有 manifest 的漂移检测）
+- **THEN** 归档点完成度门 SHALL NOT 被触发（该模式 SHALL 只做归档事件日志可投影校验，SHALL NOT 做 manifest 漂移检测）
 - **AND** 单 change 模式（`--change <id>`）SHALL 同样不触发归档点门
 
 #### Scenario: 状态机仪式停用
@@ -361,6 +362,7 @@ guard 对 Bash 命令 SHALL 在 is_write 判定之前先扫描受保护路径；
 - **GIVEN** Bash 命令调用 `workflow_state.py flow approve`（或 `advance` / `block` / `confirm`），或调用已删除的 `review-manifest`
 - **WHEN** guard 判定该命令是否为豁免的合法写通道
 - **THEN** guard SHALL NOT 豁免它（与子命令已删除的事实一致）
+
 ### Requirement: 内容门槛阶段感知
 
 CI artifact checker 对 `Reference Implementation Research` 字段的检查 SHALL 区分结构门槛与内容门槛：change 处于 proposal 阶段时 SHALL 只要求 section 存在且非空；当 change **在本 PR 归档**时 SHALL 额外执行**两**项内容检查——(1)「自认未完成」短语级模式，命中 SHALL 报错（exit 2）并指明命中短语与字段；(2) **`research_tier` 与 `status` 的闭环校验**：`research_tier: full|light` 时 `status` SHALL 为 `enabled`，`research_tier: exempt` 时 `status` SHALL 为 `disabled` 且 `reason` SHALL 命中结构性豁免关键词或引用证据（`#<数字>` 或 `docs/`、`openspec/changes/archive/`、`reviews/` 路径），违反 SHALL 报错。
@@ -386,6 +388,7 @@ CI artifact checker 对 `Reference Implementation Research` 字段的检查 SHAL
 - **GIVEN** 一个 change 处于 proposal 阶段或尚未归档
 - **WHEN** 其 Reference Implementation Research 字段含占位文本
 - **THEN** checker SHALL 只按结构门槛检查（section 存在 + 非空），不触发内容门槛报错
+
 ### Requirement: 阶段执行者 agent schema 定义
 
 `scripts/flow-policy.json` SHALL 支持可选的 `phases.<phase>.agent = {provider, model}` 与顶层 `review.agent` 声明，用于表达每阶段与审阅节点的执行者选择。本 requirement 只定义 schema 并做结构校验，不实现按阶段 spawn 执行者（后续阶段实现）。

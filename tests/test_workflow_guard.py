@@ -102,26 +102,22 @@ def test_guard_still_blocks_archived_legacy_manifest(tmp_path):
     """删除 `-review-manifest.json` 规则后，归档内的历史 manifest 仍由归档前缀规则保护。"""
     _seed_active_change(tmp_path)
 
-    result = _run_guard(
-        tmp_path,
-        {
-            "tool_name": "Write",
-            "tool_input": {
-                "file_path": str(
-                    tmp_path
-                    / "openspec"
-                    / "changes"
-                    / "archive"
-                    / "2026-01-01-old-change"
-                    / "reviews"
-                    / "building-review-manifest.json"
-                )
-            },
-        },
+    file_path = str(
+        tmp_path
+        / "openspec"
+        / "changes"
+        / "archive"
+        / "2026-01-01-old-change"
+        / "reviews"
+        / "building-review-manifest.json"
     )
-
-    assert result.returncode == 2
-    assert "⛔" in result.stderr
+    for tool_name in ("Write", "Edit"):
+        result = _run_guard(
+            tmp_path,
+            {"tool_name": tool_name, "tool_input": {"file_path": file_path}},
+        )
+        assert result.returncode == 2, tool_name
+        assert "⛔" in result.stderr
 
 
 def test_guard_allows_workflow_state_cli_commands(tmp_path):

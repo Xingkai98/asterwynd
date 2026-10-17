@@ -4,6 +4,7 @@
 
 定义 OpenSpec change 的设计、诊断、类型元数据和机械检查规则，确保需求、设计、根因分析、任务拆分和实现验收职责清晰分离。
 ## Requirements
+
 ### Requirement: Detailed design artifact
 Every non-trivial OpenSpec change SHALL include a `design.md` artifact that
 records the implementation approach and major technical decisions before
@@ -420,6 +421,7 @@ description.
 - **THEN** 其事件日志首事件 SHALL 为 `change_created`（当代）
 - **AND** 系统 SHALL NOT 为其生成 `handoff.json`
 - **AND** 唯一可能产出 `handoff.json` 的旧命令（`spawn`）SHALL 已不存在
+
 ### Requirement: 机械门禁的信任边界
 
 项目 artifact checker 的受保护路径解释门禁 SHALL 定位为**防误改**（防止改动受保护路径时漏配解释事件）而非**防伪造**。它 SHALL 只校验存在匹配的结构化解释事件（`event_type` / `artifact_path` / 必填字段齐全），SHALL NOT 尝试判定该事件是否出自真实的人类授权——`approved_by` 是自由字符串，无法被机械校验。

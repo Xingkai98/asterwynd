@@ -368,11 +368,10 @@ def _require_change_target(change_id: str) -> tuple[Path, bool] | None:
                 file=sys.stderr,
             )
             return None
-        archived_dir = matches[0] if matches else CHANGES_ROOT / "archive" / change_id
-        if not archived_dir.exists():
+        if not matches:
             print(f"错误：change '{change_id}' 不存在", file=sys.stderr)
             return None
-        change_dir = archived_dir
+        change_dir = matches[0]
     if not (change_dir / "proposal.md").exists() and not (change_dir / "handoff.json").exists():
         print(
             f"错误：change '{change_id}' 不是合法 change（缺 proposal.md 且无 handoff.json）",
