@@ -124,9 +124,11 @@
 全部通过 ⇒ 本轮结束；下一轮才开新一批（含 deferred）。单次审阅意见、单次修复提交、单次验证
 SHALL NOT 各自计为一轮。
 
-**批次**：一轮开始时审阅者 SHALL 只列 severity 为 `blocker` / `high` / `medium` 的问题
-（合称 medium+）；批次 `B_n` 在开批后 SHALL 冻结——本轮内 SHALL NOT 增加、删除或替换成员，
-severity SHALL 随批次冻结。`B_n = ∅` ⇒ 审阅闭环 SHALL 以 `PASS` 结束，不进入修复，也不消耗轮数。
+**批次**：一轮开始时审阅者 SHALL 只把 severity 为 `blocker` / `high` / `medium` 的问题
+（合称 medium+）列入批次 `B_n`；开批时发现的 `low` / `nit` SHALL 直接进入本轮 low/nit
+登记表，不进入阻塞批次。批次 `B_n` 在开批后 SHALL 冻结——本轮内 SHALL NOT 增加、删除或
+替换成员，severity SHALL 随批次冻结。`B_n = ∅` ⇒ 审阅闭环 SHALL 以 `PASS` 结束，不进入
+修复，也不消耗轮数。
 
 **全修**：开发者 SHALL 修完 `B_n` 的每一项。实现环每项 SHALL 附一条**能变红的回归测试**
 （先红后绿）；设计环的对应物 SHALL 是可复现反例 / 一条改前失败、改后通过的文档守卫 /
@@ -207,7 +209,10 @@ SHALL NOT 静默把批次项移出批次或降为 low/nit。最终 `PASS` 报告
 **两环共用**：设计阶段对抗环与实现后 `/review-loop` SHALL 使用同一套轮次模型（批次 / 验证 /
 deferred / 20 / 三出口）。设计环的 `BLOCKED` 成因映射 SHALL 为：核心需求缺失 / 设计自相矛盾 /
 依赖不可满足 / 同一批反复无法收口；作者负责改该 change 的设计制品：`design.md`、`proposal.md`、
-`specs/<capability>/spec.md`、`tasks.md`，以及决策记录 `grill-design.md`。
+`specs/<capability>/spec.md`、`tasks.md`，以及决策记录 `grill-design.md`。**设计环的出口
+SHALL 是实现的前置条件**：设计环以 `BLOCKED` 终结时 SHALL NOT 作为写码许可；只有设计环
+`PASS`，或 `BLOCKED` + 成因 + **用户明确裁决继续**，才允许进入实现。用户裁决 SHALL 记入
+`grill-design.md` 的 `## User Confirmation`（或 `## Blocked Ruling`）。
 
 **frontier 豁免**：grill 的 frontier 追问轮 SHALL 仅指**进入对抗环之前**、为求设计树完备而做
 的内部轮；它 SHALL NOT 算作审阅轮，SHALL NOT 受 20 上限或「验证禁提新问题」约束。由对抗环
@@ -260,7 +265,7 @@ deferred / 20 / 三出口）。设计环的 `BLOCKED` 成因映射 SHALL 为：�
 
 - **GIVEN** 第 1–20 轮均已收口；收口确认发现 2 条 medium+（id 用 `C-1` / `C-2`）
 - **WHEN** 判定出口
-- **THEN** `BLOCKED`；报告含「建议推倒重开（revise the design）」与那 2 条问题
+- **THEN** **超上限 `BLOCKED`**；报告含「建议推倒重开（revise the design）」与那 2 条问题
 - **AND** 不会开始第 21 轮修复
 
 #### Scenario: 第 20 轮收口后批次为空 ⇒ PASS

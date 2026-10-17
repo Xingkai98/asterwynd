@@ -63,7 +63,8 @@ asterwynd 当前仍写上一版口径，并且存在一个结构性缺口：**�
 
 **选择**：按用户口径与 witnessloop 模板，一轮的精确流程为：
 
-1. **开批**：审阅者做一次完整审阅，只列 `blocker` / `high` / `medium`，得到 `B_n`。
+1. **开批**：审阅者做一次完整审阅，只列 `blocker` / `high` / `medium`，得到 `B_n`；
+   开批时发现的 `low` / `nit` 直接进入本轮 low/nit 登记表，不进入阻塞批次。
    - `B_n = ∅` ⇒ `PASS`（不进入修复，不消耗轮数）。
    - `B_n ≠ ∅` 且已有 20 个已收口轮 ⇒ 超上限 `BLOCKED`。
    - 否则本轮编号为 `n`，`B_n` 冻结。
@@ -176,9 +177,13 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
 - **frontier 豁免**：grill 的 frontier 追问轮仅指**进入对抗环之前**、为求设计树完备而做的
   内部轮；它不是审阅轮，不受 20 上限与「验证禁提新问题」约束。**由对抗环批次项驱动的设计
   探索属于该轮修复**，SHALL NOT 改标为 frontier。
+- **设计环出口是写码前置条件**：设计环以 `BLOCKED` 终结时 SHALL NOT 作为写码许可；只有
+  设计环 `PASS`，或 `BLOCKED` + 成因 + **用户明确裁决继续**，才允许进入实现。用户裁决 SHALL
+  记入 `grill-design.md` 的 `## User Confirmation`（或 `## Blocked Ruling`）。这与实现环的
+  manifest verdict 非 PASS 即拦截同构。
 
 **理由**：两环同构是用户拍板的；frontier 求完备与「批次闭环」是不同阶段，混计会让 20 上限
-错误地约束设计探索。
+错误地约束设计探索；设计环 `BLOCKED` 若不拦截写码，「两环共用」就只共用了一半。
 
 ### Decision 7: 机械门禁零变化，只改提示文案
 
@@ -231,10 +236,13 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
 ## Testing Strategy
 
 1. **先红**：新增 `tests/test_round_model_alignment.py`，钉住：
-   - 新模型七要素在各自的必须文件里出现；
+   - 新模型七要素在各自的必须文件里出现（per-file 映射）；
    - 旧口径词表在规范面不出现；
-   - checker 三处提示已同步；
-   - 两份当前规格与 delta 的 Requirement 标题/正文一致。
+   - checker 三处提示已同步。
+   **不做**「当前规格与 delta 标题/正文一致」的 equality 断言：delta 会随本 PR 归档到
+   `openspec/changes/archive/**`，硬编码 active 路径会 `FileNotFoundError`，glob 归档路径又会
+   把冻结的历史 delta 与活规格永久绑死。delta 合法性由 `openspec validate --all --strict`
+   承担；当前规格只做单向「新 Requirement 要素在场、旧口径不在场」断言。
    先跑指定测试确认**红**（记录原始输出）。
 2. **再改**：先改规则文档与规格，再改 checker 提示字符串，最后同步本地入口。
 3. **变异验证**：临时把 `AGENTS.md:104` 的措辞改回旧口径，指定测试至少 1 failed；恢复后复绿。
@@ -269,8 +277,10 @@ change 无法 `PASS`，与「某一轮没有任何 medium+ ⇒ PASS」冲突。
 - **R4｜`check` 绿 ≠ 模型被执行**：诚实边界必须写进 design/proposal，避免过度承诺。
 - **R5｜本地入口漂移**：`/home/happy/my-agent/.claude/commands/review-loop.md` 不在版本控制内；
   不同步就会出现「仓库已改、实际入口仍旧」。
-- **R6｜证据时序**：manifest 与内容改动不得同提交；归档 move 之后用归档目录名重建 manifest
-  （#29 次序）。squash 合入会切断证据祖先链，必须 `--merge`。
+- **R6｜证据时序与命名**：manifest 与内容改动不得同提交；归档 move 之后重建 manifest，但
+  **两侧命名不同**——witnessloop 三份用归档目录名（解析 `archive/<name>`），asterwynd 形态
+  用**裸 id**（CLI 拒绝日期前缀，`scripts/workflow_state.py:375-379`；归档校验按裸 id 比对）。
+  squash 合入会切断证据祖先链，必须 `--merge`。
 
 ## Pre-Implementation Review
 

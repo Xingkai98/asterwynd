@@ -7,7 +7,7 @@
 > `reviews/grill-design.md`；随后跑设计阶段对抗闭环，产出 `reviews/grill-adversarial.md`。
 >
 > **结算说明（收尾次序）**：本文件在**最后一个内容提交**上落定，随后执行机械收尾：
-> **① 纯 rename 归档 move → ② 在归档目录上用归档目录名重建 manifest → ③ 机械门复核**。
+> **① 归档 move（独立提交）→ ② witnessloop manifest 用归档目录名、asterwynd manifest 用裸 id 重建 → ③ 机械门复核**。
 > closeout 类任务（合入后动作）标 `(post-merge)`。
 
 ## 0. 设计追问与对抗收敛（前置门，不完成不开工）
@@ -15,7 +15,7 @@
 - [ ] 0.1 用 `grilling` skill（独立零记忆 subagent）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条，每条含**同行裸** `来源:`；`## Open Questions`、`## User Confirmation` 小节无条件存在）。
 - [ ] 0.2 逐项核对 grill 的 7 个维度，重点是第 7 条（触发与门禁）：本 change 改 `scripts/**` ⇒ 会触发 `building` 与 `grill-adversarial` 两个 stage；确认建立 change 目录 + 三份 witnessloop manifest 后能判绿。
 - [ ] 0.3 跑**设计阶段对抗闭环**（与 `/review-loop` 同构但审设计而非代码）→ `reviews/grill-adversarial.md`；按批次模型执行：开批只列 medium+、全修、只验证、验证期新问题 deferred；最多 20 个已收口轮，超限 ⇒ 超上限 `BLOCKED` + 「建议推倒重开（revise the design）」。
-- [ ] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question。若无 ⇒ 进入实现；若有 ⇒ 停下报告，不代拟答案。
+- [ ] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question，且设计对抗环的出口是 `PASS`（或 `BLOCKED` + 成因 + 用户明确裁决继续）。两者都满足 ⇒ 进入实现；任一不满足 ⇒ 停下报告，不代拟答案。`BLOCKED` 本身 SHALL NOT 作为写码许可。
 - [ ] 0.5 把 grill 与对抗闭环的结论回填 `design.md` 的 `## Pre-Implementation Review`。
 - [ ] 0.6 把用户已拍板的四个参数（轮 = 非空 medium+ 批次、20 上限、medium+/low 口径、两环共用）记入 `reviews/grill-design.md` 的 `## User Confirmation`。
 
@@ -53,8 +53,8 @@
 
 ## 5. 实现后独立审阅闭环
 
-- [ ] 5.1 跑 `/review-loop round-model-align`，产出 `reviews/building-review.md` + `reviews/building-review-manifest.json`（asterwynd 形态）。按批次模型执行：开批只列 medium+、全修、只验证、验证期新问题 deferred；`CHANGES_REQUESTED` 是轮内状态，不是出口；最多 20 个已收口轮。
-- [ ] 5.2 收敛后清理中间轮产物，避免孤儿报告。
+- [ ] 5.1 跑 `/review-loop round-model-align`，产出 `reviews/building-review.md` + reviewer run；asterwynd 形态 manifest 只在 7.5 的最终 revision 上生成。按批次模型执行：开批只列 medium+、全修、只验证、验证期新问题 deferred；`CHANGES_REQUESTED` 是轮内状态，不是出口；最多 20 个已收口轮。
+- [ ] 5.2 收口后清理中间轮产物，避免孤儿报告。
 
 ## 6. witnessloop 证据与出口判据
 
@@ -65,10 +65,10 @@
 ## 7. 收尾（归档前必须完成）
 
 - [ ] 7.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**移除；配 `backlog_updated` 解释事件。
-- [ ] 7.2 写 `workflow-events.jsonl`：`change_created` / `backlog_updated` / `current_spec_synced` × 2 / `backlog_updated`（移除）/ `change_archived`，`approved_by` 非空。
+- [ ] 7.2 确保 `workflow-events.jsonl` 事件齐全（`change_created` 已有 seq 1）：`change_created` / `backlog_updated`（登记）/ `current_spec_synced` × 2 / `backlog_updated`（移除）/ `change_archived`，`approved_by` 非空。
 - [ ] 7.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。未勾且未标 `(post-merge)` 的任务必须为 0 条。
-- [ ] 7.4 归档 move 前：`git add openspec/changes/round-model-align/reviews/` 并确认 `git ls-files` 包含 `grill-design.md`、`grill-adversarial.md`、`building-review.md`（否则 `git mv` 不会搬走未跟踪报告）；随后手工 `git mv` 到 `openspec/changes/archive/2026-10-17-round-model-align/`，独立纯 rename 提交（不跑 `openspec archive`）；归档后核对归档目录包含三份报告与两套 manifest。
-- [ ] 7.5 归档后，在归档目录上用**归档目录名**重建两套 manifest（asterwynd 形态 + witnessloop 三份）。
+- [ ] 7.4 归档 move 前：`git add openspec/changes/round-model-align/reviews/` 并确认 `git ls-files` 包含 `grill-design.md`、`grill-adversarial.md`、`building-review.md`（否则 `git mv` 不会搬走未跟踪报告）；随后手工 `git mv` 到 `openspec/changes/archive/2026-10-17-round-model-align/`，归档 move 独立提交（不跑 `openspec archive`；若同一提交含新增报告，则不是纯 rename，如实记录）；归档后核对归档目录包含三份报告与两套 manifest。
+- [ ] 7.5 归档后重建 manifest：**witnessloop 三份**用归档目录名（`--change 2026-10-17-round-model-align`，解析 `archive/<name>`）；**asterwynd 形态**用**裸 id**（`workflow_state.py review-manifest --change round-model-align`，走归档回退；CLI 拒绝日期前缀，见 `scripts/workflow_state.py:375-379`），manifest 写入归档目录。
 - [ ] 7.5b 归档提交后重跑 `witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`，留原始输出。
 - [ ] 7.6 **合入方式**：本 PR SHALL 用 `--merge` 合入，SHALL NOT squash（否则 manifest 的 `head_sha` 不再是祖先，日后触及本 change 目录的 PR 会判红）。
 

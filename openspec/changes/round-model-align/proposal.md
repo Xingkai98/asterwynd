@@ -39,8 +39,8 @@ asterwynd 的规则面仍写着上一版口径，与 witnessloop 已落地的模
    收口）；单次审阅意见、单次修复提交、单次验证 SHALL NOT 各自计为一轮。
 2. **批次冻结**：批次成员与 severity 在开批后冻结；轮内不得增删替换，不得静默降级。
 3. **验证期禁提新问题**：验证只确认当前批次逐项是否修好；新发现的 medium+ 只进
-   `deferred`（下一批），low/nit 只进登记表；例外是「该问题使当前轮验证失去意义或继续不安全」
-   ⇒ `BLOCKED` + 成因。
+   `deferred`（下一批），low/nit 只进登记表（开批时发现的 low/nit 也直接进本轮登记表）；
+   例外是「该问题使当前轮验证失去意义或继续不安全」⇒ `BLOCKED` + 成因。
 4. **20 轮上限**：最多 20 个**已收口轮**；第 20 轮收口后做一次收口确认，若仍有 medium+ ⇒
    超上限 `BLOCKED` +「建议推倒重开（revise the design）」；第 20 轮自身达到验证重试终止点
    同样判超上限。**这不是「到轮数就停」**。
@@ -50,6 +50,8 @@ asterwynd 的规则面仍写着上一版口径，与 witnessloop 已落地的模
    `CHANGES_REQUESTED` 只是轮内状态，不是出口。
 7. **两环共用 + frontier 豁免**：设计阶段对抗环与实现后 `/review-loop` 使用同一模型；
    grill 在进入对抗环之前的 frontier 追问轮不计入 20，也不受「验证禁提新问题」约束。
+   设计环以 `BLOCKED` 终结时 **SHALL NOT** 作为写码许可；只有 `PASS`，或 `BLOCKED` + 成因 +
+   用户明确裁决继续，才允许进入实现。
 8. **同步全部规范面**：`AGENTS.md`、`README.md` / `README_EN.md`、`docs/requirements-process.md`、
    `docs/interview-script/questions/Q14-dev-process.md`、两份当前规格，以及
    `scripts/check_openspec_artifacts.py` 的**提示文案**（判定逻辑一行不改）。

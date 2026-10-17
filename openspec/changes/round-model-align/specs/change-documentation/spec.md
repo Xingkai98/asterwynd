@@ -53,6 +53,12 @@ answers recorded in a `## User Confirmation` section. A change whose Open
 Questions are not all confirmed SHALL be blocked from code writes by the write
 guard and SHALL fail the artifact checker once its tasks are fully checked.
 
+The design-phase review loop's exit SHALL be a precondition for implementation:
+a `BLOCKED` exit SHALL NOT be treated as permission to write code. Only `PASS`,
+or `BLOCKED` + cause + **an explicit user ruling to continue**, SHALL allow
+implementation to start; the ruling SHALL be recorded in
+`grill-design.md`'s `## User Confirmation` (or a `## Blocked Ruling` section).
+
 #### Scenario: grill evidence passes design review
 
 - **GIVEN** a non-trivial change with a `reviews/grill-design.md`
