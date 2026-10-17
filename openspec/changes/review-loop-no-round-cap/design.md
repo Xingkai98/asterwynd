@@ -9,7 +9,7 @@
 三条来自实测的硬事实决定本设计的形状：
 
 1. **本仓自己的两半流程用了两套终止条件**：`openspec/specs/dev-workflow-state-machine/spec.md` 已为**设计阶段**闭环写了「再审直到收敛」，而**实现后**的 `/review-loop` 仍写「PASS 或 3 轮封顶」。同一条流程不能一半收敛、一半数轮数。
-2. **「cap 与收敛脱钩」有实录**：witnessloop 的 change `convergence-based-stop`（issue #24）逐条复核过——一个环在 3 轮 cap 下**照旧跑到 R5**，另一个环把「封顶」写成停轮理由后**又跑了 R4–R6**。⇒ cap 是一个与收敛无关的任意常数，这不是本 change 新造的推理。
+2. **「cap 与收敛脱钩」有实录**：witnessloop 的 change `convergence-based-stop`（issue #24，**在该工作树里是未提交的草稿**——引用时必须这么标）逐条复核过——一个环在 3 轮 cap 下**照旧跑到 R5**，另一处把「封顶」写成停轮理由后**又跑了 R4–R6**。⇒ cap 是一个与收敛无关的任意常数，这不是本 change 新造的推理。**但先例本身尚未落地**，不能当作「已在用的规则」（见 Decision 3）。
 3. **没有测试钉住这句文案**：`git grep "3 轮封顶" -- tests/` 为空 ⇒ 门禁提示的字符串可以安全改写，不需要改测试。
 
 ## Goals / Non-Goals
@@ -17,7 +17,7 @@
 **Goals:**
 
 - 删掉**版本控制内**所有现行规则里的「3 轮封顶 / 轮数封顶」，统一改成「**无轮数上限**：审 → 改 → 再审，直到**收敛**」。
-- 把终止条件**写进规格**（`dev-workflow-state-machine` 新增一条 Requirement），使它成为可引用的规范而不只是散文。
+- 把终止条件**写进规格**（`dev-workflow-state-machine` **新增**一条 Requirement；`change-documentation` 的对应条目从 round cap **MODIFIED** 为收敛口径），使它成为可引用的规范而不只是散文。
 - 把「**无法收敛 ⇒ 停下来报告阻塞**」写成显式出口；明确**不以轮数作为停止条件**。
 - 让本 change 自己的 PR 在 `gate / check` 下判绿（它改了 `scripts/**` ⇒ 会触发 `building` 与 `grill-adversarial` 两个 stage 判定）。
 
@@ -31,43 +31,55 @@
 
 ## Decisions
 
-### Decision 1: `primary: process` + `research_tier: light`
+### Decision 1: `primary: process` + `research_tier: full`
 
-**选择**：`## Change Type` 取 `primary: process`；`research_tier: light` + `status: enabled`。
+**选择**：`## Change Type` 取 `primary: process`；`research_tier: full` + `status: enabled`。
 
 **理由**：
 - 改的是**开发流程规则**，不是某个能力域的运行时行为 ⇒ `process`（与 `witnessloop-adoption`、`stage-c-required-switch` 两个流程 change 的先例一致）。
-- `light`：这是「成熟模式的局部应用」——同一条迁移线上的 witnessloop 已经做过同一件事（`convergence-based-stop` / issue #24），有直接可比的先例；不引入框架/协议/依赖，也不是架构级改造。**不是 `exempt`**：本 change 有一处真实的取舍（对齐到哪一层，见 Decision 3），不是「无待定设计项」。
+- `full`：判据表把「**走 grill 的非平凡 change**」列在 `full` 行（`AGENTS.md:37` / `docs/development-guide.md:316`），而本 change 明确安排独立 grill、有 7 条 Decision 与 spec delta ⇒ **命中该行**。初稿声明 `light` 被设计追问 D7 判为「与必须 grill 自相矛盾」，已改为 `full` 并补齐完整 RIR。
 
-### Decision 2: 终止条件写成**可判定的自然语言**，不写任何数值阈值
+### Decision 2: 终止条件写成**可判定的自然语言**，不写任何数值上限
 
-**选择**：规范与文案统一使用这套判据——
+**选择**：规范与文案统一使用这套判据（**四要素 + 两条定义**）——
 
-> **无轮数上限**：审 → 改 → 再审，直到**收敛**——一次审阅下来**没有新的可证伪项**，且此前列出的**所有「必须修改项」都已落库**。出现 `BLOCKED`、或反复修仍不断冒出新的可证伪项（**无法收敛**）时，停下来报告**阻塞**；**不以「已达某个轮数」作为停止理由**。
+> **无轮数上限**：审 → 改 → 再审，直到**收敛**。
+> **收敛** = 一次审阅下来**没有新的可证伪项**，且此前列出的**所有「必须修改项」都已落库**。「必须修改项」= **中等及以上严重度**的问题（风格偏好与低价值建议**不阻断 `PASS`、不延长闭环**）。
+> **无法收敛** = **最近两轮开放的「必须修改项」数没有下降**（原地打转）。
+> **出口**：收敛 → `PASS`；`BLOCKED` / 无法收敛 → 停下来报告阻塞，**报告须写明成因**（阻塞性缺陷 / 无法收敛）。**不以「已达某个轮数」作为任何终态的成因。**
 
-**理由**：
+**理由**（设计追问 D1 的实测结论改写了初稿）：
 - 用户的指令明确要求「**别自作主张加码**」：任何「最多 N 轮」「至少 M 轮」都是把同一个任意常数换个名字。
-- 「收敛」必须**可判定**，否则会退化成「感觉差不多了就停」：故写清两个条件（**没有新的可证伪项** + **必须修改项全部落库**）。这两条都能在审阅报告里逐条对照，不需要新机制。
-- 「无法收敛」必须有自己的出口，否则「去掉上限」会被读成「无限循环」——出口就是 `BLOCKED` / 报告阻塞（与现有三态 verdict 对齐）。
+- **初稿的「收敛」定义不可判定，两个条件会互相矛盾**（D1 用两个场景证明）：
+  - **只提风格建议**：它既不是「可证伪项」也不是「必须修改项」⇒ 按定义该停；但现有 verdict 规则把 `PASS` 定为「无未解决**中等以上**问题」，若审阅者仍因风格建议回 `CHANGES_REQUESTED`，规格要求「收敛即停 ⇒ PASS」就落不了地。⇒ 必须把「必须修改项」**钉到中等及以上严重度**。
+  - **每轮都有真实但低价值的新可证伪项**：Scenario「没有轮数上限 ⇒ 继续」与 Scenario「反复出现新项 ⇒ 无法收敛」观察的是**同一个量**，初稿没给区分「净进展 / 空转」的判据 ⇒ 该序列**没有确定出口**。⇒ 必须补**净进度**判据（最近两轮开放必须修改项数是否下降）。
+- 「无法收敛」必须有独立出口，否则「去掉上限」会被读成「无限循环」。出口复用现有三态里的 `BLOCKED`，但**要求写明成因**——这样既不需要新终态，也不会把「无法收敛」与「阻塞性缺陷」混为一谈。
 
-**被否决的替代方案**：① 写「最多 5 轮」（换一个常数，同样与收敛脱钩）；② 只写「直到收敛」不定义收敛（不可判定，等于把判断权留给感觉）；③ 保留 cap 但改成「软上限」（仍是没被要求的新机制）。
+**「最近两轮」是判定窗口，不是上限**：它不限制闭环跑多少轮，只回答「最近这段有没有净进展」。这是**可判定性**的最小补充，不是用户禁止的新上限。
+
+**被否决的替代方案**：① 写「最多 5 轮」（换一个常数，同样与收敛脱钩）；② 只写「直到收敛」不定义收敛（不可判定，等于把判断权留给感觉）；③ 保留 cap 但改成「软上限」（仍是没被要求的新机制）；④ 直接搬先例的账本 + 判据 A/B′（见 Decision 3，属加码）。
 
 ### Decision 3: 语义对齐 witnessloop 的 `convergence-based-stop`，但**只对齐「停的条件」**，不搬它的机制
 
-**选择**：本 change 只取先例的**终止语义**（无上限 + 收敛即停 + 不收敛则交人/报阻塞）；**不引入**它的收敛账本、判据 A/B′、DP 终止性证明。
+**选择**：本 change 只取先例的**终止语义**（无上限 + 收敛即停 + 不收敛则报阻塞），并**补一条自然语言的净进度判据**；**不引入**它的跨轮账本、判据 A/B′ 的完整实现、DP 终止性证明。
 
 **理由**：
-- 先例的机制是为**工具自身**服务的：它要处理机器可读的跨轮账本（同一个 id 跨轮沿用、新增 / 遗留 / 已关闭），所以需要形状判定与终止性证明。本仓的 `/review-loop` 是**人/agent 按文档执行**的流程，没有那样的账本；为它发明一套等于**加码**，正是用户明确不要的。
-- 但**语义必须同向**：两套流程描述的是同一件事（审阅闭环什么时候停），若本仓写成「数轮数」，就会与已经收敛口径的设计阶段闭环、以及 witnessloop 侧互相矛盾。
-- ⇒ 这是本 change **唯一的实质取舍**：**对齐到「停的条件」，不对齐到「机制」**。理由已写进本 Decision，而不是留成开放问题。
+- **先例必须先被说准**（设计追问 D5 抓到的转述错误）：witnessloop 的 `convergence-based-stop`（issue #24）是一份**未提交的草稿**——实测其 change 目录在该工作树里 `git ls-files` = 0、`git status` = `??`，`proposal.md` 自述「草稿」，其 `design.md` 的 Open Questions **尚未停轮确认**。⇒ 它能当**设计参照**，但**不能**被引作「已经落地的实现」（初稿那样写了，已订正）。
+- **先例中可复核实录的部分**：仓内记录里一个环在 3 轮 cap 下**照旧跑到 R5**，另一处把「封顶」写成停轮理由后**又跑了 R4–R6** ⇒ 「cap 与收敛脱钩」有实录支撑。而「cap 会在净进展时掐掉闭环」在那边被标为**反事实（风险）**——本 change 沿用同样诚实的定性。
+- **先例明确拒绝「只删掉 3、跑到 PASS 为止」**，理由正是「放弃终止保证」。⇒ 本 change **不能只做减法**：必须同时给出「收敛 / 无法收敛」的判定，否则等于把「无限循环」当成新规则。这就是 Decision 2 里补净进度判据的原因。
+- **但不搬机制**：先例的账本 + 判据 A/B′ + 终止性证明是为**工具自身**服务的（它要处理机器可读的跨轮账本：同一个 id 跨轮沿用、新增 / 遗留 / 已关闭）。本仓的 `/review-loop` 是**人/agent 按文档执行**的流程，没有那样的账本；为它发明一套等于**加码**，正是用户明确不要的。
+- ⇒ 取舍是：**对齐「停的条件」的语义（含净进度），不对齐「判定机制」**。
 
-### Decision 4: 规格用 **ADDED** 一条新 Requirement，不 MODIFIED 现有条目
+### Decision 4: 两份规格都要同步——`dev-workflow-state-machine`（ADDED）与 `change-documentation`（MODIFIED）
 
-**选择**：在 `dev-workflow-state-machine` 的 delta 里用 `## ADDED Requirements` 新增 `### Requirement: 审阅闭环的终止条件为收敛，而非轮数上限`；现有的 `### Requirement: 开发流程精简为 OpenSpec 主干 + 强制审阅闭环` **不删不改**。
+**选择**：
+- `dev-workflow-state-machine`：**ADDED** `### Requirement: 审阅闭环的终止条件为收敛，而非轮数上限`。现有 `### Requirement: 开发流程精简为 OpenSpec 主干 + 强制审阅闭环` **不删不改**——它没有写轮数上限，本 change 是**补上**一条此前缺失的规范。
+- `change-documentation`：**MODIFIED** `### Requirement: Pre-implementation design grilling`。该条目**同时**写着「re-review until `PASS` or a round cap is reached」（正文与一个 Scenario 各一处）与「until convergence」（同一段）——**文件内部自相矛盾**；本 change 把两处 round cap 改成收敛口径，其余逐字保留。
+- 两份规格的同步都要有 `current_spec_synced` 解释事件。
 
-**理由**：
-- 现有条目**没有**写轮数上限（它写的是「强制独立 subagent 审阅闭环」，终止条件没提）⇒ 没有「被证伪的断言」需要 MODIFIED。本 change 是**补上**一条此前缺失的规范。
-- MODIFIED 需要逐字重现那条很长的 Requirement（含 9 个 Scenario），本 change 与它的内容**零冲突**；整条重写只会制造无法独立评估的 diff。
+**为什么 `dev-workflow-state-machine` 用 ADDED 而不是 MODIFIED**：现有条目**没有**写轮数上限（它写的是「强制独立 subagent 审阅闭环」，终止条件没提）⇒ 没有「被证伪的断言」需要 MODIFIED；本 change 是**补上**一条此前缺失的规范。而 MODIFIED 需要逐字重现那条很长的 Requirement（含 9 个 Scenario），本 change 与它的内容零冲突，整条重写只会制造无法独立评估的 diff。
+
+**理由**：设计追问 D2 实测指出初稿只列了 `dev-workflow-state-machine`——若不同步 `change-documentation`，归档后会留下**两条互相冲突的现行 Requirement**（一条说收敛、一条说 round cap），正好是本 change 要消除的那类不一致。
 
 ### Decision 5: 门禁文案只改字符串，不改任何判定逻辑
 
@@ -107,7 +119,7 @@
 |---|---|---|
 | R1 | **「无上限」被读成「无限循环」** | Decision 2 把终止性写成两个出口：**收敛**（可判定）或 **报告阻塞**；规范里明写「不以轮数为停止理由」，并**不写任何新上限** |
 | R2 | **改漏某个落点**，或某处仍留着旧口径 | Decision 7 的 grep 校验：`git grep -n "3 轮封顶\|轮数封顶"` 在**排除 archive 后必须为空**；任务里把它写成一条机械验收 |
-| R3 | **`.claude/commands/review-loop.md` 仍是旧文案**（本地、gitignore、不在版本控制内） | 如实登记：本 change 只保证**版本控制内**一致；本地文件的下次同步不在本 PR 范围内。**不把它写成「已改」** |
+| R3 | **`.claude/commands/review-loop.md` 仍是旧文案**（本地、gitignore、不在版本控制内）——它是 **agent 实际加载的入口**，不同步会导致「版本控制内改了、实际操作仍按 3 轮封顶跑」 | 设计追问 D6 指出初稿只写了「下次本地操作时同步」、**没有落点**。已补一条**本地任务**（`tasks.md` 的 0.7 / `(post-merge)` 7.3）：写死路径与三处行号、给出更新后的 grep 验收，并登记「已改 / 未改」。**本 PR 不把它写进版本控制**（`.claude/` 被 gitignore），但**必须**在合入后执行，且**不谎称已改** |
 | R4 | **误改历史归档** | 明确 Non-Goal；`git diff --stat origin/master...HEAD -- openspec/changes/archive/` 必须为空（本 change 只会**新增**自己的归档目录） |
 | R5 | **同一概念出现多套说法**（漂移点） | Decision 7 的四要素 canonical 措辞 + grep 校验 |
 | R6 | **本 change 触发 witnessloop 的 `building` / `grill-adversarial`**（改 `scripts/**` ⇒ `code_hits` 非空） | 按本仓现行口径产三份 witnessloop 形态 manifest；**不放宽任何判据** |
@@ -125,10 +137,14 @@
 | T3 | `uv run python scripts/check_openspec_artifacts.py --check-archived --skip-protected-paths --skip-backlog` | `OpenSpec artifact checks passed`（exit 0） | 内容已提交 |
 | T4 | `uv run python scripts/platform_gate.py --verify` | `全部一致`（exit 0）——证明本 change 没动平台实况 | 无 |
 | T5 | `/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD`（**v1.7.0**） | `check：通过 ✓`（0 项） | **内容已提交** |
-| T6 | `git grep -n "3 轮封顶\|轮数封顶" -- ':!openspec/changes/archive'` | **无命中**（exit 1） | 无 |
-| T7 | `git diff --stat origin/master...HEAD -- openspec/changes/archive/` | 只出现**本 change 自己**的归档路径 | 无 |
+| T6 | `git grep -n -e "3 轮封顶" -e "轮数封顶" -e "round cap" -e "3-round cap" -- ':!openspec/changes/archive' ':!openspec/changes/review-loop-no-round-cap' ':!docs/openspec-change-backlog.md'` | **无命中**（exit 1） | 无 |
+| T7a | `git diff --stat origin/master...HEAD -- openspec/changes/archive/`（**归档提交之前**） | **空输出** | 归档提交尚未落盘 |
+| T7b | 同 T7a（**纯 rename 归档提交之后**） | 只出现**本 change 自己**的归档目录 | 归档提交已落盘 |
 
-**T5 的 revision 必须锚定**：PATH 上那份 witnessloop 是 0.1.0、`/home/happy/witnessloop` 克隆在 tag `v1`，**都不是 CI 用的 v1.7.0**；本 change 用 `/home/happy/wl170`（已装 v1.7.0）。T2/T3/T5 只对**已提交**内容有效（untracked 不进 `git diff`）。
+**T6 初稿自带假阳性（设计追问 D3 实测）**：原命令跑出来 **exit 0、32 行命中**——9 行是要改的现行规则、1 行是 backlog 里的历史记录、22 行是**本 change 自己的文档在引用旧口径**。改完 9 行后仍有 23 行 ⇒ **原判据永远达不到 exit 1**。现版本用三条排除解决：① 排除本 change 自己的目录（它的 proposal/design/tasks **引用了**旧口径，这是必要的叙述，不是残留）；② 排除 `docs/openspec-change-backlog.md`（`:169`/`:173` 是**历史记录**，按「不回填历史」不动）；③ 把英文与连字符变体（`round cap` / `3-round cap`）一并纳入模式——初稿只搜中文，会漏掉 `README_EN.md:148` 与 `change-documentation` 规格。
+**T7 初稿与 R4 矛盾（D4 实测）**：归档前该命令是**空输出**，而初稿的期望写作「只出现自己的归档路径」、R4 又写「必须为空」——两者对应的是**不同时点**。⇒ 拆成 T7a（归档前必须为空）与 T7b（归档后只出现自己的目录），各自写清前置。
+
+**T5 的 revision 必须锚定**：PATH 上那份 witnessloop 是 0.1.0、`/home/happy/witnessloop` 克隆在 tag `v1`，**都不是 CI 用的 v1.7.0**；本 change 用 `/home/happy/wl170`（已装 v1.7.0）。**不要用 `witnessloop --version` 验收**（它报的也是 0.1.0，是包内 pyproject 的版本号）；判据看 `direct_url.json` 的 `requested_revision=v1.7.0` 或 `check` 自报的 `requested_revision`。T2/T3/T5 只对**已提交**内容有效（untracked 不进 `git diff`）。
 
 ## Impact Analysis
 

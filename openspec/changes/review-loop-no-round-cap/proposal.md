@@ -23,9 +23,12 @@
 
 1. **删掉所有现行规则里的「3 轮封顶 / 轮数封顶」表述**，改成「**无轮数上限**：审 → 改 → 再审，直到**收敛**」。
 2. **把终止条件写进规格**：新增一条 Requirement，明确「收敛 = 一次审阅下来没有新的可证伪项、且所有必须修改项都已落库」；`BLOCKED` / 无法收敛时**停下来报告阻塞**，**不以轮数作为停止条件**。
-3. **统一口径**：`AGENTS.md`（两处）、`README.md` / `README_EN.md`、`docs/requirements-process.md`（两处）、`docs/interview-script/questions/Q14-dev-process.md`（两处）用同一套措辞。
-4. **门禁提示文案同步**：`scripts/check_openspec_artifacts.py` 两处提示里的「PASS 或 3 轮封顶」改为收敛口径——**只改提示文字，不改任何判定逻辑**。
-5. **不回填历史**：`openspec/changes/archive/**` 与历史 review 报告一律不动（它们记录的是**当时**的规则）。
+   **判据必须可判定**（设计追问 D1 指出初稿的定义在两个场景上会给出相反结论）：① 「必须修改项」SHALL 对齐现有 verdict 规则的**中等及以上严重度**——风格偏好与低价值建议不阻断 `PASS`、不延长闭环；② 补一条**净进度**判据——「最近两轮开放的必须修改项数没有下降」即判为**无法收敛**、报告阻塞。这条是**判定窗口**、不是新的上限（不限制轮数），用于把「还在净进展」与「原地打转」区分开。
+3. **定死「无法收敛」的终结语义**：`BLOCKED` 的语义扩为「闭环无法自行推进到 `PASS`」，报告里 SHALL 写明成因，至少区分「阻塞性缺陷」与「无法收敛」；**不新增独立终态**（避免与现有三态 verdict 再分叉）。
+4. **统一口径**：`AGENTS.md`（两处）、`README.md` / `README_EN.md`、`docs/requirements-process.md`（两处）、`docs/interview-script/questions/Q14-dev-process.md`（两处）用同一套措辞。
+5. **门禁提示文案同步**：`scripts/check_openspec_artifacts.py` 两处提示里的「PASS 或 3 轮封顶」改为收敛口径——**只改提示文字，不改任何判定逻辑**。
+6. **补上一条**在现行规格里也写着轮数封顶的地方**：`openspec/specs/change-documentation/spec.md` 的 `Pre-implementation design grilling` Requirement 里同时写着「until PASS or a round cap is reached」与「until convergence」（**文件内部自相矛盾**）——用 MODIFIED delta 改成收敛口径。
+7. **不回填历史**：`openspec/changes/archive/**` 与历史 review 报告一律不动（它们记录的是**当时**的规则）。
 
 ## 非目标
 
@@ -47,7 +50,9 @@
 
 ## Impact Analysis
 
-- **影响规格**：`openspec/specs/dev-workflow-state-machine/spec.md`（**ADDED 1 条 Requirement**；现有「开发流程精简为 OpenSpec 主干 + 强制审阅闭环」条目**不删不改**——它没有写轮数上限，本 change 只是把终止条件补成显式的规范）。
+- **影响规格（两份）**：
+  - `openspec/specs/dev-workflow-state-machine/spec.md`：**ADDED 1 条 Requirement**（终止条件为收敛）。现有「开发流程精简为 OpenSpec 主干 + 强制审阅闭环」条目**不删不改**——它没有写轮数上限，本 change 只是把终止条件补成显式的规范。
+  - `openspec/specs/change-documentation/spec.md`：**MODIFIED 1 条 Requirement**（`Pre-implementation design grilling`）。该条目**同时**写着「re-review until `PASS` or a round cap is reached」（正文与一个 Scenario 各一处）与「until convergence」（同一段），**文件内部自相矛盾**；本 change 把两处 round cap 改成收敛口径，其余逐字保留。**这是设计追问 D2 抓到的漏项**——初稿只列了 `dev-workflow-state-machine`。
 - **影响规则文档**（均为**现行规则**，不是历史记录）：
   - `AGENTS.md`：`:18`（设计阶段闭环的「直到 PASS 或轮数封顶」）与 `:104`（实现后闭环的「直到 PASS 或 3 轮封顶」）。
   - `README.md:148` + `README_EN.md:148`（流水线图里的同一句，**必须同改**）。
@@ -61,21 +66,25 @@
 
 ## Reference Implementation Research
 
-- research_tier: light
+- research_tier: full
 - status: enabled
-- reason: 本 change 是**流程规则的局部修改**（把一条终止条件从「固定轮数」换成「收敛」），属判据表「成熟模式的局部应用」一档 ⇒ `light`。它不需要架构级调研（不引入框架/协议/依赖），但**有一个直接可比的同类实现**：同一条工具化迁移线的 witnessloop 已经做过同一件事（其 change `convergence-based-stop`，issue #24）。
+- reason: **判据表命中「走 grill 的非平凡 change」**（`AGENTS.md:37` / `docs/development-guide.md:316`）：本 change 明确安排独立 grill（`tasks.md` 0.1）、有 7 条 Decision 与一份 spec delta。初稿声明 `light` 被设计追问 D7 判为「与必须 grill 自相矛盾」⇒ **改为 `full`**，并补齐完整 RIR（研究问题 / findings / design impact 全字段）。它没有引入框架/协议/依赖，也不是架构级改造；但「非平凡」这一条独立命中，足以按 `full` 做。
 - research questions:
-  1. 「审阅闭环去掉固定轮数上限、改为收敛即停」在同类工具里有没有先例？先例是怎么定义「收敛」的？
-  2. 去掉上限之后，**终止性**怎么保证（会不会「永远在修」）？
-  3. 本仓与先例的语义**该对齐到什么程度**（只对齐「停的条件」，还是连机制一起搬）？
+  1. 「审阅闭环去掉固定轮数上限、改为收敛即停」在同类工具里有没有先例？先例怎么定义「收敛」？
+  2. 去掉上限之后，**终止性**怎么保证（会不会「永远在修」）？「还在净进展」与「原地打转」怎么区分？
+  3. 本仓与先例的语义**该对齐到什么程度**（只对齐「停的条件」，还是连账本/证明机制一起搬）？「无法收敛」该用什么终态表达？
 - findings:
-  1. **有直接先例，且就在同一条迁移线上**：witnessloop（本仓抽出的流程门禁工具）已经把它自己的审阅闭环从「`PASS` 或轮数封顶（默认 3）」改成收敛即停（change `convergence-based-stop`，issue #24）。它的实证依据与本 change 同源：固定轮数与收敛**不等价**——仓内记录里一个环在 3 轮 cap 下**照旧跑到 R5**（cap 没刹住），另一个环先把「封顶」写成停轮理由、之后**又跑了 R4–R6**。⇒ 「cap 是一个与收敛脱钩的任意常数」这条判断有实录支撑（**不是本 change 新造的推理**）。
-  2. **先例的终止性靠「收敛判据」而不是靠「上限」**：它把「有没有收敛」定义成可判定的形状（一轮下来没有新的可证伪项 / 零位移 / 最近两轮累计净额非正），不收敛即 `HANDOFF（未收敛）` 停下交人。⇒ **去掉上限不等于允许无限循环**——终止性由「收敛或交人」保证，而不是由「数到 N」保证。
-  3. **对齐程度：只对齐「停的条件」，不搬机制**。先例的收敛判据带账本形状、判据 A/B′ 与终止性证明，那是**工具自身实现级**的设计（它要处理「同一个 id 跨轮沿用、新增/遗留/已关闭」这类机器可读账本）。本仓的 `/review-loop` 是**人/agent 按文档执行的流程**，没有账本，也不必为它发明一套。⇒ 本 change 只把「无轮数上限 + 收敛 = 一轮下来没有新的可证伪项且所有必须修改项已落库 + 无法收敛时报告阻塞」写成规范。这是**刻意的范围收缩**，不是遗漏。
+  1. **有直接可比的先例，但它是**未提交的草稿**——引用时必须这么说**：witnessloop（本仓抽出的流程门禁工具）有一个 change `convergence-based-stop`（issue #24），目标正是同一件事。**实测其 change 目录在该工作树里完全未提交**（`git ls-files` = 0、`git status` = `??`），`proposal.md` 自述「草稿」、其 `design.md` 的 Open Questions **尚未停轮确认**。⇒ 它可作为**设计参照**，SHALL NOT 被引作「已经落地的实现」。
+     > ⚠️ 初稿写「witnessloop 已经把它自己的审阅闭环改成收敛即停」——**那是事实错误**（它还没落地）。已按实测订正。这正是本项目反复抓到的同类错误：**引用的东西必须真的存在且处于所声称的状态**。
+  2. **先例中可复核实录的部分**：它的 proposal 逐条复核过仓内记录——一个环在 3 轮 cap 下**照旧跑到 R5**（cap 没刹住），另一处把「封顶」写成停轮理由后**又跑了 R4–R6**。⇒ 「cap 与收敛脱钩」有实录支撑（**不是本 change 新造的推理**）。而「cap 会在还在净进展时掐掉闭环」在那边被**明确标为反事实（风险，非已观测缺陷）**——本 change 沿用同样诚实的定性，不把它写成缺陷。
+  3. **先例的终止性靠「收敛判据」，且它拒绝「只删掉 3、跑到 PASS 为止」**：它把「有没有收敛」定义成可判定的形状（`PASS` 即停 / 零位移 / **最近两轮累计净额 ≤ 0** ⇒ `HANDOFF（未收敛）`），并明确以「放弃终止保证」为由拒绝更简的方案。⇒ **去掉上限不等于允许无限循环**；但**只删掉「3」而不补任何收敛判据**，确实会丢掉终止保证。
+  4. **对齐程度：对齐「停的条件」的语义，不搬账本机制，但**必须**补一条净进度判据**。先例的完整机制（跨轮账本、判据 A/B′、DP 终止性证明）是为**工具自身**服务的；本仓 `/review-loop` 是**人/agent 按文档执行**的流程，没有账本，不必为它发明一套。但「没有新的可证伪项」本身不足以判定收敛——**原地打转**（每轮都有新项、但开放项数不降）必须能被识别。⇒ 本 change 采用**自然语言的净进度判据**（最近两轮开放必须修改项数是否下降），不引入账本。
+  5. **终态语义**：先例用独立 `HANDOFF`（verdict 仍 `CHANGES_REQUESTED` + 终止原因）；本仓现有是三态 verdict（`PASS` / `CHANGES_REQUESTED` / `BLOCKED`）。为避免再分叉出一个终态，本 change 把 `BLOCKED` 的语义扩为「闭环无法自行推进到 `PASS`」并**要求写明成因**（阻塞性缺陷 / 无法收敛）——用现有的状态表达同一件事。
 - design impact:
-  - ⇒ 终止条件写成**可判定的自然语言判据**（「一轮下来没有新的可证伪项、且所有必须修改项都已落库」），而不是任何数值阈值。规范里**不得出现新的上限**。
-  - ⇒ 「无法收敛」的出口写成 **`BLOCKED` / 停下来报告阻塞**，与现有的三态 verdict 对齐；明确**不以「已跑满 N 轮」为停止理由**。
-  - ⇒ 本 change **不引入** witnessloop 的账本/判据机制（那是工具面）；若将来本仓的 `/review-loop` 也要机器判定收敛，应当去 witnessloop 立 issue 或另立 change。
+  - ⇒ 终止条件写成**可判定的自然语言判据**：无轮数上限；收敛 = 没有新的可证伪项 + 必须修改项（**中等及以上严重度**）全部落库；**净进度** = 最近两轮开放必须修改项数在下降。**规范里不得出现新的轮数上限**。
+  - ⇒ 「无法收敛」的出口：`BLOCKED` + **成因写明**（阻塞性缺陷 / 无法收敛）；明确**不以「已跑满 N 轮」为停止理由**。
+  - ⇒ 本 change **不引入** witnessloop 的账本/判据机制（那是工具面）；若将来本仓也要**机器判定**收敛，应去 witnessloop 立 issue 或另立 change。
+  - ⇒ 对先例的引用必须标注「**草稿、未提交、未停轮**」——否则就是在引用一个不存在的落地状态。
 
 ## 用户故事
 
