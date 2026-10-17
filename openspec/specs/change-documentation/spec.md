@@ -43,8 +43,10 @@ change SHALL run a **design-phase review loop**: an independent zero-memory
 reviewer that performs **adversarial analysis** (defaulting to the assumption
 that the design is wrong, attempting to refute each Confirmed Decision and the
 design's assumptions), returns a **verdict** (`PASS` / `CHANGES_REQUESTED`), and
-on `CHANGES_REQUESTED` the design SHALL be revised and re-reviewed until `PASS`
-or a round cap is reached. The loop SHALL produce a structured record at
+on `CHANGES_REQUESTED` the design SHALL be revised and re-reviewed until **the
+loop converges** — no fixed round limit SHALL apply (see the termination-condition
+requirement in the `dev-workflow-state-machine` capability). The loop SHALL
+produce a structured record at
 `openspec/changes/<id>/reviews/grill-adversarial.md`. This loop is **isomorphic to the
 implementation-phase `/review-loop`** — same shape (independent zero-memory
 reviewer -> adversarial -> verdict -> revise -> re-review until convergence) —
@@ -91,7 +93,7 @@ guard and SHALL fail the artifact checker once its tasks are fully checked.
 - **AND** it SHALL record a verdict (`PASS` / `CHANGES_REQUESTED`) with per-issue
   `file:line` evidence in `reviews/grill-adversarial.md`
 - **AND** on `CHANGES_REQUESTED`, the design SHALL be revised and re-reviewed
-  until `PASS` or a round cap is reached
+  until the loop **converges** — no fixed round limit SHALL apply
 - **AND** any refuted decision SHALL be corrected in `grill-design.md` before
   the stop-turn confirmation
 

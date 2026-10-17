@@ -1,0 +1,13 @@
+{
+  "schema": "review-manifest/v1",
+  "change_id": "review-loop-no-round-cap",
+  "phase": "building",
+  "verdict": "PASS",
+  "reviewer_run_id": "paseo-building-review-review-loop-no-round-cap-r1",
+  "base_sha": "79460e391f399c743e1a8e14155924ac6a7b3773",
+  "head_sha": "ddcd7cd333b6a840f2515da6feeaefea075daefd",
+  "tasks_hash": "sha256:faf5adefe4b3b34ca4d4221d54e89cb1bdcfa68221505b1526e33a47c467cbdd",
+  "spec_hash": "sha256:d4ac15a47c112bbb4a1611bde379c9f5741b1a245006e0b8c879a092f4fde3bf",
+  "diff_hash": "sha256:e638c3e3141acfe5997ad59739ec37ae058084da3b4025777cf958c7863076bf",
+  "report_hash": "sha256:e3121d7a62cb20644468cf8a4578db17bd3231544cf6428d75523a0b89e8acb5"
+}
