@@ -90,4 +90,3 @@
 - **WHEN** 一个 PR 的 required check 判绿而某个已降级的检查判红
 - **THEN** 该 PR SHALL 仍可合入（这是降级的设计后果）
 - **AND** 该后果 SHALL 被文档化到 `AGENTS.md` 与 `docs/development-guide.md`，使读者不会把「CI 绿」读成「项目规则已满足」
-

@@ -667,4 +667,3 @@ building review 报告 SHALL 在 `reviews/building-review.md` 中以二级标题
 - **WHEN** 运行 `--check-archived`
 - **THEN** checker SHALL NOT 因该历史报告格式报错
 - **AND** SHALL NOT 校验其历史 asterwynd 形态 manifest
-
