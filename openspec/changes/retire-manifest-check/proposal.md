@@ -17,11 +17,12 @@
 - witnessloop 形态：`reviews/<stage>.manifest.json`（schema `witnessloop/review-manifest@v1`），
   由 `witnessloop manifest build` 产出，required 的 `gate / check` 消费。
 
-#316 的探索结论是：真正可收敛的方向不是「统一 schema」，而是**下掉本仓 checker 里与
-witnessloop 重复的那块校验**，让 witnessloop 形态成为唯一被要求的审阅 manifest。本 change
-只做**第一刀**：删除 `_check_review_manifests` 的 manifest 校验与它的两个调用点，停止产出
-asterwynd 形态 manifest；`agent/workflow/review_manifest.py`、其测试与 80 份历史 ast manifest
-留给第二刀。
+#316 的探索 comment §5 **推荐 (d)**：保留两套 manifest，在收尾时从 witnessloop 形态确定性
+派生 asterwynd 形态；该 comment 同时明确「不放宽任何判据」。**本 change 按用户在探索之后的
+裁决偏离 (d)，改走第一刀：下掉本仓 checker 里与 witnessloop 重复的那块校验**，让 witnessloop
+形态成为唯一被要求的审阅 manifest。本 change 只做**第一刀**：删除
+`_check_review_manifests` 的 manifest 校验与它的两个调用点，停止产出 asterwynd 形态
+manifest；`agent/workflow/review_manifest.py`、其测试与 80 份历史 ast manifest 留给第二刀。
 
 **关键风险已定位并由本 change 正面处理**：旧 manifest 校验里唯一不被 witnessloop 覆盖的
 判据是 `verdict == PASS`（witnessloop 源码明确不解析报告 verdict）。若把整块删掉，「只有
@@ -34,12 +35,16 @@ PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：保留�
 1. **删除重复的 manifest 校验**：`scripts/check_openspec_artifacts.py` SHALL 删除
    `_check_review_manifests` 及 `check_change` / `--check-archived` 两处调用；SHALL NOT 再
    校验 asterwynd 形态 manifest 的字段、hash、`change_id`、`phase` 或 git span。
-2. **保留 verdict 判据（方案 i）**：本仓 checker SHALL 在实现完成的 active change 与**本 PR
-   新归档**的 change 上解析 `reviews/building-review.md` 的 `## 闭环出口`，要求唯一的终结
-   出口 token 为 `PASS`；缺失该小节、未填、出口非 PASS 或出口不唯一 SHALL 报错。
-3. **触发条件不变**：active 侧仍为「非 docs + 有 spec delta + tasks 全勾选」；归档点侧仍为
-   「本 PR `--diff-filter=AR` 新建、且在 base 树不存在的归档目录」。在途 change SHALL NOT
-   被误伤。
+2. **保留 building review 的 verdict 判据（方案 i）**：本仓 checker SHALL 在实现完成的
+   active change 与**本 PR 新归档**的 change 上解析 `reviews/building-review.md` 的
+   `## 闭环出口`，要求小节**首个非空行以 `PASS` 开头**。解析规则 SHALL 为：标题以
+   `闭环出口` 为前缀（容忍中文括号后缀）；忽略 fenced code；只认首个非空行（`不是 PASS`
+   不以 token 开头、`未定` 不合法）；出现多个 `## 闭环出口` 小节 SHALL 报错。该判据只覆盖
+   building review；非 building 的 `*-review.md` PASS 门随旧校验退役，SHALL 登记 known-debt。
+3. **触发条件**：active 侧为「非 docs + 有 spec delta + tasks 全勾选」（这是 building-review
+   存在性门原有的触发条件）；旧 manifest 校验的隐式宽触发（`reviews/` 存在即校验）SHALL 被
+   收窄到完成面。归档点侧为「本 PR `--diff-filter=AR` 新建、且在 base 树不存在、且有 spec
+   delta 的非 docs 归档目录」。在途 change SHALL NOT 被误伤。
 4. **不做历史追溯**：80 份历史 ast manifest 与历史 `building-review.md` SHALL 保持原样；
    `--check-archived` SHALL 只保留归档事件日志可投影校验，SHALL NOT 对历史 manifest 做
    漂移检测，SHALL NOT 新增历史报告正文门槛。
@@ -88,9 +93,9 @@ PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：保留�
 - **代码**：`scripts/check_openspec_artifacts.py`
   - `:1111-1153` 删除 `_check_review_manifests`；`:1353` 的 active 调用替换为新的
     `_check_building_review`（存在性 + `## 闭环出口` PASS）；
-  - `:1700-1755` 删除 `--check-archived` 中的 manifest 校验与 `tasks_hash` 汇总，
+  - `:1732-1754` 删除 `--check-archived` 中的 manifest 校验与 `tasks_hash` 汇总，
     保留 `_check_archived_projectable`；`:1715` help 文案同步；
-  - `:1573-1577`、`:1626-1640` 的注释 / docstring 同步（grill-adversarial 证据门不变）；
+  - `:1573-1578`、`:1626-1640` 的注释 / docstring 同步（grill-adversarial 证据门不变）；
   - `_check_archived_completion_gate` 在 building-review 存在性之后增加同一个 verdict 检查。
 - **测试**：`tests/test_openspec_artifact_checker.py`
   - 删除 / 改写断言 `review manifest missing`、`spec hash mismatch` 与
@@ -141,14 +146,16 @@ PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：保留�
      `tasks_hash`（归档也校验）、`spec_hash`；孤儿规则绑定 `reviews/**/*.md`。
      ⇒ 被删的重复面：`change_id`、`phase`、reviewer 非空、`report_hash`、`tasks_hash`
      （active）、`spec_hash`、git span、报告必须绑定 manifest。
-  3. **会随删除消失、但不由 witnessloop 补齐的两项**：`verdict == PASS` 与 `diff_hash`
-     强校验（witnessloop 把 `diff_hash` 当 informational，`manifestcmd.py:181-184`）。
-     verdict 由方案 (i) 保留；`diff_hash` 的强校验在 witnessloop 的严格 span 下由
-     「审阅后不得再落非证据文件」部分补偿，剩余损失登记入 `docs/known-debt.md`。
+  3. **会随删除消失、但不由 witnessloop 补齐的判据**：building review 的
+     `verdict == PASS`（由方案 i 保留）、非 building `*-review.md` 的 PASS 门（登记
+     known-debt），以及 `diff_hash` 强校验（witnessloop 把它当 informational，
+     `manifestcmd.py:181-184`；其严格 span 部分补偿）。剩余损失登记入
+     `docs/known-debt.md`。
   4. **历史报告格式不统一**：实测 79 份归档 `building-review.md` 中，仅 1 份有
-     `## 闭环出口`（`2026-10-17-round-model-align`），78 份使用 `## Verdict` 且正文含
-     多轮 verdict；对历史报告做统一解析会产生 13 份 `CHANGES_REQUESTED` + 12 份无标题的
-     假红。⇒ verdict 检查只对本 change 之后的 active / 新归档生效，历史不追溯。
+     `## 闭环出口`（`2026-10-17-round-model-align`）；67 份有 `## Verdict` 前缀标题、12 份
+     没有；按「最后一个 `## Verdict` 小节的首个 verdict token」统计为 61 PASS /
+     5 CHANGES_REQUESTED / 1 无 token，且 15 份该小节混有多个 token。对历史报告做统一解析
+     会产生假红。⇒ verdict 检查只对本 change 之后的 active / 新归档生效，历史不追溯。
   5. **历史 manifest 不可干净迁移**（#316 comment 实测）：80 份 ast manifest 中 27 份
      `tasks_hash` 漂移、8 份 base/head 提交不可解析、全部缺 `author_run_id`、`spec_hash`
      与 witnessloop 算法 79/80 不同。⇒ 不迁移、不双读，留给第二刀决定归档处置。
@@ -158,8 +165,8 @@ PASS 的审阅才算数」会消失。本 change 采用**方案 (i)**：保留�
   - ⇒ 新增一个只解析 `## 闭环出口` 的小函数，在 active 与归档点两处复用；不解析轮次、
     severity、deferred，也不读取 manifest。
   - ⇒ `--check-archived` 缩小为事件日志可投影校验；历史归档保持冻结。
-  - ⇒ 文档全面改为「witnessloop 形态唯一」，并在 known-debt 登记 `diff_hash` 与历史
-    manifest 的剩余边界。
+  - ⇒ 文档全面改为「witnessloop 形态唯一」，并在 known-debt 登记 `diff_hash` 强校验、
+    历史 drift 检测、非 building review PASS 门三项残余边界。
 
 ## 用户故事
 

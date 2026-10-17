@@ -14,21 +14,21 @@
 
 ## 1. 先写红测试（TDD）
 
-- [ ] 1.1 新增 active gate 的 `## 闭环出口` 用例：PASS 通过；BLOCKED / CHANGES_REQUESTED / 缺失小节 / 多 token ⇒ 报错。
-- [ ] 1.2 改写旧用例：断言 `review manifest missing` 的用例改为断言「无 manifest 不再报错」；保留 building-review 存在性门用例。
-- [ ] 1.3 新增 `--check-archived` 退役用例：带漂移 `spec_hash` / `tasks_hash` / 缺失 manifest 的归档 change 不再报错；归档事件日志不可投影仍报错。
-- [ ] 1.4 新增归档点门用例：新建归档的 building-review 出口非 PASS ⇒ 报错；PASS ⇒ 通过。
+- [ ] 1.1 新增 parser 单测：标题带中文括号后缀命中；fenced code 内标题 / token 忽略；`**PASS**（...）` 通过；`PASS（此前 CHANGES_REQUESTED 已收口）` 通过；`不是 PASS` / `未定` 报错；多小节报错。
+- [ ] 1.2 改写旧用例：`review manifest missing` 改为「无 manifest 不再报错」；保留 building-review 存在性门用例；新增 partial active change（有报告、tasks 未全勾）不被新门误伤。
+- [ ] 1.3 新增 `--check-archived` 退役用例：带漂移 `spec_hash` / `tasks_hash` / 缺失 manifest 的归档 change 不再报错；历史归档（无 `## 闭环出口`）仍 exit 0；归档事件日志不可投影仍报错。
+- [ ] 1.4 新增归档点门用例：新建归档的 building-review 出口非 PASS / 缺失 ⇒ 报错；PASS ⇒ 通过；docs / 无 spec delta 的归档不触发 verdict 检查。
 - [ ] 1.5 运行指定测试确认**红**，记录原始输出。
 
 ## 2. 实现（checker）
 
-- [ ] 2.1 `scripts/check_openspec_artifacts.py`：删除 `_check_review_manifests` 与其 `verify_review_manifest` 调用；删除 `--check-archived` 的 manifest 校验、`tasks_hash` 汇总与相关死代码。
-- [ ] 2.2 新增 `_review_exit_verdict` / `_building_review_errors`：解析 `## 闭环出口`，要求唯一 token 且为 PASS。
-- [ ] 2.3 active `check_change` 用新函数替代旧调用；触发条件（非 docs + spec delta + tasks 全勾）不变。
-- [ ] 2.4 `_check_archived_completion_gate` 在存在性之后复用 verdict 检查；`--check-archived` 只保留 `_check_archived_projectable`。
+- [ ] 2.1 `scripts/check_openspec_artifacts.py`：删除 `_check_review_manifests` 与其 `verify_review_manifest` 调用；删除 `--check-archived` 的 manifest 校验、`tasks_hash` 汇总，以及只被旧函数使用的死代码 `_change_id_from_dir_name` / `_repo_root_for_change_dir`。
+- [ ] 2.2 新增 `_review_exit_verdict` / `_building_review_errors`，按四条规则解析：① 标题前缀匹配 `闭环出口`（容忍中文括号）；② 忽略 fenced code；③ 只认首个非空行且必须以 PASS 开头（`不是 PASS` / `未定` 不合法）；④ 多个同名小节报错。出口必须是 PASS。
+- [ ] 2.3 active `check_change` 用新函数替代旧调用；触发条件为「非 docs + spec delta + tasks 全勾」（存在性门触发不变）；旧 manifest 校验的隐式宽触发收窄到完成面。
+- [ ] 2.4 `_check_archived_completion_gate` 在存在性之后复用 verdict 检查（条件同为非 docs + spec delta）；`--check-archived` 只保留 `_check_archived_projectable`。
 - [ ] 2.5 同步 help 文案、注释与 docstring；确认 RIR / Impact / benchmark / backlog / 受保护路径 / grill 证据 / 归档点其它门逐行未动。
 - [ ] 2.6 `.github/workflows/ci.yml`：只改归档校验步骤的名称 / 注释，命令与 flag 不变。
-- [ ] 2.7 同步本地入口 `/home/happy/my-agent/.claude/commands/review-loop.md`：第 6 步改为 `witnessloop manifest build`，不再产 ast manifest。
+- [ ] 2.7 **全文件**同步本地入口 `/home/happy/my-agent/.claude/commands/review-loop.md`（描述、步骤 6/7、输出、护栏）：改为 `witnessloop manifest build` + `## 闭环出口`，不再产 ast manifest；改完 grep 确认无 `write_review_manifest` / `building-review-manifest` 字样。
 
 ## 3. 规则文档
 
@@ -37,7 +37,7 @@
 - [ ] 3.3 `docs/development-guide.md`：Review manifest 纪律改为 witnessloop 证据纪律 + `## 闭环出口` 格式；降级清单去掉 review manifest。
 - [ ] 3.4 `docs/requirements-process.md`：实现后闭环产物、受保护证据、checker 检查清单。
 - [ ] 3.5 `docs/interview-script/questions/Q12-ci-testing.md` 与 `Q14-dev-process.md`：manifest 与 checker 描述。
-- [ ] 3.6 `docs/known-debt.md`：登记退役、`diff_hash` 残余损失、第二刀清单（80 份历史 manifest / 模块 / 受保护路径规则）。
+- [ ] 3.6 `docs/known-debt.md`：登记退役、`diff_hash` 强校验损失、`--check-archived` 历史 drift 检测能力消失、非 building `*-review.md` 的 PASS 门消失、第二刀清单（80 份历史 manifest / 模块 / 受保护路径规则）。
 - [ ] 3.7 全仓 grep 复核：规范面不再要求产出 ast manifest（历史归档 / known-debt 历史记录除外）。
 
 ## 4. 规格
@@ -47,6 +47,7 @@
 - [ ] 4.3 `specs/platform-gate/spec.md` delta：MODIFIED 降级理由清单，移除已不成立的 review manifest 例子。
 - [ ] 4.4 把三份 delta 施加进当前规格（同步对应 current spec 到 `openspec/specs/<capability>/spec.md`），记录 Requirement 计数前后变化，并写 `current_spec_synced` 事件。
 - [ ] 4.5 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 通过。
+- [ ] 4.6 修 current spec 的悬空交叉引用：`openspec/specs/dev-workflow-gate/spec.md:45` 的「review manifest 两套并存」指向改名后的 Requirement；同步 Purpose 中的承载清单，并在 `current_spec_synced` 事件中说明非 Requirement 散文编辑。
 
 ## 5. 验证
 

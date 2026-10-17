@@ -4,7 +4,7 @@
 
 ### Requirement: review manifest 单套承载：本仓形态退役
 
-接入 witnessloop 后，review manifest SHALL 只有一套要求：witnessloop 形态（`reviews/<stage>.manifest.json`，schema `witnessloop/review-manifest@v1`），由 `witnessloop manifest build` 产出并供 required 的 `gate / check` 消费。asterwynd 形态（`reviews/<phase>-review-manifest.json`，schema `review-manifest/v1`）SHALL NOT 再被要求、产出或由本仓 checker 校验；历史文件 SHALL 保持原样，不迁移、不重算、不删除。`evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`，SHALL NOT 放宽为 `*-manifest.json`。本仓 checker 对 building review 的终结 `## 闭环出口` PASS 判据 SHALL 保留（见 `dev-workflow-state-machine` 的 `Review evidence 与终结 verdict`），该判据不是 manifest 字段校验。`agent/workflow/review_manifest.py` 与其写通道 SHALL 在第二刀之前保留，SHALL NOT 被新 change 的流程要求使用。
+接入 witnessloop 后，review manifest SHALL 只有一套要求：witnessloop 形态（`reviews/<stage>.manifest.json`，schema `witnessloop/review-manifest@v1`），由 `witnessloop manifest build` 产出并供 required 的 `gate / check` 消费。asterwynd 形态（`reviews/<phase>-review-manifest.json`，schema `review-manifest/v1`）SHALL NOT 再被流程要求产出，也 SHALL NOT 由本仓 checker 校验；历史文件 SHALL 保持原样，不迁移、不重算、不删除。`workflow_state.py review-manifest` SHALL 仅作为 legacy 写通道保留，由第二刀处置，SHALL NOT 被描述为当前流程要求。`evidence.review_manifest_glob` SHALL 保持 witnessloop 默认的 `reviews/*.manifest.json`，SHALL NOT 放宽为 `*-manifest.json`。本仓 checker 对 building review 的终结 `## 闭环出口` PASS 判据 SHALL 保留（见 `dev-workflow-state-machine` 的 `Review evidence 与终结 verdict`），该判据不是 manifest 字段校验。`agent/workflow/review_manifest.py` 与其写通道 SHALL 在第二刀之前保留，SHALL NOT 被新 change 的流程要求使用。
 
 #### Scenario: 本仓形态退役的边界
 
