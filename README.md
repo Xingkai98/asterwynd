@@ -145,7 +145,7 @@ Asterwynd 用**自己定义的一套工程闭环**开发自己——不是一次
         → 独立 subagent 设计追问（grill，逐条决策 + 停轮等用户确认）
         → 独立零记忆 subagent 对抗验证（试图推翻设计结论）
         → 实现（独立 git worktree，测试先行）
-        → 独立 subagent 审阅闭环（审 → 改 → 再审，直到收敛——无轮数上限）
+        → 独立 subagent 审阅闭环（一轮 = 一个非空 medium+ 批次的闭环：开批 → 全修 → 只验证 → 收口；批次冻结、deferred 进下一批；最多 20 个已收口轮，超限判 BLOCKED + 建议推倒重开）
         → CI 门禁（required 只有 witnessloop 的 gate / check；全量 pytest + OpenSpec strict validate + artifact checker + benchmark-gate 照跑但不拦）
         → 归档收尾（spec 同步 + change 归档 + backlog 清理）
 ```
