@@ -120,16 +120,6 @@
 
 ## 未实现队列
 
-### 5. `review-loop-no-round-cap`
-
-状态：实现中（规则/流程变更）。
-
-批次：第十七批（开发流程工具化 / witnessloop 接入）之后的流程收尾。
-
-关联 issue：[#305](https://github.com/Xingkai98/asterwynd/issues/305)。
-
-范围：**删掉版本控制内所有现行规则里的「3 轮封顶 / 轮数封顶」**，改成「**无轮数上限**：审 → 改 → 再审，直到**收敛**」；并把终止条件写进规格（`dev-workflow-state-machine` **ADDED** 一条 Requirement；`change-documentation` 的 `Pre-implementation design grilling` 从 round cap **MODIFIED** 为收敛口径）。语义由用户拍板：**不再有轮数上限**；收敛 = 没有新的中等及以上可证伪项 + 必须修改项全部落库；**无法收敛 ⇒ 停下来报告阻塞**（不以轮数为停止理由）。**无运行时行为改动**：`scripts/check_openspec_artifacts.py` 只改两处提示字符串，判定逻辑一行不改。research_tier = full。
-
 ### 第二十批：workflow foreach 预算截断可见性（#286）
 
 - `foreach-budget-truncation-visibility`（issue [#286](https://github.com/Xingkai98/asterwynd/issues/286)）：**已归档 2026-10-03**。#279（静态截断可见）的独立对抗验证拆出的**同缺陷类、范围外**项——治 `max_items=0` 路径下的**预算**截断静默。`_resolve_items`（`scheduler.py:2675-2678`）在 `max_items==0` 时返回 `items[:remaining_expansion_capacity()]`，切片使 `_check_foreach_budget`（`:2167`）的 `run+delta>limit` **刚好不触发** ⇒ 超预算项**静默丢弃**（实测：60 声明 / 24 展开 / 36 静默丢，`status=completed`、`diagnostics={}`）。**交付**：扩展 #279 共享 helper `_foreach_visibility_fields`（去 `max_items>0` 前置、加成因判别字段 `items_omitted_cause`），**三出口**一致报告「声明 N / 展开 M / 省略 K」+ 成因（`max_items` vs `budget`）——dry-run 条目、`GetWorkflow(detail='nodes')` 投影、**`RunWorkflow` 结果信封**（用户拍板 OQ2=(b) 新增出口，一并补 #279 静态字段缺口）；字段**后写**绕过 `_bounded_node` 白名单；成因字段不复用既有 `reason` 键。**对抗验证修正**：proposal 的「非 terminal 一律响亮」被实测证伪（切片 ≤ `max_fan_in` 时非 terminal 同样静默），边界文字改「切片后预算仍够图跑完即静默」；design「静态路径逐字节不变」改为「既有字段值不变 + 新增成因键」。**Non-Goal**：不改 `max_items` 默认值（#276）、不改 `max_items=0` 语义、不改 #279 静态面、成因不细化到绑定维度、不改 `GetWorkflow` 默认 `detail='summary'` 出口。research_tier = light。**验收**：review-loop 2 轮 PASS（R1 PASS + 3 Low → 修 → R2 确认 PASS）；新测试 7 条（`test_foreach_truncation_visibility.py` 25 passed）；`agent/{subagent,tools}` 1710 passed；benchmark-gate PASS（1.0000）；全量除 2 处预存在 `/tmp` 环境失败外全绿。

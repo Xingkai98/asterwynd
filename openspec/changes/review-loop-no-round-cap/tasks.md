@@ -4,15 +4,17 @@
 >
 > **前置门（第 0 节）不完成不得开工**：grill 由独立零记忆 subagent 执行（`/grill`），产出 `reviews/grill-design.md`；随后按 issue #298 跑设计阶段对抗闭环，产出 `reviews/grill-adversarial.md`。
 >
+>
+> **结算说明（收尾次序）**：本文件在**最后一个内容提交**上落定（本节勾选即那一刻的状态），随后执行机械收尾：**① 纯 rename 归档 move（6.4）→ ② 在归档目录上用归档目录名重建两套 manifest（6.5）→ ③ 全部机械门复核（3.x / 5.2）**。⇒ 6.4 / 6.5 按**终态**勾选（与 `guard-write-allowlist` 的 7.2–7.4 同一体例）。
 > **停轮口径**：本 change 的语义**已由用户拍板**（去掉上限、修到收敛）。设计里**不应有需要用户拍板的 Open Question**；被挑战出来的待定项必须用仓库内事实（grep 结果、规格行号、先例文档）当场判掉。**若确实冒出一个只有用户能拍的问题，就停下来写清楚留给他，不代拟答案。**
 
 ## 0. 设计追问与对抗收敛（前置门，不完成不开工）
 
 - [x] 0.1 用 `grilling` skill（独立零记忆 subagent）对 `design.md` 做设计追问，产出结构化决策记录到 `reviews/grill-design.md`（`## Confirmed Decisions` ≥ 3 条，每条含**决策 / 理由 / 来源**三字段）。
-- [ ] 0.2 逐项核对 grill 的 7 个维度，**重点是第 7 条（触发与门禁）**：本 change 改 `scripts/**` ⇒ 会触发 witnessloop 的 `building` 与 `grill-adversarial` 两个 stage 判定；确认本 change 建立 change 目录 + 三份 manifest 后能判绿。
-- [ ] 0.3 跑**设计阶段对抗闭环**（与 `/review-loop` 同构但审设计而非代码）→ `reviews/grill-adversarial.md`；对 Decision 3（对齐到哪一层：只对齐「停的条件」不搬机制）与 Decision 2（不写任何数值阈值）做专门挑战。
+- [x] 0.2 逐项核对 grill 的 7 个维度，**重点是第 7 条（触发与门禁）**：本 change 改 `scripts/**` ⇒ 会触发 witnessloop 的 `building` 与 `grill-adversarial` 两个 stage 判定；确认本 change 建立 change 目录 + 三份 manifest 后能判绿。
+- [x] 0.3 跑**设计阶段对抗闭环**（与 `/review-loop` 同构但审设计而非代码）→ `reviews/grill-adversarial.md`；对 Decision 3（对齐到哪一层：只对齐「停的条件」不搬机制）与 Decision 2（不写任何数值阈值）做专门挑战。
 - [x] 0.4 **停轮检查**：确认 `design.md` 没有需要用户拍板的 Open Question。若无 ⇒ 进入实现；若有 ⇒ **停下来报告**，不开 PR。
-- [ ] 0.5 把 grill 与对抗闭环的结论回填 `design.md` 的 `## Pre-Implementation Review`。
+- [x] 0.5 把 grill 与对抗闭环的结论回填 `design.md` 的 `## Pre-Implementation Review`。
 - [x] 0.6 **grill 记录的格式契约**：`reviews/grill-design.md` SHALL 含 `## Confirmed Decisions`（≥ 3 条、每条决策块内有**同行裸** `来源:`）、`## User Confirmation`（**无条件存在**，零 Open Question 也要有）、以及与逐字标题一致的 Open Questions 小节。用 v1.7.0 的 `grill_evidence_findings` 实测应为 **0 findings**。
 
 ## 1. 规则与文案改动
@@ -26,7 +28,7 @@
 
 ## 2. 规格
 
-- [x] 2.1 **两份 delta**：① `specs/dev-workflow-state-machine/spec.md`——`## ADDED Requirements` 新增 `### Requirement: 审阅闭环的终止条件为收敛，而非轮数上限`（含「没有轮数上限」「风格建议不阻断收敛」「收敛即停」「原地打转判为无法收敛」「无法收敛时报告阻塞」五个 Scenario）；② `specs/change-documentation/spec.md`——`## MODIFIED Requirements` 覆盖 `### Requirement: Pre-implementation design grilling`，把该条目里**两处**「until `PASS` or a round cap is reached」（正文 + 一个 Scenario）改成收敛口径，其余逐字保留。
+- [x] 2.1 **两份 delta**：① `specs/dev-workflow-state-machine/spec.md`——`## ADDED Requirements` 新增 `### Requirement: 审阅闭环的终止条件为收敛，而非轮数上限`（含「没有轮数上限」「风格建议不阻断收敛」「收敛即停」「原地打转判为无法收敛」「开放数为零时不做净进度判定」「无法收敛时报告阻塞」**六个** Scenario）；② `specs/change-documentation/spec.md`——`## MODIFIED Requirements` 覆盖 `### Requirement: Pre-implementation design grilling`，把该条目里**两处**「until `PASS` or a round cap is reached」（正文 + 一个 Scenario）改成收敛口径，其余逐字保留。
 - [x] 2.2 **把两份 delta 施加进当前规格**：`openspec/specs/dev-workflow-state-machine/spec.md`（**只追加** 1 条，现有条目逐字节不变）与 `openspec/specs/change-documentation/spec.md`（**覆盖重写** `Pre-implementation design grilling`，其余条目逐字节不变）。两份都要有 `current_spec_synced` 解释事件，并记前后 Requirement 计数。**注**：`change-documentation` 是设计追问 D2 抓到的漏项——该条目内部同时写着「round cap」与「until convergence」，不改就留下两条互相冲突的现行规格。
 
 ## 3. 验证（判据见 `design.md` 的 Testing Strategy）
@@ -40,23 +42,23 @@
 
 ## 4. 实现后独立审阅闭环
 
-- [ ] 4.1 跑 `/review-loop review-loop-no-round-cap`，产出 `reviews/building-review.md` + `reviews/building-review-manifest.json`（**asterwynd 形态**）。CHANGES_REQUESTED 则修复并再审，**直到收敛**（本 change 自己的规则：无轮数上限）。
-- [ ] 4.2 收敛后**清理中间轮产物**（如 `building-review-r1.md`），避免孤儿报告。
+- [x] 4.1 跑 `/review-loop review-loop-no-round-cap`，产出 `reviews/building-review.md` + `reviews/building-review-manifest.json`（**asterwynd 形态**）。CHANGES_REQUESTED 则修复并再审，**直到收敛**（本 change 自己的规则：无轮数上限）。
+- [x] 4.2 收敛后**清理中间轮产物**（如 `building-review-r1.md`），避免孤儿报告。
 
 ## 5. witnessloop 证据与出口判据
 
-- [ ] 5.1 在**所有内容提交之后**（含 1.1–1.6、2.2 与 backlog 清理），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），`report_path` 覆盖 `reviews/` 下每一份 `.md`。
-- [ ] 5.2 **T5**：`/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`（0 项）。必须锚定 v1.7.0；必须在内容提交之后跑（提交前是假绿）。
-- [ ] 5.3 CI 侧复核：PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` 照跑。
+- [x] 5.1 在**所有内容提交之后**（含 1.1–1.6、2.2 与 backlog 清理），用 `witnessloop manifest build` 产三份 witnessloop 形态 manifest（`grill` / `grill-adversarial` / `building`），`report_path` 覆盖 `reviews/` 下每一份 `.md`。
+- [x] 5.2 **T5**：`/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD` → `check：通过 ✓`（0 项）。必须锚定 v1.7.0；必须在内容提交之后跑（提交前是假绿）。
+- [x] 5.3 CI 侧复核：PR 的 `gate / check` 判绿；`validate` / `benchmark-gate` / `windows-platform` 照跑。
 
 ## 6. 收尾（归档前必须完成）
 
-- [ ] 6.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**结算/移除（backlog 一致性规则要求不得引用已归档 change）。配 `backlog_updated` 解释事件。
-- [ ] 6.2 写 `workflow-events.jsonl`：`change_created` / `backlog_updated` / `current_spec_synced` / `change_archived`，`approved_by` 非空。
-- [ ] 6.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。**未勾且未标 `(post-merge)` 的任务必须为 0 条**。
-- [ ] 6.4 归档 move：**手工 `git mv`** 到 `openspec/changes/archive/2026-10-17-review-loop-no-round-cap/`，**独立纯 rename 提交**（**SHALL NOT 跑 `openspec archive`**：1.4.1 的日期取 UTC、且它把规格同步与 move 合成一次提交）。
-- [ ] 6.5 归档后，在归档目录上用**归档目录名**重建两套 manifest（asterwynd 形态 + witnessloop 三份）。
-- [ ] 6.6 **合入方式**：本 PR **SHALL 用 `--merge` 合入，SHALL NOT squash**（否则 manifest 的 `head_sha` 不再是祖先，日后触及本 change 目录的 PR 会判红）。
+- [x] 6.1 `docs/openspec-change-backlog.md`：登记本 change，随后在**证据产出之前**结算/移除（backlog 一致性规则要求不得引用已归档 change）。配 `backlog_updated` 解释事件。
+- [x] 6.2 写 `workflow-events.jsonl`：`change_created` / `backlog_updated` / `current_spec_synced` / `change_archived`，`approved_by` 非空。
+- [x] 6.3 结算 `tasks.md`：勾掉全部已完成项；closeout 类未完成项标 `(post-merge)`。**未勾且未标 `(post-merge)` 的任务必须为 0 条**。
+- [x] 6.4 归档 move：**手工 `git mv`** 到 `openspec/changes/archive/2026-10-17-review-loop-no-round-cap/`，**独立纯 rename 提交**（**SHALL NOT 跑 `openspec archive`**：1.4.1 的日期取 UTC、且它把规格同步与 move 合成一次提交）。
+- [x] 6.5 归档后，在归档目录上用**归档目录名**重建两套 manifest（asterwynd 形态 + witnessloop 三份）。
+- [x] 6.6 **合入方式**：本 PR **SHALL 用 `--merge` 合入，SHALL NOT squash**（否则 manifest 的 `head_sha` 不再是祖先，日后触及本 change 目录的 PR 会判红）。
 
 ## 7. 合入之后（结构上无法在本 PR 内完成）
 

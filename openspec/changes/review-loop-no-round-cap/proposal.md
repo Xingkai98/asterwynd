@@ -46,7 +46,8 @@
 
 ### Modified Capabilities
 
-- `dev-workflow-state-machine`：**新增**一条 Requirement「审阅闭环的终止条件为收敛，而非轮数上限」——把「无轮数上限 + 收敛定义 + 无法收敛时报告阻塞」写成规范约束，并给出三个 Scenario（没有轮数上限 / 收敛即停 / 无法收敛时报告阻塞）。
+- `dev-workflow-state-machine`：**新增**一条 Requirement「审阅闭环的终止条件为收敛，而非轮数上限」——把「无轮数上限 + 收敛定义 + 无法收敛时报告阻塞」写成规范约束，并给出**六个** Scenario（没有轮数上限 / 风格建议不阻断收敛 / 收敛即停 / 原地打转判为无法收敛 / 开放数为零时不做净进度判定 / 无法收敛时报告阻塞）。
+- `change-documentation`：**修改**一条 Requirement（`Pre-implementation design grilling`）——把该条目内部两处「round cap」改成收敛口径，其余逐字保留。
 
 ## Impact Analysis
 

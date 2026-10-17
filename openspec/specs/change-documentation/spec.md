@@ -118,6 +118,7 @@ guard and SHALL fail the artifact checker once its tasks are fully checked.
 
 - **WHEN** the current agent environment does not provide the `grilling` skill
 - **THEN** the agent performs an equivalent independent design grilling
+
 ### Requirement: Diagnosis artifact
 Bug, regression, incident, and research-driven OpenSpec changes SHALL include a
 `diagnosis.md` artifact before implementation begins.
