@@ -425,10 +425,20 @@ def _output_arg(args: list[str], flags: set[str]) -> list[str]:
         if arg in flags and index + 1 < len(args):
             return [args[index + 1]]
         for flag in flags:
-            if flag.startswith("--") and arg.startswith(flag + "="):
-                return [arg.split("=", 1)[1]]
-            if not flag.startswith("--") and arg.startswith(flag) and len(arg) > len(flag):
-                return [arg[len(flag):]]
+            if flag.startswith("--"):
+                if arg.startswith(flag + "="):
+                    return [arg.split("=", 1)[1]]
+                continue
+            letter = flag[1]
+            if arg.startswith("-") and not arg.startswith("--"):
+                position = arg.find(letter)
+                if position <= 0:
+                    continue
+                remainder = arg[position + 1 :]
+                if remainder:
+                    return [remainder]
+                if index + 1 < len(args):
+                    return [args[index + 1]]
     return []
 
 
@@ -529,13 +539,16 @@ def _unwrap_prefixes(words: list[str]) -> list[str]:
     return words
 
 
+_SHELL_FLAG_LETTERS = set("abefhkmnptuvxdBCDHPcl")
+
+
 def _nested_shell_code(words: list[str]) -> str | None:
     if not words or Path(words[0]).name not in _NESTED_SHELLS:
         return None
     for index, arg in enumerate(words[1:], start=1):
         if arg.startswith("-") and "c" in arg[1:]:
             tail = arg[arg.index("c") + 1 :]
-            if tail:
+            if tail and not all(ch in _SHELL_FLAG_LETTERS for ch in tail):
                 return tail
             if index + 1 < len(words):
                 return words[index + 1]
@@ -582,18 +595,34 @@ def _command_targets(words: list[str]) -> tuple[list[str], str | None]:
     if command in {"python", "python3"}:
         return _python_code_targets(args), None
     if command == "git":
+        git_cwd: str | None = None
         while args:
             head = args[0]
-            if head in {"-C", "--git-dir", "--work-tree", "-c"}:
+            if head == "-C":
+                if len(args) > 1:
+                    git_cwd = args[1]
                 args = args[2:] if len(args) > 1 else []
                 continue
-            if head.startswith(("--git-dir=", "--work-tree=")) or (
-                head.startswith("-C") and len(head) > 2
-            ):
+            if head.startswith("-C") and len(head) > 2:
+                git_cwd = head[2:]
+                args = args[1:]
+                continue
+            if head in {"--git-dir", "--work-tree", "-c"}:
+                args = args[2:] if len(args) > 1 else []
+                continue
+            if head.startswith(("--git-dir=", "--work-tree=")):
                 args = args[1:]
                 continue
             break
-        return _git_targets(args)
+        targets, reason = _git_targets(args)
+        if git_cwd:
+            targets = [
+                target
+                if target.startswith("/")
+                else str(Path(git_cwd) / target)
+                for target in targets
+            ]
+        return targets, reason
     return [], None
 
 

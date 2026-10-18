@@ -1,8 +1,8 @@
 # Building Review: slim-gates
 
 ## Reviewer
-- run id: review-slim-gates-20261018-r1
-- base/head: 528d02f / 4ada5c7
+- run id: review-slim-gates-20261018-r1（Round 1 开批）/ review-slim-gates-20261018-r2（修复验证）
+- base/head: 528d02f / c424eff（Round 1 审阅 revision 为 4ada5c7）
 
 ## 任务逐项验证
 
@@ -45,9 +45,32 @@
 - **L-6（low）｜tasks 4.8 的证据是「命令级」harness，不是任务要求的临时 Claude Code settings 同时安装实测**：`docs/development-guide.md:440-441` 自述「命令级」，`tasks.md` 4.8 要求「在临时 Claude Code settings 中同时挂」并禁止用「分别调用」冒充；文档另以阶段 A 的真实 CC 2.1.231 记录补足合并/并行/并集语义。理由: 阶段 A 已实测 CC 调度语义，新 guard 只是另一个 command hook，行为问题（哪个 hook 看哪个工具）已由表格回答；若不接受组合证据，应在 CC settings 中重跑一次并替换表格。
 - **L-7（low)｜tasks 4.7 要求「记录原始输出」，仓库内只有结论没有原始命令输出**：`tasks.md` 4.7；建议把 4.7/4.8 的原始命令与输出写进 PR 描述或 tasks 行内。
 - **L-8（nit）｜`docs/development-guide.md:419` 仍是将来时**「本 change 的 4.8 会按同一方法再记录一次」，而 4.8 已勾选、记录已在下方表格。
+- **L-9（low，Round 1 I-7 残留）｜CLI 级补充用例仍未补**：空/空白 `--base-ref` 不只是「解析为非空」，还要断言不跳过归档门；`--skip-backlog` 与 `--change` 模式也没有 main 级用例（旧测试 `test_empty_base_ref_does_not_skip_checks`、`test_bare_check_does_not_trace_historical_archives`、`test_explicit_base_ref_still_wins` 未迁移）。理由：`_resolve_base_ref` / main 的归档门调用是逐字搬运且本轮手工验证通过，风险低于三条归档反绕过用例；补测试即可，不需改判据。
+
+## 验证（Round 1 批次，revision c424eff）
+
+> 只核对 I-1…I-8 的修复落点与测试牙齿；验证期新发现的 medium+ 只进下方 deferred。测试在 `c424eff` 的脚本/测试快照上运行（`/tmp/verify-c424eff`），未使用工作区未提交改动。
+
+- **I-1 已修复。** `scripts/bash_write_guard.py:79-84` 新增 `isinstance(data, dict)` 拒绝分支并退回内嵌默认表；`tests/test_bash_write_guard.py:173-175` 的 `test_non_object_policy_falls_back_to_embedded_defaults` 在 `c424eff` 上通过。变异（删掉该分支）实测该用例 1 failed。
+- **I-2 已修复（已报告形态）。** `scripts/bash_write_guard.py:496-529` 的 `_unwrap_prefixes` 在嵌套检测前剥离 `sudo`/`env`/`timeout`/`nice`/`nohup`/`command` 的选项与值；`:532-542` 的 `_nested_shell_code` 支持 `-c`、`-lc`、`-ec` 与紧贴参数。`tests/test_bash_write_guard.py:89-96` 覆盖 `timeout 5 bash -c`、`nohup sh -c`、`bash -lc`、`bash -ec`、`sudo -u root`、`nice -n 10`、`env -i`，全部通过；变异（改回只认 `-c`）实测 2 failed。
+- **I-3 未完全修复（本轮不通过）。** `c424eff` 上 `git -C .`、`git --git-dir=.git`、`git --work-tree=.` 已能拦截并有测试；但 Round 1 报告的首要复现 **`git -C agent restore y`（以及 `git -Cagent restore y`、`git -C agent checkout -- y`）在 `c424eff` 上仍放行**：`scripts/bash_write_guard.py:584-596` 在 `-C` 分支里仍直接丢弃目录、未把它并入目标路径归一化。实测（c424eff 快照）三者均 `evaluate_command(...) == []`。工作区现有未提交的 `git_cwd` 修复与两条 `git -C agent` 测试可覆盖该形态，但不在审阅 revision；提交并复验后方可关闭。
+- **I-4 已修复（已报告形态）。** `_REDIRECT_OPS` 加入 `>&`（`scripts/bash_write_guard.py:48`），`_output_arg` 支持紧贴短选项值（`:430-431`）。`curl -oagent/y`、`wget -Oagent/y`、`cmd >& agent/y` 均被拦；对应参数化用例通过；变异（去掉 `>&` 或删掉紧贴分支）分别实测 1 failed / 2 failed。
+- **I-5 已修复。** `scripts/bash_write_guard.py:466-478` 的路径正则支持不带 `/` 的受管根；`shutil.rmtree('agent')`、`open('scripts','w')` 被拦，`print('agent')` / `print('agent/y')` 仍放行；对应用例通过。变异（还原旧正则）实测 3 failed。
+- **I-6 已修复。** delta 与 applied spec 同句均改为「不重复 active-stage grill 检查；归档点 grill 证据按 `dev-workflow-gate` rule 4 检查」（`openspec/changes/slim-gates/specs/change-documentation/spec.md:16`、`openspec/specs/change-documentation/spec.md:41`），与 `dev-workflow-gate` rule 4 及实现一致；grep 无残留的无条件 `SHALL NOT check grill evidence`。
+- **I-7 已修复（核心反绕过）。** 新增 `test_archive_rir_content_threshold_applies_when_tasks_incomplete`、`test_archive_grill_evidence_required_even_when_tasks_incomplete`、`test_archive_unconfirmed_open_question_when_tasks_incomplete`（`tests/test_slim_project_rules.py:612-663`），在 `c424eff` 上通过；把 `assume_implemented=True` 改成 `False` 后第一条实测 1 failed。CLI 级补充用例（空/空白 `--base-ref` 不跳过检查、`--skip-backlog`、`--change`）仍未补，降级登记为 L-9，不阻断本轮。
+- **I-8 已修复。** `openspec/project.md:54-56,61,63` 已把类型并集章节、capability 映射/current spec 同步任务、diagnosis 机械检查改为退役或人工评审；末段改为六条规则。grep 不再有条件规则旧口径。
+- **low 修复核对。** L-1 的 `flow-policy` 事件常量、`_POLICY_REL_PATH` 与 `workflow_guard` 注释已删除；HANDOFF 常量与重复 `PLACEHOLDER_ONLY` 仍在（L-1 保留）。L-7 已补 4.7 手动验收表；L-8 已改成已记录。L-2/L-3/L-4/L-5/L-6 未处理，保留为 low。
+
+### 机械复核（修复轮）
+
+- `c424eff` 快照的 `tests/test_bash_write_guard.py` + `tests/test_slim_project_rules.py`：**192 passed**；工作区 targeted 套件 **238 passed**（另含 round-model / platform-gate）。
+- `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`：29 passed / 0 failed。
+- 瘦 checker：`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` exit 0（在本报告写 CHANGES_REQUESTED 前；写入后 active 宽触发会按预期转红，待下一轮 PASS 覆盖）。
+- 工作区另有两处**非本次验证产生的未提交改动**（`scripts/bash_write_guard.py`、`tests/test_bash_write_guard.py`），包含 I-3 子目录修复；不在 `c424eff` 审阅面内，未计入本轮通过。
 
 ## deferred（验证期若发现新 medium+ 才写）
-- 无
+
+- **D-1（medium，下一批）｜组合短选项簇仍能绕过 `curl` / `wget` / 嵌套 shell 解析**：`scripts/bash_write_guard.py:427-431` 只识别「输出 flag 位于参数开头」的紧贴值；`wget -qO agent/y …`、`wget -qOagent/y …`、`curl -so agent/y …` 实测放行。`_nested_shell_code`（`:532-542`）取 `c` 后的残余字符作为命令串，`bash -cl 'touch agent/y'` 实测放行（`-cl` 中 `l` 被当成命令串）。这是本轮修复同一解析面的残余，需在下一批处理。
 
 ## 闭环出口
-未定（Round 1 开批，待修复验证）
+CHANGES_REQUESTED（I-3 未完全修复：c424eff 上 `git -C <subdir> restore <relpath>` 与 `git -C <subdir> checkout -- <relpath>` 仍放行；I-1/I-2/I-4/I-5/I-6/I-7/I-8 已验证通过。工作区未提交的 `git_cwd` 修复可覆盖 I-3，提交到审阅 revision 并复验后收口。）
