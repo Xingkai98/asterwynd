@@ -133,7 +133,7 @@
 > 输出记录在本任务行或 PR 描述。6.1–6.2 按实际完成时点勾选。section 7 的合入后动作才用
 > `(post-merge)`。
 
-- [ ] 6.1 写 `workflow-events.jsonl`，逐路径覆盖本次 diff 的受保护写入：
+- [x] 6.1 写 `workflow-events.jsonl`，逐路径覆盖本次 diff 的受保护写入：
   - `current_spec_synced`：`openspec/specs/dev-workflow-gate/spec.md`、
     `openspec/specs/change-documentation/spec.md`、
     `openspec/specs/multi-agent-collaboration/spec.md`、
@@ -142,19 +142,19 @@
   - `protected_artifact_explained`：`docs/known-debt.md`（本 change 会修改它，**无条件**写事件）；
   - `change_archived`：本 change 的归档目录。
   `approved_by` 非空。
-- [ ] 6.2 从 `docs/openspec-change-backlog.md` 移除本 change（这是生命周期要求；不要以
+- [x] 6.2 从 `docs/openspec-change-backlog.md` 移除本 change（这是生命周期要求；不要以
   「backlog 一致性会判红」为由——当前条目是散文 bullet，不匹配 checker 的引用模式）。
-- [ ] 6.3 结算 `tasks.md`：全部已完成项勾选；section 7 的 closeout 项标 `(post-merge)`；未勾且未标
+- [x] 6.3 结算 `tasks.md`：全部已完成项勾选；section 7 的 closeout 项标 `(post-merge)`；未勾且未标
   `(post-merge)` 的任务必须为 0 条。**随后提交所有内容改动**（6.1–6.3、docs/specs/backlog/
   reviews 报告），确保 manifest build 的 `head_sha` 包含最终 `tasks_hash` / `spec_hash`。
-- [ ] 6.4 手工 `git mv` 归档到 `openspec/changes/archive/2026-10-18-slim-gates/`，**单独提交纯
+- [x] 6.4 手工 `git mv` 归档到 `openspec/changes/archive/2026-10-18-slim-gates/`，**单独提交纯
   rename**（不跑 `openspec archive`；此提交不得夹带内容改动）。
-- [ ] 6.5 归档 move 之后，用 **v1.7.0** 的 `witnessloop manifest build` 以归档目录名重建三份
+- [x] 6.5 归档 move 之后，用 **v1.7.0** 的 `witnessloop manifest build` 以归档目录名重建三份
   manifest（`grill` / `grill-adversarial` / `building`），绑定 `reviews/` 下全部 `.md`；
   然后**单独提交 evidence 改动**（reports + manifests）。可执行锚点：
   `/home/happy/wl170/bin/witnessloop`（tag object `00192ab` → commit `c9b2811`；
   `/home/happy/witnessloop` 当前不是 v1.7.0，不要用）。
-- [ ] 6.6 最终机械复核（在最终 head 上）：`/home/happy/wl170/bin/witnessloop check --root .
+- [x] 6.6 最终机械复核（在最终 head 上）：`/home/happy/wl170/bin/witnessloop check --root .
   --base origin/master --head HEAD` 通过；
   `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` exit 0；
   OpenSpec strict validate 通过；`platform_gate.py --verify` 一致。
