@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "2026-10-18-slim-gates",
+  "stage": "grill",
+  "reviewer_run_id": "grill-slim-gates-20261018-r1",
+  "author_run_id": "author-slim-gates-20261018",
+  "base_sha": "528d02f51eb871408a130efb5a8653cfdb39be7d",
+  "head_sha": "599be569cb3d0df68076413df3b31edb19f7b0fc",
+  "tasks_hash": "b943c0765bfe2b0a5b7465bf1cafe75fa072b0b8ad6e4735da423193ee9ecd2e",
+  "spec_hash": "ec11b9e4ece5fdf6949b0789a78e255a9241e047ad30a8d156dd1626a44adcb8",
+  "diff_hash": "468bce9bd00df5e24435d9ded2e5741e98f205774dc95d12d383920052534ee9",
+  "report_hash": "2883390c624f88055311b7f10d113f360004e27550de61272e5318bbb37a85ec",
+  "report_path": "reviews/grill-design.md"
+}

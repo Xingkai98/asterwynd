@@ -37,7 +37,8 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - `web-ui`: FastAPI、WebSocket、Chat 和 Debug 页面。
 - `benchmark`: 任务 schema、runner、artifact、hidden tests 和结果汇总。
 - `change-documentation`: OpenSpec change 的 proposal、spec、design、diagnosis 和 tasks 文档流程。
-- `dev-workflow-state-machine`: 多阶段开发流程状态机，包含五阶段生命周期、handoff.json 状态文件、human review gate、角色 agent 路由和回退机制。
+- `dev-workflow-gate`: 开发流程门禁的承载边界——witnessloop `gate / check` 承载流程骨架，本仓瘦 checker 承载 6 条项目规则，Bash-only guard 提供本地写前拦截，`platform_gate.py` 保留 branch protection 配置即代码。
+- `platform-gate`: branch protection 的目标状态声明（`scripts/platform-gate.json`）、幂等 `--apply` 与漂移检测 `--verify`。
 
 ## Change 文档约束
 
@@ -50,13 +51,13 @@ OpenSpec 的 `spec-driven` schema 已包含 `proposal`、`specs`、`design` 和
 - `design.md` 记录目标、非目标、当前架构、方案、接口、配置、错误处理、测试策略、替代方案和风险。
 - `proposal.md` 不承载详细实现；spec delta 不承载问题定位过程；`tasks.md` 不替代设计。
 - `proposal.md` 必须包含 `## Change Type`，声明 `primary` 和 `secondary` 类型。
-- 项目文档规则按 `primary` 与 `secondary` 的类型并集校验；每个涉及类型的要求都必须满足。
+- 瘦 checker 只读取 `primary` 判断 docs 豁免；类型并集的章节要求已退役为人工评审，不再由本地脚本机械校验。
 - 新建 `tasks.md` 应参考 `openspec/templates/tasks.md`，保留通用验证项，并按影响面补充 benchmark、Web、TUI、browser 或外部集成 smoke。
-- change delta spec 路径 `openspec/changes/<change-id>/specs/<capability>/spec.md` 的 `<capability>` 必须映射到 `openspec/specs/<capability>/spec.md`；非 docs change 的 `tasks.md` 必须包含 current spec 同步任务。
+- change delta spec 的语法与引用完整性由 `openspec validate --all --strict` 负责；capability 映射与 current spec 同步任务不再由瘦 checker 校验。
 - 非平凡 change 开发前必须用 `grilling` 审视 `design.md`，逐项确认实现细节、依赖、风险、测试策略和文档影响；如果当前环境没有该 skill，必须按同等标准充分追问并记录最终方案。
 - change 实现 PR 应同时包含归档收尾：归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，并从 `docs/openspec-change-backlog.md` 移除；backlog 只记录未实现或因明确阻塞临时已完成待归档的 active change。
 
 当前 OpenSpec CLI 可通过 `openspec status --change <id>` 检查 schema
-artifact 完成状态。`diagnosis.md` 属于项目条件规则，由项目本地文档规则脚本检查。
+artifact 完成状态。`diagnosis.md` 属于人工评审约定，瘦 checker 不再机械检查。
 
-项目本地脚本只做机械校验：`Change Type` 合法、文件存在、必填章节存在、章节非空、没有模板占位符、条件验证项存在、backlog 不引用已归档或不存在的 change。设计内容是否合理不由脚本判断；开发前必须完成 `grilling` 或等价设计追问，并由人工审核 `design.md` 后确认通过。
+瘦项目规则 checker 只做六条机械校验：RIR、Impact Analysis、benchmark smoke 任务、tasks 与归档点完成度、backlog 一致性、building review 的 `## 闭环出口` PASS。change 契约、review manifest、grill stage 证据与受保护写入解释由 witnessloop `gate / check` 负责；设计内容是否合理不由脚本判断，开发前必须完成 `grilling` 或等价设计追问，并由人工审核 `design.md` 后确认通过。

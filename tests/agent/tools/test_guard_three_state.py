@@ -513,7 +513,7 @@ class TestInterpreterArgsAreNotConcealedCommands:
             "uv run python -m pytest tests/ -q",
             "uv run python -m pytest tests/agent -q",
             "python3 -m pytest tests/",
-            "uv run python scripts/check_openspec_artifacts.py",
+            "uv run python scripts/self_check.py",
         ],
     )
     def test_python_dash_m_is_not_concealment(self, command: str) -> None:

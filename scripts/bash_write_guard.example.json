@@ -1,0 +1,16 @@
+{
+  "_comment": "Copy this into .claude/settings.local.json (project-local, gitignored) or merge the hooks block into ~/.claude/settings.json. CLAUDE_PROJECT_DIR resolves to the current worktree, so the same user-level hook also works from building worktrees (which do not carry .claude/).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/scripts/bash_write_guard.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

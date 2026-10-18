@@ -15,8 +15,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          # Full history so protected-path checks can diff against the PR base
-          # (shallow checkouts silently skip the gate).
+          # Full history keeps worktree-based tests and history-sensitive
+          # checks reproducible on the runner.
           fetch-depth: 0
 
       - name: Set up Python
@@ -76,26 +76,19 @@ jobs:
       - name: Validate OpenSpec
         run: npx --yes @fission-ai/openspec@1.4.1 validate --all --strict
 
-      - name: Check OpenSpec artifacts
+      # Slim project-rule checker: RIR / Impact Analysis / benchmark smoke /
+      # tasks + archive-point completion / backlog consistency / building review
+      # exit PASS. witnessloop owns the change contract, stage manifests and
+      # protected-path events. The base sha keeps the archive-point diff scoped
+      # to this PR (a push builds against itself, so no new archive is inferred).
+      - name: Check project rules
         run: |
-          # Diff the PR branch against its base (or HEAD on a push) so
-          # protected-path changes cannot silently pass the event gate.
           if [ -n "$GITHUB_BASE_REF" ]; then
             BASE_REF="${{ github.event.pull_request.base.sha }}"
           else
             BASE_REF="$GITHUB_SHA"
           fi
           uv run python scripts/check_openspec_artifacts.py --base-ref "$BASE_REF" --require-base
-
-      - name: Check archived changes
-        run: |
-          # retire-manifest-check（issue #316）：review manifest 漂移检测已退役，
-          # --check-archived 现在只校验归档事件日志可投影。命令与 flag 保持不变，
-          # 第一步（带 base-ref）继续负责归档点完成度与 new-archive verdict 检查。
-          # --skip-protected-paths / --skip-backlog：第一步已带 base-ref 覆盖，这里
-          # 避免默认 base 解析（origin/master merge-base）打出无意义 INFO/WARNING 与重复检查。
-          uv run python scripts/check_openspec_artifacts.py \
-            --check-archived --skip-protected-paths --skip-backlog
 
   benchmark-gate:
     name: benchmark-gate

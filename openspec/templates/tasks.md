@@ -27,8 +27,8 @@
 - [ ] 4.1 运行相关单元/集成测试。
 - [ ] 4.2 运行全量测试。
 - [ ] 4.3 运行 OpenSpec strict validate。
-- [ ] 4.4 运行项目 OpenSpec artifact checker。
-- [ ] 4.5 确认 baseline CI 命令可本地通过：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、`uv run python scripts/check_openspec_artifacts.py`。
+- [ ] 4.4 运行瘦项目规则 checker（`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`）。
+- [ ] 4.5 确认 baseline CI 命令可本地通过：`uv run pytest -q`、`npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`、`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`。
 - [ ] 4.6 如果涉及 AgentLoop、工具协议、coding tools、workspace safety、benchmark runner 或其他 coding-agent 核心路径，跑通至少一个 benchmark smoke。
 - [ ] 4.7 如果涉及 Web，运行 Web session/server 测试；必要时运行浏览器 smoke。
 - [ ] 4.8 如果涉及 TUI、browser/computer use、外部服务或其他人工交互入口，运行对应 smoke。
