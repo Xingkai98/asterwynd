@@ -17,7 +17,7 @@
 
 - [x] 1.1 七条测试已就位：helper 单元、裸跑不追溯、新建归档仍红、显式 base 优先、受保护路径接线、落后分支不误红、空 `--base-ref` 不跳过检查。
 - [x] 1.2 记录修复前红/绿：T1（helper）/T2（裸跑不追溯）/T5（受保护路径接线）/T7（空 base 不跳过）红，T3/T4/T6 绿；运行 `uv run pytest -q tests/test_openspec_artifact_checker.py -k "resolve_base_ref or empty_base_ref or historical_archives or new_archive_missing_exit or explicit_base_ref_still_wins or behind_branch"`。
-- [x] 1.3 变异验证（实测）：① 把 `_resolve_base_ref` 改为恒返回 `"master"` → T1/T2/T4/T5 红（4 failed / 2 passed）；② 改为返回候选 ref 名（两点语义）→ T1/T5/T6 红（3 failed / 3 passed）；恢复后 173 passed。补丁位置：`scripts/check_openspec_artifacts.py:1538` 起（非显式分支首行）；命令同上。
+- [x] 1.3 变异验证（实测）：① 把 `_resolve_base_ref` 改为恒返回 `"master"` → T1/T2/T4/T5 红（4 failed / 3 passed）；② 改为返回候选 ref 名（两点语义）→ T1/T5/T6 红（3 failed / 4 passed）；恢复后 173 passed。补丁位置：`scripts/check_openspec_artifacts.py:1540` 起（非显式分支首行）；命令同上。
 
 ## 2. 实现（checker）
 
@@ -46,8 +46,8 @@
 
 ## 5. 实现后独立审阅闭环
 
-- [ ] 5.1 独立零记忆审阅，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS。
-- [ ] 5.2 全部 medium+ 修复并补回归测试；low/nit 登记并写理由。
+- [x] 5.1 独立零记忆审阅，产出 `reviews/building-review.md`（含 `## 闭环出口`），收敛到 PASS。
+- [x] 5.2 全部 medium+ 修复并补回归测试；low/nit 登记并写理由。
 
 ## 6. 收尾（合入后）
 
