@@ -68,6 +68,8 @@ def _root(tmp_path: Path, *, policy: dict | None = None) -> Path:
         "curl -o agent/y https://example.com",
         "wget -O agent/y https://example.com",
         "python -c \"open('agent/y','w').write('x')\"",
+        "python -c \"import shutil; shutil.rmtree('agent')\"",
+        "python -c \"open('scripts','w')\"",
         "cd agent && echo x > y",
         "cd scripts; touch new",
         "bash -c 'echo x > agent/y'",
@@ -80,6 +82,18 @@ def _root(tmp_path: Path, *, policy: dict | None = None) -> Path:
         "git apply patch.diff",
         "git -C . restore agent/y",
         "git -C . checkout -- agent/y",
+        "git --git-dir=.git restore agent/y",
+        "git --work-tree=. checkout -- agent/y",
+        "timeout 5 bash -c 'touch agent/y'",
+        "nohup sh -c \"touch agent/y\"",
+        "bash -lc 'touch agent/y'",
+        "bash -ec 'touch agent/y'",
+        "sudo -u root touch agent/y",
+        "nice -n 10 touch agent/y",
+        "env -i touch agent/y",
+        "curl -oagent/y https://example.com",
+        "wget -Oagent/y https://example.com",
+        "cmd >& agent/y",
         "echo x > openspec/specs/a/spec.md",
         "tee docs/known-debt.md",
         "echo x > .witnessloop/policy.json",
@@ -122,6 +136,7 @@ def test_blocks_absolute_path_inside_repo(tmp_path):
         "echo x > scriptsfoo/y",
         "echo x > agent2/y",
         "python -c \"print('agent/y')\"",
+        "python -c \"print('agent')\"",
         "uv run pytest -q",
         "python scripts/self_check.py",
     ],
@@ -152,6 +167,11 @@ def test_malformed_policy_falls_back_to_embedded_defaults(tmp_path):
     root = tmp_path / "repo"
     (root / ".witnessloop").mkdir(parents=True)
     (root / ".witnessloop" / "policy.json").write_text("{not json", encoding="utf-8")
+    assert guard.evaluate_command("echo x > agent/y", root)
+
+
+def test_non_object_policy_falls_back_to_embedded_defaults(tmp_path):
+    root = _root(tmp_path, policy=[])
     assert guard.evaluate_command("echo x > agent/y", root)
 
 

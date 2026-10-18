@@ -609,6 +609,55 @@ def test_archive_gate_no_spec_delta_exempt_from_building_review(tmp_path):
     assert not any("building-review" in e for e in errors), errors
 
 
+def test_archive_rir_content_threshold_applies_when_tasks_incomplete(tmp_path):
+    """归档侧的 RIR 内容门槛不得因残留一条未勾任务而降级（旧实现的反绕过用例）。"""
+
+    body = """## Reference Implementation Research
+
+- research_tier: full
+- status: disabled
+- reason: 调研在途。
+- research questions:
+  - Q.
+- findings:
+  - Done.
+- design impact:
+  - Impact.
+"""
+    change = _archive_change(
+        tmp_path,
+        proposal_text=proposal("feature", rir=False) + "\n" + body,
+        tasks="## 1. Work\n\n- [x] done.\n- [ ] pending.\n",
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("disabled" in e for e in errors), errors
+
+
+def test_archive_grill_evidence_required_even_when_tasks_incomplete(tmp_path):
+    """归档侧 grill 证据不得因残留一条未勾任务而静默跳过。"""
+
+    change = _archive_change(
+        tmp_path,
+        tasks="## 1. Work\n\n- [x] done.\n- [ ] pending.\n",
+        grill_design=None,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("grill-design.md missing" in e for e in errors), errors
+
+
+def test_archive_unconfirmed_open_question_when_tasks_incomplete(tmp_path):
+    grill = VALID_GRILL.replace(
+        "## Open Questions\n\n无\n", "## Open Questions\n\n- **Q1**: 未决项。\n"
+    )
+    change = _archive_change(
+        tmp_path,
+        tasks="## 1. Work\n\n- [x] done.\n- [ ] pending.\n",
+        grill_design=grill,
+    )
+    errors = mod._check_archived_completion_gate(change)
+    assert any("未确认的 Open Question" in e for e in errors), errors
+
+
 def test_archive_gate_flags_missing_impact_section_only_in_active_not_archive(tmp_path):
     """Impact 只按退役前矩阵在 active change 上评估；归档门不新增该检查。"""
     change = _archive_change(

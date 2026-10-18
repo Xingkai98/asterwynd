@@ -38,7 +38,7 @@ structured decision record at `openspec/changes/<id>/reviews/grill-design.md`,
 and SHALL be mechanically enforced by witnessloop: its plugin `guard` blocks
 code writes for a change whose grilling evidence is missing, and `gate / check`
 verifies the `grill` / `grill-adversarial` / `building` stage manifests and
-report evidence. The slim project-rule checker SHALL NOT check grill evidence.
+report evidence. The slim project-rule checker SHALL NOT duplicate active-stage grill evidence checks; it SHALL check the archive-point grill evidence required by `dev-workflow-gate` rule 4.
 
 Following the grilling pass and **before** the stop-turn user confirmation, the
 change SHALL run a **design-phase review loop**: an independent zero-memory

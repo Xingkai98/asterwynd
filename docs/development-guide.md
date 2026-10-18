@@ -416,7 +416,7 @@ command -v witnessloop && witnessloop --help | grep -q guard || echo "⚠️ PAT
 `openspec/changes/archive/2026-10-13-witnessloop-adoption/reviews/acceptance-stage-a.md`）：
 两个 hook **都执行**、**并行**、**任一 `exit 2` 即拦**（并集），被拦时只出现其中一个阻断
 hook 的 stderr。`--permission-mode bypassPermissions` **不能**绕过 PreToolUse hook。
-本 change 的 4.8 会按同一方法再记录一次当前两 hook 的求值归属。
+4.8 已按同一方法记录当前两 hook 的求值归属（见下）。
 
 **命名空间**：plugin 的 `plugin.json` 里 `"name": "witnessloop"` ⇒ 命令是
 `witnessloop:grill` / `witnessloop:review-loop`，与仓内 `.claude/commands/{grill,review-loop}.md`
@@ -447,7 +447,17 @@ payload 触发：
 | Bash `echo x > agent/y` | exit 0（无 `file_path`） | exit 2（拦） | 拦 |
 | Bash `ls agent` | exit 0 | exit 0 | 放行 |
 
-两个 hook 都执行；被拦时只有阻断 hook 的 stderr 出现。Claude Code 的并行 / 并集 / 提示归属语义
+两个 hook 都执行；被拦时只有阻断 hook 的 stderr 出现。
+
+**手动验收（2026-10-18）**：
+
+| 命令 | 结果 |
+|---|---|
+| `echo x > agent/y` | exit 2，命中 `agent/y` |
+| `cp x agent/y` | exit 2，命中 `agent/y` |
+| `tee docs/known-debt.md` | exit 2，命中 `docs/known-debt.md` |
+| `sed -i 's/a/b/' agent/loop.py` | exit 2，命中 `agent/loop.py` |
+| `ls agent` / `grep -n foo agent/loop.py` / `cat docs/known-debt.md` / `git status` | exit 0 |Claude Code 的并行 / 并集 / 提示归属语义
 沿用阶段 A（2026-10-13）的真实 CC 2.1.231 实测记录。该实测不替代 CI：`gate / check` 仍是最终防线。
 
 ### Claude Code plugin：安装 / 升级 / 卸载

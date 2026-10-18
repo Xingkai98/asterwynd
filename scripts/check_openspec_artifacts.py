@@ -149,8 +149,7 @@ def _extract_h2_sections(text: str) -> dict[str, str]:
     matches = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
     sections: dict[str, str] = {}
     for index, match in enumerate(matches):
-        # Skip ## inside fenced code blocks (flow-policy-source P0 正则修复，
-        # 与 workflow_guard._h2_section 同步).
+        # Skip ## inside fenced code blocks.
         if _inside_fence(text, match.start()):
             continue
         title = match.group(1).strip()
@@ -900,15 +899,6 @@ def _is_unconfirmed_answer(answer: str) -> bool:
             if tok in a:
                 return True
     return False
-PROTECTED_ARTIFACT_EVENT = "protected_artifact_explained"
-CURRENT_SPEC_SYNC_EVENT = "current_spec_synced"
-BACKLOG_UPDATED_EVENT = "backlog_updated"
-CHANGE_ARCHIVED_EVENT = "change_archived"
-
-# 受保护路径规则从 scripts/flow-policy.json 加载（flow-policy-source P0 单一策略源），
-# 替换原硬编码 PROTECTED_PATH_RULES。取 governance == event_explained 的条目。
-_POLICY_REL_PATH = Path("scripts") / "flow-policy.json"
-
 def _normalize_question_index(raw: str) -> str | None:
     """Normalize an Open Questions / User Confirmation index to ``Q<n>``.
 
@@ -967,8 +957,7 @@ def _extract_user_confirmation_indexes(text: str) -> list[str]:
     indexes: list[str] = []
     for line in section.splitlines():
         stripped = line.strip()
-        # 容忍 `**Q8**（分支命名）:` 后缀（flow-policy-source P0 正则修复，
-        # 与 workflow_guard._extract_user_confirmation_indexes 同步).
+        # 容忍 `**Q8**（分支命名）:` 后缀。
         m = re.match(r"^-\s+\*\*Q(\d+)\*\*(?:[^：:]*)\s*[:：]", stripped)
         if not m:
             continue

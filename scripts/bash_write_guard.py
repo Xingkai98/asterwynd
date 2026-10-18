@@ -45,7 +45,7 @@ EMBEDDED_PROTECTED_PATHS = [
 ]
 
 _POLICY_REL = Path(".witnessloop") / "policy.json"
-_REDIRECT_OPS = {">", ">>", "&>", ">|"}
+_REDIRECT_OPS = {">", ">>", "&>", ">&", ">|"}
 _HERE_OPS = {"<<", "<<<"}
 _PREFIXES = {"sudo", "doas", "env", "timeout", "nohup", "command", "builtin", "nice"}
 _NESTED_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
@@ -53,7 +53,7 @@ _MAX_DEPTH = 6
 
 _WRITE_CALL_RE = re.compile(
     r"\b(?:open|write_text|write_bytes|write|dump|save|remove|unlink|mkdir|"
-    r"rmdir|rename|replace|shutil\.|os\.system|subprocess\.)\s*\("
+    r"rmdir|rename|replace|shutil\.\w+|os\.system|subprocess\.\w+)\s*\("
 )
 _HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)\s*(?:-)?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
@@ -72,6 +72,13 @@ def _load_policy(root: Path) -> tuple[list[str], list[str]]:
     except (OSError, ValueError) as exc:
         print(
             f"Bash write guard: cannot read {path} ({exc}); using embedded defaults.",
+            file=sys.stderr,
+        )
+        return list(EMBEDDED_REQUIRE_CHANGE_FOR), list(EMBEDDED_PROTECTED_PATHS)
+
+    if not isinstance(data, dict):
+        print(
+            f"Bash write guard: {path} must be a JSON object; using embedded defaults.",
             file=sys.stderr,
         )
         return list(EMBEDDED_REQUIRE_CHANGE_FOR), list(EMBEDDED_PROTECTED_PATHS)
@@ -322,7 +329,7 @@ def _tokenize(segment: str) -> list[tuple[str, str]]:
             i += 1
             continue
         matched = None
-        for op in ("<<<", "&&", "||", ">>", "<<", "&>", ">|", ">", "<", "|", ";"):
+        for op in ("<<<", "&&", "||", ">>", "<<", "&>", ">&", ">|", ">", "<", "|", ";"):
             if segment.startswith(op, i):
                 matched = op
                 break
@@ -420,6 +427,8 @@ def _output_arg(args: list[str], flags: set[str]) -> list[str]:
         for flag in flags:
             if flag.startswith("--") and arg.startswith(flag + "="):
                 return [arg.split("=", 1)[1]]
+            if not flag.startswith("--") and arg.startswith(flag) and len(arg) > len(flag):
+                return [arg[len(flag):]]
     return []
 
 
@@ -464,22 +473,79 @@ def _python_code_targets(args: list[str]) -> list[str]:
     if not _WRITE_CALL_RE.search(code):
         return []
     return re.findall(
-        r"(?:agent|scripts|web|openspec|docs)/[A-Za-z0-9_.@%+\-/]*",
+        r"(?<![A-Za-z0-9_])(?:(?:agent|scripts|web)(?:/[A-Za-z0-9_.@%+\-/]*)?"
+        r"|(?:openspec|docs)/[A-Za-z0-9_.@%+\-/]*)(?![A-Za-z0-9_])",
         code,
     )
+
+
+_PREFIX_VALUE_FLAGS = {
+    "sudo": {
+        "-u", "--user", "-g", "--group", "-p", "--prompt", "-h", "--host",
+        "-r", "--role", "-t", "--type", "-U", "--other-user", "-C",
+        "--close-from", "-D", "--chdir", "-R", "--chroot", "-T",
+        "--command-timeout",
+    },
+    "doas": {"-u", "-C"},
+    "nice": {"-n", "--adjustment"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+}
+
+
+def _unwrap_prefixes(words: list[str]) -> list[str]:
+    words = list(words)
+    while words:
+        while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+            words.pop(0)
+        if not words:
+            break
+        prefix = Path(words[0]).name
+        if prefix not in _PREFIXES:
+            break
+        words.pop(0)
+        if prefix == "timeout":
+            while words and words[0].startswith("-"):
+                option = words.pop(0)
+                if option in _PREFIX_VALUE_FLAGS["timeout"] and words:
+                    words.pop(0)
+            if words:
+                words.pop(0)  # duration
+            continue
+        if prefix == "nice":
+            while words and words[0].startswith("-"):
+                option = words.pop(0)
+                if option in _PREFIX_VALUE_FLAGS["nice"] and words:
+                    words.pop(0)
+            continue
+        if prefix in _PREFIX_VALUE_FLAGS:
+            while words and words[0].startswith("-"):
+                option = words.pop(0)
+                if option in _PREFIX_VALUE_FLAGS[prefix] and words:
+                    words.pop(0)
+            continue
+        while words and words[0].startswith("-"):
+            words.pop(0)
+    return words
+
+
+def _nested_shell_code(words: list[str]) -> str | None:
+    if not words or Path(words[0]).name not in _NESTED_SHELLS:
+        return None
+    for index, arg in enumerate(words[1:], start=1):
+        if arg.startswith("-") and "c" in arg[1:]:
+            tail = arg[arg.index("c") + 1 :]
+            if tail:
+                return tail
+            if index + 1 < len(words):
+                return words[index + 1]
+    return None
 
 
 def _command_targets(words: list[str]) -> tuple[list[str], str | None]:
     if not words:
         return [], None
-    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-        words.pop(0)
-    while words and words[0] in _PREFIXES:
-        prefix = words.pop(0)
-        if prefix == "timeout" and words and re.match(r"^\d+[smhd]?$", words[0]):
-            words.pop(0)
-        while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
-            words.pop(0)
+    words = _unwrap_prefixes(words)
     if not words:
         return [], None
 
@@ -516,8 +582,17 @@ def _command_targets(words: list[str]) -> tuple[list[str], str | None]:
     if command in {"python", "python3"}:
         return _python_code_targets(args), None
     if command == "git":
-        while args and args[0] in {"-C", "--git-dir", "--work-tree", "-c"}:
-            args = args[2:] if len(args) > 1 else []
+        while args:
+            head = args[0]
+            if head in {"-C", "--git-dir", "--work-tree", "-c"}:
+                args = args[2:] if len(args) > 1 else []
+                continue
+            if head.startswith(("--git-dir=", "--work-tree=")) or (
+                head.startswith("-C") and len(head) > 2
+            ):
+                args = args[1:]
+                continue
+            break
         return _git_targets(args)
     return [], None
 
@@ -568,10 +643,10 @@ def _analyze(
                     cwd = Path(os.path.normpath(str(cwd / target)))
             continue
 
-        if words and Path(words[0]).name in _NESTED_SHELLS and "-c" in words:
-            pos = words.index("-c")
-            if pos + 1 < len(words):
-                reasons.extend(_analyze(words[pos + 1], root, cwd, depth + 1, patterns))
+        words = _unwrap_prefixes(words)
+        nested_code = _nested_shell_code(words)
+        if nested_code is not None:
+            reasons.extend(_analyze(nested_code, root, cwd, depth + 1, patterns))
             continue
         if words and Path(words[0]).name == "eval":
             reasons.extend(_analyze(" ".join(words[1:]), root, cwd, depth + 1, patterns))
