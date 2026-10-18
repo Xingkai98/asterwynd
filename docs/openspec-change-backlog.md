@@ -42,7 +42,6 @@
 
 - `add-lsp-code-intelligence`：已合入并归档。
 - `add-mcp-tool-adapter`：已合入并归档。
-- `add-minimal-tui-runtime-view`：建议在 skills、工具权限模型、planning state、streaming、runtime mode switching、工具结果 display policy 和已完成的 slash command framework 稳定后做，复用统一运行事件和 mode transition。
 
 ### 第六批：包结构和分发基础，已完成
 
@@ -114,8 +113,6 @@
 - **阶段 B**：用真实小需求在新流程上跑一遍验证——**载体是 `guard-write-allowlist`**（issue [#272](https://github.com/Xingkai98/asterwynd/issues/272)），它的 tasks 第 6 节逐条承接了归档 change 的 B.1–B.8。选它当「真实小需求」的理由：它**触达 `require_change_for`**（改 `agent/**` / `web/**` ⇒ `code_hits` 非空 ⇒ `building` 与 `grill-adversarial` 两条 stage 判定真的会触发，与阶段 A 自己 `code_hits` 为空形成对照），且**产生 spec delta 与受保护写入**。**阶段 B 已完成**：观测报告见该 change 根目录的 `stage-b-observations.md`（三态探针 2→4→`通过 ✓`；已知红按「工具不兼容 / 配置问题」分类；`值不值得真打开` 的结论是倾向打开但须先修 `events_file` 只扫一级这条工具缺口）。
 - **阶段 C（已翻开关 2026-10-17）**：`stage-c-required-switch`（issue [#305](https://github.com/Xingkai98/asterwynd/issues/305)）——**翻开关**：`master` 的 required 由 `["validate","benchmark-gate"]` 改为**唯一**的 `gate / check`；本仓自建的 `validate` / `benchmark-gate` / `windows-platform` **继续照跑、只是不再拦合并**（降级不是关闭）。**行为本体已由 PR [#311](https://github.com/Xingkai98/asterwynd/pull/311)（merge `4b5cc7d1`）先行落地并 `--apply`**（`platform_gate.py --verify` 全一致），本 change 承载**记录与规格对账**（把 `openspec/specs/platform-gate` 与 `dev-workflow-gate` 同步到实况）。翻开关的**代价**已实测并记录：改动 `agent/**`/`scripts/**`/`web/**` 的 PR 现在必须挂 change 目录才可能绿（PR #311 自己因此判红 2 项，两条都属实、未放宽判据）。
 - **后续批次**：逐项下掉与 witnessloop 重合的旧件（原 C.2，**必须等 witnessloop 侧证据齐**，不是勾完 required 就下）。**第一刀已完成并归档**：`retire-manifest-check`（issue [#316](https://github.com/Xingkai98/asterwynd/issues/316)）下掉与 witnessloop 重复的本仓 review manifest 校验；**第二刀已完成并归档**：`retire-manifest-module`（issue #316）删除 legacy 模块、CLI 写通道、受保护规则与忽略项；其余项（`handoff.json` 清理、N.4 schema 统一、归档与 backlog 口径定案）仍未立项。
-- **已知未收尾**：active change `add-minimal-tui-runtime-view` 无 `reviews/` ⇒ `gate / check` 对它的报错**现在会拦合入**（阶段 C 之前只是日志红）。解除阻塞的前提是收尾它，**不是**为它放宽判据。
-
 依赖关系：阶段 A 与任何改动 `scripts/`、`agent/workflow/`、`.github/workflows/ci.yml` 的 change **互斥**（阶段 A 明确一行不改这些文件），因此本批应与它们错开合入。
 
 ## 未实现队列
@@ -141,24 +138,6 @@
 **串行依赖**：#275 是 #276 的**硬前置**——已由 #275 兑现（见下），#276 的定值依据现已就绪。
 
 - `workflow-limit-raise`（issue #276）：**前置已就绪，待立项**。**#275 已落地并给出实测输入**：本 change 的 N=3 验收（`openspec/changes/archive/2026-10-01-workflow-limit-visibility/reviews/acceptance-evidence.md`）显示模型实际画的图**余量极大**——三次 `max_nodes` headroom 分别为 **192 / 191 / 191**（`limit=200`），`expanded_nodes` 5–9；即默认 200 远未逼近（用掉 2.5%–4.5%）。**这直接支持「暂不需要为常规图提升 max_nodes」**，与 #276 立项时的假设（「模型会画更大的图所以该提上限」）相反——**实测不支持「都该提」**。**唯一仍有前瞻风险的是 `max_nodes` 的展开系数**（声明 ≠ 运行时；Run 3 实测 `declared=5 → expanded_nodes=9`，foreach 展开 1.8×），若未来出现超大 foreach 图才可能逼近。**约束**：`recursion_limit` 默认 100 与 `max_routes` 默认 1 被 spec 明文钉死（`multi-agent-collaboration` spec 第 125 / 411 行），改它们必须先走本 change。**建议**:按实测将 #276 降级为「仅在实测出现逼近闸门的图时再立项」，或直接以本证据评估后关闭。research_tier 待立项时判。
-
-### 3. `add-minimal-tui-runtime-view`
-
-状态：未实现。
-
-批次：第五批，runtime mode switching 和 slash command framework 已合入基础能力；等待 skills、工具权限模型、工具结果 display policy 等其余依赖稳定后开始。
-
-建议顺序原因：
-
-- TUI 应复用已有 AgentLoop 事件、planning state、streaming、工具结果 display policy、slash command registry、skill runtime、tool permission metadata 和 mode transition，而不是定义另一套运行协议。
-- 放在这些基础能力之后，可以一次展示稳定的运行状态、工具调用、planning state、streaming 输出、mode 状态和工具权限信息。
-
-主要交付：
-
-- TUI 命令入口。
-- AgentLoop 事件流消费。
-- 对话、工具调用、planning state、最终回复、diff/test 摘要和 trace 路径展示。
-- 非交互环境 graceful failure 或降级。
 
 ### 第十五批：workflow 四维预算默认无上限（C4 follow-up）
 
