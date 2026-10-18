@@ -41,8 +41,8 @@
 - [x] 4.4 新建归档缺 `## 闭环出口` 的守卫用例实测为红。
 - [x] 4.5 OpenSpec strict validate 通过（本 change 活跃时为 30；归档前 29；以实跑为准）。
 - [x] 4.6 全量 `uv run pytest -q`：**2 failed / 4530 passed / 9 skipped**（550.80s）；2 条失败均为既有 `TestFindScopeRoot` 本机 `/tmp` 环境失败，与基线同因，无新增失败类型（基线 2 failed / 4523 passed；+7 = 新增测试）。
-- [ ] 4.7 归档后 `/home/happy/wl170/bin/witnessloop check --root <repo> --base origin/master --head HEAD` → `check：通过 ✓`（三份 manifest 落盘后复验）。
-- [ ] 4.8 归档 move 前写 `change_archived` 事件（`artifact-path=openspec/changes/archive/2026-10-18-check-scope-fix`），归档后重跑裸跑与 `--base-ref origin/master --require-base` 均为 EXIT=0。
+- [x] 4.7 归档后 `/home/happy/wl170/bin/witnessloop check --root <repo> --base origin/master --head HEAD` → `check：通过 ✓`（三份 manifest 落盘后复验；实测 1 个 change 目录、0 findings）。
+- [x] 4.8 归档 move 前写 `change_archived` 事件（`artifact-path=openspec/changes/archive/2026-10-18-check-scope-fix`），归档后重跑裸跑与 `--base-ref origin/master --require-base` 均为 EXIT=0（实测）。
 
 ## 5. 实现后独立审阅闭环
 

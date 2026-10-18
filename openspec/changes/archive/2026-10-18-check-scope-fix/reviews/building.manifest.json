@@ -1,0 +1,14 @@
+{
+  "schema": "witnessloop/review-manifest@v1",
+  "change_id": "2026-10-18-check-scope-fix",
+  "stage": "building",
+  "reviewer_run_id": "f64ce274-5765-4824-8dc2-af2684f91045",
+  "author_run_id": "main-session-check-scope-fix",
+  "base_sha": "b0469cba7b3248e6c9d483ed9dc5a6f6de5f8d45",
+  "head_sha": "0e9f574414ca2e829f83955955aab9d378b14ee9",
+  "tasks_hash": "f23952d285cec94ea9a468b83ee2bb14afce6c76a6f8e3cdf45447ca6429c686",
+  "spec_hash": "d4683a79678c4d5ae5a14f250dd6f40813b4894af3bb3eeeb82d895b53aeb010",
+  "diff_hash": "440788e8c6aab181732abd85668e281fdc1fb577779a105f892767614023701a",
+  "report_hash": "b7f129a867d2720a59426b628ef7d97902a9bc85617f1b5bc867df5b681acc18",
+  "report_path": "reviews/building-review.md"
+}
