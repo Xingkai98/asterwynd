@@ -1522,6 +1522,48 @@ def _repo_root_for_changes_root(changes_root: Path) -> Path:
     return Path.cwd()
 
 
+def _resolve_base_ref(repo_root: Path, explicit: str | None) -> str:
+    """Resolve the diff base used by the archive-point and protected-path checks.
+
+    A non-empty explicit ``--base-ref`` always wins and keeps the caller's
+    two-dot diff semantics. An empty/whitespace value is treated as omitted:
+    passing ``--base-ref ""`` (e.g. an unset shell variable) must not silently
+    skip both diff checks. When omitted, prefer the merge-base of
+    ``HEAD`` and ``origin/master`` — the branch PRs are opened against — then
+    that of ``HEAD`` and ``master``. The merge-base (three-dot semantics) keeps
+    upstream commits out of the diff when the branch is behind, so a stale local
+    ``master`` cannot make historical archives look newly archived and upstream
+    protected-path edits are not reported as this branch's changes. If neither
+    candidate resolves, return ``"master"`` so the existing ``--require-base``
+    fail-closed / warning handling still applies.
+    """
+    if explicit is not None and explicit.strip():
+        return explicit
+    for candidate in ("origin/master", "master"):
+        probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", candidate],
+            cwd=repo_root,
+            capture_output=True,
+            text=True, errors="replace",
+        )
+        if probe.returncode != 0:
+            continue
+        merge_base = subprocess.run(
+            ["git", "merge-base", "HEAD", candidate],
+            cwd=repo_root,
+            capture_output=True,
+            text=True, errors="replace",
+        )
+        resolved = merge_base.stdout.strip()
+        base = resolved if merge_base.returncode == 0 and resolved else candidate
+        print(
+            f"INFO: using implicit base ref '{candidate}' -> {base}",
+            file=sys.stderr,
+        )
+        return base
+    return "master"
+
+
 def _changed_paths_since_base(
     repo_root: Path, base_ref: str, *, require_base: bool = False
 ) -> tuple[set[str], str | None]:
@@ -1773,10 +1815,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
     parser.add_argument(
         "--base-ref",
-        default="master",
-        help="Git ref to diff against (default: master). Locally use "
-        "origin/master when the local master is stale, otherwise historical "
-        "archives are misread as newly archived in this PR",
+        default=None,
+        help="Git ref to diff against (two-dot, explicit values are used as-is). "
+        "Omitted: use the merge-base of HEAD with origin/master when it "
+        "resolves, then master, so a stale local master or a behind branch "
+        "does not misread historical archives or upstream protected-path "
+        "changes as part of this PR. Empty/whitespace values are treated as omitted",
     )
     parser.add_argument(
         "--skip-backlog",
@@ -1841,20 +1885,30 @@ def main(argv: list[str] | None = None) -> int:
     #   - --check-archived：只做归档事件日志可投影校验，不进本门（守爆炸半径；
     #     review manifest 漂移检测已随 retire-manifest-check 退役）
     #   - --change <id>：单 change 查询，不应额外评估本分支上的归档 id
-    if not args.check_archived and not args.change:
+    repo_root = _repo_root_for_changes_root(changes_root)
+    archive_gate_enabled = not args.check_archived and not args.change
+    protected_paths_enabled = not args.skip_protected_paths
+    # 只在有消费者时解析，避免 --check-archived --skip-protected-paths 这类
+    # 「两个 diff 消费者都关掉」的 CI 调用打出无意义的隐式 base INFO。
+    base_ref = (
+        _resolve_base_ref(repo_root, args.base_ref)
+        if archive_gate_enabled or protected_paths_enabled
+        else args.base_ref
+    )
+
+    if archive_gate_enabled:
         errors.extend(
             _check_new_archived_completion_gates(
-                _repo_root_for_changes_root(changes_root),
+                repo_root,
                 changes_root,
-                args.base_ref,
+                base_ref,
                 require_base=args.require_base,
             )
         )
 
-    if not args.skip_protected_paths:
-        repo_root = _repo_root_for_changes_root(changes_root)
+    if protected_paths_enabled:
         changed_paths, base_warning = _changed_paths_since_base(
-            repo_root, args.base_ref, require_base=args.require_base
+            repo_root, base_ref, require_base=args.require_base
         )
         if base_warning is not None:
             if args.require_base:

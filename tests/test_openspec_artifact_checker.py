@@ -1940,8 +1940,8 @@ def _yaml_step_containing(text: str, needle: str) -> str:
 
 def test_ci_validate_job_runs_check_archived():
     """D4：CI 的 validate job 必须运行 --check-archived 且参数钉死
-    （--skip-protected-paths / --skip-backlog，避免默认 --base-ref master 在 CI
-    上解析失败打出无意义 WARNING 与重复检查）。防该步骤被无声移除或参数退化。
+    （--skip-protected-paths / --skip-backlog，避免默认 base 解析在 CI 上打出
+    无意义 INFO/WARNING 与重复检查）。防该步骤被无声移除或参数退化。
 
     断言的 flag 必须出现在**命令行**（注释已剥离），且三条同属一个 step。"""
     ci = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
@@ -2709,3 +2709,258 @@ def test_backlog_has_no_duplicate_section_headings():
         if not stripped.startswith("### "):
             continue
         assert stripped.count("### ") == 1, f"backlog 标题重复拼接: {stripped!r}"
+
+
+# ── issue #319: 默认 base 解析（origin/master merge-base）──────────────
+
+
+def _write_issue_319_archive(
+    root: Path, dir_name: str, *, with_exit: bool
+) -> Path:
+    """归档 change：完整证据，唯一差异是 building review 是否含闭环出口。"""
+    change = root / "openspec" / "changes" / "archive" / dir_name
+    write_change(change, proposal_for("feature"), design=VALID_DESIGN)
+    write_tasks(change, ALL_TASKS_CHECKED)
+    write_spec_delta(change, "web-ui")
+    reviews = change / "reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "grill-design.md").write_text(GRILL_EVIDENCE_OK, encoding="utf-8")
+    (reviews / "grill-adversarial.md").write_text(
+        "## Verdict\n\n**PASS**\n", encoding="utf-8"
+    )
+    body = "## 闭环出口\n\nPASS\n" if with_exit else "# Review\n\n没有出口小节。\n"
+    (reviews / "building-review.md").write_text(body, encoding="utf-8")
+    return change
+
+
+def _stale_master_repo_with_history(tmp_path: Path) -> tuple[str, str]:
+    """本地 master 陈旧、origin/master = HEAD；历史归档位于两者之间。
+
+    返回 (stale_master_sha, origin_master_sha)。仓库必须满足回归测试的前置状态，
+    否则「修复前也绿」会伪装成回归。
+    """
+    _init_git_repo(tmp_path)
+    _git_out(tmp_path, "branch", "-M", "master")
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    stale = _git_commit(tmp_path, "stale master point")
+    _git_out(tmp_path, "checkout", "-q", "-b", "pr-branch")
+    _write_issue_319_archive(tmp_path, "2026-01-01-old-change", with_exit=False)
+    origin = _git_commit(tmp_path, "historical archive")
+    _git_out(tmp_path, "update-ref", "refs/remotes/origin/master", origin)
+    return stale, origin
+
+
+def _assert_issue_319_repo_preconditions(
+    tmp_path: Path, stale: str, origin: str
+) -> None:
+    import scripts.check_openspec_artifacts as mod
+
+    assert stale != origin
+    assert _git_out(tmp_path, "rev-parse", "master").strip() == stale
+    assert _git_out(tmp_path, "rev-parse", "origin/master").strip() == origin
+    assert (
+        int(_git_out(tmp_path, "rev-list", "--count", "master..origin/master").strip())
+        >= 1
+    )
+    assert _git_out(tmp_path, "rev-parse", "HEAD").strip() == origin
+    assert "2026-01-01-old-change" in mod._new_archive_dirs_since_base(
+        tmp_path, "master"
+    )[0]
+    assert mod._new_archive_dirs_since_base(tmp_path, "origin/master")[0] == []
+
+
+def test_resolve_base_ref_prefers_origin_master_and_honors_explicit(tmp_path):
+    """helper：显式优先；隐式用 origin/master 的 merge-base；回退 master。"""
+    import scripts.check_openspec_artifacts as mod
+
+    _init_git_repo(tmp_path)
+    _git_out(tmp_path, "branch", "-M", "master")
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    _git_commit(tmp_path, "base")
+    _git_out(tmp_path, "checkout", "-q", "-b", "pr-branch")
+    (tmp_path / "README.md").write_text("branch\n", encoding="utf-8")
+    head = _git_commit(tmp_path, "branch commit")
+    _git_out(tmp_path, "update-ref", "refs/remotes/origin/master", head)
+
+    expected = _git_out(tmp_path, "merge-base", "HEAD", "origin/master").strip()
+    assert mod._resolve_base_ref(tmp_path, None) == expected
+    assert mod._resolve_base_ref(tmp_path, "master") == "master"
+    assert mod._resolve_base_ref(tmp_path, "") == expected  # 空值视为未提供
+    assert mod._resolve_base_ref(tmp_path, "   ") == expected
+
+    # 没有 origin/master 时回退到与 master 的 merge-base
+    _git_out(tmp_path, "update-ref", "-d", "refs/remotes/origin/master")
+    expected_master = _git_out(tmp_path, "merge-base", "HEAD", "master").strip()
+    assert mod._resolve_base_ref(tmp_path, None) == expected_master
+
+    # 两个 ref 都不可解析时交给下游 warning 的 "master"
+    _git_out(tmp_path, "update-ref", "-d", "refs/heads/master")
+    assert mod._resolve_base_ref(tmp_path, None) == "master"
+
+
+def test_bare_check_does_not_trace_historical_archives(tmp_path):
+    """回归本体：本地 master 陈旧时，裸跑不得把历史归档当成本 PR 新归档。"""
+    stale, origin = _stale_master_repo_with_history(tmp_path)
+    _assert_issue_319_repo_preconditions(tmp_path, stale, origin)
+
+    changes_root = tmp_path / "openspec" / "changes"
+    exit_code = main(
+        _main_args(
+            changes_root,
+            tmp_path,
+            "--skip-protected-paths",
+            "--skip-backlog",
+        )
+    )
+    assert exit_code == 0
+
+
+def test_bare_check_still_flags_new_archive_missing_exit(tmp_path, capsys):
+    """防退化守卫：本 PR 新建的归档缺闭环出口，裸跑仍必须红。"""
+    import scripts.check_openspec_artifacts as mod
+
+    stale, origin = _stale_master_repo_with_history(tmp_path)
+    _assert_issue_319_repo_preconditions(tmp_path, stale, origin)
+
+    _write_issue_319_archive(tmp_path, "2026-10-18-new-change", with_exit=False)
+    _git_commit(tmp_path, "new archive")
+    assert "2026-10-18-new-change" in mod._new_archive_dirs_since_base(
+        tmp_path, "origin/master"
+    )[0]
+
+    changes_root = tmp_path / "openspec" / "changes"
+    exit_code = main(
+        _main_args(
+            changes_root,
+            tmp_path,
+            "--skip-protected-paths",
+            "--skip-backlog",
+        )
+    )
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "2026-10-18-new-change" in err
+    assert "闭环出口" in err
+
+
+def test_empty_base_ref_does_not_skip_checks(tmp_path, capsys):
+    """空/纯空白 --base-ref 不能被当成「跳过两个 diff 检查」的快捷方式。"""
+    stale, origin = _stale_master_repo_with_history(tmp_path)
+    _assert_issue_319_repo_preconditions(tmp_path, stale, origin)
+    _write_issue_319_archive(tmp_path, "2026-10-18-new-change", with_exit=False)
+    _git_commit(tmp_path, "new archive")
+    changes_root = tmp_path / "openspec" / "changes"
+
+    exit_code = main(
+        _main_args(
+            changes_root,
+            tmp_path,
+            "--skip-protected-paths",
+            "--skip-backlog",
+            "--base-ref",
+            "",
+        )
+    )
+    assert exit_code == 1
+    assert "闭环出口" in capsys.readouterr().err
+
+
+def test_explicit_base_ref_still_wins(tmp_path, capsys):
+    """显式 --base-ref 不被默认解析覆盖：master 仍两点 diff，origin 仍绿。"""
+    stale, origin = _stale_master_repo_with_history(tmp_path)
+    _assert_issue_319_repo_preconditions(tmp_path, stale, origin)
+    changes_root = tmp_path / "openspec" / "changes"
+
+    exit_master = main(
+        _main_args(
+            changes_root,
+            tmp_path,
+            "--skip-protected-paths",
+            "--skip-backlog",
+            "--base-ref",
+            "master",
+        )
+    )
+    assert exit_master == 1
+    assert "闭环出口" in capsys.readouterr().err
+
+    exit_origin = main(
+        _main_args(
+            changes_root,
+            tmp_path,
+            "--skip-protected-paths",
+            "--skip-backlog",
+            "--base-ref",
+            "origin/master",
+        )
+    )
+    assert exit_origin == 0
+
+
+def test_resolve_base_ref_is_used_for_protected_path_diff(tmp_path, monkeypatch):
+    """解析结果必须同时传给受保护路径 diff，而不是只给归档点门。"""
+    import scripts.check_openspec_artifacts as mod
+
+    stale, origin = _stale_master_repo_with_history(tmp_path)
+    _assert_issue_319_repo_preconditions(tmp_path, stale, origin)
+    changes_root = tmp_path / "openspec" / "changes"
+    expected = _git_out(tmp_path, "merge-base", "HEAD", "origin/master").strip()
+
+    captured: list[str] = []
+
+    def fake_changed_paths(repo_root, base_ref, require_base=False):
+        captured.append(base_ref)
+        return set(), None
+
+    monkeypatch.setattr(mod, "_changed_paths_since_base", fake_changed_paths)
+    # 本用例只关心 base 的接线；归档点门由专门的回归用例覆盖。
+    monkeypatch.setattr(
+        mod, "_check_new_archived_completion_gates", lambda *a, **k: []
+    )
+
+    assert main(_main_args(changes_root, tmp_path, "--skip-backlog")) == 0
+    assert captured[-1] == expected
+
+    assert (
+        main(
+            _main_args(
+                changes_root,
+                tmp_path,
+                "--skip-backlog",
+                "--base-ref",
+                "master",
+            )
+        )
+        == 0
+    )
+    assert captured[-1] == "master"
+
+
+def test_behind_branch_does_not_false_red_protected_paths(tmp_path):
+    """三点语义：分支落后时，上游受保护路径改动不得被反向列为本分支改动。"""
+    _init_git_repo(tmp_path)
+    _git_out(tmp_path, "branch", "-M", "master")
+    changes_root = _minimal_changes_root(tmp_path)
+    base = _git_commit(tmp_path, "base")
+
+    _git_out(tmp_path, "checkout", "-q", "-b", "pr-branch")
+    _git_out(tmp_path, "checkout", "-q", "-b", "upstream")
+    backlog = tmp_path / "docs" / "openspec-change-backlog.md"
+    backlog.write_text(
+        backlog.read_text(encoding="utf-8") + "\n<!-- upstream change -->\n",
+        encoding="utf-8",
+    )
+    upstream = _git_commit(tmp_path, "upstream protected change")
+    _git_out(tmp_path, "update-ref", "refs/remotes/origin/master", upstream)
+    _git_out(tmp_path, "checkout", "-q", "pr-branch")
+
+    assert _git_out(tmp_path, "rev-parse", "HEAD").strip() == base
+    assert (
+        _git_out(tmp_path, "rev-parse", "origin/master").strip() == upstream
+    )
+    assert (
+        _git_out(tmp_path, "merge-base", "HEAD", "origin/master").strip() == base
+    )
+
+    exit_code = main(_main_args(changes_root, tmp_path, "--skip-backlog"))
+    assert exit_code == 0

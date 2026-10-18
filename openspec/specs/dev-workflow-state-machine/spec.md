@@ -221,6 +221,8 @@
 
 **审阅门的触发条件 SHALL 为「归档点」，而非「tasks.md 全部勾选」。** 依据：留一条未勾选项即可关闭全部下游门禁，构成绕开路径；而 `AGENTS.md` 强制「实现 PR 必须同时包含归档收尾」，故**归档 commit 是 PR 的最后一个 commit，归档点是唯一必要且充分的评估点**。触发集合 SHALL 为 `--base-ref` diff 中 `--diff-filter=AR`、匹配 `openspec/changes/archive/<date>-<id>/` **且该归档子目录在 base 树不存在**的路径——末条为必需，否则「向既有归档目录补文件」会被误判成本 PR 新归档，从而对陈旧 change 追溯求值。对**本 PR 新归档**的 change，checker SHALL 在其**归档目录**上评估非 docs + 有 spec delta 的审阅证据与内容门槛，SHALL NOT 因 tasks 未全勾而跳过。
 
+**默认 base 解析 SHALL 代表本 PR。** `--base-ref` 未显式提供时，checker SHALL 优先以 `origin/master` 与 `HEAD` 的 merge-base 作为 diff base（`origin/master` 可解析时；merge-base 不可用则退回 `origin/master`），否则回退到与 `master` 的 merge-base；非空显式提供的 `--base-ref` SHALL 保持原有两点 diff 语义、SHALL NOT 被默认解析覆盖；空/纯空白显式值 SHALL 按未提供处理，SHALL NOT 静默跳过归档点 diff 与受保护路径 diff。解析结果 SHALL 同时用于归档点 diff 与受保护路径 diff。该三点语义 SHALL 保证分支落后于 `origin/master` 时，上游已合入的受保护路径改动 SHALL NOT 被反向列为本分支改动。历史归档 SHALL NOT 因本地默认分支（如陈旧的本地 `master`）而出现在本 PR 的 AR diff 中并被追溯求值；两个候选 ref 都不可解析时 SHALL 沿用既有 `--require-base` 的 fail-closed / warning 语义。
+
 **归档目录命名 SHALL 合规**（`archive/<YYYY-MM-DD>-<change-id>/`）：diff 中出现于归档根下但不匹配该命名规则的路径 SHALL 报错，SHALL NOT 静默——否则会落进「既不在 active 也不在归档门」的无人覆盖区。
 
 **部分实现的 active change 仍 SHALL NOT 被要求审阅证据**——`tasks.md` 有未勾选项的在途 change 继续不受拦截（保留原「避免误伤在途 change」口径）。
@@ -259,6 +261,22 @@
 - **GIVEN** 一个在**过去的** PR 中归档的 change（其归档路径不在本 PR diff 中）
 - **WHEN** 运行 artifact checker（含 `--check-archived`）
 - **THEN** 检查器 SHALL NOT 要求该 change 补审阅证据或补勾任务
+
+#### Scenario: 裸跑不追溯历史归档
+
+- **GIVEN** 本地 `master` 落后 `origin/master`，HEAD 与 `origin/master` 一致或仅含本 PR 提交
+- **AND** 历史归档中存在缺少 `## 闭环出口` 的报告
+- **WHEN** 运行 artifact checker 且未显式提供 `--base-ref`
+- **THEN** checker SHALL 以 `origin/master` 与 `HEAD` 的 merge-base 作为默认 base（三点语义）
+- **AND** 历史归档 SHALL NOT 被当作本 PR 新归档求值
+- **AND** 分支落后于 `origin/master` 时，上游受保护路径改动 SHALL NOT 被反向列为本分支改动
+- **AND** 新建归档缺 `## 闭环出口` 仍 SHALL 报错
+
+#### Scenario: 显式 base 不被默认解析覆盖
+
+- **GIVEN** 调用方显式传入 `--base-ref master`
+- **WHEN** 运行 artifact checker
+- **THEN** checker SHALL 使用 `master` 作为两点 diff base，SHALL NOT 替换为默认解析结果（merge-base / `origin/master`）
 
 #### Scenario: 向既有归档目录新增文件不被当成新归档
 

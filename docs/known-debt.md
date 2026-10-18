@@ -215,8 +215,10 @@ manifest 在**审阅 PASS 时**生成（tasks 未全勾），收尾阶段（spec
 2. 该降级**不静默**：`--check-archived` 在 stderr 输出一行汇总（`tasks_hash 已按归档语境跳过（N 个 change）`），
    note **不混入** `verify_review_manifest` 的返回列表（否则会被当 error → exit 1，降级失效）。
 3. `.github/workflows/ci.yml` 的 `validate` job 增 `--check-archived --skip-protected-paths --skip-backlog` 步骤；
-   加 `--skip-*` 是为避免默认 `--base-ref master` 在 CI 上解析失败打出无意义 WARNING 与重复检查（该 WARNING
-   只在 CI 现形，本地 `master` 可解析看不到）。
+   加 `--skip-*` 是为避免默认 base 在 CI 上解析失败打出无意义 WARNING 与重复检查（该 WARNING
+   只在 CI 现形，本地可解析看不到）。**2026-10-18 更新（check-scope-fix，issue #319）**：默认 base 已改为
+   `origin/master` 的 merge-base；归档点门与受保护路径 diff 都关闭时不再解析 base，该 WARNING
+   不再出现。
 4. 立「manifest 在该 change 的 `tasks.md` 最终化之后生成」纪律，写入 spec 与 `docs/development-guide.md`。
 
 **B-残余风险（已接受，勿误读为「归档 manifest 不用管」）**：归档语境**不再检测 `tasks.md` 的任何编辑，含
