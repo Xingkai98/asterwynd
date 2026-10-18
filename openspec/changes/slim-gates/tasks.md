@@ -121,9 +121,9 @@
 
 ## 5. 实现后独立审阅闭环
 
-- [ ] 5.1 跑 `/review-loop slim-gates`，产出 `reviews/building-review.md`（含 `## 闭环出口` PASS）。
-- [ ] 5.2 CHANGES_REQUESTED 则按有界批次模型修复并复审，直到 PASS。
-- [ ] 5.3 清理中间轮产物（不在任何 manifest `report_path` 上的报告）。
+- [x] 5.1 跑 `/review-loop slim-gates`，产出 `reviews/building-review.md`（含 `## 闭环出口` PASS）。
+- [x] 5.2 CHANGES_REQUESTED 则按有界批次模型修复并复审，直到 PASS。
+- [x] 5.3 清理中间轮产物（不在任何 manifest `report_path` 上的报告）。
 
 ## 6. 证据与归档（严格按此顺序）
 

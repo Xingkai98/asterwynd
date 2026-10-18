@@ -115,6 +115,8 @@ checker 走 `--base-ref`（CI 传 `${{ github.event.pull_request.base.sha }}`，
 
 ## awaiting 态无 CLI 进入/解除通道（retire-4phase-state-machine 残留面）
 
+> **已随 `slim-gates` 退役（issue #322）**：旧 `scripts/workflow_guard.py` 与事件投影已删除，awaiting 态不再有本地执法者；本节仅作历史记录。
+
 `retire-4phase-state-machine` 删除了 `flow block` / `flow confirm`（及 `flow approve`）后，
 `blocked_entered` 与 `blocked_resolved` 两个事件**不再有任何 CLI 写入者**（原写入者
 `workflow_state.py` 的 `cmd_flow_block` / `cmd_flow_confirm` 与 `manager.py` 的 `block`/`unblock`

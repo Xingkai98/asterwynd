@@ -1,8 +1,8 @@
 # Building Review: slim-gates
 
 ## Reviewer
-- run id: review-slim-gates-20261018-r1（Round 1 开批）/ review-slim-gates-20261018-r2（修复验证）
-- base/head: 528d02f / c424eff（Round 1 审阅 revision 为 4ada5c7）
+- run id: review-slim-gates-20261018-r1（Round 1 开批）/ review-slim-gates-20261018-r2（I-3 + D-1 修复验证）
+- base/head: 528d02f / ea39562（Round 1 审阅 revision 为 4ada5c7；Round 1 修复验证为 c424eff）
 
 ## 任务逐项验证
 
@@ -46,6 +46,7 @@
 - **L-7（low)｜tasks 4.7 要求「记录原始输出」，仓库内只有结论没有原始命令输出**：`tasks.md` 4.7；建议把 4.7/4.8 的原始命令与输出写进 PR 描述或 tasks 行内。
 - **L-8（nit）｜`docs/development-guide.md:419` 仍是将来时**「本 change 的 4.8 会按同一方法再记录一次」，而 4.8 已勾选、记录已在下方表格。
 - **L-9（low，Round 1 I-7 残留）｜CLI 级补充用例仍未补**：空/空白 `--base-ref` 不只是「解析为非空」，还要断言不跳过归档门；`--skip-backlog` 与 `--change` 模式也没有 main 级用例（旧测试 `test_empty_base_ref_does_not_skip_checks`、`test_bare_check_does_not_trace_historical_archives`、`test_explicit_base_ref_still_wins` 未迁移）。理由：`_resolve_base_ref` / main 的归档门调用是逐字搬运且本轮手工验证通过，风险低于三条归档反绕过用例；补测试即可，不需改判据。
+- **L-10（low，Round 2 验证期发现）｜`bash --norc -c '<cmd>'` 仍放行**：`_nested_shell_code` 对长选项 `--norc` 也命中「尾部含 c」分支，尾部为空后把下一个参数 `-c` 当成命令串，导致真正的命令不被递归分析。复现（ea39562）：`evaluate_command("bash --norc -c 'touch agent/y'", root) == []`。理由：`--norc` 是较窄的长选项变体，属本地 checkpoint 的静态解析边界；对照 `bash -cl` / `-lc` / `-ec` 等已报告形态均已修复，登记待后续顺带收紧。
 
 ## 验证（Round 1 批次，revision c424eff）
 
@@ -66,11 +67,21 @@
 - `c424eff` 快照的 `tests/test_bash_write_guard.py` + `tests/test_slim_project_rules.py`：**192 passed**；工作区 targeted 套件 **238 passed**（另含 round-model / platform-gate）。
 - `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`：29 passed / 0 failed。
 - 瘦 checker：`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` exit 0（在本报告写 CHANGES_REQUESTED 前；写入后 active 宽触发会按预期转红，待下一轮 PASS 覆盖）。
-- 工作区另有两处**非本次验证产生的未提交改动**（`scripts/bash_write_guard.py`、`tests/test_bash_write_guard.py`），包含 I-3 子目录修复；不在 `c424eff` 审阅面内，未计入本轮通过。
+- 工作区另有两处当时的未提交改动（`scripts/bash_write_guard.py`、`tests/test_bash_write_guard.py`），包含 I-3 子目录修复；已随 `ea39562` 提交，见下节 Round 2。
+
+## 验证（Round 2 批次：I-3 + D-1，revision ea39562）
+
+> 只验证两项；全部命令在 `ea39562` 的脚本快照上运行，未使用工作区改动。
+
+- **I-3 已修复。** `scripts/bash_write_guard.py:598-626` 把 `-C <dir>` / `-C<dir>` 的目录记录为 `git_cwd` 并前置到相对目标后再归一化。实测：`git -C agent restore y`、`git -Cagent restore y`、`git -C agent checkout -- y` 均 exit 2，命中 `agent/y`；`git -C agent rm y`、`git -C agent mv y z` 仍放行（删除/改名通道）；`git -C /tmp restore y` 放行（仓外）。新增 `tests/test_bash_write_guard.py:85-86` 的两条 `git -C agent` 用例。
+- **D-1 已修复。** `_output_arg`（`scripts/bash_write_guard.py:423-444`）改为在短选项簇中查找输出字母：`wget -qO agent/y URL`、`wget -qOagent/y URL`、`curl -so agent/y URL` 均 exit 2；`wget -q URL`、`curl -s URL`、`wget -qO- URL` 放行。`_nested_shell_code`（`:545-558`）把 `-cl` 尾部 `l` 识别为 flag 并取下一参数为命令串：`bash -cl 'touch agent/y'` exit 2，`bash -lc` / `bash -ec` 仍 exit 2。对应用例已加入参数化测试（`tests/test_bash_write_guard.py:98-101`）。
+- **机械复核（Round 2）**：`c424eff`→`ea39562` 只改 guard / 其测试 / 本报告；`ea39562` 快照上 `tests/test_bash_write_guard.py` **122 passed**（两文件合计 198 passed）；`openspec validate --all --strict` 29 passed。验证期仅发现 L-10（low），无新 medium+。
 
 ## deferred（验证期若发现新 medium+ 才写）
+- 无（Round 2 的 I-3 + D-1 均验证通过；D-1 原条目已关闭）
 
-- **D-1（medium，下一批）｜组合短选项簇仍能绕过 `curl` / `wget` / 嵌套 shell 解析**：`scripts/bash_write_guard.py:427-431` 只识别「输出 flag 位于参数开头」的紧贴值；`wget -qO agent/y …`、`wget -qOagent/y …`、`curl -so agent/y …` 实测放行。`_nested_shell_code`（`:532-542`）取 `c` 后的残余字符作为命令串，`bash -cl 'touch agent/y'` 实测放行（`-cl` 中 `l` 被当成命令串）。这是本轮修复同一解析面的残余，需在下一批处理。
+## 收口确认
+- **空批**：Round 2 批次 I-3、D-1 均验证通过，验证期未发现新的 medium+（L-10 为 low，已登记）。
 
 ## 闭环出口
-CHANGES_REQUESTED（I-3 未完全修复：c424eff 上 `git -C <subdir> restore <relpath>` 与 `git -C <subdir> checkout -- <relpath>` 仍放行；I-1/I-2/I-4/I-5/I-6/I-7/I-8 已验证通过。工作区未提交的 `git_cwd` 修复可覆盖 I-3，提交到审阅 revision 并复验后收口。）
+PASS
