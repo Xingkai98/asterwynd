@@ -258,7 +258,7 @@ Impact Analysis 不是一次性段落，而是贯穿 change lifecycle 的维护�
 4. 同步更新 `docs/openspec-change-backlog.md` 的“并行开发批次”，避免批次章节保留过期状态。
 5. 如果该 change 位于“已完成待归档”，也应从该列表移除。
 6. 全量浏览 `docs/` 下的稳定文档标题和相关关键词，判断 README、架构、开发指南、测试指南、路线图、benchmark 或讨论纪要是否需要同步；只更新与本 change 直接相关的稳定口径。
-7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`（本地 `master` 落后时默认 base 会把历史归档误判为「本 PR 新归档」）。
+7. 运行 `openspec validate --all --strict` 和 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`（裸跑默认用 `origin/master` 的 merge-base，不再追溯历史归档；显式参数保留两点 diff）。
 8. 在 PR 说明中记录归档路径、backlog 更新和验证结果。
 
 `docs/openspec-change-backlog.md` 不是历史台账；已归档 change 的 source of truth 是 `openspec/changes/archive/`。只有遇到冲突、校验失败或其他明确阻塞，导致实现 PR 暂时不能完成归档时，才把 change 放入“已完成待归档”，并在阻塞解除后优先清空。
@@ -286,7 +286,7 @@ PR 合入后固定确认：
 ```bash
 openspec status --change <change-id>
 openspec validate <change-id> --strict
-# 项目本地文档规则脚本，加入后也必须运行（本地 master 落后时显式用 origin/master）
+# 项目本地文档规则脚本，加入后也必须运行（裸跑默认用 origin/master 的 merge-base；也可显式指定）
 uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
 ```
 

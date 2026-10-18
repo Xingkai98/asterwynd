@@ -440,10 +440,11 @@ def test_normative_docs_mention_witnessloop_single_manifest():
 
 
 def test_full_check_commands_pin_origin_master():
-    """A stale local master makes historical archives look newly archived.
+    """Documented full checks pin ``origin/master`` explicitly.
 
-    The archive-point verdict gate then false-reds them; the documented full
-    check must therefore pin ``origin/master`` explicitly.
+    The implicit default now uses the merge-base of ``HEAD`` and
+    ``origin/master`` (issue #319), but the documented command stays explicit
+    for deterministic CI-like behaviour.
     """
     for rel in (
         "AGENTS.md",
