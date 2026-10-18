@@ -26,7 +26,6 @@ ALLOWLIST = (
     "README_EN.md",
     "docs/requirements-process.md",
     "docs/interview-script/questions/Q14-dev-process.md",
-    "openspec/specs/dev-workflow-state-machine/spec.md",
     "openspec/specs/change-documentation/spec.md",
     "scripts/check_openspec_artifacts.py",
 )
@@ -65,15 +64,6 @@ PER_FILE_REQUIRED = {
         "20 个已收口轮",
         "PASS",
         "BLOCKED",
-    ),
-    "openspec/specs/dev-workflow-state-machine/spec.md": (
-        "非空 medium+ 批次",
-        "批次冻结",
-        "deferred",
-        "20 个已收口轮",
-        "收口确认",
-        "建议推倒重开（revise the design）",
-        "CHANGES_REQUESTED",
     ),
     "openspec/specs/change-documentation/spec.md": (
         "bounded-batch",
@@ -135,17 +125,6 @@ def test_normative_surface_drops_old_round_model(relpath: str) -> None:
     assert not hits, f"{relpath} 仍含旧口径词: {hits}"
 
 
-def test_dev_workflow_spec_replaces_old_termination_requirement() -> None:
-    """旧 Requirement 必须被新 Requirement 取代，不能两条并存。"""
-
-    content = _read("openspec/specs/dev-workflow-state-machine/spec.md")
-    assert (
-        "### Requirement: 审阅闭环的轮次模型为有界批次，最多 20 个已收口轮"
-        in content
-    )
-    assert "### Requirement: 审阅闭环的终止条件为收敛，而非轮数上限" not in content
-
-
 def test_change_documentation_spec_references_bounded_batch_model() -> None:
     """设计阶段闭环的英文规格必须指向有界批次模型，而不是无固定轮数。"""
 
@@ -153,16 +132,6 @@ def test_change_documentation_spec_references_bounded_batch_model() -> None:
     assert "bounded-batch" in content
     assert "no fixed round limit" not in content
     assert "until convergence" not in content
-
-
-def test_checker_prompt_messages_use_batch_model() -> None:
-    """checker 只改提示文案；旧提示必须消失，新提示必须出现。"""
-
-    content = _read("scripts/check_openspec_artifacts.py")
-    assert "审→改→再审直到收敛" not in content
-    assert "非空 medium+ 批次" in content
-    assert "20 个已收口轮" in content
-    assert "建议推倒重开" in content
 
 
 def test_local_entry_is_gitignored() -> None:

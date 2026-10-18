@@ -255,7 +255,7 @@ uv run python run_eval.py --run_id asterwynd-lite --dataset verified
 
 ## 完成度门禁与 `(post-merge)` 任务标记
 
-完成度门禁（审阅证据 / grill 证据 / Open Question 确认 / RIR 内容门槛）的触发点是**归档点**，不是「tasks 全勾」（issue #235）。判据是：本 PR 的 `--diff-filter=AR` diff 中出现的 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` 路径，**且该归档目录在 base 树不存在**（后者排除「往既有归档目录补文件」被误判成新归档）。门在**归档目录**上评估四道门 + 未勾任务，**不因 tasks 未全勾而降级**。
+完成度门禁由**瘦项目规则 checker**（`scripts/check_openspec_artifacts.py`）承载，触发点是**归档点**（issue #235）。判据是：本 PR 的 `--diff-filter=AR` diff 中出现的 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` 路径，**且该归档目录在 base 树不存在**（后者排除「往既有归档目录补文件」被误判成新归档）。门在**归档目录**上评估：building review 存在性 + `## 闭环出口` PASS、grill 证据（`grill-design.md` ≥3 决策 + Open Question 确认、`grill-adversarial.md` 存在）、RIR 内容门槛，以及 tasks 完成度；**不因 tasks 未全勾而降级**。任何本次 diff 触及的**非日期前缀归档目录**也直接报错。Impact Analysis 与 benchmark smoke 只按退役前矩阵在 active change 上评估。
 
 ### `(post-merge)` 标记
 
@@ -287,17 +287,15 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
 
 ### 归档目录命名
 
-归档目录 MUST 为 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。缺日期前缀（如 `archive/<id>/`）会被完成度门禁**直接报错**——这类目录既不匹配归档正则、又被 `iter_change_dirs` 排除在 active 之外，否则会落进「谁都不管」的静默面。
+归档目录 MUST 为 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。缺日期前缀（如 `archive/<id>/`）会被瘦 checker **直接报错**——这类目录既不匹配归档正则、又被 active 迭代排除，否则会落进「谁都不管」的静默面。
 
 ## Review evidence 纪律（收尾）
 
 本仓只要求 **witnessloop 形态** manifest：`reviews/<stage>.manifest.json`（`grill` /
 `grill-adversarial` / `building` 三份）。asterwynd 形态
-`reviews/<phase>-review-manifest.json` 已随 `retire-manifest-check`（issue #316 第一刀）退役：
+`reviews/<phase>-review-manifest.json` 已随 `retire-manifest-check`（issue #316）退役：
 不再要求产出、不再由本仓 checker 校验，历史 80 份保持原样。其生成模块与
-`workflow_state.py review-manifest` 写通道已随 `retire-manifest-module`（第二刀）删除；
-`scripts/flow-policy.json` 的 `-review-manifest.json` 受保护规则已移除，历史文件仍由
-`openspec/changes/archive/**` 前缀规则保护。
+`workflow_state.py review-manifest` 写通道已删除；历史文件仅作为提交历史保留。
 
 - **三份 manifest SHALL 在所有内容提交之后、归档 move 之后生成**，用**归档目录名**作为
   `--change`（`<YYYY-MM-DD>-<change-id>`）；`report_path` SHALL 覆盖 `reviews/` 下每一份
@@ -317,8 +315,7 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
 - **building review 的终结 verdict**：`reviews/building-review.md` SHALL 以二级标题
   `## 闭环出口` 记录终结出口，首个非空行以 `PASS` 开头；`BLOCKED` /
   `CHANGES_REQUESTED` 是 terminal 非 PASS，宽触发一律报错；`未定` / 缺小节只在完成面
-  报错。解析细节见 `openspec/specs/dev-workflow-state-machine/spec.md` 的
-  `Review evidence 与终结 verdict`。
+  报错。解析细节见 `openspec/specs/dev-workflow-gate/spec.md` 的 building review Scenario。
 - **本地冒烟与默认 base**：`--base-ref` 未显式提供时，checker 用 `HEAD` 与
   `origin/master` 的 merge-base（三点语义；没有 `origin/master` 时回退到与 `master`
   的 merge-base）。本地 `master` 落后或分支落后于 `origin/master` 时，历史归档与上游
@@ -326,18 +323,20 @@ closeout 类任务（**PR 合入之后**才执行的动作，例如「给关联 
   `INFO: using implicit base ref ...`。裸跑前先 `git fetch origin master`，确保
   `origin/master` 不是陈旧的。显式 `--base-ref` 仍是两点 diff，可复现旧口径；CI 用
   PR base sha，不受影响。标准命令 `--base-ref origin/master --require-base` 继续可用。
-- **`--check-archived` 只做归档事件日志可投影校验**（`validate` job 已接入 CI）；它不再
-  检测历史 manifest / report / spec 漂移。历史 manifest 已随第二刀冻结（不迁移、不重算、
-  不删除）：
+- **瘦 checker 的命令与 exit 语义**（CI 的 `validate` job 已接入）：
 
 ```bash
-PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
-  --check-archived --skip-protected-paths --skip-backlog
+# 0 = 通过；1 = 规则违规；2 = changes root 缺失或用法错误
+uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
 ```
+
+  `--base-ref` 省略时用 `HEAD` 与 `origin/master` 的 merge-base（没有则退 `master`）；
+  `--require-base` 让 base 不可解析时 fail-closed。`--check-archived` / `--skip-protected-paths`
+  已删除：归档点完成度在正常模式的 diff 上评估，受保护写入解释由 witnessloop 承担。
 
 ## 业界调研门禁
 
-方案设计（proposal/design）前须按改动性质分流调研业界最新实践或框架（核心规则见 AGENTS.md「业界调研门禁」节；机械校验由 artifact checker 执行）。本小节给判据举例、豁免 reason 写法示范与常见误用。
+方案设计（proposal/design）前须按改动性质分流调研业界最新实践或框架（核心规则见 AGENTS.md「业界调研门禁」节；机械校验由瘦项目规则 checker 执行）。本小节给判据举例、豁免 reason 写法示范与常见误用。
 
 ### 三档判据举例
 
@@ -380,21 +379,24 @@ PYTHONPATH=. python3 scripts/check_openspec_artifacts.py \
 - **required 只有 `gate / check`**（阶段 C 翻开关，issue #305，2026-10-17）：`master` 的 `required_status_checks.contexts` = `["gate / check"]`。本仓自建的 `validate` / `benchmark-gate` / `windows-platform` **照跑、只是不再拦合并**。
 - **降级代价（须知）**：只由本仓 checker 承载的 RIR / Impact Analysis / benchmark smoke / 归档点完成度 / backlog 一致性 / building review 的 `## 闭环出口` PASS 判据 **不再拦合并**。逐条分叉清单见 issue #305 的阶段 C 前置 comment。⇒ **不要把「CI 绿」读成「项目规则已满足」**。
 - **caller 钉 `@v1.7.0`**：包版本由 reusable workflow 自己的 `job.workflow_sha` 推导（witnessloop issue #30 的修复），**不需要** `with: witnessloop-ref:`；升级 = `witnessloop init --gate-ref <新 ref>`（幂等，重写 caller + 同步台账）。
-- **旧门禁仍照跑**：`scripts/check_openspec_artifacts.py` / `workflow_guard.py` / `platform_gate.py` / `validate` job 全部保留；其中 checker 的 review 门已由 `retire-manifest-check`（issue #316）下掉重复 manifest 校验并改为 `## 闭环出口` PASS 判据，其余检查不变。
+- **旧门禁主体已删除**：`workflow_state.py` / `agent/workflow/*` / `flow-policy.json` / `workflow_methods.json` / 旧 `workflow_guard.py` 已移除。`validate` job 仍跑 pytest + OpenSpec validate + **瘦项目规则 checker**（RIR / Impact / benchmark smoke / tasks 与归档点完成度 / backlog / building exit）；`scripts/platform_gate.py` 保留 branch protection 配置即代码；本地 Bash 写前拦截由 `scripts/bash_write_guard.py` 提供。
 - **已知红（阶段 A 历史记录，已处置）**：① `add-minimal-tui-runtime-view`（无 `reviews/`）已由 `retire-tui-proposal`（issue #319 PR B）**原地废弃**：目录保留原样（不删、不写、不加标记；witnessloop 对纯 docs-only 删除/加标记分别实测 3/3 项 finding；含 code_hits 的删除实验为 5 项），backlog 移除，ADR-0006 留痕；② 阶段 A 的 change `witnessloop-adoption` 当时缺 witnessloop 形态 manifest（该 change **已归档**，此条只作历史记录）。两条都属「**缺 manifest**」这一类，不是配置错误。
 - **`reviews/` 的一致状态（阶段 A 实测，仍然适用）**：一个 change 的 `reviews/` 下，**每份 `.md` 都必须被某份 witnessloop 形态 manifest 的 `report_path` 绑定**，否则触发孤儿规则——阶段 A 实测「只落一部分」比「一份都不落」更红（2 条 → 14 条 → 16 条）。阶段 C 之后 `gate / check` 是 required ⇒ 一个 change 要判绿就必须把 `reviews/` 落齐并全部绑定（`grill` / `grill-adversarial` / `building` 三份 manifest）。
 - **grill 决策记录的格式契约（v1.7.0 实测，2026-10-17 补记）四条**：`reviews/grill-design.md` 必须含 `## Confirmed Decisions`（**至少 3 条**决策块——`MIN_CONFIRMED_DECISIONS = 3` 是硬门槛；且每条决策块内有**同行裸** `来源:`——加粗的 `- **来源**:` 匹配不上）、`## User Confirmation`（**无条件存在**：一条 Open Question 都没有时也要有该小节）、以及与逐字标题一致的 Open Questions 小节。详见 `openspec/specs/dev-workflow-gate/spec.md` 的「grill 报告正文判据的已知不兼容」。
 
 ### 本地跑 `check`
 
-**验证一律用 witnessloop 仓里那份源码**，别用 PATH 上那份：
+**必须锚定 CI 实际使用的 v1.7.0**。注意 `v1.7.0` 是 annotated tag：tag object `00192ab`
+对应 commit `c9b2811`；本机 `/home/happy/witnessloop` 的当前 HEAD **不是** v1.7.0，不要用。
 
 ```bash
-# 在 witnessloop 仓的本地克隆目录里跑（<witnessloop> 指该目录），--root 指本仓根
-cd <witnessloop> && uv run witnessloop check --root <本仓根>
+# 本机可执行锚点（实测 DEFAULT_GATE_REF=@v1.7.0）
+/home/happy/wl170/bin/witnessloop check --root . --base origin/master --head HEAD
+# 或者：git -C <witnessloop> checkout v1.7.0 && cd <witnessloop> && uv run witnessloop check --root <本仓根>
 ```
 
-原因：本机 PATH 上还装着一份 uv-tool 版本（实测 **0.1.0**，`--help` 里**没有** `guard` 子命令），裸 `witnessloop` 测不到 witnessloop 仓工作树里的补丁。**升级 PATH 上那份也别指望它等同于源码版**——验证一律显式走 `uv run`。
+原因：PATH 上还有一份旧 uv-tool 版本（实测 0.1.0，没有 `guard` 子命令）；用错版本会得到
+假绿/假红。
 
 ### 本地 `guard` 的前置核验（必做）
 
@@ -404,21 +406,49 @@ plugin 的守卫 shim `plugin/hooks/guard.sh` 调的是 **PATH 上的裸 `witnes
 command -v witnessloop && witnessloop --help | grep -q guard || echo "⚠️ PATH 上这份没有 guard：plugin 守卫空转，改用 uv run 那份或先升级"
 ```
 
-### 两个 PreToolUse 守卫并存（阶段 A 实测结论）
+### 两个 PreToolUse 守卫的分工
 
-本仓已有 `scripts/workflow_guard.py`（matcher `Write|Edit|Bash`），plugin 再加一个 `witnessloop guard`（matcher `Write|Edit`）。用 Claude Code 2.1.231 实跑（两个 hook 分别可观测）得到的结论：
+本仓现行形态是 **witnessloop plugin guard（`Write|Edit`）+ `scripts/bash_write_guard.py`（`Bash`）**。
+旧 `scripts/workflow_guard.py`（`Write|Edit|Bash`）已删除；它的 Bash 面由新 guard 以更窄、
+可测试的判据承接。
 
-| 问题 | 实测结论 |
-|---|---|
-| 两个 hook 是否都执行 | **都执行**（一侧阻断时另一侧仍被调用） |
-| 串行还是并行 | **并行**（一侧睡 4s，两侧启动时刻仅差 0.112s） |
-| 任一 `exit 2` 即拦，还是首个非零即终止 | **并集：任一 `exit 2` 即拦**，**不是**首个非零终止 |
-| 被拦时的报错归属 | 只出**一个**——CC 报的是其中一个阻断 hook 的命令 + 其 stderr；未阻断那一侧的 stderr 不出现 |
-| 两棵树差异 | **building worktree 下没有 `.claude/`**（`.gitignore:9` 忽略 + worktree 无副本）⇒ 那里只有 plugin 一个 hook；本仓守卫的 hook 只挂在主 checkout |
+阶段 A 用 Claude Code 2.1.231 实测过「两个 hook 同时启用」的合并语义（记录见
+`openspec/changes/archive/2026-10-13-witnessloop-adoption/reviews/acceptance-stage-a.md`）：
+两个 hook **都执行**、**并行**、**任一 `exit 2` 即拦**（并集），被拦时只出现其中一个阻断
+hook 的 stderr。`--permission-mode bypassPermissions` **不能**绕过 PreToolUse hook。
+本 change 的 4.8 会按同一方法再记录一次当前两 hook 的求值归属。
 
-**注意**：`--permission-mode bypassPermissions` **不能**绕过 PreToolUse hook（实测仍被拦）。
+**命名空间**：plugin 的 `plugin.json` 里 `"name": "witnessloop"` ⇒ 命令是
+`witnessloop:grill` / `witnessloop:review-loop`，与仓内 `.claude/commands/{grill,review-loop}.md`
+不撞名。
 
-**命名空间**：plugin 的 `plugin.json` 里 `"name": "witnessloop"` ⇒ 命令是 `witnessloop:grill` / `witnessloop:review-loop`，与仓内 `.claude/commands/{grill,review-loop}.md` 不撞名。
+### 本地 Bash 写前拦截（`scripts/bash_write_guard.py`）
+
+安装：把 `scripts/bash_write_guard.example.json` 的 `hooks` 块合并进
+`.claude/settings.local.json`（项目本地、被 gitignore）或用户级 `~/.claude/settings.json`。
+**building worktree 不会自动带 `.claude/`**：要么用示例里的绝对路径命令，要么在每个 worktree
+手动安装；否则该 worktree 只有 witnessloop 的 `Write|Edit` guard。
+
+边界：只拦**直接文件写操作**（重定向、`cp`/`mv`/`tee`/`dd`/`sed -i`/`install`/`rm` 等）命中
+受管路径（`agent/**`、`scripts/**`、`web/**`）或受保护 artifact（policy 的 `protected_paths`）。
+`ls`/`grep`/`cat`/`git status` 放行；引号内写样式文本、`cp` 的源参数、`>/dev/null`、`2>&1`、
+here-doc 数据不误伤。`git rm`/`git mv` 放行（否则文件无法删除/改名）；显式路径的
+`git restore` / `git checkout --` 与非只读 `git apply` 拦截；`git merge` / `rebase` /
+`cherry-pick` / `stash` / `am`、变量展开、符号链接、`find -exec`、被执行程序等是**已知绕过面**
+（本地 checkpoint，CI `gate / check` 兜底）。
+
+**两 hook 并存实测（2026-10-18，命令级）**：把 witnessloop plugin 的 `guard.sh`（PATH 注入
+v1.7.0 CLI）与 `scripts/bash_write_guard.py` 同时挂到同一临时仓库环境，用同一组 PreToolUse
+payload 触发：
+
+| payload | witnessloop guard（Write/Edit） | bash guard（Bash） | 并集结果 |
+|---|---|---|---|
+| Write `agent/loop.py`（缺 grill 证据） | exit 2（拦） | exit 0（不处理 Write） | 拦 |
+| Bash `echo x > agent/y` | exit 0（无 `file_path`） | exit 2（拦） | 拦 |
+| Bash `ls agent` | exit 0 | exit 0 | 放行 |
+
+两个 hook 都执行；被拦时只有阻断 hook 的 stderr 出现。Claude Code 的并行 / 并集 / 提示归属语义
+沿用阶段 A（2026-10-13）的真实 CC 2.1.231 实测记录。该实测不替代 CI：`gate / check` 仍是最终防线。
 
 ### Claude Code plugin：安装 / 升级 / 卸载
 
@@ -446,4 +476,4 @@ cd <witnessloop> && uv run witnessloop uninit --root <本仓根>
 # 或手工删：.witnessloop/ + .github/workflows/witnessloop.yml + .github/witnessloop-tests.txt
 ```
 
-旧门禁原封不动——回退不需要动 `ci.yml`、`scripts/**` 或 branch protection。
+回退不需要动 `ci.yml`、瘦 checker、Bash guard 或 branch protection；witnessloop 的 caller / policy 由 `uninit` 精确回滚。

@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-本仓库的 issue、PRD 和可交给 agent 执行的任务默认发布到 GitHub Issues。后端配置来自 `scripts/workflow_methods.json` 的 `ticket_tracker` 段，当前仓库目标为 `Xingkai98/asterwynd`，backend 默认值为 `github`。
+本仓库的 issue、PRD 和可交给 agent 执行的任务默认发布到 GitHub Issues。目标仓库为 `Xingkai98/asterwynd`；旧 `scripts/workflow_methods.json` 的 `ticket_tracker` 配置已随旧门禁删除，GitHub Issues 是唯一后端。
 
 Matt Pocock skills 需要发布或读取 issue 时，默认使用 `gh` CLI。
 
@@ -13,7 +13,7 @@ Matt Pocock skills 需要发布或读取 issue 时，默认使用 `gh` CLI。
 - 添加或移除标签：`gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - 关闭 issue：`gh issue close <number> --comment "..."`
 
-如果 `ticket_tracker.backend` 改成其他值，以上约定应替换为对应后端的等价命令。
+以上约定以 GitHub Issues 为准；没有可切换的 ticket tracker 后端。
 
 ## OpenSpec change 跟踪 issue
 

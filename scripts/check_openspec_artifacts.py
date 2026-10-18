@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
-"""Check project-level OpenSpec artifact rules.
+"""Slim project-rule checker (retired-gate replacement).
 
-This checker intentionally performs mechanical checks only:
+Implements only the six project rules that witnessloop does not cover:
 
-- required files exist for the declared change type set
-- required sections exist and contain non-placeholder body text
-- proposal.md declares Change Type with primary/secondary fields
-- change spec delta capabilities map to current specs
-- non-docs changes with spec deltas include a current spec sync task
-- non-docs changes include Impact Analysis
-- non-docs changes include Reference Implementation Research decision records
-- changes that require design include a Pre-Implementation Review record
-- handoff.json structure validation (when present)
+1. Reference Implementation Research
+2. Impact Analysis
+3. benchmark smoke task requirement
+4. tasks / archive-point completion (including archive-point grill evidence)
+5. backlog consistency
+6. building review `## 闭环出口` PASS verdict
 
-It does not judge whether a design is technically correct. Human review owns
-that gate.
+Exit codes: 0 = pass, 1 = rule violations, 2 = missing changes root / usage error.
+Change contracts, stage manifests, protected-write events, and active-stage grill
+evidence are owned by witnessloop and are NOT re-checked here.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import subprocess
 import sys
@@ -28,9 +25,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+@dataclass
+class ChangeType:
+    primary: str
+    secondary: tuple[str, ...]
+
+    @property
+    def all_types(self) -> set[str]:
+        return {self.primary, *self.secondary}
+
+
 ALLOWED_TYPES = {"feature", "bugfix", "research", "docs", "process", "refactor"}
 DESIGN_TYPES = {"feature", "refactor", "process"}
-DIAGNOSIS_TYPES = {"bugfix", "research"}
 
 BENCHMARK_SMOKE_CAPABILITIES = {
     "agent-runtime",
@@ -48,22 +54,6 @@ BENCHMARK_SMOKE_CODE_PATTERNS = (
 BACKLOG_CHANGE_PATTERN = re.compile(r"###\s+\d+\.\s+`([^`]+)`")
 DONE_BACKLOG_PATTERN = re.compile(r"-\s+`([^`]+)`")
 
-DESIGN_SECTIONS = [
-    "Context",
-    "Goals / Non-Goals",
-    "Decisions",
-    "Pre-Implementation Review",
-    "Risks / Trade-offs",
-    "Testing Strategy",
-]
-DIAGNOSIS_SECTIONS = [
-    "Symptom",
-    "Reproduction",
-    "Evidence",
-    "Root Cause",
-    "Recommended Direction",
-    "Regression Tests",
-]
 REFERENCE_RESEARCH_SECTION = "Reference Implementation Research"
 REFERENCE_RESEARCH_FIELDS = (
     "research_tier",
@@ -74,10 +64,6 @@ REFERENCE_RESEARCH_FIELDS = (
     "design impact",
 )
 RESEARCH_TIER_VALUES = ("full", "light", "exempt")
-# exempt 结构性豁免关键词（D3 + Q3 确认：不扩展证据路径清单，判断性豁免示例
-# 「与已有模块 X 等价改造」类必须带引用才通过）。「方案已由.*决策」用正则，
-# 其余子串匹配；证据 = issue 引用 #<数字> 或评审文档路径
-# （docs/、openspec/changes/archive/、reviews/）。
 STRUCTURAL_EXEMPTION_KEYWORDS = (
     "docs-only",
     "bugfix",
@@ -86,9 +72,6 @@ STRUCTURAL_EXEMPTION_KEYWORDS = (
 )
 STRUCTURAL_EXEMPTION_RE_PATTERNS = (re.compile(r"方案已由.*决策"),)
 EXEMPT_EVIDENCE_PATH_PATTERNS = ("docs/", "openspec/changes/archive/", "reviews/")
-# 内容门槛（#123 阶段感知）：tasks 全勾（实现完成）时命中即红的「自认未完成」
-# 短语级模式（grill Q6 确认，删 暂无/未完成 避免误伤「暂无参考仓库可用」类
-# 合法 finding）；语义化占位漏检记 docs/known-debt.md，不无限扩表。
 SELF_ADMITTED_INCOMPLETE_PHRASES = (
     "尚未完成",
     "待补充",
@@ -98,33 +81,6 @@ SELF_ADMITTED_INCOMPLETE_PHRASES = (
     "待确认",
 )
 
-# 归档点完成度门（issue #235）：触发路径与任务行解析。
-# 归档目录固定形如 `openspec/changes/archive/<YYYY-MM-DD>-<change-id>/`。
-ARCHIVE_PATH_RE = re.compile(r"^openspec/changes/archive/(\d{4}-\d{2}-\d{2}-[^/]+)/")
-ARCHIVE_ROOT_PREFIX = "openspec/changes/archive/"
-# 归档根下的**目录段**（`archive/<seg>/…`）。判定非规范归档只认「有一个目录段」
-# 的路径：`archive/.gitkeep` 这类归档根下的普通文件没有目录段，不该被当成命名
-# 不合规的归档目录（building-review R1 Issue low-1 的假阳性）。
-ARCHIVE_DIR_SEGMENT_RE = re.compile(r"^openspec/changes/archive/([^/]+)/")
-# 复选框行：`-`/`*`/`+` 三种标记 + `[ ]`/`[x]`/`[X]`（缩进子项也算——调用方
-# 先 strip）。原实现只认 `- [x]`/`* [x]`，漏掉 `[X]` 与 `+`。
-CHECKBOX_RE = re.compile(r"^[-*+]\s*\[([ xX])\]")
-# closeout 类任务的 `(post-merge)` 标记：容忍编号/粗体在前、全半角括号、大小写。
-# 例：`- [ ] 5.5 (post-merge)` / `- [ ] **6.9** (post-merge)` / `- [ ] （post-merge）`。
-POST_MERGE_TAG_RE = re.compile(
-    r"^\s*[-*+]\s*\[[ xX]\]\s*(?:\*\*)?(?:\d+(?:\.\d+)*)?(?:\*\*)?\s*"
-    r"[（(]\s*post-merge\s*[)）]",
-    re.IGNORECASE,
-)
-
-
-def _self_admitted_incomplete(text: str) -> str | None:
-    lowered = text.lower()
-    for phrase in SELF_ADMITTED_INCOMPLETE_PHRASES:
-        if phrase.lower() in lowered:
-            return phrase
-    return None
-
 PLACEHOLDER_ONLY = {
     "todo",
     "tbd",
@@ -132,14 +88,9 @@ PLACEHOLDER_ONLY = {
     "na",
     "待补充",
     "无",
+    "待确认",
 }
-# grill-design.md ## User Confirmation 节的"未确认"标记：`用户答复：` 后跟这些
-# 值（小写归一后）的确认记录不得计入已确认。与 PLACEHOLDER_ONLY 区分——占位
-# 判定是给整节正文用的，这些 token 用于识别"写了占位但没真拍板"的确认行
-# （grill-confirmation-gate Q1：占位文本会假通过朴素判定）。
-# 占位判定的关键：占位文本短且无实质决策内容；真实答复即使是"排除未确认 token"
-# 这类长句也不得误伤。因此短答复（≤20 字符）才做子串匹配，长答复一律视为实质
-# 内容。EXACT 精确匹配兜底短占位。
+
 UNCONFIRMED_EXACT = {
     "todo", "tbd", "n/a", "na", "无", "none",
     "待确认", "未确认", "待定", "pending", "待补充", "占位", "未决",
@@ -149,181 +100,17 @@ UNCONFIRMED_STRONG = {
     "待拍板", "未拍板",
 }
 _UNCONFIRMED_MAX_ANSWER_LEN = 20
-# 标点/空白变体剥离：`待确认。` → `待确认`，`待主agent提交` → `待主agent提交`
 _UNCONFIRMED_STRIP = str.maketrans("", "", "。．.；;，,、 \t")
 
-
-def _is_unconfirmed_answer(answer: str) -> bool:
-    """True when an answer value is an unconfirmed marker, not a real decision."""
-    a = answer.lower().strip().translate(_UNCONFIRMED_STRIP)
-    if not a:
-        return True
-    if a in UNCONFIRMED_EXACT:
-        return True
-    # Short answers that merely gesture at "pending" are placeholders; long
-    # answers are substantive even if they mention a token like 未确认.
-    if len(a) <= _UNCONFIRMED_MAX_ANSWER_LEN:
-        for tok in UNCONFIRMED_STRONG:
-            if tok in a:
-                return True
-    return False
-PROTECTED_ARTIFACT_EVENT = "protected_artifact_explained"
-CURRENT_SPEC_SYNC_EVENT = "current_spec_synced"
-BACKLOG_UPDATED_EVENT = "backlog_updated"
-CHANGE_ARCHIVED_EVENT = "change_archived"
-
-# 受保护路径规则从 scripts/flow-policy.json 加载（flow-policy-source P0 单一策略源），
-# 替换原硬编码 PROTECTED_PATH_RULES。取 governance == event_explained 的条目。
-_POLICY_REL_PATH = Path("scripts") / "flow-policy.json"
-
-
-def _load_protected_path_rules(repo_root: Path) -> tuple[tuple[str, str, tuple[str, ...]], ...] | None:
-    """Load event_explained rules from scripts/flow-policy.json.
-
-    Returns None when the policy file is missing/corrupt (fail-closed: the CI
-    gate must not silently skip protected-path checks). Raises RuntimeError on
-    an event_explained rule without event_types (invalid policy schema).
-    """
-    policy = repo_root / _POLICY_REL_PATH
-    try:
-        data = json.loads(policy.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    rules = data.get("protected_paths")
-    if not isinstance(rules, list):
-        return None
-    out: list[tuple[str, str, tuple[str, ...]]] = []
-    for rule in rules:
-        if not isinstance(rule, dict) or rule.get("governance") != "event_explained":
-            continue
-        path = rule.get("path")
-        mt = rule.get("match_type")
-        et = rule.get("event_types")
-        if not isinstance(path, str) or not path:
-            continue
-        if mt not in ("exact", "prefix", "contains"):
-            continue
-        if not isinstance(et, (list, tuple)) or not et:
-            raise RuntimeError(
-                f"scripts/flow-policy.json: event_explained rule for '{path}' "
-                "missing event_types (invalid policy schema)"
-            )
-        out.append((mt, path, tuple(et)))
-    return tuple(out)
-
-
-ALLOWED_POLICY_PHASES = {"wayfinding", "planning", "building", "closing"}
-_POLICY_META_KEYS = {"_description"}
-
-
-def _validate_agent_content(prefix: str, agent: object) -> list[str]:
-    """Validate a direct ``{provider, model}`` agent content (#127 P0 schema)."""
-    errors: list[str] = []
-    if agent is None:
-        return errors
-    if not isinstance(agent, dict):
-        return [f"flow-policy.json `{prefix}` must be an object"]
-    if not agent:
-        return errors
-    for k in ("provider", "model"):
-        if k not in agent:
-            errors.append(f"flow-policy.json `{prefix}` missing `{k}`")
-        elif not isinstance(agent[k], str) or not agent[k]:
-            errors.append(f"flow-policy.json `{prefix}.{k}` must be a non-empty string")
-    extra = set(agent.keys()) - {"provider", "model"}
-    if extra:
-        errors.append(
-            f"flow-policy.json `{prefix}` has unknown keys: " + ", ".join(sorted(extra))
-        )
-    return errors
-
-
-def _validate_agent_decl(prefix: str, val: object) -> list[str]:
-    """Validate a ``{agent: {provider, model}}`` phase declaration (#127 P0 schema).
-
-    Accepts an empty dict (schema placeholder) or a ``{agent: {...}}`` wrapper;
-    a bare ``{provider, model}`` (direct agent content) is also accepted for
-    symmetry with ``review.agent``.
-    """
-    errors: list[str] = []
-    if val is None:
-        return errors
-    if not isinstance(val, dict):
-        return [f"flow-policy.json `{prefix}` must be an object"]
-    if not val:
-        return errors
-    non_meta = set(val.keys()) - _POLICY_META_KEYS
-    if "agent" not in val:
-        # bare {provider, model} direct content form (review.agent style)
-        if non_meta <= {"provider", "model"}:
-            return _validate_agent_content(prefix, val)
-        errors.append(
-            f"flow-policy.json `{prefix}` has unknown keys (expected `agent`): "
-            + ", ".join(sorted(non_meta))
-        )
-        return errors
-    if len(non_meta) > 1:
-        errors.append(
-            f"flow-policy.json `{prefix}` has unknown extra keys: "
-            + ", ".join(sorted(non_meta - {"agent"}))
-        )
-    return _validate_agent_content(f"{prefix}.agent", val.get("agent"))
-
-
-def _validate_policy_agent_schema(repo_root: Path) -> list[str]:
-    """Validate the phases/review agent schema of flow-policy.json (#127 P0).
-
-    Missing/corrupt policy is left to ``_load_protected_path_rules`` fail-closed;
-    here we only structurally validate the optional phases/review sections.
-    """
-    errors: list[str] = []
-    policy = repo_root / _POLICY_REL_PATH
-    try:
-        data = json.loads(policy.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return errors
-    if not isinstance(data, dict):
-        return errors
-
-    phases = data.get("phases")
-    if phases is not None and not isinstance(phases, dict):
-        errors.append("flow-policy.json `phases` must be an object")
-    elif isinstance(phases, dict):
-        for key, val in phases.items():
-            if key in _POLICY_META_KEYS:
-                continue
-            if key not in ALLOWED_POLICY_PHASES:
-                errors.append(
-                    f"flow-policy.json unknown phase `{key}` "
-                    f"(allowed: {', '.join(sorted(ALLOWED_POLICY_PHASES))})"
-                )
-                continue
-            errors.extend(_validate_agent_decl(f"phases.{key}", val))
-
-    review = data.get("review")
-    if review is not None and not isinstance(review, dict):
-        errors.append("flow-policy.json `review` must be an object")
-    elif isinstance(review, dict):
-        for key, val in review.items():
-            if key in _POLICY_META_KEYS:
-                continue
-            if key != "agent":
-                errors.append(f"flow-policy.json unknown review key `{key}` (allowed: agent)")
-                continue
-            errors.extend(_validate_agent_decl("review.agent", val))
-    return errors
-
-
-@dataclass(frozen=True)
-class ChangeType:
-    primary: str
-    secondary: tuple[str, ...]
-
-    @property
-    def all_types(self) -> set[str]:
-        return {self.primary, *self.secondary}
+ARCHIVE_PATH_RE = re.compile(r"^openspec/changes/archive/(\d{4}-\d{2}-\d{2}-[^/]+)/")
+ARCHIVE_ROOT_PREFIX = "openspec/changes/archive/"
+ARCHIVE_DIR_SEGMENT_RE = re.compile(r"^openspec/changes/archive/([^/]+)/")
+CHECKBOX_RE = re.compile(r"^[-*+]\s*\[([ xX])\]")
+POST_MERGE_TAG_RE = re.compile(
+    r"^\s*[-*+]\s*\[[ xX]\]\s*(?:\*\*)?(?:\d+(?:\.\d+)*)?(?:\*\*)?\s*"
+    r"[（(]\s*post-merge\s*[)）]",
+    re.IGNORECASE,
+)
 
 
 def _strip_markdown_noise(text: str) -> str:
@@ -340,7 +127,6 @@ def _strip_markdown_noise(text: str) -> str:
             lines.append(stripped)
     return "\n".join(lines).strip()
 
-
 def _is_placeholder_body(text: str) -> bool:
     if "<!--" in text and "-->" in text and not _strip_markdown_noise(text):
         return True
@@ -348,7 +134,6 @@ def _is_placeholder_body(text: str) -> bool:
     if not cleaned:
         return True
     return cleaned in PLACEHOLDER_ONLY
-
 
 def _inside_fence(text: str, pos: int) -> bool:
     """True when ``pos`` falls inside a fenced code block (``` ... ```)."""
@@ -359,7 +144,6 @@ def _inside_fence(text: str, pos: int) -> bool:
             break
         open_fence = None if open_fence is not None else f
     return open_fence is not None
-
 
 def _extract_h2_sections(text: str) -> dict[str, str]:
     matches = list(re.finditer(r"^##\s+(.+?)\s*$", text, flags=re.MULTILINE))
@@ -375,7 +159,6 @@ def _extract_h2_sections(text: str) -> dict[str, str]:
         sections[title] = text[start:end].strip()
     return sections
 
-
 def _parse_list_value(value: str) -> tuple[str, ...]:
     value = value.strip()
     if not value or value in {"[]", "-"}:
@@ -386,7 +169,6 @@ def _parse_list_value(value: str) -> tuple[str, ...]:
             return ()
         return tuple(part.strip().strip("'\"") for part in inner.split(",") if part.strip())
     return (value.strip().strip("'\""),)
-
 
 def parse_change_type(proposal_text: str) -> tuple[ChangeType | None, list[str]]:
     errors: list[str] = []
@@ -432,22 +214,6 @@ def parse_change_type(proposal_text: str) -> tuple[ChangeType | None, list[str]]
         return None, errors
     return ChangeType(primary=primary, secondary=secondary), []
 
-
-def _check_required_sections(path: Path, required_sections: list[str]) -> list[str]:
-    errors: list[str] = []
-    if not path.exists():
-        return [f"missing required file: {path.name}"]
-
-    sections = _extract_h2_sections(path.read_text(encoding="utf-8"))
-    for section in required_sections:
-        if section not in sections:
-            errors.append(f"{path.name} missing required section: ## {section}")
-            continue
-        if _is_placeholder_body(sections[section]):
-            errors.append(f"{path.name} section is empty or placeholder-only: ## {section}")
-    return errors
-
-
 def _check_impact_analysis(change_dir: Path, proposal_text: str) -> list[str]:
     proposal_sections = _extract_h2_sections(proposal_text)
     if "Impact Analysis" in proposal_sections:
@@ -464,7 +230,6 @@ def _check_impact_analysis(change_dir: Path, proposal_text: str) -> list[str]:
             return []
 
     return ["proposal.md or design.md missing required section: ## Impact Analysis"]
-
 
 def _extract_record_field(section_body: str, field: str) -> str | None:
     lines = section_body.splitlines()
@@ -487,7 +252,6 @@ def _extract_record_field(section_body: str, field: str) -> str | None:
 
     return None
 
-
 def _find_reference_research_section(
     change_dir: Path, proposal_text: str
 ) -> tuple[str, str] | None:
@@ -502,7 +266,6 @@ def _find_reference_research_section(
             return "design.md", design_sections[REFERENCE_RESEARCH_SECTION]
 
     return None
-
 
 def _exempt_reason_satisfies(reason: str) -> bool:
     """True when an exempt reason hits a structural keyword or cites evidence.
@@ -519,7 +282,6 @@ def _exempt_reason_satisfies(reason: str) -> bool:
     if re.search(r"#\d+", reason):
         return True
     return any(path in lowered for path in EXEMPT_EVIDENCE_PATH_PATTERNS)
-
 
 def _check_reference_implementation_research(
     change_dir: Path,
@@ -655,7 +417,6 @@ def _check_reference_implementation_research(
 
     return errors
 
-
 def _requires_benchmark_smoke(proposal_text: str) -> bool:
     lowered = proposal_text.lower()
     for capability in BENCHMARK_SMOKE_CAPABILITIES:
@@ -663,29 +424,9 @@ def _requires_benchmark_smoke(proposal_text: str) -> bool:
             return True
     return any(re.search(pattern, proposal_text) for pattern in BENCHMARK_SMOKE_CODE_PATTERNS)
 
-
 def _has_benchmark_smoke_task(tasks_text: str) -> bool:
     lowered = tasks_text.lower()
     return "benchmark" in lowered and "smoke" in lowered
-
-
-def _has_design_review_task(tasks_text: str) -> bool:
-    lowered = tasks_text.lower()
-    return (
-        "grilling" in lowered  # 新名（grill-flow-hardening / issue #298）
-        or "grill-with-docs" in lowered  # 旧名，兼容历史/在途
-        or "batch-grill" in lowered  # 旧名（batch-grill-me），兼容历史/在途
-        or "等价设计追问" in tasks_text
-    )
-
-
-def _has_current_spec_sync_task(tasks_text: str) -> bool:
-    lowered = tasks_text.lower()
-    return (
-        ("current spec" in lowered or "当前规格" in tasks_text)
-        and "openspec/specs" in lowered
-    )
-
 
 def _changed_capabilities(change_dir: Path) -> tuple[str, ...]:
     specs_root = change_dir / "specs"
@@ -698,207 +439,6 @@ def _changed_capabilities(change_dir: Path) -> tuple[str, ...]:
             if path.is_file()
         )
     )
-
-
-def _check_current_spec_mapping(
-    change_dir: Path, current_specs_root: Path | None
-) -> list[str]:
-    capabilities = _changed_capabilities(change_dir)
-    if not capabilities:
-        return []
-
-    root = current_specs_root or change_dir.parent.parent / "specs"
-    errors: list[str] = []
-    for capability in capabilities:
-        current_spec = root / capability / "spec.md"
-        if not current_spec.exists():
-            errors.append(
-                "spec delta capability "
-                f"`{capability}` has no matching current spec at {current_spec}"
-            )
-    return errors
-
-
-def _check_current_spec_sync_task(
-    change_dir: Path, change_type: ChangeType
-) -> list[str]:
-    if change_type.primary == "docs" or not _changed_capabilities(change_dir):
-        return []
-
-    tasks = change_dir / "tasks.md"
-    if not tasks.exists():
-        return ["missing required file: tasks.md"]
-    if not _has_current_spec_sync_task(tasks.read_text(encoding="utf-8")):
-        return [
-            "tasks.md missing current spec sync task for spec delta "
-            "(`openspec/specs/<capability>/spec.md`)"
-        ]
-    return []
-
-
-def _check_design_review_task(
-    change_dir: Path, change_type: ChangeType, *, assume_implemented: bool = False
-) -> list[str]:
-    if not (change_type.all_types & DESIGN_TYPES):
-        return []
-
-    # Structured grill evidence (issue #95 + grill-confirmation-gate):
-    # reviews/grill-design.md must exist with a non-empty ## Confirmed Decisions
-    # section (>= 3 decision entries), and every ## Open Questions entry must
-    # have a matching ## User Confirmation record once the change is complete
-    # (tasks all checked). This replaces the literal "batch-grill" string check.
-    grill_evidence = change_dir / "reviews" / "grill-design.md"
-    if grill_evidence.exists():
-        text = grill_evidence.read_text(encoding="utf-8")
-        errors: list[str] = []
-        decisions = _extract_grill_decisions(text)
-        if len(decisions) < 3:
-            errors.append(
-                f"reviews/grill-design.md 的 ## Confirmed Decisions 不足 3 条"
-                f"（当前 {len(decisions)} 条）——独立 subagent design grilling 未完成"
-            )
-        # User Confirmation coverage (grill-confirmation-gate): only enforced
-        # on a completed change (tasks all checked). In-flight changes may keep
-        # open questions while the user clarifies mid-development.
-        # 归档点门（D3 A′）：归档侧 assume_implemented=True 让该覆盖不被未勾项降级。
-        if assume_implemented or _tasks_all_complete(change_dir):
-            missing = _unconfirmed_open_questions(text)
-            if missing:
-                errors.append(
-                    "reviews/grill-design.md 存在未确认的 Open Question: "
-                    + ", ".join(missing)
-                    + " ——每个 Open Question 必须有 ## User Confirmation 记录，未确认不允许归档"
-                )
-        return errors
-
-    # A *completed* change (non-docs, tasks all checked) must show structured
-    # grill evidence — the literal marker is no longer enough once the change
-    # is done. This is Design Decision 7: narrow the mandatory-evidence branch
-    # to implemented changes so legacy in-flight changes aren't flagged.
-    tasks = change_dir / "tasks.md"
-    if not tasks.exists():
-        return ["missing required file: tasks.md"]
-    # 归档点门（D3 A′）：归档侧不因未勾项退回字面标记兜底——否则留一条 `- [ ]`
-    # 就能让证据门静默通过（issue #235 的绕开路径）。
-    if (assume_implemented or _tasks_all_complete(change_dir)) and _changed_capabilities(change_dir):
-        return [
-            "reviews/grill-design.md missing — 实现已完成但独立 subagent design grilling 证据缺失。"
-            "请用 /grill 跑独立设计追问并产出结构化决策记录。"
-        ]
-
-    # Fallback (compat with update-design-review-method, in-flight changes):
-    # literal task marker.
-    if not _has_design_review_task(tasks.read_text(encoding="utf-8")):
-        return [
-            "tasks.md missing pre-implementation grilling (or legacy batch-grill-me / "
-            "grill-with-docs) or equivalent design review task"
-        ]
-    return []
-
-
-def _normalize_question_index(raw: str) -> str | None:
-    """Normalize an Open Questions / User Confirmation index to ``Q<n>``.
-
-    Accepts ``1``, ``1.``, ``Q1``, ``q1``, and list/bold-wrapped forms like
-    ``- **Q1**:`` (list marker and asterisks stripped). Returns None when no
-    numeric index is present.
-    """
-    cleaned = raw.strip().strip(".")
-    # Strip a leading list marker and any bold asterisks so the Q/number is
-    # directly matchable.
-    cleaned = re.sub(r"^[-*]\s*\**\s*", "", cleaned)
-    m = re.match(r"(?:[Qq])?(\d+)", cleaned)
-    if not m:
-        return None
-    return f"Q{m.group(1)}"
-
-
-def _extract_open_question_indexes(text: str) -> list[str]:
-    """Extract Open Questions entry indexes from ``## Open Questions``.
-
-    Only entries with an explicit numeric/``Q<n>`` index count (``1.``, ``- **Q1**:``,
-    ``- Q1 ...``). Placeholder entries (``- 无``, empty) are skipped.
-    """
-    section = _extract_h2_sections(text).get("Open Questions", "")
-    if not section or _is_placeholder_body(section):
-        return []
-    indexes: list[str] = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        # Skip "no open questions" markers in any form (bare, numbered, "- 无").
-        no_q = re.sub(r"^[-*]\s*", "", stripped)
-        no_q = re.sub(r"^\d+[.、]\s*", "", no_q)
-        no_q = re.sub(r"^\*\*", "", no_q)
-        if no_q.strip() in {"无", "无。", "none", "none。", "没有", "无问题"}:
-            continue
-        # Read the leading index of a real entry (from the original line).
-        m = re.match(r"^[-*]?\s*\**\s*(?:(?:Q|q)\d+|\d+)\s*[:：.]?\s*", stripped)
-        if m:
-            idx = _normalize_question_index(m.group(0))
-            if idx:
-                indexes.append(idx)
-    return indexes
-
-
-def _extract_user_confirmation_indexes(text: str) -> list[str]:
-    """Extract confirmed Open Questions indexes from ``## User Confirmation``.
-
-    A record counts only when the line is ``- **Q<n>**: 用户答复：<value>`` and
-    the answer value is not an unconfirmed marker (``待确认``, ``pending``, etc.
-    per UNCONFIRMED_TOKENS). This blocks the placeholder false-pass discovered
-    in grill-confirmation-gate Q1.
-    """
-    section = _extract_h2_sections(text).get("User Confirmation", "")
-    if not section:
-        return []
-    indexes: list[str] = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        # 容忍 `**Q8**（分支命名）:` 后缀（flow-policy-source P0 正则修复，
-        # 与 workflow_guard._extract_user_confirmation_indexes 同步).
-        m = re.match(r"^-\s+\*\*Q(\d+)\*\*(?:[^：:]*)\s*[:：]", stripped)
-        if not m:
-            continue
-        answer_match = re.search(r"用户答复\s*[:：]\s*(.*?)(?:[；;]\s*确认时间|\s*$)", stripped)
-        if not answer_match:
-            continue
-        answer = answer_match.group(1).strip().strip("`")
-        if not answer or _is_unconfirmed_answer(answer):
-            continue
-        indexes.append(f"Q{m.group(1)}")
-    return indexes
-
-
-def _unconfirmed_open_questions(text: str) -> list[str]:
-    """Open Questions without a matching confirmed User Confirmation record."""
-    open_indexes = _extract_open_question_indexes(text)
-    if not open_indexes:
-        return []
-    confirmed = set(_extract_user_confirmation_indexes(text))
-    return [q for q in open_indexes if q not in confirmed]
-
-
-def _extract_grill_decisions(text: str) -> list[str]:
-    """Extract decision entries under ## Confirmed Decisions in grill-design.md.
-
-    Only the canonical list-item format counts (``- **决策**: ...``, half- or
-    full-width colon). The ``### Decision N:`` heading form is tolerated for
-    display but does not satisfy the evidence threshold on its own — headings
-    lack the required 理由/来源 fields, so counting them would let an agent pad
-    the decision count without real content.
-    """
-    section = _extract_h2_sections(text).get("Confirmed Decisions", "")
-    if not section or _is_placeholder_body(section):
-        return []
-    decisions: list[str] = []
-    for line in section.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- **决策**：") or stripped.startswith("- **决策**:"):
-            decisions.append(stripped)
-    return decisions
-
 
 def _check_benchmark_smoke_task(change_dir: Path, proposal_text: str) -> list[str]:
     if not _requires_benchmark_smoke(proposal_text):
@@ -920,82 +460,6 @@ HANDOFF_STATE_FIELDS = ["phase", "sub_state"]
 # reviewing and code-review are now reviewing_* sub-states within each phase
 VALID_PHASES = {"wayfinding", "planning", "building", "closing", "blocked", "done"}
 VALID_ROUTING_PHASES = {"wayfinding", "planning", "building", "closing"}
-
-
-def _check_handoff_json(change_dir: Path) -> list[str]:
-    handoff = change_dir / "handoff.json"
-    if not handoff.exists():
-        return []
-
-    errors: list[str] = []
-    change_name = change_dir.name
-
-    try:
-        data = json.loads(handoff.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{change_name}: handoff.json is not valid JSON: {exc}"]
-
-    if not isinstance(data, dict):
-        return [f"{change_name}: handoff.json must be a JSON object"]
-
-    for field in HANDOFF_REQUIRED_FIELDS:
-        if field not in data:
-            errors.append(f"{change_name}: handoff.json missing required field: {field}")
-
-    if "state" in data:
-        state = data["state"]
-        if not isinstance(state, dict):
-            errors.append(f"{change_name}: handoff.json state must be an object")
-        else:
-            for field in HANDOFF_STATE_FIELDS:
-                if field not in state:
-                    errors.append(f"{change_name}: handoff.json state missing field: {field}")
-            phase = state.get("phase")
-            if phase is not None and phase not in VALID_PHASES:
-                errors.append(
-                    f"{change_name}: handoff.json state.phase invalid: {phase!r}, "
-                    f"expected one of {sorted(VALID_PHASES)}"
-                )
-
-    if "transitions" in data and not isinstance(data["transitions"], list):
-        errors.append(f"{change_name}: handoff.json transitions must be an array")
-
-    if "routing" in data:
-        routing = data["routing"]
-        if not isinstance(routing, dict):
-            errors.append(f"{change_name}: handoff.json routing must be an object")
-        else:
-            for phase in VALID_ROUTING_PHASES:
-                if phase not in routing:
-                    errors.append(f"{change_name}: handoff.json routing missing phase: {phase}")
-                else:
-                    entry = routing[phase]
-                    if not isinstance(entry, dict):
-                        errors.append(
-                            f"{change_name}: handoff.json routing.{phase} must be an object"
-                        )
-                    else:
-                        if "executor" not in entry:
-                            errors.append(
-                                f"{change_name}: handoff.json routing.{phase} missing executor"
-                            )
-                        if "session_mode" not in entry:
-                            errors.append(
-                                f"{change_name}: handoff.json routing.{phase} missing session_mode"
-                            )
-
-    if "blockers" in data and not isinstance(data["blockers"], list):
-        errors.append(f"{change_name}: handoff.json blockers must be an array")
-
-    if (change_dir / "workflow-events.jsonl").exists():
-        # Q11/代码层修正 11：verify_handoff_projection 扩为 verify_projection——
-        # gen-1 校验 handoff.json == replay；gen-2 校验磁盘 workflow-state.json == replay。
-        from agent.workflow.event_log import verify_projection
-
-        errors.extend(verify_projection(change_dir))
-
-    return errors
-
 
 def _tasks_all_complete(change_dir: Path) -> bool:
     """Return True when every checkbox line in tasks.md is checked.
@@ -1023,7 +487,6 @@ def _tasks_all_complete(change_dir: Path) -> bool:
             unchecked += 1
     return checked > 0 and unchecked == 0
 
-
 def _untagged_unchecked_tasks(change_dir: Path) -> list[str]:
     """Return unchecked task lines that lack a ``(post-merge)`` tag.
 
@@ -1046,7 +509,6 @@ def _untagged_unchecked_tasks(change_dir: Path) -> list[str]:
             continue
         untagged.append(stripped)
     return untagged
-
 
 def _tasks_missing_evidence(change_dir: Path) -> str | None:
     """Return a reason string when tasks.md carries no proof of completion.
@@ -1097,7 +559,6 @@ _REVIEW_EXIT_ANY_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 
-
 def _strip_fenced_blocks(text: str) -> str:
     """Drop fenced code blocks (``` / ~~~) so quoted templates are ignored."""
     kept: list[str] = []
@@ -1113,7 +574,6 @@ def _strip_fenced_blocks(text: str) -> str:
         elif marker == fence:
             fence = None
     return "\n".join(kept)
-
 
 def _review_exit_verdict(text: str) -> tuple[str, str | None]:
     """Parse the terminal verdict from the ``## 闭环出口`` section.
@@ -1151,7 +611,6 @@ def _review_exit_verdict(text: str) -> tuple[str, str | None]:
         return "ambiguous", None
     return "ok", verdict
 
-
 def _review_exit_errors(report: Path, *, completion: bool) -> list[str]:
     """Errors for a building review's terminal exit.
 
@@ -1188,7 +647,6 @@ def _review_exit_errors(report: Path, *, completion: bool) -> list[str]:
         "（PASS / BLOCKED / CHANGES_REQUESTED）开头。"
     ]
 
-
 def _check_building_review(
     change_dir: Path, change_type: ChangeType
 ) -> list[str]:
@@ -1223,240 +681,6 @@ def _check_building_review(
         return _review_exit_errors(review_report, completion=False)
     return []
 
-
-def _check_archived_projectable(change_dir: Path) -> list[str]:
-    """归档 change 可投影校验（Q5/代码层修正 2）。
-
-    只验证结构合法 + 所有 event_type 可识别（_apply / NON_STATE / milestones 集），
-    不要求 seed 事件、不要求磁盘 workflow-state.json（老世代不落盘，Q13）。
-    """
-    if not (change_dir / "workflow-events.jsonl").exists():
-        return []
-    try:
-        from agent.workflow.event_log import project_workflow_state
-
-        project_workflow_state(change_dir)
-    except Exception as exc:
-        return [f"{change_dir.name}: archived change 事件日志不可投影: {exc}"]
-    return []
-
-
-def check_protected_path_explanations(
-    repo_root: Path,
-    *,
-    changed_paths: set[str],
-) -> list[str]:
-    errors: list[str] = []
-    try:
-        rules = _load_protected_path_rules(repo_root)
-    except RuntimeError as exc:
-        # schema 非法（event_explained 缺 event_types 等）：不抛裸 traceback，
-        # 以可读错误 fail-closed（building-review Issue 3）。
-        return [f"scripts/flow-policy.json schema 非法: {exc}"]
-    if rules is None:
-        return [
-            "scripts/flow-policy.json 缺失或损坏：受保护路径检查无法执行（fail-closed）。"
-            "请修复策略文件后重跑。"
-        ]
-    for path in sorted(changed_paths):
-        allowed_event_types = _allowed_event_types_for_protected_path(path, rules)
-        if allowed_event_types is None:
-            continue
-        explanation_errors = _protected_artifact_explanation_errors(
-            repo_root,
-            path,
-            allowed_event_types=allowed_event_types,
-        )
-        if explanation_errors is None:
-            errors.append(
-                f"protected path `{path}` changed without workflow event explanation"
-            )
-        else:
-            errors.extend(explanation_errors)
-    return errors
-
-
-def _protected_artifact_explanation_errors(
-    repo_root: Path,
-    artifact_path: str,
-    *,
-    allowed_event_types: tuple[str, ...],
-) -> list[str] | None:
-    changes_root = repo_root / "openspec" / "changes"
-    if not changes_root.exists():
-        return None
-
-    matching_errors: list[str] = []
-    for event_log in changes_root.rglob("workflow-events.jsonl"):
-        try:
-            lines = event_log.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("event_type") not in allowed_event_types:
-                continue
-            if _event_covers_artifact_path(event, artifact_path):
-                event_errors = _validate_protected_artifact_event(
-                    event,
-                    artifact_path,
-                    expected_change_id=_change_id_for_event_log(event_log),
-                    allowed_event_types=allowed_event_types,
-                )
-                if not event_errors:
-                    return []
-                matching_errors.extend(event_errors)
-    return matching_errors or None
-
-
-def _validate_protected_artifact_event(
-    event: dict,
-    artifact_path: str,
-    *,
-    expected_change_id: str,
-    allowed_event_types: tuple[str, ...],
-) -> list[str]:
-    errors: list[str] = []
-    prefix = f"protected artifact event for `{artifact_path}`"
-    required_fields = ("reason", "approved_by")
-
-    if event.get("schema") != "workflow-event/v1":
-        errors.append(f"{prefix} has invalid schema: {event.get('schema')}")
-    if event.get("event_type") not in allowed_event_types:
-        errors.append(f"{prefix} has invalid event_type: {event.get('event_type')}")
-    if event.get("change_id") != expected_change_id:
-        errors.append(f"{prefix} change_id mismatch: {event.get('change_id')}")
-    for field in required_fields:
-        value = event.get(field)
-        if not isinstance(value, str) or _is_placeholder_body(value):
-            errors.append(f"{prefix} missing required field: {field}")
-    return errors
-
-
-def _allowed_event_types_for_protected_path(
-    path: str, rules: tuple[tuple[str, str, tuple[str, ...]], ...]
-) -> tuple[str, ...] | None:
-    for match_type, pattern, event_types in rules:
-        if match_type == "exact" and path == pattern:
-            return event_types
-        if match_type == "prefix" and path.startswith(pattern):
-            return event_types
-        if match_type == "contains" and pattern in path:
-            return event_types
-    return None
-
-
-def _event_covers_artifact_path(event: dict, changed_path: str) -> bool:
-    artifact_path = event.get("artifact_path")
-    if not isinstance(artifact_path, str):
-        return False
-    return changed_path == artifact_path or changed_path.startswith(
-        artifact_path.rstrip("/") + "/"
-    )
-
-
-def _change_id_for_event_log(event_log: Path) -> str:
-    change_dir = event_log.parent
-    if change_dir.parent.name == "archive":
-        match = re.match(r"\d{4}-\d{2}-\d{2}-(.+)", change_dir.name)
-        if match:
-            return match.group(1)
-    return change_dir.name
-
-
-def check_change(change_dir: Path, current_specs_root: Path | None = None) -> list[str]:
-    errors: list[str] = []
-    proposal = change_dir / "proposal.md"
-    if not proposal.exists():
-        return [f"{change_dir.name}: missing required file: proposal.md"]
-
-    proposal_text = proposal.read_text(encoding="utf-8")
-    change_type, type_errors = parse_change_type(proposal_text)
-    errors.extend(f"{change_dir.name}: {error}" for error in type_errors)
-    if change_type is None:
-        return errors
-
-    all_types = change_type.all_types
-    if "docs" in all_types and len(all_types) > 1:
-        errors.append(f"{change_dir.name}: docs type must not be combined with other types")
-
-    if all_types & DESIGN_TYPES:
-        errors.extend(
-            f"{change_dir.name}: {error}"
-            for error in _check_required_sections(change_dir / "design.md", DESIGN_SECTIONS)
-        )
-
-    if change_type.primary != "docs":
-        errors.extend(
-            f"{change_dir.name}: {error}"
-            for error in _check_impact_analysis(change_dir, proposal_text)
-        )
-        errors.extend(
-            f"{change_dir.name}: {error}"
-            for error in _check_reference_implementation_research(
-                change_dir, proposal_text, change_type
-            )
-        )
-
-    if all_types & DIAGNOSIS_TYPES:
-        errors.extend(
-            f"{change_dir.name}: {error}"
-            for error in _check_required_sections(
-                change_dir / "diagnosis.md", DIAGNOSIS_SECTIONS
-            )
-        )
-
-    if change_type.primary == "docs" and change_type.secondary:
-        errors.append(f"{change_dir.name}: docs primary changes must not declare secondary types")
-
-    errors.extend(
-        f"{change_dir.name}: {error}"
-        for error in _check_handoff_json(change_dir)
-    )
-
-    errors.extend(
-        f"{change_dir.name}: {error}"
-        for error in _check_building_review(change_dir, change_type)
-    )
-
-    errors.extend(
-        f"{change_dir.name}: {error}"
-        for error in _check_design_review_task(change_dir, change_type)
-    )
-
-    errors.extend(
-        f"{change_dir.name}: {error}"
-        for error in _check_benchmark_smoke_task(change_dir, proposal_text)
-    )
-
-    errors.extend(
-        f"{change_dir.name}: {error}"
-        for error in _check_current_spec_mapping(change_dir, current_specs_root)
-    )
-
-    errors.extend(
-        f"{change_dir.name}: {error}"
-        for error in _check_current_spec_sync_task(change_dir, change_type)
-    )
-
-    return errors
-
-
-def iter_change_dirs(changes_root: Path, only_change: str | None) -> list[Path]:
-    if only_change:
-        return [changes_root / only_change]
-    return sorted(
-        path
-        for path in changes_root.iterdir()
-        if path.is_dir() and path.name != "archive" and not path.name.startswith(".")
-    )
-
-
 def _archived_change_names(changes_root: Path) -> set[str]:
     archive_root = changes_root / "archive"
     if not archive_root.exists():
@@ -1471,7 +695,6 @@ def _archived_change_names(changes_root: Path) -> set[str]:
         archived.add(match.group(1) if match else name)
     return archived
 
-
 def _extract_backlog_sections(backlog_text: str) -> tuple[str, str]:
     unfinished_match = re.search(r"^##\s+未实现队列\s*$", backlog_text, flags=re.MULTILINE)
     done_match = re.search(r"^##\s+已完成待归档\s*$", backlog_text, flags=re.MULTILINE)
@@ -1485,7 +708,6 @@ def _extract_backlog_sections(backlog_text: str) -> tuple[str, str]:
     if done_match:
         done = backlog_text[done_match.end():]
     return unfinished, done
-
 
 def check_backlog_consistency(changes_root: Path, backlog_path: Path) -> list[str]:
     if not backlog_path.exists():
@@ -1515,12 +737,10 @@ def check_backlog_consistency(changes_root: Path, backlog_path: Path) -> list[st
             )
     return errors
 
-
 def _repo_root_for_changes_root(changes_root: Path) -> Path:
     if changes_root.name == "changes" and changes_root.parent.name == "openspec":
         return changes_root.parent.parent
     return Path.cwd()
-
 
 def _resolve_base_ref(repo_root: Path, explicit: str | None) -> str:
     """Resolve the diff base used by the archive-point and protected-path checks.
@@ -1562,37 +782,6 @@ def _resolve_base_ref(repo_root: Path, explicit: str | None) -> str:
         )
         return base
     return "master"
-
-
-def _changed_paths_since_base(
-    repo_root: Path, base_ref: str, *, require_base: bool = False
-) -> tuple[set[str], str | None]:
-    """Return (changed_paths, warning) where warning is set when the base ref
-    could not be resolved.
-
-    ``git diff --name-only <base_ref>`` fails on a shallow checkout where the
-    base ref is absent. With ``require_base`` the failure is reported as a
-    warning the caller must treat as an error (fails closed, so CI can't
-    silently skip protected-path checks); otherwise the check degrades to
-    best-effort with a visible warning instead of silently passing.
-    """
-    result = subprocess.run(
-        ["git", "diff", "--name-only", base_ref, "--"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True, errors="replace",
-    )
-    if result.returncode != 0:
-        warning = (
-            f"could not resolve base ref '{base_ref}' for protected-path check"
-            f" (exit {result.returncode}): {result.stderr.strip()[:200]}"
-        )
-        if require_base:
-            return set(), warning
-        return set(), warning
-    paths = {line.strip() for line in result.stdout.splitlines() if line.strip()}
-    return paths, None
-
 
 def _new_archive_dirs_since_base(
     repo_root: Path, base_ref: str
@@ -1656,7 +845,6 @@ def _new_archive_dirs_since_base(
         new_dirs.append(dir_name)
     return sorted(new_dirs), sorted(non_conforming), None
 
-
 def _archive_dir_names_in_base(repo_root: Path, base_ref: str) -> set[str]:
     """Archive directory names present in the base tree (empty on any failure).
 
@@ -1673,114 +861,6 @@ def _archive_dir_names_in_base(repo_root: Path, base_ref: str) -> set[str]:
     if result.returncode != 0:
         return set()
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
-
-
-def _check_archived_completion_gate(change_dir: Path) -> list[str]:
-    """Evaluate the four completeness gates + unchecked tasks on an archive dir.
-
-    Mirrors what ``check_change`` enforces for an active change, but on the
-    **archive point** and without the ``_tasks_all_complete`` trigger: a change
-    that leaves one box unticked must not thereby switch its own gates off
-    (issue #235 D2/D3).
-
-    building-review is checked for **existence + terminal verdict** here. The
-    existence face matches the active gate (non-docs + spec delta); the verdict
-    face also runs as a wide trigger whenever a building review exists (terminal
-    BLOCKED / CHANGES_REQUESTED is always an error). This replaces the retired
-    asterwynd manifest verdict gate; historical archives are not re-checked
-    (``--check-archived`` no longer verifies manifests at all).
-
-    Exemptions are inherited from the reused predicates rather than restated:
-    docs-only (``primary == "docs"``), no spec delta (``_changed_capabilities``),
-    and non-design types (``DESIGN_TYPES``) each skip their gate.
-    """
-    if not change_dir.exists():
-        return []
-    proposal = change_dir / "proposal.md"
-    if not proposal.exists():
-        return [
-            f"{change_dir.name}: 新归档目录缺 proposal.md，无法评估完成度门",
-        ]
-    proposal_text = proposal.read_text(encoding="utf-8")
-    change_type = parse_change_type(proposal_text)[0]
-    if change_type is None:
-        return [
-            f"{change_dir.name}: proposal.md 缺合法 Change Type，无法评估完成度门",
-        ]
-
-    prefix = f"{change_dir.name}: "
-    errors: list[str] = []
-
-    if change_type.primary != "docs":
-        errors.extend(
-            prefix + error
-            for error in _check_reference_implementation_research(
-                change_dir, proposal_text, change_type, assume_implemented=True
-            )
-        )
-
-    errors.extend(
-        prefix + error
-        for error in _check_design_review_task(
-            change_dir, change_type, assume_implemented=True
-        )
-    )
-
-    review_report = change_dir / "reviews" / "building-review.md"
-    requires_building_review = (
-        change_type.primary != "docs" and _changed_capabilities(change_dir)
-    )
-    if requires_building_review and not review_report.exists():
-        errors.append(
-            prefix + "building-review.md missing — 归档点要求独立 subagent 审阅证据。"
-            "请用 /review-loop 跑审阅闭环（一轮 = 非空 medium+ 批次：开批→全修→只验证→收口；最多 20 个已收口轮，超限则超上限 BLOCKED + 建议推倒重开）。"
-        )
-    elif review_report.exists():
-        # Wide trigger for docs / no-spec-delta archives; the completion face
-        # additionally demands a PASS exit for non-docs + spec delta.
-        errors.extend(
-            prefix + error
-            for error in _review_exit_errors(
-                review_report, completion=requires_building_review
-            )
-        )
-
-    # grill-flow-hardening / issue #298：设计阶段审阅闭环证据。触发条件比 building-review
-    # 多一道 `DESIGN_TYPES` 前置——因为「设计阶段审阅闭环」是 **grill 环节的收口**，而
-    # grill 只对 DESIGN_TYPES（feature/refactor/process）challenge；bugfix/research 不走
-    # grill（`_check_design_review_task` 对它们直接返回 []），要求其产 `grill-adversarial.md`
-    # 会是「要求一个输入不存在的产物」。存在性即可（review manifest 校验已退役）。
-    if (
-        change_type.primary != "docs"
-        and (change_type.all_types & DESIGN_TYPES)
-        and _changed_capabilities(change_dir)
-        and not (change_dir / "reviews" / "grill-adversarial.md").exists()
-    ):
-        errors.append(
-            prefix + "grill-adversarial.md missing — 归档点要求设计阶段审阅闭环证据"
-            "（grill 后、停轮前：独立零记忆审阅者对抗分析 → verdict → 修 → 按有界批次模型验证，最多 20 个已收口轮；收口确认空批 ⇒ PASS，超限 ⇒ 超上限 BLOCKED + 建议推倒重开）。"
-        )
-
-    # tasks.md 是「完成度」唯一的证据载体：缺了它（或没有可证明完成的行），未勾任务
-    # 检查会静默通过——与留一条 `- [ ]` 同构的绕开路径，必须显式报错而不是跳过。
-    # 对 docs 归档同样要求：否则「删掉 tasks.md」就成了 docs 的关闸路径（语料实测
-    # 0/93 个 docs 归档缺 tasks.md，统一口径不产生假阳性）。
-    missing_evidence = _tasks_missing_evidence(change_dir)
-    if missing_evidence is not None:
-        errors.append(
-            prefix + f"{missing_evidence} —— 归档点无法评估完成度。"
-            "tasks.md 至少要有 ≥1 条已勾选任务（closeout 类未完成项请标 `(post-merge)`）。"
-        )
-    else:
-        for line in _untagged_unchecked_tasks(change_dir):
-            errors.append(
-                prefix
-                + f"归档 change 存在未勾且未标 (post-merge) 的任务：{line}"
-                + " ——closeout 类任务（合入后动作）请标 `(post-merge)`；其余请完成后再归档。"
-            )
-
-    return errors
-
 
 def _check_new_archived_completion_gates(
     repo_root: Path,
@@ -1806,21 +886,336 @@ def _check_new_archived_completion_gates(
         errors.extend(_check_archived_completion_gate(changes_root / "archive" / dir_name))
     return errors
 
+def _is_unconfirmed_answer(answer: str) -> bool:
+    """True when an answer value is an unconfirmed marker, not a real decision."""
+    a = answer.lower().strip().translate(_UNCONFIRMED_STRIP)
+    if not a:
+        return True
+    if a in UNCONFIRMED_EXACT:
+        return True
+    # Short answers that merely gesture at "pending" are placeholders; long
+    # answers are substantive even if they mention a token like 未确认.
+    if len(a) <= _UNCONFIRMED_MAX_ANSWER_LEN:
+        for tok in UNCONFIRMED_STRONG:
+            if tok in a:
+                return True
+    return False
+PROTECTED_ARTIFACT_EVENT = "protected_artifact_explained"
+CURRENT_SPEC_SYNC_EVENT = "current_spec_synced"
+BACKLOG_UPDATED_EVENT = "backlog_updated"
+CHANGE_ARCHIVED_EVENT = "change_archived"
+
+# 受保护路径规则从 scripts/flow-policy.json 加载（flow-policy-source P0 单一策略源），
+# 替换原硬编码 PROTECTED_PATH_RULES。取 governance == event_explained 的条目。
+_POLICY_REL_PATH = Path("scripts") / "flow-policy.json"
+
+def _normalize_question_index(raw: str) -> str | None:
+    """Normalize an Open Questions / User Confirmation index to ``Q<n>``.
+
+    Accepts ``1``, ``1.``, ``Q1``, ``q1``, and list/bold-wrapped forms like
+    ``- **Q1**:`` (list marker and asterisks stripped). Returns None when no
+    numeric index is present.
+    """
+    cleaned = raw.strip().strip(".")
+    # Strip a leading list marker and any bold asterisks so the Q/number is
+    # directly matchable.
+    cleaned = re.sub(r"^[-*]\s*\**\s*", "", cleaned)
+    m = re.match(r"(?:[Qq])?(\d+)", cleaned)
+    if not m:
+        return None
+    return f"Q{m.group(1)}"
+
+def _extract_open_question_indexes(text: str) -> list[str]:
+    """Extract Open Questions entry indexes from ``## Open Questions``.
+
+    Only entries with an explicit numeric/``Q<n>`` index count (``1.``, ``- **Q1**:``,
+    ``- Q1 ...``). Placeholder entries (``- 无``, empty) are skipped.
+    """
+    section = _extract_h2_sections(text).get("Open Questions", "")
+    if not section or _is_placeholder_body(section):
+        return []
+    indexes: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Skip "no open questions" markers in any form (bare, numbered, "- 无").
+        no_q = re.sub(r"^[-*]\s*", "", stripped)
+        no_q = re.sub(r"^\d+[.、]\s*", "", no_q)
+        no_q = re.sub(r"^\*\*", "", no_q)
+        if no_q.strip() in {"无", "无。", "none", "none。", "没有", "无问题"}:
+            continue
+        # Read the leading index of a real entry (from the original line).
+        m = re.match(r"^[-*]?\s*\**\s*(?:(?:Q|q)\d+|\d+)\s*[:：.]?\s*", stripped)
+        if m:
+            idx = _normalize_question_index(m.group(0))
+            if idx:
+                indexes.append(idx)
+    return indexes
+
+def _extract_user_confirmation_indexes(text: str) -> list[str]:
+    """Extract confirmed Open Questions indexes from ``## User Confirmation``.
+
+    A record counts only when the line is ``- **Q<n>**: 用户答复：<value>`` and
+    the answer value is not an unconfirmed marker (``待确认``, ``pending``, etc.
+    per UNCONFIRMED_TOKENS). This blocks the placeholder false-pass discovered
+    in grill-confirmation-gate Q1.
+    """
+    section = _extract_h2_sections(text).get("User Confirmation", "")
+    if not section:
+        return []
+    indexes: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        # 容忍 `**Q8**（分支命名）:` 后缀（flow-policy-source P0 正则修复，
+        # 与 workflow_guard._extract_user_confirmation_indexes 同步).
+        m = re.match(r"^-\s+\*\*Q(\d+)\*\*(?:[^：:]*)\s*[:：]", stripped)
+        if not m:
+            continue
+        answer_match = re.search(r"用户答复\s*[:：]\s*(.*?)(?:[；;]\s*确认时间|\s*$)", stripped)
+        if not answer_match:
+            continue
+        answer = answer_match.group(1).strip().strip("`")
+        if not answer or _is_unconfirmed_answer(answer):
+            continue
+        indexes.append(f"Q{m.group(1)}")
+    return indexes
+
+def _unconfirmed_open_questions(text: str) -> list[str]:
+    """Open Questions without a matching confirmed User Confirmation record."""
+    open_indexes = _extract_open_question_indexes(text)
+    if not open_indexes:
+        return []
+    confirmed = set(_extract_user_confirmation_indexes(text))
+    return [q for q in open_indexes if q not in confirmed]
+
+def _extract_grill_decisions(text: str) -> list[str]:
+    """Extract decision entries under ## Confirmed Decisions in grill-design.md.
+
+    Only the canonical list-item format counts (``- **决策**: ...``, half- or
+    full-width colon). The ``### Decision N:`` heading form is tolerated for
+    display but does not satisfy the evidence threshold on its own — headings
+    lack the required 理由/来源 fields, so counting them would let an agent pad
+    the decision count without real content.
+    """
+    section = _extract_h2_sections(text).get("Confirmed Decisions", "")
+    if not section or _is_placeholder_body(section):
+        return []
+    decisions: list[str] = []
+    for line in section.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- **决策**：") or stripped.startswith("- **决策**:"):
+            decisions.append(stripped)
+    return decisions
+
+def _self_admitted_incomplete(text: str) -> str | None:
+    lowered = text.lower()
+    for phrase in SELF_ADMITTED_INCOMPLETE_PHRASES:
+        if phrase.lower() in lowered:
+            return phrase
+    return None
+
+PLACEHOLDER_ONLY = {
+    "todo",
+    "tbd",
+    "n/a",
+    "na",
+    "待补充",
+    "无",
+}
+# grill-design.md ## User Confirmation 节的"未确认"标记：`用户答复：` 后跟这些
+# 值（小写归一后）的确认记录不得计入已确认。与 PLACEHOLDER_ONLY 区分——占位
+# 判定是给整节正文用的，这些 token 用于识别"写了占位但没真拍板"的确认行
+# （grill-confirmation-gate Q1：占位文本会假通过朴素判定）。
+# 占位判定的关键：占位文本短且无实质决策内容；真实答复即使是"排除未确认 token"
+# 这类长句也不得误伤。因此短答复（≤20 字符）才做子串匹配，长答复一律视为实质
+# 内容。EXACT 精确匹配兜底短占位。
+UNCONFIRMED_EXACT = {
+    "todo", "tbd", "n/a", "na", "无", "none",
+    "待确认", "未确认", "待定", "pending", "待补充", "占位", "未决",
+}
+UNCONFIRMED_STRONG = {
+    "待主 agent", "待主agent", "待用户", "placeholder", "tobeconfirmed",
+    "待拍板", "未拍板",
+}
+_UNCONFIRMED_MAX_ANSWER_LEN = 20
+# 标点/空白变体剥离：`待确认。` → `待确认`，`待主agent提交` → `待主agent提交`
+_UNCONFIRMED_STRIP = str.maketrans("", "", "。．.；;，,、 \t")
+
+
+def _check_archive_grill_evidence(change_dir: Path, change_type: ChangeType) -> list[str]:
+    """Archive-point grill evidence for changes witnessloop's code_hits gate misses.
+
+    witnessloop only requires the `grill` / `grill-adversarial` stages when the
+    diff touches `require_change_for`. A process change that only edits
+    `openspec/specs/**` and `docs/**` would otherwise lose the old archive gate's
+    evidence checks, so the slim checker keeps them as part of archive completion.
+    """
+
+    if change_type.primary == "docs":
+        return []
+    if not (change_type.all_types & DESIGN_TYPES):
+        return []
+    if not _changed_capabilities(change_dir):
+        return []
+
+    errors: list[str] = []
+    grill = change_dir / "reviews" / "grill-design.md"
+    if not grill.exists():
+        errors.append(
+            "reviews/grill-design.md missing — 归档点要求独立 design grilling 证据。"
+        )
+    else:
+        text = grill.read_text(encoding="utf-8")
+        decisions = _extract_grill_decisions(text)
+        if len(decisions) < 3:
+            errors.append(
+                f"reviews/grill-design.md 的 ## Confirmed Decisions 不足 3 条"
+                f"（当前 {len(decisions)} 条）——独立 subagent design grilling 未完成"
+            )
+        missing = _unconfirmed_open_questions(text)
+        if missing:
+            errors.append(
+                "reviews/grill-design.md 存在未确认的 Open Question: "
+                + ", ".join(missing)
+                + " ——每个 Open Question 必须有 ## User Confirmation 记录，未确认不允许归档"
+            )
+
+    adversarial = change_dir / "reviews" / "grill-adversarial.md"
+    if not adversarial.exists():
+        errors.append(
+            "reviews/grill-adversarial.md missing — 归档点要求设计阶段审阅闭环证据"
+        )
+    return errors
+
+
+def _check_archived_completion_gate(change_dir: Path) -> list[str]:
+    """Evaluate completion on a newly archived change directory.
+
+    Retains the old archive-point judgments that witnessloop does not own:
+    RIR content threshold, building review existence/verdict, archive-point grill
+    evidence, and tasks completion. Impact Analysis / benchmark smoke stay on the
+    active-change face, matching the pre-retirement trigger matrix.
+    """
+
+    if not change_dir.exists():
+        return []
+    proposal = change_dir / "proposal.md"
+    if not proposal.exists():
+        return [f"{change_dir.name}: 新归档目录缺 proposal.md，无法评估完成度门"]
+    proposal_text = proposal.read_text(encoding="utf-8")
+    change_type = parse_change_type(proposal_text)[0]
+    if change_type is None:
+        return [f"{change_dir.name}: proposal.md 缺合法 Change Type，无法评估完成度门"]
+
+    prefix = f"{change_dir.name}: "
+    errors: list[str] = []
+
+    if change_type.primary != "docs":
+        errors.extend(
+            prefix + error
+            for error in _check_reference_implementation_research(
+                change_dir, proposal_text, change_type, assume_implemented=True
+            )
+        )
+
+    review_report = change_dir / "reviews" / "building-review.md"
+    requires_building_review = (
+        change_type.primary != "docs" and bool(_changed_capabilities(change_dir))
+    )
+    if requires_building_review and not review_report.exists():
+        errors.append(
+            prefix + "building-review.md missing — 归档点要求独立 subagent 审阅证据。"
+            "请用 /review-loop 跑审阅闭环（一轮 = 非空 medium+ 批次：开批→全修→只验证→收口；最多 20 个已收口轮，超限则超上限 BLOCKED + 建议推倒重开）。"
+        )
+    elif review_report.exists():
+        errors.extend(
+            prefix + error
+            for error in _review_exit_errors(
+                review_report, completion=requires_building_review
+            )
+        )
+
+    errors.extend(
+        prefix + error
+        for error in _check_archive_grill_evidence(change_dir, change_type)
+    )
+
+    missing_evidence = _tasks_missing_evidence(change_dir)
+    if missing_evidence is not None:
+        errors.append(
+            prefix + f"{missing_evidence} —— 归档点无法评估完成度。"
+            "tasks.md 至少要有 ≥1 条已勾选任务（closeout 类未完成项请标 `(post-merge)`）。"
+        )
+    else:
+        for line in _untagged_unchecked_tasks(change_dir):
+            errors.append(
+                prefix
+                + f"归档 change 存在未勾且未标 (post-merge) 的任务：{line}"
+                + " ——closeout 类任务（合入后动作）请标 `(post-merge)`；其余请完成后再归档。"
+            )
+
+    return errors
+
+
+def iter_change_dirs(changes_root: Path, only_change: str | None) -> list[Path]:
+    if only_change:
+        return [changes_root / only_change]
+    return sorted(
+        path
+        for path in changes_root.iterdir()
+        if path.is_dir() and path.name != "archive" and not path.name.startswith(".")
+    )
+
+
+def check_change(change_dir: Path) -> list[str]:
+    """Check the four active-change rules (RIR/Impact/benchmark/building exit)."""
+
+    errors: list[str] = []
+    proposal = change_dir / "proposal.md"
+    if not proposal.exists():
+        return [f"{change_dir.name}: missing required file: proposal.md"]
+
+    proposal_text = proposal.read_text(encoding="utf-8")
+    change_type, type_errors = parse_change_type(proposal_text)
+    errors.extend(f"{change_dir.name}: {error}" for error in type_errors)
+    if change_type is None:
+        return errors
+
+    if change_type.primary != "docs":
+        errors.extend(
+            f"{change_dir.name}: {error}"
+            for error in _check_impact_analysis(change_dir, proposal_text)
+        )
+        errors.extend(
+            f"{change_dir.name}: {error}"
+            for error in _check_reference_implementation_research(
+                change_dir, proposal_text, change_type
+            )
+        )
+
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_building_review(change_dir, change_type)
+    )
+    errors.extend(
+        f"{change_dir.name}: {error}"
+        for error in _check_benchmark_smoke_task(change_dir, proposal_text)
+    )
+    return errors
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--changes-root", default="openspec/changes")
-    parser.add_argument("--current-specs-root", default="openspec/specs")
     parser.add_argument("--change", help="Check a single active change")
     parser.add_argument("--backlog", default="docs/openspec-change-backlog.md")
     parser.add_argument(
         "--base-ref",
         default=None,
-        help="Git ref to diff against (two-dot, explicit values are used as-is). "
-        "Omitted: use the merge-base of HEAD with origin/master when it "
-        "resolves, then master, so a stale local master or a behind branch "
-        "does not misread historical archives or upstream protected-path "
-        "changes as part of this PR. Empty/whitespace values are treated as omitted",
+        help="Git ref to diff against (two-dot for explicit values). Omitted: "
+        "merge-base of HEAD with origin/master, then master. Empty/whitespace is "
+        "treated as omitted.",
     )
     parser.add_argument(
         "--skip-backlog",
@@ -1828,21 +1223,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip backlog/archive consistency checks",
     )
     parser.add_argument(
-        "--skip-protected-paths",
-        action="store_true",
-        help="Skip git diff checks for workflow-protected project artifacts",
-    )
-    parser.add_argument(
         "--require-base",
         action="store_true",
-        help="Fail when the --base-ref cannot be resolved (CI gate: prevents "
-        "protected-path checks from silently passing on a shallow checkout)",
-    )
-    parser.add_argument(
-        "--check-archived",
-        action="store_true",
-        help="Also validate archived changes' event-log projectability. Review "
-        "manifest drift checks were retired (retire-manifest-check, issue #316)",
+        help="Fail when --base-ref cannot be resolved",
     )
     args = parser.parse_args(argv)
 
@@ -1856,47 +1239,14 @@ def main(argv: list[str] | None = None) -> int:
         if not change_dir.exists():
             errors.append(f"{change_dir.name}: change directory does not exist")
             continue
-        errors.extend(check_change(change_dir, Path(args.current_specs_root)))
-
-    if args.check_archived and not args.change:
-        archive_root = changes_root / "archive"
-        if archive_root.exists():
-            for change_dir in sorted(p for p in archive_root.iterdir() if p.is_dir()):
-                # Keep the historical guard: archives without a parseable
-                # Change Type stay out of scope (4 old-generation dirs have no
-                # proposal / no reviews; widening coverage here would be a new
-                # check, not part of this retirement).
-                change_type = parse_change_type((change_dir / "proposal.md").read_text(encoding="utf-8"))[0] \
-                    if (change_dir / "proposal.md").exists() else None
-                if change_type is None:
-                    continue
-                # Q5/代码层修正 2：归档 change 只验可投影（结构合法 + 类型可识别）。
-                # Review manifests are no longer verified (retire-manifest-check).
-                errors.extend(_check_archived_projectable(change_dir))
+        errors.extend(check_change(change_dir))
 
     if not args.change and not args.skip_backlog:
         errors.extend(check_backlog_consistency(changes_root, Path(args.backlog)))
 
-    # 归档点完成度门（issue #235 D6）：**刻意放在 --skip-protected-paths 块之外**。
-    # CI 第二步命令行是 `--check-archived --skip-protected-paths --skip-backlog`，
-    # 若本门在块内，那个 flag 就成了事实上的区分开关，与「不能被它关掉」冲突；
-    # 而 AGENTS.md 速查表推荐本地跑不加该 flag 的 `--check-archived`，那样本门会
-    # 在全部历史归档上求值。区分一律靠显式守卫：
-    #   - --check-archived：只做归档事件日志可投影校验，不进本门（守爆炸半径；
-    #     review manifest 漂移检测已随 retire-manifest-check 退役）
-    #   - --change <id>：单 change 查询，不应额外评估本分支上的归档 id
-    repo_root = _repo_root_for_changes_root(changes_root)
-    archive_gate_enabled = not args.check_archived and not args.change
-    protected_paths_enabled = not args.skip_protected_paths
-    # 只在有消费者时解析，避免 --check-archived --skip-protected-paths 这类
-    # 「两个 diff 消费者都关掉」的 CI 调用打出无意义的隐式 base INFO。
-    base_ref = (
-        _resolve_base_ref(repo_root, args.base_ref)
-        if archive_gate_enabled or protected_paths_enabled
-        else args.base_ref
-    )
-
-    if archive_gate_enabled:
+    if not args.change:
+        repo_root = _repo_root_for_changes_root(changes_root)
+        base_ref = _resolve_base_ref(repo_root, args.base_ref)
         errors.extend(
             _check_new_archived_completion_gates(
                 repo_root,
@@ -1906,27 +1256,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
 
-    if protected_paths_enabled:
-        changed_paths, base_warning = _changed_paths_since_base(
-            repo_root, base_ref, require_base=args.require_base
-        )
-        if base_warning is not None:
-            if args.require_base:
-                errors.append(base_warning)
-            else:
-                print(f"WARNING: {base_warning}", file=sys.stderr)
-        errors.extend(
-            check_protected_path_explanations(repo_root, changed_paths=changed_paths)
-        )
-        # #127 P0：flow-policy.json 的 phases/review agent schema 结构校验
-        errors.extend(_validate_policy_agent_schema(repo_root))
-
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    print("OpenSpec artifact checks passed")
+    print("Project rule checks passed")
     return 0
 
 

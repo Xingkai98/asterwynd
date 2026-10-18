@@ -37,7 +37,8 @@ Asterwynd 是一个面向大厂 Agent 相关开发岗位的 Coding Agent 系统�
 - `web-ui`: FastAPI、WebSocket、Chat 和 Debug 页面。
 - `benchmark`: 任务 schema、runner、artifact、hidden tests 和结果汇总。
 - `change-documentation`: OpenSpec change 的 proposal、spec、design、diagnosis 和 tasks 文档流程。
-- `dev-workflow-state-machine`: 多阶段开发流程状态机，包含五阶段生命周期、handoff.json 状态文件、human review gate、角色 agent 路由和回退机制。
+- `dev-workflow-gate`: 开发流程门禁的承载边界——witnessloop `gate / check` 承载流程骨架，本仓瘦 checker 承载 6 条项目规则，Bash-only guard 提供本地写前拦截，`platform_gate.py` 保留 branch protection 配置即代码。
+- `platform-gate`: branch protection 的目标状态声明（`scripts/platform-gate.json`）、幂等 `--apply` 与漂移检测 `--verify`。
 
 ## Change 文档约束
 

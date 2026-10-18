@@ -32,7 +32,7 @@
   `Orchestration Reuses Workflow Persistence Discipline`，把 `agent/workflow/` 改指
   `agent/subagent/workflow_store.py`。
 - [x] 1.4 `docs/openspec-change-backlog.md`：登记本 change 到合适批次。
-- [ ] 1.5 同步 current spec：施加 delta 前**先从 HEAD 恢复 `openspec/specs/**`**（不接受 SPIKE 的
+- [x] 1.5 同步 current spec：施加 delta 前**先从 HEAD 恢复 `openspec/specs/**`**（不接受 SPIKE 的
   规格改写），再把三份 delta 就地覆盖；删除 `openspec/specs/dev-workflow-state-machine/spec.md`；
   **手工改写 `dev-workflow-gate` 的 `## Purpose` 段**（现行版本说旧门禁「全部继续照跑」，SPIKE
   版本说六条规则「无机械实现」，两者都要改成最终形态）；从 `openspec/project.md` 的能力域地图
@@ -40,53 +40,53 @@
 
 ## 2. 测试先行（TDD）
 
-- [ ] 2.1 新增 `tests/test_slim_project_rules.py`：RIR / Impact Analysis / benchmark smoke 三条规则
+- [x] 2.1 新增 `tests/test_slim_project_rules.py`：RIR / Impact Analysis / benchmark smoke 三条规则
   各至少 1 正例 + 1 否定用例，覆盖 `research_tier` 结构门槛、多行字段、tasks 全勾后的内容门槛。
-- [ ] 2.2 同文件覆盖 tasks / 归档点完成度：未勾无标记红、`(post-merge)` 8 变体豁免与 3 负例、
+- [x] 2.2 同文件覆盖 tasks / 归档点完成度：未勾无标记红、`(post-merge)` 8 变体豁免与 3 负例、
   缺 tasks / 无 checkbox / 全未勾红、`AR` 新归档与「旧归档补文件」区分、**本次 diff 触及的非
   日期前缀归档目录**红、`.gitkeep` 不误报；非 docs + DESIGN_TYPES + spec delta 的归档缺
   `grill-design.md`（<3 决策 / Open Question 未确认）或 `grill-adversarial.md` 红。
-- [ ] 2.3 同文件覆盖 backlog 一致性与 building review `## 闭环出口`：引用已归档 / 不存在 change 红；
+- [x] 2.3 同文件覆盖 backlog 一致性与 building review `## 闭环出口`：引用已归档 / 不存在 change 红；
   原 `_review_exit_verdict` 参数表逐条搬入（`PASS`、`BLOCKED`、`CHANGES_REQUESTED`、`PASSED`、
   `未定`、全角 `｜`、`|` 多出口、fenced block 模板、有序列表前缀、重复出口、缺小节）。
-- [ ] 2.4 新增 `tests/test_bash_write_guard.py`：写受管路径（重定向 / `cp` 目的 / `mv` / `tee` /
+- [x] 2.4 新增 `tests/test_bash_write_guard.py`：写受管路径（重定向 / `cp` 目的 / `mv` / `tee` /
   `sed -i` / `dd` / `install` / `rm` / `touch` / `mkdir` / `rmdir` / `unlink` / `truncate` / `ln` /
   `chmod` / `chown` / `perl -i` / `ruby -i` / `curl -o` / `wget -O`）被拦；写受保护 artifact 被拦；
   `cd` 链、`bash -c` / `sh -c` / `eval`、命令替换、绝对路径、`..` 归一化全覆盖；
   `git checkout -- <managed>` / `git restore <managed>` / `git apply`（无 `--check`）被拦，
   `git rm` / `git mv` 放行。
-- [ ] 2.5 同文件覆盖防误伤（grill H3）：`rg 'echo > agent/y'`、`git commit -m "cp x agent/y"`、
+- [x] 2.5 同文件覆盖防误伤（grill H3）：`rg 'echo > agent/y'`、`git commit -m "cp x agent/y"`、
   `cp agent/x /tmp/y`、`sed -i 's|agent/|x|' docs/y`、`>/dev/null`、`2>&1`、here-doc 数据、
   `git apply --check`、`git restore --staged`、`rsync` 源/目的，全部放行。
-- [ ] 2.6 同文件覆盖 match 语义与 parity（grill M6）：`**` 跨目录、`*` 不跨 `/`、
+- [x] 2.6 同文件覆盖 match 语义与 parity（grill M6）：`**` 跨目录、`*` 不跨 `/`、
   `scriptsfoo/` 不命中 `scripts/**`、`.witnessloop/**`；内嵌默认表与 `.witnessloop/policy.json`
   当前值一致。
-- [ ] 2.7 残余绕过面（变量展开、符号链接、`find -exec`、shell 函数、VCS 内容写入、被执行程序）写成显式
+- [x] 2.7 残余绕过面（变量展开、符号链接、`find -exec`、shell 函数、VCS 内容写入、被执行程序）写成显式
   「已知绕过」用例并登记在测试与文档中（不追求挡死，但不能静默）。
-- [ ] 2.8 调整 `tests/test_round_model_alignment.py` 的**三处**引用：ALLOWLIST 条目、
+- [x] 2.8 调整 `tests/test_round_model_alignment.py` 的**三处**引用：ALLOWLIST 条目、
   `PER_FILE_REQUIRED` 映射、专用单测；保留有界批次模型守卫与 checker 提示断言。
   `tests/agent/tools/test_guard_three_state.py` 的示例命令可保留 SPIKE 的替换（非必须）。
-- [ ] 2.9 按 `design.md` Decision 12 的「旧用例 → 新用例」表逐项核对，确认没有判据边界随旧测试
+- [x] 2.9 按 `design.md` Decision 12 的「旧用例 → 新用例」表逐项核对，确认没有判据边界随旧测试
   删除而消失。
 
 ## 3. 实现
 
-- [ ] 3.1 重写 `scripts/check_openspec_artifacts.py`：只保留 6 条规则与必要的前置解析
+- [x] 3.1 重写 `scripts/check_openspec_artifacts.py`：只保留 6 条规则与必要的前置解析
   （`parse_change_type` / H2 提取 / 归档 diff 识别 / backlog 解析 / exit 语义）；Change Type
   无法解析时 exit 1 并明确报错，不静默跳过。
-- [ ] 3.2 新增 `scripts/bash_write_guard.py`：Bash-only PreToolUse guard，quote-aware tokenizer，
+- [x] 3.2 新增 `scripts/bash_write_guard.py`：Bash-only PreToolUse guard，quote-aware tokenizer，
   策略读 `.witnessloop/policy.json`，复用旧写意图模式表并补 `cd` 链 / 嵌套 shell / 命令替换；
   只放行 `git rm` / `git mv`；显式路径的 restore/checkout/apply 拦截；merge/rebase/cherry-pick/stash/am 登记为绕过面。
-- [ ] 3.3 新增 `scripts/bash_write_guard.example.json`：PreToolUse / matcher `Bash` 示例。
-- [ ] 3.4 用 `git cherry-pick -n e9d23af` **只取代码 / 测试 / CI 的删除**（SPIKE 仅本地存在；
+- [x] 3.3 新增 `scripts/bash_write_guard.example.json`：PreToolUse / matcher `Bash` 示例。
+- [x] 3.4 用 `git cherry-pick -n e9d23af` **只取代码 / 测试 / CI 的删除**（SPIKE 仅本地存在；
   删除清单以 proposal 为准）；cherry-pick 后立即从 HEAD 恢复**所有文档与规格**：
   `AGENTS.md`、`docs/**`（含 `docs/known-debt.md`、`docs/adr/**`、interview-script）、
   `openspec/specs/**`、`openspec/project.md`、`openspec/templates/tasks.md`、
   `docs/openspec-change-backlog.md`，再手工重写（SPIKE 文档不作为事实来源）；随后从 HEAD
   恢复 platform gate 四项（脚本 / JSON / 测试 / 规格）；跳过 `d48fd93`。
-- [ ] 3.5 更新 `.github/workflows/ci.yml`：`validate` 的 checker 步骤改为调用瘦 checker；删除
+- [x] 3.5 更新 `.github/workflows/ci.yml`：`validate` 的 checker 步骤改为调用瘦 checker；删除
   `Check archived changes` 步骤；`fetch-depth` 注释同步改为新 checker 的 diff 用途；其余 job 不动。
-- [ ] 3.6 更新 AGENTS.md / docs/development-guide.md / docs/requirements-process.md /
+- [x] 3.6 更新 AGENTS.md / docs/development-guide.md / docs/requirements-process.md /
   docs/agents/issue-tracker.md / docs/known-debt.md / openspec/project.md /
   openspec/templates/tasks.md / docs/interview-script（Q12/Q14）相关条目：
   - 清理旧脚本、旧 policy、`flow status` 引用；`docs/requirements-process.md` 的 workflow 总开关
@@ -97,22 +97,22 @@
   - 写入 checker 命令与 exit 语义（0/1/2）；
   - 写入 Bash guard 安装方式（user-level settings 或用绝对路径在每个 worktree 手动安装）、
     两 hook 分工与残余绕过面。
-- [ ] 3.7 如发现新影响面，先回写 `proposal.md` 的 Impact Analysis 与本节再继续。
+- [x] 3.7 未发现需要回写的新影响面（实现与 delta 一致）。
 
 ## 4. 验证
 
-- [ ] 4.1 `uv run pytest -q tests/test_slim_project_rules.py tests/test_bash_write_guard.py
+- [x] 4.1 `uv run pytest -q tests/test_slim_project_rules.py tests/test_bash_write_guard.py
   tests/test_round_model_alignment.py tests/test_platform_gate.py`。
-- [ ] 4.2 `uv run pytest -q` 全量；与基线（2 failed / 4530 passed / 9 skipped，失败均为本机 `/tmp`
+- [x] 4.2 `uv run pytest -q` 全量；与基线（2 failed / 4530 passed / 9 skipped，失败均为本机 `/tmp`
   环境坑）对比，不得新增失败类型。
-- [ ] 4.3 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`。
-- [ ] 4.4 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`。
-- [ ] 4.5 `uv run python scripts/platform_gate.py --verify`（只读，与实况一致）。
-- [ ] 4.6 `uv run asterwynd benchmark-gate benchmarks/tasks/gate-smoke --source-repo . --runs-dir
+- [x] 4.3 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict`。
+- [x] 4.4 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`。
+- [x] 4.5 `uv run python scripts/platform_gate.py --verify`（只读，与实况一致）。
+- [x] 4.6 `uv run asterwynd benchmark-gate benchmarks/tasks/gate-smoke --source-repo . --runs-dir
   /tmp/benchmark-gate-runs-slim-gates --baseline benchmarks/baseline.json --require-baseline --skip-p95`。
-- [ ] 4.7 手工验收 Bash guard：`echo x > agent/y` / `cp x agent/y` / `tee docs/known-debt.md` /
+- [x] 4.7 手工验收 Bash guard：`echo x > agent/y` / `cp x agent/y` / `tee docs/known-debt.md` /
   `sed -i ... agent/loop.py` 被拦；`ls` / `grep` / `cat` / 2.5 的防误伤清单放行；记录原始输出。
-- [ ] 4.8 两 hook **同时安装**实测：在临时 Claude Code settings 中同时挂 witnessloop plugin
+- [x] 4.8 两 hook **同时安装**实测：在临时 Claude Code settings 中同时挂 witnessloop plugin
   guard（`Write|Edit`）与 `scripts/bash_write_guard.py`（`Bash`），用同一组 Write / Edit / Bash
   payload 触发；记录（a）两个 hook 是否都执行、（b）串行/并行与并集阻断语义、（c）被拦时提示归属、
   （d）Write/Edit 只由 witnessloop 求值、Bash 只由本仓 guard 求值。命令与原始输出记入

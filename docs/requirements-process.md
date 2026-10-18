@@ -30,7 +30,7 @@
 
 开发流程精简为 **OpenSpec 主干 + 强制独立审阅闭环**（详见 `AGENTS.md` 的「开发流程：OpenSpec 主干 + 强制审阅闭环」）。旧的四阶段状态机（phase/sub_state 推进、`handoff.json` 驱动、gate 停止）**已停用并退役删除**——其 CLI 子命令（`discover` / `current` / `validate` / `spawn`、`flow approve` / `advance` / `block` / `confirm`）、orchestrator、`dispatch`/`role_registry`、doc-artifact protocol 与 `flow/` 声明式引擎均不再存在。
 
-每个 change 的 `openspec/changes/<change-id>/workflow-events.jsonl` 仍是权威事件日志，投影到 `workflow-state.json`；`flow status` 是仅存的流程查询入口。
+每个 change 的 `openspec/changes/<change-id>/workflow-events.jsonl` 作为**只读历史数据**保留；`workflow_state.py`、`agent/workflow/*` 与 `flow status` 已删除，不再提供投影查询。
 
 主干步骤如下：
 
@@ -45,13 +45,13 @@
 9. 运行 `/review-loop` 独立零记忆审阅闭环（一轮 = 一个**非空 medium+ 批次**的闭环：开批 → 全修 → 只做修复验证 → 收口；批次冻结，验证期新问题只进 deferred；最多 **20 个已收口轮**，超限 ⇒ 超上限 `BLOCKED` + 建议推倒重开），产出 `reviews/building-review.md`（含 `## 闭环出口`，终结为 `PASS`）；收尾时为 `grill` / `grill-adversarial` / `building` 各产一份 witnessloop 形态 `reviews/<stage>.manifest.json`（命令：`witnessloop manifest build --root . --change <归档目录名> --stage <stage> --report <报告> ...`，归档 move 之后用归档目录名重建）。本仓不再要求 `*-review-manifest.json`；其生成模块与 CLI 写通道已随 `retire-manifest-module` 删除。
 10. 运行验证。
 11. 更新文档和能力证明链。
-12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和项目 artifact checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
+12. PR 发起前，执行 OpenSpec 收尾并纳入同一个实现 PR：将已完成 change 归档到 `openspec/changes/archive/YYYY-MM-DD-<change-id>/`，从 [OpenSpec Change 实现队列](./openspec-change-backlog.md) 的未实现队列移除，并运行 OpenSpec 校验和瘦项目规则 checker。PR 合入后只确认 active change 目录不存在、backlog 干净且本地 `master` 已同步。
 
-`scripts/workflow_methods.json` 里的 `workflow.enabled` 是工作流总开关；设为 `false` 时，受保护写通道与 PreToolUse 门禁退化为 no-op，agent 视为当前仓库没有启用 workflow。建议通过 `python3 scripts/workflow_state.py disable --reason ...` 和 `python3 scripts/workflow_state.py enable ...` 切换开关：`disable` 会在 `.dev/workflow-resume-baseline.json` 写入本地 baseline；重新启用时如果 baseline 之后存在代码改动，必须先运行 `resume-audit --reconcile-change <id>` 将这些改动归入某个 change 并记录 `resume_audit_reconciled` 事件。手工直接改 `enabled` 无法追溯关闭期间的起点，只能退化为普通 no-op。
+旧 `scripts/workflow_methods.json` 的 `workflow.enabled` 总开关已随旧门禁删除；当前没有「关闭整个 workflow」的本地开关。流程约束由 witnessloop 的 `.witnessloop/policy.json`、CI `gate / check` 与本地 Bash guard 共同承担。
 
-decision tickets 和 tracer-bullet tickets 的后端通过 `scripts/workflow_methods.json` 的 `ticket_tracker` 配置控制；默认 backend 为 GitHub Issues。
+decision tickets 和 tracer-bullet tickets 的 issue 后端固定为 GitHub Issues（`Xingkai98/asterwynd`）；旧 `workflow_methods.json` 的 `ticket_tracker` 配置已删除。
 
-工作流受保护 artifact 不能只靠自然语言说明来证明合法。修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**`、`docs/openspec-change-backlog.md` 或 `openspec/changes/archive/**` 时，必须在相关 change 的 `workflow-events.jsonl` 中追加结构化 artifact 解释事件。阶段 review report SHALL 由 witnessloop 形态 manifest（`openspec/changes/<change-id>/reviews/<stage>.manifest.json`）绑定 reviewer/author run、base/head sha、tasks/spec/report hash；本仓 checker 另校验 building review 的 `## 闭环出口` 为 `PASS`（terminal 非 PASS 宽触发报错）。asterwynd 形态 `*-review-manifest.json` 已退役，不再要求产出或校验。
+工作流受保护 artifact 不能只靠自然语言说明来证明合法。修改 `docs/known-issues.md`、`docs/known-debt.md`、`openspec/specs/**` 或 `docs/openspec-change-backlog.md` 时，必须在相关 change 的 `workflow-events.jsonl` 中追加结构化 artifact 解释事件（`openspec/changes/archive/**` 不要求事件）。阶段 review report SHALL 由 witnessloop 形态 manifest（`openspec/changes/<change-id>/reviews/<stage>.manifest.json`）绑定 reviewer/author run、base/head sha、tasks/spec/report hash；瘦 checker 另校验 building review 的 `## 闭环出口` 为 `PASS`（terminal 非 PASS 宽触发报错）。asterwynd 形态 `*-review-manifest.json` 已退役，不再要求产出或校验。
 
 ## 参考实现调研
 
@@ -65,7 +65,7 @@ decision tickets 和 tracer-bullet tickets 的后端通过 `scripts/workflow_met
 - 如果调研影响设计决策，应把结论写入当前 `openspec/changes/<change-id>/design.md`、`proposal.md`、`diagnosis.md` 或讨论纪要；不要把本地路径或 `.codegraph/` 产物写成项目依赖。
 - 如果 `.dev/reference-repos.txt` 不存在或为空，应说明无法使用本地参考仓库，并继续用公开文档、当前代码和用户补充信息讨论方案。
 
-非 docs change 必须在 `proposal.md` 或 `design.md` 维护以下结构，并由项目 artifact checker 机械检查：
+非 docs change 必须在 `proposal.md` 或 `design.md` 维护以下结构，并由瘦项目规则 checker 机械检查：
 
 ```markdown
 ## Reference Implementation Research
@@ -221,7 +221,7 @@ Impact Analysis 不是一次性段落，而是贯穿 change lifecycle 的维护�
 - implementation 阶段：如果发现新影响面，先回写 Impact Analysis 和 `tasks.md`，再继续无关实现。
 - archive 阶段：确认 Impact Analysis 不再残留未解释的 `unknown`、`TBD` 或 `待确认`，并完成对应验证。
 
-项目 artifact checker 只机械检查 Impact Analysis 和 Pre-Implementation Review 的存在与非空，不判断分析是否充分，也不在普通模式下禁止 proposal 阶段的待确认占位词。
+瘦 checker 只机械检查 Impact Analysis 的存在与非空（以及 RIR / benchmark smoke / tasks 完成度 / backlog / building exit），不判断分析是否充分，也不在普通模式下禁止 proposal 阶段的待确认占位词。Pre-Implementation Review 的正文由人工评审与审阅闭环负责。
 
 ## Reference Implementation Research 动态维护
 
@@ -243,7 +243,7 @@ Impact Analysis 不是一次性段落，而是贯穿 change lifecycle 的维护�
 | 创建需求、开始一个新 change | `/opsx:propose` 等价流程。创建或补齐 proposal、design、tasks、spec delta，并更新 backlog。 |
 | 开始开发某个 change | 先执行 `grilling` 设计追问；确认后进入 `/opsx:apply` 等价流程，按 tasks 测试先行并实现。 |
 | 同步 delta spec 到正式规格 | `/opsx:sync` 等价流程。读取 delta spec 和当前 spec 后智能合并。 |
-| 提 PR、收尾、准备合入 | `/opsx:archive` 等价流程。实现 PR 内完成归档、backlog 清理、OpenSpec 校验和 artifact checker。 |
+| 提 PR、收尾、准备合入 | `/opsx:archive` 等价流程。实现 PR 内完成归档、backlog 清理、OpenSpec 校验和瘦项目规则 checker。 |
 | 合入 PR | 合入后只确认本地 `master` 同步、active change 目录不存在、backlog 不引用已归档 change。 |
 
 如果当前客户端不能直接执行 `/opsx:*` slash command，agent 也必须按表中等价步骤执行；不能因为用户没有显式写命令而跳过 OpenSpec 流程。
@@ -275,10 +275,9 @@ PR 合入后固定确认：
 当前使用三层约束：
 
 - OpenSpec schema：`spec-driven` schema 已包含 `proposal`、`specs`、`design`、`tasks` 四类 artifact，可通过 `openspec status --change <id>` 查看缺失项。
-- 项目本地脚本：检查 active changes 是否满足项目文档规则，例如 `Change Type` 合法、各类型要求按并集满足、非平凡 change 有 `design.md`、问题定位类 change 有 `diagnosis.md`，必填章节不是空壳，核心路径 change 包含 benchmark smoke 验证项，并且 backlog 与 active/archive change 状态一致。
-- 项目本地脚本还会检查需要 `design.md` 的 active change 是否在 `tasks.md` 中包含 `grilling` 或“等价设计追问”任务，避免新 change 漏掉开发前设计门槛。
-- 项目本地脚本还会检查非 docs change 是否包含 `## Impact Analysis`，以及需要 `design.md` 的 change 是否包含 `## Pre-Implementation Review`。
-- 项目本地脚本还会检查非 docs change 是否包含 `## Reference Implementation Research`，并按 `status: enabled` 或 `status: disabled` 检查必填字段。
+- `witnessloop gate / check`：change 契约、review manifest 证据绑定、grill / grill-adversarial / building 三类审阅证据、受保护写入解释、测试执行点。
+- 瘦项目规则 checker（`scripts/check_openspec_artifacts.py`）：Reference Implementation Research / Impact Analysis / benchmark smoke 任务 / tasks 与归档点完成度 / backlog 一致性 / building review 的 `## 闭环出口` PASS。
+- 本地 Bash guard（`scripts/bash_write_guard.py`）：Bash 写受管路径 / 受保护 artifact 的写前拦截；Write/Edit 面由 witnessloop plugin guard 负责。
 - 人工评审：脚本不判断设计是否合理；开发前必须先完成 `grilling` 或等价设计追问，再人工审核 `design.md` 并确认通过。
 
 在开始实现前，应至少运行：
@@ -290,7 +289,7 @@ openspec validate <change-id> --strict
 uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base
 ```
 
-`scripts/check_openspec_artifacts.py` 只做机械检查：`Change Type` 合法、文件存在、必填章节存在、章节下有正文、没有模板占位符、Impact Analysis、Reference Implementation Research 和 Pre-Implementation Review 基础结构存在、条件验证项存在、change delta spec 的 capability 能映射到 `openspec/specs/<capability>/spec.md`、非 docs change 的 `tasks.md` 包含 current spec 同步任务、backlog 不引用已归档或不存在的 change、受保护 artifact 变更有 workflow event 解释、building review 的 `## 闭环出口` 为 `PASS`（完成面必须 PASS；任何已存在报告的 terminal 非 PASS 宽触发报错）。review manifest 的存在性与 revision 绑定由 witnessloop `gate / check` 承担（本仓 checker 不再校验 `*-review-manifest.json`；legacy 生成模块与写通道已删除）。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
+`scripts/check_openspec_artifacts.py` 只做六条机械检查：RIR（结构门槛 + tasks 全勾/归档点的内容门槛）、Impact Analysis（proposal 或 design 存在且非占位）、benchmark smoke 任务（触发面命中时 tasks 文本须同时出现 benchmark 与 smoke）、tasks / 归档点完成度（新归档 ≥1 已勾、未勾须标 `(post-merge)`、非日期前缀归档目录报错、归档点 grill 证据）、backlog 一致性（不引用已归档或不存在的 active change）、building review 的 `## 闭环出口`（完成面必须 PASS；任何已存在报告的 terminal 非 PASS 宽触发报错）。change 契约、review manifest、受保护写入解释与 active-stage grill 证据由 witnessloop `gate / check` 承担。设计是否正确、调研是否充分、取舍是否合理、是否足以指导开发，必须由人工评审确认。
 
 开发前设计追问和设计评审都通过前，不进入实现阶段。
 
@@ -301,7 +300,7 @@ uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --req
 - 运行相关单元/集成测试。
 - 运行全量测试。
 - 运行 OpenSpec strict validate。
-- 运行项目 OpenSpec artifact checker。
+- 运行瘦项目规则 checker（`uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base`）。
 - 如 change 包含 spec delta，将对应 capability 的 delta 合并到 `openspec/specs/<capability>/spec.md`，并确认未实现能力没有被写成已实现。
 
 还应按影响面保留条件验证任务：

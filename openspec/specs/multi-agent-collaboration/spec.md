@@ -80,7 +80,7 @@ The subagent system SHALL provide an orchestration pattern library: orchestrator
 
 ### Requirement: Orchestration Reuses Workflow Persistence Discipline
 
-Subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline (JSON serialization + schema_version + transition log style), SHALL NOT couple to the dev-workflow phase vocabulary, and SHALL NOT introduce a separate control plane. 本 Requirement 的主语是 **Subagent orchestration**：它 SHALL NOT 覆盖非 subagent 的交互式编排（例如本 change 新增的群聊轮次编排器——后者不复用 `SubAgentManager`，不属本 Requirement 的约束范畴）。
+Subagent orchestration SHALL reuse the persistence discipline of `agent/subagent/workflow_store.py` (atomic per-key artifact writes + authoritative `events.jsonl` transition log) and the schema-version discipline of `agent/subagent/workflow.py` (`SCHEMA_VERSION`), SHALL NOT couple to the dev-workflow phase vocabulary, and SHALL NOT introduce a separate control plane. 本 Requirement 的主语是 **Subagent orchestration**：它 SHALL NOT 覆盖非 subagent 的交互式编排（例如群聊轮次编排器——后者不复用 `SubAgentManager`，不属本 Requirement 的约束范畴）。已删除的 `agent/workflow/` 模块 SHALL NOT 再被本 Requirement 引用为持久化纪律来源。
 
 #### Scenario: orchestration state persists without dev-workflow coupling
 
@@ -94,7 +94,6 @@ Subagent orchestration SHALL reuse the `agent/workflow/` persistence discipline 
 - **GIVEN** 一个不基于 `SubAgentManager` 的交互式编排（群聊轮次编排器）
 - **WHEN** 它维护自己的房间日志与轮次状态
 - **THEN** 该行为 SHALL NOT 被判定为「引入独立控制面」的违规
-
 ### Requirement: 声明式 Workflow DSL
 
 系统 SHALL 提供声明式 Workflow DSL，使模型能一次性声明协作拓扑（并行 / 汇合 / 条件分支 / 有限循环），并可退回逐工具自由调度。DSL SHALL 采用分离式入口：`DeclareWorkflow` 声明并返回 workflow_id，`StartWorkflow` 启动，`GetWorkflow` 查询 bounded 状态，`CancelWorkflow` 取消；`RunWorkflow` 为便捷语法，内部走 Declare+Start。

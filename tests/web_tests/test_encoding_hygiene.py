@@ -15,7 +15,7 @@
 
 **为什么第 3 条允许「locale + errors=replace」**：子进程的输出编码是**子进程自己的契约**——
 我们自己的 python CLI 在 Windows 上往管道写 locale 编码（GBK），父进程若强行按严格 UTF-8
-解码反而会崩（实测把 ``tests/test_flow_policy.py`` 的 ``show.stdout`` 变成 None，一次改动
+解码反而会崩（实测把一个 CLI 测试的 ``show.stdout`` 变成 None，一次改动
 新增 11 条红）；反过来，子进程写 UTF-8 而父进程按 locale 解码时，``_readerthread`` 会抛
 ``UnicodeDecodeError`` 让**整段输出丢失**（实测 benchmark 一次跑出 16 处）。所以规则是：
 要么声明 ``encoding=``（确定 UTF-8），要么至少 ``errors="replace"``（不确定时也不许崩）。

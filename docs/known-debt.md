@@ -1,5 +1,13 @@
 # Known Debt
 
+> **旧门禁主体已退役（`slim-gates` / issue #322，2026-10-18）**：本文件中出现的
+> `scripts/workflow_guard.py`、`scripts/workflow_state.py`、`agent/workflow/*`、
+> `scripts/flow-policy.json` 及其行号均为历史记录。现行实现是
+> `scripts/check_openspec_artifacts.py`（6 条项目规则）、
+> `scripts/bash_write_guard.py`（本地 Bash 写前拦截）与
+> `scripts/platform_gate.py`（branch protection 配置即代码）。保留的已知边界见下方
+> 「Bash guard 的静态解析边界」与「受保护写入事件的校验退步」。
+
 Pre-existing TODO/FIXME/HACK residues — exact source-line matches.
 Files are compared against stripped source lines during gate checks.
 
@@ -16,13 +24,17 @@ Files are compared against stripped source lines during gate checks.
 1. **数量上限是冗余保护**：`_WAITING_LIST_LIMIT`（限列出几个上游 id）在「整句 160 字符 clamp 生效」时不可观测——clamp 已先截掉尾部。两条保护**各自充分**（删任一条输出仍在预算内），故数量上限是第二道。不是缺口，但若有人想清理冗余，需知道删掉它测试不会变红。
 2. **取消态防护在优先级上先于闸门分支**（`if self._cancelled:` 置于 `reason` 判据之前）：理论上「既被取消又撞闸门」的图会先报取消、遮蔽闸门真因。**实测不可达**（节点因由的唯一写入路径只在 teardown 的 `_resolve_pending_nodes` 里被调用，而 `cancel()` 不走该路径；`state.reason = state.reason or ...` 的 `or` 也保证已写的闸门因由不被覆盖）。若日后要收口，可在防护前先判 `reason` 键——当前无证据支持该改动必要。
 
-## guard Bash 静态分析无法解析 shell 变量拼接（flow-policy-source P0）
+## Bash guard 的静态解析边界（原 flow-policy-source P0）
 
-`scripts/workflow_guard.py` 的 Bash 受保护路径扫描是静态文本分析：对写意图命令做「命令文本 contains + 提取重定向/写目标 token 归一化」匹配。shell 变量拼接（`echo > doc$V/known-debt.md`、`$V` 在运行时展开为 `s`）的最终目标路径无法静态解析，该形态可绕过检测。属工具面纪律边界（同 add-worktree-tool「Bash 绕过工具直接 git worktree add 无法阻止」），P0 不引入过度误拦（拦截含 `$` 的重定向会误伤合法 `$OUTPUT_DIR/notes.txt`）。后续如需更强静态分析可引入 shell AST 解析（独立 effort）。
+`scripts/bash_write_guard.py` 的 Bash 受保护路径扫描仍是静态文本分析（quote-aware tokenizer + 写目标归一化）。以下形态无法静态判定，**有意放行并如实登记**：shell 变量 / 命令替换（`echo > $DIR/agent/y`）、符号链接、`find -exec` / `xargs` 的路径、shell 函数 / alias、`git merge` / `rebase` / `cherry-pick` / `stash` / `am`、`cp -t` / `mv -t` 等选项携带目标的形态、以及任何被执行程序（`python x.py`、`make`、`uv run …`）自行写文件。属工具面纪律边界（同 add-worktree-tool「Bash 绕过工具直接 git worktree add 无法阻止」），不引入过度误拦（拦截含 `$` 的重定向会误伤合法 `$OUTPUT_DIR/notes.txt`）。CI `gate / check` 与瘦 checker 仍是最终防线。
 
-## Workflow guard 未启用（Q7）
+## 本地 Bash guard 未在本工作区启用（Q7 后续）
 
-`scripts/workflow_guard.py`（PreToolUse 受保护文件门禁）已实现但未安装启用（settings.json 未挂钩子）。启用前必须先为 `/opsx:archive`（写 `openspec/changes/archive/`、`workflow-events.jsonl`）与 `/review-loop`（写 `reviews/*.manifest.json`；legacy `*-review-manifest.json` 写通道已随第二刀删除）增加 sanctioned 流程白名单，否则这两个合法流程会被自身写保护拦截形成死锁。是否启用是项目治理选择，当前决定不启用、保持 checker 机械门禁兜底。
+`scripts/bash_write_guard.py` 已提供可提交的示例 hook 配置（`scripts/bash_write_guard.example.json`）与安装说明，但 `.claude/` 被 gitignore，本工作区 / building worktree 不会自动带 hook；未安装时本地没有 Bash 写前拦截。安装时用绝对路径命令或每个 worktree 手动安装。是否启用仍是项目治理选择；即使安装，它也定位为本地 checkpoint，最终防线是 required 的 `gate / check` 与 CI 里的瘦 checker。
+
+## 受保护写入事件的校验退步（slim-gates）
+
+旧 checker 要求事件 `schema == "workflow-event/v1"` 且 `change_id` 与事件日志所属目录一致；witnessloop 的事件解析只读 `event_type` / `artifact_path` / `reason` / `approved_by`，不校验 `schema` / `change_id`。此外 witnessloop 的事件匹配是**全仓全局**的（历史事件可覆盖本 PR 的受保护写入），不是本次删除引入的新偏差。该退步已写入 `openspec/specs/change-documentation/spec.md` 的「机械门禁的信任边界」；不另立第七条规定。
 
 ## NGram embedding 词面近似局限（Q9）
 
