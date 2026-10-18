@@ -21,7 +21,7 @@
 
 - [x] 2.1 `specs/dev-workflow-gate/spec.md` delta：MODIFIED「已知红如实记录且不放宽判据」+「原地废弃不伪造证据」Scenario。
 - [x] 2.2 把 delta 施加进 current spec（`openspec/specs/dev-workflow-gate/spec.md`），写 `current_spec_synced` 事件；strict validate 通过。
-- [ ] 2.3 归档 move 前写 `change_archived` 事件（`artifact-path=openspec/changes/archive/2026-10-18-retire-tui-proposal`）；归档后复跑裸 checker 确认受保护路径门通过。
+- [x] 2.3 归档 move 前写 `change_archived` 事件（`artifact-path=openspec/changes/archive/2026-10-18-retire-tui-proposal`）；归档后复跑裸 checker 确认受保护路径门通过（实测 EXIT=0）。
 
 ## 3. 验证
 
@@ -30,8 +30,8 @@
 - [x] 3.3 `--base-ref origin/master --require-base` → EXIT=0。
 - [x] 3.4 `--check-archived` → EXIT=0。
 - [x] 3.5 OpenSpec strict validate → 30 passed（本 change 活跃时）/ 29（归档后）。
-- [ ] 3.6 归档后 witnessloop `check` → 通过 ✓（grill manifest 落盘后复验；未完成前不得勾选）。
-- [ ] 3.7 全仓 grep：TUI id 仅剩历史归档、ADR-0006、本 change 自身、backlog 退役条目与「已废弃」过去时说明（未完成前不得勾选）。
+- [x] 3.6 归档后 witnessloop `check` → 通过 ✓（grill manifest 用归档目录名重建；实测 1 个 change 目录、0 findings）。
+- [x] 3.7 全仓 grep：TUI id 仅剩历史归档、ADR-0006、本 change 自身与「已废弃」过去时说明（实测无 active/backlog 队列引用）。
 
 ## 4. 收尾（合入后）
 
