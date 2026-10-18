@@ -5,10 +5,10 @@
   "reviewer_run_id": "dd7d7e03-8e07-4d2e-b6a5-82f71c2be212",
   "author_run_id": "main-session-retire-tui-proposal",
   "base_sha": "325511e35eb18deadec3be0c066f2b40d7abb575",
-  "head_sha": "e47c13aedfeea58ce04caebc19044d33ad5acb00",
-  "tasks_hash": "b74b761484cb8a5e094bcf7f329238e07797ac09618ab3fd4ee7996b44714e2d",
+  "head_sha": "180a442bfc07d263690aa4941a32e9cc1289e119",
+  "tasks_hash": "e8f86cca3f933c6b34828b70d7f2fef86ad48a106fd9a84c49b5e52ebaed9088",
   "spec_hash": "6364aa75a948133b243d39c15ee60ad961a6f6fad262e381afe0ef057086ed62",
-  "diff_hash": "2ff2173aedd0443d430c2d39349c1e409cf423cde00ed9fa669d834e5505bf4d",
+  "diff_hash": "665fc7d121ca4a32fb2ae15066b51b8f17984fb4a51c9b229a2c39bf4445e1ec",
   "report_hash": "dd8338ab2d77e49b3801ab1d91aebd30be48e05e19b6649f35da7dc33f707ffe",
   "report_path": "reviews/grill-design.md"
 }
