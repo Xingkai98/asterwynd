@@ -17,9 +17,13 @@ Path containment (``path`` inside a protected prefix / the workspace) is judged
 by **path segment** after normalization, never by bare string prefix
 (fix-issue-247): ``/various.txt`` is not under ``/var``, ``/tmp/ws-evil`` is not
 inside workspace ``/tmp/ws``, and ``/tmp/ws/../etc`` normalizes out of the
-workspace. Redirection / mv-cp targets that are the ``/dev/null`` family are
-exempt (they are black-hole / std-stream aliases, not protected assets); the
-exemption deliberately does NOT extend to rm/chmod/curl targets.
+workspace. Workspace containment additionally compares **real paths**
+(fix-issue-310): the workspace is stored as ``Path.resolve()``, so absolute
+command targets go through ``_canonical_path()`` too (strict-first, fail-closed
+on loops); protected-path checks stay lexical. Redirection / mv-cp targets that
+are the ``/dev/null`` family are exempt (they are black-hole / std-stream
+aliases, not protected assets); the exemption deliberately does NOT extend to
+rm/chmod/curl targets.
 """
 from __future__ import annotations
 
@@ -142,11 +146,11 @@ def _canonical_path(path: str) -> str | None:
         return str(Path(path).resolve(strict=True))
     except FileNotFoundError:
         pass
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return None
     try:
         return str(Path(path).resolve(strict=False))
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return None
 
 

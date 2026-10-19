@@ -402,17 +402,25 @@ class TestSymlinkedWorkspaceContainment:
         assert guard.check(f"rm -rf {loop}/x") is CommandVerdict.DENY
         assert guard.last_reason == "rm_target_escape"
 
+    @pytest.mark.parametrize(
+        "command_t",
+        ["tee {t}/.env", "echo K >> {t}/.env", "dd of={t}/.env"],
+    )
     @pytest.mark.parametrize("workspace_kind", ["link", "real"])
     @pytest.mark.parametrize("target_kind", ["link", "real"])
     def test_write_allowlist_uses_same_canonical_semantics(
-        self, symlinked_workspace, workspace_kind: str, target_kind: str
+        self,
+        symlinked_workspace,
+        command_t: str,
+        workspace_kind: str,
+        target_kind: str,
     ) -> None:
-        """白名单与越界判定同源：两种 workspace 表示 × 两种目标表示都覆盖。"""
+        """白名单与越界判定同源：两种 workspace 表示 × 两种目标表示 × 三种写形态。"""
         _, real, link = symlinked_workspace
         workspace = link if workspace_kind == "link" else real
         target = link if target_kind == "link" else real
         guard = CommandGuard(workspace=str(workspace), allowed_write_paths=(".env",))
-        assert guard.check(f"tee {target}/.env") is CommandVerdict.ALLOW
+        assert guard.check(command_t.format(t=target)) is CommandVerdict.ALLOW
 
     def test_write_allowlist_prefix_collision_still_denied(
         self, symlinked_workspace
@@ -423,8 +431,16 @@ class TestSymlinkedWorkspaceContainment:
         assert guard.check(f"tee {target}") is CommandVerdict.DENY
         assert guard.last_reason == "tee_target"
 
+    @pytest.mark.parametrize(
+        "command_t,reason",
+        [
+            ("tee {t}/escape/.env", "tee_target"),
+            ("echo K >> {t}/escape/.env", "protected_redirect"),
+            ("dd of={t}/escape/.env", "dd_target"),
+        ],
+    )
     def test_write_allowlist_cannot_cover_symlink_escape(
-        self, symlinked_workspace
+        self, symlinked_workspace, command_t: str, reason: str
     ) -> None:
         """修复前按字面 `escape/.env` 可覆盖；realpath 在区外 ⇒ 不覆盖。"""
         tmp_path, real, _ = symlinked_workspace
@@ -434,8 +450,26 @@ class TestSymlinkedWorkspaceContainment:
         guard = CommandGuard(
             workspace=str(real), allowed_write_paths=("escape/.env",)
         )
-        assert guard.check(f"tee {real}/escape/.env") is CommandVerdict.DENY
-        assert guard.last_reason == "tee_target"
+        assert guard.check(command_t.format(t=real)) is CommandVerdict.DENY
+        assert guard.last_reason == reason
+
+    def test_missing_target_inside_workspace_allowed(self, symlinked_workspace) -> None:
+        """目标尚不存在走非严格回退（strict 抛 FileNotFoundError），不得误拒。"""
+        _, real, _ = symlinked_workspace
+        guard = CommandGuard(workspace=str(real))
+        assert (
+            guard.check(f"rm -rf {real}/not-yet-created/deep")
+            is CommandVerdict.ALLOW
+        )
+
+    def test_embedded_nul_fails_closed_without_raising(
+        self, symlinked_workspace
+    ) -> None:
+        """`Path.resolve()` 对内嵌 NUL 抛 ValueError：必须转成 DENY，不能冒泡。"""
+        _, real, _ = symlinked_workspace
+        guard = CommandGuard(workspace=str(real))
+        assert guard.check(f"rm -rf {real}/bad\x00name") is CommandVerdict.DENY
+        assert guard.last_reason == "rm_target_escape"
 
     def test_write_allowlist_matches_real_target_relative_path(
         self, symlinked_workspace

@@ -43,7 +43,7 @@
 
 - [x] 4.1 `uv run pytest -q tests/agent/tools/test_command_guard.py`（本分支基线实测 **272 passed**）。
 - [x] 4.2 全量 `uv run pytest -q`：**2 failed / 4383 passed / 9 skipped**（364.30s）。2 条失败均为既有 `TestFindScopeRoot` 本机 `/tmp` 环境失败，与基线同因；基线 4 failed 中的 `test_sandbox_backends[docker]`（无 Docker）与 `test_parallel_execution`（计时 flake）本轮通过。无新增失败类型。
-- [x] 4.3 本机 / ubuntu 语义下的显式符号链接命令级实测矩阵（ALLOW ×4、DENY ×6）记录进 `reviews/building-review.md`。
+- [x] 4.3 本机 / ubuntu 语义下的显式符号链接命令级实测矩阵（ALLOW ×4、DENY ×6）已由审阅者独立复核并记录进 `reviews/building-review.md` 的「符号链接命令级实测矩阵」节。
 - [x] 4.4 `npx --yes @fission-ai/openspec@1.4.1 validate --all --strict` 通过。
 - [x] 4.5 `uv run python scripts/check_openspec_artifacts.py --base-ref origin/master --require-base` EXIT=0。
 - [x] 4.6 **benchmark smoke**：本 change 触及 `agent/tools/`（命中 checker 的 benchmark smoke 触发面），跑 `uv run asterwynd benchmark benchmarks/tasks --agent fake --source-repo . --runs-dir /tmp/smoke-310` 确认工具策略接线未破。
